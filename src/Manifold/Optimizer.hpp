@@ -28,20 +28,7 @@ using namespace std;
 #include "Scheduler.hpp"
 #include "../lenda/util/GST_util.hpp"
 
-static void save_train_(void * vdata, struct train_state * train) {
-    struct save_train_files_data * data   = (struct save_train_files_data *) vdata;
-
-    int64_t iter = train->opt->iter;
-
-    // if (strlen(data->fn_checkpoint_out) > 0) {
-    //     save_checkpoint_lora_file(get_train_filename(data->fn_checkpoint_out, data->pattern_fn_it, data->fn_latest, iter).c_str(), data->model, data->lora, train);
-    //     save_checkpoint_lora_file(get_train_filename(data->fn_checkpoint_out, data->pattern_fn_it, data->fn_latest, -1  ).c_str(), data->model, data->lora, train);
-    // }
-    // if (strlen(data->fn_model_out) > 0) {
-    //     save_as_llama_lora(get_train_filename(data->fn_model_out, data->pattern_fn_it, data->fn_latest, iter).c_str(), data->lora);
-    //     save_as_llama_lora(get_train_filename(data->fn_model_out, data->pattern_fn_it, data->fn_latest, -1  ).c_str(), data->lora);
-    // }
-}
+// void save_train_(void * vdata, struct train_state * train);
 
 class Ganglia;
 class Optimizer : public std::enable_shared_from_this<Optimizer> {
@@ -106,8 +93,8 @@ public:
     virtual void Init_CallbackData(struct train_opt_callback_data& opt_cb_data,struct llama_context * lctx,struct train_params_common& train_params,hGensor  tokens_input,int flag) {
         opt_cb_data.params                 = &(train_params); //hparams.common
         opt_cb_data.train                  = train;
-        opt_cb_data.save_cb                = &save_train_;
-        // opt_cb_data.save_data              = &save_data;
+        opt_cb_data.save_cb                = nullptr;   //&save_train_;
+        opt_cb_data.save_data              = nullptr;   //&save_data;
         opt_cb_data.lctx                   = lctx;
         opt_cb_data.last_save_iter         = opt->iter;
         opt_cb_data.tokens_data            = train_tokens.data();

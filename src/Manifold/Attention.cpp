@@ -1,10 +1,3 @@
-/**
- *  Copyright 2023-2024 by Grusoft 
- * 
- *  \brief A collection of neurons
- *  \author Yingshi Chen
- */
-
 #include "Ganglia.hpp"
 #include "TGraph.hpp"
 

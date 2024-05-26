@@ -13,11 +13,13 @@
 class MutliCoder : public Ganglia   {
 protected:
     int nTop=-1,nBottom=-1;
+    bool isResi = false;
+    hGensor resi = nullptr;
     
 public:
     hGensor encode=nullptr,decode=nullptr;
 
-    MutliCoder(struct ggml_context *ctx,int dim1,int dim2,int flag=0x0) : nTop(dim1),nBottom(dim2) {
+    MutliCoder(struct ggml_context *ctx,int dim1,int dim2,bool isR = false,int flag=0x0) : nTop(dim1),nBottom(dim2),isResi(isR) {
         assert(nTop>nBottom && nBottom>0);
         encode = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nTop, nBottom);     
         decode = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nBottom, nTop); 
@@ -25,11 +27,16 @@ public:
 
     virtual hGensor ENC(struct ggml_context *ctx,hGensor x){
         x = ggml_mul_mat(ctx, encode, x );    
-
+        if(isResi){
+            resi = x;
+        }
         return x;
     }
 
     virtual hGensor DEC(struct ggml_context *ctx,hGensor x){
+        if(resi!=nullptr){
+            x = ggml_add(ctx, x, resi);
+        }
         x = ggml_mul_mat(ctx, decode, x );    
 
         return x;
@@ -96,7 +103,17 @@ protected:
         return x;
     }vector<hMultiCoder> MAEC;    //  multi-level auto encoder
 public:
-    
+    virtual int InitMAEC(struct ggml_context *ctx,std::vector<int>& dims,int flag=0x0) {
+        int nMap = dims.size()-1;       assert(nMap>0);
+        MAEC.clear( );
+        for(int i=0;i<nMap;i++){
+            hMultiCoder hCoder = std::make_shared<MutliCoder>(ctx, dims[i], dims[i+1],reserve_x);
+            MAEC.push_back(hCoder);            
+        }
+
+        return MAEC.size();
+    }
+
     virtual hGensor ENC(struct ggml_context *ctx,hGensor x){
         hGensor cur = x;
         for(auto coder:MAEC)
@@ -106,9 +123,21 @@ public:
 
     virtual hGensor DEC(struct ggml_context *ctx,hGensor x){
         hGensor cur = x;
-        for(auto coder:MAEC)
-            cur = coder->DEC(ctx, cur);
+        for (auto it = MAEC.rbegin(); it != MAEC.rend(); ++it)
+            cur = (*it)->DEC(ctx, cur);
         return cur;
+    }
+
+    /*
+        Reparameterization trick to sample from N(mu, var) from        N(0,1).
+        z = eps * std + mu
+    */
+    virtual void Latent()    {
+        /*mu = self.fc_mu(x)
+        log_var = self.fc_var(x)
+        std = torch.exp(0.5 * log_var)
+        eps = torch.randn_like(std)
+        z = eps * std + mu*/
     }
 
     void BuildGraph(int flag=0x0)   override   { 
@@ -121,7 +150,7 @@ public:
     }
 
     VariationaAE(   )       {  }
-    VariationaAE(struct cwd_params params,int flag=0x0) : Ganglia(params)  {}
+    VariationaAE(struct cwd_params params,bool isRes,int flag=0x0) : Ganglia(params),reserve_x(isRes)  {}
     virtual ~VariationaAE() {
     }  
 };

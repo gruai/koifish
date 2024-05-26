@@ -1,10 +1,3 @@
-/**
- *  Copyright 2023-2024 by Grusoft 
- * 
- *  \brief A collection of neurons
- *  \author Yingshi Chen
- */
-
 #include "Ganglia.hpp"
 #include "../ggex/GG_util.hpp"
 
@@ -248,3 +241,4 @@ enum ggml_opt_result Optimizer::ggml_train(struct ggml_context * ctx, struct tra
 void Ganglia::Train(  int flag )   {
     
 }
+
