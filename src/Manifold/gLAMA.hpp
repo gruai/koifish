@@ -13,6 +13,7 @@
 #include "../Manifold/Ganglia.hpp"   
 #include "../Manifold/VAE.hpp" 
 #include "llama.h"
+#include "../Manifold/Dictionary.hpp"
 #include "common.h"
 
 #include <vector>
@@ -78,143 +79,12 @@ struct LLaMeta : public Ganglia {
         ONLY_RMSNormal,
         VAR_0,
     };
-    enum FFN_TYPE tpFFN = VAR_0;
-
-    struct save_train_files_data {
-        const char            * fn_checkpoint_out=NULL;
-        const char            * fn_model_out=NULL;
-        const char            * fn_model_base=NULL;
-        const char            * pattern_fn_it=NULL;
-        const char            * fn_latest=NULL;
-        struct llama_model * model=nullptr;
-
-        virtual void Init(cwd_params&params,struct llama_model *model_,int flag=0x0)   {
-            fn_checkpoint_out = params.common.fn_checkpoint_out;
-            fn_model_out      = params.fn_model_out;
-            pattern_fn_it     = params.common.pattern_fn_it;
-            fn_latest         = params.common.fn_latest;
-            model             = model_;
-        }
-    };
-    save_train_files_data save_data;
-
+    enum FFN_TYPE tpFFN = VAR_0;    
+    
     int nLayerX = -1;        //user could set it from command-line, mainly for debug
     bool isLoadTokenEmbed = false;
-    struct random_normal_distribution * rnd = nullptr;
-    struct ConsiceDict : public VariationaAE    {     //concise dictionary on VAE
-        bool isLoadTokenEmbed = false;
-        LLaMeta *hLM = nullptr;
-        int nToken=0,lama_embed=0,var_embed=256,nLevel=0;
-        std::vector<int> dims;
-        std::vector<const char*> tokens;
-        // hGensor encoder = nullptr,decoder=nullptr;     
-
-        ConsiceDict(LLaMeta *lama_,int flag=0x0) : VariationaAE(),hLM(lama_)   {
-            reserve_x = true;
-            assert(hLM->isValid());
-            if(hLM->hparams.nabla==3){
-                dims = {hparams.n_embd, 64};
-                // dims = {hparams.n_embd, 512, 128};
-                // dims = {hparams.n_embd, 512, 256,64};
-                nLevel = dims.size()-1;   
-                var_embed = dims[nLevel];
-            }   else if(hLM->hparams.nabla>3)
-                assert(0);         
-            _INFO("%s resi=%d nLevel=%d dims={%d...%d}",__func__,(int)(reserve_x),nLevel,nLevel>0?dims[0]:-1,nLevel>0?var_embed:-1);           
-        }
-
-        virtual void InitVAE(int flag=0x0)  {
-            assert(nLevel>0);   
-            if(nLevel>=1){
-                isLoadTokenEmbed = true;
-                InitMAEC(hLM->ctx,dims);
-                // hMultiCoder hCoder = std::make_shared<MutliCoder>(hLM->ctx, hparams.n_embd, var_embed);
-                // MAEC.push_back(hCoder);
-                // encoder = ggml_new_tensor_2d(hLM->ctx, GGML_TYPE_F32, hparams.n_embd, var_embed);     
-                // decoder = ggml_new_tensor_2d(hLM->ctx, GGML_TYPE_F32, var_embed, hparams.n_embd); 
-            }    
-            hLM->hparams.n_embd = var_embed;        
-        }
-
-        hGensor tok_embeddings=nullptr,norm=nullptr,output=nullptr;
-
-        virtual void Update(struct random_normal_distribution * rnd,int flag=0x0)   {
-            if(nLevel>0){
-                Update_1(rnd,flag);
-            }else{
-                Update_0(rnd,flag);
-            }
-        }
-
-        virtual void Update_0(struct random_normal_distribution * rnd,int flag=0x0){
-            const uint32_t n_embd  = hparams.n_embd,n_vocab = hparams.n_vocab;
-            auto lama = hLM->GetRawModel( );  
-            if(isLoadTokenEmbed) {
-                bool isParam = false;
-                // get tensors from llama_model (possibly mmapped)
-                tok_embeddings = llama_get_model_tensor(lama, TN(LLM_TENSOR_TOKEN_EMBD));      
-                if(isParam) nParams+=ggml_nelements(tok_embeddings);
-                norm           = llama_get_model_tensor(lama, TN(LLM_TENSOR_OUTPUT_NORM));     
-                if(isParam) nParams+=ggml_nelements(norm);
-                output         = llama_get_model_tensor(lama, TN(LLM_TENSOR_OUTPUT));          
-                if(isParam) nParams+=ggml_nelements(output);
-            }   else   {
-                tok_embeddings = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_vocab);
-                norm           = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
-                output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_vocab);  
-
-                InitGensor(ctx,tok_embeddings, TN(LLM_TENSOR_TOKEN_EMBD), rnd);
-                InitGensor(ctx,norm,           TN(LLM_TENSOR_OUTPUT_NORM), rnd);
-                InitGensor(ctx,output,         TN(LLM_TENSOR_OUTPUT), rnd);
-            }
-            // ggml_tensor_dequant(ctx_compute,gensor,GGML_TYPE_F32);
-            if(0){
-                assert_shape_2d(tok_embeddings, hparams.n_embd, hparams.n_vocab);
-                assert_shape_1d(norm,           hparams.n_embd);
-                assert_shape_2d(output,         hparams.n_embd, hparams.n_vocab);              
-            }else{
-
-            }      
-        }
-
-        void Update_1(struct random_normal_distribution * rnd,int flag=0x0) {
-            const uint32_t n_embd  = hparams.n_embd,n_vocab = hparams.n_vocab;
-
-            bool isParam = false;
-            // get tensors from llama_model (possibly mmapped)
-            auto lmodel = hLM->GetRawModel( );  
-            tok_embeddings = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_TOKEN_EMBD) );        //TN(LLM_TENSOR_TOKEN_EMBD)
-            if(isParam) hLM->nParams+=ggml_nelements(tok_embeddings);
-            norm           = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT_NORM) );       //  
-            if(isParam) hLM->nParams+=ggml_nelements(norm);
-            output         = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT)  );            //
-            if(isParam) hLM->nParams+=ggml_nelements(output);
-            assert(tok_embeddings!=nullptr && norm!=nullptr && output!=nullptr);
-
-            // ggml_tensor_dequant(ctx_compute,gensor,GGML_TYPE_F32);
-            if(0){
-                assert_shape_2d(tok_embeddings, hparams.n_embd, hparams.n_vocab);
-                assert_shape_1d(norm,           hparams.n_embd);
-                assert_shape_2d(output,         hparams.n_embd, hparams.n_vocab);              
-            }
-            int i = 0;
-            for(auto map : MAEC){
-                hLM->InitGensor(hLM->ctx, map->encode,    TN(LLM_DICT_DOWN, i),     rnd); //"emb_encod",
-                hLM->InitGensor(hLM->ctx, map->decode,    TN(LLM_DICT_UP, i),       rnd);    
-                i++;            
-            }
-            //ggml_set_param(hLM->ctx, norm);              hLM->nParams+=ggml_nelements(norm);
-            //output is Q6k would fail @float ggml_get_f32_1d(const struct ggml_tensor * tensor, int i)
-            //ggml_set_param(hLM->ctx, output);            hLM->nParams+=ggml_nelements(output);
-
-            hLM->tensors[ggml_get_name(tok_embeddings)] = tok_embeddings;
-            hLM->tensors[ggml_get_name(norm)] = norm;
-            hLM->tensors[ggml_get_name(output)] = output;  
-            assert(tensors.size()==0);          
-        }
-        
-    };
-    typedef std::shared_ptr<ConsiceDict> hCDICT;
+    struct random_normal_distribution * rnd = nullptr;    
+    
     hCDICT hDict=nullptr;    
     // hGensor tok_embeddings=nullptr,norm=nullptr,output=nullptr;
     // hGensor encoder = nullptr,decoder=nullptr;      
@@ -375,6 +245,8 @@ struct LLaMeta : public Ganglia {
         }
         
         nParams = 0;
+        if(!hDict->isLoadTokenEmbed)
+            hDict->CreateEmbeddings(rnd,0x0);    //    UpdateTokEmbed(lmodel,rnd,0x0);    
         data = ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_cpu_buffer_type());
         rnd = init_random_normal_distribution(hparams.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
         hDict->Update(rnd,0x0);    //    UpdateTokEmbed(lmodel,rnd,0x0);        
@@ -418,7 +290,7 @@ struct LLaMeta : public Ganglia {
         llama_mparams.n_gpu_layers = train_params.n_gpu_layers;
         llama_mparams.vocab_only = strcmp(hparams.train,"scratch")==0;     //need lmodel to tokenize training samples
     
-        _INFO("%s: model base = '%s'\n", __func__, hparams.fn_model_base);
+        _INFO("%s: model base = '%s' nEmbd=%d\n", __func__, hparams.fn_model_base,hparams.n_embd);
         lmodel = llama_load_model_from_file(hparams.fn_model_base, llama_mparams);    
         if(llama_mparams.vocab_only){
 
@@ -439,6 +311,8 @@ struct LLaMeta : public Ganglia {
         hOPT = std::make_shared<Optimizer>(this,train_params,flag);
         hDistler = strcmp(hparams.sigma,"")==0 ? nullptr : std::make_shared<Distillation>(this,hparams,0x0);     //ADD SIGMA
         hDict = std::make_shared<ConsiceDict>(this);
+        hDict->LoadVocab(hparams.fn_model_base,0x0);
+        // hDict->LoadVocab_v1(hparams.fn_model_base,hparams,*lmodel, 0x0);
 
         struct ggml_init_params ctx_model_params;
         ctx_model_params.mem_size   = MostMemSize(0x0) ;
@@ -576,6 +450,7 @@ struct LLaMeta : public Ganglia {
         build_finetune(ctx_compute,alloc,false,flag);
         
         Statistic(0x0);
+        ggml_graph_print(gf);           ggml_graph_print(gb);       //only for debug
     }
 
     virtual void BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,hGensor cur,hGensor _tNorm,hGensor _tOutput,hGensor KQ_pos, int flag=0x0)  {
@@ -817,7 +692,7 @@ struct LLaMeta : public Ganglia {
         struct ggml_context * ctx_work = ggml_init(ctx_work_params);
         hOPT->Init_CallbackData(opt_cb_data,lama_ctx,hparams.common,tokens_input,0x0);
         int64_t t0 = ggml_time_ms();
-        save_train_(&save_data, opt_cb_data.train);      //only for debug
+        // save_train_(&save_data, opt_cb_data.train);      //only for debug
         enum ggml_opt_result result = hOPT->ggml_train(ctx_work, &opt_cb_data,loss,target_probs,gf,gb);       
 
         ggml_free(ctx_work);
@@ -830,8 +705,8 @@ struct LLaMeta : public Ganglia {
         print_duration((double) (t1 - t0));
         _INFO("\n");
     }
-    virtual void save_gguf(const char * fn_model_base, int flag);
-    virtual void save_train_(struct save_train_files_data * data, struct train_state * train);
+    void save_gguf(const char * fn_model_base, int flag)    override;
+    // virtual void save_train_(struct save_train_files_data * data, struct train_state * train);
 };
 typedef shared_ptr<LLaMeta> hLLAMA;
 
@@ -1161,12 +1036,12 @@ struct LLAMA_Brown  : public LLAMA_LORA {
 
 struct LLAMA_VAE  : public LLaMeta {
     
-    int lama_embed = 0,var_embed = 192;
+    int lama_embed = 0,latent_dim = 192;
 
     LLAMA_VAE( struct cwd_params params,int flag=0x0) 
         : LLaMeta(params,flag)  {
         isLoadTokenEmbed = true;
-        hparams.common.adam_alpha = 0.0001;     // 
+        // hparams.common.adam_alpha = 0.0001;     // 
     }
 
     virtual ~LLAMA_VAE() {        

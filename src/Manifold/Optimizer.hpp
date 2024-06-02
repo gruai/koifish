@@ -28,8 +28,6 @@ using namespace std;
 #include "Scheduler.hpp"
 #include "../lenda/util/GST_util.hpp"
 
-// void save_train_(void * vdata, struct train_state * train);
-
 class Ganglia;
 class Optimizer : public std::enable_shared_from_this<Optimizer> {
     Optimizer(const Optimizer&);

@@ -15,11 +15,12 @@ protected:
     int nTop=-1,nBottom=-1;
     bool isResi = false;
     hGensor resi = nullptr;
+    int tpNorm=-2;
     
 public:
-    hGensor encode=nullptr,decode=nullptr;
+    hGensor encode=nullptr,decode=nullptr,norm=nullptr;
 
-    MutliCoder(struct ggml_context *ctx,int dim1,int dim2,bool isR = false,int flag=0x0) : nTop(dim1),nBottom(dim2),isResi(isR) {
+    MutliCoder(struct ggml_context *ctx,int dim1,int dim2,bool isR = false,int tpN=2,int flag=0x0) : nTop(dim1),nBottom(dim2),isResi(isR),tpNorm(tpN) {
         assert(nTop>nBottom && nBottom>0);
         encode = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nTop, nBottom);     
         decode = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nBottom, nTop); 
@@ -27,9 +28,18 @@ public:
 
     virtual hGensor ENC(struct ggml_context *ctx,hGensor x){
         x = ggml_mul_mat(ctx, encode, x );    
-        if(isResi){
-            resi = x;
+        switch(tpNorm){
+        case 0:
+            x = ggml_relu(ctx, x);  
+            break;
+        case 1:
+            x = ggml_silu(ctx, x);  
+            break;
+        case 2:
+            x = ggml_rms_norm(ctx, x,1.0e-5);  
+            break;
         }
+        
         return x;
     }
 
@@ -38,7 +48,16 @@ public:
             x = ggml_add(ctx, x, resi);
         }
         x = ggml_mul_mat(ctx, decode, x );    
-
+        switch(tpNorm){
+        case 0:
+            x = ggml_relu(ctx, x);  
+            break;
+        case 1:
+            x = ggml_silu(ctx, x);  
+            break;
+        case 2:
+            x = ggml_rms_norm(ctx, x,1.0e-5);  
+        }
         return x;
     }
 };
@@ -46,11 +65,11 @@ typedef shared_ptr<MutliCoder> hMultiCoder;
 
 class VariationaAE : public Ganglia   {
 protected:
-    int nRefine = 1;
+    int nRefine = 1, tpNorm=2;
     bool reserve_x = false;
     vector<hGensor> resi_x;
     vector<float> hier_norm;
-    
+    std::vector<int> dims;        
     hGanglia callosum;
 
     virtual hGensor _build_coder( bool isDown,hGensor x=nullptr )        {
@@ -103,16 +122,19 @@ protected:
         return x;
     }vector<hMultiCoder> MAEC;    //  multi-level auto encoder
 public:
-    virtual int InitMAEC(struct ggml_context *ctx,std::vector<int>& dims,int flag=0x0) {
+    virtual int InitMAEC(struct ggml_context *ctx,std::vector<int>& dims_,int flag=0x0) {
+        dims = dims_;
         int nMap = dims.size()-1;       assert(nMap>0);
         MAEC.clear( );
         for(int i=0;i<nMap;i++){
-            hMultiCoder hCoder = std::make_shared<MutliCoder>(ctx, dims[i], dims[i+1],reserve_x);
+            hMultiCoder hCoder = std::make_shared<MutliCoder>(ctx, dims[i], dims[i+1],reserve_x,tpNorm);
             MAEC.push_back(hCoder);            
         }
 
         return MAEC.size();
     }
+
+    virtual void save_gguf(struct gguf_context *, int flag);
 
     virtual hGensor ENC(struct ggml_context *ctx,hGensor x){
         hGensor cur = x;

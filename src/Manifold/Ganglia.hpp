@@ -167,12 +167,31 @@ struct NeLayer
 };
 typedef shared_ptr<NeLayer> hLayer;
 
+struct save_train_model {
+    const char            * fn_checkpoint_out=NULL;
+    const char            * fn_model_out=NULL;
+    const char            * fn_model_base=NULL;
+    const char            * pattern_fn_it=NULL;
+    const char            * fn_latest=NULL;
+    // struct llama_model * model=nullptr;
+    void * model=nullptr;
+
+    virtual void Init(cwd_params&params,void * model_,int flag=0x0)   {
+        fn_checkpoint_out = params.common.fn_checkpoint_out;
+        fn_model_out      = params.fn_model_out;
+        pattern_fn_it     = params.common.pattern_fn_it;
+        fn_latest         = params.common.fn_latest;
+        model             = model_;
+    }        
+};
+
 class Ganglia : public std::enable_shared_from_this<Ganglia>    {
     Ganglia(const Ganglia &);
     Ganglia &operator=(const Ganglia &);
 
 protected:
     struct cwd_params hparams;
+    save_train_model save_data;
 
     hTGraph hGraph;                            // compuation graph
     struct ggml_cgraph *gf = NULL, *gb = NULL; // only for debug
@@ -439,17 +458,15 @@ public:
 
             // file saving
             const bool save_now = (params->save_every > 0) && (opt->iter - data->last_save_iter >= params->save_every);
-            if (save_now)
-            {
+            if (save_now)            {
                 int new_iters = opt->iter - data->last_save_iter;
                 train->train_its += new_iters;
                 train->train_tokens += new_iters * opt->params.n_gradient_accumulation * n_batch * n_ctx;
-
-                if (data->save_cb)
+                save_train_(&save_data, train);
+                /*if (data->save_cb)
                 {
                     data->save_cb(data->save_data, train);
-                }
-
+                }*/
                 data->last_save_iter = opt->iter;
             }
 
@@ -551,6 +568,9 @@ public:
 #endif
     }
 
+    virtual void save_train_(struct save_train_model * data, struct train_state * train);
+    virtual void save_gguf(const char * filename, int flag){}
+
     friend class GeNeuron;
     friend class SLP;
     friend class LayerNormal;
@@ -558,4 +578,5 @@ public:
     friend class SAM_encoder;
     friend class Optimizer;
     friend class Distillation;
+    friend class ConsiceDict;
 };
