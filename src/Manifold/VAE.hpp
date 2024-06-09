@@ -39,7 +39,8 @@ public:
             x = ggml_rms_norm(ctx, x,1.0e-5);  
             break;
         }
-        
+        if(isResi)      
+            resi = x;        
         return x;
     }
 
@@ -60,6 +61,8 @@ public:
         }
         return x;
     }
+    std::string Name()  override {   return "MutliCoder";  }
+    string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
 };
 typedef shared_ptr<MutliCoder> hMultiCoder;
 
@@ -70,7 +73,7 @@ protected:
     vector<hGensor> resi_x;
     vector<float> hier_norm;
     std::vector<int> dims;        
-    hGanglia callosum;
+    hGanglia callosum=nullptr;
 
     virtual hGensor _build_coder( bool isDown,hGensor x=nullptr )        {
         /*x_hier = 0  
@@ -120,7 +123,9 @@ protected:
             x = self.APPNP(x,graph.edge_index) */    
         
         return x;
-    }vector<hMultiCoder> MAEC;    //  multi-level auto encoder
+    }
+    vector<hMultiCoder> MAEC;    //  multi-level auto encoder
+
 public:
     virtual int InitMAEC(struct ggml_context *ctx,std::vector<int>& dims_,int flag=0x0) {
         dims = dims_;
@@ -172,7 +177,7 @@ public:
     }
 
     VariationaAE(   )       {  }
-    VariationaAE(struct cwd_params params,bool isRes,int flag=0x0) : Ganglia(params),reserve_x(isRes)  {}
+    VariationaAE(struct CLI_params params,bool isRes,int flag=0x0) : Ganglia(params),reserve_x(isRes)  {}
     virtual ~VariationaAE() {
     }  
 };
@@ -185,7 +190,7 @@ class VAE_LAMA : public VariationaAE {
 protected:
     int lama_embed = 0,var_embed = 192;
 public:
-    VAE_LAMA( struct cwd_params params,int flag=0x0) : VariationaAE(params) {
+    VAE_LAMA( struct CLI_params params,int flag=0x0) : VariationaAE(params) {
         callosum = std::make_shared<LLAMA_VAE>(params);
     }
 

@@ -46,7 +46,7 @@ static const char * LLM_KV_TOKENIZER_PAD_ID            = "tokenizer.ggml.padding
 static const char * LLM_KV_DICT_VAE_LAYERS             = "dict.vae.layers";
 static const char * LLM_KV_DICT_LATENT_DIM             = "%s.dict_latent_dim";
 
-static const char * arch = "gruai";
+static const char * arch = "gruai";     //llm_arch_from_string
 static char keybuf[512];
 const char * kv(const char * key)   {    
     snprintf(keybuf, 512, key, arch);
@@ -55,14 +55,15 @@ const char * kv(const char * key)   {
 
 void Ganglia::save_train_(struct save_train_model * data, struct train_state * train) { 
     int64_t iter = train->opt->iter;
-    printf("%s: iter_%ld\n", __func__, iter);
-    string sBaseName = get_train_filename(data->fn_model_out, data->pattern_fn_it, data->fn_latest, -1  );
-    if (strlen(data->fn_checkpoint_out) > 0) {
+    _INFO("%s: iter_%ld\n", __func__, iter);
+    string sBaseName = get_train_filename(data->fn_model_out.c_str(), data->pattern_fn_it.c_str(), data->fn_latest.c_str(), -1  );
+    if (strlen(data->fn_checkpoint_out.c_str()) > 0) {
         // save_checkpoint_file(get_train_filename(data->fn_checkpoint_out, data->pattern_fn_it, data->fn_latest, iter).c_str(), data->fn_model_base, data->model, train);
         // save_checkpoint_file(get_train_filename(data->fn_checkpoint_out, data->pattern_fn_it, data->fn_latest, -1  ).c_str(), data->fn_model_base, data->model, train);
     }
-    if (strlen(data->fn_model_out) > 0) {
+    if (strlen(data->fn_model_out.c_str()) > 0) {
         // save_llama_model_file(get_train_filename(data->fn_model_out, data->pattern_fn_it, data->fn_latest, iter).c_str(), data->fn_model_base, data->model);
+        arch = "gruai";                 //llm_arch_from_string
         string sOut = "g_" + sBaseName; 
         save_gguf(sOut.c_str(),0x0);
     }
@@ -75,6 +76,99 @@ void Ganglia::save_train_(struct save_train_model * data, struct train_state * t
     return;
 }
 
+void _T_repr_(hGensor t,const char*tab,char *buf,int flag=0x0){
+    if(t==nullptr)      return;
+    const char* A = "d";
+    if(t->grad!=nullptr){
+        A = "P";
+    }
+    auto ne=t->ne;
+    sprintf(buf+strlen(buf),"%s%s '%s' %.3lf(M)\t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",tab, 
+        A,t->name,ggml_nelements(t)/1.0e6,ne[0], ne[1], ne[2], ne[3], ggml_type_name(t->type)); 
+}
+
+string LLaMeta::lama_layer::__repr__( string& suffix,string& prefix,int flag)    {
+    char buf[5012]="\0";
+    const char*tab=prefix.c_str();
+    _T_repr_(attention_norm,tab,buf);
+    _T_repr_(wq,tab,buf);        _T_repr_(wk,tab,buf);       _T_repr_(wv,tab,buf);   _T_repr_(wo,tab,buf);   
+    _T_repr_(ffn_norm,tab,buf);     _T_repr_(ffn_gate,tab,buf);     _T_repr_(ffn_down,tab,buf);     _T_repr_(ffn_up,tab,buf);  
+    _T_repr_(eps,tab,buf);
+    if(flag>0)
+        _INFO("%s",buf); 
+    return buf;
+}
+
+string LLaMeta::__repr__( string& suffix,string& prefix,int flag)         {
+    // Ganglia::__repr__(suffix,prefix,flag);
+    char buf[5012]="\0";
+    const char*tab=prefix.c_str();
+    sprintf(buf+strlen(buf),"\n%s(%s):nParams = %ld(%.6gM)",tab,
+        "LLaMeta",nParams,nParams/1.0e6);
+    sprintf(buf+strlen(buf),"\n%s  tensors=%ld gf=(%d %d)  gb=(%d %d) ",tab, tensors.size(),gf->n_nodes,gf->n_leafs,gb->n_nodes,gb->n_leafs);
+    string s="\n",p=prefix+"\t";
+    sprintf(buf+strlen(buf),"%s",hDict->__repr__(s,p,0x0).c_str());
+    int nLayer = layers.size();
+    if(nLayer>0)    {
+        auto layer = layers[0];
+        sprintf(buf+strlen(buf),"%s  [%s] x %d\n",tab,layer->name.c_str(),nLayer);
+        sprintf(buf+strlen(buf),"%s",layer->__repr__(s,p,0x0).c_str());     
+        sprintf(buf+strlen(buf),"%s  ......\n",tab);
+        sprintf(buf+strlen(buf),"%s",layers[layers.size()-1]->__repr__(s,p,0x0).c_str());    
+    }
+    _T_repr_(target_probs,"  target_probs=",buf);   
+    _T_repr_(loss,"  loss=",buf);   
+
+    sprintf(buf+strlen(buf),"%s",suffix.c_str()); 
+    _INFO("%s",buf); 
+    return buf;
+}
+
+string MutliCoder::__repr__( string& suffix,string& prefix,int flag)   {
+    char buf[5012]="\0";
+    const char*tab=prefix.c_str();
+    sprintf(buf+strlen(buf),"\n%s resi=%d tpNorm=%d\n",prefix.c_str(),isResi,tpNorm);
+    _T_repr_(encode,tab,buf);   
+    _T_repr_(decode,tab,buf);   
+    _T_repr_(norm,tab,buf);   
+    _T_repr_(resi,tab,buf);   
+    if(flag>0)
+        _INFO("%s",buf); 
+    return buf;
+}
+
+string ConsiceDict::__repr__( string& suffix,string& prefix,int flag)     {
+    char buf[5012]="\0";
+    const char* _ops[]= {
+        "ONLY_LOAD","RND_GRAD","LOAD_GRAD,","LOAD_GRAD_norm",
+    };
+    const char*tab=prefix.c_str();
+    sprintf(buf+strlen(buf),"\n%s(%s):resi=%d tpNorm=%d opOut=\"%s\" nLevel=%d\n",prefix.c_str(),
+        "ConsiceDict",(int)(reserve_x),tpNorm,_ops[opOut],nLevel);
+    
+    _T_repr_(tok_embeddings,tab,buf);   
+    _T_repr_(norm,tab,buf);   
+    _T_repr_(output,tab,buf);   
+    if(nLevel>0){
+        // sprintf(buf+strlen(buf),"%s\tdims=",tab);
+        
+        string s="\n",p=prefix+"\t";
+        auto vae = MAEC[0];
+        sprintf(buf+strlen(buf),"%s  [%s] x %d\tdims=",tab,vae->Name().c_str(),MAEC.size());
+        for(auto dim : dims)           {
+            sprintf(buf+strlen(buf),"%d ",dim);
+        }
+        sprintf(buf+strlen(buf),"%s",vae->__repr__(s,p,0x0).c_str());  
+    }
+    sprintf(buf+strlen(buf),"\n");
+
+    sprintf(buf+strlen(buf),"%s",suffix.c_str());
+    if(flag>0)
+        _INFO("%s",buf); 
+    return buf;
+}
+
+
 ConsiceDict::ConsiceDict(LLaMeta *lama_,int flag) : VariationaAE(),hLM(lama_)   {
     assert(hLM->isValid());
     hparams = hLM->hparams;
@@ -83,12 +177,16 @@ ConsiceDict::ConsiceDict(LLaMeta *lama_,int flag) : VariationaAE(),hLM(lama_)   
     if(hLM->hparams.nabla==3){
         // dims = {hparams.n_embd, 64};
         // dims = {hparams.n_embd, 512, 128};
-        dims = {hparams.n_embd, 512, 256,64};
+        dims = {hparams.n_embd,1024,256,64};       //little difference with {hparams.n_embd,1024,256,128}
         nLevel = dims.size()-1;   
         latent_dim = dims[nLevel];
     }   else if(hLM->hparams.nabla>3)
         assert(0);         
-    _INFO("%s resi=%d tpNorm=%d nLevel=%d dims={%d...%d}",__func__,(int)(reserve_x),tpNorm,nLevel,nLevel>0?dims[0]:-1,nLevel>0?latent_dim:-1);           
+    _INFO("%s resi=%d tpNorm=%d opOut=%d nLevel=%d dims= ",__func__,(int)(reserve_x),tpNorm,opOut,nLevel);
+    for(auto dim : dims)           {
+        _INFO("%d ",dim);
+    }
+    _INFO("\n");
 }
 
 void ConsiceDict::InitVAE(int flag)  {
@@ -109,7 +207,7 @@ void ConsiceDict::InitVAE(int flag)  {
  * 
  * llm_load_vocab
 
-void ConsiceDict::LoadVocab_v1(const char*fn_model_base,struct cwd_params& params,llama_model & model,int flag) {
+void ConsiceDict::LoadVocab_v1(const char*fn_model_base,struct CLI_params& params,llama_model & model,int flag) {
     llama_model_loader ml(fn_model_base, true,false,nullptr);
     // model.hparams.vocab_only = params.vocab_only;
     assert(model.arch==LLM_ARCH_GRUAI);
@@ -120,12 +218,20 @@ void ConsiceDict::LoadVocab_v1(const char*fn_model_base,struct cwd_params& param
 }*/
 
 void ConsiceDict::CreateEmbeddings(struct random_normal_distribution * rnd,int flag){
-    if(isLoadTokenEmbed) {
-        return;
-    }
     const uint32_t n_embd  = hparams.n_embd,n_vocab = hparams.n_vocab;
     auto lama = hLM->GetRawModel( );  
-    auto ctx = hLM->ctx;
+    auto ctx = hLM->ctx;    
+    
+    if(isLoadTokenEmbed) {
+        if(opOut==RND_GRAD){
+            norm           = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
+            output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_vocab);  
+        }else if(opOut==LOAD_GRAD_norm){
+            output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_vocab);  
+        }
+        return;
+    }
+
     tok_embeddings = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_vocab);
     norm           = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
     output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_vocab);  
@@ -171,10 +277,38 @@ void ConsiceDict::Update_1(struct random_normal_distribution * rnd,int flag) {
     auto lmodel = hLM->GetRawModel( );  
     tok_embeddings = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_TOKEN_EMBD) );        //TN(LLM_TENSOR_TOKEN_EMBD)
     if(isParam) hLM->nParams+=ggml_nelements(tok_embeddings);
-    norm           = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT_NORM) );       //  
-    if(isParam) hLM->nParams+=ggml_nelements(norm);
-    output         = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT)  );            //
-    if(isParam) hLM->nParams+=ggml_nelements(output);
+    switch(opOut){
+    case ONLY_LOAD:
+        norm           = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT_NORM) );       //  
+        // if(isParam) hLM->nParams+=ggml_nelements(norm);
+        output         = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT)  );            //
+        // if(isParam) hLM->nParams+=ggml_nelements(output);
+        break;
+    case LOAD_GRAD_norm:
+        norm           = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT_NORM) );
+        assert(norm->type==GGML_TYPE_F32);
+        ggml_set_param(hLM->ctx, norm);         hLM->nParams += ggml_nelements(norm);           hLM->tensors[norm->name] = norm;
+        hLM->InitGensor(hLM->ctx,output,         TN(LLM_TENSOR_OUTPUT), rnd);
+        break;
+    case LOAD_GRAD:     //bug!!!
+        norm           = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT_NORM) );
+        if(norm->type!=GGML_TYPE_F32)   Gensor2float(hLM->ctx,norm);
+        ggml_set_param(hLM->ctx, norm);         hLM->nParams += ggml_nelements(norm);           hLM->tensors[norm->name] = norm;
+        output         = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT)  ); 
+        if(output->type!=GGML_TYPE_F32)   {
+            output->data = Gensor2float(hLM->ctx,output);       output->type = GGML_TYPE_F32;
+        }
+        ggml_set_param(hLM->ctx, output);     hLM->nParams += ggml_nelements(output);           hLM->tensors[output->name] = output;
+        break;
+    case RND_GRAD:
+        hLM->InitGensor(hLM->ctx,norm,           TN(LLM_TENSOR_OUTPUT_NORM), rnd);
+        hLM->InitGensor(hLM->ctx,output,         TN(LLM_TENSOR_OUTPUT), rnd);
+        break;
+
+    default:
+        assert(0);
+    }
+    
     assert(tok_embeddings!=nullptr && norm!=nullptr && output!=nullptr);
 
     // ggml_tensor_dequant(ctx_compute,gensor,GGML_TYPE_F32);
@@ -281,7 +415,7 @@ void ConsiceDict::LoadVocab(const char*fn_model_base,int flag)     {
 }
 
 static void save_checkpoint_file(const char * filename, const char * fn_model_base, struct llama_model * model, struct train_state * train) {
-    printf("%s: saving to %s\n", __func__, filename);
+    _INFO("%s: saving to %s\n", __func__, filename);
     struct gguf_context * fctx = gguf_init_empty();
 
     // save_checkpoint_gguf(fctx, fn_model_base, model, train);
@@ -296,7 +430,7 @@ static void save_checkpoint_file(const char * filename, const char * fn_model_ba
 }
 
 // void save_llama_model_file(const char * filename, const char * fn_model_base, struct llama_model * model) {
-//     printf("%s: saving to %s\n", __func__, filename);
+//     _INFO("%s: saving to %s\n", __func__, filename);
 //     struct gguf_context * fctx = gguf_init_empty();
 
 //     save_llama_model_gguf(fctx, fn_model_base, model);
@@ -328,8 +462,8 @@ hGensor  LLaMeta::build_layer_( int N,struct ggml_context *ctx_compute,hGensor c
     const float kv_scale = 1.0f/sqrtf(float(n_embd)/n_head);
     const int n_past = 0, n_head_kv=hparams.n_head_kv,n_embd_head = hparams.n_embd_head();
     hGensor wq = UpdateGensor (layer->wq->name);                     
-    hGensor wk = UpdateGensor (layer->wk->name);
-    hGensor wv = UpdateGensor (layer->wv->name);
+    hGensor wk = layer->wk==nullptr ? nullptr : UpdateGensor (layer->wk->name);
+    hGensor wv = layer->wv==nullptr ? nullptr : UpdateGensor (layer->wv->name);
     hGensor wo = UpdateGensor (layer->wo->name);
     hGensor attention_norm = UpdateGensor (layer->attention_norm->name);    
     hGensor ffn_norm = layer->ffn_norm==nullptr ? nullptr : UpdateGensor (layer->ffn_norm->name); 
@@ -365,17 +499,37 @@ hGensor  LLaMeta::build_layer_( int N,struct ggml_context *ctx_compute,hGensor c
     hGensor  t21 = ggml_add          (ctx_compute, t20, cur);                               set_name(t21, "t21");     assert_shape_2d(t21, n_embd, N*n_batch);
     hGensor  ffn = nullptr;
     switch(tpFFN)   {
+    case VAR_LAST:
     case SWIGLU:    {
         hGensor  t22 = ggml_rms_norm     (ctx_compute, t21, f_norm_rms_eps);                    set_name(t22, "t22");     assert_shape_2d(t22, n_embd, N*n_batch);
-        hGensor  t23 = ggml_repeat       (ctx_compute, ffn_norm, t22);                    set_name(t23, "t23");     assert_shape_2d(t23, n_embd, N*n_batch);
-        hGensor  t24 = ggml_mul          (ctx_compute, t23, t22);                               set_name(t24, "t24");     assert_shape_2d(t24, n_embd, N*n_batch);
-        hGensor  t25 = ggml_mul_mat      (ctx_compute, ffn_up, t24);                      set_name(t25, "t25");     assert_shape_2d(t25, n_ff, N*n_batch);
-        hGensor  t26 = ggml_mul_mat      (ctx_compute, ffn_gate, t24);                    set_name(t26, "t26");     assert_shape_2d(t26, n_ff, N*n_batch);
-        hGensor  t27 = ggml_silu         (ctx_compute, t26);                                    set_name(t27, "t27");     assert_shape_2d(t27, n_ff, N*n_batch);
-        hGensor  t28 = ggml_mul          (ctx_compute, t27, t25);                               set_name(t28, "t28");     assert_shape_2d(t28, n_ff, N*n_batch);
-        hGensor  t29 = ggml_mul_mat      (ctx_compute, ffn_down, t28);                    set_name(t29, "t29");     assert_shape_2d(t29, n_embd, N*n_batch);
-        hGensor  t30 = ggml_add          (ctx_compute, t29, t21);                               set_name(t30, "t30");     assert_shape_2d(t30, n_embd, N*n_batch);
-        return t30;   
+        ffn = t22;
+        if(ffn_norm!=nullptr)       {
+            hGensor  t23 = ggml_repeat       (ctx_compute, ffn_norm, t22);                    set_name(t23, "t23");     assert_shape_2d(t23, n_embd, N*n_batch);
+            hGensor  t24 = ggml_mul          (ctx_compute, t23, t22);                               set_name(t24, "t24");     assert_shape_2d(t24, n_embd, N*n_batch); 
+            ffn = t24;                 
+        }
+          
+        if(ffn_up!=nullptr){
+            // hGensor  t22 = ggml_rms_norm     (ctx_compute, t21, f_norm_rms_eps);                    set_name(t22, "t22");     assert_shape_2d(t22, n_embd, N*n_batch);
+            // hGensor  t23 = ggml_repeat       (ctx_compute, ffn_norm, t22);                    set_name(t23, "t23");     assert_shape_2d(t23, n_embd, N*n_batch);
+            // hGensor  t24 = ggml_mul          (ctx_compute, t23, t22);                               set_name(t24, "t24");     assert_shape_2d(t24, n_embd, N*n_batch);
+            hGensor  t24 = ffn;
+            hGensor  t25 = ggml_mul_mat      (ctx_compute, ffn_up, t24);                      set_name(t25, "t25");     assert_shape_2d(t25, n_ff, N*n_batch);
+            hGensor  t26 = ggml_mul_mat      (ctx_compute, ffn_gate, t24);                    set_name(t26, "t26");     assert_shape_2d(t26, n_ff, N*n_batch);
+            hGensor  t27 = ggml_silu         (ctx_compute, t26);                                    set_name(t27, "t27");     assert_shape_2d(t27, n_ff, N*n_batch);
+            hGensor  t28 = ggml_mul          (ctx_compute, t27, t25);                               set_name(t28, "t28");     assert_shape_2d(t28, n_ff, N*n_batch);
+            hGensor  t29 = ggml_mul_mat      (ctx_compute, ffn_down, t28);                    set_name(t29, "t29");     assert_shape_2d(t29, n_embd, N*n_batch);
+            hGensor  t30 = ggml_add          (ctx_compute, t29, t21);                               set_name(t30, "t30");     assert_shape_2d(t30, n_embd, N*n_batch);
+            ffn = t30;
+        }
+        if(layer->eps!=nullptr){
+            // hGensor  t300 = ffn!=nullptr ? ggml_rms_norm(ctx_compute, ffn, f_norm_rms_eps) : ggml_rms_norm(ctx_compute, t21, f_norm_rms_eps);
+            randomize_tensor_normal(layer->eps, rnd); 
+            hGensor  noise = ggml_scale_inplace(ctx_compute, layer->eps, 0.001);
+            ffn = ggml_add          (ctx_compute, ffn,noise);     
+        }else{
+        }
+        return ffn;   
     }
     case VAR_0:
     case ONLY_LNormal:
@@ -386,7 +540,7 @@ hGensor  LLaMeta::build_layer_( int N,struct ggml_context *ctx_compute,hGensor c
         set_name(t22, "t22");               assert_shape_2d(t22, n_embd, N*n_batch);   
         if(tpFFN==VAR_0)     {
             randomize_tensor_normal(layer->eps, rnd); 
-            hGensor  noise = ggml_scale_inplace(ctx_compute, layer->eps, 0.01);
+            hGensor  noise = ggml_scale_inplace(ctx_compute, layer->eps, 0.001);
             ffn = ggml_add          (ctx_compute, t22,noise);     
             // ffn = t22;        
         }else{
@@ -432,7 +586,7 @@ void VariationaAE::save_gguf(struct gguf_context *fctx, int flag)   {
 
 void LLaMeta::save_gguf(const char * filename, int flag) {
     enum llama_ftype ftype = LLAMA_FTYPE_ALL_F32;       //LLAMA_FTYPE_MOSTLY_Q2_K
-    printf("%s: saving to %s ftype=%d ......\n", __func__, filename,ftype);
+    _INFO("%s: saving to %s ftype=%d ......\n", __func__, filename,ftype);
     struct gguf_context * fctx = gguf_init_empty();
     int keyidx = -1;    
     
@@ -496,8 +650,10 @@ void LLaMeta::save_gguf(const char * filename, int flag) {
 
         gguf_add_tensor(fctx, layer->attention_norm);
         gguf_add_tensor(fctx, layer->wq);
-        gguf_add_tensor(fctx, layer->wk);
-        gguf_add_tensor(fctx, layer->wv);
+        if(layer->wk!=nullptr)
+            gguf_add_tensor(fctx, layer->wk);
+        if(layer->wv!=nullptr)
+            gguf_add_tensor(fctx, layer->wv);
         gguf_add_tensor(fctx, layer->wo);
         if(layer->ffn_norm!=nullptr)
             gguf_add_tensor(fctx, layer->ffn_norm);
@@ -512,4 +668,116 @@ void LLaMeta::save_gguf(const char * filename, int flag) {
     const bool only_meta = false;
     gguf_write_to_file(fctx, filename, only_meta);
     gguf_free(fctx);
+}
+
+void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,hGensor cur,hGensor _tNorm,hGensor _tOutput,hGensor KQ_pos, int flag)  {
+    int n_tokens = hparams.n_ctx;
+    auto train_params = hparams.common;
+    const int N = n_tokens, n_past = 0;
+    const float rms_norm_eps = hparams.f_norm_rms_eps;
+    hGensor  t32 = nullptr;
+    hGensor  t31   = ggml_rms_norm          (ctx, cur, rms_norm_eps);                    set_name(t31, "t31");     assert_shape_2d(t31, n_embd, N*n_batch);
+    
+    if(hDict->nLevel>0){
+        t31 = hDict->DEC(ctx,t31);      //t31 = ggml_mul_mat(ctx, hDict->decoder, t31 );  
+        set_name(t31, "embed_decoder");
+        t32 = ggml_repeat            (ctx, _tNorm, t31); 
+        n_embd = t32->ne[0];
+    }   else
+        t32   = ggml_repeat            (ctx, _tNorm, t31);                            
+    set_name(t32, "t32");     assert_shape_2d(t32, n_embd, N*n_batch);
+    hGensor  t33   = ggml_mul               (ctx, t32, t31);                             set_name(t33, "t33");     assert_shape_2d(t33, n_embd, N*n_batch);
+    hGensor  t34   = ggml_mul_mat           (ctx, _tOutput, t33);                          set_name(t34, "t34");     assert_shape_2d(t34, n_vocab, N*n_batch);
+    hGensor  t35   = ggml_reshape_3d        (ctx, t34, n_vocab, N, n_batch);             set_name(t35, "t35");     assert_shape_3d(t35, n_vocab, N, n_batch);
+    if(wiki!=nullptr){
+        t35 = ggml_add(ctx,t35,wiki->Target());
+    }
+    hGensor  t36   = ggml_cross_entropy_loss(ctx, t35, target_probs);                    set_name(t36, "t36");     assert_shape_1d(t36, 1);
+    if(hDict->nLevel>0){
+        n_embd = hparams.n_embd;
+    }
+    if (train_params.use_checkpointing) {
+        checkpoints.push_back(t31);            checkpoints.push_back(t32);            checkpoints.push_back(t33);
+        checkpoints.push_back(t34);            checkpoints.push_back(t35);            checkpoints.push_back(t36);
+    }
+
+    ggml_build_forward_expand(gf, t36);
+
+    if (train_params.use_checkpointing) {
+        ggml_build_backward_gradient_checkpointing(ctx, gf, gb, gb_tmp, checkpoints.data(), (int) checkpoints.size());
+    } else {
+        ggml_graph_cpy(gf, gb);
+        ggml_build_backward_expand(ctx, gf, gb, true);
+    }
+
+    GGML_ASSERT(alloc != NULL);
+
+    // make sure some tensors are not reallocated by inserting new temporary nodes depending on them
+    int n_leafs_before = gb->n_leafs;
+    int n_nodes_before = gb->n_nodes;
+
+    // output_ tensors
+    ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, t35, 1.0f));
+    ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, t36, 1.0f));
+    // input gradient
+    ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, t36->grad, 1.0f));
+    GGML_ASSERT(t36->grad->data == NULL && t36->grad->view_src == NULL);
+    ggml_set_input(t36->grad);
+    // KQ_pos
+    ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, KQ_pos, 1.0f));
+    // allocating checkpoints in one block to reduce memory fragmentation
+    // note: they will be freed in reverse order
+
+    for (unsigned int i = 0; i < checkpoints.size(); ++i) {
+        if (checkpoints[i]->data == NULL && checkpoints[i]->view_src == NULL) {
+            ggml_set_input(checkpoints[i]);
+        }
+    }
+
+    if (measure_only) {
+        ggml_gallocr_reserve(alloc, gb);
+    } else {
+        ggml_gallocr_alloc_graph(alloc, gb);    //367,8088
+
+        // set KQ_pos
+        {
+            int * data = (int *) KQ_pos->data;
+            for (int i = 0; i < N; ++i) {
+                data[i] = n_past + i;
+            }
+        }
+    }
+
+    // remove the additional nodes and leafs
+    for (int i = n_leafs_before; i < gb->n_leafs; ++i) {
+        gb->leafs[i] = NULL;
+    }
+    for (int i = n_nodes_before; i < gb->n_nodes; ++i) {
+        gb->nodes[i] = NULL;
+    }
+    gb->n_leafs = n_leafs_before;
+    gb->n_nodes = n_nodes_before;
+
+    logits = t35;
+    // return t36;
+    loss = t36;
+
+            /*  ???
+    // make sure base model tensors data cannot be used in viewable operations
+    ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, base->tok_embeddings, 1.0f));
+    ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, base->norm, 1.0f));
+    ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, base->output, 1.0f));
+    for (int il = 0; il < n_layer; ++il) {
+        // struct my_llama_layer & layer = layers[il];
+        auto layer = dynamic_pointer_cast<lama_layer>(layers[il]);
+        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer->attention_norm, 1.0f));
+        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer->ffn_norm, 1.0f));
+        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer->wq, 1.0f));
+        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer->wk, 1.0f));
+        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer->wv, 1.0f));
+        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer->wo, 1.0f));
+        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer->ffn_gate, 1.0f));
+        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer->ffn_down, 1.0f));
+        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer->ffn_up, 1.0f));
+    }*/
 }

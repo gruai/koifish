@@ -125,7 +125,7 @@ public:
         }
         _INFO("%s: number of unique tokens: %d\n", __func__, n_unique_tokens);
 
-        size_t shuffle_samples_hash = compute_samples_hash(train_params.fn_train_data, train_samples_begin.data(), train_samples_size.data(), train_samples_size.size());
+        size_t shuffle_samples_hash = compute_samples_hash(train_params.fn_train_data.c_str(), train_samples_begin.data(), train_samples_size.data(), train_samples_size.size());
         const bool changed_train_data = (shuffle_samples_hash != train->shuffle_samples_hash) || (train->shuffle_sample_count != train_samples_size.size());
         if (changed_train_data) {
             _INFO("%s: train data seems to have changed. restarting shuffled epoch.\n", __func__);

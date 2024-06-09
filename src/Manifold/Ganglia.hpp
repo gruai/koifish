@@ -44,8 +44,7 @@ struct NP_
     SHAPE shape;
     NP_(const std::string &t, const std::string &n, SHAPE s) : type(t), title(n), shape(s) {}
 };
-class GeNeuron
-{
+class GeNeuron  {
     // GeNeuron(const GeNeuron&)=default;       for model.layers.resize(n_layer)@llama.cpp
     GeNeuron &operator=(const GeNeuron &) = default;
 
@@ -111,7 +110,7 @@ struct BROWN_Motion    {
     //       f_norm_rms_eps(f_eps), rope_freq_base(rope_base), rope_freq_scale(rope_scale), wq(_wq)    {
             
     // }
-    BROWN_Motion(hGensor _wq, struct cwd_params hparams,int flags) : wq(_wq)   {
+    BROWN_Motion(hGensor _wq, struct CLI_params hparams,int flags) : wq(_wq)   {
         f_norm_rms_eps  = hparams.f_norm_rms_eps;
         rope_freq_base  = hparams.rope_freq_base;
         rope_freq_scale = hparams.rope_freq_scale;  
@@ -138,7 +137,7 @@ struct QKV_Motion : public BROWN_Motion    {
     //     : BROWN_Motion(_wq, _embd, _head, _N, _batch, _rot, _ctx, _head_kv, f_eps, rope_base, rope_scale), wk(_wk), wv(_wv)
     // {
     // }
-    QKV_Motion(hGensor _wq, hGensor _wk, hGensor _wv, struct cwd_params hparams,int flag)
+    QKV_Motion(hGensor _wq, hGensor _wk, hGensor _wv, struct CLI_params hparams,int flag)
         : BROWN_Motion(_wq, hparams,flag), wk(_wk), wv(_wv)
     {
     }
@@ -156,27 +155,24 @@ struct NeLayer
     void Add(hNeuron hN, int flag = 0x0)
     {
         neurons.push_back(hN);
-        hN->hLay = this; //???
+        hN->hLay = this; //???  
     }
-    NeLayer() {}
+    NeLayer() : name("NeLayer") {}
     NeLayer(const std::string &n_, int flag = 0x0) : name(n_) {}
     virtual ~NeLayer() {}
     // NeLayer* N_(const std::string& t,const std::string& n,SHAPE s)   {
     //     return this;
     // }
+    virtual string __repr__( string& suffix,string& prefix,int flag=0x0)   {    return "";  }
 };
 typedef shared_ptr<NeLayer> hLayer;
 
 struct save_train_model {
-    const char            * fn_checkpoint_out=NULL;
-    const char            * fn_model_out=NULL;
-    const char            * fn_model_base=NULL;
-    const char            * pattern_fn_it=NULL;
-    const char            * fn_latest=NULL;
+    std::string fn_checkpoint_out,fn_model_out,fn_model_base,pattern_fn_it,fn_latest;
     // struct llama_model * model=nullptr;
     void * model=nullptr;
 
-    virtual void Init(cwd_params&params,void * model_,int flag=0x0)   {
+    virtual void Init(CLI_params&params,void * model_,int flag=0x0)   {
         fn_checkpoint_out = params.common.fn_checkpoint_out;
         fn_model_out      = params.fn_model_out;
         pattern_fn_it     = params.common.pattern_fn_it;
@@ -190,7 +186,7 @@ class Ganglia : public std::enable_shared_from_this<Ganglia>    {
     Ganglia &operator=(const Ganglia &);
 
 protected:
-    struct cwd_params hparams;
+    struct CLI_params hparams;
     save_train_model save_data;
 
     hTGraph hGraph;                            // compuation graph
@@ -213,6 +209,9 @@ protected:
     int64_t perf_cycles = 0, perf_time_us = 0;
     struct ggml_context *ctx = nullptr; // model ctx
     size_t ctx_size = 0;
+    // wiki contains knowledge reflect the founation of our world
+    hGanglia wiki = nullptr;
+    
     std::vector<hGanglia> childs;
 
     virtual void Clear() {
@@ -225,16 +224,16 @@ protected:
 
 public:
     Ganglia() {}
-    Ganglia( struct cwd_params params,int flag=0x0) : hparams(params) {
+    Ganglia( struct CLI_params params,int flag=0x0) : hparams(params) {
 
     }
-    Ganglia(struct ggml_context *ctx_, int flag = 0x0) : ctx(ctx_)
-    {
+    Ganglia(struct ggml_context *ctx_, int flag = 0x0) : ctx(ctx_)    {
         GGML_PRINT("=== %s ===\n", __func__);
         // allocr = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
     }
 
     virtual ~Ganglia() { Clear(); }
+    virtual std::string Name()  {   return "";  }
 
     virtual size_t Size(int flag = 0x0) { return ctx_size; }
 
@@ -250,6 +249,13 @@ public:
         ggml_gallocr_alloc_graph(allocr, hGraph->cgraph);
     }
 
+    virtual string __repr__(string& suffix,string& prefix,int flag=0x0){
+        _INFO( "Ganlia (" );
+        prefix += "\t";
+        suffix += "\n)\n";
+        return "";
+    }        
+        
     virtual void Statistic(int typ, int flag = 0x0)    {
         ggml_graph_stat(gf);
         ggml_graph_stat(gb);
@@ -270,6 +276,8 @@ public:
                 nF16++;
         }
     }
+    virtual void CreateWiki(int flag=0x0)  {}
+    hGensor Target()    {   return nullptr;    }
 
     void UpdateTensors(int flag = 0x0)    {
         UNUSED(flag);

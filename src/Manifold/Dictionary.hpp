@@ -13,7 +13,15 @@
 #include "../Manifold/VAE.hpp" 
 
 struct LLaMeta;
-struct ConsiceDict : public VariationaAE    {     
+struct ConsiceDict : public VariationaAE    {    
+    enum OUTPUT_OP {
+        ONLY_LOAD=0x0,          //lr=0.001 much more oscillation than 0.0001
+        RND_GRAD,               //lr=0.001
+        LOAD_GRAD,
+        LOAD_GRAD_norm,
+    };
+    OUTPUT_OP opOut=ONLY_LOAD;
+
     using id    = int32_t;
     using token = std::string;
     using ttype = llama_token_type;        
@@ -70,12 +78,21 @@ struct ConsiceDict : public VariationaAE    {
         FREE_a(scores);      FREE_a(toktypes);
     }
     void LoadVocab(const char*fn_model_base,int flag);
-    void LoadVocab_v1(const char*fn_model_base,struct cwd_params& params,llama_model & model,int flag);
+    void LoadVocab_v1(const char*fn_model_base,struct CLI_params& params,llama_model & model,int flag);
 
     virtual void InitVAE(int flag=0x0);
 
     hGensor tok_embeddings=nullptr,norm=nullptr,output=nullptr;
 
+    /*  
+        tok_embeddings = llama_get_model_tensor(lama, TN(LLM_TENSOR_TOKEN_EMBD));      nParams+=ggml_nelements(tok_embeddings);
+        norm           = llama_get_model_tensor(lama, TN(LLM_TENSOR_OUTPUT_NORM));     nParams+=ggml_nelements(norm);
+        output         = llama_get_model_tensor(lama, TN(LLM_TENSOR_OUTPUT));          nParams+=ggml_nelements(output);
+        // ggml_tensor_dequant(ctx_compute,gensor,GGML_TYPE_F32); 
+        assert_shape_2d(tok_embeddings, hparams.n_embd, hparams.n_vocab);
+        assert_shape_1d(norm,           hparams.n_embd);
+        assert_shape_2d(output,         hparams.n_embd, hparams.n_vocab);
+    */  
     virtual void Update(struct random_normal_distribution * rnd,int flag=0x0)   {
         if(nLevel>0){
             Update_1(rnd,flag);
@@ -87,5 +104,7 @@ struct ConsiceDict : public VariationaAE    {
     virtual void Update_0(struct random_normal_distribution * rnd,int flag=0x0);
     void Update_1(struct random_normal_distribution * rnd,int flag=0x0);  
     void CreateEmbeddings(struct random_normal_distribution * rnd,int flag);
+
+    string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
 };
 typedef std::shared_ptr<ConsiceDict> hCDICT;
