@@ -489,9 +489,9 @@ public:
                 impr_plot = 0;
             if (std::isnan(opt->loss_before) || std::isnan(opt->loss_after))
                 impr_plot = 0;
-            _INFO("%s: iter=%6d sample=%zu/%zu sched=%.3f loss=%f",
+            _INFO("%s: iter=%6d sample=%zu/%zu sched=%.3f loss=%f S=[%g-%g]",
                   __func__, opt->iter, std::min(1 + train->shuffle_next_sample, train->shuffle_sample_count), train->shuffle_sample_count,
-                  *sched, opt->loss_after);
+                  *sched, opt->loss_after,hOPT->zmuv_0,hOPT->zmuv_1);
             if (data->millis_per_iter > 0)
             {
                 _INFO(" dt=");

@@ -8,6 +8,7 @@
 #pragma once
 #include <cassert>
 #include "../LLAMA/common/train.h" 
+#include "./ggex/json.hpp" 
 /**
  *  All paramters defined here
 */
@@ -18,11 +19,13 @@ enum COMPRESSIVE_SENSING    {
     GBTQ,
 };
 
-struct cwd_params {
+struct CLI_params {
     struct train_params_common common;
+    JSON jConfig;
+
     std::string exec_name="";
-    const char *fn_model_base="",*fn_model_out="";
-    const char *train="";  //"scratch"
+    std::string fn_model_base="",fn_model_out="";
+    std::string train="";  //"scratch"
     bool only_write_model = false;
     uint32_t n_vocab = 32000;
     uint32_t n_ctx   = 512;
@@ -33,7 +36,8 @@ struct cwd_params {
     uint32_t n_rot   = 64;
     uint32_t n_ff    = 11008;    
     int nabla = 1;      //cys
-    const char* sigma = "";
+    std::string sigma = "";
+    bool only_infer = false;
 
     enum TUNE_ALG   {
         OFF=0,
@@ -41,11 +45,11 @@ struct cwd_params {
         LORA_SVD,
         LORA_AB,
         LORA_Q,
-        VARIATIONAL,
+        // VARIATIONAL,
     };
     enum TUNE_ALG tune;
-    const char* sTune(int flag=0x0){
-        const char* tune_desc[]={
+    std::string sTune(int flag=0x0){
+        std::string tune_desc[]={
             "","_AB","_SVD","_SVD_AB","_VARIATIONAL",
         };
         return tune_desc[tune];
@@ -55,8 +59,17 @@ struct cwd_params {
     float f_norm_rms_eps = 1e-5f; // llama
     float rope_freq_base  = 10000.0f;
     float rope_freq_scale = 1.0f;
+    float lars_ratio = 0.0f;
+    float ZMUV_ratio = 0;            //Default is .01;  0.1 is too big!
 
     int32_t lora_r=0,lora_alpha=0;
+    /*enum llama_rope_type {
+        LLAMA_ROPE_TYPE_NONE = -1,
+        LLAMA_ROPE_TYPE_NORM =  0,
+        LLAMA_ROPE_TYPE_NEOX =  2,
+        LLAMA_ROPE_TYPE_GLM  =  4,
+    };*/
+    int         rope_type               = -1 ;
     /**
      * The GQA model efficiently breaks the query into n_heads, and the key and value are divided into n_kv_heads groups, 
      * enabling multiple key-value heads to share the same query.
@@ -74,10 +87,11 @@ struct cwd_params {
         return n_embd/n_gqa();
     }
 
-    bool operator!=(const cwd_params& other) const; 
+    bool operator!=(const CLI_params& other) const; 
 
     void Dump( );
 
     bool parse(int argc, char ** argv);
-    //static bool train_params_parse(int argc, char ** argv, struct cwd_params * params)
+    virtual void InitJConfig(const std::string&jPath,int flag=0x0);
+    //static bool train_params_parse(int argc, char ** argv, struct CLI_params * params)
 };

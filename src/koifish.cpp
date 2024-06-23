@@ -1,9 +1,3 @@
-/**
- *  Copyright 2023-2024 by Grusoft 
- * 
- *  \brief A collection of neurons
- *  \author Yingshi Chen
- */
 
 #include <vector>
 #include <cstring>
@@ -19,11 +13,11 @@
 
 
 int main(int argc, char ** argv) {
-    struct cwd_params params;
+    struct CLI_params params;
     if (!params.parse(argc, argv)) {
         return -1;
     }   
-    params.nabla = 3;       //only for debug
+    assert(params.nabla > 0);     
 
     if (params.common.seed == LLAMA_DEFAULT_SEED) {
         params.common.seed = time(NULL);
@@ -45,7 +39,7 @@ int main(int argc, char ** argv) {
     default:
         assert(0);
     }  
-
+    // fish->CreateWiki();
     fish->Init( );
     fish->BuildGraph( );
     fish->Train( );

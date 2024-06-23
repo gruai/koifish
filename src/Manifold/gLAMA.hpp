@@ -445,7 +445,7 @@ struct LLaMeta : public Ganglia {
         
         Statistic(0x0);
 #ifndef NDEBUG
-        ggml_graph_print(gf);           ggml_graph_print(gb);       //only for debug
+        // ggml_graph_print(gf);           ggml_graph_print(gb);       //only for debug
 #endif
     }
 
@@ -567,6 +567,8 @@ struct LLaMeta : public Ganglia {
         auto opt = hOPT->opt;
         auto adam = opt->params.adam;
         _INFO("%s: sched=%.4g ADAM(lr=%g,%g,[%g-%g])\n", __func__,adam.sched,adam.alpha,adam.decay,adam.beta1,adam.beta2);
+        if(hparams.lars_ratio>0)
+            _INFO("%s: LARS(t_max=%g)\n", __func__,hparams.lars_ratio);
         print_build_info();
         auto train=hOPT->train;
         struct train_opt_callback_data opt_cb_data;
@@ -584,7 +586,7 @@ struct LLaMeta : public Ganglia {
         hOPT->Init_CallbackData(opt_cb_data,lama_ctx,hparams.common,tokens_input,0x0);
         int64_t t0 = ggml_time_ms();
         // save_train_(&save_data, opt_cb_data.train);      //warmup save
-        enum ggml_opt_result result = hOPT->ggml_train(ctx_work, &opt_cb_data,loss,target_probs,gf,gb);       
+        enum ggml_opt_result result = hOPT->ggml_train(ctx_work, &opt_cb_data,loss,target_probs,gf,gb,hparams);       
 
         ggml_free(ctx_work);
         ggml_free(ctx_compute);

@@ -31,7 +31,7 @@ bool Optimizer::GradAccumulation(float&fx,int np,struct train_opt_callback_data 
 }
 
 enum ggml_opt_result Optimizer::ggml_train(struct ggml_context * ctx, struct train_opt_callback_data *callback_data, hGensor loss_,hGensor target_,
-    struct ggml_cgraph * gf_,struct ggml_cgraph * gb_)    {
+    struct ggml_cgraph * gf_,struct ggml_cgraph * gb_,CLI_params& hparams)    {
     assert(loss==nullptr && target_probs==nullptr);
     loss = loss_;       target_probs = target_;
     callback_data->target_probs = target_probs;
@@ -139,36 +139,70 @@ enum ggml_opt_result Optimizer::ggml_train(struct ggml_context * ctx, struct tra
             const int64_t t_start_wall = ggml_time_us(),t_start_cpu = ggml_cycles();
             {
                 float gnorm = 1.0f;
+                /**
+                 * 1. LARS/LAMB  trus_ratio - ratio between the norm of the layer weights and norm of gradients update
+                 */
                 if (gclip > 0.0f) { //Gradient clipping maybe superior than L2 Regularization in terms of gaining results and easiness in implementation
                     // gradient clipping
                     ggml_float sum = 0.0;
                     for (int64_t i = 0; i < nx; ++i) {
                         sum += (ggml_float)(g[i]*g[i]);
                     }
-                    ggml_float norm = sqrt(sum);
+                    ggml_float norm = sqrt(sum);                    
                     if (norm > (ggml_float) gclip) {
                         gnorm = (float) ((ggml_float) gclip / norm);
-                    }
+                    } 
                 }
-                const float beta1h = alpha*sched/(1.0f - powf(beta1, opt->iter));
+                
+                const float beta1h = alpha*sched/(1.0f - powf(beta1, opt->iter));                
                 const float beta2h =        1.0f/(1.0f - powf(beta2, opt->iter));
                 int64_t i = 0;
+                zmuv_0 = DBL_MAX,zmuv_1 = 0.0;
                 for (int p = 0; p < np; ++p) {
                     const int64_t ne = ggml_nelements(opt_ps[p]);
+                    bool isZMUV = ne>=hparams.n_ctx*hparams.n_embd && hparams.ZMUV_ratio>0;
                     const float p_decay = ((ggml_n_dims(opt_ps[p]) >= decay_min_ndim) ? decay : 0.0f) * sched;
+                    float wnorm=0,wmean=0,norm=0,trust_ratio;
+                    for (int64_t j = 0; j < ne; ++j) {
+                        float x  = ggml_get_f32_1d(opt_ps[p], j);       
+                        wnorm += x*x;           wmean +=x;
+                    }
+                    wnorm = sqrt(wnorm);        wmean /= ne;
+                    double sigma = wnorm*wnorm/ne - wmean*wmean;
+                    if(hparams.lars_ratio>0)   {   //lars/lamb                        
+                        for (int64_t j = i; j < i+ne; ++j) {
+                            norm += g[j]*g[j];
+                        }
+                        trust_ratio = wnorm/sqrt(norm+eps);
+                        trust_ratio = std::min(trust_ratio,hparams.lars_ratio);
+                        gnorm = trust_ratio;
+                    }
+                    double normX = 0.0,meanX=0;
                     for (int64_t j = 0; j < ne; ++j) {
                         float x  = ggml_get_f32_1d(opt_ps[p], j);
                         float g_ = g[i]*gnorm;
-                        m[i] = m[i]*beta1 +    g_*(1.0f - beta1);
-                        v[i] = v[i]*beta2 + g_*g_*(1.0f - beta2);
-                        float mh = m[i]*beta1h;
+                        m[i] = m[i]*beta1 +    g_*(1.0f - beta1);   //linear interpolations of the gradients 
+                        v[i] = v[i]*beta2 + g_*g_*(1.0f - beta2);   //linear interpolations of their variances
+                        float mh = m[i]*beta1h;     //debiasing 
                         float vh = v[i]*beta2h;
                         vh = sqrtf(vh) + eps;
-                        x  = x*(1.0f - p_decay) - mh/vh;
+                        x  = x*(1.0f - p_decay) - mh/vh;        //ormalize step(mh) by its standard deviation(vh)
+                        if(isZMUV){
+                            //x -= (sigma-1.0)*(x-wmean)/ne;
+                            //ggml_compute_forward_rms_norm_f32(
+                            x -= hparams.ZMUV_ratio*(wnorm-1.0)/(wnorm)*x;
+                            normX += x*x;       meanX+=x;
+                        }                        
                         ggml_set_f32_1d(opt_ps[p], j, x);
                         ++i;
                     }
-                }
+                    if(isZMUV){
+                        meanX = meanX/ne;
+                        // normX = sqrt(normX/ne-meanX*meanX);
+                        normX = sqrt(normX);
+                        zmuv_0 = min(zmuv_0,normX),zmuv_1 = max(zmuv_1,normX);
+                    }
+                }                
             }
 
             if(isAccuX){

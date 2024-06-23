@@ -34,6 +34,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
 	Optimizer& operator=(const Optimizer&);
 
 protected:    
+    double zmuv_0 = 0.0,zmuv_1 = 0.0;
     struct ggml_cgraph *gf=NULL,*gb=NULL;     //only for debug
     hGensor  loss = NULL, target_probs = NULL; 
     hScheduler scheduler = std::make_shared<DiscreteSchedule>( );
@@ -43,9 +44,7 @@ protected:
 
     bool GradAccumulation(float&fx,int np,struct train_opt_callback_data *callback_data,struct ggml_cplan *cplan,int flag=0x0);
 public:
-    // typedef bool (*_CALL_BACK_)(void * data, int accum_step, float * sched);
-    
-    
+    // typedef bool (*_CALL_BACK_)(void * data, int accum_step, float * sched);    
 
     Ganglia* gang=nullptr;      //ref only
     std::vector<llama_token> train_tokens;
@@ -182,7 +181,10 @@ public:
         free_train_state(train);
     }
 
-    enum ggml_opt_result ggml_train(struct ggml_context * ctx, struct train_opt_callback_data *callback_data, hGensor loss_,hGensor target_,struct ggml_cgraph * gf_,struct ggml_cgraph * gb_);
+    enum ggml_opt_result ggml_train(struct ggml_context * ctx, struct train_opt_callback_data *callback_data, hGensor loss_,hGensor target_,
+            struct ggml_cgraph * gf_,struct ggml_cgraph * gb_,CLI_params& hparams);
+    
+    friend class Ganglia;
 
 };
 typedef shared_ptr<Optimizer> hOptimizer;
