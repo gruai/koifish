@@ -20,10 +20,15 @@ protected:
 public:
     hGensor encode=nullptr,decode=nullptr,norm=nullptr;
 
-    MutliCoder(struct ggml_context *ctx,int dim1,int dim2,bool isR = false,int tpN=2,int flag=0x0) : nTop(dim1),nBottom(dim2),isResi(isR),tpNorm(tpN) {
+    MutliCoder(struct ggml_context *ctx,int dim1,int dim2,bool isR = false,bool isSym=true,int tpN=2,int flag=0x0) : nTop(dim1),nBottom(dim2),isResi(isR),tpNorm(tpN) {
         assert(nTop>nBottom && nBottom>0);
         encode = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nTop, nBottom);     
-        decode = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nBottom, nTop); 
+        if(isSym)
+            decode = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nBottom, nTop); 
+        else{
+            decode = nullptr;
+            isResi = false;
+        }            
     }
 
     virtual hGensor ENC(struct ggml_context *ctx,hGensor x){
@@ -45,6 +50,8 @@ public:
     }
 
     virtual hGensor DEC(struct ggml_context *ctx,hGensor x){
+        if(decode==nullptr)
+            return x;
         if(resi!=nullptr){
             x = ggml_add(ctx, x, resi);
         }
@@ -69,6 +76,7 @@ typedef shared_ptr<MutliCoder> hMultiCoder;
 class VariationaAE : public Ganglia   {
 protected:
     int nRefine = 1, tpNorm=2;
+    bool isSymmetric = true;
     bool reserve_x = false;
     vector<hGensor> resi_x;
     vector<float> hier_norm;
@@ -132,7 +140,7 @@ public:
         int nMap = dims.size()-1;       assert(nMap>0);
         MAEC.clear( );
         for(int i=0;i<nMap;i++){
-            hMultiCoder hCoder = std::make_shared<MutliCoder>(ctx, dims[i], dims[i+1],reserve_x,tpNorm);
+            hMultiCoder hCoder = std::make_shared<MutliCoder>(ctx, dims[i], dims[i+1],reserve_x,isSymmetric,tpNorm);
             MAEC.push_back(hCoder);            
         }
 

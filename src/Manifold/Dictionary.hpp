@@ -20,7 +20,8 @@ struct ConsiceDict : public VariationaAE    {
         LOAD_GRAD,
         LOAD_GRAD_norm,
     };
-    OUTPUT_OP opOut=ONLY_LOAD;
+    OUTPUT_OP opOut=RND_GRAD;     //LOAD_GRAD_norm;   ONLY_LOAD
+    hGensor tok_embeddings=nullptr,norm=nullptr,output=nullptr;
 
     using id    = int32_t;
     using token = std::string;
@@ -82,7 +83,7 @@ struct ConsiceDict : public VariationaAE    {
 
     virtual void InitVAE(int flag=0x0);
 
-    hGensor tok_embeddings=nullptr,norm=nullptr,output=nullptr;
+   
 
     /*  
         tok_embeddings = llama_get_model_tensor(lama, TN(LLM_TENSOR_TOKEN_EMBD));      nParams+=ggml_nelements(tok_embeddings);

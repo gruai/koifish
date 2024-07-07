@@ -186,6 +186,23 @@ class Ganglia : public std::enable_shared_from_this<Ganglia>    {
     Ganglia &operator=(const Ganglia &);
 
 protected:
+    struct WIKI {
+        enum MERGE_MODE{
+            OFF,MERGE_P,MERGE_T
+        };
+        MERGE_MODE teach=OFF;
+        hGensor  logits = NULL;
+        float * logits_out = nullptr;
+
+        virtual hGensor P()    {   return nullptr; }
+        virtual hGensor Target()    {   return nullptr; }
+
+        virtual void Decode(std::vector<int32_t>&ids,int flag)  {   assert(0); }
+    };
+    typedef shared_ptr<WIKI> hWIKI;
+    // wiki contains knowledge reflect the founation of our world
+    hWIKI wiki = nullptr;
+
     struct CLI_params hparams;
     save_train_model save_data;
 
@@ -209,8 +226,6 @@ protected:
     int64_t perf_cycles = 0, perf_time_us = 0;
     struct ggml_context *ctx = nullptr; // model ctx
     size_t ctx_size = 0;
-    // wiki contains knowledge reflect the founation of our world
-    hGanglia wiki = nullptr;
     
     std::vector<hGanglia> childs;
 
@@ -276,7 +291,8 @@ public:
                 nF16++;
         }
     }
-    virtual void CreateWiki(int flag=0x0)  {}
+    virtual void CreateWiki(int flag=0x0)   {}
+    
     hGensor Target()    {   return nullptr;    }
 
     void UpdateTensors(int flag = 0x0)    {
@@ -429,6 +445,7 @@ public:
         AddLayer(layer, flag = 0x0);
     }
 
+    virtual int64_t update_batch(struct train_opt_callback_data *data,int next_id,struct train_params_common *params);
     bool one_step(struct train_opt_callback_data *data, int accum_step, float *sched, int flag = 0x0)    {
         LearningCurve(0x0);
         struct train_params_common *params = data->params;
@@ -437,33 +454,25 @@ public:
         int n_batch = params->n_batch;
         int n_ctx = params->n_ctx;
 
-        if (accum_step == 0)
-        {
+        if (accum_step == 0)        {
             // time measurement
             int64_t now = ggml_time_ms();
-            if (now > data->last_time && opt->iter > data->first_iter)
-            {
+            if (now > data->last_time && opt->iter > data->first_iter)            {
                 double dt = (double)(now - data->last_time);
-                if (data->millis_per_iter == 0.0)
-                {
+                if (data->millis_per_iter == 0.0)                {
                     data->millis_per_iter = dt;
-                }
-                else
-                {
+                }                else                {
                     const double gain = 0.7;
                     data->millis_per_iter = data->millis_per_iter * (1.0 - gain) + dt * gain;
                 }
             }
-
             double remaining_millis = 0.0;
-            if (data->millis_per_iter > 0.0)
-            {
+            if (data->millis_per_iter > 0.0)            {
                 const int n_iter = params->adam_n_iter;
                 const int done_iter = opt->iter - data->first_iter;
                 const int remaining_iter = n_iter - done_iter;
                 remaining_millis = remaining_iter * data->millis_per_iter;
             }
-
             // file saving
             const bool save_now = (params->save_every > 0) && (opt->iter - data->last_save_iter >= params->save_every);
             if (save_now)            {
@@ -471,8 +480,7 @@ public:
                 train->train_its += new_iters;
                 train->train_tokens += new_iters * opt->params.n_gradient_accumulation * n_batch * n_ctx;
                 save_train_(&save_data, train);
-                /*if (data->save_cb)
-                {
+                /*if (data->save_cb)                {
                     data->save_cb(data->save_data, train);
                 }*/
                 data->last_save_iter = opt->iter;
@@ -480,10 +488,8 @@ public:
 
             // exclude file saving from time measurement, by measuring last_time after saving
             data->last_time = ggml_time_ms();
-
             *sched = learning_schedule(opt->iter, params->warmup, params->cos_decay_steps, params->adam_alpha, params->adam_min_alpha,
                                        params->cos_decay_min, params->cos_decay_restart, params->enable_restart);
-
             int impr_plot = -(int)(1 + (opt->loss_before - opt->loss_after) * 10.0f + 0.5f);
             if (impr_plot > 0)
                 impr_plot = 0;
@@ -492,27 +498,22 @@ public:
             _INFO("%s: iter=%6d sample=%zu/%zu sched=%.3f loss=%f S=[%g-%g]",
                   __func__, opt->iter, std::min(1 + train->shuffle_next_sample, train->shuffle_sample_count), train->shuffle_sample_count,
                   *sched, opt->loss_after,hOPT->zmuv_0,hOPT->zmuv_1);
-            if (data->millis_per_iter > 0)
-            {
+            if (data->millis_per_iter > 0)            {
                 _INFO(" dt=");
                 _TIME(data->millis_per_iter);
-                _INFO(" eta=");
-                _TIME(remaining_millis);
+                // _INFO(" eta=");                _TIME(remaining_millis);
             }
-
             float improvement = opt->loss_before - opt->loss_after;
             const float plot_scale = 10.0f;
             int bar_len = (int)(1 + improvement * plot_scale + 0.5);
             _INFO(" |");
-            for (int i = 0; i < bar_len; ++i)
-            {
+            for (int i = 0; i < bar_len; ++i)            {
                 _INFO("-");
             }
-            _INFO(">");
-            _INFO("\n");
+            _INFO(">");            _INFO("\n");
         }
-
-        int64_t used_samples = get_example_targets_batch(
+        int64_t used_samples = update_batch(data,train->shuffle_next_sample,params);
+        /*int64_t used_samples = get_example_targets_batch(
             data->lctx,
             data->tokens_input,
             data->target_probs,
@@ -526,7 +527,7 @@ public:
             params->separate_with_eos,
             params->separate_with_bos,
             params->fill_with_next_samples,
-            params->sample_random_offsets);
+            params->sample_random_offsets);*/
 
         train->train_samples += used_samples;
         train->shuffle_next_sample += used_samples;

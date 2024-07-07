@@ -87,18 +87,6 @@ void _T_repr_(hGensor t,const char*tab,char *buf,int flag=0x0){
         A,t->name,ggml_nelements(t)/1.0e6,ne[0], ne[1], ne[2], ne[3], ggml_type_name(t->type)); 
 }
 
-string LLaMeta::lama_layer::__repr__( string& suffix,string& prefix,int flag)    {
-    char buf[5012]="\0";
-    const char*tab=prefix.c_str();
-    _T_repr_(attention_norm,tab,buf);
-    _T_repr_(wq,tab,buf);        _T_repr_(wk,tab,buf);       _T_repr_(wv,tab,buf);   _T_repr_(wo,tab,buf);   
-    _T_repr_(ffn_norm,tab,buf);     _T_repr_(ffn_gate,tab,buf);     _T_repr_(ffn_down,tab,buf);     _T_repr_(ffn_up,tab,buf);  
-    _T_repr_(eps,tab,buf);
-    if(flag>0)
-        _INFO("%s",buf); 
-    return buf;
-}
-
 string LLaMeta::__repr__( string& suffix,string& prefix,int flag)         {
     // Ganglia::__repr__(suffix,prefix,flag);
     char buf[5012]="\0";
@@ -116,7 +104,9 @@ string LLaMeta::__repr__( string& suffix,string& prefix,int flag)         {
         sprintf(buf+strlen(buf),"%s  ......\n",tab);
         sprintf(buf+strlen(buf),"%s",layers[layers.size()-1]->__repr__(s,p,0x0).c_str());    
     }
-    _T_repr_(target_probs,"  target_probs=",buf);   
+    _T_repr_(target_probs,"  target_probs=",buf);  
+    if(wiki!=nullptr && wiki->logits!=nullptr)
+        _T_repr_(wiki->logits,"  wiki_logits=",buf);    
     _T_repr_(loss,"  loss=",buf);   
 
     sprintf(buf+strlen(buf),"%s",suffix.c_str()); 
@@ -173,16 +163,18 @@ ConsiceDict::ConsiceDict(LLaMeta *lama_,int flag) : VariationaAE(),hLM(lama_)   
     assert(hLM->isValid());
     hparams = hLM->hparams;
     reserve_x = true;
+    isSymmetric = false;
     lama_embed = hparams.n_embd;
+
     if(hLM->hparams.nabla==3){
-        // dims = {hparams.n_embd, 64};
-        // dims = {hparams.n_embd, 512, 128};
-        dims = {hparams.n_embd,1024,256,64};       //little difference with {hparams.n_embd,1024,256,128}
+         dims = {hparams.n_embd, 256};
+        // dims = {hparams.n_embd, 1024, 256};
+        //dims = {hparams.n_embd,1024,256,64};       //little difference with {hparams.n_embd,1024,256,128}
         nLevel = dims.size()-1;   
         latent_dim = dims[nLevel];
     }   else if(hLM->hparams.nabla>3)
         assert(0);         
-    _INFO("%s resi=%d tpNorm=%d opOut=%d nLevel=%d dims= ",__func__,(int)(reserve_x),tpNorm,opOut,nLevel);
+    _INFO("%s symmetric=%d resi=%d tpNorm=%d opOut=%d nLevel=%d dims= ",__func__,(int)(isSymmetric),(int)(reserve_x),tpNorm,opOut,nLevel);
     for(auto dim : dims)           {
         _INFO("%d ",dim);
     }
@@ -218,16 +210,17 @@ void ConsiceDict::LoadVocab_v1(const char*fn_model_base,struct CLI_params& param
 }*/
 
 void ConsiceDict::CreateEmbeddings(struct random_normal_distribution * rnd,int flag){
-    const uint32_t n_embd  = hparams.n_embd,n_vocab = hparams.n_vocab;
+    const uint32_t n_embd  = hparams.n_embd,n_vocab = hparams.n_vocab,last_dim=dims[dims.size()-1];
     auto lama = hLM->GetRawModel( );  
     auto ctx = hLM->ctx;    
     
     if(isLoadTokenEmbed) {
+        const uint32_t n1 = isSymmetric ? n_embd : last_dim;
         if(opOut==RND_GRAD){
-            norm           = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
-            output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_vocab);  
+            norm           = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n1);
+            output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n1, n_vocab);  
         }else if(opOut==LOAD_GRAD_norm){
-            output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_vocab);  
+            output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n1, n_vocab);  
         }
         return;
     }
@@ -284,7 +277,7 @@ void ConsiceDict::Update_1(struct random_normal_distribution * rnd,int flag) {
         output         = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT)  );            //
         // if(isParam) hLM->nParams+=ggml_nelements(output);
         break;
-    case LOAD_GRAD_norm:
+    case LOAD_GRAD_norm:    //bug@Optimizer::ggml_train
         norm           = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT_NORM) );
         assert(norm->type==GGML_TYPE_F32);
         ggml_set_param(hLM->ctx, norm);         hLM->nParams += ggml_nelements(norm);           hLM->tensors[norm->name] = norm;
@@ -321,7 +314,8 @@ void ConsiceDict::Update_1(struct random_normal_distribution * rnd,int flag) {
     for(auto map : MAEC){
         std::string name = TN(LLM_DICT_DOWN, i);    //"dict.0.down.weight"
         hLM->InitGensor(hLM->ctx, map->encode,    TN(LLM_DICT_DOWN, i),     rnd); 
-        hLM->InitGensor(hLM->ctx, map->decode,    TN(LLM_DICT_UP, i),       rnd);    
+        if(map->decode!=nullptr)
+            hLM->InitGensor(hLM->ctx, map->decode,    TN(LLM_DICT_UP, i),       rnd);    
         i++;            
     }
     //ggml_set_param(hLM->ctx, norm);              hLM->nParams+=ggml_nelements(norm);
@@ -450,7 +444,17 @@ static void save_checkpoint_file(const char * filename, const char * fn_model_ba
         LOG("saved session to %s\n", path_session.c_str());
     }
 */
-
+string LLaMeta::lama_layer::__repr__( string& suffix,string& prefix,int flag)    {
+    char buf[5012]="\0";
+    const char*tab=prefix.c_str();
+    _T_repr_(attention_norm,tab,buf);
+    _T_repr_(wq,tab,buf);        _T_repr_(wk,tab,buf);       _T_repr_(wv,tab,buf);   _T_repr_(wo,tab,buf);   
+    _T_repr_(ffn_norm,tab,buf);     _T_repr_(ffn_gate,tab,buf);     _T_repr_(ffn_down,tab,buf);     _T_repr_(ffn_up,tab,buf);  
+    _T_repr_(eps,tab,buf);
+    if(flag>0)
+        _INFO("%s",buf); 
+    return buf;
+}
 
 //n_embd_head, n_head_kv
 hGensor  LLaMeta::build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<LLaMeta::lama_layer> layer,hGensor  KQ_pos,/*hGensor cur, hGensor wq, hGensor wk, hGensor wv, hGensor wo,
@@ -689,8 +693,8 @@ void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool 
     hGensor  t33   = ggml_mul               (ctx, t32, t31);                             set_name(t33, "t33");     assert_shape_2d(t33, n_embd, N*n_batch);
     hGensor  t34   = ggml_mul_mat           (ctx, _tOutput, t33);                          set_name(t34, "t34");     assert_shape_2d(t34, n_vocab, N*n_batch);
     hGensor  t35   = ggml_reshape_3d        (ctx, t34, n_vocab, N, n_batch);             set_name(t35, "t35");     assert_shape_3d(t35, n_vocab, N, n_batch);
-    if(wiki!=nullptr){
-        t35 = ggml_add(ctx,t35,wiki->Target());
+    if(wiki!=nullptr && wiki->logits!=nullptr)    {   //GPT mode's input is different with TRAINING!!!
+        t35 = ggml_add(ctx,t35,wiki->logits);
     }
     hGensor  t36   = ggml_cross_entropy_loss(ctx, t35, target_probs);                    set_name(t36, "t36");     assert_shape_1d(t36, 1);
     if(hDict->nLevel>0){
@@ -781,3 +785,68 @@ void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool 
         ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer->ffn_up, 1.0f));
     }*/
 }
+
+struct ggml_cgraph * llama_build_graph(llama_context & lctx,const llama_batch & batch,bool   worst_case);
+
+void LLaMeta::LAMA::Decode(std::vector<llama_token>&embd_inp,int flag) {
+    llama_token eos = llama_token_eos(lmodel),id;
+    int i=0,n_consumed=0;
+    std::vector<llama_token> embd;
+    while ((int) embd_inp.size() > n_consumed) {
+        id = embd_inp[n_consumed];
+        // const std::string token_str = llama_token_to_piece(_ctx, id);
+        // _INFO("%s",token_str.c_str());
+        embd.push_back(embd_inp[n_consumed]);
+        ++n_consumed;       
+    }
+    int n_eval = (int) embd.size(),n_past =0;
+    auto batch = llama_batch_get_one(&embd[0], n_eval, n_past, 0);
+    llama_decode(_ctx,batch );      n_past+=n_eval;
+    llama_ctx_get_(_ctx,(void**)(&logits_out),10);  
+}
+
+void LLaMeta::LAMA::Generate(std::vector<llama_token>&embd_inp,int flag) {
+    llama_token eos = llama_token_eos(lmodel),id;
+    int i=0,n_consumed=0;
+    std::vector<llama_token> embd;    
+    /*  9493 -> 'when'   279 -> ' the' 16603 -> ' smoke'   374 -> ' is'  2133 -> ' going'  1523 -> ' down'    11 -> ','*/
+    struct llama_sampling_params sparams;
+    sparams.seed = 42;
+    struct llama_sampling_context *ctx_sampling = llama_sampling_init(sparams);
+    _INFO("%s \"%s\" embd_inp.size(): %d, n_consumed: %d\n",__func__,"", (int) embd_inp.size(), n_consumed);
+    while ((int) embd_inp.size() > n_consumed) {
+        id = embd_inp[n_consumed];
+        const std::string token_str = llama_token_to_piece(_ctx, id);
+        _INFO("%s",token_str.c_str());
+        embd.push_back(embd_inp[n_consumed]);
+        // push the prompt in the sampling context in order to apply repetition penalties later
+        // for the prompt, we don't apply grammar rules
+        llama_sampling_accept(ctx_sampling, _ctx, embd_inp[n_consumed], false);
+        ++n_consumed;       
+    }
+    int n_eval = (int) embd.size(),n_past =0;
+    auto batch = llama_batch_get_one(&embd[0], n_eval, n_past, 0);
+            //     llama_token token = llama_token_bos(&ctx->model); // not actually used by llama_build_graph, but required to choose between token and embedding inputs graph
+            // ggml_cgraph * gf = llama_build_graph(*ctx, llama_batch_get_one(&token, n_tokens, n_past, 0), true);
+    if(0)   {
+        gf = llama_build_graph(*_ctx, batch, false);
+        res  = gf->nodes[gf->n_nodes - 1];
+        GGML_ASSERT(strcmp(res->name, "result_output") == 0 && "missing result_output tensor");
+    }
+        // struct ggml_tensor * embd = gf->nodes[gf->n_nodes - 2];
+    llama_decode(_ctx,batch );      n_past+=n_eval;
+    llama_ctx_get_(_ctx,(void**)(&logits_out),10);
+    // auto tmaps = llama_internal_get_tensor_map(_ctx);       //tmpas contain all weights,not all tensors!
+    // for(auto it : tmaps){
+    //     if(it.first=="result_output")
+    //         res = it.second;
+    // }
+    // assert(res!=nullptr);    
+
+    id = llama_sampling_sample(ctx_sampling, _ctx, nullptr);      //539
+    llama_sampling_accept(ctx_sampling, _ctx, id, true);
+    const std::string token_str = llama_token_to_piece(_ctx, id);
+    _INFO("%s => \"%s\"",__func__,token_str.c_str());
+
+}
+

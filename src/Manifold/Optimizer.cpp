@@ -1,5 +1,6 @@
 #include "Ganglia.hpp"
 #include "../ggex/GG_util.hpp"
+#include "../LLAMA/common/common.h"
 
 bool Optimizer::GradAccumulation(float&fx,int np,struct train_opt_callback_data *callback_data,struct ggml_cplan *cplan,int flag)   {    
     fx = 0;
@@ -30,6 +31,15 @@ bool Optimizer::GradAccumulation(float&fx,int np,struct train_opt_callback_data 
     return true;
 }
 
+bool isGensor(hGensor gensor,vector<string> keys,int flag=0x0){
+    string name = gensor->name;
+    for(auto key:keys){
+        if( name.find(key) != std::string::npos ) 
+            return true;
+    }
+    return false;
+}
+
 enum ggml_opt_result Optimizer::ggml_train(struct ggml_context * ctx, struct train_opt_callback_data *callback_data, hGensor loss_,hGensor target_,
     struct ggml_cgraph * gf_,struct ggml_cgraph * gb_,CLI_params& hparams)    {
     assert(loss==nullptr && target_probs==nullptr);
@@ -43,7 +53,7 @@ enum ggml_opt_result Optimizer::ggml_train(struct ggml_context * ctx, struct tra
     bool isAccuX = true,   cancel = false;      //Converge much faster!!! see Lay5_accux_.info
     float *fLoss = (float*)(loss->data),*fLossG = (float*)(loss->grad->data);
     // float *target = (float*)(data->target_probs->data);
-    _INFO("Optimizer::%s: GradAccumulation=%d ...... \n", __func__,(int)isAccuX );
+    _INFO("Optimizer::%s: GradAccumulation=%d rZMUV=%g rLARS=%g...... \n\n", __func__,(int)isAccuX,hparams.ZMUV_ratio,hparams.lars_ratio );
     if(0){
         result = ggml_opt_resume_g(ctx, opt, loss, gf, gb, &train_opt_callback, callback_data);
     }else{
@@ -160,7 +170,8 @@ enum ggml_opt_result Optimizer::ggml_train(struct ggml_context * ctx, struct tra
                 zmuv_0 = DBL_MAX,zmuv_1 = 0.0;
                 for (int p = 0; p < np; ++p) {
                     const int64_t ne = ggml_nelements(opt_ps[p]);
-                    bool isZMUV = ne>=hparams.n_ctx*hparams.n_embd && hparams.ZMUV_ratio>0;
+                    // assert(opt_ps[p]->flags==0x0);       ???
+                    bool isZMUV = isGensor(opt_ps[p],{"ffn_gate.weight","ffn_down.weight","ffn_up.weight"}) && hparams.ZMUV_ratio>0;     //ne>=hparams.n_ctx*hparams.n_embd
                     const float p_decay = ((ggml_n_dims(opt_ps[p]) >= decay_min_ndim) ? decay : 0.0f) * sched;
                     float wnorm=0,wmean=0,norm=0,trust_ratio;
                     for (int64_t j = 0; j < ne; ++j) {
@@ -180,7 +191,7 @@ enum ggml_opt_result Optimizer::ggml_train(struct ggml_context * ctx, struct tra
                     double normX = 0.0,meanX=0;
                     for (int64_t j = 0; j < ne; ++j) {
                         float x  = ggml_get_f32_1d(opt_ps[p], j);
-                        float g_ = g[i]*gnorm;
+                        float g_ = isZMUV ? g[i] : g[i]*gnorm;
                         m[i] = m[i]*beta1 +    g_*(1.0f - beta1);   //linear interpolations of the gradients 
                         v[i] = v[i]*beta2 + g_*g_*(1.0f - beta2);   //linear interpolations of their variances
                         float mh = m[i]*beta1h;     //debiasing 
@@ -276,3 +287,156 @@ void Ganglia::Train(  int flag )   {
     
 }
 
+int64_t Ganglia::update_batch(struct train_opt_callback_data *data,int next_id,struct train_params_common *params) {
+    struct llama_context * lctx=data->lctx;
+    struct ggml_tensor   * tokens_input=data->tokens_input;
+    struct ggml_tensor   * target_probs=data->target_probs;
+    int64_t                example_id=next_id;
+    const size_t         * samples_offs=data->shuffled_samples_offs;
+    const size_t         * samples_begin=data->shuffled_samples_begin;
+    const size_t         * samples_size=data->shuffled_samples_size;
+          size_t           samples_count=data->samples_count;
+    const llama_token    * train_data=data->tokens_data;
+    size_t                 n_train_data=data->tokens_size;
+    bool                   separate_with_eos=params->separate_with_eos;
+    bool                   separate_with_bos=params->separate_with_bos;
+    bool                   fill_with_next_samples=params->fill_with_next_samples;
+    bool                   sample_random_offsets=params->sample_random_offsets;
+    GGML_ASSERT(samples_count > 0);
+    GGML_ASSERT(ggml_is_matrix(tokens_input));
+    GGML_ASSERT(ggml_is_3d(target_probs));
+    int64_t n_vocab  = target_probs->ne[0],n_tokens = tokens_input->ne[0],n_batch  = tokens_input->ne[1];
+    GGML_ASSERT(n_vocab  == target_probs->ne[0]);
+    GGML_ASSERT(n_tokens == target_probs->ne[1]);
+    GGML_ASSERT(n_batch  == target_probs->ne[2]);
+
+    int64_t used_samples = 0;
+    ggml_set_f32(target_probs, 0.0f);
+    llama_token bos = llama_token_bos(llama_get_model(lctx));
+    llama_token eos = llama_token_eos(llama_get_model(lctx));
+    std::string sBos = llama_token_to_piece(lctx, bos),sEos = llama_token_to_piece(lctx, eos);
+    
+    // LLAMA_LOG_INFO("%s: example_id=%d n_batch=%d n_train_samples=%zu\n", __func__, example_id, n_batch, n_train_samples);
+    _INFO("\t%s::%ld nSampe=(%ld/%ld)",__func__,example_id, samples_count,n_train_data);
+    for (int k=0; k<n_batch; ++k) {
+        // LLAMA_LOG_INFO("%s: batch %d\n", __func__, k);
+        std::vector<int32_t> tok_ids;
+        size_t sample_idx   = (example_id + used_samples) % samples_count;
+        size_t sample_offs  = sample_random_offsets ? samples_offs[sample_idx] : 0;
+        size_t sample_begin = samples_begin[sample_idx];
+        size_t sample_size  = samples_size[sample_idx];
+        ++used_samples;
+        assert(sample_offs==0);
+        
+        // LLAMA_LOG_INFO("%s: sample_idx=%zu sample=%zu\n", __func__, sample_idx, sample);
+        GGML_ASSERT(sample_begin+sample_size-1 < n_train_data);
+        std::string sentence="";
+        ggml_set_i32_nd(tokens_input, 0, k, 0, 0, bos);
+        bool sample_separation_eos = !separate_with_eos;
+        bool sample_separation_bos = !separate_with_bos;
+        for (int64_t i=0; i<n_tokens; ++i) {
+            llama_token token = eos;
+            if (sample_offs >= sample_size && fill_with_next_samples) { //true only arg == "--fill-with-next-samples"
+                if (!sample_separation_eos) {
+                    // insert eos token to separate samples
+                    sample_separation_eos = true;
+                } else if (!sample_separation_bos) {
+                    // insert bos token to separate samples
+                    sample_separation_bos = true;
+                    token = bos;
+                } else {
+                    // sample separation is done, continue with next sample
+                    sample_separation_eos = !separate_with_eos;
+                    sample_separation_bos = !separate_with_bos;
+                    sample_offs  = 0;
+                    sample_idx   = (example_id + used_samples) % samples_count;
+                    sample_begin = samples_begin[sample_idx];
+                    sample_size  = samples_size[sample_idx];
+                    ++used_samples;
+                }
+            }
+            // note: no else-if here
+            if (sample_offs < sample_size) {
+                token = clamp(train_data[sample_begin+sample_offs], 0, (llama_token) (n_vocab - 1));
+                ++sample_offs;
+            }
+            ggml_set_f32_nd(target_probs,  token, (int) i, (int) k, 0, +1.0f);
+            tok_ids.push_back(token);
+            
+            if (i+1<n_tokens) {
+                ggml_set_i32_nd(tokens_input, (int) (i + 1), (int) k, 0, 0, token);
+                sentence = llama_token_to_piece(lctx, token);
+                // _INFO("%s,",sentence.c_str());
+            }
+        }
+        _INFO(" %ld@\"%s...\"",sample_begin,sentence.c_str());     //sample_size
+        if(wiki!=nullptr && wiki->logits!=nullptr){
+            assert(target_probs->type == GGML_TYPE_F32);
+            wiki->Decode(tok_ids,0x0);
+            auto g=wiki->logits;   // wiki->logits = ggml_new_tensor_3d(ctx_input, GGML_TYPE_F32, n_vocab,  n_tokens, n_batch);
+            int ld0=g->nb[0],ld1=g->nb[1],ld2=g->nb[2],ld3=g->nb[3];          
+            assert(ld0==4); 
+            float *logits = wiki->logits_out;   //n_vocab,nToken,
+            // target=(float*)((char *)(target_probs->data)+i*ld1+k*ld2);
+            assert(sizeof(float)*n_vocab*n_tokens==ld2);    
+            memcpy(g->data+k*ld2,logits,sizeof(float)*n_vocab*n_tokens);                
+            for (int64_t i=0; i<n_tokens; ++i) {
+                /*llama_token token = tok_ids[i];
+                for(int j=0;j<n_vocab;j++,logits++){                    
+                    // target[j]=1.0f-*logits;
+                    // void * data   = (char *) tensor->data + i0*tensor->nb[0] + i1*tensor->nb[1] + i2*tensor->nb[2] + i3*tensor->nb[3];
+                    // ggml_set_f32_nd(target_probs, j, (int) i, (int) k, 0, +1.0f-*logits);
+                }*/
+                    
+            }
+        }        
+    }_INFO("\n");
+
+    return used_samples;
+}
+
+std::string shuffle_samples_X(
+        const std::string & rng_state,size_t* shuffled_offs,
+        size_t            * shuffled_begins,
+        size_t            * shuffled_sizes,
+        const size_t      * begins,
+        const size_t      * sizes,
+        size_t              count) {
+    if (count == 0) return rng_state;
+
+    std::mt19937 rng;
+    mt19937_set_state(rng, rng_state);
+
+    // sort indices by random value for each index
+    std::vector<size_t> idcs;
+    {
+        std::vector<unsigned> rnd;
+        idcs.resize(count);
+        rnd.resize(count);
+        for (unsigned i=0; i<count; ++i) {
+            idcs[i] = i;
+            rnd[i]  = rng();
+        }
+
+        std::sort(idcs.begin(), idcs.end(), [&rnd](size_t a, size_t b){
+            // stable sort for reproducibility
+            return (rnd[a] == rnd[b]) ? (a < b) : (rnd[a] < rnd[b]);
+        });
+    }
+
+    // create random offsets
+    for (unsigned i=0; i<count; ++i) {
+        shuffled_offs[i] = (size_t) ((sizes[idcs[i]] - 1) * ((double) rng() / (double) (rng.max()-1)));
+    }
+
+    // reorder begins and sizes by sorted indices
+    for (unsigned i=0; i<count; ++i) {
+        shuffled_begins[i] = begins[idcs[i]];
+    }
+
+    for (unsigned i=0; i<count; ++i) {
+        shuffled_sizes[i] = sizes[idcs[i]];
+    }
+
+    return mt19937_get_state(rng);
+}
