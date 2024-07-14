@@ -584,7 +584,8 @@ void VariationaAE::save_gguf(struct gguf_context *fctx, int flag)   {
     gguf_set_arr_data(fctx, kv(LLM_KV_DICT_VAE_LAYERS), GGUF_TYPE_INT32, dims.data(), nLay);  
     for(auto coder:MAEC){
         gguf_add_tensor(fctx, coder->encode);
-        gguf_add_tensor(fctx, coder->decode);
+        if(coder->decode!=nullptr)
+            gguf_add_tensor(fctx, coder->decode);
     }   
 }
 
@@ -805,7 +806,7 @@ void LLaMeta::LAMA::Decode(std::vector<llama_token>&embd_inp,int flag) {
     llama_ctx_get_(_ctx,(void**)(&logits_out),10);  
 }
 
-void LLaMeta::LAMA::Generate(std::vector<llama_token>&embd_inp,int flag) {
+void LLaMeta::LAMA::Answer(std::vector<llama_token>&embd_inp,int flag) {
     llama_token eos = llama_token_eos(lmodel),id;
     int i=0,n_consumed=0;
     std::vector<llama_token> embd;    

@@ -78,15 +78,19 @@ struct LLaMeta : public Ganglia {
         ONLY_LNormal,    
         ONLY_RMSNormal,
         VAR_0,
-        VAR_LAST,
+        VAR_LAST,       //last layer with gaussian noise    
     };
     enum FFN_TYPE tpFFN = VAR_LAST;   //VAR_LAST;    
 
+    /*
+        @"/home/cys/rnd/lic/log/Distiller/07_11_QKV_brown.info"
+        BROWN attenion would falls into local trap much earlier than QKV attention.
+    */
     enum ATTENTION_TYPE {
         QKV = 0,
         BROWN,      //little gain on early test, why ???
     };
-    enum ATTENTION_TYPE tpATT= QKV;   
+    enum ATTENTION_TYPE tpATT = QKV;   
     
     int nLayerX = -1;        //user could set it from command-line, mainly for debug
     bool isLoadTokenEmbed = false;
@@ -129,7 +133,7 @@ struct LLaMeta : public Ganglia {
         ggml_cgraph * gf = nullptr;
         hGensor res = nullptr;
         void Decode(std::vector<int32_t>&ids,int flag)  override;
-        void Generate(std::vector<int32_t>&ids,int flag)  ;
+        void Answer(std::vector<int32_t>&ids,int flag)  override;
 
         LAMA(CLI_params& hparams) {
             llama_mparams.n_gpu_layers = hparams.common.n_gpu_layers;
@@ -177,7 +181,10 @@ struct LLaMeta : public Ganglia {
     
     LLaMeta()   {}
     LLaMeta( struct CLI_params params,int flag=0x0) : Ganglia(params) {
-        nLayerX = params.n_layer;       
+        nLayerX = params.n_layer;              
+        tpATT = jKV_is(params.jConfig,{"model","attention","type"},string("brown")) ? ATTENTION_TYPE::BROWN : ATTENTION_TYPE::QKV;
+        tpFFN = (FFN_TYPE)(jKV(params.jConfig,{"model","ffn","type"},5));
+        // hparams.n_ff = jKV(params.jConfig,{"model","ffn","length"},hparams.n_ff);
         assert(nLayerX<160);
         hparams.n_rot   = hparams.n_embd / hparams.n_head;
         hparams.n_ctx = hparams.common.n_ctx;
@@ -238,7 +245,8 @@ struct LLaMeta : public Ganglia {
         return GetGensor(name);
     }
 
-    virtual void InitModel(int flag=0x0){        
+    virtual void InitModel(int flag=0x0){     
+        hparams.n_ff = jKV(hparams.jConfig,{"model","ffn","length"},hparams.n_ff);   
         uint32_t n_embd  = hparams.n_embd;        
         const uint32_t n_layer = hparams.n_layer;
         const uint32_t n_vocab = hparams.n_vocab;
@@ -246,7 +254,9 @@ struct LLaMeta : public Ganglia {
         auto train_params = hparams.common;
         hparams.n_rot = hparams.n_embd / hparams.n_head;    
         _INFO("\nLLaMeta%s: init model embed=%d layer=%d ff=%d tpFFN=%d\n", __func__,n_embd,n_layer,n_ff,tpFFN);  
-        _INFO("\t type of FFN=%d\n", tpFFN);  
+        _INFO("\t type of FFN=%s\n", tpFFN==FFN_TYPE::SWIGLU ? "MLP" : tpFFN==FFN_TYPE::VAR_LAST ? "Variation@last_layer" 
+            : tpFFN==FFN_TYPE::ONLY_RMSNormal ? "RMS Normal" : "other");  
+        _INFO("\t type of ATTENTION=%s\n",tpATT==ATTENTION_TYPE::BROWN ? "BROWN":"QKV");
         for (int i=0;i<n_layer;i++) {
             auto  layer = std::make_shared<lama_layer>();
             layers.push_back(layer);        //typedef shared_ptr<layer> hLayer;
@@ -346,6 +356,7 @@ struct LLaMeta : public Ganglia {
         // lama()->Init(hparams);
         std::vector<llama_token> embd_inp = {9493,279,16603,374,2133,1523,11};      //const char* promt = "when the smoke is going down,";    //when the smoke is going down, not up."    
         // wiki->Decode(embd_inp,0x0);
+        // wiki->Answer(embd_inp);      //only for debug
     }
     
     virtual void Init(int flag=0x0)     {
@@ -607,7 +618,7 @@ struct LLaMeta : public Ganglia {
         struct ggml_context * ctx_work = ggml_init(ctx_work_params);
         hOPT->Init_CallbackData(opt_cb_data,lama()->_ctx,hparams.common,tokens_input,0x0);
         int64_t t0 = ggml_time_ms();
-        // save_train_(&save_data, opt_cb_data.train);      //warmup save
+        save_train_(&save_data, opt_cb_data.train);      //warmup save
         enum ggml_opt_result result = hOPT->ggml_train(ctx_work, &opt_cb_data,loss,target_probs,gf,gb,hparams);       
 
         ggml_free(ctx_work);

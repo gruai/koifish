@@ -31,6 +31,7 @@ typedef std::vector<int> SHAPE;
 #include "../LLAMA/common/train.h"
 #include "TGraph.hpp"
 #include "Optimizer.hpp"
+#include "GPT.hpp"
 #include "../lenda/util/GST_util.hpp"
 #include "../Fuzi/Distillation.hpp"
 
@@ -186,20 +187,7 @@ class Ganglia : public std::enable_shared_from_this<Ganglia>    {
     Ganglia &operator=(const Ganglia &);
 
 protected:
-    struct WIKI {
-        enum MERGE_MODE{
-            OFF,MERGE_P,MERGE_T
-        };
-        MERGE_MODE teach=OFF;
-        hGensor  logits = NULL;
-        float * logits_out = nullptr;
 
-        virtual hGensor P()    {   return nullptr; }
-        virtual hGensor Target()    {   return nullptr; }
-
-        virtual void Decode(std::vector<int32_t>&ids,int flag)  {   assert(0); }
-    };
-    typedef shared_ptr<WIKI> hWIKI;
     // wiki contains knowledge reflect the founation of our world
     hWIKI wiki = nullptr;
 
