@@ -53,7 +53,7 @@ const char * kv(const char * key)   {
     return keybuf;
 };
 
-void Ganglia::save_train_(struct save_train_model * data, struct train_state * train) { 
+void Ganglia::SaveTrain(struct save_train_model * data, struct train_state * train) { 
     int64_t iter = train->opt->iter;
     _INFO("%s: iter_%ld\n", __func__, iter);
     string sBaseName = get_train_filename(data->fn_model_out.c_str(), data->pattern_fn_it.c_str(), data->fn_latest.c_str(), -1  );
@@ -675,6 +675,19 @@ void LLaMeta::save_gguf(const char * filename, int flag) {
     gguf_free(fctx);
 }
 
+bool LLaMeta::GetOutput(std::vector<llama_token>&tokens,vector<float>& result)   {
+    float fLos = hOPT->Compute(tokens);
+    assert(logits->type==GGML_TYPE_F32);
+    size_t nz = ggml_nelements(logits),len=logits->ne[0],i; //logits->nb[0];
+    float *out = (float*)(logits->data);
+    // result.resize(nz);
+    assert(result.size()==len);
+    memcpy(result.data(),out,sizeof(float));
+    float sum=0;
+    for(auto f : result)    sum+=f;
+    return true;
+}
+
 void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,hGensor cur,hGensor _tNorm,hGensor _tOutput,hGensor KQ_pos, int flag)  {
     int n_tokens = hparams.n_ctx;
     auto train_params = hparams.common;
@@ -787,11 +800,23 @@ void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool 
     }*/
 }
 
+
+
 struct ggml_cgraph * llama_build_graph(llama_context & lctx,const llama_batch & batch,bool   worst_case);
 
-void LLaMeta::LAMA::Decode(std::vector<llama_token>&embd_inp,int flag) {
+std::string LAMA::T2STR( int32_t tok,int flag )                    {   
+    assert(_ctx!=nullptr);
+    std::string str = llama_token_to_piece(_ctx, tok);
+    return str;  
+}
+
+/**
+ *  1.  llama_set_inputs(lctx, u_batch);        llama_graph_compute(lctx, gf, n_threads);
+ *  2.  Extract logits and embeddings
+ */
+bool LAMA::Decode(std::vector<llama_token>&embd_inp,int start,int n_past) {
     llama_token eos = llama_token_eos(lmodel),id;
-    int i=0,n_consumed=0;
+    int i=0,n_consumed=start;
     std::vector<llama_token> embd;
     while ((int) embd_inp.size() > n_consumed) {
         id = embd_inp[n_consumed];
@@ -800,13 +825,25 @@ void LLaMeta::LAMA::Decode(std::vector<llama_token>&embd_inp,int flag) {
         embd.push_back(embd_inp[n_consumed]);
         ++n_consumed;       
     }
-    int n_eval = (int) embd.size(),n_past =0;
-    auto batch = llama_batch_get_one(&embd[0], n_eval, n_past, 0);
+    int n_eval = (int) embd.size();
+    struct llama_batch batch = {
+        /*n_tokens       =*/ n_eval,
+        /*tokens         =*/ embd.data(),
+        /*embd           =*/ nullptr,
+        /*pos            =*/ nullptr,
+        /*n_seq_id       =*/ nullptr,
+        /*seq_id         =*/ nullptr,
+        /*logits         =*/ nullptr,
+        /*all_pos_0      =*/ n_past,
+        /*all_pos_1      =*/ 1,
+        /*all_seq_id     =*/ 0,
+    };//llama_batch_get_one(&embd[0], n_eval, n_past, 0);
     llama_decode(_ctx,batch );      n_past+=n_eval;
     llama_ctx_get_(_ctx,(void**)(&logits_out),10);  
+    return true;
 }
 
-void LLaMeta::LAMA::Answer(std::vector<llama_token>&embd_inp,int flag) {
+void LAMA::Answer(std::vector<llama_token>&embd_inp,int flag) {
     llama_token eos = llama_token_eos(lmodel),id;
     int i=0,n_consumed=0;
     std::vector<llama_token> embd;    
@@ -850,4 +887,105 @@ void LLaMeta::LAMA::Answer(std::vector<llama_token>&embd_inp,int flag) {
     _INFO("%s => \"%s\"",__func__,token_str.c_str());
 
 }
+/*
+int64_t Ganglia::update_batch(struct train_opt_callback_data *data,int next_id,struct train_params_common *params) {
+    struct llama_context * lctx=data->lctx;
+    struct ggml_tensor   * tokens_input=data->tokens_input;
+    struct ggml_tensor   * target_probs=data->target_probs;
+    int64_t                example_id=next_id;
+    const size_t         * samples_offs=data->shuffled_samples_offs;
+    const size_t         * samples_begin=data->shuffled_samples_begin;
+    const size_t         * samples_size=data->shuffled_samples_size;
+          size_t           samples_count=data->samples_count;
+    const llama_token    * train_data=data->tokens_data;
+    size_t                 n_train_data=data->tokens_size;
+    bool                   separate_with_eos=params->separate_with_eos;
+    bool                   separate_with_bos=params->separate_with_bos;
+    bool                   fill_with_next_samples=params->fill_with_next_samples;
+    bool                   sample_random_offsets=params->sample_random_offsets;
+    GGML_ASSERT(samples_count > 0);
+    GGML_ASSERT(ggml_is_matrix(tokens_input));
+    GGML_ASSERT(ggml_is_3d(target_probs));
+    int64_t n_vocab  = target_probs->ne[0],n_tokens = tokens_input->ne[0],n_batch  = tokens_input->ne[1];
+    GGML_ASSERT(n_vocab  == target_probs->ne[0]);
+    GGML_ASSERT(n_tokens == target_probs->ne[1]);
+    GGML_ASSERT(n_batch  == target_probs->ne[2]);
+    GST_TIC(T0);
+    int64_t used_samples = 0;
+    ggml_set_f32(target_probs, 0.0f);
+    llama_token bos = llama_token_bos(llama_get_model(lctx));
+    llama_token eos = llama_token_eos(llama_get_model(lctx));
+    std::string sBos = llama_token_to_piece(lctx, bos),sEos = llama_token_to_piece(lctx, eos);
+    
+    // LLAMA_LOG_INFO("%s: example_id=%d n_batch=%d n_train_samples=%zu\n", __func__, example_id, n_batch, n_train_samples);
+    _INFO("BATCH_%ld ",example_id);   //, samples_count,n_train_data);nSampe=(%ld/%ld)
+    for (int k=0; k<n_batch; ++k) {
+        // LLAMA_LOG_INFO("%s: batch %d\n", __func__, k);
+        std::vector<int32_t> tok_ids;
+        size_t sample_idx   = (example_id + used_samples) % samples_count;
+        size_t sample_offs  = sample_random_offsets ? samples_offs[sample_idx] : 0;
+        size_t sample_begin = samples_begin[sample_idx];
+        size_t sample_size  = samples_size[sample_idx];
+        ++used_samples;
+        assert(sample_offs==0);
+        
+        // LLAMA_LOG_INFO("%s: sample_idx=%zu sample=%zu\n", __func__, sample_idx, sample);
+        GGML_ASSERT(sample_begin+sample_size-1 < n_train_data);
+        std::string sentence="";
+        ggml_set_i32_nd(tokens_input, 0, k, 0, 0, bos);
+        bool sample_separation_eos = !separate_with_eos;
+        bool sample_separation_bos = !separate_with_bos;
+        for (int64_t i=0; i<n_tokens; ++i) {
+            llama_token token = eos;
+            if (sample_offs >= sample_size && fill_with_next_samples) { //true only arg == "--fill-with-next-samples"
+                if (!sample_separation_eos) {
+                    // insert eos token to separate samples
+                    sample_separation_eos = true;
+                } else if (!sample_separation_bos) {
+                    // insert bos token to separate samples
+                    sample_separation_bos = true;
+                    token = bos;
+                } else {
+                    // sample separation is done, continue with next sample
+                    sample_separation_eos = !separate_with_eos;
+                    sample_separation_bos = !separate_with_bos;
+                    sample_offs  = 0;
+                    sample_idx   = (example_id + used_samples) % samples_count;
+                    sample_begin = samples_begin[sample_idx];
+                    sample_size  = samples_size[sample_idx];
+                    ++used_samples;
+                }
+            }
+            // note: no else-if here
+            if (sample_offs < sample_size) {
+                token = clamp(train_data[sample_begin+sample_offs], 0, (llama_token) (n_vocab - 1));
+                ++sample_offs;
+            }
+            ggml_set_f32_nd(target_probs,  token, (int) i, (int) k, 0, +1.0f);
+            tok_ids.push_back(token);
+            
+            if (i+1<n_tokens) {
+                ggml_set_i32_nd(tokens_input, (int) (i + 1), (int) k, 0, 0, token);
+                sentence = llama_token_to_piece(lctx, token);
+                // _INFO("%s,",sentence.c_str());
+            }
+        }
+        if(k<6)
+            _INFO(" %ld@\"%s...\"",sample_begin,sentence.c_str());     //sample_size
+        if(wiki!=nullptr && wiki->logits!=nullptr){
+            assert(target_probs->type == GGML_TYPE_F32);
+            wiki->Decode(tok_ids,0,0x0);
+            auto g=wiki->logits;   // wiki->logits = ggml_new_tensor_3d(ctx_input, GGML_TYPE_F32, n_vocab,  n_tokens, n_batch);
+            size_t ld0=g->nb[0],ld1=g->nb[1],ld2=g->nb[2],ld3=g->nb[3],off=k*ld2;          
+            assert(ld0==4); 
+            float *logits = wiki->logits_out;   //n_vocab,nToken,
+            // target=(float*)((char *)(target_probs->data)+i*ld1+k*ld2);
+            assert(sizeof(float)*n_vocab*n_tokens==ld2 && off>=0);    
+            memcpy(g->data+off,logits,ld2);                
 
+        }        
+    }
+    _INFO("\tT=%g\n",GST_TOC(T0));
+
+    return used_samples;
+}*/

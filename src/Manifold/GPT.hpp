@@ -20,13 +20,16 @@
 #include <regex>
 #include <stack>
 using namespace std;
-#include "common.h"
+#include "../LLAMA/common/common.h"
 #include "GG_util.hpp"   
+
+class Ganglia;
 
 struct WIKI {
     enum MERGE_MODE{
         OFF,MERGE_P,MERGE_T
     };
+    int32_t bos,eos;   
     MERGE_MODE teach=OFF;
     hGensor  logits = NULL;
     float * logits_out = nullptr;
@@ -34,7 +37,8 @@ struct WIKI {
     virtual hGensor P()    {   return nullptr; }
     virtual hGensor Target()    {   return nullptr; }
 
-    virtual void Decode(std::vector<int32_t>&ids,int flag=0x0)      {   assert(0); }
+    virtual std::string T2STR(int32_t tok,int flag=0x0 )                    {   assert(0); return "";    }
+    virtual bool Decode(std::vector<int32_t>&ids,int start,int n_past)      {   assert(0); return false;    }
     virtual void Answer(std::vector<int32_t>&ids,int flag=0x0)    {   assert(0); }
 
     WIKI();
@@ -51,7 +55,16 @@ class GeneratOnPrompt {
 
 protected:
     bool display              = true;
+    //compatible with LLAMA.cpp
     gpt_params params;
+    CLI_params hparams;
+
+    std::string prompt = "";
+    int ga_n,ga_w;
+    int n_predict = 16;
+    bool is_antiprompt        = false;
+    bool input_echo           = true;
+
     struct llama_sampling_params sparams;
     llama_model * model;
     llama_context * ctx;
@@ -60,59 +73,39 @@ protected:
     std::string path_session = params.path_prompt_cache;
     std::vector<llama_token> session_tokens;
     std::vector<llama_token> embd_inp;
-    std::vector<int>   input_tokens;  
-    std::vector<int>   output_tokens; 
+    std::vector<int>   input_tokens,output_tokens; 
     std::ostringstream output_ss;     
     bool is_interacting = false;
+    hWIKI wiki = nullptr;   
+    Ganglia *gang = nullptr;        //only ref
+
+    llama_token Sample(int idx = -1,bool is_resampling=false);
 
     virtual void Clear()    {
         llama_print_timings(ctx);
         // write_logfile(ctx, params, model, input_tokens, output_ss.str(), output_tokens);
 
         if (ctx_guidance) { llama_free(ctx_guidance); }
-        llama_free(ctx);
-        llama_free_model(model);
+        if(wiki==nullptr){
+            llama_free(ctx);        
+            llama_free_model(model);            
+        }
 
-        llama_sampling_free(ctx_sampling);
+        if(ctx_sampling!=nullptr)
+            llama_sampling_free(ctx_sampling);
         llama_backend_free();
     }
+
+    virtual void OnAntiPrompt(int flag);
+    virtual void OnInteractive(int& n_past,int& n_consumed,int& n_remain,int flag);
 public:
     GeneratOnPrompt()    {}
     GeneratOnPrompt(struct gpt_params&par_,int flag);
+    GeneratOnPrompt(hWIKI wiki_,Ganglia* hG_,int flag);
 
     virtual ~GeneratOnPrompt()   {   Clear();    }
-    /**
-     * load the model: ggml specific format using quantization. create a compute graph from the loaded model.
-    */
-    virtual bool Init(int flag=0x0){
-        llama_backend_init();
-        llama_numa_init(params.numa);       
-        std::tie(model, ctx) = llama_init_from_gpt_params(params);
-        if (sparams.cfg_scale > 1.f) {
-            struct llama_context_params lparams = llama_context_params_from_gpt_params(params);
-            ctx_guidance = llama_new_context_with_model(model, lparams);
-        }
-        if (model == NULL) {
-            LOG_TEE("%s: error: unable to load model\n", __func__);
-            return false;
-        }
+    virtual bool Init(const std::string& prompt_,int flag=0x0);    
 
-        const int n_ctx_train = llama_n_ctx_train(model);
-        const int n_ctx = llama_n_ctx(ctx);
-        LOG("n_ctx: %d\n", n_ctx);
-
-        if (n_ctx > n_ctx_train) {
-            LOG_TEE("%s: warning: model was trained on only %d context tokens (%d specified)\n",
-                    __func__, n_ctx_train, n_ctx);
-        }
-        LOG_TEE("\n");
-        LOG_TEE("%s\n", get_system_info(params).c_str());
-        // const bool add_bos = llama_should_add_bos_token(model);
-        // LOG("add_bos: %d\n", add_bos);
-        
-        return true;
-    }
-    
     std::vector<llama_token> guidance_inp;
     std::vector<llama_token> inp_pfx,inp_sfx,cml_pfx,cml_sfx;
     int guidance_offset = 0;
@@ -270,7 +263,7 @@ public:
         return 0x0;
     }
 
-    std::vector<llama_token> embd;
+    std::vector<llama_token> tokens;
     std::vector<llama_token> embd_guidance;
     // tokenized antiprompts
     std::vector<std::vector<llama_token>> antiprompt_ids;
@@ -282,11 +275,21 @@ public:
         }
     }
 
-    virtual int UpdateEmbed(int &n_past,int &n_remain,int &n_consumed,int &n_session_consumed,int &n_past_guidance,int &ga_i,int flag=0x0); 
+    virtual int UpdateEmbed(int nJob,int &n_past,int &n_remain,int &n_consumed,int &n_session_consumed,int &n_past_guidance,int &ga_i,int flag=0x0); 
 
-    virtual int Generate(int flag=0x0);
+    virtual int Generate(int nJob,int flag=0x0);
+    // virtual int Generate_0(int nJob,int flag=0x0);
 
     virtual void DisplayEmbd(bool input_echo,llama_context *ctx,int n_consumed,int flag=0x0);
             
 };
-typedef shared_ptr<GeneratOnPrompt> hGPT;
+typedef shared_ptr<GeneratOnPrompt> hGOPT;
+
+class GOPT_infinite : public GeneratOnPrompt{
+protected:    
+    int UpdateEmbed(int nJob,int &n_past,int &n_remain,int &n_consumed,int &n_session_consumed,int &n_past_guidance,int &ga_i,int flag=0x0) override;   
+
+public:
+    GOPT_infinite(struct gpt_params&par_,int flag) : GeneratOnPrompt(par_,flag)  {;}
+
+};

@@ -71,6 +71,46 @@ void static set_name(struct ggml_tensor * t, const char * n) {
 
 bool llama2params(struct llama_model * lmodel,struct CLI_params& cparam);
 
+struct LAMA : public WIKI   {
+    struct llama_model_params llama_mparams = llama_model_default_params();
+    struct llama_context_params cparams = llama_context_default_params();            
+    struct llama_model *lmodel = nullptr;
+    struct llama_context *_ctx = nullptr; 
+    ggml_cgraph * gf = nullptr;
+    hGensor res = nullptr;
+    
+    std::string T2STR(int32_t tok,int flag=0x0 ) override;   
+    bool Decode(std::vector<int32_t>&ids,int start,int n_past)  override;
+    void Answer(std::vector<int32_t>&ids,int flag)  override;
+
+    LAMA(CLI_params& hparams) {
+        llama_mparams.n_gpu_layers = hparams.common.n_gpu_layers;
+        llama_mparams.vocab_only = hparams.train=="scratch";     //need lmodel to tokenize training samples    
+        teach = (WIKI::MERGE_MODE)(hparams.tpWiki);
+        _INFO("%s: model base = '%s' nEmbd=%d wiki=%d\n", __func__, hparams.fn_model_base.c_str(),hparams.n_embd,hparams.tpWiki);
+        lmodel = llama_load_model_from_file(hparams.fn_model_base.c_str(), llama_mparams);                
+        if(llama_mparams.vocab_only){
+        }        
+        // InitEntryTensors(flag);
+        cparams.logits_all = true;
+        _ctx = llama_new_context_with_model(lmodel, cparams);  
+
+        bos = llama_token_bos(llama_get_model(_ctx));
+        eos = llama_token_eos(llama_get_model(_ctx));
+        std::string sBos = llama_token_to_piece(_ctx, bos),sEos = llama_token_to_piece(_ctx, eos);
+    }
+
+    virtual ~LAMA(){
+        if(gf!=nullptr)
+            ggml_graph_clear(gf);            
+        llama_free(_ctx);
+        llama_free_model(lmodel);
+    }
+
+    hGensor P()         override        {   assert(res!=nullptr);   return res; }
+    hGensor Target()    override        {   return nullptr; }
+};
+
 struct LLaMeta : public Ganglia {
     enum FFN_TYPE {
         SWIGLU = 0,
@@ -125,39 +165,7 @@ struct LLaMeta : public Ganglia {
     ggml_backend_buffer_t data = NULL;
     std::vector<struct ggml_tensor *> checkpoints;
     // struct train_params_common& train_params;
-    struct LAMA : public WIKI   {
-        struct llama_model_params llama_mparams = llama_model_default_params();
-        struct llama_context_params cparams = llama_context_default_params();            
-        struct llama_model *lmodel = nullptr;
-        struct llama_context *_ctx = nullptr; 
-        ggml_cgraph * gf = nullptr;
-        hGensor res = nullptr;
-        void Decode(std::vector<int32_t>&ids,int flag)  override;
-        void Answer(std::vector<int32_t>&ids,int flag)  override;
-
-        LAMA(CLI_params& hparams) {
-            llama_mparams.n_gpu_layers = hparams.common.n_gpu_layers;
-            llama_mparams.vocab_only = hparams.train=="scratch";     //need lmodel to tokenize training samples    
-            teach = (WIKI::MERGE_MODE)(hparams.wiki);
-            _INFO("%s: model base = '%s' nEmbd=%d wiki=%d\n", __func__, hparams.fn_model_base.c_str(),hparams.n_embd,hparams.wiki);
-            lmodel = llama_load_model_from_file(hparams.fn_model_base.c_str(), llama_mparams);                
-            if(llama_mparams.vocab_only){
-            }        
-            // InitEntryTensors(flag);
-            cparams.logits_all = true;
-            _ctx = llama_new_context_with_model(lmodel, cparams);  
-        }
-
-        virtual ~LAMA(){
-            if(gf!=nullptr)
-                ggml_graph_clear(gf);            
-            llama_free(_ctx);
-            llama_free_model(lmodel);
-        }
-
-        hGensor P()         override        {   assert(res!=nullptr);   return res; }
-        hGensor Target()    override        {   return nullptr; }
-    };
+    
 
     // LAMA lama;
     struct LAMA *lama( )    {   
@@ -174,7 +182,6 @@ struct LLaMeta : public Ganglia {
          
     struct ggml_init_params ctx_compute_params = {0, NULL,true,};
     struct ggml_context * ctx_compute = NULL;
-    hGensor  logits = NULL;
     hGensor  tokens_input  = NULL;
     struct ggml_cgraph * gb_tmp = NULL;
 
@@ -353,9 +360,15 @@ struct LLaMeta : public Ganglia {
     
     void CreateWiki(int flag=0x0)   override {
         wiki = std::make_shared<LAMA>(hparams);
+        gopt = std::make_shared<GeneratOnPrompt>(wiki,this,0x0);
+        if(gopt!=nullptr && gopt->Init("Building a website can be done in 10 simple steps:\\nStep 1:")){
+            
+        }else{
+            gopt.reset();       gopt = nullptr;
+        }
         // lama()->Init(hparams);
         std::vector<llama_token> embd_inp = {9493,279,16603,374,2133,1523,11};      //const char* promt = "when the smoke is going down,";    //when the smoke is going down, not up."    
-        // wiki->Decode(embd_inp,0x0);
+        // wiki->Decode(embd_inp,0,0x0);
         // wiki->Answer(embd_inp);      //only for debug
     }
     
@@ -564,7 +577,19 @@ struct LLaMeta : public Ganglia {
         BuildTarget(ctx,alloc,m_only,cur,_tNorm,_tOutput,KQ_pos);        
     }
 
-    virtual void Tokenize( int flag=0x0 )   {   
+    virtual void LoadTokens( int flag=0x0 )   {           
+        if(0)   {
+            if( hOPT->train_loader.Serialize(hparams.train_binpath,false) 
+                && hOPT->val_loader.Serialize(hparams.eval_binpath,false)){
+                    if(hOPT->train_loader.samp_size.size()>0){
+                        return;
+                    }
+                        
+            }            
+        }
+        std::vector<llama_token> tokens;
+        std::vector<size_t> samples_begin,samples_size;
+
         auto train_params = hparams.common;
         int n_ctx_tokens = hparams.n_ctx;
 
@@ -574,28 +599,33 @@ struct LLaMeta : public Ganglia {
         _INFO("%s: include-sample-start: %s\n", __func__, hparams.common.include_sample_start ? "true" : "false");
         tokenize_file(lama()->_ctx,
                 train_params.fn_train_data.c_str(),
-                train_params.sample_start,
-                train_params.include_sample_start,
-                train_params.overlapping_samples,
-                n_ctx_tokens,
-                hOPT->train_tokens,
-                hOPT->train_samples_begin,
-                hOPT->train_samples_size);
-        GGML_ASSERT(hOPT->train_samples_begin.size() == hOPT->train_samples_size.size());
-        _INFO("%s: number of training tokens: %zu\n", __func__, hOPT->train_tokens.size());        
+                train_params.sample_start,train_params.include_sample_start,train_params.overlapping_samples,n_ctx_tokens,
+                tokens,samples_begin,samples_size);
+        
+        //val_tokens = tokens[:32768]    train_tokens = tokens[32768:]        
+        hOPT->val_loader.SetSamples(tokens,samples_begin,samples_size,false,hparams);
+        hOPT->train_loader.SetSamples(tokens,samples_begin,samples_size,true,hparams);
+
+        hOPT->train_loader.Serialize(hparams.train_binpath,true);
+        hOPT->train_loader.Serialize(hparams.train_binpath,false);      //only for debug
+        hOPT->val_loader.Serialize(hparams.eval_binpath,true);
+        // GGML_ASSERT(hOPT->train_samples_begin.size() == hOPT->train_samples_size.size());
+        // _INFO("%s: number of training tokens: %zu\n", __func__, hOPT->train_tokens.size());        
     }
 
     
+    bool GetOutput(std::vector<llama_token>&tokens,vector<float>& result)   override;
 
     void Loss(int flag=0x0)     override   {
 
     }
 
     void Train(int flag=0x0)    override   {
-        Tokenize( flag );
+        hOPT->Init_CallbackData(lama()->_ctx,hparams.common,tokens_input,0x0);
+        LoadTokens( flag );
 
         auto train_params = hparams.common;
-        hOPT->Shuffle(n_vocab,train_params,flag);
+        // hOPT->Shuffle(n_vocab,train_params,flag);
         Dump(0x0);        
         auto opt = hOPT->opt;
         auto adam = opt->params.adam;
@@ -604,7 +634,7 @@ struct LLaMeta : public Ganglia {
             _INFO("%s: LARS(t_max=%g)\n", __func__,hparams.lars_ratio);
         print_build_info();
         auto train=hOPT->train;
-        struct train_opt_callback_data opt_cb_data;
+        // struct train_opt_callback_data opt_cb_data;
         // measure required memory for work buffer
         size_t max_work_size = ggml_graph_plan(gb, train_params.n_threads).work_size + GGML_OBJECT_SIZE;
         _INFO("%s: work_size = %zu bytes (%.1f MB)\n", __func__, max_work_size, (float) max_work_size / (1024.0f*1024.0f));
@@ -616,10 +646,10 @@ struct LLaMeta : public Ganglia {
             false,         // no_alloc
         };
         struct ggml_context * ctx_work = ggml_init(ctx_work_params);
-        hOPT->Init_CallbackData(opt_cb_data,lama()->_ctx,hparams.common,tokens_input,0x0);
+        
         int64_t t0 = ggml_time_ms();
-        save_train_(&save_data, opt_cb_data.train);      //warmup save
-        enum ggml_opt_result result = hOPT->ggml_train(ctx_work, &opt_cb_data,loss,target_probs,gf,gb,hparams);       
+        // SaveTrain(&save_data, opt_cb_data.train);      //warmup save
+        enum ggml_opt_result result = hOPT->ggml_train(ctx_work,loss,target_probs,gf,gb,hparams);       
 
         ggml_free(ctx_work);
         ggml_free(ctx_compute);
@@ -632,7 +662,7 @@ struct LLaMeta : public Ganglia {
         _INFO("\n");
     }
     void save_gguf(const char * fn_model_base, int flag)    override;
-    // virtual void save_train_(struct save_train_files_data * data, struct train_state * train);
+    // virtual void SaveTrain(struct save_train_files_data * data, struct train_state * train);
 };
 typedef shared_ptr<LLaMeta> hLLAMA;
 

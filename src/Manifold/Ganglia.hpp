@@ -187,9 +187,11 @@ class Ganglia : public std::enable_shared_from_this<Ganglia>    {
     Ganglia &operator=(const Ganglia &);
 
 protected:
-
     // wiki contains knowledge reflect the founation of our world
     hWIKI wiki = nullptr;
+    // Generate some results on prompt
+    hGOPT gopt = nullptr;
+    virtual int GenSentence(int flag=0x0);
 
     struct CLI_params hparams;
     save_train_model save_data;
@@ -206,7 +208,7 @@ protected:
     size_t nParams = 0, nParamsGGUF = 0, szModel = 0;
 
     hGensor in_node = nullptr, out_node = nullptr;
-    hGensor loss = NULL, target_probs = NULL;
+    hGensor loss = nullptr, target_probs = nullptr, logits = nullptr;
     hOptimizer hOPT;
     hDistillation hDistler;
     // performance
@@ -432,8 +434,7 @@ public:
         }
         AddLayer(layer, flag = 0x0);
     }
-
-    virtual int64_t update_batch(struct train_opt_callback_data *data,int next_id,struct train_params_common *params);
+    
     bool one_step(struct train_opt_callback_data *data, int accum_step, float *sched, int flag = 0x0)    {
         LearningCurve(0x0);
         struct train_params_common *params = data->params;
@@ -463,11 +464,11 @@ public:
             }
             // file saving
             const bool save_now = (params->save_every > 0) && (opt->iter - data->last_save_iter >= params->save_every);
-            if (save_now)            {
+            if (save_now)            {                
                 int new_iters = opt->iter - data->last_save_iter;
                 train->train_its += new_iters;
                 train->train_tokens += new_iters * opt->params.n_gradient_accumulation * n_batch * n_ctx;
-                save_train_(&save_data, train);
+                SaveTrain(&save_data, train);
                 /*if (data->save_cb)                {
                     data->save_cb(data->save_data, train);
                 }*/
@@ -500,25 +501,6 @@ public:
             }
             _INFO(">");            _INFO("\n");
         }
-        int64_t used_samples = update_batch(data,train->shuffle_next_sample,params);
-        /*int64_t used_samples = get_example_targets_batch(
-            data->lctx,
-            data->tokens_input,
-            data->target_probs,
-            train->shuffle_next_sample,
-            data->shuffled_samples_offs,
-            data->shuffled_samples_begin,
-            data->shuffled_samples_size,
-            data->samples_count,
-            data->tokens_data,
-            data->tokens_size,
-            params->separate_with_eos,
-            params->separate_with_bos,
-            params->fill_with_next_samples,
-            params->sample_random_offsets);*/
-
-        train->train_samples += used_samples;
-        train->shuffle_next_sample += used_samples;
 
         if (train->shuffle_next_sample >= train->shuffle_sample_count)
         {
@@ -556,6 +538,8 @@ public:
     virtual void Train(int flag = 0x0);
     virtual void Loss(int flag = 0x0) {}
 
+    virtual bool GetOutput(std::vector<llama_token>&tokens,vector<float>& result)   {   return false;   }
+
     virtual bool isValid()  {   return true;    }
 
     virtual void LearningCurve(int flag = 0x0)
@@ -565,7 +549,7 @@ public:
 #endif
     }
 
-    virtual void save_train_(struct save_train_model * data, struct train_state * train);
+    virtual void SaveTrain(struct save_train_model * data, struct train_state * train);
     virtual void save_gguf(const char * filename, int flag){}
 
     friend class GeNeuron;
