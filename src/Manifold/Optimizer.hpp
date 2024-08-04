@@ -39,7 +39,15 @@ protected:
     double zmuv_0 = 0.0,zmuv_1 = 0.0;
     struct ggml_cgraph *gf=nullptr,*gb=nullptr;     //only for debug
     llama_token bos,eos;
-    hGensor loss=nullptr, target_probs=nullptr, logits=nullptr; 
+    // hGensor loss=nullptr, target_probs=nullptr, preLogits=nullptr; 
+    hGensor hLoss( );
+    hGensor hTargetProbs( );
+    hGensor hPreLogits( );
+    float fLoss()   {
+        float *val = (float*)(hLoss()->data);
+        return *val;
+    }
+
     hGensor tokens_input = nullptr; 
     hScheduler scheduler = std::make_shared<DiscreteSchedule>( );
     bool isStopImprove = false;
@@ -66,13 +74,13 @@ public:
 
     Optimizer(Ganglia *g_,struct train_params_common& params_,int flag=0x0);
 
-    virtual float Compute(std::vector<llama_token>&tokens,int flag=0x0);
-    virtual float Evaluate(DataLoader&loader,int flag=0x0);
+    virtual float Compute(std::vector<llama_token>&tokens,bool isForward,int flag=0x0);
+    virtual float Evaluate(DataLoader&loader,int iter,int flag=0x0);
 
     virtual void UpdateLoss(int step,float sched,float loss,int flag=0x0){
         if(step>1){
             float last = scheduler->Last();
-            isStopImprove = step>0 ? (loss>last*1.1) : false;
+            isStopImprove = step>0 ? (loss>last*1.1) : false;   
             if(isStopImprove){
                 _INFO("%s_%d: StopImprove\n", __func__, opt->iter);
             }            
@@ -119,7 +127,7 @@ public:
         // opt_cb_data.shuffled_samples_size  = train_shuffled_samples_size.data();
 
         opt_cb_data.tokens_input           = tokens_input;
-        opt_cb_data.target_probs           = target_probs;
+        opt_cb_data.target_probs           = hTargetProbs();
         opt_cb_data.first_iter             = opt->iter;
         opt_cb_data.first_epoch            = train->train_epochs;
         opt_cb_data.iter_at_last_epoch     = -1;

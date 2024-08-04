@@ -41,7 +41,7 @@ struct ConsiceDict : public VariationaAE    {
     std::map<std::pair<std::string, std::string>, int> bpe_ranks;
     float * scores=nullptr;
     int * toktypes=nullptr;
-    int token_idx,n_vocab,score_idx,toktype_idx,merges_keyidx,n_merges;
+    int token_idx,n_vocab=-1,score_idx,toktype_idx,merges_keyidx,n_merges;
     id special_bos_id = 1,special_eos_id = 2,special_unk_id = 0,special_sep_id = -1,special_pad_id = -1,special_cls_id  = -1,special_mask_id = -1;
 
     enum llama_vocab_type     type     = LLAMA_VOCAB_TYPE_SPM;

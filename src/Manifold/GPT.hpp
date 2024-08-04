@@ -31,7 +31,7 @@ struct WIKI {
     };
     int32_t bos,eos;   
     MERGE_MODE teach=OFF;
-    hGensor  logits = NULL;
+    hGensor  preLogits = NULL;      //create@InitModel update@
     float * logits_out = nullptr;
 
     virtual hGensor P()    {   return nullptr; }
@@ -40,6 +40,7 @@ struct WIKI {
     virtual std::string T2STR(int32_t tok,int flag=0x0 )                    {   assert(0); return "";    }
     virtual bool Decode(std::vector<int32_t>&ids,int start,int n_past)      {   assert(0); return false;    }
     virtual void Answer(std::vector<int32_t>&ids,int flag=0x0)    {   assert(0); }
+    virtual void Reset(int flag=0x0)    {   assert(0); }
 
     WIKI();
     virtual ~WIKI() {}
@@ -61,10 +62,10 @@ protected:
 
     std::string prompt = "";
     int ga_n,ga_w;
-    int n_predict = 16;
+    int n_predict = 160;
     bool is_antiprompt        = false;
     bool input_echo           = true;
-
+    bool isCTXSampling = true;
     struct llama_sampling_params sparams;
     llama_model * model;
     llama_context * ctx;
@@ -79,7 +80,7 @@ protected:
     hWIKI wiki = nullptr;   
     Ganglia *gang = nullptr;        //only ref
 
-    llama_token Sample(int idx = -1,bool is_resampling=false);
+    virtual llama_token Sample(int idx = -1,bool is_resampling=false);
 
     virtual void Clear()    {
         llama_print_timings(ctx);
@@ -95,13 +96,13 @@ protected:
             llama_sampling_free(ctx_sampling);
         llama_backend_free();
     }
-
+    uint64_t rng_state;
     virtual void OnAntiPrompt(int flag);
     virtual void OnInteractive(int& n_past,int& n_consumed,int& n_remain,int flag);
 public:
     GeneratOnPrompt()    {}
     GeneratOnPrompt(struct gpt_params&par_,int flag);
-    GeneratOnPrompt(hWIKI wiki_,Ganglia* hG_,int flag);
+    GeneratOnPrompt(CLI_params&cp_, hWIKI wiki_,Ganglia* hG_,int flag);
 
     virtual ~GeneratOnPrompt()   {   Clear();    }
     virtual bool Init(const std::string& prompt_,int flag=0x0);    
@@ -291,5 +292,22 @@ protected:
 
 public:
     GOPT_infinite(struct gpt_params&par_,int flag) : GeneratOnPrompt(par_,flag)  {;}
-
 };
+
+class GOPT_Metropolis : public GeneratOnPrompt{
+protected:    
+    llama_token Sample(int idx = -1,bool is_resampling=false)   override;
+public:
+    GOPT_Metropolis(struct gpt_params&par_,int flag) : GeneratOnPrompt(par_,flag)  {
+        isCTXSampling = false;
+    }
+    GOPT_Metropolis(CLI_params&cp_,hWIKI wiki_,Ganglia* hG_,int flag): GeneratOnPrompt(cp_,wiki_,hG_,flag)  {
+        isCTXSampling = false;
+    }
+
+    virtual ~GOPT_Metropolis()   {   Clear();    }
+
+    // int Generate(int nJob,int flag=0x0) override;
+};
+
+int GPT_work(CLI_params& params);

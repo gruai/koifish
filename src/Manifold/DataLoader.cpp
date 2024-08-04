@@ -10,7 +10,7 @@ int64_t DataLoader::update_batch(int sample_id,std::shared_ptr<WIKI> wiki){
     struct train_params_common *params = &(hOPT->train_params);
     struct llama_context * lctx=(struct llama_context *)(hOPT->app_ctx);
     struct ggml_tensor   * tokens_input=hOPT->tokens_input;
-    struct ggml_tensor   * target_probs=hOPT->target_probs;
+    struct ggml_tensor   * target_probs=hOPT->hTargetProbs();
     int64_t samples_count=samp_size.size();
     // const llama_token    * train_data=tokens.data();
     size_t                 n_train_data=tokens.size();
@@ -31,10 +31,8 @@ int64_t DataLoader::update_batch(int sample_id,std::shared_ptr<WIKI> wiki){
     llama_token bos = llama_token_bos(llama_get_model(lctx));
     llama_token eos = llama_token_eos(llama_get_model(lctx));
     std::string sBos = llama_token_to_piece(lctx, bos),sEos = llama_token_to_piece(lctx, eos);
-
-    
-    // LLAMA_LOG_INFO("%s: sample_id=%d n_batch=%d n_train_samples=%zu\n", __func__, sample_id, n_batch, n_train_samples);
-    _INFO("BATCH_%ld ",sample_id);   //, samples_count,n_train_data);nSampe=(%ld/%ld)
+    bool isLog = false;
+    if(isLog) _INFO("BATCH_%ld ",sample_id);   //, samples_count,n_train_data);nSampe=(%ld/%ld)
     for (int k=0; k<n_batch; ++k) {
         // LLAMA_LOG_INFO("%s: batch %d\n", __func__, k);
         std::vector<int32_t> tok_ids;
@@ -86,12 +84,12 @@ int64_t DataLoader::update_batch(int sample_id,std::shared_ptr<WIKI> wiki){
                 // _INFO("%s,",sentence.c_str());
             }
         }
-        if(k<6)
+        if(isLog && k<6)
             _INFO(" %ld@\"%s...\"",sample_begin,sentence.c_str());     //sample_size
-        if(wiki!=nullptr && wiki->logits!=nullptr){
+        if(wiki!=nullptr && wiki->preLogits!=nullptr){
             assert(target_probs->type == GGML_TYPE_F32);
             wiki->Decode(tok_ids,0,0x0);
-            auto g=wiki->logits;   // wiki->logits = ggml_new_tensor_3d(ctx_input, GGML_TYPE_F32, n_vocab,  n_tokens, n_batch);
+            auto g=wiki->preLogits;   // wiki->logits = ggml_new_tensor_3d(ctx_input, GGML_TYPE_F32, n_vocab,  n_tokens, n_batch);
             size_t ld0=g->nb[0],ld1=g->nb[1],ld2=g->nb[2],ld3=g->nb[3],off=k*ld2;          
             assert(ld0==4); 
             float *logits = wiki->logits_out;   //n_vocab,nToken,
@@ -108,7 +106,7 @@ int64_t DataLoader::update_batch(int sample_id,std::shared_ptr<WIKI> wiki){
             }*/
         }        
     }
-    _INFO("\tT=%g\n",GST_TOC(T0));
+    if(isLog) _INFO("\tT=%g\n",GST_TOC(T0));
 
     return used_samples;
 }
@@ -119,7 +117,7 @@ int64_t DataLoader::update_batch(int sample_id,std::shared_ptr<WIKI> wiki){
         if (err_ != true) {                                   \
             fprintf(stderr, "!!! %s error %d at %s:%d\n",  \
                 #err, err_, __FILE__, __LINE__);                    \
-            exit(1);                                                \
+            throw("");                                                \
         }                                                           \
     } while (0)
 
@@ -147,6 +145,7 @@ bool FSerial::Serial(std::string &val,bool isSave,int flag){
 }
 
 bool DataLoader::Serialize(const std::string&path, bool isSave, int flag){
+try{
     FSerial S(path,isSave,flag);
     if(!S.isValid())
         return false;
@@ -163,15 +162,15 @@ bool DataLoader::Serialize(const std::string&path, bool isSave, int flag){
     _CHECK( S.Serial(shuffled_samples_offs,isSave,flag) );
     _CHECK( S.Serial(shuffled_samples_begin,isSave,flag) );
     _CHECK( S.Serial(shuffled_samples_size,isSave,flag) );
-    _INFO("\r%s %s@\"%s\" ... OK. N=%lld,hash=%lld\n",__func__,isSave?"save":"load",path.c_str(),
-        n_unique_tokens,shuffle_samples_hash);
+    _INFO("\r%s %s@\"%s\" ... OK. nSamp=%ld @[Datasets(nToken=%ld unique=%lld  hash=%llX]\n",__func__,isSave?"save":"load",path.c_str(),
+        samp_size.size(),tokens.size(),n_unique_tokens,shuffle_samples_hash);
     if(isSave){
         
     }else{
         size_t nSample = samp_size.size();
         num_batches = nSample/hOPT->train_params.n_batch;
         num_batches = nSample==0 ? 0 : max(num_batches,1); 
-        _INFO("%s@[%s]: tokens=%zu nSamp=%d nBach=%d\n", __func__,path.c_str(), tokens.size(),samp_size.size(),num_batches); 
+        _INFO("\t nBatch in each epoch=%d\n", num_batches); 
     }
     if(type==TYPE::DT_TRAIN){
         assert(train!=nullptr);
@@ -195,12 +194,15 @@ bool DataLoader::Serialize(const std::string&path, bool isSave, int flag){
         _INFO("\t%s@[%s]: hash=%lld\n", "train_state",path.c_str(), train->shuffle_samples_hash);  
     }
     return true;
+}catch(...){
+    return false;
+}
 }
 
-void DataLoader::SetSamples(std::vector<llama_token>& tokens_,std::vector<size_t>& samp_0,std::vector<size_t>& samp_L,
+void DataLoader::SetSamples(int nV,std::vector<llama_token>& tokens_,std::vector<size_t>& samp_0,std::vector<size_t>& samp_L,
     bool isTrain,CLI_params& hparams,int flag)  {
     double rSplit = 1.0-hparams.rSplit;
-    n_vocab = hparams.n_vocab;
+    n_vocab = nV;    //hparams.n_vocab;
     tokens = tokens_;
     size_t nSample = samp_0.size(),pick=(size_t)(nSample*rSplit);
     assert(samp_begin.size() == samp_size.size());   

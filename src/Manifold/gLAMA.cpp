@@ -105,8 +105,8 @@ string LLaMeta::__repr__( string& suffix,string& prefix,int flag)         {
         sprintf(buf+strlen(buf),"%s",layers[layers.size()-1]->__repr__(s,p,0x0).c_str());    
     }
     _T_repr_(target_probs,"  target_probs=",buf);  
-    if(wiki!=nullptr && wiki->logits!=nullptr)
-        _T_repr_(wiki->logits,"  wiki_logits=",buf);    
+    if(wiki!=nullptr && wiki->preLogits!=nullptr)
+        _T_repr_(wiki->preLogits,"  wiki_logits=",buf);    
     _T_repr_(loss,"  loss=",buf);   
 
     sprintf(buf+strlen(buf),"%s",suffix.c_str()); 
@@ -165,7 +165,7 @@ ConsiceDict::ConsiceDict(LLaMeta *lama_,int flag) : VariationaAE(),hLM(lama_)   
     reserve_x = true;
     isSymmetric = false;
     lama_embed = hparams.n_embd;
-
+    // n_vocab = hparams.n_vocab;      //Maybe 0!  would get correct value @LoadVocab!
     if(hLM->hparams.nabla==3){
          dims = {hparams.n_embd, 256};
         // dims = {hparams.n_embd, 1024, 256};
@@ -210,7 +210,8 @@ void ConsiceDict::LoadVocab_v1(const char*fn_model_base,struct CLI_params& param
 }*/
 
 void ConsiceDict::CreateEmbeddings(struct random_normal_distribution * rnd,int flag){
-    const uint32_t n_embd  = hparams.n_embd,n_vocab = hparams.n_vocab,last_dim=dims[dims.size()-1];
+    assert(hLM!=nullptr);
+    const uint32_t n_embd  = hparams.n_embd,last_dim=dims[dims.size()-1];
     auto lama = hLM->GetRawModel( );  
     auto ctx = hLM->ctx;    
     
@@ -231,7 +232,7 @@ void ConsiceDict::CreateEmbeddings(struct random_normal_distribution * rnd,int f
 }
 
 void ConsiceDict::Update_0(struct random_normal_distribution * rnd,int flag){
-    const uint32_t n_embd  = hparams.n_embd,n_vocab = hparams.n_vocab;
+    const uint32_t n_embd  = hparams.n_embd;
     auto lama = hLM->GetRawModel( );  
     if(isLoadTokenEmbed) {
         bool isParam = false;
@@ -254,16 +255,16 @@ void ConsiceDict::Update_0(struct random_normal_distribution * rnd,int flag){
     }
     // ggml_tensor_dequant(ctx_compute,gensor,GGML_TYPE_F32);
     if(0){
-        assert_shape_2d(tok_embeddings, hparams.n_embd, hparams.n_vocab);
+        assert_shape_2d(tok_embeddings, hparams.n_embd, n_vocab);
         assert_shape_1d(norm,           hparams.n_embd);
-        assert_shape_2d(output,         hparams.n_embd, hparams.n_vocab);              
+        assert_shape_2d(output,         hparams.n_embd, n_vocab);              
     }else{
 
     }      
 }
 
 void ConsiceDict::Update_1(struct random_normal_distribution * rnd,int flag) {
-    const uint32_t n_embd  = hparams.n_embd,n_vocab = hparams.n_vocab;
+    const uint32_t n_embd  = hparams.n_embd;
 
     bool isParam = false;
     // get tensors from llama_model (possibly mmapped)
@@ -306,9 +307,9 @@ void ConsiceDict::Update_1(struct random_normal_distribution * rnd,int flag) {
 
     // ggml_tensor_dequant(ctx_compute,gensor,GGML_TYPE_F32);
     if(0){
-        assert_shape_2d(tok_embeddings, hparams.n_embd, hparams.n_vocab);
+        assert_shape_2d(tok_embeddings, hparams.n_embd, n_vocab);
         assert_shape_1d(norm,           hparams.n_embd);
-        assert_shape_2d(output,         hparams.n_embd, hparams.n_vocab);              
+        assert_shape_2d(output,         hparams.n_embd, n_vocab);              
     }
     int i = 0;
     for(auto map : MAEC){
@@ -589,9 +590,13 @@ void VariationaAE::save_gguf(struct gguf_context *fctx, int flag)   {
     }   
 }
 
+std::string LLaMeta::Name()     {   
+    return "LAMA";  
+}
+
 void LLaMeta::save_gguf(const char * filename, int flag) {
     enum llama_ftype ftype = LLAMA_FTYPE_ALL_F32;       //LLAMA_FTYPE_MOSTLY_Q2_K
-    _INFO("%s: saving to %s ftype=%d ......\n", __func__, filename,ftype);
+    _INFO("[save] saving gguf to %s ftype=%d ......\n", filename,ftype);
     struct gguf_context * fctx = gguf_init_empty();
     int keyidx = -1;    
     
@@ -674,12 +679,12 @@ void LLaMeta::save_gguf(const char * filename, int flag) {
     gguf_write_to_file(fctx, filename, only_meta);
     gguf_free(fctx);
 }
-
+//would affect training process
 bool LLaMeta::GetOutput(std::vector<llama_token>&tokens,vector<float>& result)   {
-    float fLos = hOPT->Compute(tokens);
-    assert(logits->type==GGML_TYPE_F32);
-    size_t nz = ggml_nelements(logits),len=logits->ne[0],i; //logits->nb[0];
-    float *out = (float*)(logits->data);
+    float fLos = hOPT->Compute(tokens,true);
+    assert(preLogits->type==GGML_TYPE_F32);
+    size_t nz = ggml_nelements(preLogits),len=preLogits->ne[0],i; //preLogits->nb[0];
+    float *out = (float*)(preLogits->data);
     // result.resize(nz);
     assert(result.size()==len);
     memcpy(result.data(),out,sizeof(float));
@@ -704,11 +709,14 @@ void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool 
     }   else
         t32   = ggml_repeat            (ctx, _tNorm, t31);                            
     set_name(t32, "t32");     assert_shape_2d(t32, n_embd, N*n_batch);
-    hGensor  t33   = ggml_mul               (ctx, t32, t31);                             set_name(t33, "t33");     assert_shape_2d(t33, n_embd, N*n_batch);
-    hGensor  t34   = ggml_mul_mat           (ctx, _tOutput, t33);                          set_name(t34, "t34");     assert_shape_2d(t34, n_vocab, N*n_batch);
-    hGensor  t35   = ggml_reshape_3d        (ctx, t34, n_vocab, N, n_batch);             set_name(t35, "t35");     assert_shape_3d(t35, n_vocab, N, n_batch);
-    if(wiki!=nullptr && wiki->logits!=nullptr)    {   //GPT mode's input is different with TRAINING!!!
-        t35 = ggml_add(ctx,t35,wiki->logits);
+    hGensor  t33   = ggml_mul               (ctx, t32, t31);                             set_name(t33, "t33");     
+    assert_shape_2d(t33, n_embd, N*n_batch);
+    hGensor  t34   = ggml_mul_mat           (ctx, _tOutput, t33);                          set_name(t34, "t34");     
+    assert_shape_2d(t34, n_vocab, N*n_batch);
+    hGensor  t35   = ggml_reshape_3d        (ctx, t34, n_vocab, N, n_batch);             set_name(t35, "t35");     
+    assert_shape_3d(t35, n_vocab, N, n_batch);
+    if(wiki!=nullptr && wiki->preLogits!=nullptr)    {   //GPT mode's input is different with TRAINING!!!
+        t35 = ggml_add(ctx,t35,wiki->preLogits);
     }
     hGensor  t36   = ggml_cross_entropy_loss(ctx, t35, target_probs);                    set_name(t36, "t36");     assert_shape_1d(t36, 1);
     if(hDict->nLevel>0){
@@ -776,7 +784,7 @@ void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool 
     gb->n_leafs = n_leafs_before;
     gb->n_nodes = n_nodes_before;
 
-    logits = t35;
+    preLogits = t35;
     // return t36;
     loss = t36;
 
@@ -844,6 +852,7 @@ bool LAMA::Decode(std::vector<llama_token>&embd_inp,int start,int n_past) {
 }
 
 void LAMA::Answer(std::vector<llama_token>&embd_inp,int flag) {
+    // Answer_0(embd_inp,flag);     return;
     llama_token eos = llama_token_eos(lmodel),id;
     int i=0,n_consumed=0;
     std::vector<llama_token> embd;    
@@ -855,13 +864,15 @@ void LAMA::Answer(std::vector<llama_token>&embd_inp,int flag) {
     while ((int) embd_inp.size() > n_consumed) {
         id = embd_inp[n_consumed];
         const std::string token_str = llama_token_to_piece(_ctx, id);
-        _INFO("%s",token_str.c_str());
+        _INFO("%s ",token_str.c_str());
         embd.push_back(embd_inp[n_consumed]);
         // push the prompt in the sampling context in order to apply repetition penalties later
         // for the prompt, we don't apply grammar rules
         llama_sampling_accept(ctx_sampling, _ctx, embd_inp[n_consumed], false);
         ++n_consumed;       
     }
+    fflush(stdout);
+    
     int n_eval = (int) embd.size(),n_past =0;
     auto batch = llama_batch_get_one(&embd[0], n_eval, n_past, 0);
             //     llama_token token = llama_token_bos(&ctx->model); // not actually used by llama_build_graph, but required to choose between token and embedding inputs graph
@@ -885,8 +896,8 @@ void LAMA::Answer(std::vector<llama_token>&embd_inp,int flag) {
     llama_sampling_accept(ctx_sampling, _ctx, id, true);
     const std::string token_str = llama_token_to_piece(_ctx, id);
     _INFO("%s => \"%s\"",__func__,token_str.c_str());
-
 }
+
 /*
 int64_t Ganglia::update_batch(struct train_opt_callback_data *data,int next_id,struct train_params_common *params) {
     struct llama_context * lctx=data->lctx;

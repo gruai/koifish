@@ -92,7 +92,7 @@ struct LAMA : public WIKI   {
         if(llama_mparams.vocab_only){
         }        
         // InitEntryTensors(flag);
-        cparams.logits_all = true;
+        cparams.logits_all = false;
         _ctx = llama_new_context_with_model(lmodel, cparams);  
 
         bos = llama_token_bos(llama_get_model(_ctx));
@@ -105,6 +105,11 @@ struct LAMA : public WIKI   {
             ggml_graph_clear(gf);            
         llama_free(_ctx);
         llama_free_model(lmodel);
+    }
+
+    void Reset(int flag=0x0)    override   {   
+        llama_free(_ctx);
+        _ctx = llama_new_context_with_model(lmodel, cparams);  
     }
 
     hGensor P()         override        {   assert(res!=nullptr);   return res; }
@@ -159,7 +164,8 @@ struct LLaMeta : public Ganglia {
 
         string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
     };
-    uint32_t n_vocab=0,n_batch=0,n_ctx=0,n_embd=0, n_head=0,n_rot=0,n_ff=0;
+    uint32_t n_vocab=0,n_ctx=0,n_embd=0, n_head=0,n_rot=0,n_ff=0;
+    uint32_t n_batch=0;     //Number of samples in each batch
     bool measure_only=false;  
     ggml_gallocr_t alloc;
     ggml_backend_buffer_t data = NULL;
@@ -179,7 +185,8 @@ struct LLaMeta : public Ganglia {
         assert(lama->lmodel!=nullptr);   
         return lama->lmodel;  
     }
-         
+    
+    std::string Name()  override;
     struct ggml_init_params ctx_compute_params = {0, NULL,true,};
     struct ggml_context * ctx_compute = NULL;
     hGensor  tokens_input  = NULL;
@@ -256,7 +263,7 @@ struct LLaMeta : public Ganglia {
         hparams.n_ff = jKV(hparams.jConfig,{"model","ffn","length"},hparams.n_ff);   
         uint32_t n_embd  = hparams.n_embd;        
         const uint32_t n_layer = hparams.n_layer;
-        const uint32_t n_vocab = hparams.n_vocab;
+        const uint32_t n_vocab = hDict->n_vocab;    // hDict->n_vocab;
         const uint32_t n_ff    = hparams.n_ff;
         auto train_params = hparams.common;
         hparams.n_rot = hparams.n_embd / hparams.n_head;    
@@ -302,7 +309,7 @@ struct LLaMeta : public Ganglia {
             }
         }
         if(wiki!=nullptr && wiki->teach==WIKI::MERGE_P) {
-            wiki->logits = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_vocab,  hparams.n_ctx, train_params.n_batch);
+            wiki->preLogits = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_vocab,  hparams.n_ctx, train_params.n_batch);
         }
         nParams = 0;
         
@@ -345,7 +352,7 @@ struct LLaMeta : public Ganglia {
     //for tokens_input & target_probs
     virtual void InitEntryTensors(int flag=0x0) {
         auto train_params = hparams.common;
-        int n_tokens = hparams.n_ctx,n_vocab = hparams.n_vocab,n_batch = train_params.n_batch;
+        int n_tokens = hparams.n_ctx,n_vocab = hDict->n_vocab,n_batch = train_params.n_batch;
         struct ggml_init_params ctx_input_params = {// mem_size mem_buffer no_alloc
             ggml_tensor_overhead() * 2, NULL,true,                        
         };
@@ -360,23 +367,27 @@ struct LLaMeta : public Ganglia {
     
     void CreateWiki(int flag=0x0)   override {
         wiki = std::make_shared<LAMA>(hparams);
-        gopt = std::make_shared<GeneratOnPrompt>(wiki,this,0x0);
-        if(gopt!=nullptr && gopt->Init("Building a website can be done in 10 simple steps:\\nStep 1:")){
-            
-        }else{
-            gopt.reset();       gopt = nullptr;
+        if(hparams.tpWiki>=0){
+            // gopt = std::make_shared<GeneratOnPrompt>(wiki,this,0x0);
+            gopt = std::make_shared<GOPT_Metropolis>(hparams,wiki,this,0x0);
+            if(gopt!=nullptr && gopt->Init(hparams.prompt)){
+                //GenSentence(0x0);   //only for debug
+            }else{
+                gopt.reset();       gopt = nullptr;
+            }
+            // lama()->Init(hparams);
+            std::vector<llama_token> embd_inp = {9493,279,16603,374,2133,1523,11};      //const char* promt = "when the smoke is going down,";    //when the smoke is going down, not up."    
+            // wiki->Decode(embd_inp,0,0x0);
+            // wiki->Answer(embd_inp);      //only for debug
         }
-        // lama()->Init(hparams);
-        std::vector<llama_token> embd_inp = {9493,279,16603,374,2133,1523,11};      //const char* promt = "when the smoke is going down,";    //when the smoke is going down, not up."    
-        // wiki->Decode(embd_inp,0,0x0);
-        // wiki->Answer(embd_inp);      //only for debug
+        
     }
     
     virtual void Init(int flag=0x0)     {
         auto train_params = hparams.common;
         if (train_params.seed == LLAMA_DEFAULT_SEED) {
             train_params.seed = time(NULL); 
-        }
+        }        
         CreateWiki();
       
         if(hparams.only_infer)  {
@@ -411,7 +422,7 @@ struct LLaMeta : public Ganglia {
 
         InitModel(flag);
         // hGensor tok_0 = UpdateGensor(TN(LLM_TENSOR_TOKEN_EMBD));  //only for debug llama_get_model_tensor
-        n_vocab = hparams.n_vocab;          n_batch  = train_params.n_batch;        n_ctx = hparams.n_ctx;        n_embd = hparams.n_embd;
+        n_vocab = hDict->n_vocab;          n_batch  = train_params.n_batch;        n_ctx = hparams.n_ctx;        n_embd = hparams.n_embd;
         n_head = hparams.n_head,            n_rot = hparams.n_rot,     n_ff = hparams.n_ff;
         // opt->iter = train->train_its;
         
@@ -450,7 +461,7 @@ struct LLaMeta : public Ganglia {
 
     void BuildGraph(int flag=0x0)   override   {        // measure required memory for compute tensors
         int n_tokens = hparams.n_ctx;
-        int n_vocab  = hparams.n_vocab;
+        int n_vocab  = hDict->n_vocab;
         auto train_params = hparams.common;
         int n_batch  = train_params.n_batch;
         ctx_compute_params.mem_size = 2*LLAMA_TRAIN_MAX_NODES*ggml_tensor_overhead() +
@@ -518,7 +529,7 @@ struct LLaMeta : public Ganglia {
 
     virtual void build_finetune(struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,int flag=0x0)   {        // measure required memory for compute tensors
         int n_tokens = hparams.n_ctx;
-        int n_vocab  = hparams.n_vocab;
+        int n_vocab  = hDict->n_vocab;
         auto train_params = hparams.common;
         int n_batch  = train_params.n_batch;
         measure_only = m_only;
@@ -578,7 +589,7 @@ struct LLaMeta : public Ganglia {
     }
 
     virtual void LoadTokens( int flag=0x0 )   {           
-        if(0)   {
+        if(1)   {
             if( hOPT->train_loader.Serialize(hparams.train_binpath,false) 
                 && hOPT->val_loader.Serialize(hparams.eval_binpath,false)){
                     if(hOPT->train_loader.samp_size.size()>0){
@@ -603,11 +614,11 @@ struct LLaMeta : public Ganglia {
                 tokens,samples_begin,samples_size);
         
         //val_tokens = tokens[:32768]    train_tokens = tokens[32768:]        
-        hOPT->val_loader.SetSamples(tokens,samples_begin,samples_size,false,hparams);
-        hOPT->train_loader.SetSamples(tokens,samples_begin,samples_size,true,hparams);
+        hOPT->val_loader.SetSamples(hDict->n_vocab,tokens,samples_begin,samples_size,false,hparams);
+        hOPT->train_loader.SetSamples(hDict->n_vocab,tokens,samples_begin,samples_size,true,hparams);
 
         hOPT->train_loader.Serialize(hparams.train_binpath,true);
-        hOPT->train_loader.Serialize(hparams.train_binpath,false);      //only for debug
+        // hOPT->train_loader.Serialize(hparams.train_binpath,false);      //only for debug
         hOPT->val_loader.Serialize(hparams.eval_binpath,true);
         // GGML_ASSERT(hOPT->train_samples_begin.size() == hOPT->train_samples_size.size());
         // _INFO("%s: number of training tokens: %zu\n", __func__, hOPT->train_tokens.size());        
@@ -884,7 +895,7 @@ struct LLAMA_LORA  : public LLaMeta {
 
     virtual void build_finetune(struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,int flag=0x0)     {   
         int n_tokens = hparams.n_ctx;
-        int n_vocab  = hparams.n_vocab;
+        int n_vocab  = hDict->n_vocab;
         auto train_params = hparams.common;
         int n_batch  = train_params.n_batch;
         measure_only = m_only;
@@ -892,7 +903,7 @@ struct LLAMA_LORA  : public LLaMeta {
         const int n_past = 0;
         const int N = n_tokens;
         const int n_ctx       = hparams.n_ctx;
-        // const int n_vocab     = hparams.n_vocab;
+        // const int n_vocab     = hDict->n_vocab;
         const int n_embd      = hparams.n_embd;
         const int n_layer     = hparams.n_layer;
         const int n_head      = hparams.n_head;

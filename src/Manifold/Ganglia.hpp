@@ -119,7 +119,8 @@ struct BROWN_Motion    {
         // int n_embd_gqa = hparams.n_embd_gqa();
         int n_embd_head = hparams.n_embd_head( );
         n_head_kv=hparams.n_head_kv;
-        n_vocab = hparams.n_vocab;          n_batch  = hparams.common.n_batch;          
+        // n_vocab = hparams.n_vocab;          
+        n_batch  = hparams.common.n_batch;          
         n_ctx = hparams.n_ctx;              n_embd = hparams.n_embd;
         n_head = hparams.n_head,            n_rot = hparams.n_rot,                    n_ff = hparams.n_ff;
         N = n_ctx;
@@ -208,7 +209,8 @@ protected:
     size_t nParams = 0, nParamsGGUF = 0, szModel = 0;
 
     hGensor in_node = nullptr, out_node = nullptr;
-    hGensor loss = nullptr, target_probs = nullptr, logits = nullptr;
+    hGensor loss = nullptr, target_probs = nullptr;
+    hGensor preLogits = nullptr;        //no SOFTMAX
     hOptimizer hOPT;
     hDistillation hDistler;
     // performance
@@ -484,8 +486,8 @@ public:
                 impr_plot = 0;
             if (std::isnan(opt->loss_before) || std::isnan(opt->loss_after))
                 impr_plot = 0;
-            _INFO("%s: iter=%6d sample=%zu/%zu sched=%.3f loss=%f S=[%g-%g]",
-                  __func__, opt->iter, std::min(1 + train->shuffle_next_sample, train->shuffle_sample_count), train->shuffle_sample_count,
+            _INFO("[train] iter=%6d sample=%zu/%zu sched=%.3f loss=%f S=[%g-%g]",
+                  opt->iter, std::min(1 + train->shuffle_next_sample, train->shuffle_sample_count), train->shuffle_sample_count,
                   *sched, opt->loss_after,hOPT->zmuv_0,hOPT->zmuv_1);
             if (data->millis_per_iter > 0)            {
                 _INFO(" dt=");
@@ -560,4 +562,5 @@ public:
     friend class Optimizer;
     friend class Distillation;
     friend class ConsiceDict;
+    friend class GeneratOnPrompt;
 };

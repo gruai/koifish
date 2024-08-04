@@ -68,6 +68,7 @@ public:
         if(isSave){
             if(fwrite(val,sizeof(T),nz,_stream)!=nz)
                 return false;
+            fflush(_stream);
         }else{
             if(fread(val,sizeof(T),nz,_stream)!=nz)
                 return false;
@@ -91,17 +92,17 @@ public:
         if(isSave){
             if(fwrite(arrT.data(),sizeof(T),nT,_stream)!=nT)
                 return false;
+            fflush(_stream);
         }else{
-            // arrT.clear();       arrT.resize(nT);
-            // if(fread(arrT.data(),sizeof(T),nT,_stream)!=nT)
-            //     return false;
-            T* buf = new T[nT];
-            size_t nRead = fread((void*)(buf),sizeof(T),nT,_stream);
-            if(nRead!=nT)
+            arrT.clear();       arrT.resize(nT);
+            if(fread(arrT.data(),sizeof(T),nT,_stream)!=nT)
                 return false;
-            // arrT = buf;      
-            std::copy(buf, buf + nT, std::back_inserter(arrT));
-            delete[] buf;
+            // T* buf = new T[nT];
+            // size_t nRead = fread((void*)(buf),sizeof(T),nT,_stream);
+            // if(nRead!=nT)
+            //     return false;    
+            // std::copy(buf, buf + nT, std::back_inserter(arrT));
+            // delete[] buf;
         }
         return true;
     }
@@ -141,7 +142,8 @@ struct DataLoader   {
     Optimizer *hOPT = nullptr;
     //compatible with train_opt_callback_data@LLAMA.cpp
     struct train_opt_callback_data callback_data;
-    int n_vocab,num_batches;
+    int n_vocab = 0 ;
+    int num_batches;    //number of batchs in each epoch
 
     train_state *train=nullptr;
     std::vector<llama_token> tokens;
@@ -159,7 +161,7 @@ struct DataLoader   {
     // batch and token information
     size_t B=-1;
     size_t T=-1;
-    // size_t num_tokens=0; // total number of tokens
+    size_t num_tokens=0; // total number of tokens, may different with tokens.size()!
     size_t shard_num_samples=0;  // total number of samples in the current shard per process
     // shards and current position
     glob_t glob_result; // stores the result of glob, for all shards we want to iterate
@@ -323,7 +325,7 @@ struct DataLoader   {
         buffer = (uint16_t*)mallocCheck((B * T + 1) * sizeof(uint16_t));
         inputs = (int*)mallocCheck(B * T * sizeof(int));
         targets = (int*)mallocCheck(B * T * sizeof(int));
-        // num_tokens = ntok_total;
+        num_tokens = ntok_total;
 
         // reset the  to initialize it
         reset( );
@@ -366,7 +368,7 @@ struct DataLoader   {
 #ifdef _DATA_LOADER_LITE_
 #else
     virtual bool Serialize(const std::string&path, bool isSave, int flag=0x0);
-    virtual void SetSamples(std::vector<llama_token>& tokens_,std::vector<size_t>& begin_,std::vector<size_t>& size_,
+    virtual void SetSamples(int nV,std::vector<llama_token>& tokens_,std::vector<size_t>& begin_,std::vector<size_t>& size_,
         bool isTrain,CLI_params& train_params,int flag=0x0);
     void Shuffle(int flag=0x0);
 #endif
