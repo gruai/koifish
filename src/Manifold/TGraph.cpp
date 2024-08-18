@@ -11,7 +11,7 @@
 #include "../ggex/GG_util.hpp"
 #include "../lenda/kernel/SVD.hpp"
 
-hGensor Ganglia::AddTensor(const std::string&key_,enum ggml_type tp,const SHAPE& shape,int flag){
+hGensor Fish::AddTensor(const std::string&key_,enum ggml_type tp,const SHAPE& shape,int flag){
     hGensor gg_tensor = nullptr;
     if(shape.size()==4)  {
         gg_tensor = ggml_new_tensor_4d(ctx, tp, shape[0], shape[1], shape[2], shape[3]);
@@ -22,12 +22,13 @@ hGensor Ganglia::AddTensor(const std::string&key_,enum ggml_type tp,const SHAPE&
     }else{
         assert(0);
     }  
-    assert(tensors.find(key_) == tensors.end());
-    tensors[key_] = gg_tensor;    // model.tensors["image_encoder.pos_embed"] = pe;   
+    Gensor2Map(gg_tensor);
+    // assert(tensors.find(key_) == tensors.end());
+    // tensors[key_] = gg_tensor;    
     return gg_tensor;   
 }
 
-void SLP::Build(Ganglia* graph,const std::string&key_,const SHAPE& shape_,int flag)      {
+void SLP::Build(Fish* graph,const std::string&key_,const SHAPE& shape_,int flag)      {
     shape = shape_;
     struct ggml_context * ctx = graph->ctx;
     if(shape.size()==2){    
@@ -39,10 +40,12 @@ void SLP::Build(Ganglia* graph,const std::string&key_,const SHAPE& shape_,int fl
         w = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, shape[0], shape[1], shape[2], shape[3]);
         b = ggml_new_tensor_3d(ctx, GGML_TYPE_F32,            1,            1, shape[3]);
     }
-    assert(graph->tensors.find(key_+".weight") == graph->tensors.end());
-    assert(graph->tensors.find(key_+".bias") == graph->tensors.end());
-    graph->tensors[key_+".weight"] = w;
-    graph->tensors[key_+".bias"] = b;
+    // assert(graph->tensors.find(key_+".weight") == graph->tensors.end());
+    // assert(graph->tensors.find(key_+".bias") == graph->tensors.end());
+    // graph->tensors[key_+".weight"] = w;
+    // graph->tensors[key_+".bias"] = b;
+    graph->Gensor2Map(w);           
+    graph->Gensor2Map(b);
     if(compression==SVD){
         
         assert(shape.size()==2);
@@ -119,17 +122,19 @@ hGensor SLP::Build_2(struct ggml_context * ctx0,hGensor cur,int flag)    {
 }
 
 
-void LayerNormal::Build(Ganglia* graph,const std::string&key_,const SHAPE& shape,int flag)    {
+void LayerNormal::Build(Fish* graph,const std::string&key_,const SHAPE& shape,int flag)    {
     struct ggml_context * ctx = graph->ctx;
     assert(shape.size()==1 && shape[0]>0 );
     int nIn=shape[0];
     w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, nIn);
     b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, nIn);
-    graph->tensors[key_+".weight"] = w;
-    graph->tensors[key_+".bias"] = b;
+    graph->Gensor2Map(w);
+    graph->Gensor2Map(b);
+    // graph->tensors[key_+".weight"] = w;
+    // graph->tensors[key_+".bias"] = b;
 }
 
-SelfAttention::SelfAttention(Ganglia* graph,const std::string&key_,const SHAPE& shape,int flag)    {
+SelfAttention::SelfAttention(Fish* graph,const std::string&key_,const SHAPE& shape,int flag)    {
     assert(shape.size()==3);
     SHAPE sp0={shape[0],shape[1]},sp1={shape[1],shape[2]};
     q.Build(graph,key_+".q_proj",sp0,0x0);        //mask_decoder.transformer.layers.0.self_attn.q_proj.weight
@@ -146,7 +151,7 @@ SelfAttention::SelfAttention(Ganglia* graph,const std::string&key_,const SHAPE& 
                 // l.self_attn.out_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
 }
 
-NT_SAM::NT_SAM(hGanglia graph,const std::string&key_,const SHAPE& shape,bool is_global_,int flag)    :
+NT_SAM::NT_SAM(hFISH graph,const std::string&key_,const SHAPE& shape,bool is_global_,int flag)    :
     NeLayer(key_,flag),is_global_attn(is_global_)   {
     struct ggml_context * ctx = graph->ctx;         assert(ctx!=nullptr);
     assert(shape.size()==4 && shape[0]>0);
@@ -295,7 +300,7 @@ hGensor NT_SAM::Build_(struct ggml_context * ctx0,hGensor inpL,float eps,
     return inpL;
 }
 
-hGensor NT_SAM::Forward(hGanglia graph,int nEmbed,int nHead,int W,int H,hGensor cur,int flag){
+hGensor NT_SAM::Forward(hFISH graph,int nEmbed,int nHead,int W,int H,hGensor cur,int flag){
     struct ggml_context * ctx0 = graph->ctx;    
     cur = ggml_mul_mat(ctx0, in_proj.w, cur);
     cur = ggml_add_inplace(ctx0, cur, in_proj.b);

@@ -27,6 +27,7 @@ Implements:
 #define HEADER_SIZE 256
 
 class WIKI;
+class Fish;
 struct train_state;
 class Optimizer;
 
@@ -130,9 +131,62 @@ public:
         }
         return true;
     }
+    
 };
 
-struct DataLoader   {
+struct SAMP{
+    size_t pos=-1,len=-1;       //  range is [pos,pos+len)
+    size_t off_cycle=0;         // more random
+
+    SAMP()  {}
+    SAMP(size_t p,size_t l) : pos(p),len(l) {
+
+    }
+    virtual ~SAMP() {}
+
+    bool Serialize(FSerial&S, bool isSave, int flag);
+
+    static size_t HASH(const char* fn, const std::vector<SAMP*>& samps) {
+        std::hash<std::string> h_string;
+        std::hash<unsigned long long> h_ull;
+        size_t h = h_string(std::string(fn)),sample_count=samps.size();
+        h = hash_combine(h, h_ull((unsigned long long) sample_count));
+        for (size_t i=0; i< sample_count; ++i) {
+            h = hash_combine(h, h_ull((unsigned long long) samps[i]->pos));
+            h = hash_combine(h, h_ull((unsigned long long) samps[i]->len));
+        }
+        return h;
+    }
+};
+// typedef std::shared_ptr<SAMP> hSAMP;
+typedef SAMP* hSAMP;
+
+class DataLoader   {
+protected:  
+    std::string sentence="";
+    std::vector<int32_t> tok_ids;
+    bool sample_separation_eos,sample_separation_bos;
+    size_t n_tokens=-1;
+    int32_t bos,eos;
+    std::vector<hSAMP> all_samps;
+    std::vector<size_t> idcs;      //would change epoch by epoch(shuffle,subsampling...)
+    int64_t N4Train() {
+        return idcs.size();
+    }   
+
+public:
+    int64_t len() {
+        return all_samps.size();
+    }
+    hSAMP SampAt(size_t idx_){
+        assert(idx_<idcs.size());
+        size_t id = idcs[idx_];
+        assert(id<len());
+        return all_samps[id];
+    }
+
+    void Samp2Batch(int k,hSAMP samp,struct ggml_tensor *tokens_input,struct ggml_tensor *target_probs,struct train_params_common& params,int flag=0x0);
+
     enum TYPE{
         DT_TRAIN=1,DT_EVAL,DT_PREDICT,
         DT_MERGE
@@ -141,18 +195,20 @@ struct DataLoader   {
 
     Optimizer *hOPT = nullptr;
     //compatible with train_opt_callback_data@LLAMA.cpp
-    struct train_opt_callback_data callback_data;
-    int n_vocab = 0 ;
+    struct train_opt_callback_data callback_data;   
+    size_t n_vocab = 0 ;
     int num_batches;    //number of batchs in each epoch
 
     train_state *train=nullptr;
     std::vector<llama_token> tokens;
-    size_t n_unique_tokens=0;
-    std::vector<size_t> samp_begin,samp_size;
-    std::vector<size_t> shuffled_samples_offs;
-    std::vector<size_t> shuffled_samples_begin;
-    std::vector<size_t> shuffled_samples_size;
-    size_t shuffle_samples_hash;
+    size_t n_unique_tokens=-1;
+
+    size_t shuffle_samples_hash = 0x0;
+    // std::vector<size_t> samp_begin,samp_size;
+    // std::vector<size_t> shuffled_samples_offs;
+    // std::vector<size_t> shuffled_samples_begin;
+    // std::vector<size_t> shuffled_samples_size;
+    
 
     // variables related to distributed training
     // each process/worker has to access different parts of the data
@@ -171,13 +227,13 @@ struct DataLoader   {
     FILE* tokens_file=nullptr;
     // data buffers
     uint16_t* buffer; // we fread data from file into this buffer
-    int* inputs;  // input tokens into transformer
-    int* targets; // target tokens for the transformer
+    int* inputs=nullptr;  // input tokens into transformer
+    int* targets=nullptr; // target tokens for the transformer
     // random shuffle related variables
     mt19937_torch shuffle_rng;
     int should_shuffle;
-    int* shard_indices;
-    int* intra_shard_indices;
+    int* shard_indices=nullptr;
+    int* intra_shard_indices=nullptr;
     // sizes in bytes
     size_t total_batch_size_bytes;  // total across all processes
     size_t local_batch_offset_bytes;  // inner-sample offset for this process
@@ -194,8 +250,13 @@ struct DataLoader   {
             free(shard_indices);
             free(intra_shard_indices);
         }
-        fcloseCheck(tokens_file);
-        globfree(&glob_result);
+        if(tokens_file!=nullptr)    {
+            fcloseCheck(tokens_file);
+            globfree(&glob_result);
+        }
+        if(!all_samps.empty()){
+            
+        }
     }
 
 
@@ -347,7 +408,7 @@ struct DataLoader   {
         }
     }
 
-    int64_t update_batch(int next_id,std::shared_ptr<WIKI> wiki);
+    int64_t update_batch(int next_id,Fish* fish);
 
     void next_batch( )  {
         // if the next batch would go past the end of the file, advance the loader
@@ -375,4 +436,9 @@ struct DataLoader   {
 
 };
 
+// class DataLoader_3D : public DataLoader  {
+// protected:
+// public:
+//     int64_t update_batch(int next_id,Fish* fish)    override;
+// };
 #endif // DATALOADER_H

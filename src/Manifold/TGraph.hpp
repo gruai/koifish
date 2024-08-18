@@ -261,5 +261,5 @@ public:
         return cgraph;
     }
 
-    friend class Ganglia;
+    friend class Fish;
 };

@@ -29,12 +29,16 @@ using namespace std;
 #include "DataLoader.hpp"
 #include "../lenda/util/GST_util.hpp"
 
-class Ganglia;
+class Fish;
 class Optimizer : public std::enable_shared_from_this<Optimizer> {
     Optimizer(const Optimizer&);
 	Optimizer& operator=(const Optimizer&);
 
 protected:    
+    int first_epoch=0,iter_at_last_epoch=-1,first_iter=-1;
+    int64_t                      last_time;
+    double                       millis_per_iter;
+
     void *app_ctx = nullptr;
     double zmuv_0 = 0.0,zmuv_1 = 0.0;
     struct ggml_cgraph *gf=nullptr,*gb=nullptr;     //only for debug
@@ -52,16 +56,16 @@ protected:
     hScheduler scheduler = std::make_shared<DiscreteSchedule>( );
     bool isStopImprove = false;
     struct ggml_tensor * opt_ps[GGML_MAX_PARAMS]; // these will store the parameters we want to optimize    
-    virtual void Clear()    {}    
-    struct ggml_cplan cplan;
+    virtual void Clear()    {}   
 
+    virtual bool one_step(struct train_state *train,DataLoader&loader, int accum_step, float *sched, int flag = 0x0);
     virtual void AdamW(int nx,int np,CLI_params& hparams,int flag);
     bool GradAccumulation(float&fx,int np,struct train_opt_callback_data *callback_data,struct ggml_cplan *cplan,int flag=0x0);
     bool OnLogits(int flag=0x0);
 public:
     // typedef bool (*_CALL_BACK_)(void * data, int accum_step, float * sched);    
     DataLoader train_loader, val_loader;
-    Ganglia* gang=nullptr;      //ref only
+    Fish* gang=nullptr;      //ref only
     // std::vector<llama_token> train_tokens;
     // std::vector<size_t> train_samples_begin,train_samples_size;
     // std::vector<size_t> train_shuffled_samples_offs;
@@ -72,7 +76,7 @@ public:
     struct ggml_opt_context * opt = train->opt; 
     struct train_params_common train_params;
 
-    Optimizer(Ganglia *g_,struct train_params_common& params_,int flag=0x0);
+    Optimizer(Fish *g_,struct train_params_common& params_,int flag=0x0);
 
     virtual float Compute(std::vector<llama_token>&tokens,bool isForward,int flag=0x0);
     virtual float Evaluate(DataLoader&loader,int iter,int flag=0x0);
@@ -102,38 +106,16 @@ public:
             _INFO("%s: seen train_tokens      %llu\n", __func__, (long long unsigned) train->train_tokens);
             _INFO("%s: completed train_epochs %llu\n", __func__, (long long unsigned) train->train_epochs);
         }
+        /*
+        auto train=hOPT->train;
+        _INFO("%s: total train_iterations %llu\n", __func__, (long long unsigned) train->train_its);
+        _INFO("%s: seen train_samples     %llu\n", __func__, (long long unsigned) train->train_samples);
+        _INFO("%s: seen train_tokens      %llu\n", __func__, (long long unsigned) train->train_tokens);
+        _INFO("%s: completed train_epochs %llu\n", __func__, (long long unsigned) train->train_epochs);
+        _INFO("%s: nParams=%zu model_size = %zu bytes (%.1f MB)\n", __func__, nParams,szModel,szModel / (1024.0f*1024.0f) );*/
     }
     
-    virtual void Init_CallbackData(struct llama_context * lctx,struct train_params_common& train_params,hGensor  tokens_input,int flag) {
-        app_ctx = lctx;
-
-        struct train_opt_callback_data& opt_cb_data = train_loader.callback_data;
-        opt_cb_data.params                 = &(train_params); //hparams.common
-        opt_cb_data.train                  = train;
-        opt_cb_data.save_cb                = nullptr;   //&save_train_;
-        opt_cb_data.save_data              = nullptr;   //&save_data;
-        opt_cb_data.lctx                   = lctx;
-        opt_cb_data.last_save_iter         = opt->iter;
-        // opt_cb_data.tokens_data            = train_tokens.data();
-        // opt_cb_data.tokens_size            = train_tokens.size();
-        // opt_cb_data.samples_begin          = train_samples_begin.data();
-        // opt_cb_data.samples_size           = train_samples_size.data();
-        // opt_cb_data.samples_count          = train_samples_size.size();
-        train_loader.train = train;         val_loader.train = train;
-        train_loader.hOPT = this;           val_loader.hOPT = this;
-
-        // opt_cb_data.shuffled_samples_offs  = train_shuffled_samples_offs.data();
-        // opt_cb_data.shuffled_samples_begin = train_shuffled_samples_begin.data();
-        // opt_cb_data.shuffled_samples_size  = train_shuffled_samples_size.data();
-
-        opt_cb_data.tokens_input           = tokens_input;
-        opt_cb_data.target_probs           = hTargetProbs();
-        opt_cb_data.first_iter             = opt->iter;
-        opt_cb_data.first_epoch            = train->train_epochs;
-        opt_cb_data.iter_at_last_epoch     = -1;
-        opt_cb_data.last_time              = ggml_time_ms();
-        opt_cb_data.millis_per_iter        = 0.0;
-    }
+    virtual void Init_CallbackData(struct llama_context * lctx,struct train_params_common& train_params,hGensor  tokens_input,int flag) ;
 
     virtual void Shuffle(int n_vocab,struct train_params_common& train_params,int flag=0x0)  {
         assert(0);
@@ -209,7 +191,7 @@ public:
     enum ggml_opt_result ggml_train(struct ggml_context * ctx, hGensor loss_,hGensor target_,
             struct ggml_cgraph * gf_,struct ggml_cgraph * gb_,CLI_params& hparams);
     
-    friend class Ganglia;
+    friend class Fish;
     friend class DataLoader;
 
 };

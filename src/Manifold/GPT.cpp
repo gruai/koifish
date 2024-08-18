@@ -1,6 +1,6 @@
 #include "console.h"
 #include "GPT.hpp"
-#include "Ganglia.hpp"
+#include "Fish.hpp"
 #include "gLAMA.hpp"
 
 static unsigned int random_u32(uint64_t *state){
@@ -15,6 +15,23 @@ float random_f32(uint64_t *state)   {
     return (random_u32(state) >> 8) / 16777216.0f;
 }
 
+int GPT_fish(CLI_params& hparams)  {
+    auto param_1 = hparams,param_2 = hparams;
+    param_1.tpWiki = 1;             param_1.common.n_batch = 1;
+    param_2.tpWiki = 0;             param_2.common.n_batch = 1;    // 
+    hFISH fish_0 = Fish::MakeInstance("BIG_",param_1,0x0);
+    hFISH fish_1 = Fish::MakeInstance("local_",param_2,fish_0.get(),0x110);
+    fish_0->Dump(0x0);
+    fish_1->Dump(0x0);
+
+    vector<float> logits;           
+    vector<llama_token> piffle;    
+    fish_0->LocalFeeling(piffle,logits); 
+    fish_1->CopyWeight(fish_0.get());
+    fish_1->LocalFeeling(piffle,logits);
+    return 666;
+}
+
 int GPT_work(CLI_params& hparams)  {
     gpt_params params;
     // if (!gpt_params_parse(argc, argv, params)) {
@@ -23,9 +40,9 @@ int GPT_work(CLI_params& hparams)  {
     // gpt_params_find_arg
     params.seed = 42, params.sparams.seed = params.seed;
     params.model = hparams.fn_model_base;   //"./models/Meta-Llama-3-8B.Q2_K.gguf";
-    params.prompt = "when the smoke is going down,"; //"Building a website can be done in 10 simple steps:\\nStep 1:";
+    params.prompt = hparams.prompt;
     params.escape = true;
-    params.n_predict = 32;
+    params.n_predict = 16;
     gpt_params_handle_model_default(params);
     if (params.escape)
     {
@@ -41,6 +58,7 @@ int GPT_work(CLI_params& hparams)  {
     LOG_TEE("%s\n", get_system_info(params).c_str());
     llama_numa_init(params.numa);
     hWIKI wiki = std::make_shared<LAMA>(hparams);      assert(wiki!=nullptr);
+    wiki->teach = WIKI::MERGE_P;
     //  hGOPT gpt = std::make_shared<GeneratOnPrompt>(params,0x0);
     //  hGOPT gpt = std::make_shared<GOPT_infinite>(params,0x0);    
     // hGOPT gpt = std::make_shared<GOPT_Metropolis>(params, 0x0);  
@@ -65,6 +83,21 @@ WIKI::WIKI()
     // gpt->Generate();
 }
 
+hGOPT GeneratOnPrompt::MakeInstance(struct CLI_params& hparams,hWIKI wiki,const Fish *fish_0,int flag) {
+    // gopt = std::make_shared<GeneratOnPrompt>(wiki,this,0x0);
+    hGOPT gopt = std::make_shared<GOPT_Metropolis>(hparams,wiki,fish_0,0x0);
+    if(gopt!=nullptr && gopt->Init(hparams.prompt)){
+        // gopt->Generate(0); //only for debug  
+    }else{
+        gopt.reset();       gopt = nullptr;
+    }   
+    // lama()->Init(hparams);
+    std::vector<llama_token> embd_inp = {9493,279,16603,374,2133,1523,11};      //const char* promt = "when the smoke is going down,";    //when the smoke is going down, not up."    
+    // wiki->Decode(embd_inp,0,0x0);
+    // wiki->Answer(embd_inp);      //only for debug
+    return gopt;
+}
+
 GeneratOnPrompt::GeneratOnPrompt(struct gpt_params &par_, int flag) : params(par_){    
     LOG_TEE("%s logits_all=%d\n", __func__,params.logits_all );
     llama_numa_init(params.numa);
@@ -78,8 +111,40 @@ GeneratOnPrompt::GeneratOnPrompt(struct gpt_params &par_, int flag) : params(par
     n_predict = params.n_predict;
 }
 
-GeneratOnPrompt::GeneratOnPrompt(CLI_params&cp_,hWIKI wiki_, Ganglia *hG_, int flag) : 
-    hparams(cp_),gang(hG_), wiki(wiki_) {
+void GeneratOnPrompt::Clear()    {
+    llama_print_timings(ctx);
+    // write_logfile(ctx, params, model, input_tokens, output_ss.str(), output_tokens);
+
+    if (ctx_guidance) { llama_free(ctx_guidance); }
+    if(wiki==nullptr){
+        llama_free(ctx);        
+        llama_free_model(model);            
+    }
+
+    if(ctx_sampling!=nullptr)
+        llama_sampling_free(ctx_sampling);
+    llama_backend_free();
+
+    FREE_a(_logits);
+}
+          //only for debug
+GeneratOnPrompt::GeneratOnPrompt(CLI_params&cp_,hWIKI wiki_, const Fish *hG_, int flag) : 
+    hparams(cp_),fish_0(hG_), wiki(wiki_) {
+    if(fish_0!=nullptr){
+        auto gang_param = hparams;
+        gang_param.tpWiki = 0;      assert(gang_param.tpWiki==0);
+        gang_param.common.n_batch = 1;
+        fish_1 = Fish::MakeInstance("4GPT_",gang_param,hG_,0x110);
+        // fish_1 = Fish::MakeInstance("4GPT_",gang_param,0x0);
+        fish_1->Dump(0x0);
+        if(0){//only for debug
+            vector<float> logits;           
+            vector<llama_token> piffle;     
+            fish_1->LocalFeeling(piffle,logits);
+        }          
+    }
+
+    // fish_1 = nullptr;
     params.seed = 42; 
     params.sparams.seed = params.seed;
     params.model = hparams.fn_model_base;   //"./models/Meta-Llama-3-8B.Q2_K.gguf";
@@ -99,10 +164,8 @@ GeneratOnPrompt::GeneratOnPrompt(CLI_params&cp_,hWIKI wiki_, Ganglia *hG_, int f
         }
     }
 
-
     n_predict = params.n_predict;    
-    LOG_TEE("%s wiki=%p propmt=\"%s\" n_predict=%d logits_all=%d\n", 
-        __func__,wiki,prompt.c_str(),n_predict,params.logits_all );
+    LOG_TEE("%s wiki=%p propmt=\"%s\" n_predict=%d logits_all=%d\n", __func__,wiki,prompt.c_str(),n_predict,params.logits_all );
 }
 
 bool GeneratOnPrompt::Init(const std::string &prompt_, int flag){
@@ -114,6 +177,8 @@ bool GeneratOnPrompt::Init(const std::string &prompt_, int flag){
  
     LAMA *lama = dynamic_cast<LAMA *>(wiki.get());
     model = lama->lmodel;
+    int nTokens = llama_n_vocab(model), j;
+    _logits = new float[nTokens];
     assert(model != nullptr);
     ctx = lama->_ctx;
     assert(ctx != nullptr);
@@ -158,21 +223,15 @@ bool GeneratOnPrompt::Init(const std::string &prompt_, int flag){
     return true;
 }
 
-void GeneratOnPrompt::DisplayEmbd(bool input_echo, llama_context *ctx, int n_consumed, int flag)
-{
+void GeneratOnPrompt::DisplayEmbd(bool input_echo, llama_context *ctx, int n_consumed, int flag){
 
-    if (input_echo && display)
-    {
-        for (auto id : tokens)
-        {
+    if (input_echo && display)    {
+        for (auto id : tokens)        {
             const std::string token_str = llama_token_to_piece(ctx, id);
             printf("%s", token_str.c_str());
-            if (tokens.size() > 1)
-            {
+            if (tokens.size() > 1)            {
                 input_tokens.push_back(id);
-            }
-            else
-            {
+            }            else            {
                 output_tokens.push_back(id);
                 output_ss << token_str;
             }
@@ -188,17 +247,18 @@ void GeneratOnPrompt::DisplayEmbd(bool input_echo, llama_context *ctx, int n_con
 }
 
 /**/
-int Ganglia::GenSentence(int flag)  {
+int Fish::GenSentence(int flag)  {
     if(hOPT==nullptr)
         return -1;
 
     GST_TIC(tic);
     assert(wiki != nullptr);
     if(gopt!=nullptr){
+        wiki->Reset();
         return gopt->Generate(0x0);
     }
     uint64_t rng_seed = 42;
-    // auto& datas = hOPT->train_loader;
+    // auto& datas = hOPT->train_   loader;
     int genT = 16, nTokens = preLogits->ne[0], nB = hparams.common.n_ctx, i, j;
     // assert(nTokens==wiki);
     assert(genT <= nB);
@@ -213,7 +273,7 @@ int Ganglia::GenSentence(int flag)  {
     float *preP = (float *)(preLogits->data);
     _INFO("%s: <--- ", __func__);
     for (i = 1; i <= genT; i++)    {
-        // GetOutput(piffle,preP);
+        // LocalFeeling(piffle,preP);
         float fLos = hOPT->Compute(piffle, true); // would affect training process
         int next_token = nTokens - 1;
         for (sum = 0, j = 0; j < nTokens; j++)        {
@@ -244,20 +304,68 @@ int Ganglia::GenSentence(int flag)  {
         On the two sides of the age there was a lot of room for two oth
 */
 llama_token GOPT_Metropolis::Sample(int idx, bool is_resampling)    {
-    std::vector<float> original_logits, x_logits;
+    std::vector<float> x_logits;
     auto ctx_main = ctx, ctx_cfg = ctx_guidance;
     int nTokens = llama_n_vocab(model), j;
-
+    assert(wiki != nullptr);
     float *preP = new float[nTokens](), sum, cdf;
     assert(idx==-1);
-    //  ctx->logits + (ctx->n_outputs-1)*ctx->model.hparams.n_vocab;
-    float *logits_out = llama_get_logits_ith(ctx_main, idx);
-    if(0)   {        
-        llama_ctx_get_(ctx_main,(void**)(&logits_out),10);  //ctx->logits;
-    } 
+    
+    float l1=0,sum1=0,l2=0,delta,a,pMin=FLT_MAX,pMax=FLT_MIN;   
+    if(wiki->teach==WIKI::MERGE_OFF)  {
+
+    }else{
+        const float *wLog = wiki->GetLogits();   
+        for (l2 = 0,j = 0; j < nTokens; j++    ) {
+            a = wLog[j];
+            l2 += a*a;              _logits[j] = a;
+            pMin = min(a,pMin);     pMax = max(a,pMax);
+        }        
+    }
+ 
+    if (fish_1 != nullptr)    {   //time bottleneck, so share wiki to reduce time & memory
+        // SOFT_MAX(nTokens,_logits,wLog);     //soft merge ???
+        fish_1->CopyWeight(fish_0);
+        std::vector<llama_token> inputs = embd_inp;
+        inputs.insert( inputs.end(), output_tokens.begin(), output_tokens.end() );
+        if (fish_1->LocalFeeling(inputs, x_logits))        {
+            assert(x_logits.size()==nTokens);
+            // SOFT_MAX(x_logits);
+            switch(wiki->teach){
+            case WIKI::MERGE_OFF:
+                for (j = 0; j < nTokens; j++    ) {
+                    a = x_logits[j];       
+                    sum1 += a;   l1+=a*a;     
+                    _logits[j] = a;
+                }
+                break;
+            /*case WIKI::MERGE_P:
+                for (j = 0; j < nTokens; j++    ) {
+                    a = x_logits[j];                    l1+=a*a;        
+                    _logits[j] = a;
+                }
+                delta = l2==0 ? 0 : sqrt(l1)/sqrt(l2)-1.0;
+            break;*/
+            default:
+                for (j = 0; j < nTokens; j++    ) {
+                    a = x_logits[j];        
+                    sum1 += a;              
+                    l1+=a*a;     l2+=_logits[j]*_logits[j];
+                    _logits[j] += a;
+                }
+                delta = l2==0 ? 0 : sqrt(l1)/sqrt(l2);  
+                // assert(fabs(sum1-1.0)<0.001);       //softmax->logits
+            }
+            delta_a += delta;
+            delta_max = max(delta_max,delta);                       
+        }   else{
+            return -1;
+        }
+    }
+
     int next_token = nTokens - 1;
     for (sum = 0, j = 0; j < nTokens; j++)    {
-        preP[j] = exp(logits_out[j]);
+        preP[j] = exp(_logits[j]);
         sum += preP[j];
     }
     assert(sum > 0 && sum < FLT_MAX);   //1679583
@@ -276,8 +384,7 @@ llama_token GOPT_Metropolis::Sample(int idx, bool is_resampling)    {
     return next_token;
 }
 
-llama_token GeneratOnPrompt::Sample(int idx, bool is_resampling)
-{
+llama_token GeneratOnPrompt::Sample(int idx, bool is_resampling)    {
     const llama_sampling_params &params = ctx_sampling->params;
     const float temp = params.temp, mirostat_tau = params.mirostat_tau, mirostat_eta = params.mirostat_eta;
     const int mirostat = params.mirostat;
@@ -300,13 +407,12 @@ llama_token GeneratOnPrompt::Sample(int idx, bool is_resampling)
         } llama_token_data_array;
     */
     auto cur_p = llama_sampling_prepare(ctx_sampling, ctx_main, ctx_cfg, idx, !is_resampling, &original_logits);
-    if (!is_resampling)
-    {
+    if (!is_resampling)    {
         GGML_ASSERT(!original_logits.empty());
     }
-    if (gang != nullptr)    {   //time bottleneck
+    if (fish_1 != nullptr)    {   //time bottleneck
         x_logits.resize(original_logits.size());
-        if (gang->GetOutput(embd_inp, x_logits))        {
+        if (fish_1->LocalFeeling(embd_inp, x_logits))        {
             std::transform(original_logits.begin(), original_logits.end(), x_logits.begin(),
                            original_logits.begin(), std::plus<float>());
         }
@@ -631,9 +737,11 @@ void GeneratOnPrompt::OnInteractive(int &n_past, int &n_consumed, int &n_remain,
 
 int GeneratOnPrompt::Generate(int nJob, int flag)   {
     GST_TIC(tic);
+    output_tokens.clear();
     const int n_ctx = llama_n_ctx(ctx);               // ctx->cparams.n_ctx;
     const int n_ctx_train = llama_n_ctx_train(model); // model->hparams.n_ctx_train;
-    LOG_TEE("<--- GeneratOnPrompt job=%d logits_all=%d gang=%s\n", nJob,params.logits_all,gang==nullptr?"":gang->Name().c_str());
+    delta_max = 0;      delta_a = 0;
+    LOG_TEE("<--- GeneratOnPrompt job=%d logits_all=%d fish=%s teach=%d\n", nJob,params.logits_all,fish_1==nullptr?"":fish_1->Name().c_str(),wiki->teach);
     rng_state = params.seed;
     // LOG_TEE("%s logits_all=%d\n", __func__, );
     size_t n_matching_session_tokens = 0;
@@ -675,7 +783,11 @@ int GeneratOnPrompt::Generate(int nJob, int flag)   {
     embd_guidance.clear();
     ctx_sampling = isCTXSampling ? llama_sampling_init(sparams) : nullptr;
     while ((n_remain != 0 && !is_antiprompt) || params.interactive)    {
-        int iRet = UpdateEmbed(nJob, n_past, n_remain, n_consumed, n_session_consumed, n_past_guidance, ga_i, 0x0);
+        int iRet = 0;
+        if(wiki->teach!=WIKI::MERGE_OFF)
+            iRet = UpdateEmbed(nJob, n_past, n_remain, n_consumed, n_session_consumed, n_past_guidance, ga_i, 0x0);
+        else
+            iRet = 2;
         if (iRet == 0)
             break;
         if (iRet == 1)
@@ -693,6 +805,10 @@ int GeneratOnPrompt::Generate(int nJob, int flag)   {
             }
 
             const llama_token id = Sample(); // llama_sampling_sample(ctx_sampling, ctx, ctx_guidance);
+            if(id<0){
+                _INFO("\t<E>");
+                break;
+            }
             if(ctx_sampling!=nullptr)   {
                 llama_sampling_accept(ctx_sampling, ctx, id, true);
                 LOG("last=%s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, ctx_sampling->prev).c_str());
@@ -744,7 +860,7 @@ int GeneratOnPrompt::Generate(int nJob, int flag)   {
         llama_sampling_free(ctx_sampling);    ctx_sampling = nullptr;
     }
     
-    _INFO("\tT=%gs --------------->\n", GST_TOC(tic));
+    _INFO("\n delta=%.3g(%.3g) T=%gs --------------->\n",delta_max,delta_a/params.n_predict, GST_TOC(tic));
     return 0x0;
 }
 
@@ -781,7 +897,7 @@ int GeneratOnPrompt::UpdateEmbed(int nJob, int &n_past, int &n_remain, int &n_co
         {
             int n_eval = min((int)tokens.size() - i, params.n_batch);
             LOG("eval: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, tokens).c_str());
-            bool bDecode = wiki != nullptr ? wiki->Decode(tokens, i, n_past) : llama_decode(ctx, llama_batch_get_one(&tokens[i], n_eval, n_past, 0)) >= 0;
+            bool bDecode = wiki != nullptr ? wiki->Decode(tokens, i, n_past,false) : llama_decode(ctx, llama_batch_get_one(&tokens[i], n_eval, n_past, 0)) >= 0;
             if (!bDecode)            {
                 LOG_TEE("%s : failed to eval\n", __func__);
                 return 1;
@@ -931,7 +1047,7 @@ int GOPT_infinite::UpdateEmbed(int nJob, int &n_past, int &n_remain, int &n_cons
             }
 
             LOG("eval: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, tokens).c_str());
-            bool bDecode = wiki != nullptr ? wiki->Decode(tokens, i, n_past) : llama_decode(ctx, llama_batch_get_one(&tokens[i], n_eval, n_past, 0)) >= 0;
+            bool bDecode = wiki != nullptr ? wiki->Decode(tokens, i, n_past,false) : llama_decode(ctx, llama_batch_get_one(&tokens[i], n_eval, n_past, 0)) >= 0;
             if (!bDecode)
             {
                 LOG_TEE("%s : failed to eval\n", __func__);

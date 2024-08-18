@@ -23,22 +23,27 @@ using namespace std;
 #include "../LLAMA/common/common.h"
 #include "GG_util.hpp"   
 
-class Ganglia;
+class Fish;
 
 struct WIKI {
     enum MERGE_MODE{
-        OFF,MERGE_P,MERGE_T
+        MERGE_OFF,
+        MERGE_P,
+        // MERGE_T
     };
     int32_t bos,eos;   
-    MERGE_MODE teach=OFF;
-    hGensor  preLogits = NULL;      //create@InitModel update@
-    float * logits_out = nullptr;
+    MERGE_MODE teach=MERGE_P;
+    bool isOnlyTokenizer = false;
+    
+    virtual const float *GetLogits(int idx=-1)   {   return nullptr; }
+
+    // bool takeRest = false;          //only for debug
 
     virtual hGensor P()    {   return nullptr; }
     virtual hGensor Target()    {   return nullptr; }
 
     virtual std::string T2STR(int32_t tok,int flag=0x0 )                    {   assert(0); return "";    }
-    virtual bool Decode(std::vector<int32_t>&ids,int start,int n_past)      {   assert(0); return false;    }
+    virtual bool Decode(std::vector<int32_t>&ids,int start,int n_past,bool out_all)      {   assert(0); return false;    }
     virtual void Answer(std::vector<int32_t>&ids,int flag=0x0)    {   assert(0); }
     virtual void Reset(int flag=0x0)    {   assert(0); }
 
@@ -55,6 +60,8 @@ class GeneratOnPrompt {
 	// GeneratOnPrompt& operator=(const GeneratOnPrompt&);
 
 protected:
+    float *_logits = nullptr;
+    float delta_max = 0,delta_a=0;
     bool display              = true;
     //compatible with LLAMA.cpp
     gpt_params params;
@@ -63,12 +70,12 @@ protected:
     std::string prompt = "";
     int ga_n,ga_w;
     int n_predict = 160;
-    bool is_antiprompt        = false;
+    bool is_antiprompt        = false;  
     bool input_echo           = true;
     bool isCTXSampling = true;
     struct llama_sampling_params sparams;
-    llama_model * model;
-    llama_context * ctx;
+    llama_model * model = nullptr;
+    llama_context * ctx = nullptr;
     llama_context * ctx_guidance = NULL;
     struct llama_sampling_context * ctx_sampling = NULL;
     std::string path_session = params.path_prompt_cache;
@@ -76,33 +83,23 @@ protected:
     std::vector<llama_token> embd_inp;
     std::vector<int>   input_tokens,output_tokens; 
     std::ostringstream output_ss;     
-    bool is_interacting = false;
+    bool is_interacting = false;    
     hWIKI wiki = nullptr;   
-    Ganglia *gang = nullptr;        //only ref
+    const Fish *fish_0 = nullptr;        
+    shared_ptr<Fish> fish_1 = nullptr;        //for generate, only 1 input
 
     virtual llama_token Sample(int idx = -1,bool is_resampling=false);
 
-    virtual void Clear()    {
-        llama_print_timings(ctx);
-        // write_logfile(ctx, params, model, input_tokens, output_ss.str(), output_tokens);
-
-        if (ctx_guidance) { llama_free(ctx_guidance); }
-        if(wiki==nullptr){
-            llama_free(ctx);        
-            llama_free_model(model);            
-        }
-
-        if(ctx_sampling!=nullptr)
-            llama_sampling_free(ctx_sampling);
-        llama_backend_free();
-    }
+    virtual void Clear();
     uint64_t rng_state;
     virtual void OnAntiPrompt(int flag);
     virtual void OnInteractive(int& n_past,int& n_consumed,int& n_remain,int flag);
 public:
     GeneratOnPrompt()    {}
     GeneratOnPrompt(struct gpt_params&par_,int flag);
-    GeneratOnPrompt(CLI_params&cp_, hWIKI wiki_,Ganglia* hG_,int flag);
+    GeneratOnPrompt(CLI_params&cp_, hWIKI wiki_,const Fish* hG_,int flag);
+
+    static shared_ptr<GeneratOnPrompt> MakeInstance(struct CLI_params& params,hWIKI wiki,const Fish *,int flag);
 
     virtual ~GeneratOnPrompt()   {   Clear();    }
     virtual bool Init(const std::string& prompt_,int flag=0x0);    
@@ -301,7 +298,7 @@ public:
     GOPT_Metropolis(struct gpt_params&par_,int flag) : GeneratOnPrompt(par_,flag)  {
         isCTXSampling = false;
     }
-    GOPT_Metropolis(CLI_params&cp_,hWIKI wiki_,Ganglia* hG_,int flag): GeneratOnPrompt(cp_,wiki_,hG_,flag)  {
+    GOPT_Metropolis(CLI_params&cp_,hWIKI wiki_,const Fish* hG_,int flag): GeneratOnPrompt(cp_,wiki_,hG_,flag)  {
         isCTXSampling = false;
     }
 
@@ -311,3 +308,4 @@ public:
 };
 
 int GPT_work(CLI_params& params);
+int GPT_fish(CLI_params& hparams);

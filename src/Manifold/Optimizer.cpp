@@ -1,8 +1,8 @@
-#include "Ganglia.hpp"
+#include "Fish.hpp"
 #include "../ggex/GG_util.hpp"
 #include "../LLAMA/common/common.h"
 
- Optimizer::Optimizer(Ganglia *g_,struct train_params_common& params_,int flag) : train_params(params_),gang(g_) {
+ Optimizer::Optimizer(Fish *g_,struct train_params_common& params_,int flag) : train_params(params_),gang(g_) {
     InitOpt(train_params,flag); 
     val_loader.type = DataLoader::TYPE::DT_EVAL;
     
@@ -75,11 +75,11 @@ bool Optimizer::GradAccumulation(float&fx,int np,struct train_opt_callback_data 
     struct train_state *train = callback_data->train;
     for (int accum_step = 0; accum_step < n_accum; ++accum_step) {
         // int64_t used_samples = gang->update_batch(callback_data,train->shuffle_next_sample,callback_data->params);
-        int64_t used_samples = train_loader.update_batch(train->shuffle_next_sample,gang->wiki);
+        int64_t used_samples = train_loader.update_batch(train->shuffle_next_sample,gang);
         train->train_samples += used_samples;
         train->shuffle_next_sample += used_samples;
 
-        if(gang->one_step(callback_data,accum_step, &sched)){
+        if(one_step(train,train_loader,accum_step, &sched)){
             return false;
         }
 
@@ -235,21 +235,21 @@ enum ggml_opt_result Optimizer::ggml_train(struct ggml_context * ctx, hGensor lo
         float * v  = (float *)opt->adam.v->data;  // second moment
         float * pf = params.past > 0 ? (float *)opt->adam.pf->data : NULL; // past function values
         float fx = 0;
-        cplan = ggml_graph_plan(gb, params.n_threads);
-        struct ggml_object * obj = ggml_new_object(ctx, GGML_OBJECT_TYPE_WORK_BUFFER, cplan.work_size);
-        cplan.work_data = (uint8_t *)ctx->mem_buffer + obj->offs;
-        
+        // cplan = ggml_graph_plan(gb, params.n_threads);
+        // struct ggml_object * obj = ggml_new_object(ctx, GGML_OBJECT_TYPE_WORK_BUFFER, cplan.work_size);
+        // cplan.work_data = (uint8_t *)ctx->mem_buffer + obj->offs;
+        auto *cplan = &(gang->gb_plan);
         if(isAccuX){
-            if( !GradAccumulation(fx,np,callback_data,&cplan,0x0))
+            if( !GradAccumulation(fx,np,callback_data,cplan,0x0))
                 return GGML_OPT_RESULT_CANCEL; 
         }else   { 
             ggml_set_zero(opt->adam.g);            
             for (int accum_step = 0; accum_step < n_accum; ++accum_step) {
-                if(gang->one_step(callback_data,accum_step, &sched)){
+                if(one_step(callback_data->train,train_loader,accum_step, &sched)){
                         return GGML_OPT_RESULT_CANCEL;
                     }
                 ggml_set_f32      (loss->grad, 1.0f);
-                ggml_graph_compute(gb, &cplan);
+                ggml_graph_compute(gb, cplan);
                 ggml_opt_acc_grad(np, opt_ps, g, accum_norm);
                 fx += ggml_get_f32_1d(loss, 0);
             }
@@ -298,18 +298,18 @@ enum ggml_opt_result Optimizer::ggml_train(struct ggml_context * ctx, hGensor lo
             }
    
             if(isAccuX){
-                if( !GradAccumulation(fx,np,callback_data,&cplan,0x0))
+                if( !GradAccumulation(fx,np,callback_data,cplan,0x0))
                     return GGML_OPT_RESULT_CANCEL; 
             }else   { 
                 fx = 0;
                 ggml_set_zero(opt->adam.g);
                 for (int accum_step = 0; accum_step < n_accum; ++accum_step) {
-                    if(gang->one_step(callback_data,accum_step, &sched)){
+                    if(one_step(callback_data->train,train_loader,accum_step, &sched)){
                         return GGML_OPT_RESULT_CANCEL;
                     }
                     // ggml_graph_reset  (gf);
                     ggml_set_f32      (loss->grad, 1.0f);
-                    ggml_graph_compute(gb, &cplan);
+                    ggml_graph_compute(gb, cplan);
                     ggml_opt_acc_grad(np, opt_ps, g, accum_norm);
                     fx += ggml_get_f32_1d(loss, 0);
                 }
@@ -362,7 +362,7 @@ enum ggml_opt_result Optimizer::ggml_train(struct ggml_context * ctx, hGensor lo
     return result;
 }
 
-void Ganglia::Train(  int flag )   {
+void Fish::Train(  int flag )   {
     
 }
 
@@ -372,7 +372,7 @@ float Optimizer::Compute(std::vector<llama_token>&tokens,bool onlyForward,int fl
     auto loss = hLoss( );
     float *fLoss = (float*)(loss->data),*fLossG = (float*)(loss->grad->data);
     ggml_set_zero(opt->adam.g);   
-    
+    auto cplan =&(gang->gb_plan);
     llama_token token;
     ggml_set_i32_nd(tokens_input, 0, 0, 0, 0, bos);
 
@@ -386,9 +386,9 @@ float Optimizer::Compute(std::vector<llama_token>&tokens,bool onlyForward,int fl
         ggml_set_i32_nd(tokens_input, (int) (i + 1), (int) 0, 0, 0, token);
     }
     if(onlyForward)
-        ggml_graph_compute(gf, &cplan);   
+        ggml_graph_compute(gf, cplan);   
     else
-        ggml_graph_compute(gb, &cplan);   /**/
+        ggml_graph_compute(gb, cplan);   /**/
     // if(nSamp<nB0){
     //     tokens_input->ne[1] = nB0;
     // }
@@ -403,22 +403,42 @@ float Optimizer::Evaluate(DataLoader&loader,int iter,int flag){
         return 0; 
     _INFO("[eval] " );   
     GST_TIC(tic);     
+    
     auto loss = hLoss();           
     float *fLoss = (float*)(loss->data),sum=0;
+    double l2,delta_max=0,delta_=0,a;
     int i,ldT=tokens_input->ne[0],nB=0,step=max(loader.num_batches/10,1);
+    
     llama_token tMost = (llama_token) (loader.n_vocab - 1);
     // loader.reset();
     // std::vector<llama_token> tokens;
+    const float *wLog = nullptr;
+    if(gang->exLogits!=nullptr){
+        assert(gang->exLogits->type==GGML_TYPE_F32);//ggml_float
+        wLog = (const float *)(gang->exLogits->data); 
+    }
+
     for (i = 0; i < loader.num_batches; i+=step) {
-        loader.update_batch(i,nullptr);
-        // ggml_graph_compute(gb, &cplan);     
-        ggml_graph_compute(gf, &cplan);     
+        loader.update_batch(i,gang);    
+        if(wLog!=nullptr)    {
+            size_t nz=ggml_nelements(gang->exLogits),j;
+            for (l2 = 0,j = 0; j < nz; j++    ) {
+                a = wLog[j];            l2 += a*a;              
+            }
+            l2 = sqrt(l2)/nz;            
+            delta_max = max(delta_max,l2);      delta_+=l2;        
+        }
+        // ggml_graph_compute(gb, cplan);     
+        ggml_graph_compute(gf, &(gang->gb_plan));     
         sum += *fLoss;
         nB++;
         break;
     }
     sum /= nB;
-    _INFO("\t Loss@Evaluation=%f T=%gs ======\n", sum,GST_TOC(tic) );
+    if(wLog==nullptr) 
+        _INFO("\t Loss@Evaluation=%f T=%gs ======\n", sum,GST_TOC(tic) );
+    else
+        _INFO("\t Loss@Evaluation=%f delta=%g(%.5g) T=%gs ======\n", sum,delta_max,delta_/nB,GST_TOC(tic) );
     return sum;
 }
 
@@ -469,4 +489,130 @@ std::string shuffle_samples_X(
     }
 
     return mt19937_get_state(rng);
+}
+
+void Optimizer::Init_CallbackData(struct llama_context * lctx,struct train_params_common& train_params,hGensor  tokens_input,int flag) {
+    app_ctx = lctx;
+
+    struct train_opt_callback_data& opt_cb_data = train_loader.callback_data;
+    opt_cb_data.params                 = &(train_params); //hparams.common
+    opt_cb_data.train                  = train;
+    opt_cb_data.save_cb                = nullptr;   //&save_train_;
+    opt_cb_data.save_data              = nullptr;   //&save_data;
+    opt_cb_data.lctx                   = lctx;
+    opt_cb_data.last_save_iter         = opt->iter;
+    // opt_cb_data.tokens_data            = train_tokens.data();
+    // opt_cb_data.tokens_size            = train_tokens.size();
+    // opt_cb_data.samples_begin          = train_samples_begin.data();
+    // opt_cb_data.samples_size           = train_samples_size.data();
+    // opt_cb_data.samples_count          = train_samples_size.size();
+    train_loader.train = train;         val_loader.train = train;
+    train_loader.hOPT = this;           val_loader.hOPT = this;
+
+    // opt_cb_data.shuffled_samples_offs  = train_shuffled_samples_offs.data();
+    // opt_cb_data.shuffled_samples_begin = train_shuffled_samples_begin.data();
+    // opt_cb_data.shuffled_samples_size  = train_shuffled_samples_size.data();
+
+    opt_cb_data.tokens_input           = tokens_input;
+    opt_cb_data.target_probs           = hTargetProbs();
+    first_iter             = opt->iter;
+    opt_cb_data.first_epoch            = train->train_epochs;
+    opt_cb_data.iter_at_last_epoch     = -1;
+    opt_cb_data.last_time              = ggml_time_ms();
+    opt_cb_data.millis_per_iter        = 0.0;
+}
+
+bool Optimizer::one_step(struct train_state *train,DataLoader&loader, int accum_step, float *sched, int flag)    {
+    // LearningCurve(0x0);
+    struct train_params_common *params = &(train_params);   //data->params;
+    // struct train_state *train = data->train;
+    struct ggml_opt_context *opt = train->opt;
+    int n_batch = params->n_batch;
+    int n_ctx = params->n_ctx;
+
+    if (accum_step == 0)        {
+        // time measurement
+        int64_t now = ggml_time_ms();
+        if (now > last_time && opt->iter > first_iter)            {
+            double dt = (double)(now - last_time);
+            if (millis_per_iter == 0.0)                {
+                millis_per_iter = dt;
+            }                else                {
+                const double gain = 0.7;
+                millis_per_iter = millis_per_iter * (1.0 - gain) + dt * gain;
+            }
+        }
+        double remaining_millis = 0.0;
+        if (millis_per_iter > 0.0)            {
+            const int n_iter = params->adam_n_iter;
+            const int done_iter = opt->iter - first_iter;
+            const int remaining_iter = n_iter - done_iter;
+            remaining_millis = remaining_iter * millis_per_iter;
+        }
+        // file saving
+        /*const bool save_now = (params->save_every > 0) && (opt->iter - last_save_iter >= params->save_every);
+        if (save_now)            {                
+            int new_iters = opt->iter - last_save_iter;
+            train->train_its += new_iters;
+            train->train_tokens += new_iters * opt->params.n_gradient_accumulation * n_batch * n_ctx;
+            SaveTrain(&save_data, train);
+            last_save_iter = opt->iter;
+        }*/
+
+        // exclude file saving from time measurement, by measuring last_time after saving
+        last_time = ggml_time_ms();
+        *sched = learning_schedule(opt->iter, params->warmup, params->cos_decay_steps, params->adam_alpha, params->adam_min_alpha,
+                                    params->cos_decay_min, params->cos_decay_restart, params->enable_restart);
+        int impr_plot = -(int)(1 + (opt->loss_before - opt->loss_after) * 10.0f + 0.5f);
+        if (impr_plot > 0)
+            impr_plot = 0;
+        if (std::isnan(opt->loss_before) || std::isnan(opt->loss_after))
+            impr_plot = 0;
+        _INFO("[train] iter=%6d sample=%zu/%zu sched=%.3f loss=%f ",
+                opt->iter, std::min(1 + train->shuffle_next_sample, train->shuffle_sample_count), train->shuffle_sample_count,
+                *sched, opt->loss_after); //,hOPT->zmuv_0,hOPT->zmuv_1
+        if (millis_per_iter > 0)            {
+            _INFO(" dt=");          _TIME(millis_per_iter);
+            _INFO(" eta=");         _TIME(remaining_millis);
+        }
+        float improvement = opt->loss_before - opt->loss_after;
+        const float plot_scale = 10.0f;
+        int bar_len = (int)(1 + improvement * plot_scale + 0.5);
+        _INFO(" |");
+        for (int i = 0; i < bar_len; ++i)            {
+            _INFO("-");
+        }
+        _INFO(">");            _INFO("\n");
+    }
+
+    if (train->shuffle_next_sample >= train->shuffle_sample_count)
+    {
+        ++train->train_epochs;
+        _INFO("%s: reshuffle samples. completed epochs: %llu\n", __func__, (long long unsigned)train->train_epochs);
+        // note: we may have used some samples from the current shuffling more than once
+        train->shuffle_rng_state_current = train->shuffle_rng_state_next;
+        // train->shuffle_rng_state_next = shuffle_samples(
+        //     train->shuffle_rng_state_current,data->shuffled_samples_offs,data->shuffled_samples_begin,
+        //     data->shuffled_samples_size,data->samples_begin,data->samples_size,data->samples_count);
+        
+        loader.Shuffle();           //SAMP_0816
+        // train->shuffle_rng_state_next = shuffle_samples(
+        //     train->shuffle_rng_state_current,loader.shuffled_samples_offs.data(),
+        //     loader.shuffled_samples_begin.data(),loader.shuffled_samples_size.data(),
+        //     loader.samp_begin.data(),loader.samp_size.data(),loader.samp_size.size());
+        
+        train->shuffle_next_sample = 0;
+    }
+
+    const bool last_epoch_reached = (params->n_epochs > 0 && (int64_t)train->train_epochs - first_epoch >= params->n_epochs);
+    if (last_epoch_reached)    {
+        // allow optimization iteration at last epoch to be completed before canceling
+        if (iter_at_last_epoch < 0)        {
+            iter_at_last_epoch = opt->iter;
+        }
+        else if (opt->iter > iter_at_last_epoch)        {
+            return true;
+        }
+    }
+    return false;
 }

@@ -5,7 +5,7 @@
  *  \author Yingshi Chen
  */
 #include "GG_util.hpp"   
-#include "Ganglia.hpp"   
+#include "Fish.hpp"   
 
 /*
     sam_model_load: nEmbed      = 768
@@ -47,20 +47,20 @@ struct NT_SAM : public NeLayer {
     SLP proj;       // out_proj
     SLP mlp_lin1,mlp_lin2;    
 
-    hGensor Forward(hGanglia,int nEmbed,int nHead,int W,int H,hGensor cur,int flag=0x0);
+    hGensor Forward(hFISH,int nEmbed,int nHead,int W,int H,hGensor cur,int flag=0x0);
     hGensor Build_(struct ggml_context * ctx0,hGensor inpL,float eps,
         int n_window_size,int n_enc_state,int n_enc_head_dim,int n_enc_head,int flag);  
-    NT_SAM(hGanglia ctx,const std::string&key_,const SHAPE& shape,bool is_global_,int flag=0x0);
+    NT_SAM(hFISH ctx,const std::string&key_,const SHAPE& shape,bool is_global_,int flag=0x0);
 };
 
-struct SAM_encoder : public Ganglia { 
+struct SAM_encoder : public Fish { 
     int nEmbed,nHead,head_dim;
     int n_window_size,n_img_embd,n_patch_size,n_enc_out_chans;
     // std::vector<Transformer*> layers;
 
     SAM_encoder(struct ggml_context *ctx_, bool grad_,int nEmbed,int nLayer,int n_enc_head_dim,int _enc_out_chans,
             int n_pt_embd,int _img_embd,int _window_size,int _patch_size,int flag=0x0) 
-        :Ganglia(ctx_,grad_),nEmbed(nEmbed),head_dim(n_enc_head_dim),n_window_size(_window_size),n_img_embd(_img_embd),n_patch_size(_patch_size),
+        :Fish("SAM_encoder",ctx_,grad_),nEmbed(nEmbed),head_dim(n_enc_head_dim),n_window_size(_window_size),n_img_embd(_img_embd),n_patch_size(_patch_size),
         n_enc_out_chans(_enc_out_chans)   {
         assert(nEmbed>=head_dim && head_dim>0);
         nHead = nEmbed/head_dim;
@@ -160,7 +160,7 @@ inline struct ggml_tensor* sam_layer_norm_2d(
     return layer;
 }
 
-struct SegmentAnything  : public Ganglia {
+struct SegmentAnything  : public Fish {
     // int nThread=1; 
     sam_params params;
     sam_state state;
@@ -185,7 +185,7 @@ struct SegmentAnything  : public Ganglia {
 
     int32_t n_img_size,n_patch_size,n_window_size,n_img_embd,n_enc_head_dim;
     shared_ptr<SAM_encoder> enc = nullptr;
-    shared_ptr<Ganglia> nnDec = nullptr,enc_prompt=nullptr;
+    shared_ptr<Fish> nnDec = nullptr,enc_prompt=nullptr;
 
     std::vector<int> global_attn_indices={};
     
@@ -383,7 +383,7 @@ struct SegmentAnything  : public Ganglia {
             enc->AddLayer(std::shared_ptr<NeLayer>(hFormer));
         }
         // prompt encoder
-        enc_prompt = std::make_shared<Ganglia>(ctx,0x0);        childs.push_back(enc_prompt);
+        enc_prompt = std::make_shared<Fish>("enc_prompt",ctx,0x0);        childs.push_back(enc_prompt);
         enc_prompt->AddTensor("prompt_encoder.pe_layer.positional_encoding_gaussian_matrix",GGML_TYPE_F32,{n_enc_out_chans/2, 2});
         // enc.pe = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_enc_out_chans/2, 2);
         enc_prompt->AddTensor("prompt_encoder.not_a_point_embed.weight",GGML_TYPE_F32,{n_enc_out_chans});
@@ -396,7 +396,7 @@ struct SegmentAnything  : public Ganglia {
             // enc.pt_embd[i] = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);            
         }
         // mask decoder
-        nnDec = std::make_shared<Ganglia>(ctx,0x0);        childs.push_back(nnDec);
+        nnDec = std::make_shared<Fish>("nnDec",ctx,0x0);        childs.push_back(nnDec);
         for (int i = 0; i < tfm_layers_count; ++i) {
             const auto prefix = "mask_decoder.transformer.layers." + std::to_string(i);
             nnDec->AddLayer(prefix,{
@@ -449,7 +449,7 @@ struct SegmentAnything  : public Ganglia {
         nnDec->AddTensor("mask_decoder.mask_tokens.weight",GGML_TYPE_F32, {n_enc_out_chans, n_pt_embd}); 
 
         UpdateTensors();
-        bool bRet = gg_load_weights(fin,qtype,tensors,to_quant,to_skip);// load weights      
+        bool bRet = gg_load_weights(fin,qtype,gensors,to_quant,to_skip);// load weights      
         assert(bRet); 
         fin.close();
         return bRet;

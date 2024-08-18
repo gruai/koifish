@@ -8,52 +8,132 @@
  */
 
 #include "gLAMA.hpp"
-#include "../LLAMA/unicode.h"
 
-// gguf constants (sync with gguf.py)
 static const char * LLM_KV_TRAINING_TYPE_TRAIN_MODEL     = "train_model";
 static const char * LLM_KV_TRAINING_TYPE                 = "training.type";
 
-static const char * LLM_KV_GENERAL_NAME                = "general.name";
-static const char * LLM_KV_GENERAL_ARCHITECTURE        = "general.architecture";
-static const char * LLM_KV_GENERAL_FILE_TYPE           = "general.file_type";
-static const char * LLM_KV_VOCAB_SIZE                  = "%s.vocab_size";
-static const char * LLM_KV_CONTEXT_LENGTH              = "%s.context_length";
-static const char * LLM_KV_EMBEDDING_LENGTH            = "%s.embedding_length";
-
-static const char * LLM_KV_BLOCK_COUNT                 = "%s.block_count";
-static const char * LLM_KV_FEED_FORWARD_LENGTH         = "%s.feed_forward_length";
-static const char * LLM_KV_ATTENTION_HEAD_COUNT        = "%s.attention.head_count";
-static const char * LLM_KV_ATTENTION_LAYERNORM_RMS_EPS = "%s.attention.layer_norm_rms_epsilon";
-static const char * LLM_KV_ROPE_DIMENSION_COUNT        = "%s.rope.dimension_count";
-static const char * LLM_KV_ROPE_FREQ_BASE              = "%s.rope.freq_base"; // TODO load in llama.cpp
-static const char * LLM_KV_ROPE_SCALE_LINEAR           = "%s.rope.scale_linear";
-static const char * LLM_KV_ATTENTION_HEAD_COUNT_KV     = "%s.attention.head_count_kv";
-
-static const char * LLM_KV_TOKENIZER_MODEL             = "tokenizer.ggml.model";
-static const char * LLM_KV_TOKENIZER_LIST              = "tokenizer.ggml.tokens";
-static const char * LLM_KV_TOKENIZER_TOKEN_TYPE        = "tokenizer.ggml.token_type";
-static const char * LLM_KV_TOKENIZER_SCORES            = "tokenizer.ggml.scores";
-static const char * LLM_KV_TOKENIZER_MERGES            = "tokenizer.ggml.merges";
-static const char * LLM_KV_TOKENIZER_BOS_ID            = "tokenizer.ggml.bos_token_id";
-static const char * LLM_KV_TOKENIZER_EOS_ID            = "tokenizer.ggml.eos_token_id";
-static const char * LLM_KV_TOKENIZER_UNK_ID            = "tokenizer.ggml.unknown_token_id";
-static const char * LLM_KV_TOKENIZER_SEP_ID            = "tokenizer.ggml.seperator_token_id";
-static const char * LLM_KV_TOKENIZER_PAD_ID            = "tokenizer.ggml.padding_token_id";
-
-    // { LLM_KV_DICT_VAE_LAYERS,               "dict.vae.layers"       },
-    // { LLM_KV_DICT_LATENT_DIM,                  "%s.dict_latent_dim"},
-static const char * LLM_KV_DICT_VAE_LAYERS             = "dict.vae.layers";
-static const char * LLM_KV_DICT_LATENT_DIM             = "%s.dict_latent_dim";
-
 static const char * arch = "gruai";     //llm_arch_from_string
-static char keybuf[512];
-const char * kv(const char * key)   {    
-    snprintf(keybuf, 512, key, arch);
-    return keybuf;
-};
 
-void Ganglia::SaveTrain(struct save_train_model * data, struct train_state * train) { 
+// gguf constants (sync with gguf.py)
+
+
+
+
+// Fish* Fish::Copy(const Fish* src,int flag) { 
+//     return nullptr;
+// }
+
+hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,int flag)   {
+    hFISH fish = nullptr;
+    switch(params.nabla){
+    case 1:
+        fish = std::make_shared<LLAMA_LORA>(nam_+"_lora",params);
+        break;
+    case 2:
+        // fish = std::make_shared<LLAMA_Brown>(nam_+"_brown",params);
+        fish = std::make_shared<LLaMeta>(nam_,params);
+        break;
+    case 3:
+        fish = std::make_shared<LLAMA_VAE>(nam_+"_vae",params);
+        break;    
+    default:
+        assert(0);
+    }  
+    hWIKI wiki = nullptr;
+    if(params.tpWiki>=0)        //wiki is so heavy(ugly) that only load one instance here!
+        wiki = std::make_shared<LAMA>(params);
+    fish->Init( wiki );    
+    fish->BuildGraph( );
+    if(!fish->InitCTX())
+        return nullptr;
+    if(wiki!=nullptr){  //generate some sentence
+        fish->gopt = GeneratOnPrompt::MakeInstance(params,wiki,fish.get(),flag);        
+    }
+    
+    return fish;
+}
+
+hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,const Fish *hSrc_,int flag)   {
+    hFISH fish = nullptr;
+    switch(params.nabla){
+    case 1:
+        fish = std::make_shared<LLAMA_LORA>(nam_+"_lora",params);
+        break;
+    case 2:
+        fish = std::make_shared<LLaMeta>(nam_,params);
+        break;
+    case 3:
+        fish = std::make_shared<LLAMA_VAE>(nam_+"_vae",params);
+        break;    
+    default:
+        assert(0);
+    }  
+    fish->isLocalInfer = flag==0x110;
+    fish->graph_order = hSrc_->graph_order;
+    hWIKI wiki = hSrc_->wiki;   //wiki is so heavy(ugly) that only one instance from hSrc!    
+    assert(wiki!=nullptr);
+    fish->Init( wiki );    
+    fish->BuildGraph( );
+    if(!fish->InitCTX())
+        return nullptr;
+    if(fish->isLocalInfer){  
+    }else{
+        fish->gopt = GeneratOnPrompt::MakeInstance(params,wiki,fish.get(),flag);        
+    }
+    
+    return fish;
+}
+
+bool Fish::InitCTX(int flag) {
+    auto& train_params = hparams.common;
+    struct ggml_cgraph *cgraph = gb;
+    if(gb==nullptr){        //  OnlyInfer
+        cgraph = gf;
+    }
+    size_t max_work_size = ggml_graph_plan(cgraph, train_params.n_threads).work_size + GGML_OBJECT_SIZE;
+    _INFO("%s: work_size = %zu bytes (%.1f MB)\n", __func__, max_work_size, (float) max_work_size / (1024.0f*1024.0f));
+
+    // context for work buffer
+    struct ggml_init_params ctx_work_params = {
+        max_work_size, // mem_size
+        NULL,          // mem_buffer    
+        false,         // no_alloc
+    };
+    ctx_work = ggml_init(ctx_work_params);
+    gb_plan = ggml_graph_plan(cgraph, train_params.n_threads);
+    struct ggml_object * obj = ggml_new_object(ctx_work, GGML_OBJECT_TYPE_WORK_BUFFER, gb_plan.work_size);
+    gb_plan.work_data = (uint8_t *)ctx_work->mem_buffer + obj->offs;
+    gf_plan = gb_plan;      //  ???
+    return true;
+}
+
+//params!=src->params
+LLaMeta::LLaMeta(const std::string& nam_,const LLaMeta* src,struct CLI_params params,int flag) : Fish(nam_,params){    
+    // hDict = src->hDict;
+    // tensors = src->tensors;
+    // for(auto it : tensors){
+    //     nParamsGGUF += ggml_nelements(it.second);
+    // }
+
+    graph_order = src->graph_order;
+    //VAE's latent dim
+    // if(hDict->nLevel>0)     {        
+    //     hparams.n_embd = src->hparams.n_embd;
+    //     // n_embd = hparams.n_embd;
+    // }
+
+    //  ugly ctx here
+    // struct ggml_init_params ctx_model_params;
+    // ctx_model_params.mem_size   = MostMemSize(0x0) ;
+    // ctx_model_params.mem_buffer = NULL;
+    // ctx_model_params.no_alloc   = true;
+    // assert(ctx==nullptr);
+    // ctx = ggml_init(ctx_model_params);
+
+    // InitModel();
+}
+
+void Fish::SaveTrain(struct save_train_model * data, struct train_state * train) { 
     int64_t iter = train->opt->iter;
     _INFO("%s: iter_%ld\n", __func__, iter);
     string sBaseName = get_train_filename(data->fn_model_out.c_str(), data->pattern_fn_it.c_str(), data->fn_latest.c_str(), -1  );
@@ -88,12 +168,15 @@ void _T_repr_(hGensor t,const char*tab,char *buf,int flag=0x0){
 }
 
 string LLaMeta::__repr__( string& suffix,string& prefix,int flag)         {
-    // Ganglia::__repr__(suffix,prefix,flag);
+    // Fish::__repr__(suffix,prefix,flag);
     char buf[5012]="\0";
     const char*tab=prefix.c_str();
-    sprintf(buf+strlen(buf),"\n%s(%s):nParams = %ld(%.6gM)",tab,
-        "LLaMeta",nParams,nParams/1.0e6);
-    sprintf(buf+strlen(buf),"\n%s  tensors=%ld gf=(%d %d)  gb=(%d %d) ",tab, tensors.size(),gf->n_nodes,gf->n_leafs,gb->n_nodes,gb->n_leafs);
+    sprintf(buf+strlen(buf),"\n%s(%s):nParams = %ld(%.6gM)",tab,name.c_str(),nParams,nParams/1.0e6);
+    if(gb!=nullptr)
+        sprintf(buf+strlen(buf),"\n%s  tensors=%ld gf=(%d %d)  gb=(%d %d) ",tab, gensors.size(),gf->n_nodes,gf->n_leafs,gb->n_nodes,gb->n_leafs);
+    else
+        sprintf(buf+strlen(buf),"\n%s  tensors=%ld gf=(%d %d) ",tab, gensors.size(),gf->n_nodes,gf->n_leafs);
+
     string s="\n",p=prefix+"\t";
     sprintf(buf+strlen(buf),"%s",hDict->__repr__(s,p,0x0).c_str());
     int nLayer = layers.size();
@@ -105,8 +188,8 @@ string LLaMeta::__repr__( string& suffix,string& prefix,int flag)         {
         sprintf(buf+strlen(buf),"%s",layers[layers.size()-1]->__repr__(s,p,0x0).c_str());    
     }
     _T_repr_(target_probs,"  target_probs=",buf);  
-    if(wiki!=nullptr && wiki->preLogits!=nullptr)
-        _T_repr_(wiki->preLogits,"  wiki_logits=",buf);    
+    if(exLogits!=nullptr)
+        _T_repr_(exLogits,"  wiki_logits=",buf);    
     _T_repr_(loss,"  loss=",buf);   
 
     sprintf(buf+strlen(buf),"%s",suffix.c_str()); 
@@ -127,287 +210,7 @@ string MutliCoder::__repr__( string& suffix,string& prefix,int flag)   {
     return buf;
 }
 
-string ConsiceDict::__repr__( string& suffix,string& prefix,int flag)     {
-    char buf[5012]="\0";
-    const char* _ops[]= {
-        "ONLY_LOAD","RND_GRAD","LOAD_GRAD,","LOAD_GRAD_norm",
-    };
-    const char*tab=prefix.c_str();
-    sprintf(buf+strlen(buf),"\n%s(%s):resi=%d tpNorm=%d opOut=\"%s\" nLevel=%d\n",prefix.c_str(),
-        "ConsiceDict",(int)(reserve_x),tpNorm,_ops[opOut],nLevel);
-    
-    _T_repr_(tok_embeddings,tab,buf);   
-    _T_repr_(norm,tab,buf);   
-    _T_repr_(output,tab,buf);   
-    if(nLevel>0){
-        // sprintf(buf+strlen(buf),"%s\tdims=",tab);
-        
-        string s="\n",p=prefix+"\t";
-        auto vae = MAEC[0];
-        sprintf(buf+strlen(buf),"%s  [%s] x %d\tdims=",tab,vae->Name().c_str(),MAEC.size());
-        for(auto dim : dims)           {
-            sprintf(buf+strlen(buf),"%d ",dim);
-        }
-        sprintf(buf+strlen(buf),"%s",vae->__repr__(s,p,0x0).c_str());  
-    }
-    sprintf(buf+strlen(buf),"\n");
 
-    sprintf(buf+strlen(buf),"%s",suffix.c_str());
-    if(flag>0)
-        _INFO("%s",buf); 
-    return buf;
-}
-
-
-ConsiceDict::ConsiceDict(LLaMeta *lama_,int flag) : VariationaAE(),hLM(lama_)   {
-    assert(hLM->isValid());
-    hparams = hLM->hparams;
-    reserve_x = true;
-    isSymmetric = false;
-    lama_embed = hparams.n_embd;
-    // n_vocab = hparams.n_vocab;      //Maybe 0!  would get correct value @LoadVocab!
-    if(hLM->hparams.nabla==3){
-         dims = {hparams.n_embd, 256};
-        // dims = {hparams.n_embd, 1024, 256};
-        //dims = {hparams.n_embd,1024,256,64};       //little difference with {hparams.n_embd,1024,256,128}
-        nLevel = dims.size()-1;   
-        latent_dim = dims[nLevel];
-    }   else if(hLM->hparams.nabla>3)
-        assert(0);         
-    _INFO("%s symmetric=%d resi=%d tpNorm=%d opOut=%d nLevel=%d dims= ",__func__,(int)(isSymmetric),(int)(reserve_x),tpNorm,opOut,nLevel);
-    for(auto dim : dims)           {
-        _INFO("%d ",dim);
-    }
-    _INFO("\n");
-}
-
-void ConsiceDict::InitVAE(int flag)  {
-    assert(nLevel>0);   
-    if(nLevel>=1){
-        isLoadTokenEmbed = true;
-        InitMAEC(hLM->ctx,dims);
-        // hMultiCoder hCoder = std::make_shared<MutliCoder>(hLM->ctx, hparams.n_embd, latent_dim);
-        // MAEC.push_back(hCoder);
-        // encoder = ggml_new_tensor_2d(hLM->ctx, GGML_TYPE_F32, hparams.n_embd, latent_dim);     
-        // decoder = ggml_new_tensor_2d(hLM->ctx, GGML_TYPE_F32, latent_dim, hparams.n_embd); 
-    }    
-    hLM->hparams.n_embd = latent_dim;        
-}
-
-/**
- * Only for compare & debug
- * 
- * llm_load_vocab
-
-void ConsiceDict::LoadVocab_v1(const char*fn_model_base,struct CLI_params& params,llama_model & model,int flag) {
-    llama_model_loader ml(fn_model_base, true,false,nullptr);
-    // model.hparams.vocab_only = params.vocab_only;
-    assert(model.arch==LLM_ARCH_GRUAI);
-    
-
-    auto & vocab = model.vocab;
-    bpe_ranks = vocab.bpe_ranks;
-}*/
-
-void ConsiceDict::CreateEmbeddings(struct random_normal_distribution * rnd,int flag){
-    assert(hLM!=nullptr);
-    const uint32_t n_embd  = hparams.n_embd,last_dim=dims[dims.size()-1];
-    auto lama = hLM->GetRawModel( );  
-    auto ctx = hLM->ctx;    
-    
-    if(isLoadTokenEmbed) {
-        const uint32_t n1 = isSymmetric ? n_embd : last_dim;
-        if(opOut==RND_GRAD){
-            norm           = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n1);
-            output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n1, n_vocab);  
-        }else if(opOut==LOAD_GRAD_norm){
-            output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n1, n_vocab);  
-        }
-        return;
-    }
-
-    tok_embeddings = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_vocab);
-    norm           = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
-    output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_vocab);  
-}
-
-void ConsiceDict::Update_0(struct random_normal_distribution * rnd,int flag){
-    const uint32_t n_embd  = hparams.n_embd;
-    auto lama = hLM->GetRawModel( );  
-    if(isLoadTokenEmbed) {
-        bool isParam = false;
-        // get tensors from llama_model (possibly mmapped)
-        tok_embeddings = llama_get_model_tensor(lama, TN(LLM_TENSOR_TOKEN_EMBD));      
-        if(isParam) nParams+=ggml_nelements(tok_embeddings);
-        norm           = llama_get_model_tensor(lama, TN(LLM_TENSOR_OUTPUT_NORM));     
-        if(isParam) nParams+=ggml_nelements(norm);
-        output         = llama_get_model_tensor(lama, TN(LLM_TENSOR_OUTPUT));          
-        if(isParam) nParams+=ggml_nelements(output);
-    }   else   {
-        auto ctx = hLM->ctx;
-        /*tok_embeddings = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_vocab);
-        norm           = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
-        output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_vocab); */ 
-
-        hLM->InitGensor(ctx,tok_embeddings, TN(LLM_TENSOR_TOKEN_EMBD), rnd);
-        hLM->InitGensor(ctx,norm,           TN(LLM_TENSOR_OUTPUT_NORM), rnd);
-        hLM->InitGensor(ctx,output,         TN(LLM_TENSOR_OUTPUT), rnd);
-    }
-    // ggml_tensor_dequant(ctx_compute,gensor,GGML_TYPE_F32);
-    if(0){
-        assert_shape_2d(tok_embeddings, hparams.n_embd, n_vocab);
-        assert_shape_1d(norm,           hparams.n_embd);
-        assert_shape_2d(output,         hparams.n_embd, n_vocab);              
-    }else{
-
-    }      
-}
-
-void ConsiceDict::Update_1(struct random_normal_distribution * rnd,int flag) {
-    const uint32_t n_embd  = hparams.n_embd;
-
-    bool isParam = false;
-    // get tensors from llama_model (possibly mmapped)
-    auto lmodel = hLM->GetRawModel( );  
-    tok_embeddings = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_TOKEN_EMBD) );        //TN(LLM_TENSOR_TOKEN_EMBD)
-    if(isParam) hLM->nParams+=ggml_nelements(tok_embeddings);
-    switch(opOut){
-    case ONLY_LOAD:
-        norm           = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT_NORM) );       //  
-        // if(isParam) hLM->nParams+=ggml_nelements(norm);
-        output         = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT)  );            //
-        // if(isParam) hLM->nParams+=ggml_nelements(output);
-        break;
-    case LOAD_GRAD_norm:    //bug@Optimizer::ggml_train
-        norm           = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT_NORM) );
-        assert(norm->type==GGML_TYPE_F32);
-        ggml_set_param(hLM->ctx, norm);         hLM->nParams += ggml_nelements(norm);           hLM->tensors[norm->name] = norm;
-        hLM->InitGensor(hLM->ctx,output,         TN(LLM_TENSOR_OUTPUT), rnd);
-        break;
-    case LOAD_GRAD:     //bug!!!
-        norm           = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT_NORM) );
-        if(norm->type!=GGML_TYPE_F32)   Gensor2float(hLM->ctx,norm);
-        ggml_set_param(hLM->ctx, norm);         hLM->nParams += ggml_nelements(norm);           hLM->tensors[norm->name] = norm;
-        output         = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT)  ); 
-        if(output->type!=GGML_TYPE_F32)   {
-            output->data = Gensor2float(hLM->ctx,output);       output->type = GGML_TYPE_F32;
-        }
-        ggml_set_param(hLM->ctx, output);     hLM->nParams += ggml_nelements(output);           hLM->tensors[output->name] = output;
-        break;
-    case RND_GRAD:
-        hLM->InitGensor(hLM->ctx,norm,           TN(LLM_TENSOR_OUTPUT_NORM), rnd);
-        hLM->InitGensor(hLM->ctx,output,         TN(LLM_TENSOR_OUTPUT), rnd);
-        break;
-
-    default:
-        assert(0);
-    }
-    
-    assert(tok_embeddings!=nullptr && norm!=nullptr && output!=nullptr);
-
-    // ggml_tensor_dequant(ctx_compute,gensor,GGML_TYPE_F32);
-    if(0){
-        assert_shape_2d(tok_embeddings, hparams.n_embd, n_vocab);
-        assert_shape_1d(norm,           hparams.n_embd);
-        assert_shape_2d(output,         hparams.n_embd, n_vocab);              
-    }
-    int i = 0;
-    for(auto map : MAEC){
-        std::string name = TN(LLM_DICT_DOWN, i);    //"dict.0.down.weight"
-        hLM->InitGensor(hLM->ctx, map->encode,    TN(LLM_DICT_DOWN, i),     rnd); 
-        if(map->decode!=nullptr)
-            hLM->InitGensor(hLM->ctx, map->decode,    TN(LLM_DICT_UP, i),       rnd);    
-        i++;            
-    }
-    //ggml_set_param(hLM->ctx, norm);              hLM->nParams+=ggml_nelements(norm);
-    //output is Q6k would fail @float ggml_get_f32_1d(const struct ggml_tensor * tensor, int i)
-    //ggml_set_param(hLM->ctx, output);            hLM->nParams+=ggml_nelements(output);
-
-    hLM->tensors[ggml_get_name(tok_embeddings)] = tok_embeddings;
-    hLM->tensors[ggml_get_name(norm)] = norm;
-    hLM->tensors[ggml_get_name(output)] = output;  
-    assert(tensors.size()==0);          
-}
-
-void ConsiceDict::LoadVocab(const char*fn_model_base,int flag)     {
-    string word;
-    enum llama_ftype ftype = LLAMA_FTYPE_MOSTLY_F16;   //LLAMA_FTYPE_ALL_F32;
-    struct gguf_init_params params = {        false,NULL,    };
-    struct gguf_context * vctx = gguf_init_from_file(fn_model_base, params);
-
-    token_idx = gguf_find_key(vctx, kv(LLM_KV_TOKENIZER_LIST));
-    if (token_idx == -1) {
-        die("cannot find tokenizer vocab in model file");
-    }
-    n_vocab = gguf_get_arr_n(vctx, token_idx);
-    int nTT = gguf_get_arr_n(vctx, token_idx);          assert(n_vocab==nTT);
-    score_idx = gguf_find_key(vctx, kv(LLM_KV_TOKENIZER_SCORES));
-    if (score_idx == -1) {
-        die("cannot find tokenizer scores in model file");
-    }
-    scores = new float[nTT];
-    memcpy(scores,gguf_get_arr_data(vctx, score_idx),sizeof(float)*nTT);    
-
-    toktype_idx = gguf_find_key(vctx, kv(LLM_KV_TOKENIZER_TOKEN_TYPE));
-    if (toktype_idx == -1) {
-        die("cannot find token type list in GGUF file");
-    }
-    assert( nTT == gguf_get_arr_n(vctx, toktype_idx));
-    toktypes = new int[nTT];
-    memcpy(toktypes,gguf_get_arr_data(vctx, toktype_idx),sizeof(int)*nTT);    
-    GGUF_GET_KEY(vctx, tokenizer_name, gguf_get_val_str, GGUF_TYPE_STRING, true, kv(LLM_KV_TOKENIZER_MODEL));
-    if (tokenizer_name == "llama") {
-        // default special tokens
-        special_bos_id = 1;
-        special_eos_id = 2;
-        special_unk_id = 0;
-        special_sep_id = -1;
-        special_pad_id = -1;
-    } else if (tokenizer_name == "gpt2") {
-        // read and copy bpe merges
-        merges_keyidx = gguf_find_key(vctx, kv(LLM_KV_TOKENIZER_MERGES));
-        if (merges_keyidx == -1) {
-            die("cannot find tokenizer merges in model file");
-        }
-        n_merges = gguf_get_arr_n(vctx, merges_keyidx);
-        // std::vector<const char*> merges;
-        merges.resize(n_merges);
-        for (int i = 0; i < n_merges; i++) {
-            merges[i] = strdup(gguf_get_arr_str(vctx, merges_keyidx, i));
-            word = merges[i];
-            GGML_ASSERT(unicode_cpts_from_utf8(word).size() > 0);
-            std::string first,second;
-            const size_t pos = word.find(' ', 1);
-            if (pos != std::string::npos) {
-                first  = word.substr(0, pos);
-                second = word.substr(pos + 1);
-            }
-            bpe_ranks.emplace(std::make_pair(first, second), i);
-        }
-        word = merges[0];
-        // gguf_set_arr_str(fctx, kv(LLM_KV_TOKENIZER_MERGES), merges.data(), n_merges);
-        // default special tokens
-        special_bos_id = 11;        special_eos_id = 11;        special_unk_id = -1;
-        special_sep_id = -1;        special_pad_id = -1;
-    } else {
-        fprintf(stderr, "%s: unknown tokenizer: '%s'", __func__, tokenizer_name.c_str());
-        fprintf(stderr, "%s: using default tokenizer: 'llama'", __func__);
-    }
-
-    // std::vector<const char*> tokens;
-    tokens.resize(n_vocab);
-    for (uint32_t i = 0; i < n_vocab; i++) {
-        tokens[i] = strdup(gguf_get_arr_str(vctx, token_idx, i));
-    }
-    // gguf_set_arr_str(fctx, kv(LLM_KV_TOKENIZER_LIST), tokens.data(), n_vocab);
-    GGUF_GET_KEY(vctx, special_bos_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_BOS_ID));
-    GGUF_GET_KEY(vctx, special_eos_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_EOS_ID));
-    GGUF_GET_KEY(vctx, special_unk_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_UNK_ID));
-    GGUF_GET_KEY(vctx, special_sep_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_SEP_ID));
-    GGUF_GET_KEY(vctx, special_pad_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_PAD_ID));
-
-    gguf_free(vctx);
-}
 
 static void save_checkpoint_file(const char * filename, const char * fn_model_base, struct llama_model * model, struct train_state * train) {
     _INFO("%s: saving to %s\n", __func__, filename);
@@ -461,10 +264,11 @@ string LLaMeta::lama_layer::__repr__( string& suffix,string& prefix,int flag)   
 hGensor  LLaMeta::build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<LLaMeta::lama_layer> layer,hGensor  KQ_pos,/*hGensor cur, hGensor wq, hGensor wk, hGensor wv, hGensor wo,
     hGensor attention_norm,hGensor KQ_pos,hGensor ffn_norm,hGensor ffn_up,hGensor ffn_gate,hGensor ffn_down,*/ int flag) {
     auto train_params = hparams.common;
+    int n_vocab = hDict->n_vocab,n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd,n_head = hparams.n_head,n_ff = hparams.n_ff;
     const float f_norm_rms_eps  = hparams.f_norm_rms_eps;
     const float rope_freq_base  = hparams.rope_freq_base;
     const float rope_freq_scale = hparams.rope_freq_scale;  
-    const float kv_scale = 1.0f/sqrtf(float(n_embd)/n_head);
+    const float kv_scale = 1.0f/sqrtf(float(hparams.n_embd)/hparams.n_head);
     const int n_past = 0, n_head_kv=hparams.n_head_kv,n_embd_head = hparams.n_embd_head();
     hGensor wq = UpdateGensor (layer->wq->name);                     
     hGensor wk = layer->wk==nullptr ? nullptr : UpdateGensor (layer->wk->name);
@@ -578,128 +382,86 @@ hGensor  LLaMeta::build_layer_( int N,struct ggml_context *ctx_compute,hGensor c
     }                 
 }
 
-void VariationaAE::save_gguf(struct gguf_context *fctx, int flag)   {
-    if(MAEC.size()==0)
-        return;
-    int nLay = MAEC.size()+1;       assert(nLay>=2);
-    gguf_set_arr_data(fctx, kv(LLM_KV_DICT_VAE_LAYERS), GGUF_TYPE_INT32, dims.data(), nLay);  
-    for(auto coder:MAEC){
-        gguf_add_tensor(fctx, coder->encode);
-        if(coder->decode!=nullptr)
-            gguf_add_tensor(fctx, coder->decode);
-    }   
-}
+
 
 std::string LLaMeta::Name()     {   
     return "LAMA";  
 }
 
-void LLaMeta::save_gguf(const char * filename, int flag) {
-    enum llama_ftype ftype = LLAMA_FTYPE_ALL_F32;       //LLAMA_FTYPE_MOSTLY_Q2_K
-    _INFO("[save] saving gguf to %s ftype=%d ......\n", filename,ftype);
-    struct gguf_context * fctx = gguf_init_empty();
-    int keyidx = -1;    
-    
-    // set arch
-    gguf_set_val_str(fctx, LLM_KV_GENERAL_ARCHITECTURE, arch);
-    gguf_set_val_str(fctx, LLM_KV_GENERAL_NAME, ".");
-    gguf_set_val_u32(fctx, kv(LLM_KV_VOCAB_SIZE), n_vocab);
-    int llm_embd = hDict->lama_embed,latent_dim=hDict->latent_dim;        //hparams.n_embd
-    if(hDict->nLevel>0)    assert(llm_embd>latent_dim && latent_dim>0);
-    // set hparams
-    const char*str = kv(LLM_KV_CONTEXT_LENGTH);
-    gguf_set_val_u32(fctx, kv(LLM_KV_CONTEXT_LENGTH),              hparams.n_ctx                  );
-    gguf_set_val_u32(fctx, kv(LLM_KV_EMBEDDING_LENGTH),            llm_embd                       );
-    
-    gguf_set_val_u32(fctx, kv(LLM_KV_BLOCK_COUNT),                 hparams.n_layer                );
-    gguf_set_val_u32(fctx, kv(LLM_KV_FEED_FORWARD_LENGTH),         hparams.n_ff                   );
-    gguf_set_val_u32(fctx, kv(LLM_KV_ROPE_DIMENSION_COUNT),        hparams.n_rot                  );
-    gguf_set_val_u32(fctx, kv(LLM_KV_ATTENTION_HEAD_COUNT),        hparams.n_head                 );    
-    gguf_set_val_u32(fctx, kv(LLM_KV_ATTENTION_HEAD_COUNT_KV),     hparams.n_head_kv              );
 
-    gguf_set_val_f32(fctx, kv(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS), hparams.f_norm_rms_eps         );
-    gguf_set_val_f32(fctx, kv(LLM_KV_ROPE_FREQ_BASE),              hparams.rope_freq_base         ); // TODO load in llama.cpp
+
+//REF: ggml_compute_forward_dup_bytes
+void LLaMeta::CopyWeight(const Fish* src,int flag) {
+    auto gsrc = src->gf;
+    size_t nx=0,nz,nT=0;
     
-    gguf_set_val_u32(fctx, LLM_KV_GENERAL_FILE_TYPE, ftype);
-    // set vocab by copying from vocab_model gguf file
-    gguf_set_val_str(fctx, kv(LLM_KV_TOKENIZER_MODEL), hDict->tokenizer_name.c_str());
-
-    gguf_set_arr_str(fctx, kv(LLM_KV_TOKENIZER_LIST), hDict->tokens.data(), n_vocab);
-    gguf_set_arr_data(fctx, kv(LLM_KV_TOKENIZER_SCORES), GGUF_TYPE_FLOAT32, hDict->scores, n_vocab);    
-    gguf_set_arr_data(fctx, kv(LLM_KV_TOKENIZER_TOKEN_TYPE), GGUF_TYPE_INT32, hDict->toktypes, n_vocab);
-    if (hDict->tokenizer_name == "gpt2"){
-        const char* sMERGES = kv(LLM_KV_TOKENIZER_MERGES);
-        gguf_set_val_u32(fctx, sMERGES,  hDict->merges_keyidx              );
-        keyidx = gguf_find_key(fctx, sMERGES);      //only for debug
-        assert(hDict->merges.size()==hDict->n_merges);
-        string word = hDict->merges[0];
-        gguf_set_arr_str(fctx, sMERGES, hDict->merges.data(), hDict->n_merges);
-        /*for (int i = 0; i < hDict->n_merges; i++) {        //only for debug
-            const std::string word = gguf_get_arr_str(fctx, keyidx, i);
-            GGML_ASSERT(unicode_cpts_from_utf8(word).size() > 0);            
-        }*/
-    }   
-    
-    
-    gguf_set_val_u32(fctx, kv(LLM_KV_TOKENIZER_BOS_ID), hDict->special_bos_id);
-    gguf_set_val_u32(fctx, kv(LLM_KV_TOKENIZER_EOS_ID), hDict->special_eos_id);
-    // gguf_set_val_u32(fctx, kv(LLM_KV_TOKENIZER_UNK_ID), hDict->special_unk_id);      -1
-    // gguf_set_val_u32(fctx, kv(LLM_KV_TOKENIZER_SEP_ID), hDict->special_sep_id);      -1
-    // gguf_set_val_u32(fctx, kv(LLM_KV_TOKENIZER_PAD_ID), hDict->special_pad_id);      -1
-    gguf_set_val_f32(fctx, kv(LLM_KV_ROPE_SCALE_LINEAR),           1.0f / hparams.rope_freq_scale );
-    gguf_set_val_u32(fctx, kv(LLM_KV_DICT_LATENT_DIM),             latent_dim                       );
-    //more maybe from llama_chat_apply_template
-    // add tensors
-    gguf_add_tensor(fctx, hDict->tok_embeddings);   //4096*128256
-    gguf_add_tensor(fctx, hDict->norm);             //4096
-    gguf_add_tensor(fctx, hDict->output);           //4096*128256
-    hDict->save_gguf(fctx, flag);    
-
-    for (uint32_t i = 0; i < hparams.n_layer; ++i) {
-        auto layer = dynamic_pointer_cast<lama_layer>(layers[i]); //layers[i];
-
-        gguf_add_tensor(fctx, layer->attention_norm);
-        gguf_add_tensor(fctx, layer->wq);
-        if(layer->wk!=nullptr)
-            gguf_add_tensor(fctx, layer->wk);
-        if(layer->wv!=nullptr)
-            gguf_add_tensor(fctx, layer->wv);
-        gguf_add_tensor(fctx, layer->wo);
-        if(layer->ffn_norm!=nullptr)
-            gguf_add_tensor(fctx, layer->ffn_norm);
-        if(layer->ffn_gate!=nullptr)
-            gguf_add_tensor(fctx, layer->ffn_gate);
-        if(layer->ffn_down!=nullptr)
-            gguf_add_tensor(fctx, layer->ffn_down);
-        if(layer->ffn_up!=nullptr)
-            gguf_add_tensor(fctx, layer->ffn_up);
-    }
-
-    const bool only_meta = false;
-    gguf_write_to_file(fctx, filename, only_meta);
-    gguf_free(fctx);
+    for (int i = 0; i < gsrc->n_nodes; ++i) {
+        hGensor t0 = gsrc->nodes[i],t1;
+        if(strcmp(t0->name,"output.weight")==0){
+            int j = 0;
+        }
+        const size_t type_size = ggml_type_size(t0->type);
+        if (t0->flags & GGML_TENSOR_FLAG_PARAM) {
+            t1 = GetGensor(t0->name);
+            assert(t1!=nullptr && t0->type==t1->type);
+            nz = ggml_nelements(t0);
+            assert(nz==ggml_nelements(t1));
+            memcpy(t1->data,t0->data,type_size*nz);
+            nx += nz;       nT++;
+        }
+    }      
+    assert(nx==src->nParams);   
 }
-//would affect training process
-bool LLaMeta::GetOutput(std::vector<llama_token>&tokens,vector<float>& result)   {
-    float fLos = hOPT->Compute(tokens,true);
+
+/*
+    would affect training process?
+    hOPT->Compute would merge wiki->preLogits! (REF: DataLoader::update_batch)
+*/
+bool LLaMeta::LocalFeeling(std::vector<llama_token>&samp_tokens,vector<float>& result)  const {
+    assert(target_probs->type == GGML_TYPE_F32);
+    float *fLoss = (float*)(loss->data);    
+    llama_token token;
+    ggml_set_i32_nd(tokens_input, 0, 0, 0, 0, hDict->bos);
+    size_t i,N=samp_tokens.size(),n_context=tokens_input->ne[0],nSampInBatch=tokens_input->ne[1];
+    if(N>n_context)
+        return false;
+    assert(N>=0 && N<=n_context);     
+    // assert(nSamp==1 && nSamp<=nSampInBatch);
+    for(i=0;i<N;i++)  {
+        token = samp_tokens[i];
+        ggml_set_i32_nd(tokens_input, (int) (i + 1), (int) 0, 0, 0, token);
+    }
+   
+    if(isLocalInfer)
+        ggml_graph_compute(gf, (ggml_cplan*)(&gf_plan));   
+    else{
+        ggml_graph_compute(gb, (ggml_cplan*)(&gb_plan));           
+    }        
+
     assert(preLogits->type==GGML_TYPE_F32);
-    size_t nz = ggml_nelements(preLogits),len=preLogits->ne[0],i; //preLogits->nb[0];
-    float *out = (float*)(preLogits->data);
-    // result.resize(nz);
-    assert(result.size()==len);
-    memcpy(result.data(),out,sizeof(float));
+    assert(preLogits->ne[1]==n_context);
+    size_t nz = ggml_nelements(preLogits),nTokenInWiki=preLogits->ne[0]; //preLogits->nb[0];
+
+    //Causal Language Modeling
+    size_t off = (N-1)*nTokenInWiki;      //(n_context-1)*nToken;
+    float *out = (float*)(preLogits->data)+off;
+    if(result.size()!=nTokenInWiki){
+        result.clear( );     result.resize(nTokenInWiki);
+    }
+    memcpy(result.data(),out,sizeof(float)*nTokenInWiki);
     float sum=0;
     for(auto f : result)    sum+=f;
     return true;
 }
 
 void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,hGensor cur,hGensor _tNorm,hGensor _tOutput,hGensor KQ_pos, int flag)  {
-    int n_tokens = hparams.n_ctx;
+    int n_vocab = hDict->n_vocab,n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd;
     auto train_params = hparams.common;
-    const int N = n_tokens, n_past = 0;
+    const int N = train_params.n_ctx, n_past = 0;
     const float rms_norm_eps = hparams.f_norm_rms_eps;
     hGensor  t32 = nullptr;
-    hGensor  t31   = ggml_rms_norm          (ctx, cur, rms_norm_eps);                    set_name(t31, "t31");     assert_shape_2d(t31, n_embd, N*n_batch);
+    hGensor  t31   = ggml_rms_norm          (ctx, cur, rms_norm_eps);                    set_name(t31, "t31");     
+    assert_shape_2d(t31, hparams.n_embd, N*train_params.n_batch);
     
     if(hDict->nLevel>0){
         t31 = hDict->DEC(ctx,t31);      //t31 = ggml_mul_mat(ctx, hDict->decoder, t31 );  
@@ -715,8 +477,10 @@ void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool 
     assert_shape_2d(t34, n_vocab, N*n_batch);
     hGensor  t35   = ggml_reshape_3d        (ctx, t34, n_vocab, N, n_batch);             set_name(t35, "t35");     
     assert_shape_3d(t35, n_vocab, N, n_batch);
-    if(wiki!=nullptr && wiki->preLogits!=nullptr)    {   //GPT mode's input is different with TRAINING!!!
-        t35 = ggml_add(ctx,t35,wiki->preLogits);
+    // no,no,no! 1) Softmax layers can be difficult to train since the gradients can vanish or explode  2) CrossEntropyLoss assumes logits on the input.
+    //  t35 = ggml_soft_max_inplace(ctx,t35); 
+    if(exLogits!=nullptr)    {   // preLogits = t35;
+        t35 = ggml_add(ctx,t35,exLogits);
     }
     hGensor  t36   = ggml_cross_entropy_loss(ctx, t35, target_probs);                    set_name(t36, "t36");     assert_shape_1d(t36, 1);
     if(hDict->nLevel>0){
@@ -730,60 +494,66 @@ void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool 
     ggml_build_forward_expand(gf, t36);
 
     if (train_params.use_checkpointing) {
-        ggml_build_backward_gradient_checkpointing(ctx, gf, gb, gb_tmp, checkpoints.data(), (int) checkpoints.size());
+        if(gb!=nullptr) 
+            ggml_build_backward_gradient_checkpointing(ctx, gf, gb, gb_tmp, checkpoints.data(), (int) checkpoints.size());
     } else {
-        ggml_graph_cpy(gf, gb);
-        ggml_build_backward_expand(ctx, gf, gb, true);
+        if(gb!=nullptr){
+            ggml_graph_cpy(gf, gb);
+            ggml_build_backward_expand(ctx, gf, gb, true);            
+        }
     }
 
     GGML_ASSERT(alloc != NULL);
-
-    // make sure some tensors are not reallocated by inserting new temporary nodes depending on them
-    int n_leafs_before = gb->n_leafs;
-    int n_nodes_before = gb->n_nodes;
-
-    // output_ tensors
-    ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, t35, 1.0f));
-    ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, t36, 1.0f));
-    // input gradient
-    ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, t36->grad, 1.0f));
-    GGML_ASSERT(t36->grad->data == NULL && t36->grad->view_src == NULL);
-    ggml_set_input(t36->grad);
-    // KQ_pos
-    ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, KQ_pos, 1.0f));
-    // allocating checkpoints in one block to reduce memory fragmentation
-    // note: they will be freed in reverse order
-
-    for (unsigned int i = 0; i < checkpoints.size(); ++i) {
-        if (checkpoints[i]->data == NULL && checkpoints[i]->view_src == NULL) {
-            ggml_set_input(checkpoints[i]);
+    if(isLocalInfer){  
+        GGML_ASSERT(alloc != NULL);
+        assert(gb==nullptr);
+        ggml_gallocr_alloc_graph(alloc, gf); 
+        int * data = (int *) KQ_pos->data;
+        for (int i = 0; i < N; ++i) {
+            data[i] = n_past + i;
         }
-    }
+    } else { // gb!=nullptr
+        // make sure some tensors are not reallocated by inserting new temporary nodes depending on them
+        int n_leafs_before = gb->n_leafs;
+        int n_nodes_before = gb->n_nodes;
+        // output_ tensors
+        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, t35, 1.0f));
+        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, t36, 1.0f));
+        // input gradient
+        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, t36->grad, 1.0f));
+        GGML_ASSERT(t36->grad->data == NULL && t36->grad->view_src == NULL);
+        ggml_set_input(t36->grad);
+        // KQ_pos
+        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, KQ_pos, 1.0f));
+        // allocating checkpoints in one block to reduce memory fragmentation they will be freed in reverse order    
 
-    if (measure_only) {
-        ggml_gallocr_reserve(alloc, gb);
-    } else {
-        ggml_gallocr_alloc_graph(alloc, gb);    //367,8088
-
-        // set KQ_pos
-        {
-            int * data = (int *) KQ_pos->data;
-            for (int i = 0; i < N; ++i) {
-                data[i] = n_past + i;
+        for (unsigned int i = 0; i < checkpoints.size(); ++i) {
+            if (checkpoints[i]->data == NULL && checkpoints[i]->view_src == NULL) {
+                ggml_set_input(checkpoints[i]);
             }
         }
+        if (measure_only) {
+            ggml_gallocr_reserve(alloc, gb);
+        } else {
+            ggml_gallocr_alloc_graph(alloc, gb);    //367,8088
+            // set KQ_pos
+            {
+                int * data = (int *) KQ_pos->data;
+                for (int i = 0; i < N; ++i) {
+                    data[i] = n_past + i;
+                }
+            }
+        }
+        // remove the additional nodes and leafs
+        for (int i = n_leafs_before; i < gb->n_leafs; ++i) {
+            gb->leafs[i] = NULL;
+        }
+        for (int i = n_nodes_before; i < gb->n_nodes; ++i) {
+            gb->nodes[i] = NULL;
+        }
+        gb->n_leafs = n_leafs_before;
+        gb->n_nodes = n_nodes_before;
     }
-
-    // remove the additional nodes and leafs
-    for (int i = n_leafs_before; i < gb->n_leafs; ++i) {
-        gb->leafs[i] = NULL;
-    }
-    for (int i = n_nodes_before; i < gb->n_nodes; ++i) {
-        gb->nodes[i] = NULL;
-    }
-    gb->n_leafs = n_leafs_before;
-    gb->n_nodes = n_nodes_before;
-
     preLogits = t35;
     // return t36;
     loss = t36;
@@ -822,7 +592,7 @@ std::string LAMA::T2STR( int32_t tok,int flag )                    {
  *  1.  llama_set_inputs(lctx, u_batch);        llama_graph_compute(lctx, gf, n_threads);
  *  2.  Extract logits and embeddings
  */
-bool LAMA::Decode(std::vector<llama_token>&embd_inp,int start,int n_past) {
+bool LAMA::Decode(std::vector<llama_token>&embd_inp,int start,int n_past,bool out_all) {
     llama_token eos = llama_token_eos(lmodel),id;
     int i=0,n_consumed=start;
     std::vector<llama_token> embd;
@@ -846,9 +616,28 @@ bool LAMA::Decode(std::vector<llama_token>&embd_inp,int start,int n_past) {
         /*all_pos_1      =*/ 1,
         /*all_seq_id     =*/ 0,
     };//llama_batch_get_one(&embd[0], n_eval, n_past, 0);
+    llama_ctx_set_(_ctx,&out_all,11);       
     llama_decode(_ctx,batch );      n_past+=n_eval;
-    llama_ctx_get_(_ctx,(void**)(&logits_out),10);  
+    // llama_ctx_get_(_ctx,(void**)(&logits_out),10);   
     return true;
+}
+
+const float *LAMA::GetLogits(int idx)   {
+    /*if(cparams.logits_all){   llama_ctx_set_(_ctx,&out_all,11);       
+        // assert(idx==0);
+    }*/
+/*
+    _ctx->logits_all is updated by llama_ctx_set_(_ctx,&out_all,11)
+    has no relation with cparams.logits_all !!!
+*/
+    if(idx==-1){ 
+        // assert(_ctx->logits_all==false);
+    }    
+    const float *_logits = llama_get_logits_ith(_ctx, idx);     //return ctx->logits + j*ctx->model.hparams.n_vocab;
+    if(0)   {        
+        llama_ctx_get_(_ctx,(void**)(&_logits),10);  //ctx->logits;
+    } 
+    return _logits;
 }
 
 void LAMA::Answer(std::vector<llama_token>&embd_inp,int flag) {
@@ -884,13 +673,7 @@ void LAMA::Answer(std::vector<llama_token>&embd_inp,int flag) {
     }
         // struct ggml_tensor * embd = gf->nodes[gf->n_nodes - 2];
     llama_decode(_ctx,batch );      n_past+=n_eval;
-    llama_ctx_get_(_ctx,(void**)(&logits_out),10);
-    // auto tmaps = llama_internal_get_tensor_map(_ctx);       //tmpas contain all weights,not all tensors!
-    // for(auto it : tmaps){
-    //     if(it.first=="result_output")
-    //         res = it.second;
-    // }
-    // assert(res!=nullptr);    
+    // llama_ctx_get_(_ctx,(void**)(&logits_out),10);  
 
     id = llama_sampling_sample(ctx_sampling, _ctx, nullptr);      //539
     llama_sampling_accept(ctx_sampling, _ctx, id, true);
@@ -898,105 +681,38 @@ void LAMA::Answer(std::vector<llama_token>&embd_inp,int flag) {
     _INFO("%s => \"%s\"",__func__,token_str.c_str());
 }
 
-/*
-int64_t Ganglia::update_batch(struct train_opt_callback_data *data,int next_id,struct train_params_common *params) {
-    struct llama_context * lctx=data->lctx;
-    struct ggml_tensor   * tokens_input=data->tokens_input;
-    struct ggml_tensor   * target_probs=data->target_probs;
-    int64_t                example_id=next_id;
-    const size_t         * samples_offs=data->shuffled_samples_offs;
-    const size_t         * samples_begin=data->shuffled_samples_begin;
-    const size_t         * samples_size=data->shuffled_samples_size;
-          size_t           samples_count=data->samples_count;
-    const llama_token    * train_data=data->tokens_data;
-    size_t                 n_train_data=data->tokens_size;
-    bool                   separate_with_eos=params->separate_with_eos;
-    bool                   separate_with_bos=params->separate_with_bos;
-    bool                   fill_with_next_samples=params->fill_with_next_samples;
-    bool                   sample_random_offsets=params->sample_random_offsets;
-    GGML_ASSERT(samples_count > 0);
-    GGML_ASSERT(ggml_is_matrix(tokens_input));
-    GGML_ASSERT(ggml_is_3d(target_probs));
-    int64_t n_vocab  = target_probs->ne[0],n_tokens = tokens_input->ne[0],n_batch  = tokens_input->ne[1];
-    GGML_ASSERT(n_vocab  == target_probs->ne[0]);
-    GGML_ASSERT(n_tokens == target_probs->ne[1]);
-    GGML_ASSERT(n_batch  == target_probs->ne[2]);
-    GST_TIC(T0);
-    int64_t used_samples = 0;
-    ggml_set_f32(target_probs, 0.0f);
-    llama_token bos = llama_token_bos(llama_get_model(lctx));
-    llama_token eos = llama_token_eos(llama_get_model(lctx));
-    std::string sBos = llama_token_to_piece(lctx, bos),sEos = llama_token_to_piece(lctx, eos);
-    
-    // LLAMA_LOG_INFO("%s: example_id=%d n_batch=%d n_train_samples=%zu\n", __func__, example_id, n_batch, n_train_samples);
-    _INFO("BATCH_%ld ",example_id);   //, samples_count,n_train_data);nSampe=(%ld/%ld)
-    for (int k=0; k<n_batch; ++k) {
-        // LLAMA_LOG_INFO("%s: batch %d\n", __func__, k);
-        std::vector<int32_t> tok_ids;
-        size_t sample_idx   = (example_id + used_samples) % samples_count;
-        size_t sample_offs  = sample_random_offsets ? samples_offs[sample_idx] : 0;
-        size_t sample_begin = samples_begin[sample_idx];
-        size_t sample_size  = samples_size[sample_idx];
-        ++used_samples;
-        assert(sample_offs==0);
-        
-        // LLAMA_LOG_INFO("%s: sample_idx=%zu sample=%zu\n", __func__, sample_idx, sample);
-        GGML_ASSERT(sample_begin+sample_size-1 < n_train_data);
-        std::string sentence="";
-        ggml_set_i32_nd(tokens_input, 0, k, 0, 0, bos);
-        bool sample_separation_eos = !separate_with_eos;
-        bool sample_separation_bos = !separate_with_bos;
-        for (int64_t i=0; i<n_tokens; ++i) {
-            llama_token token = eos;
-            if (sample_offs >= sample_size && fill_with_next_samples) { //true only arg == "--fill-with-next-samples"
-                if (!sample_separation_eos) {
-                    // insert eos token to separate samples
-                    sample_separation_eos = true;
-                } else if (!sample_separation_bos) {
-                    // insert bos token to separate samples
-                    sample_separation_bos = true;
-                    token = bos;
-                } else {
-                    // sample separation is done, continue with next sample
-                    sample_separation_eos = !separate_with_eos;
-                    sample_separation_bos = !separate_with_bos;
-                    sample_offs  = 0;
-                    sample_idx   = (example_id + used_samples) % samples_count;
-                    sample_begin = samples_begin[sample_idx];
-                    sample_size  = samples_size[sample_idx];
-                    ++used_samples;
-                }
-            }
-            // note: no else-if here
-            if (sample_offs < sample_size) {
-                token = clamp(train_data[sample_begin+sample_offs], 0, (llama_token) (n_vocab - 1));
-                ++sample_offs;
-            }
-            ggml_set_f32_nd(target_probs,  token, (int) i, (int) k, 0, +1.0f);
-            tok_ids.push_back(token);
-            
-            if (i+1<n_tokens) {
-                ggml_set_i32_nd(tokens_input, (int) (i + 1), (int) k, 0, 0, token);
-                sentence = llama_token_to_piece(lctx, token);
-                // _INFO("%s,",sentence.c_str());
-            }
-        }
-        if(k<6)
-            _INFO(" %ld@\"%s...\"",sample_begin,sentence.c_str());     //sample_size
-        if(wiki!=nullptr && wiki->logits!=nullptr){
-            assert(target_probs->type == GGML_TYPE_F32);
-            wiki->Decode(tok_ids,0,0x0);
-            auto g=wiki->logits;   // wiki->logits = ggml_new_tensor_3d(ctx_input, GGML_TYPE_F32, n_vocab,  n_tokens, n_batch);
-            size_t ld0=g->nb[0],ld1=g->nb[1],ld2=g->nb[2],ld3=g->nb[3],off=k*ld2;          
-            assert(ld0==4); 
-            float *logits = wiki->logits_out;   //n_vocab,nToken,
-            // target=(float*)((char *)(target_probs->data)+i*ld1+k*ld2);
-            assert(sizeof(float)*n_vocab*n_tokens==ld2 && off>=0);    
-            memcpy(g->data+off,logits,ld2);                
-
-        }        
+void LAMA::Reset(int flag)    {   
+    // cparams.seed = 42;
+    // llama_ctx_set_(_ctx,nullptr,42);
+    cparams.n_threads = 20;
+    cparams.n_threads_batch = 20;   
+    if(1){
+        _ctx = llama_ctx_reset_(_ctx,lmodel, cparams);
+    }else{
+        llama_free(_ctx);
+        _ctx = llama_new_context_with_model(lmodel, cparams);  //need more work to simplify        
     }
-    _INFO("\tT=%g\n",GST_TOC(T0));
 
-    return used_samples;
-}*/
+}   
+
+void LLaMeta::InitEntryTensors(int flag) {
+    auto train_params = hparams.common;
+    int n_ctx = train_params.n_ctx,n_vocab = hDict->n_vocab,n_batch = train_params.n_batch;
+    assert(n_ctx>0 && n_batch>0);
+    struct ggml_init_params ctx_input_params = {// mem_size mem_buffer no_alloc
+        ggml_tensor_overhead() * 2, NULL,true,                        
+    };
+    ctx_input = ggml_init(ctx_input_params);
+    tokens_input  = ggml_new_tensor_2d(ctx_input, GGML_TYPE_I32, n_ctx, n_batch);
+    target_probs  = ggml_new_tensor_3d(ctx_input, GGML_TYPE_F32, n_vocab,  n_ctx, n_batch);
+    ggml_backend_buffer_t input_data = ggml_backend_alloc_ctx_tensors_from_buft(ctx_input, ggml_backend_cpu_buffer_type());
+    size_t max_input_size = ggml_backend_buffer_get_size(input_data);
+    _INFO("%s: input_size(%d,%d) = %zu bytes (%.1f MB)\n", __func__, n_ctx, n_batch, max_input_size, (float) max_input_size / (1024.0f*1024.0f));
+    // ggml_free(ctx_input);
+}
+
+bool Fish::OnTrainStep(struct train_opt_callback_data *data,DataLoader&loader, int accum_step, float *sched, int flag)    {
+    LearningCurve(0x0);
+    assert(0);
+    return false;
+}

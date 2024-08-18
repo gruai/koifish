@@ -1,4 +1,4 @@
-#include "Ganglia.hpp"
+#include "Fish.hpp"
 #include "TGraph.hpp"
 
 void inline set_name(struct ggml_tensor * t, const char * n) {

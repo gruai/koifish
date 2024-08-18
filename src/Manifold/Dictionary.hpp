@@ -9,7 +9,7 @@
 
 #pragma once
 #include "../ggex/GG_util.hpp"   
-#include "../Manifold/Ganglia.hpp"   
+#include "../Manifold/Fish.hpp"   
 #include "../Manifold/VAE.hpp" 
 
 struct LLaMeta;
@@ -50,6 +50,8 @@ struct ConsiceDict : public VariationaAE    {
     std::vector<token_data>       id_to_token;
     std::unordered_map<token, id> special_tokens_cache;
 
+    int32_t bos,eos;   
+    
     int special_add_bos = -1; // -1 unknown, 1 add, 0 don't add.
     int special_add_eos = -1; // -1 unknown, 1 add, 0 don't add.
     id linefeed_id       = 13;

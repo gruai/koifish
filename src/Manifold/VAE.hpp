@@ -5,12 +5,12 @@
  *  \author Yingshi Chen
  */
 #pragma once
-#include "Ganglia.hpp"
+#include "Fish.hpp"
 
 /**
  * A abstract model of Multi-level Encoder/Decoer
 */
-class MutliCoder : public Ganglia   {
+class MutliCoder : public Fish   {
 protected:
     int nTop=-1,nBottom=-1;
     bool isResi = false;
@@ -73,7 +73,7 @@ public:
 };
 typedef shared_ptr<MutliCoder> hMultiCoder;
 
-class VariationaAE : public Ganglia   {
+class VariationaAE : public Fish   {
 protected:
     int nRefine = 1, tpNorm=2;
     bool isSymmetric = true;
@@ -81,7 +81,7 @@ protected:
     vector<hGensor> resi_x;
     vector<float> hier_norm;
     std::vector<int> dims;        
-    hGanglia callosum=nullptr;
+    hFISH callosum=nullptr;
 
     virtual hGensor _build_coder( bool isDown,hGensor x=nullptr )        {
         /*x_hier = 0  
@@ -185,7 +185,7 @@ public:
     }
 
     VariationaAE(   )       {  }
-    VariationaAE(struct CLI_params params,bool isRes,int flag=0x0) : Ganglia(params),reserve_x(isRes)  {}
+    VariationaAE(struct CLI_params params,bool isRes,int flag=0x0) : Fish("VariationaAE",params),reserve_x(isRes)  {}
     virtual ~VariationaAE() {
     }  
 };
