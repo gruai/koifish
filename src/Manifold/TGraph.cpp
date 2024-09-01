@@ -368,8 +368,9 @@ hGensor NT_SAM::Forward(hFISH graph,int nEmbed,int nHead,int W,int H,hGensor cur
     cur = ggml_mul_mat(ctx0, proj.w, cur);
     cur = ggml_add_inplace(ctx0, cur, proj.b);
     return cur;
-}/**/
+}
 
+/*
 struct ggml_compute_state_shared {
     const struct ggml_cgraph * cgraph=nullptr;
     const struct ggml_cplan  * cplan=nullptr;
@@ -539,7 +540,7 @@ static void ggml_graph_compute_thread_sync_task(int * task_phase, struct ggml_co
         * task_phase = atomic_load(&state->shared->node_task);
         if (* task_phase != last_task_phase) break;
     }
-}
+}*/
 
 static bool GGML_OP_HAS_INIT    [GGML_OP_COUNT] = { 0 };
 static bool GGML_OP_HAS_FINALIZE[GGML_OP_COUNT] = { 0 };
@@ -574,144 +575,14 @@ void TGraph::Traverse(int flag){
     }
 }
 
-void * _graph_pass_thread(void * data) {
-    struct ggml_compute_state * state = (struct ggml_compute_state *) data;
-
-    const struct ggml_cgraph * cgraph = state->shared->cgraph;
-    const struct ggml_cplan  * cplan  = state->shared->cplan;
-
-    const int   n_threads   = state->shared->n_threads;
-
-    set_numa_thread_affinity(state->ith);
-
-    int node_n     = -1;
-    int task_phase = GGML_TASK_TYPE_FINALIZE;
-
-    while (true) {
-        if (cplan->abort_callback && cplan->abort_callback(cplan->abort_callback_data)) {
-            state->shared->node_n += 1;
-            return (void*)(GGML_EXIT_ABORTED);  //ugly!
-        }
-
-        if (atomic_fetch_sub(&state->shared->n_active, 1) == 1) {
-            // all other threads are finished and spinning
-            // do finalize and init here so we don't have synchronize again
-            struct ggml_compute_params params = {
-                /*.type  =*/ GGML_TASK_TYPE_FINALIZE,/*.ith   =*/ 0,/*.nth   =*/ 0,
-                /*.wsize =*/ cplan->work_size,/*.wdata =*/ cplan->work_data,
-            };
-            if (node_n != -1) {
-                /* FINALIZE */
-                struct ggml_tensor * node = cgraph->nodes[node_n];
-                if (GGML_OP_HAS_FINALIZE[node->op]) {
-                    params.nth = ggml_get_n_tasks(node, n_threads);
-                    // ggml_compute_forward(&params, node);
-                }
-                // ggml_graph_compute_perf_stats_node(node, state->shared);
-            }
-           
-            while (++node_n < cgraph->n_nodes) { // distribute new work or execute it direct if 1T
-                GGML_PRINT_DEBUG_5("%s: %d/%d\n", __func__, node_n, cgraph->n_nodes);
-                struct ggml_tensor * node = cgraph->nodes[node_n];
-                const int n_tasks = ggml_get_n_tasks(node, n_threads);
-
-                state->shared->perf_node_start_cycles  = ggml_perf_cycles();
-                state->shared->perf_node_start_time_us = ggml_perf_time_us();
-
-                params.nth = n_tasks;
-
-                if (n_tasks == 1) {
-                    /* INIT */
-                    if (GGML_OP_HAS_INIT[node->op]) {
-                        params.type = GGML_TASK_TYPE_INIT;
-                        // ggml_compute_forward(&params, node);
-                    }
-
-                    // TODO: maybe push node_n to the atomic but if other threads see n_tasks is 1,
-                    // they do something more efficient than spinning (?)
-                    params.type = GGML_TASK_TYPE_COMPUTE;
-                    // ggml_compute_forward(&params, node);
-
-                    if (GGML_OP_HAS_FINALIZE[node->op]) {
-                        params.type = GGML_TASK_TYPE_FINALIZE;
-                        // ggml_compute_forward(&params, node);
-                    }
-                    // ggml_graph_compute_perf_stats_node(node, state->shared);
-                } else {
-                    break;
-                }
-
-                if (cplan->abort_callback && cplan->abort_callback(cplan->abort_callback_data)) {
-                    break;
-                }
-            }
-
-            task_phase = GGML_TASK_TYPE_INIT;
-            atomic_store(&state->shared->n_active,  n_threads);
-            atomic_store(&state->shared->node_n,    node_n);
-            atomic_store(&state->shared->node_task, task_phase);
-        } else {
-            ggml_graph_compute_thread_sync_node(&node_n,     state, false);
-            ggml_graph_compute_thread_sync_task(&task_phase, state, false);
-        }
-
-        // check if we should stop
-        if (node_n >= cgraph->n_nodes) break;
-
-        /* INIT & COMPUTE */
-        struct ggml_tensor * node = cgraph->nodes[node_n];
-        const int n_tasks = ggml_get_n_tasks(node, n_threads);
-
-        struct ggml_compute_params params = {
-            /*.type  =*/ GGML_TASK_TYPE_INIT,
-            /*.ith   =*/ state->ith,
-            /*.nth   =*/ n_tasks,
-            /*.wsize =*/ cplan->work_size,
-            /*.wdata =*/ cplan->work_data,
-        };
-
-        if (state->ith < n_tasks) {
-            if (GGML_OP_HAS_INIT[node->op]) {
-                // ggml_compute_forward(&params, node);
-            }
-        }
-
-        if (atomic_fetch_sub(&state->shared->n_active, 1) == 1) {
-            task_phase = GGML_TASK_TYPE_COMPUTE;
-            atomic_store(&state->shared->n_active,  n_threads);
-            atomic_store(&state->shared->node_task, task_phase);
-        }
-        else {
-            // TODO: this sched_yield can have significant impact on the performance - either positive or negative
-            //       depending on the workload and the operating system.
-            //       since it is not clear what is the best approach, it should potentially become user-configurable
-            //       ref: https://github.com/ggerganov/ggml/issues/291
-            // UPD:  adding the do_yield flag seems to resolve the issue universally
-            const bool do_yield = node_n < 0 || cgraph->nodes[node_n]->op == GGML_OP_MUL_MAT;
-            ggml_graph_compute_thread_sync_task(&task_phase, state, do_yield);
-        }
-
-        if (state->ith < n_tasks) {
-            params.type = GGML_TASK_TYPE_COMPUTE;
-            // ggml_compute_forward(&params, node);
-        }
-
-        if (atomic_fetch_sub(&state->shared->n_active, 1) == 1) {
-            task_phase = GGML_TASK_TYPE_FINALIZE;
-            atomic_store(&state->shared->n_active,  n_threads);
-            atomic_store(&state->shared->node_task, task_phase);
-        }
-        else {
-            ggml_graph_compute_thread_sync_task(&task_phase, state, false);
-        }
-    }
-
+void * _graph_pass_thread(void * data) {    
+    assert(0);
     return GGML_EXIT_SUCCESS;
 }
 
 int TGraph::compute_on_plan( struct ggml_cplan* cplan,int flag) {
-    //return ggml_graph_compute(cgraph, cplan);
-    int compute_status = GGML_EXIT_ABORTED;
+    return ggml_graph_compute(cgraph, cplan);
+    /*int compute_status = GGML_EXIT_ABORTED;
     GGML_ASSERT(cplan);
     GGML_ASSERT(cplan->n_threads > 0);
     if (cplan->work_size > 0) {
@@ -798,5 +669,5 @@ int TGraph::compute_on_plan( struct ggml_cplan* cplan,int flag) {
                 (double) cgraph->perf_time_us / 1000.0 / cgraph->perf_runs);
     }
     tCompute = GST_TOC(t0);
-    return compute_status;
+    return compute_status;*/
 }

@@ -11,13 +11,42 @@
 //     return used_samples;
 // }
 
+void SAMP::Refresh(DataLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,int typ)  {
+    auto target_probs = loader->hOPT->hTargetProbs();
+    int64_t n_vocab=target_probs->ne[0],n_tokens=target_probs->ne[1],nSampInBatch=target_probs->ne[2];
+    std::string sentence;
+    struct llama_context * lctx = static_cast<llama_context *>(ctx);
+    if(typ==-1)     //batch_sample=="stacking"
+        _INFO(" (%ld,%d)@\"%s...\"",pos,jump,sentence.c_str());     //sample_size
+    else{
+        tok_ids.clear();
+        int nz=len+nSampInBatch,i;
+        for(i=0;i<nz;i++){
+            llama_token tok = loader->TokenAt(pos+i);
+            tok_ids.push_back(tok);
+            string word = llama_token_to_piece(lctx, tok);
+            if(word=="\n" || word=="\r\n")  {
+                word=" ";
+            }
+                
+            sentence += word;
+            if(i>64){
+                
+            }
+        }   
+        // _INFO("\t%ld@\"%.*s...\"\n",pos,64,sentence.c_str());     //sample_size
+        desc = sentence;
+    }
+    
+}
+
 void DataLoader::Samp2Batch(int k,hSAMP samp,hGensor tokens_input,hGensor target_probs,struct train_params_common& params,int flag)    {   
-    tok_ids.clear();        sentence="";    
+    tok_ids.clear();        
     
     bool fill_with_next_samples=params.fill_with_next_samples;
-    size_t samp_off=0;    
+    size_t starting=samp->pos+samp->jump;    
     ggml_set_i32_nd(tokens_input, 0, k, 0, 0, bos);
-    for (int64_t i=0; i<n_tokens; ++i) {    
+    for (int64_t i=0; i<n_ctx; ++i) {    
         llama_token token = eos;
         /*if (samp_off >= samp->len && fill_with_next_samples) { //true only arg == "--fill-with-next-samples"
             if (!sample_separation_eos) {
@@ -37,14 +66,16 @@ void DataLoader::Samp2Batch(int k,hSAMP samp,hGensor tokens_input,hGensor target
             }
         }*/
         // note: no else-if here
-        if (samp_off < samp->len) {
-            token = clamp(tokens[samp->pos+samp_off], 0, (llama_token) (n_vocab - 1));
-            ++samp_off;
+        if (starting >= tokens.size()) {
+            starting = 0;
         }
+        assert(starting<tokens.size());
+        token = clamp(tokens[starting], 0, (llama_token) (n_vocab - 1));
+        ++starting;        
         ggml_set_f32_nd(target_probs,  token, (int) i, (int) k, 0, +1.0f);
         tok_ids.push_back(token);
         
-        if (i+1<n_tokens) {
+        if (i+1<n_ctx) {
             ggml_set_i32_nd(tokens_input, (int) (i + 1), (int) k, 0, 0, token);
             // sentence = llama_token_to_piece(lctx, token);
             // _INFO("%s,",sentence.c_str());
@@ -60,21 +91,21 @@ int64_t DataLoader::update_batch(int sample_id,Fish* fish){
     struct ggml_tensor   * target_probs=hOPT->hTargetProbs();
     int64_t samples_count = N4Train();
     // const llama_token    * train_data=tokens.data();
-    size_t                 n_train_data=tokens.size();
+    size_t  k,n_train_data=tokens.size();
     sample_separation_eos=!params->separate_with_eos;
     sample_separation_bos=!params->separate_with_bos;
-    
+    double t_Samp = 0,nrm=0,a;
     bool                   sample_random_offsets=params->sample_random_offsets;
     // GGML_ASSERT(samples_count > 0);
     GGML_ASSERT(ggml_is_matrix(tokens_input));
     GGML_ASSERT(ggml_is_3d(target_probs));
-    int64_t n_vocab  = target_probs->ne[0],nSampInBatch = tokens_input->ne[1];
-    n_tokens = tokens_input->ne[0];
+    int64_t n_vocab  = target_probs->ne[0],nSampInBatch = tokens_input->ne[1],ld0,ld1,ld2,ld3;
+    n_ctx = tokens_input->ne[0];
     GGML_ASSERT(n_vocab  == target_probs->ne[0]);
-    GGML_ASSERT(n_tokens == target_probs->ne[1]);
+    GGML_ASSERT(n_ctx == target_probs->ne[1]);
     GGML_ASSERT(nSampInBatch  == target_probs->ne[2]);
     GST_TIC(T0);
-    int64_t used_samples = 0;
+    int used_samples = 0;
     ggml_set_f32(target_probs, 0.0f);
     bos = llama_token_bos(llama_get_model(lctx));
     eos = llama_token_eos(llama_get_model(lctx));
@@ -82,35 +113,58 @@ int64_t DataLoader::update_batch(int sample_id,Fish* fish){
     bool isLog = false;
     if(isLog) _INFO("BATCH_%ld ",sample_id);   //, samples_count,n_train_data);nSampe=(%ld/%ld)
     assert(target_probs->type == GGML_TYPE_F32);
-    for (int k=0; k<nSampInBatch; ++k) {
-        
+    hSAMP samp = nullptr;
+    hGensor exLogits=nullptr;
+    if(fish->wiki!=nullptr && fish->exLogits!=nullptr) {
+        exLogits = fish->exLogits;   // wiki->logits = ggml_new_tensor_3d(ctx_input, GGML_TYPE_F32, n_vocab,  n_ctx, n_batch);
+        ld0=exLogits->nb[0],ld1=exLogits->nb[1],ld2=exLogits->nb[2],ld3=exLogits->nb[3];     
+        assert(sizeof(float)*n_vocab*n_ctx==ld2);    
+        assert(ld3==ld2*nSampInBatch);    
+    }
+    GST_TIC(tic);
+    for (k=0; k<nSampInBatch; ++k) {
         size_t sample_idx = (sample_id + used_samples) % samples_count,samp_off=0;
-        hSAMP samp = SampAt(sample_idx);
-        GGML_ASSERT(samp->pos+samp->len-1 < n_train_data);
-        ++used_samples;        
-        // LLAMA_LOG_INFO("%s: sample_idx=%zu sample=%zu\n", __func__, sample_idx, sample);
-        Samp2Batch(k,samp,tokens_input,target_probs,*params);
-        // if(isLog && k<6)
-        //     _INFO("\r %ld@\"%s...\"",sample_begin,sentence.c_str());     //sample_size
-        if(fish->wiki!=nullptr && fish->exLogits!=nullptr){   
-            GST_TIC(tic);
-            fish->wiki->Reset();         //Timing bottleneck!!! for the crazy design of llama.cpp
+        samp = SampAt(sample_idx);
+        // samp->Refresh(this,lctx,0x0);
+        GGML_ASSERT(samp->pos+samp->len-1 < n_train_data);          
+        // LLAMA_LOG_INFO("%s: sample_idx=%zu sample=%zu\n", __func__, sample_idx, sample);   
+        if(batch_sample=="stacking"){
+            samp->jump++;
+        }else{            
+            ++used_samples;   
+        }
+       
+        Samp2Batch(k,samp,tokens_input,target_probs,*params);   //refresh tok_ids
+        if(isLog && k<6 && batch_sample!="stacking"){
+            sentence=llama_token_to_piece(lctx, tok_ids[0]);
+            _INFO(" (%ld,%d)@\"%s...\"",samp->pos,samp->jump,sentence.c_str());     //sample_size
+        }
+
+        if(exLogits!=nullptr && batch_sample!="stacking"){ 
+            nrm = fish->wiki->InductLogits(k,tok_ids,exLogits,target_probs,-1);   
+            /*fish->wiki->Reset();         //Timing bottleneck!!! for the crazy design of llama.cpp
             fish->wiki->Decode(tok_ids,0,0x0,true); 
-            auto g=fish->exLogits;   // wiki->logits = ggml_new_tensor_3d(ctx_input, GGML_TYPE_F32, n_vocab,  n_tokens, n_batch);
-            size_t ld0=g->nb[0],ld1=g->nb[1],ld2=g->nb[2],ld3=g->nb[3],off=k*ld2;          
-            const float *logits = fish->wiki->GetLogits(0);   
-            double nrm = NRM_2(logits,n_vocab*n_tokens);
+            const float *logits = fish->wiki->GetLogits(n_vocab,n_ctx,0);   
+            double nrm = NRM_2(logits,n_vocab*n_ctx);
             if(nrm==0.0)    {
-                _INFO("\n\n !!! %s |preLogits| is zero,so crazy! N=%dx%d \n\n",__func__,n_vocab,n_tokens);
+                _INFO("\n\n !!! %s |preLogits| is zero,so crazy! N=%dx%d \n\n",__func__,n_vocab,n_ctx);
             }  else if(k%10==0) {
-                _INFO("\r %ld\t%ld@\"%s...\" nrm=%g\tT=%.4gs\t",k+1,samp->pos,sentence.c_str(),nrm,GST_TOC(tic));     //sample_size
-            }      
-            assert(sizeof(float)*n_vocab*n_tokens==ld2 && off>=0);    
-            memcpy(g->data+off,(void*)(logits),ld2);       
+                _INFO("\r %ld\t%ld@\"%s...\" nrm=%g\tT=%.4gs(%.4g)\t",k+1,samp->pos,sentence.c_str(),nrm,GST_TOC(tic),t_Samp);     //sample_size
+            }     
+            memcpy(exLogits->data+k*ld2,(void*)(logits),ld2);   */ 
         }        
     }
+    t_Samp = GST_TOC(tic);
     if(isLog) _INFO("\tT=%g\n",GST_TOC(T0));
-
+    if(batch_sample=="stacking"){
+        if(fish->wiki->isInduct()){
+            GST_TIC(tic);  
+            samp->Refresh(this,lctx,tok_ids,0x0);          //refresh tok_ids               
+            nrm = fish->wiki->InductLogits(nSampInBatch,tok_ids,exLogits,target_probs,0x0);           
+            _INFO("\t stacking@%d\"%.*s...\" nrm=%g\tT=%.4gs\t\n",samp->pos,64,samp->desc.c_str(),nrm,GST_TOC(tic));             
+        }
+        used_samples = nSampInBatch;        //1    
+    }
     return used_samples;
 }
 
@@ -219,6 +273,8 @@ try{
 */
 void DataLoader::SetSamples(int nV,std::vector<llama_token>& tokens_,std::vector<size_t>& samp_0,std::vector<size_t>& samp_L,
     bool isTrain,CLI_params& hparams,int flag)  {
+    batch_sample = hparams.batch_sample;
+
     double rSplit = 1.0-hparams.rSplit;
     n_vocab = nV;    //hparams.n_vocab;
     tokens = tokens_;

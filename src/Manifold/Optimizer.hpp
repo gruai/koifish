@@ -30,11 +30,31 @@ using namespace std;
 #include "../lenda/util/GST_util.hpp"
 
 class Fish;
+
+struct LossCurve    {
+    vector<float> curve;
+    int best_id=-1;
+
+    float Last()    {
+        return curve.empty() ? FLT_MAX : curve[curve.size()-1];
+    }
+    
+    float Best()    {   return best_id==-1 ? FLT_MAX : curve[best_id]; }
+
+    void Add(float a)   {
+        curve.push_back(a);
+        if(a<Best()){
+            best_id = curve.size()-1;
+        }
+    }
+};
 class Optimizer : public std::enable_shared_from_this<Optimizer> {
     Optimizer(const Optimizer&);
 	Optimizer& operator=(const Optimizer&);
 
 protected:    
+    LossCurve lcTrain,lcEval;
+
     int first_epoch=0,iter_at_last_epoch=-1,first_iter=-1;
     int64_t                      last_time;
     double                       millis_per_iter;
@@ -193,6 +213,7 @@ public:
     
     friend class Fish;
     friend class DataLoader;
+    friend class SAMP;
 
 };
 typedef shared_ptr<Optimizer> hOptimizer;

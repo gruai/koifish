@@ -151,6 +151,7 @@ struct QKV_Motion : public BROWN_Motion    {
 struct NeLayer
 { // Neural Layer with many neurons
     int id = -1;
+    bool isLast = false;
     std::string name;
     std::vector<hNeuron> neurons;
 
@@ -159,7 +160,7 @@ struct NeLayer
         neurons.push_back(hN);
         hN->hLay = this; //???  
     }
-    NeLayer() : name("NeLayer") {}
+    NeLayer(int id_) : name("NeLayer"),id(id_) {}
     NeLayer(const std::string &n_, int flag = 0x0) : name(n_) {}
     virtual ~NeLayer() {}
     // NeLayer* N_(const std::string& t,const std::string& n,SHAPE s)   {
@@ -250,10 +251,12 @@ protected:
 
     std::vector<std::string> to_quant, to_skip;
 
-public:
+public:    
+    MODEL_ARCH arch = MODEL_ARCH::_X_;
+
     Fish() {}
     Fish(const std::string&nam_,struct CLI_params params,int flag=0x0) : name(nam_),hparams(params) {
-
+        arch = params.arch;
     }
     Fish(const std::string&nam_,struct ggml_context *ctx_, int flag = 0x0) : name(nam_),ctx(ctx_)    {
         GGML_PRINT("=== %s ===\n", __func__);
@@ -459,7 +462,7 @@ public:
 
     virtual bool isValid()  {   return true;    }
 
-    virtual void LearningCurve(int flag = 0x0)
+    virtual void LossCurve(int flag = 0x0)
     { // training accuracy curve
 #ifdef _USE_WANDB_
         _WANDB_log(1.0);

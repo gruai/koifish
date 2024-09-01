@@ -204,7 +204,8 @@ enum ggml_opt_result Optimizer::ggml_train(struct ggml_context * ctx, hGensor lo
     float *fLoss = (float*)(loss->data),*fLossG = (float*)(loss->grad->data),val_loss;
     
     // float *target = (float*)(data->target_probs->data);
-    _INFO("Optimizer::%s: GradAccumu=%d rZMUV=%g rLARS=%g...... \n\n", __func__,(int)isAccuX,hparams.ZMUV_ratio,hparams.lars_ratio );
+    _INFO("Optimizer::%s: GradAccumu=%d(%d) rZMUV=%g rLARS=%g...... \n\n", __func__,
+        params.n_gradient_accumulation,(int)isAccuX,hparams.ZMUV_ratio,hparams.lars_ratio );
     if(0){
         result = ggml_opt_resume_g(ctx, opt, loss, gf, gb, &train_opt_callback, callback_data);
     }else{
@@ -434,12 +435,21 @@ float Optimizer::Evaluate(DataLoader&loader,int iter,int flag){
         nB++;
         break;
     }
-    sum /= nB;
-    if(wLog==nullptr) 
-        _INFO("\t Loss@Evaluation=%f T=%gs ======\n", sum,GST_TOC(tic) );
+    float last = lcEval.Last(),aloss = sum/nB;  //[eval]   Loss@Evaluation=7.302641 T=0.232s ======
+    lcEval.Add(aloss);
+    float delta=last-aloss,best=lcEval.Best();   
+    bool isOverfit = delta<0 && abs(aloss-best)>best/10;       
+    if(isOverfit)   {
+        _INFO(" !OVERFIT! ");
+    }
+    _INFO(" Loss@EvalSet=%f(%.2g) best=%f(eval_%d) E2T=%.3g T=%gs ======\n",aloss,delta,best,lcEval.best_id,
+        aloss-lcTrain.Last(),GST_TOC(tic) );
+
+    if(wLog==nullptr) {     }        
     else
-        _INFO("\t Loss@Evaluation=%f delta=%g(%.5g) T=%gs ======\n", sum,delta_max,delta_/nB,GST_TOC(tic) );
-    return sum;
+        _INFO("\t Loss@Evaluation=%f delta=%g(%.5g) T=%gs ======\n", aloss,delta_max,delta_/nB,GST_TOC(tic) );
+    
+    return aloss;
 }
 
 
@@ -523,7 +533,7 @@ void Optimizer::Init_CallbackData(struct llama_context * lctx,struct train_param
 }
 
 bool Optimizer::one_step(struct train_state *train,DataLoader&loader, int accum_step, float *sched, int flag)    {
-    // LearningCurve(0x0);
+    // LossCurve(0x0);
     struct train_params_common *params = &(train_params);   //data->params;
     // struct train_state *train = data->train;
     struct ggml_opt_context *opt = train->opt;
@@ -571,6 +581,7 @@ bool Optimizer::one_step(struct train_state *train,DataLoader&loader, int accum_
         _INFO("[train] iter=%6d sample=%zu/%zu sched=%.3f loss=%f ",
                 opt->iter, std::min(1 + train->shuffle_next_sample, train->shuffle_sample_count), train->shuffle_sample_count,
                 *sched, opt->loss_after); //,hOPT->zmuv_0,hOPT->zmuv_1
+        lcTrain.Add(opt->loss_after);
         if (millis_per_iter > 0)            {
             _INFO(" dt=");          _TIME(millis_per_iter);
             _INFO(" eta=");         _TIME(remaining_millis);

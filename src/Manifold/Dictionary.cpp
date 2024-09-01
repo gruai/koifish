@@ -1,5 +1,5 @@
 #include "Dictionary.hpp"
-#include "gLAMA.hpp"
+#include "gLLM.hpp"
 #include "../LLAMA/unicode.h"
 
 
@@ -36,10 +36,10 @@ static const char * LLM_KV_TOKENIZER_PAD_ID            = "tokenizer.ggml.padding
 static const char * LLM_KV_DICT_VAE_LAYERS             = "dict.vae.layers";
 static const char * LLM_KV_DICT_LATENT_DIM             = "%s.dict_latent_dim";
 
-static const char * arch = "gruai";     //llm_arch_from_string
+static const char * arch_str = "gruai";     //llm_arch_from_string
 static char keybuf[512];
 const char * kv(const char * key)   {    
-    snprintf(keybuf, 512, key, arch);
+    snprintf(keybuf, 512, key, arch_str);
     return keybuf;
 };
 
@@ -258,10 +258,13 @@ void ConsiceDict::LoadVocab(const char*fn_model_base,int flag)     {
     int nTT = gguf_get_arr_n(vctx, token_idx);          assert(n_vocab==nTT);
     score_idx = gguf_find_key(vctx, kv(LLM_KV_TOKENIZER_SCORES));
     if (score_idx == -1) {
-        die("cannot find tokenizer scores in model file");
+        _INFO("%s cannot find tokenizer scores @%s",__func__,fn_model_base);
+        // die("cannot find tokenizer scores in model file");
+    }else{
+        scores = new float[nTT];
+        memcpy(scores,gguf_get_arr_data(vctx, score_idx),sizeof(float)*nTT);          
     }
-    scores = new float[nTT];
-    memcpy(scores,gguf_get_arr_data(vctx, score_idx),sizeof(float)*nTT);    
+  
 
     toktype_idx = gguf_find_key(vctx, kv(LLM_KV_TOKENIZER_TOKEN_TYPE));
     if (toktype_idx == -1) {
@@ -330,8 +333,8 @@ void LLaMeta::save_gguf(const char * filename, int flag) {
     struct gguf_context * fctx = gguf_init_empty();
     int keyidx = -1;    
     
-    // set arch
-    gguf_set_val_str(fctx, LLM_KV_GENERAL_ARCHITECTURE, arch);
+    // set arch_str
+    gguf_set_val_str(fctx, LLM_KV_GENERAL_ARCHITECTURE, arch_str);
     gguf_set_val_str(fctx, LLM_KV_GENERAL_NAME, ".");
     gguf_set_val_u32(fctx, kv(LLM_KV_VOCAB_SIZE), hDict->n_vocab);
     int llm_embd = hDict->lama_embed,latent_dim=hDict->latent_dim;        //hparams.n_embd

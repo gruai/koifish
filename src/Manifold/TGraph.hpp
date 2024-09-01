@@ -58,11 +58,11 @@ protected:
             memset(visited_hash_table.keys, 0, visited_hash_table.size * sizeof(hGensor));
     }
 
-    size_t hash_insert(struct ggml_hash_set& hash_set, hGensor key) {
-        size_t i = ggml_hash_find(hash_set, key);
-        GGML_ASSERT(i != GGML_HASHTABLE_FULL);
+    size_t hash_insert(const struct ggml_hash_set& hash_set, hGensor key) {
+        size_t i = ggml_hash_find(&hash_set, key);
+        GGML_ASSERT(i != GGML_HASHSET_FULL);
         if (hash_set.keys[i] == key) {
-            return GGML_HASHTABLE_ALREADY_EXISTS;
+            return GGML_HASHSET_ALREADY_EXISTS;
         }
         // insert
         GGML_ASSERT(hash_set.keys[i] == NULL);
@@ -80,7 +80,7 @@ protected:
         }
 
         // check if already visited
-        if (hash_insert(visited_hash_table, node) == GGML_HASHTABLE_ALREADY_EXISTS) {
+        if (hash_insert(visited_hash_table, node) == GGML_HASHSET_ALREADY_EXISTS) {
             return;
         }
 
@@ -142,13 +142,12 @@ public:
             (grads ? (char *)(grads + size) : (char *)(hash_keys_ptr + hash_size)) - (char *)cgraph));
 
         memset(hash_keys_ptr, 0, hash_size * sizeof(hGensor));
-        visited_hash_table = { hash_size, hash_keys_ptr };   
-        *cgraph = (struct ggml_cgraph) {
-            size,0,0,nodes,grads,leafs,{ hash_size, hash_keys_ptr },
-            GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT,0,0,0,
-        };     
-
-        //allocr = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
+        // CYS_0826
+        // visited_hash_table = { hash_size, hash_keys_ptr };   
+        // *cgraph = (struct ggml_cgraph) {
+        //     size,0,0,nodes,grads,leafs,{ hash_size, hash_keys_ptr },
+        //     GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT,0,0,0,
+        // };     
     }
 
     virtual ~TGraph()   {   clear();    }
@@ -229,17 +228,17 @@ public:
         GGML_PRINT("n_nodes = %d\n", n_nodes);
         for (int i = 0; i < n_nodes; i++) {
             hGensor node = nodes[i];
+// CYS_0826
+            // perf_total_per_op_us[node->op] += MAX(1, node->perf_time_us);
 
-            perf_total_per_op_us[node->op] += MAX(1, node->perf_time_us);
-
-            GGML_PRINT(" - %3d: [ %5" PRId64 ", %5" PRId64 ", %5" PRId64 "] %16s %s (%3d) cpu = %7.3f / %7.3f ms, wall = %7.3f / %7.3f ms\n",
-                    i,
-                    node->ne[0], node->ne[1], node->ne[2],
-                    ggml_op_name(node->op), (node->flags & GGML_TENSOR_FLAG_PARAM) ? "x" : node->grad ? "g" : " ", node->perf_runs,
-                    (double) node->perf_cycles  / (double) ggml_cycles_per_ms(),
-                    (double) node->perf_cycles  / (double) ggml_cycles_per_ms() / (double) node->perf_runs,
-                    (double) node->perf_time_us / 1000.0,
-                    (double) node->perf_time_us / 1000.0 / node->perf_runs);
+            // GGML_PRINT(" - %3d: [ %5" PRId64 ", %5" PRId64 ", %5" PRId64 "] %16s %s (%3d) cpu = %7.3f / %7.3f ms, wall = %7.3f / %7.3f ms\n",
+            //         i,
+            //         node->ne[0], node->ne[1], node->ne[2],
+            //         ggml_op_name(node->op), (node->flags & GGML_TENSOR_FLAG_PARAM) ? "x" : node->grad ? "g" : " ", node->perf_runs,
+            //         (double) node->perf_cycles  / (double) ggml_cycles_per_ms(),
+            //         (double) node->perf_cycles  / (double) ggml_cycles_per_ms() / (double) node->perf_runs,
+            //         (double) node->perf_time_us / 1000.0,
+            //         (double) node->perf_time_us / 1000.0 / node->perf_runs);
         }
 
         GGML_PRINT("n_leafs = %d\n", n_leafs);

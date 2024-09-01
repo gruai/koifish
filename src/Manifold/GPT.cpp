@@ -1,7 +1,7 @@
 #include "console.h"
 #include "GPT.hpp"
 #include "Fish.hpp"
-#include "gLAMA.hpp"
+#include "gLLM.hpp"
 
 static unsigned int random_u32(uint64_t *state){
     *state ^= *state >> 12;
@@ -17,8 +17,8 @@ float random_f32(uint64_t *state)   {
 
 int GPT_fish(CLI_params& hparams)  {
     auto param_1 = hparams,param_2 = hparams;
-    param_1.tpWiki = 1;             param_1.common.n_batch = 1;
-    param_2.tpWiki = 0;             param_2.common.n_batch = 1;    // 
+    param_1.tpWiki = "logits";              param_1.common.n_batch = 1;
+    param_2.tpWiki = "";                    param_2.common.n_batch = 1;    // 
     hFISH fish_0 = Fish::MakeInstance("BIG_",param_1,0x0);
     hFISH fish_1 = Fish::MakeInstance("local_",param_2,fish_0.get(),0x110);
     fish_0->Dump(0x0);
@@ -46,19 +46,18 @@ int GPT_work(CLI_params& hparams)  {
     gpt_params_handle_model_default(params);
     if (params.escape)
     {
-        process_escapes(params.prompt);
-        process_escapes(params.input_prefix);
-        process_escapes(params.input_suffix);
-        process_escapes(params.sparams.cfg_negative_prompt);
+        string_process_escapes(params.prompt);
+        string_process_escapes(params.input_prefix);
+        string_process_escapes(params.input_suffix);
+        string_process_escapes(params.sparams.cfg_negative_prompt);
         for (auto &antiprompt : params.antiprompt)        {
-            process_escapes(antiprompt);
+            string_process_escapes(antiprompt);
         }
     }
-
-    LOG_TEE("%s\n", get_system_info(params).c_str());
+    LOG_TEE("%s\n", gpt_params_get_system_info(params).c_str());
     llama_numa_init(params.numa);
     hWIKI wiki = std::make_shared<LAMA>(hparams);      assert(wiki!=nullptr);
-    wiki->teach = WIKI::MERGE_P;
+    wiki->teach = WIKI::_LOGITS;
     //  hGOPT gpt = std::make_shared<GeneratOnPrompt>(params,0x0);
     //  hGOPT gpt = std::make_shared<GOPT_infinite>(params,0x0);    
     // hGOPT gpt = std::make_shared<GOPT_Metropolis>(params, 0x0);  
@@ -132,7 +131,7 @@ GeneratOnPrompt::GeneratOnPrompt(CLI_params&cp_,hWIKI wiki_, const Fish *hG_, in
     hparams(cp_),fish_0(hG_), wiki(wiki_) {
     if(fish_0!=nullptr){
         auto gang_param = hparams;
-        gang_param.tpWiki = 0;      assert(gang_param.tpWiki==0);
+        gang_param.tpWiki = "off";      assert(gang_param.tpWiki=="off");
         gang_param.common.n_batch = 1;
         fish_1 = Fish::MakeInstance("4GPT_",gang_param,hG_,0x110);
         // fish_1 = Fish::MakeInstance("4GPT_",gang_param,0x0);
@@ -155,12 +154,12 @@ GeneratOnPrompt::GeneratOnPrompt(CLI_params&cp_,hWIKI wiki_, const Fish *hG_, in
     params.n_predict = 32;
     gpt_params_handle_model_default(params);
     if (params.escape)    {
-        process_escapes(params.prompt);
-        process_escapes(params.input_prefix);
-        process_escapes(params.input_suffix);
-        process_escapes(params.sparams.cfg_negative_prompt);
+        string_process_escapes(params.prompt);
+        string_process_escapes(params.input_prefix);
+        string_process_escapes(params.input_suffix);
+        string_process_escapes(params.sparams.cfg_negative_prompt);
         for (auto &antiprompt : params.antiprompt)        {
-            process_escapes(antiprompt);
+            string_process_escapes(antiprompt);
         }
     }
 
@@ -310,12 +309,12 @@ llama_token GOPT_Metropolis::Sample(int idx, bool is_resampling)    {
     assert(wiki != nullptr);
     float *preP = new float[nTokens](), sum, cdf;
     assert(idx==-1);
-    
+    const float *wLog = nullptr;
     float l1=0,sum1=0,l2=0,delta,a,pMin=FLT_MAX,pMax=FLT_MIN;   
-    if(wiki->teach==WIKI::MERGE_OFF)  {
+    if(wiki->teach==WIKI::_OFF)  {
 
     }else{
-        const float *wLog = wiki->GetLogits();   
+        wLog = wiki->GetLogits(nTokens,1);   
         for (l2 = 0,j = 0; j < nTokens; j++    ) {
             a = wLog[j];
             l2 += a*a;              _logits[j] = a;
@@ -332,21 +331,39 @@ llama_token GOPT_Metropolis::Sample(int idx, bool is_resampling)    {
             assert(x_logits.size()==nTokens);
             // SOFT_MAX(x_logits);
             switch(wiki->teach){
-            case WIKI::MERGE_OFF:
+            case WIKI::_OFF:
                 for (j = 0; j < nTokens; j++    ) {
                     a = x_logits[j];       
                     sum1 += a;   l1+=a*a;     
                     _logits[j] = a;
                 }
                 break;
-            /*case WIKI::MERGE_P:
+            /*case WIKI::_LOGITS:
                 for (j = 0; j < nTokens; j++    ) {
                     a = x_logits[j];                    l1+=a*a;        
                     _logits[j] = a;
                 }
                 delta = l2==0 ? 0 : sqrt(l1)/sqrt(l2)-1.0;
             break;*/
-            default:
+            case WIKI::_TARGET:
+                SOFT_MAX(nTokens,_logits,wLog); 
+                for (j = 0; j < nTokens; j++    ) {
+                    a = x_logits[j];                    l1+=a*a;        
+                    _logits[j] += a;
+                }
+                delta = l2==0 ? 0 : sqrt(l1)/sqrt(l2)-1.0;
+            break;
+            case WIKI::_LOGITS_SCALE:
+                for (j = 0; j < nTokens; j++    ) {
+                    a = x_logits[j];        
+                    sum1 += a;              
+                    l1+=a*a;     l2+=_logits[j]*_logits[j];
+                    // a = max(a,0.f);      relu
+                    _logits[j] *= a;
+                }
+                delta = l2==0 ? 0 : sqrt(l1)/sqrt(l2);  
+                break;
+            default:    //  WIKI::_LOGITS:
                 for (j = 0; j < nTokens; j++    ) {
                     a = x_logits[j];        
                     sum1 += a;              
@@ -362,10 +379,13 @@ llama_token GOPT_Metropolis::Sample(int idx, bool is_resampling)    {
             return -1;
         }
     }
-
+    for (pMin=FLT_MAX,pMax=FLT_MIN,j = 0; j < nTokens; j++    ) {
+        a = _logits[j];
+        pMin = min(a,pMin);     pMax = max(a,pMax);
+    }   
     int next_token = nTokens - 1;
     for (sum = 0, j = 0; j < nTokens; j++)    {
-        preP[j] = exp(_logits[j]);
+        preP[j] = exp(_logits[j]-pMax);
         sum += preP[j];
     }
     assert(sum > 0 && sum < FLT_MAX);   //1679583
@@ -605,21 +625,20 @@ void GeneratOnPrompt::OnInteractive(int &n_past, int &n_consumed, int &n_remain,
 
             is_interacting = true;
             printf("\n");
-        }
-        else if (params.instruct || params.chatml)
+        }        
+        /*else if (params.instruct || params.chatml)
         {
             is_interacting = true;
-        }
+        }*/
     }
 
     if (n_past > 0 && is_interacting)
     {
         LOG("waiting for user input\n");
 
-        if (params.instruct || params.chatml)
-        {
+        /*if (params.instruct || params.chatml)        {
             printf("\n> ");
-        }
+        }*/
 
         if (params.input_prefix_bos)
         {
@@ -666,7 +685,7 @@ void GeneratOnPrompt::OnInteractive(int &n_past, int &n_consumed, int &n_remain,
             const size_t original_size = embd_inp.size();
 
             // instruct mode: insert instruction prefix
-            if (params.instruct && !is_antiprompt)
+            /*if (params.instruct && !is_antiprompt)
             {
                 LOG("inserting instruction prefix\n");
                 n_consumed = embd_inp.size();
@@ -678,10 +697,10 @@ void GeneratOnPrompt::OnInteractive(int &n_past, int &n_consumed, int &n_remain,
                 LOG("inserting chatml prefix\n");
                 n_consumed = embd_inp.size();
                 embd_inp.insert(embd_inp.end(), cml_pfx.begin(), cml_pfx.end());
-            }
+            }*/
             if (params.escape)
             {
-                process_escapes(buffer);
+                string_process_escapes(buffer);
             }
 
             const auto line_pfx = ::llama_tokenize(ctx, params.input_prefix, false, true);
@@ -695,7 +714,7 @@ void GeneratOnPrompt::OnInteractive(int &n_past, int &n_consumed, int &n_remain,
             embd_inp.insert(embd_inp.end(), line_sfx.begin(), line_sfx.end());
 
             // instruct mode: insert response suffix
-            if (params.instruct)
+            /*if (params.instruct)
             {
                 LOG("inserting instruction suffix\n");
                 embd_inp.insert(embd_inp.end(), inp_sfx.begin(), inp_sfx.end());
@@ -705,7 +724,7 @@ void GeneratOnPrompt::OnInteractive(int &n_past, int &n_consumed, int &n_remain,
             {
                 LOG("inserting chatml suffix\n");
                 embd_inp.insert(embd_inp.end(), cml_sfx.begin(), cml_sfx.end());
-            }
+            }*/
 
             for (size_t i = original_size; i < embd_inp.size(); ++i)
             {
@@ -741,7 +760,8 @@ int GeneratOnPrompt::Generate(int nJob, int flag)   {
     const int n_ctx = llama_n_ctx(ctx);               // ctx->cparams.n_ctx;
     const int n_ctx_train = llama_n_ctx_train(model); // model->hparams.n_ctx_train;
     delta_max = 0;      delta_a = 0;
-    LOG_TEE("<--- GeneratOnPrompt job=%d logits_all=%d fish=%s teach=%d\n", nJob,params.logits_all,fish_1==nullptr?"":fish_1->Name().c_str(),wiki->teach);
+    LOG_TEE("<--- GeneratOnPrompt %s job=%d logits_all=%d fish=%s teach=%d\n", wiki->teach==WIKI::_OFF?"only fish":"WIKI",
+        nJob,params.logits_all,fish_1==nullptr?"":fish_1->Name().c_str(),wiki->teach);
     rng_state = params.seed;
     // LOG_TEE("%s logits_all=%d\n", __func__, );
     size_t n_matching_session_tokens = 0;
@@ -784,7 +804,7 @@ int GeneratOnPrompt::Generate(int nJob, int flag)   {
     ctx_sampling = isCTXSampling ? llama_sampling_init(sparams) : nullptr;
     while ((n_remain != 0 && !is_antiprompt) || params.interactive)    {
         int iRet = 0;
-        if(wiki->teach!=WIKI::MERGE_OFF)
+        if(wiki->teach!=WIKI::_OFF)
             iRet = UpdateEmbed(nJob, n_past, n_remain, n_consumed, n_session_consumed, n_past_guidance, ga_i, 0x0);
         else
             iRet = 2;
@@ -840,7 +860,7 @@ int GeneratOnPrompt::Generate(int nJob, int flag)   {
             if(ctx_sampling!=nullptr)   OnInteractive(n_past, n_consumed, n_remain, 0x0);
         }
         // end of text token
-        if (!tokens.empty() && tokens.back() == llama_token_eos(model) && !(params.instruct || params.interactive || params.chatml))        {
+        if (!tokens.empty() && tokens.back() == llama_token_eos(model) )        {
             LOG_TEE(" [end of text]\n");
             break;
         }

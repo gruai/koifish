@@ -25,22 +25,38 @@ using namespace std;
 
 class Fish;
 
+/*
+     always for language model
+*/
 struct WIKI {
-    enum MERGE_MODE{
-        MERGE_OFF,
-        MERGE_P,
-        // MERGE_T
+    enum INDUCT_MODE{
+                        //  "off"-no wiki
+        _OFF,           //  ""-no INDUCT
+        _LOGITS,        //  "logits"-INDUCT to logits
+        _TARGET,        //  "target"-INDUCT to target
+        _LOGITS_SCALE,  //  "logits_scale"
     };
     int32_t bos,eos;   
-    MERGE_MODE teach=MERGE_P;
+    INDUCT_MODE teach=_LOGITS;
     bool isOnlyTokenizer = false;
-    
-    virtual const float *GetLogits(int idx=-1)   {   return nullptr; }
+    size_t n_vocab = 0, nOutToken = -1;
+
+    virtual const float *GetLogits(int n_vocab,int n_ctx,int idx=-1)   {   return nullptr; }
+    virtual bool isInduct() {   return teach!=_OFF; }
+    virtual double InductLogits(int nSampInBatch,std::vector<int32_t>& tok_ids,hGensor exLogits,hGensor target_probs,int flag);
 
     // bool takeRest = false;          //only for debug
 
     virtual hGensor P()    {   return nullptr; }
     virtual hGensor Target()    {   return nullptr; }
+    /*
+        uint32_t n_ctx;             // text context, 0 = from model
+        uint32_t n_batch;           // logical maximum batch size that can be submitted to llama_decode
+        uint32_t n_ubatch;          // physical maximum batch size
+        uint32_t n_seq_max;         // max number of sequences (i.e. distinct states for recurrent models)
+    */ 
+    virtual int nCTX()   {   return -1;    };
+
 
     virtual std::string T2STR(int32_t tok,int flag=0x0 )                    {   assert(0); return "";    }
     virtual bool Decode(std::vector<int32_t>&ids,int start,int n_past,bool out_all)      {   assert(0); return false;    }
@@ -110,20 +126,21 @@ public:
     int original_prompt_len = 0;
 
     virtual int Tokenize(int flag=0x0) {
-        const int n_ctx = llama_n_ctx(ctx);        
-
-        const bool add_bos = llama_should_add_bos_token(model);
+        const int n_ctx = llama_n_ctx(ctx);       
+        // const bool add_bos = llama_should_add_bos_token(model);
+        const bool add_bos = llama_add_bos_token(model);        // CYS_0826      
         LOG("add_bos: %d\n", add_bos);
-        if (params.interactive_first || params.instruct || params.chatml || !params.prompt.empty() || session_tokens.empty()) {
+        if (params.interactive_first /*|| params.instruct || params.chatml*/ || !params.prompt.empty() || session_tokens.empty()) {
             LOG("tokenize the prompt\n");
-            if (params.chatml) {
-                params.prompt = "<|im_start|>system\n" + params.prompt + "<|im_end|>";
-            }
+            // if (params.chatml) {
+            //     params.prompt = "<|im_start|>system\n" + params.prompt + "<|im_end|>";
+            // }
             embd_inp = ::llama_tokenize(ctx, params.prompt, add_bos, true);
         } else {
             LOG("use session tokens\n");
             embd_inp = session_tokens;
         }
+
         LOG("prompt: \"%s\"\n", log_tostr(params.prompt));
         LOG("tokens: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, embd_inp).c_str());
 
@@ -194,7 +211,7 @@ public:
         }
 
         // number of tokens to keep when resetting context
-        if (params.n_keep < 0 || params.n_keep > (int) embd_inp.size() || params.instruct || params.chatml) {
+        if (params.n_keep < 0 || params.n_keep > (int) embd_inp.size() /*|| params.instruct || params.chatml*/) {
             params.n_keep = (int)embd_inp.size();
         } else {
             params.n_keep += add_bos; // always keep the BOS token
@@ -212,7 +229,8 @@ public:
 
         LOG("cml_pfx: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, cml_pfx).c_str());
         LOG("cml_sfx: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, cml_sfx).c_str());
-        if (params.instruct) {
+        
+        /*if (params.instruct) {// CYS_0826
             params.interactive_first = true;
             params.antiprompt.emplace_back("### Instruction:\n\n");
         }
@@ -220,7 +238,7 @@ public:
         else if (params.chatml) {
             params.interactive_first = true;
             params.antiprompt.emplace_back("<|im_start|>user\n");
-        }
+        }*/
 
         // enable interactive mode if interactive start is specified
         if (params.interactive_first) {

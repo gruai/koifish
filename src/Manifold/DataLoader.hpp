@@ -134,9 +134,12 @@ public:
     
 };
 
+class DataLoader;
 struct SAMP{
     size_t pos=-1,len=-1;       //  range is [pos,pos+len)
     size_t off_cycle=0;         // more random
+    int jump = -1;   
+    std::string desc;
 
     SAMP()  {}
     SAMP(size_t p,size_t l) : pos(p),len(l) {
@@ -145,6 +148,8 @@ struct SAMP{
     virtual ~SAMP() {}
 
     bool Serialize(FSerial&S, bool isSave, int flag);
+
+    void Refresh(DataLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,int typ);
 
     static size_t HASH(const char* fn, const std::vector<SAMP*>& samps) {
         std::hash<std::string> h_string;
@@ -166,7 +171,7 @@ protected:
     std::string sentence="";
     std::vector<int32_t> tok_ids;
     bool sample_separation_eos,sample_separation_bos;
-    size_t n_tokens=-1;
+    size_t n_ctx=-1;
     int32_t bos,eos;
     std::vector<hSAMP> all_samps;
     std::vector<size_t> idcs;      //would change epoch by epoch(shuffle,subsampling...)
@@ -185,6 +190,11 @@ public:
         return all_samps[id];
     }
 
+    int32_t TokenAt(size_t pos){
+        assert(pos<n_vocab);
+        int32_t token = clamp(tokens[pos], 0, (n_vocab - 1));
+        return token;
+    }
     void Samp2Batch(int k,hSAMP samp,struct ggml_tensor *tokens_input,struct ggml_tensor *target_probs,struct train_params_common& params,int flag=0x0);
 
     enum TYPE{
@@ -194,6 +204,7 @@ public:
     TYPE type = DT_TRAIN;
 
     Optimizer *hOPT = nullptr;
+    std::string batch_sample;
     //compatible with train_opt_callback_data@LLAMA.cpp
     struct train_opt_callback_data callback_data;   
     size_t n_vocab = 0 ;
