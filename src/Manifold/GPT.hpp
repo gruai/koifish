@@ -20,7 +20,7 @@
 #include <regex>
 #include <stack>
 using namespace std;
-#include "../LLAMA/common/common.h"
+#include "common.h"
 #include "GG_util.hpp"   
 
 class Fish;
@@ -35,7 +35,9 @@ struct WIKI {
         _LOGITS,        //  "logits"-INDUCT to logits
         _TARGET,        //  "target"-INDUCT to target
         _LOGITS_SCALE,  //  "logits_scale"
+        _LOGITS_GATE,
     };
+    std::string title="";
     int32_t bos,eos;   
     INDUCT_MODE teach=_LOGITS;
     bool isOnlyTokenizer = false;

@@ -13,6 +13,7 @@
 #include "../Manifold/Fish.hpp"   
 #include "../Manifold/VAE.hpp" 
 #include "llama.h"
+#include "llama_cys.h"
 #include "../Manifold/Dictionary.hpp"
 #include "common.h"
 
@@ -126,6 +127,7 @@ struct LLaMeta : public Fish {
         VAR_0,
         VAR_LAST,       //last layer with gaussian noise 
         SMOE,           //Sparsely-Gated Mixture-of-Experts Layer
+        GATE_CYS,
     };
     enum FFN_TYPE tpFFN = VAR_LAST;   //VAR_LAST;    
 
@@ -166,7 +168,7 @@ struct LLaMeta : public Fish {
             nx += ggml_nelements(ffn_norm); nx += ggml_nelements(ffn_gate); nx += ggml_nelements(ffn_down); nx += ggml_nelements(ffn_up);            
             return nx;
         }
-        virtual bool InitFFN(const CLI_params&hparams,ggml_context *ctx,FFN_TYPE tpFFN,int flag=0x0);
+        virtual bool CreateFFN(const CLI_params&hparams,ggml_context *ctx,FFN_TYPE tpFFN,int flag=0x0);
         string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
     };
     // uint32_t n_vocab=0,n_ctx=0,n_embd=0, n_head=0,n_rot=0,n_ff=0;
@@ -270,8 +272,13 @@ struct LLaMeta : public Fish {
         uint32_t n_embd  = hparams.n_embd,n_ctx = train_params.n_ctx;        
         const uint32_t n_layer = nLayerX<=0 ? hparams.n_layer : nLayerX;    //hparams.n_layer;
         const uint32_t n_vocab = hDict->n_vocab;    // hDict->n_vocab;
-        const uint32_t n_ff    = hparams.n_ff;        
-        hparams.n_rot = hparams.n_embd / hparams.n_head;    
+        const uint32_t n_ff    = hparams.n_ff; 
+        if(arch==NLP_MAMBA)     {
+            assert(hparams.n_head == 0);
+        }  else{
+            hparams.n_rot = hparams.n_embd / hparams.n_head;    
+        }
+        
         _INFO("\nLLaMeta%s: init model embed=%d layer=%d ff=%d tpFFN=%d\n", __func__,n_embd,n_layer,n_ff,tpFFN);  
         _INFO("\t type of FFN=%s\n", tpFFN==FFN_TYPE::SWIGLU ? "MLP" : tpFFN==FFN_TYPE::VAR_LAST ? "Variation@last_layer" 
             : tpFFN==FFN_TYPE::ONLY_RMSNormal ? "RMS Normal" : "other");  
@@ -287,34 +294,17 @@ struct LLaMeta : public Fish {
                 layer->wv = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);                
             }
             layer->wo = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
-            layer->InitFFN(hparams,ctx,tpFFN);
-            /*switch(tpFFN){
-            case VAR_LAST:
-            case SWIGLU:
-                if(hparams.ZMUV_ratio>0)
-                    layer->ffn_norm = nullptr;  
-                else
-                    layer->ffn_norm = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
-                layer->ffn_gate = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   n_ff);
-                layer->ffn_down = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,   n_ff, n_embd);
-                layer->ffn_up   = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   n_ff); 
-                if(tpFFN==VAR_LAST && i==n_layer-1){
-                    layer->eps = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   train_params.n_batch*n_ctx);   
-                }
-                break;
-            case ONLY_LNormal:
-            case ONLY_RMSNormal:
-                layer->ffn_norm = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
-                break;
-            case VAR_0:
-                layer->eps = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   train_params.n_batch*n_ctx);   
-                break;                
-            default:
-                TO_DO;
-            }*/
+            layer->CreateFFN(hparams,ctx,tpFFN);            
         }
-        if(wiki!=nullptr && wiki->teach==WIKI::_LOGITS &&!isLocalInfer) {
+        if(wiki!=nullptr && (wiki->teach==WIKI::_LOGITS || wiki->teach==WIKI::_LOGITS_GATE)  
+                && !isLocalInfer) {
             exLogits = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_vocab,  n_ctx, train_params.n_batch);
+            if(wiki->teach==WIKI::_LOGITS_GATE){
+                // gate = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_vocab, 2);
+                gate = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, 2);
+            }            
+            // gate_id0 = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 1);
+            // gate_id1 = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 1);
         }
         nParams = 0;
         
@@ -348,6 +338,9 @@ struct LLaMeta : public Fish {
                 InitGensor(ctx,layer->ffn_up_shexp,             TN(LLM_TENSOR_FFN_UP_SHEXP, i), rnd);
             }
         }
+        if(gate!=nullptr){
+            InitGensor(ctx,gate,             "gate_cys", rnd);
+        }
         // free_random_normal_distribution(rnd); 
         
         if (!hparams.only_write_model && hOPT!=nullptr) {
@@ -356,6 +349,8 @@ struct LLaMeta : public Fish {
 
         szModel = (ggml_used_mem(ctx) + ggml_backend_buffer_get_size(data)), (float) (ggml_used_mem(ctx) + ggml_backend_buffer_get_size(data)) ;
     }
+
+    virtual hGensor build_gate(struct ggml_context * ctx,hGensor cur,hGensor cur_logits, int flag );
 
     virtual size_t MostMemSize(int flag)    {
         int n_layer = nLayerX<=0 ? hparams.n_layer : nLayerX;
@@ -372,7 +367,10 @@ struct LLaMeta : public Fish {
         if (train_params.seed == LLAMA_DEFAULT_SEED) {
             train_params.seed = time(NULL); 
         }    
-        wiki = wiki_;    assert(wiki_!=nullptr);
+        wiki = wiki_;    
+        if(wiki==nullptr){
+            _INFO("====== NO WIKI !!! ======\n");
+        }
         // CreateWiki();
       
         if(hparams.only_infer)  {
@@ -382,16 +380,20 @@ struct LLaMeta : public Fish {
             return;
         }        
         nParamsGGUF = 0;
-        if(lama()->isOnlyTokenizer)    {   //llama_mparams.vocab_only  not load tensors from fn_model_base
-            updateTMap = true;            
-        } else { // load all tensors from fn_model_base
-            auto tmaps = llama_internal_get_tensor_map(lama()->_ctx);
-            assert(gensors.size()==0);
-            for(auto it : tmaps){
-                Gensor2Map(it.second);
-                // tensors[it.first] = it.second;
-                nParamsGGUF += ggml_nelements(it.second);
+        if(wiki!= nullptr){
+            if(lama()->isOnlyTokenizer)    {   //llama_mparams.vocab_only  not load tensors from fn_model_base
+                updateTMap = true;            
+            } else { // load all tensors from fn_model_base
+                auto tmaps = llama_internal_get_tensor_map(lama()->_ctx);
+                assert(gensors.size()==0);
+                for(auto it : tmaps){
+                    Gensor2Map(it.second);
+                    // tensors[it.first] = it.second;
+                    nParamsGGUF += ggml_nelements(it.second);
+                }
             }
+        }else{  //NO WIKI !!!
+            updateTMap = true;          
         }
         if(isLocalInfer){
             hOPT = nullptr;
@@ -402,7 +404,7 @@ struct LLaMeta : public Fish {
         hDistler = hparams.sigma=="" ? nullptr : std::make_shared<Distillation>(this,hparams,0x0);     //ADD SIGMA
         hDict = std::make_shared<ConsiceDict>(this);
         hDict->LoadVocab(hparams.fn_model_base.c_str(),0x0);
-        hDict->bos = wiki->bos;             hDict->eos = wiki->eos;  
+        if(wiki!= nullptr)  {   hDict->bos = wiki->bos;             hDict->eos = wiki->eos;  }
         // hDict->LoadVocab_v1(hparams.fn_model_base,hparams,*lmodel, 0x0);
 
         struct ggml_init_params ctx_model_params;
@@ -565,40 +567,7 @@ struct LLaMeta : public Fish {
         BuildTarget(ctx,alloc,m_only,cur,_tNorm,_tOutput,KQ_pos,flag);       
     }
 
-    virtual void LoadTokens( int flag=0x0 )   {           
-        if(0)   {
-            if( hOPT->train_loader.Serialize(hparams.train_binpath,false) 
-                && hOPT->val_loader.Serialize(hparams.eval_binpath,false)){
-                    if(hOPT->train_loader.len()>0){
-                        return;
-                    }
-                        
-            }            
-        }
-        std::vector<llama_token> tokens;
-        std::vector<size_t> samples_begin,samples_size;
-        auto train_params = hparams.common;
-        // int n_ctx_tokens = hparams.n_ctx;
-
-        // _INFO("%s: tokenize training data\n", __func__);
-        _INFO("%s: tokenize training data from %s\n", __func__, hparams.common.fn_train_data.c_str());
-        _INFO("%s: sample-start: %s\n", __func__, hparams.common.sample_start.c_str());
-        _INFO("%s: include-sample-start: %s\n", __func__, hparams.common.include_sample_start ? "true" : "false");
-        tokenize_file(lama()->_ctx,
-                train_params.fn_train_data.c_str(),
-                train_params.sample_start,train_params.include_sample_start,train_params.overlapping_samples,hparams.common.n_ctx,
-                tokens,samples_begin,samples_size);
-        
-        //val_tokens = tokens[:32768]    train_tokens = tokens[32768:]        
-        hOPT->val_loader.SetSamples(hDict->n_vocab,tokens,samples_begin,samples_size,false,hparams);
-        hOPT->train_loader.SetSamples(hDict->n_vocab,tokens,samples_begin,samples_size,true,hparams);
-
-        hOPT->train_loader.Serialize(hparams.train_binpath,true);
-        // hOPT->train_loader.Serialize(hparams.train_binpath,false);      //only for debug
-        hOPT->val_loader.Serialize(hparams.eval_binpath,true);
-        // GGML_ASSERT(hOPT->train_samples_begin.size() == hOPT->train_samples_size.size());
-        // _INFO("%s: number of training tokens: %zu\n", __func__, hOPT->train_tokens.size());        
-    }
+    virtual void LoadTokens( int flag=0x0 );
 
     void CopyWeight(const Fish* src,int flag = 0x0)  override;
     bool LocalFeeling(std::vector<llama_token>&tokens,vector<float>& result)   const   override;
@@ -1026,10 +995,10 @@ struct LLM_MAMBA : public LLaMeta {
     }  
 
     void InitModel(int flag=0x0)    override    {
-        /*_INFO("MAMBA%s: init model\n", __func__);
+        _INFO("MAMBA::%s: init model\n", __func__);
 
         llama2params(GetRawModel(),hparams);
-        hparams.n_head = 8;    
+        /*hparams.n_head = 8;    
         hparams.n_head_kv = hparams.n_head;     //hack
         hparams.n_layer = nLayerX;
 
@@ -1054,7 +1023,7 @@ struct LLM_MOE : public LLaMeta {
     size_t MostMemSize(int flag)  override;
 
     void InitModel(int flag=0x0)    override    {
-        _INFO("LLM_MOE%s: init model\n", __func__);
+        _INFO("LLM_MOE::%s: init model\n", __func__);
 
         llama2params(GetRawModel(),hparams);//hack
         n_expert = hparams.n_expert,n_expert_used = hparams.n_expert_used;
@@ -1065,7 +1034,7 @@ struct LLM_MOE : public LLaMeta {
 
     hGensor build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<LLaMeta::lama_layer> layer,hGensor KQ_pos,int flag=0x0) override;
     // void BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,hGensor cur,hGensor _tNorm,hGensor _tOutput,hGensor KQ_pos, int flag=0x0) override; 
-
+    // hGensor build_gate(struct ggml_context * ctx,hGensor cur,hGensor cur_logits, int flag )    override;
 };
 
 

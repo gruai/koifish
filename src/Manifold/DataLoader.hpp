@@ -14,8 +14,8 @@ Implements:
 #include <string.h>
 #include <memory>
 #include <vector>
-#include "../llmc/utils.h"
-#include "../llmc/rand.h"
+#include "llmc_utils.h"
+#include "llmc_rand.h"
 #include "../GG_params.hpp"
 // ----------------------------------------------------------------------------
 // implementation of glob for Windows is in dev/unistd.h
@@ -191,7 +191,8 @@ public:
     }
 
     int32_t TokenAt(size_t pos){
-        assert(pos<n_vocab);
+        size_t nToken = tokens.size();
+        assert(pos<nToken);
         int32_t token = clamp(tokens[pos], 0, (n_vocab - 1));
         return token;
     }

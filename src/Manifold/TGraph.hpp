@@ -179,7 +179,7 @@ public:
         GGML_PRINT_DEBUG("%s ...",__func__);
         // ggml_graph_compute_helper(work_buffer, cgraph, n_threads);
         GST_TIC(t0);
-        struct ggml_cplan plan = ggml_graph_plan(cgraph, n_threads);
+        struct ggml_cplan plan = ggml_graph_plan(cgraph, n_threads,NULL);
         if (plan.work_size > 0) {
             work_buffer.resize(plan.work_size);
             plan.work_data = work_buffer.data();

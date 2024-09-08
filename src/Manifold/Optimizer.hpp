@@ -23,7 +23,7 @@
 using namespace std;
 
 #include "../ggex/GG_util.hpp"
-#include "../LLAMA/common/train.h"
+#include "train.h"
 #include "TGraph.hpp"
 #include "Scheduler.hpp"
 #include "DataLoader.hpp"

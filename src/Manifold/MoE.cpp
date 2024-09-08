@@ -9,11 +9,68 @@
 
 #include "gLLM.hpp"
 
+bool LLaMeta::lama_layer::CreateFFN(const CLI_params&hparams, ggml_context *ctx, FFN_TYPE tpFFN, int flag)  {
+    const uint32_t n_embd = hparams.n_embd, n_ctx = hparams.n_ctx(), n_ff = hparams.n_ff, n_batch = hparams.n_batch();  
+    const uint32_t n_expert = hparams.n_expert;
+    switch(tpFFN){
+    case VAR_LAST:
+    case SWIGLU:
+        if(hparams.ZMUV_ratio>0)
+            ffn_norm = nullptr;  
+        else
+            ffn_norm = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
+        ffn_gate = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   n_ff);
+        ffn_down = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,   n_ff, n_embd);
+        ffn_up   = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   n_ff); 
+        if(tpFFN==VAR_LAST && isLast){/*i==n_layer-1*/
+            eps = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   n_batch*n_ctx);   
+        }
+        break;
+    case ONLY_LNormal:
+    case ONLY_RMSNormal:
+        ffn_norm = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
+        break;
+    case VAR_0:
+        eps = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   n_batch*n_ctx);   
+        break;  
+    case GATE_CYS:
+        assert(0);
+        break;
+    case SMOE:{// MoE branch
+        assert(n_expert>0 && hparams.n_expert_used>0) ; 
+        ffn_gate_inp = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   n_expert);
+        // ffn_gate_inp = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_GATE_INP, "weight", i), {n_embd, n_expert});        
+        const int64_t n_ff_exp = hparams.n_ff_exp ? hparams.n_ff_exp : n_ff / hparams.n_expert_used;
+        ffn_gate_exps = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_embd, n_ff_exp, n_expert);
+        // ffn_gate_exps = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_GATE_EXPS, "weight", i), {  n_embd, n_ff_exp, n_expert});
+        ffn_down_exps = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_ff_exp,   n_embd, n_expert); 
+        // ffn_down_exps = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_DOWN_EXPS, "weight", i), {n_ff_exp,   n_embd, n_expert});
+        ffn_up_exps = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_embd, n_ff_exp, n_expert); 
+        // ffn_up_exps   = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_UP_EXPS,   "weight", i), {  n_embd, n_ff_exp, n_expert});
+
+        // Shared expert branch
+        const int64_t n_ff_shexp = hparams.n_ff_shexp ? hparams.n_ff_shexp : n_ff;
+        ffn_gate_inp_shexp = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd); 
+        // ffn_gate_inp_shexp = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_GATE_INP_SHEXP, "weight", i), {n_embd});
+        ffn_gate_shexp = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_ff_shexp);
+        // ffn_gate_shexp = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_GATE_SHEXP, "weight", i), {    n_embd, n_ff_shexp});
+        ffn_down_shexp = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_ff_shexp, n_embd);
+        // ffn_down_shexp = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_DOWN_SHEXP, "weight", i), {n_ff_shexp,     n_embd});
+        ffn_up_shexp = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_ff_shexp);
+        // ffn_up_shexp   = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_UP_SHEXP,   "weight", i), {    n_embd, n_ff_shexp});
+    }
+        break;
+    default:
+        TO_DO;
+    } 
+    return true;  
+}
+
 LLM_MOE::LLM_MOE( const std::string& nam_,struct CLI_params params,int flag) : LLaMeta(nam_,params,flag)  {
     assert(arch==MODEL_ARCH::NLP_MOE);
     
-
-    tpFFN = FFN_TYPE::SMOE;    
+    tpFFN = FFN_TYPE::GATE_CYS;    
+    // tpFFN = FFN_TYPE::SMOE;    
 }
 
 size_t LLM_MOE::MostMemSize(int flag)  {
@@ -93,12 +150,17 @@ hGensor LLM_MOE::build_layer_( int N,struct ggml_context *ctx_compute,hGensor cu
         }
         return ffn;  
     } 
+    case GATE_CYS:{
+    }
+        break;
     case SMOE:{
         LAMA *lama = dynamic_cast<LAMA *>(wiki.get());      assert(lama!=nullptr); 
+        //  build_qwen2moe:     LLM_FFN_SILU,false,false,
         ffn = moe_build_ffn(ctx_compute, *(lama->_ctx), cur,
                     layer->ffn_gate_inp,layer->ffn_up_exps,layer->ffn_gate_exps,layer->ffn_down_exps,
-                    n_expert, n_expert_used,true,false, 0.0,layer->id);
+                    n_expert, n_expert_used,false,false, 0.0,layer->id);
         }
+        return ffn;  
         break;
     case VAR_0:
     case ONLY_LNormal:
@@ -141,3 +203,38 @@ hGensor LLM_MOE::build_layer_( int N,struct ggml_context *ctx_compute,hGensor cu
         
     }                 
 }
+
+hGensor LLaMeta::build_gate(struct ggml_context * ctx,hGensor cur,hGensor curlogits, int flag )  {
+    int n_vocab = hDict->n_vocab,n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd;
+    int n_expert = 2,N0=cur->ne[0],ld1=2*cur->nb[0];
+    hGensor  wA = nullptr,wB = nullptr;
+    hGensor tA=ggml_reshape_2d(ctx,curlogits,n_vocab,n_ctx*n_batch),tB=ggml_reshape_2d(ctx,exLogits,n_vocab,n_ctx*n_batch);    
+    hGensor logits = ggml_mul_mat(ctx, gate, ggml_reshape_2d(ctx,cur,N0,n_ctx*n_batch));           //[n_expert, n_tokens]
+    hGensor probs = ggml_soft_max(ctx,logits);    
+    // float* p=(float*)(probs->data);
+    // float p0=p[0],p1=p[1];
+    //a[i,j] =   (char *) a->data + j*a->nb[1] + i*a->nb[0]         @@@./docs/tensor.md
+    wA = ggml_view_2d(ctx, probs, 1, n_ctx*n_batch,ld1, 0);         
+    wB = ggml_view_2d(ctx, probs, 1, n_ctx*n_batch,ld1, probs->nb[0]);
+    wA = _repeat(ctx,wA,tA);
+    wB = _repeat(ctx,wB,tB);
+    /*if(0)   {  //yun!!! GGML_OP_CONCAT don't support backward                
+        hGensor t101 = ggml_concat(ctx,tA,tB,0);
+        hGensor t102 = ggml_mul_mat(ctx,t101,gate);
+        //probs     [n_expert, n_tokens]
+        //weights   [1, n_expert_used, n_tokens]
+        hGensor weight = ggml_soft_max(ctx,t102);   
+        // hGensor t103 = ggml_reshape_3d(ctx, t101, n_vocab,2, N*n_batch);
+        wA=ggml_get_rows(ctx,weight,gate_id0),wB=ggml_get_rows(ctx,weight,gate_id1);
+    }else{
+        wA = ggml_mul_mat(ctx,tA,gate);     wB = ggml_mul_mat(ctx,tB,gate);
+    }
+    wA = _repeat(ctx,ggml_reshape_2d(ctx, wA, 1,n_ctx*n_batch),tA);
+    // tA=ggml_mul(ctx,tA,wA);       
+    wB = _repeat(ctx,ggml_reshape_2d(ctx, wB, 1,n_ctx*n_batch),tB);
+    // tB=ggml_mul(ctx,tB,wB); */
+    hGensor ouput = ggml_add(ctx,ggml_mul(ctx,tA,wA),ggml_mul(ctx,tB,wB));            
+    ouput = ggml_reshape_3d        (ctx, ouput, n_vocab, n_ctx, n_batch);
+    return ouput;
+}
+ 

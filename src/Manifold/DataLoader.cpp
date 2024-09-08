@@ -3,7 +3,7 @@
 #else
 #include "Fish.hpp"
 #include "../ggex/GG_util.hpp"
-#include "../LLAMA/common/common.h"
+#include "common.h"
 
 
 // int64_t DataLoader_3D::update_batch(int sample_id,Fish* fish)   {    
@@ -225,6 +225,7 @@ try{
     _CHECK( S.Serial(shuffle_samples_hash,isSave,flag) );
     _CHECK( S.Serial(hOPT->train_params.seed,isSave,flag) );
 
+    _CHECK( S.Serial(batch_sample,isSave,flag) );
     // _CHECK( S.Serial(samp_begin,isSave,flag) );
     // _CHECK( S.Serial(samp_size,isSave,flag) );
     // _CHECK( S.Serial(shuffled_samples_offs,isSave,flag) );
@@ -233,8 +234,14 @@ try{
     _CHECK( S.Serial(idcs,isSave,flag) );
     bool bRet = S.Serial_Vector<SAMP,SAMP>(all_samps,isSave,flag);
     _CHECK(bRet);
-    _INFO("\r%s %s@\"%s\" ... OK. nSamp=%ld @[Datasets(nToken=%ld unique=%lld  hash=%llX]\n",__func__,isSave?"save":"load",path.c_str(),
+    _INFO("\r%s %s@\"%s\" ... OK. \r\n\tnSamp=%ld @[Datasets(nToken=%ld unique=%lld  hash=%llX]\n",__func__,isSave?"save":"load",path.c_str(),
         all_samps.size(),tokens.size(),n_unique_tokens,shuffle_samples_hash);
+    for(auto id : idcs){
+        if(id>=tokens.size()){
+            _INFO("\t\tInvalid id(%ld) > nTokens=%d\n", id,tokens.size());  
+            return false;
+        }
+    }
     if(isSave){
         
     }else{
@@ -326,7 +333,7 @@ void DataLoader::Shuffle(int flag)  {
     }
 
     //  hash_combine(samples_begin,samples_size[i],sample_count
-    shuffle_samples_hash = SAMP::HASH(train_params.fn_train_data.c_str(),all_samps);    
+    shuffle_samples_hash = SAMP::HASH(train_params.fn_train_data,all_samps);    
     // compute_samples_hash(train_params.fn_train_data.c_str(), samp_begin.data(), samp_size.data(), samp_size.size());
     const bool changed_train_data = (shuffle_samples_hash != train->shuffle_samples_hash) || (train->shuffle_sample_count != all_samps.size());
     if (changed_train_data) {

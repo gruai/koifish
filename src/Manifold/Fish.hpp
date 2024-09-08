@@ -28,7 +28,7 @@ typedef struct ggml_tensor *hGensor;
 typedef std::map<std::string, struct ggml_tensor *> TENSORs;
 typedef std::vector<int> SHAPE;
 
-#include "../LLAMA/common/train.h"
+#include "train.h"
 #include "TGraph.hpp"
 #include "Optimizer.hpp"
 #include "GPT.hpp"
@@ -227,7 +227,7 @@ protected:
     hGensor in_node = nullptr, out_node = nullptr;
     hGensor loss = nullptr, target_probs = nullptr;
     hGensor preLogits = nullptr;        //no SOFTMAX
-    hGensor exLogits = NULL;      //create@InitModel update@
+    hGensor exLogits = nullptr,gate=nullptr;      //create@InitModel update@
     hOptimizer hOPT;
     hDistillation hDistler;
     // performance
@@ -351,8 +351,7 @@ public:
             ggml_set_name(gensor, name);
         if(isTrain())
             ggml_set_param(ctx, gensor);
-        if (gensor->data == nullptr)
-        {
+        if (gensor->data == nullptr)        {
             assert(0);
         }
         else

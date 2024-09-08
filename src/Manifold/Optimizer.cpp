@@ -1,6 +1,5 @@
 #include "Fish.hpp"
 #include "../ggex/GG_util.hpp"
-#include "../LLAMA/common/common.h"
 
  Optimizer::Optimizer(Fish *g_,struct train_params_common& params_,int flag) : train_params(params_),gang(g_) {
     InitOpt(train_params,flag); 
@@ -291,10 +290,10 @@ enum ggml_opt_result Optimizer::ggml_train(struct ggml_context * ctx, hGensor lo
             const int64_t t_start_wall = ggml_time_us(),t_start_cpu = ggml_cycles();
             AdamW(nx,np,hparams,0x0);   
             //gradient is useless at this stage  
-            if (train_params.eval_every>0 && t % train_params.eval_every == 0) {
+            if (hparams.eval_every>0 && t % hparams.eval_every == 0) {
                 val_loss = Evaluate(val_loader,t);  
             }        
-            if( train_params.gpt_every>0 && t%train_params.gpt_every==0 )   {
+            if( hparams.gpt_every>0 && t%hparams.gpt_every==0 )   {
                 gang->GenSentence(1);   
             }
    
