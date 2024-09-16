@@ -12,3 +12,4 @@ struct ggml_tensor * mamba_build_layer(
 struct ggml_tensor * moe_build_ffn(struct ggml_context * ctx,struct llama_context & lctx,
          struct ggml_tensor * cur,struct ggml_tensor * gate_inp,struct ggml_tensor * up_exps,struct ggml_tensor * gate_exps,struct ggml_tensor * down_exps,
                     int64_t   n_expert,int64_t   n_expert_used,bool   norm_w,bool   scale_w,float   w_scale,int   il);         
+bool llama_model2vocb_( struct llama_model * model,void *hData, int type);

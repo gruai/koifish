@@ -111,7 +111,7 @@ struct BROWN_Motion    {
     //       f_norm_rms_eps(f_eps), rope_freq_base(rope_base), rope_freq_scale(rope_scale), wq(_wq)    {
             
     // }
-    BROWN_Motion(hGensor _wq, struct CLI_params hparams,int flags) : wq(_wq)   {
+    BROWN_Motion(hGensor _wq, struct CLI_params& hparams,int flags) : wq(_wq)   {
         f_norm_rms_eps  = hparams.f_norm_rms_eps;
         rope_freq_base  = hparams.rope_freq_base;
         rope_freq_scale = hparams.rope_freq_scale;  
@@ -139,7 +139,7 @@ struct QKV_Motion : public BROWN_Motion    {
     //     : BROWN_Motion(_wq, _embd, _head, _N, _batch, _rot, _ctx, _head_kv, f_eps, rope_base, rope_scale), wk(_wk), wv(_wv)
     // {
     // }
-    QKV_Motion(hGensor _wq, hGensor _wk, hGensor _wv, struct CLI_params hparams,int flag)
+    QKV_Motion(hGensor _wq, hGensor _wk, hGensor _wv, struct CLI_params& hparams,int flag)
         : BROWN_Motion(_wq, hparams,flag), wk(_wk), wv(_wv)
     {
     }
@@ -184,14 +184,24 @@ struct save_train_model {
     }        
 };
 
+struct MixOfModels{
+    // hGensor gate = nullptr;
+    hGensor embed2w = nullptr;
+    hGensor Forward(struct ggml_context * ctx,hGensor cur,hGensor w);
+};
 class Fish : public std::enable_shared_from_this<Fish>    {
     Fish(const Fish &);
     Fish &operator=(const Fish &);
 
 protected:
     std::string name;
-    // wiki contains knowledge reflect the founation of our world
-    hWIKI wiki = nullptr;
+
+    /*  wiki contains knowledge reflect the founation of our world
+        wikis[0] is the backbone of FISH
+    */
+    vector<hWIKI> wikis;
+    vector<hGensor> tmpExLogis;
+    WIKI::INDUCT_MODE teach=WIKI::_LOGITS;
     // Generate some results on prompt
     hGOPT gopt = nullptr;
     virtual int GenSentence(int flag=0x0);
@@ -227,7 +237,11 @@ protected:
     hGensor in_node = nullptr, out_node = nullptr;
     hGensor loss = nullptr, target_probs = nullptr;
     hGensor preLogits = nullptr;        //no SOFTMAX
-    hGensor exLogits = nullptr,gate=nullptr;      //create@InitModel update@
+    
+    //hGensor gate=nullptr;      //create@InitModel update@
+    MixOfModels mom;
+
+    hDataToken hTokenset=nullptr;
     hOptimizer hOPT;
     hDistillation hDistler;
     // performance
@@ -265,13 +279,14 @@ public:
     bool isTrain()  {
         return !isLocalInfer;
     }
+    bool hasWiki()  {   return wikis.size()>0;  }
 
     virtual ~Fish() { Clear(); }
     virtual std::string Name()  {   return name.c_str();  }
 
     virtual size_t Size(int flag = 0x0) { return ctx_size; }
 
-    virtual void Init(hWIKI wiki,int flag=0x0)          {   throw "Fish::Init is ...";           }       
+    virtual void Init(const vector<hWIKI>& wikis,int flag=0x0)          {   throw "Fish::Init is ...";           }       
     virtual void BuildGraph(int flag=0x0)               {   throw "Fish::BuildGraph is ...";     }
 
     virtual void BuildGraph(struct ggml_context *ctx0, ggml_gallocr_t &allocr, bool isOnlySymbol, int flag = 0x0)    {
@@ -450,7 +465,7 @@ public:
         AddLayer(layer, flag = 0x0);
     }
     
-    bool OnTrainStep(struct train_opt_callback_data *data0,DataLoader&loader, int accum_step, float *sched, int flag = 0x0);
+    bool OnTrainStep(struct train_opt_callback_data *data0,SampLoader&loader, int accum_step, float *sched, int flag = 0x0);
 
     virtual bool InitCTX(int flag=0x0);
     virtual void Train(int flag = 0x0);
@@ -483,5 +498,5 @@ public:
     friend class ConsiceDict;
     friend class GeneratOnPrompt;
     friend class LLaMeta;   
-    friend class DataLoader;
+    friend class SampLoader;
 };

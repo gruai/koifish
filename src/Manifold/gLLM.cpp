@@ -41,17 +41,25 @@ hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,int fl
             break;    
         default:
             assert(0);
-        }     }
- 
-    hWIKI wiki = nullptr;
-    if(params.tpWiki!="off")        //wiki is so heavy(ugly) that only load one instance here!
-        wiki = std::make_shared<LAMA>(params);
-    fish->Init( wiki );    
+        }     
+    }
+    
+    vector<hWIKI> wikis;
+    if(params.tpWiki!="off") {//wiki is so heavy(ugly) that only load one instance here!
+        for(auto path : params.fn_model_base){
+            hWIKI wiki = std::make_shared<LAMA>(params,path);
+            wikis.push_back(wiki);
+        }        
+    }       
+    assert(wikis.size()>=0);
+
+    fish->Init( wikis );    
     fish->BuildGraph( );
     if(!fish->InitCTX())
         return nullptr;
-    if(wiki!=nullptr){  //generate some sentence
-        fish->gopt = GeneratOnPrompt::MakeInstance(params,wiki,fish.get(),flag);        
+    if(!wikis.empty()){  //generate some sentence
+        CHILD_0909_WIKIS
+        // fish->gopt = GeneratOnPrompt::MakeInstance(params,wikis,fish.get(),flag);        
     }
     
     return fish;
@@ -74,15 +82,14 @@ hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,const 
     }  
     fish->isLocalInfer = flag==0x110;
     fish->graph_order = hSrc_->graph_order;
-    hWIKI wiki = hSrc_->wiki;   //wiki is so heavy(ugly) that only one instance from hSrc!    
-    assert(wiki!=nullptr);
-    fish->Init( wiki );    
+    //wiki is so heavy(ugly) that only one instance from hSrc!    
+    fish->Init( hSrc_->wikis );    
     fish->BuildGraph( );
     if(!fish->InitCTX())
         return nullptr;
     if(fish->isLocalInfer){  
     }else{
-        fish->gopt = GeneratOnPrompt::MakeInstance(params,wiki,fish.get(),flag);        
+        fish->gopt = GeneratOnPrompt::MakeInstance(params,fish->wikis,fish.get(),flag);        
     }
     
     return fish;
@@ -192,10 +199,20 @@ string LLaMeta::__repr__( string& suffix,string& prefix,int flag)         {
         sprintf(buf+strlen(buf),"%s",layers[layers.size()-1]->__repr__(s,p,0x0).c_str());    
     }
     _T_repr_(target_probs,"  target_probs=",buf);  
-    if(exLogits!=nullptr)
-        _T_repr_(exLogits,"  ex_logits=",buf);    
-    if(gate!=nullptr)
-        _T_repr_(gate,"  gate=",buf); 
+    for(auto wiki : wikis){
+        if(wiki->exLogits!=nullptr){
+            string a = "   ex_logits@"+wiki->title+"=";
+            _T_repr_(wiki->exLogits,a.c_str(),buf);   
+        }
+        if(wiki->t2t!=nullptr){
+            string a = "   t2t@"+wiki->title+"=";
+            _T_repr_(wiki->t2t,a.c_str(),buf);   
+        }
+            
+    }
+     
+    if(mom.embed2w!=nullptr)
+        _T_repr_(mom.embed2w,"  gate=",buf); 
     _T_repr_(loss,"  loss=",buf);   
 
     sprintf(buf+strlen(buf),"%s",suffix.c_str()); 
@@ -290,7 +307,7 @@ LLM_MAMBA::LLM_MAMBA( const std::string& nam_,struct CLI_params params,int flag)
 
 hGensor LLM_MAMBA::build_layer_( int N,struct ggml_context *ctx_compute,hGensor inpL,std::shared_ptr<LLaMeta::lama_layer> layer,hGensor KQ_pos,int flag) {
     int il = layer->id,nLay=layers.size();
-    LAMA *lama = dynamic_cast<LAMA *>(wiki.get());      assert(lama!=nullptr);    
+    LAMA *lam = lama();      assert(lam!=nullptr);    
     
     /*  [4096,512] [4096]    */
     hGensor cur = ggml_rms_norm(ctx_compute, inpL, hparams.f_norm_rms_eps);     set_name(cur, "norm");
@@ -298,7 +315,7 @@ hGensor LLM_MAMBA::build_layer_( int N,struct ggml_context *ctx_compute,hGensor 
     set_name(t11, "t11");     //assert_shape_2d(t03, n_embd, N*n_batch);
     cur = ggml_mul(ctx, cur, t11);                    set_name(cur, "attn_norm");
 //  cur = mamba_build_layer(ctx0,lctx,gf,cur,inpL,il,n_layer,n_tokens,kv_head,n_kv,n_outputs);
-    cur = mamba_build_layer(ctx_compute, *(lama->_ctx), gf, cur,inpL, il, nLay,512);
+    cur = mamba_build_layer(ctx_compute, *(lam->_ctx), gf, cur,inpL, il, nLay,512);
     return cur;
 }
 
@@ -306,7 +323,7 @@ hGensor LLM_MAMBA::build_layer_( int N,struct ggml_context *ctx_compute,hGensor 
 hGensor  LLaMeta::build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<LLaMeta::lama_layer> layer,hGensor  KQ_pos,/*hGensor cur, hGensor wq, hGensor wk, hGensor wv, hGensor wo,
     hGensor attention_norm,hGensor KQ_pos,hGensor ffn_norm,hGensor ffn_up,hGensor ffn_gate,hGensor ffn_down,*/ int flag) {
     auto train_params = hparams.common;
-    int n_vocab = hDict->n_vocab,n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd,n_head = hparams.n_head,n_ff = hparams.n_ff;
+    int n_vocab = tVocab(),n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd,n_head = hparams.n_head,n_ff = hparams.n_ff;
     const float f_norm_rms_eps  = hparams.f_norm_rms_eps;
     const float rope_freq_base  = hparams.rope_freq_base;
     const float rope_freq_scale = hparams.rope_freq_scale;  
@@ -457,12 +474,12 @@ void LLaMeta::CopyWeight(const Fish* src,int flag) {
 
 /*
     would affect training process?
-    hOPT->Compute would merge wiki->preLogits! (REF: DataLoader::update_batch)
+    hOPT->Compute would merge wiki->preLogits! (REF: SampLoader::update_batch)
 */
-bool LLaMeta::LocalFeeling(std::vector<llama_token>&samp_tokens,vector<float>& result)  const {
+bool LLaMeta::LocalFeeling(std::vector<TOKEN_ID>&samp_tokens,vector<float>& result)  const {
     assert(target_probs->type == GGML_TYPE_F32);
     float *fLoss = (float*)(loss->data);    
-    llama_token token;
+    TOKEN_ID token;
     ggml_set_i32_nd(tokens_input, 0, 0, 0, 0, hDict->bos);
     size_t i,N=samp_tokens.size(),n_context=tokens_input->ne[0],nSampInBatch=tokens_input->ne[1];
     if(N>n_context)
@@ -496,8 +513,13 @@ bool LLaMeta::LocalFeeling(std::vector<llama_token>&samp_tokens,vector<float>& r
     return true;
 }
 
+size_t LLaMeta::tVocab(){
+    assert(hDict!=nullptr);
+    return hDict->tVocab( );
+    //return hTokenset->nUnique;
+}
 void LLM_MAMBA::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,hGensor cur,hGensor _tNorm,hGensor _tOutput,hGensor KQ_pos, int flag)  {
-    int n_vocab = hDict->n_vocab,n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd;
+    int n_vocab = tVocab(),n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd;
     auto train_params = hparams.common;
     preLogits = ggml_reshape_3d(ctx, cur, n_vocab, n_ctx, n_batch);             set_name(preLogits, "preLogits");     
     assert_shape_3d(preLogits, n_vocab, n_ctx, n_batch);;
@@ -516,7 +538,7 @@ void LLM_MAMBA::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,boo
 }
 
 void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,hGensor cur,hGensor _tNorm,hGensor _tOutput,hGensor KQ_pos, int flag)  {
-    int n_vocab = hDict->n_vocab,n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd;
+    int n_vocab = tVocab(),n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd;
     auto train_params = hparams.common;
     train_params.use_checkpointing = false;     // CYS_0826
     const int N = train_params.n_ctx, n_past = 0;
@@ -541,16 +563,27 @@ void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool 
     assert_shape_3d(t35, n_vocab, N, n_batch);
     // no,no,no! 1) Softmax layers can be difficult to train since the gradients can vanish or explode  2) CrossEntropyLoss assumes logits on the input.
     //  t35 = ggml_soft_max_inplace(ctx,t35); 
-    if(exLogits!=nullptr)    {   // preLogits = t35;
-        if(wiki->teach==WIKI::_LOGITS_GATE){
+    // preLogits = t35;
+    if(!isLocalInfer){
+        if(mom.embed2w!=nullptr)    {   
+            assert(teach==WIKI::_LOGITS_GATE);
             t35 = build_gate(ctx,t33,t35,flag);
-        }else{
-            t35 = ggml_add(ctx,t35,exLogits);
-        }
-        //  WIKI::_LOGITS_SCALE
-        // t35 = ggml_relu(ctx,t35);       //converge very slow, so strange!
-        // t35 = ggml_mul(ctx,t35,exLogits);
+        }   else {
+            for(auto wiki:wikis)    {   
+                if(wiki->t2t!=nullptr){
+                    hGensor tEX1 = ggml_mul_mat(ctx, wiki->t2t, wiki->exLogits);                          
+                    t35 = ggml_add(ctx,t35,tEX1);
+                }else if(wiki->exLogits!=nullptr){
+                    t35 = ggml_add(ctx,t35,wiki->exLogits);
+                }
+                
+                //  WIKI::_LOGITS_SCALE
+                // t35 = ggml_relu(ctx,t35);       //converge very slow, so strange!
+                // t35 = ggml_mul(ctx,t35,exLogits);        
+            }
+        }        
     }
+    
     hGensor  t36 = ggml_cross_entropy_loss(ctx, t35, target_probs);                    set_name(t36, "t36");     assert_shape_1d(t36, 1);
     if(isTrain())
         assert(t36->grad!=nullptr);
@@ -659,15 +692,16 @@ std::string LAMA::T2STR( int32_t tok,int flag )                    {
     return str;  
 }
 
+
 /**
  *  1.  llama_set_inputs(lctx, u_batch);        llama_graph_compute(lctx, gf, n_threads);
  *  2.  Extract logits and embeddings
  */
-bool LAMA::Decode(std::vector<llama_token>&embd_inp,int start,int n_past,bool out_all) {
+bool LAMA::Decode(std::vector<TOKEN_ID>&embd_inp,int start,int n_past,bool out_all) {
     assert(embd_inp.size()<=nCTX());
-    llama_token eos = llama_token_eos(lmodel),id;
+    TOKEN_ID eos = llama_token_eos(lmodel),id;
     int i=0,n_consumed=start;
-    std::vector<llama_token> embd;
+    std::vector<TOKEN_ID> embd;
     while ((int) embd_inp.size() > n_consumed) {
         id = embd_inp[n_consumed];
         // const std::string token_str = llama_token_to_piece(_ctx, id);
@@ -730,11 +764,11 @@ const float *LAMA::GetLogits(int n_vocab,int n_ctx,int idx)   {
     return _logits;
 }
 
-void LAMA::Answer(std::vector<llama_token>&embd_inp,int flag) {
+void LAMA::Answer(std::vector<TOKEN_ID>&embd_inp,int flag) {
     // Answer_0(embd_inp,flag);     return;
-    llama_token eos = llama_token_eos(lmodel),id;
+    TOKEN_ID eos = llama_token_eos(lmodel),id;
     int i=0,n_consumed=0;
-    std::vector<llama_token> embd;    
+    std::vector<TOKEN_ID> embd;    
     /*  9493 -> 'when'   279 -> ' the' 16603 -> ' smoke'   374 -> ' is'  2133 -> ' going'  1523 -> ' down'    11 -> ','*/
     struct llama_sampling_params sparams;
     sparams.seed = 42;
@@ -754,7 +788,7 @@ void LAMA::Answer(std::vector<llama_token>&embd_inp,int flag) {
     
     int n_eval = (int) embd.size(),n_past =0;
     auto batch = llama_batch_get_one(&embd[0], n_eval, n_past, 0);
-            //     llama_token token = llama_token_bos(&ctx->model); // not actually used by llama_build_graph, but required to choose between token and embedding inputs graph
+            //     TOKEN_ID token = llama_token_bos(&ctx->model); // not actually used by llama_build_graph, but required to choose between token and embedding inputs graph
             // ggml_cgraph * gf = llama_build_graph(*ctx, llama_batch_get_one(&token, n_tokens, n_past, 0), true);
     if(0)   {
         gf = llama_build_graph(*_ctx, batch, false);
@@ -771,33 +805,80 @@ void LAMA::Answer(std::vector<llama_token>&embd_inp,int flag) {
     _INFO("%s => \"%s\"",__func__,token_str.c_str());
 }
 
-LAMA::LAMA(CLI_params& hparams) {
+#include "llama-vocab.h"
+LAMA::LAMA(CLI_params& hparams,const std::string&path_)     {
+    model_path = path_;
     llama_mparams.n_gpu_layers = hparams.common.n_gpu_layers;
     llama_mparams.vocab_only = hparams.train=="scratch";     //need lmodel to tokenize training samples    
-
+    const char* fn_model = model_path.c_str();
     teach = hparams.tpWiki=="logits" ? _LOGITS : 
             hparams.tpWiki=="target" ? _TARGET : 
             hparams.tpWiki=="gate" ? _LOGITS_GATE : _OFF;
     if(llama_mparams.vocab_only || hparams.wiki_actor=="OnlyTokenizer"){
-        isOnlyTokenizer = true;
+        isOnlyTokenizer = true;     llama_mparams.vocab_only = true;
         _INFO("%s: OnlyTokenizer.\n", __func__ );
         assert(teach==WIKI::_OFF);
     }        
-    _INFO("%s: model base = '%s' nEmbd=%d wiki=%s\n", __func__, hparams.fn_model_base.c_str(),hparams.n_embd,hparams.tpWiki.c_str());
-    title = remove_extension(base_name(hparams.fn_model_base));  //hparams.fn_model_base.substr(hparams.fn_model_base.find_last_of("/\\") + 1);
-    lmodel = llama_load_model_from_file(hparams.fn_model_base.c_str(), llama_mparams);                
-    n_vocab = llama_n_vocab(lmodel);
-    // true or false?   If use logits distillation, must set it True!
-    cparams.logits_all = true;
-  
-    _ctx = llama_new_context_with_model(lmodel, cparams);  
-    // const auto & cp_ = _ctx->cparams;
+    _INFO("%s: model base = '%s' nEmbd=%d wiki=%s\n", __func__, fn_model,hparams.n_embd,hparams.tpWiki.c_str());
+    title = remove_extension(base_name(model_path));  //hparams.fn_model_base.substr(hparams.fn_model_base.find_last_of("/\\") + 1);
+    lmodel = llama_load_model_from_file(fn_model, llama_mparams);  
+        
+    if(lmodel==nullptr)   {
+        _INFO("\n%s: FAILED @'%s' !!! \n", __func__, fn_model);
+    }  else{     
+        n_vocab = llama_n_vocab(lmodel);
+        // true or false?   If use logits distillation, must set it True!
+        cparams.logits_all = true;
+    
+        _ctx = llama_new_context_with_model(lmodel, cparams);  
+        // const auto & cp_ = _ctx->cparams;
 
-    bos = llama_token_bos(llama_get_model(_ctx));
-    eos = llama_token_eos(llama_get_model(_ctx));
-    std::string sBos = llama_token_to_piece(_ctx, bos),sEos = llama_token_to_piece(_ctx, eos);
+        bos = llama_token_bos(llama_get_model(_ctx));
+        eos = llama_token_eos(llama_get_model(_ctx));
+        std::string sBos = llama_token_to_piece(_ctx, bos),sEos = llama_token_to_piece(_ctx, eos);
+        struct llama_vocab *hvocab = new struct llama_vocab();
+        if(llama_model2vocb_(lmodel,hvocab,0x0))    {
+            vocab = hvocab;
+            switch(hvocab->type){
+            case LLAMA_VOCAB_TYPE_RWKV:
+                tokenizer_name = "rwkv";    break;
+            case LLAMA_VOCAB_TYPE_UGM:
+                tokenizer_name = "t5";    break;
+            case LLAMA_VOCAB_TYPE_BPE:
+                tokenizer_name = "gpt2";    break;
+            case LLAMA_VOCAB_TYPE_WPM:
+                tokenizer_name = "bert";    break;
+            case LLAMA_VOCAB_TYPE_SPM:
+                tokenizer_name = "llama";    break;
+            case LLAMA_VOCAB_TYPE_NONE:
+                tokenizer_name = "no_vocab";    break;
+            default:
+                tokenizer_name = "X";    break;
+                break;
+            }
+        }
+        /*struct gguf_context * vctx = gguf_init_from_file(fn_model, {false,NULL,});
+        char keybuf[512]="\0";
+            GGUF_GET_KEY(vctx, tokenizer_name, gguf_get_val_str, GGUF_TYPE_STRING, true, keybuf);
+        gguf_free(vctx);*/
+    }
 }
 
+
+string LAMA::__repr__( string& suffix,string& prefix,int flag)    {
+    if(!isValid()){
+        return "!!! INVALID !!!";
+    }
+    char buf[5012]="\0";
+    const char*tab=prefix.c_str();
+    struct llama_vocab *hvocab = (struct llama_vocab *)(vocab);
+    sprintf(buf+strlen(buf),"%s(%s)\t%s\tcharsmap=%sn_vocab=%ld",tab,tokenizer_name.c_str(),title.c_str(),
+        hvocab->precompiled_charsmap.data(), n_vocab);
+    
+    sprintf(buf+strlen(buf),"%s",suffix.c_str()); 
+    _INFO("%s",buf); 
+    return buf;
+};
 
 void LAMA::Reset(int flag)    {   
     // cparams.seed = 42;
@@ -812,20 +893,36 @@ void LAMA::Reset(int flag)    {
     }
 }   
 
-double WIKI::InductLogits(int nSampInBatch,std::vector<int32_t>& tok_ids,hGensor exLogits,hGensor target_probs,int flag)  {
+double WIKI::InductLogits(int nSampInBatch,std::vector<int32_t>& tok_ids,hGensor userLogits,hGensor target_probs,int flag)  {
+    if(!isInduct())
+        return -1.0;
+
     Reset();         //Timing bottleneck!!! for the crazy design of llama.cpp
     Decode(tok_ids,0,0x0,true);    
     const float *all_logits = GetLogits(n_vocab,tok_ids.size(),0),*logit;  
-    size_t k,ld0=target_probs->nb[0],ld1=target_probs->nb[1],ld2=target_probs->nb[2],ld3=target_probs->nb[3],j,i;  
-    int n_ctx = target_probs->ne[1];  
+    //ld0=target_probs->nb[0],ld1=target_probs->nb[1],ld2=target_probs->nb[2],ld3=target_probs->nb[3]
+    size_t k,j,i,ldL=target_probs->ne[0];  
+    int n_ctx = target_probs->ne[1],n_dialect=mapT2T.size(),token;  
     double a1,a2,nrm=0;    
-    float *p=teach == WIKI::_TARGET ? new float[n_vocab]:nullptr,*target ;  
-    if(flag<0){    //only for old version
-        assert(exLogits!=nullptr);
-        target = (float*)exLogits->data+nSampInBatch*n_ctx*n_vocab;        
-        nrm =  NRM_2(all_logits,n_ctx*n_vocab)/n_vocab;   
-        memcpy((void*)target,(void*)all_logits,sizeof(float)*n_ctx*n_vocab);       //memcpy(g->data+off,(void*)(logits),ld2); 
+    float *p=teach == WIKI::_TARGET ? new float[ldL]:nullptr,*target ;  
+    if(flag<0){    //CHILD_0909_WIKIS
+        hGensor logits = userLogits==nullptr ? exLogits : userLogits;
+        assert(logits!=nullptr);
+        target = (float*)logits->data+nSampInBatch*n_ctx*ldL;        
+        nrm =  NRM_2(all_logits,n_ctx*ldL)/ldL;   
+        if(logits->ne[0]==n_dialect){
+            for(i=0; i<n_ctx; i++,target+=n_dialect,all_logits+=n_vocab){
+                for(j=0;j<n_vocab;j++){
+                    if(dialect[j]==0)       
+                        continue;
+                    token = mapT2T[j];
+                    target[token] = all_logits[j];
+                }                
+            }
+        }else
+            memcpy((void*)target,(void*)all_logits,sizeof(float)*n_ctx*n_vocab);       //memcpy(g->data+off,(void*)(logits),ld2); 
     }else{    
+        assert(0);
         for (k=0; k<nSampInBatch; ++k) {        
             const float *from=all_logits+k*n_vocab;
             a1=NRM_2((float*)(from),n_ctx*n_vocab);          nrm=max(nrm,a1/n_vocab);     
@@ -859,7 +956,7 @@ double WIKI::InductLogits(int nSampInBatch,std::vector<int32_t>& tok_ids,hGensor
 
 void LLaMeta::InitEntryTensors(int flag) {
     auto train_params = hparams.common;
-    int n_ctx = train_params.n_ctx,n_vocab = hDict->n_vocab,n_batch = train_params.n_batch;
+    int n_ctx = train_params.n_ctx,n_vocab = tVocab(),n_batch = train_params.n_batch;
     assert(n_ctx>0 && n_batch>0);
     struct ggml_init_params ctx_input_params = {// mem_size mem_buffer no_alloc
         ggml_tensor_overhead() * 2, NULL,true,                        
@@ -873,49 +970,87 @@ void LLaMeta::InitEntryTensors(int flag) {
     // ggml_free(ctx_input);
 }
 
-bool Fish::OnTrainStep(struct train_opt_callback_data *data,DataLoader&loader, int accum_step, float *sched, int flag)    {
+bool Fish::OnTrainStep(struct train_opt_callback_data *data,SampLoader&loader, int accum_step, float *sched, int flag)    {
     LossCurve(0x0);
     assert(0);
     return false;
 }
 
-void LLaMeta::LoadTokens( int flag )   {   
+bool LLaMeta::LoadTokens( int flag )   {   
     GST_TIC(tic);   
     bool isLoadOK = false;  
-    if(1)   {
+    if(0)   {
         if( hOPT->train_loader.Serialize(hparams.train_binpath,false) 
             && hOPT->val_loader.Serialize(hparams.eval_binpath,false)){
                 if(hOPT->train_loader.len()>0){
+                    // hDict->nUniqueToken = hOPT->train_loader.n_unique_tokens; 
                     // _INFO("%s: nTrain=%zu nEval=%zu batch_sample=%s T=%.3g\n", __func__, hOPT->train_loader.len(),hOPT->val_loader.len(),GST_TOC(tic));
                     isLoadOK = true;
                 }
         }            
     }
     if(!isLoadOK) {
-        std::vector<llama_token> tokens;
+        assert(hTokenset!=nullptr);
+        auto& tokens = hTokenset->tokens;   
         std::vector<size_t> samples_begin,samples_size;
         auto train_params = hparams.common;
+        size_t nUnique = hTokenset->nUnique;
         // int n_ctx_tokens = hparams.n_ctx;
+        if( hTokenset->InitSamps(hparams.common.n_ctx,samples_begin,samples_size)){
 
-        // _INFO("%s: tokenize training data\n", __func__);
-        _INFO("%s: tokenize training data from %s\n", __func__, hparams.common.fn_train_data);
-        _INFO("%s: sample-start: %s\n", __func__, hparams.common.sample_start.c_str());
-        _INFO("%s: include-sample-start: %s\n", __func__, hparams.common.include_sample_start ? "true" : "false");
-        // TODO:  cys@20240905  Very slow @llama-2-13b.Q3_K_L.gguf
-        tokenize_file(lama()->_ctx, 
-                train_params.fn_train_data,
-                train_params.sample_start,train_params.include_sample_start,train_params.overlapping_samples,hparams.common.n_ctx,
-                tokens,samples_begin,samples_size);
+        }else{
+            assert(0);
+            const char*fp=hparams.fp_train_data.c_str();
+            assert( std::filesystem::exists(fp) );
+            _INFO("%s: tokenize training data from %s\n", __func__, fp);
+            _INFO("%s: sample-start: %s\n", __func__, hparams.common.sample_start.c_str());
+            _INFO("%s: include-sample-start: %s\n", __func__, hparams.common.include_sample_start ? "true" : "false");
+            // TODO:  cys@20240905  Very slow @llama-2-13b.Q3_K_L.gguf
+            tokenize_file(lama()->_ctx, fp,
+                    train_params.sample_start,train_params.include_sample_start,train_params.overlapping_samples,hparams.common.n_ctx,
+                    tokens,samples_begin,samples_size);
+            if(samples_begin.size()==0){
+                _ERROR("\n%s: tokenize return 0 samples !!!\n", __func__);
+                return false;
+            }
+            // hDict->UniqueTokens(tokens, -1);
+        }
         
         //val_tokens = tokens[:32768]    train_tokens = tokens[32768:]        
         hOPT->val_loader.SetSamples(hDict->n_vocab,tokens,samples_begin,samples_size,false,hparams);
         hOPT->train_loader.SetSamples(hDict->n_vocab,tokens,samples_begin,samples_size,true,hparams);
+        assert(hOPT->val_loader.n_unique_tokens <= nUnique && hOPT->train_loader.n_unique_tokens <= nUnique);
+        hOPT->val_loader.n_unique_tokens = nUnique;
+        hOPT->train_loader.n_unique_tokens = nUnique;
 
         hOPT->train_loader.Serialize(hparams.train_binpath,true);
         // hOPT->train_loader.Serialize(hparams.train_binpath,false);      //only for debug
         hOPT->val_loader.Serialize(hparams.eval_binpath,true);
     }
+    hOPT->train_loader.hDict = hDict;            hOPT->val_loader.hDict = hDict;
     // GGML_ASSERT(hOPT->train_samples_begin.size() == hOPT->train_samples_size.size());
     _INFO("%s: batch_sample=%s nTrain=%zu nEval=%zu T=%.3g\n", __func__, hOPT->train_loader.batch_sample.c_str(),
         hOPT->train_loader.len(),hOPT->val_loader.len(),GST_TOC(tic));        
+    return true;
+}
+
+bool LLaMeta::CreateExlogists(hWIKI wiki,uint32_t n_ctx,uint32_t n_batch,int flag) {
+    if(teach==WIKI::_OFF )
+        return false;
+    int64_t nV = tVocab();
+    assert(wiki->n_vocab>=nV);
+    if(!isLocalInfer){
+        assert(wiki->exLogits==nullptr);
+        
+        if(wiki->n_vocab>nV){
+            wiki->exLogits = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, nV,  n_ctx, n_batch);
+            wiki->t2t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nV,  nV);
+            
+        }else{
+            wiki->exLogits = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, wiki->n_vocab,  n_ctx, n_batch);
+        }
+        tmpExLogis.push_back(wiki->exLogits); 
+        return true;               
+    }
+    return false;
 }

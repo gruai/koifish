@@ -2,6 +2,10 @@
 #include "GPT.hpp"
 #include "Fish.hpp"
 #include "gLLM.hpp"
+#include <string>
+#include <iostream>
+#include <filesystem>
+namespace fs = std::filesystem;
 
 static unsigned int random_u32(uint64_t *state){
     *state ^= *state >> 12;
@@ -13,6 +17,45 @@ static unsigned int random_u32(uint64_t *state){
 // random float32 in [0,1)
 float random_f32(uint64_t *state)   { 
     return (random_u32(state) >> 8) / 16777216.0f;
+}
+
+int GGUF_list(CLI_params& hparams)  {
+    std::vector<string> paths;
+    std::string root = "/media/cys/E0/",path;
+    root = "/home/cys/rnd/lic/models/";
+    for (const auto & entry : fs::directory_iterator(root)){
+         fs::path filePath = entry.path();
+        if(filePath.extension() == ".gguf")
+            paths.push_back(entry.path());
+    }
+    int nP = paths.size(),i=0;
+    FILE *fp = fopen("./log/GGUF_list.log","wt");
+    string sToken,info,suffix="\t",prefix;
+    fprintf(fp,"%s LOAD %d @%s\n",__func__,nP,root.c_str());         fflush(fp);
+    for(auto path : paths){
+        // path = "/media/cys/E0/LLaMA3-8B_mmproj-Q4_1.gguf";      //only for debug
+        auto param_1 = hparams;
+        param_1.wiki_actor="OnlyTokenizer";     param_1.tpWiki=WIKI::_OFF;    
+        // param_1.fn_model_base = path;
+        
+        // hFISH fish_0 = Fish::MakeInstance("GGUF_",param_1,0x0);
+        // fish_0->Dump(0x0);
+        GST_TIC(tic);
+        fprintf(fp,"%d: \"%s\" ...\n",i++,path.c_str());         fflush(fp);
+        try{
+            hWIKI wiki = wiki = std::make_shared<LAMA>(param_1,path);
+            assert(wiki!=nullptr);
+            info = wiki->__repr__(suffix,prefix);  
+        }catch(const std::exception & e) {
+            info =  std::string(e.what());
+        }catch(...){
+            info = "!!! UNKNOW EXCEPTION !!!";
+        }
+         
+        fprintf(fp,"\t %s  T=%.3g\n",info.c_str(),GST_TOC(tic));    
+        fflush(fp);
+    }
+    fclose(fp);
 }
 
 int GPT_fish(CLI_params& hparams)  {
@@ -39,7 +82,8 @@ int GPT_work(CLI_params& hparams)  {
     // }
     // gpt_params_find_arg
     params.seed = 42, params.sparams.seed = params.seed;
-    params.model = hparams.fn_model_base;   //"./models/Meta-Llama-3-8B.Q2_K.gguf";
+    assert(hparams.fn_model_base.size()>0);
+    params.model = hparams.fn_model_base[0];   //"./models/Meta-Llama-3-8B.Q2_K.gguf";
     params.prompt = hparams.prompt;
     params.escape = true;
     params.n_predict = 16;
@@ -56,12 +100,14 @@ int GPT_work(CLI_params& hparams)  {
     }
     LOG_TEE("%s\n", gpt_params_get_system_info(params).c_str());
     llama_numa_init(params.numa);
-    hWIKI wiki = std::make_shared<LAMA>(hparams);      assert(wiki!=nullptr);
+    hWIKI wiki = std::make_shared<LAMA>(hparams,params.model);      assert(wiki!=nullptr);
     wiki->teach = WIKI::_LOGITS;
+    arrHWIKI wikis;
+    wikis.push_back(wiki);
     //  hGOPT gpt = std::make_shared<GeneratOnPrompt>(params,0x0);
     //  hGOPT gpt = std::make_shared<GOPT_infinite>(params,0x0);    
     // hGOPT gpt = std::make_shared<GOPT_Metropolis>(params, 0x0);  
-    hGOPT gpt = std::make_shared<GOPT_Metropolis>(hparams,wiki,nullptr, 0x0);    
+    hGOPT gpt = std::make_shared<GOPT_Metropolis>(hparams,wikis,nullptr, 0x0);    
     if (gpt->Init(params.prompt))    { 
         for (int i = 0; i < 10; i++)        { 
             wiki->Reset();        //to get same results each run     
@@ -82,9 +128,9 @@ WIKI::WIKI()
     // gpt->Generate();
 }
 
-hGOPT GeneratOnPrompt::MakeInstance(struct CLI_params& hparams,hWIKI wiki,const Fish *fish_0,int flag) {
+hGOPT GeneratOnPrompt::MakeInstance(struct CLI_params& hparams,arrHWIKI& wikis,const Fish *fish_0,int flag) {
     // gopt = std::make_shared<GeneratOnPrompt>(wiki,this,0x0);
-    hGOPT gopt = std::make_shared<GOPT_Metropolis>(hparams,wiki,fish_0,0x0);
+    hGOPT gopt = std::make_shared<GOPT_Metropolis>(hparams,wikis,fish_0,0x0);
     if(gopt!=nullptr && gopt->Init(hparams.prompt)){
         // gopt->Generate(0); //only for debug  
     }else{
@@ -106,16 +152,17 @@ GeneratOnPrompt::GeneratOnPrompt(struct gpt_params &par_, int flag) : params(par
     params.sparams.temp = 0.8;
     sparams = params.sparams;
     // compatible with LLAMA.cpp
-    hparams.fn_model_base = params.model;
+    hparams.fn_model_base.push_back( params.model ); 
     n_predict = params.n_predict;
 }
 
 void GeneratOnPrompt::Clear()    {
-    llama_print_timings(ctx);
+    if(ctx!=nullptr)
+        llama_print_timings(ctx);
     // write_logfile(ctx, params, model, input_tokens, output_ss.str(), output_tokens);
 
     if (ctx_guidance) { llama_free(ctx_guidance); }
-    if(wiki==nullptr){
+    if(wikis.empty()){
         llama_free(ctx);        
         llama_free_model(model);            
     }
@@ -127,8 +174,8 @@ void GeneratOnPrompt::Clear()    {
     FREE_a(_logits);
 }
           //only for debug
-GeneratOnPrompt::GeneratOnPrompt(CLI_params&cp_,hWIKI wiki_, const Fish *hG_, int flag) : 
-    hparams(cp_),fish_0(hG_), wiki(wiki_) {
+GeneratOnPrompt::GeneratOnPrompt(CLI_params&cp_,arrHWIKI& wiki_, const Fish *hG_, int flag) : 
+    hparams(cp_),fish_0(hG_), wikis(wiki_) {
     if(fish_0!=nullptr){
         auto gang_param = hparams;
         gang_param.tpWiki = "off";      assert(gang_param.tpWiki=="off");
@@ -146,7 +193,7 @@ GeneratOnPrompt::GeneratOnPrompt(CLI_params&cp_,hWIKI wiki_, const Fish *hG_, in
     // fish_1 = nullptr;
     params.seed = 42; 
     params.sparams.seed = params.seed;
-    params.model = hparams.fn_model_base;   //"./models/Meta-Llama-3-8B.Q2_K.gguf";
+    params.model = hparams.fn_model_base[0];   //"./models/Meta-Llama-3-8B.Q2_K.gguf";
     params.prompt = hparams.prompt; 
     prompt = hparams.prompt; 
     //"when the smoke is going down,"; //"Building a website can be done in 10 simple steps:\\nStep 1:";
@@ -164,18 +211,22 @@ GeneratOnPrompt::GeneratOnPrompt(CLI_params&cp_,hWIKI wiki_, const Fish *hG_, in
     }
 
     n_predict = params.n_predict;    
-    LOG_TEE("%s wiki=%p propmt=\"%s\" n_predict=%d logits_all=%d\n", __func__,wiki,prompt.c_str(),n_predict,params.logits_all );
+    LOG_TEE("%s wiki=%ld propmt=\"%s\" n_predict=%d logits_all=%d\n", __func__,wikis.size(),prompt.c_str(),n_predict,params.logits_all );
 }
 
 bool GeneratOnPrompt::Init(const std::string &prompt_, int flag){
     llama_backend_init(); // ggml_time_init();
 
     // std::tie(model, ctx) = llama_init_from_gpt_params(params);
-    if (wiki == nullptr)
-        wiki = std::make_shared<LAMA>(hparams);
+    if (wikis.empty()){     CHILD_0909_WIKIS
+        hWIKI wiki = std::make_shared<LAMA>(hparams,hparams.fn_model_base[0]);
+        wikis.push_back(wiki);
+    }
  
-    LAMA *lama = dynamic_cast<LAMA *>(wiki.get());
-    model = lama->lmodel;
+    LAMA *lama = dynamic_cast<LAMA *>(wikis[0].get());
+    if(lama==nullptr || !lama->isValid())
+        return false;
+    model = lama->lmodel;    
     int nTokens = llama_n_vocab(model), j;
     _logits = new float[nTokens];
     assert(model != nullptr);
@@ -251,6 +302,7 @@ int Fish::GenSentence(int flag)  {
         return -1;
 
     GST_TIC(tic);
+    hWIKI wiki = wikis[0];       assert(0);
     assert(wiki != nullptr);
     if(gopt!=nullptr){
         wiki->Reset();
@@ -306,6 +358,8 @@ llama_token GOPT_Metropolis::Sample(int idx, bool is_resampling)    {
     std::vector<float> x_logits;
     auto ctx_main = ctx, ctx_cfg = ctx_guidance;
     int nTokens = llama_n_vocab(model), j;
+    assert(wikis.size()==1);        CHILD_0909_WIKIS
+    hWIKI wiki = wikis[0];
     assert(wiki != nullptr);
     float *preP = new float[nTokens](), sum, cdf;
     assert(idx==-1);
@@ -760,6 +814,7 @@ int GeneratOnPrompt::Generate(int nJob, int flag)   {
     const int n_ctx = llama_n_ctx(ctx);               // ctx->cparams.n_ctx;
     const int n_ctx_train = llama_n_ctx_train(model); // model->hparams.n_ctx_train;
     delta_max = 0;      delta_a = 0;
+    hWIKI wiki = wikis[0];      CHILD_0909_WIKIS
     LOG_TEE("<--- GeneratOnPrompt %s job=%d logits_all=%d fish=%s teach=%d\n", wiki->teach==WIKI::_OFF?"only fish":"WIKI",
         nJob,params.logits_all,fish_1==nullptr?"":fish_1->Name().c_str(),wiki->teach);
     rng_state = params.seed;
@@ -893,7 +948,7 @@ int GeneratOnPrompt::UpdateEmbed(int nJob, int &n_past, int &n_remain, int &n_co
     const int n_ctx_train = llama_n_ctx_train(model); // model->hparams.n_ctx_train;
     const int ga_n = params.grp_attn_n;
     const int ga_w = params.grp_attn_w;
-
+    hWIKI wiki = wikis[0];      CHILD_0909_WIKIS
     if (!tokens.empty())
     {
         // Note: (n_ctx - 4) here is to match the logic for commandline prompt handling via
@@ -941,7 +996,8 @@ int GeneratOnPrompt::UpdateEmbed(int nJob, int &n_past, int &n_remain, int &n_co
 
 int GOPT_infinite::UpdateEmbed(int nJob, int &n_past, int &n_remain, int &n_consumed, int &n_session_consumed, int &n_past_guidance, int &ga_i, int flag)
 {
-    const int n_ctx = llama_n_ctx(ctx);               // ctx->cparams.n_ctx;
+    assert(0);      CHILD_0909_WIKIS
+    /* const int n_ctx = llama_n_ctx(ctx);               // ctx->cparams.n_ctx;
     const int n_ctx_train = llama_n_ctx_train(model); // model->hparams.n_ctx_train;
     const int ga_n = params.grp_attn_n;
     const int ga_w = params.grp_attn_w;
@@ -1090,5 +1146,5 @@ int GOPT_infinite::UpdateEmbed(int nJob, int &n_past, int &n_remain, int &n_cons
             n_session_consumed = session_tokens.size();
         }
     }
-    return 2;
+    return 2;*/
 }

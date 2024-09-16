@@ -1,6 +1,6 @@
 /*
 Implements:
-- DataLoader for model training. Reads and serves data shards.
+- SampLoader for model training. Reads and serves data shards.
 - EvalLoader for multiple-choice evaluation datasets, e.g. HellaSwag.
 */
 #ifndef DATALOADER_H
@@ -134,7 +134,47 @@ public:
     
 };
 
-class DataLoader;
+class LLaMeta;
+class DataTokenSet    {
+protected:
+    std::map<TOKEN_ID, TOKEN_ID> mapT2T;
+    std::vector<TOKEN_ID> dialect;
+    std::string fpath;
+    size_t fsize=0,nUnique=0,nVocab=0;
+    size_t tell(FILE *fp) const {
+#ifdef _WIN32
+        __int64 ret = _ftelli64(fp);
+#else
+        long ret = std::ftell(fp);
+#endif
+        GGML_ASSERT(ret != -1); // this really shouldn't fail
+        return (size_t) ret;
+    }
+
+    void seek(FILE *fp,size_t offset, int whence) {
+#ifdef _WIN32
+        int ret = _fseeki64(fp, (__int64) offset, whence);
+#else   
+        int ret = std::fseek(fp, (long) offset, whence);
+#endif
+        GGML_ASSERT(ret == 0); // same
+    }
+    int UniqueTokens(const std::vector<TOKEN_ID>& tokens,size_t n_1,int flag=0x0);
+public:
+    std::vector<TOKEN_ID> tokens;
+    DataTokenSet(size_t nV) : nVocab(nV)    {
+
+    }
+    
+    virtual bool Load(struct CLI_params& hparams,void *hLLM,int flag=0x0);
+    int UniqueTokens(size_t n_1,int flag=0x0);
+    bool InitSamps(unsigned context_length,std::vector<size_t>& samples_begin,std::vector<size_t>&samples_size,int flag=0x0);
+
+friend class LLaMeta;
+};
+typedef std::shared_ptr<DataTokenSet> hDataToken;
+
+class SampLoader;
 struct SAMP{
     size_t pos=-1,len=-1;       //  range is [pos,pos+len)
     size_t off_cycle=0;         // more random
@@ -149,7 +189,7 @@ struct SAMP{
 
     bool Serialize(FSerial&S, bool isSave, int flag);
 
-    void Refresh(DataLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,int typ);
+    void Refresh(SampLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,int typ);
 
     static size_t HASH(const char* fn, const std::vector<SAMP*>& samps) {
         std::hash<std::string> h_string;
@@ -166,8 +206,10 @@ struct SAMP{
 // typedef std::shared_ptr<SAMP> hSAMP;
 typedef SAMP* hSAMP;
 
-class DataLoader   {
+struct ConsiceDict;
+class SampLoader   {
 protected:  
+    std::string fp_data;
     std::string sentence="";
     std::vector<int32_t> tok_ids;
     bool sample_separation_eos,sample_separation_bos;
@@ -178,7 +220,7 @@ protected:
     int64_t N4Train() {
         return idcs.size();
     }   
-
+    std::shared_ptr<ConsiceDict> hDict=nullptr;
 public:
     int64_t len() {
         return all_samps.size();
@@ -212,8 +254,8 @@ public:
     int num_batches;    //number of batchs in each epoch
 
     train_state *train=nullptr;
-    std::vector<llama_token> tokens;
-    size_t n_unique_tokens=-1;
+    std::vector<TOKEN_ID> tokens;
+    size_t n_unique_tokens=0;
 
     size_t shuffle_samples_hash = 0x0;
     // std::vector<size_t> samp_begin,samp_size;
@@ -252,9 +294,9 @@ public:
     size_t header_bytes;  // header size in bytes
     int64_t file_size_bytes;
 
-    DataLoader( )   {}
+    SampLoader( )   {}
 
-    virtual ~DataLoader( ) {
+    virtual ~SampLoader( ) {
         free(buffer);
         free(inputs);
         free(targets);
@@ -391,8 +433,8 @@ public:
             ntok_total += shard_ntok;
         }
         // debugging prints
-        // printf("DataLoader: filename_pattern: %s\n", filename_pattern);
-        // printf("DataLoader: Found %ld tokens across %zu shards\n", ntok_total, glob_result.gl_pathc);
+        // printf("SampLoader: filename_pattern: %s\n", filename_pattern);
+        // printf("SampLoader: Found %ld tokens across %zu shards\n", ntok_total, glob_result.gl_pathc);
 
         // allocate all the space we'll need
         buffer = (uint16_t*)mallocCheck((B * T + 1) * sizeof(uint16_t));
@@ -441,14 +483,14 @@ public:
 #ifdef _DATA_LOADER_LITE_
 #else
     virtual bool Serialize(const std::string&path, bool isSave, int flag=0x0);
-    virtual void SetSamples(int nV,std::vector<llama_token>& tokens_,std::vector<size_t>& begin_,std::vector<size_t>& size_,
+    virtual void SetSamples(int nV,std::vector<TOKEN_ID>& tokens_,std::vector<size_t>& begin_,std::vector<size_t>& size_,
         bool isTrain,CLI_params& train_params,int flag=0x0);
     void Shuffle(int flag=0x0);
 #endif
-
+    friend class LLaMeta;
 };
 
-// class DataLoader_3D : public DataLoader  {
+// class DataLoader_3D : public SampLoader  {
 // protected:
 // public:
 //     int64_t update_batch(int next_id,Fish* fish)    override;

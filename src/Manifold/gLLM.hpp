@@ -80,7 +80,7 @@ void static set_name(struct ggml_tensor * t, const char * n) {
 
 bool llama2params(struct llama_model * lmodel,struct CLI_params& cparam);
 
-struct LAMA : public WIKI   {
+struct LAMA : public WIKI   {    
     struct llama_model_params llama_mparams = llama_model_default_params();
     struct llama_context_params cparams = llama_context_default_params();            
     struct llama_model *lmodel = nullptr;
@@ -88,10 +88,13 @@ struct LAMA : public WIKI   {
     ggml_cgraph * gf = nullptr;
     hGensor res = nullptr;  
     
-    
+    bool isValid(   )  override 
+    {   return lmodel!=nullptr && _ctx!=nullptr;   }
+
     std::string T2STR(int32_t tok,int flag=0x0 ) override;   
     bool Decode(std::vector<int32_t>&ids,int start,int n_past,bool out_all)  override;
     void Answer(std::vector<int32_t>&ids,int flag)  override;
+    string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
     /*
         uint32_t n_ctx;             // text context, 0 = from model_
         uint32_t n_batch;           // logical maximum batch size that can be submitted to llama_decode
@@ -100,7 +103,7 @@ struct LAMA : public WIKI   {
     */
     int nCTX()   override  {   return cparams.n_ctx;    };
 
-    LAMA(CLI_params& hparams);
+    LAMA(CLI_params& hparams,const std::string&model_path);
 
     virtual ~LAMA(){
         if(gf!=nullptr)
@@ -179,18 +182,21 @@ struct LLaMeta : public Fish {
     std::vector<struct ggml_tensor *> checkpoints;
     // struct train_params_common& train_params;
     
-
-    // LAMA lama;
-    struct LAMA *lama( )    {   
-        LAMA *lama = dynamic_cast<LAMA *>(wiki.get());
+    CHILD_0909_WIKIS
+    //Assume wikis[0] is the backbone of FISH
+    struct LAMA *lama(int id=0)    {  
+        if(wikis.size()==0) 
+            return nullptr;
+        assert(id>=0 && id<wikis.size());
+        LAMA *lama = dynamic_cast<LAMA *>(wikis[id].get());
         assert(lama!=nullptr);
         return lama;  
     }
 
     struct llama_model *GetRawModel( )    {   
-        LAMA *lama = dynamic_cast<LAMA *>(wiki.get());
-        assert(lama->lmodel!=nullptr);   
-        return lama->lmodel;  
+        LAMA *lam = lama( );    //dynamic_cast<LAMA *>(wiki.get());
+        assert(lam->lmodel!=nullptr);   
+        return lam->lmodel;  
     }
     
     std::string Name()  override;
@@ -210,13 +216,15 @@ struct LLaMeta : public Fish {
         hparams.n_rot   = hparams.n_embd / hparams.n_head;
         // hparams.n_ctx = hparams.common.n_ctx;                    
         hparams.n_head_kv = hparams.n_head;     // n_head_kv is optional, default to n_head        
-    }
+    }   
     LLaMeta(const std::string& nam_,const LLaMeta* src,struct CLI_params params,int flag=0x0);
 
     virtual ~LLaMeta() {
         free_random_normal_distribution(rnd); 
         // ggml_free(lora.ctx);        
     }
+    //number of vocab at target layer
+    virtual size_t tVocab();
 
  // get gensors from llama_model (possibly mmapped)
     virtual void LoadTensors(struct llama_model * lama,int flag=0x0) {
@@ -266,12 +274,13 @@ struct LLaMeta : public Fish {
         return GetGensor(name);
     }
 
+    virtual bool CreateExlogists(hWIKI wiki,uint32_t n_ctx,uint32_t n_batch,int flag=0x0);
+
     virtual void InitModel(int flag=0x0){     
         hparams.n_ff = jKV(hparams.jConfig,{"model","ffn","length"},hparams.n_ff);   
         auto train_params = hparams.common;
         uint32_t n_embd  = hparams.n_embd,n_ctx = train_params.n_ctx;        
         const uint32_t n_layer = nLayerX<=0 ? hparams.n_layer : nLayerX;    //hparams.n_layer;
-        const uint32_t n_vocab = hDict->n_vocab;    // hDict->n_vocab;
         const uint32_t n_ff    = hparams.n_ff; 
         if(arch==NLP_MAMBA)     {
             assert(hparams.n_head == 0);
@@ -296,15 +305,18 @@ struct LLaMeta : public Fish {
             layer->wo = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
             layer->CreateFFN(hparams,ctx,tpFFN);            
         }
-        if(wiki!=nullptr && (wiki->teach==WIKI::_LOGITS || wiki->teach==WIKI::_LOGITS_GATE)  
+        tmpExLogis.clear();
+        for(auto wiki : wikis){
+            CreateExlogists(wiki,n_ctx,train_params.n_batch);            
+            if(wiki->t2t!=nullptr)
+                InitGensor(ctx,wiki->t2t, "", rnd);
+        }
+        if( tmpExLogis.size()>0 /* wiki!=nullptr && (wiki->teach==WIKI::_LOGITS || wiki->teach==WIKI::_LOGITS_GATE ) */ 
                 && !isLocalInfer) {
-            exLogits = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_vocab,  n_ctx, train_params.n_batch);
-            if(wiki->teach==WIKI::_LOGITS_GATE){
-                // gate = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_vocab, 2);
-                gate = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, 2);
-            }            
-            // gate_id0 = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 1);
-            // gate_id1 = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 1);
+            // exLogits = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_vocab,  n_ctx, train_params.n_batch);
+            if(teach==WIKI::_LOGITS_GATE)   {               
+                mom.embed2w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, tmpExLogis.size()+1);
+            }   
         }
         nParams = 0;
         
@@ -338,8 +350,8 @@ struct LLaMeta : public Fish {
                 InitGensor(ctx,layer->ffn_up_shexp,             TN(LLM_TENSOR_FFN_UP_SHEXP, i), rnd);
             }
         }
-        if(gate!=nullptr){
-            InitGensor(ctx,gate,             "gate_cys", rnd);
+        if(mom.embed2w!=nullptr){
+            InitGensor(ctx,mom.embed2w,             "gate_cys", rnd);
         }
         // free_random_normal_distribution(rnd); 
         
@@ -362,25 +374,28 @@ struct LLaMeta : public Fish {
     //for tokens_input & target_probs
     virtual void InitEntryTensors(int flag=0x0);
     
-    void Init(hWIKI wiki_,int flag=0x0)     override    {
+    void Init(const vector<hWIKI>& wikis_,int flag=0x0)     override    {
         auto train_params = hparams.common;
         if (train_params.seed == LLAMA_DEFAULT_SEED) {
             train_params.seed = time(NULL); 
         }    
-        wiki = wiki_;    
-        if(wiki==nullptr){
+        wikis = wikis_;  
+        // hWIKI wiki = nullptr;  
+        if(wikis.size()==0){
             _INFO("====== NO WIKI !!! ======\n");
+        }else{
+            teach = lama()->teach;
         }
         // CreateWiki();
       
         if(hparams.only_infer)  {
             hDict = std::make_shared<ConsiceDict>(this);        hDict->isLoadTokenEmbed = true;
-            hDict->LoadVocab(hparams.fn_model_base.c_str(),0x0);
+            hDict->LoadVocab(lama()->model_path.c_str(),0x0);
             LoadTensors(GetRawModel(),0x0);
             return;
         }        
         nParamsGGUF = 0;
-        if(wiki!= nullptr){
+        if(lama()!= nullptr){            
             if(lama()->isOnlyTokenizer)    {   //llama_mparams.vocab_only  not load tensors from fn_model_base
                 updateTMap = true;            
             } else { // load all tensors from fn_model_base
@@ -392,6 +407,7 @@ struct LLaMeta : public Fish {
                     nParamsGGUF += ggml_nelements(it.second);
                 }
             }
+            
         }else{  //NO WIKI !!!
             updateTMap = true;          
         }
@@ -402,9 +418,22 @@ struct LLaMeta : public Fish {
         }
         
         hDistler = hparams.sigma=="" ? nullptr : std::make_shared<Distillation>(this,hparams,0x0);     //ADD SIGMA
+        
+
         hDict = std::make_shared<ConsiceDict>(this);
-        hDict->LoadVocab(hparams.fn_model_base.c_str(),0x0);
-        if(wiki!= nullptr)  {   hDict->bos = wiki->bos;             hDict->eos = wiki->eos;  }
+        hDict->LoadVocab(lama()->model_path.c_str(),0x0);
+        if(lama()!= nullptr)  {   
+            hDict->bos = lama()->bos;             hDict->eos = lama()->eos;  
+            hTokenset = std::make_shared<DataTokenSet>(hDict->n_vocab);
+            if(!hTokenset->Load(hparams,lama()->lmodel,0x0)){
+                assert(0);
+                return;
+            };
+            hDict->mapT2T = hTokenset->mapT2T;      hDict->dialect = hTokenset->dialect;
+            for(auto wiki : wikis){
+                wiki->mapT2T = hDict->mapT2T;       wiki->dialect = hDict->dialect;
+            }
+        }
         // hDict->LoadVocab_v1(hparams.fn_model_base,hparams,*lmodel, 0x0);
 
         struct ggml_init_params ctx_model_params;
@@ -415,10 +444,6 @@ struct LLaMeta : public Fish {
         ctx = ggml_init(ctx_model_params);
 
         InitModel(flag);
-        // hGensor tok_0 = UpdateGensor(TN(LLM_TENSOR_TOKEN_EMBD));  //only for debug llama_get_model_tensor
-        // int n_vocab = hDict->n_vocab,n_batch = train_params.n_batch,n_ctx = train_params.n_ctx,n_embd = hparams.n_embd;
-        // int n_head = hparams.n_head,n_rot = hparams.n_rot,n_ff = hparams.n_ff;
-        // opt->iter = train->train_its;       
         hparams.Dump();         //        print_params(&hparams);        
         // _INFO("%s: n_vocab=%d,n_batch=%d,n_ctx=%d,n_embd=%d,n_head=%d,n_rot=%d,n_ff=%d\n", __func__, 
         //     n_vocab,n_batch,n_ctx,n_embd,n_head,n_rot,n_ff );
@@ -441,8 +466,8 @@ struct LLaMeta : public Fish {
         // _INFO("%s: seen train_tokens      %llu\n", __func__, (long long unsigned) train->train_tokens);
         // _INFO("%s: completed train_epochs %llu\n", __func__, (long long unsigned) train->train_epochs);
         _INFO("%s: nParams=%zu model_size = %zu bytes (%.1f MB)\n", __func__, nParams,szModel,szModel / (1024.0f*1024.0f) );
-        _INFO("%s: n_vocab=%d,n_batch=%d,n_ctx=%d,n_embd=%d,n_head=%d,n_rot=%d,n_ff=%d\n", __func__, 
-            n_vocab,n_batch,n_ctx,n_embd,hparams.n_head,hparams.n_rot,hparams.n_ff );
+        _INFO("%s: n_vocab=%d t_vocab=%d,n_batch=%d,n_ctx=%d,n_embd=%d,n_head=%d,n_rot=%d,n_ff=%d\n", __func__, 
+            n_vocab,tVocab(),n_batch,n_ctx,n_embd,hparams.n_head,hparams.n_rot,hparams.n_ff );
         if(hOPT!=nullptr)
             hOPT->Dump( 1 );     
         else{
@@ -453,8 +478,6 @@ struct LLaMeta : public Fish {
     void BuildGraph(int flag=0x0)   override   {        
         InitEntryTensors(flag); 
         
-        // int n_tokens = hparams.n_ctx;
-        int n_vocab  = hDict->n_vocab;
         auto train_params = hparams.common;
         int n_batch  = train_params.n_batch;
         ctx_compute_params.mem_size = 2*LLAMA_TRAIN_MAX_NODES*ggml_tensor_overhead() +
@@ -525,8 +548,6 @@ struct LLaMeta : public Fish {
     virtual hGensor  build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<LLaMeta::lama_layer> layer,hGensor KQ_pos,int flag=0x0) ;
 
     virtual void build_finetune(struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,int flag=0x0)   {        
-        // int n_tokens = hparams.n_ctx;
-        int n_vocab  = hDict->n_vocab;
         auto train_params = hparams.common;
         int n_batch  = train_params.n_batch;
         measure_only = m_only;
@@ -567,7 +588,7 @@ struct LLaMeta : public Fish {
         BuildTarget(ctx,alloc,m_only,cur,_tNorm,_tOutput,KQ_pos,flag);       
     }
 
-    virtual void LoadTokens( int flag=0x0 );
+    virtual bool LoadTokens( int flag=0x0 );
 
     void CopyWeight(const Fish* src,int flag = 0x0)  override;
     bool LocalFeeling(std::vector<llama_token>&tokens,vector<float>& result)   const   override;
@@ -579,13 +600,15 @@ struct LLaMeta : public Fish {
     void Train(int flag=0x0)    override   {
         auto train_params = hparams.common;
         hOPT->Init_CallbackData(lama()->_ctx,hparams.common,tokens_input,0x0);
-        LoadTokens( flag );
+        if(!LoadTokens( flag ))
+            return;
         
         // hOPT->Shuffle(n_vocab,train_params,flag);
         Dump(0x0);        
         auto opt = hOPT->opt;
         auto adam = opt->params.adam;
-        _INFO("%s: loader=%s sched=%.4g ADAM(lr=%g,%g,[%g-%g])\n", __func__,hparams.batch_sample.c_str(), adam.sched,adam.alpha,adam.decay,adam.beta1,adam.beta2);
+        _INFO("%s: loader=%s sched=%.4g ADAM(lr=%g,%g,[%g-%g])\n", __func__,hparams.batch_sample.c_str(), adam.sched,
+                adam.alpha,adam.decay,adam.beta1,adam.beta2);
         if(hparams.lars_ratio>0)
             _INFO("%s: LARS(t_max=%g)\n", __func__,hparams.lars_ratio);
         print_build_info();
@@ -842,16 +865,12 @@ struct LLAMA_LORA  : public LLaMeta {
     }    
 
     virtual void build_finetune(struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,int flag=0x0)     {   
-        // int n_tokens = hparams.n_ctx;
-        int n_vocab  = hDict->n_vocab;
         auto train_params = hparams.common;
         int n_batch  = train_params.n_batch;
         measure_only = m_only;
         ggml_set_scratch(ctx, { 0, 0, nullptr, });
         const int n_past = 0;
         const int n_ctx = train_params.n_ctx;    //n_tokens;
-        // const int n_ctx       = hparams.n_ctx;
-        // const int n_vocab     = hDict->n_vocab;
         const int n_embd      = hparams.n_embd;
         const int n_layer     = hparams.n_layer;
         const int n_head      = hparams.n_head;

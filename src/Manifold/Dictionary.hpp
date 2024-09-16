@@ -33,6 +33,7 @@ struct ConsiceDict : public VariationaAE    {
     bool isLoadTokenEmbed = false;
     LLaMeta *hLM = nullptr;
     int nToken=0,lama_embed=0,latent_dim=256,nLevel=0;
+    int nUniqueToken = 0;
     
     std::string tokenizer_name;         //"no_vocab","llama","bert","gpt2"
     std::vector<const char*> tokens;
@@ -41,6 +42,19 @@ struct ConsiceDict : public VariationaAE    {
     std::map<std::pair<std::string, std::string>, int> bpe_ranks;
     float * scores=nullptr;
     int * toktypes=nullptr;
+    bool isDialect = true;
+    int tVocab()    {   
+        if(!isDialect)
+            return n_vocab;
+        else{
+            assert(!mapT2T.empty());
+            return mapT2T.size();
+        }
+               
+    }   
+    std::map<TOKEN_ID, TOKEN_ID> mapT2T;
+    std::vector<TOKEN_ID> dialect;
+
     int token_idx,n_vocab=-1,score_idx,toktype_idx,merges_keyidx,n_merges;
     id special_bos_id = 1,special_eos_id = 2,special_unk_id = 0,special_sep_id = -1,special_pad_id = -1,special_cls_id  = -1,special_mask_id = -1;
 

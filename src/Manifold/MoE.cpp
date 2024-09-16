@@ -154,9 +154,9 @@ hGensor LLM_MOE::build_layer_( int N,struct ggml_context *ctx_compute,hGensor cu
     }
         break;
     case SMOE:{
-        LAMA *lama = dynamic_cast<LAMA *>(wiki.get());      assert(lama!=nullptr); 
+        LAMA *lam = lama();      assert(lam!=nullptr); 
         //  build_qwen2moe:     LLM_FFN_SILU,false,false,
-        ffn = moe_build_ffn(ctx_compute, *(lama->_ctx), cur,
+        ffn = moe_build_ffn(ctx_compute, *(lam->_ctx), cur,
                     layer->ffn_gate_inp,layer->ffn_up_exps,layer->ffn_gate_exps,layer->ffn_down_exps,
                     n_expert, n_expert_used,false,false, 0.0,layer->id);
         }
@@ -204,21 +204,50 @@ hGensor LLM_MOE::build_layer_( int N,struct ggml_context *ctx_compute,hGensor cu
     }                 
 }
 
+hGensor MixOfModels::Forward(struct ggml_context * ctx,hGensor cur,hGensor w){
+    int n_vocab=cur->ne[0],n_ctx=cur->ne[1],n_batch=cur->ne[2];
+    hGensor expert = ggml_reshape_2d(ctx,cur,n_vocab,n_ctx*n_batch);
+    hGensor wB = _repeat(ctx,w,expert);
+    return ggml_mul(ctx,expert,wB);
+}
+       
+
 hGensor LLaMeta::build_gate(struct ggml_context * ctx,hGensor cur,hGensor curlogits, int flag )  {
-    int n_vocab = hDict->n_vocab,n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd;
-    int n_expert = 2,N0=cur->ne[0],ld1=2*cur->nb[0];
-    hGensor  wA = nullptr,wB = nullptr;
-    hGensor tA=ggml_reshape_2d(ctx,curlogits,n_vocab,n_ctx*n_batch),tB=ggml_reshape_2d(ctx,exLogits,n_vocab,n_ctx*n_batch);    
-    hGensor logits = ggml_mul_mat(ctx, gate, ggml_reshape_2d(ctx,cur,N0,n_ctx*n_batch));           //[n_expert, n_tokens]
-    hGensor probs = ggml_soft_max(ctx,logits);    
-    // float* p=(float*)(probs->data);
-    // float p0=p[0],p1=p[1];
-    //a[i,j] =   (char *) a->data + j*a->nb[1] + i*a->nb[0]         @@@./docs/tensor.md
-    wA = ggml_view_2d(ctx, probs, 1, n_ctx*n_batch,ld1, 0);         
-    wB = ggml_view_2d(ctx, probs, 1, n_ctx*n_batch,ld1, probs->nb[0]);
-    wA = _repeat(ctx,wA,tA);
-    wB = _repeat(ctx,wB,tB);
-    /*if(0)   {  //yun!!! GGML_OP_CONCAT don't support backward                
+    bool isRes = true,isSiLU=false;
+
+    int n_vocab = hDict->tVocab(),n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd;
+    int nWiki = wikis.size(),i=0;        CHILD_0909_WIKIS
+    size_t N0=cur->ne[0],ld1=(nWiki+1)*cur->nb[0];    
+    assert(nWiki+1 == mom.embed2w->ne[1]);
+      
+    hGensor gat_ = mom.embed2w;
+//[nWiki+1, n_tokens] := [n_embed,nWiki+1]x[n_embed,n_tokens]  
+    hGensor w_ = ggml_mul_mat(ctx, mom.embed2w, ggml_reshape_2d(ctx,cur,N0,n_ctx*n_batch));           
+    if(isSiLU){ //maybe useful
+        w_ = ggml_silu(ctx,w_);
+    }
+    hGensor probs = ggml_soft_max(ctx,w_);    
+    size_t offset = probs->nb[0];
+    // hGensor tA = ggml_reshape_2d(ctx,curlogits,n_vocab,n_ctx*n_batch);      //[nVocab, n_ctx*nBatch] 
+    hGensor wA = ggml_view_2d(ctx, probs, 1, n_ctx*n_batch,ld1, 0);         //[1, n_ctx*nBatch] ne0,ne1,nb1,offset
+    //  wA = _repeat(ctx,wA,tA);   
+    hGensor ouput = mom.Forward(ctx,curlogits,wA);     //ggml_mul(ctx,tA,wA);
+    for(auto wiki : wikis){
+        i++;  
+        // hGensor tB = ggml_reshape_2d(ctx,wiki->exLogits,n_vocab,n_ctx*n_batch);
+        hGensor wB = ggml_view_2d(ctx, probs, 1, n_ctx*n_batch,ld1, offset*i);  //ne0,ne1,nb1,offset
+        hGensor expert = mom.Forward(ctx,wiki->exLogits,wB);          
+        // wB = _repeat(ctx,wB,expert);
+        ouput = ggml_add(ctx,ouput,expert);       //ggml_mul(ctx,expert,wB)
+    }
+       
+    ouput = ggml_reshape_3d        (ctx, ouput, n_vocab, n_ctx, n_batch);
+    if(isRes){
+        ouput = ggml_add(ctx,ouput,curlogits);   
+    }
+    return ouput;
+}
+ /*if(0)   {  //yun!!! GGML_OP_CONCAT don't support backward                
         hGensor t101 = ggml_concat(ctx,tA,tB,0);
         hGensor t102 = ggml_mul_mat(ctx,t101,gate);
         //probs     [n_expert, n_tokens]
@@ -233,8 +262,3 @@ hGensor LLaMeta::build_gate(struct ggml_context * ctx,hGensor cur,hGensor curlog
     // tA=ggml_mul(ctx,tA,wA);       
     wB = _repeat(ctx,ggml_reshape_2d(ctx, wB, 1,n_ctx*n_batch),tB);
     // tB=ggml_mul(ctx,tB,wB); */
-    hGensor ouput = ggml_add(ctx,ggml_mul(ctx,tA,wA),ggml_mul(ctx,tB,wB));            
-    ouput = ggml_reshape_3d        (ctx, ouput, n_vocab, n_ctx, n_batch);
-    return ouput;
-}
- 

@@ -79,6 +79,8 @@ string ConsiceDict::__repr__( string& suffix,string& prefix,int flag)     {
 ConsiceDict::ConsiceDict(LLaMeta *lama_,int flag) : VariationaAE(),hLM(lama_)   {
     assert(hLM->isValid());
     hparams = hLM->hparams;
+    isDialect = hparams.dict_dialect == "on";
+
     reserve_x = true;
     isSymmetric = false;
     lama_embed = hparams.n_embd;
@@ -88,7 +90,7 @@ ConsiceDict::ConsiceDict(LLaMeta *lama_,int flag) : VariationaAE(),hLM(lama_)   
         assert(0);
     if(!hLM->hparams.vae.empty()){
     // if(hLM->hparams.nabla==3){
-        dims = {hparams.n_embd, 256};
+        dims = {(int)hparams.n_embd, 256};
         // dims = {hparams.n_embd, 1024, 256};
         //dims = {hparams.n_embd,1024,256,64};       //little difference with {hparams.n_embd,1024,256,128}
         nLevel = dims.size()-1;   
@@ -121,7 +123,10 @@ void ConsiceDict::InitVAE(int flag)  {
 
 void ConsiceDict::CreateEmbeddings(struct random_normal_distribution * rnd,int flag){
     assert(hLM!=nullptr);
-    uint32_t n_embd  = hparams.n_embd;
+    uint32_t n_embd  = hparams.n_embd,n_out=n_vocab;
+    if(isDialect){
+        n_out = tVocab();
+    }
     auto lama = hLM->GetRawModel( );  
     auto ctx = hLM->ctx;    
     if(nLevel==0){
@@ -132,17 +137,17 @@ void ConsiceDict::CreateEmbeddings(struct random_normal_distribution * rnd,int f
             const uint32_t n1 = isSymmetric ? n_embd : last_dim;
             if(opOut==RND_GRAD){
                 norm           = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n1);
-                output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n1, n_vocab);  
+                output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n1, n_out);  
             }else if(opOut==LOAD_GRAD_norm){
-                output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n1, n_vocab);  
+                output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n1, n_out);  
             }
             return;
         }
     }
 
-    tok_embeddings = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_vocab);
+    tok_embeddings = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_out);
     norm           = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
-    output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_vocab);  
+    output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_out);  
 }
 
 void ConsiceDict::Update_0(struct random_normal_distribution * rnd,int flag){
@@ -159,9 +164,6 @@ void ConsiceDict::Update_0(struct random_normal_distribution * rnd,int flag){
         if(isParam) nParams+=ggml_nelements(output);
     }   else   {
         auto ctx = hLM->ctx;
-        /*tok_embeddings = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_vocab);
-        norm           = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
-        output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_vocab); */ 
 
         hLM->InitGensor(ctx,tok_embeddings, TN(LLM_TENSOR_TOKEN_EMBD), rnd);
         hLM->InitGensor(ctx,norm,           TN(LLM_TENSOR_OUTPUT_NORM), rnd);
@@ -244,11 +246,12 @@ void ConsiceDict::Update_1(struct random_normal_distribution * rnd,int flag) {
     assert(gensors.size()==0);          
 }
 
-void ConsiceDict::LoadVocab(const char*fn_model_base,int flag)     {
+void ConsiceDict::LoadVocab(const char*model_path,int flag)     {
+    assert(std::filesystem::exists(model_path));
     string word;
     enum llama_ftype ftype = LLAMA_FTYPE_MOSTLY_F16;   //LLAMA_FTYPE_ALL_F32;
     struct gguf_init_params params = {        false,NULL,    };
-    struct gguf_context * vctx = gguf_init_from_file(fn_model_base, params);
+    struct gguf_context * vctx = gguf_init_from_file(model_path, params);
 
     token_idx = gguf_find_key(vctx, kv(LLM_KV_TOKENIZER_LIST));
     if (token_idx == -1) {
@@ -258,7 +261,7 @@ void ConsiceDict::LoadVocab(const char*fn_model_base,int flag)     {
     int nTT = gguf_get_arr_n(vctx, token_idx);          assert(n_vocab==nTT);
     score_idx = gguf_find_key(vctx, kv(LLM_KV_TOKENIZER_SCORES));
     if (score_idx == -1) {
-        _INFO("%s cannot find tokenizer scores @%s",__func__,fn_model_base);
+        _INFO("%s cannot find tokenizer scores @%s",__func__,model_path);
         // die("cannot find tokenizer scores in model file");
     }else{
         scores = new float[nTT];
@@ -424,3 +427,6 @@ void VariationaAE::save_gguf(struct gguf_context *fctx, int flag)   {
             gguf_add_tensor(fctx, coder->decode);
     }   
 }
+
+
+

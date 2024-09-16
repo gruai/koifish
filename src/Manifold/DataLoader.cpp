@@ -1,17 +1,19 @@
 #include "DataLoader.hpp"
 #ifdef _DATA_LOADER_LITE_
 #else
+#endif
+
 #include "Fish.hpp"
 #include "../ggex/GG_util.hpp"
 #include "common.h"
-
+#include "Dictionary.hpp"
 
 // int64_t DataLoader_3D::update_batch(int sample_id,Fish* fish)   {    
 //     int64_t used_samples = 0;
 //     return used_samples;
 // }
 
-void SAMP::Refresh(DataLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,int typ)  {
+void SAMP::Refresh(SampLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,int typ)  {
     auto target_probs = loader->hOPT->hTargetProbs();
     int64_t n_vocab=target_probs->ne[0],n_tokens=target_probs->ne[1],nSampInBatch=target_probs->ne[2];
     std::string sentence;
@@ -22,7 +24,7 @@ void SAMP::Refresh(DataLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,in
         tok_ids.clear();
         int nz=len+nSampInBatch,i;
         for(i=0;i<nz;i++){
-            llama_token tok = loader->TokenAt(pos+i);
+            TOKEN_ID tok = loader->TokenAt(pos+i);
             tok_ids.push_back(tok);
             string word = llama_token_to_piece(lctx, tok);
             if(word=="\n" || word=="\r\n")  {
@@ -40,14 +42,14 @@ void SAMP::Refresh(DataLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,in
     
 }
 
-void DataLoader::Samp2Batch(int k,hSAMP samp,hGensor tokens_input,hGensor target_probs,struct train_params_common& params,int flag)    {   
+void SampLoader::Samp2Batch(int k,hSAMP samp,hGensor tokens_input,hGensor target_probs,struct train_params_common& params,int flag)    {   
     tok_ids.clear();        
-    
-    bool fill_with_next_samples=params.fill_with_next_samples;
+    auto dialect = hDict->dialect;
+    bool fill_with_next_samples=params.fill_with_next_samples,isDialect = hDict->isDialect;
     size_t starting=samp->pos+samp->jump;    
     ggml_set_i32_nd(tokens_input, 0, k, 0, 0, bos);
     for (int64_t i=0; i<n_ctx; ++i) {    
-        llama_token token = eos;
+        TOKEN_ID token = eos;
         /*if (samp_off >= samp->len && fill_with_next_samples) { //true only arg == "--fill-with-next-samples"
             if (!sample_separation_eos) {
                 // insert eos token to separate samples
@@ -70,7 +72,11 @@ void DataLoader::Samp2Batch(int k,hSAMP samp,hGensor tokens_input,hGensor target
             starting = 0;
         }
         assert(starting<tokens.size());
-        token = clamp(tokens[starting], 0, (llama_token) (n_vocab - 1));
+        token = clamp(tokens[starting], 0, (TOKEN_ID) (n_vocab - 1));
+        if(isDialect){
+            assert(dialect[token]>0);
+            token = hDict->mapT2T[token];
+        }
         ++starting;        
         ggml_set_f32_nd(target_probs,  token, (int) i, (int) k, 0, +1.0f);
         tok_ids.push_back(token);
@@ -84,13 +90,13 @@ void DataLoader::Samp2Batch(int k,hSAMP samp,hGensor tokens_input,hGensor target
 }
 
 //Important!  this would update input & target_probs of model!
-int64_t DataLoader::update_batch(int sample_id,Fish* fish){    
+int64_t SampLoader::update_batch(int sample_id,Fish* fish){    
     struct train_params_common *params = &(hOPT->train_params);
     struct llama_context * lctx=(struct llama_context *)(hOPT->app_ctx);
     struct ggml_tensor   * tokens_input=hOPT->tokens_input;
     struct ggml_tensor   * target_probs=hOPT->hTargetProbs();
     int64_t samples_count = N4Train();
-    // const llama_token    * train_data=tokens.data();
+    // const TOKEN_ID    * train_data=tokens.data();
     size_t  k,n_train_data=tokens.size();
     sample_separation_eos=!params->separate_with_eos;
     sample_separation_bos=!params->separate_with_bos;
@@ -99,7 +105,7 @@ int64_t DataLoader::update_batch(int sample_id,Fish* fish){
     // GGML_ASSERT(samples_count > 0);
     GGML_ASSERT(ggml_is_matrix(tokens_input));
     GGML_ASSERT(ggml_is_3d(target_probs));
-    int64_t n_vocab  = target_probs->ne[0],nSampInBatch = tokens_input->ne[1],ld0,ld1,ld2,ld3;
+    int64_t n_vocab  = target_probs->ne[0],nSampInBatch = tokens_input->ne[1];  //'ld0,ld1,ld2,ld3;
     n_ctx = tokens_input->ne[0];
     GGML_ASSERT(n_vocab  == target_probs->ne[0]);
     GGML_ASSERT(n_ctx == target_probs->ne[1]);
@@ -114,13 +120,13 @@ int64_t DataLoader::update_batch(int sample_id,Fish* fish){
     if(isLog) _INFO("BATCH_%ld ",sample_id);   //, samples_count,n_train_data);nSampe=(%ld/%ld)
     assert(target_probs->type == GGML_TYPE_F32);
     hSAMP samp = nullptr;
-    hGensor exLogits=nullptr;
-    if(fish->wiki!=nullptr && fish->exLogits!=nullptr) {
+    /*hGensor exLogits=nullptr;
+    if(fish->hasWiki() && fish->exLogits!=nullptr) {
         exLogits = fish->exLogits;   // wiki->logits = ggml_new_tensor_3d(ctx_input, GGML_TYPE_F32, n_vocab,  n_ctx, n_batch);
         ld0=exLogits->nb[0],ld1=exLogits->nb[1],ld2=exLogits->nb[2],ld3=exLogits->nb[3];     
         assert(sizeof(float)*n_vocab*n_ctx==ld2);    
         assert(ld3==ld2*nSampInBatch);    
-    }
+    }*/
     GST_TIC(tic);
     for (k=0; k<nSampInBatch; ++k) {
         size_t sample_idx = (sample_id + used_samples) % samples_count,samp_off=0;
@@ -133,6 +139,10 @@ int64_t DataLoader::update_batch(int sample_id,Fish* fish){
         }else{            
             ++used_samples;   
         }
+        if(GST_TOC(tic)>10){
+            _INFO("\r[%s] k=%d(%d) T=%.3g ...",__func__,k,nSampInBatch,GST_TOC(tic));   
+            tic = Clock::now( );
+        }
        
         Samp2Batch(k,samp,tokens_input,target_probs,*params);   //refresh tok_ids
         if(isLog && k<6 && batch_sample!="stacking"){
@@ -140,29 +150,23 @@ int64_t DataLoader::update_batch(int sample_id,Fish* fish){
             _INFO(" (%ld,%d)@\"%s...\"",samp->pos,samp->jump,sentence.c_str());     //sample_size
         }
 
-        if(exLogits!=nullptr && batch_sample!="stacking"){ 
-            nrm = fish->wiki->InductLogits(k,tok_ids,exLogits,target_probs,-1);   
-            /*fish->wiki->Reset();         //Timing bottleneck!!! for the crazy design of llama.cpp
-            fish->wiki->Decode(tok_ids,0,0x0,true); 
-            const float *logits = fish->wiki->GetLogits(n_vocab,n_ctx,0);   
-            double nrm = NRM_2(logits,n_vocab*n_ctx);
-            if(nrm==0.0)    {
-                _INFO("\n\n !!! %s |preLogits| is zero,so crazy! N=%dx%d \n\n",__func__,n_vocab,n_ctx);
-            }  else if(k%10==0) {
-                _INFO("\r %ld\t%ld@\"%s...\" nrm=%g\tT=%.4gs(%.4g)\t",k+1,samp->pos,sentence.c_str(),nrm,GST_TOC(tic),t_Samp);     //sample_size
-            }     
-            memcpy(exLogits->data+k*ld2,(void*)(logits),ld2);   */ 
+        if(batch_sample!="stacking"){ 
+            // nrm = fish->wikis[0]->InductLogits(k,tok_ids,exLogits,target_probs,-1); 
+            for(auto wiki : fish->wikis){
+                nrm = wiki->InductLogits(k,tok_ids,nullptr,target_probs,-1); 
+            }
         }        
     }
     t_Samp = GST_TOC(tic);
     if(isLog) _INFO("\tT=%g\n",GST_TOC(T0));
     if(batch_sample=="stacking"){
-        if(fish->wiki->isInduct()){
+        CHILD_0909_WIKIS assert(0);
+        /*if(fish->wiki->isInduct()){
             GST_TIC(tic);  
             samp->Refresh(this,lctx,tok_ids,0x0);          //refresh tok_ids               
             nrm = fish->wiki->InductLogits(nSampInBatch,tok_ids,exLogits,target_probs,0x0);           
             _INFO("\t stacking@%d\"%.*s...\" nrm=%g\tT=%.4gs\t\n",samp->pos,64,samp->desc.c_str(),nrm,GST_TOC(tic));             
-        }
+        }*/
         used_samples = nSampInBatch;        //1    
     }
     return used_samples;
@@ -212,13 +216,13 @@ bool SAMP::Serialize(FSerial&S, bool isSave, int flag){
 }
 
 
-bool DataLoader::Serialize(const std::string&path, bool isSave, int flag){
+bool SampLoader::Serialize(const std::string&path, bool isSave, int flag){
 try{
     FSerial S(path,isSave,flag);
     if(!S.isValid())
         return false;
     
-    _INFO("%s %s@%s...",__func__,isSave?"save":"load",path.c_str());
+    _INFO("%s %s@%s...",__func__,isSave?"save@":"load@",path.c_str());
     _CHECK( S.Serial(n_vocab,isSave,flag) );
     _CHECK( S.Serial(tokens,isSave,flag) );
     _CHECK( S.Serial(n_unique_tokens,isSave,flag) );
@@ -234,6 +238,9 @@ try{
     _CHECK( S.Serial(idcs,isSave,flag) );
     bool bRet = S.Serial_Vector<SAMP,SAMP>(all_samps,isSave,flag);
     _CHECK(bRet);
+    if(all_samps.size()==0)
+        return false;
+
     _INFO("\r%s %s@\"%s\" ... OK. \r\n\tnSamp=%ld @[Datasets(nToken=%ld unique=%lld  hash=%llX]\n",__func__,isSave?"save":"load",path.c_str(),
         all_samps.size(),tokens.size(),n_unique_tokens,shuffle_samples_hash);
     for(auto id : idcs){
@@ -270,15 +277,15 @@ try{
 
 /*
     @@@tokenize_file:
-        out_samples_begin.push_back(0);
-        out_samples_size.push_back(std::min((size_t) context_length, out_tokens.size()));
-        size_t end = (out_tokens.size() >= context_length) ? (out_tokens.size() - context_length) : 0;
+        samples_begin.push_back(0);
+        samples_size.push_back(std::min((size_t) context_length, tokens.size()));
+        size_t end = (tokens.size() >= context_length) ? (tokens.size() - context_length) : 0;
         for (size_t sample_begin = 1; sample_begin < end; ++sample_begin) {
-            out_samples_begin.push_back(sample_begin);
-            out_samples_size.push_back(context_length);
+            samples_begin.push_back(sample_begin);
+            samples_size.push_back(context_length);
         }
 */
-void DataLoader::SetSamples(int nV,std::vector<llama_token>& tokens_,std::vector<size_t>& samp_0,std::vector<size_t>& samp_L,
+void SampLoader::SetSamples(int nV,std::vector<TOKEN_ID>& tokens_,std::vector<size_t>& samp_0,std::vector<size_t>& samp_L,
     bool isTrain,CLI_params& hparams,int flag)  {
     batch_sample = hparams.batch_sample;
 
@@ -314,11 +321,13 @@ void DataLoader::SetSamples(int nV,std::vector<llama_token>& tokens_,std::vector
     _INFO("%s@[%s]: tokens=%zu nSamp=%d nBach=%d\n", __func__,isTrain?"train":"eval", tokens.size(),all_samps.size(),num_batches); 
 }
 
-void DataLoader::Shuffle(int flag)  {
+
+
+void SampLoader::Shuffle(int flag)  {
     size_t count = all_samps.size();
     assert(count>0);
     struct train_params_common& train_params = hOPT->train_params;
-    if(n_unique_tokens==-1){    //  first run
+    /*if(n_unique_tokens==-1){    //  first run
         std::vector<size_t> token_noccurs;
         token_noccurs.resize(n_vocab, 0);   //params.n_vocab
         for (unsigned int i = 0; i < tokens.size(); ++i) {
@@ -330,12 +339,11 @@ void DataLoader::Shuffle(int flag)  {
             ++n_unique_tokens;
         }
         _INFO("%s: number of unique tokens: %d\n", __func__, n_unique_tokens);        
-    }
+    }*/
 
     //  hash_combine(samples_begin,samples_size[i],sample_count
-    shuffle_samples_hash = SAMP::HASH(train_params.fn_train_data,all_samps);    
-    // compute_samples_hash(train_params.fn_train_data.c_str(), samp_begin.data(), samp_size.data(), samp_size.size());
-    const bool changed_train_data = (shuffle_samples_hash != train->shuffle_samples_hash) || (train->shuffle_sample_count != all_samps.size());
+    shuffle_samples_hash = SAMP::HASH(fp_data.c_str(),all_samps);    
+        const bool changed_train_data = (shuffle_samples_hash != train->shuffle_samples_hash) || (train->shuffle_sample_count != all_samps.size());
     if (changed_train_data) {
         _INFO("%s: train data seems to have changed. restarting shuffled epoch.\n", __func__);
     }
@@ -386,4 +394,121 @@ void DataLoader::Shuffle(int flag)  {
 
     train->shuffle_rng_state_next = mt19937_get_state(rng); 
 }
-#endif
+
+// mark each byte with its utf8 unit number.
+// returns the number of utf8 characters.
+// e.g. when bytes == '\x61\xD0\xB0\x62',
+// then utf8_units will become [0,0,1,0]
+// utf8_nunits will become [1,2,2,1] and 3 is returned.
+// bytes where utf8_units is zero, are the begin of an utf8 character.
+static size_t utf8_len(char src) {
+    const size_t lookup[] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 4 };
+    uint8_t highbits = static_cast<uint8_t>(src) >> 4;
+    return lookup[highbits];
+}
+static size_t mark_utf8_units(const char* bytes, int * utf8_units, int * utf8_nunits, size_t count) {
+    size_t offs = 0;
+    size_t count_utf8 = 0;
+    while(offs < count) {
+        int len = (int) utf8_len(bytes[offs]);
+        for (int i=0; i<len; ++i) {
+            utf8_units[offs+i]  = i;
+            utf8_nunits[offs+i] = len;
+        }
+        offs += len;
+        ++count_utf8;
+    }       
+    return count_utf8;
+}
+
+bool DataTokenSet::Load(struct CLI_params& hparams,void *hLLM,int flag){
+    GST_TIC(tic);
+    fpath = hparams.fp_train_data.c_str();
+    assert( std::filesystem::exists(fpath) );
+    llama_model *lam_ = static_cast<llama_model *>(hLLM);
+    assert(lam_!=nullptr);
+    tokens.clear();
+    FILE *fp = std::fopen(fpath.c_str(), "rb");
+    if (fp == NULL) {
+        _INFO("%s: warning: empty or not existing training data file '%s'\n", __func__, fpath.c_str());
+        return false;
+    } else {
+        seek(fp, 0, SEEK_END);
+        fsize = tell(fp);
+        seek(fp, 0, SEEK_SET);
+    }   
+    _INFO("[Load&Token]: @'%s' fsize=%.3g(M) ... ", fpath.c_str(),fsize/1.0e6);
+    const int n_max_tokens_overhead = 1;    
+    std::vector<char> buf;
+    buf.resize(fsize);
+    errno = 0;
+    std::size_t ret = std::fread(buf.data(), fsize, 1, fp);
+    if (ferror(fp)) {
+        die_fmt("read error: %s", strerror(errno));
+    }
+    if (ret != 1) {
+        die("unexpectedly reached end of file");
+    }
+
+    std::vector<int> utf8_units;
+    std::vector<int> utf8_nunits;
+    utf8_units.resize(buf.size());
+    utf8_nunits.resize(buf.size());
+    mark_utf8_units(buf.data(), utf8_units.data(), utf8_nunits.data(), buf.size());
+    // tokenize all data at once
+    tokens.resize(buf.size() + n_max_tokens_overhead);
+    int n_tokens = llama_tokenize( lam_, buf.data(),(int) buf.size(),tokens.data(),(int) tokens.size(),false, false);
+    assert(n_tokens>0);
+    
+    if (n_tokens < 0) { //???
+        tokens.resize(-n_tokens);
+        n_tokens = llama_tokenize( lam_,buf.data(),(int) buf.size(),
+        tokens.data(),(int) tokens.size(),false, false);
+    }
+    if (n_tokens >= 0) {
+        tokens.resize(n_tokens);
+        UniqueTokens(-1);
+    }
+    
+    _INFO("\r[Load&Token]: @'%s' fsize=%.3g(M) nTokens=%.3g(M) nUnique=%ld T=%.3g(s)\n", 
+        fpath.c_str(),fsize/1.0e6,n_tokens/1.0e6,nUnique,GST_TOC(tic));
+
+    return true;
+}
+
+bool DataTokenSet::InitSamps(unsigned context_length,std::vector<size_t>& samples_begin,std::vector<size_t>&samples_size,int flag){
+    samples_begin.clear();      samples_size.clear();
+    samples_begin.push_back(0);
+    size_t nToken = tokens.size(),nFirst=std::min((size_t) context_length, nToken);
+    samples_size.push_back(nFirst);
+    size_t end = (nToken >= context_length) ? (nToken - context_length) : 0;
+    for (size_t sample_begin = 1; sample_begin < end; ++sample_begin) {
+        samples_begin.push_back(sample_begin);
+        samples_size.push_back(context_length);
+    }
+    size_t nSamp = samples_begin.size();
+    return true;
+}
+
+int DataTokenSet::UniqueTokens(size_t n_1,int flag){
+    mapT2T.clear();
+    // std::vector<size_t> token_noccurs;
+    dialect.resize(nVocab, 0);   //params.n_vocab
+    assert(nVocab>0);
+    for (unsigned int i = 0; i < tokens.size(); ++i) {
+        TOKEN_ID id = tokens[i];
+        assert(id>=0 && id<nVocab);
+        // if(id==28739)        //only for debug
+        //     id=28739;
+        ++dialect[id];
+    }
+    nUnique = 0;
+    for (unsigned int i = 0; i < dialect.size(); ++i) {
+        if (dialect[i] == 0) continue;
+        TOKEN_ID id = dialect[i];
+        mapT2T[i] = nUnique;
+        ++nUnique;
+    }    
+    assert(mapT2T.size()==nUnique);
+    return nUnique;
+}

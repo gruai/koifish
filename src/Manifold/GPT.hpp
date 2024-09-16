@@ -29,6 +29,8 @@ class Fish;
      always for language model
 */
 struct WIKI {
+    
+
     enum INDUCT_MODE{
                         //  "off"-no wiki
         _OFF,           //  ""-no INDUCT
@@ -37,16 +39,23 @@ struct WIKI {
         _LOGITS_SCALE,  //  "logits_scale"
         _LOGITS_GATE,
     };
-    std::string title="";
+    std::string title="",tokenizer_name,model_path; 
+    void *vocab = nullptr;
     int32_t bos,eos;   
     INDUCT_MODE teach=_LOGITS;
     bool isOnlyTokenizer = false;
     size_t n_vocab = 0, nOutToken = -1;
 
-    virtual const float *GetLogits(int n_vocab,int n_ctx,int idx=-1)   {   return nullptr; }
-    virtual bool isInduct() {   return teach!=_OFF; }
-    virtual double InductLogits(int nSampInBatch,std::vector<int32_t>& tok_ids,hGensor exLogits,hGensor target_probs,int flag);
+    std::map<TOKEN_ID, TOKEN_ID> mapT2T;
+    std::vector<TOKEN_ID> dialect;
+    hGensor exLogits = nullptr,t2t = nullptr;
 
+    virtual const float *GetLogits(int n_vocab,int n_ctx,int idx=-1)   {   return nullptr; }
+    virtual bool isInduct() 
+    {   return teach!=_OFF && exLogits!=nullptr; }
+
+    virtual double InductLogits(int nSampInBatch,std::vector<int32_t>& tok_ids,hGensor exLogits,hGensor target_probs,int flag);
+    virtual bool isValid(   )   {   return false;   }
     // bool takeRest = false;          //only for debug
 
     virtual hGensor P()    {   return nullptr; }
@@ -60,15 +69,18 @@ struct WIKI {
     virtual int nCTX()   {   return -1;    };
 
 
-    virtual std::string T2STR(int32_t tok,int flag=0x0 )                    {   assert(0); return "";    }
+    virtual std::string T2STR(int32_t tok,int flag=0x0 )                    {   assert(0); return "";       }
     virtual bool Decode(std::vector<int32_t>&ids,int start,int n_past,bool out_all)      {   assert(0); return false;    }
     virtual void Answer(std::vector<int32_t>&ids,int flag=0x0)    {   assert(0); }
     virtual void Reset(int flag=0x0)    {   assert(0); }
+
+    virtual string __repr__( string& suffix,string& prefix,int flag=0x0)    {   assert(0); return "";      };
 
     WIKI();
     virtual ~WIKI() {}
 };
 typedef shared_ptr<WIKI> hWIKI;
+typedef std::vector<hWIKI> arrHWIKI;
 
 /*
     Ref     https://github.com/karpathy/llama2.c
@@ -102,7 +114,8 @@ protected:
     std::vector<int>   input_tokens,output_tokens; 
     std::ostringstream output_ss;     
     bool is_interacting = false;    
-    hWIKI wiki = nullptr;   
+    // hWIKI wiki = nullptr;   
+    arrHWIKI wikis;
     const Fish *fish_0 = nullptr;        
     shared_ptr<Fish> fish_1 = nullptr;        //for generate, only 1 input
 
@@ -115,9 +128,9 @@ protected:
 public:
     GeneratOnPrompt()    {}
     GeneratOnPrompt(struct gpt_params&par_,int flag);
-    GeneratOnPrompt(CLI_params&cp_, hWIKI wiki_,const Fish* hG_,int flag);
+    GeneratOnPrompt(CLI_params&cp_, arrHWIKI& wiki_,const Fish* hG_,int flag);
 
-    static shared_ptr<GeneratOnPrompt> MakeInstance(struct CLI_params& params,hWIKI wiki,const Fish *,int flag);
+    static shared_ptr<GeneratOnPrompt> MakeInstance(struct CLI_params& params,arrHWIKI& wiki,const Fish *,int flag);
 
     virtual ~GeneratOnPrompt()   {   Clear();    }
     virtual bool Init(const std::string& prompt_,int flag=0x0);    
@@ -318,7 +331,7 @@ public:
     GOPT_Metropolis(struct gpt_params&par_,int flag) : GeneratOnPrompt(par_,flag)  {
         isCTXSampling = false;
     }
-    GOPT_Metropolis(CLI_params&cp_,hWIKI wiki_,const Fish* hG_,int flag): GeneratOnPrompt(cp_,wiki_,hG_,flag)  {
+    GOPT_Metropolis(CLI_params&cp_,arrHWIKI& wikis_,const Fish* hG_,int flag): GeneratOnPrompt(cp_,wikis_,hG_,flag)  {
         isCTXSampling = false;
     }
 
@@ -329,3 +342,4 @@ public:
 
 int GPT_work(CLI_params& params);
 int GPT_fish(CLI_params& hparams);
+int GGUF_list(CLI_params& hparams);

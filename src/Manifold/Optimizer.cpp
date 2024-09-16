@@ -3,7 +3,7 @@
 
  Optimizer::Optimizer(Fish *g_,struct train_params_common& params_,int flag) : train_params(params_),gang(g_) {
     InitOpt(train_params,flag); 
-    val_loader.type = DataLoader::TYPE::DT_EVAL;
+    val_loader.type = SampLoader::TYPE::DT_EVAL;
     
     if(0){
         const char* train_tokens = "./src/llmc//tinyshakespeare/tiny_shakespeare_train.bin";
@@ -398,7 +398,7 @@ float Optimizer::Compute(std::vector<llama_token>&tokens,bool onlyForward,int fl
 /*
     REF:    /home/cys/Github/llama.cpp-master/examples/batched/batched.cpp
 */
-float Optimizer::Evaluate(DataLoader&loader,int iter,int flag){  
+float Optimizer::Evaluate(SampLoader&loader,int iter,int flag){  
     if( val_loader.num_batches==0) 
         return 0; 
     _INFO("[eval] " );   
@@ -408,20 +408,19 @@ float Optimizer::Evaluate(DataLoader&loader,int iter,int flag){
     float *fLoss = (float*)(loss->data),sum=0;
     double l2,delta_max=0,delta_=0,a;
     int i,ldT=tokens_input->ne[0],nB=0,step=max(loader.num_batches/10,1);
-    
+    size_t nz=0,j;
     llama_token tMost = (llama_token) (loader.n_vocab - 1);
-    // loader.reset();
-    // std::vector<llama_token> tokens;
+    
     const float *wLog = nullptr;
-    if(gang->exLogits!=nullptr){
+    /*if(gang->exLogits!=nullptr){
         assert(gang->exLogits->type==GGML_TYPE_F32);//ggml_float
         wLog = (const float *)(gang->exLogits->data); 
-    }
+        nz=ggml_nelements(gang->exLogits);
+    }*/
 
     for (i = 0; i < loader.num_batches; i+=step) {
         loader.update_batch(i,gang);    
         if(wLog!=nullptr)    {
-            size_t nz=ggml_nelements(gang->exLogits),j;
             for (l2 = 0,j = 0; j < nz; j++    ) {
                 a = wLog[j];            l2 += a*a;              
             }
@@ -531,7 +530,7 @@ void Optimizer::Init_CallbackData(struct llama_context * lctx,struct train_param
     opt_cb_data.millis_per_iter        = 0.0;
 }
 
-bool Optimizer::one_step(struct train_state *train,DataLoader&loader, int accum_step, float *sched, int flag)    {
+bool Optimizer::one_step(struct train_state *train,SampLoader&loader, int accum_step, float *sched, int flag)    {
     // LossCurve(0x0);
     struct train_params_common *params = &(train_params);   //data->params;
     // struct train_state *train = data->train;
