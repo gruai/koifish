@@ -56,6 +56,9 @@ string ConsiceDict::__repr__( string& suffix,string& prefix,int flag)     {
     _T_repr_(tok_embeddings,tab,buf);   
     _T_repr_(norm,tab,buf);   
     _T_repr_(output,tab,buf);   
+    _T_repr_(out_u,tab,buf);
+    _T_repr_(out_d,tab,buf);
+    _T_repr_(out_v,tab,buf);
     if(nLevel>0){
         // sprintf(buf+strlen(buf),"%s\tdims=",tab);
         
@@ -80,6 +83,7 @@ ConsiceDict::ConsiceDict(LLaMeta *lama_,int flag) : VariationaAE(),hLM(lama_)   
     assert(hLM->isValid());
     hparams = hLM->hparams;
     isDialect = hparams.dict_dialect == "on";
+    isSVD = hparams.dict_logits == "svd";
 
     reserve_x = true;
     isSymmetric = false;
@@ -98,7 +102,7 @@ ConsiceDict::ConsiceDict(LLaMeta *lama_,int flag) : VariationaAE(),hLM(lama_)   
         _INFO("%s symmetric=%d resi=%d tpNorm=%d opOut=%d nLevel=%d dims= ",__func__,(int)(isSymmetric),(int)(reserve_x),tpNorm,opOut,nLevel);
     }   else     {   /**/  
         latent_dim = hparams.dict_latent_dim;   //256;       
-        _INFO("%s latent_dim=%d",__func__,latent_dim);
+        _INFO("%s latent_dim=%d Dialect=%s",__func__,latent_dim,isDialect?"ON":"OFF");
     }
     
     for(auto dim : dims)           {
@@ -147,7 +151,28 @@ void ConsiceDict::CreateEmbeddings(struct random_normal_distribution * rnd,int f
 
     tok_embeddings = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_out);
     norm           = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
-    output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_out);  
+    if(!isSVD)
+        output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_out);  
+    else{
+        out_u = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, lo_rank, n_embd);   
+        out_v = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, lo_rank, n_out);
+        out_d = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, lo_rank, lo_rank); 
+    }
+}
+
+hGensor ConsiceDict::Embed2Output(struct ggml_context * ctx,hGensor t33,int flag){ 
+    hGensor  t34 = nullptr;
+    if(output!=nullptr){    //1024 32000
+        t34 = ggml_mul_mat(ctx, output, t33);  
+    }else{
+        hGensor dv = ggml_mul_mat(ctx, out_d, out_v);
+        hGensor svd = ggml_mul_mat(ctx, out_u, dv);  
+        t34 = ggml_mul_mat(ctx, svd, t33); 
+    }
+                              
+    set_name(t34, "t34");  
+    // assert_shape_2d(t34, n_vocab, N*n_batch);
+    return t34;   
 }
 
 void ConsiceDict::Update_0(struct random_normal_distribution * rnd,int flag){
@@ -167,7 +192,13 @@ void ConsiceDict::Update_0(struct random_normal_distribution * rnd,int flag){
 
         hLM->InitGensor(ctx,tok_embeddings, TN(LLM_TENSOR_TOKEN_EMBD), rnd);
         hLM->InitGensor(ctx,norm,           TN(LLM_TENSOR_OUTPUT_NORM), rnd);
-        hLM->InitGensor(ctx,output,         TN(LLM_TENSOR_OUTPUT), rnd);
+        if(output!=nullptr)
+            hLM->InitGensor(ctx,output,         TN(LLM_TENSOR_OUTPUT), rnd);
+        else{
+            hLM->InitGensor(ctx,out_u,         "out_u", rnd);
+            hLM->InitGensor(ctx,out_v,         "out_v", rnd);
+            hLM->InitGensor(ctx,out_d,         "out_d", rnd);
+        }
     }
     // ggml_tensor_dequant(ctx_compute,gensor,GGML_TYPE_F32);
     if(0){

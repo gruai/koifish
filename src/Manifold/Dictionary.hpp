@@ -22,6 +22,9 @@ struct ConsiceDict : public VariationaAE    {
     };
     OUTPUT_OP opOut=RND_GRAD;     //LOAD_GRAD_norm;   ONLY_LOAD
     hGensor tok_embeddings=nullptr,norm=nullptr,output=nullptr;
+    bool isSVD = false;
+    hGensor out_u=nullptr,out_v=nullptr,out_d=nullptr;
+    int lo_rank = 128;
 
     using id    = int32_t;
     using token = std::string;
@@ -117,7 +120,7 @@ struct ConsiceDict : public VariationaAE    {
             Update_0(rnd,flag);
         }
     }
-
+    virtual hGensor Embed2Output(struct ggml_context * ctx,hGensor t33,int flag=0x0);
     virtual void Update_0(struct random_normal_distribution * rnd,int flag=0x0);
     void Update_1(struct random_normal_distribution * rnd,int flag=0x0);  
     void CreateEmbeddings(struct random_normal_distribution * rnd,int flag);

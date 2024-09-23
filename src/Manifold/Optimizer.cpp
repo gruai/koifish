@@ -4,15 +4,17 @@
  Optimizer::Optimizer(Fish *g_,struct train_params_common& params_,int flag) : train_params(params_),gang(g_) {
     InitOpt(train_params,flag); 
     val_loader.type = SampLoader::TYPE::DT_EVAL;
-    
+    train_loader.Init(g_->hparams);
+    val_loader.Init(g_->hparams);
+
     if(0){
         const char* train_tokens = "./src/llmc//tinyshakespeare/tiny_shakespeare_train.bin";
         const char* val_tokens = "./src/llmc/tinyshakespeare/tiny_shakespeare_val.bin";
         int B = train_params.n_batch,T =train_params.n_ctx;
         train_loader.init(train_tokens, B, T, 0, 1, 1);
         val_loader.init(val_tokens, B, T, 0, 1, 0);
-        _INFO("%s train dataset num_batches: %zu\n", __func__,train_loader.tokens.size() / (B*T));
-        _INFO("%s val dataset num_batches: %zu\n", __func__,val_loader.tokens.size() / (B*T));        
+        _INFO("%s train dataset num_batches: %zu\n", __func__,train_loader.len() / (B*T));
+        _INFO("%s val dataset num_batches: %zu\n", __func__,val_loader.len() / (B*T));        
     }
 }
 
@@ -60,15 +62,15 @@ bool Optimizer::OnLogits(int flag)   {
     return true;
 }
 
-bool Optimizer::GradAccumulation(float&fx,int np,struct train_opt_callback_data *callback_data,struct ggml_cplan *cplan,int flag)   {    
+bool OPT_Adam::GradAccumulation(float&fx,struct train_opt_callback_data *callback_data,struct ggml_cplan *cplan,int flag)   {    
     fx = 0;
-    float * g  = (float *)opt->adam.g->data;
+    float * g  = (float *)grad->data;
     auto loss = hLoss();
     float *fLoss = (float*)(loss->data),*fLossG = (float*)(loss->grad->data);
-    ggml_set_zero(opt->adam.g);   
+    ggml_set_zero(grad);   
     assert(gb!=nullptr);
-    float sched = opt->params.adam.sched;        
-    const int n_accum = MAX(1, opt->params.n_gradient_accumulation);
+      
+    const int n_accum = MAX(1, train_params.n_gradient_accumulation);
     const float accum_norm = 1.0f / (float) n_accum;
     bool cancel = false;
     struct train_state *train = callback_data->train;
@@ -85,7 +87,7 @@ bool Optimizer::GradAccumulation(float&fx,int np,struct train_opt_callback_data 
         ggml_set_f32      (loss->grad, 1.0f);
         ggml_graph_compute(gb, cplan);
         OnLogits();
-        ggml_opt_acc_grad(np, opt_ps, g, accum_norm);        
+        ggml_opt_acc_grad(opt_ps.size(), opt_ps.data(), g, accum_norm);        
         fx += ggml_get_f32_1d(loss, 0);
     }
     fx *= accum_norm;
@@ -100,26 +102,12 @@ bool isGensor(hGensor gensor,vector<string> keys,int flag=0x0){
     }
     return false;
 }
-    /**
-     * 1. LARS/LAMB  trus_ratio - ratio between the norm of the layer weights and norm of gradients update
-     */
-void Optimizer::AdamW(int nx,int np,CLI_params& hparams,int flag)  {
-    struct ggml_opt_params params = opt->params;
-    float sched = params.adam.sched;
-    const float alpha = params.adam.alpha;
-    const float decay = params.adam.decay * alpha;
-    const float beta1 = params.adam.beta1;
-    const float beta2 = params.adam.beta2;
-    const float eps   = params.adam.eps;
-    const float gclip = params.adam.gclip;
-    const int decay_min_ndim = params.adam.decay_min_ndim;
-    float gnorm = 1.0f;
-    float * g  = (float *)opt->adam.g->data;  // gradients
-    float * m  = (float *)opt->adam.m->data;  // first moment
-    float * v  = (float *)opt->adam.v->data;  // second moment
-    float * pf = params.past > 0 ? (float *)opt->adam.pf->data : NULL; // past function values
-    float fx = 0;
 
+float Optimizer::gClip(int nx,CLI_params& hparams,int flag)  {
+    // struct ggml_opt_params params = opt->params;
+    float * g  = (float *)grad->data;  // gradients
+    // const float gclip = params.adam.gclip;
+    float gnorm = 1.0f;     
     if (gclip > 0.0f) { //Gradient clipping maybe superior than L2 Regularization in terms of gaining results and easiness in implementation
         // gradient clipping
         ggml_float sum = 0.0;
@@ -131,12 +119,34 @@ void Optimizer::AdamW(int nx,int np,CLI_params& hparams,int flag)  {
             gnorm = (float) ((ggml_float) gclip / norm);
         } 
     }
+    return gnorm;
+}
+
+/**
+ * 1. LARS/LAMB  trus_ratio - ratio between the norm of the layer weights and norm of gradients update
+ */
+void Optimizer::UpdateParams(float gnorm,int nx,CLI_params& hparams,int flag)  {
+    /*struct ggml_opt_params params = opt->params;
+    float sched = params.adam.sched;
+    const float alpha = params.adam.alpha;
+    const float decay = params.adam.decay * alpha;
+    const float beta1 = params.adam.beta1;
+    const float beta2 = params.adam.beta2;
+    const float eps   = params.adam.eps;    
+    const float gclip = params.adam.gclip;
+    const int decay_min_ndim = params.adam.decay_min_ndim;
+    
+    float * g  = (float *)g->data;  // gradients
+    float * m  = (float *)m->data;  // first moment
+    float * v  = (float *)v->data;  // second moment
+    float * pf = params.past > 0 ? (float *)pf->data : NULL; // past function values
+    float fx = 0;
     
     const float beta1h = alpha*sched/(1.0f - powf(beta1, opt->iter));                
     const float beta2h =        1.0f/(1.0f - powf(beta2, opt->iter));
     int64_t i = 0;
     zmuv_0 = DBL_MAX,zmuv_1 = 0.0;
-    for (int p = 0; p < np; ++p) {
+    for (int p = 0; p < opt_ps.size(); ++p) {
         const int64_t ne = ggml_nelements(opt_ps[p]);
         // assert(opt_ps[p]->flags==0x0);       ???
         bool isZMUV = isGensor(opt_ps[p],{"ffn_gate.weight","ffn_down.weight","ffn_up.weight"}) && hparams.ZMUV_ratio>0;     //ne>=hparams.n_ctx*hparams.n_embd
@@ -181,8 +191,70 @@ void Optimizer::AdamW(int nx,int np,CLI_params& hparams,int flag)  {
             normX = sqrt(normX);
             zmuv_0 = min(zmuv_0,normX),zmuv_1 = max(zmuv_1,normX);
         }
+    }   */
+}
+
+void OPT_Adam::UpdateParams(float gnorm,int nx,CLI_params& hparams,int flag)  {
+    if(!isAdaptiveSched)        //params.adam.sched;   
+        sched = 1.0;  
+    float * g  = (float *)grad->data;  // gradients
+    float * m  = (float *)gm->data;  // first moment
+    float * v  = (float *)gv->data;  // second moment
+    float * pf = past > 0 ? (float *)gpf->data : NULL; // past function values
+    float fx = 0;
+   
+    beta1h = alpha*sched/(1.0f - powf(beta1, iter));                
+    beta2h =        1.0f/(1.0f - powf(beta2, iter));
+    int64_t i = 0;
+    zmuv_0 = DBL_MAX,zmuv_1 = 0.0;
+    for (auto hP : opt_ps) {
+        p_decay = ((ggml_n_dims(hP) >= decay_min_ndim) ? decay : 0.0f) * sched;
+        const int64_t ne = ggml_nelements(hP);
+        UpdateTensorParam(hP,m+i,v+i,g+i,gnorm);
+        i += ne;       
+    }  
+}
+
+void OPT_Adam::UpdateTensorParam(hGensor hP,float *m,float *v,float *g,float gnorm){ 
+    double normX = 0.0,meanX=0;
+    const int64_t ne = ggml_nelements(hP);
+    for (int64_t j = 0; j < ne; ++j,m++,v++,g++) {
+        float x  = ggml_get_f32_1d(hP, j);
+        // float g0 = isZMUV ? *g : *g*gnorm;
+        float g0 = *g*gnorm;
+        *m = *m*beta1 +    g0*(1.0f - beta1);   //linear interpolations of the gradients 
+        *v = *v*beta2 + g0*g0*(1.0f - beta2);   //linear interpolations of their variances
+        float mh = *m*beta1h;     //debiasing 
+        float vh = *v*beta2h;
+        vh = sqrtf(vh) + eps;
+        x  = x*(1.0f - p_decay) - mh/vh;        //ormalize step(mh) by its standard deviation(vh)                     
+        ggml_set_f32_1d(hP, j, x);
     }
 }
+
+void OPT_AdamMiniV::UpdateTensorParam(hGensor hP,float *m,float *v0,float *g,float gnorm){       
+    bool isEmbed = true;
+    if(isEmbed) {
+        OPT_Adam::UpdateTensorParam(hP,m,v0,g,gnorm);
+        return;
+    }    
+
+    const int64_t ne = ggml_nelements(hP);
+    float v_hat = 0;
+    // *v = *v*beta2 + g0*g0*(1.0f - beta2);   //linear interpolations of their variances
+    for (int64_t j = 0; j < ne; ++j,m++,g++) {
+        float x  = ggml_get_f32_1d(hP, j);
+        // float g0 = isZMUV ? *g : *g*gnorm;
+        float g0 = *g*gnorm;
+        *m = *m*beta1 +    g0*(1.0f - beta1);   //linear interpolations of the gradients 
+        float mh = *m*beta1h;     //debiasing 
+        float vh = v_hat*beta2h;
+        vh = sqrtf(vh) + eps;
+        x  = x*(1.0f - p_decay) - mh/vh;        //ormalize step(mh) by its standard deviation(vh)                     
+        ggml_set_f32_1d(hP, j, x);
+    }
+}
+
 
 enum ggml_opt_result Optimizer::ggml_train(struct ggml_context * ctx, hGensor loss_,hGensor target_,
     struct ggml_cgraph * gf_,struct ggml_cgraph * gb_,CLI_params& hparams)    {
@@ -196,136 +268,100 @@ enum ggml_opt_result Optimizer::ggml_train(struct ggml_context * ctx, hGensor lo
     gf=gf_;      gb=gb_;
 
     enum ggml_opt_result result = GGML_OPT_RESULT_DID_NOT_CONVERGE;
-    struct ggml_opt_params params = opt->params;
+    // struct ggml_opt_params params = opt->params;
    
-    bool isAccuX = true,   cancel = false;      //Converge much faster!!! see Lay5_accux_.info
+    bool cancel = false;      //isAccuX = true
     auto loss = hLoss( );
     float *fLoss = (float*)(loss->data),*fLossG = (float*)(loss->grad->data),val_loss;
     
     // float *target = (float*)(data->target_probs->data);
-    _INFO("Optimizer::%s: GradAccumu=%d(%d) rZMUV=%g rLARS=%g...... \n\n", __func__,
-        params.n_gradient_accumulation,(int)isAccuX,hparams.ZMUV_ratio,hparams.lars_ratio );
-    if(0){
-        result = ggml_opt_resume_g(ctx, opt, loss, gf, gb, &train_opt_callback, callback_data);
-    }else{
-        //struct ggml_tensor * opt_ps[GGML_MAX_PARAMS];  these will store the parameters we want to optimize
-        int np = 0,i;
+    _INFO("Optimizer::%s: Accumulation=%d AdaptiveSched=%d rZMUV=%g rLARS=%g...... \n\n", __func__,
+        train_params.n_gradient_accumulation,(int)isAdaptiveSched,hparams.ZMUV_ratio,hparams.lars_ratio );
+    if(0){  //only for old version
+        // result = ggml_opt_resume_g(ctx, opt, loss, gf, gb, &train_opt_callback, callback_data);
+    }else{        
         int64_t nx = 0;
         for (int i = 0; i < gf->n_nodes; ++i) {
             if (gf->nodes[i]->flags & GGML_TENSOR_FLAG_PARAM) {
-                GGML_PRINT_DEBUG("found param %d: grad->op = %d\n", np, gf->nodes[i]->grad->op);
-                GGML_ASSERT(np < GGML_MAX_PARAMS);
-                opt_ps[np++] = gf->nodes[i];
-                _INFO("%4d(op=%d)\t", np, gf->nodes[i]->grad->op );
+                GGML_PRINT_DEBUG("found param %d: grad->op = %d\n", np, gf->nodes[i]->grad->op);                
+                opt_ps.push_back(gf->nodes[i]);
+                // opt_ps[np++] = gf->nodes[i];
+                _INFO("%4d(op=%d)\t", opt_ps.size(), gf->nodes[i]->grad->op );
                 gg_print_tensor_("",gf->nodes[i],0);
                 nx += ggml_nelements(gf->nodes[i]);
             }
         }            
-        if ((opt->params.type != params.type) || (opt->nx != nx) || (opt->params.past != params.past)) {
+        GGML_ASSERT(opt_ps.size() < GGML_MAX_PARAMS);
+        /*if ((opt->params.type != params.type) || (opt->nx != nx) || (opt->params.past != params.past)) {   //resume
             int iter = opt->iter;
             ggml_opt_init(opt->ctx, opt, params, nx);
             opt->iter = iter;
-        }
-        float sched = params.adam.sched;
-        const int n_accum = MAX(1, params.n_gradient_accumulation);
+        }*/
+           
+        const int n_accum = MAX(1, train_params.n_gradient_accumulation);
         const float accum_norm = 1.0f / (float) n_accum;
 
-        float * g  = (float *)opt->adam.g->data;  // gradients
-        float * m  = (float *)opt->adam.m->data;  // first moment
-        float * v  = (float *)opt->adam.v->data;  // second moment
-        float * pf = params.past > 0 ? (float *)opt->adam.pf->data : NULL; // past function values
+        /*float * g  = (float *)g->data;  // gradients
+        float * m  = (float *)m->data;  // first moment
+        float * v  = (float *)v->data;  // second moment
+        float * pf = params.past > 0 ? (float *)pf->data : NULL; // past function values*/
         float fx = 0;
         // cplan = ggml_graph_plan(gb, params.n_threads);
         // struct ggml_object * obj = ggml_new_object(ctx, GGML_OBJECT_TYPE_WORK_BUFFER, cplan.work_size);
         // cplan.work_data = (uint8_t *)ctx->mem_buffer + obj->offs;
         auto *cplan = &(gang->gb_plan);
-        if(isAccuX){
-            if( !GradAccumulation(fx,np,callback_data,cplan,0x0))
-                return GGML_OPT_RESULT_CANCEL; 
-        }else   { 
-            ggml_set_zero(opt->adam.g);            
-            for (int accum_step = 0; accum_step < n_accum; ++accum_step) {
-                if(one_step(callback_data->train,train_loader,accum_step, &sched)){
-                        return GGML_OPT_RESULT_CANCEL;
-                    }
-                ggml_set_f32      (loss->grad, 1.0f);
-                ggml_graph_compute(gb, cplan);
-                ggml_opt_acc_grad(np, opt_ps, g, accum_norm);
-                fx += ggml_get_f32_1d(loss, 0);
-            }
-            fx *= accum_norm;
-        }
+        
+        if( !GradAccumulation(fx,callback_data,cplan,0x0))
+                return GGML_OPT_RESULT_CANCEL;         
 
-        opt->adam.fx_prev = fx;
-        opt->adam.fx_best = opt->adam.fx_prev;
-        if (pf) {
-            pf[opt->iter % params.past] = opt->adam.fx_prev;
-        }
-
-        opt->loss_before = opt->adam.fx_prev;
-        opt->loss_after  = opt->adam.fx_prev;
+        fx_prev.push_back(fx);        fx_best.push_back(fx);   
+        /*if (pf) {
+            pf[opt->iter % params.past] = fx_prev;
+        }*/
+        loss_before = fx;        loss_after  = fx;
 
         // initialize
-        if (opt->just_initialized) {
-            opt->adam.n_no_improvement = 0;
-            opt->just_initialized = false;
+        if (just_initialized) {
+            n_no_improvement = 0;
+            just_initialized = false;
         }
 
-        float * fx_best = &opt->adam.fx_best;
-        float * fx_prev = &opt->adam.fx_prev;
-        int * n_no_improvement = &opt->adam.n_no_improvement;
-
-        int iter0 = opt->iter;
-
+        int iter0 = 0;  //opt->iter;
         // run the optimizer
-        for (int t = 0; t < params.adam.n_iter; ++t) {
-            opt->iter = iter0 + t + 1;
+        for (int t = 0; t < train_params.adam_n_iter; ++t) {
+            iter = iter0 + t + 1;
             GGML_PRINT_DEBUG  ("=== iter %d ===\n", t);
             GGML_PRINT_DEBUG  ("loss      = %10.6f\n", ggml_get_f32_1d(loss, 0));
             GGML_PRINT_DEBUG_5("df/dx0 = %10.6f\n", ggml_get_f32_1d(opt_ps[0]->grad, 0));
             GGML_PRINT_DEBUG_5("df/dx1 = %10.6f\n", ggml_get_f32_1d(opt_ps[1]->grad, 0));
-            for (int i = 0; i < np; ++i) {
-                GGML_PRINT_DEBUG("param %d: %10.6f, g = %10.6f\n", i,ggml_get_f32_1d(opt_ps[i], 0), ggml_get_f32_1d(opt_ps[i]->grad, 0));
+            for (auto hT : opt_ps) {
+                GGML_PRINT_DEBUG("param %d: %10.6f, g = %10.6f\n", i,ggml_get_f32_1d(hT, 0), ggml_get_f32_1d(hT->grad, 0));
             }
             const int64_t t_start_wall = ggml_time_us(),t_start_cpu = ggml_cycles();
-            AdamW(nx,np,hparams,0x0);   
+            float gnorm = gClip(nx,hparams);
+            UpdateParams(gnorm,nx,hparams,0x0);   
+            // AdamMiniV(gnorm,nx,hparams,0x0);   
             //gradient is useless at this stage  
             if (hparams.eval_every>0 && t % hparams.eval_every == 0) {
                 val_loss = Evaluate(val_loader,t);  
             }        
             if( hparams.gpt_every>0 && t%hparams.gpt_every==0 )   {
                 gang->GenSentence(1);   
-            }
-   
-            if(isAccuX){
-                if( !GradAccumulation(fx,np,callback_data,cplan,0x0))
-                    return GGML_OPT_RESULT_CANCEL; 
-            }else   { 
-                fx = 0;
-                ggml_set_zero(opt->adam.g);
-                for (int accum_step = 0; accum_step < n_accum; ++accum_step) {
-                    if(one_step(callback_data->train,train_loader,accum_step, &sched)){
-                        return GGML_OPT_RESULT_CANCEL;
-                    }
-                    // ggml_graph_reset  (gf);
-                    ggml_set_f32      (loss->grad, 1.0f);
-                    ggml_graph_compute(gb, cplan);
-                    ggml_opt_acc_grad(np, opt_ps, g, accum_norm);
-                    fx += ggml_get_f32_1d(loss, 0);
-                }
-                fx *= accum_norm;
-            }
+            }   
+            
+            if( !GradAccumulation(fx,callback_data,cplan,0x0))
+                return GGML_OPT_RESULT_CANCEL;            
 
-            opt->loss_after = fx;
-            UpdateLoss(opt->iter,sched,opt->loss_after);        //scheduler->Append(loss);
+            loss_after = fx;
+            UpdateLoss(iter,fx);        //scheduler->Append(loss);
             if(gang->hDistler!=nullptr) 
-                gang->hDistler->UpdateSigma(opt->iter);
+                gang->hDistler->UpdateSigma(iter);
             // check convergence
-            if (fabsf(fx - fx_prev[0])/fx < params.adam.eps_f) {
+            if (fabsf(fx - fx_prev[0])/fx < train_params.adam_eps_f) {
                 GGML_PRINT_DEBUG("converged\n");                result = GGML_OPT_RESULT_OK;
             }
             // delta-based convergence test
-            if (pf != NULL) {
+            /*if (pf != NULL) {
                 // need at least params.past iterations to start checking for convergence
                 if (params.past <= iter0 + t) {
                     const float rate = (pf[(iter0 + t)%params.past] - fx)/fx;
@@ -334,16 +370,16 @@ enum ggml_opt_result Optimizer::ggml_train(struct ggml_context * ctx, hGensor lo
                     }
                 }
                 pf[(iter0 + t)%params.past] = fx;
-            }
+            }*/
             // check for improvement
-            if (params.max_no_improvement > 0) {
+            if (train_params.opt_max_no_improvement > 0) {
                 if (fx_best[0] > fx) {
                     fx_best[0] = fx;
-                    n_no_improvement[0] = 0;
+                    n_no_improvement = 0;
                 } else {
-                    ++n_no_improvement[0];
+                    ++n_no_improvement;
 
-                    if (n_no_improvement[0] >= params.max_no_improvement) {
+                    if (n_no_improvement >= train_params.opt_max_no_improvement) {
                         result = GGML_OPT_RESULT_OK;
                     }
                 }
@@ -368,10 +404,10 @@ void Fish::Train(  int flag )   {
 
 float Optimizer::Compute(std::vector<llama_token>&tokens,bool onlyForward,int flag){
     // llama_token bos = llama_token_bos(llama_get_model(lctx)),eos = llama_token_eos(llama_get_model(lctx))
-    float * g  = (float *)opt->adam.g->data;
+    float * g  = (float *)grad->data;
     auto loss = hLoss( );
     float *fLoss = (float*)(loss->data),*fLossG = (float*)(loss->grad->data);
-    ggml_set_zero(opt->adam.g);   
+    ggml_set_zero(grad);   
     auto cplan =&(gang->gb_plan);
     llama_token token;
     ggml_set_i32_nd(tokens_input, 0, 0, 0, 0, bos);
@@ -508,7 +544,7 @@ void Optimizer::Init_CallbackData(struct llama_context * lctx,struct train_param
     opt_cb_data.save_cb                = nullptr;   //&save_train_;
     opt_cb_data.save_data              = nullptr;   //&save_data;
     opt_cb_data.lctx                   = lctx;
-    opt_cb_data.last_save_iter         = opt->iter;
+    opt_cb_data.last_save_iter         = iter;
     // opt_cb_data.tokens_data            = train_tokens.data();
     // opt_cb_data.tokens_size            = train_tokens.size();
     // opt_cb_data.samples_begin          = train_samples_begin.data();
@@ -523,7 +559,7 @@ void Optimizer::Init_CallbackData(struct llama_context * lctx,struct train_param
 
     opt_cb_data.tokens_input           = tokens_input;
     opt_cb_data.target_probs           = hTargetProbs();
-    first_iter             = opt->iter;
+    first_iter             = iter;
     opt_cb_data.first_epoch            = train->train_epochs;
     opt_cb_data.iter_at_last_epoch     = -1;
     opt_cb_data.last_time              = ggml_time_ms();
@@ -534,14 +570,14 @@ bool Optimizer::one_step(struct train_state *train,SampLoader&loader, int accum_
     // LossCurve(0x0);
     struct train_params_common *params = &(train_params);   //data->params;
     // struct train_state *train = data->train;
-    struct ggml_opt_context *opt = train->opt;
+    // struct ggml_opt_context *opt = train->opt;
     int n_batch = params->n_batch;
     int n_ctx = params->n_ctx;
 
     if (accum_step == 0)        {
         // time measurement
         int64_t now = ggml_time_ms();
-        if (now > last_time && opt->iter > first_iter)            {
+        if (now > last_time && iter > first_iter)            {
             double dt = (double)(now - last_time);
             if (millis_per_iter == 0.0)                {
                 millis_per_iter = dt;
@@ -553,38 +589,38 @@ bool Optimizer::one_step(struct train_state *train,SampLoader&loader, int accum_
         double remaining_millis = 0.0;
         if (millis_per_iter > 0.0)            {
             const int n_iter = params->adam_n_iter;
-            const int done_iter = opt->iter - first_iter;
+            const int done_iter = iter - first_iter;
             const int remaining_iter = n_iter - done_iter;
             remaining_millis = remaining_iter * millis_per_iter;
         }
         // file saving
-        /*const bool save_now = (params->save_every > 0) && (opt->iter - last_save_iter >= params->save_every);
+        /*const bool save_now = (params->save_every > 0) && (iter - last_save_iter >= params->save_every);
         if (save_now)            {                
-            int new_iters = opt->iter - last_save_iter;
+            int new_iters = iter - last_save_iter;
             train->train_its += new_iters;
             train->train_tokens += new_iters * opt->params.n_gradient_accumulation * n_batch * n_ctx;
             SaveTrain(&save_data, train);
-            last_save_iter = opt->iter;
+            last_save_iter = iter;
         }*/
 
         // exclude file saving from time measurement, by measuring last_time after saving
         last_time = ggml_time_ms();
-        *sched = learning_schedule(opt->iter, params->warmup, params->cos_decay_steps, params->adam_alpha, params->adam_min_alpha,
+        *sched = learning_schedule(iter, params->warmup, params->cos_decay_steps, params->adam_alpha, params->adam_min_alpha,
                                     params->cos_decay_min, params->cos_decay_restart, params->enable_restart);
-        int impr_plot = -(int)(1 + (opt->loss_before - opt->loss_after) * 10.0f + 0.5f);
+        int impr_plot = -(int)(1 + (loss_before - loss_after) * 10.0f + 0.5f);
         if (impr_plot > 0)
             impr_plot = 0;
-        if (std::isnan(opt->loss_before) || std::isnan(opt->loss_after))
+        if (std::isnan(loss_before) || std::isnan(loss_after))
             impr_plot = 0;
         _INFO("[train] iter=%6d sample=%zu/%zu sched=%.3f loss=%f ",
-                opt->iter, std::min(1 + train->shuffle_next_sample, train->shuffle_sample_count), train->shuffle_sample_count,
-                *sched, opt->loss_after); //,hOPT->zmuv_0,hOPT->zmuv_1
-        lcTrain.Add(opt->loss_after);
+                iter, std::min(1 + train->shuffle_next_sample, train->shuffle_sample_count), train->shuffle_sample_count,
+                *sched, loss_after); //,hOPT->zmuv_0,hOPT->zmuv_1
+        lcTrain.Add(loss_after);
         if (millis_per_iter > 0)            {
             _INFO(" dt=");          _TIME(millis_per_iter);
             _INFO(" eta=");         _TIME(remaining_millis);
         }
-        float improvement = opt->loss_before - opt->loss_after;
+        float improvement = loss_before - loss_after;
         const float plot_scale = 10.0f;
         int bar_len = (int)(1 + improvement * plot_scale + 0.5);
         _INFO(" |");
@@ -617,11 +653,83 @@ bool Optimizer::one_step(struct train_state *train,SampLoader&loader, int accum_
     if (last_epoch_reached)    {
         // allow optimization iteration at last epoch to be completed before canceling
         if (iter_at_last_epoch < 0)        {
-            iter_at_last_epoch = opt->iter;
+            iter_at_last_epoch = iter;
         }
-        else if (opt->iter > iter_at_last_epoch)        {
+        else if (iter > iter_at_last_epoch)        {
             return true;
         }
     }
     return false;
+}
+
+void Optimizer::InitOpt(struct train_params_common& params_,int flag)  {
+    /*iter = train->train_its;
+
+    opt->params = ggml_opt_default_params(GGML_OPT_TYPE_ADAM);
+    opt->params.print_forward_graph     = false;
+    opt->params.print_backward_graph    = false;
+    opt->params.graph_size              = LLAMA_TRAIN_MAX_NODES;
+    opt->params.n_threads               = train_params.n_threads;
+    opt->params.past                    = train_params.opt_past;
+    opt->params.delta                   = train_params.opt_delta;
+    opt->params.max_no_improvement      = train_params.opt_max_no_improvement;
+    opt->params.n_gradient_accumulation = train_params.n_gradient_accumulation;
+    opt->params.adam.n_iter             = train_params.adam_n_iter;
+    opt->params.adam.sched              = 1.0f;
+    opt->params.adam.alpha              = train_params.adam_alpha;
+    opt->params.adam.decay              = train_params.adam_decay;
+    opt->params.adam.decay_min_ndim     = train_params.adam_decay_min_ndim;
+    opt->params.adam.beta1              = train_params.adam_beta1;
+    opt->params.adam.beta2              = train_params.adam_beta2;
+    opt->params.adam.gclip              = train_params.adam_gclip;
+    opt->params.adam.eps_f              = train_params.adam_eps_f;*/
+}
+
+void Optimizer::Init(size_t nx,int flag){
+    assert(nx>0);
+    iter = 0;
+    nParams = nx;
+    just_initialized = true;
+   
+    struct ggml_init_params ctx_opt_params;    
+    ctx_opt_params.mem_size = GGML_MEM_ALIGN*3 + ggml_tensor_overhead()*3 + ggml_type_size(GGML_TYPE_F32)*nx*3;
+    if (past > 0) {
+        ctx_opt_params.mem_size += GGML_MEM_ALIGN + ggml_tensor_overhead() + ggml_type_size(GGML_TYPE_F32)*past;
+    }    
+    ctx_opt_params.mem_buffer = NULL;
+    ctx_opt_params.no_alloc   = false;
+    ctx = ggml_init(ctx_opt_params);    
+    grad = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, nx);
+}
+
+void OPT_Adam::Init(size_t nx,int flag){
+    Optimizer::Init(nx,flag);
+    assert( grad!=nullptr );
+    gm  = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, nx);
+    gv  = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, nx);
+    gpf = past > 0 ? ggml_new_tensor_1d(ctx, GGML_TYPE_F32, past) : NULL;
+    ggml_set_zero(gm);
+    ggml_set_zero(gv);
+    if (gpf) {
+        ggml_set_zero(gpf);
+    }
+}
+
+OPT_Adam::OPT_Adam(Fish *g_,struct train_params_common& params_,int flag)
+    : Optimizer(g_,params_,flag)    {
+
+    sched              = 1.0f;
+    alpha              = train_params.adam_alpha;
+    decay              = train_params.adam_decay * alpha;
+    decay_min_ndim     = train_params.adam_decay_min_ndim;
+    beta1              = train_params.adam_beta1;
+    beta2              = train_params.adam_beta2;
+    gclip              = train_params.adam_gclip;
+    eps_f              = train_params.adam_eps_f;
+}
+
+void OPT_Adam::Dump(int typ){
+    Optimizer::Dump(typ);
+    _INFO("%s:  sched=%.4g ADAM(lr=%g,%g,[%g-%g]) decay=%g(%d)\n", __func__, sched,alpha,decay,beta1,beta2,
+        decay,decay_min_ndim);
 }

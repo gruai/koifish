@@ -1,7 +1,7 @@
 /**
  *  Copyright 2023-2024 by Grusoft
  *
- *  \brief A collection of neurons
+ *  \brief Fish - a collection of neurons
  *  \author Yingshi Chen
  */
 
@@ -31,7 +31,7 @@ typedef std::vector<int> SHAPE;
 #include "train.h"
 #include "TGraph.hpp"
 #include "Optimizer.hpp"
-#include "GPT.hpp"
+#include "GoPT.hpp"
 #include "../lenda/util/GST_util.hpp"
 #include "../Fuzi/Distillation.hpp"
 
@@ -202,6 +202,7 @@ protected:
     vector<hWIKI> wikis;
     vector<hGensor> tmpExLogis;
     WIKI::INDUCT_MODE teach=WIKI::_LOGITS;
+
     // Generate some results on prompt
     hGOPT gopt = nullptr;
     virtual int GenSentence(int flag=0x0);
@@ -480,9 +481,10 @@ public:
     { // training accuracy curve
 #ifdef _USE_WANDB_
         _WANDB_log(1.0);
-#endif
+#endif  
     }
     static hFISH MakeInstance(const std::string nam_,struct CLI_params& params,int flag);
+    static hFISH MakeSwarm(const std::string nam_,struct CLI_params& params,int flag);
     static hFISH MakeInstance(const std::string nam_,struct CLI_params& params,const Fish *hSrc_,int flag);
     // static Fish* Copy(const Fish* src,int flag=0x0);
     virtual void SaveTrain(struct save_train_model * data, struct train_state * train);
@@ -500,3 +502,42 @@ public:
     friend class LLaMeta;   
     friend class SampLoader;
 };
+
+struct LogicSalp : public Fish {
+    typedef vector<shared_ptr<Fish>> tpSWARM;
+    tpSWARM swarm;
+
+    typedef enum {
+        BIT_MASK
+    }SPACE_TYPE;
+    SPACE_TYPE space=BIT_MASK;
+
+    int x=0;
+    float fitness;	//greater fitness will have a greater probability of being selected for recombination.
+    vector<double> position;
+    // LogicSalp(const int dim, int flag = 0x0);
+    // LogicSalp(const int dim, const vector<int>&picks, int flag = 0x0);
+    LogicSalp(const std::string& nam_, struct CLI_params params,tpSWARM& swarm_,int flag=0x0);
+    void Train(int flag = 0x0)  override;
+
+    	
+    int DIM() const		{ return position.size(); }
+
+    virtual void Copy(const LogicSalp*src,int flag=0x0) {
+        position = src->position;
+        fitness = src->fitness;
+        x = src->x;
+    }
+
+    //aA+b*B
+    virtual void MixPosition(double alpha, const LogicSalp*A, double beta, const LogicSalp*B, int flag) {
+        int dim = position.size(), i;
+        for (i = 0; i < dim; i++) {
+            position[i] = alpha*A->position[i] + beta*B->position[i];
+        }
+    }
+
+    virtual void cross_over(const LogicSalp*A,  const LogicSalp*B,int flag=0x0);
+    virtual void mutatioin(double T_mut,int flag=0x0);
+};
+typedef shared_ptr<LogicSalp> hSALP;

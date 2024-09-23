@@ -61,8 +61,19 @@ hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,int fl
         CHILD_0909_WIKIS
         // fish->gopt = GeneratOnPrompt::MakeInstance(params,wikis,fish.get(),flag);        
     }
-    
+   
     return fish;
+}
+
+hFISH Fish::MakeSwarm(const std::string nam_,struct CLI_params& params,int flag)   {
+    int nSwarm = 2,i;
+    vector<shared_ptr<Fish>> swarm;
+    for(i=0; i<nSwarm;i++){
+        hFISH fish = Fish::MakeInstance("Fish_",params,0x0); 
+        swarm.push_back(fish);
+    }
+    hSALP salp = std::make_shared<LogicSalp>(nam_,params,swarm);
+    return salp;    
 }
 
 hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,const Fish *hSrc_,int flag)   {
@@ -518,12 +529,17 @@ size_t LLaMeta::tVocab(){
     return hDict->tVocab( );
     //return hTokenset->nUnique;
 }
-void LLM_MAMBA::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,hGensor cur,hGensor _tNorm,hGensor _tOutput,hGensor KQ_pos, int flag)  {
+
+void LLM_MAMBA::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,hGensor cur,hGensor _tNorm,hGensor KQ_pos, int flag)  {
     int n_vocab = tVocab(),n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd;
     auto train_params = hparams.common;
     preLogits = ggml_reshape_3d(ctx, cur, n_vocab, n_ctx, n_batch);             set_name(preLogits, "preLogits");     
-    assert_shape_3d(preLogits, n_vocab, n_ctx, n_batch);;
-    loss = ggml_cross_entropy_loss(ctx, preLogits, target_probs);                    
+    assert_shape_3d(preLogits, n_vocab, n_ctx, n_batch);
+    if(hparams.is({"model","target"},string("OneHot")))
+        loss = ggml_cross_entropy_loss_1(ctx, preLogits, target_probs);
+    else
+        loss = ggml_cross_entropy_loss(ctx, preLogits, target_probs);            
+                   
     set_name(loss, "loss");     assert_shape_1d(loss, 1);
     ggml_build_forward_expand(gf, loss);
     if (train_params.use_checkpointing) {
@@ -537,7 +553,7 @@ void LLM_MAMBA::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,boo
     }    
 }
 
-void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,hGensor cur,hGensor _tNorm,hGensor _tOutput,hGensor KQ_pos, int flag)  {
+void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,hGensor cur,hGensor _tNorm,hGensor KQ_pos, int flag)  {
     int n_vocab = tVocab(),n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd;
     auto train_params = hparams.common;
     train_params.use_checkpointing = false;     // CYS_0826
@@ -557,7 +573,9 @@ void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool 
     set_name(t32, "t32");     assert_shape_2d(t32, n_embd, N*n_batch);
     hGensor  t33   = ggml_mul               (ctx, t32, t31);                             set_name(t33, "t33");     
     assert_shape_2d(t33, n_embd, N*n_batch);
-    hGensor  t34   = ggml_mul_mat           (ctx, _tOutput, t33);                          set_name(t34, "t34");     
+    //  _tOutput = UpdateGensor (hDict->output->name);     
+    hGensor t34 = hDict->Embed2Output(ctx,t33);
+    // hGensor  t34   = ggml_mul_mat           (ctx, _tOutput, t33);                          set_name(t34, "t34");     
     assert_shape_2d(t34, n_vocab, N*n_batch);
     hGensor  t35   = ggml_reshape_3d        (ctx, t34, n_vocab, N, n_batch);             set_name(t35, "t35");     
     assert_shape_3d(t35, n_vocab, N, n_batch);
@@ -574,7 +592,8 @@ void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool 
                     hGensor tEX1 = ggml_mul_mat(ctx, wiki->t2t, wiki->exLogits);                          
                     t35 = ggml_add(ctx,t35,tEX1);
                 }else if(wiki->exLogits!=nullptr){
-                    t35 = ggml_add(ctx,t35,wiki->exLogits);
+                    hGensor tEX1 = ggml_soft_max(ctx,wiki->exLogits);
+                    t35 = ggml_add(ctx,t35,tEX1);
                 }
                 
                 //  WIKI::_LOGITS_SCALE
@@ -583,8 +602,13 @@ void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool 
             }
         }        
     }
-    
-    hGensor  t36 = ggml_cross_entropy_loss(ctx, t35, target_probs);                    set_name(t36, "t36");     assert_shape_1d(t36, 1);
+    hGensor  t36 = nullptr;    
+    if(hparams.is({"model","target"},string("OneHot")))
+        t36 = ggml_cross_entropy_loss_1(ctx, t35, target_probs);
+    else
+        t36 = ggml_cross_entropy_loss(ctx, t35, target_probs);               
+    set_name(t36, "t36");     assert_shape_1d(t36, 1);
+
     if(isTrain())
         assert(t36->grad!=nullptr);
     if(hDict->nLevel>0){
@@ -899,9 +923,8 @@ double WIKI::InductLogits(int nSampInBatch,std::vector<int32_t>& tok_ids,hGensor
 
     Reset();         //Timing bottleneck!!! for the crazy design of llama.cpp
     Decode(tok_ids,0,0x0,true);    
-    const float *all_logits = GetLogits(n_vocab,tok_ids.size(),0),*logit;  
-    //ld0=target_probs->nb[0],ld1=target_probs->nb[1],ld2=target_probs->nb[2],ld3=target_probs->nb[3]
-    size_t k,j,i,ldL=target_probs->ne[0];  
+    const float *all_logits = GetLogits(n_vocab,tok_ids.size(),0),*logit; 
+    size_t k,j,i,ldL=exLogits->ne[0];  
     int n_ctx = target_probs->ne[1],n_dialect=mapT2T.size(),token;  
     double a1,a2,nrm=0;    
     float *p=teach == WIKI::_TARGET ? new float[ldL]:nullptr,*target ;  
@@ -962,8 +985,11 @@ void LLaMeta::InitEntryTensors(int flag) {
         ggml_tensor_overhead() * 2, NULL,true,                        
     };
     ctx_input = ggml_init(ctx_input_params);
-    tokens_input  = ggml_new_tensor_2d(ctx_input, GGML_TYPE_I32, n_ctx, n_batch);
-    target_probs  = ggml_new_tensor_3d(ctx_input, GGML_TYPE_F32, n_vocab,  n_ctx, n_batch);
+    tokens_input = ggml_new_tensor_2d(ctx_input, GGML_TYPE_I32, n_ctx, n_batch);
+    if(hparams.is( {"model","target"},string("OneHot") )){
+        target_probs = ggml_new_tensor_3d(ctx_input, GGML_TYPE_I32, 1,  n_ctx, n_batch);
+    }else
+        target_probs = ggml_new_tensor_3d(ctx_input, GGML_TYPE_F32, n_vocab,  n_ctx, n_batch);
     ggml_backend_buffer_t input_data = ggml_backend_alloc_ctx_tensors_from_buft(ctx_input, ggml_backend_cpu_buffer_type());
     size_t max_input_size = ggml_backend_buffer_get_size(input_data);
     _INFO("%s: input_size(%d,%d) = %zu bytes (%.1f MB)\n", __func__, n_ctx, n_batch, max_input_size, (float) max_input_size / (1024.0f*1024.0f));
@@ -979,9 +1005,13 @@ bool Fish::OnTrainStep(struct train_opt_callback_data *data,SampLoader&loader, i
 bool LLaMeta::LoadTokens( int flag )   {   
     GST_TIC(tic);   
     bool isLoadOK = false;  
-    if(0)   {
-        if( hOPT->train_loader.Serialize(hparams.train_binpath,false) 
-            && hOPT->val_loader.Serialize(hparams.eval_binpath,false)){
+    string spTrain = hparams.serial_path+".train",spEval = hparams.serial_path+".eval";
+    auto& tokens = hTokenset->tokens;
+    if(1)   {
+        hOPT->train_loader.tokens = hTokenset;
+        hOPT->val_loader.tokens = hTokenset;
+        if( hOPT->train_loader.Serialize(spTrain,false) 
+            && hOPT->val_loader.Serialize(spEval,false)){
                 if(hOPT->train_loader.len()>0){
                     // hDict->nUniqueToken = hOPT->train_loader.n_unique_tokens; 
                     // _INFO("%s: nTrain=%zu nEval=%zu batch_sample=%s T=%.3g\n", __func__, hOPT->train_loader.len(),hOPT->val_loader.len(),GST_TOC(tic));
@@ -991,7 +1021,7 @@ bool LLaMeta::LoadTokens( int flag )   {
     }
     if(!isLoadOK) {
         assert(hTokenset!=nullptr);
-        auto& tokens = hTokenset->tokens;   
+           
         std::vector<size_t> samples_begin,samples_size;
         auto train_params = hparams.common;
         size_t nUnique = hTokenset->nUnique;
@@ -999,33 +1029,21 @@ bool LLaMeta::LoadTokens( int flag )   {
         if( hTokenset->InitSamps(hparams.common.n_ctx,samples_begin,samples_size)){
 
         }else{
-            assert(0);
-            const char*fp=hparams.fp_train_data.c_str();
-            assert( std::filesystem::exists(fp) );
-            _INFO("%s: tokenize training data from %s\n", __func__, fp);
-            _INFO("%s: sample-start: %s\n", __func__, hparams.common.sample_start.c_str());
-            _INFO("%s: include-sample-start: %s\n", __func__, hparams.common.include_sample_start ? "true" : "false");
-            // TODO:  cys@20240905  Very slow @llama-2-13b.Q3_K_L.gguf
-            tokenize_file(lama()->_ctx, fp,
-                    train_params.sample_start,train_params.include_sample_start,train_params.overlapping_samples,hparams.common.n_ctx,
-                    tokens,samples_begin,samples_size);
-            if(samples_begin.size()==0){
-                _ERROR("\n%s: tokenize return 0 samples !!!\n", __func__);
-                return false;
-            }
-            // hDict->UniqueTokens(tokens, -1);
+            _INFO("%s: NULL Samps!!!    batch_sample=%s nTrain=%zu nEval=%zu T=%.3g\n", __func__, hOPT->train_loader.batch_sample.c_str(),
+                hOPT->train_loader.len(),hOPT->val_loader.len(),GST_TOC(tic));      
+            return false;
         }
         
         //val_tokens = tokens[:32768]    train_tokens = tokens[32768:]        
-        hOPT->val_loader.SetSamples(hDict->n_vocab,tokens,samples_begin,samples_size,false,hparams);
-        hOPT->train_loader.SetSamples(hDict->n_vocab,tokens,samples_begin,samples_size,true,hparams);
+        hOPT->val_loader.SetSamples(hDict->n_vocab,hTokenset,samples_begin,samples_size,false,hparams);
+        hOPT->train_loader.SetSamples(hDict->n_vocab,hTokenset,samples_begin,samples_size,true,hparams);
         assert(hOPT->val_loader.n_unique_tokens <= nUnique && hOPT->train_loader.n_unique_tokens <= nUnique);
         hOPT->val_loader.n_unique_tokens = nUnique;
         hOPT->train_loader.n_unique_tokens = nUnique;
 
-        hOPT->train_loader.Serialize(hparams.train_binpath,true);
+        hOPT->train_loader.Serialize(spTrain,true);
         // hOPT->train_loader.Serialize(hparams.train_binpath,false);      //only for debug
-        hOPT->val_loader.Serialize(hparams.eval_binpath,true);
+        hOPT->val_loader.Serialize(spEval,true);
     }
     hOPT->train_loader.hDict = hDict;            hOPT->val_loader.hDict = hDict;
     // GGML_ASSERT(hOPT->train_samples_begin.size() == hOPT->train_samples_size.size());
@@ -1044,8 +1062,10 @@ bool LLaMeta::CreateExlogists(hWIKI wiki,uint32_t n_ctx,uint32_t n_batch,int fla
         
         if(wiki->n_vocab>nV){
             wiki->exLogits = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, nV,  n_ctx, n_batch);
+            if(0){
             wiki->t2t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nV,  nV);
-            
+            sprintf(wiki->t2t->name,"t2t@%s",wiki->title.c_str());
+            }
         }else{
             wiki->exLogits = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, wiki->n_vocab,  n_ctx, n_batch);
         }

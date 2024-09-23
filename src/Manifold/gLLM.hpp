@@ -307,9 +307,7 @@ struct LLaMeta : public Fish {
         }
         tmpExLogis.clear();
         for(auto wiki : wikis){
-            CreateExlogists(wiki,n_ctx,train_params.n_batch);            
-            if(wiki->t2t!=nullptr)
-                InitGensor(ctx,wiki->t2t, "", rnd);
+            CreateExlogists(wiki,n_ctx,train_params.n_batch);  
         }
         if( tmpExLogis.size()>0 /* wiki!=nullptr && (wiki->teach==WIKI::_LOGITS || wiki->teach==WIKI::_LOGITS_GATE ) */ 
                 && !isLocalInfer) {
@@ -353,10 +351,17 @@ struct LLaMeta : public Fish {
         if(mom.embed2w!=nullptr){
             InitGensor(ctx,mom.embed2w,             "gate_cys", rnd);
         }
+        for(auto wiki : wikis){
+            if(wiki->t2t!=nullptr){
+                InitGensor(ctx,wiki->t2t, nullptr, rnd);
+            }
+                
+        }
         // free_random_normal_distribution(rnd); 
         
         if (!hparams.only_write_model && hOPT!=nullptr) {
-            ggml_opt_init(hOPT->opt->ctx, hOPT->opt, hOPT->opt->params, nParams);
+            hOPT->Init(nParams);
+            // ggml_opt_init(hOPT->opt->ctx, hOPT->opt, hOPT->opt->params, nParams);
         }
 
         szModel = (ggml_used_mem(ctx) + ggml_backend_buffer_get_size(data)), (float) (ggml_used_mem(ctx) + ggml_backend_buffer_get_size(data)) ;
@@ -414,7 +419,8 @@ struct LLaMeta : public Fish {
         if(isLocalInfer){
             hOPT = nullptr;
         }else{
-            hOPT = std::make_shared<Optimizer>(this,train_params,flag);
+            // hOPT = std::make_shared<Optimizer>(this,train_params,flag);
+            hOPT = std::make_shared<OPT_Adam>(this,train_params,flag);
         }
         
         hDistler = hparams.sigma=="" ? nullptr : std::make_shared<Distillation>(this,hparams,0x0);     //ADD SIGMA
@@ -468,6 +474,7 @@ struct LLaMeta : public Fish {
         _INFO("%s: nParams=%zu model_size = %zu bytes (%.1f MB)\n", __func__, nParams,szModel,szModel / (1024.0f*1024.0f) );
         _INFO("%s: n_vocab=%d t_vocab=%d,n_batch=%d,n_ctx=%d,n_embd=%d,n_head=%d,n_rot=%d,n_ff=%d\n", __func__, 
             n_vocab,tVocab(),n_batch,n_ctx,n_embd,hparams.n_head,hparams.n_rot,hparams.n_ff );
+        _INFO("%s: loader=%s\n", __func__, hparams.batch_sample.c_str() );
         if(hOPT!=nullptr)
             hOPT->Dump( 1 );     
         else{
@@ -533,7 +540,7 @@ struct LLaMeta : public Fish {
 #endif
     }
 
-    virtual void BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,hGensor cur,hGensor _tNorm,hGensor _tOutput,hGensor KQ_pos, int flag=0x0); 
+    virtual void BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,hGensor cur,hGensor _tNorm,hGensor KQ_pos, int flag=0x0); 
 
     virtual hBrownMotion CreateBrownMotion(hGensor wq, hGensor wk, hGensor wv)  {
         hBrownMotion hMotion =  (tpATT==ATTENTION_TYPE::QKV) ? 
@@ -568,7 +575,7 @@ struct LLaMeta : public Fish {
         GGML_ASSERT(tokens_input->type == GGML_TYPE_I32);
         hGensor _tEmbed = UpdateGensor (hDict->tok_embeddings-> name);      //embedding of all tokens
         hGensor _tNorm = UpdateGensor (hDict->norm->name); 
-        hGensor _tOutput = UpdateGensor (hDict->output->name);       
+        // hGensor _tOutput = UpdateGensor (hDict->output->name);       
         hGensor  t00 = ggml_reshape_1d(ctx, tokens_input, n_ctx*n_batch);  set_name(t00, "t00"); 
         assert_shape_1d(t00, n_ctx*n_batch);
         hGensor  t01 = ggml_get_rows(ctx, _tEmbed, t00);    set_name(t01, "t01"); 
@@ -585,7 +592,7 @@ struct LLaMeta : public Fish {
             cur = build_layer_( n_ctx,ctx, cur, layer, KQ_pos);           
             checkpoints.push_back(cur);
         }
-        BuildTarget(ctx,alloc,m_only,cur,_tNorm,_tOutput,KQ_pos,flag);       
+        BuildTarget(ctx,alloc,m_only,cur,_tNorm,KQ_pos,flag);       
     }
 
     virtual bool LoadTokens( int flag=0x0 );
@@ -605,30 +612,13 @@ struct LLaMeta : public Fish {
         
         // hOPT->Shuffle(n_vocab,train_params,flag);
         Dump(0x0);        
-        auto opt = hOPT->opt;
-        auto adam = opt->params.adam;
-        _INFO("%s: loader=%s sched=%.4g ADAM(lr=%g,%g,[%g-%g])\n", __func__,hparams.batch_sample.c_str(), adam.sched,
-                adam.alpha,adam.decay,adam.beta1,adam.beta2);
+        
+        // _INFO("%s: loader=%s sched=%.4g ADAM(lr=%g,%g,[%g-%g])\n", __func__,hparams.batch_sample.c_str(), adam.sched,
+        //         adam.alpha,adam.decay,adam.beta1,adam.beta2);
         if(hparams.lars_ratio>0)
             _INFO("%s: LARS(t_max=%g)\n", __func__,hparams.lars_ratio);
         print_build_info();
-        auto train=hOPT->train;
-        // struct train_opt_callback_data opt_cb_data;
-        /*// measure required memory for work buffer
-        size_t max_work_size = ggml_graph_plan(gb, train_params.n_threads).work_size + GGML_OBJECT_SIZE;
-        _INFO("%s: work_size = %zu bytes (%.1f MB)\n", __func__, max_work_size, (float) max_work_size / (1024.0f*1024.0f));
-
-        // context for work buffer
-        struct ggml_init_params ctx_work_params = {
-            max_work_size, // mem_size
-            NULL,          // mem_buffer    
-            false,         // no_alloc
-        };
-        struct ggml_context * ctx_work = ggml_init(ctx_work_params);
-        gb_plan = ggml_graph_plan(gb, train_params.n_threads);
-        struct ggml_object * obj = ggml_new_object(ctx_work, GGML_OBJECT_TYPE_WORK_BUFFER, gb_plan.work_size);
-        gb_plan.work_data = (uint8_t *)ctx_work->mem_buffer + obj->offs;
-        gf_plan = gb_plan;      */
+        auto train=hOPT->train;        
         assert(ctx_work!=nullptr);
         int64_t t0 = ggml_time_ms();
         // SaveTrain(&save_data, opt_cb_data.train);      //warmup save
@@ -755,7 +745,8 @@ struct LLAMA_LORA  : public LLaMeta {
         // data = ggml_backend_alloc_ctx_tensors_from_buft(ctx,buf1 );
         size_t sz2=ggml_backend_buffer_get_size(data);      //130872416
         if (!hparams.only_write_model) {    //only_write_lora
-            ggml_opt_init( hOPT->opt->ctx, hOPT->opt, hOPT->opt->params, nParams);     //nx=16358481
+            hOPT->Init(nParams);
+            // ggml_opt_init( hOPT->opt->ctx, hOPT->opt, hOPT->opt->params, nParams);     //nx=16358481
         }
         szModel = ggml_used_mem(ctx) + ggml_backend_buffer_get_size(data);  //580800+65436224
 
@@ -909,7 +900,7 @@ struct LLAMA_LORA  : public LLaMeta {
         hGensor _tEmbed = base->hDict->tok_embeddings,_tNorm = base->hDict->norm,_tOutput = base->hDict->output; 
         _tEmbed = UpdateGensor (base->hDict->tok_embeddings->name); 
         _tNorm = UpdateGensor (base->hDict->norm->name); 
-        _tOutput = UpdateGensor (base->hDict->output->name);         
+        // _tOutput = UpdateGensor (base->hDict->output->name);         
 
         hGensor  t00 = ggml_reshape_1d(ctx, tokens_input, n_ctx*n_batch);  set_name(t00, "t00"); assert_shape_1d(t00, n_ctx*n_batch);
         hGensor  t01 = ggml_get_rows(ctx, _tEmbed, t00);        set_name(t01, "t01"); assert_shape_2d(t01, n_embd, n_ctx*n_batch);
@@ -944,7 +935,7 @@ struct LLAMA_LORA  : public LLaMeta {
             }     
         }
 
-        BuildTarget(ctx,alloc,m_only,cur,_tNorm,_tOutput,KQ_pos);
+        BuildTarget(ctx,alloc,m_only,cur,_tNorm,KQ_pos);
     }
 
 };
@@ -1028,8 +1019,17 @@ struct LLM_MAMBA : public LLaMeta {
     }     
 
     hGensor build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<LLaMeta::lama_layer> layer,hGensor KQ_pos,int flag=0x0) override;
-    void BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,hGensor cur,hGensor _tNorm,hGensor _tOutput,hGensor KQ_pos, int flag=0x0) override; 
+    void BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,hGensor cur,hGensor _tNorm,hGensor KQ_pos, int flag=0x0) override; 
 
+};
+
+struct GPT2 : public LLaMeta { 
+};
+
+struct TinyLama : public LLaMeta { 
+};
+
+struct StableLM : public LLaMeta { 
 };
 
 struct LLM_MOE : public LLaMeta { 
@@ -1052,8 +1052,7 @@ struct LLM_MOE : public LLaMeta {
     }     
 
     hGensor build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<LLaMeta::lama_layer> layer,hGensor KQ_pos,int flag=0x0) override;
-    // void BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,hGensor cur,hGensor _tNorm,hGensor _tOutput,hGensor KQ_pos, int flag=0x0) override; 
-    // hGensor build_gate(struct ggml_context * ctx,hGensor cur,hGensor cur_logits, int flag )    override;
+        // hGensor build_gate(struct ggml_context * ctx,hGensor cur,hGensor cur_logits, int flag )    override;
 };
 
 

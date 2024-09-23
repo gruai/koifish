@@ -234,9 +234,15 @@ hGensor LLaMeta::build_gate(struct ggml_context * ctx,hGensor cur,hGensor curlog
     hGensor ouput = mom.Forward(ctx,curlogits,wA);     //ggml_mul(ctx,tA,wA);
     for(auto wiki : wikis){
         i++;  
-        // hGensor tB = ggml_reshape_2d(ctx,wiki->exLogits,n_vocab,n_ctx*n_batch);
+        hGensor tB = wiki->exLogits;
+        float *logistB = (float*)(tB->data);
+        if(wiki->t2t!=nullptr){
+            tB = ggml_mul_mat(ctx, wiki->t2t, tB);     
+        }else {
+            // tB = ggml_soft_max(ctx,tB);  maybe bad choice
+        }
         hGensor wB = ggml_view_2d(ctx, probs, 1, n_ctx*n_batch,ld1, offset*i);  //ne0,ne1,nb1,offset
-        hGensor expert = mom.Forward(ctx,wiki->exLogits,wB);          
+        hGensor expert = mom.Forward(ctx,tB,wB);          
         // wB = _repeat(ctx,wB,expert);
         ouput = ggml_add(ctx,ouput,expert);       //ggml_mul(ctx,expert,wB)
     }

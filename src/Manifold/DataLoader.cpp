@@ -68,17 +68,22 @@ void SampLoader::Samp2Batch(int k,hSAMP samp,hGensor tokens_input,hGensor target
             }
         }*/
         // note: no else-if here
-        if (starting >= tokens.size()) {
+        if (starting >= nTokens()) {
             starting = 0;
         }
-        assert(starting<tokens.size());
-        token = clamp(tokens[starting], 0, (TOKEN_ID) (n_vocab - 1));
+        assert(starting<nTokens());
+        token = TokenAt(starting); //clamp(tokens[starting], 0, (TOKEN_ID) (n_vocab - 1));
         if(isDialect){
             assert(dialect[token]>0);
             token = hDict->mapT2T[token];
         }
-        ++starting;        
-        ggml_set_f32_nd(target_probs,  token, (int) i, (int) k, 0, +1.0f);
+        ++starting;   
+        if(isTarget_1)     
+            ggml_set_f32_nd(target_probs,  0, (int) i, (int) k, 0, token);            
+        else{
+            ggml_set_f32_nd(target_probs,  token, (int) i, (int) k, 0, +1.0f);
+        }           
+
         tok_ids.push_back(token);
         
         if (i+1<n_ctx) {
@@ -97,7 +102,7 @@ int64_t SampLoader::update_batch(int sample_id,Fish* fish){
     struct ggml_tensor   * target_probs=hOPT->hTargetProbs();
     int64_t samples_count = N4Train();
     // const TOKEN_ID    * train_data=tokens.data();
-    size_t  k,n_train_data=tokens.size();
+    size_t  k,n_train_data = nTokens(); // tokens.size();
     sample_separation_eos=!params->separate_with_eos;
     sample_separation_bos=!params->separate_with_bos;
     double t_Samp = 0,nrm=0,a;
@@ -118,7 +123,7 @@ int64_t SampLoader::update_batch(int sample_id,Fish* fish){
     std::string sBos = llama_token_to_piece(lctx, bos),sEos = llama_token_to_piece(lctx, eos);
     bool isLog = false;
     if(isLog) _INFO("BATCH_%ld ",sample_id);   //, samples_count,n_train_data);nSampe=(%ld/%ld)
-    assert(target_probs->type == GGML_TYPE_F32);
+    // assert(target_probs->type == GGML_TYPE_F32);
     hSAMP samp = nullptr;
     /*hGensor exLogits=nullptr;
     if(fish->hasWiki() && fish->exLogits!=nullptr) {
@@ -139,7 +144,7 @@ int64_t SampLoader::update_batch(int sample_id,Fish* fish){
         }else{            
             ++used_samples;   
         }
-        if(GST_TOC(tic)>10){
+        if(GST_TOC(tic)>10){        //for long-time data-update
             _INFO("\r[%s] k=%d(%d) T=%.3g ...",__func__,k,nSampInBatch,GST_TOC(tic));   
             tic = Clock::now( );
         }
@@ -215,6 +220,40 @@ bool SAMP::Serialize(FSerial&S, bool isSave, int flag){
     return true;
 }
 
+bool DataTokenSet::Serialize(const std::string&path,  bool isSave, int flag){
+try{
+    FSerial S(path,isSave,flag);
+    if(!S.isValid())
+        return false;
+    
+    _INFO("%s %s@%s...",__func__,isSave?"save@":"load@",path.c_str());
+    _CHECK( S.Serial(nVocab,isSave,flag) );
+    _CHECK( S.Serial(nUnique,isSave,flag) );
+    _CHECK( S.Serial(fsize,isSave,flag) );
+    _CHECK( S.Serial(nDialect,isSave,flag) );
+    _CHECK( S.Serial(tokens,isSave,flag) );
+    if(nDialect>0){
+        _CHECK( S.Serial(dialect,isSave,flag) );
+        _CHECK( S.Serial(mapT2T,isSave,flag) );
+    }
+    if(isSave){
+
+    }else{
+        if(tokens.size()==0)    return false;
+        for(auto token:tokens){
+            if(token<0 || token>=nVocab){
+                return false;
+            }
+        }
+    }
+    
+    
+    
+    return true;
+}catch(...){
+    return false;
+}
+}
 
 bool SampLoader::Serialize(const std::string&path, bool isSave, int flag){
 try{
@@ -224,7 +263,7 @@ try{
     
     _INFO("%s %s@%s...",__func__,isSave?"save@":"load@",path.c_str());
     _CHECK( S.Serial(n_vocab,isSave,flag) );
-    _CHECK( S.Serial(tokens,isSave,flag) );
+    // _CHECK( S.Serial(tokens,isSave,flag) );
     _CHECK( S.Serial(n_unique_tokens,isSave,flag) );
     _CHECK( S.Serial(shuffle_samples_hash,isSave,flag) );
     _CHECK( S.Serial(hOPT->train_params.seed,isSave,flag) );
@@ -240,12 +279,12 @@ try{
     _CHECK(bRet);
     if(all_samps.size()==0)
         return false;
-
+    size_t nT = nTokens();
     _INFO("\r%s %s@\"%s\" ... OK. \r\n\tnSamp=%ld @[Datasets(nToken=%ld unique=%lld  hash=%llX]\n",__func__,isSave?"save":"load",path.c_str(),
-        all_samps.size(),tokens.size(),n_unique_tokens,shuffle_samples_hash);
+        all_samps.size(),nT,n_unique_tokens,shuffle_samples_hash);
     for(auto id : idcs){
-        if(id>=tokens.size()){
-            _INFO("\t\tInvalid id(%ld) > nTokens=%d\n", id,tokens.size());  
+        if(id>=nT){
+            _INFO("\t\tInvalid id(%ld) > nTokens=%d\n", id,nT);  
             return false;
         }
     }
@@ -275,6 +314,11 @@ try{
 }
 }
 
+void SampLoader::Init(CLI_params& hparams,int flag) {
+    isTarget_1 = hparams.is( {"model","target"},string("OneHot") );
+
+}
+
 /*
     @@@tokenize_file:
         samples_begin.push_back(0);
@@ -285,13 +329,14 @@ try{
             samples_size.push_back(context_length);
         }
 */
-void SampLoader::SetSamples(int nV,std::vector<TOKEN_ID>& tokens_,std::vector<size_t>& samp_0,std::vector<size_t>& samp_L,
+void SampLoader::SetSamples(int nV,hDataToken hDT,std::vector<size_t>& samp_0,std::vector<size_t>& samp_L,
     bool isTrain,CLI_params& hparams,int flag)  {
     batch_sample = hparams.batch_sample;
+    
 
     double rSplit = 1.0-hparams.rSplit;
     n_vocab = nV;    //hparams.n_vocab;
-    tokens = tokens_;
+    tokens = hDT;
     size_t nSample = samp_0.size(),pick=(size_t)(nSample*rSplit),i;
     //    assert(samp_begin.size() == samp_size.size());   
     if(isTrain){
@@ -318,7 +363,7 @@ void SampLoader::SetSamples(int nV,std::vector<TOKEN_ID>& tokens_,std::vector<si
     nSample = all_samps.size();
     num_batches = nSample/hparams.common.n_batch;
     num_batches = nSample==0 ? 0 : max(num_batches,1);
-    _INFO("%s@[%s]: tokens=%zu nSamp=%d nBach=%d\n", __func__,isTrain?"train":"eval", tokens.size(),all_samps.size(),num_batches); 
+    _INFO("%s@[%s]: tokens=%zu nSamp=%d nBach=%d\n", __func__,isTrain?"train":"eval", nTokens(),all_samps.size(),num_batches); 
 }
 
 
@@ -423,66 +468,97 @@ static size_t mark_utf8_units(const char* bytes, int * utf8_units, int * utf8_nu
 
 bool DataTokenSet::Load(struct CLI_params& hparams,void *hLLM,int flag){
     GST_TIC(tic);
-    fpath = hparams.fp_train_data.c_str();
-    assert( std::filesystem::exists(fpath) );
-    llama_model *lam_ = static_cast<llama_model *>(hLLM);
-    assert(lam_!=nullptr);
-    tokens.clear();
-    FILE *fp = std::fopen(fpath.c_str(), "rb");
-    if (fp == NULL) {
-        _INFO("%s: warning: empty or not existing training data file '%s'\n", __func__, fpath.c_str());
-        return false;
-    } else {
-        seek(fp, 0, SEEK_END);
-        fsize = tell(fp);
-        seek(fp, 0, SEEK_SET);
-    }   
-    _INFO("[Load&Token]: @'%s' fsize=%.3g(M) ... ", fpath.c_str(),fsize/1.0e6);
-    const int n_max_tokens_overhead = 1;    
-    std::vector<char> buf;
-    buf.resize(fsize);
-    errno = 0;
-    std::size_t ret = std::fread(buf.data(), fsize, 1, fp);
-    if (ferror(fp)) {
-        die_fmt("read error: %s", strerror(errno));
-    }
-    if (ret != 1) {
-        die("unexpectedly reached end of file");
-    }
-
-    std::vector<int> utf8_units;
-    std::vector<int> utf8_nunits;
-    utf8_units.resize(buf.size());
-    utf8_nunits.resize(buf.size());
-    mark_utf8_units(buf.data(), utf8_units.data(), utf8_nunits.data(), buf.size());
-    // tokenize all data at once
-    tokens.resize(buf.size() + n_max_tokens_overhead);
-    int n_tokens = llama_tokenize( lam_, buf.data(),(int) buf.size(),tokens.data(),(int) tokens.size(),false, false);
-    assert(n_tokens>0);
-    
-    if (n_tokens < 0) { //???
-        tokens.resize(-n_tokens);
-        n_tokens = llama_tokenize( lam_,buf.data(),(int) buf.size(),
-        tokens.data(),(int) tokens.size(),false, false);
-    }
-    if (n_tokens >= 0) {
-        tokens.resize(n_tokens);
+    string ssf = hparams.serial_path+".tokens";     
+    if( Serialize(ssf,false) ){
+        
+    }else{
+        fpath = hparams.fp_train_data.c_str();
+        assert( std::filesystem::exists(fpath) );
+        llama_model *lam_ = static_cast<llama_model *>(hLLM);
+        assert(lam_!=nullptr);
+        tokens.clear();
+        FILE *fp = std::fopen(fpath.c_str(), "rb");
+        if (fp == NULL) {
+            _INFO("%s: warning: empty or not existing training data file '%s'\n", __func__, fpath.c_str());
+            return false;
+        } else {
+            seek(fp, 0, SEEK_END);
+            fsize = tell(fp);
+            seek(fp, 0, SEEK_SET);
+        }   
+        _INFO("[Load&Token]: @'%s' fsize=%.3g(M) ... ", fpath.c_str(),fsize/1.0e6);
+        const int n_max_tokens_overhead = 1;    
+        if(fsize+n_max_tokens_overhead*2>=INT_MAX){
+            _INFO("\n%s reduce fsize from %ld=>%ld\n",__func__,fsize,INT_MAX-n_max_tokens_overhead*2);
+            fsize = INT_MAX-n_max_tokens_overhead*2;            
+        }
+        char *buf=new char[fsize];        //buf.resize(fsize);
+        errno = 0;
+        std::size_t ret = std::fread(buf, fsize, 1, fp);
+        if (ferror(fp)) {
+            die_fmt("read error: %s", strerror(errno));
+        }
+        if (ret != 1) {
+            die("unexpectedly reached end of file");
+        }
+        size_t count_utf8 = 0;
+        if(0)   {
+            std::vector<int> utf8_units,utf8_nunits;
+            utf8_units.resize(fsize);            utf8_nunits.resize(fsize);
+            count_utf8 = mark_utf8_units(buf, utf8_units.data(), utf8_nunits.data(), fsize);
+        }
+        /*
+        tokens.resize(fsize + n_max_tokens_overhead);        
+        if (tokens.size()>=INT_MAX) {
+            _ERROR("Too many tokens=%ld\n",tokens.size());
+        }
+        assert(tokens.size()<INT_MAX);
+        _INFO("\r[Load&Token]: @'%s' fsize=%.3g(M) ......",fpath.c_str(),fsize/1.0e6);*/
+        std::vector<TOKEN_ID> btch;
+        size_t cur=0,step=10*1024*1024,len;
+        btch.resize(step);
+        while(cur<fsize){     
+            GST_TIC(t0);
+            len = min(step,fsize-cur);  
+            int n_tokens = llama_tokenize( lam_, buf+cur,len,btch.data(),(int) btch.size(),false, false);
+            assert(n_tokens>0);
+            if (n_tokens<=0) {
+                 _INFO("Invalid n_tokens=%d @%ld!!!\n",n_tokens,cur);                
+            }
+            
+            _INFO("\r\t tokenize %.3g%%\t[%ld:%ld]\tT=%.3g(s) ......",cur*100.0/fsize,cur,tokens.size(),GST_TOC(t0));
+            tokens.insert(tokens.begin(),btch.begin(),btch.begin()+n_tokens);
+            cur += len;
+        }
+        delete[] buf;
+        /*if (n_tokens < 0) { //???
+            tokens.resize(-n_tokens);
+            n_tokens = llama_tokenize( lam_,buf.data(),(int) buf.size(),tokens.data(),(int) tokens.size(),false, false);
+        }
+        if (n_tokens >= 0) {
+            tokens.resize(n_tokens);
+            
+        }*/
         UniqueTokens(-1);
+        Serialize(ssf,true);
     }
+    nTokens = tokens.size();
+    _INFO("\r[Load&Token]: @'%s' fsize=%.3g(M) nTokens=%.3g(M) nUnique=%ld T=%.3g(s)\t\t\t\n", 
+        ssf.c_str(),fsize/1.0e6,nTokens/1.0e6,nUnique,GST_TOC(tic));
     
-    _INFO("\r[Load&Token]: @'%s' fsize=%.3g(M) nTokens=%.3g(M) nUnique=%ld T=%.3g(s)\n", 
-        fpath.c_str(),fsize/1.0e6,n_tokens/1.0e6,nUnique,GST_TOC(tic));
-
     return true;
 }
 
 bool DataTokenSet::InitSamps(unsigned context_length,std::vector<size_t>& samples_begin,std::vector<size_t>&samples_size,int flag){
     samples_begin.clear();      samples_size.clear();
     samples_begin.push_back(0);
-    size_t nToken = tokens.size(),nFirst=std::min((size_t) context_length, nToken);
+    size_t nToken = tokens.size(),nFirst=std::min((size_t) context_length, nToken),step=1;
     samples_size.push_back(nFirst);
     size_t end = (nToken >= context_length) ? (nToken - context_length) : 0;
-    for (size_t sample_begin = 1; sample_begin < end; ++sample_begin) {
+    if(end>10*1024*1024){
+        step = context_length;
+    }
+    for (size_t sample_begin = 1; sample_begin < end; sample_begin+=step) {
         samples_begin.push_back(sample_begin);
         samples_size.push_back(context_length);
     }

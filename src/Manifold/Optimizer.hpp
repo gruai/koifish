@@ -53,9 +53,22 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
 	Optimizer& operator=(const Optimizer&);
 
 protected:    
-    LossCurve lcTrain,lcEval;
+    std::string title = "Optimizer";
 
-    int first_epoch=0,iter_at_last_epoch=-1,first_iter=-1;
+    LossCurve lcTrain,lcEval;
+    struct ggml_context * ctx=nullptr;
+    size_t nParams = 0;
+    bool just_initialized = false,isAdaptiveSched = true;
+    int past=0,n_gradient_accumulation=0;
+    float gclip = 1.0;            // gradient clipping
+    float sched = 1.0f; // schedule multiplier (fixed, decay or warmup)
+
+    hGensor grad=nullptr;  // current gradient
+    vector<float> fx_best;
+    vector<float> fx_prev;
+    int n_no_improvement=0;
+    float loss_before=0,loss_after=0;
+    int first_epoch=0,iter_at_last_epoch=-1,first_iter=-1,iter=-1;
     int64_t                      last_time;
     double                       millis_per_iter;
 
@@ -75,12 +88,15 @@ protected:
     hGensor tokens_input = nullptr; 
     hScheduler scheduler = std::make_shared<DiscreteSchedule>( );
     bool isStopImprove = false;
-    struct ggml_tensor * opt_ps[GGML_MAX_PARAMS]; // these will store the parameters we want to optimize    
+    // struct ggml_tensor * opt_ps[GGML_MAX_PARAMS]; // these will store the parameters we want to optimize    
+    std::vector<hGensor> opt_ps;
     virtual void Clear()    {}   
 
     virtual bool one_step(struct train_state *train,SampLoader&loader, int accum_step, float *sched, int flag = 0x0);
-    virtual void AdamW(int nx,int np,CLI_params& hparams,int flag);
-    bool GradAccumulation(float&fx,int np,struct train_opt_callback_data *callback_data,struct ggml_cplan *cplan,int flag=0x0);
+    virtual float gClip(int nx,CLI_params& hparams,int flag=0x0);
+    virtual void UpdateParams(float gnorm,int nx,CLI_params& hparams,int flag);
+    // virtual void AdamMiniV(float gnorm,int nx,CLI_params& hparams,int flag);
+    virtual bool GradAccumulation(float&fx,struct train_opt_callback_data *callback_data,struct ggml_cplan *cplan,int flag=0x0) {   assert(0);  return false; }
     bool OnLogits(int flag=0x0);
 public:
     // typedef bool (*_CALL_BACK_)(void * data, int accum_step, float * sched);    
@@ -93,7 +109,7 @@ public:
     // std::vector<size_t> train_shuffled_samples_size;
 
     struct train_state      * train = init_train_state();
-    struct ggml_opt_context * opt = train->opt; 
+    //  struct ggml_opt_context * opt = train->opt; 
     struct train_params_common train_params;
 
     Optimizer(Fish *g_,struct train_params_common& params_,int flag=0x0);
@@ -101,12 +117,12 @@ public:
     virtual float Compute(std::vector<llama_token>&tokens,bool isForward,int flag=0x0);
     virtual float Evaluate(SampLoader&loader,int iter,int flag=0x0);
 
-    virtual void UpdateLoss(int step,float sched,float loss,int flag=0x0){
+    virtual void UpdateLoss(int step,float loss,int flag=0x0){
         if(step>1){
             float last = scheduler->Last();
             isStopImprove = step>0 ? (loss>last*1.1) : false;   
             if(isStopImprove){
-                _INFO("%s_%d: StopImprove\n", __func__, opt->iter);
+                _INFO("%s_%d: StopImprove\n", __func__, iter);
             }            
         }
 
@@ -119,8 +135,8 @@ public:
 
     virtual void Dump(int typ){
         const char*title = "OPT";   //__func__
-        _INFO("%s: mem_size  = %zu bytes (%.1f MB)\n", title, ggml_get_mem_size(opt->ctx), (float) ggml_get_mem_size(opt->ctx) / (1024.0f*1024.0f));
-        _INFO("%s: iter = %d\n", title, opt->iter);
+        _INFO("%s: mem_size  = %zu bytes (%.1f MB)\n", title, ggml_get_mem_size(ctx), (float) ggml_get_mem_size(ctx) / (1024.0f*1024.0f));
+        _INFO("%s: iter = %d\n", title, iter);
         
         if(typ==1){
             _INFO("%s: total train_iterations=%llu train_samples=%llu train_tokens=%llu completed_epochs=%llu\n", title, 
@@ -141,31 +157,12 @@ public:
         assert(0);
     }    
 
-    virtual void InitOpt(struct train_params_common& params_,int flag=0x0)  {
-        opt->iter = train->train_its;
+    virtual void Init(size_t nx,int flag=0x0);
 
-        opt->params = ggml_opt_default_params(GGML_OPT_TYPE_ADAM);
-        opt->params.print_forward_graph     = false;
-        opt->params.print_backward_graph    = false;
-        opt->params.graph_size              = LLAMA_TRAIN_MAX_NODES;
-        opt->params.n_threads               = train_params.n_threads;
-        opt->params.past                    = train_params.opt_past;
-        opt->params.delta                   = train_params.opt_delta;
-        opt->params.max_no_improvement      = train_params.opt_max_no_improvement;
-        opt->params.n_gradient_accumulation = train_params.n_gradient_accumulation;
-        opt->params.adam.n_iter             = train_params.adam_n_iter;
-        opt->params.adam.sched              = 1.0f;
-        opt->params.adam.alpha              = train_params.adam_alpha;
-        opt->params.adam.decay              = train_params.adam_decay;
-        opt->params.adam.decay_min_ndim     = train_params.adam_decay_min_ndim;
-        opt->params.adam.beta1              = train_params.adam_beta1;
-        opt->params.adam.beta2              = train_params.adam_beta2;
-        opt->params.adam.gclip              = train_params.adam_gclip;
-        opt->params.adam.eps_f              = train_params.adam_eps_f;
-    }
+    virtual void InitOpt(struct train_params_common& params_,int flag=0x0);
     
     virtual ~Optimizer( ) {
-        ggml_free(opt->ctx);
+        ggml_free(ctx);
         free_train_state(train);
     }
 
@@ -178,3 +175,38 @@ public:
 
 };
 typedef shared_ptr<Optimizer> hOptimizer;
+
+class OPT_Adam : public Optimizer  {
+protected:    
+    float decay = 0.0f; // weight decay for AdamW, use 0.0f to disable
+    float p_decay = 0;
+    int   decay_min_ndim = 2; // minimum number of tensor dimension to apply weight decay
+    float alpha = 0.001f; // learning rate
+    float beta1 = 0.9f,beta2 = 0.999f;
+    float beta1h,beta2h;
+    float eps = 1e-8f;   // epsilon for numerical stability
+    float eps_f = 1e-5f; // epsilon for convergence test
+    float eps_g = 1e-3f; // epsilon for convergence test
+    
+    hGensor gm;  // first moment
+    hGensor gv;  // second moment
+    hGensor gpf; // past function values
+
+    void Init(size_t nx,int flag=0x0)   override;
+    bool GradAccumulation(float&fx,struct train_opt_callback_data *callback_data,struct ggml_cplan *cplan,int flag=0x0) override;
+    virtual void UpdateTensorParam(hGensor hP,float *m,float *v,float *g,float gnorm);
+    void UpdateParams(float gnorm,int nx,CLI_params& hparams,int flag)  override;
+public:
+    OPT_Adam(Fish *g_,struct train_params_common& params_,int flag=0x0);
+    void Dump(int typ)  override;
+};
+
+class OPT_AdamMiniV: public OPT_Adam  {
+protected:    
+    void UpdateTensorParam(hGensor hP,float *m,float *v,float *g,float gnorm) override;
+public:
+    OPT_AdamMiniV(Fish *g_,struct train_params_common& params_,int flag=0x0) :
+        OPT_Adam(g_,params_,flag) {
+        title = "OPT_AdamMiniV";
+    };
+};

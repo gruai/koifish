@@ -135,12 +135,13 @@ public:
 };
 
 class LLaMeta;
+class SampLoader;
 class DataTokenSet    {
 protected:
     std::map<TOKEN_ID, TOKEN_ID> mapT2T;
     std::vector<TOKEN_ID> dialect;
     std::string fpath;
-    size_t fsize=0,nUnique=0,nVocab=0;
+    size_t fsize=0,nUnique=0,nVocab=0,nDialect=0,nTokens;
     size_t tell(FILE *fp) const {
 #ifdef _WIN32
         __int64 ret = _ftelli64(fp);
@@ -159,18 +160,27 @@ protected:
 #endif
         GGML_ASSERT(ret == 0); // same
     }
-    int UniqueTokens(const std::vector<TOKEN_ID>& tokens,size_t n_1,int flag=0x0);
+    // int UniqueTokens(const std::vector<TOKEN_ID>& tokens,size_t n_1,int flag=0x0);
 public:
     std::vector<TOKEN_ID> tokens;
     DataTokenSet(size_t nV) : nVocab(nV)    {
 
     }
+
+    TOKEN_ID At(size_t pos){
+        assert(pos<nTokens);
+        int32_t token = clamp(tokens[pos], 0, (nVocab - 1));
+        return token;
+    }
+
+    bool Serialize(const std::string&path,  bool isSave, int flag=0x0);
     
     virtual bool Load(struct CLI_params& hparams,void *hLLM,int flag=0x0);
     int UniqueTokens(size_t n_1,int flag=0x0);
     bool InitSamps(unsigned context_length,std::vector<size_t>& samples_begin,std::vector<size_t>&samples_size,int flag=0x0);
 
 friend class LLaMeta;
+friend class SampLoader;
 };
 typedef std::shared_ptr<DataTokenSet> hDataToken;
 
@@ -180,6 +190,7 @@ struct SAMP{
     size_t off_cycle=0;         // more random
     int jump = -1;   
     std::string desc;
+    
 
     SAMP()  {}
     SAMP(size_t p,size_t l) : pos(p),len(l) {
@@ -202,7 +213,7 @@ struct SAMP{
         }
         return h;
     }
-};
+}; 
 // typedef std::shared_ptr<SAMP> hSAMP;
 typedef SAMP* hSAMP;
 
@@ -221,9 +232,13 @@ protected:
         return idcs.size();
     }   
     std::shared_ptr<ConsiceDict> hDict=nullptr;
+    bool isTarget_1 = false;
 public:
     int64_t len() {
         return all_samps.size();
+    }
+    size_t nTokens()    {
+        return tokens->nTokens;
     }
     hSAMP SampAt(size_t idx_){
         assert(idx_<idcs.size());
@@ -233,10 +248,11 @@ public:
     }
 
     int32_t TokenAt(size_t pos){
-        size_t nToken = tokens.size();
+        return tokens->At(pos);
+        /*size_t nToken = tokens.size();
         assert(pos<nToken);
         int32_t token = clamp(tokens[pos], 0, (n_vocab - 1));
-        return token;
+        return token;*/
     }
     void Samp2Batch(int k,hSAMP samp,struct ggml_tensor *tokens_input,struct ggml_tensor *target_probs,struct train_params_common& params,int flag=0x0);
 
@@ -254,14 +270,12 @@ public:
     int num_batches;    //number of batchs in each epoch
 
     train_state *train=nullptr;
-    std::vector<TOKEN_ID> tokens;
+    //token source
+    hDataToken tokens = nullptr;      
+    // std::vector<TOKEN_ID> tokens;
     size_t n_unique_tokens=0;
 
     size_t shuffle_samples_hash = 0x0;
-    // std::vector<size_t> samp_begin,samp_size;
-    // std::vector<size_t> shuffled_samples_offs;
-    // std::vector<size_t> shuffled_samples_begin;
-    // std::vector<size_t> shuffled_samples_size;
     
 
     // variables related to distributed training
@@ -295,6 +309,7 @@ public:
     int64_t file_size_bytes;
 
     SampLoader( )   {}
+    virtual void Init(CLI_params& hparams,int flag=0x0 ) ;
 
     virtual ~SampLoader( ) {
         free(buffer);
@@ -483,7 +498,7 @@ public:
 #ifdef _DATA_LOADER_LITE_
 #else
     virtual bool Serialize(const std::string&path, bool isSave, int flag=0x0);
-    virtual void SetSamples(int nV,std::vector<TOKEN_ID>& tokens_,std::vector<size_t>& begin_,std::vector<size_t>& size_,
+    virtual void SetSamples(int nV,hDataToken hDT,std::vector<size_t>& begin_,std::vector<size_t>& size_,
         bool isTrain,CLI_params& train_params,int flag=0x0);
     void Shuffle(int flag=0x0);
 #endif
