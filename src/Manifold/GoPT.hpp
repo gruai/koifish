@@ -29,8 +29,6 @@ class Fish;
      always for language model
 */
 struct WIKI {
-    
-
     enum INDUCT_MODE{
                         //  "off"-no wiki
         _OFF,           //  ""-no INDUCT
@@ -44,7 +42,8 @@ struct WIKI {
     int32_t bos,eos;   
     INDUCT_MODE teach=_LOGITS;
     bool isOnlyTokenizer = false;
-    size_t n_vocab = 0, nOutToken = -1;
+    size_t n_vocab = 0, nOutToken = -1,nEleGGUF = 0;
+    std::vector<std::pair<std::string, struct ggml_tensor *>> tmaps;
 
     std::map<TOKEN_ID, TOKEN_ID> mapT2T;
     std::vector<TOKEN_ID> dialect;
@@ -78,6 +77,11 @@ struct WIKI {
 
     WIKI();
     virtual ~WIKI() {}
+
+    virtual void CopyParams(CLI_params& params,int flag=0x0)     {   assert(0); return;      };
+    virtual bool CopyGensors(Fish *hFish,int flag=0x0);
+
+    static std::vector<shared_ptr<WIKI>> MakeInstance(const std::string nam_,struct CLI_params& params,int flag);
 };
 typedef shared_ptr<WIKI> hWIKI;
 typedef std::vector<hWIKI> arrHWIKI;
@@ -341,5 +345,6 @@ public:
 };
 
 int GPT_work(CLI_params& params);
-int GPT_fish(CLI_params& hparams);
+int fish_1(CLI_params& hparams);
 int GGUF_list(CLI_params& hparams);
+int Fish_bubble(CLI_params& hparams);

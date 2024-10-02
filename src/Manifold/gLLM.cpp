@@ -12,122 +12,7 @@
 
 static const char * LLM_KV_TRAINING_TYPE_TRAIN_MODEL     = "train_model";
 static const char * LLM_KV_TRAINING_TYPE                 = "training.type";
-static const char * vendor = "gruai";     //llm_arch_from_string
 
-// Fish* Fish::Copy(const Fish* src,int flag) { 
-//     return nullptr;
-// }
-
-hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,int flag)   {
-    hFISH fish = nullptr;
-    switch(params.arch){
-    case MODEL_ARCH::NLP_MAMBA:
-        fish = std::make_shared<LLM_MAMBA>(nam_+"_mamba",params);
-        break;
-    case MODEL_ARCH::NLP_MOE:
-        fish = std::make_shared<LLM_MOE>(nam_+"_moe",params);
-        break;
-    default:
-        switch(params.nabla){
-        case 1:
-            fish = std::make_shared<LLAMA_LORA>(nam_+"_lora",params);
-            break;
-        case 2:
-            // fish = std::make_shared<LLAMA_Brown>(nam_+"_brown",params);
-            fish = std::make_shared<LLaMeta>(nam_,params);
-            break;
-        case 3:
-            fish = std::make_shared<LLAMA_VAE>(nam_+"_vae",params);
-            break;    
-        default:
-            assert(0);
-        }     
-    }
-    
-    vector<hWIKI> wikis;
-    if(params.tpWiki!="off") {//wiki is so heavy(ugly) that only load one instance here!
-        for(auto path : params.fn_model_base){
-            hWIKI wiki = std::make_shared<LAMA>(params,path);
-            wikis.push_back(wiki);
-        }        
-    }       
-    assert(wikis.size()>=0);
-
-    fish->Init( wikis );    
-    fish->BuildGraph( );
-    if(!fish->InitCTX())
-        return nullptr;
-    if(!wikis.empty()){  //generate some sentence
-        CHILD_0909_WIKIS
-        // fish->gopt = GeneratOnPrompt::MakeInstance(params,wikis,fish.get(),flag);        
-    }
-   
-    return fish;
-}
-
-hFISH Fish::MakeSwarm(const std::string nam_,struct CLI_params& params,int flag)   {
-    int nSwarm = 2,i;
-    vector<shared_ptr<Fish>> swarm;
-    for(i=0; i<nSwarm;i++){
-        hFISH fish = Fish::MakeInstance("Fish_",params,0x0); 
-        swarm.push_back(fish);
-    }
-    hSALP salp = std::make_shared<LogicSalp>(nam_,params,swarm);
-    return salp;    
-}
-
-hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,const Fish *hSrc_,int flag)   {
-    hFISH fish = nullptr;
-    switch(params.nabla){
-    case 1:
-        fish = std::make_shared<LLAMA_LORA>(nam_+"_lora",params);
-        break;
-    case 2:
-        fish = std::make_shared<LLaMeta>(nam_,params);
-        break;
-    case 3:
-        fish = std::make_shared<LLAMA_VAE>(nam_+"_vae",params);
-        break;    
-    default:
-        assert(0);
-    }  
-    fish->isLocalInfer = flag==0x110;
-    fish->graph_order = hSrc_->graph_order;
-    //wiki is so heavy(ugly) that only one instance from hSrc!    
-    fish->Init( hSrc_->wikis );    
-    fish->BuildGraph( );
-    if(!fish->InitCTX())
-        return nullptr;
-    if(fish->isLocalInfer){  
-    }else{
-        fish->gopt = GeneratOnPrompt::MakeInstance(params,fish->wikis,fish.get(),flag);        
-    }
-    
-    return fish;
-}
-
-bool Fish::InitCTX(int flag) {
-    auto& train_params = hparams.common;
-    struct ggml_cgraph *cgraph = gb;
-    if(gb==nullptr){        //  OnlyInfer
-        cgraph = gf;
-    }
-    size_t max_work_size = ggml_graph_plan(cgraph, train_params.n_threads,nullptr).work_size + GGML_OBJECT_SIZE;
-    _INFO("%s: work_size = %zu bytes (%.1f MB)\n", __func__, max_work_size, (float) max_work_size / (1024.0f*1024.0f));
-
-    // context for work buffer
-    struct ggml_init_params ctx_work_params = {
-        max_work_size, // mem_size
-        NULL,          // mem_buffer    
-        false,         // no_alloc
-    };
-    ctx_work = ggml_init(ctx_work_params);
-    gb_plan = ggml_graph_plan(cgraph, train_params.n_threads,nullptr);
-    struct ggml_object * obj = ggml_new_object(ctx_work, GGML_OBJECT_TYPE_WORK_BUFFER, gb_plan.work_size);
-    gb_plan.work_data = (uint8_t *)ctx_work->mem_buffer + obj->offs;
-    gf_plan = gb_plan;      //  ???
-    return true;
-}
 
 //params!=src->params
 LLaMeta::LLaMeta(const std::string& nam_,const LLaMeta* src,struct CLI_params params,int flag) : Fish(nam_,params){    
@@ -155,28 +40,6 @@ LLaMeta::LLaMeta(const std::string& nam_,const LLaMeta* src,struct CLI_params pa
     // InitModel();
 }
 
-void Fish::SaveTrain(struct save_train_model * data, struct train_state * train) { 
-    int64_t iter = train->opt->iter;
-    _INFO("%s: iter_%ld\n", __func__, iter);
-    string sBaseName = get_train_filename(data->fn_model_out.c_str(), data->pattern_fn_it.c_str(), data->fn_latest.c_str(), -1  );
-    if (strlen(data->fn_checkpoint_out.c_str()) > 0) {
-        // save_checkpoint_file(get_train_filename(data->fn_checkpoint_out, data->pattern_fn_it, data->fn_latest, iter).c_str(), data->fn_model_base, data->model, train);
-        // save_checkpoint_file(get_train_filename(data->fn_checkpoint_out, data->pattern_fn_it, data->fn_latest, -1  ).c_str(), data->fn_model_base, data->model, train);
-    }
-    if (strlen(data->fn_model_out.c_str()) > 0) {
-        // save_llama_model_file(get_train_filename(data->fn_model_out, data->pattern_fn_it, data->fn_latest, iter).c_str(), data->fn_model_base, data->model);
-        vendor = "gruai";                 //llm_arch_from_string
-        string sOut = "g_" + sBaseName; 
-        save_gguf(sOut.c_str(),0x0);
-    }
-    if(1){  //only for debug
-        vendor = "llama";
-        string sOut = "l_" + sBaseName;     //hack        
-        save_gguf(sOut.c_str(),0x0);
-    }
-
-    return;
-}
 
 void _T_repr_(hGensor t,const char*tab,char *buf,int flag=0x0){
     if(t==nullptr)      return;
@@ -303,7 +166,7 @@ string LLaMeta::lama_layer::__repr__( string& suffix,string& prefix,int flag)   
         
     llm.init();
 */
-LLM_MAMBA::LLM_MAMBA( const std::string& nam_,struct CLI_params params,int flag) : LLaMeta(nam_,params,flag)  {
+LLM_MAMBA::LLM_MAMBA( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag) : LLaMeta(nam_,params,role,flag)  {
     assert(arch==MODEL_ARCH::NLP_MAMBA);
     bool worst_case = true;
     // n_kv = (worst_case ? kv_self.size : kv_self.n);
@@ -403,7 +266,7 @@ hGensor  LLaMeta::build_layer_( int N,struct ggml_context *ctx_compute,hGensor c
         }
         if(layer->eps!=nullptr){
             // hGensor  t300 = ffn!=nullptr ? ggml_rms_norm(ctx_compute, ffn, f_norm_rms_eps) : ggml_rms_norm(ctx_compute, t21, f_norm_rms_eps);
-            randomize_tensor_normal(layer->eps, rnd); 
+            randomize_tensor_normal(layer->eps, rnd);       set_name(layer->eps, "var_noise"); 
             hGensor  noise = ggml_scale_inplace(ctx_compute, layer->eps, 0.001);
             ffn = ggml_add          (ctx_compute, ffn,noise);     
         }else{
@@ -574,53 +437,141 @@ void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool 
     hGensor  t33   = ggml_mul               (ctx, t32, t31);                             set_name(t33, "t33");     
     assert_shape_2d(t33, n_embd, N*n_batch);
     //  _tOutput = UpdateGensor (hDict->output->name);     
-    hGensor t34 = hDict->Embed2Output(ctx,t33);
-    // hGensor  t34   = ggml_mul_mat           (ctx, _tOutput, t33);                          set_name(t34, "t34");     
-    assert_shape_2d(t34, n_vocab, N*n_batch);
-    hGensor  t35   = ggml_reshape_3d        (ctx, t34, n_vocab, N, n_batch);             set_name(t35, "t35");     
-    assert_shape_3d(t35, n_vocab, N, n_batch);
-    // no,no,no! 1) Softmax layers can be difficult to train since the gradients can vanish or explode  2) CrossEntropyLoss assumes logits on the input.
-    //  t35 = ggml_soft_max_inplace(ctx,t35); 
-    // preLogits = t35;
-    if(!isLocalInfer){
-        if(mom.embed2w!=nullptr)    {   
-            assert(teach==WIKI::_LOGITS_GATE);
-            t35 = build_gate(ctx,t33,t35,flag);
-        }   else {
-            for(auto wiki:wikis)    {   
-                if(wiki->t2t!=nullptr){
-                    hGensor tEX1 = ggml_mul_mat(ctx, wiki->t2t, wiki->exLogits);                          
-                    t35 = ggml_add(ctx,t35,tEX1);
-                }else if(wiki->exLogits!=nullptr){
-                    hGensor tEX1 = ggml_soft_max(ctx,wiki->exLogits);
-                    t35 = ggml_add(ctx,t35,tEX1);
+    if(role==ROLE_TYPE::SWARM_FOLLOWER){
+        out_node = t33 ;        return;
+    }else    {
+        if(role==ROLE_TYPE::SWARM_HEAD){
+            t33 = mos.Build(hparams,ctx,t33);
+        }
+        hGensor t34 = hDict->Embed2Output(ctx,t33);
+        // hGensor  t34   = ggml_mul_mat           (ctx, _tOutput, t33);                          set_name(t34, "t34");     
+        assert_shape_2d(t34, n_vocab, N*n_batch);
+        hGensor  t35   = ggml_reshape_3d        (ctx, t34, n_vocab, N, n_batch);             set_name(t35, "t35");     
+        assert_shape_3d(t35, n_vocab, N, n_batch);
+        // no,no,no! 1) Softmax layers can be difficult to train since the gradients can vanish or explode  2) CrossEntropyLoss assumes logits on the input.
+        //  t35 = ggml_soft_max_inplace(ctx,t35); 
+        // preLogits = t35;
+        if(!isLocalInfer){
+            if(mom.embed2w!=nullptr)    {   
+                assert(teach==WIKI::_LOGITS_GATE);
+                t35 = build_gate(ctx,t33,t35,flag);
+            }   else {
+                for(auto wiki:wikis)    {   
+                    if(wiki->t2t!=nullptr){
+                        hGensor tEX1 = ggml_mul_mat(ctx, wiki->t2t, wiki->exLogits);                          
+                        t35 = ggml_add(ctx,t35,tEX1);
+                    }else if(wiki->exLogits!=nullptr){
+                        hGensor tEX1 = ggml_soft_max(ctx,wiki->exLogits);
+                        t35 = ggml_add(ctx,t35,tEX1);
+                    }
+                    
+                    //  WIKI::_LOGITS_SCALE
+                    // t35 = ggml_relu(ctx,t35);       //converge very slow, so strange!
+                    // t35 = ggml_mul(ctx,t35,exLogits);        
                 }
-                
-                //  WIKI::_LOGITS_SCALE
-                // t35 = ggml_relu(ctx,t35);       //converge very slow, so strange!
-                // t35 = ggml_mul(ctx,t35,exLogits);        
-            }
-        }        
+            }        
+        }
+        hGensor  t36 = nullptr;    
+        if(hparams.is({"model","target"},string("OneHot")))
+            t36 = ggml_cross_entropy_loss_1(ctx, t35, target_probs);
+        else
+            t36 = ggml_cross_entropy_loss(ctx, t35, target_probs);               
+        set_name(t36, "t36");     assert_shape_1d(t36, 1);
+        out_node = t36;
+        if (train_params.use_checkpointing) {
+            checkpoints.push_back(t31);            checkpoints.push_back(t32);            checkpoints.push_back(t33);
+            checkpoints.push_back(t34);            checkpoints.push_back(t35);            checkpoints.push_back(t36);
+        }    
+        preLogits = t35;
+        loss = t36;
     }
-    hGensor  t36 = nullptr;    
-    if(hparams.is({"model","target"},string("OneHot")))
-        t36 = ggml_cross_entropy_loss_1(ctx, t35, target_probs);
-    else
-        t36 = ggml_cross_entropy_loss(ctx, t35, target_probs);               
-    set_name(t36, "t36");     assert_shape_1d(t36, 1);
 
     if(isTrain())
-        assert(t36->grad!=nullptr);
+        assert(out_node->grad!=nullptr);
     if(hDict->nLevel>0){
         n_embd = hparams.n_embd;
     }
-    if (train_params.use_checkpointing) {
-        checkpoints.push_back(t31);            checkpoints.push_back(t32);            checkpoints.push_back(t33);
-        checkpoints.push_back(t34);            checkpoints.push_back(t35);            checkpoints.push_back(t36);
+    
+    if(!CHILD_0925_GRAPH){
+        ggml_build_forward_expand(gf, out_node);
+
+        if (train_params.use_checkpointing) {
+            if(gb!=nullptr) 
+                ggml_build_backward_gradient_checkpointing(ctx, gf, gb, gb_tmp, checkpoints.data(), (int) checkpoints.size());
+        } else {
+            if(gb!=nullptr){
+                ggml_graph_cpy(gf, gb);
+                ggml_build_backward_expand(ctx, gf, gb, true);            
+            }
+        }
+
+        GGML_ASSERT(alloc != NULL);
+        if(isLocalInfer){  //gb=nullptr
+            GGML_ASSERT(alloc != NULL);
+            assert(gb==nullptr);
+            ggml_gallocr_alloc_graph(alloc, gf); 
+            int * data = (int *) KQ_pos->data;
+            for (int i = 0; i < N; ++i) {
+                data[i] = n_past + i;
+            }
+        } else { // gb!=nullptr
+            // make sure some tensors are not reallocated by inserting new temporary nodes depending on them
+            int n_leafs_before = gb->n_leafs;
+            int n_nodes_before = gb->n_nodes;
+            // output_ tensors
+            ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, preLogits, 1.0f));
+            ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, loss, 1.0f));
+            // input gradient
+            ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, out_node->grad, 1.0f));
+            GGML_ASSERT(out_node->grad->data == NULL && out_node->grad->view_src == NULL);
+            ggml_set_input(out_node->grad);
+            // KQ_pos
+            ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, KQ_pos, 1.0f));
+            // allocating checkpoints in one block to reduce memory fragmentation they will be freed in reverse order    
+
+            for (unsigned int i = 0; i < checkpoints.size(); ++i) {
+                if (checkpoints[i]->data == NULL && checkpoints[i]->view_src == NULL) {
+                    ggml_set_input(checkpoints[i]);
+                }
+            }
+            if (measure_only) {
+                ggml_gallocr_reserve(alloc, gb);
+            } else {
+                ggml_gallocr_alloc_graph(alloc, gb);    //367,8088
+                // set KQ_pos
+                {
+                    int * data = (int *) KQ_pos->data;
+                    for (int i = 0; i < N; ++i) {
+                        data[i] = n_past + i;
+                    }
+                }
+            }
+            // remove the additional nodes and leafs
+            for (int i = n_leafs_before; i < gb->n_leafs; ++i) {
+                gb->leafs[i] = NULL;
+            }
+            for (int i = n_nodes_before; i < gb->n_nodes; ++i) {
+                gb->nodes[i] = NULL;
+            }
+            gb->n_leafs = n_leafs_before;
+            gb->n_nodes = n_nodes_before;   
+        }
     }
+}
 
-    ggml_build_forward_expand(gf, t36);
+void LLaMeta::BuildComputeGraph(unsigned order,struct ggml_context * ctx,ggml_gallocr_t& alloc,int flag){
+    auto train_params = hparams.common;
+    train_params.use_checkpointing = false;     // CYS_0826
+    gf = ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true);
+    gf->order = (enum ggml_cgraph_eval_order) order;      
+    if(!isLocalInfer){
+        gb = ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true);
+        gb_tmp = train_params.use_checkpointing ? ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true) : NULL;
+    }  
 
+    ggml_build_forward_expand(gf, out_node);
+    
+    const int N = train_params.n_ctx, n_past = 0;
     if (train_params.use_checkpointing) {
         if(gb!=nullptr) 
             ggml_build_backward_gradient_checkpointing(ctx, gf, gb, gb_tmp, checkpoints.data(), (int) checkpoints.size());
@@ -632,10 +583,10 @@ void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool 
     }
 
     GGML_ASSERT(alloc != NULL);
-    if(isLocalInfer){  
+    if(isLocalInfer){  //gb=nullptr
         GGML_ASSERT(alloc != NULL);
         assert(gb==nullptr);
-        ggml_gallocr_alloc_graph(alloc, gf); 
+        ggml_gallocr_alloc_graph(alloc, gf);         
         int * data = (int *) KQ_pos->data;
         for (int i = 0; i < N; ++i) {
             data[i] = n_past + i;
@@ -645,12 +596,12 @@ void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool 
         int n_leafs_before = gb->n_leafs;
         int n_nodes_before = gb->n_nodes;
         // output_ tensors
-        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, t35, 1.0f));
-        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, t36, 1.0f));
+        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, preLogits, 1.0f));
+        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, loss, 1.0f));
         // input gradient
-        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, t36->grad, 1.0f));
-        GGML_ASSERT(t36->grad->data == NULL && t36->grad->view_src == NULL);
-        ggml_set_input(t36->grad);
+        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, out_node->grad, 1.0f));
+        GGML_ASSERT(out_node->grad->data == NULL && out_node->grad->view_src == NULL);
+        ggml_set_input(out_node->grad);
         // KQ_pos
         ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, KQ_pos, 1.0f));
         // allocating checkpoints in one block to reduce memory fragmentation they will be freed in reverse order    
@@ -663,14 +614,13 @@ void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool 
         if (measure_only) {
             ggml_gallocr_reserve(alloc, gb);
         } else {
-            ggml_gallocr_alloc_graph(alloc, gb);    //367,8088
-            // set KQ_pos
+            ggml_gallocr_alloc_graph(alloc, gb);    //367,8088       
             {
                 int * data = (int *) KQ_pos->data;
                 for (int i = 0; i < N; ++i) {
                     data[i] = n_past + i;
                 }
-            }
+            }     
         }
         // remove the additional nodes and leafs
         for (int i = n_leafs_before; i < gb->n_leafs; ++i) {
@@ -682,30 +632,7 @@ void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool 
         gb->n_leafs = n_leafs_before;
         gb->n_nodes = n_nodes_before;
     }
-    preLogits = t35;
-    // return t36;
-    loss = t36;
-
-            /*  ???
-    // make sure base model tensors data cannot be used in viewable operations
-    ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, base->tok_embeddings, 1.0f));
-    ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, base->norm, 1.0f));
-    ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, base->output, 1.0f));
-    for (int il = 0; il < n_layer; ++il) {
-        // struct my_llama_layer & layer = layers[il];
-        auto layer = dynamic_pointer_cast<lama_layer>(layers[il]);
-        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer->attention_norm, 1.0f));
-        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer->ffn_norm, 1.0f));
-        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer->wq, 1.0f));
-        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer->wk, 1.0f));
-        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer->wv, 1.0f));
-        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer->wo, 1.0f));
-        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer->ffn_gate, 1.0f));
-        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer->ffn_down, 1.0f));
-        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer->ffn_up, 1.0f));
-    }*/
 }
-
 
 
 struct ggml_cgraph * llama_build_graph(llama_context & lctx,const llama_batch & batch,bool   worst_case);
@@ -713,6 +640,17 @@ struct ggml_cgraph * llama_build_graph(llama_context & lctx,const llama_batch & 
 std::string LAMA::T2STR( int32_t tok,int flag )                    {   
     assert(_ctx!=nullptr);
     std::string str = llama_token_to_piece(_ctx, tok);
+    return str;  
+}
+
+std::string LLaMeta::T2STR( const std::vector<TOKEN_ID>& toks,int flag )                    { 
+    LAMA *lam = lama( );  
+    std::string str = "";
+    for(auto tok : toks){
+        std::string a = lam->T2STR(tok,flag);
+        str += a;
+    }
+    
     return str;  
 }
 
@@ -831,25 +769,27 @@ void LAMA::Answer(std::vector<TOKEN_ID>&embd_inp,int flag) {
 
 #include "llama-vocab.h"
 LAMA::LAMA(CLI_params& hparams,const std::string&path_)     {
+    // cparams.flash_attn = true;           //would affect accuracy
     model_path = path_;
-    llama_mparams.n_gpu_layers = hparams.common.n_gpu_layers;
-    llama_mparams.vocab_only = hparams.train=="scratch";     //need lmodel to tokenize training samples    
+    llama_model_params.n_gpu_layers = hparams.common.n_gpu_layers;
+    llama_model_params.vocab_only = hparams.train=="scratch";     //need lmodel to tokenize training samples    
     const char* fn_model = model_path.c_str();
     teach = hparams.tpWiki=="logits" ? _LOGITS : 
             hparams.tpWiki=="target" ? _TARGET : 
             hparams.tpWiki=="gate" ? _LOGITS_GATE : _OFF;
-    if(llama_mparams.vocab_only || hparams.wiki_actor=="OnlyTokenizer"){
-        isOnlyTokenizer = true;     llama_mparams.vocab_only = true;
+    if(llama_model_params.vocab_only || hparams.wiki_actor=="OnlyTokenizer"){
+        isOnlyTokenizer = true;     llama_model_params.vocab_only = true;
         _INFO("%s: OnlyTokenizer.\n", __func__ );
         assert(teach==WIKI::_OFF);
     }        
     _INFO("%s: model base = '%s' nEmbd=%d wiki=%s\n", __func__, fn_model,hparams.n_embd,hparams.tpWiki.c_str());
     title = remove_extension(base_name(model_path));  //hparams.fn_model_base.substr(hparams.fn_model_base.find_last_of("/\\") + 1);
-    lmodel = llama_load_model_from_file(fn_model, llama_mparams);  
+    lmodel = llama_load_model_from_file(fn_model, llama_model_params);  
         
     if(lmodel==nullptr)   {
         _INFO("\n%s: FAILED @'%s' !!! \n", __func__, fn_model);
     }  else{     
+        bool bRet = llama_get_params(lmodel,llama_params);
         n_vocab = llama_n_vocab(lmodel);
         // true or false?   If use logits distillation, must set it True!
         cparams.logits_all = true;
@@ -885,9 +825,90 @@ LAMA::LAMA(CLI_params& hparams,const std::string&path_)     {
         char keybuf[512]="\0";
             GGUF_GET_KEY(vctx, tokenizer_name, gguf_get_val_str, GGUF_TYPE_STRING, true, keybuf);
         gguf_free(vctx);*/
+        nEleGGUF = 0;
+        tmaps = llama_internal_get_tensor_map(_ctx);        
+        for(auto it : tmaps){
+            nEleGGUF += ggml_nelements(it.second);
+        }
     }
 }
 
+bool LLaMeta::InitDictTokenset(int flag)    {
+    hDict = std::make_shared<ConsiceDict>(this);
+    hDict->LoadVocab(lama()->model_path.c_str(),0x0);       //???
+    if(lama()!= nullptr)  {   
+        hDict->bos = lama()->bos;             hDict->eos = lama()->eos;  
+        
+            hTokenset = std::make_shared<DataTokenSet>(hDict->n_vocab);
+            if(!hTokenset->Load(hparams,lama()->lmodel,0x0)){
+                assert(0);
+                return false;
+            };
+            hDict->mapT2T = hTokenset->mapT2T;      hDict->dialect = hTokenset->dialect;
+            for(auto wiki : wikis){
+                wiki->mapT2T = hDict->mapT2T;       wiki->dialect = hDict->dialect;
+            }            
+        if(isTrain()){
+
+        }
+
+    }
+    // hDict->LoadVocab_v1(hparams.fn_model_base,hparams,*lmodel, 0x0);
+    return true;
+}
+
+bool WIKI::CopyGensors(Fish *hFish,int flag)    {    
+    int nT0 = tmaps.size(),nT1 = hFish->optParams.size(),nT2 = hFish->gensors.size();
+    if(nT1>0 && nT0!=nT1){
+        return false;
+    }
+    if(nT0>nT2){
+        return false;
+    }
+    for(auto it : tmaps){
+        auto nam = it.first;
+        hGensor src=it.second,dst = hFish->GetGensor(nam.c_str());
+        if(dst==nullptr)
+            return false;
+        if(!ggml_are_same_shape(src,dst))
+            return false;
+        if(src->type==dst->type){
+
+        }else if(dst->type==GGML_TYPE_F32)  {
+            assert(ggml_is_quantized(src->type));
+            Gensor2float_(src,(float*)(dst->data),flag);            
+        }else{
+            assert(0);
+        }        
+    }
+    return true;
+}
+
+void LAMA::CopyParams(CLI_params& hparams,int flag)    {
+    /*auto tmaps = llama_internal_get_tensor_map(_ctx);
+        assert(gensors.size()==0);
+        for(auto it : tmaps){
+            Gensor2Map(it.second);
+            // tensors[it.first] = it.second;
+            nEleGGUF += ggml_nelements(it.second);
+        }*/
+
+    hparams.n_layer = llama_params.n_layer;
+    hparams.n_embd = llama_params.n_embd;  
+    // hparams.n_ctx = llama_params.n_ctx;     
+    hparams.n_ff = llama_params.n_ff();  
+    
+    hparams.n_head = llama_params.n_head();
+    hparams.n_head_kv = llama_params.n_head_kv();    
+    // hparams.n_vocab = llama_params.n_vocab;
+    hparams.rope_type = llama_params.rope_type;
+
+    hparams.f_norm_rms_eps = llama_params.f_norm_rms_eps;  
+    hparams.rope_freq_base = llama_params.rope_freq_base_train; 
+    hparams.rope_freq_scale = llama_params.rope_freq_scale_train; 
+    hparams.n_expert = llama_params.n_expert;
+    hparams.n_expert_used = llama_params.n_expert_used;
+}
 
 string LAMA::__repr__( string& suffix,string& prefix,int flag)    {
     if(!isValid()){
@@ -996,61 +1017,6 @@ void LLaMeta::InitEntryTensors(int flag) {
     // ggml_free(ctx_input);
 }
 
-bool Fish::OnTrainStep(struct train_opt_callback_data *data,SampLoader&loader, int accum_step, float *sched, int flag)    {
-    LossCurve(0x0);
-    assert(0);
-    return false;
-}
-
-bool LLaMeta::LoadTokens( int flag )   {   
-    GST_TIC(tic);   
-    bool isLoadOK = false;  
-    string spTrain = hparams.serial_path+".train",spEval = hparams.serial_path+".eval";
-    auto& tokens = hTokenset->tokens;
-    if(1)   {
-        hOPT->train_loader.tokens = hTokenset;
-        hOPT->val_loader.tokens = hTokenset;
-        if( hOPT->train_loader.Serialize(spTrain,false) 
-            && hOPT->val_loader.Serialize(spEval,false)){
-                if(hOPT->train_loader.len()>0){
-                    // hDict->nUniqueToken = hOPT->train_loader.n_unique_tokens; 
-                    // _INFO("%s: nTrain=%zu nEval=%zu batch_sample=%s T=%.3g\n", __func__, hOPT->train_loader.len(),hOPT->val_loader.len(),GST_TOC(tic));
-                    isLoadOK = true;
-                }
-        }            
-    }
-    if(!isLoadOK) {
-        assert(hTokenset!=nullptr);
-           
-        std::vector<size_t> samples_begin,samples_size;
-        auto train_params = hparams.common;
-        size_t nUnique = hTokenset->nUnique;
-        // int n_ctx_tokens = hparams.n_ctx;
-        if( hTokenset->InitSamps(hparams.common.n_ctx,samples_begin,samples_size)){
-
-        }else{
-            _INFO("%s: NULL Samps!!!    batch_sample=%s nTrain=%zu nEval=%zu T=%.3g\n", __func__, hOPT->train_loader.batch_sample.c_str(),
-                hOPT->train_loader.len(),hOPT->val_loader.len(),GST_TOC(tic));      
-            return false;
-        }
-        
-        //val_tokens = tokens[:32768]    train_tokens = tokens[32768:]        
-        hOPT->val_loader.SetSamples(hDict->n_vocab,hTokenset,samples_begin,samples_size,false,hparams);
-        hOPT->train_loader.SetSamples(hDict->n_vocab,hTokenset,samples_begin,samples_size,true,hparams);
-        assert(hOPT->val_loader.n_unique_tokens <= nUnique && hOPT->train_loader.n_unique_tokens <= nUnique);
-        hOPT->val_loader.n_unique_tokens = nUnique;
-        hOPT->train_loader.n_unique_tokens = nUnique;
-
-        hOPT->train_loader.Serialize(spTrain,true);
-        // hOPT->train_loader.Serialize(hparams.train_binpath,false);      //only for debug
-        hOPT->val_loader.Serialize(spEval,true);
-    }
-    hOPT->train_loader.hDict = hDict;            hOPT->val_loader.hDict = hDict;
-    // GGML_ASSERT(hOPT->train_samples_begin.size() == hOPT->train_samples_size.size());
-    _INFO("%s: batch_sample=%s nTrain=%zu nEval=%zu T=%.3g\n", __func__, hOPT->train_loader.batch_sample.c_str(),
-        hOPT->train_loader.len(),hOPT->val_loader.len(),GST_TOC(tic));        
-    return true;
-}
 
 bool LLaMeta::CreateExlogists(hWIKI wiki,uint32_t n_ctx,uint32_t n_batch,int flag) {
     if(teach==WIKI::_OFF )
@@ -1073,4 +1039,229 @@ bool LLaMeta::CreateExlogists(hWIKI wiki,uint32_t n_ctx,uint32_t n_batch,int fla
         return true;               
     }
     return false;
+}
+
+void LLaMeta::Train(int flag)       {
+    hOPT->BeforeTrain(lama()->_ctx,hparams.common,tokens_input,0x0);
+    if(!hOPT->PrepareData( hparams,flag ))
+        return;
+       
+    GST_TIC(t0);
+    print_build_info();           
+    assert(ctx_work!=nullptr);
+    // SaveTrain(&save_data, opt_cb_data.train);      //warmup save
+    enum ggml_opt_result result = hOPT->Search(ctx_work,loss,target_probs,hparams);     
+    ggml_free(ctx_work);
+    ggml_free(ctx_compute);
+    // ggml_free(ctx_input);
+    ggml_gallocr_free(alloc); 
+
+    _INFO("%s: total training time: %.3g\n", __func__,GST_TOC(t0) );
+}
+
+struct ggml_cgraph *LLaMeta::GetRawGraph(int flag)       { 
+    llama_model *model = GetRawModel( );
+    assert(model!=nullptr);
+    struct ggml_cgraph *gf_raw = nullptr;// _llama_raw_graph(model,0x0); 
+    assert(gf_raw!=nullptr);
+    return gf_raw;
+}
+
+void LLaMeta::Build(int flag)      {      
+    if(!CHILD_0925_GRAPH){  
+        Build_v0(flag);       //only for debug
+        return;
+    }
+
+    BeforeBuild();
+    if(hparams.compute_graph=="raw"){  //only for debug
+        // int iRet = _llama_build_graph(GetRawModel(),&gf,&gb,0x0);          //bug
+        int iRet = BuildGraphFromRaw(0x0);
+        assert(iRet == 0x0); 
+    }
+    ctx_compute_params.mem_size = 2*LLAMA_TRAIN_MAX_NODES*ggml_tensor_overhead() +
+            (hparams.common.use_checkpointing ? 3 : 2)*(GGML_OBJECT_SIZE+ggml_graph_overhead_custom(LLAMA_TRAIN_MAX_NODES, true));
+    ctx_compute = ggml_init(ctx_compute_params);
+
+    InitEntryTensors(flag); 
+    enum ggml_cgraph_eval_order best_order = GGML_CGRAPH_EVAL_ORDER_COUNT;  //GGML_CGRAPH_EVAL_ORDER_RIGHT_TO_LEFT;  //GGML_CGRAPH_EVAL_ORDER_COUNT;
+    if(role==SWARM_FOLLOWER){
+        build_finetune(ctx_compute,alloc,false,flag);   
+    }else{
+        size_t best_compute_size = SIZE_MAX;        
+        // graph_order = GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT;     //only for debug
+        if(graph_order==-1)   {// find best evaluation order
+            for (unsigned order = 0; order < (unsigned) GGML_CGRAPH_EVAL_ORDER_COUNT; ++order) {
+                // ctx_compute = ggml_init(ctx_compute_params);
+                ggml_gallocr_t alloc_tmp = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
+                build_finetune(ctx_compute,alloc_tmp,true,flag);
+                BuildComputeGraph(order,ctx_compute,alloc_tmp,flag);       
+                size_t max_compute_size = ggml_gallocr_get_buffer_size(alloc_tmp, 0); // FIXME: this will still allocate the buffer
+                if (max_compute_size < best_compute_size) {
+                    best_compute_size = max_compute_size;
+                    best_order = gf->order;
+                }
+                ggml_gallocr_free(alloc_tmp);
+                // ggml_free(ctx_compute);
+            }
+        
+            size_t max_compute_size = best_compute_size;
+            _INFO("%s: compute_size = %zu bytes (%.1f MB)\n", __func__, max_compute_size, (float) max_compute_size / (1024.0f*1024.0f));
+            _INFO("%s: evaluation order = %s\n", __func__,
+                (best_order == GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT) ? "LEFT_TO_RIGHT" :
+                (best_order == GGML_CGRAPH_EVAL_ORDER_RIGHT_TO_LEFT) ? "RIGHT_TO_LEFT" :
+                "invalid");
+            graph_order = best_order;
+        }else{
+            assert(GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT<=graph_order && graph_order<=GGML_CGRAPH_EVAL_ORDER_COUNT);
+            best_order = (enum ggml_cgraph_eval_order)(graph_order);
+        } 
+
+        alloc = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
+        build_finetune(ctx_compute,alloc,false,flag);   
+        BuildComputeGraph(best_order,ctx_compute,alloc,flag);
+    }
+    Statistic(0x0);
+    AfterBuild();
+    
+    ComputePlan();
+    Dump(0x0);
+
+    // ggml_free(ctx_compute);         ctx_compute = nullptr;
+#ifndef NDEBUG
+    // ggml_graph_print(gf);    ggml_graph_print(gb);       //only for debug
+#endif    
+}
+
+void LLaMeta::InitModel(int flag){     
+    hparams.n_ff = jKV(hparams.jConfig,{"model","ffn","length"},hparams.n_ff);   
+    auto train_params = hparams.common;
+    uint32_t n_embd  = hparams.n_embd,n_ctx = train_params.n_ctx;        
+    const uint32_t n_layer = nLayerX<=0 ? hparams.n_layer : nLayerX;    //hparams.n_layer;
+    const uint32_t n_ff    = hparams.n_ff; 
+    if(arch==NLP_MAMBA)     {
+        assert(hparams.n_head == 0);
+    }  else{
+        hparams.n_rot = hparams.n_embd / hparams.n_head;    
+    }
+    
+    _INFO("\nLLaMeta%s: init model embed=%d layer=%d ff=%d tpFFN=%d\n", __func__,n_embd,n_layer,n_ff,tpFFN);  
+    _INFO("\t type of FFN=%s\n", tpFFN==FFN_TYPE::SWIGLU ? "MLP" : tpFFN==FFN_TYPE::VAR_LAST ? "Variation@last_layer" 
+        : tpFFN==FFN_TYPE::ONLY_RMSNormal ? "RMS Normal" : "other");  
+    _INFO("\t type of ATTENTION=%s\n",tpATT==ATTENTION_TYPE::BROWN ? "BROWN":"QKV");
+    for (int i=0;i<n_layer;i++) {
+        auto  layer = std::make_shared<lama_layer>(i);
+        layer->isLast = i==n_layer-1;
+        layers.push_back(layer);        //typedef shared_ptr<layer> hLayer;
+        layer->attention_norm = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
+            layer->wq = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
+        if(tpATT==ATTENTION_TYPE::QKV){
+            layer->wk = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
+            layer->wv = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);                
+        }
+        layer->wo = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
+        layer->CreateFFN(hparams,ctx,tpFFN);            
+    }
+    tmpExLogis.clear();
+    if(role==ROLE_TYPE::SWARM_FOLLOWER) {
+    }else{
+        for(auto wiki : wikis){
+            CreateExlogists(wiki,n_ctx,train_params.n_batch);  
+        }      
+        if(role==ROLE_TYPE::SWARM_HEAD) {
+            mos.Init(swarm,ctx,n_embd); 
+        }      
+    }
+
+    if( tmpExLogis.size()>0 /* wiki!=nullptr && (wiki->teach==WIKI::_LOGITS || wiki->teach==WIKI::_LOGITS_GATE ) */ 
+            && !isLocalInfer) {
+        // exLogits = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_vocab,  n_ctx, train_params.n_batch);
+        if(teach==WIKI::_LOGITS_GATE)   {               
+            mom.embed2w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, tmpExLogis.size()+1);
+        }   
+    }
+    nParams = 0;
+    
+    hDict->CreateEmbeddings(rnd,0x0);       
+    data = ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_cpu_buffer_type());
+    rnd = init_random_normal_distribution(hparams.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
+    hDict->Update(rnd,0x0);      
+        
+    for (u_int i=0;i<n_layer;i++) {
+        auto layer = dynamic_pointer_cast<lama_layer>(layers[i]);        
+        InitGensor(ctx,layer->attention_norm, TN(LLM_TENSOR_ATTN_NORM, i), rnd);
+        InitGensor(ctx,layer->wq,             TN(LLM_TENSOR_ATTN_Q, i), rnd);
+        if(layer->wk!=nullptr)      InitGensor(ctx,layer->wk,TN(LLM_TENSOR_ATTN_K, i), rnd);
+        if(layer->wv!=nullptr)      InitGensor(ctx,layer->wv,TN(LLM_TENSOR_ATTN_V, i), rnd);
+        InitGensor(ctx,layer->wo,             TN(LLM_TENSOR_ATTN_OUT, i), rnd);
+        if(layer->ffn_norm!=nullptr)
+            InitGensor(ctx,layer->ffn_norm,       TN(LLM_TENSOR_FFN_NORM, i), rnd);
+        if(layer->ffn_up!=nullptr){                
+            InitGensor(ctx,layer->ffn_gate,       TN(LLM_TENSOR_FFN_GATE, i), rnd);
+            InitGensor(ctx,layer->ffn_down,       TN(LLM_TENSOR_FFN_DOWN, i), rnd);
+            InitGensor(ctx,layer->ffn_up,         TN(LLM_TENSOR_FFN_UP, i), rnd);                
+        }
+        if(layer->ffn_gate_inp!=nullptr){
+            InitGensor(ctx,layer->ffn_gate_inp,             TN(LLM_TENSOR_FFN_GATE_INP, i), rnd);
+            InitGensor(ctx,layer->ffn_gate_exps,            TN(LLM_TENSOR_FFN_GATE_EXPS, i), rnd);
+            InitGensor(ctx,layer->ffn_down_exps,            TN(LLM_TENSOR_FFN_DOWN_EXPS, i), rnd);
+            InitGensor(ctx,layer->ffn_up_exps,              TN(LLM_TENSOR_FFN_UP_EXPS, i), rnd);
+            InitGensor(ctx,layer->ffn_gate_inp_shexp,       TN(LLM_TENSOR_FFN_GATE_INP_SHEXP, i), rnd);
+            InitGensor(ctx,layer->ffn_gate_shexp,           TN(LLM_TENSOR_FFN_GATE_SHEXP, i), rnd);
+            InitGensor(ctx,layer->ffn_down_shexp,           TN(LLM_TENSOR_FFN_DOWN_SHEXP, i), rnd);
+            InitGensor(ctx,layer->ffn_up_shexp,             TN(LLM_TENSOR_FFN_UP_SHEXP, i), rnd);
+        }
+    }
+    if(mom.embed2w!=nullptr){
+        InitGensor(ctx,mom.embed2w,"gate_cys", rnd);
+    }
+    if(mos.gat_!=nullptr){
+        InitGensor(ctx,mos.gat_,"gate_swarm", rnd);
+    }
+    for(auto wiki : wikis){
+        if(wiki->t2t!=nullptr){
+            InitGensor(ctx,wiki->t2t, nullptr, rnd);
+        }
+            
+    }
+    // free_random_normal_distribution(rnd); 
+    
+    if (!hparams.only_write_model && hOPT!=nullptr) {
+        hOPT->Prepare(nParams);
+    }
+
+    szModel = (ggml_used_mem(ctx) + ggml_backend_buffer_get_size(data)), (float) (ggml_used_mem(ctx) + ggml_backend_buffer_get_size(data)) ;
+}
+//Deprecated
+void LLaMeta::LoadTensors(struct llama_model * lama,int flag) {        
+    nParams = 0;
+    hDict->Update(nullptr,true);   //UpdateTokEmbed(lama,nullptr,true);
+    
+    // layers.resize(hparams.n_layer);
+    for (uint32_t i = 0; i < hparams.n_layer; ++i) {
+        // auto layer = dynamic_pointer_cast<lama_layer>(layers[i]);
+        auto layer = std::make_shared<lama_layer>(i);
+        layers.push_back(layer);        
+        layer->attention_norm = llama_get_model_tensor(lama, TN(LLM_TENSOR_ATTN_NORM, i));     nParams+=ggml_nelements(layer->attention_norm);
+        layer->wq             = llama_get_model_tensor(lama, TN(LLM_TENSOR_ATTN_Q, i));        nParams+=ggml_nelements(layer->wq);
+        layer->wk             = llama_get_model_tensor(lama, TN(LLM_TENSOR_ATTN_K, i));        nParams+=ggml_nelements(layer->wk);
+        layer->wv             = llama_get_model_tensor(lama, TN(LLM_TENSOR_ATTN_V, i));        nParams+=ggml_nelements(layer->wv);
+        layer->wo             = llama_get_model_tensor(lama, TN(LLM_TENSOR_ATTN_OUT, i));      nParams+=ggml_nelements(layer->wo);
+        layer->ffn_norm       = llama_get_model_tensor(lama, TN(LLM_TENSOR_FFN_NORM, i));      nParams+=ggml_nelements(layer->ffn_norm);
+        layer->ffn_gate       = llama_get_model_tensor(lama, TN(LLM_TENSOR_FFN_GATE, i));      nParams+=ggml_nelements(layer->ffn_gate);
+        layer->ffn_down       = llama_get_model_tensor(lama, TN(LLM_TENSOR_FFN_DOWN, i));      nParams+=ggml_nelements(layer->ffn_down);
+        layer->ffn_up         = llama_get_model_tensor(lama, TN(LLM_TENSOR_FFN_UP, i));        nParams+=ggml_nelements(layer->ffn_up); 
+
+        Gensor2Map({layer->attention_norm,layer->wq,layer->wk,layer->wv,layer->wo,layer->ffn_norm,layer->ffn_gate,layer->ffn_down,layer->ffn_up});
+        assert_shape_1d(layer->attention_norm, hparams.n_embd);
+        assert_shape_2d(layer->wq,             hparams.n_embd, hparams.n_embd);
+        assert_shape_2d(layer->wk,             hparams.n_embd, hparams.n_embd_gqa());
+        assert_shape_2d(layer->wv,             hparams.n_embd, hparams.n_embd_gqa());
+        assert_shape_2d(layer->wo,             hparams.n_embd, hparams.n_embd);
+        assert_shape_1d(layer->ffn_norm,       hparams.n_embd);
+        assert_shape_2d(layer->ffn_gate,       hparams.n_embd, hparams.n_ff);
+        assert_shape_2d(layer->ffn_down,       hparams.n_ff,   hparams.n_embd);
+        assert_shape_2d(layer->ffn_up,         hparams.n_embd, hparams.n_ff);
+    }
+
 }

@@ -58,11 +58,22 @@ int GGUF_list(CLI_params& hparams)  {
     fclose(fp);
 }
 
-int GPT_fish(CLI_params& hparams)  {
+int Fish_bubble(CLI_params& hparams)  {    
+    hparams.wiki_actor = "copy";
+    hparams.compute_graph = "raw";
+    arrHWIKI wikis = WIKI::MakeInstance("wikis",hparams,0x0);
+    hFISH fish = Fish::MakeInstance("BUBBLE_",hparams,wikis,Fish::ROLE_TYPE::COMMON,0x110);
+    if(1)
+        ggml_graph_print(fish->ForwarGraph());
+    fish->GenSentence();
+    return 666;
+}
+
+int fish_1(CLI_params& hparams)  {
     auto param_1 = hparams,param_2 = hparams;
     param_1.tpWiki = "logits";              param_1.common.n_batch = 1;
     param_2.tpWiki = "";                    param_2.common.n_batch = 1;    // 
-    hFISH fish_0 = Fish::MakeInstance("BIG_",param_1,0x0);
+    hFISH fish_0 = Fish::MakeInstance("BIG_",param_1,{},Fish::ROLE_TYPE::COMMON,0x0);
     hFISH fish_1 = Fish::MakeInstance("local_",param_2,fish_0.get(),0x110);
     fish_0->Dump(0x0);
     fish_1->Dump(0x0);
@@ -121,11 +132,18 @@ int GPT_work(CLI_params& hparams)  {
     return 666;
 }
 
-WIKI::WIKI()
-{
-    // hGOPT gpt = std::make_shared<GeneratOnPrompt>(params);       //cys
-    // gpt->Init();
-    // gpt->Generate();
+WIKI::WIKI(){
+
+}
+std::vector<hWIKI> WIKI::MakeInstance(const std::string nam_,struct CLI_params& params,int flag){
+    std::vector<hWIKI> wikis;
+    if(params.tpWiki!="off") {//wiki is so heavy(ugly) that only load one instance here!
+        for(auto path : params.fn_model_base){
+            hWIKI wiki = std::make_shared<LAMA>(params,path);
+            wikis.push_back(wiki);
+        }        
+    }   
+    return wikis;  
 }
 
 hGOPT GeneratOnPrompt::MakeInstance(struct CLI_params& hparams,arrHWIKI& wikis,const Fish *fish_0,int flag) {
@@ -302,16 +320,13 @@ int Fish::GenSentence(int flag)  {
         return -1;
 
     GST_TIC(tic);
-    hWIKI wiki = wikis[0];       assert(0);
-    assert(wiki != nullptr);
+    hWIKI wiki = wikis[0];           assert(wiki != nullptr);
     if(gopt!=nullptr){
         wiki->Reset();
         return gopt->Generate(0x0);
     }
     uint64_t rng_seed = 42;
-    // auto& datas = hOPT->train_   loader;
-    int genT = 16, nTokens = preLogits->ne[0], nB = hparams.common.n_ctx, i, j;
-    // assert(nTokens==wiki);
+    int genT = 16, nVocab = preLogits->ne[0], nB = hparams.common.n_ctx, i, j;
     assert(genT <= nB);
     vector<llama_token> piffle;
     double sum = 0, cdf = 0;
@@ -320,20 +335,22 @@ int Fish::GenSentence(int flag)  {
         piffle[i] = wiki->eos;
     }
 
+    hOPT->val_loader.Serialize("./datasets/story19M___[bitnet-m7-70m.Q8_0]_.eval",false);
     assert(preLogits->type == GGML_TYPE_F32);
-    float *preP = (float *)(preLogits->data);
+    float *preP = (float *)(preLogits->data)+(nB-1)*nVocab;
     _INFO("%s: <--- ", __func__);
     for (i = 1; i <= genT; i++)    {
         // LocalFeeling(piffle,preP);
-        float fLos = hOPT->Compute(piffle, true); // would affect training process
-        int next_token = nTokens - 1;
-        for (sum = 0, j = 0; j < nTokens; j++)        {
+        // float fLos = hOPT->Compute(piffle, true); // would affect training process
+        float fLos = hOPT->Evaluate(hOPT->val_loader,-666);
+        int next_token = nVocab - 1;
+        for (sum = 0, j = 0; j < nVocab; j++)        {
             preP[j] = exp(preP[j]);
             sum += preP[j];
         }
         assert(sum > 0 && sum < FLT_MAX);
         float coin = random_f32(&rng_seed);
-        for (cdf = 0, j = 0; j < nTokens; j++)        {
+        for (cdf = 0, j = 0; j < nVocab; j++)        {
             cdf += preP[j];
             if (coin < cdf / sum)            {
                 next_token = j;
@@ -341,9 +358,9 @@ int Fish::GenSentence(int flag)  {
             }
         }
         piffle[i] = next_token; /**/
-        _INFO("%s ", wiki->T2STR(next_token).c_str());
+        _INFO("%s %s ",hOPT->val_loader.sentence.c_str(), wiki->T2STR(next_token).c_str());
         fflush(stdout);
-        // break;
+        break;
     }
     _INFO("---> T=%g s\n", GST_TOC(tic));
     return 0x0;

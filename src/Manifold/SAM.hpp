@@ -497,7 +497,7 @@ struct SegmentAnything  : public Fish {
         out_node = cur;         
         gg_print_tensor_("embd_img_0", state.embd_img);
         in_node = state.embd_img;           //???
-        BuildGraph(ctx0,state.allocr,params.isOnlySymbol);
+        Build(ctx0,state.allocr,params.isOnlySymbol);
         // hGraph->print();
         ggml_free(ctx0);
         SetInput(nx,ny,data);

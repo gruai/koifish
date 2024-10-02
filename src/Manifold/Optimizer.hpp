@@ -56,9 +56,10 @@ protected:
     std::string title = "Optimizer";
 
     LossCurve lcTrain,lcEval;
-    struct ggml_context * ctx=nullptr;
-    size_t nParams = 0;
-    bool just_initialized = false,isAdaptiveSched = true;
+    struct ggml_context * _ctx=nullptr;
+    std::vector<hGensor> opt_ps;
+    size_t nParams = 0, nMostParam = 0;
+    bool just_initialized = false,isAdaptiveSched = false;
     int past=0,n_gradient_accumulation=0;
     float gclip = 1.0;            // gradient clipping
     float sched = 1.0f; // schedule multiplier (fixed, decay or warmup)
@@ -69,12 +70,12 @@ protected:
     int n_no_improvement=0;
     float loss_before=0,loss_after=0;
     int first_epoch=0,iter_at_last_epoch=-1,first_iter=-1,iter=-1;
-    int64_t                      last_time;
-    double                       millis_per_iter;
+    uint64_t train_its=0,train_samples=0,train_tokens=0,train_epochs=0,max_epoch=0;
+    int64_t last_time;
+    double millis_per_iter;
 
-    void *app_ctx = nullptr;
-    double zmuv_0 = 0.0,zmuv_1 = 0.0;
-    struct ggml_cgraph *gf=nullptr,*gb=nullptr;     //only for debug
+    // void *app_ctx = nullptr;
+    double zmuv_0 = 0.0,zmuv_1 = 0.0;    
     llama_token bos,eos;
     // hGensor loss=nullptr, target_probs=nullptr, preLogits=nullptr; 
     hGensor hLoss( );
@@ -84,36 +85,32 @@ protected:
         float *val = (float*)(hLoss()->data);
         return *val;
     }
-
-    hGensor tokens_input = nullptr; 
+    
     hScheduler scheduler = std::make_shared<DiscreteSchedule>( );
     bool isStopImprove = false;
-    // struct ggml_tensor * opt_ps[GGML_MAX_PARAMS]; // these will store the parameters we want to optimize    
-    std::vector<hGensor> opt_ps;
+
     virtual void Clear()    {}   
 
     virtual bool one_step(struct train_state *train,SampLoader&loader, int accum_step, float *sched, int flag = 0x0);
     virtual float gClip(int nx,CLI_params& hparams,int flag=0x0);
     virtual void UpdateParams(float gnorm,int nx,CLI_params& hparams,int flag);
     // virtual void AdamMiniV(float gnorm,int nx,CLI_params& hparams,int flag);
-    virtual bool GradAccumulation(float&fx,struct train_opt_callback_data *callback_data,struct ggml_cplan *cplan,int flag=0x0) {   assert(0);  return false; }
+    virtual bool BatchGrad(float&fx,struct train_opt_callback_data *callback_data,struct ggml_cplan *cplan,int flag=0x0) {   assert(0);  return false; }
     bool OnLogits(int flag=0x0);
 public:
     // typedef bool (*_CALL_BACK_)(void * data, int accum_step, float * sched);    
     SampLoader train_loader, val_loader;
-    Fish* gang=nullptr;      //ref only
-    // std::vector<llama_token> train_tokens;
-    // std::vector<size_t> train_samples_begin,train_samples_size;
-    // std::vector<size_t> train_shuffled_samples_offs;
-    // std::vector<size_t> train_shuffled_samples_begin;
-    // std::vector<size_t> train_shuffled_samples_size;
+    size_t shuffle_samples_hash = 0x0;  //hack
 
-    struct train_state      * train = init_train_state();
+    Fish* gang=nullptr;      //ref only
+
+
+    struct train_state      *trainst = init_train_state();
     //  struct ggml_opt_context * opt = train->opt; 
     struct train_params_common train_params;
 
-    Optimizer(Fish *g_,struct train_params_common& params_,int flag=0x0);
-
+    Optimizer(LLaMeta *g_,struct train_params_common& params_,int flag=0x0);
+    //Deprecated need refactor!!!       9/30/2024
     virtual float Compute(std::vector<llama_token>&tokens,bool isForward,int flag=0x0);
     virtual float Evaluate(SampLoader&loader,int iter,int flag=0x0);
 
@@ -135,12 +132,13 @@ public:
 
     virtual void Dump(int typ){
         const char*title = "OPT";   //__func__
-        _INFO("%s: mem_size  = %zu bytes (%.1f MB)\n", title, ggml_get_mem_size(ctx), (float) ggml_get_mem_size(ctx) / (1024.0f*1024.0f));
+        if(_ctx!=nullptr)
+            _INFO("%s: mem_size  = %zu bytes (%.1f MB)\n", title, ggml_get_mem_size(_ctx), (float) ggml_get_mem_size(_ctx) / (1024.0f*1024.0f));
         _INFO("%s: iter = %d\n", title, iter);
         
         if(typ==1){
-            _INFO("%s: total train_iterations=%llu train_samples=%llu train_tokens=%llu completed_epochs=%llu\n", title, 
-                train->train_its,train->train_samples,train->train_tokens,train->train_epochs);            
+           _INFO("%s: SAMP_HASH=%llu total train_iterations=%llu train_samples=%llu train_tokens=%llu completed_epochs=%llu\n", title, 
+                shuffle_samples_hash, train_its,train_samples,train_tokens,train_epochs);            
         }
         /*
         auto train=hOPT->train;
@@ -151,23 +149,22 @@ public:
         _INFO("%s: nParams=%zu model_size = %zu bytes (%.1f MB)\n", __func__, nParams,szModel,szModel / (1024.0f*1024.0f) );*/
     }
     
-    virtual void Init_CallbackData(struct llama_context * lctx,struct train_params_common& train_params,hGensor  tokens_input,int flag) ;
-
+    virtual void BeforeTrain(struct llama_context * lctx,struct train_params_common& train_params,hGensor  tokens_input,int flag) ;
+    virtual bool PrepareData( CLI_params& hparams,int flag );
     virtual void Shuffle(int n_vocab,struct train_params_common& train_params,int flag=0x0)  {
         assert(0);
     }    
 
-    virtual void Init(size_t nx,int flag=0x0);
+    virtual void Prepare(size_t nx,int flag=0x0);
 
-    virtual void InitOpt(struct train_params_common& params_,int flag=0x0);
+    // virtual void InitOpt(struct train_params_common& params_,int flag=0x0);
     
     virtual ~Optimizer( ) {
-        ggml_free(ctx);
-        free_train_state(train);
+        ggml_free(_ctx);
+        // free_train_state(train);
     }
 
-    enum ggml_opt_result ggml_train(struct ggml_context * ctx, hGensor loss_,hGensor target_,
-            struct ggml_cgraph * gf_,struct ggml_cgraph * gb_,CLI_params& hparams);
+    enum ggml_opt_result Search(struct ggml_context * ctx, hGensor loss_,hGensor target_,CLI_params& hparams);
     
     friend class Fish;
     friend class SampLoader;
@@ -192,12 +189,12 @@ protected:
     hGensor gv;  // second moment
     hGensor gpf; // past function values
 
-    void Init(size_t nx,int flag=0x0)   override;
-    bool GradAccumulation(float&fx,struct train_opt_callback_data *callback_data,struct ggml_cplan *cplan,int flag=0x0) override;
+    void Prepare(size_t nx,int flag=0x0)   override;
+    bool BatchGrad(float&fx,struct train_opt_callback_data *callback_data,struct ggml_cplan *cplan,int flag=0x0) override;
     virtual void UpdateTensorParam(hGensor hP,float *m,float *v,float *g,float gnorm);
     void UpdateParams(float gnorm,int nx,CLI_params& hparams,int flag)  override;
 public:
-    OPT_Adam(Fish *g_,struct train_params_common& params_,int flag=0x0);
+    OPT_Adam(LLaMeta *g_,struct train_params_common& params_,int flag=0x0);
     void Dump(int typ)  override;
 };
 
@@ -205,7 +202,7 @@ class OPT_AdamMiniV: public OPT_Adam  {
 protected:    
     void UpdateTensorParam(hGensor hP,float *m,float *v,float *g,float gnorm) override;
 public:
-    OPT_AdamMiniV(Fish *g_,struct train_params_common& params_,int flag=0x0) :
+    OPT_AdamMiniV(LLaMeta *g_,struct train_params_common& params_,int flag=0x0) :
         OPT_Adam(g_,params_,flag) {
         title = "OPT_AdamMiniV";
     };

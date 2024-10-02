@@ -48,6 +48,7 @@ public:
         }
         
     }catch(...){
+        
         _valid = false;
     }
     }
@@ -180,6 +181,7 @@ public:
     bool InitSamps(unsigned context_length,std::vector<size_t>& samples_begin,std::vector<size_t>&samples_size,int flag=0x0);
 
 friend class LLaMeta;
+friend class Optimizer;
 friend class SampLoader;
 };
 typedef std::shared_ptr<DataTokenSet> hDataToken;
@@ -201,15 +203,16 @@ struct SAMP{
     bool Serialize(FSerial&S, bool isSave, int flag);
 
     void Refresh(SampLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,int typ);
+    virtual double UpdateTag(hDataToken hDT,int *tag,int step,bool flip,int flag=0x0);
 
     static size_t HASH(const char* fn, const std::vector<SAMP*>& samps) {
         std::hash<std::string> h_string;
         std::hash<unsigned long long> h_ull;
         size_t h = h_string(std::string(fn)),sample_count=samps.size();
         h = hash_combine(h, h_ull((unsigned long long) sample_count));
-        for (size_t i=0; i< sample_count; ++i) {
-            h = hash_combine(h, h_ull((unsigned long long) samps[i]->pos));
-            h = hash_combine(h, h_ull((unsigned long long) samps[i]->len));
+        for (auto samp : samps) {
+            h = hash_combine(h, h_ull((unsigned long long) samp->pos));
+            h = hash_combine(h, h_ull((unsigned long long) samp->len));
         }
         return h;
     }
@@ -220,6 +223,7 @@ typedef SAMP* hSAMP;
 struct ConsiceDict;
 class SampLoader   {
 protected:  
+    CLI_params hparams;
     std::string fp_data;
     std::string sentence="";
     std::vector<int32_t> tok_ids;
@@ -227,12 +231,18 @@ protected:
     size_t n_ctx=-1;
     int32_t bos,eos;
     std::vector<hSAMP> all_samps;
-    std::vector<size_t> idcs;      //would change epoch by epoch(shuffle,subsampling...)
+    // std::vector<size_t> idcs;      //would change epoch by epoch(shuffle,subsampling...)
     int64_t N4Train() {
-        return idcs.size();
+        return all_samps.size();
+        // return idcs.size();
     }   
     std::shared_ptr<ConsiceDict> hDict=nullptr;
     bool isTarget_1 = false;
+    mt19937_state shuffle_rng_state_current;
+    mt19937_state shuffle_rng_state_next;
+    size_t shuffle_sample_count=0,next_sample=0;
+
+    LLaMeta *lama=nullptr;
 public:
     int64_t len() {
         return all_samps.size();
@@ -241,10 +251,10 @@ public:
         return tokens->nTokens;
     }
     hSAMP SampAt(size_t idx_){
-        assert(idx_<idcs.size());
-        size_t id = idcs[idx_];
-        assert(id<len());
-        return all_samps[id];
+        assert(idx_<N4Train());
+        // size_t id = idcs[idx_];
+        // assert(id<len());
+        return all_samps[idx_];
     }
 
     int32_t TokenAt(size_t pos){
@@ -273,10 +283,9 @@ public:
     //token source
     hDataToken tokens = nullptr;      
     // std::vector<TOKEN_ID> tokens;
-    size_t n_unique_tokens=0;
+    // size_t n_unique_tokens=0;
 
     size_t shuffle_samples_hash = 0x0;
-    
 
     // variables related to distributed training
     // each process/worker has to access different parts of the data
@@ -289,14 +298,12 @@ public:
     size_t shard_num_samples=0;  // total number of samples in the current shard per process
     // shards and current position
     glob_t glob_result; // stores the result of glob, for all shards we want to iterate
-    size_t current_shard_idx; // the current shard we are reading from
-    size_t current_sample_idx; // the current sample we are reading from
+    size_t current_shard_idx,current_sample_idx; 
     // file handle
     FILE* tokens_file=nullptr;
     // data buffers
-    uint16_t* buffer; // we fread data from file into this buffer
-    int* inputs=nullptr;  // input tokens into transformer
-    int* targets=nullptr; // target tokens for the transformer
+    uint16_t* buffer=nullptr;  
+    int* inputs=nullptr,*targets=nullptr; 
     // random shuffle related variables
     mt19937_torch shuffle_rng;
     int should_shuffle;
@@ -309,7 +316,8 @@ public:
     int64_t file_size_bytes;
 
     SampLoader( )   {}
-    virtual void Init(CLI_params& hparams,int flag=0x0 ) ;
+    virtual void Init(LLaMeta *g_,int flag=0x0 ) ;
+    virtual void Prepare(Optimizer *hOPT_,int flag=0x0 ) ;    
 
     virtual ~SampLoader( ) {
         free(buffer);
@@ -501,8 +509,11 @@ public:
     virtual void SetSamples(int nV,hDataToken hDT,std::vector<size_t>& begin_,std::vector<size_t>& size_,
         bool isTrain,CLI_params& train_params,int flag=0x0);
     void Shuffle(int flag=0x0);
+    bool TopoOrder(std::vector<size_t>&ids,std::mt19937& rng,int flag=0x0);
 #endif
     friend class LLaMeta;
+    friend class Optimizer;
+    friend class Fish;
 };
 
 // class DataLoader_3D : public SampLoader  {

@@ -1,5 +1,6 @@
 #include "Fish.hpp"
 
+tpSWARM Fish::swarm={};
     // LogicSalp::LogicSalp(const int dim, int flag) {
     // 	position.resize(dim);
     // }
@@ -14,15 +15,29 @@
     // 	}
     // }
 
-LogicSalp::LogicSalp(const std::string& nam_, struct CLI_params params,tpSWARM& swarm_,int flag) : swarm(swarm_)    {
-
+LogicSalp::LogicSalp(const std::string& nam_, struct CLI_params params,int flag)     {
+    assert(swarm.size()>0);
+    for(auto fish : swarm){
+        if(fish->role==ROLE_TYPE::SWARM_HEAD){
+            assert(head==nullptr);
+            head = fish;
+        }            
+    }
+    assert(head!=nullptr);
 }
 
 void LogicSalp::Train(int flag)       {
-    assert(swarm.size()>=1);
-    swarm[0]->Train(flag);
+    assert(head!=nullptr);
+    if(0){
+        for(auto hFish : swarm){
+            hFish->Train(flag);
+        }  
+    }else{
+        head->Train(flag);
+    }    
 }
-    
+
+
 void LogicSalp::cross_over(const LogicSalp*A, const LogicSalp*B, int flag) {
 	assert(space == BIT_MASK);
 	int DIM = position.size(),i;
@@ -30,9 +45,8 @@ void LogicSalp::cross_over(const LogicSalp*A, const LogicSalp*B, int flag) {
 	for (i = 0; i < DIM; i++) {
 		position[i] = i < pos ? A->position[i] : B->position[i];
 	}
-
-
 }
+
 void LogicSalp::mutatioin(double T_mut, int flag) {
 	assert(space == BIT_MASK);
 	int DIM = position.size(),i;

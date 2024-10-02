@@ -3,15 +3,10 @@
 #else
 #endif
 
-#include "Fish.hpp"
+#include "gLLM.hpp"
 #include "../ggex/GG_util.hpp"
 #include "common.h"
 #include "Dictionary.hpp"
-
-// int64_t DataLoader_3D::update_batch(int sample_id,Fish* fish)   {    
-//     int64_t used_samples = 0;
-//     return used_samples;
-// }
 
 void SAMP::Refresh(SampLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,int typ)  {
     auto target_probs = loader->hOPT->hTargetProbs();
@@ -95,10 +90,12 @@ void SampLoader::Samp2Batch(int k,hSAMP samp,hGensor tokens_input,hGensor target
 }
 
 //Important!  this would update input & target_probs of model!
-int64_t SampLoader::update_batch(int sample_id,Fish* fish){    
+int64_t SampLoader::update_batch(int x,Fish* fish){    
     struct train_params_common *params = &(hOPT->train_params);
-    struct llama_context * lctx=(struct llama_context *)(hOPT->app_ctx);
-    struct ggml_tensor   * tokens_input=hOPT->tokens_input;
+    // struct llama_context * lctx=(struct llama_context *)(hOPT->app_ctx);
+    
+    struct ggml_tensor   * tokens_input=hOPT->gang->Input();
+    assert(tokens_input!=nullptr);
     struct ggml_tensor   * target_probs=hOPT->hTargetProbs();
     int64_t samples_count = N4Train();
     // const TOKEN_ID    * train_data=tokens.data();
@@ -106,7 +103,7 @@ int64_t SampLoader::update_batch(int sample_id,Fish* fish){
     sample_separation_eos=!params->separate_with_eos;
     sample_separation_bos=!params->separate_with_bos;
     double t_Samp = 0,nrm=0,a;
-    bool                   sample_random_offsets=params->sample_random_offsets;
+    bool sample_random_offsets=params->sample_random_offsets;
     // GGML_ASSERT(samples_count > 0);
     GGML_ASSERT(ggml_is_matrix(tokens_input));
     GGML_ASSERT(ggml_is_3d(target_probs));
@@ -116,34 +113,24 @@ int64_t SampLoader::update_batch(int sample_id,Fish* fish){
     GGML_ASSERT(n_ctx == target_probs->ne[1]);
     GGML_ASSERT(nSampInBatch  == target_probs->ne[2]);
     GST_TIC(T0);
-    int used_samples = 0;
+    
     ggml_set_f32(target_probs, 0.0f);
-    bos = llama_token_bos(llama_get_model(lctx));
-    eos = llama_token_eos(llama_get_model(lctx));
-    std::string sBos = llama_token_to_piece(lctx, bos),sEos = llama_token_to_piece(lctx, eos);
+    // bos = llama_token_bos(llama_get_model(lctx));
+    // eos = llama_token_eos(llama_get_model(lctx));
+    /*std::string sBos = llama_token_to_piece(lctx, bos),sEos = llama_token_to_piece(lctx, eos);*/
     bool isLog = false;
-    if(isLog) _INFO("BATCH_%ld ",sample_id);   //, samples_count,n_train_data);nSampe=(%ld/%ld)
+    if(isLog) _INFO("BATCH_%ld ",next_sample);   //, samples_count,n_train_data);nSampe=(%ld/%ld)
     // assert(target_probs->type == GGML_TYPE_F32);
     hSAMP samp = nullptr;
-    /*hGensor exLogits=nullptr;
-    if(fish->hasWiki() && fish->exLogits!=nullptr) {
-        exLogits = fish->exLogits;   // wiki->logits = ggml_new_tensor_3d(ctx_input, GGML_TYPE_F32, n_vocab,  n_ctx, n_batch);
-        ld0=exLogits->nb[0],ld1=exLogits->nb[1],ld2=exLogits->nb[2],ld3=exLogits->nb[3];     
-        assert(sizeof(float)*n_vocab*n_ctx==ld2);    
-        assert(ld3==ld2*nSampInBatch);    
-    }*/
+
     GST_TIC(tic);
-    for (k=0; k<nSampInBatch; ++k) {
-        size_t sample_idx = (sample_id + used_samples) % samples_count,samp_off=0;
-        samp = SampAt(sample_idx);
-        // samp->Refresh(this,lctx,0x0);
-        GGML_ASSERT(samp->pos+samp->len-1 < n_train_data);          
-        // LLAMA_LOG_INFO("%s: sample_idx=%zu sample=%zu\n", __func__, sample_idx, sample);   
+    for (k=0; k<nSampInBatch; ++k) { 
         if(batch_sample=="stacking"){
             samp->jump++;
         }else{            
-            ++used_samples;   
+            samp = SampAt((next_sample + k) % samples_count);  
         }
+        // LLAMA_LOG_INFO("%s: sample_idx=%zu sample=%zu\n", __func__, sample_idx, sample);  
         if(GST_TOC(tic)>10){        //for long-time data-update
             _INFO("\r[%s] k=%d(%d) T=%.3g ...",__func__,k,nSampInBatch,GST_TOC(tic));   
             tic = Clock::now( );
@@ -151,8 +138,8 @@ int64_t SampLoader::update_batch(int sample_id,Fish* fish){
        
         Samp2Batch(k,samp,tokens_input,target_probs,*params);   //refresh tok_ids
         if(isLog && k<6 && batch_sample!="stacking"){
-            sentence=llama_token_to_piece(lctx, tok_ids[0]);
-            _INFO(" (%ld,%d)@\"%s...\"",samp->pos,samp->jump,sentence.c_str());     //sample_size
+            sentence = lama->T2STR(tok_ids,0x0);     //llama_token_to_piece(lctx, tok_ids[0]);
+            _INFO(" (%ld,%d)@\"%s\"",samp->pos,samp->jump,sentence.c_str());     //sample_size
         }
 
         if(batch_sample!="stacking"){ 
@@ -172,9 +159,10 @@ int64_t SampLoader::update_batch(int sample_id,Fish* fish){
             nrm = fish->wiki->InductLogits(nSampInBatch,tok_ids,exLogits,target_probs,0x0);           
             _INFO("\t stacking@%d\"%.*s...\" nrm=%g\tT=%.4gs\t\n",samp->pos,64,samp->desc.c_str(),nrm,GST_TOC(tic));             
         }*/
-        used_samples = nSampInBatch;        //1    
     }
-    return used_samples;
+    
+    next_sample += nSampInBatch;
+    return nSampInBatch;
 }
 
 #define _CHECK(err)                                               \
@@ -264,29 +252,24 @@ try{
     _INFO("%s %s@%s...",__func__,isSave?"save@":"load@",path.c_str());
     _CHECK( S.Serial(n_vocab,isSave,flag) );
     // _CHECK( S.Serial(tokens,isSave,flag) );
-    _CHECK( S.Serial(n_unique_tokens,isSave,flag) );
+    // _CHECK( S.Serial(n_unique_tokens,isSave,flag) );
     _CHECK( S.Serial(shuffle_samples_hash,isSave,flag) );
     _CHECK( S.Serial(hOPT->train_params.seed,isSave,flag) );
 
     _CHECK( S.Serial(batch_sample,isSave,flag) );
-    // _CHECK( S.Serial(samp_begin,isSave,flag) );
-    // _CHECK( S.Serial(samp_size,isSave,flag) );
-    // _CHECK( S.Serial(shuffled_samples_offs,isSave,flag) );
-    // _CHECK( S.Serial(shuffled_samples_begin,isSave,flag) );
-    // _CHECK( S.Serial(shuffled_samples_size,isSave,flag) );
-    _CHECK( S.Serial(idcs,isSave,flag) );
+    // _CHECK( S.Serial(ids,isSave,flag) );
     bool bRet = S.Serial_Vector<SAMP,SAMP>(all_samps,isSave,flag);
     _CHECK(bRet);
     if(all_samps.size()==0)
         return false;
     size_t nT = nTokens();
-    _INFO("\r%s %s@\"%s\" ... OK. \r\n\tnSamp=%ld @[Datasets(nToken=%ld unique=%lld  hash=%llX]\n",__func__,isSave?"save":"load",path.c_str(),
-        all_samps.size(),nT,n_unique_tokens,shuffle_samples_hash);
-    for(auto id : idcs){
-        if(id>=nT){
-            _INFO("\t\tInvalid id(%ld) > nTokens=%d\n", id,nT);  
-            return false;
-        }
+    _INFO("\r%s %s@\"%s\" ... OK. \r\n\tnSamp=%ld @[Datasets(nToken=%ld  hash=%llX]\n",__func__,isSave?"save":"load",path.c_str(),
+        all_samps.size(),nT,shuffle_samples_hash);
+    for(auto samp : all_samps){
+        // if(id>=nT){
+        //     _INFO("\t\tInvalid id(%ld) > nTokens=%d\n", id,nT);  
+        //     return false;
+        // }
     }
     if(isSave){
         
@@ -297,16 +280,16 @@ try{
         _INFO("\t nBatch in each epoch=%d\n", num_batches); 
     }
     if(type==TYPE::DT_TRAIN){
-        assert(train!=nullptr);   
+        /*assert(train!=nullptr);   */
         if(isSave)    {
 
         }else{
-            train->shuffle_rng_state_current = mt19937_seed_to_state(hOPT->train_params.seed);
-            train->shuffle_sample_count = all_samps.size();
-            train->shuffle_next_sample = 0;
-            train->shuffle_samples_hash = shuffle_samples_hash; 
+            shuffle_rng_state_current = mt19937_seed_to_state(hOPT->train_params.seed);
+            shuffle_sample_count = all_samps.size();
+            next_sample = 0;
+            shuffle_samples_hash = shuffle_samples_hash; 
         }
-        _INFO("\t%s@[%s]: hash=%lld\n", "train_state",path.c_str(), train->shuffle_samples_hash);  
+        _INFO("\t%s@[%s]: hash=%lld\n", "train_state",path.c_str(), shuffle_samples_hash);  
     }
     return true;
 }catch(...){
@@ -314,11 +297,21 @@ try{
 }
 }
 
-void SampLoader::Init(CLI_params& hparams,int flag) {
-    isTarget_1 = hparams.is( {"model","target"},string("OneHot") );
-
+void SampLoader::Init(LLaMeta *g_,int flag) {
+    lama = g_;      //need dict&tokenset but is nullptr now
+    isTarget_1 = g_->hparams.is( {"model","target"},string("OneHot") );
 }
 
+void SampLoader::Prepare(Optimizer *hOPT_,int flag){
+    hOPT = hOPT_;           assert(hOPT_!=nullptr);
+    assert(lama!=nullptr);
+    tokens = lama->hTokenset;
+    hDict = lama->hDict;        
+    assert(tokens!=nullptr && hDict!=nullptr);  
+    bos = hDict->bos;
+    eos = hDict->eos;
+}
+            
 /*
     @@@tokenize_file:
         samples_begin.push_back(0);
@@ -330,9 +323,9 @@ void SampLoader::Init(CLI_params& hparams,int flag) {
         }
 */
 void SampLoader::SetSamples(int nV,hDataToken hDT,std::vector<size_t>& samp_0,std::vector<size_t>& samp_L,
-    bool isTrain,CLI_params& hparams,int flag)  {
+    bool isTrain,CLI_params& hp_,int flag)  {
+    hparams = hp_;
     batch_sample = hparams.batch_sample;
-    
 
     double rSplit = 1.0-hparams.rSplit;
     n_vocab = nV;    //hparams.n_vocab;
@@ -343,21 +336,18 @@ void SampLoader::SetSamples(int nV,hDataToken hDT,std::vector<size_t>& samp_0,st
         for(i=0;i<pick;i++){
             all_samps.push_back(new SAMP(samp_0[i],samp_L[i]));
         }
-        // samp_begin = std::vector<size_t>(samp_0.begin(),samp_0.begin()+pick);          
-        // samp_size = std::vector<size_t>(samp_L.begin(),samp_L.begin()+pick);          
+          
         Shuffle( );
     } else if(pick<nSample) {
         for(i=pick;i<nSample;i++){
             all_samps.push_back(new SAMP(samp_0[i],samp_L[i]));
         }
-        // samp_begin = std::vector<size_t>(samp_0.begin()+pick,samp_0.end());          
-        // samp_size = std::vector<size_t>(samp_L.begin()+pick,samp_L.end()); 
+
         if(1){  //too many batch in eval-set, so just random pick
             Shuffle( );
         }else{
             assert(0);
-            // shuffled_samples_begin = samp_begin;
-            // shuffled_samples_size = samp_size;            
+            
         }
     }
     nSample = all_samps.size();
@@ -366,40 +356,107 @@ void SampLoader::SetSamples(int nV,hDataToken hDT,std::vector<size_t>& samp_0,st
     _INFO("%s@[%s]: tokens=%zu nSamp=%d nBach=%d\n", __func__,isTrain?"train":"eval", nTokens(),all_samps.size(),num_batches); 
 }
 
+double SAMP::UpdateTag(hDataToken hDT,int *tag,int step,bool do_mask,int flag)   {
+    TOKEN_ID tok;
+    int nFlip = 0;
+    for(size_t t=pos;t<pos+len;t++){
+        tok = hDT->tokens[t];
+        assert(tag[tok]<=step);
+        if(tag[tok]==step){
 
+        }else{
+            if(do_mask)            {    
+                tag[tok]=step;      nFlip++;
+            }
+            else{   //self duplicate
+                if(tag[tok]<0)  
+                    continue;
+                else{
+                    tag[tok]*=-1;       nFlip++;
+                }
+            }
+        }
+    }
+    if(!do_mask) {
+        for(size_t t=pos;t<pos+len;t++){
+            tok = hDT->tokens[t];
+            if(tag[tok]<0)  
+                tag[tok] = -tag[tok];
+        }
+    }
+    return nFlip*1.0;
+}
+
+bool SampLoader::TopoOrder(std::vector<size_t>&ids,std::mt19937& rng,int flag)  {    
+    bool isRepeated = true;
+    size_t count = all_samps.size(),i,j,k,jj,pick,seed,nPick=16,nLeft;
+    size_t nSampInBatch=hparams.n_batch(),nVocab=tokens->nVocab,ctx=hparams.n_ctx(),tib=hparams.nTokenInBatch();
+    if(count<nSampInBatch*10)
+        return false;
+    GST_TIC(tic);
+    size_t nBatch = (size_t)(count/nSampInBatch*0.7),nz=0;    
+    int step=1,*stp=new int[nVocab]();
+    for(i=0;i<nVocab;i++)       stp[i]=step;
+
+    hSAMP cur,next=nullptr;
+    double rDup=0.0,avgDup=0,maxDup=0;
+    for(i=0;i<nBatch;i++)    {  //for each batch
+        seed = ids[i*nSampInBatch];
+        cur = all_samps[seed];
+        step++;
+        double rEx = cur->UpdateTag(tokens,stp,step,true),r,rBest=FLT_MAX;        
+        for(j=i*nSampInBatch+1;j<(i+1)*nSampInBatch;j++)  {
+            if(1)   {   //10001/16/3 rDup=0.415(0.568)=>rDup=0.347(0.453)        10001/16/32 rDup=0.704(0.738)=>0.625(0.649)
+                nLeft = count-j;        
+                for(k=0,rBest=0;k<nPick;k++){
+                    if(isRepeated)  {
+                        jj = rng()%count;
+                    }else       {
+                        jj = j+rng()%nLeft;         assert(jj>=j && jj<count);
+                    }
+                    next = all_samps[ids[jj]];
+                    r = next->UpdateTag(tokens,stp,step,false);      
+                    if(r>rBest){
+                        rBest = r;  pick = jj;
+                    }
+                }                
+                std::swap(ids[j],ids[pick]);
+            }
+            next = all_samps[ids[j]];
+            r = next->UpdateTag(tokens,stp,step,true);  
+            assert(r==rBest || rBest==FLT_MAX);
+            rEx+=r;
+        }
+        rDup = 1.0-rEx/tib;
+        avgDup += rDup;     maxDup = max(maxDup,rDup);
+        nz++;
+        // if(nz>10000)  break;      //only for debug
+    }
+    avgDup /= nz;
+    _INFO("SampLoader_%s nBatch=%ld rDup=%.3g(%.3g) T=%.3g(sec)\n",__func__,nz,avgDup,maxDup,GST_TOC(tic));
+    delete[] stp;
+
+    return true;
+}
 
 void SampLoader::Shuffle(int flag)  {
-    size_t count = all_samps.size();
+    size_t count = all_samps.size(),i;
     assert(count>0);
     struct train_params_common& train_params = hOPT->train_params;
-    /*if(n_unique_tokens==-1){    //  first run
-        std::vector<size_t> token_noccurs;
-        token_noccurs.resize(n_vocab, 0);   //params.n_vocab
-        for (unsigned int i = 0; i < tokens.size(); ++i) {
-            ++token_noccurs[tokens[i]];
-        }
-        n_unique_tokens = 0;
-        for (unsigned int i = 0; i < token_noccurs.size(); ++i) {
-            if (token_noccurs[i] == 0) continue;
-            ++n_unique_tokens;
-        }
-        _INFO("%s: number of unique tokens: %d\n", __func__, n_unique_tokens);        
-    }*/
-
     //  hash_combine(samples_begin,samples_size[i],sample_count
-    shuffle_samples_hash = SAMP::HASH(fp_data.c_str(),all_samps);    
-        const bool changed_train_data = (shuffle_samples_hash != train->shuffle_samples_hash) || (train->shuffle_sample_count != all_samps.size());
+        
+    const bool changed_train_data = false;  //(shuffle_samples_hash != hOPT->shuffle_samples_hash) || (train->shuffle_sample_count != all_samps.size());
     if (changed_train_data) {
         _INFO("%s: train data seems to have changed. restarting shuffled epoch.\n", __func__);
     }
     if (train_params.force_reshuffle) {
         _INFO("%s: forced reshuffling of data. restarting with newly shuffled epoch.\n", __func__);
     }
-    if ((train->shuffle_rng_state_current == "") || changed_train_data || train_params.force_reshuffle) {
-        train->shuffle_rng_state_current = mt19937_seed_to_state(train_params.seed);
-        train->shuffle_sample_count = all_samps.size();
-        train->shuffle_next_sample = 0;
-        train->shuffle_samples_hash = shuffle_samples_hash;
+    if ((shuffle_rng_state_current == "") || changed_train_data || train_params.force_reshuffle) {
+        shuffle_rng_state_current = mt19937_seed_to_state(train_params.seed);
+        shuffle_sample_count = all_samps.size();
+        next_sample = 0;
+        
     }
     
     // shuffled_samples_offs.resize(samp_begin.size());
@@ -407,37 +464,31 @@ void SampLoader::Shuffle(int flag)  {
     // shuffled_samples_size.resize(samp_size.size());
         
     std::mt19937 rng;
-    mt19937_set_state(rng, train->shuffle_rng_state_current);
+    mt19937_set_state(rng, shuffle_rng_state_current);
     // sort indices by random value for each index
        
     std::vector<unsigned> rnd;    
-    idcs.resize(count);    rnd.resize(count);
-    for (unsigned i=0; i<count; ++i) {
-        idcs[i] = i;
+    std::vector<size_t> ids;
+    ids.resize(count);    rnd.resize(count);
+    for (i=0; i<count; ++i) {
+        ids[i] = i;
         rnd[i]  = rng();
     }
-    std::sort(idcs.begin(), idcs.end(), [&rnd](size_t a, size_t b){
+    std::sort(ids.begin(), ids.end(), [&rnd](size_t a, size_t b){
         // stable sort for reproducibility
         return (rnd[a] == rnd[b]) ? (a < b) : (rnd[a] < rnd[b]);
     }); 
-    /*epoch_samps.clear();       
-    for (unsigned i=0; i<count; ++i) {
-        hSAMP samp=all_samps[idcs[i]];
-        samp->off = samp->len * ((double) rng() / (double) (rng.max()-1));
-        epoch_samps.push_back(samp);
-    }*/
-    /*
-    for (unsigned i=0; i<count; ++i) {
-        shuffled_samples_offs[i] = (size_t) ((samp_size[idcs[i]] - 1) * ((double) rng() / (double) (rng.max()-1)));
-    }    
-    for (unsigned i=0; i<count; ++i) {
-        shuffled_samples_begin[i] = samp_begin[idcs[i]];
-    }
-    for (unsigned i=0; i<count; ++i) {
-        shuffled_samples_size[i] = samp_size[idcs[i]];
-    }*/
+    std::vector<hSAMP> tSamps;      tSamps.resize(count);
 
-    train->shuffle_rng_state_next = mt19937_get_state(rng); 
+    TopoOrder(ids,rng);     // May better, need more testing
+
+    for(i=0; i<count; ++i){
+        tSamps[i] = all_samps[ids[i]];
+    }
+    all_samps = tSamps;
+    
+    shuffle_samples_hash = SAMP::HASH(fp_data.c_str(),all_samps);
+    shuffle_rng_state_next = mt19937_get_state(rng); 
 }
 
 // mark each byte with its utf8 unit number.

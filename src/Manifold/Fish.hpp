@@ -37,6 +37,7 @@ typedef std::vector<int> SHAPE;
 
 class Fish;
 typedef shared_ptr<Fish> hFISH;
+typedef vector<hFISH> tpSWARM;    
 struct NeLayer;
 
 struct NP_
@@ -104,6 +105,8 @@ struct BROWN_Motion    {
     hGensor wq=nullptr;
     int n_embd=-1, n_head=-1, N=-1, n_batch=-1, n_rot=-1, n_ctx=-1, n_head_kv=-1, n_vocab=-1, n_ff=-1, n_past = 0;
     float f_norm_rms_eps, rope_freq_base, rope_freq_scale;
+    float f_max_alibi_bias;
+    float attn_soft_cap;
 
     BROWN_Motion()  {}
     // BROWN_Motion(hGensor _wq, int _embd, int _head, int _N, int _batch, int _rot, int _ctx, int _head_kv, float f_eps, float rope_base, float rope_scale)
@@ -115,6 +118,9 @@ struct BROWN_Motion    {
         f_norm_rms_eps  = hparams.f_norm_rms_eps;
         rope_freq_base  = hparams.rope_freq_base;
         rope_freq_scale = hparams.rope_freq_scale;  
+        f_max_alibi_bias = hparams.f_max_alibi_bias;
+        attn_soft_cap = hparams.attn_soft_cap ? hparams.f_attn_logit_softcapping : 0.0f;
+
         float kv_scale = 1.0f/sqrtf(float(n_embd)/n_head);
         // int n_embd_gqa = hparams.n_embd_gqa();
         int n_embd_head = hparams.n_embd_head( );
@@ -185,10 +191,22 @@ struct save_train_model {
 };
 
 struct MixOfModels{
+    bool isRes = true,isSiLU=false;    
+    vector<hGensor> exs;
+    int nTiB;       //number of tokens in batch
     // hGensor gate = nullptr;
     hGensor embed2w = nullptr;
+    hGensor gat_ = nullptr;
+
+    virtual hGensor Build(CLI_params&hparams,struct ggml_context * ctx,hGensor cur,int flag=0x0)  {}
     hGensor Forward(struct ggml_context * ctx,hGensor cur,hGensor w);
 };
+
+struct MixOfSwarm : public MixOfModels{
+    virtual void Init(tpSWARM&swarm,struct ggml_context *ctx,int n_embd,int flag=0x0);
+    hGensor Build(CLI_params&hparams,struct ggml_context * ctx,hGensor cur,int flag=0x0)  override;
+};
+
 class Fish : public std::enable_shared_from_this<Fish>    {
     Fish(const Fish &);
     Fish &operator=(const Fish &);
@@ -204,8 +222,7 @@ protected:
     WIKI::INDUCT_MODE teach=WIKI::_LOGITS;
 
     // Generate some results on prompt
-    hGOPT gopt = nullptr;
-    virtual int GenSentence(int flag=0x0);
+    hGOPT gopt = nullptr;    
 
     struct CLI_params hparams;
     save_train_model save_data;
@@ -216,15 +233,19 @@ protected:
     struct ggml_cplan gf_plan,gb_plan;
 
     std::map<std::string, struct ggml_tensor *> gensors;
+    std::vector<hGensor> wGensors;      //gensors with weight parameters
+    
+    void Gensor2Map(std::vector<hGensor> gensors){
+        for(auto gensor : gensors){
+            Gensor2Map(gensor);
+        }
+    }   
     void Gensor2Map(struct ggml_tensor *gensor){
         auto key = ggml_get_name(gensor);
         assert(gensors.find(key) == gensors.end());
         gensors[key] = gensor;
     }   
-    virtual hGensor GetGensor(const char *name, int flag = 0x0)    {
-        assert(gensors.find(name) != gensors.end());
-        return gensors[name];
-    } 
+    
         // 
     // std::vector<std::pair<std::string, struct ggml_tensor *>> tmaps;
     bool updateTMap = false;
@@ -233,17 +254,19 @@ protected:
     std::vector<uint8_t> work_buffer;
     // from GGML
     int size = 0; //,n_nodes=0,n_leafs=0;
-    size_t nParams = 0, nParamsGGUF = 0, szModel = 0;
+    size_t nParams = 0, szModel = 0;
 
     hGensor in_node = nullptr, out_node = nullptr;
-    hGensor loss = nullptr, target_probs = nullptr;
+    hGensor loss = nullptr, target_probs = nullptr, KQ_pos = nullptr;
     hGensor preLogits = nullptr;        //no SOFTMAX
     
     //hGensor gate=nullptr;      //create@InitModel update@
     MixOfModels mom;
+    MixOfSwarm  mos;
 
     hDataToken hTokenset=nullptr;
     hOptimizer hOPT;
+    vector<hGensor> optParams;     //paramter tensors updated by hOPT
     hDistillation hDistler;
     // performance
     int perf_runs = 0;
@@ -251,6 +274,8 @@ protected:
     struct ggml_context *ctx = nullptr;         // model ctx
     struct ggml_context *ctx_work = nullptr;    // training ctx
     struct ggml_context *ctx_input = nullptr; 
+    struct ggml_init_params ctx_compute_params = {0, NULL,true,};
+    struct ggml_context * ctx_compute = nullptr;    //build graph
     size_t ctx_size = 0;
     
     std::vector<hFISH> childs;
@@ -267,11 +292,21 @@ protected:
     std::vector<std::string> to_quant, to_skip;
 
 public:    
+    static tpSWARM swarm;
     MODEL_ARCH arch = MODEL_ARCH::_X_;
+    enum ROLE_TYPE    {
+        COMMON,
+        SWARM_HEAD,
+        SWARM_FOLLOWER,
+    };
+    ROLE_TYPE role = ROLE_TYPE::COMMON;
 
     Fish() {}
-    Fish(const std::string&nam_,struct CLI_params params,int flag=0x0) : name(nam_),hparams(params) {
+    Fish(const std::string&nam_,struct CLI_params params,ROLE_TYPE role_=COMMON,int flag=0x0) : name(nam_),hparams(params),role(role_) {
         arch = params.arch;
+        if(jKEY(params.jConfig,{"train"}).empty())     {
+            isLocalInfer = true;
+        }
     }
     Fish(const std::string&nam_,struct ggml_context *ctx_, int flag = 0x0) : name(nam_),ctx(ctx_)    {
         GGML_PRINT("=== %s ===\n", __func__);
@@ -281,6 +316,7 @@ public:
         return !isLocalInfer;
     }
     bool hasWiki()  {   return wikis.size()>0;  }
+    virtual struct ggml_cgraph *GetRawGraph(int flag=0x0)    {     return nullptr; }
 
     virtual ~Fish() { Clear(); }
     virtual std::string Name()  {   return name.c_str();  }
@@ -288,15 +324,21 @@ public:
     virtual size_t Size(int flag = 0x0) { return ctx_size; }
 
     virtual void Init(const vector<hWIKI>& wikis,int flag=0x0)          {   throw "Fish::Init is ...";           }       
-    virtual void BuildGraph(int flag=0x0)               {   throw "Fish::BuildGraph is ...";     }
+    virtual void Build(int flag=0x0)               {   throw "Fish::Build is ...";     }
+    virtual void BeforeBuild(int flag=0x0);
+    virtual void AfterBuild(int flag=0x0);
 
-    virtual void BuildGraph(struct ggml_context *ctx0, ggml_gallocr_t &allocr, bool isOnlySymbol, int flag = 0x0)    {
+    virtual void Build(struct ggml_context *ctx0, ggml_gallocr_t &allocr, bool isOnlySymbol, int flag = 0x0)    {
         hGraph = std::make_shared<TGraph>(ctx0, GGML_DEFAULT_GRAPH_SIZE, false, isOnlySymbol);
         assert(out_node != nullptr && in_node != nullptr);
         hGraph->build_forward(out_node, true);
         hGraph->disconnect_node(in_node);
         ggml_gallocr_alloc_graph(allocr, hGraph->cgraph);
     }
+    virtual hGensor GetGensor(const char *name, int flag = 0x0)    {
+        assert(gensors.find(name) != gensors.end());
+        return gensors[name];
+    } 
 
     virtual string __repr__(string& suffix,string& prefix,int flag=0x0){
         _INFO( "Ganlia (" );
@@ -329,7 +371,11 @@ public:
     }
     // virtual void CreateWiki(int flag=0x0)   {}
     
-    hGensor Target()    {   return nullptr;    }
+    virtual hGensor Target()    {   return nullptr;    }
+    virtual hGensor Output()    {   assert(out_node!=nullptr);   return out_node;    }
+    virtual hGensor Input()     {   return nullptr;    }
+    virtual struct ggml_cgraph * ForwarGraph()      {   return gf;  }
+    virtual struct ggml_cgraph * BackwardGraph()    {   return gb;  }
 
     void UpdateTensors(int flag = 0x0)    {
         UNUSED(flag);
@@ -468,7 +514,11 @@ public:
     
     bool OnTrainStep(struct train_opt_callback_data *data0,SampLoader&loader, int accum_step, float *sched, int flag = 0x0);
 
-    virtual bool InitCTX(int flag=0x0);
+    virtual int GenSentence(int flag=0x0);
+
+    virtual bool ComputePlan(int flag=0x0);
+    int BuildGraphFromRaw(int flag);
+
     virtual void Train(int flag = 0x0);
     virtual void Loss(int flag = 0x0) {}
 
@@ -483,7 +533,7 @@ public:
         _WANDB_log(1.0);
 #endif  
     }
-    static hFISH MakeInstance(const std::string nam_,struct CLI_params& params,int flag);
+    static hFISH MakeInstance(const std::string nam_,struct CLI_params& params,vector<hWIKI> wikis,ROLE_TYPE role, int flag);
     static hFISH MakeSwarm(const std::string nam_,struct CLI_params& params,int flag);
     static hFISH MakeInstance(const std::string nam_,struct CLI_params& params,const Fish *hSrc_,int flag);
     // static Fish* Copy(const Fish* src,int flag=0x0);
@@ -501,11 +551,12 @@ public:
     friend class GeneratOnPrompt;
     friend class LLaMeta;   
     friend class SampLoader;
+    friend class WIKI;
 };
 
 struct LogicSalp : public Fish {
-    typedef vector<shared_ptr<Fish>> tpSWARM;
-    tpSWARM swarm;
+
+    hFISH head=nullptr;
 
     typedef enum {
         BIT_MASK
@@ -517,7 +568,9 @@ struct LogicSalp : public Fish {
     vector<double> position;
     // LogicSalp(const int dim, int flag = 0x0);
     // LogicSalp(const int dim, const vector<int>&picks, int flag = 0x0);
-    LogicSalp(const std::string& nam_, struct CLI_params params,tpSWARM& swarm_,int flag=0x0);
+    LogicSalp(const std::string& nam_, struct CLI_params params,int flag=0x0);
+    // void BeforeBuild(int flag=0x0)   override;   
+    // void AfterBuild(int flag=0x0)   override;   
     void Train(int flag = 0x0)  override;
 
     	

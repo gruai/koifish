@@ -101,10 +101,13 @@ ConsiceDict::ConsiceDict(LLaMeta *lama_,int flag) : VariationaAE(),hLM(lama_)   
         latent_dim = dims[nLevel];
         _INFO("%s symmetric=%d resi=%d tpNorm=%d opOut=%d nLevel=%d dims= ",__func__,(int)(isSymmetric),(int)(reserve_x),tpNorm,opOut,nLevel);
     }   else     {   /**/  
-        latent_dim = hparams.dict_latent_dim;   //256;       
+        if(hLM->hparams.wiki_actor!="copy") {
+            latent_dim = hparams.dict_latent_dim;   //256;       
+        }            
         _INFO("%s latent_dim=%d Dialect=%s",__func__,latent_dim,isDialect?"ON":"OFF");
     }
-    
+    if(hLM->hparams.wiki_actor!="copy")
+        hLM->hparams.n_embd = latent_dim;   //Reset n_embd just like nLayerX
     for(auto dim : dims)           {
         _INFO("%d ",dim);
     }
@@ -122,19 +125,19 @@ void ConsiceDict::InitVAE(int flag)  {
         // encoder = ggml_new_tensor_2d(hLM->ctx, GGML_TYPE_F32, hparams.n_embd, latent_dim);     
         // decoder = ggml_new_tensor_2d(hLM->ctx, GGML_TYPE_F32, latent_dim, hparams.n_embd); 
     }    
-    hLM->hparams.n_embd = latent_dim;        
+         
 }
 
 void ConsiceDict::CreateEmbeddings(struct random_normal_distribution * rnd,int flag){
     assert(hLM!=nullptr);
-    uint32_t n_embd  = hparams.n_embd,n_out=n_vocab;
+    uint32_t n_embd = latent_dim,n_out=n_vocab;
     if(isDialect){
         n_out = tVocab();
     }
     auto lama = hLM->GetRawModel( );  
     auto ctx = hLM->ctx;    
     if(nLevel==0){
-        n_embd = latent_dim;
+        
     }else{
         const uint32_t last_dim=dims[dims.size()-1];        
         if(isLoadTokenEmbed) {

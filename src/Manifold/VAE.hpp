@@ -175,12 +175,12 @@ public:
         z = eps * std + mu*/
     }
 
-    void BuildGraph(int flag=0x0)   override   { 
+    void Build(int flag=0x0)   override   { 
     }
 
     virtual void Build( hGensor x=nullptr )        {
         x = _build_coder(true,x);       //encoder
-        callosum->BuildGraph( );      //  self.scale_MLP( torch.cat(combined, dim=1))                              //
+        callosum->Build( );      //  self.scale_MLP( torch.cat(combined, dim=1))                              //
         x = _build_coder(false,x);      //decoer
     }
 
@@ -209,8 +209,8 @@ public:
         callosum->Init();
     }
 
-    void BuildGraph(int flag=0x0)   override        {  
-        callosum->BuildGraph( );
+    void Build(int flag=0x0)   override        {  
+        callosum->Build( );
     }
     
     void Train(int flag=0x0)    override            {

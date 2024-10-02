@@ -1,21 +1,17 @@
-#include "Fish.hpp"
+#include "gLLM.hpp"
+#include "Dictionary.hpp"
 #include "../ggex/GG_util.hpp"
 
- Optimizer::Optimizer(Fish *g_,struct train_params_common& params_,int flag) : train_params(params_),gang(g_) {
-    InitOpt(train_params,flag); 
+ Optimizer::Optimizer(LLaMeta *g_,struct train_params_common& params_,int flag) : train_params(params_),gang(g_) {
+    // InitOpt(train_params,flag); 
     val_loader.type = SampLoader::TYPE::DT_EVAL;
-    train_loader.Init(g_->hparams);
-    val_loader.Init(g_->hparams);
-
-    if(0){
-        const char* train_tokens = "./src/llmc//tinyshakespeare/tiny_shakespeare_train.bin";
-        const char* val_tokens = "./src/llmc/tinyshakespeare/tiny_shakespeare_val.bin";
-        int B = train_params.n_batch,T =train_params.n_ctx;
-        train_loader.init(train_tokens, B, T, 0, 1, 1);
-        val_loader.init(val_tokens, B, T, 0, 1, 0);
-        _INFO("%s train dataset num_batches: %zu\n", __func__,train_loader.len() / (B*T));
-        _INFO("%s val dataset num_batches: %zu\n", __func__,val_loader.len() / (B*T));        
+    if(gang->isTrain())  {
+        train_loader.Init(g_);
+        
+    }else{
+       
     }
+    val_loader.Init(g_); 
 }
 
 hGensor Optimizer::hLoss()             {    
@@ -62,30 +58,28 @@ bool Optimizer::OnLogits(int flag)   {
     return true;
 }
 
-bool OPT_Adam::GradAccumulation(float&fx,struct train_opt_callback_data *callback_data,struct ggml_cplan *cplan,int flag)   {    
+bool OPT_Adam::BatchGrad(float&fx,struct train_opt_callback_data *cb0,struct ggml_cplan *cplan,int flag)   {    
     fx = 0;
     float * g  = (float *)grad->data;
     auto loss = hLoss();
     float *fLoss = (float*)(loss->data),*fLossG = (float*)(loss->grad->data);
     ggml_set_zero(grad);   
-    assert(gb!=nullptr);
+    struct ggml_cgraph *_gf=gang->ForwarGraph(),*_gb=gang->BackwardGraph();
+    assert(_gb!=nullptr);
       
     const int n_accum = MAX(1, train_params.n_gradient_accumulation);
     const float accum_norm = 1.0f / (float) n_accum;
     bool cancel = false;
-    struct train_state *train = callback_data->train;
+    struct train_state *train = nullptr;    //callback_data->train;
     for (int accum_step = 0; accum_step < n_accum; ++accum_step) {
-        // int64_t used_samples = gang->update_batch(callback_data,train->shuffle_next_sample,callback_data->params);
-        int64_t used_samples = train_loader.update_batch(train->shuffle_next_sample,gang);
-        train->train_samples += used_samples;
-        train->shuffle_next_sample += used_samples;
-
+        int64_t used_samples = train_loader.update_batch(-1,gang);
+        train_samples += used_samples;      
         if(one_step(train,train_loader,accum_step, &sched)){
             return false;
         }
 
         ggml_set_f32      (loss->grad, 1.0f);
-        ggml_graph_compute(gb, cplan);
+        ggml_graph_compute(_gb, cplan);
         OnLogits();
         ggml_opt_acc_grad(opt_ps.size(), opt_ps.data(), g, accum_norm);        
         fx += ggml_get_f32_1d(loss, 0);
@@ -256,16 +250,15 @@ void OPT_AdamMiniV::UpdateTensorParam(hGensor hP,float *m,float *v0,float *g,flo
 }
 
 
-enum ggml_opt_result Optimizer::ggml_train(struct ggml_context * ctx, hGensor loss_,hGensor target_,
-    struct ggml_cgraph * gf_,struct ggml_cgraph * gb_,CLI_params& hparams)    {
-    struct train_opt_callback_data *callback_data = &(train_loader.callback_data);
+enum ggml_opt_result Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGensor target_,CLI_params& hparams)    {
+    // struct train_opt_callback_data *callback_data = &(train_loader.callback_data);
     // assert(loss==nullptr && target_probs==nullptr);
     // loss = loss_;       target_probs = target_;
     // preLogits = gang->preLogits;
     // callback_data->target_probs = target_probs;
-    tokens_input = callback_data->tokens_input;
+    // tokens_input = callback_data->tokens_input;
     
-    gf=gf_;      gb=gb_;
+    struct ggml_cgraph *_gf=gang->ForwarGraph(),*_gb=gang->BackwardGraph();
 
     enum ggml_opt_result result = GGML_OPT_RESULT_DID_NOT_CONVERGE;
     // struct ggml_opt_params params = opt->params;
@@ -280,44 +273,19 @@ enum ggml_opt_result Optimizer::ggml_train(struct ggml_context * ctx, hGensor lo
     if(0){  //only for old version
         // result = ggml_opt_resume_g(ctx, opt, loss, gf, gb, &train_opt_callback, callback_data);
     }else{        
-        int64_t nx = 0;
-        for (int i = 0; i < gf->n_nodes; ++i) {
-            if (gf->nodes[i]->flags & GGML_TENSOR_FLAG_PARAM) {
-                GGML_PRINT_DEBUG("found param %d: grad->op = %d\n", np, gf->nodes[i]->grad->op);                
-                opt_ps.push_back(gf->nodes[i]);
-                // opt_ps[np++] = gf->nodes[i];
-                _INFO("%4d(op=%d)\t", opt_ps.size(), gf->nodes[i]->grad->op );
-                gg_print_tensor_("",gf->nodes[i],0);
-                nx += ggml_nelements(gf->nodes[i]);
-            }
-        }            
-        GGML_ASSERT(opt_ps.size() < GGML_MAX_PARAMS);
         /*if ((opt->params.type != params.type) || (opt->nx != nx) || (opt->params.past != params.past)) {   //resume
             int iter = opt->iter;
             ggml_opt_init(opt->ctx, opt, params, nx);
             opt->iter = iter;
         }*/
            
-        const int n_accum = MAX(1, train_params.n_gradient_accumulation);
-        const float accum_norm = 1.0f / (float) n_accum;
-
-        /*float * g  = (float *)g->data;  // gradients
-        float * m  = (float *)m->data;  // first moment
-        float * v  = (float *)v->data;  // second moment
-        float * pf = params.past > 0 ? (float *)pf->data : NULL; // past function values*/
         float fx = 0;
-        // cplan = ggml_graph_plan(gb, params.n_threads);
-        // struct ggml_object * obj = ggml_new_object(ctx, GGML_OBJECT_TYPE_WORK_BUFFER, cplan.work_size);
-        // cplan.work_data = (uint8_t *)ctx->mem_buffer + obj->offs;
         auto *cplan = &(gang->gb_plan);
-        
-        if( !GradAccumulation(fx,callback_data,cplan,0x0))
-                return GGML_OPT_RESULT_CANCEL;         
+
+        if( !BatchGrad(fx,nullptr,cplan,0x0))
+            return GGML_OPT_RESULT_CANCEL;         
 
         fx_prev.push_back(fx);        fx_best.push_back(fx);   
-        /*if (pf) {
-            pf[opt->iter % params.past] = fx_prev;
-        }*/
         loss_before = fx;        loss_after  = fx;
 
         // initialize
@@ -330,16 +298,16 @@ enum ggml_opt_result Optimizer::ggml_train(struct ggml_context * ctx, hGensor lo
         // run the optimizer
         for (int t = 0; t < train_params.adam_n_iter; ++t) {
             iter = iter0 + t + 1;
-            GGML_PRINT_DEBUG  ("=== iter %d ===\n", t);
+            /*GGML_PRINT_DEBUG  ("=== iter %d ===\n", t);
             GGML_PRINT_DEBUG  ("loss      = %10.6f\n", ggml_get_f32_1d(loss, 0));
             GGML_PRINT_DEBUG_5("df/dx0 = %10.6f\n", ggml_get_f32_1d(opt_ps[0]->grad, 0));
             GGML_PRINT_DEBUG_5("df/dx1 = %10.6f\n", ggml_get_f32_1d(opt_ps[1]->grad, 0));
             for (auto hT : opt_ps) {
                 GGML_PRINT_DEBUG("param %d: %10.6f, g = %10.6f\n", i,ggml_get_f32_1d(hT, 0), ggml_get_f32_1d(hT->grad, 0));
-            }
+            }*/
             const int64_t t_start_wall = ggml_time_us(),t_start_cpu = ggml_cycles();
-            float gnorm = gClip(nx,hparams);
-            UpdateParams(gnorm,nx,hparams,0x0);   
+            float gnorm = gClip(nParams,hparams);
+            UpdateParams(gnorm,nParams,hparams,0x0);   
             // AdamMiniV(gnorm,nx,hparams,0x0);   
             //gradient is useless at this stage  
             if (hparams.eval_every>0 && t % hparams.eval_every == 0) {
@@ -349,7 +317,7 @@ enum ggml_opt_result Optimizer::ggml_train(struct ggml_context * ctx, hGensor lo
                 gang->GenSentence(1);   
             }   
             
-            if( !GradAccumulation(fx,callback_data,cplan,0x0))
+            if( !BatchGrad(fx,nullptr,cplan,0x0))
                 return GGML_OPT_RESULT_CANCEL;            
 
             loss_after = fx;
@@ -402,14 +370,14 @@ void Fish::Train(  int flag )   {
     
 }
 
-float Optimizer::Compute(std::vector<llama_token>&tokens,bool onlyForward,int flag){
-    // llama_token bos = llama_token_bos(llama_get_model(lctx)),eos = llama_token_eos(llama_get_model(lctx))
-    float * g  = (float *)grad->data;
+float Optimizer::Compute(std::vector<llama_token>&tokens,bool onlyForward,int flag){    
+    struct ggml_cgraph *_gf=gang->ForwarGraph(),*_gb=gang->BackwardGraph();
+    assert(_gf!=nullptr);
     auto loss = hLoss( );
-    float *fLoss = (float*)(loss->data),*fLossG = (float*)(loss->grad->data);
-    ggml_set_zero(grad);   
+    float *fLoss = (float*)(loss->data),*fLossG = onlyForward ? nullptr:(float*)(loss->grad->data);    
     auto cplan =&(gang->gb_plan);
     llama_token token;
+    auto tokens_input = gang->Input( );
     ggml_set_i32_nd(tokens_input, 0, 0, 0, 0, bos);
 
     size_t i,len=tokens.size(),ldB=tokens_input->ne[0],nB0=tokens_input->ne[1],nSamp = len/ldB;
@@ -422,9 +390,13 @@ float Optimizer::Compute(std::vector<llama_token>&tokens,bool onlyForward,int fl
         ggml_set_i32_nd(tokens_input, (int) (i + 1), (int) 0, 0, 0, token);
     }
     if(onlyForward)
-        ggml_graph_compute(gf, cplan);   
-    else
-        ggml_graph_compute(gb, cplan);   /**/
+        ggml_graph_compute(_gf, cplan);   
+    else{
+        float * g  = (float *)grad->data;
+        ggml_set_zero(grad);  
+        ggml_graph_compute(_gb, cplan);   /**/
+    }
+        
     // if(nSamp<nB0){
     //     tokens_input->ne[1] = nB0;
     // }
@@ -437,12 +409,13 @@ float Optimizer::Compute(std::vector<llama_token>&tokens,bool onlyForward,int fl
 float Optimizer::Evaluate(SampLoader&loader,int iter,int flag){  
     if( val_loader.num_batches==0) 
         return 0; 
-    _INFO("[eval] " );   
+    if(iter!=-666)   _INFO("[eval] " );   
     GST_TIC(tic);     
-    
+    struct ggml_cgraph *_gf=gang->ForwarGraph();
     auto loss = hLoss();           
     float *fLoss = (float*)(loss->data),sum=0;
     double l2,delta_max=0,delta_=0,a;
+    auto tokens_input = gang->Input( );
     int i,ldT=tokens_input->ne[0],nB=0,step=max(loader.num_batches/10,1);
     size_t nz=0,j;
     llama_token tMost = (llama_token) (loader.n_vocab - 1);
@@ -464,10 +437,13 @@ float Optimizer::Evaluate(SampLoader&loader,int iter,int flag){
             delta_max = max(delta_max,l2);      delta_+=l2;        
         }
         // ggml_graph_compute(gb, cplan);     
-        ggml_graph_compute(gf, &(gang->gb_plan));     
+        ggml_graph_compute(_gf, &(gang->gb_plan));     
         sum += *fLoss;
         nB++;
         break;
+    }
+    if(iter=-666)    {   //hack
+        return i;
     }
     float last = lcEval.Last(),aloss = sum/nB;  //[eval]   Loss@Evaluation=7.302641 T=0.232s ======
     lcEval.Add(aloss);
@@ -535,38 +511,9 @@ std::string shuffle_samples_X(
     return mt19937_get_state(rng);
 }
 
-void Optimizer::Init_CallbackData(struct llama_context * lctx,struct train_params_common& train_params,hGensor  tokens_input,int flag) {
-    app_ctx = lctx;
 
-    struct train_opt_callback_data& opt_cb_data = train_loader.callback_data;
-    opt_cb_data.params                 = &(train_params); //hparams.common
-    opt_cb_data.train                  = train;
-    opt_cb_data.save_cb                = nullptr;   //&save_train_;
-    opt_cb_data.save_data              = nullptr;   //&save_data;
-    opt_cb_data.lctx                   = lctx;
-    opt_cb_data.last_save_iter         = iter;
-    // opt_cb_data.tokens_data            = train_tokens.data();
-    // opt_cb_data.tokens_size            = train_tokens.size();
-    // opt_cb_data.samples_begin          = train_samples_begin.data();
-    // opt_cb_data.samples_size           = train_samples_size.data();
-    // opt_cb_data.samples_count          = train_samples_size.size();
-    train_loader.train = train;         val_loader.train = train;
-    train_loader.hOPT = this;           val_loader.hOPT = this;
 
-    // opt_cb_data.shuffled_samples_offs  = train_shuffled_samples_offs.data();
-    // opt_cb_data.shuffled_samples_begin = train_shuffled_samples_begin.data();
-    // opt_cb_data.shuffled_samples_size  = train_shuffled_samples_size.data();
-
-    opt_cb_data.tokens_input           = tokens_input;
-    opt_cb_data.target_probs           = hTargetProbs();
-    first_iter             = iter;
-    opt_cb_data.first_epoch            = train->train_epochs;
-    opt_cb_data.iter_at_last_epoch     = -1;
-    opt_cb_data.last_time              = ggml_time_ms();
-    opt_cb_data.millis_per_iter        = 0.0;
-}
-
-bool Optimizer::one_step(struct train_state *train,SampLoader&loader, int accum_step, float *sched, int flag)    {
+bool Optimizer::one_step(struct train_state *trainst0,SampLoader&loader, int accum_step, float *sched, int flag)    {
     // LossCurve(0x0);
     struct train_params_common *params = &(train_params);   //data->params;
     // struct train_state *train = data->train;
@@ -592,16 +539,7 @@ bool Optimizer::one_step(struct train_state *train,SampLoader&loader, int accum_
             const int done_iter = iter - first_iter;
             const int remaining_iter = n_iter - done_iter;
             remaining_millis = remaining_iter * millis_per_iter;
-        }
-        // file saving
-        /*const bool save_now = (params->save_every > 0) && (iter - last_save_iter >= params->save_every);
-        if (save_now)            {                
-            int new_iters = iter - last_save_iter;
-            train->train_its += new_iters;
-            train->train_tokens += new_iters * opt->params.n_gradient_accumulation * n_batch * n_ctx;
-            SaveTrain(&save_data, train);
-            last_save_iter = iter;
-        }*/
+        }        
 
         // exclude file saving from time measurement, by measuring last_time after saving
         last_time = ggml_time_ms();
@@ -612,30 +550,23 @@ bool Optimizer::one_step(struct train_state *train,SampLoader&loader, int accum_
             impr_plot = 0;
         if (std::isnan(loss_before) || std::isnan(loss_after))
             impr_plot = 0;
-        _INFO("[train] iter=%6d sample=%zu/%zu sched=%.3f loss=%f ",
-                iter, std::min(1 + train->shuffle_next_sample, train->shuffle_sample_count), train->shuffle_sample_count,
-                *sched, loss_after); //,hOPT->zmuv_0,hOPT->zmuv_1
+        _INFO("[train]_%-6d\tsample@%zu/%zu sched=%.3f loss=%f ",
+                iter, std::min(1 + train_loader.next_sample, train_loader.shuffle_sample_count), train_loader.shuffle_sample_count,
+                *sched, loss_after); //,zmuv_0,zmuv_1
         lcTrain.Add(loss_after);
         if (millis_per_iter > 0)            {
             _INFO(" dt=");          _TIME(millis_per_iter);
             _INFO(" eta=");         _TIME(remaining_millis);
         }
         float improvement = loss_before - loss_after;
-        const float plot_scale = 10.0f;
-        int bar_len = (int)(1 + improvement * plot_scale + 0.5);
-        _INFO(" |");
-        for (int i = 0; i < bar_len; ++i)            {
-            _INFO("-");
-        }
-        _INFO(">");            _INFO("\n");
+        _INFO("\n");
     }
 
-    if (train->shuffle_next_sample >= train->shuffle_sample_count)
-    {
-        ++train->train_epochs;
-        _INFO("%s: reshuffle samples. completed epochs: %llu\n", __func__, (long long unsigned)train->train_epochs);
+    if (train_loader.next_sample >=train_loader.shuffle_sample_count)    {
+        ++train_epochs;
+        _INFO("%s: reshuffle samples. completed epochs: %llu\n", __func__, train_epochs);
         // note: we may have used some samples from the current shuffling more than once
-        train->shuffle_rng_state_current = train->shuffle_rng_state_next;
+        train_loader.shuffle_rng_state_current =train_loader.shuffle_rng_state_next;
         // train->shuffle_rng_state_next = shuffle_samples(
         //     train->shuffle_rng_state_current,data->shuffled_samples_offs,data->shuffled_samples_begin,
         //     data->shuffled_samples_size,data->samples_begin,data->samples_size,data->samples_count);
@@ -646,10 +577,10 @@ bool Optimizer::one_step(struct train_state *train,SampLoader&loader, int accum_
         //     loader.shuffled_samples_begin.data(),loader.shuffled_samples_size.data(),
         //     loader.samp_begin.data(),loader.samp_size.data(),loader.samp_size.size());
         
-        train->shuffle_next_sample = 0;
+        train_loader.next_sample = 0;
     }
 
-    const bool last_epoch_reached = (params->n_epochs > 0 && (int64_t)train->train_epochs - first_epoch >= params->n_epochs);
+    const bool last_epoch_reached = (params->n_epochs > 0 && train_epochs - first_epoch >= params->n_epochs);
     if (last_epoch_reached)    {
         // allow optimization iteration at last epoch to be completed before canceling
         if (iter_at_last_epoch < 0)        {
@@ -662,60 +593,112 @@ bool Optimizer::one_step(struct train_state *train,SampLoader&loader, int accum_
     return false;
 }
 
-void Optimizer::InitOpt(struct train_params_common& params_,int flag)  {
-    /*iter = train->train_its;
+void Optimizer::BeforeTrain(struct llama_context * lctx,struct train_params_common& train_params,hGensor tokens_,int flag) {    
+    first_iter             = iter;
+    // train_loader.hOPT = this;           val_loader.hOPT = this;
+    // assert(tokens_!=nullptr);
+    // tokens_input = tokens_;
 
-    opt->params = ggml_opt_default_params(GGML_OPT_TYPE_ADAM);
-    opt->params.print_forward_graph     = false;
-    opt->params.print_backward_graph    = false;
-    opt->params.graph_size              = LLAMA_TRAIN_MAX_NODES;
-    opt->params.n_threads               = train_params.n_threads;
-    opt->params.past                    = train_params.opt_past;
-    opt->params.delta                   = train_params.opt_delta;
-    opt->params.max_no_improvement      = train_params.opt_max_no_improvement;
-    opt->params.n_gradient_accumulation = train_params.n_gradient_accumulation;
-    opt->params.adam.n_iter             = train_params.adam_n_iter;
-    opt->params.adam.sched              = 1.0f;
-    opt->params.adam.alpha              = train_params.adam_alpha;
-    opt->params.adam.decay              = train_params.adam_decay;
-    opt->params.adam.decay_min_ndim     = train_params.adam_decay_min_ndim;
-    opt->params.adam.beta1              = train_params.adam_beta1;
-    opt->params.adam.beta2              = train_params.adam_beta2;
-    opt->params.adam.gclip              = train_params.adam_gclip;
-    opt->params.adam.eps_f              = train_params.adam_eps_f;*/
+    opt_ps = gang->optParams;
+    nMostParam = 0;
+    for (auto ps : opt_ps) {            
+        nMostParam += ggml_nelements(ps);
+    } 
+    assert(nMostParam>=nParams);
+
+    // max_epoch = train_params.adam_n_iter
 }
 
-void Optimizer::Init(size_t nx,int flag){
-    assert(nx>0);
+void Optimizer::Prepare(size_t nx_,int flag){
+    // assert(nx_>=0);
     iter = 0;
-    nParams = nx;
+    nParams = nx_;         
     just_initialized = true;
-   
-    struct ggml_init_params ctx_opt_params;    
-    ctx_opt_params.mem_size = GGML_MEM_ALIGN*3 + ggml_tensor_overhead()*3 + ggml_type_size(GGML_TYPE_F32)*nx*3;
-    if (past > 0) {
-        ctx_opt_params.mem_size += GGML_MEM_ALIGN + ggml_tensor_overhead() + ggml_type_size(GGML_TYPE_F32)*past;
-    }    
-    ctx_opt_params.mem_buffer = NULL;
-    ctx_opt_params.no_alloc   = false;
-    ctx = ggml_init(ctx_opt_params);    
-    grad = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, nx);
+    if(nParams>0)   {
+        struct ggml_init_params ctx_opt_params;    
+        ctx_opt_params.mem_size = GGML_MEM_ALIGN*3 + ggml_tensor_overhead()*3 + ggml_type_size(GGML_TYPE_F32)*nParams*3;
+        if (past > 0) {
+            ctx_opt_params.mem_size += GGML_MEM_ALIGN + ggml_tensor_overhead() + ggml_type_size(GGML_TYPE_F32)*past;
+        }    
+        ctx_opt_params.mem_buffer = NULL;
+        ctx_opt_params.no_alloc   = false;
+        _ctx = ggml_init(ctx_opt_params);    
+        if(gang->isTrain()) {
+            grad = ggml_new_tensor_1d(_ctx, GGML_TYPE_F32, nParams);
+        }
+        train_loader.Prepare(this);
+    }
+    
+    val_loader.Prepare(this);
 }
 
-void OPT_Adam::Init(size_t nx,int flag){
-    Optimizer::Init(nx,flag);
-    assert( grad!=nullptr );
-    gm  = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, nx);
-    gv  = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, nx);
-    gpf = past > 0 ? ggml_new_tensor_1d(ctx, GGML_TYPE_F32, past) : NULL;
-    ggml_set_zero(gm);
-    ggml_set_zero(gv);
-    if (gpf) {
-        ggml_set_zero(gpf);
+bool Optimizer::PrepareData( CLI_params& hparams,int flag )   {   
+    GST_TIC(tic);   
+
+    bool isLoadOK = false;  
+    string spTrain = hparams.serial_path+".train",spEval = hparams.serial_path+".eval";
+    // auto& tokens = hTokenset->tokens;
+    
+    if(1)   {
+        if( train_loader.Serialize(spTrain,false) 
+            && val_loader.Serialize(spEval,false)){
+                if(train_loader.len()>0){
+                    // hDict->nUniqueToken = train_loader.n_unique_tokens; 
+                    // _INFO("%s: nTrain=%zu nEval=%zu batch_sample=%s T=%.3g\n", __func__, train_loader.len(),val_loader.len(),GST_TOC(tic));
+                    isLoadOK = true;
+                }
+        }            
+    }
+    if(!isLoadOK) {
+        hDataToken hTokenset=train_loader.tokens;
+        assert(hTokenset!=nullptr);
+           
+        std::vector<size_t> samples_begin,samples_size;
+        // auto train_params = hparams.common;
+        size_t nUnique = hTokenset->nUnique,nVocab=hTokenset->nVocab;
+        // int n_ctx_tokens = hparams.n_ctx;
+        if( hTokenset->InitSamps(hparams.common.n_ctx,samples_begin,samples_size)){
+
+        }else{
+            _INFO("%s: NULL Samps!!!    batch_sample=%s nTrain=%zu nEval=%zu T=%.3g\n", __func__, train_loader.batch_sample.c_str(),
+                train_loader.len(),val_loader.len(),GST_TOC(tic));      
+            return false;
+        }        
+  
+        train_loader.SetSamples(nVocab,hTokenset,samples_begin,samples_size,true,hparams);    
+        val_loader.SetSamples(nVocab,hTokenset,samples_begin,samples_size,false,hparams);
+        
+        // assert(val_loader.n_unique_tokens <= nUnique && train_loader.n_unique_tokens <= nUnique);
+        // val_loader.n_unique_tokens = nUnique;
+        // train_loader.n_unique_tokens = nUnique;
+        shuffle_samples_hash = train_loader.shuffle_samples_hash;
+        train_loader.Serialize(spTrain,true);
+        // train_loader.Serialize(spTrain,false);      //only for debug
+        val_loader.Serialize(spEval,true);
+    }
+    
+    // GGML_ASSERT(train_samples_begin.size() == train_samples_size.size());
+    _INFO("%s: batch_sample=%s nTrain=%zu nEval=%zu T=%.3g\n", __func__, train_loader.batch_sample.c_str(),
+        train_loader.len(),val_loader.len(),GST_TOC(tic));        
+    return true;
+}
+
+void OPT_Adam::Prepare(size_t nx_,int flag){
+    Optimizer::Prepare(nx_,flag);
+    if(gang->isTrain()){
+        assert( grad!=nullptr );
+        gm  = ggml_new_tensor_1d(_ctx, GGML_TYPE_F32, nParams);
+        gv  = ggml_new_tensor_1d(_ctx, GGML_TYPE_F32, nParams);
+        gpf = past > 0 ? ggml_new_tensor_1d(_ctx, GGML_TYPE_F32, past) : NULL;
+        ggml_set_zero(gm);
+        ggml_set_zero(gv);
+        if (gpf) {
+            ggml_set_zero(gpf);
+        }
     }
 }
 
-OPT_Adam::OPT_Adam(Fish *g_,struct train_params_common& params_,int flag)
+OPT_Adam::OPT_Adam(LLaMeta *g_,struct train_params_common& params_,int flag)
     : Optimizer(g_,params_,flag)    {
 
     sched              = 1.0f;

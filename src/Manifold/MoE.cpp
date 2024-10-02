@@ -66,7 +66,7 @@ bool LLaMeta::lama_layer::CreateFFN(const CLI_params&hparams, ggml_context *ctx,
     return true;  
 }
 
-LLM_MOE::LLM_MOE( const std::string& nam_,struct CLI_params params,int flag) : LLaMeta(nam_,params,flag)  {
+LLM_MOE::LLM_MOE( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag) : LLaMeta(nam_,params,role,flag)  {
     assert(arch==MODEL_ARCH::NLP_MOE);
     
     tpFFN = FFN_TYPE::GATE_CYS;    
@@ -210,7 +210,55 @@ hGensor MixOfModels::Forward(struct ggml_context * ctx,hGensor cur,hGensor w){
     hGensor wB = _repeat(ctx,w,expert);
     return ggml_mul(ctx,expert,wB);
 }
+
+void MixOfSwarm::Init(tpSWARM&swarm,struct ggml_context *ctx,int n_embd,int flag){
+    hGensor a=nullptr,b=nullptr;
+    for(auto fish:swarm){
+        b = fish->Output();
+        // assert(b!=nullptr && b->data!=nullptr);
+        exs.push_back(b);
+        if(a==nullptr){
+            a = b;
+        }else{
+            assert(ggml_are_same_shape(a, b));
+        }
+    }
+    gat_ = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, swarm.size()+1);
+}
+
+hGensor MixOfSwarm::Build(CLI_params&hparams,struct ggml_context * ctx,hGensor cur,int flag )  { 
+    // return cur;
+    int n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd;
+    int i=0,nSwarm=exs.size()+1;      
+    size_t offset = gat_->nb[0];       assert(offset==4);  
+    size_t N0=cur->ne[0],ld1=(nSwarm)*offset,nToken=cur->ne[1],N1=nToken;    
+    assert(nSwarm == gat_->ne[1]);
+
+//[nWiki+1, n_tokens] := [n_embed,nWiki+1]x[n_embed,n_tokens]  
+    hGensor w_ = ggml_mul_mat(ctx, gat_, ggml_reshape_2d(ctx,cur,N0,nToken));           
+    if(isSiLU){ //maybe useful
+        w_ = ggml_silu(ctx,w_);
+    }
+    hGensor probs = ggml_soft_max(ctx,w_);        
+    // hGensor tA = ggml_reshape_2d(ctx,curlogits,n_vocab,n_ctx*n_batch);      //[nVocab, n_ctx*nBatch] 
+    hGensor wA = ggml_view_2d(ctx, probs, 1, nToken,ld1, 0);         //[1, n_ctx*nBatch] ne0,ne1,nb1,offset
+    //  wA = _repeat(ctx,wA,tA);   
+    hGensor ouput = Forward(ctx,cur,wA);     //ggml_mul(ctx,tA,wA);
+    for(auto tB : exs){
+        i++;  
+        // float *logistB = (float*)(tB->data);    //always nullptr    
+        hGensor wB = ggml_view_2d(ctx, probs, 1, nToken,ld1, offset*i);  //ne0,ne1,nb1,offset
+        hGensor expert = Forward(ctx,tB,wB);          
+        // wB = _repeat(ctx,wB,expert);
+        ouput = ggml_add(ctx,ouput,expert);       //ggml_mul(ctx,expert,wB)
+    }
        
+    // ouput = ggml_reshape_3d        (ctx, ouput, N0, n_ctx, n_batch);
+    if(isRes){
+        ouput = ggml_add(ctx,ouput,cur);   
+    }
+    return ouput;
+}
 
 hGensor LLaMeta::build_gate(struct ggml_context * ctx,hGensor cur,hGensor curlogits, int flag )  {
     bool isRes = true,isSiLU=false;
