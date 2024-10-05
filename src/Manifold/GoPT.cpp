@@ -56,6 +56,7 @@ int GGUF_list(CLI_params& hparams)  {
         fflush(fp);
     }
     fclose(fp);
+    return 0x0;
 }
 
 int Fish_bubble(CLI_params& hparams)  {    
@@ -889,11 +890,10 @@ int GeneratOnPrompt::Generate(int nJob, int flag)   {
         embd_guidance.clear();
         if ((int)embd_inp.size() <= n_consumed && !is_interacting)        {
             // optionally save the session on first sample (for faster prompt loading next time)
-            if (!path_session.empty() && need_to_save_session && !params.prompt_cache_ro)
-            {
+            if (!path_session.empty() && need_to_save_session && !params.prompt_cache_ro)            {
                 need_to_save_session = false;
-                llama_save_session_file(ctx, path_session.c_str(), session_tokens.data(), session_tokens.size());
-                LOG("saved session to %s\n", path_session.c_str());
+                // llama_save_session_file(ctx, path_session.c_str(), session_tokens.data(), session_tokens.size());
+                // LOG("saved session to %s\n", path_session.c_str());
             }
 
             const llama_token id = Sample(); // llama_sampling_sample(ctx_sampling, ctx, ctx_guidance);

@@ -201,7 +201,8 @@ hGensor LLM_MOE::build_layer_( int N,struct ggml_context *ctx_compute,hGensor cu
         return ffn;
     }else{
         
-    }                 
+    }    
+    return nullptr;             
 }
 
 hGensor MixOfModels::Forward(struct ggml_context * ctx,hGensor cur,hGensor w){

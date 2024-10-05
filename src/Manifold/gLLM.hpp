@@ -58,7 +58,7 @@ static const char * TN( const char *format,... )	{
 
 static const char * TNs( const char *format,const char *suffix,... )	{
     va_list args;
-    va_start( args, format );
+    va_start( args, suffix );       //  va_start( args, format );
     vsnprintf( buffer,GGML_MAX_NAME,format,args );
     va_end(args);
     const char*w = ".weight";
@@ -217,7 +217,7 @@ struct LLaMeta : public Fish {
         }
 
         tpATT = jKV_is(params.jConfig,{"model","attention","type"},string("brown")) ? ATTENTION_TYPE::BROWN : ATTENTION_TYPE::QKV;
-        tpFFN = (FFN_TYPE)(jKV(params.jConfig,{"model","ffn","type"},5));
+        tpFFN = (FFN_TYPE)(jKV(params.jConfig,{"model","ffn","type"},5,false));
         // hparams.n_ff = jKV(params.jConfig,{"model","ffn","length"},hparams.n_ff);
         
         hparams.n_rot   = hparams.n_embd / hparams.n_head;

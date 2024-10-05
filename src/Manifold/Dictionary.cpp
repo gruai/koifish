@@ -64,7 +64,7 @@ string ConsiceDict::__repr__( string& suffix,string& prefix,int flag)     {
         
         string s="\n",p=prefix+"\t";
         auto vae = MAEC[0];
-        sprintf(buf+strlen(buf),"%s  [%s] x %d\tdims=",tab,vae->Name().c_str(),MAEC.size());
+        sprintf(buf+strlen(buf),"%s  [%s] x %ld\tdims=",tab,vae->Name().c_str(),MAEC.size());
         for(auto dim : dims)           {
             sprintf(buf+strlen(buf),"%d ",dim);
         }

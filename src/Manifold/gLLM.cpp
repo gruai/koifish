@@ -311,7 +311,7 @@ hGensor  LLaMeta::build_layer_( int N,struct ggml_context *ctx_compute,hGensor c
             // set_name(t30, "t30");     assert_shape_2d(t30, n_embd, N*n_batch);
         return ffn;
     }else{
-        
+        return ffn;
     }                 
 }
 
@@ -1134,7 +1134,7 @@ void LLaMeta::Build(int flag)      {
 }
 
 void LLaMeta::InitModel(int flag){     
-    hparams.n_ff = jKV(hparams.jConfig,{"model","ffn","length"},hparams.n_ff);   
+    hparams.n_ff = jKV(hparams.jConfig,{"model","ffn","length"},hparams.n_ff,false);   
     auto train_params = hparams.common;
     uint32_t n_embd  = hparams.n_embd,n_ctx = train_params.n_ctx;        
     const uint32_t n_layer = nLayerX<=0 ? hparams.n_layer : nLayerX;    //hparams.n_layer;
