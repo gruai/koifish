@@ -6,8 +6,9 @@
 
 ## Features
 
-- Mix of models
+- Mixture of models
 - Pure C++ project
+- CPU, GPU and Hybrid training
 
 ## Build
 
@@ -17,8 +18,12 @@ cd koifish
 
 mkdir build && cd build
 cmake ..
-cmake --build . --config Release -j 8
+make clean && make VERBOSE=TRUE
+# cmake --build . --config Release -j 8
 ```
+
+## Datasets
+
 ## Training
 
 ```bash
@@ -27,6 +32,9 @@ cmake --build . --config Release -j 8
 
 For more information, checkout the corresponding programs in the [examples](examples) folder.
 
+## Working plan
+- Sign adam optimizer
+
 ## Contributing
 
 - Contributors can open PRs
@@ -34,7 +42,7 @@ For more information, checkout the corresponding programs in the [examples](exam
 - Collaborators will be invited based on contributions
 - Any help with managing issues, PRs and projects is very appreciated!
 
-## Future work
+
 
 
 
