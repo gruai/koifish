@@ -16,10 +16,9 @@
 git clone https://github.com/gruai/koifish
 cd koifish
 
-mkdir build && cd build
-cmake ..
+mkdir build && cd build && cmake ..
 make clean && make VERBOSE=TRUE
-# cmake --build . --config Release -j 8
+# cmake --build . --config Release -j 8 VERBOSE=TRUE
 ```
 
 ## Datasets
@@ -30,7 +29,9 @@ make clean && make VERBOSE=TRUE
 
 ```
 
-For more information, checkout the corresponding programs in the [examples](examples) folder.
+## Fine-tuning
+
+
 
 ## Working plan
 - Sign adam optimizer
