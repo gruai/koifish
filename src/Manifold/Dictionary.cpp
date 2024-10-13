@@ -43,7 +43,7 @@ const char * kv(const char * key)   {
     return keybuf;
 };
 
-void _T_repr_(hGensor t,const char*tab,char *buf,int flag=0x0);
+
 string ConsiceDict::__repr__( string& suffix,string& prefix,int flag)     {
     char buf[5012]="\0";
     const char* _ops[]= {
@@ -382,10 +382,10 @@ void LLaMeta::save_gguf(const char * filename, int flag) {
     gguf_set_val_u32(fctx, kv(LLM_KV_EMBEDDING_LENGTH),            llm_embd                       );
     
     gguf_set_val_u32(fctx, kv(LLM_KV_BLOCK_COUNT),                 hparams.n_layer                );
-    gguf_set_val_u32(fctx, kv(LLM_KV_FEED_FORWARD_LENGTH),         hparams.n_ff                   );
+    gguf_set_val_u32(fctx, kv(LLM_KV_FEED_FORWARD_LENGTH),         hparams.n_ff()                   );
     gguf_set_val_u32(fctx, kv(LLM_KV_ROPE_DIMENSION_COUNT),        hparams.n_rot                  );
-    gguf_set_val_u32(fctx, kv(LLM_KV_ATTENTION_HEAD_COUNT),        hparams.n_head                 );    
-    gguf_set_val_u32(fctx, kv(LLM_KV_ATTENTION_HEAD_COUNT_KV),     hparams.n_head_kv              );
+    gguf_set_val_u32(fctx, kv(LLM_KV_ATTENTION_HEAD_COUNT),        hparams.n_head()                 );    
+    gguf_set_val_u32(fctx, kv(LLM_KV_ATTENTION_HEAD_COUNT_KV),     hparams.n_head_kv()              );
 
     gguf_set_val_f32(fctx, kv(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS), hparams.f_norm_rms_eps         );
     gguf_set_val_f32(fctx, kv(LLM_KV_ROPE_FREQ_BASE),              hparams.rope_freq_base         ); // TODO load in llama.cpp
@@ -426,7 +426,7 @@ void LLaMeta::save_gguf(const char * filename, int flag) {
     hDict->save_gguf(fctx, flag);    
 
     for (uint32_t i = 0; i < hparams.n_layer; ++i) {
-        auto layer = dynamic_pointer_cast<lama_layer>(layers[i]); //layers[i];
+        auto layer = dynamic_pointer_cast<QKV_LAY>(layers[i]); //layers[i];
 
         gguf_add_tensor(fctx, layer->attention_norm);
         gguf_add_tensor(fctx, layer->wq);

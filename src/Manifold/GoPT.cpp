@@ -61,7 +61,6 @@ int GGUF_list(CLI_params& hparams)  {
 
 int Fish_bubble(CLI_params& hparams)  {    
     hparams.wiki_actor = "copy";
-    hparams.compute_graph = "raw";
     arrHWIKI wikis = WIKI::MakeInstance("wikis",hparams,0x0);
     hFISH fish = Fish::MakeInstance("BUBBLE_",hparams,wikis,Fish::ROLE_TYPE::COMMON,0x110);
     if(1)
@@ -319,7 +318,7 @@ void GeneratOnPrompt::DisplayEmbd(bool input_echo, llama_context *ctx, int n_con
 int Fish::GenSentence(int flag)  {
     if(hOPT==nullptr)
         return -1;
-
+    assert(preLogits!=nullptr);
     GST_TIC(tic);
     hWIKI wiki = wikis[0];           assert(wiki != nullptr);
     if(gopt!=nullptr){

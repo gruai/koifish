@@ -131,7 +131,7 @@ int64_t SampLoader::update_batch(int x,Fish* fish){
             samp = SampAt((next_sample + k) % samples_count);  
         }
         // LLAMA_LOG_INFO("%s: sample_idx=%zu sample=%zu\n", __func__, sample_idx, sample);  
-        if(GST_TOC(tic)>10){        //for long-time data-update
+        if(GST_TOC(tic)>20){        //for long-time data-update
             _INFO("\r[%s] k=%d(%d) T=%.3g ...",__func__,k,nSampInBatch,GST_TOC(tic));   
             tic = Clock::now( );
         }

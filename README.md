@@ -1,14 +1,16 @@
 # Koifish
 
-**Koifish** is a c++ framework focused on efficient training/fine-tuning language model on PC & edge devices. 
+**Koifish** is a c++ framework focused on efficient training/fine-tuning language model on edge devices & PC. 
 1. Efficient  on-device training of billion parameter language model.
-2. Efficient  fine-tuning 10-billion parameter LLMs on PC & edge device.
+2. Efficient  fine-tuning 10-billion parameter LLMs on edge device.
 
 ## Features
 
 - Mixture of models
-- Pure C++ project
+- Support LLAMA/GPT/MAMBA ...
 - CPU, GPU and Hybrid training
+- Json config file
+- Pure C++ project
 
 ## Build
 
@@ -42,10 +44,3 @@ make clean && make VERBOSE=TRUE
 - Collaborators can push to branches in the `koifish` repo and merge PRs into the `master` branch
 - Collaborators will be invited based on contributions
 - Any help with managing issues, PRs and projects is very appreciated!
-
-
-
-
-
-
-

@@ -9,8 +9,8 @@
 
 #include "gLLM.hpp"
 
-bool LLaMeta::lama_layer::CreateFFN(const CLI_params&hparams, ggml_context *ctx, FFN_TYPE tpFFN, int flag)  {
-    const uint32_t n_embd = hparams.n_embd, n_ctx = hparams.n_ctx(), n_ff = hparams.n_ff, n_batch = hparams.n_batch();  
+bool QKV_LAY::CreateFFN(const CLI_params&hparams, ggml_context *ctx, FFN_TYPE tpFFN, int flag)  {
+    const uint32_t n_embd = hparams.n_embd, n_ctx = hparams.n_ctx(), n_ff = hparams.n_ff(), n_batch = hparams.n_batch();  
     const uint32_t n_expert = hparams.n_expert;
     switch(tpFFN){
     case VAR_LAST:
@@ -82,15 +82,15 @@ size_t LLM_MOE::MostMemSize(int flag)  {
 
 
 
-hGensor LLM_MOE::build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<LLaMeta::lama_layer> layer,hGensor  KQ_pos,/*hGensor cur, hGensor wq, hGensor wk, hGensor wv, hGensor wo,
+hGensor LLM_MOE::build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<QKV_LAY> layer,hGensor  KQ_pos,/*hGensor cur, hGensor wq, hGensor wk, hGensor wv, hGensor wo,
     hGensor attention_norm,hGensor KQ_pos,hGensor ffn_norm,hGensor ffn_up,hGensor ffn_gate,hGensor ffn_down,*/ int flag) {
     auto train_params = hparams.common;
-    int n_vocab = hDict->n_vocab,n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd,n_head = hparams.n_head,n_ff = hparams.n_ff;
+    int n_vocab = hDict->n_vocab,n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd,n_head = hparams.n_head(),n_ff = hparams.n_ff();
     const float f_norm_rms_eps  = hparams.f_norm_rms_eps;
     const float rope_freq_base  = hparams.rope_freq_base;
     const float rope_freq_scale = hparams.rope_freq_scale;  
-    const float kv_scale = 1.0f/sqrtf(float(hparams.n_embd)/hparams.n_head);
-    const int n_past = 0, n_head_kv=hparams.n_head_kv,n_embd_head = hparams.n_embd_head();
+    const float kv_scale = 1.0f/sqrtf(float(hparams.n_embd)/hparams.n_head());
+    const int n_past = 0, n_head_kv=hparams.n_head_kv(),n_embd_head = hparams.n_embd_head();
     hGensor wq = UpdateGensor (layer->wq->name);                     
     hGensor wk = layer->wk==nullptr ? nullptr : UpdateGensor (layer->wk->name);
     hGensor wv = layer->wv==nullptr ? nullptr : UpdateGensor (layer->wv->name);
@@ -109,8 +109,8 @@ hGensor LLM_MOE::build_layer_( int N,struct ggml_context *ctx_compute,hGensor cu
     hGensor  t03 = ggml_repeat       (ctx_compute, attention_norm, t02);              set_name(t03, "t03");     assert_shape_2d(t03, n_embd, N*n_batch);
     hGensor  t04 = ggml_mul          (ctx_compute, t03, t02);                               set_name(t04, "t04");     assert_shape_2d(t04, n_embd, N*n_batch);
     // QKV_Motion qkv(wq,wk,wv,n_embd,n_head,  N, n_batch,n_rot, n_ctx,n_head_kv,f_norm_rms_eps,rope_freq_base,rope_freq_scale);
-    hBrownMotion hBrown = CreateBrownMotion(wq, wk, wv);                              
-    hGensor t16 = hBrown->Build(ctx_compute , t04,  KQ_pos,  train_params.use_flash);        
+    hBrownMotion hBrown = CreateBrownMotion(wq, wk, wv,layer);                              
+    hGensor t16 = hBrown->Build(ctx_compute , t04,  KQ_pos,*GetKVCache());        
     hGensor  t17 = ggml_permute      (ctx_compute, t16, 0, 2, 1, 3);                        set_name(t17, "t17");     assert_shape_4d(t17, n_embd/n_head, n_head, N, n_batch);
     hGensor  t18 = ggml_cont         (ctx_compute, t17);                                    set_name(t18, "t18");     assert_shape_4d(t18, n_embd/n_head, n_head, N, n_batch);
     hGensor  t19 = ggml_reshape_2d   (ctx_compute, t18, n_embd, N*n_batch);                 set_name(t19, "t19");     assert_shape_2d(t19, n_embd, N*n_batch);

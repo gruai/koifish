@@ -16,7 +16,9 @@
 
 hGensor Optimizer::hLoss()             {    
     assert(gang!=nullptr);
-    GGML_ASSERT(ggml_is_scalar(gang->loss));  return gang->loss;          
+    if(gang->loss!=nullptr)
+        GGML_ASSERT(ggml_is_scalar(gang->loss));  
+    return gang->loss;          
 }
 
 hGensor Optimizer::hTargetProbs()      {   return gang->target_probs;  }
@@ -412,23 +414,17 @@ float Optimizer::Evaluate(SampLoader&loader,int iter,int flag){
     if(iter!=-666)   _INFO("[eval] " );   
     GST_TIC(tic);     
     struct ggml_cgraph *_gf=gang->ForwarGraph();
-    auto loss = hLoss();           
-    float *fLoss = (float*)(loss->data),sum=0;
-    double l2,delta_max=0,delta_=0,a;
-    auto tokens_input = gang->Input( );
-    int i,ldT=tokens_input->ne[0],nB=0,step=max(loader.num_batches/10,1);
+    auto loss = hLoss();     
+    double l2,delta_max=0,delta_=0,a,sum=0;
+    auto tokens_input = gang->Input( ); //,ldT=tokens_input->ne[0]
+    int i,nB=0,step=max(loader.num_batches/10,1);
     size_t nz=0,j;
     llama_token tMost = (llama_token) (loader.n_vocab - 1);
     
     const float *wLog = nullptr;
-    /*if(gang->exLogits!=nullptr){
-        assert(gang->exLogits->type==GGML_TYPE_F32);//ggml_float
-        wLog = (const float *)(gang->exLogits->data); 
-        nz=ggml_nelements(gang->exLogits);
-    }*/
-
     for (i = 0; i < loader.num_batches; i+=step) {
-        loader.update_batch(i,gang);    
+        if(tokens_input!=nullptr)   //in some debug mode, tokens_input maybe null
+            loader.update_batch(i,gang);    
         if(wLog!=nullptr)    {
             for (l2 = 0,j = 0; j < nz; j++    ) {
                 a = wLog[j];            l2 += a*a;              
@@ -437,12 +433,12 @@ float Optimizer::Evaluate(SampLoader&loader,int iter,int flag){
             delta_max = max(delta_max,l2);      delta_+=l2;        
         }
         // ggml_graph_compute(gb, cplan);     
-        ggml_graph_compute(_gf, &(gang->gb_plan));     
-        sum += *fLoss;
+        ggml_graph_compute(_gf, &(gang->gb_plan));     //((float*)hPreLogits()->data)[0]
+        sum += loss==nullptr ? 0 : ((float*)(loss->data))[0];         //float *fLoss = (float*)(loss->data)
         nB++;
         break;
     }
-    if(iter=-666)    {   //hack
+    if(iter==-666)    {   //hack
         return i;
     }
     float last = lcEval.Last(),aloss = sum/nB;  //[eval]   Loss@Evaluation=7.302641 T=0.232s ======

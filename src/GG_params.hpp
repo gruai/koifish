@@ -31,15 +31,53 @@ enum MODEL_ARCH {
     SAM_
 };
 
+struct LAY_PARAM{
+    uint32_t head,head_kv,ff;
+    LAY_PARAM(uint32_t h,uint32_t k,uint32_t f) : head(h),head_kv(k),ff(f) {
+        assert(h>0 && k>0 && f>0);
+    }
+
+    uint32_t n_head()       const           {   return head;    }
+    uint32_t n_head_kv()    const           {   return head_kv;    }
+    uint32_t n_ff()         const           {   return ff;    }
+
+    /**
+     * The GQA model efficiently breaks the query into n_heads, and the key and value are divided into n_kv_heads groups, 
+     * enabling multiple key-value heads to share the same query.
+    */
+    uint32_t n_gqa() const {
+        assert(head>=head_kv);
+        return head/head_kv;
+    }
+    uint32_t n_embd_head(int n_embd) const {
+        return n_embd/head;
+    }
+
+    uint32_t n_embd_gqa(int n_embd) const {
+        return n_embd/n_gqa();
+    }
+};
 struct CLI_params {
     struct train_params_common common;      
+    bool isFlashAtten()     {   //GGML don't support back of FLASH_ATTEN !
+        common.use_flash=false;  return common.use_flash;  
+    }
     uint32_t n_ctx()    const    {  return common.n_ctx;  }             //number of tokens in each sample
+    uint32_t n_ctx_orig()    const    {
+        return n_ctx_orig_yarn != 0 ? n_ctx_orig_yarn : n_ctx_train;
+    }
     uint32_t n_batch()  const    {  return common.n_batch;}             //number of samps in each batch
     uint32_t nTokenInBatch()  const    {  return common.n_batch*common.n_ctx;}
+    uint32_t n_seq_max,n_ctx_orig_yarn,n_ctx_train=-1;
+    bool isLongRope(uint32_t il = 0) const {
+        assert(il>=0 && il<layers.size());
+        const auto n_ctx_pre_seq = n_ctx() / n_seq_max;
+        bool isLong = n_ctx_pre_seq > n_ctx_orig_yarn;
+        return isLong;
+    }
 
     JSON jConfig;
     MODEL_ARCH arch = MODEL_ARCH::_X_;
-
     std::string exec_name="",test="",compute_graph="";
     std::vector<std::string> fn_model_base;
     //  std::string fn_vocab_model;
@@ -51,11 +89,16 @@ struct CLI_params {
     // uint32_t n_ctx   = 0;
     uint32_t n_swarm = 1;
     uint32_t n_embd  = -1;  //4096;
-    uint32_t n_head  = 32;          
-    uint32_t n_head_kv  = 32;
+    uint32_t n_embd_head_k = -1; // dimension of keys (d_k). d_q is assumed to be the same, but there are n_head q heads, and only n_head_kv k-v heads
+    uint32_t n_embd_head_v = -1; // dimension of values (d_v) aka n_embd_head
+    // uint32_t n_head  = 32;          
+    // uint32_t n_head_kv  = 32;
+    // uint32_t n_ff    = 11008;
+    std::vector<LAY_PARAM> layers;
+
     uint32_t n_layer = 32;
     uint32_t n_rot   = 64;
-    uint32_t n_ff    = 11008;    
+        
     int nabla = 1;      //cys
     std::string sigma = ""; 
     std::string vae = "";
@@ -63,9 +106,12 @@ struct CLI_params {
     std::string dict_vae_dims = "",dict_dialect="",dict_logits="";
     int dict_latent_dim = 256;
 
-    std::vector<uint32_t> n_head_arr;
-    std::vector<uint32_t> n_head_kv_arr;
-    std::vector<uint32_t> n_ff_arr;
+
+    // for RWKV
+    uint32_t rescale_every_n_layers = 0;
+    uint32_t time_mix_extra_dim = 0;
+    uint32_t time_decay_extra_dim = 0;
+    uint32_t wkv_head_size = 0;
 
     int eval_every=-1,gpt_every=-1;
     // MOE
@@ -77,16 +123,18 @@ struct CLI_params {
     uint32_t ssm_d_state = 0;
     uint32_t ssm_dt_rank = 0;
     bool ssm_dt_b_c_rms = false;
-    uint32_t n_embd_v_s() const { // dimension of the recurrent state embeddings
-        // corresponds to Mamba's ssm_states size
-        return ssm_d_state * ssm_d_inner;
-    }
 
     template<typename T>
     bool is(const std::vector<std::string>&keys,const T& t){
         T v0;   
         T val = jKV(jConfig,keys,v0);
+        // return jKV_is(jConfig,keys,target);
         return val==t;
+    }
+    template<typename T>
+    bool Get(const std::vector<std::string>&keys,const T& t){
+        T val = jKV(jConfig,keys,t);
+        return val;
     }
 
     float f_clamp_kqv      = 0.0f;
@@ -141,21 +189,67 @@ struct CLI_params {
         LLAMA_ROPE_TYPE_GLM  =  4,
     };*/
     int         rope_type               = -1 ;
-    /**
-     * The GQA model efficiently breaks the query into n_heads, and the key and value are divided into n_kv_heads groups, 
-     * enabling multiple key-value heads to share the same query.
-    */
-    uint32_t n_gqa() const {
-        assert(n_head>=n_head_kv);
+   
+    uint32_t n_head(uint32_t il = 0) const {
+        assert(il>=0 && il<layers.size());
+        return layers[il].n_head();        
+    }
+    uint32_t n_head_kv(uint32_t il = 0) const {
+        assert(il>=0 && il<layers.size());
+        return layers[il].n_head_kv();
+    }
+
+    uint32_t n_ff(uint32_t il = 0) const {
+        assert(il>=0 && il<layers.size());
+        return layers[il].n_ff();        
+    }
+    uint32_t n_embd_head(uint32_t il = 0) const {
+        assert(il>=0 && il<layers.size());
+        return layers[il].n_embd_head(n_embd);        
+    }
+    uint32_t n_embd_gqa(uint32_t il = 0) const {
+        assert(il>=0 && il<layers.size());
+        return layers[il].n_embd_gqa(n_embd);        
+    }
+    uint32_t n_gqa(uint32_t il = 0) const {
+        const uint32_t n_head    = this->n_head(il);
+        const uint32_t n_head_kv = this->n_head_kv(il);
+        if (n_head_kv == 0) {
+            return 0;
+        }
         return n_head/n_head_kv;
     }
 
-    uint32_t n_embd_head() const {
-        return n_embd/n_head;
+    uint32_t n_embd_k_gqa(uint32_t il = 0) const { // dimension of key embeddings across all k-v heads
+        const uint32_t n_head_kv = this->n_head_kv(il);
+        return n_embd_head_k * n_head_kv;
     }
 
-    uint32_t n_embd_gqa() const {
-        return n_embd/n_gqa();
+    uint32_t n_embd_v_gqa(uint32_t il = 0) const { // dimension of value embeddings across all k-v heads
+        const uint32_t n_head_kv = this->n_head_kv(il);
+        return n_embd_head_v * n_head_kv;
+    }
+
+    uint32_t n_embd_k_s() const { // dimension of the rolling state embeddings
+        // corresponds to Mamba's conv_states size or RWKV's token_shift states size
+        if (wkv_head_size != 0) {
+            // for RWKV models
+            return 2 * n_embd;
+        } else {
+            // TODO: maybe support other convolution strides than 1
+            // NOTE: since the first column of the conv_state is shifted out each time, it's not actually needed
+            return (ssm_d_conv > 0 ? ssm_d_conv - 1 : 0) * ssm_d_inner;
+        }
+    }
+
+    uint32_t n_embd_v_s() const { // dimension of the recurrent state embeddings
+        if (wkv_head_size != 0) {
+            // corresponds to RWKV's wkv_states size
+            return n_embd * wkv_head_size;
+        } else {
+            // corresponds to Mamba's ssm_states size
+            return ssm_d_state * ssm_d_inner;
+        }
     }
 
     bool operator!=(const CLI_params& other) const; 

@@ -193,25 +193,53 @@ void Fish::SaveTrain(struct save_train_model * data, struct train_state * train)
     return;
 }
 
+void Fish::Statistic(int typ, int flag)     {   
+    string suffix="", prefix="\t"; 
+    if(hparams.is({"gpt","c_graph"},string("raw"))){
+        _INFO("raw graph\n");
+    }
+    if(preLogits!=nullptr)
+        TGraph(gf).__repr__(suffix,prefix,gf->nodes[gf->n_nodes-2]);   //preLogits = gf->nodes[gf->n_nodes - 1];
+    ggml_graph_stat(gf);
+    if(gb!=nullptr) ggml_graph_stat(gb);
+    if (1)        {
+        ggml_graph_dump_dot(gf, NULL, "opt-forward.dot");
+        if(gb!=nullptr) ggml_graph_dump_dot(gb, gf, "opt-backward.dot");
+    }   else        {
+        ggml_graph_print(gf);
+        if(gb!=nullptr) ggml_graph_print(gb);
+    }
+
+    int nT = gensors.size(), nQ = 0, nF16 = 0;
+    for (auto t : gensors)        {
+        auto type = t.second->type;
+        if (ggml_is_quantized(type))
+            nQ++;
+        if (type == GGML_TYPE_F16)
+            nF16++;
+    }
+}
+
 int Fish::BuildGraphFromRaw(int flag)   {
     int iRet = 0x0;
     bool isKeep = true;
     ctx_compute_params.mem_size = 2*LLAMA_TRAIN_MAX_NODES*ggml_tensor_overhead() +
             (hparams.common.use_checkpointing ? 3 : 2)*(GGML_OBJECT_SIZE+ggml_graph_overhead_custom(LLAMA_TRAIN_MAX_NODES, true));
     ctx_compute = ggml_init(ctx_compute_params);
-    gf= ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true);        //ggml_hash_set_reset(&cgraph->visited_hash_set);    
-    // GetRawGraph(&gf);
-    ggml_graph_print(gf);
-
-
+    
+    gf = GetRawGraph( ctx_compute );
+    // ggml_graph_print(gf);
     
     set<std::string> leaf_const={"inp_tokens"};
     for (int i = 0; i < gf->n_leafs; i++) { //to float
         struct ggml_tensor * node = gf->leafs[i];
         if(strstr(node->name,"weight")==NULL)        
             continue;        
-        wGensors.push_back(node);
+        wGensors.push_back(node);        
     }    
+        // the output is always the last tensor in the graph
+    preLogits = gf->nodes[gf->n_nodes - 1];
+    hGensor last_embd = gf->nodes[gf->n_nodes - 2];
     // gf->order = GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT;      
     if(!isLocalInfer){
         gb = ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true);

@@ -542,10 +542,102 @@ static void ggml_graph_compute_thread_sync_task(int * task_phase, struct ggml_co
     }
 }*/
 
-static bool GGML_OP_HAS_INIT    [GGML_OP_COUNT] = { 0 };
-static bool GGML_OP_HAS_FINALIZE[GGML_OP_COUNT] = { 0 };
+string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {        
+    if(empty())   return "";
+    
+    char buf[32*1024]="\0";
+    sprintf(buf+strlen(buf),"\nCOMPUTE_GRAPH nodes=%d leafs=%d \n", cgraph->n_nodes, cgraph->n_leafs);
+    const char*tab=prefix.c_str();
+    // the output is always the last tensor in the graph
+    hGensor root = root_0==nullptr ? cgraph->nodes[cgraph->n_nodes-1] : root_0;
+    for(int i=0;i<cgraph->n_nodes;i++){     //pick root
+        if(strcmp(cgraph->nodes[i]->name,"kqv_out-0")==0){  //    l_out-1
+            root = cgraph->nodes[i];
+            break;
+        }
+    }
+    hGensor cur=root,son;    
+    std::vector<hGensor> gensors;
+    std::map<hGensor, GENSOR_INFO> gmask;
+    gensors.push_back(root);        gmask[root] = GENSOR_INFO(0,0,-1,-1);
+    int pos=-1,nDup=0,i,no;
+    while(++pos<gensors.size()) {
+        cur = gensors[pos];
+        GENSOR_INFO info = gmask[cur];
+        for (int i=0,no=0; i < GGML_MAX_SRC; ++i) {
+            const int k =(order == GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT) ? i :(order == GGML_CGRAPH_EVAL_ORDER_RIGHT_TO_LEFT) ? (GGML_MAX_SRC-1-i) : i;
+            if (!cur->src[k]) continue;
+            son = cur->src[k];
+            if(gmask.find(son) == gmask.end())  {                
+                gmask[son] = GENSOR_INFO(gensors.size(),info.level+1,pos,no++);
+                gensors.push_back(son);
+            }else{
+                nDup++;
+            }
+                
+        }        
+    }
+    for(auto gensor:gensors){
+        _T_repr_(gensor,tab,buf,gmask[gensor]);     
+    }
 
+    sprintf(buf+strlen(buf),"%s",suffix.c_str()); 
+    _INFO("%s",buf); 
+    return buf;
+}   
+
+//  visit_parents
+void TGraph::visit_parents(hGensor node,int flag) {
+    if (node->grad == NULL) {
+        // this usually happens when we generate intermediate nodes from constants in the backward pass
+        // it can also happen during forward pass, if the user performs computations with constants
+        if (node->op != GGML_OP_NONE) {
+            //GGML_PRINT_DEBUG("%s: warning: node %p has no grad, but op %d\n", __func__, (void *) node, node->op);
+        }
+    }
+
+    // check if already visited
+    if (hash_insert(visited_hash_table, node) == GGML_HASHSET_ALREADY_EXISTS) {
+        return;
+    }
+
+    for (int i = 0; i < GGML_MAX_SRC; ++i) {
+        const int k =
+            (order == GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT) ? i :
+            (order == GGML_CGRAPH_EVAL_ORDER_RIGHT_TO_LEFT) ? (GGML_MAX_SRC-1-i) :
+            /* unknown order, just fall back to using i*/ i;
+        if (node->src[k]) {
+            visit_parents(node->src[k]);
+        }
+    }
+
+    if (node->op == GGML_OP_NONE && node->grad == NULL) {
+        // reached a leaf node, not part of the gradient graph (e.g. a constant)
+        GGML_ASSERT(n_leafs < size);
+
+        if (strlen(node->name) == 0) {
+            ggml_format_name(node, "leaf_%d", n_leafs);
+        }
+
+        leafs[n_leafs] = node;
+        n_leafs++;
+    } else {
+        GGML_ASSERT(n_nodes < size);
+
+        if (strlen(node->name) == 0) {
+            ggml_format_name(node, "node_%d", n_nodes);
+        }
+
+        nodes[n_nodes] = node;
+        if (grads) {
+            grads[n_nodes] = node->grad;
+        }
+        n_nodes++;
+    }
+}
 void TGraph::Traverse(int flag){
+    bool GGML_OP_HAS_INIT    [GGML_OP_COUNT] = { 0 };
+    bool GGML_OP_HAS_FINALIZE[GGML_OP_COUNT] = { 0 };
     int node_n     = -1;
     while (true) {
         if (node_n != -1) {                /* FINALIZE */
@@ -559,7 +651,6 @@ void TGraph::Traverse(int flag){
             GGML_PRINT_DEBUG_5("%s: %d/%d\n", __func__, node_n, cgraph->n_nodes);
             struct ggml_tensor * node = cgraph->nodes[node_n];
             if (1) {
-                /* INIT */
                 if (GGML_OP_HAS_INIT[node->op]) {
                     //params.type = GGML_TASK_TYPE_INIT;
                 }

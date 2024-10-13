@@ -70,57 +70,12 @@ protected:
         return i;
     }
 
-    void visit_parents(hGensor node,int flag=0x0) {
-        if (node->grad == NULL) {
-            // this usually happens when we generate intermediate nodes from constants in the backward pass
-            // it can also happen during forward pass, if the user performs computations with constants
-            if (node->op != GGML_OP_NONE) {
-                //GGML_PRINT_DEBUG("%s: warning: node %p has no grad, but op %d\n", __func__, (void *) node, node->op);
-            }
-        }
-
-        // check if already visited
-        if (hash_insert(visited_hash_table, node) == GGML_HASHSET_ALREADY_EXISTS) {
-            return;
-        }
-
-        for (int i = 0; i < GGML_MAX_SRC; ++i) {
-            const int k =
-                (order == GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT) ? i :
-                (order == GGML_CGRAPH_EVAL_ORDER_RIGHT_TO_LEFT) ? (GGML_MAX_SRC-1-i) :
-                /* unknown order, just fall back to using i*/ i;
-            if (node->src[k]) {
-                visit_parents(node->src[k]);
-            }
-        }
-
-        if (node->op == GGML_OP_NONE && node->grad == NULL) {
-            // reached a leaf node, not part of the gradient graph (e.g. a constant)
-            GGML_ASSERT(n_leafs < size);
-
-            if (strlen(node->name) == 0) {
-                ggml_format_name(node, "leaf_%d", n_leafs);
-            }
-
-            leafs[n_leafs] = node;
-            n_leafs++;
-        } else {
-            GGML_ASSERT(n_nodes < size);
-
-            if (strlen(node->name) == 0) {
-                ggml_format_name(node, "node_%d", n_nodes);
-            }
-
-            nodes[n_nodes] = node;
-            if (grads) {
-                grads[n_nodes] = node->grad;
-            }
-            n_nodes++;
-        }
-    }
-
+    void visit_parents(hGensor node,int flag=0x0);
 public:
     TGraph()    {}
+    TGraph(struct ggml_cgraph *c,int flag=0x0) : cgraph(c) {
+    }
+
     TGraph(struct ggml_context *ctx_,int flag=0x0) :ctx(ctx_)   {
     }
 
@@ -152,6 +107,9 @@ public:
 
     virtual ~TGraph()   {   clear();    }
     
+    bool empty()  {   return cgraph==nullptr || cgraph->n_nodes==0;    }
+    virtual string __repr__( string& suffix,string& prefix,hGensor root=nullptr,int flag=0x0);
+
     virtual size_t Size(int flag=0x0)      {   return ctx_size;  }
 
     hGensor get_tensor(const char * name,int flag=0x0) {
@@ -198,7 +156,7 @@ public:
             cgraph->n_nodes = n_nodes;
             cgraph->n_leafs = n_leafs;            
         }else{
-            ggml_visit_parents_x(cgraph, tensor,0);
+            // ggml_visit_parents(cgraph, tensor,0);
             n_nodes = cgraph->n_nodes;
             n_leafs = cgraph->n_leafs;
         }
@@ -219,7 +177,7 @@ public:
     }
 
     virtual void Traverse(int flag=0x0);
-
+    // Deprecated
     void print( ) {
         int64_t perf_total_per_op_us[GGML_OP_COUNT] = {0};
 

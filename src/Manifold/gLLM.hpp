@@ -86,6 +86,7 @@ struct LAMA : public WIKI   {
     struct llama_context_params cparams = llama_context_default_params();            
     struct llama_model *lmodel = nullptr;
     struct llama_context *_ctx = nullptr; 
+    struct llama_kv_cache *_cache=nullptr;
     ggml_cgraph * gf = nullptr;
     hGensor res = nullptr;  
     
@@ -125,16 +126,6 @@ struct LAMA : public WIKI   {
 };
 
 struct LLaMeta : public Fish {
-    enum FFN_TYPE {
-        SWIGLU = 0,
-        VANILLA,
-        ONLY_LNormal,    
-        ONLY_RMSNormal,
-        VAR_0,
-        VAR_LAST,       //last layer with gaussian noise 
-        SMOE,           //Sparsely-Gated Mixture-of-Experts Layer
-        GATE_CYS,
-    };
     enum FFN_TYPE tpFFN = VAR_LAST;   //VAR_LAST;    
 
     /*
@@ -153,30 +144,7 @@ struct LLaMeta : public Fish {
     
     hCDICT hDict=nullptr;    
 
-    struct lama_layer : public NeLayer {
-        hGensor eps=nullptr;
-        hGensor attention_norm=nullptr;
-            // attention
-        hGensor wq=nullptr,wk=nullptr,wv=nullptr;
-        hGensor wo=nullptr;
-            // normalization
-        hGensor  ffn_norm=nullptr,ffn_gate=nullptr,ffn_down=nullptr,ffn_up=nullptr;  
-            //SMOE
-        hGensor  ffn_gate_inp=nullptr,ffn_gate_exps=nullptr,ffn_down_exps=nullptr,ffn_up_exps=nullptr;  
-        hGensor  ffn_gate_inp_shexp=nullptr,ffn_gate_shexp=nullptr,ffn_down_shexp=nullptr,ffn_up_shexp=nullptr;
-
-        lama_layer(int id)  :  NeLayer(id)     {   name = "lama_layer";   }
-        int64_t parameter_count() {
-            int64_t nx = 0;
-            nx += ggml_nelements(attention_norm);
-            nx += ggml_nelements(wq);            nx += ggml_nelements(wk);            nx += ggml_nelements(wv);
-            nx += ggml_nelements(wo);
-            nx += ggml_nelements(ffn_norm); nx += ggml_nelements(ffn_gate); nx += ggml_nelements(ffn_down); nx += ggml_nelements(ffn_up);            
-            return nx;
-        }
-        virtual bool CreateFFN(const CLI_params&hparams,ggml_context *ctx,FFN_TYPE tpFFN,int flag=0x0);
-        string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
-    };
+    
     // uint32_t n_vocab=0,n_ctx=0,n_embd=0, n_head=0,n_rot=0,n_ff=0;
     // uint32_t n_batch=0;     //Number of samples in each batch
     bool measure_only=false;  
@@ -200,8 +168,14 @@ struct LLaMeta : public Fish {
         LAMA *lam = lama( );    //dynamic_cast<LAMA *>(wiki.get());
         assert(lam->lmodel!=nullptr);   
         return lam->lmodel;  
+    }    
+    KV_CACHE *GetKVCache() override {   
+        LAMA *lam = lama( );    //dynamic_cast<LAMA *>(wiki.get());
+        assert(lam->lmodel!=nullptr);   
+        return lam->_cache;    
     }
-    struct ggml_cgraph *GetRawGraph(int flag=0x0)   override;
+
+    struct ggml_cgraph *GetRawGraph( struct ggml_context *,int flag=0x0)   override;
     std::string T2STR( const std::vector<TOKEN_ID>& tok,int flag );
     
     std::string Name()  override;    
@@ -218,11 +192,11 @@ struct LLaMeta : public Fish {
 
         tpATT = jKV_is(params.jConfig,{"model","attention","type"},string("brown")) ? ATTENTION_TYPE::BROWN : ATTENTION_TYPE::QKV;
         tpFFN = (FFN_TYPE)(jKV(params.jConfig,{"model","ffn","type"},5,false));
-        // hparams.n_ff = jKV(params.jConfig,{"model","ffn","length"},hparams.n_ff);
+        // hparams.n_ff() = jKV(params.jConfig,{"model","ffn","length"},hparams.n_ff());
         
-        hparams.n_rot   = hparams.n_embd / hparams.n_head;
+        // hparams.n_rot   = hparams.n_embd / hparams.n_head();
         // hparams.n_ctx = hparams.common.n_ctx;                    
-        hparams.n_head_kv = hparams.n_head;     // n_head_kv is optional, default to n_head     
+        // hparams.n_head_kv = hparams.n_head();     
     }   
     LLaMeta(const std::string& nam_,const LLaMeta* src,struct CLI_params params,int flag=0x0);
 
@@ -260,7 +234,7 @@ struct LLaMeta : public Fish {
     //for tokens_input & target_probs
     virtual void InitEntryTensors(int flag=0x0);
     virtual bool InitDictTokenset(int flag=0x0);
-    hGensor Input()     override    {   assert(tokens_input!=nullptr);      return tokens_input;    }
+    hGensor Input()     override    {   return tokens_input;    }
 
     void Init(const vector<hWIKI>& wikis_,int flag=0x0)     override    {
         auto train_params = hparams.common;
@@ -317,7 +291,7 @@ struct LLaMeta : public Fish {
         // _INFO("%s: completed train_epochs %llu\n", __func__, (long long unsigned) train->train_epochs);
         _INFO("%s: nParams=%zu model_size = %zu bytes (%.1f MB)\n", __func__, nParams,szModel,szModel / (1024.0f*1024.0f) );
         _INFO("%s: n_vocab=%d t_vocab=%d,n_batch=%d,n_ctx=%d,n_embd=%d,n_head=%d,n_rot=%d,n_ff=%d\n", __func__, 
-            n_vocab,tVocab(),n_batch,n_ctx,n_embd,hparams.n_head,hparams.n_rot,hparams.n_ff );
+            n_vocab,tVocab(),n_batch,n_ctx,n_embd,hparams.n_head(),hparams.n_rot,hparams.n_ff() );
         _INFO("%s: loader=%s\n", __func__, hparams.batch_sample.c_str() );
         if(hOPT!=nullptr)
             hOPT->Dump( 1 );     
@@ -390,17 +364,18 @@ struct LLaMeta : public Fish {
 
     virtual void BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,hGensor cur,hGensor _tNorm,hGensor KQ_pos, int flag=0x0); 
 
-    virtual hBrownMotion CreateBrownMotion(hGensor wq, hGensor wk, hGensor wv)  {
+    virtual hBrownMotion CreateBrownMotion(hGensor wq, hGensor wk, hGensor wv,const std::shared_ptr<QKV_LAY>& layer)  {
         hBrownMotion hMotion =  (tpATT==ATTENTION_TYPE::QKV) ? 
-            std::make_shared<QKV_Motion> (wq,wk,wv,hparams,0x0) :
-            std::make_shared<BROWN_Motion> (wq,hparams,0x0);
+            std::make_shared<QKV_Motion> (wq,wk,wv,inp_KQ_mask,hparams,layer,0x0) :
+            std::make_shared<BROWN_Motion> (wq,hparams,layer,0x0);
         return hMotion;
     }
     
+    hGensor build_inp_KQ_(struct ggml_context *ctx ,bool causal = true);
     //n_embd_head, n_head_kv
     // virtual hGensor  build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur, hGensor wq, hGensor wk, hGensor wv, hGensor wo,
     //     hGensor attention_norm,hGensor KQ_pos,hGensor ffn_norm,hGensor ffn_up,hGensor ffn_gate,hGensor ffn_down, int flag=0x0) ;
-    virtual hGensor  build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<LLaMeta::lama_layer> layer,hGensor KQ_pos,int flag=0x0) ;
+    virtual hGensor  build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<QKV_LAY> layer,hGensor KQ_pos,int flag=0x0) ;
 
     virtual void build_finetune(struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,int flag=0x0)   {        
         auto train_params = hparams.common;
@@ -408,35 +383,35 @@ struct LLaMeta : public Fish {
         measure_only = m_only;
         ggml_set_scratch(ctx, { 0, 0, nullptr, });      
         const int n_ctx = train_params.n_ctx,n_embd = hparams.n_embd,n_layer = hparams.n_layer,
-            n_head = hparams.n_head,n_rot = hparams.n_rot,n_ff = hparams.n_ff,n_past=0;
+            n_head = hparams.n_head(),n_rot = hparams.n_rot,n_ff = hparams.n_ff(),n_past=0;
         const float f_norm_rms_eps  = hparams.f_norm_rms_eps;
         const float rope_freq_base  = hparams.rope_freq_base;
-        const float rope_freq_scale = hparams.rope_freq_scale;        
-        // const float kv_scale = 1.0f/sqrtf(float(n_embd)/n_head);
-        // KQ_pos - contains the positions
-        KQ_pos = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, n_ctx);
-        ggml_set_input(KQ_pos);
+        const float rope_freq_scale = hparams.rope_freq_scale;  
+        build_inp_KQ_(ctx ,true);      
+        
+        // KQ_pos = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, n_ctx);
+        // ggml_set_input(KQ_pos);
         // struct ggml_context   * ctx0= ctx;
-        set_name(tokens_input, "tokens_input");
+        set_name(tokens_input, "inp_tokens");
         set_name(target_probs,      "targets");
 
         GGML_ASSERT(tokens_input->type == GGML_TYPE_I32);
         hGensor _tEmbed = UpdateGensor (hDict->tok_embeddings-> name);      //embedding of all tokens
         hGensor _tNorm = UpdateGensor (hDict->norm->name); 
         // hGensor _tOutput = UpdateGensor (hDict->output->name);       
-        hGensor  t00 = ggml_reshape_1d(ctx, tokens_input, n_ctx*n_batch);  set_name(t00, "t00"); 
+        hGensor  t00 = n_batch==1 ? tokens_input : ggml_reshape_1d(ctx, tokens_input, n_ctx*n_batch);  //set_name(t00, "t00"); 
         assert_shape_1d(t00, n_ctx*n_batch);
-        hGensor  t01 = ggml_get_rows(ctx, _tEmbed, t00);    set_name(t01, "t01"); 
-        hGensor  cur = t01;
+        hGensor  t01 = ggml_get_rows(ctx, _tEmbed, t00);    set_name(t01, "inp_embd"); 
+        hGensor  cur = t01;        
         cur = hDict->ENC(ctx,t01);      // cur=t01 if hDict->dims is empty;
-        set_name(cur, "embed_encoder");  
+        if(cur!=t01)        set_name(cur, "embed_encoder");  
         assert_shape_2d(cur, n_embd, n_ctx*n_batch);
         checkpoints.clear();
         checkpoints.push_back(tokens_input);        checkpoints.push_back(target_probs);        
         checkpoints.push_back(t00);        checkpoints.push_back(t01);        
         
         for (auto lay : layers) {
-            auto layer = dynamic_pointer_cast<lama_layer>(lay);      
+            auto layer = dynamic_pointer_cast<QKV_LAY>(lay);      
             cur = build_layer_( n_ctx,ctx, cur, layer, KQ_pos);           
             checkpoints.push_back(cur);
         }
@@ -482,7 +457,7 @@ struct LLAMA_LORA  : public LLaMeta {
     LLAMA_LORA( const std::string& nam_,struct CLI_params params,int flag=0x0)   {
         hparams = params;
         nLayerX = hparams.n_layer;
-        hparams.n_rot   = hparams.n_embd / hparams.n_head;
+        hparams.n_rot   = hparams.n_embd / hparams.n_head();
         // hparams.n_ctx = hparams.common.n_ctx;
         assert(hparams.lora_r>0);
         n_rank_wq = n_rank_wk = n_rank_wv = n_rank_wo = hparams.lora_r;
@@ -525,7 +500,7 @@ struct LLAMA_LORA  : public LLaMeta {
         
         // layers.resize(n_layer);
         for (uint32_t i = 0; i < hparams.n_layer; ++i) {
-            auto lay_ = dynamic_pointer_cast<lama_layer>(layers[i]);
+            auto lay_ = dynamic_pointer_cast<QKV_LAY>(layers[i]);
             // auto layer = std::make_shared<lora_layer>();
             // lora_layers.push_back(layer);        //typedef shared_ptr<layer> hLayer;
             InitFactor(ctx, lay_->attention_norm,lora_type, n_rank_attention_norm,0x0);
@@ -577,7 +552,7 @@ struct LLAMA_LORA  : public LLaMeta {
     void Dump(int type,int flag=0x0)    override   {
         LLaMeta::Dump(type);
         _INFO("%s:%s model=%zu bytes (%.1f MB)\tn_embd=%d n_vocab=%d n_ff=%d n_rank_wq=%d\n", "LLAMA_LORA", hparams.sTune(),szModel, (float) (szModel) / (1024.0f*1024.0f),
-            hparams.n_embd,hDict->n_vocab,hparams.n_ff,n_rank_wq);
+            hparams.n_embd,hDict->n_vocab,hparams.n_ff(),n_rank_wq);
     }
 
 
@@ -685,9 +660,9 @@ struct LLAMA_LORA  : public LLaMeta {
         const int n_ctx = train_params.n_ctx;    //n_tokens;
         const int n_embd      = hparams.n_embd;
         const int n_layer     = hparams.n_layer;
-        const int n_head      = hparams.n_head;
-        const int n_head_kv   = hparams.n_head_kv;
-        const int n_ff        = hparams.n_ff;
+        const int n_head      = hparams.n_head();
+        const int n_head_kv   = hparams.n_head_kv();
+        const int n_ff        = hparams.n_ff();
         const int n_rot       = hparams.n_embd_head();
         const int n_embd_head = hparams.n_embd_head();
         const int n_embd_gqa  = hparams.n_embd_gqa();
@@ -700,7 +675,7 @@ struct LLAMA_LORA  : public LLaMeta {
         hGensor  KQ_pos = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, n_ctx);
         ggml_set_input(KQ_pos);
         struct ggml_context   * ctx0= ctx;
-        set_name(tokens_input, "tokens_input");
+        set_name(tokens_input, "inp_tokens");
         set_name(target_probs,      "targets");
         auto rope = [ctx, KQ_pos, n_rot, n_ctx, rope_freq_base, rope_freq_scale]
                 (struct ggml_tensor * t) -> struct ggml_tensor * {
@@ -735,7 +710,7 @@ struct LLAMA_LORA  : public LLaMeta {
 
         const float kv_scale = 1.0f/sqrtf(float(n_embd)/n_head);
         for (int il = 0; il < n_layer; ++il) {
-            auto layer = dynamic_pointer_cast<lama_layer>(layers[il]);
+            auto layer = dynamic_pointer_cast<QKV_LAY>(layers[il]);
             // auto llayer = dynamic_pointer_cast<lora_layer>(lora_layers[il]); 
             hGensor a_norm = UpdateGensor (layer->attention_norm->name);   
             hGensor wq = n_rank_wq ==0 ? nullptr : UpdateGensor (layer->wq->name);                     
@@ -777,8 +752,8 @@ struct LLAMA_Brown  : public LLAMA_LORA {
         // free_random_normal_distribution(rnd);
     }  
 
-    hBrownMotion CreateBrownMotion(hGensor wq, hGensor wk, hGensor wv)  override    {
-        hBrownMotion hMotion = std::make_shared<BROWN_Motion> (wq,hparams,0x0);
+    hBrownMotion CreateBrownMotion(hGensor wq, hGensor wk, hGensor wv,const std::shared_ptr<QKV_LAY>& layer)  override    {
+        hBrownMotion hMotion = std::make_shared<BROWN_Motion> (wq,hparams,layer,0x0);
         return hMotion;
     }
 };
@@ -800,8 +775,8 @@ struct LLAMA_VAE  : public LLaMeta {
         _INFO("LLAMA_VAE%s: init model\n", __func__);
 
         // llama2params(GetRawModel(),hparams);hparams.n_layer = nLayerX;
-        hparams.n_head = 8;    
-        hparams.n_head_kv = hparams.n_head;     // CYS_0826
+        // hparams.n_head() = 8;    
+        // hparams.n_head_kv = hparams.n_head();     // CYS_0826
 
         gensors.clear();
         hDict->InitVAE();       updateTMap = true;
@@ -828,8 +803,8 @@ struct LLM_MAMBA : public LLaMeta {
         _INFO("MAMBA::%s: init model\n", __func__);
 
         llama2params(GetRawModel(),hparams);
-        /*hparams.n_head = 8;    
-        hparams.n_head_kv = hparams.n_head;     //hack
+        /*hparams.n_head() = 8;    
+        hparams.n_head_kv = hparams.n_head();     //hack
         hparams.n_layer = nLayerX;
 
         gensors.clear();
@@ -838,7 +813,7 @@ struct LLM_MAMBA : public LLaMeta {
         LLaMeta::InitModel(flag);        
     }     
 
-    hGensor build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<LLaMeta::lama_layer> layer,hGensor KQ_pos,int flag=0x0) override;
+    hGensor build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<QKV_LAY> layer,hGensor KQ_pos,int flag=0x0) override;
     void BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,hGensor cur,hGensor _tNorm,hGensor KQ_pos, int flag=0x0) override; 
 
 };
@@ -871,7 +846,7 @@ struct LLM_MOE : public LLaMeta {
         LLaMeta::InitModel(flag);        
     }     
 
-    hGensor build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<LLaMeta::lama_layer> layer,hGensor KQ_pos,int flag=0x0) override;
+    hGensor build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<QKV_LAY> layer,hGensor KQ_pos,int flag=0x0) override;
         // hGensor build_gate(struct ggml_context * ctx,hGensor cur,hGensor cur_logits, int flag )    override;
 };
 
