@@ -16,6 +16,6 @@
 # target_include_directories(ggex PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 set(PWD ${CMAKE_CURRENT_SOURCE_DIR})
-set(ggex_sources  ${PWD}/common_sample.cpp ${PWD}/common-ggml.cpp ${PWD}/GG_util.cpp
+set(ggex_sources  ${PWD}/common_sample.cpp ${PWD}/common-ggml.cpp ${PWD}/GG_util.cpp  ${PWD}/tutor.cpp
   PARENT_SCOPE )
 

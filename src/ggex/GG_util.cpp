@@ -1,4 +1,4 @@
-#include "../GG_params.hpp"
+#include "../CLI_params.hpp"
 #include "../ggex/GG_util.hpp"
 #include "../lenda/kernel/SVD.hpp"
 #include "json.hpp"
@@ -107,9 +107,9 @@ void CLI_params::Dump( )    {
     // _INFO(" n_vocab: %u", n_vocab);
     _INFO(" n_ctx:   %u", common.n_ctx);
     _INFO(" n_embd:  %u", n_embd);        
-    _INFO(" n_ff:    %u", n_ff);
-    _INFO(" n_head:  %u", n_head);
-    _INFO(" n_head_kv:  %u", n_head_kv);
+    _INFO(" n_ff:    %u", n_ff());
+    _INFO(" n_head:  %u", n_head());
+    _INFO(" n_head_kv:  %u", n_head_kv());
     _INFO(" n_layer: %u", n_layer);
     _INFO(" n_rot:   %u\n", n_rot);       
     _INFO(" f_norm_rms_eps:   %g", f_norm_rms_eps);   
@@ -172,7 +172,7 @@ try{
     common.save_every = jKV(jConfig,{"train","save-every"},common.save_every );
     eval_every = jKV(jConfig,{"train","eval-every"},eval_every );    
     gpt_every = jKV(jConfig,{"train","gpt-every"},gpt_every );    
-    // eval_every = eval_every<=0 ? 100000000 : eval_every;
+    eval_every = eval_every<=0 ? 100000000 : eval_every;
     // if( eval_every>0 ){
     //     _INFO("\r\n%s  eval@every %d steps.",__func__,eval_every );
     // }
@@ -643,4 +643,34 @@ struct ggml_tensor * ggml_cross_entropy_loss_1(
     result->src[1] = b;
 
     return result;
+}
+
+void _T_repr_(hGensor t,const char*tab,char *buf,const GENSOR_INFO&info){
+    if(t==nullptr)      return;
+    const char* A = "d";
+    if(t->grad!=nullptr){
+        A = "P";
+    }
+    auto ne=t->ne;
+    sprintf(buf+strlen(buf),"%s %s %s '%s' \t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",tab,info.sX.c_str(), A,
+        t->name,ne[0], ne[1], ne[2], ne[3], ggml_type_name(t->type));
+}
+
+void _T_repr_(hGensor t,const char*tab,char *buf,int typ){
+    if(t==nullptr)      return;
+    const char* A = "d";
+    if(t->grad!=nullptr){
+        A = "P";
+    }
+    auto ne=t->ne;
+    switch(typ){
+    case 1:
+        sprintf(buf+strlen(buf),"%s%s '%s' \t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",tab,A,t->name,ne[0], ne[1], ne[2], ne[3], ggml_type_name(t->type));
+        break;
+    default:
+        sprintf(buf+strlen(buf),"%s%s '%s' %.3lf(M)\t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",tab, 
+        A,t->name,ggml_nelements(t)/1.0e6,ne[0], ne[1], ne[2], ne[3], ggml_type_name(t->type)); 
+        break;
+    }
+    
 }

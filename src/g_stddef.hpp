@@ -267,6 +267,6 @@ T remove_extension(T const & filename)
 
 #define CHILD_0909_WIKIS
 
-#define CHILD_0925_GRAPH true
+
 
 #define CHILD_1012_CACHE true

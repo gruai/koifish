@@ -106,7 +106,7 @@ extern "C" {
         void * ggml_graph_compute_thread(void * data);
         void clear_numa_thread_affinity(void);
         int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads);
-        void ggml_visit_parents_x(struct ggml_cgraph * cgraph, struct ggml_tensor * node,int depth);
+        
         // enum ggml_opt_result ggml_train(struct ggml_context * ctx,struct ggml_opt_context * opt,
         //         struct ggml_opt_params params,struct ggml_tensor * f,struct ggml_cgraph * gf,struct ggml_cgraph * gb,struct train_opt_callback_data * callback_data);
 #ifdef __cplusplus

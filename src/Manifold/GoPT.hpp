@@ -348,3 +348,4 @@ int GPT_work(CLI_params& params);
 int fish_1(CLI_params& hparams);
 int GGUF_list(CLI_params& hparams);
 int Fish_bubble(CLI_params& hparams);
+int Tutor(CLI_params& hparams);

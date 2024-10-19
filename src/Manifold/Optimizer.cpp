@@ -432,8 +432,9 @@ float Optimizer::Evaluate(SampLoader&loader,int iter,int flag){
             l2 = sqrt(l2)/nz;            
             delta_max = max(delta_max,l2);      delta_+=l2;        
         }
-        // ggml_graph_compute(gb, cplan);     
-        ggml_graph_compute(_gf, &(gang->gb_plan));     //((float*)hPreLogits()->data)[0]
+        // ggml_graph_comp0(_gf,0x0);  //  only for debug
+        ggml_graph_compute(_gf, &(gang->gb_plan));     
+        a = ((float*)hPreLogits()->data)[0];        //  -6.60046101     -4.3040733
         sum += loss==nullptr ? 0 : ((float*)(loss->data))[0];         //float *fLoss = (float*)(loss->data)
         nB++;
         break;
@@ -600,7 +601,7 @@ void Optimizer::BeforeTrain(struct llama_context * lctx,struct train_params_comm
     for (auto ps : opt_ps) {            
         nMostParam += ggml_nelements(ps);
     } 
-    assert(nMostParam>=nParams);
+    // assert(nMostParam>=nParams);
 
     // max_epoch = train_params.adam_n_iter
 }

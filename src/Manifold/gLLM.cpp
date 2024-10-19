@@ -8,6 +8,7 @@
  */
 
 #include "gLLM.hpp"
+#include "Cache.hpp"
 #include "../g_stddef.hpp"
 
 static const char * LLM_KV_TRAINING_TYPE_TRAIN_MODEL     = "train_model";
@@ -179,15 +180,20 @@ hGensor LLaMeta::build_inp_KQ_(struct ggml_context *ctx ,bool causal) {
     char nam_[128];
     bool isFlash = hparams.isFlashAtten();     
     const uint32_t pad = isFlash ? 256u : 32u,cell_max=0;     //llama_kv_cache_cell_max(*cache)
-    auto cache = GetKVCache();
-    cache->n = std::min(cache->size, std::max(pad, GGML_PAD(cell_max, pad)));
+    // auto cache = GetKVCache();
+    // cache->n = std::min(cache->size, std::max(pad, GGML_PAD(cell_max, pad)));
 
-    int n_tokens = hparams.n_ctx(),n_kv=cache->n;
+    int n_tokens = hparams.n_ctx(),n_kv=hCache->n_kv(),n_past=0;
     // const float kv_scale = 1.0f/sqrtf(float(n_embd)/n_head);
         // KQ_pos - contains the positions
-    KQ_pos = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, hparams.n_ctx());
+    KQ_pos = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, n_tokens);
     sprintf(nam_,"inp_pos");    set_name(KQ_pos, nam_);  
     ggml_set_input(KQ_pos);    
+    int * data = (int *) KQ_pos->data;
+    // @BuildComputeGraph After ggml_gallocr_alloc_graph(alloc, gb)!
+    // for (int i = 0; i < n_tokens; ++i) {
+    //     data[i] = n_past + i;
+    // }
     
     auto dt = GGML_TYPE_F32;        
     inp_KQ_mask = causal
@@ -200,11 +206,12 @@ hGensor LLaMeta::build_inp_KQ_(struct ggml_context *ctx ,bool causal) {
 }
 
 //n_embd_head, n_head_kv
-hGensor  LLaMeta::build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<QKV_LAY> layer,hGensor  KQ_pos,/*hGensor cur, hGensor wq, hGensor wk, hGensor wv, hGensor wo,
+hGensor LLaMeta::build_layer_( int N,struct ggml_context *ctx_compute,hGensor inpL,std::shared_ptr<QKV_LAY> layer,hGensor  KQ_pos,/*hGensor cur, hGensor wq, hGensor wk, hGensor wv, hGensor wo,
     hGensor attention_norm,hGensor KQ_pos,hGensor ffn_norm,hGensor ffn_up,hGensor ffn_gate,hGensor ffn_down,*/ int flag) {
     char nam_[128];
     auto train_params = hparams.common;
     int n_vocab = tVocab(),n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd,n_head = hparams.n_head(),n_ff = hparams.n_ff();
+    int n_outputs = n_ctx;  //  ????
     const float f_norm_rms_eps  = hparams.f_norm_rms_eps;
     const float rope_freq_base  = hparams.rope_freq_base;
     const float rope_freq_scale = hparams.rope_freq_scale;  
@@ -221,21 +228,9 @@ hGensor  LLaMeta::build_layer_( int N,struct ggml_context *ctx_compute,hGensor c
         ffn_up = UpdateGensor (layer->ffn_up->name);
         ffn_gate = UpdateGensor (layer->ffn_gate->name);
         ffn_down = UpdateGensor (layer->ffn_down->name);                
-    }  
-    /*  LORA
-        hGensor wq = n_rank_wq ==0 ? nullptr : UpdateGensor (layer->wq->name);                     
-        hGensor wk = n_rank_wk ==0 ? nullptr : UpdateGensor (layer->wk->name);
-        hGensor wv = n_rank_wv ==0 ? nullptr : UpdateGensor (layer->wv->name);
-        hGensor wo = UpdateGensor (layer->wo->name);
-        hGensor a_norm = UpdateGensor (layer->attention_norm->name);   
-        hGensor ffn_norm = UpdateGensor (layer->ffn_norm->name);
-        hGensor ffn_up = UpdateGensor (layer->ffn_up->name);
-        hGensor ffn_gate = UpdateGensor (layer->ffn_gate->name);
-        hGensor ffn_down = UpdateGensor (layer->ffn_down->name);
-    */
-
+    }
     //  rms_norm:   Root Mean Square Layer Normalization
-    hGensor  t02 = ggml_rms_norm     (ctx_compute, cur, f_norm_rms_eps);                    
+    hGensor  t02 = ggml_rms_norm     (ctx_compute, inpL, f_norm_rms_eps);                    
     sprintf(nam_,"norm-%d",layer->id),   set_name(t02, nam_);     assert_shape_2d(t02, n_embd, N*n_batch);
     hGensor  t03 = attention_norm;
     if(isTrain()){
@@ -243,28 +238,36 @@ hGensor  LLaMeta::build_layer_( int N,struct ggml_context *ctx_compute,hGensor c
     }
     hGensor  tBase = ggml_mul          (ctx_compute, t02, t03);                               
     sprintf(nam_,"attn_norm-%d",layer->id),   set_name(tBase, nam_);     assert_shape_2d(tBase, n_embd, N*n_batch);
-    // QKV_Motion qkv(wq,wk,wv,n_embd,n_head,  N, n_batch,n_rot, n_ctx,n_head_kv,f_norm_rms_eps,rope_freq_base,rope_freq_scale);
+    
     hBrownMotion hBrown = CreateBrownMotion(wq, wk, wv,layer);                       
-    hGensor t16 = hBrown->Build(ctx_compute , tBase,  KQ_pos,*GetKVCache());          // [128,17,6,1]         
-    /*hGensor  t17 = ggml_permute      (ctx_compute, t16, 0, 2, 1, 3);    // [128,6,17,1]                      
-    set_name(t17, "t17");     assert_shape_4d(t17, n_embd/n_head, n_head, N, n_batch);
-    hGensor  t18 = ggml_cont         (ctx_compute, t17);                                    
-    set_name(t18, "t18");     assert_shape_4d(t18, n_embd/n_head, n_head, N, n_batch);
-    hGensor  t19 = ggml_reshape_2d   (ctx_compute, t18, n_embd, N*n_batch);   // [768,17,1]               
-    set_name(t19, "t19");     assert_shape_2d(t19, n_embd, N*n_batch);*/
+    hGensor t16 = hBrown->Build(ctx_compute , tBase,  KQ_pos);          // [128,17,6,1]    
+
     hGensor  t20 = ggml_mul_mat      (ctx_compute, wo, t16);                          
     sprintf(nam_,"kqv_out-%d",layer->id),           set_name(t20, nam_);     assert_shape_2d(t20, n_embd, N*n_batch);
-    hGensor  t21 = ggml_add          (ctx_compute, t20, cur);                               
-    sprintf(nam_,"ffn_inp-%d",layer->id),           set_name(t21, nam_);     assert_shape_2d(t21, n_embd, N*n_batch);
+    if (layer->isLast && 0) {          //would crash if not set inp_out_ids       
+        // skip computing output for unused tokens
+        struct ggml_tensor * inp_out_ids = ggml_new_tensor_1d(ctx_compute, GGML_TYPE_I32, n_outputs);   //n_outputs=(worst_case ? n_tokens : lctx.n_outputs),
+        sprintf(nam_,"inp_out_ids"),     set_name(inp_out_ids, nam_);     // cb(lctx.inp_out_ids, "inp_out_ids", -1);
+        ggml_set_input(inp_out_ids);
+        t20   = ggml_get_rows(ctx_compute,   t20, inp_out_ids);
+        inpL = ggml_get_rows(ctx_compute, inpL, inp_out_ids);
+    }
+    hGensor  ffn_inp = ggml_add          (ctx_compute, t20, inpL);                               
+    sprintf(nam_,"ffn_inp-%d",layer->id),           set_name(ffn_inp, nam_);     assert_shape_2d(ffn_inp, n_embd, N*n_batch);
     hGensor  ffn = nullptr;
     switch(tpFFN)   {
     case VAR_LAST:
     case SWIGLU:    {
-        hGensor  t22 = ggml_rms_norm     (ctx_compute, t21, f_norm_rms_eps);                    set_name(t22, "t22");     assert_shape_2d(t22, n_embd, N*n_batch);
+        hGensor  t22 = ggml_rms_norm     (ctx_compute, ffn_inp, f_norm_rms_eps);                    
+        sprintf(nam_,"norm-%d",layer->id),    set_name(t22, nam_);     assert_shape_2d(t22, n_embd, N*n_batch);
         ffn = t22;
         if(ffn_norm!=nullptr)       {
-            hGensor  t23 = ggml_repeat       (ctx_compute, ffn_norm, t22);                    set_name(t23, "t23");     assert_shape_2d(t23, n_embd, N*n_batch);
-            hGensor  t24 = ggml_mul          (ctx_compute, t23, t22);                               
+            hGensor  t23 = ffn_norm; //ggml_repeat       (ctx_compute, ffn_norm, t22);    
+             if(isTrain()){
+                t23 = ggml_repeat       (ctx_compute, ffn_norm, t22);    
+                set_name(t23, "ffn_norm.repeat");     assert_shape_2d(t23, n_embd, N*n_batch);
+            }      
+            hGensor  t24 = ggml_mul          (ctx_compute, t22, t23);                               
             sprintf(nam_,"ffn_norm-%d",layer->id),    set_name(t24, nam_);     assert_shape_2d(t24, n_embd, N*n_batch); 
             ffn = t24;                 
         }
@@ -284,7 +287,7 @@ hGensor  LLaMeta::build_layer_( int N,struct ggml_context *ctx_compute,hGensor c
             sprintf(nam_,"ffn_gate_par-%d",layer->id),         set_name(t28, nam_);     assert_shape_2d(t28, n_ff, N*n_batch);
             hGensor  t29 = ggml_mul_mat      (ctx_compute, ffn_down, t28);                    
             sprintf(nam_,"ffn_out-%d",layer->id),  set_name(t29, nam_);   assert_shape_2d(t29, n_embd, N*n_batch);
-            hGensor  t30 = ggml_add          (ctx_compute, t29, t21);   ffn = t30;
+            hGensor  t30 = ggml_add          (ctx_compute, t29, ffn_inp);   ffn = t30;
         }
         if(layer->eps!=nullptr){
             // hGensor  t300 = ffn!=nullptr ? ggml_rms_norm(ctx_compute, ffn, f_norm_rms_eps) : ggml_rms_norm(ctx_compute, t21, f_norm_rms_eps);
@@ -299,8 +302,8 @@ hGensor  LLaMeta::build_layer_( int N,struct ggml_context *ctx_compute,hGensor c
     case ONLY_LNormal:
     case ONLY_RMSNormal:    {
         assert(ffn_up==nullptr);
-        hGensor  t22 = tpFFN==ONLY_LNormal ? ggml_norm(ctx_compute, t21, f_norm_rms_eps) :
-            ggml_rms_norm(ctx_compute, t21, f_norm_rms_eps);
+        hGensor  t22 = tpFFN==ONLY_LNormal ? ggml_norm(ctx_compute, ffn_inp, f_norm_rms_eps) :
+            ggml_rms_norm(ctx_compute, ffn_inp, f_norm_rms_eps);
         set_name(t22, "t22");               assert_shape_2d(t22, n_embd, N*n_batch);   
         if(tpFFN==VAR_0)     {
             randomize_tensor_normal(layer->eps, rnd); 
@@ -502,7 +505,7 @@ void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool 
         if(hparams.is({"model","target"},string("OneHot")))
             t36 = ggml_cross_entropy_loss_1(ctx, t35, target_probs);
         else
-            t36 = ggml_cross_entropy_loss(ctx, t35, target_probs);               
+            t36 = ggml_cross_entropy_loss(ctx, t35, target_probs);          //  square_error_loss(ctx0, targets, logits);       
         set_name(t36, "t36");     assert_shape_1d(t36, 1);
         out_node = t36;
         if (train_params.use_checkpointing) {
@@ -519,85 +522,21 @@ void LLaMeta::BuildTarget( struct ggml_context * ctx,ggml_gallocr_t& alloc,bool 
         n_embd = hparams.n_embd;
     }
     
-    if(!CHILD_0925_GRAPH){
-        ggml_build_forward_expand(gf, out_node);
-
-        if (train_params.use_checkpointing) {
-            if(gb!=nullptr) 
-                ggml_build_backward_gradient_checkpointing(ctx, gf, gb, gb_tmp, checkpoints.data(), (int) checkpoints.size());
-        } else {
-            if(gb!=nullptr){
-                ggml_graph_cpy(gf, gb);
-                ggml_build_backward_expand(ctx, gf, gb, true);            
-            }
-        }
-
-        GGML_ASSERT(alloc != NULL);
-        if(isLocalInfer){  //gb=nullptr
-            GGML_ASSERT(alloc != NULL);
-            assert(gb==nullptr);
-            ggml_gallocr_alloc_graph(alloc, gf); 
-            int * data = (int *) KQ_pos->data;
-            for (int i = 0; i < N; ++i) {
-                data[i] = n_past + i;
-            }
-        } else { // gb!=nullptr
-            // make sure some tensors are not reallocated by inserting new temporary nodes depending on them
-            int n_leafs_before = gb->n_leafs;
-            int n_nodes_before = gb->n_nodes;
-            // output_ tensors
-            ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, preLogits, 1.0f));
-            ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, loss, 1.0f));
-            // input gradient
-            ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, out_node->grad, 1.0f));
-            GGML_ASSERT(out_node->grad->data == NULL && out_node->grad->view_src == NULL);
-            ggml_set_input(out_node->grad);
-            // KQ_pos
-            ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, KQ_pos, 1.0f));
-            // allocating checkpoints in one block to reduce memory fragmentation they will be freed in reverse order    
-
-            for (unsigned int i = 0; i < checkpoints.size(); ++i) {
-                if (checkpoints[i]->data == NULL && checkpoints[i]->view_src == NULL) {
-                    ggml_set_input(checkpoints[i]);
-                }
-            }
-            if (measure_only) {
-                ggml_gallocr_reserve(alloc, gb);
-            } else {
-                ggml_gallocr_alloc_graph(alloc, gb);    //367,8088
-                // set KQ_pos
-                {
-                    int * data = (int *) KQ_pos->data;
-                    for (int i = 0; i < N; ++i) {
-                        data[i] = n_past + i;
-                    }
-                }
-            }
-            // remove the additional nodes and leafs
-            for (int i = n_leafs_before; i < gb->n_leafs; ++i) {
-                gb->leafs[i] = NULL;
-            }
-            for (int i = n_nodes_before; i < gb->n_nodes; ++i) {
-                gb->nodes[i] = NULL;
-            }
-            gb->n_leafs = n_leafs_before;
-            gb->n_nodes = n_nodes_before;   
-        }
-    }
+    
 }
 
 void LLaMeta::BuildComputeGraph(unsigned order,struct ggml_context * ctx,ggml_gallocr_t& alloc,int flag){
     auto train_params = hparams.common;
     train_params.use_checkpointing = false;     // CYS_0826
-    gf = ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true);
+    
     gf->order = (enum ggml_cgraph_eval_order) order;      
     if(!isLocalInfer){
         gb = ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true);
         gb_tmp = train_params.use_checkpointing ? ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true) : NULL;
     }  
-
+    int n0=gf->n_nodes;
     ggml_build_forward_expand(gf, out_node);
-    
+    auto leaf0=gf->nodes[0];
     const int N = train_params.n_ctx, n_past = 0;
     if (train_params.use_checkpointing) {
         if(gb!=nullptr) 
@@ -614,10 +553,10 @@ void LLaMeta::BuildComputeGraph(unsigned order,struct ggml_context * ctx,ggml_ga
         GGML_ASSERT(alloc != NULL);
         assert(gb==nullptr);
         ggml_gallocr_alloc_graph(alloc, gf);         
-        int * data = (int *) KQ_pos->data;
-        for (int i = 0; i < N; ++i) {
-            data[i] = n_past + i;
-        }
+        // int * data = (int *) KQ_pos->data;
+        // for (int i = 0; i < N; ++i) {
+        //     data[i] = n_past + i;
+        // }
     } else { // gb!=nullptr
         // make sure some tensors are not reallocated by inserting new temporary nodes depending on them
         int n_leafs_before = gb->n_leafs;
@@ -641,13 +580,7 @@ void LLaMeta::BuildComputeGraph(unsigned order,struct ggml_context * ctx,ggml_ga
         if (measure_only) {
             ggml_gallocr_reserve(alloc, gb);
         } else {
-            ggml_gallocr_alloc_graph(alloc, gb);    //367,8088       
-            {
-                int * data = (int *) KQ_pos->data;
-                for (int i = 0; i < N; ++i) {
-                    data[i] = n_past + i;
-                }
-            }     
+            ggml_gallocr_alloc_graph(alloc, gb);    //367,8088  
         }
         // remove the additional nodes and leafs
         for (int i = n_leafs_before; i < gb->n_leafs; ++i) {
@@ -658,6 +591,10 @@ void LLaMeta::BuildComputeGraph(unsigned order,struct ggml_context * ctx,ggml_ga
         }
         gb->n_leafs = n_leafs_before;
         gb->n_nodes = n_nodes_before;
+    }
+    int * data = (int *) KQ_pos->data;
+    for (int i = 0; i < N; ++i) {
+        data[i] = n_past + i;
     }
 }
 
@@ -822,6 +759,8 @@ LAMA::LAMA(CLI_params& hparams,const std::string&path_)     {
         cparams.logits_all = true;
     
         _ctx = llama_new_context_with_model(lmodel, cparams);  
+
+        // llama_ctx_get_(_ctx,(void**)(&hparams.n_outputs),11);
         _cache = llama_internal_get_kvcache(_ctx );
         // const auto & cp_ = _ctx->cparams;
 
@@ -886,7 +825,7 @@ bool LLaMeta::InitDictTokenset(int flag)    {
 }
 
 bool WIKI::CopyGensors(Fish *hFish,int flag)    {    
-    int nT0 = tmaps.size(),nT1 = hFish->optParams.size(),nT2 = hFish->gensors.size();
+    int nT0 = tmaps.size(),nT1 = hFish->optParams.size(),nT2 = hFish->gensors.size(),x;
     if(nT1>0 && nT0!=nT1){
         return false;
     }
@@ -896,15 +835,21 @@ bool WIKI::CopyGensors(Fish *hFish,int flag)    {
     for(auto it : tmaps){
         auto nam = it.first;
         hGensor src=it.second,dst = hFish->GetGensor(nam.c_str());
+        size_t nElem = ggml_nelements(src),nbyte = ggml_nbytes(src);
+        if(strcmp(src->name,"blk.0.attn_q.weight")==0)   {   //only for debug
+            x = 0;
+        }
         if(dst==nullptr)
             return false;
         if(!ggml_are_same_shape(src,dst))
             return false;
+        float *arr = (float*)(dst->data),a=arr[0];
         if(src->type==dst->type){
-
+            memcpy(dst->data,src->data,nbyte);    
         }else if(dst->type==GGML_TYPE_F32)  {
             assert(ggml_is_quantized(src->type));
             Gensor2float_(src,(float*)(dst->data),flag);            
+            
         }else{
             assert(0);
         }        
@@ -913,16 +858,11 @@ bool WIKI::CopyGensors(Fish *hFish,int flag)    {
 }
 
 void LAMA::CopyParams(CLI_params& hparams,int flag)    {
-    /*auto tmaps = llama_internal_get_tensor_map(_ctx);
-        assert(gensors.size()==0);
-        for(auto it : tmaps){
-            Gensor2Map(it.second);
-            // tensors[it.first] = it.second;
-            nEleGGUF += ggml_nelements(it.second);
-        }*/
-
+    //  ???
+    // hparams.common.n_ctx = 17;     hparams.common.n_batch = 1;      hparams.n_layer=1;      //Only for debug
+    //  ???
     hparams.n_layer = llama_params.n_layer;
-    hparams.n_embd = llama_params.n_embd;  
+    hparams.n_embd = llama_params.n_embd;   //would change @ConsiceDict
     for(int i=0;i<hparams.n_layer;i++){
         hparams.layers.push_back(LAY_PARAM(llama_params.n_head(i),llama_params.n_head_kv(i),llama_params.n_ff(i)));
     }
@@ -1097,8 +1037,14 @@ struct ggml_cgraph *LLaMeta::GetRawGraph( struct ggml_context * ctx_,int flag)  
     llama_model *model = GetRawModel( );
     assert(model!=nullptr);
     struct ggml_cgraph *gf_raw = ggml_new_graph_custom(ctx_, LLAMA_TRAIN_MAX_NODES, true);      ;
-    gf_raw = _llama_raw_graph(model,gf_raw,0x0); 
+    gf_raw = _llama_raw_graph(model,gf_raw,hparams.prompt,false,0x0); 
     assert(gf_raw!=nullptr);
+    for(int i=0;i<gf_raw->n_leafs;i++){     
+        if(strcmp(gf_raw->leafs[i]->name,"inp_tokens")==0){  
+            // tokens_input = gf_raw->nodes[i];     
+            break;
+        }
+    }
     return gf_raw;
 }
 
@@ -1109,9 +1055,6 @@ void LLaMeta::Build(int flag)      {
         int iRet = BuildGraphFromRaw(0x0);
         assert(iRet == 0x0); 
     }else{
-#if !defined(NDEBUG)
-        hparams.common.n_ctx = 17;     hparams.common.n_batch = 1;  //Only for debug
-#endif
         ctx_compute_params.mem_size = 2*LLAMA_TRAIN_MAX_NODES*ggml_tensor_overhead() +
                 (hparams.common.use_checkpointing ? 3 : 2)*(GGML_OBJECT_SIZE+ggml_graph_overhead_custom(LLAMA_TRAIN_MAX_NODES, true));
         ctx_compute = ggml_init(ctx_compute_params);
@@ -1119,22 +1062,22 @@ void LLaMeta::Build(int flag)      {
         InitEntryTensors(flag); 
         enum ggml_cgraph_eval_order best_order = GGML_CGRAPH_EVAL_ORDER_COUNT;  //GGML_CGRAPH_EVAL_ORDER_RIGHT_TO_LEFT;  //GGML_CGRAPH_EVAL_ORDER_COUNT;
         if(role==SWARM_FOLLOWER){
-            build_finetune(ctx_compute,alloc,false,flag);   
+            BuildOperators(ctx_compute,alloc,false,flag);   
         }else{
             size_t best_compute_size = SIZE_MAX;        
-            // graph_order = GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT;     //only for debug
+            graph_order = GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT;     //only for debug
             if(graph_order==-1)   {// find best evaluation order
                 for (unsigned order = 0; order < (unsigned) GGML_CGRAPH_EVAL_ORDER_COUNT; ++order) {
                     // ctx_compute = ggml_init(ctx_compute_params);
                     ggml_gallocr_t alloc_tmp = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
-                    build_finetune(ctx_compute,alloc_tmp,true,flag);
+                    BuildOperators(ctx_compute,alloc_tmp,true,flag);
                     BuildComputeGraph(order,ctx_compute,alloc_tmp,flag);       
                     size_t max_compute_size = ggml_gallocr_get_buffer_size(alloc_tmp, 0); // FIXME: this will still allocate the buffer
                     if (max_compute_size < best_compute_size) {
                         best_compute_size = max_compute_size;
                         best_order = gf->order;
                     }
-                    ggml_gallocr_free(alloc_tmp);
+                    ggml_gallocr_free(alloc_tmp);           gf = nullptr;
                     // ggml_free(ctx_compute);
                 }
             
@@ -1151,7 +1094,7 @@ void LLaMeta::Build(int flag)      {
             } 
 
             alloc = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
-            build_finetune(ctx_compute,alloc,false,flag);   
+            BuildOperators(ctx_compute,alloc,false,flag);   
             BuildComputeGraph(best_order,ctx_compute,alloc,flag);
         }
     }
@@ -1183,16 +1126,25 @@ void LLaMeta::InitModel(int flag){
     _INFO("\nLLaMeta%s: init model embed=%d layer=%d ff=%d tpFFN=%d\n", __func__,n_embd,n_layer,n_ff,tpFFN);  
     _INFO("\t type of FFN=%s\n", tpFFN==FFN_TYPE::SWIGLU ? "MLP" : tpFFN==FFN_TYPE::VAR_LAST ? "Variation@last_layer" 
         : tpFFN==FFN_TYPE::ONLY_RMSNormal ? "RMS Normal" : "other");  
-    _INFO("\t type of ATTENTION=%s\n",tpATT==ATTENTION_TYPE::BROWN ? "BROWN":"QKV");
+    _INFO("\t type of ATTENTION=%s P=%s \n",tpATT==ATTENTION_TYPE::BROWN ? "BROWN":"QKV",BROWN_Motion::Transfer_1?"Token":"Embed");
     for (int i=0;i<n_layer;i++) {
         auto  layer = std::make_shared<QKV_LAY>(i);
         layer->isLast = i==n_layer-1;
         layers.push_back(layer);        //typedef shared_ptr<layer> hLayer;
         layer->attention_norm = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
-            layer->wq = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
+
         if(tpATT==ATTENTION_TYPE::QKV){
+            layer->wq = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
             layer->wk = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
             layer->wv = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);                
+        }else{
+            if(BROWN_Motion::Transfer_1){
+                // layer->wv = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
+                // layer->wq = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, n_ctx, n_ctx,hparams.n_head(i),hparams.n_batch());
+                layer->wq = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
+            }else{
+                layer->wq = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
+            }
         }
         layer->wo = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
         layer->CreateFFN(hparams,ctx,tpFFN);            

@@ -94,9 +94,9 @@ int64_t SampLoader::update_batch(int x,Fish* fish){
     struct train_params_common *params = &(hOPT->train_params);
     // struct llama_context * lctx=(struct llama_context *)(hOPT->app_ctx);
     
-    struct ggml_tensor   * tokens_input=hOPT->gang->Input();
+    struct ggml_tensor *tokens_input=hOPT->gang->Input();
     assert(tokens_input!=nullptr);
-    struct ggml_tensor   * target_probs=hOPT->hTargetProbs();
+    struct ggml_tensor *target_probs=hOPT->hTargetProbs();
     int64_t samples_count = N4Train();
     // const TOKEN_ID    * train_data=tokens.data();
     size_t  k,n_train_data = nTokens(); // tokens.size();

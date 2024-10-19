@@ -106,8 +106,10 @@ ConsiceDict::ConsiceDict(LLaMeta *lama_,int flag) : VariationaAE(),hLM(lama_)   
         }            
         _INFO("%s latent_dim=%d Dialect=%s",__func__,latent_dim,isDialect?"ON":"OFF");
     }
-    if(hLM->hparams.wiki_actor!="copy")
+    if(hLM->hparams.wiki_actor!="copy") {
         hLM->hparams.n_embd = latent_dim;   //Reset n_embd just like nLayerX
+        // hLM->hparams.SetHead(latent_dim);   // ???????
+    }
     for(auto dim : dims)           {
         _INFO("%d ",dim);
     }

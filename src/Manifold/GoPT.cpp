@@ -62,10 +62,17 @@ int GGUF_list(CLI_params& hparams)  {
 int Fish_bubble(CLI_params& hparams)  {    
     hparams.wiki_actor = "copy";
     arrHWIKI wikis = WIKI::MakeInstance("wikis",hparams,0x0);
+#if !defined(NDEBUG)
+    hparams.common.n_ctx = 17;     hparams.common.n_batch = 1;      hparams.n_layer=1;      //Only for debug
+#endif
     hFISH fish = Fish::MakeInstance("BUBBLE_",hparams,wikis,Fish::ROLE_TYPE::COMMON,0x110);
-    if(1)
-        ggml_graph_print(fish->ForwarGraph());
-    fish->GenSentence();
+    auto _gf = fish->ForwarGraph();         assert(_gf!=nullptr);
+    if(0)
+        ggml_graph_print(_gf);
+    if(hparams.is({"gpt","c_graph"},string("raw")))
+        ggml_graph_comp0(_gf,0x0);   //only for comparsion
+    else
+        fish->GenSentence();
     return 666;
 }
 

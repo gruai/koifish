@@ -16,7 +16,7 @@ Implements:
 #include <vector>
 #include "llmc_utils.h"
 #include "llmc_rand.h"
-#include "../GG_params.hpp"
+#include "../CLI_params.hpp"
 // ----------------------------------------------------------------------------
 // implementation of glob for Windows is in dev/unistd.h
 #ifndef _WIN32

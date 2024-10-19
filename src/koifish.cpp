@@ -33,6 +33,8 @@ int main(int argc, char ** argv) {
         return GGUF_list(params);     
     if(params.test=="bubble")
         return Fish_bubble(params);   
+    if(params.test=="tutor")
+        return Tutor(params);   
         
     hFISH fish = nullptr;
     if(params.n_swarm>1)   {

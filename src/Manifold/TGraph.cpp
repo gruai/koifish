@@ -546,21 +546,24 @@ string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {
     if(empty())   return "";
     
     char buf[32*1024]="\0";
-    sprintf(buf+strlen(buf),"\nCOMPUTE_GRAPH nodes=%d leafs=%d \n", cgraph->n_nodes, cgraph->n_leafs);
+    sprintf(buf+strlen(buf),"\n COMPUTE_GRAPH x=%d nodes=%d leafs=%d \n", -1,cgraph->n_nodes, cgraph->n_leafs);
     const char*tab=prefix.c_str();
     // the output is always the last tensor in the graph
+    int pos=-1,nDup=0,i,no,root_id=root_0==nullptr ? cgraph->n_nodes-1 : -1;
     hGensor root = root_0==nullptr ? cgraph->nodes[cgraph->n_nodes-1] : root_0;
+#if !defined(NDEBUG)
     for(int i=0;i<cgraph->n_nodes;i++){     //pick root
-        if(strcmp(cgraph->nodes[i]->name,"kqv_out-0")==0){  //    l_out-1
-            root = cgraph->nodes[i];
+        if(strcmp(cgraph->nodes[i]->name,"result_norm")==0){  //    l_out-1    inp_embd
+            root = cgraph->nodes[i];     root_id=i;
             break;
         }
     }
+#endif
     hGensor cur=root,son;    
     std::vector<hGensor> gensors;
     std::map<hGensor, GENSOR_INFO> gmask;
     gensors.push_back(root);        gmask[root] = GENSOR_INFO(0,0,-1,-1);
-    int pos=-1,nDup=0,i,no;
+    
     while(++pos<gensors.size()) {
         cur = gensors[pos];
         GENSOR_INFO info = gmask[cur];
@@ -583,6 +586,7 @@ string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {
 
     sprintf(buf+strlen(buf),"%s",suffix.c_str()); 
     _INFO("%s",buf); 
+    _INFO("%s root=%d nPass=%ld(%d)",__func__,root_id,gensors.size(),nDup); 
     return buf;
 }   
 

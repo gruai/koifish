@@ -142,11 +142,8 @@ struct LLaMeta : public Fish {
     bool isLoadTokenEmbed = false;
     struct random_normal_distribution * rnd = nullptr;    
     
-    hCDICT hDict=nullptr;    
+    hCDICT hDict=nullptr; 
 
-    
-    // uint32_t n_vocab=0,n_ctx=0,n_embd=0, n_head=0,n_rot=0,n_ff=0;
-    // uint32_t n_batch=0;     //Number of samples in each batch
     bool measure_only=false;  
     ggml_gallocr_t alloc;
     ggml_backend_buffer_t data = NULL;
@@ -169,12 +166,7 @@ struct LLaMeta : public Fish {
         assert(lam->lmodel!=nullptr);   
         return lam->lmodel;  
     }    
-    KV_CACHE *GetKVCache() override {   
-        LAMA *lam = lama( );    //dynamic_cast<LAMA *>(wiki.get());
-        assert(lam->lmodel!=nullptr);   
-        return lam->_cache;    
-    }
-
+    
     struct ggml_cgraph *GetRawGraph( struct ggml_context *,int flag=0x0)   override;
     std::string T2STR( const std::vector<TOKEN_ID>& tok,int flag );
     
@@ -185,18 +177,13 @@ struct LLaMeta : public Fish {
     
     LLaMeta()   {}
     LLaMeta( const std::string& nam_, struct CLI_params params,ROLE_TYPE role_,int flag=0x0) : Fish(nam_,params,role_) {
-        if(hparams.wiki_actor!="copy")  {
+        if(!hparams.is({"wiki","actor"},"copy"))  {
             nLayerX = params.n_layer;      //X-param update by json config file
             assert(nLayerX<160 && nLayerX>0);
         }
 
         tpATT = jKV_is(params.jConfig,{"model","attention","type"},string("brown")) ? ATTENTION_TYPE::BROWN : ATTENTION_TYPE::QKV;
-        tpFFN = (FFN_TYPE)(jKV(params.jConfig,{"model","ffn","type"},5,false));
-        // hparams.n_ff() = jKV(params.jConfig,{"model","ffn","length"},hparams.n_ff());
-        
-        // hparams.n_rot   = hparams.n_embd / hparams.n_head();
-        // hparams.n_ctx = hparams.common.n_ctx;                    
-        // hparams.n_head_kv = hparams.n_head();     
+        tpFFN = (FFN_TYPE)(jKV(params.jConfig,{"model","ffn","type"},5,false));    
     }   
     LLaMeta(const std::string& nam_,const LLaMeta* src,struct CLI_params params,int flag=0x0);
 
@@ -249,6 +236,7 @@ struct LLaMeta : public Fish {
             teach = lama()->teach;
             wikis[0]->CopyParams(hparams);      
         } 
+        hCache = std::make_shared<KVCache>(this,0,0,0,0);
         // hOPT = std::make_shared<Optimizer>(this,train_params,flag);
         hOPT = std::make_shared<OPT_Adam>(this,train_params,flag);
         
@@ -265,7 +253,7 @@ struct LLaMeta : public Fish {
 
         InitModel(flag);
         hparams.Dump();         
-        if(hparams.wiki_actor=="copy"){
+        if(hparams.is({"wiki","actor"},"copy")){
             bool bRet = wikis[0]->CopyGensors(this);      
             assert(bRet);
         }
@@ -323,7 +311,7 @@ struct LLaMeta : public Fish {
                     gb = ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true);
                     gb_tmp = train_params.use_checkpointing ? ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true) : NULL;
                 }
-                build_finetune(ctx_compute,alloc,true,flag);
+                BuildOperators(ctx_compute,alloc,true,flag);
                 size_t max_compute_size = ggml_gallocr_get_buffer_size(alloc, 0); // FIXME: this will still allocate the buffer
                 if (max_compute_size < best_compute_size) {
                     best_compute_size = max_compute_size;
@@ -354,7 +342,7 @@ struct LLaMeta : public Fish {
             gb_tmp = train_params.use_checkpointing ? ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true) : NULL;
         }
         
-        build_finetune(ctx_compute,alloc,false,flag);
+        BuildOperators(ctx_compute,alloc,false,flag);
         
         Statistic(0x0);
 #ifndef NDEBUG
@@ -366,8 +354,8 @@ struct LLaMeta : public Fish {
 
     virtual hBrownMotion CreateBrownMotion(hGensor wq, hGensor wk, hGensor wv,const std::shared_ptr<QKV_LAY>& layer)  {
         hBrownMotion hMotion =  (tpATT==ATTENTION_TYPE::QKV) ? 
-            std::make_shared<QKV_Motion> (wq,wk,wv,inp_KQ_mask,hparams,layer,0x0) :
-            std::make_shared<BROWN_Motion> (wq,hparams,layer,0x0);
+            std::make_shared<QKV_Motion> (this,wq,wk,wv,inp_KQ_mask,hparams,layer,0x0) :
+            std::make_shared<BROWN_Motion> (this,wq,wv,hparams,layer,0x0);
         return hMotion;
     }
     
@@ -377,8 +365,9 @@ struct LLaMeta : public Fish {
     //     hGensor attention_norm,hGensor KQ_pos,hGensor ffn_norm,hGensor ffn_up,hGensor ffn_gate,hGensor ffn_down, int flag=0x0) ;
     virtual hGensor  build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<QKV_LAY> layer,hGensor KQ_pos,int flag=0x0) ;
 
-    virtual void build_finetune(struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,int flag=0x0)   {        
-        auto train_params = hparams.common;
+    virtual void BuildOperators(struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,int flag=0x0)   {    
+        gf = ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true);    
+        auto train_params = hparams.common;     
         int n_batch  = train_params.n_batch;
         measure_only = m_only;
         ggml_set_scratch(ctx, { 0, 0, nullptr, });      
@@ -651,7 +640,7 @@ struct LLAMA_LORA  : public LLaMeta {
         }
     }    
 
-    virtual void build_finetune(struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,int flag=0x0)     {   
+    virtual void BuildOperators(struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,int flag=0x0)     {   
         auto train_params = hparams.common;
         int n_batch  = train_params.n_batch;
         measure_only = m_only;
@@ -753,7 +742,7 @@ struct LLAMA_Brown  : public LLAMA_LORA {
     }  
 
     hBrownMotion CreateBrownMotion(hGensor wq, hGensor wk, hGensor wv,const std::shared_ptr<QKV_LAY>& layer)  override    {
-        hBrownMotion hMotion = std::make_shared<BROWN_Motion> (wq,hparams,layer,0x0);
+        hBrownMotion hMotion = std::make_shared<BROWN_Motion> (this,wq,wv,hparams,layer,0x0);
         return hMotion;
     }
 };

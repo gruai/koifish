@@ -36,6 +36,25 @@ typedef std::vector<int> SHAPE;
 #include "../Fuzi/Distillation.hpp"
 
 class Fish;
+class LLaMeta;
+class KVCache {
+    void *lamakv=nullptr;
+    int kv_n = -1;
+    void init_lamakv(int n_batch);
+protected:
+    LLaMeta *lam_ = nullptr;
+public:
+    KVCache(LLaMeta *lam_,int max_batch_size, int max_seq_len, int n_kv_heads, int head_dim);
+
+    void update(int batch_size, int start_pos, hGensor xk, hGensor xv);
+    hGensor get(int batch_size, int start_pos, int seq_len);
+
+    int n_kv();
+    virtual hGensor SerialV(struct ggml_context *ctx,hGensor vCur,int il,bool isSave);
+    virtual hGensor SerialK(struct ggml_context *ctx,hGensor vCur,int il,bool isSave);
+
+};
+
 typedef shared_ptr<Fish> hFISH;
 typedef vector<hFISH> tpSWARM;    
 struct NeLayer;
@@ -174,12 +193,19 @@ struct QKV_LAY : public NeLayer {
 };
 typedef std::shared_ptr<QKV_LAY> hLQKV;
 struct BROWN_Motion    {
+    Fish *hFish_ = nullptr;
+    std::shared_ptr<KVCache> kv;
+    char nam_[128];
+    //Transfer probability of Token or Transfer probability of Embed
+    static bool Transfer_1;  
+
     int version = 0;
-    hGensor wq=nullptr;
-    bool use_flash = true;   
+    bool isTrain = false;
+    hGensor wq=nullptr,wv=nullptr;
+    bool use_flash = true,use_cache = false;   
     // int layer_id=-1;
     hLQKV lay;
-    int rope_type=-1,n_embd_head=-1,n_tokens=-1,n_embd_head_k,n_embd_k_gqa=-1,n_embd_head_v,n_embd_v_gqa=-1;
+    int rope_type=-1,n_embd_head=-1,n_embd_head_k,n_embd_k_gqa=-1,n_embd_head_v,n_embd_v_gqa=-1;//n_tokens=-1,
     int n_embd=-1, n_head=-1, N=-1, n_batch=-1, n_rot=-1,n_ctx_orig=-1, n_ctx=-1, n_head_kv=-1, n_vocab=-1, n_ff=-1, n_past = 0;
     float f_norm_rms_eps, rope_freq_base, rope_freq_scale;
     float f_max_alibi_bias;
@@ -192,44 +218,14 @@ struct BROWN_Motion    {
     //       f_norm_rms_eps(f_eps), rope_freq_base(rope_base), rope_freq_scale(rope_scale), wq(_wq)    {
             
     // }
-    BROWN_Motion(hGensor _wq, struct CLI_params& hparams,hLQKV lQKV,int flags) : wq(_wq),lay(lQKV)   {
-        int layer_id = lay->id;
-        version = hparams.Get({"model","attention","version"},version);
-
-        f_norm_rms_eps  = hparams.f_norm_rms_eps;
-        rope_freq_base  = hparams.rope_freq_base;
-        rope_freq_scale = hparams.rope_freq_scale;  
-        f_max_alibi_bias = hparams.f_max_alibi_bias;
-        attn_soft_cap = hparams.attn_soft_cap ? hparams.f_attn_logit_softcapping : 0.0f;
-        use_flash = hparams.isFlashAtten();
-        // float kv_scale = 1.0f/sqrtf(float(n_embd)/n_head);
-        // int n_embd_gqa = hparams.n_embd_gqa();
-        // int n_embd_head = hparams.n_embd_head( );
-        n_head_kv=hparams.n_head_kv(layer_id);
-        // n_vocab = hparams.n_vocab;          
-        n_batch  = hparams.common.n_batch;          
-        n_ctx_orig = hparams.n_ctx_orig();                  n_ctx = hparams.n_ctx();            n_tokens = n_ctx;             
-        n_embd = hparams.n_embd;
-        n_head = hparams.n_head(layer_id),                  n_rot = hparams.n_rot,              n_ff = hparams.n_ff(layer_id);
-        n_embd_head = hparams.n_embd_head(layer_id);
-        
-        rope_type = hparams.rope_type;
-        N = n_ctx;
-
-        n_embd_head_k = hparams.n_embd_head_k;
-        n_embd_k_gqa  = hparams.n_embd_k_gqa(layer_id);
-        n_embd_head_v = hparams.n_embd_head_v;
-        n_embd_v_gqa  = hparams.n_embd_v_gqa(layer_id);
-
-        
-    }
-    hGensor QKV_rope(struct ggml_context *ctx, hGensor cur, hGensor w, hGensor KQ_pos, SHAPE shape, int flag = 0x0);
-    virtual hGensor Build(struct ggml_context *ctx, hGensor t04, hGensor KQ_pos,const llama_kv_cache & kv);
+    BROWN_Motion(Fish *hFish_,hGensor _wq, hGensor _wv,struct CLI_params& hparams,hLQKV lQKV,int flags);
+    hGensor W_rope(struct ggml_context *ctx, hGensor cur, hGensor w, hGensor KQ_pos, SHAPE shape, int flag = 0x0);
+    virtual hGensor Build(struct ggml_context *ctx, hGensor t04, hGensor KQ_pos);
 };
 typedef shared_ptr<BROWN_Motion> hBrownMotion;
 
 struct QKV_Motion : public BROWN_Motion    {
-    hGensor wk, wv, inp_KQ_mask = nullptr;
+    hGensor wk=nullptr, inp_KQ_mask=nullptr;
       
     // int n_embd, n_head, N, n_batch, n_rot, n_ctx, n_head_kv, n_past = 0;
     // float f_norm_rms_eps, rope_freq_base, rope_freq_scale;
@@ -238,13 +234,13 @@ struct QKV_Motion : public BROWN_Motion    {
     //     : BROWN_Motion(_wq, _embd, _head, _N, _batch, _rot, _ctx, _head_kv, f_eps, rope_base, rope_scale), wk(_wk), wv(_wv)
     // {
     // }
-    QKV_Motion(hGensor _wq, hGensor _wk, hGensor _wv,hGensor inp_mask, struct CLI_params& hparams,hLQKV lQKV,int flag)
-        : BROWN_Motion(_wq, hparams,lQKV,flag), wk(_wk), wv(_wv),inp_KQ_mask(inp_mask)
+    QKV_Motion( Fish *hFish_,hGensor _wq, hGensor _wk, hGensor _wv,hGensor inp_mask, struct CLI_params& hparams,hLQKV lQKV,int flag)
+        : BROWN_Motion(hFish_,_wq, _wv, hparams,lQKV,flag), wk(_wk), inp_KQ_mask(inp_mask)
     {
     }
-    
-    // hGensor QKV_rope(struct ggml_context *ctx, hGensor cur, hGensor w, hGensor KQ_pos, SHAPE shape, int flag = 0x0);
-    hGensor Build(struct ggml_context *ctx, hGensor t04, hGensor KQ_pos,const llama_kv_cache & kv)    override;
+    hGensor vXkq(struct ggml_context *ctx, hGensor v,hGensor kq,int layer_id);
+    // hGensor W_rope(struct ggml_context *ctx, hGensor cur, hGensor w, hGensor KQ_pos, SHAPE shape, int flag = 0x0);
+    hGensor Build(struct ggml_context *ctx, hGensor t04, hGensor KQ_pos)    override;
 };
 struct save_train_model {
     std::string fn_checkpoint_out,fn_model_out,fn_model_base,pattern_fn_it,fn_latest;
@@ -277,8 +273,6 @@ struct MixOfSwarm : public MixOfModels{
     hGensor Build(CLI_params&hparams,struct ggml_context * ctx,hGensor cur,int flag=0x0)  override;
 };
 
-typedef llama_kv_cache KV_CACHE;
-
 class Fish : public std::enable_shared_from_this<Fish>    {
     Fish(const Fish &);
     Fish &operator=(const Fish &);
@@ -298,8 +292,6 @@ protected:
 
     struct CLI_params hparams;
     save_train_model save_data;
-
-    // KV_CACHE kv_cache;
     
     hTGraph hGraph;                            // compuation graph
     int graph_order=-1;
@@ -391,7 +383,8 @@ public:
     }
     bool hasWiki()  {   return wikis.size()>0;  }
     virtual struct ggml_cgraph *GetRawGraph( struct ggml_context *,int flag=0x0)    {     return nullptr; }
-    virtual KV_CACHE *GetKVCache()  {   return nullptr;    }
+    std::shared_ptr<KVCache> hCache = nullptr;
+    // virtual KVCache *GetKVCache()  {   return nullptr;    }
 
     virtual ~Fish() { Clear(); }
     virtual std::string Name()  {   return name.c_str();  }
@@ -608,6 +601,7 @@ public:
     friend class LLaMeta;   
     friend class SampLoader;
     friend class WIKI;
+    friend class KVCache;
 };
 
 struct LogicSalp : public Fish {

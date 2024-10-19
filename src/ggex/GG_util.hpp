@@ -34,7 +34,7 @@ using namespace std;
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 #include "common-ggml.h"
-#include "../GG_params.hpp"
+#include "../CLI_params.hpp"
 #include "../g_stddef.hpp"
 #include "train.h"          //struct train_params_common common;
 #include "common.h" 
@@ -113,6 +113,29 @@ inline void GG_log_internal(ggml_log_level level, const char * format, ...) {
 }
 
 typedef struct ggml_tensor* hGensor;
+
+struct GENSOR_INFO{
+    int level=-1,ID=-1,dad,c_id;
+    string sX;
+    GENSOR_INFO(){;}
+    GENSOR_INFO(int id_,int l,int d,int c) : ID(id_),level(l),dad(d),c_id(c)  {
+        string suffix,prefix;
+        sX = __repr__(suffix,prefix);
+    }
+    string __repr__(string& suffix,string& prefix,int flag=0x0) {  
+        char buf[512]="\0";
+        if(dad==-1){
+            sprintf(buf+strlen(buf),"ROOT"); 
+        }else
+            sprintf(buf+strlen(buf),"[%d %d.%d l=%d]",ID,dad,c_id,level); 
+        return buf;
+    }
+
+};
+
+void _T_repr_(hGensor t,const char*tab,char *buf,int typ=0x0);
+void _T_repr_(hGensor t,const char*tab,char *buf,const GENSOR_INFO&info);
+
 
 extern "C"
 inline void gg_print_tensor_(const char* title, struct ggml_tensor * t, int n = 10) {

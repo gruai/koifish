@@ -198,16 +198,22 @@ void Fish::Statistic(int typ, int flag)     {
     if(hparams.is({"gpt","c_graph"},string("raw"))){
         _INFO("raw graph\n");
     }
-    if(preLogits!=nullptr)
-        TGraph(gf).__repr__(suffix,prefix,gf->nodes[gf->n_nodes-2]);   //preLogits = gf->nodes[gf->n_nodes - 1];
+    int vQKV = hparams.Get({"model","attention","version"},0,false);
+    _INFO("QKV version=%d\n",vQKV);
+    
     ggml_graph_stat(gf);
     if(gb!=nullptr) ggml_graph_stat(gb);
-    if (1)        {
+    bool isDot = false;
+    if (isDot)        {
         ggml_graph_dump_dot(gf, NULL, "opt-forward.dot");
         if(gb!=nullptr) ggml_graph_dump_dot(gb, gf, "opt-backward.dot");
     }   else        {
-        ggml_graph_print(gf);
-        if(gb!=nullptr) ggml_graph_print(gb);
+        // ggml_graph_print(gf);
+        // if(gb!=nullptr) ggml_graph_print(gb);
+        if(preLogits!=nullptr)
+            TGraph(gf).__repr__(suffix,prefix,gf->nodes[gf->n_nodes-2]);   //preLogits = gf->nodes[gf->n_nodes - 1];
+        if(gb!=nullptr)
+            TGraph(gb).__repr__(suffix,prefix);   //preLogits = gf->nodes[gf->n_nodes - 1];
     }
 
     int nT = gensors.size(), nQ = 0, nF16 = 0;
@@ -230,7 +236,7 @@ int Fish::BuildGraphFromRaw(int flag)   {
     gf = GetRawGraph( ctx_compute );
     // ggml_graph_print(gf);
     
-    set<std::string> leaf_const={"inp_tokens"};
+    // set<std::string> leaf_const={"inp_tokens"};
     for (int i = 0; i < gf->n_leafs; i++) { //to float
         struct ggml_tensor * node = gf->leafs[i];
         if(strstr(node->name,"weight")==NULL)        
@@ -239,6 +245,7 @@ int Fish::BuildGraphFromRaw(int flag)   {
     }    
         // the output is always the last tensor in the graph
     preLogits = gf->nodes[gf->n_nodes - 1];
+    
     hGensor last_embd = gf->nodes[gf->n_nodes - 2];
     // gf->order = GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT;      
     if(!isLocalInfer){

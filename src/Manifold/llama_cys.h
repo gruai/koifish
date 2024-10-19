@@ -15,4 +15,4 @@ struct ggml_tensor * moe_build_ffn(struct ggml_context * ctx,struct llama_contex
                     int64_t   n_expert,int64_t   n_expert_used,bool   norm_w,bool   scale_w,float   w_scale,int   il);         
 bool llama_model2vocb_( struct llama_model * model,void *hData, int type);
 int _llama_build_graph(struct llama_model * model,struct ggml_cgraph **hgf,struct ggml_cgraph **hgb,int flag);
-struct ggml_cgraph * _llama_raw_graph(llama_model * model,struct ggml_cgraph *gfx,int flag);
+struct ggml_cgraph * _llama_raw_graph(llama_model * model,struct ggml_cgraph *gfx,const std::string&prompt,bool isOnline,int flag);
