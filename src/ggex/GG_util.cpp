@@ -105,22 +105,61 @@ bool CLI_params::operator!=(const CLI_params& other) const {
 void CLI_params::Dump( )    {
     _INFO("%s::CLI_params: \n", exec_name.c_str());
     // _INFO(" n_vocab: %u", n_vocab);
-    _INFO(" n_ctx:   %u", common.n_ctx);
-    _INFO(" n_embd:  %u", n_embd);        
-    _INFO(" n_ff:    %u", n_ff());
-    _INFO(" n_head:  %u", n_head());
-    _INFO(" n_head_kv:  %u", n_head_kv());
-    _INFO(" n_layer: %u", n_layer);
-    _INFO(" n_rot:   %u\n", n_rot);       
-    _INFO(" f_norm_rms_eps:   %g", f_norm_rms_eps);   
-    _INFO(" rope_freq_base:   %g", rope_freq_base);   
-    _INFO(" rope_freq_scale:   %g", rope_freq_scale);
-    _INFO("\n lora_r=%d  lora_alpha=%g \n", lora_r,lora_alpha); 
+    _INFO(" n_ctx=%u", common.n_ctx);
+    _INFO(" n_embd=%u", n_embd);        
+    _INFO(" n_ff=%u", n_ff());
+    _INFO(" n_head=%u", n_head());
+    _INFO(" n_head_kv=%u", n_head_kv());
+    _INFO(" n_layer=%u(%u)", nLayer(),n_layer_train);
+    _INFO(" n_rot=%u\n", n_rot);       
+    _INFO(" f_norm_rms_eps=%g", f_norm_rms_eps);   
+    _INFO(" rope_freq_base=%g", rope_freq_base);   
+    _INFO(" rope_freq_scale=%g", rope_freq_scale);
+    _INFO("\n lora_r=%d lora_alpha=%g \n", lora_r,lora_alpha); 
     _INFO(" NABLA = %s\n", nabla==0? "" : nabla==3 ? "Embed+AutoEncoder" : (nabla==2 ? "" : "qkv") ); 
-    _INFO(" SIGMA = %s\n", sigma.c_str()); 
+    // _INFO(" SIGMA = %s\n", sigma.c_str()); 
 }
 
+MODEL_ARCH CLI_params::ModelArch()   {  
+    MODEL_ARCH arch = MODEL_ARCH::_X_;
+    string info = jKV(jConfig,{"model","arch"},string("")); 
+    std::transform(info.begin(), info.end(), info.begin(), ::toupper);
+    arch =  info=="MOE" ? NLP_MOE :
+            info=="MAMBA" ? MODEL_ARCH::NLP_MAMBA : 
+            info=="GPT2" ? MODEL_ARCH::NLP_GPT2 :
+            MODEL_ARCH::NLP_LLAMA;  
 
+    return arch; 
+}
+
+void CLI_params::OnArch( ){
+    switch(ModelArch()){
+    case MODEL_ARCH::NLP_GPT2:  {
+        n_embd = 768;               dict_latent_dim = 768;
+        n_embd_head_v = 64;         n_embd_head_k = 64;
+        // n_embd = 128; dict_latent_dim = 128;        n_embd_head_v=n_embd_head_k=2; //only for debug        
+        n_ctx_train = 1024;
+        if(layers.size()==0){
+            // TO_DO: why grad vanish @/home/cys/rnd/lic/log/gpt2/10_29_bug.info
+            int n_ff0 = jKV(jConfig,{"model","ffn","length"},3072,false);
+            for(int i=0;i<nLayer();i++){
+                LAY_PARAM lay(12,12,n_ff0);
+                layers.push_back(lay);
+            }
+        }
+        // assert(layers.size()==12);
+        // n_embd_gqa = 768;
+        
+        tpWiki = "";
+        int group=Get({"model","target_group"},1);
+        assert(group==1);
+    }
+        // hparams.Set({"model","target_group"},1);
+        break;
+    default:
+        break;
+    }
+}
 /*
     Some trick
     1 Large batch size would decrease osillation
@@ -152,11 +191,17 @@ try{
     for(auto path : all_base){
         if(path.empty() || path[0]=='#')
             continue;
-        if( !std::filesystem::exists(path) )
+        if( !std::filesystem::exists(path) ){
+            _WARN("====== Failed to load model @\"%s\" !!! ======\n",path.c_str());
             continue;
+        }
+            
         if(model_title.empty()) //the first path is backbone
             model_title = remove_extension(base_name(path));
         fn_model_base.push_back(path);
+    }
+    if(model_title.empty()){
+        model_title = jKV(jConfig,{"model","arch"},string(""));
     }
     
     serial_path = jKV(jConfig,{"data","serialize_path"},s0 );
@@ -184,14 +229,12 @@ try{
     wiki_logits = jKV(jConfig,{"wiki","logits"},wiki_logits );
     tpWiki = jKV(jConfig,{"wiki","induct"},tpWiki ); 
 
-    info = jKV(jConfig,{"model","arch"},tpWiki ); 
-    std::transform(info.begin(), info.end(), info.begin(), ::toupper);
-    arch =  info=="MOE" ? NLP_MOE :
-            info=="MAMBA" ? MODEL_ARCH::NLP_MAMBA : MODEL_ARCH::NLP_LLAMA;
+    
 
     nabla = jKV(jConfig,{"model","nabla"},nabla );
-    sigma = jKV(jConfig,{"model","sigma"},sigma ); 
-    n_layer = jKV(jConfig,{"model","layer"},n_layer );
+    // sigma = jKV(jConfig,{"model","sigma"},sigma ); 
+    nLayerX = jKV(jConfig,{"model","layer"},nLayerX );    
+    assert(nLayerX<160 && nLayerX>0);
     
     common.custom_n_ctx = true;
     common.n_threads = jKV(jConfig,{"threads"},common.n_threads );
@@ -425,13 +468,13 @@ bool CLI_params::parse(int argc, char ** argv)  {
                 invalid_param = true;
                 break;
             }
-            sigma = argv[i];
+            // sigma = argv[i];
         }else if (arg == "--layer") {
             if (++i >= argc) {
                 invalid_param = true;
                 break;
             }
-            n_layer = std::stoi(argv[i]);
+            nLayerX = std::stoi(argv[i]);
         }else if (arg == "--tune") {
             if (++i >= argc) {
                 invalid_param = true;
@@ -658,9 +701,12 @@ void _T_repr_(hGensor t,const char*tab,char *buf,const GENSOR_INFO&info){
 
 void _T_repr_(hGensor t,const char*tab,char *buf,int typ){
     if(t==nullptr)      return;
-    const char* A = "d";
+    const char* A = t->type==GGML_TYPE_F16 ? "d16":"d";
     if(t->grad!=nullptr){
-        A = "P";
+        if(t->type==GGML_TYPE_F16)
+            A = "P16";    
+        else
+            A = "P";
     }
     auto ne=t->ne;
     switch(typ){
@@ -671,6 +717,68 @@ void _T_repr_(hGensor t,const char*tab,char *buf,int typ){
         sprintf(buf+strlen(buf),"%s%s '%s' %.3lf(M)\t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",tab, 
         A,t->name,ggml_nelements(t)/1.0e6,ne[0], ne[1], ne[2], ne[3], ggml_type_name(t->type)); 
         break;
+    }    
+}
+
+int CHECK_SAME_TENSORS(const std::vector<hGensor>&arrA,const std::vector<hGensor>&arrB,int flag){
+    _INFO("======== %s \n",__func__);
+    size_t nA=arrA.size(),nB=arrB.size(),nDup=0,nMiss=0;
+    bool isSame = arrA.size()==arrB.size();
+    std::map<std::string, int> msg;
+    int no=1;
+    for(auto tA:arrA){
+        if(msg.find(tA->name)!=msg.end()){
+            _INFO("\tAA=\"%s\"",tA->name); 
+            isSame = false;
+        }
+        msg[tA->name] = no;     
+        no++;
+    }
+    for(auto tB:arrB){
+        if(msg.find(tB->name)==msg.end()){
+            isSame = false;    nMiss++; 
+            _INFO("\tB_%d=\"%s\"",nMiss,tB->name); 
+        }
+        no = msg[tB->name];
+        if(no<0){
+            isSame = false;     nDup++;
+        }
+        msg[tB->name] = -no; 
+    }
+    for(auto ms : msg){
+        if(ms.second>0){
+            auto tA = arrA[ms.second-1];
+            _INFO("A_%d=%s ",nMiss,tA->name); 
+            isSame = false;     nMiss++;
+        }
+    }
+    return 0x0;
+}
+
+size_t F_SIZE(const std::string&fpath,FILE *fp0,int flag) {
+try{
+    FILE *fp = fp0;
+    if(fp0==NULL){
+        fp = std::fopen(fpath.c_str(), "rb");
+        assert(fp!=NULL);
+#ifdef _WIN32
+        int ret = _fseeki64(fp, 0, SEEK_END);
+#else   
+        int ret = std::fseek(fp, 0, SEEK_END);
+#endif        
     }
     
+#ifdef _WIN32
+    __int64 ret = _ftelli64(fp);
+#else
+    long ret = std::ftell(fp);
+#endif
+    assert(ret != -1); 
+    if(fp!=fp0)
+        fclose(fp);
+    return (size_t) ret;
+}catch(...){
+    assert(0);
+    return 0x0;
+}
 }

@@ -11,7 +11,7 @@ out/
 tmp/
 models/
 models-mnt
-bin/*.*
+bin/
 build_/
 datasets/
 models
@@ -53,6 +53,7 @@ llama.log
 src/LLAMA/common/build-info.cpp
 *.eval
 *.tokens
+*.tokenset
 *.train
 datasets
 

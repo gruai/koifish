@@ -24,9 +24,11 @@ enum COMPRESSIVE_SENSING    {
 
 enum MODEL_ARCH {
     _X_,
+    NLP_GPT2,
     NLP_LLAMA,
     NLP_MAMBA,
     NLP_MOE,    //???
+    
     SCORE_,
     SAM_
 };
@@ -67,6 +69,9 @@ struct CLI_params {
     bool isFlashAtten()     {   
         common.use_flash=false;  return common.use_flash;  
     }
+    uint32_t nLayer()   {
+        return nLayerX<=0 ? n_layer_train : nLayerX;
+    }
     uint32_t n_ctx()    const    {  return common.n_ctx;  }             //number of tokens in each sample
     uint32_t n_ctx_orig()    const    {
         return n_ctx_orig_yarn != 0 ? n_ctx_orig_yarn : n_ctx_train;
@@ -82,7 +87,9 @@ struct CLI_params {
     }
 
     JSON jConfig;
-    MODEL_ARCH arch = MODEL_ARCH::_X_;
+    MODEL_ARCH ModelArch();
+    virtual void OnArch();
+
     std::string exec_name="",test="",compute_graph="";
     std::vector<std::string> fn_model_base;
     //  std::string fn_vocab_model;
@@ -99,11 +106,12 @@ struct CLI_params {
     uint32_t n_embd_head_v = -1; // dimension of values (d_v) aka n_embd_head
     std::vector<LAY_PARAM> layers;
 
-    uint32_t n_layer = 32;
-    uint32_t n_rot   = 64;
+    uint32_t n_layer_train = -1, nLayerX = -1;
+    
+    uint32_t n_rot = 64;
         
     int nabla = 1;      //cys
-    std::string sigma = ""; 
+    // std::string sigma = ""; 
     std::string vae = "";
     std::string prompt = "";
     std::string dict_vae_dims = "",dict_dialect="",dict_logits="";
@@ -139,8 +147,18 @@ struct CLI_params {
     }
 
     template<typename T>
-    bool Get(const std::vector<std::string>&keys,const T& t,bool isCLI=true){
+    T Get(const std::vector<std::string>&keys,const T& t,bool isCLI=true){
         T val = jKV(jConfig,keys,t,isCLI);
+        return val;
+    }
+
+    // It is also not easy to change keys in a std::map
+    template<typename T>
+    T Set(const std::vector<std::string>&keys,const T& t){
+        //  https://github.com/nlohmann/json/issues/1723
+        assert(0);
+        T v0;   
+        T val = jKV(jConfig,keys,v0,false);
         return val;
     }
 
@@ -179,8 +197,8 @@ struct CLI_params {
     float rSplit = 0.1;
     std::string serial_path,batch_sample;
     
-    // float f_norm_eps     = 1e-5f; // falcon
-    float f_norm_rms_eps = 1e-5f; // llama
+    float f_norm_eps = 1e-5f; 
+    float f_norm_rms_eps = 1e-5f; 
     float rope_freq_base  = 10000.0f;
     float rope_freq_scale = 1.0f;
     float lars_ratio = 0.0f;

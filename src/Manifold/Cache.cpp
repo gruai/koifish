@@ -3,7 +3,7 @@
 #include "llama.h"
 // #include "llama_cys.h"
 
-KVCache::KVCache(LLaMeta *la_,int max_batch_size, int max_seq_len, int n_kv_heads, int head_dim) : lam_(la_){   
+KVCache::KVCache(NLP_AutoRegressive *la_,int max_batch_size, int max_seq_len, int n_kv_heads, int head_dim) : lam_(la_){   
     struct LAMA *lama  = la_->lama();  
     llama_kv_cache *kv = lama->_cache;  
     bool isFlash = false;
@@ -70,7 +70,7 @@ void KVCache::init_lamakv(int n_batch) {
 
     const uint32_t n_ctx   = hparams.n_ctx();
     const uint32_t n_embd  = hparams.n_embd;
-    const uint32_t n_layer = hparams.n_layer;
+    const uint32_t n_layer = hparams.n_layer_train;
 
     const int64_t n_mem      = n_layer*n_ctx*n_batch;
     const int64_t n_elements = n_embd*n_mem;

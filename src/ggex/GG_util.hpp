@@ -62,6 +62,39 @@ using namespace std;
 
 #define TO_DO   assert(0);
 
+static char buffer[GGML_MAX_NAME];
+static const char * _NAM_( const char *format,... )	{
+    va_list args;
+    va_start( args, format );
+    vsnprintf( buffer,GGML_MAX_NAME,format,args );
+    va_end(args);
+    return buffer;
+}
+
+static const char * TN( const char *format,... )	{
+    va_list args;
+    va_start( args, format );
+    vsnprintf( buffer,GGML_MAX_NAME,format,args );
+    va_end(args);
+    assert(strlen(buffer)+strlen(".weight")<=GGML_MAX_NAME);
+    return strcat(buffer,".weight");
+}
+
+static const char * TNs( const char *format,const char *suffix,... )	{
+    va_list args;
+    va_start( args, suffix );       //  va_start( args, format );
+    vsnprintf( buffer,GGML_MAX_NAME,format,args );
+    va_end(args);
+    const char*w = ".weight";
+    if(strlen(buffer) > 7 && strcmp(buffer+strlen(buffer)-7, ".weight")==0){
+        w = "";
+    }
+    assert(strlen(buffer)+strlen(w)+strlen(suffix)<=GGML_MAX_NAME);
+    strcat(buffer,w);
+    strcat(buffer,suffix);        
+    return buffer;
+}
+
 inline void GG_log_callback_default(ggml_log_level level, const char * text, void * user_data) {
     (void) level;
     (void) user_data;
@@ -162,8 +195,11 @@ inline void gg_print_tensor_(const char* title, struct ggml_tensor * t, int n = 
         }        
     }
     // printf("sum:  %f\n\n", sum);
-    printf("T%d:%s: %.4g(M)\t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] sum=%g data=[%f-%f] rZ=%.3g%%\n", 
-        -1/*t->id*/,t->name,nElems/1.0e6,t->ne[0], t->ne[1], t->ne[2], t->ne[3], ggml_type_name(t->type),sum,a0,a1,nz*100.0/nElems);
+    if(nElems==1){
+        printf("T%d:%s: %s\t data=%f \n",-1/*t->id*/,t->name, ggml_type_name(t->type),a0);
+    }else
+        printf("T%d:%s: %.4g(M)\t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] sum=%g data=[%f : %f] rZ=%.3g%%\n", 
+            -1/*t->id*/,t->name,nElems/1.0e6,t->ne[0], t->ne[1], t->ne[2], t->ne[3], ggml_type_name(t->type),sum,a0,a1,nz*100.0/nElems);
     if(n>0){
         printf("\t{");
         for (int i = 0; i < std::min((int) (t->ne[0]*t->ne[1]), n); i++) {
@@ -617,7 +653,8 @@ inline void _TIME(double fmillis) {
         _INFO("%02lld:%02lld:%02lld", (long long int) hours, (long long int) minutes, (long long int) seconds);
 }
 struct ggml_tensor * ggml_cross_entropy_loss_1(struct ggml_context * ctx,struct ggml_tensor * a, struct ggml_tensor * b);
-
+int CHECK_SAME_TENSORS(const std::vector<hGensor>&arrA,const std::vector<hGensor>&arrB,int flag=0x0);
+size_t F_SIZE(const std::string&fpath,FILE *fp0=NULL,int flag=0x0); 
 /*
 static void ggml_compute_forward_scale_q(
         const struct ggml_compute_params * params,

@@ -1,7 +1,7 @@
 /**
  *  Copyright 2023-2024 by Grusoft 
  * 
- *  \brief LLaMeta Model(https://llama.meta.com/)
+ *  \brief NLP_AutoRegressive Model(https://llama.meta.com/)
  *  \author Yingshi Chen
  */
 #pragma once

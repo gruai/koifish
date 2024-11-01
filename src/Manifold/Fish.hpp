@@ -27,6 +27,19 @@ typedef struct ggml_tensor gensor;
 typedef struct ggml_tensor *hGensor;
 typedef std::map<std::string, struct ggml_tensor *> TENSORs;
 typedef std::vector<int> SHAPE;
+inline bool CHECK_SHAPE(const SHAPE&shape){
+    bool isValid = shape.size()>0;
+    for(auto s : shape){
+        if(s<0) {
+            isValid = false;        break;
+        }
+        if(s>1024*1024)        {
+            isValid = false;        break;
+        }
+    }
+    assert(isValid);
+    return isValid;
+}
 
 #include "train.h"
 #include "TGraph.hpp"
@@ -36,15 +49,15 @@ typedef std::vector<int> SHAPE;
 #include "../Fuzi/Distillation.hpp"
 
 class Fish;
-class LLaMeta;
+class NLP_AutoRegressive;
 class KVCache {
     void *lamakv=nullptr;
     int kv_n = -1;
     void init_lamakv(int n_batch);
 protected:
-    LLaMeta *lam_ = nullptr;
+    NLP_AutoRegressive *lam_ = nullptr;
 public:
-    KVCache(LLaMeta *lam_,int max_batch_size, int max_seq_len, int n_kv_heads, int head_dim);
+    KVCache(NLP_AutoRegressive *lam_,int max_batch_size, int max_seq_len, int n_kv_heads, int head_dim);
 
     void update(int batch_size, int start_pos, hGensor xk, hGensor xv);
     hGensor get(int batch_size, int start_pos, int seq_len);
@@ -70,45 +83,48 @@ class GeNeuron  {
     GeNeuron &operator=(const GeNeuron &) = default;
 
 protected:
-    hFISH hOrg = nullptr;
+    Fish *hOrg = nullptr;
     COMPRESSIVE_SENSING compression = SKIP;
     SHAPE shape;
 
 public:
     NeLayer *hLay = nullptr;
     std::string name;
-    GeNeuron() {}
-    GeNeuron(SHAPE shape_, hFISH hG_, int flag) : shape(shape_), hOrg(hG_) { ; }
+    GeNeuron() {}    
+    GeNeuron(SHAPE shape_, Fish *hG_, int flag) : shape(shape_), hOrg(hG_) { ; }
     virtual ~GeNeuron() { ; }
 
+    virtual void Init(Fish *hG_, int flag=0x0) {    hOrg=hG_;   }
     virtual bool Empty() { return shape.size() == 0; }
+    virtual size_t nElem()  { return 0x0; }
 };
 typedef shared_ptr<GeNeuron> hNeuron;
 
-struct SLP : public GeNeuron
-{ // single layer perceptron
+// single layer perceptron
+struct SLP : public GeNeuron    { 
     hGensor w = nullptr, b = nullptr;
     hGensor u = nullptr, s = nullptr, v = nullptr;
-    SLP() {}
-    SLP(Fish *ctx, const std::string &key_, const SHAPE &shape_, hFISH hG_, int flag) : GeNeuron(shape_, hG_, flag)
-    {
+    SLP( ) {}
+    SLP(Fish *ctx, const std::string &key_, const SHAPE &shape_, Fish *hG_, int flag) : GeNeuron(shape_, hG_, flag)    {
         // compression = hOrg->params.compression;
-        Build(ctx, key_, shape_, flag);
+        Build(key_, shape_, flag);
     }
 
-    void Init(hGensor w_, hGensor b_, const SHAPE &shape_, int flag = 0x0);
-    void Build(Fish *ctx, const std::string &key_, const SHAPE &shape, int flag);
+    // void Init(hGensor w_, hGensor b_, const SHAPE &shape_, int flag = 0x0);
+    void Build(const std::string &key_, const SHAPE &shape, int flag);
     hGensor Build_2(struct ggml_context *ctx0, hGensor cur, int flag = 0x0);
+    
+    size_t nElem()  override;  
 };
-struct LayerNormal : public GeNeuron
-{
+struct LayerNormal : public GeNeuron    {
     hGensor w = nullptr, b = nullptr;
     LayerNormal() {}
-    LayerNormal(Fish *ctx, const std::string &key_, const SHAPE &shape, int flag)
-    {
-        Build(ctx, key_, shape, flag);
+    LayerNormal(Fish *ctx, const std::string &key_, const SHAPE &shape, int flag)    {
+        Build(key_, shape, flag);
     }
-    void Build(Fish *ctx, const std::string &key_, const SHAPE &shape, int flag);
+    void Build(const std::string &key_, const SHAPE &shape, int flag);
+    hGensor Build_2(struct ggml_context * ctx0,hGensor cur,int flag);
+    size_t nElem()  override;      
 };
 
 struct SelfAttention : public GeNeuron
@@ -157,13 +173,14 @@ enum FFN_TYPE {
     
 struct QKV_LAY : public NeLayer {
     hGensor eps=nullptr;
-    hGensor attention_norm=nullptr;
-        // attention
-    hGensor wq=nullptr,wk=nullptr,wv=nullptr;
+    LayerNormal att_norm,ffn_norm;
+    SLP Q,up,down;
+    hGensor  ffn_gate=nullptr;  
+    // attention
+    hGensor wk=nullptr,wv=nullptr;
     hGensor wo=nullptr;
-        // normalization
-    hGensor  ffn_norm=nullptr,ffn_gate=nullptr,ffn_down=nullptr,ffn_up=nullptr;  
-        //SMOE
+      
+    //SMOE
     hGensor  ffn_gate_inp=nullptr,ffn_gate_exps=nullptr,ffn_down_exps=nullptr,ffn_up_exps=nullptr;  
     hGensor  ffn_gate_inp_shexp=nullptr,ffn_gate_shexp=nullptr,ffn_down_shexp=nullptr,ffn_up_shexp=nullptr;
 
@@ -179,17 +196,21 @@ struct QKV_LAY : public NeLayer {
         return rope_short;
     }
 
-    QKV_LAY(int id)  :  NeLayer(id)     {   name = "QKV_LAY";   }
+    QKV_LAY(Fish *hF_,int id);
     int64_t parameter_count() {
         int64_t nx = 0;
-        nx += ggml_nelements(attention_norm);
-        nx += ggml_nelements(wq);            nx += ggml_nelements(wk);            nx += ggml_nelements(wv);
+        nx += att_norm.nElem();    //ggml_nelements(attention_norm);
+
+        nx += Q.nElem();            nx += ggml_nelements(wk);            nx += ggml_nelements(wv);
         nx += ggml_nelements(wo);
-        nx += ggml_nelements(ffn_norm); nx += ggml_nelements(ffn_gate); nx += ggml_nelements(ffn_down); nx += ggml_nelements(ffn_up);            
+        nx += ffn_norm.nElem();     //ggml_nelements(ffn_norm); 
+        nx += ggml_nelements(ffn_gate);         nx += down.nElem();         nx += up.nElem();            //(ffn_down); nx += ggml_nelements(ffn_up);            
         return nx;
     }
     virtual bool CreateFFN(const CLI_params&hparams,ggml_context *ctx,FFN_TYPE tpFFN,int flag=0x0);
     string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
+
+    virtual void save_gguf(struct gguf_context *fctx, int flag);
 };
 typedef std::shared_ptr<QKV_LAY> hLQKV;
 struct BROWN_Motion    {
@@ -213,19 +234,17 @@ struct BROWN_Motion    {
     float beta_fast=32.0,beta_slow=1.0,ext_factor=0,attn_factor=1;
 
     BROWN_Motion()  {}
-    // BROWN_Motion(hGensor _wq, int _embd, int _head, int _N, int _batch, int _rot, int _ctx, int _head_kv, float f_eps, float rope_base, float rope_scale)
-    //     : n_embd(_embd), n_head(_head), N(_N), n_batch(_batch), n_rot(_rot), n_ctx(_ctx), n_head_kv(_head_kv),
-    //       f_norm_rms_eps(f_eps), rope_freq_base(rope_base), rope_freq_scale(rope_scale), wq(_wq)    {
-            
-    // }
     BROWN_Motion(Fish *hFish_,hGensor _wq, hGensor _wv,struct CLI_params& hparams,hLQKV lQKV,int flags);
     hGensor W_rope(struct ggml_context *ctx, hGensor cur, hGensor w, hGensor KQ_pos, SHAPE shape, int flag = 0x0);
     virtual hGensor Build(struct ggml_context *ctx, hGensor t04, hGensor KQ_pos);
+
+    virtual hGensor DiffusionOnEmbed(struct ggml_context *ctx, hGensor teb, hGensor KQ_pos);
+    virtual hGensor DiffusionOnToken(struct ggml_context *ctx, hGensor teb, hGensor KQ_pos);
 };
 typedef shared_ptr<BROWN_Motion> hBrownMotion;
 
 struct QKV_Motion : public BROWN_Motion    {
-    hGensor wk=nullptr, inp_KQ_mask=nullptr;
+    hGensor wk=nullptr, KQ_mask=nullptr;
       
     // int n_embd, n_head, N, n_batch, n_rot, n_ctx, n_head_kv, n_past = 0;
     // float f_norm_rms_eps, rope_freq_base, rope_freq_scale;
@@ -235,7 +254,7 @@ struct QKV_Motion : public BROWN_Motion    {
     // {
     // }
     QKV_Motion( Fish *hFish_,hGensor _wq, hGensor _wk, hGensor _wv,hGensor inp_mask, struct CLI_params& hparams,hLQKV lQKV,int flag)
-        : BROWN_Motion(hFish_,_wq, _wv, hparams,lQKV,flag), wk(_wk), inp_KQ_mask(inp_mask)
+        : BROWN_Motion(hFish_,_wq, _wv, hparams,lQKV,flag), wk(_wk), KQ_mask(inp_mask)
     {
     }
     hGensor vXkq(struct ggml_context *ctx, hGensor v,hGensor kq,int layer_id);
@@ -292,14 +311,19 @@ protected:
 
     struct CLI_params hparams;
     save_train_model save_data;
-    
+    ggml_gallocr_t alloc;
     hTGraph hGraph;                            // compuation graph
     int graph_order=-1;
     struct ggml_cgraph *gf = NULL, *gb = NULL; // only for debug
+    struct ggml_cgraph * gb_tmp = NULL;
+    struct random_normal_distribution *rnd = nullptr;   
+    ggml_backend_buffer_t back_data = NULL; 
+    std::vector<struct ggml_tensor *> checkpoints;
+    bool measure_only=false;  
     struct ggml_cplan gf_plan,gb_plan;
 
     std::map<std::string, struct ggml_tensor *> gensors;
-    std::vector<hGensor> wGensors;      //gensors with weight parameters
+   
     
     void Gensor2Map(std::vector<hGensor> gensors){
         for(auto gensor : gensors){
@@ -307,7 +331,8 @@ protected:
         }
     }   
     void Gensor2Map(struct ggml_tensor *gensor){
-        auto key = ggml_get_name(gensor);
+        const char* key = ggml_get_name(gensor);
+        assert(strlen(key)>0);
         assert(gensors.find(key) == gensors.end());
         gensors[key] = gensor;
     }   
@@ -323,7 +348,7 @@ protected:
     size_t nParams = 0, szModel = 0;
 
     hGensor in_node = nullptr, out_node = nullptr;
-    hGensor loss = nullptr, target_probs = nullptr, KQ_pos = nullptr, inp_KQ_mask = nullptr;
+    hGensor loss = nullptr, target_probs = nullptr, KQ_pos = nullptr, KQ_mask = nullptr;
     hGensor preLogits = nullptr;        //no SOFTMAX
     
     //hGensor gate=nullptr;      //create@InitModel update@
@@ -333,6 +358,7 @@ protected:
     hDataToken hTokenset=nullptr;
     hOptimizer hOPT;
     vector<hGensor> optParams;     //paramter tensors updated by hOPT
+    std::vector<hGensor> xGensors;      
     hDistillation hDistler;
     // performance
     int perf_runs = 0;
@@ -369,7 +395,7 @@ public:
 
     Fish() {}
     Fish(const std::string&nam_,struct CLI_params params,ROLE_TYPE role_=COMMON,int flag=0x0) : name(nam_),hparams(params),role(role_) {
-        arch = params.arch;
+        arch = params.ModelArch();
         if(jKEY(params.jConfig,{"train"}).empty())     {
             isLocalInfer = true;
         }
@@ -382,7 +408,7 @@ public:
         return !isLocalInfer;
     }
     bool hasWiki()  {   return wikis.size()>0;  }
-    virtual struct ggml_cgraph *GetRawGraph( struct ggml_context *,int flag=0x0)    {     return nullptr; }
+    virtual struct ggml_cgraph *GetRawGraph( struct ggml_context *,bool isBuild,int flag=0x0)    {     return nullptr; }
     std::shared_ptr<KVCache> hCache = nullptr;
     // virtual KVCache *GetKVCache()  {   return nullptr;    }
 
@@ -391,10 +417,10 @@ public:
 
     virtual size_t Size(int flag = 0x0) { return ctx_size; }
 
-    virtual void Init(const vector<hWIKI>& wikis,int flag=0x0)          {   throw "Fish::Init is ...";           }       
-    virtual void Build(int flag=0x0)               {   throw "Fish::Build is ...";     }
-    virtual void BeforeBuild(int flag=0x0);
-    virtual void AfterBuild(int flag=0x0);
+    virtual bool Init(const vector<hWIKI>& wikis,int flag=0x0)          {   throw "Fish::Init is ...";           }       
+    virtual bool Build(int flag=0x0)               {   throw "Fish::Build is ...";     }
+    virtual bool BeforeBuild(int flag=0x0);
+    virtual bool AfterBuild(bool isInitParam,int flag=0x0);
 
     virtual void Build(struct ggml_context *ctx0, ggml_gallocr_t &allocr, bool isOnlySymbol, int flag = 0x0)    {
         hGraph = std::make_shared<TGraph>(ctx0, GGML_DEFAULT_GRAPH_SIZE, false, isOnlySymbol);
@@ -403,6 +429,9 @@ public:
         hGraph->disconnect_node(in_node);
         ggml_gallocr_alloc_graph(allocr, hGraph->cgraph);
     }
+    virtual int BuildComputeGraph(int order,struct ggml_context * ctx,ggml_gallocr_t& alloc,int flag);
+    virtual hGensor BuildLoss( struct ggml_context * ctx,hGensor cur,int flag=0x0); 
+    virtual hGensor BuildTarget( struct ggml_context * ctx,hGensor cur,int flag=0x0)    {   return nullptr;   } 
     virtual hGensor GetGensor(const char *name, int flag = 0x0)    {
         assert(gensors.find(name) != gensors.end());
         return gensors[name];
@@ -445,41 +474,9 @@ public:
     }
 
     // If isParam, only alloc grad, no init!
-    void InitGensor(struct ggml_context *ctx, const char *name, hGensor gensor, bool isParam, int flag = 0)    {
-        if (name != nullptr)
-            ggml_set_name(gensor, name);
-        assert(gensor->data == nullptr);
-        Gensor2Map(gensor);
-        if (isParam && isTrain())        {
-            ggml_set_param(ctx, gensor);
-            nParams += ggml_nelements(gensor);
-        }
-    }
+    void InitGensor(struct ggml_context *ctx, const char *name, hGensor gensor, bool isParam, int flag = 0);
 
-    void InitGensor(struct ggml_context *ctx, hGensor gensor, const char *name, struct random_normal_distribution *rnd = nullptr, int flag = 0)
-    {
-        if (name != nullptr)
-            ggml_set_name(gensor, name);
-        if(isTrain())
-            ggml_set_param(ctx, gensor);
-        if (gensor->data == nullptr)        {
-            assert(0);
-        }
-        else
-        {
-            if (rnd != nullptr)
-                randomize_tensor_normal(gensor, rnd);
-            else
-                ggml_set_zero(gensor);
-        }
-        if (updateTMap)        {
-            Gensor2Map(gensor);            
-        }
-        if(isTrain())
-            nParams += ggml_nelements(gensor);
-    }
-
-    
+    void InitGensor(struct ggml_context *ctx, hGensor gensor, const char *name, struct random_normal_distribution *rnd = nullptr, int flag = 0);    
 
     hGensor get_tensor(const char *name, int flag = 0x0)    {
         return hGraph->get_tensor(name, flag); // from GGML
@@ -508,8 +505,9 @@ public:
     }
 
     virtual void Neck(const std::string &key_, const SHAPE &shape, int flag = 0x0) { ; }
-
+    // Deprecated
     hGensor AddTensor(const std::string &key_, enum ggml_type tp, const SHAPE &shape, int flag = 0x0);
+    hGensor AddTensor(struct ggml_context *ctx,const std::string &key_, enum ggml_type tp, const SHAPE &shape, bool isParam,int flag = 0x0);
 
     std::vector<hLayer> layers;
     virtual void BeforeAddLayer() { ; }
@@ -550,7 +548,7 @@ public:
             }
             else if (param.type == "SLP")
             {
-                hN = std::make_shared<SLP>(this, key_ + param.title, param.shape, shared_from_this(), flag);
+                hN = std::make_shared<SLP>(this, key_ + param.title, param.shape, this, flag);
             }
             else
             {
@@ -586,7 +584,7 @@ public:
     static hFISH MakeSwarm(const std::string nam_,struct CLI_params& params,int flag);
     static hFISH MakeInstance(const std::string nam_,struct CLI_params& params,const Fish *hSrc_,int flag);
     // static Fish* Copy(const Fish* src,int flag=0x0);
-    virtual void SaveTrain(struct save_train_model * data, struct train_state * train);
+    virtual void SaveTrain(struct save_train_model * data, void *user_data,int flag=0x0);
     virtual void save_gguf(const char * filename, int flag){}
 
     friend class GeNeuron;
@@ -595,10 +593,11 @@ public:
     friend class NT_SAM;
     friend class SAM_encoder;
     friend class Optimizer;
+    friend class OPT_Adam;
     friend class Distillation;
     friend class ConsiceDict;
     friend class GeneratOnPrompt;
-    friend class LLaMeta;   
+    friend class NLP_AutoRegressive;   
     friend class SampLoader;
     friend class WIKI;
     friend class KVCache;
@@ -619,8 +618,7 @@ struct LogicSalp : public Fish {
     // LogicSalp(const int dim, int flag = 0x0);
     // LogicSalp(const int dim, const vector<int>&picks, int flag = 0x0);
     LogicSalp(const std::string& nam_, struct CLI_params params,int flag=0x0);
-    // void BeforeBuild(int flag=0x0)   override;   
-    // void AfterBuild(int flag=0x0)   override;   
+
     void Train(int flag = 0x0)  override;
 
     	

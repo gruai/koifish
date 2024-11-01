@@ -104,7 +104,7 @@ struct SAM_encoder : public Fish {
         pe = AddTensor(key_+".pos_embed",GGML_TYPE_F32,{nEmbed, n_img_embd, n_img_embd, 1},0x0);
         // pe = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, nEmbed, n_img_embd, n_img_embd, 1);
         // model.tensors["image_encoder.pos_embed"] = pe;
-        proj.Build(this,key_+".patch_embed.proj",{n_patch_size, n_patch_size,           3, nEmbed},0x0);
+        proj.Build(key_+".patch_embed.proj",{n_patch_size, n_patch_size,           3, nEmbed},0x0);
             // proj_w = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, n_patch_size, n_patch_size,           3, nEmbed);
             // proj_b = ggml_new_tensor_3d(ctx, GGML_TYPE_F32,            1,            1, nEmbed);
         neck_conv_0 = AddTensor(key_+".neck.0.weight",GGML_TYPE_F16,{1, 1, nEmbed,     n_enc_out_chans},0x0);
@@ -113,10 +113,10 @@ struct SAM_encoder : public Fish {
             // neck_conv_1 = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, 3, 3, n_enc_out_chans, n_enc_out_chans);
                         // model.tensors["image_encoder.neck.0.weight"] = neck_conv_0;
             // model.tensors["image_encoder.neck.2.weight"] = neck_conv_1;
-        neck_norm_0.Build(this,key_+".neck.1",{n_enc_out_chans},0x0);
+        neck_norm_0.Build(key_+".neck.1",{n_enc_out_chans},0x0);
             // neck_norm_0_w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
             // neck_norm_0_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
-        neck_norm_1.Build(this,key_+".neck.3",{n_enc_out_chans},0x0);
+        neck_norm_1.Build(key_+".neck.3",{n_enc_out_chans},0x0);
             // neck_norm_1_w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
             // neck_norm_1_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
     }

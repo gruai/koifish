@@ -44,3 +44,7 @@ make clean && make VERBOSE=TRUE
 - Collaborators can push to branches in the `koifish` repo and merge PRs into the `master` branch
 - Collaborators will be invited based on contributions
 - Any help with managing issues, PRs and projects is very appreciated!
+  
+## Acknowledgements
+
+* Thanks very much for the outstanding work of [llama.cpp](https://github.com/ggerganov/llama.cpp) & [ggml](https://github.com/ggerganov/ggml).

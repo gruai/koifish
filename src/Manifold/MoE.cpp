@@ -16,19 +16,19 @@ bool QKV_LAY::CreateFFN(const CLI_params&hparams, ggml_context *ctx, FFN_TYPE tp
     case VAR_LAST:
     case SWIGLU:
         if(hparams.ZMUV_ratio>0)
-            ffn_norm = nullptr;  
+            ffn_norm.w = nullptr;  
         else
-            ffn_norm = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
+            ffn_norm.w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
         ffn_gate = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   n_ff);
-        ffn_down = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,   n_ff, n_embd);
-        ffn_up   = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   n_ff); 
+        down.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,   n_ff, n_embd);
+        up.w   = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   n_ff); 
         if(tpFFN==VAR_LAST && isLast){/*i==n_layer-1*/
             eps = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   n_batch*n_ctx);   
         }
         break;
     case ONLY_LNormal:
     case ONLY_RMSNormal:
-        ffn_norm = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
+        ffn_norm.w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
         break;
     case VAR_0:
         eps = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   n_batch*n_ctx);   
@@ -66,7 +66,7 @@ bool QKV_LAY::CreateFFN(const CLI_params&hparams, ggml_context *ctx, FFN_TYPE tp
     return true;  
 }
 
-LLM_MOE::LLM_MOE( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag) : LLaMeta(nam_,params,role,flag)  {
+LLM_MOE::LLM_MOE( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag) : NLP_AutoRegressive(nam_,params,role,flag)  {
     assert(arch==MODEL_ARCH::NLP_MOE);
     
     tpFFN = FFN_TYPE::GATE_CYS;    
@@ -74,7 +74,7 @@ LLM_MOE::LLM_MOE( const std::string& nam_,struct CLI_params params,ROLE_TYPE rol
 }
 
 size_t LLM_MOE::MostMemSize(int flag)  {
-    int n_layer = nLayerX<=0 ? hparams.n_layer : nLayerX;
+    int n_layer = hparams.nLayer();
     int nHead = hDict!=nullptr ? hDict->nLevel*3+2+6 : 6; 
     size_t sz0 = ggml_tensor_overhead(),sz = sz0*2*(nHead + n_layer*18);
     return sz;
@@ -83,7 +83,7 @@ size_t LLM_MOE::MostMemSize(int flag)  {
 
 
 hGensor LLM_MOE::build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<QKV_LAY> layer,hGensor  KQ_pos,/*hGensor cur, hGensor wq, hGensor wk, hGensor wv, hGensor wo,
-    hGensor attention_norm,hGensor KQ_pos,hGensor ffn_norm,hGensor ffn_up,hGensor ffn_gate,hGensor ffn_down,*/ int flag) {
+    hGensor attention_norm,hGensor KQ_pos,hGensor ffn_norm.w,hGensor ffn_up,hGensor ffn_gate,hGensor ffn_down,*/ int flag) {
     auto train_params = hparams.common;
     int n_vocab = hDict->n_vocab,n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd,n_head = hparams.n_head(),n_ff = hparams.n_ff();
     const float f_norm_rms_eps  = hparams.f_norm_rms_eps;
@@ -91,17 +91,17 @@ hGensor LLM_MOE::build_layer_( int N,struct ggml_context *ctx_compute,hGensor cu
     const float rope_freq_scale = hparams.rope_freq_scale;  
     const float kv_scale = 1.0f/sqrtf(float(hparams.n_embd)/hparams.n_head());
     const int n_past = 0, n_head_kv=hparams.n_head_kv(),n_embd_head = hparams.n_embd_head();
-    hGensor wq = UpdateGensor (layer->wq->name);                     
+    hGensor wq = UpdateGensor (layer->Q.w->name);                     
     hGensor wk = layer->wk==nullptr ? nullptr : UpdateGensor (layer->wk->name);
     hGensor wv = layer->wv==nullptr ? nullptr : UpdateGensor (layer->wv->name);
     hGensor wo = UpdateGensor (layer->wo->name);
-    hGensor attention_norm = UpdateGensor (layer->attention_norm->name);    
-    hGensor ffn_norm = layer->ffn_norm==nullptr ? nullptr : UpdateGensor (layer->ffn_norm->name); 
+    hGensor attention_norm = UpdateGensor (layer->att_norm.w->name);    
+    hGensor ffn_norm = layer->ffn_norm.w==nullptr ? nullptr : UpdateGensor (layer->ffn_norm.w->name); 
     hGensor ffn_up = nullptr,ffn_gate=nullptr,ffn_down=nullptr;
-    if(layer->ffn_up!=nullptr){                
-        ffn_up = UpdateGensor (layer->ffn_up->name);
+    if(layer->up.w!=nullptr){                
+        ffn_up = UpdateGensor (layer->up.w->name);
         ffn_gate = UpdateGensor (layer->ffn_gate->name);
-        ffn_down = UpdateGensor (layer->ffn_down->name);                
+        ffn_down = UpdateGensor (layer->down.w->name);                
     }  
 
     //  rms_norm:   Root Mean Square Layer Normalization
@@ -261,7 +261,7 @@ hGensor MixOfSwarm::Build(CLI_params&hparams,struct ggml_context * ctx,hGensor c
     return ouput;
 }
 
-hGensor LLaMeta::build_gate(struct ggml_context * ctx,hGensor cur,hGensor curlogits, int flag )  {
+hGensor NLP_AutoRegressive::build_gate(struct ggml_context * ctx,hGensor cur,hGensor curlogits, int flag )  {
     bool isRes = true,isSiLU=false;
 
     int n_vocab = hDict->tVocab(),n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd;

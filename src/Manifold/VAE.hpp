@@ -135,7 +135,7 @@ protected:
     vector<hMultiCoder> MAEC;    //  multi-level auto encoder
 
 public:
-    virtual int InitMAEC(struct ggml_context *ctx,std::vector<int>& dims_,int flag=0x0) {
+    virtual int InitMAEC(struct ggml_context *ctx,const std::vector<int>& dims_,int flag=0x0) {
         dims = dims_;
         int nMap = dims.size()-1;       assert(nMap>0);
         MAEC.clear( );
@@ -175,7 +175,8 @@ public:
         z = eps * std + mu*/
     }
 
-    void Build(int flag=0x0)   override   { 
+    bool Build(int flag=0x0)   override   { 
+        return false;
     }
 
     virtual void Build( hGensor x=nullptr )        {

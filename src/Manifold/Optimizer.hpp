@@ -61,8 +61,10 @@ protected:
     size_t nParams = 0, nMostParam = 0;
     bool just_initialized = false,isAdaptiveSched = false;
     int past=0,n_gradient_accumulation=0;
-    float gclip = 1.0;            // gradient clipping
-    float sched = 1.0f; // schedule multiplier (fixed, decay or warmup)
+    // gradient clipping
+    double gclip = 1.0;         
+    // schedule multiplier (fixed, decay or warmup)   
+    float sched = 1.0f;             
 
     hGensor grad=nullptr;  // current gradient
     vector<float> fx_best;
@@ -75,7 +77,7 @@ protected:
     double millis_per_iter;
 
     // void *app_ctx = nullptr;
-    double zmuv_0 = 0.0,zmuv_1 = 0.0;    
+    double zmuv_0 = 0.0,zmuv_1 = 0.0,g_step=0.0;    
     llama_token bos,eos;
     // hGensor loss=nullptr, target_probs=nullptr, preLogits=nullptr; 
     hGensor hLoss( );
@@ -90,12 +92,13 @@ protected:
     bool isStopImprove = false;
 
     virtual void Clear()    {}   
-
-    virtual bool one_step(struct train_state *train,SampLoader&loader, int accum_step, float *sched, int flag = 0x0);
+    // update sched & dump some info
+    virtual float UpdateSchedule(int flag = 0x0);
+    virtual bool AfterLoadBatch(SampLoader&loader, int accum_step, int flag = 0x0);
     virtual float gClip(int nx,CLI_params& hparams,int flag=0x0);
     virtual void UpdateParams(float gnorm,int nx,CLI_params& hparams,int flag);
     // virtual void AdamMiniV(float gnorm,int nx,CLI_params& hparams,int flag);
-    virtual bool BatchGrad(float&fx,struct train_opt_callback_data *callback_data,struct ggml_cplan *cplan,int flag=0x0) {   assert(0);  return false; }
+    virtual bool BatchGrad(float&fx,int flag=0x0) {   assert(0);  return false; }
     bool OnLogits(int flag=0x0);
 public:
     // typedef bool (*_CALL_BACK_)(void * data, int accum_step, float * sched);    
@@ -109,7 +112,7 @@ public:
     //  struct ggml_opt_context * opt = train->opt; 
     struct train_params_common train_params;
 
-    Optimizer(LLaMeta *g_,struct train_params_common& params_,int flag=0x0);
+    Optimizer(NLP_AutoRegressive *g_,struct train_params_common& params_,int flag=0x0);
     //Deprecated need refactor!!!       9/30/2024
     virtual float Compute(std::vector<llama_token>&tokens,bool isForward,int flag=0x0);
     virtual float Evaluate(SampLoader&loader,int iter,int flag=0x0);
@@ -185,24 +188,25 @@ protected:
     float eps_f = 1e-5f; // epsilon for convergence test
     float eps_g = 1e-3f; // epsilon for convergence test
     
-    hGensor gm;  // first moment
-    hGensor gv;  // second moment
-    hGensor gpf; // past function values
+    hGensor gm=nullptr;  // first moment
+    hGensor gv=nullptr;  // second moment
+    hGensor gpf=nullptr; // past function values
 
     void Prepare(size_t nx,int flag=0x0)   override;
-    bool BatchGrad(float&fx,struct train_opt_callback_data *callback_data,struct ggml_cplan *cplan,int flag=0x0) override;
-    virtual void UpdateTensorParam(hGensor hP,float *m,float *v,float *g,float gnorm);
+    // compute grad on batchs
+    bool BatchGrad(float&fx,int flag=0x0) override;
+    virtual double UpdateTensorParam(hGensor hP,float *m,float *v,float *g,float gnorm);
     void UpdateParams(float gnorm,int nx,CLI_params& hparams,int flag)  override;
 public:
-    OPT_Adam(LLaMeta *g_,struct train_params_common& params_,int flag=0x0);
+    OPT_Adam(NLP_AutoRegressive *g_,struct train_params_common& params_,int flag=0x0);
     void Dump(int typ)  override;
 };
 
 class OPT_AdamMiniV: public OPT_Adam  {
 protected:    
-    void UpdateTensorParam(hGensor hP,float *m,float *v,float *g,float gnorm) override;
+    double UpdateTensorParam(hGensor hP,float *m,float *v,float *g,float gnorm) override;
 public:
-    OPT_AdamMiniV(LLaMeta *g_,struct train_params_common& params_,int flag=0x0) :
+    OPT_AdamMiniV(NLP_AutoRegressive *g_,struct train_params_common& params_,int flag=0x0) :
         OPT_Adam(g_,params_,flag) {
         title = "OPT_AdamMiniV";
     };

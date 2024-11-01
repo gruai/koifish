@@ -66,8 +66,8 @@ hGensor BROWN_Motion::W_rope(struct ggml_context *ctx ,hGensor cur,hGensor w,hGe
     return t13;
 }
 
-//  teb=tokens*embed*batch
-hGensor BROWN_Motion::Build(struct ggml_context *ctx ,hGensor teb, hGensor KQ_pos)    {
+hGensor BROWN_Motion::DiffusionOnEmbed(struct ggml_context *ctx, hGensor teb, hGensor KQ_pos){
+    assert(Transfer_1==false);
     const float kq_scale = 1.0f/sqrtf(float(n_embd)/n_head);
     int rope = 1;       
     auto gf_ = hFish_->ForwarGraph();
@@ -142,6 +142,130 @@ hGensor BROWN_Motion::Build(struct ggml_context *ctx ,hGensor teb, hGensor KQ_po
     return kqv_out;   
 }
 
+hGensor BROWN_Motion::DiffusionOnToken(struct ggml_context *ctx, hGensor teb, hGensor KQ_pos)   {
+    assert(Transfer_1 && wq!=nullptr);
+    const float kq_scale = 1.0f/sqrtf(float(n_embd)/n_head);
+    int rope = 1;       
+    auto gf_ = hFish_->ForwarGraph();
+    hGensor v = teb,v3=nullptr,v4=nullptr, t14 = nullptr, kqv_out=nullptr;
+    assert_shape_2d(teb, n_embd, N*n_batch);
+      
+    hGensor v_rope = ggml_reshape_4d   (ctx, teb, n_embd_head, n_head, N, n_batch);
+    v_rope = ggml_rope_ext(ctx, v_rope, KQ_pos, nullptr, n_rot, 0, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
+    v_rope = ggml_reshape_2d   (ctx, v_rope, n_embd_head*n_head, N*n_batch);
+    v = ggml_mul_mat(ctx, v_rope, wq); 
+    v3 = ggml_reshape_3d(ctx, v, N, n_batch, n_embd);        set_name(v3, "v3");       
+  
+    hGensor probs = nullptr;
+    if(wv!=nullptr)   {
+        hGensor w_trans = wv;
+        hGensor w_ = ggml_mul_mat(ctx, w_trans,teb ); //ggml_reshape_2d(ctx,v3,N, n_batch*n_embd)  
+        w_ = ggml_reshape_2d(ctx, w_, N,n_batch);   
+        // if(isSiLU){ //maybe useful
+        //     w_ = ggml_silu(ctx,w_);
+        // } 
+        probs = ggml_soft_max(ctx,w_); 
+        probs = ggml_repeat(ctx, probs, v3); 
+    }else
+        probs = ggml_soft_max(ctx,v3); 
+    hGensor expert = v3;    //ggml_reshape_2d(ctx,v3,n_vocab,n_ctx*n_batch);
+    // hGensor wB = _repeat(ctx,probs,expert);
+    hGensor kqv = ggml_mul(ctx,expert,probs);
+    v4 = ggml_reshape_4d   (ctx, kqv,N, n_batch,n_embd_head, n_head);
+    kqv_out = ggml_permute(ctx, v4, 2, 3, 0, 1);       // [24,6,512,32]  
+    assert_shape_4d(kqv_out, n_embd_head, n_head, N, n_batch);  
+    // kqv_out = ggml_rope_ext(ctx, kqv_out, KQ_pos, nullptr, n_rot, 0, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
+    set_name(kqv_out, "kqv_out_rope");     
+
+    kqv_out = ggml_cont(ctx, kqv_out);              
+    sprintf(nam_,"kqv_merged_cont-%d",lay->id);    set_name(kqv_out, nam_);     
+    kqv_out = ggml_reshape_2d   (ctx, kqv_out, n_embd, N*n_batch);   // [768,17,1]  
+    ggml_build_forward_expand(gf_,kqv_out);  
+    return kqv_out;   
+}
+
+//  teb=tokens*embed*batch
+hGensor BROWN_Motion::Build(struct ggml_context *ctx ,hGensor teb, hGensor KQ_pos)    {
+    hGensor kqv_out=nullptr;
+    if(Transfer_1)
+        kqv_out = DiffusionOnToken(ctx,teb,KQ_pos);
+    else
+        kqv_out = DiffusionOnEmbed(ctx,teb,KQ_pos);
+    return kqv_out;
+    /*const float kq_scale = 1.0f/sqrtf(float(n_embd)/n_head);
+    int rope = 1;       
+    auto gf_ = hFish_->ForwarGraph();
+    hGensor  t13 = nullptr, t14 = nullptr, kqv_out=nullptr;
+    auto shape=teb->ne;
+    assert_shape_2d(teb, n_embd, N*n_batch);
+    assert(wq!=nullptr);
+    
+    hGensor wq_2 = wq,v = teb,v4 = nullptr,v3=nullptr;
+    if(!Transfer_1){  //scale wq
+        hGensor  t16_1 = ggml_scale_inplace        (ctx, wq, kq_scale);  
+        wq_2 = ggml_diag_mask_inf_inplace(ctx, t16_1, n_past); 
+    }
+    hGensor  kq = ggml_soft_max_inplace     (ctx, wq_2);  
+    ggml_build_forward_expand(gf_,kq); 
+    if(wv!=nullptr){
+        v = ggml_mul_mat(ctx, teb, wv); 
+        v4 = ggml_reshape_4d(ctx, v, N, n_batch, n_embd_head, n_head_kv);   
+    }else{
+        hGensor v_rope = ggml_reshape_4d   (ctx, teb, n_embd_head, n_head, N, n_batch);
+        v_rope = ggml_rope_ext(ctx, v_rope, KQ_pos, nullptr, n_rot, 0, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
+        v_rope = ggml_reshape_2d   (ctx, v_rope, n_embd_head*n_head, N*n_batch);
+        v = ggml_mul_mat(ctx, v_rope, wq); 
+        v3 = ggml_reshape_3d(ctx, v, N, n_batch, n_embd);        set_name(v3, "v3");   
+    }
+                
+    if(!Transfer_1){
+        hGensor  t05 = ggml_mul_mat      (ctx, kq, v);       //[144,144,1,1]x[144,16384,1,1] = [4096,256,1,1]                   
+        set_name(t05, "t05");     assert_shape_2d(t05, n_embd, N*n_batch);
+        hGensor  t06 = ggml_reshape_4d   (ctx, t05, n_embd_head, n_head, N, n_batch); 
+        set_name(t06, "t06");     assert_shape_4d(t06, n_embd_head, n_head, N, n_batch);      //[128,32,64,4]   
+        hGensor  t07 =  ggml_rope_ext(ctx, t06, KQ_pos, nullptr, n_rot, 0, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
+                //ggml_rope_custom   (ctx,t06, KQ_pos, n_rot, 0, n_ctx, 0,rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f); 
+        set_name(t07, "t07");     assert_shape_4d(t07, n_embd_head, n_head, N, n_batch);      // [128,6,32,8]    
+        kqv_out = t07;
+    }else if(v3!=nullptr){
+        // if(isSiLU){ //maybe useful
+        //     v3 = ggml_silu(ctx,v3);
+        // }  
+        // v3 = ggml_scale_inplace        (ctx, v3, kq_scale);  
+        // v3 = ggml_diag_mask_inf_inplace(ctx, v3, n_past);       
+        hGensor probs = ggml_soft_max(ctx,v3); 
+        hGensor expert = v3;    //ggml_reshape_2d(ctx,v3,n_vocab,n_ctx*n_batch);
+        // hGensor wB = _repeat(ctx,probs,expert);
+        hGensor kqv = ggml_mul(ctx,expert,probs);
+        v4 = ggml_reshape_4d   (ctx, kqv,N, n_batch,n_embd_head, n_head);
+        kqv_out = ggml_permute(ctx, v4, 2, 3, 0, 1);       // [24,6,512,32]  
+        assert_shape_4d(kqv_out, n_embd_head, n_head, N, n_batch);  
+        // kqv_out = ggml_rope_ext(ctx, kqv_out, KQ_pos, nullptr, n_rot, 0, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
+        set_name(kqv_out, "kqv_out_rope");     
+        
+    } else{     //  Deprecated
+        assert(v4!=nullptr);
+        set_name(v4, "v4");     
+        v = ggml_permute      (ctx, v4, 0, 3, 1, 2); 
+
+        // hGensor v4 = ggml_reshape_4d   (ctx, v, n_embd_head, n_head, N, n_batch); 
+        // hGensor  v_rope =  ggml_rope_ext(ctx, v4, KQ_pos, nullptr, n_rot, 0, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
+        // set_name(v_rope, "v_rope");     assert_shape_4d(v_rope, n_embd_head, n_head, N, n_batch);      // [128,6,32,8] 
+        // v = ggml_permute(ctx, v_rope, 1, 2, 0, 3); 
+        hGensor  kqv = ggml_mul_mat      (ctx, v, kq);       //  [512,24,6,32] x [512,512,6,32]    => [24,512,6,32]  
+        set_name(kqv, "kqv");     
+        kqv_out = ggml_permute(ctx, kqv, 0, 2, 1, 3);       // [24,6,512,32]  
+        kqv_out = ggml_rope_ext(ctx, kqv_out, KQ_pos, nullptr, n_rot, 0, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
+        set_name(kqv_out, "kqv_out_rope");     assert_shape_4d(kqv_out, n_embd_head, n_head, N, n_batch);      
+    }      
+
+    kqv_out = ggml_cont(ctx, kqv_out);              
+    sprintf(nam_,"kqv_merged_cont-%d",lay->id);    set_name(kqv_out, nam_);     
+    kqv_out = ggml_reshape_2d   (ctx, kqv_out, n_embd, N*n_batch);   // [768,17,1]  
+    ggml_build_forward_expand(gf_,kqv_out);  
+    return kqv_out;   */
+}
+
 hGensor QKV_Motion::vXkq(struct ggml_context *ctx, hGensor v,hGensor kq,int layer_id){
     char nam_[128];
     hGensor kqv = ggml_mul_mat(ctx, v, kq);         assert_shape_4d(kqv, n_embd_head, N, n_head, n_batch); 
@@ -192,7 +316,7 @@ hGensor QKV_Motion::Build(struct ggml_context *ctx, hGensor teb, hGensor KQ_pos)
         hGensor  kq = ggml_mul_mat              (ctx, k, q);      
         sprintf(nam_,"kq-%d",layer_id);     set_name(kq, nam_);         assert_shape_4d(kq, N, N, n_head, n_batch);
         if(0)      {
-            kq = ggml_soft_max_ext(ctx, kq, inp_KQ_mask, kq_scale, f_max_alibi_bias);       //would crash!
+            kq = ggml_soft_max_ext(ctx, kq, KQ_mask, kq_scale, f_max_alibi_bias);       //would crash!
         }else{
             hGensor  t16_1 = ggml_scale_inplace        (ctx, kq, kq_scale);          
                     // set_name(t16_1, "t16_1"); assert_shape_4d(t16_1, N, N, n_head, n_batch);
@@ -264,7 +388,7 @@ hGensor QKV_Motion::Build(struct ggml_context *ctx, hGensor teb, hGensor KQ_pos)
         if(!use_flash)  {
             hGensor kq = ggml_mul_mat(ctx, k, q);           //assert_shape_4d(kq, N, N, n_head, n_batch);   
             sprintf(nam_,"kq-%d",layer_id);    set_name(kq, nam_);
-            kq = ggml_soft_max_ext(ctx, kq, inp_KQ_mask, kq_scale, f_max_alibi_bias);
+            kq = ggml_soft_max_ext(ctx, kq, KQ_mask, kq_scale, f_max_alibi_bias);
             sprintf(nam_,"kq_soft_max_ext-%d",layer_id);    set_name(kq, nam_);
             v = kv->SerialV(ctx,Vcur,il,false);    
             /*if(use_cache){ 
@@ -295,7 +419,7 @@ hGensor QKV_Motion::Build(struct ggml_context *ctx, hGensor teb, hGensor KQ_pos)
             if(isTrain && v->type!=GGML_TYPE_F32)
                 v = ggml_cast(ctx, v, GGML_TYPE_F32);
             sprintf(nam_,"v-%d",layer_id);    set_name(v, nam_);
-            kqv_out = ggml_flash_attn_ext(ctx, q, k, v, inp_KQ_mask, kq_scale, f_max_alibi_bias,attn_soft_cap);
+            kqv_out = ggml_flash_attn_ext(ctx, q, k, v, KQ_mask, kq_scale, f_max_alibi_bias,attn_soft_cap);
             // if (model.arch == LLM_ARCH_PHI2 || model.arch == LLM_ARCH_PHI3 || model.arch == LLM_ARCH_GPTNEOX || model.arch == LLM_ARCH_GEMMA2) {
             //     ggml_flash_attn_ext_set_prec(cur, GGML_PREC_F32);
             // }   

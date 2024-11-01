@@ -37,7 +37,8 @@ class TGraph : public std::enable_shared_from_this<TGraph> {
 
     struct ggml_cgraph * cgraph=nullptr;        //only for debug
 protected:
-    bool isOnlySymbol = true;
+    string name;
+    bool isOnlySymbol = true, isBackward =false;
     double tX=0,tCompute=0.0,tPlan=0.0;
     std::vector<uint8_t> work_buffer;
     //from GGML
@@ -73,7 +74,8 @@ protected:
     void visit_parents(hGensor node,int flag=0x0);
 public:
     TGraph()    {}
-    TGraph(struct ggml_cgraph *c,int flag=0x0) : cgraph(c) {
+    TGraph(const string&nam_,struct ggml_cgraph *c,bool isB=false,int flag=0x0) : 
+        name(nam_),cgraph(c),isBackward(isB) {
     }
 
     TGraph(struct ggml_context *ctx_,int flag=0x0) :ctx(ctx_)   {
@@ -109,6 +111,10 @@ public:
     
     bool empty()  {   return cgraph==nullptr || cgraph->n_nodes==0;    }
     virtual string __repr__( string& suffix,string& prefix,hGensor root=nullptr,int flag=0x0);
+    virtual string __repr__( hGensor root=nullptr,int flag=0x0){
+        string suffix="", prefix="\t"; 
+        return __repr__(suffix,prefix,root,flag);
+    }
 
     virtual size_t Size(int flag=0x0)      {   return ctx_size;  }
 
@@ -148,6 +154,7 @@ public:
         GGML_PRINT_DEBUG("%s:  nT=%d  symbol=%d T = %.3g(plan=%.3g)sec\n", __func__,n_threads,isOnlySymbol, GST_TOC(t0),tPlan);
     }
 
+    virtual void BuildBackward();
     void build_forward(hGensor tensor, bool expand,int flag=0x0)    {
         const int n0 = n_nodes;
         // UNUSED(n0);

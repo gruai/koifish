@@ -297,7 +297,7 @@ try{
 }
 }
 
-void SampLoader::Init(LLaMeta *g_,int flag) {
+void SampLoader::Init(NLP_AutoRegressive *g_,int flag) {
     lama = g_;      //need dict&tokenset but is nullptr now
     isTarget_1 = g_->hparams.is( {"model","target"},string("OneHot") );
 }
@@ -517,16 +517,24 @@ static size_t mark_utf8_units(const char* bytes, int * utf8_units, int * utf8_nu
     return count_utf8;
 }
 
+int DataTokenSet::stream2token(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag){
+    llama_model *lam_ = static_cast<llama_model *>(hLLM);
+        assert(lam_!=nullptr);
+        //  would call llama_tokenize_internal
+    int n_tokens = llama_tokenize( lam_, txt,txt_len,btch.data(),(int) btch.size(),false, false);
+    return n_tokens;
+}
+
 bool DataTokenSet::Load(struct CLI_params& hparams,void *hLLM,int flag){
     GST_TIC(tic);
-    string ssf = hparams.serial_path+".tokens";     
+    string ssf = hparams.serial_path+".tokenset";     
     if( Serialize(ssf,false) ){
         
     }else{
         fpath = hparams.fp_train_data.c_str();
         assert( std::filesystem::exists(fpath) );
-        llama_model *lam_ = static_cast<llama_model *>(hLLM);
-        assert(lam_!=nullptr);
+        // llama_model *lam_ = static_cast<llama_model *>(hLLM);
+        // assert(lam_!=nullptr);
         tokens.clear();
         FILE *fp = std::fopen(fpath.c_str(), "rb");
         if (fp == NULL) {
@@ -534,7 +542,7 @@ bool DataTokenSet::Load(struct CLI_params& hparams,void *hLLM,int flag){
             return false;
         } else {
             seek(fp, 0, SEEK_END);
-            fsize = tell(fp);
+            fsize = F_SIZE(fpath,fp);
             seek(fp, 0, SEEK_SET);
         }   
         _INFO("[Load&Token]: @'%s' fsize=%.3g(M) ... ", fpath.c_str(),fsize/1.0e6);
@@ -558,23 +566,26 @@ bool DataTokenSet::Load(struct CLI_params& hparams,void *hLLM,int flag){
             utf8_units.resize(fsize);            utf8_nunits.resize(fsize);
             count_utf8 = mark_utf8_units(buf, utf8_units.data(), utf8_nunits.data(), fsize);
         }
-        /*
-        tokens.resize(fsize + n_max_tokens_overhead);        
-        if (tokens.size()>=INT_MAX) {
-            _ERROR("Too many tokens=%ld\n",tokens.size());
-        }
-        assert(tokens.size()<INT_MAX);
-        _INFO("\r[Load&Token]: @'%s' fsize=%.3g(M) ......",fpath.c_str(),fsize/1.0e6);*/
+        
         std::vector<TOKEN_ID> btch;
         size_t cur=0,step=10*1024*1024,len;
         btch.resize(step);
         while(cur<fsize){     
             GST_TIC(t0);
             len = min(step,fsize-cur);  
-            int n_tokens = llama_tokenize( lam_, buf+cur,len,btch.data(),(int) btch.size(),false, false);
-            assert(n_tokens>0);
+            int n_tokens = stream2token(hLLM,buf+cur,len,btch,flag);
+            // int n_tokens = llama_tokenize( lam_, buf+cur,len,btch.data(),(int) btch.size(),false, false);            
             if (n_tokens<=0) {
-                 _INFO("Invalid n_tokens=%d @%ld!!!\n",n_tokens,cur);                
+                 _INFO("Invalid n_tokens=%d @%ld!!!\n",n_tokens,cur);    
+                 assert(n_tokens>0);            
+            }
+            for(int i=0;i<n_tokens;i++){
+                auto t = btch[i];
+                assert(t>=0 && t<nVocab);
+                if(t<0 || t>=nVocab){
+                    _ERROR("\n======== %s Invalid token(%d) @%d !========\n",__func__,t,tokens.size()+i);
+                    return false;
+                }
             }
             
             _INFO("\r\t tokenize %.3g%%\t[%ld:%ld]\tT=%.3g(s) ......",cur*100.0/fsize,cur,tokens.size(),GST_TOC(t0));
@@ -582,14 +593,7 @@ bool DataTokenSet::Load(struct CLI_params& hparams,void *hLLM,int flag){
             cur += len;
         }
         delete[] buf;
-        /*if (n_tokens < 0) { //???
-            tokens.resize(-n_tokens);
-            n_tokens = llama_tokenize( lam_,buf.data(),(int) buf.size(),tokens.data(),(int) tokens.size(),false, false);
-        }
-        if (n_tokens >= 0) {
-            tokens.resize(n_tokens);
-            
-        }*/
+        
         UniqueTokens(-1);
         Serialize(ssf,true);
     }

@@ -135,7 +135,7 @@ public:
     
 };
 
-class LLaMeta;
+class NLP_AutoRegressive;
 class SampLoader;
 class DataTokenSet    {
 protected:
@@ -143,15 +143,7 @@ protected:
     std::vector<TOKEN_ID> dialect;
     std::string fpath;
     size_t fsize=0,nUnique=0,nVocab=0,nDialect=0,nTokens;
-    size_t tell(FILE *fp) const {
-#ifdef _WIN32
-        __int64 ret = _ftelli64(fp);
-#else
-        long ret = std::ftell(fp);
-#endif
-        GGML_ASSERT(ret != -1); // this really shouldn't fail
-        return (size_t) ret;
-    }
+    
 
     void seek(FILE *fp,size_t offset, int whence) {
 #ifdef _WIN32
@@ -176,15 +168,24 @@ public:
 
     bool Serialize(const std::string&path,  bool isSave, int flag=0x0);
     
+    virtual int stream2token(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0);
     virtual bool Load(struct CLI_params& hparams,void *hLLM,int flag=0x0);
     int UniqueTokens(size_t n_1,int flag=0x0);
     bool InitSamps(unsigned context_length,std::vector<size_t>& samples_begin,std::vector<size_t>&samples_size,int flag=0x0);
 
-friend class LLaMeta;
+friend class NLP_AutoRegressive;
 friend class Optimizer;
 friend class SampLoader;
 };
 typedef std::shared_ptr<DataTokenSet> hDataToken;
+
+class DTS_GPT2 : public DataTokenSet    {
+public:
+    DTS_GPT2(size_t nV) : DataTokenSet(nV)    {
+
+    }
+    int stream2token(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0)    override;
+};
 
 class SampLoader;
 struct SAMP{
@@ -242,7 +243,7 @@ protected:
     mt19937_state shuffle_rng_state_next;
     size_t shuffle_sample_count=0,next_sample=0;
 
-    LLaMeta *lama=nullptr;
+    NLP_AutoRegressive *lama=nullptr;
 public:
     int64_t len() {
         return all_samps.size();
@@ -316,7 +317,7 @@ public:
     int64_t file_size_bytes;
 
     SampLoader( )   {}
-    virtual void Init(LLaMeta *g_,int flag=0x0 ) ;
+    virtual void Init(NLP_AutoRegressive *g_,int flag=0x0 ) ;
     virtual void Prepare(Optimizer *hOPT_,int flag=0x0 ) ;    
 
     virtual ~SampLoader( ) {
@@ -511,7 +512,7 @@ public:
     void Shuffle(int flag=0x0);
     bool TopoOrder(std::vector<size_t>&ids,std::mt19937& rng,int flag=0x0);
 #endif
-    friend class LLaMeta;
+    friend class NLP_AutoRegressive;
     friend class Optimizer;
     friend class Fish;
 };

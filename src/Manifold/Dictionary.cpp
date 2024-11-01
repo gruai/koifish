@@ -54,8 +54,8 @@ string ConsiceDict::__repr__( string& suffix,string& prefix,int flag)     {
         "ConsiceDict",(int)(reserve_x),tpNorm,_ops[opOut],nLevel);
     
     _T_repr_(tok_embeddings,tab,buf);   
-    _T_repr_(norm,tab,buf);   
-    _T_repr_(output,tab,buf);   
+    _T_repr_(_norm.w,tab,buf);              _T_repr_(_norm.b,tab,buf);   
+    _T_repr_(_output.w,tab,buf);            _T_repr_(_output.b,tab,buf);   
     _T_repr_(out_u,tab,buf);
     _T_repr_(out_d,tab,buf);
     _T_repr_(out_v,tab,buf);
@@ -79,12 +79,13 @@ string ConsiceDict::__repr__( string& suffix,string& prefix,int flag)     {
 }
 
 
-ConsiceDict::ConsiceDict(LLaMeta *lama_,int flag) : VariationaAE(),hLM(lama_)   {
+ConsiceDict::ConsiceDict(NLP_AutoRegressive *lama_,int flag) : VariationaAE(),hLM(lama_)   {
     assert(hLM->isValid());
     hparams = hLM->hparams;
     isDialect = hparams.dict_dialect == "on";
     isSVD = hparams.dict_logits == "svd";
-
+    _norm.Init(lama_);              
+    _output.Init(lama_); 
     reserve_x = true;
     isSymmetric = false;
     lama_embed = hparams.n_embd;
@@ -136,7 +137,7 @@ void ConsiceDict::CreateEmbeddings(struct random_normal_distribution * rnd,int f
     if(isDialect){
         n_out = tVocab();
     }
-    auto lama = hLM->GetRawModel( );  
+    // auto lama = hLM->GetRawModel( );  
     auto ctx = hLM->ctx;    
     if(nLevel==0){
         
@@ -145,39 +146,82 @@ void ConsiceDict::CreateEmbeddings(struct random_normal_distribution * rnd,int f
         if(isLoadTokenEmbed) {
             const uint32_t n1 = isSymmetric ? n_embd : last_dim;
             if(opOut==RND_GRAD){
-                norm           = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n1);
-                output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n1, n_out);  
+                _norm.w          = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n1);
+                _output.w         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n1, n_out);  
             }else if(opOut==LOAD_GRAD_norm){
-                output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n1, n_out);  
+                _output.w         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n1, n_out);  
             }
             return;
         }
     }
-
+    int group=hparams.Get({"model","target_group"},1);
     tok_embeddings = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_out);
-    norm           = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
-    if(!isSVD)
-        output         = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_out);  
-    else{
+    _norm.w           = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
+    if(!isSVD){
+        if(false){  // TO_DO maybe useful
+            _output.w = tok_embeddings;
+        }else{
+            if(group==1)
+                _output.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_out);  
+            else{
+                assert(n_embd%group==0);
+                _output.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd/group, n_out);  
+            }             
+        }
+           
+    } else{
         out_u = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, lo_rank, n_embd);   
         out_v = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, lo_rank, n_out);
         out_d = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, lo_rank, lo_rank); 
     }
 }
 
-hGensor ConsiceDict::Embed2Output(struct ggml_context * ctx,hGensor t33,int flag){ 
-    hGensor  t34 = nullptr;
-    if(output!=nullptr){    //1024 32000
-        t34 = ggml_mul_mat(ctx, output, t33);  
+hGensor ConsiceDict::Embed2Output(struct ggml_context * ctx,hGensor t33,int flag)       { 
+    hGensor  tOutput = nullptr;
+    int group=hparams.Get({"model","target_group"},1);
+    int n_embd=latent_dim,n_out=n_vocab,n_tokens=t33->ne[1],g_embd=n_embd/group;
+    size_t nb0 = t33->nb[0],offset=0;       assert(nb0==4);  
+    assert(n_embd%group==0);
+    if(_output.w!=nullptr){    //1024 32000
+        if(group>1){
+            if(false){//expert version
+                for(int i=0;i<group;i++){       
+                    hGensor embd = ggml_view_2d(ctx, t33, g_embd, n_tokens, t33->nb[1], nb0*i*g_embd);  //ne0,ne1,nb1,offset
+                    hGensor w = ggml_view_2d(ctx, _output.w, g_embd, n_vocab,_output.w->nb[1], nb0*i*g_embd);  //ne0,ne1,nb1,offset
+                    hGensor expert = ggml_mul_mat(ctx, w, embd);        
+                    // wB = _repeat(ctx,wB,expert);
+                    tOutput = i==0 ? expert : ggml_add(ctx,tOutput,expert);       
+                }                
+            }/*else{
+                assert(n_vocab%group==0);
+                int ne1 = n_vocab/group;
+                for(int i=0;i<group;i++){       
+                    hGensor embd = ggml_view_2d(ctx, t33, g_embd, n_tokens, t33->nb[1], nb0*i*g_embd);  //ne0,ne1,nb1,offset
+                    hGensor w = ggml_view_2d(ctx, _output.w, g_embd, ne1,_output.w->nb[1], offset);  //ne0,ne1,nb1,offset
+                    offset += ggml_nelements(w)*nb0;
+                    hGensor expert = ggml_mul_mat(ctx, w, embd);        
+                    // wB = _repeat(ctx,wB,expert);                   
+                    tOutput = i==0 ? expert : ggml_concat(ctx,tOutput,expert,0);       
+                }    
+            }*/
+            hGensor embd = ggml_reshape_3d   (ctx, t33, n_embd/group, group, n_tokens);
+            embd = ggml_permute(ctx,embd,0,2,1,3);
+            assert(_output.w->ne[0]==n_embd/group);
+            hGensor w = ggml_reshape_3d   (ctx, _output.w, _output.w->ne[0],n_vocab/group, group);            
+            tOutput = ggml_mul_mat(ctx, w, embd);  
+            tOutput = ggml_cont(ctx,ggml_permute(ctx,tOutput,0,2,1,3));
+            tOutput = ggml_reshape_2d(ctx, tOutput, n_vocab, n_tokens);      //n_vocab, n_tokens
+        }else
+            tOutput = ggml_mul_mat(ctx, _output.w, t33);  
     }else{
         hGensor dv = ggml_mul_mat(ctx, out_d, out_v);
         hGensor svd = ggml_mul_mat(ctx, out_u, dv);  
-        t34 = ggml_mul_mat(ctx, svd, t33); 
+        tOutput = ggml_mul_mat(ctx, svd, t33); 
     }
                               
-    set_name(t34, "t34");  
+    set_name(tOutput, "_output.w");  
     // assert_shape_2d(t34, n_vocab, N*n_batch);
-    return t34;   
+    return tOutput;   
 }
 
 void ConsiceDict::Update_0(struct random_normal_distribution * rnd,int flag){
@@ -188,17 +232,19 @@ void ConsiceDict::Update_0(struct random_normal_distribution * rnd,int flag){
         // get tensors from llama_model (possibly mmapped)
         tok_embeddings = llama_get_model_tensor(lama, TN(LLM_TENSOR_TOKEN_EMBD));      
         if(isParam) nParams+=ggml_nelements(tok_embeddings);
-        norm           = llama_get_model_tensor(lama, TN(LLM_TENSOR_OUTPUT_NORM));     
-        if(isParam) nParams+=ggml_nelements(norm);
-        output         = llama_get_model_tensor(lama, TN(LLM_TENSOR_OUTPUT));          
-        if(isParam) nParams+=ggml_nelements(output);
+        _norm.w           = llama_get_model_tensor(lama, TN(LLM_TENSOR_OUTPUT_NORM));     
+        if(isParam) nParams+=ggml_nelements(_norm.w);
+        _output.w         = llama_get_model_tensor(lama, TN(LLM_TENSOR_OUTPUT));          
+        if(isParam) nParams+=ggml_nelements(_output.w);
     }   else   {
         auto ctx = hLM->ctx;
 
         hLM->InitGensor(ctx,tok_embeddings, TN(LLM_TENSOR_TOKEN_EMBD), rnd);
-        hLM->InitGensor(ctx,norm,           TN(LLM_TENSOR_OUTPUT_NORM), rnd);
-        if(output!=nullptr)
-            hLM->InitGensor(ctx,output,         TN(LLM_TENSOR_OUTPUT), rnd);
+        hLM->InitGensor(ctx,_norm.w,           TN(LLM_TENSOR_OUTPUT_NORM), rnd);
+        if(_output.w!=nullptr){
+            if(_output.w!=tok_embeddings)
+                hLM->InitGensor(ctx,_output.w,         TN(LLM_TENSOR_OUTPUT), rnd);
+        }
         else{
             hLM->InitGensor(ctx,out_u,         "out_u", rnd);
             hLM->InitGensor(ctx,out_v,         "out_v", rnd);
@@ -208,8 +254,8 @@ void ConsiceDict::Update_0(struct random_normal_distribution * rnd,int flag){
     // ggml_tensor_dequant(ctx_compute,gensor,GGML_TYPE_F32);
     if(0){
         assert_shape_2d(tok_embeddings, hparams.n_embd, n_vocab);
-        assert_shape_1d(norm,           hparams.n_embd);
-        assert_shape_2d(output,         hparams.n_embd, n_vocab);              
+        assert_shape_1d(_norm.w,           hparams.n_embd);
+        assert_shape_2d(_output.w,         hparams.n_embd, n_vocab);              
     }else{
 
     }      
@@ -225,44 +271,42 @@ void ConsiceDict::Update_1(struct random_normal_distribution * rnd,int flag) {
     if(isParam) hLM->nParams+=ggml_nelements(tok_embeddings);
     switch(opOut){
     case ONLY_LOAD:
-        norm           = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT_NORM) );       //  
-        // if(isParam) hLM->nParams+=ggml_nelements(norm);
-        output         = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT)  );            //
-        // if(isParam) hLM->nParams+=ggml_nelements(output);
+        _norm.w           = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT_NORM) );       
+        _output.w         = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT)  );            
         break;
     case LOAD_GRAD_norm:    //bug@Optimizer::ggml_train
-        norm           = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT_NORM) );
-        assert(norm->type==GGML_TYPE_F32);
-        ggml_set_param(hLM->ctx, norm);         hLM->nParams += ggml_nelements(norm);           
-        hLM->Gensor2Map(norm);       // hLM->tensors[norm->name] = norm;
-        hLM->InitGensor(hLM->ctx,output,         TN(LLM_TENSOR_OUTPUT), rnd);
+        _norm.w           = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT_NORM) );
+        assert(_norm.w->type==GGML_TYPE_F32);
+        ggml_set_param(hLM->ctx, _norm.w);         hLM->nParams += ggml_nelements(_norm.w);           
+        hLM->Gensor2Map(_norm.w);       // hLM->tensors[_norm.w->name] = _norm.w;
+        hLM->InitGensor(hLM->ctx,_output.w,         TN(LLM_TENSOR_OUTPUT), rnd);
         break;
     case LOAD_GRAD:     //bug!!!
-        norm           = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT_NORM) );
-        if(norm->type!=GGML_TYPE_F32)   Gensor2float(hLM->ctx,norm);
-        ggml_set_param(hLM->ctx, norm);         hLM->nParams += ggml_nelements(norm);           
-        hLM->Gensor2Map(norm);       //hLM->tensors[norm->name] = norm;
-        output         = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT)  ); 
-        if(output->type!=GGML_TYPE_F32)   {
-            output->data = Gensor2float(hLM->ctx,output);       output->type = GGML_TYPE_F32;
+        _norm.w           = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT_NORM) );
+        if(_norm.w->type!=GGML_TYPE_F32)   Gensor2float(hLM->ctx,_norm.w);
+        ggml_set_param(hLM->ctx, _norm.w);         hLM->nParams += ggml_nelements(_norm.w);           
+        hLM->Gensor2Map(_norm.w);       //hLM->tensors[_norm.w->name] = _norm.w;
+        _output.w         = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT)  ); 
+        if(_output.w->type!=GGML_TYPE_F32)   {
+            _output.w->data = Gensor2float(hLM->ctx,_output.w);       _output.w->type = GGML_TYPE_F32;
         }
-        ggml_set_param(hLM->ctx, output);     hLM->nParams += ggml_nelements(output);           
-        hLM->Gensor2Map(output);       //hLM->tensors[output->name] = output;
+        ggml_set_param(hLM->ctx, _output.w);     hLM->nParams += ggml_nelements(_output.w);           
+        hLM->Gensor2Map(_output.w);       //hLM->tensors[_output.w->name] = _output.w;
         break;
     case RND_GRAD:
-        hLM->InitGensor(hLM->ctx,norm,           TN(LLM_TENSOR_OUTPUT_NORM), rnd);
-        hLM->InitGensor(hLM->ctx,output,         TN(LLM_TENSOR_OUTPUT), rnd);
+        hLM->InitGensor(hLM->ctx,_norm.w,           TN(LLM_TENSOR_OUTPUT_NORM), rnd);
+        hLM->InitGensor(hLM->ctx,_output.w,         TN(LLM_TENSOR_OUTPUT), rnd);
         break;
 
     default:
         assert(0);
     }    
-    assert(tok_embeddings!=nullptr && norm!=nullptr && output!=nullptr);
+    assert(tok_embeddings!=nullptr && _norm.w!=nullptr && _output.w!=nullptr);
     // ggml_tensor_dequant(ctx_compute,gensor,GGML_TYPE_F32);
     if(0){
         assert_shape_2d(tok_embeddings, hparams.n_embd, n_vocab);
-        assert_shape_1d(norm,           hparams.n_embd);
-        assert_shape_2d(output,         hparams.n_embd, n_vocab);              
+        assert_shape_1d(_norm.w,           hparams.n_embd);
+        assert_shape_2d(_output.w,         hparams.n_embd, n_vocab);              
     }
     int i = 0;
     for(auto map : MAEC){
@@ -272,13 +316,13 @@ void ConsiceDict::Update_1(struct random_normal_distribution * rnd,int flag) {
             hLM->InitGensor(hLM->ctx, map->decode,    TN(LLM_DICT_UP, i),       rnd);    
         i++;            
     }
-    //ggml_set_param(hLM->ctx, norm);              hLM->nParams+=ggml_nelements(norm);
-    //output is Q6k would fail @float ggml_get_f32_1d(const struct ggml_tensor * tensor, int i)
-    //ggml_set_param(hLM->ctx, output);            hLM->nParams+=ggml_nelements(output);
+    //ggml_set_param(hLM->ctx, _norm.w);              hLM->nParams+=ggml_nelements(_norm.w);
+    //_output.w is Q6k would fail @float ggml_get_f32_1d(const struct ggml_tensor * tensor, int i)
+    //ggml_set_param(hLM->ctx, _output.w);            hLM->nParams+=ggml_nelements(_output.w);
     hLM->Gensor2Map(tok_embeddings); 
     // hLM->tensors[ggml_get_name(tok_embeddings)] = tok_embeddings;
-    // hLM->tensors[ggml_get_name(norm)] = norm;
-    // hLM->tensors[ggml_get_name(output)] = output;  
+    // hLM->tensors[ggml_get_name(_norm.w)] = _norm.w;
+    // hLM->tensors[ggml_get_name(_output.w)] = _output.w;  
     assert(gensors.size()==0);          
 }
 
@@ -366,7 +410,7 @@ void ConsiceDict::LoadVocab(const char*model_path,int flag)     {
     gguf_free(vctx);
 }
 
-void LLaMeta::save_gguf(const char * filename, int flag) {
+void NLP_AutoRegressive::save_gguf(const char * filename, int flag) {
     enum llama_ftype ftype = LLAMA_FTYPE_ALL_F32;       //LLAMA_FTYPE_MOSTLY_Q2_K
     _INFO("[save] saving gguf to %s ftype=%d ......\n", filename,ftype);
     struct gguf_context * fctx = gguf_init_empty();
@@ -383,7 +427,7 @@ void LLaMeta::save_gguf(const char * filename, int flag) {
     gguf_set_val_u32(fctx, kv(LLM_KV_CONTEXT_LENGTH),              hparams.common.n_ctx                  );
     gguf_set_val_u32(fctx, kv(LLM_KV_EMBEDDING_LENGTH),            llm_embd                       );
     
-    gguf_set_val_u32(fctx, kv(LLM_KV_BLOCK_COUNT),                 hparams.n_layer                );
+    gguf_set_val_u32(fctx, kv(LLM_KV_BLOCK_COUNT),                 hparams.n_layer_train                );
     gguf_set_val_u32(fctx, kv(LLM_KV_FEED_FORWARD_LENGTH),         hparams.n_ff()                   );
     gguf_set_val_u32(fctx, kv(LLM_KV_ROPE_DIMENSION_COUNT),        hparams.n_rot                  );
     gguf_set_val_u32(fctx, kv(LLM_KV_ATTENTION_HEAD_COUNT),        hparams.n_head()                 );    
@@ -397,7 +441,8 @@ void LLaMeta::save_gguf(const char * filename, int flag) {
     gguf_set_val_str(fctx, kv(LLM_KV_TOKENIZER_MODEL), hDict->tokenizer_name.c_str());
 
     gguf_set_arr_str(fctx, kv(LLM_KV_TOKENIZER_LIST), hDict->tokens.data(), hDict->n_vocab);
-    gguf_set_arr_data(fctx, kv(LLM_KV_TOKENIZER_SCORES), GGUF_TYPE_FLOAT32, hDict->scores, hDict->n_vocab);    
+    if(hDict->scores!=nullptr)
+        gguf_set_arr_data(fctx, kv(LLM_KV_TOKENIZER_SCORES), GGUF_TYPE_FLOAT32, hDict->scores, hDict->n_vocab);    
     gguf_set_arr_data(fctx, kv(LLM_KV_TOKENIZER_TOKEN_TYPE), GGUF_TYPE_INT32, hDict->toktypes, hDict->n_vocab);
     if (hDict->tokenizer_name == "gpt2"){
         const char* sMERGES = kv(LLM_KV_TOKENIZER_MERGES);
@@ -423,33 +468,56 @@ void LLaMeta::save_gguf(const char * filename, int flag) {
     //more maybe from llama_chat_apply_template
     // add tensors
     gguf_add_tensor(fctx, hDict->tok_embeddings);   //4096*128256
-    gguf_add_tensor(fctx, hDict->norm);             //4096
-    gguf_add_tensor(fctx, hDict->output);           //4096*128256
+    gguf_add_tensor(fctx, hDict->_norm.w);             //4096
+    gguf_add_tensor(fctx, hDict->_output.w);           //4096*128256
     hDict->save_gguf(fctx, flag);    
 
-    for (uint32_t i = 0; i < hparams.n_layer; ++i) {
+    for (uint32_t i = 0; i < hparams.nLayer(); ++i) {
         auto layer = dynamic_pointer_cast<QKV_LAY>(layers[i]); //layers[i];
-
-        gguf_add_tensor(fctx, layer->attention_norm);
-        gguf_add_tensor(fctx, layer->wq);
-        if(layer->wk!=nullptr)
-            gguf_add_tensor(fctx, layer->wk);
-        if(layer->wv!=nullptr)
-            gguf_add_tensor(fctx, layer->wv);
-        gguf_add_tensor(fctx, layer->wo);
-        if(layer->ffn_norm!=nullptr)
-            gguf_add_tensor(fctx, layer->ffn_norm);
-        if(layer->ffn_gate!=nullptr)
-            gguf_add_tensor(fctx, layer->ffn_gate);
-        if(layer->ffn_down!=nullptr)
-            gguf_add_tensor(fctx, layer->ffn_down);
-        if(layer->ffn_up!=nullptr)
-            gguf_add_tensor(fctx, layer->ffn_up);
+        layer->save_gguf(fctx, flag);    
+        // gguf_add_tensor(fctx, layer->att_norm.w);
+        // gguf_add_tensor(fctx, layer->Q.w);
+        // if(layer->wk!=nullptr)
+        //     gguf_add_tensor(fctx, layer->wk);
+        // if(layer->wv!=nullptr)
+        //     gguf_add_tensor(fctx, layer->wv);
+        // gguf_add_tensor(fctx, layer->wo);
+        // if(layer->ffn_norm.w!=nullptr)
+        //     gguf_add_tensor(fctx, layer->ffn_norm.w);
+        // if(layer->ffn_gate!=nullptr)
+        //     gguf_add_tensor(fctx, layer->ffn_gate);
+        // if(layer->down.w!=nullptr)
+        //     gguf_add_tensor(fctx, layer->down.w);
+        // if(layer->up.w!=nullptr)
+        //     gguf_add_tensor(fctx, layer->up.w);
     }
 
     const bool only_meta = false;
     gguf_write_to_file(fctx, filename, only_meta);
     gguf_free(fctx);
+
+    size_t fsize = F_SIZE(filename);
+    _INFO("%s Save@\"%s\" fsize=%gM\n",__func__,filename,fsize/1.0e6);
+}
+
+
+void QKV_LAY::save_gguf(struct gguf_context *fctx, int flag){
+    gguf_add_tensor(fctx, att_norm.w);
+    gguf_add_tensor(fctx, Q.w);
+    if(wk!=nullptr)
+        gguf_add_tensor(fctx, wk);
+    if(wv!=nullptr)
+        gguf_add_tensor(fctx, wv);
+    if(wo!=nullptr)
+        gguf_add_tensor(fctx, wo);
+    if(ffn_norm.w!=nullptr)
+        gguf_add_tensor(fctx, ffn_norm.w);
+    if(ffn_gate!=nullptr)
+        gguf_add_tensor(fctx, ffn_gate);
+    if(down.w!=nullptr)
+        gguf_add_tensor(fctx, down.w);
+    if(up.w!=nullptr)
+        gguf_add_tensor(fctx, up.w);
 }
 
 void VariationaAE::save_gguf(struct gguf_context *fctx, int flag)   {

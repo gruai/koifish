@@ -1,7 +1,7 @@
 /**
  *  Copyright 2023-2024 by Grusoft 
  * 
- *  \brief LLaMeta Model(https://llama.meta.com/)
+ *  \brief NLP_AutoRegressive Model(https://llama.meta.com/)
  *  \author Yingshi Chen
  */
 #pragma once
@@ -43,10 +43,10 @@ public:
     ALG alg;    
 
     Distillation(Fish *hGang_,struct CLI_params&param,int flag)  : hGang(hGang_)   {
-        alg = param.sigma=="add" ? ADD : SIGMA;
+        alg = SIGMA;    //param.sigma=="add" ? ADD : SIGMA;
         scheduler = std::make_shared<DiscreteSchedule>();
         sigmas = scheduler->get_sigmas(100);
-        _INFO("%s: alg=%d(%s)\n", __func__, alg,param.sigma);
+        _INFO("%s: alg=%d(%s)\n", __func__, alg,alg==SIGMA?"sigma":"add");
     }
     virtual ~Distillation() {
 

@@ -1508,7 +1508,7 @@ int Tutor(CLI_params& hparams) {
 
         ggml_build_forward_expand(gf, e);
         ggml_graph_compute_helper(work_buffer, gf, /*n_threads*/ 1);
-        TGraph(gf).__repr__(info,info,e); 
+        TGraph("lama_tutor",gf,true).__repr__(info,info,e); 
 
         float error_before_opt = ggml_get_f32_1d(e, 0);
 

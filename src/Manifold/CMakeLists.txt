@@ -3,7 +3,7 @@ include_directories(.)
 
 set(PWD ${CMAKE_CURRENT_SOURCE_DIR})
 set(TGraph_sources  ${PWD}/Fish.cpp ${PWD}/TGraph.cpp ${PWD}/Optimizer.cpp ${PWD}/Attention.cpp 
-                    ${PWD}/gLLM.cpp ${PWD}/MoE.cpp ${PWD}/GoPT.cpp ${PWD}/DataLoader.cpp ${PWD}/Dictionary.cpp 
+                    ${PWD}/gLLM.cpp ${PWD}/gLLMx.cpp ${PWD}/MoE.cpp ${PWD}/GoPT.cpp ${PWD}/DataLoader.cpp ${PWD}/Dictionary.cpp 
                     ${PWD}/Salp.cpp ${PWD}/Cache.cpp 
 PARENT_SCOPE )
 

@@ -28,44 +28,46 @@ hGensor Fish::AddTensor(const std::string&key_,enum ggml_type tp,const SHAPE& sh
     return gg_tensor;   
 }
 
-void SLP::Build(Fish* graph,const std::string&key_,const SHAPE& shape_,int flag)      {
+void SLP::Build(const std::string&key_,const SHAPE& shape_,int flag)      {
     shape = shape_;
-    struct ggml_context * ctx = graph->ctx;
+    struct ggml_context * ctx = hOrg->ctx;
     if(shape.size()==2){    
         assert(shape[0]>0 && shape[1]>0);
         int nIn=shape[0],nOut=shape[1];
-        w = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, nIn, nOut);
+        w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nIn, nOut);
         b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, nOut);
     }else if(shape.size()==4)  {
-        w = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, shape[0], shape[1], shape[2], shape[3]);
+        w = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, shape[0], shape[1], shape[2], shape[3]);
         b = ggml_new_tensor_3d(ctx, GGML_TYPE_F32,            1,            1, shape[3]);
     }
-    // assert(graph->tensors.find(key_+".weight") == graph->tensors.end());
-    // assert(graph->tensors.find(key_+".bias") == graph->tensors.end());
-    // graph->tensors[key_+".weight"] = w;
-    // graph->tensors[key_+".bias"] = b;
-    graph->Gensor2Map(w);           
-    graph->Gensor2Map(b);
-    if(compression==SVD){
-        
+    string sw = key_+".weight",sb=key_+".bias";
+    bool isTrain = hOrg->isTrain();
+    hOrg->InitGensor(ctx,sw.c_str(),w,isTrain);
+    hOrg->InitGensor(ctx,sb.c_str(),b,isTrain);
+    
+    if(compression==SVD){        
         assert(shape.size()==2);
         // SVD(w);
     }
 }
 
-void SLP::Init(hGensor w_,hGensor b_,const SHAPE& shape_,int flag)      {
-    w = w_;     b = b_;
-    shape = shape_;
-    if(shape.size()==2){    
-        assert(shape[0]>0 && shape[1]>0);
-        int nIn=shape[0],nOut=shape[1];
-    }else {
-        assert(0);
-    }
+QKV_LAY::QKV_LAY(Fish *hF_,int id)  :  NeLayer(id)     {   
+    name = "QKV_LAY";   
+    att_norm.Init(hF_,0x0),             ffn_norm.Init(hF_,0x0);
+    Q.Init(hF_,0x0),        up.Init(hF_,0x0),       down.Init(hF_,0x0);
+}
+
+size_t SLP::nElem()  {
+    size_t nX=0; 
+    nX += ggml_nelements(w);
+    if(b!=nullptr)      
+        nX += ggml_nelements(b);
+    return nX;
 }
 
 hGensor SLP::Build_2(struct ggml_context * ctx0,hGensor cur,int flag)    {
-    compression = SVD_a; //SVD_a;    //SKIP;//hOrg->params.compression;
+    assert(cur!=nullptr && ctx0!=nullptr);
+    // compression = SVD_a; //SVD_a;    //SKIP;//hOrg->params.compression;
     // if(1)   {   //only for debug
     //     float a[6*5] = {				
     //         8.79,  9.93,  9.83, 5.45,  3.16,
@@ -116,37 +118,73 @@ hGensor SLP::Build_2(struct ggml_context * ctx0,hGensor cur,int flag)    {
     if(compression == SKIP || compression==SVD_a)  {
         cur = ggml_mul_mat(ctx0, w, cur);           //create temp GGML_OP_MUL_MAT tensor:  result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
     }
-    if(b!=nullptr)
-        cur = ggml_add_inplace(ctx0, cur, b); 
+    if(b!=nullptr)  {
+        
+            cur = ggml_add(ctx0, cur, b); 
+        
+            // cur = ggml_add_inplace(ctx0, cur, b); 
+    }
     return cur;
 }
 
-
-void LayerNormal::Build(Fish* graph,const std::string&key_,const SHAPE& shape,int flag)    {
-    struct ggml_context * ctx = graph->ctx;
+void LayerNormal::Build(const std::string&key_,const SHAPE& shape,int flag)    {
+    name = key_;
+    struct ggml_context * ctx = hOrg->ctx;
     assert(shape.size()==1 && shape[0]>0 );
     int nIn=shape[0];
     w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, nIn);
     b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, nIn);
-    graph->Gensor2Map(w);
-    graph->Gensor2Map(b);
-    // graph->tensors[key_+".weight"] = w;
-    // graph->tensors[key_+".bias"] = b;
+    string sw = key_+".weight",sb=key_+".bias";
+    bool isTrain = hOrg->isTrain();
+    hOrg->InitGensor(ctx,sw.c_str(),w,isTrain);
+    hOrg->InitGensor(ctx,sb.c_str(),b,isTrain);
+    // hOrg->InitGensor(ctx,w,sw.c_str(),hOrg->rnd);
+    // hOrg->InitGensor(ctx,b,sb.c_str(),hOrg->rnd);
+}
+
+hGensor LayerNormal::Build_2(struct ggml_context * ctx0,hGensor cur,int flag)    {    
+    float f_norm_eps = hOrg->hparams.f_norm_eps;
+    assert(cur!=nullptr);
+    // TODO: implement ggml_norm backward
+    // cur = ggml_norm(ctx0, cur, f_norm_eps);      
+    cur = ggml_rms_norm(ctx0, cur, f_norm_eps);      
+    hGensor  t03 = w;
+    if(hOrg->isTrain()){
+        t03 = ggml_repeat(ctx0, w, cur);          
+        ggml_set_name(t03,_NAM_("%s.r",w->name));    
+        hOrg->Gensor2Map(t03);  
+    }
+    cur = ggml_mul(ctx0, cur, t03);        
+    if(b!=nullptr){
+        if(hOrg->isTrain())
+            cur = ggml_add(ctx0, cur, b); 
+        else
+            cur = ggml_add_inplace(ctx0, cur, b); 
+    }
+        
+    return cur;
+}
+size_t LayerNormal::nElem()  {
+    size_t nX=0; 
+    nX += ggml_nelements(w);
+    if(b!=nullptr)      
+        nX += ggml_nelements(b);
+    return nX;
 }
 
 SelfAttention::SelfAttention(Fish* graph,const std::string&key_,const SHAPE& shape,int flag)    {
     assert(shape.size()==3);
     SHAPE sp0={shape[0],shape[1]},sp1={shape[1],shape[2]};
-    q.Build(graph,key_+".q_proj",sp0,0x0);        //mask_decoder.transformer.layers.0.self_attn.q_proj.weight
+    q.Build(key_+".q_proj",sp0,0x0);        //mask_decoder.transformer.layers.0.self_attn.q_proj.weight
     // l.self_attn.q_w = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, n_enc_out_chans, n_enc_out_chans);
     // l.self_attn.q_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
-    k.Build(graph,key_+".k_proj",sp0,0x0);
+    k.Build(key_+".k_proj",sp0,0x0);
                 // l.self_attn.k_w = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, n_enc_out_chans, n_enc_out_chans);
                 // l.self_attn.k_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
-    v.Build(graph,key_+".v_proj",sp0,0x0);
+    v.Build(key_+".v_proj",sp0,0x0);
                 // l.self_attn.v_w = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, n_enc_out_chans, n_enc_out_chans);
                 // l.self_attn.v_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
-    proj.Build(graph,key_+".out_proj",sp1,0x0); 
+    proj.Build(key_+".out_proj",sp1,0x0); 
                 // l.self_attn.out_w = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, n_enc_out_chans, n_enc_out_chans);
                 // l.self_attn.out_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
 }
@@ -164,14 +202,14 @@ NT_SAM::NT_SAM(hFISH graph,const std::string&key_,const SHAPE& shape,bool is_glo
     } else {
         ld = 2*n_window_size - 1;
     }
-    norm1.Build(graph.get(),key_+".norm1",{nEmbed},0x0);
+    norm1.Build(key_+".norm1",{nEmbed},0x0);
     rel_pos_w = graph->AddTensor(key_+".attn.rel_pos_w",GGML_TYPE_F16,{head_dim,ld},0x0);
     rel_pos_h = graph->AddTensor(key_+".attn.rel_pos_h",GGML_TYPE_F16,{head_dim,ld},0x0);
-    in_proj.Build(graph.get(),key_+".attn.qkv",{nEmbed, 3*nEmbed},0x0);
-    proj.Build(graph.get(),key_+".attn.proj",{nEmbed, nEmbed},0x0);
-    norm2.Build(graph.get(),key_+".norm2",{nEmbed},0x0);
-    mlp_lin1.Build(graph.get(),key_+".mlp.lin1",{nEmbed, 4*nEmbed},0x0);
-    mlp_lin2.Build(graph.get(),key_+".mlp.lin2",{4*nEmbed, nEmbed},0x0);
+    in_proj.Build(key_+".attn.qkv",{nEmbed, 3*nEmbed},0x0);
+    proj.Build(key_+".attn.proj",{nEmbed, nEmbed},0x0);
+    norm2.Build(key_+".norm2",{nEmbed},0x0);
+    mlp_lin1.Build(key_+".mlp.lin1",{nEmbed, 4*nEmbed},0x0);
+    mlp_lin2.Build(key_+".mlp.lin2",{4*nEmbed, nEmbed},0x0);
 
     // graph->AddLayer(key_,{
     //                 NP_("SelfAttention",".self_attn",{n_enc_out_chans, n_enc_out_chans, n_enc_out_chans}),
@@ -544,26 +582,37 @@ static void ggml_graph_compute_thread_sync_task(int * task_phase, struct ggml_co
 
 string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {        
     if(empty())   return "";
-    
+    string root_name = "";
     char buf[32*1024]="\0";
-    sprintf(buf+strlen(buf),"\n COMPUTE_GRAPH x=%d nodes=%d leafs=%d \n", -1,cgraph->n_nodes, cgraph->n_leafs);
+    sprintf(buf+strlen(buf),"\n CGRAPH_%s x=%d nodes=%d leafs=%d \n",name.c_str(), -1,cgraph->n_nodes, cgraph->n_leafs);
     const char*tab=prefix.c_str();
     // the output is always the last tensor in the graph
-    int pos=-1,nDup=0,i,no,root_id=root_0==nullptr ? cgraph->n_nodes-1 : -1;
-    hGensor root = root_0==nullptr ? cgraph->nodes[cgraph->n_nodes-1] : root_0;
+    int pos=-1,nDup=0,i,no,nNode=cgraph->n_nodes,nLeaf=cgraph->n_leafs,root_id=root_0==nullptr ? cgraph->n_nodes-1 : -1;
+    hGensor root = root_0;
+    if(root_0==nullptr){
+        if(isBackward)
+            root_name = "loss";
+        else
+            root = cgraph->nodes[nNode-1];
+    } 
 #if !defined(NDEBUG)
-    for(int i=0;i<cgraph->n_nodes;i++){     //pick root
-        if(strcmp(cgraph->nodes[i]->name,"result_norm")==0){  //    l_out-1    inp_embd
-            root = cgraph->nodes[i];     root_id=i;
-            break;
-        }
-    }
 #endif
+    if(!root_name.empty()){
+        for(int i=0;i<nNode;i++){     //pick root
+            if(strcmp(cgraph->nodes[i]->name,root_name.c_str())==0){  //    l_out-1    inp_embd
+                root = cgraph->nodes[i];     root_id=i;
+                break;
+            }
+        }        
+    }
+    assert(root!=nullptr);
+
     hGensor cur=root,son;    
-    std::vector<hGensor> gensors;
+    std::vector<hGensor> gensors,all_nodes;
+    for(int i=0;i<nNode;i++)        all_nodes.push_back(cgraph->nodes[i]);
+    for(int i=0;i<nLeaf;i++)        all_nodes.push_back(cgraph->leafs[i]);
     std::map<hGensor, GENSOR_INFO> gmask;
-    gensors.push_back(root);        gmask[root] = GENSOR_INFO(0,0,-1,-1);
-    
+    gensors.push_back(root);        gmask[root] = GENSOR_INFO(0,0,-1,-1);    
     while(++pos<gensors.size()) {
         cur = gensors[pos];
         GENSOR_INFO info = gmask[cur];
@@ -586,7 +635,12 @@ string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {
 
     sprintf(buf+strlen(buf),"%s",suffix.c_str()); 
     _INFO("%s",buf); 
-    _INFO("%s root=%d nPass=%ld(%d)",__func__,root_id,gensors.size(),nDup); 
+    int nMiss = nNode+nLeaf-pos;
+    _INFO("%s root=%d nPass=%ld(%d) nMiss=%d",__func__,root_id,gensors.size(),nDup,nMiss); 
+    if(nMiss>0){   //
+        CHECK_SAME_TENSORS(gensors,all_nodes);
+        // _INFO("!!!\n"); 
+    }
     return buf;
 }   
 
@@ -639,6 +693,11 @@ void TGraph::visit_parents(hGensor node,int flag) {
         n_nodes++;
     }
 }
+
+void TGraph::BuildBackward(){
+    
+}
+
 void TGraph::Traverse(int flag){
     bool GGML_OP_HAS_INIT    [GGML_OP_COUNT] = { 0 };
     bool GGML_OP_HAS_FINALIZE[GGML_OP_COUNT] = { 0 };

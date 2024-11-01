@@ -3,7 +3,7 @@
  *  
  *  concise dictionary on VAE
  * 
- *  \brief LLaMeta Model(https://llama.meta.com/)
+ *  \brief NLP_AutoRegressive Model(https://llama.meta.com/)
  *  \author Yingshi Chen
  */
 
@@ -12,7 +12,7 @@
 #include "../Manifold/Fish.hpp"   
 #include "../Manifold/VAE.hpp" 
 
-struct LLaMeta;
+struct NLP_AutoRegressive;
 struct ConsiceDict : public VariationaAE    {    
     enum OUTPUT_OP {
         ONLY_LOAD=0x0,          //lr=0.001 much more oscillation than 0.0001
@@ -21,7 +21,9 @@ struct ConsiceDict : public VariationaAE    {
         LOAD_GRAD_norm,
     };
     OUTPUT_OP opOut=RND_GRAD;     //LOAD_GRAD_norm;   ONLY_LOAD
-    hGensor tok_embeddings=nullptr,norm=nullptr,output=nullptr;
+    LayerNormal _norm;
+    SLP _output;
+    hGensor tok_embeddings=nullptr; //norm=nullptr,output=nullptr;
     bool isSVD = false;
     hGensor out_u=nullptr,out_v=nullptr,out_d=nullptr;
     int lo_rank = 128;
@@ -34,7 +36,7 @@ struct ConsiceDict : public VariationaAE    {
     };   
 
     bool isLoadTokenEmbed = false;
-    LLaMeta *hLM = nullptr;
+    NLP_AutoRegressive *hLM = nullptr;
     int nToken=0,lama_embed=0,latent_dim=256,nLevel=0;
     int nUniqueToken = 0;
     
@@ -65,6 +67,7 @@ struct ConsiceDict : public VariationaAE    {
     enum llama_vocab_pre_type type_pre = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
     std::unordered_map<token, id> token_to_id;
     std::vector<token_data>       id_to_token;
+    std::vector<std::string> special_tokens;
     std::unordered_map<token, id> special_tokens_cache;
 
     int32_t bos,eos;   
@@ -93,26 +96,16 @@ struct ConsiceDict : public VariationaAE    {
         return it->second;
     }    
 
-    ConsiceDict(LLaMeta *lama_,int flag=0x0);
+    ConsiceDict(NLP_AutoRegressive *lama_,int flag=0x0);
     virtual ~ConsiceDict()  {
         FREE_a(scores);      FREE_a(toktypes);
     }
+    //  n_vocab,scores,toktypes,special_,tokens
     void LoadVocab(const char*fn_model_base,int flag);
     void LoadVocab_v1(const char*fn_model_base,struct CLI_params& params,llama_model & model,int flag);
 
     virtual void InitVAE(int flag=0x0);
 
-   
-
-    /*  
-        tok_embeddings = llama_get_model_tensor(lama, TN(LLM_TENSOR_TOKEN_EMBD));      nParams+=ggml_nelements(tok_embeddings);
-        norm           = llama_get_model_tensor(lama, TN(LLM_TENSOR_OUTPUT_NORM));     nParams+=ggml_nelements(norm);
-        output         = llama_get_model_tensor(lama, TN(LLM_TENSOR_OUTPUT));          nParams+=ggml_nelements(output);
-        // ggml_tensor_dequant(ctx_compute,gensor,GGML_TYPE_F32); 
-        assert_shape_2d(tok_embeddings, hparams.n_embd, hparams.n_vocab);
-        assert_shape_1d(norm,           hparams.n_embd);
-        assert_shape_2d(output,         hparams.n_embd, hparams.n_vocab);
-    */  
     virtual void Update(struct random_normal_distribution * rnd,int flag=0x0)   {
         if(nLevel>0){
             Update_1(rnd,flag);
@@ -128,3 +121,9 @@ struct ConsiceDict : public VariationaAE    {
     string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
 };
 typedef std::shared_ptr<ConsiceDict> hCDICT;
+
+class CDict_GPT2 : public ConsiceDict{
+public:
+    CDict_GPT2(NLP_AutoRegressive *nlp_,int flag=0x0);
+    int InitMAEC(struct ggml_context *ctx,const std::vector<int>& dims_,int flag=0x0) override;
+};

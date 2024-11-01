@@ -63,7 +63,8 @@ int Fish_bubble(CLI_params& hparams)  {
     hparams.wiki_actor = "copy";
     arrHWIKI wikis = WIKI::MakeInstance("wikis",hparams,0x0);
 #if !defined(NDEBUG)
-    hparams.common.n_ctx = 17;     hparams.common.n_batch = 1;      hparams.n_layer=1;      //Only for debug
+    hparams.common.n_ctx = 17;     hparams.common.n_batch = 1;      hparams.nLayerX=1;      //Only for debug
+    // hparams.set();
 #endif
     hFISH fish = Fish::MakeInstance("BUBBLE_",hparams,wikis,Fish::ROLE_TYPE::COMMON,0x110);
     auto _gf = fish->ForwarGraph();         assert(_gf!=nullptr);
@@ -1168,6 +1169,6 @@ int GOPT_infinite::UpdateEmbed(int nJob, int &n_past, int &n_remain, int &n_cons
             session_tokens.insert(session_tokens.end(), tokens.begin(), tokens.end());
             n_session_consumed = session_tokens.size();
         }
-    }
-    return 2;*/
+    }*/
+    return 2;
 }

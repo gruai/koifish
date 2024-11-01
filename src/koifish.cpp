@@ -35,12 +35,17 @@ int main(int argc, char ** argv) {
         return Fish_bubble(params);   
     if(params.test=="tutor")
         return Tutor(params);   
-        
+    params.OnArch();    
     hFISH fish = nullptr;
     if(params.n_swarm>1)   {
         fish = Fish::MakeSwarm("Fish_",params,0x0);    
     }else {
-        vector<hWIKI> wikis = WIKI::MakeInstance("",params,0x0);        
+        vector<hWIKI> wikis = WIKI::MakeInstance("",params,0x0);      
+        if(wikis.size()==0){
+            // _INFO("====== NO WIKI !!! ======\n");       return;
+        }else{
+            wikis[0]->CopyParams(params);      
+        }   
         fish = Fish::MakeInstance("Fish_",params,wikis,Fish::ROLE_TYPE::COMMON,0x0);    
     } 
     if(fish->isTrain())
