@@ -48,7 +48,7 @@ int main(int argc, char ** argv) {
         }   
         fish = Fish::MakeInstance("Fish_",params,wikis,Fish::ROLE_TYPE::COMMON,0x0);    
     } 
-    if(fish->isTrain())
+    if(fish && fish->isTrain())
         fish->Train( );
 
     return 0x0;    

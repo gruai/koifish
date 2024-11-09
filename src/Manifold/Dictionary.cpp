@@ -205,6 +205,7 @@ hGensor ConsiceDict::Embed2Output(struct ggml_context * ctx,hGensor t33,int flag
                 }    
             }*/
             hGensor embd = ggml_reshape_3d   (ctx, t33, n_embd/group, group, n_tokens);
+            strcpy(embd->name, "");;        gTN(embd,"%s_group%d",t33->name,group);
             embd = ggml_permute(ctx,embd,0,2,1,3);
             assert(_output.w->ne[0]==n_embd/group);
             hGensor w = ggml_reshape_3d   (ctx, _output.w, _output.w->ne[0],n_vocab/group, group);            
@@ -219,7 +220,7 @@ hGensor ConsiceDict::Embed2Output(struct ggml_context * ctx,hGensor t33,int flag
         tOutput = ggml_mul_mat(ctx, svd, t33); 
     }
                               
-    set_name(tOutput, "_output.w");  
+    gTN(tOutput, "_output.w");  
     // assert_shape_2d(t34, n_vocab, N*n_batch);
     return tOutput;   
 }
@@ -474,22 +475,7 @@ void NLP_AutoRegressive::save_gguf(const char * filename, int flag) {
 
     for (uint32_t i = 0; i < hparams.nLayer(); ++i) {
         auto layer = dynamic_pointer_cast<QKV_LAY>(layers[i]); //layers[i];
-        layer->save_gguf(fctx, flag);    
-        // gguf_add_tensor(fctx, layer->att_norm.w);
-        // gguf_add_tensor(fctx, layer->Q.w);
-        // if(layer->wk!=nullptr)
-        //     gguf_add_tensor(fctx, layer->wk);
-        // if(layer->wv!=nullptr)
-        //     gguf_add_tensor(fctx, layer->wv);
-        // gguf_add_tensor(fctx, layer->wo);
-        // if(layer->ffn_norm.w!=nullptr)
-        //     gguf_add_tensor(fctx, layer->ffn_norm.w);
-        // if(layer->ffn_gate!=nullptr)
-        //     gguf_add_tensor(fctx, layer->ffn_gate);
-        // if(layer->down.w!=nullptr)
-        //     gguf_add_tensor(fctx, layer->down.w);
-        // if(layer->up.w!=nullptr)
-        //     gguf_add_tensor(fctx, layer->up.w);
+        layer->save_gguf(fctx, flag);
     }
 
     const bool only_meta = false;
@@ -504,10 +490,10 @@ void NLP_AutoRegressive::save_gguf(const char * filename, int flag) {
 void QKV_LAY::save_gguf(struct gguf_context *fctx, int flag){
     gguf_add_tensor(fctx, att_norm.w);
     gguf_add_tensor(fctx, Q.w);
-    if(wk!=nullptr)
-        gguf_add_tensor(fctx, wk);
-    if(wv!=nullptr)
-        gguf_add_tensor(fctx, wv);
+    if(K.w!=nullptr)
+        gguf_add_tensor(fctx, K.w);
+    if(V.w!=nullptr)
+        gguf_add_tensor(fctx, V.w);
     if(wo!=nullptr)
         gguf_add_tensor(fctx, wo);
     if(ffn_norm.w!=nullptr)

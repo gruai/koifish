@@ -117,9 +117,9 @@ hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,const 
 
 bool Fish::ComputePlan(int flag) {
     auto& train_params = hparams.common;
-    struct ggml_cgraph *cgraph = gb;
-    if(gb==nullptr){        //  OnlyInfer
-        cgraph = gf;
+    struct ggml_cgraph *cgraph = hBackTG->raw();
+    if(cgraph==nullptr){        //  OnlyInfer
+        cgraph = hForwTG->raw();
     }
     size_t max_work_size = ggml_graph_plan(cgraph, train_params.n_threads,nullptr).work_size + GGML_OBJECT_SIZE;
     _INFO("%s: work_size = %zu bytes (%.1f MB)\n", __func__, max_work_size, (float) max_work_size / (1024.0f*1024.0f));
@@ -141,11 +141,12 @@ bool Fish::ComputePlan(int flag) {
 
 bool Fish::AfterBuild(bool isInitParam,int flag)   {        
     int64_t nx = 0;
+    auto gf = hForwTG->raw(),gb = hBackTG->raw();
     if(isInitParam) {
         assert(rnd!=nullptr);
         // rnd = init_random_normal_distribution(hparams.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
     }
-
+    printf("\n\n");
     assert(optParams.size()==0);
     for (int i = 0; i < gf->n_nodes; ++i) {
         if (gf->nodes[i]->flags & GGML_TENSOR_FLAG_PARAM) {
@@ -159,8 +160,12 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
                 else
                     ggml_set_zero(node);                
             }
-            _INFO("%4d(op=%d)\t", optParams.size(), gf->nodes[i]->grad->op );
-            gg_print_tensor_("",gf->nodes[i],0);
+            _INFO("Param_%-4d(op=%d)\t", optParams.size(), gf->nodes[i]->grad->op );
+#ifndef NDEBUG
+            
+#endif
+            _pt_cys_("",node,0x0);         printf("\n");
+            // gg_print_tensor_("",gf->nodes[i],0);
             nx += ggml_nelements(gf->nodes[i]);
         }
     }     
@@ -168,8 +173,8 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
     if(nx != nParams){
         CHECK_SAME_TENSORS(optParams,xGensors); 
         _ERROR("%s nx(%ld)!=nParams(%ld)\t", __func__,nx,nParams );
-        assert(0);
-        return false;
+        //  assert(0);
+        // return false;
     }
     if (!hparams.only_write_model && hOPT!=nullptr) {
         hOPT->Prepare(nParams);
@@ -227,6 +232,7 @@ void Fish::SaveTrain(struct save_train_model * data, void *user_data,int flag) {
 
 void Fish::Statistic(int typ, int flag)     {   
     string suffix="", prefix="\t"; 
+    auto gf = hForwTG->raw(),gb = hBackTG==nullptr? nullptr : hBackTG->raw();
     if(hparams.is({"gpt","c_graph"},string("raw"))){
         _INFO("raw graph\n");
     }
@@ -241,9 +247,9 @@ void Fish::Statistic(int typ, int flag)     {
         if(gb!=nullptr) ggml_graph_dump_dot(gb, gf, "opt-backward.dot");
     }   else        {
         if(preLogits!=nullptr)
-            // ;TGraph("Forward",gf).__repr__(suffix,prefix);   //preLogits = gf->nodes[gf->n_nodes - 2];
+            // hForwTG->__repr__(suffix,prefix);   //preLogits = gf->nodes[gf->n_nodes - 2];
         if(gb!=nullptr){
-            TGraph("Backward",gb,true).__repr__(suffix,prefix);   //
+            // hBackTG->__repr__(suffix,prefix);   //// TGraph("Backward",gb,true)
         }            
     }
 
@@ -264,10 +270,9 @@ int Fish::BuildGraphFromRaw(int flag)   {
             (hparams.common.use_checkpointing ? 3 : 2)*(GGML_OBJECT_SIZE+ggml_graph_overhead_custom(LLAMA_TRAIN_MAX_NODES, true));
     ctx_compute = ggml_init(ctx_compute_params);
     
-    gf = GetRawGraph( ctx_compute,false );
-    preLogits = gf->nodes[gf->n_nodes - 1]; // the output is always the last tensor in the graph
-    if(1){
-        out_node = BuildLoss(ctx_compute,preLogits);
+    struct ggml_cgraph *gf = GetRawGraph( ctx_compute,false ),*gb=nullptr;
+    // preLogits = gf->nodes[gf->n_nodes - 1]; // the output is always the last tensor in the graph
+    if(1){        
         alloc = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
         iRet = BuildComputeGraph(0,ctx_compute,alloc,0x0);
     }else{
@@ -340,11 +345,13 @@ void Fish::InitGensor(struct ggml_context *ctx, const char *name, hGensor gensor
     Gensor2Map(gensor);
     if (isParam && isTrain())        {
         ggml_set_param(ctx, gensor);
+        gTN(gensor,"");
         nParams += ggml_nelements(gensor);
+        assert(strlen(gensor->grad->name)>0);
         xGensors.push_back(gensor);
     }
-    if(strcmp(gensor->name,"output.weight")==0) {   //only for debug
-        int xxx=0;
+    if(strcmp(gensor->name,"output.bias")==0) {   //only for debug
+        // xn= gensor;     xxn = gensor->grad;
     }
 }
 
@@ -353,8 +360,11 @@ void Fish::InitGensor(struct ggml_context *ctx, hGensor gensor, const char *name
         ggml_set_name(gensor, name);
     }
         
-    if(isTrain())
+    if(isTrain()){
         ggml_set_param(ctx, gensor);
+        gTN(gensor,"");
+    }
+        
     if (gensor->data == nullptr)        {
         assert(0);
     }
@@ -371,8 +381,8 @@ void Fish::InitGensor(struct ggml_context *ctx, hGensor gensor, const char *name
         xGensors.push_back(gensor);
         nParams += ggml_nelements(gensor);
     }
-    if(strcmp(gensor->name,"output.weight")==0) {   //only for debug
-        int xxx=0;
+    if(strcmp(gensor->name,"output.bias")==0) {   //only for debug
+        // xn= gensor;     xxn = gensor->grad;
     }
 }
 

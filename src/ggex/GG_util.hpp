@@ -70,7 +70,7 @@ static const char * _NAM_( const char *format,... )	{
     va_end(args);
     return buffer;
 }
-
+//return tensor name
 static const char * TN( const char *format,... )	{
     va_list args;
     va_start( args, format );
@@ -94,6 +94,8 @@ static const char * TNs( const char *format,const char *suffix,... )	{
     strcat(buffer,suffix);        
     return buffer;
 }
+//set name of tensor & its grad
+int gTN(struct ggml_tensor *,const char *format,...);
 
 inline void GG_log_callback_default(ggml_log_level level, const char * text, void * user_data) {
     (void) level;

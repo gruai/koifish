@@ -16,3 +16,4 @@ struct ggml_tensor * moe_build_ffn(struct ggml_context * ctx,struct llama_contex
 bool llama_model2vocb_( struct llama_model * model,void *hData, int type);
 int _llama_build_graph(struct llama_model * model,struct ggml_cgraph **hgf,struct ggml_cgraph **hgb,int flag);
 struct ggml_cgraph * _llama_raw_graph(llama_model * model,struct ggml_cgraph *gfx,const std::string&prompt,bool isOnline,int flag);
+extern "C" void _pt_cys_(const char* title, struct ggml_tensor * t, int n);

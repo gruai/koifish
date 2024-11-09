@@ -4,13 +4,13 @@
 
 bool BROWN_Motion::Transfer_1 = true;  //if true,  wQ is large & need more time to train
 //  bool BROWN_Motion::Transfer_1 = false;  
-
-void inline set_name(struct ggml_tensor * t, const char * n) {
-    ggml_set_name(t, n);
-    if (t->grad) {
-        ggml_format_name(t->grad, "%s->grad", n);
-    }
-};
+// =gTN(t,n);
+// void inline gTN(struct ggml_tensor * t, const char * n) {
+//     ggml_set_name(t, n);
+//     if (t->grad) {
+//         ggml_format_name(t->grad, "%s->grad", n);
+//     }
+// };
 
 BROWN_Motion::BROWN_Motion(Fish *hF_,hGensor _wq, hGensor _wv,struct CLI_params& hparams,hLQKV lQKV,int flags) : hFish_(hF_),wq(_wq),wv(_wv),lay(lQKV)   {
     int layer_id = lay->id;
@@ -48,21 +48,24 @@ BROWN_Motion::BROWN_Motion(Fish *hF_,hGensor _wq, hGensor _wv,struct CLI_params&
 /*
     Rotary Position Embedding
 */
-hGensor BROWN_Motion::W_rope(struct ggml_context *ctx ,hGensor cur,hGensor w,hGensor KQ_pos,SHAPE shape,int flag)   {
+hGensor BROWN_Motion::W_rope(struct ggml_context *ctx ,hGensor cur,hGensor w,hGensor KQ_pos,SHAPE shape,const string&shortcut,int flag)   {
     /*  ggml_rope_impl(
         ctx, a, b, NULL, n_dims, mode, 0, 10000.0f, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f, false
     */
-    hGensor  t05 = w==nullptr ? cur : ggml_mul_mat      (ctx, w, cur);                          
-    //set_name(t05, "t05");     assert_shape_2d(t05, n_embd, N*n_batch);
+    string nam0 = shortcut+"."+cur->name;
+    hGensor  t05 = w==nullptr ? cur : ggml_mul_mat      (ctx, w, cur);         
+    gTN(t05,"%s*w",nam0.c_str());   //gTN(t05, "t05");     assert_shape_2d(t05, n_embd, N*n_batch);
     hGensor  t06 = ggml_reshape_4d   (ctx, t05,shape[0],shape[1],shape[2],shape[3]); //n_embd_head, n_head, N, n_batch
-    //set_name(t06, "t06");     
+    gTN(t06,"%s$",nam0.c_str());   //gTN(t06, "t06");     
     assert_shape_4d(t06, shape[0],shape[1],shape[2],shape[3]);
     //                                                  32      64          10000           1        
     const int rope_mode = 0;
     hGensor  t07 = n_embd_head==1 ? t06 :
         ggml_rope_ext(ctx, t06, KQ_pos, nullptr, n_rot, rope_mode, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
+    gTN(t07,"%s_rope",nam0.c_str()); 
     // CYS_0826 hGensor  t07 = ggml_rope_custom(ctx,t06, KQ_pos, n_rot, 0, n_ctx, 0,rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f);
     hGensor  t13 = ggml_permute      (ctx, t07, 0, 2, 1, 3);    //  [24,6,512,32] => [24,512,6,32]
+    gTN(t13,"%s_0213",t07->name);
     return t13;
 }
 
@@ -82,7 +85,7 @@ hGensor BROWN_Motion::DiffusionOnEmbed(struct ggml_context *ctx, hGensor teb, hG
         wq_2 = ggml_diag_mask_inf_inplace(ctx, t16_1, n_past); 
     }
     hGensor  kq = ggml_soft_max_inplace     (ctx, wq_2);  
-    ggml_build_forward_expand(gf_,kq); 
+    if(isOnlinePush) ggml_build_forward_expand(gf_,kq); 
     if(wv!=nullptr){
         v = ggml_mul_mat(ctx, teb, wv); 
         v4 = ggml_reshape_4d(ctx, v, N, n_batch, n_embd_head, n_head_kv);   
@@ -91,17 +94,17 @@ hGensor BROWN_Motion::DiffusionOnEmbed(struct ggml_context *ctx, hGensor teb, hG
         v_rope = ggml_rope_ext(ctx, v_rope, KQ_pos, nullptr, n_rot, 0, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
         v_rope = ggml_reshape_2d   (ctx, v_rope, n_embd_head*n_head, N*n_batch);
         v = ggml_mul_mat(ctx, v_rope, wq); 
-        v3 = ggml_reshape_3d(ctx, v, N, n_batch, n_embd);        set_name(v3, "v3");   
+        v3 = ggml_reshape_3d(ctx, v, N, n_batch, n_embd);        gTN(v3, "v3_%d",lay->id);   
     }
                 
     if(!Transfer_1){
         hGensor  t05 = ggml_mul_mat      (ctx, kq, v);       //[144,144,1,1]x[144,16384,1,1] = [4096,256,1,1]                   
-        set_name(t05, "t05");     assert_shape_2d(t05, n_embd, N*n_batch);
+        gTN(t05, "t05_%d",lay->id);     assert_shape_2d(t05, n_embd, N*n_batch);
         hGensor  t06 = ggml_reshape_4d   (ctx, t05, n_embd_head, n_head, N, n_batch); 
-        set_name(t06, "t06");     assert_shape_4d(t06, n_embd_head, n_head, N, n_batch);      //[128,32,64,4]   
+        gTN(t06, "t06_%d",lay->id);     assert_shape_4d(t06, n_embd_head, n_head, N, n_batch);      //[128,32,64,4]   
         hGensor  t07 =  ggml_rope_ext(ctx, t06, KQ_pos, nullptr, n_rot, 0, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
                 //ggml_rope_custom   (ctx,t06, KQ_pos, n_rot, 0, n_ctx, 0,rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f); 
-        set_name(t07, "t07");     assert_shape_4d(t07, n_embd_head, n_head, N, n_batch);      // [128,6,32,8]    
+        gTN(t07, "t07_%d",lay->id);     assert_shape_4d(t07, n_embd_head, n_head, N, n_batch);      // [128,6,32,8]    
         kqv_out = t07;
     }else if(v3!=nullptr){
         // if(isSiLU){ //maybe useful
@@ -117,28 +120,28 @@ hGensor BROWN_Motion::DiffusionOnEmbed(struct ggml_context *ctx, hGensor teb, hG
         kqv_out = ggml_permute(ctx, v4, 2, 3, 0, 1);       // [24,6,512,32]  
         assert_shape_4d(kqv_out, n_embd_head, n_head, N, n_batch);  
         // kqv_out = ggml_rope_ext(ctx, kqv_out, KQ_pos, nullptr, n_rot, 0, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
-        set_name(kqv_out, "kqv_out_rope");     
+        gTN(kqv_out, "kqv_out_rope_%d",lay->id);     
         
     } else{     //  Deprecated
         assert(v4!=nullptr);
-        set_name(v4, "v4");     
+        gTN(v4, "v4");     
         v = ggml_permute      (ctx, v4, 0, 3, 1, 2); 
 
         // hGensor v4 = ggml_reshape_4d   (ctx, v, n_embd_head, n_head, N, n_batch); 
         // hGensor  v_rope =  ggml_rope_ext(ctx, v4, KQ_pos, nullptr, n_rot, 0, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
-        // set_name(v_rope, "v_rope");     assert_shape_4d(v_rope, n_embd_head, n_head, N, n_batch);      // [128,6,32,8] 
+        // gTN(v_rope, "v_rope");     assert_shape_4d(v_rope, n_embd_head, n_head, N, n_batch);      // [128,6,32,8] 
         // v = ggml_permute(ctx, v_rope, 1, 2, 0, 3); 
         hGensor  kqv = ggml_mul_mat      (ctx, v, kq);       //  [512,24,6,32] x [512,512,6,32]    => [24,512,6,32]  
-        set_name(kqv, "kqv");     
+        gTN(kqv, "kqv");     
         kqv_out = ggml_permute(ctx, kqv, 0, 2, 1, 3);       // [24,6,512,32]  
         kqv_out = ggml_rope_ext(ctx, kqv_out, KQ_pos, nullptr, n_rot, 0, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
-        set_name(kqv_out, "kqv_out_rope");     assert_shape_4d(kqv_out, n_embd_head, n_head, N, n_batch);      
+        gTN(kqv_out, "kqv_out_rope");     assert_shape_4d(kqv_out, n_embd_head, n_head, N, n_batch);      
     }      
 
     kqv_out = ggml_cont(ctx, kqv_out);              
-    sprintf(nam_,"kqv_merged_cont-%d",lay->id);    set_name(kqv_out, nam_);     
+    sprintf(nam_,"kqv_merged_cont-%d",lay->id);    gTN(kqv_out, nam_);     
     kqv_out = ggml_reshape_2d   (ctx, kqv_out, n_embd, N*n_batch);   // [768,17,1]  
-    ggml_build_forward_expand(gf_,kqv_out);  
+    if(isOnlinePush) ggml_build_forward_expand(gf_,kqv_out);  
     return kqv_out;   
 }
 
@@ -151,36 +154,40 @@ hGensor BROWN_Motion::DiffusionOnToken(struct ggml_context *ctx, hGensor teb, hG
     assert_shape_2d(teb, n_embd, N*n_batch);
       
     hGensor v_rope = ggml_reshape_4d   (ctx, teb, n_embd_head, n_head, N, n_batch);
+    gTN(v_rope,"teb_%d",lay->id);        //gTN(v_rope,"%s_rope",teb->name);
     v_rope = ggml_rope_ext(ctx, v_rope, KQ_pos, nullptr, n_rot, 0, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
+    gTN(v_rope,"rope_ext_%d",lay->id); 
     v_rope = ggml_reshape_2d   (ctx, v_rope, n_embd_head*n_head, N*n_batch);
     v = ggml_mul_mat(ctx, v_rope, wq); 
-    v3 = ggml_reshape_3d(ctx, v, N, n_batch, n_embd);        set_name(v3, "v3");       
+    gTN(v,"rope_wq_%d",lay->id);
+    v3 = ggml_reshape_3d(ctx, v, N, n_batch, n_embd);        gTN(v3, "v3_%d",lay->id);       
   
     hGensor probs = nullptr;
     if(wv!=nullptr)   {
         hGensor w_trans = wv;
         hGensor w_ = ggml_mul_mat(ctx, w_trans,teb ); //ggml_reshape_2d(ctx,v3,N, n_batch*n_embd)  
+        gTN(w_,"wvteb_%d",lay->id);
         w_ = ggml_reshape_2d(ctx, w_, N,n_batch);   
         // if(isSiLU){ //maybe useful
         //     w_ = ggml_silu(ctx,w_);
         // } 
-        probs = ggml_soft_max(ctx,w_); 
+        probs = ggml_soft_max(ctx,w_);              gTN(probs,"probs_%d",lay->id);
         probs = ggml_repeat(ctx, probs, v3); 
     }else
         probs = ggml_soft_max(ctx,v3); 
     hGensor expert = v3;    //ggml_reshape_2d(ctx,v3,n_vocab,n_ctx*n_batch);
     // hGensor wB = _repeat(ctx,probs,expert);
-    hGensor kqv = ggml_mul(ctx,expert,probs);
+    hGensor kqv = ggml_mul(ctx,expert,probs);       gTN(kqv,"kqv_%d",lay->id);
     v4 = ggml_reshape_4d   (ctx, kqv,N, n_batch,n_embd_head, n_head);
     kqv_out = ggml_permute(ctx, v4, 2, 3, 0, 1);       // [24,6,512,32]  
     assert_shape_4d(kqv_out, n_embd_head, n_head, N, n_batch);  
     // kqv_out = ggml_rope_ext(ctx, kqv_out, KQ_pos, nullptr, n_rot, 0, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
-    set_name(kqv_out, "kqv_out_rope");     
+    gTN(kqv_out, "kqv_out_rope_%d",lay->id);     
 
     kqv_out = ggml_cont(ctx, kqv_out);              
-    sprintf(nam_,"kqv_merged_cont-%d",lay->id);    set_name(kqv_out, nam_);     
+    sprintf(nam_,"kqv_merged_cont-%d",lay->id);    gTN(kqv_out, nam_);     
     kqv_out = ggml_reshape_2d   (ctx, kqv_out, n_embd, N*n_batch);   // [768,17,1]  
-    ggml_build_forward_expand(gf_,kqv_out);  
+    if(isOnlinePush) ggml_build_forward_expand(gf_,kqv_out);  
     return kqv_out;   
 }
 
@@ -206,7 +213,7 @@ hGensor BROWN_Motion::Build(struct ggml_context *ctx ,hGensor teb, hGensor KQ_po
         wq_2 = ggml_diag_mask_inf_inplace(ctx, t16_1, n_past); 
     }
     hGensor  kq = ggml_soft_max_inplace     (ctx, wq_2);  
-    ggml_build_forward_expand(gf_,kq); 
+    if(isOnlinePush) ggml_build_forward_expand(gf_,kq); 
     if(wv!=nullptr){
         v = ggml_mul_mat(ctx, teb, wv); 
         v4 = ggml_reshape_4d(ctx, v, N, n_batch, n_embd_head, n_head_kv);   
@@ -215,17 +222,17 @@ hGensor BROWN_Motion::Build(struct ggml_context *ctx ,hGensor teb, hGensor KQ_po
         v_rope = ggml_rope_ext(ctx, v_rope, KQ_pos, nullptr, n_rot, 0, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
         v_rope = ggml_reshape_2d   (ctx, v_rope, n_embd_head*n_head, N*n_batch);
         v = ggml_mul_mat(ctx, v_rope, wq); 
-        v3 = ggml_reshape_3d(ctx, v, N, n_batch, n_embd);        set_name(v3, "v3");   
+        v3 = ggml_reshape_3d(ctx, v, N, n_batch, n_embd);        gTN(v3, "v3");   
     }
                 
     if(!Transfer_1){
         hGensor  t05 = ggml_mul_mat      (ctx, kq, v);       //[144,144,1,1]x[144,16384,1,1] = [4096,256,1,1]                   
-        set_name(t05, "t05");     assert_shape_2d(t05, n_embd, N*n_batch);
+        gTN(t05, "t05");     assert_shape_2d(t05, n_embd, N*n_batch);
         hGensor  t06 = ggml_reshape_4d   (ctx, t05, n_embd_head, n_head, N, n_batch); 
-        set_name(t06, "t06");     assert_shape_4d(t06, n_embd_head, n_head, N, n_batch);      //[128,32,64,4]   
+        gTN(t06, "t06");     assert_shape_4d(t06, n_embd_head, n_head, N, n_batch);      //[128,32,64,4]   
         hGensor  t07 =  ggml_rope_ext(ctx, t06, KQ_pos, nullptr, n_rot, 0, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
                 //ggml_rope_custom   (ctx,t06, KQ_pos, n_rot, 0, n_ctx, 0,rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f); 
-        set_name(t07, "t07");     assert_shape_4d(t07, n_embd_head, n_head, N, n_batch);      // [128,6,32,8]    
+        gTN(t07, "t07");     assert_shape_4d(t07, n_embd_head, n_head, N, n_batch);      // [128,6,32,8]    
         kqv_out = t07;
     }else if(v3!=nullptr){
         // if(isSiLU){ //maybe useful
@@ -241,49 +248,49 @@ hGensor BROWN_Motion::Build(struct ggml_context *ctx ,hGensor teb, hGensor KQ_po
         kqv_out = ggml_permute(ctx, v4, 2, 3, 0, 1);       // [24,6,512,32]  
         assert_shape_4d(kqv_out, n_embd_head, n_head, N, n_batch);  
         // kqv_out = ggml_rope_ext(ctx, kqv_out, KQ_pos, nullptr, n_rot, 0, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
-        set_name(kqv_out, "kqv_out_rope");     
+        gTN(kqv_out, "kqv_out_rope");     
         
     } else{     //  Deprecated
         assert(v4!=nullptr);
-        set_name(v4, "v4");     
+        gTN(v4, "v4");     
         v = ggml_permute      (ctx, v4, 0, 3, 1, 2); 
 
         // hGensor v4 = ggml_reshape_4d   (ctx, v, n_embd_head, n_head, N, n_batch); 
         // hGensor  v_rope =  ggml_rope_ext(ctx, v4, KQ_pos, nullptr, n_rot, 0, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
-        // set_name(v_rope, "v_rope");     assert_shape_4d(v_rope, n_embd_head, n_head, N, n_batch);      // [128,6,32,8] 
+        // gTN(v_rope, "v_rope");     assert_shape_4d(v_rope, n_embd_head, n_head, N, n_batch);      // [128,6,32,8] 
         // v = ggml_permute(ctx, v_rope, 1, 2, 0, 3); 
         hGensor  kqv = ggml_mul_mat      (ctx, v, kq);       //  [512,24,6,32] x [512,512,6,32]    => [24,512,6,32]  
-        set_name(kqv, "kqv");     
+        gTN(kqv, "kqv");     
         kqv_out = ggml_permute(ctx, kqv, 0, 2, 1, 3);       // [24,6,512,32]  
         kqv_out = ggml_rope_ext(ctx, kqv_out, KQ_pos, nullptr, n_rot, 0, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
-        set_name(kqv_out, "kqv_out_rope");     assert_shape_4d(kqv_out, n_embd_head, n_head, N, n_batch);      
+        gTN(kqv_out, "kqv_out_rope");     assert_shape_4d(kqv_out, n_embd_head, n_head, N, n_batch);      
     }      
 
     kqv_out = ggml_cont(ctx, kqv_out);              
-    sprintf(nam_,"kqv_merged_cont-%d",lay->id);    set_name(kqv_out, nam_);     
+    sprintf(nam_,"kqv_merged_cont-%d",lay->id);    gTN(kqv_out, nam_);     
     kqv_out = ggml_reshape_2d   (ctx, kqv_out, n_embd, N*n_batch);   // [768,17,1]  
-    ggml_build_forward_expand(gf_,kqv_out);  
+    if(isOnlinePush) ggml_build_forward_expand(gf_,kqv_out);  
     return kqv_out;   */
 }
 
 hGensor QKV_Motion::vXkq(struct ggml_context *ctx, hGensor v,hGensor kq,int layer_id){
     char nam_[128];
     hGensor kqv = ggml_mul_mat(ctx, v, kq);         assert_shape_4d(kqv, n_embd_head, N, n_head, n_batch); 
-    sprintf(nam_,"kqv-%d",layer_id);    set_name(kqv, nam_);
+    sprintf(nam_,"kqv-%d",layer_id);    gTN(kqv, nam_);
     hGensor kqv_merged = ggml_permute(ctx, kqv, 0, 2, 1, 3);        assert_shape_4d(kqv_merged, n_embd_head,n_head,N,n_batch); 
-    sprintf(nam_,"kqv_merged-%d",layer_id);    set_name(kqv_merged, nam_);
+    sprintf(nam_,"kqv_merged-%d",layer_id);    gTN(kqv_merged, nam_);
     // kqv_out = ggml_cont_2d(ctx, kqv_merged, n_embd, n_ctx*n_batch);
     hGensor kqv_out = nullptr;
     if(0){  // stuck at local minima
         kqv_out = ggml_cont_2d(ctx, kqv_merged, n_embd, n_ctx*n_batch);
-        sprintf(nam_,"kqv_merged_cont-%d",layer_id);    set_name(kqv_out, nam_);         
+        sprintf(nam_,"kqv_merged_cont-%d",layer_id);    gTN(kqv_out, nam_);         
     }else{      ///home/cys/rnd/lic/log/wiki/MOM_1010.info
         kqv_out = ggml_cont         (ctx, kqv_merged);              // [128,6,32,8]      
-        sprintf(nam_,"kqv_merged_cont-%d",layer_id);    set_name(kqv_out, nam_);     
+        sprintf(nam_,"kqv_merged_cont-%d",layer_id);    gTN(kqv_out, nam_);     
         kqv_out = ggml_reshape_2d   (ctx, kqv_out, n_embd, N*n_batch);     
     }
   
-    // sprintf(nam_,"kqv-%d",layer_id);            set_name(kqv_out, nam_); 
+    // sprintf(nam_,"kqv-%d",layer_id);            gTN(kqv_out, nam_); 
     return kqv_out;
 }
 
@@ -302,77 +309,77 @@ hGensor QKV_Motion::Build(struct ggml_context *ctx, hGensor teb, hGensor KQ_pos)
     assert(wk!=nullptr && wv!=nullptr) ;
     auto gf_ = hFish_->ForwarGraph();
     if(version == 0)   {
-        q = W_rope(ctx,teb,wq,KQ_pos,{n_embd_head, n_head, N, n_batch});        
-        set_name(q, "q");     assert_shape_4d(q, n_embd_head, N, n_head, n_batch);
-        k = W_rope(ctx ,teb,wk,KQ_pos,{n_embd_head, n_head_kv, N, n_batch});        
-        set_name(k, "k");     assert_shape_4d(k, n_embd_head, N, n_head_kv, n_batch);                
+        q = W_rope(ctx,teb,wq,KQ_pos,{n_embd_head, n_head, N, n_batch},"q");        
+        gTN(q, "q_%d",lay->id);     assert_shape_4d(q, n_embd_head, N, n_head, n_batch);
+        k = W_rope(ctx ,teb,wk,KQ_pos,{n_embd_head, n_head_kv, N, n_batch},"k");        
+        gTN(k, "k_%d",lay->id);     assert_shape_4d(k, n_embd_head, N, n_head_kv, n_batch);                
         v = ggml_mul_mat      (ctx, teb, wv);        //[4096,256,1,1]x[4096,1024,1,1]= [256,1024,1,1]                   
-        set_name(v, "v");     //assert_shape_2d(t11, N*n_batch, n_embd_gqa);    
-        ggml_build_forward_expand(gf_,q);           ggml_build_forward_expand(gf_,k);           ggml_build_forward_expand(gf_,v);           
+        gTN(v, "v_%d",lay->id);     //assert_shape_2d(t11, N*n_batch, n_embd_gqa);    
+        if(isOnlinePush) ggml_build_forward_expand(gf_,q);           if(isOnlinePush) ggml_build_forward_expand(gf_,k);           if(isOnlinePush) ggml_build_forward_expand(gf_,v);           
         hGensor  v4 = ggml_reshape_4d   (ctx, v, N, n_batch, n_embd_head, n_head_kv);      // [64,4,128,8,] 
-        set_name(v4, "t12");     assert_shape_4d(v4, N, n_batch, n_embd_head, n_head_kv);
+        gTN(v4, "t12_%d",lay->id);     assert_shape_4d(v4, N, n_batch, n_embd_head, n_head_kv);
         hGensor  t15 = ggml_permute      (ctx, v4, 0, 3, 1, 2);                                // [64,128,8,4,] 
-        set_name(t15, "t15");     assert_shape_4d(t15, N, n_embd_head, n_head_kv, n_batch);        
+        gTN(t15, "t15_%d",lay->id);     assert_shape_4d(t15, N, n_embd_head, n_head_kv, n_batch);        
         hGensor  kq = ggml_mul_mat              (ctx, k, q);      
-        sprintf(nam_,"kq-%d",layer_id);     set_name(kq, nam_);         assert_shape_4d(kq, N, N, n_head, n_batch);
+        sprintf(nam_,"kq-%d",layer_id);     gTN(kq, nam_);         assert_shape_4d(kq, N, N, n_head, n_batch);
         if(0)      {
             kq = ggml_soft_max_ext(ctx, kq, KQ_mask, kq_scale, f_max_alibi_bias);       //would crash!
         }else{
             hGensor  t16_1 = ggml_scale_inplace        (ctx, kq, kq_scale);          
-                    // set_name(t16_1, "t16_1"); assert_shape_4d(t16_1, N, N, n_head, n_batch);
+                    // gTN(t16_1, "t16_1"); assert_shape_4d(t16_1, N, N, n_head, n_batch);
             hGensor  t16_2 = ggml_diag_mask_inf_inplace(ctx, t16_1, n_past);            
-                    // set_name(t16_2, "t16_2"); assert_shape_4d(t16_2, N, N, n_head, n_batch);
+                    // gTN(t16_2, "t16_2"); assert_shape_4d(t16_2, N, N, n_head, n_batch);
             kq = ggml_soft_max_inplace     (ctx, t16_2);                    
-                    // set_name(t16_3, "t16_3"); assert_shape_4d(t16_3, N, N, n_head, n_batch);            
+                    // gTN(t16_3, "t16_3"); assert_shape_4d(t16_3, N, N, n_head, n_batch);            
         }   
         kqv_out = vXkq(ctx,t15,kq,layer_id);    //  [512,24,6,32]x[512,512,6,32]
         /*hGensor kqv = ggml_mul_mat(ctx, t15, t16_3);         assert_shape_4d(kqv, n_embd_head, N, n_head, n_batch);                                             
-                // set_name(t16, "t16");     assert_shape_4d(t16, n_embd_head, N, n_head, n_batch);
+                // gTN(t16, "t16");     assert_shape_4d(t16, n_embd_head, N, n_head, n_batch);
         hGensor  t17 = ggml_permute      (ctx, kqv, 0, 2, 1, 3);    // [128,6,17,1]                      
-        set_name(t17, "t17");     assert_shape_4d(t17, n_embd_head, n_head, N, n_batch);
+        gTN(t17, "t17");     assert_shape_4d(t17, n_embd_head, n_head, N, n_batch);
         kqv_out = ggml_cont         (ctx, t17);                                    
-        // set_name(t18, "t18");     assert_shape_4d(t18, n_embd_head, n_head, N, n_batch);
+        // gTN(t18, "t18");     assert_shape_4d(t18, n_embd_head, n_head, N, n_batch);
         kqv_out = ggml_reshape_2d   (ctx, kqv_out, n_embd, N*n_batch);   // [768,17,1] */
         
     }else{        
         hGensor  Qcur = ggml_mul_mat      (ctx, wq, teb);     
-        sprintf(nam_,"Qcur-%d",layer_id);    set_name(Qcur, nam_);  
+        sprintf(nam_,"Qcur-%d",layer_id);    gTN(Qcur, nam_);  
         hGensor  Kcur = ggml_mul_mat      (ctx, wk, teb);     
-        sprintf(nam_,"Kcur-%d",layer_id);    set_name(Kcur, nam_); 
+        sprintf(nam_,"Kcur-%d",layer_id);    gTN(Kcur, nam_); 
         hGensor  Vcur = ggml_mul_mat      (ctx, wv, teb);
-        sprintf(nam_,"Vcur-%d",layer_id);    set_name(Vcur, nam_); 
+        sprintf(nam_,"Vcur-%d",layer_id);    gTN(Vcur, nam_); 
         hGensor  rope_factors = lay->rope_(false);         
         Qcur = ggml_rope_ext(
                 ctx, ggml_reshape_4d(ctx, Qcur, n_embd_head, n_head, n_ctx,n_batch), KQ_pos, rope_factors,
                 n_rot, rope_type, n_ctx_orig, rope_freq_base, rope_freq_scale,ext_factor, attn_factor, beta_fast, beta_slow
             );
-        sprintf(nam_,"Qcur_rope-%d",layer_id);    set_name(Qcur, nam_);     assert_shape_4d(Qcur, n_embd_head, n_head, N, n_batch);
+        sprintf(nam_,"Qcur_rope-%d",layer_id);    gTN(Qcur, nam_);     assert_shape_4d(Qcur, n_embd_head, n_head, N, n_batch);
         Kcur = ggml_rope_ext(
                     ctx, ggml_reshape_4d(ctx, Kcur, n_embd_head, n_head_kv, n_ctx,n_batch), KQ_pos, rope_factors,
                     n_rot, rope_type, n_ctx_orig, rope_freq_base, rope_freq_scale,ext_factor, attn_factor, beta_fast, beta_slow
                 );
-        sprintf(nam_,"Kcur_rope-%d",layer_id);      set_name(Kcur, nam_);     assert_shape_4d(Kcur, n_embd_head, n_head, N, n_batch);   
-        ggml_build_forward_expand(gf_, Qcur);       ggml_build_forward_expand(gf_, Kcur);        ggml_build_forward_expand(gf_, Vcur);
+        sprintf(nam_,"Kcur_rope-%d",layer_id);      gTN(Kcur, nam_);     assert_shape_4d(Kcur, n_embd_head, n_head, N, n_batch);   
+        if(isOnlinePush) ggml_build_forward_expand(gf_, Qcur);       if(isOnlinePush) ggml_build_forward_expand(gf_, Kcur);        if(isOnlinePush) ggml_build_forward_expand(gf_, Vcur);
         k = kv->SerialK(ctx,Kcur,il,true);          v = kv->SerialV(ctx,Vcur,il,true);          
-        ggml_build_forward_expand(gf_,k);           ggml_build_forward_expand(gf_,v);
+        if(isOnlinePush) ggml_build_forward_expand(gf_,k);           if(isOnlinePush) ggml_build_forward_expand(gf_,v);
         /*if(use_cache){            //  llm_build_kv_store(ctx, hparams, cparams, kv, graph, k_cur, v_cur, n_tokens, kv_head, cb, il);
             size_t nzK = n_ctx*n_batch*n_embd_k_gqa;
             struct ggml_tensor * k_cache_view = ggml_view_1d(ctx, kv->k_l[il], nzK, ggml_row_size(kv->k_l[il]->type, n_embd_k_gqa)*kv_head);
-            sprintf(nam_,"k_cache_view-%d",layer_id);    set_name(k_cache_view, nam_);         
-            ggml_build_forward_expand(gf_, ggml_cpy(ctx, Kcur, k_cache_view));        //
+            sprintf(nam_,"k_cache_view-%d",layer_id);    gTN(k_cache_view, nam_);         
+            if(isOnlinePush) ggml_build_forward_expand(gf_, ggml_cpy(ctx, Kcur, k_cache_view));        //
             // assert(Vcur->ne[0] == n_embd_v_gqa && Vcur->ne[1] == n_ctx);
             size_t nzV = n_ctx*n_batch*n_embd_v_gqa;
             // struct ggml_tensor * v_cache_view = ggml_view_1d(ctx, kv->v_l[il], nzV, ggml_row_size(kv->v_l[il]->type, n_embd_v_gqa)*kv_head);        
             struct ggml_tensor *v_cache_view = ggml_view_2d(ctx, kv->v_l[il], n_ctx*n_batch, n_embd_v_gqa,(  n_ctx)*ggml_element_size(kv->v_l[il]),(kv_head)*ggml_element_size(kv->v_l[il]));
-            sprintf(nam_,"v_cache_view-%d",layer_id);    set_name(v_cache_view, nam_);         //cb(v_cache_view, "v_cache_view", il);
+            sprintf(nam_,"v_cache_view-%d",layer_id);    gTN(v_cache_view, nam_);         //cb(v_cache_view, "v_cache_view", il);
             Vcur = ggml_transpose(ctx, Vcur);
-            ggml_build_forward_expand(gf_, ggml_cpy(ctx, Vcur, v_cache_view));      //copy Vcur to v_cache_view
+            if(isOnlinePush) ggml_build_forward_expand(gf_, ggml_cpy(ctx, Vcur, v_cache_view));      //copy Vcur to v_cache_view
         }else{
-            ggml_build_forward_expand(gf_,Kcur);            ggml_build_forward_expand(gf_,Vcur);
+            if(isOnlinePush) ggml_build_forward_expand(gf_,Kcur);            if(isOnlinePush) ggml_build_forward_expand(gf_,Vcur);
         }*/
         
         q = ggml_permute(ctx, Qcur, 0, 2, 1, 3);        
-        sprintf(nam_,"q-%d",layer_id);    set_name(q, nam_);    
+        sprintf(nam_,"q-%d",layer_id);    gTN(q, nam_);    
         k = kv->SerialK(ctx,Kcur,il,false);        
         if(isTrain && k->type!=GGML_TYPE_F32)
             k = ggml_cast(ctx, k, GGML_TYPE_F32);             
@@ -384,12 +391,12 @@ hGensor QKV_Motion::Build(struct ggml_context *ctx, hGensor teb, hGensor KQ_pos)
         }else{
             k = Kcur;
         }*/
-        sprintf(nam_,"k-%d",layer_id);    set_name(k, nam_);
+        sprintf(nam_,"k-%d",layer_id);    gTN(k, nam_);
         if(!use_flash)  {
             hGensor kq = ggml_mul_mat(ctx, k, q);           //assert_shape_4d(kq, N, N, n_head, n_batch);   
-            sprintf(nam_,"kq-%d",layer_id);    set_name(kq, nam_);
+            sprintf(nam_,"kq-%d",layer_id);    gTN(kq, nam_);
             kq = ggml_soft_max_ext(ctx, kq, KQ_mask, kq_scale, f_max_alibi_bias);
-            sprintf(nam_,"kq_soft_max_ext-%d",layer_id);    set_name(kq, nam_);
+            sprintf(nam_,"kq_soft_max_ext-%d",layer_id);    gTN(kq, nam_);
             v = kv->SerialV(ctx,Vcur,il,false);    
             /*if(use_cache){ 
                 v = ggml_view_3d(ctx, kv->v_l[il],n_kv, n_embd_head_v, n_head_kv,
@@ -403,31 +410,31 @@ hGensor QKV_Motion::Build(struct ggml_context *ctx, hGensor teb, hGensor KQ_pos)
                     v = ggml_cast(ctx, v, GGML_TYPE_F32);
                 // v = ggml_repeat(ctx, v, kq);  
             }
-            sprintf(nam_,"v-%d",layer_id);    set_name(v, nam_);    
+            sprintf(nam_,"v-%d",layer_id);    gTN(v, nam_);    
             kqv_out = vXkq(ctx,v, kq,layer_id);   
-            // sprintf(nam_,"v-%d",layer_id);    set_name(v, nam_);             
+            // sprintf(nam_,"v-%d",layer_id);    gTN(v, nam_);             
             // hGensor kqv = ggml_mul_mat(ctx, v, kq);
-            // sprintf(nam_,"kqv-%d",layer_id);    set_name(kqv, nam_);
+            // sprintf(nam_,"kqv-%d",layer_id);    gTN(kqv, nam_);
             // hGensor kqv_merged = ggml_permute(ctx, kqv, 0, 2, 1, 3);
-            // sprintf(nam_,"kqv_merged-%d",layer_id);    set_name(kqv_merged, nam_);
+            // sprintf(nam_,"kqv_merged-%d",layer_id);    gTN(kqv_merged, nam_);
             // kqv_out = ggml_cont_2d(ctx, kqv_merged, n_embd, n_ctx*n_batch);
-            // sprintf(nam_,"kqv_merged_cont-%d",layer_id);    set_name(kqv_out, nam_);     
+            // sprintf(nam_,"kqv_merged_cont-%d",layer_id);    gTN(kqv_out, nam_);     
    
         }else{      //  
             assert(use_flash);
             v = kv->SerialV(ctx,Vcur,il,false);
             if(isTrain && v->type!=GGML_TYPE_F32)
                 v = ggml_cast(ctx, v, GGML_TYPE_F32);
-            sprintf(nam_,"v-%d",layer_id);    set_name(v, nam_);
+            sprintf(nam_,"v-%d",layer_id);    gTN(v, nam_);
             kqv_out = ggml_flash_attn_ext(ctx, q, k, v, KQ_mask, kq_scale, f_max_alibi_bias,attn_soft_cap);
             // if (model.arch == LLM_ARCH_PHI2 || model.arch == LLM_ARCH_PHI3 || model.arch == LLM_ARCH_GPTNEOX || model.arch == LLM_ARCH_GEMMA2) {
             //     ggml_flash_attn_ext_set_prec(cur, GGML_PREC_F32);
             // }   
             kqv_out = ggml_reshape_2d   (ctx, kqv_out, n_embd, N*n_batch);   // [768,17,1] 
-            sprintf(nam_,"kqv-%d",layer_id);            set_name(kqv_out, nam_); 
+            sprintf(nam_,"kqv-%d",layer_id);            gTN(kqv_out, nam_); 
         }   
     }    
-    ggml_build_forward_expand(gf_, kqv_out);
+    if(isOnlinePush) ggml_build_forward_expand(gf_, kqv_out);
     assert(ggml_nelements(teb)==ggml_nelements(kqv_out));
     return kqv_out;
 }

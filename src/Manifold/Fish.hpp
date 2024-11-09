@@ -82,13 +82,17 @@ class GeNeuron  {
     // GeNeuron(const GeNeuron&)=default;       for model.layers.resize(n_layer)@llama.cpp
     GeNeuron &operator=(const GeNeuron &) = default;
 
-protected:
+protected: 
     Fish *hOrg = nullptr;
     COMPRESSIVE_SENSING compression = SKIP;
     SHAPE shape;
 
 public:
+    hGensor w = nullptr, b = nullptr;
+    bool isBias = true;
+    
     NeLayer *hLay = nullptr;
+    string sT = "";     //  short-cut infomation
     std::string name;
     GeNeuron() {}    
     GeNeuron(SHAPE shape_, Fish *hG_, int flag) : shape(shape_), hOrg(hG_) { ; }
@@ -102,7 +106,7 @@ typedef shared_ptr<GeNeuron> hNeuron;
 
 // single layer perceptron
 struct SLP : public GeNeuron    { 
-    hGensor w = nullptr, b = nullptr;
+    
     hGensor u = nullptr, s = nullptr, v = nullptr;
     SLP( ) {}
     SLP(Fish *ctx, const std::string &key_, const SHAPE &shape_, Fish *hG_, int flag) : GeNeuron(shape_, hG_, flag)    {
@@ -116,8 +120,7 @@ struct SLP : public GeNeuron    {
     
     size_t nElem()  override;  
 };
-struct LayerNormal : public GeNeuron    {
-    hGensor w = nullptr, b = nullptr;
+struct LayerNormal : public GeNeuron    {    
     LayerNormal() {}
     LayerNormal(Fish *ctx, const std::string &key_, const SHAPE &shape, int flag)    {
         Build(key_, shape, flag);
@@ -174,7 +177,7 @@ enum FFN_TYPE {
 struct QKV_LAY : public NeLayer {
     hGensor eps=nullptr;
     LayerNormal att_norm,ffn_norm;
-    SLP Q,up,down;
+    SLP Q,K,V,up,down;
     hGensor  ffn_gate=nullptr;  
     // attention
     hGensor wk=nullptr,wv=nullptr;
@@ -214,6 +217,7 @@ struct QKV_LAY : public NeLayer {
 };
 typedef std::shared_ptr<QKV_LAY> hLQKV;
 struct BROWN_Motion    {
+    bool isOnlinePush = false;      // push nodes last or online(QKV)
     Fish *hFish_ = nullptr;
     std::shared_ptr<KVCache> kv;
     char nam_[128];
@@ -235,7 +239,7 @@ struct BROWN_Motion    {
 
     BROWN_Motion()  {}
     BROWN_Motion(Fish *hFish_,hGensor _wq, hGensor _wv,struct CLI_params& hparams,hLQKV lQKV,int flags);
-    hGensor W_rope(struct ggml_context *ctx, hGensor cur, hGensor w, hGensor KQ_pos, SHAPE shape, int flag = 0x0);
+    hGensor W_rope(struct ggml_context *ctx, hGensor cur, hGensor w, hGensor KQ_pos, SHAPE shape,const string&shortcut, int flag = 0x0);
     virtual hGensor Build(struct ggml_context *ctx, hGensor t04, hGensor KQ_pos);
 
     virtual hGensor DiffusionOnEmbed(struct ggml_context *ctx, hGensor teb, hGensor KQ_pos);
@@ -312,9 +316,10 @@ protected:
     struct CLI_params hparams;
     save_train_model save_data;
     ggml_gallocr_t alloc;
-    hTGraph hGraph;                            // compuation graph
+    hTGraph hForwTG=nullptr,hBackTG=nullptr;                            // compuation graph
     int graph_order=-1;
-    struct ggml_cgraph *gf = NULL, *gb = NULL; // only for debug
+    // struct ggml_cgraph *gf = NULL, *gb = NULL; // only for debug
+
     struct ggml_cgraph * gb_tmp = NULL;
     struct random_normal_distribution *rnd = nullptr;   
     ggml_backend_buffer_t back_data = NULL; 
@@ -350,6 +355,7 @@ protected:
     hGensor in_node = nullptr, out_node = nullptr;
     hGensor loss = nullptr, target_probs = nullptr, KQ_pos = nullptr, KQ_mask = nullptr;
     hGensor preLogits = nullptr;        //no SOFTMAX
+    hGensor xn = nullptr,xxn = nullptr;     //only for debug
     
     //hGensor gate=nullptr;      //create@InitModel update@
     MixOfModels mom;
@@ -423,9 +429,10 @@ public:
     virtual bool AfterBuild(bool isInitParam,int flag=0x0);
 
     virtual void Build(struct ggml_context *ctx0, ggml_gallocr_t &allocr, bool isOnlySymbol, int flag = 0x0)    {
-        hGraph = std::make_shared<TGraph>(ctx0, GGML_DEFAULT_GRAPH_SIZE, false, isOnlySymbol);
+        assert(0);      //  Deprecated
+        hTGraph hGraph = std::make_shared<TGraph>(ctx0, GGML_DEFAULT_GRAPH_SIZE, false, isOnlySymbol);
         assert(out_node != nullptr && in_node != nullptr);
-        hGraph->build_forward(out_node, true);
+        // hGraph->build_forward(out_node, true);
         hGraph->disconnect_node(in_node);
         ggml_gallocr_alloc_graph(allocr, hGraph->cgraph);
     }
@@ -452,8 +459,8 @@ public:
     virtual hGensor Target()    {   return nullptr;    }
     virtual hGensor Output()    {   assert(out_node!=nullptr);   return out_node;    }
     virtual hGensor Input()     {   return nullptr;    }
-    virtual struct ggml_cgraph * ForwarGraph()      {   return gf;  }
-    virtual struct ggml_cgraph * BackwardGraph()    {   return gb;  }
+    virtual struct ggml_cgraph * ForwarGraph()      {   return hForwTG->cgraph;  }
+    virtual struct ggml_cgraph * BackwardGraph()    {   return hBackTG->cgraph;  }
 
     void UpdateTensors(int flag = 0x0)    {
         UNUSED(flag);
@@ -478,12 +485,13 @@ public:
 
     void InitGensor(struct ggml_context *ctx, hGensor gensor, const char *name, struct random_normal_distribution *rnd = nullptr, int flag = 0);    
 
-    hGensor get_tensor(const char *name, int flag = 0x0)    {
+    /*hGensor get_tensor(const char *name, int flag = 0x0)    {
         return hGraph->get_tensor(name, flag); // from GGML
-    }
+    }*/
 
     void SetTensor(const int nx, const int ny, const std::vector<float> &arr_data, const char *name, int flag = 0x0)    {
-        hGensor inp = get_tensor("inp");
+        assert(0);      //  Drepecated
+        hGensor inp = GetGensor("inp");
         float *data = (float *)ggml_get_data(inp);
         assert(data != nullptr);
         const int n = nx * ny;
@@ -601,6 +609,7 @@ public:
     friend class SampLoader;
     friend class WIKI;
     friend class KVCache;
+    friend class TGraph;
 };
 
 struct LogicSalp : public Fish {

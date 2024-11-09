@@ -59,8 +59,8 @@ protected:
     struct ggml_context * _ctx=nullptr;
     std::vector<hGensor> opt_ps;
     size_t nParams = 0, nMostParam = 0;
-    bool just_initialized = false,isAdaptiveSched = false;
-    int past=0,n_gradient_accumulation=0;
+    bool just_initialized = false,isAdaptiveSched = false,isGlobalGrad=true;
+    int past=0,nGradAccum=0,tpSign=0;
     // gradient clipping
     double gclip = 1.0;         
     // schedule multiplier (fixed, decay or warmup)   
@@ -95,12 +95,22 @@ protected:
     // update sched & dump some info
     virtual float UpdateSchedule(int flag = 0x0);
     virtual bool AfterLoadBatch(SampLoader&loader, int accum_step, int flag = 0x0);
-    virtual float gClip(int nx,CLI_params& hparams,int flag=0x0);
-    virtual void UpdateParams(float gnorm,int nx,CLI_params& hparams,int flag);
+    virtual int SignStochastic(int nx,CLI_params& hparams,int flag=0x0);
+    virtual float gClip(int nx,float *g,hGensor hP,int flag=0x0);
+    virtual void UpdateParams(int nx,CLI_params& hparams,int flag);
     // virtual void AdamMiniV(float gnorm,int nx,CLI_params& hparams,int flag);
     virtual bool BatchGrad(float&fx,int flag=0x0) {   assert(0);  return false; }
     bool OnLogits(int flag=0x0);
 public:
+    enum GD_METHOD {
+        ADAMw=0x0,          
+        SGD,               
+        SGD_v,
+        SGD_gensor_v,
+   
+    };
+    GD_METHOD tpGD=ADAMw;  
+
     // typedef bool (*_CALL_BACK_)(void * data, int accum_step, float * sched);    
     SampLoader train_loader, val_loader;
     size_t shuffle_samples_hash = 0x0;  //hack
@@ -196,7 +206,7 @@ protected:
     // compute grad on batchs
     bool BatchGrad(float&fx,int flag=0x0) override;
     virtual double UpdateTensorParam(hGensor hP,float *m,float *v,float *g,float gnorm);
-    void UpdateParams(float gnorm,int nx,CLI_params& hparams,int flag)  override;
+    void UpdateParams(int nx,CLI_params& hparams,int flag)  override;
 public:
     OPT_Adam(NLP_AutoRegressive *g_,struct train_params_common& params_,int flag=0x0);
     void Dump(int typ)  override;

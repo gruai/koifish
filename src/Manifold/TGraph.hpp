@@ -27,7 +27,7 @@ using namespace std;
 #include "../ggex/GG_util.hpp"
 #include "../lenda/util/GST_util.hpp"
 
-
+class Fish;
 class TGraph;   
 typedef shared_ptr<TGraph> hTGraph;
 
@@ -36,15 +36,19 @@ class TGraph : public std::enable_shared_from_this<TGraph> {
 	TGraph& operator=(const TGraph&);
 
     struct ggml_cgraph * cgraph=nullptr;        //only for debug
-protected:
+protected:    
+    Fish *hFish = nullptr;
     string name;
     bool isOnlySymbol = true, isBackward =false;
     double tX=0,tCompute=0.0,tPlan=0.0;
     std::vector<uint8_t> work_buffer;
     //from GGML
-    int size=0,n_nodes=0,n_leafs=0;
+    int size=0,nForwN=0,nForwL=0; // n_nodes=0,n_leafs=0;
     hGensor*nodes=nullptr,*grads=nullptr,*leafs=nullptr;
-    struct ggml_hash_set visited_hash_table = { 0, nullptr };   
+    std::vector<hGensor> all_nodes;
+    std::vector<hGensor> sinks;      //  sinks of tensor flow graph
+    // vector<hGensor> nodes,grads,leafs;
+    // struct ggml_hash_set visited_hash_table = { 0, nullptr };   
     enum ggml_cgraph_eval_order order=GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT;
     // performance
     int     perf_runs=0;
@@ -52,11 +56,10 @@ protected:
     struct ggml_context * ctx=nullptr;
     size_t ctx_size = 0;
 
-    void clear()    {
-        n_leafs = 0;
-        n_nodes = 0;
-        if (visited_hash_table.size>0)
-            memset(visited_hash_table.keys, 0, visited_hash_table.size * sizeof(hGensor));
+    void Clear()    {
+        sinks.clear();
+        // if (visited_hash_table.size>0)
+        //     memset(visited_hash_table.keys, 0, visited_hash_table.size * sizeof(hGensor));
     }
 
     size_t hash_insert(const struct ggml_hash_set& hash_set, hGensor key) {
@@ -71,15 +74,13 @@ protected:
         return i;
     }
 
-    void visit_parents(hGensor node,int flag=0x0);
 public:
     TGraph()    {}
-    TGraph(const string&nam_,struct ggml_cgraph *c,bool isB=false,int flag=0x0) : 
-        name(nam_),cgraph(c),isBackward(isB) {
+    TGraph(Fish *hF_,const string&nam_,struct ggml_cgraph *c,bool isB=false,int flag=0x0) : 
+        hFish(hF_),name(nam_),cgraph(c),isBackward(isB) {
     }
 
-    TGraph(struct ggml_context *ctx_,int flag=0x0) :ctx(ctx_)   {
-    }
+    TGraph(Fish *hF_,const string&nam_,struct ggml_context *ctx_,bool isGrad,int flag=0x0);
 
     TGraph(struct ggml_context *ctx_, size_t size_, bool grad_,bool isOnlySymbol_,int flag=0x0) :
         size(size_),ctx(ctx_),isOnlySymbol(isOnlySymbol_)  {
@@ -106,9 +107,11 @@ public:
         //     GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT,0,0,0,
         // };     
     }
-
-    virtual ~TGraph()   {   clear();    }
+    virtual ~TGraph()   {   Clear();    }
+    virtual int has(const string&name,int flag=0x0);
+    virtual bool isValid( );
     
+    enum ggml_cgraph_eval_order Order() {   return cgraph->order;   }
     bool empty()  {   return cgraph==nullptr || cgraph->n_nodes==0;    }
     virtual string __repr__( string& suffix,string& prefix,hGensor root=nullptr,int flag=0x0);
     virtual string __repr__( hGensor root=nullptr,int flag=0x0){
@@ -118,7 +121,7 @@ public:
 
     virtual size_t Size(int flag=0x0)      {   return ctx_size;  }
 
-    hGensor get_tensor(const char * name,int flag=0x0) {
+    /*hGensor get_tensor(const char * name,int flag=0x0) {
         for (int i = 0; i < n_leafs; i++) {
             hGensor leaf = leafs[i];
             if (strcmp(leaf->name, name) == 0) {
@@ -133,9 +136,7 @@ public:
         }
         assert(0);
         return NULL;
-    }
-
-    
+    }*/    
 
     int compute_on_plan( struct ggml_cplan* cplan,int flag=0x0);
 
@@ -154,34 +155,19 @@ public:
         GGML_PRINT_DEBUG("%s:  nT=%d  symbol=%d T = %.3g(plan=%.3g)sec\n", __func__,n_threads,isOnlySymbol, GST_TOC(t0),tPlan);
     }
 
-    virtual void BuildBackward();
-    void build_forward(hGensor tensor, bool expand,int flag=0x0)    {
-        const int n0 = n_nodes;
-        // UNUSED(n0);
-        if(1){
-            visit_parents(tensor);
-            cgraph->n_nodes = n_nodes;
-            cgraph->n_leafs = n_leafs;            
-        }else{
-            // ggml_visit_parents(cgraph, tensor,0);
-            n_nodes = cgraph->n_nodes;
-            n_leafs = cgraph->n_leafs;
-        }
-        const int n_new = n_nodes - n0;
-        GGML_PRINT_DEBUG("%s: visited %d new nodes\n", __func__, n_new);
-
-        if (n_new > 0) {
-            // the last added node should always be starting point
-            GGML_ASSERT(nodes[n_nodes - 1] == tensor);
-        }        
-    }
-
+    virtual struct ggml_cgraph * BuildBackward(struct ggml_context * ctx_compute,struct ggml_cgraph *gf,int flag=0x0);
+    
+    // Push new added node to last position
+    void PushBack(hGensor node,int flag=0x0);
+    
     void disconnect_node(ggml_tensor * t) {
         t->op = GGML_OP_NONE;
         for (int i = 0; i < GGML_MAX_SRC; i++) {
             t->src[i] = NULL;
         }
     }
+
+    bool isSink(hGensor node,int flag=0x0);   
 
     virtual void Traverse(int flag=0x0);
     // Deprecated
@@ -190,8 +176,8 @@ public:
 
         GGML_PRINT("=== GRAPH ===\n");
 
-        GGML_PRINT("n_nodes = %d\n", n_nodes);
-        for (int i = 0; i < n_nodes; i++) {
+        GGML_PRINT("n_nodes = %d\n", cgraph->n_nodes);
+        for (int i = 0; i < cgraph->n_nodes; i++) {
             hGensor node = nodes[i];
 // CYS_0826
             // perf_total_per_op_us[node->op] += MAX(1, node->perf_time_us);
@@ -206,8 +192,8 @@ public:
             //         (double) node->perf_time_us / 1000.0 / node->perf_runs);
         }
 
-        GGML_PRINT("n_leafs = %d\n", n_leafs);
-        for (int i = 0; i < n_leafs; i++) {
+        GGML_PRINT("n_leafs = %d\n", cgraph->n_leafs);
+        for (int i = 0; i < cgraph->n_leafs; i++) {
             hGensor node = leafs[i];
             GGML_PRINT(" - %3d: [ %5" PRId64 ", %5" PRId64 "] %8s %16s\n",
                     i,node->ne[0], node->ne[1],ggml_op_name(node->op), ggml_get_name(node));        }
@@ -220,10 +206,12 @@ public:
         GGML_PRINT("========================================\n");
     }
 
-    struct ggml_cgraph * CGraph() {
+    struct ggml_cgraph * raw() {
         assert(cgraph!=nullptr);
         return cgraph;
     }
 
     friend class Fish;
+    friend class NLP_AutoRegressive;
 };
+typedef std::shared_ptr<TGraph> hTGraph;

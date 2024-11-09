@@ -88,6 +88,7 @@ string NLP_AutoRegressive::__repr__( string& suffix,string& prefix,int flag)    
     // Fish::__repr__(suffix,prefix,flag);
     char buf[5012]="\0";
     const char*tab=prefix.c_str();
+    auto gb=hBackTG->raw(), gf=hForwTG->raw();;
     sprintf(buf+strlen(buf),"\n%s(%s):nParams = %ld(%.6gM)",tab,name.c_str(),nParams,nParams/1.0e6);
     if(gb!=nullptr)
         sprintf(buf+strlen(buf),"\n%s  tensors=%ld gf=(%d %d)  gb=(%d %d) ",tab, gensors.size(),gf->n_nodes,gf->n_leafs,gb->n_nodes,gb->n_leafs);
@@ -184,7 +185,10 @@ string QKV_LAY::__repr__( string& suffix,string& prefix,int flag)    {
     const char*tab=prefix.c_str();
     _T_repr_(att_norm.w,tab,buf);           _T_repr_(att_norm.b,tab,buf);
     _T_repr_(Q.w,tab,buf);                  _T_repr_(Q.b,tab,buf);       
-    _T_repr_(wk,tab,buf);       _T_repr_(wv,tab,buf);   _T_repr_(wo,tab,buf);   
+    _T_repr_(K.w,tab,buf);                  _T_repr_(K.b,tab,buf);   
+    _T_repr_(V.w,tab,buf);                  _T_repr_(V.b,tab,buf);   
+    // _T_repr_(wk,tab,buf);       _T_repr_(wv,tab,buf);   
+    _T_repr_(wo,tab,buf);   
     _T_repr_(ffn_norm.w,tab,buf);           _T_repr_(ffn_norm.b,tab,buf); 
     _T_repr_(ffn_gate,tab,buf);     
     _T_repr_(down.w,tab,buf);   _T_repr_(down.b,tab,buf);   _T_repr_(up.w,tab,buf);     _T_repr_(up.b,tab,buf);  
@@ -205,7 +209,7 @@ void NLP_AutoRegressive::build_inp_KQ_(struct ggml_context *ctx,bool isMask,bool
     // const float kv_scale = 1.0f/sqrtf(float(n_embd)/n_head);
         // KQ_pos - contains the positions
     KQ_pos = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, hparams.n_ctx());
-    sprintf(nam_,"inp_pos");    set_name(KQ_pos, nam_);  
+    sprintf(nam_,"inp_pos");    gTN(KQ_pos, nam_);  
     ggml_set_input(KQ_pos);    
     int * data = (int *) KQ_pos->data;
     // @BuildComputeGraph After ggml_gallocr_alloc_graph(alloc, gb)!
@@ -217,7 +221,7 @@ void NLP_AutoRegressive::build_inp_KQ_(struct ggml_context *ctx,bool isMask,bool
         KQ_mask = causal
             ? ggml_new_tensor_2d(ctx, dt, n_kv,     GGML_PAD(n_tokens, GGML_KQ_MASK_PAD))
             : ggml_new_tensor_2d(ctx, dt, n_tokens, GGML_PAD(n_tokens, GGML_KQ_MASK_PAD));
-        sprintf(nam_,"KQ_mask");    set_name(KQ_mask, nam_);      //cb(lctx.KQ_mask, "KQ_mask", -1);
+        sprintf(nam_,"KQ_mask");    gTN(KQ_mask, nam_);      //cb(lctx.KQ_mask, "KQ_mask", -1);
         ggml_set_input(KQ_mask);
         KQ_mask = isFlash ? ggml_cast(ctx, KQ_mask, GGML_TYPE_F16) : KQ_mask;        
     }
@@ -237,8 +241,8 @@ hGensor NLP_AutoRegressive::build_layer_( int N,struct ggml_context *ctx_compute
     const float kv_scale = 1.0f/sqrtf(float(hparams.n_embd)/hparams.n_head());
     const int n_past = 0, n_head_kv=hparams.n_head_kv(),n_embd_head = hparams.n_embd_head();
     hGensor wq = UpdateGensor (layer->Q.w->name);                     
-    hGensor wk = layer->wk==nullptr ? nullptr : UpdateGensor (layer->wk->name);
-    hGensor wv = layer->wv==nullptr ? nullptr : UpdateGensor (layer->wv->name);
+    hGensor wk = layer->K.w==nullptr ? nullptr : UpdateGensor (layer->K.w->name);
+    hGensor wv = layer->V.w==nullptr ? nullptr : UpdateGensor (layer->V.w->name);
     hGensor wo = UpdateGensor (layer->wo->name);
     hGensor attention_norm = UpdateGensor (layer->att_norm.w->name);    
     hGensor ffn_norm = layer->ffn_norm.w==nullptr ? nullptr : UpdateGensor (layer->ffn_norm.w->name); 
@@ -250,13 +254,13 @@ hGensor NLP_AutoRegressive::build_layer_( int N,struct ggml_context *ctx_compute
     }
     //  rms_norm:   Root Mean Square Layer Normalization
     hGensor  t02 = ggml_rms_norm     (ctx_compute, inpL, f_norm_rms_eps);                    
-    sprintf(nam_,"norm_L-%d",layer->id),   set_name(t02, nam_);     assert_shape_2d(t02, n_embd, N*n_batch);
+    sprintf(nam_,"norm_L-%d",layer->id),   gTN(t02, nam_);     assert_shape_2d(t02, n_embd, N*n_batch);
     hGensor  t03 = attention_norm;
     if(isTrain()){
-        t03 = ggml_repeat(ctx_compute, attention_norm, t02);              set_name(t03, "attnorm.w.repeat");     assert_shape_2d(t03, n_embd, N*n_batch);
+        t03 = ggml_repeat(ctx_compute, attention_norm, t02);              gTN(t03, "attnorm.w.repeat-%d",layer->id);     assert_shape_2d(t03, n_embd, N*n_batch);
     }
     hGensor  tBase = ggml_mul          (ctx_compute, t02, t03);                               
-    sprintf(nam_,"attn_norm-%d",layer->id),   set_name(tBase, nam_);     assert_shape_2d(tBase, n_embd, N*n_batch);
+    sprintf(nam_,"attn_norm-%d",layer->id),   gTN(tBase, nam_);     assert_shape_2d(tBase, n_embd, N*n_batch);
     if(isBias){
 
     }
@@ -265,55 +269,55 @@ hGensor NLP_AutoRegressive::build_layer_( int N,struct ggml_context *ctx_compute
     hGensor t16 = hBrown->Build(ctx_compute , tBase,  KQ_pos);          // [128,17,6,1]    
 
     hGensor  t20 = ggml_mul_mat      (ctx_compute, wo, t16);                          
-    sprintf(nam_,"kqv_out-%d",layer->id),           set_name(t20, nam_);     assert_shape_2d(t20, n_embd, N*n_batch);
+    sprintf(nam_,"kqv_out-%d",layer->id),           gTN(t20, nam_);     assert_shape_2d(t20, n_embd, N*n_batch);
     if (layer->isLast && 0) {          //would crash if not set inp_out_ids       
         // skip computing output for unused tokens
         struct ggml_tensor * inp_out_ids = ggml_new_tensor_1d(ctx_compute, GGML_TYPE_I32, n_outputs);   //n_outputs=(worst_case ? n_tokens : lctx.n_outputs),
-        sprintf(nam_,"inp_out_ids"),     set_name(inp_out_ids, nam_);     // cb(lctx.inp_out_ids, "inp_out_ids", -1);
+        sprintf(nam_,"inp_out_ids"),     gTN(inp_out_ids, nam_);     // cb(lctx.inp_out_ids, "inp_out_ids", -1);
         ggml_set_input(inp_out_ids);
         t20   = ggml_get_rows(ctx_compute,   t20, inp_out_ids);
         inpL = ggml_get_rows(ctx_compute, inpL, inp_out_ids);
     }
     hGensor  ffn_inp = ggml_add          (ctx_compute, t20, inpL);                               
-    sprintf(nam_,"ffn_inp-%d",layer->id),           set_name(ffn_inp, nam_);     assert_shape_2d(ffn_inp, n_embd, N*n_batch);
+    sprintf(nam_,"ffn_inp-%d",layer->id),           gTN(ffn_inp, nam_);     assert_shape_2d(ffn_inp, n_embd, N*n_batch);
     hGensor  ffn = nullptr;
     switch(tpFFN)   {
     case VAR_LAST:
     case SWIGLU:    {
         hGensor  t22 = ggml_rms_norm     (ctx_compute, ffn_inp, f_norm_rms_eps);                    
-        sprintf(nam_,"norm_ffn-%d",layer->id),    set_name(t22, nam_);     assert_shape_2d(t22, n_embd, N*n_batch);
+        sprintf(nam_,"norm_ffn-%d",layer->id),    gTN(t22, nam_);     assert_shape_2d(t22, n_embd, N*n_batch);
         ffn = t22;
         if(ffn_norm!=nullptr)       {
             hGensor  t23 = ffn_norm; //ggml_repeat       (ctx_compute, ffn_norm, t22);    
              if(isTrain()){
                 t23 = ggml_repeat       (ctx_compute, ffn_norm, t22);    
-                set_name(t23, "ffn_norm.repeat");     assert_shape_2d(t23, n_embd, N*n_batch);
+                gTN(t23, "ffn_norm.repeat-%d",layer->id);     assert_shape_2d(t23, n_embd, N*n_batch);
             }      
             hGensor  t24 = ggml_mul          (ctx_compute, t22, t23);                               
-            sprintf(nam_,"ffn_norm-%d",layer->id),    set_name(t24, nam_);     assert_shape_2d(t24, n_embd, N*n_batch); 
+            sprintf(nam_,"ffn_norm-%d",layer->id),    gTN(t24, nam_);     assert_shape_2d(t24, n_embd, N*n_batch); 
             ffn = t24;                 
         }
           
         if(ffn_up!=nullptr){
-            // hGensor  t22 = ggml_rms_norm     (ctx_compute, t21, f_norm_rms_eps);                    set_name(t22, "t22");     assert_shape_2d(t22, n_embd, N*n_batch);
-            // hGensor  t23 = ggml_repeat       (ctx_compute, ffn_norm, t22);                    set_name(t23, "t23");     assert_shape_2d(t23, n_embd, N*n_batch);
-            // hGensor  t24 = ggml_mul          (ctx_compute, t23, t22);                               set_name(t24, "t24");     assert_shape_2d(t24, n_embd, N*n_batch);
+            // hGensor  t22 = ggml_rms_norm     (ctx_compute, t21, f_norm_rms_eps);                    gTN(t22, "t22");     assert_shape_2d(t22, n_embd, N*n_batch);
+            // hGensor  t23 = ggml_repeat       (ctx_compute, ffn_norm, t22);                    gTN(t23, "t23");     assert_shape_2d(t23, n_embd, N*n_batch);
+            // hGensor  t24 = ggml_mul          (ctx_compute, t23, t22);                               gTN(t24, "t24");     assert_shape_2d(t24, n_embd, N*n_batch);
             hGensor  t24 = ffn;
             hGensor  t25 = ggml_mul_mat      (ctx_compute, ffn_up, t24);                      
-            sprintf(nam_,"ffn_up-%d",layer->id),set_name(t25, nam_);     assert_shape_2d(t25, n_ff, N*n_batch);
+            sprintf(nam_,"ffn_up-%d",layer->id),gTN(t25, nam_);     assert_shape_2d(t25, n_ff, N*n_batch);
             hGensor  t26 = ggml_mul_mat      (ctx_compute, ffn_gate, t24);                    
-            sprintf(nam_,"ffn_gate-%d",layer->id),  set_name(t26, nam_);     assert_shape_2d(t26, n_ff, N*n_batch);
+            sprintf(nam_,"ffn_gate-%d",layer->id),  gTN(t26, nam_);     assert_shape_2d(t26, n_ff, N*n_batch);
             hGensor  t27 = ggml_silu         (ctx_compute, t26);                                    
-            sprintf(nam_,"ffn_silu-%d",layer->id),         set_name(t27, nam_);      assert_shape_2d(t27, n_ff, N*n_batch);
+            sprintf(nam_,"ffn_silu-%d",layer->id),         gTN(t27, nam_);      assert_shape_2d(t27, n_ff, N*n_batch);
             hGensor  t28 = ggml_mul          (ctx_compute, t27, t25);                               
-            sprintf(nam_,"ffn_gate_par-%d",layer->id),         set_name(t28, nam_);     assert_shape_2d(t28, n_ff, N*n_batch);
+            sprintf(nam_,"ffn_gate_par-%d",layer->id),         gTN(t28, nam_);     assert_shape_2d(t28, n_ff, N*n_batch);
             hGensor  t29 = ggml_mul_mat      (ctx_compute, ffn_down, t28);                    
-            sprintf(nam_,"ffn_out-%d",layer->id),  set_name(t29, nam_);   assert_shape_2d(t29, n_embd, N*n_batch);
+            sprintf(nam_,"ffn_out-%d",layer->id),  gTN(t29, nam_);   assert_shape_2d(t29, n_embd, N*n_batch);
             hGensor  t30 = ggml_add          (ctx_compute, t29, ffn_inp);   ffn = t30;
         }
         if(layer->eps!=nullptr){
             // hGensor  t300 = ffn!=nullptr ? ggml_rms_norm(ctx_compute, ffn, f_norm_rms_eps) : ggml_rms_norm(ctx_compute, t21, f_norm_rms_eps);
-            randomize_tensor_normal(layer->eps, rnd);       set_name(layer->eps, "var_noise"); 
+            randomize_tensor_normal(layer->eps, rnd);       gTN(layer->eps, "var_noise"); 
             hGensor  noise = ggml_scale_inplace(ctx_compute, layer->eps, 0.001);
             ffn = ggml_add          (ctx_compute, ffn,noise);     
         }else{
@@ -326,14 +330,14 @@ hGensor NLP_AutoRegressive::build_layer_( int N,struct ggml_context *ctx_compute
         assert(ffn_up==nullptr);
         hGensor  t22 = tpFFN==ONLY_LNormal ? ggml_norm(ctx_compute, ffn_inp, f_norm_rms_eps) :
             ggml_rms_norm(ctx_compute, ffn_inp, f_norm_rms_eps);
-        set_name(t22, "t22");               assert_shape_2d(t22, n_embd, N*n_batch);   
+        gTN(t22, "t22");               assert_shape_2d(t22, n_embd, N*n_batch);   
         if(tpFFN==VAR_0)     {
             randomize_tensor_normal(layer->eps, rnd); 
             hGensor  noise = ggml_scale_inplace(ctx_compute, layer->eps, 0.001);
             ffn = ggml_add          (ctx_compute, t22,noise);     
             // ffn = t22;        
         }else{
-            hGensor  t23 = ggml_repeat       (ctx_compute, ffn_norm, t22);                    set_name(t23, "t23");     assert_shape_2d(t23, n_embd, N*n_batch);
+            hGensor  t23 = ggml_repeat       (ctx_compute, ffn_norm, t22);                    gTN(t23, "t23");     assert_shape_2d(t23, n_embd, N*n_batch);
             ffn = ggml_mul          (ctx_compute, t23, t22);
         }
         break;
@@ -354,12 +358,12 @@ hGensor NLP_AutoRegressive::build_layer_( int N,struct ggml_context *ctx_compute
         // hGensor  tVar = ggml_mul          (ctx_compute, layer->w_var, t21);*/
         //  trick v1
                               
-            // set_name(t30, "t30");     assert_shape_2d(t30, n_embd, N*n_batch);        
+            // gTN(t30, "t30");     assert_shape_2d(t30, n_embd, N*n_batch);        
     }else{
         
     }       
     assert_shape_2d(ffn, n_embd, N*n_batch);
-    sprintf(nam_,"l_out-%d",layer->id),  set_name(ffn, nam_);
+    sprintf(nam_,"l_out-%d",layer->id),  gTN(ffn, nam_);
     return ffn;          
 }
 
@@ -373,7 +377,7 @@ std::string NLP_AutoRegressive::Name()     {
 
 //REF: ggml_compute_forward_dup_bytes
 void NLP_AutoRegressive::CopyWeight(const Fish* src,int flag) {
-    auto gsrc = src->gf;
+    auto gsrc = src->hForwTG->raw();
     size_t nx=0,nz,nT=0;
     
     for (int i = 0; i < gsrc->n_nodes; ++i) {
@@ -401,6 +405,7 @@ void NLP_AutoRegressive::CopyWeight(const Fish* src,int flag) {
 bool NLP_AutoRegressive::LocalFeeling(std::vector<TOKEN_ID>&samp_tokens,vector<float>& result)  const {
     assert(target_probs->type == GGML_TYPE_F32);
     float *fLoss = (float*)(loss->data);    
+    auto gf = hForwTG->raw(),gb = hBackTG->raw();
     TOKEN_ID token;
     ggml_set_i32_nd(tokens_input, 0, 0, 0, 0, hDict->bos);
     size_t i,N=samp_tokens.size(),n_context=tokens_input->ne[0],nSampInBatch=tokens_input->ne[1];
@@ -448,7 +453,7 @@ hGensor Fish::BuildLoss( struct ggml_context * ctx,hGensor cur,int flag){
         t36 = ggml_cross_entropy_loss_1(ctx, cur, target_probs);
     else
         t36 = ggml_cross_entropy_loss(ctx, cur, target_probs);          //  square_error_loss(ctx0, targets, logits);       
-    set_name(t36, "loss");     assert_shape_1d(t36, 1);
+    gTN(t36, "loss");     assert_shape_1d(t36, 1);
     loss = t36;
     if(isTrain())
         assert(loss->grad!=nullptr);
@@ -463,22 +468,22 @@ hGensor NLP_AutoRegressive::BuildTarget( struct ggml_context * ctx,hGensor cur,i
     const int N = train_params.n_ctx, n_past = 0;
     const float rms_norm_eps = hparams.f_norm_rms_eps;
     hGensor  t32 = nullptr,wA = nullptr,wB = nullptr;
-    hGensor  t31 = ggml_rms_norm(ctx, cur, rms_norm_eps);                    set_name(t31, "norm");     
+    hGensor  t31 = ggml_rms_norm(ctx, cur, rms_norm_eps);                    gTN(t31, "norm");     
     assert_shape_2d(t31, hparams.n_embd, N*train_params.n_batch);
     
     if(hDict->nLevel>0){
         t31 = hDict->DEC(ctx,t31);      //t31 = ggml_mul_mat(ctx, hDict->decoder, t31 );  
-        set_name(t31, "embed_decoder");
+        gTN(t31, "embed_decoder");
         t32 = ggml_repeat            (ctx, _tNorm, t31); 
         n_embd = t32->ne[0];
     }   else{
         if(isTrain()){
             t32 = ggml_repeat(ctx, _tNorm, t31);   //_tNorm shoud same shape as t31 if has grad!
-            set_name(t32, "_tNorm.repeat");     //assert_shape_2d(t32, n_embd, N*n_batch);
+            gTN(t32, "_tNorm.repeat");     //assert_shape_2d(t32, n_embd, N*n_batch);
         }else
             t32 = _tNorm ;   
     }     
-    hGensor  t33   = ggml_mul(ctx, t31, t32);                             set_name(t33, "result_norm");     
+    hGensor  t33   = ggml_mul(ctx, t31, t32);                             gTN(t33, "result_norm");     
     assert_shape_2d(t33, n_embd, N*n_batch);
     if(role==ROLE_TYPE::SWARM_FOLLOWER){
         out_node = t33 ;        return out_node;
@@ -487,9 +492,9 @@ hGensor NLP_AutoRegressive::BuildTarget( struct ggml_context * ctx,hGensor cur,i
             t33 = mos.Build(hparams,ctx,t33);
         }
         hGensor t34 = hDict->Embed2Output(ctx,t33);
-        // hGensor  t34   = ggml_mul_mat           (ctx, _tOutput, t33);                          set_name(t34, "t34");     
+        // hGensor  t34   = ggml_mul_mat           (ctx, _tOutput, t33);                          gTN(t34, "t34");     
         assert_shape_2d(t34, n_vocab, N*n_batch);
-        hGensor  t35 = n_batch==1 ? t34 : ggml_reshape_3d(ctx, t34, n_vocab, N, n_batch);             set_name(t35, "t35");     
+        hGensor  t35 = n_batch==1 ? t34 : ggml_reshape_3d(ctx, t34, n_vocab, N, n_batch);             gTN(t35, "t35");     
         assert_shape_3d(t35, n_vocab, N, n_batch);
         // no,no,no! 1) Softmax layers can be difficult to train since the gradients can vanish or explode  2) CrossEntropyLoss assumes logits on the input.
         //  t35 = ggml_soft_max_inplace(ctx,t35); 
@@ -515,20 +520,11 @@ hGensor NLP_AutoRegressive::BuildTarget( struct ggml_context * ctx,hGensor cur,i
             }        
         }
         out_node = BuildLoss(ctx,t35);
-        /*hGensor  t36 = nullptr;    
-        if(hparams.is({"model","target"},string("OneHot")))
-            t36 = ggml_cross_entropy_loss_1(ctx, t35, target_probs);
-        else
-            t36 = ggml_cross_entropy_loss(ctx, t35, target_probs);          //  square_error_loss(ctx0, targets, logits);       
-        set_name(t36, "t36");     assert_shape_1d(t36, 1);
-        loss = t36;
-        out_node = t36;*/
         if (train_params.use_checkpointing) {
             checkpoints.push_back(t31);            checkpoints.push_back(t32);            checkpoints.push_back(t33);
             checkpoints.push_back(t34);            checkpoints.push_back(t35);            checkpoints.push_back(out_node);
         }    
         preLogits = t35;
-        
     }
 
     if(isTrain())
@@ -539,85 +535,7 @@ hGensor NLP_AutoRegressive::BuildTarget( struct ggml_context * ctx,hGensor cur,i
     return out_node;
 }
 
-int Fish::BuildComputeGraph(int order,struct ggml_context * ctx,ggml_gallocr_t& alloc,int flag){
-    auto train_params = hparams.common;
-    train_params.use_checkpointing = false;     // CYS_0826
-       
-    if(order>=0){   //order<0: we have build it in other way
-        gf->order = (enum ggml_cgraph_eval_order) order;    
-        ggml_build_forward_expand(gf, out_node);  
-        // TGraph(gf).__repr__(out_node);  
-    }int n0=gf->n_nodes; 
-    if(!isLocalInfer){
-        gb = ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true);
-        gb_tmp = train_params.use_checkpointing ? ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true) : NULL;
-    }  
-    
-    auto leaf0=gf->nodes[0];
-    const int N = train_params.n_ctx, n_past = 0;
-    if (train_params.use_checkpointing) {
-        if(gb!=nullptr) 
-            ggml_build_backward_gradient_checkpointing(ctx, gf, gb, gb_tmp, checkpoints.data(), (int) checkpoints.size());
-    } else {
-        if(gb!=nullptr){
-            ggml_graph_cpy(gf, gb);
-            ggml_build_backward_expand(ctx, gf, gb, true);       
-            // TGraph(gf).__repr__(out_node);  
-            // TGraph(gb).__repr__(out_node);       
-        }
-    }
 
-    GGML_ASSERT(alloc != NULL);
-    if(isLocalInfer){  //gb=nullptr
-        GGML_ASSERT(alloc != NULL);
-        assert(gb==nullptr);
-        ggml_gallocr_alloc_graph(alloc, gf);         
-        // int * data = (int *) KQ_pos->data;
-        // for (int i = 0; i < N; ++i) {
-        //     data[i] = n_past + i;
-        // }
-    } else { // gb!=nullptr
-        // make sure some tensors are not reallocated by inserting new temporary nodes depending on them
-        int n_leafs_before = gb->n_leafs;
-        int n_nodes_before = gb->n_nodes;
-        // output_ tensors
-        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, preLogits, 1.0f));
-        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, loss, 1.0f));
-        // input gradient
-        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, out_node->grad, 1.0f));
-        GGML_ASSERT(out_node->grad->data == NULL && out_node->grad->view_src == NULL);
-        ggml_set_input(out_node->grad);
-        // KQ_pos
-        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, KQ_pos, 1.0f));
-        // allocating checkpoints in one block to reduce memory fragmentation they will be freed in reverse order    
-
-        for (unsigned int i = 0; i < checkpoints.size(); ++i) {
-            if (checkpoints[i]->data == NULL && checkpoints[i]->view_src == NULL) {
-                ggml_set_input(checkpoints[i]);
-            }
-        }
-        if (measure_only) {
-            ggml_gallocr_reserve(alloc, gb);
-        } else {
-            ggml_gallocr_alloc_graph(alloc, gb);    //367,8088  
-        }
-        // remove the additional nodes and leafs
-        for (int i = n_leafs_before; i < gb->n_leafs; ++i) {
-            gb->leafs[i] = NULL;
-        }
-        for (int i = n_nodes_before; i < gb->n_nodes; ++i) {
-            gb->nodes[i] = NULL;
-        }
-        gb->n_leafs = n_leafs_before;
-        gb->n_nodes = n_nodes_before;
-    }
-    int * data = (int *) KQ_pos->data;
-    for (int i = 0; i < N; ++i) {
-        data[i] = n_past + i;
-    }
-    
-    return 0x0;
-}
 
 
 struct ggml_cgraph * llama_build_graph(llama_context & lctx,const llama_batch & batch,bool   worst_case);
@@ -1029,8 +947,8 @@ void NLP_AutoRegressive::InitEntryTensors(int flag) {
     size_t max_input_size = ggml_backend_buffer_get_size(input_data);
     _INFO("%s: input_size(%d,%d) = %zu bytes (%.1f MB)\n", __func__, n_ctx, n_batch, max_input_size, (float) max_input_size / (1024.0f*1024.0f));
     // ggml_free(ctx_input);
-    set_name(tokens_input, "inp_tokens");
-    set_name(target_probs,      "targets");
+    gTN(tokens_input, "inp_tokens");
+    gTN(target_probs,      "targets");
 }
 
 
@@ -1122,9 +1040,9 @@ bool NLP_AutoRegressive::Build(int flag)      {
                     size_t max_compute_size = ggml_gallocr_get_buffer_size(alloc_tmp, 0); // FIXME: this will still allocate the buffer
                     if (max_compute_size < best_compute_size) {
                         best_compute_size = max_compute_size;
-                        best_order = gf->order;
+                        best_order = hForwTG->Order();
                     }
-                    ggml_gallocr_free(alloc_tmp);           gf = nullptr;
+                    ggml_gallocr_free(alloc_tmp);           //gf = nullptr;
                     // ggml_free(ctx_compute);
                 }
             
@@ -1142,7 +1060,8 @@ bool NLP_AutoRegressive::Build(int flag)      {
 
             alloc = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
             BuildOperators(ctx_compute,alloc,false,flag);   
-            BuildComputeGraph(best_order,ctx_compute,alloc,flag);
+            if( BuildComputeGraph(best_order,ctx_compute,alloc,flag)!=0x0)
+                return false;
         }
     }
     Statistic(0x0);
@@ -1166,8 +1085,8 @@ void NLP_AutoRegressive::InitGensors(int flag){
         auto layer = dynamic_pointer_cast<QKV_LAY>(layers[i]);        
         InitGensor(ctx,layer->att_norm.w, TN(LLM_TENSOR_ATTN_NORM, i), rnd);
         InitGensor(ctx,layer->Q.w,             TN(LLM_TENSOR_ATTN_Q, i), rnd);
-        if(layer->wk!=nullptr)      InitGensor(ctx,layer->wk,TN(LLM_TENSOR_ATTN_K, i), rnd);
-        if(layer->wv!=nullptr)      InitGensor(ctx,layer->wv,TN(LLM_TENSOR_ATTN_V, i), rnd);
+        if(layer->K.w!=nullptr)      InitGensor(ctx,layer->K.w,TN(LLM_TENSOR_ATTN_K, i), rnd);
+        if(layer->V.w!=nullptr)      InitGensor(ctx,layer->V.w,TN(LLM_TENSOR_ATTN_V, i), rnd);
         InitGensor(ctx,layer->wo,             TN(LLM_TENSOR_ATTN_OUT, i), rnd);
         if(layer->ffn_norm.w!=nullptr)
             InitGensor(ctx,layer->ffn_norm.w,       TN(LLM_TENSOR_FFN_NORM, i), rnd);
@@ -1225,11 +1144,11 @@ void NLP_AutoRegressive::InitModel(int flag){
 
         if(tpATT==ATTENTION_TYPE::QKV){
             layer->Q.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
-            layer->wk = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
-            layer->wv = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);                
+            layer->K.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
+            layer->V.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);                
         }else{
             if(BROWN_Motion::Transfer_1){
-                layer->wv = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, 1);                
+                layer->V.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, 1);                
                 layer->Q.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
             }else{
                 layer->Q.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
@@ -1282,19 +1201,19 @@ void NLP_AutoRegressive::LoadTensors(struct llama_model * lama,int flag) {
         layers.push_back(layer);        
         layer->att_norm.w = llama_get_model_tensor(lama, TN(LLM_TENSOR_ATTN_NORM, i));     nParams+=ggml_nelements(layer->att_norm.w);
         layer->Q.w             = llama_get_model_tensor(lama, TN(LLM_TENSOR_ATTN_Q, i));        nParams+=ggml_nelements(layer->Q.w);
-        layer->wk             = llama_get_model_tensor(lama, TN(LLM_TENSOR_ATTN_K, i));        nParams+=ggml_nelements(layer->wk);
-        layer->wv             = llama_get_model_tensor(lama, TN(LLM_TENSOR_ATTN_V, i));        nParams+=ggml_nelements(layer->wv);
+        layer->K.w             = llama_get_model_tensor(lama, TN(LLM_TENSOR_ATTN_K, i));        nParams+=ggml_nelements(layer->K.w);
+        layer->V.w             = llama_get_model_tensor(lama, TN(LLM_TENSOR_ATTN_V, i));        nParams+=ggml_nelements(layer->V.w);
         layer->wo             = llama_get_model_tensor(lama, TN(LLM_TENSOR_ATTN_OUT, i));      nParams+=ggml_nelements(layer->wo);
         layer->ffn_norm.w       = llama_get_model_tensor(lama, TN(LLM_TENSOR_FFN_NORM, i));      nParams+=ggml_nelements(layer->ffn_norm.w);
         layer->ffn_gate       = llama_get_model_tensor(lama, TN(LLM_TENSOR_FFN_GATE, i));      nParams+=ggml_nelements(layer->ffn_gate);
         layer->down.w       = llama_get_model_tensor(lama, TN(LLM_TENSOR_FFN_DOWN, i));      nParams+=ggml_nelements(layer->down.w);
         layer->up.w         = llama_get_model_tensor(lama, TN(LLM_TENSOR_FFN_UP, i));        nParams+=ggml_nelements(layer->up.w); 
 
-        Gensor2Map({layer->att_norm.w,layer->Q.w,layer->wk,layer->wv,layer->wo,layer->ffn_norm.w,layer->ffn_gate,layer->down.w,layer->up.w});
+        Gensor2Map({layer->att_norm.w,layer->Q.w,layer->K.w,layer->V.w,layer->wo,layer->ffn_norm.w,layer->ffn_gate,layer->down.w,layer->up.w});
         assert_shape_1d(layer->att_norm.w, hparams.n_embd);
         assert_shape_2d(layer->Q.w,             hparams.n_embd, hparams.n_embd);
-        assert_shape_2d(layer->wk,             hparams.n_embd, hparams.n_embd_gqa());
-        assert_shape_2d(layer->wv,             hparams.n_embd, hparams.n_embd_gqa());
+        assert_shape_2d(layer->K.w,             hparams.n_embd, hparams.n_embd_gqa());
+        assert_shape_2d(layer->V.w,             hparams.n_embd, hparams.n_embd_gqa());
         assert_shape_2d(layer->wo,             hparams.n_embd, hparams.n_embd);
         assert_shape_1d(layer->ffn_norm.w,       hparams.n_embd);
         assert_shape_2d(layer->ffn_gate,       hparams.n_embd, hparams.n_ff());

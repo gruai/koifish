@@ -47,15 +47,12 @@ static const char *LLM_TENSOR_FFN_DOWN_SHEXP    = "blk.%d.ffn_down_shexp";
 static const char *LLM_TENSOR_FFN_UP_SHEXP      = "blk.%d.ffn_up_shexp";
 
    
-void static set_name(struct ggml_tensor * t, const char * n) {
-    ggml_set_name(t, n);
-    if (t->grad) {
-        ggml_format_name(t->grad, "%s->grad", n);
-    }
-};
-
-
-
+// void static set_name(struct ggml_tensor * t, const char * n) {
+//     ggml_set_name(t, n);
+//     if (t->grad) {
+//         ggml_format_name(t->grad, "%s->grad", n);
+//     }
+// };
 struct LAMA : public WIKI   {    
     struct llama_hparams llama_params;
     struct llama_model_params llama_model_params = llama_model_default_params();
@@ -205,11 +202,6 @@ struct NLP_AutoRegressive : public Fish {
         __repr__(suffix,prefix);
         hparams.Dump();         //        print_params(&hparams)
         _INFO("====== nParams = %ld(%.6gM) ======\n", nParams,nParams/1.0e6);
-        // _INFO("====== gensors=%d gf=(%d %d)  gb=(%d %d) ======\n", gensors.size(),gf->n_nodes,gf->n_leafs,gb->n_nodes,gb->n_leafs);
-        // _INFO("%s: total train_iterations %llu\n", __func__, (long long unsigned) train->train_its);
-        // _INFO("%s: seen train_samples     %llu\n", __func__, (long long unsigned) train->train_samples);
-        // _INFO("%s: seen train_tokens      %llu\n", __func__, (long long unsigned) train->train_tokens);
-        // _INFO("%s: completed train_epochs %llu\n", __func__, (long long unsigned) train->train_epochs);
         _INFO("%s: nParams=%zu model_size = %zu bytes (%.1f MB)\n", __func__, nParams,szModel,szModel / (1024.0f*1024.0f) );
         _INFO("%s: n_vocab=%d t_vocab=%d,n_batch=%d,n_ctx=%d,n_embd=%d,n_head=%d,n_rot=%d,n_ff=%d\n", __func__, 
             n_vocab,tVocab(),n_batch,n_ctx,n_embd,hparams.n_head(),hparams.n_rot,hparams.n_ff() );
@@ -224,7 +216,7 @@ struct NLP_AutoRegressive : public Fish {
     }
     
     bool Build(int flag=0x0)   override;
-    void Build_v0(int flag=0x0)      {    
+    /*void Build_v0(int flag=0x0)      {    
         _WARN("\n%s Deprecated!!!\n",__func__);    
         InitEntryTensors(flag); 
         
@@ -281,7 +273,7 @@ struct NLP_AutoRegressive : public Fish {
 #ifndef NDEBUG
         // ggml_graph_print(gf);           ggml_graph_print(gb);       //only for debug
 #endif
-    }
+    }*/
 
     hGensor BuildTarget( struct ggml_context * ctx,hGensor cur,int flag=0x0)   override; 
     
@@ -300,7 +292,9 @@ struct NLP_AutoRegressive : public Fish {
     virtual hGensor  build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<QKV_LAY> layer,hGensor KQ_pos,int flag=0x0) ;
 
     virtual void BuildOperators(struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,int flag=0x0)   {    
-        gf = ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true);    
+        // gf = ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true);    
+        hForwTG = std::make_shared<TGraph>(this,"Forward",ctx_compute,true);         
+
         auto train_params = hparams.common;     
         int n_batch  = train_params.n_batch;
         measure_only = m_only;
@@ -314,12 +308,12 @@ struct NLP_AutoRegressive : public Fish {
         hGensor _tEmbed = UpdateGensor (hDict->tok_embeddings-> name);      //embedding of all tokens
         
         // hGensor _tOutput = UpdateGensor (hDict->_output.w->name);       
-        hGensor  t00 = n_batch==1 ? tokens_input : ggml_reshape_1d(ctx, tokens_input, n_ctx*n_batch);  //set_name(t00, "t00"); 
+        hGensor  t00 = n_batch==1 ? tokens_input : ggml_reshape_1d(ctx, tokens_input, n_ctx*n_batch);  //gTN(t00, "t00"); 
         assert_shape_1d(t00, n_ctx*n_batch);
-        hGensor  t01 = ggml_get_rows(ctx, _tEmbed, t00);    set_name(t01, "inp_embd"); 
+        hGensor  t01 = ggml_get_rows(ctx, _tEmbed, t00);    gTN(t01, "inp_embd"); 
         hGensor  cur = t01;        
         cur = hDict->ENC(ctx,t01);      // cur=t01 if hDict->dims is empty;
-        if(cur!=t01)        set_name(cur, "embed_encoder");  
+        if(cur!=t01)        gTN(cur, "embed_encoder");  
         assert_shape_2d(cur, n_embd, n_ctx*n_batch);
         checkpoints.clear();
         checkpoints.push_back(tokens_input);        checkpoints.push_back(target_probs);        
@@ -422,10 +416,10 @@ struct LLAMA_LORA  : public NLP_AutoRegressive {
             InitFactor(ctx, lay_->Q.w,lora_type, n_rank_wq,0x0);
             // layer->wq_a = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_rank_wq, n_embd);
             // layer->wq_b = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_rank_wq, n_embd);
-            InitFactor(ctx, lay_->wk,lora_type, n_rank_wk, 0x0);
+            InitFactor(ctx, lay_->K.w,lora_type, n_rank_wk, 0x0);
             // layer->wk_a = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_rank_wk, n_embd);
             // layer->wk_b = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_rank_wk, n_embd_gqa);
-            InitFactor(ctx, lay_->wv,lora_type, n_rank_wv, 0x0);
+            InitFactor(ctx, lay_->V.w,lora_type, n_rank_wv, 0x0);
             // layer->wv_a = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_rank_wv, n_embd);
             // layer->wv_b = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_rank_wv, n_embd_gqa);
             InitFactor(ctx, lay_->wo,lora_type, n_rank_wo, 0x0);
@@ -587,8 +581,8 @@ struct LLAMA_LORA  : public NLP_AutoRegressive {
         hGensor  KQ_pos = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, n_ctx);
         ggml_set_input(KQ_pos);
         struct ggml_context   * ctx0= ctx;
-        set_name(tokens_input, "inp_tokens");
-        set_name(target_probs,      "targets");
+        gTN(tokens_input, "inp_tokens");
+        gTN(target_probs,      "targets");
         auto rope = [ctx, KQ_pos, n_rot, n_ctx, rope_freq_base, rope_freq_scale]
                 (struct ggml_tensor * t) -> struct ggml_tensor * {
             // not capturing these, to silcence warnings
@@ -610,8 +604,8 @@ struct LLAMA_LORA  : public NLP_AutoRegressive {
         // _tNorm = UpdateGensor (base->hDict->_norm.w->name); 
         // _tOutput = UpdateGensor (base->hDict->_output.w->name);         
 
-        hGensor  t00 = ggml_reshape_1d(ctx, tokens_input, n_ctx*n_batch);  set_name(t00, "t00"); assert_shape_1d(t00, n_ctx*n_batch);
-        hGensor  t01 = ggml_get_rows(ctx, _tEmbed, t00);        set_name(t01, "t01"); assert_shape_2d(t01, n_embd, n_ctx*n_batch);
+        hGensor  t00 = ggml_reshape_1d(ctx, tokens_input, n_ctx*n_batch);  gTN(t00, "t00"); assert_shape_1d(t00, n_ctx*n_batch);
+        hGensor  t01 = ggml_get_rows(ctx, _tEmbed, t00);        gTN(t01, "t01"); assert_shape_2d(t01, n_embd, n_ctx*n_batch);
         hGensor  cur = t01;
         checkpoints.clear();
         // std::vector<struct ggml_tensor *> checkpoints;
@@ -626,8 +620,8 @@ struct LLAMA_LORA  : public NLP_AutoRegressive {
             // auto llayer = dynamic_pointer_cast<lora_layer>(lora_layers[il]); 
             hGensor a_norm = UpdateGensor (layer->att_norm.w->name);   
             hGensor wq = n_rank_wq ==0 ? nullptr : UpdateGensor (layer->Q.w->name);                     
-            hGensor wk = n_rank_wk ==0 ? nullptr : UpdateGensor (layer->wk->name);
-            hGensor wv = n_rank_wv ==0 ? nullptr : UpdateGensor (layer->wv->name);
+            hGensor wk = n_rank_wk ==0 ? nullptr : UpdateGensor (layer->K.w->name);
+            hGensor wv = n_rank_wv ==0 ? nullptr : UpdateGensor (layer->V.w->name);
             hGensor wo = UpdateGensor (layer->wo->name);
             hGensor ffn_norm = UpdateGensor (layer->ffn_norm.w->name);
             hGensor ffn_up = UpdateGensor (layer->up.w->name);

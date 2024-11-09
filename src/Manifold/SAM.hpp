@@ -498,12 +498,12 @@ struct SegmentAnything  : public Fish {
         gg_print_tensor_("embd_img_0", state.embd_img);
         in_node = state.embd_img;           //???
         Build(ctx0,state.allocr,params.isOnlySymbol);
-        // hGraph->print();
+        // hForwTG->print();
         ggml_free(ctx0);
         SetInput(nx,ny,data);
-        hGensor inp1 = hGraph->get_tensor("inp");
+        hGensor inp1 = nullptr;     //hForwTG->get_tensor("inp");
         gg_print_tensor_("",inp1);
-        hGraph->compute_helper(params.n_threads,0x0);     
+        hForwTG->compute_helper(params.n_threads,0x0);     
 /*
 T873:leaf_178: [ 64  64  256  1 f32] sum=12757.2 data=[-0.994997-0.963888] rZ=0%
         {-0.05100 -0.06349 -0.07116 -0.06840 -0.06826 -0.06972 -0.07148 -0.07088 -0.06774 -0.05427 ...
@@ -514,7 +514,7 @@ T873:leaf_178: [ 64  64  256  1 f32] sum=12757.2 data=[-0.994997-0.963888] rZ=0%
         0.01574 0.01769 0.02241 0.01670 0.01753 0.01665 0.01794 0.02047 0.02100 0.03392 }
 */
         gg_print_tensor_("embd_img", state.embd_img,32);
-        hGensor inp0 = get_tensor("inp");  /**/    
+        hGensor inp0 = GetGensor("inp");  /**/    
     }
 };
 typedef shared_ptr<SegmentAnything> hSegmentAnything;

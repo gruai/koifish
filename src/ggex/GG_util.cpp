@@ -688,15 +688,47 @@ struct ggml_tensor * ggml_cross_entropy_loss_1(
     return result;
 }
 
+int gTN(struct ggml_tensor *cur,const char *format,... ){
+    int iRet = 0;
+    if(strlen(cur->name)==0){
+        va_list args;
+        va_start( args, format );
+        vsnprintf( buffer,GGML_MAX_NAME,format,args );
+        va_end(args);
+        assert(strlen(buffer)<=GGML_MAX_NAME);
+        ggml_format_name(cur,"%s",buffer);
+        
+        iRet+=1;
+    }
+    /*
+        in ggml_compute_backward, some grad has no name!
+
+        ggml_format_name(tensor->grad, "%s (grad)", tensor->name);
+    */
+    if(cur->grad && strlen(cur->grad->name)==0){
+        assert(strlen(cur->name)<GGML_MAX_NAME);
+        ggml_format_name(cur->grad,"%s\"",cur->name);        
+        iRet+=2;
+    }
+    return iRet;
+}
+
 void _T_repr_(hGensor t,const char*tab,char *buf,const GENSOR_INFO&info){
     if(t==nullptr)      return;
     const char* A = "d";
-    if(t->grad!=nullptr){
+    if(t->flags & GGML_TENSOR_FLAG_PARAM){
         A = "P";
+    }else{
+        if(t->grad!=nullptr){
+            A = "G";
+        }
     }
+    
     auto ne=t->ne;
-    sprintf(buf+strlen(buf),"%s %s %s '%s' \t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",tab,info.sX.c_str(), A,
+    size_t n0 = strlen(buf),n1;       //char buf[64*1024]="\0";
+    sprintf(buf+strlen(buf),"%s %s %s %s \t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",tab,info.sX.c_str(), A,
         t->name,ne[0], ne[1], ne[2], ne[3], ggml_type_name(t->type));
+    n1= strlen(buf); 
 }
 
 void _T_repr_(hGensor t,const char*tab,char *buf,int typ){
@@ -721,7 +753,7 @@ void _T_repr_(hGensor t,const char*tab,char *buf,int typ){
 }
 
 int CHECK_SAME_TENSORS(const std::vector<hGensor>&arrA,const std::vector<hGensor>&arrB,int flag){
-    _INFO("======== %s \n",__func__);
+    _INFO("\n======== %s \n",__func__);
     size_t nA=arrA.size(),nB=arrB.size(),nDup=0,nMiss=0;
     bool isSame = arrA.size()==arrB.size();
     std::map<std::string, int> msg;
