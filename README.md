@@ -6,6 +6,8 @@
 
 ## Features
 
+- Hybrid 1-bit Optimizer
+- Sparse mapping of token-embedding to logits
 - Mixture of models
 - Support LLAMA/GPT/MAMBA ...
 - CPU, GPU and Hybrid training
@@ -36,7 +38,7 @@ make clean && make VERBOSE=TRUE
 
 
 ## Working plan
-- Sign adam optimizer
+- Smart attention method
 
 ## Contributing
 

@@ -111,13 +111,11 @@ struct NLP_AutoRegressive : public Fish {
     };
     enum ATTENTION_TYPE tpATT = QKV;   
     
-    // int nLayerX = -1;        //user could set it from command-line, mainly for debug
     bool isLoadTokenEmbed = false;
-    
     
     hCDICT hDict=nullptr; 
     
-    bool isBias = false;   
+    bool isAttOnBC=false;   
         
     // struct train_params_common& train_params;
     
@@ -145,15 +143,7 @@ struct NLP_AutoRegressive : public Fish {
     hGensor  tokens_input  = NULL;    
     
     NLP_AutoRegressive()   {}
-    NLP_AutoRegressive( const std::string& nam_, struct CLI_params params,ROLE_TYPE role_,int flag=0x0) : Fish(nam_,params,role_) {
-        if(!hparams.is({"wiki","actor"},"copy"))  {
-            
-            
-        }
-
-        tpATT = jKV_is(params.jConfig,{"model","attention","type"},string("brown")) ? ATTENTION_TYPE::BROWN : ATTENTION_TYPE::QKV;
-        tpFFN = (FFN_TYPE)(jKV(params.jConfig,{"model","ffn","type"},5,false));    
-    }   
+    NLP_AutoRegressive( const std::string& nam_, struct CLI_params params,ROLE_TYPE role_,int flag=0x0);
     NLP_AutoRegressive(const std::string& nam_,const NLP_AutoRegressive* src,struct CLI_params params,int flag=0x0);
 
     virtual ~NLP_AutoRegressive() {
@@ -439,7 +429,7 @@ struct LLAMA_LORA  : public NLP_AutoRegressive {
             // layer->ffn_up_b   = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_rank_ffn_up,   n_ff);
         }        
         // allocate data for lora_tensors
-        back_data = ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_cpu_buffer_type());
+        InitBackEnd(ctx);   //back_data = ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_cpu_buffer_type());
         assert(updateTMap==false);
         // size_t sz1=ggml_backend_buffer_get_size(data);      //130872416
         ggml_backend_buffer_type_t buf0 = ggml_backend_cpu_buffer_type(); 
@@ -721,7 +711,7 @@ struct LLM_MAMBA : public NLP_AutoRegressive {
 
 
 struct GPT2 : public NLP_AutoRegressive {
-    hGensor pos_embd;
+
     GPT2( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag=0x0);
 
     virtual ~GPT2() {          
@@ -732,10 +722,13 @@ struct GPT2 : public NLP_AutoRegressive {
 
         // NLP_AutoRegressive::InitModel(flag);         
     }     
+    hNeuron J2Neuron(struct ggml_context *ctx_compute,string,const JSON& j,int flag);
+    struct ggml_cgraph *jRawGraph( struct ggml_context *,bool isBuild,int flag=0x0)   ;//override;
     struct ggml_cgraph *GetRawGraph( struct ggml_context *,bool isBuild,int flag=0x0)   override;
     void InitGensors(int flag=0x0) override    {;}
 
     hGensor BuildTarget(struct ggml_context * ctx,hGensor cur,int flag=0x0) override; 
+    string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
 };
 
 struct TinyLama : public NLP_AutoRegressive { 

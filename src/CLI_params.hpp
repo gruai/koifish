@@ -87,6 +87,7 @@ struct CLI_params {
     }
 
     JSON jConfig;
+    nlohmann::ordered_json jModel;
     MODEL_ARCH ModelArch();
     virtual void OnArch();
 
@@ -106,7 +107,7 @@ struct CLI_params {
     uint32_t n_embd_head_v = -1; // dimension of values (d_v) aka n_embd_head
     std::vector<LAY_PARAM> layers;
 
-    uint32_t n_layer_train = -1, nLayerX = -1;
+    int n_layer_train = -1, nLayerX = -1, nFFX = -1;
     
     uint32_t n_rot = 64;
         
@@ -149,6 +150,10 @@ struct CLI_params {
     template<typename T>
     T Get(const std::vector<std::string>&keys,const T& t,bool isCLI=true){
         T val = jKV(jConfig,keys,t,isCLI);
+        return val;
+    }
+    std::string KV(const std::vector<std::string>&keys,const std::string& t="",bool isCLI=true){
+        std::string val = Get(keys,t);
         return val;
     }
 
@@ -238,7 +243,10 @@ struct CLI_params {
 
     uint32_t n_ff(uint32_t il = 0) const {
         assert(il>=0 && il<layers.size());
-        return layers[il].n_ff();        
+        if(nFFX<=0)
+            return layers[il].n_ff();        
+        else
+            return nFFX;
     }
     uint32_t n_embd_head(uint32_t il = 0) const {
         assert(il>=0 && il<layers.size());

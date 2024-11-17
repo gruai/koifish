@@ -1,7 +1,7 @@
 /**
  *  Copyright 2023-2024 by Grusoft
  *
- *  \brief Fish - a collection of neurons
+ *  \brief Fish - just random swimming 
  *  \author Yingshi Chen
  */
 
@@ -20,27 +20,8 @@
 #include <inttypes.h>
 #include <regex>
 #include <stack>
-using namespace std;
-
 #include "../ggex/GG_util.hpp"
-typedef struct ggml_tensor gensor;
-typedef struct ggml_tensor *hGensor;
-typedef std::map<std::string, struct ggml_tensor *> TENSORs;
-typedef std::vector<int> SHAPE;
-inline bool CHECK_SHAPE(const SHAPE&shape){
-    bool isValid = shape.size()>0;
-    for(auto s : shape){
-        if(s<0) {
-            isValid = false;        break;
-        }
-        if(s>1024*1024)        {
-            isValid = false;        break;
-        }
-    }
-    assert(isValid);
-    return isValid;
-}
-
+#include "Neuron.hpp"
 #include "train.h"
 #include "TGraph.hpp"
 #include "Optimizer.hpp"
@@ -48,7 +29,12 @@ inline bool CHECK_SHAPE(const SHAPE&shape){
 #include "../lenda/util/GST_util.hpp"
 #include "../Fuzi/Distillation.hpp"
 
+using namespace std;
+
 class Fish;
+typedef shared_ptr<Fish> hFISH;
+typedef vector<hFISH> tpSWARM;   
+
 class NLP_AutoRegressive;
 class KVCache {
     void *lamakv=nullptr;
@@ -67,101 +53,7 @@ public:
     virtual hGensor SerialK(struct ggml_context *ctx,hGensor vCur,int il,bool isSave);
 
 };
-
-typedef shared_ptr<Fish> hFISH;
-typedef vector<hFISH> tpSWARM;    
-struct NeLayer;
-
-struct NP_
-{ // Paramer of GeNeuron
-    std::string type, title;
-    SHAPE shape;
-    NP_(const std::string &t, const std::string &n, SHAPE s) : type(t), title(n), shape(s) {}
-};
-class GeNeuron  {
-    // GeNeuron(const GeNeuron&)=default;       for model.layers.resize(n_layer)@llama.cpp
-    GeNeuron &operator=(const GeNeuron &) = default;
-
-protected: 
-    Fish *hOrg = nullptr;
-    COMPRESSIVE_SENSING compression = SKIP;
-    SHAPE shape;
-
-public:
-    hGensor w = nullptr, b = nullptr;
-    bool isBias = true;
-    
-    NeLayer *hLay = nullptr;
-    string sT = "";     //  short-cut infomation
-    std::string name;
-    GeNeuron() {}    
-    GeNeuron(SHAPE shape_, Fish *hG_, int flag) : shape(shape_), hOrg(hG_) { ; }
-    virtual ~GeNeuron() { ; }
-
-    virtual void Init(Fish *hG_, int flag=0x0) {    hOrg=hG_;   }
-    virtual bool Empty() { return shape.size() == 0; }
-    virtual size_t nElem()  { return 0x0; }
-};
-typedef shared_ptr<GeNeuron> hNeuron;
-
-// single layer perceptron
-struct SLP : public GeNeuron    { 
-    
-    hGensor u = nullptr, s = nullptr, v = nullptr;
-    SLP( ) {}
-    SLP(Fish *ctx, const std::string &key_, const SHAPE &shape_, Fish *hG_, int flag) : GeNeuron(shape_, hG_, flag)    {
-        // compression = hOrg->params.compression;
-        Build(key_, shape_, flag);
-    }
-
-    // void Init(hGensor w_, hGensor b_, const SHAPE &shape_, int flag = 0x0);
-    void Build(const std::string &key_, const SHAPE &shape, int flag);
-    hGensor Build_2(struct ggml_context *ctx0, hGensor cur, int flag = 0x0);
-    
-    size_t nElem()  override;  
-};
-struct LayerNormal : public GeNeuron    {    
-    LayerNormal() {}
-    LayerNormal(Fish *ctx, const std::string &key_, const SHAPE &shape, int flag)    {
-        Build(key_, shape, flag);
-    }
-    void Build(const std::string &key_, const SHAPE &shape, int flag);
-    hGensor Build_2(struct ggml_context * ctx0,hGensor cur,int flag);
-    size_t nElem()  override;      
-};
-
-struct SelfAttention : public GeNeuron
-{
-    SLP q, k, v;
-    SLP proj;
-    // SLP qkv;
-    SelfAttention() {}
-    SelfAttention(Fish *ctx, const std::string &key_, const SHAPE &shape, int flag);
-};
-
-
-
-struct NeLayer
-{ // Neural Layer with many neurons
-    int id = -1;
-    bool isLast = false;
-    std::string name;
-    std::vector<hNeuron> neurons;
-
-    void Add(hNeuron hN, int flag = 0x0)
-    {
-        neurons.push_back(hN);
-        hN->hLay = this; //???  
-    }
-    NeLayer(int id_) : name("NeLayer"),id(id_) {}
-    NeLayer(const std::string &n_, int flag = 0x0) : name(n_) {}
-    virtual ~NeLayer() {}
-    // NeLayer* N_(const std::string& t,const std::string& n,SHAPE s)   {
-    //     return this;
-    // }
-    virtual string __repr__( string& suffix,string& prefix,int flag=0x0)   {    return "";  }
-};
-typedef shared_ptr<NeLayer> hLayer;
+ 
 
 enum FFN_TYPE {
     SWIGLU = 0,
@@ -177,7 +69,7 @@ enum FFN_TYPE {
 struct QKV_LAY : public NeLayer {
     hGensor eps=nullptr;
     LayerNormal att_norm,ffn_norm;
-    SLP Q,K,V,up,down;
+    SLP Q,K,V,proj,up,down;
     hGensor  ffn_gate=nullptr;  
     // attention
     hGensor wk=nullptr,wv=nullptr;
@@ -327,9 +219,10 @@ protected:
     bool measure_only=false;  
     struct ggml_cplan gf_plan,gb_plan;
 
+    std::vector<hNeuron> neurons;       
     std::map<std::string, struct ggml_tensor *> gensors;
    
-    
+    virtual size_t InitBackEnd(struct ggml_context *,int flag=0x0);
     void Gensor2Map(std::vector<hGensor> gensors){
         for(auto gensor : gensors){
             Gensor2Map(gensor);
@@ -342,10 +235,9 @@ protected:
         gensors[key] = gensor;
     }   
     
-        // 
-    // std::vector<std::pair<std::string, struct ggml_tensor *>> tmaps;
     bool updateTMap = false;
     bool isLocalInfer = false;
+    bool isBias=false;
 
     std::vector<uint8_t> work_buffer;
     // from GGML
@@ -353,7 +245,7 @@ protected:
     size_t nParams = 0, szModel = 0;
 
     hGensor in_node = nullptr, out_node = nullptr;
-    hGensor loss = nullptr, target_probs = nullptr, KQ_pos = nullptr, KQ_mask = nullptr;
+    hGensor loss = nullptr, target_probs = nullptr, KQ_pos = nullptr, KQ_mask = nullptr, pos_embd=nullptr;
     hGensor preLogits = nullptr;        //no SOFTMAX
     hGensor xn = nullptr,xxn = nullptr;     //only for debug
     
@@ -556,7 +448,7 @@ public:
             }
             else if (param.type == "SLP")
             {
-                hN = std::make_shared<SLP>(this, key_ + param.title, param.shape, this, flag);
+                hN = std::make_shared<SLP>(this, key_ + param.title, param.shape, flag);
             }
             else
             {

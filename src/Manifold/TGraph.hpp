@@ -29,6 +29,7 @@ using namespace std;
 
 class Fish;
 class TGraph;   
+class Optimizer;
 typedef shared_ptr<TGraph> hTGraph;
 
 class TGraph : public std::enable_shared_from_this<TGraph> {
@@ -38,6 +39,7 @@ class TGraph : public std::enable_shared_from_this<TGraph> {
     struct ggml_cgraph * cgraph=nullptr;        //only for debug
 protected:    
     Fish *hFish = nullptr;
+    // Optimizer *hOPT = nullptr;
     string name;
     bool isOnlySymbol = true, isBackward =false;
     double tX=0,tCompute=0.0,tPlan=0.0;
@@ -45,8 +47,10 @@ protected:
     //from GGML
     int size=0,nForwN=0,nForwL=0; // n_nodes=0,n_leafs=0;
     hGensor*nodes=nullptr,*grads=nullptr,*leafs=nullptr;
-    std::vector<hGensor> all_nodes;
+    std::vector<hGensor> topo_nodes;    //nodes in Topological order
     std::vector<hGensor> sinks;      //  sinks of tensor flow graph
+    std::map<hGensor, GENSOR_INFO> gimap;   // Get gensor info from map
+    virtual bool TopoOrder(int flag=0x0); 
     // vector<hGensor> nodes,grads,leafs;
     // struct ggml_hash_set visited_hash_table = { 0, nullptr };   
     enum ggml_cgraph_eval_order order=GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT;
@@ -110,6 +114,8 @@ public:
     virtual ~TGraph()   {   Clear();    }
     virtual int has(const string&name,int flag=0x0);
     virtual bool isValid( );
+    
+    size_t Prepare4Train(struct ggml_context *ctx_,GD_METHOD, int flag=0x0);
     
     enum ggml_cgraph_eval_order Order() {   return cgraph->order;   }
     bool empty()  {   return cgraph==nullptr || cgraph->n_nodes==0;    }
@@ -213,5 +219,6 @@ public:
 
     friend class Fish;
     friend class NLP_AutoRegressive;
+    friend class Optimizer;
 };
 typedef std::shared_ptr<TGraph> hTGraph;

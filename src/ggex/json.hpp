@@ -24565,7 +24565,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // SPDX-FileCopyrightText: 2013-2023 Niels Lohmann <https://nlohmann.me>
 // SPDX-License-Identifier: MIT
 #include <iostream>
-using JSON = nlohmann::json;
+using JSON = nlohmann::ordered_json;
 JSON jKEY(const JSON& jConfig,const std::vector<std::string>&keys,int flag=0x0);
 
 template<typename T>

@@ -30,6 +30,7 @@ hGensor Fish::AddTensor(const std::string&key_,enum ggml_type tp,const SHAPE& sh
 }
 
 void SLP::Build(const std::string&key_,const SHAPE& shape_,int flag)      {
+    isBias = hOrg->isBias;
     shape = shape_;
     struct ggml_context * ctx = hOrg->ctx;
     if(shape.size()==2){    
@@ -57,6 +58,7 @@ QKV_LAY::QKV_LAY(Fish *hF_,int id)  :  NeLayer(id)     {
     att_norm.Init(hF_,0x0),             ffn_norm.Init(hF_,0x0);
     Q.Init(hF_,0x0),        K.Init(hF_,0x0),            V.Init(hF_,0x0),        
     up.Init(hF_,0x0),       down.Init(hF_,0x0);
+    proj.Init(hF_,0x0);
 }
 
 size_t SLP::nElem()  {
@@ -67,7 +69,7 @@ size_t SLP::nElem()  {
     return nX;
 }
 
-hGensor SLP::Build_2(struct ggml_context * ctx0,hGensor cur,int flag)    {
+hGensor SLP::Forward(struct ggml_context * ctx0,hGensor cur,int flag)    {
     // const char*name_0 = cur->name;
     const string prefix = sT+"."+cur->name;
     assert(cur!=nullptr && ctx0!=nullptr);
@@ -131,54 +133,7 @@ hGensor SLP::Build_2(struct ggml_context * ctx0,hGensor cur,int flag)    {
     return cur;
 }
 
-void LayerNormal::Build(const std::string&key_,const SHAPE& shape,int flag)    {
-    name = key_;
-    struct ggml_context * ctx = hOrg->ctx;
-    assert(shape.size()==1 && shape[0]>0 );
-    int nIn=shape[0];
-    w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, nIn);
-    if(isBias)  b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, nIn);
-    string sw = key_+".weight",sb=key_+".bias";
-    bool isTrain = hOrg->isTrain();
-    hOrg->InitGensor(ctx,sw.c_str(),w,isTrain);
-    if(isBias)  hOrg->InitGensor(ctx,sb.c_str(),b,isTrain);
-    // hOrg->InitGensor(ctx,w,sw.c_str(),hOrg->rnd);
-    // hOrg->InitGensor(ctx,b,sb.c_str(),hOrg->rnd);
-}
 
-hGensor LayerNormal::Build_2(struct ggml_context * ctx0,hGensor cur,int flag)    {    
-    float f_norm_eps = hOrg->hparams.f_norm_eps;
-    assert(cur!=nullptr);
-    // TODO: implement ggml_norm backward
-    // cur = ggml_norm(ctx0, cur, f_norm_eps);  
-    const string prefix = sT+"."+cur->name;
-    hGensor cur_norm = ggml_rms_norm(ctx0, cur, f_norm_eps);     
-    ggml_set_name(cur_norm,_NAM_("%s_rms",prefix.c_str()));  
-    hGensor  t03 = w;
-    if(hOrg->isTrain()){
-        t03 = ggml_repeat(ctx0, w, cur_norm);          
-        ggml_set_name(t03,_NAM_("%s.r",w->name));    
-        hOrg->Gensor2Map(t03);  
-    }
-    hGensor curw = ggml_mul(ctx0, cur_norm, t03);   
-    ggml_set_name(curw,_NAM_("%s*w",prefix.c_str()));       
-    if(b!=nullptr){
-        if(hOrg->isTrain())
-            cur = ggml_add(ctx0, curw, b); 
-        else
-            cur = ggml_add_inplace(ctx0, curw, b); 
-        ggml_set_name(cur,_NAM_("%s+b",prefix.c_str()));   
-    }
-        
-    return cur;
-}
-size_t LayerNormal::nElem()  {
-    size_t nX=0; 
-    nX += ggml_nelements(w);
-    if(b!=nullptr)      
-        nX += ggml_nelements(b);
-    return nX;
-}
 
 SelfAttention::SelfAttention(Fish* graph,const std::string&key_,const SHAPE& shape,int flag)    {
     assert(shape.size()==3);
@@ -252,7 +207,7 @@ hGensor NT_SAM::Build_(struct ggml_context * ctx0,hGensor inpL,float eps,
 
     const int64_t W = cur->ne[1],H = cur->ne[2];
     {
-        cur = in_proj.Build_2(ctx0,cur);
+        cur = in_proj.Forward(ctx0,cur);
             // cur = ggml_mul_mat(ctx0, in_proj.w, cur);
             // cur = ggml_add_inplace(ctx0, cur, in_proj.b);
         
@@ -587,6 +542,48 @@ static void ggml_graph_compute_thread_sync_task(int * task_phase, struct ggml_co
         if (* task_phase != last_task_phase) break;
     }
 }*/
+    
+/*
+    
+*/
+bool TGraph::TopoOrder(int flag)   {
+    gimap.clear();          topo_nodes.clear();
+    int pos=-1,nDup=0,i,no,nNode=cgraph->n_nodes,nLeaf=cgraph->n_leafs;
+    hGensor cur,son;    
+    // std::vector<hGensor> gensors;
+    assert(sinks.size()>0);
+    for(auto r : sinks){
+        topo_nodes.push_back(r);        gimap[r] = GENSOR_INFO(0,0,-1,-1);    
+        gimap[r].sX = r->name;
+    }
+
+    while(++pos<topo_nodes.size()) {
+        cur = topo_nodes[pos];
+        if(strcmp(cur->name,"result_output'")==0){      // only for debug
+            int xxx = 0;
+        }
+        GENSOR_INFO info = gimap[cur];
+        for (int i=0,no=0; i < GGML_MAX_SRC; ++i) {
+            const int k =(order == GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT) ? i :(order == GGML_CGRAPH_EVAL_ORDER_RIGHT_TO_LEFT) ? (GGML_MAX_SRC-1-i) : i;
+            if (!cur->src[k]) continue;
+            son = cur->src[k];
+            if(strcmp(son->name,"loss'")==0){           // only for debug
+                int xxx = 0;
+            }
+            if(gimap.find(son) == gimap.end())  {                
+                gimap[son] = GENSOR_INFO(topo_nodes.size(),info.level+1,pos,no++);
+                gimap[son].sX = son->name;
+                topo_nodes.push_back(son);
+            }else{
+                nDup++;
+            }
+                
+        }        
+    }
+    
+    // sort(gimap.begin(), gimap.end(), comp);
+    return true;
+}
 
 string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {        
     if(empty())   return "";
@@ -624,12 +621,12 @@ string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {
         all_nodes.push_back(cgraph->nodes[i]);
     }
     for(int i=0;i<nLeaf;i++)        all_nodes.push_back(cgraph->leafs[i]);
-    std::map<hGensor, GENSOR_INFO> gmask;
-    if(root!=nullptr){
-        gensors.push_back(root);            gmask[root] = GENSOR_INFO(0,0,-1,-1);    
+    
+    /*if(root!=nullptr){
+        gensors.push_back(root);            gimap[root] = GENSOR_INFO(0,0,-1,-1);    
     }else{
         for(auto r : sinks){
-            gensors.push_back(r);        gmask[r] = GENSOR_INFO(0,0,-1,-1);    
+            gensors.push_back(r);        gimap[r] = GENSOR_INFO(0,0,-1,-1);    
         }
     }
     
@@ -638,7 +635,7 @@ string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {
         if(strcmp(cur->name,"result_output'")==0){      // only for debug
             int xxx = 0;
         }
-        GENSOR_INFO info = gmask[cur];
+        GENSOR_INFO info = gimap[cur];
         for (int i=0,no=0; i < GGML_MAX_SRC; ++i) {
             const int k =(order == GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT) ? i :(order == GGML_CGRAPH_EVAL_ORDER_RIGHT_TO_LEFT) ? (GGML_MAX_SRC-1-i) : i;
             if (!cur->src[k]) continue;
@@ -646,23 +643,28 @@ string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {
             if(strcmp(son->name,"loss'")==0){           // only for debug
                 int xxx = 0;
             }
-            if(gmask.find(son) == gmask.end())  {                
-                gmask[son] = GENSOR_INFO(gensors.size(),info.level+1,pos,no++);
+            if(gimap.find(son) == gimap.end())  {                
+                gimap[son] = GENSOR_INFO(gensors.size(),info.level+1,pos,no++);
                 gensors.push_back(son);
             }else{
                 nDup++;
             }
                 
         }        
-    }
+    }    
     for(auto gensor:gensors){
-        _T_repr_(gensor,tab,buf,gmask[gensor]);     
+        _T_repr_(gensor,tab,buf,gimap[gensor]);     
+        assert(strlen(buf)<MAX_BUF);
+    }*/
+   for(auto gensor:topo_nodes){
+        gensors.push_back(gensor);
+        _T_repr_(gensor,tab,buf,gimap[gensor]);     
         assert(strlen(buf)<MAX_BUF);
     }
 
     sprintf(buf+strlen(buf),"%s",suffix.c_str()); 
     _INFO("%s",buf); 
-    int nMiss = all_nodes.size()-pos;
+    int nMiss = all_nodes.size()-gensors.size();
     _INFO("CGRAPH_%s root=%d(%d) nPass=%ld(%d) nMiss=%d",name.c_str(),root_id,sinks.size(),gensors.size(),nDup,nMiss); 
     if(CHECK_SAME_TENSORS(gensors,all_nodes)!=0x0){   //       "loss"???
         assert(has("loss")>=0);
@@ -672,6 +674,7 @@ string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {
 }   
 
 TGraph::TGraph(Fish *hF_,const string&nam_,struct ggml_context *ctx_,bool isGrad,int flag) : hFish(hF_),ctx(ctx_),name(nam_)   {
+    // hOPT = hFish->hOPT;
     cgraph = ggml_new_graph_custom(ctx, LLAMA_TRAIN_MAX_NODES, isGrad);
     /*
     const size_t obj_size = ggml_graph_nbytes(size, grads);
@@ -770,12 +773,12 @@ int Fish::BuildComputeGraph(int order,struct ggml_context * ctx,ggml_gallocr_t& 
         return -1;
     }
     assert(hForwTG->isValid());
+    hForwTG->TopoOrder();
     // hForwTG->__repr__(out_node);  
     int n0=gf->n_nodes; 
     if(!isLocalInfer){       
         hBackTG = std::make_shared<TGraph>(this,"Backward",ctx_compute,true);        hBackTG->isBackward = true; 
         gb = hBackTG->BuildBackward(ctx,gf);
-  
         // make sure some tensors are not reallocated by inserting new temporary nodes depending on them
         int n_leafs_before = gb->n_leafs,n_nodes_before = gb->n_nodes;
         ggml_set_input(out_node->grad);
@@ -967,6 +970,8 @@ struct ggml_cgraph * TGraph::BuildBackward(struct ggml_context * ctx_compute,str
     }
     int n_bleafs = gb->n_leafs,n_bnodes = gb->n_nodes;
     ggml_hash_set_free(&zero_table);       
+
+    TopoOrder();
     
     __repr__( ); 
     

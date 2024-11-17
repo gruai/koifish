@@ -38,10 +38,11 @@ struct ConsiceDict : public VariationaAE    {
     bool isLoadTokenEmbed = false;
     NLP_AutoRegressive *hLM = nullptr;
     int nToken=0,lama_embed=0,latent_dim=256,nLevel=0;
-    int nUniqueToken = 0;
+    // int nUniqueToken = 0;
     
     std::string tokenizer_name;         //"no_vocab","llama","bert","gpt2"
-    std::vector<const char*> tokens;
+    // vocabulary
+    std::vector<const char*> vocab;
     //原生LLaMA对中文的支持很弱，一个汉子往往被切分成多个token，因此需要对其进行中文词表扩展。思路通常是在中文语料库上训练一个中文tokenizer模型，然后将中文tokenizer与LLaMA原生tokenizer进行合并，最终得到一个扩展后的tokenizer模型。国内Chinese-LLaMA-Alpaca开源项目详细说明了词表扩展。
     std::vector<const char*> merges;
     std::map<std::pair<std::string, std::string>, int> bpe_ranks;
@@ -70,7 +71,7 @@ struct ConsiceDict : public VariationaAE    {
     std::vector<std::string> special_tokens;
     std::unordered_map<token, id> special_tokens_cache;
 
-    int32_t bos,eos;   
+    int32_t bos = 1,eos = 2;   
     
     int special_add_bos = -1; // -1 unknown, 1 add, 0 don't add.
     int special_add_eos = -1; // -1 unknown, 1 add, 0 don't add.
@@ -101,9 +102,10 @@ struct ConsiceDict : public VariationaAE    {
         FREE_a(scores);      FREE_a(toktypes);
     }
     //  n_vocab,scores,toktypes,special_,tokens
-    void LoadVocab(const char*fn_model_base,int flag);
+    virtual void LoadVocab(const char*fn_model_base,int flag);
     void LoadVocab_v1(const char*fn_model_base,struct CLI_params& params,llama_model & model,int flag);
-
+    virtual int stream2token(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0);
+    
     virtual void InitVAE(int flag=0x0);
 
     virtual void Update(struct random_normal_distribution * rnd,int flag=0x0)   {
@@ -126,4 +128,15 @@ class CDict_GPT2 : public ConsiceDict{
 public:
     CDict_GPT2(NLP_AutoRegressive *nlp_,int flag=0x0);
     int InitMAEC(struct ggml_context *ctx,const std::vector<int>& dims_,int flag=0x0) override;
+};
+
+/*
+    Just map characters to int, only for debug!
+*/
+class CDict_CHAR : public ConsiceDict{
+public:
+    CDict_CHAR(NLP_AutoRegressive *nlp_,int flag=0x0);
+    void LoadVocab(const char*fn_model_base,int flag)   override;
+    int InitMAEC(struct ggml_context *ctx,const std::vector<int>& dims_,int flag=0x0) override;
+    int stream2token(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0)    override;
 };

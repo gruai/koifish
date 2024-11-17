@@ -50,7 +50,7 @@ string ConsiceDict::__repr__( string& suffix,string& prefix,int flag)     {
         "ONLY_LOAD","RND_GRAD","LOAD_GRAD,","LOAD_GRAD_norm",
     };
     const char*tab=prefix.c_str();
-    sprintf(buf+strlen(buf),"\n%s(%s):resi=%d tpNorm=%d opOut=\"%s\" nLevel=%d\n",prefix.c_str(),
+    sprintf(buf+strlen(buf),"\n%s[%s]:resi=%d tpNorm=%d opOut=\"%s\" nLevel=%d\n",prefix.c_str(),
         "ConsiceDict",(int)(reserve_x),tpNorm,_ops[opOut],nLevel);
     
     _T_repr_(tok_embeddings,tab,buf);   
@@ -70,7 +70,7 @@ string ConsiceDict::__repr__( string& suffix,string& prefix,int flag)     {
         }
         sprintf(buf+strlen(buf),"%s",vae->__repr__(s,p,0x0).c_str());  
     }
-    sprintf(buf+strlen(buf),"\n");
+    // sprintf(buf+strlen(buf),"\n");
 
     sprintf(buf+strlen(buf),"%s",suffix.c_str());
     if(flag>0)
@@ -327,6 +327,7 @@ void ConsiceDict::Update_1(struct random_normal_distribution * rnd,int flag) {
     assert(gensors.size()==0);          
 }
 
+
 void ConsiceDict::LoadVocab(const char*model_path,int flag)     {
     assert(std::filesystem::exists(model_path));
     string word;
@@ -354,12 +355,12 @@ void ConsiceDict::LoadVocab(const char*model_path,int flag)     {
     if (toktype_idx == -1) {
         die("cannot find token type list in GGUF file");
     }
-    assert( nTT == gguf_get_arr_n(vctx, toktype_idx));
+    // assert( nTT == gguf_get_arr_n(vctx, toktype_idx));
     toktypes = new int[nTT];
     memcpy(toktypes,gguf_get_arr_data(vctx, toktype_idx),sizeof(int)*nTT);    
     GGUF_GET_KEY(vctx, tokenizer_name, gguf_get_val_str, GGUF_TYPE_STRING, true, kv(LLM_KV_TOKENIZER_MODEL));
     if (tokenizer_name == "llama") {
-        // default special tokens
+        // default special vocab
         special_bos_id = 1;
         special_eos_id = 2;
         special_unk_id = 0;
@@ -388,7 +389,7 @@ void ConsiceDict::LoadVocab(const char*model_path,int flag)     {
         }
         word = merges[0];
         // gguf_set_arr_str(fctx, kv(LLM_KV_TOKENIZER_MERGES), merges.data(), n_merges);
-        // default special tokens
+        // default special vocab
         special_bos_id = 11;        special_eos_id = 11;        special_unk_id = -1;
         special_sep_id = -1;        special_pad_id = -1;
     } else {
@@ -396,12 +397,11 @@ void ConsiceDict::LoadVocab(const char*model_path,int flag)     {
         fprintf(stderr, "%s: using default tokenizer: 'llama'", __func__);
     }
 
-    // std::vector<const char*> tokens;
-    tokens.resize(n_vocab);
+    vocab.resize(n_vocab);
     for (uint32_t i = 0; i < n_vocab; i++) {
-        tokens[i] = strdup(gguf_get_arr_str(vctx, token_idx, i));
+        vocab[i] = strdup(gguf_get_arr_str(vctx, token_idx, i));
     }
-    // gguf_set_arr_str(fctx, kv(LLM_KV_TOKENIZER_LIST), tokens.data(), n_vocab);
+    // gguf_set_arr_str(fctx, kv(LLM_KV_TOKENIZER_LIST), vocab.data(), n_vocab);
     GGUF_GET_KEY(vctx, special_bos_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_BOS_ID));
     GGUF_GET_KEY(vctx, special_eos_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_EOS_ID));
     GGUF_GET_KEY(vctx, special_unk_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_UNK_ID));
@@ -409,6 +409,32 @@ void ConsiceDict::LoadVocab(const char*model_path,int flag)     {
     GGUF_GET_KEY(vctx, special_pad_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_PAD_ID));
 
     gguf_free(vctx);
+}
+
+void CDict_CHAR::LoadVocab(const char*model_path,int flag)   {
+    assert(strlen(model_path)==0 || std::filesystem::exists(model_path));
+    string word;
+    enum llama_ftype ftype = LLAMA_FTYPE_MOSTLY_Q8_0; 
+    token_idx = -1;
+    // n_vocab = len(chars);
+    int nTT = n_vocab;
+    score_idx = -1;
+    if (score_idx == -1) {
+        scores = nullptr;
+    }else{
+        scores = new float[nTT];        
+    }
+    toktype_idx = -1;
+    
+    toktypes = new int[nTT];
+    // memcpy(toktypes,gguf_get_arr_data(vctx, toktype_idx),sizeof(int)*nTT); 
+    tokenizer_name = "char_nano";
+    vocab.resize(n_vocab);
+    
+    for (uint32_t i = 0; i < n_vocab; i++) {
+        char a[2] = {(char)(i),'\0'};
+        vocab[i] = strdup(a);
+    }
 }
 
 void NLP_AutoRegressive::save_gguf(const char * filename, int flag) {
@@ -441,7 +467,7 @@ void NLP_AutoRegressive::save_gguf(const char * filename, int flag) {
     // set vocab by copying from vocab_model gguf file
     gguf_set_val_str(fctx, kv(LLM_KV_TOKENIZER_MODEL), hDict->tokenizer_name.c_str());
 
-    gguf_set_arr_str(fctx, kv(LLM_KV_TOKENIZER_LIST), hDict->tokens.data(), hDict->n_vocab);
+    gguf_set_arr_str(fctx, kv(LLM_KV_TOKENIZER_LIST), hDict->vocab.data(), hDict->n_vocab);
     if(hDict->scores!=nullptr)
         gguf_set_arr_data(fctx, kv(LLM_KV_TOKENIZER_SCORES), GGUF_TYPE_FLOAT32, hDict->scores, hDict->n_vocab);    
     gguf_set_arr_data(fctx, kv(LLM_KV_TOKENIZER_TOKEN_TYPE), GGUF_TYPE_INT32, hDict->toktypes, hDict->n_vocab);

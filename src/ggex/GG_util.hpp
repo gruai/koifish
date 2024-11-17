@@ -149,9 +149,24 @@ inline void GG_log_internal(ggml_log_level level, const char * format, ...) {
 
 typedef struct ggml_tensor* hGensor;
 
+enum GD_METHOD {
+    ADAMw=0x0,          
+    SGD,               
+    SGD_v,
+    SGD_blk_v,
+    SGD_HYBRID,   
+};
+ 
+
 struct GENSOR_INFO{
-    int level=-1,ID=-1,dad,c_id;
     string sX;
+    int level=-1,ID=-1,dad,c_id;
+    bool isAdam = true;
+    // for Optimizer
+    hGensor gm=nullptr;  // first moment
+    hGensor gv=nullptr;  // second moment
+    hGensor gpf=nullptr; // past function values
+    
     GENSOR_INFO(){;}
     GENSOR_INFO(int id_,int l,int d,int c) : ID(id_),level(l),dad(d),c_id(c)  {
         string suffix,prefix;
@@ -166,6 +181,9 @@ struct GENSOR_INFO{
         return buf;
     }
 
+    static bool comp(GENSOR_INFO& a, GENSOR_INFO& b) {
+        return a.ID < b.ID;
+    }
 };
 
 void _T_repr_(hGensor t,const char*tab,char *buf,int typ=0x0);
@@ -657,54 +675,22 @@ inline void _TIME(double fmillis) {
 struct ggml_tensor * ggml_cross_entropy_loss_1(struct ggml_context * ctx,struct ggml_tensor * a, struct ggml_tensor * b);
 int CHECK_SAME_TENSORS(const std::vector<hGensor>&arrA,const std::vector<hGensor>&arrB,int flag=0x0);
 size_t F_SIZE(const std::string&fpath,FILE *fp0=NULL,int flag=0x0); 
-/*
-static void ggml_compute_forward_scale_q(
-        const struct ggml_compute_params * params,
-        struct ggml_tensor * dst) {
+struct ggml_context *InitCTX(size_t msize,int flag=0x0);
 
-    const struct ggml_tensor * src0 = dst->src[0];
-
-    GGML_ASSERT(ggml_is_contiguous(src0));
-    GGML_ASSERT(ggml_is_contiguous(dst));
-    GGML_ASSERT(ggml_are_same_shape(src0, dst));
-
-    if (params->type == GGML_TASK_TYPE_INIT || params->type == GGML_TASK_TYPE_FINALIZE) {
-        return;
-    }
-    GGML_TENSOR_UNARY_OP_LOCALS
-    // scale factor
-    float v;
-    memcpy(&v, dst->op_params, sizeof(float));
-
-    const int ith = params->ith;
-    const int nth = params->nth;
-
-    const int nc = src0->ne[0];
-    const int nr = ggml_nrows(src0);
-
-    // rows per thread
-    const int dr = (nr + nth - 1)/nth;
-
-    // row range for this thread
-    const int ir0 = dr*ith;
-    const int ir1 = MIN(ir0 + dr, nr);
-
-    // const size_t nb01 = src0->nb[1];
-    // const size_t nb1 = dst->nb[1];    
-    assert(ne00 % 32 == 0);
-    float * wdata = (float *) params->wdata + (ne00 + CACHE_LINE_SIZE_F32) * ith;
-    const enum ggml_type type = src0->type;
-    const enum ggml_type dtype = dst->type;
-    ggml_to_float_t const dequantize_row_q = type_traits[type].to_float;
-    ggml_from_float_t const quantize_row_q = type_traits[dtype].from_float;
-    for (int i1 = ir0; i1 < ir1; i1++) {
-        if (dst->data != src0->data) {            // src0 is same shape as dst => same indices
-            memcpy((char *)dst->data + i1*nb1, (char *)src0->data + i1*nb01, nc * sizeof(float));
+typedef struct ggml_tensor gensor;
+typedef struct ggml_tensor *hGensor;
+typedef std::map<std::string, struct ggml_tensor *> TENSORs;
+typedef std::vector<int> SHAPE;
+inline bool CHECK_SHAPE(const SHAPE&shape){
+    bool isValid = shape.size()>0;
+    for(auto s : shape){
+        if(s<0) {
+            isValid = false;        break;
         }
-        void *data = dst->data + i1*nb1;
-        dequantize_row_q(data, wdata, ne00);    // unquantize row from src0 to temp buffer    
-        ggml_vec_scale_f32(nc, wdata, v);
-        // ggml_vec_scale_f32(nc, (float *) ((char *) dst->data + i1*nb1), v);
-        quantize_row_q(wdata, data, ne00);
+        if(s>1024*1024)        {
+            isValid = false;        break;
+        }
     }
-}*/
+    assert(isValid);
+    return isValid;
+}

@@ -20,8 +20,8 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_,int flag)     {
         train_params.seed = time(NULL); 
     }    
     wikis = wikis_;  
-    hOPT = std::make_shared<OPT_Adam>(this,train_params,flag);
-    if(!InitDictTokenset())
+    hOPT = std::make_shared<OPT_Adam>(this,hparams,flag);
+    if(!InitDictTokenset()) //hDict
         return false;
 
     if(wikis.size()==0){
@@ -30,19 +30,16 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_,int flag)     {
         teach = lama()->teach;  
     } 
     hCache = std::make_shared<KVCache>(this,0,0,0,0);
-    // hOPT = std::make_shared<Optimizer>(this,train_params,flag);
     
-    
-    hDistler = nullptr; //hparams.sigma=="" ? nullptr : std::make_shared<Distillation>(this,hparams,0x0);     //ADD SIGMA    
+    hDistler = nullptr; //hparams.sigma=="" ? nullptr : std::make_shared<Distillation>(this,hparams,0x0);     //ADD SIGMA             
 
-         
-
-    struct ggml_init_params ctx_model_params;
-    ctx_model_params.mem_size   = MostMemSize(0x0) ;
-    ctx_model_params.mem_buffer = NULL;
-    ctx_model_params.no_alloc   = true;
+    // struct ggml_init_params ctx_model_params;
+    // ctx_model_params.mem_size   = MostMemSize(0x0) ;
+    // ctx_model_params.mem_buffer = NULL;
+    // ctx_model_params.no_alloc   = true;
     assert(ctx==nullptr);
-    ctx = ggml_init(ctx_model_params);
+    ctx = InitCTX(MostMemSize(0x0));
+    // ctx = ggml_init(ctx_model_params);
     
     InitModel(flag);
     hparams.Dump();         
@@ -58,6 +55,16 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_,int flag)     {
     return true;         
 }
 
+NLP_AutoRegressive::NLP_AutoRegressive( const std::string& nam_, struct CLI_params params,ROLE_TYPE role_,int flag) : Fish(nam_,params,role_) {
+    if(!hparams.is({"wiki","actor"},"copy"))  {
+        
+    }
+    int d = hparams.Get({"model","attention","dQKV"},4,false);
+    isAttOnBC = d==3;       //d=4 much faster,nearly same
+
+    tpATT = jKV_is(params.jConfig,{"model","attention","type"},string("brown")) ? ATTENTION_TYPE::BROWN : ATTENTION_TYPE::QKV;
+    tpFFN = (FFN_TYPE)(jKV(params.jConfig,{"model","ffn","type"},5,false));    
+}   
 //params!=src->params
 NLP_AutoRegressive::NLP_AutoRegressive(const std::string& nam_,const NLP_AutoRegressive* src,struct CLI_params params,int flag) : Fish(nam_,params){    
     // hDict = src->hDict;
@@ -96,6 +103,9 @@ string NLP_AutoRegressive::__repr__( string& suffix,string& prefix,int flag)    
         sprintf(buf+strlen(buf),"\n%s  tensors=%ld gf=(%d %d) ",tab, gensors.size(),gf->n_nodes,gf->n_leafs);
 
     string s="\n",p=prefix+"\t";
+    _T_repr_(KQ_pos,"\n\tKQ_pos: ",buf);  
+    _T_repr_(pos_embd,"\tpos_embd: ",buf); 
+    _T_repr_(KQ_mask,"\tKQ_mask: ",buf);  
     sprintf(buf+strlen(buf),"%s",hDict->__repr__(s,p,0x0).c_str());
     int nLayer = layers.size();
     if(nLayer>0)    {
@@ -186,12 +196,14 @@ string QKV_LAY::__repr__( string& suffix,string& prefix,int flag)    {
     _T_repr_(att_norm.w,tab,buf);           _T_repr_(att_norm.b,tab,buf);
     _T_repr_(Q.w,tab,buf);                  _T_repr_(Q.b,tab,buf);       
     _T_repr_(K.w,tab,buf);                  _T_repr_(K.b,tab,buf);   
-    _T_repr_(V.w,tab,buf);                  _T_repr_(V.b,tab,buf);   
+    _T_repr_(V.w,tab,buf);                  _T_repr_(V.b,tab,buf); 
+    _T_repr_(proj.w,tab,buf);               _T_repr_(proj.b,tab,buf);   
     // _T_repr_(wk,tab,buf);       _T_repr_(wv,tab,buf);   
     _T_repr_(wo,tab,buf);   
     _T_repr_(ffn_norm.w,tab,buf);           _T_repr_(ffn_norm.b,tab,buf); 
     _T_repr_(ffn_gate,tab,buf);     
-    _T_repr_(down.w,tab,buf);   _T_repr_(down.b,tab,buf);   _T_repr_(up.w,tab,buf);     _T_repr_(up.b,tab,buf);  
+    _T_repr_(up.w,tab,buf);     _T_repr_(up.b,tab,buf);
+    _T_repr_(down.w,tab,buf);   _T_repr_(down.b,tab,buf);     
     _T_repr_(eps,tab,buf);
     if(flag>0)
         _INFO("%s",buf); 
@@ -741,17 +753,22 @@ LAMA::LAMA(CLI_params& hparams,const std::string&path_)     {
 
 bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
     void *hLLM = nullptr;
+    string type = hparams.KV({"dict","type"});
     switch(hparams.ModelArch()){
     case MODEL_ARCH::NLP_GPT2:
-        hDict = std::make_shared<CDict_GPT2>(this);
-        // hTokenset = std::make_shared<DTS_GPT2>(hDict->n_vocab);
-
-        if(lama()!= nullptr)  {   
-            hDict->LoadVocab(lama()->model_path.c_str(),0x0);       //  tokenizer_name == "gpt2"
-            hDict->bos = lama()->bos;             hDict->eos = lama()->eos;  
+        if(type=="char"){
+            hDict = std::make_shared<CDict_CHAR>(this);
+            hDict->LoadVocab("",0x0); 
+        }else{
+            hDict = std::make_shared<CDict_GPT2>(this);
+            if(lama()!= nullptr)  {   
+                hDict->LoadVocab(lama()->model_path.c_str(),0x0);       //  tokenizer_name == "gpt2"
+                hDict->bos = lama()->bos;             hDict->eos = lama()->eos;  
+                hLLM = lama()->lmodel;
+            }  
         }
-        hTokenset = std::make_shared<DataTokenSet>(hDict->n_vocab);
-        hLLM = lama()->lmodel;
+        hTokenset = std::make_shared<DataTokenSet>(hDict.get());
+        
         break;
     default:
         hDict = std::make_shared<ConsiceDict>(this);
@@ -759,7 +776,7 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
             hDict->LoadVocab(lama()->model_path.c_str(),0x0); 
             hDict->bos = lama()->bos;             hDict->eos = lama()->eos;  
         }
-        hTokenset = std::make_shared<DataTokenSet>(hDict->n_vocab);
+        hTokenset = std::make_shared<DataTokenSet>(hDict.get());
         hLLM = lama()->lmodel;
         break;
     }
@@ -1087,7 +1104,8 @@ void NLP_AutoRegressive::InitGensors(int flag){
         InitGensor(ctx,layer->Q.w,             TN(LLM_TENSOR_ATTN_Q, i), rnd);
         if(layer->K.w!=nullptr)      InitGensor(ctx,layer->K.w,TN(LLM_TENSOR_ATTN_K, i), rnd);
         if(layer->V.w!=nullptr)      InitGensor(ctx,layer->V.w,TN(LLM_TENSOR_ATTN_V, i), rnd);
-        InitGensor(ctx,layer->wo,             TN(LLM_TENSOR_ATTN_OUT, i), rnd);
+        // InitGensor(ctx,layer->wo,             TN(LLM_TENSOR_ATTN_OUT, i), rnd);        
+        InitGensor(ctx,layer->wo,             TN("blk.%d.attn_out", i), rnd);
         if(layer->ffn_norm.w!=nullptr)
             InitGensor(ctx,layer->ffn_norm.w,       TN(LLM_TENSOR_FFN_NORM, i), rnd);
         if(layer->up.w!=nullptr){                
@@ -1115,13 +1133,12 @@ void NLP_AutoRegressive::InitGensors(int flag){
     for(auto wiki : wikis){
         if(wiki->t2t!=nullptr){
             InitGensor(ctx,wiki->t2t, nullptr, rnd);
-        }
-            
+        }            
     }
 }
 
 void NLP_AutoRegressive::InitModel(int flag){    
-    const uint32_t n_ff = jKV(hparams.jConfig,{"model","ffn","length"},hparams.n_ff(),false);
+    const uint32_t n_ff = hparams.n_ff();
     auto train_params = hparams.common;
     uint32_t n_embd  = hparams.n_embd,n_ctx = train_params.n_ctx;        
     const uint32_t n_layer = hparams.nLayer();
@@ -1176,8 +1193,8 @@ void NLP_AutoRegressive::InitModel(int flag){
         }   
     }
     nParams = 0;    
-    hDict->CreateEmbeddings(rnd,0x0);       
-    back_data = ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_cpu_buffer_type());
+    hDict->CreateEmbeddings(rnd,0x0);
+    InitBackEnd(ctx);  //back_data = ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_cpu_buffer_type());
     rnd = init_random_normal_distribution(hparams.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
     hDict->Update(rnd,0x0);      
     InitGensors(flag);

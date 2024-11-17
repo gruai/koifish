@@ -19,7 +19,7 @@ hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,vector
         fish = std::make_shared<LLM_MAMBA>(nam_+"_mamba",params,role_);
         break;
     case MODEL_ARCH::NLP_GPT2:
-        fish = std::make_shared<GPT2>(nam_+"_mamba",params,role_);
+        fish = std::make_shared<GPT2>(nam_+"_GPT2",params,role_);
         break;
     case MODEL_ARCH::NLP_MOE:
         fish = std::make_shared<LLM_MOE>(nam_+"_moe",params,role_);

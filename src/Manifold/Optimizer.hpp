@@ -54,13 +54,14 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
 
 protected:    
     std::string title = "Optimizer";
-
+    std::map<hGensor, GENSOR_INFO> gimap;   
     LossCurve lcTrain,lcEval;
     struct ggml_context * _ctx=nullptr;
     std::vector<hGensor> opt_ps;
     size_t nParams = 0, nMostParam = 0;
     bool just_initialized = false,isAdaptiveSched = false,isGlobalGrad=true;
     int past=0,nGradAccum=0,tpSign=0;
+    int warmup_iters=0;
     // gradient clipping
     double gclip = 1.0;         
     // schedule multiplier (fixed, decay or warmup)   
@@ -75,9 +76,10 @@ protected:
     uint64_t train_its=0,train_samples=0,train_tokens=0,train_epochs=0,max_epoch=0;
     int64_t last_time;
     double millis_per_iter;
+    std::vector<string> adam_filter =  {"output","norm"};    //{"token_embd","output","norm"};
 
     // void *app_ctx = nullptr;
-    double zmuv_0 = 0.0,zmuv_1 = 0.0,g_step=0.0;    
+    double zmuv_0 = 0.0,zmuv_1 = 0.0,g_step=0.0,gNorm2=0;    
     llama_token bos,eos;
     // hGensor loss=nullptr, target_probs=nullptr, preLogits=nullptr; 
     hGensor hLoss( );
@@ -102,13 +104,6 @@ protected:
     virtual bool BatchGrad(float&fx,int flag=0x0) {   assert(0);  return false; }
     bool OnLogits(int flag=0x0);
 public:
-    enum GD_METHOD {
-        ADAMw=0x0,          
-        SGD,               
-        SGD_v,
-        SGD_gensor_v,
-   
-    };
     GD_METHOD tpGD=ADAMw;  
 
     // typedef bool (*_CALL_BACK_)(void * data, int accum_step, float * sched);    
@@ -122,7 +117,7 @@ public:
     //  struct ggml_opt_context * opt = train->opt; 
     struct train_params_common train_params;
 
-    Optimizer(NLP_AutoRegressive *g_,struct train_params_common& params_,int flag=0x0);
+    Optimizer(NLP_AutoRegressive *g_,CLI_params& params_,int flag=0x0);
     //Deprecated need refactor!!!       9/30/2024
     virtual float Compute(std::vector<llama_token>&tokens,bool isForward,int flag=0x0);
     virtual float Evaluate(SampLoader&loader,int iter,int flag=0x0);
@@ -182,7 +177,7 @@ public:
     friend class Fish;
     friend class SampLoader;
     friend class SAMP;
-
+    friend class TGraph;
 };
 typedef shared_ptr<Optimizer> hOptimizer;
 
@@ -198,26 +193,16 @@ protected:
     float eps_f = 1e-5f; // epsilon for convergence test
     float eps_g = 1e-3f; // epsilon for convergence test
     
-    hGensor gm=nullptr;  // first moment
-    hGensor gv=nullptr;  // second moment
-    hGensor gpf=nullptr; // past function values
+    // hGensor gm=nullptr;  // first moment
+    // hGensor gv=nullptr;  // second moment
+    // hGensor gpf=nullptr; // past function values
 
     void Prepare(size_t nx,int flag=0x0)   override;
     // compute grad on batchs
     bool BatchGrad(float&fx,int flag=0x0) override;
-    virtual double UpdateTensorParam(hGensor hP,float *m,float *v,float *g,float gnorm);
+    virtual double UpdateTensorParam(hGensor hP,size_t offset,float *g,float gnorm);
     void UpdateParams(int nx,CLI_params& hparams,int flag)  override;
 public:
-    OPT_Adam(NLP_AutoRegressive *g_,struct train_params_common& params_,int flag=0x0);
+    OPT_Adam(NLP_AutoRegressive *g_,CLI_params& params_,int flag=0x0);
     void Dump(int typ)  override;
-};
-
-class OPT_AdamMiniV: public OPT_Adam  {
-protected:    
-    double UpdateTensorParam(hGensor hP,float *m,float *v,float *g,float gnorm) override;
-public:
-    OPT_AdamMiniV(NLP_AutoRegressive *g_,struct train_params_common& params_,int flag=0x0) :
-        OPT_Adam(g_,params_,flag) {
-        title = "OPT_AdamMiniV";
-    };
 };

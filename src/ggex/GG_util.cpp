@@ -133,9 +133,12 @@ MODEL_ARCH CLI_params::ModelArch()   {
 }
 
 void CLI_params::OnArch( ){
+    int n_head=-1;
     switch(ModelArch()){
     case MODEL_ARCH::NLP_GPT2:  {
-        n_embd = 768;               dict_latent_dim = 768;
+        //baby_GPT      dropout = 0.2
+        // n_head = 6;             n_embd = 384;           dict_latent_dim=n_embd;
+        n_head = 12;         n_embd = 768;           dict_latent_dim = 768;
         n_embd_head_v = 64;         n_embd_head_k = 64;
         // n_embd = 128; dict_latent_dim = 128;        n_embd_head_v=n_embd_head_k=2; //only for debug        
         n_ctx_train = 1024;
@@ -143,7 +146,7 @@ void CLI_params::OnArch( ){
             // TO_DO: why grad vanish @/home/cys/rnd/lic/log/gpt2/10_29_bug.info
             int n_ff0 = jKV(jConfig,{"model","ffn","length"},3072,false);
             for(int i=0;i<nLayer();i++){
-                LAY_PARAM lay(12,12,n_ff0);
+                LAY_PARAM lay(n_head,n_head,n_ff0);
                 layers.push_back(lay);
             }
         }
@@ -203,11 +206,13 @@ try{
     if(model_title.empty()){
         model_title = jKV(jConfig,{"model","arch"},string(""));
     }
-    
+    // nlohmann::ordered_json jm = jKEY(jConfig,{"jmodel"});
+    jModel = jKEY(jConfig,{"jmodel"});
     serial_path = jKV(jConfig,{"data","serialize_path"},s0 );
+    string dict_type = jKV(jConfig,{"dict","type"},s0 );
     // eval_binpath = jKV(jConfig,{"data","eval_binpath"},s0 );   
     string a = batch_sample=="stacking" ? batch_sample : "";
-    serial_path += a+"_["+model_title+"]_";       //std::to_string(1.0-rSplit)
+    serial_path += a+"_["+model_title+dict_type+"]_";       //std::to_string(1.0-rSplit)
     // eval_binpath += a+"_["+model_title+"]_.data";
     fp_train_data = jKV(jConfig,{"data","source"},fp_train_data );
     common.fn_train_data = "\0";
@@ -235,6 +240,8 @@ try{
     // sigma = jKV(jConfig,{"model","sigma"},sigma ); 
     nLayerX = jKV(jConfig,{"model","layer"},nLayerX );    
     assert(nLayerX<160 && nLayerX>0);
+
+    nFFX = jKV(jConfig,{"model","ffn","length"},nFFX );    
     
     common.custom_n_ctx = true;
     common.n_threads = jKV(jConfig,{"threads"},common.n_threads );
@@ -733,21 +740,26 @@ void _T_repr_(hGensor t,const char*tab,char *buf,const GENSOR_INFO&info){
 
 void _T_repr_(hGensor t,const char*tab,char *buf,int typ){
     if(t==nullptr)      return;
-    const char* A = t->type==GGML_TYPE_F16 ? "d16":"d";
+    bool isInput = t->flags & GGML_TENSOR_FLAG_INPUT;
+    string A = t->type==GGML_TYPE_F16 ? "d16":"d";
     if(t->grad!=nullptr){
         if(t->type==GGML_TYPE_F16)
             A = "P16";    
         else
             A = "P";
     }
+    if(isInput){
+        A = "("+A+")";
+    }
+    size_t nElem = ggml_nelements(t);
     auto ne=t->ne;
     switch(typ){
     case 1:
-        sprintf(buf+strlen(buf),"%s%s '%s' \t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",tab,A,t->name,ne[0], ne[1], ne[2], ne[3], ggml_type_name(t->type));
+        sprintf(buf+strlen(buf),"%s%s '%s' \t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",tab,A.c_str(),t->name,ne[0], ne[1], ne[2], ne[3], ggml_type_name(t->type));
         break;
     default:
-        sprintf(buf+strlen(buf),"%s%s '%s' %.3lf(M)\t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",tab, 
-        A,t->name,ggml_nelements(t)/1.0e6,ne[0], ne[1], ne[2], ne[3], ggml_type_name(t->type)); 
+        sprintf(buf+strlen(buf),"%s%s '%s' %.3g%s\t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",tab, 
+        A.c_str(),t->name,nElem>1000?nElem/1.0e6:nElem,nElem>1000?"M":"",ne[0], ne[1], ne[2], ne[3], ggml_type_name(t->type)); 
         break;
     }    
 }
@@ -784,6 +796,7 @@ int CHECK_SAME_TENSORS(const std::vector<hGensor>&arrA,const std::vector<hGensor
             isSame = false;     nMiss++;
         }
     }
+    _INFO("\n======== %s OK\n",__func__);
     return 0x0;
 }
 
@@ -814,3 +827,65 @@ try{
     return 0x0;
 }
 }
+
+struct ggml_context *InitCTX(size_t msize,int flag){
+    struct ggml_init_params ctx_model_params;
+    ctx_model_params.mem_size   = msize;
+    ctx_model_params.mem_buffer = NULL;
+    ctx_model_params.no_alloc   = true;
+
+    struct ggml_context * ctx = ggml_init(ctx_model_params);  
+    return ctx;  
+}
+
+/*
+static void ggml_compute_forward_scale_q(
+        const struct ggml_compute_params * params,
+        struct ggml_tensor * dst) {
+
+    const struct ggml_tensor * src0 = dst->src[0];
+
+    GGML_ASSERT(ggml_is_contiguous(src0));
+    GGML_ASSERT(ggml_is_contiguous(dst));
+    GGML_ASSERT(ggml_are_same_shape(src0, dst));
+
+    if (params->type == GGML_TASK_TYPE_INIT || params->type == GGML_TASK_TYPE_FINALIZE) {
+        return;
+    }
+    GGML_TENSOR_UNARY_OP_LOCALS
+    // scale factor
+    float v;
+    memcpy(&v, dst->op_params, sizeof(float));
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    const int nc = src0->ne[0];
+    const int nr = ggml_nrows(src0);
+
+    // rows per thread
+    const int dr = (nr + nth - 1)/nth;
+
+    // row range for this thread
+    const int ir0 = dr*ith;
+    const int ir1 = MIN(ir0 + dr, nr);
+
+    // const size_t nb01 = src0->nb[1];
+    // const size_t nb1 = dst->nb[1];    
+    assert(ne00 % 32 == 0);
+    float * wdata = (float *) params->wdata + (ne00 + CACHE_LINE_SIZE_F32) * ith;
+    const enum ggml_type type = src0->type;
+    const enum ggml_type dtype = dst->type;
+    ggml_to_float_t const dequantize_row_q = type_traits[type].to_float;
+    ggml_from_float_t const quantize_row_q = type_traits[dtype].from_float;
+    for (int i1 = ir0; i1 < ir1; i1++) {
+        if (dst->data != src0->data) {            // src0 is same shape as dst => same indices
+            memcpy((char *)dst->data + i1*nb1, (char *)src0->data + i1*nb01, nc * sizeof(float));
+        }
+        void *data = dst->data + i1*nb1;
+        dequantize_row_q(data, wdata, ne00);    // unquantize row from src0 to temp buffer    
+        ggml_vec_scale_f32(nc, wdata, v);
+        // ggml_vec_scale_f32(nc, (float *) ((char *) dst->data + i1*nb1), v);
+        quantize_row_q(wdata, data, ne00);
+    }
+}*/

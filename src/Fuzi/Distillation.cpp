@@ -8,7 +8,7 @@ void Distillation::UpdateSigma( int step,int flag){
     float delta = 1.0/100.0/2;   //scheduler->GetSigma(step);
     if(step>0)
         alpha -= delta;      
-    if(hGang->hOPT->isStopImproving()){
+    if(hFish->hOPT->isStopImproving()){
         // alpha = scheduler->Last()+delta;      hard to converge to zero
         alpha = scheduler->Last();   
     }     

@@ -59,8 +59,7 @@ hGensor LLM_MAMBA::BuildTarget( struct ggml_context * ctx,hGensor cur,int flag) 
 
 GPT2::GPT2( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag) : NLP_AutoRegressive(nam_,params,role,flag)  {
     assert(arch==MODEL_ARCH::NLP_GPT2);
-    isBias = true;
-    
+    isBias = false;    //   if true, converge much slower
 }
 
 static void cb(struct ggml_tensor * cur, const char * name, int il)    {
@@ -94,55 +93,73 @@ static void cb(struct ggml_tensor * cur, const char * name, int il)    {
 };
 
 /*
-    case LLM_ARCH_GPT2:
-                {
-                    model.tok_embd = ml.create_tensor(ctx_input, tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab});
-                    model.pos_embd = ml.create_tensor(ctx_input, tn(LLM_TENSOR_POS_EMBD,   "weight"), {n_embd, n_ctx_train});
+GPT(
+  (transformer): ModuleDict(
+    (wte): Embedding(65, 768)
+    (wpe): Embedding(256, 768)
+    (drop): Dropout(p=0, inplace=False)
+    (h): ModuleList(
+      (0): Block(
+        (ln_1): LayerNorm()
+        (attn): CausalSelfAttention(
+          (c_attn): Linear(in_features=768, out_features=2304, bias=False)
+          (c_proj): Linear(in_features=768, out_features=768, bias=False)
+          (attn_dropout): Dropout(p=0, inplace=False)
+          (resid_dropout): Dropout(p=0, inplace=False)
+        )
+        (ln_2): LayerNorm()
+        (mlp): MLP(
+          (c_fc): Linear(in_features=768, out_features=3072, bias=False)
+          (gelu): GELU(approximate='none')
+          (c_proj): Linear(in_features=3072, out_features=768, bias=False)
+          (dropout): Dropout(p=0, inplace=False)
+        )
+      )
+    )
+    (ln_f): LayerNorm()
+  )
+  (lm_head): Linear(in_features=768, out_features=65, bias=False)
+)
 
-                    // output
-                    {
-                        model.output_norm   = ml.create_tensor(ctx_output,       tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd});
-                        model.output_norm_b = ml.create_tensor(ctx_output,       tn(LLM_TENSOR_OUTPUT_NORM, "bias"),   {n_embd});
-                        model.output        = ml.create_tensor(ctx_output_split, tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab});
-                    }
-
-                    for (int i = 0; i < n_layer; ++i) {
-                        ggml_context * ctx_layer = ctx_for_layer(i);
-                        ggml_context * ctx_split = ctx_for_layer_split(i);
-
-                        auto & layer = model.layers[i];
-
-                        layer.attn_norm   = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_NORM,   "weight", i), {n_embd});
-                        layer.attn_norm_b = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_NORM,   "bias", i),   {n_embd});
-
-                        layer.wqkv = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_QKV, "weight", i), {n_embd, n_embd + 2*n_embd_gqa});
-                        layer.bqkv = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_QKV, "bias", i),   {n_embd + 2*n_embd_gqa});
-
-                        layer.wo   = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd, n_embd});
-                        layer.bo   = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_OUT, "bias", i),   {n_embd});
-
-                        layer.ffn_norm   = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd});
-                        layer.ffn_norm_b = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_NORM, "bias", i),   {n_embd});
-
-                        layer.ffn_down   = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_DOWN, "weight", i), {n_ff, n_embd});
-                        layer.ffn_down_b = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_DOWN, "bias", i),   {n_embd});
-
-                        layer.ffn_up     = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd, n_ff});
-                        layer.ffn_up_b   = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_UP,   "bias", i),   {n_ff});
-                    }
-                } break;
 */
-
+/*
 int DTS_GPT2::stream2token(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag)    {
-    // // bool gpt2_model_load(const std::string & fname, gpt2_model & model, gpt_vocab & vocab, const gpt_params & params) {
-    // gpt_vocab vocab;
-    // std::vector<gpt_vocab::id> embd_inp = ::gpt_tokenize(vocab, params.prompt);
+    // bool gpt2_model_load(const std::string & fname, gpt2_model & model, gpt_vocab & vocab, const gpt_params & params) {
+    gpt_vocab vocab;
+    std::vector<gpt_vocab::id> embd_inp = ::gpt_tokenize(vocab, params.prompt);
     return 0x0;
-}
+}*/
 
 CDict_GPT2::CDict_GPT2(NLP_AutoRegressive *nlp_,int flag)   : ConsiceDict(nlp_,flag)   {
     int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd;
     n_vocab=50257;    
+}
+
+CDict_CHAR::CDict_CHAR(NLP_AutoRegressive *nlp_,int flag)   : ConsiceDict(nlp_,flag)   {
+    int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd;
+    n_vocab=256;    
+}
+int CDict_CHAR::InitMAEC(struct ggml_context *ctx_compute,const std::vector<int>& dims_,int flag)  {
+    int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd;
+
+    tok_embeddings = hLM->AddTensor(ctx_compute,_NAM_("token_embd.weight"),GGML_TYPE_F32,{n_embd, n_vocab},true,0x0);  
+    _norm.Build("output_norm", {n_embd},0x0);
+    _output.isBias = false;
+    _output.Build("output", {n_embd, n_vocab},0x0);  
+    assert(gensors.size()==0);
+    return 0x0;     
+}
+int CDict_CHAR::stream2token(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag){
+    int n_tokens = 0, nMost = btch.size(); 
+    assert(txt_len<=nMost);
+    unsigned char *a = (unsigned char*)(txt);
+    for(int i=0;i<txt_len;i++,a++)  {
+        TOKEN_ID t=(TOKEN_ID)(*a);
+        assert(t>=0 && t<n_vocab);
+        btch[i] = t;
+        n_tokens++;
+    }
+    return n_tokens;
 }
 
 int CDict_GPT2::InitMAEC(struct ggml_context *ctx_compute,const std::vector<int>& dims_,int flag)  {
@@ -156,8 +173,50 @@ int CDict_GPT2::InitMAEC(struct ggml_context *ctx_compute,const std::vector<int>
     return 0x0;     
 }
 
+hNeuron GPT2::J2Neuron(struct ggml_context *ctx_compute,string dad,const JSON& j,int flag){
+    hNeuron hN=nullptr,cur=nullptr;
+    std::vector<hNeuron> gang;    
+    string k;
+    for(auto it = j.begin(); it != j.end(); ++it)    {
+        k =it.key();        
+        auto v=it.value();
+        if(it->is_array()){
+            cur = GeNeuron::MakeInstance(this,ctx_compute,dad,k,v,flag);        
+        }else if(it->is_structured())        {
+            cur =  J2Neuron(ctx_compute,k,*it,flag);            
+        }
+        else        {
+            cur = GeNeuron::MakeInstance(this,ctx_compute,dad,k,v,flag);              
+        }
+        neurons.push_back(cur);
+        gang.push_back(cur);
+    }
+    assert(gang.size()>0);
+    if(gang.size()>1)   {
+        hN = std::make_shared<Ganglia>(ctx_compute,dad,gang,flag);
+        neurons.push_back(hN);  
+    }else{
+        assert(cur!=nullptr);
+        hN = cur;
+    }
+    assert(hN->isValid());
+    return hN;
+}
+
+struct ggml_cgraph *GPT2::jRawGraph( struct ggml_context *ctx_compute,bool isBuild,int flag)   {
+    J2Neuron(ctx_compute,"GPT2",hparams.jModel,flag);
+
+    hGensor cur = nullptr;
+    for(auto nn : neurons){
+        cur = nn->Forward(ctx_compute,cur);
+    }
+    
+    return nullptr;
+}
 
 struct ggml_cgraph *GPT2::GetRawGraph( struct ggml_context *ctx_compute,bool isBuild,int flag)   { 
+    return jRawGraph(ctx_compute,isBuild,flag);
+
     bool isOnlinePush = true;      // push nodes last or online(QKV)
     ctx = ctx_compute;
     // gf = ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true);  
@@ -180,20 +239,23 @@ struct ggml_cgraph *GPT2::GetRawGraph( struct ggml_context *ctx_compute,bool isB
     hDict->InitMAEC(ctx_compute,{n_embd},0x0);    
 
     InitEntryTensors();
-    pos_embd = AddTensor(ctx_compute,_NAM_("position_embed.weight"),GGML_TYPE_F32,{n_embd, n_ctx_train},true,0x0); //ml.create_tensor(ctx_input, tn(LLM_TENSOR_POS_EMBD,   "weight"), {n_embd, n_ctx_train});
+    
+    pos_embd = AddTensor(ctx_compute,_NAM_("position_embed.weight"),GGML_TYPE_F32,{n_embd, n_ctx},true,0x0); //ml.create_tensor(ctx_input, tn(LLM_TENSOR_POS_EMBD,   "weight"), {n_embd, n_ctx_train});
     //llm_build_inp_embd(ctx_compute, lctx, hparams, batch, tok_embd, cb);
     hGensor  inp_tokens = tokens_input;    
     if(n_batch>1){
         inp_tokens = ggml_reshape_1d(ctx_compute, tokens_input, n_ctx*n_batch);   gTN(inp_tokens, "inp_tokens_1d");
-    }
-    
-    hGensor  inpL = ggml_get_rows(ctx_compute, hDict->tok_embeddings, inp_tokens);    gTN(inpL, "inp_embd"); 
-    build_inp_KQ_(ctx_compute,false);     // init KQ_pos
-    hGensor inp_pos = KQ_pos;           //build_inp_pos();    
-    // hGensor KQ_mask = build_inp_KQ_mask();
-    pos = ggml_get_rows(ctx_compute, pos_embd, KQ_pos);
-    cb(pos, "pos_embd", -1);
-    inpL = ggml_add(ctx_compute, inpL, pos);        
+    }    
+    hGensor  inpL = ggml_get_rows(ctx_compute, hDict->tok_embeddings, inp_tokens);    gTN(inpL, "inp_embd");    
+    build_inp_KQ_(ctx_compute,false);     // init KQ_pos 
+    if(1)   {        
+        hGensor inp_pos = KQ_pos;           
+        pos = ggml_get_rows(ctx_compute, pos_embd, KQ_pos);    cb(pos, "pos_embd", -1);
+        float *fpos = (float*)(pos->data);
+        inpL = ggml_add(ctx_compute, inpL, pos);     
+    }else{
+        inpL = ggml_add(ctx_compute, inpL, pos_embd);     
+    }   
     cb(inpL, "inp_pe", -1);
     // layers.clear();     cur = inpL;        xn=cur;      xxn=cur->grad;   //only for debug
     for (int il = 0; il < layers.size(); ++il) {  
@@ -203,11 +265,11 @@ struct ggml_cgraph *GPT2::GetRawGraph( struct ggml_context *ctx_compute,bool isB
         //  llm_build_norm(ctx_compute, inpL, hparams,layers[il].attn_norm,layers[il].attn_norm_b,LLM_NORM, cb, il);
         auto layer = dynamic_pointer_cast<QKV_LAY>(layers[il]);    
         layer->att_norm.Build(_NAM_("block.%d.attn_norm",il),{n_embd},0x0);     layer->att_norm.sT="a";
-        cur = layer->att_norm.Build_2(ctx_compute,inpL,0x0);
+        cur = layer->att_norm.Forward(ctx_compute,inpL,0x0);
         cb(cur, _NAM_("attn_norm"), il);
-        if(0){  
+        if(1){  
             layer->Q.Build(_NAM_("block.%d.attn_qkv",il),{n_embd, n_embd + 2*n_embd_gqa},0x0);
-            cur = layer->Q.Build_2(ctx_compute,cur,0x0);            cb(cur, "wqkv", il);      
+            cur = layer->Q.Forward(ctx_compute,cur,0x0);            cb(cur, "wqkv", il);      
             hGensor Q2= ggml_view_2d(ctx_compute, cur, n_embd,     n_tokens, cur->nb[1], 0*sizeof(float)*(n_embd));
             hGensor K2= ggml_view_2d(ctx_compute, cur, n_embd_gqa, n_tokens, cur->nb[1], 1*sizeof(float)*(n_embd));
             hGensor V2= ggml_view_2d(ctx_compute, cur, n_embd_gqa, n_tokens, cur->nb[1], 1*sizeof(float)*(n_embd + n_embd_gqa));
@@ -218,15 +280,22 @@ struct ggml_cgraph *GPT2::GetRawGraph( struct ggml_context *ctx_compute,bool isB
             layer->Q.Build(_NAM_("block.%d.Q",il),{n_embd, n_embd},0x0);                layer->Q.sT="q";
             layer->K.Build(_NAM_("block.%d.K",il),{n_embd, n_embd_gqa},0x0);            layer->K.sT="k";
             layer->V.Build(_NAM_("block.%d.V",il),{n_embd, n_embd_gqa},0x0);            layer->V.sT="v";
-            Qcur = layer->Q.Build_2(ctx_compute,cur,0x0);       
-            Kcur = layer->K.Build_2(ctx_compute,cur,0x0);       
-            Vcur = layer->V.Build_2(ctx_compute,cur,0x0);
+            Qcur = layer->Q.Forward(ctx_compute,cur,0x0);       
+            Kcur = layer->K.Forward(ctx_compute,cur,0x0);       
+            Vcur = layer->V.Forward(ctx_compute,cur,0x0);
         }
         cb(Qcur, "Qcur", il);        cb(Kcur, "Kcur", il);        cb(Vcur, "Vcur", il);
-        Qcur = ggml_reshape_3d(ctx_compute, Qcur, n_embd_head, n_head, n_tokens);
-        Kcur = ggml_reshape_3d(ctx_compute, Kcur, n_embd_head, n_head, n_tokens);
-        Vcur = ggml_reshape_3d(ctx_compute, Vcur, n_embd_head, n_head, n_tokens);
-        q = ggml_permute(ctx_compute, Qcur, 0, 2, 1, 3);   
+        if(isAttOnBC){  // attenion on all tokens, memory would explode!
+            Qcur = ggml_reshape_3d(ctx_compute, Qcur, n_embd_head, n_head, n_tokens);
+            Kcur = ggml_reshape_3d(ctx_compute, Kcur, n_embd_head, n_head, n_tokens);
+            Vcur = ggml_reshape_3d(ctx_compute, Vcur, n_embd_head, n_head, n_tokens);
+        }else{
+            Qcur = ggml_reshape_4d(ctx_compute, Qcur, n_embd_head, n_head, n_ctx,n_batch);
+            Kcur = ggml_reshape_4d(ctx_compute, Kcur, n_embd_head, n_head, n_ctx,n_batch);
+            Vcur = ggml_reshape_4d(ctx_compute, Vcur, n_embd_head, n_head, n_ctx,n_batch);
+        }
+        
+        q = ggml_permute(ctx_compute, Qcur, 0, 2, 1, 3);   //eh,ctx,h,b
         k = ggml_permute(ctx_compute, Kcur, 0, 2, 1, 3);  
         v = ggml_cont(ctx_compute,ggml_permute(ctx_compute, Vcur, 1, 2, 0, 3));
         if(isOnlinePush)    {
@@ -243,9 +312,9 @@ struct ggml_cgraph *GPT2::GetRawGraph( struct ggml_context *ctx_compute,bool isB
         }   
         cb(kq, "kq_soft_max_ext", il);
         
-        struct ggml_tensor * kqv = ggml_mul_mat(ctx_compute, v, kq);
+        struct ggml_tensor * kqv = ggml_mul_mat(ctx_compute, v, kq);        // eh,ctx,h,b
         cb(kqv, "kqv", il);
-        struct ggml_tensor * kqv_merged = ggml_permute(ctx_compute, kqv, 0, 2, 1, 3);
+        struct ggml_tensor * kqv_merged = ggml_permute(ctx_compute, kqv, 0, 2, 1, 3); // eh,h,ctx,b
         cb(kqv_merged, "kqv_merged", il);
         if(0)   //  back gradient is zero
             cur = ggml_cont_2d(ctx_compute, kqv_merged, n_embd_head_v*n_head, n_tokens);
@@ -254,7 +323,9 @@ struct ggml_cgraph *GPT2::GetRawGraph( struct ggml_context *ctx_compute,bool isB
             cur = ggml_reshape_2d(ctx_compute, kqv_out, n_embd, n_tokens);              
         }        
         cb(cur, "kqv_merged_cont", il);
-
+        layer->proj.Build(_NAM_("block.%d.attn_proj",il),{n_embd, n_embd},0x0);     //why proj is useful?
+        cur = layer->proj.Forward(ctx_compute,cur,0x0);            cb(cur, "attn_proj", il); 
+        
         if(isOnlinePush)            ggml_build_forward_expand(gf, cur);        
 
         if (layer->isLast) {            // skip computing output for unused tokens
@@ -265,15 +336,15 @@ struct ggml_cgraph *GPT2::GetRawGraph( struct ggml_context *ctx_compute,bool isB
         // add the input
         hGensor ffn_inp = ggml_add(ctx_compute, cur, inpL);        cb(ffn_inp, "ffn_inp", il);
         layer->ffn_norm.Build(_NAM_("block.%d.ffn_norm",il),{n_embd},0x0);      layer->ffn_norm.sT="f";
-        cur = layer->ffn_norm.Build_2(ctx_compute,inpL,0x0);
+        cur = layer->ffn_norm.Forward(ctx_compute,inpL,0x0);
         cb(cur, _NAM_("ffn_norm"), il);
         layer->up.Build(_NAM_("block.%d.ffn_up",il),{n_embd, n_ff},0x0);
-        cur = layer->up.Build_2(ctx_compute,cur,0x0);
+        cur = layer->up.Forward(ctx_compute,cur,0x0);
         cb(cur, "ffn_up", il);
         // cur = ggml_gelu(ctx, cur);                cb(cur, "ffn_gelu", il);  //GGML_UNARY_OP_GELU:not implemented for backward
         cur = ggml_silu(ctx, cur);                cb(cur, "ffn_silu", il); 
         layer->down.Build(_NAM_("block.%d.ffn_down",il),{n_ff, n_embd},0x0);
-        cur = layer->down.Build_2(ctx_compute,cur,0x0);
+        cur = layer->down.Forward(ctx_compute,cur,0x0);
         cb(cur, "ffn_down", il);
         cur = ggml_add(ctx_compute, cur, ffn_inp);
         // cur = lctx.cvec.apply_to(ctx_compute, cur, il);
@@ -294,19 +365,26 @@ struct ggml_cgraph *GPT2::GetRawGraph( struct ggml_context *ctx_compute,bool isB
     }
     if(rnd==nullptr)
         rnd = init_random_normal_distribution(hparams.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
-    if(back_data==nullptr){
-        back_data = ggml_backend_alloc_ctx_tensors_from_buft(ctx_compute, ggml_backend_cpu_buffer_type());
-        sz2=ggml_backend_buffer_get_size(back_data); 
-    }
+    sz2 = InitBackEnd(ctx_compute);
+    
     return gf;
 }
 
 hGensor GPT2::BuildTarget(struct ggml_context * ctx_compute,hGensor inpL,int flag) {
     assert(hDict!=nullptr);
-    hGensor cur = hDict->_norm.Build_2(ctx_compute,inpL,0x0);                    cb(cur, "result_norm", -1);
-    cur = hDict->_output.Build_2(ctx_compute,cur,0x0);                         cb(cur, "result_output", -1);
+    hGensor cur = hDict->_norm.Forward(ctx_compute,inpL,0x0);                    cb(cur, "result_norm", -1);
+    cur = hDict->_output.Forward(ctx_compute,cur,0x0);                         cb(cur, "result_output", -1);
     preLogits = cur;
     out_node = BuildLoss(ctx_compute,preLogits);
 
     return cur;
+}
+
+string GPT2::__repr__( string& suffix,string& prefix,int flag) {
+    char buf[5012]="\0";
+    const char*tab=prefix.c_str();
+    string sBasic = NLP_AutoRegressive::__repr__(suffix,prefix,flag);
+    sprintf(buf+strlen(buf),"%s",sBasic.c_str()); 
+    _INFO("GPT2:    Bias=%d AttOnBC=%d\n========\n",isBias,isAttOnBC); 
+    return buf;
 }

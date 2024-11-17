@@ -8,6 +8,8 @@
 #include "common.h"
 #include "Dictionary.hpp"
 
+
+
 void SAMP::Refresh(SampLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,int typ)  {
     auto target_probs = loader->hOPT->hTargetProbs();
     int64_t n_vocab=target_probs->ne[0],n_tokens=target_probs->ne[1],nSampInBatch=target_probs->ne[2];
@@ -42,9 +44,9 @@ void SampLoader::Samp2Batch(int k,hSAMP samp,hGensor tokens_input,hGensor target
     auto dialect = hDict->dialect;
     bool fill_with_next_samples=params.fill_with_next_samples,isDialect = hDict->isDialect;
     size_t starting=samp->pos+samp->jump;    
-    ggml_set_i32_nd(tokens_input, 0, k, 0, 0, bos);
+    ggml_set_i32_nd(tokens_input, 0, k, 0, 0, hDict->bos);
     for (int64_t i=0; i<n_ctx; ++i) {    
-        TOKEN_ID token = eos;
+        TOKEN_ID token = hDict->eos;
         /*if (samp_off >= samp->len && fill_with_next_samples) { //true only arg == "--fill-with-next-samples"
             if (!sample_separation_eos) {
                 // insert eos token to separate samples
@@ -208,6 +210,11 @@ bool SAMP::Serialize(FSerial&S, bool isSave, int flag){
     return true;
 }
 
+DataTokenSet::DataTokenSet(ConsiceDict *hD) : hDict(hD)   {
+    nVocab = hDict->n_vocab;
+    assert(nVocab>0);
+}
+
 bool DataTokenSet::Serialize(const std::string&path,  bool isSave, int flag){
 try{
     FSerial S(path,isSave,flag);
@@ -308,8 +315,8 @@ void SampLoader::Prepare(Optimizer *hOPT_,int flag){
     tokens = lama->hTokenset;
     hDict = lama->hDict;        
     assert(tokens!=nullptr && hDict!=nullptr);  
-    bos = hDict->bos;
-    eos = hDict->eos;
+    // bos = hDict->bos;
+    // eos = hDict->eos;
 }
             
 /*
@@ -406,7 +413,7 @@ bool SampLoader::TopoOrder(std::vector<size_t>&ids,std::mt19937& rng,int flag)  
         step++;
         double rEx = cur->UpdateTag(tokens,stp,step,true),r,rBest=FLT_MAX;        
         for(j=i*nSampInBatch+1;j<(i+1)*nSampInBatch;j++)  {
-            if(1)   {   //10001/16/3 rDup=0.415(0.568)=>rDup=0.347(0.453)        10001/16/32 rDup=0.704(0.738)=>0.625(0.649)
+            if(0)   {   //10001/16/3 rDup=0.415(0.568)=>rDup=0.347(0.453)        10001/16/32 rDup=0.704(0.738)=>0.625(0.649)
                 nLeft = count-j;        
                 for(k=0,rBest=0;k<nPick;k++){
                     if(isRepeated)  {
@@ -517,9 +524,9 @@ static size_t mark_utf8_units(const char* bytes, int * utf8_units, int * utf8_nu
     return count_utf8;
 }
 
-int DataTokenSet::stream2token(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag){
+int ConsiceDict::stream2token(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag){
     llama_model *lam_ = static_cast<llama_model *>(hLLM);
-        assert(lam_!=nullptr);
+    assert(lam_!=nullptr);
         //  would call llama_tokenize_internal
     int n_tokens = llama_tokenize( lam_, txt,txt_len,btch.data(),(int) btch.size(),false, false);
     return n_tokens;
@@ -573,7 +580,7 @@ bool DataTokenSet::Load(struct CLI_params& hparams,void *hLLM,int flag){
         while(cur<fsize){     
             GST_TIC(t0);
             len = min(step,fsize-cur);  
-            int n_tokens = stream2token(hLLM,buf+cur,len,btch,flag);
+            int n_tokens = hDict->stream2token(hLLM,buf+cur,len,btch,flag);
             // int n_tokens = llama_tokenize( lam_, buf+cur,len,btch.data(),(int) btch.size(),false, false);            
             if (n_tokens<=0) {
                  _INFO("Invalid n_tokens=%d @%ld!!!\n",n_tokens,cur);    
@@ -595,7 +602,9 @@ bool DataTokenSet::Load(struct CLI_params& hparams,void *hLLM,int flag){
         delete[] buf;
         
         UniqueTokens(-1);
+        assert(nUnique<=nVocab);
         Serialize(ssf,true);
+        
     }
     nTokens = tokens.size();
     _INFO("\r[Load&Token]: @'%s' fsize=%.3g(M) nTokens=%.3g(M) nUnique=%ld T=%.3g(s)\t\t\t\n", 

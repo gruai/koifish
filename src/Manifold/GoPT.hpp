@@ -39,7 +39,7 @@ struct WIKI {
     };
     std::string title="",tokenizer_name,model_path; 
     void *vocab = nullptr;
-    int32_t bos,eos;   
+    int32_t bos=1,eos=2;   
     INDUCT_MODE teach=_LOGITS;
     bool isOnlyTokenizer = false;
     size_t n_vocab = 0, nOutToken = -1,nEleGGUF = 0;

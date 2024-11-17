@@ -16,6 +16,8 @@ Implements:
 #include <vector>
 #include "llmc_utils.h"
 #include "llmc_rand.h"
+// #include "Dictionary.hpp"
+struct ConsiceDict;
 #include "../CLI_params.hpp"
 // ----------------------------------------------------------------------------
 // implementation of glob for Windows is in dev/unistd.h
@@ -139,6 +141,7 @@ class NLP_AutoRegressive;
 class SampLoader;
 class DataTokenSet    {
 protected:
+    ConsiceDict *hDict = nullptr;
     std::map<TOKEN_ID, TOKEN_ID> mapT2T;
     std::vector<TOKEN_ID> dialect;
     std::string fpath;
@@ -156,9 +159,7 @@ protected:
     // int UniqueTokens(const std::vector<TOKEN_ID>& tokens,size_t n_1,int flag=0x0);
 public:
     std::vector<TOKEN_ID> tokens;
-    DataTokenSet(size_t nV) : nVocab(nV)    {
-
-    }
+    DataTokenSet(ConsiceDict *hDict);
 
     TOKEN_ID At(size_t pos){
         assert(pos<nTokens);
@@ -168,7 +169,6 @@ public:
 
     bool Serialize(const std::string&path,  bool isSave, int flag=0x0);
     
-    virtual int stream2token(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0);
     virtual bool Load(struct CLI_params& hparams,void *hLLM,int flag=0x0);
     int UniqueTokens(size_t n_1,int flag=0x0);
     bool InitSamps(unsigned context_length,std::vector<size_t>& samples_begin,std::vector<size_t>&samples_size,int flag=0x0);
@@ -181,10 +181,10 @@ typedef std::shared_ptr<DataTokenSet> hDataToken;
 
 class DTS_GPT2 : public DataTokenSet    {
 public:
-    DTS_GPT2(size_t nV) : DataTokenSet(nV)    {
+    DTS_GPT2(ConsiceDict *hDict) : DataTokenSet(hDict)    {
 
     }
-    int stream2token(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0)    override;
+    // int stream2token(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0)    override;
 };
 
 class SampLoader;
@@ -221,16 +221,16 @@ struct SAMP{
 // typedef std::shared_ptr<SAMP> hSAMP;
 typedef SAMP* hSAMP;
 
-struct ConsiceDict;
+
 class SampLoader   {
 protected:  
+    int tokens_per_iter = 0;
     CLI_params hparams;
     std::string fp_data;
     std::string sentence="";
     std::vector<int32_t> tok_ids;
     bool sample_separation_eos,sample_separation_bos;
     size_t n_ctx=-1;
-    int32_t bos,eos;
     std::vector<hSAMP> all_samps;
     // std::vector<size_t> idcs;      //would change epoch by epoch(shuffle,subsampling...)
     int64_t N4Train() {

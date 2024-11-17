@@ -32,7 +32,7 @@ protected:
     std::vector<hGensor> gensors;
     std::vector<float> sigmas;
     hScheduler scheduler = std::make_shared<DiscreteSchedule>( );
-    Fish *hGang=nullptr;
+    Fish *hFish=nullptr;
     
 public:
     enum ALG   {
@@ -42,7 +42,7 @@ public:
     };
     ALG alg;    
 
-    Distillation(Fish *hGang_,struct CLI_params&param,int flag)  : hGang(hGang_)   {
+    Distillation(Fish *hGang_,struct CLI_params&param,int flag)  : hFish(hGang_)   {
         alg = SIGMA;    //param.sigma=="add" ? ADD : SIGMA;
         scheduler = std::make_shared<DiscreteSchedule>();
         sigmas = scheduler->get_sigmas(100);
