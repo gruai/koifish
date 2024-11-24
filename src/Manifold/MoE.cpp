@@ -19,7 +19,8 @@ bool QKV_LAY::CreateFFN(const CLI_params&hparams, ggml_context *ctx, FFN_TYPE tp
             ffn_norm.w = nullptr;  
         else
             ffn_norm.w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
-        ffn_gate = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   n_ff);
+        if(hparams.ffn_use_gate)
+            ffn_gate = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   n_ff);
         down.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,   n_ff, n_embd);
         up.w   = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   n_ff); 
         if(tpFFN==VAR_LAST && isLast){/*i==n_layer-1*/
@@ -82,7 +83,7 @@ size_t LLM_MOE::MostMemSize(int flag)  {
 
 
 
-hGensor LLM_MOE::build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<QKV_LAY> layer,hGensor  KQ_pos,/*hGensor cur, hGensor wq, hGensor wk, hGensor wv, hGensor wo,
+hGensor LLM_MOE::build_layer_( int N,struct ggml_context *ctx_build,hGensor cur,std::shared_ptr<QKV_LAY> layer,hGensor  KQ_pos,/*hGensor cur, hGensor wq, hGensor wk, hGensor wv, hGensor wo,
     hGensor attention_norm,hGensor KQ_pos,hGensor ffn_norm.w,hGensor ffn_up,hGensor ffn_gate,hGensor ffn_down,*/ int flag) {
     auto train_params = hparams.common;
     int n_vocab = hDict->n_vocab,n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd,n_head = hparams.n_head(),n_ff = hparams.n_ff();
@@ -105,47 +106,47 @@ hGensor LLM_MOE::build_layer_( int N,struct ggml_context *ctx_compute,hGensor cu
     }  
 
     //  rms_norm:   Root Mean Square Layer Normalization
-    hGensor  t02 = ggml_rms_norm     (ctx_compute, cur, f_norm_rms_eps);                    gTN(t02, "t02");     assert_shape_2d(t02, n_embd, N*n_batch);
-    hGensor  t03 = ggml_repeat       (ctx_compute, attention_norm, t02);              gTN(t03, "t03");     assert_shape_2d(t03, n_embd, N*n_batch);
-    hGensor  t04 = ggml_mul          (ctx_compute, t03, t02);                               gTN(t04, "t04");     assert_shape_2d(t04, n_embd, N*n_batch);
+    hGensor  t02 = ggml_rms_norm     (ctx_build, cur, f_norm_rms_eps);                    gTN(t02, "t02");     assert_shape_2d(t02, n_embd, N*n_batch);
+    hGensor  t03 = ggml_repeat       (ctx_build, attention_norm, t02);              gTN(t03, "t03");     assert_shape_2d(t03, n_embd, N*n_batch);
+    hGensor  t04 = ggml_mul          (ctx_build, t03, t02);                               gTN(t04, "t04");     assert_shape_2d(t04, n_embd, N*n_batch);
     // QKV_Motion qkv(wq,wk,wv,n_embd,n_head,  N, n_batch,n_rot, n_ctx,n_head_kv,f_norm_rms_eps,rope_freq_base,rope_freq_scale);
     hBrownMotion hBrown = CreateBrownMotion(wq, wk, wv,layer);                              
-    hGensor t16 = hBrown->Build(ctx_compute , t04,  KQ_pos);        
-    hGensor  t17 = ggml_permute      (ctx_compute, t16, 0, 2, 1, 3);                        gTN(t17, "t17");     assert_shape_4d(t17, n_embd/n_head, n_head, N, n_batch);
-    hGensor  t18 = ggml_cont         (ctx_compute, t17);                                    gTN(t18, "t18");     assert_shape_4d(t18, n_embd/n_head, n_head, N, n_batch);
-    hGensor  t19 = ggml_reshape_2d   (ctx_compute, t18, n_embd, N*n_batch);                 gTN(t19, "t19");     assert_shape_2d(t19, n_embd, N*n_batch);
-    hGensor  t20 = ggml_mul_mat      (ctx_compute, wo, t19);                          gTN(t20, "t20");     assert_shape_2d(t20, n_embd, N*n_batch);
-    hGensor  t21 = ggml_add          (ctx_compute, t20, cur);                               gTN(t21, "t21");     assert_shape_2d(t21, n_embd, N*n_batch);
+    hGensor t16 = hBrown->Build(ctx_build , t04,  KQ_pos);        
+    hGensor  t17 = ggml_permute      (ctx_build, t16, 0, 2, 1, 3);                        gTN(t17, "t17");     assert_shape_4d(t17, n_embd/n_head, n_head, N, n_batch);
+    hGensor  t18 = ggml_cont         (ctx_build, t17);                                    gTN(t18, "t18");     assert_shape_4d(t18, n_embd/n_head, n_head, N, n_batch);
+    hGensor  t19 = ggml_reshape_2d   (ctx_build, t18, n_embd, N*n_batch);                 gTN(t19, "t19");     assert_shape_2d(t19, n_embd, N*n_batch);
+    hGensor  t20 = ggml_mul_mat      (ctx_build, wo, t19);                          gTN(t20, "t20");     assert_shape_2d(t20, n_embd, N*n_batch);
+    hGensor  t21 = ggml_add          (ctx_build, t20, cur);                               gTN(t21, "t21");     assert_shape_2d(t21, n_embd, N*n_batch);
     hGensor  ffn = nullptr;
     switch(tpFFN)   {
     case VAR_LAST:
     case SWIGLU:    {
-        hGensor  t22 = ggml_rms_norm     (ctx_compute, t21, f_norm_rms_eps);                    gTN(t22, "t22");     assert_shape_2d(t22, n_embd, N*n_batch);
+        hGensor  t22 = ggml_rms_norm     (ctx_build, t21, f_norm_rms_eps);                    gTN(t22, "t22");     assert_shape_2d(t22, n_embd, N*n_batch);
         ffn = t22;
         if(ffn_norm!=nullptr)       {
-            hGensor  t23 = ggml_repeat       (ctx_compute, ffn_norm, t22);                    gTN(t23, "t23");     assert_shape_2d(t23, n_embd, N*n_batch);
-            hGensor  t24 = ggml_mul          (ctx_compute, t23, t22);                               gTN(t24, "t24");     assert_shape_2d(t24, n_embd, N*n_batch); 
+            hGensor  t23 = ggml_repeat       (ctx_build, ffn_norm, t22);                    gTN(t23, "t23");     assert_shape_2d(t23, n_embd, N*n_batch);
+            hGensor  t24 = ggml_mul          (ctx_build, t23, t22);                               gTN(t24, "t24");     assert_shape_2d(t24, n_embd, N*n_batch); 
             ffn = t24;                 
         }
           
         if(ffn_up!=nullptr){
-            // hGensor  t22 = ggml_rms_norm     (ctx_compute, t21, f_norm_rms_eps);                    gTN(t22, "t22");     assert_shape_2d(t22, n_embd, N*n_batch);
-            // hGensor  t23 = ggml_repeat       (ctx_compute, ffn_norm, t22);                    gTN(t23, "t23");     assert_shape_2d(t23, n_embd, N*n_batch);
-            // hGensor  t24 = ggml_mul          (ctx_compute, t23, t22);                               gTN(t24, "t24");     assert_shape_2d(t24, n_embd, N*n_batch);
+            // hGensor  t22 = ggml_rms_norm     (ctx_build, t21, f_norm_rms_eps);                    gTN(t22, "t22");     assert_shape_2d(t22, n_embd, N*n_batch);
+            // hGensor  t23 = ggml_repeat       (ctx_build, ffn_norm, t22);                    gTN(t23, "t23");     assert_shape_2d(t23, n_embd, N*n_batch);
+            // hGensor  t24 = ggml_mul          (ctx_build, t23, t22);                               gTN(t24, "t24");     assert_shape_2d(t24, n_embd, N*n_batch);
             hGensor  t24 = ffn;
-            hGensor  t25 = ggml_mul_mat      (ctx_compute, ffn_up, t24);                      gTN(t25, "t25");     assert_shape_2d(t25, n_ff, N*n_batch);
-            hGensor  t26 = ggml_mul_mat      (ctx_compute, ffn_gate, t24);                    gTN(t26, "t26");     assert_shape_2d(t26, n_ff, N*n_batch);
-            hGensor  t27 = ggml_silu         (ctx_compute, t26);                                    gTN(t27, "t27");     assert_shape_2d(t27, n_ff, N*n_batch);
-            hGensor  t28 = ggml_mul          (ctx_compute, t27, t25);                               gTN(t28, "t28");     assert_shape_2d(t28, n_ff, N*n_batch);
-            hGensor  t29 = ggml_mul_mat      (ctx_compute, ffn_down, t28);                    gTN(t29, "t29");     assert_shape_2d(t29, n_embd, N*n_batch);
-            hGensor  t30 = ggml_add          (ctx_compute, t29, t21);                               gTN(t30, "t30");     assert_shape_2d(t30, n_embd, N*n_batch);
+            hGensor  t25 = ggml_mul_mat      (ctx_build, ffn_up, t24);                      gTN(t25, "t25");     assert_shape_2d(t25, n_ff, N*n_batch);
+            hGensor  t26 = ggml_mul_mat      (ctx_build, ffn_gate, t24);                    gTN(t26, "t26");     assert_shape_2d(t26, n_ff, N*n_batch);
+            hGensor  t27 = ggml_silu         (ctx_build, t26);                                    gTN(t27, "t27");     assert_shape_2d(t27, n_ff, N*n_batch);
+            hGensor  t28 = ggml_mul          (ctx_build, t27, t25);                               gTN(t28, "t28");     assert_shape_2d(t28, n_ff, N*n_batch);
+            hGensor  t29 = ggml_mul_mat      (ctx_build, ffn_down, t28);                    gTN(t29, "t29");     assert_shape_2d(t29, n_embd, N*n_batch);
+            hGensor  t30 = ggml_add          (ctx_build, t29, t21);                               gTN(t30, "t30");     assert_shape_2d(t30, n_embd, N*n_batch);
             ffn = t30;
         }
         if(layer->eps!=nullptr){
-            // hGensor  t300 = ffn!=nullptr ? ggml_rms_norm(ctx_compute, ffn, f_norm_rms_eps) : ggml_rms_norm(ctx_compute, t21, f_norm_rms_eps);
+            // hGensor  t300 = ffn!=nullptr ? ggml_rms_norm(ctx_build, ffn, f_norm_rms_eps) : ggml_rms_norm(ctx_build, t21, f_norm_rms_eps);
             randomize_tensor_normal(layer->eps, rnd); 
-            hGensor  noise = ggml_scale_inplace(ctx_compute, layer->eps, 0.001);
-            ffn = ggml_add          (ctx_compute, ffn,noise);     
+            hGensor  noise = ggml_scale_inplace(ctx_build, layer->eps, 0.001);
+            ffn = ggml_add          (ctx_build, ffn,noise);     
         }else{
         }
         return ffn;  
@@ -156,7 +157,7 @@ hGensor LLM_MOE::build_layer_( int N,struct ggml_context *ctx_compute,hGensor cu
     case SMOE:{
         LAMA *lam = lama();      assert(lam!=nullptr); 
         //  build_qwen2moe:     LLM_FFN_SILU,false,false,
-        ffn = moe_build_ffn(ctx_compute, *(lam->_ctx), cur,
+        ffn = moe_build_ffn(ctx_build, *(lam->_ctx), cur,
                     layer->ffn_gate_inp,layer->ffn_up_exps,layer->ffn_gate_exps,layer->ffn_down_exps,
                     n_expert, n_expert_used,false,false, 0.0,layer->id);
         }
@@ -166,17 +167,17 @@ hGensor LLM_MOE::build_layer_( int N,struct ggml_context *ctx_compute,hGensor cu
     case ONLY_LNormal:
     case ONLY_RMSNormal:    {
         assert(ffn_up==nullptr);
-        hGensor  t22 = tpFFN==ONLY_LNormal ? ggml_norm(ctx_compute, t21, f_norm_rms_eps) :
-            ggml_rms_norm(ctx_compute, t21, f_norm_rms_eps);
+        hGensor  t22 = tpFFN==ONLY_LNormal ? ggml_norm(ctx_build, t21, f_norm_rms_eps) :
+            ggml_rms_norm(ctx_build, t21, f_norm_rms_eps);
         gTN(t22, "t22");               assert_shape_2d(t22, n_embd, N*n_batch);   
         if(tpFFN==VAR_0)     {
             randomize_tensor_normal(layer->eps, rnd); 
-            hGensor  noise = ggml_scale_inplace(ctx_compute, layer->eps, 0.001);
-            ffn = ggml_add          (ctx_compute, t22,noise);     
+            hGensor  noise = ggml_scale_inplace(ctx_build, layer->eps, 0.001);
+            ffn = ggml_add          (ctx_build, t22,noise);     
             // ffn = t22;        
         }else{
-            hGensor  t23 = ggml_repeat       (ctx_compute, ffn_norm, t22);                    gTN(t23, "t23");     assert_shape_2d(t23, n_embd, N*n_batch);
-            ffn = ggml_mul          (ctx_compute, t23, t22);
+            hGensor  t23 = ggml_repeat       (ctx_build, ffn_norm, t22);                    gTN(t23, "t23");     assert_shape_2d(t23, n_embd, N*n_batch);
+            ffn = ggml_mul          (ctx_build, t23, t22);
         }
         return ffn;
     }
@@ -193,8 +194,8 @@ hGensor LLM_MOE::build_layer_( int N,struct ggml_context *ctx_compute,hGensor cu
             eps = torch.randn_like(std)
             z = eps * std + mu        
         //  
-        // hGensor  tMu = ggml_mul          (ctx_compute, layer->w_mu, t21);
-        // hGensor  tVar = ggml_mul          (ctx_compute, layer->w_var, t21);*/
+        // hGensor  tMu = ggml_mul          (ctx_build, layer->w_mu, t21);
+        // hGensor  tVar = ggml_mul          (ctx_build, layer->w_var, t21);*/
         //  trick v1
                               
             // gTN(t30, "t30");     assert_shape_2d(t30, n_embd, N*n_batch);

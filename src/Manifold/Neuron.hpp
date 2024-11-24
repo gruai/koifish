@@ -43,80 +43,155 @@ protected:
     Fish *hOrg = nullptr;
     COMPRESSIVE_SENSING compression = SKIP;
     SHAPE shape;
+    int level=-1,ID=-1,dad,c_id;    //topo info
+    vector<double> jvals; 
+    virtual hGensor BeforeForward(struct ggml_context *ctx_build,hGensor cur,int flag=0x0);
+    virtual hGensor AfterForward(struct ggml_context *ctx_build,hGensor cur,int flag=0x0);
     // std::vector<shared_ptr<GeNeuron>> brothers;
 public:
-    static shared_ptr<GeNeuron> MakeInstance(Fish *hG_,struct ggml_context *ctx_compute,const string& guid,const string& typ,const JSON& j,int flag=0x0);
+    static shared_ptr<GeNeuron> MakeInstance(Fish *hG_,struct ggml_context *ctx_build,const string& guid,JSON::const_iterator jit,int flag=0x0);
     hGensor w = nullptr, b = nullptr;
-    bool isBias = true;
+    bool isBias = true, isResidual = true;
     
     NeLayer *hLay = nullptr;
     string sT = "";     //  short-cut infomation
-    std::string name = "N";
+    std::string name = "N",type_info="";
     GeNeuron() {}    
-    GeNeuron(const std::string &key_,SHAPE shape_, Fish *hG_, int flag);
+    GeNeuron(const std::string &key_,JSON::const_iterator jit, Fish *hG_, int flag);
     virtual ~GeNeuron() { ; }
 
-    virtual bool isValid()  {   return true;    }
+    virtual bool isValid();
     virtual void Init(Fish *hG_, int flag=0x0) {    hOrg=hG_;   }
     virtual bool Empty() { return shape.size() == 0; }
     virtual size_t nElem()  { return 0x0; }
 
-    virtual hGensor Forward(struct ggml_context *ctx_compute,hGensor cur,int flag=0x0);
+    virtual hGensor Forward(struct ggml_context *ctx_build,hGensor cur,int flag=0x0);
+    virtual bool Build(int flag)   {assert(0);     return false;}
+    // Init & build with more option
+    virtual void BuildX(const std::string &key_, const SHAPE &shape, Fish *hG_, int flag);
+
+friend class Fish;
 };
 typedef shared_ptr<GeNeuron> hNeuron;
 
 // Collection of neurons, only special operation!
 struct Ganglia : public GeNeuron    { 
     std::vector<hNeuron> ns;
-    Ganglia(struct ggml_context *ctx_compute,const string& guid,std::vector<hNeuron>& ns_,int flag) : ns(ns_)  {}
+    Ganglia(Fish *hG_,const string& guid,std::vector<hNeuron>& ns_,int flag);
+    bool isValid()  override{   return ns.size()>0; }
 
-    // virtual hGensor Forward(struct ggml_context *ctx_compute,hGensor cur,int flag=0x0);
+    // virtual hGensor Forward(struct ggml_context *ctx_build,hGensor cur,int flag=0x0);
 };
 
 //a lookup table instead of matrix*vector(as in SLP)
 struct Embed : public GeNeuron    { 
+    bool isAddPos = false;
+
+    Embed(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag);
+    virtual hGensor Forward(struct ggml_context *ctx_build,hGensor cur,int flag=0x0)  override;
+    bool Build(int flag)   override;
 };
 
 struct Relu : public GeNeuron    { 
+    Relu()  {;}
+    Relu(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag);
+    virtual hGensor Forward(struct ggml_context *ctx_build,hGensor cur,int flag=0x0)  override;
+    bool Build(int flag)   override;
+    bool isValid()  override    {   return true;    }
 };
 
 struct Drop : public GeNeuron    { 
+    Drop(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag);
+    virtual hGensor Forward(struct ggml_context *ctx_build,hGensor cur,int flag=0x0)  override;
+    bool Build(int flag)   override;
+    bool isValid()  override    {   return true;    }
 };
 
 
 // single layer perceptron
-struct SLP : public GeNeuron    { 
-    
+struct SLP : public GeNeuron    {
     hGensor u = nullptr, s = nullptr, v = nullptr;
     SLP( ) {}
-    SLP(Fish *hG_, const std::string &key_, const SHAPE &shape_,  int flag) : GeNeuron(key_,shape_, hG_, flag)    {
-        // compression = hOrg->params.compression;
-        // Build(key_, shape_, flag);
-    }
+    SLP(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag);
 
-    // void Init(hGensor w_, hGensor b_, const SHAPE &shape_, int flag = 0x0);
-    void Build(const std::string &key_, const SHAPE &shape, int flag);
-    hGensor Forward(struct ggml_context *ctx0, hGensor cur, int flag = 0x0);
-    
+    bool Empty() override   { return w==nullptr; }
+    bool Build(int flag)   override;
+    hGensor Forward(struct ggml_context *ctx0, hGensor cur, int flag = 0x0)     override;
+    // only for deprecated function"UpdateGensor"
+    hGensor UpdateGensor(int flag=0x0);
     size_t nElem()  override;  
 };
-struct LayerNormal : public GeNeuron    {    
+struct LayerNormal : public GeNeuron    {  
+    bool isAffineTrans = true;       // Learnable affine transform parameters 
     LayerNormal() {}
-    LayerNormal(Fish *ctx, const std::string &key_, const SHAPE &shape, int flag)    {
-        Build(key_, shape, flag);
-    }
-    void Build(const std::string &key_, const SHAPE &shape, int flag);
-    hGensor Forward(struct ggml_context * ctx0,hGensor cur,int flag);
+    //Deprecated
+    LayerNormal(Fish *ctx, const std::string &key_, JSON::const_iterator jit, int flag);
+    bool Build(int flag)   override;
+    hGensor Forward(struct ggml_context * ctx0,hGensor cur,int flag)    override;
     size_t nElem()  override;      
 };
 
-struct SelfAttention : public GeNeuron
-{
-    SLP q, k, v;
-    SLP proj;
+struct SelfAttention : public GeNeuron  {
+    bool use_cache = false;
+    bool isLast = false,isAttOnBC = false;
+    float f_max_alibi_bias;
+    int n_batch,n_ctx,n_embd,n_embd_head,n_head,n_head_kv,n_embd_gqa,n_tokens;
+    hGensor KQ_pos=nullptr,KQ_mask=nullptr;
+    LayerNormal norm;
+    SLP Q, K, V;
+    SLP proj_cat;       //   concatenate the heads and combine them with a final weight matrix.
     // SLP qkv;
     SelfAttention() {}
-    SelfAttention(Fish *ctx, const std::string &key_, const SHAPE &shape, int flag);
+    SelfAttention(Fish *ctx, const std::string &key_, JSON::const_iterator jit, int flag);
+    bool Build(int flag)   override;
+    hGensor Forward(struct ggml_context * ctx0,hGensor cur,int flag)    override;
+    bool isValid()  override    {   return true;    }
+};
+/*
+    SelfAttention with Rotary Position Embedding
+*/
+struct QKV_rope : public SelfAttention  {    
+protected:
+    int n_rot=-1;
+    float f_norm_rms_eps, rope_freq_base, rope_freq_scale;
+    hGensor W_rope(struct ggml_context *ctx ,hGensor cur,hGensor w,hGensor KQ_pos,SHAPE shape,const string&shortcut,int flag=0x0);
+    hGensor vXkq(struct ggml_context *ctx, hGensor v,hGensor kq);
+public:
+    QKV_rope() {}
+    QKV_rope(Fish *ctx, const std::string &key_, JSON::const_iterator jit, int flag);
+    bool Build(int flag)   override;    
+
+    hGensor Forward(struct ggml_context * ctx0,hGensor cur,int flag)    override;
+    bool isValid()  override    {   return true;    }
+};
+
+struct FFN : public GeNeuron  {
+    LayerNormal norm;
+    SLP up,down;
+    Relu relu;
+    FFN() {}
+    FFN(Fish *ctx, const std::string &key_, JSON::const_iterator jit, int flag);
+    bool Build(int flag)   override;
+    hGensor Forward(struct ggml_context * ctx0,hGensor cur,int flag)    override;
+    bool isValid()  override    {   return true;    }
+};
+
+struct MOE : public GeNeuron  {
+};
+
+struct FFN_MOE : public FFN{
+    MOE Moe;
+};
+
+struct OutCLS : public GeNeuron  {
+    LayerNormal norm;
+    SLP proj;
+    int nCls = 0;
+    OutCLS() {}
+    OutCLS(Fish *ctx, const std::string &key_, JSON::const_iterator jit, int flag);
+    bool Build(int flag)   override;
+    hGensor Forward(struct ggml_context * ctx0,hGensor cur,int flag)    override;
+    bool isValid()  override    {   return true;    }
 };
 
 struct NeLayer

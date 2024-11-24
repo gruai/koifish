@@ -17,17 +17,17 @@ LLM_MAMBA::LLM_MAMBA( const std::string& nam_,struct CLI_params params,ROLE_TYPE
     // hparams.common.adam_alpha = 0.0001;     // 
 }
 
-hGensor LLM_MAMBA::build_layer_( int N,struct ggml_context *ctx_compute,hGensor inpL,std::shared_ptr<QKV_LAY> layer,hGensor KQ_pos,int flag) {
+hGensor LLM_MAMBA::build_layer_( int N,struct ggml_context *ctx_build,hGensor inpL,std::shared_ptr<QKV_LAY> layer,hGensor KQ_pos,int flag) {
     int il = layer->id,nLay=layers.size();
     LAMA *lam = lama();      assert(lam!=nullptr);    
     
     /*  [4096,512] [4096]    */
-    hGensor cur = ggml_rms_norm(ctx_compute, inpL, hparams.f_norm_rms_eps);     gTN(cur, "norm");
-    hGensor t11 = ggml_repeat(ctx_compute, layer->att_norm.w, cur);          
+    hGensor cur = ggml_rms_norm(ctx_build, inpL, hparams.f_norm_rms_eps);     gTN(cur, "norm");
+    hGensor t11 = ggml_repeat(ctx_build, layer->att_norm.w, cur);          
     gTN(t11, "t11");     //assert_shape_2d(t03, n_embd, N*n_batch);
-    cur = ggml_mul(ctx_compute, cur, t11);                    gTN(cur, "attn_norm");
-//  cur = mamba_build_layer(ctx_compute,lctx,gf,cur,inpL,il,n_layer,n_tokens,kv_head,n_kv,n_outputs);
-    cur = mamba_build_layer(ctx_compute, *(lam->_ctx), ForwarGraph(), cur,inpL, il, nLay,512);
+    cur = ggml_mul(ctx_build, cur, t11);                    gTN(cur, "attn_norm");
+//  cur = mamba_build_layer(ctx_build,lctx,gf,cur,inpL,il,n_layer,n_tokens,kv_head,n_kv,n_outputs);
+    cur = mamba_build_layer(ctx_build, *(lam->_ctx), ForwarGraph(), cur,inpL, il, nLay,512);
     return cur;
 }
 
@@ -139,13 +139,9 @@ CDict_CHAR::CDict_CHAR(NLP_AutoRegressive *nlp_,int flag)   : ConsiceDict(nlp_,f
     int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd;
     n_vocab=256;    
 }
-int CDict_CHAR::InitMAEC(struct ggml_context *ctx_compute,const std::vector<int>& dims_,int flag)  {
+int CDict_CHAR::InitMAEC(struct ggml_context *ctx_build,const std::vector<int>& dims_,int flag)  {
     int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd;
 
-    tok_embeddings = hLM->AddTensor(ctx_compute,_NAM_("token_embd.weight"),GGML_TYPE_F32,{n_embd, n_vocab},true,0x0);  
-    _norm.Build("output_norm", {n_embd},0x0);
-    _output.isBias = false;
-    _output.Build("output", {n_embd, n_vocab},0x0);  
     assert(gensors.size()==0);
     return 0x0;     
 }
@@ -162,71 +158,23 @@ int CDict_CHAR::stream2token(void *hLLM,const char*txt,int txt_len,std::vector<T
     return n_tokens;
 }
 
-int CDict_GPT2::InitMAEC(struct ggml_context *ctx_compute,const std::vector<int>& dims_,int flag)  {
+int CDict_GPT2::InitMAEC(struct ggml_context *ctx_build,const std::vector<int>& dims_,int flag)  {
     int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd;
 
-    tok_embeddings = hLM->AddTensor(ctx_compute,_NAM_("token_embd.weight"),GGML_TYPE_F32,{n_embd, n_vocab},true,0x0);  
-    _norm.Build("output_norm", {n_embd},0x0);
-    _output.isBias = false;
-    _output.Build("output", {n_embd, n_vocab},0x0);  
-    assert(gensors.size()==0);
+    // tok_embeddings = hLM->AddTensor(ctx_build,_NAM_("token_embd.weight"),GGML_TYPE_F32,{n_embd, n_vocab},true,0x0);  
+    // _norm.BuildX("output_norm", {n_embd},hLM,0x0);
+    // _output.isBias = false;
+    // _output.BuildX("output", {n_embd, n_vocab},hLM,0x0);  
+    // assert(gensors.size()==0);
     return 0x0;     
 }
 
-hNeuron GPT2::J2Neuron(struct ggml_context *ctx_compute,string dad,const JSON& j,int flag){
-    hNeuron hN=nullptr,cur=nullptr;
-    std::vector<hNeuron> gang;    
-    string k;
-    for(auto it = j.begin(); it != j.end(); ++it)    {
-        k =it.key();        
-        auto v=it.value();
-        if(it->is_array()){
-            cur = GeNeuron::MakeInstance(this,ctx_compute,dad,k,v,flag);        
-        }else if(it->is_structured())        {
-            cur =  J2Neuron(ctx_compute,k,*it,flag);            
-        }
-        else        {
-            cur = GeNeuron::MakeInstance(this,ctx_compute,dad,k,v,flag);              
-        }
-        neurons.push_back(cur);
-        gang.push_back(cur);
-    }
-    assert(gang.size()>0);
-    if(gang.size()>1)   {
-        hN = std::make_shared<Ganglia>(ctx_compute,dad,gang,flag);
-        neurons.push_back(hN);  
-    }else{
-        assert(cur!=nullptr);
-        hN = cur;
-    }
-    assert(hN->isValid());
-    return hN;
-}
 
-struct ggml_cgraph *GPT2::jRawGraph( struct ggml_context *ctx_compute,bool isBuild,int flag)   {
-    J2Neuron(ctx_compute,"GPT2",hparams.jModel,flag);
-
-    hGensor cur = nullptr;
-    for(auto nn : neurons){
-        cur = nn->Forward(ctx_compute,cur);
-    }
-    
-    return nullptr;
-}
-
-struct ggml_cgraph *GPT2::GetRawGraph( struct ggml_context *ctx_compute,bool isBuild,int flag)   { 
-    return jRawGraph(ctx_compute,isBuild,flag);
-
-    bool isOnlinePush = true;      // push nodes last or online(QKV)
-    ctx = ctx_compute;
-    // gf = ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true);  
-    hForwTG = std::make_shared<TGraph>(this,"gpt_raw",ctx_compute,true);
-    auto gf = hForwTG->raw();
-    size_t sz2 = 0;
+int GPT2::cRawGraph( struct ggml_context *ctx_build,bool isBuild,int flag)   {
+    bool isOnlinePush = true;      // push nodes last or online(QKV)    
     const int n_embd_head = hparams.n_embd_head_v,n_embd_gqa  = hparams.n_embd_v_gqa();
     GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);    
-    int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd;
-    // if(n_ctx_train!=n_ctx)      n_ctx_train = n_ctx;
+    int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd,n_vocab=hDict->n_vocab;
     int n_tokens=n_ctx*n_batch,n_head,n_embd_head_v=hparams.n_embd_head_v,n_ff;
     const uint32_t n_layer = hparams.nLayer();
     for(int i=0;i<n_layer;i++){
@@ -236,149 +184,163 @@ struct ggml_cgraph *GPT2::GetRawGraph( struct ggml_context *ctx_compute,bool isB
     }
     hGensor cur = nullptr,pos = nullptr,q,k,v,Qcur,Kcur,Vcur;
     float kq_scale = 1.0f/sqrtf(float(n_embd_head));
-    hDict->InitMAEC(ctx_compute,{n_embd},0x0);    
-
-    InitEntryTensors();
+    // hDict->InitMAEC(ctx_build,{n_embd},0x0);    
+    hGensor tok_embeddings = AddTensor(ctx_build,_NAM_("token_embd.weight"),GGML_TYPE_F32,{n_embd, n_vocab},true,0x0);  
+    _norm.BuildX("output_norm", {n_embd},this, 0x0);
+    _output.BuildX("output", {n_embd, n_vocab},this,0x0); 
     
-    pos_embd = AddTensor(ctx_compute,_NAM_("position_embed.weight"),GGML_TYPE_F32,{n_embd, n_ctx},true,0x0); //ml.create_tensor(ctx_input, tn(LLM_TENSOR_POS_EMBD,   "weight"), {n_embd, n_ctx_train});
-    //llm_build_inp_embd(ctx_compute, lctx, hparams, batch, tok_embd, cb);
-    hGensor  inp_tokens = tokens_input;    
-    if(n_batch>1){
-        inp_tokens = ggml_reshape_1d(ctx_compute, tokens_input, n_ctx*n_batch);   gTN(inp_tokens, "inp_tokens_1d");
-    }    
-    hGensor  inpL = ggml_get_rows(ctx_compute, hDict->tok_embeddings, inp_tokens);    gTN(inpL, "inp_embd");    
-    build_inp_KQ_(ctx_compute,false);     // init KQ_pos 
-    if(1)   {        
+    pos_embd = AddTensor(ctx_build,_NAM_("position_embed.weight"),GGML_TYPE_F32,{n_embd, n_ctx},true,0x0); //ml.create_tensor(ctx_input, tn(LLM_TENSOR_POS_EMBD,   "weight"), {n_embd, n_ctx_train});
+    //llm_build_inp_embd(ctx_build, lctx, hparams, batch, tok_embd, cb);
+  
+    hGensor  inpL = ggml_get_rows(ctx_build, tok_embeddings, tBatch);    gTN(inpL, "inp_embd");    
+     
+    if(0)   {        
         hGensor inp_pos = KQ_pos;           
-        pos = ggml_get_rows(ctx_compute, pos_embd, KQ_pos);    cb(pos, "pos_embd", -1);
+        pos = ggml_get_rows(ctx_build, pos_embd, KQ_pos);    cb(pos, "pos_embd", -1);
         float *fpos = (float*)(pos->data);
-        inpL = ggml_add(ctx_compute, inpL, pos);     
+        inpL = ggml_add(ctx_build, inpL, pos);     
     }else{
-        inpL = ggml_add(ctx_compute, inpL, pos_embd);     
+        inpL = ggml_add(ctx_build, inpL, pos_embd);     
     }   
     cb(inpL, "inp_pe", -1);
+    auto gf = hForwTG->raw();
     // layers.clear();     cur = inpL;        xn=cur;      xxn=cur->grad;   //only for debug
     for (int il = 0; il < layers.size(); ++il) {  
         n_head=hparams.n_head(il);          assert(n_embd_head*n_head==n_embd);
         n_ff=hparams.n_ff(il);
         // sprintf(nam_,"block.%d.attn_norm",il);
-        //  llm_build_norm(ctx_compute, inpL, hparams,layers[il].attn_norm,layers[il].attn_norm_b,LLM_NORM, cb, il);
-        auto layer = dynamic_pointer_cast<QKV_LAY>(layers[il]);    
-        layer->att_norm.Build(_NAM_("block.%d.attn_norm",il),{n_embd},0x0);     layer->att_norm.sT="a";
-        cur = layer->att_norm.Forward(ctx_compute,inpL,0x0);
+        //  llm_build_norm(ctx_build, inpL, hparams,layers[il].attn_norm,layers[il].attn_norm_b,LLM_NORM, cb, il);
+        auto layer = dynamic_pointer_cast<QKV_LAY>(layers[il]);   
+        hGensor ffn_inp = inpL;
+if(1)   {   //pass self attention module,  loss would stop at 2.48
+        layer->att_norm.BuildX(_NAM_("block.%d.attn_norm",il),{n_embd},this,0x0);     layer->att_norm.sT="a";
+        cur = layer->att_norm.Forward(ctx_build,inpL,0x0);
         cb(cur, _NAM_("attn_norm"), il);
-        if(1){  
-            layer->Q.Build(_NAM_("block.%d.attn_qkv",il),{n_embd, n_embd + 2*n_embd_gqa},0x0);
-            cur = layer->Q.Forward(ctx_compute,cur,0x0);            cb(cur, "wqkv", il);      
-            hGensor Q2= ggml_view_2d(ctx_compute, cur, n_embd,     n_tokens, cur->nb[1], 0*sizeof(float)*(n_embd));
-            hGensor K2= ggml_view_2d(ctx_compute, cur, n_embd_gqa, n_tokens, cur->nb[1], 1*sizeof(float)*(n_embd));
-            hGensor V2= ggml_view_2d(ctx_compute, cur, n_embd_gqa, n_tokens, cur->nb[1], 1*sizeof(float)*(n_embd + n_embd_gqa));
+        if(0){  
+            layer->Q.BuildX(_NAM_("block.%d.attn_qkv",il),{n_embd, n_embd + 2*n_embd_gqa},this,0x0);
+            cur = layer->Q.Forward(ctx_build,cur,0x0);            cb(cur, "wqkv", il);      
+            hGensor Q2= ggml_view_2d(ctx_build, cur, n_embd,     n_tokens, cur->nb[1], 0*sizeof(float)*(n_embd));
+            hGensor K2= ggml_view_2d(ctx_build, cur, n_embd_gqa, n_tokens, cur->nb[1], 1*sizeof(float)*(n_embd));
+            hGensor V2= ggml_view_2d(ctx_build, cur, n_embd_gqa, n_tokens, cur->nb[1], 1*sizeof(float)*(n_embd + n_embd_gqa));
             cb(Q2, "Q2", il);        cb(K2, "K2", il);        cb(V2, "V2", il);
-            Qcur = ggml_cont(ctx_compute,Q2 ),Kcur = ggml_cont(ctx_compute,K2 ),Vcur = ggml_cont(ctx_compute,V2 );  
+            Qcur = ggml_cont(ctx_build,Q2 ),Kcur = ggml_cont(ctx_build,K2 ),Vcur = ggml_cont(ctx_build,V2 );  
         }else{  // Gradient of Q K would vanish,but the training curve nearly same!
             layer->Q.isBias=false;          layer->K.isBias=false;
-            layer->Q.Build(_NAM_("block.%d.Q",il),{n_embd, n_embd},0x0);                layer->Q.sT="q";
-            layer->K.Build(_NAM_("block.%d.K",il),{n_embd, n_embd_gqa},0x0);            layer->K.sT="k";
-            layer->V.Build(_NAM_("block.%d.V",il),{n_embd, n_embd_gqa},0x0);            layer->V.sT="v";
-            Qcur = layer->Q.Forward(ctx_compute,cur,0x0);       
-            Kcur = layer->K.Forward(ctx_compute,cur,0x0);       
-            Vcur = layer->V.Forward(ctx_compute,cur,0x0);
+            layer->Q.BuildX(_NAM_("block.%d.Q",il),{n_embd, n_embd},this,0x0);                layer->Q.sT="q";
+            layer->K.BuildX(_NAM_("block.%d.K",il),{n_embd, n_embd_gqa},this,0x0);            layer->K.sT="k";
+            layer->V.BuildX(_NAM_("block.%d.V",il),{n_embd, n_embd_gqa},this,0x0);            layer->V.sT="v";
+            Qcur = layer->Q.Forward(ctx_build,cur,0x0);       
+            Kcur = layer->K.Forward(ctx_build,cur,0x0);       
+            Vcur = layer->V.Forward(ctx_build,cur,0x0);
         }
         cb(Qcur, "Qcur", il);        cb(Kcur, "Kcur", il);        cb(Vcur, "Vcur", il);
         if(isAttOnBC){  // attenion on all tokens, memory would explode!
-            Qcur = ggml_reshape_3d(ctx_compute, Qcur, n_embd_head, n_head, n_tokens);
-            Kcur = ggml_reshape_3d(ctx_compute, Kcur, n_embd_head, n_head, n_tokens);
-            Vcur = ggml_reshape_3d(ctx_compute, Vcur, n_embd_head, n_head, n_tokens);
+            Qcur = ggml_reshape_3d(ctx_build, Qcur, n_embd_head, n_head, n_tokens);
+            Kcur = ggml_reshape_3d(ctx_build, Kcur, n_embd_head, n_head, n_tokens);
+            Vcur = ggml_reshape_3d(ctx_build, Vcur, n_embd_head, n_head, n_tokens);
         }else{
-            Qcur = ggml_reshape_4d(ctx_compute, Qcur, n_embd_head, n_head, n_ctx,n_batch);
-            Kcur = ggml_reshape_4d(ctx_compute, Kcur, n_embd_head, n_head, n_ctx,n_batch);
-            Vcur = ggml_reshape_4d(ctx_compute, Vcur, n_embd_head, n_head, n_ctx,n_batch);
+            Qcur = ggml_reshape_4d(ctx_build, Qcur, n_embd_head, n_head, n_ctx,n_batch);
+            Kcur = ggml_reshape_4d(ctx_build, Kcur, n_embd_head, n_head, n_ctx,n_batch);
+            Vcur = ggml_reshape_4d(ctx_build, Vcur, n_embd_head, n_head, n_ctx,n_batch);
         }
         
-        q = ggml_permute(ctx_compute, Qcur, 0, 2, 1, 3);   //eh,ctx,h,b
-        k = ggml_permute(ctx_compute, Kcur, 0, 2, 1, 3);  
-        v = ggml_cont(ctx_compute,ggml_permute(ctx_compute, Vcur, 1, 2, 0, 3));
+        q = ggml_permute(ctx_build, Qcur, 0, 2, 1, 3);   //eh,ctx,h,b
+        k = ggml_permute(ctx_build, Kcur, 0, 2, 1, 3);  
+        v = ggml_cont(ctx_build,ggml_permute(ctx_build, Vcur, 1, 2, 0, 3));
         if(isOnlinePush)    {
             ggml_build_forward_expand(gf, q);    ggml_build_forward_expand(gf, k);    ggml_build_forward_expand(gf, v);
         }    
 
-        struct ggml_tensor * kq = ggml_mul_mat(ctx_compute, k, q);        cb(kq, "kq", il);        
+        struct ggml_tensor * kq = ggml_mul_mat(ctx_build, k, q);        cb(kq, "kq", il);        
         if(1)      {    // nearly same     
-            kq = ggml_soft_max_ext(ctx_compute, kq, KQ_mask, kq_scale, hparams.f_max_alibi_bias);       //would 
+            kq = ggml_soft_max_ext(ctx_build, kq, KQ_mask, kq_scale, hparams.f_max_alibi_bias);       //would 
         }else{
-            hGensor  t16_1 = ggml_scale_inplace        (ctx, kq, kq_scale);   
-            hGensor  t16_2 = ggml_diag_mask_inf_inplace(ctx, t16_1, 0);     
-            kq = ggml_soft_max_inplace     (ctx, t16_2);             
+            hGensor  t16_1 = ggml_scale_inplace        (ctx_build, kq, kq_scale);   
+            hGensor  t16_2 = ggml_diag_mask_inf_inplace(ctx_build, t16_1, 0);     
+            kq = ggml_soft_max_inplace     (ctx_build, t16_2);             
         }   
         cb(kq, "kq_soft_max_ext", il);
         
-        struct ggml_tensor * kqv = ggml_mul_mat(ctx_compute, v, kq);        // eh,ctx,h,b
+        struct ggml_tensor * kqv = ggml_mul_mat(ctx_build, v, kq);        // eh,ctx,h,b
         cb(kqv, "kqv", il);
-        struct ggml_tensor * kqv_merged = ggml_permute(ctx_compute, kqv, 0, 2, 1, 3); // eh,h,ctx,b
+        struct ggml_tensor * kqv_merged = ggml_permute(ctx_build, kqv, 0, 2, 1, 3); // eh,h,ctx,b
         cb(kqv_merged, "kqv_merged", il);
         if(0)   //  back gradient is zero
-            cur = ggml_cont_2d(ctx_compute, kqv_merged, n_embd_head_v*n_head, n_tokens);
+            cur = ggml_cont_2d(ctx_build, kqv_merged, n_embd_head_v*n_head, n_tokens);
         else{
-            hGensor kqv_out = ggml_cont(ctx_compute, kqv_merged);              
-            cur = ggml_reshape_2d(ctx_compute, kqv_out, n_embd, n_tokens);              
+            hGensor kqv_out = ggml_cont(ctx_build, kqv_merged);              
+            cur = ggml_reshape_2d(ctx_build, kqv_out, n_embd, n_tokens);              
         }        
         cb(cur, "kqv_merged_cont", il);
-        layer->proj.Build(_NAM_("block.%d.attn_proj",il),{n_embd, n_embd},0x0);     //why proj is useful?
-        cur = layer->proj.Forward(ctx_compute,cur,0x0);            cb(cur, "attn_proj", il); 
+        layer->proj.BuildX(_NAM_("block.%d.attn_proj",il),{n_embd, n_embd},this,0x0);     //why proj is useful?
+        cur = layer->proj.Forward(ctx_build,cur,0x0);            cb(cur, "attn_proj", il); 
         
         if(isOnlinePush)            ggml_build_forward_expand(gf, cur);        
 
         if (layer->isLast) {            // skip computing output for unused tokens
             // hGensor inp_out_ids = nullptr;  //build_inp_out_ids();
-            // cur  = ggml_get_rows(ctx_compute,  cur, inp_out_ids);
-            // inpL = ggml_get_rows(ctx_compute, inpL, inp_out_ids);
+            // cur  = ggml_get_rows(ctx_build,  cur, inp_out_ids);
+            // inpL = ggml_get_rows(ctx_build, inpL, inp_out_ids);
         }
         // add the input
-        hGensor ffn_inp = ggml_add(ctx_compute, cur, inpL);        cb(ffn_inp, "ffn_inp", il);
-        layer->ffn_norm.Build(_NAM_("block.%d.ffn_norm",il),{n_embd},0x0);      layer->ffn_norm.sT="f";
-        cur = layer->ffn_norm.Forward(ctx_compute,inpL,0x0);
-        cb(cur, _NAM_("ffn_norm"), il);
-        layer->up.Build(_NAM_("block.%d.ffn_up",il),{n_embd, n_ff},0x0);
-        cur = layer->up.Forward(ctx_compute,cur,0x0);
+        ffn_inp = ggml_add(ctx_build, cur, inpL);        cb(ffn_inp, "ffn_inp", il);      cur = ffn_inp;
+}
+if(1)   {   //pass self attention module            loss would stop at 2.4
+        layer->ffn_norm.BuildX(_NAM_("block.%d.ffn.norm",il),{n_embd},this,0x0);      layer->ffn_norm.sT="f";
+        cur = layer->ffn_norm.Forward(ctx_build,inpL,0x0);        //  ??? cur = layer->ffn_norm.Forward(ctx_build,inpL,0x0);
+        cb(cur, _NAM_("ffn.norm"), il);
+        layer->up.BuildX(_NAM_("block.%d.ffn.up",il),{n_embd, n_ff},this,0x0);
+        cur = layer->up.Forward(ctx_build,cur,0x0);
         cb(cur, "ffn_up", il);
         // cur = ggml_gelu(ctx, cur);                cb(cur, "ffn_gelu", il);  //GGML_UNARY_OP_GELU:not implemented for backward
-        cur = ggml_silu(ctx, cur);                cb(cur, "ffn_silu", il); 
-        layer->down.Build(_NAM_("block.%d.ffn_down",il),{n_ff, n_embd},0x0);
-        cur = layer->down.Forward(ctx_compute,cur,0x0);
-        cb(cur, "ffn_down", il);
-        cur = ggml_add(ctx_compute, cur, ffn_inp);
-        // cur = lctx.cvec.apply_to(ctx_compute, cur, il);
+        cur = ggml_silu(ctx_build, cur);                cb(cur, "ffn.silu", il); 
+        layer->down.BuildX(_NAM_("block.%d.ffn.down",il),{n_ff, n_embd},this,0x0);
+        cur = layer->down.Forward(ctx_build,cur,0x0);
+        cb(cur, "ffn.down", il);
+        cur = ggml_add(ctx_build, cur, ffn_inp);
+        // cur = lctx.cvec.apply_to(ctx_build, cur, il);
         cb(cur, "l_out", il);
-
+}
         // input for next layer
         inpL = cur;
     }
     
-    cur = BuildTarget(ctx_compute,cur);
-    hForwTG->PushBack(cur);         //0x7fffdfaaba60    
-    // ggml_build_forward_expand(gf, cur);
+    cur = _norm.Forward(ctx_build,inpL,0x0);                          cb(cur, "result_norm", -1);
+    cur = _output.Forward(ctx_build,cur,0x0);                         cb(cur, "result_output", -1);
+    preLogits = cur;
     
+    // hForwTG->PushBack(cur);         
     if(0){  //only for debug
         string suffix="", prefix="\t"; 
         __repr__(suffix,prefix);
         TGraph(this,"gpt_raw",gf,true).__repr__(suffix,prefix,cur);  
-    }
+    }    
+    
+    return 0x0;
+}
+
+struct ggml_cgraph *GPT2::GetRawGraph( struct ggml_context *ctx_build,bool isBuild,int flag)   { 
+    int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd,n_vocab=hDict->n_vocab;
+    bool isJModel = !hparams.jModel.empty();
+    hForwTG = std::make_shared<TGraph>(this,isJModel?"gptJ":"gpt_raw",ctx_build,true);
+    auto gf = hForwTG->raw();    
+    // ctx = ctx_build;
+    InitInput(ctx_build,false);
+
+    if(isJModel)
+        jToGraph(ctx_build,isBuild,flag);
+    else
+        cRawGraph(ctx_build,isBuild,flag);
+    assert(preLogits!=nullptr);
+    out_node = BuildLoss(ctx_build,preLogits);
+
     if(rnd==nullptr)
         rnd = init_random_normal_distribution(hparams.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
-    sz2 = InitBackEnd(ctx_compute);
+    size_t sz2 = InitBackEnd(ctx_build);
     
     return gf;
 }
 
-hGensor GPT2::BuildTarget(struct ggml_context * ctx_compute,hGensor inpL,int flag) {
-    assert(hDict!=nullptr);
-    hGensor cur = hDict->_norm.Forward(ctx_compute,inpL,0x0);                    cb(cur, "result_norm", -1);
-    cur = hDict->_output.Forward(ctx_compute,cur,0x0);                         cb(cur, "result_output", -1);
-    preLogits = cur;
-    out_node = BuildLoss(ctx_compute,preLogits);
-
-    return cur;
-}
 
 string GPT2::__repr__( string& suffix,string& prefix,int flag) {
     char buf[5012]="\0";

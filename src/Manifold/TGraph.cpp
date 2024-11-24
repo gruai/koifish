@@ -13,6 +13,7 @@
 #include "llama_cys.h"
 
 hGensor Fish::AddTensor(const std::string&key_,enum ggml_type tp,const SHAPE& shape,int flag){
+    auto ctx=GetCTX();
     hGensor gg_tensor = nullptr;
     if(shape.size()==4)  {
         gg_tensor = ggml_new_tensor_4d(ctx, tp, shape[0], shape[1], shape[2], shape[3]);
@@ -29,29 +30,7 @@ hGensor Fish::AddTensor(const std::string&key_,enum ggml_type tp,const SHAPE& sh
     return gg_tensor;   
 }
 
-void SLP::Build(const std::string&key_,const SHAPE& shape_,int flag)      {
-    isBias = hOrg->isBias;
-    shape = shape_;
-    struct ggml_context * ctx = hOrg->ctx;
-    if(shape.size()==2){    
-        assert(shape[0]>0 && shape[1]>0);
-        int nIn=shape[0],nOut=shape[1];
-        w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nIn, nOut);
-        if(isBias)  b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, nOut);
-    }else if(shape.size()==4)  {
-        w = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, shape[0], shape[1], shape[2], shape[3]);
-        if(isBias)  b = ggml_new_tensor_3d(ctx, GGML_TYPE_F32,            1,            1, shape[3]);
-    }
-    string sw = key_+".weight",sb=key_+".bias";
-    bool isTrain = hOrg->isTrain();
-    hOrg->InitGensor(ctx,sw.c_str(),w,isTrain);
-    if(isBias)  hOrg->InitGensor(ctx,sb.c_str(),b,isTrain);
-    
-    if(compression==SVD){        
-        assert(shape.size()==2);
-        // SVD(w);
-    }
-}
+
 
 QKV_LAY::QKV_LAY(Fish *hF_,int id)  :  NeLayer(id)     {   
     name = "QKV_LAY";   
@@ -69,92 +48,208 @@ size_t SLP::nElem()  {
     return nX;
 }
 
-hGensor SLP::Forward(struct ggml_context * ctx0,hGensor cur,int flag)    {
-    // const char*name_0 = cur->name;
-    const string prefix = sT+"."+cur->name;
-    assert(cur!=nullptr && ctx0!=nullptr);
-    // compression = SVD_a; //SVD_a;    //SKIP;//hOrg->params.compression;
-    // if(1)   {   //only for debug
-    //     float a[6*5] = {				
-    //         8.79,  9.93,  9.83, 5.45,  3.16,
-    //         6.11,  6.91,  5.04, -0.27,  7.98,
-    //         -9.15, -7.93,  4.86, 4.85,  3.01,
-    //         9.57,  1.64,  8.83, 0.74,  5.80,
-    //         -3.49,  4.02,  9.80, 10.00,  4.27,
-    //         9.84,  0.15, -8.99, -6.02, -5.31
-    //     };
-    //     auto svd=std::make_shared<LoSVD<float>>(a,6,5,5,0); //1.0e-3
-    //     svd->Build( );
-    // }
-    if(compression==SVD || compression==SVD_a)        {   //A=UDV
-        int nIn=shape[0], nOut=shape[1], rank = min(64,min(nIn,nOut)/10);
-        float *A=new float[nIn*nOut];
-        switch(w->type){
-            case GGML_TYPE_F16:
-                ggml_fp16_to_fp32_row((ggml_fp16_t*)w->data,A,nIn*nOut);
-                break;
-            case GGML_TYPE_F32:
-                break;
-            default:
-                assert(0);
-        }
-        ggml_fp16_to_fp32_row((ggml_fp16_t*)w->data,A,nIn*nOut);
-        auto svd=std::make_shared<LoSVD<float>>(A,nIn,nOut,rank,0); //1.0e-3
-        if(!svd->Build( ))  {
-            compression = SKIP;
-        }else{
-            //GGML_TYPE_F16 tensor would call ggml_vec_dot_f16 with GGML_SIMD acceleration
-            if(compression==SVD_a)  {   //keep same graph
-                float *approx = svd->Approx( );
-                ggml_fp32_to_fp16_row(approx,(ggml_fp16_t*)w->data,nIn*nOut);
-            }else{  
-                u = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, nIn, rank);   
-                memcpy(u->data,svd->U(),sizeof(float)*nIn*rank);     
-                memcpy(v->data,svd->V(),sizeof(float)*nIn*rank); 
-                v = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, rank, nOut);
-                // s = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, nIn, nOut);
-                
-                cur = ggml_mul_mat(ctx0, u, cur);    
-                // cur = ggml_scale_inplace(ctx0, cur,1.0f/sqrt(float(n_embd)/n_head));  
-                cur = ggml_mul_mat(ctx0, v, cur);                      
-            }       
-        }
-        delete[] A;
+SelfAttention::SelfAttention(Fish* hG_,const std::string&key_,JSON::const_iterator jit,int flag) : GeNeuron(key_,jit, hG_, flag)     {
+    assert(hOrg!=nullptr);
+    auto& hparams = hG_->hparams;
+    f_max_alibi_bias = hparams.f_max_alibi_bias;
+    n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_embd=hparams.n_embd;
+    n_embd_head = hparams.n_embd_head();
+    // n_embd_head = hparams.n_embd_head_v;   
+    n_embd_gqa  = hparams.n_embd_v_gqa();
+    n_tokens=n_ctx*n_batch;
+    KQ_mask=hOrg->KQ_mask,      KQ_pos=hOrg->KQ_pos;
+
+    ID = 0;
+    n_head=hparams.n_head(ID);  
+    n_head_kv=hparams.n_head_kv(ID);        
+    assert(n_embd_head*n_head==n_embd);
+    assert(jvals.size()>=3);
+    shape={(int)(jvals[0]),(int)(jvals[1]),(int)(jvals[2])};
+    assert(shape[0]>0 && shape[1]>0 && shape[2]>0);
+    // q.Init(hG_,flag);       k.Init(hG_,flag);       v.Init(hG_,flag);       proj.Init(hG_,flag);
+}
+
+bool SelfAttention::Build(int flag)   {
+    /*layer->Q.BuildX(_NAM_("block.%d.Q",il),{n_embd, n_embd},0x0);                layer->Q.sT="q";
+            layer->K.BuildX(_NAM_("block.%d.K",il),{n_embd, n_embd_gqa},0x0);            layer->K.sT="k";
+            layer->V.BuildX(_NAM_("block.%d.V",il),{n_embd, n_embd_gqa},0x0);            layer->V.sT="v";
+            Qcur = layer->Q.Forward(ctx_build,cur,0x0);       
+            Kcur = layer->K.Forward(ctx_build,cur,0x0);       
+            Vcur = layer->V.Forward(ctx_build,cur,0x0);*/
+    SHAPE sp={shape[0],shape[1]};
+    norm.BuildX(name+".norm",{shape[0]},hOrg,0x0);        
+    Q.BuildX(name+".Q",sp,hOrg,flag);          
+    K.BuildX(name+".K",sp,hOrg,flag);              V.BuildX(name+".V",sp,hOrg,flag);
+    proj_cat.BuildX(name+".proj",sp,hOrg,flag);
+    return true;
+}
+
+hGensor SelfAttention::Forward(struct ggml_context * ctx_build,hGensor inpL,int flag)    {
+    if(inpL==nullptr){   //symbolic analysis
+        return GeNeuron::Forward(ctx_build,nullptr,flag);
     }
-    if(compression == SKIP || compression==SVD_a)  {
-        cur = ggml_mul_mat(ctx0, w, cur);           //create temp GGML_OP_MUL_MAT tensor:  result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
-        gTN(cur,"%s*w",prefix.c_str());
+
+    float kq_scale = 1.0f/sqrtf(float(n_embd_head));
+    hGensor cur = norm.Forward(ctx_build,inpL,0x0);
+    hGensor q,k,v;                  //  assert(KQ_mask!=nullptr);
+    hGensor Qcur = Q.Forward(ctx_build,cur,0x0);       
+    hGensor Kcur = K.Forward(ctx_build,cur,0x0);       
+    hGensor Vcur = V.Forward(ctx_build,cur,0x0);    
+    gTN0(Qcur,"Qcur-%d",ID);         gTN0(Kcur,"Kcur-%d",ID);         gTN0(Vcur,"Vcur-%d",ID); 
+    // cb(Qcur, "Qcur", il);        cb(Kcur, "Kcur", il);        cb(Vcur, "Vcur", il);
+    /*if(isAttOnBC){  // attenion on all tokens, memory would explode!
+        Qcur = ggml_reshape_3d(ctx_build, Qcur, n_embd_head, n_head, n_tokens);
+        Kcur = ggml_reshape_3d(ctx_build, Kcur, n_embd_head, n_head, n_tokens);
+        Vcur = ggml_reshape_3d(ctx_build, Vcur, n_embd_head, n_head, n_tokens);
+    }else*/ {
+        Qcur = ggml_reshape_4d(ctx_build, Qcur, n_embd_head, n_head, n_ctx,n_batch);
+        Kcur = ggml_reshape_4d(ctx_build, Kcur, n_embd_head, n_head, n_ctx,n_batch);
+        Vcur = ggml_reshape_4d(ctx_build, Vcur, n_embd_head, n_head, n_ctx,n_batch);
     }
-    if(b!=nullptr)  {        
-        cur = ggml_add(ctx0, cur, b); 
-        gTN(cur,"%s+b",prefix.c_str());
-            // cur = ggml_add_inplace(ctx0, cur, b); 
+    
+    q = ggml_permute(ctx_build, Qcur, 0, 2, 1, 3);   //eh,ctx,h,b
+    k = ggml_permute(ctx_build, Kcur, 0, 2, 1, 3);  
+    v = ggml_cont(ctx_build,ggml_permute(ctx_build, Vcur, 1, 2, 0, 3));
+    /*if(isOnlinePush)    {
+        ggml_build_forward_expand(gf, q);    ggml_build_forward_expand(gf, k);    ggml_build_forward_expand(gf, v);
+    }*/    
+
+    struct ggml_tensor * kq = ggml_mul_mat(ctx_build, k, q);        //cb(kq, "kq", il);        
+    if(1)      {    // nearly same     
+        kq = ggml_soft_max_ext(ctx_build, kq, KQ_mask, kq_scale, f_max_alibi_bias);       //would 
+    }else{
+        hGensor  t16_1 = ggml_scale_inplace        (ctx_build, kq, kq_scale);   
+        hGensor  t16_2 = ggml_diag_mask_inf_inplace(ctx_build, t16_1, 0);     
+        kq = ggml_soft_max_inplace     (ctx_build, t16_2);             
+    }   
+    gTN(kq,"kq_soft_max_ext-%d",ID);            //cb(kq, "kq_soft_max_ext", il);
+    
+    hGensor kqv = ggml_mul_mat(ctx_build, v, kq);        // eh,ctx,h,b
+    gTN(kqv,"kqv-%d",ID);            //cb(kqv, "kqv", il);
+    hGensor kqv_merged = ggml_permute(ctx_build, kqv, 0, 2, 1, 3); // eh,h,ctx,b
+    gTN0(kqv_merged,"kqv_merged-%d",ID);            //cb(kqv_merged, "kqv_merged", il);
+    if(0){   //  back gradient is zero
+        //cur = ggml_cont_2d(ctx_build, kqv_merged, n_embd_head_v*n_head, n_tokens);
+    }else{
+        hGensor kqv_out = ggml_cont(ctx_build, kqv_merged);              
+        cur = ggml_reshape_2d(ctx_build, kqv_out, n_embd, n_tokens);              
+    }        
+    gTN0(cur,"kqv_merged_cont-%d",ID);//cb(cur, "kqv_merged_cont", il);
+    
+    cur = proj_cat.Forward(ctx_build,cur,0x0);            //cb(cur, "attn_proj", il); 
+    
+    //if(isOnlinePush)            ggml_build_forward_expand(gf, cur);        
+
+    if (isLast) {            // skip computing output for unused tokens
+        // hGensor inp_out_ids = nullptr;  //build_inp_out_ids();
+        // cur  = ggml_get_rows(ctx_build,  cur, inp_out_ids);
+        // inpL = ggml_get_rows(ctx_build, inpL, inp_out_ids);
     }
+    // add the input
+    cur = ggml_add(ctx_build, cur, inpL);        
+    
+    if(!name.empty()){
+        strcpy(cur->name,"");   gTN(cur,"%s",name.c_str());
+    }
+    gTN0(cur,"ffn_inp-%d",ID);  // only for debug
     return cur;
 }
 
+QKV_rope::QKV_rope(Fish* hG_,const std::string&key_,JSON::const_iterator jit,int flag) : SelfAttention(hG_,key_,jit,flag)     {
+    auto& hparams = hG_->hparams;
+    n_rot = hparams.n_rot;
+    rope_freq_base  = hparams.rope_freq_base;
+    rope_freq_scale = hparams.rope_freq_scale;  
+}
 
+bool QKV_rope::Build(int flag)   {
+    SelfAttention::Build(flag);                  
+           
+    return true;
+}
 
-SelfAttention::SelfAttention(Fish* graph,const std::string&key_,const SHAPE& shape,int flag)    {
-    assert(shape.size()==3);
-    SHAPE sp0={shape[0],shape[1]},sp1={shape[1],shape[2]};
-    q.Build(key_+".q_proj",sp0,0x0);        //mask_decoder.transformer.layers.0.self_attn.q_proj.weight
-    // l.self_attn.q_w = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, n_enc_out_chans, n_enc_out_chans);
-    // l.self_attn.q_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
-    k.Build(key_+".k_proj",sp0,0x0);
-                // l.self_attn.k_w = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, n_enc_out_chans, n_enc_out_chans);
-                // l.self_attn.k_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
-    v.Build(key_+".v_proj",sp0,0x0);
-                // l.self_attn.v_w = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, n_enc_out_chans, n_enc_out_chans);
-                // l.self_attn.v_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
-    proj.Build(key_+".out_proj",sp1,0x0); 
-                // l.self_attn.out_w = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, n_enc_out_chans, n_enc_out_chans);
-                // l.self_attn.out_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
+hGensor QKV_rope::Forward(struct ggml_context * ctx_,hGensor teb,int flag)    {
+    hGensor cur=BeforeForward(ctx_,teb,flag);
+    if(cur==nullptr)       return cur;
+    cur = norm.Forward(ctx_,teb,0x0);
+    int N = n_ctx,n_past=0;
+    float kq_scale = 1.0f/sqrtf(float(n_embd_head));        //
+    hGensor q = W_rope(ctx_,cur,Q.w,KQ_pos,{n_embd_head, n_head, N, n_batch},"q");        
+    gTN(q, "%s.q",name.c_str());     assert_shape_4d(q, n_embd_head, N, n_head, n_batch);
+    hGensor k = W_rope(ctx_ ,cur,K.w,KQ_pos,{n_embd_head, n_head_kv, N, n_batch},"k");        
+    gTN(k, "%s.k",name.c_str());     assert_shape_4d(k, n_embd_head, N, n_head_kv, n_batch); 
+    hGensor v = V.Forward(ctx_,cur);                   
+    gTN(v, "%s.v",name.c_str());     //assert_shape_2d(t11, N*n_batch, n_embd_gqa);    
+    // if(isOnlinePush) ggml_build_forward_expand(gf_,q);           if(isOnlinePush) ggml_build_forward_expand(gf_,k);           if(isOnlinePush) ggml_build_forward_expand(gf_,v);           
+    hGensor  v4 = ggml_reshape_4d   (ctx_, v, N, n_batch, n_embd_head, n_head_kv);      // [64,4,128,8,] 
+    gTN(v4, "%s.t12",name.c_str());     assert_shape_4d(v4, N, n_batch, n_embd_head, n_head_kv);
+    hGensor  t15 = ggml_permute      (ctx_, v4, 0, 3, 1, 2);                                // [64,128,8,4,] 
+    gTN(t15, "%s.t15",name.c_str());     assert_shape_4d(t15, N, n_embd_head, n_head_kv, n_batch);        
+    hGensor  kq = ggml_mul_mat              (ctx_, k, q);      
+    gTN(kq, "%s.kq",name.c_str());         assert_shape_4d(kq, N, N, n_head, n_batch);
+    if(0)      {
+        kq = ggml_soft_max_ext(ctx_, kq, KQ_mask, kq_scale, f_max_alibi_bias);       //would crash!
+    }else{
+        hGensor  t16_1 = ggml_scale_inplace        (ctx_, kq, kq_scale);          
+                // gTN(t16_1, "t16_1"); assert_shape_4d(t16_1, N, N, n_head, n_batch);
+        hGensor  t16_2 = ggml_diag_mask_inf_inplace(ctx_, t16_1, n_past);            
+                // gTN(t16_2, "t16_2"); assert_shape_4d(t16_2, N, N, n_head, n_batch);
+        kq = ggml_soft_max_inplace     (ctx_, t16_2);                    
+                // gTN(t16_3, "t16_3"); assert_shape_4d(t16_3, N, N, n_head, n_batch);            
+    }   
+    hGensor kqv_out = vXkq(ctx_,t15,kq);    //  [512,24,6,32]x[512,512,6,32]
+    // hGensor  t20 = ggml_mul_mat      (ctx_build, wo, t16); 
+    hGensor t20 = proj_cat.Forward(ctx_,kqv_out);                        
+    gTN(t20, "%s.kqv_out",name.c_str());     assert_shape_2d(t20, n_embd, N*n_batch);
+    cur = ggml_add          (ctx_, t20, teb);  /**/
+
+    cur = AfterForward(ctx_,cur,flag);
+    return cur;
+}
+
+/*
+    Rotary Position Embedding
+*/
+hGensor QKV_rope::W_rope(struct ggml_context *ctx ,hGensor cur,hGensor w,hGensor KQ_pos,SHAPE shape,const string&shortcut,int flag)   {
+    string nam0 = shortcut+"."+cur->name;
+    hGensor  t05 = w==nullptr ? cur : ggml_mul_mat      (ctx, w, cur);         
+    gTN(t05,"%s*w",nam0.c_str());   //gTN(t05, "t05");     assert_shape_2d(t05, n_embd, N*n_batch);
+    hGensor  t06 = ggml_reshape_4d   (ctx, t05,shape[0],shape[1],shape[2],shape[3]); //n_embd_head, n_head, N, n_batch
+    gTN(t06,"%s$",nam0.c_str());   //gTN(t06, "t06");            
+    const int rope_mode = 0;
+    hGensor  t07 = n_embd_head==1 ? t06 :
+        ggml_rope_ext(ctx, t06, KQ_pos, nullptr, n_rot, rope_mode, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
+    gTN(t07,"%s_rope",nam0.c_str()); 
+    // CYS_0826 hGensor  t07 = ggml_rope_custom(ctx,t06, KQ_pos, n_rot, 0, n_ctx, 0,rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f);
+    hGensor  t13 = ggml_permute      (ctx, t07, 0, 2, 1, 3);    //  [24,6,512,32] => [24,512,6,32]
+    gTN(t13,"%s_0213",t07->name);
+    return t13;
+}
+
+hGensor QKV_rope::vXkq(struct ggml_context *ctx, hGensor v,hGensor kq){
+    int N = n_ctx;
+    hGensor kqv = ggml_mul_mat(ctx, v, kq);         assert_shape_4d(kqv, n_embd_head, N, n_head, n_batch); 
+    gTN(kqv, "%s.kqv",name.c_str());
+    hGensor kqv_merged = ggml_permute(ctx, kqv, 0, 2, 1, 3);        assert_shape_4d(kqv_merged, n_embd_head,n_head,N,n_batch); 
+    gTN(kqv_merged,"%s.kqv_merged",name.c_str());
+    // kqv_out = ggml_cont_2d(ctx, kqv_merged, n_embd, n_ctx*n_batch);
+    hGensor kqv_out = nullptr;
+    if(0){  // stuck at local minima
+        kqv_out = ggml_cont_2d(ctx, kqv_merged, n_embd, n_ctx*n_batch);
+        gTN(kqv_out, "%s.kqv_merged_cont",name.c_str());         
+    }else{      ///home/cys/rnd/lic/log/wiki/MOM_1010.info
+        kqv_out = ggml_cont         (ctx, kqv_merged);              // [128,6,32,8]      
+        gTN(kqv_out, "%s.kqv_merged_cont",name.c_str());     
+        kqv_out = ggml_reshape_2d   (ctx, kqv_out, n_embd, N*n_batch);     
+    }
+  
+    // sprintf(nam_,"kqv-%d",ID);            gTN(kqv_out, nam_); 
+    return kqv_out;
 }
 
 NT_SAM::NT_SAM(hFISH graph,const std::string&key_,const SHAPE& shape,bool is_global_,int flag)    :
     NeLayer(key_,flag),is_global_attn(is_global_)   {
-    struct ggml_context * ctx = graph->ctx;         assert(ctx!=nullptr);
+    struct ggml_context * ctx = graph->GetCTX();         assert(ctx!=nullptr);
     assert(shape.size()==4 && shape[0]>0);
     nEmbed = shape[0];                          
     head_dim = shape[1];
@@ -165,14 +260,14 @@ NT_SAM::NT_SAM(hFISH graph,const std::string&key_,const SHAPE& shape,bool is_glo
     } else {
         ld = 2*n_window_size - 1;
     }
-    norm1.Build(key_+".norm1",{nEmbed},0x0);
+    norm1.BuildX(key_+".norm1",{nEmbed},nullptr,0x0);
     rel_pos_w = graph->AddTensor(key_+".attn.rel_pos_w",GGML_TYPE_F16,{head_dim,ld},0x0);
     rel_pos_h = graph->AddTensor(key_+".attn.rel_pos_h",GGML_TYPE_F16,{head_dim,ld},0x0);
-    in_proj.Build(key_+".attn.qkv",{nEmbed, 3*nEmbed},0x0);
-    proj.Build(key_+".attn.proj",{nEmbed, nEmbed},0x0);
-    norm2.Build(key_+".norm2",{nEmbed},0x0);
-    mlp_lin1.Build(key_+".mlp.lin1",{nEmbed, 4*nEmbed},0x0);
-    mlp_lin2.Build(key_+".mlp.lin2",{4*nEmbed, nEmbed},0x0);
+    in_proj.BuildX(key_+".attn.qkv",{nEmbed, 3*nEmbed},nullptr,0x0);
+    proj.BuildX(key_+".attn.proj",{nEmbed, nEmbed},nullptr,0x0);
+    norm2.BuildX(key_+".norm2",{nEmbed},nullptr,0x0);
+    mlp_lin1.BuildX(key_+".mlp.lin1",{nEmbed, 4*nEmbed},nullptr,0x0);
+    mlp_lin2.BuildX(key_+".mlp.lin2",{4*nEmbed, nEmbed},nullptr,0x0);
 
     // graph->AddLayer(key_,{
     //                 NP_("SelfAttention",".self_attn",{n_enc_out_chans, n_enc_out_chans, n_enc_out_chans}),
@@ -302,7 +397,7 @@ hGensor NT_SAM::Build_(struct ggml_context * ctx0,hGensor inpL,float eps,
 }
 
 hGensor NT_SAM::Forward(hFISH graph,int nEmbed,int nHead,int W,int H,hGensor cur,int flag){
-    struct ggml_context * ctx0 = graph->ctx;    
+    struct ggml_context * ctx0 = graph->GetCTX();    
     cur = ggml_mul_mat(ctx0, in_proj.w, cur);
     cur = ggml_add_inplace(ctx0, cur, in_proj.b);
     int32_t head_dim = nEmbed / nHead; 
@@ -585,13 +680,17 @@ bool TGraph::TopoOrder(int flag)   {
     return true;
 }
 
-string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {        
-    if(empty())   return "";
+string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {
+    const char*tab=prefix.c_str();     
+    if(empty())   {
+        _INFO("CGRAPH_%s is empty! root=%s",name.c_str(),root_0==nullptr?"":root_0->name); 
+        return "";
+    }
     string root_name = "";
     const size_t MAX_BUF=64*1024;
     char buf[MAX_BUF]="\0";
     sprintf(buf+strlen(buf),"\n CGRAPH_%s x=%d nodes=%d leafs=%d forward=(%d,%d)\n",name.c_str(), -1,cgraph->n_nodes, cgraph->n_leafs,nForwN,nForwL);
-    const char*tab=prefix.c_str();
+    
     // the output is always the last tensor in the graph
     int pos=-1,nDup=0,i,no,nNode=cgraph->n_nodes,nLeaf=cgraph->n_leafs,root_id=root_0==nullptr ? cgraph->n_nodes-1 : -1;
     hGensor root = root_0;
@@ -620,43 +719,9 @@ string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {
             continue;
         all_nodes.push_back(cgraph->nodes[i]);
     }
-    for(int i=0;i<nLeaf;i++)        all_nodes.push_back(cgraph->leafs[i]);
+    for(int i=0;i<nLeaf;i++)        all_nodes.push_back(cgraph->leafs[i]);    
     
-    /*if(root!=nullptr){
-        gensors.push_back(root);            gimap[root] = GENSOR_INFO(0,0,-1,-1);    
-    }else{
-        for(auto r : sinks){
-            gensors.push_back(r);        gimap[r] = GENSOR_INFO(0,0,-1,-1);    
-        }
-    }
-    
-    while(++pos<gensors.size()) {
-        cur = gensors[pos];
-        if(strcmp(cur->name,"result_output'")==0){      // only for debug
-            int xxx = 0;
-        }
-        GENSOR_INFO info = gimap[cur];
-        for (int i=0,no=0; i < GGML_MAX_SRC; ++i) {
-            const int k =(order == GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT) ? i :(order == GGML_CGRAPH_EVAL_ORDER_RIGHT_TO_LEFT) ? (GGML_MAX_SRC-1-i) : i;
-            if (!cur->src[k]) continue;
-            son = cur->src[k];
-            if(strcmp(son->name,"loss'")==0){           // only for debug
-                int xxx = 0;
-            }
-            if(gimap.find(son) == gimap.end())  {                
-                gimap[son] = GENSOR_INFO(gensors.size(),info.level+1,pos,no++);
-                gensors.push_back(son);
-            }else{
-                nDup++;
-            }
-                
-        }        
-    }    
-    for(auto gensor:gensors){
-        _T_repr_(gensor,tab,buf,gimap[gensor]);     
-        assert(strlen(buf)<MAX_BUF);
-    }*/
-   for(auto gensor:topo_nodes){
+    for(auto gensor:topo_nodes){
         gensors.push_back(gensor);
         _T_repr_(gensor,tab,buf,gimap[gensor]);     
         assert(strlen(buf)<MAX_BUF);
@@ -666,7 +731,7 @@ string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {
     _INFO("%s",buf); 
     int nMiss = all_nodes.size()-gensors.size();
     _INFO("CGRAPH_%s root=%d(%d) nPass=%ld(%d) nMiss=%d",name.c_str(),root_id,sinks.size(),gensors.size(),nDup,nMiss); 
-    if(CHECK_SAME_TENSORS(gensors,all_nodes)!=0x0){   //       "loss"???
+    if(CHECK_SAME_TENSORS(name,gensors,all_nodes)!=0x0){   //       "loss"
         assert(has("loss")>=0);
         assert(0);  
     }
@@ -761,7 +826,7 @@ int Fish::BuildComputeGraph(int order,struct ggml_context * ctx,ggml_gallocr_t& 
     // hForwTG->Clear();               hBackTG->Clear();        
     auto train_params = hparams.common;
     train_params.use_checkpointing = false;     // CYS_0826
-    assert(ctx==ctx_compute);
+    assert(ctx==ctx_build);
     struct ggml_cgraph *gf = hForwTG->raw(), *gb = nullptr;
     if(order>=0){   //order<0: we have build it in other way
         gf->order = (enum ggml_cgraph_eval_order) order;    
@@ -774,10 +839,10 @@ int Fish::BuildComputeGraph(int order,struct ggml_context * ctx,ggml_gallocr_t& 
     }
     assert(hForwTG->isValid());
     hForwTG->TopoOrder();
-    // hForwTG->__repr__(out_node);  
+    hForwTG->__repr__(out_node);  
     int n0=gf->n_nodes; 
     if(!isLocalInfer){       
-        hBackTG = std::make_shared<TGraph>(this,"Backward",ctx_compute,true);        hBackTG->isBackward = true; 
+        hBackTG = std::make_shared<TGraph>(this,hForwTG->name+".Backward",ctx_build,true);        hBackTG->isBackward = true; 
         gb = hBackTG->BuildBackward(ctx,gf);
         // make sure some tensors are not reallocated by inserting new temporary nodes depending on them
         int n_leafs_before = gb->n_leafs,n_nodes_before = gb->n_nodes;
@@ -824,7 +889,7 @@ int Fish::BuildComputeGraph(int order,struct ggml_context * ctx,ggml_gallocr_t& 
     const int N = train_params.n_ctx, n_past = 0;
     if (train_params.use_checkpointing) {
         if(gb!=nullptr) {
-            gb_tmp = train_params.use_checkpointing ? ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true) : NULL;
+            gb_tmp = train_params.use_checkpointing ? ggml_new_graph_custom(ctx_build, LLAMA_TRAIN_MAX_NODES, true) : NULL;
             ggml_build_backward_gradient_checkpointing(ctx, gf, gb, gb_tmp, checkpoints.data(), (int) checkpoints.size());
         }            
     } 
@@ -877,9 +942,10 @@ bool TGraph::isValid(){
     for(int i=0;i<nLeaf;i++)        all_nodes.push_back(cgraph->leafs[i]);
 
     for(auto tA:all_nodes){
-        if(msg.find(tA->name)!=msg.end()){
+        if(msg.find(tA->name)!=msg.end()){            
             int j = msg[tA->name];
-            _INFO("\tAA_[%d %d]=\"%s\"",j,no,tA->name); 
+            hGensor tB=all_nodes[j];
+            _INFO("\tAA_[%d %d]=\"%s\" !!!\n",j,no,tA->name); 
             nDup++;
         }
         msg[tA->name] = no;     
@@ -897,7 +963,7 @@ bool TGraph::isValid(){
     };
     */
 extern "C" void ggml_compute_backward(struct ggml_context * ctx, struct ggml_tensor * tensor, struct ggml_hash_set * zero_table);
-struct ggml_cgraph * TGraph::BuildBackward(struct ggml_context * ctx_compute,struct ggml_cgraph *gf,int flag)   {    
+struct ggml_cgraph * TGraph::BuildBackward(struct ggml_context * ctx_build,struct ggml_cgraph *gf,int flag)   {    
     struct ggml_cgraph *gb=cgraph;
     assert(isBackward && gf!=nullptr);
     nForwN=gf->n_nodes,nForwL=gf->n_leafs;
@@ -908,13 +974,13 @@ struct ggml_cgraph * TGraph::BuildBackward(struct ggml_context * ctx_compute,str
     hGensor xn = hFish->xn,xxn = hFish->xxn,root_f=gf->nodes[nForwN-1],root_b=nullptr;
     
     ggml_graph_cpy(gf, gb);   //copy all leafs/nodes/grads & visited_hash_set
-    // ggml_build_backward_expand(ctx_compute, gf, gb, true);    return gb;    
+    // ggml_build_backward_expand(ctx_build, gf, gb, true);    return gb;    
          
     if (isKeep) {
         for (int i = 0; i < gf->n_nodes; i++) {
             struct ggml_tensor * node = gf->nodes[i];
             if (node->grad) {
-                node->grad = ggml_dup_tensor(ctx_compute, node);
+                node->grad = ggml_dup_tensor(ctx_build, node);
                 gf->grads[i] = node->grad;      n_grad++;
             }            
         }
@@ -935,7 +1001,7 @@ struct ggml_cgraph * TGraph::BuildBackward(struct ggml_context * ctx_compute,str
             int xxx = 0;
         }
         if (node->grad) {   //set src's grad
-            if(node->grad->grad!=NULL)  //???
+            if(node->grad->grad!=NULL)  //
                 node->grad->grad = NULL;
                 
             if(strlen(node->grad->name)==0){
@@ -944,7 +1010,7 @@ struct ggml_cgraph * TGraph::BuildBackward(struct ggml_context * ctx_compute,str
             if(i==6){   //  inp_pe_rms
                 int xxx=0;
             }
-            ggml_compute_backward(ctx_compute, node, &zero_table);
+            ggml_compute_backward(ctx_build, node, &zero_table);
             // if(xn->grad!=xxn){
             //     int xxx=0;
             // }
@@ -1104,4 +1170,98 @@ int TGraph::compute_on_plan( struct ggml_cplan* cplan,int flag) {
     }
     tCompute = GST_TOC(t0);
     return compute_status;*/
+}
+
+void s2layerinfo(const string&jkey,std::vector<string>&lays){
+    lays.clear();
+    const char* seps=" ,:;{}()\t=";
+    string nam_0;
+    char *token = strtok((char*) jkey.c_str(), seps);
+    int no=0,nLay=1;
+    while (token != NULL) {
+        if(no==0)
+            nam_0 = token;
+        else{
+            if(token[0]=='*'){
+                if(sscanf(token+1,"%d",&nLay)==1)   {
+
+                }else{
+
+                }
+            }
+        }
+        token = strtok(NULL, seps);     no++;
+    }
+    if(nLay>1){
+        for(int i=0;i<nLay;i++){
+            string name=nam_0+".L"+std::to_string(i);
+            lays.push_back(name);
+        }
+    }else{
+        lays.push_back(nam_0);
+    }
+}
+
+hNeuron Fish::J2Neuron(struct ggml_context *ctx_build,string dad,const JConfig& config,int flag){
+    hNeuron hN=nullptr,cur=nullptr;
+    std::vector<hNeuron> gang;    
+    string k,nam_,prefix;
+    std::vector<string> lay_names;
+    int i,nLay;
+    for(JSON::const_iterator it = config.js.begin(); it != config.js.end(); ++it)    {
+        k =it.key();     
+        if(!k.empty() && k[0]=='#')     
+            continue;
+        auto v=it.value();
+        if(it->is_array()){
+
+        }else if(it->is_structured())        {
+            s2layerinfo(k,lay_names);
+            int lay = 0;
+            for(auto nam_ : lay_names){
+                JConfig jLay(*it,lay++);
+                prefix = dad.empty()?nam_:dad+"."+nam_;      //  ,  //nam_
+                cur = J2Neuron(ctx_build,prefix,jLay,flag);  
+                gang.push_back(cur);        
+            }   
+            continue;       
+        }
+        else        {
+            assert(0);          
+        }       
+        cur = GeNeuron::MakeInstance(this,ctx_build,dad,it,flag);        
+        cur->ID = config.ID;
+        neurons.push_back(cur);  
+        gang.push_back(cur);
+    }
+    assert(gang.size()>0);
+    if(gang.size()>1)   {
+        hN = std::make_shared<Ganglia>(this,dad,gang,flag);
+        neurons.push_back(hN);  
+    }else{
+        assert(cur!=nullptr);
+        hN = cur;
+    }
+    assert(hN->isValid());
+    return hN;
+}
+
+/*
+
+*/
+int Fish::jToGraph( struct ggml_context *ctx_build,bool isBuild,int flag)   {
+    JConfig js(hparams.jModel);
+    J2Neuron(ctx_build,"",js,flag);   //  "GPT2"
+    for(auto nn : neurons){    //symbolic analysis
+        nn->Forward(ctx_build,nullptr);
+    }
+
+    int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd;
+    hGensor cur = tBatch; 
+    for(auto nn : neurons){
+        cur = nn->Forward(ctx_build,cur);
+    }
+    preLogits = cur;
+    // out_node = BuildLoss(ctx_build,preLogits);
+    return 0x0;
 }

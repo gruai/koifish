@@ -98,6 +98,7 @@ struct CLI_params {
     std::string fp_train_data;
     std::string train="";  //"scratch"
     bool only_write_model = false;
+    bool ffn_use_gate = false;
     // uint32_t n_vocab = 0;
     // uint32_t n_ctx   = 0;
     uint32_t n_swarm = 1;

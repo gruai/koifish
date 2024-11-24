@@ -720,6 +720,30 @@ int gTN(struct ggml_tensor *cur,const char *format,... ){
     return iRet;
 }
 
+int gTN0(struct ggml_tensor *cur,const char *format,... ){
+    int iRet = 0;
+    va_list args;
+    va_start( args, format );
+    vsnprintf( buffer,GGML_MAX_NAME,format,args );
+    va_end(args);
+    assert(strlen(buffer)<=GGML_MAX_NAME);
+    ggml_format_name(cur,"%s",buffer);    
+    iRet+=1;
+
+    /*
+        in ggml_compute_backward, some grad has no name!
+
+        ggml_format_name(tensor->grad, "%s (grad)", tensor->name);
+    */
+    if(cur->grad && strlen(cur->grad->name)==0){
+        assert(strlen(cur->name)<GGML_MAX_NAME);
+        ggml_format_name(cur->grad,"%s\"",cur->name);        
+        iRet+=2;
+    }
+    return iRet;
+}
+
+
 void _T_repr_(hGensor t,const char*tab,char *buf,const GENSOR_INFO&info){
     if(t==nullptr)      return;
     const char* A = "d";
@@ -732,8 +756,9 @@ void _T_repr_(hGensor t,const char*tab,char *buf,const GENSOR_INFO&info){
     }
     
     auto ne=t->ne;
-    size_t n0 = strlen(buf),n1;       //char buf[64*1024]="\0";
-    sprintf(buf+strlen(buf),"%s %s %s %s \t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",tab,info.sX.c_str(), A,
+    size_t n0 = strlen(buf),n1;         //char buf[64*1024]="\0";
+    string suf,pref,sX = info.__repr__(suf,pref);        //    info.sX;
+    sprintf(buf+strlen(buf),"%s %s %s %s \t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",tab,sX.c_str(), A,
         t->name,ne[0], ne[1], ne[2], ne[3], ggml_type_name(t->type));
     n1= strlen(buf); 
 }
@@ -764,8 +789,8 @@ void _T_repr_(hGensor t,const char*tab,char *buf,int typ){
     }    
 }
 
-int CHECK_SAME_TENSORS(const std::vector<hGensor>&arrA,const std::vector<hGensor>&arrB,int flag){
-    _INFO("\n======== %s \n",__func__);
+int CHECK_SAME_TENSORS(const string& desc,const std::vector<hGensor>&arrA,const std::vector<hGensor>&arrB,int flag){
+    _INFO("\n======== %s @[%s]...",__func__,desc.c_str());
     size_t nA=arrA.size(),nB=arrB.size(),nDup=0,nMiss=0;
     bool isSame = arrA.size()==arrB.size();
     std::map<std::string, int> msg;
@@ -796,7 +821,7 @@ int CHECK_SAME_TENSORS(const std::vector<hGensor>&arrA,const std::vector<hGensor
             isSame = false;     nMiss++;
         }
     }
-    _INFO("\n======== %s OK\n",__func__);
+    _INFO("%s======== %s @[%s] OK. A=%d B=%d \n",isSame?"\r":"\n", __func__,desc.c_str(),nA,nB);
     return 0x0;
 }
 

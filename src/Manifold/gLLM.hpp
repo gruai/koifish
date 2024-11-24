@@ -108,6 +108,7 @@ struct NLP_AutoRegressive : public Fish {
     enum ATTENTION_TYPE {
         QKV = 0,
         BROWN,      //little gain on early test, why ???
+        OFF
     };
     enum ATTENTION_TYPE tpATT = QKV;   
     
@@ -140,7 +141,7 @@ struct NLP_AutoRegressive : public Fish {
     std::string T2STR( const std::vector<TOKEN_ID>& tok,int flag );
     
     std::string Name()  override;    
-    hGensor  tokens_input  = NULL;    
+    hGensor  tokens_input=nullptr;    
     
     NLP_AutoRegressive()   {}
     NLP_AutoRegressive( const std::string& nam_, struct CLI_params params,ROLE_TYPE role_,int flag=0x0);
@@ -152,6 +153,7 @@ struct NLP_AutoRegressive : public Fish {
     }
     //number of vocab at target layer
     virtual size_t tVocab();
+    size_t nClass()    override     {   return tVocab(); }
 
  // get gensors from llama_model (possibly mmapped)
     virtual void LoadTensors(struct llama_model * lama,int flag=0x0);   
@@ -171,14 +173,19 @@ struct NLP_AutoRegressive : public Fish {
     virtual hGensor build_gate(struct ggml_context * ctx,hGensor cur,hGensor cur_logits, int flag );
 
     virtual size_t MostMemSize(int flag)    {
+        //mem_size = 2*LLAMA_TRAIN_MAX_NODES*ggml_tensor_overhead() +(hparams.common.use_checkpointing ? 3 : 2)*(GGML_OBJECT_SIZE+ggml_graph_overhead_custom(LLAMA_TRAIN_MAX_NODES, true));
         int n_layer = hparams.nLayer();
         int nHead = hDict!=nullptr ? hDict->nLevel*3+2+6 : 6; 
-        size_t sz = ggml_tensor_overhead()*2*(nHead + n_layer*18);
+        int nMost = LLAMA_TRAIN_MAX_NODES;      //  16384
+        assert(nHead*2 + n_layer*18<nMost);
+        size_t sz = ggml_tensor_overhead()*2*nMost;
+        size_t overhead = GGML_OBJECT_SIZE+ggml_graph_overhead_custom(LLAMA_TRAIN_MAX_NODES, true);
+        sz += (hparams.common.use_checkpointing ? 3 : 2)*overhead;
         return sz;
     }    
 
     //for tokens_input & target_probs
-    virtual void InitEntryTensors(int flag=0x0);
+    virtual void InitInput(struct ggml_context * ctx,bool isMask,int flag=0x0);
     virtual bool InitDictTokenset(int flag=0x0);
     hGensor Input()     override    {   return tokens_input;    }
 
@@ -208,7 +215,7 @@ struct NLP_AutoRegressive : public Fish {
     bool Build(int flag=0x0)   override;
     /*void Build_v0(int flag=0x0)      {    
         _WARN("\n%s Deprecated!!!\n",__func__);    
-        InitEntryTensors(flag); 
+        InitInput(flag); 
         
         auto train_params = hparams.common;
         int n_batch  = train_params.n_batch;
@@ -218,22 +225,22 @@ struct NLP_AutoRegressive : public Fish {
         enum ggml_cgraph_eval_order best_order = GGML_CGRAPH_EVAL_ORDER_COUNT;  //GGML_CGRAPH_EVAL_ORDER_RIGHT_TO_LEFT;  //GGML_CGRAPH_EVAL_ORDER_COUNT;
         if(graph_order==-1)   {// find best evaluation order
             for (unsigned order = 0; order < (unsigned) GGML_CGRAPH_EVAL_ORDER_COUNT; ++order) {
-                ctx_compute = ggml_init(ctx_compute_params);
+                ctx_build = ggml_init(ctx_compute_params);
                 ggml_gallocr_t alloc = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
-                gf = ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true);
+                gf = ggml_new_graph_custom(ctx_build, LLAMA_TRAIN_MAX_NODES, true);
                 gf->order = (enum ggml_cgraph_eval_order) order;
                 if(!isLocalInfer){
-                    gb = ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true);
-                    gb_tmp = train_params.use_checkpointing ? ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true) : NULL;
+                    gb = ggml_new_graph_custom(ctx_build, LLAMA_TRAIN_MAX_NODES, true);
+                    gb_tmp = train_params.use_checkpointing ? ggml_new_graph_custom(ctx_build, LLAMA_TRAIN_MAX_NODES, true) : NULL;
                 }
-                BuildOperators(ctx_compute,alloc,true,flag);
+                BuildOperators(ctx_build,alloc,true,flag);
                 size_t max_compute_size = ggml_gallocr_get_buffer_size(alloc, 0); // FIXME: this will still allocate the buffer
                 if (max_compute_size < best_compute_size) {
                     best_compute_size = max_compute_size;
                     best_order = gf->order;
                 }
                 ggml_gallocr_free(alloc);
-                ggml_free(ctx_compute);
+                ggml_free(ctx_build);
             }
         
             size_t max_compute_size = best_compute_size;
@@ -248,16 +255,16 @@ struct NLP_AutoRegressive : public Fish {
             best_order = (enum ggml_cgraph_eval_order)(graph_order);
         }        
 
-        ctx_compute = ggml_init(ctx_compute_params);
+        ctx_build = ggml_init(ctx_compute_params);
         alloc = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
-        gf = ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true);
+        gf = ggml_new_graph_custom(ctx_build, LLAMA_TRAIN_MAX_NODES, true);
         gf->order = best_order;
         if(!isLocalInfer){
-            gb = ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true);
-            gb_tmp = train_params.use_checkpointing ? ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true) : NULL;
+            gb = ggml_new_graph_custom(ctx_build, LLAMA_TRAIN_MAX_NODES, true);
+            gb_tmp = train_params.use_checkpointing ? ggml_new_graph_custom(ctx_build, LLAMA_TRAIN_MAX_NODES, true) : NULL;
         }
         
-        BuildOperators(ctx_compute,alloc,false,flag);
+        BuildOperators(ctx_build,alloc,false,flag);
         
         Statistic(0x0);
 #ifndef NDEBUG
@@ -277,13 +284,13 @@ struct NLP_AutoRegressive : public Fish {
     // build KQ_pos & KQ_mask
     void build_inp_KQ_(struct ggml_context *ctx,bool isMask,bool causal = true);
     //n_embd_head, n_head_kv
-    // virtual hGensor  build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur, hGensor wq, hGensor wk, hGensor wv, hGensor wo,
+    // virtual hGensor  build_layer_( int N,struct ggml_context *ctx_build,hGensor cur, hGensor wq, hGensor wk, hGensor wv, hGensor wo,
     //     hGensor att_norm.w,hGensor KQ_pos,hGensor ffn_norm,hGensor ffn_up,hGensor ffn_gate,hGensor ffn_down, int flag=0x0) ;
-    virtual hGensor  build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<QKV_LAY> layer,hGensor KQ_pos,int flag=0x0) ;
+    virtual hGensor  build_layer_( int N,struct ggml_context *ctx_build,hGensor cur,std::shared_ptr<QKV_LAY> layer,hGensor KQ_pos,int flag=0x0) ;
 
     virtual void BuildOperators(struct ggml_context * ctx,ggml_gallocr_t& alloc,bool m_only,int flag=0x0)   {    
-        // gf = ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true);    
-        hForwTG = std::make_shared<TGraph>(this,"Forward",ctx_compute,true);         
+        // gf = ggml_new_graph_custom(ctx_build, LLAMA_TRAIN_MAX_NODES, true);    
+        hForwTG = std::make_shared<TGraph>(this,"Forward",ctx_build,true);         
 
         auto train_params = hparams.common;     
         int n_batch  = train_params.n_batch;
@@ -292,13 +299,13 @@ struct NLP_AutoRegressive : public Fish {
         const int n_ctx = train_params.n_ctx,n_embd = hparams.n_embd,n_layer = hparams.nLayer(),
             n_head = hparams.n_head(),n_rot = hparams.n_rot,n_ff = hparams.n_ff(),n_past=0;
  
-        build_inp_KQ_(ctx,true);      
+    // build_inp_KQ_(ctx,true);      
 
         GGML_ASSERT(tokens_input->type == GGML_TYPE_I32);
         hGensor _tEmbed = UpdateGensor (hDict->tok_embeddings-> name);      //embedding of all tokens
         
         // hGensor _tOutput = UpdateGensor (hDict->_output.w->name);       
-        hGensor  t00 = n_batch==1 ? tokens_input : ggml_reshape_1d(ctx, tokens_input, n_ctx*n_batch);  //gTN(t00, "t00"); 
+        hGensor  t00 = tBatch;  //n_batch==1 ? tokens_input : ggml_reshape_1d(ctx, tokens_input, n_ctx*n_batch);  //gTN(t00, "t00"); 
         assert_shape_1d(t00, n_ctx*n_batch);
         hGensor  t01 = ggml_get_rows(ctx, _tEmbed, t00);    gTN(t01, "inp_embd"); 
         hGensor  cur = t01;        
@@ -377,6 +384,7 @@ struct LLAMA_LORA  : public NLP_AutoRegressive {
 
     void InitModel(int flag=0x0)    override    {
         _INFO("LLAMA_LORA::%s: init model\n", __func__);
+        auto ctx=GetCTX();
         hDict->isLoadTokenEmbed = true;
         
         LoadTensors(GetRawModel());  
@@ -463,7 +471,7 @@ struct LLAMA_LORA  : public NLP_AutoRegressive {
     hGensor UpdateGensor( const char*name,int flag=0x0 ) override    {
         hGensor gensor = NLP_AutoRegressive::UpdateGensor(name);       assert(gensor!=nullptr); 
         // if(ggml_is_quantized(gensor->type))    
-        //     ggml_tensor_dequant(ctx_compute,gensor,GGML_TYPE_F32); 
+        //     ggml_tensor_dequant(ctx_build,gensor,GGML_TYPE_F32); 
 
         auto shape = gensor->ne;
         int nIn=shape[0], nOut=shape[1];
@@ -491,7 +499,7 @@ struct LLAMA_LORA  : public NLP_AutoRegressive {
             if(!measure_only){
                 randomize_tensor_normal(ga, rnd);       ggml_set_zero(gb); 
             }
-            delta = ggml_mul_mat(ctx_compute, ga, gb);  //gensor = add_to_f32(ctx_compute, gensor, ggml_mul_mat(ctx_compute, ga, gb));
+            delta = ggml_mul_mat(ctx_build, ga, gb);  //gensor = add_to_f32(ctx_build, gensor, ggml_mul_mat(ctx_build, ga, gb));
         break;
         case CLI_params::OFF:   //would fail because gensor has no grad!!! gensor fixed as load from model file
             assert(0);
@@ -499,15 +507,15 @@ struct LLAMA_LORA  : public NLP_AutoRegressive {
         case CLI_params::LORA_AB:       //9.784955
         //,nHeavy = ga->ne[0], rank = nHeavy
             if(!measure_only)
-                Gensor_loab(ctx_compute,gensor,ga->ne[0],ga,gb);
-            delta = ggml_mul_mat(ctx_compute, ga, gb);  //gensor = add_to_f32(ctx_compute, gensor, ggml_mul_mat(ctx_compute, ga, gb));
+                Gensor_loab(ctx_build,gensor,ga->ne[0],ga,gb);
+            delta = ggml_mul_mat(ctx_build, ga, gb);  //gensor = add_to_f32(ctx_build, gensor, ggml_mul_mat(ctx_build, ga, gb));
             break;
         case CLI_params::LORA_SVD:  {       //9.784960
                 if(!measure_only)
-                    Gensor_SVD(ctx_compute,gensor,d->ne[0],u,d,v);
-                // hGensor dv = ggml_mul_mat(ctx_compute, ggml_diag(ctx_compute,d),v);  //GGML_OP_DIAG don't support backward!!!
-                hGensor dv = ggml_mul_mat(ctx_compute, d,v);
-                delta = ggml_mul_mat(ctx_compute, u, dv);  //gensor = add_to_f32(ctx_compute, gensor, ggml_mul_mat(ctx_compute, u, dv));
+                    Gensor_SVD(ctx_build,gensor,d->ne[0],u,d,v);
+                // hGensor dv = ggml_mul_mat(ctx_build, ggml_diag(ctx_build,d),v);  //GGML_OP_DIAG don't support backward!!!
+                hGensor dv = ggml_mul_mat(ctx_build, d,v);
+                delta = ggml_mul_mat(ctx_build, u, dv);  //gensor = add_to_f32(ctx_build, gensor, ggml_mul_mat(ctx_build, u, dv));
             }
             break;
         default:
@@ -515,9 +523,9 @@ struct LLAMA_LORA  : public NLP_AutoRegressive {
             break;
         }       
         if(hDistler!=nullptr) 
-            gensor = hDistler->UpdateGG(ctx_compute,gensor,delta);
+            gensor = hDistler->UpdateGG(ctx_build,gensor,delta);
         else
-            gensor = add_to_f32(ctx_compute, gensor, delta);
+            gensor = add_to_f32(ctx_build, gensor, delta);
         
         return gensor;
     }
@@ -594,7 +602,7 @@ struct LLAMA_LORA  : public NLP_AutoRegressive {
         // _tNorm = UpdateGensor (base->hDict->_norm.w->name); 
         // _tOutput = UpdateGensor (base->hDict->_output.w->name);         
 
-        hGensor  t00 = ggml_reshape_1d(ctx, tokens_input, n_ctx*n_batch);  gTN(t00, "t00"); assert_shape_1d(t00, n_ctx*n_batch);
+        hGensor  t00 = tBatch;  //ggml_reshape_1d(ctx, tokens_input, n_ctx*n_batch);  gTN(t00, "t00"); assert_shape_1d(t00, n_ctx*n_batch);
         hGensor  t01 = ggml_get_rows(ctx, _tEmbed, t00);        gTN(t01, "t01"); assert_shape_2d(t01, n_embd, n_ctx*n_batch);
         hGensor  cur = t01;
         checkpoints.clear();
@@ -705,13 +713,18 @@ struct LLM_MAMBA : public NLP_AutoRegressive {
         NLP_AutoRegressive::InitModel(flag);        
     }     
 
-    hGensor build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<QKV_LAY> layer,hGensor KQ_pos,int flag=0x0) override;
+    hGensor build_layer_( int N,struct ggml_context *ctx_build,hGensor cur,std::shared_ptr<QKV_LAY> layer,hGensor KQ_pos,int flag=0x0) override;
     hGensor BuildTarget( struct ggml_context * ctx,hGensor cur,int flag=0x0) override; 
 };
 
 
-struct GPT2 : public NLP_AutoRegressive {
-
+class GPT2 : public NLP_AutoRegressive {
+protected:    
+    LayerNormal _norm;
+    SLP _output;    
+    
+    int cRawGraph( struct ggml_context *,bool isBuild,int flag=0x0)   ;//override;
+public:
     GPT2( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag=0x0);
 
     virtual ~GPT2() {          
@@ -722,12 +735,11 @@ struct GPT2 : public NLP_AutoRegressive {
 
         // NLP_AutoRegressive::InitModel(flag);         
     }     
-    hNeuron J2Neuron(struct ggml_context *ctx_compute,string,const JSON& j,int flag);
-    struct ggml_cgraph *jRawGraph( struct ggml_context *,bool isBuild,int flag=0x0)   ;//override;
+    
     struct ggml_cgraph *GetRawGraph( struct ggml_context *,bool isBuild,int flag=0x0)   override;
     void InitGensors(int flag=0x0) override    {;}
 
-    hGensor BuildTarget(struct ggml_context * ctx,hGensor cur,int flag=0x0) override; 
+    // hGensor BuildTarget(struct ggml_context * ctx,hGensor cur,int flag=0x0) override; 
     string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
 };
 
@@ -755,7 +767,7 @@ struct LLM_MOE : public NLP_AutoRegressive {
         NLP_AutoRegressive::InitModel(flag);        
     }     
 
-    hGensor build_layer_( int N,struct ggml_context *ctx_compute,hGensor cur,std::shared_ptr<QKV_LAY> layer,hGensor KQ_pos,int flag=0x0) override;
+    hGensor build_layer_( int N,struct ggml_context *ctx_build,hGensor cur,std::shared_ptr<QKV_LAY> layer,hGensor KQ_pos,int flag=0x0) override;
         // hGensor build_gate(struct ggml_context * ctx,hGensor cur,hGensor cur_logits, int flag )    override;
 };
 

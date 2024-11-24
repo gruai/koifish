@@ -57,11 +57,12 @@ struct SAM_encoder : public Fish {
     int nEmbed,nHead,head_dim;
     int n_window_size,n_img_embd,n_patch_size,n_enc_out_chans;
     // std::vector<Transformer*> layers;
-
+    
     SAM_encoder(struct ggml_context *ctx_, bool grad_,int nEmbed,int nLayer,int n_enc_head_dim,int _enc_out_chans,
             int n_pt_embd,int _img_embd,int _window_size,int _patch_size,int flag=0x0) 
-        :Fish("SAM_encoder",ctx_,grad_),nEmbed(nEmbed),head_dim(n_enc_head_dim),n_window_size(_window_size),n_img_embd(_img_embd),n_patch_size(_patch_size),
+        :   /*Fish("SAM_encoder",ctx_,grad_),*/nEmbed(nEmbed),head_dim(n_enc_head_dim),n_window_size(_window_size),n_img_embd(_img_embd),n_patch_size(_patch_size),
         n_enc_out_chans(_enc_out_chans)   {
+        assert(0);  //Deprecated
         assert(nEmbed>=head_dim && head_dim>0);
         nHead = nEmbed/head_dim;
     }
@@ -104,7 +105,7 @@ struct SAM_encoder : public Fish {
         pe = AddTensor(key_+".pos_embed",GGML_TYPE_F32,{nEmbed, n_img_embd, n_img_embd, 1},0x0);
         // pe = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, nEmbed, n_img_embd, n_img_embd, 1);
         // model.tensors["image_encoder.pos_embed"] = pe;
-        proj.Build(key_+".patch_embed.proj",{n_patch_size, n_patch_size,           3, nEmbed},0x0);
+        proj.BuildX(key_+".patch_embed.proj",{n_patch_size, n_patch_size,           3, nEmbed},this,0x0);
             // proj_w = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, n_patch_size, n_patch_size,           3, nEmbed);
             // proj_b = ggml_new_tensor_3d(ctx, GGML_TYPE_F32,            1,            1, nEmbed);
         neck_conv_0 = AddTensor(key_+".neck.0.weight",GGML_TYPE_F16,{1, 1, nEmbed,     n_enc_out_chans},0x0);
@@ -113,10 +114,10 @@ struct SAM_encoder : public Fish {
             // neck_conv_1 = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, 3, 3, n_enc_out_chans, n_enc_out_chans);
                         // model.tensors["image_encoder.neck.0.weight"] = neck_conv_0;
             // model.tensors["image_encoder.neck.2.weight"] = neck_conv_1;
-        neck_norm_0.Build(key_+".neck.1",{n_enc_out_chans},0x0);
+        neck_norm_0.BuildX(key_+".neck.1",{n_enc_out_chans},this,0x0);
             // neck_norm_0_w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
             // neck_norm_0_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
-        neck_norm_1.Build(key_+".neck.3",{n_enc_out_chans},0x0);
+        neck_norm_1.BuildX(key_+".neck.3",{n_enc_out_chans},this,0x0);
             // neck_norm_1_w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
             // neck_norm_1_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
     }
@@ -368,7 +369,7 @@ struct SegmentAnything  : public Fish {
         };
         Size();
         struct ggml_init_params params = {ctx_size,NULL,false,        };
-        ctx = ggml_init(params);
+        auto ctx = ggml_init(params);
         if (!ctx) {
             fprintf(stderr, "%s: _init() failed\n", __func__);            return false;
         }
@@ -383,7 +384,7 @@ struct SegmentAnything  : public Fish {
             enc->AddLayer(std::shared_ptr<NeLayer>(hFormer));
         }
         // prompt encoder
-        enc_prompt = std::make_shared<Fish>("enc_prompt",ctx,0x0);        childs.push_back(enc_prompt);
+        enc_prompt = nullptr;/*std::make_shared<Fish>("enc_prompt",ctx,0x0);*/        childs.push_back(enc_prompt);
         enc_prompt->AddTensor("prompt_encoder.pe_layer.positional_encoding_gaussian_matrix",GGML_TYPE_F32,{n_enc_out_chans/2, 2});
         // enc.pe = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_enc_out_chans/2, 2);
         enc_prompt->AddTensor("prompt_encoder.not_a_point_embed.weight",GGML_TYPE_F32,{n_enc_out_chans});

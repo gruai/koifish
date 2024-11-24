@@ -56,7 +56,7 @@ template<typename T>
 void G_S2TTT_(const string& str_, vector<T>&nums, const char* seps=" ,:;{}()\t=", int flag = 0x0) {
     nums. clear();
     string str = str_;
-    char *token = strtok((char*) str. c_str(), seps);
+    char *token = strtok((char*) str.c_str(), seps);
     while (token != NULL) {
         if( typeid(T)==typeid(int) ){
             int nInt;

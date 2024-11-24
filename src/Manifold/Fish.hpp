@@ -65,7 +65,8 @@ enum FFN_TYPE {
     SMOE,           //Sparsely-Gated Mixture-of-Experts Layer
     GATE_CYS,
 };
-    
+
+// Deprecated, repalce by SelfAttention+FFN
 struct QKV_LAY : public NeLayer {
     hGensor eps=nullptr;
     LayerNormal att_norm,ffn_norm;
@@ -154,7 +155,6 @@ struct QKV_Motion : public BROWN_Motion    {
     {
     }
     hGensor vXkq(struct ggml_context *ctx, hGensor v,hGensor kq,int layer_id);
-    // hGensor W_rope(struct ggml_context *ctx, hGensor cur, hGensor w, hGensor KQ_pos, SHAPE shape, int flag = 0x0);
     hGensor Build(struct ggml_context *ctx, hGensor t04, hGensor KQ_pos)    override;
 };
 struct save_train_model {
@@ -192,6 +192,14 @@ class Fish : public std::enable_shared_from_this<Fish>    {
     Fish(const Fish &);
     Fish &operator=(const Fish &);
 
+    struct JConfig{
+        int ID=-1;
+        JSON js;
+        JConfig(const JSON& j,int id=-1) : js(j),ID(id){
+
+        }
+    };
+
 protected:
     std::string name;
 
@@ -205,7 +213,6 @@ protected:
     // Generate some results on prompt
     hGOPT gopt = nullptr;    
 
-    struct CLI_params hparams;
     save_train_model save_data;
     ggml_gallocr_t alloc;
     hTGraph hForwTG=nullptr,hBackTG=nullptr;                            // compuation graph
@@ -244,7 +251,7 @@ protected:
     int size = 0; //,n_nodes=0,n_leafs=0;
     size_t nParams = 0, szModel = 0;
 
-    hGensor in_node = nullptr, out_node = nullptr;
+    hGensor in_node = nullptr, out_node = nullptr, tBatch=nullptr;
     hGensor loss = nullptr, target_probs = nullptr, KQ_pos = nullptr, KQ_mask = nullptr, pos_embd=nullptr;
     hGensor preLogits = nullptr;        //no SOFTMAX
     hGensor xn = nullptr,xxn = nullptr;     //only for debug
@@ -261,27 +268,25 @@ protected:
     // performance
     int perf_runs = 0;
     int64_t perf_cycles = 0, perf_time_us = 0;
-    struct ggml_context *ctx = nullptr;         // model ctx
+    // struct ggml_context *ctx = nullptr;         // model ctx
     struct ggml_context *ctx_work = nullptr;    // training ctx
-    struct ggml_context *ctx_input = nullptr; 
+ 
     struct ggml_init_params ctx_compute_params = {0, NULL,true,};
-    struct ggml_context * ctx_compute = nullptr;    //build graph
+    struct ggml_context * ctx_build = nullptr;    //build graph
     size_t ctx_size = 0;
     
     std::vector<hFISH> childs;
 
     virtual void Clear() {
-        if (ctx!=nullptr) {
-            ggml_free(ctx);
-        }
-        if (ctx_input!=nullptr) {
-            ggml_free(ctx_input);
-        }
+        // if (ctx!=nullptr) {
+        //     ggml_free(ctx);
+        // }
     }
 
     std::vector<std::string> to_quant, to_skip;
 
 public:    
+    struct CLI_params hparams;
     static tpSWARM swarm;
     MODEL_ARCH arch = MODEL_ARCH::_X_;
     enum ROLE_TYPE    {
@@ -298,7 +303,8 @@ public:
             isLocalInfer = true;
         }
     }
-    Fish(const std::string&nam_,struct ggml_context *ctx_, int flag = 0x0) : name(nam_),ctx(ctx_)    {
+    Fish(const std::string&nam_,struct ggml_context *ctx_, int flag = 0x0) : name(nam_)/*,ctx(ctx_)*/    {
+        assert(0);  //Deprecated
         GGML_PRINT("=== %s ===\n", __func__);
         // allocr = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
     }
@@ -314,8 +320,22 @@ public:
     virtual std::string Name()  {   return name.c_str();  }
 
     virtual size_t Size(int flag = 0x0) { return ctx_size; }
+    //  number of class (only valid for classification problem)
+    virtual size_t nClass() {   assert(0);        return 0; }
 
     virtual bool Init(const vector<hWIKI>& wikis,int flag=0x0)          {   throw "Fish::Init is ...";           }       
+    virtual struct ggml_context * GetCTX(int typ=0x0)                   {  
+        switch(typ){
+        case 1: 
+            return ctx_build;
+        case 2:
+            return ctx_work;
+        default:
+            return ctx_build;
+        }
+        assert(0);
+        return nullptr;    
+    }
     virtual bool Build(int flag=0x0)               {   throw "Fish::Build is ...";     }
     virtual bool BeforeBuild(int flag=0x0);
     virtual bool AfterBuild(bool isInitParam,int flag=0x0);
@@ -434,7 +454,8 @@ public:
 
     virtual void AddLayer(const std::string &key_, std::vector<NP_> nps, int flag = 0x0)    {
         hLayer layer = std::make_shared<NeLayer>(key_);
-        for (auto param : nps)
+        assert(0);      //Deprecated
+        /*for (auto param : nps)
         {
             hNeuron hN = nullptr;
             auto tp = param.type;
@@ -455,7 +476,7 @@ public:
                 assert(0);
             }
             layer->neurons.push_back(hN);
-        }
+        }*/
         AddLayer(layer, flag = 0x0);
     }
     
@@ -465,6 +486,8 @@ public:
 
     virtual bool ComputePlan(int flag=0x0);
     int BuildGraphFromRaw(int flag);
+    hNeuron J2Neuron(struct ggml_context *ctx_build,string,const JConfig& j,int flag);
+    virtual int jToGraph( struct ggml_context *,bool isBuild,int flag=0x0)   ;
 
     virtual void Train(int flag = 0x0);
     virtual void Loss(int flag = 0x0) {}
@@ -502,6 +525,7 @@ public:
     friend class WIKI;
     friend class KVCache;
     friend class TGraph;
+    friend class SelfAttention;
 };
 
 struct LogicSalp : public Fish {

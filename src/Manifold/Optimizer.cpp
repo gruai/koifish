@@ -93,7 +93,6 @@ bool OPT_Adam::BatchGrad(float&fx,int flag)   {
     bool bench=false;
     // const int n_accum = MAX(1, train_params.n_gradient_accumulation);
     const float accum_norm = 1.0f / (float) nGradAccum;
-    // bool cancel = false;
     
     for (int accum_step = 0; accum_step < nGradAccum; ++accum_step) {
         int64_t nSamp = train_loader.update_batch(-1,gang);
@@ -317,7 +316,7 @@ enum ggml_opt_result Optimizer::Search(struct ggml_context * ctx, hGensor loss_,
     float *fLoss = (float*)(loss->data),*fLossG = (float*)(loss->grad->data),val_loss;
     
     // float *target = (float*)(data->target_probs->data);
-    _INFO("Optimizer::%s: Accumulation=%d AdaptiveSched=%d GRAP=%p rZMUV=%g rLARS=%g \n", __func__,
+    _INFO("Optimizer::%s@<%s>: Accumulation=%d AdaptiveSched=%d GRAP=%p rZMUV=%g rLARS=%g \n", __func__,gang->hBackTG->name.c_str(),
         nGradAccum,(int)isAdaptiveSched,grad,hparams.ZMUV_ratio,hparams.lars_ratio );
         // tpGD=SGD_HYBRID;    //ADAMw      SGD_v    SGD_HYBRID        SGD_blk_v
     _INFO("\tDECENT=%d(%s) SIGN=%d \n\n",tpGD,GD_NAME[tpGD].c_str(),tpSign);

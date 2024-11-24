@@ -118,7 +118,7 @@ struct ConsiceDict : public VariationaAE    {
     virtual hGensor Embed2Output(struct ggml_context * ctx,hGensor t33,int flag=0x0);
     virtual void Update_0(struct random_normal_distribution * rnd,int flag=0x0);
     void Update_1(struct random_normal_distribution * rnd,int flag=0x0);  
-    void CreateEmbeddings(struct random_normal_distribution * rnd,int flag);
+    void CreateEmbeddings(int flag);
 
     string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
 };

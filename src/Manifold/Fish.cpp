@@ -123,7 +123,7 @@ bool Fish::ComputePlan(int flag) {
     }
     size_t max_work_size = ggml_graph_plan(cgraph, train_params.n_threads,nullptr).work_size + GGML_OBJECT_SIZE;
     _INFO("%s: work_size = %zu bytes (%.1f MB)\n", __func__, max_work_size, (float) max_work_size / (1024.0f*1024.0f));
-// ggml_free(ctx_compute);         ctx_compute = nullptr;
+// ggml_free(ctx_build);         ctx_build = nullptr;
     // context for work buffer
     struct ggml_init_params ctx_work_params = {
         max_work_size, // mem_size
@@ -171,7 +171,7 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
     }     
     
     if(nx != nParams){
-        CHECK_SAME_TENSORS(optParams,xGensors); 
+        CHECK_SAME_TENSORS("Compare parameter tensors\t",optParams,xGensors); 
         _ERROR("%s nx(%ld)!=nParams(%ld)\t", __func__,nx,nParams );
         //  assert(0);
         // return false;
@@ -180,7 +180,7 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
         hOPT->Prepare(nParams);
     }
     hOPT->Dump(1);
-    szModel = ggml_used_mem(ctx) + ggml_backend_buffer_get_size(back_data);   // (float) (ggml_used_mem(ctx) + ggml_backend_buffer_get_size(back_data)) ;
+    szModel = ggml_used_mem(GetCTX()) + ggml_backend_buffer_get_size(back_data);   // (float) (ggml_used_mem(ctx) + ggml_backend_buffer_get_size(back_data)) ;
           
     GGML_ASSERT(optParams.size() < GGML_MAX_PARAMS);
 
@@ -268,13 +268,13 @@ int Fish::BuildGraphFromRaw(int flag)   {
     bool isKeep = true;
     ctx_compute_params.mem_size = 2*LLAMA_TRAIN_MAX_NODES*ggml_tensor_overhead() +
             (hparams.common.use_checkpointing ? 3 : 2)*(GGML_OBJECT_SIZE+ggml_graph_overhead_custom(LLAMA_TRAIN_MAX_NODES, true));
-    ctx_compute = ggml_init(ctx_compute_params);
+    ctx_build = ggml_init(ctx_compute_params);
     
-    struct ggml_cgraph *gf = GetRawGraph( ctx_compute,false ),*gb=nullptr;
+    struct ggml_cgraph *gf = GetRawGraph( ctx_build,false ),*gb=nullptr;
     // preLogits = gf->nodes[gf->n_nodes - 1]; // the output is always the last tensor in the graph
     if(1){        
         alloc = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
-        iRet = BuildComputeGraph(0,ctx_compute,alloc,0x0);
+        iRet = BuildComputeGraph(0,ctx_build,alloc,0x0);
     }else{
         // set<std::string> leaf_const={""};
         /*for (int i = 0; i < gf->n_leafs; i++) { //to float
@@ -287,7 +287,7 @@ int Fish::BuildGraphFromRaw(int flag)   {
         hGensor last_embd = gf->nodes[gf->n_nodes - 2];
         // gf->order = GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT;      
         if(!isLocalInfer){
-            gb = ggml_new_graph_custom(ctx_compute, LLAMA_TRAIN_MAX_NODES, true);
+            gb = ggml_new_graph_custom(ctx_build, LLAMA_TRAIN_MAX_NODES, true);
         }
         if(gb!=nullptr){
             ggml_graph_cpy(gf, gb);        
@@ -295,7 +295,7 @@ int Fish::BuildGraphFromRaw(int flag)   {
                 for (int i = 0; i < gf->n_nodes; i++) {
                     struct ggml_tensor * node = gf->nodes[i];
                     if (node->grad) {
-                        node->grad = ggml_dup_tensor(ctx_compute, node);
+                        node->grad = ggml_dup_tensor(ctx_build, node);
                         gf->grads[i] = node->grad;
                     }
                 }
@@ -314,7 +314,7 @@ int Fish::BuildGraphFromRaw(int flag)   {
                 // inplace operations to add gradients are not created by ggml_compute_backward
                 // use allocator to automatically make inplace operations
                 if (node->grad) {
-                    // ggml_compute_backward(ctx_compute, node, &zero_table);
+                    // ggml_compute_backward(ctx_build, node, &zero_table);
                 }
             }
 
@@ -337,8 +337,9 @@ int Fish::BuildGraphFromRaw(int flag)   {
 
 // If isParam, only alloc grad, no init!
 void Fish::InitGensor(struct ggml_context *ctx, const char *name, hGensor gensor, bool isParam, int flag)    {
+    assert(gensor!=nullptr);
     if (name != nullptr){
-        ggml_set_name(gensor, name);
+        ggml_set_name(gensor, name);        //    gTN0(w,"%s.w",name.c_str());
     }
         
     assert(gensor->data == nullptr);

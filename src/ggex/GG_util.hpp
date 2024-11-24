@@ -94,8 +94,10 @@ static const char * TNs( const char *format,const char *suffix,... )	{
     strcat(buffer,suffix);        
     return buffer;
 }
-//set name of tensor & its grad
+//set name of a tensor if its name is "\0" & its grad
 int gTN(struct ggml_tensor *,const char *format,...);
+//clear then set name of a tensor & its grad
+int gTN0(struct ggml_tensor *cur,const char *format,... );
 
 inline void GG_log_callback_default(ggml_log_level level, const char * text, void * user_data) {
     (void) level;
@@ -172,7 +174,7 @@ struct GENSOR_INFO{
         string suffix,prefix;
         sX = __repr__(suffix,prefix);
     }
-    string __repr__(string& suffix,string& prefix,int flag=0x0) {  
+    string __repr__(string& suffix,string& prefix,int flag=0x0) const {  
         char buf[512]="\0";
         if(dad==-1){
             sprintf(buf+strlen(buf),"ROOT"); 
@@ -673,7 +675,7 @@ inline void _TIME(double fmillis) {
         _INFO("%02lld:%02lld:%02lld", (long long int) hours, (long long int) minutes, (long long int) seconds);
 }
 struct ggml_tensor * ggml_cross_entropy_loss_1(struct ggml_context * ctx,struct ggml_tensor * a, struct ggml_tensor * b);
-int CHECK_SAME_TENSORS(const std::vector<hGensor>&arrA,const std::vector<hGensor>&arrB,int flag=0x0);
+int CHECK_SAME_TENSORS(const string& desc,const std::vector<hGensor>&arrA,const std::vector<hGensor>&arrB,int flag=0x0);
 size_t F_SIZE(const std::string&fpath,FILE *fp0=NULL,int flag=0x0); 
 struct ggml_context *InitCTX(size_t msize,int flag=0x0);
 

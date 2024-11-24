@@ -109,8 +109,8 @@ int64_t SampLoader::update_batch(int x,Fish* fish){
     // GGML_ASSERT(samples_count > 0);
     GGML_ASSERT(ggml_is_matrix(tokens_input));
     GGML_ASSERT(ggml_is_3d(target_probs));
-    int64_t n_vocab  = target_probs->ne[0],nSampInBatch = tokens_input->ne[1];  //'ld0,ld1,ld2,ld3;
-    n_ctx = tokens_input->ne[0];
+    int64_t n_vocab  = target_probs->ne[0],nSampInBatch = fish->hparams.n_batch();  // tokens_input->ne[1];  //'ld0,ld1,ld2,ld3;
+    n_ctx = fish->hparams.n_ctx();            //    tokens_input->ne[0];
     GGML_ASSERT(n_vocab  == target_probs->ne[0]);
     GGML_ASSERT(n_ctx == target_probs->ne[1]);
     GGML_ASSERT(nSampInBatch  == target_probs->ne[2]);

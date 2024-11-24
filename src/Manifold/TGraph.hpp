@@ -50,7 +50,7 @@ protected:
     std::vector<hGensor> topo_nodes;    //nodes in Topological order
     std::vector<hGensor> sinks;      //  sinks of tensor flow graph
     std::map<hGensor, GENSOR_INFO> gimap;   // Get gensor info from map
-    virtual bool TopoOrder(int flag=0x0); 
+    
     // vector<hGensor> nodes,grads,leafs;
     // struct ggml_hash_set visited_hash_table = { 0, nullptr };   
     enum ggml_cgraph_eval_order order=GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT;
@@ -127,22 +127,7 @@ public:
 
     virtual size_t Size(int flag=0x0)      {   return ctx_size;  }
 
-    /*hGensor get_tensor(const char * name,int flag=0x0) {
-        for (int i = 0; i < n_leafs; i++) {
-            hGensor leaf = leafs[i];
-            if (strcmp(leaf->name, name) == 0) {
-                return leaf;
-            }
-        }
-        for (int i = 0; i < n_nodes; i++) {
-            hGensor node = nodes[i];
-            if (strcmp(node->name, name) == 0) {
-                return node;
-            }
-        }
-        assert(0);
-        return NULL;
-    }*/    
+    virtual bool TopoOrder(int flag=0x0); 
 
     int compute_on_plan( struct ggml_cplan* cplan,int flag=0x0);
 
@@ -161,7 +146,7 @@ public:
         GGML_PRINT_DEBUG("%s:  nT=%d  symbol=%d T = %.3g(plan=%.3g)sec\n", __func__,n_threads,isOnlySymbol, GST_TOC(t0),tPlan);
     }
 
-    virtual struct ggml_cgraph * BuildBackward(struct ggml_context * ctx_compute,struct ggml_cgraph *gf,int flag=0x0);
+    virtual struct ggml_cgraph * BuildBackward(struct ggml_context * ctx_build,struct ggml_cgraph *gf,int flag=0x0);
     
     // Push new added node to last position
     void PushBack(hGensor node,int flag=0x0);
