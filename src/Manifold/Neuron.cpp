@@ -26,8 +26,12 @@ hNeuron GeNeuron::MakeInstance(Fish *hG_,struct ggml_context *ctx,const string& 
         nn = std::make_shared<Embed>(hG_, guid, jit, flag);
     }else if(typ.rfind("LINEAR", 0) == 0){        
         nn = std::make_shared<SLP>(hG_, guid, jit, flag);
-    }else if(typ.rfind("QKV_ROPE", 0) == 0){
+    }else if(typ.rfind("GAU", 0) == 0){        
+        nn = std::make_shared<GatedAttention>(hG_, guid, jit, flag);
+    }/*else if(typ.rfind("QKV_ROPE", 0) == 0){
         nn = std::make_shared<QKV_rope>(hG_, guid, jit, flag);
+    }*/else if(typ.rfind("BROWN", 0) == 0){
+        nn = std::make_shared<BROWN_attn>(hG_, guid, jit, flag);
     }else if(typ.rfind("QKV", 0) == 0){
         nn = std::make_shared<SelfAttention>(hG_, guid, jit, flag);
     }else if(typ.rfind("DROPOUT", 0) == 0){
@@ -41,6 +45,7 @@ hNeuron GeNeuron::MakeInstance(Fish *hG_,struct ggml_context *ctx,const string& 
     }else if(typ.rfind("CLASIFY", 0) == 0){
         nn = std::make_shared<OutCLS>(hG_, guid, jit, flag);
     }else{
+        _ERROR("%s failed@[%s]",__func__,typ.c_str());
         assert(0);
     }
 
@@ -51,7 +56,9 @@ hNeuron GeNeuron::MakeInstance(Fish *hG_,struct ggml_context *ctx,const string& 
 }
 
 GeNeuron::GeNeuron(const std::string &key_,JSON::const_iterator jit, Fish *hG_, int flag) : name(key_), hOrg(hG_),ID(0) {    
-try{    
+try{   
+    Init(hG_,0x0);
+
     if((*jit).contains(std::string{ "#id" })){
         ID = (*jit)["id"];
     }
@@ -66,6 +73,15 @@ try{
     assert(0);
 } 
 }
+void GeNeuron::Init(Fish *hG_, int flag) {    
+    hOrg=hG_;   
+    auto& hparams = hG_->hparams; 
+    n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_embd=hparams.n_embd;
+    n_embd_head = hparams.n_embd_head();
+    n_head=hparams.n_head();
+    assert(n_embd_head*n_head==n_embd);
+}
+
 Ganglia::Ganglia(Fish *hG_,const string& key_,std::vector<hNeuron>& ns_,int flag) : ns(ns_)  {
     name="{"+key_+"}"; 
     hOrg=hG_;
@@ -79,7 +95,7 @@ Relu::Relu(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int fl
 bool Relu::Build(int flag)   {
     return true;
 };
-hGensor Relu::Forward(struct ggml_context *ctx_build,hGensor cur,int flag){
+hGensor Relu::Forward(struct ggml_context *ctx_,hGensor cur,int flag){
     return cur;
 }
 
@@ -89,7 +105,7 @@ Drop::Drop(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int fl
 bool Drop::Build(int flag)   {
     return true;
 };
-hGensor Drop::Forward(struct ggml_context *ctx_build,hGensor cur,int flag){
+hGensor Drop::Forward(struct ggml_context *ctx_,hGensor cur,int flag){
     return cur;
 }
 
@@ -121,24 +137,37 @@ bool Embed::Build(int flag){
     
     return true;
 }
-hGensor Embed::Forward(struct ggml_context *ctx_build,hGensor cur,int flag){
+hGensor Embed::Forward(struct ggml_context *ctx_,hGensor cur,int flag){
     if(cur==nullptr)  //symbolic analysis
-        return GeNeuron::Forward(ctx_build,cur,flag);
+        return GeNeuron::Forward(ctx_,cur,flag);
     
     string sw = name+"_samp";
-    cur = ggml_get_rows(ctx_build, w, cur);    gTN(cur, sw.c_str());   
+    cur = ggml_get_rows(ctx_, w, cur);    gTN(cur, sw.c_str());   
     if(isAddPos){
-        cur = ggml_add(ctx_build, cur, b);  
+        cur = ggml_add(ctx_, cur, b);  
     }
     if(!name.empty()){ //"inp_embd"
         gTN0(cur,"%s",name.c_str());
     }
     return cur;
 }
+string Embed::__repr__( string& suffix,string& prefix,int flag)    {
+    char buf[5012]="\0";
+    const char*tab=prefix.c_str();
+    sprintf(buf+strlen(buf),"%s {EMBED n=%d %s}",tab,shape[0],isAddPos?"+POS":"");    
+    if(flag>0)
+        _INFO("%s",buf); 
+    return buf;  
+};
 
 FFN::FFN(Fish* hG_,const std::string&key_,JSON::const_iterator jit,int flag) : GeNeuron(key_,jit, hG_, flag)     {
-    assert(jvals.size()>=2);
-    shape={(int)(jvals[0]),(int)(jvals[1])};
+    if(jvals.size()>=2){
+        shape={(int)(jvals[0]),(int)(jvals[1])};
+    }else{
+        int n_ff = hOrg->hparams.n_ff();
+        shape = {n_embd,n_ff};
+    }
+    
     assert(shape[0]>0 && shape[1]>0);
     // up.Init(hG_,flag);       down.Init(hG_,flag);       relu.Init(hG_,flag); 
 }
@@ -150,26 +179,80 @@ bool FFN::Build(int flag)   {
     down.BuildX(name+".down",{shape[1],shape[0]},hOrg,flag);       
     return true;
 }
-hGensor FFN::Forward(struct ggml_context * ctx_build,hGensor inpL,int flag){    
+hGensor FFN::Forward(struct ggml_context * ctx_,hGensor inpL,int flag){    
     if(inpL==nullptr){   //symbolic analysis
-        return GeNeuron::Forward(ctx_build,nullptr,flag);
+        return GeNeuron::Forward(ctx_,nullptr,flag);
     }
 
-    hGensor cur = norm.Forward(ctx_build,inpL,0x0);
+    hGensor cur = norm.Forward(ctx_,inpL,0x0);
     gTN(cur,"%s.ffn_norm",name.c_str());      // cb(cur, _NAM_("ffn_norm"), il);    
-    cur = up.Forward(ctx_build,cur,0x0);
+    cur = up.Forward(ctx_,cur,0x0);
     gTN(cur,"%s.ffn_up",name.c_str());//cb(cur, "ffn_up", il);
     // cur = ggml_gelu(ctx, cur);                cb(cur, "ffn_gelu", il);  //GGML_UNARY_OP_GELU:not implemented for backward
-    cur = ggml_silu(ctx_build, cur);                
+    cur = ggml_silu(ctx_, cur);                
     gTN(cur,"%s.ffn_silu",name.c_str());    //cb(cur, "ffn_silu", il);     
-    cur = down.Forward(ctx_build,cur,0x0);
+    cur = down.Forward(ctx_,cur,0x0);
     gTN(cur,"%s.ffn_down",name.c_str());    //cb(cur, "ffn_down", il);
-    cur = ggml_add(ctx_build, cur, inpL);// add the input
-    if(!name.empty()){
-        strcpy(cur->name,"");   gTN(cur,"%s",name.c_str());
-    }
+    cur = ggml_add(ctx_, cur, inpL);// add the input
+    cur = AfterForward(ctx_,cur,flag);
+    // if(!name.empty()){
+    //     strcpy(cur->name,"");   gTN(cur,"%s",name.c_str());
+    // }
     return cur;
 }
+string FFN::__repr__( string& suffix,string& prefix,int flag)    {
+    char buf[5012]="\0";
+    const char*tab=prefix.c_str();
+    sprintf(buf+strlen(buf),"%s FFN",tab);    
+    if(flag>0)
+        _INFO("%s",buf); 
+    return buf;  
+};
+
+MOE::MOE(Fish* hG_,const std::string&key_,JSON::const_iterator jit,int flag) : GeNeuron(key_,jit, hG_, flag)     {
+    assert(jvals.size()>=2);
+    shape={(int)(jvals[0]),(int)(jvals[1])};
+    assert(shape[0]>0 && shape[1]>0);
+    isSiLU = true;
+    //[ctx, E/H, H, n_batch
+    // up.Init(hG_,flag);       down.Init(hG_,flag);       relu.Init(hG_,flag); 
+}
+bool MOE::Build(int flag)   {
+    string sw = name+".weight",sb=name+".bias";
+    bool isTrain = hOrg->isTrain();    
+    int nIn=shape[0];
+    struct ggml_context * ctx = hOrg->GetCTX();
+    //  [ctx, E/H, H, n_batch); ]
+    w = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, n_embd_head,1,n_head,n_batch);
+    hOrg->InitGensor(ctx,sw.c_str(),w,isTrain);
+      
+    return true;
+}
+hGensor MOE::Forward2(struct ggml_context * ctx_,hGensor inpL,hGensor wBase,int flag){   
+    int n0=inpL->ne[0],n1=inpL->ne[1],n2=inpL->ne[2],n3=inpL->ne[3]; 
+    hGensor cur = BeforeForward(ctx_,inpL,flag);
+    if(cur==nullptr)  //    some operation like symolic analysis     
+        return cur; 
+
+    hGensor wp_ = ggml_mul_mat(ctx_,w,wBase ); //ggml_reshape_2d(ctx,v3,N, n_batch*n_embd)  
+    gTN(wp_,"%s.trans",name.c_str());
+    assert(wp_->ne[0]==1);
+    wp_ = ggml_reshape_3d(ctx_, wp_, n1,n2,n3);   
+    // w_ = ggml_reshape_2d(ctx_, w_, n_ctx,n_batch);   
+    if(isSiLU){ //maybe useful
+        wp_ = ggml_silu(ctx_,wp_);
+    } 
+    hGensor probs = ggml_soft_max(ctx_,wp_);             gTN(probs,"%s.probs",name.c_str());
+    probs = ggml_reshape_4d(ctx_, wp_, 1,n1,n2,n3);  
+    probs = ggml_repeat(ctx_, probs, cur); 
+    // 
+    cur = ggml_mul(ctx_,cur,probs);                     gTN(cur,"%s.moe",name.c_str());        
+    cur = AfterForward(ctx_,cur);
+    return cur;
+}
+string MOE::__repr__( string& suffix,string& prefix,int flag)    {
+    return _repr_1(suffix,prefix,"MOE");
+};
 
 OutCLS::OutCLS(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : GeNeuron(key_,jit, hG_, flag){
     int nEmbd=hOrg->hparams.n_embd;
@@ -182,22 +265,22 @@ bool OutCLS::Build(int flag)   {
     proj.BuildX(name+".cls",{shape[0],shape[1]},hOrg,flag);       
     return true;
 }
-hGensor OutCLS::Forward(struct ggml_context * ctx_build,hGensor inpL,int flag)    {
+hGensor OutCLS::Forward(struct ggml_context * ctx_,hGensor inpL,int flag)    {
     if(inpL==nullptr){   //symbolic analysis
-        return GeNeuron::Forward(ctx_build,nullptr,flag);
+        return GeNeuron::Forward(ctx_,nullptr,flag);
     }
     int n_batch=hOrg->hparams.n_batch(),n_ctx=hOrg->hparams.n_ctx();
-    hGensor cur = norm.Forward(ctx_build,inpL,0x0);
+    hGensor cur = norm.Forward(ctx_,inpL,0x0);
     gTN(cur,"result_norm");      // cb(cur, _NAM_("ffn_norm"), il);    
-    cur = proj.Forward(ctx_build,cur,0x0);
+    cur = proj.Forward(ctx_,cur,0x0);
     gTN(cur,"result_output");//cb(cur, "ffn_up", il);    
-    // cur = ggml_silu(ctx_build, cur);    
+    // cur = ggml_silu(ctx_, cur);    
     
     if(n_batch>1){
-        cur = ggml_reshape_3d(ctx_build, cur, nCls, n_ctx, n_batch);
+        cur = ggml_reshape_3d(ctx_, cur, nCls, n_ctx, n_batch);
     }
             
-    cur = AfterForward(ctx_build,cur,flag);           
+    cur = AfterForward(ctx_,cur,flag);           
     return cur;    
 }
 
@@ -306,6 +389,58 @@ hGensor SLP::Forward(struct ggml_context * ctx0,hGensor cur,int flag)    {
     return cur;
 }
 
+ROPE::ROPE(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag)    : GeNeuron(key_,jit, hG_, flag) {
+    assert(jvals.size()>=1 && jvals[0]>0);
+    shape={(int)(jvals[0])};
+    /*auto& hparams = hG_->hparams;
+    n_rot = hparams.n_rot;
+    rope_freq_base  = hparams.rope_freq_base;
+    rope_freq_scale = hparams.rope_freq_scale;  
+    KQ_pos = hOrg->KQ_pos;*/
+}
+/*
+    https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html#torch.nn.LayerNorm
+*/
+bool ROPE::Build(int flag)    {
+    auto& hparams = hOrg->hparams;
+    n_rot = hparams.n_rot;
+    rope_freq_base  = hparams.rope_freq_base;
+    rope_freq_scale = hparams.rope_freq_scale;  
+    KQ_pos = hOrg->KQ_pos;    
+    shape = {n_embd_head, n_head, n_ctx, n_batch};
+    return true;
+}
+
+hGensor ROPE::Forward(struct ggml_context * ctx_,hGensor inpL,int flag)    {   
+    hGensor cur = BeforeForward(ctx_,inpL,flag);
+    if(cur==nullptr)  //    some operation like symolic analysis     
+        return cur; 
+    assert(cur->ne[0]==shape[0] && cur->ne[1]==shape[1] && cur->ne[2]==shape[2] && cur->ne[3]==shape[3]);
+    string nam0 = name+"."+sT;
+    // hGensor  t05 = w==nullptr ? cur : ggml_mul_mat(ctx_, w, cur);         
+    // gTN(t05,"%s*w",name.c_str());   
+    // hGensor  t06 = ggml_reshape_4d(ctx_, cur,shape[0],shape[1],shape[2],shape[3]); //n_embd_head, n_head, N, n_batch    
+    // gTN(t06,"%s$",name.c_str());   //gTN(t06, "t06");            
+    const int rope_mode = 0;
+    hGensor  t07 = n_embd_head==1 ? cur :
+        ggml_rope_ext(ctx_, cur, KQ_pos, nullptr, n_rot, rope_mode, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
+    gTN(t07,"%s_rope",nam0.c_str()); 
+    // CYS_0826 hGensor  t07 = ggml_rope_custom(ctx,t06, KQ_pos, n_rot, 0, n_ctx, 0,rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f);
+    if(flag==0){
+        hGensor  t13 = ggml_permute      (ctx_, t07, 0, 2, 1, 3);    //  [24,6,512,32] => [24,512,6,32]
+        gTN(t13,"%s_0213",t07->name);
+        return t13;        
+    }else{
+        return t07;
+    }
+     
+    cur = AfterForward(ctx_,cur);
+    return cur;
+}
+string ROPE::__repr__( string& suffix,string& prefix,int flag)    {
+    return _repr_1(suffix,prefix,"ROPE");
+};
+
 LayerNormal::LayerNormal(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag)    : GeNeuron(key_,jit, hG_, flag) {
     assert(jvals.size()>=1 && jvals[0]>0);
     shape={(int)(jvals[0])};
@@ -375,7 +510,7 @@ size_t LayerNormal::nElem()  {
     return nX;
 }
 
-hGensor GeNeuron::Forward(struct ggml_context *ctx_build,hGensor cur,int flag){
+hGensor GeNeuron::Forward(struct ggml_context *ctx_,hGensor cur,int flag){
     int tp=0;
     _INFO("\t %s\n",name.c_str());
     hGensor inp = cur;
@@ -390,14 +525,14 @@ hGensor GeNeuron::Forward(struct ggml_context *ctx_build,hGensor cur,int flag){
 
     return cur;
 }
-hGensor GeNeuron::BeforeForward(struct ggml_context *ctx_build,hGensor cur,int flag){
+hGensor GeNeuron::BeforeForward(struct ggml_context *ctx_,hGensor cur,int flag){
     int tp=0;
     if(cur==nullptr){
         _INFO("\t %s\n",name.c_str());
     }
     return cur;
 }
-hGensor GeNeuron::AfterForward(struct ggml_context *ctx_build,hGensor cur,int flag){
+hGensor GeNeuron::AfterForward(struct ggml_context *ctx_,hGensor cur,int flag){
     if(!name.empty()){
         gTN0(cur,"%s",name.c_str());
     }

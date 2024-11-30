@@ -275,6 +275,7 @@ hGensor BROWN_Motion::Build(struct ggml_context *ctx ,hGensor teb, hGensor KQ_po
 
 hGensor QKV_Motion::vXkq(struct ggml_context *ctx, hGensor v,hGensor kq,int layer_id){
     char nam_[128];
+    // [32,24,6,3]x[32,32,6,3]  => [24,32,6,3]
     hGensor kqv = ggml_mul_mat(ctx, v, kq);         assert_shape_4d(kqv, n_embd_head, N, n_head, n_batch); 
     sprintf(nam_,"kqv-%d",layer_id);    gTN(kqv, nam_);
     hGensor kqv_merged = ggml_permute(ctx, kqv, 0, 2, 1, 3);        assert_shape_4d(kqv_merged, n_embd_head,n_head,N,n_batch); 
@@ -316,9 +317,9 @@ hGensor QKV_Motion::Build(struct ggml_context *ctx, hGensor teb, hGensor KQ_pos)
         v = ggml_mul_mat      (ctx, teb, wv);        //[4096,256,1,1]x[4096,1024,1,1]= [256,1024,1,1]                   
         gTN(v, "v_%d",lay->id);     //assert_shape_2d(t11, N*n_batch, n_embd_gqa);    
         if(isOnlinePush) ggml_build_forward_expand(gf_,q);           if(isOnlinePush) ggml_build_forward_expand(gf_,k);           if(isOnlinePush) ggml_build_forward_expand(gf_,v);           
-        hGensor  v4 = ggml_reshape_4d   (ctx, v, N, n_batch, n_embd_head, n_head_kv);      // [64,4,128,8,] 
-        gTN(v4, "t12_%d",lay->id);     assert_shape_4d(v4, N, n_batch, n_embd_head, n_head_kv);
-        hGensor  t15 = ggml_permute      (ctx, v4, 0, 3, 1, 2);                                // [64,128,8,4,] 
+        hGensor  v4 = ggml_reshape_4d   (ctx, v, N, n_batch, n_embd_head, n_head_kv);      // 
+        gTN(v4, "t12_%d",lay->id);     
+        hGensor  t15 = ggml_permute      (ctx, v4, 0, 3, 1, 2);                                // 
         gTN(t15, "t15_%d",lay->id);     assert_shape_4d(t15, N, n_embd_head, n_head_kv, n_batch);        
         hGensor  kq = ggml_mul_mat              (ctx, k, q);      
         sprintf(nam_,"kq-%d",layer_id);     gTN(kq, nam_);         assert_shape_4d(kq, N, N, n_head, n_batch);

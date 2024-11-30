@@ -48,6 +48,26 @@ struct LossCurve    {
         }
     }
 };
+
+struct EDGE_DEVICES{
+    Fish *hFish = nullptr;
+    size_t sz = 0x0;
+    ggml_backend_buffer_t back_data = NULL; 
+    ggml_backend_t cpu = nullptr;
+    std::vector<ggml_backend_t> workers;
+    std::vector<ggml_backend_buffer_type_t> bufts;
+    ggml_backend_sched_t sched = nullptr;
+    
+    EDGE_DEVICES(Fish *hF,struct ggml_context *,int flag=0x0);
+    virtual size_t Alloc(struct ggml_context *ctx,int flag=0x0);
+    bool Build(bool isPlan,int flag=0x0);
+    virtual string __repr__( string& suffix,string& prefix,int flag=0x0);
+
+    bool isOnlyCPU()    {
+        return cpu!=nullptr && workers.size()==1;
+    }
+};
+typedef shared_ptr<EDGE_DEVICES>hEDevices;
 class Optimizer : public std::enable_shared_from_this<Optimizer> {
     Optimizer(const Optimizer&);
 	Optimizer& operator=(const Optimizer&);
@@ -75,7 +95,7 @@ protected:
     int first_epoch=0,iter_at_last_epoch=-1,first_iter=-1,iter=-1;
     uint64_t train_its=0,train_samples=0,train_tokens=0,train_epochs=0,max_epoch=0;
     int64_t last_time;
-    double millis_per_iter;
+    double millis_per_iter=0;
     std::vector<string> adam_filter =  {"output","norm"};    //{"token_embd","output","norm"};
 
     // void *app_ctx = nullptr;
@@ -110,8 +130,8 @@ public:
     SampLoader train_loader, val_loader;
     size_t shuffle_samples_hash = 0x0;  //hack
 
-    Fish* gang=nullptr;      //ref only
-
+    Fish* gang=nullptr;         //ref only
+    hEDevices hEDS;             //ref only
 
     struct train_state      *trainst = init_train_state();
     //  struct ggml_opt_context * opt = train->opt; 
@@ -119,6 +139,7 @@ public:
 
     Optimizer(NLP_AutoRegressive *g_,CLI_params& params_,int flag=0x0);
     //Deprecated need refactor!!!       9/30/2024
+    virtual void GraphCompute(struct ggml_cgraph *,int flag=0x0);
     virtual float Compute(std::vector<llama_token>&tokens,bool isForward,int flag=0x0);
     virtual float Evaluate(SampLoader&loader,int iter,int flag=0x0);
 

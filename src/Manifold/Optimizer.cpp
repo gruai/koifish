@@ -11,9 +11,13 @@
 #include "Dictionary.hpp"
 #include "../ggex/GG_util.hpp"
 
-Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params& hparams,int flag) : train_params(hparams.common),gang(g_) {
+Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params& hparams,int flag) : train_params(hparams.common),gang(g_) {    
     tpSign = hparams.Get({"train","optimizatioin","sign"},0,false);
     string method = hparams.Get({"train","optimizatioin","method"},string("adamw"),false);
+    /*
+        Although many people think "ADAMw is much better than SGD for attention models"  https://arxiv.org/pdf/2310.01082
+        But may litter slower. For example:   jModel_SGD_v.info
+    */
     tpGD = method=="adamw" ? ADAMw : method=="sgdv" ? SGD_v : method=="hsgd" ? SGD_HYBRID : ADAMw;
 
     nGradAccum =  MAX(1, train_params.n_gradient_accumulation);
@@ -108,8 +112,11 @@ bool OPT_Adam::BatchGrad(float&fx,int flag)   {
             ggml_graph_comp0(_gb,0x0); 
             _INFO("gb_compute %s T=%.3g","",GST_TOC(t0));  
             exit(-666);
-        }else
-            ggml_graph_compute(_gb, cplan);
+        }else{
+            GraphCompute(_gb);
+            //ggml_graph_compute(_gb, cplan);
+        }
+            
         
         OnLogits();
         if(isGlobalGrad){
@@ -306,8 +313,10 @@ static string GD_NAME[]={
 };
 
 enum ggml_opt_result Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGensor target_,CLI_params& hparams)    {
+    hEDS = gang->hEDS;              assert(hEDS!=nullptr);
+
     struct ggml_cgraph *_gf=gang->ForwarGraph(),*_gb=gang->BackwardGraph();
-    
+    last_time = ggml_time_ms();
     enum ggml_opt_result result = GGML_OPT_RESULT_DID_NOT_CONVERGE;
     // struct ggml_opt_params params = opt->params;
    
@@ -316,7 +325,9 @@ enum ggml_opt_result Optimizer::Search(struct ggml_context * ctx, hGensor loss_,
     float *fLoss = (float*)(loss->data),*fLossG = (float*)(loss->grad->data),val_loss;
     
     // float *target = (float*)(data->target_probs->data);
-    _INFO("Optimizer::%s@<%s>: Accumulation=%d AdaptiveSched=%d GRAP=%p rZMUV=%g rLARS=%g \n", __func__,gang->hBackTG->name.c_str(),
+    string suf,pref;
+    _INFO("Optimizer::%s@<%s>: device=[%s] \n", __func__,gang->hBackTG->name.c_str(),hEDS->__repr__(suf,pref,0).c_str());
+    _INFO("\t Accumulation=%d AdaptiveSched=%d GRAP=%p rZMUV=%g rLARS=%g \n", __func__,gang->hBackTG->name.c_str(),
         nGradAccum,(int)isAdaptiveSched,grad,hparams.ZMUV_ratio,hparams.lars_ratio );
         // tpGD=SGD_HYBRID;    //ADAMw      SGD_v    SGD_HYBRID        SGD_blk_v
     _INFO("\tDECENT=%d(%s) SIGN=%d \n\n",tpGD,GD_NAME[tpGD].c_str(),tpSign);
@@ -413,6 +424,36 @@ void Fish::Train(  int flag )   {
     
 }
 
+void Optimizer::GraphCompute(struct ggml_cgraph * cgraph,int flag){
+    int nThread = train_params.n_threads;
+    struct ggml_cgraph *_gf=gang->ForwarGraph(),*_gb=gang->BackwardGraph();
+    assert(cgraph==_gf || cgraph==_gb);
+    if(hEDS->isOnlyCPU()){
+        auto *cplan = &(gang->gb_plan);
+        ggml_graph_compute(cgraph, cplan);
+        return;
+    }
+    
+#ifdef GGML_USE_METAL
+    if (ggml_backend_is_metal(lctx.backend_metal)) {
+        ggml_backend_metal_set_n_cb(lctx.backend_metal, n_threads);
+    }
+#endif
+
+    if (hEDS->cpu != nullptr) {
+        ggml_backend_cpu_set_n_threads(hEDS->cpu, nThread);
+        //ggml_backend_cpu_set_threadpool(hEDS->cpu, threadpool);
+        // ggml_backend_cpu_set_abort_callback(hEDS->cpu, lctx.abort_callback, lctx.abort_callback_data);
+    }
+#ifdef GGML_USE_BLAS
+    if (lctx.backend_blas != nullptr) {
+        ggml_backend_blas_set_n_threads(lctx.backend_blas, n_threads);
+    }
+#endif
+
+    ggml_backend_sched_graph_compute_async(hEDS->sched, cgraph);
+}
+
 float Optimizer::Compute(std::vector<llama_token>&tokens,bool onlyForward,int flag){    
     struct ggml_cgraph *_gf=gang->ForwarGraph(),*_gb=gang->BackwardGraph();
     assert(_gf!=nullptr);
@@ -474,7 +515,8 @@ float Optimizer::Evaluate(SampLoader&loader,int iter,int flag){
             delta_max = max(delta_max,l2);      delta_+=l2;        
         }
         // ggml_graph_comp0(_gf,0x0);  //  only for debug
-        ggml_graph_compute(_gf, &(gang->gb_plan));     
+        GraphCompute(_gf);
+        // ggml_graph_compute(_gf, &(gang->gb_plan));     
         a = ((float*)hPreLogits()->data)[0];        //  -6.60046101     -4.3040733
         sum += loss==nullptr ? 0 : ((float*)(loss->data))[0];         //float *fLoss = (float*)(loss->data)
         nB++;
@@ -564,9 +606,7 @@ float Optimizer::UpdateSchedule(int flag){
     }
     double remaining_millis = 0.0;
     if (millis_per_iter > 0.0)            {
-        const int n_iter = params->adam_n_iter;
-        const int done_iter = iter - first_iter;
-        const int remaining_iter = n_iter - done_iter;
+        const int n_iter = params->adam_n_iter,done_iter = iter - first_iter,remaining_iter = n_iter - done_iter;
         remaining_millis = remaining_iter * millis_per_iter;
     }        
 

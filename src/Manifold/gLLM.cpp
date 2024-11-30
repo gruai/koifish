@@ -35,6 +35,7 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_,int flag)     {
 
     assert(ctx_build==nullptr);
     ctx_build = InitCTX(MostMemSize(0x0));
+    hEDS = std::make_shared<EDGE_DEVICES>(this,ctx_build);
     // ctx = ggml_init(ctx_model_params);
     
     InitModel(flag);
@@ -96,24 +97,37 @@ string NLP_AutoRegressive::__repr__( string& suffix,string& prefix,int flag)    
     auto gb=hBackTG->raw(), gf=hForwTG->raw();;
     sprintf(buf+strlen(buf),"\n%s(%s):nParams = %ld(%.6gM)",tab,name.c_str(),nParams,nParams/1.0e6);
     if(gb!=nullptr)
-        sprintf(buf+strlen(buf),"\n%s  tensors=%ld gf=(%d %d)  gb=(%d %d) ffn_use_gate=%d",tab, gensors.size(),gf->n_nodes,gf->n_leafs,gb->n_nodes,gb->n_leafs,
+        sprintf(buf+strlen(buf),"\n%s  tensors=%ld %s=(%d %d)  %s=(%d %d) ffn_use_gate=%d",tab, gensors.size(),
+            hForwTG->name.c_str(),gf->n_nodes,gf->n_leafs,hBackTG->name.c_str(),gb->n_nodes,gb->n_leafs,
             hparams.ffn_use_gate);
     else
         sprintf(buf+strlen(buf),"\n%s  tensors=%ld gf=(%d %d) ",tab, gensors.size(),gf->n_nodes,gf->n_leafs);
 
     string s="\n",p=prefix+"\t";
+    int i;
     _T_repr_(KQ_pos,"\n\tKQ_pos: ",buf);  
     _T_repr_(pos_embd,"\tpos_embd: ",buf); 
     _T_repr_(KQ_mask,"\tKQ_mask: ",buf);  
     sprintf(buf+strlen(buf),"%s",hDict->__repr__(s,p,0x0).c_str());
-    int nLayer = layers.size();
-    if(nLayer>0)    {
-        auto layer = layers[0];
-        sprintf(buf+strlen(buf),"%s  [%s] x %d\n",tab,layer->name.c_str(),nLayer);
-        sprintf(buf+strlen(buf),"%s",layer->__repr__(s,p,0x0).c_str());     
-        if(nLayer>1){
-            sprintf(buf+strlen(buf),"%s  ......\n",tab);
-            sprintf(buf+strlen(buf),"%s",layers[layers.size()-1]->__repr__(s,p,0x0).c_str());         
+    bool isJModel =  !hparams.jModel.empty();
+    if(isJModel){
+        for(auto nn : neurons){
+            if(nn->isGang())   continue;
+            for(p=prefix, i=0;i<nn->level-1;i++)    p+="\t";
+            // if(nn->level==1)
+                sprintf(buf+strlen(buf),"%s\n",nn->__repr__(s,p,0x0).c_str());     
+        }
+    }else{
+        
+        int nLayer = layers.size();
+        if(nLayer>0)    {
+            auto layer = layers[0];
+            sprintf(buf+strlen(buf),"%s  [%s] x %d\n",tab,layer->name.c_str(),nLayer);
+            sprintf(buf+strlen(buf),"%s",layer->__repr__(s,p,0x0).c_str());     
+            if(nLayer>1){
+                sprintf(buf+strlen(buf),"%s  ......\n",tab);
+                sprintf(buf+strlen(buf),"%s",layers[layers.size()-1]->__repr__(s,p,0x0).c_str());         
+            }
         }
     }
     _T_repr_(target_probs,"  target_probs=",buf);  
@@ -125,8 +139,7 @@ string NLP_AutoRegressive::__repr__( string& suffix,string& prefix,int flag)    
         if(wiki->t2t!=nullptr){
             string a = "   t2t@"+wiki->title+"=";
             _T_repr_(wiki->t2t,a.c_str(),buf);   
-        }
-            
+        }            
     }
      
     if(mom.embed2w!=nullptr)
@@ -135,6 +148,29 @@ string NLP_AutoRegressive::__repr__( string& suffix,string& prefix,int flag)    
 
     sprintf(buf+strlen(buf),"%s",suffix.c_str()); 
     _INFO("%s",buf); 
+    return buf;
+}
+
+string Ganglia::__repr__( string& suffix,string& prefix,int flag)    {
+    char buf[5012]="\0";
+    const char*tab=prefix.c_str();
+    sprintf(buf+strlen(buf),"%s %s",tab,name.c_str());
+    string s,p;
+    for(auto child : ns){
+        sprintf(buf+strlen(buf),"%s ",child->__repr__(s,p,0).c_str());
+    }
+    // sprintf(buf+strlen(buf),"\n");
+    if(flag>0)
+        _INFO("%s",buf); 
+    return buf;  
+};
+
+string GeNeuron::__repr__( string& suffix,string& prefix,int flag)   {    
+    char buf[5012]="\0";
+    // const char*tab=prefix.c_str();
+    // sprintf(buf+strlen(buf),"\n%s %s",tab,name.c_str());
+    // if(flag>0)
+    //     _INFO("%s",buf); 
     return buf;
 }
 
@@ -189,6 +225,8 @@ static void save_checkpoint_file(const char * filename, const char * fn_model_ba
         LOG("saved session to %s\n", path_session.c_str());
     }
 */
+
+
 string QKV_LAY::__repr__( string& suffix,string& prefix,int flag)    {
     char buf[5012]="\0";
     const char*tab=prefix.c_str();
@@ -216,7 +254,7 @@ void NLP_AutoRegressive::build_inp_KQ_(struct ggml_context *ctx,bool isMask,bool
     // auto cache = GetKVCache();
     // cache->n = std::min(cache->size, std::max(pad, GGML_PAD(cell_max, pad)));
     int n_kv=hCache==nullptr ? 512 : hCache->n_kv();
-    int n_batch=hparams.n_batch(),n_tokens = n_batch*hparams.n_ctx(),n_past=0;
+    int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_tokens = n_batch*n_ctx,n_past=0;
     // const float kv_scale = 1.0f/sqrtf(float(n_embd)/n_head);
         // KQ_pos - contains the positions
     KQ_pos = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, hparams.n_ctx());
@@ -227,11 +265,12 @@ void NLP_AutoRegressive::build_inp_KQ_(struct ggml_context *ctx,bool isMask,bool
     // for (int i = 0; i < n_tokens; ++i) {
     //     data[i] = n_past + i;
     // }
-    if(isMask){
+    if(isMask && 0){        //  nearly same if mask==nullptr
         auto dt = GGML_TYPE_F32;        
-        KQ_mask = causal
-            ? ggml_new_tensor_2d(ctx, dt, n_kv,     GGML_PAD(n_tokens, GGML_KQ_MASK_PAD))
-            : ggml_new_tensor_2d(ctx, dt, n_tokens, GGML_PAD(n_tokens, GGML_KQ_MASK_PAD));
+        // KQ_mask = causal
+        //     ? ggml_new_tensor_2d(ctx, dt, n_kv,     GGML_PAD(n_tokens, GGML_KQ_MASK_PAD))
+        //     : ggml_new_tensor_2d(ctx, dt, n_tokens, GGML_PAD(n_tokens, GGML_KQ_MASK_PAD));
+        KQ_mask = ggml_new_tensor_2d(ctx, dt, n_ctx, GGML_PAD(n_ctx, GGML_KQ_MASK_PAD));
         sprintf(nam_,"KQ_mask");    gTN(KQ_mask, nam_);      //cb(lctx.KQ_mask, "KQ_mask", -1);
         ggml_set_input(KQ_mask);
         KQ_mask = isFlash ? ggml_cast(ctx, KQ_mask, GGML_TYPE_F16) : KQ_mask;        
@@ -705,6 +744,7 @@ LAMA::LAMA(CLI_params& hparams,const std::string&path_)     {
     // cparams.flash_attn = true;           //would affect accuracy
     model_path = path_;
     llama_model_params.n_gpu_layers = hparams.common.n_gpu_layers;
+    // llama_model_params.n_gpu_layers = 0;     //  12s->8s
     llama_model_params.vocab_only = hparams.train=="scratch";     //need lmodel to tokenize training samples    
     const char* fn_model = model_path.c_str();
     teach = hparams.tpWiki=="logits" ? _LOGITS : 
@@ -857,7 +897,7 @@ void LAMA::CopyParams(CLI_params& hparams,int flag)    {
     hparams.n_embd = llama_params.n_embd;   //would change @ConsiceDict
     for(int i=0;i<hparams.n_layer_train;i++){
         int h0=llama_params.n_head(i),kv0=llama_params.n_head_kv(i),ff0=llama_params.n_ff(i);
-        hparams.layers.push_back(LAY_PARAM(h0,kv0,ff0));
+        hparams.layerps.push_back(LAY_PARAM(h0,kv0,ff0));
     }
     hparams.n_embd_head_k = llama_params.n_embd_head_k;
     hparams.n_embd_head_v = llama_params.n_embd_head_v;
@@ -875,6 +915,8 @@ void LAMA::CopyParams(CLI_params& hparams,int flag)    {
     hparams.rope_freq_scale = llama_params.rope_freq_scale_train; 
     hparams.n_expert = llama_params.n_expert;
     hparams.n_expert_used = llama_params.n_expert_used;
+
+    hparams.JModel2Params(0);
 }
 
 string LAMA::__repr__( string& suffix,string& prefix,int flag)    {
@@ -1026,10 +1068,10 @@ void NLP_AutoRegressive::Train(int flag)       {
        
     GST_TIC(t0);
     print_build_info();           
-    assert(ctx_work!=nullptr);
+    // assert(ctx_work!=nullptr);
     // SaveTrain(&save_data, nullptr);      //warmup save
     enum ggml_opt_result result = hOPT->Search(ctx_work,loss,target_probs,hparams);     
-    ggml_free(ctx_work);
+    if(ctx_work!=nullptr)  ggml_free(ctx_work);
     ggml_free(ctx_build);
     // ggml_free(ctx_input);
     ggml_gallocr_free(alloc); 
@@ -1072,7 +1114,7 @@ bool NLP_AutoRegressive::Build(int flag)      {
             out_node = BuildLoss(ctx_build,preLogits);
             if(rnd==nullptr){   // InitModel
                 rnd = init_random_normal_distribution(hparams.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
-                size_t sz2 = InitBackEnd(ctx_build);
+                size_t sz2 = hEDS->Alloc(ctx_build);
             }                
             alloc = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
             iRet = BuildComputeGraph(0,ctx_build,alloc,0x0);
@@ -1120,9 +1162,11 @@ bool NLP_AutoRegressive::Build(int flag)      {
     assert(iRet==0x0);
     Statistic(0x0);
     if(!AfterBuild(isInitParam))
+        return false;    
+    if(!hEDS->Build(true)){
         return false;
+    }
     
-    ComputePlan();
     Dump(0x0);
 
     // ggml_free(ctx_build);         ctx_build = nullptr;
@@ -1239,7 +1283,7 @@ void NLP_AutoRegressive::InitModel(int flag){
 
     }else{
         hDict->CreateEmbeddings(0x0);
-        InitBackEnd(ctx);  //back_data = ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_cpu_buffer_type());
+        hEDS->Alloc(ctx);  //back_data = ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_cpu_buffer_type());
         rnd = init_random_normal_distribution(hparams.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);        
         hDict->Update(rnd,0x0);      
         InitGensors(flag);        

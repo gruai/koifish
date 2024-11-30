@@ -437,19 +437,19 @@ struct LLAMA_LORA  : public NLP_AutoRegressive {
             // layer->ffn_up_b   = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_rank_ffn_up,   n_ff);
         }        
         // allocate data for lora_tensors
-        InitBackEnd(ctx);   //back_data = ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_cpu_buffer_type());
+        // hEDS->Init(this,ctx);   //back_data = ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_cpu_buffer_type());
         assert(updateTMap==false);
         // size_t sz1=ggml_backend_buffer_get_size(data);      //130872416
         ggml_backend_buffer_type_t buf0 = ggml_backend_cpu_buffer_type(); 
         
         ggml_backend_buffer_type_t buf1 = ggml_backend_cpu_buffer_type();
         // data = ggml_backend_alloc_ctx_tensors_from_buft(ctx,buf1 );
-        size_t sz2=ggml_backend_buffer_get_size(back_data);      //130872416
+        size_t sz2=hEDS->sz;  // ggml_backend_buffer_get_size(back_data);      //130872416
         if (!hparams.only_write_model) {    //only_write_lora
             hOPT->Prepare(nParams);
             // ggml_opt_init( hOPT->opt->ctx, hOPT->opt, hOPT->opt->params, nParams);     //nx=16358481
         }
-        szModel = ggml_used_mem(ctx) + ggml_backend_buffer_get_size(back_data);  //580800+65436224
+        szModel = ggml_used_mem(ctx) + sz2; //ggml_backend_buffer_get_size(back_data);  //580800+65436224
 
         rnd = init_random_normal_distribution(hparams.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
     }

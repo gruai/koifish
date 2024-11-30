@@ -106,6 +106,7 @@ int GPT_work(CLI_params& hparams)  {
     params.prompt = hparams.prompt;
     params.escape = true;
     params.n_predict = 128;
+    params.n_gpu_layers = 6;
     gpt_params_handle_model_default(params);
     if (params.escape)
     {

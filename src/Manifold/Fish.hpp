@@ -221,15 +221,13 @@ protected:
 
     struct ggml_cgraph * gb_tmp = NULL;
     struct random_normal_distribution *rnd = nullptr;   
-    ggml_backend_buffer_t back_data = NULL; 
+    
     std::vector<struct ggml_tensor *> checkpoints;
     bool measure_only=false;  
     struct ggml_cplan gf_plan,gb_plan;
-
     std::vector<hNeuron> neurons;       
     std::map<std::string, struct ggml_tensor *> gensors;
-   
-    virtual size_t InitBackEnd(struct ggml_context *,int flag=0x0);
+    hEDevices hEDS=nullptr;
     void Gensor2Map(std::vector<hGensor> gensors){
         for(auto gensor : gensors){
             Gensor2Map(gensor);
@@ -241,14 +239,14 @@ protected:
         assert(gensors.find(key) == gensors.end());
         gensors[key] = gensor;
     }   
-    
+     
     bool updateTMap = false;
     bool isLocalInfer = false;
     bool isBias=false;
 
     std::vector<uint8_t> work_buffer;
     // from GGML
-    int size = 0; //,n_nodes=0,n_leafs=0;
+    int size = 0; 
     size_t nParams = 0, szModel = 0;
 
     hGensor in_node = nullptr, out_node = nullptr, tBatch=nullptr;
@@ -320,6 +318,10 @@ public:
     virtual std::string Name()  {   return name.c_str();  }
 
     virtual size_t Size(int flag = 0x0) { return ctx_size; }
+    virtual size_t nMostNodes(){
+        size_t n = std::max(size_t(8192), gensors.size()*5);
+        return n;
+    }
     //  number of class (only valid for classification problem)
     virtual size_t nClass() {   assert(0);        return 0; }
 
@@ -486,7 +488,7 @@ public:
 
     virtual bool ComputePlan(int flag=0x0);
     int BuildGraphFromRaw(int flag);
-    hNeuron J2Neuron(struct ggml_context *ctx_build,string,const JConfig& j,int flag);
+    hNeuron J2Neuron(struct ggml_context *ctx_build,string&,int level,const JConfig& j,int flag);
     virtual int jToGraph( struct ggml_context *,bool isBuild,int flag=0x0)   ;
 
     virtual void Train(int flag = 0x0);
@@ -525,7 +527,8 @@ public:
     friend class WIKI;
     friend class KVCache;
     friend class TGraph;
-    friend class SelfAttention;
+    friend class SelfAttention;     friend class ROPE;
+    friend class EDGE_DEVICES;
 };
 
 struct LogicSalp : public Fish {

@@ -40,6 +40,12 @@ struct LAY_PARAM{
     }
 
     uint32_t n_head()       const           {   return head;    }
+    virtual void SetHead(int nH)    {
+        assert(nH>0 && nH<1024*1024);       head=nH;        head_kv=nH;
+    }
+    virtual void SetFF(int nF)    {
+        assert(nF>0 && nF<1024*1024);       ff=nF;        
+    }
     uint32_t n_head_kv()    const           {   return head_kv;    }
     uint32_t n_ff()         const           {   return ff;    }    
 
@@ -80,7 +86,7 @@ struct CLI_params {
     uint32_t nTokenInBatch()  const    {  return common.n_batch*common.n_ctx;}
     uint32_t n_seq_max,n_ctx_orig_yarn,n_ctx_train=-1;
     bool isLongRope(uint32_t il = 0) const {
-        assert(il>=0 && il<layers.size());
+        assert(il>=0 && il<layerps.size());
         const auto n_ctx_pre_seq = n_ctx() / n_seq_max;
         bool isLong = n_ctx_pre_seq > n_ctx_orig_yarn;
         return isLong;
@@ -90,6 +96,7 @@ struct CLI_params {
     nlohmann::ordered_json jModel;
     MODEL_ARCH ModelArch();
     virtual void OnArch();
+    virtual void JModel2Params(int flag);
 
     std::string exec_name="",test="",compute_graph="";
     std::vector<std::string> fn_model_base;
@@ -106,7 +113,7 @@ struct CLI_params {
     uint32_t n_embd  = -1;  //4096;
     uint32_t n_embd_head_k = -1; // dimension of keys (d_k). d_q is assumed to be the same, but there are n_head q heads, and only n_head_kv k-v heads
     uint32_t n_embd_head_v = -1; // dimension of values (d_v) aka n_embd_head
-    std::vector<LAY_PARAM> layers;
+    std::vector<LAY_PARAM> layerps;
 
     int n_layer_train = -1, nLayerX = -1, nFFX = -1;
     
@@ -226,36 +233,36 @@ struct CLI_params {
         return n_ff;
     }
     void SetHead(uint32_t nH){
-        for(int il=0;il<layers.size();il++){
-            assert(layers[il].head==layers[il].head_kv);
-            layers[il].head = nH;
-            layers[il].head_kv = nH;
+        for(int il=0;il<layerps.size();il++){
+            assert(layerps[il].head==layerps[il].head_kv);
+            layerps[il].head = nH;
+            layerps[il].head_kv = nH;
         }
             
     }
     uint32_t n_head(uint32_t il = 0) const {
-        assert(il>=0 && il<layers.size());
-        return layers[il].n_head();        
+        assert(il>=0 && il<layerps.size());
+        return layerps[il].n_head();        
     }
     uint32_t n_head_kv(uint32_t il = 0) const {
-        assert(il>=0 && il<layers.size());
-        return layers[il].n_head_kv();
+        assert(il>=0 && il<layerps.size());
+        return layerps[il].n_head_kv();
     }
 
     uint32_t n_ff(uint32_t il = 0) const {
-        assert(il>=0 && il<layers.size());
+        assert(il>=0 && il<layerps.size());
         if(nFFX<=0)
-            return layers[il].n_ff();        
+            return layerps[il].n_ff();        
         else
             return nFFX;
     }
     uint32_t n_embd_head(uint32_t il = 0) const {
-        assert(il>=0 && il<layers.size());
-        return layers[il].n_embd_head(n_embd);        
+        assert(il>=0 && il<layerps.size());
+        return layerps[il].n_embd_head(n_embd);        
     }
     uint32_t n_embd_gqa(uint32_t il = 0) const {
-        assert(il>=0 && il<layers.size());
-        return layers[il].n_embd_gqa(n_embd);        
+        assert(il>=0 && il<layerps.size());
+        return layerps[il].n_embd_gqa(n_embd);        
     }
     uint32_t n_gqa(uint32_t il = 0) const {
         const uint32_t n_head    = this->n_head(il);

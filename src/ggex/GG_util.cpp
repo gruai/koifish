@@ -122,7 +122,7 @@ void CLI_params::Dump( )    {
 
 MODEL_ARCH CLI_params::ModelArch()   {  
     MODEL_ARCH arch = MODEL_ARCH::_X_;
-    string info = jKV(jConfig,{"model","arch"},string("")); 
+    string info = jKV(jConfig,{"arch"},string("")); 
     std::transform(info.begin(), info.end(), info.begin(), ::toupper);
     arch =  info=="MOE" ? NLP_MOE :
             info=="MAMBA" ? MODEL_ARCH::NLP_MAMBA : 
@@ -132,22 +132,45 @@ MODEL_ARCH CLI_params::ModelArch()   {
     return arch; 
 }
 
+void CLI_params::JModel2Params(int flag){
+    if(jModel.empty()){   
+        return;
+    }
+
+    auto jTrans = jKEY(jConfig,{"jmodel","parameter","transformer"});
+    if(!jTrans.empty()){
+        int nH0=n_head(),nH = jKV(jTrans,{"Head"},nH0);
+        if(nH!=nH0){
+            for(auto& lay : layerps){
+                lay.SetHead(nH);
+            }
+        }
+        int nE0=n_embd,nE = jKV(jTrans,{"Embed"},nE0);
+        if(nE0!=nE){
+            n_embd = nE;
+        }
+    }
+}
+
 void CLI_params::OnArch( ){
-    int n_head=-1;
+    int nH=-1;
+    string info = jKV(jConfig,{"arch"},string("")); 
+    bool isJModel = !jModel.empty();
+    
     switch(ModelArch()){
     case MODEL_ARCH::NLP_GPT2:  {
         //baby_GPT      dropout = 0.2
         // n_head = 6;             n_embd = 384;           dict_latent_dim=n_embd;
-        n_head = 12;         n_embd = 768;           dict_latent_dim = 768;
+        nH = 12;         n_embd = 768;           dict_latent_dim = 768;
         n_embd_head_v = 64;         n_embd_head_k = 64;
         // n_embd = 128; dict_latent_dim = 128;        n_embd_head_v=n_embd_head_k=2; //only for debug        
         n_ctx_train = 1024;
-        if(layers.size()==0){
+        if(layerps.size()==0){
             // TO_DO: why grad vanish @/home/cys/rnd/lic/log/gpt2/10_29_bug.info
             int n_ff0 = jKV(jConfig,{"model","ffn","length"},3072,false);
             for(int i=0;i<nLayer();i++){
-                LAY_PARAM lay(n_head,n_head,n_ff0);
-                layers.push_back(lay);
+                LAY_PARAM lay(nH,nH,n_ff0);
+                layerps.push_back(lay);
             }
         }
         // assert(layers.size()==12);
@@ -159,9 +182,10 @@ void CLI_params::OnArch( ){
     }
         // hparams.Set({"model","target_group"},1);
         break;
-    default:
+    default:        
+        _INFO("[ARCH]=%s\n",info.c_str());
         break;
-    }
+    }    
 }
 /*
     Some trick
@@ -204,7 +228,7 @@ try{
         fn_model_base.push_back(path);
     }
     if(model_title.empty()){
-        model_title = jKV(jConfig,{"model","arch"},string(""));
+        model_title = jKV(jConfig,{"arch"},string(""));
     }
     // nlohmann::ordered_json jm = jKEY(jConfig,{"jmodel"});
     jModel = jKEY(jConfig,{"jmodel"});

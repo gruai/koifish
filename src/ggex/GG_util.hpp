@@ -679,6 +679,11 @@ int CHECK_SAME_TENSORS(const string& desc,const std::vector<hGensor>&arrA,const 
 size_t F_SIZE(const std::string&fpath,FILE *fp0=NULL,int flag=0x0); 
 struct ggml_context *InitCTX(size_t msize,int flag=0x0);
 
+inline hGensor To4D(struct ggml_context * ctx_build,hGensor cur,int64_t n1,int64_t n2,int64_t n3,int64_t n4){
+    cur = ggml_reshape_4d(ctx_build, cur, n1, n2,n3,n4);
+    return cur;
+}
+
 typedef struct ggml_tensor gensor;
 typedef struct ggml_tensor *hGensor;
 typedef std::map<std::string, struct ggml_tensor *> TENSORs;

@@ -336,7 +336,7 @@ struct ggml_cgraph *GPT2::GetRawGraph( struct ggml_context *ctx_build,bool isBui
 
     if(rnd==nullptr)
         rnd = init_random_normal_distribution(hparams.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
-    size_t sz2 = InitBackEnd(ctx_build);
+    size_t sz2 = hEDS->Alloc(ctx_build);
     
     return gf;
 }
