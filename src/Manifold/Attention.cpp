@@ -73,7 +73,7 @@ hGensor BROWN_Motion::DiffusionOnEmbed(struct ggml_context *ctx, hGensor teb, hG
     assert(Transfer_1==false);
     const float kq_scale = 1.0f/sqrtf(float(n_embd)/n_head);
     int rope = 1;       
-    auto gf_ = hFish_->ForwarGraph();
+    auto gf_ = hFish_->GetForwRaw();
     hGensor  t13 = nullptr, t14 = nullptr, kqv_out=nullptr;
     auto shape=teb->ne;
     assert_shape_2d(teb, n_embd, N*n_batch);
@@ -149,7 +149,7 @@ hGensor BROWN_Motion::DiffusionOnToken(struct ggml_context *ctx, hGensor teb, hG
     assert(Transfer_1 && wq!=nullptr);
     const float kq_scale = 1.0f/sqrtf(float(n_embd)/n_head);
     int rope = 1;       
-    auto gf_ = hFish_->ForwarGraph();
+    auto gf_ = hFish_->GetForwRaw();
     hGensor v = teb,v3=nullptr,v4=nullptr, t14 = nullptr, kqv_out=nullptr;
     assert_shape_2d(teb, n_embd, N*n_batch);
       
@@ -201,7 +201,7 @@ hGensor BROWN_Motion::Build(struct ggml_context *ctx ,hGensor teb, hGensor KQ_po
     return kqv_out;
     /*const float kq_scale = 1.0f/sqrtf(float(n_embd)/n_head);
     int rope = 1;       
-    auto gf_ = hFish_->ForwarGraph();
+    auto gf_ = hFish_->GetForwRaw();
     hGensor  t13 = nullptr, t14 = nullptr, kqv_out=nullptr;
     auto shape=teb->ne;
     assert_shape_2d(teb, n_embd, N*n_batch);
@@ -308,7 +308,7 @@ hGensor QKV_Motion::Build(struct ggml_context *ctx, hGensor teb, hGensor KQ_pos)
     float kq_scale = 1.0f/sqrtf(float(n_embd_head));        //0.0883883461
     hGensor  q=nullptr,k=nullptr,v=nullptr,kqv_out=nullptr; //t13 = nullptr, t14 = nullptr, t16=nullptr;
     assert(wk!=nullptr && wv!=nullptr) ;
-    auto gf_ = hFish_->ForwarGraph();
+    auto gf_ = hFish_->GetForwRaw();
     if(version == 0)   {
         q = W_rope(ctx,teb,wq,KQ_pos,{n_embd_head, n_head, N, n_batch},"q");        
         gTN(q, "q_%d",lay->id);     assert_shape_4d(q, n_embd_head, N, n_head, n_batch);

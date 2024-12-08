@@ -27,7 +27,7 @@ hGensor LLM_MAMBA::build_layer_( int N,struct ggml_context *ctx_build,hGensor in
     gTN(t11, "t11");     //assert_shape_2d(t03, n_embd, N*n_batch);
     cur = ggml_mul(ctx_build, cur, t11);                    gTN(cur, "attn_norm");
 //  cur = mamba_build_layer(ctx_build,lctx,gf,cur,inpL,il,n_layer,n_tokens,kv_head,n_kv,n_outputs);
-    cur = mamba_build_layer(ctx_build, *(lam->_ctx), ForwarGraph(), cur,inpL, il, nLay,512);
+    cur = mamba_build_layer(ctx_build, *(lam->_ctx), GetForwRaw(), cur,inpL, il, nLay,512);
     return cur;
 }
 
@@ -58,7 +58,7 @@ hGensor LLM_MAMBA::BuildTarget( struct ggml_context * ctx,hGensor cur,int flag) 
 
 
 GPT2::GPT2( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag) : NLP_AutoRegressive(nam_,params,role,flag)  {
-    assert(arch==MODEL_ARCH::NLP_GPT2);
+    assert(arch==MODEL_ARCH::NLP_GPT2 || arch==MODEL_ARCH::NLP_GPT2_char);
     isBias = false;    //   if true, converge much slower
 }
 
@@ -157,6 +157,11 @@ int CDict_CHAR::stream2token(void *hLLM,const char*txt,int txt_len,std::vector<T
     }
     return n_tokens;
 }
+std::string CDict_CHAR::T2STR(TOKEN_ID tok,int flag ) {
+    assert(tok>=0 && tok<256);
+    string a = string(1,(char)tok);
+    return a;
+};   
 
 int CDict_GPT2::InitMAEC(struct ggml_context *ctx_build,const std::vector<int>& dims_,int flag)  {
     int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd;
@@ -203,7 +208,7 @@ int GPT2::cRawGraph( struct ggml_context *ctx_build,bool isBuild,int flag)   {
         inpL = ggml_add(ctx_build, inpL, pos_embd);     
     }   
     cb(inpL, "inp_pe", -1);
-    auto gf = hForwTG->raw();
+    auto gf = GetForwRaw();
     // layers.clear();     cur = inpL;        xn=cur;      xxn=cur->grad;   //only for debug
     for (int il = 0; il < layers.size(); ++il) {  
         n_head=hparams.n_head(il);          assert(n_embd_head*n_head==n_embd);
@@ -319,11 +324,11 @@ if(1)   {   //pass self attention module            loss would stop at 2.4
     return 0x0;
 }
 
-struct ggml_cgraph *GPT2::GetRawGraph( struct ggml_context *ctx_build,bool isBuild,int flag)   { 
+struct ggml_cgraph *GPT2::BuildRawGraph( struct ggml_context *ctx_build,bool isBuild,int flag)   { 
     int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd,n_vocab=hDict->n_vocab;
     bool isJModel = !hparams.jModel.empty();
     hForwTG = std::make_shared<TGraph>(this,isJModel?"gptJ":"gpt_raw",ctx_build,true);
-    auto gf = hForwTG->raw();    
+    auto gf = GetForwRaw();    
     // ctx = ctx_build;
     InitInput(ctx_build,false);
 
@@ -350,3 +355,49 @@ string GPT2::__repr__( string& suffix,string& prefix,int flag) {
     _INFO("GPT2:    Bias=%d AttOnBC=%d\n========\n",isBias,isAttOnBC); 
     return buf;
 }
+
+/*
+void GPT2_tokenizer_init(Tokenizer *tokenizer, const char *filename) {
+    FILE *file = fopen(filename, "rb");
+    if (file == NULL) {
+        // try to be more helpful as we just added this feature, erase later
+        printf("---\n");
+        printf("WARNING: Failed to open the tokenizer file %s\n", filename);
+        printf("The Tokenizer is a new feature added April 14 2024.\n");
+        printf("Re-run `python train_gpt2.py` to write it\n");
+        printf("---\n");
+        tokenizer->init_ok = 0;
+        return;
+    }
+    // read in the header
+    uint32_t header[256];
+    freadCheck(header, sizeof(uint32_t), 256, file);
+    assert(header[0] == 20240328);
+    int version = header[1];
+    tokenizer->vocab_size = header[2];
+    if (version == 1) {
+        // version 1 didn't include the EOT token id
+        // so we assume it is 50256, the EOT in GPT-2
+        assert(tokenizer->vocab_size == 50257); // let's be defensive here
+        tokenizer->eot_token = 50256;
+    } else if (version == 2) {
+        tokenizer->eot_token = header[3];
+    } else {
+        fprintf(stderr, "Tokenizer model file %s has bad version: %d\n", filename, version);
+        exit(EXIT_FAILURE);
+    }
+    // read in all the tokens
+    unsigned char length;
+    tokenizer->token_table = (char **)mallocCheck(tokenizer->vocab_size * sizeof(char *));
+    for (uint32_t i = 0; i < tokenizer->vocab_size; i++) {
+        freadCheck(&length, sizeof(unsigned char), 1, file);
+        assert(length > 0); // every token should be at least one character
+        char *token_bytes = (char *)mallocCheck(length + 1);
+        freadCheck(token_bytes, sizeof(char), length, file);
+        token_bytes[length] = '\0';  // Add null terminator for printing
+        tokenizer->token_table[i] = token_bytes;
+    }
+    // cleanups
+    fcloseCheck(file);
+    tokenizer->init_ok = 1;
+}*/

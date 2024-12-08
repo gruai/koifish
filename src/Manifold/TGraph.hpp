@@ -78,6 +78,11 @@ protected:
         return i;
     }
 
+    struct ggml_cgraph * raw() {
+        assert(cgraph!=nullptr);
+        return cgraph;
+    }
+
 public:
     TGraph()    {}
     TGraph(Fish *hF_,const string&nam_,struct ggml_cgraph *c,bool isB=false,int flag=0x0) : 
@@ -195,11 +200,6 @@ public:
             //GGML_PRINT("perf_total_per_op_us[%16s] = %7.3f ms\n", ggml_op_name(i), (double) perf_total_per_op_us[i] / 1000.0);
         }
         GGML_PRINT("========================================\n");
-    }
-
-    struct ggml_cgraph * raw() {
-        assert(cgraph!=nullptr);
-        return cgraph;
     }
 
     friend class Fish;

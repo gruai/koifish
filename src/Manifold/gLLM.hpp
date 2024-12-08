@@ -78,7 +78,7 @@ struct LAMA : public WIKI   {
     */
     int nCTX()   override  {   return cparams.n_ctx;    };
 
-    LAMA(CLI_params& hparams,const std::string&model_path);
+    LAMA(CLI_params& hparams,const std::string&model_path,int flag=0x0);
     void CopyParams(CLI_params& params,int flag=0x0)    override;
     // bool CopyGensors(Fish *hFish,int flag=0x0)          override;
 
@@ -96,6 +96,11 @@ struct LAMA : public WIKI   {
 
     //Hack function, should be called afer decode and the data maybe modified!!!
     const float *GetLogits(int n_vocab,int n_ctx,int idx=-1)   override;
+};
+
+struct LAMA2FISH : public WIKI   { 
+    LAMA2FISH() {}
+    LAMA2FISH(CLI_params& hparams,const std::string&model_path,int flag=0x0);   
 };
 
 struct NLP_AutoRegressive : public Fish {
@@ -137,7 +142,8 @@ struct NLP_AutoRegressive : public Fish {
         return lam->lmodel;  
     }    
     
-    struct ggml_cgraph *GetRawGraph( struct ggml_context *,bool isBuild,int flag=0x0)   override;
+    struct ggml_cgraph *BuildRawGraph( struct ggml_context *,bool isBuild,int flag=0x0)   override;
+    int GenSentence(int flag=0x0)  override;
     std::string T2STR( const std::vector<TOKEN_ID>& tok,int flag );
     
     std::string Name()  override;    
@@ -335,8 +341,8 @@ struct NLP_AutoRegressive : public Fish {
 
     void Train(int flag=0x0)    override    ;
 
-    void save_gguf(const char * fn_model_base, int flag)    override;
-    // virtual void SaveTrain(struct save_train_files_data * data, struct train_state * train);
+    // void SaveGGUF(const std::string &filename, int flag)    override;
+    // void LoadGGUF(const std::string &filename, int flag)    override;
 };
 typedef shared_ptr<NLP_AutoRegressive> hLLAMA;
 
@@ -736,7 +742,7 @@ public:
         // NLP_AutoRegressive::InitModel(flag);         
     }     
     
-    struct ggml_cgraph *GetRawGraph( struct ggml_context *,bool isBuild,int flag=0x0)   override;
+    struct ggml_cgraph *BuildRawGraph( struct ggml_context *,bool isBuild,int flag=0x0)   override;
     void InitGensors(int flag=0x0) override    {;}
 
     // hGensor BuildTarget(struct ggml_context * ctx,hGensor cur,int flag=0x0) override; 

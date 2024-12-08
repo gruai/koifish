@@ -75,7 +75,7 @@ void train_print_usage(int argc, char ** argv, const struct CLI_params * params)
     fprintf(stderr, "  -h, --help                 show this help message and exit\n");
 
     // fprintf(stderr, "  --model-base FNAME         model path from which to load base model (default '%s')\n", params->fn_model_base);
-    fprintf(stderr, "  --lora-out FNAME           path to save llama lora (default '%s')\n", params->fn_model_out.c_str());
+    fprintf(stderr, "  --lora-out FNAME           path to save llama lora (default '%s')\n", params->save.model_out.c_str());
     fprintf(stderr, "  --only-write-lora          only save llama lora, don't do any training.  use this if you only want to convert a checkpoint to a lora adapter.\n");
     fprintf(stderr, "  --norm-rms-eps F           RMS-Norm epsilon value (default %f)\n", params->f_norm_rms_eps);
     fprintf(stderr, "  --rope-freq-base F         Frequency base for ROPE (default %f)\n", params->rope_freq_base);
@@ -105,7 +105,7 @@ bool CLI_params::operator!=(const CLI_params& other) const {
 void CLI_params::Dump( )    {
     _INFO("%s::CLI_params: \n", exec_name.c_str());
     // _INFO(" n_vocab: %u", n_vocab);
-    _INFO(" n_ctx=%u", common.n_ctx);
+    _INFO(" n_ctx=%u", n_ctx());
     _INFO(" n_embd=%u", n_embd);        
     _INFO(" n_ff=%u", n_ff());
     _INFO(" n_head=%u", n_head());
@@ -127,29 +127,46 @@ MODEL_ARCH CLI_params::ModelArch()   {
     arch =  info=="MOE" ? NLP_MOE :
             info=="MAMBA" ? MODEL_ARCH::NLP_MAMBA : 
             info=="GPT2" ? MODEL_ARCH::NLP_GPT2 :
+            info=="GPT2CHAR" ? MODEL_ARCH::NLP_GPT2_char :
             MODEL_ARCH::NLP_LLAMA;  
 
     return arch; 
 }
 
 void CLI_params::JModel2Params(int flag){
+    // nlohmann::ordered_json jm = jKEY(jConfig,{"jmodel"});
+    jModel = jKEY(jConfig,{"jmodel"});
     if(jModel.empty()){   
         return;
     }
-
+    nLayerX = 1;    //at least 1 layer
+    nLayerX = jKV(jConfig,{"jmodel","parameter","Layer"},nLayerX );    
+    assert(nLayerX<160 && nLayerX>0);
+    assert(layerps.size()==0);
     auto jTrans = jKEY(jConfig,{"jmodel","parameter","transformer"});
     if(!jTrans.empty()){
-        int nH0=n_head(),nH = jKV(jTrans,{"Head"},nH0);
+        int nH = jKV(jTrans,{"Head"},-1),nF = jKV(jTrans,{"Ffn"},-1),nE = jKV(jTrans,{"Embed"},-1);
+        for(int i=0;i<nLayerX;i++)
+            layerps.push_back(LAY_PARAM(nH,nH,nF));
+        n_embd = nE;        assert(n_embd<160*1000 && n_embd>0);
+        /*int nH0=n_head(),;
         if(nH!=nH0){
             for(auto& lay : layerps){
                 lay.SetHead(nH);
             }
         }
+        int nF0=n_ff(),nF = jKV(jTrans,{"Ffn"},nF0);
+        if(nF0!=nF){
+            for(auto& lay : layerps){
+                lay.SetFF(nF);
+            }
+        }
         int nE0=n_embd,nE = jKV(jTrans,{"Embed"},nE0);
         if(nE0!=nE){
             n_embd = nE;
-        }
+        }*/
     }
+    //  n_embd_head_k   n_embd_head_v   ???
 }
 
 void CLI_params::OnArch( ){
@@ -158,16 +175,17 @@ void CLI_params::OnArch( ){
     bool isJModel = !jModel.empty();
     
     switch(ModelArch()){
-    case MODEL_ARCH::NLP_GPT2:  {
+    case MODEL_ARCH::NLP_GPT2:  
+    case MODEL_ARCH::NLP_GPT2_char:  {
         //baby_GPT      dropout = 0.2
         // n_head = 6;             n_embd = 384;           dict_latent_dim=n_embd;
         nH = 12;         n_embd = 768;           dict_latent_dim = 768;
         n_embd_head_v = 64;         n_embd_head_k = 64;
         // n_embd = 128; dict_latent_dim = 128;        n_embd_head_v=n_embd_head_k=2; //only for debug        
         n_ctx_train = 1024;
-        if(layerps.size()==0){
+        if(layerps.size()==0 && !isJModel){
             // TO_DO: why grad vanish @/home/cys/rnd/lic/log/gpt2/10_29_bug.info
-            int n_ff0 = jKV(jConfig,{"model","ffn","length"},3072,false);
+            int n_ff0 = jKV(jConfig,{"model","ffn","length"},3072,false),nLay=nLayer();
             for(int i=0;i<nLayer();i++){
                 LAY_PARAM lay(nH,nH,n_ff0);
                 layerps.push_back(lay);
@@ -230,8 +248,9 @@ try{
     if(model_title.empty()){
         model_title = jKV(jConfig,{"arch"},string(""));
     }
-    // nlohmann::ordered_json jm = jKEY(jConfig,{"jmodel"});
-    jModel = jKEY(jConfig,{"jmodel"});
+    
+    JModel2Params(0x0);
+    
     serial_path = jKV(jConfig,{"data","serialize_path"},s0 );
     string dict_type = jKV(jConfig,{"dict","type"},s0 );
     // eval_binpath = jKV(jConfig,{"data","eval_binpath"},s0 );   
@@ -251,21 +270,22 @@ try{
     //     _INFO("\r\n%s  eval@every %d steps.",__func__,eval_every );
     // }
     common.seed = jKV(jConfig,{"seed"},common.seed );
-    common.n_ctx = jKV(jConfig,{"model","ctx"},common.n_ctx );
-    
+    common.n_ctx = jKV(jConfig,{"model","ctx"},common.n_ctx );    
      
     wiki_actor = jKV(jConfig,{"wiki","actor"},wiki_actor );
     wiki_logits = jKV(jConfig,{"wiki","logits"},wiki_logits );
     tpWiki = jKV(jConfig,{"wiki","induct"},tpWiki ); 
-
-    
-
     nabla = jKV(jConfig,{"model","nabla"},nabla );
     // sigma = jKV(jConfig,{"model","sigma"},sigma ); 
-    nLayerX = jKV(jConfig,{"model","layer"},nLayerX );    
-    assert(nLayerX<160 && nLayerX>0);
 
-    nFFX = jKV(jConfig,{"model","ffn","length"},nFFX );    
+    if(jModel.empty()){
+        nFFX = jKV(jConfig,{"model","ffn","length"},nFFX );  
+        assert(nFFX<160*1024 && nFFX>0); 
+        nLayerX = jKV(jConfig,{"model","layer"},nLayerX );    
+        assert(nLayerX<160 && nLayerX>0);    
+    }else{
+        
+    }
     
     common.custom_n_ctx = true;
     common.n_threads = jKV(jConfig,{"threads"},common.n_threads );
@@ -273,7 +293,9 @@ try{
     
     // n_embd = jKV(jConfig,{"wiki","embd"},n_embd );
 
-    fn_model_out = jKV(jConfig,{"model-out"},fn_model_out );    
+    save.model_out = jKV(jConfig,{"model-out"},save.model_out );  
+    save.checkpoint_in = jKV(jConfig,{"checkpoint-in"},save.checkpoint_in );  
+    save.checkpoint_out = jKV(jConfig,{"checkpoint-out"},save.checkpoint_out );    
     
     f_norm_rms_eps = jKV(jConfig,{"norm-rms-eps"},f_norm_rms_eps );
     rope_freq_base = jKV(jConfig,{"rope-freq-base"},rope_freq_base );
@@ -348,7 +370,7 @@ bool CLI_params::parse(int argc, char ** argv)  {
                 invalid_param = true;
                 break;
             }
-            fn_model_out = argv[i];
+            save.model_out = argv[i];
         } else if (arg == "--embd") {
             if (++i >= argc) {
                 invalid_param = true;
@@ -360,7 +382,7 @@ bool CLI_params::parse(int argc, char ** argv)  {
                 invalid_param = true;
                 break;
             }
-            fn_model_out = argv[i];
+            save.model_out = argv[i];
         } else if (arg == "--only-write-lora") {
             only_write_model = true;
         } else if (arg == "--learning-rate"){

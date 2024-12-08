@@ -683,6 +683,15 @@ inline hGensor To4D(struct ggml_context * ctx_build,hGensor cur,int64_t n1,int64
     cur = ggml_reshape_4d(ctx_build, cur, n1, n2,n3,n4);
     return cur;
 }
+inline hGensor Permute(struct ggml_context * ctx_,hGensor cur,int64_t n1,int64_t n2,int64_t n3,int64_t n4,bool isCont=true)    {
+    hGensor q = ggml_permute(ctx_, cur, n1,n2,n3,n4);   
+    gTN0(q,"%s.#",cur->name);     
+    if(isCont)    {
+        q = ggml_cont(ctx_,q);        
+        gTN(q,"%s.#c",cur->name);           
+    }
+    return q;
+}
 
 typedef struct ggml_tensor gensor;
 typedef struct ggml_tensor *hGensor;

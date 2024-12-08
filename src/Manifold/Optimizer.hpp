@@ -100,8 +100,7 @@ protected:
 
     // void *app_ctx = nullptr;
     double zmuv_0 = 0.0,zmuv_1 = 0.0,g_step=0.0,gNorm2=0;    
-    llama_token bos,eos;
-    // hGensor loss=nullptr, target_probs=nullptr, preLogits=nullptr; 
+
     hGensor hLoss( );
     hGensor hTargetProbs( );
     hGensor hPreLogits( );
@@ -140,7 +139,6 @@ public:
     Optimizer(NLP_AutoRegressive *g_,CLI_params& params_,int flag=0x0);
     //Deprecated need refactor!!!       9/30/2024
     virtual void GraphCompute(struct ggml_cgraph *,int flag=0x0);
-    virtual float Compute(std::vector<llama_token>&tokens,bool isForward,int flag=0x0);
     virtual float Evaluate(SampLoader&loader,int iter,int flag=0x0);
 
     virtual void UpdateLoss(int step,float loss,int flag=0x0){
@@ -178,7 +176,7 @@ public:
         _INFO("%s: nParams=%zu model_size = %zu bytes (%.1f MB)\n", __func__, nParams,szModel,szModel / (1024.0f*1024.0f) );*/
     }
     
-    virtual void BeforeTrain(struct llama_context * lctx,struct train_params_common& train_params,hGensor  tokens_input,int flag) ;
+    virtual void BeforeTrain(struct train_params_common& train_params,hGensor  tokens_input,int flag) ;
     virtual bool PrepareData( CLI_params& hparams,int flag );
     virtual void Shuffle(int n_vocab,struct train_params_common& train_params,int flag=0x0)  {
         assert(0);

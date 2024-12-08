@@ -24,12 +24,12 @@ Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params& hparams,int flag) : tra
     isGlobalGrad = nGradAccum>1;        // Nearly same alloc grad or not
     val_loader.type = SampLoader::TYPE::DT_EVAL;
     if(gang->isTrain())  {
-        train_loader.Init(g_);
+        train_loader.Init(g_,"Train");
         
     }else{
        
     }
-    val_loader.Init(g_); 
+    val_loader.Init(g_,"Eval"); 
 }
 
 hGensor Optimizer::hLoss()             {    
@@ -91,7 +91,7 @@ bool OPT_Adam::BatchGrad(float&fx,int flag)   {
         g = (float *)grad->data;
     }
     
-    struct ggml_cgraph *_gf=gang->ForwarGraph(),*_gb=gang->BackwardGraph();
+    struct ggml_cgraph *_gf=gang->GetForwRaw(),*_gb=gang->GetBackRaw();
     assert(_gb!=nullptr);
     auto *cplan = &(gang->gb_plan);
     bool bench=false;
@@ -315,7 +315,7 @@ static string GD_NAME[]={
 enum ggml_opt_result Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGensor target_,CLI_params& hparams)    {
     hEDS = gang->hEDS;              assert(hEDS!=nullptr);
 
-    struct ggml_cgraph *_gf=gang->ForwarGraph(),*_gb=gang->BackwardGraph();
+    struct ggml_cgraph *_gf=gang->GetForwRaw(),*_gb=gang->GetBackRaw();
     last_time = ggml_time_ms();
     enum ggml_opt_result result = GGML_OPT_RESULT_DID_NOT_CONVERGE;
     // struct ggml_opt_params params = opt->params;
@@ -326,7 +326,9 @@ enum ggml_opt_result Optimizer::Search(struct ggml_context * ctx, hGensor loss_,
     
     // float *target = (float*)(data->target_probs->data);
     string suf,pref;
-    _INFO("Optimizer::%s@<%s>: device=[%s] \n", __func__,gang->hBackTG->name.c_str(),hEDS->__repr__(suf,pref,0).c_str());
+    _INFO("Optimizer::%s@<%s> %s device=[%s] \n", __func__,gang->hBackTG->name.c_str(),
+        gang->isLoadCheckpoint?hparams.save.checkpoint_in.c_str():"",
+        hEDS->__repr__(suf,pref,0).c_str());
     _INFO("\t Accumulation=%d AdaptiveSched=%d GRAP=%p rZMUV=%g rLARS=%g \n", __func__,gang->hBackTG->name.c_str(),
         nGradAccum,(int)isAdaptiveSched,grad,hparams.ZMUV_ratio,hparams.lars_ratio );
         // tpGD=SGD_HYBRID;    //ADAMw      SGD_v    SGD_HYBRID        SGD_blk_v
@@ -363,14 +365,14 @@ enum ggml_opt_result Optimizer::Search(struct ggml_context * ctx, hGensor loss_,
             UpdateParams(nParams,hparams,0x0);   
             sched = UpdateSchedule(0x0);
             // AdamMiniV(clip,nx,hparams,0x0);   
-            //gradient is useless at this stage  
+            //gradient is useless at this stage
+   
             if (hparams.eval_every>0 && t % hparams.eval_every == 0) {
                 val_loss = Evaluate(val_loader,t);  
-            } 
+            }            
             if( hparams.gpt_every>0 && t%hparams.gpt_every==0 )   {
                 gang->GenSentence(1);   
-            }   
-            
+            }            
             if( !BatchGrad(fx,0x0))
                 return GGML_OPT_RESULT_CANCEL;            
 
@@ -426,7 +428,7 @@ void Fish::Train(  int flag )   {
 
 void Optimizer::GraphCompute(struct ggml_cgraph * cgraph,int flag){
     int nThread = train_params.n_threads;
-    struct ggml_cgraph *_gf=gang->ForwarGraph(),*_gb=gang->BackwardGraph();
+    struct ggml_cgraph *_gf=gang->GetForwRaw(),*_gb=gang->GetBackRaw();
     assert(cgraph==_gf || cgraph==_gb);
     if(hEDS->isOnlyCPU()){
         auto *cplan = &(gang->gb_plan);
@@ -454,39 +456,6 @@ void Optimizer::GraphCompute(struct ggml_cgraph * cgraph,int flag){
     ggml_backend_sched_graph_compute_async(hEDS->sched, cgraph);
 }
 
-float Optimizer::Compute(std::vector<llama_token>&tokens,bool onlyForward,int flag){    
-    struct ggml_cgraph *_gf=gang->ForwarGraph(),*_gb=gang->BackwardGraph();
-    assert(_gf!=nullptr);
-    auto loss = hLoss( );
-    float *fLoss = (float*)(loss->data),*fLossG = onlyForward ? nullptr:(float*)(loss->grad->data);    
-    auto cplan =&(gang->gb_plan);
-    llama_token token;
-    auto tokens_input = gang->Input( );
-    ggml_set_i32_nd(tokens_input, 0, 0, 0, 0, bos);
-
-    size_t i,len=tokens.size(),ldB=tokens_input->ne[0],nB0=tokens_input->ne[1],nSamp = len/ldB;
-    // if(nSamp<nB0){   //useless should rebuild graph and plan
-    //     tokens_input->ne[1] = nSamp;
-    // }
-    assert(len>0 && len<=tokens_input->ne[0]);
-    for(i=0;i<len;i++){
-        token = tokens[i];
-        ggml_set_i32_nd(tokens_input, (int) (i + 1), (int) 0, 0, 0, token);
-    }
-    if(onlyForward)
-        ggml_graph_compute(_gf, cplan);   
-    else{
-        float * g  = (float *)grad->data;
-        ggml_set_zero(grad);  
-        ggml_graph_compute(_gb, cplan);   /**/
-    }
-        
-    // if(nSamp<nB0){
-    //     tokens_input->ne[1] = nB0;
-    // }
-    return *fLoss;
-}
-
 /*
     REF:    /home/cys/Github/llama.cpp-master/examples/batched/batched.cpp
 */
@@ -495,18 +464,19 @@ float Optimizer::Evaluate(SampLoader&loader,int iter,int flag){
         return 0; 
     if(iter!=-666)   _INFO("[eval] " );   
     GST_TIC(tic);     
-    struct ggml_cgraph *_gf=gang->ForwarGraph();
+    struct ggml_cgraph *_gf=gang->GetForwRaw();
     auto loss = hLoss();     
-    double l2,delta_max=0,delta_=0,a,sum=0;
+    double l2,delta_max=0,delta_=0,a,sum=0,ee;
     auto tokens_input = gang->Input( ); //,ldT=tokens_input->ne[0]
     int i,nB=0,step=max(loader.num_batches/10,1);
     size_t nz=0,j;
-    llama_token tMost = (llama_token) (loader.n_vocab - 1);
+    llama_token tMost = (llama_token) (gang->nClass() - 1);
     
     const float *wLog = nullptr;
     for (i = 0; i < loader.num_batches; i+=step) {
-        if(tokens_input!=nullptr)   //in some debug mode, tokens_input maybe null
-            loader.update_batch(i,gang);    
+        if(tokens_input!=nullptr)   {//in some debug mode, tokens_input maybe null
+            loader.update_batch(i,gang);
+        } 
         if(wLog!=nullptr)    {
             for (l2 = 0,j = 0; j < nz; j++    ) {
                 a = wLog[j];            l2 += a*a;              
@@ -517,14 +487,19 @@ float Optimizer::Evaluate(SampLoader&loader,int iter,int flag){
         // ggml_graph_comp0(_gf,0x0);  //  only for debug
         GraphCompute(_gf);
         // ggml_graph_compute(_gf, &(gang->gb_plan));     
-        a = ((float*)hPreLogits()->data)[0];        //  -6.60046101     -4.3040733
+        a = ((float*)hPreLogits()->data)[0];        //  -6.60046101     -4.3040733           
+        ee=loader.DecodeVerify(tokens_input,gang->preLogits);
         sum += loss==nullptr ? 0 : ((float*)(loss->data))[0];         //float *fLoss = (float*)(loss->data)
         nB++;
+        if(gang->hparams.isOnlyGPT){
+            return ee;
+        }        
         break;
     }
     if(iter==-666)    {   //hack
         return i;
     }
+
     float last = lcEval.Last(),aloss = sum/nB;  //[eval]   Loss@Evaluation=7.302641 T=0.232s ======
     lcEval.Add(aloss);
     float delta=last-aloss,best=lcEval.Best();   
@@ -532,13 +507,16 @@ float Optimizer::Evaluate(SampLoader&loader,int iter,int flag){
     if(isOverfit)   {
         _INFO(" !OVERFIT! ");
     }
-    _INFO(" Loss@EvalSet=%f(%.2g) best=%f(eval_%d) E2T=%.3g T=%gs ======\n",aloss,delta,best,lcEval.best_id,
-        aloss-lcTrain.Last(),GST_TOC(tic) );
+    _INFO(" Loss@EvalSet=%f(%.2g) best=%f(eval_%d) E2T=%.3g T=%gs x=%.3g======\n",aloss,delta,best,lcEval.best_id,
+        aloss-lcTrain.Last(),GST_TOC(tic),ee );
 
     if(wLog==nullptr) {     }        
     else
         _INFO("\t Loss@Evaluation=%f delta=%g(%.5g) T=%gs ======\n", aloss,delta_max,delta_/nB,GST_TOC(tic) );
-    
+    string sX="_loss="+std::to_string(aloss);    
+    if(delta>0)     
+        gang->SaveTrain(sX);  
+
     return aloss;
 }
 
@@ -672,7 +650,7 @@ bool Optimizer::AfterLoadBatch(SampLoader&loader, int accum_step, int flag)    {
     return false;
 }
 
-void Optimizer::BeforeTrain(struct llama_context * lctx,struct train_params_common& train_params,hGensor tokens_,int flag) {    
+void Optimizer::BeforeTrain(struct train_params_common& train_params,hGensor tokens_,int flag) {    
     first_iter             = iter;
     // train_loader.hOPT = this;           val_loader.hOPT = this;
     // assert(tokens_!=nullptr);
@@ -778,7 +756,7 @@ bool Optimizer::PrepareData( CLI_params& hparams,int flag )   {
         }            
     }
     if(!isLoadOK) {
-        hDataToken hTokenset=train_loader.tokens;
+        hDataToken hTokenset=train_loader.hTokens;
         assert(hTokenset!=nullptr);
            
         std::vector<size_t> samples_begin,samples_size;

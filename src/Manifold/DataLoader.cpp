@@ -35,17 +35,54 @@ void SAMP::Refresh(SampLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,in
         }   
         // _INFO("\t%ld@\"%.*s...\"\n",pos,64,sentence.c_str());     //sample_size
         desc = sentence;
-    }
-    
+    }    
 }
 
+
+double SampLoader::DecodeVerify(hGensor tokens,hGensor logits,int flag)    {
+    int nC = tokens->ne[0],nB = tokens->ne[1],b,c,j,cand,nz=0;
+    int _nvocab = hDict->n_vocab;
+    assert( tokens->type== GGML_TYPE_I32 && tokens->ne[2]==1);
+    double off=0,sum=0,avg;
+    float *p = nullptr,p1;
+    if(logits!=nullptr) {
+        assert( logits->type== GGML_TYPE_F32 );
+        assert(logits->ne[1]==nC && logits->ne[2]==nB && _nvocab==logits->ne[0]);
+        p = (float*)(logits->data);
+    }
+    
+    assert(nC>0 && nB>0);
+    int *t = (int*)tokens->data;
+    for(b=0; b<nB; b++){
+        string line;
+        t++;
+        for(c=1; c<nC; c++,t++){
+            assert(*t>0 && *t<_nvocab);
+            if(p!=nullptr){
+                for(p1=-FLT_MAX,cand=-1,j=0;j<_nvocab;j++){
+                    if(p1<*p){
+                        p1 = *p;    cand = j;    
+                    }
+                    p++;
+                }
+            }
+            off = abs(cand-*t);         sum += off*off;     nz++;
+            line += hDict->T2STR(*t);
+        }
+        p+=_nvocab;        
+        curDeTexts.push_back(line);
+        break;
+    }
+    avg =sqrt(sum/(nz));
+    return avg;
+}
 void SampLoader::Samp2Batch(int k,hSAMP samp,hGensor tokens_input,hGensor target_probs,struct train_params_common& params,int flag)    {   
     tok_ids.clear();        
     auto dialect = hDict->dialect;
     bool fill_with_next_samples=params.fill_with_next_samples,isDialect = hDict->isDialect;
-    size_t starting=samp->pos+samp->jump;    
+    size_t starting=samp->pos+samp->jump,_nctx = params.n_ctx;            //    tokens_input->ne[0];;    
     ggml_set_i32_nd(tokens_input, 0, k, 0, 0, hDict->bos);
-    for (int64_t i=0; i<n_ctx; ++i) {    
+    for (int64_t i=0; i<_nctx; ++i) {    
         TOKEN_ID token = hDict->eos;
         /*if (samp_off >= samp->len && fill_with_next_samples) { //true only arg == "--fill-with-next-samples"
             if (!sample_separation_eos) {
@@ -64,29 +101,31 @@ void SampLoader::Samp2Batch(int k,hSAMP samp,hGensor tokens_input,hGensor target
                 ++used_samples;
             }
         }*/
-        // note: no else-if here
+        // eos ???
         if (starting >= nTokens()) {
             starting = 0;
         }
         assert(starting<nTokens());
-        token = TokenAt(starting); //clamp(tokens[starting], 0, (TOKEN_ID) (n_vocab - 1));
+        token = TokenAt(starting); 
         if(isDialect){
             assert(dialect[token]>0);
             token = hDict->mapT2T[token];
         }
         ++starting;   
-        if(isTarget_1)     
-            ggml_set_f32_nd(target_probs,  0, (int) i, (int) k, 0, token);            
-        else{
-            ggml_set_f32_nd(target_probs,  token, (int) i, (int) k, 0, +1.0f);
-        }           
+        if(target_probs==nullptr){
+
+        }else{
+            if(isTarget_1)     
+                ggml_set_f32_nd(target_probs,  0, (int) i, (int) k, 0, token);            
+            else{
+                ggml_set_f32_nd(target_probs,  token, (int) i, (int) k, 0, +1.0f);
+            }        
+        }   
 
         tok_ids.push_back(token);
         
-        if (i+1<n_ctx) {
+        if (i+1<_nctx) {
             ggml_set_i32_nd(tokens_input, (int) (i + 1), (int) k, 0, 0, token);
-            // sentence = llama_token_to_piece(lctx, token);
-            // _INFO("%s,",sentence.c_str());
         }
     }
 }
@@ -110,16 +149,11 @@ int64_t SampLoader::update_batch(int x,Fish* fish){
     GGML_ASSERT(ggml_is_matrix(tokens_input));
     GGML_ASSERT(ggml_is_3d(target_probs));
     int64_t n_vocab  = target_probs->ne[0],nSampInBatch = fish->hparams.n_batch();  // tokens_input->ne[1];  //'ld0,ld1,ld2,ld3;
-    n_ctx = fish->hparams.n_ctx();            //    tokens_input->ne[0];
-    GGML_ASSERT(n_vocab  == target_probs->ne[0]);
-    GGML_ASSERT(n_ctx == target_probs->ne[1]);
-    GGML_ASSERT(nSampInBatch  == target_probs->ne[2]);
+    
+    assert(n_vocab  == target_probs->ne[0] && nSampInBatch  == target_probs->ne[2]);
     GST_TIC(T0);
     
     ggml_set_f32(target_probs, 0.0f);
-    // bos = llama_token_bos(llama_get_model(lctx));
-    // eos = llama_token_eos(llama_get_model(lctx));
-    /*std::string sBos = llama_token_to_piece(lctx, bos),sEos = llama_token_to_piece(lctx, eos);*/
     bool isLog = false;
     if(isLog) _INFO("BATCH_%ld ",next_sample);   //, samples_count,n_train_data);nSampe=(%ld/%ld)
     // assert(target_probs->type == GGML_TYPE_F32);
@@ -140,8 +174,11 @@ int64_t SampLoader::update_batch(int x,Fish* fish){
        
         Samp2Batch(k,samp,tokens_input,target_probs,*params);   //refresh tok_ids
         if(isLog && k<6 && batch_sample!="stacking"){
-            sentence = lama->T2STR(tok_ids,0x0);     //llama_token_to_piece(lctx, tok_ids[0]);
+            sentence = dolphin->T2STR(tok_ids,0x0);     //llama_token_to_piece(lctx, tok_ids[0]);
             _INFO(" (%ld,%d)@\"%s\"",samp->pos,samp->jump,sentence.c_str());     //sample_size
+        }else if(type == SampLoader::TYPE::DT_EVAL)  {
+            if(k==0)
+                sentence = dolphin->T2STR(tok_ids,0x0); 
         }
 
         if(batch_sample!="stacking"){ 
@@ -152,6 +189,7 @@ int64_t SampLoader::update_batch(int x,Fish* fish){
         }        
     }
     t_Samp = GST_TOC(tic);
+    // Decode(tokens_input);       //only for debug
     if(isLog) _INFO("\tT=%g\n",GST_TOC(T0));
     if(batch_sample=="stacking"){
         CHILD_0909_WIKIS assert(0);
@@ -162,8 +200,12 @@ int64_t SampLoader::update_batch(int x,Fish* fish){
             _INFO("\t stacking@%d\"%.*s...\" nrm=%g\tT=%.4gs\t\n",samp->pos,64,samp->desc.c_str(),nrm,GST_TOC(tic));             
         }*/
     }
-    
-    next_sample += nSampInBatch;
+    if(type == SampLoader::TYPE::DT_TRAIN) 
+        next_sample += nSampInBatch;
+    else{
+        if(!isFixEvalSample)
+            next_sample += nSampInBatch;
+    }
     return nSampInBatch;
 }
 
@@ -215,6 +257,12 @@ DataTokenSet::DataTokenSet(ConsiceDict *hD) : hDict(hD)   {
     assert(nVocab>0);
 }
 
+TOKEN_ID DataTokenSet::At(size_t pos){
+    assert(pos<tokens.size());
+    int32_t token = clamp(tokens[pos], 0, (nVocab - 1));
+    return token;
+}
+
 bool DataTokenSet::Serialize(const std::string&path,  bool isSave, int flag){
 try{
     FSerial S(path,isSave,flag);
@@ -255,9 +303,9 @@ try{
     FSerial S(path,isSave,flag);
     if(!S.isValid())
         return false;
-    
+    int _nvocab = hDict->n_vocab;
     _INFO("%s %s@%s...",__func__,isSave?"save@":"load@",path.c_str());
-    _CHECK( S.Serial(n_vocab,isSave,flag) );
+    _CHECK( S.Serial(_nvocab,isSave,flag) );
     // _CHECK( S.Serial(tokens,isSave,flag) );
     // _CHECK( S.Serial(n_unique_tokens,isSave,flag) );
     _CHECK( S.Serial(shuffle_samples_hash,isSave,flag) );
@@ -304,17 +352,20 @@ try{
 }
 }
 
-void SampLoader::Init(NLP_AutoRegressive *g_,int flag) {
-    lama = g_;      //need dict&tokenset but is nullptr now
+void SampLoader::Init(NLP_AutoRegressive *g_,const string&n,int flag) {
+    name = n;
+    assert(g_!=nullptr);
+    dolphin = g_;      //need dict&tokenset but is nullptr now
     isTarget_1 = g_->hparams.is( {"model","target"},string("OneHot") );
+    
 }
 
 void SampLoader::Prepare(Optimizer *hOPT_,int flag){
     hOPT = hOPT_;           assert(hOPT_!=nullptr);
-    assert(lama!=nullptr);
-    tokens = lama->hTokenset;
-    hDict = lama->hDict;        
-    assert(tokens!=nullptr && hDict!=nullptr);  
+    assert(dolphin!=nullptr);
+    hTokens = dolphin->hTokenset;
+    hDict = dolphin->hDict;        
+    assert(hTokens!=nullptr && hDict!=nullptr);  
     // bos = hDict->bos;
     // eos = hDict->eos;
 }
@@ -331,12 +382,12 @@ void SampLoader::Prepare(Optimizer *hOPT_,int flag){
 */
 void SampLoader::SetSamples(int nV,hDataToken hDT,std::vector<size_t>& samp_0,std::vector<size_t>& samp_L,
     bool isTrain,CLI_params& hp_,int flag)  {
-    hparams = hp_;
-    batch_sample = hparams.batch_sample;
+    // hparams = hp_;
+    batch_sample = dolphin->hparams.batch_sample;
 
-    double rSplit = 1.0-hparams.rSplit;
-    n_vocab = nV;    //hparams.n_vocab;
-    tokens = hDT;
+    double rSplit = 1.0-dolphin->hparams.rSplit;
+    // n_vocab = nV;    //hparams.n_vocab;
+    hTokens = hDT;
     size_t nSample = samp_0.size(),pick=(size_t)(nSample*rSplit),i;
     //    assert(samp_begin.size() == samp_size.size());   
     if(isTrain){
@@ -358,7 +409,7 @@ void SampLoader::SetSamples(int nV,hDataToken hDT,std::vector<size_t>& samp_0,st
         }
     }
     nSample = all_samps.size();
-    num_batches = nSample/hparams.common.n_batch;
+    num_batches = nSample/dolphin->hparams.n_batch();
     num_batches = nSample==0 ? 0 : max(num_batches,1);
     _INFO("%s@[%s]: tokens=%zu nSamp=%d nBach=%d\n", __func__,isTrain?"train":"eval", nTokens(),all_samps.size(),num_batches); 
 }
@@ -397,7 +448,7 @@ double SAMP::UpdateTag(hDataToken hDT,int *tag,int step,bool do_mask,int flag)  
 bool SampLoader::TopoOrder(std::vector<size_t>&ids,std::mt19937& rng,int flag)  {    
     bool isRepeated = true;
     size_t count = all_samps.size(),i,j,k,jj,pick,seed,nPick=16,nLeft;
-    size_t nSampInBatch=hparams.n_batch(),nVocab=tokens->nVocab,ctx=hparams.n_ctx(),tib=hparams.nTokenInBatch();
+    size_t nSampInBatch=dolphin->hparams.n_batch(),nVocab=hTokens->nVocab,ctx=dolphin->hparams.n_ctx(),tib=dolphin->hparams.nTokenInBatch();
     if(count<nSampInBatch*10)
         return false;
     GST_TIC(tic);
@@ -411,7 +462,7 @@ bool SampLoader::TopoOrder(std::vector<size_t>&ids,std::mt19937& rng,int flag)  
         seed = ids[i*nSampInBatch];
         cur = all_samps[seed];
         step++;
-        double rEx = cur->UpdateTag(tokens,stp,step,true),r,rBest=FLT_MAX;        
+        double rEx = cur->UpdateTag(hTokens,stp,step,true),r,rBest=FLT_MAX;        
         for(j=i*nSampInBatch+1;j<(i+1)*nSampInBatch;j++)  {
             if(0)   {   //10001/16/3 rDup=0.415(0.568)=>rDup=0.347(0.453)        10001/16/32 rDup=0.704(0.738)=>0.625(0.649)
                 nLeft = count-j;        
@@ -422,7 +473,7 @@ bool SampLoader::TopoOrder(std::vector<size_t>&ids,std::mt19937& rng,int flag)  
                         jj = j+rng()%nLeft;         assert(jj>=j && jj<count);
                     }
                     next = all_samps[ids[jj]];
-                    r = next->UpdateTag(tokens,stp,step,false);      
+                    r = next->UpdateTag(hTokens,stp,step,false);      
                     if(r>rBest){
                         rBest = r;  pick = jj;
                     }
@@ -430,7 +481,7 @@ bool SampLoader::TopoOrder(std::vector<size_t>&ids,std::mt19937& rng,int flag)  
                 std::swap(ids[j],ids[pick]);
             }
             next = all_samps[ids[j]];
-            r = next->UpdateTag(tokens,stp,step,true);  
+            r = next->UpdateTag(hTokens,stp,step,true);  
             assert(r==rBest || rBest==FLT_MAX);
             rEx+=r;
         }
@@ -538,6 +589,8 @@ bool DataTokenSet::Load(struct CLI_params& hparams,void *hLLM,int flag){
     if( Serialize(ssf,false) ){
         
     }else{
+        if(hLLM==nullptr && hparams.ModelArch()!=MODEL_ARCH::NLP_GPT2_char)
+            return false;
         fpath = hparams.fp_train_data.c_str();
         assert( std::filesystem::exists(fpath) );
         // llama_model *lam_ = static_cast<llama_model *>(hLLM);
@@ -606,11 +659,41 @@ bool DataTokenSet::Load(struct CLI_params& hparams,void *hLLM,int flag){
         Serialize(ssf,true);
         
     }
-    nTokens = tokens.size();
+    size_t nTokens = tokens.size();
     _INFO("\r[Load&Token]: @'%s' fsize=%.3g(M) nTokens=%.3g(M) nUnique=%ld T=%.3g(s)\t\t\t\n", 
         ssf.c_str(),fsize/1.0e6,nTokens/1.0e6,nUnique,GST_TOC(tic));
     
     return true;
+}
+
+hSAMP SampLoader::InitOneSamp(const string &prompt,hGensor input, int flag){
+    const char *buf = prompt.c_str();
+    std::vector<TOKEN_ID> btch;
+    btch.resize(10*1024*1024);
+    assert(hTokens!=nullptr);
+    assert(hTokens->tokens.size()==0);
+    hTokens->tokens.clear();
+    int n_tokens = hDict->stream2token(nullptr,buf,prompt.size(),btch,flag);
+    int _nctx = dolphin->hparams.n_ctx();
+    n_tokens = min(n_tokens,_nctx);         assert(n_tokens>0);
+    if(flag==0x110){
+        for (int i = 0; i < n_tokens; ++i)    {
+            btch[i] = hDict->eos;
+        }
+    }
+    hTokens->tokens.insert(hTokens->tokens.begin(),btch.begin(),btch.begin()+n_tokens);
+    
+    all_samps.clear();
+    all_samps.push_back(new SAMP(0,n_tokens));    
+    hSAMP samp = all_samps[0];
+    // assert(_nvocab==0);
+    // _nvocab = hDict->n_vocab;
+    num_batches = 1;
+    sentence = hDict->T2STR(hTokens->tokens);
+
+    if(input!=nullptr)
+        Samp2Batch(0,samp,input,nullptr,dolphin->hparams.common);  
+    return samp;
 }
 
 bool DataTokenSet::InitSamps(unsigned context_length,std::vector<size_t>& samples_begin,std::vector<size_t>&samples_size,int flag){

@@ -176,6 +176,17 @@ void ConsiceDict::CreateEmbeddings(int flag){
     }
 }
 
+std::string ConsiceDict::T2STR(TOKEN_ID tok,int flag ) { 
+    string word = "";
+    
+    if(hLM!=nullptr){
+        auto lama = hLM->lama();
+        assert(lama!=nullptr);
+        word = lama->T2STR(tok,flag);
+    }        
+    return word;   
+}   
+
 hGensor ConsiceDict::Embed2Output(struct ggml_context * ctx,hGensor t33,int flag)       { 
     hGensor  tOutput = nullptr;
     int group=hparams.Get({"model","target_group"},1);
@@ -436,82 +447,6 @@ void CDict_CHAR::LoadVocab(const char*model_path,int flag)   {
         vocab[i] = strdup(a);
     }
 }
-
-void NLP_AutoRegressive::save_gguf(const char * filename, int flag) {
-    enum llama_ftype ftype = LLAMA_FTYPE_ALL_F32;       //LLAMA_FTYPE_MOSTLY_Q2_K
-    _INFO("[save] saving gguf to %s ftype=%d ......\n", filename,ftype);
-    struct gguf_context * fctx = gguf_init_empty();
-    int keyidx = -1;    
-    
-    // set arch_str
-    gguf_set_val_str(fctx, LLM_KV_GENERAL_ARCHITECTURE, arch_str);
-    gguf_set_val_str(fctx, LLM_KV_GENERAL_NAME, ".");
-    gguf_set_val_u32(fctx, kv(LLM_KV_VOCAB_SIZE), hDict->n_vocab);
-    int llm_embd = hDict->lama_embed,latent_dim=hDict->latent_dim;        //hparams.n_embd
-    if(hDict->nLevel>0)    assert(llm_embd>latent_dim && latent_dim>0);
-    // set hparams
-    const char*str = kv(LLM_KV_CONTEXT_LENGTH);
-    gguf_set_val_u32(fctx, kv(LLM_KV_CONTEXT_LENGTH),              hparams.common.n_ctx                  );
-    gguf_set_val_u32(fctx, kv(LLM_KV_EMBEDDING_LENGTH),            llm_embd                       );
-    
-    gguf_set_val_u32(fctx, kv(LLM_KV_BLOCK_COUNT),                 hparams.n_layer_train                );
-    gguf_set_val_u32(fctx, kv(LLM_KV_FEED_FORWARD_LENGTH),         hparams.n_ff()                   );
-    gguf_set_val_u32(fctx, kv(LLM_KV_ROPE_DIMENSION_COUNT),        hparams.n_rot                  );
-    gguf_set_val_u32(fctx, kv(LLM_KV_ATTENTION_HEAD_COUNT),        hparams.n_head()                 );    
-    gguf_set_val_u32(fctx, kv(LLM_KV_ATTENTION_HEAD_COUNT_KV),     hparams.n_head_kv()              );
-
-    gguf_set_val_f32(fctx, kv(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS), hparams.f_norm_rms_eps         );
-    gguf_set_val_f32(fctx, kv(LLM_KV_ROPE_FREQ_BASE),              hparams.rope_freq_base         ); // TODO load in llama.cpp
-    
-    gguf_set_val_u32(fctx, LLM_KV_GENERAL_FILE_TYPE, ftype);
-    // set vocab by copying from vocab_model gguf file
-    gguf_set_val_str(fctx, kv(LLM_KV_TOKENIZER_MODEL), hDict->tokenizer_name.c_str());
-
-    gguf_set_arr_str(fctx, kv(LLM_KV_TOKENIZER_LIST), hDict->vocab.data(), hDict->n_vocab);
-    if(hDict->scores!=nullptr)
-        gguf_set_arr_data(fctx, kv(LLM_KV_TOKENIZER_SCORES), GGUF_TYPE_FLOAT32, hDict->scores, hDict->n_vocab);    
-    gguf_set_arr_data(fctx, kv(LLM_KV_TOKENIZER_TOKEN_TYPE), GGUF_TYPE_INT32, hDict->toktypes, hDict->n_vocab);
-    if (hDict->tokenizer_name == "gpt2"){
-        const char* sMERGES = kv(LLM_KV_TOKENIZER_MERGES);
-        gguf_set_val_u32(fctx, sMERGES,  hDict->merges_keyidx              );
-        keyidx = gguf_find_key(fctx, sMERGES);      //only for debug
-        assert(hDict->merges.size()==hDict->n_merges);
-        string word = hDict->merges[0];
-        gguf_set_arr_str(fctx, sMERGES, hDict->merges.data(), hDict->n_merges);
-        /*for (int i = 0; i < hDict->n_merges; i++) {        //only for debug
-            const std::string word = gguf_get_arr_str(fctx, keyidx, i);
-            GGML_ASSERT(unicode_cpts_from_utf8(word).size() > 0);            
-        }*/
-    }   
-    
-    
-    gguf_set_val_u32(fctx, kv(LLM_KV_TOKENIZER_BOS_ID), hDict->special_bos_id);
-    gguf_set_val_u32(fctx, kv(LLM_KV_TOKENIZER_EOS_ID), hDict->special_eos_id);
-    // gguf_set_val_u32(fctx, kv(LLM_KV_TOKENIZER_UNK_ID), hDict->special_unk_id);      -1
-    // gguf_set_val_u32(fctx, kv(LLM_KV_TOKENIZER_SEP_ID), hDict->special_sep_id);      -1
-    // gguf_set_val_u32(fctx, kv(LLM_KV_TOKENIZER_PAD_ID), hDict->special_pad_id);      -1
-    gguf_set_val_f32(fctx, kv(LLM_KV_ROPE_SCALE_LINEAR),           1.0f / hparams.rope_freq_scale );
-    gguf_set_val_u32(fctx, kv(LLM_KV_DICT_LATENT_DIM),             latent_dim                       );
-    //more maybe from llama_chat_apply_template
-    // add tensors
-    gguf_add_tensor(fctx, hDict->tok_embeddings);   //4096*128256
-    gguf_add_tensor(fctx, hDict->_norm.w);             //4096
-    gguf_add_tensor(fctx, hDict->_output.w);           //4096*128256
-    hDict->save_gguf(fctx, flag);    
-
-    for (uint32_t i = 0; i < hparams.nLayer(); ++i) {
-        auto layer = dynamic_pointer_cast<QKV_LAY>(layers[i]); //layers[i];
-        layer->save_gguf(fctx, flag);
-    }
-
-    const bool only_meta = false;
-    gguf_write_to_file(fctx, filename, only_meta);
-    gguf_free(fctx);
-
-    size_t fsize = F_SIZE(filename);
-    _INFO("%s Save@\"%s\" fsize=%gM\n",__func__,filename,fsize/1.0e6);
-}
-
 
 void QKV_LAY::save_gguf(struct gguf_context *fctx, int flag){
     gguf_add_tensor(fctx, att_norm.w);

@@ -19,6 +19,7 @@ hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,vector
         fish = std::make_shared<LLM_MAMBA>(nam_+"_mamba",params,role_);
         break;
     case MODEL_ARCH::NLP_GPT2:
+    case MODEL_ARCH::NLP_GPT2_char:
         fish = std::make_shared<GPT2>(nam_+"_GPT2",params,role_);
         break;
     case MODEL_ARCH::NLP_MOE:
@@ -50,8 +51,8 @@ hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,vector
 
     }else{
         if(!wikis.empty()){  //generate some sentence
-            CHILD_0909_WIKIS
-            // fish->gopt = GeneratOnPrompt::MakeInstance(params,wikis,fish.get(),flag);        
+            if( params.gpt_every>0 && !fish->isLocalInfer)
+                fish->gopt = GeneratOnPrompt::MakeInstance(params,wikis,fish.get(),flag);        
         }
     }
     // fish->Dump(0x0);
@@ -114,7 +115,7 @@ hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,const 
 
 bool Fish::AfterBuild(bool isInitParam,int flag)   {        
     int64_t nx = 0;
-    auto gf = hForwTG->raw(),gb = hBackTG->raw();
+    auto gf = GetForwRaw(),gb = GetBackRaw();
     if(isInitParam) {
         assert(rnd!=nullptr);
         // rnd = init_random_normal_distribution(hparams.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
@@ -126,23 +127,33 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
             GGML_PRINT_DEBUG("found param %d: grad->op = %d\n", np, gf->nodes[i]->grad->op);      
             auto node = gf->nodes[i];          
             optParams.push_back(node);
-            // wGensors.push_back(node);   
-            if(isInitParam){
-                if (rnd != nullptr)
-                    randomize_tensor_normal(node, rnd);
-                else
-                    ggml_set_zero(node);                
-            }
-            _INFO("Param_%-4d(op=%d)\t", optParams.size(), gf->nodes[i]->grad->op );
+            // _INFO("Param_%-4d(op=%d)\t", optParams.size(), gf->nodes[i]->grad->op );
+        }
+    }
+    isLoadCheckpoint = GGUF_Serialize(hparams.save.checkpoint_in,false,0x0);
+    for (auto node : optParams) {  
+        if(isLoadCheckpoint) {
+            
+        }else if(isInitParam){
+            if (rnd != nullptr)
+                randomize_tensor_normal(node, rnd);
+            else
+                ggml_set_zero(node);         
+            _pt_cys_("",node,0x0);         printf("\n");       
+        }
+        
 #ifndef NDEBUG
             
 #endif
-            _pt_cys_("",node,0x0);         printf("\n");
-            // gg_print_tensor_("",gf->nodes[i],0);
-            nx += ggml_nelements(gf->nodes[i]);
-        }
-    }     
-    
+        
+        // gg_print_tensor_("",gf->nodes[i],0);
+        nx += ggml_nelements(node);        
+    }   
+    if(isTrain())  
+        assert(nParams>0);
+    else{
+        assert(nParams==0);     assert(gb==nullptr);
+    }
     if(nx != nParams){
         CHECK_SAME_TENSORS("Compare parameter tensors\t",optParams,xGensors); 
         _ERROR("%s nx(%ld)!=nParams(%ld)\t", __func__,nx,nParams );
@@ -182,17 +193,19 @@ bool Fish::OnTrainStep(struct train_opt_callback_data *data,SampLoader&loader, i
 }
 
 static const char * vendor = "gruai";     //llm_arch_from_string
-void Fish::SaveTrain(struct save_train_model * data, void *user_data,int flag) { 
+bool Fish::SaveTrain(string sX,int flag) { 
     assert(hOPT!=nullptr);
     int64_t iter = hOPT->iter;  //     train->opt->iter;
-    _INFO("%s: iter_%ld\n", __func__, iter);
-    string sBaseName = get_train_filename(data->fn_model_out.c_str(), data->pattern_fn_it.c_str(), data->fn_latest.c_str(), -1  );
-    if (strlen(data->fn_checkpoint_out.c_str()) > 0) {
-        // save_checkpoint_file(get_train_filename(data->fn_checkpoint_out, data->pattern_fn_it, data->fn_latest, iter).c_str(), data->fn_model_base, data->model, train);
-        // save_checkpoint_file(get_train_filename(data->fn_checkpoint_out, data->pattern_fn_it, data->fn_latest, -1  ).c_str(), data->fn_model_base, data->model, train);
+    // _INFO("%s: iter_%ld\n", __func__, iter);
+    string sit = "IT",sOut;
+    string sBaseName = hparams.save.model_out;  //get_train_filename(.c_str(),sit.c_str(), "", -1  );
+    if (!hparams.save.checkpoint_out.empty()) {
+        sOut = hparams.save.checkpoint_out+std::to_string(iter)+sX+".gguf";
+        GGUF_Serialize(sOut,true,0x0);
+        // GGUF_Serialize(sOut,false,0x0); //only for debug
     }
-    string sOut = "g_" + sBaseName; 
-    if (strlen(data->fn_model_out.c_str()) > 0) {
+    
+    if (!hparams.save.model_out.empty()) {
         // save_llama_model_file(get_train_filename(data->fn_model_out, data->pattern_fn_it, data->fn_latest, iter).c_str(), data->fn_model_base, data->model);
         vendor = "gruai";                 //llm_arch_from_string
     }
@@ -200,10 +213,188 @@ void Fish::SaveTrain(struct save_train_model * data, void *user_data,int flag) {
         vendor = "llama";
         sOut = "l_" + sBaseName;     //hack  
     }
-    save_gguf(sOut.c_str(),0x0);
-    return;
+    
+    return true;
+}
+/*
+    1.  gguf_get_tensor_offset
+*/
+bool Fish::GGUF_Serialize(const std::string&path,  bool isSave, int flag){
+try{
+    char buf[1024];
+    struct ggml_context * fctx_data = NULL;
+    struct gguf_context * fctx = NULL;
+    int n_kv = 0,n_tensors = 0;
+    if(isSave){ //KV pairs
+        fctx = gguf_init_empty();
+        // struct ggml_init_params params = {128ull*1024ull*1024ull,NULL,false,};
+        // fctx_data = ggml_init(params);
+    }else{
+        fctx = gguf_init_from_file(path.c_str(), {false,&fctx_data});
+        if (!fctx) {
+            _INFO("%s: failed to load '%s'\n", __func__, path.c_str());
+            return false;
+        }
+
+        _INFO("%s: version=%d alignment=%zu offset=%zu\n", __func__, gguf_get_version(fctx),gguf_get_alignment(fctx),gguf_get_data_offset(fctx));
+        n_kv = gguf_get_n_kv(fctx);
+        _INFO("%s: n_kv: %d\n", __func__, n_kv);
+        for (int i = 0; i < n_kv; ++i) {
+            const char * key = gguf_get_key(fctx, i);
+            printf("%s: kv[%d]: key = %s\n", __func__, i, key);
+        }
+        if(0){// find kv string
+            const char * findkey = "some.parameter.string";
+            const int keyidx = gguf_find_key(fctx, findkey);
+            if (keyidx == -1) {
+                printf("%s: find key: %s not found.\n", __func__, findkey);
+            } else {
+                const char * key_value = gguf_get_val_str(fctx, keyidx);
+                printf("%s: find key: %s found, kv[%d] value = %s\n", __func__, findkey, keyidx, key_value);
+            }
+        }
+    }
+    if(isSave){
+        for(auto ps : optParams) {            
+            gguf_add_tensor(fctx, ps);
+        } 
+        const bool only_meta = false;    
+        gguf_write_to_file(fctx, path.c_str(), only_meta);
+        size_t fsize = F_SIZE(path.c_str());
+        _INFO("[save] @\"%s\" nT=%ld fsize=%gM\n",path.c_str(),optParams.size(),fsize/1.0e6);
+    }else{
+        n_tensors = gguf_get_n_tensors(fctx);
+        if(isTrain() && n_tensors!=optParams.size()){      //  optParams maybe empty
+            _INFO("%s nOptParams don't match(%d,%d) @%s!",__func__,n_tensors,optParams.size(),path.c_str());
+            return false;
+        }
+        _INFO("[Serialize] n_tensors: %d\n", n_tensors);
+        for (int i = 0; i < n_tensors; ++i) {
+            const char *name = gguf_get_tensor_name  (fctx, i);
+            hGensor target = GetGensor(name);
+            if(target==nullptr){
+                return false;
+            }
+            if(!optParams.empty()){
+                if(!(target->flags & GGML_TENSOR_FLAG_PARAM)){
+                    return false;
+                }
+            }else{
+                assert(!isTrain());
+            }
+            // const size_t offset = gguf_get_tensor_offset(fctx, i);
+            // printf("%s: tensor[%d]: name = %s, offset = %zu\n", __func__, i, name, offset);
+            struct ggml_tensor * cur = ggml_get_tensor(fctx_data, name);    //  cur = (struct ggml_tensor *)(mem_buffer + obj->offs);
+            if(cur==nullptr){
+                _INFO("%s failed to load tensor(%s) @%s!",__func__,name,path.c_str());
+                return false;
+            }else{
+                
+            }
+            size_t nEle = ggml_nelements(cur),sz = ggml_nbytes(cur);
+            assert(nEle == ggml_nelements(target)) ;
+            memcpy(target->data,cur->data,sz);
+            sprintf(buf,"\t%d d=%d sz=%ld",i,ggml_n_dims(cur),sz);
+             _pt_cys_(buf,cur,0x0);    printf("\n");
+            // _INFO("[Serialize]_%d\t%s: n_dims=%d sz = %ld\n",i,cur->name, ggml_n_dims(cur),sz);            
+        }    
+    }
+    if(fctx_data!=NULL) ggml_free(fctx_data);
+    gguf_free(fctx);
+    return true;
+}catch(...){
+    return false;
+}
 }
 
+/*void NLP_AutoRegressive::LoadGGUF(const std::string &filename, int flag)    {
+    enum llama_ftype ftype = LLAMA_FTYPE_ALL_F32;       //LLAMA_FTYPE_MOSTLY_Q2_K
+    _INFO("[save] %s to \"%s\" ftype=%d ......", name.c_str(), filename.c_str(), ftype);
+    struct gguf_context * fctx = gguf_init_empty();
+    int keyidx = -1;    
+    
+    // set arch_str
+    gguf_set_val_str(fctx, LLM_KV_GENERAL_ARCHITECTURE, arch_str);
+    gguf_set_val_str(fctx, LLM_KV_GENERAL_NAME, ".");
+    gguf_set_val_u32(fctx, kv(LLM_KV_VOCAB_SIZE), hDict->n_vocab);
+    int llm_embd = hDict->lama_embed,latent_dim=hDict->latent_dim;        //hparams.n_embd
+    if(hDict->nLevel>0)    assert(llm_embd>latent_dim && latent_dim>0);
+    // set hparams
+    const char*str = kv(LLM_KV_CONTEXT_LENGTH);
+    gguf_set_val_u32(fctx, kv(LLM_KV_CONTEXT_LENGTH),              hparams.common.n_ctx                  );
+    gguf_set_val_u32(fctx, kv(LLM_KV_EMBEDDING_LENGTH),            llm_embd                       );
+    
+    gguf_set_val_u32(fctx, kv(LLM_KV_BLOCK_COUNT),                 hparams.n_layer_train                );
+    gguf_set_val_u32(fctx, kv(LLM_KV_FEED_FORWARD_LENGTH),         hparams.n_ff()                   );
+    gguf_set_val_u32(fctx, kv(LLM_KV_ROPE_DIMENSION_COUNT),        hparams.n_rot                  );
+    gguf_set_val_u32(fctx, kv(LLM_KV_ATTENTION_HEAD_COUNT),        hparams.n_head()                 );    
+    gguf_set_val_u32(fctx, kv(LLM_KV_ATTENTION_HEAD_COUNT_KV),     hparams.n_head_kv()              );
+
+    gguf_set_val_f32(fctx, kv(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS), hparams.f_norm_rms_eps         );
+    gguf_set_val_f32(fctx, kv(LLM_KV_ROPE_FREQ_BASE),              hparams.rope_freq_base         ); // TODO load in llama.cpp
+    
+    gguf_set_val_u32(fctx, LLM_KV_GENERAL_FILE_TYPE, ftype);
+    // set vocab by copying from vocab_model gguf file
+    gguf_set_val_str(fctx, kv(LLM_KV_TOKENIZER_MODEL), hDict->tokenizer_name.c_str());
+
+    gguf_set_arr_str(fctx, kv(LLM_KV_TOKENIZER_LIST), hDict->vocab.data(), hDict->n_vocab);
+    if(hDict->scores!=nullptr)
+        gguf_set_arr_data(fctx, kv(LLM_KV_TOKENIZER_SCORES), GGUF_TYPE_FLOAT32, hDict->scores, hDict->n_vocab);    
+    gguf_set_arr_data(fctx, kv(LLM_KV_TOKENIZER_TOKEN_TYPE), GGUF_TYPE_INT32, hDict->toktypes, hDict->n_vocab);
+    if (hDict->tokenizer_name == "gpt2"){
+        const char* sMERGES = kv(LLM_KV_TOKENIZER_MERGES);
+        gguf_set_val_u32(fctx, sMERGES,  hDict->merges_keyidx              );
+        keyidx = gguf_find_key(fctx, sMERGES);      //only for debug
+        assert(hDict->merges.size()==hDict->n_merges);
+        string word = hDict->merges[0];
+        gguf_set_arr_str(fctx, sMERGES, hDict->merges.data(), hDict->n_merges);
+        for (int i = 0; i < hDict->n_merges; i++) {        //only for debug
+            const std::string word = gguf_get_arr_str(fctx, keyidx, i);
+            GGML_ASSERT(unicode_cpts_from_utf8(word).size() > 0);            
+        }
+    }    
+    
+    gguf_set_val_u32(fctx, kv(LLM_KV_TOKENIZER_BOS_ID), hDict->special_bos_id);
+    gguf_set_val_u32(fctx, kv(LLM_KV_TOKENIZER_EOS_ID), hDict->special_eos_id);
+    // gguf_set_val_u32(fctx, kv(LLM_KV_TOKENIZER_UNK_ID), hDict->special_unk_id);      -1
+    // gguf_set_val_u32(fctx, kv(LLM_KV_TOKENIZER_SEP_ID), hDict->special_sep_id);      -1
+    // gguf_set_val_u32(fctx, kv(LLM_KV_TOKENIZER_PAD_ID), hDict->special_pad_id);      -1
+    gguf_set_val_f32(fctx, kv(LLM_KV_ROPE_SCALE_LINEAR),           1.0f / hparams.rope_freq_scale );
+    gguf_set_val_u32(fctx, kv(LLM_KV_DICT_LATENT_DIM),             latent_dim                       );    
+    //more maybe from llama_chat_apply_template
+
+
+    for(auto ps : optParams) {            
+        gguf_add_tensor(fctx, ps);
+    } 
+    _INFO("JModel n=%d\t",optParams.size());
+    
+
+    const bool only_meta = false;
+    gguf_write_to_file(fctx, filename.c_str(), only_meta);
+    gguf_free(fctx);
+
+    size_t fsize = F_SIZE(filename.c_str());
+    _INFO("\n[save] @\"%s\" fsize=%gM\n",filename.c_str(),fsize/1.0e6);
+}
+*/
+bool Fish::LoadTrain(int flag) { 
+    assert(hOPT!=nullptr);
+    int64_t iter = hOPT->iter;  //     train->opt->iter;
+    _INFO("%s: ......", __func__);
+
+    auto fpCheck = hparams.save.checkpoint_in;
+    if (fpCheck.empty()){
+        _INFO("\r[LoadTrain] failed!  please set checkpoint path @\"checkpoint-in\"\n" );
+        return false;
+    }
+               
+    if(!GGUF_Serialize(fpCheck,false,0x0))
+        return false;
+    assert( vendor == "gruai" );
+    _INFO("\r[LoadTrain] OK @\"%s\"\n",fpCheck.c_str() );
+    return true;
+}
 void Fish::Statistic(int typ, int flag)     {   
     string suffix="", prefix="\t"; 
     auto gf = hForwTG->raw(),gb = hBackTG==nullptr? nullptr : hBackTG->raw();
@@ -244,7 +435,7 @@ int Fish::BuildGraphFromRaw(int flag)   {
             (hparams.common.use_checkpointing ? 3 : 2)*(GGML_OBJECT_SIZE+ggml_graph_overhead_custom(LLAMA_TRAIN_MAX_NODES, true));
     ctx_build = ggml_init(ctx_compute_params);
     
-    struct ggml_cgraph *gf = GetRawGraph( ctx_build,false ),*gb=nullptr;
+    struct ggml_cgraph *gf = BuildRawGraph( ctx_build,false ),*gb=nullptr;
     // preLogits = gf->nodes[gf->n_nodes - 1]; // the output is always the last tensor in the graph
     if(1){        
         alloc = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
@@ -543,9 +734,9 @@ size_t EDGE_DEVICES::Alloc(struct ggml_context *ctx,int flag)    {
 bool EDGE_DEVICES::Build(bool isX,int flag)  {
     string sTp = hFish->hparams.KV({"train","device"},"");
     auto& train_params = hFish->hparams.common;
-    struct ggml_cgraph *cgraph = hFish->hBackTG->raw();
+    struct ggml_cgraph *cgraph = hFish->GetBackRaw();   
     if(cgraph==nullptr){        //  OnlyInfer
-        cgraph = hFish->hForwTG->raw();
+        cgraph = hFish->GetForwRaw();
     }
     size_t max_work_size = 0;
     
@@ -623,7 +814,7 @@ bool EDGE_DEVICES::Build(bool isX,int flag)  {
 
 bool Fish::ComputePlan(int flag) {
     auto& train_params = hparams.common;
-    struct ggml_cgraph *cgraph = hBackTG->raw();
+    struct ggml_cgraph *cgraph = GetBackRaw();
     if(cgraph==nullptr){        //  OnlyInfer
         cgraph = hForwTG->raw();
     }

@@ -73,12 +73,6 @@ SelfAttention::SelfAttention(Fish* hG_,const std::string&key_,JSON::const_iterat
 }
 
 bool SelfAttention::Build(int flag)   {
-    /*layer->Q.BuildX(_NAM_("block.%d.Q",il),{n_embd, n_embd},0x0);                layer->Q.sT="q";
-            layer->K.BuildX(_NAM_("block.%d.K",il),{n_embd, n_embd_gqa},0x0);            layer->K.sT="k";
-            layer->V.BuildX(_NAM_("block.%d.V",il),{n_embd, n_embd_gqa},0x0);            layer->V.sT="v";
-            Qcur = layer->Q.Forward(ctx_,cur,0x0);       
-            Kcur = layer->K.Forward(ctx_,cur,0x0);       
-            Vcur = layer->V.Forward(ctx_,cur,0x0);*/
     SHAPE sp={shape[0],shape[1]};
     norm.BuildX(name+".norm",{shape[0]},hOrg,0x0);        
     Q.BuildX(name+".Q",sp,hOrg,flag);          
@@ -127,14 +121,34 @@ hGensor SelfAttention::MyAttention(struct ggml_context * ctx_,hGensor cur,int fl
         gTN(Qcur,"%s.Q4",name.c_str());         gTN(Kcur,"%s.K4",name.c_str());         //gTN(Vcur,"%s.V4",name.c_str()); 
     }
 
-    q = ggml_permute(ctx_, Qcur, 0, 2, 1, 3);   //eh,ctx,h,b
-    k = ggml_permute(ctx_, Kcur, 0, 2, 1, 3);  
+    if(tpTrans==LINEAR && 0){   //  ???
+        attn_k = Permute(ctx_,Kcur, 1, 2, 0, 3);
+        attn_q = Permute(ctx_,Qcur, 0, 2, 1, 3);     
+        // attn_k = ggml_permute(ctx_, Kcur, 1, 2, 0, 3);         attn_q = ggml_permute(ctx_, Qcur, 0, 2, 1, 3);  
+        // gTN0(attn_q,"%s.q",name.c_str());        gTN0(attn_k,"%s.k",name.c_str());  
+        // attn_q = ggml_cont(ctx_,attn_q);        gTN(attn_q,"%s.qc",name.c_str());      
+        // attn_k = ggml_cont(ctx_,attn_k);        gTN(attn_k,"%s.kc",name.c_str()); 
+        isLinear = true;
+        return nullptr;
+    }
+    q = Permute(ctx_,Qcur, 0, 2, 1, 3);     k = Permute(ctx_,Kcur, 0, 2, 1, 3);        
     struct ggml_tensor * kq = ggml_mul_mat(ctx_, k, q);        //cb(kq, "kq", il);        
     switch(tpTrans){    //Get markov transition matrix from KQ
+    case LINEAR:
+        kq = ggml_scale(ctx_,kq,kq_scale);    gTN(kq,"%s.kqs",name.c_str()); 
+        break;
     case RELU2:
         kq = ggml_silu(ctx_,kq);                        gTN(kq,"%s.r2_0",name.c_str()); 
         kq = ggml_mul(ctx_,kq,kq);                      gTN(kq,"%s.r2_1",name.c_str()); 
         kq = ggml_scale(ctx_,kq,(1.0f/n_embd_head));    gTN(kq,"%s.r2_2",name.c_str()); 
+        break;
+    case RELU_:     //slower <0.38->0.68>@Epoch_161
+        kq = ggml_silu(ctx_,kq);                        gTN(kq,"%s.r_0",name.c_str()); 
+        kq = ggml_scale(ctx_,kq,kq_scale);    gTN(kq,"%s.r_1",name.c_str()); 
+        break;
+    case SIGMOID:
+        kq = ggml_sigmoid(ctx_,kq);                         gTN(kq,"%s.s_0",name.c_str()); 
+        kq = ggml_scale(ctx_,kq,1.0/float(n_embd_head+1.0));                  gTN(kq,"%s.s_1",name.c_str()); 
         break;
     case SOFT_MAX:
     default:    //
@@ -148,8 +162,8 @@ hGensor SelfAttention::MyAttention(struct ggml_context * ctx_,hGensor cur,int fl
         break;  
     }
   
-    gTN(kq,"%s.kq_soft_max_ext",name.c_str());            //cb(kq, "kq_soft_max_ext", il);  
-    gTN0(q,"%s.q",name.c_str());         gTN0(k,"%s.k",name.c_str());  
+    gTN(kq,"%s.kq_attn",name.c_str());            //cb(kq, "kq_soft_max_ext", il);  
+    
     return kq;
 }
 
@@ -287,13 +301,16 @@ GatedAttention::GatedAttention(Fish* hG_,const std::string&key_,JSON::const_iter
     auto& hparams = hG_->hparams;
     shape = {n_embd,n_ff};
     tpTrans = RELU2;
+    // tpTrans = LINEAR;
+    if(jvals.size()>0)
+        tpTrans = (TRANSITION_MODE)(jvals[0]);
 }
 bool GatedAttention::Build(int flag)   {
     norm.BuildX(name+".norm",{shape[0]},hOrg,0x0);        //layer->ffn_norm.sT="f";
     upU.BuildX(name+".upU",{shape[0],shape[1]},hOrg,flag);   
     upV.BuildX(name+".upV",{shape[0],shape[1]},hOrg,flag);     
     down.BuildX(name+".down",{shape[1],shape[0]},hOrg,flag);           
-    if(1){
+    if(attn_mode>0){
         SHAPE sp={n_embd,n_embd};
         Q.BuildX(name+".Q",sp,hOrg,flag);          
         K.BuildX(name+".K",sp,hOrg,flag);              
@@ -309,16 +326,16 @@ hGensor GatedAttention::Forward(struct ggml_context * ctx_,hGensor inpL,int flag
     
     hGensor cur = norm.Forward(ctx_,inpL,0x0),attn=nullptr;    
     gTN(cur,"%s.gau_norm",name.c_str());      // cb(cur, _NAM_("ffn_norm"), il); 
-    // attn = MyAttention(ctx_,cur,0x0);       //  [c,c,H,B]   
-    // cur = up.Forward(ctx_,cur,0x0);    
+    if(attn_mode>0)
+        attn = MyAttention(ctx_,cur,0x0);       //  [c,c,H,B]   
+       
     hGensor Ucur = upU.Forward(ctx_,cur,0x0);  
     hGensor Vcur = upV.Forward(ctx_,cur,0x0);  
-    hGensor u = ggml_silu(ctx_, Ucur); 
-    hGensor v = ggml_silu(ctx_, Vcur);    
+    hGensor u = ggml_silu(ctx_, Ucur);          gTN(u,"%s.u",name.c_str()); 
+    hGensor v = ggml_silu(ctx_, Vcur);          gTN(v,"%s.v",name.c_str()); 
     
-    if(attn!=nullptr){  //https://zhuanlan.zhihu.com/p/475393475
-        v = ggml_mul_mat(ctx_,attn, v);
-    }
+    v = vXattn(ctx_, v,attn,0x100);        
+    
  
     hGensor uv = ggml_mul(ctx_,u,v);
     cur = down.Forward(ctx_,uv,0x0);
@@ -327,15 +344,49 @@ hGensor GatedAttention::Forward(struct ggml_context * ctx_,hGensor inpL,int flag
     cur = AfterForward(ctx_,cur,flag);
     return cur;
 }
-
 string GatedAttention::__repr__( string& suffix,string& prefix,int flag)    {
     char buf[5012]="\0";
     const char*tab=prefix.c_str();
-    sprintf(buf+strlen(buf),"%s {GatedAttention }",tab);    
+    sprintf(buf+strlen(buf),"%s {GatedAttention attn_mode=(%d trans=%d)}",tab,attn_mode,tpTrans);    
     if(flag>0)
         _INFO("%s",buf); 
     return buf;  
 };
+
+hGensor SelfAttention::vXattn(struct ggml_context *ctx_, hGensor v,hGensor attn,int flag){
+    float kq_scale = 1.0f/sqrtf(float(n_embd_head)),s;
+    if(attn==nullptr){
+        if(isLinear){
+            assert(attn_k!=nullptr && attn_q!=nullptr);
+        }else
+            return v;
+    }
+    if(flag=0x100){ //2d=>4d
+        v = ggml_reshape_4d(ctx_, v, n_embd_head, n_head, n_ctx,n_batch);
+        v = ggml_cont(ctx_,ggml_permute(ctx_, v, 1, 2, 0, 3));
+    }
+    gTN(v,"%s.v4",name.c_str()); 
+    hGensor attnv = nullptr;
+    if(attn==nullptr){
+        hGensor vk = ggml_mul_mat(ctx_, v,attn_k);
+        gTN(vk,"%s.vk",name.c_str());   vk = ggml_scale(ctx_,vk,kq_scale);
+        vk = ggml_cont(ctx_, vk);           
+        attnv = ggml_mul_mat(ctx_, vk,attn_q);
+        
+    }else
+        attnv = ggml_mul_mat(ctx_, v,attn);
+    gTN(v,"%s.vattn",name.c_str()); 
+    hGensor v_merged = ggml_permute(ctx_, attnv, 0, 2, 1, 3); // eh,h,ctx,b
+    gTN0(v_merged,"%s.vehcb",name.c_str());            //cb(kqv_merged, "kqv_merged", il);
+    if(0){   //  back gradient is zero
+        //cur = ggml_cont_2d(ctx_, kqv_merged, n_embd_head_v*n_head, n_tokens);
+    }else{
+        hGensor kqv_out = ggml_cont(ctx_, v_merged);              
+        v = ggml_reshape_2d(ctx_, kqv_out, n_embd, n_tokens);              
+    }        
+    gTN0(v,"%s.kqv_merged_cont",name.c_str());//cb(cur, "kqv_merged_cont", il);
+    return v;
+}
 
 /*
 BROWN_v0::BROWN_v0(Fish* hG_,const std::string&key_,JSON::const_iterator jit,int flag) : SelfAttention(hG_,key_,jit,flag)     {

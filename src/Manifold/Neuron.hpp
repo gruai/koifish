@@ -180,13 +180,16 @@ class RevNet : public GeNeuron{
 
 class SelfAttention : public GeNeuron  {
 protected:
-    int tpNormal=1;
-    
+    int tpNormal=1,n_ff=0;
+    bool isLinear = false;
 
     //markov transition matrix from KQ
     enum TRANSITION_MODE{
         SOFT_MAX=0,
-        SIGMOID=1,  RELU2=2
+        SIGMOID=1,  
+        RELU2=2,
+        RELU_=3,
+        LINEAR=4,
     };
 
     // 1 linear(No softmax!) 2 sim(q,k)>=0
@@ -204,16 +207,17 @@ protected:
 
     bool isAttOnBC = false;     //  // Nearly same. If true,attenion on all tokens, memory would explode!
     bool isRope = true;
+    hGensor attn_k=nullptr,attn_q=nullptr;
     // int n_rot=-1;
     // hGensor W_rope(struct ggml_context *ctx ,hGensor cur,hGensor w,hGensor KQ_pos,SHAPE shape,const string&shortcut,int flag=0x0);
     hGensor MyAttention(struct ggml_context * ctx_,hGensor inpL,int flag);
-    
+    hGensor vXattn(struct ggml_context *ctx, hGensor v,hGensor attn,int flag);
     float f_norm_rms_eps, rope_freq_base, rope_freq_scale;
 public:
     bool use_cache = false;
     bool isLast = false;
     float f_max_alibi_bias;
-    int n_head_kv,n_embd_gqa,n_tokens,n_ff;
+    int n_head_kv,n_embd_gqa,n_tokens;
     hGensor KQ_pos=nullptr,KQ_mask=nullptr;
     LayerNormal norm;
     SLP Q, K, V;
@@ -236,6 +240,7 @@ public:
 */    
 struct GatedAttention : public SelfAttention  {    
 protected:
+    int attn_mode = 1;
     SLP down,upU,upV;
 public:
     GatedAttention() {}

@@ -38,8 +38,10 @@ struct WIKI {
         _LOGITS_GATE,
     };
     std::string title="",tokenizer_name,model_path; 
+    shared_ptr<Fish> hFish=nullptr;
     void *vocab = nullptr;
     int32_t bos=1,eos=2;   
+    string sBos,sEos;
     INDUCT_MODE teach=_LOGITS;
     bool isOnlyTokenizer = false;
     size_t n_vocab = 0, nOutToken = -1,nEleGGUF = 0;
@@ -76,6 +78,7 @@ struct WIKI {
     virtual string __repr__( string& suffix,string& prefix,int flag=0x0)    {   assert(0); return "";      };
 
     WIKI();
+    // WIKI(CLI_params& hparams,const std::string&path_,int flag=0x0);
     virtual ~WIKI() {}
 
     virtual void CopyParams(CLI_params& params,int flag=0x0)     {   assert(0); return;      };
@@ -100,9 +103,11 @@ protected:
     //compatible with LLAMA.cpp
     gpt_params params;
     CLI_params hparams;
+    MODEL_ARCH _arch = MODEL_ARCH::_X_;
 
     std::string prompt = "";
-    int ga_n,ga_w;
+    int ga_n=-1,ga_w=-1;
+    int32_t bos=1,eos=2;  
     int n_predict = 160;
     bool is_antiprompt        = false;  
     bool input_echo           = true;
@@ -110,6 +115,7 @@ protected:
     struct llama_sampling_params sparams;
     llama_model * model = nullptr;
     llama_context * ctx = nullptr;
+    int n_ctx=-1,n_ctx_train=-1;
     llama_context * ctx_guidance = NULL;
     struct llama_sampling_context * ctx_sampling = NULL;
     std::string path_session = params.path_prompt_cache;
@@ -143,6 +149,7 @@ public:
     std::vector<llama_token> inp_pfx,inp_sfx,cml_pfx,cml_sfx;
     int guidance_offset = 0;
     int original_prompt_len = 0;
+    virtual void InitEmbdInput(int flag=0x0);
 
     virtual int Tokenize(int flag=0x0) {
         const int n_ctx = llama_n_ctx(ctx);       
@@ -150,11 +157,7 @@ public:
         const bool add_bos = llama_add_bos_token(model);        // CYS_0826      
         LOG("add_bos: %d\n", add_bos);
         if (params.interactive_first /*|| params.instruct || params.chatml*/ || !params.prompt.empty() || session_tokens.empty()) {
-            LOG("tokenize the prompt\n");
-            // if (params.chatml) {
-            //     params.prompt = "<|im_start|>system\n" + params.prompt + "<|im_end|>";
-            // }
-            embd_inp = ::llama_tokenize(ctx, params.prompt, add_bos, true);
+            InitEmbdInput();
         } else {
             LOG("use session tokens\n");
             embd_inp = session_tokens;

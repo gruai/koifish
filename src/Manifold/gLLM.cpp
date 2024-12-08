@@ -9,6 +9,7 @@
 
 #include "gLLM.hpp"
 #include "Cache.hpp"
+#include "Fish.hpp"
 #include "../g_stddef.hpp"
 
 static const char * LLM_KV_TRAINING_TYPE_TRAIN_MODEL     = "train_model";
@@ -25,7 +26,7 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_,int flag)     {
         return false;
 
     if(wikis.size()==0){
-        _INFO("====== NO WIKI !!! ======\n");       return false;
+        _INFO("====== NO WIKI !!! ======\n");       //return false;
     }else{
         teach = lama()->teach;  
     } 
@@ -36,6 +37,7 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_,int flag)     {
     assert(ctx_build==nullptr);
     ctx_build = InitCTX(MostMemSize(0x0));
     hEDS = std::make_shared<EDGE_DEVICES>(this,ctx_build);
+    hOPT->hEDS = hEDS;
     // ctx = ggml_init(ctx_model_params);
     
     InitModel(flag);
@@ -45,7 +47,7 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_,int flag)     {
         assert(bRet);
     }
 
-    save_data.Init(hparams,GetRawModel());
+    // save_data.Init(hparams,GetRawModel());
     if(hOPT!=nullptr)   {
         hOPT->Dump(1);
     }   
@@ -94,7 +96,7 @@ string NLP_AutoRegressive::__repr__( string& suffix,string& prefix,int flag)    
     // Fish::__repr__(suffix,prefix,flag);
     char buf[5012]="\0";
     const char*tab=prefix.c_str();
-    auto gb=hBackTG->raw(), gf=hForwTG->raw();;
+    auto gb=GetBackRaw(), gf=hForwTG->raw();;
     sprintf(buf+strlen(buf),"\n%s(%s):nParams = %ld(%.6gM)",tab,name.c_str(),nParams,nParams/1.0e6);
     if(gb!=nullptr)
         sprintf(buf+strlen(buf),"\n%s  tensors=%ld %s=(%d %d)  %s=(%d %d) ffn_use_gate=%d",tab, gensors.size(),
@@ -185,23 +187,6 @@ string MutliCoder::__repr__( string& suffix,string& prefix,int flag)   {
     if(flag>0)
         _INFO("%s",buf); 
     return buf;
-}
-
-
-
-static void save_checkpoint_file(const char * filename, const char * fn_model_base, struct llama_model * model, struct train_state * train) {
-    _INFO("%s: saving to %s\n", __func__, filename);
-    struct gguf_context * fctx = gguf_init_empty();
-
-    // save_checkpoint_gguf(fctx, fn_model_base, model, train);
-    gguf_set_val_str(fctx, LLM_KV_TRAINING_TYPE, LLM_KV_TRAINING_TYPE_TRAIN_MODEL);
-    // save_llama_model_gguf(fctx, fn_model_base, model);
-    save_train_state_gguf(fctx, train);
-
-    // write file
-    const bool only_meta = false;
-    gguf_write_to_file(fctx, filename, only_meta);
-    gguf_free(fctx);
 }
 
 // void save_llama_model_file(const char * filename, const char * fn_model_base, struct llama_model * model) {
@@ -463,12 +448,11 @@ void NLP_AutoRegressive::CopyWeight(const Fish* src,int flag) {
 
 /*
     would affect training process?
-    hOPT->Compute would merge wiki->preLogits! (REF: SampLoader::update_batch)
 */
 bool NLP_AutoRegressive::LocalFeeling(std::vector<TOKEN_ID>&samp_tokens,vector<float>& result)  const {
-    assert(target_probs->type == GGML_TYPE_F32);
+    // assert(target_probs->type == GGML_TYPE_F32);
     float *fLoss = (float*)(loss->data);    
-    auto gf = hForwTG->raw(),gb = hBackTG->raw();
+    auto gf = GetForwRaw(),gb = GetBackRaw();
     TOKEN_ID token;
     ggml_set_i32_nd(tokens_input, 0, 0, 0, 0, hDict->bos);
     size_t i,N=samp_tokens.size(),n_context=tokens_input->ne[0],nSampInBatch=tokens_input->ne[1];
@@ -477,7 +461,7 @@ bool NLP_AutoRegressive::LocalFeeling(std::vector<TOKEN_ID>&samp_tokens,vector<f
     assert(N>=0 && N<=n_context);     
     // assert(nSamp==1 && nSamp<=nSampInBatch);
     for(i=0;i<N;i++)  {
-        token = samp_tokens[i];
+        token = samp_tokens[i];         assert(token>=0&&token<hDict->n_vocab);
         ggml_set_i32_nd(tokens_input, (int) (i + 1), (int) 0, 0, 0, token);
     }
    
@@ -616,10 +600,11 @@ std::string LAMA::T2STR( int32_t tok,int flag )                    {
 }
 
 std::string NLP_AutoRegressive::T2STR( const std::vector<TOKEN_ID>& toks,int flag )                    { 
-    LAMA *lam = lama( );  
     std::string str = "";
     for(auto tok : toks){
-        std::string a = lam->T2STR(tok,flag);
+        if(tok==hDict->eos)
+            break;
+        std::string a = hDict->T2STR(tok,flag);
         str += a;
     }
     
@@ -739,8 +724,14 @@ void LAMA::Answer(std::vector<TOKEN_ID>&embd_inp,int flag) {
     _INFO("%s => \"%s\"",__func__,token_str.c_str());
 }
 
+//  
+LAMA2FISH::LAMA2FISH(CLI_params& hparams,const std::string&path_,int flag)    {
+    hFish = std::make_shared<Fish>();
+    hFish->LoadTrain();
+}
+
 #include "llama-vocab.h"
-LAMA::LAMA(CLI_params& hparams,const std::string&path_)     {
+LAMA::LAMA(CLI_params& hparams,const std::string&path_,int flag)     {
     // cparams.flash_attn = true;           //would affect accuracy
     model_path = path_;
     llama_model_params.n_gpu_layers = hparams.common.n_gpu_layers;
@@ -773,9 +764,9 @@ LAMA::LAMA(CLI_params& hparams,const std::string&path_)     {
         _cache = llama_internal_get_kvcache(_ctx );
         // const auto & cp_ = _ctx->cparams;
 
-        bos = llama_token_bos(llama_get_model(_ctx));
-        eos = llama_token_eos(llama_get_model(_ctx));
-        std::string sBos = llama_token_to_piece(_ctx, bos),sEos = llama_token_to_piece(_ctx, eos);
+        bos = llama_token_bos(llama_get_model(_ctx));       //  1
+        eos = llama_token_eos(llama_get_model(_ctx));       //  2
+        sBos = llama_token_to_piece(_ctx, bos),sEos = llama_token_to_piece(_ctx, eos);  //<s>   </s>
         struct llama_vocab *hvocab = new struct llama_vocab();
         if(llama_model2vocb_(lmodel,hvocab,0x0))    {
             vocab = hvocab;
@@ -811,10 +802,11 @@ LAMA::LAMA(CLI_params& hparams,const std::string&path_)     {
 
 bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
     void *hLLM = nullptr;
-    string type = hparams.KV({"dict","type"});
+    
     switch(hparams.ModelArch()){
     case MODEL_ARCH::NLP_GPT2:
-        if(type=="char"){
+    case MODEL_ARCH::NLP_GPT2_char:
+        if(hparams.ModelArch()==MODEL_ARCH::NLP_GPT2_char){
             hDict = std::make_shared<CDict_CHAR>(this);
             hDict->LoadVocab("",0x0); 
         }else{
@@ -833,21 +825,24 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
         if(lama()!= nullptr)  {   
             hDict->LoadVocab(lama()->model_path.c_str(),0x0); 
             hDict->bos = lama()->bos;             hDict->eos = lama()->eos;  
+            hLLM = lama()->lmodel;
         }
-        hTokenset = std::make_shared<DataTokenSet>(hDict.get());
-        hLLM = lama()->lmodel;
+        hTokenset = std::make_shared<DataTokenSet>(hDict.get());        
         break;
     }
         
-    
-    if(!hTokenset->Load(hparams,hLLM,0x0)){
-        _ERROR("\n======== %s Failed to load tokenset!========\n",__func__);
-        return false;
-    };
-    hDict->mapT2T = hTokenset->mapT2T;      hDict->dialect = hTokenset->dialect;
-    for(auto wiki : wikis){
-        wiki->mapT2T = hDict->mapT2T;       wiki->dialect = hDict->dialect;
-    }            
+    if(hparams.isOnlyGPT){
+
+    }else{
+        if(!hTokenset->Load(hparams,hLLM,0x0)){
+            _ERROR("\n======== %s Failed to load tokenset@%s!========\n",__func__,hparams.fp_train_data.c_str());
+            return false;
+        };
+        hDict->mapT2T = hTokenset->mapT2T;      hDict->dialect = hTokenset->dialect;
+        for(auto wiki : wikis){
+            wiki->mapT2T = hDict->mapT2T;       wiki->dialect = hDict->dialect;
+        }       
+    }     
     if(isTrain()){
 
     }
@@ -896,8 +891,8 @@ void LAMA::CopyParams(CLI_params& hparams,int flag)    {
     hparams.n_layer_train = llama_params.n_layer;
     hparams.n_embd = llama_params.n_embd;   //would change @ConsiceDict
     for(int i=0;i<hparams.n_layer_train;i++){
-        int h0=llama_params.n_head(i),kv0=llama_params.n_head_kv(i),ff0=llama_params.n_ff(i);
-        hparams.layerps.push_back(LAY_PARAM(h0,kv0,ff0));
+        // int h0=llama_params.n_head(i),kv0=llama_params.n_head_kv(i),ff0=llama_params.n_ff(i);
+        // hparams.layerps.push_back(LAY_PARAM(h0,kv0,ff0));
     }
     hparams.n_embd_head_k = llama_params.n_embd_head_k;
     hparams.n_embd_head_v = llama_params.n_embd_head_v;
@@ -916,7 +911,7 @@ void LAMA::CopyParams(CLI_params& hparams,int flag)    {
     hparams.n_expert = llama_params.n_expert;
     hparams.n_expert_used = llama_params.n_expert_used;
 
-    hparams.JModel2Params(0);
+    // hparams.JModel2Params(0);
 }
 
 string LAMA::__repr__( string& suffix,string& prefix,int flag)    {
@@ -1062,14 +1057,14 @@ bool NLP_AutoRegressive::CreateExlogists(hWIKI wiki,uint32_t n_ctx,uint32_t n_ba
 }
 
 void NLP_AutoRegressive::Train(int flag)       {
-    hOPT->BeforeTrain(lama()->_ctx,hparams.common,tokens_input,0x0);
+    hOPT->BeforeTrain(hparams.common,tokens_input,0x0);
     if(!hOPT->PrepareData( hparams,flag ))
         return;
        
     GST_TIC(t0);
-    print_build_info();           
-    // assert(ctx_work!=nullptr);
-    // SaveTrain(&save_data, nullptr);      //warmup save
+    print_build_info();
+    
+    SaveTrain("warmup" );      //warmup save
     enum ggml_opt_result result = hOPT->Search(ctx_work,loss,target_probs,hparams);     
     if(ctx_work!=nullptr)  ggml_free(ctx_work);
     ggml_free(ctx_build);
@@ -1079,7 +1074,7 @@ void NLP_AutoRegressive::Train(int flag)       {
     _INFO("%s: total training time: %.3g\n", __func__,GST_TOC(t0) );
 }
 
-struct ggml_cgraph *NLP_AutoRegressive::GetRawGraph( struct ggml_context * ctx_,bool isBuild,int flag)       { 
+struct ggml_cgraph *NLP_AutoRegressive::BuildRawGraph( struct ggml_context * ctx_,bool isBuild,int flag)       { 
     llama_model *model = GetRawModel( );
     assert(model!=nullptr);
     struct ggml_cgraph *gf_raw = ggml_new_graph_custom(ctx_, LLAMA_TRAIN_MAX_NODES, true);      ;
@@ -1100,7 +1095,8 @@ bool NLP_AutoRegressive::Build(int flag)      {
         return false;
     int iRet = 0x0;
     bool isInitParam = false, isJModel = !hparams.jModel.empty();
-    if(hparams.is({"gpt","c_graph"},string("raw")) || hparams.ModelArch()==MODEL_ARCH::NLP_GPT2){  //only for debug
+    if(hparams.is({"gpt","c_graph"},string("raw")) || hparams.ModelArch()==MODEL_ARCH::NLP_GPT2 
+        || hparams.ModelArch()==MODEL_ARCH::NLP_GPT2_char){  //only for debug
         isInitParam = true;
         // int iRet = _llama_build_graph(GetRawModel(),&gf,&gb,0x0);          //bug
         iRet = BuildGraphFromRaw(0x0);
@@ -1323,3 +1319,4 @@ void NLP_AutoRegressive::LoadTensors(struct llama_model * lama,int flag) {
     }
 
 }
+

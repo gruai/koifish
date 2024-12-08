@@ -19,6 +19,8 @@ Implements:
 // #include "Dictionary.hpp"
 struct ConsiceDict;
 #include "../CLI_params.hpp"
+
+using namespace std;
 // ----------------------------------------------------------------------------
 // implementation of glob for Windows is in dev/unistd.h
 #ifndef _WIN32
@@ -145,7 +147,7 @@ protected:
     std::map<TOKEN_ID, TOKEN_ID> mapT2T;
     std::vector<TOKEN_ID> dialect;
     std::string fpath;
-    size_t fsize=0,nUnique=0,nVocab=0,nDialect=0,nTokens;
+    size_t fsize=0,nUnique=0,nVocab=0,nDialect=0;
     
 
     void seek(FILE *fp,size_t offset, int whence) {
@@ -161,11 +163,7 @@ public:
     std::vector<TOKEN_ID> tokens;
     DataTokenSet(ConsiceDict *hDict);
 
-    TOKEN_ID At(size_t pos){
-        assert(pos<nTokens);
-        int32_t token = clamp(tokens[pos], 0, (nVocab - 1));
-        return token;
-    }
+    TOKEN_ID At(size_t pos);
 
     bool Serialize(const std::string&path,  bool isSave, int flag=0x0);
     
@@ -225,12 +223,12 @@ typedef SAMP* hSAMP;
 class SampLoader   {
 protected:  
     int tokens_per_iter = 0;
-    CLI_params hparams;
+    // CLI_params hparams;
     std::string fp_data;
     std::string sentence="";
     std::vector<int32_t> tok_ids;
     bool sample_separation_eos,sample_separation_bos;
-    size_t n_ctx=-1;
+    // size_t _nctx=-1;
     std::vector<hSAMP> all_samps;
     // std::vector<size_t> idcs;      //would change epoch by epoch(shuffle,subsampling...)
     int64_t N4Train() {
@@ -239,17 +237,19 @@ protected:
     }   
     std::shared_ptr<ConsiceDict> hDict=nullptr;
     bool isTarget_1 = false;
+    bool isFixEvalSample = true;        // Need fix this to do some experiments
     mt19937_state shuffle_rng_state_current;
     mt19937_state shuffle_rng_state_next;
     size_t shuffle_sample_count=0,next_sample=0;
 
-    NLP_AutoRegressive *lama=nullptr;
+    NLP_AutoRegressive *dolphin=nullptr;
 public:
+    std::string name;
     int64_t len() {
         return all_samps.size();
     }
     size_t nTokens()    {
-        return tokens->nTokens;
+        return hTokens->tokens.size();
     }
     hSAMP SampAt(size_t idx_){
         assert(idx_<N4Train());
@@ -257,14 +257,14 @@ public:
         // assert(id<len());
         return all_samps[idx_];
     }
+    vector<TOKEN_ID>& GetTokens()    {  return hTokens->tokens; }
 
     int32_t TokenAt(size_t pos){
-        return tokens->At(pos);
-        /*size_t nToken = tokens.size();
-        assert(pos<nToken);
-        int32_t token = clamp(tokens[pos], 0, (n_vocab - 1));
-        return token;*/
+        return hTokens->At(pos);
     }
+    std::vector<std::string> curDeTexts;
+    virtual hSAMP InitOneSamp(const string &prompt,struct ggml_tensor *input,int flag=0x0);
+    virtual double DecodeVerify(struct ggml_tensor *tokens,struct ggml_tensor *logits,int flag=0x0);
     void Samp2Batch(int k,hSAMP samp,struct ggml_tensor *tokens_input,struct ggml_tensor *target_probs,struct train_params_common& params,int flag=0x0);
 
     enum TYPE{
@@ -277,14 +277,13 @@ public:
     std::string batch_sample;
     //compatible with train_opt_callback_data@LLAMA.cpp
     struct train_opt_callback_data callback_data;   
-    size_t n_vocab = 0 ;
+
     int num_batches;    //number of batchs in each epoch
 
     train_state *train=nullptr;
-    //token source
-    hDataToken tokens = nullptr;      
-    // std::vector<TOKEN_ID> tokens;
-    // size_t n_unique_tokens=0;
+    //token source, in some case, only need lite vector
+    hDataToken hTokens = nullptr; 
+    // std::vector<TOKEN_ID> stokens;
 
     size_t shuffle_samples_hash = 0x0;
 
@@ -317,7 +316,7 @@ public:
     int64_t file_size_bytes;
 
     SampLoader( )   {}
-    virtual void Init(NLP_AutoRegressive *g_,int flag=0x0 ) ;
+    virtual void Init(NLP_AutoRegressive *g_,const string&n,int flag=0x0 ) ;
     virtual void Prepare(Optimizer *hOPT_,int flag=0x0 ) ;    
 
     virtual ~SampLoader( ) {

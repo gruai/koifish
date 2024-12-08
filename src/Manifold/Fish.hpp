@@ -157,19 +157,6 @@ struct QKV_Motion : public BROWN_Motion    {
     hGensor vXkq(struct ggml_context *ctx, hGensor v,hGensor kq,int layer_id);
     hGensor Build(struct ggml_context *ctx, hGensor t04, hGensor KQ_pos)    override;
 };
-struct save_train_model {
-    std::string fn_checkpoint_out,fn_model_out,fn_model_base,pattern_fn_it,fn_latest;
-    // struct llama_model * model=nullptr;
-    void * model=nullptr;
-
-    virtual void Init(CLI_params&params,void * model_,int flag=0x0)   {
-        fn_checkpoint_out = params.common.fn_checkpoint_out;
-        fn_model_out      = params.fn_model_out;
-        pattern_fn_it     = params.common.pattern_fn_it;
-        fn_latest         = params.common.fn_latest;
-        model             = model_;
-    }        
-};
 
 struct MixOfModels{
     bool isRes = true,isSiLU=false;    
@@ -213,7 +200,7 @@ protected:
     // Generate some results on prompt
     hGOPT gopt = nullptr;    
 
-    save_train_model save_data;
+    // save_train_model save_data;
     ggml_gallocr_t alloc;
     hTGraph hForwTG=nullptr,hBackTG=nullptr;                            // compuation graph
     int graph_order=-1;
@@ -242,6 +229,7 @@ protected:
      
     bool updateTMap = false;
     bool isLocalInfer = false;
+    bool isLoadCheckpoint = false;
     bool isBias=false;
 
     std::vector<uint8_t> work_buffer;
@@ -283,6 +271,8 @@ protected:
 
     std::vector<std::string> to_quant, to_skip;
 
+    virtual bool GGUF_Serialize(const std::string&path,  bool isSave, int flag=0x0);
+
 public:    
     struct CLI_params hparams;
     static tpSWARM swarm;
@@ -310,7 +300,14 @@ public:
         return !isLocalInfer;
     }
     bool hasWiki()  {   return wikis.size()>0;  }
-    virtual struct ggml_cgraph *GetRawGraph( struct ggml_context *,bool isBuild,int flag=0x0)    {     return nullptr; }
+    virtual struct ggml_cgraph *BuildRawGraph( struct ggml_context *,bool isBuild,int flag=0x0)    {     return nullptr; }
+    virtual struct ggml_cgraph *GetForwRaw( int flag=0x0)  const  {   assert(hForwTG!=nullptr);  return hForwTG->raw(); }
+    virtual struct ggml_cgraph *GetBackRaw( int flag=0x0)  const  {     
+        if(hBackTG==nullptr){
+            assert(isLocalInfer);   return nullptr;
+        }
+        return hBackTG->raw(); 
+    }
     std::shared_ptr<KVCache> hCache = nullptr;
     // virtual KVCache *GetKVCache()  {   return nullptr;    }
 
@@ -373,8 +370,7 @@ public:
     virtual hGensor Target()    {   return nullptr;    }
     virtual hGensor Output()    {   assert(out_node!=nullptr);   return out_node;    }
     virtual hGensor Input()     {   return nullptr;    }
-    virtual struct ggml_cgraph * ForwarGraph()      {   return hForwTG->cgraph;  }
-    virtual struct ggml_cgraph * BackwardGraph()    {   return hBackTG->cgraph;  }
+
 
     void UpdateTensors(int flag = 0x0)    {
         UNUSED(flag);
@@ -484,13 +480,14 @@ public:
     
     bool OnTrainStep(struct train_opt_callback_data *data0,SampLoader&loader, int accum_step, float *sched, int flag = 0x0);
 
-    virtual int GenSentence(int flag=0x0);
+    virtual int GenSentence(int flag=0x0)   {   return -1;  }
 
     virtual bool ComputePlan(int flag=0x0);
     int BuildGraphFromRaw(int flag);
     hNeuron J2Neuron(struct ggml_context *ctx_build,string&,int level,const JConfig& j,int flag);
     virtual int jToGraph( struct ggml_context *,bool isBuild,int flag=0x0)   ;
 
+    
     virtual void Train(int flag = 0x0);
     virtual void Loss(int flag = 0x0) {}
 
@@ -509,8 +506,10 @@ public:
     static hFISH MakeSwarm(const std::string nam_,struct CLI_params& params,int flag);
     static hFISH MakeInstance(const std::string nam_,struct CLI_params& params,const Fish *hSrc_,int flag);
     // static Fish* Copy(const Fish* src,int flag=0x0);
-    virtual void SaveTrain(struct save_train_model * data, void *user_data,int flag=0x0);
-    virtual void save_gguf(const char * filename, int flag){}
+    virtual bool SaveTrain(string sX,int flag=0x0);
+    virtual bool LoadTrain(int flag=0x0);
+    // virtual void SaveGGUF(const std::string &filename, int flag){}
+    // virtual void LoadGGUF(const std::string &filename, int flag){}
 
     friend class GeNeuron;
     friend class SLP;

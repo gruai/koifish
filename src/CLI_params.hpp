@@ -24,7 +24,7 @@ enum COMPRESSIVE_SENSING    {
 
 enum MODEL_ARCH {
     _X_,
-    NLP_GPT2,
+    NLP_GPT2,       NLP_GPT2_char,
     NLP_LLAMA,
     NLP_MAMBA,
     NLP_MOE,    //???
@@ -68,15 +68,33 @@ struct LAY_PARAM{
         return n_embd/gqa;
     }
 };
+
 struct CLI_params {
-    struct train_params_common common;      
-    
+    struct train_params_common common;  
+    struct SaveModel {
+        std::string checkpoint_in,checkpoint_out;
+        std::string model_out,model_base;
+        
+        //void * model=nullptr;
+
+        /*virtual void Init(CLI_params&params,void * model_,int flag=0x0)   {
+            fn_checkpoint_out = params.common.fn_checkpoint_out;
+            fn_model_out      = params.fn_model_out;
+            pattern_fn_it     = params.common.pattern_fn_it;
+            fn_latest         = params.common.fn_latest;
+            model             = model_;
+        }*/        
+    };    
+    SaveModel save;
+
     //Always false,     GGML don't support back of FLASH_ATTEN !
     bool isFlashAtten()     {   
         common.use_flash=false;  return common.use_flash;  
     }
     uint32_t nLayer()   {
-        return nLayerX<=0 ? n_layer_train : nLayerX;
+        if(nLayerX>0)   return nLayerX;
+        assert(n_layer_train>0);
+        return n_layer_train;
     }
     uint32_t n_ctx()    const    {  return common.n_ctx;  }             //number of tokens in each sample
     uint32_t n_ctx_orig()    const    {
@@ -101,18 +119,19 @@ struct CLI_params {
     std::string exec_name="",test="",compute_graph="";
     std::vector<std::string> fn_model_base;
     //  std::string fn_vocab_model;
-    std::string fn_model_out="",model_title="";
+    std::string model_title="";
     std::string fp_train_data;
     std::string train="";  //"scratch"
+
+    bool isOnlyGPT = false;
+        
     bool only_write_model = false;
     bool ffn_use_gate = false;
     // uint32_t n_vocab = 0;
     // uint32_t n_ctx   = 0;
     uint32_t n_swarm = 1;
     // uint32_t n_outputs = 1;
-    uint32_t n_embd  = -1;  //4096;
-    uint32_t n_embd_head_k = -1; // dimension of keys (d_k). d_q is assumed to be the same, but there are n_head q heads, and only n_head_kv k-v heads
-    uint32_t n_embd_head_v = -1; // dimension of values (d_v) aka n_embd_head
+    int n_embd = -1, n_embd_head_k = -1, n_embd_head_v = -1; 
     std::vector<LAY_PARAM> layerps;
 
     int n_layer_train = -1, nLayerX = -1, nFFX = -1;

@@ -55,8 +55,18 @@ struct ConsiceDict : public VariationaAE    {
         else{
             assert(!mapT2T.empty());
             return mapT2T.size();
+        }               
+    }   
+    virtual std::string T2STR(TOKEN_ID tok,int flag=0x0 );  
+    virtual std::string T2STR(const std::vector<TOKEN_ID>&toks,int flag=0x0 ) {  
+        string line="";
+        for(auto t:toks){
+            if(t==eos)
+                break;
+            line += T2STR(t,flag);
         }
-               
+            
+        return line;
     }   
     std::map<TOKEN_ID, TOKEN_ID> mapT2T;
     std::vector<TOKEN_ID> dialect;
@@ -139,4 +149,5 @@ public:
     void LoadVocab(const char*fn_model_base,int flag)   override;
     int InitMAEC(struct ggml_context *ctx,const std::vector<int>& dims_,int flag=0x0) override;
     int stream2token(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0)    override;
+    std::string T2STR(TOKEN_ID tok,int flag=0x0 ) override;   
 };

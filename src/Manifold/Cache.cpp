@@ -5,11 +5,15 @@
 
 KVCache::KVCache(NLP_AutoRegressive *la_,int max_batch_size, int max_seq_len, int n_kv_heads, int head_dim) : lam_(la_){   
     struct LAMA *lama  = la_->lama();  
-    llama_kv_cache *kv = lama->_cache;  
-    bool isFlash = false;
-    lamakv = kv; 
-    const uint32_t pad = isFlash ? 256u : 32u,cell_max=0;     //llama_kv_cache_cell_max(*cache)
-    kv_n = std::min(kv->size, std::max(pad, GGML_PAD(cell_max, pad)));
+    if(lama==nullptr){
+
+    }else{
+        llama_kv_cache *kv = lama->_cache;  
+        bool isFlash = false;
+        lamakv = kv; 
+        const uint32_t pad = isFlash ? 256u : 32u,cell_max=0;     //llama_kv_cache_cell_max(*cache)
+        kv_n = std::min(kv->size, std::max(pad, GGML_PAD(cell_max, pad)));        
+    }
 }
 
 int KVCache::n_kv(){
