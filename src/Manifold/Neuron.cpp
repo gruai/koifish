@@ -55,7 +55,7 @@ hNeuron GeNeuron::MakeInstance(Fish *hG_,struct ggml_context *ctx,const string& 
     return nn;
 }
 
-GeNeuron::GeNeuron(const std::string &key_,JSON::const_iterator jit, Fish *hG_, int flag) : name(key_), hOrg(hG_),ID(0) {    
+GeNeuron::GeNeuron(const std::string &key_,JSON::const_iterator jit, Fish *hG_, int flag) : name(key_), hFish(hG_),ID(0) {    
 try{   
     Init(hG_,0x0);
 
@@ -74,7 +74,7 @@ try{
 } 
 }
 void GeNeuron::Init(Fish *hG_, int flag) {    
-    hOrg=hG_;   
+    hFish=hG_;   
     auto& hparams = hG_->hparams; 
     n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_embd=hparams.n_embd;
     n_embd_head = hparams.n_embd_head();
@@ -84,7 +84,7 @@ void GeNeuron::Init(Fish *hG_, int flag) {
 
 Ganglia::Ganglia(Fish *hG_,const string& key_,std::vector<hNeuron>& ns_,int flag) : ns(ns_)  {
     name="{"+key_+"}"; 
-    hOrg=hG_;
+    hFish=hG_;
 }
 
 
@@ -110,29 +110,33 @@ hGensor Drop::Forward(struct ggml_context *ctx_,hGensor cur,int flag){
 }
 
 Embed::Embed(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag) : GeNeuron(key_,jit, hG_, flag)    {
-    assert(jvals.size()==2);
-    shape={(int)(jvals[0]),(int)(jvals[1])};
-    assert(shape[1]>0);    
-
+    int nCls = hG_->nClass();
+    if(jvals.size()==2){
+        shape={(int)(jvals[0]),(int)(jvals[1])};
+    }else{
+        shape = {nCls,n_embd};
+    }
+    
+    assert(shape[1]>0);
     isAddPos = type_info[type_info.length()-1] =='+'; 
 }
 bool Embed::Build(int flag){
     assert(shape.size()==2);    
-    struct ggml_context * ctx = hOrg->GetCTX(1);
+    struct ggml_context * ctx = hFish->GetCTX(1);
     int n=shape[0],latent=shape[1];
     if(n<=0){
-        n = hOrg->hparams.n_ctx();
+        n = hFish->hparams.n_ctx();
     }
     assert(n>0 && latent>0);
 
-    bool isTrain = hOrg->isTrain();
-    string sw = name+".w",sb=name+".pos"; 
+    bool isTrain = hFish->isTrain();
+    string sw = name+sWeight,sb=name+".pos"; 
     w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, latent, n);
-    hOrg->InitGensor(ctx,sw.c_str(),w,isTrain);
+    hFish->InitGensor(ctx,sw.c_str(),w,isTrain);
     if(isAddPos){
-        n = hOrg->hparams.n_ctx();
+        n = hFish->hparams.n_ctx();
         b = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, latent, n);
-        hOrg->InitGensor(ctx,sb.c_str(),b,isTrain);
+        hFish->InitGensor(ctx,sb.c_str(),b,isTrain);
     }
     
     return true;
@@ -164,7 +168,7 @@ FFN::FFN(Fish* hG_,const std::string&key_,JSON::const_iterator jit,int flag) : G
     if(jvals.size()>=2){
         shape={(int)(jvals[0]),(int)(jvals[1])};
     }else{
-        int n_ff = hOrg->hparams.n_ff();
+        int n_ff = hFish->hparams.n_ff();
         shape = {n_embd,n_ff};
     }
     
@@ -173,10 +177,15 @@ FFN::FFN(Fish* hG_,const std::string&key_,JSON::const_iterator jit,int flag) : G
 }
 bool FFN::Build(int flag)   {
     SHAPE sp={shape[0]};
-    norm.BuildX(name+".norm",sp,hOrg,0x0);        //layer->ffn_norm.sT="f";
-    up.BuildX(name+".up",{shape[0],shape[1]},hOrg,flag);   
-  
-    down.BuildX(name+".down",{shape[1],shape[0]},hOrg,flag);       
+    struct ggml_context * ctx_ = hFish->GetCTX(1);
+    bool isTrain = hFish->isTrain();
+    norm.BuildX(name+sNorm,sp,hFish,0x0);        //layer->ffn_norm.sT="f";
+    up.BuildX(name+"_up",{shape[0],shape[1]},hFish,flag);
+    gate.BuildX(name+"_gate",{shape[0],shape[1]},hFish,flag);
+    down.BuildX(name+"_down",{shape[1],shape[0]},hFish,flag);    
+
+    // gate = ggml_new_tensor_2d(ctx_, GGML_TYPE_F32, shape[0],shape[1]);   
+    // hFish->InitGensor(ctx_,name+"_gate",gate,isTrain);
     return true;
 }
 hGensor FFN::Forward(struct ggml_context * ctx_,hGensor inpL,int flag){    
@@ -188,9 +197,15 @@ hGensor FFN::Forward(struct ggml_context * ctx_,hGensor inpL,int flag){
     gTN(cur,"%s.ffn_norm",name.c_str());      // cb(cur, _NAM_("ffn_norm"), il);    
     cur = up.Forward(ctx_,cur,0x0);
     gTN(cur,"%s.ffn_up",name.c_str());//cb(cur, "ffn_up", il);
+    
     // cur = ggml_gelu(ctx, cur);                cb(cur, "ffn_gelu", il);  //GGML_UNARY_OP_GELU:not implemented for backward
     cur = ggml_silu(ctx_, cur);                
-    gTN(cur,"%s.ffn_silu",name.c_str());    //cb(cur, "ffn_silu", il);     
+    gTN(cur,"%s.ffn_silu",name.c_str());    
+    if(!gate.Empty()){
+        hGensor g = gate.Forward(ctx_,inpL,0x0);
+        cur = ggml_mul(ctx_, cur, g);
+        gTN(cur,"%s.ffn_gate",name.c_str());
+    }    
     cur = down.Forward(ctx_,cur,0x0);
     gTN(cur,"%s.ffn_down",name.c_str());    //cb(cur, "ffn_down", il);
     cur = ggml_add(ctx_, cur, inpL);// add the input
@@ -218,13 +233,13 @@ MOE::MOE(Fish* hG_,const std::string&key_,JSON::const_iterator jit,int flag) : G
     // up.Init(hG_,flag);       down.Init(hG_,flag);       relu.Init(hG_,flag); 
 }
 bool MOE::Build(int flag)   {
-    string sw = name+".weight",sb=name+".bias";
-    bool isTrain = hOrg->isTrain();    
+    string sw = name+sWeight,sb=name+".bias";
+    bool isTrain = hFish->isTrain();    
     int nIn=shape[0];
-    struct ggml_context * ctx = hOrg->GetCTX();
+    struct ggml_context * ctx = hFish->GetCTX();
     //  [ctx, E/H, H, n_batch); ]
     w = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, n_embd_head,1,n_head,n_batch);
-    hOrg->InitGensor(ctx,sw.c_str(),w,isTrain);
+    hFish->InitGensor(ctx,sw.c_str(),w,isTrain);
       
     return true;
 }
@@ -255,21 +270,23 @@ string MOE::__repr__( string& suffix,string& prefix,int flag)    {
 };
 
 OutCLS::OutCLS(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : GeNeuron(key_,jit, hG_, flag){
-    int nEmbd=hOrg->hparams.n_embd;
-    nCls=hOrg->nClass();
+    int nEmbd=hFish->hparams.n_embd;
+    nCls=hFish->nClass();
     shape={nEmbd,nCls};
 }
 bool OutCLS::Build(int flag)   {
     SHAPE sp={shape[0]};
-    norm.BuildX(name+".norm",sp,hOrg,0x0);        //layer->ffn_norm.sT="f";
-    proj.BuildX(name+".cls",{shape[0],shape[1]},hOrg,flag);       
+    norm.BuildX(name+sNorm,sp,hFish,0x0);        //layer->ffn_norm.sT="f";
+    string sCls = "";   //  ".cls"
+    proj.BuildX(name+sCls,{shape[0],shape[1]},hFish,flag); 
+    name += ".cls";      
     return true;
 }
 hGensor OutCLS::Forward(struct ggml_context * ctx_,hGensor inpL,int flag)    {
     if(inpL==nullptr){   //symbolic analysis
         return GeNeuron::Forward(ctx_,nullptr,flag);
     }
-    int n_batch=hOrg->hparams.n_batch(),n_ctx=hOrg->hparams.n_ctx();
+    int n_batch=hFish->hparams.n_batch(),n_ctx=hFish->hparams.n_ctx();
     hGensor cur = norm.Forward(ctx_,inpL,0x0);
     gTN(cur,"result_norm");      // cb(cur, _NAM_("ffn_norm"), il);    
     cur = proj.Forward(ctx_,cur,0x0);
@@ -288,13 +305,13 @@ SLP::SLP(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag
     assert(jvals.size()>=2);
     shape={(int)(jvals[0]),(int)(jvals[1])};
     assert(shape[0]>0 && shape[1]>0);
-    // compression = hOrg->params.compression;
+    // compression = hFish->params.compression;
     // Build(key_, shape_, flag);
 }
 bool SLP::Build(int flag)      {
-    isBias = hOrg->isBias;
+    isBias = hFish->isBias;
     // shape = shape_;
-    struct ggml_context * ctx = hOrg->GetCTX();
+    struct ggml_context * ctx = hFish->GetCTX();
     if(shape.size()==2){    
         assert(shape[0]>0 && shape[1]>0);
         int nIn=shape[0],nOut=shape[1];
@@ -306,10 +323,10 @@ bool SLP::Build(int flag)      {
     }else{
         assert(0);
     }
-    string sw = name+".weight",sb=name+".bias"; 
-    bool isTrain = hOrg->isTrain();
-    hOrg->InitGensor(ctx,sw.c_str(),w,isTrain);
-    if(isBias)  hOrg->InitGensor(ctx,sb.c_str(),b,isTrain);
+    string sw = name+sWeight,sb=name+".bias"; 
+    bool isTrain = hFish->isTrain();
+    hFish->InitGensor(ctx,sw.c_str(),w,isTrain);
+    if(isBias)  hFish->InitGensor(ctx,sb.c_str(),b,isTrain);
     
     if(compression==SVD){        
         assert(shape.size()==2);
@@ -325,7 +342,7 @@ hGensor SLP::Forward(struct ggml_context * ctx0,hGensor cur,int flag)    {
         prefix = prefix+cur->name;
     }
     
-    // compression = SVD_a; //SVD_a;    //SKIP;//hOrg->params.compression;
+    // compression = SVD_a; //SVD_a;    //SKIP;//hFish->params.compression;
     // if(1)   {   //only for debug
     //     float a[6*5] = {				
     //         8.79,  9.93,  9.83, 5.45,  3.16,
@@ -382,9 +399,10 @@ hGensor SLP::Forward(struct ggml_context * ctx0,hGensor cur,int flag)    {
         gTN(cur,"%s+b",prefix.c_str());
             // cur = ggml_add_inplace(ctx0, cur, b); 
     }
-    if(!name.empty()){
-        gTN0(cur,"%s",name.c_str());
-    }
+    cur = AfterForward(ctx0,cur,flag);
+    // if(!name.empty()){
+    //     gTN0(cur,"%s",name.c_str());
+    // }
         
     return cur;
 }
@@ -396,17 +414,17 @@ ROPE::ROPE(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int fla
     n_rot = hparams.n_rot;
     rope_freq_base  = hparams.rope_freq_base;
     rope_freq_scale = hparams.rope_freq_scale;  
-    KQ_pos = hOrg->KQ_pos;*/
+    KQ_pos = hFish->KQ_pos;*/
 }
 /*
     https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html#torch.nn.LayerNorm
 */
 bool ROPE::Build(int flag)    {
-    auto& hparams = hOrg->hparams;
+    auto& hparams = hFish->hparams;
     n_rot = hparams.n_rot;
     rope_freq_base  = hparams.rope_freq_base;
     rope_freq_scale = hparams.rope_freq_scale;  
-    KQ_pos = hOrg->KQ_pos;    
+    KQ_pos = hFish->KQ_pos;    
     shape = {n_embd_head, n_head, n_ctx, n_batch};
     return true;
 }
@@ -449,20 +467,20 @@ LayerNormal::LayerNormal(Fish *hG_, const std::string &key_, JSON::const_iterato
     https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html#torch.nn.LayerNorm
 */
 bool LayerNormal::Build(int flag)    {
-    isBias = hOrg->isBias;
+    isBias = hFish->isBias;
     // name = key_;
-    struct ggml_context * ctx = hOrg->GetCTX();
+    struct ggml_context * ctx = hFish->GetCTX();
     assert(shape.size()==1 && shape[0]>0 );
-    string sw = name+".weight",sb=name+".bias";
-    bool isTrain = hOrg->isTrain();    
+    string sw = name+sWeight,sb=name+".bias";
+    bool isTrain = hFish->isTrain();    
     int nIn=shape[0];
     if(isAffineTrans){
         w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, nIn);
-        hOrg->InitGensor(ctx,sw.c_str(),w,isTrain);
+        hFish->InitGensor(ctx,sw.c_str(),w,isTrain);
     }
     if(isBias)  {
         b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, nIn);
-        hOrg->InitGensor(ctx,sb.c_str(),b,isTrain);
+        hFish->InitGensor(ctx,sb.c_str(),b,isTrain);
     }
     return true;
 }
@@ -472,7 +490,7 @@ hGensor LayerNormal::Forward(struct ggml_context * ctx0,hGensor cur,int flag)   
         return GeNeuron::Forward(ctx0,cur,flag);
     } 
 
-    float f_norm_eps = hOrg->hparams.f_norm_eps;
+    float f_norm_eps = hFish->hparams.f_norm_eps;
     assert(cur!=nullptr);
     // TODO: implement ggml_norm backward
     // cur = ggml_norm(ctx0, cur, f_norm_eps);  
@@ -480,15 +498,15 @@ hGensor LayerNormal::Forward(struct ggml_context * ctx0,hGensor cur,int flag)   
     hGensor cur_norm = ggml_rms_norm(ctx0, cur, f_norm_eps);     
     ggml_set_name(cur_norm,_NAM_("%s_rms",prefix.c_str()));  
     hGensor  t03 = w;
-    if(hOrg->isTrain()){
+    if(hFish->isTrain()){
         t03 = ggml_repeat(ctx0, w, cur_norm);          
         ggml_set_name(t03,_NAM_("%s.r",w->name));    
-        hOrg->Gensor2Map(t03);  
+        hFish->gensors.Insert(t03);  
     }
     hGensor curw = ggml_mul(ctx0, cur_norm, t03);   
     ggml_set_name(curw,_NAM_("%s*w",prefix.c_str()));       
     if(b!=nullptr){
-        if(hOrg->isTrain())
+        if(hFish->isTrain())
             cur = ggml_add(ctx0, curw, b); 
         else
             cur = ggml_add_inplace(ctx0, curw, b); 
@@ -540,7 +558,7 @@ hGensor GeNeuron::AfterForward(struct ggml_context *ctx_,hGensor cur,int flag){
 }
 
 void GeNeuron::BuildX(const std::string &key_, const SHAPE &shp_, Fish *hG_, int flag){
-    if(hOrg==hG_ && shp_==shape && name==key_){ //
+    if(hFish==hG_ && shp_==shape && name==key_){ //
         _INFO("%s is alread build!!!\n",name.c_str());
         assert(0);   return;
     }

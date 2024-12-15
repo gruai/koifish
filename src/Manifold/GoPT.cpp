@@ -20,10 +20,14 @@ float random_f32(uint64_t *state)   {
 }
 
 int Sample_CDF(int n,float*preP,uint64_t *rng_seed,int flag=0x0) {
-    float sum=0,cdf=0;
+    float sum=0,cdf=0,pMin,pMax,a;
     int j,next_token=-1;
+    for (pMin=FLT_MAX,pMax=-FLT_MAX,j = 0; j < n; j++    ) {
+        a = preP[j];
+        pMin = min(a,pMin);     pMax = max(a,pMax);
+    } 
     for (sum = 0, j = 0; j < n; j++)        {
-        preP[j] = exp(preP[j]);
+        preP[j] = exp(preP[j]-pMax);
         sum += preP[j];
     }
     assert(sum > 0 && sum < FLT_MAX);
@@ -111,10 +115,11 @@ int fish_1(CLI_params& hparams)  {
     fish_1->Dump(0x0);
 
     vector<float> logits;           
-    vector<llama_token> piffle;    
-    fish_0->LocalFeeling(piffle,logits); 
+    vector<TOKEN_ID> piffle;    
+    // Need piffle to samploader
+    fish_0->LocalFeeling(nullptr,logits); 
     fish_1->CopyWeight(fish_0.get());
-    fish_1->LocalFeeling(piffle,logits);
+    fish_1->LocalFeeling(nullptr,logits);
     return 666;
 }
 
@@ -129,28 +134,27 @@ bool _LoadCheckPoint(CLI_params& hparams,arrHWIKI& wikis,int flag=0x0){
 }
 
 int GPT_work(CLI_params& hparams)  {
+    //  GRUS_Get_SystemInfo
+    _INFO("[%s] threads=%d \n%s\n",__func__,std::thread::hardware_concurrency(),llama_print_system_info());
+    ggml_numa_init(GGML_NUMA_STRATEGY_DISABLED);    
+    hparams.isOnlyGPT = true;
+    hparams.passLoadToken = true;
+    bool isCopy = hparams.is({"wiki","actor"},"copy");
     hFISH fish = nullptr;
-    vector<hWIKI> wikis = WIKI::MakeInstance("",hparams,0x0); 
-    if(!hparams.save.checkpoint_in.empty()){
-        fish = Fish::MakeInstance("Fish_",hparams,wikis,Fish::ROLE_TYPE::COMMON,0x110);  
-        if(fish==nullptr || !fish->LoadTrain())
-            return 0;
-    }else{
-        wikis.clear();
+    vector<hWIKI> wikis = WIKI::MakeInstance("",hparams,0x0);          
+    if(hparams.fn_model_base.size()>0 && !isCopy){
+        for(auto wiki : wikis)
+            wiki->teach = WIKI::_LOGITS; 
+        /*wikis.clear();
         gpt_params params;
         params.seed = 42,           params.sparams.seed = params.seed;
-        if(hparams.fn_model_base.size()==0){
-            _ERROR("%s has no WIKI models!",__func__);
-            return -2;
-        }
         params.model = hparams.fn_model_base[0];   //"./models/Meta-Llama-3-8B.Q2_K.gguf";
-        params.prompt = hparams.prompt;
+        // prompt = hparams.prompt;
         params.escape = true;
         params.n_predict = 128;
         params.n_gpu_layers = 6;
         gpt_params_handle_model_default(params);
-        if (params.escape)
-        {
+        if (params.escape)        {
             string_process_escapes(params.prompt);
             string_process_escapes(params.input_prefix);
             string_process_escapes(params.input_suffix);
@@ -163,13 +167,17 @@ int GPT_work(CLI_params& hparams)  {
         llama_numa_init(params.numa);
         hWIKI wiki = std::make_shared<LAMA>(hparams,params.model);      assert(wiki!=nullptr);
         wiki->teach = WIKI::_LOGITS;        
-        wikis.push_back(wiki);
-        //  hGOPT gpt = std::make_shared<GeneratOnPrompt>(params,0x0);
-        //  hGOPT gpt = std::make_shared<GOPT_infinite>(params,0x0);    
-        // hGOPT gpt = std::make_shared<GOPT_Metropolis>(params, 0x0); 
+        wikis.push_back(wiki);*/ 
+    }else{
+        fish = Fish::MakeInstance("Fish_",hparams,wikis,Fish::ROLE_TYPE::COMMON,0x110);  
+        if(fish==nullptr || !fish->LoadTrain()){
+            _ERROR("%s has no WIKI or FISH!\n",__func__);
+            return 0;
+        }            
     }
+    //  hGOPT gpt = std::make_shared<GeneratOnPrompt>(params,0x0);
+    //  hGOPT gpt = std::make_shared<GOPT_infinite>(params,0x0); 
     hGOPT gpt = std::make_shared<GOPT_Metropolis>(hparams,wikis,fish.get(), 0x0);
-    // hWIKI wiki = wikis[0];
     if (gpt->Init(hparams.prompt))    { 
         for (int i = 0; i < 10; i++)        { 
             if(!wikis.empty())
@@ -207,31 +215,41 @@ hGOPT GeneratOnPrompt::MakeInstance(struct CLI_params& hparams,arrHWIKI& wikis,c
         gopt.reset();       gopt = nullptr;
     }   
     const char* promt = "when the smoke is going down,"; 
-    std::vector<llama_token> some_inp = {9493,279,16603,374,2133,1523,11};      //const char* promt = "when the smoke is going down,";      
+    std::vector<TOKEN_ID> some_inp = {9493,279,16603,374,2133,1523,11};      //const char* promt = "when the smoke is going down,";      
     
     // wiki->Decode(embd_inp,0,0x0);
     // wiki->Answer(embd_inp);      //only for debug
     return gopt;
 }
 
-void GeneratOnPrompt::InitEmbdInput(int flag){
-            // if (params.chatml) {
-            //     params.prompt = "<|im_start|>system\n" + params.prompt + "<|im_end|>";
-            // }
+std::string GeneratOnPrompt::GetPrompt(int flag) {   
+    return hparams.prompt;  
+} 
+void GeneratOnPrompt::InitInput(int flag){
+    // if (params.chatml) {
+    //     GetPrompt() = "<|im_start|>system\n" + GetPrompt() + "<|im_end|>";
+    // }
     _INFO("[GPT] tokenize the prompt\n");    
+    hGensor input = fish_1!=nullptr? fish_1->Input() : nullptr;
     TOKEN_ID bo=-1;
+    if(input!=nullptr)
+        dialogs.InitOneSamp(hparams.prompt,input,0x110);
     switch(_arch)    {  
-    case NLP_GPT2_char:
-        embd_inp.clear();
-        embd_inp.push_back(0);
-        for(int i=0;i<params.prompt.length();i++){
-            int id = (int)(params.prompt[i]);       
-            embd_inp.push_back(id);
-        }
+    case NLP_GPT2_char:        
+        
+        // embd_inp.clear();
+        // embd_inp.push_back(0);
+        // for(int i=0;i<GetPrompt().length();i++){
+        //     int id = (int)(GetPrompt()[i]);       
+        //     embd_inp.push_back(id);
+        // }
         break;
+    // case NLP_LLAMA:
+    //     dialogs.InitOneSamp(hparams.prompt,input,0x110);
+    //     break;
     default:{
         const bool add_bos = llama_add_bos_token(model);
-        embd_inp = ::llama_tokenize(ctx, params.prompt, add_bos, true);
+        embd_inp = ::llama_tokenize(ctx, GetPrompt(), add_bos, true);
         bo = embd_inp[0];
         }
         break;
@@ -243,7 +261,7 @@ void GeneratOnPrompt::InitEmbdInput(int flag){
 GeneratOnPrompt::GeneratOnPrompt(struct gpt_params &par_, int flag) : params(par_){    
     LOG_TEE("%s logits_all=%d\n", __func__,params.logits_all );
     llama_numa_init(params.numa);
-    prompt = params.prompt;
+    // prompt = GetPrompt();
 
     params.sparams.temp = 0.0;
     params.sparams.temp = 0.8;
@@ -282,9 +300,8 @@ GeneratOnPrompt::GeneratOnPrompt(CLI_params&cp_,arrHWIKI& wiki_, const Fish *hG_
         // fish_1 = Fish::MakeInstance("4GPT_",gang_param,0x0);
         fish_1->Dump(0x0);
         if(0){//only for debug
-            vector<float> logits;           
-            vector<llama_token> piffle;     
-            fish_1->LocalFeeling(piffle,logits);
+            vector<float> logits;    
+            fish_1->LocalFeeling(&dialogs,logits);
         } 
         _arch = fish_0->arch;         
     }else{
@@ -298,8 +315,8 @@ GeneratOnPrompt::GeneratOnPrompt(CLI_params&cp_,arrHWIKI& wiki_, const Fish *hG_
         params.model = hparams.fn_model_base[0];   //"./models/Meta-Llama-3-8B.Q2_K.gguf";
     else
         params.model = hparams.KV({"arch"});
-    params.prompt = hparams.prompt; 
-    prompt = hparams.prompt; 
+    
+    // prompt = hparams.prompt; 
     //"when the smoke is going down,"; //"Building a website can be done in 10 simple steps:\\nStep 1:";
     params.escape = true;
     params.n_predict = 32;
@@ -315,23 +332,28 @@ GeneratOnPrompt::GeneratOnPrompt(CLI_params&cp_,arrHWIKI& wiki_, const Fish *hG_
     }
 
     n_predict = params.n_predict;    
-    LOG_TEE("%s wiki=%ld propmt=\"%s\" n_predict=%d logits_all=%d\n", __func__,wikis.size(),prompt.c_str(),n_predict,params.logits_all );
+    LOG_TEE("%s wiki=%ld propmt=\"%s\" n_predict=%d logits_all=%d\n", __func__,wikis.size(),GetPrompt().c_str(),n_predict,params.logits_all );
 }
 
 bool GeneratOnPrompt::Init(const std::string &prompt_, int flag)    {
     // std::tie(model, ctx) = llama_init_from_gpt_params(params);
+    if(fish_1!=nullptr) {
+        dialogs.Init(fish_1.get(),"gpt", 0);        dialogs.isRecycle = false;
+        dialogs.type = SampLoader::TYPE::DT_EVAL;          
+    }
+  
     if (wikis.empty()){     CHILD_0909_WIKIS
-        // hWIKI wiki = std::make_shared<LAMA>(hparams,hparams.fn_model_base[0]);
-        // wikis.push_back(wiki);
-        prompt = prompt_;
         n_ctx = hparams.n_ctx();
         int nTokens = fish_1->nClass();
         _logits = new float[nTokens];
-        InitEmbdInput();
+        // dialogs.init(hparams.prompt.c_str(), B, T, 0, 1, 0);
+
+        InitInput();
         return true;
     }else{        
     }
     
+
     llama_backend_init(); // ggml_time_init(); 
     LAMA *lama = dynamic_cast<LAMA *>(wikis[0].get());
     if(lama==nullptr || !lama->isValid())
@@ -361,9 +383,9 @@ bool GeneratOnPrompt::Init(const std::string &prompt_, int flag)    {
     }
     LOG_TEE("\n");
 
-    prompt = prompt_;
-    if (prompt != "")    {
-        params.prompt = prompt;
+    // prompt = prompt_;
+    if (GetPrompt() != "")    {
+        // GetPrompt() = prompt;
         Tokenize(flag);
     }
 
@@ -445,17 +467,15 @@ int NLP_AutoRegressive::GenSentence(int flag)  {
     pLen = std::min(_nctx,(int)(prompt.size()));
     
     double sum = 0, cdf = 0;
-    /*vector<llama_token> piffle;       piffle.resize(_nctx);
+    /*vector<TOKEN_ID> piffle;       piffle.resize(_nctx);
     for (int i = 0; i < _nctx; ++i)    {
         piffle[i] = wiki->eos;
     }*/
-   SampLoader *hLoader = &(hOPT->val_loader);
+    SampLoader *hLoader = &(hOPT->val_loader);
     if(hLoader->num_batches==0 )    {
-        hLoader->InitOneSamp(prompt,Input(),0x110);
-        // hSAMP samp = hOPT->val_loader.all_samps[0];
-        // hOPT->val_loader.Samp2Batch(0,samp,Input(),nullptr,hparams.common);  
+        hLoader->InitOneSamp(prompt,nullptr,0x110);
     } 
-    vector<llama_token>& piffle = hLoader->GetTokens();
+    vector<TOKEN_ID>& piffle = hLoader->GetTokens();
     assert(preLogits->type == GGML_TYPE_F32);
     vector<TOKEN_ID> answer;
     _INFO("%s: <--- \n\t", __func__);
@@ -478,17 +498,16 @@ int NLP_AutoRegressive::GenSentence(int flag)  {
         We were between his second and third birthday and it was time to go to the doctor and not go to the doctor--and that was the reason he was going to the doctor and not going to the doctor.
         On the two sides of the age there was a lot of room for two oth
 */
-llama_token GOPT_Metropolis::Sample(int idx, bool is_resampling)    {
+TOKEN_ID GOPT_Metropolis::Sample(int idx, bool is_resampling)    {
     std::vector<float> x_logits;
     auto ctx_main = ctx, ctx_cfg = ctx_guidance;
     int j,nTokens = fish_1==nullptr ? llama_n_vocab(model) : fish_1->nClass();   //, j;
     
     hWIKI wiki = wikis.size()>0  ? wikis[0] : nullptr;
-    WIKI::INDUCT_MODE teach = wiki==nullptr ? WIKI::_OFF : wiki->teach;
-    float *preP = new float[nTokens](), sum, cdf;
+    WIKI::INDUCT_MODE teach = wiki==nullptr ? WIKI::_OFF : wiki->teach;    
     assert(idx==-1);
     const float *wLog = nullptr;
-    float l1=0,sum1=0,l2=0,delta,a,pMin=FLT_MAX,pMax=FLT_MIN;   
+    float l1=0,sum1=0,l2=0,delta,a;   
     if(teach==WIKI::_OFF)  {
 
     }else{
@@ -496,16 +515,16 @@ llama_token GOPT_Metropolis::Sample(int idx, bool is_resampling)    {
         for (l2 = 0,j = 0; j < nTokens; j++    ) {
             a = wLog[j];
             l2 += a*a;              _logits[j] = a;
-            pMin = min(a,pMin);     pMax = max(a,pMax);
+            // pMin = min(a,pMin);     pMax = max(a,pMax);
         }        
     }
  
     if (fish_1 != nullptr)    {   //time bottleneck, so share wiki to reduce time & memory
         // SOFT_MAX(nTokens,_logits,wLog);     //soft merge ???
         fish_1->CopyWeight(fish_0);
-        std::vector<llama_token> inputs = embd_inp;
-        inputs.insert( inputs.end(), output_tokens.begin(), output_tokens.end() );
-        if (fish_1->LocalFeeling(inputs, x_logits))        {
+        // std::vector<TOKEN_ID> inputs = embd_inp;
+        // inputs.insert( inputs.end(), output_tokens.begin(), output_tokens.end() );
+        if (fish_1->LocalFeeling(&dialogs, x_logits))        {
             assert(x_logits.size()==nTokens);
             // SOFT_MAX(x_logits);
             switch(teach){
@@ -557,32 +576,11 @@ llama_token GOPT_Metropolis::Sample(int idx, bool is_resampling)    {
             return -1;
         }
     }
-    for (pMin=FLT_MAX,pMax=FLT_MIN,j = 0; j < nTokens; j++    ) {
-        a = _logits[j];
-        pMin = min(a,pMin);     pMax = max(a,pMax);
-    }   
-    int next_token = nTokens - 1;
-    for (sum = 0, j = 0; j < nTokens; j++)    {
-        preP[j] = exp(_logits[j]-pMax);
-        sum += preP[j];
-    }
-    assert(sum > 0 && sum < FLT_MAX);   //1679583
-    if(rng_state==42){  //only for debug
-        assert(sum > 0 && sum < FLT_MAX);   //1679583
-    }
-    float coin = random_f32(&rng_state);     //0.339085
-    for (cdf = 0, j = 0; j < nTokens; j++)    {
-        cdf += preP[j];
-        if (coin < cdf / sum)        {
-            next_token = j;
-            break;
-        }
-    }
-    delete[] preP;
+    int next_token = Sample_CDF(nTokens,_logits,&rng_state);    
     return next_token;
 }
 
-llama_token GeneratOnPrompt::Sample(int idx, bool is_resampling)    {
+TOKEN_ID GeneratOnPrompt::Sample(int idx, bool is_resampling)    {
     const llama_sampling_params &params = ctx_sampling->params;
     const float temp = params.temp, mirostat_tau = params.mirostat_tau, mirostat_eta = params.mirostat_eta;
     const int mirostat = params.mirostat;
@@ -596,7 +594,7 @@ llama_token GeneratOnPrompt::Sample(int idx, bool is_resampling)    {
     const float typical_p = params.typical_p;
     const std::vector<llama_sampler_type> &samplers_sequence = params.samplers_sequence;
 
-    llama_token id = 0;
+    TOKEN_ID id = 0;
     std::vector<float> original_logits, x_logits;
     auto ctx_main = ctx, ctx_cfg = ctx_guidance;
     /*
@@ -610,7 +608,7 @@ llama_token GeneratOnPrompt::Sample(int idx, bool is_resampling)    {
     }
     if (fish_1 != nullptr)    {   //time bottleneck
         x_logits.resize(original_logits.size());
-        if (fish_1->LocalFeeling(embd_inp, x_logits))        {
+        if (fish_1->LocalFeeling(&dialogs, x_logits))        {
             std::transform(original_logits.begin(), original_logits.end(), x_logits.begin(),
                            original_logits.begin(), std::plus<float>());
         }
@@ -693,7 +691,7 @@ llama_token GeneratOnPrompt::Sample(int idx, bool is_resampling)    {
             //    LOG("top %d candidates:\n", n_top);
 
             //    for (int i = 0; i < n_top; i++) {
-            //        const llama_token id = cur_p.data[i].id;
+            //        const TOKEN_ID id = cur_p.data[i].id;
             //        (void)id; // To avoid a warning that id is unused when logging is disabled.
             //        LOG(" - %5d: '%12s' (%.3f)\n", id, llama_token_to_piece(ctx_main, id).c_str(), cur_p.data[i].p);
             //    }
@@ -764,8 +762,8 @@ void GeneratOnPrompt::OnAntiPrompt(int flag)
         }
 
         // check for reverse prompt using special tokens
-        llama_token last_token = llama_sampling_last(ctx_sampling);
-        for (std::vector<llama_token> ids : antiprompt_ids)
+        TOKEN_ID last_token = llama_sampling_last(ctx_sampling);
+        for (std::vector<TOKEN_ID> ids : antiprompt_ids)
         {
             if (ids.size() == 1 && last_token == ids[0])
             {
@@ -877,22 +875,9 @@ void GeneratOnPrompt::OnInteractive(int &n_past, int &n_consumed, int &n_remain,
             embd_inp.insert(embd_inp.end(), line_inp.begin(), line_inp.end());
             embd_inp.insert(embd_inp.end(), line_sfx.begin(), line_sfx.end());
 
-            // instruct mode: insert response suffix
-            /*if (params.instruct)
-            {
-                LOG("inserting instruction suffix\n");
-                embd_inp.insert(embd_inp.end(), inp_sfx.begin(), inp_sfx.end());
-            }
-            // chatml mode: insert assistant chat suffix
-            if (params.chatml)
-            {
-                LOG("inserting chatml suffix\n");
-                embd_inp.insert(embd_inp.end(), cml_sfx.begin(), cml_sfx.end());
-            }*/
-
             for (size_t i = original_size; i < embd_inp.size(); ++i)
             {
-                const llama_token token = embd_inp[i];
+                const TOKEN_ID token = embd_inp[i];
                 output_tokens.push_back(token);
                 output_ss << llama_token_to_piece(ctx, token);
             }
@@ -920,6 +905,90 @@ void GeneratOnPrompt::OnInteractive(int &n_past, int &n_consumed, int &n_remain,
 
 int GeneratOnPrompt::Generate(int nJob, int flag)   {
     GST_TIC(tic);
+    hSAMP samp = dialogs.empty() ? nullptr : dialogs.SampAt(0);
+    output_tokens.clear();
+    delta_max = 0;      delta_a = 0;
+    hWIKI wiki = nullptr;
+    string info = "only fish";
+    if(wikis.size()>0)  {
+        wiki = wikis[0];      CHILD_0909_WIKIS
+        info = wiki->teach==WIKI::_OFF ? "only fish":"WIKI"; 
+        ctx_sampling = isCTXSampling ? llama_sampling_init(sparams) : nullptr;
+    }   
+    LOG_TEE("<--- GeneratOnPrompt %s job=%d logits_all=%d fish=%s teach=%d\n", info.c_str(),
+        nJob,params.logits_all,fish_1==nullptr?"":fish_1->Name().c_str(),wiki==nullptr? -1 : wiki->teach);
+    rng_state = params.seed;
+    // LOG_TEE("%s logits_all=%d\n", __func__, );  
+
+    // bool need_to_save_session = !path_session.empty() && n_matching_session_tokens < embd_inp.size();
+    int n_past = 0,n_remain = params.n_predict,n_consumed = 0,n_session_consumed = 0,n_past_guidance = 0,ga_i = 0;
+
+    tokens.clear();
+    embd_guidance.clear();
+    LOG("embd_inp.size(): %d, n_consumed: %d\n", (int)embd_inp.size(), n_consumed);
+    while ((int)embd_inp.size() > n_consumed)            {
+        tokens.push_back(embd_inp[n_consumed]);
+        if(ctx_sampling!=nullptr)   
+            llama_sampling_accept(ctx_sampling, ctx, embd_inp[n_consumed], false);
+        ++n_consumed;
+        if ((int)tokens.size() >= params.n_batch)                {
+            break;
+        }
+    }
+    DisplayEmbd(input_echo, ctx, n_consumed);
+    
+    while ((n_remain != 0 && !is_antiprompt) || params.interactive)    {
+        int iRet = 0;
+        /*if(info=="only fish"){
+            iRet = UpdateEmbed(nJob, n_past, n_remain, n_consumed, n_session_consumed, n_past_guidance, ga_i, 0x100);
+        }else*/ if(wiki!=nullptr && wiki->teach!=WIKI::_OFF)
+            iRet = UpdateEmbed(nJob, n_past, n_remain, n_consumed, n_session_consumed, n_past_guidance, ga_i, 0x0);
+        else
+            iRet = 2;
+        if (iRet == 0)
+            break;
+        if (iRet == 1)
+            return 1;
+
+        tokens.clear();
+        embd_guidance.clear();
+        if (!is_interacting)        {
+            const TOKEN_ID id = Sample(); // llama_sampling_sample(ctx_sampling, ctx, ctx_guidance);
+            if(id<0){
+                _INFO("\t<E>");                break;
+            }
+            if(samp!=nullptr)   {
+                dialogs.hTokens->Append(id);        samp->len++;
+            }
+            
+            tokens.push_back(id);            
+            input_echo = true;      // echo this to console            
+            --n_remain;             // decrement remaining sampling budget
+            LOG("n_remain=%d\n", n_remain);
+        }        
+        DisplayEmbd(input_echo, ctx, n_consumed);
+
+        // if not currently processing queued inputs;
+        if ((int)embd_inp.size() <= n_consumed)        {            // check for reverse prompt in the last n_prev tokens
+            OnAntiPrompt(0x0);
+            if(ctx_sampling!=nullptr)   OnInteractive(n_past, n_consumed, n_remain, 0x0);
+        }
+        // end of text token
+        if (!tokens.empty() && tokens.back() == eos )        {
+            LOG_TEE(" [end of text]\n");
+            break;
+        }
+    }
+    if(ctx_sampling!=nullptr)   {
+        llama_sampling_free(ctx_sampling);    ctx_sampling = nullptr;
+    }
+    
+    _INFO("\n delta=%.3g(%.3g) T=%gs --------------->\n",delta_max,delta_a/params.n_predict, GST_TOC(tic));
+    return 0x0;
+}
+
+int GeneratOnPrompt::Generate_v0(int nJob, int flag)   {
+    /*GST_TIC(tic);
     output_tokens.clear();
     delta_max = 0;      delta_a = 0;
     hWIKI wiki = nullptr;
@@ -935,14 +1004,14 @@ int GeneratOnPrompt::Generate(int nJob, int flag)   {
     // LOG_TEE("%s logits_all=%d\n", __func__, );
     size_t n_matching_session_tokens = 0;
     if (!session_tokens.empty())    {
-        for (llama_token id : session_tokens)        {
+        for (TOKEN_ID id : session_tokens)        {
             if (n_matching_session_tokens >= embd_inp.size() || id != embd_inp[n_matching_session_tokens])
             {
                 break;
             }
             n_matching_session_tokens++;
         }
-        if (prompt.empty() && n_matching_session_tokens == embd_inp.size())
+        if (GetPrompt().empty() && n_matching_session_tokens == embd_inp.size())
         {
             LOG_TEE("%s: using full prompt from session file\n", __func__);
         }
@@ -992,7 +1061,7 @@ int GeneratOnPrompt::Generate(int nJob, int flag)   {
                 // LOG("saved session to %s\n", path_session.c_str());
             }
 
-            const llama_token id = Sample(); // llama_sampling_sample(ctx_sampling, ctx, ctx_guidance);
+            const TOKEN_ID id = Sample(); // llama_sampling_sample(ctx_sampling, ctx, ctx_guidance);
             if(id<0){
                 _INFO("\t<E>");
                 break;
@@ -1048,7 +1117,7 @@ int GeneratOnPrompt::Generate(int nJob, int flag)   {
         llama_sampling_free(ctx_sampling);    ctx_sampling = nullptr;
     }
     
-    _INFO("\n delta=%.3g(%.3g) T=%gs --------------->\n",delta_max,delta_a/params.n_predict, GST_TOC(tic));
+    _INFO("\n delta=%.3g(%.3g) T=%gs --------------->\n",delta_max,delta_a/params.n_predict, GST_TOC(tic));*/
     return 0x0;
 }
 
@@ -1074,11 +1143,18 @@ int GeneratOnPrompt::UpdateEmbed(int nJob, int &n_past, int &n_remain, int &n_co
         // assert(ga_n == 1);
         assert(ctx_guidance == nullptr);
 
-        for (int i = 0; i < (int)tokens.size(); i += params.n_batch)
-        {
+        for (int i = 0; i < (int)tokens.size(); i += params.n_batch)        {
             int n_eval = min((int)tokens.size() - i, params.n_batch);
             LOG("eval: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, tokens).c_str());
-            bool bDecode = wiki != nullptr ? wiki->Decode(tokens, i, n_past,false) : llama_decode(ctx, llama_batch_get_one(&tokens[i], n_eval, n_past, 0)) >= 0;
+            bool bDecode = false;
+            if(flag==0x100)     {   //  "only fish"
+                vector<float> preP;
+                float fLos = fish_1->LocalFeeling(&dialogs,preP);
+                bDecode = true;
+            }else{
+                bDecode = wiki != nullptr ? wiki->Decode(tokens, i, n_past,false) : 
+                    llama_decode(ctx, llama_batch_get_one(&tokens[i], n_eval, n_past, 0)) >= 0;
+            }
             if (!bDecode)            {
                 LOG_TEE("%s : failed to eval\n", __func__);
                 return 1;
@@ -1100,157 +1176,160 @@ int GeneratOnPrompt::UpdateEmbed(int nJob, int &n_past, int &n_remain, int &n_co
     return 2;
 }
 
+int GeneratOnPrompt::Tokenize(int flag) {
+    // auto& embd_inp = prompt
+    const int n_ctx = llama_n_ctx(ctx);       
+    // const bool add_bos = llama_should_add_bos_token(model);
+    const bool add_bos = llama_add_bos_token(model);        // CYS_0826      
+    LOG("add_bos: %d\n", add_bos);
+    if (params.interactive_first /*|| params.instruct || params.chatml*/ || !GetPrompt().empty() || session_tokens.empty()) {
+        InitInput();
+    } else {
+        LOG("use session tokens\n");
+        embd_inp = session_tokens;
+    }
+
+    LOG("prompt: \"%s\"\n", log_tostr(GetPrompt()));
+    LOG("tokens: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, embd_inp).c_str());
+
+    // Should not run without any tokens
+    if (embd_inp.empty()) {
+        embd_inp.push_back(llama_token_bos(model));
+        LOG("embd_inp was considered empty and bos was added: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, embd_inp).c_str());
+    }
+    // negative prompt
+    std::vector<TOKEN_ID> guidance_inp;
+    int guidance_offset = 0;
+    int original_prompt_len = 0;
+    if (ctx_guidance) {
+        LOG("cfg_negative_prompt: \"%s\"\n", log_tostr(sparams.cfg_negative_prompt));
+
+        guidance_inp = ::llama_tokenize(ctx_guidance, sparams.cfg_negative_prompt, add_bos, true);
+        LOG("guidance_inp tokenized: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx_guidance, guidance_inp).c_str());
+
+        std::vector<TOKEN_ID> original_inp = ::llama_tokenize(ctx, GetPrompt(), add_bos, true);
+        LOG("original_inp tokenized: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, original_inp).c_str());
+
+        original_prompt_len = original_inp.size();
+        guidance_offset = (int)guidance_inp.size() - original_prompt_len;
+        LOG("original_prompt_len: %s", log_tostr(original_prompt_len));
+        LOG("guidance_offset:     %s", log_tostr(guidance_offset));
+    }
+
+    if ((int) embd_inp.size() > n_ctx - 4) {
+        LOG_TEE("%s: error: prompt is too long (%d tokens, max %d)\n", __func__, (int) embd_inp.size(), n_ctx - 4);
+        return 1;
+    }
+
+    // debug message about similarity of saved session, if applicable
+    size_t n_matching_session_tokens = 0;
+    if (!session_tokens.empty()) {
+        for (TOKEN_ID id : session_tokens) {
+            if (n_matching_session_tokens >= embd_inp.size() || id != embd_inp[n_matching_session_tokens]) {
+                break;
+            }
+            n_matching_session_tokens++;
+        }
+        if (GetPrompt().empty() && n_matching_session_tokens == embd_inp.size()) {
+            LOG_TEE("%s: using full prompt from session file\n", __func__);
+        } else if (n_matching_session_tokens >= embd_inp.size()) {
+            LOG_TEE("%s: session file has exact match for prompt!\n", __func__);
+        } else if (n_matching_session_tokens < (embd_inp.size() / 2)) {
+            LOG_TEE("%s: warning: session file has low similarity to prompt (%zu / %zu tokens); will mostly be reevaluated\n",
+                __func__, n_matching_session_tokens, embd_inp.size());
+        } else {
+            LOG_TEE("%s: session file matches %zu / %zu tokens of prompt\n",
+                __func__, n_matching_session_tokens, embd_inp.size());
+        }
+
+        // remove any "future" tokens that we might have inherited from the previous session
+        llama_kv_cache_seq_rm(ctx, -1, n_matching_session_tokens, -1);
+    }
+
+    LOGLN(
+            "recalculate the cached logits (check): embd_inp.empty() %s, n_matching_session_tokens %zu, embd_inp.size() %zu, session_tokens.size() %zu, embd_inp.size() %zu",
+            log_tostr(embd_inp.empty()), n_matching_session_tokens, embd_inp.size(), session_tokens.size(), embd_inp.size());
+
+    // if we will use the cache for the full prompt without reaching the end of the cache, force
+    // reevaluation of the last token token to recalculate the cached logits
+    if (!embd_inp.empty() && n_matching_session_tokens == embd_inp.size() && session_tokens.size() > embd_inp.size()) {
+        LOGLN("recalculate the cached logits (do): session_tokens.resize( %zu )", embd_inp.size() - 1);
+
+        session_tokens.resize(embd_inp.size() - 1);
+    }
+
+    // number of tokens to keep when resetting context
+    if (params.n_keep < 0 || params.n_keep > (int) embd_inp.size() /*|| params.instruct || params.chatml*/) {
+        params.n_keep = (int)embd_inp.size();
+    } else {
+        params.n_keep += add_bos; // always keep the BOS token
+    }
+        // prefix & suffix for instruct mode
+    inp_pfx = ::llama_tokenize(ctx, "\n\n### Instruction:\n\n", add_bos, true);
+    inp_sfx = ::llama_tokenize(ctx, "\n\n### Response:\n\n",    false,   true);
+
+    LOG("inp_pfx: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, inp_pfx).c_str());
+    LOG("inp_sfx: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, inp_sfx).c_str());
+
+    // chatml prefix & suffix
+    cml_pfx = ::llama_tokenize(ctx, "\n<|im_start|>user\n", add_bos, true);
+    cml_sfx = ::llama_tokenize(ctx, "<|im_end|>\n<|im_start|>assistant\n", false, true);
+
+    LOG("cml_pfx: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, cml_pfx).c_str());
+    LOG("cml_sfx: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, cml_sfx).c_str());
+    
+    /*if (params.instruct) {// CYS_0826
+        params.interactive_first = true;
+        params.antiprompt.emplace_back("### Instruction:\n\n");
+    }
+    // similar for chatml mode
+    else if (params.chatml) {
+        params.interactive_first = true;
+        params.antiprompt.emplace_back("<|im_start|>user\n");
+    }*/
+
+    // enable interactive mode if interactive start is specified
+    if (params.interactive_first) {
+        params.interactive = true;
+    }
+
+    if (params.verbose_prompt) {
+        LOG_TEE("\n");
+        LOG_TEE("%s: prompt: '%s'\n", __func__, GetPrompt().c_str());
+        LOG_TEE("%s: number of tokens in prompt = %zu\n", __func__, embd_inp.size());
+        for (int i = 0; i < (int) embd_inp.size(); i++) {
+            LOG_TEE("%6d -> '%s'\n", embd_inp[i], llama_token_to_piece(ctx, embd_inp[i]).c_str());
+        }
+
+        if (ctx_guidance) {
+            LOG_TEE("\n");
+            LOG_TEE("%s: negative prompt: '%s'\n", __func__, sparams.cfg_negative_prompt.c_str());
+            LOG_TEE("%s: number of tokens in negative prompt = %zu\n", __func__, guidance_inp.size());
+            for (int i = 0; i < (int) guidance_inp.size(); i++) {
+                LOG_TEE("%6d -> '%s'\n", guidance_inp[i], llama_token_to_piece(ctx, guidance_inp[i]).c_str());
+            }
+        }
+
+        if (params.n_keep > add_bos) {
+            LOG_TEE("%s: static prompt based on n_keep: '", __func__);
+            for (int i = 0; i < params.n_keep; i++) {
+                LOG_TEE("%s", llama_token_to_piece(ctx, embd_inp[i]).c_str());
+            }
+            LOG_TEE("'\n");
+        }
+        LOG_TEE("\n");
+    }
+    LOG_TEE("sampling: \n%s\n", llama_sampling_print(sparams).c_str());
+    LOG_TEE("sampling order: \n%s\n", llama_sampling_order_print(sparams).c_str());
+    LOG_TEE("generate: n_ctx = %d, n_batch = %d, n_predict = %d, n_keep = %d\n", n_ctx, 
+        params.n_batch, params.n_predict, params.n_keep);
+    // Handle_CtrlC();
+    return 0x0;
+}
+
 int GOPT_infinite::UpdateEmbed(int nJob, int &n_past, int &n_remain, int &n_consumed, int &n_session_consumed, int &n_past_guidance, int &ga_i, int flag)
 {
     assert(0);      CHILD_0909_WIKIS
-    /* const int n_ctx = llama_n_ctx(ctx);               // ctx->cparams.n_ctx;
-    const int n_ctx_train = llama_n_ctx_train(model); // model->hparams.n_ctx_train;
-    const int ga_n = params.grp_attn_n;
-    const int ga_w = params.grp_attn_w;
-
-    if (!tokens.empty())
-    {
-        // Note: (n_ctx - 4) here is to match the logic for commandline prompt handling via
-        // --prompt or --file which uses the same value.
-        int max_embd_size = n_ctx - 4;
-
-        // Ensure the input doesn't exceed the context size by truncating tokens if necessary.
-        if ((int)tokens.size() > max_embd_size)
-        {
-            const int skipped_tokens = (int)tokens.size() - max_embd_size;
-            tokens.resize(max_embd_size);
-            console::set_display(console::error);
-            printf("<<input too long: skipped %d token%s>>", skipped_tokens, skipped_tokens != 1 ? "s" : "");
-            console::set_display(console::reset);
-            fflush(stdout);
-        }
-        assert(ga_n == 1);
-        if (ga_n == 1)
-        {
-            // infinite text generation via context shifting
-            // if we run out of context:
-            // - take the n_keep first tokens from the original prompt (via n_past)
-            // - take half of the last (n_ctx - n_keep) tokens and recompute the logits in batches
-            if (n_past + (int)tokens.size() + std::max<int>(0, guidance_offset) > n_ctx)
-            {
-                if (params.n_predict == -2)
-                {
-                    LOG_TEE("\n\n%s: context full and n_predict == -%d => stopping\n", __func__, params.n_predict);
-                    return 0;
-                }
-
-                const int n_left = n_past - params.n_keep;
-                const int n_discard = n_left / 2;
-
-                LOG("context full, swapping: n_past = %d, n_left = %d, n_ctx = %d, n_keep = %d, n_discard = %d\n",
-                    n_past, n_left, n_ctx, params.n_keep, n_discard);
-
-                llama_kv_cache_seq_rm(ctx, 0, params.n_keep, params.n_keep + n_discard);
-                llama_kv_cache_seq_add(ctx, 0, params.n_keep + n_discard, n_past, -n_discard);
-
-                n_past -= n_discard;
-
-                if (ctx_guidance)
-                {
-                    n_past_guidance -= n_discard;
-                }
-
-                LOG("after swap: n_past = %d, n_past_guidance = %d\n", n_past, n_past_guidance);
-
-                LOG("tokens: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, tokens).c_str());
-
-                LOG("clear session path\n");
-                path_session.clear();
-            }
-        }
-        else
-        {
-            // context extension via Self-Extend
-            while (n_past >= ga_i + ga_w)
-            {
-                const int ib = (ga_n * ga_i) / ga_w;
-                const int bd = (ga_w / ga_n) * (ga_n - 1);
-                const int dd = (ga_w / ga_n) - ib * bd - ga_w;
-
-                LOG("\n");
-                LOG("shift: [%6d, %6d] + %6d -> [%6d, %6d]\n", ga_i, n_past, ib * bd, ga_i + ib * bd, n_past + ib * bd);
-                LOG("div:   [%6d, %6d] / %6d -> [%6d, %6d]\n", ga_i + ib * bd, ga_i + ib * bd + ga_w, ga_n, (ga_i + ib * bd) / ga_n, (ga_i + ib * bd + ga_w) / ga_n);
-                LOG("shift: [%6d, %6d] + %6d -> [%6d, %6d]\n", ga_i + ib * bd + ga_w, n_past + ib * bd, dd, ga_i + ib * bd + ga_w + dd, n_past + ib * bd + dd);
-
-                llama_kv_cache_seq_add(ctx, 0, ga_i, n_past, ib * bd);
-                llama_kv_cache_seq_div(ctx, 0, ga_i + ib * bd, ga_i + ib * bd + ga_w, ga_n);
-                llama_kv_cache_seq_add(ctx, 0, ga_i + ib * bd + ga_w, n_past + ib * bd, dd);
-
-                n_past -= bd;
-
-                ga_i += ga_w / ga_n;
-
-                LOG("\nn_past_old = %d, n_past = %d, ga_i = %d\n\n", n_past + bd, n_past, ga_i);
-            }
-        }
-
-        // try to reuse a matching prefix from the loaded session instead of re-eval (via n_past)
-        if (n_session_consumed < (int)session_tokens.size())
-        {
-            size_t i = 0;
-            for (; i < tokens.size(); i++)
-            {
-                if (tokens[i] != session_tokens[n_session_consumed])
-                {
-                    session_tokens.resize(n_session_consumed);
-                    break;
-                }
-
-                n_past++;
-                n_session_consumed++;
-
-                if (n_session_consumed >= (int)session_tokens.size())
-                {
-                    ++i;
-                    break;
-                }
-            }
-            if (i > 0)
-            {
-                tokens.erase(tokens.begin(), tokens.begin() + i);
-            }
-        }
-        // evaluate tokens in batches
-        // tokens is typically prepared beforehand to fit within a batch, but not always
-        assert(ctx_guidance == nullptr);
-        for (int i = 0; i < (int)tokens.size(); i += params.n_batch)
-        {
-            if (i == 0)
-                i = 0; // only for debug
-            int n_eval = (int)tokens.size() - i;
-            if (n_eval > params.n_batch)
-            {
-                n_eval = params.n_batch;
-            }
-
-            LOG("eval: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, tokens).c_str());
-            bool bDecode = wiki != nullptr ? wiki->Decode(tokens, i, n_past,false) : llama_decode(ctx, llama_batch_get_one(&tokens[i], n_eval, n_past, 0)) >= 0;
-            if (!bDecode)
-            {
-                LOG_TEE("%s : failed to eval\n", __func__);
-                return 1;
-            }
-
-            n_past += n_eval;
-
-            LOG("n_past = %d\n", n_past);
-            // Display total tokens alongside total time
-            if (params.n_print > 0 && n_past % params.n_print == 0)
-            {
-                LOG_TEE("\n\033[31mTokens consumed so far = %d / %d \033[0m\n", n_past, n_ctx);
-            }
-        }
-
-        if (!tokens.empty() && !path_session.empty())
-        {
-            session_tokens.insert(session_tokens.end(), tokens.begin(), tokens.end());
-            n_session_consumed = session_tokens.size();
-        }
-    }*/
+    
     return 2;
 }

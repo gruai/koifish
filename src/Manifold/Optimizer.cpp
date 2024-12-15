@@ -24,12 +24,12 @@ Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params& hparams,int flag) : tra
     isGlobalGrad = nGradAccum>1;        // Nearly same alloc grad or not
     val_loader.type = SampLoader::TYPE::DT_EVAL;
     if(gang->isTrain())  {
-        train_loader.Init(g_,"Train");
+        // train_loader.Init(g_,"Train");
         
     }else{
        
     }
-    val_loader.Init(g_,"Eval"); 
+    // val_loader.Init(g_,"Eval"); 
 }
 
 hGensor Optimizer::hLoss()             {    
@@ -240,8 +240,8 @@ inline bool isStrMatch(const string& target,const vector<string>&words){
 }
 
 double OPT_Adam::UpdateTensorParam(hGensor hP,size_t offset,float *g,float clip){ 
-    assert(gimap.find(hP)!=gimap.end());
-    auto& im = gimap[hP];
+    // assert(gimap.find(hP)!=gimap.end());
+    auto& im = gang->GetGensorInfo(hP); //gimap[hP];
     float *m=im.gm==nullptr?nullptr:(float*)(im.gm->data);
     float *v=im.gv==nullptr?nullptr:(float*)(im.gv->data);        //first&second moment
     // double normX = 0.0,meanX=0;
@@ -329,7 +329,7 @@ enum ggml_opt_result Optimizer::Search(struct ggml_context * ctx, hGensor loss_,
     _INFO("Optimizer::%s@<%s> %s device=[%s] \n", __func__,gang->hBackTG->name.c_str(),
         gang->isLoadCheckpoint?hparams.save.checkpoint_in.c_str():"",
         hEDS->__repr__(suf,pref,0).c_str());
-    _INFO("\t Accumulation=%d AdaptiveSched=%d GRAP=%p rZMUV=%g rLARS=%g \n", __func__,gang->hBackTG->name.c_str(),
+    _INFO("\t Accumulation=%d AdaptiveSched=%d GRAP=%p rZMUV=%g rLARS=%g \n", 
         nGradAccum,(int)isAdaptiveSched,grad,hparams.ZMUV_ratio,hparams.lars_ratio );
         // tpGD=SGD_HYBRID;    //ADAMw      SGD_v    SGD_HYBRID        SGD_blk_v
     _INFO("\tDECENT=%d(%s) SIGN=%d \n\n",tpGD,GD_NAME[tpGD].c_str(),tpSign);
@@ -460,22 +460,23 @@ void Optimizer::GraphCompute(struct ggml_cgraph * cgraph,int flag){
     REF:    /home/cys/Github/llama.cpp-master/examples/batched/batched.cpp
 */
 float Optimizer::Evaluate(SampLoader&loader,int iter,int flag){  
-    if( val_loader.num_batches==0) 
-        return 0; 
+    if( loader.num_batches==0 ) 
+    {    assert(0);         return 0;          }
     if(iter!=-666)   _INFO("[eval] " );   
     GST_TIC(tic);     
     struct ggml_cgraph *_gf=gang->GetForwRaw();
     auto loss = hLoss();     
     double l2,delta_max=0,delta_=0,a,sum=0,ee;
-    auto tokens_input = gang->Input( ); //,ldT=tokens_input->ne[0]
+    auto tokens_input = gang->Input( ); 
     int i,nB=0,step=max(loader.num_batches/10,1);
     size_t nz=0,j;
     llama_token tMost = (llama_token) (gang->nClass() - 1);
-    
+    hSAMP samp = nullptr;
     const float *wLog = nullptr;
-    for (i = 0; i < loader.num_batches; i+=step) {
+    for (i = 0; i < loader.num_batches; i+=step) {        
         if(tokens_input!=nullptr)   {//in some debug mode, tokens_input maybe null
             loader.update_batch(i,gang);
+            samp = loader.cur_samps[i];
         } 
         if(wLog!=nullptr)    {
             for (l2 = 0,j = 0; j < nz; j++    ) {
@@ -487,8 +488,11 @@ float Optimizer::Evaluate(SampLoader&loader,int iter,int flag){
         // ggml_graph_comp0(_gf,0x0);  //  only for debug
         GraphCompute(_gf);
         // ggml_graph_compute(_gf, &(gang->gb_plan));     
-        a = ((float*)hPreLogits()->data)[0];        //  -6.60046101     -4.3040733           
-        ee=loader.DecodeVerify(tokens_input,gang->preLogits);
+        a = ((float*)hPreLogits()->data)[0];        //  -6.60046101     -4.3040733  
+#ifndef NDEBUG        
+        
+#endif
+        ee=loader.DecodeVerify(samp,tokens_input,gang->preLogits);
         sum += loss==nullptr ? 0 : ((float*)(loss->data))[0];         //float *fLoss = (float*)(loss->data)
         nB++;
         if(gang->hparams.isOnlyGPT){
@@ -519,9 +523,6 @@ float Optimizer::Evaluate(SampLoader&loader,int iter,int flag){
 
     return aloss;
 }
-
-
-
 
 std::string shuffle_samples_X(
         const std::string & rng_state,size_t* shuffled_offs,
@@ -669,7 +670,7 @@ void Optimizer::BeforeTrain(struct train_params_common& train_params,hGensor tok
 size_t TGraph::Prepare4Train(struct ggml_context *ctx_,GD_METHOD tpGD,int flag){
     hOptimizer hOpt = hFish->hOPT;          assert(hOpt!=nullptr);
     size_t nP=0,nz=0,nzAll=0,id=0;
-    for(auto& gi : gimap){
+    for(auto& gi : hFish->gensors.infos){
         auto gensor = gi.first;
         size_t nParam = ggml_nelements(gensor);        
         if(strcmp(gensor->name,"output.weight")==0){
@@ -681,7 +682,6 @@ size_t TGraph::Prepare4Train(struct ggml_context *ctx_,GD_METHOD tpGD,int flag){
             continue;
         nzAll += nParam;
         if(tpGD == GD_METHOD::SGD_HYBRID){
-            // gi.second.isAdam = isStrMatch(gensor->name,{"token_embd","output","norm"});
             gi.second.isAdam = isStrMatch(gensor->name,hOpt->adam_filter);
         }
             
@@ -716,6 +716,7 @@ void Optimizer::Prepare(size_t nx_,int flag){
     just_initialized = true;
     double s=0;
     size_t nz = 0;
+    NLP_AutoRegressive *dolphin = dynamic_cast<NLP_AutoRegressive*>(gang);
     if(nParams>0)   {
         struct ggml_init_params ctx_opt_params;    
         ctx_opt_params.mem_size = GGML_MEM_ALIGN*3 + ggml_tensor_overhead()*3 + ggml_type_size(GGML_TYPE_F32)*nParams*3;
@@ -730,12 +731,12 @@ void Optimizer::Prepare(size_t nx_,int flag){
                 grad = ggml_new_tensor_1d(_ctx, GGML_TYPE_F32, nParams);
             nz = gang->hBackTG->Prepare4Train(_ctx,tpGD);
             s = nz*1.0/nParams;
-            gimap = gang->hBackTG->gimap;
+            // gimap = gang->hBackTG->gimap;
         }
-        train_loader.Prepare(this);
+        train_loader.Init(dolphin,"Train");     //train_loader.Prepare(this);
     }
     
-    val_loader.Prepare(this);
+    val_loader.Init(dolphin,"Eval");            //val_loader.Prepare(this);
 }
 
 bool Optimizer::PrepareData( CLI_params& hparams,int flag )   {   

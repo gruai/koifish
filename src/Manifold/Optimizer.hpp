@@ -74,7 +74,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
 
 protected:    
     std::string title = "Optimizer";
-    std::map<hGensor, GENSOR_INFO> gimap;   
+    // std::map<hGensor, GENSOR_INFO> gimap;   
     LossCurve lcTrain,lcEval;
     struct ggml_context * _ctx=nullptr;
     std::vector<hGensor> opt_ps;

@@ -15,6 +15,13 @@
 #include <assert.h>
 using namespace std;
 
+#define BIT_SET( val,flag ) ((val) |= (flag))	
+#define BIT_RESET( val,flag ) ((val) &= (~(flag)) ) 
+#define BIT_TEST( val,flag ) (((val)&(flag))==(flag))
+#define BIT_IS( val,flag ) (((val)&(flag))!=0)
+
+#define MEM_CLEAR(mem,size)			memset( (mem),(0x0),(size) )
+
 #ifdef WIN32
 	#define G_INT_64 __int64
 	//typedef __int64 INT_63;	

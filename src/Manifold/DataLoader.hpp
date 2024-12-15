@@ -168,6 +168,7 @@ public:
     bool Serialize(const std::string&path,  bool isSave, int flag=0x0);
     
     virtual bool Load(struct CLI_params& hparams,void *hLLM,int flag=0x0);
+    virtual void Append(TOKEN_ID id,int flag=0x0);
     int UniqueTokens(size_t n_1,int flag=0x0);
     bool InitSamps(unsigned context_length,std::vector<size_t>& samples_begin,std::vector<size_t>&samples_size,int flag=0x0);
 
@@ -182,16 +183,15 @@ public:
     DTS_GPT2(ConsiceDict *hDict) : DataTokenSet(hDict)    {
 
     }
-    // int stream2token(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0)    override;
 };
 
 class SampLoader;
 struct SAMP{
     size_t pos=-1,len=-1;       //  range is [pos,pos+len)
     size_t off_cycle=0;         // more random
-    int jump = -1;   
-    std::string desc;
-    
+    int jump = 0;   
+    TOKEN_ID last_target=-1;
+    std::string desc;    
 
     SAMP()  {}
     SAMP(size_t p,size_t l) : pos(p),len(l) {
@@ -201,7 +201,7 @@ struct SAMP{
 
     bool Serialize(FSerial&S, bool isSave, int flag);
 
-    void Refresh(SampLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,int typ);
+    void Refresh(SampLoader *loader,void *ctx,std::vector<int32_t>& samp_toks,int typ);
     virtual double UpdateTag(hDataToken hDT,int *tag,int step,bool flip,int flag=0x0);
 
     static size_t HASH(const char* fn, const std::vector<SAMP*>& samps) {
@@ -226,10 +226,11 @@ protected:
     // CLI_params hparams;
     std::string fp_data;
     std::string sentence="";
-    std::vector<int32_t> tok_ids;
+    std::vector<TOKEN_ID> samp_toks;
     bool sample_separation_eos,sample_separation_bos;
     // size_t _nctx=-1;
     std::vector<hSAMP> all_samps;
+    std::vector<hSAMP> cur_samps;
     // std::vector<size_t> idcs;      //would change epoch by epoch(shuffle,subsampling...)
     int64_t N4Train() {
         return all_samps.size();
@@ -237,6 +238,7 @@ protected:
     }   
     std::shared_ptr<ConsiceDict> hDict=nullptr;
     bool isTarget_1 = false;
+    bool isRecycle = true;
     bool isFixEvalSample = true;        // Need fix this to do some experiments
     mt19937_state shuffle_rng_state_current;
     mt19937_state shuffle_rng_state_next;
@@ -248,6 +250,7 @@ public:
     int64_t len() {
         return all_samps.size();
     }
+    bool empty()    {   return len()==0;    }
     size_t nTokens()    {
         return hTokens->tokens.size();
     }
@@ -264,7 +267,7 @@ public:
     }
     std::vector<std::string> curDeTexts;
     virtual hSAMP InitOneSamp(const string &prompt,struct ggml_tensor *input,int flag=0x0);
-    virtual double DecodeVerify(struct ggml_tensor *tokens,struct ggml_tensor *logits,int flag=0x0);
+    virtual double DecodeVerify(hSAMP samp, struct ggml_tensor *tokens,struct ggml_tensor *logits,int flag=0x0);
     void Samp2Batch(int k,hSAMP samp,struct ggml_tensor *tokens_input,struct ggml_tensor *target_probs,struct train_params_common& params,int flag=0x0);
 
     enum TYPE{
@@ -316,8 +319,8 @@ public:
     int64_t file_size_bytes;
 
     SampLoader( )   {}
-    virtual void Init(NLP_AutoRegressive *g_,const string&n,int flag=0x0 ) ;
-    virtual void Prepare(Optimizer *hOPT_,int flag=0x0 ) ;    
+    virtual bool Init(Fish *g_,const string&n,int flag=0x0 ) ;
+    virtual void Prepare(int flag=0x0 ) ;    
 
     virtual ~SampLoader( ) {
         free(buffer);
@@ -514,6 +517,7 @@ public:
     friend class NLP_AutoRegressive;
     friend class Optimizer;
     friend class Fish;
+    friend class GeneratOnPrompt;
 };
 
 // class DataLoader_3D : public SampLoader  {

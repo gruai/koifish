@@ -25,7 +25,10 @@ hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,vector
     case MODEL_ARCH::NLP_MOE:
         fish = std::make_shared<LLM_MOE>(nam_+"_moe",params,role_);
         break;
-    default:
+    case NLP_LLAMA:
+        fish = std::make_shared<NLP_AutoRegressive>(nam_,params,role_);
+        break;
+    default:    //  more structures
         switch(params.nabla){
         case 1:
             fish = std::make_shared<LLAMA_LORA>(nam_+"_lora",params,role_);
@@ -116,6 +119,7 @@ hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,const 
 bool Fish::AfterBuild(bool isInitParam,int flag)   {        
     int64_t nx = 0;
     auto gf = GetForwRaw(),gb = GetBackRaw();
+    
     if(isInitParam) {
         assert(rnd!=nullptr);
         // rnd = init_random_normal_distribution(hparams.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
@@ -131,21 +135,26 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
         }
     }
     isLoadCheckpoint = GGUF_Serialize(hparams.save.checkpoint_in,false,0x0);
+    bool isCopy = hparams.is({"wiki","actor"},"copy") && wikis.size()>0;
+    if(isCopy){
+        bool bRet = wikis[0]->CopyGensors(this);      
+        if(!bRet){
+            _INFO("%s Failed to coyp gensors from %s! tutor=%s\tN=%d sz=%.7gM \n",__func__,"");
+            return false;
+        }
+    }
     for (auto node : optParams) {  
-        if(isLoadCheckpoint) {
+        if(isLoadCheckpoint || isCopy) {
             
         }else if(isInitParam){
             if (rnd != nullptr)
                 randomize_tensor_normal(node, rnd);
             else
-                ggml_set_zero(node);         
-            _pt_cys_("",node,0x0);         printf("\n");       
+                ggml_set_zero(node);  
         }
-        
+         _pt_cys_("",node,0x0);         printf("\n");  
 #ifndef NDEBUG
-            
-#endif
-        
+#endif        
         // gg_print_tensor_("",gf->nodes[i],0);
         nx += ggml_nelements(node);        
     }   
@@ -221,6 +230,8 @@ bool Fish::SaveTrain(string sX,int flag) {
 */
 bool Fish::GGUF_Serialize(const std::string&path,  bool isSave, int flag){
 try{
+    if(path.empty())
+        return false;
     char buf[1024];
     struct ggml_context * fctx_data = NULL;
     struct gguf_context * fctx = NULL;
@@ -292,7 +303,9 @@ try{
                 
             }
             size_t nEle = ggml_nelements(cur),sz = ggml_nbytes(cur);
-            assert(nEle == ggml_nelements(target)) ;
+            if(nEle != ggml_nelements(target)) {
+                assert(0);      continue;
+            }
             memcpy(target->data,cur->data,sz);
             sprintf(buf,"\t%d d=%d sz=%ld",i,ggml_n_dims(cur),sz);
              _pt_cys_(buf,cur,0x0);    printf("\n");
@@ -384,7 +397,10 @@ bool Fish::LoadTrain(int flag) {
     _INFO("%s: ......", __func__);
 
     auto fpCheck = hparams.save.checkpoint_in;
+    bool isCopy = hparams.is({"wiki","actor"},"copy") && wikis.size()>0;
     if (fpCheck.empty()){
+        if(wiki_tutor!=nullptr)
+            return true;
         _INFO("\r[LoadTrain] failed!  please set checkpoint path @\"checkpoint-in\"\n" );
         return false;
     }
@@ -419,7 +435,7 @@ void Fish::Statistic(int typ, int flag)     {
     }
 
     int nT = gensors.size(), nQ = 0, nF16 = 0;
-    for (auto t : gensors)        {
+    for (auto t : gensors.nag)        {
         auto type = t.second->type;
         if (ggml_is_quantized(type))
             nQ++;
@@ -508,7 +524,7 @@ void Fish::InitGensor(struct ggml_context *ctx, const char *name, hGensor gensor
     }
         
     assert(gensor->data == nullptr);
-    Gensor2Map(gensor);
+    gensors.Insert(gensor);
     if (isParam && isTrain())        {
         ggml_set_param(ctx, gensor);
         gTN(gensor,"");
@@ -541,7 +557,7 @@ void Fish::InitGensor(struct ggml_context *ctx, hGensor gensor, const char *name
             ggml_set_zero(gensor);
     }
     if (updateTMap)        {
-        Gensor2Map(gensor);            
+        gensors.Insert(gensor);            
     }
     if(isTrain())   {
         xGensors.push_back(gensor);
@@ -564,7 +580,7 @@ hGensor Fish::AddTensor(struct ggml_context *ctx,const std::string&key_,enum ggm
     }else{
         assert(0);
     }  
-    // Gensor2Map(gg_tensor);
+    // gensors.Insert(gg_tensor);
     InitGensor(ctx, key_.c_str(), gensor, isParam, 0x0);
 
     return gensor;   

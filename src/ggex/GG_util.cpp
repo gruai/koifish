@@ -128,6 +128,7 @@ MODEL_ARCH CLI_params::ModelArch()   {
             info=="MAMBA" ? MODEL_ARCH::NLP_MAMBA : 
             info=="GPT2" ? MODEL_ARCH::NLP_GPT2 :
             info=="GPT2CHAR" ? MODEL_ARCH::NLP_GPT2_char :
+            info=="LAMA" ? MODEL_ARCH::NLP_LLAMA :
             MODEL_ARCH::NLP_LLAMA;  
 
     return arch; 
@@ -145,26 +146,23 @@ void CLI_params::JModel2Params(int flag){
     assert(layerps.size()==0);
     auto jTrans = jKEY(jConfig,{"jmodel","parameter","transformer"});
     if(!jTrans.empty()){
-        int nH = jKV(jTrans,{"Head"},-1),nF = jKV(jTrans,{"Ffn"},-1),nE = jKV(jTrans,{"Embed"},-1);
-        for(int i=0;i<nLayerX;i++)
-            layerps.push_back(LAY_PARAM(nH,nH,nF));
-        n_embd = nE;        assert(n_embd<160*1000 && n_embd>0);
-        /*int nH0=n_head(),;
-        if(nH!=nH0){
-            for(auto& lay : layerps){
-                lay.SetHead(nH);
-            }
+        int nH = jKV(jTrans,{"Head"},-1),nF = jKV(jTrans,{"Ffn"},-1),nE = jKV(jTrans,{"Embed"},-1),nC = jKV(jTrans,{"Ctx"},-1);
+        if(nH>0 && nF>0){
+            for(int i=0;i<nLayerX;i++)
+                layerps.push_back(LAY_PARAM(nH,nH,nF));
+        }else{
+            assert(0);
         }
-        int nF0=n_ff(),nF = jKV(jTrans,{"Ffn"},nF0);
-        if(nF0!=nF){
-            for(auto& lay : layerps){
-                lay.SetFF(nF);
-            }
+        if(nE>0)    {
+            n_embd = nE;        assert(n_embd<160*1000 && n_embd>0);
+        }else{
+            assert(0);
         }
-        int nE0=n_embd,nE = jKV(jTrans,{"Embed"},nE0);
-        if(nE0!=nE){
-            n_embd = nE;
-        }*/
+        if(nC>0)    {
+            common.n_ctx = nC; 
+        }else{
+            assert(0);
+        }      
     }
     //  n_embd_head_k   n_embd_head_v   ???
 }
@@ -269,9 +267,7 @@ try{
     // if( eval_every>0 ){
     //     _INFO("\r\n%s  eval@every %d steps.",__func__,eval_every );
     // }
-    common.seed = jKV(jConfig,{"seed"},common.seed );
-    common.n_ctx = jKV(jConfig,{"model","ctx"},common.n_ctx );    
-     
+    common.seed = jKV(jConfig,{"seed"},common.seed ); 
     wiki_actor = jKV(jConfig,{"wiki","actor"},wiki_actor );
     wiki_logits = jKV(jConfig,{"wiki","logits"},wiki_logits );
     tpWiki = jKV(jConfig,{"wiki","induct"},tpWiki ); 
@@ -283,6 +279,7 @@ try{
         assert(nFFX<160*1024 && nFFX>0); 
         nLayerX = jKV(jConfig,{"model","layer"},nLayerX );    
         assert(nLayerX<160 && nLayerX>0);    
+        common.n_ctx = jKV(jConfig,{"model","ctx"},common.n_ctx ); 
     }else{
         
     }
@@ -685,6 +682,36 @@ float SOFT_MAX_minus(const int n, float * y, const float * x) {
 }
 
 /*
+    for (int i = 0; i < count; ++i) {
+    loss -= input_data[i] * (target[i] - (input_data[i] >= 0)) -
+        log(1 + exp(input_data[i] - 2 * input_data[i] * (input_data[i] >= 0)));
+  }
+*/
+float LOSS_cross_entropy_1(int n,const float*preP, int target,int&isMatch,int flag) {
+    assert(target>=0 && target<n);
+    float sum=0,loss=0,pMin,pMax,a;
+    int j,next_token=-1,cand=-1;
+    for (pMin=FLT_MAX,pMax=-FLT_MAX,j = 0; j < n; j++    ) {
+        a = preP[j];
+        if(a>pMax){
+            pMax = a;   cand = j;
+        }
+        pMin = min(a,pMin);     //pMax = max(a,pMax);
+    } 
+    isMatch = cand==target;
+    /*for (sum = 0, j = 0; j < n; j++)        { //  standard SOFTMAX
+        preP[j] = exp(preP[j]-pMax);
+        sum += preP[j];
+    }
+    assert(sum > 0 && sum < FLT_MAX);
+    a = preP[target]/sum;   loss = -log(a); //  0.0430280194*/
+    for (sum = 0,a = preP[target], j = 0; j < n; j++)        {  //faster & safer
+        sum += exp(preP[j]-a);
+    }assert(sum > 0 && sum < FLT_MAX);
+    loss = log(sum);  
+    return loss;
+}
+/*
 struct ggml_tensor * ggml_flash_attn(
         struct ggml_context * ctx,
         struct ggml_tensor  * q,
@@ -720,6 +747,8 @@ struct ggml_tensor * ggml_flash_attn(
 //     std::string s2 = jKV(jConfig,keys,s1);
 //     return s2;
 // }
+
+
 
 struct ggml_tensor * ggml_cross_entropy_loss_1(
         struct ggml_context         * ctx,

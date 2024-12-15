@@ -24,7 +24,7 @@ hGensor Fish::AddTensor(const std::string&key_,enum ggml_type tp,const SHAPE& sh
     }else{
         assert(0);
     }  
-    Gensor2Map(gg_tensor);
+    gensors.Insert(gg_tensor);
     // assert(tensors.find(key_) == tensors.end());
     // tensors[key_] = gg_tensor;    
     return gg_tensor;   
@@ -49,17 +49,17 @@ size_t SLP::nElem()  {
 }
 
 SelfAttention::SelfAttention(Fish* hG_,const std::string&key_,JSON::const_iterator jit,int flag) : GeNeuron(key_,jit, hG_, flag)     {
-    assert(hOrg!=nullptr);
+    assert(hFish!=nullptr);
     auto& hparams = hG_->hparams;
     f_max_alibi_bias = hparams.f_max_alibi_bias;
  
     // n_embd_head = hparams.n_embd_head_v;   
     n_embd_gqa  = hparams.n_embd_v_gqa();
     n_tokens=n_ctx*n_batch;
-    KQ_mask=hOrg->KQ_mask,      KQ_pos=hOrg->KQ_pos;
+    KQ_mask=hFish->KQ_mask,      KQ_pos=hFish->KQ_pos;
     ID = 0;
     
-    n_ff = hOrg->hparams.n_ff(ID);
+    n_ff = hFish->hparams.n_ff(ID);
     n_head_kv=hparams.n_head_kv(ID);        
     assert(n_embd_head*n_head==n_embd);
     if(jvals.size()>=3){
@@ -74,14 +74,16 @@ SelfAttention::SelfAttention(Fish* hG_,const std::string&key_,JSON::const_iterat
 
 bool SelfAttention::Build(int flag)   {
     SHAPE sp={shape[0],shape[1]};
-    norm.BuildX(name+".norm",{shape[0]},hOrg,0x0);        
-    Q.BuildX(name+".Q",sp,hOrg,flag);          
-    K.BuildX(name+".K",sp,hOrg,flag);              V.BuildX(name+".V",sp,hOrg,flag);
-    rope.BuildX(name+".rope",sp,hOrg,flag);
-    proj_cat.BuildX(name+".proj",sp,hOrg,flag);
+    norm.BuildX(name+sNorm,{shape[0]},hFish,0x0);        
+    Q.BuildX(name+"_q",sp,hFish,flag);          
+    K.BuildX(name+"_k",sp,hFish,flag);              
+    V.BuildX(name+"_v",sp,hFish,flag);
+    rope.BuildX(name+".rope",sp,hFish,flag);
+    string sCat = "_output";    //  ".proj" ".cat"
+    proj_cat.BuildX(name+sCat,sp,hFish,flag);
 
     // tpTrans = RELU2;
-    // moe.BuildX(name+".moe",sp,hOrg,flag);        //  why this would slow converge???
+    // moe.BuildX(name+".moe",sp,hFish,flag);        //  why this would slow converge???
     return true;
 }
 string SelfAttention::__repr__( string& suffix,string& prefix,int flag)    {
@@ -222,10 +224,10 @@ BROWN_attn::BROWN_attn(Fish* hG_,const std::string&key_,JSON::const_iterator jit
 bool BROWN_attn::Build(int flag)   {
     // SelfAttention::Build(flag);           
     SHAPE sp={shape[0],shape[1]};
-    norm.BuildX(name+".norm",{shape[0]},hOrg,0x0);        
-    Q.BuildX(name+".tmp",{n_ctx,n_ctx,n_head,n_batch},hOrg,flag);   //transition as property
-    proj_cat.BuildX(name+".proj",sp,hOrg,flag);   
-    // moe.BuildX(name+".moe",sp,hOrg,flag);  
+    norm.BuildX(name+sNorm,{shape[0]},hFish,0x0);        
+    Q.BuildX(name+".tmp",{n_ctx,n_ctx,n_head,n_batch},hFish,flag);   //transition as property
+    proj_cat.BuildX(name+".proj",sp,hFish,flag);   
+    // moe.BuildX(name+".moe",sp,hFish,flag);  
     return true;
 }
 hGensor BROWN_attn::Forward(struct ggml_context * ctx_,hGensor teb,int flag)    {
@@ -306,15 +308,15 @@ GatedAttention::GatedAttention(Fish* hG_,const std::string&key_,JSON::const_iter
         tpTrans = (TRANSITION_MODE)(jvals[0]);
 }
 bool GatedAttention::Build(int flag)   {
-    norm.BuildX(name+".norm",{shape[0]},hOrg,0x0);        //layer->ffn_norm.sT="f";
-    upU.BuildX(name+".upU",{shape[0],shape[1]},hOrg,flag);   
-    upV.BuildX(name+".upV",{shape[0],shape[1]},hOrg,flag);     
-    down.BuildX(name+".down",{shape[1],shape[0]},hOrg,flag);           
+    norm.BuildX(name+sNorm,{shape[0]},hFish,0x0);        //layer->ffn_norm.sT="f";
+    upU.BuildX(name+".upU",{shape[0],shape[1]},hFish,flag);   
+    upV.BuildX(name+".upV",{shape[0],shape[1]},hFish,flag);     
+    down.BuildX(name+".down",{shape[1],shape[0]},hFish,flag);           
     if(attn_mode>0){
         SHAPE sp={n_embd,n_embd};
-        Q.BuildX(name+".Q",sp,hOrg,flag);          
-        K.BuildX(name+".K",sp,hOrg,flag);              
-        rope.BuildX(name+".rope",sp,hOrg,flag);
+        Q.BuildX(name+".Q",sp,hFish,flag);          
+        K.BuildX(name+".K",sp,hFish,flag);              
+        rope.BuildX(name+".rope",sp,hFish,flag);
     }
            
     return true;
@@ -398,12 +400,12 @@ BROWN_v0::BROWN_v0(Fish* hG_,const std::string&key_,JSON::const_iterator jit,int
 bool BROWN_v0::Build(int flag)   {
     // SelfAttention::Build(flag);           
     SHAPE sp={shape[0],shape[1]};
-    norm.BuildX(name+".norm",{shape[0]},hOrg,0x0);        
-    Q.BuildX(name+".Q",sp,hOrg,flag);  
+    norm.BuildX(name+".norm",{shape[0]},hFish,0x0);        
+    Q.BuildX(name+".Q",sp,hFish,flag);  
     if(Transfer_1)       
-        V.BuildX(name+".V",{shape[0],1},hOrg,flag);  //w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, 1);           
-    // K.BuildX(name+".K",sp,hOrg,flag);              V.BuildX(name+".V",sp,hOrg,flag);
-    proj_cat.BuildX(name+".proj",sp,hOrg,flag);       
+        V.BuildX(name+".V",{shape[0],1},hFish,flag);  //w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, 1);           
+    // K.BuildX(name+".K",sp,hFish,flag);              V.BuildX(name+".V",sp,hFish,flag);
+    proj_cat.BuildX(name+".proj",sp,hFish,flag);       
            
     return true;
 }
@@ -867,14 +869,19 @@ static void ggml_graph_compute_thread_sync_task(int * task_phase, struct ggml_co
     
 */
 bool TGraph::TopoOrder(int flag)   {
-    gimap.clear();          topo_nodes.clear();
+    // auto& gimap = hFish->gensors.infos;
+    // gimap.clear();     
+    hFish->gensors.Clear();     
+    topo_nodes.clear();
     int pos=-1,nDup=0,i,no,nNode=cgraph->n_nodes,nLeaf=cgraph->n_leafs;
     hGensor cur,son;    
     // std::vector<hGensor> gensors;
     assert(sinks.size()>0);
     for(auto r : sinks){
-        topo_nodes.push_back(r);        gimap[r] = GENSOR_INFO(0,0,-1,-1);    
-        gimap[r].sX = r->name;
+        topo_nodes.push_back(r);       
+        hFish->gensors.Insert(r,GENSOR_INFO(0,0,-1,-1));
+        // gimap[r] = GENSOR_INFO(0,0,-1,-1);    
+        // gimap[r].sX = r->name;
     }
 
     while(++pos<topo_nodes.size()) {
@@ -882,7 +889,7 @@ bool TGraph::TopoOrder(int flag)   {
         if(strcmp(cur->name,"result_output'")==0){      // only for debug
             int xxx = 0;
         }
-        GENSOR_INFO info = gimap[cur];
+        auto info = hFish->GetGensorInfo(cur);  // gimap[cur];
         for (int i=0,no=0; i < GGML_MAX_SRC; ++i) {
             const int k =(order == GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT) ? i :(order == GGML_CGRAPH_EVAL_ORDER_RIGHT_TO_LEFT) ? (GGML_MAX_SRC-1-i) : i;
             if (!cur->src[k]) continue;
@@ -890,9 +897,10 @@ bool TGraph::TopoOrder(int flag)   {
             if(strcmp(son->name,"loss'")==0){           // only for debug
                 int xxx = 0;
             }
-            if(gimap.find(son) == gimap.end())  {                
-                gimap[son] = GENSOR_INFO(topo_nodes.size(),info.level+1,pos,no++);
-                gimap[son].sX = son->name;
+            if(!hFish->gensors.has(son) )  {  //gimap.find(son) == gimap.end()      
+                hFish->gensors.Insert(son,GENSOR_INFO(topo_nodes.size(),info.level+1,pos,no++));        
+                // gimap[son] = GENSOR_INFO(topo_nodes.size(),info.level+1,pos,no++);
+                // gimap[son].sX = son->name;
                 topo_nodes.push_back(son);
             }else{
                 nDup++;
@@ -900,8 +908,10 @@ bool TGraph::TopoOrder(int flag)   {
                 
         }        
     }
+    size_t nT = hFish->gensors.size();
+    if(isBackward)    nT+=1;      //"Loss"
+    assert(nT==nNode+nLeaf);
     
-    // sort(gimap.begin(), gimap.end(), comp);
     return true;
 }
 
@@ -938,28 +948,31 @@ string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {
     assert(root!=nullptr || sinks.size()>0);
 
     hGensor cur,son;    
-    std::vector<hGensor> gensors,all_nodes;
+    std::vector<hGensor> all_nodes;
     for(int i=0;i<nNode;i++)        {
         if(strcmp(cgraph->nodes[i]->name,"loss")==0)
             continue;
         all_nodes.push_back(cgraph->nodes[i]);
+        
     }
     for(int i=0;i<nLeaf;i++)        all_nodes.push_back(cgraph->leafs[i]);    
     
     for(auto gensor:topo_nodes){
-        gensors.push_back(gensor);
-        _T_repr_(gensor,tab,buf,gimap[gensor]);     
-        assert(strlen(buf)<MAX_BUF);
+        _T_repr_(gensor,tab,buf,hFish->GetGensorInfo(gensor));  assert(strlen(buf)<MAX_BUF);
+        if(!hFish->GetGensor(gensor->name)){
+            assert(0);
+        }
     }
 
     sprintf(buf+strlen(buf),"%s",suffix.c_str()); 
     _INFO("%s",buf); 
-    int nMiss = all_nodes.size()-gensors.size();
-    _INFO("CGRAPH_%s root=%d(%d) nPass=%ld(%d) nMiss=%d",name.c_str(),root_id,sinks.size(),gensors.size(),nDup,nMiss); 
-    if(CHECK_SAME_TENSORS(name,gensors,all_nodes)!=0x0){   //       "loss"
+    int nMiss = all_nodes.size()-topo_nodes.size();
+    _INFO("CGRAPH_%s root=%d(%d) nPass=%ld(%d) nMiss=%d",name.c_str(),root_id,sinks.size(),topo_nodes.size(),nDup,nMiss); 
+    if(CHECK_SAME_TENSORS(name,topo_nodes,all_nodes)!=0x0){   //       "loss"
         assert(has("loss")>=0);
         assert(0);  
     }
+    
     return buf;
 }   
 
@@ -1160,6 +1173,7 @@ int TGraph::has(const string&name,int flag){
 }
 
 bool TGraph::isValid(){
+    char buf[5012]="\0";
     std::map<std::string, int> msg;
     int nLeaf = cgraph->n_leafs,nNode = cgraph->n_nodes,no=1,nDup=0;
     std::vector<hGensor> gensors,all_nodes;
@@ -1171,6 +1185,9 @@ bool TGraph::isValid(){
             int j = msg[tA->name];
             hGensor tB=all_nodes[j];
             _INFO("\tAA_[%d %d]=\"%s\" !!!\n",j,no,tA->name); 
+            _T_repr_(tA,"",buf);     _T_repr_(tB,"",buf);
+            _INFO("%s",buf); 
+            //_pt_cys_("",tA,0);          _pt_cys_("",tB,0);
             nDup++;
         }
         msg[tA->name] = no;     
@@ -1417,9 +1434,10 @@ void s2layerinfo(const string&jkey,std::vector<string>&lays){
         }
         token = strtok(NULL, seps);     no++;
     }
+    const string sL=".";  //".L"
     if(nLay>1){
         for(int i=0;i<nLay;i++){
-            string name=nam_0+".L"+std::to_string(i);
+            string name=nam_0+sL+std::to_string(i);
             lays.push_back(name);
         }
     }else{

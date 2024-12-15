@@ -450,7 +450,7 @@ struct SegmentAnything  : public Fish {
         nnDec->AddTensor("mask_decoder.mask_tokens.weight",GGML_TYPE_F32, {n_enc_out_chans, n_pt_embd}); 
 
         UpdateTensors();
-        bool bRet = gg_load_weights(fin,qtype,gensors,to_quant,to_skip);// load weights      
+        bool bRet = gg_load_weights(fin,qtype,gensors.nag,to_quant,to_skip);// load weights      
         assert(bRet); 
         fin.close();
         return bRet;

@@ -150,16 +150,6 @@ inline void GG_log_internal(ggml_log_level level, const char * format, ...) {
 }
 
 typedef struct ggml_tensor* hGensor;
-
-enum GD_METHOD {
-    ADAMw=0x0,          
-    SGD,               
-    SGD_v,
-    SGD_blk_v,
-    SGD_HYBRID,   
-};
- 
-
 struct GENSOR_INFO{
     string sX;
     int level=-1,ID=-1,dad,c_id;
@@ -187,6 +177,75 @@ struct GENSOR_INFO{
         return a.ID < b.ID;
     }
 };
+struct GENSORS{
+    // name and gg_tensor
+    std::map<std::string, hGensor> nag;
+    std::map<hGensor, GENSOR_INFO> infos;
+    virtual bool has(hGensor gensor){
+        assert(nag.size()==infos.size());
+        return infos.find(gensor) != infos.end();
+    }
+    //  Deprecated
+    void Insert(hGensor gensor){
+        // const char* key = ggml_get_name(gensor);
+        // assert(strlen(key)>0);
+        // assert(nag.find(key) == nag.end());
+        // nag[key] = gensor;
+    }   
+    void Insert(std::vector<hGensor> gs){
+        for(auto gensor : gs){
+            Insert(gensor);
+        }
+    }   
+    void Insert(hGensor gensor,const GENSOR_INFO&gi,int flag=0x0){
+        const char* key = ggml_get_name(gensor);
+        assert(strlen(key)>0);
+        assert(nag.find(key) == nag.end());
+        nag[key] = gensor;
+
+        assert(infos.find(gensor) == infos.end());
+        infos[gensor] = gi;    
+        infos[gensor].sX = gensor->name;
+    }
+
+    void Insert(const std::map<std::string, struct ggml_tensor *>& src){
+        nag.insert(src.begin(), src.end());
+    }
+    size_t size()   {   return nag.size();  }
+    virtual hGensor Get(const char *name, int flag = 0x0)    {        
+        if(flag==0x100){    //  .weight=>.w
+            for(auto ng:nag){
+                if(strstr(name,ng.first.c_str())!= NULL){
+                    return ng.second;
+                }
+            }
+            return nullptr;
+        }else{
+            if(nag.find(name) == nag.end()){
+                assert(0);  return nullptr;
+            }
+            return nag[name];
+        }
+        
+    } 
+    virtual void Clear() {   
+        nag.clear();    
+        infos.clear();
+    }
+
+    virtual void TopoOrder()    {
+        // sort(gimap.begin(), gimap.end(), comp);
+    }
+};
+
+enum GD_METHOD {
+    ADAMw=0x0,          
+    SGD,               
+    SGD_v,
+    SGD_blk_v,
+    SGD_HYBRID,   
+};
+ 
 
 void _T_repr_(hGensor t,const char*tab,char *buf,int typ=0x0);
 void _T_repr_(hGensor t,const char*tab,char *buf,const GENSOR_INFO&info);
@@ -674,6 +733,7 @@ inline void _TIME(double fmillis) {
     }else
         _INFO("%02lld:%02lld:%02lld", (long long int) hours, (long long int) minutes, (long long int) seconds);
 }
+float LOSS_cross_entropy_1(int n,const float*preP,int target,int&isMatch,int flag=0x0);
 struct ggml_tensor * ggml_cross_entropy_loss_1(struct ggml_context * ctx,struct ggml_tensor * a, struct ggml_tensor * b);
 int CHECK_SAME_TENSORS(const string& desc,const std::vector<hGensor>&arrA,const std::vector<hGensor>&arrB,int flag=0x0);
 size_t F_SIZE(const std::string&fpath,FILE *fp0=NULL,int flag=0x0); 

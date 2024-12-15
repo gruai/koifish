@@ -124,7 +124,7 @@ struct CLI_params {
     std::string train="";  //"scratch"
 
     bool isOnlyGPT = false;
-        
+    bool passLoadToken = false;
     bool only_write_model = false;
     bool ffn_use_gate = false;
     // uint32_t n_vocab = 0;

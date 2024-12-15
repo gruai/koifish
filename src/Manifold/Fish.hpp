@@ -194,6 +194,7 @@ protected:
         wikis[0] is the backbone of FISH
     */
     vector<hWIKI> wikis;
+    WIKI *wiki_tutor = nullptr;
     vector<hGensor> tmpExLogis;
     WIKI::INDUCT_MODE teach=WIKI::_LOGITS;
 
@@ -212,20 +213,11 @@ protected:
     std::vector<struct ggml_tensor *> checkpoints;
     bool measure_only=false;  
     struct ggml_cplan gf_plan,gb_plan;
-    std::vector<hNeuron> neurons;       
-    std::map<std::string, struct ggml_tensor *> gensors;
-    hEDevices hEDS=nullptr;
-    void Gensor2Map(std::vector<hGensor> gensors){
-        for(auto gensor : gensors){
-            Gensor2Map(gensor);
-        }
-    }   
-    void Gensor2Map(struct ggml_tensor *gensor){
-        const char* key = ggml_get_name(gensor);
-        assert(strlen(key)>0);
-        assert(gensors.find(key) == gensors.end());
-        gensors[key] = gensor;
-    }   
+    std::vector<hNeuron> neurons;      
+    
+    GENSORS gensors;
+    
+    hEDevices hEDS=nullptr;    
      
     bool updateTMap = false;
     bool isLocalInfer = false;
@@ -351,8 +343,11 @@ public:
     virtual hGensor BuildLoss( struct ggml_context * ctx,hGensor cur,int flag=0x0); 
     virtual hGensor BuildTarget( struct ggml_context * ctx,hGensor cur,int flag=0x0)    {   return nullptr;   } 
     virtual hGensor GetGensor(const char *name, int flag = 0x0)    {
-        assert(gensors.find(name) != gensors.end());
-        return gensors[name];
+        return gensors.Get(name,flag);        
+    } 
+    virtual GENSOR_INFO& GetGensorInfo(hGensor hP, int flag = 0x0)    {
+        assert(gensors.infos.find(hP)!=gensors.infos.end());
+        return gensors.infos[hP];        
     } 
 
     virtual string __repr__(string& suffix,string& prefix,int flag=0x0){
@@ -374,17 +369,16 @@ public:
 
     void UpdateTensors(int flag = 0x0)    {
         UNUSED(flag);
-        gensors.clear();
+        gensors.Clear();
         std::stack<hFISH> all_childs;
         for (auto child : childs)
             all_childs.push(child);
         while (!all_childs.empty())        {
             hFISH cur = all_childs.top();
-            for (auto child : cur->childs)
-            {
+            for (auto child : cur->childs)            {
                 all_childs.push(child);
             }
-            gensors.insert(cur->gensors.begin(), cur->gensors.end());
+            gensors.Insert(cur->gensors.nag);
             all_childs.pop();
         }
         int nTensor = gensors.size();
@@ -492,7 +486,7 @@ public:
     virtual void Loss(int flag = 0x0) {}
 
     virtual void CopyWeight(const Fish* src,int flag = 0x0) {}
-    virtual bool LocalFeeling(std::vector<llama_token>&tokens,vector<float>& result)   const  {   return false;   }
+    virtual bool LocalFeeling(SampLoader *hLoader,vector<float>& result,int flag=0x0)   {   return false;   }
 
     virtual bool isValid()  {   return true;    }
 
@@ -527,7 +521,7 @@ public:
     friend class KVCache;
     friend class TGraph;
     friend class SelfAttention;     friend class ROPE;
-    friend class EDGE_DEVICES;
+    friend class EDGE_DEVICES;    
 };
 
 struct LogicSalp : public Fish {

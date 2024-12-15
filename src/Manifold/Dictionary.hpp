@@ -24,6 +24,7 @@ struct ConsiceDict : public VariationaAE    {
     LayerNormal _norm;
     SLP _output;
     hGensor tok_embeddings=nullptr; //norm=nullptr,output=nullptr;
+    bool init_ok = false;
     bool isSVD = false;
     hGensor out_u=nullptr,out_v=nullptr,out_d=nullptr;
     int lo_rank = 128;
@@ -36,7 +37,7 @@ struct ConsiceDict : public VariationaAE    {
     };   
 
     bool isLoadTokenEmbed = false;
-    NLP_AutoRegressive *hLM = nullptr;
+    NLP_AutoRegressive *dolphin = nullptr;
     int nToken=0,lama_embed=0,latent_dim=256,nLevel=0;
     // int nUniqueToken = 0;
     
@@ -112,9 +113,10 @@ struct ConsiceDict : public VariationaAE    {
         FREE_a(scores);      FREE_a(toktypes);
     }
     //  n_vocab,scores,toktypes,special_,tokens
-    virtual void LoadVocab(const char*fn_model_base,int flag);
-    void LoadVocab_v1(const char*fn_model_base,struct CLI_params& params,llama_model & model,int flag);
-    virtual int stream2token(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0);
+    virtual void LoadVocab_v0(const char*fn_model_base,int flag);
+    virtual void LoadVocab(const char*fn_model_base,int flag)   {   assert(0);  }
+    // virtual bool LoadTokenizer(const char *filename,int flag=0x0)   {   assert(0);  }
+    virtual int stream2token(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0);
     
     virtual void InitVAE(int flag=0x0);
 
@@ -135,9 +137,23 @@ struct ConsiceDict : public VariationaAE    {
 typedef std::shared_ptr<ConsiceDict> hCDICT;
 
 class CDict_GPT2 : public ConsiceDict{
+protected:
+    // uint32_t vocab_size;
+    char **token_table;    
+    int eot_token; // <|endoftext|> token id
+    
+    // bool LoadTokenizer(const char *filename,int flag=0x0)   override;
 public:
     CDict_GPT2(NLP_AutoRegressive *nlp_,int flag=0x0);
+    virtual ~CDict_GPT2()   {
+        for (uint32_t i = 0; i < n_vocab; i++) {
+            free(token_table[i]);
+        }
+        free(token_table);
+    }
     int InitMAEC(struct ggml_context *ctx,const std::vector<int>& dims_,int flag=0x0) override;
+    std::string T2STR(TOKEN_ID tok,int flag=0x0 ) override;   
+    int stream2token(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0)    override;
 };
 
 /*
@@ -148,6 +164,6 @@ public:
     CDict_CHAR(NLP_AutoRegressive *nlp_,int flag=0x0);
     void LoadVocab(const char*fn_model_base,int flag)   override;
     int InitMAEC(struct ggml_context *ctx,const std::vector<int>& dims_,int flag=0x0) override;
-    int stream2token(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0)    override;
+    int stream2token(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0)    override;
     std::string T2STR(TOKEN_ID tok,int flag=0x0 ) override;   
 };

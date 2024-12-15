@@ -25,6 +25,9 @@ using namespace std;
 
 #include "../ggex/GG_util.hpp"
 
+static const string sWeight=".weight",sBias=".bias";        //".w"
+static const string sNorm="_norm";            //".norm"
+
 class Fish;
 struct NeLayer;
 
@@ -41,7 +44,7 @@ class GeNeuron  {
 
 protected: 
     int n_batch,n_ctx,n_embd,n_embd_head,n_head;
-    Fish *hOrg = nullptr;
+    Fish *hFish = nullptr;
     COMPRESSIVE_SENSING compression = SKIP;
     SHAPE shape;
     int level=-1,ID=-1,dad,c_id;    //topo info
@@ -286,8 +289,9 @@ public:
 
 struct FFN : public GeNeuron  {
     LayerNormal norm;
-    SLP up,down;
+    SLP up,down,gate;
     Relu relu;
+   
     FFN() {}
     FFN(Fish *ctx, const std::string &key_, JSON::const_iterator jit, int flag);
     bool Build(int flag)   override;

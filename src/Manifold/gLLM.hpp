@@ -161,7 +161,7 @@ struct NLP_AutoRegressive : public Fish {
     virtual size_t tVocab();
     size_t nClass()    override     {   return tVocab(); }
 
- // get gensors from llama_model (possibly mmapped)
+ // get gg_tensors from llama_model (possibly mmapped)
     virtual void LoadTensors(struct llama_model * lama,int flag=0x0);   
 
     virtual void LoadModel(const char * fn_model, int flag=0x0) {
@@ -333,7 +333,7 @@ struct NLP_AutoRegressive : public Fish {
     // virtual bool LoadTokens( int flag=0x0 );
 
     void CopyWeight(const Fish* src,int flag = 0x0)  override;
-    bool LocalFeeling(std::vector<llama_token>&tokens,vector<float>& result)   const   override;
+    bool LocalFeeling(SampLoader *hLoader,vector<float>& result,int flag)   override;
 
     void Loss(int flag=0x0)     override   {
 
@@ -684,7 +684,7 @@ struct LLAMA_VAE  : public NLP_AutoRegressive {
     void InitModel(int flag=0x0)    override    {
         _INFO("LLAMA_VAE%s: init model\n", __func__);
 
-        gensors.clear();
+        gensors.Clear();
         hDict->InitVAE();       updateTMap = true;
 
         NLP_AutoRegressive::InitModel(flag);        
@@ -707,15 +707,6 @@ struct LLM_MAMBA : public NLP_AutoRegressive {
 
     void InitModel(int flag=0x0)    override    {
         _INFO("MAMBA::%s: init model\n", __func__);
-
-        /*llama2params(GetRawModel(),hparams);
-        hparams.n_head() = 8;    
-        hparams.n_head_kv = hparams.n_head();     //hack
-        hparams.n_layer = nLayerX;
-
-        gensors.clear();
-        hDict->InitVAE();       updateTMap = true;*/
-
         NLP_AutoRegressive::InitModel(flag);        
     }     
 

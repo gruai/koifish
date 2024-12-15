@@ -132,7 +132,7 @@ int DTS_GPT2::stream2token(void *hLLM,const char*txt,int txt_len,std::vector<TOK
 
 CDict_GPT2::CDict_GPT2(NLP_AutoRegressive *nlp_,int flag)   : ConsiceDict(nlp_,flag)   {
     int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd;
-    n_vocab=50257;    
+    // n_vocab=50257;    
 }
 
 CDict_CHAR::CDict_CHAR(NLP_AutoRegressive *nlp_,int flag)   : ConsiceDict(nlp_,flag)   {
@@ -145,7 +145,7 @@ int CDict_CHAR::InitMAEC(struct ggml_context *ctx_build,const std::vector<int>& 
     assert(gensors.size()==0);
     return 0x0;     
 }
-int CDict_CHAR::stream2token(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag){
+int CDict_CHAR::stream2token(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag){
     int n_tokens = 0, nMost = btch.size(); 
     assert(txt_len<=nMost);
     unsigned char *a = (unsigned char*)(txt);
@@ -166,10 +166,10 @@ std::string CDict_CHAR::T2STR(TOKEN_ID tok,int flag ) {
 int CDict_GPT2::InitMAEC(struct ggml_context *ctx_build,const std::vector<int>& dims_,int flag)  {
     int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd;
 
-    // tok_embeddings = hLM->AddTensor(ctx_build,_NAM_("token_embd.weight"),GGML_TYPE_F32,{n_embd, n_vocab},true,0x0);  
-    // _norm.BuildX("output_norm", {n_embd},hLM,0x0);
+    // tok_embeddings = dolphin->AddTensor(ctx_build,_NAM_("token_embd.weight"),GGML_TYPE_F32,{n_embd, n_vocab},true,0x0);  
+    // _norm.BuildX("output_norm", {n_embd},dolphin,0x0);
     // _output.isBias = false;
-    // _output.BuildX("output", {n_embd, n_vocab},hLM,0x0);  
+    // _output.BuildX("output", {n_embd, n_vocab},dolphin,0x0);  
     // assert(gensors.size()==0);
     return 0x0;     
 }
@@ -356,48 +356,64 @@ string GPT2::__repr__( string& suffix,string& prefix,int flag) {
     return buf;
 }
 
+std::string CDict_GPT2::T2STR(TOKEN_ID tok,int flag ) {
+    assert(0);
+    return "";
+};   
+int CDict_GPT2::stream2token(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag){
+    //  https://github.com/wangkuiyi/huggingface-tokenizer-in-cxx
+    //  https://www.daoplays.org/blog/gpt2_p1 
+    assert(0);
+    int n_tokens = 0, nMost = btch.size(); 
+    assert(txt_len<=nMost);
+    unsigned char *a = (unsigned char*)(txt);
+    for(int i=0;i<txt_len;i++,a++)  {
+        TOKEN_ID t=(TOKEN_ID)(*a);
+        assert(t>=0 && t<n_vocab);
+        btch[i] = t;
+        n_tokens++;
+    }
+    return n_tokens;
+}
+
 /*
-void GPT2_tokenizer_init(Tokenizer *tokenizer, const char *filename) {
+bool CDict_GPT2::LoadTokenizer(const char *filename,int flag) {
     FILE *file = fopen(filename, "rb");
     if (file == NULL) {
-        // try to be more helpful as we just added this feature, erase later
-        printf("---\n");
-        printf("WARNING: Failed to open the tokenizer file %s\n", filename);
-        printf("The Tokenizer is a new feature added April 14 2024.\n");
-        printf("Re-run `python train_gpt2.py` to write it\n");
-        printf("---\n");
-        tokenizer->init_ok = 0;
-        return;
+        _WARN("%s: Failed to open the tokenizer file @%s\n", filename);
+        init_ok = 0;
+        return false;
     }
     // read in the header
     uint32_t header[256];
     freadCheck(header, sizeof(uint32_t), 256, file);
     assert(header[0] == 20240328);
     int version = header[1];
-    tokenizer->vocab_size = header[2];
+    n_vocab = header[2];
     if (version == 1) {
         // version 1 didn't include the EOT token id
         // so we assume it is 50256, the EOT in GPT-2
-        assert(tokenizer->vocab_size == 50257); // let's be defensive here
-        tokenizer->eot_token = 50256;
+        assert(n_vocab == 50257); // let's be defensive here
+        eot_token = 50256;
     } else if (version == 2) {
-        tokenizer->eot_token = header[3];
+        eot_token = header[3];
     } else {
         fprintf(stderr, "Tokenizer model file %s has bad version: %d\n", filename, version);
         exit(EXIT_FAILURE);
     }
     // read in all the tokens
     unsigned char length;
-    tokenizer->token_table = (char **)mallocCheck(tokenizer->vocab_size * sizeof(char *));
-    for (uint32_t i = 0; i < tokenizer->vocab_size; i++) {
+    token_table = (char **)mallocCheck(n_vocab * sizeof(char *));
+    for (uint32_t i = 0; i < n_vocab; i++) {
         freadCheck(&length, sizeof(unsigned char), 1, file);
         assert(length > 0); // every token should be at least one character
         char *token_bytes = (char *)mallocCheck(length + 1);
         freadCheck(token_bytes, sizeof(char), length, file);
         token_bytes[length] = '\0';  // Add null terminator for printing
-        tokenizer->token_table[i] = token_bytes;
+        token_table[i] = token_bytes;
     }
     // cleanups
     fcloseCheck(file);
-    tokenizer->init_ok = 1;
+    init_ok = true;
+    return init_ok;
 }*/

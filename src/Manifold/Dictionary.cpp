@@ -79,9 +79,9 @@ string ConsiceDict::__repr__( string& suffix,string& prefix,int flag)     {
 }
 
 
-ConsiceDict::ConsiceDict(NLP_AutoRegressive *lama_,int flag) : VariationaAE(),hLM(lama_)   {
-    assert(hLM->isValid());
-    hparams = hLM->hparams;
+ConsiceDict::ConsiceDict(NLP_AutoRegressive *lama_,int flag) : VariationaAE(),dolphin(lama_)   {
+    assert(dolphin->isValid());
+    hparams = dolphin->hparams;
     isDialect = hparams.dict_dialect == "on";
     isSVD = hparams.dict_logits == "svd";
     _norm.Init(lama_);              
@@ -91,10 +91,10 @@ ConsiceDict::ConsiceDict(NLP_AutoRegressive *lama_,int flag) : VariationaAE(),hL
     lama_embed = hparams.n_embd;
     // n_vocab = hparams.n_vocab;      //Maybe 0!  would get correct value @LoadVocab!
     latent_dim = hparams.n_embd;
-    if(hLM->hparams.nabla>3)
+    if(dolphin->hparams.nabla>3)
         assert(0);
-    if(!hLM->hparams.vae.empty()){
-    // if(hLM->hparams.nabla==3){
+    if(!dolphin->hparams.vae.empty()){
+    // if(dolphin->hparams.nabla==3){
         dims = {(int)hparams.n_embd, 256};
         // dims = {hparams.n_embd, 1024, 256};
         //dims = {hparams.n_embd,1024,256,64};       //little difference with {hparams.n_embd,1024,256,128}
@@ -102,14 +102,14 @@ ConsiceDict::ConsiceDict(NLP_AutoRegressive *lama_,int flag) : VariationaAE(),hL
         latent_dim = dims[nLevel];
         _INFO("%s symmetric=%d resi=%d tpNorm=%d opOut=%d nLevel=%d dims= ",__func__,(int)(isSymmetric),(int)(reserve_x),tpNorm,opOut,nLevel);
     }   else     {   /**/  
-        if(hLM->hparams.wiki_actor!="copy") {
+        if(dolphin->hparams.wiki_actor!="copy") {
             latent_dim = hparams.dict_latent_dim;   //256;       
         }            
         _INFO("%s latent_dim=%d Dialect=%s",__func__,latent_dim,isDialect?"ON":"OFF");
     }
-    if(hLM->hparams.wiki_actor!="copy") {
-        hLM->hparams.n_embd = latent_dim;   //Reset n_embd just like nLayerX
-        // hLM->hparams.SetHead(latent_dim);   // ???????
+    if(dolphin->hparams.wiki_actor!="copy") {
+        dolphin->hparams.n_embd = latent_dim;   //Reset n_embd just like nLayerX
+        // dolphin->hparams.SetHead(latent_dim);   // ???????
     }
     for(auto dim : dims)           {
         _INFO("%d ",dim);
@@ -122,23 +122,23 @@ void ConsiceDict::InitVAE(int flag)  {
 
     }  else if(nLevel>=1){
         isLoadTokenEmbed = true;
-        InitMAEC(hLM->GetCTX(),dims);
-        // hMultiCoder hCoder = std::make_shared<MutliCoder>(hLM->GetCTX(), hparams.n_embd, latent_dim);
+        InitMAEC(dolphin->GetCTX(),dims);
+        // hMultiCoder hCoder = std::make_shared<MutliCoder>(dolphin->GetCTX(), hparams.n_embd, latent_dim);
         // MAEC.push_back(hCoder);
-        // encoder = ggml_new_tensor_2d(hLM->GetCTX(), GGML_TYPE_F32, hparams.n_embd, latent_dim);     
-        // decoder = ggml_new_tensor_2d(hLM->GetCTX(), GGML_TYPE_F32, latent_dim, hparams.n_embd); 
+        // encoder = ggml_new_tensor_2d(dolphin->GetCTX(), GGML_TYPE_F32, hparams.n_embd, latent_dim);     
+        // decoder = ggml_new_tensor_2d(dolphin->GetCTX(), GGML_TYPE_F32, latent_dim, hparams.n_embd); 
     }    
          
 }
 
 void ConsiceDict::CreateEmbeddings(int flag){
-    assert(hLM!=nullptr);
+    assert(dolphin!=nullptr);
     uint32_t n_embd = latent_dim,n_out=n_vocab;
     if(isDialect){
         n_out = tVocab();
     }
-    // auto lama = hLM->GetRawModel( );  
-    auto ctx = hLM->GetCTX();    
+    // auto lama = dolphin->GetRawModel( );  
+    auto ctx = dolphin->GetCTX();    
     if(nLevel==0){
         
     }else{
@@ -179,8 +179,8 @@ void ConsiceDict::CreateEmbeddings(int flag){
 std::string ConsiceDict::T2STR(TOKEN_ID tok,int flag ) { 
     string word = "";
     
-    if(hLM!=nullptr){
-        auto lama = hLM->lama();
+    if(dolphin!=nullptr){
+        auto lama = dolphin->lama();
         assert(lama!=nullptr);
         word = lama->T2STR(tok,flag);
     }        
@@ -238,7 +238,7 @@ hGensor ConsiceDict::Embed2Output(struct ggml_context * ctx,hGensor t33,int flag
 
 void ConsiceDict::Update_0(struct random_normal_distribution * rnd,int flag){
     const uint32_t n_embd  = hparams.n_embd;
-    auto lama = hLM->GetRawModel( );  
+    auto lama = dolphin->GetRawModel( );  
     if(isLoadTokenEmbed) {
         bool isParam = false;
         // get tensors from llama_model (possibly mmapped)
@@ -249,18 +249,18 @@ void ConsiceDict::Update_0(struct random_normal_distribution * rnd,int flag){
         _output.w         = llama_get_model_tensor(lama, TN(LLM_TENSOR_OUTPUT));          
         if(isParam) nParams+=ggml_nelements(_output.w);
     }   else   {
-        auto ctx = hLM->GetCTX();
+        auto ctx = dolphin->GetCTX();
 
-        hLM->InitGensor(ctx,tok_embeddings, TN(LLM_TENSOR_TOKEN_EMBD), rnd);
-        hLM->InitGensor(ctx,_norm.w,           TN(LLM_TENSOR_OUTPUT_NORM), rnd);
+        dolphin->InitGensor(ctx,tok_embeddings, TN(LLM_TENSOR_TOKEN_EMBD), rnd);
+        dolphin->InitGensor(ctx,_norm.w,           TN(LLM_TENSOR_OUTPUT_NORM), rnd);
         if(_output.w!=nullptr){
             if(_output.w!=tok_embeddings)
-                hLM->InitGensor(ctx,_output.w,         TN(LLM_TENSOR_OUTPUT), rnd);
+                dolphin->InitGensor(ctx,_output.w,         TN(LLM_TENSOR_OUTPUT), rnd);
         }
         else{
-            hLM->InitGensor(ctx,out_u,         "out_u", rnd);
-            hLM->InitGensor(ctx,out_v,         "out_v", rnd);
-            hLM->InitGensor(ctx,out_d,         "out_d", rnd);
+            dolphin->InitGensor(ctx,out_u,         "out_u", rnd);
+            dolphin->InitGensor(ctx,out_v,         "out_v", rnd);
+            dolphin->InitGensor(ctx,out_d,         "out_d", rnd);
         }
     }
     // ggml_tensor_dequant(ctx_build,gensor,GGML_TYPE_F32);
@@ -278,9 +278,9 @@ void ConsiceDict::Update_1(struct random_normal_distribution * rnd,int flag) {
 
     bool isParam = false;
     // get tensors from llama_model (possibly mmapped)
-    auto lmodel = hLM->GetRawModel( );  
+    auto lmodel = dolphin->GetRawModel( );  
     tok_embeddings = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_TOKEN_EMBD) );        //TN(LLM_TENSOR_TOKEN_EMBD)
-    if(isParam) hLM->nParams+=ggml_nelements(tok_embeddings);
+    if(isParam) dolphin->nParams+=ggml_nelements(tok_embeddings);
     switch(opOut){
     case ONLY_LOAD:
         _norm.w           = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT_NORM) );       
@@ -289,25 +289,25 @@ void ConsiceDict::Update_1(struct random_normal_distribution * rnd,int flag) {
     case LOAD_GRAD_norm:    //bug@Optimizer::ggml_train
         _norm.w           = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT_NORM) );
         assert(_norm.w->type==GGML_TYPE_F32);
-        ggml_set_param(hLM->GetCTX(), _norm.w);         hLM->nParams += ggml_nelements(_norm.w);           
-        hLM->Gensor2Map(_norm.w);       // hLM->tensors[_norm.w->name] = _norm.w;
-        hLM->InitGensor(hLM->GetCTX(),_output.w,         TN(LLM_TENSOR_OUTPUT), rnd);
+        ggml_set_param(dolphin->GetCTX(), _norm.w);         dolphin->nParams += ggml_nelements(_norm.w);           
+        dolphin->gensors.Insert(_norm.w);       // dolphin->tensors[_norm.w->name] = _norm.w;
+        dolphin->InitGensor(dolphin->GetCTX(),_output.w,         TN(LLM_TENSOR_OUTPUT), rnd);
         break;
     case LOAD_GRAD:     //bug!!!
         _norm.w           = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT_NORM) );
-        if(_norm.w->type!=GGML_TYPE_F32)   Gensor2float(hLM->GetCTX(),_norm.w);
-        ggml_set_param(hLM->GetCTX(), _norm.w);         hLM->nParams += ggml_nelements(_norm.w);           
-        hLM->Gensor2Map(_norm.w);       //hLM->tensors[_norm.w->name] = _norm.w;
+        if(_norm.w->type!=GGML_TYPE_F32)   Gensor2float(dolphin->GetCTX(),_norm.w);
+        ggml_set_param(dolphin->GetCTX(), _norm.w);         dolphin->nParams += ggml_nelements(_norm.w);           
+        dolphin->gensors.Insert(_norm.w);       //dolphin->tensors[_norm.w->name] = _norm.w;
         _output.w         = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT)  ); 
         if(_output.w->type!=GGML_TYPE_F32)   {
-            _output.w->data = Gensor2float(hLM->GetCTX(),_output.w);       _output.w->type = GGML_TYPE_F32;
+            _output.w->data = Gensor2float(dolphin->GetCTX(),_output.w);       _output.w->type = GGML_TYPE_F32;
         }
-        ggml_set_param(hLM->GetCTX(), _output.w);     hLM->nParams += ggml_nelements(_output.w);           
-        hLM->Gensor2Map(_output.w);       //hLM->tensors[_output.w->name] = _output.w;
+        ggml_set_param(dolphin->GetCTX(), _output.w);     dolphin->nParams += ggml_nelements(_output.w);           
+        dolphin->gensors.Insert(_output.w);       //dolphin->tensors[_output.w->name] = _output.w;
         break;
     case RND_GRAD:
-        hLM->InitGensor(hLM->GetCTX(),_norm.w,           TN(LLM_TENSOR_OUTPUT_NORM), rnd);
-        hLM->InitGensor(hLM->GetCTX(),_output.w,         TN(LLM_TENSOR_OUTPUT), rnd);
+        dolphin->InitGensor(dolphin->GetCTX(),_norm.w,           TN(LLM_TENSOR_OUTPUT_NORM), rnd);
+        dolphin->InitGensor(dolphin->GetCTX(),_output.w,         TN(LLM_TENSOR_OUTPUT), rnd);
         break;
 
     default:
@@ -323,23 +323,23 @@ void ConsiceDict::Update_1(struct random_normal_distribution * rnd,int flag) {
     int i = 0;
     for(auto map : MAEC){
         std::string name = TN(LLM_DICT_DOWN, i);    //"dict.0.down.weight"
-        hLM->InitGensor(hLM->GetCTX(), map->encode,    TN(LLM_DICT_DOWN, i),     rnd); 
+        dolphin->InitGensor(dolphin->GetCTX(), map->encode,    TN(LLM_DICT_DOWN, i),     rnd); 
         if(map->decode!=nullptr)
-            hLM->InitGensor(hLM->GetCTX(), map->decode,    TN(LLM_DICT_UP, i),       rnd);    
+            dolphin->InitGensor(dolphin->GetCTX(), map->decode,    TN(LLM_DICT_UP, i),       rnd);    
         i++;            
     }
-    //ggml_set_param(hLM->GetCTX(), _norm.w);              hLM->nParams+=ggml_nelements(_norm.w);
+    //ggml_set_param(dolphin->GetCTX(), _norm.w);              dolphin->nParams+=ggml_nelements(_norm.w);
     //_output.w is Q6k would fail @float ggml_get_f32_1d(const struct ggml_tensor * tensor, int i)
-    //ggml_set_param(hLM->GetCTX(), _output.w);            hLM->nParams+=ggml_nelements(_output.w);
-    hLM->Gensor2Map(tok_embeddings); 
-    // hLM->tensors[ggml_get_name(tok_embeddings)] = tok_embeddings;
-    // hLM->tensors[ggml_get_name(_norm.w)] = _norm.w;
-    // hLM->tensors[ggml_get_name(_output.w)] = _output.w;  
+    //ggml_set_param(dolphin->GetCTX(), _output.w);            dolphin->nParams+=ggml_nelements(_output.w);
+    dolphin->gensors.Insert(tok_embeddings); 
+    // dolphin->tensors[ggml_get_name(tok_embeddings)] = tok_embeddings;
+    // dolphin->tensors[ggml_get_name(_norm.w)] = _norm.w;
+    // dolphin->tensors[ggml_get_name(_output.w)] = _output.w;  
     assert(gensors.size()==0);          
 }
 
 
-void ConsiceDict::LoadVocab(const char*model_path,int flag)     {
+void ConsiceDict::LoadVocab_v0(const char*model_path,int flag)     {
     assert(std::filesystem::exists(model_path));
     string word;
     enum llama_ftype ftype = LLAMA_FTYPE_MOSTLY_F16;   //LLAMA_FTYPE_ALL_F32;

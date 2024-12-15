@@ -49,7 +49,7 @@ protected:
     hGensor*nodes=nullptr,*grads=nullptr,*leafs=nullptr;
     std::vector<hGensor> topo_nodes;    //nodes in Topological order
     std::vector<hGensor> sinks;      //  sinks of tensor flow graph
-    std::map<hGensor, GENSOR_INFO> gimap;   // Get gensor info from map
+    // std::map<hGensor, GENSOR_INFO> gimap;   // Get gensor info from map
     
     // vector<hGensor> nodes,grads,leafs;
     // struct ggml_hash_set visited_hash_table = { 0, nullptr };   

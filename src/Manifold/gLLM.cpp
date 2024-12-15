@@ -38,14 +38,13 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_,int flag)     {
     ctx_build = InitCTX(MostMemSize(0x0));
     hEDS = std::make_shared<EDGE_DEVICES>(this,ctx_build);
     hOPT->hEDS = hEDS;
-    // ctx = ggml_init(ctx_model_params);
     
     InitModel(flag);
     hparams.Dump();         
-    if(hparams.is({"wiki","actor"},"copy")){
-        bool bRet = wikis[0]->CopyGensors(this);      
-        assert(bRet);
-    }
+    // if(hparams.is({"wiki","actor"},"copy")){
+    //     bool bRet = wikis[0]->CopyGensors(this);      
+    //     assert(bRet);
+    // }
 
     // save_data.Init(hparams,GetRawModel());
     if(hOPT!=nullptr)   {
@@ -264,7 +263,7 @@ void NLP_AutoRegressive::build_inp_KQ_(struct ggml_context *ctx,bool isMask,bool
 }
 
 hGensor SLP::UpdateGensor(int flag)  {
-    hGensor h = w==nullptr ? nullptr : hOrg->GetGensor (w->name);
+    hGensor h = w==nullptr ? nullptr : hFish->GetGensor (w->name);
     return h;
 }
 
@@ -449,39 +448,27 @@ void NLP_AutoRegressive::CopyWeight(const Fish* src,int flag) {
 /*
     would affect training process?
 */
-bool NLP_AutoRegressive::LocalFeeling(std::vector<TOKEN_ID>&samp_tokens,vector<float>& result)  const {
-    // assert(target_probs->type == GGML_TYPE_F32);
-    float *fLoss = (float*)(loss->data);    
-    auto gf = GetForwRaw(),gb = GetBackRaw();
-    TOKEN_ID token;
-    ggml_set_i32_nd(tokens_input, 0, 0, 0, 0, hDict->bos);
-    size_t i,N=samp_tokens.size(),n_context=tokens_input->ne[0],nSampInBatch=tokens_input->ne[1];
-    if(N>n_context)
-        return false;
-    assert(N>=0 && N<=n_context);     
-    // assert(nSamp==1 && nSamp<=nSampInBatch);
-    for(i=0;i<N;i++)  {
-        token = samp_tokens[i];         assert(token>=0&&token<hDict->n_vocab);
-        ggml_set_i32_nd(tokens_input, (int) (i + 1), (int) 0, 0, 0, token);
-    }
-   
-    if(isLocalInfer)
-        ggml_graph_compute(gf, (ggml_cplan*)(&gf_plan));   
-    else{
-        ggml_graph_compute(gb, (ggml_cplan*)(&gb_plan));           
-    }        
-
+bool NLP_AutoRegressive::LocalFeeling(SampLoader *hLoader,vector<float>& result,int flag)  {
+    assert(hOPT!=nullptr);
+    
+    assert(hLoader->all_samps.size()==1);
+    auto hSamp = hLoader->all_samps[0];
+    int i,curTokens = hSamp->len,_nctx=hparams.n_ctx();
+    
+    hOPT->Evaluate(*hLoader,-666);
+    if(BIT_TEST(flag,0x100))
+        _INFO("\t%s @\"%s\"\n",__func__,hLoader->sentence.c_str());
     assert(preLogits->type==GGML_TYPE_F32);
-    assert(preLogits->ne[1]==n_context);
-    size_t nz = ggml_nelements(preLogits),nTokenInWiki=preLogits->ne[0]; //preLogits->nb[0];
+    // assert(preLogits->ne[1]>=n_tokens);  //???
+    size_t nz = ggml_nelements(preLogits),nVocabInWiki=preLogits->ne[0]; //preLogits->nb[0];
 
     //Causal Language Modeling
-    size_t off = (N-1)*nTokenInWiki;      //(n_context-1)*nToken;
+    size_t off = (curTokens-1)*nVocabInWiki;      //(n_context-1)*nToken;
     float *out = (float*)(preLogits->data)+off;
-    if(result.size()!=nTokenInWiki){
-        result.clear( );     result.resize(nTokenInWiki);
+    if(result.size()!=nVocabInWiki){
+        result.clear( );     result.resize(nVocabInWiki);
     }
-    memcpy(result.data(),out,sizeof(float)*nTokenInWiki);
+    memcpy(result.data(),out,sizeof(float)*nVocabInWiki);
     float sum=0;
     for(auto f : result)    sum+=f;
     return true;
@@ -617,9 +604,12 @@ std::string NLP_AutoRegressive::T2STR( const std::vector<TOKEN_ID>& toks,int fla
  *  2.  Extract logits and embeddings
  */
 bool LAMA::Decode(std::vector<TOKEN_ID>&embd_inp,int start,int n_past,bool out_all) {
-    assert(embd_inp.size()<=nCTX());
-    TOKEN_ID eos = llama_token_eos(lmodel),id;
+    assert(embd_inp.size()<=nCTX()+1);
     int i=0,n_consumed=start;
+    if(embd_inp.size()==nCTX()+1){
+        assert(embd_inp[0]==bos && start==0);       n_consumed=1;
+    }
+    TOKEN_ID id;    //eos = llama_token_eos(lmodel),    
     std::vector<TOKEN_ID> embd;
     while ((int) embd_inp.size() > n_consumed) {
         id = embd_inp[n_consumed];
@@ -812,10 +802,12 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
         }else{
             hDict = std::make_shared<CDict_GPT2>(this);
             if(lama()!= nullptr)  {   
-                hDict->LoadVocab(lama()->model_path.c_str(),0x0);       //  tokenizer_name == "gpt2"
+                // hDict->LoadVocab(lama()->model_path.c_str(),0x0);       //  tokenizer_name == "gpt2"
                 hDict->bos = lama()->bos;             hDict->eos = lama()->eos;  
                 hLLM = lama()->lmodel;
-            }  
+            }  else{
+                // hDict->LoadTokenizer("/home/cys/rnd/lic/models/gpt2_tokenizer.bin");
+            }
         }
         hTokenset = std::make_shared<DataTokenSet>(hDict.get());
         
@@ -823,7 +815,8 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
     default:
         hDict = std::make_shared<ConsiceDict>(this);
         if(lama()!= nullptr)  {   
-            hDict->LoadVocab(lama()->model_path.c_str(),0x0); 
+            hDict->n_vocab = lama()->n_vocab;
+            // hDict->LoadVocab(lama()->model_path.c_str(),0x0); 
             hDict->bos = lama()->bos;             hDict->eos = lama()->eos;  
             hLLM = lama()->lmodel;
         }
@@ -847,15 +840,15 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
 
     }
 
-    // hDict->LoadVocab_v1(hparams.fn_model_base,hparams,*lmodel, 0x0);
     return true;
 }
 
 bool WIKI::CopyGensors(Fish *hFish,int flag)    {    
     int nT0 = tmaps.size(),nT1 = hFish->optParams.size(),nT2 = hFish->gensors.size(),x;
-    if(nT1>0 && nT0!=nT1){
+    size_t sz=0;
+    /*if(nT1>0 && nT0!=nT1){
         return false;
-    }
+    }*/
     if(nT0>nT2){
         return false;
     }
@@ -863,6 +856,7 @@ bool WIKI::CopyGensors(Fish *hFish,int flag)    {
         auto nam = it.first;
         hGensor src=it.second,dst = hFish->GetGensor(nam.c_str());
         size_t nElem = ggml_nelements(src),nbyte = ggml_nbytes(src);
+        sz += nElem;
         if(strcmp(src->name,"blk.0.attn_q.weight")==0)   {   //only for debug
             x = 0;
         }
@@ -881,6 +875,8 @@ bool WIKI::CopyGensors(Fish *hFish,int flag)    {
             assert(0);
         }        
     }
+    hFish->wiki_tutor = this;
+    _INFO("%s succeed! tutor=%s\tN=%d sz=%.7gM \n",__func__,"", nT0,sz/1.0e6);
     return true;
 }
 
@@ -1223,6 +1219,7 @@ void NLP_AutoRegressive::InitModel(int flag){
     auto train_params = hparams.common;
     uint32_t n_embd  = hparams.n_embd,n_ctx = train_params.n_ctx;        
     const uint32_t n_layer = hparams.nLayer();
+    bool isJModel = !hparams.jModel.empty();
     auto ctx=GetCTX();
     if(arch==NLP_MAMBA)     {
         assert(hparams.n_head() == 0);
@@ -1234,26 +1231,30 @@ void NLP_AutoRegressive::InitModel(int flag){
     _INFO("\t type of FFN=%s\n", tpFFN==FFN_TYPE::SWIGLU ? "MLP" : tpFFN==FFN_TYPE::VAR_LAST ? "Variation@last_layer" 
         : tpFFN==FFN_TYPE::ONLY_RMSNormal ? "RMS Normal" : "other");  
     _INFO("\t type of ATTENTION=%s P=%s \n",tpATT==ATTENTION_TYPE::BROWN ? "BROWN":"QKV",BROWN_Motion::Transfer_1?"Token":"Embed");
-    for (int i=0;i<n_layer;i++) {
-        auto  layer = std::make_shared<QKV_LAY>(this,i);
-        layer->isLast = i==n_layer-1;
-        layers.push_back(layer);        //typedef shared_ptr<layer> hLayer;
-        layer->att_norm.w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
-        if(tpATT==ATTENTION_TYPE::OFF){
-        }else if(tpATT==ATTENTION_TYPE::QKV){
-            layer->Q.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
-            layer->K.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
-            layer->V.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);                
-        }else{
-            if(BROWN_Motion::Transfer_1){
-                layer->V.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, 1);                
+    if(isJModel){
+
+    }else{
+        for (int i=0;i<n_layer;i++) {
+            auto  layer = std::make_shared<QKV_LAY>(this,i);
+            layer->isLast = i==n_layer-1;
+            layers.push_back(layer);        //typedef shared_ptr<layer> hLayer;
+            layer->att_norm.w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
+            if(tpATT==ATTENTION_TYPE::OFF){
+            }else if(tpATT==ATTENTION_TYPE::QKV){
                 layer->Q.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
+                layer->K.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
+                layer->V.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);                
             }else{
-                layer->Q.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
+                if(BROWN_Motion::Transfer_1){
+                    layer->V.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, 1);                
+                    layer->Q.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
+                }else{
+                    layer->Q.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
+                }
             }
+            layer->wo = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
+            layer->CreateFFN(hparams,ctx,tpFFN);            
         }
-        layer->wo = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
-        layer->CreateFFN(hparams,ctx,tpFFN);            
     }
     tmpExLogis.clear();
     if(role==ROLE_TYPE::SWARM_FOLLOWER) {
@@ -1266,7 +1267,7 @@ void NLP_AutoRegressive::InitModel(int flag){
         }      
     }
 
-    if( tmpExLogis.size()>0 /* wiki!=nullptr && (wiki->teach==WIKI::_LOGITS || wiki->teach==WIKI::_LOGITS_GATE ) */ 
+    if( tmpExLogis.size()>0 
             && !isLocalInfer) {
         // exLogits = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_vocab,  n_ctx, train_params.n_batch);
         if(teach==WIKI::_LOGITS_GATE)   {               
@@ -1274,7 +1275,7 @@ void NLP_AutoRegressive::InitModel(int flag){
         }   
     }
     nParams = 0;    
-    bool isJModel = !hparams.jModel.empty();
+    
     if(isJModel){
 
     }else{
@@ -1306,7 +1307,7 @@ void NLP_AutoRegressive::LoadTensors(struct llama_model * lama,int flag) {
         layer->down.w       = llama_get_model_tensor(lama, TN(LLM_TENSOR_FFN_DOWN, i));      nParams+=ggml_nelements(layer->down.w);
         layer->up.w         = llama_get_model_tensor(lama, TN(LLM_TENSOR_FFN_UP, i));        nParams+=ggml_nelements(layer->up.w); 
 
-        Gensor2Map({layer->att_norm.w,layer->Q.w,layer->K.w,layer->V.w,layer->wo,layer->ffn_norm.w,layer->ffn_gate,layer->down.w,layer->up.w});
+        gensors.Insert({layer->att_norm.w,layer->Q.w,layer->K.w,layer->V.w,layer->wo,layer->ffn_norm.w,layer->ffn_gate,layer->down.w,layer->up.w});
         assert_shape_1d(layer->att_norm.w, hparams.n_embd);
         assert_shape_2d(layer->Q.w,             hparams.n_embd, hparams.n_embd);
         assert_shape_2d(layer->K.w,             hparams.n_embd, hparams.n_embd_gqa());
