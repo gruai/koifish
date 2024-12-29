@@ -29,11 +29,12 @@
 #include <regex> 
 using namespace std;
 #include "ggml.h"
+// #include "ggml-cpu.h"
 #include "ggml-impl.h"
 #include "ggml-quants.h"
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
-#include "common-ggml.h"
+// #include "common-ggml.h"
 #include "../CLI_params.hpp"
 #include "../g_stddef.hpp"
 #include "train.h"          //struct train_params_common common;
@@ -133,7 +134,7 @@ inline void GG_log_internal(ggml_log_level level, const char * format, ...) {
 #define _INFO(...)  GG_log_internal(GGML_LOG_LEVEL_INFO , __VA_ARGS__)
 #define _WARN(...)  GG_log_internal(GGML_LOG_LEVEL_WARN , __VA_ARGS__)
 #define _ERROR(...) GG_log_internal(GGML_LOG_LEVEL_ERROR, __VA_ARGS__)
-
+#define _INFO_IF(...)   {   if(DUMP())  GG_log_internal(GGML_LOG_LEVEL_INFO , __VA_ARGS__);}
 #define GGUF_GET_KEY(ctx, dst, func, type, req, key) \
 { \
     const std::string skey(key); \
@@ -183,7 +184,9 @@ struct GENSORS{
     std::map<hGensor, GENSOR_INFO> infos;
     virtual bool has(hGensor gensor){
         assert(nag.size()==infos.size());
-        return infos.find(gensor) != infos.end();
+        bool b1 = nag.find(gensor->name) != nag.end(),b2=infos.find(gensor) != infos.end();
+        assert(b1==b2);
+        return b2;
     }
     //  Deprecated
     void Insert(hGensor gensor){
@@ -624,7 +627,7 @@ inline void ggml_graph_stat(struct ggml_cgraph * cgraph, int flag=0x0) {
             nF16++;
     }
     
-    printf("%s cgraph(%d,%d) nQ=%d nF16=%d",__func__,cgraph->n_leafs,cgraph->n_nodes,nQ,nF16);
+    _INFO("%s cgraph(%d,%d) nQ=%d nF16=%d",__func__,cgraph->n_leafs,cgraph->n_nodes,nQ,nF16);
 }
 
 #include <signal.h>
@@ -675,24 +678,18 @@ inline struct ggml_tensor * add_to_f32(struct ggml_context * ctx,hGensor  a,hGen
 inline hGensor gg_axpy_f32(struct ggml_context * ctx,hGensor a,float alpha,hGensor b,float beta) {
     hGensor result = nullptr;
     ggml_type type = GGML_TYPE_F32;
-    if (ggml_is_quantized(a->type) || a->type == GGML_TYPE_F16) {       
-        /*assert(b->type == GGML_TYPE_F32);
-        float s = beta/alpha;
-        result = ggml_add_cast(ctx, a, ggml_scale(ctx,b,s), GGML_TYPE_F32);
-        result = ggml_scale(ctx,result,alpha);
-          REF:  ggml_add_cast_impl
-        GGML_ASSERT(ggml_can_repeat_rows(b, a));*/
+    if (ggml_is_quantized(a->type) || a->type == GGML_TYPE_F16) {
         bool is_node = false;       //ggml_add_cast_impl
-        if (a->grad || b->grad) {
-            GGML_ASSERT(ggml_are_same_shape(a, b));
-            is_node = true;
-        }
+        // if (a->grad || b->grad) {
+        //     GGML_ASSERT(ggml_are_same_shape(a, b));
+        //     is_node = true;
+        // }
 
         struct ggml_tensor * result = ggml_new_tensor(ctx, type, GGML_MAX_DIMS, a->ne);
         float abc[3] = {1,alpha,beta};
         memcpy(result->op_params, abc, sizeof(abc));        //ggml_set_op_params(result, abc, sizeof(abc));
         result->op   = GGML_OP_ADD;
-        result->grad = is_node ? ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, a->ne) : NULL;
+        // result->grad = is_node ? ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, a->ne) : NULL;
         result->src[0] = a;   
         result->src[1] = b;
 
@@ -753,6 +750,11 @@ inline hGensor Permute(struct ggml_context * ctx_,hGensor cur,int64_t n1,int64_t
     return q;
 }
 
+ggml_cgraph * GG_dup_graph(ggml_context * ctx, ggml_cgraph *src);
+hGensor GG_SCAL(struct ggml_context * ctx,struct ggml_tensor  * a,float s,int flag=0x0);
+hGensor GG_map_tensor(std::map<ggml_tensor *, ggml_tensor *> & tensor_map, ggml_context * ctx, ggml_tensor * tensor);
+hGensor GradOf(struct ggml_cgraph *cgraph,hGensor node,int flag=0);
+
 typedef struct ggml_tensor gensor;
 typedef struct ggml_tensor *hGensor;
 typedef std::map<std::string, struct ggml_tensor *> TENSORs;
@@ -770,3 +772,19 @@ inline bool CHECK_SHAPE(const SHAPE&shape){
     assert(isValid);
     return isValid;
 }
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+    //
+    // For TGraph
+    //
+        size_t ggml_hash_size(size_t min_sz);
+        size_t ggml_graph_nbytes(size_t size, bool grads);
+        struct ggml_object * ggml_new_object(struct ggml_context * ctx, enum ggml_object_type type, size_t size);        
+        void * ggml_graph_compute_thread(void * data);
+        void clear_numa_thread_affinity(void);
+        int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads);
+#ifdef __cplusplus
+}
+#endif

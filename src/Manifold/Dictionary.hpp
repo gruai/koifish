@@ -24,10 +24,12 @@ struct ConsiceDict : public VariationaAE    {
     LayerNormal _norm;
     SLP _output;
     hGensor tok_embeddings=nullptr; //norm=nullptr,output=nullptr;
+    bool tokenizer_add_bos = false;
     bool init_ok = false;
     bool isSVD = false;
     hGensor out_u=nullptr,out_v=nullptr,out_d=nullptr;
     int lo_rank = 128;
+    hWIKI wiki_tutor=nullptr;
 
     using id    = int32_t;
     using token = std::string;
@@ -58,6 +60,8 @@ struct ConsiceDict : public VariationaAE    {
             return mapT2T.size();
         }               
     }   
+
+    virtual int STR2T(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0);
     virtual std::string T2STR(TOKEN_ID tok,int flag=0x0 );  
     virtual std::string T2STR(const std::vector<TOKEN_ID>&toks,int flag=0x0 ) {  
         string line="";
@@ -116,7 +120,7 @@ struct ConsiceDict : public VariationaAE    {
     virtual void LoadVocab_v0(const char*fn_model_base,int flag);
     virtual void LoadVocab(const char*fn_model_base,int flag)   {   assert(0);  }
     // virtual bool LoadTokenizer(const char *filename,int flag=0x0)   {   assert(0);  }
-    virtual int stream2token(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0);
+    
     
     virtual void InitVAE(int flag=0x0);
 
@@ -153,7 +157,7 @@ public:
     }
     int InitMAEC(struct ggml_context *ctx,const std::vector<int>& dims_,int flag=0x0) override;
     std::string T2STR(TOKEN_ID tok,int flag=0x0 ) override;   
-    int stream2token(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0)    override;
+    int STR2T(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0)    override;
 };
 
 /*
@@ -164,6 +168,6 @@ public:
     CDict_CHAR(NLP_AutoRegressive *nlp_,int flag=0x0);
     void LoadVocab(const char*fn_model_base,int flag)   override;
     int InitMAEC(struct ggml_context *ctx,const std::vector<int>& dims_,int flag=0x0) override;
-    int stream2token(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0)    override;
+    int STR2T(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0)    override;
     std::string T2STR(TOKEN_ID tok,int flag=0x0 ) override;   
 };

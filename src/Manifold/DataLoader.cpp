@@ -11,8 +11,8 @@
 
 
 void SAMP::Refresh(SampLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,int typ)  {
-    assert(0);
-    auto target_probs = loader->hOPT->hTargetProbs();
+    assert(0);      // Deprecated
+    /*auto target_probs = loader->hOPT->hTargetProbs();
     int64_t n_vocab=target_probs->ne[0],n_tokens=target_probs->ne[1],nSampInBatch=target_probs->ne[2];
     std::string sentence;
     struct llama_context * lctx = static_cast<llama_context *>(ctx);
@@ -36,12 +36,12 @@ void SAMP::Refresh(SampLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,in
         }   
         // _INFO("\t%ld@\"%.*s...\"\n",pos,64,sentence.c_str());     //sample_size
         desc = sentence;
-    }    
+    }    */
 }
 
 
 double SampLoader::DecodeVerify(hSAMP samp,hGensor tokens,hGensor logits,int flag)    {
-    int nC = tokens->ne[0],nB = tokens->ne[1],b,c,j,cand,nz=0;
+    int nC = tokens->ne[0],nB = tokens->ne[1],b,c,j,cand=-1,nz=0;
     int _nvocab = hDict->n_vocab;
     assert( tokens->type== GGML_TYPE_I32 && tokens->ne[2]==1);
     double off=0,sum=0,avg,last_err=0;
@@ -53,15 +53,15 @@ double SampLoader::DecodeVerify(hSAMP samp,hGensor tokens,hGensor logits,int fla
     }
     
     assert(nC>0 && nB>0);
-    int *t0 = (int*)tokens->data,*t=t0,nMatch=0,nMiss=0,target,match;
+    int *t0 = (int*)tokens->data,*t=t0,nMatch=0,nMiss=0,target;
     for(b=0; b<nB; b++){
         string line;
         t++;                assert(*t>0 && *t<_nvocab);
         for(c=0; c<nC; c++,t++){        
             target = c==nC-1 ? samp->last_target : *t;
-            off = LOSS_cross_entropy_1(_nvocab,p,target,match);    
+            off = LOSS_cross_entropy_1(_nvocab,p,target,cand);    
             p+=_nvocab;   sum += off*off;     nz++;
-            if(match){
+            if(cand==target){
                 nMatch++;
             }else{
                 nMiss++;
@@ -75,6 +75,11 @@ double SampLoader::DecodeVerify(hSAMP samp,hGensor tokens,hGensor logits,int fla
     accu_self = nMatch*1.0/nz;
     avg =sqrt(sum/(nz));
     return last_err;
+}
+
+int SampLoader::nLeastCTX(int  flag) {   
+    auto samp = SampAt(0);
+    return hDict->tokenizer_add_bos? samp->len : samp->len+1;
 }
 void SampLoader::Samp2Batch(int k,hSAMP samp,hGensor tokens_input,hGensor target_probs,struct train_params_common& params,int flag)    {   
     samp_toks.clear();        
@@ -137,32 +142,32 @@ void SampLoader::Samp2Batch(int k,hSAMP samp,hGensor tokens_input,hGensor target
 
 //Important!  this would update input & target_probs of model!
 int64_t SampLoader::update_batch(int x,Fish* fish){    
-    struct train_params_common *params = &(hOPT->train_params);
+    struct train_params_common _params = hOPT->TrainParams();
     // struct llama_context * lctx=(struct llama_context *)(hOPT->app_ctx);
     cur_samps.clear();
-    struct ggml_tensor *tokens_input=hOPT->gang->Input();
+    struct ggml_tensor *tokens_input=hOPT->_fish->Input();
     assert(tokens_input!=nullptr);
     int *raw_t = (int*)(tokens_input->data);
     struct ggml_tensor *target_probs=hOPT->hTargetProbs();
     int64_t samples_count = N4Train();
     // const TOKEN_ID    * train_data=tokens.data();
     size_t  k,n_train_data = nTokens(); // tokens.size();
-    sample_separation_eos=!params->separate_with_eos;
-    sample_separation_bos=!params->separate_with_bos;
+    sample_separation_eos=!_params.separate_with_eos;
+    sample_separation_bos=!_params.separate_with_bos;
     double t_Samp = 0,nrm=0,a;
-    bool sample_random_offsets=params->sample_random_offsets;
+    bool sample_random_offsets=_params.sample_random_offsets;
     // GGML_ASSERT(samples_count > 0);
-    GGML_ASSERT(ggml_is_matrix(tokens_input));
-    GGML_ASSERT(ggml_is_3d(target_probs));
-    int64_t n_vocab  = target_probs->ne[0],nSampInBatch = fish->hparams.n_batch();  // tokens_input->ne[1];  //'ld0,ld1,ld2,ld3;
+    assert(ggml_is_matrix(tokens_input));
+    int64_t nSampInBatch = fish->hparams.n_batch();  
+    if(target_probs!=nullptr)    {
+        assert(ggml_is_3d(target_probs));
+        assert(nSampInBatch==target_probs->ne[2]);
+        ggml_set_f32(target_probs, 0.0f);
+    }
     
-    assert(n_vocab  == target_probs->ne[0] && nSampInBatch  == target_probs->ne[2]);
     GST_TIC(T0);
-    
-    ggml_set_f32(target_probs, 0.0f);
     bool isLog = false;
-    if(isLog) _INFO("BATCH_%ld ",next_sample);   //, samples_count,n_train_data);nSampe=(%ld/%ld)
-    // assert(target_probs->type == GGML_TYPE_F32);
+    if(isLog) _INFO("BATCH_%ld ",next_sample);   
     hSAMP samp = nullptr;
 
     GST_TIC(tic);
@@ -178,7 +183,7 @@ int64_t SampLoader::update_batch(int x,Fish* fish){
             tic = Clock::now( );
         }
         cur_samps.push_back(samp);
-        Samp2Batch(k,samp,tokens_input,target_probs,*params);   
+        Samp2Batch(k,samp,tokens_input,target_probs,_params);   
         if(isLog && k<6 && batch_sample!="stacking"){
             sentence = dolphin->T2STR(samp_toks,0x0);     //llama_token_to_piece(lctx, samp_toks[0]);
             _INFO(" (%ld,%d)@\"%s\"",samp->pos,samp->jump,sentence.c_str());     //sample_size
@@ -312,12 +317,13 @@ try{
     if(!S.isValid())
         return false;
     int _nvocab = hDict->n_vocab;
+    uint32_t seed=hOPT->TrainParams().seed;
     _INFO("%s %s@%s...",__func__,isSave?"save@":"load@",path.c_str());
     _CHECK( S.Serial(_nvocab,isSave,flag) );
     // _CHECK( S.Serial(tokens,isSave,flag) );
     // _CHECK( S.Serial(n_unique_tokens,isSave,flag) );
     _CHECK( S.Serial(shuffle_samples_hash,isSave,flag) );
-    _CHECK( S.Serial(hOPT->train_params.seed,isSave,flag) );
+    _CHECK( S.Serial(seed,isSave,flag) );
 
     _CHECK( S.Serial(batch_sample,isSave,flag) );
     // _CHECK( S.Serial(ids,isSave,flag) );
@@ -338,7 +344,7 @@ try{
         
     }else{
         size_t nSample = all_samps.size();
-        num_batches = nSample/hOPT->train_params.n_batch;
+        num_batches = nSample/hOPT->TrainParams().n_batch;
         num_batches = nSample==0 ? 0 : max(num_batches,1); 
         _INFO("\t nBatch in each epoch=%d\n", num_batches); 
     }
@@ -347,7 +353,7 @@ try{
         if(isSave)    {
 
         }else{
-            shuffle_rng_state_current = mt19937_seed_to_state(hOPT->train_params.seed);
+            shuffle_rng_state_current = mt19937_seed_to_state(hOPT->TrainParams().seed);
             shuffle_sample_count = all_samps.size();
             next_sample = 0;
             shuffle_samples_hash = shuffle_samples_hash; 
@@ -516,18 +522,18 @@ bool SampLoader::TopoOrder(std::vector<size_t>&ids,std::mt19937& rng,int flag)  
 void SampLoader::Shuffle(int flag)  {
     size_t count = all_samps.size(),i;
     assert(count>0);
-    struct train_params_common& train_params = hOPT->train_params;
+    struct train_params_common _params = hOPT->TrainParams();
     //  hash_combine(samples_begin,samples_size[i],sample_count
         
     const bool changed_train_data = false;  //(shuffle_samples_hash != hOPT->shuffle_samples_hash) || (train->shuffle_sample_count != all_samps.size());
     if (changed_train_data) {
         _INFO("%s: train data seems to have changed. restarting shuffled epoch.\n", __func__);
     }
-    if (train_params.force_reshuffle) {
+    if (_params.force_reshuffle) {
         _INFO("%s: forced reshuffling of data. restarting with newly shuffled epoch.\n", __func__);
     }
-    if ((shuffle_rng_state_current == "") || changed_train_data || train_params.force_reshuffle) {
-        shuffle_rng_state_current = mt19937_seed_to_state(train_params.seed);
+    if ((shuffle_rng_state_current == "") || changed_train_data || _params.force_reshuffle) {
+        shuffle_rng_state_current = mt19937_seed_to_state(_params.seed);
         shuffle_sample_count = all_samps.size();
         next_sample = 0;
         
@@ -591,13 +597,32 @@ static size_t mark_utf8_units(const char* bytes, int * utf8_units, int * utf8_nu
     return count_utf8;
 }
 
-int ConsiceDict::stream2token(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag){    
-    llama_model *lam_ = dolphin->GetRawModel(); //    <llama_model *>(hLLM);
-    assert(lam_!=nullptr);
-        //  would call llama_tokenize_internal
-    int n_tokens = llama_tokenize( lam_, txt,txt_len,btch.data(),(int) btch.size(),false, false);
+int ConsiceDict::STR2T(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag)  {   
+    int n_tokens = -1;
+    if(wiki_tutor!=nullptr) {
+        n_tokens = wiki_tutor->STR2T(txt,btch,flag);
+    }else{
+        assert(0);
+        /*llama_model *lam_ = dolphin->GetRawModel(); //    <llama_model *>(hLLM);
+        assert(lam_!=nullptr);
+            //  would call llama_tokenize_internal
+        int n_tokens = llama_tokenize( lam_, txt,txt_len,btch.data(),(int) btch.size(),tokenizer_add_bos, false);*/
+        
+    }
+    if(tokenizer_add_bos)
+        assert(btch[0]==bos);
     return n_tokens;
 }
+std::string ConsiceDict::T2STR(TOKEN_ID tok,int flag ) { 
+    string word = "";
+    
+    if(wiki_tutor!=nullptr){
+        word = wiki_tutor->T2STR(tok,flag);
+    }else{
+        assert(0);
+    }       
+    return word;   
+}   
 
 bool DataTokenSet::Load(struct CLI_params& hparams,void *hLLM,int flag){
     if(hparams.passLoadToken)
@@ -653,7 +678,7 @@ bool DataTokenSet::Load(struct CLI_params& hparams,void *hLLM,int flag){
         while(cur<fsize){     
             GST_TIC(t0);
             len = min(step,fsize-cur);  
-            int n_tokens = hDict->stream2token(buf+cur,len,btch,flag);
+            int n_tokens = hDict->STR2T(buf+cur,len,btch,flag);
             // int n_tokens = llama_tokenize( lam_, buf+cur,len,btch.data(),(int) btch.size(),false, false);            
             if (n_tokens<=0) {
                  _INFO("Invalid n_tokens=%d @%ld!!!\n",n_tokens,cur);    
@@ -693,7 +718,7 @@ hSAMP SampLoader::InitOneSamp(const string &prompt,hGensor input, int flag){
     assert(hTokens!=nullptr);
     assert(hTokens->tokens.size()==0);
     hTokens->tokens.clear();
-    int n_tokens = hDict->stream2token(buf,prompt.size(),btch,flag);
+    int n_tokens = hDict->STR2T(buf,prompt.size(),btch,flag);
     int _nctx = dolphin->hparams.n_ctx();
     n_tokens = min(n_tokens,_nctx);         assert(n_tokens>0);
 

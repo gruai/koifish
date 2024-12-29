@@ -32,15 +32,15 @@
 //
 
 #if (GGML_DEBUG >= 1)
-#define GGML_PRINT_DEBUG(...) printf(__VA_ARGS__)
+#define _INFO(...) printf(__VA_ARGS__)
 #else
-#define GGML_PRINT_DEBUG(...)
+#define _INFO(...)
 #endif
 
 #if (GGML_DEBUG >= 5)
-#define GGML_PRINT_DEBUG_5(...) printf(__VA_ARGS__)
+#define _INFO(...) printf(__VA_ARGS__)
 #else
-#define GGML_PRINT_DEBUG_5(...)
+#define _INFO(...)
 #endif
 
 #if (GGML_DEBUG >= 10)
@@ -49,7 +49,7 @@
 #define GGML_PRINT_DEBUG_10(...)
 #endif
 
-#define GGML_PRINT(...) printf(__VA_ARGS__)
+#define _INFO(...) printf(__VA_ARGS__)
 
 static float frand(void) {
     return (float)rand()/(float)RAND_MAX;
@@ -337,32 +337,32 @@ static bool check_mat_mul(
     const int nr = x1->ne[1];
     const int nk = x0->ne[0];
 
-    GGML_PRINT_DEBUG("check_mat_mul: nc=%d, nr=%d, nk=%d\n", nc, nr, nk);
+    _INFO("check_mat_mul: nc=%d, nr=%d, nk=%d\n", nc, nr, nk);
 
-    GGML_PRINT_DEBUG("x0:\n");
+    _INFO("x0:\n");
     for (int j = 0; j < x0->ne[1]; ++j) {
         for (int i = 0; i < x0->ne[0]; ++i) {
-            GGML_PRINT_DEBUG("%6.3f ", src0[j*nk + i]);
+            _INFO("%6.3f ", src0[j*nk + i]);
         }
-        GGML_PRINT_DEBUG("\n");
+        _INFO("\n");
     }
-    GGML_PRINT_DEBUG("\n");
+    _INFO("\n");
 
-    GGML_PRINT_DEBUG("x1:\n");
+    _INFO("x1:\n");
     for (int j = 0; j < x1->ne[1]; ++j) {
         for (int i = 0; i < x1->ne[0]; ++i) {
-            GGML_PRINT_DEBUG("%6.3f ", src1[j*nk + i]);
+            _INFO("%6.3f ", src1[j*nk + i]);
         }
-        GGML_PRINT_DEBUG("\n");
+        _INFO("\n");
     }
-    GGML_PRINT_DEBUG("\n");
+    _INFO("\n");
 
-    GGML_PRINT_DEBUG("y: n_dims = %d, (%lld, %lld)\n", y->n_dims, y->ne[0], y->ne[1]);
+    _INFO("y: n_dims = %d, (%lld, %lld)\n", y->n_dims, y->ne[0], y->ne[1]);
     for (int j = 0; j < y->ne[1]; ++j) {
         for (int i = 0; i < y->ne[0]; ++i) {
-            GGML_PRINT_DEBUG("%6.3f ", dst[j*nr + i]);
+            _INFO("%6.3f ", dst[j*nr + i]);
         }
-        GGML_PRINT_DEBUG("\n");
+        _INFO("\n");
     }
 
     for (int i = 0; i < nr; ++i) {
@@ -806,7 +806,7 @@ int main(int argc, const char ** argv) {
                         struct ggml_tensor * m = ggml_mul_mat(ctx0, x[1], x[0]);
                         struct ggml_tensor * f = ggml_sum(ctx0, m);
 
-                        GGML_PRINT_DEBUG("testing: mul_mat, [%lld, %lld] (%d) * [%lld, %lld] (%d)\n", x[1]->ne[0], x[1]->ne[1], x[1]->n_dims, x[0]->ne[0], x[0]->ne[1], x[0]->n_dims);
+                        _INFO("testing: mul_mat, [%lld, %lld] (%d) * [%lld, %lld] (%d)\n", x[1]->ne[0], x[1]->ne[1], x[1]->n_dims, x[0]->ne[0], x[0]->ne[1], x[0]->n_dims);
 
                         check_gradient("mul_mat", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
                         if (ndims == 2) {
@@ -1499,7 +1499,7 @@ int main(int argc, const char ** argv) {
 
                         struct ggml_tensor * f = ggml_sum(ctx0, ggml_rope(ctx0, x[0], p, n_rot, mode));
 
-                        GGML_PRINT_DEBUG("rope f32: n_past: %d n_rot: %d mode: %d\n", n_past, n_rot, mode);
+                        _INFO("rope f32: n_past: %d n_rot: %d mode: %d\n", n_past, n_rot, mode);
                         check_gradient("rope f32", ctx0, x, f, ndims, nargs, 1e-2f, 1e-3f, INFINITY, {});
                     }
                 }
@@ -1539,7 +1539,7 @@ int main(int argc, const char ** argv) {
 
                         struct ggml_tensor * f = ggml_sum(ctx0, ggml_rope(ctx0, x[0], p, n_rot, mode));
 
-                        GGML_PRINT_DEBUG("rope f16: n_past: %d n_rot: %d mode: %d\n", n_past, n_rot, mode);
+                        _INFO("rope f16: n_past: %d n_rot: %d mode: %d\n", n_past, n_rot, mode);
                         check_gradient("rope f16", ctx0, x, f, ndims, nargs, 1e-1f, 1e-1f, INFINITY, {});
                     }
                 }
@@ -1585,7 +1585,7 @@ int main(int argc, const char ** argv) {
 
                 struct ggml_tensor * f = ggml_sum(ctx0, ggml_im2col(ctx0, x[1], x[0], s0, s1, p0, p1, d0, d1, is_2D, GGML_TYPE_F32));
 
-                GGML_PRINT_DEBUG("im2col f32: is_2D=%s, s0=%d, s1=%d, p0=%d, p1=%d, d0=%d, d1=%d\n", is_2D ? "yes" : "no", s0, s1, p0, p1, d0, d1);
+                _INFO("im2col f32: is_2D=%s, s0=%d, s1=%d, p0=%d, p1=%d, d0=%d, d1=%d\n", is_2D ? "yes" : "no", s0, s1, p0, p1, d0, d1);
                 check_gradient("im2col f32", ctx0, x, f, ndims, nargs, 1e-2f, 1e-3f, INFINITY, {});
             }
         }
@@ -1616,7 +1616,7 @@ int main(int argc, const char ** argv) {
 
                 struct ggml_tensor * f = ggml_sum(ctx0, ggml_pool_2d(ctx0, x[0], op, k0, k1, s0, s1, p0, p1));
 
-                GGML_PRINT_DEBUG("ggml_pool_2d f32: op=%s k0=%d, k1=%d, s0=%d, s1=%d, p0=%d, p1=%d\n",
+                _INFO("ggml_pool_2d f32: op=%s k0=%d, k1=%d, s0=%d, s1=%d, p0=%d, p1=%d\n",
                                  op == GGML_OP_POOL_MAX ? "max" : "avg", k0, k1, s0, s1, p0, p1);
                 std::vector<double> expected_vals;
                 if (op == GGML_OP_POOL_MAX) {

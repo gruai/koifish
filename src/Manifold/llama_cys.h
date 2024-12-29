@@ -1,3 +1,8 @@
+
+#include <memory>
+// struct WIKI;
+// std::shared_ptr<WIKI> INST_LAMA(struct CLI_params& params,const std::string&path,int flag=0x0);
+
 // cys  08_28
 bool llama2params(struct llama_model * lmodel,struct CLI_params& cparam);
 bool llama_get_params(struct llama_model * lmodel,struct llama_hparams& cparam);

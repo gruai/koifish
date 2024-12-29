@@ -145,7 +145,7 @@ hGensor LLM_MOE::build_layer_( int N,struct ggml_context *ctx_build,hGensor cur,
         if(layer->eps!=nullptr){
             // hGensor  t300 = ffn!=nullptr ? ggml_rms_norm(ctx_build, ffn, f_norm_rms_eps) : ggml_rms_norm(ctx_build, t21, f_norm_rms_eps);
             randomize_tensor_normal(layer->eps, rnd); 
-            hGensor  noise = ggml_scale_inplace(ctx_build, layer->eps, 0.001);
+            hGensor  noise = GG_SCAL(ctx_build, layer->eps, 0.001);
             ffn = ggml_add          (ctx_build, ffn,noise);     
         }else{
         }
@@ -155,13 +155,15 @@ hGensor LLM_MOE::build_layer_( int N,struct ggml_context *ctx_build,hGensor cur,
     }
         break;
     case SMOE:{
-        LAMA *lam = lama();      assert(lam!=nullptr); 
+        /*LAMA *lam = lama();      assert(lam!=nullptr); 
         //  build_qwen2moe:     LLM_FFN_SILU,false,false,
         ffn = moe_build_ffn(ctx_build, *(lam->_ctx), cur,
                     layer->ffn_gate_inp,layer->ffn_up_exps,layer->ffn_gate_exps,layer->ffn_down_exps,
                     n_expert, n_expert_used,false,false, 0.0,layer->id);
         }
-        return ffn;  
+        return ffn; */
+        return nullptr; 
+    }
         break;
     case VAR_0:
     case ONLY_LNormal:
@@ -172,7 +174,7 @@ hGensor LLM_MOE::build_layer_( int N,struct ggml_context *ctx_build,hGensor cur,
         gTN(t22, "t22");               assert_shape_2d(t22, n_embd, N*n_batch);   
         if(tpFFN==VAR_0)     {
             randomize_tensor_normal(layer->eps, rnd); 
-            hGensor  noise = ggml_scale_inplace(ctx_build, layer->eps, 0.001);
+            hGensor  noise = GG_SCAL(ctx_build, layer->eps, 0.001);
             ffn = ggml_add          (ctx_build, t22,noise);     
             // ffn = t22;        
         }else{

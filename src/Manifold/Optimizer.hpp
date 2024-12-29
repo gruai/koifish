@@ -50,21 +50,42 @@ struct LossCurve    {
 };
 
 struct EDGE_DEVICES{
-    Fish *hFish = nullptr;
+    // Fish *hFish = nullptr;
     size_t sz = 0x0;
     ggml_backend_buffer_t back_data = NULL; 
-    ggml_backend_t cpu = nullptr;
+    // ggml_backend_t cpu = nullptr;
     std::vector<ggml_backend_t> workers;
     std::vector<ggml_backend_buffer_type_t> bufts;
-    ggml_backend_sched_t sched = nullptr;
+#ifdef GG_V12
+    std::vector<ggml_backend_dev_t> devs;
+#endif
+    ggml_gallocr_t alloc_tmp = nullptr;
+    ggml_backend_sched_t sched0 = nullptr;
     
-    EDGE_DEVICES(Fish *hF,struct ggml_context *,int flag=0x0);
+    EDGE_DEVICES(const CLI_params&hparams, int flag=0x0);
+    virtual ~EDGE_DEVICES();
+    EDGE_DEVICES(EDGE_DEVICES const&)    = delete;
+    void operator=(EDGE_DEVICES const&)  = delete;
+    static shared_ptr<EDGE_DEVICES> GetInstance(const CLI_params&hparams, int flag=0x0);
+
     virtual size_t Alloc(struct ggml_context *ctx,int flag=0x0);
-    bool Build(bool isPlan,int flag=0x0);
+    virtual bool AllocGraph(hTGraph graph,int flag=0x0);
+    // bool Build(struct ggml_cgraph *cgraph,bool isPlan,int flag=0x0);
     virtual string __repr__( string& suffix,string& prefix,int flag=0x0);
 
     bool isOnlyCPU()    {
-        return cpu!=nullptr && workers.size()==1;
+        for(auto worker : workers){
+            if (!ggml_backend_is_cpu(worker))
+                return false;
+        }
+        return true;    /*!=nullptr && workers.size()==1;*/
+    }
+
+    int SetThread(int nThread,int flag=0x0);
+    
+    virtual ggml_backend_sched_t GetSched(int flag=0x0){
+        assert(sched0!=nullptr);
+        return sched0;
     }
 };
 typedef shared_ptr<EDGE_DEVICES>hEDevices;
@@ -104,6 +125,13 @@ protected:
     hGensor hLoss( );
     hGensor hTargetProbs( );
     hGensor hPreLogits( );
+    hGensor GradOf(hGensor node,int flag=0);
+    float* fGrad(hGensor node,int flag=0){
+        auto grad = GradOf(node);
+        assert(grad!=nullptr);
+        float *g = (float*)(grad->data);
+        return g;
+    }
     float fLoss()   {
         float *val = (float*)(hLoss()->data);
         return *val;
@@ -124,18 +152,22 @@ protected:
     bool OnLogits(int flag=0x0);
 public:
     GD_METHOD tpGD=ADAMw;  
+    enum RESULT {
+        OK = 0,DID_NOT_CONVERGE,NO_CONTEXT,INVALID_WOLFE,
+        FAIL,CANCEL,
+    };
+
 
     // typedef bool (*_CALL_BACK_)(void * data, int accum_step, float * sched);    
     SampLoader train_loader, val_loader;
     size_t shuffle_samples_hash = 0x0;  //hack
 
-    Fish* gang=nullptr;         //ref only
+    Fish* _fish=nullptr;         //ref only
     hEDevices hEDS;             //ref only
 
-    struct train_state      *trainst = init_train_state();
-    //  struct ggml_opt_context * opt = train->opt; 
-    struct train_params_common train_params;
-
+    struct train_state      *trainst = nullptr; //init_train_state();
+    struct train_params_common TrainParams();
+    
     Optimizer(NLP_AutoRegressive *g_,CLI_params& params_,int flag=0x0);
     //Deprecated need refactor!!!       9/30/2024
     virtual void GraphCompute(struct ggml_cgraph *,int flag=0x0);
@@ -158,6 +190,8 @@ public:
     }
 
     virtual void Dump(int typ){
+        if(NOT_DUMP(0))    return;
+
         const char*title = "OPT";   //__func__
         if(_ctx!=nullptr)
             _INFO("%s: mem_size  = %zu bytes (%.1f MB)\n", title, ggml_get_mem_size(_ctx), (float) ggml_get_mem_size(_ctx) / (1024.0f*1024.0f));
@@ -167,13 +201,6 @@ public:
            _INFO("%s: SAMP_HASH=%llu total train_iterations=%llu train_samples=%llu train_tokens=%llu completed_epochs=%llu\n", title, 
                 shuffle_samples_hash, train_its,train_samples,train_tokens,train_epochs);            
         }
-        /*
-        auto train=hOPT->train;
-        _INFO("%s: total train_iterations %llu\n", __func__, (long long unsigned) train->train_its);
-        _INFO("%s: seen train_samples     %llu\n", __func__, (long long unsigned) train->train_samples);
-        _INFO("%s: seen train_tokens      %llu\n", __func__, (long long unsigned) train->train_tokens);
-        _INFO("%s: completed train_epochs %llu\n", __func__, (long long unsigned) train->train_epochs);
-        _INFO("%s: nParams=%zu model_size = %zu bytes (%.1f MB)\n", __func__, nParams,szModel,szModel / (1024.0f*1024.0f) );*/
     }
     
     virtual void BeforeTrain(struct train_params_common& train_params,hGensor  tokens_input,int flag) ;
@@ -191,7 +218,7 @@ public:
         // free_train_state(train);
     }
 
-    enum ggml_opt_result Search(struct ggml_context * ctx, hGensor loss_,hGensor target_,CLI_params& hparams);
+    RESULT Search(struct ggml_context * ctx, hGensor loss_,hGensor target_,CLI_params& hparams);
     
     friend class Fish;
     friend class SampLoader;

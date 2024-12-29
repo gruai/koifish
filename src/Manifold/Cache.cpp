@@ -8,11 +8,11 @@ KVCache::KVCache(NLP_AutoRegressive *la_,int max_batch_size, int max_seq_len, in
     if(lama==nullptr){
 
     }else{
-        llama_kv_cache *kv = lama->_cache;  
+        /*llama_kv_cache *kv = lama->_cache;  
         bool isFlash = false;
         lamakv = kv; 
         const uint32_t pad = isFlash ? 256u : 32u,cell_max=0;     //llama_kv_cache_cell_max(*cache)
-        kv_n = std::min(kv->size, std::max(pad, GGML_PAD(cell_max, pad)));        
+        kv_n = std::min(kv->size, std::max(pad, GGML_PAD(cell_max, pad)));      */  
     }
 }
 
@@ -21,14 +21,15 @@ int KVCache::n_kv(){
 }
 
 hGensor KVCache::SerialV(struct ggml_context *ctx,hGensor Vcur,int il,bool isSave){
-    llama_kv_cache *kv = (llama_kv_cache *)lamakv;
+    hGensor v = nullptr;
+    /*llama_kv_cache *kv = (llama_kv_cache *)lamakv;
     if(kv==nullptr)
         return Vcur;
 
     auto& hparams = lam_->hparams;
     int n_ctx = hparams.n_ctx(),n_batch = hparams.n_batch(),n_embd_v_gqa = hparams.n_embd_v_gqa(il),n_embd_head_v = hparams.n_embd_head_v,n_head_kv=hparams.n_head_kv(il);    
     int kv_head=0,kv_size = kv->size;   
-    hGensor v = nullptr;
+    
     if(isSave){
         char nam_[128];
         size_t nzV = n_ctx*n_batch*n_embd_v_gqa;
@@ -40,20 +41,21 @@ hGensor KVCache::SerialV(struct ggml_context *ctx,hGensor Vcur,int il,bool isSav
     }else{
         v = ggml_view_3d(ctx, kv->v_l[il],kv_n, n_embd_head_v, n_head_kv,
                             ggml_element_size(kv->v_l[il])*kv_size,ggml_element_size(kv->v_l[il])*kv_size*n_embd_head_v,0);        
-    }
+    }*/
 
     return v;
 }
 
 hGensor KVCache::SerialK(struct ggml_context *ctx,hGensor Kcur,int il,bool isSave){
-    llama_kv_cache *kv = (llama_kv_cache *)lamakv;
+    hGensor k = nullptr;
+    /*llama_kv_cache *kv = (llama_kv_cache *)lamakv;
     if(kv==nullptr)
         return Kcur;
 
     const auto& hparams = lam_->hparams;
     int n_ctx = hparams.n_ctx(),n_batch = hparams.n_batch(),n_embd_k_gqa  = hparams.n_embd_k_gqa(il),n_embd_head_k = hparams.n_embd_head_k,n_head_kv=hparams.n_head_kv(il);    
     int kv_head=0,kv_size = kv->size;   
-    hGensor k = nullptr;
+    
     if(isSave){
         char nam_[128];
         size_t nzK = n_ctx*n_batch*n_embd_k_gqa;
@@ -64,7 +66,7 @@ hGensor KVCache::SerialK(struct ggml_context *ctx,hGensor Kcur,int il,bool isSav
     }else{
         k = ggml_view_3d(ctx, kv->k_l[il],n_embd_head_k, kv_n, n_head_kv,
                     ggml_row_size(kv->k_l[il]->type, n_embd_k_gqa),ggml_row_size(kv->k_l[il]->type, n_embd_head_k),0);        
-    }
+    }*/
 
     return k;
 }
@@ -85,7 +87,7 @@ void KVCache::init_lamakv(int n_batch) {
     // params.mem_size   = cache.buf.size;
     // params.mem_buffer = cache.buf.addr;
     // params.no_alloc   = false;
-     llama_kv_cache *cache = (llama_kv_cache *)lamakv;
+    //  llama_kv_cache *cache = (llama_kv_cache *)lamakv;
     /*if (!cache->ctx) {
         struct ggml_init_params params;
         params.mem_size   = 2u*n_elements*ggml_type_size(GGML_TYPE_F32) + 2u*1024*1024;

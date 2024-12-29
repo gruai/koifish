@@ -13,7 +13,7 @@
 #include "llama_cys.h"
 
 hGensor Fish::AddTensor(const std::string&key_,enum ggml_type tp,const SHAPE& shape,int flag){
-    auto ctx=GetCTX();
+    auto ctx=GetGGCTX();
     hGensor gg_tensor = nullptr;
     if(shape.size()==4)  {
         gg_tensor = ggml_new_tensor_4d(ctx, tp, shape[0], shape[1], shape[2], shape[3]);
@@ -68,6 +68,7 @@ SelfAttention::SelfAttention(Fish* hG_,const std::string&key_,JSON::const_iterat
         shape={n_embd,n_embd,n_head};
     }
     
+    tpNormal = hFish->hparams.debug.SelfAttention_noraml;
     assert(shape[0]>0 && shape[1]>0 && shape[2]>0);
     // q.Init(hG_,flag);       k.Init(hG_,flag);       v.Init(hG_,flag);       proj.Init(hG_,flag);
 }
@@ -126,20 +127,17 @@ hGensor SelfAttention::MyAttention(struct ggml_context * ctx_,hGensor cur,int fl
     if(tpTrans==LINEAR && 0){   //  ???
         attn_k = Permute(ctx_,Kcur, 1, 2, 0, 3);
         attn_q = Permute(ctx_,Qcur, 0, 2, 1, 3);     
-        // attn_k = ggml_permute(ctx_, Kcur, 1, 2, 0, 3);         attn_q = ggml_permute(ctx_, Qcur, 0, 2, 1, 3);  
-        // gTN0(attn_q,"%s.q",name.c_str());        gTN0(attn_k,"%s.k",name.c_str());  
-        // attn_q = ggml_cont(ctx_,attn_q);        gTN(attn_q,"%s.qc",name.c_str());      
-        // attn_k = ggml_cont(ctx_,attn_k);        gTN(attn_k,"%s.kc",name.c_str()); 
         isLinear = true;
         return nullptr;
     }
     q = Permute(ctx_,Qcur, 0, 2, 1, 3);     k = Permute(ctx_,Kcur, 0, 2, 1, 3);        
-    struct ggml_tensor * kq = ggml_mul_mat(ctx_, k, q);        //cb(kq, "kq", il);        
+    struct ggml_tensor * kq = ggml_mul_mat(ctx_, k, q);        //cb(kq, "kq", il);
+    gTN(kq,"%s.kxq",name.c_str());           
     switch(tpTrans){    //Get markov transition matrix from KQ
     case LINEAR:
         kq = ggml_scale(ctx_,kq,kq_scale);    gTN(kq,"%s.kqs",name.c_str()); 
         break;
-    case RELU2:
+    case RELU2:     // same name of grad!
         kq = ggml_silu(ctx_,kq);                        gTN(kq,"%s.r2_0",name.c_str()); 
         kq = ggml_mul(ctx_,kq,kq);                      gTN(kq,"%s.r2_1",name.c_str()); 
         kq = ggml_scale(ctx_,kq,(1.0f/n_embd_head));    gTN(kq,"%s.r2_2",name.c_str()); 
@@ -154,12 +152,17 @@ hGensor SelfAttention::MyAttention(struct ggml_context * ctx_,hGensor cur,int fl
         break;
     case SOFT_MAX:
     default:    //
-        if(1)      {    //     may crash in some case! 
+        if(KQ_mask!=nullptr)      {    //     may crash in some case! 
             kq = ggml_soft_max_ext(ctx_, kq, KQ_mask, kq_scale, f_max_alibi_bias);       //would 
         }else{  //wouls slow converge,why?
-            hGensor  t16_1 = ggml_scale_inplace(ctx_, kq, kq_scale);        gTN(t16_1,"%s.161",name.c_str());     
-            hGensor  t16_2 = ggml_diag_mask_inf_inplace(ctx_, t16_1, 0);    gTN(t16_2,"%s.162",name.c_str());        
-            kq = ggml_soft_max_inplace(ctx_, t16_2);             
+            hGensor  t16_1 = GG_SCAL(ctx_, kq, kq_scale);           gTN(t16_1,"%s.161",name.c_str());     
+            //hGensor  t16_2 = ggml_diag_mask_inf_inplace(ctx_, t16_1, 0);    gTN(t16_2,"%s.162",name.c_str());
+            /*  
+                ggml_diag_mask_inf  实现对输入张量进行对角线以下部分的掩码操作，将其设置为负无穷。  n_past：过去的时间步数 
+                REF @ggml_compute_forward_diag_mask_f32(params, dst, -INFINITY);
+            */
+            hGensor  t16_2 = ggml_diag_mask_inf(ctx_, t16_1, 0);    gTN(t16_2,"%s.162",name.c_str());        
+            kq = ggml_soft_max(ctx_, t16_2);             
         }   
         break;  
     }
@@ -179,7 +182,7 @@ hGensor SelfAttention::Forward(struct ggml_context * ctx_,hGensor inpL,int flag)
     hGensor Vcur = V.Forward(ctx_,cur,0x0),v; 
     Vcur = ggml_reshape_4d(ctx_, Vcur, n_embd_head, n_head, n_ctx,n_batch);
     v = ggml_cont(ctx_,ggml_permute(ctx_, Vcur, 1, 2, 0, 3));
-           gTN0(v,"%s.v",name.c_str()); 
+    gTN0(v,"%s.v",name.c_str()); 
     /*if(isOnlinePush)    {
         ggml_build_forward_expand(gf, q);    ggml_build_forward_expand(gf, k);    ggml_build_forward_expand(gf, v);
     }*/   
@@ -209,7 +212,7 @@ hGensor SelfAttention::Forward(struct ggml_context * ctx_,hGensor inpL,int flag)
     }
     
     cur = ggml_add(ctx_, cur, inpL);  
-
+    gTN0(cur,"%s_+",name.c_str());
     cur = AfterForward(ctx_,cur,flag);
     return cur;
 }
@@ -255,10 +258,10 @@ hGensor BROWN_attn::Forward(struct ggml_context * ctx_,hGensor teb,int flag)    
         }
     }
     gTN(v,"%s.v4",name.c_str());     
-    if(0)      {
+    if(KQ_mask!=nullptr)      {
         prob = ggml_soft_max_ext(ctx_, Q.w, KQ_mask, kq_scale, f_max_alibi_bias);       //would crash!
     }else{
-        hGensor  t16_1 = ggml_scale_inplace        (ctx_, Q.w, kq_scale); 
+        hGensor  t16_1 = GG_SCAL        (ctx_, Q.w, kq_scale); 
         hGensor  t16_2 = ggml_diag_mask_inf_inplace(ctx_, t16_1, n_past); 
         prob = ggml_soft_max_inplace     (ctx_, t16_2);               
     }      
@@ -476,7 +479,7 @@ string BROWN_v0::__repr__( string& suffix,string& prefix,int flag)    {
 
 NT_SAM::NT_SAM(hFISH graph,const std::string&key_,const SHAPE& shape,bool is_global_,int flag)    :
     NeLayer(key_,flag),is_global_attn(is_global_)   {
-    struct ggml_context * ctx = graph->GetCTX();         assert(ctx!=nullptr);
+    struct ggml_context * ctx = graph->GetGGCTX();         assert(ctx!=nullptr);
     assert(shape.size()==4 && shape[0]>0);
     nEmbed = shape[0];                          
     head_dim = shape[1];
@@ -555,7 +558,7 @@ hGensor NT_SAM::Build_(struct ggml_context * ctx0,hGensor inpL,float eps,
 
         struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
 
-        struct ggml_tensor * KQ_scaled = ggml_scale_inplace(ctx0,KQ,1.0f/sqrtf(n_enc_head_dim));
+        struct ggml_tensor * KQ_scaled = GG_SCAL(ctx0,KQ,1.0f/sqrtf(n_enc_head_dim));
 
         struct ggml_tensor * rw = ggml_get_rel_pos(ctx0, rel_pos_w, W, W);
         struct ggml_tensor * rh = ggml_get_rel_pos(ctx0, rel_pos_h, H, H);
@@ -624,7 +627,7 @@ hGensor NT_SAM::Build_(struct ggml_context * ctx0,hGensor inpL,float eps,
 }
 
 hGensor NT_SAM::Forward(hFISH graph,int nEmbed,int nHead,int W,int H,hGensor cur,int flag){
-    struct ggml_context * ctx0 = graph->GetCTX();    
+    struct ggml_context * ctx0 = graph->GetGGCTX();    
     cur = ggml_mul_mat(ctx0, in_proj.w, cur);
     cur = ggml_add_inplace(ctx0, cur, in_proj.b);
     int32_t head_dim = nEmbed / nHead; 
@@ -658,7 +661,7 @@ hGensor NT_SAM::Forward(hFISH graph,int nEmbed,int nHead,int W,int H,hGensor cur
     struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
 
     struct ggml_tensor * KQ_scaled =
-        ggml_scale_inplace(ctx0,
+        GG_SCAL(ctx0,
                 KQ,
                 1.0f/sqrtf(head_dim));
 
@@ -869,11 +872,14 @@ static void ggml_graph_compute_thread_sync_task(int * task_phase, struct ggml_co
     
 */
 bool TGraph::TopoOrder(int flag)   {
-    // auto& gimap = hFish->gensors.infos;
-    // gimap.clear();     
+    if(hFish->graph_update>0)   {
+        int xxx = 0;
+    }
+
     hFish->gensors.Clear();     
     topo_nodes.clear();
     int pos=-1,nDup=0,i,no,nNode=cgraph->n_nodes,nLeaf=cgraph->n_leafs;
+    assert(nNode>0 && nLeaf>0);
     hGensor cur,son;    
     // std::vector<hGensor> gensors;
     assert(sinks.size()>0);
@@ -883,9 +889,13 @@ bool TGraph::TopoOrder(int flag)   {
         // gimap[r] = GENSOR_INFO(0,0,-1,-1);    
         // gimap[r].sX = r->name;
     }
-
+    nNeedGrad = 0;
     while(++pos<topo_nodes.size()) {
         cur = topo_nodes[pos];
+        if((cur->flags & GGML_TENSOR_FLAG_PARAM) || (cur->flags & GGML_TENSOR_FLAG_LOSS)){
+            nNeedGrad++;
+        }
+        
         if(strcmp(cur->name,"result_output'")==0){      // only for debug
             int xxx = 0;
         }
@@ -904,13 +914,12 @@ bool TGraph::TopoOrder(int flag)   {
                 topo_nodes.push_back(son);
             }else{
                 nDup++;
-            }
-                
+            }                
         }        
     }
     size_t nT = hFish->gensors.size();
     if(isBackward)    nT+=1;      //"Loss"
-    assert(nT==nNode+nLeaf);
+    assert(nT==nNode+nLeaf);        //  271=211+60
     
     return true;
 }
@@ -921,6 +930,8 @@ string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {
         _INFO("CGRAPH_%s is empty! root=%s",name.c_str(),root_0==nullptr?"":root_0->name); 
         return "";
     }
+    // if(DUMP())
+    //     ggml_graph_print(raw());
     string root_name = "";
     const size_t MAX_BUF=64*1024;
     char buf[MAX_BUF]="\0";
@@ -958,7 +969,8 @@ string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {
     for(int i=0;i<nLeaf;i++)        all_nodes.push_back(cgraph->leafs[i]);    
     
     for(auto gensor:topo_nodes){
-        _T_repr_(gensor,tab,buf,hFish->GetGensorInfo(gensor));  assert(strlen(buf)<MAX_BUF);
+        if(hFish->hparams.debug.graph_dump==0)
+            _T_repr_(gensor,tab,buf,hFish->GetGensorInfo(gensor));  assert(strlen(buf)<MAX_BUF);
         if(!hFish->GetGensor(gensor->name)){
             assert(0);
         }
@@ -979,6 +991,7 @@ string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {
 TGraph::TGraph(Fish *hF_,const string&nam_,struct ggml_context *ctx_,bool isGrad,int flag) : hFish(hF_),ctx(ctx_),name(nam_)   {
     // hOPT = hFish->hOPT;
     cgraph = ggml_new_graph_custom(ctx, LLAMA_TRAIN_MAX_NODES, isGrad);
+    size_t nVisi = gset.size();
     /*
     const size_t obj_size = ggml_graph_nbytes(size, grads);
     struct ggml_object * obj = ggml_new_object(ctx, GGML_OBJECT_TYPE_GRAPH, obj_size);
@@ -993,19 +1006,30 @@ void TGraph::PushBack(hGensor node,int flag) {
     assert(node!=nullptr && strlen(node->name)>0);
     const char*name = node->name;
     const int n0 = cgraph->n_nodes;
-    if (node->grad == NULL) {
+    auto grad = GradOf(cgraph,node);
+#ifndef GG_V12
+    if (grad == NULL) {
         // this usually happens when we generate intermediate nodes from constants in the backward pass
         // it can also happen during forward pass, if the user performs computations with constants
         if (node->op != GGML_OP_NONE) {
-            //GGML_PRINT_DEBUG("%s: warning: node %p has no grad, but op %d\n", __func__, (void *) node, node->op);
+            //_INFO("%s: warning: node %p has no grad, but op %d\n", __func__, (void *) node, node->op);
         }
     }
 
-    // check if already visited
-    if (hash_insert(cgraph->visited_hash_set, node) == GGML_HASHSET_ALREADY_EXISTS) {
+    // if (hash_insert(cgraph->visited_hash_set, node) == GGML_HASHSET_ALREADY_EXISTS) {
+    //     return;
+    // }
+    if(gset.find(node)!=gset.end())     
+        return;
+    gset.insert(node);
+#else
+    if (ggml_hash_insert(&cgraph->visited_hash_set, node) == GGML_HASHSET_ALREADY_EXISTS) {
+        assert(gset.find(node)!=gset.end());
         return;
     }
-
+    assert(gset.find(node)==gset.end());    
+    gset.insert(node);
+#endif    
     for (int i = 0; i < GGML_MAX_SRC; ++i) {
         const int k =
             (order == GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT) ? i :
@@ -1020,7 +1044,7 @@ void TGraph::PushBack(hGensor node,int flag) {
         }
     }
 
-    if (node->op == GGML_OP_NONE && node->grad == NULL) {
+    if (node->op == GGML_OP_NONE && grad==NULL) {   //!(node->flags & GGML_TENSOR_FLAG_PARAM)
         // reached a leaf node, not part of the gradient graph (e.g. a constant)
         GGML_ASSERT(cgraph->n_leafs < cgraph->size);
 
@@ -1035,21 +1059,25 @@ void TGraph::PushBack(hGensor node,int flag) {
             ggml_format_name(node, "stem_%d", cgraph->n_nodes);
         }
         nodes[cgraph->n_nodes] = node;
+        
+#ifndef GG_V12
         if (grads) {
-            grads[cgraph->n_nodes] = node->grad;
+            grads[cgraph->n_nodes] = grad;
         }
-        if(node->grad!=0x0 && strlen(node->grad->name)==0){
-            ggml_format_name(node->grad, "%s_grad", node->name);
+        if(grad!=0x0 && strlen(grad->name)==0){
+            ggml_format_name(grad, "%s_grad", node->name);
         }
+#endif
         cgraph->n_nodes++;
     }
-
+#ifndef GG_V12
     if (cgraph->n_nodes > n0) {        
         assert(nodes[cgraph->n_nodes - 1] == node);
-        if(node->grad && strlen(node->grad->name)==0){
-            ggml_format_name(node->grad,"%s_grad",node->name);
+        if(grad && strlen(grad->name)==0){
+            ggml_format_name(grad,"%s_grad",node->name);
         }
     }
+#endif
 }
 
 bool TGraph::isSink(hGensor node,int flag){
@@ -1060,10 +1088,34 @@ bool TGraph::isSink(hGensor node,int flag){
     return false;
 }
 
-int Fish::BuildComputeGraph(int order,struct ggml_context * ctx,ggml_gallocr_t& alloc,int flag){
-    // hForwTG->Clear();               hBackTG->Clear();        
-    auto train_params = hparams.common;
-    train_params.use_checkpointing = false;     // CYS_0826
+bool TGraph::Alloc(ggml_gallocr_t& alloc,int flag)    {
+    bool bRet = false;    
+    auto backend_sched = hFish->hEDS->GetSched();
+    ggml_backend_sched_reset(backend_sched); // clear allocation of previous graph
+#ifdef GG_V12    
+    // ggml_init_params params = {
+    //         ggml_tensor_overhead() * GGML_DEFAULT_GRAPH_SIZE,nullptr, true,
+    // };
+    // ggml_free(opt_ctx->ctx_copy);
+    auto ctx_copy = InitCTX(0); //ggml_init({ggml_tensor_overhead() * GGML_DEFAULT_GRAPH_SIZE,nullptr, true});    
+    auto allocated_graph_copy = GG_dup_graph(ctx_copy, cgraph);
+    bRet = ggml_backend_sched_alloc_graph(backend_sched, allocated_graph_copy);
+#else
+    if (hFish->measure_only) {
+        bRet = ggml_gallocr_reserve(alloc, cgraph);
+    } else {
+        bRet = ggml_backend_sched_alloc_graph(backend_sched, cgraph);
+        // bRet = ggml_gallocr_alloc_graph(alloc, cgraph);    //367,8088  
+    }
+#endif
+    return bRet;
+}
+
+int Fish::BuildComputeGraph(int order,struct ggml_context * ctx,int flag){
+    const int N = hparams.n_ctx(), n_past = 0;
+    if(N==19){
+        int debug = 0x0;
+    }
     assert(ctx==ctx_build);
     struct ggml_cgraph *gf = hForwTG->raw(), *gb = nullptr;
     if(order>=0){   //order<0: we have build it in other way
@@ -1081,34 +1133,35 @@ int Fish::BuildComputeGraph(int order,struct ggml_context * ctx,ggml_gallocr_t& 
     int n0=gf->n_nodes; 
     if(!isLocalInfer){       
         hBackTG = std::make_shared<TGraph>(this,hForwTG->name+".Backward",ctx_build,true);        hBackTG->isBackward = true; 
-        gb = hBackTG->BuildBackward(ctx,gf);
+        gb = hBackTG->BuildBackward(ctx,hForwTG);
         // make sure some tensors are not reallocated by inserting new temporary nodes depending on them
         int n_leafs_before = gb->n_leafs,n_nodes_before = gb->n_nodes;
-        ggml_set_input(out_node->grad);
-        hBackTG->PushBack(ggml_scale_inplace(ctx, KQ_pos, 1.0f));        
+#ifndef GG_V12
+            auto grad = GradOf(gb,out_node);   //out_node->grad
+            ggml_set_input(grad);
+#endif
+        hBackTG->PushBack(GG_SCAL(ctx, KQ_pos, 1.0f));        
         
-        bool isReforward = false;        //why???
-        if(isReforward){// output_ tensors
-            ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, preLogits, 1.0f));
-            ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, loss, 1.0f));
+        bool isReforward = false;        // why???
+        /*if(isReforward){// output_ tensors
+            ggml_build_forward_expand(gb, GG_SCAL(ctx, preLogits, 1.0f));
+            ggml_build_forward_expand(gb, GG_SCAL(ctx, loss, 1.0f));
             // input gradient
-            ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, out_node->grad, 1.0f));
-            assert(out_node->grad->data == NULL && out_node->grad->view_src == NULL);
-            ggml_set_input(out_node->grad);
+            ggml_build_forward_expand(gb, GG_SCAL(ctx, grad, 1.0f));
+            assert(grad->data == NULL && grad->view_src == NULL);
+            ggml_set_input(grad);
             // KQ_pos
-            ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, KQ_pos, 1.0f));
+            ggml_build_forward_expand(gb, GG_SCAL(ctx, KQ_pos, 1.0f));
             // allocating checkpoints in one block to reduce memory fragmentation they will be freed in reverse order
             for (unsigned int i = 0; i < checkpoints.size(); ++i) {
                 if (checkpoints[i]->data == NULL && checkpoints[i]->view_src == NULL) {
                     ggml_set_input(checkpoints[i]);
                 }
             }        
-        }
-        if (measure_only) {
-            ggml_gallocr_reserve(alloc, gb);
-        } else {
-            ggml_gallocr_alloc_graph(alloc, gb);    //367,8088  
-        }
+        }*/
+        //  ggml_gallocr_reserve_n ???
+        hEDS->AllocGraph(hBackTG);
+        // hBackTG->Alloc(alloc,0);
         // remove the additional nodes and leafs
         for (int i = n_leafs_before; i < gb->n_leafs; ++i) {
             gb->leafs[i] = NULL;
@@ -1124,23 +1177,19 @@ int Fish::BuildComputeGraph(int order,struct ggml_context * ctx,ggml_gallocr_t& 
     }  
     
     auto leaf0=gf->nodes[0];
-    const int N = train_params.n_ctx, n_past = 0;
-    if (train_params.use_checkpointing) {
-        if(gb!=nullptr) {
-            gb_tmp = train_params.use_checkpointing ? ggml_new_graph_custom(ctx_build, LLAMA_TRAIN_MAX_NODES, true) : NULL;
-            ggml_build_backward_gradient_checkpointing(ctx, gf, gb, gb_tmp, checkpoints.data(), (int) checkpoints.size());
-        }            
-    } 
+    
+    // if (false) { //train_params.use_checkpointing
+    //     if(gb!=nullptr) {
+    //         gb_tmp = train_params.use_checkpointing ? ggml_new_graph_custom(ctx_build, LLAMA_TRAIN_MAX_NODES, true) : NULL;
+    //         // ggml_build_backward_gradient_checkpointing(ctx, gf, gb, gb_tmp, checkpoints.data(), (int) checkpoints.size());
+    //     }            
+    // } 
 
-    assert(alloc != NULL);
+    // assert(alloc != NULL);
     if(isLocalInfer){  //gb=nullptr
-        GGML_ASSERT(alloc != NULL);
         assert(gb==nullptr);
-        ggml_gallocr_alloc_graph(alloc, gf);         
-        // int * data = (int *) KQ_pos->data;
-        // for (int i = 0; i < N; ++i) {
-        //     data[i] = n_past + i;
-        // }
+        hEDS->AllocGraph(hForwTG);
+        // hForwTG->Alloc(alloc);        // ggml_gallocr_alloc_graph(alloc, gf);         
     } else { // gb!=nullptr
         
     }
@@ -1172,29 +1221,51 @@ int TGraph::has(const string&name,int flag){
     return -1;
 }
 
-bool TGraph::isValid(){
+bool TGraph::isValid( ) {
     char buf[5012]="\0";
     std::map<std::string, int> msg;
-    int nLeaf = cgraph->n_leafs,nNode = cgraph->n_nodes,no=1,nDup=0;
+    int nLeaf = cgraph->n_leafs,nNode = cgraph->n_nodes,no=1,nDup=0,nNull=0;
+    if(nLeaf==0 && nNode==0)
+        return false;
     std::vector<hGensor> gensors,all_nodes;
     for(int i=0;i<nNode;i++)        all_nodes.push_back(cgraph->nodes[i]);
     for(int i=0;i<nLeaf;i++)        all_nodes.push_back(cgraph->leafs[i]);
 
-    for(auto tA:all_nodes){
+    // for(auto tA:all_nodes){ 
+    for(no=0;no<all_nodes.size();no++){     //
+        auto tA = all_nodes[no];
+        if(tA->op==GGML_OP_NONE)    nNull++;
+        if(no==75 || no==77){
+            // printf("\n%s\n",tA->name);  //grad for block.0.gattn.r2_0
+            int only_debug=0;
+        }
         if(msg.find(tA->name)!=msg.end()){            
             int j = msg[tA->name];
             hGensor tB=all_nodes[j];
-            _INFO("\tAA_[%d %d]=\"%s\" !!!\n",j,no,tA->name); 
-            _T_repr_(tA,"",buf);     _T_repr_(tB,"",buf);
+            assert(strcmp(tA->name,tB->name)==0);
+            _INFO("\tAA_[%d=%d]=\"%s\" !!!\n",j,no,tA->name); 
+            buf[0]='\0';     _T_repr_(tA,"",buf);     _T_repr_(tB,"",buf);
             _INFO("%s",buf); 
             //_pt_cys_("",tA,0);          _pt_cys_("",tB,0);
             nDup++;
         }
         msg[tA->name] = no;     
-        no++;
+        // no++;
     }
-    if(nDup>0)
-        return false;
+    // if(nDup>0)
+    //     return false;
+    bool any_params = false,any_loss = false;
+    for (auto node : all_nodes) {
+        any_params = any_params || (node->flags & GGML_TENSOR_FLAG_PARAM);
+        any_loss   = any_loss   || (node->flags & GGML_TENSOR_FLAG_LOSS);
+    }
+    if(hFish->isTrain()){
+        assert(any_params && "no trainable parameters found, did you forget to call ggml_set_param?");
+        if(!any_loss){
+            _INFO("Invalid TGraph,no training loss found, did you forget to call ggml_set_loss?");
+        }        
+    }
+
     return true;
 }
 /*
@@ -1204,27 +1275,30 @@ bool TGraph::isValid(){
         struct ggml_tensor ** keys;
     };
     */
+#ifndef GG_V12
 extern "C" void ggml_compute_backward(struct ggml_context * ctx, struct ggml_tensor * tensor, struct ggml_hash_set * zero_table);
-struct ggml_cgraph * TGraph::BuildBackward(struct ggml_context * ctx_,struct ggml_cgraph *gf,int flag)   {    
+struct ggml_cgraph * TGraph::BuildBackward(struct ggml_context * ctx_,hTGraph hFore,bool accumulate,int flag)   {    
     struct ggml_cgraph *gb=cgraph;
-    assert(isBackward && gf!=nullptr);
+    assert(isBackward && hFore!=nullptr);
+    auto gf = hFore->raw();
     nForwN=gf->n_nodes,nForwL=gf->n_leafs;
     int n_grad=0,n_param=0,n_p0=0;
     size_t sz = gf->size;
     bool isKeep = false;
     assert(gb!=nullptr);
     hGensor xn = hFish->xn,xxn = hFish->xxn,root_f=gf->nodes[nForwN-1],root_b=nullptr;
-    
     ggml_graph_cpy(gf, gb);   //copy all leafs/nodes/grads & visited_hash_set
+    gset = hFore->gset;    
     // ggml_build_backward_expand(ctx_, gf, gb, true);    return gb;    
          
     if (isKeep) {
         for (int i = 0; i < gf->n_nodes; i++) {
             struct ggml_tensor * node = gf->nodes[i];
+            assert(0);      CHILD_1218_GRAD
             if (node->grad) {
                 node->grad = ggml_dup_tensor(ctx_, node);
                 gf->grads[i] = node->grad;      n_grad++;
-            }            
+            }          
         }
     }
     
@@ -1242,11 +1316,12 @@ struct ggml_cgraph * TGraph::BuildBackward(struct ggml_context * ctx_,struct ggm
         if(node==xn){   //only for debug
             int xxx = 0;
         }
-        if (node->grad) {   //set src's grad
+        auto grad = GradOf(gf,node);
+        if (grad) {   //set src's grad
             if(node->grad->grad!=NULL)  //
                 node->grad->grad = NULL;
                 
-            if(strlen(node->grad->name)==0){
+            if(strlen(grad->name)==0){
                 gTN(node,"");
             }
             if(i==6){   //  inp_pe_rms
@@ -1266,13 +1341,14 @@ struct ggml_cgraph * TGraph::BuildBackward(struct ggml_context * ctx_,struct ggm
     root_b=gb->nodes[gb->n_nodes-1];
     for (int i = 0; i < gf->n_nodes; i++) {
         struct ggml_tensor * node = gf->nodes[i];
+        auto grad = GradOf(gf,node);
         if (node->flags & GGML_TENSOR_FLAG_PARAM) {
             // _INFO("%s: found root node %p\n", __func__, (void *) node);
             // ggml_build_forward_expand(gb, node->grad);
-            assert( !(node->grad->flags & GGML_TENSOR_FLAG_PARAM) );
+            assert( !(grad->flags & GGML_TENSOR_FLAG_PARAM) );
             gTN(node,"");            
-            PushBack(node->grad);
-            sinks.push_back(node->grad);
+            PushBack(grad);
+            sinks.push_back(grad);
             n_param++;
         }
     }
@@ -1285,6 +1361,127 @@ struct ggml_cgraph * TGraph::BuildBackward(struct ggml_context * ctx_,struct ggm
     
     return gb;
 }
+#else
+extern "C" void ggml_compute_backward(struct ggml_context * ctx, struct ggml_cgraph * cgraph, int i, bool * grads_needed);
+struct ggml_cgraph * TGraph::BuildBackward(struct ggml_context * ctx_,hTGraph hFore,bool accumulate,int flag)   { 
+    auto gf = hFore->raw();
+    nForwN=gf->n_nodes,nForwL=gf->n_leafs;
+    int n_grad=0,n_param=0,n_p0=0;
+    size_t sz = gf->size;
+    struct ggml_cgraph *gb=GG_dup_graph(ctx_, gf);
+    cgraph = gb;        //  ggml_build_backward_expand
+    const size_t size_meta = (3*hFore->nNeedGrad + 9) * ggml_tensor_overhead();
+    struct ggml_context * ctx_static = ggml_init({size_meta,nullptr,true});
+    if(hFish->hparams.debug.back_graph_version==1){
+        ggml_build_backward_expand(ctx_static, ctx_, gb, accumulate);
+        return gb;
+    }
+    
+    GGML_ASSERT(cgraph->n_nodes > 0);    GGML_ASSERT(cgraph->grads);    GGML_ASSERT(cgraph->grad_accs);
+    const int n_nodes_f = cgraph->n_nodes,nHash=cgraph->visited_hash_set.size;
+    memset(cgraph->grads,     0, cgraph->visited_hash_set.size*sizeof(struct ggml_tensor *));
+    memset(cgraph->grad_accs, 0, cgraph->visited_hash_set.size*sizeof(struct ggml_tensor *));
+    bool * grads_needed = new bool[nHash]();   //calloc(cgraph->visited_hash_set.size, sizeof(bool));
+    // bool accumulate = false;
+    for (int i = 0; i < n_nodes_f; ++i) {
+        struct ggml_tensor * node = cgraph->nodes[i];
+        if (node->type == GGML_TYPE_I32) {
+            continue;
+        }
+
+        bool node_needs_grad = (node->flags & GGML_TENSOR_FLAG_PARAM) || (node->flags & GGML_TENSOR_FLAG_LOSS);
+        bool ignore_src[GGML_MAX_SRC] = {false};
+        switch (node->op) {
+            // gradients in node->src[0] for one reason or another have no effect on output gradients
+            case GGML_OP_IM2COL:      // only used for its shape
+            case GGML_OP_IM2COL_BACK: // same as IM2COL
+                ignore_src[0] = true;
+                break;
+            case GGML_OP_UNARY: {
+                const enum ggml_unary_op uop = ggml_get_unary_op(node);
+                // SGN and STEP unary ops are piecewise constant
+                if (uop == GGML_UNARY_OP_SGN || uop == GGML_UNARY_OP_STEP) {
+                    ignore_src[0] = true;
+                }
+            } break;
+
+            // gradients in node->src[1] for one reason or another have no effect on output gradients
+            case GGML_OP_CPY:           // gradients in CPY target are irrelevant
+            case GGML_OP_GET_ROWS:      // row indices not differentiable
+            case GGML_OP_GET_ROWS_BACK: // same as for GET_ROWS
+            case GGML_OP_ROPE:          // positions not differentiable
+                ignore_src[1] = true;
+                break;
+
+            default:
+                break;
+        }
+        for (int j = 0; j < GGML_MAX_SRC; ++j) {
+            if (!node->src[j] || ignore_src[j] || !grads_needed[ggml_hash_find(&cgraph->visited_hash_set, node->src[j])]) {
+                continue;
+            }
+            GGML_ASSERT(node->src[j]->type == GGML_TYPE_F32 || node->src[j]->type == GGML_TYPE_F16);
+            node_needs_grad = true;
+            break;
+        }
+        if (!node_needs_grad) {
+            continue;
+        }
+
+        // inplace operations are currently not supported
+        GGML_ASSERT(!node->view_src || node->op == GGML_OP_CPY || node->op == GGML_OP_VIEW ||
+            node->op == GGML_OP_RESHAPE || node->op == GGML_OP_PERMUTE || node->op == GGML_OP_TRANSPOSE);
+
+        const size_t igrad = ggml_hash_find(&cgraph->visited_hash_set, node);
+        GGML_ASSERT(igrad != GGML_HASHSET_FULL);
+        GGML_ASSERT(ggml_bitset_get(cgraph->visited_hash_set.used, igrad));
+        if (((node->flags & GGML_TENSOR_FLAG_PARAM)) || (node->flags & GGML_TENSOR_FLAG_LOSS)) {
+            auto grad = ggml_dup_tensor(ctx_, node);
+            // cgraph->grad_accs[igrad] = ggml_dup_tensor(ctx_static, node);
+            cgraph->grads[igrad]     = grad;    //cgraph->grad_accs[igrad];
+            ggml_format_name(grad, "%s\"", node->name);
+            // ggml_format_name(cgraph->grad_accs[igrad], "grad acc for %s", node->name);
+            if (node->flags & GGML_TENSOR_FLAG_PARAM) {
+                sinks.push_back(grad);
+                n_param++;
+            }
+        }
+        grads_needed[igrad] = true;     n_grad++;
+    }
+
+    for (int i = n_nodes_f - 1; i >= 0; --i) {
+        // inplace operations to add gradients are not created by ggml_compute_backward except for gradient accumulation
+        // use allocator to automatically make inplace operations
+        auto node = cgraph->nodes[i];
+        auto grad = GradOf(cgraph,node);
+        if(grad==nullptr)   continue;
+        ggml_compute_backward(ctx_, cgraph, i, grads_needed);
+    }
+
+    delete[] grads_needed;
+    assert(isValid()); 
+    auto root_b=gb->nodes[gb->n_nodes-1];
+    // for (int i = 0; i < gf->n_nodes; i++) {
+    //     struct ggml_tensor * node = gf->nodes[i];
+    //     auto gra_0 = ggml_graph_get_grad(gf,node),grad=ggml_graph_get_grad(cgraph,node);
+    //     if (node->flags & GGML_TENSOR_FLAG_PARAM) {
+    //         assert( !(grad->flags & GGML_TENSOR_FLAG_PARAM) );
+    //         gTN(node,"");            
+    //         PushBack(grad);
+    //         sinks.push_back(grad);
+    //         n_param++;
+    //     }
+    // }
+    int n_bleafs = gb->n_leafs,n_bnodes = gb->n_nodes;
+    // int n_bleafs = gb->n_leafs,n_bnodes = gb->n_nodes;
+    // ggml_hash_set_free(&zero_table);       
+
+    TopoOrder();    
+    __repr__( ); 
+    
+    return gb; 
+}
+#endif
 
 void TGraph::Traverse(int flag){
     bool GGML_OP_HAS_INIT    [GGML_OP_COUNT] = { 0 };
@@ -1299,7 +1496,7 @@ void TGraph::Traverse(int flag){
         }
         
         while (++node_n < cgraph->n_nodes) { // distribute new work or execute it direct if 1T
-            GGML_PRINT_DEBUG_5("%s: %d/%d\n", __func__, node_n, cgraph->n_nodes);
+            _INFO("%s: %d/%d\n", __func__, node_n, cgraph->n_nodes);
             struct ggml_tensor * node = cgraph->nodes[node_n];
             if (1) {
                 if (GGML_OP_HAS_INIT[node->op]) {
@@ -1403,7 +1600,7 @@ int TGraph::compute_on_plan( struct ggml_cplan* cplan,int flag) {
         cgraph->perf_cycles  += perf_cycles_cur;
         cgraph->perf_time_us += perf_time_us_cur;
 
-        GGML_PRINT_DEBUG("%s: perf (%d) - cpu = %.3f / %.3f ms, wall = %.3f / %.3f ms\n",
+        _INFO("%s: perf (%d) - cpu = %.3f / %.3f ms, wall = %.3f / %.3f ms\n",
                 __func__, cgraph->perf_runs,
                 (double) perf_cycles_cur      / (double) ggml_cycles_per_ms(),
                 (double) cgraph->perf_cycles  / (double) ggml_cycles_per_ms() / (double) cgraph->perf_runs,
@@ -1447,7 +1644,7 @@ void s2layerinfo(const string&jkey,std::vector<string>&lays){
 
 hNeuron Fish::J2Neuron(struct ggml_context *ctx_,string& dad,int level,const JConfig& config,int flag){
     hNeuron hN=nullptr,cur=nullptr;
-    std::vector<hNeuron> gang;    
+    std::vector<hNeuron> _fish;    
     string k,nam_,prefix;
     std::vector<string> lay_names;
     int i,nLay;
@@ -1469,7 +1666,7 @@ hNeuron Fish::J2Neuron(struct ggml_context *ctx_,string& dad,int level,const JCo
                 JConfig jLay(*it,lay++);
                 prefix = dad.empty()?nam_:dad+"."+nam_;      //  ,  //nam_
                 cur = J2Neuron(ctx_,prefix,level+1,jLay,flag);  
-                gang.push_back(cur);        
+                _fish.push_back(cur);        
             }   
             continue;       
         }
@@ -1479,11 +1676,11 @@ hNeuron Fish::J2Neuron(struct ggml_context *ctx_,string& dad,int level,const JCo
         cur = GeNeuron::MakeInstance(this,ctx_,dad,it,flag);        
         cur->ID = config.ID;        cur->level = level+1;
         neurons.push_back(cur);  
-        gang.push_back(cur);
+        _fish.push_back(cur);
     }
-    assert(gang.size()>0);
-    if(gang.size()>1)   {
-        hN = std::make_shared<Ganglia>(this,dad,gang,flag);     hN->level = level;
+    assert(_fish.size()>0);
+    if(_fish.size()>1)   {
+        hN = std::make_shared<Ganglia>(this,dad,_fish,flag);     hN->level = level;
         neurons.push_back(hN);  
     }else{
         assert(cur!=nullptr);
@@ -1510,6 +1707,5 @@ int Fish::jToGraph( struct ggml_context *ctx_,bool isBuild,int flag)   {
         cur = nn->Forward(ctx_,cur);
     }
     preLogits = cur;
-    // out_node = BuildLoss(ctx_,preLogits);
     return 0x0;
 }

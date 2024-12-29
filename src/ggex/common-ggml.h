@@ -77,16 +77,7 @@ struct ggml_context {
 
 typedef double ggml_float;
 
-static void ggml_opt_acc_grad(int np, struct ggml_tensor * const ps[], float * g, float scale) {
-    int64_t i = 0;
-    for (int p = 0; p < np; ++p) {
-        const int64_t ne = ggml_nelements(ps[p]) ;
-        // TODO: add function to get all elements at once
-        for (int64_t j = 0; j < ne; ++j) {
-            g[i++] += ggml_get_f32_1d(ps[p]->grad, j) * scale;
-        }
-    }
-}
+
 
 #ifdef __cplusplus
 extern "C" {

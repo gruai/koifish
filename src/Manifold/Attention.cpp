@@ -15,7 +15,7 @@ bool BROWN_Motion::Transfer_1 = true;  //if true,  wQ is large & need more time 
 BROWN_Motion::BROWN_Motion(Fish *hF_,hGensor _wq, hGensor _wv,struct CLI_params& hparams,hLQKV lQKV,int flags) : hFish_(hF_),wq(_wq),wv(_wv),lay(lQKV)   {
     int layer_id = lay->id;
     version = hparams.Get({"model","attention","version"},version,false);
-    isTrain = _wq->grad!=nullptr;
+    isTrain = hFish_->isTrain();    //_wq->grad!=nullptr;
     f_norm_rms_eps  = hparams.f_norm_rms_eps;
     rope_freq_base  = hparams.rope_freq_base;
     rope_freq_scale = hparams.rope_freq_scale;  
@@ -81,7 +81,7 @@ hGensor BROWN_Motion::DiffusionOnEmbed(struct ggml_context *ctx, hGensor teb, hG
     
     hGensor wq_2 = wq,v = teb,v4 = nullptr,v3=nullptr;
     if(!Transfer_1){  //scale wq
-        hGensor  t16_1 = ggml_scale_inplace        (ctx, wq, kq_scale);  
+        hGensor  t16_1 = GG_SCAL        (ctx, wq, kq_scale);  
         wq_2 = ggml_diag_mask_inf_inplace(ctx, t16_1, n_past); 
     }
     hGensor  kq = ggml_soft_max_inplace     (ctx, wq_2);  
@@ -110,7 +110,7 @@ hGensor BROWN_Motion::DiffusionOnEmbed(struct ggml_context *ctx, hGensor teb, hG
         // if(isSiLU){ //maybe useful
         //     v3 = ggml_silu(ctx,v3);
         // }  
-        // v3 = ggml_scale_inplace        (ctx, v3, kq_scale);  
+        // v3 = GG_SCAL        (ctx, v3, kq_scale);  
         // v3 = ggml_diag_mask_inf_inplace(ctx, v3, n_past);       
         hGensor probs = ggml_soft_max(ctx,v3); 
         hGensor expert = v3;    //ggml_reshape_2d(ctx,v3,n_vocab,n_ctx*n_batch);
@@ -209,7 +209,7 @@ hGensor BROWN_Motion::Build(struct ggml_context *ctx ,hGensor teb, hGensor KQ_po
     
     hGensor wq_2 = wq,v = teb,v4 = nullptr,v3=nullptr;
     if(!Transfer_1){  //scale wq
-        hGensor  t16_1 = ggml_scale_inplace        (ctx, wq, kq_scale);  
+        hGensor  t16_1 = GG_SCAL        (ctx, wq, kq_scale);  
         wq_2 = ggml_diag_mask_inf_inplace(ctx, t16_1, n_past); 
     }
     hGensor  kq = ggml_soft_max_inplace     (ctx, wq_2);  
@@ -238,7 +238,7 @@ hGensor BROWN_Motion::Build(struct ggml_context *ctx ,hGensor teb, hGensor KQ_po
         // if(isSiLU){ //maybe useful
         //     v3 = ggml_silu(ctx,v3);
         // }  
-        // v3 = ggml_scale_inplace        (ctx, v3, kq_scale);  
+        // v3 = GG_SCAL        (ctx, v3, kq_scale);  
         // v3 = ggml_diag_mask_inf_inplace(ctx, v3, n_past);       
         hGensor probs = ggml_soft_max(ctx,v3); 
         hGensor expert = v3;    //ggml_reshape_2d(ctx,v3,n_vocab,n_ctx*n_batch);
@@ -326,7 +326,7 @@ hGensor QKV_Motion::Build(struct ggml_context *ctx, hGensor teb, hGensor KQ_pos)
         if(0)      {
             kq = ggml_soft_max_ext(ctx, kq, KQ_mask, kq_scale, f_max_alibi_bias);       //would crash!
         }else{
-            hGensor  t16_1 = ggml_scale_inplace        (ctx, kq, kq_scale);          
+            hGensor  t16_1 = GG_SCAL        (ctx, kq, kq_scale);          
                     // gTN(t16_1, "t16_1"); assert_shape_4d(t16_1, N, N, n_head, n_batch);
             hGensor  t16_2 = ggml_diag_mask_inf_inplace(ctx, t16_1, n_past);            
                     // gTN(t16_2, "t16_2"); assert_shape_4d(t16_2, N, N, n_head, n_batch);

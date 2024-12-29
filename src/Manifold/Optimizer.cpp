@@ -11,9 +11,14 @@
 #include "Dictionary.hpp"
 #include "../ggex/GG_util.hpp"
 
-Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params& hparams,int flag) : train_params(hparams.common),gang(g_) {    
+struct train_params_common Optimizer::TrainParams()    {   
+    return _fish->hparams.common;   
+}
+
+Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params& hparams,int flag) : _fish(g_) {    
     tpSign = hparams.Get({"train","optimizatioin","sign"},0,false);
     string method = hparams.Get({"train","optimizatioin","method"},string("adamw"),false);
+    auto train_params=TrainParams();
     /*
         Although many people think "ADAMw is much better than SGD for attention models"  https://arxiv.org/pdf/2310.01082
         But may litter slower. For example:   jModel_SGD_v.info
@@ -23,7 +28,7 @@ Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params& hparams,int flag) : tra
     nGradAccum =  MAX(1, train_params.n_gradient_accumulation);
     isGlobalGrad = nGradAccum>1;        // Nearly same alloc grad or not
     val_loader.type = SampLoader::TYPE::DT_EVAL;
-    if(gang->isTrain())  {
+    if(_fish->isTrain())  {
         // train_loader.Init(g_,"Train");
         
     }else{
@@ -33,17 +38,21 @@ Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params& hparams,int flag) : tra
 }
 
 hGensor Optimizer::hLoss()             {    
-    assert(gang!=nullptr);
-    if(gang->loss!=nullptr)
-        GGML_ASSERT(ggml_is_scalar(gang->loss));  
-    return gang->loss;          
+    assert(_fish!=nullptr);
+    if(_fish->loss!=nullptr)
+        GGML_ASSERT(ggml_is_scalar(_fish->loss));  
+    return _fish->loss;          
 }
 
-hGensor Optimizer::hTargetProbs()      {   return gang->target_probs;  }
-hGensor Optimizer::hPreLogits()       {   return gang->preLogits;     }
+hGensor Optimizer::hTargetProbs()      {   return _fish->target_probs;  }
+hGensor Optimizer::hPreLogits()       {   return _fish->preLogits;     }
 
-/**
- * Xoshiro256PlusSIMD       https://github.com/stephanfr/Xoshiro256PlusSIMD/blob/main/README.md
+hGensor Optimizer::GradOf(hGensor node,int flag){
+    auto cgraph = _fish->GetBackRaw();
+    return ::GradOf(cgraph,node,flag);    
+}
+
+/* Xoshiro256PlusSIMD       https://github.com/stephanfr/Xoshiro256PlusSIMD/blob/main/README.md
  * https://www.lomont.org/papers/2008/Lomont_PRNG_2008.pdf
  */
 /*
@@ -82,34 +91,46 @@ bool Optimizer::OnLogits(int flag)   {
     return true;
 }
 
+static void ggml_opt_acc_grad(int np, struct ggml_tensor * const ps[], float * g, float scale) {
+    int64_t i = 0;
+    for (int p = 0; p < np; ++p) {
+        const int64_t ne = ggml_nelements(ps[p]) ;
+        // TODO: add function to get all elements at once
+        for (int64_t j = 0; j < ne; ++j) {
+            assert(0);
+            // g[i++] += ggml_get_f32_1d(ps[p]->grad, j) * scale;
+        }
+    }
+}
+
 bool OPT_Adam::BatchGrad(float&fx,int flag)   {    
     fx = 0;
     auto loss = hLoss();
-    float *fLoss = (float*)(loss->data),*fLossG = (float*)(loss->grad->data),*g = nullptr;
+    float *fLoss = (float*)(loss->data),*g = nullptr;
     if(grad!=nullptr){
         ggml_set_zero(grad);   
         g = (float *)grad->data;
     }
     
-    struct ggml_cgraph *_gf=gang->GetForwRaw(),*_gb=gang->GetBackRaw();
+    struct ggml_cgraph *_gf=_fish->GetForwRaw(),*_gb=_fish->GetBackRaw();
     assert(_gb!=nullptr);
-    auto *cplan = &(gang->gb_plan);
+    auto *cplan = &(_fish->gb_plan);
     bool bench=false;
     // const int n_accum = MAX(1, train_params.n_gradient_accumulation);
     const float accum_norm = 1.0f / (float) nGradAccum;
     
     for (int accum_step = 0; accum_step < nGradAccum; ++accum_step) {
-        int64_t nSamp = train_loader.update_batch(-1,gang);
+        int64_t nSamp = train_loader.update_batch(-1,_fish);
         train_samples += nSamp;      
         if(AfterLoadBatch(train_loader,accum_step)){
             return false;
-        }
-
-        ggml_set_f32      (loss->grad, 1.0f);
+        }   
+        auto grad = GradOf(loss);
+        ggml_set_f32      (grad, 1.0f);
         if(bench){ //  only for performance benchmark
             GST_TIC(t0);
             // ggml_graph_comp0(_gf,0x0); 
-            ggml_graph_comp0(_gb,0x0); 
+            // ggml_graph_comp0(_gb,0x0); 
             _INFO("gb_compute %s T=%.3g","",GST_TOC(t0));  
             exit(-666);
         }else{
@@ -152,7 +173,7 @@ int Optimizer::SignStochastic(int nx,CLI_params& hparams,int flag){
     if(grad==nullptr){
         for (auto hP : opt_ps) {
             size_t ne = ggml_nelements(hP);
-            float *g =(float*)(hP->grad->data);
+            float *g =(float*)(GradOf(hP)->data);
             for (int64_t i = 0; i < ne; ++i) {
                 g[i] = g[i]>0?1:-1;
             }    
@@ -241,15 +262,14 @@ inline bool isStrMatch(const string& target,const vector<string>&words){
 
 double OPT_Adam::UpdateTensorParam(hGensor hP,size_t offset,float *g,float clip){ 
     // assert(gimap.find(hP)!=gimap.end());
-    auto& im = gang->GetGensorInfo(hP); //gimap[hP];
+    auto& im = _fish->GetGensorInfo(hP); //gimap[hP];
     float *m=im.gm==nullptr?nullptr:(float*)(im.gm->data);
     float *v=im.gv==nullptr?nullptr:(float*)(im.gv->data);        //first&second moment
     // double normX = 0.0,meanX=0;
     g_step = 0.0;       clip = 1.0;
     const int64_t ne = ggml_nelements(hP);
-    if(g==nullptr){
-        assert(hP->grad!=nullptr);        
-        g = (float*)(hP->grad->data);
+    if(g==nullptr){       
+        g = fGrad(hP);
         clip = gClip(ne,g,hP);        
     }else{
         // m  = (float *)gm->data+offset;  // first moment
@@ -312,22 +332,22 @@ static string GD_NAME[]={
     "ADAMw","SGD","SGD_v","SGD_blk_v","SGD_HYBRID",   
 };
 
-enum ggml_opt_result Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGensor target_,CLI_params& hparams)    {
-    hEDS = gang->hEDS;              assert(hEDS!=nullptr);
-
-    struct ggml_cgraph *_gf=gang->GetForwRaw(),*_gb=gang->GetBackRaw();
+Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGensor target_,CLI_params& hparams)    {
+    hEDS = _fish->hEDS;              assert(hEDS!=nullptr);
+    auto train_params = TrainParams();
+    struct ggml_cgraph *_gf=_fish->GetForwRaw(),*_gb=_fish->GetBackRaw();
     last_time = ggml_time_ms();
-    enum ggml_opt_result result = GGML_OPT_RESULT_DID_NOT_CONVERGE;
+    Optimizer::RESULT result = DID_NOT_CONVERGE;
     // struct ggml_opt_params params = opt->params;
    
     bool cancel = false;      //isAccuX = true
     auto loss = hLoss( );
-    float *fLoss = (float*)(loss->data),*fLossG = (float*)(loss->grad->data),val_loss;
+    float *fLoss = (float*)(loss->data),val_loss;
     
     // float *target = (float*)(data->target_probs->data);
     string suf,pref;
-    _INFO("Optimizer::%s@<%s> %s device=[%s] \n", __func__,gang->hBackTG->name.c_str(),
-        gang->isLoadCheckpoint?hparams.save.checkpoint_in.c_str():"",
+    _INFO("Optimizer::%s@<%s> %s device=[%s] \n", __func__,_fish->hBackTG->name.c_str(),
+        _fish->isLoadCheckpoint?hparams.save.checkpoint_in.c_str():"",
         hEDS->__repr__(suf,pref,0).c_str());
     _INFO("\t Accumulation=%d AdaptiveSched=%d GRAP=%p rZMUV=%g rLARS=%g \n", 
         nGradAccum,(int)isAdaptiveSched,grad,hparams.ZMUV_ratio,hparams.lars_ratio );
@@ -345,7 +365,7 @@ enum ggml_opt_result Optimizer::Search(struct ggml_context * ctx, hGensor loss_,
            
         float fx = 0;
         if( !BatchGrad(fx,0x0) )       //  warmup
-            return GGML_OPT_RESULT_CANCEL;         
+            return CANCEL;         
 
         fx_prev.push_back(fx);        fx_best.push_back(fx);   
         loss_before = fx;        loss_after  = fx;
@@ -371,18 +391,18 @@ enum ggml_opt_result Optimizer::Search(struct ggml_context * ctx, hGensor loss_,
                 val_loss = Evaluate(val_loader,t);  
             }            
             if( hparams.gpt_every>0 && t%hparams.gpt_every==0 )   {
-                gang->GenSentence(1);   
+                _fish->GenSentence(1);   
             }            
             if( !BatchGrad(fx,0x0))
-                return GGML_OPT_RESULT_CANCEL;            
+                return CANCEL;            
 
             loss_after = fx;
             UpdateLoss(iter,fx);        //scheduler->Append(loss);
-            if(gang->hDistler!=nullptr) 
-                gang->hDistler->UpdateSigma(iter);
+            if(_fish->hDistler!=nullptr) 
+                _fish->hDistler->UpdateSigma(iter);
             // check convergence
             if (fabsf(fx - fx_prev[0])/fx < train_params.adam_eps_f) {
-                GGML_PRINT_DEBUG("converged\n");                result = GGML_OPT_RESULT_OK;
+                _INFO("converged\n");                result = OK;
             }
             // delta-based convergence test
             /*if (pf != NULL) {
@@ -404,20 +424,19 @@ enum ggml_opt_result Optimizer::Search(struct ggml_context * ctx, hGensor loss_,
                     ++n_no_improvement;
 
                     if (n_no_improvement >= train_params.opt_max_no_improvement) {
-                        result = GGML_OPT_RESULT_OK;
+                        result = OK;
                     }
                 }
             }
             
             fx_prev[0] = fx;
             const int64_t t_end_cpu = ggml_cycles();
-            GGML_PRINT_DEBUG("time iter:      %5.3f s\n", ((float)(t_end_cpu - t_start_cpu))/CLOCKS_PER_SEC);
+            // _INFO("time iter:      %5.3f s\n", ((float)(t_end_cpu - t_start_cpu))/CLOCKS_PER_SEC);
             const int64_t t_end_wall = ggml_time_us();
-            GGML_PRINT_DEBUG("wall time iter: %5.3f s\n", (t_end_wall - t_start_wall)/1e6);
-            
+            // _INFO("wall time iter: %5.3f s\n", (t_end_wall - t_start_wall)/1e6);            
         }
 
-        result = GGML_OPT_RESULT_DID_NOT_CONVERGE;
+        result = DID_NOT_CONVERGE;
     }
     return result;
 }
@@ -427,11 +446,19 @@ void Fish::Train(  int flag )   {
 }
 
 void Optimizer::GraphCompute(struct ggml_cgraph * cgraph,int flag){
-    int nThread = train_params.n_threads;
-    struct ggml_cgraph *_gf=gang->GetForwRaw(),*_gb=gang->GetBackRaw();
+    int nThread = TrainParams().n_threads;
+    struct ggml_cgraph *_gf=_fish->GetForwRaw(),*_gb=_fish->GetBackRaw();
     assert(cgraph==_gf || cgraph==_gb);
+    bool bench = false;
+    if(bench){ //  only for performance benchmark
+        GST_TIC(t0);
+        CHILD_1218_GRAD //ggml_graph_comp0(_gf,0x0); 
+        // ggml_graph_comp0(_gb,0x0); 
+        _INFO("gb_compute %s T=%.3g","",GST_TOC(t0));  
+        exit(-666);
+    }
     if(hEDS->isOnlyCPU()){
-        auto *cplan = &(gang->gb_plan);
+        auto *cplan = &(_fish->gb_plan);
         ggml_graph_compute(cgraph, cplan);
         return;
     }
@@ -441,19 +468,9 @@ void Optimizer::GraphCompute(struct ggml_cgraph * cgraph,int flag){
         ggml_backend_metal_set_n_cb(lctx.backend_metal, n_threads);
     }
 #endif
+    hEDS->SetThread(nThread);
 
-    if (hEDS->cpu != nullptr) {
-        ggml_backend_cpu_set_n_threads(hEDS->cpu, nThread);
-        //ggml_backend_cpu_set_threadpool(hEDS->cpu, threadpool);
-        // ggml_backend_cpu_set_abort_callback(hEDS->cpu, lctx.abort_callback, lctx.abort_callback_data);
-    }
-#ifdef GGML_USE_BLAS
-    if (lctx.backend_blas != nullptr) {
-        ggml_backend_blas_set_n_threads(lctx.backend_blas, n_threads);
-    }
-#endif
-
-    ggml_backend_sched_graph_compute_async(hEDS->sched, cgraph);
+    ggml_backend_sched_graph_compute_async(hEDS->sched0, cgraph);
 }
 
 /*
@@ -462,20 +479,21 @@ void Optimizer::GraphCompute(struct ggml_cgraph * cgraph,int flag){
 float Optimizer::Evaluate(SampLoader&loader,int iter,int flag){  
     if( loader.num_batches==0 ) 
     {    assert(0);         return 0;          }
+    
     if(iter!=-666)   _INFO("[eval] " );   
     GST_TIC(tic);     
-    struct ggml_cgraph *_gf=gang->GetForwRaw();
+    struct ggml_cgraph *_gf=_fish->GetForwRaw();
     auto loss = hLoss();     
     double l2,delta_max=0,delta_=0,a,sum=0,ee;
-    auto tokens_input = gang->Input( ); 
+    auto tokens_input = _fish->Input( ); 
     int i,nB=0,step=max(loader.num_batches/10,1);
     size_t nz=0,j;
-    llama_token tMost = (llama_token) (gang->nClass() - 1);
+    llama_token tMost = (llama_token) (_fish->nClass() - 1);
     hSAMP samp = nullptr;
     const float *wLog = nullptr;
     for (i = 0; i < loader.num_batches; i+=step) {        
         if(tokens_input!=nullptr)   {//in some debug mode, tokens_input maybe null
-            loader.update_batch(i,gang);
+            loader.update_batch(i,_fish);
             samp = loader.cur_samps[i];
         } 
         if(wLog!=nullptr)    {
@@ -487,15 +505,15 @@ float Optimizer::Evaluate(SampLoader&loader,int iter,int flag){
         }
         // ggml_graph_comp0(_gf,0x0);  //  only for debug
         GraphCompute(_gf);
-        // ggml_graph_compute(_gf, &(gang->gb_plan));     
+        // ggml_graph_compute(_gf, &(_fish->gb_plan));     
         a = ((float*)hPreLogits()->data)[0];        //  -6.60046101     -4.3040733  
 #ifndef NDEBUG        
         
 #endif
-        ee=loader.DecodeVerify(samp,tokens_input,gang->preLogits);
+        ee=loader.DecodeVerify(samp,tokens_input,_fish->preLogits);
         sum += loss==nullptr ? 0 : ((float*)(loss->data))[0];         //float *fLoss = (float*)(loss->data)
         nB++;
-        if(gang->hparams.isOnlyGPT){
+        if(_fish->hparams.isOnlyGPT){
             return ee;
         }        
         break;
@@ -519,7 +537,7 @@ float Optimizer::Evaluate(SampLoader&loader,int iter,int flag){
         _INFO("\t Loss@Evaluation=%f delta=%g(%.5g) T=%gs ======\n", aloss,delta_max,delta_/nB,GST_TOC(tic) );
     string sX="_loss="+std::to_string(aloss);    
     if(delta>0)     
-        gang->SaveTrain(sX);  
+        _fish->SaveTrain(sX);  
 
     return aloss;
 }
@@ -570,9 +588,55 @@ std::string shuffle_samples_X(
     return mt19937_get_state(rng);
 }
 
+float cosine_decay(int64_t step, int64_t decay_steps, float minimum) {
+    if (step > decay_steps) {
+        step = decay_steps;
+    }
+    const float cosine_decay = 0.50f*(1.0f + cosf(3.14159265359f*step/decay_steps));
+    const float decay = (1 - minimum)*cosine_decay + minimum;
+    return decay;
+}
+
+float cosine_decay_restart(int64_t step, int64_t decay_steps, float minimum, float restart_step_mult) {
+    while (step > decay_steps) {
+        step -= decay_steps;
+        decay_steps = (int64_t) (restart_step_mult * decay_steps);
+    }
+    return cosine_decay(step, decay_steps, minimum);
+}
+
+float learning_schedule(
+    int64_t step,
+    int64_t warmup_steps,
+    int64_t cos_decay_steps,
+    float   learning_rate,
+    float   overall_minimum,
+    float   cos_decay_minimum,
+    float   cos_decay_restart_step_mult,
+    bool    enable_restart) {
+
+    float result =
+        (step < warmup_steps)
+            ? (float) step / (float) warmup_steps
+            : enable_restart
+                ? cosine_decay_restart(
+                    step - warmup_steps,
+                    cos_decay_steps,
+                    cos_decay_minimum,
+                    cos_decay_restart_step_mult)
+                : cosine_decay(
+                    step,
+                    cos_decay_steps,
+                    cos_decay_minimum);
+
+    float min = overall_minimum / learning_rate;
+    result = min + result * (1.0f - min);
+    return result;
+}
+
 float Optimizer::UpdateSchedule(int flag){
-    struct train_params_common *params = &(train_params);   
-    int n_batch = params->n_batch,n_ctx = params->n_ctx;
+    struct train_params_common _params = TrainParams();   
+    int n_batch = _params.n_batch,n_ctx = _params.n_ctx;
     int64_t now = ggml_time_ms();
     if (now > last_time && iter > first_iter)            {
         double dt = (double)(now - last_time);
@@ -585,14 +649,14 @@ float Optimizer::UpdateSchedule(int flag){
     }
     double remaining_millis = 0.0;
     if (millis_per_iter > 0.0)            {
-        const int n_iter = params->adam_n_iter,done_iter = iter - first_iter,remaining_iter = n_iter - done_iter;
+        const int n_iter = _params.adam_n_iter,done_iter = iter - first_iter,remaining_iter = n_iter - done_iter;
         remaining_millis = remaining_iter * millis_per_iter;
     }        
 
     // exclude file saving from time measurement, by measuring last_time after saving
     last_time = ggml_time_ms();
-    float sched = learning_schedule(iter, params->warmup, params->cos_decay_steps, params->adam_alpha, params->adam_min_alpha,
-                                params->cos_decay_min, params->cos_decay_restart, params->enable_restart);
+    float sched = learning_schedule(iter, _params.warmup, _params.cos_decay_steps, _params.adam_alpha, _params.adam_min_alpha,
+                                _params.cos_decay_min, _params.cos_decay_restart, _params.enable_restart);
     int impr_plot = -(int)(1 + (loss_before - loss_after) * 10.0f + 0.5f);
     if (impr_plot > 0)
         impr_plot = 0;
@@ -613,8 +677,8 @@ float Optimizer::UpdateSchedule(int flag){
 // TODO 
 bool Optimizer::AfterLoadBatch(SampLoader&loader, int accum_step, int flag)    {
     // LossCurve(0x0);
-    struct train_params_common *params = &(train_params);   
-    int n_batch = params->n_batch,n_ctx = params->n_ctx;
+    auto _params = TrainParams();   
+    int n_batch = _params.n_batch,n_ctx = _params.n_ctx;
 
     if (accum_step == 0)        {
         // *sched = UpdateSchedule(flag);
@@ -638,7 +702,7 @@ bool Optimizer::AfterLoadBatch(SampLoader&loader, int accum_step, int flag)    {
         train_loader.next_sample = 0;
     }
 
-    const bool last_epoch_reached = (params->n_epochs > 0 && train_epochs - first_epoch >= params->n_epochs);
+    const bool last_epoch_reached = (_params.n_epochs > 0 && train_epochs - first_epoch >= _params.n_epochs);
     if (last_epoch_reached)    {
         // allow optimization iteration at last epoch to be completed before canceling
         if (iter_at_last_epoch < 0)        {
@@ -657,7 +721,7 @@ void Optimizer::BeforeTrain(struct train_params_common& train_params,hGensor tok
     // assert(tokens_!=nullptr);
     // tokens_input = tokens_;
 
-    opt_ps = gang->optParams;
+    opt_ps = _fish->optParams;
     nMostParam = 0;
     for (auto ps : opt_ps) {            
         nMostParam += ggml_nelements(ps);
@@ -716,7 +780,7 @@ void Optimizer::Prepare(size_t nx_,int flag){
     just_initialized = true;
     double s=0;
     size_t nz = 0;
-    NLP_AutoRegressive *dolphin = dynamic_cast<NLP_AutoRegressive*>(gang);
+    NLP_AutoRegressive *dolphin = dynamic_cast<NLP_AutoRegressive*>(_fish);
     if(nParams>0)   {
         struct ggml_init_params ctx_opt_params;    
         ctx_opt_params.mem_size = GGML_MEM_ALIGN*3 + ggml_tensor_overhead()*3 + ggml_type_size(GGML_TYPE_F32)*nParams*3;
@@ -726,12 +790,12 @@ void Optimizer::Prepare(size_t nx_,int flag){
         ctx_opt_params.mem_buffer = NULL;
         ctx_opt_params.no_alloc   = false;
         _ctx = ggml_init(ctx_opt_params);    
-        if(gang->isTrain()) {
+        if(_fish->isTrain()) {
             if(isGlobalGrad)
                 grad = ggml_new_tensor_1d(_ctx, GGML_TYPE_F32, nParams);
-            nz = gang->hBackTG->Prepare4Train(_ctx,tpGD);
+            nz = _fish->hBackTG->Prepare4Train(_ctx,tpGD);
             s = nz*1.0/nParams;
-            // gimap = gang->hBackTG->gimap;
+            // gimap = _fish->hBackTG->gimap;
         }
         train_loader.Init(dolphin,"Train");     //train_loader.Prepare(this);
     }
@@ -792,7 +856,7 @@ bool Optimizer::PrepareData( CLI_params& hparams,int flag )   {
 
 void OPT_Adam::Prepare(size_t nx_,int flag){
     Optimizer::Prepare(nx_,flag);
-    if(gang->isTrain()){
+    if(_fish->isTrain()){
         if( grad!=nullptr ){
 
         }else{
@@ -808,7 +872,7 @@ void OPT_Adam::Prepare(size_t nx_,int flag){
         if (gpf) {
             ggml_set_zero(gpf);
         }*/
-       /*gang->hBackTG->Prepare(_ctx);
+       /*_fish->hBackTG->Prepare(_ctx);
         */
     }
 }
@@ -817,6 +881,7 @@ OPT_Adam::OPT_Adam(NLP_AutoRegressive *g_,CLI_params& params_,int flag)
     : Optimizer(g_,params_,flag)    {
 
     sched              = 1.0f;
+    auto train_params = TrainParams();
     alpha              = train_params.adam_alpha;
     decay              = train_params.adam_decay * alpha;
     decay_min_ndim     = train_params.adam_decay_min_ndim;
@@ -828,6 +893,7 @@ OPT_Adam::OPT_Adam(NLP_AutoRegressive *g_,CLI_params& params_,int flag)
 
 void OPT_Adam::Dump(int typ){
     Optimizer::Dump(typ);
+    if(NOT_DUMP())  return;
     _INFO("%s:  s=%.3g ADAM(lr=%g,%g,[%g-%g]) decay=%g(%d)\n", __func__, sched,alpha,decay,beta1,beta2,
         decay,decay_min_ndim);
 }

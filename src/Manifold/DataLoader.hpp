@@ -199,8 +199,7 @@ struct SAMP{
     }
     virtual ~SAMP() {}
 
-    bool Serialize(FSerial&S, bool isSave, int flag);
-
+    bool Serialize(FSerial&S, bool isSave, int flag);    
     void Refresh(SampLoader *loader,void *ctx,std::vector<int32_t>& samp_toks,int typ);
     virtual double UpdateTag(hDataToken hDT,int *tag,int step,bool flip,int flag=0x0);
 
@@ -254,6 +253,7 @@ public:
     size_t nTokens()    {
         return hTokens->tokens.size();
     }
+    int nLeastCTX(int flag=0x0);
     hSAMP SampAt(size_t idx_){
         assert(idx_<N4Train());
         // size_t id = idcs[idx_];

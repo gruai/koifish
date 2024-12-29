@@ -99,8 +99,8 @@ struct Ganglia : public GeNeuron    {
     Ganglia(Fish *hG_,const string& guid,std::vector<hNeuron>& ns_,int flag);
     bool isValid()  override    {   return ns.size()>0; }
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
-    bool isGang()   override    {   return true;    }       
-    // virtual hGensor Forward(struct ggml_context *ctx_build,hGensor cur,int flag=0x0);
+    bool isGang()   override    {   return true;    }  
+    hGensor Forward(struct ggml_context *ctx_build,hGensor cur,int flag=0x0)    override   {   return cur; } 
 };
 
 //a lookup table instead of matrix*vector(as in SLP)

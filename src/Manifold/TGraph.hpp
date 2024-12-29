@@ -12,6 +12,7 @@
 #include <memory>
 #include <vector>
 #include <map>
+#include <set>
 #include <typeinfo>
 #include <float.h>
 #include <stdio.h>
@@ -19,11 +20,6 @@
 #include <atomic>
 #include <inttypes.h> 
 using namespace std;
-// #include "../ggml/ggml.h"
-// #include "../ggml/ggml-impl.h"
-// #include "../ggml/ggml-alloc.h"
-// #include "../ggml/ggml-backend.h"
-// #include "../ggex/common-ggml.h"
 #include "../ggex/GG_util.hpp"
 #include "../lenda/util/GST_util.hpp"
 
@@ -44,8 +40,10 @@ protected:
     bool isOnlySymbol = true, isBackward =false;
     double tX=0,tCompute=0.0,tPlan=0.0;
     std::vector<uint8_t> work_buffer;
+    //lite ggml_hash_set
+    std::set<hGensor> gset;
     //from GGML
-    int size=0,nForwN=0,nForwL=0; // n_nodes=0,n_leafs=0;
+    int size=0,nForwN=0,nForwL=0,nNeedGrad=0; // n_nodes=0,n_leafs=0;+
     hGensor*nodes=nullptr,*grads=nullptr,*leafs=nullptr;
     std::vector<hGensor> topo_nodes;    //nodes in Topological order
     std::vector<hGensor> sinks;      //  sinks of tensor flow graph
@@ -65,7 +63,7 @@ protected:
         // if (visited_hash_table.size>0)
         //     memset(visited_hash_table.keys, 0, visited_hash_table.size * sizeof(hGensor));
     }
-
+/*#ifndef GG_V12
     size_t hash_insert(const struct ggml_hash_set& hash_set, hGensor key) {
         size_t i = ggml_hash_find(&hash_set, key);
         GGML_ASSERT(i != GGML_HASHSET_FULL);
@@ -77,6 +75,7 @@ protected:
         hash_set.keys[i] = key;
         return i;
     }
+#endif*/
 
     struct ggml_cgraph * raw() {
         assert(cgraph!=nullptr);
@@ -93,7 +92,8 @@ public:
 
     TGraph(struct ggml_context *ctx_, size_t size_, bool grad_,bool isOnlySymbol_,int flag=0x0) :
         size(size_),ctx(ctx_),isOnlySymbol(isOnlySymbol_)  {
-        GGML_PRINT("=== %s ===\n",__func__);
+        assert(0);  //Deprecated
+        /*_INFO("=== %s ===\n",__func__);
         const size_t obj_size = ggml_graph_nbytes(size, grads);
         struct ggml_object * obj = ggml_new_object(ctx, GGML_OBJECT_TYPE_GRAPH, obj_size);
         cgraph = (struct ggml_cgraph *) ((char *) ctx->mem_buffer + obj->offs);
@@ -114,7 +114,7 @@ public:
         // *cgraph = (struct ggml_cgraph) {
         //     size,0,0,nodes,grads,leafs,{ hash_size, hash_keys_ptr },
         //     GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT,0,0,0,
-        // };     
+        // };     */
     }
     virtual ~TGraph()   {   Clear();    }
     virtual int has(const string&name,int flag=0x0);
@@ -137,7 +137,7 @@ public:
     int compute_on_plan( struct ggml_cplan* cplan,int flag=0x0);
 
     void compute_helper(int32_t n_threads,int flag=0x0){
-        GGML_PRINT_DEBUG("%s ...",__func__);
+        _INFO("%s ...",__func__);
         // ggml_graph_compute_helper(work_buffer, cgraph, n_threads);
         GST_TIC(t0);
         struct ggml_cplan plan = ggml_graph_plan(cgraph, n_threads,NULL);
@@ -148,11 +148,11 @@ public:
         tPlan = GST_TOC(t0);       
 
         compute_on_plan(&plan);
-        GGML_PRINT_DEBUG("%s:  nT=%d  symbol=%d T = %.3g(plan=%.3g)sec\n", __func__,n_threads,isOnlySymbol, GST_TOC(t0),tPlan);
+        _INFO("%s:  nT=%d  symbol=%d T = %.3g(plan=%.3g)sec\n", __func__,n_threads,isOnlySymbol, GST_TOC(t0),tPlan);
     }
 
-    virtual struct ggml_cgraph * BuildBackward(struct ggml_context * ctx_build,struct ggml_cgraph *gf,int flag=0x0);
-    
+    virtual struct ggml_cgraph * BuildBackward(struct ggml_context * ctx_build,std::shared_ptr<TGraph> gf, bool accumulate=false,int flag=0x0);
+    virtual bool Alloc(ggml_gallocr_t& alloc,int flag=0x0);
     // Push new added node to last position
     void PushBack(hGensor node,int flag=0x0);
     
@@ -170,15 +170,15 @@ public:
     void print( ) {
         int64_t perf_total_per_op_us[GGML_OP_COUNT] = {0};
 
-        GGML_PRINT("=== GRAPH ===\n");
+        _INFO("=== GRAPH ===\n");
 
-        GGML_PRINT("n_nodes = %d\n", cgraph->n_nodes);
+        _INFO("n_nodes = %d\n", cgraph->n_nodes);
         for (int i = 0; i < cgraph->n_nodes; i++) {
             hGensor node = nodes[i];
 // CYS_0826
             // perf_total_per_op_us[node->op] += MAX(1, node->perf_time_us);
 
-            // GGML_PRINT(" - %3d: [ %5" PRId64 ", %5" PRId64 ", %5" PRId64 "] %16s %s (%3d) cpu = %7.3f / %7.3f ms, wall = %7.3f / %7.3f ms\n",
+            // _INFO(" - %3d: [ %5" PRId64 ", %5" PRId64 ", %5" PRId64 "] %16s %s (%3d) cpu = %7.3f / %7.3f ms, wall = %7.3f / %7.3f ms\n",
             //         i,
             //         node->ne[0], node->ne[1], node->ne[2],
             //         ggml_op_name(node->op), (node->flags & GGML_TENSOR_FLAG_PARAM) ? "x" : node->grad ? "g" : " ", node->perf_runs,
@@ -188,22 +188,23 @@ public:
             //         (double) node->perf_time_us / 1000.0 / node->perf_runs);
         }
 
-        GGML_PRINT("n_leafs = %d\n", cgraph->n_leafs);
+        _INFO("n_leafs = %d\n", cgraph->n_leafs);
         for (int i = 0; i < cgraph->n_leafs; i++) {
             hGensor node = leafs[i];
-            GGML_PRINT(" - %3d: [ %5" PRId64 ", %5" PRId64 "] %8s %16s\n",
+            _INFO(" - %3d: [ %5" PRId64 ", %5" PRId64 "] %8s %16s\n",
                     i,node->ne[0], node->ne[1],ggml_op_name(node->op), ggml_get_name(node));        }
         for (int i = 0; i < GGML_OP_COUNT; i++) {
             if (perf_total_per_op_us[i] == 0) {
                 continue;
             }
-            //GGML_PRINT("perf_total_per_op_us[%16s] = %7.3f ms\n", ggml_op_name(i), (double) perf_total_per_op_us[i] / 1000.0);
+            //_INFO("perf_total_per_op_us[%16s] = %7.3f ms\n", ggml_op_name(i), (double) perf_total_per_op_us[i] / 1000.0);
         }
-        GGML_PRINT("========================================\n");
+        _INFO("========================================\n");
     }
 
     friend class Fish;
     friend class NLP_AutoRegressive;
     friend class Optimizer;
+    friend class EDGE_DEVICES;
 };
 typedef std::shared_ptr<TGraph> hTGraph;

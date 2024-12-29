@@ -270,10 +270,21 @@ T remove_extension(T const & filename)
   return p > 0 && p != T::npos ? filename.substr(0, p) : filename;
 }
 
+template<class T>
+const char* CSTR(const T&obj,int flag=0x0)      {
+    string suffix, prefix;  
+    string info = obj.__repr__(suffix,prefix,flag);
+    return info.c_str();
+}
+template<class T>
+const char* CSTR(const shared_ptr<T> obj,int flag=0x0)      {
+    return CSTR(*obj,flag);
+}
+
 #define HACK_07092024   assert(0)
 
 #define CHILD_0909_WIKIS
-
+#define CHILD_1218_GRAD //
 
 
 #define CHILD_1012_CACHE true

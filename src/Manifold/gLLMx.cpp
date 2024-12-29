@@ -27,7 +27,7 @@ hGensor LLM_MAMBA::build_layer_( int N,struct ggml_context *ctx_build,hGensor in
     gTN(t11, "t11");     //assert_shape_2d(t03, n_embd, N*n_batch);
     cur = ggml_mul(ctx_build, cur, t11);                    gTN(cur, "attn_norm");
 //  cur = mamba_build_layer(ctx_build,lctx,gf,cur,inpL,il,n_layer,n_tokens,kv_head,n_kv,n_outputs);
-    cur = mamba_build_layer(ctx_build, *(lam->_ctx), GetForwRaw(), cur,inpL, il, nLay,512);
+    // cur = mamba_build_layer(ctx_build, *(lam->_ctx), GetForwRaw(), cur,inpL, il, nLay,512);
     return cur;
 }
 
@@ -123,7 +123,7 @@ GPT(
 
 */
 /*
-int DTS_GPT2::stream2token(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag)    {
+int DTS_GPT2::STR2T(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag)    {
     // bool gpt2_model_load(const std::string & fname, gpt2_model & model, gpt_vocab & vocab, const gpt_params & params) {
     gpt_vocab vocab;
     std::vector<gpt_vocab::id> embd_inp = ::gpt_tokenize(vocab, params.prompt);
@@ -145,7 +145,7 @@ int CDict_CHAR::InitMAEC(struct ggml_context *ctx_build,const std::vector<int>& 
     assert(gensors.size()==0);
     return 0x0;     
 }
-int CDict_CHAR::stream2token(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag){
+int CDict_CHAR::STR2T(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag){
     int n_tokens = 0, nMost = btch.size(); 
     assert(txt_len<=nMost);
     unsigned char *a = (unsigned char*)(txt);
@@ -257,10 +257,10 @@ if(1)   {   //pass self attention module,  loss would stop at 2.48
         }    
 
         struct ggml_tensor * kq = ggml_mul_mat(ctx_build, k, q);        cb(kq, "kq", il);        
-        if(1)      {    // nearly same     
+        if(0)      {    // nearly same     
             kq = ggml_soft_max_ext(ctx_build, kq, KQ_mask, kq_scale, hparams.f_max_alibi_bias);       //would 
         }else{
-            hGensor  t16_1 = ggml_scale_inplace        (ctx_build, kq, kq_scale);   
+            hGensor  t16_1 = GG_SCAL        (ctx_build, kq, kq_scale);   
             hGensor  t16_2 = ggml_diag_mask_inf_inplace(ctx_build, t16_1, 0);     
             kq = ggml_soft_max_inplace     (ctx_build, t16_2);             
         }   
@@ -337,7 +337,7 @@ struct ggml_cgraph *GPT2::BuildRawGraph( struct ggml_context *ctx_build,bool isB
     else
         cRawGraph(ctx_build,isBuild,flag);
     assert(preLogits!=nullptr);
-    out_node = BuildLoss(ctx_build,preLogits);
+    BuildLoss(ctx_build,preLogits);
 
     if(rnd==nullptr)
         rnd = init_random_normal_distribution(hparams.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
@@ -360,7 +360,7 @@ std::string CDict_GPT2::T2STR(TOKEN_ID tok,int flag ) {
     assert(0);
     return "";
 };   
-int CDict_GPT2::stream2token(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag){
+int CDict_GPT2::STR2T(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag){
     //  https://github.com/wangkuiyi/huggingface-tokenizer-in-cxx
     //  https://www.daoplays.org/blog/gpt2_p1 
     assert(0);

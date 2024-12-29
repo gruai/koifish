@@ -122,7 +122,7 @@ Embed::Embed(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int 
 }
 bool Embed::Build(int flag){
     assert(shape.size()==2);    
-    struct ggml_context * ctx = hFish->GetCTX(1);
+    struct ggml_context * ctx = hFish->GetGGCTX(1);
     int n=shape[0],latent=shape[1];
     if(n<=0){
         n = hFish->hparams.n_ctx();
@@ -145,8 +145,9 @@ hGensor Embed::Forward(struct ggml_context *ctx_,hGensor cur,int flag){
     if(cur==nullptr)  //symbolic analysis
         return GeNeuron::Forward(ctx_,cur,flag);
     
-    string sw = name+"_samp";
+    string sw = name+"_rows";
     cur = ggml_get_rows(ctx_, w, cur);    gTN(cur, sw.c_str());   
+    hFish->xn = cur;                        hFish->xxn = cur->grad;
     if(isAddPos){
         cur = ggml_add(ctx_, cur, b);  
     }
@@ -177,7 +178,7 @@ FFN::FFN(Fish* hG_,const std::string&key_,JSON::const_iterator jit,int flag) : G
 }
 bool FFN::Build(int flag)   {
     SHAPE sp={shape[0]};
-    struct ggml_context * ctx_ = hFish->GetCTX(1);
+    struct ggml_context * ctx_ = hFish->GetGGCTX(1);
     bool isTrain = hFish->isTrain();
     norm.BuildX(name+sNorm,sp,hFish,0x0);        //layer->ffn_norm.sT="f";
     up.BuildX(name+"_up",{shape[0],shape[1]},hFish,flag);
@@ -236,7 +237,7 @@ bool MOE::Build(int flag)   {
     string sw = name+sWeight,sb=name+".bias";
     bool isTrain = hFish->isTrain();    
     int nIn=shape[0];
-    struct ggml_context * ctx = hFish->GetCTX();
+    struct ggml_context * ctx = hFish->GetGGCTX();
     //  [ctx, E/H, H, n_batch); ]
     w = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, n_embd_head,1,n_head,n_batch);
     hFish->InitGensor(ctx,sw.c_str(),w,isTrain);
@@ -311,7 +312,7 @@ SLP::SLP(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag
 bool SLP::Build(int flag)      {
     isBias = hFish->isBias;
     // shape = shape_;
-    struct ggml_context * ctx = hFish->GetCTX();
+    struct ggml_context * ctx = hFish->GetGGCTX();
     if(shape.size()==2){    
         assert(shape[0]>0 && shape[1]>0);
         int nIn=shape[0],nOut=shape[1];
@@ -384,7 +385,6 @@ hGensor SLP::Forward(struct ggml_context * ctx0,hGensor cur,int flag)    {
                 // s = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, nIn, nOut);
                 
                 cur = ggml_mul_mat(ctx0, u, cur);    
-                // cur = ggml_scale_inplace(ctx0, cur,1.0f/sqrt(float(n_embd)/n_head));  
                 cur = ggml_mul_mat(ctx0, v, cur);                      
             }       
         }
@@ -469,7 +469,7 @@ LayerNormal::LayerNormal(Fish *hG_, const std::string &key_, JSON::const_iterato
 bool LayerNormal::Build(int flag)    {
     isBias = hFish->isBias;
     // name = key_;
-    struct ggml_context * ctx = hFish->GetCTX();
+    struct ggml_context * ctx = hFish->GetGGCTX();
     assert(shape.size()==1 && shape[0]>0 );
     string sw = name+sWeight,sb=name+".bias";
     bool isTrain = hFish->isTrain();    

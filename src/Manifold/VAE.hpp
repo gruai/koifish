@@ -92,7 +92,7 @@ protected:
                 x = self.first_embed(x,graph.MAEC.graphs[-1])*/
         // map_range = range(graph.MAEC.nRefine) if self.down else reversed(range(graph.MAEC.nRefine))
         vector<int> map_range;
-        auto ctx = GetCTX();
+        auto ctx = GetGGCTX();
         for( auto map_no : map_range )  {
             // hier_norm.push_back(torch.norm(x).item())            
             auto map = MAEC[map_no];

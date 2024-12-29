@@ -12,6 +12,17 @@
 
 typedef int32_t TOKEN_ID;
 
+/*
+    10 levels of dumps, 0-9. 0 is a full dump,The lower the number the more dump.
+*/  
+extern int g_dump_level;
+inline bool NOT_DUMP(int t=0) {
+    if(g_dump_level<=t)    return false;
+    return true;
+}
+inline bool DUMP(int t=0) {
+    return !NOT_DUMP(t);
+}
 /**
  *  All paramters defined here
 */
@@ -58,7 +69,7 @@ struct LAY_PARAM{
         return head/head_kv;
     }
     uint32_t n_embd_head(int n_embd) const {
-        assert(n_embd%head==0 && n_embd>=head);
+        assert(n_embd>0 && n_embd%head==0 && n_embd>=head);
         return n_embd/head;
     }
 
@@ -73,24 +84,23 @@ struct CLI_params {
     struct train_params_common common;  
     struct SaveModel {
         std::string checkpoint_in,checkpoint_out;
-        std::string model_out,model_base;
-        
-        //void * model=nullptr;
-
-        /*virtual void Init(CLI_params&params,void * model_,int flag=0x0)   {
-            fn_checkpoint_out = params.common.fn_checkpoint_out;
-            fn_model_out      = params.fn_model_out;
-            pattern_fn_it     = params.common.pattern_fn_it;
-            fn_latest         = params.common.fn_latest;
-            model             = model_;
-        }*/        
+        std::string model_out,model_base;       
     };    
     SaveModel save;
 
+    struct DEUG_SWITCH{
+        int SelfAttention_noraml=1;
+        bool NO_loss = false;
+        int dict_latent_dim = -1;
+        int graph_dump = 0; //  10 levels of dumps, 0-9. 0 is a full dump,The lower the number the more dump.
+    };
+    DEUG_SWITCH debug;
     //Always false,     GGML don't support back of FLASH_ATTEN !
     bool isFlashAtten()     {   
         common.use_flash=false;  return common.use_flash;  
     }
+    uint32_t nThread()  const;
+    
     uint32_t nLayer()   {
         if(nLayerX>0)   return nLayerX;
         assert(n_layer_train>0);
@@ -99,6 +109,10 @@ struct CLI_params {
     uint32_t n_ctx()    const    {  return common.n_ctx;  }             //number of tokens in each sample
     uint32_t n_ctx_orig()    const    {
         return n_ctx_orig_yarn != 0 ? n_ctx_orig_yarn : n_ctx_train;
+    }
+    void SetNCTX(int _nctx)  {
+        assert(_nctx>0 && _nctx<1024*1024);
+        common.n_ctx = _nctx;
     }
     uint32_t n_batch()  const    {  return common.n_batch;}             //number of samps in each batch
     uint32_t nTokenInBatch()  const    {  return common.n_batch*common.n_ctx;}
@@ -143,7 +157,7 @@ struct CLI_params {
     std::string vae = "";
     std::string prompt = "";
     std::string dict_vae_dims = "",dict_dialect="",dict_logits="";
-    int dict_latent_dim = 256;
+    
 
 
     // for RWKV
@@ -165,8 +179,9 @@ struct CLI_params {
 
     template<typename T>
     bool is(const std::vector<std::string>&keys,const T& t){
-        T v0;   
-        T val = jKV(jConfig,keys,v0);
+        T v0;  
+        bool isDump = !NOT_DUMP(0);
+        T val = jKV(jConfig,keys,v0,isDump);
         // return jKV_is(jConfig,keys,target);
         return val==t;
     }

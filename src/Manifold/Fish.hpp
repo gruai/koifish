@@ -188,25 +188,32 @@ class Fish : public std::enable_shared_from_this<Fish>    {
     };
 
 protected:
+    enum INIT_WEIGHT    {
+        RANDOM=0x0,
+        COPY_WIKI,
+        COPY_SWARM_HEAD,
+        SERIALIZE
+    };
+    INIT_WEIGHT tpInitWeight = INIT_WEIGHT::RANDOM;
+    
     std::string name;
 
     /*  wiki contains knowledge reflect the founation of our world
         wikis[0] is the backbone of FISH
     */
     vector<hWIKI> wikis;
+    
     WIKI *wiki_tutor = nullptr;
+    bool CopyGensors(hWIKI wiki,int flag);    
     vector<hGensor> tmpExLogis;
     WIKI::INDUCT_MODE teach=WIKI::_LOGITS;
 
     // Generate some results on prompt
     hGOPT gopt = nullptr;    
 
-    // save_train_model save_data;
-    ggml_gallocr_t alloc;
+    // ggml_gallocr_t alloc;
     hTGraph hForwTG=nullptr,hBackTG=nullptr;                            // compuation graph
-    int graph_order=-1;
-    // struct ggml_cgraph *gf = NULL, *gb = NULL; // only for debug
-
+    int graph_order=-1,graph_update=-1;
     struct ggml_cgraph * gb_tmp = NULL;
     struct random_normal_distribution *rnd = nullptr;   
     
@@ -230,9 +237,10 @@ protected:
     size_t nParams = 0, szModel = 0;
 
     hGensor in_node = nullptr, out_node = nullptr, tBatch=nullptr;
-    hGensor loss = nullptr, target_probs = nullptr, KQ_pos = nullptr, KQ_mask = nullptr, pos_embd=nullptr;
+    hGensor loss = nullptr, target_probs = nullptr, KQ_pos = nullptr, pos_embd=nullptr;
+    hGensor KQ_mask = nullptr;  // mask for 1 head, it will be broadcasted to all heads
     hGensor preLogits = nullptr;        //no SOFTMAX
-    hGensor xn = nullptr,xxn = nullptr;     //only for debug
+    
     
     //hGensor gate=nullptr;      //create@InitModel update@
     MixOfModels mom;
@@ -241,6 +249,7 @@ protected:
     hDataToken hTokenset=nullptr;
     hOptimizer hOPT;
     vector<hGensor> optParams;     //paramter tensors updated by hOPT
+    vector<hGensor> loadGensors;     
     std::vector<hGensor> xGensors;      
     hDistillation hDistler;
     // performance
@@ -255,17 +264,23 @@ protected:
     
     std::vector<hFISH> childs;
 
+    //Only delete graph/neurons, keep OPT,DataLoader...
+    virtual void ClearGraph(int flag=0x0);
     virtual void Clear() {
         // if (ctx!=nullptr) {
         //     ggml_free(ctx);
         // }
     }
-
+    virtual size_t MostMemSize(int flag)                                        {   assert(0);  return 0x0; }
+    virtual bool InitInput(struct ggml_context * ctx,bool isMask,int flag=0x0)  {   assert(0);  return false;   }
+    virtual bool BuildOperators(struct ggml_context * ctx,ggml_gallocr_t alloc,bool m_only,int flag=0x0)   {  assert(0);   return false; }
     std::vector<std::string> to_quant, to_skip;
 
     virtual bool GGUF_Serialize(const std::string&path,  bool isSave, int flag=0x0);
 
-public:    
+public:
+    hGensor xn = nullptr,xxn = nullptr;     //only for debug
+    
     struct CLI_params hparams;
     static tpSWARM swarm;
     MODEL_ARCH arch = MODEL_ARCH::_X_;
@@ -277,15 +292,10 @@ public:
     ROLE_TYPE role = ROLE_TYPE::COMMON;
 
     Fish() {}
-    Fish(const std::string&nam_,struct CLI_params params,ROLE_TYPE role_=COMMON,int flag=0x0) : name(nam_),hparams(params),role(role_) {
-        arch = params.ModelArch();
-        if(jKEY(params.jConfig,{"train"}).empty())     {
-            isLocalInfer = true;
-        }
-    }
+    Fish(const std::string&nam_,struct CLI_params params,ROLE_TYPE role_=COMMON,int flag=0x0);
     Fish(const std::string&nam_,struct ggml_context *ctx_, int flag = 0x0) : name(nam_)/*,ctx(ctx_)*/    {
         assert(0);  //Deprecated
-        GGML_PRINT("=== %s ===\n", __func__);
+        _INFO("=== %s ===\n", __func__);
         // allocr = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
     }
     bool isTrain()  {
@@ -315,7 +325,7 @@ public:
     virtual size_t nClass() {   assert(0);        return 0; }
 
     virtual bool Init(const vector<hWIKI>& wikis,int flag=0x0)          {   throw "Fish::Init is ...";           }       
-    virtual struct ggml_context * GetCTX(int typ=0x0)                   {  
+    virtual struct ggml_context * GetGGCTX(int typ=0x0)                   {  
         switch(typ){
         case 1: 
             return ctx_build;
@@ -327,19 +337,15 @@ public:
         assert(0);
         return nullptr;    
     }
-    virtual bool Build(int flag=0x0)               {   throw "Fish::Build is ...";     }
+    virtual bool Build(int flag=0x0);
     virtual bool BeforeBuild(int flag=0x0);
     virtual bool AfterBuild(bool isInitParam,int flag=0x0);
+    virtual bool UpdateNCTX(int _nctx,int flag=0x0);
 
     virtual void Build(struct ggml_context *ctx0, ggml_gallocr_t &allocr, bool isOnlySymbol, int flag = 0x0)    {
         assert(0);      //  Deprecated
-        hTGraph hGraph = std::make_shared<TGraph>(ctx0, GGML_DEFAULT_GRAPH_SIZE, false, isOnlySymbol);
-        assert(out_node != nullptr && in_node != nullptr);
-        // hGraph->build_forward(out_node, true);
-        hGraph->disconnect_node(in_node);
-        ggml_gallocr_alloc_graph(allocr, hGraph->cgraph);
     }
-    virtual int BuildComputeGraph(int order,struct ggml_context * ctx,ggml_gallocr_t& alloc,int flag);
+    virtual int BuildComputeGraph(int order,struct ggml_context * ctx,int flag);
     virtual hGensor BuildLoss( struct ggml_context * ctx,hGensor cur,int flag=0x0); 
     virtual hGensor BuildTarget( struct ggml_context * ctx,hGensor cur,int flag=0x0)    {   return nullptr;   } 
     virtual hGensor GetGensor(const char *name, int flag = 0x0)    {
@@ -485,7 +491,7 @@ public:
     virtual void Train(int flag = 0x0);
     virtual void Loss(int flag = 0x0) {}
 
-    virtual void CopyWeight(const Fish* src,int flag = 0x0) {}
+    virtual void CopyWeight(const Fish* src,int flag = 0x0);
     virtual bool LocalFeeling(SampLoader *hLoader,vector<float>& result,int flag=0x0)   {   return false;   }
 
     virtual bool isValid()  {   return true;    }
@@ -502,8 +508,6 @@ public:
     // static Fish* Copy(const Fish* src,int flag=0x0);
     virtual bool SaveTrain(string sX,int flag=0x0);
     virtual bool LoadTrain(int flag=0x0);
-    // virtual void SaveGGUF(const std::string &filename, int flag){}
-    // virtual void LoadGGUF(const std::string &filename, int flag){}
 
     friend class GeNeuron;
     friend class SLP;
