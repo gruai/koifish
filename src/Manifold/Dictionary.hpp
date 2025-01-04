@@ -1,5 +1,5 @@
 /**
- *  Copyright 2023-2024 by Grusoft 
+ *  Copyright 2023-2025 by Grusoft 
  *  
  *  concise dictionary on VAE
  * 
@@ -53,9 +53,10 @@ struct ConsiceDict : public VariationaAE    {
     int * toktypes=nullptr;
     bool isDialect = true;
     int tVocab()    {   
-        if(!isDialect)
+        if(!isDialect){
+            assert(n_vocab>0);
             return n_vocab;
-        else{
+        }   else{
             assert(!mapT2T.empty());
             return mapT2T.size();
         }               
@@ -99,10 +100,10 @@ struct ConsiceDict : public VariationaAE    {
     bool add_space_prefix = true;
 
     int find_bpe_rank(const std::string & token_left, const std::string & token_right) const {
-        GGML_ASSERT(token_left.find(' ') == std::string::npos);
-        GGML_ASSERT(token_left.find('\n') == std::string::npos);
-        GGML_ASSERT(token_right.find(' ') == std::string::npos);
-        GGML_ASSERT(token_right.find('\n') == std::string::npos);
+        assert(token_left.find(' ') == std::string::npos);
+        assert(token_left.find('\n') == std::string::npos);
+        assert(token_right.find(' ') == std::string::npos);
+        assert(token_right.find('\n') == std::string::npos);
 
         auto it = bpe_ranks.find(std::make_pair(token_left, token_right));
         if (it == bpe_ranks.end()) {
@@ -119,6 +120,10 @@ struct ConsiceDict : public VariationaAE    {
     //  n_vocab,scores,toktypes,special_,tokens
     virtual void LoadVocab_v0(const char*fn_model_base,int flag);
     virtual void LoadVocab(const char*fn_model_base,int flag)   {   assert(0);  }
+    virtual bool isValid(int flag=0x0)  {   
+        if(n_vocab<=0)  return false;
+        return true; 
+    }
     // virtual bool LoadTokenizer(const char *filename,int flag=0x0)   {   assert(0);  }
     
     

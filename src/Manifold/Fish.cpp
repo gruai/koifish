@@ -1,5 +1,5 @@
 /**
- *  Copyright 2023-2024 by Grusoft 
+ *  Copyright 2023-2025 by Grusoft  
  *  
  *  Random swimming fish  
  * 
@@ -150,9 +150,12 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
             auto node = gf->nodes[i];          
             optParams.push_back(node);  
             nx += ggml_nelements(node);        
+            hEDS->SetBackend(node);
             // _INFO("Param_%-4d(op=%d)\t", optParams.size(), gf->nodes[i]->grad->op );
         }
     }
+    hEDS->SplitSched(gb);
+
     bool bRet = false;
     switch (tpInitWeight)    {
     case SERIALIZE:
@@ -185,38 +188,7 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
         _INFO("%s Failed to InitWeight from %s! tutor=%s\n",__func__,"",CSTR(wikis[0]));
         return false;
     }
-    if(0){    // would copy weight from master
-        _INFO_IF("%s found %d params\n", __func__,optParams.size()); 
-        isLoadCheckpoint = GGUF_Serialize(hparams.save.checkpoint_in,false,0x0);
-        bool isCopy = hparams.is({"wiki","actor"},"copy") && wikis.size()>0 && !isLoadCheckpoint;
-        if(isCopy){
-            if(wikis.empty()){
-                _INFO("%s wikis is empty. So strange !!! \n",__func__,"");
-                return false;
-            }
-            bool bRet = CopyGensors(wikis[0],0x0);      
-            if(!bRet){
-                _INFO("%s Failed to coyp gensors from %s! tutor=%s\n",__func__,"",CSTR(wikis[0]));
-                return false;
-            }
-        }
-        for (auto node : optParams) {  
-            if(isLoadCheckpoint || isCopy) {
-                
-            }else if(isInitParam){
-                if (rnd != nullptr)
-                    randomize_tensor_normal(node, rnd);
-                else
-                    ggml_set_zero(node);  
-            }
-            _pt_cys_("",node,0x0);         printf("\n");  
-    #ifndef NDEBUG
-    #endif        
-            // gg_print_tensor_("",gf->nodes[i],0);
-            
-        }   
-    }
-    
+       
     if(isTrain())  
         assert(nParams>0);
     else{
@@ -234,7 +206,7 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
     hOPT->Dump(1);
     szModel = ggml_used_mem(GetGGCTX()) + hEDS->sz; // ggml_backend_buffer_get_size(back_data);   // (float) (ggml_used_mem(ctx) + ggml_backend_buffer_get_size(back_data)) ;
           
-    GGML_ASSERT(optParams.size() < GGML_MAX_PARAMS);
+    assert(optParams.size() < GGML_MAX_PARAMS);
 
     if(role==SWARM_FOLLOWER){
         
@@ -657,6 +629,26 @@ hGensor Fish::AddTensor(struct ggml_context *ctx,const std::string&key_,enum ggm
 #include "ggml-alloc.h"
 extern "C" bool alloc_tensor_range(struct ggml_context * ctx,struct ggml_tensor * first, struct ggml_tensor * last,
         ggml_backend_buffer_type_t buft, size_t size,ggml_backend_buffer_t ** buffers, size_t * n_buffers);
+
+bool EDGE_DEVICES::InitGPU(const CLI_params&hparams,int flag){
+    string sTp = hparams.KV({"train","device"},"");
+#ifdef __USE_CUDA__
+    int nGPU = ggml_backend_cuda_get_device_count();     //  ggml_cuda_init: found 1 CUDA devices:    
+    for (int device = 0; device < nGPU; ++device) {
+        ggml_backend_t backend = ggml_backend_cuda_init(device);
+        if (backend == nullptr) {
+            _ERROR("%s: failed to initialize CUDA%d backend\n", __func__, device);
+        }
+        if(sTp=="onlycpu")
+            continue;
+        workers.push_back(backend);
+        bufts.push_back(ggml_backend_get_default_buffer_type(backend));
+        // char *guid = (char*)(backend->guid);
+        _INFO("Fish::%s init CUDA backend @%p\n", __func__, backend);
+    }
+#endif
+    return true;
+}
 /*
 
 
@@ -668,8 +660,11 @@ EDGE_DEVICES::EDGE_DEVICES(const CLI_params&hparams, int flag){
     const size_t dev_count = 1; //ggml_backend_dev_count();
     _INFO("%s: %zu devices\n\n",__func__, dev_count);
     int n_ok=0,nT0=std::thread::hardware_concurrency(),nT=hparams.nThread();
+    string sTp = hparams.KV({"train","device"},"");
     ggml_backend_t backend = nullptr;
     size_t free, total; 
+
+    InitGPU(hparams,flag);
     for (size_t i = 0; i < dev_count; ++i) {
 #ifdef GG_V12  
         auto dev = ggml_backend_dev_get(i);
@@ -692,35 +687,28 @@ EDGE_DEVICES::EDGE_DEVICES(const CLI_params&hparams, int flag){
         }
         workers.push_back(backend);
     }
-/*      need cuda support!
-    int nDevice = ggml_backend_cuda_get_device_count();     //  ggml_cuda_init: found 1 CUDA devices:
-    string sTp = hFish->hparams.KV({"train","device"},"");
-    for (int device = 0; device < nDevice; ++device) {
-        ggml_backend_t backend = ggml_backend_cuda_init(device);
-        if (backend == nullptr) {
-            _ERROR("%s: failed to initialize CUDA%d backend\n", __func__, device);
-        }
-        if(sTp=="onlycpu")
-            continue;
-        workers.push_back(backend);
-        // char *guid = (char*)(backend->guid);
-        _INFO("Fish::%s init CUDA backend @%p\n", __func__, backend);
-    }*/
-
-    for (size_t i = 0; i < dev_count; ++i) {
+    
+#ifdef GG_V12    
+    for (auto backend : workers) {
         // Put the backend to be tested in front so that it's prioritized:
-        std::vector<ggml_backend_t> backends_modded = {workers[i]};
+        std::vector<ggml_backend_t> backends_modded = {backend};
         backends_modded.insert(backends_modded.end(), workers.begin(), workers.end());
-/*
-static size_t llama_model_max_nodes(const llama_model & model) {
-    return std::max<size_t>(8192, model.tensors_by_name.size()*5);
-}*/
+
         sched0 = ggml_backend_sched_new(
             backends_modded.data(), nullptr, backends_modded.size(), GGML_DEFAULT_GRAPH_SIZE/*2048*/, false);
         break;
         // std::pair<int, int> result = test_backend(backend_sched, backends[i]);
         // ggml_backend_sched_free(backend_sched);
     }    
+#else
+    sched0 = ggml_backend_sched_new(workers.data(), bufts.data(), bufts.size(), LLAMA_TRAIN_MAX_NODES, false);
+#endif
+    int i,nBack = ggml_backend_sched_get_n_backends(sched0);
+    for (int i = 0; i < nBack; i++) {
+        auto back = ggml_backend_sched_get_backend(sched0, i);
+        _INFO("");
+    }
+
     /*
         static struct ggml_backend_buffer_type ggml_backend_cpu_buffer_type = {
          {
@@ -736,7 +724,6 @@ static size_t llama_model_max_nodes(const llama_model & model) {
     */
 }
 
-
 EDGE_DEVICES::~EDGE_DEVICES(){
    for (auto backend : workers) {
         ggml_backend_free(backend); 
@@ -747,10 +734,60 @@ EDGE_DEVICES::~EDGE_DEVICES(){
             ggml_gallocr_free(alloc_tmp);
 }
 
+/*
+    llm_build_cb cb = [&](struct ggml_tensor * cur, const char * name, int il) 
+    why "norm"      ???
+*/
+int EDGE_DEVICES::SetBackend(hGensor cur,int flag)    {
+    int il = 0;    
+    if (strcmp(cur->name, "norm") != 0) // norm may be automatically assigned to the backend of the previous layer, increasing data transfer between backends
+        return -1;
+        
+    for (auto * backend : workers) {
+        bool isBuft = false/*ggml_backend_supports_buft(backend, lctx.model.buft_layer[il].buft)*/;
+        bool isOP = ggml_backend_supports_op(backend, cur) || ggml_backend_offload_op(backend, cur);
+        if ( isBuft && isOP ) {
+            ggml_backend_sched_set_tensor_backend(GetSched(), cur, backend);
+            break;
+        }
+    }
+    return 0x0;    
+}
+
+/*
+    const int node_backend_id = tensor_backend_id(node); =1 for "norm???"
+*/
+bool EDGE_DEVICES::SplitSched(ggml_cgraph * cgraph,int flag)  {
+    assert(cgraph!=nullptr);
+    int nNode = cgraph->n_nodes;
+    auto sched = GetSched();
+    if (!ggml_backend_sched_reserve(sched, cgraph)) {
+        _ERROR("%s: failed to allocate compute buffers\n", __func__);
+        // llama_free(ctx);
+        return false;
+    }
+
+    for (size_t i = 0; i < workers.size(); i++) {
+        ggml_backend_t backend = workers[i];
+        ggml_backend_buffer_type_t buft = bufts[i];
+        size_t size = ggml_backend_sched_get_buffer_size(sched, backend);
+        if (size > 1) {
+            _INFO("%s: %10s compute buffer size = %8.2f MiB\n", __func__,
+                    ggml_backend_buft_name(buft),size / 1024.0 / 1024.0);
+        }
+    }
+
+    // note: the number of splits during measure is higher than during inference due to the kv shift
+    int n_splits = ggml_backend_sched_get_n_splits(sched);
+    _INFO("%s: graph nNode=%d nSplits=%d\n", __func__, nNode, n_splits );
+    assert(n_splits==2);
+    return true;
+}
+
 int EDGE_DEVICES::SetThread(int nThread,int flag)   {
     int nSet = 0;
     for(auto worker : workers){
-        if (!ggml_backend_is_cpu(worker))   {
+        if (ggml_backend_is_cpu(worker))   {
             ggml_backend_cpu_set_n_threads(worker, nThread);
             nSet ++;
             //ggml_backend_cpu_set_threadpool(hEDS->cpu, threadpool);

@@ -1,5 +1,4 @@
 #include "ggml.h"
-#include "train.h"
 #include "../CLI_params.hpp"
 #include "../Manifold/TGraph.hpp"
 

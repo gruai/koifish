@@ -1,5 +1,5 @@
 /**
- *  Copyright 2023-2024 by Grusoft 
+ *  Copyright 2023-2025 by Grusoft  
  * 
  *  \brief
  *  \author Yingshi Chen
@@ -1046,7 +1046,7 @@ void TGraph::PushBack(hGensor node,int flag) {
 
     if (node->op == GGML_OP_NONE && grad==NULL) {   //!(node->flags & GGML_TENSOR_FLAG_PARAM)
         // reached a leaf node, not part of the gradient graph (e.g. a constant)
-        GGML_ASSERT(cgraph->n_leafs < cgraph->size);
+        assert(cgraph->n_leafs < cgraph->size);
 
         if (strlen(node->name) == 0) {
             ggml_format_name(node, "lef_%d",cgraph->n_leafs);
@@ -1054,7 +1054,7 @@ void TGraph::PushBack(hGensor node,int flag) {
         leafs[cgraph->n_leafs] = node;
         cgraph->n_leafs++;
     } else {
-        GGML_ASSERT(cgraph->n_nodes < cgraph->size);
+        assert(cgraph->n_nodes < cgraph->size);
         if (strlen(node->name) == 0) {
             ggml_format_name(node, "stem_%d", cgraph->n_nodes);
         }
@@ -1261,9 +1261,11 @@ bool TGraph::isValid( ) {
     }
     if(hFish->isTrain()){
         assert(any_params && "no trainable parameters found, did you forget to call ggml_set_param?");
+#ifdef GG_V12
         if(!any_loss){
             _INFO("Invalid TGraph,no training loss found, did you forget to call ggml_set_loss?");
-        }        
+        }
+#endif        
     }
 
     return true;
@@ -1377,7 +1379,7 @@ struct ggml_cgraph * TGraph::BuildBackward(struct ggml_context * ctx_,hTGraph hF
         return gb;
     }
     
-    GGML_ASSERT(cgraph->n_nodes > 0);    GGML_ASSERT(cgraph->grads);    GGML_ASSERT(cgraph->grad_accs);
+    assert(cgraph->n_nodes > 0);    assert(cgraph->grads);    assert(cgraph->grad_accs);
     const int n_nodes_f = cgraph->n_nodes,nHash=cgraph->visited_hash_set.size;
     memset(cgraph->grads,     0, cgraph->visited_hash_set.size*sizeof(struct ggml_tensor *));
     memset(cgraph->grad_accs, 0, cgraph->visited_hash_set.size*sizeof(struct ggml_tensor *));
@@ -1420,7 +1422,7 @@ struct ggml_cgraph * TGraph::BuildBackward(struct ggml_context * ctx_,hTGraph hF
             if (!node->src[j] || ignore_src[j] || !grads_needed[ggml_hash_find(&cgraph->visited_hash_set, node->src[j])]) {
                 continue;
             }
-            GGML_ASSERT(node->src[j]->type == GGML_TYPE_F32 || node->src[j]->type == GGML_TYPE_F16);
+            assert(node->src[j]->type == GGML_TYPE_F32 || node->src[j]->type == GGML_TYPE_F16);
             node_needs_grad = true;
             break;
         }
@@ -1429,12 +1431,12 @@ struct ggml_cgraph * TGraph::BuildBackward(struct ggml_context * ctx_,hTGraph hF
         }
 
         // inplace operations are currently not supported
-        GGML_ASSERT(!node->view_src || node->op == GGML_OP_CPY || node->op == GGML_OP_VIEW ||
+        assert(!node->view_src || node->op == GGML_OP_CPY || node->op == GGML_OP_VIEW ||
             node->op == GGML_OP_RESHAPE || node->op == GGML_OP_PERMUTE || node->op == GGML_OP_TRANSPOSE);
 
         const size_t igrad = ggml_hash_find(&cgraph->visited_hash_set, node);
-        GGML_ASSERT(igrad != GGML_HASHSET_FULL);
-        GGML_ASSERT(ggml_bitset_get(cgraph->visited_hash_set.used, igrad));
+        assert(igrad != GGML_HASHSET_FULL);
+        assert(ggml_bitset_get(cgraph->visited_hash_set.used, igrad));
         if (((node->flags & GGML_TENSOR_FLAG_PARAM)) || (node->flags & GGML_TENSOR_FLAG_LOSS)) {
             auto grad = ggml_dup_tensor(ctx_, node);
             // cgraph->grad_accs[igrad] = ggml_dup_tensor(ctx_static, node);
@@ -1522,10 +1524,10 @@ void * _graph_pass_thread(void * data) {
 int TGraph::compute_on_plan( struct ggml_cplan* cplan,int flag) {
     return ggml_graph_compute(cgraph, cplan);
     /*int compute_status = GGML_EXIT_ABORTED;
-    GGML_ASSERT(cplan);
-    GGML_ASSERT(cplan->n_threads > 0);
+    assert(cplan);
+    assert(cplan->n_threads > 0);
     if (cplan->work_size > 0) {
-        GGML_ASSERT(cplan->work_data);
+        assert(cplan->work_data);
     }
     GST_TIC(t0);   
 #ifdef GGML_USE_VULKAN
@@ -1556,12 +1558,12 @@ int TGraph::compute_on_plan( struct ggml_cplan* cplan,int flag) {
             };
             if(isOnlySymbol){
                 const int rc = pthread_create(&workers[j].thrd, NULL, _graph_pass_thread, &workers[j]);
-                GGML_ASSERT(rc == 0);                UNUSED(rc);   
+                assert(rc == 0);                UNUSED(rc);   
                 // _graph_pass_thread(&workers[j]);
             }   else{
                 // const int rc = ggml_thread_create(&workers[j].thrd, NULL, ggml_graph_compute_thread, &workers[j]);
                 const int rc = pthread_create(&workers[j].thrd, NULL, ggml_graph_compute_thread, &workers[j]);
-                GGML_ASSERT(rc == 0);                UNUSED(rc);                
+                assert(rc == 0);                UNUSED(rc);                
             }
         }
     }
@@ -1583,7 +1585,7 @@ int TGraph::compute_on_plan( struct ggml_cplan* cplan,int flag) {
     if (n_threads > 1) {
         for (int j = 1; j < n_threads; j++) {
             const int rc = ggml_thread_join(workers[j].thrd, NULL);
-            GGML_ASSERT(rc == 0);
+            assert(rc == 0);
         }
     }
 

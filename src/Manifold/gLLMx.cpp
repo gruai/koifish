@@ -1,5 +1,5 @@
 /**
- *  Copyright 2023-2024 by Grusoft 
+ *  Copyright 2023-2025 by Grusoft  
  *  
  *  More models derived from NLP_AutoRegressive
  * 
@@ -178,7 +178,7 @@ int CDict_GPT2::InitMAEC(struct ggml_context *ctx_build,const std::vector<int>& 
 int GPT2::cRawGraph( struct ggml_context *ctx_build,bool isBuild,int flag)   {
     bool isOnlinePush = true;      // push nodes last or online(QKV)    
     const int n_embd_head = hparams.n_embd_head_v,n_embd_gqa  = hparams.n_embd_v_gqa();
-    GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);    
+    assert(n_embd_head == hparams.n_embd_head_k);    
     int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd,n_vocab=hDict->n_vocab;
     int n_tokens=n_ctx*n_batch,n_head,n_embd_head_v=hparams.n_embd_head_v,n_ff;
     const uint32_t n_layer = hparams.nLayer();

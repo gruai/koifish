@@ -1,5 +1,5 @@
 /**
- *  Copyright 2023-2024 by Grusoft 
+ *  Copyright 2023-2025 by Grusoft  
  *  
  *  Optimizer
  * 
@@ -11,7 +11,7 @@
 #include "Dictionary.hpp"
 #include "../ggex/GG_util.hpp"
 
-struct train_params_common Optimizer::TrainParams()    {   
+struct train_params_ Optimizer::TrainParams()    {   
     return _fish->hparams.common;   
 }
 
@@ -27,20 +27,21 @@ Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params& hparams,int flag) : _fi
 
     nGradAccum =  MAX(1, train_params.n_gradient_accumulation);
     isGlobalGrad = nGradAccum>1;        // Nearly same alloc grad or not
-    val_loader.type = SampLoader::TYPE::DT_EVAL;
+    train_loader = std::make_shared<SampLoader>(_fish,"Train",false);
+    val_loader = std::make_shared<SampLoader>(_fish,"Eval",false);
+    val_loader->type = SampLoader::TYPE::DT_EVAL;
     if(_fish->isTrain())  {
-        // train_loader.Init(g_,"Train");
+        // train_loader->Init(g_,"Train");
         
     }else{
        
     }
-    // val_loader.Init(g_,"Eval"); 
 }
 
 hGensor Optimizer::hLoss()             {    
     assert(_fish!=nullptr);
     if(_fish->loss!=nullptr)
-        GGML_ASSERT(ggml_is_scalar(_fish->loss));  
+        assert(ggml_is_scalar(_fish->loss));  
     return _fish->loss;          
 }
 
@@ -120,9 +121,11 @@ bool OPT_Adam::BatchGrad(float&fx,int flag)   {
     const float accum_norm = 1.0f / (float) nGradAccum;
     
     for (int accum_step = 0; accum_step < nGradAccum; ++accum_step) {
-        int64_t nSamp = train_loader.update_batch(-1,_fish);
+        int64_t nSamp = train_loader->update_batch(-1,_fish);
+        if(nSamp==0)        return false;
+        
         train_samples += nSamp;      
-        if(AfterLoadBatch(train_loader,accum_step)){
+        if(AfterLoadBatch(accum_step)){
             return false;
         }   
         auto grad = GradOf(loss);
@@ -445,7 +448,7 @@ void Fish::Train(  int flag )   {
     
 }
 
-void Optimizer::GraphCompute(struct ggml_cgraph * cgraph,int flag){
+bool Optimizer::GraphCompute(struct ggml_cgraph * cgraph,int flag){
     int nThread = TrainParams().n_threads;
     struct ggml_cgraph *_gf=_fish->GetForwRaw(),*_gb=_fish->GetBackRaw();
     assert(cgraph==_gf || cgraph==_gb);
@@ -459,8 +462,8 @@ void Optimizer::GraphCompute(struct ggml_cgraph * cgraph,int flag){
     }
     if(hEDS->isOnlyCPU()){
         auto *cplan = &(_fish->gb_plan);
-        ggml_graph_compute(cgraph, cplan);
-        return;
+        auto status = ggml_graph_compute(cgraph, cplan);
+        return status==GGML_STATUS_SUCCESS;
     }
     
 #ifdef GGML_USE_METAL
@@ -470,14 +473,17 @@ void Optimizer::GraphCompute(struct ggml_cgraph * cgraph,int flag){
 #endif
     hEDS->SetThread(nThread);
 
-    ggml_backend_sched_graph_compute_async(hEDS->sched0, cgraph);
+    auto status = ggml_backend_sched_graph_compute_async(hEDS->sched0, cgraph);
+    if(status!=GGML_STATUS_SUCCESS)
+        return false;
+    return true;
 }
 
 /*
     REF:    /home/cys/Github/llama.cpp-master/examples/batched/batched.cpp
 */
-float Optimizer::Evaluate(SampLoader&loader,int iter,int flag){  
-    if( loader.num_batches==0 ) 
+float Optimizer::Evaluate(hSampLoader loader,int iter,int flag){  
+    if( loader->num_batches==0 ) 
     {    assert(0);         return 0;          }
     
     if(iter!=-666)   _INFO("[eval] " );   
@@ -486,15 +492,15 @@ float Optimizer::Evaluate(SampLoader&loader,int iter,int flag){
     auto loss = hLoss();     
     double l2,delta_max=0,delta_=0,a,sum=0,ee;
     auto tokens_input = _fish->Input( ); 
-    int i,nB=0,step=max(loader.num_batches/10,1);
+    int i,nB=0,step=max(loader->num_batches/10,1);
     size_t nz=0,j;
     llama_token tMost = (llama_token) (_fish->nClass() - 1);
     hSAMP samp = nullptr;
     const float *wLog = nullptr;
-    for (i = 0; i < loader.num_batches; i+=step) {        
+    for (i = 0; i < loader->num_batches; i+=step) {        
         if(tokens_input!=nullptr)   {//in some debug mode, tokens_input maybe null
-            loader.update_batch(i,_fish);
-            samp = loader.cur_samps[i];
+            loader->update_batch(i,_fish);
+            samp = loader->cur_samps[i];
         } 
         if(wLog!=nullptr)    {
             for (l2 = 0,j = 0; j < nz; j++    ) {
@@ -510,7 +516,7 @@ float Optimizer::Evaluate(SampLoader&loader,int iter,int flag){
 #ifndef NDEBUG        
         
 #endif
-        ee=loader.DecodeVerify(samp,tokens_input,_fish->preLogits);
+        ee=loader->DecodeVerify(samp,tokens_input,_fish->preLogits);
         sum += loss==nullptr ? 0 : ((float*)(loss->data))[0];         //float *fLoss = (float*)(loss->data)
         nB++;
         if(_fish->hparams.isOnlyGPT){
@@ -540,52 +546,6 @@ float Optimizer::Evaluate(SampLoader&loader,int iter,int flag){
         _fish->SaveTrain(sX);  
 
     return aloss;
-}
-
-std::string shuffle_samples_X(
-        const std::string & rng_state,size_t* shuffled_offs,
-        size_t            * shuffled_begins,
-        size_t            * shuffled_sizes,
-        const size_t      * begins,
-        const size_t      * sizes,
-        size_t              count) {
-    if (count == 0) return rng_state;
-
-    std::mt19937 rng;
-    mt19937_set_state(rng, rng_state);
-
-    // sort indices by random value for each index
-    std::vector<size_t> idcs;
-    {
-        std::vector<unsigned> rnd;
-        idcs.resize(count);
-        rnd.resize(count);
-        for (unsigned i=0; i<count; ++i) {
-            idcs[i] = i;
-            rnd[i]  = rng();
-        }
-
-        std::sort(idcs.begin(), idcs.end(), [&rnd](size_t a, size_t b){
-            // stable sort for reproducibility
-            return (rnd[a] == rnd[b]) ? (a < b) : (rnd[a] < rnd[b]);
-        });
-    }
-
-    // create random offsets
-    for (unsigned i=0; i<count; ++i) {
-        shuffled_offs[i] = (size_t) ((sizes[idcs[i]] - 1) * ((double) rng() / (double) (rng.max()-1)));
-    }
-
-    // reorder begins and sizes by sorted indices
-    for (unsigned i=0; i<count; ++i) {
-        shuffled_begins[i] = begins[idcs[i]];
-    }
-
-    for (unsigned i=0; i<count; ++i) {
-        shuffled_sizes[i] = sizes[idcs[i]];
-    }
-
-    return mt19937_get_state(rng);
 }
 
 float cosine_decay(int64_t step, int64_t decay_steps, float minimum) {
@@ -635,7 +595,7 @@ float learning_schedule(
 }
 
 float Optimizer::UpdateSchedule(int flag){
-    struct train_params_common _params = TrainParams();   
+    struct train_params_ _params = TrainParams();   
     int n_batch = _params.n_batch,n_ctx = _params.n_ctx;
     int64_t now = ggml_time_ms();
     if (now > last_time && iter > first_iter)            {
@@ -663,7 +623,7 @@ float Optimizer::UpdateSchedule(int flag){
     if (std::isnan(loss_before) || std::isnan(loss_after))
         impr_plot = 0;
     _INFO("[train]_%-6d sample@%zu/%zu g'=%g\ts=%.2f loss=%f ",
-            iter, std::min(1 + train_loader.next_sample, train_loader.shuffle_sample_count), train_loader.shuffle_sample_count,
+            iter, std::min(1 + train_loader->next_sample, train_loader->shuffle_sample_count), train_loader->shuffle_sample_count,
             g_step,sched, loss_after); //,zmuv_0,zmuv_1
     lcTrain.Add(loss_after);
     if (millis_per_iter > 0)            {
@@ -675,7 +635,7 @@ float Optimizer::UpdateSchedule(int flag){
     return sched;
 }\
 // TODO 
-bool Optimizer::AfterLoadBatch(SampLoader&loader, int accum_step, int flag)    {
+bool Optimizer::AfterLoadBatch(int accum_step, int flag)    {
     // LossCurve(0x0);
     auto _params = TrainParams();   
     int n_batch = _params.n_batch,n_ctx = _params.n_ctx;
@@ -684,22 +644,22 @@ bool Optimizer::AfterLoadBatch(SampLoader&loader, int accum_step, int flag)    {
         // *sched = UpdateSchedule(flag);
     }
 
-    if (train_loader.next_sample >=train_loader.shuffle_sample_count)    {
+    if (train_loader->next_sample >=train_loader->shuffle_sample_count)    {
         ++train_epochs;
         _INFO("%s: reshuffle samples. completed epochs: %llu\n", __func__, train_epochs);
         // note: we may have used some samples from the current shuffling more than once
-        train_loader.shuffle_rng_state_current =train_loader.shuffle_rng_state_next;
+        train_loader->shuffle_rng_state_current =train_loader->shuffle_rng_state_next;
         // train->shuffle_rng_state_next = shuffle_samples(
         //     train->shuffle_rng_state_current,data->shuffled_samples_offs,data->shuffled_samples_begin,
         //     data->shuffled_samples_size,data->samples_begin,data->samples_size,data->samples_count);
         
-        loader.Shuffle();           //SAMP_0816
+        train_loader->Shuffle();           //SAMP_0816
         // train->shuffle_rng_state_next = shuffle_samples(
-        //     train->shuffle_rng_state_current,loader.shuffled_samples_offs.data(),
-        //     loader.shuffled_samples_begin.data(),loader.shuffled_samples_size.data(),
-        //     loader.samp_begin.data(),loader.samp_size.data(),loader.samp_size.size());
+        //     train->shuffle_rng_state_current,loader->shuffled_samples_offs.data(),
+        //     loader->shuffled_samples_begin.data(),loader->shuffled_samples_size.data(),
+        //     loader->samp_begin.data(),loader->samp_size.data(),loader->samp_size.size());
         
-        train_loader.next_sample = 0;
+        train_loader->next_sample = 0;
     }
 
     const bool last_epoch_reached = (_params.n_epochs > 0 && train_epochs - first_epoch >= _params.n_epochs);
@@ -715,9 +675,9 @@ bool Optimizer::AfterLoadBatch(SampLoader&loader, int accum_step, int flag)    {
     return false;
 }
 
-void Optimizer::BeforeTrain(struct train_params_common& train_params,hGensor tokens_,int flag) {    
+void Optimizer::BeforeTrain(struct train_params_& train_params,hGensor tokens_,int flag) {    
     first_iter             = iter;
-    // train_loader.hOPT = this;           val_loader.hOPT = this;
+    // train_loader->hOPT = this;           val_loader->hOPT = this;
     // assert(tokens_!=nullptr);
     // tokens_input = tokens_;
 
@@ -797,31 +757,34 @@ void Optimizer::Prepare(size_t nx_,int flag){
             s = nz*1.0/nParams;
             // gimap = _fish->hBackTG->gimap;
         }
-        train_loader.Init(dolphin,"Train");     //train_loader.Prepare(this);
+        // train_loader->Init(dolphin,"Train",false);     //train_loader->Prepare(this);
     }
     
-    val_loader.Init(dolphin,"Eval");            //val_loader.Prepare(this);
+    // val_loader->Init(dolphin,"Eval",false);            //val_loader->Prepare(this);
 }
 
 bool Optimizer::PrepareData( CLI_params& hparams,int flag )   {   
     GST_TIC(tic);   
-
+    train_loader->Prepare(_fish->tsTrain);                val_loader->Prepare(_fish->tsEval);
     bool isLoadOK = false;  
-    string spTrain = hparams.serial_path+".train",spEval = hparams.serial_path+".eval";
+    string root=_fish->tsTrain->serial_root,spTrain = root+".train",spEval = root+".eval";
+    if(root.empty()){ 
+        return true;
+    }
     // auto& tokens = hTokenset->tokens;
     
     if(1)   {
-        if( train_loader.Serialize(spTrain,false) 
-            && val_loader.Serialize(spEval,false)){
-                if(train_loader.len()>0){
-                    // hDict->nUniqueToken = train_loader.n_unique_tokens; 
-                    // _INFO("%s: nTrain=%zu nEval=%zu batch_sample=%s T=%.3g\n", __func__, train_loader.len(),val_loader.len(),GST_TOC(tic));
+        if( train_loader->Serialize(spTrain,false) 
+            && val_loader->Serialize(spEval,false)){
+                if(train_loader->len()>0){
+                    // hDict->nUniqueToken = train_loader->n_unique_tokens; 
+                    // _INFO("%s: nTrain=%zu nEval=%zu batch_sample=%s T=%.3g\n", __func__, train_loader->len(),val_loader->len(),GST_TOC(tic));
                     isLoadOK = true;
                 }
         }            
     }
     if(!isLoadOK) {
-        hDataToken hTokenset=train_loader.hTokens;
+        hDataToken hTokenset=train_loader->hTokens;
         assert(hTokenset!=nullptr);
            
         std::vector<size_t> samples_begin,samples_size;
@@ -831,26 +794,26 @@ bool Optimizer::PrepareData( CLI_params& hparams,int flag )   {
         if( hTokenset->InitSamps(hparams.common.n_ctx,samples_begin,samples_size)){
 
         }else{
-            _INFO("%s: NULL Samps!!!    batch_sample=%s nTrain=%zu nEval=%zu T=%.3g\n", __func__, train_loader.batch_sample.c_str(),
-                train_loader.len(),val_loader.len(),GST_TOC(tic));      
+            _INFO("%s: NULL Samps!!!    batch_sample=%s nTrain=%zu nEval=%zu T=%.3g\n", __func__, train_loader->batch_sample.c_str(),
+                train_loader->len(),val_loader->len(),GST_TOC(tic));      
             return false;
         }        
   
-        train_loader.SetSamples(nVocab,hTokenset,samples_begin,samples_size,true,hparams);    
-        val_loader.SetSamples(nVocab,hTokenset,samples_begin,samples_size,false,hparams);
+        train_loader->SetSamples(samples_begin,samples_size,true,hparams);    
+        val_loader->SetSamples(samples_begin,samples_size,false,hparams);
         
-        // assert(val_loader.n_unique_tokens <= nUnique && train_loader.n_unique_tokens <= nUnique);
-        // val_loader.n_unique_tokens = nUnique;
-        // train_loader.n_unique_tokens = nUnique;
-        shuffle_samples_hash = train_loader.shuffle_samples_hash;
-        train_loader.Serialize(spTrain,true);
-        // train_loader.Serialize(spTrain,false);      //only for debug
-        val_loader.Serialize(spEval,true);
+        // assert(val_loader->n_unique_tokens <= nUnique && train_loader->n_unique_tokens <= nUnique);
+        // val_loader->n_unique_tokens = nUnique;
+        // train_loader->n_unique_tokens = nUnique;
+        shuffle_samples_hash = train_loader->shuffle_samples_hash;
+        train_loader->Serialize(spTrain,true);
+        // train_loader->Serialize(spTrain,false);      //only for debug
+        val_loader->Serialize(spEval,true);
     }
     
-    // GGML_ASSERT(train_samples_begin.size() == train_samples_size.size());
-    _INFO("%s: batch_sample=%s nTrain=%zu nEval=%zu T=%.3g\n", __func__, train_loader.batch_sample.c_str(),
-        train_loader.len(),val_loader.len(),GST_TOC(tic));        
+    // assert(train_samples_begin.size() == train_samples_size.size());
+    _INFO("%s: batch_sample=%s nTrain=%zu nEval=%zu T=%.3g\n", __func__, train_loader->batch_sample.c_str(),
+        train_loader->len(),val_loader->len(),GST_TOC(tic));        
     return true;
 }
 

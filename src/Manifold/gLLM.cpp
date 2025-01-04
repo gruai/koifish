@@ -1,5 +1,5 @@
 /**
- *  Copyright 2023-2024 by Grusoft 
+ *  Copyright 2023-2025 by Grusoft  
  *  
  *  General AutoRegressive Language model  
  * 
@@ -475,14 +475,14 @@ void Fish::CopyWeight(const Fish* src,int flag) {
 /*
     would affect training process?
 */
-bool NLP_AutoRegressive::LocalFeeling(SampLoader *hLoader,vector<float>& result,int flag)  {
+bool NLP_AutoRegressive::LocalFeeling(hSampLoader hLoader,vector<float>& result,int flag)  {
     assert(hOPT!=nullptr);
     
-    assert(hLoader->all_samps.size()==1);
-    auto hSamp = hLoader->all_samps[0];
+    assert(hLoader->shard_samps.size()==1);
+    auto hSamp = hLoader->shard_samps[0];
     int i,nTok = hSamp->len,_nctx=hparams.n_ctx();
     assert(!hDict->tokenizer_add_bos);
-    hOPT->Evaluate(*hLoader,-666);
+    hOPT->Evaluate(hLoader,-666);
     if(DUMP())
         _INFO("\t%s @\"%s\"\n",__func__,hLoader->sentence.c_str());
     assert(preLogits->type==GGML_TYPE_F32);
@@ -649,8 +649,7 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
                 // hDict->LoadTokenizer("/home/cys/rnd/lic/models/gpt2_tokenizer.bin");
             }
         }
-        hTokenset = std::make_shared<DataTokenSet>(hDict.get());
-        
+        // hTokenset = std::make_shared<DataTokenSet>(hDict.get());        
         break;
     default:
         hDict = std::make_shared<ConsiceDict>(this);
@@ -660,18 +659,22 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
             hDict->bos = wikis[0]->bos;             hDict->eos = wikis[0]->eos;  
             // hLLM = lama()->lmodel;
         }
-        hTokenset = std::make_shared<DataTokenSet>(hDict.get());        
+        // hTokenset = std::make_shared<DataTokenSet>(hDict.get());        
         break;
     }
-        
+    assert(hDict!=nullptr && hDict->isValid());
+    
     if(hparams.isOnlyGPT){
 
     }else{
-        if(!hTokenset->Load(hparams,hLLM,0x0)){
-            _ERROR("\n======== %s Failed to load tokenset@%s!========\n",__func__,hparams.fp_train_data.c_str());
+        tokenset = DataTokenSet::MakeInstance(hparams,hDict.get(),0x0);
+        
+        if(tokenset.empty() /*!hTokenset->Load(hparams,hLLM,0x0)*/ ){
+            _ERROR("\n======== %s Failed to load tokenset!========\n",__func__);
             return false;
         };
-        hDict->mapT2T = hTokenset->mapT2T;      hDict->dialect = hTokenset->dialect;
+        tsTrain = tokenset[0];      tsEval = tokenset.size()>1 ? tokenset[1] : tsTrain;
+        hDict->mapT2T = tsTrain->mapT2T;        hDict->dialect = tsTrain->dialect;
         for(auto wiki : wikis){
             wiki->mapT2T = hDict->mapT2T;       wiki->dialect = hDict->dialect;
         }       

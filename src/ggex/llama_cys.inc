@@ -630,15 +630,18 @@ struct LAMA : public WIKI   {
         // LOG("add_bos: %d\n", add_bos);
         // toks = ::llama_tokenize(_ctx, info, add_bos, true);
         int nMaxToks=info.length()+1;
-        toks.clear();       toks.resize(nMaxToks);
-        int n_tokens = llama_tokenize(lmodel, info.c_str(),info.length(),toks.data(),(int)toks.size(), add_bos, false);
+        std::vector<llama_token> toks32;
+        toks32.clear();       toks32.resize(nMaxToks);        
+        int n_tokens = llama_tokenize(lmodel, info.c_str(),info.length(),toks32.data(),(int)toks32.size(), add_bos, false);
         assert(n_tokens<=nMaxToks);
-        toks.resize(n_tokens);
+        toks32.resize(n_tokens);
+        toks.clear();   toks.insert(toks.begin(),toks32.begin(),toks32.end());
+        // toks = toks32;
         return n_tokens;       
     }
     std::string T2STR(int32_t tok,int flag=0x0 ) override;   
-    bool Decode(std::vector<int32_t>&ids,int start,int n_past,bool out_all)  override;
-    void Answer(std::vector<int32_t>&ids,int flag)  override;
+    bool Decode(std::vector<TOKEN_ID>&ids,int start,int n_past,bool out_all)  override;
+    void Answer(std::vector<TOKEN_ID>&ids,int flag)  override;
     string __repr__( string& suffix,string& prefix,int flag=0x0)   const  override    {
         if(!isValid()){
             return "!!! INVALID !!!";
@@ -703,7 +706,7 @@ bool LAMA::Decode(std::vector<TOKEN_ID>&embd_inp,int start,int n_past,bool out_a
         assert(embd_inp[0]==bos && start==0);       n_consumed=1;
     }
     TOKEN_ID id;    //eos = llama_token_eos(lmodel),    
-    std::vector<TOKEN_ID> embd;
+    std::vector<llama_token> embd;
     while ((int) embd_inp.size() > n_consumed) {
         id = embd_inp[n_consumed];
         // const std::string token_str = llama_token_to_piece(_ctx, id);

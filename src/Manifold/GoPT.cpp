@@ -217,7 +217,7 @@ void GeneratOnPrompt::InitInput(int flag){
     hGensor input = fish_1!=nullptr? fish_1->Input() : nullptr;
     TOKEN_ID bo=-1;
     if(input!=nullptr)
-        dialogs.InitOneSamp(hparams.prompt,input,0x110);
+        dialogs->InitOneSamp(hparams.prompt,input,0x110);
     switch(_arch)    {  
     case NLP_GPT2_char:        
         
@@ -228,9 +228,7 @@ void GeneratOnPrompt::InitInput(int flag){
         //     embd_inp.push_back(id);
         // }
         break;
-    // case NLP_LLAMA:
-    //     dialogs.InitOneSamp(hparams.prompt,input,0x110);
-    //     break;
+
     default:{
         int iRet =wiki0->STR2T(GetPrompt(),embd_inp);
         // const bool add_bos = llama_add_bos_token(model);
@@ -283,7 +281,7 @@ GeneratOnPrompt::GeneratOnPrompt(CLI_params&cp_,arrHWIKI& wiki_, const Fish *hG_
         fish_1->Dump(0x0);
         if(0){//only for debug
             vector<float> logits;    
-            fish_1->LocalFeeling(&dialogs,logits);
+            fish_1->LocalFeeling(dialogs,logits);
         } 
         _arch = fish_0->arch;         
     }else{
@@ -322,15 +320,16 @@ GeneratOnPrompt::GeneratOnPrompt(CLI_params&cp_,arrHWIKI& wiki_, const Fish *hG_
 bool GeneratOnPrompt::Init(const std::string &prompt_, int flag)    {
     // std::tie(model, ctx) = llama_init_from_gpt_params(params);
     if(fish_1!=nullptr) {
-        dialogs.Init(fish_1.get(),"gpt", 0);        dialogs.isRecycle = false;
-        dialogs.type = SampLoader::TYPE::DT_EVAL;          
+        dialogs = std::make_shared<SampLoader>(fish_1.get(),"gpt", true);        
+        dialogs->isRecycle = false;
+        dialogs->type = SampLoader::TYPE::DT_EVAL;          
     }
     int n_vocab;
     if (wikis.empty()){     CHILD_0909_WIKIS
         n_ctx = hparams.n_ctx();
         n_vocab = fish_1->nClass();
         _logits = new float[n_vocab];
-        // dialogs.init(hparams.prompt.c_str(), B, T, 0, 1, 0);
+        // dialogs->init(hparams.prompt.c_str(), B, T, 0, 1, 0);
 
         InitInput();
         return true;
@@ -372,10 +371,10 @@ bool GeneratOnPrompt::Init(const std::string &prompt_, int flag)    {
 
     // ga_n = params.grp_attn_n;               ga_w = params.grp_attn_w;
     // if (ga_n != 1)    {
-    //     GGML_ASSERT(ga_n > 0 && "grp_attn_n must be positive");                         // NOLINT
-    //     GGML_ASSERT(ga_w % ga_n == 0 && "grp_attn_w must be a multiple of grp_attn_n"); // NOLINT
-    //                                                                                     // GGML_ASSERT(n_ctx_train % ga_w == 0     && "n_ctx_train must be a multiple of grp_attn_w");    // NOLINT
-    //     // GGML_ASSERT(n_ctx >= n_ctx_train * ga_n && "n_ctx must be at least n_ctx_train * grp_attn_n"); // NOLINT
+    //     assert(ga_n > 0 && "grp_attn_n must be positive");                         // NOLINT
+    //     assert(ga_w % ga_n == 0 && "grp_attn_w must be a multiple of grp_attn_n"); // NOLINT
+    //                                                                                     // assert(n_ctx_train % ga_w == 0     && "n_ctx_train must be a multiple of grp_attn_w");    // NOLINT
+    //     // assert(n_ctx >= n_ctx_train * ga_n && "n_ctx must be at least n_ctx_train * grp_attn_n"); // NOLINT
     //     LOG("self-extend: n_ctx_train = %d, grp_attn_n = %d, grp_attn_w = %d\n", n_ctx_train, ga_n, ga_w);
     // }
     // LOG("\n\n");
@@ -405,7 +404,7 @@ void GeneratOnPrompt::DisplayEmbd(bool input_echo, int n_consumed, int flag){
             }
         }
         if(dolphin!=nullptr)    {
-            _INFO("[Generate]_%d {%s}%s",tokens.size(),dialogs.sentence.c_str(),token_str.c_str());
+            _INFO("[Generate]_%d {%s}%s",tokens.size(),dialogs->sentence.c_str(),token_str.c_str());
         }else{
             // token_str = llama_token_to_piece(ctx, tokens[0]);
             printf("%s", token_str.c_str());
@@ -449,7 +448,7 @@ int NLP_AutoRegressive::GenSentence(int flag)  {
     }
     uint64_t rng_seed = 42;
     std::string prompt = hparams.prompt;
-    prompt = LoadSomeText(hparams.fp_train_data,0x0);
+    prompt = LoadSomeText("hparams.fp_train_data",0x0);
     int genT = 16, nVocab = preLogits->ne[0], _nctx = hparams.n_ctx(), i, j,pLen=0;
     assert(genT <= _nctx);
     pLen = std::min(_nctx,(int)(prompt.size()));
@@ -459,7 +458,7 @@ int NLP_AutoRegressive::GenSentence(int flag)  {
     for (int i = 0; i < _nctx; ++i)    {
         piffle[i] = wiki->eos;
     }*/
-    SampLoader *hLoader = &(hOPT->val_loader);
+    hSampLoader hLoader = hOPT->val_loader;
     if(hLoader->num_batches==0 )    {
         hLoader->InitOneSamp(prompt,nullptr,0x110);
     } 
@@ -469,7 +468,7 @@ int NLP_AutoRegressive::GenSentence(int flag)  {
     _INFO("%s: <--- \n\t", __func__);
     for (i = 1; i <= genT; i++)    {
         // LocalFeeling(piffle,preP);
-        float fLos = hOPT->Evaluate(*hLoader ,-666);
+        float fLos = hOPT->Evaluate(hLoader ,-666);
         float *preP = (float *)(preLogits->data)+i*nVocab;
         TOKEN_ID t = Sample_CDF(nVocab,preP,&rng_seed);
         piffle[i] = t;      answer.push_back(t); 
@@ -490,7 +489,7 @@ TOKEN_ID GOPT_Metropolis::Sample(int idx, bool is_resampling)    {
     
     auto ctx_main = ctx, ctx_cfg = ctx_guidance;
     int j,nVocab = fish_1==nullptr ? wiki0->n_vocab : fish_1->nClass();   //, j;
-    hSAMP samp = dialogs.empty() ? nullptr : dialogs.SampAt(0);
+    hSAMP samp = (dialogs==nullptr||dialogs->empty()) ? nullptr : dialogs->SampAt(0);
     
     hWIKI wiki = wikis.size()>0  ? wikis[0] : nullptr;
     WIKI::INDUCT_MODE teach = wiki==nullptr ? WIKI::_OFF : wiki->teach;    
@@ -510,7 +509,7 @@ TOKEN_ID GOPT_Metropolis::Sample(int idx, bool is_resampling)    {
 
     if (fish_1 != nullptr)    {   //time bottleneck, so share wiki to reduce time & memory
         // SOFT_MAX(nTokens,_logits,wLog);     //soft merge ???        
-        /*fish_1->UpdateNCTX(dialogs.nLeastCTX());
+        /*fish_1->UpdateNCTX(dialogs->nLeastCTX());
         fish_1->CopyWeight(fish_0);
         if (fish_1->LocalFeeling(&dialogs, x_logits,0))        {*/
             assert(x_logits.size()==nVocab);
@@ -586,7 +585,7 @@ TOKEN_ID GeneratOnPrompt::Sample(int idx, bool is_resampling)    {
     auto ctx_main = ctx, ctx_cfg = ctx_guidance;
     auto cur_p = llama_sampling_prepare(ctx_sampling, ctx_main, ctx_cfg, idx, !is_resampling, &original_logits);
     if (!is_resampling)    {
-        GGML_ASSERT(!original_logits.empty());
+        assert(!original_logits.empty());
     }
     if (fish_1 != nullptr)    {   //time bottleneck
         x_logits.resize(original_logits.size());
@@ -775,9 +774,9 @@ bool GeneratOnPrompt::Inference(hSAMP samp,int& n_past,int flag)   {
     // LOG("eval: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, tokens).c_str());
     bool bRet = false;
     if(fish_1!=nullptr){
-        fish_1->UpdateNCTX(dialogs.nLeastCTX());
+        fish_1->UpdateNCTX(dialogs->nLeastCTX());
         fish_1->CopyWeight(fish_0);
-        bRet = fish_1->LocalFeeling(&dialogs, x_logits,0);      assert(bRet);
+        bRet = fish_1->LocalFeeling(dialogs, x_logits,0);      assert(bRet);
     }
     /*if(flag==0x100)     {   //  debug flag of "only fish"
         // vector<float> preP;
@@ -789,7 +788,7 @@ bool GeneratOnPrompt::Inference(hSAMP samp,int& n_past,int flag)   {
     }
 
     if (!bRet)            {
-        LOG("%s_%d : failed @%s\n", __func__,samp->len,dialogs.sentence.c_str());
+        LOG("%s_%d : failed @%s\n", __func__,samp->len,dialogs->sentence.c_str());
         return 1;
     }
     n_past += n_eval;
@@ -801,7 +800,7 @@ int GeneratOnPrompt::Generate(int nJob, int flag)   {
     g_dump_level = 1;
     
     GST_TIC(tic);
-    hSAMP samp = dialogs.empty() ? nullptr : dialogs.SampAt(0);
+    hSAMP samp = (dialogs==nullptr||dialogs->empty()) ? nullptr : dialogs->SampAt(0);
     output_tokens.clear();
     delta_max = 0;      delta_a = 0;
     string info = "only fish",sTok;
@@ -863,11 +862,11 @@ int GeneratOnPrompt::Generate(int nJob, int flag)   {
             _INFO("\t<E>");                break;
         }
         if(samp!=nullptr)   {
-            dialogs.hTokens->Append(tok);        samp->len++;
+            dialogs->hTokens->Append(tok);        samp->len++;
         }
         sTok = T2STR(tok);
         if(samp!=nullptr)
-            _INFO("[Generate]_%d {%s}%s\n",samp->len,dialogs.sentence.c_str(),sTok.c_str());
+            _INFO("[Generate]_%d {%s}%s\n",samp->len,dialogs->sentence.c_str(),sTok.c_str());
         else
         {   _INFO("%s",sTok.c_str());             fflush(stdout);       }
         tokens.push_back(tok);             

@@ -1,5 +1,19 @@
-
+/**
+ *  Copyright 2023-2025 by Grusoft  
+ *  
+ *  Call some internal function of llama.cpp
+ * 
+ *  \brief 
+ *  \author Yingshi Chen
+ */
 #include <memory>
+
+#define LLAMA_TRAIN_MAX_NODES   16384
+/*
+static size_t llama_model_max_nodes(const llama_model & model) {
+    return std::max<size_t>(8192, model.tensors_by_name.size()*5);
+}*/
+
 // struct WIKI;
 // std::shared_ptr<WIKI> INST_LAMA(struct CLI_params& params,const std::string&path,int flag=0x0);
 

@@ -93,7 +93,7 @@ ConsiceDict::ConsiceDict(NLP_AutoRegressive *lama_,int flag) : VariationaAE(),do
     reserve_x = true;
     isSymmetric = false;
     lama_embed = hparams.n_embd;
-    // n_vocab = hparams.n_vocab;      //Maybe 0!  would get correct value @LoadVocab!
+    
     latent_dim = hparams.n_embd;
     if(dolphin->hparams.nabla>3)
         assert(0);
@@ -384,7 +384,7 @@ void ConsiceDict::LoadVocab_v0(const char*model_path,int flag)     {
         for (int i = 0; i < n_merges; i++) {
             merges[i] = strdup(gguf_get_arr_str(vctx, merges_keyidx, i));
             word = merges[i];
-            GGML_ASSERT(unicode_cpts_from_utf8(word).size() > 0);
+            assert(unicode_cpts_from_utf8(word).size() > 0);
             std::string first,second;
             const size_t pos = word.find(' ', 1);
             if (pos != std::string::npos) {

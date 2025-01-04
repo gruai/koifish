@@ -1,5 +1,5 @@
 /**
- *  Copyright 2023-2024 by Grusoft 
+ *  Copyright 2023-2025 by Grusoft  
  *  
  *  Some auxiliary functions
  *  Unfortunately, llama.cpp removed training functions. I would continue to work hard to support and strengthen training.
@@ -50,41 +50,12 @@ void assert_shape_4d(struct ggml_tensor * tensor, int64_t ne0, int64_t ne1, int6
     GGML_ASSERT(tensor->ne[3] == ne3);
 }
 
-struct random_normal_distribution {
-    std::mt19937 gen;
-    std::normal_distribution<float> rd;
-    float min;
-    float max;
-};
-
-void mt19937_set_state(std::mt19937& rng, const std::string& rng_state) {
-    std::stringstream s_rng_state;
-    s_rng_state.imbue(std::locale::classic());
-    s_rng_state.exceptions(std::stringstream::failbit);
-    s_rng_state.str(rng_state);
-    s_rng_state >> rng;
-}
-
-std::string mt19937_get_state(const std::mt19937& rng) {
-    std::stringstream s_rng_state;
-    s_rng_state.imbue(std::locale::classic());
-    s_rng_state << rng;
-    return s_rng_state.str();
-}
-
-std::string mt19937_seed_to_state(unsigned seed) {
-    std::mt19937 rng(seed);
-    return mt19937_get_state(rng);
-}
-
 struct random_uniform_distribution {
     std::mt19937 gen;
     std::uniform_real_distribution<float> rd;
 };
 
-struct random_normal_distribution * init_random_normal_distribution(
-    int seed, float mean, float std, float min, float max
-) {
+struct random_normal_distribution * init_random_normal_distribution(    int seed, float mean, float std, float min, float max) {
     struct random_normal_distribution * rnd = (struct random_normal_distribution *) malloc(sizeof(struct random_normal_distribution));
     rnd->gen = std::mt19937(seed);
     rnd->rd = std::normal_distribution<float>{mean, std};
@@ -118,22 +89,6 @@ float frand_normal(struct random_normal_distribution * rnd) {
 
 float frand_uniform(struct random_uniform_distribution * rnd) {
     return rnd->rd(rnd->gen);
-}
-
-size_t hash_combine(size_t h1, size_t h2) {
-    return h1 ^ (h2 << 1);
-}
-
-size_t compute_samples_hash(const char* fn, const size_t* samples_begin, const size_t* samples_size, size_t sample_count) {
-    std::hash<std::string> h_string;
-    std::hash<unsigned long long> h_ull;
-    size_t h = h_string(std::string(fn));
-    h = hash_combine(h, h_ull((unsigned long long) sample_count));
-    for (size_t i=0; i< sample_count; ++i) {
-        h = hash_combine(h, h_ull((unsigned long long) samples_begin[i]));
-        h = hash_combine(h, h_ull((unsigned long long) samples_size[i]));
-    }
-    return h;
 }
 
 struct ggml_tensor * randomize_tensor_normal(struct ggml_tensor * tensor, struct random_normal_distribution * rnd) {
@@ -390,8 +345,8 @@ void CLI_params::OnArch( ){
     }    
 }
 
-struct train_params_common get_default_train_params_common() {
-    struct train_params_common params;
+struct train_params_ get_default_train_params_common() {
+    struct train_params_ params;
     params.fn_train_data     = "shakespeare.txt";
     params.fn_checkpoint_in  = "checkpoint.gguf";
     params.fn_checkpoint_out = "checkpoint-ITERATION.gguf";
@@ -449,6 +404,25 @@ struct train_params_common get_default_train_params_common() {
     return params;
 }
 
+std::string CLI_params::GetDataPath(const string type,int flag){
+    string fp = "";
+try{
+    if(type.empty())    //some tiny file for fast debug
+        fp = jKV(jConfig,{"tiny_data","source"},fp );
+    else{
+        fp = jKV(jConfig,{"datasets",type,"source"},fp );
+    }
+    
+}catch(...){
+
+}
+    if( !std::filesystem::exists(fp) ){
+        _INFO("%s: warning: empty or not existing %s data file '%s'\n", __func__, type.c_str(), fp.c_str());
+        fp = "";
+    }    
+    return fp;
+}
+
 /*
     Some trick
     1 Large batch size would decrease osillation
@@ -473,8 +447,17 @@ try{
     lars_ratio = jKV(jConfig,{          "train","optimizatioin","lars_ratio"},lars_ratio );
     ZMUV_ratio = jKV(jConfig,{          "train","optimizatioin","ZMUV_ratio"},ZMUV_ratio );
 
+    // serial_path = jKV(jConfig,{"data","serialize_path"},s0 );
+    string dict_type = jKV(jConfig,{"dict","type"},s0 );
     batch_sample = jKV(jConfig,{"data","batch_sample"},batch_sample ); 
     rSplit = jKV(jConfig,{"data","eval_split"},rSplit );
+    string a = batch_sample=="stacking" ? batch_sample : "";
+    
+    // eval_binpath += a+"_["+model_title+"]_.data";
+    // fp_train_data = jKV(jConfig,{"data","source"},fp_train_data );
+    // common.fn_train_data = "\0";
+    // assert( std::filesystem::exists(fp_train_data) );
+
     std::vector<string> all_base;
     all_base = jKV_arr(jConfig,{"wiki","path"},all_base,false);
     for(auto path : all_base){
@@ -492,18 +475,12 @@ try{
     if(model_title.empty()){
         model_title = jKV(jConfig,{"arch"},string(""));
     }
-    
+    // serial_path += a+"_["+model_title+dict_type+"]_";       //std::to_string(1.0-rSplit)
     JModel2Params(0x0);
     
-    serial_path = jKV(jConfig,{"data","serialize_path"},s0 );
-    string dict_type = jKV(jConfig,{"dict","type"},s0 );
+
     // eval_binpath = jKV(jConfig,{"data","eval_binpath"},s0 );   
-    string a = batch_sample=="stacking" ? batch_sample : "";
-    serial_path += a+"_["+model_title+dict_type+"]_";       //std::to_string(1.0-rSplit)
-    // eval_binpath += a+"_["+model_title+"]_.data";
-    fp_train_data = jKV(jConfig,{"data","source"},fp_train_data );
-    common.fn_train_data = "\0";
-    assert( std::filesystem::exists(fp_train_data) );
+
     
     n_swarm = jKV(jConfig,{"train","swarm"},1 );
     common.save_every = jKV(jConfig,{"train","save-every"},common.save_every );
@@ -951,44 +928,6 @@ float LOSS_cross_entropy_1(int n,const float*preP, int target,int&cand,int flag)
     loss = log(sum);  
     return loss;
 }
-/*
-struct ggml_tensor * ggml_flash_attn(
-        struct ggml_context * ctx,
-        struct ggml_tensor  * q,
-        struct ggml_tensor  * k,
-        struct ggml_tensor  * v,
-        bool                  masked) {
-    GGML_ASSERT(ggml_can_mul_mat(k, q));
-    // TODO: check if vT can be multiplied by (k*qT)
-
-    bool is_node = false;
-
-    if (q->grad || k->grad || v->grad) {
-        is_node = true;
-    }
-
-    //struct ggml_tensor * result = ggml_dup_tensor(ctx, q);
-    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, q->ne);
-
-    int32_t t = masked ? 1 : 0;
-    ggml_set_op_params(result, &t, sizeof(t));
-
-    result->op   = GGML_OP_FLASH_ATTN;
-    result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
-    result->src[0] = q;
-    result->src[1] = k;
-    result->src[2] = v;
-
-    return result;
-}
-*/
-// std::string jKV(const JSON& jConfig,const std::vector<std::string>&keys,const char* default_value,int flag){
-//     std::string s1 = default_value;
-//     std::string s2 = jKV(jConfig,keys,s1);
-//     return s2;
-// }
-
-
 
 struct ggml_tensor * ggml_cross_entropy_loss_1(
         struct ggml_context         * ctx,

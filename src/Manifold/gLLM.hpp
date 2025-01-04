@@ -1,5 +1,5 @@
 /**
- *  Copyright 2023-2024 by Grusoft 
+ *  Copyright 2023-2025 by Grusoft  
  *  
  *  General LLM model  
  * 
@@ -23,7 +23,9 @@
 #include <algorithm>
 #include <string>
 
-#define GGML_OBJECT_MAX_SIZE 128
+#define GGML_OBJECT_MAX_SIZE    128
+
+//  GGML_DEFAULT_GRAPH_SIZE/*2048*/
 
 static const char * LLM_TENSOR_TOKEN_EMBD    = "token_embd";
 static const char * LLM_TENSOR_OUTPUT_NORM   = "output_norm";
@@ -77,8 +79,7 @@ struct NLP_AutoRegressive : public Fish {
     
     bool isAttOnBC=false;   
         
-    // struct train_params_common& train_params;
-    
+   
     CHILD_0909_WIKIS
     //Assume wikis[0] is the backbone of FISH
     struct LAMA *lama(int id=0)    {  
@@ -113,7 +114,8 @@ struct NLP_AutoRegressive : public Fish {
     NLP_AutoRegressive(const std::string& nam_,const NLP_AutoRegressive* src,struct CLI_params params,int flag=0x0);
 
     virtual ~NLP_AutoRegressive() {
-        free_random_normal_distribution(rnd); 
+        free(rnd);
+        // free_random_normal_distribution(rnd); 
         // ggml_free(lora.ctx);        
     }
     //number of vocab at target layer
@@ -210,7 +212,7 @@ struct NLP_AutoRegressive : public Fish {
  
     // build_inp_KQ_(ctx,true);      
 
-        GGML_ASSERT(tokens_input->type == GGML_TYPE_I32);
+        assert(tokens_input->type == GGML_TYPE_I32);
         hGensor _tEmbed = UpdateGensor (hDict->tok_embeddings-> name);      //embedding of all tokens
         
         // hGensor _tOutput = UpdateGensor (hDict->_output.w->name);       
@@ -236,7 +238,7 @@ struct NLP_AutoRegressive : public Fish {
 
     // virtual bool LoadTokens( int flag=0x0 );
     // void CopyWeight(const Fish* src,int flag = 0x0)  override;
-    bool LocalFeeling(SampLoader *hLoader,vector<float>& result,int flag)   override;
+    bool LocalFeeling(hSampLoader hLoader,vector<float>& result,int flag)   override;
 
     void Loss(int flag=0x0)     override   {
 
@@ -279,7 +281,6 @@ struct LLAMA_LORA  : public NLP_AutoRegressive {
     }
 
     virtual ~LLAMA_LORA() {
-        free_random_normal_distribution(rnd);
     }  
     
     size_t MostMemSize(int flag)     override   {
@@ -479,7 +480,7 @@ struct LLAMA_LORA  : public NLP_AutoRegressive {
         const float rms_norm_eps    = hparams.f_norm_rms_eps;
         const float rope_freq_base  = hparams.rope_freq_base;
         const float rope_freq_scale = hparams.rope_freq_scale;
-        GGML_ASSERT((size_t) n_layer == layers.size());
+        assert((size_t) n_layer == layers.size());
        
         // KQ_pos - contains the positions
         hGensor  KQ_pos = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, n_ctx);
@@ -498,7 +499,7 @@ struct LLAMA_LORA  : public NLP_AutoRegressive {
             );
         };
 
-        GGML_ASSERT(tokens_input->type == GGML_TYPE_I32);
+        assert(tokens_input->type == GGML_TYPE_I32);
         NLP_AutoRegressive *base = dynamic_cast<NLP_AutoRegressive *>(this);
     //    hGensor  _tEmbed = add_to_f32(ctx, base->tok_embeddings, ggml_mul_mat(ctx, tok_embeddings_a, tok_embeddings_b));
     //    hGensor  _tNorm           = add_to_f32(ctx, base->norm, ggml_mul_mat(ctx, norm_a, norm_b));

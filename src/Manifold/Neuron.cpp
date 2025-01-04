@@ -1,6 +1,6 @@
 
 /**
- *  Copyright 2023-2024 by Grusoft 
+ *  Copyright 2023-2025 by Grusoft  
  *  
  *  Perceptrons 
  * 
@@ -141,17 +141,21 @@ bool Embed::Build(int flag){
     
     return true;
 }
-hGensor Embed::Forward(struct ggml_context *ctx_,hGensor cur,int flag){
-    if(cur==nullptr)  //symbolic analysis
-        return GeNeuron::Forward(ctx_,cur,flag);
-    
+/*
+   batch(tokens) embeddings from glob token embedding(w)
+*/
+hGensor Embed::Forward(struct ggml_context *ctx_,hGensor tokens,int flag){
+    if(tokens==nullptr)  //symbolic analysis
+        return GeNeuron::Forward(ctx_,tokens,flag);
+    assert(tokens->type==GGML_TYPE_I32);
     string sw = name+"_rows";
-    cur = ggml_get_rows(ctx_, w, cur);    gTN(cur, sw.c_str());   
-    hFish->xn = cur;                        hFish->xxn = cur->grad;
-    if(isAddPos){
+    assert(w->ne[1]==shape[0]);
+    hGensor cur = ggml_get_rows(ctx_, w, tokens);       gTN(cur, sw.c_str());   
+    // hFish->xn = cur; hFish->xxn = cur->grad;         //  only for debug
+    if(isAddPos)        {
         cur = ggml_add(ctx_, cur, b);  
     }
-    if(!name.empty()){ //"inp_embd"
+    if(!name.empty())   { //"inp_embd"
         gTN0(cur,"%s",name.c_str());
     }
     return cur;

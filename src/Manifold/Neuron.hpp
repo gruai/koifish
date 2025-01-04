@@ -1,6 +1,6 @@
 
 /**
- *  Copyright 2023-2024 by Grusoft
+ *  Copyright 2023-2025 by Grusoft 
  *
  *  \brief Collection of neurons
  *  \author Yingshi Chen

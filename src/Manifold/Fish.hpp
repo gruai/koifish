@@ -1,5 +1,5 @@
 /**
- *  Copyright 2023-2024 by Grusoft
+ *  Copyright 2023-2025 by Grusoft 
  *
  *  \brief Fish - just random swimming 
  *  \author Yingshi Chen
@@ -22,7 +22,6 @@
 #include <stack>
 #include "../ggex/GG_util.hpp"
 #include "Neuron.hpp"
-#include "train.h"
 #include "TGraph.hpp"
 #include "Optimizer.hpp"
 #include "GoPT.hpp"
@@ -246,7 +245,9 @@ protected:
     MixOfModels mom;
     MixOfSwarm  mos;
 
-    hDataToken hTokenset=nullptr;
+    DataTokens tokenset;
+    hDataToken tsTrain=nullptr,tsEval=nullptr;
+    
     hOptimizer hOPT;
     vector<hGensor> optParams;     //paramter tensors updated by hOPT
     vector<hGensor> loadGensors;     
@@ -405,7 +406,7 @@ public:
         float *data = (float *)ggml_get_data(inp);
         assert(data != nullptr);
         const int n = nx * ny;
-        // GGML_ASSERT(nx == n_img_size && ny == n_img_size);
+        // assert(nx == n_img_size && ny == n_img_size);
         for (int k = 0; k < 3; k++)
         {
             for (int y = 0; y < ny; y++)
@@ -492,7 +493,7 @@ public:
     virtual void Loss(int flag = 0x0) {}
 
     virtual void CopyWeight(const Fish* src,int flag = 0x0);
-    virtual bool LocalFeeling(SampLoader *hLoader,vector<float>& result,int flag=0x0)   {   return false;   }
+    virtual bool LocalFeeling(hSampLoader hLoader,vector<float>& result,int flag=0x0)   {   return false;   }
 
     virtual bool isValid()  {   return true;    }
 

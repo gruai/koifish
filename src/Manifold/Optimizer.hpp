@@ -1,5 +1,5 @@
 /**
- *  Copyright 2023-2024 by Grusoft 
+ *  Copyright 2023-2025 by Grusoft  
  * 
  *  \brief A collection of neurons
  *  \author Yingshi Chen
@@ -23,7 +23,6 @@
 using namespace std;
 
 #include "../ggex/GG_util.hpp"
-#include "train.h"
 #include "TGraph.hpp"
 #include "Scheduler.hpp"
 #include "DataLoader.hpp"
@@ -61,6 +60,8 @@ struct EDGE_DEVICES{
 #endif
     ggml_gallocr_t alloc_tmp = nullptr;
     ggml_backend_sched_t sched0 = nullptr;
+
+    virtual bool InitGPU(const CLI_params&hparams,int flag=0x0);
     
     EDGE_DEVICES(const CLI_params&hparams, int flag=0x0);
     virtual ~EDGE_DEVICES();
@@ -87,6 +88,9 @@ struct EDGE_DEVICES{
         assert(sched0!=nullptr);
         return sched0;
     }
+    virtual bool SplitSched(ggml_cgraph * ,int flag=0x0);
+    virtual int SetBackend(hGensor cur,int flag=0x0);
+
 };
 typedef shared_ptr<EDGE_DEVICES>hEDevices;
 class Optimizer : public std::enable_shared_from_this<Optimizer> {
@@ -143,7 +147,7 @@ protected:
     virtual void Clear()    {}   
     // update sched & dump some info
     virtual float UpdateSchedule(int flag = 0x0);
-    virtual bool AfterLoadBatch(SampLoader&loader, int accum_step, int flag = 0x0);
+    virtual bool AfterLoadBatch(int accum_step, int flag = 0x0);
     virtual int SignStochastic(int nx,CLI_params& hparams,int flag=0x0);
     virtual float gClip(int nx,float *g,hGensor hP,int flag=0x0);
     virtual void UpdateParams(int nx,CLI_params& hparams,int flag);
@@ -159,19 +163,19 @@ public:
 
 
     // typedef bool (*_CALL_BACK_)(void * data, int accum_step, float * sched);    
-    SampLoader train_loader, val_loader;
+    hSampLoader train_loader=nullptr, val_loader=nullptr;
     size_t shuffle_samples_hash = 0x0;  //hack
 
     Fish* _fish=nullptr;         //ref only
     hEDevices hEDS;             //ref only
 
     struct train_state      *trainst = nullptr; //init_train_state();
-    struct train_params_common TrainParams();
+    struct train_params_ TrainParams();
     
     Optimizer(NLP_AutoRegressive *g_,CLI_params& params_,int flag=0x0);
     //Deprecated need refactor!!!       9/30/2024
-    virtual void GraphCompute(struct ggml_cgraph *,int flag=0x0);
-    virtual float Evaluate(SampLoader&loader,int iter,int flag=0x0);
+    virtual bool GraphCompute(struct ggml_cgraph *,int flag=0x0);
+    virtual float Evaluate(hSampLoader loader,int iter,int flag=0x0);
 
     virtual void UpdateLoss(int step,float loss,int flag=0x0){
         if(step>1){
@@ -203,15 +207,15 @@ public:
         }
     }
     
-    virtual void BeforeTrain(struct train_params_common& train_params,hGensor  tokens_input,int flag) ;
+    virtual void BeforeTrain(struct train_params_& train_params,hGensor  tokens_input,int flag) ;
     virtual bool PrepareData( CLI_params& hparams,int flag );
-    virtual void Shuffle(int n_vocab,struct train_params_common& train_params,int flag=0x0)  {
+    virtual void Shuffle(int n_vocab,struct train_params_& train_params,int flag=0x0)  {
         assert(0);
     }    
 
     virtual void Prepare(size_t nx,int flag=0x0);
 
-    // virtual void InitOpt(struct train_params_common& params_,int flag=0x0);
+    // virtual void InitOpt(struct train_params_& params_,int flag=0x0);
     
     virtual ~Optimizer( ) {
         ggml_free(_ctx);

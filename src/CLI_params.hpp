@@ -1,5 +1,5 @@
 /**
- *  Copyright 2023-2024 by Grusoft 
+ *  Copyright 2023-2025 by Grusoft  
  * 
  *  \brief
  *  \author Yingshi Chen
@@ -7,11 +7,11 @@
 
 #pragma once
 #include <cassert>
-#include "../common/train.h" 
+// #include "train.h" 
 #include "./ggex/json.hpp" 
 
-typedef int32_t TOKEN_ID;
-
+// typedef int32_t TOKEN_ID;
+typedef uint16_t TOKEN_ID;
 /*
     10 levels of dumps, 0-9. 0 is a full dump,The lower the number the more dump.
 */  
@@ -80,8 +80,65 @@ struct LAY_PARAM{
     }
 };
 
+struct train_params_ {
+    const char * fn_train_data;
+    const char * fn_checkpoint_in;
+    const char * fn_checkpoint_out;
+    const char * pattern_fn_it;
+    const char * fn_latest;
+
+    bool print_usage;
+
+    int save_every;
+
+    uint32_t seed;
+
+    int n_ctx;
+    int n_threads;
+    int n_batch;
+    int n_gradient_accumulation;
+    int n_epochs;
+    int n_gpu_layers;
+
+    bool custom_n_ctx;
+
+    bool use_flash;
+    bool use_checkpointing;
+
+    std::string sample_start;
+    bool include_sample_start;
+    bool escape;
+    bool overlapping_samples;
+    bool fill_with_next_samples;
+    bool separate_with_eos;
+    bool separate_with_bos;
+    bool sample_random_offsets;
+
+    bool force_reshuffle;
+
+    int   warmup;
+    int   cos_decay_steps;
+    float cos_decay_restart;
+    float cos_decay_min;
+    bool  enable_restart;
+
+    int   opt_past;
+    float opt_delta;
+    int   opt_max_no_improvement;
+
+    int   adam_n_iter;
+    float adam_alpha;
+    float adam_min_alpha;
+    float adam_decay;
+    int   adam_decay_min_ndim;
+    float adam_beta1;
+    float adam_beta2;
+    float adam_gclip;
+    float adam_eps_f;
+};
+
 struct CLI_params {
-    struct train_params_common common;  
+    struct train_params_ common;  
     struct SaveModel {
         std::string checkpoint_in,checkpoint_out;
         std::string model_out,model_base;       
@@ -134,7 +191,7 @@ struct CLI_params {
     std::vector<std::string> fn_model_base;
     //  std::string fn_vocab_model;
     std::string model_title="";
-    std::string fp_train_data;
+    // std::string fp_train_data;   serial_path
     std::string train="";  //"scratch"
 
     bool isOnlyGPT = false;
@@ -190,11 +247,11 @@ struct CLI_params {
     }
 
     template<typename T>
-    T Get(const std::vector<std::string>&keys,const T& t,bool isCLI=true){
+    T Get(const std::vector<std::string>&keys,const T& t,bool isCLI=true)   const   {
         T val = jKV(jConfig,keys,t,isCLI);
         return val;
     }
-    std::string KV(const std::vector<std::string>&keys,const std::string& t="",bool isCLI=true){
+    std::string KV(const std::vector<std::string>&keys,const std::string& t="",bool isCLI=true) const   {
         std::string val = Get(keys,t);
         return val;
     }
@@ -242,7 +299,7 @@ struct CLI_params {
 
      //parameters of datasets
     float rSplit = 0.1;
-    std::string serial_path,batch_sample;
+    std::string batch_sample;
     
     float f_norm_eps = 1e-5f; 
     float f_norm_rms_eps = 1e-5f; 
@@ -345,5 +402,6 @@ struct CLI_params {
 
     bool parse(int argc, char ** argv);
     virtual bool InitJConfig(const std::string&jPath,int flag=0x0);
+    std::string GetDataPath(const std::string type,int flag=0x0);
     //static bool train_params_parse(int argc, char ** argv, struct CLI_params * params)
 };

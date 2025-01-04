@@ -22,8 +22,6 @@ using namespace std;
 
 class Fish;
 
-
-typedef int32_t TOKEN_ID;
 typedef struct ggml_tensor* hGensor;
 /*
      always for language model
@@ -56,7 +54,7 @@ struct WIKI {
     virtual bool isInduct() 
     {   return teach!=_OFF && exLogits!=nullptr; }
 
-    virtual double InductLogits(int nSampInBatch,std::vector<int32_t>& tok_ids,hGensor exLogits,hGensor target_probs,int flag){
+    virtual double InductLogits(int nSampInBatch,std::vector<TOKEN_ID>& tok_ids,hGensor exLogits,hGensor target_probs,int flag){
         return 0.0;
     }
     virtual bool isValid(   )   const    {   return false;   }
@@ -74,8 +72,8 @@ struct WIKI {
 
     virtual int STR2T(const std::string&info,std::vector<TOKEN_ID>&,int flag=0x0 )                    {   assert(0); return -1;       }
     virtual std::string T2STR(int32_t tok,int flag=0x0 )                    {   assert(0); return "";       }
-    virtual bool Decode(std::vector<int32_t>&ids,int start,int n_past,bool out_all)      {   assert(0); return false;    }
-    virtual void Answer(std::vector<int32_t>&ids,int flag=0x0)    {   assert(0); }
+    virtual bool Decode(std::vector<TOKEN_ID>&ids,int start,int n_past,bool out_all)      {   assert(0); return false;    }
+    virtual void Answer(std::vector<TOKEN_ID>&ids,int flag=0x0)    {   assert(0); }
     virtual void Reset(int flag=0x0)    {   assert(0); }
 
     virtual string __repr__( string& suffix,string& prefix,int flag=0x0)    const   {   assert(0); return "";      };

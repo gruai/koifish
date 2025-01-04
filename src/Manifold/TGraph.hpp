@@ -1,5 +1,5 @@
 /**
- *  Copyright 2023-2024 by Grusoft 
+ *  Copyright 2023-2025 by Grusoft  
  * 
  *  \brief
  *  \author Yingshi Chen
@@ -66,12 +66,12 @@ protected:
 /*#ifndef GG_V12
     size_t hash_insert(const struct ggml_hash_set& hash_set, hGensor key) {
         size_t i = ggml_hash_find(&hash_set, key);
-        GGML_ASSERT(i != GGML_HASHSET_FULL);
+        assert(i != GGML_HASHSET_FULL);
         if (hash_set.keys[i] == key) {
             return GGML_HASHSET_ALREADY_EXISTS;
         }
         // insert
-        GGML_ASSERT(hash_set.keys[i] == NULL);
+        assert(hash_set.keys[i] == NULL);
         hash_set.keys[i] = key;
         return i;
     }

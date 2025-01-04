@@ -1,5 +1,5 @@
 /**
- *  Copyright 2023-2024 by Grusoft 
+ *  Copyright 2023-2025 by Grusoft  
  * 
  *  \brief Generate some nonsense on Prompt
  *  \author Yingshi Chen
@@ -60,7 +60,7 @@ protected:
     std::vector<TOKEN_ID> session_tokens;
     std::vector<TOKEN_ID> embd_inp;
     std::string GetPrompt(int flag=0x0);
-    SampLoader dialogs;
+    hSampLoader dialogs;
     std::vector<int>   input_tokens,output_tokens; 
     std::ostringstream output_ss;     
     bool is_interacting = false;    

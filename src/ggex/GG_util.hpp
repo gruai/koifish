@@ -1,5 +1,5 @@
 /**
- *  Copyright 2023-2024 by Grusoft 
+ *  Copyright 2023-2025 by Grusoft  
  * 
  *  \brief
  *  \author Yingshi Chen
@@ -34,10 +34,9 @@ using namespace std;
 #include "ggml-quants.h"
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
-// #include "common-ggml.h"
 #include "../CLI_params.hpp"
 #include "../g_stddef.hpp"
-#include "train.h"          //struct train_params_common common;
+//#include "train.h"          //struct train_params_common common;
 #include "common.h" 
 
 #if defined(GGML_USE_ACCELERATE)
@@ -750,10 +749,25 @@ inline hGensor Permute(struct ggml_context * ctx_,hGensor cur,int64_t n1,int64_t
     return q;
 }
 
+struct random_normal_distribution {
+    std::mt19937 gen;
+    std::normal_distribution<float> rd;
+    float min;
+    float max;
+};
+struct random_normal_distribution * init_random_normal_distribution(    int seed, float mean, float std, float min, float max);
+struct ggml_tensor * randomize_tensor_normal(struct ggml_tensor * tensor, struct random_normal_distribution * rnd);
+
+
 ggml_cgraph * GG_dup_graph(ggml_context * ctx, ggml_cgraph *src);
 hGensor GG_SCAL(struct ggml_context * ctx,struct ggml_tensor  * a,float s,int flag=0x0);
 hGensor GG_map_tensor(std::map<ggml_tensor *, ggml_tensor *> & tensor_map, ggml_context * ctx, ggml_tensor * tensor);
 hGensor GradOf(struct ggml_cgraph *cgraph,hGensor node,int flag=0);
+void assert_shape_1d(struct ggml_tensor * tensor, int64_t ne0);
+void assert_shape_2d(struct ggml_tensor * tensor, int64_t ne0, int64_t ne1);
+void assert_shape_3d(struct ggml_tensor * tensor, int64_t ne0, int64_t ne1, int64_t ne2);
+void assert_shape_4d(struct ggml_tensor * tensor, int64_t ne0, int64_t ne1, int64_t ne2, int64_t ne3);
+
 
 typedef struct ggml_tensor gensor;
 typedef struct ggml_tensor *hGensor;

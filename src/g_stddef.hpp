@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <unordered_map>
 #include <map>
+#include <random>
 #include <math.h>
 #include <float.h>
 #include <assert.h>
@@ -92,6 +93,14 @@ void G_SomeXat_( vector<int>& pos, const vector<T>& someX, const vector<T>& allX
             pos.push_back( i );
         }
     }
+}
+
+inline int CLAMP(const int v, const int min, const int max) {
+    return ((v < min) ? (min) : (v > max) ? (max) : v);
+}
+
+inline size_t HASH_combine(size_t h1, size_t h2) {
+    return h1 ^ (h2 << 1);
 }
 
 template <typename T>

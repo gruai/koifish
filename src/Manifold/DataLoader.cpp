@@ -8,11 +8,29 @@
 #include "common.h"
 #include "Dictionary.hpp"
 
+void mt19937_set_state(std::mt19937& rng, const std::string& rng_state) {
+    std::stringstream s_rng_state;
+    s_rng_state.imbue(std::locale::classic());
+    s_rng_state.exceptions(std::stringstream::failbit);
+    s_rng_state.str(rng_state);
+    s_rng_state >> rng;
+}
 
+std::string mt19937_get_state(const std::mt19937& rng) {
+    std::stringstream s_rng_state;
+    s_rng_state.imbue(std::locale::classic());
+    s_rng_state << rng;
+    return s_rng_state.str();
+}
 
+std::string mt19937_seed_to_state(unsigned seed) {
+    std::mt19937 rng(seed);
+    return mt19937_get_state(rng);
+}
+/*
 void SAMP::Refresh(SampLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,int typ)  {
     assert(0);      // Deprecated
-    /*auto target_probs = loader->hOPT->hTargetProbs();
+    auto target_probs = loader->hOPT->hTargetProbs();
     int64_t n_vocab=target_probs->ne[0],n_tokens=target_probs->ne[1],nSampInBatch=target_probs->ne[2];
     std::string sentence;
     struct llama_context * lctx = static_cast<llama_context *>(ctx);
@@ -36,8 +54,8 @@ void SAMP::Refresh(SampLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,in
         }   
         // _INFO("\t%ld@\"%.*s...\"\n",pos,64,sentence.c_str());     //sample_size
         desc = sentence;
-    }    */
-}
+    }    
+}*/
 
 
 double SampLoader::DecodeVerify(hSAMP samp,hGensor tokens,hGensor logits,int flag)    {
@@ -81,7 +99,7 @@ int SampLoader::nLeastCTX(int  flag) {
     auto samp = SampAt(0);
     return hDict->tokenizer_add_bos? samp->len : samp->len+1;
 }
-void SampLoader::Samp2Batch(int k,hSAMP samp,hGensor tokens_input,hGensor target_probs,struct train_params_common& params,int flag)    {   
+void SampLoader::Samp2Batch(int k,hSAMP samp,hGensor tokens_input,hGensor target_probs,struct train_params_& params,int flag)    {   
     samp_toks.clear();        
     auto dialect = hDict->dialect;
     bool fill_with_next_samples=params.fill_with_next_samples,isDialect = hDict->isDialect;
@@ -141,24 +159,24 @@ void SampLoader::Samp2Batch(int k,hSAMP samp,hGensor tokens_input,hGensor target
 }
 
 //Important!  this would update input & target_probs of model!
-int64_t SampLoader::update_batch(int x,Fish* fish){    
-    struct train_params_common _params = hOPT->TrainParams();
+size_t SampLoader::update_batch(int x,Fish* fish){    
+    struct train_params_ _params = hOPT->TrainParams();
     // struct llama_context * lctx=(struct llama_context *)(hOPT->app_ctx);
     cur_samps.clear();
     struct ggml_tensor *tokens_input=hOPT->_fish->Input();
     assert(tokens_input!=nullptr);
     int *raw_t = (int*)(tokens_input->data);
     struct ggml_tensor *target_probs=hOPT->hTargetProbs();
-    int64_t samples_count = N4Train();
+    int64_t nAllSamples_ = nShard();
     // const TOKEN_ID    * train_data=tokens.data();
     size_t  k,n_train_data = nTokens(); // tokens.size();
     sample_separation_eos=!_params.separate_with_eos;
     sample_separation_bos=!_params.separate_with_bos;
     double t_Samp = 0,nrm=0,a;
     bool sample_random_offsets=_params.sample_random_offsets;
-    // GGML_ASSERT(samples_count > 0);
+    // assert(samples_count > 0);
     assert(ggml_is_matrix(tokens_input));
-    int64_t nSampInBatch = fish->hparams.n_batch();  
+    size_t nSampInBatch = fish->hparams.n_batch();  
     if(target_probs!=nullptr)    {
         assert(ggml_is_3d(target_probs));
         assert(nSampInBatch==target_probs->ne[2]);
@@ -175,8 +193,10 @@ int64_t SampLoader::update_batch(int x,Fish* fish){
         if(batch_sample=="stacking"){
             samp->jump++;
         }else{            
-            samp = SampAt((next_sample + k) % samples_count);  
+            samp = Next();  //SampAt((next_sample + k) % samples_count);  
         }
+        if(samp==nullptr)   return 0x0;
+
         // LLAMA_LOG_INFO("%s: sample_idx=%zu sample=%zu\n", __func__, sample_idx, sample);  
         if(GST_TOC(tic)>20){        //for long-time data-update
             _INFO("\r[%s] k=%d(%d) T=%.3g ...",__func__,k,nSampInBatch,GST_TOC(tic));   
@@ -213,12 +233,12 @@ int64_t SampLoader::update_batch(int x,Fish* fish){
             _INFO("\t stacking@%d\"%.*s...\" nrm=%g\tT=%.4gs\t\n",samp->pos,64,samp->desc.c_str(),nrm,GST_TOC(tic));             
         }*/
     }
-    if(type == SampLoader::TYPE::DT_TRAIN) 
-        next_sample += nSampInBatch;
-    else{
-        if(!isFixEvalSample)
-            next_sample += nSampInBatch;
-    }
+    // if(type == SampLoader::TYPE::DT_TRAIN) 
+    //     next_sample += nSampInBatch;
+    // else{
+    //     if(!isFixEvalSample)
+    //         next_sample += nSampInBatch;
+    // }
     return nSampInBatch;
 }
 
@@ -265,6 +285,154 @@ bool SAMP::Serialize(FSerial&S, bool isSave, int flag){
     return true;
 }
 
+std::vector<hDataToken> DataTokenSet::MakeInstance(struct CLI_params& params,ConsiceDict *hDict, int flag){
+    DataTokens dts;
+    JSON jdata = jKEY(params.jConfig,{"datasets"});
+    if(jdata.empty()){      //Deprecated
+        auto hTokenset = std::make_shared<DataTokenSet>(hDict);  
+        hTokenset->serial_root = "/home/cys/rnd/lic/datasets/story19M___[gpt2char]_"; //only for debug" 
+        dts.push_back(hTokenset);
+    }else{
+        for(JSON::const_iterator it = jdata.begin(); it != jdata.end(); ++it)    {
+            auto k =it.key();     
+            if(!k.empty() && k[0]=='#')     
+                continue;
+            if(k=="debug"){
+                continue;
+            }
+            auto v=it.value();
+            // auto hTokenset = std::make_shared<DataTokenSet>(hDict); 
+            auto hTokenset = std::make_shared<GlobTokenset>(it,hDict);   
+            dts.push_back(hTokenset);  
+        }        
+    }
+
+    return dts;
+}
+
+GlobTokenset::GlobTokenset(JSON::const_iterator jit,ConsiceDict *hDict,int flag) : DataTokenSet(hDict)    {
+    header_bytes = HEADER_SIZE * sizeof(int);
+    int num_processes=1,process_rank=0;
+    B = hDict->hparams.n_batch(),       T = hDict->hparams.n_ctx();
+    total_batch_size_bytes = ((num_processes * (B * T)) * sizeof(uint16_t));
+    local_batch_offset_bytes = process_rank * B * T * sizeof(uint16_t);
+
+    auto k =jit.key();  
+    auto v = jit.value();
+    string pattern = v["glob"];
+    glob_t glob_result;
+    int glob_status = glob(pattern.c_str(), 0, NULL, &glob_result);
+    if (glob_status != 0) {
+        _INFO("%s Error: glob failed @\"%s\"\n", __func__,pattern.c_str());
+        exit(EXIT_FAILURE);
+    }
+    if (glob_result.gl_pathc == 0) {
+        _INFO("%s No files found matching the pattern: %s\n", __func__,pattern.c_str());
+        exit(EXIT_FAILURE);
+    }
+    int nFile = 0;
+    /*if (isShuffle) {
+        manual_seed(&shuffle_rng, 42 + process_rank);
+        shard_indices = (int*)mallocCheck(glob_result.gl_pathc * sizeof(int));
+        init_identity_permutation(shard_indices, (int) glob_result.gl_pathc);
+        intra_shard_indices = NULL;  // dynamically allocated allowing different shard sizes
+    }*/
+
+    // inspect and validate all shards so we don't get any runtime errors later
+    // if too slow / too many shards, may wish to revisit later
+    int64_t ntok_total = 0;
+    for (int id = 0; id < glob_result.gl_pathc; id++) {
+        string sPath = glob_result.gl_pathv[id];
+        shard_paths.push_back(sPath);
+        int64_t shard_ntok = PrepareShard( id );
+        nFile++;
+        // assert(shard_ntok >= (int64_t) (num_processes * B * T + 1));
+        ntok_total += shard_ntok;
+    }
+    double nG = ntok_total/1.0e9;
+    _INFO( "[%s] %s find %.8gG tokens @\"%s\"(%d files)\n", __func__,name.c_str(),pattern.c_str(),nG,nFile );
+}
+
+bool GlobTokenset::NextShard(int flag)  {
+    PrepareShard(shard_index++,true);      
+    // InitSamps
+    int n_ctx = hDict->hparams.n_ctx();
+    double rSplit = 1.0-hDict->hparams.rSplit;
+    // samples_begin.clear();      samples_size.clear();
+    // samples_begin.push_back(0);
+    size_t nToken = tokens.size(),nFirst=std::min((size_t) n_ctx, nToken),step=1;
+    // samples_size.push_back(nFirst);
+    size_t end = (nToken >= n_ctx) ? (nToken - n_ctx) : 0;
+    if(end>10*1024*1024){
+        step = n_ctx;
+    }
+    for (size_t sample_begin = 1; sample_begin < end; sample_begin+=step) {
+        shard_samps.push_back(new SAMP(sample_begin,n_ctx));
+    }
+    size_t nSample = shard_samps.size();
+    size_t num_batches = nSample/hDict->hparams.n_batch();
+    num_batches = nSample==0 ? 0 : max(num_batches,(size_t)1);
+    _INFO("%s@[%s]: tokens=%zu nSamp=%d nBach=%d\n", __func__,name.c_str(), nToken,shard_samps.size(),num_batches); 
+    return true;
+}
+
+int64_t GlobTokenset::PrepareShard(int id, bool load, int flag) {
+    if (isShuffle) {
+        // id = shard_indices[id];
+    }
+    // use the first glob match as the filename for now
+    const char* filename = shard_paths[id].c_str();
+    if (fpToken != NULL) {
+        fcloseCheck(fpToken);
+    }
+    fpToken = fopenCheck(filename, "rb");
+    // validate the header
+    int header[HEADER_SIZE];
+    freadCheck(header, sizeof(int), HEADER_SIZE, fpToken);
+    if (header[0] != 20240520) {
+        printf("Bad magic in the data file\n");
+        printf("---> HINT: Are you passing in a correct file?\n");
+        printf("---> HINT: The data encoding may have changed, re-run data prepro or refer again to README.\n");
+        exit(EXIT_FAILURE);
+    }
+    if (header[1] != 1) { printf("Bad version in data file\n"); exit(EXIT_FAILURE); }
+    int64_t nTok0 = header[2]; // number of tokens in the file
+    assert(nTok0 > 0); // we expect some tokens in the file. this should never trip, right?
+    // determine the file size and make sure it is consistent with the number of tokens
+    fseekCheck(fpToken, 0, SEEK_END); // seek to end of file
+    file_size_bytes = ftell(fpToken); // read the offset, i.e. file size
+    fseekCheck(fpToken, 0, SEEK_SET); // seek back to the beginning
+    // we expect nTok0 in the file to be consistent with filesize, assert that is the case
+    int64_t expected_file_size = HEADER_SIZE * sizeof(int) + nTok0 * sizeof(uint16_t);
+    if (file_size_bytes != expected_file_size) {
+        printf("Error: file size is not as expected\n");
+        exit(EXIT_FAILURE);
+    }
+    if(load){
+        int szT=sizeof(uint16_t),nT = (file_size_bytes-header_bytes)/szT;
+        assert(nT==nTok0);
+        tokens.resize(nT);
+        fseekCheck(fpToken, (int) header_bytes, SEEK_SET);
+        uint16_t *tmp16=new uint16_t[nT];
+        if(fread(tokens.data(),szT,nT,fpToken)!=nT) {
+            _INFO("Error: file size is not as expected\n");
+            return 0x0;
+        }else{
+            nT = min(nT,1024);
+            for(int i=0;i<nT;i++){
+                assert(0<=tokens[i] && tokens[i]<nVocab);
+            }
+        }
+        delete[] tmp16;
+    }
+    // -1 uint16_t due to us taking B*T+1 tokens but moving by B*T tokens
+    shard_num_samples = (nTok0 * sizeof(uint16_t) - sizeof(uint16_t)) / total_batch_size_bytes;
+    if(load){
+        _INFO("[shard]: tokens=%zu nSamp=%d @\"%s\"\n", nTok0,shard_num_samples,filename); 
+    }
+    return nTok0;
+}
+
 DataTokenSet::DataTokenSet(ConsiceDict *hD) : hDict(hD)   {
     nVocab = hDict->n_vocab;
     assert(nVocab>0);
@@ -272,7 +440,7 @@ DataTokenSet::DataTokenSet(ConsiceDict *hD) : hDict(hD)   {
 
 TOKEN_ID DataTokenSet::At(size_t pos){
     assert(pos<tokens.size());
-    int32_t token = clamp(tokens[pos], 0, (nVocab - 1));
+    int32_t token = CLAMP(tokens[pos], 0, (nVocab - 1));
     return token;
 }
 
@@ -327,14 +495,14 @@ try{
 
     _CHECK( S.Serial(batch_sample,isSave,flag) );
     // _CHECK( S.Serial(ids,isSave,flag) );
-    bool bRet = S.Serial_Vector<SAMP,SAMP>(all_samps,isSave,flag);
+    bool bRet = S.Serial_Vector<SAMP,SAMP>(shard_samps,isSave,flag);
     _CHECK(bRet);
-    if(all_samps.size()==0)
+    if(shard_samps.size()==0)
         return false;
     size_t nT = nTokens();
     _INFO("\r%s %s@\"%s\" ... OK. \r\n\tnSamp=%ld @[Datasets(nToken=%ld  hash=%llX]\n",__func__,isSave?"save":"load",path.c_str(),
-        all_samps.size(),nT,shuffle_samples_hash);
-    for(auto samp : all_samps){
+        shard_samps.size(),nT,shuffle_samples_hash);
+    for(auto samp : shard_samps){
         // if(id>=nT){
         //     _INFO("\t\tInvalid id(%ld) > nTokens=%d\n", id,nT);  
         //     return false;
@@ -343,7 +511,7 @@ try{
     if(isSave){
         
     }else{
-        size_t nSample = all_samps.size();
+        size_t nSample = shard_samps.size();
         num_batches = nSample/hOPT->TrainParams().n_batch;
         num_batches = nSample==0 ? 0 : max(num_batches,1); 
         _INFO("\t nBatch in each epoch=%d\n", num_batches); 
@@ -354,7 +522,7 @@ try{
 
         }else{
             shuffle_rng_state_current = mt19937_seed_to_state(hOPT->TrainParams().seed);
-            shuffle_sample_count = all_samps.size();
+            shuffle_sample_count = shard_samps.size();
             next_sample = 0;
             shuffle_samples_hash = shuffle_samples_hash; 
         }
@@ -366,30 +534,48 @@ try{
 }
 }
 
-bool SampLoader::Init(Fish *g_,const string&n,int flag) {
+SampLoader::SampLoader(Fish *g_,const string&n,bool isNewTS,int flag) {
     name = n;
     assert(g_!=nullptr);
     dolphin = dynamic_cast<NLP_AutoRegressive*>(g_);         
     if(dolphin==nullptr){
         assert(0);
-        return false;
+        return ;
     }
-    hTokens = dolphin->hTokenset;
-    hDict = dolphin->hDict;        
-    assert(hTokens!=nullptr && hDict!=nullptr);  
+    // hDict = dolphin->hDict;     
+    // if(isNewTS){
+    //     hTokens = std::make_shared<DataTokenSet>(hDict.get());
+    // }else
+    //     hTokens = dolphin->hTokenset;
+       
+    // assert(hTokens!=nullptr && hDict!=nullptr);  
 
+    // hOPT = dolphin->hOPT.get();
+    // assert(hOPT!=nullptr);
+
+    isTarget_1 = g_->hparams.is( {"model","target"},string("OneHot") );
+    return ;
+}
+
+bool SampLoader::Prepare(hDataToken hT,int flag){
+    bool isNewTS = hT==nullptr;
+    hDict = dolphin->hDict;     
+    if(isNewTS){
+        hTokens = std::make_shared<DataTokenSet>(hDict.get());
+    }else
+        hTokens = hT;   //dolphin->hTokenset;
+    assert(hTokens!=nullptr && hDict!=nullptr);  
     hOPT = dolphin->hOPT.get();
     assert(hOPT!=nullptr);
 
-    isTarget_1 = g_->hparams.is( {"model","target"},string("OneHot") );
-    return true;
-}
-
-void SampLoader::Prepare(int flag){
-    // hOPT = hOPT_;           assert(hOPT_!=nullptr);
-    
+    if(hTokens!=nullptr){
+        if(!hTokens->NextShard())
+            return false;
+        shard_samps = hTokens->shard_samps;
+    }
     // bos = hDict->bos;
     // eos = hDict->eos;
+    return true;
 }
             
 /*
@@ -402,25 +588,23 @@ void SampLoader::Prepare(int flag){
             samples_size.push_back(context_length);
         }
 */
-void SampLoader::SetSamples(int nV,hDataToken hDT,std::vector<size_t>& samp_0,std::vector<size_t>& samp_L,
-    bool isTrain,CLI_params& hp_,int flag)  {
+void SampLoader::SetSamples(std::vector<size_t>& samp_0,std::vector<size_t>& samp_L,bool isTrain,CLI_params& hp_,int flag)  {
     // hparams = hp_;
     batch_sample = dolphin->hparams.batch_sample;
 
     double rSplit = 1.0-dolphin->hparams.rSplit;
-    // n_vocab = nV;    //hparams.n_vocab;
-    hTokens = hDT;
+    // hTokens = hDT;
     size_t nSample = samp_0.size(),pick=(size_t)(nSample*rSplit),i;
     //    assert(samp_begin.size() == samp_size.size());   
     if(isTrain){
         for(i=0;i<pick;i++){
-            all_samps.push_back(new SAMP(samp_0[i],samp_L[i]));
+            shard_samps.push_back(new SAMP(samp_0[i],samp_L[i]));
         }
           
         Shuffle( );
     } else if(pick<nSample) {
         for(i=pick;i<nSample;i++){
-            all_samps.push_back(new SAMP(samp_0[i],samp_L[i]));
+            shard_samps.push_back(new SAMP(samp_0[i],samp_L[i]));
         }
 
         if(1){  //too many batch in eval-set, so just random pick
@@ -430,10 +614,10 @@ void SampLoader::SetSamples(int nV,hDataToken hDT,std::vector<size_t>& samp_0,st
             
         }
     }
-    nSample = all_samps.size();
+    nSample = shard_samps.size();
     num_batches = nSample/dolphin->hparams.n_batch();
     num_batches = nSample==0 ? 0 : max(num_batches,1);
-    _INFO("%s@[%s]: tokens=%zu nSamp=%d nBach=%d\n", __func__,isTrain?"train":"eval", nTokens(),all_samps.size(),num_batches); 
+    _INFO("%s@[%s]: tokens=%zu nSamp=%d nBach=%d\n", __func__,isTrain?"train":"eval", nTokens(),shard_samps.size(),num_batches); 
 }
 
 double SAMP::UpdateTag(hDataToken hDT,int *tag,int step,bool do_mask,int flag)   {
@@ -469,7 +653,7 @@ double SAMP::UpdateTag(hDataToken hDT,int *tag,int step,bool do_mask,int flag)  
 
 bool SampLoader::TopoOrder(std::vector<size_t>&ids,std::mt19937& rng,int flag)  {    
     bool isRepeated = true;
-    size_t count = all_samps.size(),i,j,k,jj,pick,seed,nPick=16,nLeft;
+    size_t count = shard_samps.size(),i,j,k,jj,pick,seed,nPick=16,nLeft;
     size_t nSampInBatch=dolphin->hparams.n_batch(),nVocab=hTokens->nVocab,ctx=dolphin->hparams.n_ctx(),tib=dolphin->hparams.nTokenInBatch();
     if(count<nSampInBatch*10)
         return false;
@@ -482,7 +666,7 @@ bool SampLoader::TopoOrder(std::vector<size_t>&ids,std::mt19937& rng,int flag)  
     double rDup=0.0,avgDup=0,maxDup=0;
     for(i=0;i<nBatch;i++)    {  //for each batch
         seed = ids[i*nSampInBatch];
-        cur = all_samps[seed];
+        cur = shard_samps[seed];
         step++;
         double rEx = cur->UpdateTag(hTokens,stp,step,true),r,rBest=FLT_MAX;        
         for(j=i*nSampInBatch+1;j<(i+1)*nSampInBatch;j++)  {
@@ -494,7 +678,7 @@ bool SampLoader::TopoOrder(std::vector<size_t>&ids,std::mt19937& rng,int flag)  
                     }else       {
                         jj = j+rng()%nLeft;         assert(jj>=j && jj<count);
                     }
-                    next = all_samps[ids[jj]];
+                    next = shard_samps[ids[jj]];
                     r = next->UpdateTag(hTokens,stp,step,false);      
                     if(r>rBest){
                         rBest = r;  pick = jj;
@@ -502,7 +686,7 @@ bool SampLoader::TopoOrder(std::vector<size_t>&ids,std::mt19937& rng,int flag)  
                 }                
                 std::swap(ids[j],ids[pick]);
             }
-            next = all_samps[ids[j]];
+            next = shard_samps[ids[j]];
             r = next->UpdateTag(hTokens,stp,step,true);  
             assert(r==rBest || rBest==FLT_MAX);
             rEx+=r;
@@ -520,12 +704,12 @@ bool SampLoader::TopoOrder(std::vector<size_t>&ids,std::mt19937& rng,int flag)  
 }
 
 void SampLoader::Shuffle(int flag)  {
-    size_t count = all_samps.size(),i;
+    size_t count = shard_samps.size(),i;
     assert(count>0);
-    struct train_params_common _params = hOPT->TrainParams();
+    struct train_params_ _params = hOPT->TrainParams();
     //  hash_combine(samples_begin,samples_size[i],sample_count
         
-    const bool changed_train_data = false;  //(shuffle_samples_hash != hOPT->shuffle_samples_hash) || (train->shuffle_sample_count != all_samps.size());
+    const bool changed_train_data = false;  //(shuffle_samples_hash != hOPT->shuffle_samples_hash) || (train->shuffle_sample_count != shard_samps.size());
     if (changed_train_data) {
         _INFO("%s: train data seems to have changed. restarting shuffled epoch.\n", __func__);
     }
@@ -534,7 +718,7 @@ void SampLoader::Shuffle(int flag)  {
     }
     if ((shuffle_rng_state_current == "") || changed_train_data || _params.force_reshuffle) {
         shuffle_rng_state_current = mt19937_seed_to_state(_params.seed);
-        shuffle_sample_count = all_samps.size();
+        shuffle_sample_count = shard_samps.size();
         next_sample = 0;
         
     }
@@ -560,14 +744,14 @@ void SampLoader::Shuffle(int flag)  {
     }); 
     std::vector<hSAMP> tSamps;      tSamps.resize(count);
 
-    TopoOrder(ids,rng);     // May better, need more testing
+    //  TopoOrder(ids,rng);     // May better, need more testing
 
     for(i=0; i<count; ++i){
-        tSamps[i] = all_samps[ids[i]];
+        tSamps[i] = shard_samps[ids[i]];
     }
-    all_samps = tSamps;
+    shard_samps = tSamps;
     
-    shuffle_samples_hash = SAMP::HASH(fp_data.c_str(),all_samps);
+    shuffle_samples_hash = SAMP::HASH(fp_data.c_str(),shard_samps);
     shuffle_rng_state_next = mt19937_get_state(rng); 
 }
 
@@ -629,18 +813,20 @@ bool DataTokenSet::Load(struct CLI_params& hparams,void *hLLM,int flag){
         return true;
     auto arch = hparams.ModelArch();
     GST_TIC(tic);
-    string ssf = hparams.serial_path+".tokenset";     
+    string batch_sample = hparams.KV({"data","batch_sample"} ); 
+    // rSplit = jKV(jConfig,{"data","eval_split"},rSplit );
+    string ssf = "./dataset/Serial/";
+    string dict_type = hparams.KV({"dict","type"} );
+    ssf += "_["+hparams.model_title+dict_type+"]_"+".tokenset";       //hparams.serial_path+
+    ssf = serial_root+".tokenset"; //only for debug
+    // string ssf = hparams.serial_path+".tokenset";     
     if( Serialize(ssf,false) ){
         
     }else{
         if(hLLM==nullptr && arch!=MODEL_ARCH::NLP_GPT2_char && arch!=MODEL_ARCH::NLP_GPT2)
             return false;
-        fpath = hparams.fp_train_data.c_str();
-        tokens.clear();
-        if( !std::filesystem::exists(fpath) ){
-            _INFO("%s: warning: empty or not existing training data file '%s'\n", __func__, fpath.c_str());
-            return false;
-        }
+        fpath = hparams.GetDataPath(""); //fp_train_data.c_str();
+        tokens.clear();        
         FILE *fp = std::fopen(fpath.c_str(), "rb");
         if (fp == NULL) {
             _INFO("%s: warning: empty or not existing training data file '%s'\n", __func__, fpath.c_str());
@@ -724,9 +910,9 @@ hSAMP SampLoader::InitOneSamp(const string &prompt,hGensor input, int flag){
 
     hTokens->tokens.insert(hTokens->tokens.begin(),btch.begin(),btch.begin()+n_tokens);
     
-    all_samps.clear();
-    all_samps.push_back(new SAMP(0,n_tokens));    
-    hSAMP samp = all_samps[0];
+    shard_samps.clear();
+    shard_samps.push_back(new SAMP(0,n_tokens));    
+    hSAMP samp = shard_samps[0];
     // assert(_nvocab==0);
     // _nvocab = hDict->n_vocab;
     num_batches = 1;
@@ -779,4 +965,105 @@ int DataTokenSet::UniqueTokens(size_t n_1,int flag){
     }    
     assert(mapT2T.size()==nUnique);
     return nUnique;
+}
+
+/*
+*/
+void SampLoader_glob::Init( const char* filename_pattern,size_t B_,size_t T_,int process_rank_,int num_processes_,int should_shuffle_) {
+    process_rank = process_rank_;
+    num_processes = num_processes_;
+    B = B_;         T = T_;
+    assert(B>0 && T>0);
+    fpToken = NULL;
+    should_shuffle = should_shuffle_;
+    header_bytes = HEADER_SIZE * sizeof(int);
+    total_batch_size_bytes = ((num_processes * (B * T)) * sizeof(uint16_t));
+    local_batch_offset_bytes = process_rank * B * T * sizeof(uint16_t);
+
+    // glob to get the list of files matching the pattern, these are our data shards
+    int glob_status = glob(filename_pattern, 0, NULL, &glob_result);
+    if (glob_status != 0) {
+        printf("Error: failed to glob pattern: %s\n", filename_pattern);
+        exit(EXIT_FAILURE);
+    }
+    if (glob_result.gl_pathc == 0) {
+        printf("Error: no files found matching the pattern: %s\n", filename_pattern);
+        exit(EXIT_FAILURE);
+    }
+
+    if (should_shuffle) {
+        manual_seed(&shuffle_rng, 42 + process_rank);
+        shard_indices = (int*)mallocCheck(glob_result.gl_pathc * sizeof(int));
+        init_identity_permutation(shard_indices, (int) glob_result.gl_pathc);
+        intra_shard_indices = NULL;  // dynamically allocated allowing different shard sizes
+    }
+
+    // inspect and validate all shards so we don't get any runtime errors later
+    // if too slow / too many shards, may wish to revisit later
+    int64_t ntok_total = 0;
+    for (int id = 0; id < glob_result.gl_pathc; id++) {
+        int64_t shard_ntok = PrepareShard( id);
+        // we need at least one batch/shard, the way things are written right now.
+        // can be relaxed a lot later.
+        assert(shard_ntok >= (int64_t) (num_processes * B * T + 1));
+        ntok_total += shard_ntok;
+    }
+    // debugging prints
+    // printf("SampLoader: filename_pattern: %s\n", filename_pattern);
+    // printf("SampLoader: Found %ld tokens across %zu shards\n", ntok_total, glob_result.gl_pathc);
+
+    // allocate all the space we'll need
+    buffer = (uint16_t*)mallocCheck((B * T + 1) * sizeof(uint16_t));
+    inputs = (int*)mallocCheck(B * T * sizeof(int));
+    targets = (int*)mallocCheck(B * T * sizeof(int));
+    num_tokens = ntok_total;
+
+    // reset the  to initialize it
+    reset( );
+}
+
+std::string shuffle_samples_X(
+        const std::string & rng_state,size_t* shuffled_offs,
+        size_t            * shuffled_begins,
+        size_t            * shuffled_sizes,
+        const size_t      * begins,
+        const size_t      * sizes,
+        size_t              count) {
+    if (count == 0) return rng_state;
+
+    std::mt19937 rng;
+    mt19937_set_state(rng, rng_state);
+
+    // sort indices by random value for each index
+    std::vector<size_t> idcs;
+    {
+        std::vector<unsigned> rnd;
+        idcs.resize(count);
+        rnd.resize(count);
+        for (unsigned i=0; i<count; ++i) {
+            idcs[i] = i;
+            rnd[i]  = rng();
+        }
+
+        std::sort(idcs.begin(), idcs.end(), [&rnd](size_t a, size_t b){
+            // stable sort for reproducibility
+            return (rnd[a] == rnd[b]) ? (a < b) : (rnd[a] < rnd[b]);
+        });
+    }
+
+    // create random offsets
+    for (unsigned i=0; i<count; ++i) {
+        shuffled_offs[i] = (size_t) ((sizes[idcs[i]] - 1) * ((double) rng() / (double) (rng.max()-1)));
+    }
+
+    // reorder begins and sizes by sorted indices
+    for (unsigned i=0; i<count; ++i) {
+        shuffled_begins[i] = begins[idcs[i]];
+    }
+
+    for (unsigned i=0; i<count; ++i) {
+        shuffled_sizes[i] = sizes[idcs[i]];
+    }
+
+    return mt19937_get_state(rng);
 }
