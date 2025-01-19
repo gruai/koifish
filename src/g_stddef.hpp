@@ -162,6 +162,16 @@ void FREE_a( T* &ptr ){
             return HT[key];
     }
 #endif
+
+template <typename T> 
+bool isInRange(const T* inp,size_t nz,T t0,T t1){    
+    for(size_t i=0;i<nz;i++,inp++){
+        if(*inp<t0 || *inp>t1)
+            return false;
+    }
+    return true;
+}
+
 // double a = fabs(arr[i]) !!!
 template<typename T, typename tpFF>
 void G_minmax(T *arr,tpFF dim, double& a_0, double& a_1,tpFF&nz){

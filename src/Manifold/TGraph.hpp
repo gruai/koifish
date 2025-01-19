@@ -43,13 +43,10 @@ protected:
     //lite ggml_hash_set
     std::set<hGensor> gset;
     //from GGML
-    int size=0,nForwN=0,nForwL=0,nNeedGrad=0; // n_nodes=0,n_leafs=0;+
+    int size=0,nForwN=0,nForwL=0,nNeedGrad=0,nInput=0; // n_nodes=0,n_leafs=0;+
     hGensor*nodes=nullptr,*grads=nullptr,*leafs=nullptr;
     std::vector<hGensor> topo_nodes;    //nodes in Topological order
     std::vector<hGensor> sinks;      //  sinks of tensor flow graph
-    // std::map<hGensor, GENSOR_INFO> gimap;   // Get gensor info from map
-    
-    // vector<hGensor> nodes,grads,leafs;
     // struct ggml_hash_set visited_hash_table = { 0, nullptr };   
     enum ggml_cgraph_eval_order order=GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT;
     // performance
@@ -78,15 +75,18 @@ protected:
 #endif*/
 
     struct ggml_cgraph * raw() {
+#ifdef _TENSOR_CUD_
+    return nullptr;
+#endif
         assert(cgraph!=nullptr);
         return cgraph;
     }
 
 public:
     TGraph()    {}
-    TGraph(Fish *hF_,const string&nam_,struct ggml_cgraph *c,bool isB=false,int flag=0x0) : 
-        hFish(hF_),name(nam_),cgraph(c),isBackward(isB) {
-    }
+    // TGraph(Fish *hF_,const string&nam_,struct ggml_cgraph *c,bool isB=false,int flag=0x0) : 
+    //     hFish(hF_),name(nam_),cgraph(c),isBackward(isB) {
+    // }
 
     TGraph(Fish *hF_,const string&nam_,struct ggml_context *ctx_,bool isGrad,int flag=0x0);
 
@@ -152,17 +152,9 @@ public:
     }
 
     virtual struct ggml_cgraph * BuildBackward(struct ggml_context * ctx_build,std::shared_ptr<TGraph> gf, bool accumulate=false,int flag=0x0);
-    virtual bool Alloc(ggml_gallocr_t& alloc,int flag=0x0);
     // Push new added node to last position
     void PushBack(hGensor node,int flag=0x0);
     
-    void disconnect_node(ggml_tensor * t) {
-        t->op = GGML_OP_NONE;
-        for (int i = 0; i < GGML_MAX_SRC; i++) {
-            t->src[i] = NULL;
-        }
-    }
-
     bool isSink(hGensor node,int flag=0x0);   
 
     virtual void Traverse(int flag=0x0);
@@ -191,8 +183,8 @@ public:
         _INFO("n_leafs = %d\n", cgraph->n_leafs);
         for (int i = 0; i < cgraph->n_leafs; i++) {
             hGensor node = leafs[i];
-            _INFO(" - %3d: [ %5" PRId64 ", %5" PRId64 "] %8s %16s\n",
-                    i,node->ne[0], node->ne[1],ggml_op_name(node->op), ggml_get_name(node));        }
+            // _INFO(" - %3d: [ %5" PRId64 ", %5" PRId64 "] %8s %16s\n",i,node->ne[0], node->ne[1],ggml_op_name(node->op), ggml_get_name(node));        
+        }
         for (int i = 0; i < GGML_OP_COUNT; i++) {
             if (perf_total_per_op_us[i] == 0) {
                 continue;

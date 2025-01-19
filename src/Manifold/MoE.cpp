@@ -10,54 +10,54 @@
 #include "gLLM.hpp"
 
 bool QKV_LAY::CreateFFN(const CLI_params&hparams, ggml_context *ctx, FFN_TYPE tpFFN, int flag)  {
-    const uint32_t n_embd = hparams.n_embd, n_ctx = hparams.n_ctx(), n_ff = hparams.n_ff(), n_batch = hparams.n_batch();  
-    const uint32_t n_expert = hparams.n_expert;
+    const int n_embd = hparams.n_embd, n_ctx = hparams.n_ctx(), n_ff = hparams.n_ff(), n_batch = hparams.n_batch();  
+    const int n_expert = hparams.n_expert;
     switch(tpFFN){
     case VAR_LAST:
     case SWIGLU:
         if(hparams.ZMUV_ratio>0)
             ffn_norm.w = nullptr;  
         else
-            ffn_norm.w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
+            ffn_norm.w = TENSO(ctx, GGML_TYPE_F32, {n_embd});
         if(hparams.ffn_use_gate)
-            ffn_gate = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   n_ff);
-        down.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,   n_ff, n_embd);
-        up.w   = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   n_ff); 
+            ffn_gate = TENSO(ctx, GGML_TYPE_F32, {n_embd,   n_ff});
+        down.w = TENSO(ctx, GGML_TYPE_F32,   {n_ff, n_embd});
+        up.w   = TENSO(ctx, GGML_TYPE_F32, {n_embd,   n_ff}); 
         if(tpFFN==VAR_LAST && isLast){/*i==n_layer-1*/
-            eps = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   n_batch*n_ctx);   
+            eps = TENSO(ctx, GGML_TYPE_F32, {n_embd,   n_batch*n_ctx});   
         }
         break;
     case ONLY_LNormal:
     case ONLY_RMSNormal:
-        ffn_norm.w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
+        ffn_norm.w = TENSO(ctx, GGML_TYPE_F32, {n_embd});
         break;
     case VAR_0:
-        eps = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   n_batch*n_ctx);   
+        eps = TENSO(ctx, GGML_TYPE_F32, {n_embd,   n_batch*n_ctx});   
         break;  
     case GATE_CYS:
         assert(0);
         break;
     case SMOE:{// MoE branch
         assert(n_expert>0 && hparams.n_expert_used>0) ; 
-        ffn_gate_inp = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd,   n_expert);
+        ffn_gate_inp = TENSO(ctx, GGML_TYPE_F32, {n_embd,   n_expert});
         // ffn_gate_inp = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_GATE_INP, "weight", i), {n_embd, n_expert});        
-        const int64_t n_ff_exp = hparams.n_ff_exp ? hparams.n_ff_exp : n_ff / hparams.n_expert_used;
-        ffn_gate_exps = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_embd, n_ff_exp, n_expert);
+        const int n_ff_exp = hparams.n_ff_exp ? hparams.n_ff_exp : n_ff / hparams.n_expert_used;
+        ffn_gate_exps = TENSO(ctx, GGML_TYPE_F32, {n_embd, n_ff_exp, n_expert});
         // ffn_gate_exps = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_GATE_EXPS, "weight", i), {  n_embd, n_ff_exp, n_expert});
-        ffn_down_exps = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_ff_exp,   n_embd, n_expert); 
+        ffn_down_exps = TENSO(ctx, GGML_TYPE_F32, {n_ff_exp,   n_embd, n_expert}); 
         // ffn_down_exps = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_DOWN_EXPS, "weight", i), {n_ff_exp,   n_embd, n_expert});
-        ffn_up_exps = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_embd, n_ff_exp, n_expert); 
+        ffn_up_exps = TENSO(ctx, GGML_TYPE_F32, {n_embd, n_ff_exp, n_expert}); 
         // ffn_up_exps   = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_UP_EXPS,   "weight", i), {  n_embd, n_ff_exp, n_expert});
 
         // Shared expert branch
-        const int64_t n_ff_shexp = hparams.n_ff_shexp ? hparams.n_ff_shexp : n_ff;
-        ffn_gate_inp_shexp = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd); 
+        const int n_ff_shexp = hparams.n_ff_shexp ? hparams.n_ff_shexp : n_ff;
+        ffn_gate_inp_shexp = TENSO(ctx, GGML_TYPE_F32, {n_embd}); 
         // ffn_gate_inp_shexp = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_GATE_INP_SHEXP, "weight", i), {n_embd});
-        ffn_gate_shexp = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_ff_shexp);
+        ffn_gate_shexp = TENSO(ctx, GGML_TYPE_F32, {n_embd, n_ff_shexp});
         // ffn_gate_shexp = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_GATE_SHEXP, "weight", i), {    n_embd, n_ff_shexp});
-        ffn_down_shexp = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_ff_shexp, n_embd);
+        ffn_down_shexp = TENSO(ctx, GGML_TYPE_F32, {n_ff_shexp, n_embd});
         // ffn_down_shexp = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_DOWN_SHEXP, "weight", i), {n_ff_shexp,     n_embd});
-        ffn_up_shexp = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_ff_shexp);
+        ffn_up_shexp = TENSO(ctx, GGML_TYPE_F32, {n_embd, n_ff_shexp});
         // ffn_up_shexp   = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_UP_SHEXP,   "weight", i), {    n_embd, n_ff_shexp});
     }
         break;
@@ -83,137 +83,17 @@ size_t LLM_MOE::MostMemSize(int flag)  {
 
 
 
-hGensor LLM_MOE::build_layer_( int N,struct ggml_context *ctx_build,hGensor cur,std::shared_ptr<QKV_LAY> layer,hGensor  KQ_pos,/*hGensor cur, hGensor wq, hGensor wk, hGensor wv, hGensor wo,
-    hGensor attention_norm,hGensor KQ_pos,hGensor ffn_norm.w,hGensor ffn_up,hGensor ffn_gate,hGensor ffn_down,*/ int flag) {
-    auto train_params = hparams.common;
-    int n_vocab = hDict->n_vocab,n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd,n_head = hparams.n_head(),n_ff = hparams.n_ff();
-    const float f_norm_rms_eps  = hparams.f_norm_rms_eps;
-    const float rope_freq_base  = hparams.rope_freq_base;
-    const float rope_freq_scale = hparams.rope_freq_scale;  
-    const float kv_scale = 1.0f/sqrtf(float(hparams.n_embd)/hparams.n_head());
-    const int n_past = 0, n_head_kv=hparams.n_head_kv(),n_embd_head = hparams.n_embd_head();
-    hGensor wq = UpdateGensor (layer->Q.w->name);                     
-    hGensor wk = layer->K.w==nullptr ? nullptr : UpdateGensor (layer->K.w->name);
-    hGensor wv = layer->V.w==nullptr ? nullptr : UpdateGensor (layer->V.w->name);
-    hGensor wo = UpdateGensor (layer->wo->name);
-    hGensor attention_norm = UpdateGensor (layer->att_norm.w->name);    
-    hGensor ffn_norm = layer->ffn_norm.w==nullptr ? nullptr : UpdateGensor (layer->ffn_norm.w->name); 
-    hGensor ffn_up = nullptr,ffn_gate=nullptr,ffn_down=nullptr;
-    if(layer->up.w!=nullptr){                
-        ffn_up = UpdateGensor (layer->up.w->name);
-        ffn_gate = UpdateGensor (layer->ffn_gate->name);
-        ffn_down = UpdateGensor (layer->down.w->name);                
-    }  
-
-    //  rms_norm:   Root Mean Square Layer Normalization
-    hGensor  t02 = ggml_rms_norm     (ctx_build, cur, f_norm_rms_eps);                    gTN(t02, "t02");     assert_shape_2d(t02, n_embd, N*n_batch);
-    hGensor  t03 = ggml_repeat       (ctx_build, attention_norm, t02);              gTN(t03, "t03");     assert_shape_2d(t03, n_embd, N*n_batch);
-    hGensor  t04 = ggml_mul          (ctx_build, t03, t02);                               gTN(t04, "t04");     assert_shape_2d(t04, n_embd, N*n_batch);
-    // QKV_Motion qkv(wq,wk,wv,n_embd,n_head,  N, n_batch,n_rot, n_ctx,n_head_kv,f_norm_rms_eps,rope_freq_base,rope_freq_scale);
-    hBrownMotion hBrown = CreateBrownMotion(wq, wk, wv,layer);                              
-    hGensor t16 = hBrown->Build(ctx_build , t04,  KQ_pos);        
-    hGensor  t17 = ggml_permute      (ctx_build, t16, 0, 2, 1, 3);                        gTN(t17, "t17");     assert_shape_4d(t17, n_embd/n_head, n_head, N, n_batch);
-    hGensor  t18 = ggml_cont         (ctx_build, t17);                                    gTN(t18, "t18");     assert_shape_4d(t18, n_embd/n_head, n_head, N, n_batch);
-    hGensor  t19 = ggml_reshape_2d   (ctx_build, t18, n_embd, N*n_batch);                 gTN(t19, "t19");     assert_shape_2d(t19, n_embd, N*n_batch);
-    hGensor  t20 = ggml_mul_mat      (ctx_build, wo, t19);                          gTN(t20, "t20");     assert_shape_2d(t20, n_embd, N*n_batch);
-    hGensor  t21 = ggml_add          (ctx_build, t20, cur);                               gTN(t21, "t21");     assert_shape_2d(t21, n_embd, N*n_batch);
-    hGensor  ffn = nullptr;
-    switch(tpFFN)   {
-    case VAR_LAST:
-    case SWIGLU:    {
-        hGensor  t22 = ggml_rms_norm     (ctx_build, t21, f_norm_rms_eps);                    gTN(t22, "t22");     assert_shape_2d(t22, n_embd, N*n_batch);
-        ffn = t22;
-        if(ffn_norm!=nullptr)       {
-            hGensor  t23 = ggml_repeat       (ctx_build, ffn_norm, t22);                    gTN(t23, "t23");     assert_shape_2d(t23, n_embd, N*n_batch);
-            hGensor  t24 = ggml_mul          (ctx_build, t23, t22);                               gTN(t24, "t24");     assert_shape_2d(t24, n_embd, N*n_batch); 
-            ffn = t24;                 
-        }
-          
-        if(ffn_up!=nullptr){
-            // hGensor  t22 = ggml_rms_norm     (ctx_build, t21, f_norm_rms_eps);                    gTN(t22, "t22");     assert_shape_2d(t22, n_embd, N*n_batch);
-            // hGensor  t23 = ggml_repeat       (ctx_build, ffn_norm, t22);                    gTN(t23, "t23");     assert_shape_2d(t23, n_embd, N*n_batch);
-            // hGensor  t24 = ggml_mul          (ctx_build, t23, t22);                               gTN(t24, "t24");     assert_shape_2d(t24, n_embd, N*n_batch);
-            hGensor  t24 = ffn;
-            hGensor  t25 = ggml_mul_mat      (ctx_build, ffn_up, t24);                      gTN(t25, "t25");     assert_shape_2d(t25, n_ff, N*n_batch);
-            hGensor  t26 = ggml_mul_mat      (ctx_build, ffn_gate, t24);                    gTN(t26, "t26");     assert_shape_2d(t26, n_ff, N*n_batch);
-            hGensor  t27 = ggml_silu         (ctx_build, t26);                                    gTN(t27, "t27");     assert_shape_2d(t27, n_ff, N*n_batch);
-            hGensor  t28 = ggml_mul          (ctx_build, t27, t25);                               gTN(t28, "t28");     assert_shape_2d(t28, n_ff, N*n_batch);
-            hGensor  t29 = ggml_mul_mat      (ctx_build, ffn_down, t28);                    gTN(t29, "t29");     assert_shape_2d(t29, n_embd, N*n_batch);
-            hGensor  t30 = ggml_add          (ctx_build, t29, t21);                               gTN(t30, "t30");     assert_shape_2d(t30, n_embd, N*n_batch);
-            ffn = t30;
-        }
-        if(layer->eps!=nullptr){
-            // hGensor  t300 = ffn!=nullptr ? ggml_rms_norm(ctx_build, ffn, f_norm_rms_eps) : ggml_rms_norm(ctx_build, t21, f_norm_rms_eps);
-            randomize_tensor_normal(layer->eps, rnd); 
-            hGensor  noise = GG_SCAL(ctx_build, layer->eps, 0.001);
-            ffn = ggml_add          (ctx_build, ffn,noise);     
-        }else{
-        }
-        return ffn;  
-    } 
-    case GATE_CYS:{
-    }
-        break;
-    case SMOE:{
-        /*LAMA *lam = lama();      assert(lam!=nullptr); 
-        //  build_qwen2moe:     LLM_FFN_SILU,false,false,
-        ffn = moe_build_ffn(ctx_build, *(lam->_ctx), cur,
-                    layer->ffn_gate_inp,layer->ffn_up_exps,layer->ffn_gate_exps,layer->ffn_down_exps,
-                    n_expert, n_expert_used,false,false, 0.0,layer->id);
-        }
-        return ffn; */
-        return nullptr; 
-    }
-        break;
-    case VAR_0:
-    case ONLY_LNormal:
-    case ONLY_RMSNormal:    {
-        assert(ffn_up==nullptr);
-        hGensor  t22 = tpFFN==ONLY_LNormal ? ggml_norm(ctx_build, t21, f_norm_rms_eps) :
-            ggml_rms_norm(ctx_build, t21, f_norm_rms_eps);
-        gTN(t22, "t22");               assert_shape_2d(t22, n_embd, N*n_batch);   
-        if(tpFFN==VAR_0)     {
-            randomize_tensor_normal(layer->eps, rnd); 
-            hGensor  noise = GG_SCAL(ctx_build, layer->eps, 0.001);
-            ffn = ggml_add          (ctx_build, t22,noise);     
-            // ffn = t22;        
-        }else{
-            hGensor  t23 = ggml_repeat       (ctx_build, ffn_norm, t22);                    gTN(t23, "t23");     assert_shape_2d(t23, n_embd, N*n_batch);
-            ffn = ggml_mul          (ctx_build, t23, t22);
-        }
-        return ffn;
-    }
-    default:
-        TO_DO;
-        break;
-    }
-    if(ffn_up==nullptr)   {        
-        
-        /*trick v0
-            mu = self.fc_mu(x)
-            log_var = self.fc_var(x)
-            std = torch.exp(0.5 * log_var)
-            eps = torch.randn_like(std)
-            z = eps * std + mu        
-        //  
-        // hGensor  tMu = ggml_mul          (ctx_build, layer->w_mu, t21);
-        // hGensor  tVar = ggml_mul          (ctx_build, layer->w_var, t21);*/
-        //  trick v1
-                              
-            // gTN(t30, "t30");     assert_shape_2d(t30, n_embd, N*n_batch);
-        return ffn;
-    }else{
-        
-    }    
-    return nullptr;             
-}
 
 hGensor MixOfModels::Forward(struct ggml_context * ctx,hGensor cur,hGensor w){
+#ifdef _TENSOR_CUD_
+    return nullptr;
+#else
     int n_vocab=cur->ne[0],n_ctx=cur->ne[1],n_batch=cur->ne[2];
     hGensor expert = ggml_reshape_2d(ctx,cur,n_vocab,n_ctx*n_batch);
     hGensor wB = _repeat(ctx,w,expert);
     gTN(wB,"%s_r",w->name);
     return ggml_mul(ctx,expert,wB);
+#endif
 }
 
 void MixOfSwarm::Init(tpSWARM&swarm,struct ggml_context *ctx,int n_embd,int flag){
@@ -225,13 +105,16 @@ void MixOfSwarm::Init(tpSWARM&swarm,struct ggml_context *ctx,int n_embd,int flag
         if(a==nullptr){
             a = b;
         }else{
-            assert(ggml_are_same_shape(a, b));
+            // assert(ggml_are_same_shape(a, b));
         }
     }
-    gat_ = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, swarm.size()+1);
+    gat_ = TENSO(ctx, GGML_TYPE_F32, {n_embd, (int)(swarm.size()+1)});
 }
 
 hGensor MixOfSwarm::Build(CLI_params&hparams,struct ggml_context * ctx,hGensor cur,int flag )  { 
+    hGensor ouput = nullptr;
+#ifdef _TENSOR_CUD_
+#else
     // return cur;
     int n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd;
     int i=0,nSwarm=exs.size()+1;      
@@ -248,7 +131,7 @@ hGensor MixOfSwarm::Build(CLI_params&hparams,struct ggml_context * ctx,hGensor c
     // hGensor tA = ggml_reshape_2d(ctx,curlogits,n_vocab,n_ctx*n_batch);      //[nVocab, n_ctx*nBatch] 
     hGensor wA = ggml_view_2d(ctx, probs, 1, nToken,ld1, 0);         //[1, n_ctx*nBatch] ne0,ne1,nb1,offset
     //  wA = _repeat(ctx,wA,tA);   
-    hGensor ouput = Forward(ctx,cur,wA);     //ggml_mul(ctx,tA,wA);
+    ouput = Forward(ctx,cur,wA);     //ggml_mul(ctx,tA,wA);
     for(auto tB : exs){
         i++;  
         // float *logistB = (float*)(tB->data);    //always nullptr    
@@ -262,10 +145,14 @@ hGensor MixOfSwarm::Build(CLI_params&hparams,struct ggml_context * ctx,hGensor c
     if(isRes){
         ouput = ggml_add(ctx,ouput,cur);   
     }
+#endif
     return ouput;
 }
 
 hGensor NLP_AutoRegressive::build_gate(struct ggml_context * ctx,hGensor cur,hGensor curlogits, int flag )  {
+    hGensor ouput = nullptr;
+#ifdef _TENSOR_CUD_
+#else
     bool isRes = true,isSiLU=false;
 
     int n_vocab = hDict->tVocab(),n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd;
@@ -286,7 +173,7 @@ hGensor NLP_AutoRegressive::build_gate(struct ggml_context * ctx,hGensor cur,hGe
     hGensor wA = ggml_view_2d(ctx, probs, 1, n_ctx*n_batch,ld1, 0);         //[1, n_ctx*nBatch] ne0,ne1,nb1,offset
     wA->name[0]='\0';   gTN(wA,"gate_probs_000");
     //  wA = _repeat(ctx,wA,tA);   
-    hGensor ouput = mom.Forward(ctx,curlogits,wA);     //ggml_mul(ctx,tA,wA);
+    ouput = mom.Forward(ctx,curlogits,wA);     //ggml_mul(ctx,tA,wA);
     gTN(ouput,"gate_ouput_0");
     for(auto wiki : wikis){
         i++;  
@@ -313,5 +200,6 @@ hGensor NLP_AutoRegressive::build_gate(struct ggml_context * ctx,hGensor cur,hGe
         ouput = ggml_add(ctx,ouput,curlogits);   
         gTN(ouput,"gate_ouput+");
     }
+#endif
     return ouput;
 }

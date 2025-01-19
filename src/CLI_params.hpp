@@ -173,8 +173,8 @@ struct CLI_params {
     }
     uint32_t n_batch()  const    {  return common.n_batch;}             //number of samps in each batch
     uint32_t nTokenInBatch()  const    {  return common.n_batch*common.n_ctx;}
-    uint32_t n_seq_max,n_ctx_orig_yarn,n_ctx_train=-1;
-    bool isLongRope(uint32_t il = 0) const {
+    uint32_t n_seq_max,n_ctx_orig_yarn,n_ctx_train=0;
+    bool isLongRope(int il = 0) const {
         assert(il>=0 && il<layerps.size());
         const auto n_ctx_pre_seq = n_ctx() / n_seq_max;
         bool isLong = n_ctx_pre_seq > n_ctx_orig_yarn;
@@ -331,27 +331,27 @@ struct CLI_params {
         }
             
     }
-    uint32_t n_head(uint32_t il = 0) const {
+    uint32_t n_head(int il = 0) const {
         assert(il>=0 && il<layerps.size());
         return layerps[il].n_head();        
     }
-    uint32_t n_head_kv(uint32_t il = 0) const {
+    uint32_t n_head_kv(int il = 0) const {
         assert(il>=0 && il<layerps.size());
         return layerps[il].n_head_kv();
     }
 
-    uint32_t n_ff(uint32_t il = 0) const {
+    uint32_t n_ff(int il = 0) const {
         assert(il>=0 && il<layerps.size());
         if(nFFX<=0)
             return layerps[il].n_ff();        
         else
             return nFFX;
     }
-    uint32_t n_embd_head(uint32_t il = 0) const {
+    uint32_t n_embd_head(int il = 0) const {
         assert(il>=0 && il<layerps.size());
         return layerps[il].n_embd_head(n_embd);        
     }
-    uint32_t n_embd_gqa(uint32_t il = 0) const {
+    uint32_t n_embd_gqa(int il = 0) const {
         assert(il>=0 && il<layerps.size());
         return layerps[il].n_embd_gqa(n_embd);        
     }

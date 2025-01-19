@@ -1,4 +1,4 @@
-#include "console.h"
+#include "../../llama.cpp/common/console.h"
 #include "GoPT.hpp"
 #include "Fish.hpp"
 #include "gLLM.hpp"
@@ -143,10 +143,11 @@ int GPT_work(CLI_params& hparams)  {
     hparams.debug.SelfAttention_noraml = 0;
     hparams.debug.NO_loss = true;
     hparams.debug.graph_dump = 1;
+    // hparams.wiki_actor="";    //only for debug
 
     hparams.isOnlyGPT = true;
     hparams.passLoadToken = true;
-    bool isMakeFish = hparams.is({"wiki","actor"},"copy") || hparams.is({"wiki","actor"},"OnlyTokenizer");
+    bool isMakeFish = hparams.is({"wiki","actor"},"copy") || hparams.wiki_actor=="OnlyTokenizer";
     hFISH fish = nullptr;
     vector<hWIKI> wikis = WIKI::MakeInstance("",hparams,0x0);          
     if(hparams.fn_model_base.size()>0 && !isMakeFish){
@@ -274,53 +275,23 @@ GeneratOnPrompt::GeneratOnPrompt(CLI_params&cp_,arrHWIKI& wiki_, const Fish *hG_
         auto gang_param = hparams;
         gang_param.tpWiki = "off";      assert(gang_param.tpWiki=="off");
         gang_param.common.n_batch = 1;
-        fish_1 = Fish::MakeInstance("4GPT_",gang_param,wikis,Fish::ROLE_TYPE::SWARM_FOLLOWER,0x110);        //  isLocalInfer = flag==0x110;
+        fish_1 = (Fish*)fish_0;
+        // fish_1 = Fish::MakeInstance("4GPT_",gang_param,wikis,Fish::ROLE_TYPE::SWARM_FOLLOWER,0x110);        //  isLocalInfer = flag==0x110;
+        // fish_1->Dump(0x0);
 
-            //fish_1 = Fish::MakeInstance("4GPT_",gang_param,hG_,0x110);
-        // fish_1 = Fish::MakeInstance("4GPT_",gang_param,0x0);
-        fish_1->Dump(0x0);
-        if(0){//only for debug
-            vector<float> logits;    
-            fish_1->LocalFeeling(dialogs,logits);
-        } 
         _arch = fish_0->arch;         
     }else{
         _arch = hparams.ModelArch();
     }
     if(!wikis.empty())
         wiki0 = wikis[0];
-/*
-    // fish_1 = nullptr;
-    params.seed = 42; 
-    params.sparams.seed = params.seed;
-    if(!hparams.fn_model_base.empty())
-        params.model = hparams.fn_model_base[0];   //"./models/Meta-Llama-3-8B.Q2_K.gguf";
-    else
-        params.model = hparams.KV({"arch"});
-    
-    // prompt = hparams.prompt; 
-    //"when the smoke is going down,"; //"Building a website can be done in 10 simple steps:\\nStep 1:";
-    params.escape = true;
-    params.n_predict = 32;
-    gpt_params_handle_model_default(params);
-    if (params.escape)    {
-        string_process_escapes(params.prompt);
-        string_process_escapes(params.input_prefix);
-        string_process_escapes(params.input_suffix);
-        string_process_escapes(params.sparams.cfg_negative_prompt);
-        for (auto &antiprompt : params.antiprompt)        {
-            string_process_escapes(antiprompt);
-        }
-    }
-
-    n_predict = params.n_predict;    
-    LOG("%s wiki=%ld propmt=\"%s\" n_predict=%d logits_all=%d\n", __func__,wikis.size(),GetPrompt().c_str(),n_predict,params.logits_all );*/
 }
 
 bool GeneratOnPrompt::Init(const std::string &prompt_, int flag)    {
     // std::tie(model, ctx) = llama_init_from_gpt_params(params);
     if(fish_1!=nullptr) {
-        dialogs = std::make_shared<SampLoader>(fish_1.get(),"gpt", true);        
+        dialogs = std::make_shared<SampLoader>(fish_1,"gpt", true);       
+        dialogs->Prepare(fish_1->tsEval); 
         dialogs->isRecycle = false;
         dialogs->type = SampLoader::TYPE::DT_EVAL;          
     }
@@ -383,7 +354,7 @@ bool GeneratOnPrompt::Init(const std::string &prompt_, int flag)    {
 }
 
 void GeneratOnPrompt::DisplayEmbd(bool input_echo, int n_consumed, int flag){
-    NLP_AutoRegressive *dolphin = dynamic_cast<NLP_AutoRegressive *>(fish_1.get());
+    NLP_AutoRegressive *dolphin = dynamic_cast<NLP_AutoRegressive *>(fish_1);
     std::string token_str;
     if (input_echo && display)    {
         for (auto id : tokens)        {            
@@ -759,7 +730,7 @@ void GeneratOnPrompt::OnAntiPrompt(int flag){
 }
 
 std::string GeneratOnPrompt::T2STR(TOKEN_ID tok,int flag){
-    NLP_AutoRegressive *dolphin = dynamic_cast<NLP_AutoRegressive *>(fish_1.get());
+    NLP_AutoRegressive *dolphin = dynamic_cast<NLP_AutoRegressive *>(fish_1);
     std::string token_str;
     if(dolphin!=nullptr)
         token_str = dolphin->hDict->T2STR(tok);

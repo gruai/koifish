@@ -33,8 +33,8 @@ hGensor KVCache::SerialV(struct ggml_context *ctx,hGensor Vcur,int il,bool isSav
     if(isSave){
         char nam_[128];
         size_t nzV = n_ctx*n_batch*n_embd_v_gqa;
-            // struct ggml_tensor * v_cache_view = ggml_view_1d(ctx, kv->v_l[il], nzV, ggml_row_size(kv->v_l[il]->type, n_embd_v_gqa)*kv_head);        
-            struct ggml_tensor *v_cache_view = ggml_view_2d(ctx, kv->v_l[il], n_ctx*n_batch, n_embd_v_gqa,(n_ctx)*ggml_element_size(kv->v_l[il]),(kv_head)*ggml_element_size(kv->v_l[il]));
+            // hGensor  v_cache_view = ggml_view_1d(ctx, kv->v_l[il], nzV, ggml_row_size(kv->v_l[il]->type, n_embd_v_gqa)*kv_head);        
+            hGensor v_cache_view = ggml_view_2d(ctx, kv->v_l[il], n_ctx*n_batch, n_embd_v_gqa,(n_ctx)*ggml_element_size(kv->v_l[il]),(kv_head)*ggml_element_size(kv->v_l[il]));
             sprintf(nam_,"v_cache_view-%d",il);    gTN(v_cache_view, nam_);         //cb(v_cache_view, "v_cache_view", il);
             Vcur = ggml_transpose(ctx, Vcur);
             ggml_cpy(ctx, Vcur, v_cache_view);          v = v_cache_view;            
@@ -59,7 +59,7 @@ hGensor KVCache::SerialK(struct ggml_context *ctx,hGensor Kcur,int il,bool isSav
     if(isSave){
         char nam_[128];
         size_t nzK = n_ctx*n_batch*n_embd_k_gqa;
-            struct ggml_tensor * k_cache_view = ggml_view_1d(ctx, kv->k_l[il], nzK, ggml_row_size(kv->k_l[il]->type, n_embd_k_gqa)*kv_head);
+            hGensor  k_cache_view = ggml_view_1d(ctx, kv->k_l[il], nzK, ggml_row_size(kv->k_l[il]->type, n_embd_k_gqa)*kv_head);
             sprintf(nam_,"k_cache_view-%d",il);    gTN(k_cache_view, nam_);   
         ggml_cpy(ctx, Kcur, k_cache_view);          k = k_cache_view;     
             
@@ -102,6 +102,6 @@ void KVCache::init_lamakv(int n_batch) {
         }
     }
 
-    cache->k = ggml_new_tensor_1d(cache->ctx, GGML_TYPE_F32, n_elements);
-    cache->v = ggml_new_tensor_1d(cache->ctx, GGML_TYPE_F32, n_elements);*/
+    cache->k = TENSO(cache->ctx, GGML_TYPE_F32, n_elements);
+    cache->v = TENSO(cache->ctx, GGML_TYPE_F32, n_elements);*/
 }

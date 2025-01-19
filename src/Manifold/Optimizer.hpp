@@ -1,7 +1,7 @@
 /**
  *  Copyright 2023-2025 by Grusoft  
  * 
- *  \brief A collection of neurons
+ *  \brief 
  *  \author Yingshi Chen
  */
 
@@ -23,6 +23,7 @@
 using namespace std;
 
 #include "../ggex/GG_util.hpp"
+#include "../Device/EDevice.hpp"
 #include "TGraph.hpp"
 #include "Scheduler.hpp"
 #include "DataLoader.hpp"
@@ -48,51 +49,6 @@ struct LossCurve    {
     }
 };
 
-struct EDGE_DEVICES{
-    // Fish *hFish = nullptr;
-    size_t sz = 0x0;
-    ggml_backend_buffer_t back_data = NULL; 
-    // ggml_backend_t cpu = nullptr;
-    std::vector<ggml_backend_t> workers;
-    std::vector<ggml_backend_buffer_type_t> bufts;
-#ifdef GG_V12
-    std::vector<ggml_backend_dev_t> devs;
-#endif
-    ggml_gallocr_t alloc_tmp = nullptr;
-    ggml_backend_sched_t sched0 = nullptr;
-
-    virtual bool InitGPU(const CLI_params&hparams,int flag=0x0);
-    
-    EDGE_DEVICES(const CLI_params&hparams, int flag=0x0);
-    virtual ~EDGE_DEVICES();
-    EDGE_DEVICES(EDGE_DEVICES const&)    = delete;
-    void operator=(EDGE_DEVICES const&)  = delete;
-    static shared_ptr<EDGE_DEVICES> GetInstance(const CLI_params&hparams, int flag=0x0);
-
-    virtual size_t Alloc(struct ggml_context *ctx,int flag=0x0);
-    virtual bool AllocGraph(hTGraph graph,int flag=0x0);
-    // bool Build(struct ggml_cgraph *cgraph,bool isPlan,int flag=0x0);
-    virtual string __repr__( string& suffix,string& prefix,int flag=0x0);
-
-    bool isOnlyCPU()    {
-        for(auto worker : workers){
-            if (!ggml_backend_is_cpu(worker))
-                return false;
-        }
-        return true;    /*!=nullptr && workers.size()==1;*/
-    }
-
-    int SetThread(int nThread,int flag=0x0);
-    
-    virtual ggml_backend_sched_t GetSched(int flag=0x0){
-        assert(sched0!=nullptr);
-        return sched0;
-    }
-    virtual bool SplitSched(ggml_cgraph * ,int flag=0x0);
-    virtual int SetBackend(hGensor cur,int flag=0x0);
-
-};
-typedef shared_ptr<EDGE_DEVICES>hEDevices;
 class Optimizer : public std::enable_shared_from_this<Optimizer> {
     Optimizer(const Optimizer&);
 	Optimizer& operator=(const Optimizer&);
@@ -105,6 +61,7 @@ protected:
     std::vector<hGensor> opt_ps;
     size_t nParams = 0, nMostParam = 0;
     bool just_initialized = false,isAdaptiveSched = false,isGlobalGrad=true;
+    bool isBackward = false;
     int past=0,nGradAccum=0,tpSign=0;
     int warmup_iters=0;
     // gradient clipping
@@ -160,9 +117,7 @@ public:
         OK = 0,DID_NOT_CONVERGE,NO_CONTEXT,INVALID_WOLFE,
         FAIL,CANCEL,
     };
-
-
-    // typedef bool (*_CALL_BACK_)(void * data, int accum_step, float * sched);    
+  
     hSampLoader train_loader=nullptr, val_loader=nullptr;
     size_t shuffle_samples_hash = 0x0;  //hack
 
@@ -174,7 +129,7 @@ public:
     
     Optimizer(NLP_AutoRegressive *g_,CLI_params& params_,int flag=0x0);
     //Deprecated need refactor!!!       9/30/2024
-    virtual bool GraphCompute(struct ggml_cgraph *,int flag=0x0);
+    virtual bool GraphCompute(hTGraph,int flag=0x0);
     virtual float Evaluate(hSampLoader loader,int iter,int flag=0x0);
 
     virtual void UpdateLoss(int step,float loss,int flag=0x0){
@@ -225,6 +180,7 @@ public:
     RESULT Search(struct ggml_context * ctx, hGensor loss_,hGensor target_,CLI_params& hparams);
     
     friend class Fish;
+    friend class GeNeuron;
     friend class SampLoader;
     friend class SAMP;
     friend class TGraph;

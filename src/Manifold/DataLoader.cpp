@@ -4,8 +4,7 @@
 #endif
 
 #include "gLLM.hpp"
-#include "../ggex/GG_util.hpp"
-#include "common.h"
+#include "../ggex/llmc_utils.h"
 #include "Dictionary.hpp"
 
 void mt19937_set_state(std::mt19937& rng, const std::string& rng_state) {
@@ -99,16 +98,8 @@ int SampLoader::nLeastCTX(int  flag) {
     auto samp = SampAt(0);
     return hDict->tokenizer_add_bos? samp->len : samp->len+1;
 }
-void SampLoader::Samp2Batch(int k,hSAMP samp,hGensor tokens_input,hGensor target_probs,struct train_params_& params,int flag)    {   
-    samp_toks.clear();        
-    auto dialect = hDict->dialect;
-    bool fill_with_next_samples=params.fill_with_next_samples,isDialect = hDict->isDialect;
-    size_t starting=samp->pos+samp->jump,_nctx = params.n_ctx,_nToken=nTokens();            //    tokens_input->ne[0];;    
-    ggml_set_i32_nd(tokens_input, 0, k, 0, 0, hDict->bos);
-    samp_toks.push_back(hDict->bos);
-    for (int64_t i=0; i<_nctx; ++i) {    
-        TOKEN_ID token = hDict->eos;        
-        /*if (samp_off >= samp->len && fill_with_next_samples) { //true only arg == "--fill-with-next-samples"
+
+/*if (samp_off >= samp->len && fill_with_next_samples) { //true only arg == "--fill-with-next-samples"
             if (!sample_separation_eos) {
                 // insert eos token to separate samples
                 sample_separation_eos = true;
@@ -125,6 +116,18 @@ void SampLoader::Samp2Batch(int k,hSAMP samp,hGensor tokens_input,hGensor target
                 ++used_samples;
             }
         }*/
+
+
+void SampLoader::Samp2Batch(int k,hSAMP samp,struct train_params_& params,int flag)    {   
+    samp_toks.clear();        
+    auto dialect = hDict->dialect;
+    bool fill_with_next_samples=params.fill_with_next_samples,isDialect = hDict->isDialect;
+    size_t starting=samp->pos+samp->jump,_nctx = params.n_ctx,_nToken=nTokens();            //    tokens_input->ne[0];;    
+    hostBatch->Set(0, k, 0, 0, hDict->bos);  //ggml_set_i32_nd(G(tokens_input), 0, k, 0, 0, hDict->bos);
+    samp_toks.push_back(hDict->bos);
+    for (int64_t i=0; i<_nctx; ++i) {    
+        TOKEN_ID token = hDict->eos;        
+        
         // eos ???
         if (starting >= _nToken) {
             if(isRecycle)
@@ -139,19 +142,19 @@ void SampLoader::Samp2Batch(int k,hSAMP samp,hGensor tokens_input,hGensor target
             token = hDict->mapT2T[token];
         }
         ++starting;   
-        if(target_probs==nullptr){
+        if(hostTargetProbs==nullptr){
 
         }else{
             if(isTarget_1)     
-                ggml_set_f32_nd(target_probs,  0, (int) i, (int) k, 0, token);            
+                hostTargetProbs->Set(0, (int) i, (int) k, 0, token);            
             else    {
-                ggml_set_f32_nd(target_probs,  token, (int) i, (int) k, 0, +1.0f);
+                hostTargetProbs->Set(token, (int) i, (int) k, 0, +1.0f);
             }        
         }
         samp_toks.push_back(token);
         
         if (i+1<_nctx) {
-            ggml_set_i32_nd(tokens_input, (int) (i + 1), (int) k, 0, 0, token);
+            hostBatch->Set( (int) (i + 1), (int) k, 0, 0, token);
         }else{
             samp->last_target = token;
         }
@@ -161,12 +164,10 @@ void SampLoader::Samp2Batch(int k,hSAMP samp,hGensor tokens_input,hGensor target
 //Important!  this would update input & target_probs of model!
 size_t SampLoader::update_batch(int x,Fish* fish){    
     struct train_params_ _params = hOPT->TrainParams();
+    assert(fish==hOPT->_fish);
     // struct llama_context * lctx=(struct llama_context *)(hOPT->app_ctx);
-    cur_samps.clear();
-    struct ggml_tensor *tokens_input=hOPT->_fish->Input();
-    assert(tokens_input!=nullptr);
-    int *raw_t = (int*)(tokens_input->data);
-    struct ggml_tensor *target_probs=hOPT->hTargetProbs();
+    cur_samps.clear();      
+    hostBatch->Zero();          hostTargetProbs->Zero();
     int64_t nAllSamples_ = nShard();
     // const TOKEN_ID    * train_data=tokens.data();
     size_t  k,n_train_data = nTokens(); // tokens.size();
@@ -175,14 +176,8 @@ size_t SampLoader::update_batch(int x,Fish* fish){
     double t_Samp = 0,nrm=0,a;
     bool sample_random_offsets=_params.sample_random_offsets;
     // assert(samples_count > 0);
-    assert(ggml_is_matrix(tokens_input));
+    // assert(ggml_is_matrix(tokens_input));
     size_t nSampInBatch = fish->hparams.n_batch();  
-    if(target_probs!=nullptr)    {
-        assert(ggml_is_3d(target_probs));
-        assert(nSampInBatch==target_probs->ne[2]);
-        ggml_set_f32(target_probs, 0.0f);
-    }
-    
     GST_TIC(T0);
     bool isLog = false;
     if(isLog) _INFO("BATCH_%ld ",next_sample);   
@@ -203,24 +198,41 @@ size_t SampLoader::update_batch(int x,Fish* fish){
             tic = Clock::now( );
         }
         cur_samps.push_back(samp);
-        Samp2Batch(k,samp,tokens_input,target_probs,_params);   
+        Samp2Batch(k,samp,_params);   
         if(isLog && k<6 && batch_sample!="stacking"){
             sentence = dolphin->T2STR(samp_toks,0x0);     //llama_token_to_piece(lctx, samp_toks[0]);
             _INFO(" (%ld,%d)@\"%s\"",samp->pos,samp->jump,sentence.c_str());     //sample_size
         }else if(type == SampLoader::TYPE::DT_EVAL)  {
             if(k==0){
                 sentence = dolphin->T2STR(samp_toks,0x0); 
-                assert(raw_t[0]==hDict->bos);
+                // assert(raw_t[0]==hDict->bos);
             }
         }
 
-        if(batch_sample!="stacking"){ 
-            // nrm = fish->wikis[0]->InductLogits(k,samp_toks,exLogits,target_probs,-1); 
+        if(batch_sample!="stacking"){
             for(auto wiki : fish->wikis){
-                nrm = wiki->InductLogits(k,samp_toks,nullptr,target_probs,-1); 
+                // nrm = wiki->InductLogits(k,samp_toks,nullptr,G(target_probs),-1); 
+                nrm = wiki->InductLogits(k,samp_toks,nullptr,nullptr,-1); 
             }
         }        
     }
+    hGensor tokens_input=fish->Input(),target_probs=hOPT->hTargetProbs();    assert(tokens_input!=nullptr);
+    int *raw_t = (int*)(tokens_input->data);
+#ifdef _TENSOR_CUD_
+    assert(isInRange((int*)(hostBatch->data),hostBatch->size(),0,hDict->n_vocab));
+    tokens_input->OverWrite(hostBatch);
+    if(target_probs!=nullptr)    {
+        target_probs->OverWrite(hostTargetProbs);    
+    }
+#else
+    hostBatch->OverWrite(tokens_input,false);
+    if(target_probs!=nullptr)    {
+        hostTargetProbs->OverWrite(target_probs,false);    
+        // assert(nSampInBatch==target_probs->ne[2]);
+        // ggml_set_f32(target_probs, 0.0f);
+    }
+#endif
+
     t_Samp = GST_TOC(tic);
     // Decode(tokens_input);       //only for debug
     if(isLog) _INFO("\tT=%g\n",GST_TOC(T0));
@@ -290,7 +302,9 @@ std::vector<hDataToken> DataTokenSet::MakeInstance(struct CLI_params& params,Con
     JSON jdata = jKEY(params.jConfig,{"datasets"});
     if(jdata.empty()){      //Deprecated
         auto hTokenset = std::make_shared<DataTokenSet>(hDict);  
-        hTokenset->serial_root = "/home/cys/rnd/lic/datasets/story19M___[gpt2char]_"; //only for debug" 
+        // hTokenset->serial_root = "/home/cys/rnd/lic/datasets/story19M___[gpt2char]_"; //only for debug" 
+        hTokenset->serial_root = "./datasets/story19M___[gpt2.Q8_0]_";
+        // hTokenset->serial_root = "./datasets/story19M___[bitnet-m7-70m.Q8_0]_";
         dts.push_back(hTokenset);
     }else{
         for(JSON::const_iterator it = jdata.begin(); it != jdata.end(); ++it)    {
@@ -542,17 +556,6 @@ SampLoader::SampLoader(Fish *g_,const string&n,bool isNewTS,int flag) {
         assert(0);
         return ;
     }
-    // hDict = dolphin->hDict;     
-    // if(isNewTS){
-    //     hTokens = std::make_shared<DataTokenSet>(hDict.get());
-    // }else
-    //     hTokens = dolphin->hTokenset;
-       
-    // assert(hTokens!=nullptr && hDict!=nullptr);  
-
-    // hOPT = dolphin->hOPT.get();
-    // assert(hOPT!=nullptr);
-
     isTarget_1 = g_->hparams.is( {"model","target"},string("OneHot") );
     return ;
 }
@@ -575,6 +578,22 @@ bool SampLoader::Prepare(hDataToken hT,int flag){
     }
     // bos = hDict->bos;
     // eos = hDict->eos;
+    // Batch tensor would be set @UpdateBatch!
+    struct train_params_ _params = hOPT->TrainParams();   
+    int n_ctx = _params.n_ctx,n_batch = _params.n_batch;
+    assert(n_ctx>0 && n_batch>0);
+    SHAPE shape={n_ctx, n_batch},sp1={1, n_ctx, n_batch};
+    hostBatch = std::make_shared<GTensor>(shape,GGML_TYPE_I32);    
+#ifdef _TENSOR_CUD_
+    sp1 = shape;
+#endif
+    if(isTarget_1){
+        hostTargetProbs = std::make_shared<GTensor>( sp1,GGML_TYPE_I32);
+    }else{
+        sp1={hDict->n_vocab, n_ctx, n_batch};
+        hostTargetProbs = std::make_shared<GTensor>( sp1,GGML_TYPE_F32);
+    }
+    hostBatch->Alloc();     hostTargetProbs->Alloc();
     return true;
 }
             
@@ -967,60 +986,7 @@ int DataTokenSet::UniqueTokens(size_t n_1,int flag){
     return nUnique;
 }
 
-/*
-*/
-void SampLoader_glob::Init( const char* filename_pattern,size_t B_,size_t T_,int process_rank_,int num_processes_,int should_shuffle_) {
-    process_rank = process_rank_;
-    num_processes = num_processes_;
-    B = B_;         T = T_;
-    assert(B>0 && T>0);
-    fpToken = NULL;
-    should_shuffle = should_shuffle_;
-    header_bytes = HEADER_SIZE * sizeof(int);
-    total_batch_size_bytes = ((num_processes * (B * T)) * sizeof(uint16_t));
-    local_batch_offset_bytes = process_rank * B * T * sizeof(uint16_t);
 
-    // glob to get the list of files matching the pattern, these are our data shards
-    int glob_status = glob(filename_pattern, 0, NULL, &glob_result);
-    if (glob_status != 0) {
-        printf("Error: failed to glob pattern: %s\n", filename_pattern);
-        exit(EXIT_FAILURE);
-    }
-    if (glob_result.gl_pathc == 0) {
-        printf("Error: no files found matching the pattern: %s\n", filename_pattern);
-        exit(EXIT_FAILURE);
-    }
-
-    if (should_shuffle) {
-        manual_seed(&shuffle_rng, 42 + process_rank);
-        shard_indices = (int*)mallocCheck(glob_result.gl_pathc * sizeof(int));
-        init_identity_permutation(shard_indices, (int) glob_result.gl_pathc);
-        intra_shard_indices = NULL;  // dynamically allocated allowing different shard sizes
-    }
-
-    // inspect and validate all shards so we don't get any runtime errors later
-    // if too slow / too many shards, may wish to revisit later
-    int64_t ntok_total = 0;
-    for (int id = 0; id < glob_result.gl_pathc; id++) {
-        int64_t shard_ntok = PrepareShard( id);
-        // we need at least one batch/shard, the way things are written right now.
-        // can be relaxed a lot later.
-        assert(shard_ntok >= (int64_t) (num_processes * B * T + 1));
-        ntok_total += shard_ntok;
-    }
-    // debugging prints
-    // printf("SampLoader: filename_pattern: %s\n", filename_pattern);
-    // printf("SampLoader: Found %ld tokens across %zu shards\n", ntok_total, glob_result.gl_pathc);
-
-    // allocate all the space we'll need
-    buffer = (uint16_t*)mallocCheck((B * T + 1) * sizeof(uint16_t));
-    inputs = (int*)mallocCheck(B * T * sizeof(int));
-    targets = (int*)mallocCheck(B * T * sizeof(int));
-    num_tokens = ntok_total;
-
-    // reset the  to initialize it
-    reset( );
-}
 
 std::string shuffle_samples_X(
         const std::string & rng_state,size_t* shuffled_offs,

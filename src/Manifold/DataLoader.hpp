@@ -9,9 +9,7 @@
 
 #ifndef DATALOADER_H
 #define DATALOADER_H
-
-#include "llmc_utils.h"
-#include "llmc_rand.h"
+#include "../ggex/GG_util.hpp"
 struct ConsiceDict;
 #include "../CLI_params.hpp"
 #include "../g_stddef.hpp"
@@ -41,7 +39,8 @@ class SampLoader;
 class SampLoader   {
 protected:  
     typedef std::string mt19937_state;
-    
+    //  Store tokens from source.  always in CPU
+    shared_ptr<GTensor> hostBatch=nullptr,hostTargetProbs=nullptr;     
     int tokens_per_iter = 0;
     // CLI_params hparams;
     std::string fp_data;
@@ -107,9 +106,9 @@ public:
         return hTokens->At(pos);
     }
     std::vector<std::string> curDeTexts;
-    virtual hSAMP InitOneSamp(const string &prompt,struct ggml_tensor *input,int flag=0x0);
-    virtual double DecodeVerify(hSAMP samp, struct ggml_tensor *tokens,struct ggml_tensor *logits,int flag=0x0);
-    void Samp2Batch(int k,hSAMP samp,struct ggml_tensor *tokens_input,struct ggml_tensor *target_probs,struct train_params_& params,int flag=0x0);
+    virtual hSAMP InitOneSamp(const string &prompt,hGensor input,int flag=0x0);
+    virtual double DecodeVerify(hSAMP samp, hGensor tokens,hGensor logits,int flag=0x0);
+    void Samp2Batch(int k,hSAMP samp,struct train_params_& params,int flag=0x0);
 
     enum TYPE{
         DT_TRAIN=1,DT_EVAL,DT_PREDICT,
@@ -145,141 +144,6 @@ public:
     friend class GeneratOnPrompt;
 };
 typedef shared_ptr<SampLoader> hSampLoader;
-
-class SampLoader_glob : public SampLoader {
-
-public:    
-    //compatible with train_opt_callback_data@LLAMA.cpp
-    // struct train_opt_callback_data callback_data;
-    // train_state *train=nullptr;
-    //token source, in some case, only need lite vector
-    
-    // std::vector<TOKEN_ID> stokens;
-
-    
-    // variables related to distributed training
-    // each process/worker has to access different parts of the data
-    int process_rank;
-    int num_processes;
-    // batch and token information
-    size_t B=-1;
-    size_t T=-1;
-    size_t num_tokens=0; // total number of tokens, may different with tokens.size()!
-    size_t shard_num_samples=0;  // total number of samples in the current shard per process
-    // shards and current position
-    glob_t glob_result; // stores the result of glob
-    size_t current_shard_idx,current_sample_idx; 
-    // file handle
-    FILE* fpToken=nullptr;
-    // data buffers
-    uint16_t* buffer=nullptr;  
-    int* inputs=nullptr,*targets=nullptr; 
-    // random shuffle related variables
-    mt19937_torch shuffle_rng;
-    int should_shuffle;
-    int* shard_indices=nullptr;
-    int* intra_shard_indices=nullptr;
-    // sizes in bytes
-    size_t total_batch_size_bytes;  // total across all processes
-    size_t local_batch_offset_bytes;  // inner-sample offset for this process
-    size_t header_bytes;  // header size in bytes
-    int64_t file_size_bytes;
-
-    SampLoader_glob()  {}
-    virtual ~SampLoader_glob( ) {
-        free(buffer);
-        free(inputs);
-        free(targets);
-        if (should_shuffle) {
-            free(shard_indices);
-            free(intra_shard_indices);
-        }
-        if(fpToken!=nullptr)    {
-            fcloseCheck(fpToken);
-            globfree(&glob_result);
-        }
-    }
-
-    
-
-    void prepare_intra_shard_indices_( ) {
-        // shuffle the examples inside the shards
-        if (intra_shard_indices != NULL) {
-            // in case shards have different number of samples / sizes
-            free(intra_shard_indices);
-        }
-        intra_shard_indices = (int*)mallocCheck(shard_num_samples * sizeof(int));
-        init_identity_permutation(intra_shard_indices, (int) shard_num_samples);
-        random_permutation(intra_shard_indices, (int) shard_num_samples, &shuffle_rng);
-    }
-    int64_t PrepareShard(int id)    {   return 0x0; }
-    void reset( ) {
-        current_shard_idx = 0;
-        current_sample_idx = 0;
-        if (should_shuffle) {  // shuffle the shards
-            random_permutation(shard_indices, (int) glob_result.gl_pathc, &shuffle_rng);
-        }
-        PrepareShard( (int) current_shard_idx);
-        if (should_shuffle) {
-            prepare_intra_shard_indices_( );
-        }
-    }
-
-    void advance_( ) {
-        if (current_shard_idx == glob_result.gl_pathc - 1) {
-            // if we are at the last shard, we reset the loader and start a new epoch
-            reset( );
-            return;
-        }
-
-        // advance the loader by loading the next data shard and resetting the position
-        current_shard_idx = (current_shard_idx + 1) % glob_result.gl_pathc;
-        current_sample_idx = 0;
-        PrepareShard( (int) current_shard_idx);
-
-        if (should_shuffle) {
-            prepare_intra_shard_indices_( );
-        }
-    }
-
-    virtual void Init( const char* filename_pattern,size_t B_,size_t T_,int process_rank_,int num_processes_,int should_shuffle_);
-
-    void load_batch( ) {
-        assert(!should_shuffle || (should_shuffle && intra_shard_indices != NULL));
-        assert(current_sample_idx < shard_num_samples);
-        size_t idx = should_shuffle ? intra_shard_indices[current_sample_idx] : current_sample_idx;
-        size_t global_batch_offset_bytes = idx * total_batch_size_bytes;
-        int64_t current_offset = header_bytes + global_batch_offset_bytes + local_batch_offset_bytes;
-        // read B*T+1 uint16_t tokens from the file into buffer
-        fseekCheck(fpToken, (int) current_offset, SEEK_SET);
-        freadCheck(buffer, sizeof(uint16_t), B*T+1, fpToken);
-        // decode the buffer into inputs and targets (cast to int)
-        for (int i = 0; i < B*T; i++) {
-            inputs[i] = (int)buffer[i];
-            targets[i] = (int)buffer[i+1];
-        }
-    }
-
-    
-
-    void next_batch( )  {
-        // if the next batch would go past the end of the file, advance the loader
-        if (current_sample_idx >= shard_num_samples) {
-            advance_( );
-        }
-        load_batch( );
-        current_sample_idx += 1;
-    }
-
-    void resume(size_t current_shard_idx_, size_t current_sample_idx_) {
-        // used during model resumption (-y 1) flag
-        current_shard_idx = current_shard_idx_;
-        current_sample_idx = current_sample_idx_;
-        // PrepareShard( (int) current_shard_idx);
-    }
-
-
-};
 
 // class DataLoader_3D : public SampLoader  {
 // protected:

@@ -22,17 +22,31 @@ public:
 
     MutliCoder(struct ggml_context *ctx,int dim1,int dim2,bool isR = false,bool isSym=true,int tpN=2,int flag=0x0) : nTop(dim1),nBottom(dim2),isResi(isR),tpNorm(tpN) {
         assert(nTop>nBottom && nBottom>0);
-        encode = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nTop, nBottom);     
+        encode = TENSO(ctx, GGML_TYPE_F32, {nTop, nBottom});     
         if(isSym)
-            decode = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nBottom, nTop); 
+            decode = TENSO(ctx, GGML_TYPE_F32, {nBottom, nTop}); 
         else{
             decode = nullptr;
             isResi = false;
         }            
     }
 
-    virtual hGensor ENC(struct ggml_context *ctx,hGensor x){
-        x = ggml_mul_mat(ctx, encode, x );    
+    virtual hGensor ENC(struct ggml_context *ctx,const hGensor x0){
+#ifdef _TENSOR_CUD_
+        hGensor x = nullptr;    //encode*x0;
+        switch(tpNorm){
+        case 0:
+            x = x->Relu();  
+            break;
+        case 1:
+            x = x->Silu();  
+            break;
+        case 2:
+            x = x->Norm(1.0e-5);  
+            break;
+        }
+#else
+        hGensor x = ggml_mul_mat(ctx, encode, x0 );    
         switch(tpNorm){
         case 0:
             x = ggml_relu(ctx, x);  
@@ -44,14 +58,33 @@ public:
             x = ggml_rms_norm(ctx, x,1.0e-5);  
             break;
         }
+#endif
         if(isResi)      
-            resi = x;        
+            resi = x;  
+          
         return x;
     }
 
     virtual hGensor DEC(struct ggml_context *ctx,hGensor x){
         if(decode==nullptr)
             return x;
+#ifdef _TENSOR_CUD_
+        if(resi!=nullptr){
+            x += resi;
+        }
+        // x = decode*x;
+        switch(tpNorm){
+        case 0:
+            x = x->Relu();  
+            break;
+        case 1:
+            x = x->Silu();  
+            break;
+        case 2:
+            x = x->Norm(1.0e-5);  
+            break;
+        }
+#else
         if(resi!=nullptr){
             x = ggml_add(ctx, x, resi);
         }
@@ -66,6 +99,7 @@ public:
         case 2:
             x = ggml_rms_norm(ctx, x,1.0e-5);  
         }
+#endif
         return x;
     }
     std::string Name()  override {   return "MutliCoder";  }

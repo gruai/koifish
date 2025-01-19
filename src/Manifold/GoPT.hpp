@@ -20,10 +20,9 @@
 #include <regex>
 #include <stack>
 using namespace std;
-#include "common.h"
-#include "GG_util.hpp"   
+#include "../ggex/GG_util.hpp"   
 #include "DataLoader.hpp" 
-#include "WIKI.hpp"
+#include "../ggex/WIKI.hpp"
 class Fish;
 
 
@@ -66,8 +65,9 @@ protected:
     bool is_interacting = false;    
     hWIKI wiki0 = nullptr;   
     arrHWIKI wikis;
-    const Fish *fish_0 = nullptr;        
-    shared_ptr<Fish> fish_1 = nullptr;        //for generate, only 1 input
+    const Fish *fish_0 = nullptr;
+    Fish *fish_1 = nullptr;        
+    // shared_ptr<Fish> fish_1 = nullptr;        //for generate, only 1 input
 
     virtual TOKEN_ID Sample(int idx = -1,bool is_resampling=false);
     virtual std::string T2STR(TOKEN_ID tok,int flag=0x0 );  

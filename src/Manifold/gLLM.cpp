@@ -76,7 +76,7 @@ NLP_AutoRegressive::NLP_AutoRegressive(const std::string& nam_,const NLP_AutoReg
     // hDict = src->hDict;
     // tensors = src->tensors;
     // for(auto it : tensors){
-    //     nParamsGGUF += ggml_nelements(it.second);
+    //     nParamsGGUF += tELEM(it.second);
     // }
 
     graph_order = src->graph_order;
@@ -101,6 +101,8 @@ string NLP_AutoRegressive::__repr__( string& suffix,string& prefix,int flag)    
     // Fish::__repr__(suffix,prefix,flag);
     char buf[5012]="\0";
     const char*tab=prefix.c_str();
+#ifdef _TENSOR_CUD_
+#else
     auto gb=GetBackRaw(), gf=hForwTG->raw();;
     sprintf(buf+strlen(buf),"\n%s(%s):nParams = %ld(%.6gM)",tab,name.c_str(),nParams,nParams/1.0e6);
     if(gb!=nullptr)
@@ -109,7 +111,7 @@ string NLP_AutoRegressive::__repr__( string& suffix,string& prefix,int flag)    
             hparams.ffn_use_gate);
     else
         sprintf(buf+strlen(buf),"\n%s  tensors=%ld gf=(%d %d) ",tab, gensors.size(),gf->n_nodes,gf->n_leafs);
-
+#endif
     string s="\n",p=prefix+"\t";
     int i;
     _T_repr_(KQ_pos,"\n\tKQ_pos: ",buf);  
@@ -124,8 +126,7 @@ string NLP_AutoRegressive::__repr__( string& suffix,string& prefix,int flag)    
             // if(nn->level==1)
                 sprintf(buf+strlen(buf),"%s\n",nn->__repr__(s,p,0x0).c_str());     
         }
-    }else{
-        
+    }else{        
         int nLayer = layers.size();
         if(nLayer>0)    {
             auto layer = layers[0];
@@ -141,11 +142,11 @@ string NLP_AutoRegressive::__repr__( string& suffix,string& prefix,int flag)    
     for(auto wiki : wikis){
         if(wiki->exLogits!=nullptr){
             string a = "   ex_logits@"+wiki->title+"=";
-            _T_repr_(wiki->exLogits,a.c_str(),buf);   
+            // _T_repr_(wiki->exLogits,a.c_str(),buf);   
         }
         if(wiki->t2t!=nullptr){
             string a = "   t2t@"+wiki->title+"=";
-            _T_repr_(wiki->t2t,a.c_str(),buf);   
+            // _T_repr_(wiki->t2t,a.c_str(),buf);   
         }            
     }
      
@@ -247,9 +248,9 @@ void NLP_AutoRegressive::build_inp_KQ_(struct ggml_context *ctx,bool isMask,bool
     int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_tokens = n_batch*n_ctx,n_past=0;
     // const float kv_scale = 1.0f/sqrtf(float(n_embd)/n_head);
         // KQ_pos - contains the positions
-    KQ_pos = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, hparams.n_ctx());
+    KQ_pos = TENSO(ctx, GGML_TYPE_I32, {n_ctx});
     gTN(KQ_pos, "inp_pos");  
-    ggml_set_input(KQ_pos);    
+    tFLAG(KQ_pos,GTensor::F_INPUT);       //    ggml_set_input(KQ_pos);    
     int * data = (int *) KQ_pos->data;
     // @BuildComputeGraph After ggml_gallocr_alloc_graph(alloc, gb)!
     // for (int i = 0; i < n_tokens; ++i) {
@@ -259,14 +260,13 @@ void NLP_AutoRegressive::build_inp_KQ_(struct ggml_context *ctx,bool isMask,bool
         auto dt = GGML_TYPE_F32;     
         auto pad = GGML_PAD(n_ctx, GGML_KQ_MASK_PAD);   //  (((x) + (n) - 1) & ~((n) - 1))
         // KQ_mask = causal
-        //     ? ggml_new_tensor_2d(ctx, dt, n_kv,     GGML_PAD(n_tokens, GGML_KQ_MASK_PAD))
-        //     : ggml_new_tensor_2d(ctx, dt, n_tokens, GGML_PAD(n_tokens, GGML_KQ_MASK_PAD));
-        KQ_mask = ggml_new_tensor_2d(ctx, dt, n_ctx,pad );
+        //     ? TENSO(ctx, dt, n_kv,     GGML_PAD(n_tokens, GGML_KQ_MASK_PAD))
+        //     : TENSO(ctx, dt, n_tokens, GGML_PAD(n_tokens, GGML_KQ_MASK_PAD));
+        KQ_mask = TENSO(ctx, dt, {n_ctx,pad} );
         gTN(KQ_mask, "KQ_mask");      
-        ggml_set_input(KQ_mask);        //  flags |= GGML_TENSOR_FLAG_INPUT;
+        tFLAG(KQ_mask,GTensor::F_INPUT);    //ggml_set_input(KQ_mask);        //  flags |= GGML_TENSOR_FLAG_INPUT;
         float*mask = (float*)(KQ_mask->data);
-        KQ_mask = isFlash ? ggml_cast(ctx, KQ_mask, GGML_TYPE_F16) : KQ_mask;    
-        // set data like llama_set_inputs    
+        //  KQ_mask = isFlash ? ggml_cast(ctx, KQ_mask, GGML_TYPE_F16) : KQ_mask;   
     }
     return ;
 }
@@ -275,155 +275,6 @@ hGensor SLP::UpdateGensor(int flag)  {
     hGensor h = w==nullptr ? nullptr : hFish->GetGensor (w->name);
     return h;
 }
-
-//n_embd_head, n_head_kv
-hGensor NLP_AutoRegressive::build_layer_( int N,struct ggml_context *ctx_build,hGensor inpL,std::shared_ptr<QKV_LAY> layer,hGensor  KQ_pos,/*hGensor cur, hGensor wq, hGensor wk, hGensor wv, hGensor wo,
-    hGensor attention_norm,hGensor KQ_pos,hGensor ffn_norm,hGensor ffn_up,hGensor ffn_gate,hGensor ffn_down,*/ int flag) {
-    char nam_[128];
-    auto train_params = hparams.common;
-    int n_vocab = tVocab(),n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd,n_head = hparams.n_head(),n_ff = hparams.n_ff();
-    int n_outputs = n_ctx;  //  ????
-    const float f_norm_rms_eps  = hparams.f_norm_rms_eps;
-    const float rope_freq_base  = hparams.rope_freq_base;
-    const float rope_freq_scale = hparams.rope_freq_scale;  
-    const float kv_scale = 1.0f/sqrtf(float(hparams.n_embd)/hparams.n_head());
-    const int n_past = 0, n_head_kv=hparams.n_head_kv(),n_embd_head = hparams.n_embd_head();    
-    hGensor wq = layer->Q.UpdateGensor();   //  UpdateGensor (layer->Q.w->name);                     
-    hGensor wk = layer->K.UpdateGensor();   //layer->K.w==nullptr ? nullptr : UpdateGensor (layer->K.w->name);
-    hGensor wv = layer->V.UpdateGensor();   //layer->V.w==nullptr ? nullptr : UpdateGensor (layer->V.w->name);
-    hGensor ffn_norm = layer->ffn_norm.w==nullptr ? nullptr : UpdateGensor (layer->ffn_norm.w->name); 
-    hGensor ffn_up = nullptr,ffn_gate=nullptr,ffn_down=nullptr;
-    if(layer->up.w!=nullptr){                
-        ffn_up = UpdateGensor (layer->up.w->name);
-        if(layer->ffn_gate!=nullptr)    ffn_gate = UpdateGensor (layer->ffn_gate->name);
-        ffn_down = UpdateGensor (layer->down.w->name);                
-    }
-    
-    hGensor  ffn_inp = inpL;
-    if(!layer->Q.Empty()){      //  if 0,   only for debug
-        hGensor attention_norm = UpdateGensor (layer->att_norm.w->name);  
-    //  rms_norm:   Root Mean Square Layer Normalization
-        hGensor  t02 = ggml_rms_norm     (ctx_build, inpL, f_norm_rms_eps);                    
-        sprintf(nam_,"norm_L-%d",layer->id),   gTN(t02, nam_);     assert_shape_2d(t02, n_embd, N*n_batch);
-        hGensor  t03 = attention_norm;
-        if(isTrain()){
-            t03 = ggml_repeat(ctx_build, attention_norm, t02);              gTN(t03, "attnorm.w.repeat-%d",layer->id);     assert_shape_2d(t03, n_embd, N*n_batch);
-        }
-        hGensor  tBase = ggml_mul          (ctx_build, t02, t03);                               
-        sprintf(nam_,"attn_norm-%d",layer->id),   gTN(tBase, nam_);     assert_shape_2d(tBase, n_embd, N*n_batch);
-        if(isBias){
-
-        }        
-        hGensor wo = UpdateGensor (layer->wo->name);
-        hBrownMotion hBrown = CreateBrownMotion(wq, wk, wv,layer);                       
-        hGensor t16 = hBrown->Build(ctx_build , tBase,  KQ_pos);          // [128,17,6,1]   
-        hGensor  t20 = ggml_mul_mat      (ctx_build, wo, t16);                          
-        sprintf(nam_,"kqv_out-%d",layer->id),           gTN(t20, nam_);     assert_shape_2d(t20, n_embd, N*n_batch);
-        if (layer->isLast && 0) {          //would crash if not set inp_out_ids       
-            // skip computing output for unused tokens
-            struct ggml_tensor * inp_out_ids = ggml_new_tensor_1d(ctx_build, GGML_TYPE_I32, n_outputs);   //n_outputs=(worst_case ? n_tokens : lctx.n_outputs),
-            sprintf(nam_,"inp_out_ids"),     gTN(inp_out_ids, nam_);     // cb(lctx.inp_out_ids, "inp_out_ids", -1);
-            ggml_set_input(inp_out_ids);
-            t20   = ggml_get_rows(ctx_build,   t20, inp_out_ids);
-            inpL = ggml_get_rows(ctx_build, inpL, inp_out_ids);
-        }
-        ffn_inp = ggml_add          (ctx_build, t20, inpL);  
-    }                             
-    sprintf(nam_,"ffn_inp-%d",layer->id),           gTN(ffn_inp, nam_);     assert_shape_2d(ffn_inp, n_embd, N*n_batch);
-    hGensor  ffn = nullptr;
-    switch(tpFFN)   {
-    case VAR_LAST:
-    case SWIGLU:    {
-        hGensor  t22 = ggml_rms_norm     (ctx_build, ffn_inp, f_norm_rms_eps);                    
-        sprintf(nam_,"norm_ffn-%d",layer->id),    gTN(t22, nam_);     assert_shape_2d(t22, n_embd, N*n_batch);
-        ffn = t22;
-        if(ffn_norm!=nullptr)       {
-            hGensor  t23 = ffn_norm; //ggml_repeat       (ctx_build, ffn_norm, t22);    
-             if(isTrain()){
-                t23 = ggml_repeat       (ctx_build, ffn_norm, t22);    
-                gTN(t23, "ffn_norm.repeat-%d",layer->id);     assert_shape_2d(t23, n_embd, N*n_batch);
-            }      
-            hGensor  t24 = ggml_mul          (ctx_build, t22, t23);                               
-            sprintf(nam_,"ffn_norm-%d",layer->id),    gTN(t24, nam_);     assert_shape_2d(t24, n_embd, N*n_batch); 
-            ffn = t24;                 
-        }
-          
-        if(ffn_up!=nullptr){
-            // hGensor  t22 = ggml_rms_norm     (ctx_build, t21, f_norm_rms_eps);                    gTN(t22, "t22");     assert_shape_2d(t22, n_embd, N*n_batch);
-            // hGensor  t23 = ggml_repeat       (ctx_build, ffn_norm, t22);                    gTN(t23, "t23");     assert_shape_2d(t23, n_embd, N*n_batch);
-            // hGensor  t24 = ggml_mul          (ctx_build, t23, t22);                               gTN(t24, "t24");     assert_shape_2d(t24, n_embd, N*n_batch);
-            hGensor  t24 = ffn;
-            hGensor  t25 = ggml_mul_mat      (ctx_build, ffn_up, t24);                      
-            sprintf(nam_,"ffn_up-%d",layer->id),gTN(t25, nam_);     assert_shape_2d(t25, n_ff, N*n_batch);
-            hGensor  t28;
-            if(ffn_gate==nullptr){
-                t28 = ggml_silu         (ctx_build, t25);      
-                sprintf(nam_,"ffn_silu-%d",layer->id),         gTN(t28, nam_);      assert_shape_2d(t28, n_ff, N*n_batch);
-            }else{
-                hGensor t26 = ggml_mul_mat      (ctx_build, ffn_gate, t24);                    
-                sprintf(nam_,"ffn_gate-%d",layer->id),  gTN(t26, nam_);     assert_shape_2d(t26, n_ff, N*n_batch); 
-                hGensor t27 = ggml_silu         (ctx_build, t26);                 
-                sprintf(nam_,"ffn_silu-%d",layer->id),         gTN(t27, nam_);      assert_shape_2d(t27, n_ff, N*n_batch);
-                t28 = ggml_mul          (ctx_build, t27, t25);      
-                sprintf(nam_,"ffn_gate_par-%d",layer->id),         gTN(t28, nam_);     assert_shape_2d(t28, n_ff, N*n_batch);      
-            }
-            hGensor  t29 = ggml_mul_mat      (ctx_build, ffn_down, t28);                    
-            sprintf(nam_,"ffn_out-%d",layer->id),  gTN(t29, nam_);   assert_shape_2d(t29, n_embd, N*n_batch);
-            hGensor  t30 = ggml_add          (ctx_build, t29, ffn_inp);   ffn = t30;
-        }
-        if(layer->eps!=nullptr){
-            // hGensor  t300 = ffn!=nullptr ? ggml_rms_norm(ctx_build, ffn, f_norm_rms_eps) : ggml_rms_norm(ctx_build, t21, f_norm_rms_eps);
-            randomize_tensor_normal(layer->eps, rnd);       gTN(layer->eps, "var_noise"); 
-            hGensor  noise = ggml_scale_inplace(ctx_build, layer->eps, 0.001);
-            ffn = ggml_add          (ctx_build, ffn,noise);     
-        }else{
-        } 
-        break;
-    }
-    case VAR_0:
-    case ONLY_LNormal:
-    case ONLY_RMSNormal:    {
-        assert(ffn_up==nullptr);
-        hGensor  t22 = tpFFN==ONLY_LNormal ? ggml_norm(ctx_build, ffn_inp, f_norm_rms_eps) :
-            ggml_rms_norm(ctx_build, ffn_inp, f_norm_rms_eps);
-        gTN(t22, "t22");               assert_shape_2d(t22, n_embd, N*n_batch);   
-        if(tpFFN==VAR_0)     {
-            randomize_tensor_normal(layer->eps, rnd); 
-            hGensor  noise = ggml_scale_inplace(ctx_build, layer->eps, 0.001);
-            ffn = ggml_add          (ctx_build, t22,noise);     
-            // ffn = t22;        
-        }else{
-            hGensor  t23 = ggml_repeat       (ctx_build, ffn_norm, t22);                    gTN(t23, "t23");     assert_shape_2d(t23, n_embd, N*n_batch);
-            ffn = ggml_mul          (ctx_build, t23, t22);
-        }
-        break;
-    }
-    default:
-        TO_DO;
-        break;
-    }
-    if(ffn_up==nullptr)   {   
-        /*trick v0
-            mu = self.fc_mu(x)
-            log_var = self.fc_var(x)
-            std = torch.exp(0.5 * log_var)
-            eps = torch.randn_like(std)
-            z = eps * std + mu        
-        //  
-        // hGensor  tMu = ggml_mul          (ctx_build, layer->w_mu, t21);
-        // hGensor  tVar = ggml_mul          (ctx_build, layer->w_var, t21);*/
-        //  trick v1
-                              
-            // gTN(t30, "t30");     assert_shape_2d(t30, n_embd, N*n_batch);        
-    }else{
-        
-    }       
-    assert_shape_2d(ffn, n_embd, N*n_batch);
-    sprintf(nam_,"l_out-%d",layer->id),  gTN(ffn, nam_);
-    return ffn;          
-}
-
-
 
 std::string NLP_AutoRegressive::Name()     {   
     return "LAMA";  
@@ -437,6 +288,8 @@ void Fish::CopyWeight(const Fish* src,int flag) {
         assert(wiki_tutor==src->wiki_tutor);
         return;
     }
+#ifdef _TENSOR_CUD_
+#else
     auto gsrc = src->hForwTG->raw();
     size_t nx=0,nz,nT=0,type_size;
     vector<hGensor> tSrc;  
@@ -451,8 +304,8 @@ void Fish::CopyWeight(const Fish* src,int flag) {
             if (t0->flags & GGML_TENSOR_FLAG_PARAM) {
                 t1 = GetGensor(t0->name);
                 assert(t1!=nullptr && t0->type==t1->type);
-                nz = ggml_nelements(t0);
-                assert(nz==ggml_nelements(t1));
+                nz = tELEM(t0);
+                assert(nz==tELEM(t1));
                 memcpy(t1->data,t0->data,type_size*nz);
                 nx += nz;       nT++;
             }
@@ -465,11 +318,12 @@ void Fish::CopyWeight(const Fish* src,int flag) {
     for(auto t0 : tSrc){
         t1 = GetGensor(t0->name);
         assert(t1!=nullptr && t0->type==t1->type);
-        nz = ggml_nelements(t0);        type_size = ggml_type_size(t0->type);
-        assert(nz==ggml_nelements(t1));
+        nz = tELEM(t0);        type_size = ggml_type_size(t0->type);
+        assert(nz==tELEM(t1));
         memcpy(t1->data,t0->data,type_size*nz);
         nx += nz;       nT++;
     }
+#endif
 }
 
 /*
@@ -487,7 +341,7 @@ bool NLP_AutoRegressive::LocalFeeling(hSampLoader hLoader,vector<float>& result,
         _INFO("\t%s @\"%s\"\n",__func__,hLoader->sentence.c_str());
     assert(preLogits->type==GGML_TYPE_F32);
     assert(preLogits->ne[1]==nTok+1);  //???
-    size_t nz = ggml_nelements(preLogits),nVocabInWiki=preLogits->ne[0]; //preLogits->nb[0];
+    size_t nz = tELEM(preLogits),nVocabInWiki=preLogits->ne[0]; //preLogits->nb[0];
 
     //out is last distribution of Causal Language Modeling
     size_t off = (nTok)*nVocabInWiki;      
@@ -513,25 +367,33 @@ hGensor Fish::BuildLoss( struct ggml_context * ctx,hGensor cur,int flag){
         out_node = cur;     return cur;
     }
     int n_ctx = hparams.n_ctx(),nCls = nClass(),n_batch = hparams.n_batch();
-    if(hparams.is( {"model","target"},string("OneHot") )){
-        target_probs = ggml_new_tensor_3d(ctx_build, GGML_TYPE_I32, 1, n_ctx, n_batch);
-    }else
-        target_probs = ggml_new_tensor_3d(ctx_build, GGML_TYPE_F32, nCls, n_ctx, n_batch);
-    gTN(target_probs,      "targets");
-
+    
+    // cuLiteTest(GTensor::B,GTensor::T,GTensor::C);  
+    
+    
+#ifdef _TENSOR_CUD_
+    assert(loss!=nullptr);
+#else
     assert(loss==nullptr);
     hGensor  t36 = nullptr;    
+    if(hparams.is( {"model","target"},string("OneHot") )){
+        target_probs = TENSO(ctx_build, GGML_TYPE_I32, {1, n_ctx, n_batch});
+    }else
+        target_probs = TENSO(ctx_build, GGML_TYPE_F32, {nCls, n_ctx, n_batch});
+    gTN(target_probs,      "targets");    
     if(hparams.is({"model","target"},string("OneHot")))
         t36 = ggml_cross_entropy_loss_1(ctx, cur, target_probs);
     else
-        t36 = ggml_cross_entropy_loss(ctx, cur, target_probs);          //  square_error_loss(ctx0, targets, logits);       
+        t36 = ggml_cross_entropy_loss(ctx, cur, target_probs);          //  square_error_loss(ctx0, targets, logits);   
+    
     gTN(t36, "loss");     assert_shape_1d(t36, 1);
     loss = t36;
     // if(isTrain())
     //     assert(loss->grad!=nullptr);
-#ifdef GG_V12
-    ggml_set_loss(loss);
-#endif
+    #ifdef GG_V12
+        ggml_set_loss(loss);
+    #endif
+#endif    
     out_node = loss;
     
     return loss;
@@ -545,6 +407,9 @@ hGensor NLP_AutoRegressive::BuildTarget( struct ggml_context * ctx,hGensor cur,i
     const int N = train_params.n_ctx, n_past = 0;
     const float rms_norm_eps = hparams.f_norm_rms_eps;
     hGensor  t32 = nullptr,wA = nullptr,wB = nullptr;
+#ifdef _TENSOR_CUD_
+    
+#else
     hGensor  t31 = ggml_rms_norm(ctx, cur, rms_norm_eps);                    gTN(t31, "norm");     
     assert_shape_2d(t31, hparams.n_embd, N*train_params.n_batch);
     
@@ -608,6 +473,7 @@ hGensor NLP_AutoRegressive::BuildTarget( struct ggml_context * ctx,hGensor cur,i
     if(hDict->nLevel>0){
         n_embd = hparams.n_embd;
     } 
+#endif
     return out_node;
 }
 
@@ -752,28 +618,25 @@ bool NLP_AutoRegressive::InitInput(struct ggml_context * ctx_build,bool isMask,i
     auto train_params = hparams.common;
     int n_ctx = train_params.n_ctx,n_vocab = tVocab(),n_batch = train_params.n_batch;
     assert(n_ctx>0 && n_batch>0);
-    // struct ggml_init_params ctx_input_params = {// mem_size mem_buffer no_alloc
-    //     ggml_tensor_overhead() * 2, NULL,true,                        
-    // };
-    // ctx_input = ggml_init(ctx_input_params);
-    tokens_input = ggml_new_tensor_2d(ctx_build, GGML_TYPE_I32, n_ctx, n_batch);
-    // if(hparams.is( {"model","target"},string("OneHot") )){
-    //     target_probs = ggml_new_tensor_3d(ctx_build, GGML_TYPE_I32, 1,  n_ctx, n_batch);
-    // }else
-    //     target_probs = ggml_new_tensor_3d(ctx_build, GGML_TYPE_F32, n_vocab,  n_ctx, n_batch);
-    // gTN(target_probs,      "targets");
+    SHAPE shape={n_ctx, n_batch};
+    
+    // tokens_input copy values from Batch tensor
+    tokens_input = TENSO(ctx_build, GGML_TYPE_I32, shape,GTensor::F_INPUT);       gTN(tokens_input, "inp_tokens");
+    in_node = tokens_input;
+#ifdef _TENSOR_CUD_
+#else
     ggml_backend_buffer_t input_data = ggml_backend_alloc_ctx_tensors_from_buft(ctx_build, ggml_backend_cpu_buffer_type());
     size_t max_input_size = ggml_backend_buffer_get_size(input_data);
     if(DUMP())
         _INFO("%s: input_size(%d,%d) = %zu bytes (%.1f MB)\n", __func__, n_ctx, n_batch, max_input_size, (float) max_input_size / (1024.0f*1024.0f));
     // ggml_free(ctx_input);
-    gTN(tokens_input, "inp_tokens");
-    
-    // tokens_input would be set @UpdateBatch!
     if(n_batch>1){
-        tBatch = ggml_reshape_1d(ctx_build, tokens_input, n_ctx*n_batch);   gTN(tokens_input, "inp_tokens_1d");
-    } else
-        tBatch = tokens_input;
+        in_node = ggml_reshape_1d(ctx_build, tokens_input, n_ctx*n_batch);   gTN(in_node, "inp_tokens_1d");
+    } else{
+        
+    }
+#endif    
+    
 
     build_inp_KQ_(ctx_build,isMask);    
     return true;
@@ -788,17 +651,19 @@ bool NLP_AutoRegressive::CreateExlogists(hWIKI wiki,uint32_t n_ctx,uint32_t n_ba
     assert(wiki->n_vocab>=nV);
     if(!isLocalInfer){
         assert(wiki->exLogits==nullptr);
-        
+#ifndef _TENSOR_CUD_       
         if(wiki->n_vocab>nV){
-            wiki->exLogits = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, nV,  n_ctx, n_batch);
+            wiki->exLogits = TENSO(ctx, GGML_TYPE_F32, {nV,  n_ctx, n_batch});
             if(0){
-            wiki->t2t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nV,  nV);
+            wiki->t2t = TENSO(ctx, GGML_TYPE_F32, {nV,  nV});
             sprintf(wiki->t2t->name,"t2t@%s",wiki->title.c_str());
             }
         }else{
-            wiki->exLogits = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, wiki->n_vocab,  n_ctx, n_batch);
+            wiki->exLogits = TENSO(ctx, GGML_TYPE_F32, {wiki->n_vocab,  n_ctx, n_batch});
         }
+
         tmpExLogis.push_back(wiki->exLogits); 
+#endif        
         return true;               
     }
     return false;
@@ -880,7 +745,9 @@ void NLP_AutoRegressive::InitGensors(int flag){
     }
     for(auto wiki : wikis){
         if(wiki->t2t!=nullptr){
+#ifndef _TENSOR_CUD_
             InitGensor(ctx,wiki->t2t, nullptr, rnd);
+#endif
         }            
     }
 }
@@ -888,7 +755,7 @@ void NLP_AutoRegressive::InitGensors(int flag){
 void NLP_AutoRegressive::InitModel(int flag){    
     const uint32_t n_ff = hparams.n_ff();
     auto train_params = hparams.common;
-    uint32_t n_embd  = hparams.n_embd,n_ctx = train_params.n_ctx;        
+    int n_embd  = hparams.n_embd,n_ctx = train_params.n_ctx;        
     const uint32_t n_layer = hparams.nLayer();
     bool isJModel = !hparams.jModel.empty();
     auto ctx=GetGGCTX();
@@ -901,31 +768,11 @@ void NLP_AutoRegressive::InitModel(int flag){
     _INFO("\nLLaMeta%s: init model embed=%d layer=%d ff=%d tpFFN=%d\n", __func__,n_embd,n_layer,n_ff,tpFFN);  
     _INFO("\t type of FFN=%s\n", tpFFN==FFN_TYPE::SWIGLU ? "MLP" : tpFFN==FFN_TYPE::VAR_LAST ? "Variation@last_layer" 
         : tpFFN==FFN_TYPE::ONLY_RMSNormal ? "RMS Normal" : "other");  
-    _INFO("\t type of ATTENTION=%s P=%s \n",tpATT==ATTENTION_TYPE::BROWN ? "BROWN":"QKV",BROWN_Motion::Transfer_1?"Token":"Embed");
+    // _INFO("\t type of ATTENTION=%s P=%s \n",tpATT==ATTENTION_TYPE::BROWN ? "BROWN":"QKV",BROWN_Motion::Transfer_1?"Token":"Embed");
     if(isJModel){
 
     }else{
-        for (int i=0;i<n_layer;i++) {
-            auto  layer = std::make_shared<QKV_LAY>(this,i);
-            layer->isLast = i==n_layer-1;
-            layers.push_back(layer);        //typedef shared_ptr<layer> hLayer;
-            layer->att_norm.w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
-            if(tpATT==ATTENTION_TYPE::OFF){
-            }else if(tpATT==ATTENTION_TYPE::QKV){
-                layer->Q.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
-                layer->K.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
-                layer->V.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);                
-            }else{
-                if(BROWN_Motion::Transfer_1){
-                    layer->V.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, 1);                
-                    layer->Q.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
-                }else{
-                    layer->Q.w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
-                }
-            }
-            layer->wo = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_embd);
-            layer->CreateFFN(hparams,ctx,tpFFN);            
-        }
+        
     }
     tmpExLogis.clear();
     if(role==ROLE_TYPE::SWARM_FOLLOWER) {
@@ -940,9 +787,9 @@ void NLP_AutoRegressive::InitModel(int flag){
 
     if( tmpExLogis.size()>0 
             && !isLocalInfer) {
-        // exLogits = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_vocab,  n_ctx, train_params.n_batch);
+        // exLogits = TENSO(ctx, GGML_TYPE_F32, n_vocab,  n_ctx, train_params.n_batch);
         if(teach==WIKI::_LOGITS_GATE)   {               
-            mom.embed2w = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, tmpExLogis.size()+1);
+            mom.embed2w = TENSO(ctx, GGML_TYPE_F32, {n_embd, (int)(tmpExLogis.size())+1});
         }   
     }
     nParams = 0;    
@@ -951,44 +798,11 @@ void NLP_AutoRegressive::InitModel(int flag){
 
     }else{
         hDict->CreateEmbeddings(0x0);
-        hEDS->Alloc(ctx);  //back_data = ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_cpu_buffer_type());
+        hEDS->Alloc(hForwTG, ctx);  //back_data = ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_cpu_buffer_type());
         rnd = init_random_normal_distribution(hparams.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);        
         hDict->Update(rnd,0x0);      
         InitGensors(flag);        
     }
 }
 
-//Deprecated
-void NLP_AutoRegressive::LoadTensors(struct llama_model * lama,int flag) {        
-    nParams = 0;
-    hDict->Update(nullptr,true);   //UpdateTokEmbed(lama,nullptr,true);
-    
-    // layers.resize(hparams.n_layer);
-    for (uint32_t i = 0; i < hparams.n_layer_train; ++i) {
-        // auto layer = dynamic_pointer_cast<QKV_LAY>(layers[i]);
-        auto layer = std::make_shared<QKV_LAY>(this,i);
-        layers.push_back(layer);        
-        layer->att_norm.w = llama_get_model_tensor(lama, TN(LLM_TENSOR_ATTN_NORM, i));     nParams+=ggml_nelements(layer->att_norm.w);
-        layer->Q.w             = llama_get_model_tensor(lama, TN(LLM_TENSOR_ATTN_Q, i));        nParams+=ggml_nelements(layer->Q.w);
-        layer->K.w             = llama_get_model_tensor(lama, TN(LLM_TENSOR_ATTN_K, i));        nParams+=ggml_nelements(layer->K.w);
-        layer->V.w             = llama_get_model_tensor(lama, TN(LLM_TENSOR_ATTN_V, i));        nParams+=ggml_nelements(layer->V.w);
-        layer->wo             = llama_get_model_tensor(lama, TN(LLM_TENSOR_ATTN_OUT, i));      nParams+=ggml_nelements(layer->wo);
-        layer->ffn_norm.w       = llama_get_model_tensor(lama, TN(LLM_TENSOR_FFN_NORM, i));      nParams+=ggml_nelements(layer->ffn_norm.w);
-        layer->ffn_gate       = llama_get_model_tensor(lama, TN(LLM_TENSOR_FFN_GATE, i));      nParams+=ggml_nelements(layer->ffn_gate);
-        layer->down.w       = llama_get_model_tensor(lama, TN(LLM_TENSOR_FFN_DOWN, i));      nParams+=ggml_nelements(layer->down.w);
-        layer->up.w         = llama_get_model_tensor(lama, TN(LLM_TENSOR_FFN_UP, i));        nParams+=ggml_nelements(layer->up.w); 
-
-        gensors.Insert({layer->att_norm.w,layer->Q.w,layer->K.w,layer->V.w,layer->wo,layer->ffn_norm.w,layer->ffn_gate,layer->down.w,layer->up.w});
-        assert_shape_1d(layer->att_norm.w, hparams.n_embd);
-        assert_shape_2d(layer->Q.w,             hparams.n_embd, hparams.n_embd);
-        assert_shape_2d(layer->K.w,             hparams.n_embd, hparams.n_embd_gqa());
-        assert_shape_2d(layer->V.w,             hparams.n_embd, hparams.n_embd_gqa());
-        assert_shape_2d(layer->wo,             hparams.n_embd, hparams.n_embd);
-        assert_shape_1d(layer->ffn_norm.w,       hparams.n_embd);
-        assert_shape_2d(layer->ffn_gate,       hparams.n_embd, hparams.n_ff());
-        assert_shape_2d(layer->down.w,       hparams.n_ff(),   hparams.n_embd);
-        assert_shape_2d(layer->up.w,         hparams.n_embd, hparams.n_ff());
-    }
-
-}
 

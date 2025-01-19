@@ -103,32 +103,32 @@ struct SAM_encoder : public Fish {
     void Neck(const std::string&key_,const SHAPE& shape,int flag=0x0) override{
         //struct ggml_context * ctx = graph->ctx;
         pe = AddTensor(key_+".pos_embed",GGML_TYPE_F32,{nEmbed, n_img_embd, n_img_embd, 1},0x0);
-        // pe = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, nEmbed, n_img_embd, n_img_embd, 1);
+        // pe = TENSO(ctx, GGML_TYPE_F32, nEmbed, n_img_embd, n_img_embd, 1);
         // model.tensors["image_encoder.pos_embed"] = pe;
         proj.BuildX(key_+".patch_embed.proj",{n_patch_size, n_patch_size,           3, nEmbed},this,0x0);
-            // proj_w = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, n_patch_size, n_patch_size,           3, nEmbed);
-            // proj_b = ggml_new_tensor_3d(ctx, GGML_TYPE_F32,            1,            1, nEmbed);
+            // proj_w = TENSO(ctx, GGML_TYPE_F16, n_patch_size, n_patch_size,           3, nEmbed);
+            // proj_b = TENSO(ctx, GGML_TYPE_F32,            1,            1, nEmbed);
         neck_conv_0 = AddTensor(key_+".neck.0.weight",GGML_TYPE_F16,{1, 1, nEmbed,     n_enc_out_chans},0x0);
         neck_conv_1 = AddTensor(key_+".neck.2.weight",GGML_TYPE_F16,{3, 3, n_enc_out_chans, n_enc_out_chans},0x0);
-            // neck_conv_0 = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, 1, 1, nEmbed,     n_enc_out_chans);
-            // neck_conv_1 = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, 3, 3, n_enc_out_chans, n_enc_out_chans);
+            // neck_conv_0 = TENSO(ctx, GGML_TYPE_F16, 1, 1, nEmbed,     n_enc_out_chans);
+            // neck_conv_1 = TENSO(ctx, GGML_TYPE_F16, 3, 3, n_enc_out_chans, n_enc_out_chans);
                         // model.tensors["image_encoder.neck.0.weight"] = neck_conv_0;
             // model.tensors["image_encoder.neck.2.weight"] = neck_conv_1;
         neck_norm_0.BuildX(key_+".neck.1",{n_enc_out_chans},this,0x0);
-            // neck_norm_0_w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
-            // neck_norm_0_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
+            // neck_norm_0_w = TENSO(ctx, GGML_TYPE_F32, n_enc_out_chans);
+            // neck_norm_0_b = TENSO(ctx, GGML_TYPE_F32, n_enc_out_chans);
         neck_norm_1.BuildX(key_+".neck.3",{n_enc_out_chans},this,0x0);
-            // neck_norm_1_w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
-            // neck_norm_1_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
+            // neck_norm_1_w = TENSO(ctx, GGML_TYPE_F32, n_enc_out_chans);
+            // neck_norm_1_b = TENSO(ctx, GGML_TYPE_F32, n_enc_out_chans);
     }
 };
 
 struct sam_state {
-    struct ggml_tensor * embd_img;
-    struct ggml_tensor * output;
-    struct ggml_tensor * low_res_masks;
-    struct ggml_tensor * iou_predictions;
-    //struct ggml_tensor * tmp_save = {};
+    hGensor  embd_img;
+    hGensor  output;
+    hGensor  low_res_masks;
+    hGensor  iou_predictions;
+    //hGensor  tmp_save = {};
     struct ggml_context * ctx;
     // buffer for `ggml_graph_plan.work_data`
     std::vector<uint8_t> work_buffer;
@@ -138,12 +138,12 @@ struct sam_state {
     ggml_gallocr_t       allocr = {};
 };
 
-inline struct ggml_tensor* sam_layer_norm_2d(
+inline hGensor  sam_layer_norm_2d(
                     struct ggml_context * ctx0,
-                    struct ggml_tensor  * layer,
+                    hGensor  layer,
                     int                   n_channels,
-                    struct ggml_tensor  * w,
-                    struct ggml_tensor  * b,
+                    hGensor  w,
+                    hGensor  b,
                     float                 eps) {
     // LayerNorm2d
     // normalize along channel dimmension
@@ -206,9 +206,9 @@ struct SegmentAnything  : public Fish {
         static size_t buf_size = 256u*1024*1024;
         struct ggml_init_params ggml_params = {buf_size,NULL,false, };
         state.ctx = ggml_init(ggml_params);
-        state.embd_img = ggml_new_tensor_3d(state.ctx, GGML_TYPE_F32,n_img_embd, n_img_embd, n_enc_out_chans);
-        state.low_res_masks = ggml_new_tensor_3d(state.ctx, GGML_TYPE_F32,n_enc_out_chans, n_enc_out_chans, 3);
-        state.iou_predictions = ggml_new_tensor_1d(state.ctx, GGML_TYPE_F32, 3);
+        state.embd_img = TENSO(state.ctx, GGML_TYPE_F32,n_img_embd, n_img_embd, n_enc_out_chans);
+        state.low_res_masks = TENSO(state.ctx, GGML_TYPE_F32,n_enc_out_chans, n_enc_out_chans, 3);
+        state.iou_predictions = TENSO(state.ctx, GGML_TYPE_F32, 3);
         state.buf_compute_img_enc.resize(ggml_tensor_overhead()*GGML_DEFAULT_GRAPH_SIZE + ggml_graph_overhead());
         state.allocr = ggml_gallocr_new(ggml_backend_cpu_buffer_type());   
     }
@@ -386,15 +386,15 @@ struct SegmentAnything  : public Fish {
         // prompt encoder
         enc_prompt = nullptr;/*std::make_shared<Fish>("enc_prompt",ctx,0x0);*/        childs.push_back(enc_prompt);
         enc_prompt->AddTensor("prompt_encoder.pe_layer.positional_encoding_gaussian_matrix",GGML_TYPE_F32,{n_enc_out_chans/2, 2});
-        // enc.pe = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_enc_out_chans/2, 2);
+        // enc.pe = TENSO(ctx, GGML_TYPE_F32, n_enc_out_chans/2, 2);
         enc_prompt->AddTensor("prompt_encoder.not_a_point_embed.weight",GGML_TYPE_F32,{n_enc_out_chans});
         enc_prompt->AddTensor("prompt_encoder.no_mask_embed.weight",GGML_TYPE_F32,{n_enc_out_chans});
-            // enc.not_a_pt_embd_w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
-            // enc.no_mask_embd_w  = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);
+            // enc.not_a_pt_embd_w = TENSO(ctx, GGML_TYPE_F32, n_enc_out_chans);
+            // enc.no_mask_embd_w  = TENSO(ctx, GGML_TYPE_F32, n_enc_out_chans);
         // enc.pt_embd.resize(n_pt_embd);
         for (int i = 0; i < n_pt_embd; i++) {
             enc_prompt->AddTensor("prompt_encoder.point_embeddings." + std::to_string(i) + ".weight",GGML_TYPE_F32,{n_enc_out_chans});
-            // enc.pt_embd[i] = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_enc_out_chans);            
+            // enc.pt_embd[i] = TENSO(ctx, GGML_TYPE_F32, n_enc_out_chans);            
         }
         // mask decoder
         nnDec = std::make_shared<Fish>("nnDec",ctx,0x0);        childs.push_back(nnDec);
@@ -425,12 +425,12 @@ struct SegmentAnything  : public Fish {
         nnDec->AddTensor("mask_decoder.output_upscaling.3.weight",GGML_TYPE_F16,  {2, 2, n_img_embd/2, n_img_embd});
         nnDec->AddTensor("mask_decoder.output_upscaling.3.bias",GGML_TYPE_F32, {n_img_embd/2});
         /*
-            dec.output_upscaling_0_w = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, 2, 2, n_img_embd, n_enc_out_chans);
-            dec.output_upscaling_0_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_img_embd);
-            dec.output_upscaling_1_w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_img_embd);
-            dec.output_upscaling_1_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_img_embd);
-            dec.output_upscaling_3_w = ggml_new_tensor_4d(ctx, GGML_TYPE_F16,  2, 2, n_img_embd/2, n_img_embd);
-            dec.output_upscaling_3_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_img_embd/2);
+            dec.output_upscaling_0_w = TENSO(ctx, GGML_TYPE_F16, 2, 2, n_img_embd, n_enc_out_chans);
+            dec.output_upscaling_0_b = TENSO(ctx, GGML_TYPE_F32, n_img_embd);
+            dec.output_upscaling_1_w = TENSO(ctx, GGML_TYPE_F32, n_img_embd);
+            dec.output_upscaling_1_b = TENSO(ctx, GGML_TYPE_F32, n_img_embd);
+            dec.output_upscaling_3_w = TENSO(ctx, GGML_TYPE_F16,  2, 2, n_img_embd/2, n_img_embd);
+            dec.output_upscaling_3_b = TENSO(ctx, GGML_TYPE_F32, n_img_embd/2);
         */
         for (int i = 0; i < n_hypernet_mpls_count; ++i) {
             nnDec->AddLayer("mask_decoder.output_hypernetworks_mlps."+ std::to_string(i),{
@@ -450,7 +450,7 @@ struct SegmentAnything  : public Fish {
         nnDec->AddTensor("mask_decoder.mask_tokens.weight",GGML_TYPE_F32, {n_enc_out_chans, n_pt_embd}); 
 
         UpdateTensors();
-        bool bRet = gg_load_weights(fin,qtype,gensors.nag,to_quant,to_skip);// load weights      
+        bool bRet = false;  //gg_load_weights(fin,qtype,gensors.nag,to_quant,to_skip);// load weights      
         assert(bRet); 
         fin.close();
         return bRet;
@@ -465,12 +465,12 @@ struct SegmentAnything  : public Fish {
         struct ggml_context * ctx0   = ggml_init(ggml_params);
         // struct ggml_cgraph  * gf     = ggml_new_graph(ctx0);
         
-        struct ggml_tensor * inp = ggml_new_tensor_4d(ctx0, GGML_TYPE_F32, n_img_size, n_img_size, 3, 1);
+        hGensor  inp = TENSO(ctx0, GGML_TYPE_F32, n_img_size, n_img_size, 3, 1);
         ggml_set_name(inp, "inp");
         ggml_set_input(inp);
 
         // ref: https://github.com/facebookresearch/segment-anything/blob/main/segment_anything/modeling/image_encoder.py#L392
-        struct ggml_tensor * cur = ggml_conv_2d_sk_p0(ctx0, enc->proj.w, inp);
+        hGensor  cur = ggml_conv_2d_sk_p0(ctx0, enc->proj.w, inp);
         cur = ggml_add_inplace(ctx0,cur,ggml_repeat(ctx0, enc->proj.b, cur));
         // ref: https://github.com/facebookresearch/segment-anything/blob/main/segment_anything/modeling/image_encoder.py#L394
         // keep in F32
@@ -478,11 +478,11 @@ struct SegmentAnything  : public Fish {
         // convert to F16
         //cur = ggml_cpy(ctx0,
         //        ggml_permute(ctx0, cur, 1, 2, 0, 3),
-        //        ggml_new_tensor_3d(ctx0, GGML_TYPE_F16, n_enc_state, n_img_embd, n_img_embd));
+        //        TENSO(ctx0, GGML_TYPE_F16, n_enc_state, n_img_embd, n_img_embd));
         // ref: https://github.com/facebookresearch/segment-anything/blob/main/segment_anything/modeling/image_encoder.py#L108-L109
         cur = ggml_add_inplace(ctx0, cur, enc->pe);
 
-        struct ggml_tensor * inpL = cur;
+        hGensor  inpL = cur;
         assert(enc->layers.size()==n_enc_layer);
         for (int il = 0; il < n_enc_layer; ++il) {
             NT_SAM * hLay = dynamic_cast<NT_SAM *>(enc->layers[il].get());            

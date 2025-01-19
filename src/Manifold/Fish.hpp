@@ -94,12 +94,12 @@ struct QKV_LAY : public NeLayer {
     QKV_LAY(Fish *hF_,int id);
     int64_t parameter_count() {
         int64_t nx = 0;
-        nx += att_norm.nElem();    //ggml_nelements(attention_norm);
+        nx += att_norm.nElem();    //tELEM(attention_norm);
 
-        nx += Q.nElem();            nx += ggml_nelements(wk);            nx += ggml_nelements(wv);
-        nx += ggml_nelements(wo);
-        nx += ffn_norm.nElem();     //ggml_nelements(ffn_norm); 
-        nx += ggml_nelements(ffn_gate);         nx += down.nElem();         nx += up.nElem();            //(ffn_down); nx += ggml_nelements(ffn_up);            
+        nx += Q.nElem();            nx += tELEM(wk);            nx += tELEM(wv);
+        nx += tELEM(wo);
+        nx += ffn_norm.nElem();     //tELEM(ffn_norm); 
+        nx += tELEM(ffn_gate);         nx += down.nElem();         nx += up.nElem();            //(ffn_down); nx += tELEM(ffn_up);            
         return nx;
     }
     virtual bool CreateFFN(const CLI_params&hparams,ggml_context *ctx,FFN_TYPE tpFFN,int flag=0x0);
@@ -108,7 +108,7 @@ struct QKV_LAY : public NeLayer {
     virtual void save_gguf(struct gguf_context *fctx, int flag);
 };
 typedef std::shared_ptr<QKV_LAY> hLQKV;
-struct BROWN_Motion    {
+/*struct BROWN_Motion    {
     bool isOnlinePush = false;      // push nodes last or online(QKV)
     Fish *hFish_ = nullptr;
     std::shared_ptr<KVCache> kv;
@@ -155,7 +155,7 @@ struct QKV_Motion : public BROWN_Motion    {
     }
     hGensor vXkq(struct ggml_context *ctx, hGensor v,hGensor kq,int layer_id);
     hGensor Build(struct ggml_context *ctx, hGensor t04, hGensor KQ_pos)    override;
-};
+};*/
 
 struct MixOfModels{
     bool isRes = true,isSiLU=false;    
@@ -216,7 +216,7 @@ protected:
     struct ggml_cgraph * gb_tmp = NULL;
     struct random_normal_distribution *rnd = nullptr;   
     
-    std::vector<struct ggml_tensor *> checkpoints;
+    std::vector<hGensor > checkpoints;
     bool measure_only=false;  
     struct ggml_cplan gf_plan,gb_plan;
     std::vector<hNeuron> neurons;      
@@ -229,13 +229,14 @@ protected:
     bool isLocalInfer = false;
     bool isLoadCheckpoint = false;
     bool isBias=false;
+    bool isSymbolicAnalysis = false;
 
     std::vector<uint8_t> work_buffer;
     // from GGML
     int size = 0; 
     size_t nParams = 0, szModel = 0;
-
-    hGensor in_node = nullptr, out_node = nullptr, tBatch=nullptr;
+    
+    hGensor in_node=nullptr, out_node=nullptr;          //maybe GPU tensor
     hGensor loss = nullptr, target_probs = nullptr, KQ_pos = nullptr, pos_embd=nullptr;
     hGensor KQ_mask = nullptr;  // mask for 1 head, it will be broadcasted to all heads
     hGensor preLogits = nullptr;        //no SOFTMAX
@@ -338,6 +339,8 @@ public:
         assert(0);
         return nullptr;    
     }
+    //  Activations would creat at Symbolic Analysis stage
+    bool isSymbolic(    )   {   return isSymbolicAnalysis; }
     virtual bool Build(int flag=0x0);
     virtual bool BeforeBuild(int flag=0x0);
     virtual bool AfterBuild(bool isInitParam,int flag=0x0);
@@ -349,7 +352,7 @@ public:
     virtual int BuildComputeGraph(int order,struct ggml_context * ctx,int flag);
     virtual hGensor BuildLoss( struct ggml_context * ctx,hGensor cur,int flag=0x0); 
     virtual hGensor BuildTarget( struct ggml_context * ctx,hGensor cur,int flag=0x0)    {   return nullptr;   } 
-    virtual hGensor GetGensor(const char *name, int flag = 0x0)    {
+    virtual hGensor GetGensor(const string&name, int flag = 0x0)    {
         return gensors.Get(name,flag);        
     } 
     virtual GENSOR_INFO& GetGensorInfo(hGensor hP, int flag = 0x0)    {
@@ -369,7 +372,7 @@ public:
     virtual void Statistic(int typ, int flag = 0x0);
     // virtual void CreateWiki(int flag=0x0)   {}
     
-    virtual hGensor Target()    {   return nullptr;    }
+    virtual hGensor Target()    {   return target_probs;    }
     virtual hGensor Output()    {   assert(out_node!=nullptr);   return out_node;    }
     virtual hGensor Input()     {   return nullptr;    }
 
@@ -392,7 +395,7 @@ public:
     }
 
     // If isParam, only alloc grad, no init!
-    void InitGensor(struct ggml_context *ctx, const char *name, hGensor gensor, bool isParam, int flag = 0);
+    void InitGensor(struct ggml_context *ctx, const string&name, hGensor gensor, bool isParam, int flag = 0);
 
     void InitGensor(struct ggml_context *ctx, hGensor gensor, const char *name, struct random_normal_distribution *rnd = nullptr, int flag = 0);    
 
@@ -403,7 +406,7 @@ public:
     void SetTensor(const int nx, const int ny, const std::vector<float> &arr_data, const char *name, int flag = 0x0)    {
         assert(0);      //  Drepecated
         hGensor inp = GetGensor("inp");
-        float *data = (float *)ggml_get_data(inp);
+        float *data = (float *)inp->data;   //ggml_get_data(inp);
         assert(data != nullptr);
         const int n = nx * ny;
         // assert(nx == n_img_size && ny == n_img_size);
@@ -527,6 +530,7 @@ public:
     friend class TGraph;
     friend class SelfAttention;     friend class ROPE;
     friend class EDGE_DEVICES;    
+    friend class OutCLS;
 };
 
 struct LogicSalp : public Fish {
