@@ -8,6 +8,7 @@
  */
 #include <set>
 #include "Fish.hpp"
+#include "Optimizer.hpp"
 #include "gLLM.hpp"
 #include "../g_stddef.hpp"
 
@@ -204,7 +205,7 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
                 else
                     ZERO_(node);    //ggml_set_zero(node);  
             }
-            _pt_cys_("",node,0x0);         printf("\n");
+            _pt_cys_("",node,0x0);         //printf("\n");
         }   
         bRet = true;
         break;
@@ -242,6 +243,7 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
         return false;
     }
 #ifdef _TENSOR_CUD_
+    
 #else
     // ugly code!
     int * data = (int *) KQ_pos->data;
@@ -419,6 +421,7 @@ bool Fish::GGUF_Serialize(const std::string&path,  bool isSave, int flag){
 try{
     if(path.empty())
         return false;
+    GST_TIC(tic);
     char buf[1024];
     struct ggml_context * fctx_data = NULL;
     struct gguf_context * fctx = NULL;
@@ -453,17 +456,17 @@ try{
         }
     }
     if(isSave){
-        if(!std::filesystem::exists(path)){
-            _INFO("%s: failed to save @'%s'\n", __func__, path.c_str());
-            return false;
-        }
+        // if(!std::filesystem::exists(path)){
+        //     _INFO("%s: failed to save @'%s'\n", __func__, path.c_str());
+        //     return false;
+        // }
         for(auto ps : optParams) {            
             gguf_add_tensor(fctx, G(ps));
         } 
         const bool only_meta = false;    
         gguf_write_to_file(fctx, path.c_str(), only_meta);
         size_t fsize = F_SIZE(path.c_str());
-        _INFO("[save] @\"%s\" nT=%ld fsize=%gM\n",path.c_str(),optParams.size(),fsize/1.0e6);
+        _INFO("[save] @\"%s\" nT=%ld fsize=%gM\tT=%.3g S\n",path.c_str(),optParams.size(),fsize/1.0e6,GST_TOC(tic));
     }else{
         n_tensors = gguf_get_n_tensors(fctx);
         if(isTrain() && n_tensors!=optParams.size()){      //  optParams maybe empty
@@ -488,13 +491,18 @@ try{
             }
             // const size_t offset = gguf_get_tensor_offset(fctx, i);
             // printf("%s: tensor[%d]: name = %s, offset = %zu\n", __func__, i, name, offset);
-            hGensor cur = NEW_(ggml_get_tensor(fctx_data, name));    //  cur = (hGensor )(mem_buffer + obj->offs);
+            // cur = std::make_shared<cuTensor>(ggml_get_tensor(fctx_data, name),GTensor::F_PARAM);    //  cur = (hGensor )(mem_buffer + obj->offs);
+            ggml_tensor *cur = ggml_get_tensor(fctx_data, name);    //  cur = (hGensor )(mem_buffer + obj->offs);
             if(cur==nullptr){
                 _INFO("%s failed to load tensor(%s) @%s!",__func__,name,path.c_str());
                 return false;
             }else{
                 
             }
+            
+#ifdef _TENSOR_CUD_       
+            target->CopyGG(cur);
+#else     
             size_t nEle = tELEM(cur),sz = tBYTE(cur);
             if(nEle != tELEM(target)) {
                 assert(0);      continue;
@@ -503,8 +511,9 @@ try{
                 Gensor2float_(cur,(float*)target->data,0x0);
             }else
                 memcpy(target->data,cur->data,sz);
+#endif            
             if(DUMP()){
-                sprintf(buf,"\t%d d=%d sz=%ld",i,tDIM(cur),sz);
+                sprintf(buf,"\t%d d=%d sz=%ld",i,tDIM(target),tBYTE(target));
                 _pt_cys_(buf,target,0x0);      printf("\n");
             }
             // _INFO("[Serialize]_%d\t%s: n_dims=%d sz = %ld\n",i,cur->name, tDIM(cur),sz);            

@@ -14,32 +14,13 @@ LLM_MAMBA::LLM_MAMBA( const std::string& nam_,struct CLI_params params,ROLE_TYPE
     assert(arch==MODEL_ARCH::NLP_MAMBA);
     bool worst_case = true;
     // isLoadTokenEmbed = true;
-    // hparams.common.adam_alpha = 0.0001;     // 
+    // hparams.common.adam.alpha = 0.0001;     // 
 }
 
 
 
 hGensor LLM_MAMBA::BuildTarget( struct ggml_context * ctx,hGensor cur,int flag)  {
-    /*int n_vocab = tVocab(),n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd;
-    auto train_params = hparams.common;
-    preLogits = ggml_reshape_3d(ctx, cur, n_vocab, n_ctx, n_batch);             gTN(preLogits, "preLogits");     
-    assert_shape_3d(preLogits, n_vocab, n_ctx, n_batch);
-    if(hparams.is({"model","target"},string("OneHot")))
-        loss = ggml_cross_entropy_loss_1(ctx, preLogits, target_probs);
-    else
-        loss = ggml_cross_entropy_loss(ctx, preLogits, target_probs);            
-                   
-    gTN(loss, "loss");     assert_shape_1d(loss, 1);
-    ggml_build_forward_expand(gf, loss);
-    if (train_params.use_checkpointing) {
-        if(gb!=nullptr) 
-            ggml_build_backward_gradient_checkpointing(ctx, gf, gb, gb_tmp, checkpoints.data(), (int) checkpoints.size());
-    } else {
-        if(gb!=nullptr){
-            ggml_graph_cpy(gf, gb);
-            ggml_build_backward_expand(ctx, gf, gb, true);            
-        }
-    } */
+    
    return nullptr;   
 }
 

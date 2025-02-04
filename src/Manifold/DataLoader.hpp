@@ -100,6 +100,8 @@ public:
         // next_sample++;
         return shard_samps[idx_];
     }
+    virtual bool isNextEpoch(int flag=0x0);
+    virtual string IterInfo(int flag=0x0);
     vector<TOKEN_ID>& GetTokens()    {  return hTokens->tokens; }
 
     int32_t TokenAt(size_t pos){

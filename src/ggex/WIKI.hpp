@@ -21,8 +21,6 @@
 using namespace std;
 
 class Fish;
-
-typedef struct ggml_tensor* hGensor;
 /*
      always for language model
 */
@@ -44,24 +42,24 @@ struct WIKI {
     INDUCT_MODE teach=_LOGITS;
     bool isOnlyTokenizer = false;
     size_t n_vocab = 0, nOutToken = -1,nEleGGUF = 0;
-    std::vector<std::pair<std::string, struct ggml_tensor *>> tmaps;
+    std::vector<std::pair<std::string, struct ggml_tensor  *>> tmaps;
 
     std::map<TOKEN_ID, TOKEN_ID> mapT2T;
     std::vector<TOKEN_ID> dialect;
-    hGensor exLogits = nullptr,t2t = nullptr;
+    struct ggml_tensor  *exLogits = nullptr,*t2t = nullptr;
 
     virtual const float *GetLogits(int n_vocab,int n_ctx,int idx=-1)   {   return nullptr; }
     virtual bool isInduct() 
     {   return teach!=_OFF && exLogits!=nullptr; }
 
-    virtual double InductLogits(int nSampInBatch,std::vector<TOKEN_ID>& tok_ids,hGensor exLogits,hGensor target_probs,int flag){
+    virtual double InductLogits(int nSampInBatch,std::vector<TOKEN_ID>& tok_ids,struct ggml_tensor  * exLogits,struct ggml_tensor  * target_probs,int flag){
         return 0.0;
     }
     virtual bool isValid(   )   const    {   return false;   }
     // bool takeRest = false;          //only for debug
 
-    virtual hGensor P()    {   return nullptr; }
-    virtual hGensor Target()    {   return nullptr; }
+    virtual struct ggml_tensor  * P()    {   return nullptr; }
+    virtual struct ggml_tensor  * Target()    {   return nullptr; }
     /*
         uint32_t n_ctx;             // text context, 0 = from model
         uint32_t n_batch;           // logical maximum batch size that can be submitted to llama_decode

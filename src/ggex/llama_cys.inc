@@ -620,7 +620,7 @@ struct LAMA : public WIKI   {
     struct llama_context *_ctx = nullptr; 
     struct llama_kv_cache *_cache=nullptr;
     ggml_cgraph * gf = nullptr;
-    hGensor res = nullptr;  
+    struct ggml_tensor  * res = nullptr;  
     
     bool isValid(   )  const    override 
     {   return lmodel!=nullptr && _ctx!=nullptr;   }
@@ -676,8 +676,8 @@ struct LAMA : public WIKI   {
 
     void Reset(int flag=0x0)    override;   
 
-    hGensor P()         override        {   assert(res!=nullptr);   return res; }
-    hGensor Target()    override        {   return nullptr; }
+    struct ggml_tensor  * P()         override        {   assert(res!=nullptr);   return res; }
+    struct ggml_tensor  * Target()    override        {   return nullptr; }
 
     //Hack function, should be called afer decode and the data maybe modified!!!
     const float *GetLogits(int n_vocab,int n_ctx,int idx=-1)   override;
@@ -808,6 +808,10 @@ void LAMA::Answer(std::vector<TOKEN_ID>&embd_inp,int flag) {
 
 #include "llama-vocab.h"
 #define _INFO printf
+/*
+    Ugly code from /home/cys/rnd/lic/llama.cpp/examples/main/main.cpp
+
+*/
 LAMA::LAMA(CLI_params& hparams,const std::string&path_,int flag)     {
     // cparams.flash_attn = true;           //would affect accuracy
     model_path = path_;
@@ -825,8 +829,8 @@ LAMA::LAMA(CLI_params& hparams,const std::string&path_,int flag)     {
     }        
     _INFO("%s: model base = '%s' nEmbd=%d wiki=%s\n", __func__, fn_model,hparams.n_embd,hparams.tpWiki.c_str());
     title = ""; //remove_extension(base_name(model_path));  
+    // llama_backend_init();
     lmodel = llama_load_model_from_file(fn_model, llama_model_params);  
-        
     if(lmodel==nullptr)   {
         _INFO("\n%s: FAILED @'%s' !!! \n", __func__, fn_model);
     }  else{     

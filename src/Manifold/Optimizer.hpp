@@ -60,8 +60,10 @@ protected:
     struct ggml_context * _ctx=nullptr;
     std::vector<hGensor> opt_ps;
     size_t nParams = 0, nMostParam = 0;
+    float *_tmp=nullptr;
     bool just_initialized = false,isAdaptiveSched = false,isGlobalGrad=true;
     bool isBackward = false;
+    bool isConverge = false;
     int past=0,nGradAccum=0,tpSign=0;
     int warmup_iters=0;
     // gradient clipping
@@ -73,15 +75,15 @@ protected:
     vector<float> fx_best;
     vector<float> fx_prev;
     int n_no_improvement=0;
-    float loss_before=0,loss_after=0;
+    float loss_before=0,loss_after=0,tokens_per_second=0,ema_tps=0;
     int first_epoch=0,iter_at_last_epoch=-1,first_iter=-1,iter=-1;
     uint64_t train_its=0,train_samples=0,train_tokens=0,train_epochs=0,max_epoch=0;
-    int64_t last_time;
+    double last_time,tX=0,tData;
     double millis_per_iter=0;
     std::vector<string> adam_filter =  {"output","norm"};    //{"token_embd","output","norm"};
 
     // void *app_ctx = nullptr;
-    double zmuv_0 = 0.0,zmuv_1 = 0.0,g_step=0.0,gNorm2=0;    
+    double zmuv_0 = 0.0,zmuv_1 = 0.0,g_step=0.0,g_ll=0,g2_sum=0;    
 
     hGensor hLoss( );
     hGensor hTargetProbs( );
@@ -106,10 +108,10 @@ protected:
     virtual float UpdateSchedule(int flag = 0x0);
     virtual bool AfterLoadBatch(int accum_step, int flag = 0x0);
     virtual int SignStochastic(int nx,CLI_params& hparams,int flag=0x0);
-    virtual float gClip(int nx,float *g,hGensor hP,int flag=0x0);
+    virtual float gClip(int nx,floatX *g,hGensor hP,int flag=0x0);
     virtual void UpdateParams(int nx,CLI_params& hparams,int flag);
     // virtual void AdamMiniV(float gnorm,int nx,CLI_params& hparams,int flag);
-    virtual bool BatchGrad(float&fx,int flag=0x0) {   assert(0);  return false; }
+    virtual bool BatchGrad(int iter,float&fx,int flag=0x0) {   assert(0);  return false; }
     bool OnLogits(int flag=0x0);
 public:
     GD_METHOD tpGD=ADAMw;  
@@ -129,20 +131,10 @@ public:
     
     Optimizer(NLP_AutoRegressive *g_,CLI_params& params_,int flag=0x0);
     //Deprecated need refactor!!!       9/30/2024
-    virtual bool GraphCompute(hTGraph,int flag=0x0);
+    virtual double GraphCompute(hTGraph,int flag=0x0);
     virtual float Evaluate(hSampLoader loader,int iter,int flag=0x0);
 
-    virtual void UpdateLoss(int step,float loss,int flag=0x0){
-        if(step>1){
-            float last = scheduler->Last();
-            isStopImprove = step>0 ? (loss>last*1.1) : false;   
-            if(isStopImprove){
-                _INFO("%s_%d: StopImprove\n", __func__, iter);
-            }            
-        }
-
-        scheduler->Append(loss);
-    }
+    virtual void UpdateLoss(int x,float loss,int flag=0x0);
 
     virtual bool isStopImproving( )	{	
         return isStopImprove;	
@@ -174,7 +166,8 @@ public:
     
     virtual ~Optimizer( ) {
         ggml_free(_ctx);
-        // free_train_state(train);
+        if(_tmp!=nullptr)
+            delete[] _tmp;
     }
 
     RESULT Search(struct ggml_context * ctx, hGensor loss_,hGensor target_,CLI_params& hparams);
@@ -187,26 +180,20 @@ public:
 };
 typedef shared_ptr<Optimizer> hOptimizer;
 
-class OPT_Adam : public Optimizer  {
+class OPT_Adam : public Optimizer  {    
 protected:    
-    float decay = 0.0f; // weight decay for AdamW, use 0.0f to disable
+    ADAM_params_ adam;      //may be modified
+    // float decay = 0.0f; // weight decay for AdamW, use 0.0f to disable
     float p_decay = 0;
-    int   decay_min_ndim = 2; // minimum number of tensor dimension to apply weight decay
-    float alpha = 0.001f; // learning rate
-    float beta1 = 0.9f,beta2 = 0.999f;
+    // int   decay_min_ndim = 2; // minimum number of tensor dimension to apply weight decay
+    // float alpha = 0.001f; // learning rate
+    // float beta1 = 0.9f,beta2 = 0.999f;
     float beta1h,beta2h;
-    float eps = 1e-8f;   // epsilon for numerical stability
-    float eps_f = 1e-5f; // epsilon for convergence test
-    float eps_g = 1e-3f; // epsilon for convergence test
-    
-    // hGensor gm=nullptr;  // first moment
-    // hGensor gv=nullptr;  // second moment
-    // hGensor gpf=nullptr; // past function values
 
     void Prepare(size_t nx,int flag=0x0)   override;
     // compute grad on batchs
-    bool BatchGrad(float&fx,int flag=0x0) override;
-    virtual double UpdateTensorParam(hGensor hP,size_t offset,float *g,float gnorm);
+    bool BatchGrad(int iter,float&fx,int flag=0x0) override;
+    virtual double UpdateTensorParam(hGensor hP,size_t offset,floatX *g,float gnorm);
     void UpdateParams(int nx,CLI_params& hparams,int flag)  override;
 public:
     OPT_Adam(NLP_AutoRegressive *g_,CLI_params& params_,int flag=0x0);

@@ -158,26 +158,7 @@ struct NLP_AutoRegressive : public Fish {
     
     string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
 
-    void Dump(int type,int flag=0x0)    override  {
-        if(NOT_DUMP())          return;
-        
-        int n_vocab = hDict->n_vocab,n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd;
-        string suffix="\n========\n",prefix;
-        __repr__(suffix,prefix);
-        hparams.Dump();         //        print_params(&hparams)
-        _INFO("====== nParams = %ld(%.6gM) ======\n", nParams,nParams/1.0e6);
-        _INFO("%s: nParams=%zu model_size = %zu bytes (%.1f MB)\n", __func__, nParams,szModel,szModel / (1024.0f*1024.0f) );
-        _INFO("%s: n_vocab=%d t_vocab=%d,n_batch=%d,n_ctx=%d,n_embd=%d,n_head=%d,n_rot=%d,n_ff=%d\n", __func__, 
-            n_vocab,tVocab(),n_batch,n_ctx,n_embd,hparams.n_head(),hparams.n_rot,hparams.n_ff() );
-        _INFO("%s: loader=%s\n", __func__, hparams.batch_sample.c_str() );
-        if(hOPT!=nullptr)
-            hOPT->Dump( 1 );     
-        else{
-            _INFO("hOPT is NULL\n");
-        }   
-        if(hparams.lars_ratio>0)
-            _INFO("%s: LARS(t_max=%g)\n", __func__,hparams.lars_ratio);
-    }
+    void Dump(int type,int flag=0x0)    override;
     
     // bool Build(int flag=0x0)   override;    
 
@@ -253,7 +234,7 @@ struct LLAMA_VAE  : public NLP_AutoRegressive {
     LLAMA_VAE( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag=0x0) 
         : NLP_AutoRegressive(nam_,params,role,flag)  {
         isLoadTokenEmbed = true;
-        // hparams.common.adam_alpha = 0.0001;     // 
+        // hparams.common.adam.alpha = 0.0001;     // 
     }
 
     virtual ~LLAMA_VAE() {        

@@ -4,6 +4,7 @@
 #endif
 
 #include "gLLM.hpp"
+#include "Optimizer.hpp"
 #include "../ggex/llmc_utils.h"
 #include "Dictionary.hpp"
 
@@ -141,12 +142,20 @@ void SampLoader::Samp2Batch(int k,hSAMP samp,struct train_params_& params,int fl
             assert(dialect[token]>0);
             token = hDict->mapT2T[token];
         }
+        if(DEBUG.train_datas==1)
+            token = i;      //only for debug
+
         ++starting;   
         if(hostTargetProbs==nullptr){
 
         }else{
-            if(isTarget_1)     
-                hostTargetProbs->Set(0, (int) i, (int) k, 0, token);            
+            if(isTarget_1)     {
+#ifdef _TENSOR_CUD_
+                hostTargetProbs->Set( (int) i, (int) k, 0, 0, token); 
+#else
+                hostTargetProbs->Set(0, (int) i, (int) k, 0, token); 
+#endif
+            }                           
             else    {
                 hostTargetProbs->Set(token, (int) i, (int) k, 0, +1.0f);
             }        
@@ -354,16 +363,17 @@ GlobTokenset::GlobTokenset(JSON::const_iterator jit,ConsiceDict *hDict,int flag)
 
     // inspect and validate all shards so we don't get any runtime errors later
     // if too slow / too many shards, may wish to revisit later
-    int64_t ntok_total = 0;
+    nMostTok = 0;
     for (int id = 0; id < glob_result.gl_pathc; id++) {
         string sPath = glob_result.gl_pathv[id];
         shard_paths.push_back(sPath);
         int64_t shard_ntok = PrepareShard( id );
         nFile++;
         // assert(shard_ntok >= (int64_t) (num_processes * B * T + 1));
-        ntok_total += shard_ntok;
+        nMostTok += shard_ntok;
     }
-    double nG = ntok_total/1.0e9;
+    double nG = nMostTok/1.0e9;
+    
     _INFO( "[%s] %s find %.8gG tokens @\"%s\"(%d files)\n", __func__,name.c_str(),pattern.c_str(),nG,nFile );
 }
 
@@ -371,7 +381,7 @@ bool GlobTokenset::NextShard(int flag)  {
     PrepareShard(shard_index++,true);      
     // InitSamps
     int n_ctx = hDict->hparams.n_ctx();
-    double rSplit = 1.0-hDict->hparams.rSplit;
+    // double rSplit = 1.0-hDict->hparams.rSplit;
     // samples_begin.clear();      samples_size.clear();
     // samples_begin.push_back(0);
     size_t nToken = tokens.size(),nFirst=std::min((size_t) n_ctx, nToken),step=1;
@@ -386,7 +396,7 @@ bool GlobTokenset::NextShard(int flag)  {
     size_t nSample = shard_samps.size();
     size_t num_batches = nSample/hDict->hparams.n_batch();
     num_batches = nSample==0 ? 0 : max(num_batches,(size_t)1);
-    _INFO("%s@[%s]: tokens=%zu nSamp=%d nBach=%d\n", __func__,name.c_str(), nToken,shard_samps.size(),num_batches); 
+    _INFO("\t%s@[%s]: tokens=%.3g(M) nSamp=%d nBach=%d\n", __func__,name.c_str(), nToken/1.0e6,shard_samps.size(),num_batches); 
     return true;
 }
 
@@ -442,7 +452,7 @@ int64_t GlobTokenset::PrepareShard(int id, bool load, int flag) {
     // -1 uint16_t due to us taking B*T+1 tokens but moving by B*T tokens
     shard_num_samples = (nTok0 * sizeof(uint16_t) - sizeof(uint16_t)) / total_batch_size_bytes;
     if(load){
-        _INFO("[shard]: tokens=%zu nSamp=%d @\"%s\"\n", nTok0,shard_num_samples,filename); 
+        _INFO("[shard]: tokens=%.3g(M) nSamp=%d @\"%s\"\n", nTok0/1.0e6,shard_num_samples,filename); 
     }
     return nTok0;
 }
@@ -719,6 +729,40 @@ bool SampLoader::TopoOrder(std::vector<size_t>&ids,std::mt19937& rng,int flag)  
     _INFO("SampLoader_%s nBatch=%ld rDup=%.3g(%.3g) T=%.3g(sec)\n",__func__,nz,avgDup,maxDup,GST_TOC(tic));
     delete[] stp;
 
+    return true;
+}
+
+string SampLoader::IterInfo(int flag){
+    char buffer[256];
+    if(hTokens->shard_paths.size()>0)  {
+        sprintf(buffer,"%zu/%zu@S%d",std::min(1 + next_sample, shuffle_sample_count), shuffle_sample_count,hTokens->shard_index);
+    }else{
+        sprintf(buffer,"sample@%zu/%zu",std::min(1 + next_sample, shuffle_sample_count), shuffle_sample_count);
+    }
+    
+    return buffer;
+}
+
+
+bool SampLoader::isNextEpoch(int train_epochs){
+    if(hTokens->shard_paths.size()>0)   
+        return false;
+    if( next_sample <shuffle_sample_count )
+        return false;
+
+    _INFO("%s: reshuffle samples. completed epochs: %llu\n", __func__, train_epochs);
+    shuffle_rng_state_current =shuffle_rng_state_next;
+    // train->shuffle_rng_state_next = shuffle_samples(
+    //     train->shuffle_rng_state_current,data->shuffled_samples_offs,data->shuffled_samples_begin,
+    //     data->shuffled_samples_size,data->samples_begin,data->samples_size,data->samples_count);
+    
+    Shuffle();           //SAMP_0816
+    // train->shuffle_rng_state_next = shuffle_samples(
+    //     train->shuffle_rng_state_current,loader->shuffled_samples_offs.data(),
+    //     loader->shuffled_samples_begin.data(),loader->shuffled_samples_size.data(),
+    //     loader->samp_begin.data(),loader->samp_size.data(),loader->samp_size.size());
+    
+    next_sample = 0;
     return true;
 }
 

@@ -9,6 +9,7 @@
  */
 #include <set>
 #include "Fish.hpp"
+#include "Optimizer.hpp"
 #include "gLLM.hpp"
 #include "../g_stddef.hpp"
 #include "../lenda/kernel/SVD.hpp"
@@ -50,7 +51,7 @@ hNeuron GeNeuron::MakeInstance(Fish *hG_,struct ggml_context *ctx,const string& 
     }
 
     // nn->Init(nullptr,0x0);
-    nn->Build(0x0);
+    nn->Build(flag);
     assert(nn->isValid());
     return nn;
 }
@@ -80,6 +81,14 @@ void GeNeuron::Init(Fish *hG_, int flag) {
     n_embd_head = hparams.n_embd_head();
     n_head=hparams.n_head();
     assert(n_embd_head*n_head==n_embd);
+}
+string GeNeuron::_repr_1( string& suffix,string& prefix,string info,int flag)    {
+    char buf[5012]="\0";
+    const char*tab=prefix.c_str();
+    sprintf(buf+strlen(buf),"%s %s",tab,info.c_str());    
+    if(flag>0)
+        _INFO("%s",buf); 
+    return buf;  
 }
 
 Ganglia::Ganglia(Fish *hG_,const string& key_,std::vector<hNeuron>& ns_,int flag) : ns(ns_)  {
@@ -127,12 +136,18 @@ bool Embed::Build(int flag){
     if(n<=0){
         n = hFish->hparams.n_ctx();
     }
+
     assert(n>0 && latent>0);
     GTensor::tpDATA tpData = GTensor::tpFloatX;
 
     bool isTrain = hFish->isTrain();
     string sw = name+sWeight,sb=name+".pos"; 
+#ifdef _TENSOR_CUD_ 
+    padded_nCls = ceil(n/128.0)*128;   
+    w = TENSO(ctx, tpData, {latent, padded_nCls}); 
+#else
     w = TENSO(ctx, tpData, {latent, n});
+#endif    
     hFish->InitGensor(ctx,sw.c_str(),w,isTrain);
     if(isAddPos){
         n = hFish->hparams.n_ctx();
@@ -204,6 +219,7 @@ bool FFN::Build(int flag_0)   {
     assert(GTensor::C==shape[0]);
     sp3={GTensor::B,GTensor::T,latent};
     relu.out = std::make_shared<cuTensor>(name+"_relu",sp3,GTensor::tpFloatX,false);
+    // pre_gelu = std::make_shared<cuTensor>(name+"_pregelu",sp3,GTensor::tpFloatX,false);
     // hFish->InitGensor(nullptr,name+"_relu",relu.out,false);
 #else    
     gate.BuildX(name+"_gate",{shape[0],shape[1]},hFish,flag);
@@ -211,6 +227,9 @@ bool FFN::Build(int flag_0)   {
     norm.BuildX(name+sNorm,sp,hFish,flag);        //layer->ffn_norm.sT="f";
     up.BuildX(name+"_up",{shape[0],latent},hFish,flag);    
     down.BuildX(name+"_down",{latent,shape[0]},hFish,flag);    
+#ifdef _TENSOR_CUD_
+    BIT_SET(down.out->flags,GTensor::F_NOALLOC);
+#endif
     return true;
 }
 
@@ -223,23 +242,16 @@ hGensor FFN::Interact(struct ggml_context * ctx_,hGensor inpL,int flag){
 #ifdef _TENSOR_CUD_
     cur = inpL;
     hGensor lastResi = inpL;
-    if(hFish->isSymbolic()){            
-//         out = std::make_shared<cuTensor>(cur->shape,cur->type);        cur = out;        
-//         _ffn = std::make_shared<cuTensor>(cur->shape,cur->type);    //B * T* C
-//         cur = norm.Interact(ctx_,_ffn,0x0); 
-//         //floatX* l_fch = acts.fch + l * B * T * 4*C;
-        SHAPE sp={cur->shape[0],cur->shape[1],4*cur->shape[2]};    //B * T* 4*C
-//         _latent = std::make_shared<cuTensor>(sp,cur->type);
-// // reuse the same activation buffer at each layer, as we'll re-compute the gelu during backward very useful because we dramatically reduce VRAM usage, and may be able to fit larger batch size
-
-        out = inpL >> up >> relu >> down >> norm ;        
+    if(hFish->isSymbolic()){      
+        out = inpL >> up >> relu >> down >> norm ;  
+        // out->AddSrc(pre_gelu);      
         cur = out;
     } else{ //  high performance fused operator
-        iRet = FUSE_FFN(down.out,cur,up.out,up.w,up.b,relu.out,down.w,down.b,gelu_fusion,0);  cur=down.out; 
-        cuLiteTest(GTensor::B,GTensor::T,GTensor::C,1);
-        // iRet = FUSE_ResiNormal(out,down.out,lastResi,norm.out,norm.mean,norm.rstd,norm.w,norm.b,0x0);   
-        // cuLiteTest(GTensor::B,GTensor::T,GTensor::C,1);  
-        // cur = out;
+        float *inp1=TO<float>(down.out);
+        FUSE_cuda(cur,0x0);
+        cur = norm.out;
+        // iRet = FUSE_FFN(down.out,cur,up.out,up.w,up.b,relu.out,down.w,down.b,gelu_fusion,0);            cur = down.out;  
+        // iRet = FUSE_ResiNormal(out,down.out,lastResi,norm.out,norm.mean,norm.rstd,norm.w,norm.b,0x0);   cur = norm.out; 
     } 
 #else
     cur = norm.Interact(ctx_,inpL,0x0);
@@ -269,7 +281,7 @@ hGensor FFN::Interact(struct ggml_context * ctx_,hGensor inpL,int flag){
 string FFN::__repr__( string& suffix,string& prefix,int flag)    {
     char buf[5012]="\0";
     const char*tab=prefix.c_str();
-    sprintf(buf+strlen(buf),"%s FFN",tab);    
+    sprintf(buf+strlen(buf),"%s %s {l=%d}",tab,name.c_str(),shape[1]);    
     if(flag>0)
         _INFO("%s",buf); 
     return buf;  
@@ -328,23 +340,33 @@ OutCLS::OutCLS(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int
     // _target = hFish->Target();   //null now
     nCls=hFish->nClass();
     padded_nCls = ceil(nCls/128.0)*128;
+#ifdef _TENSOR_CUD_
+    shape={nEmbd,padded_nCls};
+    rLoss = 1.0f / (GTensor::B * GTensor::T );  //* grad_accum_steps 
+    rLoss /= hG_->hparams.nGradAccumulate();
+#else
     shape={nEmbd,nCls};
+#endif
 }
 bool OutCLS::Build(int flag)   {
     SHAPE sp={shape[0]};
-#ifdef _TENSOR_CUD_
-    SHAPE sp2={GTensor::B,GTensor::T};
+#ifdef _TENSOR_CUD_    
+    SHAPE sp2={GTensor::B,GTensor::T},sp3={GTensor::B,GTensor::T,padded_nCls};
+    hostLoss = new float[GTensor::B*GTensor::T];
     target = std::make_shared<cuTensor>("target",sp2,GGML_TYPE_F32,false); 
     // hFish->InitGensor(nullptr,"target",target,false);           
     hFish->target_probs = target; 
     out = std::make_shared<cuTensor>("loss",sp2,GGML_TYPE_F32,false);     
+    preLogits = std::make_shared<cuTensor>("preLogits",sp3,GTensor::tpFloatX,false);  
     // hFish->InitGensor(nullptr,"loss",out,false);                
     hFish->loss = out;//
 #else
     norm.BuildX(name+sNorm,sp,hFish,0x0);        //layer->ffn_norm.sT="f";
+    proj.BuildX(name+".probability",{shape[0],shape[1]},hFish,flag); 
 #endif
     string sCls = "";   //  ".cls"
-    proj.BuildX(name+".probability",{shape[0],shape[1]},hFish,flag); 
+    
+
     name += ".cls";      
     return true;
 }
@@ -356,13 +378,14 @@ hGensor OutCLS::Interact(struct ggml_context * ctx_,hGensor inpL,int flag)    {
     hGensor cur = nullptr;
 #ifdef _TENSOR_CUD_
     if(hFish->isSymbolic()){ 
-        SHAPE sp={GTensor::B,GTensor::T},sp3={GTensor::B,GTensor::T,padded_nCls};
-        inpL >> proj;         
-        out->AddSrc({proj.out,target});            assert(target!=nullptr);
-        hFish->preLogits = proj.out;
-    } else{     
-        assert(proj.b==nullptr);
-        mean_loss = proj.out->FusedLoss(out,target,inpL,proj.w,nCls,0x0);        
+        // inpL >> proj;         
+        // out->AddSrc({proj.out,target});            assert(target!=nullptr);
+        out->AddSrc({inpL,preLogits,target});            assert(target!=nullptr);
+        hFish->preLogits = preLogits;
+    } else{    
+        FUSE_cuda(inpL,0x0);
+        // mean_loss = proj.out->FusedLoss(rLoss,out,target,inpL,proj.w,nCls,isForward(),0x0);     
+        hFish->hOPT->UpdateLoss(-1,mean_loss);   
     }
     cur = out;      return cur;
 #else    
@@ -379,6 +402,14 @@ hGensor OutCLS::Interact(struct ggml_context * ctx_,hGensor inpL,int flag)    {
     cur = AfterForward(ctx_,cur,flag);           
     return cur;    
 }
+string OutCLS::__repr__( string& suffix,string& prefix,int flag)    {
+    char buf[5012]="\0";
+    const char*tab=prefix.c_str();
+    sprintf(buf+strlen(buf),"%s OutCLS",tab);    
+    if(flag>0)
+        _INFO("%s",buf); 
+    return buf;  
+};
 
 SLP::SLP(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag)      : GeNeuron(key_,jit, hG_, flag)    {
     assert(jvals.size()>=2);
@@ -410,6 +441,7 @@ bool SLP::Build(int flag)      {
     hFish->InitGensor(ctx,sw.c_str(),w,isTrain);
     if(isBias)  hFish->InitGensor(ctx,sb.c_str(),b,isTrain);
 #ifdef _TENSOR_CUD_        
+    if(b!=nullptr)  b->tpInit = 0;
     SHAPE s3={GTensor::B,GTensor::T,nOut};
     out = std::make_shared<cuTensor>(so,s3,tpData,false);    
     // hFish->InitGensor(ctx,so.c_str(),out,false);    
@@ -552,14 +584,20 @@ string ROPE::__repr__( string& suffix,string& prefix,int flag)    {
 };
 
 LayerNormal::LayerNormal(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag)    : GeNeuron(key_,jit, hG_, flag) {
-    assert(jvals.size()>=1 && jvals[0]>0);
-    shape={(int)(jvals[0])};
+    if(jvals.size()==1){
+        shape={(int)(jvals[0])};
+    }else{
+        shape = {n_embd};
+    }
+    isBias = true;
+    // assert(jvals.size()>=1 && jvals[0]>0);
+    // shape={(int)(jvals[0])};
 }
 /*
     https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html#torch.nn.LayerNorm
 */
 bool LayerNormal::Build(int flag)    {
-    isBias = hFish->isBias || BIT_TEST(flag,F_BIAS);
+    isBias = hFish->isBias || BIT_TEST(flag,F_BIAS) || isBias;
     // name = key_;
     struct ggml_context * ctx = hFish->GetGGCTX();
     assert(shape.size()==1 && shape[0]>0 );
@@ -575,6 +613,7 @@ bool LayerNormal::Build(int flag)    {
         hFish->InitGensor(ctx,sb.c_str(),b,isTrain);
     }
 #ifdef _TENSOR_CUD_        
+    w->tpInit=1;    b->tpInit=0;
     assert(nIn==GTensor::C);
     SHAPE sp={GTensor::B,GTensor::T},sp3={GTensor::B,GTensor::T,nIn};
     out = std::make_shared<cuTensor>(name+".out",sp3,GTensor::tpFloatX,false);    
@@ -588,7 +627,15 @@ bool LayerNormal::Build(int flag)    {
 #endif
     return true;
 }
-
+string LayerNormal::__repr__( string& suffix,string& prefix,int flag){
+    char buf[5012]="\0";
+    const char*tab=prefix.c_str();
+    sprintf(buf+strlen(buf),"%s LayerNormal(%s%s%s) out=%s",tab,b==nullptr?"":"+b",mean==nullptr?"":"+mean",rstd==nullptr?"":"+rstd",
+        out==nullptr?"NULL":out->name);    
+    if(flag>0)
+        _INFO("%s",buf); 
+    return buf; 
+}
 
 
 hGensor LayerNormal::Interact(struct ggml_context * ctx0,hGensor cur,int flag)    {   
@@ -604,11 +651,7 @@ hGensor LayerNormal::Interact(struct ggml_context * ctx0,hGensor cur,int flag)  
 #ifdef _TENSOR_CUD_
     if(isForward()){
         if(hFish->isSymbolic()){            
-            // out = std::make_shared<cuTensor>(cur->shape,cur->type);        cur = out;
-  
-            // out->AddSrc({cur,w,b});   
-            // mean->AddSrc({cur,w,b});   
-            // rstd->AddSrc({cur,w,b});   
+            cur >> *this;       cur = out;
         } else{
             cur = cur->Normal(out,mean,rstd,w,b);            
         } 
@@ -711,7 +754,8 @@ bool GeNeuron::isForward()  {
 hGTensor operator>>(hGTensor t, const LayerNormal& norm){
     assert(t!=nullptr && norm.out!=nullptr);
 
-    norm.out->AddSrc({t,norm.w,norm.b});
+    // norm.out->AddSrc({t,norm.w,norm.b});
+    norm.out->AddSrc({t,norm.w,norm.b,norm.mean,norm.rstd});    // should alloc memory of mean&rstd
     // norm.mean->AddSrc({t,norm.w,norm.b});    //???
     // norm.rstd->AddSrc({t,norm.w,norm.b});    //???
 

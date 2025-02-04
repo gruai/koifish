@@ -1,4 +1,5 @@
 #include "../../llama.cpp/common/console.h"
+#include "Optimizer.hpp"
 #include "GoPT.hpp"
 #include "Fish.hpp"
 #include "gLLM.hpp"
@@ -140,9 +141,9 @@ int GPT_work(CLI_params& hparams)  {
     //  GRUS_Get_SystemInfo
     _INFO("[%s] threads=%d \n%s\n",__func__,std::thread::hardware_concurrency(),llama_print_system_info());
     ggml_numa_init(GGML_NUMA_STRATEGY_DISABLED);    
-    hparams.debug.SelfAttention_noraml = 0;
-    hparams.debug.NO_loss = true;
-    hparams.debug.graph_dump = 1;
+    DEBUG.SelfAttention_noraml = 0;
+    DEBUG.NO_loss = true;
+    DEBUG.graph_dump = 1;
     // hparams.wiki_actor="";    //only for debug
 
     hparams.isOnlyGPT = true;

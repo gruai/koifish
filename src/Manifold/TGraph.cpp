@@ -11,6 +11,7 @@
 #include "../ggex/GG_util.hpp"
 #include "../lenda/kernel/SVD.hpp"
 #include "llama_cys.h"
+#include "ggml-impl.h"
 
 hGensor Fish::AddTensor(const std::string&key_,enum ggml_type tp,const SHAPE& shape,int flag){
     auto ctx=GetGGCTX();
@@ -67,7 +68,7 @@ SelfAttention::SelfAttention(Fish* hG_,const std::string&key_,JSON::const_iterat
         shape={n_embd,n_embd,n_head};
     }
     
-    tpNormal = hFish->hparams.debug.SelfAttention_noraml;
+    tpNormal = DEBUG.SelfAttention_noraml;
     assert(shape[0]>0 && shape[1]>0 && shape[2]>0);
     // q.Init(hG_,flag);       k.Init(hG_,flag);       v.Init(hG_,flag);       proj.Init(hG_,flag);
 }
@@ -81,9 +82,10 @@ bool SelfAttention::Build(int flag_0)   {
 
     norm.BuildX(name+sNorm,{shape[0]},hFish,flag);        
 #ifdef _TENSOR_CUD_
-    SHAPE sp2={shape[0],shape[1]*3},sp3={GTensor::B,GTensor::T,GTensor::C};
+    SHAPE sp2={shape[0],shape[1]*3},sp3={GTensor::B,GTensor::T,GTensor::C},spTrans={GTensor::B,n_head_kv,GTensor::T};   //,GTensor::T
     Q.BuildX(name+"_qkv",sp2,hFish,flag);
     attn = std::make_shared<cuTensor>(name+".attn",sp3,GTensor::tpFloatX,false);        // B * T * C
+    trans = std::make_shared<cuTensor>(name+".trans",spTrans,GGML_TYPE_F32,false);        // ENABLE_CUDNN need float array
     // hFish->InitGensor(nullptr,name+".attn",attn,false);
     out = std::make_shared<cuTensor>(name+".out",sp3,GTensor::tpFloatX,false);    
     // hFish->InitGensor(nullptr,name+".out",out,false); 
@@ -93,9 +95,11 @@ bool SelfAttention::Build(int flag_0)   {
     V.BuildX(name+"_v",sp,hFish,flag);
     rope.BuildX(name+".rope",sp,hFish,flag);
 #endif
-    string sCat = "_output";    //  ".proj" ".cat"
+    string sCat = "_cat";    //  ".proj" ".cat"
     proj_cat.BuildX(name+sCat,sp,hFish,flag);
-
+#ifdef _TENSOR_CUD_
+    BIT_SET(proj_cat.out->flags,GTensor::F_NOALLOC);       //memory trick as kGPT
+#endif
     // tpTrans = RELU2;
     // moe.BuildX(name+".moe",sp,hFish,flag);        //  why this would slow converge???
     return true;
@@ -128,20 +132,17 @@ hGensor SelfAttention::Interact(struct ggml_context * ctx_,hGensor inpL,int flag
         residual = std::make_shared<cuTensor>(cur->shape,cur->type);
         out = std::make_shared<cuTensor>(cur->shape,cur->type);        
         cur = norm.Interact(ctx_,out,0x0); */    
-        inpL>>Q;        attn->AddSrc(Q.out);
+        inpL>>Q;        attn->AddSrc({Q.out,trans});
         attn>>proj_cat>>norm;      out->AddSrc(norm.out);
         cur = out;
-    } else{     //high performace fused operator
-        
+    } else{     //high performace fused operator        
         // inpL*Q => attn => proj_cat
-        // iRet = FUSE_QKV(proj_cat.out,inpL,Q.out,attn,Q.w,Q.b,n_head,proj_cat.w,proj_cat.b,0x0 );   
-        // assert(lastResi->isSameShape(out) && lastResi->isSameShape(norm.out));
+        iRet = FUSE_QKV(proj_cat.out,inpL,Q.out,attn,Q.w,Q.b,n_head,proj_cat.w,proj_cat.b,0x0 );        cur=proj_cat.out;
+                // cuLiteTest(GTensor::B,GTensor::T,GTensor::C,1);
+        // norm(cur+resi)        
+        iRet = FUSE_ResiNormal(out,cur,lastResi,norm.out,norm.mean,norm.rstd,norm.w,norm.b,0x0);        cur = norm.out;
         // cuLiteTest(GTensor::B,GTensor::T,GTensor::C,1);
-        // norm(cur)+resi
-        cur=proj_cat.out;
-        // iRet = FUSE_ResiNormal(out,cur,lastResi,norm.out,norm.mean,norm.rstd,norm.w,norm.b,0x0);
-        // cuLiteTest(GTensor::B,GTensor::T,GTensor::C,1);
-        // cur = out;
+        // 
     }
 #else
     hGensor cur = norm.Interact(ctx_,inpL,0x0);   
@@ -807,7 +808,7 @@ string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {
     // if(DUMP())
     //     ggml_graph_print(raw());
     string root_name = "";
-    const size_t MAX_BUF=64*1024;
+    const size_t MAX_BUF=640*1024;
     char buf[MAX_BUF]="\0";
     sprintf(buf+strlen(buf),"\n CGRAPH_%s x=%d nodes=%d leafs=%d forward=(%d,%d)\n",name.c_str(), -1,cgraph->n_nodes, cgraph->n_leafs,nForwN,nForwL);
 #ifdef _TENSOR_CUD_
@@ -844,7 +845,7 @@ string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {
     for(int i=0;i<nLeaf;i++)        all_nodes.push_back(cgraph->leafs[i]);    
     
     for(auto gensor:topo_nodes){
-        if(hFish->hparams.debug.graph_dump==0)
+        if(DEBUG.graph_dump==0)
             _T_repr_(gensor,tab,buf,hFish->GetGensorInfo(gensor));  assert(strlen(buf)<MAX_BUF);
         if(!hFish->GetGensor(gensor->name)){
             assert(0);
@@ -1305,7 +1306,7 @@ struct ggml_cgraph * TGraph::BuildBackward(struct ggml_context * ctx_,hTGraph hF
     cgraph = gb;        //  ggml_build_backward_expand
     const size_t size_meta = (3*hFore->nNeedGrad + 9) * ggml_tensor_overhead();
     struct ggml_context * ctx_static = ggml_init({size_meta,nullptr,true});
-    if(hFish->hparams.debug.back_graph_version==1){
+    if(DEBUG.back_graph_version==1){
         ggml_build_backward_expand(ctx_static, ctx_, gb, accumulate);
         return gb;
     }
@@ -1565,6 +1566,7 @@ void s2layerinfo(const string&jkey,std::vector<string>&lays){
         token = strtok(NULL, seps);     no++;
     }
     const string sL=".";  //".L"
+    
     if(nLay>1){
         for(int i=0;i<nLay;i++){
             string name=nam_0+sL+std::to_string(i);
@@ -1581,6 +1583,7 @@ hNeuron Fish::J2Neuron(struct ggml_context *ctx_,string& dad,int level,const JCo
     string k,nam_,prefix;
     std::vector<string> lay_names;
     int i,nLay;
+    hparams.n_layer_train = 12;
     for(JSON::const_iterator it = config.js.begin(); it != config.js.end(); ++it)    {
         k =it.key();     
         if(!k.empty() && k[0]=='#')     
@@ -1632,17 +1635,31 @@ int Fish::jToGraph( struct ggml_context *ctx_,bool isBuild,int flag)   {
     GTensor::B = hparams.n_batch();     GTensor::C = hparams.n_embd;     GTensor::T = hparams.n_ctx();
 #ifdef _TENSOR_CUD_
     // cuLiteTest(GTensor::B,GTensor::T,GTensor::C);
+    int Vp=(int)(nClass()*1.1),NH=hparams.n_head();
+    int nTmp = std::max(3*GTensor::C, std::max(NH*GTensor::T, Vp));
+    SHAPE sp={GTensor::B,GTensor::T,GTensor::C},sp4={GTensor::B,GTensor::T,4*GTensor::C},sp0={GTensor::B * GTensor::T *nTmp};
+    GTensor::scratch_bt4c = std::make_shared<cuTensor>("scratch_4c",sp4,GTensor::tpFloatX,false); 
+    GTensor::scratch_btc = std::make_shared<cuTensor>("scratch",sp,GTensor::tpFloatX,false); 
+    GTensor::scratch_output = std::make_shared<cuTensor>("scratch_output",sp0,GTensor::tpFloatX,false);
+    GTensor::scratch_bt4c->Alloc();         GTensor::scratch_btc->Alloc();
+    GTensor::scratch_output->Alloc();
 #endif
     J2Neuron(ctx_,sRoot,0,js,flag);   //  "GPT2"
 
     //Only symbolic analysis
+    string suffix,prefix;
     int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd,no=0;
     hGensor cur = in_node;  //tBatch; 
     for(auto nn : neurons){     //Symbolic Interact
         no++;       
         assert(cur!=nullptr);
         cur = nn->Interact(ctx_,cur);
-        
+        if(nn->isGang()){
+
+        }else{
+            _INFO("%d\t%s\n",no,nn->__repr__(suffix,prefix).c_str());   
+        }
+         
     }
 #ifdef _TENSOR_CUD_
 #else

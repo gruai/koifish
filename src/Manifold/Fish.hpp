@@ -23,7 +23,7 @@
 #include "../ggex/GG_util.hpp"
 #include "Neuron.hpp"
 #include "TGraph.hpp"
-#include "Optimizer.hpp"
+#include "../Device/EDevice.hpp"
 #include "GoPT.hpp"
 #include "../lenda/util/GST_util.hpp"
 #include "../Fuzi/Distillation.hpp"
@@ -31,6 +31,8 @@
 using namespace std;
 
 class Fish;
+class Optimizer;
+typedef shared_ptr<Optimizer> hOptimizer;
 typedef shared_ptr<Fish> hFISH;
 typedef vector<hFISH> tpSWARM;   
 
@@ -219,7 +221,7 @@ protected:
     std::vector<hGensor > checkpoints;
     bool measure_only=false;  
     struct ggml_cplan gf_plan,gb_plan;
-    std::vector<hNeuron> neurons;      
+    std::vector<hNeuron> neurons;
     
     GENSORS gensors;
     
@@ -231,8 +233,8 @@ protected:
     bool isBias=false;
     bool isSymbolicAnalysis = false;
 
-    std::vector<uint8_t> work_buffer;
-    // from GGML
+    // std::vector<uint8_t> work_buffer;
+
     int size = 0; 
     size_t nParams = 0, szModel = 0;
     
@@ -314,6 +316,21 @@ public:
     }
     std::shared_ptr<KVCache> hCache = nullptr;
     // virtual KVCache *GetKVCache()  {   return nullptr;    }
+    template<typename T>
+    T *GetNeuron(const string&desc,int no,int flag=0x0) {
+        int k=0;
+        for(auto n : neurons){
+            T* t=dynamic_cast<T*>(n.get());
+            if(t==nullptr){
+                continue;
+            }
+            if(k++==no){
+                return t;
+            }
+        }
+        assert(0);
+        return nullptr;
+    }
 
     virtual ~Fish() { Clear(); }
     virtual std::string Name()  {   return name.c_str();  }
@@ -456,29 +473,7 @@ public:
 
     virtual void AddLayer(const std::string &key_, std::vector<NP_> nps, int flag = 0x0)    {
         hLayer layer = std::make_shared<NeLayer>(key_);
-        assert(0);      //Deprecated
-        /*for (auto param : nps)
-        {
-            hNeuron hN = nullptr;
-            auto tp = param.type;
-            if (param.type == "SelfAttention")
-            {
-                hN = std::make_shared<SelfAttention>(this, key_ + param.title, param.shape, flag);
-            }
-            else if (param.type == "LayerNormal")
-            {
-                hN = std::make_shared<LayerNormal>(this, key_ + param.title, param.shape, flag);
-            }
-            else if (param.type == "SLP")
-            {
-                hN = std::make_shared<SLP>(this, key_ + param.title, param.shape, flag);
-            }
-            else
-            {
-                assert(0);
-            }
-            layer->neurons.push_back(hN);
-        }*/
+        assert(0);      //Deprecated        
         AddLayer(layer, flag = 0x0);
     }
     

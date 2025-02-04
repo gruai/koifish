@@ -11,6 +11,7 @@
 #include "Cache.hpp"
 #include "Fish.hpp"
 #include "../g_stddef.hpp"
+#include "Optimizer.hpp"
 
 static const char * LLM_KV_TRAINING_TYPE_TRAIN_MODEL     = "train_model";
 static const char * LLM_KV_TRAINING_TYPE                 = "training.type";
@@ -362,7 +363,7 @@ size_t NLP_AutoRegressive::tVocab(){
 }
 
 hGensor Fish::BuildLoss( struct ggml_context * ctx,hGensor cur,int flag){
-    if(hparams.debug.NO_loss)   {
+    if(DEBUG.NO_loss)   {
         assert(cur==preLogits);
         out_node = cur;     return cur;
     }
@@ -546,7 +547,8 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
         }       
     }     
     if(isTrain()){
-
+        if(tsTrain!=nullptr && tsTrain->nMostTok>0)
+            hparams.OnMostToken(tsTrain->nMostTok);
     }
 
     return true;
@@ -670,6 +672,10 @@ bool NLP_AutoRegressive::CreateExlogists(hWIKI wiki,uint32_t n_ctx,uint32_t n_ba
 }
 
 void NLP_AutoRegressive::Train(int flag)       {
+#ifdef _TENSOR_CUD_
+    DEBUG.train_datas = 1;
+    DEBUG.train_hyperparams = 1;
+#endif
     hOPT->BeforeTrain(hparams.common,tokens_input,0x0);
     if(!hOPT->PrepareData( hparams,flag ))
         return;
@@ -806,3 +812,23 @@ void NLP_AutoRegressive::InitModel(int flag){
 }
 
 
+void NLP_AutoRegressive::Dump(int type,int flag)      {
+    if(NOT_DUMP(5))          return;
+    
+    int n_vocab = hDict->n_vocab,n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd;
+    string suffix="\n========\n",prefix;
+    __repr__(suffix,prefix);
+    hparams.Dump();         //        print_params(&hparams)
+    _INFO("====== nParams = %ld(%.6gM) ======\n", nParams,nParams/1.0e6);
+    _INFO("%s: nParams=%zu model_size = %zu bytes (%.1f MB)\n", __func__, nParams,szModel,szModel / (1024.0f*1024.0f) );
+    _INFO("%s: n_vocab=%d t_vocab=%d,n_batch=%d,n_ctx=%d,n_embd=%d,n_head=%d,n_rot=%d,n_ff=%d\n", __func__, 
+        n_vocab,tVocab(),n_batch,n_ctx,n_embd,hparams.n_head(),hparams.n_rot,hparams.n_ff() );
+    _INFO("%s: loader=%s\n", __func__, hparams.batch_sample.c_str() );
+    if(hOPT!=nullptr)
+        hOPT->Dump( 1 );     
+    else{
+        _INFO("hOPT is NULL\n");
+    }   
+    if(hparams.lars_ratio>0)
+        _INFO("%s: LARS(t_max=%g)\n", __func__,hparams.lars_ratio);
+}

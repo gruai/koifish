@@ -25,7 +25,7 @@ class DataTokenSet;
 typedef std::shared_ptr<DataTokenSet> hDataToken;
 
 struct SAMP{
-    size_t pos=-1,len=-1;       //  range is [pos,pos+len)
+    size_t pos=0,len=0;       //  range is [pos,pos+len)
     size_t off_cycle=0;         // more random
     int jump = 0;   
     TOKEN_ID last_target=-1;
@@ -58,13 +58,15 @@ typedef SAMP* hSAMP;
 
 class DataTokenSet    {
 protected:
+    std::vector<string> shard_paths;
+    int shard_index=0;
     string name;
     string serial_root;
     ConsiceDict *hDict = nullptr;
     std::map<TOKEN_ID, TOKEN_ID> mapT2T;
     std::vector<TOKEN_ID> dialect;
     std::string fpath;
-    size_t fsize=0,nUnique=0,nVocab=0,nDialect=0;    
+    size_t fsize=0,nUnique=0,nVocab=0,nDialect=0,nMostTok=0;    
     std::vector<hSAMP> shard_samps;
 
     void seek(FILE *fp,size_t offset, int whence) {
@@ -99,16 +101,13 @@ typedef std::vector<hDataToken> DataTokens;
 
 class GlobTokenset : public DataTokenSet{
 protected:
-    std::vector<string> shard_paths;
-    int shard_index=0;
-
     FILE* fpToken=nullptr;
     bool isShuffle = false;
     int64_t PrepareShard(int id,bool load=false, int flag=0x0);
     bool NextShard(int flag=0x0)    override;
     size_t total_batch_size_bytes;  // total across all processes
     size_t local_batch_offset_bytes;  // inner-sample offset for this process
-    size_t header_bytes,B=-1,T=-1;  // header size in bytes
+    int header_bytes,B=-1,T=-1;  // header size in bytes
     int64_t file_size_bytes,shard_num_samples=0;
 public:
     GlobTokenset(JSON::const_iterator jit,ConsiceDict *hDict,int flag=0x0);

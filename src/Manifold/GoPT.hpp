@@ -23,6 +23,7 @@ using namespace std;
 #include "../ggex/GG_util.hpp"   
 #include "DataLoader.hpp" 
 #include "../ggex/WIKI.hpp"
+#include "../../llama.cpp/common/common.h" 
 class Fish;
 
 

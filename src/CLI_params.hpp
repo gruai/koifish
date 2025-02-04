@@ -80,6 +80,15 @@ struct LAY_PARAM{
     }
 };
 
+struct ADAM_params_ {
+    size_t n_parameters;
+    int   n_iter;
+    float alpha,min_alpha,decay,decay_min_ndim,beta1,beta2;
+    float gclip;
+    float eps = 1e-8f;   // epsilon for numerical stability
+    float eps_loss = 1e-5f; // epsilon for convergence test
+    // float eps_g = 1e-3f; // epsilon for convergence test
+};
 struct train_params_ {
     const char * fn_train_data;
     const char * fn_checkpoint_in;
@@ -97,7 +106,7 @@ struct train_params_ {
     int n_threads;
     int n_batch;
     int n_gradient_accumulation;
-    int n_epochs;
+    int n_epochs=1;
     int n_gpu_layers;
 
     bool custom_n_ctx;
@@ -126,16 +135,31 @@ struct train_params_ {
     float opt_delta;
     int   opt_max_no_improvement;
 
-    int   adam_n_iter;
-    float adam_alpha;
-    float adam_min_alpha;
-    float adam_decay;
-    int   adam_decay_min_ndim;
-    float adam_beta1;
-    float adam_beta2;
-    float adam_gclip;
-    float adam_eps_f;
+    ADAM_params_ adam;
+    // int   adam_n_iter;
+    // float adam_alpha;
+    // float adam_min_alpha;
+    // float adam_decay;
+    // int   adam_decay_min_ndim;
+    // float adam_beta1;
+    // float adam_beta2;
+    // float adam_gclip;
+    // float adam_eps_f;
 };
+
+
+
+struct DEUG_SWITCH{
+    int SelfAttention_noraml=1;
+    bool NO_loss = false;
+    int dict_latent_dim = -1;
+    int graph_dump = 0; //  10 levels of dumps, 0-9. 0 is a full dump,The lower the number the more dump.
+    int train_hyperparams = 0;
+    int train_datas = 0;
+
+    void Dump(int typ);
+};
+extern DEUG_SWITCH DEBUG;
 
 struct CLI_params {
     struct train_params_ common;  
@@ -145,13 +169,7 @@ struct CLI_params {
     };    
     SaveModel save;
 
-    struct DEUG_SWITCH{
-        int SelfAttention_noraml=1;
-        bool NO_loss = false;
-        int dict_latent_dim = -1;
-        int graph_dump = 0; //  10 levels of dumps, 0-9. 0 is a full dump,The lower the number the more dump.
-    };
-    DEUG_SWITCH debug;
+
     //Always false,     GGML don't support back of FLASH_ATTEN !
     bool isFlashAtten()     {   
         common.use_flash=false;  return common.use_flash;  
@@ -171,8 +189,10 @@ struct CLI_params {
         assert(_nctx>0 && _nctx<1024*1024);
         common.n_ctx = _nctx;
     }
-    uint32_t n_batch()  const    {  return common.n_batch;}             //number of samps in each batch
-    uint32_t nTokenInBatch()  const    {  return common.n_batch*common.n_ctx;}
+    uint32_t n_batch()  const               {  return common.n_batch;}             //number of samps in each batch
+    uint32_t nGradAccumulate()  const       {  return common.n_gradient_accumulation;  }
+    size_t nTokenInBatch()    const       {  return common.n_batch*common.n_ctx;  }
+    size_t nTokensPerGrad()   const       {  return nTokenInBatch()*common.n_gradient_accumulation;   }
     uint32_t n_seq_max,n_ctx_orig_yarn,n_ctx_train=0;
     bool isLongRope(int il = 0) const {
         assert(il>=0 && il<layerps.size());
@@ -186,7 +206,7 @@ struct CLI_params {
     MODEL_ARCH ModelArch();
     virtual void OnArch();
     virtual void JModel2Params(int flag);
-
+    virtual void OnMostToken(size_t nMost,int flag=0x0);
     std::string exec_name="",test="",compute_graph="";
     std::vector<std::string> fn_model_base;
     //  std::string fn_vocab_model;

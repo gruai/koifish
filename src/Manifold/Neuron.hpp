@@ -23,7 +23,6 @@
 #include <stack>
 using namespace std;
 
-#include "../ggex/GG_util.hpp"
 #include "../ggex/GTensor.hpp"
 static const string sWeight=".weight",sBias=".bias";        //".w"
 static const string sNorm="_norm";            //".norm"
@@ -51,14 +50,7 @@ protected:
     vector<double> jvals; 
 
 
-    string _repr_1( string& suffix,string& prefix,string info,int flag=0x0)    {
-        char buf[5012]="\0";
-        const char*tab=prefix.c_str();
-        sprintf(buf+strlen(buf),"%s %s",tab,info.c_str());    
-        if(flag>0)
-            _INFO("%s",buf); 
-        return buf;  
-    }
+    string _repr_1( string& suffix,string& prefix,string info,int flag=0x0);
 
     // std::vector<shared_ptr<GeNeuron>> brothers;
 public:
@@ -113,7 +105,7 @@ struct Ganglia : public GeNeuron    {
 //a lookup table instead of matrix*vector(as in SLP)
 struct Embed : public GeNeuron    { 
     bool isAddPos = false;
-
+    int padded_nCls=-1;        //for cuda version
     Embed(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag);
     virtual hGensor Interact(struct ggml_context *ctx_build,hGensor cur,int flag=0x0)  override;
     bool Build(int flag)   override;
@@ -175,7 +167,7 @@ struct LayerNormal : public GeNeuron    {
     bool Build(int flag)   override;
     hGensor Interact(struct ggml_context * ctx0,hGensor cur,int flag)    override;
     size_t nElem()  override;    
-
+    string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
     // hGTensor operator>>(hGTensor & a){  return a;   }
     hGTensor operator<<(hGTensor a);
 };
@@ -238,7 +230,7 @@ public:
     hGensor KQ_pos=nullptr,KQ_mask=nullptr;
     LayerNormal norm;
 #ifdef _TENSOR_CUD_
-    hGensor attn=nullptr;
+    hGensor attn=nullptr,trans=nullptr;
 #endif
     SLP Q, K, V;
     ROPE rope;
@@ -254,6 +246,8 @@ public:
     hGensor Interact(struct ggml_context * ctx0,hGensor cur,int flag)    override;
     bool isValid()  override    {   return true;    }
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
+
+    int FUSE_cuda(hGTensor inpL,int flag);
 };
 
 /*
@@ -307,7 +301,7 @@ struct FFN : public GeNeuron  {
     LayerNormal norm;
     SLP up,down,gate;
     Relu relu;
-    // hGensor _latent=nullptr,_gelu=nullptr,_ffn=nullptr;
+    // hGensor pre_gelu = nullptr;
     int gelu_fusion = 0;
     FFN() {}
     FFN(Fish *ctx, const std::string &key_, JSON::const_iterator jit, int flag);
@@ -315,6 +309,8 @@ struct FFN : public GeNeuron  {
     hGensor Interact(struct ggml_context * ctx0,hGensor cur,int flag)    override;
     bool isValid()  override    {   return true;    }
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
+
+    int FUSE_cuda(hGTensor inpL,int flag);
 };
 
 
@@ -326,15 +322,22 @@ struct FFN_MOE : public FFN{
 struct OutCLS : public GeNeuron  {
     LayerNormal norm;
     SLP proj;
-    hGTensor target=nullptr;
+    hGTensor target=nullptr,preLogits=nullptr;
     int nCls = 0;
     int padded_nCls; // padded to e.g. %128==0, 
-    float mean_loss = 0;
+    float mean_loss=0, rLoss=1.0,*hostLoss=nullptr;
     OutCLS() {}
     OutCLS(Fish *ctx, const std::string &key_, JSON::const_iterator jit, int flag);
+    virtual ~OutCLS()   {
+        if(hostLoss!=nullptr)
+            delete[] hostLoss;
+    }
     bool Build(int flag)   override;
     hGensor Interact(struct ggml_context * ctx0,hGensor cur,int flag)    override;
     bool isValid()  override    {   return true;    }
+    string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
+
+    int FUSE_cuda(hGTensor inpL,int flag);
 };
 
 struct NeLayer
@@ -361,4 +364,5 @@ typedef shared_ptr<NeLayer> hLayer;
 
 hGTensor  operator>>(hGTensor t, const LayerNormal& norm);
 hGTensor  operator>>(hGTensor t, const SLP& slp);
-hGTensor operator>>(hGTensor t, const Relu& relu);
+hGTensor  operator>>(hGTensor t, const Relu& relu);
+

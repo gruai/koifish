@@ -105,8 +105,8 @@ ConsiceDict::ConsiceDict(NLP_AutoRegressive *lama_,int flag) : VariationaAE(),do
         _INFO("%s symmetric=%d resi=%d tpNorm=%d opOut=%d nLevel=%d dims= ",__func__,(int)(isSymmetric),(int)(reserve_x),tpNorm,opOut,nLevel);
     }   else     {   /**/  
         if(dolphin->hparams.wiki_actor!="copy") {
-            if(hparams.debug.dict_latent_dim>0)
-            latent_dim = hparams.debug.dict_latent_dim;   
+            if(DEBUG.dict_latent_dim>0)
+                latent_dim = DEBUG.dict_latent_dim;   
         }            
         _INFO("%s latent_dim=%d Dialect=%s",__func__,latent_dim,isDialect?"ON":"OFF");
     }

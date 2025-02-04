@@ -7,12 +7,92 @@
  *  \brief 
  *  \author Yingshi Chen
  */
+#include "ggml-impl.h"
+#include "ggml-quants.h"
+#include "ggml-alloc.h"
+#include "ggml-backend.h"
 #include "../CLI_params.hpp"
 #include "../ggex/GG_util.hpp"
 #include "../lenda/kernel/SVD.hpp"
 #include "json.hpp"
 #include <iostream>
 #include <cstring>
+
+#define ARG2STR(format,len)    {    va_list args;    va_start( args, format );    vsnprintf( buffer,len,format,args );    va_end(args);   assert(strlen(buffer)<=len);   }
+
+int gTN(hGTensor cur, const char *format,...){
+    int iRet = 0;
+    if(strlen(cur->name)==0){
+        ARG2STR(format,GGML_MAX_NAME);
+        snprintf(cur->name, sizeof(cur->name), "%s", buffer);
+        iRet+=1;
+    }
+    return iRet;
+}
+
+
+int gTN0(hGTensor cur,const char *format,... ){
+    ARG2STR(format,GGML_MAX_NAME);
+    snprintf(cur->name, sizeof(cur->name), "%s", buffer);
+    return 0x0;
+}
+
+int gTN(struct ggml_tensor *cur,const char *format,... ){
+    int iRet = 0;
+    if(strlen(cur->name)==0){
+        ARG2STR(format,GGML_MAX_NAME);
+        // va_list args;
+        // va_start( args, format );
+        // vsnprintf( buffer,GGML_MAX_NAME,format,args );
+        // va_end(args);
+        // assert(strlen(buffer)<=GGML_MAX_NAME);
+        ggml_format_name(cur,"%s",buffer);
+        
+        iRet+=1;
+    }
+    /*
+        in ggml_compute_backward, some grad has no name!
+
+        ggml_format_name(tensor->grad, "%s (grad)", tensor->name);
+    */
+#ifdef GG_V12
+   CHILD_1218_GRAD      //  set name @BuildBackward
+#else
+    if(cur->grad && strlen(cur->grad->name)==0){
+        assert(strlen(cur->name)<GGML_MAX_NAME);
+        if(strcmp(cur->name,"inp_embd_rows")==0){
+            int debug = 0;
+        }
+        ggml_format_name(cur->grad,"%s\"",cur->name);        
+        iRet+=2;
+    }
+#endif
+    return iRet;
+}
+
+int gTN0(struct ggml_tensor *cur,const char *format,... ){
+    int iRet = 0;
+    ARG2STR(format,GGML_MAX_NAME);
+    // va_list args;
+    // va_start( args, format );
+    // vsnprintf( buffer,GGML_MAX_NAME,format,args );
+    // va_end(args);
+    // assert(strlen(buffer)<=GGML_MAX_NAME);
+    ggml_format_name(cur,"%s",buffer);    
+    iRet+=1;
+
+    /*
+        in ggml_compute_backward, some grad has no name!
+
+        ggml_format_name(tensor->grad, "%s (grad)", tensor->name);
+    */
+    /*if(cur->grad && strlen(cur->grad->name)==0){
+        assert(strlen(cur->name)<GGML_MAX_NAME);
+        ggml_format_name(cur->grad,"%s\"",cur->name);        
+        iRet+=2;
+    }*/
+    return iRet;
+}
 
 int clamp(const int v, const int min, const int max) {
     return ((v < min) ? (min) : (v > max) ? (max) : v);
@@ -21,6 +101,11 @@ int clamp(const int v, const int min, const int max) {
 float fclamp(const float v, const float min, const float max) {
     return ((v < min) ? (min) : (v > max) ? (max) : v);
 }
+
+void assert_shape_1d(hGTensor  tensor, int64_t ne0){}
+void assert_shape_2d(hGTensor  tensor, int64_t ne0, int64_t ne1){}
+void assert_shape_3d(hGTensor  tensor, int64_t ne0, int64_t ne1, int64_t ne2){}
+void assert_shape_4d(hGTensor  tensor, int64_t ne0, int64_t ne1, int64_t ne2, int64_t ne3){}
 
 void assert_shape_1d(struct ggml_tensor * tensor, int64_t ne0) {
     GGML_ASSERT(tensor->ne[0] == ne0);
@@ -91,7 +176,7 @@ float frand_uniform(struct random_uniform_distribution * rnd) {
     return rnd->rd(rnd->gen);
 }
 
-struct ggml_tensor * randomize_tensor_normal(struct ggml_tensor * tensor, struct random_normal_distribution * rnd) {
+struct ggml_tensor * tRAND(struct ggml_tensor * tensor, struct random_normal_distribution * rnd) {
     float scale = 1.0f; // xavier
     switch (ggml_n_dims(tensor)) {
         case 1:
@@ -135,11 +220,13 @@ struct ggml_tensor * randomize_tensor_normal(struct ggml_tensor * tensor, struct
             }
             break;
         default:
-            die("Unsupported tensor->n_dims");
+            assert(0 && "Unsupported tensor->n_dims");
     };
     return tensor;
 }
-
+hGTensor tRAND(hGTensor tensor, struct random_normal_distribution * rnd) {
+    return nullptr;
+}
 
 JSON jKEY(const JSON& jConfig,const std::vector<std::string>&keys,int flag){
     assert(keys.size()>0);
@@ -238,6 +325,10 @@ bool CLI_params::operator!=(const CLI_params& other) const {
     return memcmp(this, &other, sizeof(other));
 }
 
+DEUG_SWITCH DEBUG;
+void DEUG_SWITCH::Dump(int typ)    {
+    _INFO("[Debug] datas=%d hyperparams=%d attn=%d\n", train_datas,train_hyperparams,SelfAttention_noraml);
+}
 void CLI_params::Dump( )    {
     _INFO("%s::CLI_params: \n", exec_name.c_str());
     // _INFO(" n_vocab: %u", n_vocab);
@@ -308,6 +399,10 @@ uint32_t CLI_params::nThread() const {
     int nT0=std::thread::hardware_concurrency(),nT1=common.n_threads;
     return nT1;
 }
+void CLI_params::OnMostToken(size_t nMost,int flag){
+    float a = nMost*1.0/nTokenInBatch();
+    common.adam.n_iter = (int)ceil(a)*common.n_epochs;
+}
 void CLI_params::OnArch( ){
     int nH=-1;
     string info = jKV(jConfig,{"arch"},string("")); 
@@ -318,7 +413,7 @@ void CLI_params::OnArch( ){
     case MODEL_ARCH::NLP_GPT2_char:  {
         //baby_GPT      dropout = 0.2
         // n_head = 6;             n_embd = 384;           dict_latent_dim=n_embd;
-        nH = 12;         n_embd = 768;           debug.dict_latent_dim = 768;
+        nH = 12;         n_embd = 768;           DEBUG.dict_latent_dim = 768;
         n_embd_head_v = 64;         n_embd_head_k = 64;
         // n_embd = 128; dict_latent_dim = 128;        n_embd_head_v=n_embd_head_k=2; //only for debug        
         n_ctx_train = 1024;
@@ -391,15 +486,15 @@ struct train_params_ get_default_train_params_common() {
     params.cos_decay_min     = 0.1f;
     params.enable_restart    = false;
 
-    params.adam_n_iter         = 256;
-    params.adam_alpha          = 1e-3f;
-    params.adam_min_alpha      = 0;
-    params.adam_decay          = 1e-1f;
-    params.adam_decay_min_ndim = 2;
-    params.adam_beta1          = 0.9f;
-    params.adam_beta2          = 0.999f;
-    params.adam_gclip          = 1.0f;
-    params.adam_eps_f          = 0.0f;
+    params.adam.n_iter         = -1;
+    params.adam.alpha          = 1e-3f;
+    params.adam.min_alpha      = 0;
+    params.adam.decay          = 1e-1f;
+    params.adam.decay_min_ndim = 2;
+    params.adam.beta1          = 0.9f;
+    params.adam.beta2          = 0.95f; //0.999f;
+    params.adam.gclip          = 1.0f;
+    params.adam.eps_loss       = 1e-5f;
 
     return params;
 }
@@ -441,8 +536,9 @@ try{
     jfile>>jConfig;
     std::string s = jConfig.dump(),s0;
     common.n_batch = jKV(jConfig,{      "train","batch"},common.n_batch );
-    common.adam_n_iter = jKV(jConfig,{  "train","adam-iter"},common.adam_n_iter );
-    common.adam_alpha = jKV(jConfig,{   "train","learning-rate"},common.adam_alpha );
+    common.n_epochs = jKV(jConfig,{  "train","epoch"},common.n_epochs );
+    common.adam.n_iter = jKV(jConfig,{  "train","adam-iter"},common.adam.n_iter );
+    common.adam.alpha = jKV(jConfig,{   "train","learning-rate"},common.adam.alpha );
     common.n_gradient_accumulation = jKV(jConfig,{ "train","optimizatioin","grad_accumulation"  },common.n_gradient_accumulation );
     lars_ratio = jKV(jConfig,{          "train","optimizatioin","lars_ratio"},lars_ratio );
     ZMUV_ratio = jKV(jConfig,{          "train","optimizatioin","ZMUV_ratio"},ZMUV_ratio );
@@ -453,11 +549,6 @@ try{
     rSplit = jKV(jConfig,{"data","eval_split"},rSplit );
     string a = batch_sample=="stacking" ? batch_sample : "";
     
-    // eval_binpath += a+"_["+model_title+"]_.data";
-    // fp_train_data = jKV(jConfig,{"data","source"},fp_train_data );
-    // common.fn_train_data = "\0";
-    // assert( std::filesystem::exists(fp_train_data) );
-
     std::vector<string> all_base;
     all_base = jKV_arr(jConfig,{"wiki","path"},all_base,false);
     for(auto path : all_base){
@@ -524,7 +615,7 @@ try{
     prompt = jKV(jConfig,{"gpt","prompt"},prompt );    
 
     dict_vae_dims = jKV(jConfig,{"dict","vae","dims"},dict_vae_dims ); 
-    // debug.dict_latent_dim = jKV(jConfig,{"dict","latent_dim"},debug.dict_latent_dim ); 
+    // DEBUG.dict_latent_dim = jKV(jConfig,{"dict","latent_dim"},DEBUG.dict_latent_dim ); 
     dict_dialect = jKV(jConfig,{"dict","dialect"},dict_dialect );
     dict_logits = jKV(jConfig,{"dict","logits"},dict_logits );
     
@@ -603,7 +694,7 @@ bool CLI_params::parse(int argc, char ** argv)  {
                 invalid_param = true;
                 break;
             }
-            common.adam_alpha = std::stof(argv[i]);
+            common.adam.alpha = std::stof(argv[i]);
         }
         else if (arg == "--norm-rms-eps") {
             if (++i >= argc) {
@@ -774,7 +865,7 @@ int Gensor_loab(struct ggml_context * ctx0,hGensor w,int nHeavy,hGensor ga,hGens
     printf("%s@%s <== %s x %s\n\t",__func__,w->name,ga->name,gb->name);
     auto shape = w->ne;
     int nIn=shape[0], nOut=shape[1], rank = nHeavy; //min(64,min(nIn,nOut)/10);
-    size_t ne00 = ggml_nelements(w);        assert(nIn>0 && nOut>0 && ne00==nIn*nOut);
+    size_t ne00 = tELEM(w);        assert(nIn>0 && nOut>0 && ne00==nIn*nOut);
     assert(nIn>nHeavy && nOut>nHeavy && nHeavy>0);
     float *A=Gensor2float(ctx0,w,flag);
     auto svd=std::make_shared<LoSVD<float>>(A,nIn,nOut,rank,1.0e-3,0); //1.0e-3
@@ -782,7 +873,7 @@ int Gensor_loab(struct ggml_context * ctx0,hGensor w,int nHeavy,hGensor ga,hGens
     if(!svd->Build( ))  {
         return -1;
     }else{
-        if(ggml_nelements(ga)!=nIn*rank || ggml_nelements(gb)!=nOut*rank)    {
+        if(tELEM(ga)!=nIn*rank || tELEM(gb)!=nOut*rank)    {
             return -2;
         }
         svd->US((float *) ((char *) ga->data));     
@@ -797,7 +888,7 @@ int Gensor_SVD(struct ggml_context * ctx0,hGensor w,int nHeavy,hGensor U,hGensor
       
     auto shape = w->ne;
     int nIn=shape[0], nOut=shape[1], rank = nHeavy; //min(64,min(nIn,nOut)/10);
-    size_t ne00 = ggml_nelements(w);
+    size_t ne00 = tELEM(w);
     assert(nIn>0 && nOut>0 && ne00==nIn*nOut);
     assert(nIn>nHeavy && nOut>nHeavy && nHeavy>0);
     float *A=Gensor2float(ctx0,w,flag);
@@ -951,63 +1042,6 @@ struct ggml_tensor * ggml_cross_entropy_loss_1(
 #endif
 }
 
-int gTN(struct ggml_tensor *cur,const char *format,... ){
-    int iRet = 0;
-    if(strlen(cur->name)==0){
-        va_list args;
-        va_start( args, format );
-        vsnprintf( buffer,GGML_MAX_NAME,format,args );
-        va_end(args);
-        assert(strlen(buffer)<=GGML_MAX_NAME);
-        ggml_format_name(cur,"%s",buffer);
-        
-        iRet+=1;
-    }
-    /*
-        in ggml_compute_backward, some grad has no name!
-
-        ggml_format_name(tensor->grad, "%s (grad)", tensor->name);
-    */
-#ifdef GG_V12
-   CHILD_1218_GRAD      //  set name @BuildBackward
-#else
-    if(cur->grad && strlen(cur->grad->name)==0){
-        assert(strlen(cur->name)<GGML_MAX_NAME);
-        if(strcmp(cur->name,"inp_embd_rows")==0){
-            int debug = 0;
-        }
-        ggml_format_name(cur->grad,"%s\"",cur->name);        
-        iRet+=2;
-    }
-#endif
-    return iRet;
-}
-
-int gTN0(struct ggml_tensor *cur,const char *format,... ){
-    int iRet = 0;
-    va_list args;
-    va_start( args, format );
-    vsnprintf( buffer,GGML_MAX_NAME,format,args );
-    va_end(args);
-    assert(strlen(buffer)<=GGML_MAX_NAME);
-    ggml_format_name(cur,"%s",buffer);    
-    iRet+=1;
-
-    /*
-        in ggml_compute_backward, some grad has no name!
-
-        ggml_format_name(tensor->grad, "%s (grad)", tensor->name);
-    */
-   CHILD_1218_GRAD
-    /*if(cur->grad && strlen(cur->grad->name)==0){
-        assert(strlen(cur->name)<GGML_MAX_NAME);
-        ggml_format_name(cur->grad,"%s\"",cur->name);        
-        iRet+=2;
-    }*/
-    return iRet;
-}
-
-
 void _T_repr_(hGensor t,const char*tab,char *buf,const GENSOR_INFO&info){
     if(t==nullptr)      return;
     const char* A = "d";
@@ -1042,7 +1076,7 @@ void _T_repr_(hGensor t,const char*tab,char *buf,int typ){
     if(isInput){
         A = "("+A+")";
     }
-    size_t nElem = ggml_nelements(t);
+    size_t nElem = tELEM(t);
     auto ne=t->ne;
     switch(typ){
     case 1:
@@ -1132,84 +1166,6 @@ struct ggml_context *InitCTX(size_t msize,int flag){
     return ctx;  
 }
 
-//  
-hGensor GG_SCAL(struct ggml_context * ctx,struct ggml_tensor  * a,float s,int flag)   {
-/*
-    GGML_ASSERT(ggml_is_padded_1d(a));
-    struct ggml_tensor * result = inplace ? ggml_view_tensor(ctx, a) : ggml_dup_tensor(ctx, a);
-    ggml_set_op_params(result, &s, sizeof(s));
-    result->op     = GGML_OP_SCALE;
-    result->src[0] = a;
-    return result;
-*/
-    // hGensor b = ggml_scale_inplace( ctx,a,s);    // inplace operations are currently not supported!!!
-    hGensor b = ggml_scale( ctx,a,s);
-    gTN(b,"%s_s",a->name);
-    return b;
-}
-
-ggml_tensor * GG_map_tensor(std::map<ggml_tensor *, ggml_tensor *> & tensor_map, ggml_context * ctx, ggml_tensor * tensor) {
-    if (!tensor) {
-        return nullptr;
-    }
-
-    if (tensor_map.find(tensor) != tensor_map.end()) {
-        return tensor_map[tensor];
-    }
-
-    ggml_tensor * new_tensor = ggml_dup_tensor(ctx, tensor);
-    tensor_map[tensor] = new_tensor;
-
-    new_tensor->op = tensor->op;
-    for (int i = 0; i < GGML_MAX_DIMS; i++) {
-        new_tensor->nb[i] = tensor->nb[i];
-    }
-    new_tensor->flags = tensor->flags;
-    memcpy(new_tensor->op_params, tensor->op_params, sizeof(tensor->op_params));
-    strcpy(new_tensor->name, tensor->name);
-    new_tensor->data = tensor->data;
-    new_tensor->buffer = tensor->buffer;
-    new_tensor->extra = tensor->extra;
-    new_tensor->view_offs = tensor->view_offs;
-    new_tensor->view_src = GG_map_tensor(tensor_map, ctx, tensor->view_src);
-    for (int i = 0; i < GGML_MAX_SRC; i++) {
-        new_tensor->src[i] = GG_map_tensor(tensor_map, ctx, tensor->src[i]);
-    }
-
-    return new_tensor;
-}
-ggml_cgraph * GG_dup_graph(ggml_context * ctx, ggml_cgraph * src) {
-    std::map<ggml_tensor *, ggml_tensor *> tensor_map;
-
-    ggml_cgraph * dst = ggml_new_graph_custom(ctx, src->size, /*grads =*/ true);
-    hGensor node;
-    for (int i = 0; i < src->n_leafs; i++) {
-        node = GG_map_tensor(tensor_map, ctx, src->leafs[i]);
-        ggml_build_forward_expand(dst,node);
-    }
-    // GGML_ASSERT(dst->n_leafs == src->n_leafs);
-    for (int i = 0; i < src->n_nodes; i++) {
-        node = GG_map_tensor(tensor_map, ctx, src->nodes[i]);
-        ggml_build_forward_expand(dst,node );
-    }
-    // GGML_ASSERT(dst->n_nodes == src->n_nodes);
-    for (int i = 0; i < src->n_nodes; ++i) {
-        const size_t igrad_src = ggml_hash_find(&src->visited_hash_set, src->nodes[i]);
-        const size_t igrad_dst = ggml_hash_find(&dst->visited_hash_set, dst->nodes[i]);
-
-        GGML_ASSERT(igrad_src != GGML_HASHSET_FULL);
-        GGML_ASSERT(ggml_bitset_get(src->visited_hash_set.used, igrad_src));
-        GGML_ASSERT(igrad_dst != GGML_HASHSET_FULL);
-        GGML_ASSERT(ggml_bitset_get(dst->visited_hash_set.used, igrad_dst));
-
-        dst->grads[igrad_dst]     = src->grads[igrad_src];
-#ifdef GG_V12
-        dst->grad_accs[igrad_dst] = src->grad_accs[igrad_src];
-#endif
-    }
-
-    return dst;
-}
 /*
 static void ggml_compute_forward_scale_q(
         const struct ggml_compute_params * params,
@@ -1274,6 +1230,9 @@ hGensor GradOf(struct ggml_cgraph *cgraph,hGensor node,int flag){
         return cgraph->grads[igrad];
     else
         return nullptr;
+#elif defined _TENSOR_CUD_
+    assert(0);
+    return nullptr;
 #else
     if(node->grad==nullptr){
         int maybe = 0;
@@ -1281,3 +1240,189 @@ hGensor GradOf(struct ggml_cgraph *cgraph,hGensor node,int flag){
     return node->grad;
 #endif
  }
+
+bool GTensor::Dump(int type,int flag)  const{
+    int i = 0;
+    switch(type){
+    default:
+        _INFO(" - %3d: [ %5" PRId64 ", %5" PRId64 "] %8s %16s\n",
+                    i,gg->ne[0], gg->ne[1],ggml_op_name(gg->op), ggml_get_name(gg));
+    }
+    return true;
+}
+
+extern "C" void gg_print_tensor_(const char* title, hGensor t, int n) {
+    if(strlen(title)>0) printf("%s\n", title);
+    size_t nz=0,nElems = 0;//t->size(),;
+    float * data = (float *)t->data,a1=-FLT_MAX,a0=FLT_MAX;
+    if(t->type!=GGML_TYPE_F32){
+        data = new float[nElems];
+        if(t->type==GGML_TYPE_F16){
+            ggml_fp16_t *src_ = (ggml_fp16_t *)(t->data);
+            for (int i = 0; i < nElems; i++) {
+                data[i] = src_[i];
+            }
+        }else{  //need dequant
+            data = nullptr;     n = 0;
+        }
+    }    
+    double sum = 0.0;
+    if(data!=nullptr){
+        for (int i = 0; i < nElems; i++) {
+            sum += data[i];
+            if(data[i]==0)      nz++;
+            a1 = std::max(a1,data[i]);      a0 = std::min(a0,data[i]);
+        }        
+    }
+    // printf("sum:  %f\n\n", sum);
+    if(nElems==1){
+        printf("T%d:%s: %s\t data=%f \n",-1/*t->id*/,t->name, ggml_type_name(t->type),a0);
+    }else
+        printf("T%d:%s: %.4g(M)\t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] sum=%g data=[%f : %f] rZ=%.3g%%\n", 
+            -1/*t->id*/,t->name,nElems/1.0e6,t->ne[0], t->ne[1], t->ne[2], t->ne[3], ggml_type_name(t->type),sum,a0,a1,nz*100.0/nElems);
+    if(n>0){
+        printf("\t{");
+        for (int i = 0; i < std::min((int) (t->ne[0]*t->ne[1]), n); i++) {
+            printf("%.5f ", data[i]);
+            if (i != 0 && i % t->ne[0] == 0) {
+                // printf("\n");
+            }
+        }
+        printf("...");
+        for (int i = 0; i < std::min((int) (t->ne[0]*t->ne[1]), n); i++) {
+            printf("%.5f ", data[nElems - n + i]);
+            if ((nElems - n + i) % t->ne[0] == 0) {
+                // printf("\n");
+            }
+        }
+        printf("}\n");
+    }
+
+    if(t->type!=GGML_TYPE_F32){
+        delete[] data;
+    } 
+}
+
+size_t GTensor::size( )  const       {   
+    size_t nz=1;    
+    for(auto a : shape)   nz*=a;  
+    return nz;
+    // return ggml_nelements(gg);     
+}
+#ifdef _TENSOR_CUD_
+
+
+#else
+    hGensor tSCAL(struct ggml_context * ctx,struct ggml_tensor  * a,float s,int flag)   {
+        // hGensor b = ggml_scale_inplace( ctx,a,s);    // inplace operations are currently not supported!!!
+        hGensor b = ggml_scale( ctx,a,s);
+        gTN(b,"%s_s",a->name);        return b;
+    }
+
+    hGensor Permute(struct ggml_context * ctx_,struct ggml_tensor* cur,int64_t n1,int64_t n2,int64_t n3,int64_t n4,bool isCont)    {
+        hGensor q = ggml_permute(ctx_, cur, n1,n2,n3,n4);   
+        gTN0(q,"%s.#",cur->name);     
+        if(isCont)    {
+            q = ggml_cont(ctx_,q);        
+            gTN(q,"%s.#c",cur->name);           
+        }
+        return q;
+    }
+
+    hGensor TENSO(void* ctx0,int typ,SHAPE shape,int flag,const string&name){
+        /*va_list args;   //  In C/C++, you can not determine the number of arguments that were passed to a "variadic" function!!!
+        va_start( args, typ );
+        SHAPE shape;
+        int val=-1;
+        while (val = va_arg(args, int))  {
+            shape.push_back(val);
+        }
+        va_end(args);*/
+        struct ggml_context *ctx=(struct ggml_context *)(ctx0);
+        assert(ctx0!=nullptr);
+        enum ggml_type type = (enum ggml_type)typ;
+        struct ggml_tensor *gg=nullptr;
+        switch(shape.size()){
+        case 1:
+            gg = ggml_new_tensor_1d(ctx, type, shape[0]);      
+            break;
+        case 2:
+            gg = ggml_new_tensor_2d(ctx, type, shape[0],shape[1]);
+            break;
+        case 3:
+            gg = ggml_new_tensor_3d(ctx, type, shape[0],shape[1],shape[2]);
+            break;
+        case 4:
+            ggml_new_tensor_4d(ctx, type, shape[0],shape[1],shape[2],shape[3]); 
+            break;
+        default:
+            assert(0);
+            break;
+        }
+        return gg;
+    }
+#endif
+
+void Gensor2float_(const hGensor w,float *A,int flag)   {
+    size_t ne00 = tELEM(w),nbyte = tBYTE(w); 
+    void *data_0 = w->data;
+    enum ggml_type tp0 = w->type;
+    void  *src0_row = (void *) ((char *) w->data );
+    assert(ggml_is_quantized(w->type));
+    switch(w->type){
+        // case GGML_TYPE_F16:
+        //     ggml_fp16_to_fp32_row((ggml_fp16_t*)w->data,A,nIn*nOut);
+        //     break;
+        case GGML_TYPE_F32:
+            break;
+        case GGML_TYPE_Q2_K:
+            dequantize_row_q2_K((const block_q2_K*)src0_row, A, ne00);//-0.00318908691
+            break;
+        case GGML_TYPE_Q3_K:
+            dequantize_row_q3_K((const block_q3_K*)src0_row, A, ne00);  
+            break;
+        case GGML_TYPE_Q4_K:
+            dequantize_row_q4_K((const block_q4_K*)src0_row, A, ne00);  
+            break;
+        case GGML_TYPE_Q6_K:
+            dequantize_row_q6_K((const block_q6_K*)src0_row, A, ne00);  
+            break;
+        case GGML_TYPE_Q8_0:
+            dequantize_row_q8_0((const block_q8_0*)src0_row, A, ne00);  
+            break;
+        default:
+            assert(0);
+            // ggml_tensor_dequant(ctx0,w,GGML_TYPE_F32);       //memory leak@"float * wdata = malloc(sizeof(float)*ne00)" !!!
+            // memcpy(A,w->data,sizeof(float)*ne00);
+            // w->data = data_0;       w->type = tp0;
+            break;
+    }
+}
+
+void _TIME_INFO(const string&info,double fmillis,int flag) {
+    _INFO("%s",info.c_str());
+    if (fmillis < 1000.0f) {
+        _INFO("%.1fms", (float) fmillis);
+        return;
+    }
+    if (fmillis < 60*1000.0f) { //60sec
+        _INFO("%.2f", fmillis/1000);
+        return;
+    }
+    const int64_t one_sec = 1000, one_min = one_sec*60, one_hour = one_min*60, one_day = one_hour*24;
+
+    int64_t millis  = (int64_t) fmillis;
+    int64_t days    = millis/one_day;
+    int64_t hours   = (millis - days*one_day)/one_hour;
+    int64_t minutes = (millis - days*one_day - hours*one_hour)/one_min;
+    int64_t seconds = (millis - days*one_day - hours*one_hour - minutes*one_min)/one_sec;
+
+    // to print int64_t either cast to (long long int) or use macro PRId64 from <inttypes.h>
+    if (days > 0) {
+        _INFO("%lldd ", (long long int) days);
+    }
+    if(hours==0 && minutes==0){
+        _INFO("%02ld", seconds);
+    }else
+        _INFO("%02lld:%02lld:%02lld", (long long int) hours, (long long int) minutes, (long long int) seconds);
+}   
