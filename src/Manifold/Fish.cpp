@@ -55,7 +55,7 @@ hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,vector
 
     }else{
         if(!wikis.empty()){  //generate some sentence
-            if( params.gpt_every>0 && !fish->isLocalInfer)
+            if( params.common.gpt_every>0 && !fish->isLocalInfer)
                 fish->gopt = GeneratOnPrompt::MakeInstance(params,wikis,fish.get(),flag);        
         }
     }

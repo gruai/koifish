@@ -56,6 +56,8 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_,int flag)     {
     // save_data.Init(hparams,GetRawModel());
     if(hOPT!=nullptr)   {
         hOPT->Dump(1);
+        if(!hOPT->PrepareData( hparams,flag ))
+            return false;
     }   
     return true;         
 }
@@ -673,12 +675,12 @@ bool NLP_AutoRegressive::CreateExlogists(hWIKI wiki,uint32_t n_ctx,uint32_t n_ba
 
 void NLP_AutoRegressive::Train(int flag)       {
 #ifdef _TENSOR_CUD_
-    DEBUG.train_datas = 1;
-    DEBUG.train_hyperparams = 1;
+    // DEBUG.train_datas = 1;
+    // DEBUG.train_hyperparams = 1;
 #endif
     hOPT->BeforeTrain(hparams.common,tokens_input,0x0);
-    if(!hOPT->PrepareData( hparams,flag ))
-        return;
+    // if(!hOPT->PrepareData( hparams,flag ))
+    //     return;
        
     GST_TIC(t0);
     print_build_info();

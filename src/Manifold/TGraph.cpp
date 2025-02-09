@@ -76,6 +76,7 @@ SelfAttention::SelfAttention(Fish* hG_,const std::string&key_,JSON::const_iterat
 bool SelfAttention::Build(int flag_0)   {
     SHAPE sp={shape[0],shape[1]};
     int flag=flag_0;
+    
 #ifdef _TENSOR_CUD_
     flag |= GeNeuron::F_BIAS;       //  s_bias[i/x128::size] = load128(bias + i);
 #endif
@@ -99,6 +100,7 @@ bool SelfAttention::Build(int flag_0)   {
     proj_cat.BuildX(name+sCat,sp,hFish,flag);
 #ifdef _TENSOR_CUD_
     BIT_SET(proj_cat.out->flags,GTensor::F_NOALLOC);       //memory trick as kGPT
+    proj_cat.w->residual_scale = hFish->hparams.common.residual_scale;
 #endif
     // tpTrans = RELU2;
     // moe.BuildX(name+".moe",sp,hFish,flag);        //  why this would slow converge???
@@ -1583,7 +1585,7 @@ hNeuron Fish::J2Neuron(struct ggml_context *ctx_,string& dad,int level,const JCo
     string k,nam_,prefix;
     std::vector<string> lay_names;
     int i,nLay;
-    hparams.n_layer_train = 12;
+
     for(JSON::const_iterator it = config.js.begin(); it != config.js.end(); ++it)    {
         k =it.key();     
         if(!k.empty() && k[0]=='#')     
@@ -1632,15 +1634,20 @@ hNeuron Fish::J2Neuron(struct ggml_context *ctx_,string& dad,int level,const JCo
 int Fish::jToGraph( struct ggml_context *ctx_,bool isBuild,int flag)   {
     JConfig js(hparams.jModel);
     string sRoot;
-    GTensor::B = hparams.n_batch();     GTensor::C = hparams.n_embd;     GTensor::T = hparams.n_ctx();
-#ifdef _TENSOR_CUD_
-    // cuLiteTest(GTensor::B,GTensor::T,GTensor::C);
+    
     int Vp=(int)(nClass()*1.1),NH=hparams.n_head();
     int nTmp = std::max(3*GTensor::C, std::max(NH*GTensor::T, Vp));
-    SHAPE sp={GTensor::B,GTensor::T,GTensor::C},sp4={GTensor::B,GTensor::T,4*GTensor::C},sp0={GTensor::B * GTensor::T *nTmp};
+    hparams.modep.preLogits_dB = 8; //(int)ceil(GTensor::B*4.0f*GTensor::C/nTmp);   
+    int dB = hparams.modep.preLogits_dB;        
+    assert(GTensor::B%dB==0);
+#ifdef _TENSOR_CUD_
+    // cuLiteTest(GTensor::B,GTensor::T,GTensor::C);
+    SHAPE sp={GTensor::B,GTensor::T,GTensor::C},sp4={GTensor::B,GTensor::T,4*GTensor::C},sp0={dB, GTensor::T*nTmp};
     GTensor::scratch_bt4c = std::make_shared<cuTensor>("scratch_4c",sp4,GTensor::tpFloatX,false); 
     GTensor::scratch_btc = std::make_shared<cuTensor>("scratch",sp,GTensor::tpFloatX,false); 
     GTensor::scratch_output = std::make_shared<cuTensor>("scratch_output",sp0,GTensor::tpFloatX,false);
+    // GTensor::scratch_output = GTensor::scratch_bt4c;
+    // assert(dB*GTensor::T*nTmp<GTensor::scratch_bt4c->size());
     GTensor::scratch_bt4c->Alloc();         GTensor::scratch_btc->Alloc();
     GTensor::scratch_output->Alloc();
 #endif

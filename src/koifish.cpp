@@ -10,7 +10,7 @@
 #pragma warning(disable: 4244 4267) // possible loss of data
 #endif
 
-int g_dump_level = 0;
+int g_dump_level = 1;
 
 int main(int argc, char ** argv) {
     print_build_info();

@@ -69,13 +69,13 @@ protected:
     // gradient clipping
     double gclip = 1.0;         
     // schedule multiplier (fixed, decay or warmup)   
-    float sched = 1.0f;             
+    // float sched = 1.0f;             
 
     hGensor grad=nullptr;  // current gradient
     vector<float> fx_best;
     vector<float> fx_prev;
     int n_no_improvement=0;
-    float loss_before=0,loss_after=0,tokens_per_second=0,ema_tps=0;
+    float loss_before=0,loss_after=0,tokens_per_second=0,ema_tps=0,last_lr=0;
     int first_epoch=0,iter_at_last_epoch=-1,first_iter=-1,iter=-1;
     uint64_t train_its=0,train_samples=0,train_tokens=0,train_epochs=0,max_epoch=0;
     double last_time,tX=0,tData;
@@ -100,12 +100,12 @@ protected:
         return *val;
     }
     
-    hScheduler scheduler = std::make_shared<DiscreteSchedule>( );
+    hLearnSKDU scheduler = nullptr;
     bool isStopImprove = false;
 
     virtual void Clear()    {}   
     // update sched & dump some info
-    virtual float UpdateSchedule(int flag = 0x0);
+    virtual float UpdateLossCurve(int flag = 0x0);
     virtual bool AfterLoadBatch(int accum_step, int flag = 0x0);
     virtual int SignStochastic(int nx,CLI_params& hparams,int flag=0x0);
     virtual float gClip(int nx,floatX *g,hGensor hP,int flag=0x0);
@@ -131,7 +131,7 @@ public:
     
     Optimizer(NLP_AutoRegressive *g_,CLI_params& params_,int flag=0x0);
     //Deprecated need refactor!!!       9/30/2024
-    virtual double GraphCompute(hTGraph,int flag=0x0);
+    virtual double GraphCompute(hSampLoader loader,hTGraph,int flag=0x0);
     virtual float Evaluate(hSampLoader loader,int iter,int flag=0x0);
 
     virtual void UpdateLoss(int x,float loss,int flag=0x0);

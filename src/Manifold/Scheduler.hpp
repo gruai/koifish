@@ -5,6 +5,8 @@
  *  \author Yingshi Chen
  */
 #pragma once
+#include "../CLI_params.hpp"
+#include <memory>
 
 /*
 struct LearnSKDU{		
@@ -28,12 +30,14 @@ struct LearnSKDU{
  * https://towardsdatascience.com/learning-rate-schedules-and-adaptive-learning-rate-methods-for-deep-learning-2c8f433990d1
  * time-based decay, step decay and exponential decay.
 */
-struct Scheduler {
+struct LearnSKDU {
+    train_params_ _params;
     const static int TIMESTEPS = 1000;
     float alphas_cumprod[TIMESTEPS];
     float sigmas[TIMESTEPS];
     float log_sigmas[TIMESTEPS];
 
+    float LearningRate(int64_t step, int flag=0x0);
     float cosine_decay(int64_t step, int64_t decay_steps, float minimum) {
         if (step > decay_steps) {
             step = decay_steps;
@@ -59,7 +63,7 @@ struct Scheduler {
     float Last()            {   assert(history.vals.size()>0);  return history.vals[history.vals.size()-1];  }
     void Append(float a)    {   history.vals.push_back(a);   }
 
-    Scheduler() {}
+    LearnSKDU(struct train_params_& train_params) : _params(train_params) {}
 
     virtual std::vector<float> get_sigmas(uint32_t n) = 0;
 
@@ -105,9 +109,10 @@ struct Scheduler {
         return {c_out, c_in};
     }
 };
-typedef shared_ptr<Scheduler> hScheduler;
+typedef std::shared_ptr<LearnSKDU> hLearnSKDU;
 
-struct DiscreteSchedule : Scheduler {
+struct DiscreteSchedule : LearnSKDU {
+    DiscreteSchedule(struct train_params_& train_params) : LearnSKDU(train_params)  {}
     std::vector<float> get_sigmas(uint32_t n) {
         std::vector<float> result;
 
@@ -131,7 +136,7 @@ struct DiscreteSchedule : Scheduler {
     }
 };
 
-struct KarrasSchedule : Scheduler {
+struct KarrasSchedule : LearnSKDU {
     std::vector<float> get_sigmas(uint32_t n) {
         // These *COULD* be function arguments here,
         // but does anybody ever bother to touch them?

@@ -20,7 +20,7 @@ using namespace std;
 #define BIT_RESET( val,flag ) ((val) &= (~(flag)) ) 
 #define BIT_TEST( val,flag ) (((val)&(flag))==(flag))
 #define BIT_IS( val,flag ) (((val)&(flag))!=0)
-
+#define CEIL_DIV(M, N) (((M) + (N)-1) / (N))
 #define MEM_CLEAR(mem,size)			memset( (mem),(0x0),(size) )
 
 #ifdef WIN32
@@ -40,6 +40,16 @@ using namespace std;
 	// #define G_INT_64  long long
 #endif
 
+#define _CHECK(err)                                               \
+    do {                                                            \
+        bool err_ = (err);                                        \
+        if (err_ != true) {                                   \
+            fprintf(stderr, "!!! %s error %d at %s:%d\n",  \
+                #err, err_, __FILE__, __LINE__);                    \
+            throw("");                                                \
+        }                                                           \
+    } while (0)
+    
 //Prefer a struct when you can. It may involve some overhead, but is definitely easier for maintenance.
 /*
     64-bit ID + double weight

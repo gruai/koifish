@@ -1,3 +1,10 @@
+/**
+ *  Copyright 2023-2025 by Grusoft  
+ * 
+ *  \brief
+ *  \author Yingshi Chen
+ */
+
 #include "Dictionary.hpp"
 #include "gLLM.hpp"
 #include "../../llama.cpp/src/unicode.h"

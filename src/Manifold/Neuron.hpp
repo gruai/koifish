@@ -24,6 +24,8 @@
 using namespace std;
 
 #include "../ggex/GTensor.hpp"
+#include "DataLoader.hpp"
+
 static const string sWeight=".weight",sBias=".bias";        //".w"
 static const string sNorm="_norm";            //".norm"
 
@@ -320,10 +322,12 @@ struct FFN_MOE : public FFN{
 };
 
 struct OutCLS : public GeNeuron  {
+    bool isSymProj = true;
     LayerNormal norm;
     SLP proj;
     hGTensor target=nullptr,preLogits=nullptr;
-    int nCls = 0;
+    hSampLoader hLoader=nullptr;
+    int nCls = 0,dB = 1,nzLoss = 0;
     int padded_nCls; // padded to e.g. %128==0, 
     float mean_loss=0, rLoss=1.0,*hostLoss=nullptr;
     OutCLS() {}
@@ -335,9 +339,8 @@ struct OutCLS : public GeNeuron  {
     bool Build(int flag)   override;
     hGensor Interact(struct ggml_context * ctx0,hGensor cur,int flag)    override;
     bool isValid()  override    {   return true;    }
-    string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
-
-    int FUSE_cuda(hGTensor inpL,int flag);
+    string __repr__( string& suffix,string& prefix,int flag=0x0)    override;    
+    int FUSE_cuda(hGTensor inpL,hGTensor token_embed,int flag);
 };
 
 struct NeLayer

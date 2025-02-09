@@ -22,13 +22,12 @@ using namespace std;
 #endif
 // ----------------------------------------------------------------------------
 // Distributed Data Loader
-#define HEADER_SIZE 256
+#define SHARD_HEADER_SIZE 256
 
 class WIKI;
 class Fish;
 struct train_state;
 class Optimizer;
-
 
 class NLP_AutoRegressive;
 class SampLoader;
@@ -40,7 +39,7 @@ class SampLoader   {
 protected:  
     typedef std::string mt19937_state;
     //  Store tokens from source.  always in CPU
-    shared_ptr<GTensor> hostBatch=nullptr,hostTargetProbs=nullptr;     
+    shared_ptr<GTensor> hostBatch=nullptr,hostBatchMask=nullptr,hostTargetProbs=nullptr;     
     int tokens_per_iter = 0;
     // CLI_params hparams;
     std::string fp_data;
@@ -68,7 +67,7 @@ protected:
 public:
     std::string batch_sample;       //  "stacking"
     std::string name;
-    int num_batches;    //number of batchs in each epoch
+    int num_batches=-1;    //number of batchs in each epoch
 
     int64_t len() {
         return shard_samps.size();
@@ -82,24 +81,7 @@ public:
         assert(idx_<nShard());
         return shard_samps[idx_];
     }
-    virtual hSAMP Next(bool isLoop = true){
-        if(next_sample==nShard()){
-            if(!hTokens->NextShard( ))
-                return nullptr;      
-            next_sample = 0;
-        }
-            
-        int64_t idx_ = next_sample;
-        assert(idx_<nShard());
-        if(type == SampLoader::TYPE::DT_TRAIN) 
-            next_sample ++;
-        else{
-            if(!isFixEvalSample)
-                next_sample ++;
-        }
-        // next_sample++;
-        return shard_samps[idx_];
-    }
+    virtual hSAMP Next(bool isLoop = true);
     virtual bool isNextEpoch(int flag=0x0);
     virtual string IterInfo(int flag=0x0);
     vector<TOKEN_ID>& GetTokens()    {  return hTokens->tokens; }
@@ -107,6 +89,7 @@ public:
     int32_t TokenAt(size_t pos){
         return hTokens->At(pos);
     }
+    bool MaskAt(size_t pos,TOKEN_ID&mask);
     std::vector<std::string> curDeTexts;
     virtual hSAMP InitOneSamp(const string &prompt,hGensor input,int flag=0x0);
     virtual double DecodeVerify(hSAMP samp, hGensor tokens,hGensor logits,int flag=0x0);
@@ -144,6 +127,7 @@ public:
     friend class Optimizer;
     friend class Fish;
     friend class GeneratOnPrompt;
+    friend class OutCLS;
 };
 typedef shared_ptr<SampLoader> hSampLoader;
 

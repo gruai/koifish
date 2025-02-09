@@ -144,7 +144,8 @@ bool Embed::Build(int flag){
     string sw = name+sWeight,sb=name+".pos"; 
 #ifdef _TENSOR_CUD_ 
     padded_nCls = ceil(n/128.0)*128;   
-    w = TENSO(ctx, tpData, {latent, padded_nCls}); 
+    w = TENSO(ctx, tpData, {latent, padded_nCls}); //padded_nCls
+    w->x_shape = {latent,n};
 #else
     w = TENSO(ctx, tpData, {latent, n});
 #endif    
@@ -218,15 +219,14 @@ bool FFN::Build(int flag_0)   {
     latent*=4;  //from kGPT
     assert(GTensor::C==shape[0]);
     sp3={GTensor::B,GTensor::T,latent};
-    relu.out = std::make_shared<cuTensor>(name+"_relu",sp3,GTensor::tpFloatX,false);
-    // pre_gelu = std::make_shared<cuTensor>(name+"_pregelu",sp3,GTensor::tpFloatX,false);
-    // hFish->InitGensor(nullptr,name+"_relu",relu.out,false);
+    // relu.out = std::make_shared<cuTensor>(name+"_relu",sp3,GTensor::tpFloatX,false);   
 #else    
     gate.BuildX(name+"_gate",{shape[0],shape[1]},hFish,flag);
 #endif
     norm.BuildX(name+sNorm,sp,hFish,flag);        //layer->ffn_norm.sT="f";
     up.BuildX(name+"_up",{shape[0],latent},hFish,flag);    
     down.BuildX(name+"_down",{latent,shape[0]},hFish,flag);    
+    up.w->residual_scale = hFish->hparams.common.residual_scale;
 #ifdef _TENSOR_CUD_
     BIT_SET(down.out->flags,GTensor::F_NOALLOC);
 #endif
@@ -243,12 +243,13 @@ hGensor FFN::Interact(struct ggml_context * ctx_,hGensor inpL,int flag){
     cur = inpL;
     hGensor lastResi = inpL;
     if(hFish->isSymbolic()){      
-        out = inpL >> up >> relu >> down >> norm ;  
+        // out = inpL >> up >> relu >> down >> norm;  
+        out = inpL >> up >> down >> norm ;  
         // out->AddSrc(pre_gelu);      
         cur = out;
     } else{ //  high performance fused operator
         float *inp1=TO<float>(down.out);
-        FUSE_cuda(cur,0x0);
+        FUSE_cuda(cur,0x0); //embde->w
         cur = norm.out;
         // iRet = FUSE_FFN(down.out,cur,up.out,up.w,up.b,relu.out,down.w,down.b,gelu_fusion,0);            cur = down.out;  
         // iRet = FUSE_ResiNormal(out,down.out,lastResi,norm.out,norm.mean,norm.rstd,norm.w,norm.b,0x0);   cur = norm.out; 
@@ -340,6 +341,10 @@ OutCLS::OutCLS(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int
     // _target = hFish->Target();   //null now
     nCls=hFish->nClass();
     padded_nCls = ceil(nCls/128.0)*128;
+    //reduce memory & some float error
+    dB = hFish->hparams.modep.preLogits_dB; //GTensor::B 1 GTensor::B/2;
+    assert(GTensor::B%dB==0);
+    // isSymProj = false;           //much slower convergence!!!
 #ifdef _TENSOR_CUD_
     shape={nEmbd,padded_nCls};
     rLoss = 1.0f / (GTensor::B * GTensor::T );  //* grad_accum_steps 
@@ -351,8 +356,9 @@ OutCLS::OutCLS(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int
 bool OutCLS::Build(int flag)   {
     SHAPE sp={shape[0]};
 #ifdef _TENSOR_CUD_    
-    SHAPE sp2={GTensor::B,GTensor::T},sp3={GTensor::B,GTensor::T,padded_nCls};
-    hostLoss = new float[GTensor::B*GTensor::T];
+    SHAPE sp2={GTensor::B,GTensor::T},sp3={dB,GTensor::T,padded_nCls};
+    nzLoss = GTensor::B*GTensor::T;
+    hostLoss = new float[nzLoss];
     target = std::make_shared<cuTensor>("target",sp2,GGML_TYPE_F32,false); 
     // hFish->InitGensor(nullptr,"target",target,false);           
     hFish->target_probs = target; 
@@ -360,6 +366,8 @@ bool OutCLS::Build(int flag)   {
     preLogits = std::make_shared<cuTensor>("preLogits",sp3,GTensor::tpFloatX,false);  
     // hFish->InitGensor(nullptr,"loss",out,false);                
     hFish->loss = out;//
+    if(!isSymProj)
+        proj.BuildX(name+".probability",{shape[0],shape[1]},hFish,flag); 
 #else
     norm.BuildX(name+sNorm,sp,hFish,0x0);        //layer->ffn_norm.sT="f";
     proj.BuildX(name+".probability",{shape[0],shape[1]},hFish,flag); 
@@ -378,12 +386,16 @@ hGensor OutCLS::Interact(struct ggml_context * ctx_,hGensor inpL,int flag)    {
     hGensor cur = nullptr;
 #ifdef _TENSOR_CUD_
     if(hFish->isSymbolic()){ 
-        // inpL >> proj;         
-        // out->AddSrc({proj.out,target});            assert(target!=nullptr);
-        out->AddSrc({inpL,preLogits,target});            assert(target!=nullptr);
+        if(!isSymProj){
+            //inpL >> proj;               // out->AddSrc({proj.out,target}); 
+            out->AddSrc({inpL,proj.w,preLogits,target});       
+        }else{
+            out->AddSrc({inpL,preLogits,target});            
+        }
+        assert(target!=nullptr);       
         hFish->preLogits = preLogits;
     } else{    
-        FUSE_cuda(inpL,0x0);
+        FUSE_cuda(inpL,nullptr,0x0);        //embe->w
         // mean_loss = proj.out->FusedLoss(rLoss,out,target,inpL,proj.w,nCls,isForward(),0x0);     
         hFish->hOPT->UpdateLoss(-1,mean_loss);   
     }
@@ -405,7 +417,7 @@ hGensor OutCLS::Interact(struct ggml_context * ctx_,hGensor inpL,int flag)    {
 string OutCLS::__repr__( string& suffix,string& prefix,int flag)    {
     char buf[5012]="\0";
     const char*tab=prefix.c_str();
-    sprintf(buf+strlen(buf),"%s OutCLS",tab);    
+    sprintf(buf+strlen(buf),"%s OutCLS{dB=%d x=%d}",tab,dB,padded_nCls);    
     if(flag>0)
         _INFO("%s",buf); 
     return buf;  

@@ -370,6 +370,9 @@ void CLI_params::JModel2Params(int flag){
     nLayerX = 1;    //at least 1 layer
     nLayerX = jKV(jConfig,{"jmodel","parameter","Layer"},nLayerX );    
     assert(nLayerX<160 && nLayerX>0);
+    // nearly same ???
+    // if(nLayerX>0)
+    //     common.residual_scale = 1.0f / sqrtf(2.0f * nLayerX);   
     assert(layerps.size()==0);
     auto jTrans = jKEY(jConfig,{"jmodel","parameter","transformer"});
     if(!jTrans.empty()){
@@ -407,7 +410,7 @@ void CLI_params::OnArch( ){
     int nH=-1;
     string info = jKV(jConfig,{"arch"},string("")); 
     bool isJModel = !jModel.empty();
-    
+    GTensor::B = n_batch();     GTensor::C = n_embd;     GTensor::T = n_ctx();
     switch(ModelArch()){
     case MODEL_ARCH::NLP_GPT2:  
     case MODEL_ARCH::NLP_GPT2_char:  {
@@ -480,7 +483,7 @@ struct train_params_ get_default_train_params_common() {
     params.opt_delta              = 1e-5f;
     params.opt_max_no_improvement = 0;
 
-    params.warmup            =  100;
+    params.warmup            =  600;
     params.cos_decay_steps   = 1000;
     params.cos_decay_restart = 1.1f;
     params.cos_decay_min     = 0.1f;
@@ -575,9 +578,10 @@ try{
     
     n_swarm = jKV(jConfig,{"train","swarm"},1 );
     common.save_every = jKV(jConfig,{"train","save-every"},common.save_every );
-    eval_every = jKV(jConfig,{"train","eval-every"},eval_every );    
-    gpt_every = jKV(jConfig,{"train","gpt-every"},gpt_every );    
-    eval_every = eval_every<=0 ? 100000000 : eval_every;
+    common.dump_every = jKV(jConfig,{"train","dump-every"},common.dump_every );   
+    common.eval_every = jKV(jConfig,{"train","eval-every"},common.eval_every );    
+    common.gpt_every = jKV(jConfig,{"train","gpt-every"},common.gpt_every );    
+    common.eval_every = common.eval_every<=0 ? 100000000 : common.eval_every;
     // if( eval_every>0 ){
     //     _INFO("\r\n%s  eval@every %d steps.",__func__,eval_every );
     // }
@@ -1303,9 +1307,20 @@ extern "C" void gg_print_tensor_(const char* title, hGensor t, int n) {
     } 
 }
 
-size_t GTensor::size( )  const       {   
+size_t GTensor::size(int typ)  const       {   
     size_t nz=1;    
     for(auto a : shape)   nz*=a;  
+    switch(typ){
+    case 1:     //only for padded shape
+        if(x_shape.size()>0){
+            nz = 1;
+            for(auto a : x_shape)   nz*=a;  
+            assert(nz>1);            
+        }
+        break;
+    default:
+        break;
+    }
     return nz;
     // return ggml_nelements(gg);     
 }
@@ -1426,3 +1441,12 @@ void _TIME_INFO(const string&info,double fmillis,int flag) {
     }else
         _INFO("%02lld:%02lld:%02lld", (long long int) hours, (long long int) minutes, (long long int) seconds);
 }   
+
+void ADAM_params_::Dump(int typ){
+    _INFO("\tADAM lr=%g,beta=[%g-%g] decay=%g(%d) \n", alpha,beta1,beta2,
+        decay,decay_min_ndim);
+}
+
+void MOEL_params_::Dump(int typ){
+
+}

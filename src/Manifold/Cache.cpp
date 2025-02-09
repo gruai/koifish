@@ -1,3 +1,10 @@
+/**
+ *  Copyright 2023-2025 by Grusoft  
+ * 
+ *  \brief
+ *  \author Yingshi Chen
+ */
+
 #include "Cache.hpp"
 #include "gLLM.hpp"
 #include "llama.h"

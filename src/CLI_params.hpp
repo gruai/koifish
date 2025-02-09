@@ -82,13 +82,15 @@ struct LAY_PARAM{
 
 struct ADAM_params_ {
     size_t n_parameters;
-    int   n_iter;
-    float alpha,min_alpha,decay,decay_min_ndim,beta1,beta2;
+    int   n_iter,decay_min_ndim;
+    float alpha,min_alpha,decay,beta1,beta2;
     float gclip;
     float eps = 1e-8f;   // epsilon for numerical stability
     float eps_loss = 1e-5f; // epsilon for convergence test
-    // float eps_g = 1e-3f; // epsilon for convergence test
+    
+    void Dump(int typ);
 };
+
 struct train_params_ {
     const char * fn_train_data;
     const char * fn_checkpoint_in;
@@ -98,7 +100,8 @@ struct train_params_ {
 
     bool print_usage;
 
-    int save_every;
+    int save_every,dump_every=1;
+    int eval_every=-1,gpt_every=-1;
 
     uint32_t seed;
 
@@ -136,15 +139,9 @@ struct train_params_ {
     int   opt_max_no_improvement;
 
     ADAM_params_ adam;
-    // int   adam_n_iter;
-    // float adam_alpha;
-    // float adam_min_alpha;
-    // float adam_decay;
-    // int   adam_decay_min_ndim;
-    // float adam_beta1;
-    // float adam_beta2;
-    // float adam_gclip;
-    // float adam_eps_f;
+    float residual_scale = 1.0f;
+    float LearningRate()    {   return adam.alpha;  }
+    
 };
 
 
@@ -161,8 +158,15 @@ struct DEUG_SWITCH{
 };
 extern DEUG_SWITCH DEBUG;
 
+struct MOEL_params_ {
+    int preLogits_dB=2; // epsilon for convergence test
+    
+    void Dump(int typ);
+};
+
 struct CLI_params {
     struct train_params_ common;  
+    MOEL_params_ modep;
     struct SaveModel {
         std::string checkpoint_in,checkpoint_out;
         std::string model_out,model_base;       
@@ -243,7 +247,7 @@ struct CLI_params {
     uint32_t time_decay_extra_dim = 0;
     uint32_t wkv_head_size = 0;
 
-    int eval_every=-1,gpt_every=-1;
+    
     // MOE
     uint32_t n_expert = 0, n_expert_used = 0, n_ff_exp = 0, n_ff_shexp = 0;
 

@@ -233,16 +233,13 @@ protected:
     bool isBias=false;
     bool isSymbolicAnalysis = false;
 
-    // std::vector<uint8_t> work_buffer;
-
     int size = 0; 
     size_t nParams = 0, szModel = 0;
     
     hGensor in_node=nullptr, out_node=nullptr;          //maybe GPU tensor
-    hGensor loss = nullptr, target_probs = nullptr, KQ_pos = nullptr, pos_embd=nullptr;
+    hGensor loss = nullptr, target_mask = nullptr, target_probs = nullptr, KQ_pos = nullptr, pos_embd=nullptr;
     hGensor KQ_mask = nullptr;  // mask for 1 head, it will be broadcasted to all heads
-    hGensor preLogits = nullptr;        //no SOFTMAX
-    
+    hGensor preLogits = nullptr;        //no SOFTMAX    
     
     //hGensor gate=nullptr;      //create@InitModel update@
     MixOfModels mom;

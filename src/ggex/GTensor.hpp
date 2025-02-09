@@ -73,8 +73,10 @@ protected:
 public:
     static int B,T,C;       //shortcut parameter of LLM models
     static hGTensor scratch_bt4c,scratch_btc,scratch_output;
+    float residual_scale=1.0;   // some tricks
     size_t offset = 0x0;
     SHAPE shape; 
+    SHAPE x_shape;     //  1.padded_shape  for high performance or menory alignment
     typedef enum ggml_type tpDATA;
     static tpDATA tpFloatX;
     tpDATA  type;
@@ -96,6 +98,7 @@ public:
 
     virtual ~GTensor();
     virtual bool Alloc(int tpInit=0,int flag=0x0);
+    virtual bool InitParam(int tpInit,int flag=0x0)           {     assert(0);    return false;   }
     virtual bool Free() {   return true;    }
 
     virtual bool Dump(int type,int flag=0x0)  const;
@@ -155,7 +158,7 @@ public:
     //  return ggml_tensor
     struct ggml_tensor*GG();
     struct ggml_context*CTX()   {   return _ctx;  }
-    virtual size_t size( )  const;
+    virtual size_t size(int typ=0)  const;
     virtual int dims()    const         {   
         for (int i = GGML_MAX_DIMS - 1; i >= 1; --i) {
             if (ne[i] > 1) {    return i + 1;   }
@@ -271,6 +274,10 @@ inline floatX *ToX(hGensor t) {
     BIT_SET(t->flags,GTensor::F_TOX);
     return (floatX*)(t->data); 
 }
+inline floatX *ToG(hGTensor t) { 
+    assert(t!=nullptr && t->grad!=nullptr);
+    return (floatX*)(t->grad); 
+}
 hGensor TENSO(void* ctx0,int typ,SHAPE,int flag=0x0,const string&name="" );
 hGensor tRAND(hGensor  tensor, struct random_normal_distribution * rnd);
 
@@ -283,6 +290,7 @@ public:
     virtual ~cuTensor();
 
     bool Alloc(int tpInit=0,int flag=0x0)    override;
+    bool InitParam(int tpInit,int flag=0x0)    override;
     bool CopyGG(struct ggml_tensor*gg_,int flag=0x0) override;
     bool Free() override;
     void Set(float a,int flag=0x0)  override

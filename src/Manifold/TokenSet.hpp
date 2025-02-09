@@ -6,6 +6,8 @@
  *  \brief Tokenset from files/hugging/...
  *  \author Yingshi Chen
  */
+#pragma once
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
@@ -22,6 +24,7 @@
 
 struct ConsiceDict;
 class DataTokenSet;
+class OutCLS;
 typedef std::shared_ptr<DataTokenSet> hDataToken;
 
 struct SAMP{
@@ -30,7 +33,10 @@ struct SAMP{
     int jump = 0;   
     TOKEN_ID last_target=-1;
     std::string desc;    
-
+    char    *mask=nullptr;
+    int     *target=nullptr;
+    int label=-1;
+    
     SAMP()  {}
     SAMP(size_t p,size_t l) : pos(p),len(l) {
 
@@ -57,7 +63,13 @@ struct SAMP{
 typedef SAMP* hSAMP;
 
 class DataTokenSet    {
+public:
+    enum SAMPLE_TYPE  {
+        RANDOM_GENERATE,
+        HellaSwag ,
+    };
 protected:
+    SAMPLE_TYPE tpSample=RANDOM_GENERATE;
     std::vector<string> shard_paths;
     int shard_index=0;
     string name;
@@ -68,6 +80,8 @@ protected:
     std::string fpath;
     size_t fsize=0,nUnique=0,nVocab=0,nDialect=0,nMostTok=0;    
     std::vector<hSAMP> shard_samps;
+    size_t nBatch(int flag=0x0);
+    // char *buffer = nullptr;
 
     void seek(FILE *fp,size_t offset, int whence) {
 #ifdef _WIN32
@@ -81,17 +95,20 @@ protected:
 public:
     static std::vector<hDataToken> MakeInstance(struct CLI_params& params,ConsiceDict *hDict, int flag);
 
-    std::vector<TOKEN_ID> tokens;
+    std::vector<TOKEN_ID> tokens,masks;
     DataTokenSet(ConsiceDict *hDict);
-
+    bool hasMask()  {   return masks.size()>0;  }
+    
     TOKEN_ID At(size_t pos);
-
+    
     bool Serialize(const std::string&path,  bool isSave, int flag=0x0);
     virtual bool NextShard(int flag=0x0)    {return true;}
     virtual bool Load(struct CLI_params& hparams,void *hLLM,int flag=0x0);
     virtual void Append(TOKEN_ID id,int flag=0x0);
     int UniqueTokens(size_t n_1,int flag=0x0);
     bool InitSamps(unsigned context_length,std::vector<size_t>& samples_begin,std::vector<size_t>&samples_size,int flag=0x0);
+
+    virtual double LossOnResult(OutCLS *cls,int flag=0x0);
 
 friend class NLP_AutoRegressive;
 friend class Optimizer;
@@ -101,16 +118,24 @@ typedef std::vector<hDataToken> DataTokens;
 
 class GlobTokenset : public DataTokenSet{
 protected:
-    FILE* fpToken=nullptr;
+    FILE* fpShard=nullptr;
     bool isShuffle = false;
-    int64_t PrepareShard(int id,bool load=false, int flag=0x0);
+    bool Shard2Sample(int flag=0x0);
+    bool Shard2Sample_hellaswag(int flag=0x0);
+    size_t OnShardFile(int id,bool load=false, int flag=0x0);
     bool NextShard(int flag=0x0)    override;
     size_t total_batch_size_bytes;  // total across all processes
     size_t local_batch_offset_bytes;  // inner-sample offset for this process
+    size_t longest_example_bytes;
     int header_bytes,B=-1,T=-1;  // header size in bytes
-    int64_t file_size_bytes,shard_num_samples=0;
+    size_t szFile,nShardSamples=0,nShardToks=0;
 public:
     GlobTokenset(JSON::const_iterator jit,ConsiceDict *hDict,int flag=0x0);
+};
+
+class Tokenset_HellaSwag : public GlobTokenset{
+public:
+    Tokenset_HellaSwag(JSON::const_iterator jit,ConsiceDict *hDict,int flag=0x0);
 };
 
 class DTS_GPT2 : public DataTokenSet    {
