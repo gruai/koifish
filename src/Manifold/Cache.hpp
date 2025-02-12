@@ -1,5 +1,6 @@
 /**
- *  Copyright 2023-2025 by Grusoft 
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT 
  *
  *  \brief KV cache
  *  \author Yingshi Chen

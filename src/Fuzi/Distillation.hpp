@@ -1,5 +1,6 @@
 /**
- *  Copyright 2023-2025 by Grusoft  
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT  
  * 
  *  \brief NLP_AutoRegressive Model(https://llama.meta.com/)
  *  \author Yingshi Chen
@@ -31,7 +32,7 @@ class Distillation {
 protected:
     std::vector<hGensor> gensors;
     std::vector<float> sigmas;
-    hScheduler scheduler = std::make_shared<DiscreteSchedule>( );
+    hLearnSKDU scheduler = nullptr; 
     Fish *hFish=nullptr;
     
 public:
@@ -44,7 +45,7 @@ public:
 
     Distillation(Fish *hGang_,struct CLI_params&param,int flag)  : hFish(hGang_)   {
         alg = SIGMA;    //param.sigma=="add" ? ADD : SIGMA;
-        scheduler = std::make_shared<DiscreteSchedule>();
+        scheduler = std::make_shared<DiscreteSchedule>(param.common);
         sigmas = scheduler->get_sigmas(100);
         _INFO("%s: alg=%d(%s)\n", __func__, alg,alg==SIGMA?"sigma":"add");
     }
@@ -58,7 +59,7 @@ public:
         hGensor result=nullptr;
         switch(alg){
         case SIGMA:
-            gensor = gg_axpy_f32(ctx,gensor,sigma,delta,1-sigma);
+            gensor = nullptr;   //gg_axpy_f32(ctx,G(gensor),sigma,G(delta),1-sigma);
             gensors.push_back(gensor);
             result = gensor;
             break;
@@ -66,7 +67,7 @@ public:
             gensor = delta;
             break;
         default:
-            gensor = add_to_f32(ctx, gensor, delta);
+            gensor = nullptr;   //add_to_f32(ctx, G(gensor), G(delta));
             break;
         }      
         

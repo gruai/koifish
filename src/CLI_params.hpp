@@ -1,5 +1,6 @@
 /**
- *  Copyright 2023-2025 by Grusoft  
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT  
  * 
  *  \brief
  *  \author Yingshi Chen
@@ -323,7 +324,7 @@ struct CLI_params {
 
      //parameters of datasets
     float rSplit = 0.1;
-    std::string batch_sample;
+    std::string tpBatchSample;
     
     float f_norm_eps = 1e-5f; 
     float f_norm_rms_eps = 1e-5f; 

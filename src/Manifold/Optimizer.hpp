@@ -1,5 +1,6 @@
 /**
- *  Copyright 2023-2025 by Grusoft  
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT  
  * 
  *  \brief 
  *  \author Yingshi Chen
@@ -64,6 +65,7 @@ protected:
     bool just_initialized = false,isAdaptiveSched = false,isGlobalGrad=true;
     bool isBackward = false;
     bool isConverge = false;
+    bool isDumpOnce = false;
     int past=0,nGradAccum=0,tpSign=0;
     int warmup_iters=0;
     // gradient clipping
@@ -134,7 +136,7 @@ public:
     virtual double GraphCompute(hSampLoader loader,hTGraph,int flag=0x0);
     virtual float Evaluate(hSampLoader loader,int iter,int flag=0x0);
 
-    virtual void UpdateLoss(int x,float loss,int flag=0x0);
+    virtual void UpdateTrainLoss(int x,float loss,int flag=0x0);     //
 
     virtual bool isStopImproving( )	{	
         return isStopImprove;	

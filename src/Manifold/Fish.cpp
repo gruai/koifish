@@ -1,5 +1,6 @@
 /**
- *  Copyright 2023-2025 by Grusoft  
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT  
  *  
  *  Random swimming fish  
  * 
@@ -66,7 +67,7 @@ hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,vector
 Fish::Fish(const std::string&nam_,struct CLI_params params,ROLE_TYPE role_,int flag) : name(nam_),hparams(params),role(role_) {
     arch = params.ModelArch();
     
-    string w = hparams.KV({"jmodel","parameter","debug_init_weight"});    // hack parameter only for debug
+    string w = hparams.KV({"model","parameter","debug_init_weight"});    // hack parameter only for debug
     bool isLoad = !hparams.save.checkpoint_in.empty();
     if(role==SWARM_FOLLOWER){
         tpInitWeight = INIT_WEIGHT::COPY_SWARM_HEAD;
@@ -557,7 +558,7 @@ void Fish::Statistic(int typ, int flag)     {
     if(hparams.is({"gpt","c_graph"},string("raw"))){
         _INFO("raw graph\n");
     }
-    int vQKV = hparams.Get({"model","attention","version"},0,false);
+    int vQKV = hparams.Get({"model_v0","attention","version"},0,false);
     // _INFO("QKV version=%d\n",vQKV);
     
     // ggml_graph_stat(gf);

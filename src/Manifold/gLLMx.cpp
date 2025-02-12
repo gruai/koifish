@@ -1,5 +1,6 @@
 /**
- *  Copyright 2023-2025 by Grusoft  
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT  
  *  
  *  More models derived from NLP_AutoRegressive
  * 
@@ -326,7 +327,11 @@ string GPT2::__repr__( string& suffix,string& prefix,int flag) {
 }
 
 std::string CDict_GPT2::T2STR(TOKEN_ID tok,int flag ) {
+#ifdef _TENSOR_CUD_
+    // [todo] call gpt2 tokenizer in next version
+#else
     assert(0);
+#endif
     return "";
 };   
 int CDict_GPT2::STR2T(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag){

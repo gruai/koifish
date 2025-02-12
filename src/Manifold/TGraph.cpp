@@ -1,5 +1,6 @@
 /**
- *  Copyright 2023-2025 by Grusoft  
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT  
  * 
  *  \brief
  *  \author Yingshi Chen
@@ -971,7 +972,7 @@ void TGraph::PushBack(hGensor node,int flag) {
     for (auto child : node->src) {
         assert(strlen(child->name)>=0);
         // gTN(node->src[k], "%s_%d",node->name,k);
-        _INFO("\t%s@%s\n",child->name,node->name);
+        if(DUMP()) _INFO("\t%s@%s\n",child->name,node->name);
         PushBack(child);        
     }
     return;

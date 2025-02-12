@@ -1,5 +1,6 @@
 /**
- *  Copyright 2023-2025 by Grusoft 
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT 
  *  
  *  Generate samples for train/Eval
  *      
@@ -39,7 +40,7 @@ class SampLoader   {
 protected:  
     typedef std::string mt19937_state;
     //  Store tokens from source.  always in CPU
-    shared_ptr<GTensor> hostBatch=nullptr,hostBatchMask=nullptr,hostTargetProbs=nullptr;     
+      
     int tokens_per_iter = 0;
     // CLI_params hparams;
     std::string fp_data;
@@ -48,7 +49,7 @@ protected:
     bool sample_separation_eos,sample_separation_bos;
     // size_t _nctx=-1;
     std::vector<hSAMP> shard_samps;
-    std::vector<hSAMP> cur_samps;
+    
     // std::vector<size_t> idcs;      //would change epoch by epoch(shuffle,subsampling...)
     int64_t nShard() {
         return shard_samps.size();
@@ -58,16 +59,17 @@ protected:
 
     bool isTarget_1 = false;
     bool isRecycle = true;
-    bool isFixEvalSample = true;        // Need fix this to do some experiments
+    bool isFixEvalSample = false;        // Need fix this to do some experiments
     mt19937_state shuffle_rng_state_current;
     mt19937_state shuffle_rng_state_next;
     size_t shuffle_sample_count=0,next_sample=0,shuffle_samples_hash = 0x0;
 
     NLP_AutoRegressive *dolphin=nullptr;
 public:
-    std::string batch_sample;       //  "stacking"
-    std::string name;
+    std::string tpBatchSample,name;       //  "stacking"
+    std::vector<hSAMP> cur_samps;
     int num_batches=-1;    //number of batchs in each epoch
+    shared_ptr<GTensor> hostBatch=nullptr,hostBatchMask=nullptr,hostTargetProbs=nullptr;   
 
     int64_t len() {
         return shard_samps.size();
@@ -84,12 +86,14 @@ public:
     virtual hSAMP Next(bool isLoop = true);
     virtual bool isNextEpoch(int flag=0x0);
     virtual string IterInfo(int flag=0x0);
+    virtual string sTokenSet(int flag=0x0);
     vector<TOKEN_ID>& GetTokens()    {  return hTokens->tokens; }
 
     int32_t TokenAt(size_t pos){
         return hTokens->At(pos);
     }
     bool MaskAt(size_t pos,TOKEN_ID&mask);
+    bool isHostMask(size_t pos,int flag=0x0);
     std::vector<std::string> curDeTexts;
     virtual hSAMP InitOneSamp(const string &prompt,hGensor input,int flag=0x0);
     virtual double DecodeVerify(hSAMP samp, hGensor tokens,hGensor logits,int flag=0x0);
@@ -107,7 +111,7 @@ public:
     SampLoader(Fish *g_,const string&n,bool isNewTS,int flag=0x0);
     // virtual bool Init(Fish *g_,const string&n,bool isNewTS,int flag=0x0 ) ;
     virtual bool Prepare(hDataToken hT,int flag=0x0 ) ;    
-    virtual size_t update_batch(int next_id,Fish* fish);
+    virtual size_t UpdateBatch(int next_id,Fish* fish);
     virtual ~SampLoader( ) {
         
         
@@ -128,12 +132,13 @@ public:
     friend class Fish;
     friend class GeneratOnPrompt;
     friend class OutCLS;
+    friend class DataTokenSet;
 };
 typedef shared_ptr<SampLoader> hSampLoader;
 
 // class DataLoader_3D : public SampLoader  {
 // protected:
 // public:
-//     int64_t update_batch(int next_id,Fish* fish)    override;
+//     int64_t UpdateBatch(int next_id,Fish* fish)    override;
 // };
 #endif // DATALOADER_H

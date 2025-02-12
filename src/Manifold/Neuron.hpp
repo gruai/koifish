@@ -1,6 +1,7 @@
 
 /**
- *  Copyright 2023-2025 by Grusoft 
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT 
  *
  *  \brief Collection of neurons
  *  \author Yingshi Chen
@@ -233,6 +234,7 @@ public:
     LayerNormal norm;
 #ifdef _TENSOR_CUD_
     hGensor attn=nullptr,trans=nullptr;
+    floatX* dl_btc=nullptr;
 #endif
     SLP Q, K, V;
     ROPE rope;
@@ -249,7 +251,7 @@ public:
     bool isValid()  override    {   return true;    }
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
 
-    int FUSE_cuda(hGTensor inpL,int flag);
+    int FUSE_cuda(hGTensor inpL,floatX* residual,LayerNormal&norm2,float* scratchF,int flag);
 };
 
 /*
@@ -305,6 +307,11 @@ struct FFN : public GeNeuron  {
     Relu relu;
     // hGensor pre_gelu = nullptr;
     int gelu_fusion = 0;
+#ifdef _TENSOR_CUD_
+    floatX* dl_btc=nullptr;
+    SelfAttention *lastQKV=nullptr;
+#endif
+
     FFN() {}
     FFN(Fish *ctx, const std::string &key_, JSON::const_iterator jit, int flag);
     bool Build(int flag)   override;
@@ -312,7 +319,7 @@ struct FFN : public GeNeuron  {
     bool isValid()  override    {   return true;    }
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
 
-    int FUSE_cuda(hGTensor inpL,int flag);
+    int FUSE_cuda(hGTensor inpL,floatX *inp1,floatX *inp2,LayerNormal*norm2,int flag);
 };
 
 

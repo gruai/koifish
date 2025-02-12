@@ -1,5 +1,6 @@
 /**
- *  Copyright 2023-2025 by Grusoft 
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT 
  *  
  *  Tokenset manager. Key component of speed & accuracy
  * 
@@ -26,7 +27,8 @@ struct ConsiceDict;
 class DataTokenSet;
 class OutCLS;
 typedef std::shared_ptr<DataTokenSet> hDataToken;
-
+class SampLoader;
+typedef shared_ptr<SampLoader> hSampLoader;
 struct SAMP{
     size_t pos=0,len=0;       //  range is [pos,pos+len)
     size_t off_cycle=0;         // more random
@@ -34,8 +36,8 @@ struct SAMP{
     TOKEN_ID last_target=-1;
     std::string desc;    
     char    *mask=nullptr;
-    int     *target=nullptr;
-    int label=-1;
+    void     *target=nullptr;
+    // int label=-1;
     
     SAMP()  {}
     SAMP(size_t p,size_t l) : pos(p),len(l) {
@@ -108,7 +110,7 @@ public:
     int UniqueTokens(size_t n_1,int flag=0x0);
     bool InitSamps(unsigned context_length,std::vector<size_t>& samples_begin,std::vector<size_t>&samples_size,int flag=0x0);
 
-    virtual double LossOnResult(OutCLS *cls,int flag=0x0);
+    virtual double LossOnResult(hSampLoader hLoader,OutCLS *cls,int flag=0x0);
 
 friend class NLP_AutoRegressive;
 friend class Optimizer;
@@ -120,8 +122,8 @@ class GlobTokenset : public DataTokenSet{
 protected:
     FILE* fpShard=nullptr;
     bool isShuffle = false;
-    bool Shard2Sample(int flag=0x0);
-    bool Shard2Sample_hellaswag(int flag=0x0);
+    virtual bool Shard2Sample(int flag=0x0);
+    
     size_t OnShardFile(int id,bool load=false, int flag=0x0);
     bool NextShard(int flag=0x0)    override;
     size_t total_batch_size_bytes;  // total across all processes
@@ -134,8 +136,30 @@ public:
 };
 
 class Tokenset_HellaSwag : public GlobTokenset{
+protected:
+    int nMostCompletion=4;
+    bool Shard2Sample(int flag=0x0)   override;
 public:
+    struct QUESTION{
+        int b0,b1;
+        int label;
+
+        QUESTION(int l,int _b0,int _b1,int flag=0x0)    : label(l),b0(_b0),b1(_b1)  {
+
+        }
+    };
+    // typedef std::shared_ptr<QUESTION> hQuestion;
+    typedef QUESTION *hQuestion;
+    std::vector<hQuestion> questions;
+    std::vector<hQuestion> quesInBatch;
+
     Tokenset_HellaSwag(JSON::const_iterator jit,ConsiceDict *hDict,int flag=0x0);
+    virtual ~Tokenset_HellaSwag(){
+        for(auto q : questions)
+            delete q;
+        questions.clear();
+    }
+    double LossOnResult(hSampLoader hLoader,OutCLS *cls,int flag=0x0)   override;
 };
 
 class DTS_GPT2 : public DataTokenSet    {

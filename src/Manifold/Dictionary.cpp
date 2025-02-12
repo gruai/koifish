@@ -1,5 +1,6 @@
 /**
- *  Copyright 2023-2025 by Grusoft  
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT  
  * 
  *  \brief
  *  \author Yingshi Chen
@@ -164,7 +165,7 @@ void ConsiceDict::CreateEmbeddings(int flag){
             return;
         }
     }
-    int group=hparams.Get({"model","target_group"},1);
+    int group=hparams.Get({"model_v0","target_group"},1);
     tok_embeddings = TENSO(ctx, GGML_TYPE_F32, {n_embd, n_out});
     _norm.w           = TENSO(ctx, GGML_TYPE_F32, {n_embd});
     if(!isSVD){
@@ -191,7 +192,7 @@ hGensor ConsiceDict::Embed2Output(struct ggml_context * ctx,hGensor t33,int flag
     hGensor  tOutput = nullptr;
 #ifdef _TENSOR_CUD_
 #else
-    int group=hparams.Get({"model","target_group"},1);
+    int group=hparams.Get({"model_v0","target_group"},1);
     int n_embd=latent_dim,n_out=n_vocab,n_tokens=t33->ne[1],g_embd=n_embd/group;
     size_t nb0 = t33->nb[0],offset=0;       assert(nb0==4);  
     assert(n_embd%group==0);

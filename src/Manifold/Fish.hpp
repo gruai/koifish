@@ -1,5 +1,6 @@
 /**
- *  Copyright 2023-2025 by Grusoft 
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT 
  *
  *  \brief Fish - just random swimming 
  *  \author Yingshi Chen
@@ -230,7 +231,7 @@ protected:
     bool updateTMap = false;
     bool isLocalInfer = false;
     bool isLoadCheckpoint = false;
-    bool isBias=false;
+    bool isBias=true;
     bool isSymbolicAnalysis = false;
 
     int size = 0; 

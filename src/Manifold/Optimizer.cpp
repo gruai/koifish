@@ -1,5 +1,6 @@
 /**
- *  Copyright 2023-2025 by Grusoft  
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT
  *  
  *  Optimizer
  * 
@@ -124,7 +125,7 @@ bool OPT_Adam::BatchGrad(int iter,float&fx,int flag)   {
     // assert(_gb!=nullptr);
     for (int accum_step = 0; accum_step < 1/*nGradAccum*/; ++accum_step) {
         // auto now = ggml_time_ms();        
-        int64_t nSamp = train_loader->update_batch(-1,_fish);
+        int64_t nSamp = train_loader->UpdateBatch(-1,_fish);
         if(nSamp==0)        {
             _WARN("<%s> Failed to get next batch!!!\n",__func__);
             return false;
@@ -149,9 +150,8 @@ bool OPT_Adam::BatchGrad(int iter,float&fx,int flag)   {
             _INFO("gb_compute %s T=%.3g","",GST_TOC(t0));  
             exit(-666);
         }else{
-            GraphCompute(_fish->hBackTG);
-        }
-            
+            GraphCompute(train_loader,_fish->hBackTG);
+        }           
         
         OnLogits();
         if(isGlobalGrad){
@@ -160,7 +160,7 @@ bool OPT_Adam::BatchGrad(int iter,float&fx,int flag)   {
             
         } 
         fx += tGET(loss,0);  
-        UpdateLoss(-1,fx);
+        UpdateTrainLoss(-1,fx);
 #endif               
        
         if(accum_step==0){
@@ -400,7 +400,7 @@ static string GD_NAME[]={
     "ADAMw","SGD","SGD_v","SGD_blk_v","SGD_HYBRID",   
 };
 
-void Optimizer::UpdateLoss(int x,float loss,int flag){
+void Optimizer::UpdateTrainLoss(int x,float loss,int flag){
     int step = iter;
     if(step>1){
         float last = scheduler->Last();
@@ -433,7 +433,7 @@ void Optimizer::UpdateLoss(int x,float loss,int flag){
         // fx_prev[0] = fx;
 }
 
-int RAW_update(std::vector<hGTensor>& tensors,ADAM_params_ adam, float learning_rate,float& grad_norm, int t, int flag);
+int RAW_update(std::vector<hGTensor>& tensors,ADAM_params_ adam, float learning_rate,float& grad_norm, int t,int alg, int flag);
 Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGensor target_,CLI_params& hparams)    {
     hEDS = _fish->hEDS;              assert(hEDS!=nullptr);
     auto train_params = TrainParams();    
@@ -453,8 +453,7 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
 
     float a=0, val_loss=0,grad_norm=0;    
     if( !BatchGrad(0,a,0x0) )       //  warmup
-        return CANCEL;         
-    // UpdateLoss(0,fx);
+        return CANCEL;    
 
     if (just_initialized) {
         n_no_improvement = 0;
@@ -469,10 +468,11 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
 #ifdef _TENSOR_CUD_
         lr = scheduler->LearningRate(iter);
 #else
-        lr = learning_schedule(iter, _params.warmup, _params.cos_decay_steps, _params.adam.alpha, _params.adam.min_alpha,_params.cos_decay_min, _params.cos_decay_restart, _params.enable_restart);
+        lr = scheduler->LearningRate(iter);
+        // lr = learning_schedule(iter, _params.warmup, _params.cos_decay_steps, _params.adam.alpha, _params.adam.min_alpha,_params.cos_decay_min, _params.cos_decay_restart, _params.enable_restart);
 #endif
 #ifdef _TENSOR_CUD_
-        RAW_update(opt_ps,train_params.adam,lr, grad_norm, iter,0);
+        RAW_update(opt_ps,train_params.adam,lr, grad_norm, iter,1,0);
         last_lr = lr;       g_step = grad_norm; //sqrt(grad_norm*grad_norm/nParams);
 #else         
         SignStochastic(nParams,hparams);    
@@ -489,28 +489,19 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
         }    
 #ifdef _TENSOR_CUD_
 #else        
-        if( hparams.gpt_every>0 && t%hparams.gpt_every==0 )   {
+        if( hparams.common.gpt_every>0 && t%hparams.common.gpt_every==0 )   {
             _fish->GenSentence(1);   
         }  
 #endif          
         if( !BatchGrad(iter,a,0x0))
-            return CANCEL;            
-
-        // loss_after = fx;
-        // UpdateLoss(iter,fx);        
+            return CANCEL; 
+      
         if(_fish->hDistler!=nullptr) 
             _fish->hDistler->UpdateSigma(iter);
         // check convergence
         if (isConverge) {
             _INFO("[search] Converged!!!\n");                result = OK;
         }
-        
-        
-        // const int64_t t_end_cpu = ggml_cycles();
-        // _INFO("time iter:      %5.3f s\n", ((float)(t_end_cpu - t_start_cpu))/CLOCKS_PER_SEC);
-        // const int64_t t_end_wall = ggml_time_us();
-        // _INFO("wall time iter: %5.3f s\n", (t_end_wall - t_start_wall)/1e6);            
-   
 
         result = DID_NOT_CONVERGE;
     }
@@ -524,6 +515,7 @@ void Fish::Train(  int flag )   {
 void RAW_forward(Fish *fish,int flag);
 float RAW_backward(Fish *fish,const int* hostInput,int accum_steps,bool,int flag);
 double Optimizer::GraphCompute(hSampLoader hLoader,hTGraph hTG, int flag){
+    // return 0.0; //only for debug
     int64_t now = ggml_time_ms();
     int nThread = TrainParams().n_threads,no=0,nAccum=TrainParams().n_gradient_accumulation;
     bool bench = false;
@@ -537,11 +529,11 @@ double Optimizer::GraphCompute(hSampLoader hLoader,hTGraph hTG, int flag){
     RAW_forward(_fish,flag);    //0x1001
     isBackward = true;
     RAW_backward(_fish,hostInput,nAccum,isOnlyEvaluate,flag);
-    mean_loss = hLoader->hTokens->LossOnResult(cls);
+    mean_loss = hLoader->hTokens->LossOnResult(hLoader,cls);
     if(isOnlyEvaluate){
         return mean_loss;
     }else
-        UpdateLoss(-1,mean_loss);   
+        UpdateTrainLoss(-1,mean_loss);   
     /*for(auto it : _fish->gensors.infos){
         auto node = it.first;
         if(!BIT_TEST(node->flags,GTensor::F_TOX)){
@@ -612,18 +604,18 @@ float Optimizer::Evaluate(hSampLoader loader,int iter,int flag){
     GST_TIC(tic);   
     OutCLS* cls = _fish->GetNeuron<OutCLS>("OutCLS",0);  
     cls->hLoader = loader;
-    struct ggml_cgraph *_gf=_fish->GetForwRaw();
     auto loss = hLoss();     
-    double l2,delta_max=0,delta_=0,a,sum=0,ee;
+    double l2,delta_max=0,delta_=0,a,mean_loss=0,ee;
     auto tokens_input = _fish->Input( ); 
-    int i,nB=0,step=max(loader->num_batches/10,1);
+    int i,nB=0,step=max(loader->num_batches/10,1);      //smaple to reduce eval time
     size_t nz=0,j;
     llama_token tMost = (llama_token) (_fish->nClass() - 1);
     hSAMP samp = nullptr;
     const float *wLog = nullptr;
+    loader->next_sample = 0;        // fix this to keep same acc on each experiment
     for (i = 0; i < loader->num_batches; i+=step) {        
         if(tokens_input!=nullptr)   {//in some debug mode, tokens_input maybe null
-            loader->update_batch(i,_fish);
+            loader->UpdateBatch(i,_fish);
             samp = loader->cur_samps[i];
         } 
         if(wLog!=nullptr)    {
@@ -633,43 +625,42 @@ float Optimizer::Evaluate(hSampLoader loader,int iter,int flag){
             l2 = sqrt(l2)/nz;            
             delta_max = max(delta_max,l2);      delta_+=l2;        
         }
-        // ggml_graph_comp0(_gf,0x0);  //  only for debug
-        sum += GraphCompute(loader,_fish->hForwTG);
-        // ggml_graph_compute(_gf, &(_fish->gb_plan));  
+        mean_loss += GraphCompute(loader,_fish->hForwTG);
+        nB++;
+        if(_fish->hparams.isOnlyGPT){
+            return ee;
+        }     
 #ifdef _TENSOR_CUD_
 #else   
         a = ((float*)hPreLogits()->data)[0];        //  -6.60046101     -4.3040733  
         ee=loader->DecodeVerify(samp,tokens_input,_fish->preLogits);
-        sum += loss==nullptr ? 0 : ((float*)(loss->data))[0];         //float *fLoss = (float*)(loss->data)
-#endif        
-        nB++;
-        if(_fish->hparams.isOnlyGPT){
-            return ee;
-        }        
+        mean_loss += loss==nullptr ? 0 : ((float*)(loss->data))[0];         //float *fLoss = (float*)(loss->data)
         break;
+#endif              
     }
+    mean_loss /= nB;
     if(iter==-666)    {   //hack
         return i;
     }
 
-    float last = lcEval.Last(),aloss = sum/nB;  //[eval]   Loss@Evaluation=7.302641 T=0.232s ======
-    lcEval.Add(aloss);
-    float delta=last-aloss,best=lcEval.Best();   
-    bool isOverfit = delta<0 && abs(aloss-best)>best/10;       
-    if(isOverfit)   {
-        _INFO(" !OVERFIT! ");
-    }
-    _INFO(" Loss@EvalSet=%f(%.2g) best=%f(eval_%d) E2T=%.3g T=%gs x=%.3g======\n",aloss,delta,best,lcEval.best_id,
-        aloss-lcTrain.Last(),GST_TOC(tic),ee );
+    float last = lcEval.Last();  //[eval]   Loss@Evaluation=7.302641 T=0.232s ======
+    lcEval.Add(mean_loss);
+    float delta=last-mean_loss,best=lcEval.Best();   
+    bool isOverfit = delta<0 && abs(mean_loss-best)>best/10;       
+    // if(isOverfit)   {
+    //     _INFO(" !OVERFIT! ");
+    // }
+    _INFO(" Loss@\"%s\"=%.3f(%.2g) best=%.4f(eval_%d) E2T=%.3g T=%gs x=%.3g\n",loader->sTokenSet().c_str(), mean_loss,delta,best,lcEval.best_id,
+        mean_loss-lcTrain.Last(),GST_TOC(tic),ee );
 
     if(wLog==nullptr) {     }        
     else
-        _INFO("\t Loss@Evaluation=%f delta=%g(%.5g) T=%gs ======\n", aloss,delta_max,delta_/nB,GST_TOC(tic) );
-    string sX="_loss="+std::to_string(aloss);    
+        _INFO("\t Loss@Evaluation=%f delta=%g(%.5g) T=%gs\n", mean_loss,delta_max,delta_/nB,GST_TOC(tic) );
+    string sX="_loss="+std::to_string(mean_loss);    
     // if(delta>0)     
     //     _fish->SaveTrain(sX);  
 
-    return aloss;
+    return mean_loss;
 }
 
 float cosine_decay(int64_t step, int64_t decay_steps, float minimum) {
@@ -745,7 +736,8 @@ float Optimizer::UpdateLossCurve(int flag){
     if (std::isnan(loss_before) || std::isnan(loss_after))
         impr_plot = 0;
     lcTrain.Add(loss_after);
-    if((iter-1)%_params.dump_every==0){
+    if((iter-1)%_params.dump_every==0 || isDumpOnce){
+        isDumpOnce = false;
         _INFO("[train]_%-6d loss=%f |g|=%g\tlr=%.2e | %s ",iter,loss_after,g_step,last_lr,train_loader->IterInfo().c_str()); //,zmuv_0,zmuv_1    
         if (millis_per_iter > 0)            {
             _TIME_INFO(" dt=",millis_per_iter);  _TIME_INFO(" tData=",tData);    _TIME_INFO(" tX=",tX);        _TIME_INFO(" eta=",remaining_millis);
@@ -913,7 +905,7 @@ bool Optimizer::PrepareData( CLI_params& hparams,int flag )   {
             && val_loader->Serialize(spEval,false)){
                 if(train_loader->len()>0){
                     // hDict->nUniqueToken = train_loader->n_unique_tokens; 
-                    // _INFO("%s: nTrain=%zu nEval=%zu batch_sample=%s T=%.3g\n", __func__, train_loader->len(),val_loader->len(),GST_TOC(tic));
+                    // _INFO("%s: nTrain=%zu nEval=%zu tpBatchSample=%s T=%.3g\n", __func__, train_loader->len(),val_loader->len(),GST_TOC(tic));
                     isLoadOK = true;
                 }
         }            
@@ -929,7 +921,7 @@ bool Optimizer::PrepareData( CLI_params& hparams,int flag )   {
         if( hTokenset->InitSamps(hparams.common.n_ctx,samples_begin,samples_size)){
 
         }else{
-            _INFO("%s: NULL Samps!!!    batch_sample=%s nTrain=%zu nEval=%zu T=%.3g\n", __func__, train_loader->batch_sample.c_str(),
+            _INFO("%s: NULL Samps!!!    tpBatchSample=%s nTrain=%zu nEval=%zu T=%.3g\n", __func__, train_loader->tpBatchSample.c_str(),
                 train_loader->len(),val_loader->len(),GST_TOC(tic));      
             return false;
         }        
@@ -947,7 +939,7 @@ bool Optimizer::PrepareData( CLI_params& hparams,int flag )   {
     }
     
     // assert(train_samples_begin.size() == train_samples_size.size());
-    _INFO("%s: batch_sample=%s nTrain=%zu nEval=%zu T=%.3g\n", __func__, train_loader->batch_sample.c_str(),
+    _INFO("%s: tpBatchSample=%s nTrain=%zu nEval=%zu T=%.3g\n", __func__, train_loader->tpBatchSample.c_str(),
         train_loader->len(),val_loader->len(),GST_TOC(tic));        
     return true;
 }

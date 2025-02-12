@@ -1,5 +1,6 @@
 /**
- *  Copyright 2023-2025 by Grusoft  
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT  
  * 
  *  \brief
  *  \author Yingshi Chen
@@ -41,7 +42,7 @@ void SAMP::Refresh(SampLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,in
     int64_t n_vocab=target_probs->ne[0],n_tokens=target_probs->ne[1],nSampInBatch=target_probs->ne[2];
     std::string sentence;
     struct llama_context * lctx = static_cast<llama_context *>(ctx);
-    if(typ==-1)     //batch_sample=="stacking"
+    if(typ==-1)     //tpBatchSample=="stacking"
         _INFO(" (%ld,%d)@\"%s...\"",pos,jump,sentence.c_str());     //sample_size
     else{
         tok_ids.clear();
@@ -133,6 +134,13 @@ bool SampLoader::MaskAt(size_t pos,TOKEN_ID&mask){
     return true;
 }
 
+bool SampLoader::isHostMask(size_t pos,int flag){
+    if(hostBatchMask==nullptr)  return 0x0;
+    assert(pos>=0 && pos<hostBatchMask->size());
+    int m = TO<int>(hostBatchMask)[pos];
+    return m==1;
+}
+
 void SampLoader::Samp2Batch(int k,hSAMP samp,struct train_params_& params,int flag)    {   
     samp_toks.clear();        
     auto dialect = hDict->dialect;
@@ -160,12 +168,12 @@ void SampLoader::Samp2Batch(int k,hSAMP samp,struct train_params_& params,int fl
             token = i;      //only for debug
         if(MaskAt(starting,mask)){
             if (i+1<_nctx)
-                hostBatchMask->Set( (int) (i + 1), (int) k, 0, 0, 1);
+                hostBatchMask->Set( (int) (i + 1), (int) k, 0, 0, mask);
         }
         ++starting;   
         if(hostTargetProbs==nullptr){
 
-        }else{
+        }else{            
             if(isTarget_1)     {
 #ifdef _TENSOR_CUD_
                 hostTargetProbs->Set( (int) i, (int) k, 0, 0, token); 
@@ -176,6 +184,7 @@ void SampLoader::Samp2Batch(int k,hSAMP samp,struct train_params_& params,int fl
             else    {
                 hostTargetProbs->Set(token, (int) i, (int) k, 0, +1.0f);
             }        
+        
         }
         samp_toks.push_back(token);
         
@@ -188,8 +197,8 @@ void SampLoader::Samp2Batch(int k,hSAMP samp,struct train_params_& params,int fl
     }
 }
 
-hSAMP SampLoader::Next(bool isLoop){
-    if(next_sample==nShard()){
+hSAMP SampLoader::Next(bool isLoop) {    
+    if(next_sample==nShard())       {
         if(!hTokens->NextShard( ))  {
             _WARN("<SampLoader::%s> Failed to get next shard file!!!\n",__func__);
             return nullptr;   
@@ -210,7 +219,7 @@ hSAMP SampLoader::Next(bool isLoop){
 }
 
 //Important!  this would update input & target_probs of model!
-size_t SampLoader::update_batch(int x,Fish* fish){    
+size_t SampLoader::UpdateBatch(int x,Fish* fish){    
     struct train_params_ _params = hOPT->TrainParams();
     assert(fish==hOPT->_fish);
     // struct llama_context * lctx=(struct llama_context *)(hOPT->app_ctx);
@@ -233,7 +242,7 @@ size_t SampLoader::update_batch(int x,Fish* fish){
 
     GST_TIC(tic);
     for (k=0; k<nSampInBatch; ++k) { 
-        if(batch_sample=="stacking"){
+        if(tpBatchSample=="stacking"){
             samp->jump++;
         }else{            
             samp = Next();  //SampAt((next_sample + k) % samples_count);  
@@ -251,7 +260,7 @@ size_t SampLoader::update_batch(int x,Fish* fish){
         }
         cur_samps.push_back(samp);
         Samp2Batch(k,samp,_params);   
-        if(isLog && k<6 && batch_sample!="stacking"){
+        if(isLog && k<6 && tpBatchSample!="stacking"){
             sentence = dolphin->T2STR(samp_toks,0x0);     //llama_token_to_piece(lctx, samp_toks[0]);
             _INFO(" (%ld,%d)@\"%s\"",samp->pos,samp->jump,sentence.c_str());     //sample_size
         }else if(type == SampLoader::TYPE::DT_EVAL)  {
@@ -261,12 +270,15 @@ size_t SampLoader::update_batch(int x,Fish* fish){
             }
         }
 
-        if(batch_sample!="stacking"){
+        if(tpBatchSample!="stacking"){
             for(auto wiki : fish->wikis){
                 // nrm = wiki->InductLogits(k,samp_toks,nullptr,G(target_probs),-1); 
                 nrm = wiki->InductLogits(k,samp_toks,nullptr,nullptr,-1); 
             }
         }        
+    }
+    if(next_sample+nSampInBatch>=nShard())     {
+        hOPT->isDumpOnce = true;
     }
     hGensor tokens_input=fish->Input(),target_probs=hOPT->hTargetProbs();    assert(tokens_input!=nullptr);
     int *raw_t = (int*)(tokens_input->data);
@@ -288,7 +300,7 @@ size_t SampLoader::update_batch(int x,Fish* fish){
     t_Samp = GST_TOC(tic);
     // Decode(tokens_input);       //only for debug
     if(isLog) _INFO("\tT=%g\n",GST_TOC(T0));
-    if(batch_sample=="stacking"){
+    if(tpBatchSample=="stacking"){
         CHILD_0909_WIKIS assert(0);
         /*if(fish->wiki->isInduct()){
             GST_TIC(tic);  
@@ -342,6 +354,7 @@ bool SAMP::Serialize(FSerial&S, bool isSave, int flag){
 std::vector<hDataToken> DataTokenSet::MakeInstance(struct CLI_params& params,ConsiceDict *hDict, int flag){
     DataTokens dts;
     JSON jdata = jKEY(params.jConfig,{"datasets"});
+    string type="";
     if(jdata.empty()){      //Deprecated
         auto hTokenset = std::make_shared<DataTokenSet>(hDict);  
         // hTokenset->serial_root = "/home/cys/rnd/lic/datasets/story19M___[gpt2char]_"; //only for debug" 
@@ -356,73 +369,19 @@ std::vector<hDataToken> DataTokenSet::MakeInstance(struct CLI_params& params,Con
             if(k=="debug"){
                 continue;
             }
-            string typ="glob";  //v=it.value(),
+            auto v=it.value();
             hDataToken hTokenset = nullptr;
-            // auto hTokenset = std::make_shared<DataTokenSet>(hDict); 
-            hTokenset = std::make_shared<GlobTokenset>(it,hDict);   
+            type = jKV(v,{"type"},type);
+            if(type=="hellaswag")
+                hTokenset = std::make_shared<Tokenset_HellaSwag>(it,hDict); 
+            else
+                hTokenset = std::make_shared<GlobTokenset>(it,hDict);   
             dts.push_back(hTokenset);  
         }        
     }
 
     return dts;
 }
-
-Tokenset_HellaSwag::Tokenset_HellaSwag(JSON::const_iterator jit,ConsiceDict *hDict,int flag) : GlobTokenset(jit,hDict,flag)    {
-}
-
-GlobTokenset::GlobTokenset(JSON::const_iterator jit,ConsiceDict *hDict,int flag) : DataTokenSet(hDict)    {
-    header_bytes = SHARD_HEADER_SIZE * sizeof(int);
-    int num_processes=1,process_rank=0;
-    B = hDict->hparams.n_batch(),       T = hDict->hparams.n_ctx();
-    total_batch_size_bytes = ((num_processes * (B * T)) * sizeof(uint16_t));
-    local_batch_offset_bytes = process_rank * B * T * sizeof(uint16_t);
-
-    auto k =jit.key();  
-    auto v = jit.value();
-    string pattern = v["glob"];
-    glob_t glob_result;
-    int glob_status = glob(pattern.c_str(), 0, NULL, &glob_result);
-    if (glob_status != 0) {
-        _INFO("%s Error: glob failed @\"%s\"\n", __func__,pattern.c_str());
-        exit(EXIT_FAILURE);
-    }
-    if (glob_result.gl_pathc == 0) {
-        _INFO("%s No files found matching the pattern: %s\n", __func__,pattern.c_str());
-        exit(EXIT_FAILURE);
-    }
-    int nFile = 0;
-    /*if (isShuffle) {
-        manual_seed(&shuffle_rng, 42 + process_rank);
-        shard_indices = (int*)mallocCheck(glob_result.gl_pathc * sizeof(int));
-        init_identity_permutation(shard_indices, (int) glob_result.gl_pathc);
-        intra_shard_indices = NULL;  // dynamically allocated allowing different shard sizes
-    }*/
-
-    // inspect and validate all shards so we don't get any runtime errors later
-    // if too slow / too many shards, may wish to revisit later
-    nMostTok = 0;
-    for (int id = 0; id < glob_result.gl_pathc; id++) {
-        string sPath = glob_result.gl_pathv[id];
-        shard_paths.push_back(sPath);
-        int64_t shard_ntok = OnShardFile( id );
-        nFile++;
-        // assert(shard_ntok >= (int64_t) (num_processes * B * T + 1));
-        nMostTok += shard_ntok;
-    }
-    double nG = nMostTok/1.0e9;             
-    if(nMostTok==0){
-        assert(0 && "GlobTokenset::Failed to load tokens");
-    }else
-        _INFO( "[%s] %s find %.8gG tokens @\"%s\"(%d files)\n", __func__,name.c_str(),pattern.c_str(),nG,nFile );
-}
-
-size_t DataTokenSet::nBatch(int flag){
-    size_t nSample = shard_samps.size();
-    size_t nBatches = nSample/hDict->hparams.n_batch();
-    nBatches = nSample==0 ? 0 : max(nBatches,(size_t)1);
-    return nBatches;
-}
-
 
 bool SampLoader::Serialize(const std::string&path, bool isSave, int flag){
 try{
@@ -438,7 +397,7 @@ try{
     _CHECK( S.Serial(shuffle_samples_hash,isSave,flag) );
     _CHECK( S.Serial(seed,isSave,flag) );
 
-    _CHECK( S.Serial(batch_sample,isSave,flag) );
+    _CHECK( S.Serial(tpBatchSample,isSave,flag) );
     // _CHECK( S.Serial(ids,isSave,flag) );
     bool bRet = S.Serial_Vector<SAMP,SAMP>(shard_samps,isSave,flag);
     _CHECK(bRet);
@@ -487,7 +446,11 @@ SampLoader::SampLoader(Fish *g_,const string&n,bool isNewTS,int flag) {
         assert(0);
         return ;
     }
-    isTarget_1 = g_->hparams.is( {"model","target"},string("OneHot") );
+#ifdef _TENSOR_CUD_
+    isTarget_1 = true;
+#else
+    isTarget_1 = g_->hparams.is( {"model_v0","target"},string("OneHot") );
+#endif
     return ;
 }
 
@@ -515,14 +478,15 @@ bool SampLoader::Prepare(hDataToken hT,int flag){
     int n_ctx = _params.n_ctx,n_batch = _params.n_batch;
     assert(n_ctx>0 && n_batch>0);
     SHAPE shape={n_ctx, n_batch},sp1={1, n_ctx, n_batch};
-    hostBatch = std::make_shared<GTensor>(shape,GGML_TYPE_I32);    
+    hostBatch = std::make_shared<GTensor>(shape,GGML_TYPE_I32);   
+#ifdef _TENSOR_CUD_
     if(hTokens->hasMask()){
         hostBatchMask = std::make_shared<GTensor>(shape,GGML_TYPE_I32); 
         hostBatchMask->Alloc();
         dolphin->target_mask = hostBatchMask;
-    }
-#ifdef _TENSOR_CUD_
+    }    
     sp1 = shape;
+    // isFixEvalSample = false;
 #endif
     if(isTarget_1){
         hostTargetProbs = std::make_shared<GTensor>( sp1,GGML_TYPE_I32);
@@ -546,7 +510,7 @@ bool SampLoader::Prepare(hDataToken hT,int flag){
 */
 void SampLoader::SetSamples(std::vector<size_t>& samp_0,std::vector<size_t>& samp_L,bool isTrain,CLI_params& hp_,int flag)  {
     // hparams = hp_;
-    batch_sample = dolphin->hparams.batch_sample;
+    tpBatchSample = dolphin->hparams.tpBatchSample;
 
     double rSplit = 1.0-dolphin->hparams.rSplit;
     // hTokens = hDT;
@@ -668,6 +632,15 @@ string SampLoader::IterInfo(int flag){
         sprintf(buffer,"sample@%zu/%zu",std::min(1 + next_sample, shuffle_sample_count), shuffle_sample_count);
     }
     
+    return buffer;
+}
+
+string SampLoader::sTokenSet(int flag){
+    char buffer[256]="\0";
+    if(hTokens!=nullptr)
+        sprintf(buffer,"%s",hTokens->name.c_str());
+    else
+        sprintf(buffer,"%s",name.c_str());
     return buffer;
 }
 
@@ -806,7 +779,7 @@ bool DataTokenSet::Load(struct CLI_params& hparams,void *hLLM,int flag){
         return true;
     auto arch = hparams.ModelArch();
     GST_TIC(tic);
-    string batch_sample = hparams.KV({"data","batch_sample"} ); 
+    string tpBatchSample = hparams.KV({"data","tpBatchSample"} ); 
     // rSplit = jKV(jConfig,{"data","eval_split"},rSplit );
     string ssf = "./dataset/Serial/";
     string dict_type = hparams.KV({"dict","type"} );

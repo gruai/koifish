@@ -1,5 +1,6 @@
 /**
- *  Copyright 2023-2025 by Grusoft  
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT  
  *  
  *  Some auxiliary functions
  *  Unfortunately, llama.cpp removed training functions. I would continue to work hard to support and strengthen training.
@@ -362,19 +363,19 @@ MODEL_ARCH CLI_params::ModelArch()   {
 }
 
 void CLI_params::JModel2Params(int flag){
-    // nlohmann::ordered_json jm = jKEY(jConfig,{"jmodel"});
-    jModel = jKEY(jConfig,{"jmodel"});
+    // nlohmann::ordered_json jm = jKEY(jConfig,{"model"});
+    jModel = jKEY(jConfig,{"model"});
     if(jModel.empty()){   
         return;
     }
     nLayerX = 1;    //at least 1 layer
-    nLayerX = jKV(jConfig,{"jmodel","parameter","Layer"},nLayerX );    
+    nLayerX = jKV(jConfig,{"model","parameter","Layer"},nLayerX );    
     assert(nLayerX<160 && nLayerX>0);
     // nearly same ???
     // if(nLayerX>0)
     //     common.residual_scale = 1.0f / sqrtf(2.0f * nLayerX);   
     assert(layerps.size()==0);
-    auto jTrans = jKEY(jConfig,{"jmodel","parameter","transformer"});
+    auto jTrans = jKEY(jConfig,{"model","parameter","transformer"});
     if(!jTrans.empty()){
         int nH = jKV(jTrans,{"Head"},-1),nF = jKV(jTrans,{"Ffn"},-1),nE = jKV(jTrans,{"Embed"},-1),nC = jKV(jTrans,{"Ctx"},-1);
         if(nH>0 && nF>0){
@@ -422,7 +423,7 @@ void CLI_params::OnArch( ){
         n_ctx_train = 1024;
         if(layerps.size()==0 && !isJModel){
             // TO_DO: why grad vanish @/home/cys/rnd/lic/log/gpt2/10_29_bug.info
-            int n_ff0 = jKV(jConfig,{"model","ffn","length"},3072,false),nLay=nLayer();
+            int n_ff0 = jKV(jConfig,{"model_v0","ffn","length"},3072,false),nLay=nLayer();
             for(int i=0;i<nLayer();i++){
                 LAY_PARAM lay(nH,nH,n_ff0);
                 layerps.push_back(lay);
@@ -432,10 +433,10 @@ void CLI_params::OnArch( ){
         // n_embd_gqa = 768;
         
         tpWiki = "";
-        int group=Get({"model","target_group"},1);
+        int group=Get({"model_v0","target_group"},1);
         assert(group==1);
     }
-        // hparams.Set({"model","target_group"},1);
+        // hparams.Set({"model_v0","target_group"},1);
         break;
     default:        
         _INFO("[ARCH]=%s\n",info.c_str());
@@ -548,9 +549,9 @@ try{
 
     // serial_path = jKV(jConfig,{"data","serialize_path"},s0 );
     string dict_type = jKV(jConfig,{"dict","type"},s0 );
-    batch_sample = jKV(jConfig,{"data","batch_sample"},batch_sample ); 
+    tpBatchSample = jKV(jConfig,{"data","tpBatchSample"},tpBatchSample ); 
     rSplit = jKV(jConfig,{"data","eval_split"},rSplit );
-    string a = batch_sample=="stacking" ? batch_sample : "";
+    string a = tpBatchSample=="stacking" ? tpBatchSample : "";
     
     std::vector<string> all_base;
     all_base = jKV_arr(jConfig,{"wiki","path"},all_base,false);
@@ -589,15 +590,15 @@ try{
     wiki_actor = jKV(jConfig,{"wiki","actor"},wiki_actor );
     wiki_logits = jKV(jConfig,{"wiki","logits"},wiki_logits );
     tpWiki = jKV(jConfig,{"wiki","induct"},tpWiki ); 
-    nabla = jKV(jConfig,{"model","nabla"},nabla );
-    // sigma = jKV(jConfig,{"model","sigma"},sigma ); 
+    nabla = jKV(jConfig,{"model_v0","nabla"},nabla );
+    // sigma = jKV(jConfig,{"model_v0","sigma"},sigma ); 
 
     if(jModel.empty()){
-        nFFX = jKV(jConfig,{"model","ffn","length"},nFFX );  
+        nFFX = jKV(jConfig,{"model_v0","ffn","length"},nFFX );  
         assert(nFFX<160*1024 && nFFX>0); 
-        nLayerX = jKV(jConfig,{"model","layer"},nLayerX );    
+        nLayerX = jKV(jConfig,{"model_v0","layer"},nLayerX );    
         assert(nLayerX<160 && nLayerX>0);    
-        common.n_ctx = jKV(jConfig,{"model","ctx"},common.n_ctx ); 
+        common.n_ctx = jKV(jConfig,{"model_v0","ctx"},common.n_ctx ); 
     }else{
         
     }

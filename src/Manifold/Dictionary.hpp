@@ -1,5 +1,6 @@
 /**
- *  Copyright 2023-2025 by Grusoft 
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT 
  *  
  *  concise dictionary on VAE
  * 
@@ -148,17 +149,20 @@ typedef std::shared_ptr<ConsiceDict> hCDICT;
 class CDict_GPT2 : public ConsiceDict{
 protected:
     // uint32_t vocab_size;
-    char **token_table;    
+    char **token_table=nullptr;    
     int eot_token; // <|endoftext|> token id
     
     // bool LoadTokenizer(const char *filename,int flag=0x0)   override;
 public:
     CDict_GPT2(NLP_AutoRegressive *nlp_,int flag=0x0);
     virtual ~CDict_GPT2()   {
-        for (uint32_t i = 0; i < n_vocab; i++) {
-            free(token_table[i]);
+        if(token_table!=nullptr){
+            for (uint32_t i = 0; i < n_vocab; i++) {
+                free(token_table[i]);
+            }
+            free(token_table);            
         }
-        free(token_table);
+
     }
     int InitMAEC(struct ggml_context *ctx,const std::vector<int>& dims_,int flag=0x0) override;
     std::string T2STR(TOKEN_ID tok,int flag=0x0 ) override;   

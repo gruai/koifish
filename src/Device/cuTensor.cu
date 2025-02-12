@@ -43,10 +43,14 @@ bool cuTensor::Alloc(int tpX,int flag){
     return true;
 }
 bool cuTensor::Free() {
+try{
     if(data!=nullptr)       
     {    cudaFreeCheck(&data);      data=nullptr;   }
     if(grad!=nullptr)       
     {    cudaFreeCheck(&grad);      grad=nullptr;   }
+}catch(...){
+    assert(0);
+}
     return true;
 }
 

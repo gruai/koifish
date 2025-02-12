@@ -1,5 +1,6 @@
 /**
- *  Copyright 2023-2025 by Grusoft  
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT  
  *  
  *  General AutoRegressive Language model  
  * 
@@ -67,12 +68,12 @@ NLP_AutoRegressive::NLP_AutoRegressive( const std::string& nam_, struct CLI_para
         
     }
     hparams.ffn_use_gate = true;
-    int d = hparams.Get({"model","attention","dQKV"},4,false);
+    int d = hparams.Get({"model_v0","attention","dQKV"},4,false);
     isAttOnBC = d==3;       //d=4 much faster,nearly same
 
-    string sT = params.KV({"model","attention","type"},"QKV",false);
+    string sT = params.KV({"model_v0","attention","type"},"QKV",false);
     tpATT = sT=="brown" ? ATTENTION_TYPE::BROWN : sT=="off" ? ATTENTION_TYPE::OFF : ATTENTION_TYPE::QKV;
-    tpFFN = (FFN_TYPE)(jKV(params.jConfig,{"model","ffn","type"},5,false));    
+    tpFFN = (FFN_TYPE)(jKV(params.jConfig,{"model_v0","ffn","type"},5,false));    
 }   
 //params!=src->params
 NLP_AutoRegressive::NLP_AutoRegressive(const std::string& nam_,const NLP_AutoRegressive* src,struct CLI_params params,int flag) : Fish(nam_,params){    
@@ -379,12 +380,12 @@ hGensor Fish::BuildLoss( struct ggml_context * ctx,hGensor cur,int flag){
 #else
     assert(loss==nullptr);
     hGensor  t36 = nullptr;    
-    if(hparams.is( {"model","target"},string("OneHot") )){
+    if(hparams.is( {"model_v0","target"},string("OneHot") )){
         target_probs = TENSO(ctx_build, GGML_TYPE_I32, {1, n_ctx, n_batch});
     }else
         target_probs = TENSO(ctx_build, GGML_TYPE_F32, {nCls, n_ctx, n_batch});
     gTN(target_probs,      "targets");    
-    if(hparams.is({"model","target"},string("OneHot")))
+    if(hparams.is({"model_v0","target"},string("OneHot")))
         t36 = ggml_cross_entropy_loss_1(ctx, cur, target_probs);
     else
         t36 = ggml_cross_entropy_loss(ctx, cur, target_probs);          //  square_error_loss(ctx0, targets, logits);   
@@ -511,10 +512,11 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
         }else{
             hDict = std::make_shared<CDict_GPT2>(this);
             if(wikis.size()>0)  {   //lama()!= nullptr
-                // hDict->LoadVocab(lama()->model_path.c_str(),0x0);       //  tokenizer_name == "gpt2"
+                hDict->n_vocab = wikis[0]->n_vocab;
                 hDict->bos = wikis[0]->bos;             hDict->eos = wikis[0]->eos;  
                 // hLLM = wikis[0]->lmodel;
             }  else{
+                hDict->n_vocab = 50257;     //NO WIKI
                 // hDict->LoadTokenizer("/home/cys/rnd/lic/models/gpt2_tokenizer.bin");
             }
         }
@@ -531,7 +533,9 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
         // hTokenset = std::make_shared<DataTokenSet>(hDict.get());        
         break;
     }
+
     assert(hDict!=nullptr && hDict->isValid());
+
     
     if(hparams.isOnlyGPT){
 
@@ -682,18 +686,18 @@ void NLP_AutoRegressive::Train(int flag)       {
     // if(!hOPT->PrepareData( hparams,flag ))
     //     return;
        
-    GST_TIC(t0);
+    int64_t now = ggml_time_ms();
+    double ms=0;
     print_build_info();
     
     SaveTrain("warmup" );      //warmup save
     Optimizer::RESULT result = hOPT->Search(ctx_work,loss,target_probs,hparams);  
-    assert(result==Optimizer::OK);  
+    assert(result==Optimizer::OK || result==Optimizer::DID_NOT_CONVERGE);  
     if(ctx_work!=nullptr)  ggml_free(ctx_work);
     ggml_free(ctx_build);
-    // ggml_free(ctx_input);
-    // ggml_gallocr_free(alloc); 
-
-    _INFO("%s: total training time: %.3g\n", __func__,GST_TOC(t0) );
+    ms = ggml_time_ms()-now;
+    _INFO("\n[train]: ");   _TIME_INFO(" Total time=",ms);
+    _INFO("\n\n");
 }
 
 struct ggml_cgraph *NLP_AutoRegressive::BuildRawGraph( struct ggml_context * ctx_,bool isBuild,int flag)       { 
@@ -825,7 +829,7 @@ void NLP_AutoRegressive::Dump(int type,int flag)      {
     _INFO("%s: nParams=%zu model_size = %zu bytes (%.1f MB)\n", __func__, nParams,szModel,szModel / (1024.0f*1024.0f) );
     _INFO("%s: n_vocab=%d t_vocab=%d,n_batch=%d,n_ctx=%d,n_embd=%d,n_head=%d,n_rot=%d,n_ff=%d\n", __func__, 
         n_vocab,tVocab(),n_batch,n_ctx,n_embd,hparams.n_head(),hparams.n_rot,hparams.n_ff() );
-    _INFO("%s: loader=%s\n", __func__, hparams.batch_sample.c_str() );
+    _INFO("%s: loader=%s\n", __func__, hparams.tpBatchSample.c_str() );
     if(hOPT!=nullptr)
         hOPT->Dump( 1 );     
     else{

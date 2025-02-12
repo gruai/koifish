@@ -1,6 +1,7 @@
 
 /**
- *  Copyright 2023-2025 by Grusoft  
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT  
  *  
  *  Perceptrons 
  * 
@@ -225,9 +226,9 @@ bool FFN::Build(int flag_0)   {
 #endif
     norm.BuildX(name+sNorm,sp,hFish,flag);        //layer->ffn_norm.sT="f";
     up.BuildX(name+"_up",{shape[0],latent},hFish,flag);    
-    down.BuildX(name+"_down",{latent,shape[0]},hFish,flag);    
-    up.w->residual_scale = hFish->hparams.common.residual_scale;
+    down.BuildX(name+"_down",{latent,shape[0]},hFish,flag);        
 #ifdef _TENSOR_CUD_
+    up.w->residual_scale = hFish->hparams.common.residual_scale;
     BIT_SET(down.out->flags,GTensor::F_NOALLOC);
 #endif
     return true;
@@ -249,7 +250,7 @@ hGensor FFN::Interact(struct ggml_context * ctx_,hGensor inpL,int flag){
         cur = out;
     } else{ //  high performance fused operator
         float *inp1=TO<float>(down.out);
-        FUSE_cuda(cur,0x0); //embde->w
+        FUSE_cuda(cur,nullptr,nullptr,&norm,0x0); //embde->w
         cur = norm.out;
         // iRet = FUSE_FFN(down.out,cur,up.out,up.w,up.b,relu.out,down.w,down.b,gelu_fusion,0);            cur = down.out;  
         // iRet = FUSE_ResiNormal(out,down.out,lastResi,norm.out,norm.mean,norm.rstd,norm.w,norm.b,0x0);   cur = norm.out; 
@@ -397,7 +398,7 @@ hGensor OutCLS::Interact(struct ggml_context * ctx_,hGensor inpL,int flag)    {
     } else{    
         FUSE_cuda(inpL,nullptr,0x0);        //embe->w
         // mean_loss = proj.out->FusedLoss(rLoss,out,target,inpL,proj.w,nCls,isForward(),0x0);     
-        hFish->hOPT->UpdateLoss(-1,mean_loss);   
+        hFish->hOPT->UpdateTrainLoss(-1,mean_loss);   
     }
     cur = out;      return cur;
 #else    
@@ -730,8 +731,10 @@ hGensor GeNeuron::BeforeForward(struct ggml_context *ctx_,hGensor cur,int flag){
     return cur;
 }
 hGensor GeNeuron::AfterForward(struct ggml_context *ctx_,hGensor cur,int flag){
-    if(!name.empty()){
-        gTN0(cur,"%s",name.c_str());
+    if(hFish->isSymbolic()){
+        if(!name.empty()){
+            gTN0(cur,"%s",name.c_str());
+        }
     }
     return cur;
 }
