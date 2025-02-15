@@ -1,0 +1,55 @@
+{        
+    "version":"0.1.0",     
+    "arch":"GPT2",
+    "datasets":{
+        "train":{
+            "glob":"/hy-tmp/edu_fineweb1B/*train*.bin",          "name":"edu_fineweb1B"
+        },
+        "eval_1": {"glob":"/hy-tmp/edu_fineweb1B/*val*.bin","name":"edu_fineweb1B","eval-every":100        },
+        "eval_2":{"glob":"/hy-tmp/hellaswag_val.bin", "type":"hellaswag","eval-every":500        }
+    },
+    
+    "train": {
+        "save-every":500,
+        "dump-every":10,
+        
+        "gpt-every":-10,
+        "epoch":2,
+        "batch":80,
+        "learning-rate":0.0006,  
+
+        "optimizatioin":{
+            "#method":"adamw sgdv hsgd",
+            "method":"adamw",
+            "sign":0,
+            "grad_accumulation":1,
+            "lars_ratio":0,      "ZMUV_ratio":0.00    
+        }              
+    },  
+
+    "model":{      
+        "parameter":{
+            "Layer": 12,  
+            "transformer":{
+                "Ctx":1024,  "Embed":    768,    "Head": 12,   "Ffn":768,
+                "on":[""]
+            }
+        },  
+        "inp_embd": {"Embedding+":[]},    
+        "layer":  {      
+            "attn":{"QKV":[]},               
+            "ffn":{"FFN":[]},       
+            "# gattn":{"GAU":[]}
+                                  
+        },
+        "last_normal":{"Normal":[]},
+        "out": {"CLASIFY":[]}
+    },
+
+    "#checkpoint-in":"./hy-tmp/checkpoint/chk-GPT2_2001.gguf",
+    "#checkpoint-out":"./hy-tmp/checkpoint/chk-GPT2_",
+    "# model-out":"gpt2_cys.gguf",    
+
+    "threads":20,            
+    "seed":42
+}

@@ -6,15 +6,15 @@
 
 ## Features
 
-- Hybrid 1-bit Optimizer
+
 - Sparse mapping of token-embedding to logits
 - Mixture of models
-- Support LLAMA/GPT/MAMBA ...
+- Support LLAMA/GPT ...
 - CPU, GPU and Hybrid training
 - Json config file
 - Pure C++ project
 
-## Build
+## Download & Build
 
 ```bash
 git clone https://github.com/gruai/koifish
@@ -30,20 +30,14 @@ make clean && make VERBOSE=TRUE
 # cmake --build . --config Release -j 8 VERBOSE=TRUE
 ```
 
-## Datasets
+## Tutorial
 
-## Training
-
-```bash
-
-```
-
-## Fine-tuning
-
+1.    [Training of GPT2(124M)](cases/tutorial_gpt2.md)
 
 
 ## Working plan
-- Smart attention method
+- Hybrid 1-bit Optimizer
+- Support DEEPSEEK/MAMBA
 
 ## Contributing
 
@@ -54,4 +48,4 @@ make clean && make VERBOSE=TRUE
   
 ## Acknowledgements
 
-* Thanks very much for the outstanding work of [llama.cpp](https://github.com/ggerganov/llama.cpp) & [ggml](https://github.com/ggerganov/ggml).
+* Thanks very much for the outstanding work of [llm.c](https://github.com/karpathy/llm.c) & [ggml](https://github.com/ggerganov/ggml).

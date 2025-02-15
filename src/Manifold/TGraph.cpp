@@ -1548,16 +1548,19 @@ int TGraph::compute_on_plan( struct ggml_cplan* cplan,int flag) {
     return compute_status;*/
 }
 
-void s2layerinfo(const string&jkey,std::vector<string>&lays){
+void s2layerinfo(struct CLI_params& hparams,const string&jkey,std::vector<string>&lays){
     lays.clear();
     const char* seps=" ,:;{}()\t=";
     string nam_0;
     char *token = strtok((char*) jkey.c_str(), seps);
     int no=0,nLay=1;
     while (token != NULL) {
-        if(no==0)
-            nam_0 = token;
-        else{
+        if(no==0){
+            nam_0 = token;            
+            if(strcasecmp(token,"Layer")==0){
+                nLay = hparams.nLayer();
+            }
+        }else{
             if(token[0]=='*'){
                 if(sscanf(token+1,"%d",&nLay)==1)   {
 
@@ -1599,7 +1602,7 @@ hNeuron Fish::J2Neuron(struct ggml_context *ctx_,string& dad,int level,const JCo
         if(it->is_array()){
 
         }else if(it->is_structured())        {
-            s2layerinfo(k,lay_names);
+            s2layerinfo(hparams,k,lay_names);
             int lay = 0;
             for(auto nam_ : lay_names){
                 JConfig jLay(*it,lay++);

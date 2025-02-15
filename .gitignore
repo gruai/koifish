@@ -55,5 +55,7 @@ src/LLAMA/common/build-info.cpp
 *.tokens
 *.tokenset
 *.train
+*.csv
 datasets
 
+src/kGPT/train_gpt2cu
