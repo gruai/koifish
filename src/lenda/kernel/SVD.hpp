@@ -142,7 +142,7 @@ public:
 		FREE_a(approx);
 	}
 
-	void *US(T* US_,int flag=0x0)	{	
+	void US(T* US_,int flag=0x0)	{	
 		int m=this->nRow,lda=this->nCol,n=this->nCol,k=nHeavy;
 		T one_=1.0;
 		GEMD(charN,m, k, &one_, mU, ldU, sigma, US_, k);	

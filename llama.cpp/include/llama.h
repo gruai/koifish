@@ -1423,9 +1423,78 @@ extern "C" {
 
 struct ggml_tensor;
 
+#include <set>
+struct llama_kv_cell {
+    llama_pos pos   = -1;
+    llama_pos delta = 0;
+    int32_t   src   = -1; // used by recurrent state models to copy states
+    int32_t   tail  = -1;
+
+    std::set<llama_seq_id> seq_id;
+
+    bool has_seq_id(const llama_seq_id & id) const {
+        return seq_id.find(id) != seq_id.end();
+    }
+
+    bool is_empty() const {
+        return seq_id.empty();
+    }
+
+    bool is_same_seq(const llama_kv_cell & other) const {
+        return seq_id == other.seq_id;
+    }
+};
+
+// ring-buffer of cached KV data
+struct llama_kv_cache {
+    bool has_shift = false;
+    bool do_defrag = false;
+    bool recurrent = false; // with recurrent state models, a cell can hold the state for more than one past token
+    bool v_trans   = true;  // the value tensor is transposed
+
+    // Note: The value of head isn't only used to optimize searching
+    // for a free KV slot. llama_decode_internal also uses it, so it
+    // cannot be freely changed after a slot has been allocated.
+    uint32_t head = 0;
+    uint32_t size = 0;
+    uint32_t used = 0; // used cells (i.e. at least one seq_id)
+
+    // computed before each graph build
+    uint32_t n = 0;
+
+    ggml_type type_k = GGML_TYPE_F16;
+    ggml_type type_v = GGML_TYPE_F16;
+
+    std::vector<llama_kv_cell> cells;
+
+    std::vector<struct ggml_tensor *> k_l; // per layer
+    std::vector<struct ggml_tensor *> v_l;
+
+    std::vector<struct ggml_context *> ctxs;
+    std::vector<ggml_backend_buffer_t> bufs;
+
+    size_t total_size() const {
+        size_t size = 0;
+        for (ggml_backend_buffer_t buf : bufs) {
+            size += ggml_backend_buffer_get_size(buf);
+        }
+        return size;
+    }
+
+    ~llama_kv_cache() {
+        for (struct ggml_context * ctx : ctxs) {
+            ggml_free(ctx);
+        }
+        for (ggml_backend_buffer_t buf : bufs) {
+            ggml_backend_buffer_free(buf);
+        }
+    }
+};
+
 const std::vector<std::pair<std::string, struct ggml_tensor *>> & llama_internal_get_tensor_map(
     struct llama_context * ctx
 );
+struct llama_kv_cache *llama_internal_get_kvcache(struct llama_context * ctx,bool isUpdate=false);
 
 struct llama_partial_utf8 {
     uint32_t value;    // bit value so far (unshifted)

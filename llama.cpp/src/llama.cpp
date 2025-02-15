@@ -2442,72 +2442,7 @@ struct llama_ubatch {
     int8_t       *  output;   // [n_tokens]
 };
 
-struct llama_kv_cell {
-    llama_pos pos   = -1;
-    llama_pos delta = 0;
-    int32_t   src   = -1; // used by recurrent state models to copy states
-    int32_t   tail  = -1;
 
-    std::set<llama_seq_id> seq_id;
-
-    bool has_seq_id(const llama_seq_id & id) const {
-        return seq_id.find(id) != seq_id.end();
-    }
-
-    bool is_empty() const {
-        return seq_id.empty();
-    }
-
-    bool is_same_seq(const llama_kv_cell & other) const {
-        return seq_id == other.seq_id;
-    }
-};
-
-// ring-buffer of cached KV data
-struct llama_kv_cache {
-    bool has_shift = false;
-    bool do_defrag = false;
-    bool recurrent = false; // with recurrent state models, a cell can hold the state for more than one past token
-    bool v_trans   = true;  // the value tensor is transposed
-
-    // Note: The value of head isn't only used to optimize searching
-    // for a free KV slot. llama_decode_internal also uses it, so it
-    // cannot be freely changed after a slot has been allocated.
-    uint32_t head = 0;
-    uint32_t size = 0;
-    uint32_t used = 0; // used cells (i.e. at least one seq_id)
-
-    // computed before each graph build
-    uint32_t n = 0;
-
-    ggml_type type_k = GGML_TYPE_F16;
-    ggml_type type_v = GGML_TYPE_F16;
-
-    std::vector<llama_kv_cell> cells;
-
-    std::vector<struct ggml_tensor *> k_l; // per layer
-    std::vector<struct ggml_tensor *> v_l;
-
-    std::vector<struct ggml_context *> ctxs;
-    std::vector<ggml_backend_buffer_t> bufs;
-
-    size_t total_size() const {
-        size_t size = 0;
-        for (ggml_backend_buffer_t buf : bufs) {
-            size += ggml_backend_buffer_get_size(buf);
-        }
-        return size;
-    }
-
-    ~llama_kv_cache() {
-        for (struct ggml_context * ctx : ctxs) {
-            ggml_free(ctx);
-        }
-        for (ggml_backend_buffer_t buf : bufs) {
-            ggml_backend_buffer_free(buf);
-        }
-    }
-};
 
 struct llama_control_vector {
     std::vector<struct ggml_tensor *> tensors; // per layer
@@ -9761,6 +9696,9 @@ struct llm_build_context {
         struct ggml_tensor * inpL;
 
         inpL = llm_build_inp_embd(ctx0, lctx, hparams, batch, model.tok_embd, cb);
+        if(inpL->ne[1]==17){        
+            cur=nullptr;
+        }
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -9809,14 +9747,14 @@ struct llm_build_context {
                     n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
                     ext_factor, attn_factor, beta_fast, beta_slow
                 );
-                cb(Qcur, "Qcur", il);
+                cb(Qcur, "Qcur_rope", il);
 
                 Kcur = ggml_rope_ext(
                     ctx0, ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens), inp_pos, rope_factors,
                     n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
                     ext_factor, attn_factor, beta_fast, beta_slow
                 );
-                cb(Kcur, "Kcur", il);
+                cb(Kcur, "Kcur_rope", il);
 
                 cur = llm_build_kv(ctx0, lctx, kv_self, gf,
                         model.layers[il].wo, model.layers[il].bo,
@@ -10899,7 +10837,7 @@ struct llm_build_context {
 
         // final output
         cur = inpL;
-        cb(cur, "result_embd", -1);
+        cb(cur, "result_output", -1);
 
         ggml_build_forward_expand(gf, cur);
 
@@ -20672,52 +20610,7 @@ void llama_log_callback_default(ggml_log_level level, const char * text, void * 
     fflush(stderr);
 }
 
-#include "llama_cys.inc"
-struct ggml_cgraph * _llama_raw_graph(llama_model * model,struct ggml_cgraph *gfx,int flag){
-    llama_context_params cparams;
-    cparams = llama_context_default_params();
-    auto & hparams = model->hparams;
-       
-    cparams.flash_attn = true;
-
-    llama_context * lctx = llama_new_context_with_model(model, cparams);
-    llama_ubatch ubatch;
-    std::vector<llama_token> tokens;        tokens.resize(512);
-    llama_batch batch_all = llama_batch_get_one(tokens.data(), std::min(tokens.size(), (size_t)cparams.n_batch), 0, 0);
-    lctx->sbatch.from_batch(batch_all, hparams.n_embd,!lctx->kv_self.recurrent,lctx->logits_all);
-    ubatch = lctx->sbatch.split_simple(cparams.n_ubatch);
-    int n_tokens = ubatch.n_tokens, n_threads = n_tokens == 1 ? cparams.n_threads : cparams.n_threads_batch;
-    ggml_threadpool_t threadpool = n_tokens == 1 ? lctx->threadpool : lctx->threadpool_batch;
-    auto & kv_self = lctx->kv_self;
-    GGML_ASSERT(n_threads > 0);
-
-    // non-causal masks do not use the KV cache
-    if (hparams.causal_attn) {
-        llama_kv_cache_update(lctx);
-        // if we have enough unused cells before the current head ->
-        //   better to start searching from the beginning of the cache, hoping to fill it
-        if (kv_self.head > kv_self.used + 2*n_tokens) {
-            kv_self.head = 0;
-        }
-        if (!llama_kv_cache_find_slot(kv_self, ubatch)) {
-            return nullptr;
-        }
-        if (!kv_self.recurrent) {
-            const uint32_t pad = lctx->cparams.flash_attn ? 256u : 32u;
-            kv_self.n = std::min(kv_self.size, std::max(pad, GGML_PAD(llama_kv_cache_cell_max(kv_self), pad)));
-            //kv_self.n = llama_kv_cache_cell_max(kv_self);
-        }
-    }
-
-    //printf("kv_self.n = %5d, kv_self.used = %5d, kv_self.head = %5d\n", kv_self.n, kv_self.used, kv_self.head);
-
-    ggml_backend_sched_reset(lctx->sched);
-    ggml_backend_sched_set_eval_callback(lctx->sched, lctx->cparams.cb_eval, lctx->cparams.cb_eval_user_data);    
-    ggml_cgraph *gf =  llama_build_graph(*lctx, ubatch, false);
-    ggml_graph_cpy(gf, gfx);    
-    return gf;
-}
-
+#include "../../src/ggex/llama_cys.inc"
 // Hack with some bugs
 int _llama_build_graph(llama_model * model,struct ggml_cgraph **hgf,struct ggml_cgraph **hgb,int flag){
     llama_context_params cparams;
@@ -20797,7 +20690,7 @@ int _llama_build_graph(llama_model * model,struct ggml_cgraph **hgf,struct ggml_
         gf = llm.append_pooling(gf);
     }
     ggml_graph_print(gf);
-    gb = ggml_new_graph_custom(llm.ctx0, LLAMA_TRAIN_MAX_NODES, true);
+    gb = ggml_new_graph_custom(llm.ctx0, 16384, true);  //LLAMA_TRAIN_MAX_NODES
     if(gb!=nullptr){
         ggml_graph_cpy(gf, gb);
         ggml_build_backward_expand(llm.ctx0, gf, gb, true);            
@@ -20811,4 +20704,100 @@ int _llama_build_graph(llama_model * model,struct ggml_cgraph **hgf,struct ggml_
     llama_graph_compute(*lctx, gf, n_threads, threadpool);
 
     return true;
+}
+
+struct ggml_cgraph * _llama_raw_graph(llama_model * model,struct ggml_cgraph *gfx,const std::string&prompt,bool isOnline,int flag){
+    llama_context_params cparams;
+    cparams = llama_context_default_params();
+    auto & hparams = model->hparams;       
+    cparams.flash_attn = false;
+    cparams.logits_all = true;
+    // hparams.causal_attn = false;        
+
+    llama_context * lctx = llama_new_context_with_model(model, cparams);
+    llama_ubatch ubatch;
+    std::vector<llama_token> tokens ={1,259,3672,15349,303,18349,478,8646,5247,4604,13,28705,1725,21290,9689,28742,28713};
+    int32_t n_tokens = tokens.size();
+    if(0){
+        tokens.resize(512);
+        int32_t n_tokens = llama_tokenize(model,prompt.data(),prompt.size(),tokens.data(),tokens.size(), true, true);
+        tokens.resize(n_tokens);         
+    }
+       
+        
+    llama_batch batch_all = llama_batch_get_one(tokens.data(), std::min(tokens.size(), (size_t)cparams.n_batch), 0, 0);
+    uint32_t n_tokens_all = batch_all.n_tokens,n_outputs = 0,n_outputs_new = 0, n_threads = 1;   
+    const bool embd_pooled = false;     //cparams.embeddings && cparams.pooling_type != LLAMA_POOLING_TYPE_NONE;
+    if (batch_all.logits && !embd_pooled) { // count outputs
+        for (uint32_t i = 0; i < n_tokens_all; ++i) {
+            n_outputs += batch_all.logits[i] != 0;
+        }
+    } else if (lctx->logits_all || embd_pooled) {
+        n_outputs = n_tokens_all;
+    } else {        // keep last output only
+        n_outputs = 1;
+    }
+
+    lctx->sbatch.from_batch(batch_all, hparams.n_embd,!lctx->kv_self.recurrent,lctx->logits_all);
+    ubatch = lctx->sbatch.split_simple(cparams.n_ubatch);
+    n_tokens = ubatch.n_tokens;  //n_tokens == 1 ? cparams.n_threads : cparams.n_threads_batch;
+    if (n_outputs == n_tokens_all) {
+        n_outputs_new = n_tokens;
+    } else {
+        GGML_ASSERT(ubatch.output);
+        for (uint32_t i = 0; i < n_tokens; i++) {
+            n_outputs_new += (int32_t) (ubatch.output[i] != 0);
+        }
+    }    // needs to happen before the graph is built
+    lctx->n_outputs = n_outputs_new;
+    
+    ggml_threadpool_t threadpool = n_tokens == 1 ? lctx->threadpool : lctx->threadpool_batch;
+    auto & kv_self = lctx->kv_self;     //  init @llama_kv_cache_init
+    GGML_ASSERT(n_threads > 0);
+
+    // non-causal masks do not use the KV cache
+    if (hparams.causal_attn) {
+        llama_kv_cache_update(lctx);
+        // if we have enough unused cells before the current head ->
+        //   better to start searching from the beginning of the cache, hoping to fill it
+        if (kv_self.head > kv_self.used + 2*n_tokens) {
+            kv_self.head = 0;
+        }
+        if (!llama_kv_cache_find_slot(kv_self, ubatch)) {
+            return nullptr;
+        }
+        if (!kv_self.recurrent) {
+            const uint32_t pad = lctx->cparams.flash_attn ? 256u : 32u;
+            kv_self.n = std::min(kv_self.size, std::max(pad, GGML_PAD(llama_kv_cache_cell_max(kv_self), pad)));
+            //kv_self.n = llama_kv_cache_cell_max(kv_self);
+        }
+    }
+
+    //printf("kv_self.n = %5d, kv_self.used = %5d, kv_self.head = %5d\n", kv_self.n, kv_self.used, kv_self.head);
+
+    ggml_backend_sched_reset(lctx->sched);
+    ggml_backend_sched_set_eval_callback(lctx->sched, lctx->cparams.cb_eval, lctx->cparams.cb_eval_user_data);  
+    ggml_cgraph *gf = llama_build_graph(*lctx, ubatch, false);    
+    auto preLogits = gf->nodes[gf->n_nodes - 1],leaf0=gf->nodes[0];
+    float *logits_out = nullptr;        
+    ggml_graph_cpy(gf, gfx);     //just copy node_ptr & update hash   
+    // ggml_graph_clear(gf);   gf = gfx;       
+    if(isOnline){
+        ggml_backend_sched_alloc_graph(lctx->sched, gf);
+        logits_out = (float*)(preLogits->data);   
+        llama_set_inputs(*lctx, ubatch);
+        if(0)
+            llama_graph_compute(*lctx, gf, n_threads, threadpool);  //only call once!!!
+        else{
+            ggml_graph_compute(gf, NULL);              
+            assert(fabs(logits_out[0]+6.60046101)<1.0e-6);  //6.51698589           
+        }         
+    }else{
+        ggml_backend_sched_alloc_graph(lctx->sched, gf);  
+        llama_set_inputs(*lctx, ubatch);
+    }
+
+    // llm.init();    
+    // llm.free();
+    return gf;
 }

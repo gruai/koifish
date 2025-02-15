@@ -270,7 +270,7 @@ static void ggml_print_backtrace(void) {
 
 void ggml_abort(const char * file, int line, const char * fmt, ...) {
     fflush(stdout);
-
+    
     fprintf(stderr, "%s:%d: ", file, line);
 
     va_list args;
@@ -6043,8 +6043,8 @@ struct ggml_tensor * ggml_reshape(
     }
 
     struct ggml_tensor * result = ggml_new_tensor_impl(ctx, a->type, GGML_MAX_DIMS, b->ne, a, 0);
-    ggml_format_name(result, "%s (reshaped)", a->name);
-
+    // ggml_format_name(result, "%s (reshaped)", a->name);
+    ggml_format_name(result, "%s#", a->name);         GGML_ASSERT(strlen(a->name)>0);
     result->op   = GGML_OP_RESHAPE;
     result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
     result->src[0] = a;
@@ -6067,8 +6067,8 @@ struct ggml_tensor * ggml_reshape_1d(
 
     const int64_t ne[1] = { ne0 };
     struct ggml_tensor * result = ggml_new_tensor_impl(ctx, a->type, 1, ne, a, 0);
-    ggml_format_name(result, "%s (reshaped)", a->name);
-
+    // ggml_format_name(result, "%s (reshaped)", a->name);
+    ggml_format_name(result, "%s#", a->name);         GGML_ASSERT(strlen(a->name)>0);
     result->op   = GGML_OP_RESHAPE;
     result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
     result->src[0] = a;
@@ -6092,8 +6092,8 @@ struct ggml_tensor * ggml_reshape_2d(
 
     const int64_t ne[2] = { ne0, ne1 };
     struct ggml_tensor * result = ggml_new_tensor_impl(ctx, a->type, 2, ne, a, 0);
-    ggml_format_name(result, "%s (reshaped)", a->name);
-
+    // ggml_format_name(result, "%s (reshaped)", a->name);         
+    ggml_format_name(result, "%s#", a->name);         GGML_ASSERT(strlen(a->name)>0);
     result->op   = GGML_OP_RESHAPE;
     result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
     result->src[0] = a;
@@ -6118,8 +6118,8 @@ struct ggml_tensor * ggml_reshape_3d(
 
     const int64_t ne[3] = { ne0, ne1, ne2 };
     struct ggml_tensor * result = ggml_new_tensor_impl(ctx, a->type, 3, ne, a, 0);
-    ggml_format_name(result, "%s (reshaped)", a->name);
-
+    // ggml_format_name(result, "%s (reshaped)", a->name);
+    ggml_format_name(result, "%s#", a->name);         GGML_ASSERT(strlen(a->name)>0);
     result->op   = GGML_OP_RESHAPE;
     result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
     result->src[0] = a;
@@ -6145,8 +6145,8 @@ struct ggml_tensor * ggml_reshape_4d(
 
     const int64_t ne[4] = { ne0, ne1, ne2, ne3 };
     struct ggml_tensor * result = ggml_new_tensor_impl(ctx, a->type, 4, ne, a, 0);
-    ggml_format_name(result, "%s (reshaped)", a->name);
-
+    // ggml_format_name(result, "%s (reshaped)", a->name);
+    ggml_format_name(result, "%s#", a->name);         GGML_ASSERT(strlen(a->name)>0);
     result->op   = GGML_OP_RESHAPE;
     result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
     result->src[0] = a;
@@ -17385,11 +17385,13 @@ static void ggml_compute_forward_cross_entropy_loss_f32_1(
     const int ith = params->ith;
     const int nth = params->nth;
 
-    float * sums = (float *) params->wdata;
+    float * sums = (float *) params->wdata,w=1;
 
     // TODO: handle transposed/permuted matrices
     const int nc = src0->ne[0];
     const int nr = ggml_nrows(src0);
+    int samp_pick = src1->ne[1];
+    int n_pick=nr/samp_pick;
 
     GGML_ASSERT(params->wsize >= sizeof(float) * (nth + nth * nc));
 
@@ -17406,6 +17408,10 @@ static void ggml_compute_forward_cross_entropy_loss_f32_1(
     const int ir1 = MIN(ir0 + dr, nr);
 
     for (int i1 = ir0; i1 < ir1; i1++) {
+        // if((i1+1)%samp_pick!=0)   
+        //     w = 0.5;
+        // else    
+        //     w = 0.5+samp_pick/2;
         float * s0 = (float *)((char *) src0->data + i1*src0->nb[1]),sid;
         int * target = (int *)((char *) src1->data + i1*src1->nb[1]),id=target[0];
         float * st = ((float *) params->wdata) + nth + ith*nc;
@@ -17424,7 +17430,7 @@ static void ggml_compute_forward_cross_entropy_loss_f32_1(
         assert(sum >= 0.0);
 
         ggml_vec_add1_f32(nc, st, st, -sum);
-        sid = st[id];
+        st[id]*=w;      sid = st[id];
         memset(st,0x0,sizeof(float)*nc);
         st[id] = sid;       sums[ith] += sid;
         /*ggml_vec_mul_f32(nc, st, st, s1);
@@ -17439,11 +17445,11 @@ static void ggml_compute_forward_cross_entropy_loss_f32_1(
 #endif*/
     }
     ggml_barrier(params->threadpool);
-
     if (ith == 0) {
         float * dp = (float *) dst->data;
         ggml_vec_sum_f32(nth, dp, sums);
         dp[0] *= -1.0f / (float) nr;
+        // dp[0] *= -1.0f / (float) n_pick;
     }
 }
 static void ggml_compute_forward_cross_entropy_loss(
@@ -17482,10 +17488,12 @@ static void ggml_compute_forward_cross_entropy_loss_back_f32_1(
 
     const int64_t ith = params->ith;
     const int64_t nth = params->nth;
-
     // TODO: handle transposed/permuted matrices
     const int64_t nc = src0->ne[0];
     const int64_t nr = ggml_nrows(src0);
+    int samp_pick = src1->ne[1];
+    int n_pick=nr/samp_pick;
+    float w = 1;
 
     // rows per thread
     const int64_t dr = (nr + nth - 1)/nth;
@@ -17497,6 +17505,10 @@ static void ggml_compute_forward_cross_entropy_loss_back_f32_1(
     float * d   = (float *) opt0->data;
 
     for (int64_t i1 = ir0; i1 < ir1; i1++) {
+        // if((i1+1)%samp_pick!=0)   
+        //     w = 0.5;
+        // else    
+        //     w = 0.5+samp_pick/2;
         float * ds0 = (float *)((char *) dst->data  + i1*dst->nb[1]),sid;
         float * s0  = (float *)((char *) src0->data + i1*src0->nb[1]);
         // float * s1  = (float *)((char *) src1->data + i1*src1->nb[1]);        
@@ -17519,6 +17531,7 @@ static void ggml_compute_forward_cross_entropy_loss_back_f32_1(
         // grad(src0) = (softmax(src0) - src1) * grad(cross_entropy_loss(src0, src1)) / nr
         // ggml_vec_sub_f32(nc, ds0, ds0, s1);
         sid = ds0[id];      ds0[id] -= 1.0;
+        ds0[id] *= w;
         ggml_vec_scale_f32(nc, ds0, d[0] / (float) nr);
 
 #ifndef NDEBUG
@@ -18193,7 +18206,7 @@ static struct ggml_tensor * ggml_sub_or_set(struct ggml_context * ctx, struct gg
     }
 }
 
-static void ggml_compute_backward(struct ggml_context * ctx, struct ggml_tensor * tensor, struct ggml_hash_set * zero_table) {
+void ggml_compute_backward(struct ggml_context * ctx, struct ggml_tensor * tensor, struct ggml_hash_set * zero_table) {
     struct ggml_tensor * src0 = tensor->src[0];
     struct ggml_tensor * src1 = tensor->src[1];
     struct ggml_tensor * src2 = tensor->src[2];
@@ -20313,11 +20326,141 @@ struct ggml_threadpool * ggml_threadpool_new(struct ggml_threadpool_params * tpp
     return ggml_threadpool_new_impl(tpp, NULL, NULL);
 }
 
+/*  hack by yschen
+      CHILD_1012_CACHE
+*/
+void _pt_cys_(const char* title, struct ggml_tensor * t, int n) {
+    if(t==NULL)      return;
+
+    // if(strlen(title)>0) printf("%s=", title);
+    int nElems = ggml_nelements(t),nz=0,nan_id=-1;
+    float * data = (float *)t->data,a1=-FLT_MAX,a0=FLT_MAX;
+    switch(t->type) {
+    case GGML_TYPE_F32:{ 
+        float * data = (float *)t->data,a1=-FLT_MAX,a0=FLT_MAX,T_zero=1.0e-10;
+        double sum=0;
+        for(int i=0;i<nElems;i++){
+            if(isnan(data[i])){
+                nan_id=i;   break;
+            }
+            sum+=data[i];
+            a0 = fmin(a0,data[i]);           a1 = fmax(a1,data[i]);
+        }
+        if(fabs(a0)<T_zero && fabs(a1)<T_zero){
+            printf("\t %s %s all zero!!! n=%d\n",title,t->name,nElems);
+        }else
+            printf("%s %s [%f,%f %f-%d],",title,t->name,a0,a1,sum/nElems,nElems);
+    }
+        break;
+    case GGML_TYPE_I32:{ 
+        int * data = (int *)t->data;
+        for(int i=0;i<nElems;i++){
+            if(isnan(data[i]*1.0f)){
+                nan_id=i;   break;
+            }
+        }
+        printf("%s[%d,%d,...,%d,%d],",title,data[0],data[1],data[nElems-2],data[nElems-1]);
+    }
+        break;
+    default :
+        break;
+    }  
+    if(nan_id>=0){
+        printf("!!! NAN@%d !!!\n",nan_id);
+        assert(0);
+    }
+}
+enum ggml_status ggml_graph_comp0(struct ggml_cgraph * cgraph, int flag){
+    printf("\n\n================ %s ================\n",__func__);    
+
+    struct ggml_cplan cplan = ggml_graph_plan(cgraph, 1, NULL);    
+    if(cplan.work_data == NULL){
+        size_t max_work_size = cplan.work_size+ GGML_OBJECT_SIZE;
+        struct ggml_init_params ctx_work_params = {
+            max_work_size,         NULL,       false,        
+        };    
+        struct ggml_context *ctx_work = ggml_init(ctx_work_params);
+        struct ggml_object * obj = ggml_new_object(ctx_work, GGML_OBJECT_TYPE_WORK_BUFFER, cplan.work_size);
+        cplan.work_data = (uint8_t *)ctx_work->mem_buffer + obj->offs;
+    }
+    int n_threads = cplan.n_threads,nBottle=-1;     assert(n_threads==1);
+    struct ggml_threadpool * threadpool = cplan.threadpool;
+    bool disposable_threadpool = false;
+    if (threadpool == NULL) {        
+        disposable_threadpool = true;
+        struct ggml_threadpool_params ttp = ggml_threadpool_params_default(n_threads);
+        threadpool = ggml_threadpool_new_impl(&ttp, cgraph, &cplan);
+    } else {
+        threadpool->cgraph           = cgraph;        threadpool->cplan            = &cplan;
+        threadpool->n_threads_cur    = n_threads;        threadpool->current_chunk    = 0;        threadpool->ec               = GGML_STATUS_SUCCESS;
+    }
+    // ggml_graph_compute_thread(&threadpool->workers[0]);
+    struct ggml_compute_state * state = (struct ggml_compute_state *) (&threadpool->workers[0]);
+    assert( cgraph == state->threadpool->cgraph );
+    assert( &cplan  == state->threadpool->cplan );
+    struct ggml_compute_params params = {
+        state->ith,state->threadpool->n_threads_cur,cplan.work_size,cplan.work_data,state->threadpool,
+    };
+
+    printf("\tnNodes=%d wsize=%ld nT=%d\n",cgraph->n_nodes,cplan.work_size,n_threads);
+    double t1=0,tAll=0;
+    for (int no = 0; no < cgraph->n_nodes; no++) {
+        struct ggml_tensor *node = cgraph->nodes[no],*dst=node;
+        const struct ggml_tensor *src0 = dst->src[0],*src1 = dst->src[1];
+        int nElems = ggml_nelements(dst),nz=0;          
+
+        int64_t t_000 = ggml_time_us();        
+        ggml_compute_forward(&params, node);        // ggml_compute_backward(&params, node)
+        double tX = (ggml_time_us() - t_000) / 1000000.0f;
+        tAll += tX;
+        if(tX>t1){
+            t1 = tX;        nBottle = no;
+        }
+        printf("%d %s T=%.3g\t%s",no,dst->name,tX>0.5?tX:0,ggml_op_name(dst->op));  
+        if(src1==NULL){      
+            if(src0!=NULL)     {
+                printf("@[%s]\n",src0->name);
+                GGML_ASSERT(src0->data!=NULL);                
+            } 
+        }   else{            
+            printf("@[%s],[%s]\n",src0->name,src1->name);
+            GGML_ASSERT(src1->data!=NULL);
+        }   GGML_ASSERT(dst->data!=NULL);
+        _pt_cys_("\tdst=",dst,0);        _pt_cys_("\tsrc0=",src0,0);       _pt_cys_("\tsrc1=",src1,0);        printf("\n");
+        
+        if (state->ith == 0 && cplan.abort_callback && cplan.abort_callback(cplan.abort_callback_data)) {
+            state->threadpool->ec = GGML_STATUS_ABORTED;
+        }
+        ggml_barrier(state->threadpool);
+        if (state->threadpool->ec != GGML_STATUS_SUCCESS) {
+            break;
+        }
+    }
+    if (disposable_threadpool) {
+        ggml_threadpool_free(threadpool);
+    }
+    if(nBottle!=-1) {
+        struct ggml_tensor *node = cgraph->nodes[nBottle];
+        const struct ggml_tensor *src0 = node->src[0],*src1 = node->src[1];
+        printf("================ Botteneck@%d t=%.3g(%.3g) %s %s@[%s %s]\n",nBottle,t1,tAll,node->name,ggml_op_name(node->op),
+            src0==NULL?"":src0->name,src1==NULL?"":src1->name);
+        printf("\t[%d,%d,%d,%d]\t",node->ne[0], node->ne[1], node->ne[2], node->ne[3]);       
+        if(src0!=NULL)   printf("src0=[%d,%d,%d,%d]\t",src0->ne[0], src0->ne[1], src0->ne[2], src0->ne[3]);   
+        if(src1!=NULL)   printf("src1=[%d,%d,%d,%d]\t",src1->ne[0], src1->ne[1], src1->ne[2], src1->ne[3]);   
+        printf("\n");  
+    }
+ 
+    enum ggml_status ret = threadpool->ec;
+    return ret;
+}
+
 enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cplan * cplan) {
+    if(cplan==NULL)
+        return ggml_graph_comp0(cgraph,cplan);          //  CHILD_1012_CACHE
+
     GGML_ASSERT(cplan);
     GGML_ASSERT(cplan->n_threads > 0);
-    GGML_ASSERT(cplan->work_size == 0 || cplan->work_data != NULL);
-
+    GGML_ASSERT(cplan->work_size == 0 || cplan->work_data != NULL);    
     int n_threads                               = cplan->n_threads;
     struct ggml_threadpool * threadpool = cplan->threadpool;
 

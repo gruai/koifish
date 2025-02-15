@@ -247,7 +247,8 @@ protected:
     MixOfSwarm  mos;
 
     DataTokens tokenset;
-    hDataToken tsTrain=nullptr,tsEval=nullptr;
+    hDataToken tsTrain=nullptr;     //  always only 1 train set!
+    DataTokens tsEval;              //  support multiple eval set!
     
     hOptimizer hOPT;
     vector<hGensor> optParams;     //paramter tensors updated by hOPT

@@ -103,6 +103,10 @@ double SampLoader::DecodeVerify(hSAMP samp,hGensor tokens,hGensor logits,int fla
     return last_err;
 }
 
+int SampLoader::StepOfEvaluate(int flag)    {   //  smaple to reduce eval time
+    int step = num_batches*hTokens->rStepOfEval;
+    return max(step,1);     
+}
 int SampLoader::nLeastCTX(int  flag) {   
     auto samp = SampAt(0);
     return hDict->tokenizer_add_bos? samp->len : samp->len+1;
@@ -197,12 +201,69 @@ void SampLoader::Samp2Batch(int k,hSAMP samp,struct train_params_& params,int fl
     }
 }
 
+bool SampLoader::isEval(int t,int flag){
+    assert(type==DT_EVAL);
+    if( eval_every>0 && t % eval_every == 0){
+        if(t==0){
+            if(hTokens->tpSample==DataTokenSet::HellaSwag){ //too long!
+                return false;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+bool SampLoader::NextEpoch(int flag){
+    _INFO("-------- End of all shards of epoch_%d! -------- \n",hOPT->train_epochs+1);
+    hOPT->train_epochs++;
+    return true;
+    /*if (train_loader->next_sample >=train_loader->shuffle_sample_count)    {
+        ++train_epochs;
+        _INFO("%s: reshuffle samples. completed epochs: %llu\n", __func__, train_epochs);
+        // note: we may have used some samples from the current shuffling more than once
+        train_loader->shuffle_rng_state_current =train_loader->shuffle_rng_state_next;
+        // train->shuffle_rng_state_next = shuffle_samples(
+        //     train->shuffle_rng_state_current,data->shuffled_samples_offs,data->shuffled_samples_begin,
+        //     data->shuffled_samples_size,data->samples_begin,data->samples_size,data->samples_count);
+        
+        train_loader->Shuffle();           //SAMP_0816
+        // train->shuffle_rng_state_next = shuffle_samples(
+        //     train->shuffle_rng_state_current,loader->shuffled_samples_offs.data(),
+        //     loader->shuffled_samples_begin.data(),loader->shuffled_samples_size.data(),
+        //     loader->samp_begin.data(),loader->samp_size.data(),loader->samp_size.size());
+        
+        train_loader->next_sample = 0;
+    }*/
+    //return hTokens->isNextEpoch;
+    /*if(hTokens->shard_paths.size()>0)   
+        return false;
+    if( next_sample <shuffle_sample_count )
+        return false;
+
+    _INFO("%s: reshuffle samples. completed epochs: %llu\n", __func__, train_epochs);
+    shuffle_rng_state_current =shuffle_rng_state_next;
+    // train->shuffle_rng_state_next = shuffle_samples(
+    //     train->shuffle_rng_state_current,data->shuffled_samples_offs,data->shuffled_samples_begin,
+    //     data->shuffled_samples_size,data->samples_begin,data->samples_size,data->samples_count);
+    
+    Shuffle();           //SAMP_0816
+    // train->shuffle_rng_state_next = shuffle_samples(
+    //     train->shuffle_rng_state_current,loader->shuffled_samples_offs.data(),
+    //     loader->shuffled_samples_begin.data(),loader->shuffled_samples_size.data(),
+    //     loader->samp_begin.data(),loader->samp_size.data(),loader->samp_size.size());
+    
+    next_sample = 0;*/
+    return true;
+}
+
 hSAMP SampLoader::Next(bool isLoop) {    
     if(next_sample==nShard())       {
-        if(!hTokens->NextShard( ))  {
+        if(!hTokens->LoadNextShard(this))  {
             _WARN("<SampLoader::%s> Failed to get next shard file!!!\n",__func__);
             return nullptr;   
-        }               
+        }          
+        hOPT->OnNextShard();     
         next_sample = 0;
     }
         
@@ -446,6 +507,8 @@ SampLoader::SampLoader(Fish *g_,const string&n,bool isNewTS,int flag) {
         assert(0);
         return ;
     }
+    stepis.name = name;
+
 #ifdef _TENSOR_CUD_
     isTarget_1 = true;
 #else
@@ -454,7 +517,7 @@ SampLoader::SampLoader(Fish *g_,const string&n,bool isNewTS,int flag) {
     return ;
 }
 
-bool SampLoader::Prepare(hDataToken hT,int flag){
+bool SampLoader::Prepare(Optimizer *hO,hDataToken hT,int flag){
     bool isNewTS = hT==nullptr;
     hDict = dolphin->hDict;     
     if(isNewTS){
@@ -462,14 +525,16 @@ bool SampLoader::Prepare(hDataToken hT,int flag){
     }else
         hTokens = hT;   //dolphin->hTokenset;
     assert(hTokens!=nullptr && hDict!=nullptr);  
-    hOPT = dolphin->hOPT.get();
+    hOPT = hO;  //dolphin->hOPT.get();
     assert(hOPT!=nullptr);
-
+    
     if(hTokens!=nullptr){
-        if(!hTokens->NextShard())
+        if(!hTokens->LoadNextShard(this))
             return false;
         shard_samps = hTokens->shard_samps;
         num_batches = hTokens->nBatch( );
+        stepis.name = name+"@["+hTokens->name+"]";
+        eval_every = hTokens->eval_every;        
     }
     // bos = hDict->bos;
     // eos = hDict->eos;
@@ -642,29 +707,6 @@ string SampLoader::sTokenSet(int flag){
     else
         sprintf(buffer,"%s",name.c_str());
     return buffer;
-}
-
-
-bool SampLoader::isNextEpoch(int train_epochs){
-    if(hTokens->shard_paths.size()>0)   
-        return false;
-    if( next_sample <shuffle_sample_count )
-        return false;
-
-    _INFO("%s: reshuffle samples. completed epochs: %llu\n", __func__, train_epochs);
-    shuffle_rng_state_current =shuffle_rng_state_next;
-    // train->shuffle_rng_state_next = shuffle_samples(
-    //     train->shuffle_rng_state_current,data->shuffled_samples_offs,data->shuffled_samples_begin,
-    //     data->shuffled_samples_size,data->samples_begin,data->samples_size,data->samples_count);
-    
-    Shuffle();           //SAMP_0816
-    // train->shuffle_rng_state_next = shuffle_samples(
-    //     train->shuffle_rng_state_current,loader->shuffled_samples_offs.data(),
-    //     loader->shuffled_samples_begin.data(),loader->shuffled_samples_size.data(),
-    //     loader->samp_begin.data(),loader->samp_size.data(),loader->samp_size.size());
-    
-    next_sample = 0;
-    return true;
 }
 
 void SampLoader::Shuffle(int flag)  {
@@ -981,3 +1023,23 @@ std::string shuffle_samples_X(
     return mt19937_get_state(rng);
 }
 
+bool StepInfos::SaveToCSV(const string&path,int flag){
+try{
+    //  FSerial
+    string fpath = sRoot+name+path;
+    FILE *fp = fopen(fpath.c_str(), "wt");
+    if (fp == NULL) {
+        _INFO("%s: warning: empty or not existing training data file '%s'\n", __func__, fpath.c_str());
+        return false;
+    } 
+    fprintf(fp,"epoch iter loss lr gNorm tX dt\n");
+    for(auto step:steps){
+        fprintf(fp,"%d %d %.3f %.2e %.3f %g %g\n",step.epoch,step.iter,step.loss,step.lr, step.gNorm,step.tX,step.dt);
+    }
+    fclose(fp);
+    _INFO(">>>>>> Save %s to \"%s\", N=%ld\n",name.c_str(),fpath.c_str(),steps.size());
+    return true;
+}catch(...){
+    return false;
+}
+}

@@ -12,7 +12,7 @@ Global norm, used in gradient clipping
 // CUDA kernels
 
 template<class T>
-__device__ float global_norm_squared_for_range(const T* data, size_t count) {
+__device__ inline float global_norm_squared_for_range(const T* data, size_t count) {
     size_t index = blockIdx.x * blockDim.x + threadIdx.x;
     size_t grid_width = blockDim.x * gridDim.x;
     float accumulator = 0.f;
@@ -24,7 +24,7 @@ __device__ float global_norm_squared_for_range(const T* data, size_t count) {
 }
 
 template<class T>
-__global__ void global_norm_squared_kernel(float* out, const T* data, size_t count, ptrdiff_t stride) {
+__global__ inline void global_norm_squared_kernel(float* out, const T* data, size_t count, ptrdiff_t stride) {
     float block_sum = global_norm_squared_for_range(data + blockIdx.y * stride, count);
     // each block accumulates its partial sum to out[out_index]
     // we want to avoid using atomic add here so we combine this kernel with another kernel call
@@ -35,7 +35,7 @@ __global__ void global_norm_squared_kernel(float* out, const T* data, size_t cou
     }
 }
 
-__global__ void global_norm_aggregate_kernel(float* out, size_t grid_size) {
+__global__ inline void global_norm_aggregate_kernel(float* out, size_t grid_size) {
     size_t index = threadIdx.x;
     // grab block sums from the previous kernel, use 0. as the neutral sum element
     float block_sum = (index < grid_size) ? out[index] : 0.f;
@@ -49,7 +49,7 @@ __global__ void global_norm_aggregate_kernel(float* out, size_t grid_size) {
 // kernel launcher
 
 // Helper function determines the maximum number of block sums
-int get_max_num_block_sums(int* num_slices_all, int numel) {
+inline int get_max_num_block_sums(int* num_slices_all, int numel) {
     // NOTE: this needs to be kept in sync with `global_norm_squared` below.
     const int block_size = 512;
     const int grid_size = deviceProp.maxThreadsPerMultiProcessor * deviceProp.multiProcessorCount / block_size;
@@ -66,7 +66,7 @@ int get_max_num_block_sums(int* num_slices_all, int numel) {
 }
 
 template<typename T>
-void global_norm_squared(float* out, const T* values, size_t count, ptrdiff_t stride, int num_slices, int max_num_block_sums, bool reset, cudaStream_t stream) {
+inline void global_norm_squared(float* out, const T* values, size_t count, ptrdiff_t stride, int num_slices, int max_num_block_sums, bool reset, cudaStream_t stream) {
     const int block_size = 512;
     // launch just enough blocks to fill the grid. deliberately no DIV_CEIL.
     // having one block less than possible is a tiny performance hit, having

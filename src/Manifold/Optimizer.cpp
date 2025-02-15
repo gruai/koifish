@@ -30,8 +30,14 @@ Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params& hparams,int flag) : _fi
     nGradAccum =  std::max(1, train_params.n_gradient_accumulation);
     isGlobalGrad = nGradAccum>1;        // Nearly same alloc grad or not
     train_loader = std::make_shared<SampLoader>(_fish,"Train",false);
-    val_loader = std::make_shared<SampLoader>(_fish,"Eval",false);
-    val_loader->type = SampLoader::TYPE::DT_EVAL;
+    train_loader->Prepare(this,_fish->tsTrain);  
+    for(auto tsE : _fish->tsEval)            {
+        auto loader = std::make_shared<SampLoader>(_fish,"Eval",false);
+        loader->type = SampLoader::TYPE::DT_EVAL;      
+        loader->Prepare(this,tsE);
+        val_loaders.push_back(loader);          
+    }  
+
     if(_fish->isTrain())  {
         // train_loader->Init(g_,"Train");
         
@@ -132,7 +138,7 @@ bool OPT_Adam::BatchGrad(int iter,float&fx,int flag)   {
         }
         
         train_samples += nSamp;      
-        if(AfterLoadBatch(accum_step)){
+        if(!AfterLoadBatch(accum_step)){
             return false;
         }   
         
@@ -402,18 +408,18 @@ static string GD_NAME[]={
 
 void Optimizer::UpdateTrainLoss(int x,float loss,int flag){
     int step = iter;
-    if(step>1){
+    if(!fx_prev.empty()){
         float last = scheduler->Last();
         isStopImprove = step>0 ? (loss>last*1.1) : false;   
         if(isStopImprove){
             // _INFO("%s_%d: StopImprove\n", __func__, iter);
         }       
         fx_prev[0] = loss;                
-    }else if(step==0){
+    }else if(fx_prev.empty()){
         fx_prev.push_back(loss);        fx_best.push_back(loss);   //   only 1 element  ???
         loss_before = loss;             
     }
-    loss_after  = loss;
+    loss_after = loss;
     scheduler->Append(loss);
 
     isConverge = false; /*fabsf(loss_after - fx_prev[0])/loss_after < train_params.adam.eps_loss*/
@@ -440,7 +446,7 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
     
     last_time = ggml_time_ms();
     Optimizer::RESULT result = DID_NOT_CONVERGE;   
-    bool cancel = false;      
+    bool cancel = false,isWarmup=false;      
     string suf,pref;
     
     _INFO("\nOptimizer::%s@<%s> %s device=[%s] \n", __func__,_fish->hBackTG->name.c_str(),
@@ -452,7 +458,7 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
     DEBUG.Dump(0);
 
     float a=0, val_loss=0,grad_norm=0;    
-    if( !BatchGrad(0,a,0x0) )       //  warmup
+    if( isWarmup && !BatchGrad(0,a,0x0) )       //  warmup
         return CANCEL;    
 
     if (just_initialized) {
@@ -460,9 +466,16 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
         just_initialized = false;
     }
     // g_dump_level = 0;
-    int iter0 = 0;  //opt->iter;
-    for (int t = 0; t < train_params.adam.n_iter; ++t) {
-        iter = iter0 + t + 1;        
+    int iter0 = 0,t;  //opt->iter;
+    for (t = 0; t < train_params.adam.n_iter; ++t) {
+        if(t==train_params.adam.n_iter-1){
+            if(train_loader!=nullptr)   {
+                train_loader->isLast = true;        isDumpOnce = true;
+            }                
+        }
+        iter = iter0 + t + 1;       
+        if( !BatchGrad(iter,a,0x0))
+            return CANCEL;  
         // const int64_t t_start_wall = ggml_time_us(),t_start_cpu = ggml_cycles();
         float lr = train_params.LearningRate();
 #ifdef _TENSOR_CUD_
@@ -472,7 +485,7 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
         // lr = learning_schedule(iter, _params.warmup, _params.cos_decay_steps, _params.adam.alpha, _params.adam.min_alpha,_params.cos_decay_min, _params.cos_decay_restart, _params.enable_restart);
 #endif
 #ifdef _TENSOR_CUD_
-        RAW_update(opt_ps,train_params.adam,lr, grad_norm, iter,1,0);
+        RAW_update(opt_ps,train_params.adam,lr, grad_norm, iter,1,0);       //  0212
         last_lr = lr;       g_step = grad_norm; //sqrt(grad_norm*grad_norm/nParams);
 #else         
         SignStochastic(nParams,hparams);    
@@ -482,10 +495,13 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
         // AdamMiniV(clip,nx,hparams,0x0);   
         //gradient is useless at this stage
         if (train_params.save_every>0 && t % train_params.save_every == 0) {  
-            _fish->SaveTrain(""); 
+            _fish->SaveTrain("");          
         }
-        if (hparams.common.eval_every>0 && t % hparams.common.eval_every == 0) {
-            val_loss = Evaluate(val_loader,iter);  
+        if(t%100==0)        trainInfos().SaveToCSV("_info_.csv");
+        for(auto vl : val_loaders){
+            if (vl->isEval(t)) {
+                val_loss = Evaluate(vl,iter);  
+            }
         }    
 #ifdef _TENSOR_CUD_
 #else        
@@ -493,8 +509,6 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
             _fish->GenSentence(1);   
         }  
 #endif          
-        if( !BatchGrad(iter,a,0x0))
-            return CANCEL; 
       
         if(_fish->hDistler!=nullptr) 
             _fish->hDistler->UpdateSigma(iter);
@@ -505,6 +519,8 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
 
         result = DID_NOT_CONVERGE;
     }
+    double b=t/1.0e6*hparams.nTokenInBatch();
+    _INFO("[train]: End of all epochs. nEpoch=%d nIter=%d(%d) nToken=%.5g(M)\n",train_epochs+1, t,iter0,b);
     return result;
 }
 
@@ -515,7 +531,7 @@ void Fish::Train(  int flag )   {
 void RAW_forward(Fish *fish,int flag);
 float RAW_backward(Fish *fish,const int* hostInput,int accum_steps,bool,int flag);
 double Optimizer::GraphCompute(hSampLoader hLoader,hTGraph hTG, int flag){
-    // return 0.0; //only for debug
+    // return 0.0; //  0212
     int64_t now = ggml_time_ms();
     int nThread = TrainParams().n_threads,no=0,nAccum=TrainParams().n_gradient_accumulation;
     bool bench = false;
@@ -607,7 +623,7 @@ float Optimizer::Evaluate(hSampLoader loader,int iter,int flag){
     auto loss = hLoss();     
     double l2,delta_max=0,delta_=0,a,mean_loss=0,ee;
     auto tokens_input = _fish->Input( ); 
-    int i,nB=0,step=max(loader->num_batches/10,1);      //smaple to reduce eval time
+    int i,nB=0,step=loader->StepOfEvaluate();      
     size_t nz=0,j;
     llama_token tMost = (llama_token) (_fish->nClass() - 1);
     hSAMP samp = nullptr;
@@ -643,15 +659,17 @@ float Optimizer::Evaluate(hSampLoader loader,int iter,int flag){
         return i;
     }
 
-    float last = lcEval.Last();  //[eval]   Loss@Evaluation=7.302641 T=0.232s ======
-    lcEval.Add(mean_loss);
-    float delta=last-mean_loss,best=lcEval.Best();   
+    float last = loader->stepis.Last();  //[eval]   Loss@Evaluation=7.302641 T=0.232s ======
+    auto stp = StepInfos::STEP(mean_loss,iter,train_epochs);
+    loader->stepis.Add(stp);
+    float delta=last-mean_loss,best=loader->stepis.Best();
     bool isOverfit = delta<0 && abs(mean_loss-best)>best/10;       
     // if(isOverfit)   {
     //     _INFO(" !OVERFIT! ");
     // }
-    _INFO(" Loss@\"%s\"=%.3f(%.2g) best=%.4f(eval_%d) E2T=%.3g T=%gs x=%.3g\n",loader->sTokenSet().c_str(), mean_loss,delta,best,lcEval.best_id,
-        mean_loss-lcTrain.Last(),GST_TOC(tic),ee );
+    a = nB*TrainParams().nTokenInBatch()/1.0e6;   
+    _INFO(" Loss@\"%s\"=%.3f(%.2g) nToken=%.3gM best=%.4f(eval_%d) E2T=%.3g T=%gs x=%.3g\n",loader->sTokenSet().c_str(), mean_loss,delta,a,
+        best,loader->stepis.best_id,mean_loss-trainInfos().Last(),GST_TOC(tic),ee );  //
 
     if(wLog==nullptr) {     }        
     else
@@ -659,6 +677,9 @@ float Optimizer::Evaluate(hSampLoader loader,int iter,int flag){
     string sX="_loss="+std::to_string(mean_loss);    
     // if(delta>0)     
     //     _fish->SaveTrain(sX);  
+    
+     
+    loader->stepis.SaveToCSV("_info_.csv");
 
     return mean_loss;
 }
@@ -709,6 +730,12 @@ float learning_schedule(
     return result;
 }
 
+string StepInfos::STEP::Info(int flag){
+    char buffer[256];
+    _INFO("loss=%f |g|=%g\tlr=%.2e", loss,gNorm,lr); 
+    return buffer;
+}
+
 float Optimizer::UpdateLossCurve(int flag){
     struct train_params_ _params = TrainParams();   
     int n_batch = _params.n_batch,n_ctx = _params.n_ctx;
@@ -734,11 +761,12 @@ float Optimizer::UpdateLossCurve(int flag){
     if (impr_plot > 0)
         impr_plot = 0;
     if (std::isnan(loss_before) || std::isnan(loss_after))
-        impr_plot = 0;
-    lcTrain.Add(loss_after);
+        impr_plot = 0;    
+    trainInfos().Add(StepInfos::STEP(loss_after,iter,train_epochs,last_lr,g_step,tX,millis_per_iter));
     if((iter-1)%_params.dump_every==0 || isDumpOnce){
         isDumpOnce = false;
-        _INFO("[train]_%-6d loss=%f |g|=%g\tlr=%.2e | %s ",iter,loss_after,g_step,last_lr,train_loader->IterInfo().c_str()); //,zmuv_0,zmuv_1    
+        _INFO("[epoch_%d]_%-6d loss=%f |g|=%g\tlr=%.2e | %s ",train_epochs,iter,
+            loss_after,g_step,last_lr,train_loader->IterInfo().c_str()); //,zmuv_0,zmuv_1    
         if (millis_per_iter > 0)            {
             _TIME_INFO(" dt=",millis_per_iter);  _TIME_INFO(" tData=",tData);    _TIME_INFO(" tX=",tX);        _TIME_INFO(" eta=",remaining_millis);
         }
@@ -750,45 +778,32 @@ float Optimizer::UpdateLossCurve(int flag){
     float improvement = loss_before - loss_after;
     return improvement;
 }
-// TODO 
+
+// Maybe more operation in the future
 bool Optimizer::AfterLoadBatch(int accum_step, int flag)    {
-    // LossCurve(0x0);
     auto _params = TrainParams();   
     int n_batch = _params.n_batch,n_ctx = _params.n_ctx;
 
     if (accum_step == 0)        {
-        // *sched = UpdateSchedule(flag);
+        
     }
-    if(train_loader->isNextEpoch(train_epochs)) ++train_epochs;
-    /*if (train_loader->next_sample >=train_loader->shuffle_sample_count)    {
-        ++train_epochs;
-        _INFO("%s: reshuffle samples. completed epochs: %llu\n", __func__, train_epochs);
-        // note: we may have used some samples from the current shuffling more than once
-        train_loader->shuffle_rng_state_current =train_loader->shuffle_rng_state_next;
-        // train->shuffle_rng_state_next = shuffle_samples(
-        //     train->shuffle_rng_state_current,data->shuffled_samples_offs,data->shuffled_samples_begin,
-        //     data->shuffled_samples_size,data->samples_begin,data->samples_size,data->samples_count);
-        
-        train_loader->Shuffle();           //SAMP_0816
-        // train->shuffle_rng_state_next = shuffle_samples(
-        //     train->shuffle_rng_state_current,loader->shuffled_samples_offs.data(),
-        //     loader->shuffled_samples_begin.data(),loader->shuffled_samples_size.data(),
-        //     loader->samp_begin.data(),loader->samp_size.data(),loader->samp_size.size());
-        
-        train_loader->next_sample = 0;
-    }*/
-
     const bool last_epoch_reached = (_params.n_epochs > 0 && train_epochs - first_epoch >= _params.n_epochs);
     if (last_epoch_reached)    {
-        // allow optimization iteration at last epoch to be completed before canceling
-        if (iter_at_last_epoch < 0)        {
-            iter_at_last_epoch = iter;
-        }
-        else if (iter > iter_at_last_epoch)        {
-            return true;
-        }
+        
     }
-    return false;
+    return true;
+}
+
+bool Optimizer::OnNextShard(int flag){
+    float a = trainInfos().Best();
+    string sRoot="./";
+    trainInfos().SaveToCSV("_info_.csv");
+    for(auto vl : val_loaders){
+        float b =  vl->stepis.Best();
+        vl->stepis.SaveToCSV("_info_.csv");
+    }
+        
+    return true;
 }
 
 void Optimizer::BeforeTrain(struct train_params_& train_params,hGensor tokens_,int flag) {    
@@ -813,7 +828,8 @@ void Optimizer::BeforeTrain(struct train_params_& train_params,hGensor tokens_,i
     } 
     // assert(nMostParam>=nParams);
     assert(train_params.adam.n_iter>0);
-    // max_epoch = train_params.adam.n_iter
+    // trainInfos().name = "Train infos";
+    // evalInfos.name = "Evaluate infos";
 }
 
 size_t TGraph::Prepare4Train(struct ggml_context *ctx_,GD_METHOD tpGD,int flag){
@@ -890,15 +906,15 @@ void Optimizer::Prepare(size_t nx_,int flag){
 
 bool Optimizer::PrepareData( CLI_params& hparams,int flag )   {   
     GST_TIC(tic);   
-    train_loader->Prepare(_fish->tsTrain);                
-    val_loader->Prepare(_fish->tsEval);
+    // train_loader->Prepare(_fish->tsTrain);                
+    // val_loader->Prepare(_fish->tsEval);
     bool isLoadOK = false;  
     string root=_fish->tsTrain->serial_root,spTrain = root+".train",spEval = root+".eval";
     if(root.empty()){ 
         train_loader->Shuffle();
         return true;
     }
-    // auto& tokens = hTokenset->tokens;
+    hSampLoader val_loader = val_loaders.empty() ? nullptr : val_loaders[0];
     
     if(1)   {
         if( train_loader->Serialize(spTrain,false) 

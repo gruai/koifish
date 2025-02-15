@@ -28,11 +28,10 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_,int flag)     {
     if (train_params.seed == LLAMA_DEFAULT_SEED) {
         train_params.seed = time(NULL); 
     }    
-    wikis = wikis_;  
-    hOPT = std::make_shared<OPT_Adam>(this,hparams,flag);
+    wikis = wikis_;
     if(!InitDictTokenset()) //hDict
         return false;
-
+    hOPT = std::make_shared<OPT_Adam>(this,hparams,flag);
     if(wikis.size()==0){
         _INFO("====== NO WIKI !!! ======\n");       //return false;
     }else{
@@ -546,7 +545,11 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
             _ERROR("\n======== %s Failed to load tokenset!========\n",__func__);
             return false;
         };
-        tsTrain = tokenset[0];      tsEval = tokenset.size()>1 ? tokenset[1] : tsTrain;
+        tsTrain = tokenset[0];   // tsEval = tokenset.size()>1 ? tokenset[1] : tsTrain;
+        for(int i=1;i<tokenset.size();i++)  {
+            tsEval.push_back(tokenset[i]);
+        } 
+        
         hDict->mapT2T = tsTrain->mapT2T;        hDict->dialect = tsTrain->dialect;
         for(auto wiki : wikis){
             wiki->mapT2T = hDict->mapT2T;       wiki->dialect = hDict->dialect;
@@ -696,7 +699,7 @@ void NLP_AutoRegressive::Train(int flag)       {
     if(ctx_work!=nullptr)  ggml_free(ctx_work);
     ggml_free(ctx_build);
     ms = ggml_time_ms()-now;
-    _INFO("\n[train]: ");   _TIME_INFO(" Total time=",ms);
+    _INFO("\n[train]: ");   _TIME_INFO("Total time=",ms);
     _INFO("\n\n");
 }
 

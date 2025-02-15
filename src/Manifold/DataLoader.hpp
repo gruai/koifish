@@ -35,12 +35,42 @@ class SampLoader;
 
 
 class SampLoader;
+struct StepInfos    {
+    string name="",sRoot = "./";
+    struct STEP{        
+        float loss,lr,gNorm,tX,dt;
+        int iter,epoch;
+        virtual string Info(int flag);
 
+        STEP(float los_,int it_,int epo_,float lr_=0,float g_=0,float tX_=0,float dt_=0 ) 
+            : loss(los_),iter(it_),epoch(epo_),lr(lr_),gNorm(g_),tX(tX_),dt(dt_) {
+
+        }
+    };
+    vector<STEP> steps;
+    // vector<float> curve;
+    int best_id=-1;
+
+    float Last()    {
+        return steps.empty() ? FLT_MAX : steps[steps.size()-1].loss;
+    }
+    virtual bool SaveToCSV(const string&sPath,int flag=0x0);
+    float Best()    {   return best_id==-1 ? FLT_MAX : steps[best_id].loss; }
+
+    void Add(const STEP step,int flag=0x0)   {
+        // curve.push_back(a);
+        steps.push_back(step);
+        if(step.loss<Best()){
+            best_id = steps.size()-1;
+        }
+    }
+};
 class SampLoader   {
 protected:  
     typedef std::string mt19937_state;
     //  Store tokens from source.  always in CPU
-      
+    
+    int eval_every=-1;
     int tokens_per_iter = 0;
     // CLI_params hparams;
     std::string fp_data;
@@ -58,7 +88,7 @@ protected:
     hDataToken hTokens;
 
     bool isTarget_1 = false;
-    bool isRecycle = true;
+    bool isRecycle = true,isLast=false;
     bool isFixEvalSample = false;        // Need fix this to do some experiments
     mt19937_state shuffle_rng_state_current;
     mt19937_state shuffle_rng_state_next;
@@ -66,9 +96,12 @@ protected:
 
     NLP_AutoRegressive *dolphin=nullptr;
 public:
+    StepInfos stepis;        // info of each step on train/evaluate/...
     std::string tpBatchSample,name;       //  "stacking"
     std::vector<hSAMP> cur_samps;
     int num_batches=-1;    //number of batchs in each epoch
+    int StepOfEvaluate(int flag=0x0); //  smaple to reduce eval time
+
     shared_ptr<GTensor> hostBatch=nullptr,hostBatchMask=nullptr,hostTargetProbs=nullptr;   
 
     int64_t len() {
@@ -83,8 +116,9 @@ public:
         assert(idx_<nShard());
         return shard_samps[idx_];
     }
+    virtual bool isEval(int t,int flag=0x0);
     virtual hSAMP Next(bool isLoop = true);
-    virtual bool isNextEpoch(int flag=0x0);
+    virtual bool NextEpoch(int flag=0x0);
     virtual string IterInfo(int flag=0x0);
     virtual string sTokenSet(int flag=0x0);
     vector<TOKEN_ID>& GetTokens()    {  return hTokens->tokens; }
@@ -110,7 +144,7 @@ public:
     SampLoader()    {}
     SampLoader(Fish *g_,const string&n,bool isNewTS,int flag=0x0);
     // virtual bool Init(Fish *g_,const string&n,bool isNewTS,int flag=0x0 ) ;
-    virtual bool Prepare(hDataToken hT,int flag=0x0 ) ;    
+    virtual bool Prepare(Optimizer *hO,hDataToken hT,int flag=0x0 ) ;    
     virtual size_t UpdateBatch(int next_id,Fish* fish);
     virtual ~SampLoader( ) {
         
@@ -133,6 +167,7 @@ public:
     friend class GeneratOnPrompt;
     friend class OutCLS;
     friend class DataTokenSet;
+    friend class GlobTokenset;
 };
 typedef shared_ptr<SampLoader> hSampLoader;
 

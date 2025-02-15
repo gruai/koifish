@@ -25,16 +25,16 @@ cuBLAS related utils
 // cuBLAS globals for workspace, handle, settings
 
 // Hardcoding workspace to 32MiB but only Hopper needs 32 (for others 4 is OK)
-const size_t cublaslt_workspace_size = 32 * 1024 * 1024;
-void* cublaslt_workspace = NULL;
-cublasComputeType_t cublas_compute = CUBLAS_COMPUTE_32F;
-cublasLtHandle_t cublaslt_handle;
+extern const size_t cublaslt_workspace_size;
+extern void* cublaslt_workspace;
+extern cublasComputeType_t cublas_compute;
+extern cublasLtHandle_t cublaslt_handle;
 
 // ----------------------------------------------------------------------------
 // Error checking
 
 // cuBLAS error checking
-void cublasCheck(cublasStatus_t status, const char *file, int line)
+void inline cublasCheck(cublasStatus_t status, const char *file, int line)
 {
     if (status != CUBLAS_STATUS_SUCCESS) {
         printf("[cuBLAS ERROR]: %d %s %d\n", status, file, line);

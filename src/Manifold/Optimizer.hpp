@@ -32,24 +32,6 @@ using namespace std;
 
 class Fish;
 
-struct LossCurve    {
-    vector<float> curve;
-    int best_id=-1;
-
-    float Last()    {
-        return curve.empty() ? FLT_MAX : curve[curve.size()-1];
-    }
-    
-    float Best()    {   return best_id==-1 ? FLT_MAX : curve[best_id]; }
-
-    void Add(float a)   {
-        curve.push_back(a);
-        if(a<Best()){
-            best_id = curve.size()-1;
-        }
-    }
-};
-
 class Optimizer : public std::enable_shared_from_this<Optimizer> {
     Optimizer(const Optimizer&);
 	Optimizer& operator=(const Optimizer&);
@@ -57,7 +39,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
 protected:    
     std::string title = "Optimizer";
     // std::map<hGensor, GENSOR_INFO> gimap;   
-    LossCurve lcTrain,lcEval;
+    
     struct ggml_context * _ctx=nullptr;
     std::vector<hGensor> opt_ps;
     size_t nParams = 0, nMostParam = 0;
@@ -109,6 +91,7 @@ protected:
     // update sched & dump some info
     virtual float UpdateLossCurve(int flag = 0x0);
     virtual bool AfterLoadBatch(int accum_step, int flag = 0x0);
+    virtual bool OnNextShard(int flag = 0x0);
     virtual int SignStochastic(int nx,CLI_params& hparams,int flag=0x0);
     virtual float gClip(int nx,floatX *g,hGensor hP,int flag=0x0);
     virtual void UpdateParams(int nx,CLI_params& hparams,int flag);
@@ -122,7 +105,9 @@ public:
         FAIL,CANCEL,
     };
   
-    hSampLoader train_loader=nullptr, val_loader=nullptr;
+    hSampLoader train_loader=nullptr;
+    StepInfos& trainInfos()  {   assert(train_loader!=nullptr);  return train_loader->stepis;    }
+    std::vector<hSampLoader> val_loaders;
     size_t shuffle_samples_hash = 0x0;  //hack
 
     Fish* _fish=nullptr;         //ref only

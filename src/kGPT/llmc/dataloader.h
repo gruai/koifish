@@ -24,7 +24,7 @@ Implements:
 #endif
 // ----------------------------------------------------------------------------
 // Distributed Data Loader
-#define HEADER_SIZE 256
+#define SHARD_HEADER_SIZE 256
 
 typedef struct {
     // variables related to distributed training
@@ -70,8 +70,8 @@ int64_t dataloader_load_shard_(DataLoader *loader, int shard_index) {
     }
     loader->tokens_file = fopenCheck(filename, "rb");
     // validate the header
-    int header[HEADER_SIZE];
-    freadCheck(header, sizeof(int), HEADER_SIZE, loader->tokens_file);
+    int header[SHARD_HEADER_SIZE];
+    freadCheck(header, sizeof(int), SHARD_HEADER_SIZE, loader->tokens_file);
     if (header[0] != 20240520) {
         printf("Bad magic in the data file\n");
         printf("---> HINT: Are you passing in a correct file?\n");
@@ -86,7 +86,7 @@ int64_t dataloader_load_shard_(DataLoader *loader, int shard_index) {
     loader->file_size_bytes = ftell(loader->tokens_file); // read the offset, i.e. file size
     fseekCheck(loader->tokens_file, 0, SEEK_SET); // seek back to the beginning
     // we expect ntok in the file to be consistent with filesize, assert that is the case
-    int64_t expected_file_size = HEADER_SIZE * sizeof(int) + ntok * sizeof(uint16_t);
+    int64_t expected_file_size = SHARD_HEADER_SIZE * sizeof(int) + ntok * sizeof(uint16_t);
     if (loader->file_size_bytes != expected_file_size) {
         printf("Error: file size is not as expected\n");
         exit(EXIT_FAILURE);
@@ -152,7 +152,7 @@ void dataloader_init(DataLoader *loader,
     loader->T = T;
     loader->tokens_file = NULL;
     loader->should_shuffle = should_shuffle;
-    loader->header_bytes = HEADER_SIZE * sizeof(int);
+    loader->header_bytes = SHARD_HEADER_SIZE * sizeof(int);
     loader->total_batch_size_bytes = ((loader->num_processes * (loader->B * loader->T)) * sizeof(uint16_t));
     loader->local_batch_offset_bytes = loader->process_rank * loader->B * loader->T * sizeof(uint16_t);
 
@@ -318,7 +318,7 @@ void evalloader_reset(EvalLoader *loader) {
     }
     // now seek through the file to the start of that example
     // utilize <EXAMPLE_BYTES> for efficiency
-    int64_t header_bytes = HEADER_SIZE * sizeof(int);
+    int64_t header_bytes = SHARD_HEADER_SIZE * sizeof(int);
     fseekCheck(loader->eval_file, (int) header_bytes, SEEK_SET);
     for (int i = 0; i < loader->start_example_index; i++) {
         uint16_t example_header[3];
@@ -351,8 +351,8 @@ void evalloader_init(EvalLoader *loader,
     // open the file and validate the header
     loader->eval_file = fopenCheck(filename, "rb");
     // validate the header
-    int header[HEADER_SIZE];
-    freadCheck(header, sizeof(int), HEADER_SIZE, loader->eval_file);
+    int header[SHARD_HEADER_SIZE];
+    freadCheck(header, sizeof(int), SHARD_HEADER_SIZE, loader->eval_file);
     if (header[0] != 20240522) { printf("Bad magic in eval file\n"); exit(EXIT_FAILURE); }
     if (header[1] != 1) { printf("Bad version in data file\n"); exit(EXIT_FAILURE); }
     loader->num_examples = header[2]; // number of examples in the file

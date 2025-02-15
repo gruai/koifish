@@ -926,8 +926,7 @@ size_t ggml_gallocr_get_buffer_size(ggml_gallocr_t galloc, int buffer_id) {
 }
 
 // utils
-
-static bool alloc_tensor_range(struct ggml_context * ctx,
+bool alloc_tensor_range(struct ggml_context * ctx,
         struct ggml_tensor * first, struct ggml_tensor * last,
         ggml_backend_buffer_type_t buft, size_t size,
         ggml_backend_buffer_t ** buffers, size_t * n_buffers) {

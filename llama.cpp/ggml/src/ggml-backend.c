@@ -1190,6 +1190,7 @@ static int ggml_backend_sched_backend_id_from_cur(ggml_backend_sched_t sched, st
                 for (int b = 0; b < src_backend_id; b++) {
                     if (ggml_backend_supports_op(sched->backends[b], tensor) && ggml_backend_offload_op(sched->backends[b], tensor)) {
                         SET_CAUSE(tensor, "1.off");
+                        fprintf(stderr,"\t%s change device from %d to %d\n",tensor->name,src_backend_id,b);
                         return b;
                     }
                 }

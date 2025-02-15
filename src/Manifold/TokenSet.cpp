@@ -15,6 +15,9 @@
 
 Tokenset_HellaSwag::Tokenset_HellaSwag(JSON::const_iterator jit,ConsiceDict *hDict,int flag) : GlobTokenset(jit,hDict,flag)    {
     name = "HellaSwag";
+    //rStepOfEval = 0.0;  //  no sample on evaluate
+    
+    rStepOfEval = 0.1;
 }
 
 GlobTokenset::GlobTokenset(JSON::const_iterator jit,ConsiceDict *hDict,int flag) : DataTokenSet(hDict)    {
@@ -28,6 +31,8 @@ GlobTokenset::GlobTokenset(JSON::const_iterator jit,ConsiceDict *hDict,int flag)
     auto v = jit.value();
     string pattern = v["glob"];
     name = jKV(v,{"name"},name);
+    eval_every = jKV(v,{"eval-every"},eval_every);
+    
     glob_t glob_result;
     int glob_status = glob(pattern.c_str(), 0, NULL, &glob_result);
     if (glob_status != 0) {
@@ -71,15 +76,19 @@ size_t DataTokenSet::nBatch(int flag){
     return nBatches;
 }
 
-bool GlobTokenset::NextShard(int flag)  {
-    if(shard_index==shard_paths.size()){
-        _INFO("-------- End of all shards in current epoch! -------- \n");
-    }else
-        _INFO("-------- End of shard_%d@\"%s\"-------- \n",shard_index,shard_paths[shard_index].c_str());
-
-    size_t iRet = OnShardFile(shard_index++,true);    
-    if(iRet==size_t(-1))  
-        return false;    
+bool GlobTokenset::LoadNextShard(SampLoader *hLoader,int flag)  {
+    if(shard_index>0)
+        _INFO("-------- End of shard_%d@\"%s\"-------- \n",shard_index,shard_paths[shard_index-1].c_str());
+    if(shard_index==shard_paths.size()){        
+        hLoader->NextEpoch();       shard_index = 0;
+    } 
+    
+    if(!hLoader->isLast){
+        size_t iRet = OnShardFile(shard_index++,true);    
+        if(iRet==size_t(-1))  
+            return false;    
+    }
+    
     
     return true;
 }
@@ -103,17 +112,18 @@ try{
     }
     delete[] tmp16;
     // InitSamps
-    int n_ctx = hDict->hparams.n_ctx();
+    int n_ctx = hDict->hparams.n_ctx(),len;
     size_t nToken = tokens.size(),nFirst=std::min((size_t) n_ctx, nToken),step=1,n0=shard_samps.size();
     // samples_size.push_back(nFirst);
     size_t end = (nToken >= n_ctx) ? (nToken - n_ctx) : 0;
     if(end>10*1024*1024){
         step = n_ctx;
     }
-    for (size_t sample_begin = 1; sample_begin < end; sample_begin+=step) {
-        shard_samps.push_back(new SAMP(sample_begin,n_ctx));
+    for (size_t sample_begin = 0; sample_begin < end; sample_begin+=step) {
+        len = std::min(n_ctx,(int)(end-sample_begin));
+        shard_samps.push_back(new SAMP(sample_begin,len));
     }
-    
+    n0=shard_samps.size( );
     // _INFO("\t%s %s: nSamp=%ld=>%ld nBach=%d\n", __func__,name.c_str(),n0,shard_samps.size(),nBatch()); 
     return true;
 }catch(...){
@@ -170,7 +180,7 @@ size_t GlobTokenset::OnShardFile(int id0, bool load, int flag) {
     }
     if(load){
         Shard2Sample(0x0);            
-        _INFO("[shard-%d]@\"%s\": tokens=%.3g(M) nShardSamples=%ld(%ld) \n",id,filename,nShardToks/1.0e6,nShardSamples,shard_samps.size()); 
+        _INFO("[shard-%d]@\"%s\": tokens=%.3g(M) nShardSamples=%ld(%ld) \n",id+1,filename,nShardToks/1.0e6,nShardSamples,shard_samps.size()); 
     }
     if(tpSample==RANDOM_GENERATE)    {        
         /*

@@ -102,7 +102,7 @@ struct train_params_ {
     bool print_usage;
 
     int save_every,dump_every=1;
-    int eval_every=-1,gpt_every=-1;
+    int gpt_every=-1;       //eval_every=-1,
 
     uint32_t seed;
 
@@ -141,8 +141,8 @@ struct train_params_ {
 
     ADAM_params_ adam;
     float residual_scale = 1.0f;
-    float LearningRate()    {   return adam.alpha;  }
-    
+    float LearningRate()        const       {   return adam.alpha;      }
+    size_t nTokenInBatch()      const       {  return n_batch*n_ctx;    }
 };
 
 

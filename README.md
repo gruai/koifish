@@ -19,6 +19,11 @@
 ```bash
 git clone https://github.com/gruai/koifish
 cd koifish
+# build ggml lib first
+cd llama.cpp
+mkdir build && cd build && cmake .. 
+make clean && make VERBOSE=TRUE
+cd ../../
 
 mkdir build && cd build && cmake ..
 make clean && make VERBOSE=TRUE

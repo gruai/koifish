@@ -292,7 +292,7 @@ bool GeneratOnPrompt::Init(const std::string &prompt_, int flag)    {
     // std::tie(model, ctx) = llama_init_from_gpt_params(params);
     if(fish_1!=nullptr) {
         dialogs = std::make_shared<SampLoader>(fish_1,"gpt", true);       
-        dialogs->Prepare(fish_1->tsEval); 
+        dialogs->Prepare(fish_1->hOPT.get(), fish_1->tsEval[0]); 
         dialogs->isRecycle = false;
         dialogs->type = SampLoader::TYPE::DT_EVAL;          
     }
@@ -430,7 +430,7 @@ int NLP_AutoRegressive::GenSentence(int flag)  {
     for (int i = 0; i < _nctx; ++i)    {
         piffle[i] = wiki->eos;
     }*/
-    hSampLoader hLoader = hOPT->val_loader;
+    hSampLoader hLoader = hOPT->val_loaders[0];
     if(hLoader->num_batches==0 )    {
         hLoader->InitOneSamp(prompt,nullptr,0x110);
     } 

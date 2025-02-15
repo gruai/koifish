@@ -73,7 +73,10 @@ public:
 protected:
     SAMPLE_TYPE tpSample=RANDOM_GENERATE;
     std::vector<string> shard_paths;
-    int shard_index=0;
+    int shard_index = 0;
+    int eval_every = -1;
+    float rStepOfEval = 0.1;
+    //bool isNextEpoch = false;
     string name;
     string serial_root;
     ConsiceDict *hDict = nullptr;
@@ -104,7 +107,7 @@ public:
     TOKEN_ID At(size_t pos);
     
     bool Serialize(const std::string&path,  bool isSave, int flag=0x0);
-    virtual bool NextShard(int flag=0x0)    {return true;}
+    virtual bool LoadNextShard(SampLoader *hLoader,int flag=0x0)    {return true;}
     virtual bool Load(struct CLI_params& hparams,void *hLLM,int flag=0x0);
     virtual void Append(TOKEN_ID id,int flag=0x0);
     int UniqueTokens(size_t n_1,int flag=0x0);
@@ -125,7 +128,7 @@ protected:
     virtual bool Shard2Sample(int flag=0x0);
     
     size_t OnShardFile(int id,bool load=false, int flag=0x0);
-    bool NextShard(int flag=0x0)    override;
+    bool LoadNextShard(SampLoader *hLoader,int flag=0x0)    override;
     size_t total_batch_size_bytes;  // total across all processes
     size_t local_batch_offset_bytes;  // inner-sample offset for this process
     size_t longest_example_bytes;

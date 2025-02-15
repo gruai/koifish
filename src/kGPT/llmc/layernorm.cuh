@@ -17,7 +17,7 @@ E.g., the layernorms are connected to the residuals so we += in layernorm backwa
 // ----------------------------------------------------------------------------
 // CUDA kernels
 
-__global__ void layernorm_forward_kernel3(floatX* __restrict__ out, float* __restrict__ mean, float* __restrict__ rstd,
+__global__ inline void layernorm_forward_kernel3(floatX* __restrict__ out, float* __restrict__ mean, float* __restrict__ rstd,
                                     const floatX*  __restrict__ inp, const floatX*  __restrict__ weight,
                                     const floatX* __restrict__ bias, int N, int C) {
     int lane_id = threadIdx.x % WARP_SIZE;
@@ -64,7 +64,7 @@ __global__ void layernorm_forward_kernel3(floatX* __restrict__ out, float* __res
     }
 }
 
-__global__ void layernorm_forward_kernel6(floatX* __restrict__ out, float* __restrict__ mean, float* __restrict__ rstd,
+__global__ inline void layernorm_forward_kernel6(floatX* __restrict__ out, float* __restrict__ mean, float* __restrict__ rstd,
                                     const floatX*  __restrict__ inp, const floatX*  __restrict__ weight,
                                     const floatX* __restrict__ bias, int N, int C) {
     assert(blockDim.x == WARP_SIZE);
@@ -139,7 +139,7 @@ __global__ void layernorm_forward_kernel6(floatX* __restrict__ out, float* __res
     }
 }
 
-__global__ void fused_residual_forward_kernel5(floatX* residual, floatX* normed, float* mean, float* rstd,
+__global__ inline void fused_residual_forward_kernel5(floatX* residual, floatX* normed, float* mean, float* rstd,
                                                const floatX* inp1, const floatX* inp2,
                                                const floatX* weight, const floatX* bias,
                                                int N, int C) {
@@ -218,7 +218,7 @@ __global__ void fused_residual_forward_kernel5(floatX* residual, floatX* normed,
     }
 }
 
-__global__ void residual_forward_kernel(floatX* out, const floatX* inp1, const floatX* inp2) {
+__global__ inline void residual_forward_kernel(floatX* out, const floatX* inp1, const floatX* inp2) {
     int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
 
     x128 packed_out;
@@ -230,7 +230,7 @@ __global__ void residual_forward_kernel(floatX* out, const floatX* inp1, const f
     store128(out + idx, packed_out);
 }
 
-__global__ void __launch_bounds__(512, 2) // todo - any warnings on Turing with only 1024 threads?
+__global__ inline void __launch_bounds__(512, 2) // todo - any warnings on Turing with only 1024 threads?
     layernorm_backward_kernel10(floatX* dinp, floatX* dweight, floatX* dbias, float* scratch,
                                 const floatX* dout, const floatX* inp, const floatX* weight,
                                 const float* mean, const float* rstd,
@@ -430,7 +430,7 @@ __global__ void __launch_bounds__(512, 2) // todo - any warnings on Turing with 
 // kernel launchers
 
 // similar to `fused_residual_forward5`
-void layernorm_forward(floatX* out, float* mean, float* rstd,
+void inline layernorm_forward(floatX* out, float* mean, float* rstd,
                        floatX* inp, const floatX* weight, const floatX* bias,
                        int B, int T, int C, cudaStream_t stream) {
     NVTX_RANGE_FN();
@@ -455,7 +455,7 @@ void layernorm_forward(floatX* out, float* mean, float* rstd,
     cudaCheck(cudaGetLastError());
 }
 
-void residual_forward(floatX* out, const floatX* inp1, const floatX* inp2, int N, cudaStream_t stream) {
+void inline residual_forward(floatX* out, const floatX* inp1, const floatX* inp2, int N, cudaStream_t stream) {
     NVTX_RANGE_FN();
     const int block_size = 256;
     assert(N % (block_size * x128::size) == 0);
@@ -464,7 +464,7 @@ void residual_forward(floatX* out, const floatX* inp1, const floatX* inp2, int N
     cudaCheck(cudaGetLastError());
 }
 
-void fused_residual_forward5(floatX* residual, floatX* normed, float* mean, float* rstd,
+void inline fused_residual_forward5(floatX* residual, floatX* normed, float* mean, float* rstd,
                              const floatX* inp1, const floatX* inp2,
                              const floatX* weight, const floatX* bias,
                              int N, int C, cudaStream_t stream) {
@@ -489,7 +489,7 @@ void fused_residual_forward5(floatX* residual, floatX* normed, float* mean, floa
     cudaCheck(cudaGetLastError());
 }
 
-void layernorm_backward(floatX* dinp, floatX* dweight, floatX* dbias, float* scratch,
+void inline layernorm_backward(floatX* dinp, floatX* dweight, floatX* dbias, float* scratch,
                         const floatX* dout, const floatX* inp, const floatX* weight, const float* mean, const float* rstd,
                         int B, int T, int C, cudaStream_t stream) {
     NVTX_RANGE_FN();

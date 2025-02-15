@@ -404,8 +404,10 @@ uint32_t CLI_params::nThread() const {
     return nT1;
 }
 void CLI_params::OnMostToken(size_t nMost,int flag){
-    float a = nMost*1.0/nTokenInBatch();
-    common.adam.n_iter = (int)ceil(a)*common.n_epochs;
+    double a = nMost*1.0/n_ctx();    //nTokenInBatch();
+    size_t nSamp = (size_t)(floor)(a);
+    int iter_1 = (int)floor(a/n_batch());
+    common.adam.n_iter = (int)floor(nMost*common.n_epochs*1.0/nTokenInBatch());
 }
 void CLI_params::OnArch( ){
     int nH=-1;
@@ -580,9 +582,9 @@ try{
     n_swarm = jKV(jConfig,{"train","swarm"},1 );
     common.save_every = jKV(jConfig,{"train","save-every"},common.save_every );
     common.dump_every = jKV(jConfig,{"train","dump-every"},common.dump_every );   
-    common.eval_every = jKV(jConfig,{"train","eval-every"},common.eval_every );    
+    // common.eval_every = jKV(jConfig,{"train","eval-every"},common.eval_every );    
     common.gpt_every = jKV(jConfig,{"train","gpt-every"},common.gpt_every );    
-    common.eval_every = common.eval_every<=0 ? 100000000 : common.eval_every;
+    // common.eval_every = common.eval_every<=0 ? 100000000 : common.eval_every;
     // if( eval_every>0 ){
     //     _INFO("\r\n%s  eval@every %d steps.",__func__,eval_every );
     // }

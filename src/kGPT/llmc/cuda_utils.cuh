@@ -87,17 +87,17 @@ template<typename Td, typename Ts>
 __device__ Td cast_value(Ts val);
 
 template<>
-__device__ float cast_value<float, float>(float val) {
+__device__ inline float cast_value<float, float>(float val) {
     return val;
 }
 
 template<>
-__device__ float cast_value<float, half>(half val) {
+__device__ inline float cast_value<float, half>(half val) {
     return __half2float(val);
 }
 
 template<>
-__device__ float cast_value<float, __nv_bfloat16>(__nv_bfloat16 val) {
+__device__ inline float cast_value<float, __nv_bfloat16>(__nv_bfloat16 val) {
     return __bfloat162float(val);
 }
 
@@ -109,7 +109,7 @@ __global__ void copy_and_cast_kernel(Td* dst, const Ts* src, size_t n, ptrdiff_t
         dst[idx + stride_dst * blockIdx.y] = cast_value<Td, Ts>(src[idx + stride_src * blockIdx.y]);
     }
 }
-
+    
 // ----------------------------------------------------------------------------
 // Warp/Block communication primitives
 

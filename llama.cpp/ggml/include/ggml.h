@@ -575,6 +575,7 @@ extern "C" {
         GGML_TENSOR_FLAG_INPUT  = 1,
         GGML_TENSOR_FLAG_OUTPUT = 2,
         GGML_TENSOR_FLAG_PARAM  = 4,
+        GGML_TENSOR_FLAG_LOSS   = 8, // ...defines loss for numerical optimization (multiple loss tensors add up)
     };
 
     // ggml object
@@ -2122,6 +2123,7 @@ extern "C" {
                                        int   n_threads, /* = GGML_DEFAULT_N_THREADS */
                     struct ggml_threadpool * threadpool /* = NULL */ );
     GGML_API enum ggml_status  ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cplan * cplan);
+    GGML_API enum ggml_status  ggml_graph_comp0(struct ggml_cgraph * cgraph, int flag);
 
     // same as ggml_graph_compute() but the work data is allocated as a part of the context
     // note: the drawback of this API is that you must have ensured that the context has enough memory for the work data

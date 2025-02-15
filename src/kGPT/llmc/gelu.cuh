@@ -10,7 +10,7 @@
 // CUDA kernels
 
 #define GELU_SCALING_FACTOR sqrtf(2.0f / M_PI)
-__global__ void gelu_forward_kernel2(floatX* out, const floatX* inp) {
+__global__ void inline gelu_forward_kernel2(floatX* out, const floatX* inp) {
     int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
 
     x128 packed_out;
@@ -25,7 +25,7 @@ __global__ void gelu_forward_kernel2(floatX* out, const floatX* inp) {
     store128(out + idx, packed_out);
 }
 
-__global__ void gelu_backward_inplace_kernel(floatX* d_in_out, const floatX* inp) {
+__global__ void inline gelu_backward_inplace_kernel(floatX* d_in_out, const floatX* inp) {
     int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
 
     x128 packed_dinp;
@@ -47,7 +47,7 @@ __global__ void gelu_backward_inplace_kernel(floatX* d_in_out, const floatX* inp
 // ----------------------------------------------------------------------------
 // kernel launchers
 
-void gelu_forward(floatX* out, const floatX* inp, int N, cudaStream_t stream) {
+void inline gelu_forward(floatX* out, const floatX* inp, int N, cudaStream_t stream) {
     NVTX_RANGE_FN();
     const int block_size = 512;
     assert(N % (block_size * x128::size) == 0);
@@ -56,7 +56,7 @@ void gelu_forward(floatX* out, const floatX* inp, int N, cudaStream_t stream) {
     cudaCheck(cudaGetLastError());
 }
 
-void gelu_backward_inplace(floatX* d_in_out, const floatX* inp, const int N, cudaStream_t stream) {
+void inline gelu_backward_inplace(floatX* d_in_out, const floatX* inp, const int N, cudaStream_t stream) {
     NVTX_RANGE_FN();
     const int block_size = 128;
     assert(N % (block_size * x128::size) == 0);

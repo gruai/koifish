@@ -80,7 +80,7 @@ __global__ void matmul_backward_bias_kernel9(OutFloat* dbias, const floatX* dout
     }
 }
 
-__global__ void reduce_add_sum_kernel(floatX* dst, const float* src, size_t n, size_t m) {
+__global__ void inline reduce_add_sum_kernel(floatX* dst, const float* src, size_t n, size_t m) {
     const size_t idx = (blockIdx.x * blockDim.x + threadIdx.x) * f128::size;
     assert(n % x128::size == 0);
     if (idx < n) {
@@ -106,7 +106,7 @@ __global__ void reduce_add_sum_kernel(floatX* dst, const float* src, size_t n, s
 
 // Wrapper around cublasLtMatmul that is meant to support everything we need in llm.c
 // https://docs.nvidia.com/cuda/cublas/#cublasltmatmul
-void matmul_cublaslt(floatX* d, const floatX* a, const floatX* b, const floatX* bias,
+void inline matmul_cublaslt(floatX* d, const floatX* a, const floatX* b, const floatX* bias,
                      int m, int n, int k, cudaStream_t stream=0, bool transA=true, bool transB=false,
                      int batch_count=0, size_t strideA=0, size_t strideB=0, size_t strideOut=0,
                      bool accumulate=false, floatX* pre_gelu=NULL, bool backward=false)
@@ -228,7 +228,7 @@ void matmul_cublaslt(floatX* d, const floatX* a, const floatX* b, const floatX* 
 }
 
 // small wrapper around matmul_cublaslt for the forward pass (keeping historical order of arguments)
-void matmul_forward_cublaslt(floatX* out,
+void inline matmul_forward_cublaslt(floatX* out,
                      floatX* inp, floatX* weight, floatX* bias,
                      int B, int T, int C, int OC, cudaStream_t stream,
                      floatX* pre_gelu=NULL, int gelu_fusion=1) {
@@ -241,7 +241,7 @@ void matmul_forward_cublaslt(floatX* out,
     }
 }
 
-void matmul_backward(floatX* dinp, floatX* dweight, floatX* dbias,
+void inline matmul_backward(floatX* dinp, floatX* dweight, floatX* dbias,
                      floatX* dout, floatX* inp, floatX* weight,
                      float* dbias_buffer,
                      int B, int T, int C, int OC, cudaStream_t stream,
