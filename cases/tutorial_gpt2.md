@@ -138,7 +138,7 @@ Koifish would save each step info to three csv files:
     "parameter":{
             "Layer": 12,  
             "transformer":{
-                "Ctx":1024,  "Embed":    768,    "Head": 12,   "Ffn":768,
+                "Ctx":1024,  "Embed":    768,    "Head": 12,   "Ffn":3072,
             }
         },  
 ```
