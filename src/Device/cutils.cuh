@@ -34,7 +34,7 @@ inline float T2Float(T* a0)   {
 extern int g_dump_level;
 template <typename T>
 void inline PrintTensor(const char* title,T *src, bool isDevice,int n1,int n2,int n3=1,int n4=1,int flag=0x0){
-    if( g_dump_level>0 ) return;
+    if( g_dump_level>0 && flag>=0 ) return;
 
     T *dst=(T*)src; 
     size_t nElem=n1*n2*n3*n4,sz = nElem*sizeof(T),i,nz=0,nEach=3;

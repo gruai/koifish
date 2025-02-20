@@ -18,6 +18,9 @@ struct train_params_ Optimizer::TrainParams()    {
 }
 
 Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params& hparams,int flag) : _fish(g_) {    
+    adam_filter =  {"output","norm","embd"}; 
+    // adam_filter =  {"output","norm"}; 
+
     tpSign = hparams.Get({"train","optimizatioin","sign"},0,false);
     string method = hparams.Get({"train","optimizatioin","method"},string("adamw"),false);
     auto train_params=TrainParams();
@@ -224,13 +227,12 @@ void OPT_Adam::UpdateParams(int nx,CLI_params& hparams,int flag)  {
     
     float clip = 0.f, fx = 0,sum,sched;
     g2_sum = 0;
-    if(!isAdaptiveSched)        //params.adam.sched;   
+    if(!isAdaptiveSched)        //params.adam->sched;   
         sched = 1.0;  
 #ifdef _TENSOR_CUD_
-    // sum = tNormOf(opt_ps,0x0);        //may have bug
-    // g_step = sqrt(sum/nParams);
+    g_step = tNormOf(opt_ps,0x0);  
     if(DEBUG.train_hyperparams==1){
-        adam.decay = 0;      sched = 1.0;
+        adam->decay = 0;      sched = 1.0;
     }
 #else
 #endif
@@ -241,25 +243,25 @@ void OPT_Adam::UpdateParams(int nx,CLI_params& hparams,int flag)  {
     auto now = ggml_time_ms();    
     // float beta1_correction = 1.0f - powf(beta1, t);
     // float beta2_correction = 1.0f - powf(beta2, t);   
-    beta1h =        sched/(1.0f - powf(adam.beta1, iter));                
-    beta2h =        1.0f/(1.0f - powf(adam.beta2, iter));
+    beta1h =        sched/(1.0f - powf(adam->beta1, iter));                
+    beta2h =        1.0f/(1.0f - powf(adam->beta2, iter));
     size_t i = 0;
     zmuv_0 = DBL_MAX,zmuv_1 = 0.0;
     if(iter==1)
-        _INFO("clip=%g(%g) lr=%g beta1=%g , beta2=%g,  eps=%g , weight_decay=%g\n",1.0e-6,0.0,adam.alpha,adam.beta1, adam.beta2, adam.eps,adam.decay);
+        _INFO("clip=%g(%g) lr=%g beta1=%g , beta2=%g,  eps=%g , weight_decay=%g\n",1.0e-6,0.0,adam->alpha,adam->beta1, adam->beta2, adam->eps,adam->decay);
     for (auto hP : opt_ps) {
-        p_decay = ((tDIM(hP) >= adam.decay_min_ndim) ? adam.decay : 0.0f) * sched;
+        p_decay = ((tDIM(hP) >= adam->decay_min_ndim) ? adam->decay : 0.0f) * sched;
         const int64_t ne = tELEM(hP);
         UpdateTensorParam(hP,i,g==nullptr?nullptr:g+i,clip);
         i += ne;       
     }
     tData = ggml_time_ms()-now;
-    double a = sqrt(g2_sum),off=0;
-#ifdef _TENSOR_CUD_
-    off = a - g_step;
-    assert(a);
-#endif
-    g_step = a;
+//     double a = sqrt(g2_sum),off=0;
+// #ifdef _TENSOR_CUD_
+//     off = a - g_step;
+//     assert(a);
+// #endif
+//     g_step = a;
 }
 
 float Optimizer::gClip(int ne,floatX *g,hGensor hP,int flag)  {
@@ -302,24 +304,26 @@ inline bool isStrMatch(const string& target,const vector<string>&words){
     return false;
 }
 
+int UpdateTensorParam_cuda(hGTensor tensor,size_t np,Optimizer *hOPT,float& grad_norm,int flag);
 double OPT_Adam::UpdateTensorParam(hGensor hP,size_t offset,floatX *gX,float clip){ 
     // assert(gimap.find(hP)!=gimap.end());
-    float alpha=adam.alpha,beta1=adam.beta1,beta2=adam.beta2,eps=adam.eps;
+    float alpha=adam->alpha,beta1=adam->beta1,beta2=adam->beta2,eps=adam->eps,grad_norm=g_step;
     auto& im = _fish->GetGensorInfo(hP); //gimap[hP];
-    float *m=im.gm; //==nullptr?nullptr:(float*)(im.gm->data);
-    float *v=im.gv; //==nullptr?nullptr:(float*)(im.gv->data);        //first&second moment
-     
+    float *m=im.gm,*v=im.gv; 
+    bool isToHost = false;      // out of GPU memory!
     const int64_t ne = tELEM(hP);
     floatX *paramX = (floatX*)(hP->data),*paramX0,*gX0;
     float mh,vh,g0,x,x0,x00;
 #ifdef _TENSOR_CUD_
-    paramX = (floatX*)_tmp;     gX=paramX+hP->szData;
-    paramX0 = paramX,           gX0 = gX;
-    hP->SerialGP(paramX,gX,true);           x00 = T2Float(paramX);     
-    if(DEBUG.train_hyperparams==1){
-        clip = 1.0e-6;        
-    }else{
-        clip = gClip(ne,gX,hP); 
+    if(isToHost){
+        paramX = (floatX*)_tmp;     gX=paramX+hP->szData;
+        paramX0 = paramX,           gX0 = gX;
+        hP->SerialGP(paramX,gX,true);           x00 = T2Float(paramX);     
+        if(DEBUG.train_hyperparams==1){
+            clip = 1.0e-6;        
+        }else{
+            clip = gClip(ne,gX,hP); 
+        }
     }
         
 #else
@@ -331,7 +335,13 @@ double OPT_Adam::UpdateTensorParam(hGensor hP,size_t offset,floatX *gX,float cli
     }
     assert(hP->type==GGML_TYPE_F32);
 #endif    
-    
+#ifdef _TENSOR_CUD_
+    UpdateTensorParam_cuda(hP,offset,this,grad_norm,0x0);     
+    if(isToHost){
+        x = T2Float(paramX0);               g0 = x-x00;
+        hP->SerialGP(paramX0,gX0,false);
+    }    
+#else    
     GD_METHOD tpCurGD = tpGD;
     if(tpGD==SGD_HYBRID){
         tpCurGD = im.isAdam ? ADAMw : SGD;
@@ -363,6 +373,7 @@ double OPT_Adam::UpdateTensorParam(hGensor hP,size_t offset,floatX *gX,float cli
         break;
     case ADAMw:        
     default:
+
         for (int64_t j = 0; j < ne; ++j,m++,v++,gX++,paramX++) {
             float g=T2Float(gX);
             x0 = x  = T2Float(paramX);  
@@ -377,28 +388,11 @@ double OPT_Adam::UpdateTensorParam(hGensor hP,size_t offset,floatX *gX,float cli
             *paramX = x; //ggml_set_f32_1d(hP, j, x);
             //  !!!update our low precision version of the parameters using stochastic rounding!!!
         }    
+
         break;
-    case ADAMw_cuda:{
-            //float grad = grad_scale * (float)grads_memory[idx];
-            //float m = m_memory[idx],v = v_memory[idx];
-            // m = lerp(grad, m, beta1);                   m_memory[idx] = m;
-            // v = lerp(grad * grad, v, beta2);            v_memory[idx] = v;
-            // m /= beta1_correction;  // m_hat
-            // v /= beta2_correction;  // v_hat
-            // fetch the old value of this parameter as a float, from either source
-            // float old_param = (master_params_memory != NULL) ? master_params_memory[idx] : (float)params_memory[idx];
-            // update this parameter
-            // float param = old_param - (learning_rate * (m / (sqrtf(v) + eps) + weight_decay * old_param));
-            // stochastic_rounding(param, &params_memory[idx], seed);
-    }
-        break;
-    
     } 
-#ifdef _TENSOR_CUD_
-    x = T2Float(paramX0);               g0 = x-x00;
-    hP->SerialGP(paramX0,gX0,false);
-    // hP->SerialGP(paramX0,gX0,true);    x  = T2Float(paramX0);  
-#endif    
+#endif
+  
     return 0.0;
 }
 
@@ -422,7 +416,7 @@ void Optimizer::UpdateTrainLoss(int x,float loss,int flag){
     loss_after = loss;
     scheduler->Append(loss);
 
-    isConverge = false; /*fabsf(loss_after - fx_prev[0])/loss_after < train_params.adam.eps_loss*/
+    isConverge = false; /*fabsf(loss_after - fx_prev[0])/loss_after < train_params.adam->eps_loss*/
     // check for improvement
         /*if (train_params.opt_max_no_improvement > 0) {
             if (fx_best[0] > fx) {
@@ -439,7 +433,13 @@ void Optimizer::UpdateTrainLoss(int x,float loss,int flag){
         // fx_prev[0] = fx;
 }
 
-int RAW_update(std::vector<hGTensor>& tensors,ADAM_params_ adam, float learning_rate,float& grad_norm, int t,int alg, int flag);
+int Optimizer::GetITER(int flag)   {   
+    //  first_iter             = iter;
+    //  iter = iter0 + t + 1;       
+    return  iter;  
+}
+
+int RAW_update(std::vector<hGTensor>& tensors,Optimizer *hOPT, float& grad_norm, int alg, int flag);
 Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGensor target_,CLI_params& hparams)    {
     hEDS = _fish->hEDS;              assert(hEDS!=nullptr);
     auto train_params = TrainParams();    
@@ -478,19 +478,16 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
             return CANCEL;  
         // const int64_t t_start_wall = ggml_time_us(),t_start_cpu = ggml_cycles();
         float lr = train_params.LearningRate();
-#ifdef _TENSOR_CUD_
-        lr = scheduler->LearningRate(iter);
-#else
-        lr = scheduler->LearningRate(iter);
-        // lr = learning_schedule(iter, _params.warmup, _params.cos_decay_steps, _params.adam.alpha, _params.adam.min_alpha,_params.cos_decay_min, _params.cos_decay_restart, _params.enable_restart);
-#endif
-#ifdef _TENSOR_CUD_
-        RAW_update(opt_ps,train_params.adam,lr, grad_norm, iter,1,0);       //  0212
-        last_lr = lr;       g_step = grad_norm; //sqrt(grad_norm*grad_norm/nParams);
-#else         
-        SignStochastic(nParams,hparams);    
-        UpdateParams(nParams,hparams,0x0);     
-#endif   
+        lr = scheduler->LearningRate(iter);     last_lr = lr;
+        // lr = learning_schedule(iter, _params.warmup, _params.cos_decay_steps, _params.adam->alpha, _params.adam->min_alpha,_params.cos_decay_min, _params.cos_decay_restart, _params.enable_restart);
+        if(0){
+            RAW_update(opt_ps,this, grad_norm, 0, 0);       //  0212
+            g_step = grad_norm; //sqrt(grad_norm*grad_norm/nParams);
+        }else{
+            SignStochastic(nParams,hparams);    
+            UpdateParams(nParams,hparams,0x0); 
+        }
+ 
         UpdateLossCurve(0x0);    
         // AdamMiniV(clip,nx,hparams,0x0);   
         //gradient is useless at this stage
@@ -806,16 +803,14 @@ bool Optimizer::OnNextShard(int flag){
     return true;
 }
 
-void Optimizer::BeforeTrain(struct train_params_& train_params,hGensor tokens_,int flag) {    
+void Optimizer::BeforeTrain(hGensor tokens_,int flag) {    
     first_iter             = iter;
     // train_loader->hOPT = this;           val_loader->hOPT = this;
     // assert(tokens_!=nullptr);
     // tokens_input = tokens_;
-    train_params.adam.n_parameters = nParams;    
-#ifdef _TENSOR_CUD_
-    train_params.adam.decay = 0.1;      //very high for GPT2 Model
-#endif
-    scheduler = std::make_shared<DiscreteSchedule>(train_params);
+    auto& adam = _fish->hparams.common.adam; //TrainParams().
+    adam.n_parameters = nParams;    
+
     opt_ps = _fish->optParams;
     nMostParam = 0;
     size_t offset = 0x0;
@@ -826,15 +821,19 @@ void Optimizer::BeforeTrain(struct train_params_& train_params,hGensor tokens_,i
         offset += ps->nByte();
 #endif
     } 
+#ifdef _TENSOR_CUD_
+    adam.decay = 0.1;      //very high for GPT2 Model
+
+    InitCUDA(1);
+#endif    
     // assert(nMostParam>=nParams);
-    assert(train_params.adam.n_iter>0);
-    // trainInfos().name = "Train infos";
-    // evalInfos.name = "Evaluate infos";
+    assert(adam.n_iter>0);
+    scheduler = std::make_shared<DiscreteSchedule>(_fish->hparams.common);
 }
 
 size_t TGraph::Prepare4Train(struct ggml_context *ctx_,GD_METHOD tpGD,int flag){
     hOptimizer hOpt = hFish->hOPT;          assert(hOpt!=nullptr);
-    size_t nP=0,nz=0,nzAll=0,id=0;
+    size_t nP=0,nz=0,nzAll=0,id=0,n1=hFish->gensors.size();
     for(auto& gi : hFish->gensors.infos){
         auto gensor = gi.first;
         int nParam = (int)tELEM(gensor);        
@@ -849,17 +848,20 @@ size_t TGraph::Prepare4Train(struct ggml_context *ctx_,GD_METHOD tpGD,int flag){
         if(tpGD == GD_METHOD::SGD_HYBRID){
             gi.second.isAdam = isStrMatch(gensor->name,hOpt->adam_filter);
         }
-            
+        gi.second.isAdam = isStrMatch(gensor->name,hOpt->adam_filter);    
         if(!gi.second.isAdam)
             continue;
         
         nP++;       nz+=nParam;
+#ifdef _TENSOR_CUD_
+#else
         gi.second.gm = new float[nParam]();
         gi.second.gv = new float[nParam]();
-        gi.second.gpf = new float[nParam]();          
+        gi.second.gpf = new float[nParam]();  
+#endif        
     }
     
-    _INFO("[TGraph::%s] AdamTensor=(%d,%g) filter={",__func__,nP,nz*1.0/nzAll);
+    _INFO("[TGraph::%s] AdamTensor=(%d,%.3g%%) filter={",__func__,nP,nz*100.0/nzAll);
     for(auto f : hOpt->adam_filter){
         _INFO("\"%s\" ",f.c_str());
     }
@@ -985,16 +987,23 @@ void OPT_Adam::Prepare(size_t nx_,int flag){
 
 OPT_Adam::OPT_Adam(NLP_AutoRegressive *g_,CLI_params& params_,int flag)
     : Optimizer(g_,params_,flag)    {    
-    auto train_params = TrainParams();
+    // auto train_params = TrainParams();
     //  0.9f, 0.95f, 1e-8f      decay=0.1
-    adam = train_params.adam;
+    adam = &(_fish->hparams.common.adam); 
+    adam->clip_alg = 1;      //clip_alg=0 little better
+    _fish->hparams.Fuse_Normal = 0;     //some strange bug
+    _fish->hparams.common.remater_ffn = true;
+    _fish->hparams.common.remater_qkv = true;
+
     // sched              = 1.0f;
 }
 
 void OPT_Adam::Dump(int typ){
+
     Optimizer::Dump(typ);
     // if(NOT_DUMP())  return;
-     _INFO("[OPT_Adam]\tsRESI=%g",TrainParams().residual_scale);
-    adam.Dump(typ);
+     _INFO("[OPT_Adam]\tsRESI=%g s_rounding=%d alloc_w=%d ffu_reuse=%d",TrainParams().residual_scale,
+        TrainParams().opt_alloc_weight,TrainParams().opt_alloc_weight,1);
+    adam->Dump(typ);
     
 }

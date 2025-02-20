@@ -685,7 +685,7 @@ void NLP_AutoRegressive::Train(int flag)       {
     // DEBUG.train_datas = 1;
     // DEBUG.train_hyperparams = 1;
 #endif
-    hOPT->BeforeTrain(hparams.common,tokens_input,0x0);
+    hOPT->BeforeTrain(tokens_input,0x0);
     // if(!hOPT->PrepareData( hparams,flag ))
     //     return;
        

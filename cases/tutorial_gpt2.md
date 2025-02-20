@@ -9,9 +9,9 @@
     make clean && make VERBOSE=TRUE
     cd ../../
 
+# export CPATH=~/cudnn-frontend/include/:/usr/local/cuda-12.1/include:$CPATH        # maybe need this to export CPATH
     mkdir build && cd build && cmake ..
     make clean && make VERBOSE=TRUE
-    # cmake --build . --config Release -j 8 VERBOSE=TRUE
 ```
 There would be following files in the ./bin directory if everythins is OK.
 ```shell
@@ -27,17 +27,30 @@ drwxr-xr-x 9 root root      218 Feb 15 15:07 ../
 -rw-r--r-- 1 root root   784508 Feb 15 15:35 libllava_static.a
 ```
 
-## 2. Datasets & Tokenizer    
-    The datasets for this tutorial comes from [huggingface](https://huggingface.co/datasets/karpathy/fineweb-edu-100B-gpt2-token-shards), which includes about 1000 .bin files. Each file contain 100M tokens.    Thank Andrej K very much for providing this dataset!
+## 2. Datasets & Tokenizer   
 
-    This tutorial only use 1B(10 file) tokens.
-    * Training files:        edu_fineweb_train_000001.bin ~ edu_fineweb_train_000010.bin
-    * Evaluate file:         edu_fineweb_val_000000.bin
-    * Hellaswag file:        hellaswag_val.bin
-    For the detail of how tokenize texts to generate these tokens, please visit https://github.com/karpathy/llm.c/discussions/481 
+The datasets for this tutorial comes from [karpathy/fineweb-edu-100B-gpt2-token-shards](https://huggingface.co/datasets/karpathy/fineweb-edu-100B-gpt2-token-shards), which includes about 1000 .bin files. Each file contain 100M tokens.    Thank Andrej K very much for providing this dataset!
+
+This tutorial only use 1B(10 file) tokens.
+* Training files:        edu_fineweb_train_000001.bin ~ edu_fineweb_train_000010.bin
+* Evaluate file:         edu_fineweb_val_000000.bin
+* Hellaswag file:        hellaswag_val.bin
+For the detail of how tokenize texts to generate these tokens, please visit https://github.com/karpathy/llm.c/discussions/481 
+
+As the following json configuration shows, Koifish supports multiple evaluation datasets. It would load token files from user specified folder. In this configuration, "most"=10, so Koifish would only load at most 10 train*.bin files from /hy-tmp/edu_fineweb/. 
+```json
+    "datasets":{
+        "train":{
+            "glob":"/hy-tmp/edu_fineweb/*train*.bin",  "most":10,        "name":"edu_fineweb1B"
+        },
+        "eval_1": {"glob":"/hy-tmp/edu_fineweb/*val*.bin","name":"edu_fineweb1B","eval-every":100        },
+        "eval_2":{"glob":"/hy-tmp/hellaswag_val.bin", "type":"hellaswag","eval-every":500        }
+    },
+```
 
 ## 3. Enviroment
-   3.1. Install CUDNN & cudnn-frontend
+1) Linux x86 64bit Ubuntu 22.04 with CUDA 12
+2) Install CUDNN & cudnn-frontend
 ```shell
 wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
 sudo dpkg -i cuda-keyring_1.1-1_all.deb
@@ -50,18 +63,19 @@ git clone https://github.com/NVIDIA/cudnn-frontend.git
 
 ## 4. Train 
 ```shell
-    ./bin/koifish ./cases/gpt2/gpt2.json
+    ./bin/koifish ./cases/gpt2/gpt2_124M.json
+    ./bin/koifish ./cases/gpt2/gpt2_774M.json
 ```
-The gpt2.json is a configuration file as follows, which includes the model and training parameters.
+The gpt2_124M/774M.json is a configuration file as follows, which includes the model and training parameters.
 ```json
 {        
     "version":"0.1.0",     
     "arch":"GPT2",
     "datasets":{
         "train":{
-            "glob":"/hy-tmp/edu_fineweb1B/*train*.bin",          "name":"edu_fineweb1B"
+            "glob":"/hy-tmp/edu_fineweb/*train*.bin",  "most":10,        "name":"edu_fineweb1B"
         },
-        "eval_1": {"glob":"/hy-tmp/edu_fineweb1B/*val*.bin","name":"edu_fineweb1B","eval-every":100        },
+        "eval_1": {"glob":"/hy-tmp/edu_fineweb/*val*.bin","name":"edu_fineweb1B","eval-every":100        },
         "eval_2":{"glob":"/hy-tmp/hellaswag_val.bin", "type":"hellaswag","eval-every":500        }
     },
     
@@ -87,7 +101,7 @@ The gpt2.json is a configuration file as follows, which includes the model and t
         "parameter":{
             "Layer": 12,  
             "transformer":{
-                "Ctx":1024,  "Embed":    768,    "Head": 12,   "Ffn":768,
+                "Ctx":1024,  "Embed":    768,    "Head": 12,   "Ffn":3072,
                 "on":[""]
             }
         },  
@@ -112,12 +126,35 @@ The gpt2.json is a configuration file as follows, which includes the model and t
 ```
    
 ## 5. Results
-    5.1. The training process takes several hous, depending on the GPU. In my PC(with 3090-24G GPU), it takes about 7 hours(~72k tokens per second).
-    5.2. The loss curve is as follows:
-         ![Training curves & results](./gpt2_124M_losscurve.png).
-    5.3. Koifish would save each step info to three csv files:
-    * Train@[edu_fineweb1B]_info_.csv 
-    * Eval@[edu_fineweb1B]_info_.csv 
-    * Eval@[HellaSwag]_info_.csv.
+The training process takes several hours/days, depending on the model & GPU. In my PC(only one 3090-24G GPU), it takes about 7 hours(~72k tokens per second) to train 124M model.
+Koifish would save each step info to three csv files:
+* Train@[data_set_name]_info_.csv 
+* Eval@[data_set_name]_info_.csv 
+* Eval@[HellaSwag]_info_.csv
+
+### Results of GPT2-124M 
+[Json config file](./gpt2/gpt_124M.json). Model parameters:
+```json
+    "parameter":{
+            "Layer": 12,  
+            "transformer":{
+                "Ctx":1024,  "Embed":    768,    "Head": 12,   "Ffn":768,
+            }
+        },  
+```
+    The loss curve is as follows:
+![Training curves & results](./gpt2_124M_losscurve.png).
+
    
-    
+### Results of GPT2-774M 
+[Json config file](./gpt2/gpt_774M.json).Model parameters:
+```json
+    "parameter":{
+            "Layer": 36,  
+            "transformer":{
+                "Ctx":1024,  "Embed":    1280,    "Head": 20,   "Ffn":5120,
+            }
+        },  
+```
+The loss curve is as follows:
+![Training curves & results](./gpt2_774M_losscurve.png).

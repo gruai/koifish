@@ -40,7 +40,8 @@ __device__ void adamw_update(Tp* params_memory, float* master_params_memory, Tg*
     float param = old_param - (learning_rate * (m / (sqrtf(v) + eps) + weight_decay * old_param));
     // update our low precision version of the parameters using stochastic rounding
     // this will be used in the next forward pass
-    stochastic_rounding(param, &params_memory[idx], seed);
+    // stochastic_rounding(param, &params_memory[idx], seed);
+    params_memory[idx] = param;
     // write the full, float version of the param into our master copy, if we maintain one
     // this will be used in the next update
     if (master_params_memory != NULL) { master_params_memory[idx] = param; }

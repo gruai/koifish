@@ -19,7 +19,6 @@ models
 compile_commands.json
 CMakeSettings.json
 .vs/
-.vscode/
 .clangd
 
 .exrc
@@ -45,7 +44,6 @@ __pycache__/
 # Model files
 ggml-model-f16.bin
 *.bat
-*.png
 *.pth
 *.bin
 main.log
@@ -56,6 +54,7 @@ src/LLAMA/common/build-info.cpp
 *.tokenset
 *.train
 *.csv
+*.info
 datasets
 
 src/kGPT/train_gpt2cu

@@ -85,6 +85,7 @@ struct ADAM_params_ {
     size_t n_parameters;
     int   n_iter,decay_min_ndim;
     float alpha,min_alpha,decay,beta1,beta2;
+    int clip_alg=0;     // if 1: adaptive local clip
     float gclip;
     float eps = 1e-8f;   // epsilon for numerical stability
     float eps_loss = 1e-5f; // epsilon for convergence test
@@ -138,6 +139,11 @@ struct train_params_ {
     int   opt_past;
     float opt_delta;
     int   opt_max_no_improvement;
+    int   opt_stochastic_rounding = 0;
+    int   opt_alloc_weight = 0;
+
+    int remater_ffn = 0;
+    int remater_qkv = 0;
 
     ADAM_params_ adam;
     float residual_scale = 1.0f;
@@ -153,7 +159,7 @@ struct DEUG_SWITCH{
     int dict_latent_dim = -1;
     int graph_dump = 0; //  10 levels of dumps, 0-9. 0 is a full dump,The lower the number the more dump.
     int train_hyperparams = 0;
-    int train_datas = 0;
+    int train_datas = 0;    
 
     void Dump(int typ);
 };
@@ -231,6 +237,7 @@ struct CLI_params {
     std::vector<LAY_PARAM> layerps;
 
     int n_layer_train = -1, nLayerX = -1, nFFX = -1;
+    int Fuse_Normal = 0;
     
     uint32_t n_rot = 64;
         

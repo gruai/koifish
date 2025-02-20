@@ -7,7 +7,7 @@ import os
 import json
 import argparse 
 
-sz = "124M"
+sz = "774M"
 loss_baseline = {
     "124M": 3.424958,
     "350M": 3.083089,

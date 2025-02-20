@@ -328,7 +328,7 @@ bool CLI_params::operator!=(const CLI_params& other) const {
 
 DEUG_SWITCH DEBUG;
 void DEUG_SWITCH::Dump(int typ)    {
-    _INFO("[Debug] datas=%d hyperparams=%d attn=%d\n", train_datas,train_hyperparams,SelfAttention_noraml);
+    _INFO("\t switch: datas=%d hyperparams=%d attn=%d\n", train_datas,train_hyperparams,SelfAttention_noraml);
 }
 void CLI_params::Dump( )    {
     _INFO("%s::CLI_params: \n", exec_name.c_str());
@@ -351,6 +351,7 @@ void CLI_params::Dump( )    {
 MODEL_ARCH CLI_params::ModelArch()   {  
     MODEL_ARCH arch = MODEL_ARCH::_X_;
     string info = jKV(jConfig,{"arch"},string(""),false); 
+    assert(!info.empty());
     std::transform(info.begin(), info.end(), info.begin(), ::toupper);
     arch =  info=="MOE" ? NLP_MOE :
             info=="MAMBA" ? MODEL_ARCH::NLP_MAMBA : 
@@ -419,7 +420,8 @@ void CLI_params::OnArch( ){
     case MODEL_ARCH::NLP_GPT2_char:  {
         //baby_GPT      dropout = 0.2
         // n_head = 6;             n_embd = 384;           dict_latent_dim=n_embd;
-        nH = 12;         n_embd = 768;           DEBUG.dict_latent_dim = 768;
+        //124M
+        // nH = 12;         n_embd = 768;           DEBUG.dict_latent_dim = 768;
         n_embd_head_v = 64;         n_embd_head_k = 64;
         // n_embd = 128; dict_latent_dim = 128;        n_embd_head_v=n_embd_head_k=2; //only for debug        
         n_ctx_train = 1024;
@@ -1446,8 +1448,8 @@ void _TIME_INFO(const string&info,double fmillis,int flag) {
 }   
 
 void ADAM_params_::Dump(int typ){
-    _INFO("\tADAM lr=%g,beta=[%g-%g] decay=%g(%d) \n", alpha,beta1,beta2,
-        decay,decay_min_ndim);
+    _INFO("\tADAM lr=%g,beta=[%g-%g] decay=%g(%d) clip=%g(alg=%d)\n", alpha,beta1,beta2,
+        decay,decay_min_ndim,gclip,clip_alg);
 }
 
 void MOEL_params_::Dump(int typ){

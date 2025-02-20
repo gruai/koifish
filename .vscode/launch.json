@@ -1,0 +1,55 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "train",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/bin/koifish",
+            "args": [
+                "cases/gpt2/gpt2.json"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Set Disassembly Flavor to Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ],
+            "logging": {
+                "trace": true,
+                "traceResponse": true
+            },
+            "preLaunchTask": "sh2",
+            "miDebuggerPath": "/usr/bin/gdb",            
+        },        
+         
+        {
+            "name": "losscurve",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "cases/loss_curve.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {"PYTHONPATH": "$PYTHONPATH:${workspaceFolder}"}, 
+            "args": [
+                "--train","cases/gpt2/0214/Train@[edu_fineweb1B]_info_.csv",
+                "--eval","cases/gpt2/0214/Eval@[edu_fineweb1B]_info_.csv",
+                "--hellaswag","cases/gpt2/0214/Eval@[HellaSwag]_info_.csv"
+            ],
+        },  
+    ]
+}

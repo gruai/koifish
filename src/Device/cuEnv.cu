@@ -425,12 +425,16 @@ int FUSE_QKV(hGTensor hOut,hGTensor hIn,hGTensor hQKV,hGTensor hATTN,hGTensor w,
     return 0x0;
 }  
 
-int SelfAttention::FUSE_cuda(hGTensor inpL,floatX* residual,LayerNormal&norm2,float* scratchF,int flag){
+//
+int SelfAttention::FUSE_cuda(hGTensor inpL,floatX* residual,LayerNormal*norm2,float* scratchF,int flag){
     int B=GTensor::B,T=GTensor::T,C=GTensor::C,NH=n_head;
     floatX *weight=ToX(Q.w), *bias=Q.b==nullptr?nullptr:ToX(Q.b),*qkvr=ToX(Q.out);
-    floatX *inp1=ToX(proj_cat.out),*atty=ToX(attn),*data=ToX(inpL),*inp2=data;    
-    float *stats=nullptr,*l_att = TO<float>(trans); //(float*)acts.att + l * B * NH * T; // cuDNN needs a smaller FP32 tensor
-    if(isForward()){      
+    floatX *inp1=ToX(proj_cat.out),*atty=ToX(attn),*data=ToX(inpL);    
+    float *l_att = TO<float>(trans); //(float*)acts.att + l * B * NH * T; // cuDNN needs a smaller FP32 tensor
+    if(isForward()){    //  data=ToX(QKV->norm.out)
+        if(remater_qkv)  {
+            qkvr=ToX(GTensor::scratch_ff1);
+        }
 #ifdef ENABLE_CUDNN        
         matmul_forward_cublaslt(qkvr, data, weight, bias, B, T, C, 3*C, main_stream);
         // PrintTensor<floatX>("l_qkvw",l_qkvw,true,3*C,C);       PrintTensor<floatX>("l_qkvb",l_qkvb,true,3*C,1);
@@ -449,11 +453,11 @@ int SelfAttention::FUSE_cuda(hGTensor inpL,floatX* residual,LayerNormal&norm2,fl
 #endif
         PrintTensor<floatX>("l_atty",atty,true,B,T,C);
         floatX *pw=ToX(proj_cat.w), *pb=proj_cat.b==nullptr?nullptr:ToX(proj_cat.b);
-        floatX* scratch = ToX(GTensor::scratch_output),*normed=ToX(norm2.out),*ouput=(floatX *)out->data;
+        floatX* scratch = ToX(GTensor::scratch_output),*normed=ToX(norm2->out),*ouput=(floatX *)out->data;
         matmul_forward_cublaslt(scratch, atty, pw, pb, B, T, C, C, main_stream);       
-        float *mean=TO<float>(norm2.mean),*rstd=TO<float>(norm2.rstd);
+        float *mean=TO<float>(norm2->mean),*rstd=TO<float>(norm2->rstd);
         if(flag==0)
-            fused_residual_forward5(ouput, normed,mean,rstd, residual, scratch, ToX(norm2.w), ToX(norm2.b), B*T, C, main_stream);
+            fused_residual_forward5(ouput, normed,mean,rstd, residual, scratch, ToX(norm2->w), ToX(norm2->b), B*T, C, main_stream);
         else{
             assert(0);
             // residual_forward(ouput, inp1, inp2, B*T*C, main_stream);
@@ -461,6 +465,10 @@ int SelfAttention::FUSE_cuda(hGTensor inpL,floatX* residual,LayerNormal&norm2,fl
         }
     }else{
         floatX* dl_bt4c = ToX(GTensor::scratch_bt4c),*dresidual = ToX(GTensor::scratch_btc);  
+        if(remater_qkv)  {  //    data=ToX(QKV->norm.out)
+            qkvr=ToX(GTensor::scratch_ff1);
+            matmul_forward_cublaslt(qkvr, data, weight, bias, B, T, C, 3*C, main_stream);
+        }
         attention_backward_cudnn(dl_bt4c, dl_btc, qkvr, atty, l_att, B, T, NH, C, main_stream);
         PrintTensor<floatX>("back of attn",dl_bt4c,true,B,T,C);
         // if(model->recompute >= 2) {
@@ -473,35 +481,52 @@ int SelfAttention::FUSE_cuda(hGTensor inpL,floatX* residual,LayerNormal&norm2,fl
     return 0x0;
 }
 
-int FFN::FUSE_cuda(hGTensor hIn,floatX *inp1,floatX *inp2,LayerNormal*neuron_x,int flag){
+//  hIn = QKV->out
+int FFN::FUSE_cuda(hGTensor hIn,floatX *scratch,LayerNormal*neuron_x,int flag){
     int B=GTensor::B,T=GTensor::T,C=GTensor::C;
-    floatX *ff2=ToX(down.out),*ff1=ToX(up.out),*normed=ToX(neuron_x->out),*output = ToX(out),*input = ToX(hIn);
+    floatX *ff2=ToX(down.out),*ff1=ToX(up.out),*normed=ToX(neuron_x->out);
     float *mean=TO<float>(neuron_x->mean),*rstd=TO<float>(neuron_x->rstd);
-    floatX *l_fch_gelu = ToX(GTensor::scratch_output);  //???
+    floatX *l_fch_gelu = ToX(GTensor::scratch_output);  //  reuse the same activation buffer at each layer, as we'll re-compute the gelu during backward
     bool isBias = up.b!=nullptr;  assert(isBias);
-    if(isForward()){      
-        floatX *scratch = ToX(GTensor::scratch_btc);    //ToX(GTensor::scratch_output);  //???
-        matmul_forward_cublaslt(l_fch_gelu,inp1, (floatX*)up.w->data, (floatX*)up.b->data, B, T, C, 4*C, main_stream, ff1, gelu_fusion);
-        matmul_forward_cublaslt(scratch, l_fch_gelu, (floatX*)down.w->data, (floatX*)down.b->data, B, T, 4*C, C, main_stream);   //???
+    if(isForward()){     
+        floatX * inp1_ =  ToX(norm.out);         
+        if(remater_ffn)  {
+            input_1 = inp1_;
+            ff1=ToX(GTensor::scratch_ff1);              
+        } 
+        assert(ff1!=nullptr);       // ff1=gelu_forward(out, l_fch_gelu, B*T*OC, stream);
+        floatX *scratch = ToX(GTensor::scratch_btc);    
+        matmul_forward_cublaslt(l_fch_gelu,inp1_, (floatX*)up.w->data, (floatX*)up.b->data, B, T, C, latent, main_stream, ff1, gelu_fusion);
+        // PrintTensor<floatX>("inp1",ToX(norm.out),true,B,T,C,1,-1);          PrintTensor<floatX>("ff1",ff1,true,B,T,latent,1,-1);  
+        matmul_forward_cublaslt(scratch, l_fch_gelu, (floatX*)down.w->data, (floatX*)down.b->data, B, T, latent, C, main_stream);   //???
+        // PrintTensor<floatX>("inp1",ToX(norm.out),true,B,T,C,1,-1);
         PrintTensor<floatX>("ffn",scratch,true,B,T,C);
-        if(flag==0)
-            fused_residual_forward5(output, normed,mean,rstd, inp2, scratch, ToX(neuron_x->w), ToX(neuron_x->b), B*T, C, main_stream);
-        else{
+        if(flag==0) {
+            fused_residual_forward5(ToX(out), normed,mean,rstd, ToX(hIn), scratch, ToX(neuron_x->w), ToX(neuron_x->b), B*T, C, main_stream);
+        }   else{
             assert(0);
         }
-        PrintTensor<floatX>("residual3",output,true,B,T,C);/**/
+        // PrintTensor<floatX>("inp1",ToX(norm.out),true,B,T,C,1,-1);
+        out->PrintX<floatX>("residual3",0,0);
     }else{
         floatX *dl_bt4c = ToX(GTensor::scratch_bt4c),*dresidual = ToX(GTensor::scratch_btc); 
-        float*  scratchF = (float*) inp1;
-        gelu_forward(l_fch_gelu, ToX(up.out), B*T*4*C, main_stream);     
-        matmul_backward(dl_bt4c, ToG(down.w), ToG(down.b), dresidual, l_fch_gelu, ToX(down.w), scratchF, B, T, 4*C, C, main_stream, ToX(up.out), gelu_fusion);
-        PrintTensor<floatX>("back of ffn1",dl_bt4c,true,B,T,4*C);
+        float*  scratchF = (float*) scratch;   // not the same inp1 of forward !!!
+        if(input_1!=nullptr){
+            input_1 =  ToX(norm.out);
+            ff1=ToX(GTensor::scratch_ff1);              
+            matmul_forward_cublaslt(l_fch_gelu,input_1, (floatX*)up.w->data, (floatX*)up.b->data, B, T, C, latent, main_stream, ff1, gelu_fusion);
+            // norm.out->PrintX<floatX>("inp1",0,-1);          PrintTensor<floatX>("ff1",ff1,true,B,T,latent,-1);  
+        }else
+            gelu_forward(l_fch_gelu, ff1, B*T*latent, main_stream);  
+        assert(ff1!=nullptr);   
+        matmul_backward(dl_bt4c, ToG(down.w), ToG(down.b), dresidual, l_fch_gelu, ToX(down.w), scratchF, B, T, latent, C, main_stream, ff1, gelu_fusion);
+        PrintTensor<floatX>("back of ffn1",dl_bt4c,true,B,T,latent);
         
-        matmul_backward(dl_btc, ToG(up.w), ToG(up.b), dl_bt4c, ToX(norm.out), ToX(up.w), scratchF, B, T, C, 4 * C, main_stream);
+        matmul_backward(residual, ToG(up.w), ToG(up.b), dl_bt4c, ToX(norm.out), ToX(up.w), scratchF, B, T, C, latent, main_stream);
         // // layernorm backward does += to the dresidual, so it correctly accumulates grad from the MLP block above
-        layernorm_backward(dresidual, ToG(norm.w), ToG(norm.b), scratchF, dl_btc, input, ToX(norm.w), TO<float>(norm.mean), TO<float>(norm.rstd), B, T, C, main_stream);
-        matmul_backward(dl_btc, ToG(lastQKV->proj_cat.w), ToG(lastQKV->proj_cat.b), dresidual, ToX(lastQKV->attn), ToX(lastQKV->proj_cat.w), scratchF, B, T, C, C, main_stream);
-        PrintTensor<floatX>("back of ffn0",dl_btc,true,B,T,C);
+        layernorm_backward(dresidual, ToG(norm.w), ToG(norm.b), scratchF, residual, ToX(hIn), ToX(norm.w), TO<float>(norm.mean), TO<float>(norm.rstd), B, T, C, main_stream);
+        matmul_backward(residual, ToG(lastQKV->proj_cat.w), ToG(lastQKV->proj_cat.b), dresidual, ToX(lastQKV->attn), ToX(lastQKV->proj_cat.w), scratchF, B, T, C, C, main_stream);
+        PrintTensor<floatX>("back of ffn0",residual,true,B,T,C);
     }
     
     return 0x0;
@@ -615,110 +640,3 @@ cuTensor::~cuTensor()  {
 
 }
 
-/*int cuLiteTest(size_t B,size_t T,size_t C,int stage,int flag){
-    int l=0,recompute=1;
-    TensorSpec tensors[NUM_ACTIVATION_TENSORS];
-    ActivationTensors acts;
-    size_t Vp=50304,L=12,NH=12,maxT=1024;
-    size_t nzP=0,param_elements[NUM_PARAMETER_TENSORS],param_sizeof[NUM_PARAMETER_TENSORS];
-    param_elements[0] = Vp * C; // wte         50304*768
-    param_elements[1] = maxT * C; // wpe       1024*768
-    param_elements[2] = L * C; // ln1w
-    param_elements[3] = L * C; // ln1b
-    param_elements[4] = L * (3 * C) * C; // qkvw
-    param_elements[5] = L * (3 * C); // qkvb
-    param_elements[6] = L * C * C; // attprojw
-    param_elements[7] = L * C; // attprojb
-    param_elements[8] = L * C; // ln2w
-    param_elements[9] = L * C; // ln2b
-    param_elements[10] = L * (4 * C) * C; // fcw
-    param_elements[11] = L * (4 * C); // fcb
-    param_elements[12] = L * C * (4 * C); // fcprojw
-    param_elements[13] = L * C; // fcprojb
-    param_elements[14] = C; // lnfw
-    param_elements[15] = C; // lnfb
-    // populate the parameter sizes in bytes (all the same for now, keeping for future use)
-    for (int i = 0; i < NUM_PARAMETER_TENSORS; i++) {
-        param_sizeof[i] = sizeof(floatX);
-    }
-    ParameterTensors params,grads;
-    size_t num_parameters_bytes = 0;
-    for (int i = 0; i < NUM_PARAMETER_TENSORS; i++) {
-        nzP += param_elements[i];
-        num_parameters_bytes += param_elements[i] * param_sizeof[i];
-    }
-    // malloc all parameters all at once on the device
-    void* params_memory;
-    printf("[cuTest] mem=%.5g(G)\tnP=%ld\n",num_parameters_bytes/1.0e9,num_parameters_bytes);
-    cudaCheck(cudaMalloc((void**)&params_memory, nzP));
-    if(stage==1)
-        return -1;
-    // assign all the tensors their place in the array
-    floatX** ptrs[] = {
-        &params.wte, &params.wpe, &params.ln1w, &params.ln1b, &params.qkvw, &params.qkvb,
-        &params.attprojw, &params.attprojb, &params.ln2w, &params.ln2b, &params.fcw, &params.fcb,
-        &params.fcprojw, &params.fcprojb, &params.lnfw, &params.lnfb
-    };
-    char* params_memory_iterator = (char*)params_memory;
-    for (int i = 0; i < NUM_PARAMETER_TENSORS; i++) {
-        *(ptrs[i]) = (floatX*)params_memory_iterator;
-        params_memory_iterator += param_elements[i] * param_sizeof[i];
-    }
-
-    tensors[0] = TENSOR_SPEC(acts.encoded, B * T * C);
-    // if recompute >= 1 then we will recompute the layernorm forward activation during backward pass
-    tensors[1] = TENSOR_SPEC(acts.ln1,  (recompute < 2) ? L * B * T * C : 0);
-    tensors[2] = TENSOR_SPEC(acts.ln1_mean, L * B * T);
-    tensors[3] = TENSOR_SPEC(acts.ln1_rstd, L * B * T);
-    tensors[4] = TENSOR_SPEC(acts.atty, L * B * T * C);
-#ifdef ENABLE_CUDNN
-    // FP32 stats tensor for cuDNN to be passed to backward pass
-    tensors[5] = TENSOR_SPEC(acts.att, L * B * NH * T);
-#else
-    tensors[5] = TENSOR_SPEC(acts.att, L * B * NH * T * T);
-#endif
-    tensors[6] = TENSOR_SPEC(acts.residual2, L * B * T * C);
-    // if recompute >= 1 then we will recompute the layernorm forward activation during backward pass
-    tensors[7] = TENSOR_SPEC(acts.ln2, (recompute < 2) ? L * B * T * C : 0);
-    tensors[8] = TENSOR_SPEC(acts.ln2_mean, L * B * T);
-    tensors[9] = TENSOR_SPEC(acts.ln2_rstd, L * B * T);
-    tensors[10] = TENSOR_SPEC(acts.fch, L * B * T * 4*C);
-    // if recompute >= 1 then we will recompute gelu_forward during backward and use this as scratch buffer
-    tensors[11] = TENSOR_SPEC(acts.fch_gelu, (recompute < 1) ? L * B * T * 4*C : B * T * 4*C);
-    tensors[12] = TENSOR_SPEC(acts.residual3, L * B * T * C);
-    tensors[13] = TENSOR_SPEC(acts.lnf, B * T * C);
-    tensors[14] = TENSOR_SPEC(acts.lnf_mean, B * T);
-    tensors[15] = TENSOR_SPEC(acts.lnf_rstd, B * T);
-    tensors[16] = TENSOR_SPEC(acts.losses, B * T);
-    tensors[17] = TENSOR_SPEC(acts.qkvr, L * B * T * 3*C);
-    tensors[18] = TENSOR_SPEC(acts.output, B * T * max(3*C, max(NH*T, Vp)));
-    tensors[19] = TENSOR_SPEC(acts.scratch_bt4c, B * T * 4 * C);
-    tensors[20] = TENSOR_SPEC(acts.scratch_btc, B * T * C);
-
-    // acts_memory = malloc_and_point_activations(acts_specs);
-    size_t bytes = 0;
-    for (size_t i = 0; i < NUM_ACTIVATION_TENSORS; i++) {
-        bytes += tensors[i].size * sizeof_dtype(tensors[i].type);
-    }
-    // printf0("allocating %d MiB for activations\n", (int)round(bytes / (1024 * 1024)));
-    void* acts_memory;
-    cudaCheck(cudaMalloc((void**)&acts_memory, bytes));
-    cudaCheck(cudaMemset(acts_memory, 0, bytes));
-    char* acts_memory_iterator = (char*)acts_memory;
-    for (size_t i = 0; i < NUM_ACTIVATION_TENSORS; i++) {
-        // extra protection so we don't accidentally use an empty buffer
-        if(tensors[i].size == 0) {
-            *(tensors[i].ptr) = NULL;
-        }else {
-            *(tensors[i].ptr) = acts_memory_iterator;
-            acts_memory_iterator += tensors[i].size * sizeof_dtype(tensors[i].type);
-        }
-    }
-
-    floatX* l_qkvr = acts.qkvr + l * B * T * 3*C;
-    floatX* l_ln1 = acts.ln1 + l * B * T * C;
-    floatX* l_qkvw = params.qkvw + l * 3*C * C;
-    floatX* l_qkvb = params.qkvb + l * 3*C;
-    matmul_forward_cublaslt(l_qkvr, l_ln1, l_qkvw, l_qkvb, B, T, C, 3*C, main_stream);
-    return 0x0;
-}*/ 

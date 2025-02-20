@@ -39,7 +39,7 @@ bool cuTensor::Alloc(int tpX,int flag){
     }
     szMaloc += sz;
     if(sz>=100*1.0e6)
-        printf("\tcudaMalloc=%gM(%gG)@%s\n",sz*1.0f/1.0e6,szMaloc*1.0/1.0e9,name);
+        printf("\tcudaMalloc=%gM(%gG)@%s shape=[%d,%d,%d,%d]\n",sz*1.0f/1.0e6,szMaloc*1.0/1.0e9,name,ne[0],ne[1],ne[2],ne[3]);
     return true;
 }
 bool cuTensor::Free() {
@@ -189,6 +189,29 @@ double tNormOf(const std::vector<hGTensor>& tensors,int flag){
         // PrintTensor<floatX>("tNormOf",val,true,nEle,1);
         // break;
     }
+    global_sum_deterministic(grad_norm_squared, grad_norm_squared, max_num_block_sums, main_stream);
+    cudaCheck(cudaMemcpy(&a, grad_norm_squared, sizeof(float), cudaMemcpyDeviceToHost));
+
+    norm = sqrt(a);
+    a = sqrt(a/nz);
+    return norm;
+}
+
+double tNormOf(const hGTensor tensor,int flag){
+    const int block_size = 512;
+    float* grad_norm_squared,a;
+    grad_norm_squared = (float*)(GTensor::scratch_bt4c->data);
+    double norm = 0.0f;
+    int num_slices[2] = {1, 1},zero_stage=1,max_num_block_sums = get_max_num_block_sums(num_slices, 2);
+    size_t nz=0;
+    bool is_first_pass = true;
+        //ShardInfo shard ={0, tensor->size()};
+    size_t nEle = tensor->size();       nz+=nEle;
+    assert(tensor->grad!=nullptr);
+    floatX* val = (floatX*)(tensor->grad);        
+    // _norm2_kernel<<<dim3(grid_size, 1), block_size, 0, main_stream>>>(grad_norm_squared, val, nEle, nEle);
+    global_norm_squared(grad_norm_squared, val, nEle, 0, 1,max_num_block_sums, is_first_pass, main_stream);
+        
     global_sum_deterministic(grad_norm_squared, grad_norm_squared, max_num_block_sums, main_stream);
     cudaCheck(cudaMemcpy(&a, grad_norm_squared, sizeof(float), cudaMemcpyDeviceToHost));
 
