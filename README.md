@@ -6,8 +6,7 @@
 
 ## Features
 
-
-- Sparse mapping of token-embedding to logits
+- Rematerialisation and fusion of operators
 - Mixture of models
 - Support LLAMA/GPT ...
 - CPU, GPU and Hybrid training
@@ -26,18 +25,19 @@ make clean && make VERBOSE=TRUE
 cd ../../
 
 mkdir build && cd build && cmake ..
+# export CPATH=~/cudnn-frontend/include/:/usr/local/cuda-12.1/include:$CPATH        # maybe need this to export CPATH
 make clean && make VERBOSE=TRUE
-# cmake --build . --config Release -j 8 VERBOSE=TRUE
 ```
 
 ## Tutorial
 
-1.    [Training of GPT2(124M)](cases/tutorial_gpt2.md)
+1.    [Training of GPT2(774M/124M) on single 3090](cases/tutorial_gpt2.md)
 
 
 ## Working plan
 - Hybrid 1-bit Optimizer
 - Support DEEPSEEK/MAMBA
+- Sparse mapping of token-embedding to logits
 
 ## Contributing
 

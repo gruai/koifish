@@ -120,7 +120,8 @@ public:
     //Deprecated need refactor!!!       9/30/2024
     virtual double GraphCompute(hSampLoader loader,hTGraph,int flag=0x0);
     virtual float Evaluate(hSampLoader loader,int iter,int flag=0x0);
-
+    virtual int GetITER(int flag=0x0);
+    virtual float LearningRate(int flag=0x0 )   {   return  scheduler->LearningRate(iter);  }
     virtual void UpdateTrainLoss(int x,float loss,int flag=0x0);     //
 
     virtual bool isStopImproving( )	{	
@@ -141,7 +142,9 @@ public:
         }
     }
     
-    virtual void BeforeTrain(struct train_params_& train_params,hGensor  tokens_input,int flag) ;
+    virtual void BeforeTrain(hGensor tokens_input,int flag) ;
+    virtual void InitCUDA(int flag);
+    virtual void ClearCUDA(int flag);
     virtual bool PrepareData( CLI_params& hparams,int flag );
     virtual void Shuffle(int n_vocab,struct train_params_& train_params,int flag=0x0)  {
         assert(0);
@@ -169,7 +172,7 @@ typedef shared_ptr<Optimizer> hOptimizer;
 
 class OPT_Adam : public Optimizer  {    
 protected:    
-    ADAM_params_ adam;      //may be modified
+    ADAM_params_ *adam=nullptr;      //may be modified
     // float decay = 0.0f; // weight decay for AdamW, use 0.0f to disable
     float p_decay = 0;
     // int   decay_min_ndim = 2; // minimum number of tensor dimension to apply weight decay

@@ -206,28 +206,40 @@ FFN::FFN(Fish* hG_,const std::string&key_,JSON::const_iterator jit,int flag) : G
         int n_ff = hFish->hparams.n_ff();
         shape = {n_embd,n_ff};
     }
-    
+    remater_ffn = hFish->hparams.common.remater_ffn;       //false;
     assert(shape[0]>0 && shape[1]>0);
     // up.Init(hG_,flag);       down.Init(hG_,flag);       relu.Init(hG_,flag); 
 }
 bool FFN::Build(int flag_0)   {
-    SHAPE sp={shape[0]},sp3;
+    SHAPE sp={shape[0]},sp3,sp2;
     struct ggml_context * ctx_ = hFish->GetGGCTX(1);
     bool isTrain = hFish->isTrain();
-    int flag = flag_0,latent=shape[1];
+    int flag = flag_0;
+    latent=shape[1];
 #ifdef _TENSOR_CUD_
-    flag |= GeNeuron::F_BIAS;       
-    latent*=4;  //from kGPT
+    flag |= GeNeuron::F_BIAS; 
     assert(GTensor::C==shape[0]);
-    sp3={GTensor::B,GTensor::T,latent};
+    sp3 = {GTensor::B,GTensor::T,latent};
+    sp2 = {GTensor::B,GTensor::T,GTensor::C};
     // relu.out = std::make_shared<cuTensor>(name+"_relu",sp3,GTensor::tpFloatX,false);   
 #else    
     gate.BuildX(name+"_gate",{shape[0],shape[1]},hFish,flag);
 #endif
     norm.BuildX(name+sNorm,sp,hFish,flag);        //layer->ffn_norm.sT="f";
-    up.BuildX(name+"_up",{shape[0],latent},hFish,flag);    
+    up.BuildX(name+"_up",{shape[0],latent},hFish,flag);  
     down.BuildX(name+"_down",{latent,shape[0]},hFish,flag);        
 #ifdef _TENSOR_CUD_
+    if(GTensor::scratch_ff1!=nullptr)   {
+        assert(GTensor::scratch_ff1->size()>=up.out->size());
+        // gelu_fusion = 1;     //  0 = none, 1 = forward, 2 = forward+backward (-1 => per-GPU default)
+        if(remater_ffn){
+            BIT_SET(up.out->flags,GTensor::F_NOALLOC); 
+            out = std::make_shared<cuTensor>(name+"_out",sp2,GTensor::tpFloatX,false);  
+        }else{
+            //out would be norm.out
+        }
+    }
+           
     up.w->residual_scale = hFish->hparams.common.residual_scale;
     BIT_SET(down.out->flags,GTensor::F_NOALLOC);
 #endif
@@ -245,12 +257,15 @@ hGensor FFN::Interact(struct ggml_context * ctx_,hGensor inpL,int flag){
     hGensor lastResi = inpL;
     if(hFish->isSymbolic()){      
         // out = inpL >> up >> relu >> down >> norm;  
-        out = inpL >> up >> down >> norm ;  
-        // out->AddSrc(pre_gelu);      
+        inpL >> up >> down >> norm ;  
+        if(remater_ffn){
+            out->AddSrc(norm.out);
+        }else
+            out = norm.out;     //to save memory    
         cur = out;
     } else{ //  high performance fused operator
         float *inp1=TO<float>(down.out);
-        FUSE_cuda(cur,nullptr,nullptr,&norm,0x0); //embde->w
+        FUSE_cuda(cur,nullptr,&norm,0x0); //nullptr,nullptr,
         cur = norm.out;
         // iRet = FUSE_FFN(down.out,cur,up.out,up.w,up.b,relu.out,down.w,down.b,gelu_fusion,0);            cur = down.out;  
         // iRet = FUSE_ResiNormal(out,down.out,lastResi,norm.out,norm.mean,norm.rstd,norm.w,norm.b,0x0);   cur = norm.out; 

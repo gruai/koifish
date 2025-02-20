@@ -59,6 +59,7 @@ SelfAttention::SelfAttention(Fish* hG_,const std::string&key_,JSON::const_iterat
     n_tokens=n_ctx*n_batch;
     KQ_mask=hFish->KQ_mask,      KQ_pos=hFish->KQ_pos;
     ID = 0;
+    remater_qkv = hFish->hparams.common.remater_qkv; 
     
     n_ff = hFish->hparams.n_ff(ID);
     n_head_kv=hparams.n_head_kv(ID);        
@@ -102,6 +103,9 @@ bool SelfAttention::Build(int flag_0)   {
 #ifdef _TENSOR_CUD_
     BIT_SET(proj_cat.out->flags,GTensor::F_NOALLOC);       //memory trick as kGPT
     proj_cat.w->residual_scale = hFish->hparams.common.residual_scale;
+    if(remater_qkv){
+        BIT_SET(Q.out->flags,GTensor::F_NOALLOC);
+    }
 #endif
     // tpTrans = RELU2;
     // moe.BuildX(name+".moe",sp,hFish,flag);        //  why this would slow converge???
@@ -803,19 +807,27 @@ bool TGraph::TopoOrder(int flag)   {
 }
 
 string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {
-    const char*tab=prefix.c_str();     
-    if(empty())   {
-        _INFO("CGRAPH_%s is empty! root=%s",name.c_str(),root_0==nullptr?"":root_0->name); 
-        return "";
-    }
-    // if(DUMP())
-    //     ggml_graph_print(raw());
+    const char*tab=prefix.c_str();  
     string root_name = "";
     const size_t MAX_BUF=640*1024;
     char buf[MAX_BUF]="\0";
-    sprintf(buf+strlen(buf),"\n CGRAPH_%s x=%d nodes=%d leafs=%d forward=(%d,%d)\n",name.c_str(), -1,cgraph->n_nodes, cgraph->n_leafs,nForwN,nForwL);
+    
 #ifdef _TENSOR_CUD_
+    if(DEBUG.graph_dump==0){
+        for(auto gensor : gset){
+            _T_repr_(gensor,tab,buf,hFish->GetGensorInfo(gensor));  assert(strlen(buf)<MAX_BUF);
+        }
+        sprintf(buf+strlen(buf),"%s",suffix.c_str()); 
+        _INFO("%s",buf);         
+    }
+    return buf;
 #else    
+    sprintf(buf+strlen(buf),"\n CGRAPH_%s x=%d nodes=%d leafs=%d forward=(%d,%d)\n",name.c_str(), -1,cgraph->n_nodes, cgraph->n_leafs,nForwN,nForwL);
+    if(empty())   {        
+        _INFO("CGRAPH_%s is empty! root=%s",name.c_str(),root_0==nullptr?"":root_0->name); 
+        return "";
+    }
+
     // the output is always the last tensor in the graph
     int pos=-1,nDup=0,i,no,nNode=cgraph->n_nodes,nLeaf=cgraph->n_leafs,root_id=root_0==nullptr ? cgraph->n_nodes-1 : -1;
     hGensor root = root_0;
@@ -1076,6 +1088,8 @@ int Fish::BuildComputeGraph(int order,struct ggml_context * ctx,int flag){
     }   
 #ifdef _TENSOR_CUD_    
     hBackTG = std::make_shared<TGraph>(this,hForwTG->name+".Backward",nullptr,true);        hBackTG->isBackward = true; 
+    
+        
     return 0x0;
 #endif
     if(!isLocalInfer){       
@@ -1602,7 +1616,7 @@ hNeuron Fish::J2Neuron(struct ggml_context *ctx_,string& dad,int level,const JCo
         if(it->is_array()){
 
         }else if(it->is_structured())        {
-            s2layerinfo(hparams,k,lay_names);
+            s2layerinfo(hparams, k,lay_names);
             int lay = 0;
             for(auto nam_ : lay_names){
                 JConfig jLay(*it,lay++);
@@ -1648,12 +1662,13 @@ int Fish::jToGraph( struct ggml_context *ctx_,bool isBuild,int flag)   {
     // cuLiteTest(GTensor::B,GTensor::T,GTensor::C);
     SHAPE sp={GTensor::B,GTensor::T,GTensor::C},sp4={GTensor::B,GTensor::T,4*GTensor::C},sp0={dB, GTensor::T*nTmp};
     GTensor::scratch_bt4c = std::make_shared<cuTensor>("scratch_4c",sp4,GTensor::tpFloatX,false); 
+    GTensor::scratch_ff1 = std::make_shared<cuTensor>("scratch_ff1",sp4,GTensor::tpFloatX,false); 
     GTensor::scratch_btc = std::make_shared<cuTensor>("scratch",sp,GTensor::tpFloatX,false); 
     GTensor::scratch_output = std::make_shared<cuTensor>("scratch_output",sp0,GTensor::tpFloatX,false);
     // GTensor::scratch_output = GTensor::scratch_bt4c;
     // assert(dB*GTensor::T*nTmp<GTensor::scratch_bt4c->size());
     GTensor::scratch_bt4c->Alloc();         GTensor::scratch_btc->Alloc();
-    GTensor::scratch_output->Alloc();
+    GTensor::scratch_output->Alloc();       GTensor::scratch_ff1->Alloc();
 #endif
     J2Neuron(ctx_,sRoot,0,js,flag);   //  "GPT2"
 
@@ -1668,7 +1683,7 @@ int Fish::jToGraph( struct ggml_context *ctx_,bool isBuild,int flag)   {
         if(nn->isGang()){
 
         }else{
-            _INFO("%d\t%s\n",no,nn->__repr__(suffix,prefix).c_str());   
+            // _INFO("%d\t%s\n",no,nn->__repr__(suffix,prefix).c_str());   
         }
          
     }

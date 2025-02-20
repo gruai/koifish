@@ -205,9 +205,9 @@ bool SampLoader::isEval(int t,int flag){
     assert(type==DT_EVAL);
     if( eval_every>0 && t % eval_every == 0){
         if(t==0){
-            if(hTokens->tpSample==DataTokenSet::HellaSwag){ //too long!
-                return false;
-            }
+            // if(hTokens->tpSample==DataTokenSet::HellaSwag){ //too long!
+            //     return false;
+            // }
         }
         return true;
     }
@@ -1037,7 +1037,7 @@ try{
         fprintf(fp,"%d %d %.3f %.2e %.3f %g %g\n",step.epoch,step.iter,step.loss,step.lr, step.gNorm,step.tX,step.dt);
     }
     fclose(fp);
-    _INFO(">>>>>> Save %s to \"%s\", N=%ld\n",name.c_str(),fpath.c_str(),steps.size());
+    _INFO(">>>>>> Save %s to \"%s\", step=%ld\n",name.c_str(),fpath.c_str(),steps.size());
     return true;
 }catch(...){
     return false;

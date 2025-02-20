@@ -216,7 +216,7 @@ protected:
         POOLING=0x1,
         LINFORMER=0x2,
     };
-
+    bool remater_qkv = false;
     bool isAttOnBC = false;     //  // Nearly same. If true,attenion on all tokens, memory would explode!
     bool isRope = true;
     hGensor attn_k=nullptr,attn_q=nullptr;
@@ -251,7 +251,7 @@ public:
     bool isValid()  override    {   return true;    }
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
 
-    int FUSE_cuda(hGTensor inpL,floatX* residual,LayerNormal&norm2,float* scratchF,int flag);
+    int FUSE_cuda(hGTensor inpL,floatX* residual,LayerNormal*norm2,float* scratchF,int flag);
 };
 
 /*
@@ -306,10 +306,11 @@ struct FFN : public GeNeuron  {
     SLP up,down,gate;
     Relu relu;
     // hGensor pre_gelu = nullptr;
-    int gelu_fusion = 0;
+    int gelu_fusion = 0,latent;
 #ifdef _TENSOR_CUD_
-    floatX* dl_btc=nullptr;
+    floatX *residual=nullptr,*input_1=nullptr,*scratchX=nullptr;
     SelfAttention *lastQKV=nullptr;
+    bool remater_ffn = false;
 #endif
 
     FFN() {}
@@ -319,7 +320,7 @@ struct FFN : public GeNeuron  {
     bool isValid()  override    {   return true;    }
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
 
-    int FUSE_cuda(hGTensor inpL,floatX *inp1,floatX *inp2,LayerNormal*norm2,int flag);
+    int FUSE_cuda(hGTensor inpL,floatX *scratch,LayerNormal*norm2,int flag);
 };
 
 

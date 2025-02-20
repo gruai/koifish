@@ -16,8 +16,10 @@
 Tokenset_HellaSwag::Tokenset_HellaSwag(JSON::const_iterator jit,ConsiceDict *hDict,int flag) : GlobTokenset(jit,hDict,flag)    {
     name = "HellaSwag";
     //rStepOfEval = 0.0;  //  no sample on evaluate
-    
-    rStepOfEval = 0.1;
+    auto k =jit.key();  
+    auto v = jit.value();
+    rStepOfEval = 0;
+    rStepOfEval = jKV(v,{"step"},rStepOfEval);
 }
 
 GlobTokenset::GlobTokenset(JSON::const_iterator jit,ConsiceDict *hDict,int flag) : DataTokenSet(hDict)    {
@@ -32,6 +34,9 @@ GlobTokenset::GlobTokenset(JSON::const_iterator jit,ConsiceDict *hDict,int flag)
     string pattern = v["glob"];
     name = jKV(v,{"name"},name);
     eval_every = jKV(v,{"eval-every"},eval_every);
+    rStepOfEval = 0.1;
+    rStepOfEval = jKV(v,{"step"},rStepOfEval);
+    nMostShard = jKV(v,{"most"},nMostShard);
     
     glob_t glob_result;
     int glob_status = glob(pattern.c_str(), 0, NULL, &glob_result);
@@ -61,6 +66,8 @@ GlobTokenset::GlobTokenset(JSON::const_iterator jit,ConsiceDict *hDict,int flag)
         nFile++;
         // assert(shard_ntok >= (int64_t) (num_processes * B * T + 1));
         nMostTok += shard_ntok;
+        if(nMostShard>0 && shard_paths.size()==nMostShard)
+            break;
     }
     double nG = nMostTok/1.0e9;             
     if(nMostTok==0){

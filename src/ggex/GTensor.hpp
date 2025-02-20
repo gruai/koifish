@@ -68,12 +68,13 @@ private:
 protected:
     std::shared_ptr<EDGE_DEVICES> hDevice = nullptr;
     struct ggml_backend_buffer * buffer;
+    
     size_t szData=0;
     int recompute=1;
     virtual hGTensor _Multiply(const hGTensor& other) { assert(0);  return nullptr;    }
 public:
     static int B,T,C;       //shortcut parameter of LLM models
-    static hGTensor scratch_bt4c,scratch_btc,scratch_output;
+    static hGTensor scratch_bt4c,scratch_btc,scratch_output,scratch_ff1;
     float residual_scale=1.0;   // some tricks
     size_t offset = 0x0;
     SHAPE shape; 
@@ -101,7 +102,11 @@ public:
     virtual bool Alloc(int tpInit=0,int flag=0x0);
     virtual bool InitParam(int tpInit,int flag=0x0)           {     assert(0);    return false;   }
     virtual bool Free() {   return true;    }
-
+    template<typename T> 
+    void PrintX(const string& title, int typ, int flag){
+        bool isDevice = true;
+        PrintTensor<T>(title.c_str(),(T *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
+    }
     virtual bool Dump(int type,int flag=0x0)  const;
 //operations
     hGTensor operator*(const hGTensor& other) {
@@ -250,6 +255,7 @@ inline hGTensor operator+=( const hGTensor &a,const hGTensor &b ) 	{
     inline void tSET(hGensor T,float a)         { T->Set(a);  }
     inline void tFLAG(hGensor T,int64_t flag)   { T->SetFlag(flag);  }
     double tNormOf(const std::vector<hGTensor>& tensors,int flag);
+    double tNormOf(const hGTensor tensor,int flag=0x0);
 #else
     int gTN(struct ggml_tensor *cur,const char *format,... );
     int gTN0(struct ggml_tensor *cur,const char *format,... );
@@ -301,10 +307,7 @@ public:
     hGTensor CrossEntropy( const hGTensor b,int flag=0x0 )  override;
     hGTensor GetRow(hGTensor, hGTensor token,hGTensor pos,int flag)   override;
     hGTensor Normal(hGTensor hOut,hGTensor _mean,hGTensor _rstd,hGTensor w,hGTensor b,bool isForward=true,int flag=0x0)   override;
-    // hGTensor QKV(hGTensor hOut,hGTensor hQKV,hGTensor hATTN,hGTensor w,hGTensor b,int NH,hGTensor proj_w,hGTensor proj_b,int flag)    override;
-    // hGTensor FFN(hGTensor hOut,hGTensor hUp,hGTensor wUP,hGTensor bUp,hGTensor fch,hGTensor wDown,hGTensor bDown,int gelu_fusion,int flag)  override;
-    // hGTensor ResiNormal(hGTensor hOut,hGTensor hNormed,hGTensor _mean,hGTensor _rstd,hGTensor hInp1,hGTensor hInp2,hGTensor w,hGTensor b,int flag) override;                 
-    // float FusedLoss(float dloss,hGTensor hLoss,hGTensor hTarget,hGTensor tX, hGTensor w,int V,bool isForward, int flag)  override;
+    // bool Dump(int type,int flag=0x0)  const override;
 };
 
 struct GENSOR_INFO{

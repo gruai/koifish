@@ -73,6 +73,7 @@ public:
 protected:
     SAMPLE_TYPE tpSample=RANDOM_GENERATE;
     std::vector<string> shard_paths;
+    int nMostShard = -1;
     int shard_index = 0;
     int eval_every = -1;
     float rStepOfEval = 0.1;
