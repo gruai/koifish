@@ -6,7 +6,7 @@
  *  \author Yingshi Chen
  */
 #pragma once
-#include "../ggex/GG_util.hpp"
+#include "../../ggex/GG_util.hpp"
 #include "ggml-backend.h"
 class TGraph;
 typedef shared_ptr<TGraph> hTGraph;

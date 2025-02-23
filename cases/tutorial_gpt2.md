@@ -134,27 +134,11 @@ Koifish would save each step info to three csv files:
 
 ### Results of GPT2-124M 
 [Json config file](./gpt2/gpt_124M.json). Model parameters:
-```json
-    "parameter":{
-            "Layer": 12,  
-            "transformer":{
-                "Ctx":1024,  "Embed":    768,    "Head": 12,   "Ffn":3072,
-            }
-        },  
-```
     The loss curve is as follows:
 ![Training curves & results](./gpt2_124M_losscurve.png).
 
    
 ### Results of GPT2-774M 
 [Json config file](./gpt2/gpt_774M.json).Model parameters:
-```json
-    "parameter":{
-            "Layer": 36,  
-            "transformer":{
-                "Ctx":1024,  "Embed":    1280,    "Head": 20,   "Ffn":5120,
-            }
-        },  
-```
 The loss curve is as follows:
 ![Training curves & results](./gpt2_774M_losscurve.png).

@@ -1,15 +1,12 @@
-#include "../CLI_params.hpp"
-#include "../ggex/GTensor.hpp"
-#include "../g_stddef.hpp" 
+
 // #include "../ggex/GG_util.hpp"       //ugly  "__builtin_ia32_ldtilecfg" is undefined
-#include "../kGPT/llmc/cuda_common.h"
-#include "../kGPT/llmc/cublas_common.h"
-#include "../kGPT/llmc/matmul.cuh"
-#include "../kGPT/llmc/layernorm.cuh"
-#include "../kGPT/llmc/encoder.cuh"
-#include "../kGPT/llmc/fused_classifier.cuh"
-#include "../Manifold/Neuron.hpp"
-// #include "../kGPT/llmc/mfu.h"
+#include "./cublas_common.h"
+#include "./matmul.cuh"
+#include "./layernorm.cuh"
+#include "./encoder.cuh"
+#include "./fused_classifier.cuh"
+#include "../../Manifold/Neuron.hpp"
+// #include "./mfu.h"
 #define NOMINMAX
 #include <cudnn_frontend.h>
 namespace fe = cudnn_frontend;

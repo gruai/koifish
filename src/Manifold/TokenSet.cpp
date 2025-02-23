@@ -11,7 +11,7 @@
 #include "gLLM.hpp"
 #include "Optimizer.hpp"
 #include "Dictionary.hpp"
-#include "../kGPT/llmc/utils.h"
+
 
 Tokenset_HellaSwag::Tokenset_HellaSwag(JSON::const_iterator jit,ConsiceDict *hDict,int flag) : GlobTokenset(jit,hDict,flag)    {
     name = "HellaSwag";
@@ -20,6 +20,8 @@ Tokenset_HellaSwag::Tokenset_HellaSwag(JSON::const_iterator jit,ConsiceDict *hDi
     auto v = jit.value();
     rStepOfEval = 0;
     rStepOfEval = jKV(v,{"step"},rStepOfEval);
+    int nFile = shard_paths.size();
+    assert(nFile==1);
 }
 
 GlobTokenset::GlobTokenset(JSON::const_iterator jit,ConsiceDict *hDict,int flag) : DataTokenSet(hDict)    {
@@ -126,6 +128,8 @@ try{
     if(end>10*1024*1024){
         step = n_ctx;
     }
+    if(rStepOfEval>1)
+        step *= rStepOfEval;
     for (size_t sample_begin = 0; sample_begin < end; sample_begin+=step) {
         len = std::min(n_ctx,(int)(end-sample_begin));
         shard_samps.push_back(new SAMP(sample_begin,len));

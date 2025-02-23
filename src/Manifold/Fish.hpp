@@ -24,7 +24,7 @@
 #include "../ggex/GG_util.hpp"
 #include "Neuron.hpp"
 #include "TGraph.hpp"
-#include "../Device/EDevice.hpp"
+#include "../Device/CUDA/EDevice.hpp"
 #include "GoPT.hpp"
 #include "../lenda/util/GST_util.hpp"
 #include "../Fuzi/Distillation.hpp"

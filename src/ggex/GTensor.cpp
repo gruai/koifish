@@ -22,6 +22,17 @@
 int GTensor::B=0,GTensor::T=0,GTensor::C=0;
 hGTensor GTensor::scratch_bt4c=nullptr,GTensor::scratch_btc=nullptr,GTensor::scratch_output=nullptr,GTensor::scratch_ff1=nullptr;
 
+float GTensor::rLARS(float s0,float T_lars,int flag)   {
+   if( shape.size()<=1 )
+      return s0;
+      
+   float eps = 1.0e-8;
+   float trust_ratio =wnorm/(gnorm+eps);
+   trust_ratio = std::min(trust_ratio,T_lars);
+   float r = trust_ratio;
+   return r;
+}
+
 GTensor::GTensor(SHAPE shape_,tpDATA tpD_,bool isX,int flag) : shape(shape_),type(tpD_),flags(flag)      {
    int i=0;
    for(auto n : shape){

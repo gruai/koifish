@@ -1,8 +1,6 @@
-#include "../CLI_params.hpp"
-#include "../ggex/GTensor.hpp"
-#include "cutils.cuh"
-#include "../kGPT/llmc/rand.h"
-#include "../kGPT/llmc/global_norm.cuh"
+#include "./rand.h"
+#include "./global_norm.cuh"
+#include "../../ggex/GTensor.hpp"
 
 cuTensor::cuTensor(const string&name_,SHAPE shape,tpDATA tpD_,bool isX,int flag) : GTensor(shape,tpD_,false,flag){
     size_t nEle=size();
@@ -199,23 +197,27 @@ double tNormOf(const std::vector<hGTensor>& tensors,int flag){
 
 double tNormOf(const hGTensor tensor,int flag){
     const int block_size = 512;
-    float* grad_norm_squared,a;
-    grad_norm_squared = (float*)(GTensor::scratch_bt4c->data);
-    double norm = 0.0f;
+    float a,*norm2 = (float*)(GTensor::scratch_bt4c->data);
     int num_slices[2] = {1, 1},zero_stage=1,max_num_block_sums = get_max_num_block_sums(num_slices, 2);
     size_t nz=0;
     bool is_first_pass = true;
         //ShardInfo shard ={0, tensor->size()};
     size_t nEle = tensor->size();       nz+=nEle;
     assert(tensor->grad!=nullptr);
-    floatX* val = (floatX*)(tensor->grad);        
-    // _norm2_kernel<<<dim3(grid_size, 1), block_size, 0, main_stream>>>(grad_norm_squared, val, nEle, nEle);
-    global_norm_squared(grad_norm_squared, val, nEle, 0, 1,max_num_block_sums, is_first_pass, main_stream);
-        
-    global_sum_deterministic(grad_norm_squared, grad_norm_squared, max_num_block_sums, main_stream);
-    cudaCheck(cudaMemcpy(&a, grad_norm_squared, sizeof(float), cudaMemcpyDeviceToHost));
-
-    norm = sqrt(a);
-    a = sqrt(a/nz);
-    return norm;
+     
+    if(tensor->grad!=nullptr)     {
+        global_norm_squared(norm2, (floatX*)(tensor->grad), nEle, 0, 1,max_num_block_sums, is_first_pass, main_stream);            
+        global_sum_deterministic(norm2, norm2, max_num_block_sums, main_stream);
+        cudaCheck(cudaMemcpy(&a, norm2, sizeof(float), cudaMemcpyDeviceToHost));
+        tensor->gnorm = sqrt(a);
+        a = sqrt(a/nz);
+    }
+    if(tensor->data!=nullptr)     {
+        global_norm_squared(norm2, (floatX*)(tensor->data), nEle, 0, 1,max_num_block_sums, is_first_pass, main_stream);            
+        global_sum_deterministic(norm2, norm2, max_num_block_sums, main_stream);
+        cudaCheck(cudaMemcpy(&a, norm2, sizeof(float), cudaMemcpyDeviceToHost));
+        tensor->wnorm = sqrt(a);
+    }
+    
+    return tensor->gnorm;
 }

@@ -18,8 +18,8 @@ struct train_params_ Optimizer::TrainParams()    {
 }
 
 Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params& hparams,int flag) : _fish(g_) {    
-    adam_filter =  {"output","norm","embd"}; 
-    // adam_filter =  {"output","norm"}; 
+    // adam_filter =  {"output","norm","embd"}; 
+    adam_filter =  {"output","norm"}; 
 
     tpSign = hparams.Get({"train","optimizatioin","sign"},0,false);
     string method = hparams.Get({"train","optimizatioin","method"},string("adamw"),false);
@@ -28,7 +28,8 @@ Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params& hparams,int flag) : _fi
         Although many people think "ADAMw is much better than SGD for attention models"  https://arxiv.org/pdf/2310.01082
         But may litter slower. For example:   jModel_SGD_v.info
     */
-    tpGD = method=="adamw" ? ADAMw : method=="sgdv" ? SGD_v : method=="hsgd" ? SGD_HYBRID : ADAMw;
+    tpGD = method=="adamw" ? ADAMw : method=="sgdv" ? SGD_v : 
+        method=="sgd" ? SGD :method=="hsgd" ? SGD_HYBRID : ADAMw;
 
     nGradAccum =  std::max(1, train_params.n_gradient_accumulation);
     isGlobalGrad = nGradAccum>1;        // Nearly same alloc grad or not
@@ -324,8 +325,7 @@ double OPT_Adam::UpdateTensorParam(hGensor hP,size_t offset,floatX *gX,float cli
         }else{
             clip = gClip(ne,gX,hP); 
         }
-    }
-        
+    }        
 #else
     if(gX==nullptr){       
         gX = fGrad(hP);
@@ -334,6 +334,18 @@ double OPT_Adam::UpdateTensorParam(hGensor hP,size_t offset,floatX *gX,float cli
 
     }
     assert(hP->type==GGML_TYPE_F32);
+    if(hparams.lars_ratio>0)   {   //lars/lamb
+        float wnorm=0,norm=0,trust_ratio;
+        for (int64_t j = 0; j < ne; ++j) {
+            float x  = ggml_get_f32_1d(opt_ps[p], j);       wnorm += x*x;
+        }
+        for (int64_t j = i; j < i+ne; ++j) {
+            norm += g[j]*g[j];
+        }
+        trust_ratio = sqrt(wnorm)/sqrt(norm+eps);
+        trust_ratio = std::min(trust_ratio,hparams.lars_ratio);
+        gnorm = trust_ratio;
+    }
 #endif    
 #ifdef _TENSOR_CUD_
     UpdateTensorParam_cuda(hP,offset,this,grad_norm,0x0);     
@@ -1002,8 +1014,8 @@ void OPT_Adam::Dump(int typ){
 
     Optimizer::Dump(typ);
     // if(NOT_DUMP())  return;
-     _INFO("[OPT_Adam]\tsRESI=%g s_rounding=%d alloc_w=%d ffu_reuse=%d",TrainParams().residual_scale,
-        TrainParams().opt_alloc_weight,TrainParams().opt_alloc_weight,1);
-    adam->Dump(typ);
-    
+     _INFO("[OPT_Adam]\tsRESI=%g s_rounding=%d alloc_w=%d remater[ffn=%d qkv=%d]",TrainParams().residual_scale,
+        TrainParams().opt_alloc_weight,TrainParams().opt_alloc_weight,
+        TrainParams().remater_ffn,TrainParams().remater_qkv);
+    adam->Dump(typ);    
 }

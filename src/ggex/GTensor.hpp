@@ -33,19 +33,8 @@ typedef shared_ptr<GTensor> hGTensor;
 typedef std::vector<int> SHAPE;
 
 #ifdef _TENSOR_CUD_
-    #include "../kGPT/llmc/cuda_common.h"
-    #include "../Device/cutils.cuh"
-    // #if defined(ENABLE_FP32)
-    //     typedef float floatX;
-    //     #define PRECISION_MODE PRECISION_FP32
-    //     // use fp16 (note: this may require gradient scaler, currently not implemented!)
-    // #elif defined(ENABLE_FP16)
-    //     typedef half floatX;
-    //     #define PRECISION_MODE PRECISION_FP16
-    // #else // Default to bfloat16
-    //     typedef __nv_bfloat16 floatX;
-    //     #define PRECISION_MODE PRECISION_BF16
-    // #endif
+    #include "../Device/CUDA/cuda_common.h"
+    // #include "../Device/CUDA/cutils.cuh"
 #else
     typedef float floatX;
 #endif
@@ -75,7 +64,8 @@ protected:
 public:
     static int B,T,C;       //shortcut parameter of LLM models
     static hGTensor scratch_bt4c,scratch_btc,scratch_output,scratch_ff1;
-    float residual_scale=1.0;   // some tricks
+    float residual_scale=1.0,wnorm=0,gnorm=0;   // some tricks
+    float rLARS(float s0,float T_lars,int flag);
     size_t offset = 0x0;
     SHAPE shape; 
     SHAPE x_shape;     //  1.padded_shape  for high performance or menory alignment

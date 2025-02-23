@@ -24,7 +24,7 @@
 using namespace std;
 
 #include "../ggex/GG_util.hpp"
-#include "../Device/EDevice.hpp"
+#include "../Device/CUDA/EDevice.hpp"
 #include "TGraph.hpp"
 #include "Scheduler.hpp"
 #include "DataLoader.hpp"

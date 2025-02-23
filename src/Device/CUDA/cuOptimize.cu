@@ -14,4 +14,4 @@
 #include "../g_stddef.hpp" 
 #include "cutils.cuh"
 
-extern GPT2 *model=nullptr;
+

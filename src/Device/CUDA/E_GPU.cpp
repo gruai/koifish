@@ -6,10 +6,9 @@
  *  \author Yingshi Chen
  */
 
-#include "../ggex/GTensor.hpp"
 #include "./EDevice.hpp"
-#include "../kGPT/llmc/cuda_common.h"
-// #include "../kGPT/llmc/cuda_utils.cuh"
+// #include "./cuda_common.h"
+// #include "./cuda_utils.cuh"
 
 #include "ggml-cuda.h"
 #include "ggml-sycl.h"

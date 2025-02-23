@@ -109,7 +109,7 @@ message(STATUS "KOIFISH GG_LIB=${GG_LIB} cc=${DELTA_cc} lib=${DELTA_LIB} PWD=${C
 
 add_subdirectory(src/Manifold)
 add_subdirectory(src/Fuzi)
-add_subdirectory(src/Device)
+add_subdirectory(src/Device/CUDA)
 add_subdirectory(src/ggex)
  
 set(sources   ${TGraph_sources} ${util_sources} ${kernel_sources} ${Fuzi_sources} ${ggex_sources} ${device_sources} )
