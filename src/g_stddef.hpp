@@ -1,3 +1,11 @@
+/**
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT  
+ * 
+ *  \brief
+ *  \author Yingshi Chen
+ */
+
 #pragma once
 #include <memory> //for shared_ptr
 #include <string>
@@ -22,6 +30,10 @@ using namespace std;
 #define BIT_IS( val,flag ) (((val)&(flag))!=0)
 #define CEIL_DIV(M, N) (((M) + (N)-1) / (N))
 #define MEM_CLEAR(mem,size)			memset( (mem),(0x0),(size) )
+
+#define UNUSED(x) (void)(x)
+
+
 
 #ifdef WIN32
 	#define G_INT_64 __int64

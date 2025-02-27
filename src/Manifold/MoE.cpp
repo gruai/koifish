@@ -10,17 +10,17 @@
 
 #include "gLLM.hpp"
 
-bool QKV_LAY::CreateFFN(const CLI_params&hparams, ggml_context *ctx, FFN_TYPE tpFFN, int flag)  {
-    const int n_embd = hparams.n_embd, n_ctx = hparams.n_ctx(), n_ff = hparams.n_ff(), n_batch = hparams.n_batch();  
-    const int n_expert = hparams.n_expert;
+bool QKV_LAY::CreateFFN(const CLI_params&config, ggml_context *ctx, FFN_TYPE tpFFN, int flag)  {
+    const int n_embd = config.n_embd, n_ctx = config.n_ctx(), n_ff = config.n_ff(), n_batch = config.n_batch();  
+    const int n_expert = config.n_expert;
     switch(tpFFN){
     case VAR_LAST:
     case SWIGLU:
-        if(hparams.ZMUV_ratio>0)
+        if(config.ZMUV_ratio>0)
             ffn_norm.w = nullptr;  
         else
             ffn_norm.w = TENSO(ctx, GGML_TYPE_F32, {n_embd});
-        if(hparams.ffn_use_gate)
+        if(config.ffn_use_gate)
             ffn_gate = TENSO(ctx, GGML_TYPE_F32, {n_embd,   n_ff});
         down.w = TENSO(ctx, GGML_TYPE_F32,   {n_ff, n_embd});
         up.w   = TENSO(ctx, GGML_TYPE_F32, {n_embd,   n_ff}); 
@@ -39,10 +39,10 @@ bool QKV_LAY::CreateFFN(const CLI_params&hparams, ggml_context *ctx, FFN_TYPE tp
         assert(0);
         break;
     case SMOE:{// MoE branch
-        assert(n_expert>0 && hparams.n_expert_used>0) ; 
+        assert(n_expert>0 && config.n_expert_used>0) ; 
         ffn_gate_inp = TENSO(ctx, GGML_TYPE_F32, {n_embd,   n_expert});
         // ffn_gate_inp = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_GATE_INP, "weight", i), {n_embd, n_expert});        
-        const int n_ff_exp = hparams.n_ff_exp ? hparams.n_ff_exp : n_ff / hparams.n_expert_used;
+        const int n_ff_exp = config.n_ff_exp ? config.n_ff_exp : n_ff / config.n_expert_used;
         ffn_gate_exps = TENSO(ctx, GGML_TYPE_F32, {n_embd, n_ff_exp, n_expert});
         // ffn_gate_exps = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_GATE_EXPS, "weight", i), {  n_embd, n_ff_exp, n_expert});
         ffn_down_exps = TENSO(ctx, GGML_TYPE_F32, {n_ff_exp,   n_embd, n_expert}); 
@@ -51,7 +51,7 @@ bool QKV_LAY::CreateFFN(const CLI_params&hparams, ggml_context *ctx, FFN_TYPE tp
         // ffn_up_exps   = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_UP_EXPS,   "weight", i), {  n_embd, n_ff_exp, n_expert});
 
         // Shared expert branch
-        const int n_ff_shexp = hparams.n_ff_shexp ? hparams.n_ff_shexp : n_ff;
+        const int n_ff_shexp = config.n_ff_shexp ? config.n_ff_shexp : n_ff;
         ffn_gate_inp_shexp = TENSO(ctx, GGML_TYPE_F32, {n_embd}); 
         // ffn_gate_inp_shexp = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_GATE_INP_SHEXP, "weight", i), {n_embd});
         ffn_gate_shexp = TENSO(ctx, GGML_TYPE_F32, {n_embd, n_ff_shexp});
@@ -76,7 +76,7 @@ LLM_MOE::LLM_MOE( const std::string& nam_,struct CLI_params params,ROLE_TYPE rol
 }
 
 size_t LLM_MOE::MostMemSize(int flag)  {
-    int n_layer = hparams.nLayer();
+    int n_layer = config.nLayer();
     int nHead = hDict!=nullptr ? hDict->nLevel*3+2+6 : 6; 
     size_t sz0 = ggml_tensor_overhead(),sz = sz0*2*(nHead + n_layer*18);
     return sz;
@@ -112,12 +112,12 @@ void MixOfSwarm::Init(tpSWARM&swarm,struct ggml_context *ctx,int n_embd,int flag
     gat_ = TENSO(ctx, GGML_TYPE_F32, {n_embd, (int)(swarm.size()+1)});
 }
 
-hGensor MixOfSwarm::Build(CLI_params&hparams,struct ggml_context * ctx,hGensor cur,int flag )  { 
+hGensor MixOfSwarm::Build(CLI_params&config,struct ggml_context * ctx,hGensor cur,int flag )  { 
     hGensor ouput = nullptr;
 #ifdef _TENSOR_CUD_
 #else
     // return cur;
-    int n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd;
+    int n_batch = config.common.n_batch,n_ctx = config.common.n_ctx,n_embd = config.n_embd;
     int i=0,nSwarm=exs.size()+1;      
     size_t offset = gat_->nb[0];       assert(offset==4);  
     size_t N0=cur->ne[0],ld1=(nSwarm)*offset,nToken=cur->ne[1],N1=nToken;    
@@ -156,7 +156,7 @@ hGensor NLP_AutoRegressive::build_gate(struct ggml_context * ctx,hGensor cur,hGe
 #else
     bool isRes = true,isSiLU=false;
 
-    int n_vocab = hDict->tVocab(),n_batch = hparams.common.n_batch,n_ctx = hparams.common.n_ctx,n_embd = hparams.n_embd;
+    int n_vocab = hDict->tVocab(),n_batch = config.common.n_batch,n_ctx = config.common.n_ctx,n_embd = config.n_embd;
     int nWiki = wikis.size(),i=0;        CHILD_0909_WIKIS
     size_t N0=cur->ne[0],ld1=(nWiki+1)*cur->nb[0];    
     assert(nWiki+1 == mom.embed2w->ne[1]);

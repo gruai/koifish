@@ -14,7 +14,7 @@
 #include <alloca.h>
 #endif
 
-    #include "GTensor.hpp"
+#include "GTensor.hpp"
 
 #include "../CLI_params.hpp"
 #include "../g_stddef.hpp"
@@ -194,7 +194,7 @@ inline float *Gensor2float(struct ggml_context * ctx0,const hGensor w,int flag=0
 }
 
 
-//must called after ggml_build_forward/backwrad_expand
+/*must called after ggml_build_forward/backwrad_expand
 inline void ggml_graph_stat(struct ggml_cgraph * cgraph, int flag=0x0) {
     if(cgraph==nullptr)     return;
     
@@ -216,7 +216,7 @@ inline void ggml_graph_stat(struct ggml_cgraph * cgraph, int flag=0x0) {
     }
     
     _INFO("%s cgraph(%d,%d) nQ=%d nF16=%d",__func__,cgraph->n_leafs,cgraph->n_nodes,nQ,nF16);
-}
+}*/
 
 #include <signal.h>
 // ctrl+C handling

@@ -42,7 +42,7 @@ protected:
     bool display              = true;
     //compatible with LLAMA.cpp
     // gpt_params params;
-    CLI_params hparams;
+    CLI_params config;
     MODEL_ARCH _arch = MODEL_ARCH::_X_;
     
     int ga_n=-1,ga_w=-1;
@@ -146,7 +146,7 @@ public:
 };
 
 int GPT_work(CLI_params& params);
-int fish_1(CLI_params& hparams);
-int GGUF_list(CLI_params& hparams);
-int Fish_bubble(CLI_params& hparams);
-int Tutor(CLI_params& hparams);
+int fish_1(CLI_params& config);
+int GGUF_list(CLI_params& config);
+int Fish_bubble(CLI_params& config);
+int Tutor(CLI_params& config);

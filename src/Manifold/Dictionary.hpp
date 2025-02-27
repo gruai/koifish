@@ -119,7 +119,7 @@ struct ConsiceDict : public VariationaAE    {
         FREE_a(scores);      FREE_a(toktypes);
     }
     //  n_vocab,scores,toktypes,special_,tokens
-    virtual void LoadVocab_v0(const char*fn_model_base,int flag);
+    // virtual void LoadVocab_v0(const char*fn_model_base,int flag);
     virtual void LoadVocab(const char*fn_model_base,int flag)   {   assert(0);  }
     virtual bool isValid(int flag=0x0)  {   
         if(n_vocab<=0)  return false;

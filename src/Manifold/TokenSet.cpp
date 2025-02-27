@@ -27,7 +27,7 @@ Tokenset_HellaSwag::Tokenset_HellaSwag(JSON::const_iterator jit,ConsiceDict *hDi
 GlobTokenset::GlobTokenset(JSON::const_iterator jit,ConsiceDict *hDict,int flag) : DataTokenSet(hDict)    {
     header_bytes = SHARD_HEADER_SIZE * sizeof(int);
     int num_processes=1,process_rank=0;
-    B = hDict->hparams.n_batch(),       T = hDict->hparams.n_ctx();
+    B = hDict->config.n_batch(),       T = hDict->config.n_ctx();
     total_batch_size_bytes = ((num_processes * (B * T)) * sizeof(uint16_t));
     local_batch_offset_bytes = process_rank * B * T * sizeof(uint16_t);
 
@@ -80,7 +80,7 @@ GlobTokenset::GlobTokenset(JSON::const_iterator jit,ConsiceDict *hDict,int flag)
 
 size_t DataTokenSet::nBatch(int flag){
     size_t nSample = shard_samps.size();
-    size_t nBatches = nSample/hDict->hparams.n_batch();
+    size_t nBatches = nSample/hDict->config.n_batch();
     nBatches = nSample==0 ? 0 : max(nBatches,(size_t)1);
     return nBatches;
 }
@@ -121,7 +121,7 @@ try{
     }
     delete[] tmp16;
     // InitSamps
-    int n_ctx = hDict->hparams.n_ctx(),len;
+    int n_ctx = hDict->config.n_ctx(),len;
     size_t nToken = tokens.size(),nFirst=std::min((size_t) n_ctx, nToken),step=1,n0=shard_samps.size();
     // samples_size.push_back(nFirst);
     size_t end = (nToken >= n_ctx) ? (nToken - n_ctx) : 0;

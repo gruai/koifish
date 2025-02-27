@@ -7,8 +7,8 @@
 #include <string.h>
 #include "GVMAT.h"
 #include "Pattern.h"
-#include "../util/BLAS_t.hpp"
-#include "../util/GST_util.hpp"
+#include "../../Utils/BLAS_t.hpp"
+#include "../../Utils/GST_util.hpp"
 
 using namespace std;
 

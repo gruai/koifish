@@ -8,7 +8,7 @@
 
 #pragma once
 #include <cassert>
-// #include "train.h" 
+#include "g_float.hpp" 
 #include "./ggex/json.hpp" 
 
 // typedef int32_t TOKEN_ID;
@@ -39,6 +39,7 @@ enum MODEL_ARCH {
     NLP_GPT2,       NLP_GPT2_char,
     NLP_LLAMA,
     NLP_MAMBA,
+    NLP_DEEPSEEK,
     NLP_MOE,    //???
     
     SCORE_,
@@ -151,8 +152,6 @@ struct train_params_ {
     size_t nTokenInBatch()      const       {  return n_batch*n_ctx;    }
 };
 
-
-
 struct DEUG_SWITCH{
     int SelfAttention_noraml=1;
     bool NO_loss = false;
@@ -160,7 +159,7 @@ struct DEUG_SWITCH{
     int graph_dump = 0; //  10 levels of dumps, 0-9. 0 is a full dump,The lower the number the more dump.
     int train_hyperparams = 0;
     int train_datas = 0;    
-
+    int back_graph_version = 0;
     void Dump(int typ);
 };
 extern DEUG_SWITCH DEBUG;
@@ -180,6 +179,7 @@ struct CLI_params {
     };    
     SaveModel save;
 
+    tpFloatingPoint tpWeight,tpActivation,tpGradient;
 
     //Always false,     GGML don't support back of FLASH_ATTEN !
     bool isFlashAtten()     {   
@@ -204,10 +204,10 @@ struct CLI_params {
     uint32_t nGradAccumulate()  const       {  return common.n_gradient_accumulation;  }
     size_t nTokenInBatch()    const       {  return common.n_batch*common.n_ctx;  }
     size_t nTokensPerGrad()   const       {  return nTokenInBatch()*common.n_gradient_accumulation;   }
-    uint32_t n_seq_max,n_ctx_orig_yarn,n_ctx_train=0;
+    uint32_t max_seq_len,n_ctx_orig_yarn,n_ctx_train=0;
     bool isLongRope(int il = 0) const {
         assert(il>=0 && il<layerps.size());
-        const auto n_ctx_pre_seq = n_ctx() / n_seq_max;
+        const auto n_ctx_pre_seq = n_ctx() / max_seq_len;
         bool isLong = n_ctx_pre_seq > n_ctx_orig_yarn;
         return isLong;
     }

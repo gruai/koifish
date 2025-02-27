@@ -295,7 +295,7 @@ size_t SampLoader::UpdateBatch(int x,Fish* fish){
     bool sample_random_offsets=_params.sample_random_offsets;
     // assert(samples_count > 0);
     // assert(ggml_is_matrix(tokens_input));
-    size_t nSampInBatch = fish->hparams.n_batch();  
+    size_t nSampInBatch = fish->config.n_batch();  
     GST_TIC(T0);
     bool isLog = false;
     if(isLog) _INFO("BATCH_%ld ",next_sample);   
@@ -334,7 +334,7 @@ size_t SampLoader::UpdateBatch(int x,Fish* fish){
         if(tpBatchSample!="stacking"){
             for(auto wiki : fish->wikis){
                 // nrm = wiki->InductLogits(k,samp_toks,nullptr,G(target_probs),-1); 
-                nrm = wiki->InductLogits(k,samp_toks,nullptr,nullptr,-1); 
+                // nrm = wiki->InductLogits(k,samp_toks,nullptr,nullptr,-1); 
             }
         }        
     }
@@ -512,7 +512,7 @@ SampLoader::SampLoader(Fish *g_,const string&n,bool isNewTS,int flag) {
 #ifdef _TENSOR_CUD_
     isTarget_1 = true;
 #else
-    isTarget_1 = g_->hparams.is( {"model_v0","target"},string("OneHot") );
+    isTarget_1 = g_->config.is( {"model_v0","target"},string("OneHot") );
 #endif
     return ;
 }
@@ -574,10 +574,10 @@ bool SampLoader::Prepare(Optimizer *hO,hDataToken hT,int flag){
         }
 */
 void SampLoader::SetSamples(std::vector<size_t>& samp_0,std::vector<size_t>& samp_L,bool isTrain,CLI_params& hp_,int flag)  {
-    // hparams = hp_;
-    tpBatchSample = dolphin->hparams.tpBatchSample;
+    // config = hp_;
+    tpBatchSample = dolphin->config.tpBatchSample;
 
-    double rSplit = 1.0-dolphin->hparams.rSplit;
+    double rSplit = 1.0-dolphin->config.rSplit;
     // hTokens = hDT;
     size_t nSample = samp_0.size(),pick=(size_t)(nSample*rSplit),i;
     //    assert(samp_begin.size() == samp_size.size());   
@@ -600,7 +600,7 @@ void SampLoader::SetSamples(std::vector<size_t>& samp_0,std::vector<size_t>& sam
         }
     }
     nSample = shard_samps.size();
-    num_batches = nSample/dolphin->hparams.n_batch();
+    num_batches = nSample/dolphin->config.n_batch();
     num_batches = nSample==0 ? 0 : max(num_batches,1);
     _INFO("%s@[%s]: tokens=%zu nSamp=%d nBatch=%d\n", __func__,isTrain?"train":"eval", nTokens(),shard_samps.size(),num_batches); 
 }
@@ -639,7 +639,7 @@ double SAMP::UpdateTag(hDataToken hDT,int *tag,int step,bool do_mask,int flag)  
 bool SampLoader::TopoOrder(std::vector<size_t>&ids,std::mt19937& rng,int flag)  {    
     bool isRepeated = true;
     size_t count = shard_samps.size(),i,j,k,jj,pick,seed,nPick=16,nLeft;
-    size_t nSampInBatch=dolphin->hparams.n_batch(),nVocab=hTokens->nVocab,ctx=dolphin->hparams.n_ctx(),tib=dolphin->hparams.nTokenInBatch();
+    size_t nSampInBatch=dolphin->config.n_batch(),nVocab=hTokens->nVocab,ctx=dolphin->config.n_ctx(),tib=dolphin->config.nTokenInBatch();
     if(count<nSampInBatch*10)
         return false;
     GST_TIC(tic);
@@ -816,24 +816,24 @@ std::string ConsiceDict::T2STR(TOKEN_ID tok,int flag ) {
     return word;   
 }   
 
-bool DataTokenSet::Load(struct CLI_params& hparams,void *hLLM,int flag){
-    if(hparams.passLoadToken)
+bool DataTokenSet::Load(struct CLI_params& config,void *hLLM,int flag){
+    if(config.passLoadToken)
         return true;
-    auto arch = hparams.ModelArch();
+    auto arch = config.ModelArch();
     GST_TIC(tic);
-    string tpBatchSample = hparams.KV({"data","tpBatchSample"} ); 
+    string tpBatchSample = config.KV({"data","tpBatchSample"} ); 
     // rSplit = jKV(jConfig,{"data","eval_split"},rSplit );
     string ssf = "./dataset/Serial/";
-    string dict_type = hparams.KV({"dict","type"} );
-    ssf += "_["+hparams.model_title+dict_type+"]_"+".tokenset";       //hparams.serial_path+
+    string dict_type = config.KV({"dict","type"} );
+    ssf += "_["+config.model_title+dict_type+"]_"+".tokenset";       //config.serial_path+
     ssf = serial_root+".tokenset"; //only for debug
-    // string ssf = hparams.serial_path+".tokenset";     
+    // string ssf = config.serial_path+".tokenset";     
     if( Serialize(ssf,false) ){
         
     }else{
         if(hLLM==nullptr && arch!=MODEL_ARCH::NLP_GPT2_char && arch!=MODEL_ARCH::NLP_GPT2)
             return false;
-        fpath = hparams.GetDataPath(""); //fp_train_data.c_str();
+        fpath = config.GetDataPath(""); //fp_train_data.c_str();
         tokens.clear();        
         FILE *fp = std::fopen(fpath.c_str(), "rb");
         if (fp == NULL) {
@@ -913,7 +913,7 @@ hSAMP SampLoader::InitOneSamp(const string &prompt,hGensor input, int flag){
     assert(hTokens->tokens.size()==0);
     hTokens->tokens.clear();
     int n_tokens = hDict->STR2T(buf,prompt.size(),btch,flag);
-    int _nctx = dolphin->hparams.n_ctx();
+    int _nctx = dolphin->config.n_ctx();
     n_tokens = min(n_tokens,_nctx);         assert(n_tokens>0);
 
     hTokens->tokens.insert(hTokens->tokens.begin(),btch.begin(),btch.begin()+n_tokens);
@@ -927,7 +927,7 @@ hSAMP SampLoader::InitOneSamp(const string &prompt,hGensor input, int flag){
     sentence = hDict->T2STR(hTokens->tokens);
 
     // if(input!=nullptr)
-    //     Samp2Batch(0,samp,input,nullptr,dolphin->hparams.common);  
+    //     Samp2Batch(0,samp,input,nullptr,dolphin->config.common);  
     return samp;
 }
 

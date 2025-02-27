@@ -28,7 +28,6 @@ using namespace std;
 #include "TGraph.hpp"
 #include "Scheduler.hpp"
 #include "DataLoader.hpp"
-#include "../lenda/util/GST_util.hpp"
 
 class Fish;
 
@@ -92,10 +91,10 @@ protected:
     virtual float UpdateLossCurve(int flag = 0x0);
     virtual bool AfterLoadBatch(int accum_step, int flag = 0x0);
     virtual bool OnNextShard(int flag = 0x0);
-    virtual int SignStochastic(int nx,CLI_params& hparams,int flag=0x0);
+    virtual int SignStochastic(int nx,CLI_params& config,int flag=0x0);
     virtual float gClip(int nx,floatX *g,hGensor hP,int flag=0x0);
-    virtual void UpdateParams(int nx,CLI_params& hparams,int flag);
-    // virtual void AdamMiniV(float gnorm,int nx,CLI_params& hparams,int flag);
+    virtual void UpdateParams(int nx,CLI_params& config,int flag);
+    // virtual void AdamMiniV(float gnorm,int nx,CLI_params& config,int flag);
     virtual bool BatchGrad(int iter,float&fx,int flag=0x0) {   assert(0);  return false; }
     bool OnLogits(int flag=0x0);
 public:
@@ -145,7 +144,7 @@ public:
     virtual void BeforeTrain(hGensor tokens_input,int flag) ;
     virtual void InitCUDA(int flag);
     virtual void ClearCUDA(int flag);
-    virtual bool PrepareData( CLI_params& hparams,int flag );
+    virtual bool PrepareData( CLI_params& config,int flag );
     virtual void Shuffle(int n_vocab,struct train_params_& train_params,int flag=0x0)  {
         assert(0);
     }    
@@ -160,7 +159,7 @@ public:
             delete[] _tmp;
     }
 
-    RESULT Search(struct ggml_context * ctx, hGensor loss_,hGensor target_,CLI_params& hparams);
+    RESULT Search(struct ggml_context * ctx, hGensor loss_,hGensor target_,CLI_params& config);
     
     friend class Fish;
     friend class GeNeuron;
@@ -184,7 +183,7 @@ protected:
     // compute grad on batchs
     bool BatchGrad(int iter,float&fx,int flag=0x0) override;
     virtual double UpdateTensorParam(hGensor hP,size_t offset,floatX *g,float gnorm);
-    void UpdateParams(int nx,CLI_params& hparams,int flag)  override;
+    void UpdateParams(int nx,CLI_params& config,int flag)  override;
 public:
     OPT_Adam(NLP_AutoRegressive *g_,CLI_params& params_,int flag=0x0);
     void Dump(int typ)  override;

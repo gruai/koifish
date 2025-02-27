@@ -1,5 +1,5 @@
 # TODO: there have been some issues with the workflow, so disabling for now
-#       https://github.com/ggerganov/llama.cpp/issues/7893
+#       https://github.com/ggml-org/llama.cpp/issues/7893
 #
 # Benchmark
 name: Benchmark
@@ -27,10 +27,10 @@ on:
   push:
     branches:
       - master
-    paths: ['llama.cpp', 'ggml.c', 'ggml-backend.c', 'ggml-quants.c', '**/*.cu', 'examples/server/*.h*', 'examples/server/*.cpp']
+    paths: ['llama.cpp', 'ggml.c', 'ggml-backend.cpp', 'ggml-quants.c', '**/*.cu', 'examples/server/*.h*', 'examples/server/*.cpp']
   pull_request_target:
     types: [opened, synchronize, reopened]
-    paths: ['llama.cpp', 'ggml.c', 'ggml-backend.c', 'ggml-quants.c', '**/*.cu', 'examples/server/*.h*', 'examples/server/*.cpp']
+    paths: ['llama.cpp', 'ggml.c', 'ggml-backend.cpp', 'ggml-quants.c', '**/*.cu', 'examples/server/*.h*', 'examples/server/*.cpp']
   schedule:
     -  cron: '04 2 * * *'
 
@@ -57,17 +57,7 @@ jobs:
 
     if: |
       inputs.gpu-series == 'Standard_NC4as_T4_v3'
-      || (
-        github.event_name == 'schedule'
-        && github.ref_name == 'master'
-        && github.repository_owner == 'ggerganov'
-      )
       || github.event_name == 'pull_request_target'
-      || (
-        github.event_name == 'push'
-        && github.event.ref == 'refs/heads/master'
-        && github.repository_owner == 'ggerganov'
-      )
     steps:
       - name: Clone
         id: checkout

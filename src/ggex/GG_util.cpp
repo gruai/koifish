@@ -355,6 +355,7 @@ MODEL_ARCH CLI_params::ModelArch()   {
     std::transform(info.begin(), info.end(), info.begin(), ::toupper);
     arch =  info=="MOE" ? NLP_MOE :
             info=="MAMBA" ? MODEL_ARCH::NLP_MAMBA : 
+            info=="DEEPSEEK" ? MODEL_ARCH::NLP_DEEPSEEK : 
             info=="GPT2" ? MODEL_ARCH::NLP_GPT2 :
             info=="GPT2CHAR" ? MODEL_ARCH::NLP_GPT2_char :
             info=="LAMA" ? MODEL_ARCH::NLP_LLAMA :
@@ -433,10 +434,9 @@ void CLI_params::OnArch( ){
                 layerps.push_back(lay);
             }
         }
-        // assert(layers.size()==12);
-        // n_embd_gqa = 768;
-        
-        tpWiki = "";
+
+        // n_embd_gqa = 768;        
+
         int group=Get({"model_v0","target_group"},1);
         assert(group==1);
     }
@@ -537,8 +537,9 @@ try{
     std::ifstream jfile(jPath);
     std::string info;
 
+    
     if(jfile.fail()){
-        _INFO("\r\n[%s] Failed to open %s !!!\n",__func__,jPath.c_str());
+        _INFO("\r\n[%s] Failed to open \"%s\" !!!\n",__func__,jPath.c_str());
         return false;
     }
     jfile>>jConfig;
@@ -1049,6 +1050,7 @@ struct ggml_tensor * ggml_cross_entropy_loss_1(
 
     return result;
 #endif
+    return nullptr;
 }
 
 void _T_repr_(hGensor t,const char*tab,char *buf,const GENSOR_INFO&info){
@@ -1230,7 +1232,8 @@ static void ggml_compute_forward_scale_q(
 hGensor GradOf(struct ggml_cgraph *cgraph,hGensor node,int flag){
 #ifdef GG_V12
     assert(cgraph->grads);
-    const size_t igrad = ggml_hash_find(&cgraph->visited_hash_set, node);
+    assert(0);          return nullptr;
+    /*const size_t igrad = ggml_hash_find(&cgraph->visited_hash_set, node);
     if(igrad == GGML_HASHSET_FULL){
         assert(0);      return nullptr;
     }
@@ -1238,7 +1241,7 @@ hGensor GradOf(struct ggml_cgraph *cgraph,hGensor node,int flag){
     if( ggml_bitset_get(cgraph->visited_hash_set.used, igrad) && cgraph->grads )
         return cgraph->grads[igrad];
     else
-        return nullptr;
+        return nullptr;*/
 #elif defined _TENSOR_CUD_
     assert(0);
     return nullptr;
@@ -1454,4 +1457,9 @@ void ADAM_params_::Dump(int typ){
 
 void MOEL_params_::Dump(int typ){
 
+}
+
+ggml_cgraph * GG_dup_graph(ggml_context * ctx, ggml_cgraph *src){
+    assert(0);
+    return nullptr;
 }

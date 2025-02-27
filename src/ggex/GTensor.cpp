@@ -53,12 +53,18 @@ GTensor::GTensor(SHAPE shape_,tpDATA tpD_,bool isX,int flag) : shape(shape_),typ
    szData = size()*nB;   
 }
 
+float GTensor::Get(int i,int flag)  const    {   
+   assert(0);     return 0.f;
+   // return ggml_get_f32_1d(gg, i); 
+}
 /*
    Only for gguf-serialize
 */
 struct ggml_tensor* GTensor::GG( ) {   
    if(gg==nullptr){
       gg = new ggml_tensor();
+#ifdef GG_V12
+#else
       *gg = (struct ggml_tensor) {     // @ggml_new_tensor_impl
          /*.type         =*/ type,
          /*.backend      =*/ GGML_BACKEND_TYPE_CPU,
@@ -77,6 +83,7 @@ struct ggml_tensor* GTensor::GG( ) {
          /*.extra        =*/ NULL,
          ///*.padding      =*/ { 0 },
       };
+#endif
       gg->data = new char[szData];
       memcpy(gg->name,name,sizeof(char)*GGML_MAX_NAME);
    }

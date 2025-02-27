@@ -72,7 +72,7 @@ protected:
     
     int eval_every=-1;
     int tokens_per_iter = 0;
-    // CLI_params hparams;
+    // CLI_params config;
     std::string fp_data;
     std::string sentence="";
     std::vector<TOKEN_ID> samp_toks;

@@ -15,7 +15,7 @@ LLM_MAMBA::LLM_MAMBA( const std::string& nam_,struct CLI_params params,ROLE_TYPE
     assert(arch==MODEL_ARCH::NLP_MAMBA);
     bool worst_case = true;
     // isLoadTokenEmbed = true;
-    // hparams.common.adam.alpha = 0.0001;     // 
+    // config.common.adam.alpha = 0.0001;     // 
 }
 
 
@@ -70,16 +70,16 @@ int DTS_GPT2::STR2T(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>&
 }*/
 
 CDict_GPT2::CDict_GPT2(NLP_AutoRegressive *nlp_,int flag)   : ConsiceDict(nlp_,flag)   {
-    int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd;
+    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.n_embd;
     // n_vocab=50257;    
 }
 
 CDict_CHAR::CDict_CHAR(NLP_AutoRegressive *nlp_,int flag)   : ConsiceDict(nlp_,flag)   {
-    int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd;
+    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.n_embd;
     n_vocab=256;    
 }
 int CDict_CHAR::InitMAEC(struct ggml_context *ctx_build,const std::vector<int>& dims_,int flag)  {
-    int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd;
+    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.n_embd;
 
     assert(gensors.size()==0);
     return 0x0;     
@@ -103,7 +103,7 @@ std::string CDict_CHAR::T2STR(TOKEN_ID tok,int flag ) {
 };   
 
 int CDict_GPT2::InitMAEC(struct ggml_context *ctx_build,const std::vector<int>& dims_,int flag)  {
-    int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd;
+    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.n_embd;
 
     // tok_embeddings = dolphin->AddTensor(ctx_build,_NAM_("token_embd.weight"),GGML_TYPE_F32,{n_embd, n_vocab},true,0x0);  
     // _norm.BuildX("output_norm", {n_embd},dolphin,0x0);
@@ -131,7 +131,7 @@ static void cb(hGensor  cur, const char * name, int il)    {
 
     // norm may be automatically assigned to the backend of the previous layer, increasing data transfer between backends
     // FIXME: fix in ggml_backend_sched
-    const bool full_offload = false;    //lctx.n_gpu_layers > (int)lctx.hparams.n_layer;
+    const bool full_offload = false;    //lctx.n_gpu_layers > (int)lctx.config.n_layer;
     if(full_offload) { //batch.n_tokens < 32 ||
         if (il != -1 && strcmp(name, "norm") == 0) {
             /*for (auto * backend : lctx.backends) {
@@ -146,11 +146,11 @@ static void cb(hGensor  cur, const char * name, int il)    {
 };
 int GPT2::cRawGraph( struct ggml_context *ctx_build,bool isBuild,int flag)   {
     bool isOnlinePush = true;      // push nodes last or online(QKV)    
-    const int n_embd_head = hparams.n_embd_head_v,n_embd_gqa  = hparams.n_embd_v_gqa();
-    assert(n_embd_head == hparams.n_embd_head_k);    
-    int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd,n_vocab=hDict->n_vocab;
-    int n_tokens=n_ctx*n_batch,n_head,n_embd_head_v=hparams.n_embd_head_v,n_ff;
-    const uint32_t n_layer = hparams.nLayer();
+    const int n_embd_head = config.n_embd_head_v,n_embd_gqa  = config.n_embd_v_gqa();
+    assert(n_embd_head == config.n_embd_head_k);    
+    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.n_embd,n_vocab=hDict->n_vocab;
+    int n_tokens=n_ctx*n_batch,n_head,n_embd_head_v=config.n_embd_head_v,n_ff;
+    const uint32_t n_layer = config.nLayer();
     for(int i=0;i<n_layer;i++){
         auto  layer = std::make_shared<QKV_LAY>(this,i);
         layer->isLast = i==n_layer-1;
@@ -164,7 +164,7 @@ int GPT2::cRawGraph( struct ggml_context *ctx_build,bool isBuild,int flag)   {
     _output.BuildX("output", {n_embd, n_vocab},this,0x0); 
     
     pos_embd = AddTensor(ctx_build,_NAM_("position_embed.weight"),GGML_TYPE_F32,{n_embd, n_ctx},true,0x0); //ml.create_tensor(ctx_input, tn(LLM_TENSOR_POS_EMBD,   "weight"), {n_embd, n_ctx_train});
-    //llm_build_inp_embd(ctx_build, lctx, hparams, batch, tok_embd, cb);
+    //llm_build_inp_embd(ctx_build, lctx, config, batch, tok_embd, cb);
   
     hGensor  inpL = ggml_get_rows(ctx_build, tok_embeddings, in_node);    gTN(inpL, "inp_embd");    
      
@@ -180,10 +180,10 @@ int GPT2::cRawGraph( struct ggml_context *ctx_build,bool isBuild,int flag)   {
     auto gf = GetForwRaw();
     // layers.clear();     cur = inpL;        xn=cur;      xxn=cur->grad;   //only for debug
     for (int il = 0; il < layers.size(); ++il) {  
-        n_head=hparams.n_head(il);          assert(n_embd_head*n_head==n_embd);
-        n_ff=hparams.n_ff(il);
+        n_head=config.n_head(il);          assert(n_embd_head*n_head==n_embd);
+        n_ff=config.n_ff(il);
         // sprintf(nam_,"block.%d.attn_norm",il);
-        //  llm_build_norm(ctx_build, inpL, hparams,layers[il].attn_norm,layers[il].attn_norm_b,LLM_NORM, cb, il);
+        //  llm_build_norm(ctx_build, inpL, config,layers[il].attn_norm,layers[il].attn_norm_b,LLM_NORM, cb, il);
         auto layer = dynamic_pointer_cast<QKV_LAY>(layers[il]);   
         hGensor ffn_inp = inpL;
 if(1)   {   //pass self attention module,  loss would stop at 2.48
@@ -227,7 +227,7 @@ if(1)   {   //pass self attention module,  loss would stop at 2.48
 
         hGensor  kq = ggml_mul_mat(ctx_build, k, q);        cb(kq, "kq", il);        
         if(0)      {    // nearly same     
-            kq = ggml_soft_max_ext(ctx_build, kq, KQ_mask, kq_scale, hparams.f_max_alibi_bias);       //would 
+            kq = ggml_soft_max_ext(ctx_build, kq, KQ_mask, kq_scale, config.f_max_alibi_bias);       //would 
         }else{
             hGensor  t16_1 = tSCAL        (ctx_build, kq, kq_scale);   
             hGensor  t16_2 = ggml_diag_mask_inf_inplace(ctx_build, t16_1, 0);     
@@ -294,8 +294,8 @@ if(1)   {   //pass self attention module            loss would stop at 2.4
 #endif
 
 struct ggml_cgraph *GPT2::BuildRawGraph( struct ggml_context *ctx_build,bool isBuild,int flag)   { 
-    int n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_ctx_train=hparams.n_ctx_train,n_embd=hparams.n_embd,n_vocab=hDict->n_vocab;
-    bool isJModel = !hparams.jModel.empty();
+    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.n_embd,n_vocab=hDict->n_vocab;
+    bool isJModel = !config.jModel.empty();
     hForwTG = std::make_shared<TGraph>(this,isJModel?"gptJ":"gpt_raw",ctx_build,true);
     auto gf = nullptr;  //GetForwRaw();    
     // ctx = ctx_build;
@@ -310,7 +310,7 @@ struct ggml_cgraph *GPT2::BuildRawGraph( struct ggml_context *ctx_build,bool isB
 
 #ifndef _TENSOR_CUD_
     if(rnd==nullptr)
-        rnd = init_random_normal_distribution(hparams.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
+        rnd = init_random_normal_distribution(config.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
     size_t sz2 = hEDS->Alloc(hForwTG, ctx_build);
 #endif
     return gf;

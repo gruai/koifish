@@ -8,6 +8,7 @@
 #pragma once
 #include "../../ggex/GG_util.hpp"
 #include "ggml-backend.h"
+#include "ggml-cpu.h"
 class TGraph;
 typedef shared_ptr<TGraph> hTGraph;
 

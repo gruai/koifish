@@ -133,12 +133,12 @@ Koifish would save each step info to three csv files:
 * Eval@[HellaSwag]_info_.csv
 
 ### Results of GPT2-124M 
-[Json config file](./gpt2/gpt_124M.json). Model parameters:
+[Json config file](./gpt2/gpt2_124M.json). Model parameters:
     The loss curve is as follows:
 ![Training curves & results](./gpt2_124M_losscurve.png).
 
    
 ### Results of GPT2-774M 
-[Json config file](./gpt2/gpt_774M.json).Model parameters:
+[Json config file](./gpt2/gpt2_774M.json).Model parameters:
 The loss curve is as follows:
 ![Training curves & results](./gpt2_774M_losscurve.png).

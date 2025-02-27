@@ -77,10 +77,10 @@ try{
 }
 void GeNeuron::Init(Fish *hG_, int flag) {    
     hFish=hG_;   
-    auto& hparams = hG_->hparams; 
-    n_batch=hparams.n_batch(),n_ctx=hparams.n_ctx(),n_embd=hparams.n_embd;
-    n_embd_head = hparams.n_embd_head();
-    n_head=hparams.n_head();
+    auto& config = hG_->config; 
+    n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_embd=config.n_embd;
+    n_embd_head = config.n_embd_head();
+    n_head=config.n_head();
     assert(n_embd_head*n_head==n_embd);
 }
 string GeNeuron::_repr_1( string& suffix,string& prefix,string info,int flag)    {
@@ -135,7 +135,7 @@ bool Embed::Build(int flag){
     struct ggml_context * ctx = hFish->GetGGCTX(1);
     int n=shape[0],latent=shape[1];
     if(n<=0){
-        n = hFish->hparams.n_ctx();
+        n = hFish->config.n_ctx();
     }
 
     assert(n>0 && latent>0);
@@ -152,7 +152,7 @@ bool Embed::Build(int flag){
 #endif    
     hFish->InitGensor(ctx,sw.c_str(),w,isTrain);
     if(isAddPos){
-        n = hFish->hparams.n_ctx();
+        n = hFish->config.n_ctx();
         b = TENSO(ctx, tpData, {latent, n});
         hFish->InitGensor(ctx,sb.c_str(),b,isTrain);
     }
@@ -203,10 +203,10 @@ FFN::FFN(Fish* hG_,const std::string&key_,JSON::const_iterator jit,int flag) : G
     if(jvals.size()>=2){
         shape={(int)(jvals[0]),(int)(jvals[1])};
     }else{
-        int n_ff = hFish->hparams.n_ff();
+        int n_ff = hFish->config.n_ff();
         shape = {n_embd,n_ff};
     }
-    remater_ffn = hFish->hparams.common.remater_ffn;       //false;
+    remater_ffn = hFish->config.common.remater_ffn;       //false;
     assert(shape[0]>0 && shape[1]>0);
     // up.Init(hG_,flag);       down.Init(hG_,flag);       relu.Init(hG_,flag); 
 }
@@ -240,7 +240,7 @@ bool FFN::Build(int flag_0)   {
         }
     }
            
-    up.w->residual_scale = hFish->hparams.common.residual_scale;
+    up.w->residual_scale = hFish->config.common.residual_scale;
     BIT_SET(down.out->flags,GTensor::F_NOALLOC);
 #endif
     return true;
@@ -353,18 +353,18 @@ string MOE::__repr__( string& suffix,string& prefix,int flag)    {
 };
 
 OutCLS::OutCLS(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : GeNeuron(key_,jit, hG_, flag){
-    int nEmbd=hFish->hparams.n_embd;
+    int nEmbd=hFish->config.n_embd;
     // _target = hFish->Target();   //null now
     nCls=hFish->nClass();
     padded_nCls = ceil(nCls/128.0)*128;
     //reduce memory & some float error
-    dB = hFish->hparams.modep.preLogits_dB; //GTensor::B 1 GTensor::B/2;
+    dB = hFish->config.modep.preLogits_dB; //GTensor::B 1 GTensor::B/2;
     assert(GTensor::B%dB==0);
     // isSymProj = false;           //much slower convergence!!!
 #ifdef _TENSOR_CUD_
     shape={nEmbd,padded_nCls};
     rLoss = 1.0f / (GTensor::B * GTensor::T );  //* grad_accum_steps 
-    rLoss /= hG_->hparams.nGradAccumulate();
+    rLoss /= hG_->config.nGradAccumulate();
 #else
     shape={nEmbd,nCls};
 #endif
@@ -398,7 +398,7 @@ hGensor OutCLS::Interact(struct ggml_context * ctx_,hGensor inpL,int flag)    {
     if(inpL==nullptr){   //symbolic analysis
         return GeNeuron::Interact(ctx_,nullptr,flag);
     }
-    int n_batch=hFish->hparams.n_batch(),n_ctx=hFish->hparams.n_ctx();
+    int n_batch=hFish->config.n_batch(),n_ctx=hFish->config.n_ctx();
     hGensor cur = nullptr;
 #ifdef _TENSOR_CUD_
     if(hFish->isSymbolic()){ 
@@ -559,20 +559,20 @@ hGensor SLP::Interact(struct ggml_context * ctx0,hGensor cur,int flag)    {
 ROPE::ROPE(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag)    : GeNeuron(key_,jit, hG_, flag) {
     assert(jvals.size()>=1 && jvals[0]>0);
     shape={(int)(jvals[0])};
-    /*auto& hparams = hG_->hparams;
-    n_rot = hparams.n_rot;
-    rope_freq_base  = hparams.rope_freq_base;
-    rope_freq_scale = hparams.rope_freq_scale;  
+    /*auto& config = hG_->config;
+    n_rot = config.n_rot;
+    rope_freq_base  = config.rope_freq_base;
+    rope_freq_scale = config.rope_freq_scale;  
     KQ_pos = hFish->KQ_pos;*/
 }
 /*
     https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html#torch.nn.LayerNorm
 */
 bool ROPE::Build(int flag)    {
-    auto& hparams = hFish->hparams;
-    n_rot = hparams.n_rot;
-    rope_freq_base  = hparams.rope_freq_base;
-    rope_freq_scale = hparams.rope_freq_scale;  
+    auto& config = hFish->config;
+    n_rot = config.n_rot;
+    rope_freq_base  = config.rope_freq_base;
+    rope_freq_scale = config.rope_freq_scale;  
     KQ_pos = hFish->KQ_pos;    
     shape = {n_embd_head, n_head, n_ctx, n_batch};
     return true;
@@ -671,7 +671,7 @@ hGensor LayerNormal::Interact(struct ggml_context * ctx0,hGensor cur,int flag)  
         return GeNeuron::Interact(ctx0,cur,flag);
     } 
 
-    float f_norm_eps = hFish->hparams.f_norm_eps;
+    float f_norm_eps = hFish->config.f_norm_eps;
     assert(cur!=nullptr);
     // TODO: implement ggml_norm backward
     // cur = ggml_norm(ctx0, cur, f_norm_eps);  

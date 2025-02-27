@@ -626,13 +626,13 @@ struct LAMA : public WIKI   {
     {   return lmodel!=nullptr && _ctx!=nullptr;   }
     int STR2T(const std::string&info,std::vector<TOKEN_ID>&toks,int flag=0x0 )  override    {   
         assert(lmodel!=nullptr);
-        add_bos = llama_add_bos_token(lmodel);
+        add_bos = llama_add_bos_token(&(lmodel->vocab));
         // LOG("add_bos: %d\n", add_bos);
         // toks = ::llama_tokenize(_ctx, info, add_bos, true);
         int nMaxToks=info.length()+1;
         std::vector<llama_token> toks32;
         toks32.clear();       toks32.resize(nMaxToks);        
-        int n_tokens = llama_tokenize(lmodel, info.c_str(),info.length(),toks32.data(),(int)toks32.size(), add_bos, false);
+        int n_tokens = llama_tokenize(&(lmodel->vocab), info.c_str(),info.length(),toks32.data(),(int)toks32.size(), add_bos, false);
         assert(n_tokens<=nMaxToks);
         toks32.resize(n_tokens);
         toks.clear();   toks.insert(toks.begin(),toks32.begin(),toks32.end());
@@ -649,8 +649,9 @@ struct LAMA : public WIKI   {
         char buf[5012]="\0";
         const char*tab=prefix.c_str();
         struct llama_vocab *hvocab = (struct llama_vocab *)(vocab);
+        string charsmap=""; //hvocab->precompiled_charsmap
         sprintf(buf+strlen(buf),"%s(%s)\t%s\tcharsmap=%sn_vocab=%ld",tab,tokenizer_name.c_str(),title.c_str(),
-            hvocab->precompiled_charsmap.data(), n_vocab);
+            charsmap.data(), n_vocab);
         
         sprintf(buf+strlen(buf),"%s",suffix.c_str()); 
         // _INFO("%s",buf); 
@@ -835,7 +836,8 @@ LAMA::LAMA(CLI_params& hparams,const std::string&path_,int flag)     {
         _INFO("\n%s: FAILED @'%s' !!! \n", __func__, fn_model);
     }  else{     
         bool bRet = llama_get_params(lmodel,llama_params);
-        n_vocab = llama_n_vocab(lmodel);
+        const struct llama_vocab * vocab = &(lmodel->vocab);
+        n_vocab = llama_n_vocab(vocab);
         // true or false?   If use logits distillation, must set it True!
         cparams.logits_all = true;
     
@@ -845,13 +847,13 @@ LAMA::LAMA(CLI_params& hparams,const std::string&path_,int flag)     {
         _cache = nullptr;   //llama_internal_get_kvcache(_ctx );
         // const auto & cp_ = _ctx->cparams;
 
-        bos = llama_token_bos(llama_get_model(_ctx));       //  1
-        eos = llama_token_eos(llama_get_model(_ctx));       //  2
+        bos = llama_token_bos(vocab);       //  1   llama_get_model((_ctx)
+        eos = llama_token_eos(vocab);       //  2    llama_get_model(_ctx)
         // sBos = llama_token_to_piece(_ctx, bos),sEos = llama_token_to_piece(_ctx, eos);  //<s>   </s>
         struct llama_vocab *hvocab = new struct llama_vocab();
         if(llama_model2vocb_(lmodel,hvocab,0x0))    {
             vocab = hvocab;
-            switch(hvocab->type){
+            switch(hvocab->get_type()){
             case LLAMA_VOCAB_TYPE_RWKV:
                 tokenizer_name = "rwkv";    break;
             case LLAMA_VOCAB_TYPE_UGM:
@@ -926,7 +928,7 @@ void LAMA::Reset(int flag)    {
 std::string LAMA::T2STR( int32_t tok,int flag )                    {   
     assert(lmodel!=nullptr);
     char buf[256];
-    int n = llama_token_to_piece(lmodel, tok, buf, sizeof(buf), 0, true);
+    int n = llama_token_to_piece(&(lmodel->vocab), tok, buf, sizeof(buf), 0, true);
     if (n < 0) {
         printf("%s T2STR failed@%d\n",__func__,tok);
         return "";

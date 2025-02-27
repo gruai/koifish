@@ -45,7 +45,7 @@ int main(int argc, char ** argv) {
         vector<hWIKI> wikis = WIKI::MakeInstance("",params,0x0);      
         if(wikis.size()==0){
             // _INFO("====== NO WIKI !!! ======\n");       return;
-        }else{
+        }else if(params.wiki_actor=="copy" ){
             wikis[0]->CopyParams(params);      
         }   
         fish = Fish::MakeInstance("Fish_",params,wikis,Fish::ROLE_TYPE::COMMON,0x0);    

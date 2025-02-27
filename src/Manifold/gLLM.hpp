@@ -139,14 +139,14 @@ struct NLP_AutoRegressive : public Fish {
     virtual hGensor build_gate(struct ggml_context * ctx,hGensor cur,hGensor cur_logits, int flag );
 
     size_t MostMemSize(int flag)  override  {
-        //mem_size = 2*LLAMA_TRAIN_MAX_NODES*ggml_tensor_overhead() +(hparams.common.use_checkpointing ? 3 : 2)*(GGML_OBJECT_SIZE+ggml_graph_overhead_custom(LLAMA_TRAIN_MAX_NODES, true));
-        int n_layer = hparams.nLayer();
+        //mem_size = 2*LLAMA_TRAIN_MAX_NODES*ggml_tensor_overhead() +(config.common.use_checkpointing ? 3 : 2)*(GGML_OBJECT_SIZE+ggml_graph_overhead_custom(LLAMA_TRAIN_MAX_NODES, true));
+        int n_layer = config.nLayer();
         int nHead = hDict!=nullptr ? hDict->nLevel*3+2+6 : 6; 
         int nMost = LLAMA_TRAIN_MAX_NODES;      //  16384
         assert(nHead*2 + n_layer*18<nMost);
         size_t sz = ggml_tensor_overhead()*2*nMost;
         size_t overhead = GGML_OBJECT_MAX_SIZE+ggml_graph_overhead_custom(LLAMA_TRAIN_MAX_NODES, true);
-        sz += (hparams.common.use_checkpointing ? 3 : 2)*overhead;
+        sz += (config.common.use_checkpointing ? 3 : 2)*overhead;
         return sz;
     }    
 
@@ -168,8 +168,8 @@ struct NLP_AutoRegressive : public Fish {
 
     // virtual hBrownMotion CreateBrownMotion(hGensor wq, hGensor wk, hGensor wv,const std::shared_ptr<QKV_LAY>& layer)  {
     //     hBrownMotion hMotion =  (tpATT==ATTENTION_TYPE::QKV) ? 
-    //         std::make_shared<QKV_Motion> (this,wq,wk,wv,KQ_mask,hparams,layer,0x0) :
-    //         std::make_shared<BROWN_Motion> (this,wq,wv,hparams,layer,0x0);
+    //         std::make_shared<QKV_Motion> (this,wq,wk,wv,KQ_mask,config,layer,0x0) :
+    //         std::make_shared<BROWN_Motion> (this,wq,wv,config,layer,0x0);
     //     return hMotion;
     // }
     // build KQ_pos & KQ_mask
@@ -183,12 +183,12 @@ struct NLP_AutoRegressive : public Fish {
         // gf = ggml_new_graph_custom(ctx_build, LLAMA_TRAIN_MAX_NODES, true);    
         hForwTG = std::make_shared<TGraph>(this,"Forward",ctx_build,true);         
 
-        auto train_params = hparams.common;     
+        auto train_params = config.common;     
         int n_batch  = train_params.n_batch;
         measure_only = m_only;
         // ggml_set_scratch(ctx, { 0, 0, nullptr, });      
-        const int n_ctx = train_params.n_ctx,n_embd = hparams.n_embd,n_layer = hparams.nLayer(),
-            n_head = hparams.n_head(),n_rot = hparams.n_rot,n_ff = hparams.n_ff(),n_past=0;
+        const int n_ctx = train_params.n_ctx,n_embd = config.n_embd,n_layer = config.nLayer(),
+            n_head = config.n_head(),n_rot = config.n_rot,n_ff = config.n_ff(),n_past=0;
  
     // build_inp_KQ_(ctx,true);      
 
@@ -235,7 +235,7 @@ struct LLAMA_VAE  : public NLP_AutoRegressive {
     LLAMA_VAE( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag=0x0) 
         : NLP_AutoRegressive(nam_,params,role,flag)  {
         isLoadTokenEmbed = true;
-        // hparams.common.adam.alpha = 0.0001;     // 
+        // config.common.adam.alpha = 0.0001;     // 
     }
 
     virtual ~LLAMA_VAE() {        
@@ -291,11 +291,31 @@ public:
     void InitModel(int flag=0x0)    override    {
         _INFO("GPT2_model::%s: init model\n", __func__);
 
-        // NLP_AutoRegressive::InitModel(flag);         
+        NLP_AutoRegressive::InitModel(flag);         
     }     
     
     struct ggml_cgraph *BuildRawGraph( struct ggml_context *,bool isBuild,int flag=0x0)   override;
     void InitGensors(int flag=0x0) override    {;}
+
+    // hGensor BuildTarget(struct ggml_context * ctx,hGensor cur,int flag=0x0) override; 
+    string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
+};
+
+class DeepSeek : public NLP_AutoRegressive {
+protected:    
+    virtual void _forward_cpu(int token, int pos, int flag=0x0);
+
+public:
+    DeepSeek( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag=0x0);
+
+    virtual ~DeepSeek() {          
+    }  
+
+    void InitModel(int flag=0x0)    override    {
+        _INFO("DeepSeek::%s: init model\n", __func__);
+
+        NLP_AutoRegressive::InitModel(flag);         
+    }     
 
     // hGensor BuildTarget(struct ggml_context * ctx,hGensor cur,int flag=0x0) override; 
     string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
@@ -319,7 +339,7 @@ struct LLM_MOE : public NLP_AutoRegressive {
     void InitModel(int flag=0x0)    override    {
         _INFO("LLM_MOE::%s: init model\n", __func__);
        
-        n_expert = hparams.n_expert,n_expert_used = hparams.n_expert_used;
+        n_expert = config.n_expert,n_expert_used = config.n_expert_used;
         assert( n_expert_used <= n_expert && n_expert <= 160 );      //160:    DeepSeekV2
 
         NLP_AutoRegressive::InitModel(flag);        

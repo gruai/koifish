@@ -20,6 +20,9 @@ hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,vector
     case MODEL_ARCH::NLP_MAMBA:
         fish = std::make_shared<LLM_MAMBA>(nam_+"_mamba",params,role_);
         break;
+    case MODEL_ARCH::NLP_DEEPSEEK:
+        fish = std::make_shared<DeepSeek>(nam_+"_DS",params,role_);
+        break;
     case MODEL_ARCH::NLP_GPT2:
     case MODEL_ARCH::NLP_GPT2_char:
         fish = std::make_shared<GPT2>(nam_+"_GPT2",params,role_);
@@ -64,11 +67,11 @@ hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,vector
     return fish;
 }
 
-Fish::Fish(const std::string&nam_,struct CLI_params params,ROLE_TYPE role_,int flag) : name(nam_),hparams(params),role(role_) {
+Fish::Fish(const std::string&nam_,struct CLI_params params,ROLE_TYPE role_,int flag) : name(nam_),config(params),role(role_) {
     arch = params.ModelArch();
     
-    string w = hparams.KV({"model","parameter","debug_init_weight"});    // hack parameter only for debug
-    bool isLoad = !hparams.save.checkpoint_in.empty();
+    string w = config.KV({"model","parameter","debug_init_weight"});    // hack parameter only for debug
+    bool isLoad = !config.save.checkpoint_in.empty();
     if(role==SWARM_FOLLOWER){
         tpInitWeight = INIT_WEIGHT::COPY_SWARM_HEAD;
     }else{
@@ -141,7 +144,7 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
     int64_t nx=0, n0=0,nInput=0,i;
     if(isInitParam) {
         assert(rnd!=nullptr);
-        // rnd = init_random_normal_distribution(hparams.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
+        // rnd = init_random_normal_distribution(config.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
     }
     printf("\n\n");
     assert(optParams.size()==0);
@@ -186,12 +189,12 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
     bool bRet = false;
     switch (tpInitWeight)    {
     case SERIALIZE:
-        isLoadCheckpoint = GGUF_Serialize(hparams.save.checkpoint_in,false,0x0);
+        isLoadCheckpoint = GGUF_Serialize(config.save.checkpoint_in,false,0x0);
         bRet = isLoadCheckpoint;
         break;
     case COPY_WIKI:
         assert(0);  //  Deprecated
-        assert(hparams.is({"wiki","actor"},"copy") && wikis.size()>0);
+        assert(config.is({"wiki","actor"},"copy") && wikis.size()>0);
         bRet = CopyGensors(wikis[0],0x0); 
         break;
     case COPY_SWARM_HEAD:
@@ -227,7 +230,7 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
         //  assert(0);
         // return false;
     }
-    if (!hparams.only_write_model && hOPT!=nullptr) {
+    if (!config.only_write_model && hOPT!=nullptr) {
         hOPT->Prepare(nParams);
     }
     hOPT->Dump(1);
@@ -248,7 +251,7 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
 #else
     // ugly code!
     int * data = (int *) KQ_pos->data;
-    for (int i = 0; i < hparams.n_ctx(); ++i) {
+    for (int i = 0; i < config.n_ctx(); ++i) {
         data[i] = 0 + i;    //n_past=0
     }
 #endif   
@@ -278,14 +281,14 @@ void Fish::ClearGraph(int flag) {
     return;
 }
 bool Fish::UpdateNCTX(int _nctx,int flag){
-    int ctx0 = hparams.n_ctx();
+    int ctx0 = config.n_ctx();
     if(ctx0==_nctx)
         return true;
     name = "4GPT_" + std::to_string(_nctx);
     graph_update = _nctx;
     _INFO("\n\n[UpdateNCTX] %d=>%d @%s\n",ctx0,_nctx,name.c_str());
     ClearGraph();
-    hparams.SetNCTX(_nctx);
+    config.SetNCTX(_nctx);
     if(!Build())
         return false;
     
@@ -309,66 +312,28 @@ bool Fish::Build(int flag)  {
     if(!BeforeBuild())
         return false;
     int iRet = 0x0;
-    bool isInitParam = false, isJModel = !hparams.jModel.empty();
-    isSymbolicAnalysis = true;
+    bool isInitParam = false, isJModel = !config.jModel.empty();
+    isSymbolicAnalysis = true;    
+#ifdef _TENSOR_CUD_
+#else
     ggml_backend_sched_reset(hEDS->GetSched());
-//#ifndef _TENSOR_CUD_
-    if(hparams.is({"gpt","c_graph"},string("raw")) || hparams.ModelArch()==MODEL_ARCH::NLP_GPT2 
-        || hparams.ModelArch()==MODEL_ARCH::NLP_GPT2_char){  //only for debug
+#endif
+    if(config.is({"gpt","c_graph"},string("raw")) || config.ModelArch()==MODEL_ARCH::NLP_GPT2 
+        || config.ModelArch()==MODEL_ARCH::NLP_GPT2_char){  //only for debug
         isInitParam = true;
         // int iRet = _llama_build_graph(GetRawModel(),&gf,&gb,0x0);          //bug
         iRet = BuildGraphFromRaw(0x0);
     }else
-//#endif
+
     {
         InitInput(ctx_build,true,flag); 
-        if(isJModel){
-            isInitParam = true;
-            hForwTG = std::make_shared<TGraph>(this,"J_model",ctx_build,true);
-            jToGraph(ctx_build,false,flag);
-            assert(preLogits!=nullptr);            
-            BuildLoss(ctx_build,preLogits);
-            iRet = BuildComputeGraph(0,ctx_build,0x0);
-        }else{  //Deprecated!!!
-            enum ggml_cgraph_eval_order best_order = GGML_CGRAPH_EVAL_ORDER_COUNT;  //GGML_CGRAPH_EVAL_ORDER_RIGHT_TO_LEFT;  //GGML_CGRAPH_EVAL_ORDER_COUNT;
-            if(role==SWARM_FOLLOWER){
-                BuildOperators(ctx_build,NULL,false,flag);   
-            }else{
-                size_t best_compute_size = SIZE_MAX;        
-                graph_order = GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT;     //only for debug
-                if(graph_order==-1)   {// find best evaluation order
-                    for (unsigned order = 0; order < (unsigned) GGML_CGRAPH_EVAL_ORDER_COUNT; ++order) {
-                        // ctx_build = ggml_init(ctx_compute_params);
-                        ggml_gallocr_t alloc_tmp = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
-                        BuildOperators(ctx_build,alloc_tmp,true,flag);
-                        BuildComputeGraph(order,ctx_build,flag);       
-                        size_t max_compute_size = ggml_gallocr_get_buffer_size(alloc_tmp, 0); // FIXME: this will still allocate the buffer
-                        if (max_compute_size < best_compute_size) {
-                            best_compute_size = max_compute_size;
-                            best_order = hForwTG->Order();
-                        }
-                        ggml_gallocr_free(alloc_tmp);           //gf = nullptr;
-                        // ggml_free(ctx_build);
-                    }
-                
-                    size_t max_compute_size = best_compute_size;
-                    _INFO("%s: compute_size = %zu bytes (%.1f MB)\n", __func__, max_compute_size, (float) max_compute_size / (1024.0f*1024.0f));
-                    _INFO("%s: evaluation order = %s\n", __func__,
-                        (best_order == GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT) ? "LEFT_TO_RIGHT" :
-                        (best_order == GGML_CGRAPH_EVAL_ORDER_RIGHT_TO_LEFT) ? "RIGHT_TO_LEFT" :
-                        "invalid");
-                    graph_order = best_order;
-                }else{
-                    assert(GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT<=graph_order && graph_order<=GGML_CGRAPH_EVAL_ORDER_COUNT);
-                    best_order = (enum ggml_cgraph_eval_order)(graph_order);
-                } 
-
-                // alloc = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
-                BuildOperators(ctx_build,NULL,false,flag);   
-                if( BuildComputeGraph(best_order,ctx_build,flag)!=0x0)
-                    return false;
-            }
-        }
+        assert(isJModel);
+        isInitParam = true;
+        hForwTG = std::make_shared<TGraph>(this,"J_model",ctx_build,true);
+        jToGraph(ctx_build,false,flag);
+        assert(preLogits!=nullptr);            
+        BuildLoss(ctx_build,preLogits);
+        iRet = BuildComputeGraph(0,ctx_build,0x0);        
     }
     
     assert(iRet==0x0);
@@ -397,14 +362,14 @@ bool Fish::SaveTrain(string sX,int flag) {
     int64_t iter = hOPT->iter;  //     train->opt->iter;
     // _INFO("%s: iter_%ld\n", __func__, iter);
     string sit = "IT",sOut;
-    string sBaseName = hparams.save.model_out;  //get_train_filename(.c_str(),sit.c_str(), "", -1  );
-    if (!hparams.save.checkpoint_out.empty()) {
-        sOut = hparams.save.checkpoint_out+std::to_string(iter)+sX+".gguf";
+    string sBaseName = config.save.model_out;  //get_train_filename(.c_str(),sit.c_str(), "", -1  );
+    if (!config.save.checkpoint_out.empty()) {
+        sOut = config.save.checkpoint_out+std::to_string(iter)+sX+".gguf";
         GGUF_Serialize(sOut,true,0x0);
         // GGUF_Serialize(sOut,false,0x0); //only for debug
     }
     
-    if (!hparams.save.model_out.empty()) {
+    if (!config.save.model_out.empty()) {
         // save_llama_model_file(get_train_filename(data->fn_model_out, data->pattern_fn_it, data->fn_latest, iter).c_str(), data->fn_model_base, data->model);
         vendor = "gruai";                 //llm_arch_from_string
     }
@@ -415,6 +380,8 @@ bool Fish::SaveTrain(string sX,int flag) {
     
     return true;
 }
+
+#include "gguf.h"
 /*
     1.  gguf_get_tensor_offset
 */
@@ -533,8 +500,8 @@ bool Fish::LoadTrain(int flag) {
     int64_t iter = hOPT->iter;  //     train->opt->iter;
     _INFO("%s: ......", __func__);
 
-    auto fpCheck = hparams.save.checkpoint_in;
-    bool isCopy = hparams.is({"wiki","actor"},"copy") && wikis.size()>0;
+    auto fpCheck = config.save.checkpoint_in;
+    bool isCopy = config.is({"wiki","actor"},"copy") && wikis.size()>0;
     if (fpCheck.empty()){
         if(wiki_tutor!=nullptr)
             return true;
@@ -555,10 +522,10 @@ void Fish::Statistic(int typ, int flag)     {
 #else
     gf = hForwTG->raw(),gb = hBackTG==nullptr? nullptr : hBackTG->raw();
 #endif
-    if(hparams.is({"gpt","c_graph"},string("raw"))){
+    if(config.is({"gpt","c_graph"},string("raw"))){
         _INFO("raw graph\n");
     }
-    int vQKV = hparams.Get({"model_v0","attention","version"},0,false);
+    int vQKV = config.Get({"model_v0","attention","version"},0,false);
     // _INFO("QKV version=%d\n",vQKV);
     
     // ggml_graph_stat(gf);
@@ -591,7 +558,7 @@ int Fish::BuildGraphFromRaw(int flag)   {
     bool isKeep = true;
     ctx_compute_params.mem_size = MostMemSize(0x0);
     // 2*LLAMA_TRAIN_MAX_NODES*ggml_tensor_overhead() +
-    //         (hparams.common.use_checkpointing ? 3 : 2)*(GGML_OBJECT_SIZE+ggml_graph_overhead_custom(LLAMA_TRAIN_MAX_NODES, true));
+    //         (config.common.use_checkpointing ? 3 : 2)*(GGML_OBJECT_SIZE+ggml_graph_overhead_custom(LLAMA_TRAIN_MAX_NODES, true));
     ctx_build = ggml_init(ctx_compute_params);
     
     struct ggml_cgraph *gf = BuildRawGraph( ctx_build,false ),*gb=nullptr;
@@ -683,40 +650,42 @@ hGensor Fish::AddTensor(struct ggml_context *ctx,const std::string&key_,enum ggm
 
 
 */
-EDGE_DEVICES::EDGE_DEVICES(const CLI_params&hparams, int flag){
+EDGE_DEVICES::EDGE_DEVICES(const CLI_params&config, int flag){
     // hFish = hF;
     assert(back_data==nullptr);
     assert(workers.size()==0);
     const size_t dev_count = 1; //ggml_backend_dev_count();
     _INFO("%s: %zu devices\n\n",__func__, dev_count);
-    int n_ok=0,nT0=std::thread::hardware_concurrency(),nT=hparams.nThread();
-    string sTp = hparams.KV({"train","device"},"");
+    int n_ok=0,nT0=std::thread::hardware_concurrency(),nT=config.nThread();
+    string sTp = config.KV({"train","device"},"");
     ggml_backend_t backend = nullptr;
     size_t free, total; 
 #ifdef _TENSOR_CUD_
-    InitGPU(hparams,flag);
+    InitGPU(config,flag);
+    return;
 #endif
-    for (size_t i = 0; i < dev_count; ++i) {
+    for (size_t i = 0; i < dev_count; ++i) {        
+        assert(0);
 #ifdef GG_V12  
-        auto dev = ggml_backend_dev_get(i);
+        /*auto dev = ggml_backend_dev_get(i);
         devs.push_back(dev);
         ggml_backend_dev_memory(dev, &free, &total);
         printf("[EDGE_DEVICE]_%d %s:%s  memory: %zu MB (%zu MB free)\n", i, ggml_backend_dev_name(dev), ggml_backend_dev_description(dev)
             ,total / 1024 / 1024, free / 1024 / 1024);   
         
-        ggml_backend_t backend = ggml_backend_dev_init(dev, NULL);
+        ggml_backend_t backend = ggml_backend_dev_init(dev, NULL);*/
 #else
         backend = ggml_backend_cpu_init();
 #endif
         assert(backend != NULL);
-        if (ggml_backend_is_cpu(backend)) {
+        /*if (ggml_backend_is_cpu(backend)) {
             ggml_backend_cpu_set_n_threads(backend, nT);
             auto buft = ggml_backend_cpu_buffer_type();
             bufts.push_back(buft);
         } else {
             bufts.push_back(ggml_backend_get_default_buffer_type(backend));
         }
-        workers.push_back(backend);
+        workers.push_back(backend);*/
     }
     
 #ifdef GG_V12    
@@ -787,6 +756,7 @@ int EDGE_DEVICES::SetBackend(hGensor cur0,int flag)    {
     return pick;    
 }
 
+#include "ggml-impl.h"
 /*
     const int node_backend_id = tensor_backend_id(node); =1 for "norm???"
 */
@@ -812,7 +782,7 @@ bool EDGE_DEVICES::SplitSched(hTGraph hTG,int flag)  {
     for (size_t i = 0; i < workers.size(); i++) {
         ggml_backend_t backend = workers[i];
         ggml_backend_buffer_type_t buft = bufts[i];
-        size_t size = ggml_backend_sched_get_buffer_size(sched, backend);
+        size_t size = 0x0;  //ggml_backend_sched_get_buffer_size(sched, backend);
         if (size > 1) {
             _INFO("%s: %10s compute buffer size = %8.2f MiB\n", __func__,
                     ggml_backend_buft_name(buft),size / 1024.0 / 1024.0);
@@ -827,7 +797,8 @@ bool EDGE_DEVICES::SplitSched(hTGraph hTG,int flag)  {
 }
 
 int EDGE_DEVICES::SetThread(int nThread,int flag)   {
-    int nSet = 0;
+    assert(0);
+    /*int nSet = 0;
     for(auto worker : workers){
         if (ggml_backend_is_cpu(worker))   {
             ggml_backend_cpu_set_n_threads(worker, nThread);
@@ -841,24 +812,25 @@ int EDGE_DEVICES::SetThread(int nThread,int flag)   {
     if (lctx.backend_blas != nullptr) {
         ggml_backend_blas_set_n_threads(lctx.backend_blas, n_threads);
     }
-#endif
+#endif*/
     return 0x0;
 }
 
 string EDGE_DEVICES::__repr__( string& suffix,string& prefix,int flag)  {
+    return "";
     char buf[5012]="\0";
     const char*tab=prefix.c_str();
     if(isOnlyCPU()){
         assert(workers.size()==1);
         sprintf(buf+strlen(buf),"OnlyCPU"); 
     }else{
-        for (auto * backend : workers) {
+        /*for (auto * backend : workers) {
             if (ggml_backend_is_cpu(backend)) {  
                 sprintf(buf+strlen(buf),"CPU,"); 
             }else{
                 sprintf(buf+strlen(buf),"GPU,");
             }
-        }        
+        }  */      
     }
 
     if(flag>0)
@@ -1053,7 +1025,8 @@ bool Fish::ComputePlan(int flag) {
 #ifdef _TENSOR_CUD_
     return true;
 #endif
-    auto& train_params = hparams.common;
+    assert(0);
+    auto& train_params = config.common;
     struct ggml_cgraph *cgraph = GetBackRaw();
     if(cgraph==nullptr){        //  OnlyInfer
         cgraph = hForwTG->raw();
@@ -1064,8 +1037,7 @@ bool Fish::ComputePlan(int flag) {
 // ggml_free(ctx_build);         ctx_build = nullptr;
     ctx_work = ggml_init({max_work_size,NULL,false});    
     struct ggml_object * obj = ggml_new_object(ctx_work, GGML_OBJECT_TYPE_WORK_BUFFER, gb_plan.work_size);
-    // gb_plan.work_data = (uint8_t *)ctx_work->mem_buffer + obj->offs;
-    gb_plan.work_data = (uint8_t *)ggml_get_mem_buffer(ctx_work)+ obj->offs;
+    // gb_plan.work_data = (uint8_t *)ggml_get_mem_buffer(ctx_work)+ obj->offs;
     gf_plan = gb_plan;      //  ???
     return true;
 }

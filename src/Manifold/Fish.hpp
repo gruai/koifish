@@ -26,7 +26,7 @@
 #include "TGraph.hpp"
 #include "../Device/CUDA/EDevice.hpp"
 #include "GoPT.hpp"
-#include "../lenda/util/GST_util.hpp"
+#include "../Utils/GST_util.hpp"
 #include "../Fuzi/Distillation.hpp"
 
 using namespace std;
@@ -105,7 +105,7 @@ struct QKV_LAY : public NeLayer {
         nx += tELEM(ffn_gate);         nx += down.nElem();         nx += up.nElem();            //(ffn_down); nx += tELEM(ffn_up);            
         return nx;
     }
-    virtual bool CreateFFN(const CLI_params&hparams,ggml_context *ctx,FFN_TYPE tpFFN,int flag=0x0);
+    virtual bool CreateFFN(const CLI_params&config,ggml_context *ctx,FFN_TYPE tpFFN,int flag=0x0);
     string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
 
     virtual void save_gguf(struct gguf_context *fctx, int flag);
@@ -133,7 +133,7 @@ typedef std::shared_ptr<QKV_LAY> hLQKV;
     float beta_fast=32.0,beta_slow=1.0,ext_factor=0,attn_factor=1;
 
     BROWN_Motion()  {}
-    BROWN_Motion(Fish *hFish_,hGensor _wq, hGensor _wv,struct CLI_params& hparams,hLQKV lQKV,int flags);
+    BROWN_Motion(Fish *hFish_,hGensor _wq, hGensor _wv,struct CLI_params& config,hLQKV lQKV,int flags);
     hGensor W_rope(struct ggml_context *ctx, hGensor cur, hGensor w, hGensor KQ_pos, SHAPE shape,const string&shortcut, int flag = 0x0);
     virtual hGensor Build(struct ggml_context *ctx, hGensor t04, hGensor KQ_pos);
 
@@ -152,8 +152,8 @@ struct QKV_Motion : public BROWN_Motion    {
     //     : BROWN_Motion(_wq, _embd, _head, _N, _batch, _rot, _ctx, _head_kv, f_eps, rope_base, rope_scale), wk(_wk), wv(_wv)
     // {
     // }
-    QKV_Motion( Fish *hFish_,hGensor _wq, hGensor _wk, hGensor _wv,hGensor inp_mask, struct CLI_params& hparams,hLQKV lQKV,int flag)
-        : BROWN_Motion(hFish_,_wq, _wv, hparams,lQKV,flag), wk(_wk), KQ_mask(inp_mask)
+    QKV_Motion( Fish *hFish_,hGensor _wq, hGensor _wk, hGensor _wv,hGensor inp_mask, struct CLI_params& config,hLQKV lQKV,int flag)
+        : BROWN_Motion(hFish_,_wq, _wv, config,lQKV,flag), wk(_wk), KQ_mask(inp_mask)
     {
     }
     hGensor vXkq(struct ggml_context *ctx, hGensor v,hGensor kq,int layer_id);
@@ -168,13 +168,13 @@ struct MixOfModels{
     hGensor embed2w = nullptr;
     hGensor gat_ = nullptr;
 
-    virtual hGensor Build(CLI_params&hparams,struct ggml_context * ctx,hGensor cur,int flag=0x0)  { return nullptr; }
+    virtual hGensor Build(CLI_params&config,struct ggml_context * ctx,hGensor cur,int flag=0x0)  { return nullptr; }
     hGensor Forward(struct ggml_context * ctx,hGensor cur,hGensor w);
 };
 
 struct MixOfSwarm : public MixOfModels{
     virtual void Init(tpSWARM&swarm,struct ggml_context *ctx,int n_embd,int flag=0x0);
-    hGensor Build(CLI_params&hparams,struct ggml_context * ctx,hGensor cur,int flag=0x0)  override;
+    hGensor Build(CLI_params&config,struct ggml_context * ctx,hGensor cur,int flag=0x0)  override;
 };
 
 class Fish : public std::enable_shared_from_this<Fish>    {
@@ -284,7 +284,7 @@ protected:
 public:
     hGensor xn = nullptr,xxn = nullptr;     //only for debug
     
-    struct CLI_params hparams;
+    struct CLI_params config;
     static tpSWARM swarm;
     MODEL_ARCH arch = MODEL_ARCH::_X_;
     enum ROLE_TYPE    {

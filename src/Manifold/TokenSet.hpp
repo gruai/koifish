@@ -109,7 +109,7 @@ public:
     
     bool Serialize(const std::string&path,  bool isSave, int flag=0x0);
     virtual bool LoadNextShard(SampLoader *hLoader,int flag=0x0)    {return true;}
-    virtual bool Load(struct CLI_params& hparams,void *hLLM,int flag=0x0);
+    virtual bool Load(struct CLI_params& config,void *hLLM,int flag=0x0);
     virtual void Append(TOKEN_ID id,int flag=0x0);
     int UniqueTokens(size_t n_1,int flag=0x0);
     bool InitSamps(unsigned context_length,std::vector<size_t>& samples_begin,std::vector<size_t>&samples_size,int flag=0x0);

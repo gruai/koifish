@@ -14,15 +14,15 @@
 
 int tpFuseCu = 1;
 struct train_params_ Optimizer::TrainParams()    {   
-    return _fish->hparams.common;   
+    return _fish->config.common;   
 }
 
-Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params& hparams,int flag) : _fish(g_) {    
+Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params& config,int flag) : _fish(g_) {    
     // adam_filter =  {"output","norm","embd"}; 
     adam_filter =  {"output","norm"}; 
 
-    tpSign = hparams.Get({"train","optimizatioin","sign"},0,false);
-    string method = hparams.Get({"train","optimizatioin","method"},string("adamw"),false);
+    tpSign = config.Get({"train","optimizatioin","sign"},0,false);
+    string method = config.Get({"train","optimizatioin","method"},string("adamw"),false);
     auto train_params=TrainParams();
     /*
         Although many people think "ADAMw is much better than SGD for attention models"  https://arxiv.org/pdf/2310.01082
@@ -192,7 +192,7 @@ bool isGensor(hGensor gensor,vector<string> keys,int flag=0x0){
     return false;
 }
 
-int Optimizer::SignStochastic(int nx,CLI_params& hparams,int flag){    
+int Optimizer::SignStochastic(int nx,CLI_params& config,int flag){    
     if(tpSign<=0)
         return tpSign;
     if(grad==nullptr){
@@ -220,10 +220,10 @@ int Optimizer::SignStochastic(int nx,CLI_params& hparams,int flag){
 /**
  * 1. LARS/LAMB  trus_ratio - ratio between the norm of the layer weights and norm of gradients update
  */
-void Optimizer::UpdateParams(int nx,CLI_params& hparams,int flag)  {    
+void Optimizer::UpdateParams(int nx,CLI_params& config,int flag)  {    
 }
 
-void OPT_Adam::UpdateParams(int nx,CLI_params& hparams,int flag)  {
+void OPT_Adam::UpdateParams(int nx,CLI_params& config,int flag)  {
     floatX *g = nullptr;
     
     float clip = 0.f, fx = 0,sum,sched;
@@ -334,7 +334,7 @@ double OPT_Adam::UpdateTensorParam(hGensor hP,size_t offset,floatX *gX,float cli
 
     }
     assert(hP->type==GGML_TYPE_F32);
-    if(hparams.lars_ratio>0)   {   //lars/lamb
+    if(config.lars_ratio>0)   {   //lars/lamb
         float wnorm=0,norm=0,trust_ratio;
         for (int64_t j = 0; j < ne; ++j) {
             float x  = ggml_get_f32_1d(opt_ps[p], j);       wnorm += x*x;
@@ -343,7 +343,7 @@ double OPT_Adam::UpdateTensorParam(hGensor hP,size_t offset,floatX *gX,float cli
             norm += g[j]*g[j];
         }
         trust_ratio = sqrt(wnorm)/sqrt(norm+eps);
-        trust_ratio = std::min(trust_ratio,hparams.lars_ratio);
+        trust_ratio = std::min(trust_ratio,config.lars_ratio);
         gnorm = trust_ratio;
     }
 #endif    
@@ -452,7 +452,7 @@ int Optimizer::GetITER(int flag)   {
 }
 
 int RAW_update(std::vector<hGTensor>& tensors,Optimizer *hOPT, float& grad_norm, int alg, int flag);
-Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGensor target_,CLI_params& hparams)    {
+Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGensor target_,CLI_params& config)    {
     hEDS = _fish->hEDS;              assert(hEDS!=nullptr);
     auto train_params = TrainParams();    
     
@@ -462,9 +462,9 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
     string suf,pref;
     
     _INFO("\nOptimizer::%s@<%s> %s device=[%s] \n", __func__,_fish->hBackTG->name.c_str(),
-        _fish->isLoadCheckpoint?hparams.save.checkpoint_in.c_str():"",
+        _fish->isLoadCheckpoint?config.save.checkpoint_in.c_str():"",
         hEDS->__repr__(suf,pref,0).c_str());
-    _INFO("\t Accumulation=%d AdaptiveSched=%d GRAP=%p rZMUV=%g rLARS=%g \n",nGradAccum,(int)isAdaptiveSched,grad,hparams.ZMUV_ratio,hparams.lars_ratio );
+    _INFO("\t Accumulation=%d AdaptiveSched=%d GRAP=%p rZMUV=%g rLARS=%g \n",nGradAccum,(int)isAdaptiveSched,grad,config.ZMUV_ratio,config.lars_ratio );
         // tpGD=SGD_HYBRID;    //ADAMw      SGD_v    SGD_HYBRID        SGD_blk_v
     _INFO("\tDECENT=%d(%s) SIGN=%d tpFuseCu=%d\n\n",tpGD,GD_NAME[tpGD].c_str(),tpSign,tpFuseCu);
     DEBUG.Dump(0);
@@ -496,12 +496,12 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
             RAW_update(opt_ps,this, grad_norm, 0, 0);       //  0212
             g_step = grad_norm; //sqrt(grad_norm*grad_norm/nParams);
         }else{
-            SignStochastic(nParams,hparams);    
-            UpdateParams(nParams,hparams,0x0); 
+            SignStochastic(nParams,config);    
+            UpdateParams(nParams,config,0x0); 
         }
  
         UpdateLossCurve(0x0);    
-        // AdamMiniV(clip,nx,hparams,0x0);   
+        // AdamMiniV(clip,nx,config,0x0);   
         //gradient is useless at this stage
         if (train_params.save_every>0 && t % train_params.save_every == 0) {  
             _fish->SaveTrain("");          
@@ -514,7 +514,7 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
         }    
 #ifdef _TENSOR_CUD_
 #else        
-        if( hparams.common.gpt_every>0 && t%hparams.common.gpt_every==0 )   {
+        if( config.common.gpt_every>0 && t%config.common.gpt_every==0 )   {
             _fish->GenSentence(1);   
         }  
 #endif          
@@ -528,7 +528,7 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
 
         result = DID_NOT_CONVERGE;
     }
-    double b=t/1.0e6*hparams.nTokenInBatch();
+    double b=t/1.0e6*config.nTokenInBatch();
     _INFO("[train]: End of all epochs. nEpoch=%d nIter=%d(%d) nToken=%.5g(M)\n",train_epochs+1, t,iter0,b);
     return result;
 }
@@ -652,7 +652,7 @@ float Optimizer::Evaluate(hSampLoader loader,int iter,int flag){
         }
         mean_loss += GraphCompute(loader,_fish->hForwTG);
         nB++;
-        if(_fish->hparams.isOnlyGPT){
+        if(_fish->config.isOnlyGPT){
             return ee;
         }     
 #ifdef _TENSOR_CUD_
@@ -779,7 +779,7 @@ float Optimizer::UpdateLossCurve(int flag){
         if (millis_per_iter > 0)            {
             _TIME_INFO(" dt=",millis_per_iter);  _TIME_INFO(" tData=",tData);    _TIME_INFO(" tX=",tX);        _TIME_INFO(" eta=",remaining_millis);
         }
-        size_t tokens_processed = _fish->hparams.nTokensPerGrad();   //(size_t) * B * T * grad_accum_steps;
+        size_t tokens_processed = _fish->config.nTokensPerGrad();   //(size_t) * B * T * grad_accum_steps;
         float tokens_per_second = tokens_processed / millis_per_iter * 1000.0f;
         ema_tps = iter==1 ? tokens_per_second : 0.95f * ema_tps + 0.05f * tokens_per_second;
         _INFO(" | %.1fK token/s",ema_tps/1000.0);     _INFO("\n");
@@ -820,7 +820,7 @@ void Optimizer::BeforeTrain(hGensor tokens_,int flag) {
     // train_loader->hOPT = this;           val_loader->hOPT = this;
     // assert(tokens_!=nullptr);
     // tokens_input = tokens_;
-    auto& adam = _fish->hparams.common.adam; //TrainParams().
+    auto& adam = _fish->config.common.adam; //TrainParams().
     adam.n_parameters = nParams;    
 
     opt_ps = _fish->optParams;
@@ -840,7 +840,7 @@ void Optimizer::BeforeTrain(hGensor tokens_,int flag) {
 #endif    
     // assert(nMostParam>=nParams);
     assert(adam.n_iter>0);
-    scheduler = std::make_shared<DiscreteSchedule>(_fish->hparams.common);
+    scheduler = std::make_shared<DiscreteSchedule>(_fish->config.common);
 }
 
 size_t TGraph::Prepare4Train(struct ggml_context *ctx_,GD_METHOD tpGD,int flag){
@@ -918,7 +918,7 @@ void Optimizer::Prepare(size_t nx_,int flag){
     // val_loader->Init(dolphin,"Eval",false);            //val_loader->Prepare(this);
 }
 
-bool Optimizer::PrepareData( CLI_params& hparams,int flag )   {   
+bool Optimizer::PrepareData( CLI_params& config,int flag )   {   
     GST_TIC(tic);   
     // train_loader->Prepare(_fish->tsTrain);                
     // val_loader->Prepare(_fish->tsEval);
@@ -945,10 +945,10 @@ bool Optimizer::PrepareData( CLI_params& hparams,int flag )   {
         assert(hTokenset!=nullptr);
            
         std::vector<size_t> samples_begin,samples_size;
-        // auto train_params = hparams.common;
+        // auto train_params = config.common;
         size_t nUnique = hTokenset->nUnique,nVocab=hTokenset->nVocab;
-        // int n_ctx_tokens = hparams.n_ctx;
-        if( hTokenset->InitSamps(hparams.common.n_ctx,samples_begin,samples_size)){
+        // int n_ctx_tokens = config.n_ctx;
+        if( hTokenset->InitSamps(config.common.n_ctx,samples_begin,samples_size)){
 
         }else{
             _INFO("%s: NULL Samps!!!    tpBatchSample=%s nTrain=%zu nEval=%zu T=%.3g\n", __func__, train_loader->tpBatchSample.c_str(),
@@ -956,8 +956,8 @@ bool Optimizer::PrepareData( CLI_params& hparams,int flag )   {
             return false;
         }        
   
-        train_loader->SetSamples(samples_begin,samples_size,true,hparams);    
-        val_loader->SetSamples(samples_begin,samples_size,false,hparams);
+        train_loader->SetSamples(samples_begin,samples_size,true,config);    
+        val_loader->SetSamples(samples_begin,samples_size,false,config);
         
         // assert(val_loader->n_unique_tokens <= nUnique && train_loader->n_unique_tokens <= nUnique);
         // val_loader->n_unique_tokens = nUnique;
@@ -1001,11 +1001,11 @@ OPT_Adam::OPT_Adam(NLP_AutoRegressive *g_,CLI_params& params_,int flag)
     : Optimizer(g_,params_,flag)    {    
     // auto train_params = TrainParams();
     //  0.9f, 0.95f, 1e-8f      decay=0.1
-    adam = &(_fish->hparams.common.adam); 
+    adam = &(_fish->config.common.adam); 
     adam->clip_alg = 1;      //clip_alg=0 little better
-    _fish->hparams.Fuse_Normal = 0;     //some strange bug
-    _fish->hparams.common.remater_ffn = true;
-    _fish->hparams.common.remater_qkv = true;
+    _fish->config.Fuse_Normal = 0;     //some strange bug
+    _fish->config.common.remater_ffn = true;
+    _fish->config.common.remater_qkv = true;
 
     // sched              = 1.0f;
 }

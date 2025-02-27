@@ -34,8 +34,8 @@ hGensor KVCache::SerialV(struct ggml_context *ctx,hGensor Vcur,int il,bool isSav
     if(kv==nullptr)
         return Vcur;
 
-    auto& hparams = lam_->hparams;
-    int n_ctx = hparams.n_ctx(),n_batch = hparams.n_batch(),n_embd_v_gqa = hparams.n_embd_v_gqa(il),n_embd_head_v = hparams.n_embd_head_v,n_head_kv=hparams.n_head_kv(il);    
+    auto& config = lam_->config;
+    int n_ctx = config.n_ctx(),n_batch = config.n_batch(),n_embd_v_gqa = config.n_embd_v_gqa(il),n_embd_head_v = config.n_embd_head_v,n_head_kv=config.n_head_kv(il);    
     int kv_head=0,kv_size = kv->size;   
     
     if(isSave){
@@ -60,8 +60,8 @@ hGensor KVCache::SerialK(struct ggml_context *ctx,hGensor Kcur,int il,bool isSav
     if(kv==nullptr)
         return Kcur;
 
-    const auto& hparams = lam_->hparams;
-    int n_ctx = hparams.n_ctx(),n_batch = hparams.n_batch(),n_embd_k_gqa  = hparams.n_embd_k_gqa(il),n_embd_head_k = hparams.n_embd_head_k,n_head_kv=hparams.n_head_kv(il);    
+    const auto& config = lam_->config;
+    int n_ctx = config.n_ctx(),n_batch = config.n_batch(),n_embd_k_gqa  = config.n_embd_k_gqa(il),n_embd_head_k = config.n_embd_head_k,n_head_kv=config.n_head_kv(il);    
     int kv_head=0,kv_size = kv->size;   
     
     if(isSave){
@@ -80,11 +80,11 @@ hGensor KVCache::SerialK(struct ggml_context *ctx,hGensor Kcur,int il,bool isSav
 }
 
 void KVCache::init_lamakv(int n_batch) {
-    const auto& hparams = lam_->hparams;
+    const auto& config = lam_->config;
 
-    const uint32_t n_ctx   = hparams.n_ctx();
-    const uint32_t n_embd  = hparams.n_embd;
-    const uint32_t n_layer = hparams.n_layer_train;
+    const uint32_t n_ctx   = config.n_ctx();
+    const uint32_t n_embd  = config.n_embd;
+    const uint32_t n_layer = config.n_layer_train;
 
     const int64_t n_mem      = n_layer*n_ctx*n_batch;
     const int64_t n_elements = n_embd*n_mem;

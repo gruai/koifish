@@ -25,6 +25,8 @@ using namespace std;
 #include <string.h>
 #include "ggml.h"
 
+#define GG_V12
+
 class GTensor;
 class cuTensor;
 class Fish;
@@ -204,11 +206,10 @@ public:
     virtual void SetFlag(int64_t flag)   {  
         flags |= (int32_t)flag;     if(gg!=nullptr) gg->flags |= (int32_t)flag;    
     }
-    virtual float Get(int i,int flag=0x0)
-    {   return ggml_get_f32_1d(gg, i); }
-    virtual float Item(){
+    virtual float Get(int i,int flag=0x0)   const;
+    virtual float Item()    const{
         assert(ggml_is_scalar(gg));  
-        assert(size()==1);  return ggml_get_f32_1d(gg, 0);
+        assert(size()==1);  return Get(0);
     }   
     friend class cuTensor;
     friend class OPT_Adam;

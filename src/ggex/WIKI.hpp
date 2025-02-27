@@ -53,9 +53,8 @@ struct WIKI {
     virtual bool isInduct() 
     {   return teach!=_OFF && exLogits!=nullptr; }
 
-    virtual double InductLogits(int nSampInBatch,std::vector<TOKEN_ID>& tok_ids,struct ggml_tensor  * exLogits,struct ggml_tensor  * target_probs,int flag){
-        return 0.0;
-    }
+    // virtual double InductLogits(int nSampInBatch,std::vector<TOKEN_ID>& tok_ids,struct ggml_tensor *exLogits,struct ggml_tensor *target_probs,int flag);
+
     virtual bool isValid(   )   const    {   return false;   }
     // bool takeRest = false;          //only for debug
 

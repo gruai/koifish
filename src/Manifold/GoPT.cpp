@@ -1,4 +1,4 @@
-#include "../../llama.cpp/common/console.h"
+// #include "../../llama.cpp/common/console.h"
 #include "Optimizer.hpp"
 #include "GoPT.hpp"
 #include "Fish.hpp"
@@ -45,7 +45,7 @@ int Sample_CDF(int n,float*preP,uint64_t *rng_seed,int flag=0x0) {
     return next_token;
 }
 
-int GGUF_list(CLI_params& hparams)  {
+int GGUF_list(CLI_params& config)  {
     std::vector<string> paths;
     std::string root = "/media/cys/E0/",path;
     root = "/home/cys/rnd/lic/models/";
@@ -60,7 +60,7 @@ int GGUF_list(CLI_params& hparams)  {
     fprintf(fp,"%s LOAD %d @%s\n",__func__,nP,root.c_str());         fflush(fp);
     for(auto path : paths){
         // path = "/media/cys/E0/LLaMA3-8B_mmproj-Q4_1.gguf";      //only for debug
-        auto param_1 = hparams;
+        auto param_1 = config;
         param_1.wiki_actor="OnlyTokenizer";     param_1.tpWiki=WIKI::_OFF;    
         // param_1.fn_model_base = path;
         
@@ -85,19 +85,19 @@ int GGUF_list(CLI_params& hparams)  {
     return 0x0;
 }
 
-int Fish_bubble(CLI_params& hparams)  {    
-    hparams.wiki_actor = "copy";
-    arrHWIKI wikis = WIKI::MakeInstance("wikis",hparams,0x0);
+int Fish_bubble(CLI_params& config)  {    
+    config.wiki_actor = "copy";
+    arrHWIKI wikis = WIKI::MakeInstance("wikis",config,0x0);
 #if !defined(NDEBUG)
-    // hparams.common.n_ctx = 17;     hparams.common.n_batch = 1;      hparams.nLayerX=1;      //Only for debug
-    // hparams.set();
+    // config.common.n_ctx = 17;     config.common.n_batch = 1;      config.nLayerX=1;      //Only for debug
+    // config.set();
 #endif
-    hparams.isOnlyGPT = true;
-    hFISH fish = Fish::MakeInstance("BUBBLE_",hparams,wikis,Fish::ROLE_TYPE::COMMON,0x110);
+    config.isOnlyGPT = true;
+    hFISH fish = Fish::MakeInstance("BUBBLE_",config,wikis,Fish::ROLE_TYPE::COMMON,0x110);
     auto _gf = fish->GetForwRaw();         assert(_gf!=nullptr);
     if(0)
         ggml_graph_print(_gf);
-    if(hparams.is({"gpt","c_graph"},string("raw"))){
+    if(config.is({"gpt","c_graph"},string("raw"))){
         //ggml_graph_comp0(_gf,0x0);   //only for comparsion
     }        
     else{
@@ -109,8 +109,8 @@ int Fish_bubble(CLI_params& hparams)  {
     return 666;
 }
 
-int fish_1(CLI_params& hparams)  {
-    auto param_1 = hparams,param_2 = hparams;
+int fish_1(CLI_params& config)  {
+    auto param_1 = config,param_2 = config;
     param_1.tpWiki = "logits";              param_1.common.n_batch = 1;
     param_2.tpWiki = "";                    param_2.common.n_batch = 1;    // 
     hFISH fish_0 = Fish::MakeInstance("BIG_",param_1,{},Fish::ROLE_TYPE::COMMON,0x0);
@@ -127,31 +127,31 @@ int fish_1(CLI_params& hparams)  {
     return 666;
 }
 
-bool _LoadCheckPoint(CLI_params& hparams,arrHWIKI& wikis,int flag=0x0){ 
-    if (hparams.save.checkpoint_in.empty())
+bool _LoadCheckPoint(CLI_params& config,arrHWIKI& wikis,int flag=0x0){ 
+    if (config.save.checkpoint_in.empty())
         return false;
                
-    hFISH fish = Fish::MakeInstance("Fish_",hparams,wikis,Fish::ROLE_TYPE::COMMON,0x110);  
+    hFISH fish = Fish::MakeInstance("Fish_",config,wikis,Fish::ROLE_TYPE::COMMON,0x110);  
     if(fish==nullptr || !fish->LoadTrain())
         return false;
     return true;
 }
 
-int GPT_work(CLI_params& hparams)  {
+int GPT_work(CLI_params& config)  {
     //  GRUS_Get_SystemInfo
     _INFO("[%s] threads=%d \n%s\n",__func__,std::thread::hardware_concurrency(),llama_print_system_info());
-    ggml_numa_init(GGML_NUMA_STRATEGY_DISABLED);    
+    // ggml_numa_init(GGML_NUMA_STRATEGY_DISABLED);    
     DEBUG.SelfAttention_noraml = 0;
     DEBUG.NO_loss = true;
     DEBUG.graph_dump = 1;
-    // hparams.wiki_actor="";    //only for debug
+    // config.wiki_actor="";    //only for debug
 
-    hparams.isOnlyGPT = true;
-    hparams.passLoadToken = true;
-    bool isMakeFish = hparams.is({"wiki","actor"},"copy") || hparams.wiki_actor=="OnlyTokenizer";
+    config.isOnlyGPT = true;
+    config.passLoadToken = true;
+    bool isMakeFish = config.is({"wiki","actor"},"copy") || config.wiki_actor=="OnlyTokenizer";
     hFISH fish = nullptr;
-    vector<hWIKI> wikis = WIKI::MakeInstance("",hparams,0x0);          
-    if(hparams.fn_model_base.size()>0 && !isMakeFish){
+    vector<hWIKI> wikis = WIKI::MakeInstance("",config,0x0);          
+    if(config.fn_model_base.size()>0 && !isMakeFish){
         for(auto wiki : wikis){
             if(wiki->isOnlyTokenizer)
                 assert( wiki->teach == WIKI::_OFF );
@@ -161,7 +161,7 @@ int GPT_work(CLI_params& hparams)  {
     }
 
     if(isMakeFish){
-        fish = Fish::MakeInstance("Fish_",hparams,wikis,Fish::ROLE_TYPE::COMMON,0x110);  
+        fish = Fish::MakeInstance("Fish_",config,wikis,Fish::ROLE_TYPE::COMMON,0x110);  
         if(fish==nullptr || !fish->LoadTrain()){
             _ERROR("%s has no WIKI or FISH!\n",__func__);
             return 0;
@@ -169,8 +169,8 @@ int GPT_work(CLI_params& hparams)  {
     }
     //  hGOPT gpt = std::make_shared<GeneratOnPrompt>(params,0x0);
     //  hGOPT gpt = std::make_shared<GOPT_infinite>(params,0x0); 
-    hGOPT gpt = std::make_shared<GOPT_Metropolis>(hparams,wikis,fish.get(), 0x0);
-    if (gpt->Init(hparams.prompt))    { 
+    hGOPT gpt = std::make_shared<GOPT_Metropolis>(config,wikis,fish.get(), 0x0);
+    if (gpt->Init(config.prompt))    { 
         for (int i = 0; i < 10; i++)        { 
             if(!wikis.empty())
                 wikis[0]->Reset();        //to get same results each run     
@@ -184,10 +184,10 @@ int GPT_work(CLI_params& hparams)  {
     return 666;
 }
 
-hGOPT GeneratOnPrompt::MakeInstance(struct CLI_params& hparams,arrHWIKI& wikis,const Fish *fish_0,int flag) {
+hGOPT GeneratOnPrompt::MakeInstance(struct CLI_params& config,arrHWIKI& wikis,const Fish *fish_0,int flag) {
     // gopt = std::make_shared<GeneratOnPrompt>(wiki,this,0x0);
-    hGOPT gopt = std::make_shared<GOPT_Metropolis>(hparams,wikis,fish_0,0x0);
-    if(gopt!=nullptr && gopt->Init(hparams.prompt)){
+    hGOPT gopt = std::make_shared<GOPT_Metropolis>(config,wikis,fish_0,0x0);
+    if(gopt!=nullptr && gopt->Init(config.prompt)){
         // gopt->Generate(0); //only for debug  
     }else{
         gopt.reset();       gopt = nullptr;
@@ -201,7 +201,7 @@ hGOPT GeneratOnPrompt::MakeInstance(struct CLI_params& hparams,arrHWIKI& wikis,c
 }
 
 std::string GeneratOnPrompt::GetPrompt(int flag) {   
-    return hparams.prompt;  
+    return config.prompt;  
 } 
 
 /*
@@ -219,7 +219,7 @@ void GeneratOnPrompt::InitInput(int flag){
     hGensor input = fish_1!=nullptr? fish_1->Input() : nullptr;
     TOKEN_ID bo=-1;
     if(input!=nullptr)
-        dialogs->InitOneSamp(hparams.prompt,input,0x110);
+        dialogs->InitOneSamp(config.prompt,input,0x110);
     switch(_arch)    {  
     case NLP_GPT2_char:        
         
@@ -252,7 +252,7 @@ GeneratOnPrompt::GeneratOnPrompt(struct gpt_params &par_, int flag) {
     params.sparams.temp = 0.8;
     sparams = params.sparams;
     // compatible with LLAMA.cpp
-    hparams.fn_model_base.push_back( params.model ); 
+    config.fn_model_base.push_back( params.model ); 
     n_predict = params.n_predict;*/
 }
 
@@ -271,9 +271,9 @@ void GeneratOnPrompt::Clear()    {
 }
           //only for debug
 GeneratOnPrompt::GeneratOnPrompt(CLI_params&cp_,arrHWIKI& wiki_, const Fish *hG_, int flag) : 
-    hparams(cp_),fish_0(hG_), wikis(wiki_) {
+    config(cp_),fish_0(hG_), wikis(wiki_) {
     if(fish_0!=nullptr){
-        auto gang_param = hparams;
+        auto gang_param = config;
         gang_param.tpWiki = "off";      assert(gang_param.tpWiki=="off");
         gang_param.common.n_batch = 1;
         fish_1 = (Fish*)fish_0;
@@ -282,7 +282,7 @@ GeneratOnPrompt::GeneratOnPrompt(CLI_params&cp_,arrHWIKI& wiki_, const Fish *hG_
 
         _arch = fish_0->arch;         
     }else{
-        _arch = hparams.ModelArch();
+        _arch = config.ModelArch();
     }
     if(!wikis.empty())
         wiki0 = wikis[0];
@@ -298,10 +298,10 @@ bool GeneratOnPrompt::Init(const std::string &prompt_, int flag)    {
     }
     int n_vocab;
     if (wikis.empty()){     CHILD_0909_WIKIS
-        n_ctx = hparams.n_ctx();
+        n_ctx = config.n_ctx();
         n_vocab = fish_1->nClass();
         _logits = new float[n_vocab];
-        // dialogs->init(hparams.prompt.c_str(), B, T, 0, 1, 0);
+        // dialogs->init(config.prompt.c_str(), B, T, 0, 1, 0);
 
         InitInput();
         return true;
@@ -387,7 +387,7 @@ void GeneratOnPrompt::DisplayEmbd(bool input_echo, int n_consumed, int flag){
     // reset color to default if there is no pending user input
     if (input_echo && (int)embd_inp.size() == n_consumed)
     {
-        console::set_display(console::reset);
+        // console::set_display(console::reset);
         display = true;
     }
 }
@@ -419,9 +419,9 @@ int NLP_AutoRegressive::GenSentence(int flag)  {
         return gopt->Generate(0x0);
     }
     uint64_t rng_seed = 42;
-    std::string prompt = hparams.prompt;
-    prompt = LoadSomeText("hparams.fp_train_data",0x0);
-    int genT = 16, nVocab = preLogits->ne[0], _nctx = hparams.n_ctx(), i, j,pLen=0;
+    std::string prompt = config.prompt;
+    prompt = LoadSomeText("config.fp_train_data",0x0);
+    int genT = 16, nVocab = preLogits->ne[0], _nctx = config.n_ctx(), i, j,pLen=0;
     assert(genT <= _nctx);
     pLen = std::min(_nctx,(int)(prompt.size()));
     
@@ -782,14 +782,14 @@ int GeneratOnPrompt::Generate(int nJob, int flag)   {
     }   
     LOG("<--- GeneratOnPrompt %s job=%d logits_all=%d fish=%s teach=%d\n", info.c_str(),
         nJob,0,fish_1==nullptr?"":fish_1->Name().c_str(),wiki0==nullptr? -1 : wiki0->teach);
-    rng_state = hparams.common.seed;
+    rng_state = config.common.seed;
     // LOG("%s logits_all=%d\n", __func__, );  
     // bool need_to_save_session = !path_session.empty() && n_matching_session_tokens < embd_inp.size();
     int n_past = 0,n_remain = n_predict,n_session_consumed = 0,ga_i = 0,max_embd_size = n_ctx-4;
     tokens.clear();                 // embd_guidance.clear();
     LOG("embd_inp.size(): %d \n", (int)embd_inp.size());
     tokens = embd_inp;
-    _INFO("%s",hparams.prompt.c_str());
+    _INFO("%s",config.prompt.c_str());
     
     while ((--n_remain >= 0 && !is_antiprompt) )    {
         if (tokens.empty())    
@@ -993,7 +993,7 @@ int GeneratOnPrompt::Generate_v0(int nJob, int flag)   {
     return 0x0;
 }
 
-#include "../../../llama.cpp/common/log.h"
+// #include "../../../llama.cpp/common/GG_dup_graph"
 int GeneratOnPrompt::Tokenize(int flag) {
     // auto& embd_inp = prompt
     // const int n_ctx = llama_n_ctx(ctx);       

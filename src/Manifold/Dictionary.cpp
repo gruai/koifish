@@ -87,9 +87,9 @@ string ConsiceDict::__repr__( string& suffix,string& prefix,int flag)     {
 
 ConsiceDict::ConsiceDict(NLP_AutoRegressive *lama_,int flag) : VariationaAE(),dolphin(lama_)   {
     assert(dolphin->isValid());
-    hparams = dolphin->hparams;
-    isDialect = hparams.dict_dialect == "on";
-    isSVD = hparams.dict_logits == "svd";
+    config = dolphin->config;
+    isDialect = config.dict_dialect == "on";
+    isSVD = config.dict_logits == "svd";
     if(dolphin->wikis.size()>0)
         wiki_tutor = dolphin->wikis[0];     
     // assert(wiki_tutor!=nullptr); 
@@ -98,29 +98,29 @@ ConsiceDict::ConsiceDict(NLP_AutoRegressive *lama_,int flag) : VariationaAE(),do
     _output.Init(lama_); 
     reserve_x = true;
     isSymmetric = false;
-    lama_embed = hparams.n_embd;
+    lama_embed = config.n_embd;
     
-    latent_dim = hparams.n_embd;
-    if(dolphin->hparams.nabla>3)
+    latent_dim = config.n_embd;
+    if(dolphin->config.nabla>3)
         assert(0);
-    if(!dolphin->hparams.vae.empty()){
-    // if(dolphin->hparams.nabla==3){
-        dims = {(int)hparams.n_embd, 256};
-        // dims = {hparams.n_embd, 1024, 256};
-        //dims = {hparams.n_embd,1024,256,64};       //little difference with {hparams.n_embd,1024,256,128}
+    if(!dolphin->config.vae.empty()){
+    // if(dolphin->config.nabla==3){
+        dims = {(int)config.n_embd, 256};
+        // dims = {config.n_embd, 1024, 256};
+        //dims = {config.n_embd,1024,256,64};       //little difference with {config.n_embd,1024,256,128}
         nLevel = dims.size()-1;   
         latent_dim = dims[nLevel];
         _INFO("%s symmetric=%d resi=%d tpNorm=%d opOut=%d nLevel=%d dims= ",__func__,(int)(isSymmetric),(int)(reserve_x),tpNorm,opOut,nLevel);
     }   else     {   /**/  
-        if(dolphin->hparams.wiki_actor!="copy") {
+        if(dolphin->config.wiki_actor!="copy") {
             if(DEBUG.dict_latent_dim>0)
                 latent_dim = DEBUG.dict_latent_dim;   
         }            
         _INFO("%s latent_dim=%d Dialect=%s",__func__,latent_dim,isDialect?"ON":"OFF");
     }
-    if(dolphin->hparams.wiki_actor!="copy") {
-        dolphin->hparams.n_embd = latent_dim;   //Reset n_embd just like nLayerX
-        // dolphin->hparams.SetHead(latent_dim);   // ???????
+    if(dolphin->config.wiki_actor!="copy") {
+        dolphin->config.n_embd = latent_dim;   //Reset n_embd just like nLayerX
+        // dolphin->config.SetHead(latent_dim);   // ???????
     }
     for(auto dim : dims)           {
         _INFO("%d ",dim);
@@ -134,10 +134,10 @@ void ConsiceDict::InitVAE(int flag)  {
     }  else if(nLevel>=1){
         isLoadTokenEmbed = true;
         InitMAEC(dolphin->GetGGCTX(),dims);
-        // hMultiCoder hCoder = std::make_shared<MutliCoder>(dolphin->GetGGCTX(), hparams.n_embd, latent_dim);
+        // hMultiCoder hCoder = std::make_shared<MutliCoder>(dolphin->GetGGCTX(), config.n_embd, latent_dim);
         // MAEC.push_back(hCoder);
-        // encoder = TENSO(dolphin->GetGGCTX(), GGML_TYPE_F32, hparams.n_embd, latent_dim);     
-        // decoder = TENSO(dolphin->GetGGCTX(), GGML_TYPE_F32, latent_dim, hparams.n_embd); 
+        // encoder = TENSO(dolphin->GetGGCTX(), GGML_TYPE_F32, config.n_embd, latent_dim);     
+        // decoder = TENSO(dolphin->GetGGCTX(), GGML_TYPE_F32, latent_dim, config.n_embd); 
     }    
          
 }
@@ -165,7 +165,7 @@ void ConsiceDict::CreateEmbeddings(int flag){
             return;
         }
     }
-    int group=hparams.Get({"model_v0","target_group"},1);
+    int group=config.Get({"model_v0","target_group"},1);
     tok_embeddings = TENSO(ctx, GGML_TYPE_F32, {n_embd, n_out});
     _norm.w           = TENSO(ctx, GGML_TYPE_F32, {n_embd});
     if(!isSVD){
@@ -192,7 +192,7 @@ hGensor ConsiceDict::Embed2Output(struct ggml_context * ctx,hGensor t33,int flag
     hGensor  tOutput = nullptr;
 #ifdef _TENSOR_CUD_
 #else
-    int group=hparams.Get({"model_v0","target_group"},1);
+    int group=config.Get({"model_v0","target_group"},1);
     int n_embd=latent_dim,n_out=n_vocab,n_tokens=t33->ne[1],g_embd=n_embd/group;
     size_t nb0 = t33->nb[0],offset=0;       assert(nb0==4);  
     assert(n_embd%group==0);
@@ -243,7 +243,7 @@ hGensor ConsiceDict::Embed2Output(struct ggml_context * ctx,hGensor t33,int flag
 void ConsiceDict::Update_0(struct random_normal_distribution * rnd,int flag){
 #ifdef _TENSOR_CUD_
 #else
-    const uint32_t n_embd  = hparams.n_embd;
+    const uint32_t n_embd  = config.n_embd;
     auto lama = dolphin->GetRawModel( );  
     if(isLoadTokenEmbed) {
         bool isParam = false;
@@ -271,9 +271,9 @@ void ConsiceDict::Update_0(struct random_normal_distribution * rnd,int flag){
     }
     // ggml_tensor_dequant(ctx_build,gensor,GGML_TYPE_F32);
     if(0){
-        assert_shape_2d(tok_embeddings, hparams.n_embd, n_vocab);
-        assert_shape_1d(_norm.w,           hparams.n_embd);
-        assert_shape_2d(_output.w,         hparams.n_embd, n_vocab);              
+        assert_shape_2d(tok_embeddings, config.n_embd, n_vocab);
+        assert_shape_1d(_norm.w,           config.n_embd);
+        assert_shape_2d(_output.w,         config.n_embd, n_vocab);              
     }else{
 
     }   
@@ -281,7 +281,7 @@ void ConsiceDict::Update_0(struct random_normal_distribution * rnd,int flag){
 }
 
 void ConsiceDict::Update_1(struct random_normal_distribution * rnd,int flag) {
-    const uint32_t n_embd  = hparams.n_embd;
+    const uint32_t n_embd  = config.n_embd;
 #ifdef _TENSOR_CUD_
 #else
     bool isParam = false;
@@ -322,9 +322,9 @@ void ConsiceDict::Update_1(struct random_normal_distribution * rnd,int flag) {
     assert(tok_embeddings!=nullptr && _norm.w!=nullptr && _output.w!=nullptr);
     // ggml_tensor_dequant(ctx_build,gensor,GGML_TYPE_F32);
     if(0){
-        assert_shape_2d(tok_embeddings, hparams.n_embd, n_vocab);
-        assert_shape_1d(_norm.w,           hparams.n_embd);
-        assert_shape_2d(_output.w,         hparams.n_embd, n_vocab);              
+        assert_shape_2d(tok_embeddings, config.n_embd, n_vocab);
+        assert_shape_1d(_norm.w,           config.n_embd);
+        assert_shape_2d(_output.w,         config.n_embd, n_vocab);              
     }
     int i = 0;
     for(auto map : MAEC){
@@ -338,90 +338,6 @@ void ConsiceDict::Update_1(struct random_normal_distribution * rnd,int flag) {
 
     assert(gensors.size()==0);      
 #endif    
-}
-
-
-void ConsiceDict::LoadVocab_v0(const char*model_path,int flag)     {
-    assert(std::filesystem::exists(model_path));
-    string word;
-    enum llama_ftype ftype = LLAMA_FTYPE_MOSTLY_F16;   //LLAMA_FTYPE_ALL_F32;
-    struct gguf_init_params params = {        false,NULL,    };
-    struct gguf_context * vctx = gguf_init_from_file(model_path, params);
-
-    token_idx = gguf_find_key(vctx, kv(LLM_KV_TOKENIZER_LIST));
-    if (token_idx == -1) {
-        die("cannot find tokenizer vocab in model file");
-    }
-    n_vocab = gguf_get_arr_n(vctx, token_idx);
-    int nTT = gguf_get_arr_n(vctx, token_idx);          assert(n_vocab==nTT);
-    score_idx = gguf_find_key(vctx, kv(LLM_KV_TOKENIZER_SCORES));
-    if (score_idx == -1) {
-        _INFO("%s cannot find tokenizer scores @%s",__func__,model_path);
-        // die("cannot find tokenizer scores in model file");
-    }else{
-        scores = new float[nTT];
-        memcpy(scores,gguf_get_arr_data(vctx, score_idx),sizeof(float)*nTT);          
-    }
-  
-
-    toktype_idx = gguf_find_key(vctx, kv(LLM_KV_TOKENIZER_TOKEN_TYPE));
-    if (toktype_idx == -1) {
-        die("cannot find token type list in GGUF file");
-    }
-    // assert( nTT == gguf_get_arr_n(vctx, toktype_idx));
-    toktypes = new int[nTT];
-    memcpy(toktypes,gguf_get_arr_data(vctx, toktype_idx),sizeof(int)*nTT);    
-    GGUF_GET_KEY(vctx, tokenizer_name, gguf_get_val_str, GGUF_TYPE_STRING, true, kv(LLM_KV_TOKENIZER_MODEL));
-    if (tokenizer_name == "llama") {
-        // default special vocab
-        special_bos_id = 1;
-        special_eos_id = 2;
-        special_unk_id = 0;
-        special_sep_id = -1;
-        special_pad_id = -1;
-    } else if (tokenizer_name == "gpt2") {
-        // read and copy bpe merges
-        merges_keyidx = gguf_find_key(vctx, kv(LLM_KV_TOKENIZER_MERGES));
-        if (merges_keyidx == -1) {
-            die("cannot find tokenizer merges in model file");
-        }
-        n_merges = gguf_get_arr_n(vctx, merges_keyidx);
-        // std::vector<const char*> merges;
-        merges.resize(n_merges);
-        for (int i = 0; i < n_merges; i++) {
-            merges[i] = strdup(gguf_get_arr_str(vctx, merges_keyidx, i));
-            word = merges[i];
-            assert(unicode_cpts_from_utf8(word).size() > 0);
-            std::string first,second;
-            const size_t pos = word.find(' ', 1);
-            if (pos != std::string::npos) {
-                first  = word.substr(0, pos);
-                second = word.substr(pos + 1);
-            }
-            bpe_ranks.emplace(std::make_pair(first, second), i);
-        }
-        word = merges[0];
-        // gguf_set_arr_str(fctx, kv(LLM_KV_TOKENIZER_MERGES), merges.data(), n_merges);
-        // default special vocab
-        special_bos_id = 11;        special_eos_id = 11;        special_unk_id = -1;
-        special_sep_id = -1;        special_pad_id = -1;
-    } else {
-        fprintf(stderr, "%s: unknown tokenizer: '%s'", __func__, tokenizer_name.c_str());
-        fprintf(stderr, "%s: using default tokenizer: 'llama'", __func__);
-    }
-
-    vocab.resize(n_vocab);
-    for (uint32_t i = 0; i < n_vocab; i++) {
-        vocab[i] = strdup(gguf_get_arr_str(vctx, token_idx, i));
-    }
-    // gguf_set_arr_str(fctx, kv(LLM_KV_TOKENIZER_LIST), vocab.data(), n_vocab);
-    GGUF_GET_KEY(vctx, special_bos_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_BOS_ID));
-    GGUF_GET_KEY(vctx, special_eos_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_EOS_ID));
-    GGUF_GET_KEY(vctx, special_unk_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_UNK_ID));
-    GGUF_GET_KEY(vctx, special_sep_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_SEP_ID));
-    GGUF_GET_KEY(vctx, special_pad_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_PAD_ID));
-
-    gguf_free(vctx);
 }
 
 void CDict_CHAR::LoadVocab(const char*model_path,int flag)   {

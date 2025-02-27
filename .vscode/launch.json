@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/bin/koifish",
             "args": [
-                "cases/gpt2/gpt2.json"
+                "./cases/gpt2/gpt_774M.json"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
@@ -46,9 +46,9 @@
             "justMyCode": true,
             "env": {"PYTHONPATH": "$PYTHONPATH:${workspaceFolder}"}, 
             "args": [
-                "--train","cases/gpt2/0214/Train@[edu_fineweb1B]_info_.csv",
-                "--eval","cases/gpt2/0214/Eval@[edu_fineweb1B]_info_.csv",
-                "--hellaswag","cases/gpt2/0214/Eval@[HellaSwag]_info_.csv"
+                "--train","log/0226_ffn=1280/Train@[edu_fineweb1B]_info_.csv",
+                "--eval","log/0226_ffn=1280/Eval@[edu_fineweb1B]_info_.csv",
+                "--hellaswag","log/0226_ffn=1280/Eval@[HellaSwag]_info_.csv"
             ],
         },  
     ]

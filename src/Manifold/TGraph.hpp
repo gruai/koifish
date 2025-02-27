@@ -22,7 +22,7 @@
 #include <inttypes.h> 
 using namespace std;
 #include "../ggex/GG_util.hpp"
-#include "../lenda/util/GST_util.hpp"
+// #include "../lenda/util/GST_util.hpp"
 
 class Fish;
 class TGraph;   
@@ -35,6 +35,9 @@ class TGraph : public std::enable_shared_from_this<TGraph> {
 
     struct ggml_cgraph * cgraph=nullptr;        //only for debug
 protected:    
+    enum ORDER {
+        LEFT_TO_RIGHT = 0,        RIGHT_TO_LEFT,        COUNT
+    };
     Fish *hFish = nullptr;
     // Optimizer *hOPT = nullptr;
     string name;
@@ -49,7 +52,7 @@ protected:
     std::vector<hGensor> topo_nodes;    //nodes in Topological order
     std::vector<hGensor> sinks;      //  sinks of tensor flow graph
     // struct ggml_hash_set visited_hash_table = { 0, nullptr };   
-    enum ggml_cgraph_eval_order order=GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT;
+    ORDER order=LEFT_TO_RIGHT;
     // performance
     int     perf_runs=0;
     int64_t perf_cycles=0,perf_time_us=0;
@@ -114,7 +117,7 @@ public:
         // visited_hash_table = { hash_size, hash_keys_ptr };   
         // *cgraph = (struct ggml_cgraph) {
         //     size,0,0,nodes,grads,leafs,{ hash_size, hash_keys_ptr },
-        //     GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT,0,0,0,
+        //     LEFT_TO_RIGHT,0,0,0,
         // };     */
     }
     virtual ~TGraph()   {   Clear();    }
@@ -123,8 +126,8 @@ public:
     
     size_t Prepare4Train(struct ggml_context *ctx_,GD_METHOD, int flag=0x0);
     
-    enum ggml_cgraph_eval_order Order() {   return cgraph->order;   }
-    bool empty()  {   return cgraph==nullptr || cgraph->n_nodes==0;    }
+    // ORDER Order() {   return cgraph->order;   }
+    bool empty();
     virtual string __repr__( string& suffix,string& prefix,hGensor root=nullptr,int flag=0x0);
     virtual string __repr__( hGensor root=nullptr,int flag=0x0){
         string suffix="", prefix="\t"; 
@@ -137,7 +140,7 @@ public:
 
     int compute_on_plan( struct ggml_cplan* cplan,int flag=0x0);
 
-    void compute_helper(int32_t n_threads,int flag=0x0){
+    /*void compute_helper(int32_t n_threads,int flag=0x0){
         _INFO("%s ...",__func__);
         // ggml_graph_compute_helper(work_buffer, cgraph, n_threads);
         GST_TIC(t0);
@@ -150,7 +153,7 @@ public:
 
         compute_on_plan(&plan);
         _INFO("%s:  nT=%d  symbol=%d T = %.3g(plan=%.3g)sec\n", __func__,n_threads,isOnlySymbol, GST_TOC(t0),tPlan);
-    }
+    }*/
 
     virtual struct ggml_cgraph * BuildBackward(struct ggml_context * ctx_build,std::shared_ptr<TGraph> gf, bool accumulate=false,int flag=0x0);
     // Push new added node to last position
@@ -159,7 +162,7 @@ public:
     bool isSink(hGensor node,int flag=0x0);   
 
     virtual void Traverse(int flag=0x0);
-    // Deprecated
+    /* Deprecated
     void print( ) {
         int64_t perf_total_per_op_us[GGML_OP_COUNT] = {0};
 
@@ -168,17 +171,6 @@ public:
         _INFO("n_nodes = %d\n", cgraph->n_nodes);
         for (int i = 0; i < cgraph->n_nodes; i++) {
             hGensor node = nodes[i];
-// CYS_0826
-            // perf_total_per_op_us[node->op] += MAX(1, node->perf_time_us);
-
-            // _INFO(" - %3d: [ %5" PRId64 ", %5" PRId64 ", %5" PRId64 "] %16s %s (%3d) cpu = %7.3f / %7.3f ms, wall = %7.3f / %7.3f ms\n",
-            //         i,
-            //         node->ne[0], node->ne[1], node->ne[2],
-            //         ggml_op_name(node->op), (node->flags & GGML_TENSOR_FLAG_PARAM) ? "x" : node->grad ? "g" : " ", node->perf_runs,
-            //         (double) node->perf_cycles  / (double) ggml_cycles_per_ms(),
-            //         (double) node->perf_cycles  / (double) ggml_cycles_per_ms() / (double) node->perf_runs,
-            //         (double) node->perf_time_us / 1000.0,
-            //         (double) node->perf_time_us / 1000.0 / node->perf_runs);
         }
 
         _INFO("n_leafs = %d\n", cgraph->n_leafs);
@@ -193,7 +185,7 @@ public:
             //_INFO("perf_total_per_op_us[%16s] = %7.3f ms\n", ggml_op_name(i), (double) perf_total_per_op_us[i] / 1000.0);
         }
         _INFO("========================================\n");
-    }
+    }*/
 
     friend class Fish;
     friend class NLP_AutoRegressive;
