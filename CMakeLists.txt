@@ -121,7 +121,8 @@ message(STATUS "KOIFISH sources=${sources}")
 
 foreach(prog koifish )    #finetune koifish train2
     install(TARGETS ${prog} RUNTIME)
-    target_include_directories(${prog} PRIVATE ${CMAKE_SOURCE_DIR}/llama.cpp/ggml/include ${CMAKE_SOURCE_DIR}/llama.cpp/ggml/src ${CMAKE_SOURCE_DIR}/llama.cpp/include ${CUDA_INC} )
+    target_include_directories(${prog} PRIVATE ${CMAKE_SOURCE_DIR}/src/Device/CUDA 
+         ${CMAKE_SOURCE_DIR}/third-party/cutlass/include ${CMAKE_SOURCE_DIR}/llama.cpp/ggml/include ${CMAKE_SOURCE_DIR}/llama.cpp/ggml/src ${CMAKE_SOURCE_DIR}/llama.cpp/include ${CUDA_INC} )
 
     # target_include_directories(${prog} PRIVATE ${CMAKE_SOURCE_DIR}/llama.cpp/ggml/include ${CMAKE_SOURCE_DIR}/llama.cpp/ggml/src ${CMAKE_SOURCE_DIR}/llama.cpp/common ${CMAKE_SOURCE_DIR}/llama.cpp/include ${CMAKE_SOURCE_DIR}/llama.cpp/src ${CMAKE_SOURCE_DIR}/src/ggex/)
     target_link_libraries(${prog} PRIVATE ${GG_LIB} ${CMAKE_THREAD_LIBS_INIT} ${OPENBLAS_LIB} ${DELTA_LIB} ${CUDA_LIB} pthread)

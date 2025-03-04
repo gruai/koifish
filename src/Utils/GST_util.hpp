@@ -18,14 +18,37 @@
 #include <map>
 #include <math.h>
 #include <float.h>
-
+#include <time.h>
 using namespace std;
 
-#ifdef WIN32
-	#include <time.h>
+#if defined(_MSC_VER) || defined(__MINGW32__) || defined(WIN32)
+	
 	#define GST_NOW( )		(clock( ))
 	#define GST_TIC(tick)	clock_t tick=clock( );
 	#define GST_TOC(tick)	((clock()-(tick))*1.0f/CLOCKS_PER_SEC)
+
+	static int64_t timer_freq, timer_start;
+	inline void GST_time_init(void) {
+		LARGE_INTEGER t;
+		QueryPerformanceFrequency(&t);
+		timer_freq = t.QuadPart;
+
+		// The multiplication by 1000 or 1000000 below can cause an overflow if timer_freq
+		// and the uptime is high enough.
+		// We subtract the program start time to reduce the likelihood of that happening.
+		QueryPerformanceCounter(&t);
+		timer_start = t.QuadPart;
+	}
+	inline int64_t GST_ms(void) {
+		LARGE_INTEGER t;
+		QueryPerformanceCounter(&t);
+		return ((t.QuadPart-timer_start) * 1000) / timer_freq;
+	}
+	inline int64_t GST_us(void) {
+		LARGE_INTEGER t;
+		QueryPerformanceCounter(&t);
+		return ((t.QuadPart-timer_start) * 1000000) / timer_freq;
+	}
 #else
 	#include <chrono>
 	#include <thread>
@@ -34,7 +57,30 @@ using namespace std;
 	#define GST_NOW( )	(Clock::now( ))
 	#define GST_TIC(tick)	auto tick = Clock::now( );
 	#define GST_TOC(tick)	( (std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now( )-(tick)).count( ))/1000.0)
+
+	inline void GST_time_init(void) {}
+
+	//	A millisecond is a unit of time in the International System of Units equal to one thousandth of a second or 1000 microseconds
+	inline double GST_ms(void) {
+		struct timespec ts;
+		clock_gettime(CLOCK_MONOTONIC, &ts);
+		return (int64_t)ts.tv_sec*1000.0 + (int64_t)ts.tv_nsec/1000000.0;
+	}
+
+	// A microsecond is equal to 1000 nanoseconds or 1⁄1,000 of a millisecond
+	inline double GST_us(void) {
+		struct timespec ts;
+		clock_gettime(CLOCK_MONOTONIC, &ts);
+		return (int64_t)ts.tv_sec*1000000.0 + (int64_t)ts.tv_nsec/1000.0;
+	}
 #endif
+
+#define TIMING_ms(a,sum) \
+    do { \
+        double t0=GST_ms(); \
+        a; \
+        sum += GST_ms()-t0; \
+    } while (0)
 
 /*
 	Dataset��Matrix�������ƣ�Ҳ��������κϲ���		 10/19/2014		cys

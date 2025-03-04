@@ -334,7 +334,7 @@ size_t SampLoader::UpdateBatch(int x,Fish* fish){
         if(tpBatchSample!="stacking"){
             for(auto wiki : fish->wikis){
                 // nrm = wiki->InductLogits(k,samp_toks,nullptr,G(target_probs),-1); 
-                // nrm = wiki->InductLogits(k,samp_toks,nullptr,nullptr,-1); 
+                nrm = wiki->InductLogits(fish->config,k,samp_toks,nullptr,-1); 
             }
         }        
     }

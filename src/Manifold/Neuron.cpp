@@ -130,6 +130,18 @@ Embed::Embed(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int 
     assert(shape[1]>0);
     isAddPos = type_info[type_info.length()-1] =='+'; 
 }
+Embed::~Embed(){
+    FREE_a(workload_indices);       FREE_a(bucket_info);
+}
+bool Embed::InitBucket(size_t num_c_groups,int flag){
+    if (bucket_info != NULL)
+        return false;
+
+    assert((size_t)(GTensor::B * GTensor::T) * num_c_groups < (1ULL<<31ULL)); // todo - maybe an issue for llama3-400B(?)
+    workload_indices = new int[GTensor::B * GTensor::T * num_c_groups];
+    bucket_info = new int4[GTensor::B * GTensor::T * num_c_groups];
+    return true;
+}
 bool Embed::Build(int flag){
     assert(shape.size()==2);    
     struct ggml_context * ctx = hFish->GetGGCTX(1);
@@ -177,7 +189,9 @@ hGensor Embed::Interact(struct ggml_context *ctx_,hGensor tokens,int flag){
     if(hFish->isSymbolic()){            
         out->AddSrc({w,tokens,b});      cur=out;
     } else{
-        cur = w->GetRow(out,tokens,b);
+        // cur = w->GetRow(out,tokens,b);
+        FUSE_cuda(tokens,nullptr,nullptr,0x0); //nullptr,nullptr,
+        cur = out;
     }   
 #else
     assert(w->ne[1]==shape[0]);
@@ -217,7 +231,7 @@ bool FFN::Build(int flag_0)   {
     int flag = flag_0;
     latent=shape[1];
 #ifdef _TENSOR_CUD_
-    flag |= GeNeuron::F_BIAS; 
+    // flag |= GeNeuron::F_BIAS; 
     assert(GTensor::C==shape[0]);
     sp3 = {GTensor::B,GTensor::T,latent};
     sp2 = {GTensor::B,GTensor::T,GTensor::C};
@@ -267,8 +281,6 @@ hGensor FFN::Interact(struct ggml_context * ctx_,hGensor inpL,int flag){
         float *inp1=TO<float>(down.out);
         FUSE_cuda(cur,nullptr,&norm,0x0); //nullptr,nullptr,
         cur = norm.out;
-        // iRet = FUSE_FFN(down.out,cur,up.out,up.w,up.b,relu.out,down.w,down.b,gelu_fusion,0);            cur = down.out;  
-        // iRet = FUSE_ResiNormal(out,down.out,lastResi,norm.out,norm.mean,norm.rstd,norm.w,norm.b,0x0);   cur = norm.out; 
     } 
 #else
     cur = norm.Interact(ctx_,inpL,0x0);
@@ -447,7 +459,7 @@ SLP::SLP(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag
     // Build(key_, shape_, flag);
 }
 bool SLP::Build(int flag)      {
-    isBias = hFish->isBias || BIT_TEST(flag,F_BIAS);
+    isBias = hFish->config.modep.isSLPBias || BIT_TEST(flag,F_BIAS);
     // shape = shape_;
     struct ggml_context *ctx = hFish->GetGGCTX();
     GTensor::tpDATA tpData = GTensor::tpFloatX;
@@ -617,7 +629,6 @@ LayerNormal::LayerNormal(Fish *hG_, const std::string &key_, JSON::const_iterato
     }else{
         shape = {n_embd};
     }
-    isBias = true;
     // assert(jvals.size()>=1 && jvals[0]>0);
     // shape={(int)(jvals[0])};
 }
@@ -625,7 +636,7 @@ LayerNormal::LayerNormal(Fish *hG_, const std::string &key_, JSON::const_iterato
     https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html#torch.nn.LayerNorm
 */
 bool LayerNormal::Build(int flag)    {
-    isBias = hFish->isBias || BIT_TEST(flag,F_BIAS) || isBias;
+    isBias = hFish->config.modep.isNormalBias || BIT_TEST(flag,F_BIAS) ;
     // name = key_;
     struct ggml_context * ctx = hFish->GetGGCTX();
     assert(shape.size()==1 && shape[0]>0 );
@@ -641,7 +652,8 @@ bool LayerNormal::Build(int flag)    {
         hFish->InitGensor(ctx,sb.c_str(),b,isTrain);
     }
 #ifdef _TENSOR_CUD_        
-    w->tpInit=1;    b->tpInit=0;
+    w->tpInit=1;    
+    if(b!=nullptr)  b->tpInit=0;
     assert(nIn==GTensor::C);
     SHAPE sp={GTensor::B,GTensor::T},sp3={GTensor::B,GTensor::T,nIn};
     out = std::make_shared<cuTensor>(name+".out",sp3,GTensor::tpFloatX,false);    

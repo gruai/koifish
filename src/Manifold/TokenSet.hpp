@@ -33,7 +33,7 @@ struct SAMP{
     size_t pos=0,len=0;       //  range is [pos,pos+len)
     size_t off_cycle=0;         // more random
     int jump = 0;   
-    TOKEN_ID last_target=-1;
+    TOKEN_ID last_target=(TOKEN_ID)(-1);
     std::string desc;    
     char    *mask=nullptr;
     void     *target=nullptr;

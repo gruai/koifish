@@ -231,7 +231,7 @@ protected:
     bool updateTMap = false;
     bool isLocalInfer = false;
     bool isLoadCheckpoint = false;
-    bool isBias=true;
+    // bool isBias()   const  {   return config.modep.isBias; }
     bool isSymbolicAnalysis = false;
 
     int size = 0; 

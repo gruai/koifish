@@ -434,7 +434,9 @@ void CLI_params::OnArch( ){
                 layerps.push_back(lay);
             }
         }
-
+        //  need new GEMM! cuBLASLt requires bias in FP8 mode to be BF16... (sigh)
+        modep.isNormalBias = true;
+        modep.isSLPBias = true;        //nealy same
         // n_embd_gqa = 768;        
 
         int group=Get({"model_v0","target_group"},1);
@@ -442,6 +444,13 @@ void CLI_params::OnArch( ){
     }
         // hparams.Set({"model_v0","target_group"},1);
         break;
+    case NLP_QWEN2:
+    case NLP_DEEPSEEK:
+    /*
+          `. llama_model_rope_type=LLAMA_ROPE_TYPE_NEOX
+    */
+        break;
+
     default:        
         _INFO("[ARCH]=%s\n",info.c_str());
         break;

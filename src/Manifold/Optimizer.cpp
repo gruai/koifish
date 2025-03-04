@@ -134,8 +134,9 @@ bool OPT_Adam::BatchGrad(int iter,float&fx,int flag)   {
     // struct ggml_cgraph *_gf=_fish->GetForwRaw(),*_gb=_fish->GetBackRaw();
     // assert(_gb!=nullptr);
     for (int accum_step = 0; accum_step < 1/*nGradAccum*/; ++accum_step) {
-        // auto now = ggml_time_ms();        
+        auto now = GST_ms();        
         int64_t nSamp = train_loader->UpdateBatch(-1,_fish);
+        tData = GST_ms()-now;
         if(nSamp==0)        {
             _WARN("<%s> Failed to get next batch!!!\n",__func__);
             return false;
@@ -241,7 +242,7 @@ void OPT_Adam::UpdateParams(int nx,CLI_params& config,int flag)  {
         g = (floatX *)grad->data;  // gradients
         clip = gClip(nParams,g,nullptr);        
     }
-    auto now = ggml_time_ms();    
+    auto now = GST_ms();    
     // float beta1_correction = 1.0f - powf(beta1, t);
     // float beta2_correction = 1.0f - powf(beta2, t);   
     beta1h =        sched/(1.0f - powf(adam->beta1, iter));                
@@ -256,7 +257,7 @@ void OPT_Adam::UpdateParams(int nx,CLI_params& config,int flag)  {
         UpdateTensorParam(hP,i,g==nullptr?nullptr:g+i,clip);
         i += ne;       
     }
-    tData = ggml_time_ms()-now;
+    tUpdate = GST_ms()-now;
 //     double a = sqrt(g2_sum),off=0;
 // #ifdef _TENSOR_CUD_
 //     off = a - g_step;
@@ -456,7 +457,7 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
     hEDS = _fish->hEDS;              assert(hEDS!=nullptr);
     auto train_params = TrainParams();    
     
-    last_time = ggml_time_ms();
+    last_time = GST_ms();
     Optimizer::RESULT result = DID_NOT_CONVERGE;   
     bool cancel = false,isWarmup=false;      
     string suf,pref;
@@ -541,24 +542,27 @@ void RAW_forward(Fish *fish,int flag);
 float RAW_backward(Fish *fish,const int* hostInput,int accum_steps,bool,int flag);
 double Optimizer::GraphCompute(hSampLoader hLoader,hTGraph hTG, int flag){
     // return 0.0; //  0212
-    int64_t now = ggml_time_ms();
+    int64_t now = GST_ms();
     int nThread = TrainParams().n_threads,no=0,nAccum=TrainParams().n_gradient_accumulation;
     bool bench = false;
     string suffix,prefix;
     bool isOnlyEvaluate = !hTG->isBackward;
     float mean_loss = 0.f;
     OutCLS* cls = _fish->GetNeuron<OutCLS>("OutCLS",0);
+    Embed* embed = _fish->GetNeuron<Embed>("Embed",0);    
 #ifdef _TENSOR_CUD_    
-    const int* hostInput = (int*)hLoader->hostBatch->data;        //(int*)train_loader->hostBatch->data;
+    embed->hostInput = (int*)hLoader->hostBatch->data;        //(int*)train_loader->hostBatch->data;
     isBackward = false;
-    RAW_forward(_fish,flag);    //0x1001
-    isBackward = true;
-    RAW_backward(_fish,hostInput,nAccum,isOnlyEvaluate,flag);
+    RAW_forward(_fish,0);    //0x1001    0x100
     mean_loss = hLoader->hTokens->LossOnResult(hLoader,cls);
     if(isOnlyEvaluate){
         return mean_loss;
-    }else
-        UpdateTrainLoss(-1,mean_loss);   
+    }else{
+        isBackward = true;
+        RAW_backward(_fish,nullptr,nAccum,isOnlyEvaluate,flag);        
+        UpdateTrainLoss(-1,mean_loss); 
+    }
+          
     /*for(auto it : _fish->gensors.infos){
         auto node = it.first;
         if(!BIT_TEST(node->flags,GTensor::F_TOX)){
@@ -614,7 +618,7 @@ double Optimizer::GraphCompute(hSampLoader hLoader,hTGraph hTG, int flag){
     if(status!=GGML_STATUS_SUCCESS)
         return false;
 #endif
-    tX = ggml_time_ms()-now;
+    tX = GST_ms()-now;
     return 0.0;
 }
 
@@ -630,7 +634,7 @@ float Optimizer::Evaluate(hSampLoader loader,int iter,int flag){
     OutCLS* cls = _fish->GetNeuron<OutCLS>("OutCLS",0);  
     cls->hLoader = loader;
     auto loss = hLoss();     
-    double l2,delta_max=0,delta_=0,a,mean_loss=0,ee;
+    double l2,delta_max=0,delta_=0,a,mean_loss=0,ee,tX=0;
     auto tokens_input = _fish->Input( ); 
     int i,nB=0,step=loader->StepOfEvaluate();      
     size_t nz=0,j;
@@ -640,7 +644,7 @@ float Optimizer::Evaluate(hSampLoader loader,int iter,int flag){
     loader->next_sample = 0;        // fix this to keep same acc on each experiment
     for (i = 0; i < loader->num_batches; i+=step) {        
         if(tokens_input!=nullptr)   {//in some debug mode, tokens_input maybe null
-            loader->UpdateBatch(i,_fish);
+            TIMING_ms(loader->UpdateBatch(i,_fish),tX);
             samp = loader->cur_samps[i];
         } 
         if(wLog!=nullptr)    {
@@ -662,6 +666,8 @@ float Optimizer::Evaluate(hSampLoader loader,int iter,int flag){
         mean_loss += loss==nullptr ? 0 : ((float*)(loss->data))[0];         //float *fLoss = (float*)(loss->data)
         break;
 #endif              
+        if(_fish->wikis.size()>0)       //too long
+            break;
     }
     mean_loss /= nB;
     if(iter==-666)    {   //hack
@@ -677,8 +683,8 @@ float Optimizer::Evaluate(hSampLoader loader,int iter,int flag){
     //     _INFO(" !OVERFIT! ");
     // }
     a = nB*TrainParams().nTokenInBatch()/1.0e6;   
-    _INFO(" Loss@\"%s\"=%.3f(%.2g) nToken=%.3gM best=%.4f(eval_%d) E2T=%.3g T=%gs x=%.3g\n",loader->sTokenSet().c_str(), mean_loss,delta,a,
-        best,loader->stepis.best_id,mean_loss-trainInfos().Last(),GST_TOC(tic),ee );  //
+    _INFO(" Loss@\"%s\"=%.3f(%.2g) nToken=%.3gM best=%.4f(eval_%d) E2T=%.3g T=%g(%.3g)s x=%.3g\n",loader->sTokenSet().c_str(), mean_loss,delta,a,
+        best,loader->stepis.best_id,mean_loss-trainInfos().Last(),GST_TOC(tic),tX/1000.0,ee );  //
 
     if(wLog==nullptr) {     }        
     else
@@ -748,7 +754,7 @@ string StepInfos::STEP::Info(int flag){
 float Optimizer::UpdateLossCurve(int flag){
     struct train_params_ _params = TrainParams();   
     int n_batch = _params.n_batch,n_ctx = _params.n_ctx;
-    int64_t now = ggml_time_ms();
+    int64_t now = GST_ms();
     if (now > last_time && iter > first_iter)            {
         double dt = (double)(now - last_time);
         if (millis_per_iter == 0.0)                {
@@ -764,7 +770,7 @@ float Optimizer::UpdateLossCurve(int flag){
         remaining_millis = remaining_iter * millis_per_iter;
     }        
 
-    last_time = ggml_time_ms();
+    last_time = GST_ms();
     
     int impr_plot = -(int)(1 + (loss_before - loss_after) * 10.0f + 0.5f);
     if (impr_plot > 0)
@@ -777,7 +783,7 @@ float Optimizer::UpdateLossCurve(int flag){
         _INFO("[epoch_%d]_%-6d loss=%f |g|=%g\tlr=%.2e | %s ",train_epochs,iter,
             loss_after,g_step,last_lr,train_loader->IterInfo().c_str()); //,zmuv_0,zmuv_1    
         if (millis_per_iter > 0)            {
-            _TIME_INFO(" dt=",millis_per_iter);  _TIME_INFO(" tData=",tData);    _TIME_INFO(" tX=",tX);        _TIME_INFO(" eta=",remaining_millis);
+            _TIME_INFO(" T=",millis_per_iter);  _TIME_INFO("(data=",tData);    _TIME_INFO(" X=",tX);        _TIME_INFO(") eta=",remaining_millis);
         }
         size_t tokens_processed = _fish->config.nTokensPerGrad();   //(size_t) * B * T * grad_accum_steps;
         float tokens_per_second = tokens_processed / millis_per_iter * 1000.0f;

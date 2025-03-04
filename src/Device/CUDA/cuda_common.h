@@ -16,7 +16,7 @@ Common utilities for CUDA code.
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
 
-#include "utils.h"
+#include "llm_c/utils.h"
 
 #include "../../CLI_params.hpp"
 #include "../../g_stddef.hpp"

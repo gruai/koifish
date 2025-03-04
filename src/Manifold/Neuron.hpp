@@ -32,7 +32,7 @@ static const string sNorm="_norm";            //".norm"
 
 class Fish;
 struct NeLayer;
-
+struct LayerNormal;
 struct NP_
 { // Paramer of GeNeuron
     std::string type, title;
@@ -46,6 +46,7 @@ class GeNeuron  {
 
 protected: 
     int n_batch,n_ctx,n_embd,n_embd_head,n_head;
+    int gelu_fusion = 0;
     Fish *hFish = nullptr;
     COMPRESSIVE_SENSING compression = SKIP;
     SHAPE shape;
@@ -107,12 +108,19 @@ struct Ganglia : public GeNeuron    {
 
 //a lookup table instead of matrix*vector(as in SLP)
 struct Embed : public GeNeuron    { 
+
+    int *workload_indices=nullptr;
+    int4 *bucket_info=nullptr;
+
     bool isAddPos = false;
-    int padded_nCls=-1;        //for cuda version
+    int padded_nCls=-1,*hostInput=nullptr;        //for cuda version
     Embed(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag);
+    virtual ~Embed();
+    virtual bool InitBucket(size_t num_c_groups,int flag=0x0);
     virtual hGensor Interact(struct ggml_context *ctx_build,hGensor cur,int flag=0x0)  override;
     bool Build(int flag)   override;
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
+    virtual int FUSE_cuda(hGTensor hIn,floatX *scratch,LayerNormal*neuron_x,unsigned int flag);
 };
 
 class ROPE : public GeNeuron    { 
@@ -158,7 +166,14 @@ struct SLP : public GeNeuron    {
     hGensor UpdateGensor(int flag=0x0);
     size_t nElem()  override;  
     hGTensor operator<<(hGTensor a);
+    /*
+        1.  rhs = SLP(lhs)  or rhs = W*lhs+b
+        2.  gelu = GELU(rhs)
+    */
+    int FUSE_cuda(hGTensor rhs,hGTensor lhs,hGTensor gelu=nullptr,bool isForw=true,int flag=0x0);
+    int FUSE_cuda_block(hGTensor rhs,hGTensor lhs,hGTensor gelu=nullptr,bool isForw=true,int flag=0x0);
 };
+
 struct LayerNormal : public GeNeuron    {  
     bool isAffineTrans = true;       // Learnable affine transform parameters 
     //  always float
@@ -306,7 +321,7 @@ struct FFN : public GeNeuron  {
     SLP up,down,gate;
     Relu relu;
     // hGensor pre_gelu = nullptr;
-    int gelu_fusion = 0,latent;
+    int latent;
 #ifdef _TENSOR_CUD_
     floatX *residual=nullptr,*input_1=nullptr,*scratchX=nullptr;
     SelfAttention *lastQKV=nullptr;

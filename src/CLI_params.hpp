@@ -39,9 +39,12 @@ enum MODEL_ARCH {
     NLP_GPT2,       NLP_GPT2_char,
     NLP_LLAMA,
     NLP_MAMBA,
+
+    NLP_QWEN2,
     NLP_DEEPSEEK,
+
     NLP_MOE,    //???
-    
+//////    
     SCORE_,
     SAM_
 };
@@ -166,7 +169,8 @@ extern DEUG_SWITCH DEBUG;
 
 struct MOEL_params_ {
     int preLogits_dB=2; // epsilon for convergence test
-    
+    bool isNormalBias = true;  
+    bool isSLPBias = true;  
     void Dump(int typ);
 };
 

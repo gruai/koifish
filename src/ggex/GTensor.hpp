@@ -269,12 +269,24 @@ inline hGTensor operator+=( const hGTensor &a,const hGTensor &b ) 	{
     inline float T2Float(T* a0)   {        float a=*a0;        return a;      }
 #endif
 inline floatX *ToX(hGensor t) { 
+    assert(t!=nullptr);
     BIT_SET(t->flags,GTensor::F_TOX);
     return (floatX*)(t->data); 
 }
+inline floatX *ToX0(hGensor t) { 
+    if(t==nullptr)  
+        return nullptr;
+    return ToX(t); 
+}
 inline floatX *ToG(hGTensor t) { 
+    assert(t!=nullptr);
     assert(t!=nullptr && t->grad!=nullptr);
     return (floatX*)(t->grad); 
+}
+inline floatX *ToG0(hGTensor t) { 
+    if(t==nullptr)  
+        return nullptr;    
+    return ToG(t); 
 }
 hGensor TENSO(void* ctx0,int typ,SHAPE,int flag=0x0,const string&name="" );
 hGensor tRAND(hGensor  tensor, struct random_normal_distribution * rnd);

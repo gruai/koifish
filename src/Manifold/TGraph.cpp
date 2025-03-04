@@ -80,13 +80,13 @@ bool SelfAttention::Build(int flag_0)   {
     int flag=flag_0;
     
 #ifdef _TENSOR_CUD_
-    flag |= GeNeuron::F_BIAS;       //  s_bias[i/x128::size] = load128(bias + i);
+    // flag |= GeNeuron::F_BIAS;       //  s_bias[i/x128::size] = load128(bias + i);
 #endif
 
     norm.BuildX(name+sNorm,{shape[0]},hFish,flag);        
 #ifdef _TENSOR_CUD_
     SHAPE sp2={shape[0],shape[1]*3},sp3={GTensor::B,GTensor::T,GTensor::C},spTrans={GTensor::B,n_head_kv,GTensor::T};   //,GTensor::T
-    Q.BuildX(name+"_qkv",sp2,hFish,flag);
+    Q.BuildX(name+"_qkv",sp2,hFish,flag );
     attn = std::make_shared<cuTensor>(name+".attn",sp3,GTensor::tpFloatX,false);        // B * T * C
     trans = std::make_shared<cuTensor>(name+".trans",spTrans,GGML_TYPE_F32,false);        // ENABLE_CUDNN need float array
     // hFish->InitGensor(nullptr,name+".attn",attn,false);
@@ -99,7 +99,7 @@ bool SelfAttention::Build(int flag_0)   {
     rope.BuildX(name+".rope",sp,hFish,flag);
 #endif
     string sCat = "_cat";    //  ".proj" ".cat"
-    proj_cat.BuildX(name+sCat,sp,hFish,flag);
+    proj_cat.BuildX(name+sCat,sp,hFish,flag );
 #ifdef _TENSOR_CUD_
     BIT_SET(proj_cat.out->flags,GTensor::F_NOALLOC);       //memory trick as kGPT
     proj_cat.w->residual_scale = hFish->config.common.residual_scale;
@@ -130,26 +130,12 @@ hGensor SelfAttention::Interact(struct ggml_context * ctx_,hGensor inpL,int flag
 #ifdef _TENSOR_CUD_
     hGensor cur = inpL,lastResi=inpL;
     int iRet;
-    if(hFish->isSymbolic()){ 
-        /*SHAPE sp={GTensor::B,GTensor::T,Q.w->shape[0]},sp3={GTensor::B,GTensor::T,Q.w->shape[1]};
-        qkv = std::make_shared<cuTensor>(sp3,Q.w->type);                // B * T * 3*C; 
-        attn = std::make_shared<cuTensor>(cur->shape,cur->type);        // B * T * C   
-        qkvr = std::make_shared<cuTensor>(cur->shape,cur->type);                // B * T * C; 
-        // floatX* residual = l == 0 ? acts.encoded : acts.residual3 + (l-1) * B * T * C;
-        residual = std::make_shared<cuTensor>(cur->shape,cur->type);
-        out = std::make_shared<cuTensor>(cur->shape,cur->type);        
-        cur = norm.Interact(ctx_,out,0x0); */    
+    if(hFish->isSymbolic()){   
         inpL>>Q;        attn->AddSrc({Q.out,trans});
         attn>>proj_cat>>norm;      out->AddSrc(norm.out);
         cur = out;
-    } else{     //high performace fused operator        
-        // inpL*Q => attn => proj_cat
-        iRet = FUSE_QKV(proj_cat.out,inpL,Q.out,attn,Q.w,Q.b,n_head,proj_cat.w,proj_cat.b,0x0 );        cur=proj_cat.out;
-                // cuLiteTest(GTensor::B,GTensor::T,GTensor::C,1);
-        // norm(cur+resi)        
-        iRet = FUSE_ResiNormal(out,cur,lastResi,norm.out,norm.mean,norm.rstd,norm.w,norm.b,0x0);        cur = norm.out;
-        // cuLiteTest(GTensor::B,GTensor::T,GTensor::C,1);
-        // 
+    } else{     //high performace fused operator    
+        // FUSE_cuda(QKV->norm.out,residual,&(ffn->norm),nullptr,flag);      
     }
 #else
     hGensor cur = norm.Interact(ctx_,inpL,0x0);   

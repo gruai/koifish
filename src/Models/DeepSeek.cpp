@@ -12,8 +12,9 @@
 #include "../Manifold/gLLM.hpp"
 
 DeepSeek::DeepSeek( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag) : NLP_AutoRegressive(nam_,params,role,flag)  {
-    assert(arch==MODEL_ARCH::NLP_GPT2 || arch==MODEL_ARCH::NLP_GPT2_char);
-    isBias = false;    //   if true, converge much slower
+    assert(arch==MODEL_ARCH::NLP_DEEPSEEK);
+    config.modep.isSLPBias = false;    
+    config.modep.isNormalBias= false;    
 }
 
 string DeepSeek::__repr__( string& suffix,string& prefix,int flag) {
@@ -21,7 +22,7 @@ string DeepSeek::__repr__( string& suffix,string& prefix,int flag) {
     const char*tab=prefix.c_str();
     string sBasic = NLP_AutoRegressive::__repr__(suffix,prefix,flag);
     sprintf(buf+strlen(buf),"%s",sBasic.c_str()); 
-    _INFO("DeepSeek:    Bias=%d AttOnBC=%d\n========\n",isBias,isAttOnBC); 
+    // _INFO("DeepSeek:    Bias=%d AttOnBC=%d\n========\n",isBias(),isAttOnBC); 
     return buf;
 }
 

@@ -42,6 +42,7 @@ int main(int argc, char ** argv) {
     if(params.n_swarm>1)   {
         fish = Fish::MakeSwarm("Fish_",params,0x0);    
     }else {
+        params.common.n_gpu_layers = 40;
         vector<hWIKI> wikis = WIKI::MakeInstance("",params,0x0);      
         if(wikis.size()==0){
             // _INFO("====== NO WIKI !!! ======\n");       return;

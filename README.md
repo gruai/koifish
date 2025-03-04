@@ -8,7 +8,7 @@
 
 - Rematerialisation and fusion of operators
 - Mixture of models
-- Support LLAMA/GPT ...
+- Support DEEPSEEK/LLAMA/GPT ...
 - CPU, GPU and Hybrid training
 - Json config file
 - Pure C++ project
@@ -36,7 +36,7 @@ make clean && make VERBOSE=TRUE
 
 ## Working plan
 - Hybrid 1-bit Optimizer
-- Support DEEPSEEK/MAMBA
+- Support MAMBA
 - Sparse mapping of token-embedding to logits
 
 ## Contributing

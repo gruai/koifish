@@ -46,9 +46,9 @@
             "justMyCode": true,
             "env": {"PYTHONPATH": "$PYTHONPATH:${workspaceFolder}"}, 
             "args": [
-                "--train","log/0226_ffn=1280/Train@[edu_fineweb1B]_info_.csv",
-                "--eval","log/0226_ffn=1280/Eval@[edu_fineweb1B]_info_.csv",
-                "--hellaswag","log/0226_ffn=1280/Eval@[HellaSwag]_info_.csv"
+                "--train","log/0227/Train@[edu_fineweb1B]_info_.csv",
+                "--eval","log/0227/Eval@[edu_fineweb1B]_info_.csv",
+                "--hellaswag","log/0227/Eval@[HellaSwag]_info_.csv"
             ],
         },  
     ]

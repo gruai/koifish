@@ -1,5 +1,5 @@
-#include "./rand.h"
-#include "./global_norm.cuh"
+#include "./llm_c/rand.h"
+#include "./llm_c/global_norm.cuh"
 #include "../../ggex/GTensor.hpp"
 
 cuTensor::cuTensor(const string&name_,SHAPE shape,tpDATA tpD_,bool isX,int flag) : GTensor(shape,tpD_,false,flag){
@@ -37,7 +37,7 @@ bool cuTensor::Alloc(int tpX,int flag){
     }
     szMaloc += sz;
     if(sz>=100*1.0e6)
-        printf("\tcudaMalloc=%gM(%gG)@%s shape=[%d,%d,%d,%d]\n",sz*1.0f/1.0e6,szMaloc*1.0/1.0e9,name,ne[0],ne[1],ne[2],ne[3]);
+        printf("\tcudaMalloc=%gM(%gG)@%s shape=[%ld,%ld,%ld,%ld]\n",sz*1.0f/1.0e6,szMaloc*1.0/1.0e9,name,ne[0],ne[1],ne[2],ne[3]);
     return true;
 }
 bool cuTensor::Free() {
@@ -221,3 +221,78 @@ double tNormOf(const hGTensor tensor,int flag){
     
     return tensor->gnorm;
 }
+
+hGTensor cuTensor::GetRow(hGTensor hOut,hGTensor token,hGTensor pos,int flag)   {
+    floatX *out=(floatX*)(hOut->data),*wte=(floatX*)(data),*wpe=pos==nullptr?nullptr : (floatX*)(pos->data);
+    // int nCls = shape[1],i;
+    const int* inp=(int*)(token->data);
+    // assert(isInRange(inp,token->size(),0,nCls));
+
+    /*encoder_forward(out, inp, wte, wpe, B, T, C, main_stream);
+    NVTX_RANGE_FN();
+    const int block_size = 256;
+    const int N = B * T * C;
+    const int grid_size = CEIL_DIV(N, (int)(block_size * x128::size));
+    encoder_forward_kernel3<<<grid_size, block_size, 0, stream>>>(out, inp, wte, wpe, B, T, C);
+    cudaCheck(cudaGetLastError());*/
+
+    // PrintTensor<floatX>("wte",params.wte,true,Vp,C);        PrintTensor<floatX>("wpe",params.wpe,true,T,C);
+    // PrintTensor<int>("inputs",model->inputs,true,B,T);      PrintTensor<floatX>("GetRow",ToX(embed->out),true,B,T,C);
+    return hOut;    
+}
+
+/*
+float RAW_backward_1{
+if(config.Fuse_Normal==0)
+        lnf = fish->GetNeuron<LayerNormal>("LayerNormal",0);
+    else
+        lnf = &(lastFFN->norm); 
+
+floatX* dresidual = ToX(GTensor::scratch_btc),*scratchX = ToX(cls->preLogits),*dl_bt4c = ToX(GTensor::scratch_bt4c);   
+        floatX* gb = lnf->b==nullptr ? nullptr : ToG(lnf->b);
+        cudaCheck(cudaMemset(dresidual, 0, B * T * C * sizeof(floatX)));
+        PrintTensor<floatX>("back of P",ToX(GTensor::scratch_bt4c),true,B,T,C);
+        // backward the final layernorm
+        SelfAttention *QKV=fish->GetNeuron<SelfAttention>("SelfAttention",L-1),*preQKV=nullptr;
+        FFN *ffn=fish->GetNeuron<FFN>("FFN",L-1),*preFFN=nullptr;  
+        floatX* residual = ToX(ffn->out);   //acts.residual3 + (L-1) * B * T * C; // last residual is in residual3
+        if(config.Fuse_Normal==0){
+            layernorm_backward(dresidual, ToG(lnf->w), gb, (float*)scratchX, ToX(GTensor::scratch_bt4c), residual, ToX(lnf->w), TO<float>(lnf->mean), TO<float>(lnf->rstd), B, T, C, main_stream);
+            PrintTensor<floatX>("back of normal",dresidual,true,B,T,C);
+        }
+        // from this point on, we no longer need the values stored in the last residual, so we can reuse that memory as generic
+        // scratch for backward computations
+        floatX* dl_btc = ToX(ffn->out); //residual;
+        for (int l = L-1; l >= 0; l--) {
+            NvtxRange layer_range("Layer", l);
+            QKV = fish->GetNeuron<SelfAttention>("SelfAttention",l);
+            ffn = fish->GetNeuron<FFN>("FFN",l);        preFFN = l==0 ? nullptr : fish->GetNeuron<FFN>("FFN",l-1); 
+            residual = l == 0 ? ToX(embed->out) : ToX(preFFN->out);   //acts.residual3 + (l-1) * B * T * C;
+            ffn->residual=dl_btc;     ffn->lastQKV=QKV;    
+            QKV->dl_btc=dl_btc;   
+            if(config.Fuse_Normal==0){
+                LayerNormal *hNorm = l+1 != L ? &(fish->GetNeuron<SelfAttention>("SelfAttention",l+1)->norm) : lnf;
+                ffn->FUSE_cuda(QKV->out,scratchX, hNorm, 0x0);    
+                QKV->FUSE_cuda(QKV->norm.out,residual,&(ffn->norm),(float*)scratchX,0x0);
+            }else{
+                LayerNormal *hNorm = l>0 ? &(fish->GetNeuron<SelfAttention>("FFN",l-1)->norm) : lnf;
+                ffn->FUSE_cuda(QKV->out,scratchX, &(ffn->norm), 0x0);    
+                QKV->FUSE_cuda(QKV->norm.out,residual,&(QKV->norm),(float*)scratchX,0x0);
+            }         
+        }
+        if(config.Fuse_Normal==1){
+            lnf = fish->GetNeuron<LayerNormal>("LayerNormal",0);
+            layernorm_backward(dresidual, ToG(lnf->w), ToG(lnf->b), (float*)scratchX, ToX(GTensor::scratch_bt4c), residual, ToX(lnf->w), TO<float>(lnf->mean), TO<float>(lnf->rstd), B, T, C, main_stream);
+            PrintTensor<floatX>("back of normal",dresidual,true,B,T,C);
+        }
+        int *input = TO<int>(fish->Input());
+        if (bucket_info == NULL) {      //grads_memory
+            // NvtxRange rng("InitGrads");
+            size_t num_c_groups = CEIL_DIV(C, (WARP_SIZE * x128::size));
+            assert((size_t)(GTensor::B * GTensor::T) * num_c_groups < (1ULL<<31ULL)); // todo - maybe an issue for llama3-400B(?)
+            workload_indices = (int*)mallocCheck(sizeof(int) * GTensor::B * GTensor::T * num_c_groups);
+            bucket_info = (int4*)mallocCheck(sizeof(int4) * GTensor::B * GTensor::T * num_c_groups);
+        }
+        encoder_backward(ToG(embed->w), ToG(embed->b), scratchX, workload_indices, bucket_info,dresidual, input, hostInput, B, T, C, random_u32(&rng_state), main_stream);
+}
+*/

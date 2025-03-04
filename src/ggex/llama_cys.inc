@@ -169,7 +169,7 @@ bool llama_ctx_set_( struct llama_context * ctx,void *hData, int type){
 
 struct llama_context *llama_ctx_reset_(struct llama_context * ctx_,struct llama_model * model,struct llama_context_params   params) {    
     llama_context * ctx = ctx_;
-    /*if (params.flash_attn && model->arch == LLM_ARCH_GROK) {
+    if (params.flash_attn && model->arch == LLM_ARCH_GROK) {
         LLAMA_LOG_WARN("%s: flash_attn is not compatible with Grok - forcing off\n", __func__);
         params.flash_attn = false;
     }
@@ -249,7 +249,7 @@ struct llama_context *llama_ctx_reset_(struct llama_context * ctx_,struct llama_
         #endif
 
             // count used buffer types
-            std::map<ggml_backend_buffer_type_t, int> buft_layer_count;
+            /*std::map<ggml_backend_buffer_type_t, int> buft_layer_count;
             if (offload) {
                 for (int64_t i = 0; i < n_layer; ++i) {
                     buft_layer_count[model->buft_layer[i].buft]++;
@@ -297,9 +297,9 @@ struct llama_context *llama_ctx_reset_(struct llama_context * ctx_,struct llama_
                 ggml_backend_buffer_clear(buf, 0);
                 LLAMA_LOG_INFO("%s: %10s KV buffer size = %8.2f MiB\n", __func__, ggml_backend_buffer_name(buf), ggml_backend_buffer_get_size(buf)/1024.0/1024.0);
                 cache.bufs.push_back(buf);
-            }   
+            }  */ 
         }
-    }*/
+    }
 
     return ctx;
 }
@@ -708,9 +708,11 @@ bool LAMA::Decode(std::vector<TOKEN_ID>&embd_inp,int start,int n_past,bool out_a
     }
     TOKEN_ID id;    //eos = llama_token_eos(lmodel),    
     std::vector<llama_token> embd;
+    string line;
     while ((int) embd_inp.size() > n_consumed) {
         id = embd_inp[n_consumed];
         // const std::string token_str = llama_token_to_piece(_ctx, id);
+        const std::string token_str = T2STR(id);        line+=token_str;
         // _INFO("%s",token_str.c_str());
         embd.push_back(embd_inp[n_consumed]);
         ++n_consumed;       
@@ -726,7 +728,7 @@ bool LAMA::Decode(std::vector<TOKEN_ID>&embd_inp,int start,int n_past,bool out_a
          nullptr,        
     };//llama_batch_get_one(&embd[0], n_eval, n_past, 0);
     llama_ctx_set_(_ctx,&out_all,11);       
-    llama_set_n_threads(_ctx,1,1);      //  only for debug
+    // llama_set_n_threads(_ctx,1,1);      //  only for debug
     llama_decode(_ctx,batch );        n_past+=n_eval;
     if(out_all){
         nOutToken = embd_inp.size();
@@ -814,7 +816,12 @@ void LAMA::Answer(std::vector<TOKEN_ID>&embd_inp,int flag) {
 
 */
 LAMA::LAMA(CLI_params& hparams,const std::string&path_,int flag)     {
+    //  Default value 
+    // struct llama_model_params llama_model_params = llama_model_default_params();
+    // struct llama_context_params cparams = llama_context_default_params();
+
     // cparams.flash_attn = true;           //would affect accuracy
+    cparams.n_threads = cparams.n_threads_batch = 20;
     model_path = path_;
     llama_model_params.n_gpu_layers = hparams.common.n_gpu_layers;
     // llama_model_params.n_gpu_layers = 0;     //  12s->8s
@@ -938,3 +945,6 @@ std::string LAMA::T2STR( int32_t tok,int flag )                    {
     return str;  
 }
 
+
+
+    

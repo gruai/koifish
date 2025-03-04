@@ -28,7 +28,7 @@ hGensor LLM_MAMBA::BuildTarget( struct ggml_context * ctx,hGensor cur,int flag) 
 
 GPT2::GPT2( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag) : NLP_AutoRegressive(nam_,params,role,flag)  {
     assert(arch==MODEL_ARCH::NLP_GPT2 || arch==MODEL_ARCH::NLP_GPT2_char);
-    isBias = false;    //   if true, converge much slower
+    // isBias = config.modep.isBias;    //   if true, converge much slower
 }
 
 /*
@@ -322,7 +322,7 @@ string GPT2::__repr__( string& suffix,string& prefix,int flag) {
     const char*tab=prefix.c_str();
     string sBasic = NLP_AutoRegressive::__repr__(suffix,prefix,flag);
     sprintf(buf+strlen(buf),"%s",sBasic.c_str()); 
-    _INFO("GPT2:    Bias=%d AttOnBC=%d\n========\n",isBias,isAttOnBC); 
+    _INFO("GPT2:    Bias=(normal=%d,slp=%d) AttOnBC=%d\n========\n",config.modep.isNormalBias,config.modep.isSLPBias,isAttOnBC); 
     return buf;
 }
 
