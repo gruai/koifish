@@ -200,6 +200,7 @@ struct CLI_params {
     uint32_t n_ctx_orig()    const    {
         return n_ctx_orig_yarn != 0 ? n_ctx_orig_yarn : n_ctx_train;
     }
+    
     void SetNCTX(int _nctx)  {
         assert(_nctx>0 && _nctx<1024*1024);
         common.n_ctx = _nctx;
@@ -220,6 +221,7 @@ struct CLI_params {
     nlohmann::ordered_json jModel;
     MODEL_ARCH ModelArch();
     virtual void OnArch();
+    virtual std::string NameOnArch(std::string&name,int flag=0x0);
     virtual void JModel2Params(int flag);
     virtual void OnMostToken(size_t nMost,int flag=0x0);
     std::string exec_name="",test="",compute_graph="";
@@ -243,7 +245,7 @@ struct CLI_params {
     int n_layer_train = -1, nLayerX = -1, nFFX = -1;
     int Fuse_Normal = 0;
     
-    uint32_t n_rot = 64;
+    
         
     int nabla = 1;      //cys
     // std::string sigma = ""; 
@@ -386,6 +388,10 @@ struct CLI_params {
     uint32_t n_embd_head(int il = 0) const {
         assert(il>=0 && il<layerps.size());
         return layerps[il].n_embd_head(n_embd);        
+    }
+    // uint32_t n_rot = 64;
+    uint32_t n_rot(int il = 0)    const{  //  n_rot to be exactly n_embd / n_head
+        return n_embd/n_head(il);
     }
     uint32_t n_embd_gqa(int il = 0) const {
         assert(il>=0 && il<layerps.size());

@@ -23,7 +23,7 @@
 */
 enum class tpFloatingPoint : uint8_t {
     FP32, 
-    FP16, 
+    FP16,       //  1 sign, 5 exponent, and the significand is being stored in 10 bits.
     BF16,       //  1 sign, 8 exponent, and the significand is being stored in 7 bits.
     F8E5M2,     //  1 sign, 5 exponent, 1 implicit and 2 explicit mantissa bits
     F8E4M3,     //  1 sign, 4 exponent, 1 implicit and 3 explicit mantissa bits

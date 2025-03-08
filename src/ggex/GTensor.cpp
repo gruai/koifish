@@ -7,7 +7,7 @@
 *  \author Yingshi Che
  */
 #include "GTensor.hpp"
-
+#include "GG_util.hpp"
 #ifdef _TENSOR_CUD_
 // GTensor::tpDATA GTensor::tpFloatX = GGML_TYPE_F32;
    GTensor::tpDATA GTensor::tpFloatX = GGML_TYPE_BF16;
@@ -19,7 +19,7 @@
    // }
 #endif
 
-int GTensor::B=0,GTensor::T=0,GTensor::C=0;
+// int B=0,T=0,C=0;
 hGTensor GTensor::scratch_bt4c=nullptr,GTensor::scratch_btc=nullptr,GTensor::scratch_output=nullptr,GTensor::scratch_ff1=nullptr;
 
 float GTensor::rLARS(float s0,float T_lars,int flag)   {
@@ -177,6 +177,19 @@ bool GTensor::OverWrite(hGTensor hGT,bool isSrc,int flag)  {
    return false;
 }
 
+hGTensor GTensor::Relu() 
+{  auto cur=ggml_relu(nullptr, gg);  return NEW_(cur);  }
+hGTensor GTensor::Silu() 
+{  auto cur=ggml_silu(nullptr, gg);  return NEW_(cur);  }
+hGTensor GTensor::Norm(float epsilon,int flag) 
+{  auto cur=ggml_silu(nullptr, gg);  return NEW_(cur);  }
+
+hGTensor GTensor::CrossEntropy( const hGTensor b,int flag )   	{
+   auto cur = ggml_cross_entropy_loss(nullptr,gg, b->GG() );   
+   // ggml_cross_entropy_loss_1(_ctx, cur, target_probs); 
+   return GTensor::NEW_(cur);
+}
+
 hGTensor GTensor::GetRow(hGTensor, hGTensor tokens,hGTensor pos,int flag)   {
    assert(0);     //GGML VERSION
    // assert(ne[1]==shape[0]);
@@ -187,6 +200,25 @@ hGTensor GTensor::GetRow(hGTensor, hGTensor tokens,hGTensor pos,int flag)   {
    // return GTensor::NEW_(cur);
    return nullptr;
 }
+
+hGensor GENSORS::Get(const string&name, int flag)    {        
+   if(flag==0x100){    //  .weight=>.w
+      for(auto ng:nag){
+            if(strstr(name.c_str(),ng.first.c_str())!= NULL){
+               return ng.second;
+            }
+      }
+      return nullptr;
+   }else{
+      if(nag.find(name) == nag.end()){
+         _ERROR("Failed to get tensor=%s nGensor=%d",name.c_str(),nag.size());
+         assert(0);  
+         return nullptr;
+      }
+      return nag[name];
+   }
+   
+} 
 
     // inline hGensor To4D(struct ggml_context * ctx_build,hGensor cur,int64_t n1,int64_t n2,int64_t n3,int64_t n4){
     //     cur = ggml_reshape_4d(ctx_build, cur, n1, n2,n3,n4);

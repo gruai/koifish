@@ -9,9 +9,6 @@ cuTensor::cuTensor(const string&name_,SHAPE shape,tpDATA tpD_,bool isX,int flag)
         snprintf(name, sizeof(name), "%s",name_.c_str());
     else
         name[0]='\0';
-    // if (isParam )        {
-    //     SetFlag(GTensor::F_PARAM);
-    // }
 }        
 
 static size_t szMaloc = 0;
@@ -22,7 +19,7 @@ bool cuTensor::Alloc(int tpX,int flag){
     assert(szData>0);
     cudaError_t error = cudaMalloc((void**)&data, szData);
     if (error != cudaSuccess) {
-        printf("[CUDA ERROR] at file %s:%d:\n%s\n", __FILE__, __LINE__, cudaGetErrorString(error));
+        printf("[CUDA Alloc] failed @%s, ERR=%s!\n", name, cudaGetErrorString(error));
         exit(EXIT_FAILURE);
     }    
     cudaCheck(cudaMemset(data, 0, szData));
@@ -31,7 +28,7 @@ bool cuTensor::Alloc(int tpX,int flag){
         InitParam(tpX,flag);
         cudaError_t error = cudaMalloc((void**)&grad, szData);      sz+=szData;
         if (error != cudaSuccess) {
-            printf("[CUDA ERROR] at file %s:%d:\n%s\n", __FILE__, __LINE__, cudaGetErrorString(error));
+            printf("[CUDA Alloc] failed @%s, ERR=%s\n", name, cudaGetErrorString(error));
             exit(EXIT_FAILURE);
         }   
     }
@@ -100,11 +97,12 @@ bool cuTensor::CopyGG(struct ggml_tensor*gg_,int flag) {
     }else{
         for(i=0;i<shape.size();i++)  {
             assert(shape[i]==gg_->ne[i]);
-            assert(nb[i] == gg_->nb[i]);
+            if(type==gg_->type)
+                assert(nb[i] == gg_->nb[i]);
         }
     }
-    size_t sz   = ggml_nbytes(gg_);  
-    assert(sz==szData);  
+    size_t sz = ggml_nbytes(gg_);  
+    if(type==gg_->type) assert(sz==szData);  
 
 #ifdef _TENSOR_CUD_
    bool toDevice = SerialGP(gg_->data,nullptr,false,0x0);
@@ -223,12 +221,12 @@ double tNormOf(const hGTensor tensor,int flag){
 }
 
 hGTensor cuTensor::GetRow(hGTensor hOut,hGTensor token,hGTensor pos,int flag)   {
-    floatX *out=(floatX*)(hOut->data),*wte=(floatX*)(data),*wpe=pos==nullptr?nullptr : (floatX*)(pos->data);
+    /*floatX *out=(floatX*)(hOut->data),*wte=(floatX*)(data),*wpe=pos==nullptr?nullptr : (floatX*)(pos->data);
     // int nCls = shape[1],i;
     const int* inp=(int*)(token->data);
     // assert(isInRange(inp,token->size(),0,nCls));
 
-    /*encoder_forward(out, inp, wte, wpe, B, T, C, main_stream);
+    encoder_forward(out, inp, wte, wpe, B, T, C, main_stream);
     NVTX_RANGE_FN();
     const int block_size = 256;
     const int N = B * T * C;
@@ -289,9 +287,9 @@ floatX* dresidual = ToX(GTensor::scratch_btc),*scratchX = ToX(cls->preLogits),*d
         if (bucket_info == NULL) {      //grads_memory
             // NvtxRange rng("InitGrads");
             size_t num_c_groups = CEIL_DIV(C, (WARP_SIZE * x128::size));
-            assert((size_t)(GTensor::B * GTensor::T) * num_c_groups < (1ULL<<31ULL)); // todo - maybe an issue for llama3-400B(?)
-            workload_indices = (int*)mallocCheck(sizeof(int) * GTensor::B * GTensor::T * num_c_groups);
-            bucket_info = (int4*)mallocCheck(sizeof(int4) * GTensor::B * GTensor::T * num_c_groups);
+            assert((size_t)(B * T) * num_c_groups < (1ULL<<31ULL)); // todo - maybe an issue for llama3-400B(?)
+            workload_indices = (int*)mallocCheck(sizeof(int) * B * T * num_c_groups);
+            bucket_info = (int4*)mallocCheck(sizeof(int4) * B * T * num_c_groups);
         }
         encoder_backward(ToG(embed->w), ToG(embed->b), scratchX, workload_indices, bucket_info,dresidual, input, hostInput, B, T, C, random_u32(&rng_state), main_stream);
 }

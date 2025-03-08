@@ -158,19 +158,7 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
             nInput++; 
         }
     }
-    /*auto gf=GetForwRaw();     
-    for (nx=0,n0=0,nInput=0, i = 0; i < gf->n_nodes; ++i) {
-        if (gf->nodes[i]->flags & GGML_TENSOR_FLAG_PARAM) {                 
-            auto node = NEW_(gf->nodes[i]);          
-            optParams.push_back(node);      //different order @tRand
-            nx += tELEM(node);     n0++;   
-            // hEDS->SetBackend(node);
-            // _INFO("Param_%-4d(op=%d)\t", optParams.size(), gf->nodes[i]->grad->op );
-        }
-        if (gf->nodes[i]->flags & GGML_TENSOR_FLAG_INPUT) {  
-            nInput++; 
-        }
-    }      */
+
     assert(optParams.size() < GGML_MAX_PARAMS);
 #ifdef _TENSOR_CUD_
 #else
@@ -313,21 +301,17 @@ bool Fish::Build(int flag)  {
         return false;
     int iRet = 0x0;
     bool isInitParam = false, isJModel = !config.jModel.empty();
+    assert(isJModel);
     isSymbolicAnalysis = true;    
 #ifdef _TENSOR_CUD_
 #else
     ggml_backend_sched_reset(hEDS->GetSched());
 #endif
-    if(config.is({"gpt","c_graph"},string("raw")) || config.ModelArch()==MODEL_ARCH::NLP_GPT2 
-        || config.ModelArch()==MODEL_ARCH::NLP_GPT2_char){  //only for debug
-        isInitParam = true;
-        // int iRet = _llama_build_graph(GetRawModel(),&gf,&gb,0x0);          //bug
+    /*if(config.ModelArch()==MODEL_ARCH::NLP_GPT2 || config.ModelArch()==MODEL_ARCH::NLP_GPT2_char){  
+        isInitParam = true;        
         iRet = BuildGraphFromRaw(0x0);
-    }else
-
-    {
-        InitInput(ctx_build,true,flag); 
-        assert(isJModel);
+    }else*/    {
+        InitInput(ctx_build,true,flag);         
         isInitParam = true;
         hForwTG = std::make_shared<TGraph>(this,"J_model",ctx_build,true);
         jToGraph(ctx_build,false,flag);
@@ -341,11 +325,7 @@ bool Fish::Build(int flag)  {
     if(!AfterBuild(isInitParam))
         return false;
 
-    Dump(0x0);
-    // ClearGraph();
-#ifndef NDEBUG
-    // ggml_graph_print(gf);    ggml_graph_print(gb);       //only for debug
-#endif    
+    Dump(0x0);  
     isSymbolicAnalysis = false;
     return true;
 }
@@ -445,6 +425,7 @@ try{
         loadGensors.clear();
         for (int i = 0; i < n_tensors; ++i) {
             const char *name = gguf_get_tensor_name  (fctx, i);
+            ggml_tensor *cur = ggml_get_tensor(fctx_data, name);    
             hGensor target = GetGensor(name);
             if(target==nullptr){
                 return false;
@@ -460,7 +441,7 @@ try{
             // const size_t offset = gguf_get_tensor_offset(fctx, i);
             // printf("%s: tensor[%d]: name = %s, offset = %zu\n", __func__, i, name, offset);
             // cur = std::make_shared<cuTensor>(ggml_get_tensor(fctx_data, name),GTensor::F_PARAM);    //  cur = (hGensor )(mem_buffer + obj->offs);
-            ggml_tensor *cur = ggml_get_tensor(fctx_data, name);    //  cur = (hGensor )(mem_buffer + obj->offs);
+            
             if(cur==nullptr){
                 _INFO("%s failed to load tensor(%s) @%s!",__func__,name,path.c_str());
                 return false;

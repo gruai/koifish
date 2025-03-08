@@ -173,7 +173,7 @@ size_t GlobTokenset::OnShardFile(int id0, bool load, int flag) {
         // int nMostCompletion =4,can_fit_examples = (int) (B / nMostCompletion);
         longest_example_bytes = header[3];
         nShardSamples = header[2];
-        nShardToks = GTensor::B*GTensor::T;
+        nShardToks = B*T;
         // label = (int*)mallocCheck(can_fit_examples * sizeof(int));
         break;
     default:    //  20240520
@@ -291,7 +291,7 @@ double DataTokenSet::LossOnResult(hSampLoader hLoader,OutCLS *cls,int flag) {
 
 bool Tokenset_HellaSwag::Shard2Sample(int flag){
 try{
-    size_t B = GTensor::B,T = GTensor::T;
+    size_t B = hDict->config.n_batch(),       T = hDict->config.n_ctx();
     int batch_dim_offset,nComplete=0;
     int can_fit_examples = (int) (B / nMostCompletion),examples_per_process=nShardSamples,end_example_index=examples_per_process,start_example_index=0;
     uint16_t *buffer16 = new uint16_t[longest_example_bytes];

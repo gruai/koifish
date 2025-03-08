@@ -339,7 +339,7 @@ void CLI_params::Dump( )    {
     _INFO(" n_head=%u", n_head());
     _INFO(" n_head_kv=%u", n_head_kv());
     _INFO(" n_layer=%u(%u)", nLayer(),n_layer_train);
-    _INFO(" n_rot=%u\n", n_rot);       
+    _INFO(" n_rot=%u\n", n_rot());       
     _INFO(" f_norm_rms_eps=%g", f_norm_rms_eps);   
     _INFO(" rope_freq_base=%g", rope_freq_base);   
     _INFO(" rope_freq_scale=%g", rope_freq_scale);
@@ -411,11 +411,28 @@ void CLI_params::OnMostToken(size_t nMost,int flag){
     int iter_1 = (int)floor(a/n_batch());
     common.adam.n_iter = (int)floor(nMost*common.n_epochs*1.0/nTokenInBatch());
 }
+
+std::string CLI_params::NameOnArch(std::string&name,int flag){
+    string sx="";
+    if(name=="layer")   
+        sx="blk";
+    switch(ModelArch()){
+    case MODEL_ARCH::NLP_GPT2:  
+    case MODEL_ARCH::NLP_GPT2_char:  {
+    }
+        break;
+    default:
+        
+        break;
+    }
+    return sx;
+}
+
 void CLI_params::OnArch( ){
     int nH=-1;
     string info = jKV(jConfig,{"arch"},string("")); 
     bool isJModel = !jModel.empty();
-    GTensor::B = n_batch();     GTensor::C = n_embd;     GTensor::T = n_ctx();
+    
     switch(ModelArch()){
     case MODEL_ARCH::NLP_GPT2:  
     case MODEL_ARCH::NLP_GPT2_char:  {
@@ -1324,6 +1341,10 @@ extern "C" void gg_print_tensor_(const char* title, hGensor t, int n) {
     } 
 }
 
+double GTensor::bpe(){
+    //  ggml_row_size()
+    return ggml_type_sizef(type);   //deprecated
+}
 size_t GTensor::size(int typ)  const       {   
     size_t nz=1;    
     for(auto a : shape)   nz*=a;  

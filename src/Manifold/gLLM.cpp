@@ -56,6 +56,8 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_,int flag)     {
     // save_data.Init(config,GetRawModel());
     if(hOPT!=nullptr)   {
         hOPT->Dump(1);
+        if(config.isOnlyGPT)
+            return true;
         if(!hOPT->PrepareData( config,flag ))
             return false;
     }   
@@ -371,7 +373,7 @@ hGensor Fish::BuildLoss( struct ggml_context * ctx,hGensor cur,int flag){
     }
     int n_ctx = config.n_ctx(),nCls = nClass(),n_batch = config.n_batch();
     
-    // cuLiteTest(GTensor::B,GTensor::T,GTensor::C);  
+    // cuLiteTest(B,T,C);  
     
     
 #ifdef _TENSOR_CUD_
@@ -719,7 +721,7 @@ void NLP_AutoRegressive::InitModel(int flag){
     if(arch==NLP_MAMBA)     {
         assert(config.n_head() == 0);
     }  else{
-        config.n_rot = config.n_embd / config.n_head();    
+        
     }
     
     _INFO("\nLLaMeta%s: init model embed=%d layer=%d ff=%d tpFFN=%d\n", __func__,n_embd,n_layer,n_ff,tpFFN);  
@@ -773,7 +775,7 @@ void NLP_AutoRegressive::Dump(int type,int flag)      {
     _INFO("====== nParams = %ld(%.6gM) ======\n", nParams,nParams/1.0e6);
     _INFO("%s: nParams=%zu model_size = %zu bytes (%.1f MB)\n", __func__, nParams,szModel,szModel / (1024.0f*1024.0f) );
     _INFO("%s: n_vocab=%d t_vocab=%d,n_batch=%d,n_ctx=%d,n_embd=%d,n_head=%d,n_rot=%d,n_ff=%d\n", __func__, 
-        n_vocab,tVocab(),n_batch,n_ctx,n_embd,config.n_head(),config.n_rot,config.n_ff() );
+        n_vocab,tVocab(),n_batch,n_ctx,n_embd,config.n_head(),config.n_rot(),config.n_ff() );
     _INFO("%s: loader=%s\n", __func__, config.tpBatchSample.c_str() );
     if(hOPT!=nullptr)
         hOPT->Dump( 1 );     

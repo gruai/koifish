@@ -342,7 +342,14 @@ public:
     //  number of class (only valid for classification problem)
     virtual size_t nClass() {   assert(0);        return 0; }
 
-    virtual bool Init(const vector<hWIKI>& wikis,int flag=0x0)          {   throw "Fish::Init is ...";           }       
+    virtual bool Init(const vector<hWIKI>& wikis,int flag=0x0)          {   throw "Fish::Init is ...";           }    
+    //shortcut parameter of LLM models
+    virtual void GetBTC(int& B,int &T,int &C){
+        B = config.n_batch();     C = config.n_embd;     T = config.n_ctx();
+        assert(B>0);    
+        assert(T>0);
+        assert(C>0);
+    };       
     virtual struct ggml_context * GetGGCTX(int typ=0x0)                   {  
         switch(typ){
         case 1: 

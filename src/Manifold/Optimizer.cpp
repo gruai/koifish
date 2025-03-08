@@ -553,7 +553,7 @@ double Optimizer::GraphCompute(hSampLoader hLoader,hTGraph hTG, int flag){
 #ifdef _TENSOR_CUD_    
     embed->hostInput = (int*)hLoader->hostBatch->data;        //(int*)train_loader->hostBatch->data;
     isBackward = false;
-    RAW_forward(_fish,0);    //0x1001    0x100
+    RAW_forward(_fish,0);    //    0x6666666
     mean_loss = hLoader->hTokens->LossOnResult(hLoader,cls);
     if(isOnlyEvaluate){
         return mean_loss;
@@ -579,7 +579,7 @@ double Optimizer::GraphCompute(hSampLoader hLoader,hTGraph hTG, int flag){
         }
         _INFO("%d\tF@%s\n",no++,nn->__repr__(suffix,prefix).c_str());            
         cur = nn->Interact(nullptr,cur);        
-        // cuLiteTest(GTensor::B,GTensor::T,GTensor::C);           //only for debug
+        // cuLiteTest(B,T,C);           //only for debug
     }
     isBackward = true;
     for (auto it = _fish->neurons.rbegin(); it != _fish->neurons.rend(); ++it)    {
@@ -926,8 +926,7 @@ void Optimizer::Prepare(size_t nx_,int flag){
 
 bool Optimizer::PrepareData( CLI_params& config,int flag )   {   
     GST_TIC(tic);   
-    // train_loader->Prepare(_fish->tsTrain);                
-    // val_loader->Prepare(_fish->tsEval);
+
     bool isLoadOK = false;  
     string root=_fish->tsTrain->serial_root,spTrain = root+".train",spEval = root+".eval";
     if(root.empty()){ 

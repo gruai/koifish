@@ -45,7 +45,8 @@ class GeNeuron  {
     GeNeuron &operator=(const GeNeuron &) = default;
 
 protected: 
-    int n_batch,n_ctx,n_embd,n_embd_head,n_head;
+    int B,T,C;  //n_batch,n_ctx,n_embd,
+    int n_embd_head,n_head;
     int gelu_fusion = 0;
     Fish *hFish = nullptr;
     COMPRESSIVE_SENSING compression = SKIP;
@@ -125,7 +126,7 @@ struct Embed : public GeNeuron    {
 
 class ROPE : public GeNeuron    { 
 protected:
-    int n_rot=0;
+    int n_rot=0,n_ctx_orig=0;
     hGensor KQ_pos;
     float f_norm_rms_eps, rope_freq_base, rope_freq_scale;
 public:    
@@ -133,6 +134,7 @@ public:
     ROPE(Fish *ctx, const std::string &key_, JSON::const_iterator jit, int flag);
     bool Build(int flag)   override;
     hGensor Interact(struct ggml_context * ctx0,hGensor cur,int flag=0x0)    override;
+    int FUSE_cuda(hGTensor QKV,bool isFX=true,int flag=0x0);
     bool isValid()  override    {   return true;    }
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
 };
@@ -184,6 +186,7 @@ struct LayerNormal : public GeNeuron    {
     LayerNormal(Fish *ctx, const std::string &key_, JSON::const_iterator jit, int flag);
     bool Build(int flag)   override;
     hGensor Interact(struct ggml_context * ctx0,hGensor cur,int flag)    override;
+    hGTensor FUSE_cuda(hGTensor inpL,float* scratch=nullptr,int flag=0x0);
     size_t nElem()  override;    
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
     // hGTensor operator>>(hGTensor & a){  return a;   }
@@ -266,7 +269,7 @@ public:
     bool isValid()  override    {   return true;    }
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
 
-    int FUSE_cuda(hGTensor inpL,floatX* residual,LayerNormal*norm2,float* scratchF,int flag);
+    hGTensor FUSE_cuda(hGTensor inpL,floatX* residual,LayerNormal*norm2,float* scratchF,int flag);
 };
 
 /*
@@ -335,7 +338,7 @@ struct FFN : public GeNeuron  {
     bool isValid()  override    {   return true;    }
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
 
-    int FUSE_cuda(hGTensor inpL,floatX *scratch,LayerNormal*norm2,int flag);
+    hGTensor FUSE_cuda(hGTensor inpL,floatX *scratch,LayerNormal*norm2,int flag);
 };
 
 

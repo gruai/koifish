@@ -54,7 +54,6 @@ int gTN0(hGTensor cur,const char *format,... );
 
 class GTensor   {
 private:
-    struct ggml_context *_ctx=nullptr;
     struct ggml_tensor  *gg=nullptr;
 protected:
     std::shared_ptr<EDGE_DEVICES> hDevice = nullptr;
@@ -64,7 +63,7 @@ protected:
     int recompute=1;
     virtual hGTensor _Multiply(const hGTensor& other) { assert(0);  return nullptr;    }
 public:
-    static int B,T,C;       //shortcut parameter of LLM models
+    // static int B,T,C;       //shortcut parameter of LLM models
     static hGTensor scratch_bt4c,scratch_btc,scratch_output,scratch_ff1;
     float residual_scale=1.0,wnorm=0,gnorm=0;   // some tricks
     float rLARS(float s0,float T_lars,int flag);
@@ -105,9 +104,9 @@ public:
         return _Multiply(other);
     }
 
-    hGTensor Relu() {  auto cur=ggml_relu(_ctx, gg);  return NEW_(cur);  }
-    hGTensor Silu() {  auto cur=ggml_silu(_ctx, gg);  return NEW_(cur);  }
-    hGTensor Norm(float epsilon,int flag=0x0) {  auto cur=ggml_silu(_ctx, gg);  return NEW_(cur);  }
+    hGTensor Relu();
+    hGTensor Silu();
+    hGTensor Norm(float epsilon,int flag=0x0);
 
 //operations
     virtual bool OverWrite(struct ggml_tensor*gg_,bool isSrc=true,int flag=0x0);
@@ -120,11 +119,7 @@ public:
     // virtual hGTensor ResiNormal(hGTensor hOut,hGTensor hNormed,hGTensor _mean,hGTensor _rstd,hGTensor hInp1,hGTensor hInp2,hGTensor w,hGTensor b,int flag)                        {   assert(0);  return nullptr;}                       
     // virtual float FusedLoss(float *hostLoss,float dLoss,hGTensor hLoss,hGTensor hTarget,hGTensor tX, hGTensor w,int V,bool isForward, int flag)  {   assert(0);  return 0;}
 //  Loss
-    virtual hGTensor CrossEntropy( const hGTensor b,int flag=0x0 )   	{
-        auto cur = ggml_cross_entropy_loss(_ctx,gg, b->GG() );   
-        // ggml_cross_entropy_loss_1(_ctx, cur, target_probs); 
-        return GTensor::NEW_(cur);
-    }
+    virtual hGTensor CrossEntropy( const hGTensor b,int flag=0x0 );
     
 
     int64_t ne[GGML_MAX_DIMS]; // number of elements
@@ -155,7 +150,9 @@ public:
     void * extra; // extra things e.g. for ggml-cuda.cu
     //  return ggml_tensor
     struct ggml_tensor*GG();
-    struct ggml_context*CTX()   {   return _ctx;  }
+    struct ggml_context*CTX()   {   return nullptr;  }
+    //  byte per element, may be fraction!!!
+    virtual double bpe();       
     virtual size_t size(int typ=0)  const;
     virtual int dims()    const         {   
         for (int i = GGML_MAX_DIMS - 1; i >= 1; --i) {
@@ -169,6 +166,9 @@ public:
     virtual bool isEmpty()  const                       {   
         // if(size()>0)    {   assert(B>0 && T>0 && C>0); }
         return size()==0;    
+    }
+    virtual size_t ld(int no){
+        assert(no>=0&&no<4);        return nb[no]/bpe();
     }
     virtual bool isSameShape(const hGTensor b) const    {   return szData==b->szData;    }
     virtual void Zero( )       {  Set(0.0);   }  
@@ -365,22 +365,7 @@ struct GENSORS{
         nag.insert(src.begin(), src.end());
     }
     size_t size()   {   return nag.size();  }
-    virtual hGensor Get(const string&name, int flag = 0x0)    {        
-        if(flag==0x100){    //  .weight=>.w
-            for(auto ng:nag){
-                if(strstr(name.c_str(),ng.first.c_str())!= NULL){
-                    return ng.second;
-                }
-            }
-            return nullptr;
-        }else{
-            if(nag.find(name) == nag.end()){
-                assert(0);  return nullptr;
-            }
-            return nag[name];
-        }
-        
-    } 
+    virtual hGensor Get(const string&name, int flag = 0x0);
     virtual void Clear() {   
         nag.clear();    
         infos.clear();

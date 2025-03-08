@@ -55,6 +55,7 @@ src/LLAMA/common/build-info.cpp
 *.train
 *.csv
 *.info
+*.sh
 datasets
 
-src/kGPT/train_gpt2cu
+koifish

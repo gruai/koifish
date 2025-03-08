@@ -5,6 +5,7 @@
 #include "./llm_c/layernorm.cuh"
 #include "./llm_c/encoder.cuh"
 #include "./llm_c/fused_classifier.cuh"
+#include "./kernel/rope.cuh"
 // #include "./TE/fused_attn/fused_attn_fp8.cu"
 #include "../../Manifold/Neuron.hpp"
 // #include "./mfu.h"
@@ -384,31 +385,10 @@ hGTensor cuTensor::_Multiply(const hGTensor& b) {
     return nullptr;
 }
 
-/*
-    1. residual_forward(residual, inp1, inp2, N*C, stream);
-    2. layernorm_forward(normed, mean, rstd, residual, weight, bias, N, 1, C, stream);
-*/
-int FUSE_ResiNormal(hGTensor hOut,hGTensor hInp1,hGTensor hInp2,hGTensor hNormed,hGTensor N_mean,hGTensor N_rstd,hGTensor w,hGTensor b,int flag){
-    assert(b!=nullptr);     //I would fix this bug
-    assert(hOut->isSameShape(hInp1) && hOut->isSameShape(hInp2));
-    int B=GTensor::B,T=GTensor::T,C=GTensor::C;
-    floatX *inp1=(floatX*)hInp1->data,*inp2=(floatX*)hInp2->data,*normed=(floatX*)hNormed->data,*residual=(floatX*)hOut->data;
-    assert(N_mean->type==GGML_TYPE_F32 && N_rstd->type==GGML_TYPE_F32);
-    float *mean=(float*)N_mean->data,*rstd=(float*)N_rstd->data;
-    if(flag==1)
-        fused_residual_forward5((floatX*)hOut->data, normed, mean,rstd, inp1, inp2, (floatX*)w->data, (floatX*)b->data, B*T, C, main_stream);
-    else{
-        residual_forward(residual, inp1, inp2, B*T*C, main_stream);
-        layernorm_forward(normed, mean, rstd, residual, (floatX*)w->data, (floatX*)b->data, B*T, 1, C, main_stream);        
-    }
-
-    return 0x0;
-}
-
 int Embed::FUSE_cuda(hGTensor tokens,floatX *scratchX,LayerNormal*neuron_x,unsigned int seed){
 try{
-    int B=GTensor::B,T=GTensor::T,C=w->ne[0],OC=w->ne[1],nCls = shape[1];    
-    assert(C==GTensor::C);
+    int OC=w->ne[1],nCls = shape[1];    
+    assert(C==w->ne[0]);
     const int* inp=(int*)(tokens->data);
     // assert(isInRange(inp,token->size(),0,nCls));
     if(isForward()){ 
@@ -434,7 +414,7 @@ try{
 int SLP::FUSE_cuda(hGTensor rhs_,hGTensor lhs_,hGTensor gelu,bool isForw,int flag){
 try{
     floatX *rhs=ToX(rhs_),*inp=ToX(lhs_);
-    int B=GTensor::B,T=GTensor::T,C=w->ne[0],OC=w->ne[1];
+    int OC=w->ne[1],IC=w->ne[0];
     // assert(C==w->ne[0]);
     assert(rhs_->ne[0]*rhs_->ne[1]*rhs_->ne[2]>=B*T*OC);        //  ne of scatch
     floatX *pre_gelu = ToX0(gelu);
@@ -442,10 +422,10 @@ try{
     if(isForw){ //Forward or remate in Back
         // matmul_forward_cublaslt(rhs, inp, ToX(w), ToX0(b), B, T, C, OC, main_stream,pre_gelu,gelu_fusion);
         if (gelu_fusion < 1 && pre_gelu) {
-            matmul_cublaslt(pre_gelu, ToX(w), inp, ToX0(b), OC, B*T, C, main_stream, true, false, 0, 0, 0, 0, false, NULL, false);
+            matmul_cublaslt(pre_gelu, ToX(w), inp, ToX0(b), OC, B*T, IC, main_stream, true, false, 0, 0, 0, 0, false, NULL, false);
             gelu_forward(rhs, pre_gelu, B*T*OC, main_stream);
         } else {
-            matmul_cublaslt(rhs, ToX(w), inp, ToX0(b), OC, B*T, C, main_stream, true, false, 0, 0, 0, 0, false, pre_gelu, false);
+            matmul_cublaslt(rhs, ToX(w), inp, ToX0(b), OC, B*T, IC, main_stream, true, false, 0, 0, 0, 0, false, pre_gelu, false);
         }
         // PrintTensor<floatX>("l_qkvw",l_qkvw,true,3*C,C);       PrintTensor<floatX>("l_qkvb",l_qkvb,true,3*C,1);
         // PrintTensor<floatX>("l_qkvr",l_qkvr,true,B,T,3*C);
@@ -453,7 +433,7 @@ try{
 /*
       floatX* dinp, floatX* dweight, floatX* dbias,floatX* dout, floatX* inp, floatX* weight,float* dbias_buffer,
 */
-       matmul_backward(rhs, ToG(w), ToG0(b), ToG(rhs_), inp, ToX(w), dbias_buffer, B, T, C, OC, main_stream); 
+       matmul_backward(rhs, ToG(w), ToG0(b), ToG(rhs_), inp, ToX(w), dbias_buffer, B, T, IC, OC, main_stream); 
     }
     return 0x0;
 }catch(...){
@@ -464,22 +444,78 @@ try{
 int SLP::FUSE_cuda_block(hGTensor rhs,hGTensor lhs,hGTensor gelu,bool isForw,int flag){
     return 0x0;
 }
+
+/*
+    QKV = (B, T, 3, NH, HS) 
+*/
+int ROPE::FUSE_cuda(hGTensor QKV,bool isFX,int flag){
+    if(Empty()){
+        return -1;
+    }
+    int NH=n_head;
+    floatX *q=nullptr,*k=nullptr;
+    const int64_t ne00 = QKV->ne[0]/3,ne01 = QKV->ne[1],ne02 = QKV->ne[2]; // num heads    
+    const int64_t nr = ne01*ne02*QKV->ne[3];  //ggml_nrows(src0);    
+    // void ggml_cuda_op_rope_impl(ggml_backend_cuda_context & ctx, ggml_tensor * dst) 
+    /*const ggml_tensor * src0 = dst->src[0];
+    const ggml_tensor * src1 = dst->src[1];
+    const ggml_tensor * src2 = dst->src[2];
+    const float * src0_d = (const float *)src0->data;
+    const float * src1_d = (const float *)src1->data;
+    float * dst_d = (float *)dst->data;
+    cudaStream_t stream = ctx.stream();
+    GGML_ASSERT(src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16);
+    GGML_ASSERT( dst->type == GGML_TYPE_F32 ||  dst->type == GGML_TYPE_F16);
+    GGML_ASSERT(src0->type == dst->type);*/   
+    floatX* devPtrQ = ToX(QKV),*devPtrK = devPtrQ + C,*devPtrV = devPtrQ + 2 * C;
+
+    const size_t s01 = QKV->ld(1);      //src0->nb[1] / ggml_type_size(src0->type);
+    const size_t s02 = QKV->ld(2);      //src0->nb[2] / ggml_type_size(src0->type);
+    const int n_dims     = n_rot;
+    float freq_base=10000.0,freq_scale=1,ext_factor=0,attn_factor=1,beta_fast=32,beta_slow=1;
+    const int32_t * pos = nullptr;  //(const int32_t *) src1_d;
+    const float * freq_factors = nullptr;
+    rope_corr_dims corr_dims;
+    ggml_rope_yarn_corr_dims(n_dims, n_ctx_orig, freq_base, beta_fast, beta_slow, corr_dims.v);
+    floatX* dst = ToX(out);
+    if(isForward()){
+        rope_neox_cuda<true>(
+            ToX(QKV),dst,  ne00, ne01, s01, s02, n_dims, nr, pos, 
+                freq_scale,freq_base, ext_factor, attn_factor, corr_dims, freq_factors, main_stream);
+    }else{
+        rope_neox_cuda<false>(
+            ToX(QKV),dst,  ne00, ne01, s01, s02, n_dims, nr, pos, 
+                freq_scale,freq_base, ext_factor, attn_factor, corr_dims, freq_factors, main_stream);
+    }
+    /*if (QKV->type == GGML_TYPE_F32) {
+        rope_neox_cuda<forward>(
+            (const float *) src0_d, ToX(QKV), ne00, ne01, s01, s02, n_dims, nr, pos, freq_scale,
+            freq_base, ext_factor, attn_factor, corr_dims, freq_factors, main_stream);
+    } else if (src0->type == GGML_TYPE_F16) {
+        rope_neox_cuda<forward>(
+            (const half *) src0_d, (half *) dst_d, ne00, ne01, s01, s02, n_dims, nr, pos, freq_scale,
+            freq_base, ext_factor, attn_factor, corr_dims, freq_factors, main_stream);
+    } else {
+        assert(0 && "fatal error@ROPE::FUSE_cuda");
+    }   */ 
+
+    return 0x0;
+}
+
 //
-int SelfAttention::FUSE_cuda(hGTensor inpL,floatX* residual,LayerNormal*norm2,float* scratchF,int flag){
-    int B=GTensor::B,T=GTensor::T,C=GTensor::C,NH=n_head;
-    floatX *weight=ToX(Q.w), *bias=ToX0(Q.b),*qkvr=ToX(Q.out);
-    floatX *inp1=ToX(proj_cat.out),*atty=ToX(attn),*data=ToX(inpL);    
+hGTensor SelfAttention::FUSE_cuda(hGTensor inpL,floatX* residual,LayerNormal*norm2,float* scratchF,int flag){
+    int NH=n_head;
+    floatX *qkvr=ToX(Q.out),*atty=ToX(attn);    
     float *l_att = TO<float>(trans); //(float*)acts.att + l * B * NH * T; // cuDNN needs a smaller FP32 tensor
     if(isForward()){    //  data=ToX(QKV->norm.out)
-        if(remater_qkv)  {
-            qkvr=ToX(GTensor::scratch_ff1);
+        hGTensor QKV=remater_qkv?GTensor::scratch_ff1:Q.out;
+        if(norm2==nullptr){
+            inpL=norm.FUSE_cuda(inpL);       
         }
-#ifdef ENABLE_CUDNN         
-        if(flag==0x100)
-            fuMM(qkvr, data, weight, bias, B, T, C, 3*C, main_stream);
-        else
-            Q.FUSE_cuda(remater_qkv?GTensor::scratch_ff1:Q.out,inpL);        
-        attention_forward_cudnn(atty, l_att, qkvr, B, T, NH, C, main_stream);
+#ifdef ENABLE_CUDNN      
+        Q.FUSE_cuda(QKV,inpL);  
+        rope.FUSE_cuda(QKV);   
+        attention_forward_cudnn(atty, l_att, ToX(QKV), B, T, NH, C, main_stream);
 #else
        floatX* l_att = ToX(QKV->trans);  //floatX* l_att = acts.att + l * B * NH * T * T;
         if (T != model->seq_len) { // unused parts of attention buffer must be zeroed (T-dependent)
@@ -491,11 +527,15 @@ int SelfAttention::FUSE_cuda(hGTensor inpL,floatX* residual,LayerNormal*norm2,fl
 #endif
         PrintTensor<floatX>("l_atty",atty,true,B,T,C);
         floatX *pw=ToX(proj_cat.w), *pb=ToX0(proj_cat.b);
-        floatX* scratch = ToX(GTensor::scratch_output),*normed=ToX(norm2->out),*ouput=(floatX *)out->data;
+        floatX* scratch = ToX(GTensor::scratch_output),*ouput=(floatX *)out->data;
         proj_cat.FUSE_cuda(GTensor::scratch_output,attn);   //fuMM(scratch, atty, pw, pb, B, T, C, C, main_stream);       
-        float *mean=TO<float>(norm2->mean),*rstd=TO<float>(norm2->rstd);        
-        fused_residual_forward5(ouput, normed,mean,rstd, residual, scratch, ToX(norm2->w), ToX0(norm2->b), B*T, C, main_stream);
-        
+                
+        // fused_residual_forward5(ouput, normed,mean,rstd, residual, scratch, ToX(norm2->w), ToX0(norm2->b), B*T, C, main_stream);
+        residual_forward(ouput, residual, scratch, B*T*C, main_stream);
+        if(norm2!=nullptr){
+            float *mean=TO<float>(norm2->mean),*rstd=TO<float>(norm2->rstd);
+            layernorm_forward(ToX(norm2->out), mean, rstd, ouput,ToX(norm2->w), ToX0(norm2->b), B*T, 1, C, main_stream);
+        }           
     }else{
         floatX* dl_bt4c = ToX(GTensor::scratch_bt4c),*dresidual = ToX(GTensor::scratch_btc),
             *gQb = Q.b==nullptr?nullptr:ToG(Q.b),*gNb=norm.b==nullptr?nullptr:ToG(norm.b);  
@@ -510,23 +550,24 @@ int SelfAttention::FUSE_cuda(hGTensor inpL,floatX* residual,LayerNormal*norm2,fl
         //     layernorm_forward(l_ln1, l_ln1_mean, l_ln1_rstd, residual, l_ln1w, l_ln1b, B, T, C, main_stream);
         // }
         // Q.FUSE_cuda()
-        matmul_backward(dl_btc, ToG(Q.w), gQb, dl_bt4c, ToX(norm.out), weight, scratchF, B, T, C, 3 * C, main_stream);
+        matmul_backward(dl_btc, ToG(Q.w), gQb, dl_bt4c, ToX(norm.out), ToX(Q.w), scratchF, B, T, C, 3 * C, main_stream);
         // layernorm backward does += to dresidual, so it correctly accumulates gradient for the Attention block above
         layernorm_backward(dresidual, ToG(norm.w), gNb, scratchF, dl_btc, residual, ToX(norm.w), TO<float>(norm.mean), TO<float>(norm.rstd), B, T, C, main_stream);
     }
-    return 0x0;
+    return out;
 }
 
 //  hIn = QKV->out
-int FFN::FUSE_cuda(hGTensor hIn,floatX *scratch,LayerNormal*neuron_x,int flag){
-    int B=GTensor::B,T=GTensor::T,C=GTensor::C;
-    floatX *ff2=ToX(down.out),*ff1=ToX(up.out),*normed=ToX(neuron_x->out);
-    float *mean=TO<float>(neuron_x->mean),*rstd=TO<float>(neuron_x->rstd);
-    // floatX *l_fch_gelu = ToX(GTensor::scratch_output);  //  reuse the same activation buffer at each layer, as we'll re-compute the gelu during backward
+hGTensor FFN::FUSE_cuda(hGTensor hIn,floatX *scratch,LayerNormal*norm2,int flag){
+    floatX *ff2=ToX(down.out),*ff1=ToX(up.out);
+    // float *mean=TO<float>(norm2->mean),*rstd=TO<float>(norm2->rstd);floatX   *normed=ToX(norm2->out);
     hGTensor tGelu=GTensor::scratch_output;
     bool isBias = up.b!=nullptr;  
-    floatX *xb = ToX0(neuron_x->b);
+    
     if(isForward()){     
+        if(norm2==nullptr){
+            norm.FUSE_cuda(hIn);       
+        }
         floatX * inp1_ = ToX(norm.out);         
         if(remater_ffn)  {
             input_1 = inp1_;
@@ -540,7 +581,13 @@ int FFN::FUSE_cuda(hGTensor hIn,floatX *scratch,LayerNormal*neuron_x,int flag){
         // PrintTensor<floatX>("inp1",ToX(norm.out),true,B,T,C,1,-1);
         PrintTensor<floatX>("ffn",scratch,true,B,T,C);
 
-        fused_residual_forward5(ToX(out), normed,mean,rstd, ToX(hIn), scratch, ToX(neuron_x->w), xb, B*T, C, main_stream);
+        // fused_residual_forward5(ToX(out), normed,mean,rstd, ToX(hIn), scratch, ToX(norm2->w), xb, B*T, C, main_stream);
+        residual_forward(ToX(out), ToX(hIn), scratch, B*T*C, main_stream);
+        if(norm2!=nullptr){
+            return norm2->FUSE_cuda(out);   
+            // layernorm_forward(ToX(norm2->out), TO<float>(norm2->mean),TO<float>(norm2->rstd), ToX(out),ToX(norm2->w), ToX0(norm2->b), B*T, 1, C, main_stream);
+            // return norm2->out;
+        }
         
         // PrintTensor<floatX>("inp1",ToX(norm.out),true,B,T,C,1,-1);
         out->PrintX<floatX>("residual3",0,0);
@@ -567,10 +614,8 @@ int FFN::FUSE_cuda(hGTensor hIn,floatX *scratch,LayerNormal*neuron_x,int flag){
         PrintTensor<floatX>("back of ffn0",residual,true,B,T,C);
     }
     
-    return 0x0;
+    return out;
 }
-
-
 
 /*
     layernorm_forward(floatX* out, float* mean, float* rstd, floatX* inp, const floatX* weight, const floatX* bias,         int B, int T, int C, cudaStream_t stream)
@@ -578,7 +623,7 @@ int FFN::FUSE_cuda(hGTensor hIn,floatX *scratch,LayerNormal*neuron_x,int flag){
 */
 hGTensor cuTensor::Normal(hGTensor hOut,hGTensor _mean,hGTensor _rstd,hGTensor w,hGTensor b,bool isForward,int flag) {
     assert(!hOut->isEmpty());
-    
+    int B=hOut->ne[0],T=hOut->ne[1],C=w->ne[0];
     // assert(b!=nullptr);     
     floatX *weight=(floatX*)(w->data),*bias=ToX0(b);    //b==nullptr?nullptr:(floatX*)(b->data);    
     floatX *out=(floatX*)(hOut->data); // (B, T, C)
@@ -592,10 +637,24 @@ hGTensor cuTensor::Normal(hGTensor hOut,hGTensor _mean,hGTensor _rstd,hGTensor w
     return hOut;
 }
 
+hGTensor LayerNormal::FUSE_cuda(hGTensor inpL,float* scratch,int flag) {
+    floatX *inp = ToX(inpL);
+    if(isForward()){    //cur = cur->Normal(out,mean,rstd,w,b);   
+        layernorm_forward(ToX(out), TO<float>(mean),  TO<float>(rstd), inp,ToX(w),ToX0(b), B, T, C, main_stream);
+    }        
+    else{   //  layernorm_backward(dresidual, ToG(lnf->w), gb, (float*)scratchX, ToX(GTensor::scratch_bt4c), residual, ToX(lnf->w), TO<float>(lnf->mean), TO<float>(lnf->rstd), B, T, C, main_stream);
+        const floatX* dout=ToX(GTensor::scratch_bt4c);
+        floatX* dresidual = ToX(GTensor::scratch_btc);
+        layernorm_backward(dresidual, ToG(w), ToG0(b), scratch, dout,inp, ToX(w), TO<float>(mean),  TO<float>(rstd), B, T, C, main_stream);
+        PrintTensor<floatX>("back of normal",dresidual,true,B,T,C);
+    }
+    return out;
+}
+
 //void fused_classifier(Type* logits, float* cuLoss,const float dloss, const int* targets,int B, int T, int V, int P, std::bool_constant<WriteDLogits> write_dlogits, cudaStream_t stream) {
 //float cuTensor::FusedLoss(float dloss,hGTensor hLoss,hGTensor hTarget,hGTensor hLastLayer, hGTensor w,int V,bool isForward,int flag){
 int OutCLS::FUSE_cuda(hGTensor inpL,hGTensor token_embed,int flag)   {
-    int B=GTensor::B,T=GTensor::T,C=GTensor::C,V=nCls,Vp=padded_nCls, gelu_fusion=1;
+    int V=nCls,Vp=padded_nCls, gelu_fusion=1;
     assert(proj.b==nullptr);
     mean_loss = 0.0f;
     const int *targets=(int*)(target->data);
@@ -621,7 +680,7 @@ int OutCLS::FUSE_cuda(hGTensor inpL,hGTensor token_embed,int flag)   {
             // proj.FUSE_cuda_block(preLogits,inpL);
             fuMM(errLogits+off, z0+nZ, w, NULL, dB, T, C, Vp, main_stream);  //[32,1024,50304]=[32,1024,768]*[768,50304]
             fused_classifier(errLogits+off, cuLoss+n1, rLoss, targets+n1, dB, T, V, Vp, cuFalse, main_stream);        //target=[32,1024]
-            if(flag!=0x1001 && gw!=nullptr && errOut!=nullptr){
+            if(gw!=nullptr && errOut!=nullptr){
                 matmul_cublaslt(errOut+nZ, w, errLogits+off, NULL, C, dB*T, Vp, main_stream, false, false, 0, 0, 0, 0, false,gelu_fusion >= 2 ? pre_gelu : NULL, true);   
                 matmul_cublaslt(gw, z0+nZ, errLogits+off, NULL /*dbias*/, C, Vp, dB*T, main_stream, false, true, 0, 0, 0, 0,true /* accumulate */, NULL, true);                
             }                         

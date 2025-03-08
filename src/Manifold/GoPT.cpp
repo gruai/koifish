@@ -94,9 +94,10 @@ int Fish_bubble(CLI_params& config)  {
 #endif
     config.isOnlyGPT = true;
     hFISH fish = Fish::MakeInstance("BUBBLE_",config,wikis,Fish::ROLE_TYPE::COMMON,0x110);
-    auto _gf = fish->GetForwRaw();         assert(_gf!=nullptr);
-    if(0)
+    if(0){
+        auto _gf = fish->GetForwRaw();         assert(_gf!=nullptr);    
         ggml_graph_print(_gf);
+    }
     if(config.is({"gpt","c_graph"},string("raw"))){
         //ggml_graph_comp0(_gf,0x0);   //only for comparsion
     }        

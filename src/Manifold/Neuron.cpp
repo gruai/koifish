@@ -78,10 +78,11 @@ try{
 void GeNeuron::Init(Fish *hG_, int flag) {    
     hFish=hG_;   
     auto& config = hG_->config; 
-    n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_embd=config.n_embd;
+    // n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_embd=config.n_embd;
+    hG_->GetBTC(B,T,C);
     n_embd_head = config.n_embd_head();
     n_head=config.n_head();
-    assert(n_embd_head*n_head==n_embd);
+    assert(n_embd_head*n_head==C);
 }
 string GeNeuron::_repr_1( string& suffix,string& prefix,string info,int flag)    {
     char buf[5012]="\0";
@@ -124,7 +125,7 @@ Embed::Embed(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int 
     if(jvals.size()==2){
         shape={(int)(jvals[0]),(int)(jvals[1])};
     }else{
-        shape = {nCls,n_embd};
+        shape = {nCls,C};
     }
     
     assert(shape[1]>0);
@@ -136,10 +137,10 @@ Embed::~Embed(){
 bool Embed::InitBucket(size_t num_c_groups,int flag){
     if (bucket_info != NULL)
         return false;
-
-    assert((size_t)(GTensor::B * GTensor::T) * num_c_groups < (1ULL<<31ULL)); // todo - maybe an issue for llama3-400B(?)
-    workload_indices = new int[GTensor::B * GTensor::T * num_c_groups];
-    bucket_info = new int4[GTensor::B * GTensor::T * num_c_groups];
+    
+    assert((size_t)(B * T) * num_c_groups < (1ULL<<31ULL)); // todo - maybe an issue for llama3-400B(?)
+    workload_indices = new int[B * T * num_c_groups];
+    bucket_info = new int4[B * T * num_c_groups];
     return true;
 }
 bool Embed::Build(int flag){
@@ -169,7 +170,8 @@ bool Embed::Build(int flag){
         hFish->InitGensor(ctx,sb.c_str(),b,isTrain);
     }
 #ifdef _TENSOR_CUD_        
-    SHAPE s3={GTensor::B,GTensor::T,latent};
+    
+    SHAPE s3={B,T,latent};
     out = std::make_shared<cuTensor>(name+".batch",s3,w->type,false);    
     // hFish->InitGensor(ctx,name+".batch",out,false);    
 #endif    
@@ -218,7 +220,7 @@ FFN::FFN(Fish* hG_,const std::string&key_,JSON::const_iterator jit,int flag) : G
         shape={(int)(jvals[0]),(int)(jvals[1])};
     }else{
         int n_ff = hFish->config.n_ff();
-        shape = {n_embd,n_ff};
+        shape = {C,n_ff};
     }
     remater_ffn = hFish->config.common.remater_ffn;       //false;
     assert(shape[0]>0 && shape[1]>0);
@@ -231,10 +233,11 @@ bool FFN::Build(int flag_0)   {
     int flag = flag_0;
     latent=shape[1];
 #ifdef _TENSOR_CUD_
+    
     // flag |= GeNeuron::F_BIAS; 
-    assert(GTensor::C==shape[0]);
-    sp3 = {GTensor::B,GTensor::T,latent};
-    sp2 = {GTensor::B,GTensor::T,GTensor::C};
+    assert(C==shape[0]);
+    sp3 = {B,T,latent};
+    sp2 = {B,T,C};
     // relu.out = std::make_shared<cuTensor>(name+"_relu",sp3,GTensor::tpFloatX,false);   
 #else    
     gate.BuildX(name+"_gate",{shape[0],shape[1]},hFish,flag);
@@ -330,7 +333,7 @@ bool MOE::Build(int flag)   {
     int nIn=shape[0];
     struct ggml_context * ctx = hFish->GetGGCTX();
     //  [ctx, E/H, H, n_batch); ]
-    w = TENSO(ctx, GGML_TYPE_F32, {n_embd_head,1,n_head,n_batch});
+    w = TENSO(ctx, GGML_TYPE_F32, {n_embd_head,1,n_head,B});
     hFish->InitGensor(ctx,sw.c_str(),w,isTrain);
       
     return true;
@@ -366,16 +369,16 @@ string MOE::__repr__( string& suffix,string& prefix,int flag)    {
 
 OutCLS::OutCLS(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : GeNeuron(key_,jit, hG_, flag){
     int nEmbd=hFish->config.n_embd;
-    // _target = hFish->Target();   //null now
+    // _target = hFish->Target();   //null now          
     nCls=hFish->nClass();
     padded_nCls = ceil(nCls/128.0)*128;
     //reduce memory & some float error
-    dB = hFish->config.modep.preLogits_dB; //GTensor::B 1 GTensor::B/2;
-    assert(GTensor::B%dB==0);
+    dB = hFish->config.modep.preLogits_dB; //B 1 B/2;
+    assert(B%dB==0);
     // isSymProj = false;           //much slower convergence!!!
 #ifdef _TENSOR_CUD_
     shape={nEmbd,padded_nCls};
-    rLoss = 1.0f / (GTensor::B * GTensor::T );  //* grad_accum_steps 
+    rLoss = 1.0f / (B * T );  //* grad_accum_steps 
     rLoss /= hG_->config.nGradAccumulate();
 #else
     shape={nEmbd,nCls};
@@ -384,8 +387,8 @@ OutCLS::OutCLS(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int
 bool OutCLS::Build(int flag)   {
     SHAPE sp={shape[0]};
 #ifdef _TENSOR_CUD_    
-    SHAPE sp2={GTensor::B,GTensor::T},sp3={dB,GTensor::T,padded_nCls};
-    nzLoss = GTensor::B*GTensor::T;
+    SHAPE sp2={B,T},sp3={dB,T,padded_nCls};
+    nzLoss = B*T;
     hostLoss = new float[nzLoss];
     target = std::make_shared<cuTensor>("target",sp2,GGML_TYPE_F32,false); 
     // hFish->InitGensor(nullptr,"target",target,false);           
@@ -463,7 +466,7 @@ bool SLP::Build(int flag)      {
     // shape = shape_;
     struct ggml_context *ctx = hFish->GetGGCTX();
     GTensor::tpDATA tpData = GTensor::tpFloatX;
-    int bFlag = GTensor::F_PARAM;
+    int bFlag = 0x0;
     int nIn=shape[0],nOut=shape[1];
     if(shape.size()==2){    
         assert(shape[0]>0 && shape[1]>0);        
@@ -479,10 +482,11 @@ bool SLP::Build(int flag)      {
     string sw = name+sWeight,sb=name+".bias",so=name+".out"; 
     bool isTrain = hFish->isTrain();
     hFish->InitGensor(ctx,sw.c_str(),w,isTrain);
-    if(isBias)  hFish->InitGensor(ctx,sb.c_str(),b,isTrain);
+    if(isBias)  
+        hFish->InitGensor(ctx,sb.c_str(),b,isTrain);
 #ifdef _TENSOR_CUD_        
     if(b!=nullptr)  b->tpInit = 0;
-    SHAPE s3={GTensor::B,GTensor::T,nOut};
+    SHAPE s3={B,T,nOut};
     out = std::make_shared<cuTensor>(so,s3,tpData,false);    
     // hFish->InitGensor(ctx,so.c_str(),out,false);    
 #endif    
@@ -570,23 +574,23 @@ hGensor SLP::Interact(struct ggml_context * ctx0,hGensor cur,int flag)    {
 
 ROPE::ROPE(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag)    : GeNeuron(key_,jit, hG_, flag) {
     assert(jvals.size()>=1 && jvals[0]>0);
-    shape={(int)(jvals[0])};
-    /*auto& config = hG_->config;
-    n_rot = config.n_rot;
-    rope_freq_base  = config.rope_freq_base;
-    rope_freq_scale = config.rope_freq_scale;  
-    KQ_pos = hFish->KQ_pos;*/
+    // shape={(int)(jvals[0])};
 }
 /*
     https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html#torch.nn.LayerNorm
 */
 bool ROPE::Build(int flag)    {
     auto& config = hFish->config;
-    n_rot = config.n_rot;
+    n_rot = config.n_rot();
+    n_ctx_orig = config.n_ctx_orig();
     rope_freq_base  = config.rope_freq_base;
     rope_freq_scale = config.rope_freq_scale;  
+#ifdef _TENSOR_CUD_
+#else
     KQ_pos = hFish->KQ_pos;    
-    shape = {n_embd_head, n_head, n_ctx, n_batch};
+#endif
+    shape = {n_embd_head, n_head, T, B};
+    shape = {};     //  only for debug
     return true;
 }
 
@@ -627,7 +631,7 @@ LayerNormal::LayerNormal(Fish *hG_, const std::string &key_, JSON::const_iterato
     if(jvals.size()==1){
         shape={(int)(jvals[0])};
     }else{
-        shape = {n_embd};
+        shape = {C};
     }
     // assert(jvals.size()>=1 && jvals[0]>0);
     // shape={(int)(jvals[0])};
@@ -644,18 +648,18 @@ bool LayerNormal::Build(int flag)    {
     bool isTrain = hFish->isTrain();    
     int nIn=shape[0];
     if(isAffineTrans){
-        w = TENSO(ctx, GTensor::tpFloatX, {nIn},GTensor::F_PARAM);
+        w = TENSO(ctx, GTensor::tpFloatX, {nIn},flag);//,GTensor::F_PARAM
         hFish->InitGensor(ctx,sw.c_str(),w,isTrain);
     }
     if(isBias)  {
-        b = TENSO(ctx, GTensor::tpFloatX, {nIn},GTensor::F_PARAM);
+        b = TENSO(ctx, GTensor::tpFloatX, {nIn},flag);//,GTensor::F_PARAM
         hFish->InitGensor(ctx,sb.c_str(),b,isTrain);
     }
 #ifdef _TENSOR_CUD_        
     w->tpInit=1;    
     if(b!=nullptr)  b->tpInit=0;
-    assert(nIn==GTensor::C);
-    SHAPE sp={GTensor::B,GTensor::T},sp3={GTensor::B,GTensor::T,nIn};
+    assert(nIn==C);
+    SHAPE sp={B,T},sp3={B,T,nIn};
     out = std::make_shared<cuTensor>(name+".out",sp3,GTensor::tpFloatX,false);    
     // hFish->InitGensor(ctx,name+".out",out,false);    
     mean = std::make_shared<cuTensor>(name+".mean",sp,GGML_TYPE_F32,false);       
