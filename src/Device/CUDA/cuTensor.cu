@@ -2,7 +2,7 @@
 #include "./llm_c/global_norm.cuh"
 #include "../../ggex/GTensor.hpp"
 
-cuTensor::cuTensor(const string&name_,SHAPE shape,tpDATA tpD_,bool isX,int flag) : GTensor(shape,tpD_,false,flag){
+cuTensor::cuTensor(const string&name_,SHAPE shape,typNUMBER tpD_,bool isX,int flag) : GTensor(shape,tpD_,false,flag){
     size_t nEle=size();
     // hFish->InitGensor(nullptr,name,attn,false);
     if(!name_.empty())
@@ -51,7 +51,7 @@ try{
 
 bool cuTensor::InitParam(int tpX,int flag){
     size_t nElem0 = size(),i;
-    size_t nInit = size(1),nB = ggml_type_sizef(type);
+    size_t nInit = size(1),nB = BPE(type);
     
     if(tpInit>0){
         mt19937_state init_rng;            
@@ -89,22 +89,30 @@ bool cuTensor::CopyGG(struct ggml_tensor*gg_,int flag) {
             shape.push_back(gg_->ne[i]);
             nb[i] = gg_->nb[i];
         }
-        type = gg_->type;
+        type = (typNUMBER)gg_->type;
         Alloc( );
         // flags = gg_->flags;     //bug in ggml: don't support flag serialization        
-        size_t nB = ggml_type_sizef(type);     // ggml_row_size  ???
+        size_t nB = BPE(type);     // ggml_row_size  ???
         szData = size()*nB;          
     }else{
         for(i=0;i<shape.size();i++)  {
-            assert(shape[i]==gg_->ne[i]);
-            if(type==gg_->type)
+            if(BIT_TEST(flags,F_PADDED))
+                assert(shape[i]>=gg_->ne[i]);
+            else
+                assert(shape[i]==gg_->ne[i]);
+            if(type==(typNUMBER)gg_->type)
                 assert(nb[i] == gg_->nb[i]);
         }
     }
     size_t sz = ggml_nbytes(gg_);  
-    if(type==gg_->type) assert(sz==szData);  
+    if(type==(typNUMBER)gg_->type) {
+        if(sz!=szData){ //bug
+            assert(strcmp(name,"token_embd.weight")==0);
+            return true;
+        }
+    };  
 
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
    bool toDevice = SerialGP(gg_->data,nullptr,false,0x0);
    assert(toDevice);
 #endif

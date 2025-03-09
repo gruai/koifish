@@ -106,7 +106,7 @@ string NLP_AutoRegressive::__repr__( string& suffix,string& prefix,int flag)    
     // Fish::__repr__(suffix,prefix,flag);
     char buf[5012]="\0";
     const char*tab=prefix.c_str();
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else
     auto gb=GetBackRaw(), gf=hForwTG->raw();;
     sprintf(buf+strlen(buf),"\n%s(%s):nParams = %ld(%.6gM)",tab,name.c_str(),nParams,nParams/1.0e6);
@@ -253,7 +253,7 @@ void NLP_AutoRegressive::build_inp_KQ_(struct ggml_context *ctx,bool isMask,bool
     int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_tokens = n_batch*n_ctx,n_past=0;
     // const float kv_scale = 1.0f/sqrtf(float(n_embd)/n_head);
         // KQ_pos - contains the positions
-    KQ_pos = TENSO(ctx, GGML_TYPE_I32, {n_ctx});
+    KQ_pos = TENSO(ctx, typNUMBER::I32, {n_ctx});
     gTN(KQ_pos, "inp_pos");  
     tFLAG(KQ_pos,GTensor::F_INPUT);       //    ggml_set_input(KQ_pos);    
     int * data = (int *) KQ_pos->data;
@@ -262,7 +262,7 @@ void NLP_AutoRegressive::build_inp_KQ_(struct ggml_context *ctx,bool isMask,bool
     //     data[i] = n_past + i;
     // }
     if(isMask && 0){        //  nearly same if mask==nullptr
-        auto dt = GGML_TYPE_F32;     
+        auto dt = typNUMBER::F32;     
         auto pad = GGML_PAD(n_ctx, GGML_KQ_MASK_PAD);   //  (((x) + (n) - 1) & ~((n) - 1))
         // KQ_mask = causal
         //     ? TENSO(ctx, dt, n_kv,     GGML_PAD(n_tokens, GGML_KQ_MASK_PAD))
@@ -293,7 +293,7 @@ void Fish::CopyWeight(const Fish* src,int flag) {
         assert(wiki_tutor==src->wiki_tutor);
         return;
     }
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else
     auto gsrc = src->hForwTG->raw();
     size_t nx=0,nz,nT=0,type_size;
@@ -305,7 +305,7 @@ void Fish::CopyWeight(const Fish* src,int flag) {
             if(strcmp(t0->name,"output.weight")==0){
                 int j = 0;
             }
-            type_size = ggml_type_size(t0->type);
+            type_size = BPE(t0->type);
             if (t0->flags & GGML_TENSOR_FLAG_PARAM) {
                 t1 = GetGensor(t0->name);
                 assert(t1!=nullptr && t0->type==t1->type);
@@ -323,7 +323,7 @@ void Fish::CopyWeight(const Fish* src,int flag) {
     for(auto t0 : tSrc){
         t1 = GetGensor(t0->name);
         assert(t1!=nullptr && t0->type==t1->type);
-        nz = tELEM(t0);        type_size = ggml_type_size(t0->type);
+        nz = tELEM(t0);        type_size = BPE(t0->type);
         assert(nz==tELEM(t1));
         memcpy(t1->data,t0->data,type_size*nz);
         nx += nz;       nT++;
@@ -344,7 +344,7 @@ bool NLP_AutoRegressive::LocalFeeling(hSampLoader hLoader,vector<float>& result,
     hOPT->Evaluate(hLoader,-666);
     if(DUMP())
         _INFO("\t%s @\"%s\"\n",__func__,hLoader->sentence.c_str());
-    assert(preLogits->type==GGML_TYPE_F32);
+    assert(preLogits->type==typNUMBER::F32);
     assert(preLogits->ne[1]==nTok+1);  //???
     size_t nz = tELEM(preLogits),nVocabInWiki=preLogits->ne[0]; //preLogits->nb[0];
 
@@ -376,15 +376,15 @@ hGensor Fish::BuildLoss( struct ggml_context * ctx,hGensor cur,int flag){
     // cuLiteTest(B,T,C);  
     
     
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     assert(loss!=nullptr);
 #else
     assert(loss==nullptr);
     hGensor  t36 = nullptr;    
     if(config.is( {"model_v0","target"},string("OneHot") )){
-        target_probs = TENSO(ctx_build, GGML_TYPE_I32, {1, n_ctx, n_batch});
+        target_probs = TENSO(ctx_build, typNUMBER::I32, {1, n_ctx, n_batch});
     }else
-        target_probs = TENSO(ctx_build, GGML_TYPE_F32, {nCls, n_ctx, n_batch});
+        target_probs = TENSO(ctx_build, typNUMBER::F32, {nCls, n_ctx, n_batch});
     gTN(target_probs,      "targets");    
     if(config.is({"model_v0","target"},string("OneHot")))
         t36 = ggml_cross_entropy_loss_1(ctx, cur, target_probs);
@@ -412,7 +412,7 @@ hGensor NLP_AutoRegressive::BuildTarget( struct ggml_context * ctx,hGensor cur,i
     const int N = train_params.n_ctx, n_past = 0;
     const float rms_norm_eps = config.f_norm_rms_eps;
     hGensor  t32 = nullptr,wA = nullptr,wB = nullptr;
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     
 #else
     hGensor  t31 = ggml_rms_norm(ctx, cur, rms_norm_eps);                    gTN(t31, "norm");     
@@ -535,28 +535,28 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
         break;
     }
 
-    assert(hDict!=nullptr && hDict->isValid());
+    assert(hDict!=nullptr && hDict->isValid());    
 
-    
+    tokenset = DataTokenSet::MakeInstance(config,hDict.get(),0x0);        
+    if(tokenset.empty() ){
+        _ERROR("\n======== %s Failed to load tokenset!========\n",__func__);
+        return false;
+    };
     if(config.isOnlyGPT){
-
-    }else{
-        tokenset = DataTokenSet::MakeInstance(config,hDict.get(),0x0);
+        // may have no train !!!
+    }else{        
         
-        if(tokenset.empty() /*!hTokenset->Load(config,hLLM,0x0)*/ ){
-            _ERROR("\n======== %s Failed to load tokenset!========\n",__func__);
-            return false;
-        };
-        tsTrain = tokenset[0];   // tsEval = tokenset.size()>1 ? tokenset[1] : tsTrain;
-        for(int i=1;i<tokenset.size();i++)  {
-            tsEval.push_back(tokenset[i]);
-        } 
+    } 
+    tsTrain = tokenset[0];   
+    for(int i=1;i<tokenset.size();i++)  {
+        tsEval.push_back(tokenset[i]);
+    } 
+    
+    hDict->mapT2T = tsTrain->mapT2T;        hDict->dialect = tsTrain->dialect;
+    for(auto wiki : wikis){
+        wiki->mapT2T = hDict->mapT2T;       wiki->dialect = hDict->dialect;
+    }       
         
-        hDict->mapT2T = tsTrain->mapT2T;        hDict->dialect = tsTrain->dialect;
-        for(auto wiki : wikis){
-            wiki->mapT2T = hDict->mapT2T;       wiki->dialect = hDict->dialect;
-        }       
-    }     
     if(isTrain()){
         if(tsTrain!=nullptr && tsTrain->nMostTok>0)
             config.OnMostToken(tsTrain->nMostTok);
@@ -572,9 +572,9 @@ bool NLP_AutoRegressive::InitInput(struct ggml_context * ctx_build,bool isMask,i
     SHAPE shape={n_ctx, n_batch};
     
     // tokens_input copy values from Batch tensor
-    tokens_input = TENSO(ctx_build, GGML_TYPE_I32, shape,GTensor::F_INPUT);       gTN(tokens_input, "inp_tokens");
+    tokens_input = TENSO(ctx_build, typNUMBER::I32, shape,GTensor::F_INPUT);       gTN(tokens_input, "inp_tokens");
     in_node = tokens_input;
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else
     ggml_backend_buffer_t input_data = ggml_backend_alloc_ctx_tensors_from_buft(ctx_build, ggml_backend_cpu_buffer_type());
     size_t max_input_size = ggml_backend_buffer_get_size(input_data);
@@ -602,15 +602,15 @@ bool NLP_AutoRegressive::CreateExlogists(hWIKI wiki,uint32_t n_ctx,uint32_t n_ba
     assert(wiki->n_vocab>=nV);
     if(!isLocalInfer){
         assert(wiki->exLogits==nullptr);
-#ifndef _TENSOR_CUD_       
+#ifndef _TENSOR_G_       
         if(wiki->n_vocab>nV){
-            wiki->exLogits = TENSO(ctx, GGML_TYPE_F32, {nV,  n_ctx, n_batch});
+            wiki->exLogits = TENSO(ctx, typNUMBER::F32, {nV,  n_ctx, n_batch});
             if(0){
-            wiki->t2t = TENSO(ctx, GGML_TYPE_F32, {nV,  nV});
+            wiki->t2t = TENSO(ctx, typNUMBER::F32, {nV,  nV});
             sprintf(wiki->t2t->name,"t2t@%s",wiki->title.c_str());
             }
         }else{
-            wiki->exLogits = TENSO(ctx, GGML_TYPE_F32, {wiki->n_vocab,  n_ctx, n_batch});
+            wiki->exLogits = TENSO(ctx, typNUMBER::F32, {wiki->n_vocab,  n_ctx, n_batch});
         }
 
         tmpExLogis.push_back(wiki->exLogits); 
@@ -624,7 +624,7 @@ bool NLP_AutoRegressive::CreateExlogists(hWIKI wiki,uint32_t n_ctx,uint32_t n_ba
 }
 
 void NLP_AutoRegressive::Train(int flag)       {
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     // DEBUG.train_datas = 1;
     // DEBUG.train_hyperparams = 1;
 #endif
@@ -704,7 +704,7 @@ void NLP_AutoRegressive::InitGensors(int flag){
     }
     for(auto wiki : wikis){
         if(wiki->t2t!=nullptr){
-#ifndef _TENSOR_CUD_
+#ifndef _TENSOR_G_
             InitGensor(ctx,wiki->t2t, nullptr, rnd);
 #endif
         }            
@@ -746,9 +746,9 @@ void NLP_AutoRegressive::InitModel(int flag){
 
     if( tmpExLogis.size()>0 
             && !isLocalInfer) {
-        // exLogits = TENSO(ctx, GGML_TYPE_F32, n_vocab,  n_ctx, train_params.n_batch);
+        // exLogits = TENSO(ctx, typNUMBER::F32, n_vocab,  n_ctx, train_params.n_batch);
         if(teach==WIKI::_LOGITS_GATE)   {               
-            mom.embed2w = TENSO(ctx, GGML_TYPE_F32, {n_embd, (int)(tmpExLogis.size())+1});
+            mom.embed2w = TENSO(ctx, typNUMBER::F32, {n_embd, (int)(tmpExLogis.size())+1});
         }   
     }
     nParams = 0;    

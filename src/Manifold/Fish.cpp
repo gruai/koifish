@@ -160,7 +160,7 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
     }
 
     assert(optParams.size() < GGML_MAX_PARAMS);
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else
     if(isLocalInfer){  //gb=nullptr
         assert(hBackTG==nullptr);
@@ -234,7 +234,7 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
     if(!ComputePlan(flag)){
         return false;
     }
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     
 #else
     // ugly code!
@@ -303,7 +303,7 @@ bool Fish::Build(int flag)  {
     bool isInitParam = false, isJModel = !config.jModel.empty();
     assert(isJModel);
     isSymbolicAnalysis = true;    
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else
     ggml_backend_sched_reset(hEDS->GetSched());
 #endif
@@ -425,10 +425,18 @@ try{
         loadGensors.clear();
         for (int i = 0; i < n_tensors; ++i) {
             const char *name = gguf_get_tensor_name  (fctx, i);
-            ggml_tensor *cur = ggml_get_tensor(fctx_data, name);    
+            ggml_tensor *cur = ggml_get_tensor(fctx_data, name);  
+            if(cur==nullptr){
+                _INFO("%s failed to load tensor(%s) @%s!",__func__,name,path.c_str());
+                return false;
+            }
+
             hGensor target = GetGensor(name);
             if(target==nullptr){
-                return false;
+                if(strcmp(name,"output.weight")==0 && config.modep.isEmbedWeightTying){
+                    continue;
+                }else
+                    return false;
             }
             loadGensors.push_back(target);
             if(!optParams.empty()){
@@ -437,19 +445,9 @@ try{
                 }
             }else{
                 assert(!isTrain());
-            }
-            // const size_t offset = gguf_get_tensor_offset(fctx, i);
-            // printf("%s: tensor[%d]: name = %s, offset = %zu\n", __func__, i, name, offset);
-            // cur = std::make_shared<cuTensor>(ggml_get_tensor(fctx_data, name),GTensor::F_PARAM);    //  cur = (hGensor )(mem_buffer + obj->offs);
+            }      
             
-            if(cur==nullptr){
-                _INFO("%s failed to load tensor(%s) @%s!",__func__,name,path.c_str());
-                return false;
-            }else{
-                
-            }
-            
-#ifdef _TENSOR_CUD_       
+#ifdef _TENSOR_G_       
             target->CopyGG(cur);
 #else     
             size_t nEle = tELEM(cur),sz = tBYTE(cur);
@@ -499,7 +497,7 @@ bool Fish::LoadTrain(int flag) {
 void Fish::Statistic(int typ, int flag)     {   
     string suffix="", prefix="\t"; 
     struct ggml_cgraph *gf = nullptr, *gb = nullptr;
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else
     gf = hForwTG->raw(),gb = hBackTG==nullptr? nullptr : hBackTG->raw();
 #endif
@@ -526,9 +524,9 @@ void Fish::Statistic(int typ, int flag)     {
     int nT = gensors.size(), nQ = 0, nF16 = 0;
     for (auto t : gensors.nag)        {
         auto type = t.second->type;
-        if (ggml_is_quantized(type))
+        if (isQuantized(type))
             nQ++;
-        if (type == GGML_TYPE_F16)
+        if (type == typNUMBER::F16)
             nF16++;
     }
     //  _INFO("%s cgraph(%d,%d) nQ=%d nF16=%d",__func__,cgraph->n_leafs,cgraph->n_nodes,nQ,nF16);
@@ -561,7 +559,7 @@ void Fish::InitGensor(struct ggml_context *ctx, const string&name, hGensor genso
     }        
     
     if (isParam && isTrain())        {
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
         gensor->SetFlag(GTensor::F_PARAM);
 #else
         assert(gensor->data == nullptr);
@@ -609,7 +607,7 @@ void Fish::InitGensor(struct ggml_context *ctx, hGensor gensor, const char *name
     }*/
 }
 
-hGensor Fish::AddTensor(struct ggml_context *ctx,const std::string&key_,enum ggml_type tp,const SHAPE& shape,bool isParam,int flag){
+hGensor Fish::AddTensor(struct ggml_context *ctx,const std::string&key_,typNUMBER tp,const SHAPE& shape,bool isParam,int flag){
     CHECK_SHAPE(shape);
     hGensor gensor = nullptr;
     if(shape.size()==4)  {
@@ -641,7 +639,7 @@ EDGE_DEVICES::EDGE_DEVICES(const CLI_params&config, int flag){
     string sTp = config.KV({"train","device"},"");
     ggml_backend_t backend = nullptr;
     size_t free, total; 
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     InitGPU(config,flag);
     return;
 #endif
@@ -925,7 +923,7 @@ bool EDGE_DEVICES::Reserve(hTGraph graph,int flag){
     return bRet;
 }
 size_t EDGE_DEVICES::Alloc(hTGraph hTG,struct ggml_context *ctx,int flag)    {
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     for(auto node : hTG->gset){
         node->Alloc( );
     }
@@ -1003,7 +1001,7 @@ size_t EDGE_DEVICES::Alloc(hTGraph hTG,struct ggml_context *ctx,int flag)    {
 }   
 
 bool Fish::ComputePlan(int flag) {
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     return true;
 #endif
     assert(0);
@@ -1035,7 +1033,7 @@ bool Fish::CopyGensors(hWIKI wiki,int flag)    {
     for(auto it : wiki->tmaps){
         auto nam = it.first;
         hGensor dst = GetGensor(nam.c_str()),src = nullptr;
-#ifndef _TENSOR_CUD_
+#ifndef _TENSOR_G_
         src = it.second;
 #endif
         size_t nElem = tELEM(src),nbyte = tBYTE(src);
@@ -1052,8 +1050,8 @@ bool Fish::CopyGensors(hWIKI wiki,int flag)    {
         // should replace by ggml_compute_forward_dup (memcpy only support CPU!)
         if(src->type==dst->type){
             memcpy(dst->data,src->data,nbyte);    
-        }else if(dst->type==GGML_TYPE_F32)  {
-            assert(ggml_is_quantized(src->type));
+        }else if(dst->type==typNUMBER::F32)  {
+            assert(isQuantized(src->type));
             Gensor2float_(src,(float*)(dst->data),flag);  
         }else{
             assert(0);

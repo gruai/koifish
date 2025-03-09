@@ -9,31 +9,20 @@
 #include "../CLI_params.hpp"
 #include <memory>
 
-/*
-struct LearnSKDU{		
-    int step;
-    typedef enum{
-        STATIC,TRI_LINE,
-    }POLICY;
-    Optimizer* hOPT=nullptr;
-    float rBase,rMax,rMin,gamma,lr;
-    int half,stp0;	//the step number to start the specified policy
-    int btch_nz;
-    POLICY policy;
-
-    LearnSKDU( );
-    void Init( Optimizer *hOPT_,int flag=0x0 );
-    void BeforeStep( int flag=0x0  );
-    void AfterEpoch( int epoch,int nBatch,bool isTest,int flag );
-
-};*/
 /**
  * https://towardsdatascience.com/learning-rate-schedules-and-adaptive-learning-rate-methods-for-deep-learning-2c8f433990d1
  * time-based decay, step decay and exponential decay.
 */
 struct LearnSKDU {
+    typedef enum{
+        STATIC,TRI_LINE,
+        COSINE,COSINE_EPOCH
+    }POLICY;
+    POLICY policy=COSINE;
+
     train_params_ _params;
     const static int TIMESTEPS = 1000;
+    int warmup = 1,mostIter = 1;
     float alphas_cumprod[TIMESTEPS];
     float sigmas[TIMESTEPS];
     float log_sigmas[TIMESTEPS];
@@ -64,8 +53,8 @@ struct LearnSKDU {
     float Last()            {   assert(history.vals.size()>0);  return history.vals[history.vals.size()-1];  }
     void Append(float a)    {   history.vals.push_back(a);   }
 
-    LearnSKDU(struct train_params_& train_params) : _params(train_params) {}
-
+    LearnSKDU(struct train_params_& train_params);
+    virtual void Dump(int typ);
     virtual std::vector<float> get_sigmas(uint32_t n) = 0;
 
     float sigma_to_t(float sigma) {

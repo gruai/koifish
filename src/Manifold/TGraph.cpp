@@ -14,7 +14,7 @@
 #include "llama_cys.h"
 #include "ggml-impl.h"
 
-hGensor Fish::AddTensor(const std::string&key_,enum ggml_type tp,const SHAPE& shape,int flag){
+hGensor Fish::AddTensor(const std::string&key_,typNUMBER tp,const SHAPE& shape,int flag){
     auto ctx=GetGGCTX();
     hGensor gg_tensor = nullptr;
     if(shape.size()==4)  {
@@ -77,16 +77,16 @@ SelfAttention::SelfAttention(Fish* hG_,const std::string&key_,JSON::const_iterat
 bool SelfAttention::Build(int flag_0)   {
     SHAPE sp={shape[0],shape[1]};
     int flag=flag_0;
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     // flag |= GeNeuron::F_BIAS;       //  s_bias[i/x128::size] = load128(bias + i);
 #endif
 
     norm.BuildX(name+sNorm,{shape[0]},hFish,flag);        
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     SHAPE sp2={shape[0],shape[1]*3},sp3={B,T,C},spTrans={B,n_head_kv,T};   //,T
     Q.BuildX(name+"_qkv",sp2,hFish,flag );
     attn = std::make_shared<cuTensor>(name+".attn",sp3,GTensor::tpFloatX,false);        // B * T * C
-    trans = std::make_shared<cuTensor>(name+".trans",spTrans,GGML_TYPE_F32,false);        // ENABLE_CUDNN need float array
+    trans = std::make_shared<cuTensor>(name+".trans",spTrans,typNUMBER::F32,false);        // ENABLE_CUDNN need float array
     // hFish->InitGensor(nullptr,name+".attn",attn,false);
     out = std::make_shared<cuTensor>(name+".out",sp3,GTensor::tpFloatX,false);    
     rope.BuildX(name+".ROPE",sp,hFish,flag);
@@ -98,7 +98,7 @@ bool SelfAttention::Build(int flag_0)   {
 #endif
     string sCat = "_output";    //  "_cat"
     proj_cat.BuildX(name+sCat,sp,hFish,flag );
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     BIT_SET(proj_cat.out->flags,GTensor::F_NOALLOC);       //memory trick as kGPT
     proj_cat.w->residual_scale = hFish->config.common.residual_scale;
     if(remater_qkv){
@@ -125,7 +125,7 @@ hGensor SelfAttention::Interact(struct ggml_context * ctx_,hGensor inpL,int flag
     }
     
     
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     hGensor cur = inpL,lastResi=inpL;
     int iRet;
     if(hFish->isSymbolic()){   
@@ -185,7 +185,7 @@ hGensor SelfAttention::MyAttention(struct ggml_context * ctx_,hGensor cur,int fl
     hGensor q,k,kq=nullptr;                  //  assert(KQ_mask!=nullptr);
     hGensor Qcur = Q.Interact(ctx_,cur,0x0);       
     hGensor Kcur = K.Interact(ctx_,cur,0x0);  
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     return cur;
 #else  
     // cb(Qcur, "Qcur", il);        cb(Kcur, "Kcur", il);        cb(Vcur, "Vcur", il);
@@ -281,7 +281,7 @@ hGensor BROWN_attn::Interact(struct ggml_context * ctx_,hGensor teb,int flag)   
     const float kq_scale = 1.0f/sqrtf(float(C)/n_head);
     int N = T,n_past=0;;    
     hGensor v = cur,v3=nullptr,v4=nullptr, wv = nullptr, kqv_out=nullptr,prob;
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else   
     hGensor v_rope = ggml_reshape_4d(ctx_, cur, n_embd_head, n_head, N, n_batch);       gTN(v_rope,"%s.4",name.c_str()); 
     if(!isRope){
@@ -370,7 +370,7 @@ hGensor GatedAttention::Interact(struct ggml_context * ctx_,hGensor inpL,int fla
     }
     
     hGensor cur = norm.Interact(ctx_,inpL,0x0),attn=nullptr;    
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else    
     gTN(cur,"%s.gau_norm",name.c_str());      // cb(cur, _NAM_("ffn_norm"), il); 
     if(attn_mode>0)
@@ -402,7 +402,7 @@ string GatedAttention::__repr__( string& suffix,string& prefix,int flag)    {
 };
 
 bool cuAttention::Build(int flag)   {
-#ifdef _TENSOR_CUD_   
+#ifdef _TENSOR_G_   
 
 #endif  
     return true;
@@ -412,7 +412,7 @@ hGensor cuAttention::Interact(struct ggml_context * ctx_,hGensor inpL,int flag) 
         return GeNeuron::Interact(ctx_,nullptr,flag);
     }
     hGensor cur = norm.Interact(ctx_,inpL,0x0),attn=nullptr;    
-#ifdef _TENSOR_CUD_       
+#ifdef _TENSOR_G_       
     
     
 #endif
@@ -436,7 +436,7 @@ hGensor SelfAttention::vXattn(struct ggml_context *ctx_, hGensor v,hGensor attn,
         }else
             return v;
     }
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else
     if(flag=0x100){ //2d=>4d
         v = ggml_reshape_4d(ctx_, v, n_embd_head, n_head, n_ctx,n_batch);
@@ -479,7 +479,7 @@ bool BROWN_v0::Build(int flag)   {
     norm.BuildX(name+".norm",{shape[0]},hFish,0x0);        
     Q.BuildX(name+".Q",sp,hFish,flag);  
     if(Transfer_1)       
-        V.BuildX(name+".V",{shape[0],1},hFish,flag);  //w = TENSO(ctx, GGML_TYPE_F32, C, 1);           
+        V.BuildX(name+".V",{shape[0],1},hFish,flag);  //w = TENSO(ctx, typNUMBER::F32, C, 1);           
     // K.BuildX(name+".K",sp,hFish,flag);              V.BuildX(name+".V",sp,hFish,flag);
     proj_cat.BuildX(name+".proj",sp,hFish,flag);       
            
@@ -735,7 +735,7 @@ bool TGraph::TopoOrder(int flag)   {
     hFish->gensors.Clear();     
     topo_nodes.clear();
     int pos=-1,nDup=0,i,no,nNode=0,nLeaf=0;
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     nNode = gset.size();
 #else
     nNode=cgraph->n_nodes,nLeaf=cgraph->n_leafs;
@@ -762,7 +762,7 @@ bool TGraph::TopoOrder(int flag)   {
             int xxx = 0;
         }
         auto info = hFish->GetGensorInfo(cur);  // gimap[cur];
-#ifndef _TENSOR_CUD_
+#ifndef _TENSOR_G_
         for (int i=0,no=0; i < GGML_MAX_SRC; ++i) {
             const int k =(order == GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT) ? i :(order == GGML_CGRAPH_EVAL_ORDER_RIGHT_TO_LEFT) ? (GGML_MAX_SRC-1-i) : i;
             if (!cur->src[k]) continue;
@@ -796,7 +796,7 @@ string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {
     const size_t MAX_BUF=640*1024;
     char buf[MAX_BUF]="\0";
     
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     if(DEBUG.graph_dump==0){
         for(auto gensor : gset){
             _T_repr_(gensor,tab,buf,hFish->GetGensorInfo(gensor));  assert(strlen(buf)<MAX_BUF);
@@ -865,7 +865,7 @@ string TGraph::__repr__(string& suffix,string& prefix,hGensor root_0,int flag) {
 
 TGraph::TGraph(Fish *hF_,const string&nam_,struct ggml_context *ctx_,bool isGrad,int flag) : hFish(hF_),ctx(ctx_),name(nam_)   {   
     size_t nVisi = gset.size();
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else
     cgraph = ggml_new_graph_custom(ctx, LLAMA_TRAIN_MAX_NODES, isGrad);
     nodes=cgraph->nodes;
@@ -880,7 +880,7 @@ void TGraph::PushBack(hGensor node,int flag) {
     const char*name = node->name;
     const int n0 = cgraph->n_nodes;
     auto grad = GradOf(cgraph,node);
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else
 #endif
 #ifndef GG_V12
@@ -964,7 +964,7 @@ void TGraph::PushBack(hGensor node,int flag) {
     assert(node!=nullptr && strlen(node->name)>0);
     const char*name = node->name;
 
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     if(gset.find(node)!=gset.end())     
         return;
     gset.insert(node);  
@@ -1006,7 +1006,7 @@ void TGraph::PushBack(hGensor node,int flag) {
             PushBack(node->src[k]);
         }
     }
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else
     if (node->op == GGML_OP_NONE && grad==NULL) {   //!(node->flags & GGML_TENSOR_FLAG_PARAM)
         // reached a leaf node, not part of the gradient graph (e.g. a constant)
@@ -1073,25 +1073,25 @@ int Fish::BuildComputeGraph(int order,struct ggml_context * ctx,int flag){
         rnd = init_random_normal_distribution(config.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
         size_t sz2 = hEDS->Alloc(hForwTG,ctx_build);
     }   
-#ifdef _TENSOR_CUD_    
-    hBackTG = std::make_shared<TGraph>(this,hForwTG->name+".Backward",nullptr,true);        hBackTG->isBackward = true; 
-    
-        
-    return 0x0;
-#endif
+// #ifdef _TENSOR_G_    
+//     hBackTG = std::make_shared<TGraph>(this,hForwTG->name+".Backward",nullptr,true);        hBackTG->isBackward = true; 
+//     return 0x0;
+// #endif
     if(!isLocalInfer){       
         hBackTG = std::make_shared<TGraph>(this,hForwTG->name+".Backward",ctx_build,true);        hBackTG->isBackward = true; 
+#ifdef _TENSOR_G_
+        return 0x0;
+#else        
         gb = hBackTG->BuildBackward(ctx,hForwTG);
         // make sure some tensors are not reallocated by inserting new temporary nodes depending on them
         int n_leafs_before = gb->n_leafs,n_nodes_before = gb->n_nodes;
-#ifdef _TENSOR_CUD_
-#else
+
 #ifndef GG_V12
             auto grad = GradOf(gb,out_node);   //out_node->grad
             ggml_set_input(grad);
 #endif
         hBackTG->PushBack(tSCAL(ctx, KQ_pos, 1.0f));        
-#endif  
+ 
         bool isReforward = false;        // why???        
         for (int i = n_leafs_before; i < gb->n_leafs; ++i) {
             gb->leafs[i] = NULL;
@@ -1101,11 +1101,11 @@ int Fish::BuildComputeGraph(int order,struct ggml_context * ctx,int flag){
         } 
         gb->n_leafs = n_leafs_before;
         gb->n_nodes = n_nodes_before;
-     
+#endif      
         // hBackTG->__repr__(out_node);        
     }  
     
-    auto leaf0=gf->nodes[0];
+    // auto leaf0=gf->nodes[0];
     
     // if (false) { //train_params.use_checkpointing
     //     if(gb!=nullptr) {
@@ -1149,7 +1149,7 @@ bool TGraph::isValid( ) {
     std::map<std::string, int> msg;
     std::vector<hGensor> gensors,all_nodes;
     int no=1,nDup=0,nNull=0;
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     std::copy(gset.begin(), gset.end(), std::back_inserter(all_nodes));
 #else
     int nLeaf = cgraph->n_leafs,nNode = cgraph->n_nodes;
@@ -1221,7 +1221,7 @@ struct ggml_cgraph * TGraph::BuildBackward(struct ggml_context * ctx_,hTGraph hF
     bool isKeep = false;
     assert(gb!=nullptr);
     hGensor xn = hFish->xn,xxn = hFish->xxn;
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else    
     struct ggml_tensor *root_f=gf->nodes[nForwN-1],*root_b=nullptr;
     ggml_graph_cpy(gf, gb);   //copy all leafs/nodes/grads & visited_hash_set
@@ -1323,7 +1323,7 @@ struct ggml_cgraph * TGraph::BuildBackward(struct ggml_context * ctx_,hTGraph hF
     // bool accumulate = false;
     for (int i = 0; i < n_nodes_f; ++i) {
         struct ggml_tensor *  node = cgraph->nodes[i];
-        if (node->type == GGML_TYPE_I32) {
+        if (typNUMBER(node->type) == typNUMBER::I32) {
             continue;
         }
 
@@ -1647,7 +1647,7 @@ int Fish::jToGraph( struct ggml_context *ctx_,bool isBuild,int flag)   {
     config.modep.preLogits_dB = 8; //(int)ceil(B*4.0f*C/nTmp);   
     int dB = config.modep.preLogits_dB;        
     assert(B%dB==0);
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     // cuLiteTest(B,T,C);
     SHAPE sp={B,T,C},sp4={B,T,4*C},sp0={dB, T*nTmp};
     GTensor::scratch_bt4c = std::make_shared<cuTensor>("scratch_4c",sp4,GTensor::tpFloatX,false); 
@@ -1676,7 +1676,7 @@ int Fish::jToGraph( struct ggml_context *ctx_,bool isBuild,int flag)   {
         }
          
     }
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else
     preLogits = cur;
 #endif

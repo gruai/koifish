@@ -89,7 +89,7 @@ void KVCache::init_lamakv(int n_batch) {
     const int64_t n_mem      = n_layer*n_ctx*n_batch;
     const int64_t n_elements = n_embd*n_mem;
 
-    // cache.buf.resize(2u*n_elements*ggml_type_size(wtype) + 2u*MB);
+    // cache.buf.resize(2u*n_elements*BPE(wtype) + 2u*MB);
 
     // struct ggml_init_params params;
     // params.mem_size   = cache.buf.size;
@@ -98,7 +98,7 @@ void KVCache::init_lamakv(int n_batch) {
     //  llama_kv_cache *cache = (llama_kv_cache *)lamakv;
     /*if (!cache->ctx) {
         struct ggml_init_params params;
-        params.mem_size   = 2u*n_elements*ggml_type_size(GGML_TYPE_F32) + 2u*1024*1024;
+        params.mem_size   = 2u*n_elements*BPE(typNUMBER::F32) + 2u*1024*1024;
         params.mem_buffer = NULL;
         params.no_alloc   = false;
 
@@ -110,6 +110,6 @@ void KVCache::init_lamakv(int n_batch) {
         }
     }
 
-    cache->k = TENSO(cache->ctx, GGML_TYPE_F32, n_elements);
-    cache->v = TENSO(cache->ctx, GGML_TYPE_F32, n_elements);*/
+    cache->k = TENSO(cache->ctx, typNUMBER::F32, n_elements);
+    cache->v = TENSO(cache->ctx, typNUMBER::F32, n_elements);*/
 }

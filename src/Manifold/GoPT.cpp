@@ -414,8 +414,9 @@ int NLP_AutoRegressive::GenSentence(int flag)  {
         return -1;
     assert(preLogits!=nullptr);
     GST_TIC(tic);
-    hWIKI wiki = wikis[0];           assert(wiki != nullptr);
+    
     if(gopt!=nullptr){
+        hWIKI wiki = wikis[0];           assert(wiki != nullptr);
         wiki->Reset();
         return gopt->Generate(0x0);
     }
@@ -436,7 +437,7 @@ int NLP_AutoRegressive::GenSentence(int flag)  {
         hLoader->InitOneSamp(prompt,nullptr,0x110);
     } 
     vector<TOKEN_ID>& piffle = hLoader->GetTokens();
-    assert(preLogits->type == GGML_TYPE_F32);
+    // assert(preLogits->type == typNUMBER::F32);
     vector<TOKEN_ID> answer;
     _INFO("%s: <--- \n\t", __func__);
     for (i = 1; i <= genT; i++)    {

@@ -69,11 +69,11 @@ void SAMP::Refresh(SampLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,in
 double SampLoader::DecodeVerify(hSAMP samp,hGensor tokens,hGensor logits,int flag)    {
     int nC = tokens->ne[0],nB = tokens->ne[1],b,c,j,cand=-1,nz=0;
     int _nvocab = hDict->n_vocab;
-    assert( tokens->type== GGML_TYPE_I32 && tokens->ne[2]==1);
+    assert( tokens->type== typNUMBER::I32 && tokens->ne[2]==1);
     double off=0,sum=0,avg,last_err=0;
     float *p = nullptr,p1,accu_self=0;
     if(logits!=nullptr) {
-        assert( logits->type== GGML_TYPE_F32 );
+        assert( logits->type== typNUMBER::F32 );
         assert(logits->ne[1]==nC && logits->ne[2]==nB && _nvocab==logits->ne[0]);
         p = (float*)(logits->data);
     }
@@ -179,7 +179,7 @@ void SampLoader::Samp2Batch(int k,hSAMP samp,struct train_params_& params,int fl
 
         }else{            
             if(isTarget_1)     {
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
                 hostTargetProbs->Set( (int) i, (int) k, 0, 0, token); 
 #else
                 hostTargetProbs->Set(0, (int) i, (int) k, 0, token); 
@@ -216,7 +216,7 @@ bool SampLoader::isEval(int t,int flag){
 
 bool SampLoader::NextEpoch(int flag){
     _INFO("-------- End of all shards of epoch_%d! -------- \n",hOPT->train_epochs+1);
-    hOPT->train_epochs++;
+    hOPT->OnNextEpoch( );
     return true;
     /*if (train_loader->next_sample >=train_loader->shuffle_sample_count)    {
         ++train_epochs;
@@ -343,7 +343,7 @@ size_t SampLoader::UpdateBatch(int x,Fish* fish){
     }
     hGensor tokens_input=fish->Input(),target_probs=hOPT->hTargetProbs();    assert(tokens_input!=nullptr);
     int *raw_t = (int*)(tokens_input->data);
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     assert(isInRange((int*)(hostBatch->data),hostBatch->size(),0,hDict->n_vocab));
     tokens_input->OverWrite(hostBatch);
     if(target_probs!=nullptr)    {
@@ -509,7 +509,7 @@ SampLoader::SampLoader(Fish *g_,const string&n,bool isNewTS,int flag) {
     }
     stepis.name = name;
 
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     isTarget_1 = true;
 #else
     isTarget_1 = g_->config.is( {"model_v0","target"},string("OneHot") );
@@ -543,10 +543,10 @@ bool SampLoader::Prepare(Optimizer *hO,hDataToken hT,int flag){
     int n_ctx = _params.n_ctx,n_batch = _params.n_batch;
     assert(n_ctx>0 && n_batch>0);
     SHAPE shape={n_ctx, n_batch},sp1={1, n_ctx, n_batch};
-    hostBatch = std::make_shared<GTensor>(shape,GGML_TYPE_I32);   
-#ifdef _TENSOR_CUD_
+    hostBatch = std::make_shared<GTensor>(shape,typNUMBER::I32);   
+#ifdef _TENSOR_G_
     if(hTokens->hasMask()){
-        hostBatchMask = std::make_shared<GTensor>(shape,GGML_TYPE_I32); 
+        hostBatchMask = std::make_shared<GTensor>(shape,typNUMBER::I32); 
         hostBatchMask->Alloc();
         dolphin->target_mask = hostBatchMask;
     }    
@@ -554,10 +554,10 @@ bool SampLoader::Prepare(Optimizer *hO,hDataToken hT,int flag){
     // isFixEvalSample = false;
 #endif
     if(isTarget_1){
-        hostTargetProbs = std::make_shared<GTensor>( sp1,GGML_TYPE_I32);
+        hostTargetProbs = std::make_shared<GTensor>( sp1,typNUMBER::I32);
     }else{
         sp1={hDict->n_vocab, n_ctx, n_batch};
-        hostTargetProbs = std::make_shared<GTensor>( sp1,GGML_TYPE_F32);
+        hostTargetProbs = std::make_shared<GTensor>( sp1,typNUMBER::F32);
     }
     hostBatch->Alloc();     hostTargetProbs->Alloc();
     return true;

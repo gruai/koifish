@@ -249,8 +249,8 @@ public:
     float f_max_alibi_bias;
     int n_head_kv,n_embd_gqa,n_tokens;
     hGensor KQ_pos=nullptr,KQ_mask=nullptr;
-    LayerNormal norm;
-#ifdef _TENSOR_CUD_
+    LayerNormal norm,*fuseNorm=nullptr;
+#ifdef _TENSOR_G_
     hGensor attn=nullptr,trans=nullptr;
     floatX* dl_btc=nullptr;
 #endif
@@ -269,7 +269,7 @@ public:
     bool isValid()  override    {   return true;    }
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
 
-    hGTensor FUSE_cuda(hGTensor inpL,floatX* residual,LayerNormal*norm2,float* scratchF,int flag);
+    hGTensor FUSE_cuda(hGTensor inpL,floatX* residual,float* scratchF,int flag);
 };
 
 /*
@@ -320,12 +320,12 @@ public:
 };
 
 struct FFN : public GeNeuron  {
-    LayerNormal norm;
+    LayerNormal norm,*fuseNorm=nullptr;;
     SLP up,down,gate;
     Relu relu;
     // hGensor pre_gelu = nullptr;
     int latent;
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_    
     floatX *residual=nullptr,*input_1=nullptr,*scratchX=nullptr;
     SelfAttention *lastQKV=nullptr;
     bool remater_ffn = false;
@@ -338,7 +338,7 @@ struct FFN : public GeNeuron  {
     bool isValid()  override    {   return true;    }
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
 
-    hGTensor FUSE_cuda(hGTensor inpL,floatX *scratch,LayerNormal*norm2,int flag);
+    hGTensor FUSE_cuda(hGTensor inpL,floatX *scratch,int flag);
 };
 
 
@@ -348,7 +348,6 @@ struct FFN_MOE : public FFN{
 };
 
 struct OutCLS : public GeNeuron  {
-    bool isSymProj = true;
     LayerNormal norm;
     SLP proj;
     hGTensor target=nullptr,preLogits=nullptr;
@@ -366,7 +365,8 @@ struct OutCLS : public GeNeuron  {
     hGensor Interact(struct ggml_context * ctx0,hGensor cur,int flag)    override;
     bool isValid()  override    {   return true;    }
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;    
-    int FUSE_cuda(hGTensor inpL,hGTensor token_embed,int flag);
+    // Backward: return lnf->out;       Forward: return preLogits or loss?
+    hGTensor FUSE_cuda(hGTensor inpL,hGTensor token_embed,int flag);
 };
 
 struct NeLayer

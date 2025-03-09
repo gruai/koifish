@@ -43,6 +43,7 @@ Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params& config,int flag) : _fis
     }  
 
     if(_fish->isTrain())  {
+        scheduler = std::make_shared<DiscreteSchedule>(_fish->config.common);
         // train_loader->Init(g_,"Train");
         
     }else{
@@ -93,7 +94,7 @@ bool Optimizer::OnLogits(int flag)   {
 
     auto pLogits = hPreLogits();
     assert(pLogits!=nullptr); 
-    assert(pLogits->type==GGML_TYPE_F32);
+    assert(pLogits->type==typNUMBER::F32);
     
     float *p = (float*)(pLogits->data),sum=0;       //target_probs->data
     
@@ -147,7 +148,7 @@ bool OPT_Adam::BatchGrad(int iter,float&fx,int flag)   {
             return false;
         }   
         
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
         cuClear(opt_ps,0x0);    
         // double a = tNormOf(opt_ps,0x0);
         GraphCompute(train_loader,_fish->hBackTG);
@@ -231,7 +232,7 @@ void OPT_Adam::UpdateParams(int nx,CLI_params& config,int flag)  {
     g2_sum = 0;
     if(!isAdaptiveSched)        //params.adam->sched;   
         sched = 1.0;  
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     g_step = tNormOf(opt_ps,0x0);  
     if(DEBUG.train_hyperparams==1){
         adam->decay = 0;      sched = 1.0;
@@ -259,7 +260,7 @@ void OPT_Adam::UpdateParams(int nx,CLI_params& config,int flag)  {
     }
     tUpdate = GST_ms()-now;
 //     double a = sqrt(g2_sum),off=0;
-// #ifdef _TENSOR_CUD_
+// #ifdef _TENSOR_G_
 //     off = a - g_step;
 //     assert(a);
 // #endif
@@ -316,7 +317,7 @@ double OPT_Adam::UpdateTensorParam(hGensor hP,size_t offset,floatX *gX,float cli
     const int64_t ne = tELEM(hP);
     floatX *paramX = (floatX*)(hP->data),*paramX0,*gX0;
     float mh,vh,g0,x,x0,x00;
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     if(isToHost){
         paramX = (floatX*)_tmp;     gX=paramX+hP->szData;
         paramX0 = paramX,           gX0 = gX;
@@ -334,7 +335,7 @@ double OPT_Adam::UpdateTensorParam(hGensor hP,size_t offset,floatX *gX,float cli
     }else{
 
     }
-    assert(hP->type==GGML_TYPE_F32);
+    assert(hP->type==typNUMBER::F32);
     if(config.lars_ratio>0)   {   //lars/lamb
         float wnorm=0,norm=0,trust_ratio;
         for (int64_t j = 0; j < ne; ++j) {
@@ -348,7 +349,7 @@ double OPT_Adam::UpdateTensorParam(hGensor hP,size_t offset,floatX *gX,float cli
         gnorm = trust_ratio;
     }
 #endif    
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     UpdateTensorParam_cuda(hP,offset,this,grad_norm,0x0);     
     if(isToHost){
         x = T2Float(paramX0);               g0 = x-x00;
@@ -480,8 +481,8 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
     }
     // g_dump_level = 0;
     int iter0 = 0,t;  //opt->iter;
-    for (t = 0; t < train_params.adam.n_iter; ++t) {
-        if(t==train_params.adam.n_iter-1){
+    for (t = 0; t < train_params.nMostIter; ++t) {
+        if(t==train_params.nMostIter-1){
             if(train_loader!=nullptr)   {
                 train_loader->isLast = true;        isDumpOnce = true;
             }                
@@ -492,7 +493,6 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
         // const int64_t t_start_wall = ggml_time_us(),t_start_cpu = ggml_cycles();
         float lr = train_params.LearningRate();
         lr = scheduler->LearningRate(iter);     last_lr = lr;
-        // lr = learning_schedule(iter, _params.warmup, _params.cos_decay_steps, _params.adam->alpha, _params.adam->min_alpha,_params.cos_decay_min, _params.cos_decay_restart, _params.enable_restart);
         if(0){
             RAW_update(opt_ps,this, grad_norm, 0, 0);       //  0212
             g_step = grad_norm; //sqrt(grad_norm*grad_norm/nParams);
@@ -513,7 +513,7 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
                 val_loss = Evaluate(vl,iter);  
             }
         }    
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else        
         if( config.common.gpt_every>0 && t%config.common.gpt_every==0 )   {
             _fish->GenSentence(1);   
@@ -550,7 +550,7 @@ double Optimizer::GraphCompute(hSampLoader hLoader,hTGraph hTG, int flag){
     float mean_loss = 0.f;
     OutCLS* cls = _fish->GetNeuron<OutCLS>("OutCLS",0);
     Embed* embed = _fish->GetNeuron<Embed>("Embed",0);    
-#ifdef _TENSOR_CUD_    
+#ifdef _TENSOR_G_    
     embed->hostInput = (int*)hLoader->hostBatch->data;        //(int*)train_loader->hostBatch->data;
     isBackward = false;
     RAW_forward(_fish,0);    //    0x6666666
@@ -659,7 +659,7 @@ float Optimizer::Evaluate(hSampLoader loader,int iter,int flag){
         if(_fish->config.isOnlyGPT){
             return ee;
         }     
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else   
         a = ((float*)hPreLogits()->data)[0];        //  -6.60046101     -4.3040733  
         ee=loader->DecodeVerify(samp,tokens_input,_fish->preLogits);
@@ -699,52 +699,6 @@ float Optimizer::Evaluate(hSampLoader loader,int iter,int flag){
     return mean_loss;
 }
 
-float cosine_decay(int64_t step, int64_t decay_steps, float minimum) {
-    if (step > decay_steps) {
-        step = decay_steps;
-    }
-    const float cosine_decay = 0.50f*(1.0f + cosf(3.14159265359f*step/decay_steps));
-    const float decay = (1 - minimum)*cosine_decay + minimum;
-    return decay;
-}
-
-float cosine_decay_restart(int64_t step, int64_t decay_steps, float minimum, float restart_step_mult) {
-    while (step > decay_steps) {
-        step -= decay_steps;
-        decay_steps = (int64_t) (restart_step_mult * decay_steps);
-    }
-    return cosine_decay(step, decay_steps, minimum);
-}
-
-float learning_schedule(
-    int64_t step,
-    int64_t warmup_steps,
-    int64_t cos_decay_steps,
-    float   learning_rate,
-    float   overall_minimum,
-    float   cos_decay_minimum,
-    float   cos_decay_restart_step_mult,
-    bool    enable_restart) {
-
-    float result =
-        (step < warmup_steps)
-            ? (float) step / (float) warmup_steps
-            : enable_restart
-                ? cosine_decay_restart(
-                    step - warmup_steps,
-                    cos_decay_steps,
-                    cos_decay_minimum,
-                    cos_decay_restart_step_mult)
-                : cosine_decay(
-                    step,
-                    cos_decay_steps,
-                    cos_decay_minimum);
-
-    float min = overall_minimum / learning_rate;
-    result = min + result * (1.0f - min);
-    return result;
-}
-
 string StepInfos::STEP::Info(int flag){
     char buffer[256];
     _INFO("loss=%f |g|=%g\tlr=%.2e", loss,gNorm,lr); 
@@ -766,8 +720,8 @@ float Optimizer::UpdateLossCurve(int flag){
     }
     double remaining_millis = 0.0;
     if (millis_per_iter > 0.0)            {
-        const int n_iter = _params.adam.n_iter,done_iter = iter - first_iter,remaining_iter = n_iter - done_iter;
-        remaining_millis = remaining_iter * millis_per_iter;
+        //const int n_iter = _params.adam.n_iter,done_iter = iter - first_iter,remaining_iter = n_iter - done_iter;
+        remaining_millis = (_params.nMostIter-(iter - first_iter)) * millis_per_iter;
     }        
 
     last_time = GST_ms();
@@ -821,6 +775,14 @@ bool Optimizer::OnNextShard(int flag){
     return true;
 }
 
+bool Optimizer::OnNextEpoch(int flag){
+    train_epochs++;
+    if(scheduler->policy==LearnSKDU::COSINE_EPOCH){
+        // _INFO("-------- End of all shards of epoch_%d! -------- \n");
+    }
+    return true;
+}
+
 void Optimizer::BeforeTrain(hGensor tokens_,int flag) {    
     first_iter             = iter;
     // train_loader->hOPT = this;           val_loader->hOPT = this;
@@ -834,19 +796,19 @@ void Optimizer::BeforeTrain(hGensor tokens_,int flag) {
     size_t offset = 0x0;
     for (auto ps : opt_ps) {            
         nMostParam += tELEM(ps);
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
         ps->offset = offset;
         offset += ps->nByte();
 #endif
     } 
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     adam.decay = 0.1;      //very high for GPT2 Model
 
     InitCUDA(1);
 #endif    
     // assert(nMostParam>=nParams);
-    assert(adam.n_iter>0);
-    scheduler = std::make_shared<DiscreteSchedule>(_fish->config.common);
+    assert(_fish->config.common.nMostIter>0);
+    
 }
 
 size_t TGraph::Prepare4Train(struct ggml_context *ctx_,GD_METHOD tpGD,int flag){
@@ -871,7 +833,7 @@ size_t TGraph::Prepare4Train(struct ggml_context *ctx_,GD_METHOD tpGD,int flag){
             continue;
         
         nP++;       nz+=nParam;
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else
         gi.second.gm = new float[nParam]();
         gi.second.gv = new float[nParam]();
@@ -898,9 +860,9 @@ void Optimizer::Prepare(size_t nx_,int flag){
     NLP_AutoRegressive *dolphin = dynamic_cast<NLP_AutoRegressive*>(_fish);
     if(nParams>0)   {
         struct ggml_init_params ctx_opt_params;    
-        ctx_opt_params.mem_size = GGML_MEM_ALIGN*3 + ggml_tensor_overhead()*3 + ggml_type_size(GGML_TYPE_F32)*nParams*3;
+        ctx_opt_params.mem_size = GGML_MEM_ALIGN*3 + ggml_tensor_overhead()*3 + BPE(typNUMBER::F32)*nParams*3;
         if (past > 0) {
-            ctx_opt_params.mem_size += GGML_MEM_ALIGN + ggml_tensor_overhead() + ggml_type_size(GGML_TYPE_F32)*past;
+            ctx_opt_params.mem_size += GGML_MEM_ALIGN + ggml_tensor_overhead() + BPE(typNUMBER::F32)*past;
         }    
         ctx_opt_params.mem_buffer = NULL;
         ctx_opt_params.no_alloc   = false;
@@ -908,7 +870,7 @@ void Optimizer::Prepare(size_t nx_,int flag){
         if(_fish->isTrain()) {
             if(isGlobalGrad){
                 assert(nParams<INT_MAX);
-                grad = TENSO(_ctx, GGML_TYPE_F32, {(int)(nParams)});
+                grad = TENSO(_ctx, typNUMBER::F32, {(int)(nParams)});
             }
                 
             nz = _fish->hBackTG->Prepare4Train(_ctx,tpGD);
@@ -917,7 +879,7 @@ void Optimizer::Prepare(size_t nx_,int flag){
         }
         // train_loader->Init(dolphin,"Train",false);     //train_loader->Prepare(this);
     }
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     _tmp = new float[nParams]();
 #else
 #endif    
@@ -987,9 +949,9 @@ void OPT_Adam::Prepare(size_t nx_,int flag){
         }else{
 
         }
-        /*gm  = TENSO(_ctx, GGML_TYPE_F32, nParams);
-        gv  = TENSO(_ctx, GGML_TYPE_F32, nParams);
-        gpf = past > 0 ? TENSO(_ctx, GGML_TYPE_F32, past) : NULL;
+        /*gm  = TENSO(_ctx, typNUMBER::F32, nParams);
+        gv  = TENSO(_ctx, typNUMBER::F32, nParams);
+        gpf = past > 0 ? TENSO(_ctx, typNUMBER::F32, past) : NULL;
         float * v  = (float *)gv->data;   // gradients
         float * m  = (float *)gm->data;     // first moment
         ZERO_(gm);
@@ -1008,7 +970,7 @@ OPT_Adam::OPT_Adam(NLP_AutoRegressive *g_,CLI_params& params_,int flag)
     //  0.9f, 0.95f, 1e-8f      decay=0.1
     adam = &(_fish->config.common.adam); 
     adam->clip_alg = 1;      //clip_alg=0 little better
-    _fish->config.Fuse_Normal = 0;     //some strange bug
+    _fish->config.Fuse_Normal = 0;          //  
     _fish->config.common.remater_ffn = true;
     _fish->config.common.remater_qkv = true;
 
@@ -1016,11 +978,14 @@ OPT_Adam::OPT_Adam(NLP_AutoRegressive *g_,CLI_params& params_,int flag)
 }
 
 void OPT_Adam::Dump(int typ){
-
     Optimizer::Dump(typ);
+
     // if(NOT_DUMP())  return;
-     _INFO("[OPT_Adam]\tsRESI=%g s_rounding=%d alloc_w=%d remater[ffn=%d qkv=%d]",TrainParams().residual_scale,
+    _INFO("[OPT_Adam]\tsRESI=%g s_rounding=%d alloc_w=%d remater[ffn=%d qkv=%d]\n",
+        TrainParams().residual_scale,
         TrainParams().opt_alloc_weight,TrainParams().opt_alloc_weight,
         TrainParams().remater_ffn,TrainParams().remater_qkv);
-    adam->Dump(typ);    
+    adam->Dump(typ);  
+    if(scheduler!=nullptr)
+        scheduler->Dump(typ);
 }

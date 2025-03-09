@@ -13,14 +13,12 @@ Common utilities for CUDA code.
 #include <nvtx3/nvToolsExt.h>
 #include <nvtx3/nvToolsExtCudaRt.h>
 #include <cuda_profiler_api.h>
-#include <cuda_bf16.h>
-#include <cuda_fp16.h>
 
 #include "llm_c/utils.h"
 
 #include "../../CLI_params.hpp"
 #include "../../g_stddef.hpp"
-
+#include "../../g_float.hpp"
 // ----------------------------------------------------------------------------
 // Global defines and settings
 
@@ -42,7 +40,7 @@ extern cudaDeviceProp deviceProp;
 #endif
 
 // convenience macro for calculating grid/block dimensions for kernels
-#define CEIL_DIV(M, N) (((M) + (N)-1) / (N))
+// #define CEIL_DIV(M, N) (((M) + (N)-1) / (N))
 
 // short-cuts for compile-time boolean values that can be used as function arguments
 constexpr std::bool_constant<true> True;
@@ -75,31 +73,6 @@ inline void cudaFreeCheck(T** ptr, const char *file, int line) {
 // ----------------------------------------------------------------------------
 // CUDA Precision settings and defines
 
-enum PrecisionMode {
-    PRECISION_FP32,
-    PRECISION_FP16,
-    PRECISION_BF16,
-    PRECISION_BF8
-};
-
-// #define ENABLE_FP8
-
-// Specific configurations based on the enabled precision
-#if defined(ENABLE_FP32)
-    typedef float floatX;
-    #define PRECISION_MODE PRECISION_FP32
-// use fp16 (note: this may require gradient scaler, currently not implemented!)
-#elif defined(ENABLE_FP8)
-    typedef __nv__fp8__e4m3 floatX;
-    // typedef __nv__fp8__e5m2 floatX;
-    #define PRECISION_MODE PRECISION_BF8
-#elif defined(ENABLE_FP16)
-    typedef half floatX;
-    #define PRECISION_MODE PRECISION_FP16
-#else // Default to bfloat16
-    typedef __nv_bfloat16 floatX;
-    #define PRECISION_MODE PRECISION_BF16
-#endif
 
 // ----------------------------------------------------------------------------
 // Load and store with streaming cache hints
@@ -214,23 +187,6 @@ inline void file_to_device(void* dest, FILE* src, size_t num_bytes, size_t buffe
     cudaCheck(cudaMemcpyAsync(gpu_write_ptr, write_buffer, write_buffer_size, cudaMemcpyHostToDevice, stream));
     cudaCheck(cudaStreamSynchronize(stream));
     cudaCheck(cudaFreeHost(buffer_space));
-}
-
-template <typename T>
-inline float T2Float(T* a0)   {
-    float a;        
-    if(typeid(T)==typeid(half)){
-        a = __half2float(*(half*)a0);
-    }else if(typeid(T)==typeid(nv_bfloat16)) {
-        a = __bfloat162float(*(nv_bfloat16*)a0);
-    }else if(typeid(T)==typeid(float)) {
-        a = *a0;
-    }else if(typeid(T)==typeid(int)) {
-        a = *a0;
-    }else{
-        assert(0);
-    }
-    return a;
 }
 
 extern cudaStream_t main_stream;

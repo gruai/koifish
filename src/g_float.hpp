@@ -1,10 +1,8 @@
 /**
  *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT  
- *  
- *  Acknowledgement: https://github.com/andrewkchan/deepseek.cpp
- * 
- *  \brief DeepSeek
+ *      
+ *  \brief  Numbers:    Floating/Integer/Quants
  *  \author Yingshi Chen
  */
 
@@ -17,20 +15,129 @@
 #include <cstdint>
 #include <stdint.h>
 #include <string.h>
+#include <typeinfo>
+#include <string>
+
+#undef ENABLE_BF16
+#undef ENABLE_FP32
+//#define ENABLE_FP32
+#define ENABLE_BF16
 
 /*
-    Type of floating-point numbers 
+    Type of numbers 
 */
-enum class tpFloatingPoint : uint8_t {
-    FP32, 
-    FP16,       //  1 sign, 5 exponent, and the significand is being stored in 10 bits.
-    BF16,       //  1 sign, 8 exponent, and the significand is being stored in 7 bits.
+enum class typNUMBER : uint8_t {
+    F32     = 0,
+    F16     = 1,              //  1 sign, 5 exponent, and the significand is being stored in 10 bits.
+    Q4_0    = 2,
+    Q4_1    = 3,
+    // Q4_2 = 4, support has been removed
+    // Q4_3 = 5, support has been removed
+    Q5_0    = 6,
+    Q5_1    = 7,
+    Q8_0    = 8,
+    Q8_1    = 9,
+    Q2_K    = 10,
+    Q3_K    = 11,
+    Q4_K    = 12,
+    Q5_K    = 13,
+    Q6_K    = 14,
+    Q8_K    = 15,
+    IQ2_XXS = 16,
+    IQ2_XS  = 17,
+    IQ3_XXS = 18,
+    IQ1_S   = 19,
+    IQ4_NL  = 20,
+    IQ3_S   = 21,
+    IQ2_S   = 22,
+    IQ4_XS  = 23,
+    I8      = 24,
+    I16     = 25,
+    I32     = 26,
+    I64     = 27,
+    F64     = 28,
+    IQ1_M   = 29,
+    BF16    = 30,           //  1 sign, 8 exponent, and the significand is being stored in 7 bits.
+    // Q4_0_4_4 = 31, support has been removed from gguf files
+    // Q4_0_4_8 = 32,
+    // Q4_0_8_8 = 33,
+    TQ1_0   = 34,
+    TQ2_0   = 35,
+    // IQ4_NL_4_4 = 36,
+    // IQ4_NL_4_8 = 37,
+    // IQ4_NL_8_8 = 38,
     F8E5M2,     //  1 sign, 5 exponent, 1 implicit and 2 explicit mantissa bits
     F8E4M3,     //  1 sign, 4 exponent, 1 implicit and 3 explicit mantissa bits
-  
-    I32,  I16,  I8,  U8,
+
+    COUNT   = 39,
 };
-typedef tpFloatingPoint DType;
+
+/*
+enum PrecisionMode {
+    typNUMBER::F32,
+    PRECISION_FP16,
+    PRECISION_BF16,
+    PRECISION_BF8
+};
+
+*/
+
+/*enum ggml_type {
+        
+    };*/
+
+/*
+    FP16/BF16/FP8/FP4 from different vendors
+*/
+#define _USE_CUDA_FLOAT_
+#if defined(_USE_CUDA_FLOAT_)
+  #include <cuda_fp16.h>
+  #include <cuda_bf16.h>
+
+  #if defined(ENABLE_FP32)
+      typedef float floatX;
+      #define FLOAT_TYPE typNUMBER::F32
+  #elif defined(ENABLE_FP8)
+      typedef __nv__fp8__e4m3 floatX;
+      // typedef __nv__fp8__e5m2 floatX;
+      #define FLOAT_TYPE typNUMBER::F8E4M3
+  #elif defined(ENABLE_FP16)    
+      typedef half floatX;
+      #define FLOAT_TYPE typNUMBER::FP16
+  #elif defined(ENABLE_BF16) 
+      typedef __nv_bfloat16 floatX;
+      #define FLOAT_TYPE typNUMBER::BF16
+  #endif
+
+  template <typename T>
+  inline float T2Float(T* a0)   {
+      float a;    
+    
+      if(typeid(T)==typeid(half)){
+          a = __half2float(*(half*)a0);
+      } else
+      if(typeid(T)==typeid(nv_bfloat16)) {
+          a = __bfloat162float(*(nv_bfloat16*)a0);
+      } else
+      if(typeid(T)==typeid(float)) {
+          a = *a0;
+      } else
+      if(typeid(T)==typeid(int)) {
+          a = *a0;
+      }else{
+          assert(0);
+      }
+      return a;
+  }
+#endif
+
+/*
+    byte per element of this type
+*/
+double BPE(typNUMBER type);
+const char *cNameOf(typNUMBER type);
+std::string NameOf(typNUMBER type);
+bool isQuantized(typNUMBER type);
 
 typedef uint16_t f16_t;
 typedef uint8_t f8e5m2_t;

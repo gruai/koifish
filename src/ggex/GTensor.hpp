@@ -34,9 +34,8 @@ class EDGE_DEVICES;
 typedef shared_ptr<GTensor> hGTensor;
 typedef std::vector<int> SHAPE;
 
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     #include "../Device/CUDA/cuda_common.h"
-    // #include "../Device/CUDA/cutils.cuh"
 #else
     typedef float floatX;
 #endif
@@ -70,14 +69,15 @@ public:
     size_t offset = 0x0;
     SHAPE shape; 
     SHAPE x_shape;     //  1.padded_shape  for high performance or menory alignment
-    typedef enum ggml_type tpDATA;
-    static tpDATA tpFloatX;
-    tpDATA  type;
+
+    static typNUMBER tpFloatX;
+    typNUMBER  type;
     int tpInit=2;
     enum BIT_FLAG {
         F_INPUT=0x1,F_OUTPUT=0x2,F_PARAM=0x4,F_LOSS=0x8, 
         F_NOALLOC=0X100,
-        F_TOX=0x10000,
+
+        F_TOX=0x10000,  F_PADDED=0x20000
     };    
         
     static hGTensor NEW_(struct ggml_tensor*gg,int flag=0x0) {
@@ -85,7 +85,7 @@ public:
         return hT;
     }
     GTensor()   {}
-    GTensor(SHAPE shape_,tpDATA tpD_,bool isAlloc=true,int flag=0x0);
+    GTensor(SHAPE shape_,typNUMBER tpD_,bool isAlloc=true,int flag=0x0);
     GTensor(struct ggml_tensor*gg_,int flag=0x0) : gg(gg_)      {     assert(0);    }
     virtual bool CopyGG(struct ggml_tensor*gg_,int flag=0x0)    {     assert(0);    return false;   }
 
@@ -177,24 +177,24 @@ public:
     void Set(int i0, int i1, int i2, int i3, T value){
         void * val   = (char *) data + i0*nb[0] + i1*nb[1] + i2*nb[2] + i3*nb[3];
         switch (type) {
-        case GGML_TYPE_I8:             {
+        case typNUMBER::I8:             {
                 ((int8_t *)(val))[0] = value;
             } break;
-        case GGML_TYPE_I16:            {
+        case typNUMBER::I16:            {
                 ((int16_t *)(val))[0] = value;
             } break;
-        case GGML_TYPE_I32:            {
+        case typNUMBER::I32:            {
                 ((int32_t *)(val))[0] = value;
             } break;
-        case GGML_TYPE_F16:            {
+        case typNUMBER::F16:            {
                 GGML_ABORT("fatal error");
                 // ((ggml_fp16_t *)(val))[0] = GGML_FP32_TO_FP16(value);
             } break;
-        case GGML_TYPE_BF16:            
+        case typNUMBER::BF16:            
             {   GGML_ABORT("fatal error");
                 // ((ggml_bf16_t *)(val))[0] = GGML_FP32_TO_BF16(value);
             } break;
-        case GGML_TYPE_F32:            {
+        case typNUMBER::F32:            {
                 ((float *)(val))[0] = value;
             } break;
         default:            {
@@ -232,7 +232,7 @@ inline hGTensor operator+=( const hGTensor &a,const hGTensor &b ) 	{
 }
 
 
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     typedef hGTensor hGensor;
     inline  struct ggml_tensor* G(hGensor T) {   assert(T!=nullptr);     return T->GG(); }
     inline hGensor NEW_(struct ggml_tensor*gg,int flag=0x0) {
@@ -288,7 +288,7 @@ inline floatX *ToG0(hGTensor t) {
         return nullptr;    
     return ToG(t); 
 }
-hGensor TENSO(void* ctx0,int typ,SHAPE,int flag=0x0,const string&name="" );
+hGensor TENSO(void* ctx0,typNUMBER typ,SHAPE,int flag=0x0,const string&name="" );
 hGensor tRAND(hGensor  tensor, struct random_normal_distribution * rnd);
 
 class cuTensor : public GTensor   {
@@ -296,7 +296,7 @@ protected:
     // PrecisionMode precision;
     hGTensor _Multiply(const hGTensor& other); 
 public:
-    cuTensor(const string&name_,SHAPE shape,tpDATA tpD_,bool isParam,int flag=0x0);    
+    cuTensor(const string&name_,SHAPE shape,typNUMBER tpD_,bool isParam,int flag=0x0);    
     virtual ~cuTensor();
 
     bool Alloc(int tpInit=0,int flag=0x0)    override;
@@ -375,9 +375,4 @@ struct GENSORS{
         // sort(gimap.begin(), gimap.end(), comp);
     }
 };
-
-int cuLiteTest(size_t B,size_t T,size_t C,int stage=0,int flag=0);
-int FUSE_ResiNormal(hGTensor hOut,hGTensor hInp1,hGTensor hInp2,hGTensor hNormed,hGTensor N_mean,hGTensor N_rstd,hGTensor w,hGTensor b,int flag);
-int FUSE_QKV(hGTensor hOut,hGTensor hIn,hGTensor hQKV,hGTensor hATTN,hGTensor w,hGTensor b,int NH,hGTensor proj_w,hGTensor proj_b,int flag);
-int FUSE_FFN(hGTensor hOut,hGTensor hIn,hGTensor hLatent,hGTensor wUp,hGTensor bUp,hGTensor hGelu,hGTensor wDown,hGTensor bDown,int gelu_fusion,int flag);
 

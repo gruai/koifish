@@ -74,7 +74,7 @@ static hGensor  get_random_tensor_f32(
         int64_t ne[],
         float fmin,
         float fmax) {
-    hGensor  result = ggml_new_tensor(ctx0, GGML_TYPE_F32, ndims, ne);
+    hGensor  result = ggml_new_tensor(ctx0, typNUMBER::F32, ndims, ne);
 
     switch (ndims) {
         case 1:
@@ -170,7 +170,7 @@ static hGensor  get_random_tensor_i32(
         int64_t ne[],
         int32_t imin,
         int32_t imax) {
-    hGensor  result = ggml_new_tensor(ctx0, GGML_TYPE_I32, ndims, ne);
+    hGensor  result = ggml_new_tensor(ctx0, typNUMBER::I32, ndims, ne);
 
     switch (ndims) {
         case 1:
@@ -1481,7 +1481,7 @@ int main(int argc, const char ** argv) {
                     for (int n_past = 1; n_past < ne2[2]; ++n_past) {
                         x[0] = get_random_tensor_f32(ctx0, ndims, ne2, -1.0f, 1.0f);
 
-                        hGensor  p = TENSO(ctx0, GGML_TYPE_I32, ne2[2]);
+                        hGensor  p = TENSO(ctx0, typNUMBER::I32, ne2[2]);
                         for (int i = 0; i < ne2[2]; ++i) {
                             ((int32_t *) p->data)[i] = n_past + i;
                         }
@@ -1521,7 +1521,7 @@ int main(int argc, const char ** argv) {
                     for (int n_past = 1; n_past < ne2[2]; ++n_past) {
                         x[0] = get_random_tensor_f16(ctx0, ndims, ne2, -1.0f, 1.0f);
 
-                        hGensor  p = TENSO(ctx0, GGML_TYPE_I32, ne2[2]);
+                        hGensor  p = TENSO(ctx0, typNUMBER::I32, ne2[2]);
                         for (int i = 0; i < ne2[2]; ++i) {
                             ((int32_t *) p->data)[i] = n_past + i;
                         }
@@ -1583,7 +1583,7 @@ int main(int argc, const char ** argv) {
                 const int d0 =         1 + irand(2);
                 const int d1 = is_2D ? 1 + irand(2) : 0;
 
-                hGensor  f = ggml_sum(ctx0, ggml_im2col(ctx0, x[1], x[0], s0, s1, p0, p1, d0, d1, is_2D, GGML_TYPE_F32));
+                hGensor  f = ggml_sum(ctx0, ggml_im2col(ctx0, x[1], x[0], s0, s1, p0, p1, d0, d1, is_2D, typNUMBER::F32));
 
                 _INFO("im2col f32: is_2D=%s, s0=%d, s1=%d, p0=%d, p1=%d, d0=%d, d1=%d\n", is_2D ? "yes" : "no", s0, s1, p0, p1, d0, d1);
                 check_gradient("im2col f32", ctx0, x, f, ndims, nargs, 1e-2f, 1e-3f, INFINITY, {});

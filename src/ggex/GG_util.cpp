@@ -409,8 +409,10 @@ void CLI_params::OnMostToken(size_t nMost,int flag){
     double a = nMost*1.0/n_ctx();    //nTokenInBatch();
     size_t nSamp = (size_t)(floor)(a);
     int iter_1 = (int)floor(a/n_batch());
-    common.adam.n_iter = (int)floor(nMost*common.n_epochs*1.0/nTokenInBatch());
-}
+    float rSample = common.rSubSample;
+    common.nEpochIter = (int)ceil(nMost*rSample/nTokenInBatch());
+    common.nMostIter = (int)floor(nMost*common.n_epochs*rSample/nTokenInBatch());
+}    
 
 std::string CLI_params::NameOnArch(std::string&name,int flag){
     string sx="";
@@ -453,13 +455,13 @@ void CLI_params::OnArch( ){
         }
         //  need new GEMM! cuBLASLt requires bias in FP8 mode to be BF16... (sigh)
         modep.isNormalBias = true;
-        modep.isSLPBias = true;        //nealy same
-        // n_embd_gqa = 768;        
+        modep.isSLPBias = true;         //nealy same
+        modep.isPaddedCls = true;       //  ceil(n/128.0)*128
 
         int group=Get({"model_v0","target_group"},1);
         assert(group==1);
     }
-        // hparams.Set({"model_v0","target_group"},1);
+        
         break;
     case NLP_QWEN2:
     case NLP_DEEPSEEK:
@@ -476,13 +478,7 @@ void CLI_params::OnArch( ){
 
 struct train_params_ get_default_train_params_common() {
     struct train_params_ params;
-    params.fn_train_data     = "shakespeare.txt";
-    params.fn_checkpoint_in  = "checkpoint.gguf";
-    params.fn_checkpoint_out = "checkpoint-ITERATION.gguf";
-    params.pattern_fn_it     = "ITERATION";
-    params.fn_latest         = "LATEST";
-
-    params.print_usage = false;
+    // params.print_usage = false;
 
     params.save_every = 10;
 
@@ -515,12 +511,9 @@ struct train_params_ get_default_train_params_common() {
     params.opt_max_no_improvement = 0;
 
     params.warmup            =  600;
-    params.cos_decay_steps   = 1000;
-    params.cos_decay_restart = 1.1f;
-    params.cos_decay_min     = 0.1f;
-    params.enable_restart    = false;
+    params.lr_restart=0;
 
-    params.adam.n_iter         = -1;
+    // params.adam.n_iter         = -1;
     params.adam.alpha          = 1e-3f;
     params.adam.min_alpha      = 0;
     params.adam.decay          = 1e-1f;
@@ -572,7 +565,7 @@ try{
     std::string s = jConfig.dump(),s0;
     common.n_batch = jKV(jConfig,{      "train","batch"},common.n_batch );
     common.n_epochs = jKV(jConfig,{  "train","epoch"},common.n_epochs );
-    common.adam.n_iter = jKV(jConfig,{  "train","adam-iter"},common.adam.n_iter );
+    common.nMostIter = jKV(jConfig,{  "train","adam-iter"},common.nMostIter );
     common.adam.alpha = jKV(jConfig,{   "train","learning-rate"},common.adam.alpha );
     common.n_gradient_accumulation = jKV(jConfig,{ "train","optimizatioin","grad_accumulation"  },common.n_gradient_accumulation );
     lars_ratio = jKV(jConfig,{          "train","optimizatioin","lars_ratio"},lars_ratio );
@@ -617,6 +610,12 @@ try{
     // if( eval_every>0 ){
     //     _INFO("\r\n%s  eval@every %d steps.",__func__,eval_every );
     // }
+    common.rSubSample = jKV(jConfig,{"train","sample"},common.rSubSample ); 
+    if(common.rSubSample<0)     common.rSubSample=1;
+    if(common.rSubSample<1)     {
+        common.lr_restart = 1;
+    }
+    
     common.seed = jKV(jConfig,{"seed"},common.seed ); 
     wiki_actor = jKV(jConfig,{"wiki","actor"},wiki_actor );
     wiki_logits = jKV(jConfig,{"wiki","logits"},wiki_logits );
@@ -905,7 +904,7 @@ int Gensor_loab(struct ggml_context * ctx0,hGensor w,int nHeavy,hGensor ga,hGens
     assert(nIn>nHeavy && nOut>nHeavy && nHeavy>0);
     float *A=Gensor2float(ctx0,w,flag);
     auto svd=std::make_shared<LoSVD<float>>(A,nIn,nOut,rank,1.0e-3,0); //1.0e-3
-    assert(ga->type==GGML_TYPE_F32 && gb->type==GGML_TYPE_F32);
+    assert(ga->type==typNUMBER::F32 && gb->type==typNUMBER::F32);
     if(!svd->Build( ))  {
         return -1;
     }else{
@@ -934,7 +933,7 @@ int Gensor_SVD(struct ggml_context * ctx0,hGensor w,int nHeavy,hGensor U,hGensor
     if(!svd->Build( ))  {
         return -1;
     }else{
-        //GGML_TYPE_F16 tensor would call ggml_vec_dot_f16 with GGML_SIMD acceleration
+        //typNUMBER::F16 tensor would call ggml_vec_dot_f16 with GGML_SIMD acceleration
         /*if(compression==SVD_a)  {   //keep same graph
             float *approx = svd->Approx( );
             ggml_fp32_to_fp16_row(approx,(ggml_fp16_t*)w->data,nIn*nOut);
@@ -1096,16 +1095,16 @@ void _T_repr_(hGensor t,const char*tab,char *buf,const GENSOR_INFO&info){
     size_t n0 = strlen(buf),n1;         //char buf[64*1024]="\0";
     string suf,pref,sX = info.__repr__(suf,pref);        //    info.sX;
     sprintf(buf+strlen(buf),"%s %s %s %s \t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",tab,sX.c_str(), A,
-        t->name,ne[0], ne[1], ne[2], ne[3], ggml_type_name(t->type));
+        t->name,ne[0], ne[1], ne[2], ne[3], cNameOf(t->type));
     n1= strlen(buf); 
 }
 
 void _T_repr_(hGensor t,const char*tab,char *buf,int typ){
     if(t==nullptr)      return;
     bool isInput = t->flags & GGML_TENSOR_FLAG_INPUT;
-    string A = t->type==GGML_TYPE_F16 ? "d16":"d";
+    string A = NameOf(t->type); //==typNUMBER::F16 ? "d16":"d";
     // if(t->grad!=nullptr){
-    //     if(t->type==GGML_TYPE_F16)
+    //     if(t->type==typNUMBER::F16)
     //         A = "P16";    
     //     else
     //         A = "P";
@@ -1117,11 +1116,11 @@ void _T_repr_(hGensor t,const char*tab,char *buf,int typ){
     auto ne=t->ne;
     switch(typ){
     case 1:
-        sprintf(buf+strlen(buf),"%s%s '%s' \t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",tab,A.c_str(),t->name,ne[0], ne[1], ne[2], ne[3], ggml_type_name(t->type));
+        sprintf(buf+strlen(buf),"%s%s '%s' \t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",tab,A.c_str(),t->name,ne[0], ne[1], ne[2], ne[3], cNameOf(t->type));
         break;
     default:
         sprintf(buf+strlen(buf),"%s%s '%s' %.3g%s\t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",tab, 
-        A.c_str(),t->name,nElem>1000?nElem/1.0e6:nElem,nElem>1000?"M":"",ne[0], ne[1], ne[2], ne[3], ggml_type_name(t->type)); 
+        A.c_str(),t->name,nElem>1000?nElem/1.0e6:nElem,nElem>1000?"M":"",ne[0], ne[1], ne[2], ne[3], cNameOf(t->type)); 
         break;
     }    
 }
@@ -1268,7 +1267,7 @@ hGensor GradOf(struct ggml_cgraph *cgraph,hGensor node,int flag){
         return cgraph->grads[igrad];
     else
         return nullptr;*/
-#elif defined _TENSOR_CUD_
+#elif defined _TENSOR_G_
     assert(0);
     return nullptr;
 #else
@@ -1293,9 +1292,9 @@ extern "C" void gg_print_tensor_(const char* title, hGensor t, int n) {
     if(strlen(title)>0) printf("%s\n", title);
     size_t nz=0,nElems = 0;//t->size(),;
     float * data = (float *)t->data,a1=-FLT_MAX,a0=FLT_MAX;
-    if(t->type!=GGML_TYPE_F32){
+    if(t->type!=typNUMBER::F32){
         data = new float[nElems];
-        if(t->type==GGML_TYPE_F16){
+        if(t->type==typNUMBER::F16){
             ggml_fp16_t *src_ = (ggml_fp16_t *)(t->data);
             for (int i = 0; i < nElems; i++) {
                 data[i] = src_[i];
@@ -1314,10 +1313,10 @@ extern "C" void gg_print_tensor_(const char* title, hGensor t, int n) {
     }
     // printf("sum:  %f\n\n", sum);
     if(nElems==1){
-        printf("T%d:%s: %s\t data=%f \n",-1/*t->id*/,t->name, ggml_type_name(t->type),a0);
+        printf("T%d:%s: %s\t data=%f \n",-1/*t->id*/,t->name, cNameOf(t->type),a0);
     }else
         printf("T%d:%s: %.4g(M)\t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] sum=%g data=[%f : %f] rZ=%.3g%%\n", 
-            -1/*t->id*/,t->name,nElems/1.0e6,t->ne[0], t->ne[1], t->ne[2], t->ne[3], ggml_type_name(t->type),sum,a0,a1,nz*100.0/nElems);
+            -1/*t->id*/,t->name,nElems/1.0e6,t->ne[0], t->ne[1], t->ne[2], t->ne[3], cNameOf(t->type),sum,a0,a1,nz*100.0/nElems);
     if(n>0){
         printf("\t{");
         for (int i = 0; i < std::min((int) (t->ne[0]*t->ne[1]), n); i++) {
@@ -1336,14 +1335,33 @@ extern "C" void gg_print_tensor_(const char* title, hGensor t, int n) {
         printf("}\n");
     }
 
-    if(t->type!=GGML_TYPE_F32){
+    if(t->type!=typNUMBER::F32){
         delete[] data;
     } 
 }
 
+/*
+    byte per element of this type
+*/
+double BPE(typNUMBER type) {
+    double bpe = ggml_type_sizef((enum ggml_type)type);//deprecated    
+    assert(bpe==1 || bpe==2 || bpe==4);
+    return bpe;
+}
+const char *cNameOf(typNUMBER type){
+    return ggml_type_name((enum ggml_type)type);
+}
+std::string NameOf(typNUMBER type){
+    std::string name = cNameOf(type);
+    return name;
+}
+bool isQuantized(typNUMBER type){
+    return ggml_is_quantized((enum ggml_type)type);
+}
+
 double GTensor::bpe(){
     //  ggml_row_size()
-    return ggml_type_sizef(type);   //deprecated
+    return BPE(type);   
 }
 size_t GTensor::size(int typ)  const       {   
     size_t nz=1;    
@@ -1362,7 +1380,7 @@ size_t GTensor::size(int typ)  const       {
     return nz;
     // return ggml_nelements(gg);     
 }
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 
 
 #else
@@ -1419,33 +1437,33 @@ size_t GTensor::size(int typ)  const       {
 void Gensor2float_(const hGensor w,float *A,int flag)   {
     size_t ne00 = tELEM(w),nbyte = tBYTE(w); 
     void *data_0 = w->data;
-    enum ggml_type tp0 = w->type;
+    enum ggml_type tp0 = (enum ggml_type)w->type;
     void  *src0_row = (void *) ((char *) w->data );
-    assert(ggml_is_quantized(w->type));
+    assert(ggml_is_quantized(tp0));
     switch(w->type){
-        // case GGML_TYPE_F16:
+        // case typNUMBER::F16:
         //     ggml_fp16_to_fp32_row((ggml_fp16_t*)w->data,A,nIn*nOut);
         //     break;
-        case GGML_TYPE_F32:
+        case typNUMBER::F32:
             break;
-        case GGML_TYPE_Q2_K:
+        case typNUMBER::Q2_K:
             dequantize_row_q2_K((const block_q2_K*)src0_row, A, ne00);//-0.00318908691
             break;
-        case GGML_TYPE_Q3_K:
+        case typNUMBER::Q3_K:
             dequantize_row_q3_K((const block_q3_K*)src0_row, A, ne00);  
             break;
-        case GGML_TYPE_Q4_K:
+        case typNUMBER::Q4_K:
             dequantize_row_q4_K((const block_q4_K*)src0_row, A, ne00);  
             break;
-        case GGML_TYPE_Q6_K:
+        case typNUMBER::Q6_K:
             dequantize_row_q6_K((const block_q6_K*)src0_row, A, ne00);  
             break;
-        case GGML_TYPE_Q8_0:
+        case typNUMBER::Q8_0:
             dequantize_row_q8_0((const block_q8_0*)src0_row, A, ne00);  
             break;
         default:
             assert(0);
-            // ggml_tensor_dequant(ctx0,w,GGML_TYPE_F32);       //memory leak@"float * wdata = malloc(sizeof(float)*ne00)" !!!
+            // ggml_tensor_dequant(ctx0,w,typNUMBER::F32);       //memory leak@"float * wdata = malloc(sizeof(float)*ne00)" !!!
             // memcpy(A,w->data,sizeof(float)*ne00);
             // w->data = data_0;       w->type = tp0;
             break;

@@ -105,7 +105,7 @@ std::string CDict_CHAR::T2STR(TOKEN_ID tok,int flag ) {
 int CDict_GPT2::InitMAEC(struct ggml_context *ctx_build,const std::vector<int>& dims_,int flag)  {
     int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.n_embd;
 
-    // tok_embeddings = dolphin->AddTensor(ctx_build,_NAM_("token_embd.weight"),GGML_TYPE_F32,{n_embd, n_vocab},true,0x0);  
+    // tok_embeddings = dolphin->AddTensor(ctx_build,_NAM_("token_embd.weight"),typNUMBER::F32,{n_embd, n_vocab},true,0x0);  
     // _norm.BuildX("output_norm", {n_embd},dolphin,0x0);
     // _output.isBias = false;
     // _output.BuildX("output", {n_embd, n_vocab},dolphin,0x0);  
@@ -113,7 +113,7 @@ int CDict_GPT2::InitMAEC(struct ggml_context *ctx_build,const std::vector<int>& 
     return 0x0;     
 }
 
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else
 static void cb(hGensor  cur, const char * name, int il)    {
     if (il >= 0) {
@@ -159,11 +159,11 @@ int GPT2::cRawGraph( struct ggml_context *ctx_build,bool isBuild,int flag)   {
     hGensor cur = nullptr,pos = nullptr,q,k,v,Qcur,Kcur,Vcur;
     float kq_scale = 1.0f/sqrtf(float(n_embd_head));
     // hDict->InitMAEC(ctx_build,{n_embd},0x0);    
-    hGensor tok_embeddings = AddTensor(ctx_build,_NAM_("token_embd.weight"),GGML_TYPE_F32,{n_embd, n_vocab},true,0x0);  
+    hGensor tok_embeddings = AddTensor(ctx_build,_NAM_("token_embd.weight"),typNUMBER::F32,{n_embd, n_vocab},true,0x0);  
     _norm.BuildX("output_norm", {n_embd},this, 0x0);
     _output.BuildX("output", {n_embd, n_vocab},this,0x0); 
     
-    pos_embd = AddTensor(ctx_build,_NAM_("position_embed.weight"),GGML_TYPE_F32,{n_embd, n_ctx},true,0x0); //ml.create_tensor(ctx_input, tn(LLM_TENSOR_POS_EMBD,   "weight"), {n_embd, n_ctx_train});
+    pos_embd = AddTensor(ctx_build,_NAM_("position_embed.weight"),typNUMBER::F32,{n_embd, n_ctx},true,0x0); //ml.create_tensor(ctx_input, tn(LLM_TENSOR_POS_EMBD,   "weight"), {n_embd, n_ctx_train});
     //llm_build_inp_embd(ctx_build, lctx, config, batch, tok_embd, cb);
   
     hGensor  inpL = ggml_get_rows(ctx_build, tok_embeddings, in_node);    gTN(inpL, "inp_embd");    
@@ -308,7 +308,7 @@ struct ggml_cgraph *GPT2::BuildRawGraph( struct ggml_context *ctx_build,bool isB
     assert(preLogits!=nullptr);
     BuildLoss(ctx_build,preLogits);
 
-#ifndef _TENSOR_CUD_
+#ifndef _TENSOR_G_
     if(rnd==nullptr)
         rnd = init_random_normal_distribution(config.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
     size_t sz2 = hEDS->Alloc(hForwTG, ctx_build);
@@ -327,7 +327,7 @@ string GPT2::__repr__( string& suffix,string& prefix,int flag) {
 }
 
 std::string CDict_GPT2::T2STR(TOKEN_ID tok,int flag ) {
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     // [todo] call gpt2 tokenizer in next version
 #else
     assert(0);

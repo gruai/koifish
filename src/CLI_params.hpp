@@ -87,7 +87,7 @@ struct LAY_PARAM{
 
 struct ADAM_params_ {
     size_t n_parameters;
-    int   n_iter,decay_min_ndim;
+    int   decay_min_ndim;
     float alpha,min_alpha,decay,beta1,beta2;
     int clip_alg=0;     // if 1: adaptive local clip
     float gclip;
@@ -98,22 +98,13 @@ struct ADAM_params_ {
 };
 
 struct train_params_ {
-    const char * fn_train_data;
-    const char * fn_checkpoint_in;
-    const char * fn_checkpoint_out;
-    const char * pattern_fn_it;
-    const char * fn_latest;
-
-    bool print_usage;
-
     int save_every,dump_every=1;
     int gpt_every=-1;       //eval_every=-1,
 
     uint32_t seed;
 
-    int n_ctx;
+    int n_ctx,n_batch;
     int n_threads;
-    int n_batch;
     int n_gradient_accumulation;
     int n_epochs=1;
     int n_gpu_layers;
@@ -134,11 +125,13 @@ struct train_params_ {
 
     bool force_reshuffle;
 
-    int   warmup;
-    int   cos_decay_steps;
-    float cos_decay_restart;
-    float cos_decay_min;
-    bool  enable_restart;
+    float rSubSample=1;
+    int nMostIter=-1,nEpochIter=-1;
+    int warmup,lr_restart=0;
+    // int   cos_decay_steps;
+    // float cos_decay_restart;
+    // float cos_decay_min;
+    // bool  enable_restart;
 
     int   opt_past;
     float opt_delta;
@@ -171,6 +164,9 @@ struct MOEL_params_ {
     int preLogits_dB=2; // epsilon for convergence test
     bool isNormalBias = true;  
     bool isSLPBias = true;  
+    bool isPaddedCls = false;  
+//  ****
+    bool isEmbedWeightTying = true;
     void Dump(int typ);
 };
 
@@ -183,7 +179,7 @@ struct CLI_params {
     };    
     SaveModel save;
 
-    tpFloatingPoint tpWeight,tpActivation,tpGradient;
+    typNUMBER tpWeight,tpActivation,tpGradient;
 
     //Always false,     GGML don't support back of FLASH_ATTEN !
     bool isFlashAtten()     {   

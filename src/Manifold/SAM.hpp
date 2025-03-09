@@ -103,12 +103,12 @@ struct SAM_encoder : public Fish {
     LayerNormal neck_norm_0,neck_norm_1;
     void Neck(const std::string&key_,const SHAPE& shape,int flag=0x0) override{
         //struct ggml_context * ctx = graph->ctx;
-        pe = AddTensor(key_+".pos_embed",GGML_TYPE_F32,{nEmbed, n_img_embd, n_img_embd, 1},0x0);
-        // pe = TENSO(ctx, GGML_TYPE_F32, nEmbed, n_img_embd, n_img_embd, 1);
+        pe = AddTensor(key_+".pos_embed",typNUMBER::F32,{nEmbed, n_img_embd, n_img_embd, 1},0x0);
+        // pe = TENSO(ctx, typNUMBER::F32, nEmbed, n_img_embd, n_img_embd, 1);
         // model.tensors["image_encoder.pos_embed"] = pe;
         proj.BuildX(key_+".patch_embed.proj",{n_patch_size, n_patch_size,           3, nEmbed},this,0x0);
             // proj_w = TENSO(ctx, GGML_TYPE_F16, n_patch_size, n_patch_size,           3, nEmbed);
-            // proj_b = TENSO(ctx, GGML_TYPE_F32,            1,            1, nEmbed);
+            // proj_b = TENSO(ctx, typNUMBER::F32,            1,            1, nEmbed);
         neck_conv_0 = AddTensor(key_+".neck.0.weight",GGML_TYPE_F16,{1, 1, nEmbed,     n_enc_out_chans},0x0);
         neck_conv_1 = AddTensor(key_+".neck.2.weight",GGML_TYPE_F16,{3, 3, n_enc_out_chans, n_enc_out_chans},0x0);
             // neck_conv_0 = TENSO(ctx, GGML_TYPE_F16, 1, 1, nEmbed,     n_enc_out_chans);
@@ -116,11 +116,11 @@ struct SAM_encoder : public Fish {
                         // model.tensors["image_encoder.neck.0.weight"] = neck_conv_0;
             // model.tensors["image_encoder.neck.2.weight"] = neck_conv_1;
         neck_norm_0.BuildX(key_+".neck.1",{n_enc_out_chans},this,0x0);
-            // neck_norm_0_w = TENSO(ctx, GGML_TYPE_F32, n_enc_out_chans);
-            // neck_norm_0_b = TENSO(ctx, GGML_TYPE_F32, n_enc_out_chans);
+            // neck_norm_0_w = TENSO(ctx, typNUMBER::F32, n_enc_out_chans);
+            // neck_norm_0_b = TENSO(ctx, typNUMBER::F32, n_enc_out_chans);
         neck_norm_1.BuildX(key_+".neck.3",{n_enc_out_chans},this,0x0);
-            // neck_norm_1_w = TENSO(ctx, GGML_TYPE_F32, n_enc_out_chans);
-            // neck_norm_1_b = TENSO(ctx, GGML_TYPE_F32, n_enc_out_chans);
+            // neck_norm_1_w = TENSO(ctx, typNUMBER::F32, n_enc_out_chans);
+            // neck_norm_1_b = TENSO(ctx, typNUMBER::F32, n_enc_out_chans);
     }
 };
 
@@ -207,9 +207,9 @@ struct SegmentAnything  : public Fish {
         static size_t buf_size = 256u*1024*1024;
         struct ggml_init_params ggml_params = {buf_size,NULL,false, };
         state.ctx = ggml_init(ggml_params);
-        state.embd_img = TENSO(state.ctx, GGML_TYPE_F32,n_img_embd, n_img_embd, n_enc_out_chans);
-        state.low_res_masks = TENSO(state.ctx, GGML_TYPE_F32,n_enc_out_chans, n_enc_out_chans, 3);
-        state.iou_predictions = TENSO(state.ctx, GGML_TYPE_F32, 3);
+        state.embd_img = TENSO(state.ctx, typNUMBER::F32,n_img_embd, n_img_embd, n_enc_out_chans);
+        state.low_res_masks = TENSO(state.ctx, typNUMBER::F32,n_enc_out_chans, n_enc_out_chans, 3);
+        state.iou_predictions = TENSO(state.ctx, typNUMBER::F32, 3);
         state.buf_compute_img_enc.resize(ggml_tensor_overhead()*GGML_DEFAULT_GRAPH_SIZE + ggml_graph_overhead());
         state.allocr = ggml_gallocr_new(ggml_backend_cpu_buffer_type());   
     }
@@ -220,55 +220,55 @@ struct SegmentAnything  : public Fish {
         const int32_t n_enc_layer_global = n_enc_layer - n_enc_layer_local;
         // image encoder
         {
-            ctx_size += n_enc_state*n_img_embd*n_img_embd*ggml_type_size(GGML_TYPE_F32);
+            ctx_size += n_enc_state*n_img_embd*n_img_embd*BPE(typNUMBER::F32);
 
-            ctx_size += n_enc_state*3*n_patch_size*n_patch_size*ggml_type_size(GGML_TYPE_F16);
-            ctx_size += n_enc_state*ggml_type_size(GGML_TYPE_F32);
+            ctx_size += n_enc_state*3*n_patch_size*n_patch_size*BPE(GGML_TYPE_F16);
+            ctx_size += n_enc_state*BPE(typNUMBER::F32);
 
-            ctx_size +=     n_enc_state*n_enc_out_chans*1*1*ggml_type_size(GGML_TYPE_F16);
-            ctx_size += n_enc_out_chans*n_enc_out_chans*3*3*ggml_type_size(GGML_TYPE_F16);
+            ctx_size +=     n_enc_state*n_enc_out_chans*1*1*BPE(GGML_TYPE_F16);
+            ctx_size += n_enc_out_chans*n_enc_out_chans*3*3*BPE(GGML_TYPE_F16);
 
-            ctx_size += n_enc_out_chans*ggml_type_size(GGML_TYPE_F32);
-            ctx_size += n_enc_out_chans*ggml_type_size(GGML_TYPE_F32);
+            ctx_size += n_enc_out_chans*BPE(typNUMBER::F32);
+            ctx_size += n_enc_out_chans*BPE(typNUMBER::F32);
 
-            ctx_size += n_enc_out_chans*ggml_type_size(GGML_TYPE_F32);
-            ctx_size += n_enc_out_chans*ggml_type_size(GGML_TYPE_F32);
+            ctx_size += n_enc_out_chans*BPE(typNUMBER::F32);
+            ctx_size += n_enc_out_chans*BPE(typNUMBER::F32);
         }
         // image encoder layers
         {
-            ctx_size += n_enc_layer*n_enc_state*ggml_type_size(GGML_TYPE_F32);
-            ctx_size += n_enc_layer*n_enc_state*ggml_type_size(GGML_TYPE_F32);
+            ctx_size += n_enc_layer*n_enc_state*BPE(typNUMBER::F32);
+            ctx_size += n_enc_layer*n_enc_state*BPE(typNUMBER::F32);
 
-            ctx_size += n_enc_layer_global*n_enc_head_dim*(2*n_img_embd - 1)*ggml_type_size(GGML_TYPE_F16);
-            ctx_size += n_enc_layer_global*n_enc_head_dim*(2*n_img_embd - 1)*ggml_type_size(GGML_TYPE_F16);
+            ctx_size += n_enc_layer_global*n_enc_head_dim*(2*n_img_embd - 1)*BPE(GGML_TYPE_F16);
+            ctx_size += n_enc_layer_global*n_enc_head_dim*(2*n_img_embd - 1)*BPE(GGML_TYPE_F16);
 
-            ctx_size += n_enc_layer_local*n_enc_head_dim*(2*n_window_size - 1)*ggml_type_size(GGML_TYPE_F16);
-            ctx_size += n_enc_layer_local*n_enc_head_dim*(2*n_window_size - 1)*ggml_type_size(GGML_TYPE_F16);
+            ctx_size += n_enc_layer_local*n_enc_head_dim*(2*n_window_size - 1)*BPE(GGML_TYPE_F16);
+            ctx_size += n_enc_layer_local*n_enc_head_dim*(2*n_window_size - 1)*BPE(GGML_TYPE_F16);
 
-            ctx_size += n_enc_layer*3*n_enc_state*n_enc_state*ggml_type_size(GGML_TYPE_F16);
-            ctx_size += n_enc_layer*3*n_enc_state*            ggml_type_size(GGML_TYPE_F32);
+            ctx_size += n_enc_layer*3*n_enc_state*n_enc_state*BPE(GGML_TYPE_F16);
+            ctx_size += n_enc_layer*3*n_enc_state*            BPE(typNUMBER::F32);
 
-            ctx_size += n_enc_layer*n_enc_state*n_enc_state*ggml_type_size(GGML_TYPE_F16);
-            ctx_size += n_enc_layer*n_enc_state*            ggml_type_size(GGML_TYPE_F32);
+            ctx_size += n_enc_layer*n_enc_state*n_enc_state*BPE(GGML_TYPE_F16);
+            ctx_size += n_enc_layer*n_enc_state*            BPE(typNUMBER::F32);
 
-            ctx_size += n_enc_layer*n_enc_state*ggml_type_size(GGML_TYPE_F32);
-            ctx_size += n_enc_layer*n_enc_state*ggml_type_size(GGML_TYPE_F32);
+            ctx_size += n_enc_layer*n_enc_state*BPE(typNUMBER::F32);
+            ctx_size += n_enc_layer*n_enc_state*BPE(typNUMBER::F32);
 
-            ctx_size += n_enc_layer*4*n_enc_state*n_enc_state*ggml_type_size(GGML_TYPE_F16);
-            ctx_size += n_enc_layer*4*n_enc_state*            ggml_type_size(GGML_TYPE_F32);
+            ctx_size += n_enc_layer*4*n_enc_state*n_enc_state*BPE(GGML_TYPE_F16);
+            ctx_size += n_enc_layer*4*n_enc_state*            BPE(typNUMBER::F32);
 
-            ctx_size += n_enc_layer*4*n_enc_state*n_enc_state*ggml_type_size(GGML_TYPE_F16);
-            ctx_size += n_enc_layer*4*n_enc_state*            ggml_type_size(GGML_TYPE_F32);
+            ctx_size += n_enc_layer*4*n_enc_state*n_enc_state*BPE(GGML_TYPE_F16);
+            ctx_size += n_enc_layer*4*n_enc_state*            BPE(typNUMBER::F32);
         }
 
         ctx_size += (8 + 14*n_enc_layer)*ggml_tensor_overhead();
 
         // prompt encoder
         {
-            ctx_size += n_enc_out_chans*ggml_type_size(GGML_TYPE_F16); // 2*(n_enc_out_chans/2)
+            ctx_size += n_enc_out_chans*BPE(GGML_TYPE_F16); // 2*(n_enc_out_chans/2)
 
-            ctx_size += n_enc_out_chans*ggml_type_size(GGML_TYPE_F32);
-            ctx_size += n_pt_embd*n_enc_out_chans*ggml_type_size(GGML_TYPE_F32);
+            ctx_size += n_enc_out_chans*BPE(typNUMBER::F32);
+            ctx_size += n_pt_embd*n_enc_out_chans*BPE(typNUMBER::F32);
         }
 
         ctx_size += (2 + n_pt_embd)*ggml_tensor_overhead();
@@ -278,61 +278,61 @@ struct SegmentAnything  : public Fish {
             //transformer
             {
                 // self_attn
-                ctx_size += tfm_layers_count*qkv_count*n_enc_state*n_enc_state*ggml_type_size(GGML_TYPE_F16);
-                ctx_size += tfm_layers_count*qkv_count*n_enc_state*            ggml_type_size(GGML_TYPE_F32);
-                ctx_size += tfm_layers_count*n_enc_state*                      ggml_type_size(GGML_TYPE_F32);
+                ctx_size += tfm_layers_count*qkv_count*n_enc_state*n_enc_state*BPE(GGML_TYPE_F16);
+                ctx_size += tfm_layers_count*qkv_count*n_enc_state*            BPE(typNUMBER::F32);
+                ctx_size += tfm_layers_count*n_enc_state*                      BPE(typNUMBER::F32);
 
                 // all norms
-                ctx_size += tfm_layers_count*norm_count*n_enc_state*ggml_type_size(GGML_TYPE_F32);
-                ctx_size += tfm_layers_count*norm_count*n_enc_state*ggml_type_size(GGML_TYPE_F32);
+                ctx_size += tfm_layers_count*norm_count*n_enc_state*BPE(typNUMBER::F32);
+                ctx_size += tfm_layers_count*norm_count*n_enc_state*BPE(typNUMBER::F32);
 
                 // cross_attn_token_to_img
-                ctx_size += tfm_layers_count*qkv_count*n_enc_state*(n_enc_state/2)*ggml_type_size(GGML_TYPE_F16);
-                ctx_size += tfm_layers_count*qkv_count*(n_enc_state/2)*            ggml_type_size(GGML_TYPE_F32);
-                ctx_size += tfm_layers_count*n_enc_state*                          ggml_type_size(GGML_TYPE_F32);
+                ctx_size += tfm_layers_count*qkv_count*n_enc_state*(n_enc_state/2)*BPE(GGML_TYPE_F16);
+                ctx_size += tfm_layers_count*qkv_count*(n_enc_state/2)*            BPE(typNUMBER::F32);
+                ctx_size += tfm_layers_count*n_enc_state*                          BPE(typNUMBER::F32);
 
                 // mlp
-                ctx_size += tfm_layers_count*8*n_enc_out_chans*n_enc_out_chans*ggml_type_size(GGML_TYPE_F16);
-                ctx_size += tfm_layers_count*8*n_enc_out_chans*                ggml_type_size(GGML_TYPE_F32);
-                ctx_size += tfm_layers_count*n_enc_out_chans*8*n_enc_out_chans*ggml_type_size(GGML_TYPE_F16);
-                ctx_size += tfm_layers_count*n_enc_out_chans*                  ggml_type_size(GGML_TYPE_F32);
+                ctx_size += tfm_layers_count*8*n_enc_out_chans*n_enc_out_chans*BPE(GGML_TYPE_F16);
+                ctx_size += tfm_layers_count*8*n_enc_out_chans*                BPE(typNUMBER::F32);
+                ctx_size += tfm_layers_count*n_enc_out_chans*8*n_enc_out_chans*BPE(GGML_TYPE_F16);
+                ctx_size += tfm_layers_count*n_enc_out_chans*                  BPE(typNUMBER::F32);
 
                 // cross_attn_img_to_token
-                ctx_size += tfm_layers_count*qkv_count*n_enc_state*(n_enc_state/2)*ggml_type_size(GGML_TYPE_F16);
-                ctx_size += tfm_layers_count*qkv_count*(n_enc_state/2)*            ggml_type_size(GGML_TYPE_F32);
-                ctx_size += tfm_layers_count*n_enc_state*                          ggml_type_size(GGML_TYPE_F32);
+                ctx_size += tfm_layers_count*qkv_count*n_enc_state*(n_enc_state/2)*BPE(GGML_TYPE_F16);
+                ctx_size += tfm_layers_count*qkv_count*(n_enc_state/2)*            BPE(typNUMBER::F32);
+                ctx_size += tfm_layers_count*n_enc_state*                          BPE(typNUMBER::F32);
 
                 // transformer_final_attn_token_to_img
-                ctx_size += qkv_count*n_enc_state*(n_enc_state/2)*ggml_type_size(GGML_TYPE_F16);
-                ctx_size += qkv_count*(n_enc_state/2)*            ggml_type_size(GGML_TYPE_F32);
-                ctx_size += n_enc_state*                          ggml_type_size(GGML_TYPE_F32);
+                ctx_size += qkv_count*n_enc_state*(n_enc_state/2)*BPE(GGML_TYPE_F16);
+                ctx_size += qkv_count*(n_enc_state/2)*            BPE(typNUMBER::F32);
+                ctx_size += n_enc_state*                          BPE(typNUMBER::F32);
 
                 // transformer_norm_final
-                ctx_size += norm_count*n_enc_state*ggml_type_size(GGML_TYPE_F32);
-                ctx_size += norm_count*n_enc_state*ggml_type_size(GGML_TYPE_F32);
+                ctx_size += norm_count*n_enc_state*BPE(typNUMBER::F32);
+                ctx_size += norm_count*n_enc_state*BPE(typNUMBER::F32);
 
                 // output_upscaling
-                ctx_size += n_enc_out_chans*n_img_embd*2*2*ggml_type_size(GGML_TYPE_F16);
-                ctx_size += 3*n_img_embd*                  ggml_type_size(GGML_TYPE_F32);
-                ctx_size += n_enc_out_chans*n_img_embd*(n_img_embd/2)*2*2*ggml_type_size(GGML_TYPE_F16);
-                ctx_size += (n_img_embd/2)*                               ggml_type_size(GGML_TYPE_F32);
+                ctx_size += n_enc_out_chans*n_img_embd*2*2*BPE(GGML_TYPE_F16);
+                ctx_size += 3*n_img_embd*                  BPE(typNUMBER::F32);
+                ctx_size += n_enc_out_chans*n_img_embd*(n_img_embd/2)*2*2*BPE(GGML_TYPE_F16);
+                ctx_size += (n_img_embd/2)*                               BPE(typNUMBER::F32);
 
-                ctx_size += n_hypernet_mpls_count*2*n_enc_out_chans*n_enc_out_chans*ggml_type_size(GGML_TYPE_F16);
-                ctx_size += n_hypernet_mpls_count*2*n_enc_out_chans*                ggml_type_size(GGML_TYPE_F32);
-                ctx_size += n_hypernet_mpls_count*n_enc_out_chans*(n_img_embd/2)*ggml_type_size(GGML_TYPE_F16);
-                ctx_size += n_hypernet_mpls_count*(n_img_embd/2)*                ggml_type_size(GGML_TYPE_F32);
+                ctx_size += n_hypernet_mpls_count*2*n_enc_out_chans*n_enc_out_chans*BPE(GGML_TYPE_F16);
+                ctx_size += n_hypernet_mpls_count*2*n_enc_out_chans*                BPE(typNUMBER::F32);
+                ctx_size += n_hypernet_mpls_count*n_enc_out_chans*(n_img_embd/2)*BPE(GGML_TYPE_F16);
+                ctx_size += n_hypernet_mpls_count*(n_img_embd/2)*                BPE(typNUMBER::F32);
 
                 // iou_prediction_head
-                ctx_size += 2*n_enc_out_chans*n_enc_out_chans*ggml_type_size(GGML_TYPE_F16);
-                ctx_size += 2*n_enc_out_chans*                ggml_type_size(GGML_TYPE_F32);
-                ctx_size += n_pt_embd*n_enc_out_chans*ggml_type_size(GGML_TYPE_F16);
-                ctx_size += n_pt_embd*                ggml_type_size(GGML_TYPE_F32);
+                ctx_size += 2*n_enc_out_chans*n_enc_out_chans*BPE(GGML_TYPE_F16);
+                ctx_size += 2*n_enc_out_chans*                BPE(typNUMBER::F32);
+                ctx_size += n_pt_embd*n_enc_out_chans*BPE(GGML_TYPE_F16);
+                ctx_size += n_pt_embd*                BPE(typNUMBER::F32);
 
                 // iou_token_w
-                ctx_size += n_enc_out_chans*ggml_type_size(GGML_TYPE_F32);
+                ctx_size += n_enc_out_chans*BPE(typNUMBER::F32);
 
                 // mask_tokens_w
-                ctx_size += n_pt_embd*n_enc_out_chans*ggml_type_size(GGML_TYPE_F32);
+                ctx_size += n_pt_embd*n_enc_out_chans*BPE(typNUMBER::F32);
             }
         }
         fprintf(stderr, "%s: ggml ctx size = %6.2f MB\n", __func__, ctx_size/(1024.0*1024.0));  //ctx size = 202.33 MB
@@ -386,16 +386,16 @@ struct SegmentAnything  : public Fish {
         }
         // prompt encoder
         enc_prompt = nullptr;/*std::make_shared<Fish>("enc_prompt",ctx,0x0);*/        childs.push_back(enc_prompt);
-        enc_prompt->AddTensor("prompt_encoder.pe_layer.positional_encoding_gaussian_matrix",GGML_TYPE_F32,{n_enc_out_chans/2, 2});
-        // enc.pe = TENSO(ctx, GGML_TYPE_F32, n_enc_out_chans/2, 2);
-        enc_prompt->AddTensor("prompt_encoder.not_a_point_embed.weight",GGML_TYPE_F32,{n_enc_out_chans});
-        enc_prompt->AddTensor("prompt_encoder.no_mask_embed.weight",GGML_TYPE_F32,{n_enc_out_chans});
-            // enc.not_a_pt_embd_w = TENSO(ctx, GGML_TYPE_F32, n_enc_out_chans);
-            // enc.no_mask_embd_w  = TENSO(ctx, GGML_TYPE_F32, n_enc_out_chans);
+        enc_prompt->AddTensor("prompt_encoder.pe_layer.positional_encoding_gaussian_matrix",typNUMBER::F32,{n_enc_out_chans/2, 2});
+        // enc.pe = TENSO(ctx, typNUMBER::F32, n_enc_out_chans/2, 2);
+        enc_prompt->AddTensor("prompt_encoder.not_a_point_embed.weight",typNUMBER::F32,{n_enc_out_chans});
+        enc_prompt->AddTensor("prompt_encoder.no_mask_embed.weight",typNUMBER::F32,{n_enc_out_chans});
+            // enc.not_a_pt_embd_w = TENSO(ctx, typNUMBER::F32, n_enc_out_chans);
+            // enc.no_mask_embd_w  = TENSO(ctx, typNUMBER::F32, n_enc_out_chans);
         // enc.pt_embd.resize(n_pt_embd);
         for (int i = 0; i < n_pt_embd; i++) {
-            enc_prompt->AddTensor("prompt_encoder.point_embeddings." + std::to_string(i) + ".weight",GGML_TYPE_F32,{n_enc_out_chans});
-            // enc.pt_embd[i] = TENSO(ctx, GGML_TYPE_F32, n_enc_out_chans);            
+            enc_prompt->AddTensor("prompt_encoder.point_embeddings." + std::to_string(i) + ".weight",typNUMBER::F32,{n_enc_out_chans});
+            // enc.pt_embd[i] = TENSO(ctx, typNUMBER::F32, n_enc_out_chans);            
         }
         // mask decoder
         nnDec = std::make_shared<Fish>("nnDec",ctx,0x0);        childs.push_back(nnDec);
@@ -420,18 +420,18 @@ struct SegmentAnything  : public Fish {
                     }
                 ); 
         nnDec->AddTensor("mask_decoder.output_upscaling.0.weight",GGML_TYPE_F16, {2, 2, n_img_embd, n_enc_out_chans});
-        nnDec->AddTensor("mask_decoder.output_upscaling.0.bias",GGML_TYPE_F32, {n_img_embd});
-        nnDec->AddTensor("mask_decoder.output_upscaling.1.weight",GGML_TYPE_F32, {n_img_embd});
-        nnDec->AddTensor("mask_decoder.output_upscaling.1.bias",GGML_TYPE_F32, {n_img_embd});
+        nnDec->AddTensor("mask_decoder.output_upscaling.0.bias",typNUMBER::F32, {n_img_embd});
+        nnDec->AddTensor("mask_decoder.output_upscaling.1.weight",typNUMBER::F32, {n_img_embd});
+        nnDec->AddTensor("mask_decoder.output_upscaling.1.bias",typNUMBER::F32, {n_img_embd});
         nnDec->AddTensor("mask_decoder.output_upscaling.3.weight",GGML_TYPE_F16,  {2, 2, n_img_embd/2, n_img_embd});
-        nnDec->AddTensor("mask_decoder.output_upscaling.3.bias",GGML_TYPE_F32, {n_img_embd/2});
+        nnDec->AddTensor("mask_decoder.output_upscaling.3.bias",typNUMBER::F32, {n_img_embd/2});
         /*
             dec.output_upscaling_0_w = TENSO(ctx, GGML_TYPE_F16, 2, 2, n_img_embd, n_enc_out_chans);
-            dec.output_upscaling_0_b = TENSO(ctx, GGML_TYPE_F32, n_img_embd);
-            dec.output_upscaling_1_w = TENSO(ctx, GGML_TYPE_F32, n_img_embd);
-            dec.output_upscaling_1_b = TENSO(ctx, GGML_TYPE_F32, n_img_embd);
+            dec.output_upscaling_0_b = TENSO(ctx, typNUMBER::F32, n_img_embd);
+            dec.output_upscaling_1_w = TENSO(ctx, typNUMBER::F32, n_img_embd);
+            dec.output_upscaling_1_b = TENSO(ctx, typNUMBER::F32, n_img_embd);
             dec.output_upscaling_3_w = TENSO(ctx, GGML_TYPE_F16,  2, 2, n_img_embd/2, n_img_embd);
-            dec.output_upscaling_3_b = TENSO(ctx, GGML_TYPE_F32, n_img_embd/2);
+            dec.output_upscaling_3_b = TENSO(ctx, typNUMBER::F32, n_img_embd/2);
         */
         for (int i = 0; i < n_hypernet_mpls_count; ++i) {
             nnDec->AddLayer("mask_decoder.output_hypernetworks_mlps."+ std::to_string(i),{
@@ -447,8 +447,8 @@ struct SegmentAnything  : public Fish {
                         NP_("SLP",".layers.2",{n_enc_out_chans, n_pt_embd}),
                     }
                 );     
-        nnDec->AddTensor("mask_decoder.iou_token.weight",GGML_TYPE_F32,  {n_enc_out_chans, 1});
-        nnDec->AddTensor("mask_decoder.mask_tokens.weight",GGML_TYPE_F32, {n_enc_out_chans, n_pt_embd}); 
+        nnDec->AddTensor("mask_decoder.iou_token.weight",typNUMBER::F32,  {n_enc_out_chans, 1});
+        nnDec->AddTensor("mask_decoder.mask_tokens.weight",typNUMBER::F32, {n_enc_out_chans, n_pt_embd}); 
 
         UpdateTensors();
         bool bRet = false;  //gg_load_weights(fin,qtype,gensors.nag,to_quant,to_skip);// load weights      
@@ -466,7 +466,7 @@ struct SegmentAnything  : public Fish {
         struct ggml_context * ctx0   = ggml_init(ggml_params);
         // struct ggml_cgraph  * gf     = ggml_new_graph(ctx0);
         
-        hGensor  inp = TENSO(ctx0, GGML_TYPE_F32, n_img_size, n_img_size, 3, 1);
+        hGensor  inp = TENSO(ctx0, typNUMBER::F32, n_img_size, n_img_size, 3, 1);
         ggml_set_name(inp, "inp");
         ggml_set_input(inp);
 

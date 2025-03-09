@@ -19,46 +19,46 @@ bool QKV_LAY::CreateFFN(const CLI_params&config, ggml_context *ctx, FFN_TYPE tpF
         if(config.ZMUV_ratio>0)
             ffn_norm.w = nullptr;  
         else
-            ffn_norm.w = TENSO(ctx, GGML_TYPE_F32, {n_embd});
+            ffn_norm.w = TENSO(ctx, typNUMBER::F32, {n_embd});
         if(config.ffn_use_gate)
-            ffn_gate = TENSO(ctx, GGML_TYPE_F32, {n_embd,   n_ff});
-        down.w = TENSO(ctx, GGML_TYPE_F32,   {n_ff, n_embd});
-        up.w   = TENSO(ctx, GGML_TYPE_F32, {n_embd,   n_ff}); 
+            ffn_gate = TENSO(ctx, typNUMBER::F32, {n_embd,   n_ff});
+        down.w = TENSO(ctx, typNUMBER::F32,   {n_ff, n_embd});
+        up.w   = TENSO(ctx, typNUMBER::F32, {n_embd,   n_ff}); 
         if(tpFFN==VAR_LAST && isLast){/*i==n_layer-1*/
-            eps = TENSO(ctx, GGML_TYPE_F32, {n_embd,   n_batch*n_ctx});   
+            eps = TENSO(ctx, typNUMBER::F32, {n_embd,   n_batch*n_ctx});   
         }
         break;
     case ONLY_LNormal:
     case ONLY_RMSNormal:
-        ffn_norm.w = TENSO(ctx, GGML_TYPE_F32, {n_embd});
+        ffn_norm.w = TENSO(ctx, typNUMBER::F32, {n_embd});
         break;
     case VAR_0:
-        eps = TENSO(ctx, GGML_TYPE_F32, {n_embd,   n_batch*n_ctx});   
+        eps = TENSO(ctx, typNUMBER::F32, {n_embd,   n_batch*n_ctx});   
         break;  
     case GATE_CYS:
         assert(0);
         break;
     case SMOE:{// MoE branch
         assert(n_expert>0 && config.n_expert_used>0) ; 
-        ffn_gate_inp = TENSO(ctx, GGML_TYPE_F32, {n_embd,   n_expert});
+        ffn_gate_inp = TENSO(ctx, typNUMBER::F32, {n_embd,   n_expert});
         // ffn_gate_inp = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_GATE_INP, "weight", i), {n_embd, n_expert});        
         const int n_ff_exp = config.n_ff_exp ? config.n_ff_exp : n_ff / config.n_expert_used;
-        ffn_gate_exps = TENSO(ctx, GGML_TYPE_F32, {n_embd, n_ff_exp, n_expert});
+        ffn_gate_exps = TENSO(ctx, typNUMBER::F32, {n_embd, n_ff_exp, n_expert});
         // ffn_gate_exps = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_GATE_EXPS, "weight", i), {  n_embd, n_ff_exp, n_expert});
-        ffn_down_exps = TENSO(ctx, GGML_TYPE_F32, {n_ff_exp,   n_embd, n_expert}); 
+        ffn_down_exps = TENSO(ctx, typNUMBER::F32, {n_ff_exp,   n_embd, n_expert}); 
         // ffn_down_exps = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_DOWN_EXPS, "weight", i), {n_ff_exp,   n_embd, n_expert});
-        ffn_up_exps = TENSO(ctx, GGML_TYPE_F32, {n_embd, n_ff_exp, n_expert}); 
+        ffn_up_exps = TENSO(ctx, typNUMBER::F32, {n_embd, n_ff_exp, n_expert}); 
         // ffn_up_exps   = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_UP_EXPS,   "weight", i), {  n_embd, n_ff_exp, n_expert});
 
         // Shared expert branch
         const int n_ff_shexp = config.n_ff_shexp ? config.n_ff_shexp : n_ff;
-        ffn_gate_inp_shexp = TENSO(ctx, GGML_TYPE_F32, {n_embd}); 
+        ffn_gate_inp_shexp = TENSO(ctx, typNUMBER::F32, {n_embd}); 
         // ffn_gate_inp_shexp = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_GATE_INP_SHEXP, "weight", i), {n_embd});
-        ffn_gate_shexp = TENSO(ctx, GGML_TYPE_F32, {n_embd, n_ff_shexp});
+        ffn_gate_shexp = TENSO(ctx, typNUMBER::F32, {n_embd, n_ff_shexp});
         // ffn_gate_shexp = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_GATE_SHEXP, "weight", i), {    n_embd, n_ff_shexp});
-        ffn_down_shexp = TENSO(ctx, GGML_TYPE_F32, {n_ff_shexp, n_embd});
+        ffn_down_shexp = TENSO(ctx, typNUMBER::F32, {n_ff_shexp, n_embd});
         // ffn_down_shexp = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_DOWN_SHEXP, "weight", i), {n_ff_shexp,     n_embd});
-        ffn_up_shexp = TENSO(ctx, GGML_TYPE_F32, {n_embd, n_ff_shexp});
+        ffn_up_shexp = TENSO(ctx, typNUMBER::F32, {n_embd, n_ff_shexp});
         // ffn_up_shexp   = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_UP_SHEXP,   "weight", i), {    n_embd, n_ff_shexp});
     }
         break;
@@ -86,7 +86,7 @@ size_t LLM_MOE::MostMemSize(int flag)  {
 
 
 hGensor MixOfModels::Forward(struct ggml_context * ctx,hGensor cur,hGensor w){
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     return nullptr;
 #else
     int n_vocab=cur->ne[0],n_ctx=cur->ne[1],n_batch=cur->ne[2];
@@ -109,12 +109,12 @@ void MixOfSwarm::Init(tpSWARM&swarm,struct ggml_context *ctx,int n_embd,int flag
             // assert(ggml_are_same_shape(a, b));
         }
     }
-    gat_ = TENSO(ctx, GGML_TYPE_F32, {n_embd, (int)(swarm.size()+1)});
+    gat_ = TENSO(ctx, typNUMBER::F32, {n_embd, (int)(swarm.size()+1)});
 }
 
 hGensor MixOfSwarm::Build(CLI_params&config,struct ggml_context * ctx,hGensor cur,int flag )  { 
     hGensor ouput = nullptr;
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else
     // return cur;
     int n_batch = config.common.n_batch,n_ctx = config.common.n_ctx,n_embd = config.n_embd;
@@ -152,7 +152,7 @@ hGensor MixOfSwarm::Build(CLI_params&config,struct ggml_context * ctx,hGensor cu
 
 hGensor NLP_AutoRegressive::build_gate(struct ggml_context * ctx,hGensor cur,hGensor curlogits, int flag )  {
     hGensor ouput = nullptr;
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else
     bool isRes = true,isSiLU=false;
 

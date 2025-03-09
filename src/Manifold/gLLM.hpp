@@ -190,7 +190,7 @@ struct NLP_AutoRegressive : public Fish {
  
     // build_inp_KQ_(ctx,true);      
 
-        assert(tokens_input->type == GGML_TYPE_I32);
+        assert(tokens_input->type == typNUMBER::I32);
         hGensor _tEmbed = UpdateGensor (hDict->tok_embeddings->name);      //embedding of all tokens
         
         // hGensor _tOutput = UpdateGensor (hDict->_output.w->name);       
@@ -276,7 +276,7 @@ class GPT2 : public NLP_AutoRegressive {
 protected:    
     LayerNormal _norm;
     SLP _output;    
-#ifdef _TENSOR_CUD_    
+#ifdef _TENSOR_G_    
 #else
     int cRawGraph( struct ggml_context *,bool isBuild,int flag=0x0)   ;//override;
 #endif

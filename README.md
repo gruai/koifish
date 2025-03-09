@@ -30,9 +30,11 @@ make clean && make VERBOSE=TRUE
 ```
 
 ## Tutorial
-
 1.    [Training of GPT2(774M/124M) on single 3090](cases/tutorial_gpt2.md)
 
+## Training tricks
+- Subsampling
+- [Weight Tying](cases/tricks/WeightTying.md)
 
 ## Working plan
 - Hybrid 1-bit Optimizer

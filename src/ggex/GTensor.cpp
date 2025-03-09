@@ -8,15 +8,10 @@
  */
 #include "GTensor.hpp"
 #include "GG_util.hpp"
-#ifdef _TENSOR_CUD_
-// GTensor::tpDATA GTensor::tpFloatX = GGML_TYPE_F32;
-   GTensor::tpDATA GTensor::tpFloatX = GGML_TYPE_BF16;
+#ifdef ENABLE_BF16
+   typNUMBER GTensor::tpFloatX = typNUMBER::BF16;
 #else
-   GTensor::tpDATA GTensor::tpFloatX = GGML_TYPE_F32;
-   // hGTensor operator*( const hGTensor &a,const hGTensor &b )   {		
-   //    auto cur = ggml_mul_mat(a->CTX(), a->GG(), b->GG() );    
-   //    return GTensor::NEW_(cur);
-   // }
+   typNUMBER GTensor::tpFloatX = typNUMBER::F32;
 #endif
 
 // int B=0,T=0,C=0;
@@ -33,7 +28,7 @@ float GTensor::rLARS(float s0,float T_lars,int flag)   {
    return r;
 }
 
-GTensor::GTensor(SHAPE shape_,tpDATA tpD_,bool isX,int flag) : shape(shape_),type(tpD_),flags(flag)      {
+GTensor::GTensor(SHAPE shape_,typNUMBER tpD_,bool isX,int flag) : shape(shape_),type(tpD_),flags(flag)      {
    int i=0;
    for(auto n : shape){
       ne[i++] = n;
@@ -41,15 +36,16 @@ GTensor::GTensor(SHAPE shape_,tpDATA tpD_,bool isX,int flag) : shape(shape_),typ
    }
    for(i=shape.size();i<GGML_MAX_DIMS;i++)  
       ne[i]=1;
+   double nB = BPE(type);    assert(nB>=1.0);
    // from ggml_new_tensor
-   size_t szBlk = ggml_blck_size(type);
-   nb[0] = ggml_type_size(type);       assert(szBlk==1);
+   size_t szBlk = ggml_blck_size((enum ggml_type)type);
+   nb[0] = BPE(type);       assert(szBlk==1);
    nb[1] = nb[0]*(ne[0]/szBlk);
    for (int i = 2; i < GGML_MAX_DIMS; i++) {
       nb[i] = nb[i - 1]*ne[i - 1];
    }
 
-   size_t nB = ggml_type_sizef(type);     // ggml_row_size  ???
+   
    szData = size()*nB;   
 }
 
@@ -89,7 +85,7 @@ struct ggml_tensor* GTensor::GG( ) {
    }
    size_t sz   = ggml_nbytes(gg);     // 154389504
    assert(sz==szData);
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     bool toHost = SerialGP(gg->data,nullptr,true,0x0);
     assert(toHost);
 #endif
@@ -128,7 +124,7 @@ bool GTensor::Alloc(int tpInit,int flag){
    return true;
 }
 GTensor::~GTensor()  {
-#ifdef _TENSOR_CUD_   
+#ifdef _TENSOR_G_   
 #else
    if(data!=nullptr)       
       delete[] (char*)data;
@@ -156,7 +152,7 @@ void GTensor::Set(float a,int flag)    {
 }
 bool GTensor::OverWrite(struct ggml_tensor*gg_,bool isSrc,int flag){
    assert(size()==ggml_nelements(gg_));
-   assert(type==gg_->type);
+   assert(type==(typNUMBER)gg_->type);
    if(isSrc){
       memcpy(data,gg_->data,szData);
    }else{
@@ -211,8 +207,7 @@ hGensor GENSORS::Get(const string&name, int flag)    {
       return nullptr;
    }else{
       if(nag.find(name) == nag.end()){
-         _ERROR("Failed to get tensor=%s nGensor=%d",name.c_str(),nag.size());
-         assert(0);  
+         _ERROR("Failed to get tensor=%s nGensor=%d",name.c_str(),nag.size());  
          return nullptr;
       }
       return nag[name];

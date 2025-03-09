@@ -91,10 +91,12 @@ __device__ inline float cast_value<float, float>(float val) {
     return val;
 }
 
+#if defined(ENABLE_FP16) 
 template<>
 __device__ inline float cast_value<float, half>(half val) {
     return __half2float(val);
 }
+#endif
 
 template<>
 __device__ inline float cast_value<float, __nv_bfloat16>(__nv_bfloat16 val) {
@@ -223,9 +225,13 @@ __device__ __forceinline__ void stochastic_rounding(float in, __nv_bfloat16 *out
     float_bits = (rounded_bits > threshold) ? (float_bits | 0xFFFF) : (float_bits  & ~0xFFFF);
     *out = __float2bfloat16_rn(__uint_as_float(float_bits));
 }
+
+#if defined(ENABLE_FP16) 
 __device__ __forceinline__ void stochastic_rounding(float in, half *out, unsigned int random) {
     *out = (float)in; // todo - implement this...
 }
+#endif
+
 __device__ __forceinline__ void stochastic_rounding(float in, float *out, unsigned int random) {
     *out = in; // dummy function for when floatX is float (FP32 mode)
 }

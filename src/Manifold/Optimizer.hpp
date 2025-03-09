@@ -91,6 +91,7 @@ protected:
     virtual float UpdateLossCurve(int flag = 0x0);
     virtual bool AfterLoadBatch(int accum_step, int flag = 0x0);
     virtual bool OnNextShard(int flag = 0x0);
+    virtual bool OnNextEpoch(int flag = 0x0);
     virtual int SignStochastic(int nx,CLI_params& config,int flag=0x0);
     virtual float gClip(int nx,floatX *g,hGensor hP,int flag=0x0);
     virtual void UpdateParams(int nx,CLI_params& config,int flag);

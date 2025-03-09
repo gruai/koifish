@@ -128,8 +128,9 @@ try{
     if(end>10*1024*1024){
         step = n_ctx;
     }
-    if(rStepOfEval>1)
-        step *= rStepOfEval;
+    float rSample = hDict->config.common.rSubSample;
+    if(rSample>0 && rSample<1)
+        step /= rSample;
     for (size_t sample_begin = 0; sample_begin < end; sample_begin+=step) {
         len = std::min(n_ctx,(int)(end-sample_begin));
         shard_samps.push_back(new SAMP(sample_begin,len));

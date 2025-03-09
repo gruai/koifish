@@ -26,7 +26,7 @@ int main(int argc, char ** argv) {
     }
     printf("\n%s: seed: %u\n", __func__, params.common.seed);
     srand(params.common.seed);
-
+    params.OnArch();    
     if(params.test=="GPT_work")
         return GPT_work(params);    
     if(params.test=="fish_1")
@@ -37,7 +37,7 @@ int main(int argc, char ** argv) {
         return Fish_bubble(params);   
     // if(params.test=="tutor")
     //     return Tutor(params);   
-    params.OnArch();    
+    
     hFISH fish = nullptr;
     if(params.n_swarm>1)   {
         fish = Fish::MakeSwarm("Fish_",params,0x0);    

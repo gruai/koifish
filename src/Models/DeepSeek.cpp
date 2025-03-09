@@ -103,21 +103,21 @@ public:
     void copy_embedding(const Config& c,int token,void* token_embedding_table) {
       int dim = c.n_embd;
         switch (c.tpWeight) {
-            case DType::FP32: {
+            case typNUMBER::F32: {
             float* emb = static_cast<float*>(token_embedding_table);
             for (int i = 0; i < dim; ++i) { 
                 x()[i] = emb[token * dim + i];
             }
             break;
             }
-            case DType::FP16: {
+            case typNUMBER::F16: {
             f16_t* emb = static_cast<f16_t*>(token_embedding_table);
             for (int i = 0; i < dim; i+=1) {
                 x()[i] = half_to_float(emb[token * dim + i]);
             }
             break;
             }
-            case DType::F8E5M2: {
+            case typNUMBER::F8E5M2: {
             f8e5m2_t* emb = static_cast<f8e5m2_t*>(token_embedding_table);
             /*int* block_size = config->block_size.data();
             int scale_num_cols = (dim + block_size[1] - 1) / block_size[1];
@@ -171,15 +171,15 @@ void DeepSeek::_forward_cpu(int token, int pos, int flag) {
     float* scls = nullptr;
   // classifier into logits
   switch (c.tpWeight) {
-    case DType::FP32: {
+    case typNUMBER::F32: {
       matmul_unscaled(infer->logits(), infer->x(), static_cast<float*>(wcls), dim, vocab_size);
       break;
     }
-    case DType::FP16: {
+    case typNUMBER::F16: {
       matmul_unscaled(infer->logits(), infer->x(), static_cast<f16_t*>(wcls), dim, vocab_size);
       break;
     }
-    case DType::F8E5M2: {
+    case typNUMBER::F8E5M2: {
       // matmul(infer->logits(), infer->x(), static_cast<f8e5m2_t*>(wcls), dim, vocab_size, c.block_size.data(), scls);
       break;
     }

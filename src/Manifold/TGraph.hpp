@@ -79,7 +79,7 @@ protected:
 #endif*/
 
     struct ggml_cgraph * raw() {
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     return nullptr;
 #endif
         assert(cgraph!=nullptr);

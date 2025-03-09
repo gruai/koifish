@@ -136,8 +136,8 @@ void ConsiceDict::InitVAE(int flag)  {
         InitMAEC(dolphin->GetGGCTX(),dims);
         // hMultiCoder hCoder = std::make_shared<MutliCoder>(dolphin->GetGGCTX(), config.n_embd, latent_dim);
         // MAEC.push_back(hCoder);
-        // encoder = TENSO(dolphin->GetGGCTX(), GGML_TYPE_F32, config.n_embd, latent_dim);     
-        // decoder = TENSO(dolphin->GetGGCTX(), GGML_TYPE_F32, latent_dim, config.n_embd); 
+        // encoder = TENSO(dolphin->GetGGCTX(), typNUMBER::F32, config.n_embd, latent_dim);     
+        // decoder = TENSO(dolphin->GetGGCTX(), typNUMBER::F32, latent_dim, config.n_embd); 
     }    
          
 }
@@ -157,40 +157,40 @@ void ConsiceDict::CreateEmbeddings(int flag){
         if(isLoadTokenEmbed) {
             const int n1 = isSymmetric ? n_embd : last_dim;
             if(opOut==RND_GRAD){
-                _norm.w          = TENSO(ctx, GGML_TYPE_F32, {n1});
-                _output.w         = TENSO(ctx, GGML_TYPE_F32, {n1, n_out});  
+                _norm.w          = TENSO(ctx, typNUMBER::F32, {n1});
+                _output.w         = TENSO(ctx, typNUMBER::F32, {n1, n_out});  
             }else if(opOut==LOAD_GRAD_norm){
-                _output.w         = TENSO(ctx, GGML_TYPE_F32, {n1, n_out});  
+                _output.w         = TENSO(ctx, typNUMBER::F32, {n1, n_out});  
             }
             return;
         }
     }
     int group=config.Get({"model_v0","target_group"},1);
-    tok_embeddings = TENSO(ctx, GGML_TYPE_F32, {n_embd, n_out});
-    _norm.w           = TENSO(ctx, GGML_TYPE_F32, {n_embd});
+    tok_embeddings = TENSO(ctx, typNUMBER::F32, {n_embd, n_out});
+    _norm.w           = TENSO(ctx, typNUMBER::F32, {n_embd});
     if(!isSVD){
         if(false){  // TO_DO maybe useful
             _output.w = tok_embeddings;
         }else{
             if(group==1)
-                _output.w = TENSO(ctx, GGML_TYPE_F32, {n_embd, n_out});  
+                _output.w = TENSO(ctx, typNUMBER::F32, {n_embd, n_out});  
             else{
                 assert(n_embd%group==0);
-                _output.w = TENSO(ctx, GGML_TYPE_F32, {n_embd/group, n_out});  
+                _output.w = TENSO(ctx, typNUMBER::F32, {n_embd/group, n_out});  
             }             
         }
            
     } else{
-        out_u = TENSO(ctx, GGML_TYPE_F32, {lo_rank, n_embd});   
-        out_v = TENSO(ctx, GGML_TYPE_F32, {lo_rank, n_out});
-        out_d = TENSO(ctx, GGML_TYPE_F32, {lo_rank, lo_rank}); 
+        out_u = TENSO(ctx, typNUMBER::F32, {lo_rank, n_embd});   
+        out_v = TENSO(ctx, typNUMBER::F32, {lo_rank, n_out});
+        out_d = TENSO(ctx, typNUMBER::F32, {lo_rank, lo_rank}); 
     }
 }
 
 
 hGensor ConsiceDict::Embed2Output(struct ggml_context * ctx,hGensor t33,int flag)       { 
     hGensor  tOutput = nullptr;
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else
     int group=config.Get({"model_v0","target_group"},1);
     int n_embd=latent_dim,n_out=n_vocab,n_tokens=t33->ne[1],g_embd=n_embd/group;
@@ -241,7 +241,7 @@ hGensor ConsiceDict::Embed2Output(struct ggml_context * ctx,hGensor t33,int flag
 }
 
 void ConsiceDict::Update_0(struct random_normal_distribution * rnd,int flag){
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else
     const uint32_t n_embd  = config.n_embd;
     auto lama = dolphin->GetRawModel( );  
@@ -269,7 +269,7 @@ void ConsiceDict::Update_0(struct random_normal_distribution * rnd,int flag){
             dolphin->InitGensor(ctx,out_d,         "out_d", rnd);
         }
     }
-    // ggml_tensor_dequant(ctx_build,gensor,GGML_TYPE_F32);
+    // ggml_tensor_dequant(ctx_build,gensor,typNUMBER::F32);
     if(0){
         assert_shape_2d(tok_embeddings, config.n_embd, n_vocab);
         assert_shape_1d(_norm.w,           config.n_embd);
@@ -282,7 +282,7 @@ void ConsiceDict::Update_0(struct random_normal_distribution * rnd,int flag){
 
 void ConsiceDict::Update_1(struct random_normal_distribution * rnd,int flag) {
     const uint32_t n_embd  = config.n_embd;
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else
     bool isParam = false;
     // get tensors from llama_model (possibly mmapped)
@@ -296,18 +296,18 @@ void ConsiceDict::Update_1(struct random_normal_distribution * rnd,int flag) {
         break;
     case LOAD_GRAD_norm:    //bug@Optimizer::ggml_train
         _norm.w           = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT_NORM) );
-        assert(_norm.w->type==GGML_TYPE_F32);
+        assert(_norm.w->type==typNUMBER::F32);
         ggml_set_param(dolphin->GetGGCTX(), _norm.w);         dolphin->nParams += tELEM(_norm.w);          
      
         dolphin->InitGensor(dolphin->GetGGCTX(),_output.w,         TN(LLM_TENSOR_OUTPUT), rnd);
         break;
     case LOAD_GRAD:     //bug!!!
         _norm.w           = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT_NORM) );
-        if(_norm.w->type!=GGML_TYPE_F32)   Gensor2float(dolphin->GetGGCTX(),_norm.w);
+        if(_norm.w->type!=typNUMBER::F32)   Gensor2float(dolphin->GetGGCTX(),_norm.w);
         ggml_set_param(dolphin->GetGGCTX(), _norm.w);         dolphin->nParams += tELEM(_norm.w);           
         _output.w         = llama_get_model_tensor(lmodel,TN(LLM_TENSOR_OUTPUT)  ); 
-        if(_output.w->type!=GGML_TYPE_F32)   {
-            _output.w->data = Gensor2float(dolphin->GetGGCTX(),_output.w);       _output.w->type = GGML_TYPE_F32;
+        if(_output.w->type!=typNUMBER::F32)   {
+            _output.w->data = Gensor2float(dolphin->GetGGCTX(),_output.w);       _output.w->type = typNUMBER::F32;
         }
         ggml_set_param(dolphin->GetGGCTX(), _output.w);     dolphin->nParams += tELEM(_output.w);           
         break;
@@ -320,7 +320,7 @@ void ConsiceDict::Update_1(struct random_normal_distribution * rnd,int flag) {
         assert(0);
     }    
     assert(tok_embeddings!=nullptr && _norm.w!=nullptr && _output.w!=nullptr);
-    // ggml_tensor_dequant(ctx_build,gensor,GGML_TYPE_F32);
+    // ggml_tensor_dequant(ctx_build,gensor,typNUMBER::F32);
     if(0){
         assert_shape_2d(tok_embeddings, config.n_embd, n_vocab);
         assert_shape_1d(_norm.w,           config.n_embd);
@@ -367,7 +367,7 @@ void CDict_CHAR::LoadVocab(const char*model_path,int flag)   {
 }
 
 void QKV_LAY::save_gguf(struct gguf_context *fctx, int flag){
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else
     gguf_add_tensor(fctx, att_norm.w);
     gguf_add_tensor(fctx, Q.w);
@@ -389,7 +389,7 @@ void QKV_LAY::save_gguf(struct gguf_context *fctx, int flag){
 }
 
 void VariationaAE::save_gguf(struct gguf_context *fctx, int flag)   {
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
 #else
     if(MAEC.size()==0)
         return;

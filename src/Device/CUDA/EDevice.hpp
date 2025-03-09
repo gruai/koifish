@@ -25,7 +25,7 @@ public:
 #endif
     ggml_gallocr_t alloc_tmp = nullptr;
     ggml_backend_sched_t sched0 = nullptr;
-#ifdef _TENSOR_CUD_
+#ifdef _TENSOR_G_
     virtual bool InitGPU(const CLI_params&hparams,int flag=0x0);
 #endif   
     

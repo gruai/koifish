@@ -2,7 +2,7 @@
  *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT 
  *
- *  \brief Fish - just random swimming 
+ *  \brief Fish - Life is just a random swimming fish.
  *  \author Yingshi Chen
  */
 
@@ -451,8 +451,8 @@ public:
 
     virtual void Neck(const std::string &key_, const SHAPE &shape, int flag = 0x0) { ; }
     // Deprecated
-    hGensor AddTensor(const std::string &key_, enum ggml_type tp, const SHAPE &shape, int flag = 0x0);
-    hGensor AddTensor(struct ggml_context *ctx,const std::string &key_, enum ggml_type tp, const SHAPE &shape, bool isParam,int flag = 0x0);
+    hGensor AddTensor(const std::string &key_, typNUMBER tp, const SHAPE &shape, int flag = 0x0);
+    hGensor AddTensor(struct ggml_context *ctx,const std::string &key_, typNUMBER tp, const SHAPE &shape, bool isParam,int flag = 0x0);
 
     std::vector<hLayer> layers;
     virtual void BeforeAddLayer() { ; }
