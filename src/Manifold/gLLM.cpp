@@ -29,7 +29,7 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_,int flag)     {
         train_params.seed = time(NULL); 
     }    
     wikis = wikis_;
-    if(!InitDictTokenset()) //hDict
+    if(!InitDictTokenset()) //hDictVAE
         return false;
     hOPT = std::make_shared<OPT_Adam>(this,config,flag);
     if(wikis.size()==0){
@@ -41,19 +41,12 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_,int flag)     {
     
     hDistler = nullptr; //config.sigma=="" ? nullptr : std::make_shared<Distillation>(this,config,0x0);     //ADD SIGMA             
 
-    // assert(ctx_build==nullptr);
-    // ctx_build = InitCTX(MostMemSize(0x0));
     hEDS = EDGE_DEVICES::GetInstance(config);
     hOPT->hEDS = hEDS;
     
     InitModel(flag);
     config.Dump();         
-    // if(config.is({"wiki","actor"},"copy")){
-    //     bool bRet = wikis[0]->CopyGensors(this);      
-    //     assert(bRet);
-    // }
 
-    // save_data.Init(config,GetRawModel());
     if(hOPT!=nullptr)   {
         hOPT->Dump(1);
         if(config.isOnlyGPT)
@@ -78,7 +71,7 @@ NLP_AutoRegressive::NLP_AutoRegressive( const std::string& nam_, struct CLI_para
 }   
 //params!=src->params
 NLP_AutoRegressive::NLP_AutoRegressive(const std::string& nam_,const NLP_AutoRegressive* src,struct CLI_params params,int flag) : Fish(nam_,params){    
-    // hDict = src->hDict;
+    // hDictVAE = src->hDictVAE;
     // tensors = src->tensors;
     // for(auto it : tensors){
     //     nParamsGGUF += tELEM(it.second);
@@ -86,7 +79,7 @@ NLP_AutoRegressive::NLP_AutoRegressive(const std::string& nam_,const NLP_AutoReg
 
     graph_order = src->graph_order;
     //VAE's latent dim
-    // if(hDict->nLevel>0)     {        
+    // if(hDictVAE->nLevel>0)     {        
     //     config.n_embd = src->config.n_embd;
     //     // n_embd = config.n_embd;
     // }
@@ -122,7 +115,7 @@ string NLP_AutoRegressive::__repr__( string& suffix,string& prefix,int flag)    
     _T_repr_(KQ_pos,"\n\tKQ_pos: ",buf);  
     _T_repr_(pos_embd,"\tpos_embd: ",buf); 
     _T_repr_(KQ_mask,"\tKQ_mask: ",buf);  
-    sprintf(buf+strlen(buf),"%s",hDict->__repr__(s,p,0x0).c_str());
+    sprintf(buf+strlen(buf),"%s",hDictVAE->__repr__(s,p,0x0).c_str());
     bool isJModel =  !config.jModel.empty();
     if(isJModel){
         for(auto nn : neurons){
@@ -340,7 +333,7 @@ bool NLP_AutoRegressive::LocalFeeling(hSampLoader hLoader,vector<float>& result,
     assert(hLoader->shard_samps.size()==1);
     auto hSamp = hLoader->shard_samps[0];
     int i,nTok = hSamp->len,_nctx=config.n_ctx();
-    assert(!hDict->tokenizer_add_bos);
+    // assert(!hDictVAE->hDict->tokenizer_add_bos);
     hOPT->Evaluate(hLoader,-666);
     if(DUMP())
         _INFO("\t%s @\"%s\"\n",__func__,hLoader->sentence.c_str());
@@ -362,8 +355,7 @@ bool NLP_AutoRegressive::LocalFeeling(hSampLoader hLoader,vector<float>& result,
 
 size_t NLP_AutoRegressive::tVocab(){
     assert(hDict!=nullptr);
-    return hDict->tVocab( );
-    //return hTokenset->nUnique;
+    return hDict->nVocab( );
 }
 
 hGensor Fish::BuildLoss( struct ggml_context * ctx,hGensor cur,int flag){
@@ -405,7 +397,7 @@ hGensor Fish::BuildLoss( struct ggml_context * ctx,hGensor cur,int flag){
 }
 
 hGensor NLP_AutoRegressive::BuildTarget( struct ggml_context * ctx,hGensor cur,int flag)  {
-    hGensor _tNorm = UpdateGensor (hDict->_norm.w->name); 
+    hGensor _tNorm = UpdateGensor (hDictVAE->_norm.w->name); 
     int n_vocab = tVocab(),n_batch = config.common.n_batch,n_ctx = config.common.n_ctx,n_embd = config.n_embd;
     auto train_params = config.common;
     train_params.use_checkpointing = false;     // CYS_0826
@@ -418,8 +410,8 @@ hGensor NLP_AutoRegressive::BuildTarget( struct ggml_context * ctx,hGensor cur,i
     hGensor  t31 = ggml_rms_norm(ctx, cur, rms_norm_eps);                    gTN(t31, "norm");     
     assert_shape_2d(t31, config.n_embd, N*train_params.n_batch);
     
-    if(hDict->nLevel>0){
-        t31 = hDict->DEC(ctx,t31);      //t31 = ggml_mul_mat(ctx, hDict->decoder, t31 );  
+    if(hDictVAE->nLevel>0){
+        t31 = hDictVAE->DEC(ctx,t31);      //t31 = ggml_mul_mat(ctx, hDictVAE->decoder, t31 );  
         gTN(t31, "embed_decoder");
         t32 = ggml_repeat            (ctx, _tNorm, t31); 
         n_embd = t32->ne[0];
@@ -438,7 +430,7 @@ hGensor NLP_AutoRegressive::BuildTarget( struct ggml_context * ctx,hGensor cur,i
         if(role==ROLE_TYPE::SWARM_HEAD){
             t33 = mos.Build(config,ctx,t33);
         }
-        hGensor t34 = hDict->Embed2Output(ctx,t33);
+        hGensor t34 = hDictVAE->Embed2Output(ctx,t33);
         // hGensor  t34   = ggml_mul_mat           (ctx, _tOutput, t33);                          gTN(t34, "t34");     
         assert_shape_2d(t34, n_vocab, N*n_batch);
         hGensor  t35 = n_batch==1 ? t34 : ggml_reshape_3d(ctx, t34, n_vocab, N, n_batch);             gTN(t35, "t35");     
@@ -475,7 +467,7 @@ hGensor NLP_AutoRegressive::BuildTarget( struct ggml_context * ctx,hGensor cur,i
 
     // if(isTrain())
     //     assert(out_node->grad!=nullptr);
-    if(hDict->nLevel>0){
+    if(hDictVAE->nLevel>0){
         n_embd = config.n_embd;
     } 
 #endif
@@ -490,54 +482,56 @@ struct ggml_cgraph * llama_build_graph(llama_context & lctx,const llama_batch & 
 std::string NLP_AutoRegressive::T2STR( const std::vector<TOKEN_ID>& toks,int flag )                    { 
     std::string str = "";
     for(auto tok : toks){
-        if(tok==hDict->eos)
+        if(tok==hDictVAE->hDict->eos_id)
             break;
-        std::string a = hDict->T2STR(tok,flag);
+        std::string a = hDictVAE->T2STR(tok,flag);
         str += a;
     }
     
     return str;  
 }
 
-
-
 bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
     void *hLLM = nullptr;
-    
+    hDict = std::make_shared<GTokenizer>(this);
+
     switch(config.ModelArch()){
     case MODEL_ARCH::NLP_GPT2:
     case MODEL_ARCH::NLP_GPT2_char:
         if(config.ModelArch()==MODEL_ARCH::NLP_GPT2_char){
-            hDict = std::make_shared<CDict_CHAR>(this);
-            hDict->LoadVocab("",0x0); 
+            hDictVAE = std::make_shared<CDict_CHAR>(this);
+            hDictVAE->LoadVocab("",0x0); 
         }else{
-            hDict = std::make_shared<CDict_GPT2>(this);
+            hDictVAE = std::make_shared<CDict_GPT2>(this);            
             if(wikis.size()>0)  {   //lama()!= nullptr
-                hDict->n_vocab = wikis[0]->n_vocab;
-                hDict->bos = wikis[0]->bos;             hDict->eos = wikis[0]->eos;  
+                hDict->vocab.resize(wikis[0]->n_vocab);
+                hDict->bos_id = wikis[0]->bos;             hDict->eos_id = wikis[0]->eos;  
                 // hLLM = wikis[0]->lmodel;
             }  else{
-                hDict->n_vocab = 50257;     //NO WIKI
-                // hDict->LoadTokenizer("/home/cys/rnd/lic/models/gpt2_tokenizer.bin");
+                hDict->vocab.resize(50257);  
+                hDict->bos_id = 1;             hDict->eos_id = 2;  
             }
         }
-        // hTokenset = std::make_shared<DataTokenSet>(hDict.get());        
+        // hTokenset = std::make_shared<DataTokenSet>(hDictVAE.get());        
+        break;
+    case MODEL_ARCH::NLP_MISTRAL:
+        hDictVAE = std::make_shared<DictVAE>(this);
+        hDict->vocab.resize(32000);  
+        hDict->bos_id = 1;             hDict->eos_id = 2;  
         break;
     default:
-        hDict = std::make_shared<ConsiceDict>(this);
+        hDictVAE = std::make_shared<DictVAE>(this);
         if(wikis.size()>0)  {   
-            hDict->n_vocab = wikis[0]->n_vocab;
-            // hDict->LoadVocab(lama()->model_path.c_str(),0x0); 
-            hDict->bos = wikis[0]->bos;             hDict->eos = wikis[0]->eos;  
-            // hLLM = lama()->lmodel;
+            // hDictVAE->n_vocab = wikis[0]->n_vocab; 
+            // hDictVAE->bos = wikis[0]->bos;             hDictVAE->eos = wikis[0]->eos;  
         }
-        // hTokenset = std::make_shared<DataTokenSet>(hDict.get());        
+        // hTokenset = std::make_shared<DataTokenSet>(hDictVAE.get());        
         break;
     }
+    hDictVAE->hDict = hDict;
+    assert(hDictVAE!=nullptr && hDictVAE->isValid());    
 
-    assert(hDict!=nullptr && hDict->isValid());    
-
-    tokenset = DataTokenSet::MakeInstance(config,hDict.get(),0x0);        
+    tokenset = DataTokenSet::MakeInstance(config,hDict,0x0);        
     if(tokenset.empty() ){
         _ERROR("\n======== %s Failed to load tokenset!========\n",__func__);
         return false;
@@ -552,10 +546,10 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
         tsEval.push_back(tokenset[i]);
     } 
     
-    hDict->mapT2T = tsTrain->mapT2T;        hDict->dialect = tsTrain->dialect;
-    for(auto wiki : wikis){
-        wiki->mapT2T = hDict->mapT2T;       wiki->dialect = hDict->dialect;
-    }       
+    // hDictVAE->mapT2T = tsTrain->mapT2T;        hDictVAE->dialect = tsTrain->dialect;
+    // for(auto wiki : wikis){
+    //     wiki->mapT2T = hDictVAE->mapT2T;       wiki->dialect = hDictVAE->dialect;
+    // }       
         
     if(isTrain()){
         if(tsTrain!=nullptr && tsTrain->nMostTok>0)
@@ -756,10 +750,10 @@ void NLP_AutoRegressive::InitModel(int flag){
     if(isJModel){
 
     }else{
-        hDict->CreateEmbeddings(0x0);
+        hDictVAE->CreateEmbeddings(0x0);
         hEDS->Alloc(hForwTG, ctx);  //back_data = ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_cpu_buffer_type());
         rnd = init_random_normal_distribution(config.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);        
-        hDict->Update(rnd,0x0);      
+        hDictVAE->Update(rnd,0x0);      
         InitGensors(flag);        
     }
 }
@@ -768,7 +762,7 @@ void NLP_AutoRegressive::InitModel(int flag){
 void NLP_AutoRegressive::Dump(int type,int flag)      {
     if(NOT_DUMP(5))          return;
     
-    int n_vocab = hDict->n_vocab,n_batch = config.common.n_batch,n_ctx = config.common.n_ctx,n_embd = config.n_embd;
+    int n_vocab = hDictVAE->hDict->nVocab(),n_batch = config.common.n_batch,n_ctx = config.common.n_ctx,n_embd = config.n_embd;
     string suffix="\n========\n",prefix;
     __repr__(suffix,prefix);
     config.Dump();         //        print_params(&config)

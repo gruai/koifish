@@ -23,7 +23,10 @@
 #include "../g_stddef.hpp"
 #include "Serial.hpp"
 
-struct ConsiceDict;
+struct DictVAE;
+class GTokenizer;
+typedef std::shared_ptr<GTokenizer> hTokenizer;
+class Fish;
 class DataTokenSet;
 class OutCLS;
 typedef std::shared_ptr<DataTokenSet> hDataToken;
@@ -80,7 +83,9 @@ protected:
     //bool isNextEpoch = false;
     string name;
     string serial_root;
-    ConsiceDict *hDict = nullptr;
+    // hTokenizer hDictVAE = nullptr;
+    Fish* hFish = nullptr;
+    hTokenizer hDict = nullptr;
     std::map<TOKEN_ID, TOKEN_ID> mapT2T;
     std::vector<TOKEN_ID> dialect;
     std::string fpath;
@@ -99,10 +104,13 @@ protected:
     }
     // int UniqueTokens(const std::vector<TOKEN_ID>& tokens,size_t n_1,int flag=0x0);
 public:
-    static std::vector<hDataToken> MakeInstance(struct CLI_params& params,ConsiceDict *hDict, int flag);
+    static std::vector<hDataToken> MakeInstance(struct CLI_params& params,hTokenizer , int flag);
 
     std::vector<TOKEN_ID> tokens,masks;
-    DataTokenSet(ConsiceDict *hDict);
+    DataTokenSet(hTokenizer hDictVAE);
+    virtual ~DataTokenSet() {
+        
+    }
     bool hasMask()  {   return masks.size()>0;  }
     
     TOKEN_ID At(size_t pos);
@@ -122,6 +130,12 @@ friend class SampLoader;
 };
 typedef std::vector<hDataToken> DataTokens;
 
+class PromptTokenset : public DataTokenSet{
+protected:
+    string sPrompt;
+public:
+    PromptTokenset(JSON::const_iterator jit,hTokenizer hDictVAE,int flag=0x0);
+};
 class GlobTokenset : public DataTokenSet{
 protected:
     FILE* fpShard=nullptr;
@@ -136,7 +150,7 @@ protected:
     int header_bytes,B=-1,T=-1;  // header size in bytes
     size_t szFile,nShardSamples=0,nShardToks=0;
 public:
-    GlobTokenset(JSON::const_iterator jit,ConsiceDict *hDict,int flag=0x0);
+    GlobTokenset(JSON::const_iterator jit,hTokenizer hDictVAE,int flag=0x0);
 };
 
 class Tokenset_HellaSwag : public GlobTokenset{
@@ -157,7 +171,7 @@ public:
     std::vector<hQuestion> questions;
     std::vector<hQuestion> quesInBatch;
 
-    Tokenset_HellaSwag(JSON::const_iterator jit,ConsiceDict *hDict,int flag=0x0);
+    Tokenset_HellaSwag(JSON::const_iterator jit,hTokenizer hDictVAE,int flag=0x0);
     virtual ~Tokenset_HellaSwag(){
         for(auto q : questions)
             delete q;
@@ -168,7 +182,7 @@ public:
 
 class DTS_GPT2 : public DataTokenSet    {
 public:
-    DTS_GPT2(ConsiceDict *hDict) : DataTokenSet(hDict)    {
+    DTS_GPT2(hTokenizer hDictVAE) : DataTokenSet(hDictVAE)    {
 
     }
 };

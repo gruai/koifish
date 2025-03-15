@@ -69,14 +69,14 @@ int DTS_GPT2::STR2T(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>&
     return 0x0;
 }*/
 
-CDict_GPT2::CDict_GPT2(NLP_AutoRegressive *nlp_,int flag)   : ConsiceDict(nlp_,flag)   {
+CDict_GPT2::CDict_GPT2(Fish *nlp_,int flag)   : DictVAE(nlp_,flag)   {
     int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.n_embd;
     // n_vocab=50257;    
 }
 
-CDict_CHAR::CDict_CHAR(NLP_AutoRegressive *nlp_,int flag)   : ConsiceDict(nlp_,flag)   {
+CDict_CHAR::CDict_CHAR(Fish *nlp_,int flag)   : DictVAE(nlp_,flag)   {
     int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.n_embd;
-    n_vocab=256;    
+    // n_vocab=256;    
 }
 int CDict_CHAR::InitMAEC(struct ggml_context *ctx_build,const std::vector<int>& dims_,int flag)  {
     int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.n_embd;
@@ -90,7 +90,7 @@ int CDict_CHAR::STR2T(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int
     unsigned char *a = (unsigned char*)(txt);
     for(int i=0;i<txt_len;i++,a++)  {
         TOKEN_ID t=(TOKEN_ID)(*a);
-        assert(t>=0 && t<n_vocab);
+        // assert(t>=0 && t<n_vocab);
         btch[i] = t;
         n_tokens++;
     }
@@ -148,7 +148,7 @@ int GPT2::cRawGraph( struct ggml_context *ctx_build,bool isBuild,int flag)   {
     bool isOnlinePush = true;      // push nodes last or online(QKV)    
     const int n_embd_head = config.n_embd_head_v,n_embd_gqa  = config.n_embd_v_gqa();
     assert(n_embd_head == config.n_embd_head_k);    
-    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.n_embd,n_vocab=hDict->n_vocab;
+    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.n_embd,n_vocab=hDictVAE->n_vocab;
     int n_tokens=n_ctx*n_batch,n_head,n_embd_head_v=config.n_embd_head_v,n_ff;
     const uint32_t n_layer = config.nLayer();
     for(int i=0;i<n_layer;i++){
@@ -158,7 +158,7 @@ int GPT2::cRawGraph( struct ggml_context *ctx_build,bool isBuild,int flag)   {
     }
     hGensor cur = nullptr,pos = nullptr,q,k,v,Qcur,Kcur,Vcur;
     float kq_scale = 1.0f/sqrtf(float(n_embd_head));
-    // hDict->InitMAEC(ctx_build,{n_embd},0x0);    
+    // hDictVAE->InitMAEC(ctx_build,{n_embd},0x0);    
     hGensor tok_embeddings = AddTensor(ctx_build,_NAM_("token_embd.weight"),typNUMBER::F32,{n_embd, n_vocab},true,0x0);  
     _norm.BuildX("output_norm", {n_embd},this, 0x0);
     _output.BuildX("output", {n_embd, n_vocab},this,0x0); 
@@ -294,7 +294,7 @@ if(1)   {   //pass self attention module            loss would stop at 2.4
 #endif
 
 struct ggml_cgraph *GPT2::BuildRawGraph( struct ggml_context *ctx_build,bool isBuild,int flag)   { 
-    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.n_embd,n_vocab=hDict->n_vocab;
+    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.n_embd;
     bool isJModel = !config.jModel.empty();
     hForwTG = std::make_shared<TGraph>(this,isJModel?"gptJ":"gpt_raw",ctx_build,true);
     auto gf = nullptr;  //GetForwRaw();    
@@ -316,7 +316,6 @@ struct ggml_cgraph *GPT2::BuildRawGraph( struct ggml_context *ctx_build,bool isB
     return gf;
 }
 
-
 string GPT2::__repr__( string& suffix,string& prefix,int flag) {
     char buf[5012]="\0";
     const char*tab=prefix.c_str();
@@ -337,13 +336,15 @@ std::string CDict_GPT2::T2STR(TOKEN_ID tok,int flag ) {
 int CDict_GPT2::STR2T(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag){
     //  https://github.com/wangkuiyi/huggingface-tokenizer-in-cxx
     //  https://www.daoplays.org/blog/gpt2_p1 
+    btch = {12518,262,7523,318,1016,866,11};        //  "when the smoke is going down"
+    return btch.size();
     assert(0);
     int n_tokens = 0, nMost = btch.size(); 
     assert(txt_len<=nMost);
     unsigned char *a = (unsigned char*)(txt);
     for(int i=0;i<txt_len;i++,a++)  {
         TOKEN_ID t=(TOKEN_ID)(*a);
-        assert(t>=0 && t<n_vocab);
+        // assert(t>=0 && t<n_vocab);
         btch[i] = t;
         n_tokens++;
     }

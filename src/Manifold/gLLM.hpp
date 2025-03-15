@@ -74,7 +74,8 @@ struct NLP_AutoRegressive : public Fish {
     
     bool isLoadTokenEmbed = false;
     
-    hCDICT hDict=nullptr; 
+    hCDICT hDictVAE=nullptr; 
+    hTokenizer hDict = nullptr;
     
     bool isAttOnBC=false;   
         
@@ -141,7 +142,7 @@ struct NLP_AutoRegressive : public Fish {
     size_t MostMemSize(int flag)  override  {
         //mem_size = 2*LLAMA_TRAIN_MAX_NODES*ggml_tensor_overhead() +(config.common.use_checkpointing ? 3 : 2)*(GGML_OBJECT_SIZE+ggml_graph_overhead_custom(LLAMA_TRAIN_MAX_NODES, true));
         int n_layer = config.nLayer();
-        int nHead = hDict!=nullptr ? hDict->nLevel*3+2+6 : 6; 
+        int nHead = hDictVAE!=nullptr ? hDictVAE->nLevel*3+2+6 : 6; 
         int nMost = LLAMA_TRAIN_MAX_NODES;      //  16384
         assert(nHead*2 + n_layer*18<nMost);
         size_t sz = ggml_tensor_overhead()*2*nMost;
@@ -191,14 +192,14 @@ struct NLP_AutoRegressive : public Fish {
     // build_inp_KQ_(ctx,true);      
 
         assert(tokens_input->type == typNUMBER::I32);
-        hGensor _tEmbed = UpdateGensor (hDict->tok_embeddings->name);      //embedding of all tokens
+        hGensor _tEmbed = UpdateGensor (hDictVAE->tok_embeddings->name);      //embedding of all tokens
         
-        // hGensor _tOutput = UpdateGensor (hDict->_output.w->name);       
+        // hGensor _tOutput = UpdateGensor (hDictVAE->_output.w->name);       
         hGensor  t00 = nullptr; //tBatch;  
         assert_shape_1d(t00, n_ctx*n_batch);
         hGensor  t01 = nullptr; //ggml_get_rows(ctx, _tEmbed, t00);    gTN(t01, "inp_embd"); 
         hGensor  cur = t01;        
-        cur = hDict->ENC(ctx,t01);      // cur=t01 if hDict->dims is empty;
+        cur = hDictVAE->ENC(ctx,t01);      // cur=t01 if hDictVAE->dims is empty;
         if(cur!=t01)        gTN(cur, "embed_encoder");  
         assert_shape_2d(cur, n_embd, n_ctx*n_batch);
         checkpoints.clear();
@@ -243,7 +244,7 @@ struct LLAMA_VAE  : public NLP_AutoRegressive {
         _INFO("LLAMA_VAE%s: init model\n", __func__);
 
         gensors.Clear();
-        hDict->InitVAE();       updateTMap = true;
+        hDictVAE->InitVAE();       updateTMap = true;
 
         NLP_AutoRegressive::InitModel(flag);        
     }     
@@ -318,6 +319,23 @@ public:
     // hGensor BuildTarget(struct ggml_context * ctx,hGensor cur,int flag=0x0) override; 
     string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
 };
+
+class Mistral : public NLP_AutoRegressive {
+protected:    
+
+public:
+    Mistral( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag=0x0);
+
+    virtual ~Mistral() {          
+    }  
+
+    void InitModel(int flag=0x0)    override    {
+        _INFO("Mistral::%s: init model\n", __func__);
+
+        NLP_AutoRegressive::InitModel(flag);         
+    }  
+};
+
 
 struct TinyLama : public NLP_AutoRegressive { 
 };

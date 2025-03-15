@@ -28,7 +28,16 @@ float GTensor::rLARS(float s0,float T_lars,int flag)   {
    return r;
 }
 
-GTensor::GTensor(SHAPE shape_,typNUMBER tpD_,bool isX,int flag) : shape(shape_),type(tpD_),flags(flag)      {
+GTensor::GTensor(SHAPE shape_,typNUMBER tpD_,bool isX,int flag) : flags(flag)      {
+   ReShape(shape_,tpD_,flag);
+}
+
+bool GTensor::ReShape(SHAPE shape_,typNUMBER tpD_,int falg){
+   if(type==tpD_ && shape==shape_)
+      return true;
+
+   shape = shape_;      type=tpD_;
+
    int i=0;
    for(auto n : shape){
       ne[i++] = n;
@@ -36,7 +45,7 @@ GTensor::GTensor(SHAPE shape_,typNUMBER tpD_,bool isX,int flag) : shape(shape_),
    }
    for(i=shape.size();i<GGML_MAX_DIMS;i++)  
       ne[i]=1;
-   double nB = BPE(type);    assert(nB>=1.0);
+   
    // from ggml_new_tensor
    size_t szBlk = ggml_blck_size((enum ggml_type)type);
    nb[0] = BPE(type);       assert(szBlk==1);
@@ -45,8 +54,9 @@ GTensor::GTensor(SHAPE shape_,typNUMBER tpD_,bool isX,int flag) : shape(shape_),
       nb[i] = nb[i - 1]*ne[i - 1];
    }
 
-   
-   szData = size()*nB;   
+   double nB = BPE(type);    assert(nB>=1.0);
+   szData = size()*nB; 
+   return true;  
 }
 
 float GTensor::Get(int i,int flag)  const    {   
@@ -211,9 +221,52 @@ hGensor GENSORS::Get(const string&name, int flag)    {
          return nullptr;
       }
       return nag[name];
-   }
-   
+   }   
 } 
+
+int GTensor::SerialJSON(const std::string& name_, const JSON& val, void* bytes_ptr, size_t bytes_size,int flag) {
+   // if(name=="tokenizer.tokens"){
+   //    std::cerr << name << std::endl;
+   // }
+   std::string dtype_str = val.value("dtype", ""); 
+   SHAPE spJ;
+   size_t numel = 1;
+   if (val.at("shape").size() > 4) {
+      std::cerr << "shape exceeds 4 dimensions" << std::endl;
+   }
+   for (size_t i = 0; i < val.at("shape").size() && i < 4; i++) {
+      if (val.at("shape")[i].get<int>() != val.at("shape")[i]) {
+         std::cerr << "bad shape" << std::endl;
+         return -2;
+      }
+      int n = val.at("shape")[i].get<int>();
+      spJ.push_back(n);      //shape[i] = 
+      numel *= shape[i];
+   }   
+   ReShape(spJ,tpNumOf(dtype_str));
+
+   if (val.at("data_offsets").size() != 2) {
+      return -3;
+   }
+   size_t offset_start = static_cast<size_t>(val.at("data_offsets")[0]);
+   size_t offset_end = static_cast<size_t>(val.at("data_offsets")[1]);
+   if (offset_start < 0 || offset_end <= offset_start || offset_end > bytes_size) {
+      std::cerr << "bad offsets" << std::endl;
+      return -1;
+   }   
+   size_t szSrc = offset_end - offset_start;
+   // validate the shape matches the size
+   if (szData != szSrc) {
+      std::cerr << "bad size" << std::endl;
+      return -1;
+   }
+      
+   void *src = (char*)bytes_ptr + offset_start;
+   if(data!=nullptr){
+      SerialGP(src,nullptr,szSrc,false);
+   }
+   return 0;
+}
 
     // inline hGensor To4D(struct ggml_context * ctx_build,hGensor cur,int64_t n1,int64_t n2,int64_t n3,int64_t n4){
     //     cur = ggml_reshape_4d(ctx_build, cur, n1, n2,n3,n4);

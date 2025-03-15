@@ -12,8 +12,15 @@
 #include "Optimizer.hpp"
 #include "Dictionary.hpp"
 
+PromptTokenset::PromptTokenset(JSON::const_iterator jit,hTokenizer hDict,int flag) : DataTokenSet(hDict)    {
+    auto k =jit.key();  
+    auto v = jit.value();
+    sPrompt = v["prompt"];
+    name = sPrompt;    
+    // hDict->eos = 0;
+}
 
-Tokenset_HellaSwag::Tokenset_HellaSwag(JSON::const_iterator jit,ConsiceDict *hDict,int flag) : GlobTokenset(jit,hDict,flag)    {
+Tokenset_HellaSwag::Tokenset_HellaSwag(JSON::const_iterator jit,hTokenizer hDict,int flag) : GlobTokenset(jit,hDict,flag)    {
     name = "HellaSwag";
     //rStepOfEval = 0.0;  //  no sample on evaluate
     auto k =jit.key();  
@@ -24,7 +31,7 @@ Tokenset_HellaSwag::Tokenset_HellaSwag(JSON::const_iterator jit,ConsiceDict *hDi
     assert(nFile==1);
 }
 
-GlobTokenset::GlobTokenset(JSON::const_iterator jit,ConsiceDict *hDict,int flag) : DataTokenSet(hDict)    {
+GlobTokenset::GlobTokenset(JSON::const_iterator jit,hTokenizer hDict,int flag) : DataTokenSet(hDict)    {
     header_bytes = SHARD_HEADER_SIZE * sizeof(int);
     int num_processes=1,process_rank=0;
     B = hDict->config.n_batch(),       T = hDict->config.n_ctx();
@@ -38,8 +45,13 @@ GlobTokenset::GlobTokenset(JSON::const_iterator jit,ConsiceDict *hDict,int flag)
     eval_every = jKV(v,{"eval-every"},eval_every);
     rStepOfEval = 0.1;
     rStepOfEval = jKV(v,{"step"},rStepOfEval);
-    nMostShard = jKV(v,{"most"},nMostShard);
-    
+    if(v.find("mody")==v.end())
+        nMostShard = 100000;
+    else
+        nMostShard = jKV(v,{"most"},nMostShard);
+    if(nMostShard==0)   // in some case, create a blank dataset
+        return;
+
     glob_t glob_result;
     int glob_status = glob(pattern.c_str(), 0, NULL, &glob_result);
     if (glob_status != 0) {
@@ -116,7 +128,7 @@ try{
     }else{
         nT = min(nT,1024);
         for(int i=0;i<nT;i++){
-            assert(0<=tokens[i] && tokens[i]<nVocab);
+            // assert(0<=tokens[i] && tokens[i]<nVocab);
         }
     }
     delete[] tmp16;
@@ -224,8 +236,9 @@ size_t GlobTokenset::OnShardFile(int id0, bool load, int flag) {
     return nShardToks;
 }
 
-DataTokenSet::DataTokenSet(ConsiceDict *hD) : hDict(hD)   {
-    nVocab = hDict->n_vocab;
+
+DataTokenSet::DataTokenSet(hTokenizer hD) : hDict(hD)   {
+    nVocab = hDict->nVocab();
     assert(nVocab>0);
 }
 

@@ -51,6 +51,18 @@ int gTN(hGTensor ,const char *format,...);
 //clear then set name of a tensor & its grad
 int gTN0(hGTensor cur,const char *format,... );
 
+enum INIT_WEIGHT    {
+    W_SKIP=0X0,
+    FIX_1,
+    RANDOM,
+    COPY_WIKI,
+    COPY_SWARM_HEAD,
+    SERIALIZE
+};
+
+/**
+ * 1.   Support dynamic change shape & type!
+ */
 class GTensor   {
 private:
     struct ggml_tensor  *gg=nullptr;
@@ -60,6 +72,8 @@ protected:
     
     size_t szData=0;
     int recompute=1;
+    //  support dynamic change shape&type!
+    virtual bool ReShape(SHAPE shape_,typNUMBER tpD_,int flag=0x0);
     virtual hGTensor _Multiply(const hGTensor& other) { assert(0);  return nullptr;    }
 public:
     // static int B,T,C;       //shortcut parameter of LLM models
@@ -68,14 +82,16 @@ public:
     float rLARS(float s0,float T_lars,int flag);
     size_t offset = 0x0;
     SHAPE shape; 
-    SHAPE x_shape;     //  1.padded_shape  for high performance or menory alignment
+    SHAPE x_shape;     //  1.padded for high performance or menory alignment(x_shape<=shape)
+    // shape=>x_shape
+    virtual void* DataPad(void* src0,int flag=0x0);     
 
     static typNUMBER tpFloatX;
     typNUMBER  type;
-    int tpInit=2;
+    INIT_WEIGHT tpInit=INIT_WEIGHT::RANDOM;
     enum BIT_FLAG {
         F_INPUT=0x1,F_OUTPUT=0x2,F_PARAM=0x4,F_LOSS=0x8, 
-        F_NOALLOC=0X100,
+        F_NOALLOC=0x100,F_GPU=0x200,
 
         F_TOX=0x10000,  F_PADDED=0x20000
     };    
@@ -110,32 +126,21 @@ public:
 
 //operations
     virtual bool OverWrite(struct ggml_tensor*gg_,bool isSrc=true,int flag=0x0);
-    virtual bool OverWrite(hGTensor,bool isSrc=true,int flag=0x0);
-      
+    virtual bool OverWrite(hGTensor,bool isSrc=true,int flag=0x0);      
     virtual hGTensor GetRow(hGTensor, hGTensor token,hGTensor pos,int flag=0x0);
-    virtual hGTensor Normal(hGTensor hOut,hGTensor _mean,hGTensor _rstd,hGTensor w,hGTensor b,bool isForward=true,int flag=0x0)   {   assert(0);  return nullptr;}
-    // virtual hGTensor QKV(hGTensor hOut,hGTensor hQKV,hGTensor hATTN,hGTensor w,hGTensor b,int NH,hGTensor proj_w,hGTensor proj_b,int flag)          {   assert(0);  return nullptr;}
-    // virtual hGTensor FFN(hGTensor hOut,hGTensor hUp,hGTensor wUP,hGTensor bUp,hGTensor fch,hGTensor wDown,hGTensor bDown,int gelu_fusion,int flag)  {   assert(0);  return nullptr;}
-    // virtual hGTensor ResiNormal(hGTensor hOut,hGTensor hNormed,hGTensor _mean,hGTensor _rstd,hGTensor hInp1,hGTensor hInp2,hGTensor w,hGTensor b,int flag)                        {   assert(0);  return nullptr;}                       
-    // virtual float FusedLoss(float *hostLoss,float dLoss,hGTensor hLoss,hGTensor hTarget,hGTensor tX, hGTensor w,int V,bool isForward, int flag)  {   assert(0);  return 0;}
-//  Loss
-    virtual hGTensor CrossEntropy( const hGTensor b,int flag=0x0 );
-    
+    virtual hGTensor Normal(hGTensor hOut,hGTensor _mean,hGTensor _rstd,hGTensor w,hGTensor b,bool isForward=true,int flag=0x0)   {   assert(0);  return nullptr;}//  Loss
+    virtual hGTensor CrossEntropy( const hGTensor b,int flag=0x0 );    
 
     int64_t ne[GGML_MAX_DIMS]; // number of elements
-    size_t  nb[GGML_MAX_DIMS]; // stride in bytes:
-                                // nb[0] = ggml_type_size(type)
-                                // nb[1] = nb[0]   * (ne[0] / ggml_blck_size(type)) + padding
-                                // nb[i] = nb[i-1] * ne[i-1]
-    // compute data
+    //stride in bytes:nb[0] = ggml_type_size(type);nb[i] = nb[i-1] * ne[i-1]
+    size_t  nb[GGML_MAX_DIMS]; 
     enum ggml_op op;
-    // op params - allocated as int32_t for alignment
     int32_t op_params[GGML_MAX_OP_PARAMS / sizeof(int32_t)];
     int32_t flags=0x0;
+
     bool isParam()  {   return BIT_TEST(flags,F_PARAM);  }
+    bool isGPU()  {   return BIT_TEST(flags,F_GPU);  }
     
-    // struct ggml_tensor * grad;
-    // struct ggml_tensor * src[GGML_MAX_SRC];
     vector<hGTensor> src;
     virtual void AddSrc(const hGTensor t)           {   assert(t!=nullptr); src.push_back(t);   }
     virtual void AddSrc(const vector<hGTensor>& ts,int flag=0x0);
@@ -144,7 +149,7 @@ public:
     size_t               view_offs=0;
     void * data=nullptr;
     void * grad=nullptr; 
-    virtual bool SerialGP(void *param,void *g,bool isSerial,int flag=0x0)   {   assert(0);  return false;   }
+    virtual bool SerialGP(void *yD,void *yG,size_t szY,bool isToY,int flag=0x0)   {   assert(0);  return false;   }
 
     char name[GGML_MAX_NAME];
     void * extra; // extra things e.g. for ggml-cuda.cu
@@ -211,6 +216,8 @@ public:
         assert(ggml_is_scalar(gg));  
         assert(size()==1);  return Get(0);
     }   
+
+    virtual int SerialJSON(const std::string& name, const JSON& val, void* bytes_ptr, size_t bytes_size,int flag=0x0);
     friend class cuTensor;
     friend class OPT_Adam;
 };
@@ -305,7 +312,7 @@ public:
     bool Free() override;
     void Set(float a,int flag=0x0)  override
     {   ; }
-    bool SerialGP(void *param,void *g,bool isSerial,int flag=0x0)   override;
+    bool SerialGP(void *yD,void *yG,size_t szY,bool isToY,int flag=0x0)   override;
     bool OverWrite(hGTensor,bool isSrc=true,int flag=0x0) override;
     hGTensor CrossEntropy( const hGTensor b,int flag=0x0 )  override;
     hGTensor GetRow(hGTensor, hGTensor token,hGTensor pos,int flag)   override;

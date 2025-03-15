@@ -11,7 +11,7 @@
 #ifndef DATALOADER_H
 #define DATALOADER_H
 #include "../ggex/GG_util.hpp"
-struct ConsiceDict;
+struct DictVAE;
 #include "../CLI_params.hpp"
 #include "../g_stddef.hpp"
 #include "TokenSet.hpp"
@@ -29,12 +29,9 @@ class WIKI;
 class Fish;
 struct train_state;
 class Optimizer;
-
 class NLP_AutoRegressive;
 class SampLoader;
 
-
-class SampLoader;
 struct StepInfos    {
     string name="",sRoot = "./";
     struct STEP{        
@@ -84,8 +81,9 @@ protected:
     int64_t nShard() {
         return shard_samps.size();
     }   
-    std::shared_ptr<ConsiceDict> hDict;
-    hDataToken hTokens;
+    // std::shared_ptr<DictVAE> hDictVAE;
+    hDataToken hTokens = nullptr;
+    hTokenizer hDict = nullptr;
 
     bool isTarget_1 = false;
     bool isRecycle = true,isLast=false;

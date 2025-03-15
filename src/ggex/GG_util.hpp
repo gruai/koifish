@@ -348,7 +348,7 @@ extern "C" {
         size_t ggml_hash_size(size_t min_sz);
         size_t ggml_graph_nbytes(size_t size, bool grads);
         struct ggml_object * ggml_new_object(struct ggml_context * ctx, enum ggml_object_type type, size_t size);        
-        void * ggml_graph_compute_thread(void * data);
+        
         void clear_numa_thread_affinity(void);
         int ggml_get_n_tasks(hGensor  node, int n_threads);
 #ifdef __cplusplus

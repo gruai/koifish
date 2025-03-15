@@ -19,6 +19,7 @@
 #include <iostream>
 #include <cstring>
 
+
 #define ARG2STR(format,len)    {    va_list args;    va_start( args, format );    vsnprintf( buffer,len,format,args );    va_end(args);   assert(strlen(buffer)<=len);   }
 
 int gTN(hGTensor cur, const char *format,...){
@@ -289,37 +290,9 @@ std::string executable_name()   {
     static_assert(false, "unrecognized platform");
 #endif
 }
-/**
- * 
-*/
+
 void train_print_usage(int argc, char ** argv, const struct CLI_params * params) {
-    fprintf(stderr, "usage: %s [options]\n", argv[0]);
-    fprintf(stderr, "\n");
-    fprintf(stderr, "options:\n");
-    fprintf(stderr, "  -h, --help                 show this help message and exit\n");
-
-    // fprintf(stderr, "  --model-base FNAME         model path from which to load base model (default '%s')\n", params->fn_model_base);
-    fprintf(stderr, "  --lora-out FNAME           path to save llama lora (default '%s')\n", params->save.model_out.c_str());
-    fprintf(stderr, "  --only-write-lora          only save llama lora, don't do any training.  use this if you only want to convert a checkpoint to a lora adapter.\n");
-    fprintf(stderr, "  --norm-rms-eps F           RMS-Norm epsilon value (default %f)\n", params->f_norm_rms_eps);
-    fprintf(stderr, "  --rope-freq-base F         Frequency base for ROPE (default %f)\n", params->rope_freq_base);
-    fprintf(stderr, "  --rope-freq-scale F        Frequency scale for ROPE (default %f)\n", params->rope_freq_scale);
-    fprintf(stderr, "  --lora-alpha N             LORA alpha : resulting LORA scaling is alpha/r. (default %d)\n", params->lora_alpha);
-    fprintf(stderr, "  --lora-r N                 LORA r: default rank. Also specifies resulting scaling together with lora-alpha. (default %d)\n", params->lora_r);
-    fprintf(stderr, "  --rank-att-norm N          LORA rank for attention norm tensor, overrides default rank. Norm tensors should generally have rank 1.\n");
-    fprintf(stderr, "  --rank-ffn-norm N          LORA rank for feed-forward norm tensor, overrides default rank. Norm tensors should generally have rank 1.\n");
-    fprintf(stderr, "  --rank-out-norm N          LORA rank for output norm tensor, overrides default rank. Norm tensors should generally have rank 1.\n");
-    fprintf(stderr, "  --rank-tok-embd N          LORA rank for token embeddings tensor, overrides default rank.\n");
-    fprintf(stderr, "  --rank-out N               LORA rank for output tensor, overrides default rank.\n");
-    fprintf(stderr, "  --rank-wq N                LORA rank for wq tensor, overrides default rank.\n");
-    fprintf(stderr, "  --rank-wk N                LORA rank for wk tensor, overrides default rank.\n");
-    fprintf(stderr, "  --rank-wv N                LORA rank for wv tensor, overrides default rank.\n");
-    fprintf(stderr, "  --rank-wo N                LORA rank for wo tensor, overrides default rank.\n");
-    fprintf(stderr, "  --rank-ffn_gate N          LORA rank for ffn_gate tensor, overrides default rank.\n");
-    fprintf(stderr, "  --rank-ffn_down N          LORA rank for ffn_down tensor, overrides default rank.\n");
-    fprintf(stderr, "  --rank-ffn_up N            LORA rank for ffn_up tensor, overrides default rank.\n");
-
-    // print_common_train_usage(argc, argv, &params->common);
+    
 }
 
 bool CLI_params::operator!=(const CLI_params& other) const {
@@ -348,10 +321,84 @@ void CLI_params::Dump( )    {
     // _INFO(" SIGMA = %s\n", sigma.c_str()); 
 }
 
+bool LoadJsonFile(const string&jPath,JSON&jObj,int flag) {
+try{
+    std::ifstream jfile(jPath);
+    std::string info;
+    if(jfile.fail()){
+        _INFO("\r\n[%s] Failed to open \"%s\" !!!\n",__func__,jPath.c_str());
+        return false;
+    }
+    jfile>>jObj;
+    return true;
+}catch(...){
+    return false;
+}
+}
+/*
+    "architectures": [
+        "MistralForCausalLM"
+    ],
+    "attention_dropout": 0.0,
+    "bos_token_id": 1,
+    "eos_token_id": 2,
+    "hidden_act": "silu",
+    "hidden_size": 4096,
+    "initializer_range": 0.02,
+    "intermediate_size": 14336,
+    "max_position_embeddings": 32768,
+    "model_type": "mistral",
+    "num_attention_heads": 32,
+    "num_hidden_layers": 32,
+    "num_key_value_heads": 8,
+    "rms_norm_eps": 1e-05,
+    "rope_theta": 1000000.0,
+    "sliding_window": null,
+    "tie_word_embeddings": false,
+    "torch_dtype": "bfloat16",
+    "transformers_version": "4.36.0",
+    "use_cache": true,
+    "vocab_size": 32000
+*/
+string MODEL_CARD::sWeight=".weight",MODEL_CARD::sBias=".bias";        //".w"
+string MODEL_CARD::sNorm="_norm";            //".norm"
+
+bool MODEL_CARD::Init(const JSON&jConfig,int flag){
+    sCardPath = jKV(jConfig,{"model_card"},sCardPath );
+    if(sCardPath.empty())
+        return false;
+    string jPath = sCardPath+"config.json";
+    LoadJsonFile(jPath,jModelParam);
+    sTokenPath = sCardPath+"tokenizer.json";
+    // LoadJsonFile(sTokenPath,jTokenizer);
+
+    if(jModelParam.empty()){
+        sCardPath = "";
+    }else{        
+        model_type = jKV(jModelParam,{"model_type"},model_type );
+        if(model_type=="")
+            sCardPath = "";
+        else{
+            vocab_size = jKV(jModelParam,{"vocab_size"},vocab_size );
+            torch_dtype = jKV(jModelParam,{"torch_dtype"},torch_dtype );
+            transformers_version = jKV(jModelParam,{"transformers_version"},transformers_version );
+            bos_token_id = jKV(jModelParam,{"bos_token_id"},bos_token_id );
+            eos_token_id = jKV(jModelParam,{"eos_token_id"},eos_token_id );
+        }
+    }
+    return empty();
+}
+
 MODEL_ARCH CLI_params::ModelArch()   {  
     MODEL_ARCH arch = MODEL_ARCH::_X_;
-    string info = jKV(jConfig,{"arch"},string(""),false); 
-    assert(!info.empty());
+    string info="";
+    if(model_card.empty()){
+        string s = jKV(jConfig,{"arch"},string(""),false); 
+        assert(!s.empty());        info = s;
+    }else{
+        info = model_card.model_type;
+    }
+
     std::transform(info.begin(), info.end(), info.begin(), ::toupper);
     arch =  info=="MOE" ? NLP_MOE :
             info=="MAMBA" ? MODEL_ARCH::NLP_MAMBA : 
@@ -359,6 +406,7 @@ MODEL_ARCH CLI_params::ModelArch()   {
             info=="GPT2" ? MODEL_ARCH::NLP_GPT2 :
             info=="GPT2CHAR" ? MODEL_ARCH::NLP_GPT2_char :
             info=="LAMA" ? MODEL_ARCH::NLP_LLAMA :
+            info=="MISTRAL" ? MODEL_ARCH::NLP_MISTRAL :
             MODEL_ARCH::NLP_LLAMA;  
 
     return arch; 
@@ -416,12 +464,16 @@ void CLI_params::OnMostToken(size_t nMost,int flag){
 
 std::string CLI_params::NameOnArch(std::string&name,int flag){
     string sx="";
-    if(name=="layer")   
+    if(name=="layer" || name=="Layer")   
         sx="blk";
     switch(ModelArch()){
     case MODEL_ARCH::NLP_GPT2:  
     case MODEL_ARCH::NLP_GPT2_char:  {
     }
+        break;
+    case MODEL_ARCH::NLP_MISTRAL:
+        if(name=="layer" || name=="Layer")   
+            sx="model.layers";
         break;
     default:
         
@@ -457,6 +509,7 @@ void CLI_params::OnArch( ){
         modep.isNormalBias = true;
         modep.isSLPBias = true;         //nealy same
         modep.isPaddedCls = true;       //  ceil(n/128.0)*128
+        modep.preLogits_dB = 8;
 
         int group=Get({"model_v0","target_group"},1);
         assert(group==1);
@@ -467,7 +520,34 @@ void CLI_params::OnArch( ){
     case NLP_DEEPSEEK:
     /*
           `. llama_model_rope_type=LLAMA_ROPE_TYPE_NEOX
-    */
+    */        break;
+    case NLP_MISTRAL:
+        model_card.sNorm = ".norm";
+/*{
+  "architectures": [
+    "MistralForCausalLM"
+  ],
+  "attention_dropout": 0.0,
+  "bos_token_id": 1,
+  "eos_token_id": 2,
+  "hidden_act": "silu",
+  "hidden_size": 4096,
+  "initializer_range": 0.02,
+  "intermediate_size": 14336,
+  "max_position_embeddings": 32768,
+  "model_type": "mistral",
+  "num_attention_heads": 32,
+  "num_hidden_layers": 32,
+  "num_key_value_heads": 8,
+  "rms_norm_eps": 1e-05,
+  "rope_theta": 1000000.0,
+  "sliding_window": null,
+  "tie_word_embeddings": false,
+  "torch_dtype": "bfloat16",
+  "transformers_version": "4.36.0",
+  "use_cache": true,
+  "vocab_size": 32000
+}*/
         break;
 
     default:        
@@ -555,8 +635,6 @@ try{
     common = get_default_train_params_common();
     std::ifstream jfile(jPath);
     std::string info;
-
-    
     if(jfile.fail()){
         _INFO("\r\n[%s] Failed to open \"%s\" !!!\n",__func__,jPath.c_str());
         return false;
@@ -595,11 +673,9 @@ try{
         model_title = jKV(jConfig,{"arch"},string(""));
     }
     // serial_path += a+"_["+model_title+dict_type+"]_";       //std::to_string(1.0-rSplit)
-    JModel2Params(0x0);
-    
-
+    JModel2Params(0x0);   
     // eval_binpath = jKV(jConfig,{"data","eval_binpath"},s0 );   
-
+    model_card.Init(jConfig);
     
     n_swarm = jKV(jConfig,{"train","swarm"},1 );
     common.save_every = jKV(jConfig,{"train","save-every"},common.save_every );
@@ -639,9 +715,9 @@ try{
     
     // n_embd = jKV(jConfig,{"wiki","embd"},n_embd );
 
-    save.model_out = jKV(jConfig,{"model-out"},save.model_out );  
-    save.checkpoint_in = jKV(jConfig,{"checkpoint-in"},save.checkpoint_in );  
-    save.checkpoint_out = jKV(jConfig,{"checkpoint-out"},save.checkpoint_out );    
+    checkpoint.model_out = jKV(jConfig,{"model-out"},checkpoint.model_out );  
+    checkpoint.in = jKV(jConfig,{"checkpoint-in"},checkpoint.in );  
+    checkpoint.out = jKV(jConfig,{"checkpoint-out"},checkpoint.out );    
     
     f_norm_rms_eps = jKV(jConfig,{"norm-rms-eps"},f_norm_rms_eps );
     rope_freq_base = jKV(jConfig,{"rope-freq-base"},rope_freq_base );
@@ -709,7 +785,7 @@ bool CLI_params::parse(int argc, char ** argv)  {
                 invalid_param = true;
                 break;
             }
-            save.model_out = argv[i];
+            checkpoint.model_out = argv[i];
         } else if (arg == "--embd") {
             if (++i >= argc) {
                 invalid_param = true;
@@ -721,7 +797,7 @@ bool CLI_params::parse(int argc, char ** argv)  {
                 invalid_param = true;
                 break;
             }
-            save.model_out = argv[i];
+            checkpoint.model_out = argv[i];
         } else if (arg == "--only-write-lora") {
             only_write_model = true;
         } else if (arg == "--learning-rate"){
@@ -1349,6 +1425,7 @@ double BPE(typNUMBER type) {
     return bpe;
 }
 const char *cNameOf(typNUMBER type){
+    
     return ggml_type_name((enum ggml_type)type);
 }
 std::string NameOf(typNUMBER type){
@@ -1367,8 +1444,9 @@ size_t GTensor::size(int typ)  const       {
     size_t nz=1;    
     for(auto a : shape)   nz*=a;  
     switch(typ){
-    case 1:     //only for padded shape
+    case 1:     //only for padded shape        
         if(x_shape.size()>0){
+            assert(BIT_TEST(flags,F_PADDED));
             nz = 1;
             for(auto a : x_shape)   nz*=a;  
             assert(nz>1);            
@@ -1377,9 +1455,13 @@ size_t GTensor::size(int typ)  const       {
     default:
         break;
     }
-    return nz;
-    // return ggml_nelements(gg);     
+    return nz; 
 }
+
+void* GTensor::DataPad(void* src0,int flag){
+    return nullptr;
+}
+
 #ifdef _TENSOR_G_
 
 
@@ -1503,11 +1585,126 @@ void ADAM_params_::Dump(int typ){
         decay,decay_min_ndim,gclip,clip_alg);
 }
 
-void MOEL_params_::Dump(int typ){
-
+void MODEL_DE_params_::Dump(int typ){
+    // _INFO("\tMODEL card=%s\n", sCardPath.c_str());
 }
 
 ggml_cgraph * GG_dup_graph(ggml_context * ctx, ggml_cgraph *src){
     assert(0);
     return nullptr;
+}
+
+#include "gguf.h"
+#include "../Manifold/Fish.hpp"
+
+/*
+    1.  gguf_get_tensor_offset
+*/
+bool Fish::GGUF_Serialize(const std::string&path,  bool isSave, int flag){
+try{
+    if(path.empty())
+        return false;
+    GST_TIC(tic);
+    char buf[1024];
+    struct ggml_context * fctx_data = NULL;
+    struct gguf_context * fctx = NULL;
+    int n_kv = 0,n_tensors = 0;
+    if(isSave){ //KV pairs
+        fctx = gguf_init_empty();
+        // struct ggml_init_params params = {128ull*1024ull*1024ull,NULL,false,};
+        // fctx_data = ggml_init(params);
+    }else{
+        fctx = gguf_init_from_file(path.c_str(), {false,&fctx_data});
+        if (!fctx) {
+            _INFO("%s: failed to load '%s'\n", __func__, path.c_str());
+            return false;
+        }
+
+        _INFO("%s: version=%d alignment=%zu offset=%zu\n", __func__, gguf_get_version(fctx),gguf_get_alignment(fctx),gguf_get_data_offset(fctx));
+        n_kv = gguf_get_n_kv(fctx);
+        _INFO("%s: n_kv: %d\n", __func__, n_kv);
+        for (int i = 0; i < n_kv; ++i) {
+            const char * key = gguf_get_key(fctx, i);
+            _INFO_IF("%s: kv[%d]: key = %s\n", __func__, i, key);
+        }
+        if(0){// find kv string
+            const char * findkey = "some.parameter.string";
+            const int keyidx = gguf_find_key(fctx, findkey);
+            if (keyidx == -1) {
+                printf("%s: find key: %s not found.\n", __func__, findkey);
+            } else {
+                const char * key_value = gguf_get_val_str(fctx, keyidx);
+                printf("%s: find key: %s found, kv[%d] value = %s\n", __func__, findkey, keyidx, key_value);
+            }
+        }
+    }
+    if(isSave){
+        // if(!std::filesystem::exists(path)){
+        //     _INFO("%s: failed to save @'%s'\n", __func__, path.c_str());
+        //     return false;
+        // }
+        for(auto ps : optParams) {            
+            gguf_add_tensor(fctx, G(ps));
+        } 
+        const bool only_meta = false;    
+        gguf_write_to_file(fctx, path.c_str(), only_meta);
+        size_t fsize = F_SIZE(path.c_str());
+        _INFO("[save] @\"%s\" nT=%ld fsize=%gM\tT=%.3g S\n",path.c_str(),optParams.size(),fsize/1.0e6,GST_TOC(tic));
+    }else{
+        n_tensors = gguf_get_n_tensors(fctx);
+        if(isTrain() && n_tensors!=optParams.size()){      //  optParams maybe empty
+            _INFO("%s nOptParams don't match(%d,%d) @%s!",__func__,n_tensors,optParams.size(),path.c_str());
+            return false;
+        }
+        _INFO("[Serialize] n_tensors: %d\n", n_tensors);
+        loadGensors.clear();
+        for (int i = 0; i < n_tensors; ++i) {
+            const char *name = gguf_get_tensor_name  (fctx, i);
+            ggml_tensor *cur = ggml_get_tensor(fctx_data, name);  
+            if(cur==nullptr){
+                _INFO("%s failed to load tensor(%s) @%s!",__func__,name,path.c_str());
+                return false;
+            }
+
+            hGensor target = GetGensor(name);
+            if(target==nullptr){
+                if(strcmp(name,"output.weight")==0 && config.modep.isEmbedWeightTying){
+                    continue;
+                }else
+                    return false;
+            }
+            loadGensors.push_back(target);
+            if(!optParams.empty()){
+                if(!(target->flags & GGML_TENSOR_FLAG_PARAM)){
+                    return false;
+                }
+            }else{
+                assert(!isTrain());
+            }      
+            
+#ifdef _TENSOR_G_       
+            target->CopyGG(cur);
+#else     
+            size_t nEle = tELEM(cur),sz = tBYTE(cur);
+            if(nEle != tELEM(target)) {
+                assert(0);      continue;
+            }
+            if(target->type!=cur->type) {
+                Gensor2float_(cur,(float*)target->data,0x0);
+            }else
+                memcpy(target->data,cur->data,sz);
+#endif            
+            if(DUMP()){
+                sprintf(buf,"\t%d d=%d sz=%ld",i,tDIM(target),tBYTE(target));
+                // _pt_cys_(buf,target,0x0);      printf("\n");
+            }
+            // _INFO("[Serialize]_%d\t%s: n_dims=%d sz = %ld\n",i,cur->name, tDIM(cur),sz);            
+        }    
+    }
+    if(fctx_data!=NULL) ggml_free(fctx_data);
+    gguf_free(fctx);
+    return true;
+}catch(...){
+    return false;
+}
 }

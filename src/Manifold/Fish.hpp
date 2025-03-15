@@ -190,12 +190,6 @@ class Fish : public std::enable_shared_from_this<Fish>    {
     };
 
 protected:
-    enum INIT_WEIGHT    {
-        RANDOM=0x0,
-        COPY_WIKI,
-        COPY_SWARM_HEAD,
-        SERIALIZE
-    };
     INIT_WEIGHT tpInitWeight = INIT_WEIGHT::RANDOM;
     
     std::string name;
@@ -280,6 +274,10 @@ protected:
     std::vector<std::string> to_quant, to_skip;
 
     virtual bool GGUF_Serialize(const std::string&path,  bool isSave, int flag=0x0);
+    //Load model wight from hugging face model
+    virtual bool HF_Serialize(bool isSave, int flag=0x0);
+    // Smart format of https://github.com/zeux/calm
+    virtual bool CALM_Serialize(const std::string&path, bool isSave, int flag=0x0);
 
 public:
     hGensor xn = nullptr,xxn = nullptr;     //only for debug
@@ -522,7 +520,7 @@ public:
     friend class Optimizer;
     friend class OPT_Adam;
     friend class Distillation;
-    friend class ConsiceDict;
+    friend class DictVAE;
     friend class GeneratOnPrompt;
     friend class NLP_AutoRegressive;   
     friend class SampLoader;

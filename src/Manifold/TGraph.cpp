@@ -81,7 +81,7 @@ bool SelfAttention::Build(int flag_0)   {
     // flag |= GeNeuron::F_BIAS;       //  s_bias[i/x128::size] = load128(bias + i);
 #endif
 
-    norm.BuildX(name+sNorm,{shape[0]},hFish,flag);        
+    norm.BuildX(name+MODEL_CARD::sNorm,{shape[0]},hFish,flag);        
 #ifdef _TENSOR_G_
     SHAPE sp2={shape[0],shape[1]*3},sp3={B,T,C},spTrans={B,n_head_kv,T};   //,T
     Q.BuildX(name+"_qkv",sp2,hFish,flag );
@@ -266,7 +266,7 @@ BROWN_attn::BROWN_attn(Fish* hG_,const std::string&key_,JSON::const_iterator jit
 bool BROWN_attn::Build(int flag)   {
     // SelfAttention::Build(flag);           
     SHAPE sp={shape[0],shape[1]};
-    norm.BuildX(name+sNorm,{shape[0]},hFish,0x0);        
+    norm.BuildX(name+MODEL_CARD::sNorm,{shape[0]},hFish,0x0);        
     Q.BuildX(name+".tmp",{T,T,n_head,B},hFish,flag);   //transition as property
     proj_cat.BuildX(name+".proj",sp,hFish,flag);   
     // moe.BuildX(name+".moe",sp,hFish,flag);  
@@ -351,7 +351,7 @@ GatedAttention::GatedAttention(Fish* hG_,const std::string&key_,JSON::const_iter
         tpTrans = (TRANSITION_MODE)(jvals[0]);
 }
 bool GatedAttention::Build(int flag)   {
-    norm.BuildX(name+sNorm,{shape[0]},hFish,0x0);        //layer->ffn_norm.sT="f";
+    norm.BuildX(name+MODEL_CARD::sNorm,{shape[0]},hFish,0x0);        //layer->ffn_norm.sT="f";
     upU.BuildX(name+".upU",{shape[0],shape[1]},hFish,flag);   
     upV.BuildX(name+".upV",{shape[0],shape[1]},hFish,flag);     
     down.BuildX(name+".down",{shape[1],shape[0]},hFish,flag);           
@@ -1644,7 +1644,7 @@ int Fish::jToGraph( struct ggml_context *ctx_,bool isBuild,int flag)   {
     int B,T,C;      GetBTC(B,T,C);
     int Vp=(int)(nClass()*1.1),NH=config.n_head();
     int nTmp = std::max(3*C, std::max(NH*T, Vp));
-    config.modep.preLogits_dB = 8; //(int)ceil(B*4.0f*C/nTmp);   
+    // config.modep.preLogits_dB = 8; //(int)ceil(B*4.0f*C/nTmp);   
     int dB = config.modep.preLogits_dB;        
     assert(B%dB==0);
 #ifdef _TENSOR_G_

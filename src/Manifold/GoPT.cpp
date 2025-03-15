@@ -85,8 +85,14 @@ int GGUF_list(CLI_params& config)  {
     return 0x0;
 }
 
-int Fish_bubble(CLI_params& config)  {    
+
+
+    
+int Fish_bubble(CLI_params& config)  {  
+    g_dump_level = 0;  
     config.wiki_actor = "copy";
+    config.common.n_batch = 1;
+    config.modep.preLogits_dB = 1;
     arrHWIKI wikis = WIKI::MakeInstance("wikis",config,0x0);
 #if !defined(NDEBUG)
     // config.common.n_ctx = 17;     config.common.n_batch = 1;      config.nLayerX=1;      //Only for debug
@@ -102,8 +108,9 @@ int Fish_bubble(CLI_params& config)  {
         //ggml_graph_comp0(_gf,0x0);   //only for comparsion
     }        
     else{
-        if(!fish->LoadTrain())
-            return -1;
+        //  tpInitWeight=SERIALIZE  then isLoadCheckpoint = GGUF_Serialize(config.checkpoint.in,false,0x0);
+        // if(!fish->LoadTrain())
+        //     return -1;
         fish->GenSentence();
     }
         
@@ -129,7 +136,7 @@ int fish_1(CLI_params& config)  {
 }
 
 bool _LoadCheckPoint(CLI_params& config,arrHWIKI& wikis,int flag=0x0){ 
-    if (config.save.checkpoint_in.empty())
+    if (config.checkpoint.in.empty())
         return false;
                
     hFISH fish = Fish::MakeInstance("Fish_",config,wikis,Fish::ROLE_TYPE::COMMON,0x110);  
@@ -291,16 +298,17 @@ GeneratOnPrompt::GeneratOnPrompt(CLI_params&cp_,arrHWIKI& wiki_, const Fish *hG_
 
 bool GeneratOnPrompt::Init(const std::string &prompt_, int flag)    {
     // std::tie(model, ctx) = llama_init_from_gpt_params(params);
+    int n_vocab = 0;
     if(fish_1!=nullptr) {
         dialogs = std::make_shared<SampLoader>(fish_1,"gpt", true);       
         dialogs->Prepare(fish_1->hOPT.get(), fish_1->tsEval[0]); 
         dialogs->isRecycle = false;
-        dialogs->type = SampLoader::TYPE::DT_EVAL;          
+        dialogs->type = SampLoader::TYPE::DT_EVAL;       
+        n_vocab = fish_1->nClass();   
     }
-    int n_vocab;
+    
     if (wikis.empty()){     CHILD_0909_WIKIS
-        n_ctx = config.n_ctx();
-        n_vocab = fish_1->nClass();
+        n_ctx = config.n_ctx();        
         _logits = new float[n_vocab];
         // dialogs->init(config.prompt.c_str(), B, T, 0, 1, 0);
 
@@ -435,7 +443,9 @@ int NLP_AutoRegressive::GenSentence(int flag)  {
     hSampLoader hLoader = hOPT->val_loaders[0];
     if(hLoader->num_batches==0 )    {
         hLoader->InitOneSamp(prompt,nullptr,0x110);
+        hLoader->isRecycle = false;
     } 
+    //  
     vector<TOKEN_ID>& piffle = hLoader->GetTokens();
     // assert(preLogits->type == typNUMBER::F32);
     vector<TOKEN_ID> answer;
@@ -446,7 +456,7 @@ int NLP_AutoRegressive::GenSentence(int flag)  {
         float *preP = (float *)(preLogits->data)+i*nVocab;
         TOKEN_ID t = Sample_CDF(nVocab,preP,&rng_seed);
         piffle[i] = t;      answer.push_back(t); 
-        string a = hDict->T2STR(answer),b=hLoader->sentence,s=hDict->T2STR(t);   
+        string a = hDictVAE->T2STR(answer),b=hLoader->sentence,s=hDictVAE->T2STR(t);   
         _INFO("\r\t%s\t(%.*s)",a.c_str(),64,b.c_str());        //_INFO("%s+[%s] ",a.c_str(), answer.c_str());
         fflush(stdout);
     }
@@ -736,7 +746,7 @@ std::string GeneratOnPrompt::T2STR(TOKEN_ID tok,int flag){
     NLP_AutoRegressive *dolphin = dynamic_cast<NLP_AutoRegressive *>(fish_1);
     std::string token_str;
     if(dolphin!=nullptr)
-        token_str = dolphin->hDict->T2STR(tok);
+        token_str = dolphin->hDictVAE->T2STR(tok);
     else{
         token_str = wikis[0]->T2STR(tok);
     }

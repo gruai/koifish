@@ -27,14 +27,16 @@ int main(int argc, char ** argv) {
     printf("\n%s: seed: %u\n", __func__, params.common.seed);
     srand(params.common.seed);
     params.OnArch();    
-    if(params.test=="GPT_work")
-        return GPT_work(params);    
+    // if(params.test=="GPT_work")      //  Deprecated
+    //     return GPT_work(params);    
     if(params.test=="fish_1")
         return fish_1(params);   
     if(params.test=="GGUF_list")
         return GGUF_list(params);     
     if(params.test=="bubble")
         return Fish_bubble(params);   
+    if(params.test=="token")
+        return Fish_token(params);   
     // if(params.test=="tutor")
     //     return Tutor(params);   
     

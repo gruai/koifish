@@ -2,8 +2,10 @@
 #include "./llm_c/global_norm.cuh"
 #include "../../ggex/GTensor.hpp"
 
+// const int block_512 = 512;
 cuTensor::cuTensor(const string&name_,SHAPE shape,typNUMBER tpD_,bool isX,int flag) : GTensor(shape,tpD_,false,flag){
     size_t nEle=size();
+    flags |= BIT_FLAG::F_GPU;
     // hFish->InitGensor(nullptr,name,attn,false);
     if(!name_.empty())
         snprintf(name, sizeof(name), "%s",name_.c_str());
@@ -15,7 +17,7 @@ static size_t szMaloc = 0;
 bool cuTensor::Alloc(int tpX,int flag){
     if(BIT_TEST(flags,F_NOALLOC))   // For example: operator fusing, memory reuse,rematerialization
         return true;
-
+    
     assert(szData>0);
     cudaError_t error = cudaMalloc((void**)&data, szData);
     if (error != cudaSuccess) {
@@ -25,7 +27,7 @@ bool cuTensor::Alloc(int tpX,int flag){
     cudaCheck(cudaMemset(data, 0, szData));
     size_t sz = szData;
     if(isParam()){
-        InitParam(tpX,flag);
+        InitParam(tpX,flag);    
         cudaError_t error = cudaMalloc((void**)&grad, szData);      sz+=szData;
         if (error != cudaSuccess) {
             printf("[CUDA Alloc] failed @%s, ERR=%s\n", name, cudaGetErrorString(error));
@@ -53,11 +55,11 @@ bool cuTensor::InitParam(int tpX,int flag){
     size_t nElem0 = size(),i;
     size_t nInit = size(1),nB = BPE(type);
     
-    if(tpInit>0){
+    if(tpInit>0 && tpInit!=SERIALIZE){
         mt19937_state init_rng;            
         floatX* tmp = new floatX[nInit];
         switch(tpInit){
-        case 1:
+        case FIX_1:
             for(i=0;i<nInit;i++)        tmp[i]=1; 
             break;
         default:
@@ -82,7 +84,7 @@ bool cuTensor::CopyGG(struct ggml_tensor*gg_,int flag) {
     int i=0;
     assert(gg == nullptr );
     bool isAlloc = data!=nullptr;
-    
+    void *src = gg_->data;
     if(!isAlloc){    
         memcpy(name,gg_->name,sizeof(char)*GGML_MAX_NAME);
         for(i=0;i<GGML_MAX_DIMS;i++)  {
@@ -92,8 +94,8 @@ bool cuTensor::CopyGG(struct ggml_tensor*gg_,int flag) {
         type = (typNUMBER)gg_->type;
         Alloc( );
         // flags = gg_->flags;     //bug in ggml: don't support flag serialization        
-        size_t nB = BPE(type);     // ggml_row_size  ???
-        szData = size()*nB;          
+        double fnB = BPE(type);     // ggml_row_size  ???
+        szData = size()*fnB;          
     }else{
         for(i=0;i<shape.size();i++)  {
             if(BIT_TEST(flags,F_PADDED))
@@ -104,39 +106,42 @@ bool cuTensor::CopyGG(struct ggml_tensor*gg_,int flag) {
                 assert(nb[i] == gg_->nb[i]);
         }
     }
-    size_t sz = ggml_nbytes(gg_);  
+    size_t szSrc = ggml_nbytes(gg_);  
     if(type==(typNUMBER)gg_->type) {
-        if(sz!=szData){ //bug
-            assert(strcmp(name,"token_embd.weight")==0);
-            return true;
+        if(szSrc!=szData){ 
+            if(BIT_TEST(flags,F_PADDED)){
+                assert(strcmp(name,"token_embd.weight")==0 && szSrc<=szData);
+            }else{
+                assert(0);
+            }            
         }
     };  
 
 #ifdef _TENSOR_G_
-   bool toDevice = SerialGP(gg_->data,nullptr,false,0x0);
+   bool toDevice = SerialGP(src,nullptr,szSrc,false,0x0);
    assert(toDevice);
 #endif
+    // if(src!=data)       delete[] src;
     return true;
 }
 
-hGTensor cuTensor::CrossEntropy( const hGTensor b,int flag ){
-    return b;
-}
-
-bool cuTensor::SerialGP(void *hostD,void *hostG,bool isToHost,int flag)   {
+//  this <=> Y
+bool cuTensor::SerialGP(void *yD,void *yG,size_t szY,bool isToY,int flag)   {
 try{
-    if(isToHost){
-        cudaCheck(cudaMemcpy(hostD,data, szData, cudaMemcpyDeviceToHost));
-        if(hostG!=nullptr){
+    if(isToY){
+        assert(szY>=szData);
+        cudaCheck(cudaMemcpy(yD,data, szY, cudaMemcpyDeviceToHost));
+        if(yG!=nullptr){
             assert(grad!=nullptr);
-            cudaCheck(cudaMemcpy(hostG,grad, szData, cudaMemcpyDeviceToHost));
+            cudaCheck(cudaMemcpy(yG,grad, szY, cudaMemcpyDeviceToHost));
         }
     }else{
-        cudaCheck(cudaMemcpy(data, hostD, szData, cudaMemcpyHostToDevice));
-        if(hostG!=nullptr){
+        assert(szY<=szData);
+        cudaCheck(cudaMemcpy(data, yD, szY, cudaMemcpyHostToDevice));
+        if(yG!=nullptr){
             assert(grad!=nullptr);
-            cudaCheck(cudaMemcpy(grad, hostG, szData, cudaMemcpyHostToDevice));
-            cudaCheck(cudaMemcpy(grad, hostG, szData, cudaMemcpyHostToDevice));
+            cudaCheck(cudaMemcpy(grad, yG, szY, cudaMemcpyHostToDevice));
+            cudaCheck(cudaMemcpy(grad, yG, szY, cudaMemcpyHostToDevice));
         }
     }
     return true;
@@ -173,9 +178,11 @@ __global__ inline void _norm2_kernel(float* out, const T* data,size_t n) {
     }
 }
 
+hGTensor cuTensor::CrossEntropy( const hGTensor b,int flag ){
+    return b;
+}
 
 double tNormOf(const std::vector<hGTensor>& tensors,int flag){
-    const int block_size = 512;
     float* grad_norm_squared,a;
     grad_norm_squared = (float*)(GTensor::scratch_bt4c->data);
     double norm = 0.0f;
@@ -202,7 +209,7 @@ double tNormOf(const std::vector<hGTensor>& tensors,int flag){
 }
 
 double tNormOf(const hGTensor tensor,int flag){
-    const int block_size = 512;
+
     float a,*norm2 = (float*)(GTensor::scratch_bt4c->data);
     int num_slices[2] = {1, 1},zero_stage=1,max_num_block_sums = get_max_num_block_sums(num_slices, 2);
     size_t nz=0;

@@ -23,6 +23,9 @@ hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,vector
     case MODEL_ARCH::NLP_DEEPSEEK:
         fish = std::make_shared<DeepSeek>(nam_+"_DS",params,role_);
         break;
+    case MODEL_ARCH::NLP_MISTRAL:
+        fish = std::make_shared<Mistral>(nam_+"_mistral",params,role_);
+        break;
     case MODEL_ARCH::NLP_GPT2:
     case MODEL_ARCH::NLP_GPT2_char:
         fish = std::make_shared<GPT2>(nam_+"_GPT2",params,role_);
@@ -71,7 +74,7 @@ Fish::Fish(const std::string&nam_,struct CLI_params params,ROLE_TYPE role_,int f
     arch = params.ModelArch();
     
     string w = config.KV({"model","parameter","debug_init_weight"});    // hack parameter only for debug
-    bool isLoad = !config.save.checkpoint_in.empty();
+    bool isLoad = !config.checkpoint.in.empty() || !config.model_card.empty();
     if(role==SWARM_FOLLOWER){
         tpInitWeight = INIT_WEIGHT::COPY_SWARM_HEAD;
     }else{
@@ -177,7 +180,17 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
     bool bRet = false;
     switch (tpInitWeight)    {
     case SERIALIZE:
-        isLoadCheckpoint = GGUF_Serialize(config.save.checkpoint_in,false,0x0);
+        if(!config.model_card.empty()){
+            isLoadCheckpoint = HF_Serialize(false,0x0);
+        }else{
+            string type=FILE_EXT(config.checkpoint.in);
+            if(type==".gguf"){
+                isLoadCheckpoint = GGUF_Serialize(config.checkpoint.in,false,0x0);
+            }else if(type==".calm"){
+                isLoadCheckpoint = CALM_Serialize(config.checkpoint.in,false,0x0);
+            }
+        }
+            
         bRet = isLoadCheckpoint;
         break;
     case COPY_WIKI:
@@ -342,14 +355,14 @@ bool Fish::SaveTrain(string sX,int flag) {
     int64_t iter = hOPT->iter;  //     train->opt->iter;
     // _INFO("%s: iter_%ld\n", __func__, iter);
     string sit = "IT",sOut;
-    string sBaseName = config.save.model_out;  //get_train_filename(.c_str(),sit.c_str(), "", -1  );
-    if (!config.save.checkpoint_out.empty()) {
-        sOut = config.save.checkpoint_out+std::to_string(iter)+sX+".gguf";
+    string sBaseName = config.checkpoint.model_out;  //get_train_filename(.c_str(),sit.c_str(), "", -1  );
+    if (!config.checkpoint.out.empty()) {
+        sOut = config.checkpoint.out+std::to_string(iter)+sX+".gguf";
         GGUF_Serialize(sOut,true,0x0);
         // GGUF_Serialize(sOut,false,0x0); //only for debug
     }
     
-    if (!config.save.model_out.empty()) {
+    if (!config.checkpoint.model_out.empty()) {
         // save_llama_model_file(get_train_filename(data->fn_model_out, data->pattern_fn_it, data->fn_latest, iter).c_str(), data->fn_model_base, data->model);
         vendor = "gruai";                 //llm_arch_from_string
     }
@@ -361,114 +374,71 @@ bool Fish::SaveTrain(string sX,int flag) {
     return true;
 }
 
-#include "gguf.h"
-/*
-    1.  gguf_get_tensor_offset
-*/
-bool Fish::GGUF_Serialize(const std::string&path,  bool isSave, int flag){
-try{
-    if(path.empty())
-        return false;
-    GST_TIC(tic);
-    char buf[1024];
-    struct ggml_context * fctx_data = NULL;
-    struct gguf_context * fctx = NULL;
-    int n_kv = 0,n_tensors = 0;
-    if(isSave){ //KV pairs
-        fctx = gguf_init_empty();
-        // struct ggml_init_params params = {128ull*1024ull*1024ull,NULL,false,};
-        // fctx_data = ggml_init(params);
+#include <sys/mman.h>
+bool Fish::HF_Serialize(bool isSave, int flag){
+    return false;
+}
+bool Fish::CALM_Serialize(const std::string&path, bool isSave, int flag){
+try{    
+    if(isSave){        
     }else{
-        fctx = gguf_init_from_file(path.c_str(), {false,&fctx_data});
-        if (!fctx) {
-            _INFO("%s: failed to load '%s'\n", __func__, path.c_str());
+        int fd = open(path.c_str(), O_RDONLY);
+        if (fd == -1) {
+            return false;
+        }
+        struct stat st;
+        if (fstat(fd, &st) != 0) {
+            close(fd);
+            return false;
+        }        
+        size = st.st_size;
+        void *data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+        if (data == MAP_FAILED) {
+            close(fd);
+            return false;
+        }
+        #ifdef __linux__
+        // increases readahead buffer size, resulting in faster cold loads
+        posix_fadvise(fd, 0, size, POSIX_FADV_SEQUENTIAL);
+        #endif
+        close(fd); // fd can be closed after mmap returns without invalidating the mapping
+
+        // Parse the metadata JSON and the tensors
+        if (size < sizeof(uint64_t)) {
+            munmap(data, size);
             return false;
         }
 
-        _INFO("%s: version=%d alignment=%zu offset=%zu\n", __func__, gguf_get_version(fctx),gguf_get_alignment(fctx),gguf_get_data_offset(fctx));
-        n_kv = gguf_get_n_kv(fctx);
-        _INFO("%s: n_kv: %d\n", __func__, n_kv);
-        for (int i = 0; i < n_kv; ++i) {
-            const char * key = gguf_get_key(fctx, i);
-            _INFO_IF("%s: kv[%d]: key = %s\n", __func__, i, key);
+        uint64_t json_size = *(uint64_t*)data;
+        if (json_size == 0 || json_size > size - sizeof(uint64_t)) {
+            munmap(data, size);
+            return false;
         }
-        if(0){// find kv string
-            const char * findkey = "some.parameter.string";
-            const int keyidx = gguf_find_key(fctx, findkey);
-            if (keyidx == -1) {
-                printf("%s: find key: %s not found.\n", __func__, findkey);
+
+        char* json_ptr = (char*)data + sizeof(uint64_t);
+        void* bytes_ptr = (char*)data + sizeof(uint64_t) + json_size;
+        size_t bytes_size = size - sizeof(uint64_t) - json_size;
+
+        std::string json_str(json_ptr, json_size);
+        JSON header = JSON::parse(json_str);
+
+        for (auto& [key, val] : header.items()) {
+            if (key == "__metadata__") {
+                JSON metadata = val;
             } else {
-                const char * key_value = gguf_get_val_str(fctx, keyidx);
-                printf("%s: find key: %s found, kv[%d] value = %s\n", __func__, findkey, keyidx, key_value);
-            }
-        }
-    }
-    if(isSave){
-        // if(!std::filesystem::exists(path)){
-        //     _INFO("%s: failed to save @'%s'\n", __func__, path.c_str());
-        //     return false;
-        // }
-        for(auto ps : optParams) {            
-            gguf_add_tensor(fctx, G(ps));
-        } 
-        const bool only_meta = false;    
-        gguf_write_to_file(fctx, path.c_str(), only_meta);
-        size_t fsize = F_SIZE(path.c_str());
-        _INFO("[save] @\"%s\" nT=%ld fsize=%gM\tT=%.3g S\n",path.c_str(),optParams.size(),fsize/1.0e6,GST_TOC(tic));
-    }else{
-        n_tensors = gguf_get_n_tensors(fctx);
-        if(isTrain() && n_tensors!=optParams.size()){      //  optParams maybe empty
-            _INFO("%s nOptParams don't match(%d,%d) @%s!",__func__,n_tensors,optParams.size(),path.c_str());
-            return false;
-        }
-        _INFO("[Serialize] n_tensors: %d\n", n_tensors);
-        loadGensors.clear();
-        for (int i = 0; i < n_tensors; ++i) {
-            const char *name = gguf_get_tensor_name  (fctx, i);
-            ggml_tensor *cur = ggml_get_tensor(fctx_data, name);  
-            if(cur==nullptr){
-                _INFO("%s failed to load tensor(%s) @%s!",__func__,name,path.c_str());
-                return false;
-            }
-
-            hGensor target = GetGensor(name);
-            if(target==nullptr){
-                if(strcmp(name,"output.weight")==0 && config.modep.isEmbedWeightTying){
-                    continue;
-                }else
-                    return false;
-            }
-            loadGensors.push_back(target);
-            if(!optParams.empty()){
-                if(!(target->flags & GGML_TENSOR_FLAG_PARAM)){
-                    return false;
+                // Tensor& tensor = tensors[key];
+                hGensor target = GetGensor(key);    //  model.layers.0.attn_norm.weight  
+                assert(target!=nullptr);
+                if (target->SerialJSON(key, val, bytes_ptr, bytes_size) != 0) {
+                    munmap(data, size);
+                    return -1;
                 }
-            }else{
-                assert(!isTrain());
-            }      
-            
-#ifdef _TENSOR_G_       
-            target->CopyGG(cur);
-#else     
-            size_t nEle = tELEM(cur),sz = tBYTE(cur);
-            if(nEle != tELEM(target)) {
-                assert(0);      continue;
             }
-            if(target->type!=cur->type) {
-                Gensor2float_(cur,(float*)target->data,0x0);
-            }else
-                memcpy(target->data,cur->data,sz);
-#endif            
-            if(DUMP()){
-                sprintf(buf,"\t%d d=%d sz=%ld",i,tDIM(target),tBYTE(target));
-                _pt_cys_(buf,target,0x0);      printf("\n");
-            }
-            // _INFO("[Serialize]_%d\t%s: n_dims=%d sz = %ld\n",i,cur->name, tDIM(cur),sz);            
-        }    
+        }
+
+        return true;
     }
-    if(fctx_data!=NULL) ggml_free(fctx_data);
-    gguf_free(fctx);
-    return true;
+    return false;
 }catch(...){
     return false;
 }
@@ -479,7 +449,7 @@ bool Fish::LoadTrain(int flag) {
     int64_t iter = hOPT->iter;  //     train->opt->iter;
     _INFO("%s: ......", __func__);
 
-    auto fpCheck = config.save.checkpoint_in;
+    auto fpCheck = config.checkpoint.in;
     bool isCopy = config.is({"wiki","actor"},"copy") && wikis.size()>0;
     if (fpCheck.empty()){
         if(wiki_tutor!=nullptr)
@@ -923,8 +893,11 @@ bool EDGE_DEVICES::Reserve(hTGraph graph,int flag){
     return bRet;
 }
 size_t EDGE_DEVICES::Alloc(hTGraph hTG,struct ggml_context *ctx,int flag)    {
+    INIT_WEIGHT tpInitWeight = hTG->hFish->tpInitWeight;
 #ifdef _TENSOR_G_
     for(auto node : hTG->gset){
+        if(tpInitWeight==SERIALIZE)        
+            node->tpInit = tpInitWeight;
         node->Alloc( );
     }
 #else

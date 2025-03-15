@@ -38,6 +38,7 @@ enum MODEL_ARCH {
     _X_,
     NLP_GPT2,       NLP_GPT2_char,
     NLP_LLAMA,
+    NLP_MISTRAL,
     NLP_MAMBA,
 
     NLP_QWEN2,
@@ -47,6 +48,24 @@ enum MODEL_ARCH {
 //////    
     SCORE_,
     SAM_
+};
+
+/**
+ * should have config.json,tokenizer.json & tokenizer_config.json
+ * generation_config.json
+ * model.safetensors.index.json
+*/
+struct MODEL_CARD{
+    static std::string sWeight,sBias,sNorm;
+
+    std::string sCardPath = "",sTokenPath="";
+    std::string sArch,torch_dtype,transformers_version,model_type;
+    JSON jModelParam;   //
+    int vocab_size=-1,bos_token_id,eos_token_id;
+
+    MODEL_CARD()    {}
+    virtual bool Init(const JSON&jConfig,int flag=0x0);
+    bool empty()    {   return sCardPath.empty();  }
 };
 
 struct LAY_PARAM{
@@ -160,7 +179,7 @@ struct DEUG_SWITCH{
 };
 extern DEUG_SWITCH DEBUG;
 
-struct MOEL_params_ {
+struct MODEL_DE_params_ {    
     int preLogits_dB=2; // epsilon for convergence test
     bool isNormalBias = true;  
     bool isSLPBias = true;  
@@ -172,12 +191,13 @@ struct MOEL_params_ {
 
 struct CLI_params {
     struct train_params_ common;  
-    MOEL_params_ modep;
-    struct SaveModel {
-        std::string checkpoint_in,checkpoint_out;
+    MODEL_CARD model_card;
+    MODEL_DE_params_ modep;
+    struct CheckPoint {
+        std::string in,out;
         std::string model_out,model_base;       
     };    
-    SaveModel save;
+    CheckPoint checkpoint;
 
     typNUMBER tpWeight,tpActivation,tpGradient;
 
@@ -215,6 +235,7 @@ struct CLI_params {
 
     JSON jConfig;
     nlohmann::ordered_json jModel;
+    
     MODEL_ARCH ModelArch();
     virtual void OnArch();
     virtual std::string NameOnArch(std::string&name,int flag=0x0);

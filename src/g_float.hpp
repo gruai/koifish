@@ -72,6 +72,30 @@ enum class typNUMBER : uint8_t {
     COUNT   = 39,
 };
 
+inline typNUMBER tpNumOf(const std::string&dtype_str){
+    typNUMBER type = typNUMBER::F32;
+    if (dtype_str == "F32") {
+        type = typNUMBER::F32;
+    } else if (dtype_str == "F16") {
+        type = typNUMBER::F16;
+    } else if (dtype_str == "BF16") {
+        type = typNUMBER::BF16;
+    } else if (dtype_str == "F8_E5M2") {
+        type = typNUMBER::F8E5M2;
+    } else if (dtype_str == "F8_E4M3") {
+        type = typNUMBER::F8E4M3;
+    } else if (dtype_str == "I32") {
+        type = typNUMBER::I32;
+    } else if (dtype_str == "I16") {
+        type = typNUMBER::I16;
+    } else if (dtype_str == "I8") {
+        type = typNUMBER::I8;
+    } else {
+        std::string sErr = "Invalid typNumber@"+dtype_str;
+        assert(0 && sErr.c_str());
+    }
+    return type;
+}
 /*
 enum PrecisionMode {
     typNUMBER::F32,
@@ -81,10 +105,6 @@ enum PrecisionMode {
 };
 
 */
-
-/*enum ggml_type {
-        
-    };*/
 
 /*
     FP16/BF16/FP8/FP4 from different vendors

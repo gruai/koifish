@@ -11,6 +11,12 @@
 
 #include "../Manifold/gLLM.hpp"
 
+Mistral::Mistral( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag)  : NLP_AutoRegressive(nam_,params,role,flag) {
+    assert(arch==MODEL_ARCH::NLP_MISTRAL);
+    config.modep.isSLPBias = false;    
+    config.modep.isNormalBias= false;    
+}
+
 DeepSeek::DeepSeek( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag) : NLP_AutoRegressive(nam_,params,role,flag)  {
     assert(arch==MODEL_ARCH::NLP_DEEPSEEK);
     config.modep.isSLPBias = false;    

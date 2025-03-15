@@ -321,7 +321,7 @@ double OPT_Adam::UpdateTensorParam(hGensor hP,size_t offset,floatX *gX,float cli
     if(isToHost){
         paramX = (floatX*)_tmp;     gX=paramX+hP->szData;
         paramX0 = paramX,           gX0 = gX;
-        hP->SerialGP(paramX,gX,true);           x00 = T2Float(paramX);     
+        hP->SerialGP(paramX,gX,hP->szData,true);           x00 = T2Float(paramX);     
         if(DEBUG.train_hyperparams==1){
             clip = 1.0e-6;        
         }else{
@@ -353,7 +353,7 @@ double OPT_Adam::UpdateTensorParam(hGensor hP,size_t offset,floatX *gX,float cli
     UpdateTensorParam_cuda(hP,offset,this,grad_norm,0x0);     
     if(isToHost){
         x = T2Float(paramX0);               g0 = x-x00;
-        hP->SerialGP(paramX0,gX0,false);
+        hP->SerialGP(paramX0,gX0,hP->szData,false);
     }    
 #else    
     GD_METHOD tpCurGD = tpGD;
@@ -464,7 +464,7 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
     string suf,pref;
     
     _INFO("\nOptimizer::%s@<%s> %s device=[%s] \n", __func__,_fish->hBackTG->name.c_str(),
-        _fish->isLoadCheckpoint?config.save.checkpoint_in.c_str():"",
+        _fish->isLoadCheckpoint?config.checkpoint.in.c_str():"",
         hEDS->__repr__(suf,pref,0).c_str());
     _INFO("\t Accumulation=%d AdaptiveSched=%d GRAP=%p rZMUV=%g rLARS=%g \n",nGradAccum,(int)isAdaptiveSched,grad,config.ZMUV_ratio,config.lars_ratio );
         // tpGD=SGD_HYBRID;    //ADAMw      SGD_v    SGD_HYBRID        SGD_blk_v
@@ -901,7 +901,7 @@ bool Optimizer::PrepareData( CLI_params& config,int flag )   {
         if( train_loader->Serialize(spTrain,false) 
             && val_loader->Serialize(spEval,false)){
                 if(train_loader->len()>0){
-                    // hDict->nUniqueToken = train_loader->n_unique_tokens; 
+                    // hDictVAE->nUniqueToken = train_loader->n_unique_tokens; 
                     // _INFO("%s: nTrain=%zu nEval=%zu tpBatchSample=%s T=%.3g\n", __func__, train_loader->len(),val_loader->len(),GST_TOC(tic));
                     isLoadOK = true;
                 }

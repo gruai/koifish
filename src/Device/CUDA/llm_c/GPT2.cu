@@ -32,7 +32,7 @@ __global__ void __launch_bounds__(1024) test_print_kernel(half *__restrict__ arr
 
     }
 }
-static int recompute=1;     //  int V=50257,Vp=50304,
+// static int recompute=1;     //  int V=50257,Vp=50304,
 static unsigned long long rng_state=0;
 float* accumulated_mean_loss=nullptr;
 bool cuClear(std::vector<hGTensor> tensors,int flag){
@@ -143,7 +143,7 @@ float RAW_backward(Fish *fish,const int* iX, int grad_accum_steps,bool isOnlyEva
     NVTX_RANGE_FN();
     bool last_step = micro_step == grad_accum_steps - 1;
     auto config = fish->config;
-    int B,T,C,L = config.nLayer(),NH = config.n_head(),tpFuseNormal=config.Fuse_Normal;      
+    int B,T,C,L = config.nLayer(),NH = config.n_head();      
     fish->GetBTC(B,T,C);
     hGensor cur=nullptr;      
     OutCLS* cls = fish->GetNeuron<OutCLS>("OutCLS",0);
@@ -217,7 +217,7 @@ void RAW_forward(Fish *fish,int flag) {
         cur=QKV0->norm.FUSE_cuda(cur);   
     } 
 
-    FFN *ffn=nullptr,*lastFFN=nullptr;
+    FFN *ffn=nullptr;
     for (int l = 0; l < L; l++) {
         NvtxRange layer_range("Layer", l);
         QKV = fish->GetNeuron<SelfAttention>("SelfAttention",l);
@@ -295,10 +295,10 @@ int UpdateTensorParam_cuda(hGTensor tensor,size_t np,Optimizer *hOPT,float& grad
     CLI_params config = hOPT->_fish->config;
     ADAM_params_ adam = hOPT->TrainParams().adam;
     auto& im = hOPT->_fish->GetGensorInfo(tensor);
-    GD_METHOD tpCurGD = hOPT->tpGD;
-    if(hOPT->tpGD==SGD_HYBRID){
-        tpCurGD = im.isAdam ? ADAMw : SGD;
-    }
+    // GD_METHOD tpCurGD = hOPT->tpGD;
+    // if(hOPT->tpGD==SGD_HYBRID){
+    //     tpCurGD = im.isAdam ? ADAMw : SGD;
+    // }
     float learning_rate=hOPT->LearningRate(),beta1=adam.beta1, beta2=adam.beta2, eps=adam.eps,weight_decay=adam.decay*adam.alpha;
     int num_slices = 1,iter=hOPT->GetITER();
     unsigned int seed = random_u32(&rng_state);
@@ -342,7 +342,7 @@ int RAW_update(std::vector<hGTensor>& tensors,Optimizer *hOPT,float& grad_norm,i
     float learning_rate = hOPT->LearningRate();
     float beta1=adam.beta1, beta2=adam.beta2, eps=adam.eps,weight_decay=adam.decay*adam.alpha;
     NVTX_RANGE_FN();
-    size_t shard_num_parameters = adam.n_parameters,np=0;
+    size_t np=0;
     int num_slices = 1,iter=hOPT->GetITER();
     
     // for (int i = 0; i < NUM_PARAMETER_TENSORS; i++) {        // generate a unique seed for each tensor

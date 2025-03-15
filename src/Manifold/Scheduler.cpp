@@ -16,7 +16,7 @@ LearnSKDU::LearnSKDU(struct train_params_& train_params) : _params(train_params)
         mostIter = _params.nEpochIter;   
     }
     if(mostIter<warmup){
-        warmup = mostIter/10;       assert(warmup>0);
+        warmup = max(1,mostIter/10);       assert(warmup>0);
     }
 }
 

@@ -1,3 +1,4 @@
+#include <filesystem> // C++17
 #include "GST_util.hpp"
 
 int GST_util::dump=10;
@@ -64,3 +65,8 @@ extern inline FILE *fexist_check(const char *path, const char *mode, const char 
     }
     return fp;
 }
+
+std::string FILE_EXT(const std::string&path)	{
+    std::filesystem::path filePath = path;
+    return filePath.extension();
+}	

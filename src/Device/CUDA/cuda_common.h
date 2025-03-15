@@ -192,7 +192,7 @@ inline void file_to_device(void* dest, FILE* src, size_t num_bytes, size_t buffe
 extern cudaStream_t main_stream;
 extern int g_dump_level;
 template <typename T>
-void inline PrintTensor(const char* title,T *src, bool isDevice,int n1,int n2,int n3=1,int n4=1,int flag=0x0){
+void inline PrintTensor(const char* title,const T *src, bool isDevice,int n1,int n2,int n3=1,int n4=1,int flag=0x0){
     if( g_dump_level>0 && flag>=0 ) return;
 
     T *dst=(T*)src; 

@@ -24566,6 +24566,8 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // SPDX-License-Identifier: MIT
 #include <iostream>
 using JSON = nlohmann::ordered_json;
+
+bool LoadJsonFile(const std::string&jPath,JSON&jObj,int flag=0x0);
 JSON jKEY(const JSON& jConfig,const std::vector<std::string>&keys,int flag=0x0);
 
 template<typename T>

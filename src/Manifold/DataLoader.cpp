@@ -39,7 +39,7 @@ std::string mt19937_seed_to_state(unsigned seed) {
 void SAMP::Refresh(SampLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,int typ)  {
     assert(0);      // Deprecated
     auto target_probs = loader->hOPT->hTargetProbs();
-    int64_t n_vocab=target_probs->ne[0],n_tokens=target_probs->ne[1],nSampInBatch=target_probs->ne[2];
+    int64_t nVocab()=target_probs->ne[0],n_tokens=target_probs->ne[1],nSampInBatch=target_probs->ne[2];
     std::string sentence;
     struct llama_context * lctx = static_cast<llama_context *>(ctx);
     if(typ==-1)     //tpBatchSample=="stacking"
@@ -68,7 +68,7 @@ void SAMP::Refresh(SampLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,in
 
 double SampLoader::DecodeVerify(hSAMP samp,hGensor tokens,hGensor logits,int flag)    {
     int nC = tokens->ne[0],nB = tokens->ne[1],b,c,j,cand=-1,nz=0;
-    int _nvocab = hDict->n_vocab;
+    int _nvocab = hDict->nVocab();
     assert( tokens->type== typNUMBER::I32 && tokens->ne[2]==1);
     double off=0,sum=0,avg,last_err=0;
     float *p = nullptr,p1,accu_self=0;
@@ -150,10 +150,10 @@ void SampLoader::Samp2Batch(int k,hSAMP samp,struct train_params_& params,int fl
     auto dialect = hDict->dialect;
     bool fill_with_next_samples=params.fill_with_next_samples,isDialect = hDict->isDialect;
     size_t starting=samp->pos+samp->jump,_nctx = params.n_ctx,_nToken=nTokens();            //    tokens_input->ne[0];;    
-    hostBatch->Set(0, k, 0, 0, hDict->bos);  //ggml_set_i32_nd(G(tokens_input), 0, k, 0, 0, hDict->bos);
-    samp_toks.push_back(hDict->bos);
+    hostBatch->Set(0, k, 0, 0, hDict->bos_id);  //ggml_set_i32_nd(G(tokens_input), 0, k, 0, 0, hDict->bos);
+    samp_toks.push_back(hDict->bos_id);
     for (int64_t i=0; i<_nctx; ++i) {    
-        TOKEN_ID token = hDict->eos,mask;        
+        TOKEN_ID token = hDict->eos_id,mask;        
         
         // eos ???
         if (starting >= _nToken) {
@@ -163,7 +163,7 @@ void SampLoader::Samp2Batch(int k,hSAMP samp,struct train_params_& params,int fl
         if(starting<_nToken)
             token = TokenAt(starting); 
         else    
-            token = hDict->eos;
+            token = hDict->eos_id;
         if(isDialect){
             assert(dialect[token]>0);
             token = hDict->mapT2T[token];
@@ -344,7 +344,7 @@ size_t SampLoader::UpdateBatch(int x,Fish* fish){
     hGensor tokens_input=fish->Input(),target_probs=hOPT->hTargetProbs();    assert(tokens_input!=nullptr);
     int *raw_t = (int*)(tokens_input->data);
 #ifdef _TENSOR_G_
-    assert(isInRange((int*)(hostBatch->data),hostBatch->size(),0,hDict->n_vocab));
+    assert(isInRange((int*)(hostBatch->data),hostBatch->size(),0,hDict->nVocab()));
     tokens_input->OverWrite(hostBatch);
     if(target_probs!=nullptr)    {
         target_probs->OverWrite(hostTargetProbs);    
@@ -412,7 +412,7 @@ bool SAMP::Serialize(FSerial&S, bool isSave, int flag){
     return true;
 }
 
-std::vector<hDataToken> DataTokenSet::MakeInstance(struct CLI_params& params,ConsiceDict *hDict, int flag){
+std::vector<hDataToken> DataTokenSet::MakeInstance(struct CLI_params& params,hTokenizer hDict, int flag){
     DataTokens dts;
     JSON jdata = jKEY(params.jConfig,{"datasets"});
     string type="";
@@ -435,8 +435,14 @@ std::vector<hDataToken> DataTokenSet::MakeInstance(struct CLI_params& params,Con
             type = jKV(v,{"type"},type);
             if(type=="hellaswag")
                 hTokenset = std::make_shared<Tokenset_HellaSwag>(it,hDict); 
-            else
-                hTokenset = std::make_shared<GlobTokenset>(it,hDict);   
+            else {
+                if(v.find("prompt")!=v.end())
+                    hTokenset = std::make_shared<PromptTokenset>(it,hDict); 
+                else if(v.find("glob")!=v.end())
+                    hTokenset = std::make_shared<GlobTokenset>(it,hDict);  
+                else
+                    assert(0);
+            }
             dts.push_back(hTokenset);  
         }        
     }
@@ -449,7 +455,7 @@ try{
     FSerial S(path,isSave,flag);
     if(!S.isValid())
         return false;
-    int _nvocab = hDict->n_vocab;
+    int _nvocab = hDict->nVocab();
     uint32_t seed=hOPT->TrainParams().seed;
     _INFO("%s %s@%s...",__func__,isSave?"save@":"load@",path.c_str());
     _CHECK( S.Serial(_nvocab,isSave,flag) );
@@ -521,14 +527,14 @@ bool SampLoader::Prepare(Optimizer *hO,hDataToken hT,int flag){
     bool isNewTS = hT==nullptr;
     hDict = dolphin->hDict;     
     if(isNewTS){
-        hTokens = std::make_shared<DataTokenSet>(hDict.get());
+        hTokens = std::make_shared<DataTokenSet>(hDict);
     }else
         hTokens = hT;   //dolphin->hTokenset;
     assert(hTokens!=nullptr && hDict!=nullptr);  
     hOPT = hO;  //dolphin->hOPT.get();
     assert(hOPT!=nullptr);
     
-    if(hTokens!=nullptr){
+    if(hTokens!=nullptr && hTokens->nMostShard>0){
         if(!hTokens->LoadNextShard(this))
             return false;
         shard_samps = hTokens->shard_samps;
@@ -556,7 +562,7 @@ bool SampLoader::Prepare(Optimizer *hO,hDataToken hT,int flag){
     if(isTarget_1){
         hostTargetProbs = std::make_shared<GTensor>( sp1,typNUMBER::I32);
     }else{
-        sp1={hDict->n_vocab, n_ctx, n_batch};
+        sp1={hDict->nVocab(), n_ctx, n_batch};
         hostTargetProbs = std::make_shared<GTensor>( sp1,typNUMBER::F32);
     }
     hostBatch->Alloc();     hostTargetProbs->Alloc();
@@ -710,6 +716,9 @@ string SampLoader::sTokenSet(int flag){
 }
 
 void SampLoader::Shuffle(int flag)  {
+    if(empty())
+        return;
+        
     size_t count = shard_samps.size(),i;
     assert(count>0);
     struct train_params_ _params = hOPT->TrainParams();
@@ -789,7 +798,7 @@ static size_t mark_utf8_units(const char* bytes, int * utf8_units, int * utf8_nu
     return count_utf8;
 }
 
-int ConsiceDict::STR2T(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag)  {   
+int DictVAE::STR2T(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag)  {   
     int n_tokens = -1;
     if(wiki_tutor!=nullptr) {
         n_tokens = wiki_tutor->STR2T(txt,btch,flag);
@@ -801,11 +810,11 @@ int ConsiceDict::STR2T(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,in
         int n_tokens = llama_tokenize( lam_, txt,txt_len,btch.data(),(int) btch.size(),tokenizer_add_bos, false);*/
         
     }
-    if(tokenizer_add_bos)
-        assert(btch[0]==bos);
+    // if(tokenizer_add_bos)
+    //     assert(btch[0]==bos);
     return n_tokens;
 }
-std::string ConsiceDict::T2STR(TOKEN_ID tok,int flag ) { 
+std::string DictVAE::T2STR(TOKEN_ID tok,int flag ) { 
     string word = "";
     
     if(wiki_tutor!=nullptr){
@@ -922,7 +931,7 @@ hSAMP SampLoader::InitOneSamp(const string &prompt,hGensor input, int flag){
     shard_samps.push_back(new SAMP(0,n_tokens));    
     hSAMP samp = shard_samps[0];
     // assert(_nvocab==0);
-    // _nvocab = hDict->n_vocab;
+    // _nvocab = hDict->nVocab();
     num_batches = 1;
     sentence = hDict->T2STR(hTokens->tokens);
 
@@ -949,13 +958,13 @@ bool DataTokenSet::InitSamps(unsigned context_length,std::vector<size_t>& sample
 }
 
 void DataTokenSet::Append(TOKEN_ID id,int flag){
-    assert(id>=0 && id<hDict->n_vocab);
+    assert(id>=0 && id<hDict->nVocab());
     tokens.push_back(id);
 }
 int DataTokenSet::UniqueTokens(size_t n_1,int flag){
     mapT2T.clear();
     // std::vector<size_t> token_noccurs;
-    dialect.resize(nVocab, 0);   //params.n_vocab
+    dialect.resize(nVocab, 0);   //params.nVocab()
     assert(nVocab>0);
     for (unsigned int i = 0; i < tokens.size(); ++i) {
         TOKEN_ID id = tokens[i];

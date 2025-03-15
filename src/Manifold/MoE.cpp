@@ -77,7 +77,7 @@ LLM_MOE::LLM_MOE( const std::string& nam_,struct CLI_params params,ROLE_TYPE rol
 
 size_t LLM_MOE::MostMemSize(int flag)  {
     int n_layer = config.nLayer();
-    int nHead = hDict!=nullptr ? hDict->nLevel*3+2+6 : 6; 
+    int nHead = hDictVAE!=nullptr ? hDictVAE->nLevel*3+2+6 : 6; 
     size_t sz0 = ggml_tensor_overhead(),sz = sz0*2*(nHead + n_layer*18);
     return sz;
 }    
@@ -156,7 +156,7 @@ hGensor NLP_AutoRegressive::build_gate(struct ggml_context * ctx,hGensor cur,hGe
 #else
     bool isRes = true,isSiLU=false;
 
-    int n_vocab = hDict->tVocab(),n_batch = config.common.n_batch,n_ctx = config.common.n_ctx,n_embd = config.n_embd;
+    int n_vocab = hDictVAE->tVocab(),n_batch = config.common.n_batch,n_ctx = config.common.n_ctx,n_embd = config.n_embd;
     int nWiki = wikis.size(),i=0;        CHILD_0909_WIKIS
     size_t N0=cur->ne[0],ld1=(nWiki+1)*cur->nb[0];    
     assert(nWiki+1 == mom.embed2w->ne[1]);

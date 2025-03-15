@@ -27,9 +27,6 @@ using namespace std;
 #include "../ggex/GTensor.hpp"
 #include "DataLoader.hpp"
 
-static const string sWeight=".weight",sBias=".bias";        //".w"
-static const string sNorm="_norm";            //".norm"
-
 class Fish;
 struct NeLayer;
 struct LayerNormal;
@@ -75,6 +72,7 @@ public:
     virtual ~GeNeuron() { ; }
 
     virtual bool isValid();
+    virtual bool isOnlyInfer();
     virtual bool isForward();
     // 1. Set C/T/H/...
     virtual void Init(Fish *hG_, int flag=0x0);
@@ -347,7 +345,7 @@ struct FFN_MOE : public FFN{
     MOE Moe;
 };
 
-struct OutCLS : public GeNeuron  {
+struct OutCLS : public GeNeuron  {    
     LayerNormal norm;
     SLP proj;
     hGTensor target=nullptr,preLogits=nullptr;

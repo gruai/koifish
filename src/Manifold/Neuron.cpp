@@ -155,7 +155,7 @@ bool Embed::Build(int flag){
     typNUMBER tpData = GTensor::tpFloatX;
 
     bool isTrain = hFish->isTrain();
-    string sw = name+sWeight,sb=name+".pos"; 
+    string sw = name+MODEL_CARD::sWeight,sb=name+".pos"; 
 #ifdef _TENSOR_G_ 
     if(hFish->config.modep.isPaddedCls) {
         flagW |= GTensor::F_PADDED;
@@ -163,7 +163,7 @@ bool Embed::Build(int flag){
     }else
         padded_nCls =n;   
     w = TENSO(ctx, tpData, {latent, padded_nCls},flagW); //padded_nCls
-    w->x_shape = {latent,n};
+    if(padded_nCls>n)   w->x_shape = {latent,n};
 #else
     w = TENSO(ctx, tpData, {latent, n});
 #endif    
@@ -247,7 +247,7 @@ bool FFN::Build(int flag_0)   {
 #else    
     gate.BuildX(name+"_gate",{shape[0],shape[1]},hFish,flag);
 #endif
-    norm.BuildX(name+sNorm,sp,hFish,flag);        //layer->ffn_norm.sT="f";
+    norm.BuildX(name+MODEL_CARD::sNorm,sp,hFish,flag);        //layer->ffn_norm.sT="f";
     up.BuildX(name+"_up",{shape[0],latent},hFish,flag);  
     down.BuildX(name+"_down",{latent,shape[0]},hFish,flag);        
 #ifdef _TENSOR_G_
@@ -333,7 +333,7 @@ MOE::MOE(Fish* hG_,const std::string&key_,JSON::const_iterator jit,int flag) : G
     // up.Init(hG_,flag);       down.Init(hG_,flag);       relu.Init(hG_,flag); 
 }
 bool MOE::Build(int flag)   {
-    string sw = name+sWeight,sb=name+".bias";
+    string sw = name+MODEL_CARD::sWeight,sb=name+".bias";
     bool isTrain = hFish->isTrain();    
     int nIn=shape[0];
     struct ggml_context * ctx = hFish->GetGGCTX();
@@ -494,13 +494,13 @@ bool SLP::Build(int flag)      {
         assert(0);
     }
 
-    string sw = name+sWeight,sb=name+".bias",so=name+".out"; 
+    string sw = name+MODEL_CARD::sWeight,sb=name+".bias",so=name+".out"; 
     bool isTrain = hFish->isTrain();
     hFish->InitGensor(ctx,sw.c_str(),w,isTrain);
     if(isBias)  
         hFish->InitGensor(ctx,sb.c_str(),b,isTrain);
 #ifdef _TENSOR_G_        
-    if(b!=nullptr)  b->tpInit = 0;
+    if(b!=nullptr)  b->tpInit = INIT_WEIGHT::W_SKIP;
     SHAPE s3={B,T,nOut};
     out = std::make_shared<cuTensor>(so,s3,tpData,false);    
     // hFish->InitGensor(ctx,so.c_str(),out,false);    
@@ -659,7 +659,7 @@ bool LayerNormal::Build(int flag)    {
     // name = key_;
     struct ggml_context * ctx = hFish->GetGGCTX();
     assert(shape.size()==1 && shape[0]>0 );
-    string sw = name+sWeight,sb=name+".bias";
+    string sw = name+MODEL_CARD::sWeight,sb=name+".bias";
     bool isTrain = hFish->isTrain();    
     int nIn=shape[0];
     if(isAffineTrans){
@@ -671,8 +671,8 @@ bool LayerNormal::Build(int flag)    {
         hFish->InitGensor(ctx,sb.c_str(),b,isTrain);
     }
 #ifdef _TENSOR_G_        
-    w->tpInit=1;    
-    if(b!=nullptr)  b->tpInit=0;
+    w->tpInit = INIT_WEIGHT::FIX_1;    //1???   
+    if(b!=nullptr)  b->tpInit=W_SKIP;
     assert(nIn==C);
     SHAPE sp={B,T},sp3={B,T,nIn};
     out = std::make_shared<cuTensor>(name+".out",sp3,GTensor::tpFloatX,false);    
@@ -806,6 +806,10 @@ bool GeNeuron::isValid()  {
     return true;    
 }
 
+bool GeNeuron::isOnlyInfer(){
+    assert(hFish!=nullptr);
+    return hFish->isLocalInfer;
+}
 bool GeNeuron::isForward()  {   
     assert(hFish!=nullptr);
     bool isForward = !hFish->hOPT->isBackward;

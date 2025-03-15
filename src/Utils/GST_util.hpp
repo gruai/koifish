@@ -83,7 +83,7 @@ using namespace std;
     } while (0)
 
 /*
-	Dataset��Matrix�������ƣ�Ҳ��������κϲ���		 10/19/2014		cys
+	Dataset 		 10/19/2014		cys
 */
 struct Dataset{
 	enum{	TAG_ZERO=0x10 };
@@ -129,6 +129,8 @@ std::string G_STR(const T& x){
 	ss<<x;				
 	return ss.str( );
 }
+
+std::string FILE_EXT(const std::string&path);
 
 class GST_util{
 public:

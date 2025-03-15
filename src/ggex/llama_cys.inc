@@ -894,7 +894,7 @@ void LAMA::CopyParams(CLI_params& hparams,int flag)    {
         return;
 
     hparams.n_layer_train = llama_params.n_layer;
-    hparams.n_embd = llama_params.n_embd;   //would change @ConsiceDict
+    hparams.n_embd = llama_params.n_embd;   //would change @DictVAE
     for(int i=0;i<hparams.n_layer_train;i++){
         // int h0=llama_params.n_head(i),kv0=llama_params.n_head_kv(i),ff0=llama_params.n_ff(i);
         // hparams.layerps.push_back(LAY_PARAM(h0,kv0,ff0));

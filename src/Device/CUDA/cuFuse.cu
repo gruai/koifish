@@ -407,15 +407,14 @@ hGTensor cuTensor::_Multiply(const hGTensor& b) {
 
 int Embed::FUSE_cuda(hGTensor tokens,floatX *scratchX,LayerNormal*neuron_x,unsigned int seed){
 try{
-    int OC=w->ne[1],nCls = shape[1];    
+    int OC=w->ne[1],nCls = shape[1],Vp=nCls;    
     assert(C==w->ne[0]);
     const int* inp=(int*)(tokens->data);
     // assert(isInRange(inp,token->size(),0,nCls));
-    if(isForward()){ 
-        //   cur = w->GetRow(out,tokens,b);       
+    if(isForward()){
         encoder_forward(ToX(out), inp, ToX(w), ToX0(b), B, T, C, main_stream);
-        // PrintTensor<floatX>("wte",params.wte,true,Vp,C);        PrintTensor<floatX>("wpe",params.wpe,true,T,C);
-        // PrintTensor<int>("inputs",model->inputs,true,B,T);      PrintTensor<floatX>("GetRow",ToX(embed->out),true,B,T,C);
+        PrintTensor<floatX>("wte",ToX(w),true,Vp,C);        PrintTensor<floatX>("wpe",ToX0(b),true,T,C);
+        PrintTensor<int>("inputs",inp,true,B,T);            PrintTensor<floatX>("GetRow",ToX(out),true,B,T,C);
     }else{        
         floatX* dresidual = ToX(GTensor::scratch_btc);
         encoder_backward(ToG(w), ToG0(b), scratchX, workload_indices, bucket_info,dresidual, inp, hostInput, B, T, C, seed, main_stream);
@@ -687,7 +686,8 @@ hGTensor OutCLS::FUSE_cuda(hGTensor inpL,hGTensor token_embed,int flag)   {
     floatX* errLogits = ToX(preLogits),*z0=ToX(inpL),*w=nullptr,*gw=nullptr,*pre_gelu=nullptr;  
     floatX* errOut = ToX(GTensor::scratch_bt4c);   //B * T * 4 * C
     if(proj.w==nullptr){ //  isEmbedWeightTying
-        w=ToX0(token_embed);         gw=ToG0(token_embed);
+        w=ToX0(token_embed);       
+        if(!isOnlyInfer())     gw=ToG0(token_embed);
     }else{
         w=ToX(proj.w);         gw=ToG(proj.w);
     }
