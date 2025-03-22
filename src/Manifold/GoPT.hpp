@@ -102,7 +102,7 @@ public:
     // tokenized antiprompts
     std::vector<std::vector<TOKEN_ID>> antiprompt_ids;
 
-    virtual void Embed(int flag=0x0)    {
+    virtual void TokenEmbed(int flag=0x0)    {
         assert(0);  //Deprecated
         // antiprompt_ids.reserve(params.antiprompt.size());
         // for (const std::string & antiprompt : params.antiprompt) {

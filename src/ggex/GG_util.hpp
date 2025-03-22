@@ -267,7 +267,7 @@ inline struct ggml_tensor* gg_axpy_f32(struct ggml_context * ctx,struct ggml_ten
     struct ggml_tensor* result = nullptr;
     ggml_type type = GGML_TYPE_F32;
     if (ggml_is_quantized(a->type) || a->type == GGML_TYPE_F16) {
-        bool is_node = false;       //ggml_add_cast_impl
+        // bool is_node = false;       //ggml_add_cast_impl
         // if (a->grad || b->grad) {
         //     GGML_ASSERT(ggml_are_same_shape(a, b));
         //     is_node = true;

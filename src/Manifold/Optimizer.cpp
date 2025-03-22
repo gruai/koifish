@@ -549,7 +549,7 @@ double Optimizer::GraphCompute(hSampLoader hLoader,hTGraph hTG, int flag){
     bool isOnlyEvaluate = !hTG->isBackward;
     float mean_loss = 0.f;
     OutCLS* cls = _fish->GetNeuron<OutCLS>("OutCLS",0);
-    Embed* embed = _fish->GetNeuron<Embed>("Embed",0);    
+    TokenEmbed* embed = _fish->GetNeuron<TokenEmbed>("TokenEmbed",0);    
 #ifdef _TENSOR_G_    
     embed->hostInput = (int*)hLoader->hostBatch->data;        //(int*)train_loader->hostBatch->data;
     isBackward = false;
@@ -822,7 +822,7 @@ size_t TGraph::Prepare4Train(struct ggml_context *ctx_,GD_METHOD tpGD,int flag){
         }
         // auto& im = gi.second;
         id++;
-        if(!(gensor->flags & GGML_TENSOR_FLAG_PARAM) )
+        if(!(gensor->flags & GTensor::F_PARAM) )
             continue;
         nzAll += nParam;
         if(tpGD == GD_METHOD::SGD_HYBRID){

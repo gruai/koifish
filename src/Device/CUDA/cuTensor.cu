@@ -3,7 +3,7 @@
 #include "../../ggex/GTensor.hpp"
 
 // const int block_512 = 512;
-cuTensor::cuTensor(const string&name_,SHAPE shape,typNUMBER tpD_,bool isX,int flag) : GTensor(shape,tpD_,false,flag){
+huTensor::huTensor(const string&name_,SHAPE shape,typNUMBER tpD_,bool isX,int flag) : GTensor(shape,tpD_,false,flag){
     size_t nEle=size();
     flags |= BIT_FLAG::F_GPU;
     // hFish->InitGensor(nullptr,name,attn,false);
@@ -11,10 +11,14 @@ cuTensor::cuTensor(const string&name_,SHAPE shape,typNUMBER tpD_,bool isX,int fl
         snprintf(name, sizeof(name), "%s",name_.c_str());
     else
         name[0]='\0';
+    
+    if(isX){
+        Alloc(0x0,flag);
+    }
 }        
 
 static size_t szMaloc = 0;
-bool cuTensor::Alloc(int tpX,int flag){
+bool huTensor::Alloc(int tpX,int flag){
     if(BIT_TEST(flags,F_NOALLOC))   // For example: operator fusing, memory reuse,rematerialization
         return true;
     
@@ -39,7 +43,7 @@ bool cuTensor::Alloc(int tpX,int flag){
         printf("\tcudaMalloc=%gM(%gG)@%s shape=[%ld,%ld,%ld,%ld]\n",sz*1.0f/1.0e6,szMaloc*1.0/1.0e9,name,ne[0],ne[1],ne[2],ne[3]);
     return true;
 }
-bool cuTensor::Free() {
+bool huTensor::Free() {
 try{
     if(data!=nullptr)       
     {    cudaFreeCheck(&data);      data=nullptr;   }
@@ -51,7 +55,7 @@ try{
     return true;
 }
 
-bool cuTensor::InitParam(int tpX,int flag){
+bool huTensor::InitParam(int tpX,int flag){
     size_t nElem0 = size(),i;
     size_t nInit = size(1),nB = BPE(type);
     
@@ -80,7 +84,7 @@ bool cuTensor::InitParam(int tpX,int flag){
 /*
    Only for gguf-serialize
 */
-bool cuTensor::CopyGG(struct ggml_tensor*gg_,int flag) {
+bool huTensor::CopyGG(struct ggml_tensor*gg_,int flag) {
     int i=0;
     assert(gg == nullptr );
     bool isAlloc = data!=nullptr;
@@ -126,7 +130,7 @@ bool cuTensor::CopyGG(struct ggml_tensor*gg_,int flag) {
 }
 
 //  this <=> Y
-bool cuTensor::SerialGP(void *yD,void *yG,size_t szY,bool isToY,int flag)   {
+bool huTensor::SerialGP(void *yD,void *yG,size_t szY,bool isToY,int flag)   {
 try{
     if(isToY){
         assert(szY>=szData);
@@ -151,11 +155,11 @@ try{
     
 }
 
-bool cuTensor::OverWrite(hGTensor hGT,bool isSrc,int flag) {    
+bool huTensor::OverWrite(hGTensor hGT,bool isSrc,int flag) {    
     size_t nEle = size();
     assert(isSameShape(hGT) && szData>0);   
     if(isSrc) {
-        cuTensor *src = dynamic_cast<cuTensor *>(hGT.get());
+        huTensor *src = dynamic_cast<huTensor *>(hGT.get());
         if(src==nullptr)    //  Host => Device
             cudaCheck(cudaMemcpy(data, hGT->data, szData, cudaMemcpyHostToDevice));
         else{
@@ -178,13 +182,13 @@ __global__ inline void _norm2_kernel(float* out, const T* data,size_t n) {
     }
 }
 
-hGTensor cuTensor::CrossEntropy( const hGTensor b,int flag ){
+hGTensor huTensor::CrossEntropy( const hGTensor b,int flag ){
     return b;
 }
 
 double tNormOf(const std::vector<hGTensor>& tensors,int flag){
     float* grad_norm_squared,a;
-    grad_norm_squared = (float*)(GTensor::scratch_bt4c->data);
+    grad_norm_squared = (float*)(GTensor::bt4c->data);
     double norm = 0.0f;
     int num_slices[2] = {1, 1},zero_stage=1,max_num_block_sums = get_max_num_block_sums(num_slices, 2);
     size_t nz=0;
@@ -210,7 +214,7 @@ double tNormOf(const std::vector<hGTensor>& tensors,int flag){
 
 double tNormOf(const hGTensor tensor,int flag){
 
-    float a,*norm2 = (float*)(GTensor::scratch_bt4c->data);
+    float a,*norm2 = (float*)(GTensor::bt4c->data);
     int num_slices[2] = {1, 1},zero_stage=1,max_num_block_sums = get_max_num_block_sums(num_slices, 2);
     size_t nz=0;
     bool is_first_pass = true;
@@ -235,7 +239,7 @@ double tNormOf(const hGTensor tensor,int flag){
     return tensor->gnorm;
 }
 
-hGTensor cuTensor::GetRow(hGTensor hOut,hGTensor token,hGTensor pos,int flag)   {
+hGTensor huTensor::GetRow(hGTensor hOut,hGTensor token,hGTensor pos,int flag)   {
     /*floatX *out=(floatX*)(hOut->data),*wte=(floatX*)(data),*wpe=pos==nullptr?nullptr : (floatX*)(pos->data);
     // int nCls = shape[1],i;
     const int* inp=(int*)(token->data);
@@ -261,16 +265,16 @@ if(config.Fuse_Normal==0)
     else
         lnf = &(lastFFN->norm); 
 
-floatX* dresidual = ToX(GTensor::scratch_btc),*scratchX = ToX(cls->preLogits),*dl_bt4c = ToX(GTensor::scratch_bt4c);   
+floatX* dresidual = ToX(GTensor::delta),*scratchX = ToX(cls->preLogits),*dl_bt4c = ToX(GTensor::bt4c);   
         floatX* gb = lnf->b==nullptr ? nullptr : ToG(lnf->b);
         cudaCheck(cudaMemset(dresidual, 0, B * T * C * sizeof(floatX)));
-        PrintTensor<floatX>("back of P",ToX(GTensor::scratch_bt4c),true,B,T,C);
+        PrintTensor<floatX>("back of P",ToX(GTensor::bt4c),true,B,T,C);
         // backward the final layernorm
         SelfAttention *QKV=fish->GetNeuron<SelfAttention>("SelfAttention",L-1),*preQKV=nullptr;
         FFN *ffn=fish->GetNeuron<FFN>("FFN",L-1),*preFFN=nullptr;  
         floatX* residual = ToX(ffn->out);   //acts.residual3 + (L-1) * B * T * C; // last residual is in residual3
         if(config.Fuse_Normal==0){
-            layernorm_backward(dresidual, ToG(lnf->w), gb, (float*)scratchX, ToX(GTensor::scratch_bt4c), residual, ToX(lnf->w), TO<float>(lnf->mean), TO<float>(lnf->rstd), B, T, C, main_stream);
+            layernorm_backward(dresidual, ToG(lnf->w), gb, (float*)scratchX, ToX(GTensor::bt4c), residual, ToX(lnf->w), TO<float>(lnf->mean), TO<float>(lnf->rstd), B, T, C, main_stream);
             PrintTensor<floatX>("back of normal",dresidual,true,B,T,C);
         }
         // from this point on, we no longer need the values stored in the last residual, so we can reuse that memory as generic
@@ -295,7 +299,7 @@ floatX* dresidual = ToX(GTensor::scratch_btc),*scratchX = ToX(cls->preLogits),*d
         }
         if(config.Fuse_Normal==1){
             lnf = fish->GetNeuron<LayerNormal>("LayerNormal",0);
-            layernorm_backward(dresidual, ToG(lnf->w), ToG(lnf->b), (float*)scratchX, ToX(GTensor::scratch_bt4c), residual, ToX(lnf->w), TO<float>(lnf->mean), TO<float>(lnf->rstd), B, T, C, main_stream);
+            layernorm_backward(dresidual, ToG(lnf->w), ToG(lnf->b), (float*)scratchX, ToX(GTensor::bt4c), residual, ToX(lnf->w), TO<float>(lnf->mean), TO<float>(lnf->rstd), B, T, C, main_stream);
             PrintTensor<floatX>("back of normal",dresidual,true,B,T,C);
         }
         int *input = TO<int>(fish->Input());

@@ -24,6 +24,13 @@
 #define ENABLE_BF16
 
 /*
+    Type of Tokens 
+    1. 32bit for DEEPSEEK
+*/
+//typedef uint32_t TOKEN_ID;
+typedef uint16_t TOKEN_ID;
+
+/*
     Type of numbers 
 */
 enum class typNUMBER : uint8_t {
@@ -155,6 +162,7 @@ enum PrecisionMode {
     byte per element of this type
 */
 double BPE(typNUMBER type);
+size_t BPBlck(typNUMBER type);
 const char *cNameOf(typNUMBER type);
 std::string NameOf(typNUMBER type);
 bool isQuantized(typNUMBER type);

@@ -307,7 +307,7 @@ void CLI_params::Dump( )    {
     _INFO("%s::CLI_params: \n", exec_name.c_str());
     // _INFO(" n_vocab: %u", n_vocab);
     _INFO(" n_ctx=%u", n_ctx());
-    _INFO(" n_embd=%u", n_embd);        
+    _INFO(" embd=%u", nEmbed());        
     _INFO(" n_ff=%u", n_ff());
     _INFO(" n_head=%u", n_head());
     _INFO(" n_head_kv=%u", n_head_kv());
@@ -362,6 +362,8 @@ try{
 */
 string MODEL_CARD::sWeight=".weight",MODEL_CARD::sBias=".bias";        //".w"
 string MODEL_CARD::sNorm="_norm";            //".norm"
+string MODEL_CARD::sLayer="blk.";            //".norm"
+string MODEL_CARD::sAttnOut=".wo";           //  "_output";    //  "_cat"
 
 bool MODEL_CARD::Init(const JSON&jConfig,int flag){
     sCardPath = jKV(jConfig,{"model_card"},sCardPath );
@@ -393,16 +395,20 @@ MODEL_ARCH CLI_params::ModelArch()   {
     MODEL_ARCH arch = MODEL_ARCH::_X_;
     string info="";
     if(model_card.empty()){
-        string s = jKV(jConfig,{"arch"},string(""),false); 
+        string s = jKV(jConfig,{"model","arch"},string(""),false); 
         assert(!s.empty());        info = s;
     }else{
         info = model_card.model_type;
     }
+    if(model_title.empty())
+        model_title = info;
 
     std::transform(info.begin(), info.end(), info.begin(), ::toupper);
     arch =  info=="MOE" ? NLP_MOE :
             info=="MAMBA" ? MODEL_ARCH::NLP_MAMBA : 
             info=="DEEPSEEK" ? MODEL_ARCH::NLP_DEEPSEEK : 
+            info=="QWEN2" ? MODEL_ARCH::NLP_QWEN2 : 
+            // info=="QWEN" ? MODEL_ARCH::NLP_DEEPSEEK : 
             info=="GPT2" ? MODEL_ARCH::NLP_GPT2 :
             info=="GPT2CHAR" ? MODEL_ARCH::NLP_GPT2_char :
             info=="LAMA" ? MODEL_ARCH::NLP_LLAMA :
@@ -412,11 +418,14 @@ MODEL_ARCH CLI_params::ModelArch()   {
     return arch; 
 }
 
-void CLI_params::JModel2Params(int flag){
+bool CLI_params::JModel2Params(int flag){
+    string key = "";
+try{
     // nlohmann::ordered_json jm = jKEY(jConfig,{"model"});
+    
     jModel = jKEY(jConfig,{"model"});
     if(jModel.empty()){   
-        return;
+        return false;
     }
     nLayerX = 1;    //at least 1 layer
     nLayerX = jKV(jConfig,{"model","parameter","Layer"},nLayerX );    
@@ -427,18 +436,27 @@ void CLI_params::JModel2Params(int flag){
     assert(layerps.size()==0);
     auto jTrans = jKEY(jConfig,{"model","parameter","transformer"});
     if(!jTrans.empty()){
-        int nH = jKV(jTrans,{"Head"},-1),nF = jKV(jTrans,{"Ffn"},-1),nE = jKV(jTrans,{"Embed"},-1),nC = jKV(jTrans,{"Ctx"},-1);
+        int nH = jKV(jTrans,{"Head"},-1),nF = jKV(jTrans,{"Ffn"},-1),nE=-1,nC = jKV(jTrans,{"Ctx"},-1);
+        auto item = jKEY(jTrans,{"Embed"});
+        if(item.is_string()){
+            string sE = item.get<string>();
+            G_S2TTT_(sE,embeds); 
+        }else{
+            assert(item.is_number_integer());
+            int n = item.get<int>();
+            embeds.push_back(n);
+        }                   
+        assert(embeds.size()>0 && embeds[0]>0);
+        if(nF<0)        
+            nF=nEmbed()*4;
+
         if(nH>0 && nF>0){
             for(int i=0;i<nLayerX;i++)
                 layerps.push_back(LAY_PARAM(nH,nH,nF));
         }else{
             assert(0);
         }
-        if(nE>0)    {
-            n_embd = nE;        assert(n_embd<160*1000 && n_embd>0);
-        }else{
-            assert(0);
-        }
+        
         if(nC>0)    {
             SetNCTX(nC);
             // common.n_ctx = nC; 
@@ -447,11 +465,26 @@ void CLI_params::JModel2Params(int flag){
         }      
     }
     //  n_embd_head_k   n_embd_head_v   ???
+    return true;
+}catch(JSON::parse_error &e){
+    _INFO("\r\n%s  Failed to open %s!!! ERR=%s",__func__,key.c_str(),e.what());
+    return false;
+}   catch(...){
+    _INFO("\r\n%s  Unknown exception @%s!!!",__func__,key.c_str());
+    return false;
+}
 }
 
 uint32_t CLI_params::nThread() const {
     int nT0=std::thread::hardware_concurrency(),nT1=common.n_threads;
     return nT1;
+}
+uint32_t CLI_params::nEmbed(int flag) const {   
+    assert(embeds.size()>0);
+    if(flag==-1) 
+        return embeds[0];
+    int no = embeds.size()-1;
+    return embeds[no];
 }
 void CLI_params::OnMostToken(size_t nMost,int flag){
     double a = nMost*1.0/n_ctx();    //nTokenInBatch();
@@ -462,40 +495,25 @@ void CLI_params::OnMostToken(size_t nMost,int flag){
     common.nMostIter = (int)floor(nMost*common.n_epochs*rSample/nTokenInBatch());
 }    
 
-std::string CLI_params::NameOnArch(std::string&name,int flag){
-    string sx="";
-    if(name=="layer" || name=="Layer")   
-        sx="blk";
-    switch(ModelArch()){
-    case MODEL_ARCH::NLP_GPT2:  
-    case MODEL_ARCH::NLP_GPT2_char:  {
-    }
-        break;
-    case MODEL_ARCH::NLP_MISTRAL:
-        if(name=="layer" || name=="Layer")   
-            sx="model.layers";
-        break;
-    default:
-        
-        break;
-    }
-    return sx;
-}
-
 void CLI_params::OnArch( ){
     int nH=-1;
-    string info = jKV(jConfig,{"arch"},string("")); 
     bool isJModel = !jModel.empty();
+    
+    if (common.seed == -1) {
+        common.seed = time(NULL);
+    }
+    _INFO("seed=%u\n", common.seed);
+    srand(common.seed);
     
     switch(ModelArch()){
     case MODEL_ARCH::NLP_GPT2:  
     case MODEL_ARCH::NLP_GPT2_char:  {
         //baby_GPT      dropout = 0.2
-        // n_head = 6;             n_embd = 384;           dict_latent_dim=n_embd;
+        // n_head = 6;             _embd = 384;           dict_latent_dim=_embd;
         //124M
-        // nH = 12;         n_embd = 768;           DEBUG.dict_latent_dim = 768;
+        // nH = 12;         _embd = 768;           DEBUG.dict_latent_dim = 768;
         n_embd_head_v = 64;         n_embd_head_k = 64;
-        // n_embd = 128; dict_latent_dim = 128;        n_embd_head_v=n_embd_head_k=2; //only for debug        
+        // _embd = 128; dict_latent_dim = 128;        n_embd_head_v=n_embd_head_k=2; //only for debug        
         n_ctx_train = 1024;
         if(layerps.size()==0 && !isJModel){
             // TO_DO: why grad vanish @/home/cys/rnd/lic/log/gpt2/10_29_bug.info
@@ -517,41 +535,21 @@ void CLI_params::OnArch( ){
         
         break;
     case NLP_QWEN2:
+        modep.isSeperateQKV = true;
+        model_card.sNorm = ".norm";
+        model_card.sLayer= "layers.";  
+        break;
     case NLP_DEEPSEEK:
-    /*
-          `. llama_model_rope_type=LLAMA_ROPE_TYPE_NEOX
-    */        break;
+        model_card.sNorm = ".norm";
+        model_card.sLayer= "layers.";        
+        break;
     case NLP_MISTRAL:
         model_card.sNorm = ".norm";
-/*{
-  "architectures": [
-    "MistralForCausalLM"
-  ],
-  "attention_dropout": 0.0,
-  "bos_token_id": 1,
-  "eos_token_id": 2,
-  "hidden_act": "silu",
-  "hidden_size": 4096,
-  "initializer_range": 0.02,
-  "intermediate_size": 14336,
-  "max_position_embeddings": 32768,
-  "model_type": "mistral",
-  "num_attention_heads": 32,
-  "num_hidden_layers": 32,
-  "num_key_value_heads": 8,
-  "rms_norm_eps": 1e-05,
-  "rope_theta": 1000000.0,
-  "sliding_window": null,
-  "tie_word_embeddings": false,
-  "torch_dtype": "bfloat16",
-  "transformers_version": "4.36.0",
-  "use_cache": true,
-  "vocab_size": 32000
-}*/
+        model_card.sLayer= "layers.";
         break;
 
     default:        
-        _INFO("[ARCH]=%s\n",info.c_str());
+        _INFO("[ARCH]=%s\n","");
         break;
     }    
 }
@@ -669,10 +667,10 @@ try{
             model_title = remove_extension(base_name(path));
         fn_model_base.push_back(path);
     }
-    if(model_title.empty()){
-        model_title = jKV(jConfig,{"arch"},string(""));
-    }
-    // serial_path += a+"_["+model_title+dict_type+"]_";       //std::to_string(1.0-rSplit)
+    // if(model_title.empty()){
+    //     model_title = "Unknown";
+    // }
+    
     JModel2Params(0x0);   
     // eval_binpath = jKV(jConfig,{"data","eval_binpath"},s0 );   
     model_card.Init(jConfig);
@@ -713,7 +711,7 @@ try{
     common.n_threads = jKV(jConfig,{"threads"},common.n_threads );
     common.n_gpu_layers = jKV(jConfig,{"n-gpu-layers"},common.n_gpu_layers );  
     
-    // n_embd = jKV(jConfig,{"wiki","embd"},n_embd );
+    // _embd = jKV(jConfig,{"wiki","embd"},_embd );
 
     checkpoint.model_out = jKV(jConfig,{"model-out"},checkpoint.model_out );  
     checkpoint.in = jKV(jConfig,{"checkpoint-in"},checkpoint.in );  
@@ -774,188 +772,9 @@ bool CLI_params::parse(int argc, char ** argv)  {
             std::replace(arg.begin(), arg.end(), '_', '-');
         }
 
-        if (arg == "--model-base") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            fn_model_base.push_back( argv[i] );
-        } else if (arg == "--model-out") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            checkpoint.model_out = argv[i];
-        } else if (arg == "--embd") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            n_embd = std::stoi(argv[i]);
-        }else if (arg == "--lora-out") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            checkpoint.model_out = argv[i];
-        } else if (arg == "--only-write-lora") {
-            only_write_model = true;
-        } else if (arg == "--learning-rate"){
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            common.adam.alpha = std::stof(argv[i]);
-        }
-        else if (arg == "--norm-rms-eps") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            f_norm_rms_eps = std::stof(argv[i]);
-            // custom_f_norm_rms_eps = true;
-        } else if (arg == "--rope-freq-base") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            rope_freq_base = std::stof(argv[i]);
-            // custom_rope_freq_base = true;
-        } else if (arg == "--rope-freq-scale") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            rope_freq_scale = std::stof(argv[i]);
-            // custom_rope_freq_scale = true;
-        } else if (arg == "--lora-alpha") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            lora_alpha = std::stoi(argv[i]);
-            // custom_lora_alpha = true;
-        } else if (arg == "--lora-r") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            lora_r = std::stoi(argv[i]);
-        } else if (arg == "--rank-att-norm") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            // n_rank_attention_norm = std::stoi(argv[i]);
-            // custom_n_rank_attention_norm = true;
-        } else if (arg == "--rank-ffn-norm") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            // n_rank_ffn_norm = std::stoi(argv[i]);
-            // custom_n_rank_ffn_norm = true;
-        } else if (arg == "--rank-out-norm") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            // n_rank_norm = std::stoi(argv[i]);
-            // custom_n_rank_norm = true;
-        } else if (arg == "--rank-tok-embd") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            // n_rank_tok_embeddings = std::stoi(argv[i]);
-            // custom_n_rank_tok_embeddings = true;
-        } else if (arg == "--rank-out") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            // n_rank_output = std::stoi(argv[i]);
-            // custom_n_rank_output = true;
-        } else if (arg == "--rank-wq") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            // n_rank_wq = std::stoi(argv[i]);
-            // custom_n_rank_wq = true;
-        } else if (arg == "--rank-wk") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            // n_rank_wk = std::stoi(argv[i]);
-            // custom_n_rank_wk = true;
-        } else if (arg == "--rank-wv") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            // n_rank_wv = std::stoi(argv[i]);
-            // custom_n_rank_wv = true;
-        } else if (arg == "--rank-wo") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            // n_rank_wo = std::stoi(argv[i]);
-            // custom_n_rank_wo = true;
-        } else if (arg == "--rank-ffn_gate") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            // n_rank_ffn_gate = std::stoi(argv[i]);
-            // custom_n_rank_ffn_gate = true;
-        } else if (arg == "--rank-ffn_down") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            // n_rank_ffn_down = std::stoi(argv[i]);
-            // custom_n_rank_ffn_down = true;
-        } else if (arg == "--rank-ffn_up") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            // n_rank_ffn_up = std::stoi(argv[i]);
-            // custom_n_rank_ffn_up = true;
-        } else if (arg == "--nabla") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            nabla = std::stoi(argv[i]);
-        } else if (arg == "--sigma") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            // sigma = argv[i];
-        }else if (arg == "--layer") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            nLayerX = std::stoi(argv[i]);
-        }else if (arg == "--tune") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            tune = (CLI_params::TUNE_ALG)(std::stoi(argv[i]));
-        } else if (arg == "--train") {
-            if (++i >= argc) {
-                invalid_param = true;
-                break;
-            }
-            train = argv[i];
-        } else {
+        if (arg == "--version") {
+            
+        }  else {
             fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
             train_print_usage(argc, argv, this);
             exit(1);
@@ -1154,10 +973,69 @@ struct ggml_tensor * ggml_cross_entropy_loss_1(
     return nullptr;
 }
 
+bool GTensor::Dump(int tpDump,const string&title,int flag)  const{
+    size_t nz=0, nElems = size(), i = 0, n = 10;
+    float * fdata = (float *)data,a1=-FLT_MAX,a0=FLT_MAX;
+    const char* A = "d";
+    if(flags & GTensor::F_PARAM){
+        A = "P";
+    }
+    if(BIT_TEST(flags,F_GPU))
+        n = 0;
+    switch(tpDump){
+    case 100:
+        _INFO(" - %3d: [ %5" PRId64 ", %5" PRId64 "] %8s %16s\n",i,ne[0], ne[1],ggml_op_name(op), name);
+        break;
+    default:     
+        if(type!=typNUMBER::F32 && n>0){
+            fdata = new float[nElems];
+            if(type==typNUMBER::F16){
+                ggml_fp16_t *src_ = (ggml_fp16_t *)(data);
+                for (int i = 0; i < nElems; i++) {
+                    fdata[i] = src_[i];
+                }
+            }else{  //need dequant
+                fdata = nullptr;     n = 0;
+            }
+        }    
+        double sum = 0.0;
+        if(fdata!=nullptr && !BIT_TEST(flags,F_GPU)){
+            for (i = 0; i < nElems; i++) {
+                sum += fdata[i];
+                if(fdata[i]==0)      nz++;
+                a1 = std::max(a1,fdata[i]);      a0 = std::min(a0,fdata[i]);
+            }        
+        }
+        printf("\t%s %s %s \t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",title.c_str(),name, A,ne[0], ne[1], ne[2], ne[3], cNameOf(type));
+        if(n>0 && a1!=-FLT_MAX){
+            printf("\nsum=%g data=[%f : %f] rZ=%.3g%%\n\t", sum,a0,a1,nz*100.0/nElems);
+            for (int i = 0; i < std::min((size_t) (ne[0]*ne[1]), n); i++) {
+                printf("%.5f ", fdata[i]);
+                if (i != 0 && i % ne[0] == 0) {
+                    // printf("\n");
+                }
+            }
+            printf("...");
+            for (int i = 0; i < std::min((size_t) (ne[0]*ne[1]), n); i++) {
+                printf("%.5f ", fdata[nElems - n + i]);
+                if ((nElems - n + i) % ne[0] == 0) {
+                    // printf("\n");
+                }
+            }
+            printf("}\n");
+        }
+
+        if(fdata!=data && fdata!=nullptr){
+            delete[] fdata;
+        } 
+    }
+    return true;
+}
+
 void _T_repr_(hGensor t,const char*tab,char *buf,const GENSOR_INFO&info){
     if(t==nullptr)      return;
     const char* A = "d";
-    if(t->flags & GGML_TENSOR_FLAG_PARAM){
+    if(t->flags & GTensor::F_PARAM){
         A = "P";
     }else{
 #ifndef GG_V12
@@ -1352,80 +1230,73 @@ hGensor GradOf(struct ggml_cgraph *cgraph,hGensor node,int flag){
     }
     return node->grad;
 #endif
- }
-
-bool GTensor::Dump(int type,int flag)  const{
-    int i = 0;
-    switch(type){
-    default:
-        _INFO(" - %3d: [ %5" PRId64 ", %5" PRId64 "] %8s %16s\n",
-                    i,gg->ne[0], gg->ne[1],ggml_op_name(gg->op), ggml_get_name(gg));
-    }
-    return true;
-}
-
-extern "C" void gg_print_tensor_(const char* title, hGensor t, int n) {
-    if(strlen(title)>0) printf("%s\n", title);
-    size_t nz=0,nElems = 0;//t->size(),;
-    float * data = (float *)t->data,a1=-FLT_MAX,a0=FLT_MAX;
-    if(t->type!=typNUMBER::F32){
-        data = new float[nElems];
-        if(t->type==typNUMBER::F16){
-            ggml_fp16_t *src_ = (ggml_fp16_t *)(t->data);
-            for (int i = 0; i < nElems; i++) {
-                data[i] = src_[i];
-            }
-        }else{  //need dequant
-            data = nullptr;     n = 0;
-        }
-    }    
-    double sum = 0.0;
-    if(data!=nullptr){
-        for (int i = 0; i < nElems; i++) {
-            sum += data[i];
-            if(data[i]==0)      nz++;
-            a1 = std::max(a1,data[i]);      a0 = std::min(a0,data[i]);
-        }        
-    }
-    // printf("sum:  %f\n\n", sum);
-    if(nElems==1){
-        printf("T%d:%s: %s\t data=%f \n",-1/*t->id*/,t->name, cNameOf(t->type),a0);
-    }else
-        printf("T%d:%s: %.4g(M)\t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] sum=%g data=[%f : %f] rZ=%.3g%%\n", 
-            -1/*t->id*/,t->name,nElems/1.0e6,t->ne[0], t->ne[1], t->ne[2], t->ne[3], cNameOf(t->type),sum,a0,a1,nz*100.0/nElems);
-    if(n>0){
-        printf("\t{");
-        for (int i = 0; i < std::min((int) (t->ne[0]*t->ne[1]), n); i++) {
-            printf("%.5f ", data[i]);
-            if (i != 0 && i % t->ne[0] == 0) {
-                // printf("\n");
-            }
-        }
-        printf("...");
-        for (int i = 0; i < std::min((int) (t->ne[0]*t->ne[1]), n); i++) {
-            printf("%.5f ", data[nElems - n + i]);
-            if ((nElems - n + i) % t->ne[0] == 0) {
-                // printf("\n");
-            }
-        }
-        printf("}\n");
-    }
-
-    if(t->type!=typNUMBER::F32){
-        delete[] data;
-    } 
 }
 
 /*
     byte per element of this type
+    GGML'type traits don't support 
+    [GGML_TYPE_F16] = {
+        .type_name                = "f16",
+        .blck_size                = 1,
+        .type_size                = sizeof(ggml_fp16_t),
+        .is_quantized             = false,
+        .to_float                 = (ggml_to_float_t) ggml_fp16_to_fp32_row,
+        .from_float_ref           = (ggml_from_float_t) ggml_fp32_to_fp16_row,
+    },
+    [GGML_TYPE_Q4_0] = {
+        .type_name                = "q4_0",
+        .blck_size                = QK4_0,
+        .type_size                = sizeof(block_q4_0),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_q4_0,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_q4_0_ref,
+    },
+    [GGML_TYPE_Q8_0] = {
+        .type_name                = "q8_0",
+        .blck_size                = 32,
+        .type_size                = sizeof(block_q8_0),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_q8_0,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_q8_0_ref,
+    },
+    [GGML_TYPE_Q8_1] = {
+        .type_name                = "q8_1",
+        .blck_size                = 32,
+        .type_size                = sizeof(block_q8_1),
+        .is_quantized             = true,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_q8_1_ref,
+    },
+    ...
+*/
+
+/*
+    byte per element of this type(maybe decimals rather than integers!)
 */
 double BPE(typNUMBER type) {
-    double bpe = ggml_type_sizef((enum ggml_type)type);//deprecated    
+    if(type==typNUMBER::F8E5M2 || type==typNUMBER::F8E4M3)
+        return 1.0;
+    auto tp = (enum ggml_type)type;
+    size_t szBlk = ggml_blck_size(tp);
+    double bpe = ggml_row_size(tp,1);   //ggml_type_size(type)*ne/ggml_blck_size(type);  
     assert(bpe==1 || bpe==2 || bpe==4);
     return bpe;
 }
-const char *cNameOf(typNUMBER type){
-    
+/*
+    byte per blck(as defined in GGML)
+*/
+size_t BPBlck(typNUMBER type)    {
+    if(type==typNUMBER::F8E5M2 || type==typNUMBER::F8E4M3)
+        return 1;
+    auto tp = (enum ggml_type)type;
+    size_t szBlk = ggml_blck_size(tp);
+    return szBlk;
+}
+
+const char *cNameOf(typNUMBER type){  
+    if(type==typNUMBER::F8E5M2) 
+        return "F8E5M2";  
+    if(type==typNUMBER::F8E4M3) 
+        return "F8E4M3";  
     return ggml_type_name((enum ggml_type)type);
 }
 std::string NameOf(typNUMBER type){
@@ -1675,7 +1546,7 @@ try{
             }
             loadGensors.push_back(target);
             if(!optParams.empty()){
-                if(!(target->flags & GGML_TENSOR_FLAG_PARAM)){
+                if(!(target->flags & GTensor::F_PARAM)){
                     return false;
                 }
             }else{

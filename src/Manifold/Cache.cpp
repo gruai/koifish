@@ -83,7 +83,7 @@ void KVCache::init_lamakv(int n_batch) {
     const auto& config = lam_->config;
 
     const uint32_t n_ctx   = config.n_ctx();
-    const uint32_t n_embd  = config.n_embd;
+    const uint32_t n_embd  = config.nEmbed();
     const uint32_t n_layer = config.n_layer_train;
 
     const int64_t n_mem      = n_layer*n_ctx*n_batch;

@@ -7,7 +7,7 @@
  *  \brief Serialization
  *  \author Yingshi Chen
  */
-
+#pragma once
 #include "../CLI_params.hpp"
 #include "../g_stddef.hpp"
 

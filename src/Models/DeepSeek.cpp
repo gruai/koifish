@@ -17,6 +17,13 @@ Mistral::Mistral( const std::string& nam_,struct CLI_params params,ROLE_TYPE rol
     config.modep.isNormalBias= false;    
 }
 
+QWen::QWen( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag)  : NLP_AutoRegressive(nam_,params,role,flag) {
+    assert(arch==MODEL_ARCH::NLP_QWEN2);
+    config.modep.isSLPBias = false;    
+    config.modep.isNormalBias= false;    
+}
+
+
 DeepSeek::DeepSeek( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag) : NLP_AutoRegressive(nam_,params,role,flag)  {
     assert(arch==MODEL_ARCH::NLP_DEEPSEEK);
     config.modep.isSLPBias = false;    
@@ -107,7 +114,7 @@ private:
     float* _logits = nullptr;    // (vocab_size,) - final output logits
 public:
     void copy_embedding(const Config& c,int token,void* token_embedding_table) {
-      int dim = c.n_embd;
+      int dim = c.nEmbed();
         switch (c.tpWeight) {
             case typNUMBER::F32: {
             float* emb = static_cast<float*>(token_embedding_table);
@@ -146,7 +153,7 @@ static InferenceState *infer=nullptr;
 
 void DeepSeek::_forward_cpu(int token, int pos, int flag) {
   const CLI_params& c= config;
-  int dim = c.n_embd,vocab_size;
+  int dim = c.nEmbed(),vocab_size;
   infer->copy_embedding(c,token,nullptr);
 
   // When decoding past the context length, keep the first few tokens in the KV cache

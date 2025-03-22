@@ -100,7 +100,7 @@ bool llama2params(struct llama_model * lmodel,struct CLI_params& cparam){
     if(lmodel==nullptr)
         return false;
     auto& lparams = lmodel->hparams;
-    cparam.n_embd = lmodel->hparams.n_embd;  
+    // cparam.n_embd = lmodel->hparams.nEmbed();  
     // cparam.n_ctx = lmodel->hparams.n_ctx;     
     // cparam.n_ff = lmodel->hparams.n_ff();  
     cparam.n_layer_train = lmodel->hparams.n_layer;
@@ -835,7 +835,7 @@ LAMA::LAMA(CLI_params& hparams,const std::string&path_,int flag)     {
         _INFO("%s: OnlyTokenizer @%s.\n", __func__,fn_model );
         assert(teach==WIKI::_OFF);
     }        
-    _INFO("%s: model base = '%s' nEmbd=%d wiki=%s\n", __func__, fn_model,hparams.n_embd,hparams.tpWiki.c_str());
+    _INFO("%s: model base = '%s' nEmbd=%d wiki=%s\n", __func__, fn_model,hparams.embeds[0],hparams.tpWiki.c_str());
     title = ""; //remove_extension(base_name(model_path));  
     // llama_backend_init();
     lmodel = llama_load_model_from_file(fn_model, llama_model_params);  
@@ -894,7 +894,7 @@ void LAMA::CopyParams(CLI_params& hparams,int flag)    {
         return;
 
     hparams.n_layer_train = llama_params.n_layer;
-    hparams.n_embd = llama_params.n_embd;   //would change @DictVAE
+    hparams.embeds = {llama_params.n_embd};   //would change @DictVAE
     for(int i=0;i<hparams.n_layer_train;i++){
         // int h0=llama_params.n_head(i),kv0=llama_params.n_head_kv(i),ff0=llama_params.n_ff(i);
         // hparams.layerps.push_back(LAY_PARAM(h0,kv0,ff0));

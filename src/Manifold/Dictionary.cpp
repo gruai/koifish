@@ -525,7 +525,7 @@ string DictVAE::__repr__( string& suffix,string& prefix,int flag)     {
         
         string s="\n",p=prefix+"\t";
         auto vae = MAEC[0];
-        sprintf(buf+strlen(buf),"%s  [%s] x %ld\tdims=",tab,vae->Name().c_str(),MAEC.size());
+        sprintf(buf+strlen(buf),"%s  [%s] x %ld\tdims=",tab,vae->name.c_str(),MAEC.size());
         for(auto dim : dims)           {
             sprintf(buf+strlen(buf),"%d ",dim);
         }
@@ -553,16 +553,16 @@ DictVAE::DictVAE(Fish *dolphin,int flag) : VariationaAE(),dolphin(dolphin)   {
     _output.Init(dolphin); 
     reserve_x = true;
     isSymmetric = false;
-    lama_embed = config.n_embd;
+    lama_embed = config.nEmbed();
     
-    latent_dim = config.n_embd;
+    latent_dim = config.nEmbed();
     if(dolphin->config.nabla>3)
         assert(0);
     if(!dolphin->config.vae.empty()){
     // if(dolphin->config.nabla==3){
-        dims = {(int)config.n_embd, 256};
-        // dims = {config.n_embd, 1024, 256};
-        //dims = {config.n_embd,1024,256,64};       //little difference with {config.n_embd,1024,256,128}
+        dims = {(int)config.nEmbed(), 256};
+        // dims = {config.nEmbed(), 1024, 256};
+        //dims = {config.nEmbed(),1024,256,64};       //little difference with {config.nEmbed(),1024,256,128}
         nLevel = dims.size()-1;   
         latent_dim = dims[nLevel];
         _INFO("%s symmetric=%d resi=%d tpNorm=%d opOut=%d nLevel=%d dims= ",__func__,(int)(isSymmetric),(int)(reserve_x),tpNorm,opOut,nLevel);
@@ -574,7 +574,7 @@ DictVAE::DictVAE(Fish *dolphin,int flag) : VariationaAE(),dolphin(dolphin)   {
         _INFO("%s latent_dim=%d Dialect=%s",__func__,latent_dim,"OFF");  //isDialect?"ON":"OFF"
     }
     if(dolphin->config.wiki_actor!="copy") {
-        dolphin->config.n_embd = latent_dim;   //Reset n_embd just like nLayerX
+        // dolphin->config.nEmbed() = latent_dim;   //Reset n_embd just like nLayerX
         // dolphin->config.SetHead(latent_dim);   // ???????
     }
     for(auto dim : dims)           {
@@ -589,10 +589,10 @@ void DictVAE::InitVAE(int flag)  {
     }  else if(nLevel>=1){
         isLoadTokenEmbed = true;
         InitMAEC(dolphin->GetGGCTX(),dims);
-        // hMultiCoder hCoder = std::make_shared<MutliCoder>(dolphin->GetGGCTX(), config.n_embd, latent_dim);
+        // hVarCoder hCoder = std::make_shared<VarCoder>(dolphin->GetGGCTX(), config.nEmbed(), latent_dim);
         // MAEC.push_back(hCoder);
-        // encoder = TENSO(dolphin->GetGGCTX(), typNUMBER::F32, config.n_embd, latent_dim);     
-        // decoder = TENSO(dolphin->GetGGCTX(), typNUMBER::F32, latent_dim, config.n_embd); 
+        // encoder = TENSO(dolphin->GetGGCTX(), typNUMBER::F32, config.nEmbed(), latent_dim);     
+        // decoder = TENSO(dolphin->GetGGCTX(), typNUMBER::F32, latent_dim, config.nEmbed()); 
     }    
          
 }
@@ -695,7 +695,7 @@ hGensor DictVAE::Embed2Output(struct ggml_context * ctx,hGensor t33,int flag)   
 void DictVAE::Update_0(struct random_normal_distribution * rnd,int flag){
 #ifdef _TENSOR_G_
 #else
-    const uint32_t n_embd  = config.n_embd;
+    const uint32_t n_embd  = config.nEmbed();
     auto lama = dolphin->GetRawModel( );  
     if(isLoadTokenEmbed) {
         bool isParam = false;
@@ -723,9 +723,9 @@ void DictVAE::Update_0(struct random_normal_distribution * rnd,int flag){
     }
     // ggml_tensor_dequant(ctx_build,gensor,typNUMBER::F32);
     if(0){
-        assert_shape_2d(tok_embeddings, config.n_embd, n_vocab);
-        assert_shape_1d(_norm.w,           config.n_embd);
-        assert_shape_2d(_output.w,         config.n_embd, n_vocab);              
+        assert_shape_2d(tok_embeddings, config.nEmbed(), n_vocab);
+        assert_shape_1d(_norm.w,           config.nEmbed());
+        assert_shape_2d(_output.w,         config.nEmbed(), n_vocab);              
     }else{
 
     }   
@@ -733,7 +733,7 @@ void DictVAE::Update_0(struct random_normal_distribution * rnd,int flag){
 }
 
 void DictVAE::Update_1(struct random_normal_distribution * rnd,int flag) {
-    const uint32_t n_embd  = config.n_embd;
+    const uint32_t n_embd  = config.nEmbed();
 #ifdef _TENSOR_G_
 #else
     bool isParam = false;
@@ -774,9 +774,9 @@ void DictVAE::Update_1(struct random_normal_distribution * rnd,int flag) {
     assert(tok_embeddings!=nullptr && _norm.w!=nullptr && _output.w!=nullptr);
     // ggml_tensor_dequant(ctx_build,gensor,typNUMBER::F32);
     if(0){
-        assert_shape_2d(tok_embeddings, config.n_embd, n_vocab);
-        assert_shape_1d(_norm.w,           config.n_embd);
-        assert_shape_2d(_output.w,         config.n_embd, n_vocab);              
+        assert_shape_2d(tok_embeddings, config.nEmbed(), n_vocab);
+        assert_shape_1d(_norm.w,           config.nEmbed());
+        assert_shape_2d(_output.w,         config.nEmbed(), n_vocab);              
     }
     int i = 0;
     for(auto map : MAEC){

@@ -51,7 +51,7 @@ bool EDGE_DEVICES::InitGPU(const CLI_params&hparams,int flag){
 //  https://stackoverflow.com/questions/16468440/how-to-split-class-definition-between-multiple-cpp-and-cu-files
 hGensor TENSO(void* ctx0,typNUMBER typ,SHAPE shape,int flag,const string&name ) {
     auto type = (typNUMBER)(typ);
-    hGensor hT = std::make_shared<cuTensor>(name,shape,type,true,flag);
+    hGensor hT = std::make_shared<huTensor>(name,shape,type,false,flag);
     return hT;    
 }
 

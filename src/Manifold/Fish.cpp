@@ -8,10 +8,10 @@
  *  \author Yingshi Chen
  */
 #include <set>
+#include "../g_stddef.hpp"
 #include "Fish.hpp"
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
-#include "../g_stddef.hpp"
 
 hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,vector<hWIKI> wikis,ROLE_TYPE role_,int flag)   {
     assert(wikis.size()>=0);
@@ -22,6 +22,9 @@ hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,vector
         break;
     case MODEL_ARCH::NLP_DEEPSEEK:
         fish = std::make_shared<DeepSeek>(nam_+"_DS",params,role_);
+        break;
+    case MODEL_ARCH::NLP_QWEN2:
+        fish = std::make_shared<QWen>(nam_+"_DS",params,role_);
         break;
     case MODEL_ARCH::NLP_MISTRAL:
         fish = std::make_shared<Mistral>(nam_+"_mistral",params,role_);
@@ -153,7 +156,7 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
     assert(optParams.size()==0);
     for(auto it : gensors.infos){
         auto node = it.first;
-        if (BIT_TEST(node->flags,GTensor::F_PARAM)) {      
+        if (BIT_TEST(node->flags,GTensor::GTensor::F_PARAM)) {      
             optParams.push_back(node);  
             nx += tELEM(node);     n0++;   //81522432,13
         }
@@ -188,6 +191,8 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
                 isLoadCheckpoint = GGUF_Serialize(config.checkpoint.in,false,0x0);
             }else if(type==".calm"){
                 isLoadCheckpoint = CALM_Serialize(config.checkpoint.in,false,0x0);
+            }else{
+                isLoadCheckpoint = YALM_Serialize(config.checkpoint.in,false,0x0);
             }
         }
             
@@ -374,75 +379,6 @@ bool Fish::SaveTrain(string sX,int flag) {
     return true;
 }
 
-#include <sys/mman.h>
-bool Fish::HF_Serialize(bool isSave, int flag){
-    return false;
-}
-bool Fish::CALM_Serialize(const std::string&path, bool isSave, int flag){
-try{    
-    if(isSave){        
-    }else{
-        int fd = open(path.c_str(), O_RDONLY);
-        if (fd == -1) {
-            return false;
-        }
-        struct stat st;
-        if (fstat(fd, &st) != 0) {
-            close(fd);
-            return false;
-        }        
-        size = st.st_size;
-        void *data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
-        if (data == MAP_FAILED) {
-            close(fd);
-            return false;
-        }
-        #ifdef __linux__
-        // increases readahead buffer size, resulting in faster cold loads
-        posix_fadvise(fd, 0, size, POSIX_FADV_SEQUENTIAL);
-        #endif
-        close(fd); // fd can be closed after mmap returns without invalidating the mapping
-
-        // Parse the metadata JSON and the tensors
-        if (size < sizeof(uint64_t)) {
-            munmap(data, size);
-            return false;
-        }
-
-        uint64_t json_size = *(uint64_t*)data;
-        if (json_size == 0 || json_size > size - sizeof(uint64_t)) {
-            munmap(data, size);
-            return false;
-        }
-
-        char* json_ptr = (char*)data + sizeof(uint64_t);
-        void* bytes_ptr = (char*)data + sizeof(uint64_t) + json_size;
-        size_t bytes_size = size - sizeof(uint64_t) - json_size;
-
-        std::string json_str(json_ptr, json_size);
-        JSON header = JSON::parse(json_str);
-
-        for (auto& [key, val] : header.items()) {
-            if (key == "__metadata__") {
-                JSON metadata = val;
-            } else {
-                // Tensor& tensor = tensors[key];
-                hGensor target = GetGensor(key);    //  model.layers.0.attn_norm.weight  
-                assert(target!=nullptr);
-                if (target->SerialJSON(key, val, bytes_ptr, bytes_size) != 0) {
-                    munmap(data, size);
-                    return -1;
-                }
-            }
-        }
-
-        return true;
-    }
-    return false;
-}catch(...){
-    return false;
-}
-}
 
 bool Fish::LoadTrain(int flag) { 
     assert(hOPT!=nullptr);
@@ -530,7 +466,7 @@ void Fish::InitGensor(struct ggml_context *ctx, const string&name, hGensor genso
     
     if (isParam && isTrain())        {
 #ifdef _TENSOR_G_
-        gensor->SetFlag(GTensor::F_PARAM);
+        gensor->SetFlag(GTensor::GTensor::F_PARAM);
 #else
         assert(gensor->data == nullptr);
         ggml_set_param(ctx, gensor);

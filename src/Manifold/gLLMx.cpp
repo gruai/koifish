@@ -70,16 +70,16 @@ int DTS_GPT2::STR2T(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>&
 }*/
 
 CDict_GPT2::CDict_GPT2(Fish *nlp_,int flag)   : DictVAE(nlp_,flag)   {
-    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.n_embd;
+    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.nEmbed();
     // n_vocab=50257;    
 }
 
 CDict_CHAR::CDict_CHAR(Fish *nlp_,int flag)   : DictVAE(nlp_,flag)   {
-    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.n_embd;
+    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.nEmbed();
     // n_vocab=256;    
 }
 int CDict_CHAR::InitMAEC(struct ggml_context *ctx_build,const std::vector<int>& dims_,int flag)  {
-    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.n_embd;
+    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.nEmbed();
 
     assert(gensors.size()==0);
     return 0x0;     
@@ -103,7 +103,7 @@ std::string CDict_CHAR::T2STR(TOKEN_ID tok,int flag ) {
 };   
 
 int CDict_GPT2::InitMAEC(struct ggml_context *ctx_build,const std::vector<int>& dims_,int flag)  {
-    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.n_embd;
+    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.nEmbed();
 
     // tok_embeddings = dolphin->AddTensor(ctx_build,_NAM_("token_embd.weight"),typNUMBER::F32,{n_embd, n_vocab},true,0x0);  
     // _norm.BuildX("output_norm", {n_embd},dolphin,0x0);
@@ -148,7 +148,7 @@ int GPT2::cRawGraph( struct ggml_context *ctx_build,bool isBuild,int flag)   {
     bool isOnlinePush = true;      // push nodes last or online(QKV)    
     const int n_embd_head = config.n_embd_head_v,n_embd_gqa  = config.n_embd_v_gqa();
     assert(n_embd_head == config.n_embd_head_k);    
-    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.n_embd,n_vocab=hDictVAE->n_vocab;
+    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.nEmbed(),n_vocab=hDictVAE->n_vocab;
     int n_tokens=n_ctx*n_batch,n_head,n_embd_head_v=config.n_embd_head_v,n_ff;
     const uint32_t n_layer = config.nLayer();
     for(int i=0;i<n_layer;i++){
@@ -294,7 +294,7 @@ if(1)   {   //pass self attention module            loss would stop at 2.4
 #endif
 
 struct ggml_cgraph *GPT2::BuildRawGraph( struct ggml_context *ctx_build,bool isBuild,int flag)   { 
-    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.n_embd;
+    int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.nEmbed();
     bool isJModel = !config.jModel.empty();
     hForwTG = std::make_shared<TGraph>(this,isJModel?"gptJ":"gpt_raw",ctx_build,true);
     auto gf = nullptr;  //GetForwRaw();    

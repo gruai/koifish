@@ -144,37 +144,36 @@ float RAW_backward(Fish *fish,const int* iX, int grad_accum_steps,bool isOnlyEva
     bool last_step = micro_step == grad_accum_steps - 1;
     auto config = fish->config;
     int B,T,C,L = config.nLayer(),NH = config.n_head();      
-    fish->GetBTC(B,T,C);
-    hGensor cur=nullptr;      
+    fish->GetBTC(B,T,C);    
     OutCLS* cls = fish->GetNeuron<OutCLS>("OutCLS",0);
-    Embed* embed = fish->GetNeuron<Embed>("Embed",0); 
-    
+    hGensor cur=nullptr,delta=cls->delta;      
+    TokenEmbed* embed = fish->GetNeuron<TokenEmbed>("TokenEmbed",0); 
     if (micro_step == 0) {// on the first micro-step zero the gradients, as we're about to += accumulate into them;     
         cudaCheck(cudaMemsetAsync(TO<float>(cls->out), 0,B*T* sizeof(float), main_stream));
     }
-    floatX* dresidual = ToX(GTensor::scratch_btc),*scratchX = ToX(cls->preLogits);   
-    cudaCheck(cudaMemset(dresidual, 0, B * T * C * sizeof(floatX)));
-    PrintTensor<floatX>("back of P",ToX(GTensor::scratch_bt4c),true,B,T,C);
+    GTensor::buff = cls->preLogits->data;    //reused in many place! 
+    floatX *scratchX=(floatX *)GTensor::buff,*dresidual = ToX(GTensor::delta);          
+    cudaCheck(cudaMemset(dresidual, 0, B * T * C * sizeof(floatX)));    //???
+    PrintTensor<floatX>("back of P",ToX(GTensor::bt4c),true,B,T,C);
     NvtxRange classifier_and_loss_range("classifier_and_loss");
     FFN *ffn=fish->GetNeuron<FFN>("FFN",L-1);  
     LayerNormal* lnf = fish->GetNeuron<LayerNormal>("LayerNormal",0);    
-    cur = cls->FUSE_cuda(lnf->out,nullptr,0x0);  
-    lnf->FUSE_cuda(ffn->out,(float*)scratchX);
-    // layernorm_backward(dresidual, ToG(lnf->w), gb, (float*)scratchX, ToX(GTensor::scratch_bt4c), residual, ToX(lnf->w), TO<float>(lnf->mean), TO<float>(lnf->rstd), B, T, C, main_stream);
+    delta = cls->FUSE_cuda(lnf->out,nullptr,0x0);    //some operation fused in forward pass
+    lnf->FUSE_cuda(ffn->out,(float*)scratchX,delta);  //
+    // layernorm_backward(dresidual, ToG(lnf->w), gb, (float*)scratchX, ToX(GTensor::bt4c), residual, ToX(lnf->w), TO<float>(lnf->mean), TO<float>(lnf->rstd), B, T, C, main_stream);
 
-    floatX* dl_btc = ToX(ffn->out);
+    hGensor tmpDelta = ffn->out;    
     for (int l = L-1; l >= 0; l--) {
         NvtxRange layer_range("Layer", l);
         SelfAttention *QKV = fish->GetNeuron<SelfAttention>("SelfAttention",l);
         ffn = fish->GetNeuron<FFN>("FFN",l);        //preFFN = l==0 ? nullptr : fish->GetNeuron<FFN>("FFN",l-1);         
         GeNeuron *last = l == 0 ? embed : (GeNeuron *)(fish->GetNeuron<FFN>("FFN",l-1));    //residual = l == 0 ? ToX(embed->out) : ToX(preFFN->out);   
-        ffn->residual=dl_btc;     ffn->lastQKV=QKV;    
-        QKV->dl_btc=dl_btc;  
+        ffn->lastQKV=QKV;    ffn->delta = tmpDelta;
+        QKV->dl_btc=ToX(tmpDelta);  
         LayerNormal *hNorm = l+1 != L ? &(fish->GetNeuron<SelfAttention>("SelfAttention",l+1)->norm) : lnf;
         ffn->FUSE_cuda(QKV->out,scratchX,  0x0);   // hNorm,
-        QKV->FUSE_cuda(QKV->norm.out,ToX(last->out),(float*)scratchX,0x0);   //&(ffn->norm)
+        QKV->FUSE_cuda(QKV->norm.out,last->out,(float*)scratchX,0x0);   //&(ffn->norm)
     }
-    
     embed->FUSE_cuda(fish->Input(),scratchX,nullptr,random_u32(&rng_state));       
 
     // Aggregate all gradients that are not part of the transformer blocks5
@@ -206,11 +205,11 @@ void RAW_forward(Fish *fish,int flag) {
     int B,T,C,tpFuseNormal=config.Fuse_Normal;      
     fish->GetBTC(B,T,C);    
     const size_t L = config.nLayer(),NH = config.n_head();       
-    hGensor cur=nullptr;
+    hGensor cur=nullptr,residual=nullptr;
     LayerNormal* lnf = fish->GetNeuron<LayerNormal>("LayerNormal",0);
-    Embed* embed = fish->GetNeuron<Embed>("Embed",0);
+    TokenEmbed* embed = fish->GetNeuron<TokenEmbed>("TokenEmbed",0);
     cur = embed->Interact(nullptr,fish->Input());     //acts.encoded=ToX(embed->out);
-    floatX* residual = ToX(embed->out);
+    residual = cur; //embed->out;
     SelfAttention *QKV0 = fish->GetNeuron<SelfAttention>("SelfAttention",0),*QKV=nullptr;
 
     if(tpFuseNormal==1){
@@ -221,14 +220,14 @@ void RAW_forward(Fish *fish,int flag) {
     for (int l = 0; l < L; l++) {
         NvtxRange layer_range("Layer", l);
         QKV = fish->GetNeuron<SelfAttention>("SelfAttention",l);
-        ffn = fish->GetNeuron<FFN>("FFN",l);            //ffn->out = GTensor::scratch_btc;
+        ffn = fish->GetNeuron<FFN>("FFN",l);            //ffn->out = GTensor::delta;
         LayerNormal *hNorm = l+1 != L ? &(fish->GetNeuron<SelfAttention>("SelfAttention",l+1)->norm) : lnf;
         ffn->fuseNorm = tpFuseNormal==1?hNorm:nullptr;       
         QKV->fuseNorm =  tpFuseNormal==1?&(ffn->norm):nullptr;
         cur = QKV->FUSE_cuda(cur,residual,nullptr,flag);   //,tpFuseNormal==1?&(ffn->norm):nullptr        
         cur = ffn->FUSE_cuda(cur,nullptr, 0x0);  // , tpFuseNormal==1?hNorm:nullptr
         // out_ = hNorm->out;
-        residual = ToX(ffn->out);
+        residual = ffn->out;
     }    
     if(tpFuseNormal==0){
         cur = lnf->FUSE_cuda(ffn->out); 
@@ -253,7 +252,7 @@ void Optimizer::InitCUDA(int flag){
     ADAM_params_ adam = TrainParams().adam;
     GD_METHOD tpCurGD = tpGD;
 
-    int num_slices = 1,C=_fish->config.n_embd;
+    int num_slices = 1,C=_fish->config.nEmbed();
     if (m_memory == NULL) {
         NvtxRange rng("InitOpt");
         
@@ -286,8 +285,8 @@ void Optimizer::InitCUDA(int flag){
         off += nP;
     }
     LayerNormal* lnf = _fish->GetNeuron<LayerNormal>("LayerNormal",0);
-    Embed* embed = _fish->GetNeuron<Embed>("Embed",0);      assert(embed!=nullptr);
-    //  ,C = config.n_embd
+    TokenEmbed* embed = _fish->GetNeuron<TokenEmbed>("TokenEmbed",0);      assert(embed!=nullptr);
+    //  ,C = config.nEmbed()
     embed->InitBucket(CEIL_DIV(C, (WARP_SIZE * x128::size)));
 }
 

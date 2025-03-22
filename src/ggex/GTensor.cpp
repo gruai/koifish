@@ -14,8 +14,8 @@
    typNUMBER GTensor::tpFloatX = typNUMBER::F32;
 #endif
 
-// int B=0,T=0,C=0;
-hGTensor GTensor::scratch_bt4c=nullptr,GTensor::scratch_btc=nullptr,GTensor::scratch_output=nullptr,GTensor::scratch_ff1=nullptr;
+hGTensor GTensor::bt4c=nullptr,GTensor::delta=nullptr,GTensor::scratch_output=nullptr,GTensor::scratch_ff1=nullptr;
+void *GTensor::buff = nullptr;
 
 float GTensor::rLARS(float s0,float T_lars,int flag)   {
    if( shape.size()<=1 )
@@ -37,7 +37,6 @@ bool GTensor::ReShape(SHAPE shape_,typNUMBER tpD_,int falg){
       return true;
 
    shape = shape_;      type=tpD_;
-
    int i=0;
    for(auto n : shape){
       ne[i++] = n;
@@ -47,7 +46,7 @@ bool GTensor::ReShape(SHAPE shape_,typNUMBER tpD_,int falg){
       ne[i]=1;
    
    // from ggml_new_tensor
-   size_t szBlk = ggml_blck_size((enum ggml_type)type);
+   size_t szBlk = BPBlck(type);
    nb[0] = BPE(type);       assert(szBlk==1);
    nb[1] = nb[0]*(ne[0]/szBlk);
    for (int i = 2; i < GGML_MAX_DIMS; i++) {
@@ -56,6 +55,12 @@ bool GTensor::ReShape(SHAPE shape_,typNUMBER tpD_,int falg){
 
    double nB = BPE(type);    assert(nB>=1.0);
    szData = size()*nB; 
+
+   if(data!=nullptr){
+      Free();
+      Alloc();
+   }
+   // _INFO();
    return true;  
 }
 
@@ -143,11 +148,16 @@ GTensor::~GTensor()  {
 #endif
 }
 
+// void GTensor::AddSrc(const hGOP t,int type,int flag)           {   
+//    assert(t!=nullptr); src.push_back(t);   
+// }
 void GTensor::AddSrc(const vector<hGTensor>& ts,int flag) {
    for(auto t : ts)   {
       if(t==nullptr) 
          continue;
-      AddSrc(t);
+      hGOP hop = std::make_shared<GENSOR_OP>(t);
+      // AddSrc(hop,0x0);
+      src.push_back(hop); 
    }      
 }
 
@@ -172,7 +182,7 @@ bool GTensor::OverWrite(struct ggml_tensor*gg_,bool isSrc,int flag){
    return true;
 }
 bool GTensor::OverWrite(hGTensor hGT,bool isSrc,int flag)  {   
-   /*cuTensor *src = dynamic_cast<cuTensor *>(hGT.get());
+   /*huTensor *src = dynamic_cast<huTensor *>(hGT.get());
    size_t nEle = size();
    assert(isSameShape(hGT));    
    if(src!=nullptr){
@@ -265,6 +275,8 @@ int GTensor::SerialJSON(const std::string& name_, const JSON& val, void* bytes_p
    if(data!=nullptr){
       SerialGP(src,nullptr,szSrc,false);
    }
+   if(strlen(name)>0)
+      Dump(0);
    return 0;
 }
 

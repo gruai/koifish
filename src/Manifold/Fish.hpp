@@ -116,7 +116,7 @@ typedef std::shared_ptr<QKV_LAY> hLQKV;
     Fish *hFish_ = nullptr;
     std::shared_ptr<KVCache> kv;
     char nam_[128];
-    //Transfer probability of Token or Transfer probability of Embed
+    //Transfer probability of Token or Transfer probability of TokenEmbed
     static bool Transfer_1;  
 
     int version = 0;
@@ -278,6 +278,7 @@ protected:
     virtual bool HF_Serialize(bool isSave, int flag=0x0);
     // Smart format of https://github.com/zeux/calm
     virtual bool CALM_Serialize(const std::string&path, bool isSave, int flag=0x0);
+    virtual bool YALM_Serialize(const std::string&path, bool isSave, int flag=0x0);
 
 public:
     hGensor xn = nullptr,xxn = nullptr;     //only for debug
@@ -343,7 +344,7 @@ public:
     virtual bool Init(const vector<hWIKI>& wikis,int flag=0x0)          {   throw "Fish::Init is ...";           }    
     //shortcut parameter of LLM models
     virtual void GetBTC(int& B,int &T,int &C){
-        B = config.n_batch();     C = config.n_embd;     T = config.n_ctx();
+        B = config.n_batch();     C = config.nEmbed();     T = config.n_ctx();
         assert(B>0);    
         assert(T>0);
         assert(C>0);

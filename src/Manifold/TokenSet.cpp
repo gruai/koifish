@@ -114,23 +114,24 @@ bool GlobTokenset::LoadNextShard(SampLoader *hLoader,int flag)  {
     return true;
 }
     
-
+// shard type != token type
 bool GlobTokenset::Shard2Sample(int flag){
 try{
     int szT=sizeof(uint16_t),nT = (szFile-header_bytes)/szT;
     assert(nT==nShardToks);
-    tokens.resize(nT);
+    // tokens.resize(nT);
     fseekCheck(fpShard, (int) header_bytes, SEEK_SET);
     uint16_t *tmp16=new uint16_t[nT];
-    if(fread(tokens.data(),szT,nT,fpShard)!=nT) {
+    if(fread(tmp16,szT,nT,fpShard)!=nT) {
         _INFO("Error: file size is not as expected\n");
         return 0x0;
-    }else{
+    }/*else{
         nT = min(nT,1024);
         for(int i=0;i<nT;i++){
             // assert(0<=tokens[i] && tokens[i]<nVocab);
         }
-    }
+    }*/
+    tokens.assign(tmp16, tmp16 + nT);
     delete[] tmp16;
     // InitSamps
     int n_ctx = hDict->config.n_ctx(),len;

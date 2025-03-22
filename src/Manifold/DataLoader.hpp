@@ -121,7 +121,7 @@ public:
     virtual string sTokenSet(int flag=0x0);
     vector<TOKEN_ID>& GetTokens()    {  return hTokens->tokens; }
 
-    int32_t TokenAt(size_t pos){
+    TOKEN_ID TokenAt(size_t pos){
         return hTokens->At(pos);
     }
     bool MaskAt(size_t pos,TOKEN_ID&mask);

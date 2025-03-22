@@ -28,7 +28,7 @@ using namespace std;
 #define GG_V12
 
 class GTensor;
-class cuTensor;
+class huTensor;
 class Fish;
 class EDGE_DEVICES;
 typedef shared_ptr<GTensor> hGTensor;
@@ -59,6 +59,34 @@ enum INIT_WEIGHT    {
     COPY_SWARM_HEAD,
     SERIALIZE
 };
+/**
+ *  Edge of Operation(TASK) GRAPH
+ */
+struct GENSOR_OP{
+    string sX;
+    int level=-1,ID=-1,dad,c_id;
+    int op=-1;
+    hGTensor _t;
+
+    GENSOR_OP(hGTensor t,int flag=0x0):_t(t){;}
+    static std::shared_ptr<GENSOR_OP> Inst(hGTensor t,int flag=0x0) {
+        return std::make_shared<GENSOR_OP>(t,flag);
+    }
+
+    string __repr__(string& suffix,string& prefix,int flag=0x0) const {  
+        char buf[512]="\0";
+        if(dad==-1){
+            sprintf(buf+strlen(buf),"ROOT"); 
+        }else
+            sprintf(buf+strlen(buf),"[%d %d.%d l=%d]",ID,dad,c_id,level); 
+        return buf;
+    }
+
+    static bool comp(GENSOR_OP& a, GENSOR_OP& b) {
+        return a.ID < b.ID;
+    }
+};
+typedef shared_ptr<GENSOR_OP> hGOP;
 
 /**
  * 1.   Support dynamic change shape & type!
@@ -67,17 +95,17 @@ class GTensor   {
 private:
     struct ggml_tensor  *gg=nullptr;
 protected:
-    std::shared_ptr<EDGE_DEVICES> hDevice = nullptr;
-    struct ggml_backend_buffer * buffer;
-    
+    std::shared_ptr<EDGE_DEVICES> hDevice = nullptr;   
     size_t szData=0;
     int recompute=1;
     //  support dynamic change shape&type!
     virtual bool ReShape(SHAPE shape_,typNUMBER tpD_,int flag=0x0);
     virtual hGTensor _Multiply(const hGTensor& other) { assert(0);  return nullptr;    }
 public:
+    static const int MAX_NAME=64;
     // static int B,T,C;       //shortcut parameter of LLM models
-    static hGTensor scratch_bt4c,scratch_btc,scratch_output,scratch_ff1;
+    static hGTensor bt4c,delta,scratch_output,scratch_ff1;
+    static void* buff;      //  temporary shared memory 
     float residual_scale=1.0,wnorm=0,gnorm=0;   // some tricks
     float rLARS(float s0,float T_lars,int flag);
     size_t offset = 0x0;
@@ -114,7 +142,7 @@ public:
         bool isDevice = true;
         PrintTensor<T>(title.c_str(),(T *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
     }
-    virtual bool Dump(int type,int flag=0x0)  const;
+    virtual bool Dump(int type,const string&title="",int flag=0x0)  const;
 //operations
     hGTensor operator*(const hGTensor& other) {
         return _Multiply(other);
@@ -141,17 +169,17 @@ public:
     bool isParam()  {   return BIT_TEST(flags,F_PARAM);  }
     bool isGPU()  {   return BIT_TEST(flags,F_GPU);  }
     
-    vector<hGTensor> src;
-    virtual void AddSrc(const hGTensor t)           {   assert(t!=nullptr); src.push_back(t);   }
+    vector<hGOP> src;
+    // virtual void AddSrc(const hGOP t,int type,int flag=0x0);
     virtual void AddSrc(const vector<hGTensor>& ts,int flag=0x0);
-    // source tensor and offset for views
-    struct ggml_tensor * view_src=nullptr;
-    size_t               view_offs=0;
+    // struct ggml_tensor * view_src=nullptr;
+    // size_t               view_offs=0;
+
     void * data=nullptr;
     void * grad=nullptr; 
     virtual bool SerialGP(void *yD,void *yG,size_t szY,bool isToY,int flag=0x0)   {   assert(0);  return false;   }
 
-    char name[GGML_MAX_NAME];
+    char name[MAX_NAME] = "\0";
     void * extra; // extra things e.g. for ggml-cuda.cu
     //  return ggml_tensor
     struct ggml_tensor*GG();
@@ -218,7 +246,7 @@ public:
     }   
 
     virtual int SerialJSON(const std::string& name, const JSON& val, void* bytes_ptr, size_t bytes_size,int flag=0x0);
-    friend class cuTensor;
+    friend class huTensor;
     friend class OPT_Adam;
 };
 
@@ -298,13 +326,15 @@ inline floatX *ToG0(hGTensor t) {
 hGensor TENSO(void* ctx0,typNUMBER typ,SHAPE,int flag=0x0,const string&name="" );
 hGensor tRAND(hGensor  tensor, struct random_normal_distribution * rnd);
 
-class cuTensor : public GTensor   {
+/**
+ *  tensor stored in hybrid memory of(CPU/GPU/DISK...)
+ */
+class huTensor : public GTensor   {
 protected:    
-    // PrecisionMode precision;
     hGTensor _Multiply(const hGTensor& other); 
 public:
-    cuTensor(const string&name_,SHAPE shape,typNUMBER tpD_,bool isParam,int flag=0x0);    
-    virtual ~cuTensor();
+    huTensor(const string&name_,SHAPE shape,typNUMBER tpD_,bool isParam,int flag=0x0);    
+    virtual ~huTensor();
 
     bool Alloc(int tpInit=0,int flag=0x0)    override;
     bool InitParam(int tpInit,int flag=0x0)    override;

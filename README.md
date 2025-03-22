@@ -8,14 +8,16 @@
 
 - Rematerialisation and fusion of operators
 - Mixture of models
-- Support DEEPSEEK/LLAMA/GPT ...
+- Support QWEN/LLAMA/GPT ...
 - CPU, GPU and Hybrid training
 - Json config file
-- Pure C++ project
+- Pure C++ project with minimal dependencies
 
 ## Download & Build
 
 ```bash
+# sudo apt-get install libicu-dev
+# export CPATH=~/cudnn-frontend/include/:/usr/local/cuda-12.1/include:$CPATH        # maybe need this to export CPATH
 git clone https://github.com/gruai/koifish
 cd koifish
 # build ggml lib first
@@ -23,29 +25,26 @@ cd llama.cpp
 mkdir build && cd build && cmake .. 
 make clean && make VERBOSE=TRUE
 cd ../../
-
 mkdir build && cd build && cmake ..
-# export CPATH=~/cudnn-frontend/include/:/usr/local/cuda-12.1/include:$CPATH        # maybe need this to export CPATH
 make clean && make VERBOSE=TRUE
 ```
 
 ## Tutorial
+
 1.    [Training of GPT2(774M/124M) on single 3090](cases/tutorial_gpt2.md)
 
 ## Training tricks
 - Subsampling
 - [Weight Tying](cases/tricks/WeightTying.md)
 
+
 ## Working plan
-- Hybrid 1-bit Optimizer
-- Support MAMBA
+- Hybrid 16/8 bit Optimizer
+- Support DeepSeek/MAMBA
 - Sparse mapping of token-embedding to logits
 
 ## Contributing
 
-- Contributors can open PRs
-- Collaborators can push to branches in the `koifish` repo and merge PRs into the `master` branch
-- Collaborators will be invited based on contributions
 - Any help with managing issues, PRs and projects is very appreciated!
   
 ## Acknowledgements

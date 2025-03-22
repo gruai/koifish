@@ -187,7 +187,7 @@ struct NLP_AutoRegressive : public Fish {
         auto train_params = config.common;     
         int n_batch  = train_params.n_batch;
         measure_only = m_only;     
-        const int n_ctx = train_params.n_ctx,n_embd = config.n_embd,n_layer = config.nLayer();
+        const int n_ctx = train_params.n_ctx,n_embd = config.nEmbed(),n_layer = config.nLayer();
  
     // build_inp_KQ_(ctx,true);      
 
@@ -335,6 +335,23 @@ public:
         NLP_AutoRegressive::InitModel(flag);         
     }  
 };
+
+class QWen : public NLP_AutoRegressive {
+protected:    
+
+public:
+    QWen( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag=0x0);
+
+    virtual ~QWen() {          
+    }  
+
+    void InitModel(int flag=0x0)    override    {
+        _INFO("QWen::%s: init model\n", __func__);
+
+        NLP_AutoRegressive::InitModel(flag);         
+    }  
+};
+
 
 
 struct TinyLama : public NLP_AutoRegressive { 

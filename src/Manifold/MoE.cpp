@@ -11,7 +11,7 @@
 #include "gLLM.hpp"
 
 bool QKV_LAY::CreateFFN(const CLI_params&config, ggml_context *ctx, FFN_TYPE tpFFN, int flag)  {
-    const int n_embd = config.n_embd, n_ctx = config.n_ctx(), n_ff = config.n_ff(), n_batch = config.n_batch();  
+    const int n_embd = config.nEmbed(), n_ctx = config.n_ctx(), n_ff = config.n_ff(), n_batch = config.n_batch();  
     const int n_expert = config.n_expert;
     switch(tpFFN){
     case VAR_LAST:
@@ -117,7 +117,7 @@ hGensor MixOfSwarm::Build(CLI_params&config,struct ggml_context * ctx,hGensor cu
 #ifdef _TENSOR_G_
 #else
     // return cur;
-    int n_batch = config.common.n_batch,n_ctx = config.common.n_ctx,n_embd = config.n_embd;
+    int n_batch = config.common.n_batch,n_ctx = config.common.n_ctx,n_embd = config.nEmbed();
     int i=0,nSwarm=exs.size()+1;      
     size_t offset = gat_->nb[0];       assert(offset==4);  
     size_t N0=cur->ne[0],ld1=(nSwarm)*offset,nToken=cur->ne[1],N1=nToken;    
@@ -156,7 +156,7 @@ hGensor NLP_AutoRegressive::build_gate(struct ggml_context * ctx,hGensor cur,hGe
 #else
     bool isRes = true,isSiLU=false;
 
-    int n_vocab = hDictVAE->tVocab(),n_batch = config.common.n_batch,n_ctx = config.common.n_ctx,n_embd = config.n_embd;
+    int n_vocab = hDictVAE->tVocab(),n_batch = config.common.n_batch,n_ctx = config.common.n_ctx,n_embd = config.nEmbed();
     int nWiki = wikis.size(),i=0;        CHILD_0909_WIKIS
     size_t N0=cur->ne[0],ld1=(nWiki+1)*cur->nb[0];    
     assert(nWiki+1 == mom.embed2w->ne[1]);

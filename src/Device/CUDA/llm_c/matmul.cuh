@@ -14,7 +14,7 @@ Matrix Multiplication, with help from cuBLASLt
 // CUDA kernels
 
 template<typename OutFloat, bool UseAuxBuffer>
-__global__ void matmul_backward_bias_kernel9(OutFloat* dbias, const floatX* dout, int B, int T, int OC,
+__global__ void matmul_backward_bias_kernel9(OutFloat* dbias, const floatX* deltaIn, int B, int T, int OC,
                                              std::bool_constant<UseAuxBuffer>) {
     constexpr const int bdx = 4;
     constexpr const int bdy = WARP_SIZE / bdx;
@@ -41,7 +41,7 @@ __global__ void matmul_backward_bias_kernel9(OutFloat* dbias, const floatX* dout
     if(global_oc < OC) {
         // sum up over all bt within registers
         for (int idx = blockIdx.y * bt_per_block + local_bt; idx < B * T; idx += gridDim.y * bt_per_block) {
-            x128 packed_dout = load128(dout + global_oc + idx*OC);
+            x128 packed_dout = load128(deltaIn + global_oc + idx*OC);
             for (int k = 0; k < x128::size; k++) {
                 accumulators[k] += (float)packed_dout[k];
             }
@@ -241,8 +241,15 @@ void inline matmul_forward_cublaslt(floatX* out,
     }
 }
 
-void inline matmul_backward(floatX* dinp, floatX* dweight, floatX* dbias,
-                     floatX* dout, floatX* inp, floatX* weight,
+/*
+    backward to bias/weight
+    backward to input(delta of this layer)
+    backward to gelu
+
+    deltaIn is delta of next layer
+*/
+void inline matmul_backward(floatX* delta, floatX* dweight, floatX* dbias,
+                     floatX* deltaIn, floatX* inp, floatX* weight,
                      float* dbias_buffer,
                      int B, int T, int C, int OC, cudaStream_t stream,
                      floatX* pre_gelu=NULL, int gelu_fusion=1) {
@@ -257,17 +264,18 @@ void inline matmul_backward(floatX* dinp, floatX* dweight, floatX* dbias,
 
         dim3 block_dim = {4, 8, (unsigned)block_size/WARP_SIZE};
         const int OC_per_warp = block_dim.y * x128::size; // 64 at BF16
+        
         const int grid_size_x = CEIL_DIV(OC, OC_per_warp); // e.g. 12 horizontal blocks for 768 OCs at BF16
         const int grid_size_y = max(1, deviceProp.maxThreadsPerMultiProcessor * deviceProp.multiProcessorCount / (block_size * grid_size_x)); // full GPU!
 
         // If we have enough OC that we don't need cross-block reductions, we can skip the bias_buffer accumulation
         // and write results directly to the output.
         if(grid_size_y == 1) {
-            matmul_backward_bias_kernel9<<<dim3(grid_size_x, grid_size_y), block_dim, 0, stream>>>(dbias, dout, B, T, OC, False);
+            matmul_backward_bias_kernel9<<<dim3(grid_size_x, grid_size_y), block_dim, 0, stream>>>(dbias, deltaIn, B, T, OC, False);
             cudaCheck(cudaGetLastError());
         } else {
             // kernel 9 overwrites temp buffer, so no need to memset
-            matmul_backward_bias_kernel9<<<dim3(grid_size_x, grid_size_y), block_dim, 0, stream>>>(dbias_buffer, dout, B, T, OC, True);
+            matmul_backward_bias_kernel9<<<dim3(grid_size_x, grid_size_y), block_dim, 0, stream>>>(dbias_buffer, deltaIn, B, T, OC, True);
             cudaCheck(cudaGetLastError());
             reduce_add_sum_kernel<<<CEIL_DIV(OC, 256 * f128::size), 256, 0, stream>>>(dbias, dbias_buffer, OC, grid_size_y);
             cudaCheck(cudaGetLastError());
@@ -276,15 +284,15 @@ void inline matmul_backward(floatX* dinp, floatX* dweight, floatX* dbias,
     }
 
     // backward to input, uses = in the backward pass (set the gradient)
-    matmul_cublaslt(dinp, weight, dout, NULL, C, B*T, OC, stream, false, false, 0, 0, 0, 0, false,
+    matmul_cublaslt(delta, weight, deltaIn, NULL, C, B*T, OC, stream, false, false, 0, 0, 0, 0, false,
                     gelu_fusion >= 2 ? pre_gelu : NULL, true);
 
     // backward GELU (if it wasn't fused into the matmul above)
     if (gelu_fusion < 2 && pre_gelu) {
-        gelu_backward_inplace(dinp, pre_gelu, B*T*C, stream);
+        gelu_backward_inplace(delta, pre_gelu, B*T*C, stream);
     }
 
     // backward to weight, uses += in the backward pass (accumulate the gradient) by setting alpha=one
-    matmul_cublaslt(dweight, inp, dout, NULL /*dbias*/, C, OC, B*T, stream, false, true, 0, 0, 0, 0,
+    matmul_cublaslt(dweight, inp, deltaIn, NULL /*dbias*/, C, OC, B*T, stream, false, true, 0, 0, 0, 0,
                     true /* accumulate */, NULL, true);
 }

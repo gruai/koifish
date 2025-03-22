@@ -80,8 +80,8 @@ NLP_AutoRegressive::NLP_AutoRegressive(const std::string& nam_,const NLP_AutoReg
     graph_order = src->graph_order;
     //VAE's latent dim
     // if(hDictVAE->nLevel>0)     {        
-    //     config.n_embd = src->config.n_embd;
-    //     // n_embd = config.n_embd;
+    //     config.nEmbed() = src->config.nEmbed();
+    //     // n_embd = config.nEmbed();
     // }
 
     //  ugly ctx here
@@ -177,19 +177,6 @@ string GeNeuron::__repr__( string& suffix,string& prefix,int flag)   {
     // sprintf(buf+strlen(buf),"\n%s %s",tab,name.c_str());
     // if(flag>0)
     //     _INFO("%s",buf); 
-    return buf;
-}
-
-string MutliCoder::__repr__( string& suffix,string& prefix,int flag)   {
-    char buf[5012]="\0";
-    const char*tab=prefix.c_str();
-    sprintf(buf+strlen(buf),"\n%s resi=%d tpNorm=%d\n",prefix.c_str(),isResi,tpNorm);
-    _T_repr_(encode,tab,buf);   
-    _T_repr_(decode,tab,buf);   
-    _T_repr_(norm,tab,buf);   
-    _T_repr_(resi,tab,buf);   
-    if(flag>0)
-        _INFO("%s",buf); 
     return buf;
 }
 
@@ -299,7 +286,7 @@ void Fish::CopyWeight(const Fish* src,int flag) {
                 int j = 0;
             }
             type_size = BPE(t0->type);
-            if (t0->flags & GGML_TENSOR_FLAG_PARAM) {
+            if (t0->flags & GTensor::F_PARAM) {
                 t1 = GetGensor(t0->name);
                 assert(t1!=nullptr && t0->type==t1->type);
                 nz = tELEM(t0);
@@ -398,7 +385,7 @@ hGensor Fish::BuildLoss( struct ggml_context * ctx,hGensor cur,int flag){
 
 hGensor NLP_AutoRegressive::BuildTarget( struct ggml_context * ctx,hGensor cur,int flag)  {
     hGensor _tNorm = UpdateGensor (hDictVAE->_norm.w->name); 
-    int n_vocab = tVocab(),n_batch = config.common.n_batch,n_ctx = config.common.n_ctx,n_embd = config.n_embd;
+    int n_vocab = tVocab(),n_batch = config.common.n_batch,n_ctx = config.common.n_ctx,n_embd = config.nEmbed();
     auto train_params = config.common;
     train_params.use_checkpointing = false;     // CYS_0826
     const int N = train_params.n_ctx, n_past = 0;
@@ -408,7 +395,7 @@ hGensor NLP_AutoRegressive::BuildTarget( struct ggml_context * ctx,hGensor cur,i
     
 #else
     hGensor  t31 = ggml_rms_norm(ctx, cur, rms_norm_eps);                    gTN(t31, "norm");     
-    assert_shape_2d(t31, config.n_embd, N*train_params.n_batch);
+    assert_shape_2d(t31, config.nEmbed(), N*train_params.n_batch);
     
     if(hDictVAE->nLevel>0){
         t31 = hDictVAE->DEC(ctx,t31);      //t31 = ggml_mul_mat(ctx, hDictVAE->decoder, t31 );  
@@ -468,7 +455,7 @@ hGensor NLP_AutoRegressive::BuildTarget( struct ggml_context * ctx,hGensor cur,i
     // if(isTrain())
     //     assert(out_node->grad!=nullptr);
     if(hDictVAE->nLevel>0){
-        n_embd = config.n_embd;
+        n_embd = config.nEmbed();
     } 
 #endif
     return out_node;
@@ -519,6 +506,17 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
         hDict->vocab.resize(32000);  
         hDict->bos_id = 1;             hDict->eos_id = 2;  
         break;
+    case MODEL_ARCH::NLP_DEEPSEEK:
+        hDictVAE = std::make_shared<DictVAE>(this);
+        hDict->vocab.resize(102400);  
+        hDict->bos_id = 100000;             hDict->eos_id = 100001;  
+        break;
+    case MODEL_ARCH::NLP_QWEN2:
+        hDictVAE = std::make_shared<DictVAE>(this);
+        hDict->vocab.resize(151936);  
+        hDict->bos_id = 151643;             hDict->eos_id = 151645;  
+        break;
+        
     default:
         hDictVAE = std::make_shared<DictVAE>(this);
         if(wikis.size()>0)  {   
@@ -528,6 +526,7 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
         // hTokenset = std::make_shared<DataTokenSet>(hDictVAE.get());        
         break;
     }
+    assert(hDict->nVocab()>0);
     hDictVAE->hDict = hDict;
     assert(hDictVAE!=nullptr && hDictVAE->isValid());    
 
@@ -708,7 +707,7 @@ void NLP_AutoRegressive::InitGensors(int flag){
 void NLP_AutoRegressive::InitModel(int flag){    
     const uint32_t n_ff = config.n_ff();
     auto train_params = config.common;
-    int n_embd  = config.n_embd,n_ctx = train_params.n_ctx;        
+    int n_embd  = config.nEmbed(),n_ctx = train_params.n_ctx;        
     const uint32_t n_layer = config.nLayer();
     bool isJModel = !config.jModel.empty();
     auto ctx=GetGGCTX();
@@ -721,7 +720,7 @@ void NLP_AutoRegressive::InitModel(int flag){
     _INFO("\nLLaMeta%s: init model embed=%d layer=%d ff=%d tpFFN=%d\n", __func__,n_embd,n_layer,n_ff,tpFFN);  
     _INFO("\t type of FFN=%s\n", tpFFN==FFN_TYPE::SWIGLU ? "MLP" : tpFFN==FFN_TYPE::VAR_LAST ? "Variation@last_layer" 
         : tpFFN==FFN_TYPE::ONLY_RMSNormal ? "RMS Normal" : "other");  
-    // _INFO("\t type of ATTENTION=%s P=%s \n",tpATT==ATTENTION_TYPE::BROWN ? "BROWN":"QKV",BROWN_Motion::Transfer_1?"Token":"Embed");
+    // _INFO("\t type of ATTENTION=%s P=%s \n",tpATT==ATTENTION_TYPE::BROWN ? "BROWN":"QKV",BROWN_Motion::Transfer_1?"Token":"TokenEmbed");
     if(isJModel){
 
     }else{
@@ -762,7 +761,7 @@ void NLP_AutoRegressive::InitModel(int flag){
 void NLP_AutoRegressive::Dump(int type,int flag)      {
     if(NOT_DUMP(5))          return;
     
-    int n_vocab = hDictVAE->hDict->nVocab(),n_batch = config.common.n_batch,n_ctx = config.common.n_ctx,n_embd = config.n_embd;
+    int n_vocab = hDictVAE->hDict->nVocab(),n_batch = config.common.n_batch,n_ctx = config.common.n_ctx,n_embd = config.nEmbed();
     string suffix="\n========\n",prefix;
     __repr__(suffix,prefix);
     config.Dump();         //        print_params(&config)

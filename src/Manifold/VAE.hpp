@@ -8,106 +8,6 @@
 #pragma once
 #include "Fish.hpp"
 
-/**
- * A abstract model of Multi-level Encoder/Decoer
-*/
-class MutliCoder : public Fish   {
-protected:
-    int nTop=-1,nBottom=-1;
-    bool isResi = false;
-    hGensor resi = nullptr;
-    int tpNorm=-2;
-    
-public:
-    hGensor encode=nullptr,decode=nullptr,norm=nullptr;
-
-    MutliCoder(struct ggml_context *ctx,int dim1,int dim2,bool isR = false,bool isSym=true,int tpN=2,int flag=0x0) : nTop(dim1),nBottom(dim2),isResi(isR),tpNorm(tpN) {
-        assert(nTop>nBottom && nBottom>0);
-        encode = TENSO(ctx, typNUMBER::F32, {nTop, nBottom});     
-        if(isSym)
-            decode = TENSO(ctx, typNUMBER::F32, {nBottom, nTop}); 
-        else{
-            decode = nullptr;
-            isResi = false;
-        }            
-    }
-
-    virtual hGensor ENC(struct ggml_context *ctx,const hGensor x0){
-#ifdef _TENSOR_G_
-        hGensor x = nullptr;    //encode*x0;
-        switch(tpNorm){
-        case 0:
-            x = x->Relu();  
-            break;
-        case 1:
-            x = x->Silu();  
-            break;
-        case 2:
-            x = x->Norm(1.0e-5);  
-            break;
-        }
-#else
-        hGensor x = ggml_mul_mat(ctx, encode, x0 );    
-        switch(tpNorm){
-        case 0:
-            x = ggml_relu(ctx, x);  
-            break;
-        case 1:
-            x = ggml_silu(ctx, x);  
-            break;
-        case 2:
-            x = ggml_rms_norm(ctx, x,1.0e-5);  
-            break;
-        }
-#endif
-        if(isResi)      
-            resi = x;  
-          
-        return x;
-    }
-
-    virtual hGensor DEC(struct ggml_context *ctx,hGensor x){
-        if(decode==nullptr)
-            return x;
-#ifdef _TENSOR_G_
-        if(resi!=nullptr){
-            x += resi;
-        }
-        // x = decode*x;
-        switch(tpNorm){
-        case 0:
-            x = x->Relu();  
-            break;
-        case 1:
-            x = x->Silu();  
-            break;
-        case 2:
-            x = x->Norm(1.0e-5);  
-            break;
-        }
-#else
-        if(resi!=nullptr){
-            x = ggml_add(ctx, x, resi);
-        }
-        x = ggml_mul_mat(ctx, decode, x );    
-        switch(tpNorm){
-        case 0:
-            x = ggml_relu(ctx, x);  
-            break;
-        case 1:
-            x = ggml_silu(ctx, x);  
-            break;
-        case 2:
-            x = ggml_rms_norm(ctx, x,1.0e-5);  
-        }
-#endif
-        return x;
-    }
-    std::string Name()  override {   return "MutliCoder";  }
-    string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
-};
-typedef shared_ptr<MutliCoder> hMultiCoder;
-
 class VariationaAE : public Fish   {
 protected:
     int nRefine = 1, tpNorm=2;
@@ -134,7 +34,7 @@ protected:
             //  x_1 = map.hier_feat(x)
             // x_hier = x_hier+self.hier_mlp[map_no](x_1)/graph.num_nodes*1.0e-6      
             if(!isDown)   
-                x = map->DEC(ctx,x);      //up_pooling
+                x = map->DEC(x);      //up_pooling
             // if not self.down and hasattr(graph,"resi_x"):
             //     assert(x.shape==graph.resi_x[map_no].shape)
             //     x = (x + graph.resi_x[map_no])/2
@@ -149,7 +49,7 @@ protected:
             if (reserve_x)
                 resi_x.push_back(x);
             if (isDown)
-                x = map->ENC(ctx,x);    //Pool_x(x,map.cluster)
+                x = map->ENC(x);    //Pool_x(x,map.cluster)
             /*########## SVD ? QR 
             # if x.shape[0]>x.shape[1]:
             #     q,r =self.Feat_normal(x,mode='reduced')
@@ -168,7 +68,7 @@ protected:
         
         return x;
     }
-    vector<hMultiCoder> MAEC;    //  multi-level auto encoder
+    vector<hVarCoder> MAEC;    //  multi-level auto encoder
 
 public:
     virtual int InitMAEC(struct ggml_context *ctx,const std::vector<int>& dims_,int flag=0x0) {
@@ -176,7 +76,7 @@ public:
         int nMap = dims.size()-1;       assert(nMap>0);
         MAEC.clear( );
         for(int i=0;i<nMap;i++){
-            hMultiCoder hCoder = std::make_shared<MutliCoder>(ctx, dims[i], dims[i+1],reserve_x,isSymmetric,tpNorm);
+            hVarCoder hCoder = std::make_shared<VarCoder>(this,dims,i,reserve_x,isSymmetric,tpNorm);
             MAEC.push_back(hCoder);            
         }
 
@@ -188,14 +88,14 @@ public:
     virtual hGensor ENC(struct ggml_context *ctx,hGensor x){
         hGensor cur = x;
         for(auto coder:MAEC)
-            cur = coder->ENC(ctx, cur);
+            cur = coder->ENC(cur);
         return cur;
     }
 
     virtual hGensor DEC(struct ggml_context *ctx,hGensor x){
         hGensor cur = x;
         for (auto it = MAEC.rbegin(); it != MAEC.rend(); ++it)
-            cur = (*it)->DEC(ctx, cur);
+            cur = (*it)->DEC(cur);
         return cur;
     }
 
@@ -254,4 +154,4 @@ public:
         callosum->Train( );
     }
 };
-typedef shared_ptr<MutliCoder> hMultiCoder;*/
+typedef shared_ptr<VarCoder> hVarCoder;*/

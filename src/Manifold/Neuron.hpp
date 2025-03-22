@@ -57,11 +57,13 @@ protected:
     // std::vector<shared_ptr<GeNeuron>> brothers;
 public:
     enum BIT_FLAG {
-        F_BIAS=0x10000, 
+        F_BIAS=0x10000, F_DELTA=0x20000
     }; 
 
     static shared_ptr<GeNeuron> MakeInstance(Fish *hG_,struct ggml_context *ctx_build,const string& guid,JSON::const_iterator jit,int flag=0x0);
     hGensor w = nullptr, b = nullptr, out = nullptr;
+    hGensor inp = nullptr;          //  may change! maybe nullptr!
+    hGensor delta = nullptr;        //  error tensor for each layer(may share memory!)
     bool isBias = true, isResidual = true;
     
     NeLayer *hLay = nullptr;
@@ -103,23 +105,6 @@ struct Ganglia : public GeNeuron    {
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
     bool isGang()   override    {   return true;    }  
     hGensor Interact(struct ggml_context *ctx_build,hGensor cur,int flag=0x0)    override   {   return cur; } 
-};
-
-//a lookup table instead of matrix*vector(as in SLP)
-struct Embed : public GeNeuron    { 
-
-    int *workload_indices=nullptr;
-    int4 *bucket_info=nullptr;
-
-    bool isAddPos = false;
-    int padded_nCls=-1,*hostInput=nullptr;        //for cuda version
-    Embed(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag);
-    virtual ~Embed();
-    virtual bool InitBucket(size_t num_c_groups,int flag=0x0);
-    virtual hGensor Interact(struct ggml_context *ctx_build,hGensor cur,int flag=0x0)  override;
-    bool Build(int flag)   override;
-    string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
-    virtual int FUSE_cuda(hGTensor hIn,floatX *scratch,LayerNormal*neuron_x,unsigned int flag);
 };
 
 class ROPE : public GeNeuron    { 
@@ -165,12 +150,13 @@ struct SLP : public GeNeuron    {
     // only for deprecated function"UpdateGensor"
     hGensor UpdateGensor(int flag=0x0);
     size_t nElem()  override;  
-    hGTensor operator<<(hGTensor a);
-    /*
+    // hGTensor operator<<(hGTensor a);
+    /*  Forward or remate in Back
         1.  rhs = SLP(lhs)  or rhs = W*lhs+b
         2.  gelu = GELU(rhs)
     */
-    int FUSE_cuda(hGTensor rhs,hGTensor lhs,hGTensor gelu=nullptr,bool isForw=true,int flag=0x0);
+    int Forw(hGTensor rhs,hGTensor lhs,hGTensor gelu=nullptr,int flag=0x0);
+    int Back(hGTensor delta,hGTensor inp,hGTensor deltaIn,hGTensor gelu=nullptr,float* dbias_buffer=nullptr,int flag=0x0);
     int FUSE_cuda_block(hGTensor rhs,hGTensor lhs,hGTensor gelu=nullptr,bool isForw=true,int flag=0x0);
 };
 
@@ -179,16 +165,15 @@ struct LayerNormal : public GeNeuron    {
     //  always float
     hGensor mean=nullptr, rstd=nullptr;
     hGensor out=nullptr;
-    LayerNormal() {}
-    //Deprecated
+    LayerNormal() {}    
     LayerNormal(Fish *ctx, const std::string &key_, JSON::const_iterator jit, int flag);
     bool Build(int flag)   override;
     hGensor Interact(struct ggml_context * ctx0,hGensor cur,int flag)    override;
-    hGTensor FUSE_cuda(hGTensor inpL,float* scratch=nullptr,int flag=0x0);
+    hGTensor FUSE_cuda(hGTensor inpL,float* scratch=nullptr,hGTensor deltaIn=nullptr,int flag=0x0);
     size_t nElem()  override;    
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
     // hGTensor operator>>(hGTensor & a){  return a;   }
-    hGTensor operator<<(hGTensor a);
+    // hGTensor operator<<(hGTensor a);
 };
 struct MOE : public GeNeuron  {
     bool isSiLU = false;
@@ -267,7 +252,7 @@ public:
     bool isValid()  override    {   return true;    }
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
 
-    hGTensor FUSE_cuda(hGTensor inpL,floatX* residual,float* scratchF,int flag);
+    hGTensor FUSE_cuda(hGTensor inpL,hGTensor residual,float* scratchF,int flag);
 };
 
 /*
@@ -317,14 +302,40 @@ public:
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
 };
 
-struct FFN : public GeNeuron  {
-    LayerNormal norm,*fuseNorm=nullptr;;
+
+// Variational Encoder/Decoer
+class VarCoder : public GeNeuron   {
+protected:
+    int nTop=-1,nBottom=-1;
+    bool isResi = false;
+    hGensor resi = nullptr;
+    int tpNorm=-2; 
     SLP up,down,gate;
-    Relu relu;
+    Relu relu;    
+    
+    bool Build(int flag)   override;
+public:
+    LayerNormal norm;
+    // hGensor encode=nullptr,decode=nullptr,norm=nullptr;
+    VarCoder()  {}
+    VarCoder(Fish *ctx, const std::string &key_, JSON::const_iterator jit, int flag);
+    VarCoder(Fish *hG_,std::vector<int>&dims,int level,bool isR = false,bool isSym=true,int tpN=2,int flag=0x0);
+    virtual hGensor ENC(const hGensor x0);
+    virtual hGensor DEC(hGensor x);
+    string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
+
+friend class TokenEmbed;
+friend class MAEC;
+};
+typedef shared_ptr<VarCoder> hVarCoder;
+
+struct FFN : public VarCoder  {
+    LayerNormal *fuseNorm=nullptr;;
+    
     // hGensor pre_gelu = nullptr;
     int latent;
 #ifdef _TENSOR_G_    
-    floatX *residual=nullptr,*input_1=nullptr,*scratchX=nullptr;
+    floatX *input_1=nullptr,*scratchX=nullptr;//,*residual=nullptr;
     SelfAttention *lastQKV=nullptr;
     bool remater_ffn = false;
 #endif
@@ -339,18 +350,56 @@ struct FFN : public GeNeuron  {
     hGTensor FUSE_cuda(hGTensor inpL,floatX *scratch,int flag);
 };
 
+//  multi-level auto encoder
+struct MAEC: public GeNeuron    { 
+    int nIn=-1,nOut=-1;
+    vector<hVarCoder> codes; 
+    LayerNormal normE,normD;
+    bool reserve_x = false;
+    vector<hGensor> resi_x;
 
+    MAEC(Fish *hG_, const std::string &key_, int flag);
+    virtual hGensor ENC(hGensor x,int flag=0x0);
+    virtual hGensor DEC(hGensor x,bool isForw,int flag=0x0);
+    string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
+    bool Empty( )    override    {   return codes.size()>0;   }
+};
+typedef shared_ptr<MAEC> hMAEC;
 
+/*
+    Each token is embed to latent vector
+*/
+struct TokenEmbed : public GeNeuron    {     
+    int *workload_indices=nullptr,nVocab=-1,latent;
+    int4 *bucket_info=nullptr;
+    bool isAddPos = false;
+    int padded_nCls=-1,*hostInput=nullptr;          //for cuda version    
+                       
+
+    virtual bool SetMAEC(hMAEC maec,int flag=0x0);
+    hMAEC maec = nullptr;
+
+    TokenEmbed(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag);
+    virtual ~TokenEmbed();
+    virtual bool InitBucket(size_t num_c_groups,int flag=0x0);
+    // virtual int InitMAC(int flag=0x0); 
+    virtual hGensor Interact(struct ggml_context *ctx_build,hGensor cur,int flag=0x0)  override;
+    bool Build(int flag)   override;
+    string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
+    virtual int FUSE_cuda(hGTensor hIn,floatX *scratch,LayerNormal*neuron_x,unsigned int flag);
+};
+    
 struct FFN_MOE : public FFN{
     MOE Moe;
 };
 
 struct OutCLS : public GeNeuron  {    
+    hMAEC maec;
     LayerNormal norm;
     SLP proj;
     hGTensor target=nullptr,preLogits=nullptr;
     hSampLoader hLoader=nullptr;
-    int nCls = 0,dB = 1,nzLoss = 0;
+    int nCls = 0,dB = 1,nzLoss = 0,latent=0;
     int padded_nCls; // padded to e.g. %128==0, 
     float mean_loss=0, rLoss=1.0,*hostLoss=nullptr;
     OutCLS() {}
@@ -392,4 +441,5 @@ typedef shared_ptr<NeLayer> hLayer;
 hGTensor  operator>>(hGTensor t, const LayerNormal& norm);
 hGTensor  operator>>(hGTensor t, const SLP& slp);
 hGTensor  operator>>(hGTensor t, const Relu& relu);
+hGTensor  operator>>(hGTensor t, const GeNeuron* neuron);
 

@@ -1,12 +1,31 @@
 {        
     "version":"0.1.0",
-    "arch":"GPT2",
+    "model":{     
+        "arch":"GPT2", 
+        "parameter":{
+            "Layer": 36,  
+            "transformer":{
+                "Ctx":1024,  "Embed":    1280,    "Head": 20,   "Ffn":1280,
+                "on":[""]
+            }
+        },  
+        "inp_embd": {"Embedding+":[]},    
+        "Layer":  {      
+            "attn":{"QKV":[]},               
+            "ffn":{"FFN":[]},       
+            "# gattn":{"GAU":[]}
+                                  
+        },
+        "last_normal":{"Normal":[]},
+        "out": {"CLASIFY":[]}
+    },
+
     "datasets":{
         "train":{
             "glob":"/hy-tmp/edu_fineweb1B/*train*.bin","most":10, "name":"edu_fineweb1B"
         },
         "eval_1": {"glob":"/hy-tmp/edu_fineweb1B/*val*.bin","name":"edu_fineweb1B","eval-every":100        },
-        "eval_2":{"glob":"/hy-tmp/hellaswag_val.bin", "type":"hellaswag","eval-every":500 }        
+        "# eval_2":{"glob":"/hy-tmp/hellaswag_val.bin", "type":"hellaswag","eval-every":500 }        
     },
     
     "train": {
@@ -26,24 +45,7 @@
         }              
     },    
     
-    "model":{      
-        "parameter":{
-            "Layer": 36,  
-            "transformer":{
-                "Ctx":1024,  "Embed":    1280,    "Head": 20,   "Ffn":1280,
-                "on":[""]
-            }
-        },  
-        "inp_embd": {"Embedding+":[]},    
-        "Layer":  {      
-            "attn":{"QKV":[]},               
-            "ffn":{"FFN":[]},       
-            "# gattn":{"GAU":[]}
-                                  
-        },
-        "last_normal":{"Normal":[]},
-        "out": {"CLASIFY":[]}
-    },
+    
 
     "# checkpoint-in":"./hy-tmp/checkpoint/chk-GPT2_9001.gguf",
     "# checkpoint-out":"./hy-tmp/checkpoint/chk-GPT2_",

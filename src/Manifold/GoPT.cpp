@@ -93,6 +93,7 @@ int Fish_bubble(CLI_params& config)  {
     config.wiki_actor = "copy";
     config.common.n_batch = 1;
     config.modep.preLogits_dB = 1;
+    DEBUG.graph_dump = 1;
     arrHWIKI wikis = WIKI::MakeInstance("wikis",config,0x0);
 #if !defined(NDEBUG)
     // config.common.n_ctx = 17;     config.common.n_batch = 1;      config.nLayerX=1;      //Only for debug
@@ -430,7 +431,7 @@ int NLP_AutoRegressive::GenSentence(int flag)  {
     }
     uint64_t rng_seed = 42;
     std::string prompt = config.prompt;
-    prompt = LoadSomeText("config.fp_train_data",0x0);
+    // prompt = LoadSomeText("config.fp_train_data",0x0);
     int genT = 16, nVocab = preLogits->ne[0], _nctx = config.n_ctx(), i, j,pLen=0;
     assert(genT <= _nctx);
     pLen = std::min(_nctx,(int)(prompt.size()));
@@ -441,7 +442,7 @@ int NLP_AutoRegressive::GenSentence(int flag)  {
         piffle[i] = wiki->eos;
     }*/
     hSampLoader hLoader = hOPT->val_loaders[0];
-    if(hLoader->num_batches==0 )    {
+    if(hLoader->num_batches<=0 )    {
         hLoader->InitOneSamp(prompt,nullptr,0x110);
         hLoader->isRecycle = false;
     } 

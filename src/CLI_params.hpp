@@ -11,8 +11,6 @@
 #include "g_float.hpp" 
 #include "./ggex/json.hpp" 
 
-// typedef int32_t TOKEN_ID;
-typedef uint16_t TOKEN_ID;
 /*
     10 levels of dumps, 0-9. 0 is a full dump,The lower the number the more dump.
 */  
@@ -56,7 +54,7 @@ enum MODEL_ARCH {
  * model.safetensors.index.json
 */
 struct MODEL_CARD{
-    static std::string sWeight,sBias,sNorm;
+    static std::string sWeight,sBias,sNorm,sLayer,sAttnOut;
 
     std::string sCardPath = "",sTokenPath="";
     std::string sArch,torch_dtype,transformers_version,model_type;
@@ -68,6 +66,16 @@ struct MODEL_CARD{
     bool empty()    {   return sCardPath.empty();  }
 };
 
+struct MODEL_DE_params_ {    
+    int preLogits_dB=2; // epsilon for convergence test
+    bool isNormalBias = true;  
+    bool isSLPBias = true;  
+    bool isPaddedCls = false;  
+//  ****
+    bool isEmbedWeightTying = true;
+    bool isSeperateQKV = false;
+    void Dump(int typ);
+};
 struct LAY_PARAM{
     uint32_t head,head_kv,ff;
     LAY_PARAM(uint32_t h,uint32_t k,uint32_t f) : head(h),head_kv(k),ff(f) {
@@ -92,15 +100,15 @@ struct LAY_PARAM{
         assert(head>=head_kv && head%head_kv==0);
         return head/head_kv;
     }
-    uint32_t n_embd_head(int n_embd) const {
-        assert(n_embd>0 && n_embd%head==0 && n_embd>=head);
-        return n_embd/head;
+    uint32_t n_embd_head(int _embd) const {
+        assert(_embd>0 && _embd%head==0 && _embd>=head);
+        return _embd/head;
     }
 
-    uint32_t n_embd_gqa(int n_embd) const {
+    uint32_t n_embd_gqa(int _embd) const {
         int gqa = n_gqa();
-        assert(n_embd%gqa==0 && n_embd>=gqa);
-        return n_embd/gqa;
+        assert(_embd%gqa==0 && _embd>=gqa);
+        return _embd/gqa;
     }
 };
 
@@ -120,13 +128,9 @@ struct train_params_ {
     int save_every,dump_every=1;
     int gpt_every=-1;       //eval_every=-1,
 
-    uint32_t seed;
+    int seed=-1;
 
-    int n_ctx,n_batch;
-    int n_threads;
-    int n_gradient_accumulation;
-    int n_epochs=1;
-    int n_gpu_layers;
+    int n_ctx=-1,n_batch=-1,n_threads=-1,n_gradient_accumulation=-1,n_epochs=1,n_gpu_layers=-1;
 
     bool custom_n_ctx;
 
@@ -179,16 +183,6 @@ struct DEUG_SWITCH{
 };
 extern DEUG_SWITCH DEBUG;
 
-struct MODEL_DE_params_ {    
-    int preLogits_dB=2; // epsilon for convergence test
-    bool isNormalBias = true;  
-    bool isSLPBias = true;  
-    bool isPaddedCls = false;  
-//  ****
-    bool isEmbedWeightTying = true;
-    void Dump(int typ);
-};
-
 struct CLI_params {
     struct train_params_ common;  
     MODEL_CARD model_card;
@@ -206,7 +200,7 @@ struct CLI_params {
         common.use_flash=false;  return common.use_flash;  
     }
     uint32_t nThread()  const;
-    
+    uint32_t nEmbed(int flag=0x0)  const;
     uint32_t nLayer()   {
         if(nLayerX>0)   return nLayerX;
         assert(n_layer_train>0);
@@ -238,8 +232,8 @@ struct CLI_params {
     
     MODEL_ARCH ModelArch();
     virtual void OnArch();
-    virtual std::string NameOnArch(std::string&name,int flag=0x0);
-    virtual void JModel2Params(int flag);
+    // virtual std::string NameOnArch(std::string&name,int flag=0x0);
+    virtual bool JModel2Params(int flag);
     virtual void OnMostToken(size_t nMost,int flag=0x0);
     std::string exec_name="",test="",compute_graph="";
     std::vector<std::string> fn_model_base;
@@ -252,11 +246,10 @@ struct CLI_params {
     bool passLoadToken = false;
     bool only_write_model = false;
     bool ffn_use_gate = false;
-    // uint32_t n_vocab = 0;
-    // uint32_t n_ctx   = 0;
     uint32_t n_swarm = 1;
     // uint32_t n_outputs = 1;
-    int n_embd = -1, n_embd_head_k = -1, n_embd_head_v = -1; 
+    int n_embd_head_k = -1, n_embd_head_v = -1; //nEmbed() = -1, 
+    std::vector<int> embeds;
     std::vector<LAY_PARAM> layerps;
 
     int n_layer_train = -1, nLayerX = -1, nFFX = -1;
@@ -375,7 +368,7 @@ struct CLI_params {
     int         rope_type               = -1 ;
 
     uint32_t FOMULA_n_ff(int n_mult) {
-        const uint32_t n_ff = ((2*(4*n_embd)/3 + n_mult - 1)/n_mult)*n_mult;
+        const uint32_t n_ff = ((2*(4*nEmbed())/3 + n_mult - 1)/n_mult)*n_mult;
         return n_ff;
     }
     void SetHead(uint32_t nH){
@@ -404,15 +397,15 @@ struct CLI_params {
     }
     uint32_t n_embd_head(int il = 0) const {
         assert(il>=0 && il<layerps.size());
-        return layerps[il].n_embd_head(n_embd);        
+        return layerps[il].n_embd_head(nEmbed());        
     }
     // uint32_t n_rot = 64;
-    uint32_t n_rot(int il = 0)    const{  //  n_rot to be exactly n_embd / n_head
-        return n_embd/n_head(il);
+    uint32_t n_rot(int il = 0)    const{  //  n_rot to be exactly nEmbed() / n_head
+        return nEmbed()/n_head(il);
     }
     uint32_t n_embd_gqa(int il = 0) const {
         assert(il>=0 && il<layerps.size());
-        return layerps[il].n_embd_gqa(n_embd);        
+        return layerps[il].n_embd_gqa(nEmbed());        
     }
     uint32_t n_gqa(uint32_t il = 0) const {
         const uint32_t n_head    = this->n_head(il);
@@ -437,7 +430,7 @@ struct CLI_params {
         // corresponds to Mamba's conv_states size or RWKV's token_shift states size
         if (wkv_head_size != 0) {
             // for RWKV models
-            return 2 * n_embd;
+            return 2 * nEmbed();
         } else {
             // TODO: maybe support other convolution strides than 1
             // NOTE: since the first column of the conv_state is shifted out each time, it's not actually needed
@@ -448,7 +441,7 @@ struct CLI_params {
     uint32_t n_embd_v_s() const { // dimension of the recurrent state embeddings
         if (wkv_head_size != 0) {
             // corresponds to RWKV's wkv_states size
-            return n_embd * wkv_head_size;
+            return nEmbed() * wkv_head_size;
         } else {
             // corresponds to Mamba's ssm_states size
             return ssm_d_state * ssm_d_inner;

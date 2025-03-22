@@ -14,18 +14,12 @@ int g_dump_level = 1;
 
 int main(int argc, char ** argv) {
     print_build_info();
-    
-    struct CLI_params params;
+    _INFO("[ARCH] token=%ld,floatX=%ld\n", sizeof(TOKEN_ID),sizeof(floatX));
+    CLI_params params;
     if (!params.parse(argc, argv)) {
         return -1;
-    }   
-    assert(params.nabla > 0);     
-
-    if (params.common.seed == LLAMA_DEFAULT_SEED) {
-        params.common.seed = time(NULL);
     }
-    printf("\n%s: seed: %u\n", __func__, params.common.seed);
-    srand(params.common.seed);
+
     params.OnArch();    
     // if(params.test=="GPT_work")      //  Deprecated
     //     return GPT_work(params);    

@@ -766,7 +766,7 @@ void inline fused_residual_forward5(floatX* residual, floatX* normed, float* mea
     cudaCheck(cudaGetLastError());
 }
 
-void inline layernorm_backward(floatX* dinp, floatX* dweight, floatX* dbias, float* scratch,
+void inline layernorm_backward(floatX* delta, floatX* dweight, floatX* dbias, float* scratch,
                         const floatX* dout, const floatX* inp, const floatX* weight, const float* mean, const float* rstd,
                         int B, int T, int C, cudaStream_t stream) {
     NVTX_RANGE_FN();
@@ -778,8 +778,8 @@ void inline layernorm_backward(floatX* dinp, floatX* dweight, floatX* dbias, flo
 
     cudaCheck(cudaMemsetAsync(scratch, 0, 1 * sizeof(float), stream)); // only need to reset the flag to 0
     if(dbias==nullptr)
-        layernorm_backward_kernel11<<<grid_size, block_size, shared_mem_size, stream>>>(dinp, dweight, scratch, dout, inp, weight, mean, rstd, B, T, C);
+        layernorm_backward_kernel11<<<grid_size, block_size, shared_mem_size, stream>>>(delta, dweight, scratch, dout, inp, weight, mean, rstd, B, T, C);
     else
-        layernorm_backward_kernel10<<<grid_size, block_size, shared_mem_size, stream>>>(dinp, dweight, dbias, scratch, dout, inp, weight, mean, rstd, B, T, C);
+        layernorm_backward_kernel10<<<grid_size, block_size, shared_mem_size, stream>>>(delta, dweight, dbias, scratch, dout, inp, weight, mean, rstd, B, T, C);
     cudaCheck(cudaGetLastError());
 }
