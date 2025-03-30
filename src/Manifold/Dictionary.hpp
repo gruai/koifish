@@ -159,6 +159,8 @@ protected:
     string mask_token = "[MASK]";
     string unk_token = "<unk>";      //  unknown word
 
+    int byte_fallback = -1;    //BPE has byte fallback option to convert unk character to utf-8 bytes
+
     // vector where the index is the token id and the value is the token string
     std::vector<std::string> vocab;
     // trie mapping token strings to token ids
@@ -191,6 +193,7 @@ protected:
     bool LoadHFJson(const string& path,int flag=0x0);
     virtual void InitTrier(int flag=0x0);
     virtual bool InitHF(Fish *dolphin,int flag=0x0);
+    virtual bool InitFrom(Fish *dolphin,hGTensor tokens,hGTensor scores,int flag=0x0);
     // convenience array containing the decodings for the fixed 256 byte fallbacks '{0x00}\0', '{0x01}\0', ..., '{0xFF}\0'.
     // TODO: use constexpr?
     std::string byte_pieces[256];
@@ -207,11 +210,9 @@ public:
     virtual ~GTokenizer()  {
         FREE_a(scores);      FREE_a(toktypes);
     }
-    virtual int nVocab(int flag=0x0);
-    virtual bool isValid(int flag=0x0)  {   
-        if(nVocab()<=0)  return false;
-        return true; 
-    }
+    virtual int nVocab(int flag=0x0)    const;
+    virtual bool isValid(int flag=0x0)  const;
+    virtual bool isInRange(const int* inp,size_t nz,int flag);
 
     virtual std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos=false) const;
     virtual std::vector<TOKEN_ID> Encode(const std::wstring& text, bool encode_bos=false) const;
@@ -220,7 +221,7 @@ public:
     virtual int STR2T(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0){
         string line(txt,txt_len);
         btch = Encode(line);
-        return 0x0;
+        return btch.size();
     }
     virtual std::string T2STR(TOKEN_ID tok,int flag=0x0 ){
         return Decode({tok});
@@ -249,6 +250,7 @@ public:
 
 friend class DataTokenSet;  friend class Tokenset_HellaSwag; friend class GlobTokenset;
 friend class SampLoader;
+friend class Fish;
 friend class NLP_AutoRegressive;
 };
 typedef std::shared_ptr<GTokenizer> hTokenizer;

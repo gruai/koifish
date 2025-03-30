@@ -160,7 +160,6 @@ float RAW_backward(Fish *fish,const int* iX, int grad_accum_steps,bool isOnlyEva
     LayerNormal* lnf = fish->GetNeuron<LayerNormal>("LayerNormal",0);    
     delta = cls->FUSE_cuda(lnf->out,nullptr,0x0);    //some operation fused in forward pass
     lnf->FUSE_cuda(ffn->out,(float*)scratchX,delta);  //
-    // layernorm_backward(dresidual, ToG(lnf->w), gb, (float*)scratchX, ToX(GTensor::bt4c), residual, ToX(lnf->w), TO<float>(lnf->mean), TO<float>(lnf->rstd), B, T, C, main_stream);
 
     hGensor tmpDelta = ffn->out;    
     for (int l = L-1; l >= 0; l--) {
@@ -169,10 +168,10 @@ float RAW_backward(Fish *fish,const int* iX, int grad_accum_steps,bool isOnlyEva
         ffn = fish->GetNeuron<FFN>("FFN",l);        //preFFN = l==0 ? nullptr : fish->GetNeuron<FFN>("FFN",l-1);         
         GeNeuron *last = l == 0 ? embed : (GeNeuron *)(fish->GetNeuron<FFN>("FFN",l-1));    //residual = l == 0 ? ToX(embed->out) : ToX(preFFN->out);   
         ffn->lastQKV=QKV;    ffn->delta = tmpDelta;
-        QKV->dl_btc=ToX(tmpDelta);  
-        LayerNormal *hNorm = l+1 != L ? &(fish->GetNeuron<SelfAttention>("SelfAttention",l+1)->norm) : lnf;
-        ffn->FUSE_cuda(QKV->out,scratchX,  0x0);   // hNorm,
-        QKV->FUSE_cuda(QKV->norm.out,last->out,(float*)scratchX,0x0);   //&(ffn->norm)
+        QKV->tmpDelta=tmpDelta;  
+        // LayerNormal *hNorm = l+1 != L ? &(fish->GetNeuron<SelfAttention>("SelfAttention",l+1)->norm) : lnf;
+        ffn->FUSE_cuda(QKV->out,scratchX,  0x0);   
+        QKV->FUSE_cuda(QKV->norm.out,last->out,(float*)scratchX,0x0);   
     }
     embed->FUSE_cuda(fish->Input(),scratchX,nullptr,random_u32(&rng_state));       
 
@@ -208,7 +207,7 @@ void RAW_forward(Fish *fish,int flag) {
     hGensor cur=nullptr,residual=nullptr;
     LayerNormal* lnf = fish->GetNeuron<LayerNormal>("LayerNormal",0);
     TokenEmbed* embed = fish->GetNeuron<TokenEmbed>("TokenEmbed",0);
-    cur = embed->Interact(nullptr,fish->Input());     //acts.encoded=ToX(embed->out);
+    cur = embed->Ming(nullptr,fish->Input());     
     residual = cur; //embed->out;
     SelfAttention *QKV0 = fish->GetNeuron<SelfAttention>("SelfAttention",0),*QKV=nullptr;
 
@@ -224,9 +223,8 @@ void RAW_forward(Fish *fish,int flag) {
         LayerNormal *hNorm = l+1 != L ? &(fish->GetNeuron<SelfAttention>("SelfAttention",l+1)->norm) : lnf;
         ffn->fuseNorm = tpFuseNormal==1?hNorm:nullptr;       
         QKV->fuseNorm =  tpFuseNormal==1?&(ffn->norm):nullptr;
-        cur = QKV->FUSE_cuda(cur,residual,nullptr,flag);   //,tpFuseNormal==1?&(ffn->norm):nullptr        
-        cur = ffn->FUSE_cuda(cur,nullptr, 0x0);  // , tpFuseNormal==1?hNorm:nullptr
-        // out_ = hNorm->out;
+        cur = QKV->FUSE_cuda(cur,residual,nullptr,flag);        
+        cur = ffn->FUSE_cuda(cur,nullptr, 0x0);  
         residual = ffn->out;
     }    
     if(tpFuseNormal==0){

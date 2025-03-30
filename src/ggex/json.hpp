@@ -24573,6 +24573,8 @@ JSON jKEY(const JSON& jConfig,const std::vector<std::string>&keys,int flag=0x0);
 template<typename T>
 T jKV(const JSON& jConfig,const std::vector<std::string>&keys,T default_value,bool isCLI=true,int flag=0x0) {
     assert(keys.size()>0);
+    std::string last = keys[keys.size()-1];
+try{    
     JSON cur = jKEY(jConfig,keys);
     std::string sKey=keys[0];
     for(auto it=keys.begin()+1; it<keys.end();it++)  sKey += "::"+(*it);    //last= keys[keys.size()-1];
@@ -24587,8 +24589,25 @@ T jKV(const JSON& jConfig,const std::vector<std::string>&keys,T default_value,bo
     if(isCLI)
         std::cout<<"{"<<sKey<<"}"<<" = "<<val<<std::endl;
     return val;
+}   catch(JSON::parse_error &e){
+    printf("\r\n%s  Failed to parse %s!!! ERR=%s",__func__,last.c_str(),e.what());
+    std::abort();
+}   catch(...){
+    printf("\r\n%s  Unknown exception @%s!!!",__func__,last.c_str());
+    std::abort();
+}
 }
 
+template<typename T>
+T jKVs(const JSON& jConfig,const std::vector<std::string>&keys,T default_value){
+    std::string info="";
+    info = jKV(jConfig,keys,info,false,0x0);
+    T t = default_value;
+    // G_S2T_(info,t);
+    std::stringstream ss(info);
+    ss>>t;
+    return t;
+}
 template<typename T>
 std::vector<T> jKV_arr(const JSON& jConfig,const std::vector<std::string>&keys,std::vector<T> default_value,bool isCLI=true,int flag=0x0) {
     JSON cur = jKEY(jConfig,keys);

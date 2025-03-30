@@ -183,20 +183,20 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
     bool bRet = false;
     switch (tpInitWeight)    {
     case SERIALIZE:
-        if(!config.model_card.empty()){
-            isLoadCheckpoint = HF_Serialize(false,0x0);
-        }else{
-            string type=FILE_EXT(config.checkpoint.in);
-            if(type==".gguf"){
-                isLoadCheckpoint = GGUF_Serialize(config.checkpoint.in,false,0x0);
-            }else if(type==".calm"){
-                isLoadCheckpoint = CALM_Serialize(config.checkpoint.in,false,0x0);
+            if(!config.model_card.empty()){
+                isLoadCheckpoint = HF_Serialize(false,0x0);
             }else{
-                isLoadCheckpoint = YALM_Serialize(config.checkpoint.in,false,0x0);
+                string type=FILE_EXT(config.checkpoint.in);
+                if(type==".gguf"){
+                    isLoadCheckpoint = GGUF_Serialize(config.checkpoint.in,false,0x0);
+                }else if(type==".calm"){
+                    isLoadCheckpoint = CALM_Serialize(config.checkpoint.in,false,0x0);
+                }else{
+                    isLoadCheckpoint = YALM_Serialize(config.checkpoint.in,false,0x0);
+                }
             }
-        }
-            
-        bRet = isLoadCheckpoint;
+                
+            bRet = isLoadCheckpoint;        
         break;
     case COPY_WIKI:
         assert(0);  //  Deprecated
@@ -380,24 +380,38 @@ bool Fish::SaveTrain(string sX,int flag) {
 }
 
 
-bool Fish::LoadTrain(int flag) { 
-    assert(hOPT!=nullptr);
-    int64_t iter = hOPT->iter;  //     train->opt->iter;
-    _INFO("%s: ......", __func__);
-
-    auto fpCheck = config.checkpoint.in;
-    bool isCopy = config.is({"wiki","actor"},"copy") && wikis.size()>0;
-    if (fpCheck.empty()){
-        if(wiki_tutor!=nullptr)
+bool Fish::LoadCheckPoint(int flag) {     
+    // if(!GGUF_Serialize(fpCheck,false,0x0))
+    //     return false;
+    std::string fpCheck = config.checkpoint.in;
+    if(!config.model_card.empty()){
+        isLoadCheckpoint = HF_Serialize(false,0x0);        
+    }else{        
+        string type=FILE_EXT(fpCheck);        
+        bool isCopy = config.is({"wiki","actor"},"copy") && wikis.size()>0;
+        if (fpCheck.empty()){
+            // if(wiki_tutor!=nullptr)
+            //     return true;
             return true;
-        _INFO("\r[LoadTrain] failed!  please set checkpoint path @\"checkpoint-in\"\n" );
-        return false;
+        }     
+
+        _INFO("[CHECKPOINT]: \"%s\"@%s......", type.c_str()+1,fpCheck.c_str());
+        if(type==".gguf"){
+            isLoadCheckpoint = GGUF_Serialize(config.checkpoint.in,false,0x0);
+        }else if(type==".calm"){
+            isLoadCheckpoint = CALM_Serialize(config.checkpoint.in,false,0x0);
+        }else{
+            isLoadCheckpoint = YALM_Serialize(config.checkpoint.in,false,0x0);
+        }
     }
-               
-    if(!GGUF_Serialize(fpCheck,false,0x0))
+        
+    if(!isLoadCheckpoint) {
+        _INFO("\r[LoadCheckPoint] failed!  please check checkpoint file @\"%s\"\n",fpCheck.c_str() );
         return false;
+    }        
+
     assert( vendor == "gruai" );
-    _INFO("\r[LoadTrain] OK @\"%s\"\n",fpCheck.c_str() );
+    _INFO("\r[LoadCheckPoint] OK @\"%s\"\n",fpCheck.c_str() );
     return true;
 }
 void Fish::Statistic(int typ, int flag)     {   

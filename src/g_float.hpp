@@ -97,7 +97,9 @@ inline typNUMBER tpNumOf(const std::string&dtype_str){
         type = typNUMBER::I16;
     } else if (dtype_str == "I8") {
         type = typNUMBER::I8;
-    } else {
+    } else if (dtype_str == "U8") {
+        type = typNUMBER::I8;
+    }else {
         std::string sErr = "Invalid typNumber@"+dtype_str;
         assert(0 && sErr.c_str());
     }

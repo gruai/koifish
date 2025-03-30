@@ -194,19 +194,21 @@ extern int g_dump_level;
 template <typename T>
 void inline PrintTensor(const char* title,const T *src, bool isDevice,int n1,int n2,int n3=1,int n4=1,int flag=0x0){
     if( g_dump_level>0 && flag>=0 ) return;
+    T *dst=(T*)src,*cur=NULL; 
+    size_t nElem=n1*n2*n3*n4,i,nz=0,nEach=3;
+	if(nElem==0)	return;
 
-    T *dst=(T*)src; 
-    size_t nElem=n1*n2*n3*n4,sz = nElem*sizeof(T),i,nz=0,nEach=3;
     if(isDevice){
-        dst = new T[nElem];
-        cudaCheck(cudaMemcpyAsync(dst,src, sz, cudaMemcpyDeviceToHost, main_stream));
+        dst = (T*)malloc(sizeof(T)*nElem);
+        cudaCheck(cudaMemcpyAsync(dst,src, nElem*sizeof(T), cudaMemcpyDeviceToHost, main_stream));
     }
-    T *cur = dst;    
+    cur = dst;  
+  
     // if(strlen(title)>0) printf("%s\n", title);
     float a1=-FLT_MAX,a0=FLT_MAX,a;    
     double sum = 0.0,len=0.0,sum2=0.0;
     for (i = 0; i < nElem; i++,cur++) {
-        a = T2Float<T>(cur);
+        a = float(*cur);	//T2Float<T>(cur);
         if(i<nEach || i>nElem-nEach || fabs(i-nElem/2)<=nEach)
             printf("%g ",a);
         if(i==nEach || i==nElem-nEach)    printf("...");
@@ -216,9 +218,9 @@ void inline PrintTensor(const char* title,const T *src, bool isDevice,int n1,int
     }
     len = sqrt(sum2/nElem);
     printf("\t\"%s\" avg=%g(%ld) avg_len=%g sum2=%g [%f,%f]\n",title,sum/nElem,nElem,len,sum2,a0,a1);
-    
+
     if(isDevice){
-        delete[] dst;
+        free(dst);
     }
 }
 

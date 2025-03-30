@@ -9,7 +9,17 @@
 // ----------------------------------------------------------------------------
 // CUDA kernels
 
+__global__ void inline silu_forward_kernel2(floatX* out, const floatX* inp) {
+    
+}
+__global__ void inline silu_backward_inplace_kernel(floatX* d_in_out, const floatX* inp) {
+    
+}
+
 #define GELU_SCALING_FACTOR sqrtf(2.0f / M_PI)
+/**
+ * Gaussian Error Linear Unit.  GELU(x)=xG(x), where G(x) is the standard Gaussian cumulative distribution function.
+ */
 __global__ void inline gelu_forward_kernel2(floatX* out, const floatX* inp) {
     int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
 

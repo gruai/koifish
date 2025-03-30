@@ -89,9 +89,9 @@ bool TokenEmbed::Build(int flag){
 /*
    batch(tokens) embeddings from glob token embedding(w)
 */
-hGensor TokenEmbed::Interact(struct ggml_context *ctx_,hGensor tokens,int flag){
+hGensor TokenEmbed::Ming(struct ggml_context *ctx_,hGensor tokens,int flag){
     if(tokens==nullptr)  //symbolic analysis
-        return GeNeuron::Interact(ctx_,tokens,flag);
+        return GeNeuron::Ming(ctx_,tokens,flag);
     assert(tokens->type==typNUMBER::I32);
     string sw = name+"_rows";
     hGensor cur = nullptr;
@@ -331,10 +331,17 @@ bool VarCoder::Build(int flag_0)   {
     int flag = flag_0;
     if(tpNorm>0)
         norm.BuildX(name+MODEL_CARD::sNorm,{nBottom},hFish,flag);   
+if(hFish->arch==MODEL_ARCH::NLP_QWEN2){
+    up.BuildX(name+".w1",{nBottom,nTop},hFish,flag | F_DELTA);  
+    down.BuildX(name+".w2",{nTop,nBottom},hFish,flag | F_DELTA); 
+    gate.BuildX(name+".w3",{nTop,nBottom},hFish,flag | F_DELTA); 
+}else{
     up.BuildX(name+"_up",{nBottom,nTop},hFish,flag | F_DELTA);  
     down.BuildX(name+"_down",{nTop,nBottom},hFish,flag | F_DELTA); 
+}
     if(!isBias)   {
-        up.b=nullptr;      down.b=nullptr;
+        up.b = nullptr;      down.b = nullptr;
+        if(!gate.Empty())   gate.b = nullptr;
     }
     
     return true;
@@ -376,9 +383,9 @@ bool FFN::Build(int flag_0)   {
     return true;
 }
 
-hGensor FFN::Interact(struct ggml_context * ctx_,hGensor inpL,int flag){    
+hGensor FFN::Ming(struct ggml_context * ctx_,hGensor inpL,int flag){    
     if(inpL==nullptr){   //symbolic analysis
-        return GeNeuron::Interact(ctx_,nullptr,flag);
+        return GeNeuron::Ming(ctx_,nullptr,flag);
     }
     hGensor cur = nullptr;
     int iRet=-1;
@@ -387,7 +394,7 @@ hGensor FFN::Interact(struct ggml_context * ctx_,hGensor inpL,int flag){
     hGensor lastResi = inpL;
     if(hFish->isSymbolic()){      
         // out = inpL >> up >> relu >> down >> norm;  
-        inpL >> up >> down >> norm ;  
+        inpL >> up >> down >> gate >> norm ;  
         if(remater_ffn){
             norm.out>>this; //out->AddSrc(GENSOR_OP::Inst(norm.out),0x0);      
         }else
@@ -399,20 +406,20 @@ hGensor FFN::Interact(struct ggml_context * ctx_,hGensor inpL,int flag){
         cur = norm.out;
     } 
 #else
-    cur = norm.Interact(ctx_,inpL,0x0);
+    cur = norm.Ming(ctx_,inpL,0x0);
     gTN(cur,"%s.ffn_norm",name.c_str());      // cb(cur, _NAM_("ffn_norm"), il);    
-    cur = up.Interact(ctx_,cur,0x0);
+    cur = up.Ming(ctx_,cur,0x0);
     gTN(cur,"%s.ffn_up",name.c_str());//cb(cur, "ffn_up", il);
     
     // cur = ggml_gelu(ctx, cur);                cb(cur, "ffn_gelu", il);  //GGML_UNARY_OP_GELU:not implemented for backward
     cur = ggml_silu(ctx_, cur);                
     gTN(cur,"%s.ffn_silu",name.c_str());    
     if(!gate.Empty()){
-        hGensor g = gate.Interact(ctx_,inpL,0x0);
+        hGensor g = gate.Ming(ctx_,inpL,0x0);
         cur = ggml_mul(ctx_, cur, g);
         gTN(cur,"%s.ffn_gate",name.c_str());
     }    
-    cur = down.Interact(ctx_,cur,0x0);
+    cur = down.Ming(ctx_,cur,0x0);
     gTN(cur,"%s.ffn_down",name.c_str());    //cb(cur, "ffn_down", il);
     cur = ggml_add(ctx_, cur, inpL);// add the input
     cur = AfterForward(ctx_,cur,flag);

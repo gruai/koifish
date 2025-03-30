@@ -341,10 +341,10 @@ size_t SampLoader::UpdateBatch(int x,Fish* fish){
     if(next_sample+nSampInBatch>=nShard())     {
         hOPT->isDumpOnce = true;
     }
-    hGensor tokens_input=fish->Input(),target_probs=hOPT->hTargetProbs();    assert(tokens_input!=nullptr);
+    hGensor tokens_input=fish->Input(),target_probs=hOPT->hTargetProbs();    assert(tokens_input!=nullptr);   
+    assert(hDict->isInRange((int*)(hostBatch->data),hostBatch->size(),0));
     int *raw_t = (int*)(tokens_input->data);
-#ifdef _TENSOR_G_
-    assert(isInRange((int*)(hostBatch->data),hostBatch->size(),0,hDict->nVocab()));
+#ifdef _TENSOR_G_    
     tokens_input->OverWrite(hostBatch);
     if(target_probs!=nullptr)    {
         target_probs->OverWrite(hostTargetProbs);    
@@ -934,6 +934,7 @@ hSAMP SampLoader::InitOneSamp(const string &prompt,hGensor input, int flag){
     // _nvocab = hDict->nVocab();
     num_batches = 1;
     sentence = hDict->T2STR(hTokens->tokens);
+    assert(sentence == prompt);
 
     // if(input!=nullptr)
     //     Samp2Batch(0,samp,input,nullptr,dolphin->config.common);  

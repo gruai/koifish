@@ -188,11 +188,11 @@ int GPT2::cRawGraph( struct ggml_context *ctx_build,bool isBuild,int flag)   {
         hGensor ffn_inp = inpL;
 if(1)   {   //pass self attention module,  loss would stop at 2.48
         layer->att_norm.BuildX(_NAM_("block.%d.attn_norm",il),{n_embd},this,0x0);     layer->att_norm.sT="a";
-        cur = layer->att_norm.Interact(ctx_build,inpL,0x0);
+        cur = layer->att_norm.Ming(ctx_build,inpL,0x0);
         cb(cur, _NAM_("attn_norm"), il);
         if(0){  
             layer->Q.BuildX(_NAM_("block.%d.attn_qkv",il),{n_embd, n_embd + 2*n_embd_gqa},this,0x0);
-            cur = layer->Q.Interact(ctx_build,cur,0x0);            cb(cur, "wqkv", il);      
+            cur = layer->Q.Ming(ctx_build,cur,0x0);            cb(cur, "wqkv", il);      
             hGensor Q2= ggml_view_2d(ctx_build, cur, n_embd,     n_tokens, cur->nb[1], 0*sizeof(float)*(n_embd));
             hGensor K2= ggml_view_2d(ctx_build, cur, n_embd_gqa, n_tokens, cur->nb[1], 1*sizeof(float)*(n_embd));
             hGensor V2= ggml_view_2d(ctx_build, cur, n_embd_gqa, n_tokens, cur->nb[1], 1*sizeof(float)*(n_embd + n_embd_gqa));
@@ -203,9 +203,9 @@ if(1)   {   //pass self attention module,  loss would stop at 2.48
             layer->Q.BuildX(_NAM_("block.%d.Q",il),{n_embd, n_embd},this,0x0);                layer->Q.sT="q";
             layer->K.BuildX(_NAM_("block.%d.K",il),{n_embd, n_embd_gqa},this,0x0);            layer->K.sT="k";
             layer->V.BuildX(_NAM_("block.%d.V",il),{n_embd, n_embd_gqa},this,0x0);            layer->V.sT="v";
-            Qcur = layer->Q.Interact(ctx_build,cur,0x0);       
-            Kcur = layer->K.Interact(ctx_build,cur,0x0);       
-            Vcur = layer->V.Interact(ctx_build,cur,0x0);
+            Qcur = layer->Q.Ming(ctx_build,cur,0x0);       
+            Kcur = layer->K.Ming(ctx_build,cur,0x0);       
+            Vcur = layer->V.Ming(ctx_build,cur,0x0);
         }
         cb(Qcur, "Qcur", il);        cb(Kcur, "Kcur", il);        cb(Vcur, "Vcur", il);
         if(isAttOnBC){  // attenion on all tokens, memory would explode!
@@ -247,7 +247,7 @@ if(1)   {   //pass self attention module,  loss would stop at 2.48
         }        
         cb(cur, "kqv_merged_cont", il);
         layer->proj.BuildX(_NAM_("block.%d.attn_proj",il),{n_embd, n_embd},this,0x0);     //why proj is useful?
-        cur = layer->proj.Interact(ctx_build,cur,0x0);            cb(cur, "attn_proj", il); 
+        cur = layer->proj.Ming(ctx_build,cur,0x0);            cb(cur, "attn_proj", il); 
         
         if(isOnlinePush)            ggml_build_forward_expand(gf, cur);        
 
@@ -261,15 +261,15 @@ if(1)   {   //pass self attention module,  loss would stop at 2.48
 }
 if(1)   {   //pass self attention module            loss would stop at 2.4
         layer->ffn_norm.BuildX(_NAM_("block.%d.ffn.norm",il),{n_embd},this,0x0);      layer->ffn_norm.sT="f";
-        cur = layer->ffn_norm.Interact(ctx_build,inpL,0x0);        //  ??? cur = layer->ffn_norm.Interact(ctx_build,inpL,0x0);
+        cur = layer->ffn_norm.Ming(ctx_build,inpL,0x0);        //  ??? cur = layer->ffn_norm.Ming(ctx_build,inpL,0x0);
         cb(cur, _NAM_("ffn.norm"), il);
         layer->up.BuildX(_NAM_("block.%d.ffn.up",il),{n_embd, n_ff},this,0x0);
-        cur = layer->up.Interact(ctx_build,cur,0x0);
+        cur = layer->up.Ming(ctx_build,cur,0x0);
         cb(cur, "ffn_up", il);
         // cur = ggml_gelu(ctx, cur);                cb(cur, "ffn_gelu", il);  //GGML_UNARY_OP_GELU:not implemented for backward
         cur = ggml_silu(ctx_build, cur);                cb(cur, "ffn.silu", il); 
         layer->down.BuildX(_NAM_("block.%d.ffn.down",il),{n_ff, n_embd},this,0x0);
-        cur = layer->down.Interact(ctx_build,cur,0x0);
+        cur = layer->down.Ming(ctx_build,cur,0x0);
         cb(cur, "ffn.down", il);
         cur = ggml_add(ctx_build, cur, ffn_inp);
         // cur = lctx.cvec.apply_to(ctx_build, cur, il);
@@ -279,8 +279,8 @@ if(1)   {   //pass self attention module            loss would stop at 2.4
         inpL = cur;
     }
     
-    cur = _norm.Interact(ctx_build,inpL,0x0);                          cb(cur, "result_norm", -1);
-    cur = _output.Interact(ctx_build,cur,0x0);                         cb(cur, "result_output", -1);
+    cur = _norm.Ming(ctx_build,inpL,0x0);                          cb(cur, "result_norm", -1);
+    cur = _output.Ming(ctx_build,cur,0x0);                         cb(cur, "result_output", -1);
     preLogits = cur;    
         
     // if(0){  //only for debug

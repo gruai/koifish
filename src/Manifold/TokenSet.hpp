@@ -125,6 +125,7 @@ public:
     virtual double LossOnResult(hSampLoader hLoader,OutCLS *cls,int flag=0x0);
 
 friend class NLP_AutoRegressive;
+friend class Fish;
 friend class Optimizer;
 friend class SampLoader;
 };

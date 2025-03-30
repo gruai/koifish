@@ -90,6 +90,8 @@ bool SelfAttention::Build(int flag_0)   {
         Q.BuildX(name+".wq",sp,hFish,flag);          
         K.BuildX(name+".wk",sp,hFish,flag);              
         V.BuildX(name+".wv",sp,hFish,flag);
+        bqkv = std::make_shared<huTensor>(name+".wqkv.bias",sp,GTensor::tpFloatX,false);    //  model.layers.0.attn.wqkv.bias
+        // hFish->InitGensor(nullptr,bqkv->name,bqkv,hFish->isTrain());
     }else
         Q.BuildX(name+"_qkv",sp2,hFish,flag );
     attn = std::make_shared<huTensor>(name+".attn",sp3,GTensor::tpFloatX,false);        // B * T * C
@@ -125,19 +127,18 @@ string SelfAttention::__repr__( string& suffix,string& prefix,int flag)    {
         _INFO("%s",buf); 
     return buf;  
 };
-hGensor SelfAttention::Interact(struct ggml_context * ctx_,hGensor inpL,int flag)    {
+hGensor SelfAttention::Ming(struct ggml_context * ctx_,hGensor inpL,int flag)    {
     if(inpL==nullptr){   //symbolic analysis
-        return GeNeuron::Interact(ctx_,nullptr,flag);
+        return GeNeuron::Ming(ctx_,nullptr,flag);
     }
     
     
 #ifdef _TENSOR_G_
     hGensor cur = inpL,lastResi=inpL;
     int iRet;
-    if(hFish->isSymbolic()){   
-         
+    if(hFish->isSymbolic()){
         if(hFish->config.modep.isSeperateQKV)
-            attn->AddSrc({inpL,Q.w,Q.b,Q.out,K.w,K.b,K.out,V.w,V.b,V.out,trans});
+            attn->AddSrc({inpL,Q.w,Q.b,Q.out,K.w,K.b,K.out,V.w,V.b,V.out,trans,bqkv});
         else{
             inpL>>Q;       
             attn->AddSrc({Q.out,trans});
@@ -149,9 +150,9 @@ hGensor SelfAttention::Interact(struct ggml_context * ctx_,hGensor inpL,int flag
         // FUSE_cuda(QKV->norm.out,residual,&(ffn->norm),nullptr,flag);      
     }
 #else
-    hGensor cur = norm.Interact(ctx_,inpL,0x0);   
+    hGensor cur = norm.Ming(ctx_,inpL,0x0);   
     hGensor kq = MyAttention(ctx_,cur,flag);
-    hGensor Vcur = V.Interact(ctx_,cur,0x0),v; 
+    hGensor Vcur = V.Ming(ctx_,cur,0x0),v; 
     Vcur = ggml_reshape_4d(ctx_, Vcur, n_embd_head, n_head, n_ctx,n_batch);
     v = ggml_cont(ctx_,ggml_permute(ctx_, Vcur, 1, 2, 0, 3));
     gTN0(v,"%s.v",name.c_str()); 
@@ -162,7 +163,7 @@ hGensor SelfAttention::Interact(struct ggml_context * ctx_,hGensor inpL,int flag
     hGensor kqv = ggml_mul_mat(ctx_, v, kq);        // eh,ctx,h,b
     gTN(kqv,"%s.kqv",name.c_str());            
     if(!moe.Empty())
-        kqv = moe.Interact(ctx_,kqv);
+        kqv = moe.Ming(ctx_,kqv);
     hGensor kqv_merged = ggml_permute(ctx_, kqv, 0, 2, 1, 3); // eh,h,ctx,b
     gTN0(kqv_merged,"%s.kqv_merged",name.c_str());            //cb(kqv_merged, "kqv_merged", il);
     if(0){   //  back gradient is zero
@@ -173,7 +174,7 @@ hGensor SelfAttention::Interact(struct ggml_context * ctx_,hGensor inpL,int flag
     }        
     gTN0(cur,"%s.kqv_merged_cont",name.c_str());//cb(cur, "kqv_merged_cont", il);
     
-    cur = proj_cat.Interact(ctx_,cur,0x0);            //cb(cur, "attn_proj", il); 
+    cur = proj_cat.Ming(ctx_,cur,0x0);            //cb(cur, "attn_proj", il); 
     
     //if(isOnlinePush)            ggml_build_forward_expand(gf, cur);        
 
@@ -196,8 +197,8 @@ hGensor SelfAttention::MyAttention(struct ggml_context * ctx_,hGensor cur,int fl
     float kq_scale = 1.0f/sqrtf(float(n_embd_head)),s;
     
     hGensor q,k,kq=nullptr;                  //  assert(KQ_mask!=nullptr);
-    hGensor Qcur = Q.Interact(ctx_,cur,0x0);       
-    hGensor Kcur = K.Interact(ctx_,cur,0x0);  
+    hGensor Qcur = Q.Ming(ctx_,cur,0x0);       
+    hGensor Kcur = K.Ming(ctx_,cur,0x0);  
 #ifdef _TENSOR_G_
     return cur;
 #else  
@@ -212,8 +213,8 @@ hGensor SelfAttention::MyAttention(struct ggml_context * ctx_,hGensor cur,int fl
         // Vcur = ggml_reshape_4d(ctx_, Vcur, n_embd_head, n_head, n_ctx,n_batch);
     }    
     if(!rope.Empty()){
-        rope.sT="Q";    Qcur = rope.Interact(ctx_,Qcur,0x1);     
-        rope.sT="K";    Kcur = rope.Interact(ctx_,Kcur,0x1);  
+        rope.sT="Q";    Qcur = rope.Ming(ctx_,Qcur,0x1);     
+        rope.sT="K";    Kcur = rope.Ming(ctx_,Kcur,0x1);  
     }
     if(tpNormal==1 /*&& n_embd_head>=1*/)    {   
         Qcur=ggml_rms_norm(ctx_,Qcur,1.0e-5);  Kcur=ggml_rms_norm(ctx_,Kcur,1.0e-5);    //Vcur=ggml_rms_norm(ctx_,Vcur,1.0e-5);  
@@ -285,12 +286,12 @@ bool BROWN_attn::Build(int flag)   {
     // moe.BuildX(name+".moe",sp,hFish,flag);  
     return true;
 }
-hGensor BROWN_attn::Interact(struct ggml_context * ctx_,hGensor teb,int flag)    {
+hGensor BROWN_attn::Ming(struct ggml_context * ctx_,hGensor teb,int flag)    {
     assert_shape_2d(teb, C, T*B);
     hGensor cur=BeforeForward(ctx_,teb,flag);
     if(cur==nullptr)    return cur;
 
-    cur = norm.Interact(ctx_,cur,0x0);
+    cur = norm.Ming(ctx_,cur,0x0);
     const float kq_scale = 1.0f/sqrtf(float(C)/n_head);
     int N = T,n_past=0;;    
     hGensor v = cur,v3=nullptr,v4=nullptr, wv = nullptr, kqv_out=nullptr,prob;
@@ -326,7 +327,7 @@ hGensor BROWN_attn::Interact(struct ggml_context * ctx_,hGensor teb,int flag)   
         // v4 = ggml_permute(ctx_, v4, 0,2,1,3); 
         // v4 = ggml_cont(ctx_,v4);
         // wv = moe.Forward2(ctx_,wv,v4);
-        wv = moe.Interact(ctx_,wv);
+        wv = moe.Ming(ctx_,wv);
     }        
 
     kqv_out = ggml_permute(ctx_, wv, 0,2,1,3);       //
@@ -338,7 +339,7 @@ hGensor BROWN_attn::Interact(struct ggml_context * ctx_,hGensor teb,int flag)   
     gTN(kqv_out, "%s.kqv_merged_cont",name.c_str());     
     kqv_out = ggml_reshape_2d   (ctx_, kqv_out, C, N*n_batch);   // [768,17,1]  
     // if(isOnlinePush) ggml_build_forward_expand(gf_,kqv_out);  
-    hGensor t20 = proj_cat.Interact(ctx_,kqv_out);                        
+    hGensor t20 = proj_cat.Ming(ctx_,kqv_out);                        
     gTN(t20, "%s.kqv_out",name.c_str());     assert_shape_2d(t20, C, N*n_batch);
     cur = ggml_add          (ctx_, t20, teb);  /**/  
 #endif    
@@ -377,20 +378,20 @@ bool GatedAttention::Build(int flag)   {
            
     return true;
 }
-hGensor GatedAttention::Interact(struct ggml_context * ctx_,hGensor inpL,int flag)    {
+hGensor GatedAttention::Ming(struct ggml_context * ctx_,hGensor inpL,int flag)    {
     if(inpL==nullptr){   //symbolic analysis
-        return GeNeuron::Interact(ctx_,nullptr,flag);
+        return GeNeuron::Ming(ctx_,nullptr,flag);
     }
     
-    hGensor cur = norm.Interact(ctx_,inpL,0x0),attn=nullptr;    
+    hGensor cur = norm.Ming(ctx_,inpL,0x0),attn=nullptr;    
 #ifdef _TENSOR_G_
 #else    
     gTN(cur,"%s.gau_norm",name.c_str());      // cb(cur, _NAM_("ffn_norm"), il); 
     if(attn_mode>0)
         attn = MyAttention(ctx_,cur,0x0);       //  [c,c,H,B]   
        
-    hGensor Ucur = upU.Interact(ctx_,cur,0x0);  
-    hGensor Vcur = upV.Interact(ctx_,cur,0x0);  
+    hGensor Ucur = upU.Ming(ctx_,cur,0x0);  
+    hGensor Vcur = upV.Ming(ctx_,cur,0x0);  
 
     hGensor u = ggml_silu(ctx_, Ucur);          gTN(u,"%s.u",name.c_str()); 
     hGensor v = ggml_silu(ctx_, Vcur);          gTN(v,"%s.v",name.c_str()); 
@@ -399,7 +400,7 @@ hGensor GatedAttention::Interact(struct ggml_context * ctx_,hGensor inpL,int fla
     
  
     hGensor uv = ggml_mul(ctx_,u,v);
-    cur = down.Interact(ctx_,uv,0x0);
+    cur = down.Ming(ctx_,uv,0x0);
     cur = ggml_add(ctx_, cur, inpL);// add the input
 #endif
     cur = AfterForward(ctx_,cur,flag);
@@ -420,11 +421,11 @@ bool cuAttention::Build(int flag)   {
 #endif  
     return true;
 }
-hGensor cuAttention::Interact(struct ggml_context * ctx_,hGensor inpL,int flag)    {
+hGensor cuAttention::Ming(struct ggml_context * ctx_,hGensor inpL,int flag)    {
     if(inpL==nullptr){   //symbolic analysis
-        return GeNeuron::Interact(ctx_,nullptr,flag);
+        return GeNeuron::Ming(ctx_,nullptr,flag);
     }
-    hGensor cur = norm.Interact(ctx_,inpL,0x0),attn=nullptr;    
+    hGensor cur = norm.Ming(ctx_,inpL,0x0),attn=nullptr;    
 #ifdef _TENSOR_G_       
     
     
@@ -498,7 +499,7 @@ bool BROWN_v0::Build(int flag)   {
            
     return true;
 }
-hGensor BROWN_v0::Interact(struct ggml_context * ctx_,hGensor teb,int flag)    {
+hGensor BROWN_v0::Ming(struct ggml_context * ctx_,hGensor teb,int flag)    {
     hGensor cur=BeforeForward(ctx_,teb,flag);
 
     const float kq_scale = 1.0f/sqrtf(float(C)/n_head);
@@ -544,7 +545,7 @@ hGensor BROWN_v0::Interact(struct ggml_context * ctx_,hGensor teb,int flag)    {
     gTN(kqv_out, "%s.kqv_merged_cont",name.c_str());     
     kqv_out = ggml_reshape_2d   (ctx_, kqv_out, C, N*n_batch);   // [768,17,1]  
     // if(isOnlinePush) ggml_build_forward_expand(gf_,kqv_out);  
-    hGensor t20 = proj_cat.Interact(ctx_,kqv_out);                        
+    hGensor t20 = proj_cat.Ming(ctx_,kqv_out);                        
     gTN(t20, "%s.kqv_out",name.c_str());     assert_shape_2d(t20, C, N*n_batch);
     cur = ggml_add          (ctx_, t20, teb);  
     
@@ -1694,10 +1695,10 @@ int Fish::jToGraph( struct ggml_context *ctx_,bool isBuild,int flag)   {
     string suffix,prefix;
     int no=0;
     hGensor cur = in_node;  //tBatch; 
-    for(auto nn : neurons){     //Symbolic Interact
+    for(auto nn : neurons){     //Symbolic Ming
         no++;       
         assert(cur!=nullptr);
-        cur = nn->Interact(ctx_,cur);
+        cur = nn->Ming(ctx_,cur);
         if(nn->isGang()){
 
         }else{

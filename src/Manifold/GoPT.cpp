@@ -1,4 +1,12 @@
-// #include "../../llama.cpp/common/console.h"
+/**
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT  
+ *  
+ *  Perceptrons 
+ * 
+ *  \brief Neurons & Perceptrons
+ *  \author Yingshi Chen
+ */
 #include "Optimizer.hpp"
 #include "GoPT.hpp"
 #include "Fish.hpp"
@@ -84,16 +92,17 @@ int GGUF_list(CLI_params& config)  {
     fclose(fp);
     return 0x0;
 }
-
-
-
     
+int run_caml(const char*prompt,int flag);
+
 int Fish_bubble(CLI_params& config)  {  
-    g_dump_level = 0;  
+    g_dump_level = 10;  
     config.wiki_actor = "copy";
     config.common.n_batch = 1;
     config.modep.preLogits_dB = 1;
     DEBUG.graph_dump = 1;
+    // return run_caml(config.prompt.c_str(),0x0);
+
     arrHWIKI wikis = WIKI::MakeInstance("wikis",config,0x0);
 #if !defined(NDEBUG)
     // config.common.n_ctx = 17;     config.common.n_batch = 1;      config.nLayerX=1;      //Only for debug
@@ -109,9 +118,6 @@ int Fish_bubble(CLI_params& config)  {
         //ggml_graph_comp0(_gf,0x0);   //only for comparsion
     }        
     else{
-        //  tpInitWeight=SERIALIZE  then isLoadCheckpoint = GGUF_Serialize(config.checkpoint.in,false,0x0);
-        // if(!fish->LoadTrain())
-        //     return -1;
         fish->GenSentence();
     }
         
@@ -141,7 +147,7 @@ bool _LoadCheckPoint(CLI_params& config,arrHWIKI& wikis,int flag=0x0){
         return false;
                
     hFISH fish = Fish::MakeInstance("Fish_",config,wikis,Fish::ROLE_TYPE::COMMON,0x110);  
-    if(fish==nullptr || !fish->LoadTrain())
+    if(fish==nullptr || !fish->LoadCheckPoint())
         return false;
     return true;
 }
@@ -171,7 +177,7 @@ int GPT_work(CLI_params& config)  {
 
     if(isMakeFish){
         fish = Fish::MakeInstance("Fish_",config,wikis,Fish::ROLE_TYPE::COMMON,0x110);  
-        if(fish==nullptr || !fish->LoadTrain()){
+        if(fish==nullptr || !fish->LoadCheckPoint()){
             _ERROR("%s has no WIKI or FISH!\n",__func__);
             return 0;
         }            

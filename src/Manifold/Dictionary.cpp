@@ -184,6 +184,12 @@ std::string GTokenizer::Decode(const TOKENS& ids, bool skip_special_tokens){
     }
     return line;
 }
+
+bool GTokenizer::isValid(int flag)  const {   
+    if(nVocab()<=0)  return false;
+    
+    return true; 
+}
 TOKENS GTokenizer::Encode(const std::wstring& wtext, bool encode_bos) const {
     using convert_type = std::codecvt_utf8<wchar_t>;
     std::wstring_convert<convert_type, wchar_t> converter;
@@ -193,42 +199,43 @@ TOKENS GTokenizer::Encode(const std::wstring& wtext, bool encode_bos) const {
     return Encode(text,encode_bos);
 }
 TOKENS GTokenizer::Encode(const std::string& text, bool encode_bos) const {
-  TOKENS out_tokens;
-  if (encode_bos) {
-    out_tokens.push_back(bos_id);
-  }
+    assert(isValid());
+    TOKENS out_tokens;
+    if (encode_bos) {
+        out_tokens.push_back(bos_id);
+    }
 
-  for (size_t i = 0; i < text.size();) {
-    size_t l = 0;
-    size_t valid_l = 0;
-    const TokenTrie* p = &vocab_trie;
-    const TokenTrie* valid_p = nullptr;
-    while (i + l < text.size()) {
-      char c = text[i+l];
-      if (p->children.count(c)) {
-        p = p->children.at(c).get();
-        l += 1;
-        if (p->token_id >= 0) {
-          valid_p = p;
-          valid_l = l;
+    for (size_t i = 0; i < text.size();) {
+        size_t l = 0;
+        size_t valid_l = 0;
+        const TokenTrie* p = &vocab_trie;
+        const TokenTrie* valid_p = nullptr;
+        while (i + l < text.size()) {
+            char c = text[i+l];
+            if (p->children.count(c)) {
+                p = p->children.at(c).get();
+                l += 1;
+                if (p->token_id >= 0) {
+                valid_p = p;
+                valid_l = l;
+                }
+            } else {
+                break;
+            }
         }
-      } else {
-        break;
-      }
+        if (!valid_p) {
+            // No substring starting from `i` matches any vocab words, use byte fallback
+            if (byte_fallback_start >= 0) {
+                out_tokens.push_back((unsigned char)text[i] + byte_fallback_start);
+            }
+            i += 1;
+        } else {
+            out_tokens.push_back(valid_p->token_id);
+            i += valid_l;
+        }
     }
-    if (!valid_p) {
-      // No substring starting from `i` matches any vocab words, use byte fallback
-      if (byte_fallback_start >= 0) {
-        out_tokens.push_back((unsigned char)text[i] + byte_fallback_start);
-      }
-      i += 1;
-    } else {
-      out_tokens.push_back(valid_p->token_id);
-      i += valid_l;
-    }
-  }
 
-  return out_tokens;
+    return out_tokens;
 }
 
 TOKENS WordPieceTokenizer::Encode(const std::string& text, bool encode_bos) const  {
@@ -284,6 +291,60 @@ GTokenizer::GTokenizer(Fish *dolphin,int flag) {
     }
 }
 
+bool GTokenizer::InitFrom(Fish *dolphin,hGTensor gTokens,hGTensor scores,int flag){
+    config = dolphin->config;
+
+	/*bos_id = config.model_card.bos_token_id;
+	eos_id = config.model_card.eos_token_id;
+	eot_id = -1;
+    if (eot_id < 0) {
+		eot_id = str_lookup("<|eot_id|>", sorted_vocab, vocab_size);
+	}
+	if (eot_id < 0) {
+		eot_id = str_lookup("<|end|>", sorted_vocab, vocab_size);
+	}
+	if (eot_id < 0) {
+		eot_id = str_lookup("<|im_end|>", sorted_vocab, vocab_size);
+	}*/
+
+    char *tokens = (char*)(gTokens->data);
+    size_t szT = gTokens->nByte(),off=0;
+    int vocab_size=config.model_card.vocab_size,MAX_TOKEN_LENGTH=512;
+	// sorted_vocab = (struct TokenIndex*)malloc(vocab_size * sizeof(struct TokenIndex));
+	// vocab_scores = scores;
+	assert(tokens[szT - 1] == '\0' && vocab_size>0);
+    vocab.resize(vocab_size);
+	for (int i = 0; i < vocab_size; ++i) {
+		vocab[i] = tokens + off;
+		// sorted_vocab[i].str = tokens + off;
+		// sorted_vocab[i].id = i;
+		int token_length = strlen(tokens + off);
+        // assert(token_length>0);  //failed at 154616!
+		assert(token_length <= MAX_TOKEN_LENGTH && off + token_length + 1 <= szT);
+		off += token_length + 1;
+	}
+	assert(off == szT);
+
+	// qsort(sorted_vocab, vocab_size, sizeof(struct TokenIndex), compare_tokens);
+
+	// byte_fallbacks = str_lookup("<0x00>", sorted_vocab, vocab_size);
+
+	if (byte_fallback >= 0) {
+		for (int i = 0; i < 256; i++) {
+			byte_pieces[i][0] = (char)i;
+			byte_pieces[i][1] = '\0';
+		}
+	}
+    if(BIT_TEST(flag,F_JVOCAB)){
+
+    }else{        
+        jVocab.clear();
+        InitTrier(flag);
+    }
+    _INFO("\n[Tokenizer] Init from \"%s\", n_vocab=%d\n",config.model_card.sTokenPath.c_str(),vocab_size);
+	
+    return true;
+}
 bool GTokenizer::InitHF(Fish *dolphin,int flag) {
     // const JSON& jToken = dolphin->config.model_card.jTokenizer;
     const JSON& jMParam = dolphin->config.model_card.jModelParam;
@@ -313,16 +374,14 @@ bool GTokenizer::InitHF(Fish *dolphin,int flag) {
 
     if(BIT_TEST(flag,F_JVOCAB)){
 
-    }else{
-        
+    }else{        
         jVocab.clear();
-
         InitTrier(flag);
     }
     return true;
 }
 
-int GTokenizer::nVocab(int flag)    {   
+int GTokenizer::nVocab(int flag)    const   {   
     assert(vocab.size()>0);    
     if(!isDialect){
         return (int)(vocab.size());
@@ -331,6 +390,16 @@ int GTokenizer::nVocab(int flag)    {
         return (int)(mapT2T.size());
     } 
 }  
+
+bool GTokenizer::isInRange(const int* inp,size_t nz,int flag){    
+    int t0=min(0,bos_id),t1=nVocab();   //some token maybe -1 in some case 
+    for(size_t i=0;i<nz;i++,inp++){
+        if(*inp==bos_id)    continue;
+        if(*inp<0 || *inp>t1)
+            return false;
+    }
+    return true;
+}
 
 void GTokenizer::InitTrier(int flag){
   /*// TODO: figure out edge cases:
@@ -360,7 +429,8 @@ void GTokenizer::InitTrier(int flag){
     // init vocab trie
     for (size_t i = 0; i < vocab.size(); i++) {
         const std::string& word = vocab[i];
-        assert(!word.empty());
+        if(word.empty())
+            continue;       // so strange!
         TokenTrie* p = &vocab_trie;
         for (char c : word) {
         if (p->children.count(c) == 0) {

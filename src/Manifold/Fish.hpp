@@ -239,7 +239,9 @@ protected:
     //hGensor gate=nullptr;      //create@InitModel update@
     MixOfModels mom;
     MixOfSwarm  mos;
-
+    // Fish can talk, at least it would bubble...
+    hTokenizer hDict = nullptr;
+    virtual bool InitDictTokenset(int flag=0x0);
     DataTokens tokenset;
     hDataToken tsTrain=nullptr;     //  always only 1 train set!
     DataTokens tsEval;              //  support multiple eval set!
@@ -511,7 +513,7 @@ public:
     static hFISH MakeInstance(const std::string nam_,struct CLI_params& params,const Fish *hSrc_,int flag);
     // static Fish* Copy(const Fish* src,int flag=0x0);
     virtual bool SaveTrain(string sX,int flag=0x0);
-    virtual bool LoadTrain(int flag=0x0);
+    virtual bool LoadCheckPoint(int flag=0x0);
 
     friend class GeNeuron;
     friend class SLP;

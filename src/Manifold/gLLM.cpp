@@ -29,8 +29,13 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_,int flag)     {
         train_params.seed = time(NULL); 
     }    
     wikis = wikis_;
-    if(!InitDictTokenset()) //hDictVAE
-        return false;
+    // if(!LoadCheckPoint())        //  need refactor
+    //     return false;
+    if(hDict==nullptr){
+        if(!InitDictTokenset())     //  hDictVAE
+            return false;        
+    }
+
     hOPT = std::make_shared<OPT_Adam>(this,config,flag);
     if(wikis.size()==0){
         _INFO("====== NO WIKI !!! ======\n");       //return false;
@@ -469,9 +474,9 @@ struct ggml_cgraph * llama_build_graph(llama_context & lctx,const llama_batch & 
 std::string NLP_AutoRegressive::T2STR( const std::vector<TOKEN_ID>& toks,int flag )                    { 
     std::string str = "";
     for(auto tok : toks){
-        if(tok==hDictVAE->hDict->eos_id)
+        if(tok==hDict->eos_id)
             break;
-        std::string a = hDictVAE->T2STR(tok,flag);
+        std::string a = hDict->T2STR(tok,flag);
         str += a;
     }
     
@@ -479,6 +484,15 @@ std::string NLP_AutoRegressive::T2STR( const std::vector<TOKEN_ID>& toks,int fla
 }
 
 bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
+    if(!Fish::InitDictTokenset(flag))
+        return false;
+
+    hDictVAE = std::make_shared<DictVAE>(this);
+    hDictVAE->hDict = hDict;
+    assert(hDictVAE!=nullptr && hDictVAE->isValid());   
+    return true; 
+}
+bool Fish::InitDictTokenset(int flag)    {
     void *hLLM = nullptr;
     hDict = std::make_shared<GTokenizer>(this);
 
@@ -486,10 +500,10 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
     case MODEL_ARCH::NLP_GPT2:
     case MODEL_ARCH::NLP_GPT2_char:
         if(config.ModelArch()==MODEL_ARCH::NLP_GPT2_char){
-            hDictVAE = std::make_shared<CDict_CHAR>(this);
-            hDictVAE->LoadVocab("",0x0); 
+            // hDictVAE = std::make_shared<CDict_CHAR>(this);
+            // hDictVAE->LoadVocab("",0x0); 
         }else{
-            hDictVAE = std::make_shared<CDict_GPT2>(this);            
+            // hDictVAE = std::make_shared<CDict_GPT2>(this);            
             if(wikis.size()>0)  {   //lama()!= nullptr
                 hDict->vocab.resize(wikis[0]->n_vocab);
                 hDict->bos_id = wikis[0]->bos;             hDict->eos_id = wikis[0]->eos;  
@@ -502,23 +516,23 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
         // hTokenset = std::make_shared<DataTokenSet>(hDictVAE.get());        
         break;
     case MODEL_ARCH::NLP_MISTRAL:
-        hDictVAE = std::make_shared<DictVAE>(this);
+        // hDictVAE = std::make_shared<DictVAE>(this);
         hDict->vocab.resize(32000);  
         hDict->bos_id = 1;             hDict->eos_id = 2;  
         break;
     case MODEL_ARCH::NLP_DEEPSEEK:
-        hDictVAE = std::make_shared<DictVAE>(this);
+        // hDictVAE = std::make_shared<DictVAE>(this);
         hDict->vocab.resize(102400);  
         hDict->bos_id = 100000;             hDict->eos_id = 100001;  
         break;
     case MODEL_ARCH::NLP_QWEN2:
-        hDictVAE = std::make_shared<DictVAE>(this);
+        // hDictVAE = std::make_shared<DictVAE>(this);
         hDict->vocab.resize(151936);  
         hDict->bos_id = 151643;             hDict->eos_id = 151645;  
         break;
         
     default:
-        hDictVAE = std::make_shared<DictVAE>(this);
+        // hDictVAE = std::make_shared<DictVAE>(this);
         if(wikis.size()>0)  {   
             // hDictVAE->n_vocab = wikis[0]->n_vocab; 
             // hDictVAE->bos = wikis[0]->bos;             hDictVAE->eos = wikis[0]->eos;  
@@ -526,9 +540,7 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
         // hTokenset = std::make_shared<DataTokenSet>(hDictVAE.get());        
         break;
     }
-    assert(hDict->nVocab()>0);
-    hDictVAE->hDict = hDict;
-    assert(hDictVAE!=nullptr && hDictVAE->isValid());    
+    assert(hDict->nVocab()>0);    
 
     tokenset = DataTokenSet::MakeInstance(config,hDict,0x0);        
     if(tokenset.empty() ){

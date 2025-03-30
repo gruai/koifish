@@ -77,28 +77,45 @@ struct MODEL_DE_params_ {
     void Dump(int typ);
 };
 struct LAY_PARAM{
-    uint32_t head,head_kv,ff;
-    LAY_PARAM(uint32_t h,uint32_t k,uint32_t f) : head(h),head_kv(k),ff(f) {
+
+/*
+	void* wq[MAX_LAYERS]; // (n_heads * head_dim, dim)
+	void* wk[MAX_LAYERS]; // (n_kv_heads * head_dim, dim)
+	void* wv[MAX_LAYERS]; // (n_kv_heads * head_dim, dim)
+	void* wo[MAX_LAYERS]; // (dim, n_heads * head_dim)
+	// weights for ffn
+	void* w1[MAX_LAYERS]; // (n_experts?, ff, dim)
+	void* w2[MAX_LAYERS]; // (n_experts?, dim, ff)
+	void* w3[MAX_LAYERS]; // (n_experts?, ff, dim)	
+	// biases for qkv (qwen)
+	float* bqkv[MAX_LAYERS]; // ((n_heads + n_kv_heads * 2) * head_dim)
+	// moe gate weights (mixtral)
+	void* moegate[MAX_LAYERS]; // (n_experts, dim)
+ */
+    uint32_t head,kv_head;
+    uint32_t ff;
+    LAY_PARAM(uint32_t h,uint32_t k,uint32_t f) : head(h),kv_head(k),ff(f) {
         assert(h>0 && k>0 && f>0);
     }
 
     uint32_t n_head()       const           {   return head;    }
     virtual void SetHead(int nH)    {
-        assert(nH>0 && nH<1024*1024);       head=nH;        head_kv=nH;
+        assert(nH>0 && nH<1024*1024);       
+        head=nH;        kv_head=nH;
     }
     virtual void SetFF(int nF)    {
         assert(nF>0 && nF<1024*1024);       ff=nF;        
     }
-    uint32_t n_head_kv()    const           {   return head_kv;    }
+    uint32_t n_head_kv()    const           {   return kv_head;    }
     uint32_t n_ff()         const           {   return ff;    }    
 
     /**
      * The GQA model efficiently breaks the query into n_heads, and the key and value are divided into n_kv_heads groups, 
-     * enabling multiple key-value heads to share the same query.
+     * enabling multiple key-value heads to share the same query.   more groups (closer to MHA) result in higher quality but slower performance, whereas fewer groups (near to MQA) boost speed at the risk of sacrificing quality.
     */
     uint32_t n_gqa() const {
-        assert(head>=head_kv && head%head_kv==0);
-        return head/head_kv;
+        assert(head>=kv_head && head%kv_head==0);
+        return head/kv_head;
     }
     uint32_t n_embd_head(int _embd) const {
         assert(_embd>0 && _embd%head==0 && _embd>=head);
@@ -373,11 +390,8 @@ struct CLI_params {
     }
     void SetHead(uint32_t nH){
         for(int il=0;il<layerps.size();il++){
-            assert(layerps[il].head==layerps[il].head_kv);
-            layerps[il].head = nH;
-            layerps[il].head_kv = nH;
-        }
-            
+            layerps[il].SetHead(nH);
+        }            
     }
     uint32_t n_head(int il = 0) const {
         assert(il>=0 && il<layerps.size());
@@ -408,12 +422,14 @@ struct CLI_params {
         return layerps[il].n_embd_gqa(nEmbed());        
     }
     uint32_t n_gqa(uint32_t il = 0) const {
-        const uint32_t n_head    = this->n_head(il);
+        assert(il>=0 && il<layerps.size());
+        return layerps[il].n_gqa( ); 
+        /*const uint32_t n_head    = this->n_head(il);
         const uint32_t n_head_kv = this->n_head_kv(il);
         if (n_head_kv == 0) {
             return 0;
         }
-        return n_head/n_head_kv;
+        return n_head/n_head_kv;*/
     }
 
     uint32_t n_embd_k_gqa(uint32_t il = 0) const { // dimension of key embeddings across all k-v heads

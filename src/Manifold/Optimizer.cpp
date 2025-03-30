@@ -578,7 +578,7 @@ double Optimizer::GraphCompute(hSampLoader hLoader,hTGraph hTG, int flag){
             int debug = 1;
         }
         _INFO("%d\tF@%s\n",no++,nn->__repr__(suffix,prefix).c_str());            
-        cur = nn->Interact(nullptr,cur);        
+        cur = nn->Ming(nullptr,cur);        
         // cuLiteTest(B,T,C);           //only for debug
     }
     isBackward = true;
@@ -586,7 +586,7 @@ double Optimizer::GraphCompute(hSampLoader hLoader,hTGraph hTG, int flag){
         hNeuron nn = *it;
         if(nn->isGang())    continue;
         _INFO("%d\tB@%s\n",no,nn->__repr__(suffix,prefix).c_str());            
-        cur = nn->Interact(nullptr,cur); 
+        cur = nn->Ming(nullptr,cur); 
     }*/
 #else
     auto cgraph = hTG->raw();

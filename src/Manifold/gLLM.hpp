@@ -74,8 +74,7 @@ struct NLP_AutoRegressive : public Fish {
     
     bool isLoadTokenEmbed = false;
     
-    hCDICT hDictVAE=nullptr; 
-    hTokenizer hDict = nullptr;
+    hCDICT hDictVAE=nullptr;     
     
     bool isAttOnBC=false;   
         
@@ -153,7 +152,7 @@ struct NLP_AutoRegressive : public Fish {
 
     //for tokens_input & target_probs
     bool InitInput(struct ggml_context * ctx,bool isMask,int flag=0x0)  override;
-    virtual bool InitDictTokenset(int flag=0x0);
+    bool InitDictTokenset(int flag=0x0) override;
     hGensor Input()     override    {   return tokens_input;    }
 
     bool Init(const vector<hWIKI>& wikis_,int flag=0x0)     override ;

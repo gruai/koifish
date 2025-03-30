@@ -317,7 +317,7 @@ void CLI_params::Dump( )    {
     _INFO(" rope_freq_base=%g", rope_freq_base);   
     _INFO(" rope_freq_scale=%g", rope_freq_scale);
     _INFO("\n lora_r=%d lora_alpha=%g \n", lora_r,lora_alpha); 
-    _INFO(" NABLA = %s\n", nabla==0? "" : nabla==3 ? "Embed+AutoEncoder" : (nabla==2 ? "" : "qkv") ); 
+    // _INFO(" NABLA = %s\n", nabla==0? "" : nabla==3 ? "Embed+AutoEncoder" : (nabla==2 ? "" : "qkv") ); 
     // _INFO(" SIGMA = %s\n", sigma.c_str()); 
 }
 
@@ -538,6 +538,7 @@ void CLI_params::OnArch( ){
         modep.isSeperateQKV = true;
         model_card.sNorm = ".norm";
         model_card.sLayer= "layers.";  
+        // model_card.sAttnOut=".wqkv"; 
         break;
     case NLP_DEEPSEEK:
         model_card.sNorm = ".norm";

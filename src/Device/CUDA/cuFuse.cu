@@ -407,13 +407,14 @@ hGTensor huTensor::_Multiply(const hGTensor& b) {
 
 int TokenEmbed::FUSE_cuda(hGTensor tokens,floatX *scratchX,LayerNormal*neuron_x,unsigned int seed){
 try{
-    int OC=w->ne[1],nCls = w->shape[1],Vp=nCls;  
+    int OC=w->ne[1],Vp=padded_nCls;  
     const int* inp=(int*)(tokens->data);
-    // assert(isInRange(inp,token->size(),0,nCls));
+    // assert(isInRange(inp,token->size(),0,Vp));
     if(isForward()){
         encoder_forward(ToX(out), inp, ToX(w), ToX0(b), B, T, C, main_stream);
         hGTensor cur = out;
-        PrintTensor<floatX>("wte",ToX(w),true,Vp,C);        PrintTensor<floatX>("wpe",ToX0(b),true,T,C);
+        w->Print("wte",0,0);        //ToX(w),true,Vp,C
+        PrintTensor<floatX>("wpe",ToX0(b),true,T,C);
         PrintTensor<int>("inputs",inp,true,B,T);            PrintTensor<floatX>("GetRow",ToX(out),true,B,T,C);
         if(maec!=nullptr){
             maec->ENC(cur);
@@ -464,9 +465,9 @@ try{
     floatX *pre_gelu = ToX0(gelu);//,*inp=ToX(lhs_);
     int OC=w->ne[1],IC=w->ne[0];
     assert(delta!=nullptr);
-    deltaIn->PrintX<floatX>("delta_in",0,flag);
+    deltaIn->Print("delta_in",0,flag);
     matmul_backward(ToX(delta), ToG(w), ToG0(b),ToX(deltaIn),ToX(inp), ToX(w), dbias_buffer, B, T, IC, OC, main_stream,pre_gelu); 
-    delta->PrintX<floatX>("delta",0,flag);
+    delta->Print("delta",0,flag);
     return 0x0;
 }catch(...){
     assert(0);
@@ -579,7 +580,7 @@ hGTensor SelfAttention::FUSE_cuda(hGTensor inpL,hGTensor residual,float* scratch
             Q.Forw(GTensor::scratch_ff1,inpL); // fuMM(qkvr, data, weight, bias, B, T, C, 3*C, main_stream);
         }
 #ifdef ENABLE_CUDNN
-        attention_backward_cudnn(dl_bt4c, dl_btc, qkvr, ToX(attn), l_att, B, T, NH, C, main_stream);
+        attention_backward_cudnn(dl_bt4c, ToX(tmpDelta), qkvr, ToX(attn), l_att, B, T, NH, C, main_stream);
 #else
         assert(0);
 #endif
@@ -588,9 +589,11 @@ hGTensor SelfAttention::FUSE_cuda(hGTensor inpL,hGTensor residual,float* scratch
         //     layernorm_forward(l_ln1, l_ln1_mean, l_ln1_rstd, residual, l_ln1w, l_ln1b, B, T, C, main_stream);
         // }
         // Q.FUSE_cuda()
-        matmul_backward(dl_btc, ToG(Q.w), gQb, dl_bt4c, ToX(norm.out), ToX(Q.w), scratchF, B, T, C, 3 * C, main_stream);
+        matmul_backward(ToX(tmpDelta), ToG(Q.w), gQb, dl_bt4c, ToX(norm.out), ToX(Q.w), scratchF, B, T, C, 3 * C, main_stream);
         // layernorm backward does += to dresidual, so it correctly accumulates gradient for the Attention block above
-        layernorm_backward(ToX(delta), ToG(norm.w), gNb, scratchF, dl_btc, ToX(residual), ToX(norm.w), TO<float>(norm.mean), TO<float>(norm.rstd), B, T, C, main_stream);
+        float *_mean = norm.mean==nullptr?nullptr : TO<float>(norm.mean);
+        norm.FUSE_cuda(residual,scratchF,tmpDelta);
+        // layernorm_backward(ToX(delta), ToG(norm.w), gNb, scratchF, ToX(tmpDelta), ToX(residual), ToX(norm.w), _mean, TO<float>(norm.rstd), B, T, C, main_stream);
     }
     return out;
 }
@@ -628,7 +631,7 @@ hGTensor FFN::FUSE_cuda(hGTensor hIn,floatX *scratch,int flag){
         }
         
         // PrintTensor<floatX>("inp1",ToX(norm.out),true,B,T,C,1,-1);
-        out->PrintX<floatX>("residual3",0,0);
+        out->Print("residual3",0,0);
     }else{
         assert(delta!=nullptr);
         floatX *dl_bt4c = ToX(GTensor::bt4c),*dresidual = ToX(GTensor::delta)
@@ -639,7 +642,7 @@ hGTensor FFN::FUSE_cuda(hGTensor hIn,floatX *scratch,int flag){
             ff1=ToX(GTensor::scratch_ff1);  
             up.Forw(tGelu,norm.out,GTensor::scratch_ff1);            
             // fuMM(l_fch_gelu,input_1, (floatX*)up.w->data, ToX0(up.b), B, T, C, latent, main_stream, ff1, gelu_fusion);
-            // norm.out->PrintX<floatX>("inp1",0,-1);          PrintTensor<floatX>("ff1",ff1,true,B,T,latent,-1);  
+            // norm.out->Print("inp1",0,-1);          PrintTensor<floatX>("ff1",ff1,true,B,T,latent,-1);  
         }else
             gelu_forward(ToX(tGelu), ff1, B*T*latent, main_stream);  
         assert(ff1!=nullptr);   
@@ -649,9 +652,11 @@ hGTensor FFN::FUSE_cuda(hGTensor hIn,floatX *scratch,int flag){
         up.Back(delta,norm.out,GTensor::bt4c,nullptr,scratchF);
         // matmul_backward(ToX(delta), ToG(up.w), ToG0(up.b), dl_bt4c, ToX(norm.out), ToX(up.w), scratchF, B, T, C, latent, main_stream);
         // // layernorm backward does += to the dresidual, so it correctly accumulates grad from the MLP block above
-        layernorm_backward(dresidual, ToG(norm.w), gNb, scratchF, ToX(delta), ToX(hIn), ToX(norm.w), TO<float>(norm.mean), TO<float>(norm.rstd), B, T, C, main_stream);
+        // norm.FUSE_cuda(residual,scratchF,tmpDelta);
+        float *_mean = norm.mean==nullptr?nullptr : TO<float>(norm.mean);
+        layernorm_backward(dresidual, ToG(norm.w), gNb, scratchF, ToX(delta), ToX(hIn), ToX(norm.w), _mean, TO<float>(norm.rstd), B, T, C, main_stream);
         matmul_backward(ToX(delta), ToG(lastQKV->proj_cat.w), gPb, dresidual, ToX(lastQKV->attn), ToX(lastQKV->proj_cat.w), scratchF, B, T, C, C, main_stream);
-        delta->PrintX<floatX>("back of ffn0",0,0);
+        delta->Print("back of ffn0",0,0);
     }
     
     return out;
@@ -678,15 +683,16 @@ hGTensor huTensor::Normal(hGTensor hOut,hGTensor _mean,hGTensor _rstd,hGTensor w
 }
 
 hGTensor LayerNormal::FUSE_cuda(hGTensor inpL,float* scratch,hGTensor deltaIn,int flag) {
+    float* _mean = mean==nullptr ? nullptr : TO<float>(mean);
     if(isForward()){    //cur = cur->Normal(out,mean,rstd,w,b); 
         inp = inpL;  
-        layernorm_forward(ToX(out), TO<float>(mean),  TO<float>(rstd), ToX(inpL),ToX(w),ToX0(b), B, T, C, main_stream);
+        layernorm_forward(ToX(out), _mean,  TO<float>(rstd), ToX(inpL),ToX(w),ToX0(b), B, T, C, main_stream);
     }        
-    else{   //  layernorm_backward(dresidual, ToG(lnf->w), gb, (float*)scratchX, ToX(GTensor::bt4c), residual, ToX(lnf->w), TO<float>(lnf->mean), TO<float>(lnf->rstd), B, T, C, main_stream);
+    else{   
         assert(deltaIn!=nullptr);       // const floatX* deltaIn=ToX(GTensor::bt4c);
         // floatX* dresidual = ToX(GTensor::delta);
-        layernorm_backward(ToX(delta), ToG(w), ToG0(b), scratch, ToX(deltaIn),ToX(inpL), ToX(w), TO<float>(mean),  TO<float>(rstd), B, T, C, main_stream);
-        delta->PrintX<floatX>("back of normal",0,0);
+        layernorm_backward(ToX(delta), ToG(w), ToG0(b), scratch, ToX(deltaIn),ToX(inpL), ToX(w), _mean,  TO<float>(rstd), B, T, C, main_stream);
+        delta->Print("back of normal",0,0);
     }
     return out;
 }
@@ -739,6 +745,7 @@ hGTensor OutCLS::FUSE_cuda(hGTensor inp,hGTensor token_embed,int flag)   {
         }*/
             
         for (int i = 0; i < B*T; i++) {
+            assert(!std::isnan(hostLoss[i]));
             mean_loss += hostLoss[i];
         }   
         mean_loss /= B*T;

@@ -106,7 +106,7 @@ Relu::Relu(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int fl
 bool Relu::Build(int flag)   {
     return true;
 };
-hGensor Relu::Interact(struct ggml_context *ctx_,hGensor cur,int flag){
+hGensor Relu::Ming(struct ggml_context *ctx_,hGensor cur,int flag){
     return cur;
 }
 
@@ -116,7 +116,7 @@ Drop::Drop(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int fl
 bool Drop::Build(int flag)   {
     return true;
 };
-hGensor Drop::Interact(struct ggml_context *ctx_,hGensor cur,int flag){
+hGensor Drop::Ming(struct ggml_context *ctx_,hGensor cur,int flag){
     return cur;
 }
 
@@ -222,9 +222,9 @@ bool OutCLS::Build(int flag)   {
     name += ".cls";      
     return true;
 }
-hGensor OutCLS::Interact(struct ggml_context * ctx_,hGensor inpL,int flag)    {
+hGensor OutCLS::Ming(struct ggml_context * ctx_,hGensor inpL,int flag)    {
     if(inpL==nullptr){   //symbolic analysis
-        return GeNeuron::Interact(ctx_,nullptr,flag);
+        return GeNeuron::Ming(ctx_,nullptr,flag);
     }
     int n_batch=hFish->config.n_batch(),n_ctx=hFish->config.n_ctx();
     hGensor cur = nullptr;
@@ -245,9 +245,9 @@ hGensor OutCLS::Interact(struct ggml_context * ctx_,hGensor inpL,int flag)    {
     }
     cur = out;      return cur;
 #else    
-    cur = norm.Interact(ctx_,inpL,0x0);    
+    cur = norm.Ming(ctx_,inpL,0x0);    
     gTN(cur,"result_norm");      // cb(cur, _NAM_("ffn_norm"), il);    
-    cur = proj.Interact(ctx_,cur,0x0);
+    cur = proj.Ming(ctx_,cur,0x0);
     gTN(cur,"result_output");//cb(cur, "ffn_up", il);    
     // cur = ggml_silu(ctx_, cur);        
     if(n_batch>1){
@@ -316,10 +316,10 @@ bool SLP::Build(int flag)      {
     }
     return true;
 }
-hGensor SLP::Interact(struct ggml_context * ctx0,hGensor cur,int flag)    {
+hGensor SLP::Ming(struct ggml_context * ctx0,hGensor cur,int flag)    {
     string prefix = ""; //sT+".";   //+
     if(cur==nullptr){   //symbolic analysis
-        return GeNeuron::Interact(ctx0,cur,flag);
+        return GeNeuron::Ming(ctx0,cur,flag);
     }else{
         prefix = prefix+cur->name;
     }
@@ -414,7 +414,7 @@ bool ROPE::Build(int flag)    {
     return true;
 }
 
-hGensor ROPE::Interact(struct ggml_context * ctx_,hGensor inpL,int flag)    {   
+hGensor ROPE::Ming(struct ggml_context * ctx_,hGensor inpL,int flag)    {   
     hGensor cur = BeforeForward(ctx_,inpL,flag);
     if(cur==nullptr)  //    some operation like symolic analysis     
         return cur; 
@@ -447,9 +447,9 @@ string ROPE::__repr__( string& suffix,string& prefix,int flag)    {
     return _repr_1(suffix,prefix,"ROPE");
 };
 
-LayerNormal::LayerNormal(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag)    : GeNeuron(key_,jit, hG_, flag) {
-    delta = GTensor::delta;
-    
+LayerNormal::LayerNormal(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : GeNeuron(key_,jit, hG_, flag) {
+    // delta = GTensor::delta;
+    // isRMS = true;
     if(jvals.size()==1){
         shape={(int)(jvals[0])};
     }else{
@@ -462,7 +462,17 @@ LayerNormal::LayerNormal(Fish *hG_, const std::string &key_, JSON::const_iterato
     https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html#torch.nn.LayerNorm
 */
 bool LayerNormal::Build(int flag)    {
+    delta = GTensor::delta;
+    // if(hFish->arch==MODEL_ARCH::NLP_GPT2)
+    //     isRMS = false;
+    // isRMS = name!="model.output_norm" ? false : true;
     isBias = hFish->config.modep.isNormalBias || BIT_TEST(flag,F_BIAS) ;
+/**
+ * 猜测，center操作，类似于全连接层的bias项，储存到的是关于数据的一种先验分布信息，而把这种先验分布信息直接储存在模型中，反而可能会导致模型的迁移能力下降。所以RMS不仅去掉了Layer Normalization的center操作，把每一层的bias项也都去掉了。
+ */
+    if(isRMS){
+        isBias = false;
+    }
     // name = key_;
     struct ggml_context * ctx = hFish->GetGGCTX();
     assert(shape.size()==1 && shape[0]>0 );
@@ -478,12 +488,16 @@ bool LayerNormal::Build(int flag)    {
         hFish->InitGensor(ctx,sb.c_str(),b,isTrain);
     }
 #ifdef _TENSOR_G_        
-    w->tpInit = INIT_WEIGHT::FIX_1;    //1???   
+    w->tpInit = INIT_WEIGHT::FIX_1;    //always 1   ???   
     if(b!=nullptr)  b->tpInit=W_SKIP;
     assert(nIn==C || nIn==hFish->config.nEmbed(-1));
     SHAPE sp={B,T},sp3={B,T,nIn};
-    out = std::make_shared<huTensor>(name+".out",sp3,GTensor::tpFloatX,false);       
-    mean = std::make_shared<huTensor>(name+".mean",sp,typNUMBER::F32,false);       
+    out = std::make_shared<huTensor>(name+".out",sp3,GTensor::tpFloatX,false);    
+    if(isRMS){
+
+    }else{
+        mean = std::make_shared<huTensor>(name+".mean",sp,typNUMBER::F32,false);  
+    }         
     rstd = std::make_shared<huTensor>(name+".rstd",sp,typNUMBER::F32,false);    
 #else
  
@@ -493,7 +507,8 @@ bool LayerNormal::Build(int flag)    {
 string LayerNormal::__repr__( string& suffix,string& prefix,int flag){
     char buf[5012]="\0";
     const char*tab=prefix.c_str();
-    sprintf(buf+strlen(buf),"%s LayerNormal(%s%s%s) out=%s",tab,b==nullptr?"":"+b",mean==nullptr?"":"+mean",rstd==nullptr?"":"+rstd",
+    sprintf(buf+strlen(buf),"%s %s(%s%s%s) out=%s",tab, isRMS ? "RMS" : "LayerNormal",
+        b==nullptr?"":"+b",mean==nullptr?"":"+mean",rstd==nullptr?"":"+rstd",
         out==nullptr?"NULL":out->name);    
     if(flag>0)
         _INFO("%s",buf); 
@@ -501,9 +516,9 @@ string LayerNormal::__repr__( string& suffix,string& prefix,int flag){
 }
 
 
-hGensor LayerNormal::Interact(struct ggml_context * ctx0,hGensor cur,int flag)    {   
+hGensor LayerNormal::Ming(struct ggml_context * ctx0,hGensor cur,int flag)    {   
     if(cur==nullptr){   //symbolic analysis
-        return GeNeuron::Interact(ctx0,cur,flag);
+        return GeNeuron::Ming(ctx0,cur,flag);
     } 
 
     float f_norm_eps = hFish->config.f_norm_eps;
@@ -558,7 +573,7 @@ size_t LayerNormal::nElem()  {
 hGensor GeNeuron::Backward(void *user_ctx_,hGensor cur,int flag)    {
     return nullptr;
 }
-hGensor GeNeuron::Interact(struct ggml_context *ctx_,hGensor cur,int flag){
+hGensor GeNeuron::Ming(struct ggml_context *ctx_,hGensor cur,int flag){
     int tp=0;
     _INFO("\t %s\n",name.c_str());
     hGensor inp = cur;
@@ -631,7 +646,10 @@ hGTensor operator>>(hGTensor t, const LayerNormal& norm){
     return norm.out;
 }
 hGTensor operator>>(hGTensor t, const SLP& slp){
-    assert(t!=nullptr && slp.out!=nullptr);
+    assert(t!=nullptr );
+    if(slp.Empty())
+        return t;
+    assert(slp.out!=nullptr);
     slp.out->AddSrc({t,slp.w,slp.b});
     return slp.out;
 }

@@ -251,15 +251,15 @@ int GTensor::SerialJSON(const std::string& name_, const JSON& val, void* bytes_p
       }
       int n = val.at("shape")[i].get<int>();
       spJ.push_back(n);      //shape[i] = 
-      numel *= shape[i];
+      numel *= spJ[i];
    }   
    ReShape(spJ,tpNumOf(dtype_str));
 
    if (val.at("data_offsets").size() != 2) {
       return -3;
    }
-   size_t offset_start = static_cast<size_t>(val.at("data_offsets")[0]);
-   size_t offset_end = static_cast<size_t>(val.at("data_offsets")[1]);
+   size_t offset_start = static_cast<size_t>(val.at("data_offsets")[0]);   // 1544148992
+   size_t offset_end = static_cast<size_t>(val.at("data_offsets")[1]);     // 1545276932
    if (offset_start < 0 || offset_end <= offset_start || offset_end > bytes_size) {
       std::cerr << "bad offsets" << std::endl;
       return -1;
@@ -270,14 +270,36 @@ int GTensor::SerialJSON(const std::string& name_, const JSON& val, void* bytes_p
       std::cerr << "bad size" << std::endl;
       return -1;
    }
-      
+   
    void *src = (char*)bytes_ptr + offset_start;
-   if(data!=nullptr){
-      SerialGP(src,nullptr,szSrc,false);
+   if(BIT_TEST(flag,F_NOALLOC)){
+      data =src;     // ((char*)(src))[szSrc-1]    (char*)bytes_ptr + offset_end-1
+   }else{
+      if(data!=nullptr){
+         SerialGP(src,nullptr,szSrc,false);
+      }
    }
    if(strlen(name)>0)
       Dump(0);
    return 0;
+}
+
+
+void GTensor::Print(const string& title, int typ, int flag){
+   bool isDevice = true;
+   if(type==FLOAT_TYPE){
+      PrintTensor<floatX>(title.c_str(),(floatX *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
+      return;
+   }
+   switch(type){
+   case typNUMBER::F8E5M2:
+      PrintTensor<floatX>(title.c_str(),(floatX *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
+      break;
+   default:
+      
+      break;
+   }
+   
 }
 
     // inline hGensor To4D(struct ggml_context * ctx_build,hGensor cur,int64_t n1,int64_t n2,int64_t n3,int64_t n4){

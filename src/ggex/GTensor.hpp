@@ -122,6 +122,7 @@ public:
         F_NOALLOC=0x100,F_GPU=0x200,
 
         F_TOX=0x10000,  F_PADDED=0x20000
+        
     };    
         
     static hGTensor NEW_(struct ggml_tensor*gg,int flag=0x0) {
@@ -137,11 +138,12 @@ public:
     virtual bool Alloc(int tpInit=0,int flag=0x0);
     virtual bool InitParam(int tpInit,int flag=0x0)           {     assert(0);    return false;   }
     virtual bool Free() {   return true;    }
-    template<typename T> 
-    void PrintX(const string& title, int typ, int flag){
-        bool isDevice = true;
-        PrintTensor<T>(title.c_str(),(T *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
-    }
+    // template<typename T> 
+    // void PrintX(const string& title, int typ, int flag){
+    //     bool isDevice = true;
+    //     PrintTensor<T>(title.c_str(),(T *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
+    // }
+    void Print(const string& title, int typ, int flag);
     virtual bool Dump(int type,const string&title="",int flag=0x0)  const;
 //operations
     hGTensor operator*(const hGTensor& other) {
