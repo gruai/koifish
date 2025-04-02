@@ -16,7 +16,7 @@
 #include "../lenda/kernel/SVD.hpp"
 
 TokenEmbed::TokenEmbed(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag) : GeNeuron(key_,jit, hG_, flag)    {
-    auto dims = hFish->config.embeds;
+    auto dims = hFish->config.token_embeds;
     nVocab = hG_->nClass();     
     latent = hFish->config.nEmbed(-1);
     shape.clear();
@@ -31,6 +31,7 @@ TokenEmbed::TokenEmbed(Fish *hG_, const std::string &key_, JSON::const_iterator 
 TokenEmbed::~TokenEmbed(){
     FREE_a(workload_indices);       FREE_a(bucket_info);
 }
+
 bool TokenEmbed::InitBucket(size_t num_c_groups,int flag){
     if (bucket_info != NULL)
         return false;
@@ -51,7 +52,7 @@ bool TokenEmbed::SetMAEC(hMAEC mae_,int flag){
 }
 
 bool TokenEmbed::Build(int flag){ 
-    struct ggml_context * ctx = hFish->GetGGCTX(1);
+    void * ctx = hFish->GetGGCTX(1);
     int flagW=flag,n=nVocab;
 
     // InitMAC();
@@ -61,7 +62,7 @@ bool TokenEmbed::Build(int flag){
     bool isTrain = hFish->isTrain();
     string sw = name+MODEL_CARD::sWeight,sb=name+".pos"; 
 #ifdef _TENSOR_G_ 
-    if(hFish->config.modep.isPaddedCls) {
+    if(hFish->config.model.isPaddedCls) {
         flagW |= GTensor::F_PADDED;
         padded_nCls = ceil(n/128.0)*128;
     }else
@@ -89,7 +90,7 @@ bool TokenEmbed::Build(int flag){
 /*
    batch(tokens) embeddings from glob token embedding(w)
 */
-hGensor TokenEmbed::Ming(struct ggml_context *ctx_,hGensor tokens,int flag){
+hGensor TokenEmbed::Ming(void *ctx_,hGensor tokens,int flag){
     if(tokens==nullptr)  //symbolic analysis
         return GeNeuron::Ming(ctx_,tokens,flag);
     assert(tokens->type==typNUMBER::I32);
@@ -227,13 +228,13 @@ VarCoder::VarCoder(Fish *hG_,std::vector<int>&dims,int level,bool isR,bool isB,i
 MAEC::MAEC(Fish *hG_, const std::string &key_, int flag) {
     name = "MAEC_"; //+key;
     Init(hG_,0x0);
-    auto dims = hFish->config.embeds;
+    auto dims = hFish->config.token_embeds;
     if(dims.size()==1)      return ;
 
     nIn = dims[0];      nOut=dims[dims.size()-1];
     int reserve_x = 0;
     int nMap = dims.size()-1,tpNorm=-1;       assert(nMap>0);
-    bool isSymmetric = hFish->config.modep.isEmbedWeightTying;
+    bool isSymmetric = hFish->config.model.isEmbedWeightTying;
     
     isBias = false;
     codes.clear( );
@@ -347,8 +348,9 @@ if(hFish->arch==MODEL_ARCH::NLP_QWEN2){
     return true;
 }
 bool FFN::Build(int flag_0)   {
+    delta = GTensor::delta;
     SHAPE sp={shape[0]},sp3,sp2;
-    struct ggml_context * ctx_ = hFish->GetGGCTX(1);
+    void * ctx_ = hFish->GetGGCTX(1);
     bool isTrain = hFish->isTrain();
     int flag = flag_0;
     latent=shape[1];
@@ -383,7 +385,7 @@ bool FFN::Build(int flag_0)   {
     return true;
 }
 
-hGensor FFN::Ming(struct ggml_context * ctx_,hGensor inpL,int flag){    
+hGensor FFN::Ming(void * ctx_,hGensor inpL,int flag){    
     if(inpL==nullptr){   //symbolic analysis
         return GeNeuron::Ming(ctx_,nullptr,flag);
     }

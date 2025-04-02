@@ -27,7 +27,7 @@ using namespace std;
 
 class WIKI;
 class Fish;
-struct train_state;
+// struct train_state;
 class Optimizer;
 class NLP_AutoRegressive;
 class SampLoader;
@@ -62,6 +62,26 @@ struct StepInfos    {
         }
     }
 };
+
+struct BATCH_INPUT  {
+    shared_ptr<GTensor> hostToken=nullptr,hostMask=nullptr;
+    
+    int *host = nullptr,*mask = nullptr;
+    void *dev = nullptr;
+    int pos = -1;
+
+    BATCH_INPUT(SHAPE sp,int flag=0x0);
+    // virtual void Update(hGTensor batch,int flag=0x0);
+    int CurToken()  {   assert(pos>=0 && host!=nullptr);     return host[pos];   }
+    virtual void Set(int i0, int i1, int i2, int i3, int tok)  {
+        hostToken->Set(i0, i1, i2, i3, tok);
+    }
+    virtual void SetMask(int i0, int i1, int i2, int i3, int tok)  {
+        hostMask->Set(i0, i1, i2, i3, tok);
+    }
+    virtual size_t size()   {   return hostToken->size();   }    
+} ;
+typedef shared_ptr<BATCH_INPUT> hBATCH;
 class SampLoader   {
 protected:  
     typedef std::string mt19937_state;
@@ -91,16 +111,17 @@ protected:
     mt19937_state shuffle_rng_state_current;
     mt19937_state shuffle_rng_state_next;
     size_t shuffle_sample_count=0,next_sample=0,shuffle_samples_hash = 0x0;
-
+    hBATCH hBatch = nullptr;
     NLP_AutoRegressive *dolphin=nullptr;
 public:
     StepInfos stepis;        // info of each step on train/evaluate/...
     std::string tpBatchSample,name;       //  "stacking"
     std::vector<hSAMP> cur_samps;
     int num_batches=-1;    //number of batchs in each epoch
+    int B=-1,T=-1;    //number of samples in each batch,  number of tokens in each sample
     int StepOfEvaluate(int flag=0x0); //  smaple to reduce eval time
 
-    shared_ptr<GTensor> hostBatch=nullptr,hostBatchMask=nullptr,hostTargetProbs=nullptr;   
+    shared_ptr<GTensor> hostTargetProbs=nullptr;   //hostBatch=nullptr,hostBatchMask=nullptr,
 
     int64_t len() {
         return shard_samps.size();
@@ -144,9 +165,7 @@ public:
     // virtual bool Init(Fish *g_,const string&n,bool isNewTS,int flag=0x0 ) ;
     virtual bool Prepare(Optimizer *hO,hDataToken hT,int flag=0x0 ) ;    
     virtual size_t UpdateBatch(int next_id,Fish* fish);
-    virtual ~SampLoader( ) {
-        
-        
+    virtual ~SampLoader( ) {       
         if(!shard_samps.empty()){
             
         }
@@ -168,6 +187,8 @@ public:
     friend class GlobTokenset;
 };
 typedef shared_ptr<SampLoader> hSampLoader;
+
+//  one batch may contain many smales
 
 // class DataLoader_3D : public SampLoader  {
 // protected:

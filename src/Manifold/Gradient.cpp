@@ -69,7 +69,7 @@ static void get_random_dims(int64_t * dims, int ndims) {
 }
 
 static hGensor  get_random_tensor_f32(
-        struct ggml_context * ctx0,
+        void * ctx0,
         int ndims,
         int64_t ne[],
         float fmin,
@@ -117,7 +117,7 @@ static hGensor  get_random_tensor_f32(
 }
 
 static hGensor  get_random_tensor_f16(
-        struct ggml_context * ctx0,
+        void * ctx0,
         int ndims,
         int64_t ne[],
         float fmin,
@@ -165,7 +165,7 @@ static hGensor  get_random_tensor_f16(
 }
 
 static hGensor  get_random_tensor_i32(
-        struct ggml_context * ctx0,
+        void * ctx0,
         int ndims,
         int64_t ne[],
         int32_t imin,
@@ -214,7 +214,7 @@ static hGensor  get_random_tensor_i32(
 
 static bool check_gradient(
         const char * op_name,
-        struct ggml_context * ctx0,
+        void * ctx0,
         hGensor  x[],
         hGensor  f,
         int ndims,
@@ -437,7 +437,7 @@ int main(int argc, const char ** argv) {
         unsigned seed = rand();
 
         printf("test-grad0: iter:%d/%d\n", (iter+1), niter);
-        struct ggml_context * ctx0 = ggml_init(params);
+        void * ctx0 = ggml_init(params);
 
         get_random_dims(ne, 4);
 

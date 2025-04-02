@@ -407,7 +407,7 @@ struct DictVAE : public VariationaAE    {
             Update_0(rnd,flag);
         }
     }
-    virtual hGensor Embed2Output(struct ggml_context * ctx,hGensor t33,int flag=0x0);
+    virtual hGensor Embed2Output(void * ctx,hGensor t33,int flag=0x0);
     virtual void Update_0(struct random_normal_distribution * rnd,int flag=0x0);
     void Update_1(struct random_normal_distribution * rnd,int flag=0x0);  
     void CreateEmbeddings(int flag);
@@ -439,7 +439,7 @@ public:
         }
 
     }
-    int InitMAEC(struct ggml_context *ctx,const std::vector<int>& dims_,int flag=0x0) override;
+    int InitMAEC(void *ctx,const std::vector<int>& dims_,int flag=0x0) override;
     std::string T2STR(TOKEN_ID tok,int flag=0x0 ) override;   
     int STR2T(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0)    override;
 };
@@ -451,7 +451,7 @@ class CDict_CHAR : public DictVAE{
 public:
     CDict_CHAR(Fish *nlp_,int flag=0x0);
     void LoadVocab(const char*fn_model_base,int flag)   override;
-    int InitMAEC(struct ggml_context *ctx,const std::vector<int>& dims_,int flag=0x0) override;
+    int InitMAEC(void *ctx,const std::vector<int>& dims_,int flag=0x0) override;
     int STR2T(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0)    override;
     std::string T2STR(TOKEN_ID tok,int flag=0x0 ) override;   
 };

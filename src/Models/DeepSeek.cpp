@@ -13,21 +13,21 @@
 
 Mistral::Mistral( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag)  : NLP_AutoRegressive(nam_,params,role,flag) {
     assert(arch==MODEL_ARCH::NLP_MISTRAL);
-    config.modep.isSLPBias = false;    
-    config.modep.isNormalBias= false;    
+    config.model.isSLPBias = false;    
+    config.model.isNormalBias= false;    
 }
 
 QWen::QWen( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag)  : NLP_AutoRegressive(nam_,params,role,flag) {
     assert(arch==MODEL_ARCH::NLP_QWEN2);
-    config.modep.isSLPBias = false;    
-    config.modep.isNormalBias= false;    
+    config.model.isSLPBias = false;    
+    config.model.isNormalBias= false;    
 }
 
 
 DeepSeek::DeepSeek( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag) : NLP_AutoRegressive(nam_,params,role,flag)  {
     assert(arch==MODEL_ARCH::NLP_DEEPSEEK);
-    config.modep.isSLPBias = false;    
-    config.modep.isNormalBias= false;    
+    config.model.isSLPBias = false;    
+    config.model.isNormalBias= false;    
 }
 
 string DeepSeek::__repr__( string& suffix,string& prefix,int flag) {

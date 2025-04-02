@@ -1,17 +1,17 @@
 # Koifish
 
 **Koifish** is a c++ framework focused on efficient training/fine-tuning language model on edge devices & PC. 
-1. Efficient  on-device training of billion parameter language model.
-2. Efficient  fine-tuning 10-billion parameter LLMs on edge device.
+1. Efficient on-device training of billion parameter language model.
+2. Efficient fine-tuning 10-billion parameter LLMs on edge device.
 
 ## Features
 
 - Rematerialisation and fusion of operators
 - Mixture of models
-- Support QWEN/LLAMA/GPT ...
+- Support DEEPSEEK/LLAMA/GPT ...
 - CPU, GPU and Hybrid training
 - Json config file
-- Pure C++ project with minimal dependencies
+- Self-contained C++ project with minimal dependencies
 
 ## Download & Build
 
@@ -20,11 +20,6 @@
 # export CPATH=~/cudnn-frontend/include/:/usr/local/cuda-12.1/include:$CPATH        # maybe need this to export CPATH
 git clone https://github.com/gruai/koifish
 cd koifish
-# build ggml lib first
-cd llama.cpp
-mkdir build && cd build && cmake .. 
-make clean && make VERBOSE=TRUE
-cd ../../
 mkdir build && cd build && cmake ..
 make clean && make VERBOSE=TRUE
 ```
@@ -40,8 +35,8 @@ make clean && make VERBOSE=TRUE
 
 ## Working plan
 - Hybrid 16/8 bit Optimizer
-- Support DeepSeek/MAMBA
-- Sparse mapping of token-embedding to logits
+- Support MAMBA
+- Sparsing
 
 ## Contributing
 
@@ -49,4 +44,4 @@ make clean && make VERBOSE=TRUE
   
 ## Acknowledgements
 
-* Thanks very much for the outstanding work of [llm.c](https://github.com/karpathy/llm.c) & [ggml](https://github.com/ggerganov/ggml).
+* Thanks very much for the highly instructive work of [calm](https://github.com/zeux/calm), [llm.c](https://github.com/karpathy/llm.c) & [ggml](https://github.com/ggerganov/ggml).

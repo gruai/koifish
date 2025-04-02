@@ -9,7 +9,7 @@
  */
 
 #include "gLLM.hpp"
-#include "Cache.hpp"
+#include "../Utils/Cache.hpp"
 #include "Fish.hpp"
 #include "../g_stddef.hpp"
 #include "Optimizer.hpp"
@@ -25,12 +25,15 @@ shared_ptr<EDGE_DEVICES> EDGE_DEVICES::GetInstance(const CLI_params&config, int 
 
 bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_,int flag)     {
     auto train_params = config.common;
-    if (train_params.seed == LLAMA_DEFAULT_SEED) {
+    if (train_params.seed == -1) {
         train_params.seed = time(NULL); 
     }    
     wikis = wikis_;
     // if(!LoadCheckPoint())        //  need refactor
     //     return false;
+    assert(rnd==nullptr);
+    rnd = init_random_normal_distribution(config.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
+    
     if(hDict==nullptr){
         if(!InitDictTokenset())     //  hDictVAE
             return false;        
@@ -41,17 +44,15 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_,int flag)     {
         _INFO("====== NO WIKI !!! ======\n");       //return false;
     }else{
         teach = wikis[0]->teach;  
-    } 
-    hCache = std::make_shared<KVCache>(this,0,0,0,0);
+    }     
     
-    hDistler = nullptr; //config.sigma=="" ? nullptr : std::make_shared<Distillation>(this,config,0x0);     //ADD SIGMA             
-
+    hDistler = nullptr; //config.sigma=="" ? nullptr : std::make_shared<Distillation>(this,config,0x0);     //ADD SIGMA  
     hEDS = EDGE_DEVICES::GetInstance(config);
     hOPT->hEDS = hEDS;
     
     InitModel(flag);
-    config.Dump();         
-
+    config.Dump();      
+    
     if(hOPT!=nullptr)   {
         hOPT->Dump(1);
         if(config.isOnlyGPT)
@@ -228,7 +229,8 @@ string QKV_LAY::__repr__( string& suffix,string& prefix,int flag)    {
     return buf;
 }
 
-void NLP_AutoRegressive::build_inp_KQ_(struct ggml_context *ctx,bool isMask,bool causal) {
+void NLP_AutoRegressive::build_inp_KQ_(void *ctx,bool isMask,bool causal) {
+#ifdef __USE_GGML__
     char nam_[128];
     bool isFlash = config.isFlashAtten();     
     const uint32_t pad = isFlash ? 256u : 32u,cell_max=0;     //llama_kv_cache_cell_max(*cache)
@@ -258,6 +260,7 @@ void NLP_AutoRegressive::build_inp_KQ_(struct ggml_context *ctx,bool isMask,bool
         float*mask = (float*)(KQ_mask->data);
         //  KQ_mask = isFlash ? ggml_cast(ctx, KQ_mask, GGML_TYPE_F16) : KQ_mask;   
     }
+#endif
     return ;
 }
 
@@ -269,8 +272,6 @@ hGensor SLP::UpdateGensor(int flag)  {
 std::string NLP_AutoRegressive::Name()     {   
     return "LAMA";  
 }
-
-
 
 //REF: ggml_compute_forward_dup_bytes
 void Fish::CopyWeight(const Fish* src,int flag) {
@@ -326,6 +327,7 @@ bool NLP_AutoRegressive::LocalFeeling(hSampLoader hLoader,vector<float>& result,
     auto hSamp = hLoader->shard_samps[0];
     int i,nTok = hSamp->len,_nctx=config.n_ctx();
     // assert(!hDictVAE->hDict->tokenizer_add_bos);
+    hOPT->SetPhase( Optimizer::P_EVAL_);
     hOPT->Evaluate(hLoader,-666);
     if(DUMP())
         _INFO("\t%s @\"%s\"\n",__func__,hLoader->sentence.c_str());
@@ -350,7 +352,7 @@ size_t NLP_AutoRegressive::tVocab(){
     return hDict->nVocab( );
 }
 
-hGensor Fish::BuildLoss( struct ggml_context * ctx,hGensor cur,int flag){
+hGensor Fish::BuildLoss( void * ctx,hGensor cur,int flag){
     if(DEBUG.NO_loss)   {
         assert(cur==preLogits);
         out_node = cur;     return cur;
@@ -388,13 +390,13 @@ hGensor Fish::BuildLoss( struct ggml_context * ctx,hGensor cur,int flag){
     return loss;
 }
 
-hGensor NLP_AutoRegressive::BuildTarget( struct ggml_context * ctx,hGensor cur,int flag)  {
+hGensor NLP_AutoRegressive::BuildTarget( void * ctx,hGensor cur,int flag)  {
     hGensor _tNorm = UpdateGensor (hDictVAE->_norm.w->name); 
     int n_vocab = tVocab(),n_batch = config.common.n_batch,n_ctx = config.common.n_ctx,n_embd = config.nEmbed();
     auto train_params = config.common;
     train_params.use_checkpointing = false;     // CYS_0826
     const int N = train_params.n_ctx, n_past = 0;
-    const float rms_norm_eps = config.f_norm_rms_eps;
+    const float rms_norm_eps = config.model.norm_rms_eps;
     hGensor  t32 = nullptr,wA = nullptr,wB = nullptr;
 #ifdef _TENSOR_G_
     
@@ -465,11 +467,6 @@ hGensor NLP_AutoRegressive::BuildTarget( struct ggml_context * ctx,hGensor cur,i
 #endif
     return out_node;
 }
-
-
-
-
-struct ggml_cgraph * llama_build_graph(llama_context & lctx,const llama_batch & batch,bool   worst_case);
 
 std::string NLP_AutoRegressive::T2STR( const std::vector<TOKEN_ID>& toks,int flag )                    { 
     std::string str = "";
@@ -570,7 +567,7 @@ bool Fish::InitDictTokenset(int flag)    {
     return true;
 }
 
-bool NLP_AutoRegressive::InitInput(struct ggml_context * ctx_build,bool isMask,int flag) {
+bool NLP_AutoRegressive::InitInput(void * ctx_build,bool isMask,int flag) {
     auto train_params = config.common;
     int n_ctx = train_params.n_ctx,n_vocab = tVocab(),n_batch = train_params.n_batch;
     assert(n_ctx>0 && n_batch>0);
@@ -639,34 +636,23 @@ void NLP_AutoRegressive::Train(int flag)       {
        
     int64_t now = GST_ms();
     double ms=0;
-    print_build_info();
+    // print_build_info();
     
     SaveTrain("warmup" );      //warmup save
-    Optimizer::RESULT result = hOPT->Search(ctx_work,loss,target_probs,config);  
+    Optimizer::RESULT result = hOPT->Search(nullptr,loss,target_probs,config);  
     assert(result==Optimizer::OK || result==Optimizer::DID_NOT_CONVERGE);  
+#ifdef __USE_GGML__
     if(ctx_work!=nullptr)  ggml_free(ctx_work);
     ggml_free(ctx_build);
+#endif
     ms = GST_ms()-now;
     _INFO("\n[train]: ");   _TIME_INFO("Total time=",ms);
     _INFO("\n\n");
 }
 
-#include "ggml-impl.h"
-struct ggml_cgraph *NLP_AutoRegressive::BuildRawGraph( struct ggml_context * ctx_,bool isBuild,int flag)       { 
-    llama_model *model = GetRawModel( );
-    assert(model!=nullptr);
-    struct ggml_cgraph *gf_raw = ggml_new_graph_custom(ctx_, LLAMA_TRAIN_MAX_NODES, true);      ;
-    gf_raw = _llama_raw_graph(model,gf_raw,config.prompt,false,0x0); 
-    assert(gf_raw!=nullptr);
-    for(int i=0;i<gf_raw->n_leafs;i++){     
-        if(strcmp(gf_raw->leafs[i]->name,"inp_tokens")==0){  
-            // tokens_input = gf_raw->nodes[i];     
-            break;
-        }
-    }
-    assert(isBuild);
-    return gf_raw;
-}
+#ifdef __USE_GGML__
+    #include "ggml-impl.h"
+#endif
 
 // TO DO :  refactor
 void NLP_AutoRegressive::InitGensors(int flag){
@@ -789,4 +775,54 @@ void NLP_AutoRegressive::Dump(int type,int flag)      {
     }   
     if(config.lars_ratio>0)
         _INFO("%s: LARS(t_max=%g)\n", __func__,config.lars_ratio);
+}
+
+float* T_generate_cuda(Fish* hFish, bool isOnlyUpdateKV,unsigned flags=0x0);
+int NLP_AutoRegressive::Forward_0(int flag)  {
+    return 0x0;
+}
+int NLP_AutoRegressive::ForwardOnNeuron(int flag)  {
+    if(DEBUG.T_cuda_ver==1){
+        T_generate_cuda(this,false); //  do one inference as warmup
+        return 0x0;        
+    }
+
+    int B,T,C,tpFuseNormal=config.Fuse_Normal,L = config.nLayer(),tpFuseCu=1;      
+    GetBTC(B,T,C);    
+    hGensor cur=nullptr,residual=nullptr;
+    LayerNormal* lnf = GetNeuron<LayerNormal>("LayerNormal",0);
+    TokenEmbed* embed = GetNeuron<TokenEmbed>("TokenEmbed",0);
+    cur = embed->Ming(nullptr,Input());     
+    residual = cur; //embed->out;
+    SelfAttention *QKV0 = GetNeuron<SelfAttention>("SelfAttention",0),*QKV=nullptr;
+
+    if(tpFuseNormal==1){
+        cur=QKV0->norm.FUSE_cuda(cur);   
+    } 
+
+    FFN *ffn=nullptr;
+    for (int l = 0; l < L; l++) {
+        NvtxRange layer_range("Layer", l);
+        QKV = GetNeuron<SelfAttention>("SelfAttention",l);
+        ffn = GetNeuron<FFN>("FFN",l);            //ffn->out = GTensor::delta;
+        LayerNormal *hNorm = l+1 != L ? &(GetNeuron<SelfAttention>("SelfAttention",l+1)->norm) : lnf;
+        ffn->fuseNorm = tpFuseNormal==1?hNorm:nullptr;       
+        QKV->fuseNorm =  tpFuseNormal==1?&(ffn->norm):nullptr;
+        cur = QKV->FUSE_cuda(cur,residual,nullptr,nullptr,flag);        
+        cur = ffn->FUSE_cuda(cur,nullptr, 0x0);  
+        residual = ffn->out;
+    }    
+    if(tpFuseNormal==0){
+        cur = lnf->FUSE_cuda(ffn->out); 
+    }
+    OutCLS* cls = GetNeuron<OutCLS>("OutCLS",0);
+    if(tpFuseCu==1)
+        cls->FUSE_cuda(cur,embed->w,flag); //lnf->out,
+    else    {
+        assert(0);
+        //cls->preLogits = lnf->out*embed->w;   //matmul_forward_cublaslt(ToX(cls->preLogits), ToX(lnf->out), ToX(embed->w), NULL, B, T, C, Vp, main_stream);
+    }
+    PrintTensor<floatX>("output",ToX(cls->preLogits),true,B,T,C);
+    SYNC_DEVICE();    
+    return 0x0;
 }

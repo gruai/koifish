@@ -23,7 +23,10 @@
 using namespace std;
 #include <stdio.h>
 #include <string.h>
-#include "ggml.h"
+
+#ifdef __USE_GGML__
+    #include "ggml.h"
+#endif
 
 #define GG_V12
 
@@ -45,7 +48,6 @@ typedef std::vector<int> SHAPE;
 #define BIT_TEST( val,flag ) (((val)&(flag))==(flag))
 #define BIT_IS( val,flag ) (((val)&(flag))!=0)
 
-static char buffer[GGML_MAX_NAME];
 //set name of a tensor if its name is "\0" & its grad
 int gTN(hGTensor ,const char *format,...);
 //clear then set name of a tensor & its grad
@@ -93,7 +95,7 @@ typedef shared_ptr<GENSOR_OP> hGOP;
  */
 class GTensor   {
 private:
-    struct ggml_tensor  *gg=nullptr;
+    void *gg=nullptr;
 protected:
     std::shared_ptr<EDGE_DEVICES> hDevice = nullptr;   
     size_t szData=0;
@@ -103,8 +105,9 @@ protected:
     virtual hGTensor _Multiply(const hGTensor& other) { assert(0);  return nullptr;    }
 public:
     static const int MAX_NAME=64;
+    static const int N_DIMS=4;
     // static int B,T,C;       //shortcut parameter of LLM models
-    static hGTensor bt4c,delta,scratch_output,scratch_ff1;
+    static hGTensor bt4c,delta,scratch,scratch_ff1;
     static void* buff;      //  temporary shared memory 
     float residual_scale=1.0,wnorm=0,gnorm=0;   // some tricks
     float rLARS(float s0,float T_lars,int flag);
@@ -129,6 +132,9 @@ public:
         hGTensor hT = std::make_shared<GTensor>(gg,flag);
         return hT;
     }
+    static size_t MostOverhead( ){
+        return sizeof(GTensor)*2;
+    }
     GTensor()   {}
     GTensor(SHAPE shape_,typNUMBER tpD_,bool isAlloc=true,int flag=0x0);
     GTensor(struct ggml_tensor*gg_,int flag=0x0) : gg(gg_)      {     assert(0);    }
@@ -143,7 +149,7 @@ public:
     //     bool isDevice = true;
     //     PrintTensor<T>(title.c_str(),(T *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
     // }
-    void Print(const string& title, int typ, int flag);
+    virtual void Print(const string& title, int typ, int flag)  const;
     virtual bool Dump(int type,const string&title="",int flag=0x0)  const;
 //operations
     hGTensor operator*(const hGTensor& other) {
@@ -154,18 +160,18 @@ public:
     hGTensor Silu();
     hGTensor Norm(float epsilon,int flag=0x0);
 
-//operations
+//operationsT_MAX_NAME
     virtual bool OverWrite(struct ggml_tensor*gg_,bool isSrc=true,int flag=0x0);
     virtual bool OverWrite(hGTensor,bool isSrc=true,int flag=0x0);      
     virtual hGTensor GetRow(hGTensor, hGTensor token,hGTensor pos,int flag=0x0);
     virtual hGTensor Normal(hGTensor hOut,hGTensor _mean,hGTensor _rstd,hGTensor w,hGTensor b,bool isForward=true,int flag=0x0)   {   assert(0);  return nullptr;}//  Loss
     virtual hGTensor CrossEntropy( const hGTensor b,int flag=0x0 );    
 
-    int64_t ne[GGML_MAX_DIMS]; // number of elements
+    int64_t ne[N_DIMS]; // number of elements
     //stride in bytes:nb[0] = ggml_type_size(type);nb[i] = nb[i-1] * ne[i-1]
-    size_t  nb[GGML_MAX_DIMS]; 
-    enum ggml_op op;
-    int32_t op_params[GGML_MAX_OP_PARAMS / sizeof(int32_t)];
+    size_t  nb[N_DIMS]; 
+    // enum ggml_op op;
+    // int32_t op_params[GGML_MAX_OP_PARAMS / sizeof(int32_t)];
     int32_t flags=0x0;
 
     bool isParam()  {   return BIT_TEST(flags,F_PARAM);  }
@@ -190,13 +196,13 @@ public:
     virtual double bpe();       
     virtual size_t size(int typ=0)  const;
     virtual int dims()    const         {   
-        for (int i = GGML_MAX_DIMS - 1; i >= 1; --i) {
+        for (int i = N_DIMS - 1; i >= 1; --i) {
             if (ne[i] > 1) {    return i + 1;   }
         }
         return 1;         
     }
-    virtual size_t nByte( )  const      {   return szData;  /*ggml_nbytes(gg);*/       }
-    virtual void SetName(const string&name,int flag=0x0)   {   ggml_set_name(gg,name.c_str()); }
+    virtual size_t nByte( )  const      {   return szData;        }
+    
     //Returns the value of this tensor(with one element!)
     virtual bool isEmpty()  const                       {   
         // if(size()>0)    {   assert(B>0 && T>0 && C>0); }
@@ -222,28 +228,27 @@ public:
                 ((int32_t *)(val))[0] = value;
             } break;
         case typNUMBER::F16:            {
-                GGML_ABORT("fatal error");
+                assert(0 && "fatal error");
                 // ((ggml_fp16_t *)(val))[0] = GGML_FP32_TO_FP16(value);
             } break;
         case typNUMBER::BF16:            
-            {   GGML_ABORT("fatal error");
+            {   assert(0 && "fatal error");
                 // ((ggml_bf16_t *)(val))[0] = GGML_FP32_TO_BF16(value);
             } break;
         case typNUMBER::F32:            {
                 ((float *)(val))[0] = value;
             } break;
         default:            {
-                GGML_ABORT("fatal error");
+                assert(0 && "fatal error");
             }
         }
     }
 
     virtual void SetFlag(int64_t flag)   {  
-        flags |= (int32_t)flag;     if(gg!=nullptr) gg->flags |= (int32_t)flag;    
+        flags |= (int32_t)flag;        
     }
     virtual float Get(int i,int flag=0x0)   const;
     virtual float Item()    const{
-        assert(ggml_is_scalar(gg));  
         assert(size()==1);  return Get(0);
     }   
 
@@ -255,19 +260,33 @@ public:
 template <typename T> 
 T* TO(hGTensor t) { 
     assert(t!=nullptr && t->data!=nullptr);
+    // assert(t->type==TYPE_<T>())
     BIT_SET(t->flags,GTensor::F_TOX);
     return (T*)(t->data); 
 }
+template <typename T=floatX> 
+T* TO(std::vector<hGTensor> gensors,const std::string &key,int flag=0x0) {    
+    assert(gensors.size()>0);
+    for(auto gensor:gensors){
+        if(gensor==nullptr) continue;        
+        if(strstr(gensor->name,key.c_str()) != NULL){
+            return TO<T>(gensor); 
+        }
+    }
+    assert(0);
+    return nullptr;
+}
 
 inline hGTensor operator+( const hGTensor &a,const hGTensor &b ) 	{		
-    auto cur = ggml_add(a->CTX(), a->GG(), b->GG() );    
-    return GTensor::NEW_(cur);
+    // auto cur = ggml_add(a->CTX(), a->GG(), b->GG() );    
+    // return GTensor::NEW_(cur);
+    return nullptr;
 }
 inline hGTensor operator+=( const hGTensor &a,const hGTensor &b ) 	{		
-    auto cur = ggml_add(a->CTX(), a->GG(), b->GG() );    
-    return GTensor::NEW_(cur);
+    // auto cur = ggml_add(a->CTX(), a->GG(), b->GG() );    
+    // return GTensor::NEW_(cur);
+    return nullptr;
 }
-
 
 #ifdef _TENSOR_G_
     typedef hGTensor hGensor;
@@ -335,7 +354,7 @@ class huTensor : public GTensor   {
 protected:    
     hGTensor _Multiply(const hGTensor& other); 
 public:
-    huTensor(const string&name_,SHAPE shape,typNUMBER tpD_,bool isParam,int flag=0x0);    
+    huTensor(const string&name_,const SHAPE& shape,typNUMBER tpD_,bool isAlloc,int flag=0x0);    
     virtual ~huTensor();
 
     bool Alloc(int tpInit=0,int flag=0x0)    override;
@@ -349,7 +368,7 @@ public:
     hGTensor CrossEntropy( const hGTensor b,int flag=0x0 )  override;
     hGTensor GetRow(hGTensor, hGTensor token,hGTensor pos,int flag)   override;
     hGTensor Normal(hGTensor hOut,hGTensor _mean,hGTensor _rstd,hGTensor w,hGTensor b,bool isForward=true,int flag=0x0)   override;
-    // bool Dump(int type,int flag=0x0)  const override;
+    void Print(const string& title, int typ, int flag)  const override;
 };
 
 struct GENSOR_INFO{

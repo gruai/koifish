@@ -13,12 +13,12 @@ Common utilities for CUDA code.
 #include <nvtx3/nvToolsExt.h>
 #include <nvtx3/nvToolsExtCudaRt.h>
 #include <cuda_profiler_api.h>
-
+ 
 #include "llm_c/utils.h"
-
 #include "../../CLI_params.hpp"
 #include "../../g_stddef.hpp"
 #include "../../g_float.hpp"
+#include "../../Utils/GST_log.hpp"
 // ----------------------------------------------------------------------------
 // Global defines and settings
 
@@ -52,7 +52,7 @@ constexpr std::bool_constant<true> False;
 // CUDA error checking
 inline void cudaCheck(cudaError_t error, const char *file, int line) {
   if (error != cudaSuccess) {
-    printf("[CUDA ERROR] at file %s:%d:\n%s\n", file, line, cudaGetErrorString(error));
+    _INFO("[CUDA ERROR] at file %s:%d:\n\"%s\" (%s code=%d)\n", file, line, cudaGetErrorString(error),cudaGetErrorName(error),error);
     exit(EXIT_FAILURE);
   }
 };
@@ -63,7 +63,7 @@ template<class T>
 inline void cudaFreeCheck(T** ptr, const char *file, int line) {
     cudaError_t error = cudaFree(*ptr);
     if (error != cudaSuccess) {
-        printf("[CUDA ERROR] at file %s:%d:\n%s\n", file, line, cudaGetErrorString(error));
+        _INFO("[CUDA ERROR] at file %s:%d:\n%s\n", file, line, cudaGetErrorString(error));
         exit(EXIT_FAILURE);
     }
     *ptr = nullptr;
@@ -204,21 +204,22 @@ void inline PrintTensor(const char* title,const T *src, bool isDevice,int n1,int
     }
     cur = dst;  
   
-    // if(strlen(title)>0) printf("%s\n", title);
+    // if(strlen(title)>0) _INFO("%s\n", title);
     float a1=-FLT_MAX,a0=FLT_MAX,a;    
     double sum = 0.0,len=0.0,sum2=0.0;
     for (i = 0; i < nElem; i++,cur++) {
         a = float(*cur);	//T2Float<T>(cur);
         if(i<nEach || i>nElem-nEach || fabs(i-nElem/2)<=nEach)
-            printf("%g ",a);
-        if(i==nEach || i==nElem-nEach)    printf("...");
+            _INFO("%g ",a);
+        if(i==nEach || i==nElem-nEach)    _INFO("...");
         sum += fabs(a);     sum2+=a*a;
         if(a==0)      nz++;
         a1 = std::max(a1,a);      a0 = std::min(a0,a);
     }
     len = sqrt(sum2/nElem);
-    printf("\t\"%s\" avg=%g(%ld) avg_len=%g sum2=%g [%f,%f]\n",title,sum/nElem,nElem,len,sum2,a0,a1);
-
+    //  printf output is only displayed if the kernel finishes successfully,  cudaDeviceSynchronize()
+    _INFO("\t\"%s\" avg=%g(%ld) avg_len=%g sum2=%g [%f,%f]\n",title,sum/nElem,nElem,len,sum2,a0,a1);
+    
     if(isDevice){
         free(dst);
     }

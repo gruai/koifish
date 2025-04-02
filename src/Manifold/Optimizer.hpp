@@ -25,6 +25,7 @@ using namespace std;
 
 #include "../ggex/GG_util.hpp"
 #include "../Device/CUDA/EDevice.hpp"
+#include "../Utils/Cache.hpp"
 #include "TGraph.hpp"
 #include "Scheduler.hpp"
 #include "DataLoader.hpp"
@@ -39,14 +40,21 @@ protected:
     std::string title = "Optimizer";
     // std::map<hGensor, GENSOR_INFO> gimap;   
     
-    struct ggml_context * _ctx=nullptr;
+    void * _ctx=nullptr;
     std::vector<hGensor> opt_ps;
     size_t nParams = 0, nMostParam = 0;
     float *_tmp=nullptr;
     bool just_initialized = false,isAdaptiveSched = false,isGlobalGrad=true;
+    bool isConverge = false,isDumpOnce = false;
+    enum PHASE{
+        P_TRAIN,
+        P_EVAL_,
+        //Inference     fish->isLocalInfer = true
+        P_PREFILL,P_GENERATE
+    };
+    PHASE phase = P_TRAIN;
     bool isBackward = false;
-    bool isConverge = false;
-    bool isDumpOnce = false;
+    
     int past=0,nGradAccum=0,tpSign=0;
     int warmup_iters=0;
     // gradient clipping
@@ -83,6 +91,8 @@ protected:
         return *val;
     }
     
+    // virtual KVCache *GetKVCache()  {   return nullptr;    }
+    
     hLearnSKDU scheduler = nullptr;
     bool isStopImprove = false;
 
@@ -110,16 +120,17 @@ public:
     std::vector<hSampLoader> val_loaders;
     size_t shuffle_samples_hash = 0x0;  //hack
 
-    Fish* _fish=nullptr;         //ref only
-    hEDevices hEDS;             //ref only
-
-    struct train_state      *trainst = nullptr; //init_train_state();
+    Fish* _fish = nullptr;         //ref only
+    hEDevices hEDS = nullptr;             //ref only
+    hKVCache hCache = nullptr;
     struct train_params_ TrainParams();
     
     Optimizer(NLP_AutoRegressive *g_,CLI_params& params_,int flag=0x0);
     //Deprecated need refactor!!!       9/30/2024
     virtual double GraphCompute(hSampLoader loader,hTGraph,int flag=0x0);
+    virtual bool SetPhase(PHASE phase_,int flag=0x0);
     virtual float Evaluate(hSampLoader loader,int iter,int flag=0x0);
+    // virtual float Prefill(hSampLoader loader,int iter,int flag=0x0);
     virtual int GetITER(int flag=0x0);
     virtual float LearningRate(int flag=0x0 )   {   return  scheduler->LearningRate(iter);  }
     virtual void UpdateTrainLoss(int x,float loss,int flag=0x0);     //
@@ -130,10 +141,10 @@ public:
 
     virtual void Dump(int typ){
         if(NOT_DUMP(0))    return;
-
+        size_t sz = 0x0;
         const char*title = "OPT";   //__func__
         if(_ctx!=nullptr)
-            _INFO("%s: mem_size  = %zu bytes (%.1f MB)\n", title, ggml_get_mem_size(_ctx), (float) ggml_get_mem_size(_ctx) / (1024.0f*1024.0f));
+            _INFO("%s: mem_size  = %zu bytes (%.1f MB)\n", title, sz, (float)sz/(1024.0f*1024.0f));
         _INFO("%s: iter = %d\n", title, iter);
         
         if(typ==1){
@@ -141,7 +152,7 @@ public:
                 shuffle_samples_hash, train_its,train_samples,train_tokens,train_epochs);            
         }
     }
-    
+    virtual void AfterBuild(int flag=0x0);
     virtual void BeforeTrain(hGensor tokens_input,int flag) ;
     virtual void InitCUDA(int flag);
     virtual void ClearCUDA(int flag);
@@ -155,14 +166,15 @@ public:
     // virtual void InitOpt(struct train_params_& params_,int flag=0x0);
     
     virtual ~Optimizer( ) {
-        ggml_free(_ctx);
+        // ggml_free(_ctx);
         if(_tmp!=nullptr)
             delete[] _tmp;
     }
 
-    RESULT Search(struct ggml_context * ctx, hGensor loss_,hGensor target_,CLI_params& config);
+    RESULT Search(void * ctx, hGensor loss_,hGensor target_,CLI_params& config);
     
     friend class Fish;
+    friend class NLP_AutoRegressive;
     friend class GeNeuron;
     friend class SampLoader;
     friend class SAMP;

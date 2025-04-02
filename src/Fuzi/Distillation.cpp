@@ -27,7 +27,7 @@ void Distillation::UpdateSigma( int step,int flag){
     case SIGMA:
         _INFO("Distillation::%s: sigma=[%g,%g]\n", __func__, alpha,1-alpha);
         for(auto gensor :gensors){
-            memcpy(gensor->op_params, abc, sizeof(abc)); 
+            // memcpy(gensor->op_params, abc, sizeof(abc)); 
         }
         break;
     default:

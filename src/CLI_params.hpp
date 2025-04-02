@@ -9,19 +9,10 @@
 #pragma once
 #include <cassert>
 #include "g_float.hpp" 
+#include "./Utils/GST_log.hpp" 
 #include "./ggex/json.hpp" 
 
-/*
-    10 levels of dumps, 0-9. 0 is a full dump,The lower the number the more dump.
-*/  
-extern int g_dump_level;
-inline bool NOT_DUMP(int t=0) {
-    if(g_dump_level<=t)    return false;
-    return true;
-}
-inline bool DUMP(int t=0) {
-    return !NOT_DUMP(t);
-}
+
 /**
  *  All paramters defined here
 */
@@ -53,80 +44,100 @@ enum MODEL_ARCH {
  * generation_config.json
  * model.safetensors.index.json
 */
-struct MODEL_CARD{
+class MODEL_CARD{
+protected:
+    struct LAY_PARAM{
+    /*
+        void* wq[MAX_LAYERS]; // (n_heads * head_dim, dim)
+        void* wk[MAX_LAYERS]; // (n_kv_heads * head_dim, dim)
+        void* wv[MAX_LAYERS]; // (n_kv_heads * head_dim, dim)
+        void* wo[MAX_LAYERS]; // (dim, n_heads * head_dim)
+        // weights for ffn
+        void* w1[MAX_LAYERS]; // (n_experts?, ff, dim)
+        void* w2[MAX_LAYERS]; // (n_experts?, dim, ff)
+        void* w3[MAX_LAYERS]; // (n_experts?, ff, dim)	
+        // biases for qkv (qwen)
+        float* bqkv[MAX_LAYERS]; // ((n_heads + n_kv_heads * 2) * head_dim)
+        // moe gate weights (mixtral)
+        void* moegate[MAX_LAYERS]; // (n_experts, dim)
+     */
+        uint32_t head,kv_head;
+        uint32_t ff;
+        LAY_PARAM(uint32_t h,uint32_t k,uint32_t f) : head(h),kv_head(k),ff(f) {
+            assert(h>0 && k>0 && f>0);
+        }
+    
+        uint32_t n_head()       const           {   return head;    }
+        virtual void SetHead(int nH)    {
+            assert(nH>0 && nH<1024*1024);       
+            head=nH;        kv_head=nH;
+        }
+        virtual void SetFF(int nF)    {
+            assert(nF>0 && nF<1024*1024);       ff=nF;        
+        }
+        uint32_t n_head_kv()    const           {   return kv_head;    }
+        uint32_t n_ff()         const           {   return ff;    }    
+    
+        /**
+         * The GQA model efficiently breaks the query into n_heads, and the key and value are divided into n_kv_heads groups, 
+         * enabling multiple key-value heads to share the same query.   more groups (closer to MHA) result in higher quality but slower performance, whereas fewer groups (near to MQA) boost speed at the risk of sacrificing quality.
+        */
+        uint32_t n_gqa() const {
+            assert(head>=kv_head && head%kv_head==0);
+            return head/kv_head;
+        }
+        uint32_t n_embd_head(int _embd) const {
+            assert(_embd>0 && _embd%head==0 && _embd>=head);
+            return _embd/head;
+        }
+    
+        uint32_t n_embd_gqa(int _embd) const {
+            int gqa = n_gqa();
+            assert(_embd%gqa==0 && _embd>=gqa);
+            return _embd/gqa;
+        }
+    };
+
+    std::vector<LAY_PARAM> layerps;
+public:
     static std::string sWeight,sBias,sNorm,sLayer,sAttnOut;
 
     std::string sCardPath = "",sTokenPath="";
     std::string sArch,torch_dtype,transformers_version,model_type;
+    std::string act_type,norm_type;
+
     JSON jModelParam;   //
     int vocab_size=-1,bos_token_id,eos_token_id;
-
-    MODEL_CARD()    {}
-    virtual bool Init(const JSON&jConfig,int flag=0x0);
-    bool empty()    {   return sCardPath.empty();  }
-};
-
-struct MODEL_DE_params_ {    
     int preLogits_dB=2; // epsilon for convergence test
     bool isNormalBias = true;  
     bool isSLPBias = true;  
     bool isPaddedCls = false;  
+// dim(=head_dim*n_heads)
+    int dim=-1,hidden_dim=-1,n_layers=-1,n_heads=-1,n_kv_heads=-1,head_dim=1;
 //  ****
     bool isEmbedWeightTying = true;
     bool isSeperateQKV = false;
+    float clip_qkv = FLT_MAX;   // Clipping Q/K/V.  to prevent numerical instability
+//  Experts     
+    int n_experts=0,n_experts_ac=0; 
+//  eps
+    float norm_eps = 1e-5f,norm_rms_eps = 1e-5f; 
+//  rope
+    float rope_freq_base  = 10000.0f,rope_freq_scale = 1.0f,rope_theta =0;
+    enum tpROPE {
+        RT_NONE = -1,        RT_NORM =  0,          RT_NEOX =  2,        RT_GLM  =  4,
+    };
+    tpROPE rope_type = RT_NORM ;
+    int rotary_dim = 0;
+    int seq_len = 0;
+
+    MODEL_CARD()    {}
+    virtual bool OnJsonCALM(const std::string&path,const JSON &meta,int flag=0X0);
+    virtual bool Init(const JSON&jConfig,int flag=0x0);
+    bool empty()    {   return sCardPath.empty();  }
     void Dump(int typ);
-};
-struct LAY_PARAM{
 
-/*
-	void* wq[MAX_LAYERS]; // (n_heads * head_dim, dim)
-	void* wk[MAX_LAYERS]; // (n_kv_heads * head_dim, dim)
-	void* wv[MAX_LAYERS]; // (n_kv_heads * head_dim, dim)
-	void* wo[MAX_LAYERS]; // (dim, n_heads * head_dim)
-	// weights for ffn
-	void* w1[MAX_LAYERS]; // (n_experts?, ff, dim)
-	void* w2[MAX_LAYERS]; // (n_experts?, dim, ff)
-	void* w3[MAX_LAYERS]; // (n_experts?, ff, dim)	
-	// biases for qkv (qwen)
-	float* bqkv[MAX_LAYERS]; // ((n_heads + n_kv_heads * 2) * head_dim)
-	// moe gate weights (mixtral)
-	void* moegate[MAX_LAYERS]; // (n_experts, dim)
- */
-    uint32_t head,kv_head;
-    uint32_t ff;
-    LAY_PARAM(uint32_t h,uint32_t k,uint32_t f) : head(h),kv_head(k),ff(f) {
-        assert(h>0 && k>0 && f>0);
-    }
-
-    uint32_t n_head()       const           {   return head;    }
-    virtual void SetHead(int nH)    {
-        assert(nH>0 && nH<1024*1024);       
-        head=nH;        kv_head=nH;
-    }
-    virtual void SetFF(int nF)    {
-        assert(nF>0 && nF<1024*1024);       ff=nF;        
-    }
-    uint32_t n_head_kv()    const           {   return kv_head;    }
-    uint32_t n_ff()         const           {   return ff;    }    
-
-    /**
-     * The GQA model efficiently breaks the query into n_heads, and the key and value are divided into n_kv_heads groups, 
-     * enabling multiple key-value heads to share the same query.   more groups (closer to MHA) result in higher quality but slower performance, whereas fewer groups (near to MQA) boost speed at the risk of sacrificing quality.
-    */
-    uint32_t n_gqa() const {
-        assert(head>=kv_head && head%kv_head==0);
-        return head/kv_head;
-    }
-    uint32_t n_embd_head(int _embd) const {
-        assert(_embd>0 && _embd%head==0 && _embd>=head);
-        return _embd/head;
-    }
-
-    uint32_t n_embd_gqa(int _embd) const {
-        int gqa = n_gqa();
-        assert(_embd%gqa==0 && _embd>=gqa);
-        return _embd/gqa;
-    }
+friend class CLI_params;
 };
 
 struct ADAM_params_ {
@@ -196,14 +207,14 @@ struct DEUG_SWITCH{
     int train_hyperparams = 0;
     int train_datas = 0;    
     int back_graph_version = 0;
+    int T_cuda_ver = 0;
     void Dump(int typ);
 };
 extern DEUG_SWITCH DEBUG;
 
 struct CLI_params {
     struct train_params_ common;  
-    MODEL_CARD model_card;
-    MODEL_DE_params_ modep;
+    MODEL_CARD model;
     struct CheckPoint {
         std::string in,out;
         std::string model_out,model_base;       
@@ -238,7 +249,7 @@ struct CLI_params {
     size_t nTokensPerGrad()   const       {  return nTokenInBatch()*common.n_gradient_accumulation;   }
     uint32_t max_seq_len,n_ctx_orig_yarn,n_ctx_train=0;
     bool isLongRope(int il = 0) const {
-        assert(il>=0 && il<layerps.size());
+        assert(il>=0 && il<model.layerps.size());
         const auto n_ctx_pre_seq = n_ctx() / max_seq_len;
         bool isLong = n_ctx_pre_seq > n_ctx_orig_yarn;
         return isLong;
@@ -266,8 +277,7 @@ struct CLI_params {
     uint32_t n_swarm = 1;
     // uint32_t n_outputs = 1;
     int n_embd_head_k = -1, n_embd_head_v = -1; //nEmbed() = -1, 
-    std::vector<int> embeds;
-    std::vector<LAY_PARAM> layerps;
+    std::vector<int> token_embeds,qkv_embeds;
 
     int n_layer_train = -1, nLayerX = -1, nFFX = -1;
     int Fuse_Normal = 0;
@@ -364,66 +374,53 @@ struct CLI_params {
 
      //parameters of datasets
     float rSplit = 0.1;
-    std::string tpBatchSample;
     
-    float f_norm_eps = 1e-5f; 
-    float f_norm_rms_eps = 1e-5f; 
-    float rope_freq_base  = 10000.0f;
-    float rope_freq_scale = 1.0f;
-    float lars_ratio = 0.0f;
+    std::string tpBatchSample;
     std::string tpWiki = "";
-    //ffn_norm = nullptr if>0 
-    float ZMUV_ratio = 0.0;   
+    float lars_ratio = 0.0f,ZMUV_ratio = 0.0;    
 
     int32_t lora_r=0,lora_alpha=0;
-    /*enum llama_rope_type {
-        LLAMA_ROPE_TYPE_NONE = -1,
-        LLAMA_ROPE_TYPE_NORM =  0,  
-        LLAMA_ROPE_TYPE_NEOX =  2,
-        LLAMA_ROPE_TYPE_GLM  =  4,
-    };*/
-    int         rope_type               = -1 ;
 
     uint32_t FOMULA_n_ff(int n_mult) {
         const uint32_t n_ff = ((2*(4*nEmbed())/3 + n_mult - 1)/n_mult)*n_mult;
         return n_ff;
     }
     void SetHead(uint32_t nH){
-        for(int il=0;il<layerps.size();il++){
-            layerps[il].SetHead(nH);
+        for(int il=0;il<model.layerps.size();il++){
+            model.layerps[il].SetHead(nH);
         }            
     }
     uint32_t n_head(int il = 0) const {
-        assert(il>=0 && il<layerps.size());
-        return layerps[il].n_head();        
+        assert(il>=0 && il<model.layerps.size());
+        return model.layerps[il].n_head();        
     }
     uint32_t n_head_kv(int il = 0) const {
-        assert(il>=0 && il<layerps.size());
-        return layerps[il].n_head_kv();
+        assert(il>=0 && il<model.layerps.size());
+        return model.layerps[il].n_head_kv();
     }
 
     uint32_t n_ff(int il = 0) const {
-        assert(il>=0 && il<layerps.size());
+        assert(il>=0 && il<model.layerps.size());
         if(nFFX<=0)
-            return layerps[il].n_ff();        
+            return model.layerps[il].n_ff();        
         else
             return nFFX;
     }
     uint32_t n_embd_head(int il = 0) const {
-        assert(il>=0 && il<layerps.size());
-        return layerps[il].n_embd_head(nEmbed());        
+        assert(il>=0 && il<model.layerps.size());
+        return model.layerps[il].n_embd_head(nEmbed());        
     }
     // uint32_t n_rot = 64;
     uint32_t n_rot(int il = 0)    const{  //  n_rot to be exactly nEmbed() / n_head
         return nEmbed()/n_head(il);
     }
     uint32_t n_embd_gqa(int il = 0) const {
-        assert(il>=0 && il<layerps.size());
-        return layerps[il].n_embd_gqa(nEmbed());        
+        assert(il>=0 && il<model.layerps.size());
+        return model.layerps[il].n_embd_gqa(nEmbed());        
     }
     uint32_t n_gqa(uint32_t il = 0) const {
-        assert(il>=0 && il<layerps.size());
-        return layerps[il].n_gqa( ); 
+        assert(il>=0 && il<model.layerps.size());
+        return model.layerps[il].n_gqa( ); 
         /*const uint32_t n_head    = this->n_head(il);
         const uint32_t n_head_kv = this->n_head_kv(il);
         if (n_head_kv == 0) {

@@ -284,7 +284,7 @@ TOKENS WordPieceTokenizer::Encode(const wstring& input_text, bool split_specials
 
 GTokenizer::GTokenizer(Fish *dolphin,int flag) {
     config = dolphin->config;
-    if(dolphin->config.model_card.empty()){
+    if(dolphin->config.model.empty()){
 
     }else{
         bool bRet = InitHF(dolphin,flag);
@@ -294,8 +294,8 @@ GTokenizer::GTokenizer(Fish *dolphin,int flag) {
 bool GTokenizer::InitFrom(Fish *dolphin,hGTensor gTokens,hGTensor scores,int flag){
     config = dolphin->config;
 
-	/*bos_id = config.model_card.bos_token_id;
-	eos_id = config.model_card.eos_token_id;
+	/*bos_id = config.model.bos_token_id;
+	eos_id = config.model.eos_token_id;
 	eot_id = -1;
     if (eot_id < 0) {
 		eot_id = str_lookup("<|eot_id|>", sorted_vocab, vocab_size);
@@ -309,7 +309,7 @@ bool GTokenizer::InitFrom(Fish *dolphin,hGTensor gTokens,hGTensor scores,int fla
 
     char *tokens = (char*)(gTokens->data);
     size_t szT = gTokens->nByte(),off=0;
-    int vocab_size=config.model_card.vocab_size,MAX_TOKEN_LENGTH=512;
+    int vocab_size=config.model.vocab_size,MAX_TOKEN_LENGTH=512;
 	// sorted_vocab = (struct TokenIndex*)malloc(vocab_size * sizeof(struct TokenIndex));
 	// vocab_scores = scores;
 	assert(tokens[szT - 1] == '\0' && vocab_size>0);
@@ -341,14 +341,14 @@ bool GTokenizer::InitFrom(Fish *dolphin,hGTensor gTokens,hGTensor scores,int fla
         jVocab.clear();
         InitTrier(flag);
     }
-    _INFO("\n[Tokenizer] Init from \"%s\", n_vocab=%d\n",config.model_card.sTokenPath.c_str(),vocab_size);
+    _INFO("\n[Tokenizer] Init from \"%s\", n_vocab=%d\n",config.model.sTokenPath.c_str(),vocab_size);
 	
     return true;
 }
 bool GTokenizer::InitHF(Fish *dolphin,int flag) {
-    // const JSON& jToken = dolphin->config.model_card.jTokenizer;
-    const JSON& jMParam = dolphin->config.model_card.jModelParam;
-    string sTokenPath = dolphin->config.model_card.sTokenPath;
+    // const JSON& jToken = dolphin->config.model.jTokenizer;
+    const JSON& jMParam = dolphin->config.model.jModelParam;
+    string sTokenPath = dolphin->config.model.sTokenPath;
     size_t szF = F_SIZE(sTokenPath);
     if(szF==0)  
         return false;
@@ -710,7 +710,7 @@ void DictVAE::CreateEmbeddings(int flag){
 }
 
 
-hGensor DictVAE::Embed2Output(struct ggml_context * ctx,hGensor t33,int flag)       { 
+hGensor DictVAE::Embed2Output(void * ctx,hGensor t33,int flag)       { 
     hGensor  tOutput = nullptr;
 #ifdef _TENSOR_G_
 #else
@@ -804,8 +804,7 @@ void DictVAE::Update_0(struct random_normal_distribution * rnd,int flag){
 
 void DictVAE::Update_1(struct random_normal_distribution * rnd,int flag) {
     const uint32_t n_embd  = config.nEmbed();
-#ifdef _TENSOR_G_
-#else
+#ifdef __USE_GGML__
     bool isParam = false;
     // get tensors from llama_model (possibly mmapped)
     auto lmodel = dolphin->GetRawModel( );  
@@ -865,8 +864,8 @@ void DictVAE::Update_1(struct random_normal_distribution * rnd,int flag) {
 void CDict_CHAR::LoadVocab(const char*model_path,int flag)   {
     assert(strlen(model_path)==0 || std::filesystem::exists(model_path));
     string word;
-    enum llama_ftype ftype = LLAMA_FTYPE_MOSTLY_Q8_0; 
-    /*token_idx = -1;
+    /*enum llama_ftype ftype = LLAMA_FTYPE_MOSTLY_Q8_0; 
+    token_idx = -1;
     // n_vocab = len(chars);
     int nTT = n_vocab;
     score_idx = -1;
@@ -934,7 +933,7 @@ int Fish_token(CLI_params& config)  {
     g_dump_level = 0;  
     config.wiki_actor = "copy";
     config.common.n_batch = 1;
-    config.modep.preLogits_dB = 1;
+    config.model.preLogits_dB = 1;
     config.isOnlyGPT = true;
     arrHWIKI wikis = WIKI::MakeInstance("wikis",config,0x0);
 

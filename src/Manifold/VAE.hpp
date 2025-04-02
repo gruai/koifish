@@ -71,7 +71,7 @@ protected:
     vector<hVarCoder> MAEC;    //  multi-level auto encoder
 
 public:
-    virtual int InitMAEC(struct ggml_context *ctx,const std::vector<int>& dims_,int flag=0x0) {
+    virtual int InitMAEC(void *ctx,const std::vector<int>& dims_,int flag=0x0) {
         dims = dims_;
         int nMap = dims.size()-1;       assert(nMap>0);
         MAEC.clear( );
@@ -85,14 +85,14 @@ public:
 
     virtual void save_gguf(struct gguf_context *, int flag);
 
-    virtual hGensor ENC(struct ggml_context *ctx,hGensor x){
+    virtual hGensor ENC(void *ctx,hGensor x){
         hGensor cur = x;
         for(auto coder:MAEC)
             cur = coder->ENC(cur);
         return cur;
     }
 
-    virtual hGensor DEC(struct ggml_context *ctx,hGensor x){
+    virtual hGensor DEC(void *ctx,hGensor x){
         hGensor cur = x;
         for (auto it = MAEC.rbegin(); it != MAEC.rend(); ++it)
             cur = (*it)->DEC(cur);

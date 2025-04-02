@@ -77,7 +77,7 @@ Fish::Fish(const std::string&nam_,struct CLI_params params,ROLE_TYPE role_,int f
     arch = params.ModelArch();
     
     string w = config.KV({"model","parameter","debug_init_weight"});    // hack parameter only for debug
-    bool isLoad = !config.checkpoint.in.empty() || !config.model_card.empty();
+    bool isLoad = !config.checkpoint.in.empty() || !config.model.empty();
     if(role==SWARM_FOLLOWER){
         tpInitWeight = INIT_WEIGHT::COPY_SWARM_HEAD;
     }else{
@@ -145,12 +145,24 @@ hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,const 
     
     return fish;
 }
+size_t Fish::MostMemSize(int typ)         {
+    size_t head_dim = config.n_embd_head();
+    /*size_t kvbw = config.n_head_kv() * head_dim * kv_len * sizeof(KVT) + p->n_heads * kv_len * sizeof(float);
+
+	uint64_t bw = 0;
+	bw += p->head_dim * (p->n_heads + p->n_kv_heads * 2) * dim * dbits / 8; // QKV
+	bw += kvbw * 2; // attn scoring and mixing
+	bw += p->head_dim * p->n_heads * dim * dbits / 8; // attn output
+	bw += 3 * (hidden_dim * dim * dbits / 8) * max(p->n_experts_ac, 1); // MLP
+	bw *= p->n_layers;*/
+    size_t bw = 1310227072;
+    return bw;
+}    
 
 bool Fish::AfterBuild(bool isInitParam,int flag)   {     
     int64_t nx=0, n0=0,nInput=0,i;
     if(isInitParam) {
         assert(rnd!=nullptr);
-        // rnd = init_random_normal_distribution(config.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
     }
     printf("\n\n");
     assert(optParams.size()==0);
@@ -165,9 +177,8 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
         }
     }
 
-    assert(optParams.size() < GGML_MAX_PARAMS);
-#ifdef _TENSOR_G_
-#else
+    assert(optParams.size() < 2048);
+#ifdef __USE_GGML__
     if(isLocalInfer){  //gb=nullptr
         assert(hBackTG==nullptr);
         hEDS->SplitSched(hForwTG);
@@ -177,13 +188,12 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
         hEDS->AllocGraph(hBackTG);
     }     
     szModel = ggml_used_mem(GetGGCTX()) + hEDS->sz; // ggml_backend_buffer_get_size(back_data);   // (float) (ggml_used_mem(ctx) + ggml_backend_buffer_get_size(back_data)) ;
-
 #endif    
 
     bool bRet = false;
     switch (tpInitWeight)    {
     case SERIALIZE:
-            if(!config.model_card.empty()){
+            if(!config.model.empty()){
                 isLoadCheckpoint = HF_Serialize(false,0x0);
             }else{
                 string type=FILE_EXT(config.checkpoint.in);
@@ -215,7 +225,7 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
                 else
                     ZERO_(node);    //ggml_set_zero(node);  
             }
-            _pt_cys_("",node,0x0);         //printf("\n");
+            // _pt_cys_("",node,0x0);         //printf("\n");
         }   
         bRet = true;
         break;
@@ -239,6 +249,7 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
     if (!config.only_write_model && hOPT!=nullptr) {
         hOPT->Prepare(nParams);
     }
+    hOPT->AfterBuild();
     hOPT->Dump(1);
           
 
@@ -265,11 +276,6 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
 }
 
 void Fish::ClearGraph(int flag) {
-    if (ctx_build!=nullptr) {
-        ggml_free(ctx_build);       //      free(ctx->mem_buffer);
-        ctx_build = nullptr;
-        // ggml_gallocr_free(alloc);
-    }
     hForwTG.reset();                hBackTG.reset();    
     neurons.clear();
     gensors.Clear();
@@ -302,10 +308,11 @@ bool Fish::UpdateNCTX(int _nctx,int flag){
 }
 
 bool Fish::BeforeBuild(int flag)   {
+#ifdef __USE_GGML__
     assert(ctx_build==nullptr);
     ctx_size = MostMemSize(0x0);
     ctx_build = InitCTX(ctx_size);
-
+#endif
     if(role==SWARM_HEAD){
         assert(swarm.size()>0);
     }else{
@@ -384,7 +391,7 @@ bool Fish::LoadCheckPoint(int flag) {
     // if(!GGUF_Serialize(fpCheck,false,0x0))
     //     return false;
     std::string fpCheck = config.checkpoint.in;
-    if(!config.model_card.empty()){
+    if(!config.model.empty()){
         isLoadCheckpoint = HF_Serialize(false,0x0);        
     }else{        
         string type=FILE_EXT(fpCheck);        
@@ -431,8 +438,8 @@ void Fish::Statistic(int typ, int flag)     {
     // if(gb!=nullptr) ggml_graph_stat(gb);
     bool isDot = false;
     if (isDot)        {
-        ggml_graph_dump_dot(gf, NULL, "opt-forward.dot");
-        if(gb!=nullptr) ggml_graph_dump_dot(gb, gf, "opt-backward.dot");
+        // ggml_graph_dump_dot(gf, NULL, "opt-forward.dot");
+        // if(gb!=nullptr) ggml_graph_dump_dot(gb, gf, "opt-backward.dot");
     }   else        {
         if(preLogits!=nullptr)
             // hForwTG->__repr__(suffix,prefix);   //preLogits = gf->nodes[gf->n_nodes - 2];
@@ -453,6 +460,7 @@ void Fish::Statistic(int typ, int flag)     {
 }
 
 int Fish::BuildGraphFromRaw(int flag)   {
+#ifdef __USE_GGML__
     int iRet = 0x0;
     bool isKeep = true;
     ctx_compute_params.mem_size = MostMemSize(0x0);
@@ -464,15 +472,15 @@ int Fish::BuildGraphFromRaw(int flag)   {
     // preLogits = gf->nodes[gf->n_nodes - 1]; // the output is always the last tensor in the graph
             
         // alloc = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
-    iRet = BuildComputeGraph(0,ctx_build,0x0);
-    
-    
-      
+    iRet = BuildComputeGraph(0,ctx_build,0x0);      
     return iRet;
+#else
+    return -1;
+#endif
 }
 
 // If isParam, only alloc grad, no init!
-void Fish::InitGensor(struct ggml_context *ctx, const string&name, hGensor gensor, bool isParam, int flag)    {
+void Fish::InitGensor(void *ctx, const string&name, hGensor gensor, bool isParam, int flag)    {
     assert(gensor!=nullptr);
     if (!name.empty()){
         gTN0(gensor,name.c_str());      //ggml_set_name(gensor, name);        //    gTN0(w,"%s.w",name.c_str());
@@ -495,7 +503,7 @@ void Fish::InitGensor(struct ggml_context *ctx, const string&name, hGensor genso
     // }
 }
 
-void Fish::InitGensor(struct ggml_context *ctx, hGensor gensor, const char *name, struct random_normal_distribution *rnd, int flag){
+void Fish::InitGensor(void *ctx, hGensor gensor, const char *name, struct random_normal_distribution *rnd, int flag){
     assert(0);  //Deprecated
     /*if (name != nullptr)    {
         ggml_set_name(gensor, name);
@@ -527,7 +535,7 @@ void Fish::InitGensor(struct ggml_context *ctx, hGensor gensor, const char *name
     }*/
 }
 
-hGensor Fish::AddTensor(struct ggml_context *ctx,const std::string&key_,typNUMBER tp,const SHAPE& shape,bool isParam,int flag){
+hGensor Fish::AddTensor(void *ctx,const std::string&key_,typNUMBER tp,const SHAPE& shape,bool isParam,int flag){
     CHECK_SHAPE(shape);
     hGensor gensor = nullptr;
     if(shape.size()==4)  {
@@ -550,7 +558,10 @@ hGensor Fish::AddTensor(struct ggml_context *ctx,const std::string&key_,typNUMBE
 
 */
 EDGE_DEVICES::EDGE_DEVICES(const CLI_params&config, int flag){
-    // hFish = hF;
+#ifdef _TENSOR_G_
+    InitGPU(config,flag);
+    return;
+#else
     assert(back_data==nullptr);
     assert(workers.size()==0);
     const size_t dev_count = 1; //ggml_backend_dev_count();
@@ -558,11 +569,7 @@ EDGE_DEVICES::EDGE_DEVICES(const CLI_params&config, int flag){
     int n_ok=0,nT0=std::thread::hardware_concurrency(),nT=config.nThread();
     string sTp = config.KV({"train","device"},"");
     ggml_backend_t backend = nullptr;
-    size_t free, total; 
-#ifdef _TENSOR_G_
-    InitGPU(config,flag);
-    return;
-#endif
+    size_t free, total;    
     for (size_t i = 0; i < dev_count; ++i) {        
         assert(0);
 #ifdef GG_V12  
@@ -621,9 +628,11 @@ EDGE_DEVICES::EDGE_DEVICES(const CLI_params&config, int flag){
          NULL,
     };
     */
+#endif
 }
 
 EDGE_DEVICES::~EDGE_DEVICES(){
+#ifdef __USE_GGML__
    for (auto backend : workers) {
         ggml_backend_free(backend); 
    }
@@ -631,6 +640,7 @@ EDGE_DEVICES::~EDGE_DEVICES(){
         ggml_backend_sched_free(sched0);
     if(alloc_tmp!=nullptr)
         ggml_gallocr_free(alloc_tmp);
+#endif
 }
 
 /*
@@ -642,6 +652,7 @@ int EDGE_DEVICES::SetBackend(hGensor cur0,int flag)    {
     // if (strcmp(cur->name, "norm") != 0) // norm may be automatically assigned to the backend of the previous layer, increasing data transfer between backends
     //     return -1;
     auto cur = G(cur0);
+#ifdef __USE_GGML__
     for (auto * backend : workers) {
         bool isBuft = false/*ggml_backend_supports_buft(backend, lctx.model.buft_layer[il].buft)*/;
         bool isOP = ggml_backend_supports_op(backend, cur) || ggml_backend_offload_op(backend, cur);
@@ -652,9 +663,11 @@ int EDGE_DEVICES::SetBackend(hGensor cur0,int flag)    {
         }
         no++;
     }
+#endif
     return pick;    
 }
 
+#ifdef __USE_GGML__
 #include "ggml-impl.h"
 /*
     const int node_backend_id = tensor_backend_id(node); =1 for "norm???"
@@ -694,6 +707,7 @@ bool EDGE_DEVICES::SplitSched(hTGraph hTG,int flag)  {
     assert(n_splits>=2);
     return true;
 }
+#endif
 
 int EDGE_DEVICES::SetThread(int nThread,int flag)   {
     assert(0);
@@ -720,7 +734,7 @@ string EDGE_DEVICES::__repr__( string& suffix,string& prefix,int flag)  {
     char buf[5012]="\0";
     const char*tab=prefix.c_str();
     if(isOnlyCPU()){
-        assert(workers.size()==1);
+        // assert(workers.size()==1);
         sprintf(buf+strlen(buf),"OnlyCPU"); 
     }else{
         /*for (auto * backend : workers) {
@@ -735,45 +749,6 @@ string EDGE_DEVICES::__repr__( string& suffix,string& prefix,int flag)  {
     if(flag>0)
         _INFO("%s",buf); 
     return buf;  
-}
-
-bool alloc_tensor_range(struct ggml_context * ctx,
-        struct ggml_tensor* first, struct ggml_tensor* last,
-        ggml_backend_buffer_type_t buft, size_t size,
-        ggml_backend_buffer_t ** buffers, size_t * n_buffers) {
-    ggml_backend_buffer_t buffer = ggml_backend_buft_alloc_buffer(buft, size);
-    if (buffer == NULL) {
-#ifndef NDEBUG
-        _INFO("%s: failed to allocate %s buffer of size %zu\n", __func__, ggml_backend_buft_name(buft), size);
-#endif
-        for (size_t i = 0; i < *n_buffers; i++) {
-            ggml_backend_buffer_free((*buffers)[i]);
-        }
-        free(*buffers);
-        return false;
-    }
-
-    struct ggml_tallocr tallocr = ggml_tallocr_new(buffer);
-
-    for (struct ggml_tensor* t = first; t != last; t = ggml_get_next_tensor(ctx, t)) {
-        if (t->data == NULL) {
-            if (t->view_src == NULL) {
-                ggml_tallocr_alloc(&tallocr, t);
-            } else if (t->buffer == NULL) {
-                ggml_backend_view_init(t);
-            }
-        } else {
-            if (t->view_src != NULL && t->buffer == NULL) {
-                // view of a pre-allocated tensor
-                ggml_backend_view_init(t);
-            }
-        }
-    }
-
-    *buffers = (ggml_backend_buffer**)realloc(*buffers, sizeof(ggml_backend_buffer_t) * (*n_buffers + 1));
-    (*buffers)[(*n_buffers)++] = buffer;
-
-    return true;
 }
 
 // Graph allocator
@@ -792,57 +767,14 @@ bool alloc_tensor_range(struct ggml_context * ctx,
 
 bool EDGE_DEVICES::AllocGraph(hTGraph graph,int flag)    {
     bool bRet = false;    
-    ggml_backend_sched_t backend_sched = GetSched();
-    struct ggml_cgraph * cgraph = graph->raw();
-    size_t nMost = cgraph->n_nodes + cgraph->n_leafs;
-    ggml_backend_sched_reset(backend_sched); // clear allocation of previous graph
-#ifdef GG_V12    
-    // ggml_init_params params = {
-    //         ggml_tensor_overhead() * GGML_DEFAULT_GRAPH_SIZE,nullptr, true,
-    // };
-    // ggml_free(opt_ctx->ctx_copy);
-    auto ctx_copy = InitCTX(0); //ggml_init({ggml_tensor_overhead() * GGML_DEFAULT_GRAPH_SIZE,nullptr, true});    
-    auto allocated_graph_copy = GG_dup_graph(ctx_copy, cgraph);
-    bRet = ggml_backend_sched_alloc_graph(backend_sched, allocated_graph_copy);
-#else
-    if (flag==0x100) {  //measure_only
-        assert(0);
-        alloc_tmp = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
-        bRet = ggml_gallocr_reserve(alloc_tmp, cgraph);
-    } else {
-        if(1){            
-            bRet = ggml_backend_sched_alloc_graph(backend_sched, cgraph);   //  need call Reserve first!!!
-        }   else{
-            auto root = cgraph->nodes[0];
-            
-            if(alloc_tmp!=nullptr)
-                ggml_gallocr_free(alloc_tmp);
-            alloc_tmp = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
-            bRet = ggml_gallocr_alloc_graph(alloc_tmp, cgraph);    //367,8088  
-            
-            ggml_backend_sched_reset(backend_sched);
-        }
-    }
-#endif
+    
     return bRet;
 }
 
 bool EDGE_DEVICES::Reserve(hTGraph graph,int flag){
-    struct ggml_cgraph * cgraph = graph->raw();
-    // assert(cgraph->n_nodes>0);
-    /*
-        GGML_ASSERT((int)sched->hash_set.size >= measure_graph->n_nodes + measure_graph->n_leafs);
-        ggml_backend_sched_split_graph(sched, measure_graph);
-        if (!ggml_gallocr_reserve_n(sched->galloc, &sched->graph, sched->node_backend_ids, sched->leaf_backend_ids)) {
-            return false;
-        }
-        ggml_backend_sched_reset(sched);
-        ggml_backend_sched_synchronize(sched);
-    */
-    bool bRet = ggml_backend_sched_reserve(GetSched(),cgraph);
-    return bRet;
+    return false;
 }
-size_t EDGE_DEVICES::Alloc(hTGraph hTG,struct ggml_context *ctx,int flag)    {
+size_t EDGE_DEVICES::Alloc(hTGraph hTG,void *ctx,int flag)    {
     INIT_WEIGHT tpInitWeight = hTG->hFish->tpInitWeight;
 #ifdef _TENSOR_G_
     for(auto node : hTG->gset){
@@ -924,9 +856,7 @@ size_t EDGE_DEVICES::Alloc(hTGraph hTG,struct ggml_context *ctx,int flag)    {
 }   
 
 bool Fish::ComputePlan(int flag) {
-#ifdef _TENSOR_G_
-    return true;
-#endif
+#ifdef __USE_GGML__
     assert(0);
     auto& train_params = config.common;
     struct ggml_cgraph *cgraph = GetBackRaw();
@@ -942,6 +872,9 @@ bool Fish::ComputePlan(int flag) {
     // gb_plan.work_data = (uint8_t *)ggml_get_mem_buffer(ctx_work)+ obj->offs;
     gf_plan = gb_plan;      //  ???
     return true;
+#else
+    return true;
+#endif
 }
 
 /**/
@@ -984,3 +917,4 @@ bool Fish::CopyGensors(hWIKI wiki,int flag)    {
     _INFO("\rCopyGensors of \"%s\" succeed!    N=%d sz=%.7gM \n",wiki->model_path.c_str(),nT0,sz/1.0e6);
     return true;
 }
+

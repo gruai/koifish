@@ -139,6 +139,7 @@ bool SampLoader::MaskAt(size_t pos,TOKEN_ID&mask){
 }
 
 bool SampLoader::isHostMask(size_t pos,int flag){
+    auto hostBatchMask = hBatch->hostMask;
     if(hostBatchMask==nullptr)  return 0x0;
     assert(pos>=0 && pos<hostBatchMask->size());
     int m = TO<int>(hostBatchMask)[pos];
@@ -150,7 +151,7 @@ void SampLoader::Samp2Batch(int k,hSAMP samp,struct train_params_& params,int fl
     auto dialect = hDict->dialect;
     bool fill_with_next_samples=params.fill_with_next_samples,isDialect = hDict->isDialect;
     size_t starting=samp->pos+samp->jump,_nctx = params.n_ctx,_nToken=nTokens();            //    tokens_input->ne[0];;    
-    hostBatch->Set(0, k, 0, 0, hDict->bos_id);  //ggml_set_i32_nd(G(tokens_input), 0, k, 0, 0, hDict->bos);
+    hBatch->Set(0, k, 0, 0, hDict->bos_id);  //ggml_set_i32_nd(G(tokens_input), 0, k, 0, 0, hDict->bos);
     samp_toks.push_back(hDict->bos_id);
     for (int64_t i=0; i<_nctx; ++i) {    
         TOKEN_ID token = hDict->eos_id,mask;        
@@ -172,7 +173,7 @@ void SampLoader::Samp2Batch(int k,hSAMP samp,struct train_params_& params,int fl
             token = i;      //only for debug
         if(MaskAt(starting,mask)){
             if (i+1<_nctx)
-                hostBatchMask->Set( (int) (i + 1), (int) k, 0, 0, mask);
+                hBatch->SetMask( (int) (i + 1), (int) k, 0, 0, mask);
         }
         ++starting;   
         if(hostTargetProbs==nullptr){
@@ -193,7 +194,7 @@ void SampLoader::Samp2Batch(int k,hSAMP samp,struct train_params_& params,int fl
         samp_toks.push_back(token);
         
         if (i+1<_nctx) {
-            hostBatch->Set( (int) (i + 1), (int) k, 0, 0, token);
+            hBatch->Set( (int) (i + 1), (int) k, 0, 0, token);
         }else{
             samp->last_target = token;
         }
@@ -279,13 +280,20 @@ hSAMP SampLoader::Next(bool isLoop) {
     return shard_samps[idx_];
 }
 
+// void BATCH_INPUT::Update(hGTensor batch,int flag){
+//     assert(!batch->isEmpty());
+//     assert(!batch->isGPU());
+//     host = TO<int>(batch);      
+//     pos = 0;        //or 1 ?
+// }
+
 //Important!  this would update input & target_probs of model!
 size_t SampLoader::UpdateBatch(int x,Fish* fish){    
     struct train_params_ _params = hOPT->TrainParams();
     assert(fish==hOPT->_fish);
     // struct llama_context * lctx=(struct llama_context *)(hOPT->app_ctx);
     cur_samps.clear();      
-    hostBatch->Zero();          hostTargetProbs->Zero();
+    hBatch->hostToken->Zero();          hostTargetProbs->Zero();
     int64_t nAllSamples_ = nShard();
     // const TOKEN_ID    * train_data=tokens.data();
     size_t  k,n_train_data = nTokens(); // tokens.size();
@@ -342,10 +350,10 @@ size_t SampLoader::UpdateBatch(int x,Fish* fish){
         hOPT->isDumpOnce = true;
     }
     hGensor tokens_input=fish->Input(),target_probs=hOPT->hTargetProbs();    assert(tokens_input!=nullptr);   
-    assert(hDict->isInRange((int*)(hostBatch->data),hostBatch->size(),0));
+    assert(hDict->isInRange(hBatch->host,hBatch->size(),0));     //(int*)(hostBatch->data)
     int *raw_t = (int*)(tokens_input->data);
 #ifdef _TENSOR_G_    
-    tokens_input->OverWrite(hostBatch);
+    tokens_input->OverWrite(hBatch->hostToken);
     if(target_probs!=nullptr)    {
         target_probs->OverWrite(hostTargetProbs);    
     }
@@ -523,6 +531,16 @@ SampLoader::SampLoader(Fish *g_,const string&n,bool isNewTS,int flag) {
     return ;
 }
 
+BATCH_INPUT::BATCH_INPUT(SHAPE shape,int flag){
+    hostToken = std::make_shared<GTensor>(shape,typNUMBER::I32);   
+    hostToken->Alloc(); 
+    hostMask = std::make_shared<GTensor>(shape,typNUMBER::I32); 
+    hostMask->Alloc();
+
+    host = TO<int>(hostToken),  mask = TO<int>(hostMask);
+    pos = 0;
+    int tok = CurToken();
+}
 bool SampLoader::Prepare(Optimizer *hO,hDataToken hT,int flag){
     bool isNewTS = hT==nullptr;
     hDict = dolphin->hDict;     
@@ -546,15 +564,16 @@ bool SampLoader::Prepare(Optimizer *hO,hDataToken hT,int flag){
     // eos = hDict->eos;
     // Batch tensor would be set @UpdateBatch!
     struct train_params_ _params = hOPT->TrainParams();   
-    int n_ctx = _params.n_ctx,n_batch = _params.n_batch;
-    assert(n_ctx>0 && n_batch>0);
-    SHAPE shape={n_ctx, n_batch},sp1={1, n_ctx, n_batch};
-    hostBatch = std::make_shared<GTensor>(shape,typNUMBER::I32);   
+    T = _params.n_ctx,B = _params.n_batch;
+    assert(T>0 && B>0);
+    SHAPE shape={T, B},sp1={1, T, B};
+    hBatch = std::make_shared<BATCH_INPUT>(shape);
+    // hostBatch = std::make_shared<GTensor>(shape,typNUMBER::I32);   
 #ifdef _TENSOR_G_
     if(hTokens->hasMask()){
-        hostBatchMask = std::make_shared<GTensor>(shape,typNUMBER::I32); 
-        hostBatchMask->Alloc();
-        dolphin->target_mask = hostBatchMask;
+        // hostBatchMask = std::make_shared<GTensor>(shape,typNUMBER::I32); 
+        // hostBatchMask->Alloc();
+        dolphin->target_mask = hBatch->hostMask;
     }    
     sp1 = shape;
     // isFixEvalSample = false;
@@ -562,22 +581,15 @@ bool SampLoader::Prepare(Optimizer *hO,hDataToken hT,int flag){
     if(isTarget_1){
         hostTargetProbs = std::make_shared<GTensor>( sp1,typNUMBER::I32);
     }else{
-        sp1={hDict->nVocab(), n_ctx, n_batch};
+        sp1={hDict->nVocab(), T, B};
         hostTargetProbs = std::make_shared<GTensor>( sp1,typNUMBER::F32);
     }
-    hostBatch->Alloc();     hostTargetProbs->Alloc();
+    hostTargetProbs->Alloc();
     return true;
 }
             
 /*
-    @@@tokenize_file:
-        samples_begin.push_back(0);
-        samples_size.push_back(std::min((size_t) context_length, tokens.size()));
-        size_t end = (tokens.size() >= context_length) ? (tokens.size() - context_length) : 0;
-        for (size_t sample_begin = 1; sample_begin < end; ++sample_begin) {
-            samples_begin.push_back(sample_begin);
-            samples_size.push_back(context_length);
-        }
+
 */
 void SampLoader::SetSamples(std::vector<size_t>& samp_0,std::vector<size_t>& samp_L,bool isTrain,CLI_params& hp_,int flag)  {
     // config = hp_;

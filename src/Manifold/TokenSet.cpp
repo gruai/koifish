@@ -287,12 +287,12 @@ try{
 double DataTokenSet::LossOnResult(hSampLoader hLoader,OutCLS *cls,int flag) {
     assert(cls!=nullptr);
     double mean_loss = 0;
-    int *mask = nullptr,n=0,nzLoss=cls->nzLoss;
+    int *mask = hLoader->hBatch->mask,n=0,nzLoss=cls->nzLoss;
     float *loss = cls->hostLoss;
     TOKEN_ID token;
-    if(hasMask()){
-        mask = TO<int>(hLoader->hostBatchMask);
-    }
+    // if(hasMask()){
+    //     mask = TO<int>(hLoader->hostBatchMask);
+    // }
     for (int i = 0; i < nzLoss; i++) {
         if(hLoader->isHostMask(i)){
             continue;
@@ -382,8 +382,11 @@ try{
 double Tokenset_HellaSwag::LossOnResult(hSampLoader hLoader,OutCLS *cls,int flag)   {
     assert(cls!=nullptr);
     double mean_loss = 0,a=0,a_0=DBL_MAX;
-    auto sp = hLoader->hostBatch->shape;
-    int *mask = nullptr,n=0,nzLoss=cls->nzLoss,nB=sp[1],nT=sp[0],i=0,t,b=0,q,no=-1,nOK=0,nQ=0,s=0;
+    // auto sp = hLoader->hostBatch->shape;
+    //auto config = hFish->config;
+    int nB =hLoader->B,nT =hLoader->T;  //,nB=sp[1],nT=sp[0]
+
+    int *mask = nullptr,n=0,nzLoss=cls->nzLoss,i=0,t,b=0,q,no=-1,nOK=0,nQ=0,s=0;
     assert(nB%nMostCompletion==0);
     
     float *loss = cls->hostLoss;

@@ -24,9 +24,10 @@ using namespace std;
 #include "../ggex/GG_util.hpp"   
 #include "DataLoader.hpp" 
 #include "../ggex/WIKI.hpp"
-#include "../../llama.cpp/common/common.h" 
+#ifdef __USE_GGML__
+    #include "../../llama.cpp/common/common.h" 
+#endif
 class Fish;
-
 
 /*
     Ref     https://github.com/karpathy/llama2.c
@@ -51,12 +52,12 @@ protected:
     bool is_antiprompt        = false;  
     // bool input_echo           = true;
     bool isCTXSampling = true;
-    // struct llama_sampling_params sparams;
-    // llama_model * model = nullptr;
-    llama_context * ctx = nullptr;
     int n_ctx=-1,n_ctx_train=-1;
+#ifdef __USE_GGML__
+    llama_context * ctx = nullptr;    
     llama_context * ctx_guidance = NULL;
     struct llama_sampling_context * ctx_sampling = NULL;
+#endif
     // std::string path_session = params.path_prompt_cache;
     std::vector<TOKEN_ID> session_tokens;
     std::vector<TOKEN_ID> embd_inp;

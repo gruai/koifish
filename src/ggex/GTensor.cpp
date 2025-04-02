@@ -14,7 +14,7 @@
    typNUMBER GTensor::tpFloatX = typNUMBER::F32;
 #endif
 
-hGTensor GTensor::bt4c=nullptr,GTensor::delta=nullptr,GTensor::scratch_output=nullptr,GTensor::scratch_ff1=nullptr;
+hGTensor GTensor::bt4c=nullptr,GTensor::delta=nullptr,GTensor::scratch=nullptr,GTensor::scratch_ff1=nullptr;
 void *GTensor::buff = nullptr;
 
 float GTensor::rLARS(float s0,float T_lars,int flag)   {
@@ -42,14 +42,14 @@ bool GTensor::ReShape(SHAPE shape_,typNUMBER tpD_,int falg){
       ne[i++] = n;
       assert(n>0 && "");
    }
-   for(i=shape.size();i<GGML_MAX_DIMS;i++)  
+   for(i=shape.size();i<N_DIMS;i++)  
       ne[i]=1;
    
    // from ggml_new_tensor
-   size_t szBlk = BPBlck(type);
+   size_t szBlk = NPBlck(type);
    nb[0] = BPE(type);       assert(szBlk==1);
    nb[1] = nb[0]*(ne[0]/szBlk);
-   for (int i = 2; i < GGML_MAX_DIMS; i++) {
+   for (int i = 2; i < N_DIMS; i++) {
       nb[i] = nb[i - 1]*ne[i - 1];
    }
 
@@ -72,11 +72,13 @@ float GTensor::Get(int i,int flag)  const    {
    Only for gguf-serialize
 */
 struct ggml_tensor* GTensor::GG( ) {   
-   if(gg==nullptr){
-      gg = new ggml_tensor();
+#ifdef __USE_GGML__
+   ggml_tensor *hgg = (ggml_tensor *)gg;
+   if(hgg==nullptr){
+      hgg = new ggml_tensor();
 #ifdef GG_V12
 #else
-      *gg = (struct ggml_tensor) {     // @ggml_new_tensor_impl
+      *hgg = (struct ggml_tensor) {     // @ggml_new_tensor_impl
          /*.type         =*/ type,
          /*.backend      =*/ GGML_BACKEND_TYPE_CPU,
          /*.buffer       =*/ NULL,
@@ -95,39 +97,21 @@ struct ggml_tensor* GTensor::GG( ) {
          ///*.padding      =*/ { 0 },
       };
 #endif
-      gg->data = new char[szData];
-      memcpy(gg->name,name,sizeof(char)*GGML_MAX_NAME);
+      hgg->data = new char[szData];
+      memcpy(hgg->name,name,sizeof(char)*GGML_MAX_NAME);
    }
-   size_t sz   = ggml_nbytes(gg);     // 154389504
+   size_t sz   = ggml_nbytes(hgg);     // 154389504
    assert(sz==szData);
 #ifdef _TENSOR_G_
-    bool toHost = SerialGP(gg->data,nullptr,true,0x0);
+    bool toHost = SerialGP(hgg->data,nullptr,true,0x0);
     assert(toHost);
-#endif
-    
-/*
-   for (uint32_t i = 0; i < ctx->header.n_tensors; ++i) {
-        struct gguf_tensor_info * info = &ctx->infos[i];
-
-        const size_t size     = info->size;
-        const size_t size_pad = GGML_PAD(size, ctx->alignment);
-
-        gguf_bwrite_el(buf, info->data, size);
-
-        if (size_pad != size) {
-            uint8_t pad = 0;
-            for (size_t j = 0; j < size_pad - size; ++j) {
-                gguf_bwrite_el(buf, &pad, sizeof(pad));
-            }
-        }
-
-        GGML_ASSERT(offset == info->offset);
-
-        offset += size_pad;
-    }
-*/
+#endif   
    assert(isParam());
-   return gg;  
+   gg = hgg;
+   return hgg;  
+#else
+   return nullptr;
+#endif
 }
 
 bool GTensor::Alloc(int tpInit,int flag){
@@ -171,6 +155,7 @@ void GTensor::Set(float a,int flag)    {
    //ggml_set_f32(gg, 1.0f); 
 }
 bool GTensor::OverWrite(struct ggml_tensor*gg_,bool isSrc,int flag){
+#ifdef __USE_GGML__
    assert(size()==ggml_nelements(gg_));
    assert(type==(typNUMBER)gg_->type);
    if(isSrc){
@@ -178,7 +163,7 @@ bool GTensor::OverWrite(struct ggml_tensor*gg_,bool isSrc,int flag){
    }else{
       memcpy(gg_->data,data,szData);
    }
-   
+#endif  
    return true;
 }
 bool GTensor::OverWrite(hGTensor hGT,bool isSrc,int flag)  {   
@@ -193,17 +178,23 @@ bool GTensor::OverWrite(hGTensor hGT,bool isSrc,int flag)  {
    return false;
 }
 
-hGTensor GTensor::Relu() 
-{  auto cur=ggml_relu(nullptr, gg);  return NEW_(cur);  }
-hGTensor GTensor::Silu() 
-{  auto cur=ggml_silu(nullptr, gg);  return NEW_(cur);  }
-hGTensor GTensor::Norm(float epsilon,int flag) 
-{  auto cur=ggml_silu(nullptr, gg);  return NEW_(cur);  }
+hGTensor GTensor::Relu() {  
+   // auto cur=ggml_relu(nullptr, (struct ggml_tensor *)gg);  return NEW_(cur);  
+   return nullptr;
+}
+hGTensor GTensor::Silu() {  
+   // auto cur=ggml_silu(nullptr, (struct ggml_tensor *)gg);  return NEW_(cur);  
+   return nullptr;
+}
+hGTensor GTensor::Norm(float epsilon,int flag) {  
+   
+   return nullptr; 
+}
 
 hGTensor GTensor::CrossEntropy( const hGTensor b,int flag )   	{
-   auto cur = ggml_cross_entropy_loss(nullptr,gg, b->GG() );   
-   // ggml_cross_entropy_loss_1(_ctx, cur, target_probs); 
-   return GTensor::NEW_(cur);
+   // auto cur = ggml_cross_entropy_loss(nullptr,(struct ggml_tensor *)gg, b->GG() );      // ggml_cross_entropy_loss_1(_ctx, cur, target_probs); 
+   // return GTensor::NEW_(cur);
+   return nullptr;
 }
 
 hGTensor GTensor::GetRow(hGTensor, hGTensor tokens,hGTensor pos,int flag)   {
@@ -279,27 +270,18 @@ int GTensor::SerialJSON(const std::string& name_, const JSON& val, void* bytes_p
          SerialGP(src,nullptr,szSrc,false);
       }
    }
-   if(strlen(name)>0)
+   if(strlen(name)>0 && flag>0)
       Dump(0);
    return 0;
 }
 
 
-void GTensor::Print(const string& title, int typ, int flag){
+void GTensor::Print(const string& title, int x, int flag)   const {
    bool isDevice = true;
    if(type==FLOAT_TYPE){
       PrintTensor<floatX>(title.c_str(),(floatX *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
       return;
-   }
-   switch(type){
-   case typNUMBER::F8E5M2:
-      PrintTensor<floatX>(title.c_str(),(floatX *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
-      break;
-   default:
-      
-      break;
-   }
-   
+   }  
 }
 
     // inline hGensor To4D(struct ggml_context * ctx_build,hGensor cur,int64_t n1,int64_t n2,int64_t n3,int64_t n4){

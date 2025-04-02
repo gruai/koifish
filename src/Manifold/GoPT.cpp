@@ -18,6 +18,86 @@ namespace fs = std::filesystem;
 
 #define LOG //
 
+#ifdef __USE_GGML__
+#else
+std::vector<hWIKI> WIKI::MakeInstance(const std::string nam_,struct CLI_params& params,int flag){
+    std::vector<hWIKI> wikis;
+    if(params.tpWiki!="off") {//wiki is so heavy(ugly) that only load one instance here!
+        for(auto path : params.fn_model_base){
+            assert(0);
+            // hWIKI wiki = std::make_shared<LAMA>(params,path);
+            // wikis.push_back(wiki);
+        }        
+    }   
+    return wikis;  
+}
+#endif
+
+double WIKI::InductLogits(const CLI_params&config, int nSampInBatch,std::vector<TOKEN_ID>& tok_ids,struct ggml_tensor *target_probs,int flag) {
+    if(!isInduct())
+        return -1.0;
+    
+    Reset();         //Timing bottleneck!!! for the crazy design of llama.cpp
+    Decode(tok_ids,0,0x0,true);    
+    const float *all_logits = GetLogits(n_vocab,tok_ids.size(),0),*logit; 
+    size_t k,j,i;    //exLogits->ne[0];  
+    int n_ctx =config.n_ctx(),n_dialect=mapT2T.size(),token;  //target_probs->ne[1],
+    double a1,a2,nrm=0;    
+    float *p=teach == WIKI::_TARGET ? new float[n_vocab]:nullptr,*target=nullptr;  
+    if(flag<0){    //CHILD_0909_WIKIS
+        /*struct ggml_tensor * logits = userLogits==nullptr ? exLogits : userLogits;
+        assert(logits!=nullptr);
+        target = (float*)logits->data+nSampInBatch*n_ctx*ldL;        
+        nrm =  NRM_2_(all_logits,n_ctx*ldL)/ldL;   
+        if(logits->ne[0]==n_dialect){
+            for(i=0; i<n_ctx; i++,target+=n_dialect,all_logits+=n_vocab){
+                for(j=0;j<n_vocab;j++){
+                    if(dialect[j]==0)       
+                        continue;
+                    token = mapT2T[j];
+                    target[token] = all_logits[j];
+                }                
+            }
+        }else*/{
+            target = exLogits+nSampInBatch*n_ctx*n_vocab;        
+            memcpy((void*)target,(void*)all_logits,sizeof(float)*n_ctx*n_vocab);       //memcpy(g->data+off,(void*)(logits),ld2); 
+        }
+    }else{    
+        #ifdef __USE_GGML__
+        for (k=0; k<nSampInBatch; ++k) {        
+            const float *from=all_logits+k*n_vocab;
+            a1=NRM_2_((float*)(from),n_ctx*n_vocab);          nrm=max(nrm,a1/n_vocab);     
+            if(teach == WIKI::_TARGET){              
+                assert(exLogits==nullptr);             
+                for(j=0;j<n_ctx;j++){
+                    logit = from+j*n_vocab;
+                    target = (float*)target_probs->data+(k*n_ctx+j)*n_vocab;
+                    //  SOFT_MAX_minus(n_vocab,target,logit);
+                    // SOFT_MAX(n_vocab,p,logit);
+                    for(a1=0,a2=0,i=0;i<n_vocab;i++){
+                        a1 += target[i];            a2 += p[i];
+                        target[i] -= p[i];
+                    }
+                    // SOFT_MAX(n_vocab,p,target);     //  !!!No converge!!!   @home/cys/rnd/lic/log/eval/08_21_wiki_target_no_converge.info  
+                    memcpy(target,p,sizeof(float)*n_vocab);
+                    // todo - cys 20240821: MSE loss 
+                }
+            }else{
+                assert(exLogits!=nullptr);                
+                if(exLogits!=from){
+                    // target = (float*)exLogits->data+k*n_ctx*n_vocab;          
+                    target = (float*)exLogits+k*n_ctx*n_vocab;          
+                    memcpy((void*)target,(void*)from,sizeof(float)*n_ctx*n_vocab);         
+                }
+                
+            }
+        }    
+        #endif
+    }
+    delete[] p;
+    return nrm;
+}
+
 static unsigned int random_u32(uint64_t *state){
     *state ^= *state >> 12;
     *state ^= *state << 25;
@@ -96,11 +176,12 @@ int GGUF_list(CLI_params& config)  {
 int run_caml(const char*prompt,int flag);
 
 int Fish_bubble(CLI_params& config)  {  
-    g_dump_level = 10;  
+    g_dump_level = 0;  
     config.wiki_actor = "copy";
     config.common.n_batch = 1;
-    config.modep.preLogits_dB = 1;
+    config.model.preLogits_dB = 1;
     DEBUG.graph_dump = 1;
+    DEBUG.T_cuda_ver = 1;
     // return run_caml(config.prompt.c_str(),0x0);
 
     arrHWIKI wikis = WIKI::MakeInstance("wikis",config,0x0);
@@ -110,17 +191,7 @@ int Fish_bubble(CLI_params& config)  {
 #endif
     config.isOnlyGPT = true;
     hFISH fish = Fish::MakeInstance("BUBBLE_",config,wikis,Fish::ROLE_TYPE::COMMON,0x110);
-    if(0){
-        auto _gf = fish->GetForwRaw();         assert(_gf!=nullptr);    
-        ggml_graph_print(_gf);
-    }
-    if(config.is({"gpt","c_graph"},string("raw"))){
-        //ggml_graph_comp0(_gf,0x0);   //only for comparsion
-    }        
-    else{
-        fish->GenSentence();
-    }
-        
+    fish->GenSentence();
     return 666;
 }
 
@@ -154,7 +225,7 @@ bool _LoadCheckPoint(CLI_params& config,arrHWIKI& wikis,int flag=0x0){
 
 int GPT_work(CLI_params& config)  {
     //  GRUS_Get_SystemInfo
-    _INFO("[%s] threads=%d \n%s\n",__func__,std::thread::hardware_concurrency(),llama_print_system_info());
+    _INFO("[%s] threads=%d \n%s\n",__func__,std::thread::hardware_concurrency(),"");    //llama_print_system_info()
     // ggml_numa_init(GGML_NUMA_STRATEGY_DISABLED);    
     DEBUG.SelfAttention_noraml = 0;
     DEBUG.NO_loss = true;
@@ -273,7 +344,7 @@ GeneratOnPrompt::GeneratOnPrompt(struct gpt_params &par_, int flag) {
 
 void GeneratOnPrompt::Clear()    {
     // write_logfile(ctx, params, model, input_tokens, output_ss.str(), output_tokens);
-
+#ifdef __USE_GGML__
     if (ctx_guidance) { llama_free(ctx_guidance); }
     if(wikis.empty()){
         llama_free(ctx);        
@@ -281,6 +352,7 @@ void GeneratOnPrompt::Clear()    {
     }
 
     llama_backend_free();
+#endif
 
     FREE_a(_logits);
 }
@@ -443,23 +515,27 @@ int NLP_AutoRegressive::GenSentence(int flag)  {
     pLen = std::min(_nctx,(int)(prompt.size()));
     
     double sum = 0, cdf = 0;
-    /*vector<TOKEN_ID> piffle;       piffle.resize(_nctx);
-    for (int i = 0; i < _nctx; ++i)    {
-        piffle[i] = wiki->eos;
-    }*/
     hSampLoader hLoader = hOPT->val_loaders[0];
     if(hLoader->num_batches<=0 )    {
         hLoader->InitOneSamp(prompt,nullptr,0x110);
         hLoader->isRecycle = false;
     } 
+    TokenEmbed* embed = GetNeuron<TokenEmbed>("TokenEmbed");    
+    embed->hBatch = hLoader->hBatch; 
     //  
     vector<TOKEN_ID>& piffle = hLoader->GetTokens();
-    // assert(preLogits->type == typNUMBER::F32);
+    int nPrompToken = piffle.size();
     vector<TOKEN_ID> answer;
     _INFO("%s: <--- \n\t", __func__);
-    for (i = 1; i <= genT; i++)    {
-        // LocalFeeling(piffle,preP);
-        float fLos = hOPT->Evaluate(hLoader ,-666);
+    for (i = 0; i < nPrompToken+genT; i++)    {
+        if(i<nPrompToken)   
+            hOPT->SetPhase(Optimizer::P_PREFILL);
+        else
+            hOPT->SetPhase(Optimizer::P_GENERATE);
+        // // LocalFeeling(piffle,preP);
+        float fLos = hOPT->Evaluate(hLoader,-666);
+        if(i<nPrompToken)   
+            continue;
         float *preP = (float *)(preLogits->data)+i*nVocab;
         TOKEN_ID t = Sample_CDF(nVocab,preP,&rng_seed);
         piffle[i] = t;      answer.push_back(t); 
@@ -477,8 +553,6 @@ int NLP_AutoRegressive::GenSentence(int flag)  {
         On the two sides of the age there was a lot of room for two oth
 */
 TOKEN_ID GOPT_Metropolis::Sample(int idx, bool is_resampling)    {
-    
-    auto ctx_main = ctx, ctx_cfg = ctx_guidance;
     int j,nVocab = fish_1==nullptr ? wiki0->n_vocab : fish_1->nClass();   //, j;
     hSAMP samp = (dialogs==nullptr||dialogs->empty()) ? nullptr : dialogs->SampAt(0);
     
@@ -797,7 +871,7 @@ int GeneratOnPrompt::Generate(int nJob, int flag)   {
     string info = "only fish",sTok;
     if(wiki0!=nullptr)  {
         info = wiki0->teach==WIKI::_OFF ? "only fish":"WIKI"; 
-        ctx_sampling = nullptr;
+        // ctx_sampling = nullptr;
     }   
     LOG("<--- GeneratOnPrompt %s job=%d logits_all=%d fish=%s teach=%d\n", info.c_str(),
         nJob,0,fish_1==nullptr?"":fish_1->Name().c_str(),wiki0==nullptr? -1 : wiki0->teach);
@@ -815,7 +889,7 @@ int GeneratOnPrompt::Generate(int nJob, int flag)   {
             break;        
         assert ((int)tokens.size() <= max_embd_size );
         // assert(ga_n == 1);
-        assert(ctx_guidance == nullptr);
+        // assert(ctx_guidance == nullptr);
         if(!Inference(samp,n_past))
             return 1;        
         /*// for (int i = 0; i < (int)tokens.size(); i += params.n_batch)        {
@@ -879,136 +953,7 @@ int GeneratOnPrompt::Generate(int nJob, int flag)   {
 }
 
 int GeneratOnPrompt::Generate_v0(int nJob, int flag)   {
-    /*GST_TIC(tic);
-    output_tokens.clear();
-    delta_max = 0;      delta_a = 0;
-    hWIKI wiki = nullptr;
-    string info = "only fish";
-    if(wikis.size()>0)  {
-        wiki = wikis[0];      CHILD_0909_WIKIS
-        info = wiki->teach==WIKI::_OFF?"only fish":"WIKI"; 
-        ctx_sampling = isCTXSampling ? llama_sampling_init(sparams) : nullptr;
-    }   
-    LOG("<--- GeneratOnPrompt %s job=%d logits_all=%d fish=%s teach=%d\n", info.c_str(),
-        nJob,params.logits_all,fish_1==nullptr?"":fish_1->Name().c_str(),wiki==nullptr? -1 : wiki->teach);
-    rng_state = params.seed;
-    // LOG("%s logits_all=%d\n", __func__, );
-    size_t n_matching_session_tokens = 0;
-    if (!session_tokens.empty())    {
-        for (TOKEN_ID id : session_tokens)        {
-            if (n_matching_session_tokens >= embd_inp.size() || id != embd_inp[n_matching_session_tokens])
-            {
-                break;
-            }
-            n_matching_session_tokens++;
-        }
-        if (GetPrompt().empty() && n_matching_session_tokens == embd_inp.size())
-        {
-            LOG("%s: using full prompt from session file\n", __func__);
-        }
-        else if (n_matching_session_tokens >= embd_inp.size())
-        {
-            LOG("%s: session file has exact match for prompt!\n", __func__);
-        }
-        else if (n_matching_session_tokens < (embd_inp.size() / 2))
-        {
-            LOG("%s: warning: session file has low similarity to prompt (%zu / %zu tokens); will mostly be reevaluated\n",
-                    __func__, n_matching_session_tokens, embd_inp.size());
-        }
-        else
-        {
-            LOG("%s: session file matches %zu / %zu tokens of prompt\n",
-                    __func__, n_matching_session_tokens, embd_inp.size());
-        }
-
-        // remove any "future" tokens that we might have inherited from the previous session
-        llama_kv_cache_seq_rm(ctx, -1, n_matching_session_tokens, -1);
-    }
-
-    bool need_to_save_session = !path_session.empty() && n_matching_session_tokens < embd_inp.size();
-    int n_past = 0,n_remain = params.n_predict,n_consumed = 0,n_session_consumed = 0,n_past_guidance = 0,ga_i = 0;
-
-    tokens.clear();
-    embd_guidance.clear();
     
-    while ((n_remain != 0 && !is_antiprompt) || params.interactive)    {
-        int iRet = 0;
-        if(wiki!=nullptr && wiki->teach!=WIKI::_OFF)
-            iRet = UpdateEmbed(nJob, n_past, n_remain, n_consumed, n_session_consumed, n_past_guidance, ga_i, 0x0);
-        else
-            iRet = 2;
-        if (iRet == 0)
-            break;
-        if (iRet == 1)
-            return 1;
-
-        tokens.clear();
-        embd_guidance.clear();
-        if ((int)embd_inp.size() <= n_consumed && !is_interacting)        {
-            // optionally save the session on first sample (for faster prompt loading next time)
-            if (!path_session.empty() && need_to_save_session && !params.prompt_cache_ro)            {
-                need_to_save_session = false;
-                // llama_save_session_file(ctx, path_session.c_str(), session_tokens.data(), session_tokens.size());
-                // LOG("saved session to %s\n", path_session.c_str());
-            }
-
-            const TOKEN_ID id = Sample(); // llama_sampling_sample(ctx_sampling, ctx, ctx_guidance);
-            if(id<0){
-                _INFO("\t<E>");
-                break;
-            }
-            if(ctx_sampling!=nullptr)   {
-                llama_sampling_accept(ctx_sampling, ctx, id, true);
-                LOG("last=%s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, ctx_sampling->prev).c_str());
-            }
-            tokens.push_back(id);            
-            input_echo = true;      // echo this to console            
-            --n_remain;             // decrement remaining sampling budget
-            LOG("n_remain=%d\n", n_remain);
-        }        else        {
-            // some user input remains from prompt or interaction, forward it to processing
-            LOG("embd_inp.size(): %d, n_consumed: %d\n", (int)embd_inp.size(), n_consumed);
-            while ((int)embd_inp.size() > n_consumed)            {
-                tokens.push_back(embd_inp[n_consumed]);
-                // push the prompt in the sampling context in order to apply repetition penalties later
-                // for the prompt, we don't apply grammar rules
-                if(ctx_sampling!=nullptr)   llama_sampling_accept(ctx_sampling, ctx, embd_inp[n_consumed], false);
-
-                ++n_consumed;
-                if ((int)tokens.size() >= params.n_batch)                {
-                    break;
-                }
-            }
-        }
-        DisplayEmbd(input_echo, n_consumed);
-
-        // if not currently processing queued inputs;
-        if ((int)embd_inp.size() <= n_consumed)        {            // check for reverse prompt in the last n_prev tokens
-            OnAntiPrompt(0x0);
-            if(ctx_sampling!=nullptr)   OnInteractive(n_past, n_consumed, n_remain, 0x0);
-        }
-        // end of text token
-        if (!tokens.empty() && tokens.back() == eos )        {
-            LOG(" [end of text]\n");
-            break;
-        }
-
-        // In interactive mode, respect the maximum number of tokens and drop back to user input when reached.
-        // We skip this logic when n_predict == -1 (infinite) or -2 (stop at context size).
-        if (params.interactive && n_remain <= 0 && params.n_predict >= 0)        {
-            n_remain = params.n_predict;
-            is_interacting = true;
-        }
-    }
-    // if (!path_session.empty() && params.prompt_cache_all && !params.prompt_cache_ro) {
-    //     LOG("\n%s: saving final output to session file '%s'\n", __func__, path_session.c_str());
-    //     llama_save_session_file(ctx, path_session.c_str(), session_tokens.data(), session_tokens.size());
-    // }
-    if(ctx_sampling!=nullptr)   {
-        llama_sampling_free(ctx_sampling);    ctx_sampling = nullptr;
-    }
-    
-    _INFO("\n delta=%.3g(%.3g) T=%gs --------------->\n",delta_max,delta_a/params.n_predict, GST_TOC(tic));*/
     return 0x0;
 }
 

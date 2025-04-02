@@ -15,7 +15,7 @@
 #include "../g_stddef.hpp"
 #include "../lenda/kernel/SVD.hpp"
 
-hNeuron GeNeuron::MakeInstance(Fish *hG_,struct ggml_context *ctx,const string& guid,JSON::const_iterator jit,int flag){
+hNeuron GeNeuron::MakeInstance(Fish *hG_,void *ctx,const string& guid,JSON::const_iterator jit,int flag){
     hNeuron nn=nullptr;    
     // assert(j.is_object());
     auto typ_0 = jit.key();  
@@ -106,7 +106,7 @@ Relu::Relu(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int fl
 bool Relu::Build(int flag)   {
     return true;
 };
-hGensor Relu::Ming(struct ggml_context *ctx_,hGensor cur,int flag){
+hGensor Relu::Ming(void *ctx_,hGensor cur,int flag){
     return cur;
 }
 
@@ -116,7 +116,7 @@ Drop::Drop(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int fl
 bool Drop::Build(int flag)   {
     return true;
 };
-hGensor Drop::Ming(struct ggml_context *ctx_,hGensor cur,int flag){
+hGensor Drop::Ming(void *ctx_,hGensor cur,int flag){
     return cur;
 }
 
@@ -132,14 +132,14 @@ bool MOE::Build(int flag)   {
     string sw = name+MODEL_CARD::sWeight,sb=name+".bias";
     bool isTrain = hFish->isTrain();    
     int nIn=shape[0];
-    struct ggml_context * ctx = hFish->GetGGCTX();
+    void * ctx = hFish->GetGGCTX();
     //  [ctx, E/H, H, n_batch); ]
     w = TENSO(ctx, typNUMBER::F32, {n_embd_head,1,n_head,B});
     hFish->InitGensor(ctx,sw.c_str(),w,isTrain);
       
     return true;
 }
-hGensor MOE::Forward2(struct ggml_context * ctx_,hGensor inpL,hGensor wBase,int flag){   
+hGensor MOE::Forward2(void * ctx_,hGensor inpL,hGensor wBase,int flag){   
     int n0=inpL->ne[0],n1=inpL->ne[1],n2=inpL->ne[2],n3=inpL->ne[3]; 
     hGensor cur = BeforeForward(ctx_,inpL,flag);
     if(cur==nullptr)  //    some operation like symolic analysis     
@@ -172,9 +172,9 @@ OutCLS::OutCLS(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int
     int nEmbd=hFish->config.nEmbed();
     // _target = hFish->Target();   //null now          
     nCls=hFish->nClass();
-    padded_nCls = (hFish->config.modep.isPaddedCls) ? ceil(nCls/128.0)*128 : nCls;
+    padded_nCls = (hFish->config.model.isPaddedCls) ? ceil(nCls/128.0)*128 : nCls;
     //reduce memory & some float error
-    dB = hFish->config.modep.preLogits_dB; //B 1 B/2;
+    dB = hFish->config.model.preLogits_dB; //B 1 B/2;
     assert(B%dB==0);
     
     /*
@@ -186,7 +186,7 @@ OutCLS::OutCLS(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int
         All the "old" code bases had this scalar (usually sqrt(d)) but the llama arch dropped this when they started untying
     4. Use Weight Tying Only When the Distributional Hypothesis Holds   ???
     */
-    // hFish->config.modep.isEmbedWeightTying = false;
+    // hFish->config.model.isEmbedWeightTying = false;
     
 #ifdef _TENSOR_G_
     shape={nEmbd,padded_nCls};
@@ -212,7 +212,7 @@ bool OutCLS::Build(int flag)   {
     //delta = std::make_shared<huTensor>("delta0",sp4,GTensor::tpFloatX,true);  
     // hFish->InitGensor(nullptr,"loss",out,false);                
     hFish->loss = out;//
-    if(!hFish->config.modep.isEmbedWeightTying)
+    if(!hFish->config.model.isEmbedWeightTying)
         proj.BuildX(name+".probability",{shape[0],shape[1]},hFish,flag); 
 #else
     norm.BuildX(name+sNorm,sp,hFish,0x0);        //layer->ffn_norm.sT="f";
@@ -222,7 +222,7 @@ bool OutCLS::Build(int flag)   {
     name += ".cls";      
     return true;
 }
-hGensor OutCLS::Ming(struct ggml_context * ctx_,hGensor inpL,int flag)    {
+hGensor OutCLS::Ming(void * ctx_,hGensor inpL,int flag)    {
     if(inpL==nullptr){   //symbolic analysis
         return GeNeuron::Ming(ctx_,nullptr,flag);
     }
@@ -230,7 +230,7 @@ hGensor OutCLS::Ming(struct ggml_context * ctx_,hGensor inpL,int flag)    {
     hGensor cur = nullptr;
 #ifdef _TENSOR_G_
     if(hFish->isSymbolic()){ 
-        if(!hFish->config.modep.isEmbedWeightTying){
+        if(!hFish->config.model.isEmbedWeightTying){
             //inpL >> proj;               // out->AddSrc({proj.out,target}); 
             out->AddSrc({inpL,proj.w,preLogits,target});       
         }else{
@@ -253,7 +253,7 @@ hGensor OutCLS::Ming(struct ggml_context * ctx_,hGensor inpL,int flag)    {
     if(n_batch>1){
         cur = ggml_reshape_3d(ctx_, cur, nCls, n_ctx, n_batch);
     }
-    //  Need loss node from BuildLoss( struct ggml_context * ctx,hGensor cur,int flag)
+    //  Need loss node from BuildLoss( void * ctx,hGensor cur,int flag)
 #endif            
     cur = AfterForward(ctx_,cur,flag);           
     return cur;    
@@ -276,9 +276,9 @@ SLP::SLP(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag
 }
 bool SLP::Build(int flag)      {
     delta = GTensor::delta;
-    isBias = hFish->config.modep.isSLPBias || BIT_TEST(flag,F_BIAS);
+    isBias = hFish->config.model.isSLPBias || BIT_TEST(flag,F_BIAS);
     // shape = shape_;
-    struct ggml_context *ctx = hFish->GetGGCTX();
+    void *ctx = hFish->GetGGCTX();
     typNUMBER tpData = GTensor::tpFloatX;
     int bFlag = 0x0;
     int nIn=shape[0],nOut=shape[1];
@@ -316,7 +316,7 @@ bool SLP::Build(int flag)      {
     }
     return true;
 }
-hGensor SLP::Ming(struct ggml_context * ctx0,hGensor cur,int flag)    {
+hGensor SLP::Ming(void * ctx0,hGensor cur,int flag)    {
     string prefix = ""; //sT+".";   //+
     if(cur==nullptr){   //symbolic analysis
         return GeNeuron::Ming(ctx0,cur,flag);
@@ -403,8 +403,8 @@ bool ROPE::Build(int flag)    {
     auto& config = hFish->config;
     n_rot = config.n_rot();
     n_ctx_orig = config.n_ctx_orig();
-    rope_freq_base  = config.rope_freq_base;
-    rope_freq_scale = config.rope_freq_scale;  
+    rope_freq_base  = config.model.rope_freq_base;
+    rope_freq_scale = config.model.rope_freq_scale;  
 #ifdef _TENSOR_G_
 #else
     KQ_pos = hFish->KQ_pos;    
@@ -414,7 +414,7 @@ bool ROPE::Build(int flag)    {
     return true;
 }
 
-hGensor ROPE::Ming(struct ggml_context * ctx_,hGensor inpL,int flag)    {   
+hGensor ROPE::Ming(void * ctx_,hGensor inpL,int flag)    {   
     hGensor cur = BeforeForward(ctx_,inpL,flag);
     if(cur==nullptr)  //    some operation like symolic analysis     
         return cur; 
@@ -463,18 +463,18 @@ LayerNormal::LayerNormal(Fish *hG_, const std::string &key_, JSON::const_iterato
 */
 bool LayerNormal::Build(int flag)    {
     delta = GTensor::delta;
-    // if(hFish->arch==MODEL_ARCH::NLP_GPT2)
-    //     isRMS = false;
+    if(hFish->arch==MODEL_ARCH::NLP_GPT2)
+        isRMS = false;
     // isRMS = name!="model.output_norm" ? false : true;
-    isBias = hFish->config.modep.isNormalBias || BIT_TEST(flag,F_BIAS) ;
+    isBias = hFish->config.model.isNormalBias || BIT_TEST(flag,F_BIAS) ;
 /**
- * 猜测，center操作，类似于全连接层的bias项，储存到的是关于数据的一种先验分布信息，而把这种先验分布信息直接储存在模型中，反而可能会导致模型的迁移能力下降。所以RMS不仅去掉了Layer Normalization的center操作，把每一层的bias项也都去掉了。
+ * 猜测，center操作/全连接层的bias项，储存到的是关于数据的一种先验分布信息，而把这种先验分布信息直接储存在模型中，反而可能会导致模型的迁移能力下降。所以RMS不仅去掉了center操作，bias项也都去掉了。
  */
     if(isRMS){
         isBias = false;
     }
     // name = key_;
-    struct ggml_context * ctx = hFish->GetGGCTX();
+    void * ctx = hFish->GetGGCTX();
     assert(shape.size()==1 && shape[0]>0 );
     string sw = name+MODEL_CARD::sWeight,sb=name+".bias";
     bool isTrain = hFish->isTrain();    
@@ -516,12 +516,12 @@ string LayerNormal::__repr__( string& suffix,string& prefix,int flag){
 }
 
 
-hGensor LayerNormal::Ming(struct ggml_context * ctx0,hGensor cur,int flag)    {   
+hGensor LayerNormal::Ming(void * ctx0,hGensor cur,int flag)    {   
     if(cur==nullptr){   //symbolic analysis
         return GeNeuron::Ming(ctx0,cur,flag);
     } 
 
-    float f_norm_eps = hFish->config.f_norm_eps;
+    float f_norm_eps = hFish->config.model.norm_eps;
     assert(cur!=nullptr);
     // TODO: implement ggml_norm backward
     // cur = ggml_norm(ctx0, cur, f_norm_eps);  
@@ -573,7 +573,7 @@ size_t LayerNormal::nElem()  {
 hGensor GeNeuron::Backward(void *user_ctx_,hGensor cur,int flag)    {
     return nullptr;
 }
-hGensor GeNeuron::Ming(struct ggml_context *ctx_,hGensor cur,int flag){
+hGensor GeNeuron::Ming(void *ctx_,hGensor cur,int flag){
     int tp=0;
     _INFO("\t %s\n",name.c_str());
     hGensor inp = cur;
@@ -588,14 +588,14 @@ hGensor GeNeuron::Ming(struct ggml_context *ctx_,hGensor cur,int flag){
 
     return cur;
 }
-hGensor GeNeuron::BeforeForward(struct ggml_context *ctx_,hGensor cur,int flag){
+hGensor GeNeuron::BeforeForward(void *ctx_,hGensor cur,int flag){
     int tp=0;
     if(cur==nullptr){
         _INFO("\t %s\n",name.c_str());
     }
     return cur;
 }
-hGensor GeNeuron::AfterForward(struct ggml_context *ctx_,hGensor cur,int flag){
+hGensor GeNeuron::AfterForward(void *ctx_,hGensor cur,int flag){
     if(hFish->isSymbolic()){
         if(!name.empty()){
             gTN0(cur,"%s",name.c_str());

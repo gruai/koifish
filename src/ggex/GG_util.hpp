@@ -15,7 +15,6 @@
 #endif
 
 #include "GTensor.hpp"
-
 #include "../CLI_params.hpp"
 #include "../g_stddef.hpp"
 
@@ -42,10 +41,11 @@
 
 #define TO_DO   assert(0);
 
+static char buffer[GTensor::MAX_NAME];
 static const char * _NAM_( const char *format,... )	{
     va_list args;
     va_start( args, format );
-    vsnprintf( buffer,GGML_MAX_NAME,format,args );
+    vsnprintf( buffer,GTensor::MAX_NAME,format,args );
     va_end(args);
     return buffer;
 }
@@ -53,62 +53,27 @@ static const char * _NAM_( const char *format,... )	{
 static const char * TN( const char *format,... )	{
     va_list args;
     va_start( args, format );
-    vsnprintf( buffer,GGML_MAX_NAME,format,args );
+    vsnprintf( buffer,GTensor::MAX_NAME,format,args );
     va_end(args);
-    assert(strlen(buffer)+strlen(".weight")<=GGML_MAX_NAME);
+    assert(strlen(buffer)+strlen(".weight")<=GTensor::MAX_NAME);
     return strcat(buffer,".weight");
 }
 
 static const char * TNs( const char *format,const char *suffix,... )	{
     va_list args;
     va_start( args, suffix );       //  va_start( args, format );
-    vsnprintf( buffer,GGML_MAX_NAME,format,args );
+    vsnprintf( buffer,GTensor::MAX_NAME,format,args );
     va_end(args);
     const char*w = ".weight";
     if(strlen(buffer) > 7 && strcmp(buffer+strlen(buffer)-7, ".weight")==0){
         w = "";
     }
-    assert(strlen(buffer)+strlen(w)+strlen(suffix)<=GGML_MAX_NAME);
+    assert(strlen(buffer)+strlen(w)+strlen(suffix)<=GTensor::MAX_NAME);
     strcat(buffer,w);
     strcat(buffer,suffix);        
     return buffer;
 }
 
-inline void GG_log_callback_default(ggml_log_level level, const char * text, void * user_data) {
-    (void) level;
-    (void) user_data;
-    fputs(text, stderr);
-    fflush(stderr);
-}
-
-inline void GG_log_internal_v(ggml_log_level level, const char * format, va_list args) {
-    va_list args_copy;
-    va_copy(args_copy, args);
-    char buffer[256];
-    int len = vsnprintf(buffer, 256, format, args);
-    if (len < 256) {
-        GG_log_callback_default(level, buffer, nullptr);
-    } else {
-        char* buffer2 = new char[len+1];
-        vsnprintf(buffer2, len+1, format, args_copy);
-        buffer2[len] = 0;
-        GG_log_callback_default(level, buffer2, nullptr);
-        delete[] buffer2;
-    }
-    va_end(args_copy);
-}
-
-inline void GG_log_internal(ggml_log_level level, const char * format, ...) {
-    va_list args;
-    va_start(args, format);
-    GG_log_internal_v(level, format, args);
-    va_end(args);
-}
-
-#define _INFO(...)  GG_log_internal(GGML_LOG_LEVEL_INFO , __VA_ARGS__)
-#define _WARN(...)  GG_log_internal(GGML_LOG_LEVEL_WARN , __VA_ARGS__)
-#define _ERROR(...) GG_log_internal(GGML_LOG_LEVEL_ERROR, __VA_ARGS__)
-#define _INFO_IF(...)   {   if(DUMP())  GG_log_internal(GGML_LOG_LEVEL_INFO , __VA_ARGS__);}
 #define GGUF_GET_KEY(ctx, dst, func, type, req, key) \
 { \
     const std::string skey(key); \
@@ -123,9 +88,6 @@ inline void GG_log_internal(ggml_log_level level, const char * format, ...) {
         die_fmt("key not found in model: %s", skey.c_str()); \
     } \
 }
-
-
-
 
 enum GD_METHOD {
     ADAMw=0x0,          
@@ -168,6 +130,7 @@ inline float SOFT_MAX(std::vector<float>&x){
     return sum;
 }
 
+#define GGML_FILE_MAGIC   0x67676d6c // "ggml"
 inline std::ifstream GGML_Load(const std::string&mode_path,int flag=0x0) {
     fprintf(stderr, "%s: loading model from '%s' - please wait ...\n", __func__, mode_path.c_str());    
     std::ifstream fin = std::ifstream(mode_path, std::ios::binary);
@@ -263,34 +226,6 @@ inline void add_to_f32(struct ggml_context * ctx,struct ggml_tensor* a,struct gg
     // }
 };
 
-inline struct ggml_tensor* gg_axpy_f32(struct ggml_context * ctx,struct ggml_tensor* a,float alpha,struct ggml_tensor* b,float beta) {
-    struct ggml_tensor* result = nullptr;
-    ggml_type type = GGML_TYPE_F32;
-    if (ggml_is_quantized(a->type) || a->type == GGML_TYPE_F16) {
-        // bool is_node = false;       //ggml_add_cast_impl
-        // if (a->grad || b->grad) {
-        //     GGML_ASSERT(ggml_are_same_shape(a, b));
-        //     is_node = true;
-        // }
-
-        struct ggml_tensor*  result = ggml_new_tensor(ctx, type, GGML_MAX_DIMS, a->ne);
-        float abc[3] = {1,alpha,beta};
-        memcpy(result->op_params, abc, sizeof(abc));        //ggml_set_op_params(result, abc, sizeof(abc));
-        result->op   = GGML_OP_ADD;
-        // result->grad = is_node ? ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, a->ne) : NULL;
-        result->src[0] = a;   
-        result->src[1] = b;
-
-        return result;
-    } else if (a->type == GGML_TYPE_F32) {
-        result = ggml_add(ctx, ggml_scale(ctx,a,alpha), ggml_scale(ctx,b,beta));
-    } else {
-        fprintf(stderr,"%s: gg_axpy on tensors with type '%s' is not yet supported.\n",__func__, ggml_type_name(a->type));
-        exit(1);
-    }
-    return result;
-};
-
 void _WANDB_log(double a);
 
 int Gensor_loab(struct ggml_context * ctx0,hGensor w,int nHeavy,hGensor ga,hGensor gb,int flag=0x0);
@@ -316,10 +251,27 @@ struct random_normal_distribution {
     float max;
 };
 struct random_normal_distribution * init_random_normal_distribution(    int seed, float mean, float std, float min, float max);
-ggml_cgraph * GG_dup_graph(ggml_context * ctx, ggml_cgraph *src);
-hGensor GG_SCAL(struct ggml_context * ctx,struct ggml_tensor  * a,float s,int flag=0x0);
-hGensor GG_map_tensor(std::map<ggml_tensor *, ggml_tensor *> & tensor_map, ggml_context * ctx, ggml_tensor * tensor);
-hGensor GradOf(struct ggml_cgraph *cgraph,hGensor node,int flag=0);
+#ifdef __USE_GGML__
+    ggml_cgraph * GG_dup_graph(ggml_context * ctx, ggml_cgraph *src);
+    hGensor GG_SCAL(struct ggml_context * ctx,struct ggml_tensor  * a,float s,int flag=0x0);
+    hGensor GG_map_tensor(std::map<ggml_tensor *, ggml_tensor *> & tensor_map, ggml_context * ctx, ggml_tensor * tensor);
+    hGensor GradOf(struct ggml_cgraph *cgraph,hGensor node,int flag=0);
+    #ifdef __cplusplus
+    extern "C" {
+    #endif
+        //
+        // For TGraph
+        //
+            size_t ggml_hash_size(size_t min_sz);
+            size_t ggml_graph_nbytes(size_t size, bool grads);
+            struct ggml_object * ggml_new_object(struct ggml_context * ctx, enum ggml_object_type type, size_t size);        
+            
+            void clear_numa_thread_affinity(void);
+            int ggml_get_n_tasks(hGensor  node, int n_threads);
+    #ifdef __cplusplus
+    }
+    #endif
+#endif
 void assert_shape_1d(hGensor  tensor, int64_t ne0);
 void assert_shape_2d(hGensor  tensor, int64_t ne0, int64_t ne1);
 void assert_shape_3d(hGensor  tensor, int64_t ne0, int64_t ne1, int64_t ne2);
@@ -339,18 +291,3 @@ inline bool CHECK_SHAPE(const SHAPE&shape){
     return isValid;
 }
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-    //
-    // For TGraph
-    //
-        size_t ggml_hash_size(size_t min_sz);
-        size_t ggml_graph_nbytes(size_t size, bool grads);
-        struct ggml_object * ggml_new_object(struct ggml_context * ctx, enum ggml_object_type type, size_t size);        
-        
-        void clear_numa_thread_affinity(void);
-        int ggml_get_n_tasks(hGensor  node, int n_threads);
-#ifdef __cplusplus
-}
-#endif

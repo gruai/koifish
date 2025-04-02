@@ -49,7 +49,7 @@ struct NT_SAM : public NeLayer {
     SLP mlp_lin1,mlp_lin2;    
 
     hGensor Forward(hFISH,int nEmbed,int nHead,int W,int H,hGensor cur,int flag=0x0);
-    hGensor Build_(struct ggml_context * ctx0,hGensor inpL,float eps,
+    hGensor Build_(void * ctx0,hGensor inpL,float eps,
         int n_window_size,int n_enc_state,int n_enc_head_dim,int n_enc_head,int flag);  
     NT_SAM(hFISH ctx,const std::string&key_,const SHAPE& shape,bool is_global_,int flag=0x0);
 };
@@ -59,7 +59,7 @@ struct SAM_encoder : public Fish {
     int n_window_size,n_img_embd,n_patch_size,n_enc_out_chans;
     // std::vector<Transformer*> layers;
     
-    SAM_encoder(struct ggml_context *ctx_, bool grad_,int nEmbed,int nLayer,int n_enc_head_dim,int _enc_out_chans,
+    SAM_encoder(void *ctx_, bool grad_,int nEmbed,int nLayer,int n_enc_head_dim,int _enc_out_chans,
             int n_pt_embd,int _img_embd,int _window_size,int _patch_size,int flag=0x0) 
         :   /*Fish("SAM_encoder",ctx_,grad_),*/nEmbed(nEmbed),head_dim(n_enc_head_dim),n_window_size(_window_size),n_img_embd(_img_embd),n_patch_size(_patch_size),
         n_enc_out_chans(_enc_out_chans)   {
@@ -102,7 +102,7 @@ struct SAM_encoder : public Fish {
     SLP proj;
     LayerNormal neck_norm_0,neck_norm_1;
     void Neck(const std::string&key_,const SHAPE& shape,int flag=0x0) override{
-        //struct ggml_context * ctx = graph->ctx;
+        //void * ctx = graph->ctx;
         pe = AddTensor(key_+".pos_embed",typNUMBER::F32,{nEmbed, n_img_embd, n_img_embd, 1},0x0);
         // pe = TENSO(ctx, typNUMBER::F32, nEmbed, n_img_embd, n_img_embd, 1);
         // model.tensors["image_encoder.pos_embed"] = pe;
@@ -130,7 +130,7 @@ struct sam_state {
     hGensor  low_res_masks;
     hGensor  iou_predictions;
     //hGensor  tmp_save = {};
-    struct ggml_context * ctx;
+    void * ctx;
     // buffer for `ggml_graph_plan.work_data`
     std::vector<uint8_t> work_buffer;
     // buffers to evaluate the model
@@ -140,7 +140,7 @@ struct sam_state {
 };
 
 inline hGensor  sam_layer_norm_2d(
-                    struct ggml_context * ctx0,
+                    void * ctx0,
                     hGensor  layer,
                     int                   n_channels,
                     hGensor  w,
@@ -463,7 +463,7 @@ struct SegmentAnything  : public Fish {
         ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
 
         struct ggml_init_params ggml_params = {state.buf_compute_img_enc.size(),state.buf_compute_img_enc.data(),true,};
-        struct ggml_context * ctx0   = ggml_init(ggml_params);
+        void * ctx0   = ggml_init(ggml_params);
         // struct ggml_cgraph  * gf     = ggml_new_graph(ctx0);
         
         hGensor  inp = TENSO(ctx0, typNUMBER::F32, n_img_size, n_img_size, 3, 1);

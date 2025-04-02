@@ -13,7 +13,7 @@
 int g_dump_level = 1;
 
 int main(int argc, char ** argv) {
-    print_build_info();
+    // print_build_info();
     _INFO("[ARCH] token=%ld,floatX=%ld\n", sizeof(TOKEN_ID),sizeof(floatX));
     CLI_params params;
     if (!params.parse(argc, argv)) {

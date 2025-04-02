@@ -835,7 +835,7 @@ LAMA::LAMA(CLI_params& hparams,const std::string&path_,int flag)     {
         _INFO("%s: OnlyTokenizer @%s.\n", __func__,fn_model );
         assert(teach==WIKI::_OFF);
     }        
-    _INFO("%s: model base = '%s' nEmbd=%d wiki=%s\n", __func__, fn_model,hparams.embeds[0],hparams.tpWiki.c_str());
+    _INFO("%s: model base = '%s' nEmbd=%d wiki=%s\n", __func__, fn_model,hparams.token_embeds[0],hparams.tpWiki.c_str());
     title = ""; //remove_extension(base_name(model_path));  
     // llama_backend_init();
     lmodel = llama_load_model_from_file(fn_model, llama_model_params);  
@@ -894,7 +894,7 @@ void LAMA::CopyParams(CLI_params& hparams,int flag)    {
         return;
 
     hparams.n_layer_train = llama_params.n_layer;
-    hparams.embeds = {llama_params.n_embd};   //would change @DictVAE
+    hparams.token_embeds = {llama_params.n_embd};   //would change @DictVAE
     for(int i=0;i<hparams.n_layer_train;i++){
         // int h0=llama_params.n_head(i),kv0=llama_params.n_head_kv(i),ff0=llama_params.n_ff(i);
         // hparams.layerps.push_back(LAY_PARAM(h0,kv0,ff0));
@@ -945,6 +945,32 @@ std::string LAMA::T2STR( int32_t tok,int flag )                    {
     return str;  
 }
 
+inline struct ggml_tensor* gg_axpy_f32(struct ggml_context * ctx,struct ggml_tensor* a,float alpha,struct ggml_tensor* b,float beta) {
+    struct ggml_tensor* result = nullptr;
+    ggml_type type = GGML_TYPE_F32;
+    if (ggml_is_quantized(a->type) || a->type == GGML_TYPE_F16) {
+        // bool is_node = false;       //ggml_add_cast_impl
+        // if (a->grad || b->grad) {
+        //     GGML_ASSERT(ggml_are_same_shape(a, b));
+        //     is_node = true;
+        // }
 
+        struct ggml_tensor*  result = ggml_new_tensor(ctx, type, GGML_MAX_DIMS, a->ne);
+        float abc[3] = {1,alpha,beta};
+        memcpy(result->op_params, abc, sizeof(abc));        //ggml_set_op_params(result, abc, sizeof(abc));
+        result->op   = GGML_OP_ADD;
+        // result->grad = is_node ? ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, a->ne) : NULL;
+        result->src[0] = a;   
+        result->src[1] = b;
+
+        return result;
+    } else if (a->type == GGML_TYPE_F32) {
+        result = ggml_add(ctx, ggml_scale(ctx,a,alpha), ggml_scale(ctx,b,beta));
+    } else {
+        fprintf(stderr,"%s: gg_axpy on tensors with type '%s' is not yet supported.\n",__func__, ggml_type_name(a->type));
+        exit(1);
+    }
+    return result;
+};
 
     

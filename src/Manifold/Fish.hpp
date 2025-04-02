@@ -36,26 +36,7 @@ class Optimizer;
 typedef shared_ptr<Optimizer> hOptimizer;
 typedef shared_ptr<Fish> hFISH;
 typedef vector<hFISH> tpSWARM;   
-
 class NLP_AutoRegressive;
-class KVCache {
-    void *lamakv=nullptr;
-    int kv_n = -1;
-    void init_lamakv(int n_batch);
-protected:
-    NLP_AutoRegressive *lam_ = nullptr;
-public:
-    KVCache(NLP_AutoRegressive *lam_,int max_batch_size, int max_seq_len, int n_kv_heads, int head_dim);
-
-    void update(int batch_size, int start_pos, hGensor xk, hGensor xv);
-    hGensor get(int batch_size, int start_pos, int seq_len);
-
-    int n_kv();
-    virtual hGensor SerialV(struct ggml_context *ctx,hGensor vCur,int il,bool isSave);
-    virtual hGensor SerialK(struct ggml_context *ctx,hGensor vCur,int il,bool isSave);
-
-};
- 
 
 enum FFN_TYPE {
     SWIGLU = 0,
@@ -134,11 +115,11 @@ typedef std::shared_ptr<QKV_LAY> hLQKV;
 
     BROWN_Motion()  {}
     BROWN_Motion(Fish *hFish_,hGensor _wq, hGensor _wv,struct CLI_params& config,hLQKV lQKV,int flags);
-    hGensor W_rope(struct ggml_context *ctx, hGensor cur, hGensor w, hGensor KQ_pos, SHAPE shape,const string&shortcut, int flag = 0x0);
-    virtual hGensor Build(struct ggml_context *ctx, hGensor t04, hGensor KQ_pos);
+    hGensor W_rope(void *ctx, hGensor cur, hGensor w, hGensor KQ_pos, SHAPE shape,const string&shortcut, int flag = 0x0);
+    virtual hGensor Build(void *ctx, hGensor t04, hGensor KQ_pos);
 
-    virtual hGensor DiffusionOnEmbed(struct ggml_context *ctx, hGensor teb, hGensor KQ_pos);
-    virtual hGensor DiffusionOnToken(struct ggml_context *ctx, hGensor teb, hGensor KQ_pos);
+    virtual hGensor DiffusionOnEmbed(void *ctx, hGensor teb, hGensor KQ_pos);
+    virtual hGensor DiffusionOnToken(void *ctx, hGensor teb, hGensor KQ_pos);
 };
 typedef shared_ptr<BROWN_Motion> hBrownMotion;
 
@@ -156,8 +137,8 @@ struct QKV_Motion : public BROWN_Motion    {
         : BROWN_Motion(hFish_,_wq, _wv, config,lQKV,flag), wk(_wk), KQ_mask(inp_mask)
     {
     }
-    hGensor vXkq(struct ggml_context *ctx, hGensor v,hGensor kq,int layer_id);
-    hGensor Build(struct ggml_context *ctx, hGensor t04, hGensor KQ_pos)    override;
+    hGensor vXkq(void *ctx, hGensor v,hGensor kq,int layer_id);
+    hGensor Build(void *ctx, hGensor t04, hGensor KQ_pos)    override;
 };*/
 
 struct MixOfModels{
@@ -168,13 +149,13 @@ struct MixOfModels{
     hGensor embed2w = nullptr;
     hGensor gat_ = nullptr;
 
-    virtual hGensor Build(CLI_params&config,struct ggml_context * ctx,hGensor cur,int flag=0x0)  { return nullptr; }
-    hGensor Forward(struct ggml_context * ctx,hGensor cur,hGensor w);
+    virtual hGensor Build(CLI_params&config,void * ctx,hGensor cur,int flag=0x0)  { return nullptr; }
+    hGensor Forward(void * ctx,hGensor cur,hGensor w);
 };
 
 struct MixOfSwarm : public MixOfModels{
-    virtual void Init(tpSWARM&swarm,struct ggml_context *ctx,int n_embd,int flag=0x0);
-    hGensor Build(CLI_params&config,struct ggml_context * ctx,hGensor cur,int flag=0x0)  override;
+    virtual void Init(tpSWARM&swarm,void *ctx,int n_embd,int flag=0x0);
+    hGensor Build(CLI_params&config,void * ctx,hGensor cur,int flag=0x0)  override;
 };
 
 class Fish : public std::enable_shared_from_this<Fish>    {
@@ -215,7 +196,25 @@ protected:
     
     std::vector<hGensor > checkpoints;
     bool measure_only=false;  
-    struct ggml_cplan gf_plan,gb_plan;
+    void *ctx_build = nullptr;    //user context of build graph
+#ifdef __USE_GGML__
+    struct ggml_cplan gf_plan,gb_plan;    
+    struct ggml_context *ctx_work = nullptr;    // training ctx
+    virtual bool BuildOperators(void * ctx,ggml_gallocr_t alloc,bool m_only,int flag=0x0)   {  assert(0);   return false; }
+    struct ggml_init_params ctx_compute_params = {0, NULL,true,};
+    
+    virtual void Build(void *ctx0, ggml_gallocr_t &allocr, bool isOnlySymbol, int flag = 0x0)    {
+        assert(0);      //  Deprecated
+    }
+    virtual struct ggml_cgraph *BuildRawGraph( void *,bool isBuild,int flag=0x0)    {     return nullptr; }
+    virtual struct ggml_cgraph *GetForwRaw( int flag=0x0)  const  {   assert(hForwTG!=nullptr);  return hForwTG->raw(); }
+    virtual struct ggml_cgraph *GetBackRaw( int flag=0x0)  const  {     
+        if(hBackTG==nullptr){
+            assert(isLocalInfer);   return nullptr;
+        }
+        return hBackTG->raw(); 
+    }
+#endif
     std::vector<hNeuron> neurons;
     
     GENSORS gensors;
@@ -225,7 +224,7 @@ protected:
     bool updateTMap = false;
     bool isLocalInfer = false;
     bool isLoadCheckpoint = false;
-    // bool isBias()   const  {   return config.modep.isBias; }
+    // bool isBias()   const  {   return config.model.isBias; }
     bool isSymbolicAnalysis = false;
 
     int size = 0; 
@@ -254,11 +253,6 @@ protected:
     // performance
     int perf_runs = 0;
     int64_t perf_cycles = 0, perf_time_us = 0;
-    // struct ggml_context *ctx = nullptr;         // model ctx
-    struct ggml_context *ctx_work = nullptr;    // training ctx
- 
-    struct ggml_init_params ctx_compute_params = {0, NULL,true,};
-    struct ggml_context * ctx_build = nullptr;    //build graph
     size_t ctx_size = 0;
     
     std::vector<hFISH> childs;
@@ -270,9 +264,9 @@ protected:
         //     ggml_free(ctx);
         // }
     }
-    virtual size_t MostMemSize(int flag)                                        {   assert(0);  return 0x0; }
-    virtual bool InitInput(struct ggml_context * ctx,bool isMask,int flag=0x0)  {   assert(0);  return false;   }
-    virtual bool BuildOperators(struct ggml_context * ctx,ggml_gallocr_t alloc,bool m_only,int flag=0x0)   {  assert(0);   return false; }
+    
+    virtual bool InitInput(void * ctx,bool isMask,int flag=0x0)  {   assert(0);  return false;   }
+    
     std::vector<std::string> to_quant, to_skip;
 
     virtual bool GGUF_Serialize(const std::string&path,  bool isSave, int flag=0x0);
@@ -297,7 +291,7 @@ public:
 
     Fish() {}
     Fish(const std::string&nam_,struct CLI_params params,ROLE_TYPE role_=COMMON,int flag=0x0);
-    Fish(const std::string&nam_,struct ggml_context *ctx_, int flag = 0x0) : name(nam_)/*,ctx(ctx_)*/    {
+    Fish(const std::string&nam_,void *ctx_, int flag = 0x0) : name(nam_)/*,ctx(ctx_)*/    {
         assert(0);  //Deprecated
         _INFO("=== %s ===\n", __func__);
         // allocr = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
@@ -306,18 +300,9 @@ public:
         return !isLocalInfer;
     }
     bool hasWiki()  {   return wikis.size()>0;  }
-    virtual struct ggml_cgraph *BuildRawGraph( struct ggml_context *,bool isBuild,int flag=0x0)    {     return nullptr; }
-    virtual struct ggml_cgraph *GetForwRaw( int flag=0x0)  const  {   assert(hForwTG!=nullptr);  return hForwTG->raw(); }
-    virtual struct ggml_cgraph *GetBackRaw( int flag=0x0)  const  {     
-        if(hBackTG==nullptr){
-            assert(isLocalInfer);   return nullptr;
-        }
-        return hBackTG->raw(); 
-    }
-    std::shared_ptr<KVCache> hCache = nullptr;
-    // virtual KVCache *GetKVCache()  {   return nullptr;    }
+    
     template<typename T>
-    T *GetNeuron(const string&desc,int no,int flag=0x0) {
+    T *GetNeuron(const string&desc,int no=0,int flag=0x0) {
         int k=0;
         for(auto n : neurons){
             T* t=dynamic_cast<T*>(n.get());
@@ -331,10 +316,12 @@ public:
         assert(0);
         return nullptr;
     }
+    hOptimizer GetOptimizer() {   assert(hOPT!=nullptr);  return hOPT;   }
 
+    virtual int ForwardOnNeuron(int flag)         {   throw "Fish::ForwardOnNeuron is ...";           } 
     virtual ~Fish() { Clear(); }
     virtual std::string Name()  {   return name.c_str();  }
-
+    virtual size_t MostMemSize(int typ=0x0);
     virtual size_t Size(int flag = 0x0) { return ctx_size; }
     virtual size_t nMostNodes(){
         size_t n = std::max(size_t(8192), gensors.size()*5);
@@ -350,9 +337,10 @@ public:
         assert(B>0);    
         assert(T>0);
         assert(C>0);
-    };       
-    virtual struct ggml_context * GetGGCTX(int typ=0x0)                   {  
-        switch(typ){
+    };      
+    virtual hEDevices curDevice(int flag=0x0)   {   assert(hEDS!=nullptr);      return hEDS;    }
+    virtual void * GetGGCTX(int typ=0x0)                   {  
+        /*switch(typ){
         case 1: 
             return ctx_build;
         case 2:
@@ -360,7 +348,7 @@ public:
         default:
             return ctx_build;
         }
-        assert(0);
+        assert(0);*/
         return nullptr;    
     }
     //  Activations would creat at Symbolic Analysis stage
@@ -370,12 +358,10 @@ public:
     virtual bool AfterBuild(bool isInitParam,int flag=0x0);
     virtual bool UpdateNCTX(int _nctx,int flag=0x0);
 
-    virtual void Build(struct ggml_context *ctx0, ggml_gallocr_t &allocr, bool isOnlySymbol, int flag = 0x0)    {
-        assert(0);      //  Deprecated
-    }
-    virtual int BuildComputeGraph(int order,struct ggml_context * ctx,int flag);
-    virtual hGensor BuildLoss( struct ggml_context * ctx,hGensor cur,int flag=0x0); 
-    virtual hGensor BuildTarget( struct ggml_context * ctx,hGensor cur,int flag=0x0)    {   return nullptr;   } 
+
+    virtual int BuildComputeGraph(int order,void * ctx,int flag);
+    virtual hGensor BuildLoss( void * ctx,hGensor cur,int flag=0x0); 
+    virtual hGensor BuildTarget( void * ctx,hGensor cur,int flag=0x0)    {   return nullptr;   } 
     virtual hGensor GetGensor(const string&name, int flag = 0x0)    {
         return gensors.Get(name,flag);        
     } 
@@ -419,13 +405,9 @@ public:
     }
 
     // If isParam, only alloc grad, no init!
-    void InitGensor(struct ggml_context *ctx, const string&name, hGensor gensor, bool isParam, int flag = 0);
+    void InitGensor(void *ctx, const string&name, hGensor gensor, bool isParam, int flag = 0);
 
-    void InitGensor(struct ggml_context *ctx, hGensor gensor, const char *name, struct random_normal_distribution *rnd = nullptr, int flag = 0);    
-
-    /*hGensor get_tensor(const char *name, int flag = 0x0)    {
-        return hGraph->get_tensor(name, flag); // from GGML
-    }*/
+    void InitGensor(void *ctx, hGensor gensor, const char *name, struct random_normal_distribution *rnd = nullptr, int flag = 0);    
 
     void SetTensor(const int nx, const int ny, const std::vector<float> &arr_data, const char *name, int flag = 0x0)    {
         assert(0);      //  Drepecated
@@ -453,7 +435,7 @@ public:
     virtual void Neck(const std::string &key_, const SHAPE &shape, int flag = 0x0) { ; }
     // Deprecated
     hGensor AddTensor(const std::string &key_, typNUMBER tp, const SHAPE &shape, int flag = 0x0);
-    hGensor AddTensor(struct ggml_context *ctx,const std::string &key_, typNUMBER tp, const SHAPE &shape, bool isParam,int flag = 0x0);
+    hGensor AddTensor(void *ctx,const std::string &key_, typNUMBER tp, const SHAPE &shape, bool isParam,int flag = 0x0);
 
     std::vector<hLayer> layers;
     virtual void BeforeAddLayer() { ; }
@@ -490,8 +472,8 @@ public:
 
     virtual bool ComputePlan(int flag=0x0);
     int BuildGraphFromRaw(int flag);
-    hNeuron J2Neuron(struct ggml_context *ctx_build,string&,int level,const JConfig& j,int flag);
-    virtual int jToGraph( struct ggml_context *,bool isBuild,int flag=0x0)   ;
+    hNeuron J2Neuron(void *ctx_build,string&,int level,const JConfig& j,int flag);
+    virtual int jToGraph( void *,bool isBuild,int flag=0x0)   ;
 
     
     virtual void Train(int flag = 0x0);

@@ -9,23 +9,18 @@
 #include "./EDevice.hpp"
 // #include "./cuda_common.h"
 // #include "./cuda_utils.cuh"
-
-#include "ggml-cuda.h"
-#include "ggml-sycl.h"
-#include "ggml-alloc.h"
-
-
-
+#ifdef __USE_GGML__
+    #include "ggml-cuda.h"
+    #include "ggml-sycl.h"
+    #include "ggml-alloc.h"
+#endif
 
 
-
-
-
-bool InitCUDNN(const CLI_params&hparams,int flag);
+bool InitCUDNN(const CLI_params&hparams,EDGE_DEVICES *hDevice,int flag);
 bool EDGE_DEVICES::InitGPU(const CLI_params&hparams,int flag){
     string sTp = hparams.KV({"train","device"},"");
 #ifdef __USE_CUDA__
-    if(!InitCUDNN(hparams,flag))
+    if(!InitCUDNN(hparams,this,flag))
         return false;
 
     /*int nGPU = ggml_backend_cuda_get_device_count();     //  ggml_cuda_init: found 1 CUDA devices:    

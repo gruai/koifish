@@ -78,14 +78,11 @@ LLM_MOE::LLM_MOE( const std::string& nam_,struct CLI_params params,ROLE_TYPE rol
 size_t LLM_MOE::MostMemSize(int flag)  {
     int n_layer = config.nLayer();
     int nHead = hDictVAE!=nullptr ? hDictVAE->nLevel*3+2+6 : 6; 
-    size_t sz0 = ggml_tensor_overhead(),sz = sz0*2*(nHead + n_layer*18);
+    size_t sz0 = GTensor::MostOverhead(),sz = sz0*2*(nHead + n_layer*18);
     return sz;
-}    
+}  
 
-
-
-
-hGensor MixOfModels::Forward(struct ggml_context * ctx,hGensor cur,hGensor w){
+hGensor MixOfModels::Forward(void * ctx,hGensor cur,hGensor w){
 #ifdef _TENSOR_G_
     return nullptr;
 #else
@@ -97,7 +94,7 @@ hGensor MixOfModels::Forward(struct ggml_context * ctx,hGensor cur,hGensor w){
 #endif
 }
 
-void MixOfSwarm::Init(tpSWARM&swarm,struct ggml_context *ctx,int n_embd,int flag){
+void MixOfSwarm::Init(tpSWARM&swarm,void *ctx,int n_embd,int flag){
     hGensor a=nullptr,b=nullptr;
     for(auto fish:swarm){
         b = fish->Output();
@@ -112,7 +109,7 @@ void MixOfSwarm::Init(tpSWARM&swarm,struct ggml_context *ctx,int n_embd,int flag
     gat_ = TENSO(ctx, typNUMBER::F32, {n_embd, (int)(swarm.size()+1)});
 }
 
-hGensor MixOfSwarm::Build(CLI_params&config,struct ggml_context * ctx,hGensor cur,int flag )  { 
+hGensor MixOfSwarm::Build(CLI_params&config,void * ctx,hGensor cur,int flag )  { 
     hGensor ouput = nullptr;
 #ifdef _TENSOR_G_
 #else
@@ -150,7 +147,7 @@ hGensor MixOfSwarm::Build(CLI_params&config,struct ggml_context * ctx,hGensor cu
     return ouput;
 }
 
-hGensor NLP_AutoRegressive::build_gate(struct ggml_context * ctx,hGensor cur,hGensor curlogits, int flag )  {
+hGensor NLP_AutoRegressive::build_gate(void * ctx,hGensor cur,hGensor curlogits, int flag )  {
     hGensor ouput = nullptr;
 #ifdef _TENSOR_G_
 #else

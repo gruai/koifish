@@ -79,6 +79,36 @@ enum class typNUMBER : uint8_t {
     COUNT   = 39,
 };
 
+template <typename T>
+inline typNUMBER TYPE_( )   {
+    // if(std::is_same<T, half>::value){   //typeid(T)==typeid(half)    ???
+    //     return typNUMBER::F16;
+    // } else
+    // if(std::is_same<T, nv_bfloat16>::value) {
+    //     return typNUMBER::BF16;
+    // } else
+    if(typeid(T)==typeid(float)) {
+        return typNUMBER::F32;
+    } else
+    if(typeid(T)==typeid(int)) {
+        return typNUMBER::I32;
+    }   else
+    if(typeid(T)==typeid(uint8_t)) {
+        return typNUMBER::I8;
+    }else{
+        assert(0);
+    }
+    return typNUMBER::F16;
+}
+struct TYPE_DESC {
+    const char             * type_name;
+    int64_t                  blck_size;
+    int64_t                  blck_size_interleave; // interleave elements in blocks
+    size_t                   type_size;
+    bool                     is_quantized;
+};
+
+
 inline typNUMBER tpNumOf(const std::string&dtype_str){
     typNUMBER type = typNUMBER::F32;
     if (dtype_str == "F32") {
@@ -128,7 +158,7 @@ enum PrecisionMode {
       #define FLOAT_TYPE typNUMBER::F32
   #elif defined(ENABLE_FP8)
       typedef __nv__fp8__e4m3 floatX;
-      // typedef __nv__fp8__e5m2 floatX;
+      // typedef __nv_fp8_e5m2 floatX;
       #define FLOAT_TYPE typNUMBER::F8E4M3
   #elif defined(ENABLE_FP16)    
       typedef half floatX;
@@ -160,11 +190,11 @@ enum PrecisionMode {
   }
 #endif
 
-/*
-    byte per element of this type
-*/
+//  byte per element of this type,  (maybe decimals rather than integers!)
 double BPE(typNUMBER type);
-size_t BPBlck(typNUMBER type);
+//  bit per element of this type,   (maybe decimals rather than integers!)
+double BitPE(typNUMBER type);
+size_t NPBlck(typNUMBER type);
 const char *cNameOf(typNUMBER type);
 std::string NameOf(typNUMBER type);
 bool isQuantized(typNUMBER type);

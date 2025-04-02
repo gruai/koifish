@@ -1,30 +1,12 @@
 
 ## 1. Download project & build
 ```bash
+    # sudo apt-get install libicu-dev
+    # export CPATH=~/cudnn-frontend/include/:/usr/local/cuda-12.1/include:$CPATH        # maybe need this to export CPATH
     git clone https://github.com/gruai/koifish
     cd koifish
-    # build ggml lib first
-    cd llama.cpp
-    mkdir build && cd build && cmake .. 
-    make clean && make VERBOSE=TRUE
-    cd ../../
-
-# export CPATH=~/cudnn-frontend/include/:/usr/local/cuda-12.1/include:$CPATH        # maybe need this to export CPATH
     mkdir build && cd build && cmake ..
     make clean && make VERBOSE=TRUE
-```
-There would be following files in the ./bin directory if everythins is OK.
-```shell
-~/koifish# ll ./bin/
-total 57420
-drwxr-xr-x 2 root root      156 Feb 15 15:47 ./
-drwxr-xr-x 9 root root      218 Feb 15 15:07 ../
--rwxr-xr-x 1 root root 52481688 Feb 15 15:47 koifish*
--rw-r--r-- 1 root root  2262270 Feb 15 15:34 libcommon.a
--rwxr-xr-x 1 root root   879760 Feb 15 15:33 libggml.so*
--rwxr-xr-x 1 root root  1846848 Feb 15 15:33 libllama.so*
--rwxr-xr-x 1 root root   532928 Feb 15 15:35 libllava_shared.so*
--rw-r--r-- 1 root root   784508 Feb 15 15:35 libllava_static.a
 ```
 
 ## 2. Datasets & Tokenizer   
@@ -65,64 +47,6 @@ git clone https://github.com/NVIDIA/cudnn-frontend.git
 ```shell
     ./bin/koifish ./cases/gpt2/gpt2_124M.json
     ./bin/koifish ./cases/gpt2/gpt2_774M.json
-```
-The gpt2_124M/774M.json is a configuration file as follows, which includes the model and training parameters.
-```json
-{        
-    "version":"0.1.0",     
-    "arch":"GPT2",
-    "datasets":{
-        "train":{
-            "glob":"/hy-tmp/edu_fineweb/*train*.bin",  "most":10,        "name":"edu_fineweb1B"
-        },
-        "eval_1": {"glob":"/hy-tmp/edu_fineweb/*val*.bin","name":"edu_fineweb1B","eval-every":100        },
-        "eval_2":{"glob":"/hy-tmp/hellaswag_val.bin", "type":"hellaswag","eval-every":500        }
-    },
-    
-    "train": {
-        "save-every":500,
-        "dump-every":10,
-        
-        "gpt-every":-10,
-        "epoch":2,
-        "batch":80,
-        "learning-rate":0.0006,  
-
-        "optimizatioin":{
-            "#method":"adamw sgdv hsgd",
-            "method":"adamw",
-            "sign":0,
-            "grad_accumulation":1,
-            "lars_ratio":0,      "ZMUV_ratio":0.00    
-        }              
-    },  
-
-    "model":{      
-        "parameter":{
-            "Layer": 12,  
-            "transformer":{
-                "Ctx":1024,  "Embed":    768,    "Head": 12,   "Ffn":3072,
-                "on":[""]
-            }
-        },  
-        "inp_embd": {"Embedding+":[]},    
-        "layer":  {      
-            "attn":{"QKV":[]},               
-            "ffn":{"FFN":[]},       
-            "# gattn":{"GAU":[]}
-                                  
-        },
-        "last_normal":{"Normal":[]},
-        "out": {"CLASIFY":[]}
-    },
-
-    "#checkpoint-in":"./hy-tmp/checkpoint/chk-GPT2_2001.gguf",
-    "#checkpoint-out":"./hy-tmp/checkpoint/chk-GPT2_",
-    "# model-out":"gpt2_cys.gguf",    
-
-    "threads":20,            
-    "seed":42
-}
 ```
    
 ## 5. Results

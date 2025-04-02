@@ -20,7 +20,7 @@ LLM_MAMBA::LLM_MAMBA( const std::string& nam_,struct CLI_params params,ROLE_TYPE
 
 
 
-hGensor LLM_MAMBA::BuildTarget( struct ggml_context * ctx,hGensor cur,int flag)  {
+hGensor LLM_MAMBA::BuildTarget( void * ctx,hGensor cur,int flag)  {
     
    return nullptr;   
 }
@@ -28,7 +28,7 @@ hGensor LLM_MAMBA::BuildTarget( struct ggml_context * ctx,hGensor cur,int flag) 
 
 GPT2::GPT2( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag) : NLP_AutoRegressive(nam_,params,role,flag)  {
     assert(arch==MODEL_ARCH::NLP_GPT2 || arch==MODEL_ARCH::NLP_GPT2_char);
-    // isBias = config.modep.isBias;    //   if true, converge much slower
+    // isBias = config.model.isBias;    //   if true, converge much slower
 }
 
 /*
@@ -78,7 +78,7 @@ CDict_CHAR::CDict_CHAR(Fish *nlp_,int flag)   : DictVAE(nlp_,flag)   {
     int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.nEmbed();
     // n_vocab=256;    
 }
-int CDict_CHAR::InitMAEC(struct ggml_context *ctx_build,const std::vector<int>& dims_,int flag)  {
+int CDict_CHAR::InitMAEC(void *ctx_build,const std::vector<int>& dims_,int flag)  {
     int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.nEmbed();
 
     assert(gensors.size()==0);
@@ -102,7 +102,7 @@ std::string CDict_CHAR::T2STR(TOKEN_ID tok,int flag ) {
     return a;
 };   
 
-int CDict_GPT2::InitMAEC(struct ggml_context *ctx_build,const std::vector<int>& dims_,int flag)  {
+int CDict_GPT2::InitMAEC(void *ctx_build,const std::vector<int>& dims_,int flag)  {
     int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.nEmbed();
 
     // tok_embeddings = dolphin->AddTensor(ctx_build,_NAM_("token_embd.weight"),typNUMBER::F32,{n_embd, n_vocab},true,0x0);  
@@ -144,7 +144,7 @@ static void cb(hGensor  cur, const char * name, int il)    {
         }
     }
 };
-int GPT2::cRawGraph( struct ggml_context *ctx_build,bool isBuild,int flag)   {
+int GPT2::cRawGraph( void *ctx_build,bool isBuild,int flag)   {
     bool isOnlinePush = true;      // push nodes last or online(QKV)    
     const int n_embd_head = config.n_embd_head_v,n_embd_gqa  = config.n_embd_v_gqa();
     assert(n_embd_head == config.n_embd_head_k);    
@@ -292,8 +292,8 @@ if(1)   {   //pass self attention module            loss would stop at 2.4
     return 0x0;
 }
 #endif
-
-struct ggml_cgraph *GPT2::BuildRawGraph( struct ggml_context *ctx_build,bool isBuild,int flag)   { 
+#ifdef __USE_GGML__
+struct ggml_cgraph *GPT2::BuildRawGraph( void *ctx_build,bool isBuild,int flag)   { 
     int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_ctx_train=config.n_ctx_train,n_embd=config.nEmbed();
     bool isJModel = !config.jModel.empty();
     hForwTG = std::make_shared<TGraph>(this,isJModel?"gptJ":"gpt_raw",ctx_build,true);
@@ -315,13 +315,14 @@ struct ggml_cgraph *GPT2::BuildRawGraph( struct ggml_context *ctx_build,bool isB
 #endif
     return gf;
 }
+#endif
 
 string GPT2::__repr__( string& suffix,string& prefix,int flag) {
     char buf[5012]="\0";
     const char*tab=prefix.c_str();
     string sBasic = NLP_AutoRegressive::__repr__(suffix,prefix,flag);
     sprintf(buf+strlen(buf),"%s",sBasic.c_str()); 
-    _INFO("GPT2:    Bias=(normal=%d,slp=%d) AttOnBC=%d\n========\n",config.modep.isNormalBias,config.modep.isSLPBias,isAttOnBC); 
+    _INFO("GPT2:    Bias=(normal=%d,slp=%d) AttOnBC=%d\n========\n",config.model.isNormalBias,config.model.isSLPBias,isAttOnBC); 
     return buf;
 }
 

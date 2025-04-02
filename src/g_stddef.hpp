@@ -185,6 +185,25 @@ void FREE_a( T* &ptr ){
     }
 #endif
 
+// return lhs+rhs
+template <typename T>
+std::vector<T> GCAT(const std::vector<T>& lhs, const std::vector<T>& rhs){
+    if (lhs.empty()) return rhs;
+    if (rhs.empty()) return lhs;
+    std::vector<T> result {};
+    result.reserve(lhs.size() + rhs.size());
+    result.insert(result.cend(), lhs.cbegin(), lhs.cend());
+    result.insert(result.cend(), rhs.cbegin(), rhs.cend());
+    return result;
+}
+
+// lhs += rhs
+template <typename T>
+void GPLUS(std::vector<T>& lhs, const std::vector<T>& rhs){
+    std::vector<T> result = GCAT(lhs,rhs);
+    lhs = result;
+}
+
 template <typename T> 
 bool isInRange(const T* inp,size_t nz,T t0,T t1){    
     for(size_t i=0;i<nz;i++,inp++){
@@ -312,11 +331,21 @@ T remove_extension(T const & filename)
 }
 
 template<class T>
+const char* CSTR(const std::vector<T>&arr,int flag=0x0)      {
+    string info = "[]";
+    for(auto n : arr){
+        info += std::to_string(n);  info+=",";
+    }
+    info+="]";    
+    return info.c_str();
+}
+template<class T>
 const char* CSTR(const T&obj,int flag=0x0)      {
     string suffix, prefix;  
     string info = obj.__repr__(suffix,prefix,flag);
     return info.c_str();
 }
+
 template<class T>
 const char* CSTR(const shared_ptr<T> obj,int flag=0x0)      {
     return CSTR(*obj,flag);

@@ -18,11 +18,14 @@
 #include "../ggex/GG_util.hpp"   
 #include "../Manifold/Fish.hpp"   
 #include "../Manifold/VAE.hpp" 
-#include "llama.h"
-#include "llama_cys.h"
 #include "../Manifold/Dictionary.hpp"
+#ifdef __USE_GGML__
+    #include "llama.h"
+    #include "llama_cys.h"
+    #define GGML_OBJECT_MAX_SIZE    128
+#endif
 
-#define GGML_OBJECT_MAX_SIZE    128
+
 
 //  GGML_DEFAULT_GRAPH_SIZE/*2048*/
 
@@ -58,7 +61,11 @@ static const char *LLM_TENSOR_FFN_UP_SHEXP      = "blk.%d.ffn_up_shexp";
 // };
 
 
-struct NLP_AutoRegressive : public Fish {
+class NLP_AutoRegressive : public Fish {
+protected:
+    int Forward_0(int flag);
+
+public:
     enum FFN_TYPE tpFFN = VAR_LAST;   //VAR_LAST;    
 
     /*
@@ -98,7 +105,6 @@ struct NLP_AutoRegressive : public Fish {
         return nullptr; 
     }    
     
-    struct ggml_cgraph *BuildRawGraph( struct ggml_context *,bool isBuild,int flag=0x0)   override;
     int GenSentence(int flag=0x0)  override;
     std::string T2STR( const std::vector<TOKEN_ID>& tok,int flag=0x0);
     std::string T2STR( TOKEN_ID tok,int flag=0x0)       { 
@@ -136,22 +142,10 @@ struct NLP_AutoRegressive : public Fish {
 
     virtual void InitModel(int flag=0x0);
     virtual void InitGensors(int flag=0x0);
-    virtual hGensor build_gate(struct ggml_context * ctx,hGensor cur,hGensor cur_logits, int flag );
-
-    size_t MostMemSize(int flag)  override  {
-        //mem_size = 2*LLAMA_TRAIN_MAX_NODES*ggml_tensor_overhead() +(config.common.use_checkpointing ? 3 : 2)*(GGML_OBJECT_SIZE+ggml_graph_overhead_custom(LLAMA_TRAIN_MAX_NODES, true));
-        int n_layer = config.nLayer();
-        int nHead = hDictVAE!=nullptr ? hDictVAE->nLevel*3+2+6 : 6; 
-        int nMost = LLAMA_TRAIN_MAX_NODES;      //  16384
-        assert(nHead*2 + n_layer*18<nMost);
-        size_t sz = ggml_tensor_overhead()*2*nMost;
-        size_t overhead = GGML_OBJECT_MAX_SIZE+ggml_graph_overhead_custom(LLAMA_TRAIN_MAX_NODES, true);
-        sz += (config.common.use_checkpointing ? 3 : 2)*overhead;
-        return sz;
-    }    
+    virtual hGensor build_gate(void * ctx,hGensor cur,hGensor cur_logits, int flag );
 
     //for tokens_input & target_probs
-    bool InitInput(struct ggml_context * ctx,bool isMask,int flag=0x0)  override;
+    bool InitInput(void * ctx,bool isMask,int flag=0x0)  override;
     bool InitDictTokenset(int flag=0x0) override;
     hGensor Input()     override    {   return tokens_input;    }
 
@@ -163,7 +157,7 @@ struct NLP_AutoRegressive : public Fish {
     
     // bool Build(int flag=0x0)   override;    
 
-    hGensor BuildTarget( struct ggml_context * ctx,hGensor cur,int flag=0x0)   override; 
+    hGensor BuildTarget( void * ctx,hGensor cur,int flag=0x0)   override; 
     
 
     // virtual hBrownMotion CreateBrownMotion(hGensor wq, hGensor wk, hGensor wv,const std::shared_ptr<QKV_LAY>& layer)  {
@@ -173,13 +167,26 @@ struct NLP_AutoRegressive : public Fish {
     //     return hMotion;
     // }
     // build KQ_pos & KQ_mask
-    void build_inp_KQ_(struct ggml_context *ctx,bool isMask,bool causal = true);
+    void build_inp_KQ_(void *ctx,bool isMask,bool causal = true);
     // Deprecated!!!
-    virtual hGensor  build_layer_( int N,struct ggml_context *ctx_build,hGensor cur,std::shared_ptr<QKV_LAY> layer,hGensor KQ_pos,int flag=0x0) {
+    virtual hGensor  build_layer_( int N,void *ctx_build,hGensor cur,std::shared_ptr<QKV_LAY> layer,hGensor KQ_pos,int flag=0x0) {
         return nullptr;
     };
+#ifdef __USE_GGML__
+    size_t MostMemSize(int flag)  override  {
 
-    bool BuildOperators(struct ggml_context * ctx,ggml_gallocr_t alloc,bool m_only,int flag=0x0)   override {    
+        //mem_size = 2*LLAMA_TRAIN_MAX_NODES*ggml_tensor_overhead() +(config.common.use_checkpointing ? 3 : 2)*(GGML_OBJECT_SIZE+ggml_graph_overhead_custom(LLAMA_TRAIN_MAX_NODES, true));
+        int n_layer = config.nLayer();
+        int nHead = hDictVAE!=nullptr ? hDictVAE->nLevel*3+2+6 : 6; 
+        int nMost = LLAMA_TRAIN_MAX_NODES;      //  16384
+        assert(nHead*2 + n_layer*18<nMost);
+        size_t sz = ggml_tensor_overhead()*2*nMost;
+        size_t overhead = GGML_OBJECT_MAX_SIZE+ggml_graph_overhead_custom(LLAMA_TRAIN_MAX_NODES, true);
+        sz += (config.common.use_checkpointing ? 3 : 2)*overhead;
+        return sz;
+    } 
+    
+    bool BuildOperators(void * ctx,ggml_gallocr_t alloc,bool m_only,int flag=0x0)   override {    
         // gf = ggml_new_graph_custom(ctx_build, LLAMA_TRAIN_MAX_NODES, true);    
         hForwTG = std::make_shared<TGraph>(this,"Forward",ctx_build,true);         
 
@@ -213,9 +220,8 @@ struct NLP_AutoRegressive : public Fish {
         BuildTarget(ctx,cur,flag);       
         return true;
     }
-
-    // virtual bool LoadTokens( int flag=0x0 );
-    // void CopyWeight(const Fish* src,int flag = 0x0)  override;
+#endif
+    int ForwardOnNeuron(int flag) override;
     bool LocalFeeling(hSampLoader hLoader,vector<float>& result,int flag)   override;
 
     void Loss(int flag=0x0)     override   {
@@ -268,7 +274,7 @@ struct LLM_MAMBA : public NLP_AutoRegressive {
         NLP_AutoRegressive::InitModel(flag);        
     }     
 
-    hGensor BuildTarget( struct ggml_context * ctx,hGensor cur,int flag=0x0) override; 
+    hGensor BuildTarget( void * ctx,hGensor cur,int flag=0x0) override; 
 };
 
 
@@ -278,7 +284,7 @@ protected:
     SLP _output;    
 #ifdef _TENSOR_G_    
 #else
-    int cRawGraph( struct ggml_context *,bool isBuild,int flag=0x0)   ;//override;
+    int cRawGraph( void *,bool isBuild,int flag=0x0)   ;//override;
 #endif
 public:
     GPT2( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag=0x0);
@@ -292,10 +298,10 @@ public:
         NLP_AutoRegressive::InitModel(flag);         
     }     
     
-    struct ggml_cgraph *BuildRawGraph( struct ggml_context *,bool isBuild,int flag=0x0)   override;
+    // struct ggml_cgraph *BuildRawGraph( void *,bool isBuild,int flag=0x0)   override;
     void InitGensors(int flag=0x0) override    {;}
 
-    // hGensor BuildTarget(struct ggml_context * ctx,hGensor cur,int flag=0x0) override; 
+    // hGensor BuildTarget(void * ctx,hGensor cur,int flag=0x0) override; 
     string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
 };
 
@@ -315,7 +321,7 @@ public:
         NLP_AutoRegressive::InitModel(flag);         
     }     
 
-    // hGensor BuildTarget(struct ggml_context * ctx,hGensor cur,int flag=0x0) override; 
+    // hGensor BuildTarget(void * ctx,hGensor cur,int flag=0x0) override; 
     string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
 };
 

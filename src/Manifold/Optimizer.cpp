@@ -51,6 +51,11 @@ Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params& config,int flag) : _fis
     }
 }
 
+bool Optimizer::SetPhase(PHASE phase_,int flag){
+    phase = phase_;
+    return true;
+}
+
 hGensor Optimizer::hLoss()             {    
     assert(_fish!=nullptr);
     if(_fish->loss!=nullptr){
@@ -65,8 +70,9 @@ hGensor Optimizer::hTargetProbs()      {   return _fish->target_probs;  }
 hGensor Optimizer::hPreLogits()       {   return _fish->preLogits;     }
 
 hGensor Optimizer::GradOf(hGensor node,int flag){
-    auto cgraph = _fish->GetBackRaw();
-    return ::GradOf(cgraph,node,flag);    
+    // assert(0);
+    // auto cgraph = _fish->GetBackRaw();
+    return nullptr; //::GradOf(cgraph,node,flag);    
 }
 
 /* Xoshiro256PlusSIMD       https://github.com/stephanfr/Xoshiro256PlusSIMD/blob/main/README.md
@@ -454,7 +460,7 @@ int Optimizer::GetITER(int flag)   {
 }
 
 int RAW_update(std::vector<hGTensor>& tensors,Optimizer *hOPT, float& grad_norm, int alg, int flag);
-Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGensor target_,CLI_params& config)    {
+Optimizer::RESULT Optimizer::Search(void * ctx, hGensor loss_,hGensor target_,CLI_params& config)    {
     hEDS = _fish->hEDS;              assert(hEDS!=nullptr);
     auto train_params = TrainParams();    
     
@@ -487,7 +493,7 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
                 train_loader->isLast = true;        isDumpOnce = true;
             }                
         }
-        iter = iter0 + t + 1;       
+        iter = iter0 + t + 1;       SetPhase(P_TRAIN);
         if( !BatchGrad(iter,a,0x0))
             return CANCEL;  
         // const int64_t t_start_wall = ggml_time_us(),t_start_cpu = ggml_cycles();
@@ -508,6 +514,7 @@ Optimizer::RESULT Optimizer::Search(struct ggml_context * ctx, hGensor loss_,hGe
             _fish->SaveTrain("");          
         }
         if(t%100==0)        trainInfos().SaveToCSV("_info_.csv");
+        SetPhase(P_EVAL_);
         for(auto vl : val_loaders){
             if (vl->isEval(t)) {
                 val_loss = Evaluate(vl,iter);  
@@ -538,27 +545,29 @@ void Fish::Train(  int flag )   {
     
 }
 
-void RAW_forward(Fish *fish,int flag);
-float RAW_backward(Fish *fish,const int* hostInput,int accum_steps,bool,int flag);
+float RAW_backward(Fish *fish,const int* hostInToken,int accum_steps,bool,int flag);
+/*
+    1 Forward/Backward on neuron graph
+    2 Forward/Backward on tensor graph
+*/
 double Optimizer::GraphCompute(hSampLoader hLoader,hTGraph hTG, int flag){
-    // return 0.0; //  0212
     int64_t now = GST_ms();
     int nThread = TrainParams().n_threads,no=0,nAccum=TrainParams().n_gradient_accumulation;
-    bool bench = false;
-    string suffix,prefix;
     bool isOnlyEvaluate = !hTG->isBackward;
     float mean_loss = 0.f;
     OutCLS* cls = _fish->GetNeuron<OutCLS>("OutCLS",0);
     TokenEmbed* embed = _fish->GetNeuron<TokenEmbed>("TokenEmbed",0);    
 #ifdef _TENSOR_G_    
-    embed->hostInput = (int*)hLoader->hostBatch->data;        //(int*)train_loader->hostBatch->data;
+    if(phase!=P_GENERATE && phase!=P_PREFILL)
+        embed->hBatch = hLoader->hBatch;   
     isBackward = false;
-    RAW_forward(_fish,0);    //    0x6666666
+    _fish->ForwardOnNeuron(0x0);
     mean_loss = hLoader->hTokens->LossOnResult(hLoader,cls);
     if(isOnlyEvaluate){
         return mean_loss;
     }else{
         isBackward = true;
+        // _fish->Backward_N(0x0);
         RAW_backward(_fish,nullptr,nAccum,isOnlyEvaluate,flag);        
         UpdateTrainLoss(-1,mean_loss); 
     }
@@ -590,7 +599,8 @@ double Optimizer::GraphCompute(hSampLoader hLoader,hTGraph hTG, int flag){
     }*/
 #else
     auto cgraph = hTG->raw();
-    
+    bool bench = false;
+    string suffix,prefix;
     struct ggml_cgraph *_gf=_fish->GetForwRaw(),*_gb=_fish->GetBackRaw();
     assert(cgraph==_gf || cgraph==_gb);
     
@@ -623,13 +633,30 @@ double Optimizer::GraphCompute(hSampLoader hLoader,hTGraph hTG, int flag){
 }
 
 /*
-    REF:    /home/cys/Github/llama.cpp-master/examples/batched/batched.cpp
+    Multiple purpose(Need refactor!)
+    1. Get loss on some evaluate set in training procee
+    2. Get loss on some evaluate set in unit-testing
+    3. Prefill stage of Inference
+    4. Generation stage of Inference 
 */
 float Optimizer::Evaluate(hSampLoader loader,int iter,int flag){  
     if( loader->num_batches==0 ) 
     {    assert(0);         return 0;          }
     assert(loader->num_batches>0);
-    if(iter!=-666)   _INFO("[eval] " );   
+    switch(phase){
+    case P_EVAL_:
+        _INFO("[eval] " );   
+        break;
+    case P_PREFILL:
+        _INFO("[prefill] " );       assert(loader->num_batches==1);
+        break;
+    case P_GENERATE:
+        _INFO("[generate] " );      assert(loader->num_batches==1);
+        break;
+    default:
+        assert(0);
+    }
+  
     GST_TIC(tic);   
     OutCLS* cls = _fish->GetNeuron<OutCLS>("OutCLS",0);  
     cls->hLoader = loader;
@@ -638,7 +665,7 @@ float Optimizer::Evaluate(hSampLoader loader,int iter,int flag){
     auto tokens_input = _fish->Input( ); 
     int i,nB=0,step=loader->StepOfEvaluate();      
     size_t nz=0,j;
-    llama_token tMost = (llama_token) (_fish->nClass() - 1);
+    TOKEN_ID tMost = (TOKEN_ID) (_fish->nClass() - 1);
     hSAMP samp = nullptr;
     const float *wLog = nullptr;
     loader->next_sample = 0;        // fix this to keep same acc on each experiment
@@ -783,11 +810,14 @@ bool Optimizer::OnNextEpoch(int flag){
     return true;
 }
 
+void Optimizer::AfterBuild(int flag){
+    if(_fish->isLocalInfer)
+        hCache = std::make_shared<KVCache>(_fish);
+}
+
 void Optimizer::BeforeTrain(hGensor tokens_,int flag) {    
     first_iter             = iter;
-    // train_loader->hOPT = this;           val_loader->hOPT = this;
-    // assert(tokens_!=nullptr);
-    // tokens_input = tokens_;
+
     auto& adam = _fish->config.common.adam; //TrainParams().
     adam.n_parameters = nParams;    
 
@@ -811,7 +841,7 @@ void Optimizer::BeforeTrain(hGensor tokens_,int flag) {
     
 }
 
-size_t TGraph::Prepare4Train(struct ggml_context *ctx_,GD_METHOD tpGD,int flag){
+size_t TGraph::Prepare4Train(void *ctx_,GD_METHOD tpGD,int flag){
     hOptimizer hOpt = hFish->hOPT;          assert(hOpt!=nullptr);
     size_t nP=0,nz=0,nzAll=0,id=0,n1=hFish->gensors.size();
     for(auto& gi : hFish->gensors.infos){
@@ -859,6 +889,7 @@ void Optimizer::Prepare(size_t nx_,int flag){
     size_t nz = 0;
     NLP_AutoRegressive *dolphin = dynamic_cast<NLP_AutoRegressive*>(_fish);
     if(nParams>0)   {
+#ifdef __USE_GGML__
         struct ggml_init_params ctx_opt_params;    
         ctx_opt_params.mem_size = GGML_MEM_ALIGN*3 + ggml_tensor_overhead()*3 + BPE(typNUMBER::F32)*nParams*3;
         if (past > 0) {
@@ -867,6 +898,7 @@ void Optimizer::Prepare(size_t nx_,int flag){
         ctx_opt_params.mem_buffer = NULL;
         ctx_opt_params.no_alloc   = false;
         _ctx = ggml_init(ctx_opt_params);    
+#endif
         if(_fish->isTrain()) {
             if(isGlobalGrad){
                 assert(nParams<INT_MAX);
