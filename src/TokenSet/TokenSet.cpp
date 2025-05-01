@@ -8,8 +8,8 @@
 
 #include "TokenSet.hpp"
 #include "DataLoader.hpp"
-#include "gLLM.hpp"
-#include "Optimizer.hpp"
+#include "../Manifold/gLLM.hpp"
+#include "../Manifold/Optimizer.hpp"
 #include "Dictionary.hpp"
 
 PromptTokenset::PromptTokenset(JSON::const_iterator jit,hTokenizer hDict,int flag) : DataTokenSet(hDict)    {

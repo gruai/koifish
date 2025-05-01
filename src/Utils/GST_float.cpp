@@ -4,7 +4,7 @@
 #if defined(__AVX2__) && defined(__F16C__)
   #include <immintrin.h>
 #endif
-#include "f16cintrin.h"
+#include <immintrin.h>  //"f16cintrin.h"
 #include "../g_float.hpp"
 #include "../g_float_cpu.hpp"
 

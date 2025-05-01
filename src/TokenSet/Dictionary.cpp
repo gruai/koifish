@@ -18,7 +18,7 @@
 #include <memory>
 #include <unordered_map>
 #include "Dictionary.hpp"
-#include "gLLM.hpp"
+#include "../Manifold/gLLM.hpp"
 #include "../ggex/json.hpp"
 
 #ifdef _USE_SENTENCEPIECE_

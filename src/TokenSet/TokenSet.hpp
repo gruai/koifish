@@ -21,7 +21,7 @@
 #include <glob.h>
 #include "../CLI_params.hpp"
 #include "../g_stddef.hpp"
-#include "Serialize.hpp"
+#include "../Manifold/Serialize.hpp"
 
 struct DictVAE;
 class GTokenizer;

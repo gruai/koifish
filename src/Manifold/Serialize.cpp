@@ -10,7 +10,7 @@
 #include <set>
 #include <sys/mman.h>
 #include "Fish.hpp"
-#include "Dictionary.hpp"
+#include "../TokenSet/Dictionary.hpp"
 #include "Serialize.hpp"
 
 void* MMAP_json(JSON& header,void**objs,size_t*objs_nz,const std::string&path, bool isSave, int flag){

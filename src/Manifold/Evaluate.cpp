@@ -13,7 +13,20 @@
 #include <iostream>
 #include <filesystem>
 
-float sample_prob(int idx, float* logits, int size);
+float sample_prob(int idx, float* logits, int size) {
+	// find max value (for numerical stability)
+	float max_val = -FLT_MAX;
+	for (int i = 0; i < size; i++) {
+		max_val = logits[i] > max_val ? logits[i] : max_val;
+	}
+	// exp and sum
+	float sum = 0.0f;
+	for (int i = 0; i < size; i++) {
+		sum += expf(logits[i] - max_val);
+	}
+	// return probability of the given index
+	return expf(logits[idx] - max_val) / sum;
+}
 
 int Fish_ppl(CLI_params& config)  {  
     g_dump_level = 0;  

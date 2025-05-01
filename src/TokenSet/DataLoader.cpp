@@ -11,8 +11,8 @@
 #else
 #endif
 
-#include "gLLM.hpp"
-#include "Optimizer.hpp"
+#include "../Manifold/gLLM.hpp"
+#include "../Manifold/Optimizer.hpp"
 // #include "../ggex/llmc_utils.h"
 #include "Dictionary.hpp"
 

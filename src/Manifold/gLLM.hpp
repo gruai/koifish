@@ -18,7 +18,7 @@
 #include "../ggex/GG_util.hpp"   
 #include "Fish.hpp"   
 #include "VAE.hpp" 
-#include "Dictionary.hpp"
+#include "../TokenSet/Dictionary.hpp"
 #include "../Utils/Cache.hpp"
 #ifdef __USE_GGML__
     #include "llama.h"

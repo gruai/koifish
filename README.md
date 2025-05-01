@@ -16,8 +16,9 @@
 ## Download & Build
 
 ```bash
+# sudo apt-get -y install libcudnn9-dev-cuda-12         # maybe need this to install CUDNN
 # sudo apt-get install libicu-dev
-# export CPATH=~/cudnn-frontend/include/:/usr/local/cuda-12.1/include:$CPATH        # maybe need this to export CPATH
+# export CPATH=/usr/local/cuda/include:$CPATH           # maybe need this to export CPATH
 git clone https://github.com/gruai/koifish
 cd koifish
 mkdir build && cd build && cmake ..

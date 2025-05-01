@@ -9,7 +9,7 @@
  */
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
-#include "Dictionary.hpp"
+#include "../TokenSet/Dictionary.hpp"
 #include "../ggex/GG_util.hpp"
 
 int tpFuseCu = 1;

@@ -25,7 +25,7 @@
 using namespace std;
 
 #include "../ggex/GTensor.hpp"
-#include "DataLoader.hpp"
+#include "../TokenSet/DataLoader.hpp"
 
 class Fish;
 struct NeLayer;
