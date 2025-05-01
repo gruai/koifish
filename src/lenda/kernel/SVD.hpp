@@ -31,14 +31,30 @@ protected:
 	T *mVt=nullptr;		// (LDVT,N) contains the N-by-N orthogonal matrix VT;
 	T *approx=nullptr,*work=nullptr;
 	int ldU=-1,ldV=-1;
-
+	
 	//[5120x5120] nHeavy=4(0/0) SIGMA={12.7609,...,25.0786} OFF=0.825211(|A|=60.464),tX=0.214
 	int SVD_(int flag=0x0)	{	//int m, int n, int k, int l, int p, mat **U, mat **S, mat **V)	
 		int m=this->nRow,n=this->nCol,l = nHeavy,iRet=-1,i,p;
+		size_t nzU = m*nHeavy,nzV = ldV*nHeavy;
 #ifdef _USE_OPENBLAS_
 		iRet = PerSVD(NULL, m, n, nHeavy, nHeavy+nHeavy/2, 2, this->val,mU,ldU, sigma, mVt,ldV);
 #endif
+		switch(this->tpOut){
+		case typNUMBER::F8E5M2:
+			float_to_fp8e5m2(nzU,(float*)mU,(f8e5m2_t*)mU);
+			float_to_fp8e5m2(nzV,(float*)mVt,(f8e5m2_t*)mVt);
+			break;
+		default:
+			break;
+		}
+		assert( isValidF(nzU,mU) );		assert( isValidF(nzV,mVt) );
 		return iRet;
+	}
+
+	float rHeavy()	{
+		assert(sigma[nHeavy-1]>sigma[0]);
+		float r = sigma[nHeavy-1]/sigma[0];
+		return r;
 	}
 	//[5120x5120] nHeavy=4(65.4239/1664.51) SIGMA={25.08,...,12.8479} OFF=0.824088(|A|=60.464),tX=1007.9
 	int SVD_0(int flag=0x0)	{
@@ -105,7 +121,7 @@ protected:
 		res = sqrt(res)/nrmA;
 		// assert(res<1.0e-5*nrmA);		
 		
-		GST_util::print( "[%dx%d] nHeavy=%d(%g/%g) SIGMA={%g,...,%g} OFF=%g(|A|=%g),tX=%g\r\n",this->nRow,this->nCol,
+		GST_util::print( "\tSVD@\"%s\" [%dx%d] nHeavy=%d(%g/%g) SIGMA={%g,...,%g} OFF=%g(|A|=%g),tX=%g\r\n",this->name.c_str(),this->nRow,this->nCol,
 			nHeavy,traceHeavy,trace_0,sigma[0],sigma[nHeavy-1], res,nrmA,this->perf.tX );
 #endif
 	}
@@ -115,8 +131,10 @@ protected:
 	}
 	
 public:
-	LoSVD( T*A,int m,int n,int k, float tol_, int flag=0x0 ) : 
+	LoSVD( const std::string nam_, T*A,int m,int n,int k, float tol_,typNUMBER tpN_=typNUMBER::F32, int flag=0x0 ) : 
 		Matrix<T>(m,n,A),nHeavy(k),TOL(tol_)	{
+		this->name = nam_;
+		this->tpOut = tpN_;
 		if(k <= 0){
 			rankMode = 0;					k = min(m,n);
 		} else {
@@ -182,11 +200,11 @@ public:
 			return false;
 		}
 		this->perf.tX += GST_TOC(t_0);
-		_dump(0);
+		_dump(0);		
 		
 		return true;
 	}
 
-	
+friend class SLP;
 };
 typedef shared_ptr<LoSVD<float>> hLSVD_f;

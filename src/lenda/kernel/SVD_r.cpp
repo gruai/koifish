@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <sys/time.h>
-#include "../lenda/util/BLAS_t.hpp"
+#include "../../Utils/BLAS_t.hpp"
 #ifdef _USE_OPENBLAS_
     #include "cblas.h"
     extern "C" {

@@ -11,6 +11,7 @@
 #include <string>
 #include <regex>
 #include <fstream>
+#include <stdlib.h>
 #ifdef _USE_UNICODE_
     #include <unicode/uchar.h>
 #endif
@@ -178,9 +179,11 @@ vector<wstring> run_split_on_punctuation(const wstring& text, bool split_special
 #endif
 std::string GTokenizer::Decode(const TOKENS& ids, bool skip_special_tokens){
     string line;
+    int nV = nVocab(),i=0;
     for(auto id : ids){
+        assert(id<nV);  
         string tok = decode_one(0,id);
-        line+=tok;
+        line+=tok;      i++;
     }
     return line;
 }
@@ -190,7 +193,7 @@ bool GTokenizer::isValid(int flag)  const {
     
     return true; 
 }
-TOKENS GTokenizer::Encode(const std::wstring& wtext, bool encode_bos) const {
+TOKENS GTokenizer::Encode(const std::wstring& wtext, bool encode_bos, bool encode_eos)  {
     using convert_type = std::codecvt_utf8<wchar_t>;
     std::wstring_convert<convert_type, wchar_t> converter;
 //use converter (.to_bytes: wstr->str, .from_bytes: str->wstr)
@@ -198,8 +201,146 @@ TOKENS GTokenizer::Encode(const std::wstring& wtext, bool encode_bos) const {
     // string text(wtext.begin(),wtext.end());
     return Encode(text,encode_bos);
 }
-TOKENS GTokenizer::Encode(const std::string& text, bool encode_bos) const {
-    assert(isValid());
+
+int GTokenizer_Heap::sLookup(const char* str, int flag) {
+    // efficiently find the perfect match for str in vocab, return its index or -1 if not found
+    int vocab_size = nVocab();
+    struct TokenIndex tok = {str, -1}; // acts as the key to search for
+    struct TokenIndex* res = (struct TokenIndex*)bsearch(&tok, sorted_vocab, vocab_size, sizeof(struct TokenIndex), compare_tokens);
+    return res != NULL ? res->id : -1;
+}
+
+
+int GTokenizer_Heap::merge_tokens_tryadd(struct Merge* heap, int n_heap, int lpos, int lid, int rpos, int rid) {
+	char str_buffer[MAX_TOKEN_LENGTH * 2 + 1];
+	strcpy(str_buffer, vocab[lid].c_str());
+	strcat(str_buffer, vocab[rid].c_str());
+	int id = sLookup(str_buffer);
+	if (id != -1) {
+        float s = scores==nullptr ? 0 : scores[id];
+		struct Merge merge = {lpos, lid, rpos, rid, id, s};
+		heap_insert(heap, n_heap++, merge);
+	}
+	return n_heap;
+}
+
+int GTokenizer_Heap::merge_tokens(std::vector<TOKEN_ID>&tokens,int flag) {
+	// create heap for all token merge pairs
+    size_t n_tokens = tokens.size(),nV = nVocab();
+	struct Merge* heap = new Merge[2 * n_tokens];   //malloc(2 * n_tokens * sizeof(struct Merge));
+	int n_heap = 0;
+
+	// insert all initial pairs
+	for (int i = 0; i < n_tokens - 1; i++) {
+        assert(tokens[i]<nV);
+		n_heap = merge_tokens_tryadd(heap, n_heap, i, tokens[i], i + 1, tokens[i + 1]);
+	}
+
+	// merge all pairs
+	while (n_heap > 0) {
+		struct Merge merge = heap[0];
+		heap_poptop(heap, n_heap--);
+
+		if (tokens[merge.lpos] != merge.lid || tokens[merge.rpos] != merge.rid) {
+			continue; // this pair was already merged, skip it
+		}
+
+		// merge
+		tokens[merge.lpos] = merge.resid;
+		tokens[merge.rpos] = TOKEN_MAX;
+
+		// we might have new pairs to merge
+		for (int i = merge.lpos - 1; i >= 0; i--) {
+			if (tokens[i] != TOKEN_MAX) {
+				n_heap = merge_tokens_tryadd(heap, n_heap, i, tokens[i], merge.lpos, merge.resid);
+				break;
+			}
+		}
+
+		for (int i = merge.rpos + 1; i < n_tokens; i++) {
+			if (tokens[i] != TOKEN_MAX) {
+				n_heap = merge_tokens_tryadd(heap, n_heap, merge.lpos, merge.resid, i, tokens[i]);
+				break;
+			}
+		}
+	}
+
+	free(heap);
+
+	// compact tokens
+	int nm_tokens = 0;
+	for (int i = 0; i < n_tokens; i++) {
+		if (tokens[i] != TOKEN_MAX) {
+            assert(tokens[i]<nV);
+			tokens[nm_tokens++] = tokens[i];
+		}
+	}
+    tokens.resize(nm_tokens);
+
+	return nm_tokens;
+}
+
+std::vector<TOKEN_ID> GTokenizer_Heap::Encode(const std::string& text, bool encode_bos, bool encode_eos) {
+    TOKENS out_tokens;
+    if (encode_bos) {
+        out_tokens.push_back(bos_id);
+    }
+	// process the raw (UTF-8) byte sequence of the input string
+    char *c = (char *)text.c_str();
+	while (*c != '\0') {
+		char codepoint[5] = {};
+		codepoint[0] = *c++;
+
+		if (codepoint[0] == '<' && *c == '|') {			// special token, skip until '|>'
+			char* e = c + 1;
+			while (*e && !(e[0] == '|' && e[1] == '>')) {
+				e++;
+			}
+			if (e[0] == '|' && e[1] == '>' && e - c + 3 <= MAX_TOKEN_LENGTH) {
+				// we found the end of the special token, try to encode it as is
+				char special[MAX_TOKEN_LENGTH + 1];
+				memcpy(special, c - 1, e - c + 3);
+				special[e - c + 3] = '\0';
+				int sid = sLookup(special);  //sorted_vocab
+				if (sid != -1) {
+					// we found special codepoint in vocab, add it as a token
+					out_tokens.push_back(sid);  // tokens[n_tokens++] = sid;
+					c = e + 2;
+					continue;
+				}
+			}
+		}
+
+		// this byte is a leading byte (11...), so it's a multi-byte UTF8 codepoint
+		if ((codepoint[0] & 0xC0) == 0xC0) {
+			for (int i = 1; i < 4 && (*c & 0xC0) == 0x80; ++i) {
+				codepoint[i] = *c++;
+			}
+		}
+
+		int id = sLookup(codepoint);
+		if (id != -1) {
+			// we found this codepoint in vocab, add it as a token
+			out_tokens.push_back(id);      //tokens[n_tokens++] = id;
+		} else if (byte_fallback >= 0) {
+			// byte_fallback encoding: just encode each byte as a token
+			for (char* fb = codepoint; *fb != '\0'; ++fb) {
+				out_tokens.push_back((unsigned char)*fb + byte_fallback);      //tokens[n_tokens++] = (unsigned char)*fb + byte_fallbacks;
+			}
+		}
+	}
+
+	// optimized heap-based merge
+	int n_tokens = merge_tokens(out_tokens);
+	// add optional EOS token, if desired
+	if (encode_eos) {   //flags & TF_ENCODE_EOS
+		out_tokens.push_back(eos_id);       //tokens[n_tokens++] = eos_id;
+	}
+
+	// assert(n_tokens <= tokenizer_bound(strlen(text)));
+	return out_tokens;
+}
+std::vector<TOKEN_ID> GTokenizer::Encode_TokenTrie(const std::string& text, bool encode_bos) const{
     TOKENS out_tokens;
     if (encode_bos) {
         out_tokens.push_back(bos_id);
@@ -238,15 +379,66 @@ TOKENS GTokenizer::Encode(const std::string& text, bool encode_bos) const {
     return out_tokens;
 }
 
-TOKENS WordPieceTokenizer::Encode(const std::string& text, bool encode_bos) const  {
+TOKENS GTokenizer::Encode(const std::string& text, bool encode_bos, bool encode_eos)  {
+    assert(isValid());
+    return Encode_TokenTrie(text,encode_bos);
+}
+
+TOKENS WordPieceTokenizer::Encode(const std::string& text, bool encode_bos, bool encode_eos)   {
     // wstring wText(text.begin(),text.end());
     std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
     std::wstring wText = converter.from_bytes(text);
     return Encode(wText,encode_bos);
 }
 
+vector<wstring> WordPieceTokenizer::wordpiece_tokenize(const wstring& input_text) const   {
+    vector<wstring> tokens = split(input_text);
+    vector<wstring> output_tokens;
+    for(size_t i = 0; i < tokens.size(); i++) {
+        auto& tok = tokens[i];
+        if(tok.length() > max_input_chars_per_word) {
+            output_tokens.push_back(wunk);
+            continue;
+        }
 
-TOKENS WordPieceTokenizer::Encode(const wstring& input_text, bool split_specials)  const  {
+        bool is_bad = false;
+        size_t start = 0;
+        vector<wstring> sub_tokens;
+
+        while(start < tok.length()) {
+            size_t end = tok.length();
+            wstring cur_substr;
+            while(start < end) {
+                wstring substr = tok.substr(start, end-start);
+                if(start > 0) {
+                    substr = L"##" + substr;
+                }
+                size_t idx = get_word_index(substr);
+                if(idx != -1) {
+                    cur_substr = substr;
+                    break;
+                }
+                end--;
+            }
+
+            if(cur_substr.empty()) {
+                is_bad = true;
+                break;
+            }
+            sub_tokens.push_back(cur_substr);
+            start = end;
+        }
+
+        if(is_bad) {
+            output_tokens.push_back(wunk);
+        }else{
+            output_tokens.insert(output_tokens.end(), sub_tokens.begin(), sub_tokens.end());
+        }
+    }
+    return output_tokens;
+}
+
+TOKENS WordPieceTokenizer::Encode(const wstring& input_text, bool split_specials)    {
     wstring padded_text = pad_chinese_chars(input_text);
     vector<wstring> tokens = split(padded_text);
 
@@ -265,7 +457,6 @@ TOKENS WordPieceTokenizer::Encode(const wstring& input_text, bool split_specials
         auto splitted_by_punc = run_split_on_punctuation(special_word_tokenized[i], split_specials, wspecial);
         basic_tokenized.insert(basic_tokenized.end(), splitted_by_punc.begin(), splitted_by_punc.end());
     }
-
 
     vector<wstring> wordpiece_tokenized;
     for(size_t i = 0; i < basic_tokenized.size(); i++) {
@@ -290,26 +481,67 @@ GTokenizer::GTokenizer(Fish *dolphin,int flag) {
         bool bRet = InitHF(dolphin,flag);
     }
 }
+GTokenizer_Heap::GTokenizer_Heap(Fish *dolphin,int flag){
+    config = dolphin->config;
+    assert(dolphin->config.model.empty());
+}
+
+bool GTokenizer_Heap::InitFrom(Fish *dolphin,hGTensor gTokens,hGTensor scores,int flag){
+    config = dolphin->config;
+	bos_id = config.model.bos_token_id;
+	eos_id = config.model.eos_token_id;
+    int vocab_size = config.model.vocab_size;
+    assert(vocab_size<TOKEN_MAX);
+
+    char *tokens = (char*)(gTokens->data);
+    size_t szT = gTokens->nByte(),off=0;    
+	// sorted_vocab = (struct TokenIndex*)malloc(vocab_size * sizeof(struct TokenIndex));
+	// vocab_scores = scores;
+	assert(tokens[szT - 1] == '\0' && vocab_size>0);
+    vocab.resize(vocab_size);
+    sorted_vocab = new TokenIndex[vocab_size];
+	for (int i = 0; i < vocab_size; ++i) {
+		vocab[i] = tokens + off;
+		sorted_vocab[i].str = tokens + off;
+		sorted_vocab[i].id = i;
+		int token_length = strlen(tokens + off);
+        // assert(token_length>0);  //failed at 154616!
+		assert(token_length <= MAX_TOKEN_LENGTH && off + token_length + 1 <= szT);
+		off += token_length + 1;
+	}
+	assert(off == szT);
+
+	qsort(sorted_vocab, vocab_size, sizeof(struct TokenIndex), compare_tokens);
+
+	byte_fallback = sLookup("<0x00>");
+
+	if (byte_fallback >= 0) {
+		for (int i = 0; i < 256; i++) {
+			byte_pieces[i][0] = (char)i;
+			byte_pieces[i][1] = '\0';
+		}
+	}
+    jVocab.clear();
+    if (eot_id < 0) {
+		eot_id = sLookup("<|eot_id|>");
+	}
+	if (eot_id < 0) {
+		eot_id = sLookup("<|end|>");
+	}
+	if (eot_id < 0) {
+		eot_id = sLookup("<|im_end|>");
+	}
+    _INFO("\n[Tokenizer_HEAP] Init from \"%s\", n_vocab=%d eot_id=%d\n",config.model.sTokenPath.c_str(),vocab_size,eot_id);
+	
+    return true;
+}
 
 bool GTokenizer::InitFrom(Fish *dolphin,hGTensor gTokens,hGTensor scores,int flag){
     config = dolphin->config;
-
-	/*bos_id = config.model.bos_token_id;
-	eos_id = config.model.eos_token_id;
-	eot_id = -1;
-    if (eot_id < 0) {
-		eot_id = str_lookup("<|eot_id|>", sorted_vocab, vocab_size);
-	}
-	if (eot_id < 0) {
-		eot_id = str_lookup("<|end|>", sorted_vocab, vocab_size);
-	}
-	if (eot_id < 0) {
-		eot_id = str_lookup("<|im_end|>", sorted_vocab, vocab_size);
-	}*/
-
     char *tokens = (char*)(gTokens->data);
     size_t szT = gTokens->nByte(),off=0;
-    int vocab_size=config.model.vocab_size,MAX_TOKEN_LENGTH=512;
+    int vocab_size = config.model.vocab_size;
+    assert(vocab_size<TOKEN_MAX);
 	// sorted_vocab = (struct TokenIndex*)malloc(vocab_size * sizeof(struct TokenIndex));
 	// vocab_scores = scores;
 	assert(tokens[szT - 1] == '\0' && vocab_size>0);
@@ -327,7 +559,7 @@ bool GTokenizer::InitFrom(Fish *dolphin,hGTensor gTokens,hGTensor scores,int fla
 
 	// qsort(sorted_vocab, vocab_size, sizeof(struct TokenIndex), compare_tokens);
 
-	// byte_fallbacks = str_lookup("<0x00>", sorted_vocab, vocab_size);
+	// byte_fallbacks = sLookup("<0x00>", sorted_vocab, vocab_size);
 
 	if (byte_fallback >= 0) {
 		for (int i = 0; i < 256; i++) {
@@ -401,6 +633,9 @@ bool GTokenizer::isInRange(const int* inp,size_t nz,int flag){
     return true;
 }
 
+/*
+    [BUG]  sentence != prompt @/home/cys/rnd/lic/models/shakespeare.txt
+*/
 void GTokenizer::InitTrier(int flag){
   /*// TODO: figure out edge cases:
   // Q: should `vocab` include byte fallback tokens?
@@ -679,33 +914,33 @@ void DictVAE::CreateEmbeddings(int flag){
         if(isLoadTokenEmbed) {
             const int n1 = isSymmetric ? n_embd : last_dim;
             if(opOut==RND_GRAD){
-                _norm.w          = TENSO(ctx, typNUMBER::F32, {n1});
-                _output.w         = TENSO(ctx, typNUMBER::F32, {n1, n_out});  
+                _norm.w          = GT(this, typNUMBER::F32, {n1});
+                _output.w         = GT(this, typNUMBER::F32, {n1, n_out});  
             }else if(opOut==LOAD_GRAD_norm){
-                _output.w         = TENSO(ctx, typNUMBER::F32, {n1, n_out});  
+                _output.w         = GT(this, typNUMBER::F32, {n1, n_out});  
             }
             return;
         }
     }
     int group=config.Get({"model_v0","target_group"},1);
-    tok_embeddings = TENSO(ctx, typNUMBER::F32, {n_embd, n_out});
-    _norm.w           = TENSO(ctx, typNUMBER::F32, {n_embd});
+    tok_embeddings = GT(this, typNUMBER::F32, {n_embd, n_out});
+    _norm.w           = GT(this, typNUMBER::F32, {n_embd});
     if(!isSVD){
         if(false){  // TO_DO maybe useful
             _output.w = tok_embeddings;
         }else{
             if(group==1)
-                _output.w = TENSO(ctx, typNUMBER::F32, {n_embd, n_out});  
+                _output.w = GT(this, typNUMBER::F32, {n_embd, n_out});  
             else{
                 assert(n_embd%group==0);
-                _output.w = TENSO(ctx, typNUMBER::F32, {n_embd/group, n_out});  
+                _output.w = GT(this, typNUMBER::F32, {n_embd/group, n_out});  
             }             
         }
            
     } else{
-        out_u = TENSO(ctx, typNUMBER::F32, {lo_rank, n_embd});   
-        out_v = TENSO(ctx, typNUMBER::F32, {lo_rank, n_out});
-        out_d = TENSO(ctx, typNUMBER::F32, {lo_rank, lo_rank}); 
+        out_u = GT(this, typNUMBER::F32, {lo_rank, n_embd});   
+        out_v = GT(this, typNUMBER::F32, {lo_rank, n_out});
+        out_d = GT(this, typNUMBER::F32, {lo_rank, lo_rank}); 
     }
 }
 

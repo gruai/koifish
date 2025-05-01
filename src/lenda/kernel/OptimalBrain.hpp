@@ -6,8 +6,8 @@
 #include "../SpMV/Matrix.hpp"
 #include "../SpMV/GVMAT_t.hpp"
 #include "../SpMV/GeQuant.hpp"
-#include "../util/BLAS_t.hpp"
-#include "../util/GST_util.hpp"
+#include "../../Utils/BLAS_t.hpp"
+#include "../../Utils/GST_util.hpp"
 #ifdef _GE_LU_
 #include "..\lu\GeLU.hpp"
 #endif

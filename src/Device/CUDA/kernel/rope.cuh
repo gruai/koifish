@@ -16,23 +16,50 @@
 #define CUDA_ROPE_BLOCK_SIZE 256
 #define _xita  10000.0f
 
-__global__ void rope_f32_kernel(float* x, float* out, int seq_len, int N){ 
-  int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  float x1 = x[idx * 2];
-  float x2 = x[idx * 2 + 1];
-  int token_pos = idx / N; 
-  int token_idx = idx % N;
-  float exp_v = 1.0f / powf(_xita, token_idx / (N * 2));
-  float sin_v = sinf(token_pos / exp_v);
-  float cos_v = cosf(token_pos / exp_v);
-  float out1 = x1 * cos_v - x2 * sin_v;
-  float out2 = x1 * sin_v + x2 * cos_v;
-  out[idx * 2] = out1;
-  out[idx * 2 + 1] = out2;
+/*
+rope(float* vec, int d, int head_dim, int pos, float theta, int rotary_dim) {
+	for (int i = 0; i < d; i += 2) {
+		int j_head = i % head_dim;
+		float freq = j_head >= rotary_dim ? 0.f : 1.0f / powf(theta, (float)j_head / (float)rotary_dim);
+		float val = pos * freq;
+		float fcr = cosf(val);
+		float fci = sinf(val);
+
+		float v0 = vec[i];
+		float v1 = vec[i + 1];
+		vec[i] = v0 * fcr - v1 * fci;
+		vec[i + 1] = v0 * fci + v1 * fcr;
+	}
+}
+*/
+
+// out may same as x
+template<typename typ>
+__global__ void CU_rope_(typ* x, typ* out, int seq_len, int head_dim, float theta, int rotary_dim,int B, int T, int C){ //, int N
+    int idx = blockIdx.x * blockDim.x + threadIdx.x,id=idx/C;
+    int N = B * T * C;
+    if (idx >= N/2) { return; }
+
+    int b = id/T,t = id % T,c = idx % C;
+    int j_head = c % head_dim;
+    float freq = j_head >= rotary_dim ? 0.f : 1.0f / powf(theta, (float)j_head / (float)rotary_dim);
+    
+    float val = c * freq;
+    float x1 = x[idx * 2],x2 = x[idx * 2 + 1];
+    
+    /* int token_pos = idx / N,    token_idx = idx % N;
+    float exp_v = 1.0f / powf(_xita, token_idx / (N * 2));
+    float sin_v = sinf(token_pos / exp_v);
+    float cos_v = cosf(token_pos / exp_v);*/
+    float sin_v = sinf(val),cos_v = cosf(val);
+    typ out1 = x1 * cos_v - x2 * sin_v;
+    typ out2 = x1 * sin_v + x2 * cos_v;
+    out[idx * 2] = out1;
+    out[idx * 2 + 1] = out2;
 }
 
 // another index method of rope.
-__global__ void rope_f32_v2_kernel(float* x, float* out, int seq_len, int N){ 
+__global__ void CU_rope_f32_v2(float* x, float* out, int seq_len, int N){ 
   int token_pos = blockIdx.x;
   int tid = threadIdx.x;
   float x1 = x[token_pos * N * 2 + tid * 2];

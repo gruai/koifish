@@ -72,7 +72,11 @@ struct BATCH_INPUT  {
 
     BATCH_INPUT(SHAPE sp,int flag=0x0);
     // virtual void Update(hGTensor batch,int flag=0x0);
-    int CurToken()  {   assert(pos>=0 && host!=nullptr);     return host[pos];   }
+    int CurToken()  {   
+        assert(pos>=0 && host!=nullptr);     
+        // assert(host[pos] < embed->nVocab);
+        return host[pos];   
+    }
     virtual void Set(int i0, int i1, int i2, int i3, int tok)  {
         hostToken->Set(i0, i1, i2, i3, tok);
     }
@@ -87,16 +91,12 @@ protected:
     typedef std::string mt19937_state;
     //  Store tokens from source.  always in CPU
     
-    int eval_every=-1;
-    int tokens_per_iter = 0;
+    int eval_every=-1,tokens_per_iter = 0;
     // CLI_params config;
     std::string fp_data;
     std::string sentence="";
     std::vector<TOKEN_ID> samp_toks;
-    bool sample_separation_eos,sample_separation_bos;
-    // size_t _nctx=-1;
-    std::vector<hSAMP> shard_samps;
-    
+    std::vector<hSAMP> shard_samps;    
     // std::vector<size_t> idcs;      //would change epoch by epoch(shuffle,subsampling...)
     int64_t nShard() {
         return shard_samps.size();
@@ -105,6 +105,8 @@ protected:
     hDataToken hTokens = nullptr;
     hTokenizer hDict = nullptr;
 
+    bool isNeedBOS = true;
+    bool sample_separation_eos,sample_separation_bos;
     bool isTarget_1 = false;
     bool isRecycle = true,isLast=false;
     bool isFixEvalSample = false;        // Need fix this to do some experiments
@@ -117,6 +119,7 @@ public:
     StepInfos stepis;        // info of each step on train/evaluate/...
     std::string tpBatchSample,name;       //  "stacking"
     std::vector<hSAMP> cur_samps;
+    int nMostToken = -1;
     int num_batches=-1;    //number of batchs in each epoch
     int B=-1,T=-1;    //number of samples in each batch,  number of tokens in each sample
     int StepOfEvaluate(int flag=0x0); //  smaple to reduce eval time
@@ -148,7 +151,7 @@ public:
     bool MaskAt(size_t pos,TOKEN_ID&mask);
     bool isHostMask(size_t pos,int flag=0x0);
     std::vector<std::string> curDeTexts;
-    virtual hSAMP InitOneSamp(const string &prompt,hGensor input,int flag=0x0);
+    virtual hSAMP InitOneSamp(const string &prompt,hGensor input,Fish *hFish,int flag=0x0);
     virtual double DecodeVerify(hSAMP samp, hGensor tokens,hGensor logits,int flag=0x0);
     void Samp2Batch(int k,hSAMP samp,struct train_params_& params,int flag=0x0);
 

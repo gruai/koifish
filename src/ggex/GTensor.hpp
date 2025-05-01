@@ -92,11 +92,16 @@ typedef shared_ptr<GENSOR_OP> hGOP;
 
 /**
  * 1.   Support dynamic change shape & type!
+ * 2.   Row-major order (first index varies most slowly and last index varies most quickly)
+ * 3.   May not contiguous in memory! All tensor operations have to take the stride into account and not assume that the tensor is contiguous in memory!
  */
 class GTensor   {
 private:
     void *gg=nullptr;
 protected:
+    Fish *hFish = nullptr;
+    hGTensor hRef = nullptr;
+    std::vector<GTensor*> refered;
     std::shared_ptr<EDGE_DEVICES> hDevice = nullptr;   
     size_t szData=0;
     int recompute=1;
@@ -107,7 +112,8 @@ public:
     static const int MAX_NAME=64;
     static const int N_DIMS=4;
     // static int B,T,C;       //shortcut parameter of LLM models
-    static hGTensor bt4c,delta,scratch,scratch_ff1;
+    static hGTensor bt4c,delta,scratch,tmpFF1,tmpW,tmpGW;
+    static bool AllocBuffer(Fish *hFish,int flag=0x0);
     static void* buff;      //  temporary shared memory 
     float residual_scale=1.0,wnorm=0,gnorm=0;   // some tricks
     float rLARS(float s0,float T_lars,int flag);
@@ -117,26 +123,24 @@ public:
     // shape=>x_shape
     virtual void* DataPad(void* src0,int flag=0x0);     
 
-    static typNUMBER tpFloatX;
+    static typNUMBER tpFloatX,tpPreLogits;
     typNUMBER  type;
     INIT_WEIGHT tpInit=INIT_WEIGHT::RANDOM;
     enum BIT_FLAG {
         F_INPUT=0x1,F_OUTPUT=0x2,F_PARAM=0x4,F_LOSS=0x8, 
-        F_NOALLOC=0x100,F_GPU=0x200,
+        F_NOALLOC=0x100,F_GPU=0x200,F_HOSTALLOC=0x400,F_MMAP=0x800,
+        F_HOSTDATA=0x1000,      //for host_data!=nullptr
 
-        F_TOX=0x10000,  F_PADDED=0x20000
+        F_TOX=0x10000,  F_PADDED=0x20000,
+        F_DEBUG=0x10000000
         
     };    
         
-    static hGTensor NEW_(struct ggml_tensor*gg,int flag=0x0) {
-        hGTensor hT = std::make_shared<GTensor>(gg,flag);
-        return hT;
-    }
     static size_t MostOverhead( ){
         return sizeof(GTensor)*2;
     }
     GTensor()   {}
-    GTensor(SHAPE shape_,typNUMBER tpD_,bool isAlloc=true,int flag=0x0);
+    GTensor(Fish *hFish,SHAPE shape_,typNUMBER tpD_,bool isAlloc=true,int flag=0x0);
     GTensor(struct ggml_tensor*gg_,int flag=0x0) : gg(gg_)      {     assert(0);    }
     virtual bool CopyGG(struct ggml_tensor*gg_,int flag=0x0)    {     assert(0);    return false;   }
 
@@ -144,11 +148,6 @@ public:
     virtual bool Alloc(int tpInit=0,int flag=0x0);
     virtual bool InitParam(int tpInit,int flag=0x0)           {     assert(0);    return false;   }
     virtual bool Free() {   return true;    }
-    // template<typename T> 
-    // void PrintX(const string& title, int typ, int flag){
-    //     bool isDevice = true;
-    //     PrintTensor<T>(title.c_str(),(T *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
-    // }
     virtual void Print(const string& title, int typ, int flag)  const;
     virtual bool Dump(int type,const string&title="",int flag=0x0)  const;
 //operations
@@ -162,27 +161,33 @@ public:
 
 //operationsT_MAX_NAME
     virtual bool OverWrite(struct ggml_tensor*gg_,bool isSrc=true,int flag=0x0);
+    virtual bool ShareWeight(hGTensor,int flag=0x0);
     virtual bool OverWrite(hGTensor,bool isSrc=true,int flag=0x0);      
+  
     virtual hGTensor GetRow(hGTensor, hGTensor token,hGTensor pos,int flag=0x0);
     virtual hGTensor Normal(hGTensor hOut,hGTensor _mean,hGTensor _rstd,hGTensor w,hGTensor b,bool isForward=true,int flag=0x0)   {   assert(0);  return nullptr;}//  Loss
     virtual hGTensor CrossEntropy( const hGTensor b,int flag=0x0 );    
 
-    int64_t ne[N_DIMS]; // number of elements
-    //stride in bytes:nb[0] = ggml_type_size(type);nb[i] = nb[i-1] * ne[i-1]
+    //row-major order. ne contains the number of elements in each dimension & nb is the number of bytes ("nb", a.k.a. stride). 
+    int64_t ne[N_DIMS]; 
+    //stride in bytes:  nb[0]=type_size(type);    nb[i]=nb[i-1]*ne[i-1]
     size_t  nb[N_DIMS]; 
-    // enum ggml_op op;
-    // int32_t op_params[GGML_MAX_OP_PARAMS / sizeof(int32_t)];
     int32_t flags=0x0;
-
+    double nrm = 0.0;       //length
     bool isParam()  {   return BIT_TEST(flags,F_PARAM);  }
-    bool isGPU()  {   return BIT_TEST(flags,F_GPU);  }
-    
+    bool isGPU()    {   return BIT_TEST(flags,F_GPU);  }
+    bool isRefer(int type=0x0)      {   return hRef!=nullptr;   }
+    hGTensor GetRefer()             {   return hRef;            }
+    virtual void SetRefer(hGTensor hR,int flag=0x0){
+        hRef = hR;      hR->refered.push_back(this);
+    }
+
     vector<hGOP> src;
     // virtual void AddSrc(const hGOP t,int type,int flag=0x0);
     virtual void AddSrc(const vector<hGTensor>& ts,int flag=0x0);
     // struct ggml_tensor * view_src=nullptr;
     // size_t               view_offs=0;
-
+    void * host_data=nullptr;        //somtimes, we need data both in device&host
     void * data=nullptr;
     void * grad=nullptr; 
     virtual bool SerialGP(void *yD,void *yG,size_t szY,bool isToY,int flag=0x0)   {   assert(0);  return false;   }
@@ -203,7 +208,7 @@ public:
     }
     virtual size_t nByte( )  const      {   return szData;        }
     
-    //Returns the value of this tensor(with one element!)
+    
     virtual bool isEmpty()  const                       {   
         // if(size()>0)    {   assert(B>0 && T>0 && C>0); }
         return size()==0;    
@@ -248,18 +253,24 @@ public:
         flags |= (int32_t)flag;        
     }
     virtual float Get(int i,int flag=0x0)   const;
+    //Returns the value of this tensor(with one element!)
     virtual float Item()    const{
         assert(size()==1);  return Get(0);
     }   
 
     virtual int SerialJSON(const std::string& name, const JSON& val, void* bytes_ptr, size_t bytes_size,int flag=0x0);
+    friend class GeNeuron;
     friend class huTensor;
     friend class OPT_Adam;
 };
 
 template <typename T> 
 T* TO(hGTensor t) { 
-    assert(t!=nullptr && t->data!=nullptr);
+    assert(t!=nullptr);
+    if(t->isRefer()){
+        t = t->GetRefer();		
+    }	
+    assert(t->data!=nullptr);
     // assert(t->type==TYPE_<T>())
     BIT_SET(t->flags,GTensor::F_TOX);
     return (T*)(t->data); 
@@ -291,9 +302,9 @@ inline hGTensor operator+=( const hGTensor &a,const hGTensor &b ) 	{
 #ifdef _TENSOR_G_
     typedef hGTensor hGensor;
     inline  struct ggml_tensor* G(hGensor T) {   assert(T!=nullptr);     return T->GG(); }
-    inline hGensor NEW_(struct ggml_tensor*gg,int flag=0x0) {
-            return GTensor::NEW_(gg,flag);
-    };    
+    // inline hGensor NEW_(struct ggml_tensor*gg,int flag=0x0) {
+    //         return GTensor::NEW_(gg,flag);
+    // };    
     inline void ZERO_(hGensor T)       {  T->Zero();   }
     inline size_t tELEM(hGensor T)    { return T->size();   }
     inline size_t tBYTE(hGensor T)    { return T->nByte();  }
@@ -344,7 +355,15 @@ inline floatX *ToG0(hGTensor t) {
         return nullptr;    
     return ToG(t); 
 }
-hGensor TENSO(void* ctx0,typNUMBER typ,SHAPE,int flag=0x0,const string&name="" );
+// only create tensor
+// hGensor TENSO(void* ctx0,typNUMBER typ,SHAPE,int flag=0x0,const string&name="" );
+
+//Generate GTensor
+hGTensor GT(Fish* hFish,typNUMBER typ,SHAPE,int flag=0x0,const string&name="");
+//  Create GTensor & alloc & copy data
+hGTensor GT(SHAPE shape_,void *data,typNUMBER tpD_,int flag=0x0);
+
+
 hGensor tRAND(hGensor  tensor, struct random_normal_distribution * rnd);
 
 /**
@@ -354,7 +373,7 @@ class huTensor : public GTensor   {
 protected:    
     hGTensor _Multiply(const hGTensor& other); 
 public:
-    huTensor(const string&name_,const SHAPE& shape,typNUMBER tpD_,bool isAlloc,int flag=0x0);    
+    huTensor(Fish *hFish,const string&name_,const SHAPE shape,typNUMBER tpD_,bool isAlloc,int flag=0x0);    
     virtual ~huTensor();
 
     bool Alloc(int tpInit=0,int flag=0x0)    override;

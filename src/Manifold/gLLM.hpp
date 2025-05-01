@@ -16,9 +16,10 @@
 #include <string>
 // #include "../ggex/common-ggml.h" 
 #include "../ggex/GG_util.hpp"   
-#include "../Manifold/Fish.hpp"   
-#include "../Manifold/VAE.hpp" 
-#include "../Manifold/Dictionary.hpp"
+#include "Fish.hpp"   
+#include "VAE.hpp" 
+#include "Dictionary.hpp"
+#include "../Utils/Cache.hpp"
 #ifdef __USE_GGML__
     #include "llama.h"
     #include "llama_cys.h"
@@ -305,6 +306,27 @@ public:
     string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
 };
 
+/*
+*/
+class Guppy : public NLP_AutoRegressive {
+protected:    
+public:
+    Guppy( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag=0x0);
+
+    virtual ~Guppy() {          
+    }  
+
+    void InitModel(int flag=0x0)    override    {
+        _INFO("Guppy::%s: init model\n", __func__);
+
+        NLP_AutoRegressive::InitModel(flag);         
+    }  
+    string DebugInfo(int type=0x0,int flag=0x0) override;
+    // hGensor BuildTarget(void * ctx,hGensor cur,int flag=0x0) override; 
+    string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
+    bool OnNextEpoch(int epoch,int flag=0x0) override;
+};
+
 class DeepSeek : public NLP_AutoRegressive {
 protected:    
     virtual void _forward_cpu(int token, int pos, int flag=0x0);
@@ -381,8 +403,9 @@ struct LLM_MOE : public NLP_AutoRegressive {
         assert( n_expert_used <= n_expert && n_expert <= 160 );      //160:    DeepSeekV2
 
         NLP_AutoRegressive::InitModel(flag);        
-    }     
-    
+    }  
 };
+
+
 
 

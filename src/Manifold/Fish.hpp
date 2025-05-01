@@ -92,54 +92,6 @@ struct QKV_LAY : public NeLayer {
     virtual void save_gguf(struct gguf_context *fctx, int flag);
 };
 typedef std::shared_ptr<QKV_LAY> hLQKV;
-/*struct BROWN_Motion    {
-    bool isOnlinePush = false;      // push nodes last or online(QKV)
-    Fish *hFish_ = nullptr;
-    std::shared_ptr<KVCache> kv;
-    char nam_[128];
-    //Transfer probability of Token or Transfer probability of TokenEmbed
-    static bool Transfer_1;  
-
-    int version = 0;
-    bool isTrain = false;
-    hGensor wq=nullptr,wv=nullptr;
-    bool use_flash = true,use_cache = false;   
-    // int layer_id=-1;
-    hLQKV lay;
-    int rope_type=-1,n_embd_head=-1,n_embd_head_k,n_embd_k_gqa=-1,n_embd_head_v,n_embd_v_gqa=-1;//n_tokens=-1,
-    int n_embd=-1, n_head=-1, N=-1, n_batch=-1, n_rot=-1,n_ctx_orig=-1, n_ctx=-1, n_head_kv=-1, n_vocab=-1, n_ff=-1, n_past = 0;
-    float f_norm_rms_eps, rope_freq_base, rope_freq_scale;
-    float f_max_alibi_bias;
-    float attn_soft_cap;
-    float beta_fast=32.0,beta_slow=1.0,ext_factor=0,attn_factor=1;
-
-    BROWN_Motion()  {}
-    BROWN_Motion(Fish *hFish_,hGensor _wq, hGensor _wv,struct CLI_params& config,hLQKV lQKV,int flags);
-    hGensor W_rope(void *ctx, hGensor cur, hGensor w, hGensor KQ_pos, SHAPE shape,const string&shortcut, int flag = 0x0);
-    virtual hGensor Build(void *ctx, hGensor t04, hGensor KQ_pos);
-
-    virtual hGensor DiffusionOnEmbed(void *ctx, hGensor teb, hGensor KQ_pos);
-    virtual hGensor DiffusionOnToken(void *ctx, hGensor teb, hGensor KQ_pos);
-};
-typedef shared_ptr<BROWN_Motion> hBrownMotion;
-
-struct QKV_Motion : public BROWN_Motion    {
-    hGensor wk=nullptr, KQ_mask=nullptr;
-      
-    // int n_embd, n_head, N, n_batch, n_rot, n_ctx, n_head_kv, n_past = 0;
-    // float f_norm_rms_eps, rope_freq_base, rope_freq_scale;
-    QKV_Motion() {}
-    // QKV_Motion(hGensor _wq, hGensor _wk, hGensor _wv, int _embd, int _head, int _N, int _batch, int _rot, int _ctx, int _head_kv, float f_eps, float rope_base, float rope_scale)
-    //     : BROWN_Motion(_wq, _embd, _head, _N, _batch, _rot, _ctx, _head_kv, f_eps, rope_base, rope_scale), wk(_wk), wv(_wv)
-    // {
-    // }
-    QKV_Motion( Fish *hFish_,hGensor _wq, hGensor _wk, hGensor _wv,hGensor inp_mask, struct CLI_params& config,hLQKV lQKV,int flag)
-        : BROWN_Motion(hFish_,_wq, _wv, config,lQKV,flag), wk(_wk), KQ_mask(inp_mask)
-    {
-    }
-    hGensor vXkq(void *ctx, hGensor v,hGensor kq,int layer_id);
-    hGensor Build(void *ctx, hGensor t04, hGensor KQ_pos)    override;
-};*/
 
 struct MixOfModels{
     bool isRes = true,isSiLU=false;    
@@ -157,6 +109,27 @@ struct MixOfSwarm : public MixOfModels{
     virtual void Init(tpSWARM&swarm,void *ctx,int n_embd,int flag=0x0);
     hGensor Build(CLI_params&config,void * ctx,hGensor cur,int flag=0x0)  override;
 };
+
+// Pick some neurons from context sparcity
+class CS_Picker {
+protected:    
+    bool isMerge = false;
+    int dim=-1,nLastHot=-1;
+    float T_hot = 0.2,T_zero = 1.0e-3;
+public:
+    int *hot = nullptr;
+    float *dTemp = nullptr;
+    static double tPick;      //  Picker should much fast than dot!
+    CS_Picker() {}    
+    CS_Picker(hFISH hFish,int flag=0x0);
+//  uses the first layer’s attention output to predict the sparsity pattern for the entire model
+    virtual ~CS_Picker()    {
+        FREE_a(hot);        FREE_a(dTemp);
+    }
+
+    int Update(int level,float *hb,int flag=0x0);
+};
+typedef shared_ptr<CS_Picker> hCSPicker;
 
 class Fish : public std::enable_shared_from_this<Fish>    {
     Fish(const Fish &);
@@ -232,8 +205,10 @@ protected:
     
     hGensor in_node=nullptr, out_node=nullptr;          //maybe GPU tensor
     hGensor loss = nullptr, target_mask = nullptr, target_probs = nullptr, KQ_pos = nullptr, pos_embd=nullptr;
-    hGensor KQ_mask = nullptr;  // mask for 1 head, it will be broadcasted to all heads
-    hGensor preLogits = nullptr;        //no SOFTMAX    
+    hGensor KQ_mask = nullptr;  //  mask for 1 head, it will be broadcasted to all heads
+    TokenEmbed *hEmbed = nullptr;
+    OutCLS *hCLS = nullptr;     //  GetNeuron<OutCLS>("OutCLS",0);
+  
     
     //hGensor gate=nullptr;      //create@InitModel update@
     MixOfModels mom;
@@ -278,7 +253,12 @@ protected:
 
 public:
     hGensor xn = nullptr,xxn = nullptr;     //only for debug
-    
+    struct STAT {			
+        double tFFN=0,tQKV=0;
+        virtual void Dump(int typ,int flag=0x0);
+    };
+    static STAT stat;
+
     struct CLI_params config;
     static tpSWARM swarm;
     MODEL_ARCH arch = MODEL_ARCH::_X_;
@@ -296,6 +276,10 @@ public:
         _INFO("=== %s ===\n", __func__);
         // allocr = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
     }
+    std::shared_ptr<Fish> SharedThis() {
+        return shared_from_this();
+    }
+
     bool isTrain()  {
         return !isLocalInfer;
     }
@@ -375,7 +359,8 @@ public:
         prefix += "\t";
         suffix += "\n)\n";
         return "";
-    }        
+    }      
+    virtual string DebugInfo(int type=0x0,int flag=0x0)     {     return "";    }
     
     virtual void Dump(int type,int flag=0x0)            {}
 
@@ -460,13 +445,9 @@ public:
         AddLayer(layer, flag);
     }
 
-    virtual void AddLayer(const std::string &key_, std::vector<NP_> nps, int flag = 0x0)    {
-        hLayer layer = std::make_shared<NeLayer>(key_);
-        assert(0);      //Deprecated        
-        AddLayer(layer, flag = 0x0);
-    }
+    virtual void Sparsing(int flag=0x0);
     
-    bool OnTrainStep(struct train_opt_callback_data *data0,SampLoader&loader, int accum_step, float *sched, int flag = 0x0);
+    virtual bool OnNextEpoch(int epoch,int flag = 0x0)    {   return true;    }
 
     virtual int GenSentence(int flag=0x0)   {   return -1;  }
 
@@ -498,23 +479,17 @@ public:
     virtual bool LoadCheckPoint(int flag=0x0);
 
     friend class GeNeuron;
-    friend class SLP;
-    friend class LayerNormal;
-    friend class NT_SAM;
-    friend class SAM_encoder;
-    friend class Optimizer;
-    friend class OPT_Adam;
+    friend class SLP;    friend class LayerNormal;    friend class NT_SAM;  friend class SelfAttention;     friend class ROPE;  friend class OutCLS;    friend class TokenEmbed;
+    friend class SAM_encoder;   friend class NLP_AutoRegressive;  
+    friend class Optimizer;     friend class OPT_Adam;
     friend class Distillation;
     friend class DictVAE;
-    friend class GeneratOnPrompt;
-    friend class NLP_AutoRegressive;   
+    friend class GeneratOnPrompt;     
     friend class SampLoader;
     friend class WIKI;
     friend class KVCache;
-    friend class TGraph;
-    friend class SelfAttention;     friend class ROPE;
-    friend class EDGE_DEVICES;    
-    friend class OutCLS;
+    friend class TGraph;    
+    friend class EDGE_DEVICES;   
 };
 
 struct LogicSalp : public Fish {

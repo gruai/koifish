@@ -166,7 +166,7 @@ protected:
     // trie mapping token strings to token ids
     TokenTrie vocab_trie;
     JSON jTokenizer,jVocab;
-    size_t max_input_chars_per_word=-1;
+    size_t max_input_chars_per_word=0;
     
     bool tokenizer_add_bos = false;
 
@@ -197,7 +197,10 @@ protected:
     // convenience array containing the decodings for the fixed 256 byte fallbacks '{0x00}\0', '{0x01}\0', ..., '{0xFF}\0'.
     // TODO: use constexpr?
     std::string byte_pieces[256];
+
+    virtual std::vector<TOKEN_ID> Encode_TokenTrie(const std::string& text, bool encode_bos=false) const;
 public:
+    static const int MAX_TOKEN_LENGTH = 512;
     int sep_id=-1,pad_id=-1,cls_id=-1,mask_id=-1;
     int bos_id = -1,eos_id = -1,eot_id = -1;
 
@@ -214,11 +217,12 @@ public:
     virtual bool isValid(int flag=0x0)  const;
     virtual bool isInRange(const int* inp,size_t nz,int flag);
 
-    virtual std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos=false) const;
-    virtual std::vector<TOKEN_ID> Encode(const std::wstring& text, bool encode_bos=false) const;
+    virtual std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos=false, bool encode_eos=false) ;
+    virtual std::vector<TOKEN_ID> Encode(const std::wstring& text, bool encode_bos=false, bool encode_eos=false) ;
     virtual std::string Decode(const TOKENS& ids, bool skip_special_tokens=false);
     
     virtual int STR2T(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0){
+        btch.clear();
         string line(txt,txt_len);
         btch = Encode(line);
         return btch.size();
@@ -227,6 +231,11 @@ public:
         return Decode({tok});
     }
     virtual std::string T2STR(const std::vector<TOKEN_ID>&toks,int flag=0x0 ) {  
+        return Decode(toks);
+    } 
+    virtual std::string T2STR(const int *arrT,int nTok,int flag=0x0 ) {  
+        std::vector<TOKEN_ID> toks(nTok);
+        std::copy(arrT, arrT + nTok, toks.begin());
         return Decode(toks);
     } 
 
@@ -255,6 +264,78 @@ friend class NLP_AutoRegressive;
 };
 typedef std::shared_ptr<GTokenizer> hTokenizer;
 
+class GTokenizer_Heap : public GTokenizer   {
+protected:
+    struct TokenIndex {
+        const char* str=nullptr;
+        int id = -1;
+    };
+    struct TokenIndex* sorted_vocab = nullptr;
+
+    static int compare_tokens(const void* a, const void* b) {
+        return strcmp(((struct TokenIndex*)a)->str, ((struct TokenIndex*)b)->str);
+    }
+
+    int sLookup(const char* str,int flag=0x0);
+    
+    struct Merge {
+        int lpos, lid;
+        int rpos, rid;
+        int resid;
+        float score;
+    };
+
+    void heap_swap(struct Merge* heap, int i, int j) {
+        struct Merge tmp = heap[i];
+        heap[i] = heap[j];
+        heap[j] = tmp;
+    }
+
+    void heap_insert(struct Merge* heap, int n_heap, struct Merge merge) {
+        // insert a new element at the end (breaks heap invariant)
+        heap[n_heap] = merge;
+        n_heap++;
+
+        // bubble up the new element to its correct position
+        int i = n_heap - 1;
+        while (i > 0 && heap[i].score > heap[(i - 1) / 2].score) {
+            heap_swap(heap, i, (i - 1) / 2);
+            i = (i - 1) / 2;
+        }
+    }
+
+    void heap_poptop(struct Merge* heap, int n_heap) {
+        // move the last element to the top (breaks heap invariant)
+        n_heap--;
+        heap[0] = heap[n_heap];
+
+        // bubble down the new top element to its correct position
+        int i = 0;
+        while (i * 2 + 1 < n_heap) {
+            // find the largest child
+            int j = i * 2 + 1;
+            if (j + 1 < n_heap && heap[j + 1].score > heap[j].score) {
+                j++;
+            }
+            // if the largest child is smaller than the parent, we're done
+            if (heap[j].score <= heap[i].score) {
+                break;
+            }
+            // otherwise, swap the parent and child
+            heap_swap(heap, i, j);
+            i = j;
+        }
+    }
+    int merge_tokens_tryadd(struct Merge* heap, int n_heap, int lpos, int lid, int rpos, int rid);
+    int merge_tokens(std::vector<TOKEN_ID>&tokens,int flag=0x0);
+    bool InitFrom(Fish *dolphin,hGTensor tokens,hGTensor scores,int flag=0x0)   override;
+public:
+    GTokenizer_Heap(Fish *,int flag=0x0);
+    virtual ~GTokenizer_Heap()  {
+        FREE_a(sorted_vocab);
+    }
+    std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos=false, bool encode_eos=false)   override;
+}; 
 /*
     subword tokenization algorithm
     from  https://github.com/Sorrow321/huggingface_tokenizer_cpp
@@ -287,56 +368,11 @@ public:
     WordPieceTokenizer(const string& config_path);
 
     int get_word_index(const wstring& word) const;
-    std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos=false) const  override;
-    vector<TOKEN_ID> Encode(const wstring& input_text, bool split_specials=false) const override;
+    std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos=false, bool encode_eos=false)  override;
+    virtual vector<TOKEN_ID> Encode(const wstring& input_text, bool split_specials=false)  ;
     // std::string Decode(const TOKENS& ids, bool skip_special_tokens=false)   override;   
 
-    vector<wstring> wordpiece_tokenize(const wstring& input_text) const   {
-        vector<wstring> tokens = split(input_text);
-        vector<wstring> output_tokens;
-        for(size_t i = 0; i < tokens.size(); i++) {
-            auto& tok = tokens[i];
-            if(tok.length() > max_input_chars_per_word) {
-                output_tokens.push_back(wunk);
-                continue;
-            }
-
-            bool is_bad = false;
-            size_t start = 0;
-            vector<wstring> sub_tokens;
-
-            while(start < tok.length()) {
-                size_t end = tok.length();
-                wstring cur_substr;
-                while(start < end) {
-                    wstring substr = tok.substr(start, end-start);
-                    if(start > 0) {
-                        substr = L"##" + substr;
-                    }
-                    size_t idx = get_word_index(substr);
-                    if(idx != -1) {
-                        cur_substr = substr;
-                        break;
-                    }
-                    end--;
-                }
-
-                if(cur_substr.empty()) {
-                    is_bad = true;
-                    break;
-                }
-                sub_tokens.push_back(cur_substr);
-                start = end;
-            }
-
-            if(is_bad) {
-                output_tokens.push_back(wunk);
-            }else{
-                output_tokens.insert(output_tokens.end(), sub_tokens.begin(), sub_tokens.end());
-            }
-        }
-        return output_tokens;
-    }
+    vector<wstring> wordpiece_tokenize(const wstring& input_text) const;
 
     vector<size_t> convert_tokens_to_ids(const vector<wstring>& input_seq)  const  {
         vector<size_t> output_ids;
@@ -370,12 +406,11 @@ struct DictVAE : public VariationaAE    {
     virtual std::string T2STR(TOKEN_ID tok,int flag=0x0 );  
     virtual std::string T2STR(const std::vector<TOKEN_ID>&toks,int flag=0x0 ) {  
         string line="";
-        // for(auto t:toks){
-        //     if(t==eos)
-        //         break;
-        //     line += T2STR(t,flag);
-        // }
-            
+        for(auto t:toks){
+            if(t==hDict->eos_id)
+                break;
+            line += T2STR(t,flag);
+        }            
         return line;
     } 
 
@@ -391,10 +426,7 @@ struct DictVAE : public VariationaAE    {
     //  n_vocab,scores,toktypes,special_,tokens
     // virtual void LoadVocab_v0(const char*fn_model_base,int flag);
     virtual void LoadVocab(const char*fn_model_base,int flag)   {   assert(0);  }
-    virtual bool isValid(int flag=0x0)  {   
-        
-        return true; 
-    }
+    
     // virtual bool LoadTokenizer(const char *filename,int flag=0x0)   {   assert(0);  }
     
     

@@ -70,3 +70,29 @@ inline void GG_log_internal(DUMP_LEVEL level, const char * format, ...) {
 #define _WARN(...)  GG_log_internal(DUMP_WARN , __VA_ARGS__)
 #define _ERROR(...) GG_log_internal(DUMP_ERROR, __VA_ARGS__)
 #define _INFO_IF(...)   {   if(DUMP())  GG_log_internal(DUMP_INFO , __VA_ARGS__);}
+
+template <typename T>
+void inline PrintTensor(const char* title,const T *src, int n1,int n2,int n3=1,int n4=1,int flag=0x0){
+    if( g_dump_level>0 && flag>=0 ) return;
+    const T *cur=src; 
+    size_t nElem=(size_t)(n1)*n2*n3*n4,i,nz=0,nEach=2;
+	if(nElem==0)	return;
+    assert(cur!=nullptr);  
+    // if(strlen(title)>0) _INFO("%s\n", title);
+    float a1=-FLT_MAX,a0=FLT_MAX,a;    
+    double sum = 0.0,len=0.0,sum2=0.0;
+    for (i = 0; i < nElem; i++,cur++) {
+        // a = float(*cur);	
+        a = T2Float<T>(cur);        assert(!isnan(a) && !isinf(a));
+        if(i<nEach || i>nElem-nEach || fabs(i-nElem/2)<=nEach)
+            _INFO("%g ",a);
+        if(i==nEach || i==nElem-nEach)    _INFO("...");
+        sum += fabs(a);     sum2+=a*a;
+        if(a==0)      nz++;
+        a1 = std::max(a1,a);      a0 = std::min(a0,a);
+    }
+    assert(!isnan(sum2) && !isinf(sum2));
+    len = sqrt(sum2/nElem);
+    //  printf output is only displayed if the kernel finishes successfully,  cudaDeviceSynchronize()
+    _INFO("\t\"%s\" avg=%g(%ld) avg_len=%g sum2=%g [%f,%f]\n",title,sum/nElem,nElem,len,sum2,a0,a1);
+}

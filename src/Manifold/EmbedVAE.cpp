@@ -11,15 +11,17 @@
 #include <set>
 #include "Fish.hpp"
 #include "Optimizer.hpp"
+#include "HotPicker.hpp"
 #include "gLLM.hpp"
 #include "../g_stddef.hpp"
 #include "../lenda/kernel/SVD.hpp"
 
-TokenEmbed::TokenEmbed(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag) : GeNeuron(key_,jit, hG_, flag)    {
+TokenEmbed::TokenEmbed(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag) : SparseNeuron(key_,jit, hG_, flag)    {
     auto dims = hFish->config.token_embeds;
     nVocab = hG_->nClass();     
     latent = hFish->config.nEmbed(-1);
     shape.clear();
+    hostID = new int[nVocab];
     /*if(jvals.size()==2){
         shape={(int)(jvals[0]),(int)(jvals[1])};
     }else{
@@ -30,17 +32,10 @@ TokenEmbed::TokenEmbed(Fish *hG_, const std::string &key_, JSON::const_iterator 
 }
 TokenEmbed::~TokenEmbed(){
     FREE_a(workload_indices);       FREE_a(bucket_info);
+    FREE_a(hostID);
 }
 
-bool TokenEmbed::InitBucket(size_t num_c_groups,int flag){
-    if (bucket_info != NULL)
-        return false;
-    
-    assert((size_t)(B * T) * num_c_groups < (1ULL<<31ULL)); // todo - maybe an issue for llama3-400B(?)
-    workload_indices = new int[B * T * num_c_groups];
-    bucket_info = new int4[B * T * num_c_groups];
-    return true;
-}
+
 bool TokenEmbed::SetMAEC(hMAEC mae_,int flag){
     maec = mae_;
     // latent = maec->nIn;
@@ -53,6 +48,7 @@ bool TokenEmbed::SetMAEC(hMAEC mae_,int flag){
 
 bool TokenEmbed::Build(int flag){ 
     void * ctx = hFish->GetGGCTX(1);
+    hFish->hEmbed = this;
     int flagW=flag,n=nVocab;
 
     // InitMAC();
@@ -61,28 +57,36 @@ bool TokenEmbed::Build(int flag){
 
     bool isTrain = hFish->isTrain();
     string sw = name+MODEL_CARD::sWeight,sb=name+".pos"; 
-#ifdef _TENSOR_G_ 
+
     if(hFish->config.model.isPaddedCls) {
         flagW |= GTensor::F_PADDED;
         padded_nCls = ceil(n/128.0)*128;
     }else
         padded_nCls =n;   
-    w = TENSO(ctx, tpData, {latent, padded_nCls},flagW); //padded_nCls
-    if(padded_nCls>n)   w->x_shape = {latent,n};
-#else
-    w = TENSO(ctx, tpData, {latent, n});
-#endif    
-    hFish->InitGensor(ctx,sw.c_str(),w,isTrain);
+    w =     GT(hFish, tpData, {latent, padded_nCls},flagW); //padded_nCls
+    hFish->InitGensor(ctx,sw.c_str(),w,true);
+    if(!hFish->config.model.isEmbedWeightTying){
+        wInv = GT(hFish, tpData, {padded_nCls, latent},flagW);
+        if(padded_nCls>n)   {
+            wInv->x_shape = {n,latent};
+        }
+        sw+=".inv";
+        hFish->InitGensor(ctx,sw.c_str(),wInv,true);
+    }
+    if(padded_nCls>n)   {
+        w->x_shape = {latent,n};  
+    } 
+    
     if(isAddPos){
         n = hFish->config.n_ctx();
-        b = TENSO(ctx, tpData, {latent, n});        
+        b = GT(hFish, tpData, {latent, n});        
         sb = "position_embd.weight";
-        hFish->InitGensor(ctx,sb.c_str(),b,isTrain);
+        hFish->InitGensor(ctx,sb.c_str(),b,true);
     }
 #ifdef _TENSOR_G_        
     
     SHAPE s3={B,T,latent};
-    out = std::make_shared<huTensor>(name+".batch",s3,w->type,false);    
+    out = std::make_shared<huTensor>(hFish,name+".batch",s3,w->type,false);    
     // hFish->InitGensor(ctx,name+".batch",out,false);    
 #endif    
     return true;
@@ -99,10 +103,10 @@ hGensor TokenEmbed::Ming(void *ctx_,hGensor tokens,int flag){
 
 #ifdef _TENSOR_G_
     if(hFish->isSymbolic()){            
-        out->AddSrc({w,tokens,b});      cur=out;
+        out->AddSrc({w,wInv,tokens,b});      cur=out;
     } else{
         // cur = w->GetRow(out,tokens,b);
-        FUSE_cuda(tokens,nullptr,nullptr,0x0); //nullptr,nullptr,
+        OnEmbed(TO<int>(tokens),0x0); //nullptr,nullptr,
         cur = out;
     }   
 #else
@@ -216,14 +220,7 @@ VarCoder::VarCoder(Fish *hG_,std::vector<int>&dims,int level,bool isR,bool isB,i
     name = "AE_"+std::to_string(level);
     Init(hG_,0x0);
     assert(nTop>=nBottom && nBottom>0);
-    Build(flag);
-    /*encode = TENSO(nullptr, typNUMBER::F32, {nTop, nBottom});     
-    if(isSym)
-        decode = TENSO(nullptr, typNUMBER::F32, {nBottom, nTop}); 
-    else{
-        decode = nullptr;
-        isResi = false;
-    } */           
+    Build(flag);             
 }
 MAEC::MAEC(Fish *hG_, const std::string &key_, int flag) {
     name = "MAEC_"; //+key;
@@ -313,7 +310,7 @@ string MAEC::__repr__( string& suffix,string& prefix,int flag)    {
     return info;
 };
 
-VarCoder::VarCoder(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : GeNeuron(key_,jit, hG_, flag) {
+VarCoder::VarCoder(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_,jit, hG_, flag) {
     if(jvals.size()>=2){
         shape={(int)(jvals[0]),(int)(jvals[1])};
     }else{
@@ -326,27 +323,55 @@ VarCoder::VarCoder(Fish *hG_, const std::string &key_, JSON::const_iterator jit,
 
 FFN::FFN(Fish* hG_,const std::string&key_,JSON::const_iterator jit,int flag) : VarCoder(hG_, key_,jit, flag)     {
     remater_ffn = hFish->config.common.remater_ffn;       //false;
+    if(hG_->config.model.isFFNWeightTying){
+        // isSymmetric = true;      Need more time to study its effect
+    }
+    if( hFish->config.ModelArch()==NLP_GUPPY )   {      //->config.model.isFFNShareParam;
+        int nSample = nTop;       
+        int nVocab = hFish->nClass();
+        if(nSample==nVocab){
+            // compression = SAMPLE;
+            // for(int i=0;i<nSample;i++){
+            //     samples[i] = i;
+            // }
+        }else{
+            compression = SAMPLE;            
+        }
+        hSamps = GT(hFish, typNUMBER::I32, {nSample},0x0);      
+        hSamps->Alloc();
+            //GT({nSample},samples,typNUMBER::I32,0x0);
+        isShareParam = true;
+        isBias = false;
+    }
     tpNorm = 2;
 }
 bool VarCoder::Build(int flag_0)   {
     int flag = flag_0;
     if(tpNorm>0)
         norm.BuildX(name+MODEL_CARD::sNorm,{nBottom},hFish,flag);   
-if(hFish->arch==MODEL_ARCH::NLP_QWEN2){
-    up.BuildX(name+".w1",{nBottom,nTop},hFish,flag | F_DELTA);  
-    down.BuildX(name+".w2",{nTop,nBottom},hFish,flag | F_DELTA); 
-    gate.BuildX(name+".w3",{nTop,nBottom},hFish,flag | F_DELTA); 
-}else{
-    up.BuildX(name+"_up",{nBottom,nTop},hFish,flag | F_DELTA);  
-    down.BuildX(name+"_down",{nTop,nBottom},hFish,flag | F_DELTA); 
-}
+    if(hFish->arch==MODEL_ARCH::NLP_QWEN2){
+        up.BuildX(name+".w1",{nBottom,nTop},hFish,flag | F_DELTA);  
+        gate.BuildX(name+".w3",{nBottom,nTop},hFish,flag | F_DELTA); 
+        down.BuildX(name+".w2",{nTop,nBottom},hFish,flag | F_DELTA);         
+    }else{
+        down.BuildX(name+"_down",{nTop,nBottom},hFish,flag | F_DELTA); 
+        up.BuildX(name+"_up",{nBottom,nTop},hFish,flag | F_DELTA);  
+        if(isSymmetric){        
+            down.w = nullptr;
+            down.w = up.w;      down.isTransW = true;
+        }
+    }
+    up.SetGanglia(this);        gate.SetGanglia(this);      down.SetGanglia(this); 
+          
     if(!isBias)   {
-        up.b = nullptr;      down.b = nullptr;
-        if(!gate.Empty())   gate.b = nullptr;
+        up.b = nullptr;         down.b = nullptr;
+        if(!gate.Empty())       gate.b = nullptr;
     }
     
     return true;
 }
+
+FFN* FFN::first = nullptr;
 bool FFN::Build(int flag_0)   {
     delta = GTensor::delta;
     SHAPE sp={shape[0]},sp3,sp2;
@@ -357,23 +382,31 @@ bool FFN::Build(int flag_0)   {
 #ifdef _TENSOR_G_    
     // flag |= GeNeuron::F_BIAS; 
     assert(C==shape[0]);
-    sp3 = {B,T,latent};
-    sp2 = {B,T,C};
+    sp3 = {B,T,latent};    sp2 = {B,T,C};
     // relu.out = std::make_shared<huTensor>(name+"_relu",sp3,GTensor::tpFloatX,false);   
 #else    
     gate.BuildX(name+"_gate",{shape[0],shape[1]},hFish,flag);
 #endif
-         //layer->ffn_norm.sT="f";
     VarCoder::Build(flag);
-    // up.BuildX(name+"_up",{shape[0],latent},hFish,flag);  
-    // down.BuildX(name+"_down",{latent,shape[0]},hFish,flag);        
+    if(isShareParam ){
+        TokenEmbed* embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed",0);  
+        down.SetEmbed(embed,0);   
+        up.SetEmbed(embed,1);    
+        if(layer==1){
+            first = this;         
+        }else{
+            
+        }
+    }
+        
 #ifdef _TENSOR_G_
-    if(GTensor::scratch_ff1!=nullptr)   {
-        assert(GTensor::scratch_ff1->size()>=up.out->size());
+    if(GTensor::tmpFF1!=nullptr)   {
+        assert(GTensor::tmpFF1->size()>=up.out->size());
         // gelu_fusion = 1;     //  0 = none, 1 = forward, 2 = forward+backward (-1 => per-GPU default)
         if(remater_ffn){
             BIT_SET(up.out->flags,GTensor::F_NOALLOC); 
-            out = std::make_shared<huTensor>(name+"_out",sp2,GTensor::tpFloatX,false);  
+            if(!gate.Empty())   BIT_SET(gate.out->flags,GTensor::F_NOALLOC); 
+            out = std::make_shared<huTensor>(hFish,name+"_out",sp2,GTensor::tpFloatX,false);  
         }else{
             //out would be norm.out
         }
@@ -435,8 +468,20 @@ hGensor FFN::Ming(void * ctx_,hGensor inpL,int flag){
 string FFN::__repr__( string& suffix,string& prefix,int flag)    {
     char buf[5012]="\0";
     const char*tab=prefix.c_str();
-    sprintf(buf+strlen(buf),"%s %s {l=%d}",tab,name.c_str(),shape[1]);    
+    string sS = "";
+    int n = 0;
+    switch(compression){
+    case SAMPLE:
+        n = hSamps->size();
+        sS = "SAMP_"+std::to_string(samp_1);
+        break;
+    default:
+        sS = isSparse?hPicker->__repr__(suffix,prefix,flag):"";
+        break;
+    }
+
+    sprintf(buf+strlen(buf),"%s %s {hidden=%d} %s %s",tab,name.c_str(),shape[1],isSymmetric?"SYM":"",  sS.c_str());    
     if(flag>0)
-        _INFO("%s",buf); 
+        _INFO("%s",buf);     
     return buf;  
 };

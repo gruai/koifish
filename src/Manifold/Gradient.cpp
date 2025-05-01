@@ -357,7 +357,7 @@ static bool check_mat_mul(
     }
     _INFO("\n");
 
-    _INFO("y: n_dims = %d, (%lld, %lld)\n", y->n_dims, y->ne[0], y->ne[1]);
+    _INFO("y: n_dims = %d, (%ld, %ld)\n", y->n_dims, y->ne[0], y->ne[1]);
     for (int j = 0; j < y->ne[1]; ++j) {
         for (int i = 0; i < y->ne[0]; ++i) {
             _INFO("%6.3f ", dst[j*nr + i]);
@@ -806,7 +806,7 @@ int main(int argc, const char ** argv) {
                         hGensor  m = ggml_mul_mat(ctx0, x[1], x[0]);
                         hGensor  f = ggml_sum(ctx0, m);
 
-                        _INFO("testing: mul_mat, [%lld, %lld] (%d) * [%lld, %lld] (%d)\n", x[1]->ne[0], x[1]->ne[1], x[1]->n_dims, x[0]->ne[0], x[0]->ne[1], x[0]->n_dims);
+                        _INFO("testing: mul_mat, [%ld, %ld] (%d) * [%ld, %ld] (%d)\n", x[1]->ne[0], x[1]->ne[1], x[1]->n_dims, x[0]->ne[0], x[0]->ne[1], x[0]->n_dims);
 
                         check_gradient("mul_mat", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
                         if (ndims == 2) {

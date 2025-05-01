@@ -49,7 +49,7 @@ find_package(OpenMP)
 if(K_TENSOR_CUDNN)
     add_compile_definitions(_TENSOR_G_)  
     set(CUDA_LIB  cudart cudnn cublasLt  )   
-    set(CUDA_INC  /home/cys/cudnn-frontend/include  ) 
+    set(CUDA_INC  ${CUDA_INC} ~/cudnn-frontend/include  ) 
 endif()
 
 if(K_USECUDA)

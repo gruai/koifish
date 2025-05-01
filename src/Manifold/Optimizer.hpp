@@ -45,14 +45,8 @@ protected:
     size_t nParams = 0, nMostParam = 0;
     float *_tmp=nullptr;
     bool just_initialized = false,isAdaptiveSched = false,isGlobalGrad=true;
-    bool isConverge = false,isDumpOnce = false;
-    enum PHASE{
-        P_TRAIN,
-        P_EVAL_,
-        //Inference     fish->isLocalInfer = true
-        P_PREFILL,P_GENERATE
-    };
-    PHASE phase = P_TRAIN;
+    bool isConverge = false,isDumpOnce = false;    
+    
     bool isBackward = false;
     
     int past=0,nGradAccum=0,tpSign=0;
@@ -114,7 +108,14 @@ public:
         OK = 0,DID_NOT_CONVERGE,NO_CONTEXT,INVALID_WOLFE,
         FAIL,CANCEL,
     };
-  
+    enum PHASE{
+        P_TRAIN,
+        P_EVAL_,
+        //Inference     fish->isLocalInfer = true
+        P_PREFILL,P_GENERATE
+    };
+    PHASE phase = P_TRAIN;
+    
     hSampLoader train_loader=nullptr;
     StepInfos& trainInfos()  {   assert(train_loader!=nullptr);  return train_loader->stepis;    }
     std::vector<hSampLoader> val_loaders;
@@ -154,8 +155,8 @@ public:
     }
     virtual void AfterBuild(int flag=0x0);
     virtual void BeforeTrain(hGensor tokens_input,int flag) ;
-    virtual void InitCUDA(int flag);
-    virtual void ClearCUDA(int flag);
+    virtual void InitOnCUDA(int flag);
+    virtual void ClearOnCUDA(int flag);
     virtual bool PrepareData( CLI_params& config,int flag );
     virtual void Shuffle(int n_vocab,struct train_params_& train_params,int flag=0x0)  {
         assert(0);

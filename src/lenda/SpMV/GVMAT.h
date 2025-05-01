@@ -52,6 +52,7 @@ class GeMAT{
 	GeMAT& operator=(const GeMAT&);
 protected:
 	int nRow,nCol,flag;
+	std::string name;
 	//double *minimum,*maximum;	//range
 	GeMAT( ) :  nRow(0),nCol(0),flag(0),type(M_UNKNOWN) {;}
 	GeMAT( int m,int n,int flag_=0x0) :  nRow(m),nCol(n),flag(flag_),type(M_UNKNOWN) {;}

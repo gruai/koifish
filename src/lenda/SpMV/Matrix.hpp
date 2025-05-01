@@ -9,6 +9,7 @@
 #include "Pattern.h"
 #include "../../Utils/BLAS_t.hpp"
 #include "../../Utils/GST_util.hpp"
+#include "../../g_float.hpp"
 
 using namespace std;
 
@@ -176,9 +177,8 @@ protected:
 public:
 //	typedef typename shared_ptr<_Mybase> handle;
 //	typedef const shared_ptr<_Mybase> const_handle;	
-//	int nRow,nCol;
-//	TYPE type;
 
+	typNUMBER  tpOut = typNUMBER::F16;		//default is float
 	Matrix( ) : GeMAT(),val(nullptr)	{;	}
 	Matrix( int nR,int nC,int flg=0x0,TYPE tp=M_GENERAL ) : val(nullptr)
 	{	create( nR,nC,tp,nullptr,0,flg );	}

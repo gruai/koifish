@@ -58,6 +58,10 @@ inline void cudaCheck(cudaError_t error, const char *file, int line) {
 };
 #define cudaCheck(err) (cudaCheck(err, __FILE__, __LINE__))
 
+inline void SYNC_DEVICE(int flag)   {
+    cudaCheck(cudaDeviceSynchronize());
+} 
+
 // like cudaFree, but checks for errors _and_ resets the pointer.
 template<class T>
 inline void cudaFreeCheck(T** ptr, const char *file, int line) {
@@ -194,34 +198,18 @@ extern int g_dump_level;
 template <typename T>
 void inline PrintTensor(const char* title,const T *src, bool isDevice,int n1,int n2,int n3=1,int n4=1,int flag=0x0){
     if( g_dump_level>0 && flag>=0 ) return;
-    T *dst=(T*)src,*cur=NULL; 
-    size_t nElem=n1*n2*n3*n4,i,nz=0,nEach=3;
+    T *host_data=(T*)src; 
+    size_t nElem=(size_t)(n1)*n2*n3*n4;
 	if(nElem==0)	return;
-
+    assert(src!=nullptr);
     if(isDevice){
-        dst = (T*)malloc(sizeof(T)*nElem);
-        cudaCheck(cudaMemcpyAsync(dst,src, nElem*sizeof(T), cudaMemcpyDeviceToHost, main_stream));
+        host_data = (T*)malloc(sizeof(T)*nElem);
+        cudaCheck(cudaMemcpyAsync(host_data,src, nElem*sizeof(T), cudaMemcpyDeviceToHost, main_stream));
     }
-    cur = dst;  
-  
-    // if(strlen(title)>0) _INFO("%s\n", title);
-    float a1=-FLT_MAX,a0=FLT_MAX,a;    
-    double sum = 0.0,len=0.0,sum2=0.0;
-    for (i = 0; i < nElem; i++,cur++) {
-        a = float(*cur);	//T2Float<T>(cur);
-        if(i<nEach || i>nElem-nEach || fabs(i-nElem/2)<=nEach)
-            _INFO("%g ",a);
-        if(i==nEach || i==nElem-nEach)    _INFO("...");
-        sum += fabs(a);     sum2+=a*a;
-        if(a==0)      nz++;
-        a1 = std::max(a1,a);      a0 = std::min(a0,a);
-    }
-    len = sqrt(sum2/nElem);
-    //  printf output is only displayed if the kernel finishes successfully,  cudaDeviceSynchronize()
-    _INFO("\t\"%s\" avg=%g(%ld) avg_len=%g sum2=%g [%f,%f]\n",title,sum/nElem,nElem,len,sum2,a0,a1);
-    
+ 
+    PrintTensor(title,host_data,n1,n2,n3,n4,flag);    
     if(isDevice){
-        free(dst);
+        free(host_data);
     }
 }
 

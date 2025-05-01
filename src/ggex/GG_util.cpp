@@ -417,9 +417,10 @@ MODEL_ARCH CLI_params::ModelArch()   {
     std::transform(info.begin(), info.end(), info.begin(), ::toupper);
     arch =  info=="MOE" ? NLP_MOE :
             info=="MAMBA" ? MODEL_ARCH::NLP_MAMBA : 
+            info=="GUPPY" ? MODEL_ARCH::NLP_GUPPY :
             info=="DEEPSEEK" ? MODEL_ARCH::NLP_DEEPSEEK : 
             info=="QWEN2" ? MODEL_ARCH::NLP_QWEN2 : 
-            // info=="QWEN" ? MODEL_ARCH::NLP_DEEPSEEK : 
+            // info=="QWEN" ? MODEL_ARCH::NLP_QWEN : 
             info=="GPT2" ? MODEL_ARCH::NLP_GPT2 :
             info=="GPT2CHAR" ? MODEL_ARCH::NLP_GPT2_char :
             info=="LAMA" ? MODEL_ARCH::NLP_LLAMA :
@@ -520,6 +521,13 @@ void CLI_params::OnArch( ){
     srand(common.seed);
     
     switch(ModelArch()){
+    case MODEL_ARCH::NLP_GUPPY:  
+        model.isNormalBias = true;
+        model.isSLPBias = true;         //nealy same
+        model.isPaddedCls = true;       //ceil(n/128.0)*128
+        model.preLogits_dB = 8;
+        DEBUG.check_tensor_norm = true;
+        break;
     case MODEL_ARCH::NLP_GPT2:  
     case MODEL_ARCH::NLP_GPT2_char:  {
         //baby_GPT      dropout = 0.2
@@ -816,7 +824,7 @@ int Gensor_loab(struct ggml_context * ctx0,hGensor w,int nHeavy,hGensor ga,hGens
     size_t ne00 = tELEM(w);        assert(nIn>0 && nOut>0 && ne00==nIn*nOut);
     assert(nIn>nHeavy && nOut>nHeavy && nHeavy>0);
     float *A=Gensor2float(ctx0,w,flag);
-    auto svd=std::make_shared<LoSVD<float>>(A,nIn,nOut,rank,1.0e-3,0); //1.0e-3
+    auto svd=std::make_shared<LoSVD<float>>("Gensor_loab",A,nIn,nOut,rank,1.0e-3); //1.0e-3
     assert(ga->type==typNUMBER::F32 && gb->type==typNUMBER::F32);
     if(!svd->Build( ))  {
         return -1;
@@ -841,7 +849,7 @@ int Gensor_SVD(struct ggml_context * ctx0,hGensor w,int nHeavy,hGensor U,hGensor
     assert(nIn>nHeavy && nOut>nHeavy && nHeavy>0);
     float *A=Gensor2float(ctx0,w,flag);
     GST_TIC(tic);
-    auto svd=std::make_shared<LoSVD<float>>(A,nIn,nOut,rank,1.0e-3,0); //1.0e-3
+    auto svd=std::make_shared<LoSVD<float>>("Gensor_SVD",A,nIn,nOut,rank,1.0e-3); //1.0e-3
     float t0 = GST_TOC(tic);
     if(!svd->Build( ))  {
         return -1;
@@ -1066,8 +1074,8 @@ void _T_repr_(hGensor t,const char*tab,char *buf,const GENSOR_INFO&info){
     auto ne=t->ne;
     size_t n0 = strlen(buf),n1;         //char buf[64*1024]="\0";
     string suf,pref,sX = info.__repr__(suf,pref);        //    info.sX;
-    sprintf(buf+strlen(buf),"%s %s %s %s \t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",tab,sX.c_str(), A,
-        t->name,ne[0], ne[1], ne[2], ne[3], cNameOf(t->type));
+    sprintf(buf+strlen(buf),"%s %s %s %s \tdata=%p grad=%p\t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",tab,sX.c_str(), A,
+        t->name,t->data,t->grad,ne[0], ne[1], ne[2], ne[3], cNameOf(t->type));
     n1= strlen(buf); 
 }
 
@@ -1308,6 +1316,13 @@ double BitPE(typNUMBER type) {
 #endif
 }
 
+dotprod_t fnDot(typNUMBER tp) {	
+	int wbit = BitPE(tp);
+	return  wbit == 4 ? dotprod_gf4 : 
+            wbit == 8 ? dotprod_fp8 : 
+            wbit == 16 ? dotprod_fp16 : dotprod_fp32;	
+}
+
 /*
     byte per element of this type(maybe decimals rather than integers!)
 */
@@ -1356,6 +1371,8 @@ const char *cNameOf(typNUMBER type){
         return "float";
     if(type==typNUMBER::I32)
         return "I32";
+    if(type==typNUMBER::I8)
+        return "I8";
 #ifdef __USE_GGML__
     return ggml_type_name((enum ggml_type)type);
 #else

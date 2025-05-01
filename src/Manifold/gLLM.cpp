@@ -9,7 +9,6 @@
  */
 
 #include "gLLM.hpp"
-#include "../Utils/Cache.hpp"
 #include "Fish.hpp"
 #include "../g_stddef.hpp"
 #include "Optimizer.hpp"
@@ -103,7 +102,7 @@ NLP_AutoRegressive::NLP_AutoRegressive(const std::string& nam_,const NLP_AutoReg
 
 string NLP_AutoRegressive::__repr__( string& suffix,string& prefix,int flag)         {
     // Fish::__repr__(suffix,prefix,flag);
-    char buf[5012]="\0";
+    char buf[50120]="\0";
     const char*tab=prefix.c_str();
 #ifdef _TENSOR_G_
 #else
@@ -142,7 +141,7 @@ string NLP_AutoRegressive::__repr__( string& suffix,string& prefix,int flag)    
             }
         }
     }
-    _T_repr_(target_probs,"  target_probs=",buf);  
+    _T_repr_(target_probs,"  target(ID)=",buf);  
     for(auto wiki : wikis){
         if(wiki->exLogits!=nullptr){
             string a = "   ex_logits@"+wiki->title+"=";
@@ -158,7 +157,7 @@ string NLP_AutoRegressive::__repr__( string& suffix,string& prefix,int flag)    
         _T_repr_(mom.embed2w,"  gate=",buf); 
     _T_repr_(loss,"  loss=",buf);   
 
-    sprintf(buf+strlen(buf),"%s",suffix.c_str()); 
+    sprintf(buf+strlen(buf),"\tLAY=%d\t%s ",TGraph::curLayer,suffix.c_str()); 
     _INFO("%s",buf); 
     return buf;
 }
@@ -240,7 +239,7 @@ void NLP_AutoRegressive::build_inp_KQ_(void *ctx,bool isMask,bool causal) {
     int n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_tokens = n_batch*n_ctx,n_past=0;
     // const float kv_scale = 1.0f/sqrtf(float(n_embd)/n_head);
         // KQ_pos - contains the positions
-    KQ_pos = TENSO(ctx, typNUMBER::I32, {n_ctx});
+    KQ_pos = GT(this, typNUMBER::I32, {n_ctx});
     gTN(KQ_pos, "inp_pos");  
     tFLAG(KQ_pos,GTensor::F_INPUT);       //    ggml_set_input(KQ_pos);    
     int * data = (int *) KQ_pos->data;
@@ -252,9 +251,9 @@ void NLP_AutoRegressive::build_inp_KQ_(void *ctx,bool isMask,bool causal) {
         auto dt = typNUMBER::F32;     
         auto pad = GGML_PAD(n_ctx, GGML_KQ_MASK_PAD);   //  (((x) + (n) - 1) & ~((n) - 1))
         // KQ_mask = causal
-        //     ? TENSO(ctx, dt, n_kv,     GGML_PAD(n_tokens, GGML_KQ_MASK_PAD))
-        //     : TENSO(ctx, dt, n_tokens, GGML_PAD(n_tokens, GGML_KQ_MASK_PAD));
-        KQ_mask = TENSO(ctx, dt, {n_ctx,pad} );
+        //     ? GT(this, dt, n_kv,     GGML_PAD(n_tokens, GGML_KQ_MASK_PAD))
+        //     : GT(this, dt, n_tokens, GGML_PAD(n_tokens, GGML_KQ_MASK_PAD));
+        KQ_mask = GT(this, dt, {n_ctx,pad} );
         gTN(KQ_mask, "KQ_mask");      
         tFLAG(KQ_mask,GTensor::F_INPUT);    //ggml_set_input(KQ_mask);        //  flags |= GGML_TENSOR_FLAG_INPUT;
         float*mask = (float*)(KQ_mask->data);
@@ -322,7 +321,7 @@ void Fish::CopyWeight(const Fish* src,int flag) {
 */
 bool NLP_AutoRegressive::LocalFeeling(hSampLoader hLoader,vector<float>& result,int flag)  {
     assert(hOPT!=nullptr);
-    
+    auto preLogits = hCLS->preLogits;
     assert(hLoader->shard_samps.size()==1);
     auto hSamp = hLoader->shard_samps[0];
     int i,nTok = hSamp->len,_nctx=config.n_ctx();
@@ -354,7 +353,7 @@ size_t NLP_AutoRegressive::tVocab(){
 
 hGensor Fish::BuildLoss( void * ctx,hGensor cur,int flag){
     if(DEBUG.NO_loss)   {
-        assert(cur==preLogits);
+        assert(cur==hCLS->preLogits);
         out_node = cur;     return cur;
     }
     int n_ctx = config.n_ctx(),nCls = nClass(),n_batch = config.n_batch();
@@ -368,9 +367,9 @@ hGensor Fish::BuildLoss( void * ctx,hGensor cur,int flag){
     assert(loss==nullptr);
     hGensor  t36 = nullptr;    
     if(config.is( {"model_v0","target"},string("OneHot") )){
-        target_probs = TENSO(ctx_build, typNUMBER::I32, {1, n_ctx, n_batch});
+        target_probs = GT(this, typNUMBER::I32, {1, n_ctx, n_batch});
     }else
-        target_probs = TENSO(ctx_build, typNUMBER::F32, {nCls, n_ctx, n_batch});
+        target_probs = GT(this, typNUMBER::F32, {nCls, n_ctx, n_batch});
     gTN(target_probs,      "targets");    
     if(config.is({"model_v0","target"},string("OneHot")))
         t36 = ggml_cross_entropy_loss_1(ctx, cur, target_probs);
@@ -491,7 +490,8 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag)    {
 }
 bool Fish::InitDictTokenset(int flag)    {
     void *hLLM = nullptr;
-    hDict = std::make_shared<GTokenizer>(this);
+    // hDict = std::make_shared<GTokenizer>(this);     //  entence != prompt
+    hDict = std::make_shared<GTokenizer_Heap>(this);
 
     switch(config.ModelArch()){
     case MODEL_ARCH::NLP_GPT2:
@@ -511,6 +511,10 @@ bool Fish::InitDictTokenset(int flag)    {
             }
         }
         // hTokenset = std::make_shared<DataTokenSet>(hDictVAE.get());        
+        break;
+    case MODEL_ARCH::NLP_GUPPY:
+        hDict->vocab.resize(50304);         //  50304       50257   ???
+        hDict->bos_id = 1;             hDict->eos_id = 2;  
         break;
     case MODEL_ARCH::NLP_MISTRAL:
         // hDictVAE = std::make_shared<DictVAE>(this);
@@ -574,7 +578,7 @@ bool NLP_AutoRegressive::InitInput(void * ctx_build,bool isMask,int flag) {
     SHAPE shape={n_ctx, n_batch};
     
     // tokens_input copy values from Batch tensor
-    tokens_input = TENSO(ctx_build, typNUMBER::I32, shape,GTensor::F_INPUT);       gTN(tokens_input, "inp_tokens");
+    tokens_input = GT(this, typNUMBER::I32, shape,GTensor::F_INPUT);       gTN(tokens_input, "inp_tokens");
     in_node = tokens_input;
 #ifdef _TENSOR_G_
 #else
@@ -606,13 +610,13 @@ bool NLP_AutoRegressive::CreateExlogists(hWIKI wiki,uint32_t n_ctx,uint32_t n_ba
         assert(wiki->exLogits==nullptr);
 #ifndef _TENSOR_G_       
         if(wiki->n_vocab>nV){
-            wiki->exLogits = TENSO(ctx, typNUMBER::F32, {nV,  n_ctx, n_batch});
+            wiki->exLogits = GT(this, typNUMBER::F32, {nV,  n_ctx, n_batch});
             if(0){
-            wiki->t2t = TENSO(ctx, typNUMBER::F32, {nV,  nV});
+            wiki->t2t = GT(this, typNUMBER::F32, {nV,  nV});
             sprintf(wiki->t2t->name,"t2t@%s",wiki->title.c_str());
             }
         }else{
-            wiki->exLogits = TENSO(ctx, typNUMBER::F32, {wiki->n_vocab,  n_ctx, n_batch});
+            wiki->exLogits = GT(this, typNUMBER::F32, {wiki->n_vocab,  n_ctx, n_batch});
         }
 
         tmpExLogis.push_back(wiki->exLogits); 
@@ -737,9 +741,9 @@ void NLP_AutoRegressive::InitModel(int flag){
 
     if( tmpExLogis.size()>0 
             && !isLocalInfer) {
-        // exLogits = TENSO(ctx, typNUMBER::F32, n_vocab,  n_ctx, train_params.n_batch);
+        // exLogits = GT(this, typNUMBER::F32, n_vocab,  n_ctx, train_params.n_batch);
         if(teach==WIKI::_LOGITS_GATE)   {               
-            mom.embed2w = TENSO(ctx, typNUMBER::F32, {n_embd, (int)(tmpExLogis.size())+1});
+            mom.embed2w = GT(this, typNUMBER::F32, {n_embd, (int)(tmpExLogis.size())+1});
         }   
     }
     nParams = 0;    
@@ -777,13 +781,17 @@ void NLP_AutoRegressive::Dump(int type,int flag)      {
         _INFO("%s: LARS(t_max=%g)\n", __func__,config.lars_ratio);
 }
 
-float* T_generate_cuda(Fish* hFish, bool isOnlyUpdateKV,unsigned flags=0x0);
+float* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV,bool isCPU,unsigned flags=0x0);
+int T_generate_cpu(hFISH hFish, bool isOnlyUpdateKV,unsigned flags=0x0);
 int NLP_AutoRegressive::Forward_0(int flag)  {
     return 0x0;
 }
 int NLP_AutoRegressive::ForwardOnNeuron(int flag)  {
-    if(DEBUG.T_cuda_ver==1){
-        T_generate_cuda(this,false); //  do one inference as warmup
+    if(DEBUG.T_cuda_ver==1){    
+        if(DEBUG.T_cpu){            
+            T_generate_cpu(SharedThis(), false, flag);
+        }else
+            T_generate_cuda(SharedThis(),false,DEBUG.T_cpu,flag); //  do one inference as warmup
         return 0x0;        
     }
 
@@ -792,7 +800,7 @@ int NLP_AutoRegressive::ForwardOnNeuron(int flag)  {
     hGensor cur=nullptr,residual=nullptr;
     LayerNormal* lnf = GetNeuron<LayerNormal>("LayerNormal",0);
     TokenEmbed* embed = GetNeuron<TokenEmbed>("TokenEmbed",0);
-    cur = embed->Ming(nullptr,Input());     
+    cur = embed->OnEmbed(TO<int>(Input()),0x0);       //  ->Ming(nullptr,Input());     
     residual = cur; //embed->out;
     SelfAttention *QKV0 = GetNeuron<SelfAttention>("SelfAttention",0),*QKV=nullptr;
 
@@ -817,7 +825,7 @@ int NLP_AutoRegressive::ForwardOnNeuron(int flag)  {
     }
     OutCLS* cls = GetNeuron<OutCLS>("OutCLS",0);
     if(tpFuseCu==1)
-        cls->FUSE_cuda(cur,embed->w,flag); //lnf->out,
+        cls->FUSE_cuda(cur,flag); //embed->w,
     else    {
         assert(0);
         //cls->preLogits = lnf->out*embed->w;   //matmul_forward_cublaslt(ToX(cls->preLogits), ToX(lnf->out), ToX(embed->w), NULL, B, T, C, Vp, main_stream);

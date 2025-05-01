@@ -13,6 +13,17 @@
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
 
+Fish::STAT Fish::stat;
+void Fish::STAT::Dump(int typ,int flag){
+    if(NOT_DUMP(0))    return;
+    size_t sz = 0x0;
+    const char*title = "OPT";   //__func__
+    switch(typ){
+    default:
+        _INFO("\tTIME: qkv=%.3g(s),ffn=%.3g(s)\n", tQKV/1.0e6,tFFN/1.0e6);
+    }
+}
+
 hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,vector<hWIKI> wikis,ROLE_TYPE role_,int flag)   {
     assert(wikis.size()>=0);
     hFISH fish = nullptr;
@@ -28,6 +39,9 @@ hFISH Fish::MakeInstance(const std::string nam_,struct CLI_params& params,vector
         break;
     case MODEL_ARCH::NLP_MISTRAL:
         fish = std::make_shared<Mistral>(nam_+"_mistral",params,role_);
+        break;
+    case MODEL_ARCH::NLP_GUPPY:
+        fish = std::make_shared<Guppy>(nam_+"_guppy",params,role_);
         break;
     case MODEL_ARCH::NLP_GPT2:
     case MODEL_ARCH::NLP_GPT2_char:
@@ -170,13 +184,15 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
         auto node = it.first;
         if (BIT_TEST(node->flags,GTensor::GTensor::F_PARAM)) {      
             optParams.push_back(node);  
-            nx += tELEM(node);     n0++;   //81522432,13
+            if(node->isRefer())
+                continue;
+            nx += tELEM(node);     n0++;   //
         }
         if (BIT_TEST(node->flags,GTensor::F_INPUT)) {  
             nInput++; 
         }
     }
-
+    nParams = nx;
     assert(optParams.size() < 2048);
 #ifdef __USE_GGML__
     if(isLocalInfer){  //gb=nullptr
@@ -238,13 +254,11 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
     if(isTrain())  
         assert(nParams>0);
     else{
-        assert(nParams==0);     assert(hBackTG==nullptr);
+        /*assert(nParams==0);*/     assert(hBackTG==nullptr);
     }
     if(nx != nParams){
         CHECK_SAME_TENSORS("Compare parameter tensors\t",optParams,xGensors); 
         _ERROR("%s nx(%ld)!=nParams(%ld)\t", __func__,nx,nParams );
-        //  assert(0);
-        // return false;
     }
     if (!config.only_write_model && hOPT!=nullptr) {
         hOPT->Prepare(nParams);
@@ -281,7 +295,7 @@ void Fish::ClearGraph(int flag) {
     gensors.Clear();
     in_node = nullptr, out_node = nullptr;  
     loss = nullptr, target_probs = nullptr, KQ_pos = nullptr, KQ_mask = nullptr, pos_embd=nullptr;
-    preLogits = nullptr;        
+    // preLogits = nullptr;        
     xn = nullptr,xxn = nullptr;  
     optParams.clear();      xGensors.clear();
 
@@ -340,8 +354,8 @@ bool Fish::Build(int flag)  {
         isInitParam = true;
         hForwTG = std::make_shared<TGraph>(this,"J_model",ctx_build,true);
         jToGraph(ctx_build,false,flag);
-        assert(preLogits!=nullptr);            
-        BuildLoss(ctx_build,preLogits);
+        assert(hCLS!=nullptr);            
+        BuildLoss(ctx_build,hCLS->preLogits);
         iRet = BuildComputeGraph(0,ctx_build,0x0);        
     }
     
@@ -353,12 +367,6 @@ bool Fish::Build(int flag)  {
     Dump(0x0);  
     isSymbolicAnalysis = false;
     return true;
-}
-
-bool Fish::OnTrainStep(struct train_opt_callback_data *data,SampLoader&loader, int accum_step, float *sched, int flag)    {
-    LossCurve(0x0);
-    assert(0);
-    return false;
 }
 
 static const char * vendor = "gruai";     //llm_arch_from_string
@@ -441,7 +449,7 @@ void Fish::Statistic(int typ, int flag)     {
         // ggml_graph_dump_dot(gf, NULL, "opt-forward.dot");
         // if(gb!=nullptr) ggml_graph_dump_dot(gb, gf, "opt-backward.dot");
     }   else        {
-        if(preLogits!=nullptr)
+        // if(preLogits!=nullptr)
             // hForwTG->__repr__(suffix,prefix);   //preLogits = gf->nodes[gf->n_nodes - 2];
         if(gb!=nullptr){
             // hBackTG->__repr__(suffix,prefix);   //// TGraph("Backward",gb,true)
@@ -486,7 +494,7 @@ void Fish::InitGensor(void *ctx, const string&name, hGensor gensor, bool isParam
         gTN0(gensor,name.c_str());      //ggml_set_name(gensor, name);        //    gTN0(w,"%s.w",name.c_str());
     }        
     
-    if (isParam && isTrain())        {
+    if (isParam /*&& isTrain()*/)        {
 #ifdef _TENSOR_G_
         gensor->SetFlag(GTensor::GTensor::F_PARAM);
 #else
@@ -494,8 +502,7 @@ void Fish::InitGensor(void *ctx, const string&name, hGensor gensor, bool isParam
         ggml_set_param(ctx, gensor);
 #endif
         gTN(gensor,"");
-        nParams += tELEM(gensor);
-        // assert(strlen(gensor->grad->name)>0);
+        // nParams += tELEM(gensor);
         xGensors.push_back(gensor);
     }
     // if(strcmp(gensor->name,"output.bias")==0) {   //only for debug
@@ -539,11 +546,11 @@ hGensor Fish::AddTensor(void *ctx,const std::string&key_,typNUMBER tp,const SHAP
     CHECK_SHAPE(shape);
     hGensor gensor = nullptr;
     if(shape.size()==4)  {
-        gensor = TENSO(ctx, tp, shape,0x0);
+        gensor = GT(this, tp, shape,0x0);
     }else if(shape.size()==2)  {
-        gensor = TENSO(ctx, tp, shape,0x0);        
+        gensor = GT(this, tp, shape,0x0);        
     }else if(shape.size()==1)  {
-        gensor = TENSO(ctx, tp, shape,0x0);        
+        gensor = GT(this, tp, shape,0x0);        
     }else{
         assert(0);
     }  
@@ -780,6 +787,7 @@ size_t EDGE_DEVICES::Alloc(hTGraph hTG,void *ctx,int flag)    {
     for(auto node : hTG->gset){
         if(tpInitWeight==SERIALIZE)        
             node->tpInit = tpInitWeight;
+        
         node->Alloc( );
     }
 #else

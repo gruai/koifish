@@ -50,7 +50,7 @@ struct WIKI {
     string sBos,sEos;
     INDUCT_MODE teach=_LOGITS;
     bool isOnlyTokenizer = false;
-    size_t n_vocab = 0, nOutToken = -1,nEleGGUF = 0;
+    size_t n_vocab = 0, nOutToken = 0,nEleGGUF = 0;
     std::vector<std::pair<std::string, struct ggml_tensor  *>> tmaps;
 
     std::map<TOKEN_ID, TOKEN_ID> mapT2T;

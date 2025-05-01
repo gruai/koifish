@@ -1,10 +1,8 @@
 /**
  *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT  
- *  
- *  Perceptrons 
  * 
- *  \brief Neurons & Perceptrons
+ *  \brief Generate some nonsense on Prompt
  *  \author Yingshi Chen
  */
 #include "Optimizer.hpp"
@@ -109,6 +107,42 @@ static unsigned int random_u32(uint64_t *state){
 float random_f32(uint64_t *state)   { 
     return (random_u32(state) >> 8) / 16777216.0f;
 }
+int Sample_CDF_T(int n,float* logits,  float minp, float temperature, uint64_t *rng_seed,int flag=0x0) {
+    float coin = random_f32(rng_seed);
+	// find max logit; we will use this to derive minp cutoff (in log space), since minp is scale-invariant (wrt softmax)
+	float max_logit = -FLT_MAX;
+	for (int i = 0; i < n; i++) {
+		max_logit = logits[i] > max_logit ? logits[i] : max_logit;
+	}
+
+	// exp(logit / temp) <= exp(max_logit / temp) * minp -> logit <= max_logit + log(minp) * temp
+	float logit_cutoff = max_logit + logf(minp) * temperature;
+
+	// convert from logits to probabilities in-place while simultaneously doing (unscaled) softmax; we'll rescale later
+	float* probs = logits;
+	int fallback = 0;
+	float cumulative_prob = 0.0f;
+	for (int i = 0; i < n; i++) {
+		if (logits[i] >= logit_cutoff) {
+			probs[i] = expf((logits[i] - max_logit) / temperature);
+			cumulative_prob += probs[i];
+			fallback = i; // for fallback due to rounding errors
+		} else {
+			probs[i] = 0.0f;
+		}
+	}
+
+	// sample from the truncated list
+	float r = coin * cumulative_prob;
+	float cdf = 0.0f;
+	for (int i = 0; i < n; i++) {
+		cdf += probs[i];
+		if (r < cdf) {
+			return i;
+		}
+	}
+	return fallback; // in case of rounding errors
+}
 
 int Sample_CDF(int n,float*preP,uint64_t *rng_seed,int flag=0x0) {
     float sum=0,cdf=0,pMin,pMax,a;
@@ -182,7 +216,8 @@ int Fish_bubble(CLI_params& config)  {
     config.model.preLogits_dB = 1;
     DEBUG.graph_dump = 1;
     DEBUG.T_cuda_ver = 1;
-    // return run_caml(config.prompt.c_str(),0x0);
+    DEBUG.T_cpu = 1;
+    GTensor::tpPreLogits = typNUMBER::F32;
 
     arrHWIKI wikis = WIKI::MakeInstance("wikis",config,0x0);
 #if !defined(NDEBUG)
@@ -305,7 +340,7 @@ void GeneratOnPrompt::InitInput(int flag){
     hGensor input = fish_1!=nullptr? fish_1->Input() : nullptr;
     TOKEN_ID bo=-1;
     if(input!=nullptr)
-        dialogs->InitOneSamp(config.prompt,input,0x110);
+        dialogs->InitOneSamp(config.prompt,input,nullptr,0x110);
     switch(_arch)    {  
     case NLP_GPT2_char:        
         
@@ -480,28 +515,11 @@ void GeneratOnPrompt::DisplayEmbd(bool input_echo, int n_consumed, int flag){
     }
 }
 
-std::string LoadSomeText(const string&fpath,int flag)   {
-    string txt="";
-    FILE *fp = std::fopen(fpath.c_str(), "rt");
-    if(fp==NULL)    return txt;
-
-    std::fseek(fp, 42, SEEK_SET);
-    const int n=2048;
-    char buf[n];
-    if( std::fread(buf, 1, n, fp)!=n ){
-        return txt;
-    }
-    txt += buf;  
-    return txt;
-}
-
 /**/
 int NLP_AutoRegressive::GenSentence(int flag)  {
     if(hOPT==nullptr)
         return -1;
-    assert(preLogits!=nullptr);
-    GST_TIC(tic);
-    
+    GST_TIC(tic);    
     if(gopt!=nullptr){
         hWIKI wiki = wikis[0];           assert(wiki != nullptr);
         wiki->Reset();
@@ -510,40 +528,48 @@ int NLP_AutoRegressive::GenSentence(int flag)  {
     uint64_t rng_seed = 42;
     std::string prompt = config.prompt;
     // prompt = LoadSomeText("config.fp_train_data",0x0);
-    int genT = 16, nVocab = preLogits->ne[0], _nctx = config.n_ctx(), i, j,pLen=0;
-    assert(genT <= _nctx);
-    pLen = std::min(_nctx,(int)(prompt.size()));
-    
-    double sum = 0, cdf = 0;
+    int genT = 64, nVocab = config.model.vocab_size, _nctx = config.n_ctx(), i, j;
+    assert(genT <= _nctx);    
+    double sum = 0, cdf = 0, tps=0,t0=GST_ms();
     hSampLoader hLoader = hOPT->val_loaders[0];
     if(hLoader->num_batches<=0 )    {
-        hLoader->InitOneSamp(prompt,nullptr,0x110);
-        hLoader->isRecycle = false;
+        hLoader->InitOneSamp(prompt,nullptr,this,0x110);        
+        // hLoader->isRecycle = false;            hLoader->isNeedBOS = false;     
+        // hLoader->UpdateBatch(0,this);
     } 
-    TokenEmbed* embed = GetNeuron<TokenEmbed>("TokenEmbed");    
-    embed->hBatch = hLoader->hBatch; 
-    //  
-    vector<TOKEN_ID>& piffle = hLoader->GetTokens();
-    int nPrompToken = piffle.size();
-    vector<TOKEN_ID> answer;
+    // TokenEmbed* embed = GetNeuron<TokenEmbed>("TokenEmbed");    
+    // embed->hBatch = hLoader->hBatch;        
+    int nPrompToken = hLoader->nMostToken;
+    // vector<TOKEN_ID>& piffle = hLoader->GetTokens( ),answer;
+    // int nPrompToken = piffle.size();
+    // nPrompToken = 1;			//	only for debug
+    TOKEN_ID t = -1;
     _INFO("%s: <--- \n\t", __func__);
+    float *logits = hCLS->Logits(); //(float *)(preLogits->data)+i*nVocab;
     for (i = 0; i < nPrompToken+genT; i++)    {
-        if(i<nPrompToken)   
+        if(i<nPrompToken-1)   
             hOPT->SetPhase(Optimizer::P_PREFILL);
         else
             hOPT->SetPhase(Optimizer::P_GENERATE);
         // // LocalFeeling(piffle,preP);
         float fLos = hOPT->Evaluate(hLoader,-666);
-        if(i<nPrompToken)   
-            continue;
-        float *preP = (float *)(preLogits->data)+i*nVocab;
-        TOKEN_ID t = Sample_CDF(nVocab,preP,&rng_seed);
-        piffle[i] = t;      answer.push_back(t); 
-        string a = hDictVAE->T2STR(answer),b=hLoader->sentence,s=hDictVAE->T2STR(t);   
-        _INFO("\r\t%s\t(%.*s)",a.c_str(),64,b.c_str());        //_INFO("%s+[%s] ",a.c_str(), answer.c_str());
+        if(i<nPrompToken-1)   
+            continue;        
+        
+        //t = Sample_CDF(nVocab,logits,&rng_seed);
+        t = Sample_CDF_T(nVocab,logits,0.1,1,&rng_seed);
+        hLoader->hBatch->Set(i+1,0,0,0,t);
+        // piffle[i] = t;      answer.push_back(t); 
+        string a = hDict->T2STR(hLoader->hBatch->host,i+2),b=hLoader->sentence,s=hDict->T2STR(t);   
+        // _INFO("\r\t%s\t(%.*s)",a.c_str(),64,b.c_str());      
+        _INFO("%s",s.c_str());   
         fflush(stdout);
+        if (t == hDict->bos_id || t == hDict->eos_id || t == hDict->eot_id) {
+            break;
+        }
     }
-    _INFO("---> T=%g s\n", GST_TOC(tic));
+    tps = genT/(GST_ms()-t0)*1000.0;
+    _INFO("\n[Generate]---> tps=%g tAll=%gs\n", tps, GST_TOC(tic));
     return 0x0;
 }
 

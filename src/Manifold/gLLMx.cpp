@@ -18,13 +18,41 @@ LLM_MAMBA::LLM_MAMBA( const std::string& nam_,struct CLI_params params,ROLE_TYPE
     // config.common.adam.alpha = 0.0001;     // 
 }
 
-
-
 hGensor LLM_MAMBA::BuildTarget( void * ctx,hGensor cur,int flag)  {
     
    return nullptr;   
 }
 
+Guppy::Guppy( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag) : NLP_AutoRegressive(nam_,params,role,flag)  {
+    assert(arch==MODEL_ARCH::NLP_GUPPY);
+    config.model.isFFNShareParam = true;
+    config.model.isEmbedWeightTying = false;
+    // isBias = config.model.isBias;    //   if true, converge much slower
+}
+
+string Guppy::__repr__( string& suffix,string& prefix,int flag) {
+    char buf[5012]="\0";
+    const char*tab=prefix.c_str();
+    string sBasic = NLP_AutoRegressive::__repr__(suffix,prefix,flag);
+    sprintf(buf+strlen(buf),"%s",sBasic.c_str()); 
+    _INFO("Guppy:    Bias=(normal=%d,slp=%d) AttOnBC=%d\n========\n",config.model.isNormalBias,config.model.isSLPBias,isAttOnBC); 
+    return buf;
+}
+
+bool Guppy::OnNextEpoch(int epoch,int flag)    {   
+    int nLayer = config.nLayer(),l;
+    for(l=0;l<nLayer;l++){
+        FFN *ffn = GetNeuron<FFN>("FFN",l);    
+        ffn->UpdateSamps(epoch*nLayer+l);
+    }
+    return true;    
+}
+
+string Guppy::DebugInfo(int type,int flag)  {
+    char buf[5012]="\0";
+    sprintf(buf+strlen(buf),"|gw|=(%.2f,%.2f)",hEmbed->w->nrm,hEmbed->wInv->nrm); 
+    return buf;
+}
 
 GPT2::GPT2( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag) : NLP_AutoRegressive(nam_,params,role,flag)  {
     assert(arch==MODEL_ARCH::NLP_GPT2 || arch==MODEL_ARCH::NLP_GPT2_char);

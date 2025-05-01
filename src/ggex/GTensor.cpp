@@ -10,11 +10,14 @@
 #include "GG_util.hpp"
 #ifdef ENABLE_BF16
    typNUMBER GTensor::tpFloatX = typNUMBER::BF16;
+   typNUMBER GTensor::tpPreLogits = typNUMBER::BF16;
 #else
    typNUMBER GTensor::tpFloatX = typNUMBER::F32;
+   typNUMBER GTensor::tpPreLogits = typNUMBER::F32;
 #endif
 
-hGTensor GTensor::bt4c=nullptr,GTensor::delta=nullptr,GTensor::scratch=nullptr,GTensor::scratch_ff1=nullptr;
+hGTensor GTensor::bt4c=nullptr,GTensor::delta=nullptr,GTensor::scratch=nullptr,GTensor::tmpFF1=nullptr,
+   GTensor::tmpW=nullptr,GTensor::tmpGW=nullptr;
 void *GTensor::buff = nullptr;
 
 float GTensor::rLARS(float s0,float T_lars,int flag)   {
@@ -28,9 +31,30 @@ float GTensor::rLARS(float s0,float T_lars,int flag)   {
    return r;
 }
 
-GTensor::GTensor(SHAPE shape_,typNUMBER tpD_,bool isX,int flag) : flags(flag)      {
+GTensor::GTensor(Fish *hFis_,SHAPE shape_,typNUMBER tpD_,bool isX,int flag) : hFish(hFis_),flags(flag)      {
    ReShape(shape_,tpD_,flag);
 }
+
+hGTensor GT(SHAPE shape_,void *src,typNUMBER tpD_,int flag){
+   hGTensor t = std::make_shared<GTensor>(nullptr,shape_,tpD_,true,0x0);
+   t->Alloc( );
+   assert(0);     //memcpy is dangerous
+   memcpy(t->data,src,t->nByte());
+   assert(!t->isEmpty());
+   return t;
+}
+
+hGTensor GT(Fish* hFish,typNUMBER type,SHAPE shape,int flag,const string&name){
+   hGensor hT = std::make_shared<huTensor>(hFish,name,shape,type,false,flag);
+   return hT;
+}
+
+//  https://stackoverflow.com/questions/16468440/how-to-split-class-definition-between-multiple-cpp-and-cu-files
+// hGensor TENSO(void* ctx0,typNUMBER typ,SHAPE shape,int flag,const string&name ) {
+//    auto type = (typNUMBER)(typ);
+//    hGensor hT = std::make_shared<huTensor>((Fish*)ctx0,name,shape,type,false,flag);
+//    return hT;    
+// }
 
 bool GTensor::ReShape(SHAPE shape_,typNUMBER tpD_,int falg){
    if(type==tpD_ && shape==shape_)
@@ -118,18 +142,19 @@ bool GTensor::Alloc(int tpInit,int flag){
    assert(szData>0);
    data = new char[szData];
    if(isParam()){
-      grad = new char[szData];
+      // if(hFish!=nullptr && hFish->isTrain())
+         grad = new char[szData];
    }
    return true;
 }
-GTensor::~GTensor()  {
-#ifdef _TENSOR_G_   
-#else
-   if(data!=nullptr)       
-      delete[] (char*)data;
-   if(grad!=nullptr)       
-      delete[] (char*)grad;
-#endif
+GTensor::~GTensor( )  {
+   if(!BIT_TEST(flags,F_GPU)){
+      if(!BIT_TEST(flags,F_MMAP)){
+         FREE_a(data);      FREE_a(grad);
+      }      
+   }
+
+   FREE_a(host_data);
 }
 
 // void GTensor::AddSrc(const hGOP t,int type,int flag)           {   
@@ -166,6 +191,7 @@ bool GTensor::OverWrite(struct ggml_tensor*gg_,bool isSrc,int flag){
 #endif  
    return true;
 }
+
 bool GTensor::OverWrite(hGTensor hGT,bool isSrc,int flag)  {   
    /*huTensor *src = dynamic_cast<huTensor *>(hGT.get());
    size_t nEle = size();
@@ -176,6 +202,15 @@ bool GTensor::OverWrite(hGTensor hGT,bool isSrc,int flag)  {
    }*/
    assert(0);
    return false;
+}
+
+bool GTensor::ShareWeight(hGTensor src,int flag){
+   assert(src!=nullptr && src->data!=nullptr);
+   data = src->data;
+
+   if(src->grad!=nullptr)
+      grad = src->grad;
+   return true;
 }
 
 hGTensor GTensor::Relu() {  
@@ -218,17 +253,21 @@ hGensor GENSORS::Get(const string&name, int flag)    {
       return nullptr;
    }else{
       if(nag.find(name) == nag.end()){
-         _ERROR("Failed to get tensor=%s nGensor=%d",name.c_str(),nag.size());  
+         _ERROR("Failed to get tensor=%s nGensor=%d\n",name.c_str(),nag.size());  
          return nullptr;
       }
       return nag[name];
    }   
 } 
 
+// parse_tensor
 int GTensor::SerialJSON(const std::string& name_, const JSON& val, void* bytes_ptr, size_t bytes_size,int flag) {
    // if(name=="tokenizer.tokens"){
    //    std::cerr << name << std::endl;
    // }
+   if(strcmp(name,name_.c_str())!=0){
+      strcpy(name,name_.c_str());
+   }
    std::string dtype_str = val.value("dtype", ""); 
    SHAPE spJ;
    size_t numel = 1;
@@ -263,11 +302,18 @@ int GTensor::SerialJSON(const std::string& name_, const JSON& val, void* bytes_p
    }
    
    void *src = (char*)bytes_ptr + offset_start;
+   if(strcmp(name,"model.layers.0.attn.wo.weight")==0){   //only for debug    815288320
+      // PrintTensor<f8e5m2_t>(name,(f8e5m2_t*)src,ne[0],ne[1]);
+  } 
    if(BIT_TEST(flag,F_NOALLOC)){
       data =src;     // ((char*)(src))[szSrc-1]    (char*)bytes_ptr + offset_end-1
+      BIT_SET(flags,F_MMAP);
    }else{
       if(data!=nullptr){
          SerialGP(src,nullptr,szSrc,false);
+      }else{
+         data = src;
+         BIT_SET(flags,F_MMAP);
       }
    }
    if(strlen(name)>0 && flag>0)
@@ -279,8 +325,16 @@ int GTensor::SerialJSON(const std::string& name_, const JSON& val, void* bytes_p
 void GTensor::Print(const string& title, int x, int flag)   const {
    bool isDevice = true;
    if(type==FLOAT_TYPE){
-      PrintTensor<floatX>(title.c_str(),(floatX *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
-      return;
+      switch(x){
+      case 1:
+         // PrintTensor<floatX>(title.c_str(),(floatX *)grad, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
+         break;
+      default:
+         PrintTensor<floatX>(title.c_str(),(floatX *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
+         break;
+      }
+      
+      
    }  
 }
 

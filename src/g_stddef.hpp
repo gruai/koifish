@@ -1,8 +1,8 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2018-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT  
  * 
- *  \brief
+ *  \brief GRUS SPARSE TEMPLATE	- common definition
  *  \author Yingshi Chen
  */
 
@@ -136,6 +136,11 @@ int G_ClosesTick( const T& x, const vector<T>&ticks, int flag=0x0 ){
         }
     }
     return tick;
+}
+
+template<typename T>
+void VALID_HANDLE(T *obj) {
+	assert((obj) != nullptr && (obj)->isValid());
 }
 
 /*

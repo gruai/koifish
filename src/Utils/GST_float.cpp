@@ -1,30 +1,152 @@
 #include <assert.h>
 #include <cfloat>
 #include <math.h>
-#include "immintrin.h"
+#if defined(__AVX2__) && defined(__F16C__)
+  #include <immintrin.h>
+#endif
 #include "f16cintrin.h"
 #include "../g_float.hpp"
+#include "../g_float_cpu.hpp"
+
+#if defined(__AVX2__) && defined(__F16C__)
+    float half_to_float(__gcc_fp16 x) {
+    return _cvtsh_ss(x);
+    }
+    __gcc_fp16 float_to_half(float x) {
+    return _cvtss_sh(x, 0);
+    }
+#else
+    float half_to_float(__gcc_fp16 x) {
+        assert(false && "float16 not supported on this platform");
+        return 0.0f;
+    }
+    __gcc_fp16 float_to_half(float x) {
+        assert(false && "float16 not supported on this platform");
+        return 0;
+    }
+#endif
+
+float dotprod_fp16(void* w, int n, int i, float* x) {
+	__gcc_fp16* r = (__gcc_fp16*)w + i * n;
+#if defined(__AVX2__) && defined(__F16C__)
+	assert(n % 16 == 0);
+	__m256 acc0 = _mm256_setzero_ps(), acc1 = _mm256_setzero_ps();
+	for (int j = 0; j < n; j += 16) {
+		__m256i rw = _mm256_loadu_si256((__m256i*)&r[j]);
+		__m128i rlo = _mm256_castsi256_si128(rw);
+		__m128i rhi = _mm256_extractf128_si256(rw, 1);
+		__m256 x0 = _mm256_loadu_ps(&x[j]);
+		__m256 x1 = _mm256_loadu_ps(&x[j + 8]);
+		acc0 = _mm256_add_ps(_mm256_mul_ps(x0, _mm256_cvtph_ps(rlo)), acc0);
+		acc1 = _mm256_add_ps(_mm256_mul_ps(x1, _mm256_cvtph_ps(rhi)), acc1);
+	}
+	__m256 acc8 = _mm256_add_ps(acc0, acc1);
+	__m128 acc4 = _mm_add_ps(_mm256_castps256_ps128(acc8), _mm256_extractf128_ps(acc8, 1));
+	__m128 accf = _mm_dp_ps(acc4, _mm_set1_ps(1.0f), 0xf1);
+	return _mm_cvtss_f32(accf);
+#else
+	float val = 0.0f;
+#pragma omp simd reduction(+ : val) simdlen(32)
+	for (int j = 0; j < n; j++) {
+		val += (float)(r[j]) * x[j];
+	}
+	return val;
+#endif
+}
+
+float dotprod_fp8(void* w, int n, int i, float* x) {
+	char* r = (char*)w + i * n;
+#if defined(__AVX2__) && defined(__F16C__)
+	assert(n % 16 == 0);
+	__m256 acc0 = _mm256_setzero_ps(), acc1 = _mm256_setzero_ps();
+	for (int j = 0; j < n; j += 16) {
+		__m128i rw = _mm_loadu_si128((__m128i*)&r[j]);
+		__m128i rlo = _mm_unpacklo_epi8(_mm_setzero_si128(), rw);
+		__m128i rhi = _mm_unpackhi_epi8(_mm_setzero_si128(), rw);
+		__m256 x0 = _mm256_loadu_ps(&x[j]);
+		__m256 x1 = _mm256_loadu_ps(&x[j + 8]);
+		acc0 = _mm256_add_ps(_mm256_mul_ps(x0, _mm256_cvtph_ps(rlo)), acc0);
+		acc1 = _mm256_add_ps(_mm256_mul_ps(x1, _mm256_cvtph_ps(rhi)), acc1);
+	}
+	__m256 acc8 = _mm256_add_ps(acc0, acc1);
+	__m128 acc4 = _mm_add_ps(_mm256_castps256_ps128(acc8), _mm256_extractf128_ps(acc8, 1));
+	__m128 accf = _mm_dp_ps(acc4, _mm_set1_ps(1.0f), 0xf1);
+	return _mm_cvtss_f32(accf);
+#else
+	float val = 0.0f;
+#pragma omp simd reduction(+ : val) simdlen(32)
+	for (int j = 0; j < n; j++) {
+		float a = fp82half(r[j]);
+		val += a * x[j];
+	}
+	return val;
+#endif
+}
+
+float dotprod_gf4(void* w, int n, int i, float* x) {
+	uint32_t* r = (uint32_t*)w + i * n / 8;
+#if defined(__AVX2__) && defined(__F16C__)
+	assert(n % 32 == 0);
+	__m256 acc0 = _mm256_setzero_ps(), acc1 = _mm256_setzero_ps();
+	for (int j = 0; j < n; j += 32) {
+		__m128i wg = _mm_loadu_si128((__m128i*)&r[j / 8]);
+		const __m128i wgfm = _mm_setr_epi8(-1, 0, -1, 4, -1, 8, -1, 12, -1, -1, -1, -1, -1, -1, -1, -1);
+		__m128 wgf = _mm_cvtph_ps(_mm_shuffle_epi8(wg, wgfm)); // note: scale 1/-4.f is baked into wgtab below
+		__m256 x0 = _mm256_loadu_ps(&x[j]);
+		__m256 x1 = _mm256_loadu_ps(&x[j + 8]);
+		__m256 x2 = _mm256_loadu_ps(&x[j + 16]);
+		__m256 x3 = _mm256_loadu_ps(&x[j + 24]);
+		__m256i wgp = _mm256_broadcastsi128_si256(wg);
+		__m256 wgfp = _mm256_castsi256_ps(_mm256_broadcastsi128_si256(_mm_castps_si128(wgf)));
+		const __m256i wgbits = _mm256_setr_epi32(8, 11, 14, 17, 20, 23, 26, 29);
+		const __m256 wgtab = _mm256_setr_ps(-4 / -4.f, -3 / -4.f, -2 / -4.f, -1 / -4.f, 0 / -4.f, 1 / -4.f, 2 / -4.f, 3 / -4.f);
+		__m256 w0 = _mm256_permutevar8x32_ps(wgtab, _mm256_srlv_epi32(_mm256_shuffle_epi32(wgp, 0x00), wgbits));
+		__m256 w1 = _mm256_permutevar8x32_ps(wgtab, _mm256_srlv_epi32(_mm256_shuffle_epi32(wgp, 0x55), wgbits));
+		__m256 w2 = _mm256_permutevar8x32_ps(wgtab, _mm256_srlv_epi32(_mm256_shuffle_epi32(wgp, 0xaa), wgbits));
+		__m256 w3 = _mm256_permutevar8x32_ps(wgtab, _mm256_srlv_epi32(_mm256_shuffle_epi32(wgp, 0xff), wgbits));
+		acc0 = _mm256_add_ps(_mm256_mul_ps(w0, _mm256_mul_ps(x0, _mm256_shuffle_ps(wgfp, wgfp, 0x00))), acc0);
+		acc1 = _mm256_add_ps(_mm256_mul_ps(w1, _mm256_mul_ps(x1, _mm256_shuffle_ps(wgfp, wgfp, 0x55))), acc1);
+		acc0 = _mm256_add_ps(_mm256_mul_ps(w2, _mm256_mul_ps(x2, _mm256_shuffle_ps(wgfp, wgfp, 0xaa))), acc0);
+		acc1 = _mm256_add_ps(_mm256_mul_ps(w3, _mm256_mul_ps(x3, _mm256_shuffle_ps(wgfp, wgfp, 0xff))), acc1);
+	}
+	__m256 acc8 = _mm256_add_ps(acc0, acc1);
+	__m128 acc4 = _mm_add_ps(_mm256_castps256_ps128(acc8), _mm256_extractf128_ps(acc8, 1));
+	__m128 accf = _mm_dp_ps(acc4, _mm_set1_ps(1.0f), 0xf1);
+	return _mm_cvtss_f32(accf);
+#else
+	float val = 0.0f;
+	for (int j = 0; j < n; j += 8) {
+		uint32_t wg = r[j / 8];
+		for (int k = 0; k < 8; ++k) {
+			val += gf4_ff(wg, k) * x[j + k];
+		}
+	}
+	return val;
+#endif
+}
+
+
 /*
 #if defined(__AVX2__) && defined(__F16C__)
-inline float half_to_float(f16_t x) {
+inline float half_to_float(__gcc_fp16 x) {
   return _cvtsh_ss(x);
 }
-inline f16_t float_to_half(float x) {
+inline __gcc_fp16 float_to_half(float x) {
   return _cvtss_sh(x, 0);
 }
 #else
-inline float half_to_float(f16_t x) {
+inline float half_to_float(__gcc_fp16 x) {
   assert(false && "float16 not supported on this platform");
   return 0.0f;
 }
-inline f16_t float_to_half(float x) {
+inline __gcc_fp16 float_to_half(float x) {
   assert(false && "float16 not supported on this platform");
   return 0;
 }
 #endif
 
-inline float float8e5m2_to_float(f8e5m2_t x) {
-  f16_t val = 0;
+inline float fp8e5m2_to_float(f8e5m2_t x) {
+  __gcc_fp16 val = 0;
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
   memcpy(&val, &x, sizeof(f8e5m2_t));
 #else
@@ -32,8 +154,8 @@ inline float float8e5m2_to_float(f8e5m2_t x) {
 #endif
   return half_to_float(val);
 }
-[[maybe_unused]] inline f8e5m2_t float_to_float8e5m2(float x) {
-  f16_t val = float_to_half(x);
+[[maybe_unused]] inline f8e5m2_t float_to_fp8e5m2(float x) {
+  __gcc_fp16 val = float_to_half(x);
   f8e5m2_t out;
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
   memcpy(&out, (char*)&val, sizeof(f8e5m2_t)); // TODO: round instead of truncate?
@@ -82,7 +204,7 @@ void matmul(float* xout, float* x, float* w, int n, int d, const int* block_size
 
 // matmul supporting float16 weights via the F16C extension, which allows
 // conversion into float32 values before calculations.
-void matmul(float* xout, float* x, f16_t* w, int n, int d, const int* block_size, float* scale) {
+void matmul(float* xout, float* x, __gcc_fp16* w, int n, int d, const int* block_size, float* scale) {
 #if defined(__AVX2__) && defined(__F16C__)
   // W (d,n) @ x (n,) -> xout (d,)
   assert(n % 16 == 0);
@@ -149,6 +271,74 @@ void matmul(float* xout, float* x, f16_t* w, int n, int d, const int* block_size
 #else
   assert(false && "float16 not supported on this platform");
 #endif
+}
+
+float dotprod_fp32(void* w, int n, int row, float* x) {
+  float *U = (float*)w;
+	float* r = (float*)w + row * n,val = 0.0f;
+#pragma omp simd reduction(+ : val) simdlen(32)
+	for (int j = 0; j < n; j++) {
+		val += (r[j]) * x[j];    
+	}  
+  assert(isValidF(&val));
+	return val;
+}
+
+// W (nOut,nIn) @ x (nIn) -> xout (nOut)
+void matmul(float* xout, float* x, void* w, float* b, int nIn, int nOut, dotprod_t dotprod) {	
+	int i;
+#pragma omp parallel for private(i)
+	for (i = 0; i < nOut; i++) {
+    float val = dotprod(w, nIn, i, x);
+		if (b) {
+			val += b[i];
+		}
+		xout[i] = val;
+	}
+}
+
+void matmul_sparse(float* xout, float* x, void* w, float* b, int n, int d,int *hot, dotprod_t dotprod) {
+	// W (d,n) @ x (n,) -> xout (d,)
+	// by far the most amount of time is spent inside this little function
+	int i;
+#pragma omp parallel for private(i)
+	for (i = 0; i < d; i++) {
+    float val = 0;
+    if(hot[i]==1) 
+		  val = dotprod(w, n, i, x);
+
+		if (b) {
+			val += b[i];
+		}
+		xout[i] = val;
+	}
+}
+
+/*
+    T_hot=0.2 80   ppl=14.5=>30.3 drop too much!
+    T_hot=0.2 800  ppl=4.96=>8.2 
+    T_hot=0.4 800  ppl=4.96=>5.66 
+*/
+void matmul_sparse_2(float* xout, float* x, void* w, float* b, int n, int d,int nHot,int *hot,float *dTemp, dotprod_t dotprod) {
+  int i,c;
+  float *x_sub = dTemp;
+  char *w_sub = (char*)(dTemp+sizeof(float)*n),*w0=(char*)w;
+  size_t ld = sizeof(char)*d,nW=0;
+#pragma omp parallel for private(i,c)
+  for(i=0;i<nHot;i++){
+    int no = hot[i];
+    x_sub[i] = x[no]; 
+    // row major -  memcpy(w_sub+ld*nHot, w+ld*i, ld);
+    // column major 
+    char *dst = w_sub+i, *src = w0+no;  
+    for(c=0;c<d;c++){
+      dst[c*nHot] = src[c*n];
+    } 
+  }
+  // assert(no==nHot);
+
+  matmul(xout, x_sub, w_sub, b, nHot, d, dotprod);
+  //matmul(xout, x, w, b, nHot, d, dotprod);
 }
 
 // matmul supporting float8e5m2 weights via AVX2 and F16C extensions, which (1) 
@@ -355,8 +545,33 @@ static void moe_gate(
     moe_weights[k] = x[active_experts[k]] / wsum * routed_scaling_factor;
   }
 }*/
+float rmsnorm(float* o, float* x, float* weight, int size, float eps, bool ln) {
+	// calculate mean
+	float mean = 0.0f;
 
-static void rmsnorm(float* o, float* x, float* weight, int size, float eps) {
+	if (ln) {
+		for (int j = 0; j < size; j++) {
+			mean += x[j];
+		}
+		mean /= size;
+	}
+
+	// calculate sum of squared deltas
+	float ss = 0.0f;
+	for (int j = 0; j < size; j++) {
+		ss += (x[j] - mean) * (x[j] - mean);
+	}
+
+	float var = ss / size;
+
+	// normalize and scale
+	float scale = 1.0f / sqrtf(var + eps);
+	for (int j = 0; j < size; j++) {
+		o[j] = (x[j] - mean) * scale * weight[j];
+	}
+  return scale;
+}
+float rmsnorm(float* o, float* x, float* weight, int size, float eps) {
   float rms = 0.0f;
   for (int i = 0; i < size; ++i) {
     rms += x[i] * x[i];
@@ -366,6 +581,7 @@ static void rmsnorm(float* o, float* x, float* weight, int size, float eps) {
   for (int i = 0; i < size; ++i) {
     o[i] = x[i] * scale * weight[i];
   }
+  return scale;
 }
 
 [[maybe_unused]] static void layernorm(float* o, float* x, float* weight, float* bias, int size, float eps) {
@@ -391,19 +607,7 @@ static void rmsnorm(float* o, float* x, float* weight, int size, float eps) {
   }
 }
 
-inline float gelu(float x) {
-  return 0.5f * x * (1.0f + tanhf(0.797885f * (x + 0.044715f * x * x * x)));
-}
-
-inline float silu(float x) {
-  return x / (1.0f + expf(-x));
-}
-
-inline float clip(float x, float v) {
-  return x < -v ? -v : (x > v ? v : x);
-}
-
-static void rope(float* buf, float* vec, int d, int head_dim, int pos, float theta) {
+void rope(float* buf, float* vec, int d, int head_dim, int pos, float theta) {
   // For some reason, DeepSeek-V2 was trained using rope output 
   // layout transposed compared to the input. This means we need a buffer
   // to hold intermediate results.
@@ -442,7 +646,22 @@ static void rope_v3(float* vec, int d, int head_dim, int pos, float theta) {
   }
 }
 
-static void rope(float* buf, f16_t* vec, int d, int head_dim, int pos, float theta) {
+void rope(float* vec, int d, int head_dim, int pos, float theta, int rotary_dim) {
+	for (int i = 0; i < d; i += 2) {
+		int j_head = i % head_dim;
+		float freq = j_head >= rotary_dim ? 0.f : 1.0f / powf(theta, (float)j_head / (float)rotary_dim);
+		float val = pos * freq;
+		float fcr = cosf(val);
+		float fci = sinf(val);
+
+		float v0 = vec[i];
+		float v1 = vec[i + 1];
+		vec[i] = v0 * fcr - v1 * fci;
+		vec[i + 1] = v0 * fci + v1 * fcr;
+	}
+}
+
+void rope(float* buf, __gcc_fp16* vec, int d, int head_dim, int pos, float theta) {
   // For some reason, DeepSeek-V2 was trained using rope output
   // layout transposed compared to the input. This means we need a buffer
   // to hold intermediate results.
@@ -464,7 +683,7 @@ static void rope(float* buf, f16_t* vec, int d, int head_dim, int pos, float the
   }
 }
 
-static void rope_v3(f16_t* vec, int d, int head_dim, int pos, float theta) {
+static void rope_v3(__gcc_fp16* vec, int d, int head_dim, int pos, float theta) {
   int rotary_dim = head_dim;
 
   for (int i = 0; i < d; i += 2) {
@@ -481,14 +700,13 @@ static void rope_v3(f16_t* vec, int d, int head_dim, int pos, float theta) {
   }
 }
 
-
 // Compute next value in a sequence for a single causal self-attention head.
 void attn(
   float* xout,    // (n_kv_heads * v_head_dim,) - output vector
   float* atth,    // (kv_len,) - scratch space to hold attention scores of the sequence
   float* qh,      // (head_dim,) - query vector for this head
-  f16_t* kh,      // (kv_len, n_kv_heads, head_dim) - buffer containing key vectors of the sequence for all KV heads
-  f16_t* vh,      // (kv_len, n_kv_heads, v_head_dim) - buffer containing value vectors of the sequence for all KV heads
+  __gcc_fp16* kh,      // (kv_len, n_kv_heads, head_dim) - buffer containing key vectors of the sequence for all KV heads
+  __gcc_fp16* vh,      // (kv_len, n_kv_heads, v_head_dim) - buffer containing value vectors of the sequence for all KV heads
   int head_dim,   // size of the "key-space"
   int v_head_dim, // size of the "value-space"
   int n_kv_heads, // number of kv heads, can be < n_heads (1 is MultiQueryAttention, >1 is GroupedQueryAttention)
@@ -522,8 +740,8 @@ void attn(
 void mha_cpu(
   float* xout,  // (n_heads, head_dim)
   float* att,   // (n_heads, max_seq_len)
-  f16_t* kb,    // (max_seq_len, n_kv_heads, head_dim)
-  f16_t* vb,    // (max_seq_len, n_kv_heads, head_dim)
+  __gcc_fp16* kb,    // (max_seq_len, n_kv_heads, head_dim)
+  __gcc_fp16* vb,    // (max_seq_len, n_kv_heads, head_dim)
   float* q,     // (n_heads, head_dim)
   int head_dim, int v_head_dim, int kv_len, int max_seq_len, int n_heads, int n_kv_heads
 ) {
@@ -534,8 +752,8 @@ void mha_cpu(
   for (h = 0; h < n_heads; h++) {
     int k_head_offset = (h / q_per_kv_head) * head_dim;
     int v_head_offset = (h / q_per_kv_head) * v_head_dim;
-    f16_t* kh = kb + k_head_offset;
-    f16_t* vh = vb + v_head_offset;
+    __gcc_fp16* kh = kb + k_head_offset;
+    __gcc_fp16* vh = vb + v_head_offset;
     attn(
       xout + head_dim * h, att + max_seq_len * h, q + head_dim * h, 
       kh, vh, head_dim, v_head_dim, n_kv_heads, kv_len
@@ -546,7 +764,7 @@ void mha_cpu(
 void matmul_unscaled(float* xout, float* x, float* w, int n, int d) {
   matmul(xout, x, w, n, d, nullptr, nullptr);
 }
-void matmul_unscaled(float* xout, float* x, f16_t* w, int n, int d) {
+void matmul_unscaled(float* xout, float* x, __gcc_fp16* w, int n, int d) {
   matmul(xout, x, w, n, d, nullptr, nullptr);
 }
 void matmul_unscaled(float* xout, float* x, f8e5m2_t* w, int n, int d) {

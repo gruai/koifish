@@ -4,38 +4,68 @@
 #include "./llm_c/global_norm.cuh"
 #include "../../ggex/GTensor.hpp"
 #include "../../Utils/GST_log.hpp" 
-
+#include "../../Manifold/Fish.hpp"
 // const int block_512 = 512;
-huTensor::huTensor(const string&name_,const SHAPE& shape,typNUMBER tpD_,bool isX,int flag) : GTensor(shape,tpD_,false,flag){
+huTensor::huTensor(Fish *fish,const string&name_,const SHAPE shape,typNUMBER tpD_,bool isAlloc,int flag) : GTensor(fish,shape,tpD_,false,flag){
     size_t nEle=size();
-    flags |= BIT_FLAG::F_GPU;
+    if(DEBUG.T_cpu){
+        flags |= BIT_FLAG::F_HOSTALLOC;
+    }else
+        flags |= BIT_FLAG::F_GPU;
     // hFish->InitGensor(nullptr,name,attn,false);
     if(!name_.empty())
         snprintf(name, sizeof(name), "%s",name_.c_str());
     else
         name[0]='\0';
     
-    if(isX){
+    if(isAlloc){
         Alloc(0x0,flag);
     }
 }        
 
 static size_t szMaloc = 0;
-bool huTensor::Alloc(int tpX,int flag){
+/*
+    cudaHostAlloc is a function used to allocate pinned (page-locked) host memory, which can improve data transfer performance between the host (CPU) and device (GPU). Pinned memory allows for faster transfers because it bypasses the operating system's virtual memory system. 
+*/
+bool huTensor::Alloc(int tpX,int flagInit){
+    if(strcmp(name,"inp_tokens")==0){
+        int debug = 0x0;
+    }
+        
     if(BIT_TEST(flags,F_NOALLOC))   // For example: operator fusing, memory reuse,rematerialization
         return true;
-    
+    if(isParam())   {
+        if(tpInit == SERIALIZE)
+            return true;
+    }
+    if(hRef!=nullptr){
+        ShareWeight(hRef);
+        _INFO("\t%s =====> %s\n",name,hRef->name );
+        return true;
+    }
+        
+       
     assert(szData>0);
-    cudaError_t error = cudaMalloc((void**)&data, szData);
+    bool hostAlloc = BIT_TEST(flags,F_HOSTALLOC);
+    bool isTrain = hFish!=nullptr && hFish->isTrain();
+    string sAlloc = "cudaMalloc";
+    if(hostAlloc){
+        sAlloc = "HostAlloc";
+    }
+    cudaError_t error = cudaSuccess;
+    error = hostAlloc ? cudaHostAlloc((void**)&data, szData,0) : cudaMalloc((void**)&data, szData);    //8420
+    // strange behavior of callo
+    //data = calloc(szData,1);  sAlloc = "Alloc_c/cu";   //8386
+
     if (error != cudaSuccess) {
         printf("[CUDA Alloc] failed @%s, ERR=%s!\n", name, cudaGetErrorString(error));
         exit(EXIT_FAILURE);
     }    
     cudaCheck(cudaMemset(data, 0, szData));
     size_t sz = szData;
-    if(isParam()){
-        InitParam(tpX,flag);    
-        cudaError_t error = cudaMalloc((void**)&grad, szData);      sz+=szData;
+    if(isParam() && isTrain){        
+        InitParam(tpX,flagInit);    
+        cudaError_t error = hostAlloc ? cudaHostAlloc((void**)&data, szData,0) : cudaMalloc((void**)&grad, szData);      sz+=szData;
         if (error != cudaSuccess) {
             printf("[CUDA Alloc] failed @%s, ERR=%s\n", name, cudaGetErrorString(error));
             exit(EXIT_FAILURE);
@@ -45,17 +75,27 @@ bool huTensor::Alloc(int tpX,int flag){
     if(sz>=100*1.0e6){
         if(ne[0]==151936 || ne[1]==151936)
         {    int isDebug = 0;   }
-        printf("\tcudaMalloc=%gM@%s type=%s shape=[%ld,%ld,%ld,%ld] sum=%gG\n",sz*1.0f/1.0e6,name,cNameOf(type),ne[0],ne[1],ne[2],ne[3],szMaloc*1.0/1.0e9);
+        printf("\t %s=%gM@%s type=%s shape=[%ld,%ld,%ld,%ld] sum=%gG\n",sAlloc.c_str(),
+            sz*1.0f/1.0e6,name,cNameOf(type),ne[0],ne[1],ne[2],ne[3],szMaloc*1.0/1.0e9);
     }
     return true;
 }
 bool huTensor::Free() {
-try{
-    
-    if(data!=nullptr)       
-    {    cudaFreeCheck(&data);      data=nullptr;   szMaloc -= szData;  }
-    if(grad!=nullptr)       
-    {    cudaFreeCheck(&grad);      grad=nullptr;   szMaloc -= szData;  }
+try{    
+    if(data!=nullptr)           {    
+        if(BIT_TEST(flags,F_HOSTALLOC) )
+            cudaFreeHost(data); 
+        else 
+            cudaFreeCheck(&data);      
+        data=nullptr;   szMaloc -= szData;  
+    }
+    if(grad!=nullptr)           {    
+        if(BIT_TEST(flags,F_HOSTALLOC) )
+            cudaFreeHost(grad); 
+        else 
+            cudaFreeCheck(&grad);      
+        grad=nullptr;   szMaloc -= szData;  
+    }
 }catch(...){
     assert(0);
 }
@@ -196,7 +236,7 @@ hGTensor huTensor::CrossEntropy( const hGTensor b,int flag ){
 }
 
 double tNormOf(const std::vector<hGTensor>& tensors,int flag){
-    float* grad_norm_squared,a;
+    float* grad_norm_squared,a,a_pre=0.0;
     grad_norm_squared = (float*)(GTensor::bt4c->data);
     double norm = 0.0f;
     int num_slices[2] = {1, 1},zero_stage=1,max_num_block_sums = get_max_num_block_sums(num_slices, 2);
@@ -209,6 +249,11 @@ double tNormOf(const std::vector<hGTensor>& tensors,int flag){
         floatX* val = (floatX*)(tensor->grad);        
         // _norm2_kernel<<<dim3(grid_size, 1), block_size, 0, main_stream>>>(grad_norm_squared, val, nEle, nEle);
         global_norm_squared(grad_norm_squared, val, nEle, 0, 1,max_num_block_sums, is_first_pass, main_stream);
+        if(DEBUG.check_tensor_norm){
+            cudaCheck(cudaMemcpy(&a, grad_norm_squared, sizeof(float), cudaMemcpyDeviceToHost));
+            assert(a>=a_pre); 
+            tensor->nrm = sqrt(a-a_pre);           a_pre = a;            
+        }        
         is_first_pass = false;
         // PrintTensor<floatX>("tNormOf",val,true,nEle,1);
         // break;
@@ -222,7 +267,6 @@ double tNormOf(const std::vector<hGTensor>& tensors,int flag){
 }
 
 double tNormOf(const hGTensor tensor,int flag){
-
     float a,*norm2 = (float*)(GTensor::bt4c->data);
     int num_slices[2] = {1, 1},zero_stage=1,max_num_block_sums = get_max_num_block_sums(num_slices, 2);
     size_t nz=0;
@@ -249,21 +293,7 @@ double tNormOf(const hGTensor tensor,int flag){
 }
 
 hGTensor huTensor::GetRow(hGTensor hOut,hGTensor token,hGTensor pos,int flag)   {
-    /*floatX *out=(floatX*)(hOut->data),*wte=(floatX*)(data),*wpe=pos==nullptr?nullptr : (floatX*)(pos->data);
-    // int nCls = shape[1],i;
-    const int* inp=(int*)(token->data);
-    // assert(isInRange(inp,token->size(),0,nCls));
 
-    encoder_forward(out, inp, wte, wpe, B, T, C, main_stream);
-    NVTX_RANGE_FN();
-    const int block_size = 256;
-    const int N = B * T * C;
-    const int grid_size = CEIL_DIV(N, (int)(block_size * x128::size));
-    encoder_forward_kernel3<<<grid_size, block_size, 0, stream>>>(out, inp, wte, wpe, B, T, C);
-    cudaCheck(cudaGetLastError());*/
-
-    // PrintTensor<floatX>("wte",params.wte,true,Vp,C);        PrintTensor<floatX>("wpe",params.wpe,true,T,C);
-    // PrintTensor<int>("inputs",model->inputs,true,B,T);      PrintTensor<floatX>("GetRow",ToX(embed->out),true,B,T,C);
     return hOut;    
 }
 
@@ -271,7 +301,8 @@ void huTensor::Print(const string& title, int x, int flag)   const {
     bool isDevice = true;
     switch(type){
     case typNUMBER::F8E5M2:
-       PrintTensor<__nv_fp8_e5m2>(title.c_str(),(__nv_fp8_e5m2 *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
+    //    PrintTensor<__nv_fp8_e5m2>(title.c_str(),(__nv_fp8_e5m2 *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
+       PrintTensor<f8e5m2_t>(title.c_str(),(f8e5m2_t *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
        break;
     default:
        GTensor::Print(title,x,flag);

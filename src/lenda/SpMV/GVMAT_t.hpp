@@ -7,7 +7,7 @@
 #include <math.h>
 #include <string.h>
 #include "GVMAT.h"
-#include "../util/BLAS_t.hpp"
+#include "../../Utils/BLAS_t.hpp"
 using namespace std;
 
 template<typename T>

@@ -48,6 +48,7 @@ protected:
     std::set<hGensor> gset;
 
     int size=0,nForwN=0,nForwL=0,nNeedGrad=0,nInput=0; // n_nodes=0,n_leafs=0;+
+    static int curLayer;       // no of layer in LLM/Brain structure
     hGensor*nodes=nullptr,*grads=nullptr,*leafs=nullptr;
     std::vector<hGensor> topo_nodes;    //nodes in Topological order
     std::vector<hGensor> sinks;      //  sinks of tensor flow graph
@@ -77,12 +78,7 @@ protected:
 
 public:
     TGraph()    {}
-    // TGraph(Fish *hF_,const string&nam_,struct ggml_cgraph *c,bool isB=false,int flag=0x0) : 
-    //     hFish(hF_),name(nam_),cgraph(c),isBackward(isB) {
-    // }
-
     TGraph(Fish *hF_,const string&nam_,void *ctx_,bool isGrad,int flag=0x0);
-
     TGraph(void *ctx_, size_t size_, bool grad_,bool isOnlySymbol_,int flag=0x0) :
         size(size_),ctx(ctx_),isOnlySymbol(isOnlySymbol_)  {
         assert(0);  //Deprecated        
@@ -132,5 +128,6 @@ public:
     friend class NLP_AutoRegressive;
     friend class Optimizer;
     friend class EDGE_DEVICES;
+    friend class GeNeuron;
 };
 typedef std::shared_ptr<TGraph> hTGraph;

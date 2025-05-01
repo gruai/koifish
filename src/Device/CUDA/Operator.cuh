@@ -15,6 +15,7 @@
 // #include "../../g_stddef.hpp" 
 // #include "cutils.cuh"
 
+
 // note: we expect loads to be broken into units of up to 16b due to specified alignment
 template <typename T, int N>
 union _ALIGNAS(sizeof(T) * N) ablock {
@@ -107,13 +108,13 @@ __device__ inline half fp8_e5m2_ff(uint8_t v) {
 }
 
 // gf4 decoding: 8 3-bit values + 1 fp8 scale are packed in a 32-bit word
-__device__ inline half gf4_ff(uint32_t v, int k) {
+__device__ inline half cu_gf4_ff(uint32_t v, int k) {
 	half s = fp8_e5m2_ff(v & 0xff) * half(-0.25f); // we expect compiler to reuse this across multiple calls
 	return half(int((v >> (8 + k * 3)) & 7) - 4) * s;
 }
 
 // gf4 decoding (2 values): 8 3-bit values + 1 fp8 scale are packed in a 32-bit word
-__device__ inline half2 gf4x2_ff(uint32_t v, int k) {
+__device__ inline half2 cu_gf4x2_ff(uint32_t v, int k) {
 	half us = fp8_e5m2_ff(v & 0xff); // we expect compiler to reuse this across multiple calls
 	half s = us * half(-0.25f);      // we expect compiler to reuse this across multiple calls
 	uint32_t p = v >> (8 + k * 3);
@@ -215,13 +216,13 @@ __device__ inline float matmul_warppar(float* x, uint32_t* w, int i, int n) {
 			ablock<float, 8> xx0 = *(ablock<float, 8>*)&x[j];
 #pragma unroll
 			for (int k = 0; k < 8; ++k) {
-				val += float(gf4_ff(wg0, k)) * xx0.v[k];
+				val += float(cu_gf4_ff(wg0, k)) * xx0.v[k];
 			}
 
 			ablock<float, 8> xx1 = *(ablock<float, 8>*)&x[j + warpSize * 8];
 #pragma unroll
 			for (int k = 0; k < 8; ++k) {
-				val += float(gf4_ff(wg1, k)) * xx1.v[k];
+				val += float(cu_gf4_ff(wg1, k)) * xx1.v[k];
 			}
 		}
 		return warpreduce_sum(val);
@@ -233,7 +234,7 @@ __device__ inline float matmul_warppar(float* x, uint32_t* w, int i, int n) {
 			ablock<float, 8> xx = *(ablock<float, 8>*)&x[j];
 #pragma unroll
 			for (int k = 0; k < 8; ++k) {
-				val += float(gf4_ff(wg, k)) * xx.v[k];
+				val += float(cu_gf4_ff(wg, k)) * xx.v[k];
 			}
 		}
 		return warpreduce_sum(val);
@@ -258,11 +259,11 @@ __device__ inline float matmul_warppar(half* x, uint32_t* w, int i, int n) {
 				ablock<__half2_raw, 8> xx = *(ablock<__half2_raw, 8>*)&x[j + warpSize * 16 * u];
 #pragma unroll
 				for (int k = 0; k < 8; k += 2) {
-					val = __hfma2(gf4x2_ff(wgp[u].v[0], k), xx.v[k / 2], val);
+					val = __hfma2(cu_gf4x2_ff(wgp[u].v[0], k), xx.v[k / 2], val);
 				}
 #pragma unroll
 				for (int k = 0; k < 8; k += 2) {
-					val = __hfma2(gf4x2_ff(wgp[u].v[1], k), xx.v[k / 2 + 4], val);
+					val = __hfma2(cu_gf4x2_ff(wgp[u].v[1], k), xx.v[k / 2 + 4], val);
 				}
 			}
 		}
@@ -275,11 +276,11 @@ __device__ inline float matmul_warppar(half* x, uint32_t* w, int i, int n) {
 			ablock<__half2_raw, 8> xx = *(ablock<__half2_raw, 8>*)&x[j];
 #pragma unroll
 			for (int k = 0; k < 8; k += 2) {
-				val = __hfma2(gf4x2_ff(wgp.v[0], k), xx.v[k / 2], val);
+				val = __hfma2(cu_gf4x2_ff(wgp.v[0], k), xx.v[k / 2], val);
 			}
 #pragma unroll
 			for (int k = 0; k < 8; k += 2) {
-				val = __hfma2(gf4x2_ff(wgp.v[1], k), xx.v[k / 2 + 4], val);
+				val = __hfma2(cu_gf4x2_ff(wgp.v[1], k), xx.v[k / 2 + 4], val);
 			}
 		}
 		return warpreduce_sum(float(val.x + val.y));
@@ -292,7 +293,7 @@ __device__ inline float embed(T* weight, int idx) {
 }
 
 __device__ inline float embed(uint32_t* weight, int idx) {
-	return gf4_ff(weight[idx / 8], idx % 8);
+	return cu_gf4_ff(weight[idx / 8], idx % 8);
 }
 
 template <typename T>
@@ -335,11 +336,24 @@ __global__ static void kernel_rotate_sink(uint64_t, int kvd, KVT* key_cache, int
 	kb[o + 1] = KVT(r1);
 }
 
-__device__ inline float gelu(float x) {
+__device__ inline float cu_gelu(float x) {
+	// const float sqrt_param = 0.79788456080286535587989211986876f;
 	return 0.5f * x * (1.0f + tanhf(0.797885f * (x + 0.044715f * x * x * x)));
 }
+__device__ inline float cu_d_gelu(const float x)
+{
+    const float sqrt_param = 0.79788456080286535587989211986876f;
+    const float mul_param = 0.044715;
 
-__device__ inline float silu(float x) {
+    float x2mul = x * x * mul_param;
+    float tan_h = tanhf(sqrt_param * (x + x * x2mul));
+    float dg1 = 0.5f * (1.0f + tan_h);
+    float dg2 = x * 0.5f * sqrt_param * (1 - tan_h * tan_h);
+    float dg3 = dg2 * 3 * x2mul;
+    return (dg1 + dg2 + dg3);
+}
+
+__device__ inline float cu_silu(float x) {
 	return x / (1.0f + expf(-x));
 }
 
@@ -378,7 +392,7 @@ __device__ static void moe_gate_warp(float* moe_weights, int* moe_experts, float
 }
 
 template <typename T>
-__device__ static float rmsnorm(T* o, float* x, float* weight, int size, float eps, bool ln) {
+__device__ static float cu_rmsnorm(T* o, float* x, float* weight, int size, float eps, bool ln) {
 	int i = threadIdx.x;
 	int blockSize = blockDim.x;
 
@@ -485,3 +499,27 @@ __device__ static void softmax(float* xout, float* x, int size) {
 		xout[j] = expf(x[j] - max_val);
 	}
 }
+
+template <typename T, typename AT>
+__global__ static void kernel_output(uint64_t, float* xout, float* x, T* w, float* rms_weight, int n, int d, float norm_eps, bool norm_ln) {
+	extern __shared__ char smem[];
+
+	AT* xs = (AT*)smem;
+
+	float rmsscale = cu_rmsnorm(xs, x, rms_weight, n, norm_eps, norm_ln);
+
+	int io = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
+	int ib = (gridDim.x * blockDim.x) / warpSize;
+
+	for (int j = io; j < d; j += ib) {
+		float val = matmul_warppar(xs, w, j, n) * rmsscale;
+
+		// instead of writing one value per block, we transpose the values and write all results from first warp
+		val = blocktranspose(val, 0.f);
+
+		if (threadIdx.x < blockDim.x / warpSize) {
+			xout[j + threadIdx.x] = val;
+		}
+	}
+}
+

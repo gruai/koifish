@@ -1,3 +1,11 @@
+/**
+ *  SPDX-FileCopyrightText: 2019-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT  
+ * 
+ *  \brief GRUS SPARSE TEMPLATE	- Utility
+ *  \author Yingshi Chen
+ */
+
 #pragma once
 
 #include <stdio.h>
@@ -56,7 +64,8 @@ using namespace std;
 	typedef std::chrono::high_resolution_clock Clock;
 	#define GST_NOW( )	(Clock::now( ))
 	#define GST_TIC(tick)	auto tick = Clock::now( );
-	#define GST_TOC(tick)	( (std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now( )-(tick)).count( ))/1000.0)
+	// #define GST_TOC(tick)	( (std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now( )-(tick)).count( ))/1000.0)
+	#define GST_TOC(tick)	( (std::chrono::duration_cast<std::chrono::microseconds>(Clock::now( )-(tick)).count( ))/1000000.0)
 
 	inline void GST_time_init(void) {}
 

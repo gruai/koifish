@@ -17,10 +17,12 @@
  *  All paramters defined here
 */
 enum COMPRESSIVE_SENSING    {
-    SKIP,
+    SKIP,    
     SVD,
     SVD_a,
     GBTQ,
+    GBDT,
+    SAMPLE,     //random sub-sampling
 };
 
 enum MODEL_ARCH {
@@ -32,6 +34,8 @@ enum MODEL_ARCH {
 
     NLP_QWEN2,
     NLP_DEEPSEEK,
+
+    NLP_GUPPY,
 
     NLP_MOE,    //???
 //////    
@@ -102,19 +106,31 @@ protected:
 public:
     static std::string sWeight,sBias,sNorm,sLayer,sAttnOut;
 
+    bool isSparse() {
+        return sparse.method!=0;
+    } 
+    struct Sparsing{
+        int method = 0;      //  1-GBDT
+        std::string model_path;
+    };
+    Sparsing sparse;
+
     std::string sCardPath = "",sTokenPath="";
     std::string sArch,torch_dtype,transformers_version,model_type;
     std::string act_type,norm_type;
-
+    typNUMBER tpWeight = typNUMBER::BF16,tpActivation = typNUMBER::BF16;
+    dotprod_t fDotW;
     JSON jModelParam;   //
     int vocab_size=-1,bos_token_id,eos_token_id;
     int preLogits_dB=2; // epsilon for convergence test
     bool isNormalBias = true;  
     bool isSLPBias = true;  
     bool isPaddedCls = false;  
+    bool isFFNShareParam = false;
 // dim(=head_dim*n_heads)
     int dim=-1,hidden_dim=-1,n_layers=-1,n_heads=-1,n_kv_heads=-1,head_dim=1;
 //  ****
+    bool isFFNWeightTying = true;
     bool isEmbedWeightTying = true;
     bool isSeperateQKV = false;
     float clip_qkv = FLT_MAX;   // Clipping Q/K/V.  to prevent numerical instability
@@ -202,12 +218,15 @@ struct train_params_ {
 struct DEUG_SWITCH{
     int SelfAttention_noraml=1;
     bool NO_loss = false;
+    bool check_tensor_norm = false;
     int dict_latent_dim = -1;
     int graph_dump = 0; //  10 levels of dumps, 0-9. 0 is a full dump,The lower the number the more dump.
     int train_hyperparams = 0;
     int train_datas = 0;    
     int back_graph_version = 0;
     int T_cuda_ver = 0;
+    int T_cpu = 0;
+    
     void Dump(int typ);
 };
 extern DEUG_SWITCH DEBUG;
@@ -221,7 +240,7 @@ struct CLI_params {
     };    
     CheckPoint checkpoint;
 
-    typNUMBER tpWeight,tpActivation,tpGradient;
+    typNUMBER tpGradient = typNUMBER::BF16;
 
     //Always false,     GGML don't support back of FLASH_ATTEN !
     bool isFlashAtten()     {   
@@ -418,7 +437,7 @@ struct CLI_params {
         assert(il>=0 && il<model.layerps.size());
         return model.layerps[il].n_embd_gqa(nEmbed());        
     }
-    uint32_t n_gqa(uint32_t il = 0) const {
+    uint32_t n_gqa(int il = 0) const {
         assert(il>=0 && il<model.layerps.size());
         return model.layerps[il].n_gqa( ); 
         /*const uint32_t n_head    = this->n_head(il);

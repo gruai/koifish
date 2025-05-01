@@ -66,8 +66,8 @@ hGensor Optimizer::hLoss()             {
     return _fish->loss;          
 }
 
-hGensor Optimizer::hTargetProbs()      {   return _fish->target_probs;  }
-hGensor Optimizer::hPreLogits()       {   return _fish->preLogits;     }
+hGensor Optimizer::hTargetProbs()       {   return _fish->target_probs;         }
+hGensor Optimizer::hPreLogits()         {   return _fish->hCLS->preLogits;      }
 
 hGensor Optimizer::GradOf(hGensor node,int flag){
     // assert(0);
@@ -238,13 +238,11 @@ void OPT_Adam::UpdateParams(int nx,CLI_params& config,int flag)  {
     g2_sum = 0;
     if(!isAdaptiveSched)        //params.adam->sched;   
         sched = 1.0;  
-#ifdef _TENSOR_G_
     g_step = tNormOf(opt_ps,0x0);  
     if(DEBUG.train_hyperparams==1){
         adam->decay = 0;      sched = 1.0;
     }
-#else
-#endif
+
     if(grad!=nullptr){
         g = (floatX *)grad->data;  // gradients
         clip = gClip(nParams,g,nullptr);        
@@ -261,9 +259,15 @@ void OPT_Adam::UpdateParams(int nx,CLI_params& config,int flag)  {
     for (auto hP : opt_ps) {
         p_decay = ((tDIM(hP) >= adam->decay_min_ndim) ? adam->decay : 0.0f) * sched;
         const int64_t ne = tELEM(hP);
+        if(hP->isRefer())
+            continue;
+        if(DEBUG.check_tensor_norm){
+            // assert(hP->nrm<1000.0);     //  only for debug
+        }
         UpdateTensorParam(hP,i,g==nullptr?nullptr:g+i,clip);
         i += ne;       
     }
+    assert(i==nParams);
     tUpdate = GST_ms()-now;
 //     double a = sqrt(g2_sum),off=0;
 // #ifdef _TENSOR_G_
@@ -325,6 +329,7 @@ double OPT_Adam::UpdateTensorParam(hGensor hP,size_t offset,floatX *gX,float cli
     float mh,vh,g0,x,x0,x00;
 #ifdef _TENSOR_G_
     if(isToHost){
+        assert(_tmp!=nullptr);
         paramX = (floatX*)_tmp;     gX=paramX+hP->szData;
         paramX0 = paramX,           gX0 = gX;
         hP->SerialGP(paramX,gX,hP->szData,true);           x00 = T2Float(paramX);     
@@ -488,6 +493,7 @@ Optimizer::RESULT Optimizer::Search(void * ctx, hGensor loss_,hGensor target_,CL
     // g_dump_level = 0;
     int iter0 = 0,t;  //opt->iter;
     for (t = 0; t < train_params.nMostIter; ++t) {
+        _fish->OnNextEpoch(t,0x0);
         if(t==train_params.nMostIter-1){
             if(train_loader!=nullptr)   {
                 train_loader->isLast = true;        isDumpOnce = true;
@@ -554,7 +560,7 @@ double Optimizer::GraphCompute(hSampLoader hLoader,hTGraph hTG, int flag){
     int64_t now = GST_ms();
     int nThread = TrainParams().n_threads,no=0,nAccum=TrainParams().n_gradient_accumulation;
     bool isOnlyEvaluate = !hTG->isBackward;
-    float mean_loss = 0.f;
+    
     OutCLS* cls = _fish->GetNeuron<OutCLS>("OutCLS",0);
     TokenEmbed* embed = _fish->GetNeuron<TokenEmbed>("TokenEmbed",0);    
 #ifdef _TENSOR_G_    
@@ -562,7 +568,9 @@ double Optimizer::GraphCompute(hSampLoader hLoader,hTGraph hTG, int flag){
         embed->hBatch = hLoader->hBatch;   
     isBackward = false;
     _fish->ForwardOnNeuron(0x0);
-    mean_loss = hLoader->hTokens->LossOnResult(hLoader,cls);
+    if(phase==P_GENERATE || phase==P_PREFILL)
+        return 0.0;
+    float mean_loss = hLoader->hTokens->LossOnResult(hLoader,cls);
     if(isOnlyEvaluate){
         return mean_loss;
     }else{
@@ -648,10 +656,12 @@ float Optimizer::Evaluate(hSampLoader loader,int iter,int flag){
         _INFO("[eval] " );   
         break;
     case P_PREFILL:
-        _INFO("[prefill] " );       assert(loader->num_batches==1);
+        // _INFO("[prefill] " );       
+        assert(loader->num_batches==1);
         break;
     case P_GENERATE:
-        _INFO("[generate] " );      assert(loader->num_batches==1);
+        // _INFO("[generate] " );      
+        assert(loader->num_batches==1);
         break;
     default:
         assert(0);
@@ -661,7 +671,7 @@ float Optimizer::Evaluate(hSampLoader loader,int iter,int flag){
     OutCLS* cls = _fish->GetNeuron<OutCLS>("OutCLS",0);  
     cls->hLoader = loader;
     auto loss = hLoss();     
-    double l2,delta_max=0,delta_=0,a,mean_loss=0,ee,tX=0;
+    double l2,delta_max=0,delta_=0,a,mean_loss=0,ee=0,tX=0;
     auto tokens_input = _fish->Input( ); 
     int i,nB=0,step=loader->StepOfEvaluate();      
     size_t nz=0,j;
@@ -670,7 +680,7 @@ float Optimizer::Evaluate(hSampLoader loader,int iter,int flag){
     const float *wLog = nullptr;
     loader->next_sample = 0;        // fix this to keep same acc on each experiment
     for (i = 0; i < loader->num_batches; i+=step) {        
-        if(tokens_input!=nullptr)   {//in some debug mode, tokens_input maybe null
+        if(tokens_input!=nullptr && (phase!=P_PREFILL && phase!=P_GENERATE))   {//in some debug mode, tokens_input maybe null
             TIMING_ms(loader->UpdateBatch(i,_fish),tX);
             samp = loader->cur_samps[i];
         } 
@@ -761,15 +771,15 @@ float Optimizer::UpdateLossCurve(int flag){
     trainInfos().Add(StepInfos::STEP(loss_after,iter,train_epochs,last_lr,g_step,tX,millis_per_iter));
     if((iter-1)%_params.dump_every==0 || isDumpOnce){
         isDumpOnce = false;
-        _INFO("[epoch_%d]_%-6d loss=%f |g|=%g\tlr=%.2e | %s ",train_epochs,iter,
-            loss_after,g_step,last_lr,train_loader->IterInfo().c_str()); //,zmuv_0,zmuv_1    
+        _INFO("[epoch_%d]_%-6d loss=%f |g|=%.3g\tlr=%.2e | %s ",train_epochs,iter,
+            loss_after,g_step,last_lr,train_loader->IterInfo().c_str() ); //,zmuv_0,zmuv_1    
         if (millis_per_iter > 0)            {
             _TIME_INFO(" T=",millis_per_iter);  _TIME_INFO("(data=",tData);    _TIME_INFO(" X=",tX);        _TIME_INFO(") eta=",remaining_millis);
         }
         size_t tokens_processed = _fish->config.nTokensPerGrad();   //(size_t) * B * T * grad_accum_steps;
         float tokens_per_second = tokens_processed / millis_per_iter * 1000.0f;
         ema_tps = iter==1 ? tokens_per_second : 0.95f * ema_tps + 0.05f * tokens_per_second;
-        _INFO(" | %.1fK token/s",ema_tps/1000.0);     _INFO("\n");
+        _INFO(" | %.1fK token/s | %s",ema_tps/1000.0,_fish->DebugInfo().c_str());     _INFO("\n");
     }
     float improvement = loss_before - loss_after;
     return improvement;
@@ -834,7 +844,7 @@ void Optimizer::BeforeTrain(hGensor tokens_,int flag) {
 #ifdef _TENSOR_G_
     adam.decay = 0.1;      //very high for GPT2 Model
 
-    InitCUDA(1);
+    InitOnCUDA(1);
 #endif    
     // assert(nMostParam>=nParams);
     assert(_fish->config.common.nMostIter>0);
@@ -902,7 +912,7 @@ void Optimizer::Prepare(size_t nx_,int flag){
         if(_fish->isTrain()) {
             if(isGlobalGrad){
                 assert(nParams<INT_MAX);
-                grad = TENSO(_ctx, typNUMBER::F32, {(int)(nParams)});
+                grad = GT(_fish, typNUMBER::F32, {(int)(nParams)});
             }
                 
             nz = _fish->hBackTG->Prepare4Train(_ctx,tpGD);
@@ -912,7 +922,8 @@ void Optimizer::Prepare(size_t nx_,int flag){
         // train_loader->Init(dolphin,"Train",false);     //train_loader->Prepare(this);
     }
 #ifdef _TENSOR_G_
-    _tmp = new float[nParams]();
+    if(_fish->isTrain())
+        _tmp = new float[nParams]();
 #else
 #endif    
     // val_loader->Init(dolphin,"Eval",false);            //val_loader->Prepare(this);
@@ -981,18 +992,6 @@ void OPT_Adam::Prepare(size_t nx_,int flag){
         }else{
 
         }
-        /*gm  = TENSO(_ctx, typNUMBER::F32, nParams);
-        gv  = TENSO(_ctx, typNUMBER::F32, nParams);
-        gpf = past > 0 ? TENSO(_ctx, typNUMBER::F32, past) : NULL;
-        float * v  = (float *)gv->data;   // gradients
-        float * m  = (float *)gm->data;     // first moment
-        ZERO_(gm);
-        ZERO_(gv);
-        if (gpf) {
-            ZERO_(gpf);
-        }*/
-       /*_fish->hBackTG->Prepare(_ctx);
-        */
     }
 }
 
@@ -1003,8 +1002,13 @@ OPT_Adam::OPT_Adam(NLP_AutoRegressive *g_,CLI_params& params_,int flag)
     adam = &(_fish->config.common.adam); 
     adam->clip_alg = 1;      //clip_alg=0 little better
     _fish->config.Fuse_Normal = 0;          //  
-    _fish->config.common.remater_ffn = true;
-    _fish->config.common.remater_qkv = true;
+    if(g_->isTrain()){
+        _fish->config.common.remater_ffn = 1;
+        _fish->config.common.remater_qkv = 1;
+    }else{  // may different
+        _fish->config.common.remater_ffn = 1;
+        _fish->config.common.remater_qkv = 1;
+    }
 
     // sched              = 1.0f;
 }

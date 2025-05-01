@@ -16,6 +16,20 @@ typedef shared_ptr<TGraph> hTGraph;
 
 class EDGE_DEVICES{
 public:
+    struct GPU_ {
+        int     cc;                 // compute capability
+        int     nsm;                // number of streaming multiprocessors
+        size_t  smpb;               // max. shared memory per block
+        size_t  smpbo;              // max. shared memory per block (with opt-in)
+        bool    vmm;                // virtual memory support
+        size_t  vmm_granularity;    // granularity of virtual memory
+        size_t  total_vram;
+        int     warp_size;          // Number of threads in a dispatch  
+
+        static int MAX_COUNT;     //  16    
+        static std::vector<GPU_> cudaGetDevice( int flag=0x0);
+    };
+
     // Fish *hFish = nullptr;
     int nCore = 1;  //  cores of CPU,GPU(Streaming Multiprocessors)
     size_t sz = 0x0;
@@ -37,7 +51,7 @@ public:
 #ifdef _TENSOR_G_
     virtual bool InitGPU(const CLI_params&hparams,int flag=0x0);
 #endif   
-    
+    EDGE_DEVICES();
     EDGE_DEVICES(const CLI_params&hparams, int flag=0x0);
     virtual ~EDGE_DEVICES();
     EDGE_DEVICES(EDGE_DEVICES const&)    = delete;

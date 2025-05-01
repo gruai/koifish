@@ -26,9 +26,14 @@
 /*
     Type of Tokens 
     1. 32bit for DEEPSEEK
+    2. 32bit for QWEN(151936)
 */
-//typedef uint32_t TOKEN_ID;
-typedef uint16_t TOKEN_ID;
+typedef uint32_t TOKEN_ID;
+//typedef uint16_t TOKEN_ID;
+const TOKEN_ID TOKEN_MAX = TOKEN_ID(-1);    
+
+//  Default type of activation of inferrence
+typedef float floatI;
 
 /*
     Type of numbers 
@@ -119,7 +124,9 @@ inline typNUMBER tpNumOf(const std::string&dtype_str){
         type = typNUMBER::BF16;
     } else if (dtype_str == "F8_E5M2") {
         type = typNUMBER::F8E5M2;
-    } else if (dtype_str == "F8_E4M3") {
+    } else if (dtype_str == "fp8") {
+        type = typNUMBER::F8E5M2;
+    }else if (dtype_str == "F8_E4M3") {
         type = typNUMBER::F8E4M3;
     } else if (dtype_str == "I32") {
         type = typNUMBER::I32;
@@ -135,20 +142,12 @@ inline typNUMBER tpNumOf(const std::string&dtype_str){
     }
     return type;
 }
-/*
-enum PrecisionMode {
-    typNUMBER::F32,
-    PRECISION_FP16,
-    PRECISION_BF16,
-    PRECISION_BF8
-};
-
-*/
 
 /*
     FP16/BF16/FP8/FP4 from different vendors
 */
 #define _USE_CUDA_FLOAT_
+// #undef _USE_CUDA_FLOAT_
 #if defined(_USE_CUDA_FLOAT_)
   #include <cuda_fp16.h>
   #include <cuda_bf16.h>
@@ -167,28 +166,37 @@ enum PrecisionMode {
       typedef __nv_bfloat16 floatX;
       #define FLOAT_TYPE typNUMBER::BF16
   #endif
+#else
 
-  template <typename T>
-  inline float T2Float(T* a0)   {
-      float a;    
-    
-      if(typeid(T)==typeid(half)){
-          a = __half2float(*(half*)a0);
-      } else
-      if(typeid(T)==typeid(nv_bfloat16)) {
-          a = __bfloat162float(*(nv_bfloat16*)a0);
-      } else
-      if(typeid(T)==typeid(float)) {
-          a = *a0;
-      } else
-      if(typeid(T)==typeid(int)) {
-          a = *a0;
-      }else{
-          assert(0);
-      }
-      return a;
-  }
 #endif
+
+#include "g_float_cpu.hpp"
+template <typename T>
+inline float T2Float(const T* a0)   {
+    float a;    
+    
+    if(typeid(T)==typeid(half)){
+        a = __half2float(*(half*)a0);
+    } else
+    if(typeid(T)==typeid(nv_bfloat16)) {
+        a = __bfloat162float(*(nv_bfloat16*)a0);
+    } else
+    if(typeid(T)==typeid(float)) {
+        a = *a0;
+    } else
+    if(typeid(T)==typeid(int)) {
+        a = *a0;
+    }else{
+        assert(0);
+    }
+    // assert(!isnan(a) && !isinf(a));
+    return a;
+}
+template <> inline float T2Float<f8e5m2_t>(const f8e5m2_t* a0)   {
+    float a = fp8_to_float(*a0);
+    assert(!isnan(a) && !isinf(a));
+    return a;
+}
 
 //  byte per element of this type,  (maybe decimals rather than integers!)
 double BPE(typNUMBER type);
@@ -199,47 +207,22 @@ const char *cNameOf(typNUMBER type);
 std::string NameOf(typNUMBER type);
 bool isQuantized(typNUMBER type);
 
-typedef uint16_t f16_t;
-typedef uint8_t f8e5m2_t;
-
-#if defined(__AVX2__) && defined(__F16C__)
-    inline float half_to_float(f16_t x) {
-    return _cvtsh_ss(x);
-    }
-    inline f16_t float_to_half(float x) {
-    return _cvtss_sh(x, 0);
-    }
-#else
-    inline float half_to_float(f16_t x) {
-        assert(false && "float16 not supported on this platform");
-        return 0.0f;
-    }
-    inline f16_t float_to_half(float x) {
-        assert(false && "float16 not supported on this platform");
-        return 0;
-    }
-#endif
-
-inline float float8e5m2_to_float(f8e5m2_t x) {
-  f16_t val = 0;
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-  memcpy(&val, &x, sizeof(f8e5m2_t));
-#else
-  memcpy((char*)&val + sizeof(f8e5m2_t), &x, sizeof(f8e5m2_t));
-#endif
-  return half_to_float(val);
-}
-[[maybe_unused]] inline f8e5m2_t float_to_float8e5m2(float x) {
-  f16_t val = float_to_half(x);
-  f8e5m2_t out;
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-  memcpy(&out, (char*)&val, sizeof(f8e5m2_t)); // TODO: round instead of truncate?
-#else
-  memcpy(&out, (char*)&val + sizeof(f8e5m2_t), sizeof(f8e5m2_t)); // TODO: round instead of truncate?
-#endif
-  return out;
-}
-
 void matmul_unscaled(float* xout, float* x, float* w, int n, int d);
-void matmul_unscaled(float* xout, float* x, f16_t* w, int n, int d);
+void matmul_unscaled(float* xout, float* x, __gcc_fp16* w, int n, int d);
 void matmul_unscaled(float* xout, float* x, f8e5m2_t* w, int n, int d);
+
+void matmul(float* xout, float* x, float* w, int n, int d, const int* block_size, float* scale);
+void matmul(float* xout, float* x, __gcc_fp16* w, int n, int d, const int* block_size, float* scale);
+void matmul(float* xout, float* x, f8e5m2_t* w, int n, int d, const int* block_size, float* scale);
+
+float rmsnorm(float* o, float* x, float* weight, int size, float eps, bool ln);
+float rmsnorm(float* o, float* x, float* weight, int size, float eps);
+
+void rope(float* vec, int d, int head_dim, int pos, float theta, int rotary_dim);
+void rope(float* buf, float* vec, int d, int head_dim, int pos, float theta);
+void rope(float* buf, __gcc_fp16* vec, int d, int head_dim, int pos, float theta);
+#if defined(_USE_CUDA_FLOAT_)   
+#else
+
+#endif
+

@@ -17,10 +17,6 @@
 #include "../../Manifold/Fish.hpp"
 #include "../../Manifold/Optimizer.hpp"
 
-// #include "./mfu.h"
-#define NOMINMAX
-#include <cudnn_frontend.h>
-namespace fe = cudnn_frontend;
 extern int tpFuseCu;
 extern cudaStream_t main_stream;
 
@@ -33,11 +29,13 @@ __global__ void __launch_bounds__(1024) test_print_kernel(half *__restrict__ arr
 
     }
 }
-// static int recompute=1;     //  int V=50257,Vp=50304,
+
 static unsigned long long rng_state=0;
 float* accumulated_mean_loss=nullptr;
 bool cuClear(std::vector<hGTensor> tensors,int flag){
     for(auto tensor:tensors){
+        if(tensor->isRefer())
+            continue;
         cudaCheck(cudaMemsetAsync(ToG(tensor), 0, tensor->nByte(), main_stream));
     }
     
@@ -159,7 +157,7 @@ float RAW_backward(Fish *fish,const int* iX, int grad_accum_steps,bool isOnlyEva
     NvtxRange classifier_and_loss_range("classifier_and_loss");
     FFN *ffn=fish->GetNeuron<FFN>("FFN",L-1);  
     LayerNormal* lnf = fish->GetNeuron<LayerNormal>("LayerNormal",0);    
-    delta = cls->FUSE_cuda(lnf->out,nullptr,0x0);    //some operation fused in forward pass
+    delta = cls->FUSE_cuda(lnf->out,0x0);    //some operation fused in forward pass
     lnf->FUSE_cuda(ffn->out,(float*)scratchX,delta);  //
 
     hGensor tmpDelta = ffn->out;    
@@ -174,7 +172,7 @@ float RAW_backward(Fish *fish,const int* iX, int grad_accum_steps,bool isOnlyEva
         ffn->FUSE_cuda(QKV->out,scratchX,  0x0);   
         QKV->FUSE_cuda(QKV->norm.out,last->out,GTensor::delta,(float*)scratchX,0x0);   
     }
-    embed->FUSE_cuda(fish->Input(),scratchX,nullptr,random_u32(&rng_state));       
+    embed->OnEmbed(TO<int>(fish->Input()),random_u32(&rng_state));    //,scratchX,nullptr,   
 
     // Aggregate all gradients that are not part of the transformer blocks5
     if(tpFuseCu==0 && last_step) {
@@ -198,7 +196,7 @@ float RAW_backward(Fish *fish,const int* iX, int grad_accum_steps,bool isOnlyEva
     
     return cls->mean_loss;
 }   
-
+/*
 void RAW_forward(Fish *fish,int flag) {
     NVTX_RANGE_FN();
     auto config = fish->config;
@@ -233,21 +231,21 @@ void RAW_forward(Fish *fish,int flag) {
     }
     OutCLS* cls = fish->GetNeuron<OutCLS>("OutCLS",0);
     if(tpFuseCu==1)
-        cls->FUSE_cuda(cur,embed->w,flag); //lnf->out,
+        cls->FUSE_cuda(cur,flag); //embed->w,
     else
         assert(0);//cls->preLogits = lnf->out*embed->w;   //matmul_forward_cublaslt(ToX(cls->preLogits), ToX(lnf->out), ToX(embed->w), NULL, B, T, C, Vp, main_stream);
     PrintTensor<floatX>("output",ToX(cls->preLogits),true,B,T,C);
     // ffn->norm.out->PrintX<floatX>("inp1",0,-1); 
     cudaCheck(cudaDeviceSynchronize());
-}
+}*/
 
 // static void *grads_memory=nullptr;
 static float *m_memory=nullptr,*v_memory=nullptr,*master_weights=nullptr;
 
-void Optimizer::ClearCUDA(int flag){
+void Optimizer::ClearOnCUDA(int flag){
 
 }
-void Optimizer::InitCUDA(int flag){
+void Optimizer::InitOnCUDA(int flag){
     ADAM_params_ adam = TrainParams().adam;
     GD_METHOD tpCurGD = tpGD;
 
@@ -283,10 +281,8 @@ void Optimizer::InitCUDA(int flag){
         }
         off += nP;
     }
-    LayerNormal* lnf = _fish->GetNeuron<LayerNormal>("LayerNormal",0);
-    TokenEmbed* embed = _fish->GetNeuron<TokenEmbed>("TokenEmbed",0);      assert(embed!=nullptr);
-    //  ,C = config.nEmbed()
-    embed->InitBucket(CEIL_DIV(C, (WARP_SIZE * x128::size)));
+    // LayerNormal* lnf = _fish->GetNeuron<LayerNormal>("LayerNormal",0);
+    // TokenEmbed* embed = _fish->GetNeuron<TokenEmbed>("TokenEmbed",0);      assert(embed!=nullptr);
 }
 
 int UpdateTensorParam_cuda(hGTensor tensor,size_t np,Optimizer *hOPT,float& grad_norm,int flag){

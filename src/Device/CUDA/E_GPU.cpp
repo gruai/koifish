@@ -7,20 +7,21 @@
  */
 
 #include "./EDevice.hpp"
-// #include "./cuda_common.h"
-// #include "./cuda_utils.cuh"
 #ifdef __USE_GGML__
     #include "ggml-cuda.h"
     #include "ggml-sycl.h"
     #include "ggml-alloc.h"
 #endif
 
-
-bool InitCUDNN(const CLI_params&hparams,EDGE_DEVICES *hDevice,int flag);
+bool InitCUDA(const CLI_params&hparams,EDGE_DEVICES *hDevice,int flag);
 bool EDGE_DEVICES::InitGPU(const CLI_params&hparams,int flag){
-    string sTp = hparams.KV({"train","device"},"");
+    string sTp = hparams.KV({"train","device"},"");    
+    std::vector<GPU_> gpus = EDGE_DEVICES::GPU_::cudaGetDevice(flag);
 #ifdef __USE_CUDA__
-    if(!InitCUDNN(hparams,this,flag))
+    if(gpus.size()==0)
+        return false;
+
+    if(!InitCUDA(hparams,this,flag))
         return false;
 
     /*int nGPU = ggml_backend_cuda_get_device_count();     //  ggml_cuda_init: found 1 CUDA devices:    
@@ -43,12 +44,7 @@ bool EDGE_DEVICES::InitGPU(const CLI_params&hparams,int flag){
 
 
 
-//  https://stackoverflow.com/questions/16468440/how-to-split-class-definition-between-multiple-cpp-and-cu-files
-hGensor TENSO(void* ctx0,typNUMBER typ,SHAPE shape,int flag,const string&name ) {
-    auto type = (typNUMBER)(typ);
-    hGensor hT = std::make_shared<huTensor>(name,shape,type,false,flag);
-    return hT;    
-}
+
 
 /*
 void ggml_numa_init(enum ggml_numa_strategy numa_flag) {
@@ -66,27 +62,27 @@ void ggml_numa_init(enum ggml_numa_strategy numa_flag) {
     // set numa scheme
     g_state.numa.numa_strategy = numa_flag;
 
-    GGML_PRINT_DEBUG("numa strategy %u\n",g_state.numa.numa_strategy);
+    _PRINT_DEBUG("numa strategy %u\n",g_state.numa.numa_strategy);
 
     g_state.numa.cpuset = ggml_get_numa_affinity();
 
     // enumerate nodes
-    while (g_state.numa.n_nodes < GGML_NUMA_MAX_NODES) {
+    while (g_state.numa.n_nodes < _NUMA_MAX_NODES) {
         rv = snprintf(path, sizeof(path), "/sys/devices/system/node/node%u", g_state.numa.n_nodes);
-        GGML_ASSERT(rv > 0 && (unsigned)rv < sizeof(path));
+        _ASSERT(rv > 0 && (unsigned)rv < sizeof(path));
         if (stat(path, &st) != 0) { break; }
         ++g_state.numa.n_nodes;
     }
 
     // enumerate CPUs
-    while (g_state.numa.total_cpus < GGML_NUMA_MAX_CPUS) {
+    while (g_state.numa.total_cpus < _NUMA_MAX_CPUS) {
         rv = snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%u", g_state.numa.total_cpus);
-        GGML_ASSERT(rv > 0 && (unsigned)rv < sizeof(path));
+        _ASSERT(rv > 0 && (unsigned)rv < sizeof(path));
         if (stat(path, &st) != 0) { break; }
         ++g_state.numa.total_cpus;
     }
 
-    GGML_PRINT_DEBUG("found %u numa nodes, %u CPUs\n", g_state.numa.n_nodes, g_state.numa.total_cpus);
+    _PRINT_DEBUG("found %u numa nodes, %u CPUs\n", g_state.numa.n_nodes, g_state.numa.total_cpus);
 
     // figure out which node we're on
     uint current_cpu;
@@ -106,21 +102,21 @@ void ggml_numa_init(enum ggml_numa_strategy numa_flag) {
         return;
     }
 
-    GGML_PRINT_DEBUG("found our process on numa node %u, CPU %u\n", g_state.numa.current_node, current_cpu);
+    _PRINT_DEBUG("found our process on numa node %u, CPU %u\n", g_state.numa.current_node, current_cpu);
 
     for (uint32_t n = 0; n < g_state.numa.n_nodes; ++n) {
         struct ggml_numa_node * node = &g_state.numa.nodes[n];
-        GGML_PRINT_DEBUG("CPUs on node %u:", n);
+        _PRINT_DEBUG("CPUs on node %u:", n);
         node->n_cpus = 0;
         for (uint32_t c = 0; c < g_state.numa.total_cpus; ++c) {
             rv = snprintf(path, sizeof(path), "/sys/devices/system/node/node%u/cpu%u", n, c);
-            GGML_ASSERT(rv > 0 && (unsigned)rv < sizeof(path));
+            _ASSERT(rv > 0 && (unsigned)rv < sizeof(path));
             if (stat(path, &st) == 0) {
                 node->cpus[node->n_cpus++] = c;
-                GGML_PRINT_DEBUG(" %u", c);
+                _PRINT_DEBUG(" %u", c);
             }
         }
-        GGML_PRINT_DEBUG("\n");
+        _PRINT_DEBUG("\n");
     }
 
     if (ggml_is_numa()) {
@@ -128,7 +124,7 @@ void ggml_numa_init(enum ggml_numa_strategy numa_flag) {
         if (fptr != NULL) {
             char buf[42];
             if (fgets(buf, sizeof(buf), fptr) && strncmp(buf, "0\n", sizeof(buf)) != 0) {
-                GGML_LOG_WARN("/proc/sys/kernel/numa_balancing is enabled, this has been observed to impair performance\n");
+                _LOG_WARN("/proc/sys/kernel/numa_balancing is enabled, this has been observed to impair performance\n");
             }
             fclose(fptr);
         }

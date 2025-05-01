@@ -150,5 +150,6 @@ int GPT_work(CLI_params& params);
 int fish_1(CLI_params& config);
 int GGUF_list(CLI_params& config);
 int Fish_bubble(CLI_params& config);
+int Fish_ppl(CLI_params& config);
 int Fish_token(CLI_params& config);
 int Tutor(CLI_params& config);

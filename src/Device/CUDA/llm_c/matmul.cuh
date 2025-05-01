@@ -252,10 +252,12 @@ void inline matmul_forward_cublaslt(floatX* out,
 void inline matmul_backward(floatX* delta, floatX* dweight, floatX* dbias,
                      floatX* deltaIn, floatX* inp, floatX* weight,
                      float* dbias_buffer,
-                     int B, int T, int C, int OC, cudaStream_t stream,
+                     int B, int T, int C, int OC, cudaStream_t stream,bool isTransW = false,
                      floatX* pre_gelu=NULL, int gelu_fusion=1) {
     NVTX_RANGE_FN();
-
+    bool transAW = false;
+    // if(isTransW)
+    //     transAW = true;
     // backward to bias, if given, does a +=
     if (dbias != NULL) {
         // Each warp is responsible for 8 * "x128::size" = 64 OCs at BF16 (OC must be a multiple of 64!)
@@ -285,7 +287,7 @@ void inline matmul_backward(floatX* delta, floatX* dweight, floatX* dbias,
     }
 
     // backward to input, uses = in the backward pass (set the gradient)
-    matmul_cublaslt(delta, weight, deltaIn, NULL, C, B*T, OC, stream, false, false, 0, 0, 0, 0, false,
+    matmul_cublaslt(delta, weight, deltaIn, NULL, C, B*T, OC, stream, transAW, false, 0, 0, 0, 0, false,
                     gelu_fusion >= 2 ? pre_gelu : NULL, true);
 
     // backward GELU (if it wasn't fused into the matmul above)
@@ -294,6 +296,6 @@ void inline matmul_backward(floatX* delta, floatX* dweight, floatX* dbias,
     }
 
     // backward to weight, uses += in the backward pass (accumulate the gradient) by setting alpha=one
-    matmul_cublaslt(dweight, inp, deltaIn, NULL /*dbias*/, C, OC, B*T, stream, false, true, 0, 0, 0, 0,
+    matmul_cublaslt(dweight, inp, deltaIn, NULL /*dbias*/, C, OC, B*T, stream, transAW, true, 0, 0, 0, 0,
                     true /* accumulate */, NULL, true);
 }

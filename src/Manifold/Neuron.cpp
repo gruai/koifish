@@ -3,8 +3,6 @@
  *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT  
  *  
- *  Perceptrons 
- * 
  *  \brief Neurons & Perceptrons
  *  \author Yingshi Chen
  */
@@ -60,13 +58,28 @@ hNeuron GeNeuron::MakeInstance(Fish *hG_,void *ctx,const string& guid,JSON::cons
 GeNeuron::GeNeuron(const std::string &key_,JSON::const_iterator jit, Fish *hG_, int flag) : name(key_), hFish(hG_),ID(0) {    
 try{   
     Init(hG_,0x0);
-
+    layer = TGraph::curLayer;          assert(layer>=0);
     if((*jit).contains(std::string{ "#id" })){
         ID = (*jit)["id"];
     }
     type_info = jit.key(); 
     if(jit->is_array()){
-        jvals = jit->get<vector<double> >();
+        for (const auto& item : *jit) {
+            if(item.is_string()){
+                string sVal = item.template get<string>();
+                std::transform(sVal.begin(), sVal.end(), sVal.begin(), ::toupper);
+                if(sVal=="SPARSE"){
+                    isSparse = true;
+                }
+                if(sVal=="SVD"){
+                    compression = SVD;      assert(0);      // need BLAS support
+                }
+            }else if(item.is_number()){
+                double val = item.template get<double>();
+                jvals.push_back(val);
+            }
+            
+        }        
         // assert(jvals.size()>=2);
     }else{
         
@@ -75,6 +88,7 @@ try{
     assert(0);
 } 
 }
+
 void GeNeuron::Init(Fish *hG_, int flag) {    
     hFish=hG_;   
     auto& config = hG_->config; 
@@ -84,6 +98,17 @@ void GeNeuron::Init(Fish *hG_, int flag) {
     n_head=config.n_head();
     assert(n_embd_head*n_head==C);
 }
+void GeNeuron::SetRefer(const GeNeuron* src,bool isBias,int flag){
+    assert(src!=nullptr);
+    assert(w->data==nullptr);
+    w->SetRefer(src->w);       
+    if(isBias){
+        if(b!=nullptr && src->b!=nullptr){
+            b->SetRefer(src->b);  
+        }
+    }
+}
+
 string GeNeuron::_repr_1( string& suffix,string& prefix,string info,int flag)    {
     char buf[5012]="\0";
     const char*tab=prefix.c_str();
@@ -100,7 +125,7 @@ Ganglia::Ganglia(Fish *hG_,const string& key_,std::vector<hNeuron>& ns_,int flag
 
 
 
-Relu::Relu(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag)    : GeNeuron(key_,jit, hG_, flag){
+Relu::Relu(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag)    : SparseNeuron(key_,jit, hG_, flag){
 
 }
 bool Relu::Build(int flag)   {
@@ -110,7 +135,7 @@ hGensor Relu::Ming(void *ctx_,hGensor cur,int flag){
     return cur;
 }
 
-Drop::Drop(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag)    : GeNeuron(key_,jit, hG_, flag){
+Drop::Drop(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag)    : SparseNeuron(key_,jit, hG_, flag){
     
 }
 bool Drop::Build(int flag)   {
@@ -120,7 +145,7 @@ hGensor Drop::Ming(void *ctx_,hGensor cur,int flag){
     return cur;
 }
 
-MOE::MOE(Fish* hG_,const std::string&key_,JSON::const_iterator jit,int flag) : GeNeuron(key_,jit, hG_, flag)     {
+MOE::MOE(Fish* hG_,const std::string&key_,JSON::const_iterator jit,int flag) : SparseNeuron(key_,jit, hG_, flag)     {
     assert(jvals.size()>=2);
     shape={(int)(jvals[0]),(int)(jvals[1])};
     assert(shape[0]>0 && shape[1]>0);
@@ -134,7 +159,7 @@ bool MOE::Build(int flag)   {
     int nIn=shape[0];
     void * ctx = hFish->GetGGCTX();
     //  [ctx, E/H, H, n_batch); ]
-    w = TENSO(ctx, typNUMBER::F32, {n_embd_head,1,n_head,B});
+    w = GT(hFish, typNUMBER::F32, {n_embd_head,1,n_head,B});
     hFish->InitGensor(ctx,sw.c_str(),w,isTrain);
       
     return true;
@@ -168,7 +193,7 @@ string MOE::__repr__( string& suffix,string& prefix,int flag)    {
     return _repr_1(suffix,prefix,"MOE");
 };
 
-OutCLS::OutCLS(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : GeNeuron(key_,jit, hG_, flag){   
+OutCLS::OutCLS(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_,jit, hG_, flag){   
     int nEmbd=hFish->config.nEmbed();
     // _target = hFish->Target();   //null now          
     nCls=hFish->nClass();
@@ -199,25 +224,41 @@ OutCLS::OutCLS(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int
 bool OutCLS::Build(int flag)   {
     SHAPE sp={shape[0]};
     latent = hFish->config.nEmbed(-1);
-#ifdef _TENSOR_G_    
+    hEmbed = hFish->GetNeuron<TokenEmbed>("TokenEmbed",0);      assert(hEmbed!=nullptr);
+    
     SHAPE sp2={B,T},sp3={dB,T,padded_nCls},sp4={B,T,latent};
     nzLoss = B*T;
     hostLoss = new float[nzLoss];
-    target = std::make_shared<huTensor>("target",sp2,typNUMBER::F32,false); 
+    target = std::make_shared<huTensor>(hFish,"target",sp2,typNUMBER::F32,false); 
     // hFish->InitGensor(nullptr,"target",target,false);           
     hFish->target_probs = target; 
-    out = std::make_shared<huTensor>("loss",sp2,typNUMBER::F32,false);     
-    preLogits = std::make_shared<huTensor>("preLogits",sp3,GTensor::tpFloatX,false);  
+    out = std::make_shared<huTensor>(hFish,"loss",sp2,typNUMBER::F32,false);     
+    
+    if(hFish->config.isOnlyGPT) {
+        sp3 = {padded_nCls};   preLogits = std::make_shared<huTensor>(hFish,"preLogits",sp3,GTensor::tpPreLogits,false);  
+        preLogits->flags |= GTensor::F_HOSTALLOC;
+    }else{
+        preLogits = std::make_shared<huTensor>(hFish,"preLogits",sp3,GTensor::tpPreLogits,false);  
+    }
+
     delta = GTensor::bt4c;
-    //delta = std::make_shared<huTensor>("delta0",sp4,GTensor::tpFloatX,true);  
+    //delta = std::make_shared<huTensor>(hFish,"delta0",sp4,GTensor::tpFloatX,true);  
     // hFish->InitGensor(nullptr,"loss",out,false);                
     hFish->loss = out;//
-    if(!hFish->config.model.isEmbedWeightTying)
-        proj.BuildX(name+".probability",{shape[0],shape[1]},hFish,flag); 
-#else
-    norm.BuildX(name+sNorm,sp,hFish,0x0);        //layer->ffn_norm.sT="f";
-    proj.BuildX(name+".probability",{shape[0],shape[1]},hFish,flag); 
-#endif
+    proj.BuildX(name,{shape[0],shape[1]},hFish,flag); proj.b = nullptr;
+    if(!hFish->config.model.isEmbedWeightTying){        
+        if(hFish->config.ModelArch()==NLP_GUPPY){
+            // assert(FFN::first!=nullptr);            
+        }
+        proj.w->SetRefer(hEmbed->wInv);   
+        //proj.w->SetRefer(hEmbed->w); 
+    }else{
+        proj.w->SetRefer(hEmbed->w);   
+    }
+
+    // norm.BuildX(name+sNorm,sp,hFish,0x0);        //layer->ffn_norm.sT="f";
+    // proj.BuildX(name+".probability",{shape[0],shape[1]},hFish,flag); 
+
     string sCls = "";   //  ".cls"
     name += ".cls";      
     return true;
@@ -234,12 +275,12 @@ hGensor OutCLS::Ming(void * ctx_,hGensor inpL,int flag)    {
             //inpL >> proj;               // out->AddSrc({proj.out,target}); 
             out->AddSrc({inpL,proj.w,preLogits,target});       
         }else{
-            out->AddSrc({inpL,preLogits,target});            
+            out->AddSrc({inpL,proj.w,preLogits,target});            
         }
         assert(target!=nullptr);       
-        hFish->preLogits = preLogits;
+        // hFish->preLogits = preLogits;
     } else{    
-        FUSE_cuda(inpL,nullptr,0x0);        //embe->w
+        FUSE_cuda(inpL,0x0);        //embe->w
         // mean_loss = proj.out->FusedLoss(rLoss,out,target,inpL,proj.w,nCls,isForward(),0x0);     
         hFish->hOPT->UpdateTrainLoss(-1,mean_loss);   
     }
@@ -267,13 +308,14 @@ string OutCLS::__repr__( string& suffix,string& prefix,int flag)    {
     return buf;  
 };
 
-SLP::SLP(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag)      : GeNeuron(key_,jit, hG_, flag)    {
+SLP::SLP(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag)      : SparseNeuron(key_,jit, hG_, flag)    {
     assert(jvals.size()>=2);
     shape={(int)(jvals[0]),(int)(jvals[1])};
     assert(shape[0]>0 && shape[1]>0);
     // compression = hFish->params.compression;
     // Build(key_, shape_, flag);
 }
+
 bool SLP::Build(int flag)      {
     delta = GTensor::delta;
     isBias = hFish->config.model.isSLPBias || BIT_TEST(flag,F_BIAS);
@@ -281,30 +323,28 @@ bool SLP::Build(int flag)      {
     void *ctx = hFish->GetGGCTX();
     typNUMBER tpData = GTensor::tpFloatX;
     int bFlag = 0x0;
-    int nIn=shape[0],nOut=shape[1];
+    nIn=shape[0],nOut=shape[1];
     if(shape.size()==2){    
         assert(shape[0]>0 && shape[1]>0);        
-        w = TENSO(ctx, tpData, {nIn, nOut});
-        if(isBias)  b = TENSO(ctx, tpData, {nOut});
+        w = GT(hFish, tpData, {nIn, nOut});
+        if(isBias)  b = GT(hFish, tpData, {nOut});
     }else if(shape.size()==4)  {
-        w = TENSO(ctx, tpData, shape);
-        if(isBias)  b = TENSO(ctx, tpData,            {1,1,shape[3]});
+        w = GT(hFish, tpData, shape);
+        if(isBias)  b = GT(hFish, tpData,            {1,1,shape[3]});
     }else{
         assert(0);
     }
 
     string sw = name+MODEL_CARD::sWeight,sb=name+".bias",so=name+".out"; 
     bool isTrain = hFish->isTrain();
-    hFish->InitGensor(ctx,sw.c_str(),w,isTrain);
+    hFish->InitGensor(ctx,sw.c_str(),w,true);
     if(isBias)  
-        hFish->InitGensor(ctx,sb.c_str(),b,isTrain);
+        hFish->InitGensor(ctx,sb.c_str(),b,true);
 #ifdef _TENSOR_G_        
     if(b!=nullptr)  b->tpInit = INIT_WEIGHT::W_SKIP;
     SHAPE s3={B,T,nOut},s4={B,T,nIn};
-    out = std::make_shared<huTensor>(so,s3,tpData,false); 
+    out = std::make_shared<huTensor>(hFish,so,s3,tpData,false); 
     if(BIT_TEST(flag,F_DELTA)){
-        // delta = std::make_shared<huTensor>(name+".delta",s4,tpData,false);
-        // delta->Alloc();
         delta = GTensor::delta;
     }
         
@@ -366,7 +406,7 @@ hGensor SLP::Ming(void * ctx0,hGensor cur,int flag)    {
                 memcpy(u->data,svd->U(),sizeof(float)*nIn*rank);     
                 memcpy(v->data,svd->V(),sizeof(float)*nIn*rank); 
                 v = TENSO(ctx0, typNUMBER::F32, {rank, nOut});
-                // s = TENSO(ctx, GGML_TYPE_F16, nIn, nOut);
+                // s = GT(hFish, GGML_TYPE_F16, nIn, nOut);
                 
                 cur = ggml_mul_mat(ctx0, u, cur);    
                 cur = ggml_mul_mat(ctx0, v, cur);                      
@@ -392,9 +432,42 @@ hGensor SLP::Ming(void * ctx0,hGensor cur,int flag)    {
     return cur;
 }
 
-ROPE::ROPE(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag)    : GeNeuron(key_,jit, hG_, flag) {
+int SLP::Forw(float *rhs,float *lhs,int flag){
+	float*bias = b==nullptr ? nullptr : TO<float>(b);
+    if(compression==GBDT){
+        // assert(nHot>0);
+		// matmul_sparse_2(xb2, hb, (char*)w->w2 + moe_experts[e] * esize, NULL, hidden_dim, dim, nHot,hPicker->hot,hPicker->dTemp, dotprod);	
+        assert(0);      return 0x0;
+    }
+			
+	if(compression==SVD || compression==SVD_a)        {   //A=UDV        
+        if(hSVD==nullptr && (layer>20) ) {  /*&& (layer==27)*/
+            InitSVD();    
+            if(hSVD->rHeavy()<1.5){
+                _INFO("\t...drop!");
+            }
+        }    
+    }
+    if(hSVD!=nullptr && hSVD->rHeavy()>1.5){
+        int nHeavy = hSVD->nHeavy;      
+        dotprod_t fDot = fnDot(hSVD->tpOut);
+        float *UX=new float[nHeavy],*U=hSVD->U();
+        // cur = ggml_mul_mat(ctx0, u, cur);    
+        matmul(UX, lhs, U, nullptr, nIn, nHeavy, fDot);
+        assert( isValidF(nHeavy,UX) );
+        // cur = ggml_mul_mat(ctx0, v, cur);   
+        matmul(rhs, UX, hSVD->V(), bias, nHeavy, nOut, fDot);
+        assert( isValidF(nOut,rhs) );
+        delete[] UX;
+    }else
+	    matmul(rhs, lhs, w->data, bias, nIn, nOut, hFish->config.model.fDotW);
+    return 0x0;
+}
+
+ROPE::ROPE(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag)    : SparseNeuron(key_,jit, hG_, flag) {
     assert(jvals.size()>=1 && jvals[0]>0);
     // shape={(int)(jvals[0])};
+    Build(flag);
 }
 /*
     https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html#torch.nn.LayerNorm
@@ -402,9 +475,21 @@ ROPE::ROPE(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int fla
 bool ROPE::Build(int flag)    {
     auto& config = hFish->config;
     n_rot = config.n_rot();
-    n_ctx_orig = config.n_ctx_orig();
-    rope_freq_base  = config.model.rope_freq_base;
-    rope_freq_scale = config.model.rope_freq_scale;  
+    int n_embed = config.nEmbed();
+    head_dim=config.n_embd_head();
+    int n_heads = config.n_head(),n_kv_heads = config.n_head_kv();
+    q_dim = head_dim*n_heads, kv_dim = head_dim*n_kv_heads;
+    assert(head_dim>0 && q_dim>0 && kv_dim>0);
+    r_dim = config.model.rotary_dim;
+    if(r_dim==0){
+        r_dim = 128;    theta = 1000000;
+    }else{
+        n_ctx_orig = config.n_ctx_orig();
+        freq_base  = config.model.rope_freq_base;
+        freq_scale = config.model.rope_freq_scale;  
+        theta = config.model.rope_theta;        
+    }		
+   
 #ifdef _TENSOR_G_
 #else
     KQ_pos = hFish->KQ_pos;    
@@ -447,7 +532,7 @@ string ROPE::__repr__( string& suffix,string& prefix,int flag)    {
     return _repr_1(suffix,prefix,"ROPE");
 };
 
-LayerNormal::LayerNormal(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : GeNeuron(key_,jit, hG_, flag) {
+LayerNormal::LayerNormal(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_,jit, hG_, flag) {
     // delta = GTensor::delta;
     // isRMS = true;
     if(jvals.size()==1){
@@ -463,7 +548,7 @@ LayerNormal::LayerNormal(Fish *hG_, const std::string &key_, JSON::const_iterato
 */
 bool LayerNormal::Build(int flag)    {
     delta = GTensor::delta;
-    if(hFish->arch==MODEL_ARCH::NLP_GPT2)
+    if(hFish->arch==MODEL_ARCH::NLP_GPT2 || hFish->arch==MODEL_ARCH::NLP_GUPPY)
         isRMS = false;
     // isRMS = name!="model.output_norm" ? false : true;
     isBias = hFish->config.model.isNormalBias || BIT_TEST(flag,F_BIAS) ;
@@ -480,25 +565,25 @@ bool LayerNormal::Build(int flag)    {
     bool isTrain = hFish->isTrain();    
     int nIn=shape[0];
     if(isAffineTrans){
-        w = TENSO(ctx, GTensor::tpFloatX, {nIn},flag);//,GTensor::GTensor::F_PARAM
-        hFish->InitGensor(ctx,sw.c_str(),w,isTrain);
+        w = GT(hFish, GTensor::tpFloatX, {nIn},flag);
+        hFish->InitGensor(ctx,sw.c_str(),w,true);
     }
     if(isBias)  {
-        b = TENSO(ctx, GTensor::tpFloatX, {nIn},flag);//,GTensor::GTensor::F_PARAM
-        hFish->InitGensor(ctx,sb.c_str(),b,isTrain);
+        b = GT(hFish, GTensor::tpFloatX, {nIn},flag);
+        hFish->InitGensor(ctx,sb.c_str(),b,true);
     }
 #ifdef _TENSOR_G_        
     w->tpInit = INIT_WEIGHT::FIX_1;    //always 1   ???   
     if(b!=nullptr)  b->tpInit=W_SKIP;
     assert(nIn==C || nIn==hFish->config.nEmbed(-1));
     SHAPE sp={B,T},sp3={B,T,nIn};
-    out = std::make_shared<huTensor>(name+".out",sp3,GTensor::tpFloatX,false);    
+    out = std::make_shared<huTensor>(hFish,name+".out",sp3,GTensor::tpFloatX,false);    
     if(isRMS){
 
     }else{
-        mean = std::make_shared<huTensor>(name+".mean",sp,typNUMBER::F32,false);  
+        mean = std::make_shared<huTensor>(hFish,name+".mean",sp,typNUMBER::F32,false);  
     }         
-    rstd = std::make_shared<huTensor>(name+".rstd",sp,typNUMBER::F32,false);    
+    rstd = std::make_shared<huTensor>(hFish,name+".rstd",sp,typNUMBER::F32,false);    
 #else
  
 #endif
@@ -663,3 +748,9 @@ hGTensor operator>>(hGTensor t, const GeNeuron* neuron){
     neuron->out->AddSrc({t});
     return neuron->out;
 }
+hGTensor operator>>(hGTensor t, const SparseNeuron* neuron){
+    assert(t!=nullptr && neuron->out!=nullptr);
+    neuron->out->AddSrc({t});
+    return neuron->out;
+}
+

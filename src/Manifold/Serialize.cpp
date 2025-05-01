@@ -74,6 +74,11 @@ bool MODEL_CARD::OnJsonCALM(const std::string&path,const JSON &meta,int flag){
         LAY_PARAM lay(n_heads,n_kv_heads,hidden_dim);
         layerps.push_back(lay);
     }
+    string info = "";
+    info = jKVs(meta,{"dtype"},info);   
+    tpWeight = tpNumOf(info);
+    int wbit = BitPE(tpWeight);
+    fDotW = fnDot(tpWeight);
 
     jModelParam = meta;
 	vocab_size = jKVs(meta,{"vocab_size"},0);
@@ -140,26 +145,30 @@ try{
         } else{
             if(isOnlyVocab)
                 continue;
+
             hGensor target = GetGensor(key);    //  "model.embed.weight"    model.layers.0.attn_norm.weight  
             if(target==nullptr){
                 _INFO("\t[SERIAL] Failed @%s!\n",key.c_str());
                 continue;
             }
+                       
             if (target->SerialJSON(key, val, objs, objs_size) != 0) {
                 munmap(data, size);
                 return -1;
             }
             if(DUMP()){
-                _INFO("\t%d typ=%s sz=%ld @%s\n",nSerialT,cNameOf(target->type),tBYTE(target),target->name);
+                _INFO("  >>>>  %d typ=%s\t data=%p grad=%p \t sz=%ld @%s\n",nSerialT,cNameOf(target->type),target->data,target->grad,tBYTE(target),target->name);
             }
-            if(strcmp(target->name,"model.embed.weight")==0){   //only for debug
-                // target->Print(key,0,-1);
+            if(strcmp(target->name,"model.output.weight")==0){   //only for debug
+                target->Print(key,0,-1);                //PrintTensor<f8e5m2_t>("wout",target->data,target->ne[0],dim);
             }
             nSerialT++;
         }
     }
     _INFO("[SERIAL] n_T=%d\n", nSerialT);
     hDict->InitFrom(this,tokens,scores,0x0);
+    tokens.reset();
+    scores.reset();
     return true;
 }catch(...){
     return false;
@@ -210,4 +219,18 @@ try{
 }catch(...){
     return false;
 }
+}
+
+std::string LoadSomeText(const string&fpath,const int nMost,int flag)   {
+    assert(nMost>0);
+    string txt="";
+    FILE *fp = std::fopen(fpath.c_str(), "rt");
+    if(fp==NULL)    return txt;
+
+    // std::fseek(fp, 42, SEEK_SET);
+    char buf[nMost+1] = "\0";
+    size_t sz = std::fread(buf, 1, nMost, fp);
+    buf[sz] = '\0';
+    txt = buf;  
+    return txt;
 }

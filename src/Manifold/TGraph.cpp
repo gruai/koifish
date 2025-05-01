@@ -20,11 +20,11 @@ hGensor Fish::AddTensor(const std::string&key_,typNUMBER tp,const SHAPE& shape,i
     auto ctx=GetGGCTX();
     hGensor gg_tensor = nullptr;
     if(shape.size()==4)  {
-        gg_tensor = TENSO(ctx, tp, shape);
+        gg_tensor = GT(this, tp, shape);
     }else if(shape.size()==2)  {
-        gg_tensor = TENSO(ctx, tp, shape);        
+        gg_tensor = GT(this, tp, shape);        
     }else if(shape.size()==1)  {
-        gg_tensor = TENSO(ctx, tp, shape);        
+        gg_tensor = GT(this, tp, shape);        
     }else{
         assert(0);
     }  
@@ -51,7 +51,7 @@ size_t SLP::nElem()  {
     return nX;
 }
 
-SelfAttention::SelfAttention(Fish* hG_,const std::string&key_,JSON::const_iterator jit,int flag) : GeNeuron(key_,jit, hG_, flag)     {
+SelfAttention::SelfAttention(Fish* hG_,const std::string&key_,JSON::const_iterator jit,int flag) : SparseNeuron(key_,jit, hG_, flag)     {
     assert(hFish!=nullptr);
     delta = GTensor::delta;
 
@@ -98,15 +98,19 @@ bool SelfAttention::Build(int flag_0)   {
         Q.BuildX(name+".wq",sp,hFish,flag);          
         K.BuildX(name+".wk",sp,hFish,flag);              
         V.BuildX(name+".wv",sp,hFish,flag);
-        bqkv = std::make_shared<huTensor>(name+".wqkv.bias",sp,GTensor::tpFloatX,false);    //  model.layers.0.attn.wqkv.bias
+        bqkv = std::make_shared<huTensor>(hFish,name+".wqkv.bias",sp,GTensor::tpFloatX,false);    //  model.layers.0.attn.wqkv.bias
         // hFish->InitGensor(nullptr,bqkv->name,bqkv,hFish->isTrain());
     }else   {
         Q.BuildX(name+"_qkv",sp2,hFish,flag );
     }
-    attn = std::make_shared<huTensor>(name+".attn",(SHAPE){B,T,C_qkv},GTensor::tpFloatX,false);        // B * T * C
-    trans = std::make_shared<huTensor>(name+".trans",spTrans,typNUMBER::F32,false);        // ENABLE_CUDNN need float array
+    attn = std::make_shared<huTensor>(hFish,name+".attn",(SHAPE){B,T,C_qkv},GTensor::tpFloatX,false);        // B * T * C
+#ifdef ENABLE_CUDNN
+    trans = std::make_shared<huTensor>(hFish,name+".trans",spTrans,typNUMBER::F32,false);        // ENABLE_CUDNN need float array
+#else
+    trans = GT(hFish,GTensor::tpFloatX,{B,n_head_kv,T*T},0X0,name+".trans");    //  too much memory!
+#endif
     // hFish->InitGensor(nullptr,name+".attn",attn,false);
-    out = std::make_shared<huTensor>(name+".out",sp3,GTensor::tpFloatX,false);    
+    out = std::make_shared<huTensor>(hFish,name+".out",sp3,GTensor::tpFloatX,false);    
     rope.BuildX(name+".ROPE",sp,hFish,flag);
 #else
     Q.BuildX(name+".wq",sp,hFish,flag);          
@@ -502,7 +506,7 @@ bool BROWN_v0::Build(int flag)   {
     norm.BuildX(name+".norm",{shape[0]},hFish,0x0);        
     Q.BuildX(name+".Q",sp,hFish,flag);  
     if(Transfer_1)       
-        V.BuildX(name+".V",{shape[0],1},hFish,flag);  //w = TENSO(ctx, typNUMBER::F32, C, 1);           
+        V.BuildX(name+".V",{shape[0],1},hFish,flag);  //w = GT(this, typNUMBER::F32, C, 1);           
     // K.BuildX(name+".K",sp,hFish,flag);              V.BuildX(name+".V",sp,hFish,flag);
     proj_cat.BuildX(name+".proj",sp,hFish,flag);       
            
@@ -1219,7 +1223,7 @@ bool TGraph::isValid( ) {
         assert(any_params && "no trainable parameters found, did you forget to call ggml_set_param?");
 #ifdef GG_V12
         if(!any_loss){
-            _INFO("Invalid TGraph,no training loss found, did you forget to call ggml_set_loss?");
+            _INFO("Invalid TGraph,no training loss found, did you forget to call ggml_set_loss?\n\n");
         }
 #endif        
     }
@@ -1612,6 +1616,7 @@ void s2layerinfo(struct CLI_params& config,const string&root,const string&jkey,s
     }
 }
 
+int TGraph::curLayer = -1;
 hNeuron Fish::J2Neuron(void *ctx_,string& dad,int level,const JConfig& jconfig,int flag){
     hNeuron hN=nullptr,cur=nullptr;
     std::vector<hNeuron> _fish;    
@@ -1637,6 +1642,8 @@ hNeuron Fish::J2Neuron(void *ctx_,string& dad,int level,const JConfig& jconfig,i
             s2layerinfo(config,dad, k,lay_names);
             int lay = 0;
             for(auto nam_ : lay_names){
+                if(level==0)    
+                    TGraph::curLayer++;
                 JConfig jLay(*it,lay++);
                 prefix = dad.empty()?nam_:dad+"."+nam_;      //  ,  //nam_
                 cur = J2Neuron(ctx_,prefix,level+1,jLay,flag);  
@@ -1665,41 +1672,62 @@ hNeuron Fish::J2Neuron(void *ctx_,string& dad,int level,const JConfig& jconfig,i
     return hN;
 }
 
+bool GTensor::AllocBuffer(Fish *hFish,int flag){
+    assert(hFish!=nullptr);
+    // TokenEmbed* embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed",0);
+    int B,T,C;      hFish->GetBTC(B,T,C);
+    int nVocab = hFish->nClass();
+    if(hFish->config.model.isPaddedCls) {
+        nVocab = ceil(nVocab/128.0)*128;
+    }
+    int Vp=(int)(nVocab*1.1),NH=hFish->config.n_head(),nFF=hFish->config.n_ff(),nEmbed=hFish->config.nEmbed();
+    size_t nTmp = ((size_t)T)*std::max(nFF, std::max(NH, Vp)),nFFW=(size_t)(B)*T*nFF;
+    // config.model.preLogits_dB = 8; //(int)ceil(B*4.0f*C/nTmp);   
+    int dB = hFish->config.model.preLogits_dB;            
+    assert(B%dB==0);
+    nTmp = std::max(nFFW/dB+1,nTmp);       assert(nTmp<INT_MAX);
+
+    // cuLiteTest(B,T,C);
+    int mostC = C;  //config.nEmbed(-1);      
+    SHAPE sp={B,T,C},sp4={B,T,max(nFF,3*C)},sp0={dB, (int)nTmp},spMost={B,T,mostC};
+    GTensor::bt4c = std::make_shared<huTensor>(hFish,"scratch_4c",sp4,GTensor::tpFloatX,true); 
+    if(hFish->config.common.remater_ffn){
+        GTensor::tmpFF1 = std::make_shared<huTensor>(hFish,"tmpFF1",sp4,GTensor::tpFloatX,true); 
+    }
+    if(hFish->config.ModelArch()==NLP_GUPPY){
+        GTensor::tmpW = std::make_shared<huTensor>(hFish,"tmpFF1",SHAPE({nEmbed,nFF}),GTensor::tpFloatX,true); 
+        GTensor::tmpGW = std::make_shared<huTensor>(hFish,"tmpFF1",SHAPE({nEmbed,nFF}),GTensor::tpFloatX,true); 
+    }
+    GTensor::delta = std::make_shared<huTensor>(hFish,"delta",spMost,GTensor::tpFloatX,true); 
+    //  may reduce memory by sp0=sp0/VP
+    GTensor::scratch = std::make_shared<huTensor>(hFish,"scratch/output",sp0,GTensor::tpFloatX,true);
+    // GTensor::scratch = GTensor::bt4c;
+    // assert(dB*T*nTmp<GTensor::bt4c->size());
+    // GTensor::bt4c->Alloc();         GTensor::delta->Alloc();
+    // GTensor::scratch->Alloc();       GTensor::tmpFF1->Alloc();
+
+    return true;
+}
 /*
 
 */
 int Fish::jToGraph( void *ctx_,bool isBuild,int flag)   {
     JConfig js(config.jModel);
-    string sRoot="model";           //jModel = jKEY(jConfig,{"model"});
-    int B,T,C;      GetBTC(B,T,C);
-    int Vp=(int)(nClass()*1.1),NH=config.n_head();
-    int nTmp = std::max(3*C, std::max(NH*T, Vp));
-    // config.model.preLogits_dB = 8; //(int)ceil(B*4.0f*C/nTmp);   
-    int dB = config.model.preLogits_dB;        
-    assert(B%dB==0);
-#ifdef _TENSOR_G_
-    // cuLiteTest(B,T,C);
-    int mostC = C;  //config.nEmbed(-1);      
-    SHAPE sp={B,T,C},sp4={B,T,4*C},sp0={dB, T*nTmp},spMost={B,T,mostC};
-    GTensor::bt4c = std::make_shared<huTensor>("scratch_4c",sp4,GTensor::tpFloatX,false); 
-    GTensor::scratch_ff1 = std::make_shared<huTensor>("scratch_ff1",sp4,GTensor::tpFloatX,false); 
-    GTensor::delta = std::make_shared<huTensor>("scratch",spMost,GTensor::tpFloatX,false); 
-    GTensor::scratch = std::make_shared<huTensor>("scratch_output",sp0,GTensor::tpFloatX,false);
-    // GTensor::scratch = GTensor::bt4c;
-    // assert(dB*T*nTmp<GTensor::bt4c->size());
-    GTensor::bt4c->Alloc();         GTensor::delta->Alloc();
-    GTensor::scratch->Alloc();       GTensor::scratch_ff1->Alloc();
-#endif
-    J2Neuron(ctx_,sRoot,0,js,flag);   //  "GPT2"
+    string sRoot="model";           //jModel = jKEY(jConfig,{"model"});    
 
+    GTensor::AllocBuffer(this);
+    
+    J2Neuron(ctx_,sRoot,0,js,flag);    
+
+    hCLS = GetNeuron<OutCLS>("OutCLS",0);       assert(hCLS!=nullptr);
     if(config.token_embeds.size()>1)  {
         auto nn = std::make_shared<MAEC>(this, "MAEC", flag);
         neurons.push_back(nn);  
         TokenEmbed* embed = GetNeuron<TokenEmbed>("TokenEmbed",0);
-        embed->SetMAEC(nn);
-        OutCLS* cls = GetNeuron<OutCLS>("OutCLS",0);
-        cls->maec = nn;
-    }
+        embed->SetMAEC(nn);        
+        hCLS->maec = nn;
+    }    
+    
     //Only symbolic analysis
     string suffix,prefix;
     int no=0;
@@ -1712,13 +1740,13 @@ int Fish::jToGraph( void *ctx_,bool isBuild,int flag)   {
 
         }else{
             // _INFO("%d\t%s\n",no,nn->__repr__(suffix,prefix).c_str());   
-        }
-         
+        }         
     }
+    
 #ifdef _TENSOR_G_
 #else
-    preLogits = cur;
+    hCLS->preLogits = cur;
 #endif
-    assert(preLogits!=nullptr);
+    // assert(preLogits!=nullptr);
     return 0x0;
 }

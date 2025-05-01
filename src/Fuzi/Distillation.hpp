@@ -55,7 +55,7 @@ public:
 
     //  ref:    ggml_scale_impl     ggml_compute_forward_timestep_embedding_f32
     virtual hGensor UpdateGG(struct ggml_context * ctx,hGensor gensor,hGensor delta,int flag=0x0){
-        float sigma = 0.5;
+        // float sigma = 0.5;
         hGensor result=nullptr;
         switch(alg){
         case SIGMA:

@@ -8,7 +8,8 @@
 
 #include "../lenda/SpMV/GVMAT.h"
 
-typedef int G_INT_64;
+// typedef int G_INT_64;
+typedef int64_t G_INT_64;
 
 #ifdef _USE_OPENBLAS_
  	#include "f77blas.h"

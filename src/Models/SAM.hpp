@@ -8,6 +8,13 @@
 #include "GG_util.hpp"   
 #include "Fish.hpp"   
 
+struct NP_
+{ // Paramer of GeNeuron
+    std::string type, title;
+    SHAPE shape;
+    NP_(const std::string &t, const std::string &n, SHAPE s) : type(t), title(n), shape(s) {}
+};
+
 /*
     sam_model_load: nEmbed      = 768
     sam_model_load: n_enc_layer      = 12
