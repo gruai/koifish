@@ -64,7 +64,7 @@ static const char *LLM_TENSOR_FFN_UP_SHEXP      = "blk.%d.ffn_up_shexp";
 
 class NLP_AutoRegressive : public Fish {
 protected:
-    int Forward_0(int flag);
+
 
 public:
     enum FFN_TYPE tpFFN = VAR_LAST;   //VAR_LAST;    
@@ -74,11 +74,11 @@ public:
         BROWN attenion would falls into local trap much earlier than QKV attention.
     */
     enum ATTENTION_TYPE {
-        QKV = 0,
+        QKVs = 0,   //scale dot(<Q,K>) attention for V
         BROWN,      //little gain on early test, why ???
         OFF
     };
-    enum ATTENTION_TYPE tpATT = QKV;   
+    enum ATTENTION_TYPE tpATT = QKVs;   
     
     bool isLoadTokenEmbed = false;
     
@@ -222,7 +222,9 @@ public:
         return true;
     }
 #endif
-    int ForwardOnNeuron(int flag) override;
+    int ForwardOnNeuron_v0(int flag);
+    int ForwardOnRLS(int iter,int flag) override;
+    int BackwardOnRLS(int iter,int flag) override;
     bool LocalFeeling(hSampLoader hLoader,vector<float>& result,int flag)   override;
 
     void Loss(int flag=0x0)     override   {

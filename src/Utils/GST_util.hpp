@@ -145,7 +145,7 @@ class GST_util{
 public:
 	static int dump;
 	static int verify;
-	static double tX;
+	static double tX,tX1;
 
 	enum{
 		VERIRY_KRYLOV_FORM=1,

@@ -53,6 +53,13 @@ int gTN(hGTensor ,const char *format,...);
 //clear then set name of a tensor & its grad
 int gTN0(hGTensor cur,const char *format,... );
 
+enum DATA_PLACE {
+    VOID,    SYMBOLIC,  REFER, 
+    MEMORY, DEV_MEM, 
+    MMAP, DISK, CLOUD,
+    FREE_DEV
+}; 
+
 enum INIT_WEIGHT    {
     W_SKIP=0X0,
     FIX_1,
@@ -111,8 +118,9 @@ protected:
 public:
     static const int MAX_NAME=64;
     static const int N_DIMS=4;
-    // static int B,T,C;       //shortcut parameter of LLM models
-    static hGTensor bt4c,delta,scratch,tmpFF1,tmpW,tmpGW;
+
+    static size_t szMaloc;
+    static hGTensor bt4c,delta,outL,scratch,tmpFF1,tmpW,tmpGW,residual;
     static bool AllocBuffer(Fish *hFish,int flag=0x0);
     static void* buff;      //  temporary shared memory 
     float residual_scale=1.0,wnorm=0,gnorm=0;   // some tricks
@@ -129,7 +137,8 @@ public:
     enum BIT_FLAG {
         F_INPUT=0x1,F_OUTPUT=0x2,F_PARAM=0x4,F_LOSS=0x8, 
         F_NOALLOC=0x100,F_GPU=0x200,F_HOSTALLOC=0x400,F_MMAP=0x800,
-        F_HOSTDATA=0x1000,      //for host_data!=nullptr
+        F_RESIDENT=0x1000,
+        F_HOSTDATA=0x2000,      //for host_data!=nullptr
 
         F_TOX=0x10000,  F_PADDED=0x20000,
         F_DEBUG=0x10000000
@@ -146,8 +155,8 @@ public:
 
     virtual ~GTensor();
     virtual bool Alloc(int tpInit=0,int flag=0x0);
-    virtual bool InitParam(int tpInit,int flag=0x0)           {     assert(0);    return false;   }
-    virtual bool Free() {   return true;    }
+    virtual bool InitParam(int tpInit)                          {     assert(0);    return false;   }
+    virtual bool Free(bool isPassResident=false)                {   return true;    }
     virtual void Print(const string& title, int typ, int flag)  const;
     virtual bool Dump(int type,const string&title="",int flag=0x0)  const;
 //operations
@@ -172,14 +181,15 @@ public:
     int64_t ne[N_DIMS]; 
     //stride in bytes:  nb[0]=type_size(type);    nb[i]=nb[i-1]*ne[i-1]
     size_t  nb[N_DIMS]; 
-    int32_t flags=0x0;
+    int32_t flags=0x0,last_stp=-1;
     double nrm = 0.0;       //length
-    bool isParam()  {   return BIT_TEST(flags,F_PARAM);  }
-    bool isGPU()    {   return BIT_TEST(flags,F_GPU);  }
-    bool isRefer(int type=0x0)      {   return hRef!=nullptr;   }
+    bool isParam()  const       {   return BIT_TEST(flags,F_PARAM);  }
+    bool isGPU()    const       {   return BIT_TEST(flags,F_GPU);  }
+    bool isRefer(int type=0x0) const     {   return hRef!=nullptr;   }
     hGTensor GetRefer()             {   return hRef;            }
     virtual void SetRefer(hGTensor hR,int flag=0x0){
         hRef = hR;      hR->refered.push_back(this);
+        _INFO("\t%s =====> %s\n",name,hR->name );
     }
 
     vector<hGOP> src;
@@ -191,6 +201,7 @@ public:
     void * data=nullptr;
     void * grad=nullptr; 
     virtual bool SerialGP(void *yD,void *yG,size_t szY,bool isToY,int flag=0x0)   {   assert(0);  return false;   }
+    virtual bool SerialData(const string&info,void *host,bool isToHost,int flag=0x0)   {   assert(0);  return false;   }
 
     char name[MAX_NAME] = "\0";
     void * extra; // extra things e.g. for ggml-cuda.cu
@@ -200,6 +211,7 @@ public:
     //  byte per element, may be fraction!!!
     virtual double bpe();       
     virtual size_t size(int typ=0)  const;
+    virtual size_t mostMemory(int typ=0)  const {   return nByte(); }
     virtual int dims()    const         {   
         for (int i = N_DIMS - 1; i >= 1; --i) {
             if (ne[i] > 1) {    return i + 1;   }
@@ -217,7 +229,8 @@ public:
         assert(no>=0&&no<4);        return nb[no]/bpe();
     }
     virtual bool isSameShape(const hGTensor b) const    {   return szData==b->szData;    }
-    virtual void Zero( )       {  Set(0.0);   }  
+    virtual void Zero( )            {  Set(0.0);   }  
+    virtual void ZeroGrad( )        {  assert(0);   } 
     virtual void Set(float a,int flag=0x0);
     template<typename T>
     void Set(int i0, int i1, int i2, int i3, T value){
@@ -372,17 +385,23 @@ hGensor tRAND(hGensor  tensor, struct random_normal_distribution * rnd);
 class huTensor : public GTensor   {
 protected:    
     hGTensor _Multiply(const hGTensor& other); 
+    size_t Alloc_1(void **dst,bool isZero,int tp=0x0);
+    size_t Free_1(void **obj,const string&info="");
 public:
     huTensor(Fish *hFish,const string&name_,const SHAPE shape,typNUMBER tpD_,bool isAlloc,int flag=0x0);    
     virtual ~huTensor();
 
     bool Alloc(int tpInit=0,int flag=0x0)    override;
-    bool InitParam(int tpInit,int flag=0x0)    override;
+    size_t mostMemory(int typ=0)  const override;
+    bool InitParam(int tpInit)    override;
     bool CopyGG(struct ggml_tensor*gg_,int flag=0x0) override;
-    bool Free() override;
+    bool Free(bool isPassResident=false) override;
+    void Zero() override;
+    void ZeroGrad() override;
     void Set(float a,int flag=0x0)  override
-    {   ; }
+    {   assert(0); }
     bool SerialGP(void *yD,void *yG,size_t szY,bool isToY,int flag=0x0)   override;
+    bool SerialData(const string&info,void *host,bool isToHost,int flag=0x0)   override;
     bool OverWrite(hGTensor,bool isSrc=true,int flag=0x0) override;
     hGTensor CrossEntropy( const hGTensor b,int flag=0x0 )  override;
     hGTensor GetRow(hGTensor, hGTensor token,hGTensor pos,int flag)   override;

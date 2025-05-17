@@ -20,8 +20,12 @@
 #endif
 
 int g_dump_level = 1;
+int testing_rope(int x, int kernel_num = 1);
 
 int main(int argc, char ** argv) {
+#ifdef _DO_SOME_TESTING_ 
+    // testing_rope(0x0,2);    return 888;
+#endif
     // print_build_info();
     _INFO("[ARCH] token=%ld,floatX=%ld\n", sizeof(TOKEN_ID),sizeof(floatX));
     CLI_params params;

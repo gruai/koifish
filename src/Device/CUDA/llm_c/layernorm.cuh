@@ -127,8 +127,7 @@ __global__ inline void rms_forward_kernel(floatX* __restrict__ out, float* __res
 
         store128cs(out + c, out_data);
     }
-    // cache the mean and rstd for the backward pass later    
-    // store the rstd, no need to cache it
+    // store the rstd, for the backward pass later   
     if(threadIdx.x == 0 && rstd != nullptr) {
         __stcs(rstd + idx, s);
     }

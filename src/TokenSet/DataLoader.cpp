@@ -357,19 +357,12 @@ size_t SampLoader::UpdateBatch(int x,Fish* fish){
     
     assert(hDict->isInRange(hBatch->host,hBatch->size(),0));     //(int*)(hostBatch->data)
     // int *raw_t = (int*)(tokens_input->data);
-#ifdef _TENSOR_G_    
+   
     tokens_input->OverWrite(hBatch->hostToken);
     if(target_probs!=nullptr)    {
         target_probs->OverWrite(hostTargetProbs);    
     }
-#else
-    hostBatch->OverWrite(tokens_input,false);
-    if(target_probs!=nullptr)    {
-        hostTargetProbs->OverWrite(target_probs,false);    
-        // assert(nSampInBatch==target_probs->ne[2]);
-        // ggml_set_f32(target_probs, 0.0f);
-    }
-#endif
+
 
     t_Samp = GST_TOC(tic);
     // Decode(tokens_input);       //only for debug

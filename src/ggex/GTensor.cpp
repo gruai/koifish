@@ -16,8 +16,9 @@
    typNUMBER GTensor::tpPreLogits = typNUMBER::F32;
 #endif
 
-hGTensor GTensor::bt4c=nullptr,GTensor::delta=nullptr,GTensor::scratch=nullptr,GTensor::tmpFF1=nullptr,
-   GTensor::tmpW=nullptr,GTensor::tmpGW=nullptr;
+hGTensor GTensor::outL=nullptr,GTensor::delta=nullptr;
+hGTensor GTensor::bt4c=nullptr,GTensor::scratch=nullptr,GTensor::tmpFF1=nullptr,
+   GTensor::tmpW=nullptr,GTensor::tmpGW=nullptr,GTensor::residual=nullptr;
 void *GTensor::buff = nullptr;
 
 float GTensor::rLARS(float s0,float T_lars,int flag)   {
@@ -325,17 +326,19 @@ int GTensor::SerialJSON(const std::string& name_, const JSON& val, void* bytes_p
 void GTensor::Print(const string& title, int x, int flag)   const {
    bool isDevice = true;
    if(type==FLOAT_TYPE){
-      switch(x){
-      case 1:
-         // PrintTensor<floatX>(title.c_str(),(floatX *)grad, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
-         break;
-      default:
-         PrintTensor<floatX>(title.c_str(),(floatX *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
-         break;
-      }
-      
-      
-   }  
+   }
+   void *src = x==1 ? grad : data;
+   switch(type){
+   case typNUMBER::BF16:
+      PrintTensor<floatX>(title.c_str(),(floatX *)src, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
+      break;
+   case typNUMBER::F32:
+      PrintTensor<float>(title.c_str(),(float*)src, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
+      break;
+   default:
+      assert(0);
+      break;
+   } 
 }
 
     // inline hGensor To4D(struct ggml_context * ctx_build,hGensor cur,int64_t n1,int64_t n2,int64_t n3,int64_t n4){

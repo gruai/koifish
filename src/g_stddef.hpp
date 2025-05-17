@@ -170,6 +170,12 @@ void FREE_a( T* &ptr ){
         ptr=nullptr;
     }
 }
+template<> inline void FREE_a<void>( void* &ptr ){
+    if( ptr!=nullptr ) {
+        delete[] (char*)ptr;
+        ptr=nullptr;
+    }
+}
 
 #ifdef HOPSCOTCH_MAP_LIB
     template<typename K, typename V>

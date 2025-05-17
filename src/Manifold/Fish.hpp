@@ -24,7 +24,7 @@
 #include "../ggex/GG_util.hpp"
 #include "Neuron.hpp"
 #include "TGraph.hpp"
-#include "../Device/CUDA/EDevice.hpp"
+#include "../Device/EDevice.hpp"
 #include "GoPT.hpp"
 #include "../Utils/GST_util.hpp"
 #include "../Fuzi/Distillation.hpp"
@@ -188,7 +188,7 @@ protected:
         return hBackTG->raw(); 
     }
 #endif
-    std::vector<hNeuron> neurons;
+    std::vector<hNeuron> neurons,backbons;
     
     GENSORS gensors;
     
@@ -250,7 +250,8 @@ protected:
     // Smart format of https://github.com/zeux/calm
     virtual bool CALM_Serialize(const std::string&path, bool isSave, int flag=0x0);
     virtual bool YALM_Serialize(const std::string&path, bool isSave, int flag=0x0);
-
+    MODEL_ARCH arch = MODEL_ARCH::_X_;
+    
 public:
     hGensor xn = nullptr,xxn = nullptr;     //only for debug
     struct STAT {			
@@ -260,8 +261,8 @@ public:
     static STAT stat;
 
     struct CLI_params config;
-    static tpSWARM swarm;
-    MODEL_ARCH arch = MODEL_ARCH::_X_;
+    static tpSWARM swarm;   
+
     enum ROLE_TYPE    {
         COMMON,
         SWARM_HEAD,
@@ -279,6 +280,9 @@ public:
     std::shared_ptr<Fish> SharedThis() {
         return shared_from_this();
     }
+    virtual bool isModel(std::vector<MODEL_ARCH> arcs,int flag=0x0);
+    virtual bool isRemater(int flag=0x0)    const;
+    virtual bool isTemporaryMemory(GeNeuron *neuron,int flag=0x0)   const;
 
     bool isTrain()  {
         return !isLocalInfer;
@@ -302,7 +306,8 @@ public:
     }
     hOptimizer GetOptimizer() {   assert(hOPT!=nullptr);  return hOPT;   }
 
-    virtual int ForwardOnNeuron(int flag)         {   throw "Fish::ForwardOnNeuron is ...";           } 
+    virtual int ForwardOnRLS(int iter,int flag)         {   throw "Fish::ForwardOnRLS is ...";           } 
+    virtual int BackwardOnRLS(int iter,int flag)        {   throw "Fish::BackwardOnRLS is ...";           } 
     virtual ~Fish() { Clear(); }
     virtual std::string Name()  {   return name.c_str();  }
     virtual size_t MostMemSize(int typ=0x0);

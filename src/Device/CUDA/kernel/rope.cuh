@@ -33,33 +33,51 @@ rope(float* vec, int d, int head_dim, int pos, float theta, int rotary_dim) {
 }
 */
 
-// out may same as x
+// out may same as inp
 template<typename typ>
-__global__ void CU_rope_(typ* x, typ* out, int seq_len, int head_dim, float theta, int rotary_dim,int B, int T, int C){ //, int N
-    int idx = blockIdx.x * blockDim.x + threadIdx.x,id=idx/C;
+__global__ void CU_rope_(typ* inp, typ* out, int seq_len, int head_dim, float theta, int rotary_dim,int B, int T, int C){ //, int N
+    int idx = (blockIdx.x * blockDim.x + threadIdx.x)*2;
     int N = B * T * C;
-    if (idx >= N/2) { return; }
-
-    int b = id/T,t = id % T,c = idx % C;
+    if (idx >= N) { return; }
+    int b = (idx/C)/T,t = (idx/C)%T,c = idx % C;
     int j_head = c % head_dim;
-    float freq = j_head >= rotary_dim ? 0.f : 1.0f / powf(theta, (float)j_head / (float)rotary_dim);
-    
-    float val = c * freq;
-    float x1 = x[idx * 2],x2 = x[idx * 2 + 1];
+    // float freq = j_head >= rotary_dim ? 0.f : 1.0f / powf(theta, (float)j_head / (float)rotary_dim);
+    float freq =  1.0f / powf(theta, (float)c / (float)C);
+    // freq = 0;
+    float val = t * freq;
+    float sin_v = sinf(val),cos_v = cosf(val);
+    float x1 = inp[idx],x2 = inp[idx + 1];
     
     /* int token_pos = idx / N,    token_idx = idx % N;
     float exp_v = 1.0f / powf(_xita, token_idx / (N * 2));
     float sin_v = sinf(token_pos / exp_v);
     float cos_v = cosf(token_pos / exp_v);*/
+    
+    float out1 = x1 * cos_v - x2 * sin_v;
+    float out2 = x1 * sin_v + x2 * cos_v;
+    out[idx] = out1;    out[idx + 1] = out2;
+    // out[idx * 2] = x1;    out[idx * 2 + 1] = x2;
+}
+template<typename typ>
+__global__ void CU_rope_back(typ* inp, typ* out, int seq_len, int head_dim, float theta, int rotary_dim,int B, int T, int C){ //, int N
+    int idx = (blockIdx.x * blockDim.x + threadIdx.x)*2;
+    int N = B * T * C;
+    if (idx >= N) { return; }
+    int b = (idx/C)/T,t = (idx/C)%T,c = idx % C;
+    int j_head = c % head_dim;
+    float freq = j_head >= rotary_dim ? 0.f : 1.0f / powf(theta, (float)j_head / (float)rotary_dim);
+    freq = 0;
+    float val = t * freq;
     float sin_v = sinf(val),cos_v = cosf(val);
-    typ out1 = x1 * cos_v - x2 * sin_v;
-    typ out2 = x1 * sin_v + x2 * cos_v;
-    out[idx * 2] = out1;
-    out[idx * 2 + 1] = out2;
+    float x1 = inp[idx],x2 = inp[idx + 1];    
+    float out1 = x1 * cos_v - x2 * sin_v;
+    float out2 = x1 * sin_v + x2 * cos_v;
+    out[idx] = out1;    out[idx + 1] = out2;
 }
 
+
 // another index method of rope.
-__global__ void CU_rope_f32_v2(float* x, float* out, int seq_len, int N){ 
+__global__ inline void CU_rope_f32_v2(float* x, float* out, int seq_len, int N){ 
   int token_pos = blockIdx.x;
   int tid = threadIdx.x;
   float x1 = x[token_pos * N * 2 + tid * 2];
@@ -73,7 +91,7 @@ __global__ void CU_rope_f32_v2(float* x, float* out, int seq_len, int N){
   out[token_pos * N * 2 + tid * 2 + 1] = out2;
 }
 
-__global__ void rope_f32x4_pack_kernel(float* x, float* out, int seq_len, int N){ 
+__global__ inline void rope_f32x4_pack_kernel(float* x, float* out, int seq_len, int N){ 
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   float4 x_v = FLOAT4(x[idx * 4]);
   int token_pos = idx / N; 
@@ -418,190 +436,436 @@ static void rope_vision_cuda(
     }
 }
 
-/*
-template <bool forward>
-void ggml_cuda_op_rope_impl(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    const ggml_tensor * src0 = dst->src[0];
-    const ggml_tensor * src1 = dst->src[1];
-    const ggml_tensor * src2 = dst->src[2];
+template<typename typ>
+__global__ void apply_rope_backward_kernel1(
+    typ *dq, typ *dk, const float *freqs_cos, const float *freqs_sin,
+    int B, int T, int num_kv_heads, int NH, int C_per_NH)
+{
+    int b = blockIdx.x;
+    int t = blockIdx.y;
+    int nh = blockIdx.z;
+    int hs = threadIdx.x;
 
-    const float * src0_d = (const float *)src0->data;
-    const float * src1_d = (const float *)src1->data;
+    // Half of the head size (real and imaginary components)
+    int half_hs = C_per_NH / 2;
 
-    float * dst_d = (float *)dst->data;
-    cudaStream_t stream = ctx.stream();
+    if (hs < half_hs) // Guard to handle only half_hs elements for real and imaginary pairs
+    {
+        int freq_index = t * half_hs + hs;
 
-    assert(src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16);
-    assert( dst->type == GGML_TYPE_F32 ||  dst->type == GGML_TYPE_F16);
-    assert(src0->type == dst->type);
+        float cos_val = freqs_cos[freq_index];
+        float sin_val = freqs_sin[freq_index];
 
-    const int64_t ne00 = src0->ne[0]; // head dims
-    const int64_t ne01 = src0->ne[1]; // num heads
-    const int64_t ne02 = src0->ne[2]; // num heads
-    const int64_t nr = ggml_nrows(src0);
+        // Backprop for q (shape: B, T, num_kv_heads, C/NH)
+        if (nh < num_kv_heads) // only the q heads are processed
+        {
+            int q_index = b * T * num_kv_heads * C_per_NH + t * num_kv_heads * C_per_NH + nh * C_per_NH + hs;
 
-    const size_t s01 = src0->nb[1] / ggml_type_size(src0->type);
-    const size_t s02 = src0->nb[2] / ggml_type_size(src0->type);
+            // Gradients from the next layer (dout_q)
+            float dq_r = dq[q_index];
+            float dq_i = dq[q_index + half_hs];
 
-    //const int n_past     = ((int32_t *) dst->op_params)[0];
-    const int n_dims     = ((int32_t *) dst->op_params)[1];
-    const int mode       = ((int32_t *) dst->op_params)[2];
-    //const int n_ctx      = ((int32_t *) dst->op_params)[3];
-    const int n_ctx_orig = ((int32_t *) dst->op_params)[4];
-    mrope_sections sections;
-
-    // RoPE alteration for extended context
-    float freq_base;
-    float freq_scale;
-    float ext_factor;
-    float attn_factor;
-    float beta_fast;
-    float beta_slow;
-
-    memcpy(&freq_base,   (int32_t *) dst->op_params +  5, sizeof(float));
-    memcpy(&freq_scale,  (int32_t *) dst->op_params +  6, sizeof(float));
-    memcpy(&ext_factor,  (int32_t *) dst->op_params +  7, sizeof(float));
-    memcpy(&attn_factor, (int32_t *) dst->op_params +  8, sizeof(float));
-    memcpy(&beta_fast,   (int32_t *) dst->op_params +  9, sizeof(float));
-    memcpy(&beta_slow,   (int32_t *) dst->op_params + 10, sizeof(float));
-    memcpy(&sections.v,  (int32_t *) dst->op_params + 11, sizeof(int)*4);
-
-    const bool is_neox = mode & GGML_ROPE_TYPE_NEOX;
-    const bool is_mrope = mode & GGML_ROPE_TYPE_MROPE;
-    const bool is_vision = mode == GGML_ROPE_TYPE_VISION;
-
-    if (is_mrope) {
-        assert(sections.v[0] > 0 || sections.v[1] > 0 || sections.v[2] > 0);
-    }
-
-    if (is_vision) {
-        assert(n_dims == ne00/2);
-    }
-
-    const int32_t * pos = (const int32_t *) src1_d;
-
-    const float * freq_factors = nullptr;
-    if (src2 != nullptr) {
-        freq_factors = (const float *) src2->data;
-    }
-
-    rope_corr_dims corr_dims;
-    ggml_rope_yarn_corr_dims(n_dims, n_ctx_orig, freq_base, beta_fast, beta_slow, corr_dims.v);
-
-    // compute
-    if (is_neox) {
-        if (src0->type == GGML_TYPE_F32) {
-            rope_neox_cuda<forward>(
-                (const float *) src0_d, (float *) dst_d, ne00, ne01, s01, s02, n_dims, nr, pos, freq_scale,
-                freq_base, ext_factor, attn_factor, corr_dims, freq_factors, stream);
-        } else if (src0->type == GGML_TYPE_F16) {
-            rope_neox_cuda<forward>(
-                (const half *) src0_d, (half *) dst_d, ne00, ne01, s01, s02, n_dims, nr, pos, freq_scale,
-                freq_base, ext_factor, attn_factor, corr_dims, freq_factors, stream);
-        } else {
-            GGML_ABORT("fatal error");
+            // Backpropagation using chain rule
+            dq[q_index] = dq_r * cos_val + dq_i * sin_val;           // (df/dq_r)
+            dq[q_index + half_hs] = dq_i * cos_val - dq_r * sin_val; // (df/dq_i)
         }
-    } else if (is_mrope && !is_vision) {
-        if (src0->type == GGML_TYPE_F32) {
-            rope_multi_cuda<forward>(
-                (const float *) src0_d, (float *) dst_d, ne00, ne01, ne02, s01, s02, n_dims, nr, pos, freq_scale,
-                freq_base, ext_factor, attn_factor, corr_dims, freq_factors, sections, stream);
-        } else if (src0->type == GGML_TYPE_F16) {
-            rope_multi_cuda<forward>(
-                (const half *) src0_d, (half *) dst_d, ne00, ne01, ne02, s01, s02, n_dims, nr, pos, freq_scale,
-                freq_base, ext_factor, attn_factor, corr_dims, freq_factors, sections, stream);
-        } else {
-            GGML_ABORT("fatal error");
-        }
-    } else if (is_vision) {
-        if (src0->type == GGML_TYPE_F32) {
-            rope_vision_cuda<forward>(
-                (const float *) src0_d, (float *) dst_d, ne00, ne01, ne02, s01, s02, n_dims, nr, pos, freq_scale,
-                freq_base, ext_factor, attn_factor, corr_dims, freq_factors, sections, stream);
-        } else if (src0->type == GGML_TYPE_F16) {
-            rope_vision_cuda<forward>(
-                (const half *) src0_d, (half *) dst_d, ne00, ne01, ne02, s01, s02, n_dims, nr, pos, freq_scale,
-                freq_base, ext_factor, attn_factor, corr_dims, freq_factors, sections, stream);
-        } else {
-            GGML_ABORT("fatal error");
-        }
-    } else {
-        if (src0->type == GGML_TYPE_F32) {
-            rope_norm_cuda<forward>(
-                (const float *) src0_d, (float *) dst_d, ne00, ne01, s01, s02, n_dims, nr, pos, freq_scale,
-                freq_base, ext_factor, attn_factor, corr_dims, freq_factors, stream);
-        } else if (src0->type == GGML_TYPE_F16) {
-            rope_norm_cuda<forward>(
-                (const half *) src0_d, (half *) dst_d, ne00, ne01, s01, s02, n_dims, nr, pos, freq_scale,
-                freq_base, ext_factor, attn_factor, corr_dims, freq_factors, stream);
-        } else {
-            GGML_ABORT("fatal error");
-        }
+
+        // Backprop for k (shape: B, T, NH, C/NH)
+        int k_index = b * T * NH * C_per_NH + t * NH * C_per_NH + nh * C_per_NH + hs;
+
+        // Gradients from the next layer
+        float dk_r = dk[k_index];
+        float dk_i = dk[k_index + half_hs];
+
+        // Backpropagation using chain rule (dout_k)
+        dk[k_index] = dk_r * cos_val + dk_i * sin_val;           // (df/dk_r)
+        dk[k_index + half_hs] = dk_i * cos_val - dk_r * sin_val; // (df/dk_i)
     }
 }
 
-void ggml_cuda_op_rope(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    ggml_cuda_op_rope_impl<true>(ctx, dst);
+/**
+ * Similar to Kernel-1 but uses Shared Memory for `freqs_cos` and `freqs_sin`
+ * It may help us address our limiting perf factor (Memory Bandwidth), since we will be utilizing SRAM (less latency, faster memory)
+ */
+__global__ inline void apply_rope_backward_kernel2(
+    float *dq, float *dk, const float *freqs_cos, const float *freqs_sin,
+    int B, int T, int num_kv_heads, int NH, int C_per_NH)
+{
+    extern __shared__ float shared_mem[]; // Shared memory for freqs_cos and freqs_sin
+    float *shared_freqs_cos = shared_mem;
+    float *shared_freqs_sin = shared_mem + blockDim.x;
+
+    int b = blockIdx.x;
+    int t = blockIdx.y;
+    int nh = blockIdx.z;
+    int hs = threadIdx.x;
+
+    // Half of the head size (real and imaginary components)
+    int half_hs = C_per_NH / 2;
+
+    // Each thread loads the necessary cos and sin values into shared memory
+    if (hs < half_hs)
+    {
+        int freq_index = t * half_hs + hs;
+        shared_freqs_cos[hs] = freqs_cos[freq_index];
+        shared_freqs_sin[hs] = freqs_sin[freq_index];
+    }
+
+    __syncthreads(); // wait till all threads have loaded the shared memory
+
+    if (hs < half_hs)
+    {
+        float cos_val = shared_freqs_cos[hs];
+        float sin_val = shared_freqs_sin[hs];
+
+        // Backprop for q (shape: B, T, num_kv_heads, C/NH)
+        if (nh < num_kv_heads)
+        {
+            int q_index = b * T * num_kv_heads * C_per_NH + t * num_kv_heads * C_per_NH + nh * C_per_NH + hs;
+
+            // Gradients from the next layer
+            float dq_r = dq[q_index];
+            float dq_i = dq[q_index + half_hs];
+
+            // Backpropagation using chain rule (dout_q)
+            dq[q_index] = dq_r * cos_val + dq_i * sin_val;           // (df/dq_r)
+            dq[q_index + half_hs] = dq_i * cos_val - dq_r * sin_val; // (df/dq_i)
+        }
+
+        // Backprop for k (shape: B, T, NH, C/NH)
+        int k_index = b * T * NH * C_per_NH + t * NH * C_per_NH + nh * C_per_NH + hs;
+
+        // Gradients from the next layer
+        float dk_r = dk[k_index];
+        float dk_i = dk[k_index + half_hs];
+
+        // Backpropagation using chain rule (dout_k)
+        dk[k_index] = dk_r * cos_val + dk_i * sin_val;           // (df/dk_r)
+        dk[k_index + half_hs] = dk_i * cos_val - dk_r * sin_val; // (df/dk_i)
+    }
 }
 
-void ggml_cuda_op_rope_back(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    ggml_cuda_op_rope_impl<false>(ctx, dst);
-}*/
+// ----------------------------------------------------------------------------
+// kernel launcher
 
+void inline apply_rope_backward1(float *dq, float *dk, const float *freqs_cos, const float *freqs_sin,
+                          int B, int T, int num_kv_heads, int NH, int C_per_NH)
+{
+    dim3 blocks(B, T, NH); // Parallelizing over B, T, NH
+    int threads = C_per_NH / 2;
 
-#ifdef _PYTORCH_BINDING_
-#include <torch/types.h>
-#include <torch/extension.h>
-// --------------------- PyTorch bindings for custom kernel -----------------------
-#define STRINGFY(str) #str
-#define TORCH_BINDING_COMMON_EXTENSION(func) \
-  m.def(STRINGFY(func), &func, STRINGFY(func));
-
-#define CHECK_TORCH_TENSOR_DTYPE(T, th_type)                 \
-if (((T).options().dtype() != (th_type))) {                  \
-  std::cout << "Tensor Info:" << (T).options() << std::endl; \
-  throw std::runtime_error("values must be " #th_type);      \
+    apply_rope_backward_kernel1<<<blocks, threads>>>(dq, dk, freqs_cos, freqs_sin, B, T, num_kv_heads, NH, C_per_NH);
+    cudaDeviceSynchronize();
 }
 
-void rope_f32(torch::Tensor x, torch::Tensor out) {
-  CHECK_TORCH_TENSOR_DTYPE(x,   torch::kFloat32)
-  CHECK_TORCH_TENSOR_DTYPE(out, torch::kFloat32)
-  int seq_len = x.size(0);
-  int hidden_size = x.size(1);
-  int N = (int)(hidden_size/2);
-  dim3 grid((seq_len * N + BLOCK_SIZE - 1) / BLOCK_SIZE);
-  dim3 block(BLOCK_SIZE);
-  rope_f32_kernel<<<grid, block>>>(
-    x.data_ptr<float>(), out.data_ptr<float>(), seq_len, N);
+void inline apply_rope_backward2(float *dq, float *dk, const float *freqs_cos, const float *freqs_sin,
+                          int B, int T, int num_kv_heads, int NH, int C_per_NH)
+{
+    dim3 blocks(B, T, NH); // Parallelizes over B, T, NH
+    int threads = C_per_NH / 2;
+    int shared_mem_size = 2 * (C_per_NH / 2) * sizeof(float); // Shared memory size for freqs_cos and freqs_sin
+
+    apply_rope_backward_kernel2<<<blocks, threads, shared_mem_size>>>(
+        dq, dk, freqs_cos, freqs_sin, B, T, num_kv_heads, NH, C_per_NH);
+    cudaDeviceSynchronize();
 }
 
-void rope_f32_v2(torch::Tensor x, torch::Tensor out) {
-  CHECK_TORCH_TENSOR_DTYPE(x,   torch::kFloat32)
-  CHECK_TORCH_TENSOR_DTYPE(out, torch::kFloat32)
-  int seq_len = x.size(0);
-  int hidden_size = x.size(1);
-  int N = (int)(hidden_size/2);
-  dim3 grid(seq_len);
-  dim3 block(N);
-  rope_f32_v2_kernel<<<grid, block>>>(
-    x.data_ptr<float>(), out.data_ptr<float>(), seq_len, N);
+// kernel version dispatch
+void inline apply_rope_backward(int kernel_num,
+                         float *dq, float *dk, const float *freqs_cos, const float *freqs_sin,
+                         int B, int T, int num_kv_heads, int NH, int C_per_NH)
+{
+    switch (kernel_num)
+    {
+    case 1:
+        apply_rope_backward1(dq, dk, freqs_cos, freqs_sin, B, T, num_kv_heads, NH, C_per_NH);
+        break;
+    case 2:
+        apply_rope_backward2(dq, dk, freqs_cos, freqs_sin, B, T, num_kv_heads, NH, C_per_NH);
+        break;
+    default:
+        printf("Invalid kernel number\n");
+        exit(1);
+    }
 }
 
-void rope_f32x4_pack(torch::Tensor x, torch::Tensor out) {
-  CHECK_TORCH_TENSOR_DTYPE(x,   torch::kFloat32)
-  CHECK_TORCH_TENSOR_DTYPE(out, torch::kFloat32)
-  int seq_len = x.size(0);
-  int hidden_size = x.size(1);
-  int N = (int)(hidden_size/4);
-  dim3 grid((seq_len * N + BLOCK_SIZE - 1) / BLOCK_SIZE);
-  dim3 block(BLOCK_SIZE);
-  rope_f32x4_pack_kernel<<<grid, block>>>(
-    x.data_ptr<float>(), out.data_ptr<float>(), seq_len, N);
+
+/**
+ * Derived from the CPU PORT of the apply_rope kernel. Utilized Coalesced Memory access for `q`, `k`,
+ * - Applies RoPE to `q` and `k` separately.
+ * - Each thread handles a real/imaginary pair
+ * - Can be optimized more, since we can warp-divergence (because of the if condition), making some threads become idle
+ */
+__global__ inline void apply_rope_forward_kernel1(
+    float *q, float *k, float *freqs_cos, float *freqs_sin,
+    int B, int T, int num_kv_heads, int NH, int C_per_NH)
+{
+    int b = blockIdx.x;
+    int t = blockIdx.y;
+    int kv_head = blockIdx.z;
+    int hs = threadIdx.x;
+
+    // Half of the head size (real and imaginary components)
+    int half_hs = C_per_NH / 2;
+
+    // Separate indexing for q and k based on their respective shapes
+    if (hs < half_hs)
+    {
+        // Query (q) index for num_kv_heads shape (B, T, num_kv_heads, C/NH)
+        if (kv_head < num_kv_heads)
+        {
+            // coalesced memory accesses for `q`
+            int q_index = b * T * num_kv_heads * C_per_NH + t * num_kv_heads * C_per_NH + kv_head * C_per_NH + hs;
+
+            // Frequency index (T, C/2NH)
+            int freq_index = t * half_hs + hs;
+
+            float cos_val = freqs_cos[freq_index];
+            float sin_val = freqs_sin[freq_index];
+
+            // Apply RoPE to q (query)
+            float q_r = q[q_index];
+            float q_i = q[q_index + half_hs];
+
+            q[q_index] = q_r * cos_val - q_i * sin_val;           // (ac-bd)
+            q[q_index + half_hs] = q_r * sin_val + q_i * cos_val; // (ad+bc) * i
+        }
+
+        // Key (k) index for NH shape (B, T, NH, C/NH)
+        int k_index = b * T * NH * C_per_NH + t * NH * C_per_NH + kv_head * C_per_NH + hs;
+
+        // Apply RoPE to k (key)
+        int freq_index = t * half_hs + hs;
+        float cos_val = freqs_cos[freq_index];
+        float sin_val = freqs_sin[freq_index];
+
+        float k_r = k[k_index];
+        float k_i = k[k_index + half_hs];
+
+        k[k_index] = k_r * cos_val - k_i * sin_val;           // (ac-bd)
+        k[k_index + half_hs] = k_r * sin_val + k_i * cos_val; // (ad+bc) * i
+    }
 }
 
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  TORCH_BINDING_COMMON_EXTENSION(rope_f32)
-  TORCH_BINDING_COMMON_EXTENSION(rope_f32_v2)
-  TORCH_BINDING_COMMON_EXTENSION(rope_f32x4_pack)
+// ----------------------------------------------------------------------------
+
+/**
+ * Below, in order to remove the warp-divergence, we are separating the kernels for `q` and `k`
+ * - Utilizes coalesced memory access for `q`, `k`, `freq_cos`, and `freq_sin`
+ * Each thread handles a real/imaginary pair for `q`, and `k`(in their respective kernels)
+ */
+template<typename typ>
+__global__ void apply_rope_forward_q1(
+    typ *q, const float *freqs_cos, const float *freqs_sin,int B, int T, int num_kv_heads, int C_per_NH){
+    int b = blockIdx.x;
+    int t = blockIdx.y;
+    int kv_head = blockIdx.z;
+    int hs = threadIdx.x;
+
+    // Half of the head size (real and imaginary components)
+    int half_hs = C_per_NH / 2;
+
+    if (hs < half_hs)
+    {
+        int q_index = b * T * num_kv_heads * C_per_NH + t * num_kv_heads * C_per_NH + kv_head * C_per_NH + hs; // Query (q) index for num_kv_heads shape (B, T, num_kv_heads, C/NH)
+        int freq_index = t * half_hs + hs;                                                                     // Frequency index (T, C/2NH)
+
+        float cos_val = freqs_cos[freq_index];
+        float sin_val = freqs_sin[freq_index];
+        float q_r = q[q_index];
+        float q_i = q[q_index + half_hs];
+
+        // Apply RoPE to q (query)
+        q[q_index] = q_r * cos_val - q_i * sin_val;           // (ac-bd)
+        q[q_index + half_hs] = q_r * sin_val + q_i * cos_val; // (ad+bc) * i
+    }
 }
-#endif
+template<typename typ>
+__global__ inline void apply_rope_forward_k1(
+    typ *k, const float *freqs_cos, const float *freqs_sin,    int B, int T, int NH, int C_per_NH){
+    int b = blockIdx.x;
+    int t = blockIdx.y;
+    int nh = blockIdx.z;
+    int hs = threadIdx.x;
+
+    // Half of the head size (real and imaginary components)
+    int half_hs = C_per_NH / 2;
+
+    if (hs < half_hs)    {
+        int k_index = b * T * NH * C_per_NH + t * NH * C_per_NH + nh * C_per_NH + hs; // Key (k) index for NH shape (B, T, NH, C/NH)
+        int freq_index = t * half_hs + hs;                                            // Frequency index (T, C/2NH)
+
+        float cos_val = freqs_cos[freq_index];
+        float sin_val = freqs_sin[freq_index];
+        float k_r = k[k_index];
+        float k_i = k[k_index + half_hs];
+
+        // Apply RoPE to k (key)
+        k[k_index] = k_r * cos_val - k_i * sin_val;           // (ac-bd)
+        k[k_index + half_hs] = k_r * sin_val + k_i * cos_val; // (ad+bc) * i
+    }
+}
+// ----------------------------------------------------------------------------
+
+/**
+ * Verion-1 and version 2, are of same perf (no as such significant performance increase due to warp-divergence), since the kernels are memory bandwidth bound
+ *  These kernels use shared memory to store `freqs_cos` and `freqs_sin` values (frequently accessed in the computation).
+ *
+ * Each thread loads one cos and one sin value, so the total size of shared memory is 2 * blockDim.x * sizeof(float).
+ */
+
+__global__ inline void apply_rope_forward_q2(
+    float *q, const float *freqs_cos, const float *freqs_sin,
+    int B, int T, int num_kv_heads, int C_per_NH)
+{
+    extern __shared__ float shared_mem[];              // Shared memory for freqs_cos and freqs_sin
+    float *shared_freqs_cos = shared_mem;              // First part of shared memory for freqs_cos
+    float *shared_freqs_sin = shared_mem + blockDim.x; // Second part for freqs_sin
+
+    int b = blockIdx.x;
+    int t = blockIdx.y;
+    int kv_head = blockIdx.z;
+    int hs = threadIdx.x;
+
+    // Half of the head size (real and imaginary components)
+    int half_hs = C_per_NH / 2;
+
+    // Load freqs_cos and freqs_sin into shared memory for reuse
+    if (hs < half_hs)
+    {
+        int freq_index = t * half_hs + hs;
+        shared_freqs_cos[hs] = freqs_cos[freq_index];
+        shared_freqs_sin[hs] = freqs_sin[freq_index];
+    }
+
+    __syncthreads(); // Ensure all threads have loaded shared memory before proceeding
+
+    if (hs < half_hs)
+    {
+        // Query (q) index for num_kv_heads shape (B, T, num_kv_heads, C/NH)
+        int q_index = b * T * num_kv_heads * C_per_NH + t * num_kv_heads * C_per_NH + kv_head * C_per_NH + hs;
+
+        // Apply RoPE to q (query)
+        float q_r = q[q_index];
+        float q_i = q[q_index + half_hs];
+
+        // Use shared memory for cos and sin values
+        float cos_val = shared_freqs_cos[hs];
+        float sin_val = shared_freqs_sin[hs];
+
+        q[q_index] = q_r * cos_val - q_i * sin_val;           // (ac-bd)
+        q[q_index + half_hs] = q_r * sin_val + q_i * cos_val; // (ad+bc) * i
+    }
+}
+
+__global__ inline void apply_rope_forward_k2(
+    float *k, const float *freqs_cos, const float *freqs_sin,
+    int B, int T, int NH, int C_per_NH)
+{
+    extern __shared__ float shared_mem[];              // Shared memory for freqs_cos and freqs_sin
+    float *shared_freqs_cos = shared_mem;              // First part of shared memory for freqs_cos
+    float *shared_freqs_sin = shared_mem + blockDim.x; // Second part for freqs_sin
+
+    int b = blockIdx.x;
+    int t = blockIdx.y;
+    int nh = blockIdx.z;
+    int hs = threadIdx.x;
+
+    // Half of the head size (real and imaginary components)
+    int half_hs = C_per_NH / 2;
+
+    // Load freqs_cos and freqs_sin into shared memory for reuse
+    if (hs < half_hs)
+    {
+        int freq_index = t * half_hs + hs;
+        shared_freqs_cos[hs] = freqs_cos[freq_index];
+        shared_freqs_sin[hs] = freqs_sin[freq_index];
+    }
+
+    __syncthreads(); // Ensure all threads have loaded shared memory before proceeding
+
+    if (hs < half_hs)
+    {
+        // Key (k) index for NH shape (B, T, NH, C/NH)
+        int k_index = b * T * NH * C_per_NH + t * NH * C_per_NH + nh * C_per_NH + hs;
+
+        // Apply RoPE to k (key)
+        float k_r = k[k_index];
+        float k_i = k[k_index + half_hs];
+
+        // Use shared memory for cos and sin values
+        float cos_val = shared_freqs_cos[hs];
+        float sin_val = shared_freqs_sin[hs];
+
+        k[k_index] = k_r * cos_val - k_i * sin_val;           // (ac-bd)
+        k[k_index + half_hs] = k_r * sin_val + k_i * cos_val; // (ad+bc) * i
+    }
+}
+
+// ----------------------------------------------------------------------------
+// kernel launcher
+
+void inline apply_rope_forward1(float *q, float *k, float *freqs_cos, float *freqs_sin, int B, int T, int num_kv_heads, int NH, int C_per_NH)
+{
+    dim3 blocks(B, T, NH);
+    int threads = C_per_NH / 2;
+
+    apply_rope_forward_kernel1<<<blocks, threads>>>(q, k, freqs_cos, freqs_sin, B, T, num_kv_heads, NH, C_per_NH);
+    cudaDeviceSynchronize();
+}
+
+void inline apply_rope_forward2(
+    float *q, float *k, float *freqs_cos, float *freqs_sin,
+    int B, int T, int num_kv_heads, int NH, int C_per_NH)
+{
+    // Separate kernel launches for `q` and `k` to avoid warp-divergence
+
+    dim3 blocks_q(B, T, num_kv_heads); // For q (shape: B, T, num_kv_heads, C/NH)
+    dim3 blocks_k(B, T, NH);           // For k (shape: B, T, NH, C/NH)
+
+    int block_size = C_per_NH / 2;
+
+    apply_rope_forward_q1<<<blocks_q, block_size>>>(q, freqs_cos, freqs_sin, B, T, num_kv_heads, C_per_NH);
+    apply_rope_forward_k1<<<blocks_k, block_size>>>(k, freqs_cos, freqs_sin, B, T, NH, C_per_NH);
+    cudaDeviceSynchronize();
+}
+
+void inline apply_rope_forward3(
+    float *q, float *k, float *freqs_cos, float *freqs_sin,
+    int B, int T, int num_kv_heads, int NH, int C_per_NH)
+{
+    // Separate kernel launches for `q` and `k` with shared memory for `freqs_cos` and `freqs_sin`
+
+    dim3 blocks_q(B, T, num_kv_heads); // For q (shape: B, T, num_kv_heads, C/NH)
+    dim3 blocks_k(B, T, NH);           // For k (shape: B, T, NH, C/NH)
+
+    int block_size = C_per_NH / 2;
+
+    size_t shared_mem_size = 2 * block_size * sizeof(float); // Shared memory for cos and sin values
+
+    apply_rope_forward_q2<<<blocks_q, block_size, shared_mem_size>>>(q, freqs_cos, freqs_sin, B, T, num_kv_heads, C_per_NH);
+    apply_rope_forward_k2<<<blocks_k, block_size, shared_mem_size>>>(k, freqs_cos, freqs_sin, B, T, NH, C_per_NH);
+    cudaDeviceSynchronize();
+}
+
+// kernel version dispatch
+void inline apply_rope_forward(int kernel_num,
+                        float *q, float *k, float *freqs_cos, float *freqs_sin,
+                        int B, int T, int num_kv_heads, int NH, int C_per_NH)
+{
+    switch (kernel_num)
+    {
+    case 1:
+        apply_rope_forward1(q, k, freqs_cos, freqs_sin, B, T, num_kv_heads, NH, C_per_NH);
+        break;
+    case 2:
+        apply_rope_forward2(q, k, freqs_cos, freqs_sin, B, T, num_kv_heads, NH, C_per_NH);
+        break;
+    case 3:
+        apply_rope_forward3(q, k, freqs_cos, freqs_sin, B, T, num_kv_heads, NH, C_per_NH);
+        break;
+    default:
+        printf("Invalid kernel number\n");
+        exit(1);
+    }
+}

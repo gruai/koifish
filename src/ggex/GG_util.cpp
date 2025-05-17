@@ -479,7 +479,8 @@ try{
             assert(0);
         }      
     }
-    //  n_embd_head_k   n_embd_head_v   ???
+    // scheduling.strategy = SKDU_params::MEM_ONLINE;
+
     return true;
 }catch(JSON::parse_error &e){
     _INFO("\r\n%s  Failed to open %s!!! ERR=%s",__func__,key.c_str(),e.what());
@@ -488,6 +489,19 @@ try{
     _INFO("\r\n%s  Unknown exception @%s!!!",__func__,key.c_str());
     return false;
 }
+}
+
+bool CLI_params::isShareLayerOut()  const   {
+    if(scheduling.strategy==SKDU_params::MEM_PRE_ALLOC)
+        return false;
+    return true;
+    
+}
+bool SKDU_params::isUpdateParamV0( )    const  {
+    if(strategy==MEM_ONLINE)
+        return false;
+        
+    return false;
 }
 
 uint32_t CLI_params::nThread() const {
@@ -510,6 +524,12 @@ void CLI_params::OnMostToken(size_t nMost,int flag){
     common.nMostIter = (int)floor(nMost*common.n_epochs*rSample/nTokenInBatch());
 }    
 
+void SKDU_params::Dump(int typ)  const{
+    _INFO("[Scheduling] MEM=%s UpdateParam=V%d\n", strategy==MEM_PRE_ALLOC?"PreAlloc":"Online",
+        isUpdateParamV0( )?0:1
+    );
+}
+
 void CLI_params::OnArch( ){
     int nH=-1;
     bool isJModel = !jModel.empty();
@@ -525,8 +545,12 @@ void CLI_params::OnArch( ){
         model.isNormalBias = true;
         model.isSLPBias = true;         //nealy same
         model.isPaddedCls = true;       //ceil(n/128.0)*128
+        model.isSeperateQKV = false;
         model.preLogits_dB = 8;
+        model.isFFNShareParam = true;
+        model.isEmbedWeightTying = false;
         DEBUG.check_tensor_norm = true;
+        model.isRope = false;       // 2025.5.7 some bugs
         break;
     case MODEL_ARCH::NLP_GPT2:  
     case MODEL_ARCH::NLP_GPT2_char:  {
@@ -549,6 +573,7 @@ void CLI_params::OnArch( ){
         model.isNormalBias = true;
         model.isSLPBias = true;         //nealy same
         model.isPaddedCls = true;       //  ceil(n/128.0)*128
+        model.isRope = false;
         model.preLogits_dB = 8;
 
         int group=Get({"model_v0","target_group"},1);
@@ -1137,7 +1162,7 @@ int CHECK_SAME_TENSORS(const string& desc,const std::vector<hGensor>&arrA,const 
             isSame = false;     nMiss++;
         }
     }
-    _INFO("%s======== %s @[%s] OK. A=%d B=%d \n",isSame?"\r":"\n", __func__,desc.c_str(),nA,nB);
+    _INFO("%s======== %s @[%s] %s. A=%d B=%d \n",isSame?"\rPASSED ":"\nFailed !", __func__,desc.c_str(),"",nA,nB);
     return 0x0;
 }
 

@@ -24,7 +24,7 @@
 using namespace std;
 
 #include "../ggex/GG_util.hpp"
-#include "../Device/CUDA/EDevice.hpp"
+#include "../Device/EDevice.hpp"
 #include "../Utils/Cache.hpp"
 #include "TGraph.hpp"
 #include "Scheduler.hpp"
@@ -63,7 +63,7 @@ protected:
     float loss_before=0,loss_after=0,tokens_per_second=0,ema_tps=0,last_lr=0;
     int first_epoch=0,iter_at_last_epoch=-1,first_iter=-1,iter=-1;
     uint64_t train_its=0,train_samples=0,train_tokens=0,train_epochs=0,max_epoch=0;
-    double last_time,tX=0,tData,tUpdate;
+    double last_time,tData,tUpdate;
     double millis_per_iter=0;
     std::vector<string> adam_filter =  {"output","norm"};    //{"token_embd","output","norm"};
 
@@ -85,10 +85,10 @@ protected:
         return *val;
     }
     
-    // virtual KVCache *GetKVCache()  {   return nullptr;    }
-    
-    hLearnSKDU scheduler = nullptr;
+    // Learning rate hLR
+    hLearnSKDU hLR = nullptr;
     bool isStopImprove = false;
+    bool isPreGStep = false;
 
     virtual void Clear()    {}   
     // update sched & dump some info
@@ -133,9 +133,9 @@ public:
     virtual float Evaluate(hSampLoader loader,int iter,int flag=0x0);
     // virtual float Prefill(hSampLoader loader,int iter,int flag=0x0);
     virtual int GetITER(int flag=0x0);
-    virtual float LearningRate(int flag=0x0 )   {   return  scheduler->LearningRate(iter);  }
+    virtual float LearningRate(int flag=0x0 )   {   return  hLR->LearningRate(iter);  }
     virtual void UpdateTrainLoss(int x,float loss,int flag=0x0);     //
-
+    virtual double UpdateTensorParam(hGensor hP,floatX *g,float gnorm)    {   return 0.0;  }
     virtual bool isStopImproving( )	{	
         return isStopImprove;	
     }
@@ -196,9 +196,15 @@ protected:
     void Prepare(size_t nx,int flag=0x0)   override;
     // compute grad on batchs
     bool BatchGrad(int iter,float&fx,int flag=0x0) override;
-    virtual double UpdateTensorParam(hGensor hP,size_t offset,floatX *g,float gnorm);
+    double UpdateTensorParam(hGensor hP,floatX *g,float gnorm)    override;
     void UpdateParams(int nx,CLI_params& config,int flag)  override;
 public:
     OPT_Adam(NLP_AutoRegressive *g_,CLI_params& params_,int flag=0x0);
     void Dump(int typ)  override;
 };
+
+
+class OPT_Muon : public Optimizer  {
+public:
+    OPT_Muon(NLP_AutoRegressive *g_,CLI_params& params_,int flag=0x0);
+};    

@@ -106,6 +106,25 @@ Fish::Fish(const std::string&nam_,struct CLI_params params,ROLE_TYPE role_,int f
     }
 }
 
+bool Fish::isModel(std::vector<MODEL_ARCH> arcs,int flag)  {   
+    MODEL_ARCH arc = config.ModelArch();  
+    for(auto arc0 : arcs){
+        if(arc == arc0)
+            return true;
+    }
+    return false;
+}
+bool Fish::isTemporaryMemory(GeNeuron *neuron,int flag) const{
+    assert(hEDS!=nullptr);    
+    return !hEDS->hRLS->isResident(neuron);
+}
+bool Fish::isRemater(int flag) const  {
+    assert(hEDS!=nullptr);
+    if( hEDS->hRLS->isRemater)
+        return true;
+    return false;
+}
+
 hFISH Fish::MakeSwarm(const std::string nam_,struct CLI_params& params,int flag)   {
     vector<hWIKI> wikis = WIKI::MakeInstance(nam_,params,0x0);
     // if(params.tpWiki!="off") {//wiki is so heavy(ugly) that only load one instance here!
@@ -183,9 +202,9 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
     for(auto it : gensors.infos){
         auto node = it.first;
         if (BIT_TEST(node->flags,GTensor::GTensor::F_PARAM)) {      
-            optParams.push_back(node);  
             if(node->isRefer())
-                continue;
+                continue;            
+            optParams.push_back(node);  
             nx += tELEM(node);     n0++;   //
         }
         if (BIT_TEST(node->flags,GTensor::F_INPUT)) {  
@@ -264,10 +283,7 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
         hOPT->Prepare(nParams);
     }
     hOPT->AfterBuild();
-    hOPT->Dump(1);
-          
-
-
+    // hOPT->Dump(1);
     if(role==SWARM_FOLLOWER){
         
     }else{
@@ -562,306 +578,17 @@ hGensor Fish::AddTensor(void *ctx,const std::string&key_,typNUMBER tp,const SHAP
 
 /*
 
-
-*/
-EDGE_DEVICES::EDGE_DEVICES(const CLI_params&config, int flag){
-#ifdef _TENSOR_G_
-    InitGPU(config,flag);
-    return;
-#else
-    assert(back_data==nullptr);
-    assert(workers.size()==0);
-    const size_t dev_count = 1; //ggml_backend_dev_count();
-    _INFO("%s: %zu devices\n\n",__func__, dev_count);
-    int n_ok=0,nT0=std::thread::hardware_concurrency(),nT=config.nThread();
-    string sTp = config.KV({"train","device"},"");
-    ggml_backend_t backend = nullptr;
-    size_t free, total;    
-    for (size_t i = 0; i < dev_count; ++i) {        
-        assert(0);
-#ifdef GG_V12  
-        /*auto dev = ggml_backend_dev_get(i);
-        devs.push_back(dev);
-        ggml_backend_dev_memory(dev, &free, &total);
-        printf("[EDGE_DEVICE]_%d %s:%s  memory: %zu MB (%zu MB free)\n", i, ggml_backend_dev_name(dev), ggml_backend_dev_description(dev)
-            ,total / 1024 / 1024, free / 1024 / 1024);   
+bool TGraph::SchedulerOnNeurons(int flag)    {
+    for(auto n : hFish->neurons){
+        n->SetDevice(0x0);  // cpu,gpu or other device?
+    }
+    // trial
+    for(auto task : nodes){
         
-        ggml_backend_t backend = ggml_backend_dev_init(dev, NULL);*/
-#else
-        backend = ggml_backend_cpu_init();
-#endif
-        assert(backend != NULL);
-        /*if (ggml_backend_is_cpu(backend)) {
-            ggml_backend_cpu_set_n_threads(backend, nT);
-            auto buft = ggml_backend_cpu_buffer_type();
-            bufts.push_back(buft);
-        } else {
-            bufts.push_back(ggml_backend_get_default_buffer_type(backend));
-        }
-        workers.push_back(backend);*/
     }
-    
-#ifdef GG_V12    
-    for (auto backend : workers) {
-        // Put the backend to be tested in front so that it's prioritized:
-        std::vector<ggml_backend_t> backends_modded = {backend};
-        backends_modded.insert(backends_modded.end(), workers.begin(), workers.end());
-
-        sched0 = ggml_backend_sched_new(
-            backends_modded.data(), nullptr, backends_modded.size(), GGML_DEFAULT_GRAPH_SIZE/*2048*/, false);
-        break;
-        // std::pair<int, int> result = test_backend(backend_sched, backends[i]);
-        // ggml_backend_sched_free(backend_sched);
-    }    
-#else
-    sched0 = ggml_backend_sched_new(workers.data(), bufts.data(), bufts.size(), LLAMA_TRAIN_MAX_NODES, false);
-#endif
-    int i,nBack = ggml_backend_sched_get_n_backends(sched0);
-    for (int i = 0; i < nBack; i++) {
-        auto back = ggml_backend_sched_get_backend(sched0, i);
-        _INFO("");
-    }
-
-    /*
-        static struct ggml_backend_buffer_type ggml_backend_cpu_buffer_type = {
-         {
-            ggml_backend_cpu_buffer_type_get_name,
-             ggml_backend_cpu_buffer_type_alloc_buffer,
-             ggml_backend_cpu_buffer_type_get_alignment,
-            NULL, // defaults to SIZE_MAX
-             NULL, // defaults to tBYTE
-            ggml_backend_cpu_buffer_type_is_host,
-        },
-         NULL,
-    };
-    */
-#endif
+    return true;    
 }
-
-EDGE_DEVICES::~EDGE_DEVICES(){
-#ifdef __USE_GGML__
-   for (auto backend : workers) {
-        ggml_backend_free(backend); 
-   }
-   if(sched0!=nullptr)
-        ggml_backend_sched_free(sched0);
-    if(alloc_tmp!=nullptr)
-        ggml_gallocr_free(alloc_tmp);
-#endif
-}
-
-/*
-    llm_build_cb cb = [&](hGensor  cur, const char * name, int il) 
-    why "norm"      ???
 */
-int EDGE_DEVICES::SetBackend(hGensor cur0,int flag)    {
-    int il = 0, no=0,pick=-1;    
-    // if (strcmp(cur->name, "norm") != 0) // norm may be automatically assigned to the backend of the previous layer, increasing data transfer between backends
-    //     return -1;
-    auto cur = G(cur0);
-#ifdef __USE_GGML__
-    for (auto * backend : workers) {
-        bool isBuft = false/*ggml_backend_supports_buft(backend, lctx.model.buft_layer[il].buft)*/;
-        bool isOP = ggml_backend_supports_op(backend, cur) || ggml_backend_offload_op(backend, cur);
-        if (  isOP /*&& isBuft*/ ) {
-            ggml_backend_sched_set_tensor_backend(GetSched(), cur, backend);
-            pick = no;
-            break;
-        }
-        no++;
-    }
-#endif
-    return pick;    
-}
-
-#ifdef __USE_GGML__
-#include "ggml-impl.h"
-/*
-    const int node_backend_id = tensor_backend_id(node); =1 for "norm???"
-*/
-bool EDGE_DEVICES::SplitSched(hTGraph hTG,int flag)  {    
-    assert(hTG!=nullptr);
-    if(workers.size()==1)   //no need to split
-        return true;
-
-    int n0=0;
-    for(auto node : hTG->sinks){
-        int no = SetBackend(node);
-        if(no==0)   n0++;
-    }    
-    auto cgraph = hTG->raw();   //    assert(cgraph!=nullptr);
-    int nNode = cgraph->n_nodes;
-    auto sched = GetSched();
-    if (!ggml_backend_sched_reserve(sched, cgraph)) {
-        _ERROR("%s: failed to allocate compute buffers\n", __func__);
-        // llama_free(ctx);
-        return false;
-    }
-
-    for (size_t i = 0; i < workers.size(); i++) {
-        ggml_backend_t backend = workers[i];
-        ggml_backend_buffer_type_t buft = bufts[i];
-        size_t size = 0x0;  //ggml_backend_sched_get_buffer_size(sched, backend);
-        if (size > 1) {
-            _INFO("%s: %10s compute buffer size = %8.2f MiB\n", __func__,
-                    ggml_backend_buft_name(buft),size / 1024.0 / 1024.0);
-        }
-    }
-
-    // note: the number of splits during measure is higher than during inference due to the kv shift
-    int n_splits = ggml_backend_sched_get_n_splits(sched);
-    _INFO("%s: graph nNode=%d nSplits=%d\n", __func__, nNode, n_splits );
-    assert(n_splits>=2);
-    return true;
-}
-#endif
-
-int EDGE_DEVICES::SetThread(int nThread,int flag)   {
-    assert(0);
-    /*int nSet = 0;
-    for(auto worker : workers){
-        if (ggml_backend_is_cpu(worker))   {
-            ggml_backend_cpu_set_n_threads(worker, nThread);
-            nSet ++;
-            //ggml_backend_cpu_set_threadpool(hEDS->cpu, threadpool);
-        // ggml_backend_cpu_set_abort_callback(hEDS->cpu, lctx.abort_callback, lctx.abort_callback_data);
-        }
-    }
-
-#ifdef GGML_USE_BLAS
-    if (lctx.backend_blas != nullptr) {
-        ggml_backend_blas_set_n_threads(lctx.backend_blas, n_threads);
-    }
-#endif*/
-    return 0x0;
-}
-
-string EDGE_DEVICES::__repr__( string& suffix,string& prefix,int flag)  {
-    return "";
-    char buf[5012]="\0";
-    const char*tab=prefix.c_str();
-    if(isOnlyCPU()){
-        // assert(workers.size()==1);
-        sprintf(buf+strlen(buf),"OnlyCPU"); 
-    }else{
-        /*for (auto * backend : workers) {
-            if (ggml_backend_is_cpu(backend)) {  
-                sprintf(buf+strlen(buf),"CPU,"); 
-            }else{
-                sprintf(buf+strlen(buf),"GPU,");
-            }
-        }  */      
-    }
-
-    if(flag>0)
-        _INFO("%s",buf); 
-    return buf;  
-}
-
-// Graph allocator
-/*
-    Example usage:
-        ggml_gallocr_t galloc = ggml_gallocr_new(ggml_bacckend_cpu_buffer_type());
-        // optional: create a worst-case graph and reserve the buffers to avoid reallocations
-        ggml_gallocr_reserve(galloc, build_graph(max_batch));
-        // allocate the graph
-        struct ggml_cgraph * graph = build_graph(batch);
-        ggml_gallocr_alloc_graph(galloc, graph);
-        printf("compute buffer size: %zu bytes\n", ggml_gallocr_get_buffer_size(galloc, 0));
-        // evaluate the graph
-        ggml_backend_graph_compute(backend, graph);
-*/
-
-bool EDGE_DEVICES::AllocGraph(hTGraph graph,int flag)    {
-    bool bRet = false;    
-    
-    return bRet;
-}
-
-bool EDGE_DEVICES::Reserve(hTGraph graph,int flag){
-    return false;
-}
-size_t EDGE_DEVICES::Alloc(hTGraph hTG,void *ctx,int flag)    {
-    INIT_WEIGHT tpInitWeight = hTG->hFish->tpInitWeight;
-#ifdef _TENSOR_G_
-    for(auto node : hTG->gset){
-        if(tpInitWeight==SERIALIZE)        
-            node->tpInit = tpInitWeight;
-        
-        node->Alloc( );
-    }
-#else
-    Reserve(hTG);
-    auto buft = ggml_backend_cpu_buffer_type();
-    // back_data = ggml_backend_alloc_ctx_tensors_from_buft(ctx,type );
-    assert(ggml_get_no_alloc(ctx) == true);
-    size_t alignment = ggml_backend_buft_get_alignment(buft);
-    size_t max_size = ggml_backend_buft_get_max_size(buft);        //  SIZE_MAX
-
-    ggml_backend_buffer_t * buffers = NULL;
-    size_t n_buffers = 0;
-
-    size_t cur_buf_size = 0;
-    struct ggml_tensor* first = ggml_get_first_tensor(ctx);
-    for (struct ggml_tensor* t = first; t != NULL; t = ggml_get_next_tensor(ctx, t)) {
-        size_t this_size = 0;
-        if (t->data == NULL && t->view_src == NULL) {
-            this_size = GGML_PAD(ggml_backend_buft_get_alloc_size(buft, t), alignment);
-        }
-        if(this_size>(size_t)(4098)*1024*1024)        // huge tensor of "gate_exLogits_1" 524M        [ 32000  512  32  1 f32]
-            assert(0);
-        if (this_size > max_size) {
-            fprintf(stderr, "%s: tensor %s is too large to fit in a %s buffer (tensor size: %zu, max buffer size: %zu)\n",__func__, t->name,
-                    ggml_backend_buft_name(buft),this_size, max_size);
-            for (size_t i = 0; i < n_buffers; i++) {
-                ggml_backend_buffer_free(buffers[i]);
-            }
-            free(buffers);
-            return 0;
-        }
-        
-        if ((cur_buf_size + this_size) > max_size) {
-            // allocate tensors in the current buffer
-            if (!alloc_tensor_range(ctx, first, t, buft, cur_buf_size, &buffers, &n_buffers)) {
-                return 0;
-            }
-            first = t;
-            cur_buf_size = this_size;
-        } else {
-            cur_buf_size += this_size;
-        }
-    }
-
-    // allocate remaining tensors
-    if (cur_buf_size > 0) {
-        if (!alloc_tensor_range(ctx, first, NULL, buft, cur_buf_size, &buffers, &n_buffers)) {
-            return 0;
-        }
-    }
-
-    if (n_buffers == 0) {
-#ifndef NDEBUG
-        fprintf(stderr, "%s: all tensors in the context are already allocated\n", __func__);
-#endif
-        return 0;
-    }
-
-    ggml_backend_buffer_t buffer;
-    if (n_buffers == 1) {
-        buffer = buffers[0];
-    } else {
-        assert(0);
-        // buffer = ggml_backend_multi_buffer_alloc_buffer(buffers, n_buffers);
-    }
-    free(buffers);
-    // return buffer;
-    back_data = buffer;
-    assert(back_data!=nullptr);     
-    sz=ggml_backend_buffer_get_size(back_data);          //buffer->size;
-    double sG = sz*1.0/1.0e9;
-#endif
-    return sz;
-}   
 
 bool Fish::ComputePlan(int flag) {
 #ifdef __USE_GGML__

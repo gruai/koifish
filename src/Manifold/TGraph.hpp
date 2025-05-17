@@ -101,22 +101,7 @@ public:
 
     virtual bool TopoOrder(int flag=0x0); 
 
-    int compute_on_plan( struct ggml_cplan* cplan,int flag=0x0);
-
-    /*void compute_helper(int32_t n_threads,int flag=0x0){
-        _INFO("%s ...",__func__);
-        // ggml_graph_compute_helper(work_buffer, cgraph, n_threads);
-        GST_TIC(t0);
-        struct ggml_cplan plan = ggml_graph_plan(cgraph, n_threads,NULL);
-        if (plan.work_size > 0) {
-            work_buffer.resize(plan.work_size);
-            plan.work_data = work_buffer.data();
-        }
-        tPlan = GST_TOC(t0);       
-
-        compute_on_plan(&plan);
-        _INFO("%s:  nT=%d  symbol=%d T = %.3g(plan=%.3g)sec\n", __func__,n_threads,isOnlySymbol, GST_TOC(t0),tPlan);
-    }*/
+    int compute_on_plan( struct ggml_cplan* cplan,int flag=0x0);    
 
     virtual struct ggml_cgraph * BuildBackward(void * ctx_build,std::shared_ptr<TGraph> gf, bool accumulate=false,int flag=0x0);
     // Push new added node to last position

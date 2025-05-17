@@ -7,7 +7,7 @@
 #include "./kernel/rope.cuh"
 #include "../../Manifold/Neuron.hpp"
 #include "../../Manifold/Fish.hpp"
-#include "./EDevice.hpp"
+// #include "./EDevice.hpp"
 #define NOMINMAX
 
 // #undef ENABLE_CUDNN
@@ -70,10 +70,8 @@ using cache_type_fwd = std::map<std::tuple<int,int,int,int, int>, std::shared_pt
 using cache_type_bwd = std::map<std::tuple<int,int,int,int>, std::shared_ptr<fe::graph::Graph>>;
 
 // Loosely based on cuDNN frontend samples functions and massively simplified
-auto lookup_cache_or_build_graph_fwd(int B,int H,int T,int HS, int is_inference_only) {
-
+auto lookup_cache_or_build_graph_fwd(int B,int H,int T,int HS, int is_inference_only,bool isRope=false) {
     static cache_type_fwd user_maintained_cache_fwd;
-
     auto key = std::make_tuple(B, H, T, HS, is_inference_only);
 
     auto it = user_maintained_cache_fwd.find(key);
@@ -89,7 +87,7 @@ auto lookup_cache_or_build_graph_fwd(int B,int H,int T,int HS, int is_inference_
 #else
     assert(0);
 #endif
-
+    auto stride = {3 * H * HS * T,  HS, 3 * H * HS, 1};
     // QKV is (B, T, 3, NH, HS) which cuDNN can handle directly without an external permute
     auto Q = graph->tensor(fe::graph::Tensor_attributes().set_name("Q")
                                .set_dim({B, H, T, HS})
@@ -109,12 +107,15 @@ auto lookup_cache_or_build_graph_fwd(int B,int H,int T,int HS, int is_inference_
                                .set_uid(Attn_scale_UID)
                                .set_is_pass_by_value(true)
                                .set_data_type(fe::DataType_t::FLOAT));
-
+    
     auto sdpa_options = fe::graph::SDPA_attributes().set_name("flash_attention");
     sdpa_options.set_is_inference(is_inference_only);
     sdpa_options.set_attn_scale(attn_scale);
     sdpa_options.set_causal_mask(true);
-
+    if(isRope)  {
+        // graph->matmul();
+    }
+    
     // Create the graph operation and get the output tensors back
     auto [O, stats] = graph->sdpa(Q, K, V, sdpa_options);
 
@@ -273,6 +274,46 @@ void attention_forward_cudnn(floatX* out,  // output: (B, T, NH, HS)
     cudaCheck(cudaGetLastError());
 }
 
+//
+bool SelfAttention::FUSE_cudnn(floatX* dqkvr,floatX* dout,int flag){
+    assert(cudnn_handle!=nullptr);
+    NVTX_RANGE_FN();
+    int NH = n_head,HS=C/n_head;
+    floatX* inp = ToX(tmpQKV);
+    void* devPtrQ = inp,* devPtrK = (inp + C),* devPtrV = (inp + 2 * C);
+    float attn_scale_cpu = 1.0 / sqrtf(C*1.0/n_head),*stats = TO<float>(transition);
+    void* devPtrO = attn->data; //out;
+    cuDNNCheck(cudnnSetStream(cudnn_handle, main_stream));
+    if(isForward()){ 
+        bool is_inference_only = false;        
+        // Get graph and tensors from cache (or generate it on first use)
+        auto graph = lookup_cache_or_build_graph_fwd(B, NH, T, HS, is_inference_only);
+        std::unordered_map<int64_t , void*> variant_pack = {
+            {Q_UID, devPtrQ}, {K_UID, devPtrK}, {V_UID, devPtrV}, {Attn_scale_UID, &attn_scale_cpu}, {O_UID, devPtrO}
+        };
+        rope.FUSE_cuda(ToX(tmpQKV));        
+        // attention_forward_cudnn(ToX(attn), TO<float>(transition), ToX(tmpQKV), B, T, NH, C_qkv, main_stream);
+        if (is_inference_only == false) {
+            variant_pack[Stats_UID] = TO<float>(transition);
+        }    
+        // Execute graph
+        checkCudnnFE(graph->execute(cudnn_handle, variant_pack, cudnn_workspace));
+
+    }else{
+        auto graph = lookup_cache_or_build_graph_bwd(B, NH, T, HS);
+        // attention_backward_cudnn(ToX(delta_attn), ToX(deltaCat), qkvr, ToX(attn), l_att, B, T, NH, C_qkv, main_stream);
+        void* devPtrdO = dout,* devPtrStats = stats,* devPtrdQ = dqkvr,* devPtrdK = (dqkvr + C),* devPtrdV = (dqkvr + 2*C);
+        std::unordered_map<int64_t, void*> variant_pack = {
+            {Q_UID, devPtrQ}, {K_UID, devPtrK}, {V_UID, devPtrV}, {O_UID, devPtrO}, {dO_UID, devPtrdO}, {Stats_UID, devPtrStats},
+            {dQ_UID, devPtrdQ}, {dK_UID, devPtrdK}, {dV_UID, devPtrdV},{Attn_scale_UID, &attn_scale_cpu}
+        };
+        checkCudnnFE(graph->execute(cudnn_handle, variant_pack, cudnn_workspace));        
+    }
+    cudaCheck(cudaGetLastError());
+    return true;
+}
+
+
 void attention_backward_cudnn(floatX* dqkvr,                                       // output
                               floatX* dout, floatX* qkvr, floatX* o, float* stats, // inputs
                               int B, int T, int NH, int C, cudaStream_t stream) {
@@ -329,10 +370,10 @@ bool InitCUDA(const CLI_params&hparams,EDGE_DEVICES *hDevice,int flag){
     }
     
     cudaCheck(cudaGetDeviceProperties(&deviceProp, local_device_idx));
-    if (1) {
-        printf("[System]\n");
-        printf("Device %d: %s\n", local_device_idx, deviceProp.name);
-    }
+    // int cuda_num_SMs = deviceProp.multiProcessorCount;
+    // int cuda_threads_per_SM = deviceProp.maxThreadsPerMultiProcessor;
+    // int cuda_arch_major = deviceProp.major;
+    // int cuda_arch_minor = deviceProp.minor;
 
     // set up the cuda streams. atm everything is on the single main stream
     cudaCheck(cudaStreamCreate(&main_stream));
@@ -348,34 +389,7 @@ bool InitCUDA(const CLI_params&hparams,EDGE_DEVICES *hDevice,int flag){
 #ifdef ENABLE_CUDNN
     create_cudnn();
 #endif
-/*
-    printf("+-----------------------+----------------------------------------------------+\n");
-    printf("| Parameter             | Value                                              |\n");
-    printf("+-----------------------+----------------------------------------------------+\n");
-    printf("| train data pattern    | %-50s |\n", train_data_pattern);
-    printf("| val data pattern      | %-50s |\n", val_data_pattern);
-    printf("| output log dir        | %-50s |\n", output_log_dir == NULL ? "NULL" : output_log_dir);
-    printf("| checkpoint_every      | %-50d |\n", checkpoint_every);
-    printf("| resume                | %-50d |\n", resume);
-    printf("| micro batch size B    | %-50d |\n", B);
-    printf("| sequence length T     | %-50d |\n", T);
-    printf("| total batch size      | %-50d |\n", total_batch_size);
-    printf("| LR scheduler          | %-50s |\n", lr_scheduler_type);
-    printf("| learning rate (LR)    | %-50e |\n", learning_rate);
-    printf("| warmup iterations     | %-50d |\n", warmup_iterations);
-    printf("| final LR fraction     | %-50e |\n", final_learning_rate_frac);
-    printf("| weight decay          | %-50e |\n", weight_decay);
-    printf("| skip update lossz     | %-50f |\n", skip_update_lossz);
-    printf("| skip update gradz     | %-50f |\n", skip_update_gradz);
-    printf("| max_steps             | %-50d |\n", max_steps);
-    printf("| val_loss_every        | %-50d |\n", val_loss_every);
-    printf("| val_max_steps         | %-50d |\n", val_max_steps);
-    printf("| sample_every          | %-50d |\n", sample_every);
-    printf("| genT                  | %-50d |\n", genT);
-    printf("| overfit_single_batch  | %-50d |\n", overfit_single_batch);
-    printf("| use_master_weights    | %-50s |\n", use_master_weights ? "enabled" : "disabled");
-    printf("| gelu_fusion           | %-50d |\n", gelu_fusion);
-    printf("| recompute             | %-50d |\n", recompute);*/
+
     printf("+-----------------------+----------------------------------------------------+\n");
     const char* precision_str = (FLOAT_TYPE == typNUMBER::F32)
                               ? (cublas_compute == CUBLAS_COMPUTE_32F_FAST_TF32 ? "TF32" : "FP32")
@@ -395,50 +409,62 @@ bool InitCUDA(const CLI_params&hparams,EDGE_DEVICES *hDevice,int flag){
 /*
     QKV = (B, T, 3, NH, HS) 
 */
-int ROPE::FUSE_cuda(hGTensor QKV,bool isFX,int flag){
+int ROPE::FUSE_cuda(floatX* inp,bool isFX,int flag){
     if(Empty()){
         return -1;
     }
-    int NH=n_head;    
-    // hFish->GetBTC(B,T,C);
-    floatX* devQ = ToX(QKV),*devK = devQ + C;    //*devPtrV = devPtrQ + 2 * C;
-
-    const size_t s01 = QKV->ld(1);      //src0->nb[1] / ggml_type_size(src0->type);
-    const size_t s02 = QKV->ld(2);      //src0->nb[2] / ggml_type_size(src0->type);
-    const int n_dims     = n_rot;
-    float freq_base=10000.0,freq_scale=1,ext_factor=0,attn_factor=1,beta_fast=32,beta_slow=1;
-    const int32_t * pos = nullptr;  //(const int32_t *) src1_d;
-    const float * freq_factors = nullptr;
-    rope_corr_dims corr_dims;
+    int NH=n_head,NH_kv=NH;    
+    hFish->GetBTC(B,T,C);    
+    // const int n_dims     = n_rot;
+    // float freq_base=10000.0,freq_scale=1,ext_factor=0,attn_factor=1,beta_fast=32,beta_slow=1;
+    // rope_corr_dims corr_dims;
     // ggml_rope_yarn_corr_dims(n_dims, n_ctx_orig, freq_base, beta_fast, beta_slow, corr_dims.v);
-    floatX* dst = ToX(out);
+    grid_size = CEIL_DIV(B*T*C/2, block_size);  
+    float *fcos = TO<float>(hCos),*fsin = TO<float>(hSin);
+    int threads = head_dim / 2;
     if(isForward()){
-        grid_size = CEIL_DIV(B*T*C/2, block_size);
-        // encoder_forward(ToX(cur), samps, ToX(wSrc), nullptr, 1, T, C, main_stream);
-        CU_rope_<<<grid_size, block_size, 0, main_stream>>>(devQ,devQ, q_dim, head_dim, theta, n_rot,B,T,C);   
-        CU_rope_<<<grid_size, block_size, 0, main_stream>>>(devK,devK, kv_dim, head_dim, theta, n_rot,B,T,C);   
-    }else{
+        floatX* q = inp,*k = q + B*T*C;           
+        dim3 blocks_q(B, T, NH_kv),blocks_k(B, T, NH);        
         
+        apply_rope_forward_q1<<<blocks_q, threads>>>(q, fcos, fsin, B, T, NH_kv, head_dim);
+        apply_rope_forward_k1<<<blocks_k, threads>>>(k, fcos, fsin, B, T, NH, head_dim);
+        cudaDeviceSynchronize();
+        // CU_rope_<<<grid_size, block_size, 0, main_stream>>>(q,q, q_dim, head_dim, theta, n_rot,B,T,C);   
+        // CU_rope_<<<grid_size, block_size, 0, main_stream>>>(k,k, kv_dim, head_dim, theta, n_rot,B,T,C);   
+    }else{
+        floatX* delta_q = inp,*delta_k = delta_q + B*T*C;
+        dim3 blocks(B, T, NH); 
+        apply_rope_backward_kernel1<<<blocks, threads>>>(delta_q, delta_k, fcos, fsin, B, T, NH_kv, NH, head_dim);
+        cudaDeviceSynchronize();
+        // CU_rope_back<<<grid_size, block_size, 0, main_stream>>>(delta_q,delta_q, q_dim, head_dim, theta, n_rot,B,T,C);   
+        // CU_rope_back<<<grid_size, block_size, 0, main_stream>>>(delta_k,delta_k, kv_dim, head_dim, theta, n_rot,B,T,C);  
     }
 
     return 0x0;
 }
 
-//
-hGTensor SelfAttention::FUSE_cuda(hGTensor inpL,hGTensor residual,hGTensor deltaIn,float* scratchF,int flag){    
-    int NH=n_head;
-    floatX *qkvr=ToX(Q.out);    
-    float *l_att = TO<float>(trans); //(float*)acts.att + l * B * NH * T; // cuDNN needs a smaller FP32 tensor
+/*
+    Forward:    cur = FUSE_cuda(cur,residual,flag);   
+    Backward:   QKV->FUSE_cuda(last->out,QKV->norm.out,0x0);
+*/
+hGTensor SelfAttention::FUSE_cuda(hGTensor inpL,int flag){    
+    floatX *qkvr=ToX(tmpQKV);    //Q.out
+    float *l_att = TO<float>(transition); //(float*)acts.att + l * B * NH * T; // cuDNN needs a smaller FP32 tensor
     if(isForward()){    //  data=ToX(QKV->norm.out)
-        hGTensor QKV=remater_qkv?GTensor::tmpFF1:Q.out;
+        inp = OnInput(inpL);            //         inp->Print("inp",0x0,dump_flag); 
+        GTensor::residual->OverWrite(inp);          //  GTensor::residual=inp
+        hGTensor inpQ = inpL;      
         if(fuseNorm==nullptr){
-            inpL=norm.FUSE_cuda(inpL);       
+            inpQ=norm.FUSE_cuda(inpL);          inpQ->Print("qkvn.out",0x0,dump_flag);  
+            // norm.w->Print("qkvn.w",0x0,dump_flag);          norm.b->Print("qkvn.b",0x0,dump_flag);  
+            // norm.mean->Print("qkvn.mean",0x0,dump_flag);       norm.rstd->Print("qkvn.rstd",0x0,dump_flag);  
         }        
- 
+        Q.Forw(tmpQKV,inpQ);
+        // Q.w->Print("Q.w",0x0,dump_flag);     Q.b->Print("Q.b",0x0,dump_flag);     tmpQKV->Print("QKV",0x0,dump_flag); 
 #ifdef ENABLE_CUDNN
-        Q.Forw(QKV,inpL);  
-        rope.FUSE_cuda(QKV);        
-        attention_forward_cudnn(ToX(attn), l_att, ToX(QKV), B, T, NH, C_qkv, main_stream);
+        FUSE_cudnn(nullptr,nullptr,flag);
+        // rope.FUSE_cuda(ToX(tmpQKV));        
+        // attention_forward_cudnn(ToX(attn), TO<float>(transition), ToX(tmpQKV), B, T, NH, C_qkv, main_stream);
 #else
         // if (T != model->seq_len) { // unused parts of attention buffer must be zeroed (T-dependent)
         //     cudaCheck(cudaMemset(l_att, 0, B * NH * T * T * sizeof(floatX)));
@@ -446,44 +472,42 @@ hGTensor SelfAttention::FUSE_cuda(hGTensor inpL,hGTensor residual,hGTensor delta
         hGTensor scrath = GTensor::bt4c;        //only forward
         Q.Forw(QKV,inpL);          
         rope.FUSE_cuda(scrath); 
-        attention_forward(ToX(attn), qkvr, ToX(trans), ToX(QKV), B, T, C, NH, main_stream);  //  l_atty, l_qkvr, l_att, scratch
+        attention_forward(ToX(attn), qkvr, ToX(transition), ToX(QKV), B, T, C, NH, main_stream);  //  l_atty, l_qkvr, l_att, scratch
 #endif
-        PrintTensor<floatX>("l_atty",ToX(attn),true,B,T,C);
-        // floatX *pw=ToX(proj_cat.w), *pb=ToX0(proj_cat.b),*scratch = ToX(GTensor::scratch); //*ouput=(floatX *)out->data;
-
+        attn->Print("l_atty",0x0,dump_flag);  
         proj_cat.Forw(GTensor::scratch,attn);   //fuMM(scratch, ToX(attn), pw, pb, B, T, C, C, main_stream);       
-                
+        // GTensor::scratch->Print("proj_cat",0x0,dump_flag);        
         // fused_residual_forward5(ouput, normed,mean,rstd, residual, scratch, ToX(fuseNorm->w), ToX0(fuseNorm->b), B*T, C, main_stream);
-        residual_forward(ToX(out), ToX(residual), ToX(GTensor::scratch), B*T*C, main_stream);
+        residual_forward(ToX(out), ToX(GTensor::residual), ToX(GTensor::scratch), B*T*C, main_stream);      
         if(fuseNorm!=nullptr){
             float *mean=TO<float>(fuseNorm->mean),*rstd=TO<float>(fuseNorm->rstd);
             layernorm_forward(ToX(fuseNorm->out), mean, rstd, ToX(out),ToX(fuseNorm->w), ToX0(fuseNorm->b), B*T, 1, C, main_stream);
-        }           
+        }      
+        out->Print("out",0x0,dump_flag);      
     }else{
+        float *scratchF=(float *)GTensor::buff;        
         assert(delta!=nullptr);
-        proj_cat.Back(deltaCat,attn,deltaIn,nullptr,scratchF);
+        proj_cat.Back(deltaCat,attn,GTensor::delta,nullptr,scratchF);
 
         hGensor delta_attn = GTensor::bt4c; //* dl_bt4c = ToX(GTensor::bt4c); 
         if(remater_qkv)  {   
-            qkvr=ToX(GTensor::tmpFF1);
-            //  tmpFF1 = inpL*Q.w+Q.b
-            Q.Forw(GTensor::tmpFF1,inpL); // fuMM(qkvr, data, weight, bias, B, T, C, 3*C, main_stream);
+            //qkvr=ToX(GTensor::tmpFF1);
+            hGTensor norm_out = norm.out;
+            Q.Forw(GTensor::tmpFF1,norm_out); // fuMM(qkvr, data, weight, bias, B, T, C, 3*C, main_stream);
         }
 #ifdef ENABLE_CUDNN
-        attention_backward_cudnn(ToX(delta_attn), ToX(deltaCat), qkvr, ToX(attn), l_att, B, T, NH, C_qkv, main_stream);
+        FUSE_cudnn(ToX(delta_attn), ToX(deltaCat),flag);
+        // attention_backward_cudnn(ToX(delta_attn), ToX(deltaCat), qkvr, ToX(attn), l_att, B, T, NH, C_qkv, main_stream);
 #else
         assert(0);
 #endif
-        PrintTensor<floatX>("back of attn",ToX(delta_attn),true,B,T,C);
-        // if(model->recompute >= 2) {
-        //     layernorm_forward(l_ln1, l_ln1_mean, l_ln1_rstd, residual, l_ln1w, l_ln1b, B, T, C, main_stream);
-        // }
-        // Q.FUSE_cuda()
+        PrintTensor<floatX>("back of attn",ToX(delta_attn),true,B,T,C);        
+        // rope.FUSE_cuda(ToX(delta_attn)); 
+        // Q.Back()
         matmul_backward(ToX(deltaCat), ToG(Q.w), ToG0(Q.b), ToX(delta_attn), ToX(norm.out), ToX(Q.w), scratchF, B, T, C_qkv, 3 * C_qkv, main_stream);
+            
         // layernorm backward does += to dresidual, so it correctly accumulates gradient for the Attention block above
-        float *_mean = norm.mean==nullptr?nullptr : TO<float>(norm.mean);
-        norm.FUSE_cuda(residual,scratchF,deltaCat);
-        // layernorm_backward(ToX(delta), ToG(norm.w), gNb, scratchF, ToX(tmpDelta), ToX(residual), ToX(norm.w), _mean, TO<float>(norm.rstd), B, T, C, main_stream);
+        norm.FUSE_cuda(deltaCat);    //inp,deltaCat
     }
     return out;
 }

@@ -2,7 +2,7 @@
 #include "GST_util.hpp"
 
 int GST_util::dump=10;
-double GST_util::tX=0.0;
+double GST_util::tX=0.0,GST_util::tX1=0.0;
 int GST_util::verify=0;
 
 #ifdef _GST_MATLAB_

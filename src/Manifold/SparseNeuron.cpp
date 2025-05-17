@@ -150,8 +150,10 @@ void SparseNeuron::SetEmbed(TokenEmbed* embd_,int type,int flag){
     // SetRefer(embd_);
 }
 
+// TODO: Weighted sampling
 void SparseNeuron::UpdateSamps(int seed,int flag){
     assert(hSamps!=nullptr);
+    float *weight = nullptr;    // TODO: Weighted sampling
     int nVocab = hFish->nClass(),nSample=hSamps->size(),*samps=new int[nSample];
     samp_1 = nVocab;
     vector<int> IDs( nVocab );

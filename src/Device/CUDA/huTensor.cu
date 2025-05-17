@@ -23,15 +23,56 @@ huTensor::huTensor(Fish *fish,const string&name_,const SHAPE shape,typNUMBER tpD
     }
 }        
 
-static size_t szMaloc = 0;
+size_t GTensor::szMaloc = 0;
+size_t huTensor::mostMemory(int typ)  const {
+    if(BIT_TEST(flags,F_NOALLOC))
+        return 0x0;
+    if(hRef!=nullptr){
+        return 0x0;
+    }
+    size_t most = nByte();
+    if(isParam())   
+        most += nByte();
+    return most;
+}
 /*
     cudaHostAlloc is a function used to allocate pinned (page-locked) host memory, which can improve data transfer performance between the host (CPU) and device (GPU). Pinned memory allows for faster transfers because it bypasses the operating system's virtual memory system. 
 */
-bool huTensor::Alloc(int tpX,int flagInit){
-    if(strcmp(name,"inp_tokens")==0){
+size_t huTensor::Alloc_1(void **dst,bool isZero,int tp){
+    assert(*dst==nullptr);
+
+    bool hostAlloc = BIT_TEST(flags,F_HOSTALLOC);
+    cudaError_t error = cudaSuccess;
+    error = hostAlloc ? cudaHostAlloc(dst, szData,0) : cudaMalloc(dst, szData);    //8420
+    // strange behavior of callo
+    //data = calloc(szData,1);  sAlloc = "Alloc_c/cu";   //8386
+    if (error != cudaSuccess) {
+        printf("[CUDA Alloc] failed @%s, ERR=%s!\n", name, cudaGetErrorString(error));
+        exit(EXIT_FAILURE);
+    }    
+    if(isZero)
+        cudaCheck(cudaMemset(*dst, 0, szData));
+    szMaloc += szData;
+    return szData;
+}
+size_t huTensor::Free_1(void **obj,const string&info){
+    assert(*obj!=nullptr);
+    // _INFO("\t%s%s freed@%p(%.3gM)!",name,info.c_str(),*obj,(szData)/1.0e6);   
+    if(BIT_TEST(flags,F_HOSTALLOC) )
+        cudaFreeHost(*obj); 
+    else 
+        cudaFreeCheck(obj);       
+    *obj=nullptr;   szMaloc -= szData;  
+    
+    return szMaloc;
+}
+
+bool huTensor::Alloc(int iter,int flagInit){
+    if(strcmp(name,"model.inp_embd.weight")==0){
         int debug = 0x0;
     }
-        
+    
+    size_t sz0 = szMaloc;
     if(BIT_TEST(flags,F_NOALLOC))   // For example: operator fusing, memory reuse,rematerialization
         return true;
     if(isParam())   {
@@ -40,69 +81,64 @@ bool huTensor::Alloc(int tpX,int flagInit){
     }
     if(hRef!=nullptr){
         ShareWeight(hRef);
-        _INFO("\t%s =====> %s\n",name,hRef->name );
+        if(DUMP(0))
+            _INFO("\t%s =====> %s\n",name,hRef->name );
         return true;
-    }
-        
+    }        
        
     assert(szData>0);
     bool hostAlloc = BIT_TEST(flags,F_HOSTALLOC);
     bool isTrain = hFish!=nullptr && hFish->isTrain();
-    string sAlloc = "cudaMalloc";
-    if(hostAlloc){
-        sAlloc = "HostAlloc";
+    if(BIT_TEST(flags,F_HOSTDATA) && host_data==nullptr){
+        host_data = new char[szData];
     }
-    cudaError_t error = cudaSuccess;
-    error = hostAlloc ? cudaHostAlloc((void**)&data, szData,0) : cudaMalloc((void**)&data, szData);    //8420
-    // strange behavior of callo
-    //data = calloc(szData,1);  sAlloc = "Alloc_c/cu";   //8386
-
-    if (error != cudaSuccess) {
-        printf("[CUDA Alloc] failed @%s, ERR=%s!\n", name, cudaGetErrorString(error));
-        exit(EXIT_FAILURE);
-    }    
-    cudaCheck(cudaMemset(data, 0, szData));
-    size_t sz = szData;
+    bool allocData = data == nullptr;
+    if(allocData)   
+        Alloc_1(&data,true);    
     if(isParam() && isTrain){        
-        InitParam(tpX,flagInit);    
-        cudaError_t error = hostAlloc ? cudaHostAlloc((void**)&data, szData,0) : cudaMalloc((void**)&grad, szData);      sz+=szData;
-        if (error != cudaSuccess) {
-            printf("[CUDA Alloc] failed @%s, ERR=%s\n", name, cudaGetErrorString(error));
-            exit(EXIT_FAILURE);
-        }   
-    }
-    szMaloc += sz;
-    if(sz>=100*1.0e6){
+        if(allocData)   {
+            InitParam(flagInit);  
+            if(DEBUG.isParamResident)  
+                BIT_SET(flags,GTensor::F_RESIDENT); 
+        }
+        Alloc_1(&grad,false);          // sgd_kernel would zero grad!
+    }else{
+        
+    }    
+    assert(szMaloc-sz0<=mostMemory());
+    if(iter<=1 && szMaloc-sz0>=100*1.0e6){
         if(ne[0]==151936 || ne[1]==151936)
         {    int isDebug = 0;   }
-        printf("\t %s=%gM@%s type=%s shape=[%ld,%ld,%ld,%ld] sum=%gG\n",sAlloc.c_str(),
-            sz*1.0f/1.0e6,name,cNameOf(type),ne[0],ne[1],ne[2],ne[3],szMaloc*1.0/1.0e9);
+        printf("\t %s=%gM@%s type=%s shape=[%ld,%ld,%ld,%ld]%s sum=%gG\n",hostAlloc?"HostAlloc":"cudaMalloc",
+            (szMaloc-sz0)*1.0f/1.0e6,name,cNameOf(type),ne[0],ne[1],ne[2],ne[3],grad!=nullptr?"x2":"",szMaloc*1.0/1.0e9);
     }
+    
     return true;
 }
-bool huTensor::Free() {
+bool huTensor::Free(bool isPassResident) {
 try{    
+    if(isRefer())
+        return true;
+    // size_t sz0=szMaloc;
     if(data!=nullptr)           {    
-        if(BIT_TEST(flags,F_HOSTALLOC) )
-            cudaFreeHost(data); 
-        else 
-            cudaFreeCheck(&data);      
-        data=nullptr;   szMaloc -= szData;  
+        if(isPassResident && BIT_TEST(flags,GTensor::F_RESIDENT) ){
+            int bug = 0;
+        }else
+            Free_1(&data);  
+    }else{
+        assert(grad==nullptr);      return true;
     }
-    if(grad!=nullptr)           {    
-        if(BIT_TEST(flags,F_HOSTALLOC) )
-            cudaFreeHost(grad); 
-        else 
-            cudaFreeCheck(&grad);      
-        grad=nullptr;   szMaloc -= szData;  
+    if(grad!=nullptr)           {  
+        Free_1(&grad,"_grad");
     }
+    // _INFO("\t%s freed(%.3gM)!",name,(sz0-szMaloc)/1.0e6);
 }catch(...){
     assert(0);
 }
     return true;
 }
 
-bool huTensor::InitParam(int tpX,int flag){
+bool huTensor::InitParam(int tpX){
     size_t nElem0 = size(),i;
     size_t nInit = size(1),nB = BPE(type);
     
@@ -178,6 +214,106 @@ bool huTensor::CopyGG(struct ggml_tensor*gg_,int flag) {
     return true;
 }
 
+//  From:   https://stackoverflow.com/questions/57948643/whats-a-good-way-to-zero-out-cudamallocd-data
+/*__global__ void clear_scratch_space_kernel(int * data, int blocks, int threads) {
+    // BOZO: change the code to just error out if we're any of the border cases below
+    const int idx = blockIdx.x * threads + threadIdx.x;
+    long size = sizeof(int) * COUNT;
+    long size_of_typical_chunk = round_up(size / (blocks * threads), GPU_CACHE_LINE_SIZE_IN_BYTES);
+    // Due to truncation, the threads at the end won't have anything to do.  This is a little sloppy but costs us
+    // hardly anything in performance, so we do the simpler thing.
+
+    long this_threads_offset = idx * size_of_typical_chunk;
+    if (this_threads_offset > SIZE_OF_DATA) {
+        return;
+    }
+
+    long size_of_this_threads_chunk;
+    if (this_threads_offset + size_of_typical_chunk >= SIZE_OF_DATA) {
+        // We are the last thread, so we do a partial write
+        size_of_this_threads_chunk = SIZE_OF_DATA - this_threads_offset;
+    } else {
+        size_of_this_threads_chunk = size_of_typical_chunk;
+    }
+    void * starting_address = reinterpret_cast<void *>(reinterpret_cast<char *>(data) + this_threads_offset);
+    memset((void *) starting_address, 0, size_of_this_threads_chunk);
+}
+__global__ void clear_scratch_space_with_coalesced_writes_kernel(int * data, int blocks, int threads) {
+    if (COUNT % (blocks * threads) != 0) {
+        printf("Adjust the SIZE_OF_DATA so it's divisible by the number of (blocks * threads)\n");
+    }
+    const long count_of_ints_in_each_blocks_chunk = COUNT / blocks;
+
+    int block = blockIdx.x;
+    int thread = threadIdx.x;
+
+    const long rounds_needed = count_of_ints_in_each_blocks_chunk / threads;
+
+    const long this_blocks_starting_offset = block * count_of_ints_in_each_blocks_chunk;
+
+    //printf("Clearing %li ints starting at offset %li\n", count_of_ints_in_each_blocks_chunk, this_blocks_starting_offset);
+
+    int * this_threads_base_pointer = &data[this_blocks_starting_offset + thread];
+    for (int round = 0; round < rounds_needed; ++round) {
+        *this_threads_base_pointer = 0;
+        this_threads_base_pointer += threads;
+    }
+}
+void set_gpu_data_to_ones(int * data_on_gpu) {
+    cudaMemset(data_on_gpu, 1, SIZE_OF_DATA);
+    CUDA_CHECK_RETURN(cudaDeviceSynchronize());
+}
+void check_gpu_data_is_zeroes(int * data_on_gpu, char * data_on_cpu) {
+    cudaMemcpy(data_on_cpu, data_on_gpu, SIZE_OF_DATA, cudaMemcpyDeviceToHost);
+    for (long i = 0; i < SIZE_OF_DATA; ++i) {
+        if (data_on_cpu[i] != 0) {
+            printf("Failed to zero-out byte offset %i in the data\n", i);
+        }
+    }
+}*/
+
+void huTensor::Zero()   {
+    assert(data!=nullptr);
+    //  https://stackoverflow.com/questions/57948643/whats-a-good-way-to-zero-out-cudamallocd-data
+    cudaCheck(cudaMemset(data, 0, szData));
+    if(grad!=nullptr){
+        ZeroGrad();
+    }
+}
+void huTensor::ZeroGrad()   {
+    assert(grad!=nullptr);
+    cudaCheck(cudaMemset(grad, 0, szData));
+    // cudaCheck(cudaMemsetAsync(ToG(tensor), 0, tensor->nByte(), main_stream));
+}
+bool cuClearGrad(std::vector<hGTensor> tensors,int flag){
+    for(auto tensor:tensors){
+        if(tensor->isRefer())
+            continue;
+        cudaCheck(cudaMemsetAsync(ToG(tensor), 0, tensor->nByte(), main_stream));
+    }
+    
+    return true;
+}
+
+bool huTensor::SerialData(const string&info,void *host,bool isToHost,int flag) {
+try{
+    assert(host!=nullptr);
+    if(isToHost){
+        cudaCheck(cudaMemcpy(host,data, szData, cudaMemcpyDeviceToHost));
+    }else{
+        cudaCheck(cudaMemcpy(data, host,szData, cudaMemcpyHostToDevice));        
+    }
+    if(flag<0){    
+        char buf[1024];
+        sprintf(buf,"%s:%s@%s",info.c_str(),isToHost?"SAVE":"LOAD",name);
+        Print(buf,0,-1);
+    }
+    
+    return true;
+}catch(...){
+    return false;
+}    
+}
 //  this <=> Y
 bool huTensor::SerialGP(void *yD,void *yG,size_t szY,bool isToY,int flag)   {
 try{
@@ -209,12 +345,12 @@ bool huTensor::OverWrite(hGTensor hGT,bool isSrc,int flag) {
     assert(isSameShape(hGT) && szData>0);   
     if(isSrc) {
         huTensor *src = dynamic_cast<huTensor *>(hGT.get());
-        if(src==nullptr)    //  Host => Device
+        if(src==nullptr)    //  hGT => this
             cudaCheck(cudaMemcpy(data, hGT->data, szData, cudaMemcpyHostToDevice));
         else{
-            assert(0);
+            cudaCheck(cudaMemcpy(data, hGT->data, szData, cudaMemcpyDeviceToDevice));
         }
-    }else{                  //  Device => Device
+    }else{                  //  this => hGT
         assert(0);
     }
     
@@ -239,7 +375,7 @@ double tNormOf(const std::vector<hGTensor>& tensors,int flag){
     float* grad_norm_squared,a,a_pre=0.0;
     grad_norm_squared = (float*)(GTensor::bt4c->data);
     double norm = 0.0f;
-    int num_slices[2] = {1, 1},zero_stage=1,max_num_block_sums = get_max_num_block_sums(num_slices, 2);
+    int num_slices[2] = {1, 1},max_num_block_sums = get_max_num_block_sums(num_slices, 2);
     size_t nz=0;
     bool is_first_pass = true;  //i==0    
     for(auto tensor:tensors){
@@ -266,9 +402,10 @@ double tNormOf(const std::vector<hGTensor>& tensors,int flag){
     return norm;
 }
 
+//  TODO: Fuse to sgdv_update
 double tNormOf(const hGTensor tensor,int flag){
     float a,*norm2 = (float*)(GTensor::bt4c->data);
-    int num_slices[2] = {1, 1},zero_stage=1,max_num_block_sums = get_max_num_block_sums(num_slices, 2);
+    int num_slices[2] = {1, 1},max_num_block_sums = get_max_num_block_sums(num_slices, 2);
     size_t nz=0;
     bool is_first_pass = true;
         //ShardInfo shard ={0, tensor->size()};
@@ -308,8 +445,13 @@ void huTensor::Print(const string& title, int x, int flag)   const {
        GTensor::Print(title,x,flag);
        break;
     }    
- }
+}
  
+huTensor::~huTensor()  {
+    Free();
+
+}
+
 /*
 float RAW_backward_1{
 if(config.Fuse_Normal==0)

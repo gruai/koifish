@@ -127,6 +127,7 @@ public:
     bool isSLPBias = true;  
     bool isPaddedCls = false;  
     bool isFFNShareParam = false;
+    bool isRope = true;
 // dim(=head_dim*n_heads)
     int dim=-1,hidden_dim=-1,n_layers=-1,n_heads=-1,n_kv_heads=-1,head_dim=1;
 //  ****
@@ -219,6 +220,7 @@ struct DEUG_SWITCH{
     int SelfAttention_noraml=1;
     bool NO_loss = false;
     bool check_tensor_norm = false;
+    bool isParamResident = false;
     int dict_latent_dim = -1;
     int graph_dump = 0; //  10 levels of dumps, 0-9. 0 is a full dump,The lower the number the more dump.
     int train_hyperparams = 0;
@@ -231,6 +233,17 @@ struct DEUG_SWITCH{
 };
 extern DEUG_SWITCH DEBUG;
 
+// parameters of scheduling
+struct SKDU_params{
+    enum STRATEGY  {
+        MEM_PRE_ALLOC,
+        MEM_ONLINE,
+    };
+    STRATEGY strategy = MEM_PRE_ALLOC;
+    
+    bool isUpdateParamV0() const;
+    void Dump(int typ)  const;
+};
 struct CLI_params {
     struct train_params_ common;  
     MODEL_CARD model;
@@ -238,7 +251,9 @@ struct CLI_params {
         std::string in,out;
         std::string model_out,model_base;       
     };    
-    CheckPoint checkpoint;
+    CheckPoint checkpoint;   
+
+    SKDU_params scheduling;
 
     typNUMBER tpGradient = typNUMBER::BF16;
 
@@ -273,6 +288,7 @@ struct CLI_params {
         bool isLong = n_ctx_pre_seq > n_ctx_orig_yarn;
         return isLong;
     }
+    bool isShareLayerOut()   const;
 
     JSON jConfig;
     nlohmann::ordered_json jModel;
@@ -300,23 +316,18 @@ struct CLI_params {
 
     int n_layer_train = -1, nLayerX = -1, nFFX = -1;
     int Fuse_Normal = 0;
-    
-    
         
     int nabla = 1;      //cys
     // std::string sigma = ""; 
     std::string vae = "";
     std::string prompt = "";
     std::string dict_vae_dims = "",dict_dialect="",dict_logits="";
-    
-
 
     // for RWKV
     uint32_t rescale_every_n_layers = 0;
     uint32_t time_mix_extra_dim = 0;
     uint32_t time_decay_extra_dim = 0;
     uint32_t wkv_head_size = 0;
-
     
     // MOE
     uint32_t n_expert = 0, n_expert_used = 0, n_ff_exp = 0, n_ff_shexp = 0;

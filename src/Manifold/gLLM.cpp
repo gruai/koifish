@@ -53,7 +53,7 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_,int flag)     {
     config.Dump();      
     
     if(hOPT!=nullptr)   {
-        hOPT->Dump(1);
+        // hOPT->Dump(1);
         if(config.isOnlyGPT)
             return true;
         if(!hOPT->PrepareData( config,flag ))
@@ -71,7 +71,7 @@ NLP_AutoRegressive::NLP_AutoRegressive( const std::string& nam_, struct CLI_para
     isAttOnBC = d==3;       //d=4 much faster,nearly same
 
     string sT = params.KV({"model_v0","attention","type"},"QKV",false);
-    tpATT = sT=="brown" ? ATTENTION_TYPE::BROWN : sT=="off" ? ATTENTION_TYPE::OFF : ATTENTION_TYPE::QKV;
+    tpATT = sT=="brown" ? ATTENTION_TYPE::BROWN : sT=="off" ? ATTENTION_TYPE::OFF : ATTENTION_TYPE::QKVs;
     tpFFN = (FFN_TYPE)(jKV(params.jConfig,{"model_v0","ffn","type"},5,false));    
 }   
 //params!=src->params
@@ -358,32 +358,9 @@ hGensor Fish::BuildLoss( void * ctx,hGensor cur,int flag){
     }
     int n_ctx = config.n_ctx(),nCls = nClass(),n_batch = config.n_batch();
     
-    // cuLiteTest(B,T,C);  
-    
-    
-#ifdef _TENSOR_G_
-    assert(loss!=nullptr);
-#else
-    assert(loss==nullptr);
-    hGensor  t36 = nullptr;    
-    if(config.is( {"model_v0","target"},string("OneHot") )){
-        target_probs = GT(this, typNUMBER::I32, {1, n_ctx, n_batch});
-    }else
-        target_probs = GT(this, typNUMBER::F32, {nCls, n_ctx, n_batch});
-    gTN(target_probs,      "targets");    
-    if(config.is({"model_v0","target"},string("OneHot")))
-        t36 = ggml_cross_entropy_loss_1(ctx, cur, target_probs);
-    else
-        t36 = ggml_cross_entropy_loss(ctx, cur, target_probs);          //  square_error_loss(ctx0, targets, logits);   
-    
-    gTN(t36, "loss");     assert_shape_1d(t36, 1);
-    loss = t36;
-    // if(isTrain())
-    //     assert(loss->grad!=nullptr);
-    #ifdef GG_V12
-        ggml_set_loss(loss);
-    #endif
-#endif    
+    // cuLiteTest(B,T,C);    
+
+    assert(loss!=nullptr); 
     out_node = loss;
     
     return loss;
@@ -578,22 +555,9 @@ bool NLP_AutoRegressive::InitInput(void * ctx_build,bool isMask,int flag) {
     SHAPE shape={n_ctx, n_batch};
     
     // tokens_input copy values from Batch tensor
-    tokens_input = GT(this, typNUMBER::I32, shape,GTensor::F_INPUT);       gTN(tokens_input, "inp_tokens");
+    tokens_input = GT(this, typNUMBER::I32, shape,GTensor::F_INPUT,"inp_tokens");      //gTN(tokens_input, "inp_tokens");
+    tokens_input->Alloc();
     in_node = tokens_input;
-#ifdef _TENSOR_G_
-#else
-    ggml_backend_buffer_t input_data = ggml_backend_alloc_ctx_tensors_from_buft(ctx_build, ggml_backend_cpu_buffer_type());
-    size_t max_input_size = ggml_backend_buffer_get_size(input_data);
-    if(DUMP())
-        _INFO("%s: input_size(%d,%d) = %zu bytes (%.1f MB)\n", __func__, n_ctx, n_batch, max_input_size, (float) max_input_size / (1024.0f*1024.0f));
-    // ggml_free(ctx_input);
-    if(n_batch>1){
-        in_node = ggml_reshape_1d(ctx_build, tokens_input, n_ctx*n_batch);   gTN(in_node, "inp_tokens_1d");
-    } else{
-        
-    }
-#endif    
-    
 
     build_inp_KQ_(ctx_build,isMask);    
     return true;
@@ -630,13 +594,17 @@ bool NLP_AutoRegressive::CreateExlogists(hWIKI wiki,uint32_t n_ctx,uint32_t n_ba
 }
 
 void NLP_AutoRegressive::Train(int flag)       {
-#ifdef _TENSOR_G_
     // DEBUG.train_datas = 1;
     // DEBUG.train_hyperparams = 1;
-#endif
+    // DEBUG.back_graph_version = 1;        Verified at 05132025
+    DEBUG.isParamResident = true;
+
     hOPT->BeforeTrain(tokens_input,0x0);
-    // if(!hOPT->PrepareData( config,flag ))
-    //     return;
+    RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();  
+    hRLS->Prepare(-1);
+    for(auto t : hOPT->opt_ps){
+        hRLS->GetTensorStatus(-1,t,0x0);
+    }
        
     int64_t now = GST_ms();
     double ms=0;
@@ -645,10 +613,6 @@ void NLP_AutoRegressive::Train(int flag)       {
     SaveTrain("warmup" );      //warmup save
     Optimizer::RESULT result = hOPT->Search(nullptr,loss,target_probs,config);  
     assert(result==Optimizer::OK || result==Optimizer::DID_NOT_CONVERGE);  
-#ifdef __USE_GGML__
-    if(ctx_work!=nullptr)  ggml_free(ctx_work);
-    ggml_free(ctx_build);
-#endif
     ms = GST_ms()-now;
     _INFO("\n[train]: ");   _TIME_INFO("Total time=",ms);
     _INFO("\n\n");
@@ -723,11 +687,6 @@ void NLP_AutoRegressive::InitModel(int flag){
     _INFO("\t type of FFN=%s\n", tpFFN==FFN_TYPE::SWIGLU ? "MLP" : tpFFN==FFN_TYPE::VAR_LAST ? "Variation@last_layer" 
         : tpFFN==FFN_TYPE::ONLY_RMSNormal ? "RMS Normal" : "other");  
     // _INFO("\t type of ATTENTION=%s P=%s \n",tpATT==ATTENTION_TYPE::BROWN ? "BROWN":"QKV",BROWN_Motion::Transfer_1?"Token":"TokenEmbed");
-    if(isJModel){
-
-    }else{
-        
-    }
     tmpExLogis.clear();
     if(role==ROLE_TYPE::SWARM_FOLLOWER) {
     }else{
@@ -747,16 +706,6 @@ void NLP_AutoRegressive::InitModel(int flag){
         }   
     }
     nParams = 0;    
-    assert(isJModel);
-    if(isJModel){
-
-    }else{
-        hDictVAE->CreateEmbeddings(0x0);
-        hEDS->Alloc(hForwTG, ctx);  //back_data = ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_cpu_buffer_type());
-        rnd = init_random_normal_distribution(config.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);        
-        hDictVAE->Update(rnd,0x0);      
-        InitGensors(flag);        
-    }
 }
 
 
@@ -783,10 +732,61 @@ void NLP_AutoRegressive::Dump(int type,int flag)      {
 
 float* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV,bool isCPU,unsigned flags=0x0);
 int T_generate_cpu(hFISH hFish, bool isOnlyUpdateKV,unsigned flags=0x0);
-int NLP_AutoRegressive::Forward_0(int flag)  {
+float RAW_backward(Fish *fish,const int* hostInToken,int accum_steps,bool,int flag);
+int NLP_AutoRegressive::BackwardOnRLS(int iter,int flag)  {
+    int nAccum=config.common.n_gradient_accumulation;
+    bool isOnlyEvaluate = false;
+    GTensor::delta->Zero(); 
+    OutCLS* cls = GetNeuron<OutCLS>("OutCLS",0);
+    GTensor::buff = hCLS->preLogits->data;    //reused in many place!     
+
+    if(DEBUG.back_graph_version==1)
+    { float loss = RAW_backward(this,nullptr,nAccum,isOnlyEvaluate,flag);    return 0x0;    }
+
+    RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();  
+    assert(hRLS!=nullptr);
+    hGensor cur=cls->delta; 
+    for (auto it = backbons.rbegin(); it != backbons.rend(); ++it) {
+        hNeuron neuron = *it;
+        cur = neuron->Ming(hRLS,cur);
+        // if(!config.scheduling.isUpdateParamV0()){
+        //     // if(strcmp(cur->name,"model.blk.11.attn")==0){
+        //     //     int bug = 0x0;
+        //     // }
+        //     vector arrT = neuron->PGensors();    
+        //     for(auto t : arrT){
+        //         if(t->isRefer() || !t->isParam())     //
+        //             continue;
+        //         hOPT->UpdateTensorParam(t,nullptr,0.0); 
+        //         hRLS->SetTensorStatus(iter,t,RLSchedule::UPDATE_PARAM);               
+        //     }  
+        // }
+    }    
+    
     return 0x0;
 }
-int NLP_AutoRegressive::ForwardOnNeuron(int flag)  {
+
+int NLP_AutoRegressive::ForwardOnRLS(int iter,int flag)  {
+    RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();  
+    assert(hRLS!=nullptr);
+    hRLS->Prepare(iter,0);
+    if(DEBUG.back_graph_version==1)
+    { return ForwardOnNeuron_v0(flag);  }
+    
+    hGensor cur=Input(),residual=nullptr;
+    int L = config.nLayer();    
+    assert(backbons.size()==2*L+3);       
+    for(auto neuron : backbons){
+        if(hRLS->step>2*L){
+            int debug=0x0;
+        }
+        cur = neuron->Ming(hRLS,cur);
+        // hRLS->OnNextStep( );
+    }    
+    SYNC_DEVICE();    
+    return 0x0;
+}
+int NLP_AutoRegressive::ForwardOnNeuron_v0(int flag)  {
     if(DEBUG.T_cuda_ver==1){    
         if(DEBUG.T_cpu){            
             T_generate_cpu(SharedThis(), false, flag);
@@ -797,11 +797,10 @@ int NLP_AutoRegressive::ForwardOnNeuron(int flag)  {
 
     int B,T,C,tpFuseNormal=config.Fuse_Normal,L = config.nLayer(),tpFuseCu=1;      
     GetBTC(B,T,C);    
-    hGensor cur=nullptr,residual=nullptr;
+    hGensor cur=nullptr;
     LayerNormal* lnf = GetNeuron<LayerNormal>("LayerNormal",0);
     TokenEmbed* embed = GetNeuron<TokenEmbed>("TokenEmbed",0);
-    cur = embed->OnEmbed(TO<int>(Input()),0x0);       //  ->Ming(nullptr,Input());     
-    residual = cur; //embed->out;
+    cur = embed->OnEmbed(Input(),0x0);       //  ->Ming(nullptr,Input());      
     SelfAttention *QKV0 = GetNeuron<SelfAttention>("SelfAttention",0),*QKV=nullptr;
 
     if(tpFuseNormal==1){
@@ -816,12 +815,12 @@ int NLP_AutoRegressive::ForwardOnNeuron(int flag)  {
         LayerNormal *hNorm = l+1 != L ? &(GetNeuron<SelfAttention>("SelfAttention",l+1)->norm) : lnf;
         ffn->fuseNorm = tpFuseNormal==1?hNorm:nullptr;       
         QKV->fuseNorm =  tpFuseNormal==1?&(ffn->norm):nullptr;
-        cur = QKV->FUSE_cuda(cur,residual,nullptr,nullptr,flag);        
-        cur = ffn->FUSE_cuda(cur,nullptr, 0x0);  
-        residual = ffn->out;
+        cur = QKV->FUSE_cuda(cur, flag);     
+        cur = ffn->FUSE_cuda(cur, 0x0);  
+        // residual = ffn->out;
     }    
     if(tpFuseNormal==0){
-        cur = lnf->FUSE_cuda(ffn->out); 
+        cur = lnf->FUSE_cuda(cur); 
     }
     OutCLS* cls = GetNeuron<OutCLS>("OutCLS",0);
     if(tpFuseCu==1)

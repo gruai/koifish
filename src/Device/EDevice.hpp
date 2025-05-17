@@ -2,20 +2,20 @@
  *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT  
  * 
- *  \brief 
+ *  \brief Edge devices & resource limited scheduling
  *  \author Yingshi Chen
  */
 #pragma once
-#include "../../ggex/GG_util.hpp"
-#ifdef __USE_GGML__
-    #include "ggml-backend.h"
-    #include "ggml-cpu.h"
-#endif
+#include "../CLI_params.hpp"
+#include "../g_stddef.hpp"
+#include "../ggex/GTensor.hpp"
+
+class RLS_BP;
 class TGraph;
 typedef shared_ptr<TGraph> hTGraph;
 
 class EDGE_DEVICES{
-public:
+public:    
     struct GPU_ {
         int     cc;                 // compute capability
         int     nsm;                // number of streaming multiprocessors
@@ -23,32 +23,19 @@ public:
         size_t  smpbo;              // max. shared memory per block (with opt-in)
         bool    vmm;                // virtual memory support
         size_t  vmm_granularity;    // granularity of virtual memory
-        size_t  total_vram;
+        size_t  total_vram = 0;
         int     warp_size;          // Number of threads in a dispatch  
 
         static int MAX_COUNT;     //  16    
         static std::vector<GPU_> cudaGetDevice( int flag=0x0);
     };
-
+    std::vector<GPU_> gpus;
     // Fish *hFish = nullptr;
     int nCore = 1;  //  cores of CPU,GPU(Streaming Multiprocessors)
-    size_t sz = 0x0;
-#ifdef __USE_GGML__
-    ggml_backend_buffer_t back_data = NULL; 
-    // ggml_backend_t cpu = nullptr;
-    std::vector<ggml_backend_t> workers;
-    std::vector<ggml_backend_buffer_type_t> bufts;
-    ggml_gallocr_t alloc_tmp = nullptr;
-    ggml_backend_sched_t sched0 = nullptr;
+    size_t sz = 0x0,mostRAM=0;
+    shared_ptr<RLS_BP> hRLS = nullptr;
 
-    virtual ggml_backend_sched_t GetSched(int flag=0x0){
-        assert(sched0!=nullptr);
-        return sched0;
-    }
-    virtual bool SplitSched(hTGraph ,int flag=0x0);
-#endif
-
-#ifdef _TENSOR_G_
+#ifdef __USE_CUDA__
     virtual bool InitGPU(const CLI_params&hparams,int flag=0x0);
 #endif   
     EDGE_DEVICES();
@@ -58,7 +45,7 @@ public:
     void operator=(EDGE_DEVICES const&)  = delete;
     static shared_ptr<EDGE_DEVICES> GetInstance(const CLI_params&hparams, int flag=0x0);
 
-    virtual size_t Alloc(hTGraph graph,void *ctx,int flag=0x0);
+    virtual size_t AfterBuild(hTGraph graph,void *ctx,int flag=0x0);
     // reserve the buffers to avoid reallocations
     virtual bool Reserve(hTGraph graph,int flag=0x0);
     virtual bool AllocGraph(hTGraph graph,int flag=0x0);
@@ -79,6 +66,10 @@ public:
 
     int SetThread(int nThread,int flag=0x0);       
     virtual int SetBackend(hGensor cur,int flag=0x0);
+    template<typename T>
+    T *GetScheduler()  {    
+        T *hS = dynamic_cast<T*>(hRLS.get());   assert(hS!=nullptr); return hS;    
+    }
 
 };
 typedef shared_ptr<EDGE_DEVICES>hEDevices;

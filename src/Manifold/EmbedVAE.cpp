@@ -72,6 +72,8 @@ bool TokenEmbed::Build(int flag){
         }
         sw+=".inv";
         hFish->InitGensor(ctx,sw.c_str(),wInv,true);
+    }else{
+        wInv = w;
     }
     if(padded_nCls>n)   {
         w->x_shape = {latent,n};  
@@ -83,8 +85,12 @@ bool TokenEmbed::Build(int flag){
         sb = "position_embd.weight";
         hFish->InitGensor(ctx,sb.c_str(),b,true);
     }
-#ifdef _TENSOR_G_        
-    
+    if(hFish->isModel({NLP_GUPPY})){
+        // lnW.BuildX(name+MODEL_CARD::sNorm,{padded_nCls},hFish,flag);  
+        // if(wInv!=w)
+        //     lnWInv.BuildX(name+MODEL_CARD::sNorm+".inv",{padded_nCls},hFish,flag);  
+    }
+#ifdef _TENSOR_G_    
     SHAPE s3={B,T,latent};
     out = std::make_shared<huTensor>(hFish,name+".batch",s3,w->type,false);    
     // hFish->InitGensor(ctx,name+".batch",out,false);    
@@ -94,36 +100,30 @@ bool TokenEmbed::Build(int flag){
 /*
    batch(tokens) embeddings from glob token embedding(w)
 */
-hGensor TokenEmbed::Ming(void *ctx_,hGensor tokens,int flag){
-    if(tokens==nullptr)  //symbolic analysis
-        return GeNeuron::Ming(ctx_,tokens,flag);
-    assert(tokens->type==typNUMBER::I32);
+hGensor TokenEmbed::Ming(RLS_BP* ctx_,hGensor tokens,int flag){
+    // GeNeuron::BeforeMing(ctx_,tokens,flag);
+    
     string sw = name+"_rows";
     hGensor cur = nullptr;
-
-#ifdef _TENSOR_G_
-    if(hFish->isSymbolic()){            
-        out->AddSrc({w,wInv,tokens,b});      cur=out;
+    if(hFish->isSymbolic()){   
+        assert(tokens->type==typNUMBER::I32);    
+        if(wInv!=w)     
+            out->AddSrc({w,wInv,tokens,b,lnW.w,lnWInv.w});      
+        else
+            out->AddSrc({w,tokens,b,lnW.w});            
+        cur=out;
     } else{
-        // cur = w->GetRow(out,tokens,b);
-        OnEmbed(TO<int>(tokens),0x0); //nullptr,nullptr,
-        cur = out;
+        cur = OnEmbed(tokens,0x0); 
     }   
-#else
-    assert(w->ne[1]==shape[0]);
-    cur = ggml_get_rows(ctx_, w, tokens);       gTN(cur, sw.c_str());   
-    // hFish->xn = cur; hFish->xxn = cur->grad;         //  only for debug
-    if(isAddPos)        {
-        cur = ggml_add(ctx_, cur, b);  
-    }
-#endif
-    cur = AfterForward(ctx_,cur,flag);
+
+    cur = AfterMing(ctx_,cur,flag);
     return cur;
 }
 string TokenEmbed::__repr__( string& suffix,string& prefix,int flag)    {
     char buf[5012]="\0";
     const char*tab=prefix.c_str();
-    sprintf(buf+strlen(buf),"%s {EMBED n=%d %s}",tab,nVocab,isAddPos?"+POS":"");    
+    bool isSym = hFish->config.model.isEmbedWeightTying;
+    sprintf(buf+strlen(buf),"%s {EMBED n=%d %s} %s",tab,nVocab,isAddPos?"+POS":"",isSym?"SYM":"");    
     if(flag>0)
         _INFO("%s",buf); 
     return buf;  
@@ -222,6 +222,15 @@ VarCoder::VarCoder(Fish *hG_,std::vector<int>&dims,int level,bool isR,bool isB,i
     assert(nTop>=nBottom && nBottom>0);
     Build(flag);             
 }
+std::vector<hGensor> VarCoder::PGensors(bool isNoRef,int flag)   {
+    std::vector<hGensor> gensors;
+    GPLUS(gensors,up.PGensors());    
+    GPLUS(gensors,down.PGensors());       
+    if(gate.out!=nullptr)   
+        GPLUS(gensors,gate.PGensors());
+    return gensors;    
+}
+
 MAEC::MAEC(Fish *hG_, const std::string &key_, int flag) {
     name = "MAEC_"; //+key;
     Init(hG_,0x0);
@@ -272,7 +281,7 @@ hGensor MAEC::ENC(hGensor cur,int flag){
             cur = down.delta;      
         }        
         if(!normE.Empty())  {
-            normE.FUSE_cuda(normE.inp,(float*)GTensor::buff,cur);   
+            normE.FUSE_cuda(cur);   
             cur = normE.delta; 
         }
     }
@@ -349,7 +358,7 @@ bool VarCoder::Build(int flag_0)   {
     int flag = flag_0;
     if(tpNorm>0)
         norm.BuildX(name+MODEL_CARD::sNorm,{nBottom},hFish,flag);   
-    if(hFish->arch==MODEL_ARCH::NLP_QWEN2){
+    if(hFish->isModel({NLP_QWEN2})){
         up.BuildX(name+".w1",{nBottom,nTop},hFish,flag | F_DELTA);  
         gate.BuildX(name+".w3",{nBottom,nTop},hFish,flag | F_DELTA); 
         down.BuildX(name+".w2",{nTop,nBottom},hFish,flag | F_DELTA);         
@@ -397,9 +406,8 @@ bool FFN::Build(int flag_0)   {
         }else{
             
         }
-    }
-        
-#ifdef _TENSOR_G_
+    }        
+
     if(GTensor::tmpFF1!=nullptr)   {
         assert(GTensor::tmpFF1->size()>=up.out->size());
         // gelu_fusion = 1;     //  0 = none, 1 = forward, 2 = forward+backward (-1 => per-GPU default)
@@ -407,6 +415,9 @@ bool FFN::Build(int flag_0)   {
             BIT_SET(up.out->flags,GTensor::F_NOALLOC); 
             if(!gate.Empty())   BIT_SET(gate.out->flags,GTensor::F_NOALLOC); 
             out = std::make_shared<huTensor>(hFish,name+"_out",sp2,GTensor::tpFloatX,false);  
+            if(hFish->config.isShareLayerOut()){    //  ???
+                out->SetRefer(GTensor::outL);        
+            } 
         }else{
             //out would be norm.out
         }
@@ -414,18 +425,20 @@ bool FFN::Build(int flag_0)   {
            
     up.w->residual_scale = hFish->config.common.residual_scale;
     BIT_SET(down.out->flags,GTensor::F_NOALLOC);
-#endif
+
     return true;
 }
 
-hGensor FFN::Ming(void * ctx_,hGensor inpL,int flag){    
-    if(inpL==nullptr){   //symbolic analysis
-        return GeNeuron::Ming(ctx_,nullptr,flag);
-    }
-    hGensor cur = nullptr;
-    int iRet=-1;
-#ifdef _TENSOR_G_
-    cur = inpL;
+std::vector<hGensor> FFN::PGensors(bool isNoRef,int flag){
+    std::vector<hGensor> gensors = VarCoder::PGensors(isNoRef,flag);
+    GPLUS(gensors,norm.PGensors());
+    GPLUS(gensors,{out});
+    return gensors;
+}
+hGensor FFN::Ming(RLS_BP* ctx_,hGensor inpL,int flag){    
+    GeNeuron::BeforeMing(ctx_,inpL,flag);
+
+    hGensor cur = inpL;
     hGensor lastResi = inpL;
     if(hFish->isSymbolic()){      
         // out = inpL >> up >> relu >> down >> norm;  
@@ -436,33 +449,10 @@ hGensor FFN::Ming(void * ctx_,hGensor inpL,int flag){
             out = norm.out;     //to save memory    
         cur = out;
     } else{ //  high performance fused operator
-        float *inp1=TO<float>(down.out);
-        FUSE_cuda(cur,nullptr,0x0); //nullptr,nullptr,
-        cur = norm.out;
+        cur = FUSE_cuda(cur,0x0); 
     } 
-#else
-    cur = norm.Ming(ctx_,inpL,0x0);
-    gTN(cur,"%s.ffn_norm",name.c_str());      // cb(cur, _NAM_("ffn_norm"), il);    
-    cur = up.Ming(ctx_,cur,0x0);
-    gTN(cur,"%s.ffn_up",name.c_str());//cb(cur, "ffn_up", il);
-    
-    // cur = ggml_gelu(ctx, cur);                cb(cur, "ffn_gelu", il);  //GGML_UNARY_OP_GELU:not implemented for backward
-    cur = ggml_silu(ctx_, cur);                
-    gTN(cur,"%s.ffn_silu",name.c_str());    
-    if(!gate.Empty()){
-        hGensor g = gate.Ming(ctx_,inpL,0x0);
-        cur = ggml_mul(ctx_, cur, g);
-        gTN(cur,"%s.ffn_gate",name.c_str());
-    }    
-    cur = down.Ming(ctx_,cur,0x0);
-    gTN(cur,"%s.ffn_down",name.c_str());    //cb(cur, "ffn_down", il);
-    cur = ggml_add(ctx_, cur, inpL);// add the input
-    cur = AfterForward(ctx_,cur,flag);
-    // if(!name.empty()){
-    //     strcpy(cur->name,"");   gTN(cur,"%s",name.c_str());
-    // }
-    
-#endif
+
+    cur = AfterMing(ctx_,cur,flag);
     return cur;
 }
 string FFN::__repr__( string& suffix,string& prefix,int flag)    {

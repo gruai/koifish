@@ -131,9 +131,9 @@ struct TRANSFORMER_PIPE : public MODEL_CARD {
 			FFN *ffn=hFish->GetNeuron<FFN>("FFN",l); 
 			cLayers[l].rms_ffn_weight = TO<float>(ffn->norm.w);	//weights->rms_ffn_weight[l];
 			cLayers[l].moegate = nullptr;	//weights->moegate[l];
-			cLayers[l].w1 = TO(ffn->Gensors(),"w1");		//weights->w1[l];
-			cLayers[l].w2 = TO(ffn->Gensors(),"w2");		//weights->w2[l];
-			cLayers[l].w3 = TO(ffn->Gensors(),"w3");		//weights->w3[l];
+			cLayers[l].w1 = TO(ffn->PGensors(),"w1");		//weights->w1[l];
+			cLayers[l].w2 = TO(ffn->PGensors(),"w2");		//weights->w2[l];
+			cLayers[l].w3 = TO(ffn->PGensors(),"w3");		//weights->w3[l];
 		}
     }
 };

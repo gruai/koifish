@@ -20,6 +20,7 @@ option(K_USE_GGML                   "KOIFISH: use GGML libs"        OFF)
 OPTION(K_USE_OPENMP                 "KOIFISH: Enable OpenMP"                 ON)
 OPTION(K_USE_OPENBLAS               "KOIFISH: Enable OpenBLAS"               OFF)
 OPTION(K_USE_GBDT                   "KOIFISH: Enable Gradient boosting trees"               OFF)
+OPTION(K_TESTING                    "KOIFISH: Do some testing"               OFF)
 
 if(K_USE_OPENMP)
     find_package(OpenMP REQUIRED)
@@ -103,7 +104,7 @@ if(K_USECUDA)
         endif()
         message(STATUS "CUDA_FLAGS=${CUDA_FLAGS}")
         add_compile_options("$<$<COMPILE_LANGUAGE:CUDA>:${CUDA_FLAGS}>")
-        set(CUDA_LIB  cudart cublasLt )   
+        set(CUDA_LIB  cudart cublas cublasLt )   
     else()
         message(WARNING "CUDA not found")
     endif()
@@ -138,11 +139,17 @@ if(K_USE_GBDT)
     set(DELTA_cc ${DELTA_cc} -D_USE_GBDT_ )
     add_subdirectory(src/GBDT)
 endif()
+
+if(K_TESTING)
+set(DELTA_cc ${DELTA_cc} -D_DO_SOME_TESTING_ )
+    add_subdirectory(tests)
+endif()
+
 message(STATUS "KOIFISH cc=${DELTA_cc} lib=${DELTA_LIB} PWD=${CMAKE_SOURCE_DIR}")
 
 add_subdirectory(src/Manifold)
 add_subdirectory(src/Fuzi)
-add_subdirectory(src/Device/CUDA)
+add_subdirectory(src/Device)
 add_subdirectory(src/ggex)
 add_subdirectory(src/Models)
 add_subdirectory(src/Utils)
@@ -150,14 +157,15 @@ add_subdirectory(src/Utils)
 add_subdirectory(src/TokenSet)
 
 set(sources   ${TGraph_sources} ${util_sources} ${kernel_sources} ${Fuzi_sources} ${ggex_sources} ${device_sources} ${model_sources} 
-    ${token_sources} ${mort_sources} ${blas_sources} )
+    ${token_sources} ${mort_sources} ${blas_sources} ${testing_sources} )
 add_executable(koifish ${CMAKE_CURRENT_SOURCE_DIR}/src/koifish.cpp ${sources} )
 message(STATUS "KOIFISH sources=${sources}")
 
 
 foreach(prog koifish )    #finetune koifish train2
     install(TARGETS ${prog} RUNTIME)
-    target_include_directories(${prog} PRIVATE ${CMAKE_SOURCE_DIR}/src/Device/CUDA ${GG_INC} ${CUDA_INC} )
+    target_include_directories(${prog} PRIVATE ${CMAKE_SOURCE_DIR}/src/Manifold/ ${CMAKE_SOURCE_DIR}/src/TokenSet/ ${CMAKE_SOURCE_DIR}/src/Utils/ 
+    ${CMAKE_SOURCE_DIR}/src/Device/CUDA ${GG_INC} ${CUDA_INC} ${OPENBLAS_INC})
 
     target_link_libraries(${prog} PRIVATE ${GG_LIB} ${CMAKE_THREAD_LIBS_INIT} ${OPENBLAS_LIB} ${DELTA_LIB} ${CUDA_LIB} pthread )
     target_compile_features(${prog} PRIVATE cxx_std_17)

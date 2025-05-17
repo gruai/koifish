@@ -25,8 +25,8 @@ hGensor LLM_MAMBA::BuildTarget( void * ctx,hGensor cur,int flag)  {
 
 Guppy::Guppy( const std::string& nam_,struct CLI_params params,ROLE_TYPE role,int flag) : NLP_AutoRegressive(nam_,params,role,flag)  {
     assert(arch==MODEL_ARCH::NLP_GUPPY);
-    config.model.isFFNShareParam = true;
-    config.model.isEmbedWeightTying = false;
+    // config.model.isFFNShareParam = true;
+    // config.model.isEmbedWeightTying = false;
     // isBias = config.model.isBias;    //   if true, converge much slower
 }
 

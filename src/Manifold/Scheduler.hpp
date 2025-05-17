@@ -2,13 +2,17 @@
  *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT  
  * 
- *  \brief NLP_AutoRegressive Model(https://llama.meta.com/)
+ *  \brief Scheduling
  *  \author Yingshi Chen
  */
 #pragma once
-#include "../CLI_params.hpp"
 #include <memory>
+#include "../CLI_params.hpp"
+#include "Neuron.hpp"
+#include "TGraph.hpp"
+#include "../Device/EDevice.hpp"
 
+class EDGE_DEVICES;
 /**
  * https://towardsdatascience.com/learning-rate-schedules-and-adaptive-learning-rate-methods-for-deep-learning-2c8f433990d1
  * time-based decay, step decay and exponential decay.
@@ -147,3 +151,79 @@ struct KarrasSchedule : LearnSKDU {
     }
 };
 
+/*
+    Resource limited scheduling / resource planning
+    budget/availability/capacity/costs  workload management
+    Resource-constrained 
+*/
+class RLSchedule{
+    public:
+        enum tpSTATUS  {
+            PASS,   
+            RESIDENT,
+            FLIP,
+            UPDATE_PARAM,
+        };
+        
+        struct Node{
+            void *hOBJ=nullptr;
+            double cost=0;        
+            tpSTATUS status = FLIP;
+    
+            Node(void *h,double v,int flag=0x0) : hOBJ(h),cost(v){
+    
+            }
+            bool isOn() {   return status == RESIDENT;   }
+            int begin=-1,end=-1;
+    
+        };
+    protected:
+        EDGE_DEVICES *hDevices = nullptr;
+        Fish *hFish = nullptr;
+        int step = 0x0;
+        bool isPrefill = true;
+        bool isRemater = false;
+        double budget = 1000;
+        vector<Node*> nodes;
+        //SKDU_params::STRATEGY strategy = SKDU_params::MEM_PRE_ALLOC;
+        SKDU_params params;
+    public:
+        RLSchedule(EDGE_DEVICES *hED,const CLI_params&config, int flag) : hDevices(hED)    {
+            
+        }
+        virtual ~RLSchedule() {}
+        virtual void BeforeStart(int flag=0x0);
+        virtual bool Planning(int flag=0x0);
+        virtual bool Verify(int flag=0x0)       {   assert(0);  return false;   }
+        virtual int OnNextStep(int flag=0x0)    {   assert(0);  return 0x0;  }
+        virtual tpSTATUS GetStatus(int step,void *hObj,int flag) {   return FLIP;    }
+        virtual void Dump(int typ)   const   {}
+    friend class EDGE_DEVICES;
+    friend class NLP_AutoRegressive;
+    friend class Fish;
+    };
+    typedef shared_ptr<RLSchedule> hRLSchedule;
+    
+    //  Resource limited scheduling of BackPropagation
+    class RLS_BP : public RLSchedule    {
+    protected:
+        int T_fore=-1,T_back=-1;
+        std::map<hGensor,enum tpSTATUS> tensors;
+        
+    public:
+        RLS_BP(EDGE_DEVICES *hED,const CLI_params&config, int flag);
+        virtual ~RLS_BP() {}
+        virtual void Init( Fish *hF,std::vector<shared_ptr<GeNeuron>> backbons,int flag=0x0);
+        virtual bool Prepare(int iter,int flag=0x0);
+        virtual tpSTATUS GetTensorStatus(int step,hGTensor tenosr,int flag=0x0);
+        virtual tpSTATUS SetTensorStatus(int step,hGTensor tenosr,tpSTATUS sta,int flag=0x0);
+        tpSTATUS GetStatus(int step,void *hObj,int flag) override;
+        bool isResident(GeNeuron *neuron,int flag=0x0);
+        
+        bool Planning(int flag=0x0) override;
+        bool Verify(int flag=0x0)   override;
+        int OnNextStep(int flag=0x0) override;
+        void Dump(int typ)   const   override;
+    friend class EDGE_DEVICES;
+    friend class GeNeuron;
+    };

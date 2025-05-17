@@ -43,7 +43,7 @@ Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params& config,int flag) : _fis
     }  
 
     if(_fish->isTrain())  {
-        scheduler = std::make_shared<DiscreteSchedule>(_fish->config.common);
+        hLR = std::make_shared<DiscreteSchedule>(_fish->config.common);
         // train_loader->Init(g_,"Train");
         
     }else{
@@ -114,19 +114,7 @@ bool Optimizer::OnLogits(int flag)   {
     return true;
 }
 
-static void ggml_opt_acc_grad(int np, hGensor  const ps[], float * g, float scale) {
-    int64_t i = 0;
-    for (int p = 0; p < np; ++p) {
-        const int64_t ne = tELEM(ps[p]) ;
-        // TODO: add function to get all elements at once
-        for (int64_t j = 0; j < ne; ++j) {
-            assert(0);
-            // g[i++] += ggml_get_f32_1d(ps[p]->grad, j) * scale;
-        }
-    }
-}
-
-bool cuClear(std::vector<hGTensor> tensors,int flag);
+bool cuClearGrad(std::vector<hGTensor> tensors,int flag);
 bool OPT_Adam::BatchGrad(int iter,float&fx,int flag)   {    
     fx = 0;
     auto loss = hLoss();
@@ -138,8 +126,7 @@ bool OPT_Adam::BatchGrad(int iter,float&fx,int flag)   {
         g = (float *)grad->data;
     }
     bool bench=false;
-    // struct ggml_cgraph *_gf=_fish->GetForwRaw(),*_gb=_fish->GetBackRaw();
-    // assert(_gb!=nullptr);
+
     for (int accum_step = 0; accum_step < 1/*nGradAccum*/; ++accum_step) {
         auto now = GST_ms();        
         int64_t nSamp = train_loader->UpdateBatch(-1,_fish);
@@ -155,7 +142,7 @@ bool OPT_Adam::BatchGrad(int iter,float&fx,int flag)   {
         }   
         
 #ifdef _TENSOR_G_
-        cuClear(opt_ps,0x0);    
+        // cuClearGrad(opt_ps,0x0);    //  reset grad online, no need this
         // double a = tNormOf(opt_ps,0x0);
         GraphCompute(train_loader,_fish->hBackTG);
 #else
@@ -235,10 +222,11 @@ void OPT_Adam::UpdateParams(int nx,CLI_params& config,int flag)  {
     floatX *g = nullptr;
     
     float clip = 0.f, fx = 0,sum,sched;
-    g2_sum = 0;
+    g2_sum = 0;     
     if(!isAdaptiveSched)        //params.adam->sched;   
         sched = 1.0;  
-    g_step = tNormOf(opt_ps,0x0);  
+    if(isPreGStep)
+        g_step = tNormOf(opt_ps,0x0);  
     if(DEBUG.train_hyperparams==1){
         adam->decay = 0;      sched = 1.0;
     }
@@ -247,34 +235,40 @@ void OPT_Adam::UpdateParams(int nx,CLI_params& config,int flag)  {
         g = (floatX *)grad->data;  // gradients
         clip = gClip(nParams,g,nullptr);        
     }
-    auto now = GST_ms();    
-    // float beta1_correction = 1.0f - powf(beta1, t);
-    // float beta2_correction = 1.0f - powf(beta2, t);   
+    auto now = GST_ms();      
     beta1h =        sched/(1.0f - powf(adam->beta1, iter));                
     beta2h =        1.0f/(1.0f - powf(adam->beta2, iter));
     size_t i = 0;
     zmuv_0 = DBL_MAX,zmuv_1 = 0.0;
     if(iter==1)
         _INFO("clip=%g(%g) lr=%g beta1=%g , beta2=%g,  eps=%g , weight_decay=%g\n",1.0e-6,0.0,adam->alpha,adam->beta1, adam->beta2, adam->eps,adam->decay);
-    for (auto hP : opt_ps) {
-        p_decay = ((tDIM(hP) >= adam->decay_min_ndim) ? adam->decay : 0.0f) * sched;
-        const int64_t ne = tELEM(hP);
-        if(hP->isRefer())
-            continue;
-        if(DEBUG.check_tensor_norm){
-            // assert(hP->nrm<1000.0);     //  only for debug
-        }
-        UpdateTensorParam(hP,i,g==nullptr?nullptr:g+i,clip);
-        i += ne;       
-    }
+    /*if(0){    //only for debug
+        std::vector<hGensor> arrT;    
+        for (auto it = _fish->backbons.rbegin(); it != _fish->backbons.rend(); ++it) {
+            hNeuron neuron = *it;            
+            for(auto t : neuron->PGensors()){
+                if(t->isRefer() || !t->isParam())     //
+                    continue;
+                arrT.push_back(t);    
+                UpdateTensorParam(t,nullptr,clip);        i += tELEM(t);                      
+            }              
+        }       // CHECK_SAME_TENSORS("Compare Parameters",arrT,opt_ps);
+        // opt_ps = arrT;
+    }   else*/    {
+        for (auto t : opt_ps) {
+            // p_decay = ((tDIM(t) >= adam->decay_min_ndim) ? adam->decay : 0.0f) * sched;
+            if(t->isRefer() || !t->isParam())
+                continue;
+            if(DEBUG.check_tensor_norm){
+                // assert(hP->nrm<1000.0);     //  only for debug
+            }
+            UpdateTensorParam(t,g==nullptr?nullptr:g+i,clip);        
+            i += tELEM(t);       
+        }  
+    } 
     assert(i==nParams);
+    if(!isPreGStep)  g_step = sqrt(g_step);
     tUpdate = GST_ms()-now;
-//     double a = sqrt(g2_sum),off=0;
-// #ifdef _TENSOR_G_
-//     off = a - g_step;
-//     assert(a);
-// #endif
-//     g_step = a;
 }
 
 float Optimizer::gClip(int ne,floatX *g,hGensor hP,int flag)  {
@@ -317,8 +311,8 @@ inline bool isStrMatch(const string& target,const vector<string>&words){
     return false;
 }
 
-int UpdateTensorParam_cuda(hGTensor tensor,size_t np,Optimizer *hOPT,float& grad_norm,int flag);
-double OPT_Adam::UpdateTensorParam(hGensor hP,size_t offset,floatX *gX,float clip){ 
+int UpdateTensorParam_cuda(hGTensor tensor,Optimizer *hOPT,float& grad_norm,int flag);
+double OPT_Adam::UpdateTensorParam(hGensor hP,floatX *gX,float clip){ 
     // assert(gimap.find(hP)!=gimap.end());
     float alpha=adam->alpha,beta1=adam->beta1,beta2=adam->beta2,eps=adam->eps,grad_norm=g_step;
     auto& im = _fish->GetGensorInfo(hP); //gimap[hP];
@@ -327,7 +321,7 @@ double OPT_Adam::UpdateTensorParam(hGensor hP,size_t offset,floatX *gX,float cli
     const int64_t ne = tELEM(hP);
     floatX *paramX = (floatX*)(hP->data),*paramX0,*gX0;
     float mh,vh,g0,x,x0,x00;
-#ifdef _TENSOR_G_
+#ifdef __USE_CUDA__
     if(isToHost){
         assert(_tmp!=nullptr);
         paramX = (floatX*)_tmp;     gX=paramX+hP->szData;
@@ -360,8 +354,9 @@ double OPT_Adam::UpdateTensorParam(hGensor hP,size_t offset,floatX *gX,float cli
         gnorm = trust_ratio;
     }
 #endif    
-#ifdef _TENSOR_G_
-    UpdateTensorParam_cuda(hP,offset,this,grad_norm,0x0);     
+#ifdef __USE_CUDA__
+    UpdateTensorParam_cuda(hP,this,grad_norm,0x0);     
+    if(!isPreGStep) g_step += grad_norm*grad_norm;
     if(isToHost){
         x = T2Float(paramX0);               g0 = x-x00;
         hP->SerialGP(paramX0,gX0,hP->szData,false);
@@ -428,7 +423,7 @@ static string GD_NAME[]={
 void Optimizer::UpdateTrainLoss(int x,float loss,int flag){
     int step = iter;
     if(!fx_prev.empty()){
-        float last = scheduler->Last();
+        float last = hLR->Last();
         isStopImprove = step>0 ? (loss>last*1.1) : false;   
         if(isStopImprove){
             // _INFO("%s_%d: StopImprove\n", __func__, iter);
@@ -439,7 +434,7 @@ void Optimizer::UpdateTrainLoss(int x,float loss,int flag){
         loss_before = loss;             
     }
     loss_after = loss;
-    scheduler->Append(loss);
+    hLR->Append(loss);
 
     isConverge = false; /*fabsf(loss_after - fx_prev[0])/loss_after < train_params.adam->eps_loss*/
     // check for improvement
@@ -471,10 +466,11 @@ Optimizer::RESULT Optimizer::Search(void * ctx, hGensor loss_,hGensor target_,CL
     
     last_time = GST_ms();
     Optimizer::RESULT result = DID_NOT_CONVERGE;   
+    RLS_BP *hRLS = _fish->hEDS->GetScheduler<RLS_BP>();  
     bool cancel = false,isWarmup=false;      
     string suf,pref;
-    
-    _INFO("\nOptimizer::%s@<%s> %s device=[%s] \n", __func__,_fish->hBackTG->name.c_str(),
+    Dump(0x0);
+    _INFO("\t%s@<%s> %s device=[%s] \n", __func__,_fish->hBackTG->name.c_str(),
         _fish->isLoadCheckpoint?config.checkpoint.in.c_str():"",
         hEDS->__repr__(suf,pref,0).c_str());
     _INFO("\t Accumulation=%d AdaptiveSched=%d GRAP=%p rZMUV=%g rLARS=%g \n",nGradAccum,(int)isAdaptiveSched,grad,config.ZMUV_ratio,config.lars_ratio );
@@ -499,18 +495,26 @@ Optimizer::RESULT Optimizer::Search(void * ctx, hGensor loss_,hGensor target_,CL
                 train_loader->isLast = true;        isDumpOnce = true;
             }                
         }
-        iter = iter0 + t + 1;       SetPhase(P_TRAIN);
+        iter = iter0 + t + 1;       GST_util::tX1 = 0.0;
+        SetPhase(P_TRAIN);
         if( !BatchGrad(iter,a,0x0))
             return CANCEL;  
         // const int64_t t_start_wall = ggml_time_us(),t_start_cpu = ggml_cycles();
         float lr = train_params.LearningRate();
-        lr = scheduler->LearningRate(iter);     last_lr = lr;
+        lr = hLR->LearningRate(iter);     last_lr = lr;
         if(0){
             RAW_update(opt_ps,this, grad_norm, 0, 0);       //  0212
             g_step = grad_norm; //sqrt(grad_norm*grad_norm/nParams);
         }else{
             SignStochastic(nParams,config);    
-            UpdateParams(nParams,config,0x0); 
+            if(_fish->config.scheduling.isUpdateParamV0()){
+                UpdateParams(nParams,config,0x0); 
+            }else{
+                for (auto t : opt_ps) {
+                    if(t->isRefer())   continue;
+                    assert(t->last_stp==GetITER());
+                }
+            }                
         }
  
         UpdateLossCurve(0x0);    
@@ -557,17 +561,17 @@ float RAW_backward(Fish *fish,const int* hostInToken,int accum_steps,bool,int fl
     2 Forward/Backward on tensor graph
 */
 double Optimizer::GraphCompute(hSampLoader hLoader,hTGraph hTG, int flag){
-    int64_t now = GST_ms();
+    double now = GST_ms();
     int nThread = TrainParams().n_threads,no=0,nAccum=TrainParams().n_gradient_accumulation;
     bool isOnlyEvaluate = !hTG->isBackward;
     
     OutCLS* cls = _fish->GetNeuron<OutCLS>("OutCLS",0);
-    TokenEmbed* embed = _fish->GetNeuron<TokenEmbed>("TokenEmbed",0);    
-#ifdef _TENSOR_G_    
+    TokenEmbed* embed = _fish->GetNeuron<TokenEmbed>("TokenEmbed",0);   
     if(phase!=P_GENERATE && phase!=P_PREFILL)
         embed->hBatch = hLoader->hBatch;   
+
     isBackward = false;
-    _fish->ForwardOnNeuron(0x0);
+    _fish->ForwardOnRLS(iter,0x0);
     if(phase==P_GENERATE || phase==P_PREFILL)
         return 0.0;
     float mean_loss = hLoader->hTokens->LossOnResult(hLoader,cls);
@@ -575,68 +579,13 @@ double Optimizer::GraphCompute(hSampLoader hLoader,hTGraph hTG, int flag){
         return mean_loss;
     }else{
         isBackward = true;
-        // _fish->Backward_N(0x0);
-        RAW_backward(_fish,nullptr,nAccum,isOnlyEvaluate,flag);        
+        g_step = 0;
+         _fish->BackwardOnRLS(iter,0x0);
+        //RAW_backward(_fish,nullptr,nAccum,isOnlyEvaluate,flag);        
         UpdateTrainLoss(-1,mean_loss); 
-    }
-          
-    /*for(auto it : _fish->gensors.infos){
-        auto node = it.first;
-        if(!BIT_TEST(node->flags,GTensor::F_TOX)){
-            int debug=0x0;
-            assert(node->data==nullptr);            
-        }
-    }*/
-    /*isBackward = false;
-    hGensor cur = _fish->Input(); 
-    for(auto nn : _fish->neurons){   
-        if(nn->isGang())    continue;
-        if(no==5){
-            int debug = 1;
-        }
-        _INFO("%d\tF@%s\n",no++,nn->__repr__(suffix,prefix).c_str());            
-        cur = nn->Ming(nullptr,cur);        
-        // cuLiteTest(B,T,C);           //only for debug
-    }
-    isBackward = true;
-    for (auto it = _fish->neurons.rbegin(); it != _fish->neurons.rend(); ++it)    {
-        hNeuron nn = *it;
-        if(nn->isGang())    continue;
-        _INFO("%d\tB@%s\n",no,nn->__repr__(suffix,prefix).c_str());            
-        cur = nn->Ming(nullptr,cur); 
-    }*/
-#else
-    auto cgraph = hTG->raw();
-    bool bench = false;
-    string suffix,prefix;
-    struct ggml_cgraph *_gf=_fish->GetForwRaw(),*_gb=_fish->GetBackRaw();
-    assert(cgraph==_gf || cgraph==_gb);
-    
-    if(bench){ //  only for performance benchmark
-        GST_TIC(t0);
-        CHILD_1218_GRAD //ggml_graph_comp0(_gf,0x0); 
-        // ggml_graph_comp0(_gb,0x0); 
-        _INFO("gb_compute %s T=%.3g","",GST_TOC(t0));  
-        exit(-666);
-    }
-    if(hEDS->isOnlyCPU()){
-        auto *cplan = &(_fish->gb_plan);
-        auto status = ggml_graph_compute(cgraph, cplan);
-        return status==GGML_STATUS_SUCCESS;
-    }
-    
-#ifdef GGML_USE_METAL
-    if (ggml_backend_is_metal(lctx.backend_metal)) {
-        ggml_backend_metal_set_n_cb(lctx.backend_metal, n_threads);
-    }
-#endif
-    hEDS->SetThread(nThread);
+    }          
 
-    auto status = ggml_backend_sched_graph_compute_async(hEDS->sched0, cgraph);
-    if(status!=GGML_STATUS_SUCCESS)
-        return false;
-#endif
-    tX = GST_ms()-now;
+    // GST_util::tX1 = GST_ms()-now;
     return 0.0;
 }
 
@@ -745,7 +694,7 @@ string StepInfos::STEP::Info(int flag){
 float Optimizer::UpdateLossCurve(int flag){
     struct train_params_ _params = TrainParams();   
     int n_batch = _params.n_batch,n_ctx = _params.n_ctx;
-    int64_t now = GST_ms();
+    double now = GST_ms();
     if (now > last_time && iter > first_iter)            {
         double dt = (double)(now - last_time);
         if (millis_per_iter == 0.0)                {
@@ -761,20 +710,20 @@ float Optimizer::UpdateLossCurve(int flag){
         remaining_millis = (_params.nMostIter-(iter - first_iter)) * millis_per_iter;
     }        
 
-    last_time = GST_ms();
+    last_time = GST_ms();           
     
     int impr_plot = -(int)(1 + (loss_before - loss_after) * 10.0f + 0.5f);
     if (impr_plot > 0)
         impr_plot = 0;
     if (std::isnan(loss_before) || std::isnan(loss_after))
         impr_plot = 0;    
-    trainInfos().Add(StepInfos::STEP(loss_after,iter,train_epochs,last_lr,g_step,tX,millis_per_iter));
+    trainInfos().Add(StepInfos::STEP(loss_after,iter,train_epochs,last_lr,g_step,GST_util::tX1,millis_per_iter));
     if((iter-1)%_params.dump_every==0 || isDumpOnce){
         isDumpOnce = false;
         _INFO("[epoch_%d]_%-6d loss=%f |g|=%.3g\tlr=%.2e | %s ",train_epochs,iter,
             loss_after,g_step,last_lr,train_loader->IterInfo().c_str() ); //,zmuv_0,zmuv_1    
         if (millis_per_iter > 0)            {
-            _TIME_INFO(" T=",millis_per_iter);  _TIME_INFO("(data=",tData);    _TIME_INFO(" X=",tX);        _TIME_INFO(") eta=",remaining_millis);
+            _TIME_INFO(" T=",millis_per_iter);  _TIME_INFO("(data=",tData);    _TIME_INFO(" X=",GST_util::tX1);        _TIME_INFO(") eta=",remaining_millis);
         }
         size_t tokens_processed = _fish->config.nTokensPerGrad();   //(size_t) * B * T * grad_accum_steps;
         float tokens_per_second = tokens_processed / millis_per_iter * 1000.0f;
@@ -814,7 +763,7 @@ bool Optimizer::OnNextShard(int flag){
 
 bool Optimizer::OnNextEpoch(int flag){
     train_epochs++;
-    if(scheduler->policy==LearnSKDU::COSINE_EPOCH){
+    if(hLR->policy==LearnSKDU::COSINE_EPOCH){
         // _INFO("-------- End of all shards of epoch_%d! -------- \n");
     }
     return true;
@@ -834,21 +783,19 @@ void Optimizer::BeforeTrain(hGensor tokens_,int flag) {
     opt_ps = _fish->optParams;
     nMostParam = 0;
     size_t offset = 0x0;
-    for (auto ps : opt_ps) {            
-        nMostParam += tELEM(ps);
-#ifdef _TENSOR_G_
-        ps->offset = offset;
-        offset += ps->nByte();
-#endif
+    for (auto t : opt_ps) {  
+        t->offset = nMostParam;      
+        
+        nMostParam += tELEM(t);        
+        // ps->offset = offset;
+        offset += t->nByte();
     } 
-#ifdef _TENSOR_G_
-    adam.decay = 0.1;      //very high for GPT2 Model
 
+    adam.decay = 0.1;      //very high for GPT2 Model
     InitOnCUDA(1);
-#endif    
+   
     // assert(nMostParam>=nParams);
-    assert(_fish->config.common.nMostIter>0);
-    
+    assert(_fish->config.common.nMostIter>0);    
 }
 
 size_t TGraph::Prepare4Train(void *ctx_,GD_METHOD tpGD,int flag){
@@ -995,6 +942,15 @@ void OPT_Adam::Prepare(size_t nx_,int flag){
     }
 }
 
+/*
+    https://github.com/KellerJordan/muon
+    https://x.com/Kimi_Moonshot/status/1897929976948965870 
+*/
+OPT_Muon::OPT_Muon(NLP_AutoRegressive *g_,CLI_params& params_,int flag)
+    : Optimizer(g_,params_,flag)    {    
+    
+}
+
 OPT_Adam::OPT_Adam(NLP_AutoRegressive *g_,CLI_params& params_,int flag)
     : Optimizer(g_,params_,flag)    {    
     // auto train_params = TrainParams();
@@ -1014,14 +970,47 @@ OPT_Adam::OPT_Adam(NLP_AutoRegressive *g_,CLI_params& params_,int flag)
 }
 
 void OPT_Adam::Dump(int typ){
-    Optimizer::Dump(typ);
+    _INFO("========\n");
+    RLS_BP *hRLS = _fish->hEDS->GetScheduler<RLS_BP>();  
+    hRLS->Dump(typ);
 
+    Optimizer::Dump(typ);
+/*
+    printf("+-----------------------+----------------------------------------------------+\n");
+    printf("| Parameter             | Value                                              |\n");
+    printf("+-----------------------+----------------------------------------------------+\n");
+    printf("| train data pattern    | %-50s |\n", train_data_pattern);
+    printf("| val data pattern      | %-50s |\n", val_data_pattern);
+    printf("| output log dir        | %-50s |\n", output_log_dir == NULL ? "NULL" : output_log_dir);
+    printf("| checkpoint_every      | %-50d |\n", checkpoint_every);
+    printf("| resume                | %-50d |\n", resume);
+    printf("| micro batch size B    | %-50d |\n", B);
+    printf("| sequence length T     | %-50d |\n", T);
+    printf("| total batch size      | %-50d |\n", total_batch_size);
+    printf("| LR scheduler          | %-50s |\n", lr_scheduler_type);
+    printf("| learning rate (LR)    | %-50e |\n", learning_rate);
+    printf("| warmup iterations     | %-50d |\n", warmup_iterations);
+    printf("| final LR fraction     | %-50e |\n", final_learning_rate_frac);
+    printf("| weight decay          | %-50e |\n", weight_decay);
+    printf("| skip update lossz     | %-50f |\n", skip_update_lossz);
+    printf("| skip update gradz     | %-50f |\n", skip_update_gradz);
+    printf("| max_steps             | %-50d |\n", max_steps);
+    printf("| val_loss_every        | %-50d |\n", val_loss_every);
+    printf("| val_max_steps         | %-50d |\n", val_max_steps);
+    printf("| sample_every          | %-50d |\n", sample_every);
+    printf("| genT                  | %-50d |\n", genT);
+    printf("| overfit_single_batch  | %-50d |\n", overfit_single_batch);
+    printf("| use_master_weights    | %-50s |\n", use_master_weights ? "enabled" : "disabled");
+    printf("| gelu_fusion           | %-50d |\n", gelu_fusion);
+    printf("| recompute             | %-50d |\n", recompute);*/
     // if(NOT_DUMP())  return;
     _INFO("[OPT_Adam]\tsRESI=%g s_rounding=%d alloc_w=%d remater[ffn=%d qkv=%d]\n",
         TrainParams().residual_scale,
         TrainParams().opt_alloc_weight,TrainParams().opt_alloc_weight,
         TrainParams().remater_ffn,TrainParams().remater_qkv);
     adam->Dump(typ);  
-    if(scheduler!=nullptr)
-        scheduler->Dump(typ);
+    if(hLR!=nullptr)
+        hLR->Dump(typ);
+  
+    
 }

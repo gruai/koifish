@@ -30,6 +30,7 @@ using namespace std;
 class Fish;
 struct NeLayer;
 struct LayerNormal;
+class RLS_BP;
 
 /**
  * Each Neuron has
@@ -40,6 +41,9 @@ struct LayerNormal;
  * 
  * Fusion
  * 1. gelu_fusion
+ * 
+ * Rematerization
+ * 1.   vRemater
  */
 
 class GeNeuron  {
@@ -47,24 +51,29 @@ class GeNeuron  {
     GeNeuron &operator=(const GeNeuron &) = default;
 
 protected: 
-    int block_size = 256, grid_size=0;      //for cuda kernel function    
+    int block_size=256, grid_size=0;      //for cuda kernel function    
     int B,T,C;  //n_batch,n_ctx,n_embd,
     int n_embd_head,n_head;
-    int gelu_fusion = 0;
+    int gelu_fusion=0, dump_flag=0;
     Fish *hFish = nullptr;    
     SHAPE shape;
     COMPRESSIVE_SENSING compression = SKIP;
+    
     int level=-1,ID=-1,dad,c_id;    //topo info
     int layer=-1;       // no of layer in LLM/Brain structure
+    int xxx = 0;
     vector<double> jvals;   
+    // vector<hGTensor> vRemater;      //support rematerization
     string _repr_1( string& suffix,string& prefix,string info,int flag=0x0);
-
+    void *host_inp = nullptr;       // backup of input in device memory
     // std::vector<shared_ptr<GeNeuron>> brothers;
 public:
     enum BIT_FLAG {
         F_BIAS=0x10000,         F_DELTA=0x20000,
         F_HOTPICK=0x100000
     }; 
+
+    DATA_PLACE place=DATA_PLACE::VOID;
 
     static shared_ptr<GeNeuron> MakeInstance(Fish *hG_,void *ctx_build,const string& guid,JSON::const_iterator jit,int flag=0x0);
 
@@ -79,15 +88,10 @@ public:
     std::string name = "N",type_info="";
     GeNeuron() {}    
     GeNeuron(const std::string &key_,JSON::const_iterator jit, Fish *hG_, int flag);
-    virtual ~GeNeuron() { ; }
-    virtual std::vector<hGensor> Gensors(bool isNoRef=true) {
-        std::vector<hGensor> gensors={  w,b };     
-        if(!isNoRef)   {
-            std::vector<hGensor> refs={  inp,out,delta };     
-            gensors.insert(gensors.end(), refs.begin(), refs.end());
-        }
-        return gensors;
-    }
+    virtual ~GeNeuron() {   FREE_a( host_inp );   }
+    //  Gensors with physical memory
+    virtual std::vector<hGensor> PGensors(bool isNoRef=true,int flag=0x0);
+
     virtual bool isValid();
     virtual bool isOnlyInfer();
     virtual bool isForward();
@@ -95,15 +99,24 @@ public:
     virtual void Init(Fish *hG_, int flag=0x0);
     virtual bool Empty()    const { return shape.size() == 0; }
     virtual size_t nElem()  { return 0x0; }
+    // memory management at different place
+    virtual size_t ManageMemory(DATA_PLACE target,int typ=0x0,int flag=0x0);
+    virtual hGensor OnInput(hGensor hIn,int flag=0x0);
+
     //  无知觉明
-    virtual hGensor Ming(void *ctx_build,hGensor cur,int flag=0x0);
+    virtual hGensor Ming(RLS_BP* hRLS,hGensor cur,int flag=0x0);
+    virtual hGensor BeforeMing(RLS_BP* hRLS,hGensor cur,int flag=0x0);
+    virtual hGensor AfterMing(RLS_BP* hRLS,hGensor cur,int flag=0x0);
+    
     virtual hGensor Backward(void *user_ctx,hGensor cur,int flag=0x0);
     virtual hGensor Forward2(void *ctx_build,hGensor,hGensor,int flag=0x0)   {   assert(0);      return nullptr;     }
-    virtual hGensor BeforeForward(void *ctx_build,hGensor cur,int flag=0x0);
-    virtual hGensor AfterForward(void *ctx_build,hGensor cur,int flag=0x0);
+    
     virtual bool Build(int flag)   {assert(0);     return false;}
     // Init & build with more option
     virtual void BuildX(const std::string &key_, const SHAPE &shape, Fish *hG_, int flag);
+
+    virtual void OnRemater(RLS_BP *schedule,int typ,int flag=0x0);
+
     virtual string __repr__( string& suffix,string& prefix,int flag=0x0);
     virtual bool isGang()   {   return false;    }  
     
@@ -112,6 +125,7 @@ public:
     virtual bool Sparsing(int flag=0x0) {   return false;   }
 friend class Fish;
 friend class NLP_AutoRegressive;
+friend class RLS_BP;
 };
 
 class HotPicker;
@@ -159,35 +173,36 @@ struct Ganglia : public SparseNeuron    {
     bool isValid()  override    {   return ns.size()>0; }
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
     bool isGang()   override    {   return true;    }  
-    hGensor Ming(void *ctx_build,hGensor cur,int flag=0x0)    override   {   return cur; } 
+    hGensor Ming(RLS_BP* hRLS,hGensor cur,int flag=0x0)    override   {   return cur; } 
 };
 
 class ROPE : public SparseNeuron    { 
 protected:
     int n_rot=0,n_ctx_orig=0,head_dim=0,q_dim=0,kv_dim=0,r_dim=0;
-    hGensor KQ_pos;
+    hGensor KQ_pos,hSin=nullptr,hCos=nullptr;
     float f_norm_rms_eps, freq_base, freq_scale, theta;    
 public:    
     ROPE() {}
     ROPE(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag);
     bool Build(int flag)   override;
-    hGensor Ming(void * ctx0,hGensor cur,int flag=0x0)    override;
-    int FUSE_cuda(hGTensor QKV,bool isFX=true,int flag=0x0);
+    hGensor Ming(RLS_BP* hRLS,hGensor cur,int flag=0x0)    override;
+    int FUSE_cuda(floatX* inp,bool isFX=true,int flag=0x0);
     bool isValid()  override    {   return true;    }
+    bool Empty() const   override;
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
 };
 
 struct Relu : public SparseNeuron    { 
     Relu()  {;}
     Relu(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag);
-    virtual hGensor Ming(void *ctx_build,hGensor cur,int flag=0x0)  override;
+    virtual hGensor Ming(RLS_BP* hRLS,hGensor cur,int flag=0x0)  override;
     bool Build(int flag)   override;
     bool isValid()  override    {   return true;    }
 };
 
 struct Drop : public SparseNeuron    { 
     Drop(Fish *hG_, const std::string &key_, JSON::const_iterator jit,  int flag);
-    virtual hGensor Ming(void *ctx_build,hGensor cur,int flag=0x0)  override;
+    virtual hGensor Ming(RLS_BP* hRLS,hGensor cur,int flag=0x0)  override;
     bool Build(int flag)   override;
     bool isValid()  override    {   return true;    }
 };
@@ -202,7 +217,7 @@ struct SLP : public SparseNeuron    {
     int nIn=-1,nOut=-1;
     bool Empty() const  override   { return w==nullptr; }
     bool Build(int flag)   override;
-    hGensor Ming(void *ctx0, hGensor cur, int flag = 0x0)     override;
+    hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag = 0x0)     override;
     // only for deprecated function"UpdateGensor"
     hGensor UpdateGensor(int flag=0x0);
     size_t nElem()  override;  
@@ -223,16 +238,21 @@ struct LayerNormal : public SparseNeuron    {
     bool isRMS = true;               // Root Mean Square Layer Normalization
     //  always float
     hGensor mean=nullptr, rstd=nullptr;
-    hGensor out=nullptr;
+
     LayerNormal() {}    
     LayerNormal(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag);
     bool Build(int flag)   override;
-    hGensor Ming(void * ctx0,hGensor cur,int flag)    override;
-    hGTensor FUSE_cuda(hGTensor inpL,float* scratch=nullptr,hGTensor deltaIn=nullptr,int flag=0x0);
+    hGensor Ming(RLS_BP* hRLS,hGensor cur,int flag)    override;
+    hGTensor FUSE_cuda(hGTensor inpL,int flag=0x0);
     size_t nElem()  override;    
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
     // hGTensor operator>>(hGTensor & a){  return a;   }
     // hGTensor operator<<(hGTensor a);
+};
+
+struct LayerSoftmax : public SparseNeuron    {
+    LayerSoftmax() {}    
+    LayerSoftmax(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag);
 };
 
 struct MOE : public SparseNeuron  {
@@ -264,7 +284,9 @@ protected:
         RELU_=3,
         LINEAR=4,
     };
-
+#ifdef ENABLE_CUDNN
+    virtual bool FUSE_cudnn(floatX* dqkvr,floatX* dout,int flag=0x0);
+#endif
     // 1 linear(No softmax!) 2 sim(q,k)>=0
     TRANSITION_MODE tpTrans=SOFT_MAX;
     enum LINEAR_MODE{   
@@ -280,10 +302,10 @@ protected:
     bool remater_qkv = false;
     bool isAttOnBC = false;     //  // Nearly same. If true,attenion on all tokens, memory would explode!
     bool isRope = true;
-    hGensor attn_k=nullptr,attn_q=nullptr;
+    hGensor attn_k=nullptr,attn_q=nullptr,tmpQKV=nullptr;
     // int n_rot=-1;
     // hGensor W_rope(void *ctx ,hGensor cur,hGensor w,hGensor KQ_pos,SHAPE shape,const string&shortcut,int flag=0x0);
-    hGensor MyAttention(void * ctx_,hGensor inpL,int flag);
+    hGensor MyAttention(RLS_BP * ctx_,hGensor inpL,int flag);
     hGensor vXattn(void *ctx, hGensor v,hGensor attn,int flag);
     float f_norm_rms_eps, rope_freq_base, rope_freq_scale;
 public:
@@ -295,7 +317,7 @@ public:
     hGensor KQ_pos=nullptr,KQ_mask=nullptr;
     LayerNormal norm,*fuseNorm=nullptr;
 #ifdef _TENSOR_G_
-    hGensor attn=nullptr,trans=nullptr;
+    hGensor attn=nullptr,transition=nullptr;
     hGensor deltaCat=nullptr;       //floatX* dl_btc=nullptr;
 #endif
     SLP Q, K, V;
@@ -306,11 +328,12 @@ public:
     SelfAttention() {}
     SelfAttention(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag);
     bool Build(int flag)   override;
-    hGensor Ming(void * ctx0,hGensor cur,int flag)    override;
+    std::vector<hGensor> PGensors(bool isNoRef=true,int flag=0x0)   override;
+    hGensor Ming(RLS_BP* hRLS,hGensor cur,int flag=0x0)    override;
     bool isValid()  override    {   return true;    }
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
 
-    hGTensor FUSE_cuda(hGTensor inpL,hGTensor residual,hGTensor deltaIn,float* scratchF,int flag);
+    hGTensor FUSE_cuda(hGTensor inpL,int flag);
 };
 
 /*
@@ -324,7 +347,7 @@ public:
     GatedAttention() {}
     GatedAttention(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag);
     bool Build(int flag)   override;    
-    hGensor Ming(void * ctx0,hGensor cur,int flag)    override;
+    hGensor Ming(RLS_BP* hRLS,hGensor cur,int flag)    override;
     bool isValid()  override    {   return true;    }
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
 };
@@ -337,7 +360,7 @@ public:
     cuAttention() {}
     cuAttention(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag);
     bool Build(int flag)   override;    
-    hGensor Ming(void * ctx0,hGensor cur,int flag)    override;
+    hGensor Ming(RLS_BP* hRLS,hGensor cur,int flag)    override;
     bool isValid()  override    {   return true;    }
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
 };
@@ -355,7 +378,7 @@ public:
     BROWN_attn(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag);
     bool Build(int flag)   override;    
 
-    hGensor Ming(void * ctx0,hGensor cur,int flag)    override;
+    hGensor Ming(RLS_BP* hRLS,hGensor cur,int flag)    override;
     bool isValid()  override    {   return true;    }
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
 };
@@ -381,14 +404,8 @@ public:
     VarCoder(Fish *hG_,std::vector<int>&dims,int level,bool isR = false,bool isSym=true,int tpN=2,int flag=0x0);
     virtual hGensor ENC(const hGensor x0);
     virtual hGensor DEC(hGensor x);
-    string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
-    std::vector<hGensor> Gensors(bool isNoRef=true) override  {
-        std::vector<hGensor> gensors;
-        GPLUS(gensors,up.Gensors());    
-        GPLUS(gensors,down.Gensors());       GPLUS(gensors,gate.Gensors());
-        return gensors;
-    }
-
+    string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
+    std::vector<hGensor> PGensors(bool isNoRef=true,int flag=0x0)   override;
 friend class TokenEmbed;
 friend class MAEC;
 friend class OutCLS;
@@ -399,22 +416,21 @@ struct FFN : public VarCoder  {
     LayerNormal *fuseNorm=nullptr;
     bool isShareParam = false;
     // hGensor pre_gelu = nullptr;
-    int latent;
-#ifdef _TENSOR_G_    
-    floatX *input_1=nullptr,*scratchX=nullptr;//,*residual=nullptr;
+    int latent;    
     // SelfAttention *lastQKV=nullptr;
     bool remater_ffn = false;
-#endif
+
     static FFN* first;
     FFN() {}
     FFN(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag);
     virtual ~FFN()  {     }
     bool Build(int flag)   override;
-    hGensor Ming(void * ctx0,hGensor cur,int flag)    override;
+    std::vector<hGensor> PGensors(bool isNoRef=true,int flag=0x0)   override;
+    hGensor Ming(RLS_BP* hRLS,hGensor cur,int flag=0x0)    override;
     bool isValid()  override    {   return true;    }
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
 
-    hGTensor FUSE_cuda(hGTensor inpL,floatX *scratch,int flag);
+    hGTensor FUSE_cuda(hGTensor inpL,int flag);
     int CPU_v0(void *ctx,int layer,int flag=0x0);
 };
 
@@ -439,7 +455,7 @@ typedef shared_ptr<MAEC> hMAEC;
 */
 struct TokenEmbed : public SparseNeuron    {      
     hBATCH hBatch = nullptr;
-
+    LayerNormal lnW,lnWInv;
     int *workload_indices=nullptr,nVocab=-1,latent,*hostID=nullptr,num_c_groups=-1,num_buckets=-1;
     int4 *bucket_info=nullptr;
     bool isAddPos = false;
@@ -455,10 +471,10 @@ struct TokenEmbed : public SparseNeuron    {
     virtual bool UpdateBucket(int type,int flag=0x0);
     virtual void WorkloadOnBucker(int *inputs_cpu,int flag );
     // virtual int InitMAC(int flag=0x0); 
-    virtual hGensor Ming(void *ctx_build,hGensor cur,int flag=0x0)  override;
+    virtual hGensor Ming(RLS_BP* hRLS,hGensor cur,int flag=0x0)  override;
     bool Build(int flag)   override;
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;
-    virtual hGTensor OnEmbed(const int* tokens,  int seed);
+    virtual hGTensor OnEmbed(hGensor inpL,  int seed);
     virtual hGTensor SubW(hGTensor hSamp, bool isForw, hGTensor subw, int flag=0x0);
 };
     
@@ -487,11 +503,16 @@ struct OutCLS : public SparseNeuron  {
             delete[] hostLoss;
     }
     bool Build(int flag)   override;
-    hGensor Ming(void * ctx0,hGensor cur,int flag)    override;
+    hGensor Ming(RLS_BP* hRLS,hGensor cur,int flag)    override;
     bool isValid()  override    {   return true;    }
     string __repr__( string& suffix,string& prefix,int flag=0x0)    override;    
     // Backward: return lnf->out;       Forward: return preLogits or loss?
-    hGTensor FUSE_cuda(hGTensor inpL,int flag);
+    virtual hGTensor FUSE_cuda(hGTensor inpL,int flag);
+};
+
+struct OutSimilarity : public OutCLS  {    
+    OutSimilarity(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag);
+    hGTensor FUSE_cuda(hGTensor inpL,int flag)  override;
 };
 
 struct NeLayer

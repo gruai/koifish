@@ -58,6 +58,14 @@ inline void cudaCheck(cudaError_t error, const char *file, int line) {
 };
 #define cudaCheck(err) (cudaCheck(err, __FILE__, __LINE__))
 
+#define CUDA_CHECK_RETURN(value) CheckCudaErrorAux(__FILE__,__LINE__, #value, value)
+static void CheckCudaErrorAux (const char *file, unsigned line, const char *statement, cudaError_t err){
+    if (err == cudaSuccess)
+        return;
+    std::cerr << statement<<" returned " << cudaGetErrorString(err) << "("<<err<< ") at "<<file<<":"<<line << std::endl;
+    exit (1);
+}
+
 inline void SYNC_DEVICE(int flag)   {
     cudaCheck(cudaDeviceSynchronize());
 } 
@@ -198,18 +206,18 @@ extern int g_dump_level;
 template <typename T>
 void inline PrintTensor(const char* title,const T *src, bool isDevice,int n1,int n2,int n3=1,int n4=1,int flag=0x0){
     if( g_dump_level>0 && flag>=0 ) return;
-    T *host_data=(T*)src; 
+    T *host_dat=(T*)src; 
     size_t nElem=(size_t)(n1)*n2*n3*n4;
 	if(nElem==0)	return;
     assert(src!=nullptr);
     if(isDevice){
-        host_data = (T*)malloc(sizeof(T)*nElem);
-        cudaCheck(cudaMemcpyAsync(host_data,src, nElem*sizeof(T), cudaMemcpyDeviceToHost, main_stream));
+        host_dat = (T*)malloc(sizeof(T)*nElem);
+        cudaCheck(cudaMemcpyAsync(host_dat,src, nElem*sizeof(T), cudaMemcpyDeviceToHost, main_stream));
     }
  
-    PrintTensor(title,host_data,n1,n2,n3,n4,flag);    
+    PrintTensor(title,host_dat,n1,n2,n3,n4,flag);    
     if(isDevice){
-        free(host_data);
+        free(host_dat);
     }
 }
 
