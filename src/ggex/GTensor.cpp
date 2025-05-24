@@ -16,7 +16,7 @@
    typNUMBER GTensor::tpPreLogits = typNUMBER::F32;
 #endif
 
-hGTensor GTensor::outL=nullptr,GTensor::delta=nullptr;
+hGTensor GTensor::outL=nullptr,GTensor::delta=nullptr,GTensor::tmpDelta=nullptr;;
 hGTensor GTensor::bt4c=nullptr,GTensor::scratch=nullptr,GTensor::tmpFF1=nullptr,
    GTensor::tmpW=nullptr,GTensor::tmpGW=nullptr,GTensor::residual=nullptr;
 void *GTensor::buff = nullptr;
@@ -209,8 +209,11 @@ bool GTensor::ShareWeight(hGTensor src,int flag){
    assert(src!=nullptr && src->data!=nullptr);
    data = src->data;
 
-   if(src->grad!=nullptr)
+   if(src->grad!=nullptr)  {
       grad = src->grad;
+      gm = src->gm;
+      gv = src->gv;
+   }
    return true;
 }
 
@@ -323,22 +326,107 @@ int GTensor::SerialJSON(const std::string& name_, const JSON& val, void* bytes_p
 }
 
 
-void GTensor::Print(const string& title, int x, int flag)   const {
+void GTensor::Print(const string& title0, int x, int flag,size_t nEle)   const {
+   assert(nEle>=0);
    bool isDevice = true;
    if(type==FLOAT_TYPE){
    }
    void *src = x==1 ? grad : data;
+   string title = title0;
+   if(x==1)    title="GRAD_"+title;
+   int64_t sp[N_DIMS] = {ne[0],ne[1],ne[2],ne[3]};
+   if(nEle>0 && nEle!=ne[0]*ne[1]*ne[2]*ne[3]){
+      sp[0]=nEle,    sp[1]=1;    sp[2]=1;    sp[3]=1;
+   }
    switch(type){
    case typNUMBER::BF16:
-      PrintTensor<floatX>(title.c_str(),(floatX *)src, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
+      PrintTensor<floatX>(title.c_str(),(floatX *)src, isDevice,sp[0],sp[1],sp[2],sp[3],flag);
       break;
    case typNUMBER::F32:
-      PrintTensor<float>(title.c_str(),(float*)src, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
+      PrintTensor<float>(title.c_str(),(float*)src, isDevice,sp[0],sp[1],sp[2],sp[3],flag);
       break;
    default:
       assert(0);
       break;
    } 
+}
+
+bool GTensor::Dump(int tpDump,const string&title,int flag)  const{
+   size_t nz=0, nElems = size(), i = 0, n = 10;
+   float * fdata = (float *)data,a1=-FLT_MAX,a0=FLT_MAX;
+   const char* A = "d";
+   if(flags & GTensor::F_PARAM){
+       A = "P";
+   }
+   if(BIT_TEST(flags,F_GPU))
+       n = 0;
+   switch(tpDump){
+   case 100:
+       _INFO(" - %3d: [ %5" PRId64 ", %5" PRId64 "] %8s %16s\n",i,ne[0], ne[1],"", name); //  ggml_op_name(op),
+       break;
+   default:     
+       if(type!=typNUMBER::F32 && n>0){
+           fdata = new float[nElems];
+           if(type==typNUMBER::F16){
+               /*ggml_fp16_t *src_ = (ggml_fp16_t *)(data);
+               for (int i = 0; i < nElems; i++) {
+                   fdata[i] = src_[i];
+               }*/
+           }else{  //need dequant
+               fdata = nullptr;     n = 0;
+           }
+       }    
+       double sum = 0.0;
+       if(fdata!=nullptr && !BIT_TEST(flags,F_GPU)){
+           for (i = 0; i < nElems; i++) {
+               sum += fdata[i];
+               if(fdata[i]==0)      nz++;
+               a1 = std::max(a1,fdata[i]);      a0 = std::min(a0,fdata[i]);
+           }        
+       }
+       printf("\t%s %s %s \t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",title.c_str(),name, A,ne[0], ne[1], ne[2], ne[3], cNameOf(type));
+       if(n>0 && a1!=-FLT_MAX){
+           printf("\nsum=%g data=[%f : %f] rZ=%.3g%%\n\t", sum,a0,a1,nz*100.0/nElems);
+           for (int i = 0; i < std::min((size_t) (ne[0]*ne[1]), n); i++) {
+               printf("%.5f ", fdata[i]);
+               if (i != 0 && i % ne[0] == 0) {
+                   // printf("\n");
+               }
+           }
+           printf("...");
+           for (int i = 0; i < std::min((size_t) (ne[0]*ne[1]), n); i++) {
+               printf("%.5f ", fdata[nElems - n + i]);
+               if ((nElems - n + i) % ne[0] == 0) {
+                   // printf("\n");
+               }
+           }
+           printf("}\n");
+       }
+
+       if(fdata!=data && fdata!=nullptr){
+           delete[] fdata;
+       } 
+   }
+   return true;
+}
+
+void _T_repr_(hGensor t,const char*tab,char *buf,const GENSOR_INFO&info){
+   if(t==nullptr)      return;
+   const char* A = "d";
+   if(t->flags & GTensor::F_PARAM){
+       A = "P";
+   }else{
+       if(t->grad!=nullptr){
+           A = "G";
+       }
+   }
+   
+   auto ne=t->ne;
+   size_t n0 = strlen(buf),n1;         //char buf[64*1024]="\0";
+   string suf,pref,sX = info.__repr__(suf,pref);        //    info.sX;
+   sprintf(buf+strlen(buf),"%s %s %s %s \tdata=%p grad=>%p\t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",tab,sX.c_str(), A,
+       t->name,t->data,t->grad,ne[0], ne[1], ne[2], ne[3], cNameOf(t->type));
+   n1= strlen(buf); 
 }
 
     // inline hGensor To4D(struct ggml_context * ctx_build,hGensor cur,int64_t n1,int64_t n2,int64_t n3,int64_t n4){

@@ -120,9 +120,7 @@ public:
     NLP_AutoRegressive(const std::string& nam_,const NLP_AutoRegressive* src,struct CLI_params params,int flag=0x0);
 
     virtual ~NLP_AutoRegressive() {
-        free(rnd);
-        // free_random_normal_distribution(rnd); 
-        // ggml_free(lora.ctx);        
+        // free(rnd);       
     }
     //number of vocab at target layer
     virtual size_t tVocab();
@@ -223,8 +221,8 @@ public:
     }
 #endif
     int ForwardOnNeuron_v0(int flag);
-    int ForwardOnRLS(int iter,int flag) override;
-    int BackwardOnRLS(int iter,int flag) override;
+    // int ForwardOnRLS(int iter,int flag) override;
+    // int BackwardOnRLS(int iter,int flag) override;
     bool LocalFeeling(hSampLoader hLoader,vector<float>& result,int flag)   override;
 
     void Loss(int flag=0x0)     override   {
@@ -326,7 +324,7 @@ public:
     string DebugInfo(int type=0x0,int flag=0x0) override;
     // hGensor BuildTarget(void * ctx,hGensor cur,int flag=0x0) override; 
     string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
-    bool OnNextEpoch(int epoch,int flag=0x0) override;
+    bool BeforeNextStep(int iter,int flag=0x0) override;
 };
 
 class DeepSeek : public NLP_AutoRegressive {

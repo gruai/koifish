@@ -160,7 +160,7 @@ friend class CLI_params;
 struct ADAM_params_ {
     size_t n_parameters;
     int   decay_min_ndim;
-    float alpha,min_alpha,decay,beta1,beta2;
+    float alpha,min_alpha,decay=0,beta1,beta2;
     int clip_alg=0;     // if 1: adaptive local clip
     float gclip;
     float eps = 1e-8f;   // epsilon for numerical stability
@@ -220,7 +220,7 @@ struct DEUG_SWITCH{
     int SelfAttention_noraml=1;
     bool NO_loss = false;
     bool check_tensor_norm = false;
-    bool isParamResident = false;
+    
     int dict_latent_dim = -1;
     int graph_dump = 0; //  10 levels of dumps, 0-9. 0 is a full dump,The lower the number the more dump.
     int train_hyperparams = 0;
@@ -228,6 +228,8 @@ struct DEUG_SWITCH{
     int back_graph_version = 0;
     int T_cuda_ver = 0;
     int T_cpu = 0;
+
+    int cmd_p1=0,cmd_p2=0,cmd_p3=0;     //some commandline parameter for debug
     
     void Dump(int typ);
 };
@@ -237,10 +239,12 @@ extern DEUG_SWITCH DEBUG;
 struct SKDU_params{
     enum STRATEGY  {
         MEM_PRE_ALLOC,
-        MEM_ONLINE,
+        MEM_SWAP,
+        MEM_SWAP_GUOKE,
     };
     STRATEGY strategy = MEM_PRE_ALLOC;
     
+    bool isParamResident = true;
     bool isUpdateParamV0() const;
     void Dump(int typ)  const;
 };

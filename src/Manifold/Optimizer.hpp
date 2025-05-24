@@ -185,12 +185,8 @@ typedef shared_ptr<Optimizer> hOptimizer;
 
 class OPT_Adam : public Optimizer  {    
 protected:    
-    ADAM_params_ *adam=nullptr;      //may be modified
-    // float decay = 0.0f; // weight decay for AdamW, use 0.0f to disable
+    ADAM_params_ *adam=nullptr;      //may be modified    
     float p_decay = 0;
-    // int   decay_min_ndim = 2; // minimum number of tensor dimension to apply weight decay
-    // float alpha = 0.001f; // learning rate
-    // float beta1 = 0.9f,beta2 = 0.999f;
     float beta1h,beta2h;
 
     void Prepare(size_t nx,int flag=0x0)   override;

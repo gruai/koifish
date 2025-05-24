@@ -81,7 +81,7 @@ int FFN::CPU_v0(void *ctx,int layer,int flag)	{
 				hb[i] = silu(hb[i]) * hb2[i];
 			}
 		}					
-		nHot = hPicker->Update(layer,hb);		
+		nHot = hPicker==nullptr?0:hPicker->Update(layer,hb);		
 		// ffn->OnData(GT({dim},xb,typNUMBER::F32),GT({hidden_dim},hb,typNUMBER::F32),hot);
 		// matmul(xb2, hb, (char*)w->w2 + moe_experts[e] * esize, NULL, hidden_dim, dim, dotprod);
 		down.Forw(xb2,hb,0x0);		

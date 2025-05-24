@@ -67,7 +67,9 @@ static void CheckCudaErrorAux (const char *file, unsigned line, const char *stat
 }
 
 inline void SYNC_DEVICE(int flag)   {
+#ifdef __USE_CUDA__
     cudaCheck(cudaDeviceSynchronize());
+#endif
 } 
 
 // like cudaFree, but checks for errors _and_ resets the pointer.

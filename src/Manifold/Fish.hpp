@@ -27,6 +27,7 @@
 #include "../Device/EDevice.hpp"
 #include "GoPT.hpp"
 #include "../Utils/GST_util.hpp"
+#include "../Utils/GST_rander.hpp"
 #include "../Fuzi/Distillation.hpp"
 
 using namespace std;
@@ -162,15 +163,15 @@ protected:
     hGOPT gopt = nullptr;    
 
     // ggml_gallocr_t alloc;
-    hTGraph hForwTG=nullptr,hBackTG=nullptr;                            // compuation graph
-    int graph_order=-1,graph_update=-1;
-    struct ggml_cgraph * gb_tmp = NULL;
-    struct random_normal_distribution *rnd = nullptr;   
-    
+    hTGraph hForwTG=nullptr,hBackTG=nullptr;                            
+    int graph_order=-1,graph_update=-1; 
     std::vector<hGensor > checkpoints;
     bool measure_only=false;  
     void *ctx_build = nullptr;    //user context of build graph
+
 #ifdef __USE_GGML__
+    struct ggml_cgraph * gb_tmp = NULL;
+    struct random_normal_distribution *rnd = nullptr;     
     struct ggml_cplan gf_plan,gb_plan;    
     struct ggml_context *ctx_work = nullptr;    // training ctx
     virtual bool BuildOperators(void * ctx,ggml_gallocr_t alloc,bool m_only,int flag=0x0)   {  assert(0);   return false; }
@@ -251,7 +252,7 @@ protected:
     virtual bool CALM_Serialize(const std::string&path, bool isSave, int flag=0x0);
     virtual bool YALM_Serialize(const std::string&path, bool isSave, int flag=0x0);
     MODEL_ARCH arch = MODEL_ARCH::_X_;
-    
+    Grusoft::GRander rand_coin;
 public:
     hGensor xn = nullptr,xxn = nullptr;     //only for debug
     struct STAT {			
@@ -306,8 +307,8 @@ public:
     }
     hOptimizer GetOptimizer() {   assert(hOPT!=nullptr);  return hOPT;   }
 
-    virtual int ForwardOnRLS(int iter,int flag)         {   throw "Fish::ForwardOnRLS is ...";           } 
-    virtual int BackwardOnRLS(int iter,int flag)        {   throw "Fish::BackwardOnRLS is ...";           } 
+    virtual int ForwardOnRLS(int iter,int flag);
+    virtual int BackwardOnRLS(int iter,int flag);
     virtual ~Fish() { Clear(); }
     virtual std::string Name()  {   return name.c_str();  }
     virtual size_t MostMemSize(int typ=0x0);
@@ -452,7 +453,8 @@ public:
 
     virtual void Sparsing(int flag=0x0);
     
-    virtual bool OnNextEpoch(int epoch,int flag = 0x0)    {   return true;    }
+    virtual bool BeforeNextStep(int iter,int flag = 0x0);
+    virtual bool AfterNextStep(int iter,int flag = 0x0);
 
     virtual int GenSentence(int flag=0x0)   {   return -1;  }
 

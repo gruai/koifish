@@ -12,9 +12,7 @@
 #include <float.h>
 #include <stdint.h>
 #include <cooperative_groups.h>
-// #include "../../g_stddef.hpp" 
-// #include "cutils.cuh"
-
+#include "cuda_common.h"
 
 // note: we expect loads to be broken into units of up to 16b due to specified alignment
 template <typename T, int N>
@@ -523,3 +521,46 @@ __global__ static void kernel_output(uint64_t, float* xout, float* x, T* w, floa
 	}
 }
 
+#include <curand_kernel.h>
+//	Initialization of the random generator state generally requires more registers and local memory than random number generation. It may be beneficial to separate calls to curand_init() and curand() into separate kernels for maximum performance.
+__global__ inline void CU_initCurand(curandState *state, unsigned long seed, int N) {
+    int id = threadIdx.x + blockIdx.x * blockDim.x;
+    if (id < N) {
+        curand_init(seed, id, 0, &state[id]);
+    }
+}
+
+template<typename typ>
+__global__ void CU_normal_generate(curandState *state, typ *results, int N, float devia) {
+    int id = threadIdx.x + blockIdx.x * blockDim.x;
+    if (id < N) {
+		//	Normally distributed float with mean 0.0f and standard deviation 1.0f
+        float rand_val = curand_normal(&state[id])*devia; 
+        results[id] = (typ)rand_val; 
+    }
+}
+//	results[id] = __float2bfloat16(rand_val); // convert to bf16
+template<typename typ>
+void CU_normal(int N,typ* out, float devia,unsigned long seed=42,bool isToHost=false){
+    typ *d_results;
+    curandState *d_states;
+	if(isToHost){
+    	cudaMalloc(&d_results, N * sizeof(typ));
+	}	else{
+		d_results = out;
+	}
+    cudaMalloc(&d_states, N * sizeof(curandState));
+
+    CU_initCurand<<<(N + 255) / 256, 256>>>(d_states, seed, N);
+    CU_normal_generate<typ><<<(N + 255) / 256, 256>>>(d_states, d_results, N, devia);
+	cudaCheck(cudaDeviceSynchronize());
+    // Copy back results if needed
+    // __nv_bfloat16 *h_results = new __nv_bfloat16[N];
+	if(isToHost){
+		cudaMemcpy(out, d_results, N * sizeof(typ), cudaMemcpyDeviceToHost);
+		cudaFree(d_results);
+	}
+
+    cudaFree(d_states);
+    return;
+}

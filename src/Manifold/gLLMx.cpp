@@ -39,18 +39,20 @@ string Guppy::__repr__( string& suffix,string& prefix,int flag) {
     return buf;
 }
 
-bool Guppy::OnNextEpoch(int epoch,int flag)    {   
+// static uint64_t rng_seed = 42;
+
+bool Guppy::BeforeNextStep(int iter,int flag)    {   
     int nLayer = config.nLayer(),l;
     for(l=0;l<nLayer;l++){
-        FFN *ffn = GetNeuron<FFN>("FFN",l);    
-        ffn->UpdateSamps(epoch*nLayer+l);
+        FFN *ffn = GetNeuron<FFN>("FFN",l);            
+        ffn->UpdateSamps(iter*nLayer+l);
     }
     return true;    
 }
 
 string Guppy::DebugInfo(int type,int flag)  {
     char buf[5012]="\0";
-    sprintf(buf+strlen(buf),"|gw|=(%.2f,%.2f)",hEmbed->w->nrm,hEmbed->wInv->nrm); 
+    sprintf(buf+strlen(buf),"|gw|=(%.2f,%.2f)",hEmbed->w->gnorm,hEmbed->wInv->gnorm); 
     return buf;
 }
 

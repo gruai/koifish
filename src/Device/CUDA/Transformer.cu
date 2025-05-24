@@ -62,8 +62,7 @@ float RAW_backward(Fish *fish,const int* iX, int grad_accum_steps,bool isOnlyEva
         SelfAttention *QKV = fish->GetNeuron<SelfAttention>("SelfAttention",l);
         ffn = fish->GetNeuron<FFN>("FFN",l);        //preFFN = l==0 ? nullptr : fish->GetNeuron<FFN>("FFN",l-1);         
         // GeNeuron *last = l == 0 ? embed : (GeNeuron *)(fish->GetNeuron<FFN>("FFN",l-1));    //residual = l == 0 ? ToX(embed->out) : ToX(preFFN->out);  
-        // ffn->delta = lastDelta;     ffn->tmpDelta = lastDelta;        
-        // QKV->deltaCat=ffn->delta;   
+        // ffn->delta = lastDelta;     ffn->tmpDelta = lastDelta;   
         // LayerNormal *hNorm = l+1 != L ? &(fish->GetNeuron<SelfAttention>("SelfAttention",l+1)->norm) : lnf;
         ffn->FUSE_cuda(nullptr, 0x0);   
         QKV->FUSE_cuda(nullptr,0x0);   //QKV->norm.out,last->out
@@ -132,7 +131,7 @@ void RAW_forward(Fish *fish,int flag) {
         assert(0);//cls->preLogits = lnf->out*embed->w;   //matmul_forward_cublaslt(ToX(cls->preLogits), ToX(lnf->out), ToX(embed->w), NULL, B, T, C, Vp, main_stream);
     PrintTensor<floatX>("output",ToX(cls->preLogits),true,B,T,C);
     // ffn->norm.out->PrintX<floatX>("inp1",0,-1); 
-    cudaCheck(cudaDeviceSynchronize());
+
 }*/
 
 void LAMA3_forward(Fish *fish,int flag)    {

@@ -1,9 +1,63 @@
+/**
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT
+ *  
+ *  \brief Utility functions
+ *  \author Yingshi Chen
+ */
+
 #include <filesystem> // C++17
+#include "../g_float.hpp"
 #include "GST_util.hpp"
+#include "GST_log.hpp"
 
 int GST_util::dump=10;
-double GST_util::tX=0.0,GST_util::tX1=0.0;
+
 int GST_util::verify=0;
+
+void _TIME_INFO(const string&info,double fmillis,int flag) {
+    _INFO("%s",info.c_str());
+    if (fmillis < 1000.0f) {
+        _INFO("%.1fms", (float) fmillis);
+        return;
+    }
+    if (fmillis < 60*1000.0f) { //60sec
+        _INFO("%.2f", fmillis/1000);
+        return;
+    }
+    const int64_t one_sec = 1000, one_min = one_sec*60, one_hour = one_min*60, one_day = one_hour*24;
+
+    int64_t millis  = (int64_t) fmillis;
+    int64_t days    = millis/one_day;
+    int64_t hours   = (millis - days*one_day)/one_hour;
+    int64_t minutes = (millis - days*one_day - hours*one_hour)/one_min;
+    int64_t seconds = (millis - days*one_day - hours*one_hour - minutes*one_min)/one_sec;
+
+    // to print int64_t either cast to (long long int) or use macro PRId64 from <inttypes.h>
+    if (days > 0) {
+        _INFO("%lldd ", (long long int) days);
+    }
+    if(hours==0 && minutes==0){
+        _INFO("%02ld", seconds);
+    }else
+        _INFO("%02lld:%02lld:%02lld", (long long int) hours, (long long int) minutes, (long long int) seconds);
+}   
+
+double SUM::tX=0.0,SUM::tX1=0.0,SUM::tRemater=0.0;
+double SUM::tQKV=0.0,SUM::tFFN=0.0;
+void SUM::Reset(string typ,int flag) {
+    if(typ=="time"){
+        tX=0.0,     tX1=0.0,    tRemater=0.0;
+        tQKV=0.0;   tFFN=0.0;
+    }
+
+}
+void SUM::TimeInfo(int flag) {
+    // _TIME_INFO(" R=",SUM::tRemater);
+	_TIME_INFO(" QKV=",tQKV);
+	_TIME_INFO(" FFN=",tFFN);
+
+}
 
 #ifdef _GST_MATLAB_
 #pragma message("\t\tMATLAB:	R2012b \r\n")

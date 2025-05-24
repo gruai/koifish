@@ -95,10 +95,13 @@ enum GD_METHOD {
     SGD_v,
     SGD_blk_v,
     SGD_HYBRID,   
+    LION,
 
     ADAMw_cuda,
 };
- 
+static string GD_NAME[]={
+    "ADAMw","SGD","SGD_v","SGD_blk_v","SGD_HYBRID","LION"   
+}; 
 
 void _T_repr_(hGensor t,const char*tab,char *buf,int typ=0x0);
 void _T_repr_(hGensor t,const char*tab,char *buf,const GENSOR_INFO&info);
@@ -231,7 +234,6 @@ void _WANDB_log(double a);
 int Gensor_loab(struct ggml_context * ctx0,hGensor w,int nHeavy,hGensor ga,hGensor gb,int flag=0x0);
 int Gensor_SVD(struct ggml_context * ctx0,hGensor w,int nHeavy,hGensor U,hGensor D,hGensor V,int flag=0x0);
 
-void _TIME_INFO(const string&info,double fmillis,int flag=0x0);
 float LOSS_cross_entropy_1(int n,const float*preP,int target,int&isMatch,int flag=0x0);
 hGensor  ggml_cross_entropy_loss_1(struct ggml_context * ctx,hGensor  a, hGensor  b);
 int CHECK_SAME_TENSORS(const string& desc,const std::vector<hGensor>&arrA,const std::vector<hGensor>&arrB,int flag=0x0);
@@ -243,14 +245,6 @@ inline hGensor To4D(struct ggml_context * ctx_build,hGensor cur,int64_t n1,int64
     return cur;
 }*/
 
-
-struct random_normal_distribution {
-    std::mt19937 gen;
-    std::normal_distribution<float> rd;
-    float min;
-    float max;
-};
-struct random_normal_distribution * init_random_normal_distribution(    int seed, float mean, float std, float min, float max);
 #ifdef __USE_GGML__
     ggml_cgraph * GG_dup_graph(ggml_context * ctx, ggml_cgraph *src);
     hGensor GG_SCAL(struct ggml_context * ctx,struct ggml_tensor  * a,float s,int flag=0x0);

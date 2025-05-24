@@ -738,7 +738,7 @@ bool TGraph::TopoOrder(int flag)    {
 
     hFish->gensors.Clear();     
     topo_nodes.clear();
-    int pos=-1,nDup=0,i,no,nNode=0,nLeaf=0;
+    int pos=-1,nDup=0,i,no=0,nNode=0,nLeaf=0;
 #ifdef _TENSOR_G_
     nNode = gset.size();
 #else
@@ -766,15 +766,9 @@ bool TGraph::TopoOrder(int flag)    {
             int xxx = 0;
         }
         auto info = hFish->GetGensorInfo(cur);  // gimap[cur];
-#ifndef _TENSOR_G_
-        for (int i=0,no=0; i < src.size(); ++i) {   //GGML_MAX_SRC
-            const int k =(order == LEFT_TO_RIGHT) ? i :(order == RIGHT_TO_LEFT) ? (src.size()-1-i) : i;
-            if (!cur->src[k]) continue;
-            son = cur->src[k];
-#else
+
         for(auto son_ : cur->src)    {
             son = son_->_t;
-#endif
             if(strcmp(son->name,"loss'")==0){           // only for debug
                 int xxx = 0;
             }
@@ -925,14 +919,14 @@ int Fish::BuildComputeGraph(int order,void * ctx,int flag){
     assert(hForwTG->isValid());
     hForwTG->TopoOrder();
     hForwTG->__repr__(out_node);  
-
-    if(rnd==nullptr){   // InitModel
-        rnd = init_random_normal_distribution(config.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);        
-    }   
+   
     size_t sz2 = hEDS->AfterBuild(hForwTG,ctx_build);
     if(!isLocalInfer){       
         hBackTG = std::make_shared<TGraph>(this,hForwTG->name+".Backward",ctx_build,true);        hBackTG->isBackward = true; 
 #ifdef __USE_GGML__     
+        if(rnd==nullptr){   // InitModel
+            rnd = init_random_normal_distribution(config.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);        
+        }        
         assert(ctx==ctx_build);
         struct ggml_cgraph *gf = hForwTG->raw(), *gb = nullptr;
         if(order>=0){   //order<0: we have build it in other way
@@ -1049,10 +1043,10 @@ bool TGraph::isValid( ) {
     }
     assert(nInput && "No input nodes!");
     if(hFish->isTrain()){
-        assert(any_params && "no trainable parameters found, did you forget to call ggml_set_param?");
+        assert(any_params && "no trainable parameters found, did you forget to set F_PARAM?");
 #ifdef GG_V12
         if(!any_loss){
-            _INFO("Invalid TGraph,no training loss found, did you forget to call ggml_set_loss?\n\n");
+            _INFO("Invalid TGraph,no training loss node found, did you forget to set F_LOSS?\n\n");
         }
 #endif        
     }
@@ -1521,16 +1515,16 @@ bool GTensor::AllocBuffer(Fish *hFish,int flag){
     int mostC = C;  //config.nEmbed(-1);      
     SHAPE sp={B,T,C},sp4={B,T,max(nFF,3*C)},sp0={dB, (int)nTmp},spMost={B,T,mostC};
     GTensor::bt4c = std::make_shared<huTensor>(hFish,"scratch_4c",sp4,GTensor::tpFloatX,true); 
-    if(hFish->config.common.remater_ffn){
-        GTensor::tmpFF1 = std::make_shared<huTensor>(hFish,"tmpFF1",sp4,GTensor::tpFloatX,true); 
-    }
+    GTensor::tmpFF1 = std::make_shared<huTensor>(hFish,"tmpFF1",sp4,GTensor::tpFloatX,true); 
+
     if(hFish->config.ModelArch()==NLP_GUPPY){
         GTensor::tmpW = std::make_shared<huTensor>(hFish,"tmpFF1",SHAPE({nEmbed,nFF}),GTensor::tpFloatX,true); 
         GTensor::tmpGW = std::make_shared<huTensor>(hFish,"tmpFF1",SHAPE({nEmbed,nFF}),GTensor::tpFloatX,true); 
     }
     GTensor::delta = std::make_shared<huTensor>(hFish,"delta",spMost,GTensor::tpFloatX,true); 
+    GTensor::tmpDelta = std::make_shared<huTensor>(hFish,"delta",spMost,GTensor::tpFloatX,true); 
     GTensor::outL = std::make_shared<huTensor>(hFish,"outL",spMost,GTensor::tpFloatX,true); 
-    GTensor::residual = std::make_shared<huTensor>(hFish,"residual",spMost,GTensor::tpFloatX,true); 
+    // GTensor::residual = std::make_shared<huTensor>(hFish,"residual",spMost,GTensor::tpFloatX,true); 
     //  may reduce memory by sp0=sp0/VP
     GTensor::scratch = std::make_shared<huTensor>(hFish,"scratch/output",sp0,GTensor::tpFloatX,true);
 
@@ -1557,13 +1551,11 @@ int Fish::jToGraph( void *ctx_,bool isBuild,int flag)   {
     RLS_BP* hRLS = hEDS->GetScheduler<RLS_BP>();   
 
     FFN *last_ffn=GetNeuron<FFN>("FFN",L-1); 
-    hGensor lastDelta = last_ffn->out;    
+    hGensor tmpDelta = GTensor::tmpDelta;       //last_ffn->out;    
     for (int l = L-1; l >= 0; l--) {
         SelfAttention *QKV = GetNeuron<SelfAttention>("SelfAttention",l);
         FFN *ffn = GetNeuron<FFN>("FFN",l);        
-        ffn->delta = lastDelta;     
-        ffn->tmpDelta = lastDelta;        
-        QKV->deltaCat = ffn->delta;   //should be same ???        
+        ffn->delta = nullptr;   //tmpDelta; 
     }
 
     hCLS = GetNeuron<OutCLS>("OutCLS",0);       assert(hCLS!=nullptr);

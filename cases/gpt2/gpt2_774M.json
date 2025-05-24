@@ -1,13 +1,10 @@
 {        
     "version":"0.1.0",
-    "model":{     
-        "arch":"GPT2", 
+    "model":{    
+        "arch":"GPT2",  
         "parameter":{
             "Layer": 36,  
-            "transformer":{
-                "Ctx":1024,  "Embed":    1280,    "Head": 20,   "Ffn":1280,
-                "on":[""]
-            }
+            "transformer":{                "Ctx":1024,  "Embed":    1280,    "Head": 20,   "Ffn":5120            }
         },  
         "inp_embd": {"Embedding+":[]},    
         "Layer":  {      
@@ -16,29 +13,34 @@
             "# gattn":{"GAU":[]}
                                   
         },
-        "last_normal":{"Normal":[]},
+        "output_norm":{"Normal":[]},
         "out": {"CLASIFY":[]}
     },
 
+    
     "datasets":{
         "train":{
-            "glob":"./Datasets/edu_fineweb1B/*train*.bin","most":10, "name":"edu_fineweb1B"
+            "glob":"./Datasets/edu_fineweb1B/*train*.bin","most":10,"name":"edu_fineweb1B"
         },
-        "eval_1": {"glob":"./Datasets/edu_fineweb1B/*val*.bin","name":"edu_fineweb1B","eval-every":100        },
-        "# eval_2":{"glob":"./Datasets/hellaswag_val.bin", "type":"hellaswag","eval-every":500 }        
+        "#eval_1": {"glob":"./Datasets/edu_fineweb1B/*val*.bin","name":"edu_fineweb1B","most":10,"eval-every":100        },
+        "# eval_2":{"glob":"./Datasets/hellaswag_val.bin", "type":"hellaswag","eval-every":100     }
     },
     
     "train": {
         "save-every":500,
         "dump-every":10,
         "gpt-every":-10,
-        "epoch":2,
-        "batch":32,
+
+
+        "epoch":1,
+        "batch":120,
         "learning-rate":0.0006,  
 
+        "decay":0.1,
+
         "optimizatioin":{
-            "#method":"adamw sgdv hsgd",
-            "method":"sgdv",
+            "#method":"adamw sgdv hsgd lion",
+            "method":"adamw",
             "sign":0,
             "grad_accumulation":1,
             "lars_ratio":0,      "ZMUV_ratio":0.00    
@@ -54,4 +56,5 @@
 
     "threads":20,            
     "seed":42
+
 }

@@ -26,6 +26,7 @@ using namespace std;
 
 #include "../ggex/GTensor.hpp"
 #include "../TokenSet/DataLoader.hpp"
+#include "../Utils/GST_util.hpp"
 
 class Fish;
 struct NeLayer;
@@ -51,6 +52,7 @@ class GeNeuron  {
     GeNeuron &operator=(const GeNeuron &) = default;
 
 protected: 
+    STATISTIC stat;
     int block_size=256, grid_size=0;      //for cuda kernel function    
     int B,T,C;  //n_batch,n_ctx,n_embd,
     int n_embd_head,n_head;
@@ -66,6 +68,8 @@ protected:
     // vector<hGTensor> vRemater;      //support rematerization
     string _repr_1( string& suffix,string& prefix,string info,int flag=0x0);
     void *host_inp = nullptr;       // backup of input in device memory
+    // 天地本逆旅, 你我皆过客(Guoke)
+    GeNeuron *hGuoke = nullptr; 
     // std::vector<shared_ptr<GeNeuron>> brothers;
 public:
     enum BIT_FLAG {
@@ -80,17 +84,19 @@ public:
     hGensor w = nullptr, b = nullptr, out = nullptr;
     
     hGensor inp = nullptr;          //  may change! maybe nullptr!
-    hGensor delta = nullptr,tmpDelta = nullptr;        //  error tensor for each layer(may share memory!)
+    hGensor delta = nullptr;        //  backward-error tensor at each layer(may share memory!)
     bool isBias = true, isResidual = true, isSparse=false, isTransW = false;
+    bool isShortcut = false;
     
     NeLayer *hLay = nullptr;
     string sT = "";     //  short-cut infomation
     std::string name = "N",type_info="";
     GeNeuron() {}    
     GeNeuron(const std::string &key_,JSON::const_iterator jit, Fish *hG_, int flag);
-    virtual ~GeNeuron() {   FREE_a( host_inp );   }
+    virtual ~GeNeuron();
     //  Gensors with physical memory
     virtual std::vector<hGensor> PGensors(bool isNoRef=true,int flag=0x0);
+    virtual int SetGuoke(GeNeuron *hGuoke_,int flag=0x0);
 
     virtual bool isValid();
     virtual bool isOnlyInfer();
@@ -224,12 +230,16 @@ struct SLP : public SparseNeuron    {
     // hGTensor operator<<(hGTensor a);
     /*  Forward or remate in Back
         1.  rhs = SLP(lhs)  or rhs = W*lhs+b
-        2.  gelu = GELU(rhs)
+        2.  rhs = GELU(W*lhs+b);    to_gelu=W*lhs+b
     */
-    int Forw(hGTensor rhs,hGTensor lhs,hGTensor gelu=nullptr,int flag=0x0);
+    int Forw(hGTensor rhs,hGTensor lhs,hGTensor to_gelu=nullptr,int flag=0x0);
     // CPU version
     int Forw(float *rhs,float *lhs,int flag=0x0);
-    int Back(hGTensor delta,hGTensor inp,hGTensor deltaIn,hGTensor gelu=nullptr,float* dbias_buffer=nullptr,int flag=0x0);
+
+    /*  Backward
+        inp & to_gelu is defined in forward: inp=GELU(to_gelu)
+    */
+    int Back(hGTensor delta,hGTensor inp,hGTensor deltaIn,hGTensor to_gelu=nullptr,int flag=0x0);
     int FUSE_cuda_block(hGTensor rhs,hGTensor lhs,hGTensor gelu=nullptr,bool isForw=true,int flag=0x0);
 };
 
@@ -316,10 +326,9 @@ public:
     hGensor bqkv=nullptr;       //  biases for qkv (qwen)	
     hGensor KQ_pos=nullptr,KQ_mask=nullptr;
     LayerNormal norm,*fuseNorm=nullptr;
-#ifdef _TENSOR_G_
-    hGensor attn=nullptr,transition=nullptr;
-    hGensor deltaCat=nullptr;       //floatX* dl_btc=nullptr;
-#endif
+
+    hGensor attn=nullptr,transition=nullptr;    
+
     SLP Q, K, V;
     ROPE rope;
     MOE moe;

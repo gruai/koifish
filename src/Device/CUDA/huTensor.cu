@@ -1,9 +1,11 @@
 #include <cuda_fp16.h>
 #include <cuda_fp8.h>
-#include "./llm_c/rand.h"
+
 #include "./llm_c/global_norm.cuh"
+#include "./Operator.cuh"
 #include "../../ggex/GTensor.hpp"
 #include "../../Utils/GST_log.hpp" 
+#include "../../Utils/GST_rander.hpp"
 #include "../../Manifold/Fish.hpp"
 // const int block_512 = 512;
 huTensor::huTensor(Fish *fish,const string&name_,const SHAPE shape,typNUMBER tpD_,bool isAlloc,int flag) : GTensor(fish,shape,tpD_,false,flag){
@@ -31,44 +33,50 @@ size_t huTensor::mostMemory(int typ)  const {
         return 0x0;
     }
     size_t most = nByte();
-    if(isParam())   
-        most += nByte();
+    if(isParam())   {
+        most += nByte();                    // grad
+        most += sizeof(float)*size()*2;     // gm,gv is float array
+    }
     return most;
 }
 /*
     cudaHostAlloc is a function used to allocate pinned (page-locked) host memory, which can improve data transfer performance between the host (CPU) and device (GPU). Pinned memory allows for faster transfers because it bypasses the operating system's virtual memory system. 
 */
-size_t huTensor::Alloc_1(void **dst,bool isZero,int tp){
+size_t huTensor::Alloc_1(void **dst,bool isZero,size_t sz0,int flag){
     assert(*dst==nullptr);
 
     bool hostAlloc = BIT_TEST(flags,F_HOSTALLOC);
     cudaError_t error = cudaSuccess;
-    error = hostAlloc ? cudaHostAlloc(dst, szData,0) : cudaMalloc(dst, szData);    //8420
+    size_t szAlloc = sz0==0 ? szData : sz0;     assert(szAlloc>0);
+    error = hostAlloc ? cudaHostAlloc(dst, szAlloc,0) : cudaMalloc(dst, szAlloc);    //8420
     // strange behavior of callo
-    //data = calloc(szData,1);  sAlloc = "Alloc_c/cu";   //8386
+    //data = calloc(szAlloc,1);  sAlloc = "Alloc_c/cu";   //8386
     if (error != cudaSuccess) {
         printf("[CUDA Alloc] failed @%s, ERR=%s!\n", name, cudaGetErrorString(error));
         exit(EXIT_FAILURE);
     }    
     if(isZero)
-        cudaCheck(cudaMemset(*dst, 0, szData));
-    szMaloc += szData;
-    return szData;
+        cudaCheck(cudaMemset(*dst, 0, szAlloc));
+    szMaloc += szAlloc;
+    return szAlloc;
 }
 size_t huTensor::Free_1(void **obj,const string&info){
+    
     assert(*obj!=nullptr);
     // _INFO("\t%s%s freed@%p(%.3gM)!",name,info.c_str(),*obj,(szData)/1.0e6);   
     if(BIT_TEST(flags,F_HOSTALLOC) )
         cudaFreeHost(*obj); 
-    else 
-        cudaFreeCheck(obj);       
+    else {
+        cudaFreeCheck(obj);   
+    }
+        
     *obj=nullptr;   szMaloc -= szData;  
     
     return szMaloc;
 }
 
 bool huTensor::Alloc(int iter,int flagInit){
-    if(strcmp(name,"model.inp_embd.weight")==0){
+    if(strcmp(name,"model.out.weight")==0 || strcmp(name,"model.inp_embd.weight")==0){     //  model.inp_embd.weight       model.out.weight
         int debug = 0x0;
     }
     
@@ -80,7 +88,7 @@ bool huTensor::Alloc(int iter,int flagInit){
             return true;
     }
     if(hRef!=nullptr){
-        ShareWeight(hRef);
+        ShareWeight(hRef);      //  grad => src->grad;
         if(DUMP(0))
             _INFO("\t%s =====> %s\n",name,hRef->name );
         return true;
@@ -93,23 +101,40 @@ bool huTensor::Alloc(int iter,int flagInit){
         host_data = new char[szData];
     }
     bool allocData = data == nullptr;
-    if(allocData)   
+    if(allocData)   {
         Alloc_1(&data,true);    
+        // _INFO("\t%s (+%.3gM)\n",name,(szMaloc-sz0)/1.0e6);
+    }
     if(isParam() && isTrain){        
         if(allocData)   {
             InitParam(flagInit);  
-            if(DEBUG.isParamResident)  
+            if(1)  //DEBUG.isParamResident
                 BIT_SET(flags,GTensor::F_RESIDENT); 
         }
-        Alloc_1(&grad,false);          // sgd_kernel would zero grad!
+        size_t szMV = sizeof(float)*size();
+        if(grad==nullptr){
+            Alloc_1(&grad,true,szData+szMV*2);          // sgd_kernel would zero grad!
+            string method = hFish->config.Get({"train","optimizatioin","method"},string("adamw"),false);
+            if(method=="adamw")            { 
+                gm = grad+szData,      gv = gm+szMV;    
+            } else if(method=="lion")            { 
+                gm = grad+szData,      gv = nullptr;    
+            } else{
+                gm = nullptr,      gv = grad+szMV;
+            }
+        }            
     }else{
         
     }    
     assert(szMaloc-sz0<=mostMemory());
-    if(iter<=1 && szMaloc-sz0>=100*1.0e6){
+    if(iter<=1 && szMaloc-sz0>=100*1.0e6){    
+        string sA = hostAlloc?"HostAlloc":"cudaMalloc";
+        if(hFish->isRemater()){
+            sA = "Remater";
+        }
         if(ne[0]==151936 || ne[1]==151936)
         {    int isDebug = 0;   }
-        printf("\t %s=%gM@%s type=%s shape=[%ld,%ld,%ld,%ld]%s sum=%gG\n",hostAlloc?"HostAlloc":"cudaMalloc",
+        printf("\t %s=%gM@%s type=%s shape=[%ld,%ld,%ld,%ld]%s sum=%gG\n",sA.c_str(),
             (szMaloc-sz0)*1.0f/1.0e6,name,cNameOf(type),ne[0],ne[1],ne[2],ne[3],grad!=nullptr?"x2":"",szMaloc*1.0/1.0e9);
     }
     
@@ -119,16 +144,19 @@ bool huTensor::Free(bool isPassResident) {
 try{    
     if(isRefer())
         return true;
-    // size_t sz0=szMaloc;
+       
+    size_t sz0=szMaloc;
     if(data!=nullptr)           {    
         if(isPassResident && BIT_TEST(flags,GTensor::F_RESIDENT) ){
-            int bug = 0;
-        }else
+            int pass = 0;
+        }else{
             Free_1(&data);  
+            // _INFO("\t%s (-%.3gM)\n",name,(sz0-szMaloc)/1.0e6);
+        }
     }else{
         assert(grad==nullptr);      return true;
     }
-    if(grad!=nullptr)           {  
+    if(!BIT_TEST(flags,GTensor::F_RESIDENT) && grad!=nullptr)           {  
         Free_1(&grad,"_grad");
     }
     // _INFO("\t%s freed(%.3gM)!",name,(sz0-szMaloc)/1.0e6);
@@ -141,8 +169,9 @@ try{
 bool huTensor::InitParam(int tpX){
     size_t nElem0 = size(),i;
     size_t nInit = size(1),nB = BPE(type);
-    
+    bool isTmp = true;
     if(tpInit>0 && tpInit!=SERIALIZE){
+        // _INFO("[InitParam]\t%ld-%ld@%s\n",size(),nInit,name);
         mt19937_state init_rng;            
         floatX* tmp = new floatX[nInit];
         switch(tpInit){
@@ -150,15 +179,23 @@ bool huTensor::InitParam(int tpX){
             for(i=0;i<nInit;i++)        tmp[i]=1; 
             break;
         default:
-            // manual_seed(&init_rng, 42);     //cys   only for debug
-            float *tmp32 = new float[nInit];
-            normal_(tmp32, nInit, 0.0f, 0.02f*residual_scale, &init_rng);
-            for(i=0;i<nInit;i++)        tmp[i]=tmp32[i];      //ony for debug    
-            delete[] tmp32;        
+#ifdef NDEBUG
+            {   CU_normal<floatX>(nInit,(floatX*)data,0.02f*residual_scale);     isTmp = false;  }
+#else
+                // manual_seed(&init_rng, 42);     //cys   only for debug
+                float *tmp32 = new float[nInit];
+                assert(nInit<INT_MAX);
+                normal_(tmp32, nInit, 0.0f, 0.02f*residual_scale, &init_rng);
+                for(i=0;i<nInit;i++)        tmp[i]=tmp32[i];      //ony for debug    
+                delete[] tmp32;   
+#endif     
             break;
         }
-        cudaCheck(cudaMemcpy(data, tmp, nInit*nB, cudaMemcpyHostToDevice));
-        delete[] tmp;
+        if(isTmp){
+            cudaCheck(cudaMemcpy(data, tmp, nInit*nB, cudaMemcpyHostToDevice));  
+        }  
+        delete[] tmp;          
+        // Print(name,0,-1);
     } 
          
     return true;
@@ -299,9 +336,11 @@ bool huTensor::SerialData(const string&info,void *host,bool isToHost,int flag) {
 try{
     assert(host!=nullptr);
     if(isToHost){
-        cudaCheck(cudaMemcpy(host,data, szData, cudaMemcpyDeviceToHost));
+        //cudaCheck(cudaMemcpyAsync(host,data, szData, cudaMemcpyDeviceToHost));
+         cudaCheck(cudaMemcpy(host,data, szData, cudaMemcpyDeviceToHost));
     }else{
-        cudaCheck(cudaMemcpy(data, host,szData, cudaMemcpyHostToDevice));        
+        //cudaCheck(cudaMemcpyAsync(data, host,szData, cudaMemcpyHostToDevice));        
+         cudaCheck(cudaMemcpy(data, host,szData, cudaMemcpyHostToDevice));   
     }
     if(flag<0){    
         char buf[1024];
@@ -388,7 +427,7 @@ double tNormOf(const std::vector<hGTensor>& tensors,int flag){
         if(DEBUG.check_tensor_norm){
             cudaCheck(cudaMemcpy(&a, grad_norm_squared, sizeof(float), cudaMemcpyDeviceToHost));
             assert(a>=a_pre); 
-            tensor->nrm = sqrt(a-a_pre);           a_pre = a;            
+            tensor->gnorm = sqrt(a-a_pre);           a_pre = a;            
         }        
         is_first_pass = false;
         // PrintTensor<floatX>("tNormOf",val,true,nEle,1);
@@ -434,7 +473,7 @@ hGTensor huTensor::GetRow(hGTensor hOut,hGTensor token,hGTensor pos,int flag)   
     return hOut;    
 }
 
-void huTensor::Print(const string& title, int x, int flag)   const {
+void huTensor::Print(const string& title, int x, int flag,size_t nEle)   const {
     bool isDevice = true;
     switch(type){
     case typNUMBER::F8E5M2:
@@ -442,7 +481,7 @@ void huTensor::Print(const string& title, int x, int flag)   const {
        PrintTensor<f8e5m2_t>(title.c_str(),(f8e5m2_t *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
        break;
     default:
-       GTensor::Print(title,x,flag);
+       GTensor::Print(title,x,flag,nEle);
        break;
     }    
 }

@@ -120,7 +120,7 @@ public:
     static const int N_DIMS=4;
 
     static size_t szMaloc;
-    static hGTensor bt4c,delta,outL,scratch,tmpFF1,tmpW,tmpGW,residual;
+    static hGTensor bt4c,delta,tmpDelta,outL,scratch,tmpFF1,tmpW,tmpGW,residual;
     static bool AllocBuffer(Fish *hFish,int flag=0x0);
     static void* buff;      //  temporary shared memory 
     float residual_scale=1.0,wnorm=0,gnorm=0;   // some tricks
@@ -157,7 +157,7 @@ public:
     virtual bool Alloc(int tpInit=0,int flag=0x0);
     virtual bool InitParam(int tpInit)                          {     assert(0);    return false;   }
     virtual bool Free(bool isPassResident=false)                {   return true;    }
-    virtual void Print(const string& title, int typ, int flag)  const;
+    virtual void Print(const string& title, int typ, int flag,size_t nEle=0)  const;
     virtual bool Dump(int type,const string&title="",int flag=0x0)  const;
 //operations
     hGTensor operator*(const hGTensor& other) {
@@ -182,7 +182,7 @@ public:
     //stride in bytes:  nb[0]=type_size(type);    nb[i]=nb[i-1]*ne[i-1]
     size_t  nb[N_DIMS]; 
     int32_t flags=0x0,last_stp=-1;
-    double nrm = 0.0;       //length
+    
     bool isParam()  const       {   return BIT_TEST(flags,F_PARAM);  }
     bool isGPU()    const       {   return BIT_TEST(flags,F_GPU);  }
     bool isRefer(int type=0x0) const     {   return hRef!=nullptr;   }
@@ -197,9 +197,10 @@ public:
     virtual void AddSrc(const vector<hGTensor>& ts,int flag=0x0);
     // struct ggml_tensor * view_src=nullptr;
     // size_t               view_offs=0;
-    void * host_data=nullptr;        //somtimes, we need data both in device&host
-    void * data=nullptr;
-    void * grad=nullptr; 
+    void *host_data=nullptr;        //somtimes, we need data both in device&host
+    void *data=nullptr;
+    void *grad=nullptr; 
+    void *gm=nullptr,*gv=nullptr;     //first moment, second moment of grad
     virtual bool SerialGP(void *yD,void *yG,size_t szY,bool isToY,int flag=0x0)   {   assert(0);  return false;   }
     virtual bool SerialData(const string&info,void *host,bool isToHost,int flag=0x0)   {   assert(0);  return false;   }
 
@@ -319,9 +320,9 @@ inline hGTensor operator+=( const hGTensor &a,const hGTensor &b ) 	{
     //         return GTensor::NEW_(gg,flag);
     // };    
     inline void ZERO_(hGensor T)       {  T->Zero();   }
-    inline size_t tELEM(hGensor T)    { return T->size();   }
-    inline size_t tBYTE(hGensor T)    { return T->nByte();  }
-    inline int tDIM(hGensor T)    { return T->dims();  }
+    inline size_t tELEM(hGensor T)    { return T==nullptr?0:T->size();   }
+    inline size_t tBYTE(hGensor T)    { return T==nullptr?0:T->nByte();  }
+    inline int tDIM(hGensor T)    { return T==nullptr?0:T->dims();  }
     inline float tGET(hGensor T,int i)          { return T->Get(i);  }
     inline void tSET(hGensor T,float a)         { T->Set(a);  }
     inline void tFLAG(hGensor T,int64_t flag)   { T->SetFlag(flag);  }
@@ -385,7 +386,7 @@ hGensor tRAND(hGensor  tensor, struct random_normal_distribution * rnd);
 class huTensor : public GTensor   {
 protected:    
     hGTensor _Multiply(const hGTensor& other); 
-    size_t Alloc_1(void **dst,bool isZero,int tp=0x0);
+    size_t Alloc_1(void **dst,bool isZero,size_t sz=0x0,int flag=0x0);
     size_t Free_1(void **obj,const string&info="");
 public:
     huTensor(Fish *hFish,const string&name_,const SHAPE shape,typNUMBER tpD_,bool isAlloc,int flag=0x0);    
@@ -406,14 +407,14 @@ public:
     hGTensor CrossEntropy( const hGTensor b,int flag=0x0 )  override;
     hGTensor GetRow(hGTensor, hGTensor token,hGTensor pos,int flag)   override;
     hGTensor Normal(hGTensor hOut,hGTensor _mean,hGTensor _rstd,hGTensor w,hGTensor b,bool isForward=true,int flag=0x0)   override;
-    void Print(const string& title, int typ, int flag)  const override;
+    void Print(const string& title, int typ, int flag,size_t nEle=0)  const override;
 };
 
 struct GENSOR_INFO{
     string sX;
-    int level=-1,ID=-1,dad,c_id;
+    int level=-1,ID=-1,dad=-1,c_id=-1;
     bool isAdam = true;
-    // first momentfor,second moment,past function values of Optimizer
+    // first moment, second moment,past function values of Optimizer
     // hGensor gm=nullptr,gv=nullptr,gpf=nullptr; // 
     float *gm=nullptr,*gv=nullptr,*gpf=nullptr;
     

@@ -29,7 +29,8 @@ Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params& config,int flag) : _fis
         But may litter slower. For example:   jModel_SGD_v.info
     */
     tpGD = method=="adamw" ? ADAMw : method=="sgdv" ? SGD_v : 
-        method=="sgd" ? SGD :method=="hsgd" ? SGD_HYBRID : ADAMw;
+        method=="sgd" ? SGD : method=="hsgd" ? SGD_HYBRID : 
+        method=="lion" ? LION : ADAMw_cuda;
 
     nGradAccum =  std::max(1, train_params.n_gradient_accumulation);
     isGlobalGrad = nGradAccum>1;        // Nearly same alloc grad or not
@@ -267,7 +268,7 @@ void OPT_Adam::UpdateParams(int nx,CLI_params& config,int flag)  {
         }  
     } 
     assert(i==nParams);
-    if(!isPreGStep)  g_step = sqrt(g_step);
+    // if(!isPreGStep)  g_step = sqrt(g_step);
     tUpdate = GST_ms()-now;
 }
 
@@ -355,8 +356,11 @@ double OPT_Adam::UpdateTensorParam(hGensor hP,floatX *gX,float clip){
     }
 #endif    
 #ifdef __USE_CUDA__
+    // hP->Print(hP->name,0,-1);         hP->Print(hP->name,1,-1);
     UpdateTensorParam_cuda(hP,this,grad_norm,0x0);     
-    if(!isPreGStep) g_step += grad_norm*grad_norm;
+    
+    if(!isPreGStep) 
+        g_step += grad_norm*grad_norm;
     if(isToHost){
         x = T2Float(paramX0);               g0 = x-x00;
         hP->SerialGP(paramX0,gX0,hP->szData,false);
@@ -415,10 +419,6 @@ double OPT_Adam::UpdateTensorParam(hGensor hP,floatX *gX,float clip){
   
     return 0.0;
 }
-
-static string GD_NAME[]={
-    "ADAMw","SGD","SGD_v","SGD_blk_v","SGD_HYBRID",   
-};
 
 void Optimizer::UpdateTrainLoss(int x,float loss,int flag){
     int step = iter;
@@ -489,37 +489,36 @@ Optimizer::RESULT Optimizer::Search(void * ctx, hGensor loss_,hGensor target_,CL
     // g_dump_level = 0;
     int iter0 = 0,t;  //opt->iter;
     for (t = 0; t < train_params.nMostIter; ++t) {
-        _fish->OnNextEpoch(t,0x0);
+        _fish->BeforeNextStep(t,0x0);
         if(t==train_params.nMostIter-1){
             if(train_loader!=nullptr)   {
                 train_loader->isLast = true;        isDumpOnce = true;
             }                
         }
-        iter = iter0 + t + 1;       GST_util::tX1 = 0.0;
+        iter = iter0 + t + 1;       SUM::Reset("time");
         SetPhase(P_TRAIN);
-        if( !BatchGrad(iter,a,0x0))
+        if( !BatchGrad(iter,a,0x0) )
             return CANCEL;  
         // const int64_t t_start_wall = ggml_time_us(),t_start_cpu = ggml_cycles();
         float lr = train_params.LearningRate();
         lr = hLR->LearningRate(iter);     last_lr = lr;
-        if(0){
-            RAW_update(opt_ps,this, grad_norm, 0, 0);       //  0212
-            g_step = grad_norm; //sqrt(grad_norm*grad_norm/nParams);
+
+        SignStochastic(nParams,config);    
+        if(_fish->config.scheduling.isUpdateParamV0()){
+            UpdateParams(nParams,config,0x0); 
         }else{
-            SignStochastic(nParams,config);    
-            if(_fish->config.scheduling.isUpdateParamV0()){
-                UpdateParams(nParams,config,0x0); 
-            }else{
-                for (auto t : opt_ps) {
-                    if(t->isRefer())   continue;
-                    assert(t->last_stp==GetITER());
-                }
-            }                
-        }
- 
+            for (auto t : opt_ps) {
+                if(t->isRefer())   continue;
+                // assert(t->last_stp==GetITER());
+            }
+        }                
+        if(!isPreGStep)  
+            g_step = sqrt(g_step);
+        _fish->AfterNextStep(t,0x0);
+
         UpdateLossCurve(0x0);    
-        // AdamMiniV(clip,nx,config,0x0);   
-        //gradient is useless at this stage
+        // throw "DEBUG exit@";        //only for debug
+
         if (train_params.save_every>0 && t % train_params.save_every == 0) {  
             _fish->SaveTrain("");          
         }
@@ -585,7 +584,7 @@ double Optimizer::GraphCompute(hSampLoader hLoader,hTGraph hTG, int flag){
         UpdateTrainLoss(-1,mean_loss); 
     }          
 
-    // GST_util::tX1 = GST_ms()-now;
+    // SUM::tX1 = GST_ms()-now;
     return 0.0;
 }
 
@@ -717,13 +716,15 @@ float Optimizer::UpdateLossCurve(int flag){
         impr_plot = 0;
     if (std::isnan(loss_before) || std::isnan(loss_after))
         impr_plot = 0;    
-    trainInfos().Add(StepInfos::STEP(loss_after,iter,train_epochs,last_lr,g_step,GST_util::tX1,millis_per_iter));
+    trainInfos().Add(StepInfos::STEP(loss_after,iter,train_epochs,last_lr,g_step,SUM::tX1,millis_per_iter));
     if((iter-1)%_params.dump_every==0 || isDumpOnce){
         isDumpOnce = false;
         _INFO("[epoch_%d]_%-6d loss=%f |g|=%.3g\tlr=%.2e | %s ",train_epochs,iter,
             loss_after,g_step,last_lr,train_loader->IterInfo().c_str() ); //,zmuv_0,zmuv_1    
         if (millis_per_iter > 0)            {
-            _TIME_INFO(" T=",millis_per_iter);  _TIME_INFO("(data=",tData);    _TIME_INFO(" X=",GST_util::tX1);        _TIME_INFO(") eta=",remaining_millis);
+            _TIME_INFO(" T=",millis_per_iter);  _TIME_INFO("(data=",tData);     
+            SUM::TimeInfo();// _TIME_INFO(" R=",SUM::tRemater);
+            _TIME_INFO(" X=",SUM::tX1);        _TIME_INFO(") eta=",remaining_millis);
         }
         size_t tokens_processed = _fish->config.nTokensPerGrad();   //(size_t) * B * T * grad_accum_steps;
         float tokens_per_second = tokens_processed / millis_per_iter * 1000.0f;
@@ -776,7 +777,7 @@ void Optimizer::AfterBuild(int flag){
 
 void Optimizer::BeforeTrain(hGensor tokens_,int flag) {    
     first_iter             = iter;
-
+    
     auto& adam = _fish->config.common.adam; //TrainParams().
     adam.n_parameters = nParams;    
 
@@ -790,11 +791,16 @@ void Optimizer::BeforeTrain(hGensor tokens_,int flag) {
         // ps->offset = offset;
         offset += t->nByte();
     } 
-
-    adam.decay = 0.1;      //very high for GPT2 Model
+    if(tpGD==GD_METHOD::LION){  //  Based on our experience, a suitable learning rate for Lion is typically 3-10x smaller than that for AdamW
+        adam.alpha /= 3;
+        adam.decay *= 3; 
+        adam.beta1 = 0.9;   //  the default values for β1 and β2 are discovered through the program search process and set as 0.9 and 0.99
+        adam.beta2 = 0.99; 
+        _INFO("\tLION alpha=%g decay=%g\n",adam.alpha,adam.decay);
+    }
+    // adam.decay = 0.1;      //very high for GPT2 Model
     InitOnCUDA(1);
-   
-    // assert(nMostParam>=nParams);
+    assert(nMostParam>=nParams);
     assert(_fish->config.common.nMostIter>0);    
 }
 
@@ -955,12 +961,12 @@ OPT_Adam::OPT_Adam(NLP_AutoRegressive *g_,CLI_params& params_,int flag)
     : Optimizer(g_,params_,flag)    {    
     // auto train_params = TrainParams();
     //  0.9f, 0.95f, 1e-8f      decay=0.1
+ 
     adam = &(_fish->config.common.adam); 
     adam->clip_alg = 1;      //clip_alg=0 little better
     _fish->config.Fuse_Normal = 0;          //  
     if(g_->isTrain()){
-        _fish->config.common.remater_ffn = 1;
-        _fish->config.common.remater_qkv = 1;
+
     }else{  // may different
         _fish->config.common.remater_ffn = 1;
         _fish->config.common.remater_qkv = 1;
@@ -970,11 +976,11 @@ OPT_Adam::OPT_Adam(NLP_AutoRegressive *g_,CLI_params& params_,int flag)
 }
 
 void OPT_Adam::Dump(int typ){
-    _INFO("========\n");
+    _INFO("========\n");        fflush(stdout);
     RLS_BP *hRLS = _fish->hEDS->GetScheduler<RLS_BP>();  
     hRLS->Dump(typ);
-
     Optimizer::Dump(typ);
+    
 /*
     printf("+-----------------------+----------------------------------------------------+\n");
     printf("| Parameter             | Value                                              |\n");
@@ -1011,6 +1017,6 @@ void OPT_Adam::Dump(int typ){
     adam->Dump(typ);  
     if(hLR!=nullptr)
         hLR->Dump(typ);
-  
-    
+    _INFO("\tnParams = %ld(%.6gM)\n", nParams,nParams/1.0e6);    
+    fflush(stdout);
 }

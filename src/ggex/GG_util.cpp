@@ -146,46 +146,7 @@ void assert_shape_4d(struct ggml_tensor * tensor, int64_t ne0, int64_t ne1, int6
     assert(tensor->ne[3] == ne3);
 }
 #endif
-struct random_uniform_distribution {
-    std::mt19937 gen;
-    std::uniform_real_distribution<float> rd;
-};
 
-struct random_normal_distribution * init_random_normal_distribution(    int seed, float mean, float std, float min, float max) {
-    struct random_normal_distribution * rnd = (struct random_normal_distribution *) malloc(sizeof(struct random_normal_distribution));
-    rnd->gen = std::mt19937(seed);
-    rnd->rd = std::normal_distribution<float>{mean, std};
-    rnd->min = min;
-    rnd->max = max;
-    return rnd;
-}
-
-struct random_uniform_distribution * init_random_uniform_distribution(int seed, float min, float max) {
-    struct random_uniform_distribution * rnd = (struct random_uniform_distribution *) malloc(sizeof(struct random_uniform_distribution));
-    rnd->gen = std::mt19937(seed);
-    rnd->rd = std::uniform_real_distribution<float>{min, max};
-    return rnd;
-}
-
-void free_random_normal_distribution (struct random_normal_distribution  * rnd) {
-    free(rnd);
-}
-
-void free_random_uniform_distribution(struct random_uniform_distribution * rnd) {
-    free(rnd);
-}
-
-float frand() {
-    return (float)rand()/((float)(RAND_MAX) + 1.0f);
-}
-
-float frand_normal(struct random_normal_distribution * rnd) {
-    return fclamp(rnd->rd(rnd->gen), rnd->min, rnd->max);
-}
-
-float frand_uniform(struct random_uniform_distribution * rnd) {
-    return rnd->rd(rnd->gen);
-}
 #ifdef __USE_GGML__
 struct ggml_tensor * tRAND(struct ggml_tensor * tensor, struct random_normal_distribution * rnd) {
     float scale = 1.0f; // xavier
@@ -327,7 +288,7 @@ void CLI_params::Dump( )    {
     _INFO(" f_norm_rms_eps=%g", model.norm_rms_eps);   
     _INFO(" rope_freq_base=%g", model.rope_freq_base);   
     _INFO(" rope_freq_scale=%g", model.rope_freq_scale);
-    _INFO("\n lora_r=%d lora_alpha=%g \n", lora_r,lora_alpha); 
+    _INFO("\n lora_r=%d lora_alpha=%d \n", lora_r,lora_alpha); 
     // _INFO(" NABLA = %s\n", nabla==0? "" : nabla==3 ? "Embed+AutoEncoder" : (nabla==2 ? "" : "qkv") ); 
     // _INFO(" SIGMA = %s\n", sigma.c_str()); 
 }
@@ -479,7 +440,20 @@ try{
             assert(0);
         }      
     }
-    // scheduling.strategy = SKDU_params::MEM_ONLINE;
+    // Mem 8484=>4772=>4838
+    if(DEBUG.cmd_p1==1)
+        scheduling.strategy = SKDU_params::MEM_SWAP;
+    else{
+        // scheduling.strategy = SKDU_params::MEM_SWAP;
+        scheduling.strategy = SKDU_params::MEM_SWAP_GUOKE;
+    }
+    
+    if(scheduling.strategy == SKDU_params::MEM_SWAP_GUOKE){
+        common.remater_ffn = 0;             common.remater_qkv = 0;
+        //common.remater_ffn = 1;             common.remater_qkv = 1; // more memory, more time
+    }else{
+        common.remater_ffn = 1;             common.remater_qkv = 1;
+    }
 
     return true;
 }catch(JSON::parse_error &e){
@@ -498,7 +472,7 @@ bool CLI_params::isShareLayerOut()  const   {
     
 }
 bool SKDU_params::isUpdateParamV0( )    const  {
-    if(strategy==MEM_ONLINE)
+    if(strategy==MEM_SWAP || strategy==MEM_SWAP_GUOKE)
         return false;
         
     return false;
@@ -525,8 +499,9 @@ void CLI_params::OnMostToken(size_t nMost,int flag){
 }    
 
 void SKDU_params::Dump(int typ)  const{
-    _INFO("[Scheduling] MEM=%s UpdateParam=V%d\n", strategy==MEM_PRE_ALLOC?"PreAlloc":"Online",
-        isUpdateParamV0( )?0:1
+    _INFO("[Scheduling] MEM=%s UpdateParam=V%d ParamResident=%d\n", 
+        strategy==MEM_PRE_ALLOC?"PreAlloc":strategy==MEM_SWAP?"Swap":"Guoke",
+        isUpdateParamV0( )?0:1,(int)isParamResident
     );
 }
 
@@ -694,6 +669,7 @@ try{
     common.n_epochs = jKV(jConfig,{  "train","epoch"},common.n_epochs );
     common.nMostIter = jKV(jConfig,{  "train","adam-iter"},common.nMostIter );
     common.adam.alpha = jKV(jConfig,{   "train","learning-rate"},common.adam.alpha );
+    common.adam.decay = jKV(jConfig,{   "train","decay"},common.adam.decay );
     common.n_gradient_accumulation = jKV(jConfig,{ "train","optimizatioin","grad_accumulation"  },common.n_gradient_accumulation );
     lars_ratio = jKV(jConfig,{          "train","optimizatioin","lars_ratio"},lars_ratio );
     ZMUV_ratio = jKV(jConfig,{          "train","optimizatioin","ZMUV_ratio"},ZMUV_ratio );
@@ -803,40 +779,37 @@ try{
 }
 
 bool CLI_params::parse(int argc, char ** argv)  {
-    bool invalid_param = false;
     std::string arg;
     common = get_default_train_params_common();
-    const std::string arg_prefix = "--";
-
+    std::string arg_prefix = "--",jPath="";
+    exec_name = executable_name( );
+    
     for (int i = 1; i < argc; i++) {
         arg = argv[i];
+        // if (arg.compare(0, arg_prefix.size(), arg_prefix) == 0) {
+        //     std::replace(arg.begin(), arg.end(), '_', '-');
+        // }
         if (arg.length()>5 && arg.substr(arg.length()-5,arg.length())==".json") {   
-#ifdef NDEBUG
-        // arg = "/home/cys/rnd/lic/scripts/koifish.json";     //only for test
-#endif         
-            if(!InitJConfig(arg))
-                return false;     
-            break;
-        }
-
-        if (arg.compare(0, arg_prefix.size(), arg_prefix) == 0) {
-            std::replace(arg.begin(), arg.end(), '_', '-');
-        }
-
-        if (arg == "--version") {
+            jPath = arg; 
+        }else if (arg == "--version") {
             
+        }  else if (arg == "p0") {
+
+        }else if (arg == "p1") {            
+            DEBUG.cmd_p1 = 1;
+            _INFO("******************* DEBUG.cmd_p1=%d ******************************\n", DEBUG.cmd_p1);
+        }  else if (arg == "p2") {
+            DEBUG.cmd_p2 = 1;
         }  else {
-            fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
+            _ERROR("error: invalid parameter for argument: %s\n", arg.c_str());
             train_print_usage(argc, argv, this);
             exit(1);
         }
-    }
-    if (invalid_param) {
-        fprintf(stderr, "error: invalid parameter for argument: %s\n", arg.c_str());
-        train_print_usage(argc, argv, this);
-        exit(1);
-    }
-    exec_name = executable_name( );
+    }    
+
+    if(jPath.empty() || !InitJConfig(jPath))
+        return false;
+    
     // finish_processing_train_args(&common);
     return true;
 }
@@ -1022,86 +995,6 @@ struct ggml_tensor * ggml_cross_entropy_loss_1(
     return result;
 #endif
     return nullptr;
-}
-
-bool GTensor::Dump(int tpDump,const string&title,int flag)  const{
-    size_t nz=0, nElems = size(), i = 0, n = 10;
-    float * fdata = (float *)data,a1=-FLT_MAX,a0=FLT_MAX;
-    const char* A = "d";
-    if(flags & GTensor::F_PARAM){
-        A = "P";
-    }
-    if(BIT_TEST(flags,F_GPU))
-        n = 0;
-    switch(tpDump){
-    case 100:
-        _INFO(" - %3d: [ %5" PRId64 ", %5" PRId64 "] %8s %16s\n",i,ne[0], ne[1],"", name); //  ggml_op_name(op),
-        break;
-    default:     
-        if(type!=typNUMBER::F32 && n>0){
-            fdata = new float[nElems];
-            if(type==typNUMBER::F16){
-                /*ggml_fp16_t *src_ = (ggml_fp16_t *)(data);
-                for (int i = 0; i < nElems; i++) {
-                    fdata[i] = src_[i];
-                }*/
-            }else{  //need dequant
-                fdata = nullptr;     n = 0;
-            }
-        }    
-        double sum = 0.0;
-        if(fdata!=nullptr && !BIT_TEST(flags,F_GPU)){
-            for (i = 0; i < nElems; i++) {
-                sum += fdata[i];
-                if(fdata[i]==0)      nz++;
-                a1 = std::max(a1,fdata[i]);      a0 = std::min(a0,fdata[i]);
-            }        
-        }
-        printf("\t%s %s %s \t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",title.c_str(),name, A,ne[0], ne[1], ne[2], ne[3], cNameOf(type));
-        if(n>0 && a1!=-FLT_MAX){
-            printf("\nsum=%g data=[%f : %f] rZ=%.3g%%\n\t", sum,a0,a1,nz*100.0/nElems);
-            for (int i = 0; i < std::min((size_t) (ne[0]*ne[1]), n); i++) {
-                printf("%.5f ", fdata[i]);
-                if (i != 0 && i % ne[0] == 0) {
-                    // printf("\n");
-                }
-            }
-            printf("...");
-            for (int i = 0; i < std::min((size_t) (ne[0]*ne[1]), n); i++) {
-                printf("%.5f ", fdata[nElems - n + i]);
-                if ((nElems - n + i) % ne[0] == 0) {
-                    // printf("\n");
-                }
-            }
-            printf("}\n");
-        }
-
-        if(fdata!=data && fdata!=nullptr){
-            delete[] fdata;
-        } 
-    }
-    return true;
-}
-
-void _T_repr_(hGensor t,const char*tab,char *buf,const GENSOR_INFO&info){
-    if(t==nullptr)      return;
-    const char* A = "d";
-    if(t->flags & GTensor::F_PARAM){
-        A = "P";
-    }else{
-#ifndef GG_V12
-        if(t->grad!=nullptr){
-            A = "G";
-        }
-#endif
-    }
-    
-    auto ne=t->ne;
-    size_t n0 = strlen(buf),n1;         //char buf[64*1024]="\0";
-    string suf,pref,sX = info.__repr__(suf,pref);        //    info.sX;
-    sprintf(buf+strlen(buf),"%s %s %s %s \tdata=%p grad=%p\t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n",tab,sX.c_str(), A,
-        t->name,t->data,t->grad,ne[0], ne[1], ne[2], ne[3], cNameOf(t->type));
-    n1= strlen(buf); 
 }
 
 void _T_repr_(hGensor t,const char*tab,char *buf,int typ){
@@ -1528,33 +1421,7 @@ void Gensor2float_(const hGensor w,float *A,int flag)   {
 }
 #endif
 
-void _TIME_INFO(const string&info,double fmillis,int flag) {
-    _INFO("%s",info.c_str());
-    if (fmillis < 1000.0f) {
-        _INFO("%.1fms", (float) fmillis);
-        return;
-    }
-    if (fmillis < 60*1000.0f) { //60sec
-        _INFO("%.2f", fmillis/1000);
-        return;
-    }
-    const int64_t one_sec = 1000, one_min = one_sec*60, one_hour = one_min*60, one_day = one_hour*24;
 
-    int64_t millis  = (int64_t) fmillis;
-    int64_t days    = millis/one_day;
-    int64_t hours   = (millis - days*one_day)/one_hour;
-    int64_t minutes = (millis - days*one_day - hours*one_hour)/one_min;
-    int64_t seconds = (millis - days*one_day - hours*one_hour - minutes*one_min)/one_sec;
-
-    // to print int64_t either cast to (long long int) or use macro PRId64 from <inttypes.h>
-    if (days > 0) {
-        _INFO("%lldd ", (long long int) days);
-    }
-    if(hours==0 && minutes==0){
-        _INFO("%02ld", seconds);
-    }else
-        _INFO("%02lld:%02lld:%02lld", (long long int) hours, (long long int) minutes, (long long int) seconds);
-}   
 
 void ADAM_params_::Dump(int typ){
     _INFO("\tADAM lr=%g,beta=[%g-%g] decay=%g(%d) clip=%g(alg=%d)\n", alpha,beta1,beta2,

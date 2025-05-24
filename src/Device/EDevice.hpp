@@ -6,9 +6,11 @@
  *  \author Yingshi Chen
  */
 #pragma once
-#include "../CLI_params.hpp"
-#include "../g_stddef.hpp"
-#include "../ggex/GTensor.hpp"
+#include "../../ggex/GG_util.hpp"
+#ifdef __USE_GGML__
+    #include "ggml-backend.h"
+    #include "ggml-cpu.h"
+#endif
 
 class RLS_BP;
 class TGraph;

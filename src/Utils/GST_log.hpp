@@ -5,9 +5,11 @@
  *  \brief Log is much complex than printf
  *  \author Yingshi Chen
  */
+
+ #pragma once
+
 #include <iostream>
 #include <cstdarg> 
-#pragma once
 
 #define die(msg)          do { fputs("error: " msg "\n", stderr);                exit(1); } while (0)
 #define die_fmt(fmt, ...) do { fprintf(stderr, "error: " fmt "\n", __VA_ARGS__); exit(1); } while (0)
@@ -70,6 +72,8 @@ inline void GG_log_internal(DUMP_LEVEL level, const char * format, ...) {
 #define _WARN(...)  GG_log_internal(DUMP_WARN , __VA_ARGS__)
 #define _ERROR(...) GG_log_internal(DUMP_ERROR, __VA_ARGS__)
 #define _INFO_IF(...)   {   if(DUMP())  GG_log_internal(DUMP_INFO , __VA_ARGS__);}
+
+void _TIME_INFO(const std::string&info,double fmillis,int flag=0x0);
 
 template <typename T>
 void inline PrintTensor(const char* title,const T *src, int n1,int n2,int n3=1,int n4=1,int flag=0x0){

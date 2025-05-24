@@ -141,11 +141,27 @@ std::string G_STR(const T& x){
 
 std::string FILE_EXT(const std::string&path);
 
+struct SUM{
+    static double tX,tX1,tRemater,tQKV,tFFN;
+    static void Reset(string typ,int flag=0x0);
+	static void TimeInfo(int flag=0x0);
+};
+
+struct STATISTIC{
+	double time=0.0,tFore=0.0,tBack=0.0;
+	double mem=0.0;
+
+	virtual void Reset()	{
+		time=0.0,tFore=0.0,tBack=0.0;
+		mem=0.0;
+	}
+};
+
 class GST_util{
 public:
 	static int dump;
 	static int verify;
-	static double tX,tX1;
+	
 
 	enum{
 		VERIRY_KRYLOV_FORM=1,

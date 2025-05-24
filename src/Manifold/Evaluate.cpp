@@ -52,7 +52,7 @@ int Fish_ppl(CLI_params& config)  {
     if(hLoader->num_batches<=0 )    {
         hLoader->InitOneSamp(prompt,nullptr,fish.get(),0x110);                
     } 
-    GST_util::tX = 0;
+    SUM::tX = 0;
     int nTokens = hLoader->nMostToken;  
     nTokens = 200;  
     // assert(nTokens <= _nctx);

@@ -12,6 +12,8 @@
 #include <string>
 #include <iostream>
 #include <filesystem>
+#include "../Utils/GST_rander.hpp"
+
 namespace fs = std::filesystem;
 
 #define LOG //
@@ -96,19 +98,9 @@ double WIKI::InductLogits(const CLI_params&config, int nSampInBatch,std::vector<
     return nrm;
 }
 
-static unsigned int random_u32(uint64_t *state){
-    *state ^= *state >> 12;
-    *state ^= *state << 25;
-    *state ^= *state >> 27;
-    return (*state * 0x2545F4914F6CDD1Dull) >> 32;
-}
-
-// random float32 in [0,1)
-float random_f32(uint64_t *state)   { 
-    return (random_u32(state) >> 8) / 16777216.0f;
-}
+static Grusoft::GRander rand_gopt(42*666);
 int Sample_CDF_T(int n,float* logits,  float minp, float temperature, uint64_t *rng_seed,int flag=0x0) {
-    float coin = random_f32(rng_seed);
+    float coin = rand_gopt.NextFloat_01();   //random_f32(rng_seed);
 	// find max logit; we will use this to derive minp cutoff (in log space), since minp is scale-invariant (wrt softmax)
 	float max_logit = -FLT_MAX;
 	for (int i = 0; i < n; i++) {
@@ -156,7 +148,7 @@ int Sample_CDF(int n,float*preP,uint64_t *rng_seed,int flag=0x0) {
         sum += preP[j];
     }
     assert(sum > 0 && sum < FLT_MAX);
-    float coin = random_f32(rng_seed);
+    float coin = rand_gopt.NextFloat_01();  //random_f32(rng_seed);
     for (cdf = 0, j = 0; j < n; j++)        {
         cdf += preP[j];
         if (coin < cdf / sum)            {
@@ -193,7 +185,7 @@ int GGUF_list(CLI_params& config)  {
         try{
             hWIKI wiki = nullptr;       //  WIKI::MakeInstance
             assert(wiki!=nullptr);
-            info = wiki->__repr__(suffix,prefix);  
+            info = wiki==nullptr ? "" : wiki->__repr__(suffix,prefix);  
         }catch(const std::exception & e) {
             info =  std::string(e.what());
         }catch(...){

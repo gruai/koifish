@@ -15,7 +15,7 @@
     using namespace Grusoft;
 #endif
 #include "../lenda/kernel/SVD.hpp"
-
+#include "../Utils/GST_rander.hpp"
 
 CS_Picker::CS_Picker(hFISH hFish,int flag){
     int nEmbed=hFish->config.nEmbed();      //
@@ -154,19 +154,25 @@ void SparseNeuron::SetEmbed(TokenEmbed* embd_,int type,int flag){
 void SparseNeuron::UpdateSamps(int seed,int flag){
     assert(hSamps!=nullptr);
     float *weight = nullptr;    // TODO: Weighted sampling
-    int nVocab = hFish->nClass(),nSample=hSamps->size(),*samps=new int[nSample];
-    samp_1 = nVocab;
-    vector<int> IDs( nVocab );
-    std::iota( IDs.begin(),IDs.end(), 0 );      //  Fills the range [first, last) with ++value.
+    int nVocab = hFish->nClass(),nSample=hSamps->size();
+    // int *samps=new int[nSample];
+    // samp_1 = nVocab;
+    // vector<int> IDs( nVocab );
+    // std::iota( IDs.begin(),IDs.end(), 0 );      //  Fills the range [first, last) with ++value.
               
-    std::mt19937 g(seed);       //std::random_device rd;  g(rd());
-    std::shuffle(IDs.begin(), IDs.end(),g);    //std::random_shuffle(IDs.begin(), IDs.end());            
-    for(int i=0;i<nSample;i++){
-        samps[i] = IDs[i]; 
-        assert(samps[i]>=0 && samps[i]<nVocab);
-    }
-    hSamps->SerialGP(samps,nullptr,sizeof(int)*nSample,false);  //29156,    22663,      34659
-    delete[] samps;
+    // std::mt19937 g(seed);       //std::random_device rd;  g(rd());
+    // std::shuffle(IDs.begin(), IDs.end(),g);    //std::random_shuffle(IDs.begin(), IDs.end());            
+    // for(int i=0;i<nSample;i++){
+    //     samps[i] = IDs[i]; 
+    //     assert(samps[i]>=0 && samps[i]<nVocab);
+    // }    
+    // hSamps->SerialGP(samps,nullptr,sizeof(int)*nSample,false);  //29156,    22663,      34659
+    // delete[] samps;
+
+    Grusoft::GRander rander(seed);
+    std::vector<int> samps = rander.kSampleInN(nSample, nVocab);
+    assert(samps.size()==nSample);
+    hSamps->SerialGP(samps.data(),nullptr,sizeof(int)*nSample,false);
 }
 
 bool SparseNeuron::InitSVD(int flag){

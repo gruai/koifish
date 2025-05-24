@@ -55,16 +55,43 @@ hGensor GeNeuron::OnInput(hGensor hIn,int flag){
     }
     
     if(!hFish->hOPT->isBackward )   {   //Forward
-        if(isTemp)
+        if(isTemp){
+            double now = GST_ms(); 
             hIn->SerialData(name,host_inp,true,dump_flag);
+            SUM::tX1 += GST_ms()-now;
+        }
     }else{
 
     }
     return hIn;
 }
 
+bool RLS_BP::BeforeTrain(int flag){
+    if(params.strategy==SKDU_params::MEM_PRE_ALLOC)
+        return true;
+    if(params.strategy==SKDU_params::MEM_SWAP_GUOKE){
+        int nLayer = hFish->config.nLayer(),nG=0,nT=0;
+        FFN *firstFFN = hFish->GetNeuron<FFN>("FFN",0); 
+        firstFFN->SetGuoke(nullptr);     
+        SelfAttention *firstQKV = hFish->GetNeuron<SelfAttention>("SelfAttention",0);
+        firstQKV->SetGuoke(nullptr);     
+        for (int l = 1; l < nLayer; l++) {
+            SelfAttention *QKV = hFish->GetNeuron<SelfAttention>("SelfAttention",l);
+            nT += QKV->PGensors().size();
+            nG += QKV->SetGuoke(firstQKV);           
+            // QKV->dump_flag = -1;
+            FFN *ffn = hFish->GetNeuron<FFN>("FFN",l);
+            nT += ffn->PGensors().size();
+            nG += ffn->SetGuoke(firstFFN);
+        }      
+        _INFO("[RLS] \tGuoke=%d(%d)\t\n",nG,nT);
+    }
+    
+    return true;
+}
+
 size_t GeNeuron::ManageMemory(DATA_PLACE target,int typ,int flag){
-    if(name=="inp_tokens"){
+    if(name=="model.blk.1.attn" && target==FREE_DEV){
         int debug = 0;
     }
     if(target == place)
@@ -72,6 +99,9 @@ size_t GeNeuron::ManageMemory(DATA_PLACE target,int typ,int flag){
     hOptimizer hOPT = hFish->hOPT;
     bool isSymbolic = target==SYMBOLIC;
     string op = "",stage=hOPT->isBackward?"BACK":"FORE";
+    if(hFish->isRemater()){
+        stage = "Remater";
+    }
     INIT_WEIGHT tpInitWeight = hFish->tpInitWeight;
     assert(out!=nullptr);
     vector arrT = PGensors();    
@@ -83,8 +113,8 @@ size_t GeNeuron::ManageMemory(DATA_PLACE target,int typ,int flag){
         switch(target){
         case FREE_DEV:
             if(t->isRefer())
-                continue;  
-            t->Free(true);      op="Free";
+                continue;              
+            t->Free(hFish->config.scheduling.isParamResident);      op="Free";            
             break;
         default:
             if(isSymbolic){
@@ -102,8 +132,13 @@ size_t GeNeuron::ManageMemory(DATA_PLACE target,int typ,int flag){
         int bug = 0x0;
     }
     place = target;
-    if(DUMP(0))
-        _INFO("[RLS] %s %s@%d_%s(%.3gM)\n",name.c_str(),op.c_str(),hOPT->GetITER(),stage.c_str(), (GTensor::szMaloc-a)/1.0e6);
+    if(DUMP(0)){
+        size_t szFree, szTotal;
+        cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
+        _INFO("[RLS] %s %s@%d_%s(%.3gM) mGPU=%.6gM\n",name.c_str(),op.c_str(),hOPT->GetITER(),stage.c_str(), (GTensor::szMaloc-a)/1.0e6,
+            (szTotal-szFree)/1.0e6 );
+    }
+        
     /*if(!isSymbolic){
         place = DEV_MEM;
         if(GTensor::szMaloc-sz0!=xxx){   //only for debug
@@ -152,7 +187,7 @@ bool RLSchedule::Planning(int flag) {
 RLS_BP::RLS_BP(EDGE_DEVICES *hED_,const CLI_params&config, int flag) : RLSchedule(hED_,config,flag)   { 
     params = config.scheduling;   
 }
-int RLS_BP::OnNextStep(int flag) {
+int RLS_BP::BeforeNextStep(int flag) {
     step++;
     return 0x0;
 }
@@ -181,28 +216,37 @@ bool RLS_BP::isResident(GeNeuron *neuron,int flag){
         return true;
     if(dynamic_cast<LayerNormal*>(neuron))
         return true;
-    // if(dynamic_cast<FFN*>(neuron)){
-    //     neuron->dump_flag = -1;
-    //     return true;
-    // }
-    // if(dynamic_cast<SelfAttention*>(neuron))
-    //     return true;
+    if(dynamic_cast<FFN*>(neuron)){
+        //neuron->dump_flag = -1;
+        // return neuron->layer==1;
+    }
+    if(dynamic_cast<SelfAttention*>(neuron)){
+        // return neuron->layer==1;
+        // return true;
+    }
+        
 
     // neuron->dump_flag = -1;
     return false;
 }
+
 bool RLS_BP::Prepare(int iter,int flag){
     double costs = 0;
     int t = 0;
+    
     for(auto node : nodes){
         if( costs + node->cost>budget )  {
             break;
         }
         node->begin = 0;   
         GeNeuron *neuron = (GeNeuron*)(node->hOBJ); 
+        if(iter<0 && isResident(neuron)){
+            resident_list += neuron->name+", ";
+        }
         bool isAlloc = false;
         switch(params.strategy){
-        case SKDU_params::MEM_ONLINE:
+        case SKDU_params::MEM_SWAP_GUOKE:
+        case SKDU_params::MEM_SWAP:
             isAlloc = isResident(neuron) ;//|| iter>0
             break;
         default:
@@ -216,6 +260,7 @@ bool RLS_BP::Prepare(int iter,int flag){
         t++;
     }
     step = 0;
-    
+    if(iter<0)
+        _INFO("[RLS] resident={%s}\n",resident_list.c_str());
     return true;
 }

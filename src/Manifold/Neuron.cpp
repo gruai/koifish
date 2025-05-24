@@ -89,6 +89,12 @@ try{
 } 
 }
 
+GeNeuron::~GeNeuron() {   
+    if(host_inp!=nullptr)
+        cudaFreeHost(host_inp); 
+    // FREE_a( host_inp );   
+}
+
 void GeNeuron::Init(Fish *hG_, int flag) {    
     hFish=hG_;   
     auto& config = hG_->config; 
@@ -658,34 +664,27 @@ hGensor GeNeuron::BeforeMing(RLS_BP* hRLS,hGensor cur,int flag){
     if(hRLS->isRemater)   {      
         return cur;
     }
-        
-    double now = GST_ms();    
     vector arrT = PGensors();    
     DATA_PLACE old_place = place;
     if(hFish->isSymbolic()){ 
-        host_inp = new char[GTensor::outL->nByte()];        
-        // hGensor inp = cur;
-        // switch(tp){
-        // case 1:
-        //     _INFO("\t %s\n",name.c_str());
-        //     break;
-        // default:
-        //     return cur;  
-        // }
+        // host_inp = new char[GTensor::outL->nByte()];        
+        cudaHostAlloc(&host_inp, GTensor::outL->nByte(),0);
         
     }else{
+        SYNC_DEVICE();  double now = GST_ms();
         ManageMemory(DATA_PLACE::DEV_MEM);
         if(isForward()){
             
         }else{
-             if(old_place==DATA_PLACE::FREE_DEV){   //  Remater                
+             if(old_place==DATA_PLACE::FREE_DEV){   //  Remater  
                 hRLS->isRemater = true;
                 Ming(hRLS,inp,flag);
-                hRLS->isRemater = false;      
+                hRLS->isRemater = false;   
              }
         }
+        SYNC_DEVICE();  SUM::tRemater += GST_ms()-now;   
     }
-    GST_util::tX1 += GST_ms()-now;
+    
     return cur;
 }
 hGensor GeNeuron::Ming(RLS_BP* hRLS,hGensor cur,int flag){
@@ -719,9 +718,11 @@ hGensor GeNeuron::AfterMing(RLS_BP* hRLS,hGensor cur,int flag){
             }
         }
         
-        if(!hRLS->isResident(this)){            
+        if(!hRLS->isResident(this)){           
+            SYNC_DEVICE();  //  Otherwise, The timing of cudaFree would get much higher
             ManageMemory(DATA_PLACE::FREE_DEV);            
         }
+        
     }
     return cur;
 }
@@ -744,6 +745,37 @@ std::vector<hGensor> GeNeuron::PGensors(bool isNoRef,int flag) {
         arrT.push_back(op->_t);
     }
     return arrT;
+}
+
+// 天地本逆旅, 你我皆过客(Guoke)
+int GeNeuron::SetGuoke(GeNeuron *hGuoke_,int flag){   
+    std::vector<hGensor> gSrc, arrP=PGensors();
+    if(hGuoke_!=nullptr){
+        gSrc=hGuoke_->PGensors();
+        assert(gSrc.size()==arrP.size());
+    }
+    int nG = 0,i,nT=arrP.size();    
+    for(i=0;i<nT;i++){
+        auto t = arrP[i];
+        if(hGuoke_==nullptr){
+            if(!BIT_TEST(t->flags,GTensor::F_RESIDENT))
+                BIT_SET(t->flags,GTensor::F_RESIDENT);
+            continue;
+        }
+        assert(gSrc[i]->isSameShape(t));
+        assert(t!=gSrc[i]);
+        if(t->isParam()){
+            assert(gSrc[i]->isParam());
+            continue;
+        }
+            
+        if(t->isRefer()){
+            continue;
+        }
+        t->SetRefer(gSrc[i]);
+        nG++;
+    }
+    return nG;
 }
 
 void GeNeuron::BuildX(const std::string &key_, const SHAPE &shp_, Fish *hG_, int flag){

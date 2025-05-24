@@ -30,8 +30,8 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_,int flag)     {
     wikis = wikis_;
     // if(!LoadCheckPoint())        //  need refactor
     //     return false;
-    assert(rnd==nullptr);
-    rnd = init_random_normal_distribution(config.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
+    // assert(rnd==nullptr);
+    // rnd = init_random_normal_distribution(config.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
     
     if(hDict==nullptr){
         if(!InitDictTokenset())     //  hDictVAE
@@ -597,10 +597,11 @@ void NLP_AutoRegressive::Train(int flag)       {
     // DEBUG.train_datas = 1;
     // DEBUG.train_hyperparams = 1;
     // DEBUG.back_graph_version = 1;        Verified at 05132025
-    DEBUG.isParamResident = true;
+    
 
     hOPT->BeforeTrain(tokens_input,0x0);
     RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();  
+    hRLS->BeforeTrain( );
     hRLS->Prepare(-1);
     for(auto t : hOPT->opt_ps){
         hRLS->GetTensorStatus(-1,t,0x0);
@@ -621,7 +622,7 @@ void NLP_AutoRegressive::Train(int flag)       {
 #ifdef __USE_GGML__
     #include "ggml-impl.h"
 #endif
-
+static struct random_normal_distribution *rnd=nullptr;
 // TO DO :  refactor
 void NLP_AutoRegressive::InitGensors(int flag){
     auto ctx=GetGGCTX();
@@ -721,9 +722,9 @@ void NLP_AutoRegressive::Dump(int type,int flag)      {
     _INFO("%s: n_vocab=%d t_vocab=%d,n_batch=%d,n_ctx=%d,n_embd=%d,n_head=%d,n_rot=%d,n_ff=%d\n", __func__, 
         n_vocab,tVocab(),n_batch,n_ctx,n_embd,config.n_head(),config.n_rot(),config.n_ff() );
     _INFO("%s: loader=%s\n", __func__, config.tpBatchSample.c_str() );
-    if(hOPT!=nullptr)
-        hOPT->Dump( 1 );     
-    else{
+    if(hOPT!=nullptr){
+        // hOPT->Dump( 1 ); 
+    }   else{
         _INFO("hOPT is NULL\n");
     }   
     if(config.lars_ratio>0)
@@ -733,7 +734,7 @@ void NLP_AutoRegressive::Dump(int type,int flag)      {
 float* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV,bool isCPU,unsigned flags=0x0);
 int T_generate_cpu(hFISH hFish, bool isOnlyUpdateKV,unsigned flags=0x0);
 float RAW_backward(Fish *fish,const int* hostInToken,int accum_steps,bool,int flag);
-int NLP_AutoRegressive::BackwardOnRLS(int iter,int flag)  {
+int Fish::BackwardOnRLS(int iter,int flag)  {
     int nAccum=config.common.n_gradient_accumulation;
     bool isOnlyEvaluate = false;
     GTensor::delta->Zero(); 
@@ -748,7 +749,11 @@ int NLP_AutoRegressive::BackwardOnRLS(int iter,int flag)  {
     hGensor cur=cls->delta; 
     for (auto it = backbons.rbegin(); it != backbons.rend(); ++it) {
         hNeuron neuron = *it;
+        if(neuron->isShortcut)
+            continue;
+        auto t0 = GST_ms();
         cur = neuron->Ming(hRLS,cur);
+        neuron->stat.tBack += GST_ms()-t0;
         // if(!config.scheduling.isUpdateParamV0()){
         //     // if(strcmp(cur->name,"model.blk.11.attn")==0){
         //     //     int bug = 0x0;
@@ -766,12 +771,12 @@ int NLP_AutoRegressive::BackwardOnRLS(int iter,int flag)  {
     return 0x0;
 }
 
-int NLP_AutoRegressive::ForwardOnRLS(int iter,int flag)  {
+int Fish::ForwardOnRLS(int iter,int flag)  {
     RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();  
     assert(hRLS!=nullptr);
     hRLS->Prepare(iter,0);
-    if(DEBUG.back_graph_version==1)
-    { return ForwardOnNeuron_v0(flag);  }
+    // if(DEBUG.back_graph_version==1)
+    // { return ForwardOnNeuron_v0(flag);  }
     
     hGensor cur=Input(),residual=nullptr;
     int L = config.nLayer();    
@@ -780,10 +785,13 @@ int NLP_AutoRegressive::ForwardOnRLS(int iter,int flag)  {
         if(hRLS->step>2*L){
             int debug=0x0;
         }
+        if(neuron->isShortcut)
+            continue;
+        auto t0 = GST_ms();
         cur = neuron->Ming(hRLS,cur);
-        // hRLS->OnNextStep( );
+        neuron->stat.tFore += GST_ms()-t0;
     }    
-    SYNC_DEVICE();    
+    // SYNC_DEVICE();    
     return 0x0;
 }
 int NLP_AutoRegressive::ForwardOnNeuron_v0(int flag)  {
@@ -830,6 +838,6 @@ int NLP_AutoRegressive::ForwardOnNeuron_v0(int flag)  {
         //cls->preLogits = lnf->out*embed->w;   //matmul_forward_cublaslt(ToX(cls->preLogits), ToX(lnf->out), ToX(embed->w), NULL, B, T, C, Vp, main_stream);
     }
     PrintTensor<floatX>("output",ToX(cls->preLogits),true,B,T,C);
-    SYNC_DEVICE();    
+    // SYNC_DEVICE();    
     return 0x0;
 }

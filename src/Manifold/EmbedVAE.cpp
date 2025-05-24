@@ -130,8 +130,7 @@ string TokenEmbed::__repr__( string& suffix,string& prefix,int flag)    {
 };
 
 hGensor VarCoder::ENC(const hGensor x0){
-#ifdef _TENSOR_G_
-    hGensor x = nullptr;    //encode*x0;
+    /*hGensor x = encode*x0;
     switch(tpNorm){
     case 0:
         x = x->Relu();  
@@ -143,30 +142,17 @@ hGensor VarCoder::ENC(const hGensor x0){
         x = x->Norm(1.0e-5);  
         break;
     }
-#else
-    hGensor x = ggml_mul_mat(ctx, encode, x0 );    
-    switch(tpNorm){
-    case 0:
-        x = ggml_relu(ctx, x);  
-        break;
-    case 1:
-        x = ggml_silu(ctx, x);  
-        break;
-    case 2:
-        x = ggml_rms_norm(ctx, x,1.0e-5);  
-        break;
-    }
-#endif
+
     if(isResi)      
         resi = x;  
         
-    return x;
+    return x;*/
+    return nullptr;
 }
 
 hGensor VarCoder::DEC(hGensor x){
     if(down.Empty())    //decode==nullptr
         return x;
-#ifdef _TENSOR_G_
     if(resi!=nullptr){
         x += resi;
     }
@@ -182,22 +168,7 @@ hGensor VarCoder::DEC(hGensor x){
         x = x->Norm(1.0e-5);  
         break;
     }
-#else
-    if(resi!=nullptr){
-        x = ggml_add(ctx, x, resi);
-    }
-    x = ggml_mul_mat(ctx, decode, x );    
-    switch(tpNorm){
-    case 0:
-        x = ggml_relu(ctx, x);  
-        break;
-    case 1:
-        x = ggml_silu(ctx, x);  
-        break;
-    case 2:
-        x = ggml_rms_norm(ctx, x,1.0e-5);  
-    }
-#endif
+
     return x;
 }
 
@@ -277,7 +248,7 @@ hGensor MAEC::ENC(hGensor cur,int flag){
             hVarCoder ac = *it;        //cur->PrintX<floatX>("ac_in",0,-1);
             SLP &down = ac->down;
             assert(down.inp!=nullptr);
-            down.Back(down.delta,down.inp,cur,nullptr,(float*)GTensor::buff,0);  
+            down.Back(down.delta,down.inp,cur,nullptr,0);  
             cur = down.delta;      
         }        
         if(!normE.Empty())  {
@@ -301,7 +272,7 @@ hGensor MAEC::DEC(hGensor cur,bool isForw,int flag){
             hVarCoder ac = *it;        //cur->PrintX<floatX>("ac_in",0,-1);
             SLP &up = ac->up;
             assert(up.inp!=nullptr);
-            up.Back(up.delta,up.inp,cur,nullptr,(float*)GTensor::buff,0);  
+            up.Back(up.delta,up.inp,cur,nullptr,0);  
             cur = up.delta;      
         }        
     }
@@ -414,18 +385,18 @@ bool FFN::Build(int flag_0)   {
         if(remater_ffn){
             BIT_SET(up.out->flags,GTensor::F_NOALLOC); 
             if(!gate.Empty())   BIT_SET(gate.out->flags,GTensor::F_NOALLOC); 
-            out = std::make_shared<huTensor>(hFish,name+"_out",sp2,GTensor::tpFloatX,false);  
-            if(hFish->config.isShareLayerOut()){    //  ???
-                out->SetRefer(GTensor::outL);        
-            } 
+            BIT_SET(down.out->flags,GTensor::F_NOALLOC);     
         }else{
-            //out would be norm.out
+            //out = norm.out;     ???
         }
+        out = std::make_shared<huTensor>(hFish,name+"_out",sp2,GTensor::tpFloatX,false);  
+        if(hFish->config.isShareLayerOut()){    //  ???
+            out->SetRefer(GTensor::outL);        
+        } 
     }
            
     up.w->residual_scale = hFish->config.common.residual_scale;
-    BIT_SET(down.out->flags,GTensor::F_NOALLOC);
-
+    
     return true;
 }
 
@@ -442,11 +413,7 @@ hGensor FFN::Ming(RLS_BP* ctx_,hGensor inpL,int flag){
     hGensor lastResi = inpL;
     if(hFish->isSymbolic()){      
         // out = inpL >> up >> relu >> down >> norm;  
-        inpL >> up >> down >> gate >> norm ;  
-        if(remater_ffn){
-            norm.out>>this; //out->AddSrc(GENSOR_OP::Inst(norm.out),0x0);      
-        }else
-            out = norm.out;     //to save memory    
+        inpL >> up >> down >> gate >> norm >> this;    
         cur = out;
     } else{ //  high performance fused operator
         cur = FUSE_cuda(cur,0x0); 

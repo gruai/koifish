@@ -18,7 +18,9 @@
 #include "../../Manifold/Optimizer.hpp"
 
 // static void *grads_memory=nullptr;
-static float *m_memory=nullptr,*v_memory=nullptr,*master_weights=nullptr;
+// static float *m_memory=nullptr;
+//*v_memory=nullptr;
+//*master_weights=nullptr;
 extern unsigned long long rng_state;
 
 typedef struct {
@@ -43,7 +45,7 @@ __device__ void sgd_update(Tp* params_memory, float* master_params_memory, Tg* g
 }
 //  reset grad online
 template <typename Tp, typename Tg>
-__global__ void sgd_kernel3(Tp* params_memory, float* master_params_memory, Tg* grads_memory, size_t num_parameters,
+__global__ void CU_sgd(Tp* params_memory, float* master_params_memory, Tg* grads_memory, size_t num_parameters,
                               ptrdiff_t w_stride, ptrdiff_t g_stride, ptrdiff_t s_stride,
                               float learning_rate, float beta1, float beta2, float beta1_correction, float beta2_correction, float eps, float weight_decay,
                               float grad_scale, unsigned int seed) {
@@ -56,7 +58,7 @@ __global__ void sgd_kernel3(Tp* params_memory, float* master_params_memory, Tg* 
 }
 
 template <typename Tp, typename Tg>
-__global__ void sgdv_update(Tp* params_memory, float* master_params_memory, Tg* grads_memory, float* v_memory, size_t num_parameters,
+__global__ void CU_sgdv(Tp* params_memory, Tg* grads_memory, float* v_memory, size_t num_parameters,
                              float learning_rate, float beta1, float beta2, float beta1_correction, float beta2_correction, float eps, float weight_decay,
                              float grad_scale, unsigned int seed) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -64,34 +66,63 @@ __global__ void sgdv_update(Tp* params_memory, float* master_params_memory, Tg* 
 
     float grad = grad_scale * (float)grads_memory[idx];
     float v = v_memory[idx];
-    // update the second moment (RMSprop)
-    v = lerp(grad * grad, v, beta2);
+    v = lerp(grad * grad, v, beta2);     //beta2*v+(1-beta2)*grad*grad;
     v_memory[idx] = v;    
     v /= beta2_correction;  // v_hat    
-    float old_param = (master_params_memory != NULL) ? master_params_memory[idx] : (float)params_memory[idx];
+    float old_param = (float)params_memory[idx];
     float param = old_param - (learning_rate * (grad / (sqrtf(v) + eps) + weight_decay * old_param));
     // stochastic_rounding(param, &params_memory[idx], seed);
     params_memory[idx] = param;
     grads_memory[idx] = 0.0;
+}
+template <typename Tp, typename Tg>
+__global__ void CU_lion_(Tp* params_memory, Tg* grads_memory, float* m_memory, size_t num_parameters,
+                             float learning_rate, float beta1, float beta2, float beta1_correction, float beta2_correction, float eps, float weight_decay,
+                             float grad_scale, unsigned int seed) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= num_parameters) { return; }  // guard
+
+    float grad = grad_scale * (float)grads_memory[idx];
+    float m = m_memory[idx],c;
+/*  Cautious LION
+    mask = (update * grad > 0).to(grad.dtype)
+    mask = mask * (mask.numel() / (mask.sum() + 1))                              
+*/
+    c = lerp(grad, m, beta1);                   //beta1*m+(1-beta1)*grad;   
+    c = c>0 ? 1 : c==0 ? 0 : -1;
+    m_memory[idx] = lerp(grad, m, beta2);       //beta2*m+(1-beta2)*grad;
+    float old_param = (float)params_memory[idx];    
+    params_memory[idx] = old_param - learning_rate * (c + weight_decay * old_param);
+    grads_memory[idx] = 0.0;
+}
+
+template <typename Tp, typename Tg>
+__global__ void CU_adamw_(Tp* params_memory, float* master_params_memory, Tg* grads_memory, float* m_memory, float* v_memory, size_t num_parameters,
+                             float learning_rate, float beta1, float beta2, float beta1_correction, float beta2_correction, float eps, float weight_decay,
+                             float grad_scale, unsigned int seed) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= num_parameters) { return; }  // guard
+
+    float grad = grad_scale * (float)grads_memory[idx];
+    float m = m_memory[idx];
+    float v = v_memory[idx];
+    m = lerp(grad, m, beta1);           m_memory[idx] = m;
+    v = lerp(grad * grad, v, beta2);    v_memory[idx] = v;
+    m /= beta1_correction;  // m_hat
+    v /= beta2_correction;  // v_hat
+    float old_param = (master_params_memory != NULL) ? master_params_memory[idx] : (float)params_memory[idx];
+    float param = old_param - (learning_rate * (m / (sqrtf(v) + eps) + weight_decay * old_param));
+    // stochastic_rounding(param, &params_memory[idx], seed);
+    params_memory[idx] = param;
+    grads_memory[idx] = 0.0;
+
     if (master_params_memory != NULL) { master_params_memory[idx] = param; }
 }
 
-template <typename Tp, typename Tg>
-__global__ void sgdv_kernel3(Tp* params_memory, float* master_params_memory, Tg* grads_memory, float* v_memory, size_t num_parameters,
-                              ptrdiff_t w_stride, ptrdiff_t g_stride, ptrdiff_t s_stride,
-                              float learning_rate, float beta1, float beta2, float beta1_correction, float beta2_correction, float eps, float weight_decay,
-                              float grad_scale, unsigned int seed) {
-    sgdv_update(params_memory + blockIdx.y * w_stride,
-                 master_params_memory ? master_params_memory + blockIdx.y * s_stride : NULL,
-                 grads_memory + blockIdx.y * g_stride,                 
-                 v_memory + blockIdx.y * s_stride,
-                 num_parameters, learning_rate, beta1, beta2, beta1_correction, beta2_correction, eps, weight_decay, grad_scale,
-                 seed
-                 );
-}
+
 
 template <typename Tp, typename Tg>
-void adamw_core(Tp* params_memory, float* master_params_memory, Tg* grads_memory, float* m_memory, float* v_memory, size_t num_parameters,
+void Optimizer_update(Tp* params_memory, float* master_params_memory, Tg* grads_memory, float* m_memory, float* v_memory, size_t num_parameters,
                   ptrdiff_t w_stride, ptrdiff_t g_stride, ptrdiff_t s_stride,  int num_slices, float learning_rate, float beta1, float beta2, int t, float eps, float weight_decay,
                   float grad_scale, unsigned int seed, cudaStream_t stream) {
     // AdamW update
@@ -100,21 +131,24 @@ void adamw_core(Tp* params_memory, float* master_params_memory, Tg* grads_memory
     float beta1_correction = 1.0f - powf(beta1, t);
     float beta2_correction = 1.0f - powf(beta2, t);
     assert(num_slices==1);      // limited gpu memory
-    if(m_memory==nullptr){
+    if(m_memory==nullptr){      //SGD,SGD_V
         if(v_memory==nullptr){
-            sgd_kernel3<<<dim3(num_blocks, num_slices), block_size, 0, stream>>>(params_memory, master_params_memory, grads_memory,
+            CU_sgd<<<dim3(num_blocks, num_slices), block_size, 0, stream>>>(params_memory, master_params_memory, grads_memory,
                 num_parameters, w_stride, g_stride, s_stride,learning_rate, beta1, beta2, beta1_correction, beta2_correction, eps, weight_decay,grad_scale, seed);
         }else{
-            sgdv_update<<<num_blocks, block_size, 0, stream>>>(params_memory, master_params_memory, grads_memory,
-                v_memory, num_parameters, learning_rate, beta1, beta2, beta1_correction, beta2_correction, eps, weight_decay,grad_scale, seed);
-            // sgdv_kernel3<<<dim3(num_blocks, num_slices), block_size, 0, stream>>>(params_memory, master_params_memory, grads_memory,
-            //     v_memory, num_parameters, w_stride, g_stride, s_stride,learning_rate, beta1, beta2, beta1_correction, beta2_correction, eps, weight_decay,grad_scale, seed);
+            CU_sgdv<<<num_blocks, block_size, 0, stream>>>(params_memory, grads_memory,
+                 v_memory, num_parameters, learning_rate, beta1, beta2, beta1_correction, beta2_correction, eps, weight_decay,grad_scale, seed);
         }
-    }else   {
-        adamw_kernel3<<<dim3(num_blocks, num_slices), block_size, 0, stream>>>(params_memory, master_params_memory, grads_memory,
-                                                         m_memory, v_memory, num_parameters, w_stride, g_stride, s_stride,
-                                                         learning_rate, beta1, beta2, beta1_correction, beta2_correction, eps, weight_decay,
-                                                         grad_scale, seed);
+    }else   {       //LION ADAMw
+        if(v_memory==nullptr){
+            CU_lion_<<<num_blocks, block_size, 0, stream>>>(params_memory, grads_memory,
+            m_memory,num_parameters,learning_rate, beta1, beta2, beta1_correction, beta2_correction, eps, weight_decay,grad_scale, seed);
+        }else{
+            // CU_sgdv<<<num_blocks, block_size, 0, stream>>>(params_memory, master_params_memory, grads_memory,
+            //          v_memory, num_parameters, learning_rate, beta1, beta2, beta1_correction, beta2_correction, eps, weight_decay,grad_scale, seed);
+            CU_adamw_<<<num_blocks, block_size, 0, stream>>>(params_memory, master_params_memory, grads_memory,
+            m_memory,v_memory, num_parameters,learning_rate, beta1, beta2, beta1_correction, beta2_correction, eps, weight_decay,grad_scale, seed);
+        }
     }
     cudaCheck(cudaGetLastError());
 }
@@ -127,19 +161,19 @@ void Optimizer::InitOnCUDA(int flag){
     GD_METHOD tpCurGD = tpGD;
 
     int num_slices = 1,C=_fish->config.nEmbed();
-    if (m_memory == NULL) {
-        NvtxRange rng("InitOpt");
+    // if (m_memory == NULL) {
+    //     NvtxRange rng("InitOpt");
         
-        if(tpGD!=SGD){
-            _INFO("Optimizer \t cudaMalloc=%zu MiB for v\n", (adam.n_parameters * sizeof(float)) >> 20);
-            cudaCheck(cudaMalloc((void**)&v_memory, adam.n_parameters * sizeof(float)));
-            cudaCheck(cudaMemset(v_memory, 0, adam.n_parameters * sizeof(float)));            
-        }  
-    }
-    if (TrainParams().opt_alloc_weight==1 && master_weights == NULL) {
-        _INFO("Optimizer \t cudaMalloc=%zu MiB for parametrs(FP32)\n", (adam.n_parameters * sizeof(float)) >> 20);
-        cudaCheck(cudaMalloc((void**)&master_weights, adam.n_parameters * sizeof(float)));
-    }
+    //     if(tpGD!=SGD){
+    //         _INFO("Optimizer \t cudaMalloc=%zu MiB for v\n", (adam.n_parameters * sizeof(float)) >> 20);
+    //         cudaCheck(cudaMalloc((void**)&v_memory, adam.n_parameters * sizeof(float)));
+    //         cudaCheck(cudaMemset(v_memory, 0, adam.n_parameters * sizeof(float)));            
+    //     }  
+    // }
+    // if (TrainParams().opt_alloc_weight==1 && master_weights == NULL) {
+    //     _INFO("Optimizer \t cudaMalloc=%zu MiB for parametrs(FP32)\n", (adam.n_parameters * sizeof(float)) >> 20);
+    //     cudaCheck(cudaMalloc((void**)&master_weights, adam.n_parameters * sizeof(float)));
+    // }
     size_t off=0;
     for(auto tensor:opt_ps) {
         size_t nP=tensor->size(),grid_size = CEIL_DIV(nP, 512);
@@ -147,15 +181,15 @@ void Optimizer::InitOnCUDA(int flag){
         if(tpGD==SGD_HYBRID){
             tpCurGD = im.isAdam ? ADAMw : SGD;
         }
-        if(tpCurGD==ADAMw){
-            // _INFO("Optimizer allocating %zu MiB for m\n", (adam.n_parameters * sizeof(float)) >> 20);        
-            cudaCheck(cudaMalloc((void**)&(im.gm), tensor->size() * sizeof(float)));        
-            cudaCheck(cudaMemset(im.gm, 0, tensor->size() * sizeof(float)));
-        }
-        if(master_weights!=nullptr){
-            copy_and_cast_kernel<<<dim3(grid_size, num_slices), 512, 0, main_stream>>>(master_weights+off, ToX(tensor), nP,nP, nP);
-            cudaCheck(cudaGetLastError());
-        }
+        // if(tpCurGD==ADAMw){
+        //     // _INFO("Optimizer allocating %zu MiB for m\n", (adam.n_parameters * sizeof(float)) >> 20);        
+        //     cudaCheck(cudaMalloc((void**)&(im.gm), tensor->size() * sizeof(float)));        
+        //     cudaCheck(cudaMemset(im.gm, 0, tensor->size() * sizeof(float)));
+        // }
+        // if(master_weights!=nullptr){
+        //     copy_and_cast_kernel<<<dim3(grid_size, num_slices), 512, 0, main_stream>>>(master_weights+off, ToX(tensor), nP,nP, nP);
+        //     cudaCheck(cudaGetLastError());
+        // }
         off += nP;
     }
 }
@@ -168,33 +202,34 @@ int UpdateTensorParam_cuda(hGTensor tensor,Optimizer *hOPT,float& grad_norm,int 
     // if(hOPT->tpGD==SGD_HYBRID){
     //     tpCurGD = im.isAdam ? ADAMw : SGD;
     // }
-    float learning_rate=hOPT->LearningRate(),beta1=adam.beta1, beta2=adam.beta2, eps=adam.eps,weight_decay=adam.decay*adam.alpha;
+    float learning_rate=hOPT->LearningRate(),beta1=adam.beta1, beta2=adam.beta2, eps=adam.eps;
     int num_slices = 1,iter=hOPT->GetITER();
     unsigned int seed = random_u32(&rng_state);
     const char*name = tensor->name;
     ShardInfo shard = {0,tensor->size()};
-    float wd = weight_decay;            // we only want to weight decay the 2D tensors and leave all 1D tensors alone
+    float wd = adam.decay;            // we only want to weight decay the 2D tensors and leave all 1D tensors alone
     if(tensor->shape.size()==1)
         wd = 0;
     
     floatX *param_ptr = ToX(tensor),*grad_ptr = ToG(tensor);
     ptrdiff_t opt_state_offset = tensor->offset; //multi_gpu_config->zero_stage < 1 ?  local_offset_full : local_offset_partial;        
-    float* m_ptr = im.gm;   //m_memory==nullptr? nullptr : m_memory + opt_state_offset;
-    float* v_ptr = v_memory==nullptr? nullptr : v_memory + opt_state_offset;
+    float* m_ptr = (float*)tensor->gm, *v_ptr = (float*)tensor->gv;   //v_memory==nullptr? nullptr : v_memory + opt_state_offset;
     float* master_ptr = NULL;   // why this would slow down converge?
-    if (master_weights != NULL && im.isAdam) { 
-        master_ptr = master_weights + opt_state_offset;    
-    }        
+    // if (master_weights != NULL && im.isAdam) { 
+    //     master_ptr = master_weights + opt_state_offset;    
+    // }        
 
     if(adam.clip_alg!=0 || config.lars_ratio>0){
         grad_norm = tNormOf(tensor,0x0);        //gnorm_1+=grad_norm*grad_norm;
+        tensor->gnorm = grad_norm;
+        // _INFO("\tdelta|%s|=%g\n",tensor->name,grad_norm);
     }        
     float grad_scale = (grad_norm > adam.gclip) ? adam.gclip / grad_norm : 1.0f;
     if( config.lars_ratio>0  ){
         grad_scale = tensor->rLARS(grad_scale,config.lars_ratio,0x0);
     }
     if(flag!=0x10001){  //some debug
-        adamw_core(param_ptr, master_ptr, grad_ptr,m_ptr, v_ptr,
+        Optimizer_update(param_ptr, master_ptr, grad_ptr,m_ptr, v_ptr,
                     shard.size, shard.size, shard.size, shard.size, num_slices,      //num_parameters,ptrdiff_t w_stride, ptrdiff_t g_stride, ptrdiff_t s_stride,  int num_slices,
                     learning_rate,beta1, beta2, iter, eps, wd, grad_scale, seed, main_stream);
     }
@@ -231,15 +266,11 @@ int RAW_update(std::vector<hGTensor>& tensors,Optimizer *hOPT,float& grad_norm,i
             
             ptrdiff_t opt_state_offset = np; //multi_gpu_config->zero_stage < 1 ?  local_offset_full : local_offset_partial;        
             
-            float* m_ptr = m_memory + opt_state_offset;
-            float* v_ptr = v_memory + opt_state_offset;
+            // float* m_ptr = m_memory + opt_state_offset,* v_ptr = v_memory + opt_state_offset;
+            float* m_ptr = (float*)tensor->gm, *v_ptr = (float*)tensor->gv;
             float* master_ptr = NULL;   
-            if (master_weights != NULL) { master_ptr = master_weights + opt_state_offset; }        
-            // if(init_master_weights) {
-            //     size_t grid_size = CEIL_DIV(shard.size, 512);
-            //     copy_and_cast_kernel<<<dim3(grid_size, num_slices), 512, 0, main_stream>>>(master_ptr, param_ptr, shard.size,shard.size, shard.size);
-            //     cudaCheck(cudaGetLastError());
-            // }
+            // if (master_weights != NULL) { master_ptr = master_weights + opt_state_offset; }        
+
             if(adam.clip_alg!=0 || config.lars_ratio>0){
                 grad_norm = tNormOf(tensor,0x0);        gnorm_1+=grad_norm*grad_norm;
             }      
@@ -249,7 +280,7 @@ int RAW_update(std::vector<hGTensor>& tensors,Optimizer *hOPT,float& grad_norm,i
             // }
                 
             if(flag!=0x10001){  //some debug
-                adamw_core(param_ptr, master_ptr, grad_ptr,m_ptr, v_ptr,
+                Optimizer_update(param_ptr, master_ptr, grad_ptr,m_ptr, v_ptr,
                             shard.size, shard.size, shard.size, shard.size, num_slices,      //num_parameters,ptrdiff_t w_stride, ptrdiff_t g_stride, ptrdiff_t s_stride,  int num_slices,
                             learning_rate,beta1, beta2, iter, eps, wd, grad_scale, seed, main_stream);
             }

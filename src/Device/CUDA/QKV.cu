@@ -232,7 +232,7 @@ auto lookup_cache_or_build_graph_bwd(int B, int NH, int T, int HS) {
         if (cudnn_workspace_size > 0) {
             cudaCheck(cudaFree(cudnn_workspace));
         }
-        cudnn_workspace_size = graph->get_workspace_size();     //1008599040
+        cudnn_workspace_size = graph->get_workspace_size();     //1008599040  2.1G for GPT2_LARGE
         cudaCheck(cudaMalloc(&cudnn_workspace, cudnn_workspace_size));
     }
 
@@ -398,6 +398,7 @@ bool InitCUDA(const CLI_params&hparams,EDGE_DEVICES *hDevice,int flag){
     // printf("| peak TFlops           | %-50.1f |\n", get_flops_promised(deviceProp.name, FLOAT_TYPE));
     printf("| precision             | %-50s |\n", precision_str);
     printf("+-----------------------+----------------------------------------------------+\n");
+    fflush(stdout);
     // Streaming Multiprocessors (SMs) of NVIDIA GPUs are roughly analogous to the cores of CPUs. That is, SMs both execute computations and store state available for computation in registers, with associated caches. Compared to CPU cores, GPU SMs are simple, weak processors.
     hDevice->nCore = deviceProp.multiProcessorCount;
     cudaCheck(cudaEventCreate(&cuStart));
@@ -452,7 +453,7 @@ hGTensor SelfAttention::FUSE_cuda(hGTensor inpL,int flag){
     float *l_att = TO<float>(transition); //(float*)acts.att + l * B * NH * T; // cuDNN needs a smaller FP32 tensor
     if(isForward()){    //  data=ToX(QKV->norm.out)
         inp = OnInput(inpL);            //         inp->Print("inp",0x0,dump_flag); 
-        GTensor::residual->OverWrite(inp);          //  GTensor::residual=inp
+        GTensor::residual=inp;      //GTensor::residual->OverWrite(inp);          
         hGTensor inpQ = inpL;      
         if(fuseNorm==nullptr){
             inpQ=norm.FUSE_cuda(inpL);          inpQ->Print("qkvn.out",0x0,dump_flag);  
@@ -478,36 +479,44 @@ hGTensor SelfAttention::FUSE_cuda(hGTensor inpL,int flag){
         proj_cat.Forw(GTensor::scratch,attn);   //fuMM(scratch, ToX(attn), pw, pb, B, T, C, C, main_stream);       
         // GTensor::scratch->Print("proj_cat",0x0,dump_flag);        
         // fused_residual_forward5(ouput, normed,mean,rstd, residual, scratch, ToX(fuseNorm->w), ToX0(fuseNorm->b), B*T, C, main_stream);
-        residual_forward(ToX(out), ToX(GTensor::residual), ToX(GTensor::scratch), B*T*C, main_stream);      
-        if(fuseNorm!=nullptr){
-            float *mean=TO<float>(fuseNorm->mean),*rstd=TO<float>(fuseNorm->rstd);
-            layernorm_forward(ToX(fuseNorm->out), mean, rstd, ToX(out),ToX(fuseNorm->w), ToX0(fuseNorm->b), B*T, 1, C, main_stream);
-        }      
-        out->Print("out",0x0,dump_flag);      
+        if(!hFish->isRemater()){
+            residual_forward(ToX(out), ToX(GTensor::residual), ToX(GTensor::scratch), B*T*C, main_stream);      
+            if(fuseNorm!=nullptr){
+                float *mean=TO<float>(fuseNorm->mean),*rstd=TO<float>(fuseNorm->rstd);
+                layernorm_forward(ToX(fuseNorm->out), mean, rstd, ToX(out),ToX(fuseNorm->w), ToX0(fuseNorm->b), B*T, 1, C, main_stream);
+            }      
+            out->Print("out",0x0,dump_flag);      
+        }else{
+            
+        }
+        return out;
     }else{
         float *scratchF=(float *)GTensor::buff;        
-        assert(delta!=nullptr);
-        proj_cat.Back(deltaCat,attn,GTensor::delta,nullptr,scratchF);
+         assert(inpL==GTensor::delta);
+        delta->Print("delta",0x0,dump_flag);     
+        proj_cat.Back(GTensor::tmpDelta,attn,GTensor::delta,nullptr);
 
-        hGensor delta_attn = GTensor::bt4c; //* dl_bt4c = ToX(GTensor::bt4c); 
+        hGensor delta_attn = GTensor::bt4c; 
         if(remater_qkv)  {   
             //qkvr=ToX(GTensor::tmpFF1);
             hGTensor norm_out = norm.out;
             Q.Forw(GTensor::tmpFF1,norm_out); // fuMM(qkvr, data, weight, bias, B, T, C, 3*C, main_stream);
         }
 #ifdef ENABLE_CUDNN
-        FUSE_cudnn(ToX(delta_attn), ToX(deltaCat),flag);
+        FUSE_cudnn(ToX(delta_attn), ToX(GTensor::tmpDelta),flag);
         // attention_backward_cudnn(ToX(delta_attn), ToX(deltaCat), qkvr, ToX(attn), l_att, B, T, NH, C_qkv, main_stream);
 #else
         assert(0);
 #endif
-        PrintTensor<floatX>("back of attn",ToX(delta_attn),true,B,T,C);        
+        delta_attn->Print("delta_attn",0x0,dump_flag);     //PrintTensor<floatX>("back of attn",ToX(delta_attn),true,B,T,C);        
         // rope.FUSE_cuda(ToX(delta_attn)); 
         // Q.Back()
-        matmul_backward(ToX(deltaCat), ToG(Q.w), ToG0(Q.b), ToX(delta_attn), ToX(norm.out), ToX(Q.w), scratchF, B, T, C_qkv, 3 * C_qkv, main_stream);
+        matmul_backward(ToX(GTensor::tmpDelta), ToG(Q.w), ToG0(Q.b), ToX(delta_attn), ToX(norm.out), ToX(Q.w), scratchF, B, T, C_qkv, 3 * C_qkv, main_stream);
             
         // layernorm backward does += to dresidual, so it correctly accumulates gradient for the Attention block above
-        norm.FUSE_cuda(deltaCat);    //inp,deltaCat
+        norm.FUSE_cuda(GTensor::tmpDelta);      // would backpropagatioin to GTensor::delta 
+        GTensor::delta->Print("back of QKV",0,dump_flag);
+        return GTensor::delta;   
     }
-    return out;
+    return nullptr;
 }

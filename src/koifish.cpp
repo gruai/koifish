@@ -23,6 +23,7 @@ int g_dump_level = 1;
 int testing_rope(int x, int kernel_num = 1);
 
 int main(int argc, char ** argv) {
+try{
 #ifdef _DO_SOME_TESTING_ 
     // testing_rope(0x0,2);    return 888;
 #endif
@@ -65,7 +66,15 @@ int main(int argc, char ** argv) {
     if(fish && fish->isTrain())
         fish->Train( );
 
-    return 0x0;    
+    return 0x0;  
+} catch(const char* info)  {
+    _INFO("%s",info);        
+    fflush(stdout);
+    return -1000;
+} catch(...)  {
+    _INFO("\r\n%s  Unknown exception !!!",__func__);
+    return -1001;
+}
 }
 
 const char *GRUAI_KOIFISH_APP_NAME = "Koifish-alpha";

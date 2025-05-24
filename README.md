@@ -13,12 +13,17 @@
 - Json config file
 - Self-contained C++ project with minimal dependencies
 
+## Minimum dependencies:
+- cudnn
+- 16GB+ VRAM CUDA Device
+- CUDA Toolkit (8.0+)
+
 ## Download & Build
 
 ```bash
-# sudo apt-get -y install libcudnn9-dev-cuda-12         # maybe need this to install CUDNN
+# sudo apt-get -y install libcudnn9-dev-cuda-12  # maybe need this to install CUDNN
 # sudo apt-get install libicu-dev
-# export CPATH=/usr/local/cuda/include:$CPATH           # maybe need this to export CPATH
+# export CPATH=/usr/local/cuda/include:$CPATH        # maybe need this to export CPATH
 git clone https://github.com/gruai/koifish
 cd koifish
 mkdir build && cd build && cmake ..
@@ -35,7 +40,7 @@ make clean && make VERBOSE=TRUE
 
 
 ## Working plan
-- Hybrid 16/8 bit Optimizer
+- Hybrid 1 bit Optimizer
 - Support MAMBA
 - Sparsing
 

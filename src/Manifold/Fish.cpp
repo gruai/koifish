@@ -99,7 +99,7 @@ Fish::Fish(const std::string&nam_,struct CLI_params params,ROLE_TYPE role_,int f
             isLoad ? INIT_WEIGHT::SERIALIZE :
             INIT_WEIGHT::RANDOM;        
     }
-
+    rand_coin.Init(42);
     
     if(jKEY(params.jConfig,{"train"}).empty())     {
         isLocalInfer = true;
@@ -195,7 +195,7 @@ size_t Fish::MostMemSize(int typ)         {
 bool Fish::AfterBuild(bool isInitParam,int flag)   {     
     int64_t nx=0, n0=0,nInput=0,i;
     if(isInitParam) {
-        assert(rnd!=nullptr);
+        // assert(rnd!=nullptr);
     }
     printf("\n\n");
     assert(optParams.size()==0);
@@ -255,10 +255,11 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
         assert(!isLoadCheckpoint);
         for (auto node : optParams) {  
             if(isInitParam){
-                if (rnd != nullptr)
-                    tRAND(node, rnd);
-                else
-                    ZERO_(node);    //ggml_set_zero(node);  
+                node->InitParam(tpInitWeight);
+                // if (rnd != nullptr)
+                //     tRAND(node, rnd);
+                // else
+                //     ZERO_(node);    
             }
             // _pt_cys_("",node,0x0);         //printf("\n");
         }   
@@ -358,16 +359,13 @@ bool Fish::Build(int flag)  {
     bool isInitParam = false, isJModel = !config.jModel.empty();
     assert(isJModel);
     isSymbolicAnalysis = true;    
-#ifdef _TENSOR_G_
-#else
-    ggml_backend_sched_reset(hEDS->GetSched());
-#endif
+
     /*if(config.ModelArch()==MODEL_ARCH::NLP_GPT2 || config.ModelArch()==MODEL_ARCH::NLP_GPT2_char){  
         isInitParam = true;        
         iRet = BuildGraphFromRaw(0x0);
     }else*/    {
         InitInput(ctx_build,true,flag);         
-        isInitParam = true;
+        //  isInitParam = true;     // would init param online, not here
         hForwTG = std::make_shared<TGraph>(this,"J_model",ctx_build,true);
         jToGraph(ctx_build,false,flag);
         assert(hCLS!=nullptr);            
@@ -653,3 +651,29 @@ bool Fish::CopyGensors(hWIKI wiki,int flag)    {
     return true;
 }
 
+bool Fish::BeforeNextStep(int iter,int flag)    { 
+    int nLayer = config.nLayer(),l;
+    for(auto neuron:backbons)
+        neuron->stat.Reset();
+        
+    for(l=0;l<nLayer;l++){
+        FFN *ffn = GetNeuron<FFN>("FFN",l);    
+        SelfAttention *QKV = GetNeuron<SelfAttention>("QKV",l);        
+           
+        bool isPass = rand_coin.NextCoin();
+        // ffn->isShortcut = isPass;   
+        // QKV->isShortcut = isPass;     
+    }  
+    return true;    
+}
+
+bool Fish::AfterNextStep(int iter,int flag){ 
+    int nLayer = config.nLayer(),l;
+    for(l=0;l<nLayer;l++){
+        FFN *ffn = GetNeuron<FFN>("FFN",l);    
+        SelfAttention *QKV = GetNeuron<SelfAttention>("QKV",l);
+        SUM::tFFN += ffn->stat.tFore;    SUM::tFFN += ffn->stat.tBack; 
+        SUM::tQKV += QKV->stat.tFore;    SUM::tQKV += QKV->stat.tBack;
+    }  
+    return true;    
+}
