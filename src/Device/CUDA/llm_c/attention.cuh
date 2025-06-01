@@ -4,7 +4,7 @@ Attention, as a fallback when we do not use the Flash Attention from cuDNN
 #include <assert.h>
 // llmc internal imports
 #include "cuda_common.h"
-#include "cuda_utils.cuh"
+#include "utils.cuh"
 #include "cublas_common.h"
 
 // ----------------------------------------------------------------------------

@@ -131,7 +131,7 @@ public:
     // shape=>x_shape
     virtual void* DataPad(void* src0,int flag=0x0);     
 
-    static typNUMBER tpFloatX,tpPreLogits;
+    // static typNUMBER tpFloatX,tpPreLogits;
     typNUMBER  type;
     INIT_WEIGHT tpInit=INIT_WEIGHT::RANDOM;
     enum BIT_FLAG {

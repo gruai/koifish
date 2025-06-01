@@ -1,10 +1,51 @@
-// Utilities for use in __device__ code
-
+/**
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT
+ * 
+ *  \brief Some Utilities cuda kernels
+ *  \author Yingshi Chen
+ */
 #ifndef CUDA_UTILS_CUH
 #define CUDA_UTILS_CUH
 
-#include "cuda_common.h"
+#include <assert.h>
+// #include <float.h>
+#include <stdint.h>
+#include "../cuda_common.h"
 
+// fused multiply-add: FMA(a, b, c) = a*b + c, where the full product enters into the addition unmodified (neither rounded nor truncated), and there is a single rounding at the end. 
+// One FMA instruction thus comprises two floating-point operations.It's the basic floating-point building block of the GPU.
+// Reference: https://developer.nvidia.com/blog/lerp-faster-cuda
+// __device__ inline float lerp(float start, float end, float weight) {
+//     return fma(weight, end, fma(-weight, start, start));
+// }
+
+// note: we expect loads to be broken into units of up to 16b due to specified alignment
+template <typename T, int N>
+union alignas(sizeof(T) * N) ablock {
+	T v[N];
+};
+
+/*
+    An “all reduce” within a warp using
+*/
+__device__ inline float warpreduce_sum(float v) {
+#pragma unroll
+	for (int mask = warpSize / 2; mask > 0; mask >>= 1) {
+		v += __shfl_xor_sync(0xffffffff, v, mask);
+	}
+	return v;
+}
+
+
+__device__ inline half fp8_e5m2_ff(uint8_t v) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+	__half_raw h = __nv_cvt_fp8_to_halfraw(v, __NV_E5M2);
+#else
+	__half_raw h = {(unsigned short)(v << 8)};
+#endif
+	return h;
+}
 // ----------------------------------------------------------------------------
 // Packed128 data structure that forces the compiler to use 128-bit loads/stores
 // in GPUs that support (the LDG.128 and STS.128 instructions)

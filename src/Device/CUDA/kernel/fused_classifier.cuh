@@ -5,8 +5,8 @@ Fused Classifier:
 - (fusion) Also kicks off the backward pass, because everything is already loaded
 */
 // llmc internal imports
-#include "cuda_common.h"
-#include "cuda_utils.cuh"
+#include "../cuda_common.h"
+#include "utils.cuh"
 
 // ----------------------------------------------------------------------------
 // CUDA kernels

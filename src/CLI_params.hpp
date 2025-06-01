@@ -118,7 +118,8 @@ public:
     std::string sCardPath = "",sTokenPath="";
     std::string sArch,torch_dtype,transformers_version,model_type;
     std::string act_type,norm_type;
-    typNUMBER tpWeight = typNUMBER::BF16,tpActivation = typNUMBER::BF16;
+    typNUMBER tpWeight = typNUMBER::BF16,tpActivation = typNUMBER::BF16, tpGradient = typNUMBER::BF16;
+;
     dotprod_t fDotW;
     JSON jModelParam;   //
     int vocab_size=-1,bos_token_id,eos_token_id;
@@ -148,7 +149,7 @@ public:
     int rotary_dim = 0;
     int seq_len = 0;
 
-    MODEL_CARD()    {}
+    MODEL_CARD();
     virtual bool OnJsonCALM(const std::string&path,const JSON &meta,int flag=0X0);
     virtual bool Init(const JSON&jConfig,int flag=0x0);
     bool empty()    {   return sCardPath.empty();  }
@@ -228,6 +229,7 @@ struct DEUG_SWITCH{
     int back_graph_version = 0;
     int T_cuda_ver = 0;
     int T_cpu = 0;
+    int T_GEMM = 0;
 
     int cmd_p1=0,cmd_p2=0,cmd_p3=0;     //some commandline parameter for debug
     
@@ -258,9 +260,7 @@ struct CLI_params {
     CheckPoint checkpoint;   
 
     SKDU_params scheduling;
-
-    typNUMBER tpGradient = typNUMBER::BF16;
-
+    
     //Always false,     GGML don't support back of FLASH_ATTEN !
     bool isFlashAtten()     {   
         common.use_flash=false;  return common.use_flash;  

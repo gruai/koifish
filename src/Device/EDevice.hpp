@@ -6,7 +6,7 @@
  *  \author Yingshi Chen
  */
 #pragma once
-#include "../../ggex/GG_util.hpp"
+#include "../ggex/GG_util.hpp"
 #ifdef __USE_GGML__
     #include "ggml-backend.h"
     #include "ggml-cpu.h"
@@ -37,9 +37,9 @@ public:
     size_t sz = 0x0,mostRAM=0;
     shared_ptr<RLS_BP> hRLS = nullptr;
 
-#ifdef __USE_CUDA__
     virtual bool InitGPU(const CLI_params&hparams,int flag=0x0);
-#endif   
+    virtual bool ClearGPU(int flag=0x0);
+  
     EDGE_DEVICES();
     EDGE_DEVICES(const CLI_params&hparams, int flag=0x0);
     virtual ~EDGE_DEVICES();

@@ -337,6 +337,16 @@ string MODEL_CARD::sNorm="_norm";            //".norm"
 string MODEL_CARD::sLayer="blk.";            //".norm"
 string MODEL_CARD::sAttnOut=".wo";           //  "_output";    //  "_cat"
 
+MODEL_CARD::MODEL_CARD( )    {
+#if defined(ENABLE_FP16)    
+    tpWeight = typNUMBER::F16,      tpActivation = typNUMBER::F16,          tpGradient = typNUMBER::F16;
+#elif defined(ENABLE_BF16) 
+    tpWeight = typNUMBER::BF16,     tpActivation = typNUMBER::BF16,         tpGradient = typNUMBER::BF16;
+#else
+    assert(0);
+#endif
+}
+
 bool MODEL_CARD::Init(const JSON&jConfig,int flag){
     sCardPath = jKV(jConfig,{"model_card"},sCardPath );
     if(sCardPath.empty())
@@ -445,7 +455,7 @@ try{
         scheduling.strategy = SKDU_params::MEM_SWAP;
     else{
         // scheduling.strategy = SKDU_params::MEM_SWAP;
-        scheduling.strategy = SKDU_params::MEM_SWAP_GUOKE;
+        //  scheduling.strategy = SKDU_params::MEM_SWAP_GUOKE;
     }
     
     if(scheduling.strategy == SKDU_params::MEM_SWAP_GUOKE){
@@ -806,7 +816,7 @@ bool CLI_params::parse(int argc, char ** argv)  {
             exit(1);
         }
     }    
-
+    DEBUG.T_GEMM = 1;
     if(jPath.empty() || !InitJConfig(jPath))
         return false;
     

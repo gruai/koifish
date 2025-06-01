@@ -2,12 +2,9 @@
  *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT  
  *  
- *  Random swimming fish  
- * 
- *  \brief General Language model
+ *  \brief Random swimming fish that generated from AI
  *  \author Yingshi Chen
  */
-#include <set>
 #include "../g_stddef.hpp"
 #include "Fish.hpp"
 #include "Optimizer.hpp"
@@ -661,7 +658,7 @@ bool Fish::BeforeNextStep(int iter,int flag)    {
         SelfAttention *QKV = GetNeuron<SelfAttention>("QKV",l);        
            
         bool isPass = rand_coin.NextCoin();
-        // ffn->isShortcut = isPass;   
+        // ffn->isShortcut = isPass;       // converge too slow
         // QKV->isShortcut = isPass;     
     }  
     return true;    

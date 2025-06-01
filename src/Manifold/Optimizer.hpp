@@ -140,19 +140,7 @@ public:
         return isStopImprove;	
     }
 
-    virtual void Dump(int typ){
-        if(NOT_DUMP(0))    return;
-        size_t sz = 0x0;
-        const char*title = "OPT";   //__func__
-        if(_ctx!=nullptr)
-            _INFO("%s: mem_size  = %zu bytes (%.1f MB)\n", title, sz, (float)sz/(1024.0f*1024.0f));
-        _INFO("%s: iter = %d\n", title, iter);
-        
-        if(typ==1){
-           _INFO("%s: SAMP_HASH=%llu total train_iterations=%llu train_samples=%llu train_tokens=%llu completed_epochs=%llu\n", title, 
-                shuffle_samples_hash, train_its,train_samples,train_tokens,train_epochs);            
-        }
-    }
+    virtual void Dump(int typ);
     virtual void AfterBuild(int flag=0x0);
     virtual void BeforeTrain(hGensor tokens_input,int flag) ;
     virtual void InitOnCUDA(int flag);

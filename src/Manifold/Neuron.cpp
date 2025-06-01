@@ -103,6 +103,9 @@ void GeNeuron::Init(Fish *hG_, int flag) {
     n_embd_head = config.n_embd_head();
     n_head=config.n_head();
     assert(n_embd_head*n_head==C);
+    tpWeight = hFish->config.model.tpWeight;
+    tpActivation = hFish->config.model.tpActivation;
+    tpGradient = hFish->config.model.tpGradient;
 }
 void GeNeuron::SetRefer(const GeNeuron* src,bool isBias,int flag){
     assert(src!=nullptr);
@@ -203,6 +206,12 @@ OutSimilarity::OutSimilarity(Fish *hG_, const std::string &key_, JSON::const_ite
         dB = 0;
 }
 
+//  The Unreasonable Effectiveness of Entropy Minimization in LLM Reasoning
+OutEntropy::OutEntropy(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) 
+    : OutCLS(hG_, key_, jit, flag)   {
+        dB = 0;
+}
+
 OutCLS::OutCLS(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_,jit, hG_, flag){   
     int nEmbd=hFish->config.nEmbed();
     // _target = hFish->Target();   //null now          
@@ -246,10 +255,10 @@ bool OutCLS::Build(int flag)   {
     out = std::make_shared<huTensor>(hFish,"loss",sp2,typNUMBER::F32,false);     
     
     if(hFish->config.isOnlyGPT) {
-        sp3 = {padded_nCls};   preLogits = std::make_shared<huTensor>(hFish,"preLogits",sp3,GTensor::tpPreLogits,false);  
+        sp3 = {padded_nCls};   preLogits = std::make_shared<huTensor>(hFish,"preLogits",sp3,tpActivation,false);  
         preLogits->flags |= GTensor::F_HOSTALLOC;
     }else{
-        preLogits = std::make_shared<huTensor>(hFish,"preLogits",sp3,GTensor::tpPreLogits,false);  
+        preLogits = std::make_shared<huTensor>(hFish,"preLogits",sp3,tpActivation,false);  
     }
 
     delta = GTensor::bt4c;  // !=GTensor::delta
@@ -319,7 +328,7 @@ bool SLP::Build(int flag)      {
     isBias = hFish->config.model.isSLPBias || BIT_TEST(flag,F_BIAS);
     // shape = shape_;
     void *ctx = hFish->GetGGCTX();
-    typNUMBER tpData = GTensor::tpFloatX;
+    typNUMBER tpData = tpWeight;
     int bFlag = 0x0;
     nIn=shape[0],nOut=shape[1];
     if(shape.size()==2){    
@@ -451,14 +460,14 @@ int SLP::Forw(float *rhs,float *lhs,int flag){
         dotprod_t fDot = fnDot(hSVD->tpOut);
         float *UX=new float[nHeavy],*U=hSVD->U();
         // cur = ggml_mul_mat(ctx0, u, cur);    
-        matmul(UX, lhs, U, nullptr, nIn, nHeavy, fDot);
+        D_matvec(UX, lhs, U, nullptr, nIn, nHeavy, fDot);
         assert( isValidF(nHeavy,UX) );
         // cur = ggml_mul_mat(ctx0, v, cur);   
-        matmul(rhs, UX, hSVD->V(), bias, nHeavy, nOut, fDot);
+        D_matvec(rhs, UX, hSVD->V(), bias, nHeavy, nOut, fDot);
         assert( isValidF(nOut,rhs) );
         delete[] UX;
     }else
-	    matmul(rhs, lhs, w->data, bias, nIn, nOut, hFish->config.model.fDotW);
+	    D_matvec(rhs, lhs, w->data, bias, nIn, nOut, hFish->config.model.fDotW);
     return 0x0;
 }
 
@@ -589,13 +598,13 @@ bool LayerNormal::Build(int flag0)    {
     assert(shape.size()==1 && shape[0]>0 );
     string sw = name+MODEL_CARD::sWeight,sb=name+".bias";
     bool isTrain = hFish->isTrain();    
-    int nIn=shape[0];
+    int nIn=shape[0];   
     if(isAffineTrans){
-        w = GT(hFish, GTensor::tpFloatX, {nIn},flag);
+        w = GT(hFish, tpWeight, {nIn},flag);
         hFish->InitGensor(ctx,sw.c_str(),w,true);
     }
     if(isBias)  {
-        b = GT(hFish, GTensor::tpFloatX, {nIn},flag);
+        b = GT(hFish, tpWeight, {nIn},flag);
         hFish->InitGensor(ctx,sb.c_str(),b,true);
     }
         
@@ -603,7 +612,7 @@ bool LayerNormal::Build(int flag0)    {
     if(b!=nullptr)  b->tpInit=W_SKIP;
     // assert(nIn==C || nIn==hFish->config.nEmbed(-1));
     SHAPE sp={B,T},sp3={B,T,nIn};
-    out = std::make_shared<huTensor>(hFish,name+".out",sp3,GTensor::tpFloatX,false);    
+    out = std::make_shared<huTensor>(hFish,name+".out",sp3,tpWeight,false);    
  
     if(isRMS){
 
@@ -840,5 +849,53 @@ hGTensor operator>>(hGTensor t, const SparseNeuron* neuron){
     assert(t!=nullptr && neuron->out!=nullptr);
     neuron->out->AddSrc({t});
     return neuron->out;
+}
+
+template<typename Tw, typename Ta>
+void tMM(Ta *lhs,Tw *W, Ta *rhs,Tw *b, size_t M, size_t N, size_t K,bool transAW, cudaStream_t main_stream,int flag=0);
+void inline gelu_forward(floatX* out, const floatX* inp, int N, cudaStream_t stream);
+int SLP::Forw(hGTensor rhs_0,hGTensor lhs_,hGTensor toGelu,int flag){
+try{
+    floatX *rhs=ToX(rhs_0),*to_gelu = ToX0(toGelu),*wX=ToX(w);//,*inp=ToX(lhs_);
+    int OC=nOut,IC=nIn;
+    assert(gelu_fusion==0);    assert(rhs_0->size()>=B*T*OC);        
+
+    inp = lhs_;
+    bool transAW = true;
+    // if(isTransW)        
+    //     transAW = false;
+    if(compression==SAMPLE && subw!=nullptr){
+        subw->SubW(hSamps,true,GTensor::tmpW,samp_type);
+        wX = ToX(GTensor::tmpW);        
+        // GTensor::tmpW->Print("subW",0,-1);    
+    }
+    /*if (gelu_fusion < 1 && to_gelu) {
+        matmul_cublaslt(to_gelu, wX, ToX(lhs_), ToX0(b), OC, B*T, IC, main_stream, transAW, false, 0, 0, 0, 0, false, NULL, false);
+        gelu_forward(rhs, to_gelu, B*T*OC, main_stream);
+    } else {
+        matmul_cublaslt(rhs, wX, ToX(lhs_), ToX0(b), OC, B*T, IC, main_stream, transAW, false, 0, 0, 0, 0, false, to_gelu, false);
+    }*/
+    rhs = to_gelu ? to_gelu : rhs;
+    switch(w->type){
+    case typNUMBER::T_SIGN:
+        assert(0);
+        break;
+    default:
+        tMM<floatX,floatX>(ToX(lhs_), wX, rhs, ToX0(b), B*T, OC, IC,true,main_stream); 
+        break;
+    }
+    if( to_gelu) {
+        gelu_forward(ToX(rhs_0), to_gelu, B*T*OC, main_stream);
+        // swiglu_forward(rhs, to_gelu, B*T*OC, main_stream);
+    }
+    if(compression==SAMPLE) {
+        // rhs_0->Print(rhs_0->name,0,-1);
+    }
+    
+    return 0x0;
+}catch(...){
+    assert(0);
+    return -1;
+}
 }
 

@@ -9,9 +9,9 @@
  */
 #include "./Operator.cuh"
 #include "./llm_c/sampler.h"
-#include "./llm_c/layernorm.cuh"
-#include "./llm_c/encoder.cuh"
-#include "./llm_c/cuda_utils.cuh"
+#include "./kernel/layernorm.cuh"
+#include "./kernel/embed.cuh"
+#include "./kernel/utils.cuh"
 #include "../../Manifold/Neuron.hpp"
 #include "../../Manifold/Fish.hpp"
 
@@ -128,7 +128,7 @@ void RAW_forward(Fish *fish,int flag) {
     if(tpFuseCu==1)
         cls->FUSE_cuda(cur,flag); //embed->w,
     else
-        assert(0);//cls->preLogits = lnf->out*embed->w;   //matmul_forward_cublaslt(ToX(cls->preLogits), ToX(lnf->out), ToX(embed->w), NULL, B, T, C, Vp, main_stream);
+        assert(0);//cls->preLogits = lnf->out*embed->w;   
     PrintTensor<floatX>("output",ToX(cls->preLogits),true,B,T,C);
     // ffn->norm.out->PrintX<floatX>("inp1",0,-1); 
 

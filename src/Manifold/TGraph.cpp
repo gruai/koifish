@@ -98,19 +98,19 @@ bool SelfAttention::Build(int flag_0)   {
         Q.BuildX(name+".wq",sp,hFish,flag);          
         K.BuildX(name+".wk",sp,hFish,flag);              
         V.BuildX(name+".wv",sp,hFish,flag);
-        bqkv = std::make_shared<huTensor>(hFish,name+".wqkv.bias",sp,GTensor::tpFloatX,false);    //  model.layers.0.attn.wqkv.bias
+        bqkv = std::make_shared<huTensor>(hFish,name+".wqkv.bias",sp,tpWeight,false);    //  model.layers.0.attn.wqkv.bias
         // hFish->InitGensor(nullptr,bqkv->name,bqkv,hFish->isTrain());
     }else   {
         Q.BuildX(name+"_qkv",sp2,hFish,flag );
     }
-    attn = std::make_shared<huTensor>(hFish,name+".attn",(SHAPE){B,T,C_qkv},GTensor::tpFloatX,false);        // B * T * C
+    attn = std::make_shared<huTensor>(hFish,name+".attn",(SHAPE){B,T,C_qkv},tpWeight,false);        // B * T * C
 #ifdef ENABLE_CUDNN
     transition = GT(hFish,typNUMBER::F32,{B,n_head_kv,T},0x0,name+".trans");        // ENABLE_CUDNN need float array
 #else
-    transition = GT(hFish,GTensor::tpFloatX,{B,n_head_kv,T*T},0X0,name+".trans");    //  too much memory!
+    transition = GT(hFish,tpWeight,{B,n_head_kv,T*T},0X0,name+".trans");    //  too much memory!
 #endif
 
-    out = std::make_shared<huTensor>(hFish,name+".out",sp3,GTensor::tpFloatX,false);    
+    out = std::make_shared<huTensor>(hFish,name+".out",sp3,tpWeight,false);    
     if(hFish->config.isShareLayerOut()){
         out->SetRefer(GTensor::outL);        
     }    
@@ -1510,23 +1510,24 @@ bool GTensor::AllocBuffer(Fish *hFish,int flag){
     int dB = hFish->config.model.preLogits_dB;            
     assert(B%dB==0);
     nTmp = std::max(nFFW/dB+1,nTmp);       assert(nTmp<INT_MAX);
+    typNUMBER tpWeight = hFish->config.model.tpWeight;
 
     // cuLiteTest(B,T,C);
     int mostC = C;  //config.nEmbed(-1);      
     SHAPE sp={B,T,C},sp4={B,T,max(nFF,3*C)},sp0={dB, (int)nTmp},spMost={B,T,mostC};
-    GTensor::bt4c = std::make_shared<huTensor>(hFish,"scratch_4c",sp4,GTensor::tpFloatX,true); 
-    GTensor::tmpFF1 = std::make_shared<huTensor>(hFish,"tmpFF1",sp4,GTensor::tpFloatX,true); 
+    GTensor::bt4c = std::make_shared<huTensor>(hFish,"scratch_4c",sp4,tpWeight,true); 
+    GTensor::tmpFF1 = std::make_shared<huTensor>(hFish,"tmpFF1",sp4,tpWeight,true); 
 
     if(hFish->config.ModelArch()==NLP_GUPPY){
-        GTensor::tmpW = std::make_shared<huTensor>(hFish,"tmpFF1",SHAPE({nEmbed,nFF}),GTensor::tpFloatX,true); 
-        GTensor::tmpGW = std::make_shared<huTensor>(hFish,"tmpFF1",SHAPE({nEmbed,nFF}),GTensor::tpFloatX,true); 
+        GTensor::tmpW = std::make_shared<huTensor>(hFish,"tmpFF1",SHAPE({nEmbed,nFF}),tpWeight,true); 
+        GTensor::tmpGW = std::make_shared<huTensor>(hFish,"tmpFF1",SHAPE({nEmbed,nFF}),tpWeight,true); 
     }
-    GTensor::delta = std::make_shared<huTensor>(hFish,"delta",spMost,GTensor::tpFloatX,true); 
-    GTensor::tmpDelta = std::make_shared<huTensor>(hFish,"delta",spMost,GTensor::tpFloatX,true); 
-    GTensor::outL = std::make_shared<huTensor>(hFish,"outL",spMost,GTensor::tpFloatX,true); 
-    // GTensor::residual = std::make_shared<huTensor>(hFish,"residual",spMost,GTensor::tpFloatX,true); 
+    GTensor::delta = std::make_shared<huTensor>(hFish,"delta",spMost,tpWeight,true); 
+    GTensor::tmpDelta = std::make_shared<huTensor>(hFish,"delta",spMost,tpWeight,true); 
+    GTensor::outL = std::make_shared<huTensor>(hFish,"outL",spMost,tpWeight,true); 
+    // GTensor::residual = std::make_shared<huTensor>(hFish,"residual",spMost,tpWeight,true); 
     //  may reduce memory by sp0=sp0/VP
-    GTensor::scratch = std::make_shared<huTensor>(hFish,"scratch/output",sp0,GTensor::tpFloatX,true);
+    GTensor::scratch = std::make_shared<huTensor>(hFish,"scratch/output",sp0,tpWeight,true);
 
     return true;
 }

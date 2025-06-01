@@ -53,7 +53,7 @@ bool TokenEmbed::Build(int flag){
 
     // InitMAC();
     assert(latent>0);
-    typNUMBER tpData = GTensor::tpFloatX;
+    typNUMBER tpData = tpWeight;
 
     bool isTrain = hFish->isTrain();
     string sw = name+MODEL_CARD::sWeight,sb=name+".pos"; 
@@ -363,7 +363,7 @@ bool FFN::Build(int flag_0)   {
     // flag |= GeNeuron::F_BIAS; 
     assert(C==shape[0]);
     sp3 = {B,T,latent};    sp2 = {B,T,C};
-    // relu.out = std::make_shared<huTensor>(name+"_relu",sp3,GTensor::tpFloatX,false);   
+    // relu.out = std::make_shared<huTensor>(name+"_relu",sp3,tpWeight,false);   
 #else    
     gate.BuildX(name+"_gate",{shape[0],shape[1]},hFish,flag);
 #endif
@@ -389,7 +389,7 @@ bool FFN::Build(int flag_0)   {
         }else{
             //out = norm.out;     ???
         }
-        out = std::make_shared<huTensor>(hFish,name+"_out",sp2,GTensor::tpFloatX,false);  
+        out = std::make_shared<huTensor>(hFish,name+"_out",sp2,tpWeight,false);  
         if(hFish->config.isShareLayerOut()){    //  ???
             out->SetRefer(GTensor::outL);        
         } 

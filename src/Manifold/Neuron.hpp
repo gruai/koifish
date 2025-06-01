@@ -60,6 +60,7 @@ protected:
     Fish *hFish = nullptr;    
     SHAPE shape;
     COMPRESSIVE_SENSING compression = SKIP;
+    typNUMBER tpWeight = typNUMBER::BF16,tpActivation = typNUMBER::BF16, tpGradient = typNUMBER::BF16;
     
     int level=-1,ID=-1,dad,c_id;    //topo info
     int layer=-1;       // no of layer in LLM/Brain structure
@@ -522,6 +523,11 @@ struct OutCLS : public SparseNeuron  {
 struct OutSimilarity : public OutCLS  {    
     OutSimilarity(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag);
     hGTensor FUSE_cuda(hGTensor inpL,int flag)  override;
+};
+
+struct OutEntropy : public OutCLS  {    
+    OutEntropy(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag);
+    // hGTensor FUSE_cuda(hGTensor inpL,int flag)  override;
 };
 
 struct NeLayer

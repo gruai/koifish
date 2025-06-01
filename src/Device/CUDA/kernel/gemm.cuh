@@ -1,14 +1,21 @@
-/*
-Matrix Multiplication, with help from cuBLASLt
-*/
+/**
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT  
+ *        
+ * 
+ *  \brief General C=op(A*B)    from many great work of open source commmutiy(TK,llm.c,calm,...)
+ *  
+ */
 #include <assert.h>
-#include <type_traits>      // std::bool_constant
-// llmc internal imports
-#include "cuda_common.h"
-#include "cuda_utils.cuh"
-#include "cublas_common.h"
-// GELU can be either fused (cublasLt) or non-fused (gelu.h)
+#include <type_traits> 
+#include <cuda_fp16.h>
+#include <cuda_bf16.hpp>
+#include <cuda_fp8.h>     
+#include "../cuda_common.h"
+#include "utils.cuh"
+#include "../cublas_common.h"
 #include "gelu.cuh"
+#include "matmul_1bit.cuh"
 
 // ----------------------------------------------------------------------------
 // CUDA kernels
@@ -101,21 +108,26 @@ __global__ void inline reduce_add_sum_kernel(floatX* dst, const float* src, size
     }
 }
 
-// ----------------------------------------------------------------------------
-// kernel launchers
 
 /*  d(m,n) = a'*b + bias
-    Wrapper around cublasLtMatmul(https://docs.nvidia.com/cuda/cublas/#cublasltmatmul)
+    Wrapper around cublasLtMatmul(https://docs.nvidia.com/cuda/cublas/#cublasltmatmul) or 
 */
-void inline matmul_cublaslt(floatX* d, const floatX* a, const floatX* b, const floatX* bias,
+void inline CU_mm_blas(floatX* d, const floatX* a, const floatX* b, const floatX* bias,
                      int m, int n, int k, cudaStream_t stream=0, bool transA=true, bool transB=false,
                      int batch_count=0, size_t strideA=0, size_t strideB=0, size_t strideOut=0,
-                     bool accumulate=false, floatX* pre_gelu=NULL, bool backward=false)
-{
+                     bool accumulate=false, floatX* pre_gelu=NULL, bool backward=false) {
     NVTX_RANGE_FN();
-    bool has_bias = (bias != NULL);
-    bool has_gelu = (pre_gelu != NULL);
-
+    bool has_bias = (bias != NULL), has_gelu = (pre_gelu != NULL);
+    const float alpha = 1.0f, beta = accumulate ? 1.0f : 0.0f;
+    cublasOperation_t opA = (transA) ? CUBLAS_OP_T : CUBLAS_OP_N, opB = (transB) ? CUBLAS_OP_T : CUBLAS_OP_N;
+    if(bias==nullptr && pre_gelu==nullptr && batch_count==0)   {
+        // A little faster than cublasLtMatmul ? 
+        int lda = transA ? k : m; 
+        int ldb = transB ? n : k;          
+        cublasGemmEx(cublas_handle,opA,opB, m,n,k,  &alpha,     a, CUDA_R_16BF, lda, 
+            b, CUDA_R_16BF, ldb,    &beta,  d, CUDA_R_16BF, m, CUDA_R_32F,CUBLAS_GEMM_DEFAULT );     //  CUBLAS_GEMM_DEFAULT_TENSOR_OP[DEPRECATED]
+        return;
+    }
     // check alignment (some modes work unaligned but it always best to be aligned for performance)
     if(((uintptr_t)a % 16) != 0 || ((uintptr_t)b % 16) != 0 || ((uintptr_t)d % 16) != 0 || ((uintptr_t)bias % 16) != 0) {
         printf("All cuBLASLt pointers must be aligned!\n");
@@ -130,10 +142,9 @@ void inline matmul_cublaslt(floatX* d, const floatX* a, const floatX* b, const f
     cublasLtMatmulPreference_t preference;
     cublasLtMatmulHeuristicResult_t heuristic;
 
-    cublasOperation_t opNoTranspose = CUBLAS_OP_N;
-    cublasOperation_t opTranspose = CUBLAS_OP_T;
-    cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSA, (transA)  ? &opTranspose : &opNoTranspose,   sizeof(opTranspose)));
-    cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSB, (transB) ? &opTranspose   : &opNoTranspose, sizeof(opNoTranspose)));
+
+    cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSA, &opA,   sizeof(opA)));       //(transA)  ? &opTranspose : &opNoTranspose
+    cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSB, &opB,   sizeof(opB)));     //(transB) ? &opTranspose   : &opNoTranspose
 
     // define matrix layouts
     cublasLtMatrixLayout_t ALayout;
@@ -141,18 +152,18 @@ void inline matmul_cublaslt(floatX* d, const floatX* a, const floatX* b, const f
     cublasLtMatrixLayout_t DLayout;
     cublasLtMatrixLayout_t CLayout;
     if (transA) {
-        cublasCheck(cublasLtMatrixLayoutCreate(&ALayout, CUBLAS_LOWP, k, m, k));
+        cublasCheck(cublasLtMatrixLayoutCreate(&ALayout, tpCuBLAS, k, m, k));
     } else {
-        cublasCheck(cublasLtMatrixLayoutCreate(&ALayout, CUBLAS_LOWP, m, k, m));
+        cublasCheck(cublasLtMatrixLayoutCreate(&ALayout, tpCuBLAS, m, k, m));
     }
     if (transB) {
-        cublasCheck(cublasLtMatrixLayoutCreate(&BLayout, CUBLAS_LOWP, n, k, n));
+        cublasCheck(cublasLtMatrixLayoutCreate(&BLayout, tpCuBLAS, n, k, n));
     } else {
-        cublasCheck(cublasLtMatrixLayoutCreate(&BLayout, CUBLAS_LOWP, k, n, k));
+        cublasCheck(cublasLtMatrixLayoutCreate(&BLayout, tpCuBLAS, k, n, k));
     }
     // cuBLASLt requires C in FP8 mode to be BF16 or FP32... (sigh)
-    cublasCheck(cublasLtMatrixLayoutCreate(&CLayout, (sizeof(floatX) == 1) ? CUDA_R_16BF : CUBLAS_LOWP, m, n, m));
-    cublasCheck(cublasLtMatrixLayoutCreate(&DLayout, CUBLAS_LOWP, m, n, m));
+    cublasCheck(cublasLtMatrixLayoutCreate(&CLayout, (sizeof(floatX) == 1) ? CUDA_R_16BF : tpCuBLAS, m, n, m));
+    cublasCheck(cublasLtMatrixLayoutCreate(&DLayout, tpCuBLAS, m, n, m));
 
     // Strided Batched GEMM (used for non-flash attention, equivalent to cublasGemmStridedBatchedEx)
     if (batch_count) {
@@ -193,7 +204,7 @@ void inline matmul_cublaslt(floatX* d, const floatX* a, const floatX* b, const f
 
     if (has_bias) {
         // cuBLASLt requires bias in FP8 mode to be BF16... (sigh)
-        cublasDataType_t bias_data_type = (sizeof(floatX) == 1) ? CUDA_R_16BF : CUBLAS_LOWP; // force BF16 bias for FP8 mode
+        cublasDataType_t bias_data_type = (sizeof(floatX) == 1) ? CUDA_R_16BF : tpCuBLAS; // force BF16 bias for FP8 mode
         cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_BIAS_DATA_TYPE, &bias_data_type, sizeof(bias_data_type)));
         cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &bias, sizeof(bias)));
     }
@@ -210,8 +221,6 @@ void inline matmul_cublaslt(floatX* d, const floatX* a, const floatX* b, const f
         exit(EXIT_FAILURE);
     }
 
-    // set whether to accumulate (i.e. D += C) or not - note this isn't considered in algorithm selection (?!)
-    const float alpha = 1.0f, beta = accumulate ? 1.0f : 0.0f;
 
     // call the matmul
     cublasCheck(cublasLtMatmul(cublaslt_handle, operationDesc,
@@ -226,20 +235,6 @@ void inline matmul_cublaslt(floatX* d, const floatX* a, const floatX* b, const f
     cublasCheck(cublasLtMatrixLayoutDestroy(CLayout));
     cublasCheck(cublasLtMatrixLayoutDestroy(DLayout));
     cudaCheck(cudaGetLastError());
-}
-
-// small wrapper around matmul_cublaslt for the forward pass (keeping historical order of arguments)
-void inline matmul_forward_cublaslt(floatX* out,
-                     floatX* inp, floatX* weight, floatX* bias,
-                     int B, int T, int C, int OC, cudaStream_t stream,
-                     floatX* pre_gelu=NULL, int gelu_fusion=1) {
-    // By default only fuse GELU for H100+ as cuBLAS seems to be inefficient for fused GELU on Ada/Ampere (?)
-    if (gelu_fusion < 1 && pre_gelu) {
-        matmul_cublaslt(pre_gelu, weight, inp, bias, OC, B*T, C, stream, true, false, 0, 0, 0, 0, false, NULL, false);
-        gelu_forward(out, pre_gelu, B*T*OC, stream);
-    } else {
-        matmul_cublaslt(out, weight, inp, bias, OC, B*T, C, stream, true, false, 0, 0, 0, 0, false, pre_gelu, false);
-    }
 }
 
 /*
@@ -283,11 +278,11 @@ void inline matmul_backward(floatX* delta, floatX* dweight, floatX* dbias,
             reduce_add_sum_kernel<<<CEIL_DIV(OC, 256 * f128::size), 256, 0, stream>>>(dbias, dbias_buffer, OC, grid_size_y);
             cudaCheck(cudaGetLastError());
         }
-        dbias = NULL; // prevent dbias calculation from also being fused in matmul_cublaslt below (if we enabled fusion)
+        dbias = NULL; // prevent dbias calculation from also being fused in CU_mm_blas below (if we enabled fusion)
     }
 
     // backward to input, uses = in the backward pass (set the gradient)
-    matmul_cublaslt(delta, weight, deltaIn, NULL, C, B*T, OC, stream, transAW, false, 0, 0, 0, 0, false,
+    CU_mm_blas(delta, weight, deltaIn, NULL, C, B*T, OC, stream, transAW, false, 0, 0, 0, 0, false,
                     gelu_fusion >= 2 ? pre_gelu : NULL, true);
 
     // backward GELU (if it wasn't fused into the matmul above)
@@ -296,6 +291,222 @@ void inline matmul_backward(floatX* delta, floatX* dweight, floatX* dbias,
     }
 
     // backward to weight, uses += in the backward pass (accumulate the gradient) by setting alpha=one
-    matmul_cublaslt(dweight, inp, deltaIn, NULL /*dbias*/, C, OC, B*T, stream, transAW, true, 0, 0, 0, 0,
+    CU_mm_blas(dweight, inp, deltaIn, NULL /*dbias*/, C, OC, B*T, stream, transAW, true, 0, 0, 0, 0,
                     true /* accumulate */, NULL, true);
+}
+
+// fast fp8x2 => half2 conversion; drops unnecessary NaN handling from __nv_cvt_fp8_to_halfraw
+__device__ inline half2 fp8x2_e5m2_ff(unsigned int v) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+	__nv_fp8x2_e5m2 p;
+	p.__x = v;
+	return half2(p);
+#else
+	__half2_raw h = {(unsigned short)(v << 8), (unsigned short)(v & 0xff00)};
+	return h;
+#endif
+}
+
+// gf4 decoding (2 values): 8 3-bit values + 1 fp8 scale are packed in a 32-bit word
+__device__ inline half2 cu_gf4x2_ff(uint32_t v, int k) {
+	half us = fp8_e5m2_ff(v & 0xff); // we expect compiler to reuse this across multiple calls
+	half s = us * half(-0.25f);      // we expect compiler to reuse this across multiple calls
+	uint32_t p = v >> (8 + k * 3);
+	half2 q = half2(int(p & 7), int((p >> 3) & 7));
+	return __hfma2(q, half2(s, s), half2(us, us));
+}
+
+// warp-parallel mat*vec; each warp collaboratively computes mat*vec for a single row
+// specialized for half/fp8/gf4 weights and ensures that we maximize transaction sizes by reading 4 bytes per thread
+__device__ inline float CU_dot16x16_warppar(half* x, half* w, int i, int n) {
+	int lane = threadIdx.x % warpSize;
+	half2 val = {0, 0};
+	for (int j = lane * 2; j < n; j += warpSize * 2) {
+		half2 ww = *(half2*)&w[i * n + j];
+		half2 xx = *(half2*)&x[j];
+		val = __hfma2(ww, xx, val);
+	}
+	return warpreduce_sum(float(val.x + val.y));
+}
+__device__ inline float CU_dot16x8_warppar(half* x, __nv_fp8_e5m2* w, int i, int n) {
+	int lane = threadIdx.x % warpSize;
+	half2 val = {0, 0};
+	// use 64-bit loads instead of 32-bit loads to increase memory throughput on H100/A100
+	// without this we are seeing lower throughput given the limited number of parallel warps in coop kernel
+	// this is performance-neutral on 4090 but results in issues with x[] load coalescing (that are benign)
+	for (int j = lane * 8; j < n; j += warpSize * 8) {
+		ablock<__nv_fp8x2_e5m2, 4> wwp = *(ablock<__nv_fp8x2_e5m2, 4>*)&w[i * n + j];
+		ablock<__half2_raw, 4> xxp = *(ablock<__half2_raw, 4>*)&x[j];
+#pragma unroll
+		for (int k = 0; k < 4; ++k) {
+			half2 ww = fp8x2_e5m2_ff(wwp.v[k].__x);
+			half2 xx = xxp.v[k];
+			val = __hfma2(ww, xx, val);
+		}
+	}
+	return warpreduce_sum(float(val.x + val.y));
+}
+__device__ inline float CU_dot16x4_warppar(half* x, uint32_t* w, int i, int n) {
+	int lane = threadIdx.x % warpSize;
+	if (n % (warpSize * 64) == 0) {
+		half2 val = {0, 0};
+		for (int j = lane * 16; j < n; j += warpSize * 64) {
+			ablock<uint32_t, 2> wgp[4] = {
+			    *(ablock<uint32_t, 2>*)&w[i * n / 8 + j / 8],
+			    *(ablock<uint32_t, 2>*)&w[i * n / 8 + j / 8 + (warpSize * 16) / 8],
+			    *(ablock<uint32_t, 2>*)&w[i * n / 8 + j / 8 + (warpSize * 32) / 8],
+			    *(ablock<uint32_t, 2>*)&w[i * n / 8 + j / 8 + (warpSize * 48) / 8],
+			};
+#pragma unroll
+			for (int u = 0; u < 4; ++u) {
+				ablock<__half2_raw, 8> xx = *(ablock<__half2_raw, 8>*)&x[j + warpSize * 16 * u];
+#pragma unroll
+				for (int k = 0; k < 8; k += 2) {
+					val = __hfma2(cu_gf4x2_ff(wgp[u].v[0], k), xx.v[k / 2], val);
+				}
+#pragma unroll
+				for (int k = 0; k < 8; k += 2) {
+					val = __hfma2(cu_gf4x2_ff(wgp[u].v[1], k), xx.v[k / 2 + 4], val);
+				}
+			}
+		}
+		return warpreduce_sum(float(val.x + val.y));
+	} else {
+		half2 val = {0, 0};
+		for (int j = lane * 16; j < n; j += warpSize * 16) {
+			ablock<uint32_t, 2> wgp = *(ablock<uint32_t, 2>*)&w[i * n / 8 + j / 8];
+
+			ablock<__half2_raw, 8> xx = *(ablock<__half2_raw, 8>*)&x[j];
+#pragma unroll
+			for (int k = 0; k < 8; k += 2) {
+				val = __hfma2(cu_gf4x2_ff(wgp.v[0], k), xx.v[k / 2], val);
+			}
+#pragma unroll
+			for (int k = 0; k < 8; k += 2) {
+				val = __hfma2(cu_gf4x2_ff(wgp.v[1], k), xx.v[k / 2 + 4], val);
+			}
+		}
+		return warpreduce_sum(float(val.x + val.y));
+	}
+}
+/*
+#include "common.h"
+#define MMA_M 16
+#define MMA_N 8
+#define MMA_K 16
+#define WARP_SIZE 32
+
+//  C = A*B
+template<typename Tw, typename Ta>
+__global__ void mmaNaiveKernel(const Tw *__restrict__ A, const Ta *__restrict__ B, Ta *__restrict__ C, size_t M,
+                               size_t N, size_t K) {
+    const size_t K_tiles = div_ceil(K, MMA_K);
+
+    const size_t warp_row = blockIdx.y * MMA_M;
+    const size_t warp_col = blockIdx.x * MMA_N;
+
+    if (warp_row >= M || warp_col >= N) {
+        return;
+    }
+
+    __shared__ Tw A_smem[MMA_M][MMA_K];
+    __shared__ Ta B_smem[MMA_N][MMA_K];
+    __shared__ Ta C_smem[MMA_M][MMA_N];
+
+    const size_t lane_id = threadIdx.x % WARP_SIZE;
+
+    uint32_t RC[2] = {0, 0};
+
+#pragma unroll
+    for (size_t i = 0; i < K_tiles; ++i) {
+        *((int4 *)(&A_smem[lane_id / 2][0]) + lane_id % 2) =
+            *((int4 *)(&A[(warp_row + lane_id / 2) * K + i * MMA_K]) + lane_id % 2);
+
+        if (lane_id < MMA_N * 2) {
+            *((int4 *)(&B_smem[lane_id / 2][0]) + lane_id % 2) =
+                *((int4 *)(&B[i * MMA_K + (warp_col + lane_id / 2) * K]) + lane_id % 2);
+        }
+
+        __syncthreads();
+
+        uint32_t RA[4];
+        uint32_t RB[2];
+
+        uint32_t A_smem_lane_addr = __cvta_generic_to_shared(&A_smem[lane_id % 16][(lane_id / 16) * 8]);
+        LDMATRIX_X4(RA[0], RA[1], RA[2], RA[3], A_smem_lane_addr);
+
+        uint32_t B_smem_lane_addr = __cvta_generic_to_shared(&B_smem[lane_id % 8][((lane_id / 8) % 2) * 8]);
+        LDMATRIX_X2(RB[0], RB[1], B_smem_lane_addr);
+
+        HMMA16816(RC[0], RC[1], RA[0], RA[1], RA[2], RA[3], RB[0], RB[1], RC[0], RC[1]);
+
+        __syncthreads();
+    }
+
+    *((uint32_t *)(&C_smem[lane_id / 4][0]) + lane_id % 4) = RC[0];
+    *((uint32_t *)(&C_smem[lane_id / 4 + 8][0]) + lane_id % 4) = RC[1];
+
+    __syncthreads();
+
+    if (lane_id < MMA_M) {
+        *((int4 *)(&C[(warp_row + lane_id) * N + warp_col])) = *((int4 *)(&C_smem[lane_id][0]));
+    }
+}*/
+
+// C[m,n] = A[m,k]*B[k,n]       A,B,C are all row-major
+template<typename Tw, typename Ta>
+__global__ void inline tABC_0(const Ta *__restrict__ A, const Tw *__restrict__ B, Ta *__restrict__ C, size_t M, size_t N, size_t K) {
+    size_t row = threadIdx.y + blockDim.y * blockIdx.y;
+    size_t col = threadIdx.x + blockDim.x * blockIdx.x;
+    if (row >= M && col >= N) {
+        return;
+    }
+    Ta tmp = 0.0;
+ #pragma unroll
+    for (size_t i = 0; i < K; ++i) {
+        tmp += A[row * K + i] * B[i + col * K];
+    }
+    C[row * N + col] = tmp;
+}
+
+/*
+    Forward of Tensor: rhs = GELU(lhs*W+b)
+    lhs[m,k]*W[k,n] => rhs[m,n]       lhs,W,rhs are all row-major
+*/
+template<typename Tw, typename Ta>
+void tMM(Ta *lhs,Tw *W, Ta *rhs,Tw *b, size_t M, size_t N, size_t K,bool transAW, cudaStream_t main_stream,int flag=0) {
+    assert(typeid(Ta)==typeid(Tw));
+    
+    CU_mm_blas(rhs, W, lhs, b, N, M, K, main_stream, transAW, false, flag, 0, 0, 0, false, NULL, false);
+    return;        
+    
+
+    switch(DEBUG.T_GEMM){
+    case -1:{
+        // PrintTensor<Ta>("rhs",rhs,true,M,N,1,1,-1);
+        // PrintTensor<Ta>("W",W,true,K,N,1,1,-1);
+        // PrintTensor<Ta>("lhs",lhs,true,M,K,1,1,-1);
+        dim3 block(16, 16), grid(CEIL_DIV(N, block.x), CEIL_DIV(M, block.y));
+        tABC_0<Ta,Tw><<<grid, block, 0, main_stream>>>(lhs, W, rhs, M, N, K);        }
+        break;
+    case 1:{
+        // dim3 block(WARP_SIZE), grid(CEIL_DIV(N, MMA_N), CEIL_DIV(M, MMA_M));
+        // mmaNaiveKernel<Ta,Tw><<<grid, block>>>(lhs, W, rhs, M, N, K); 
+    }        break;
+    case 2:{
+        const float alpha = 1.0f,beta = 0.0f;
+        cublasGemmEx(cublas_handle, CUBLAS_OP_T, CUBLAS_OP_N,N, M,K,&alpha, W, CUDA_R_16BF, M,        
+                    lhs, CUDA_R_16BF, K,&beta, rhs, CUDA_R_16BF, M, CUDA_R_16BF, CUBLAS_GEMM_DEFAULT_TENSOR_OP); }
+        break;
+    default:
+        CU_mm_blas(rhs, W, lhs, b, N, M, K, main_stream, transAW, false, 0, 0, 0, 0, false, NULL, false);
+        //  CU_mm_blas(rhs, wX, ToX(lhs_), ToX0(b), OC, B*T, IC, main_stream, transAW, false, 0, 0, 0, 0, false, NULL, false);
+        break;
+    }
+    
+
+    // static size_t smem_max_size = initMmaAsyncStage4<Ta>();
+    // dim3 block(THREADS_PER_BLOCK);
+    // dim3 grid(BLOCK_STRIDE, div_ceil(M, BLOCK_ROWS), div_ceil(N, BLOCK_COLS * BLOCK_STRIDE));
+    // mmaAsyncStage4Kernel<Ta><<<grid, block, smem_max_size>>>(W, lhs, rhs, M, N, K);
 }

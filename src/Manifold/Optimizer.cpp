@@ -975,10 +975,28 @@ OPT_Adam::OPT_Adam(NLP_AutoRegressive *g_,CLI_params& params_,int flag)
     // sched              = 1.0f;
 }
 
-void OPT_Adam::Dump(int typ){
+void Optimizer::Dump(int typ){
+    if(NOT_DUMP(1))    return;
     _INFO("========\n");        fflush(stdout);
     RLS_BP *hRLS = _fish->hEDS->GetScheduler<RLS_BP>();  
     hRLS->Dump(typ);
+    _INFO("\tType weight=%s activation=%s",cNameOf(_fish->config.model.tpWeight),cNameOf(_fish->config.model.tpActivation));        
+    fflush(stdout);
+
+    size_t sz = 0x0;
+    const char*title = "OPT";   //__func__
+    if(_ctx!=nullptr)
+        _INFO("%s: mem_size  = %zu bytes (%.1f MB)\n", title, sz, (float)sz/(1024.0f*1024.0f));
+    _INFO("%s: iter = %d\n", title, iter);
+    
+    if(typ==1){
+        _INFO("%s: SAMP_HASH=%llu total train_iterations=%llu train_samples=%llu train_tokens=%llu completed_epochs=%llu\n", title, 
+            shuffle_samples_hash, train_its,train_samples,train_tokens,train_epochs);            
+    }
+}
+
+void OPT_Adam::Dump(int typ){
+   
     Optimizer::Dump(typ);
     
 /*

@@ -835,7 +835,7 @@ int NLP_AutoRegressive::ForwardOnNeuron_v0(int flag)  {
         cls->FUSE_cuda(cur,flag); //embed->w,
     else    {
         assert(0);
-        //cls->preLogits = lnf->out*embed->w;   //matmul_forward_cublaslt(ToX(cls->preLogits), ToX(lnf->out), ToX(embed->w), NULL, B, T, C, Vp, main_stream);
+        //cls->preLogits = lnf->out*embed->w;   
     }
     PrintTensor<floatX>("output",ToX(cls->preLogits),true,B,T,C);
     // SYNC_DEVICE();    

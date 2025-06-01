@@ -116,9 +116,9 @@ float dotprod_gf4(void* w, int n, int i, float* x);
 dotprod_t fnDot(typNUMBER tp);
 
 // W (nOut,nIn) @ x (nIn) -> xout (nOut)
-void matmul(float* xout, float* x, void* w, float* b, int nIn, int nOut, dotprod_t dotprod);
-void matmul_sparse(float* xout, float* x, void* w, float* b, int n, int d, int *hot,dotprod_t dotprod);
-void matmul_sparse_2(float* xout, float* x, void* w, float* b, int n, int d,int nHot,int *hot,float *dTemp, dotprod_t dotprod);
+void D_matvec(float* xout, float* x, void* w, float* b, int nIn, int nOut, dotprod_t dotprod);
+void D_matmul_sparse(float* xout, float* x, void* w, float* b, int n, int d, int *hot,dotprod_t dotprod);
+void D_matmul_sparse_2(float* xout, float* x, void* w, float* b, int n, int d,int nHot,int *hot,float *dTemp, dotprod_t dotprod);
 
 
 

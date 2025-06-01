@@ -209,7 +209,7 @@ int Fish_bubble(CLI_params& config)  {
     DEBUG.graph_dump = 1;
     DEBUG.T_cuda_ver = 1;
     DEBUG.T_cpu = 1;
-    GTensor::tpPreLogits = typNUMBER::F32;
+    // GTensor::tpPreLogits = typNUMBER::F32;
 
     arrHWIKI wikis = WIKI::MakeInstance("wikis",config,0x0);
 #if !defined(NDEBUG)

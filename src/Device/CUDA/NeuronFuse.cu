@@ -2,10 +2,10 @@
 // #include "../ggex/GG_util.hpp"       //ugly  "__builtin_ia32_ldtilecfg" is undefined
 #include "./cuda_common.h"
 #include "./cublas_common.h"
-#include "./llm_c/matmul.cuh"
-#include "./llm_c/layernorm.cuh"
-#include "./llm_c/encoder.cuh"
-#include "./llm_c/fused_classifier.cuh"
+#include "./kernel/gemm.cuh"
+#include "./kernel/layernorm.cuh"
+#include "./kernel/embed.cuh"
+#include "./kernel/fused_classifier.cuh"
 // #include "./TE/fused_attn/fused_attn_fp8.cu"
 #include "../../Manifold/Neuron.hpp"
 #include "../../Manifold/Fish.hpp"
@@ -16,14 +16,10 @@
 cublasComputeType_t cublas_compute = CUBLAS_COMPUTE_32F;
 const size_t cublaslt_workspace_size = 32 * 1024 * 1024;
 cublasLtHandle_t cublaslt_handle;
+cublasHandle_t cublas_handle;
 void* cublaslt_workspace = NULL;
 cudaStream_t main_stream=nullptr;
 cudaDeviceProp deviceProp;
-
-
-
-
-
 
 hGTensor huTensor::_Multiply(const hGTensor& b) {
     huTensor *cuB=dynamic_cast<huTensor *>(b.get());
@@ -150,43 +146,7 @@ try{
     return nullptr;
 }
 }
-int SLP::Forw(hGTensor rhs_0,hGTensor lhs_,hGTensor toGelu,int flag){
-try{
-    floatX *rhs=ToX(rhs_0),*to_gelu = ToX0(toGelu),*wX=ToX(w);//,*inp=ToX(lhs_);
-    int OC=nOut,IC=nIn;
-    // assert(C==w->ne[0]);
-    assert(rhs_0->size()>=B*T*OC);        //  ne of scatch
-    float* dbias_buffer=nullptr;
-    inp = lhs_;
-    bool transAW = true;
-    // if(isTransW)        
-    //     transAW = false;
-    // matmul_forward_cublaslt(rhs, inp, wX, ToX0(b), B, T, C, OC, main_stream,to_gelu,gelu_fusion);
-    if(compression==SAMPLE && subw!=nullptr){
-        subw->SubW(hSamps,true,GTensor::tmpW,samp_type);
-        wX = ToX(GTensor::tmpW);        //assert(nSample==OC || nSample==IC);
-        // GTensor::tmpW->Print("subW",0,-1);    
-        // encoder_forward(wX, samples, ToX(w), nullptr, 1, nSample, C, main_stream);
-    }
-    if (gelu_fusion < 1 && to_gelu) {
-        matmul_cublaslt(to_gelu, wX, ToX(lhs_), ToX0(b), OC, B*T, IC, main_stream, transAW, false, 0, 0, 0, 0, false, NULL, false);
-        gelu_forward(rhs, to_gelu, B*T*OC, main_stream);
-        // swiglu_forward(rhs, to_gelu, B*T*OC, main_stream);
-    } else {
-        matmul_cublaslt(rhs, wX, ToX(lhs_), ToX0(b), OC, B*T, IC, main_stream, transAW, false, 0, 0, 0, 0, false, to_gelu, false);
-    }
-    if(compression==SAMPLE) {
-        // rhs_0->Print(rhs_0->name,0,-1);
-    }
-        // PrintTensor<floatX>("l_qkvw",l_qkvw,true,3*C,C);       PrintTensor<floatX>("l_qkvb",l_qkvb,true,3*C,1);
-        // PrintTensor<floatX>("l_qkvr",l_qkvr,true,B,T,3*C);
-    
-    return 0x0;
-}catch(...){
-    assert(0);
-    return -1;
-}
-}
+
 int SLP::Back(hGTensor delta,hGTensor inp,hGTensor deltaIn,hGTensor to_gelu,int flag){
 try{
     floatX *wX=ToX(w),*gW=ToG(w);
@@ -343,13 +303,13 @@ hGTensor OutCLS::FUSE_cuda(hGTensor inp_,int flag)   {
         // }
         for(size_t i=0;i<B;i+=dB){
             size_t off=i*T*Vp,n1=i*T,nZ=i*T*C;
-            off=0;      //reduce memory            
-            // fuMM(ToX(cur)+off, z0+nZ, ToX(w), NULL, dB, T, C, Vp, main_stream);  //[32,1024,50304]=[32,1024,768]*[768,50304]
-            matmul_cublaslt(ToX(cur)+off, ToX(w), z0+nZ, NULL, Vp, dB*T, C, main_stream, true, false, 0, 0, 0, 0, false);
+            off=0;      //reduce memory                        
+            tMM<floatX,floatX>(z0+nZ, ToX(w), ToX(cur)+off, NULL, dB*T, Vp, C,true,main_stream,0x0);      
+            // CU_mm_blas(ToX(cur)+off, ToX(w), z0+nZ, NULL, Vp, dB*T, C, main_stream, true, false, 0, 0, 0, 0, false);
             fused_classifier(ToX(cur)+off, cuLoss+n1, rLoss, targets+n1, dB, T, V, Vp, cuFalse, main_stream);        //target=[32,1024]
             if(ToG0(w)!=nullptr && delta!=nullptr){
-                matmul_cublaslt(ToX(delta)+nZ, ToX(w), ToX(cur)+off, NULL, C, dB*T, Vp, main_stream, false, false, 0, 0, 0, 0, false,gelu_fusion >= 2 ? to_gelu : NULL, true);   
-                matmul_cublaslt(ToG(w), z0+nZ, ToX(cur)+off, NULL /*dbias*/, C, Vp, dB*T, main_stream, false, true, 0, 0, 0, 0,true /* accumulate */, NULL, true);                
+                CU_mm_blas(ToX(delta)+nZ, ToX(w), ToX(cur)+off, NULL, C, dB*T, Vp, main_stream, false, false, 0, 0, 0, 0, false,gelu_fusion >= 2 ? to_gelu : NULL, true);   
+                CU_mm_blas(ToG(w), z0+nZ, ToX(cur)+off, NULL /*dbias*/, C, Vp, dB*T, main_stream, false, true, 0, 0, 0, 0,true /* accumulate */, NULL, true);                
             }                         
         }
         // fused_classifier(errLogits, cuLoss, rLoss, targets, B, T, V, Vp, cuFalse, main_stream);        //target=[32,1024]
@@ -358,11 +318,11 @@ hGTensor OutCLS::FUSE_cuda(hGTensor inp_,int flag)   {
         w->Print("oucls.proj.w",1,dump_flag);
          
         /*if(flag==0x1001 && gw!=nullptr && errOut!=nullptr){            //matmul_backward(errOut, gw, NULL, errLogits, z0, w, NULL, B, T, C, Vp, main_stream);      //accumulate=true  
-            matmul_cublaslt(errOut, w, errLogits, NULL, C, B*T, Vp, main_stream, false, false, 0, 0, 0, 0, false,gelu_fusion >= 2 ? to_gelu : NULL, true);
+            CU_mm_blas(errOut, w, errLogits, NULL, C, B*T, Vp, main_stream, false, false, 0, 0, 0, 0, false,gelu_fusion >= 2 ? to_gelu : NULL, true);
             if (gelu_fusion < 2 && to_gelu) {
                 gelu_backward_inplace(errOut, to_gelu, B*T*C, main_stream);
             }
-            matmul_cublaslt(gw, z0, errLogits, NULL , C, Vp, B*T, main_stream, false, true, 0, 0, 0, 0,true , NULL, true);
+            CU_mm_blas(gw, z0, errLogits, NULL , C, Vp, B*T, main_stream, false, true, 0, 0, 0, 0,true , NULL, true);
         }*/
             
         for (int i = 0; i < B*T; i++) {

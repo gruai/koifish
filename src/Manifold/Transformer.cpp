@@ -147,9 +147,9 @@ int T_generate_cpu(hFISH hFish, bool isOnlyUpdateKV,unsigned flags)	{
 			PrintTensor<float>("q",tPipe->q,q_dim,1);		
 			PrintTensor<float>("k",tPipe->k,kv_dim,1);		
 		}		// qkv matmuls for this position
-		matmul(tPipe->q, xb, w->wq, w->bqkv, dim, q_dim, dotprod);
-		matmul(tPipe->k, xb, w->wk, w->bqkv ? w->bqkv + q_dim : NULL, dim, kv_dim, dotprod);
-		matmul(tPipe->v, xb, w->wv, w->bqkv ? w->bqkv + q_dim + kv_dim : NULL, dim, kv_dim, dotprod);		
+		D_matvec(tPipe->q, xb, w->wq, w->bqkv, dim, q_dim, dotprod);
+		D_matvec(tPipe->k, xb, w->wk, w->bqkv ? w->bqkv + q_dim : NULL, dim, kv_dim, dotprod);
+		D_matvec(tPipe->v, xb, w->wv, w->bqkv ? w->bqkv + q_dim + kv_dim : NULL, dim, kv_dim, dotprod);		
 		for (int i = 0; i < q_dim; i++) {// some models require clipping qkv values
 			tPipe->q[i] = clip(tPipe->q[i], tPipe->qkv_clip);
 		}
@@ -196,7 +196,7 @@ int T_generate_cpu(hFISH hFish, bool isOnlyUpdateKV,unsigned flags)	{
 			float val = dotprod(w->wo, q_dim, 0, xb2);			//	-0.165075183
 			PrintTensor<f8e5m2_t>("wout",w->wo,q_dim,dim);		//	only for debug			
 		}
-		matmul(hb, xb2, w->wo, NULL, q_dim, dim, dotprod);		// final matmul to get the output of the attention
+		D_matvec(hb, xb2, w->wo, NULL, q_dim, dim, dotprod);		// final matmul to get the output of the attention
 		// residual connection back into x
 		for (int i = 0; i < dim; i++) {
 			x[i] += hb[i];		//	-0.170934558
@@ -222,8 +222,8 @@ int T_generate_cpu(hFISH hFish, bool isOnlyUpdateKV,unsigned flags)	{
 			// mix self.w2(F.silu(self.w1(x)) * self.w3(x))
 			for (int e = 0; e < (tPipe->n_experts_ac ? tPipe->n_experts_ac : 1); ++e) {
 				size_t esize = dim * hidden_dim * (size_t)wbit / 8;
-				matmul(hb, xb, (char*)w->w1 + moe_experts[e] * esize, NULL, dim, hidden_dim, dotprod);
-				matmul(hb2, xb, (char*)w->w3 + moe_experts[e] * esize, NULL, dim, hidden_dim, dotprod);
+				D_matvec(hb, xb, (char*)w->w1 + moe_experts[e] * esize, NULL, dim, hidden_dim, dotprod);
+				D_matvec(hb2, xb, (char*)w->w3 + moe_experts[e] * esize, NULL, dim, hidden_dim, dotprod);
 				if (tPipe->act_gelu) {					// GEGLU non-linearity
 					for (int i = 0; i < hidden_dim; i++) {
 						hb[i] = gelu(hb[i]) * hb2[i];
@@ -233,7 +233,7 @@ int T_generate_cpu(hFISH hFish, bool isOnlyUpdateKV,unsigned flags)	{
 						hb[i] = silu(hb[i]) * hb2[i];
 					}
 				}				
-				matmul(xb2, hb, (char*)w->w2 + moe_experts[e] * esize, NULL, hidden_dim, dim, dotprod);
+				D_matvec(xb2, hb, (char*)w->w2 + moe_experts[e] * esize, NULL, hidden_dim, dim, dotprod);
 				for (int i = 0; i < dim; i++) {
 					x[i] += xb2[i] * moe_weights[e];
 				}
@@ -251,7 +251,7 @@ int T_generate_cpu(hFISH hFish, bool isOnlyUpdateKV,unsigned flags)	{
 	// final rmsnorm
 	rmsnorm(x, x, rms_final_weight, dim, tPipe->norm_eps, tPipe->norm_ln);
 	// classifier into logits
-	matmul(logits, x, TO<f8e5m2_t>(tPipe->out_weight), NULL, tPipe->dim, tPipe->vocab_size, dotprod);		
+	D_matvec(logits, x, TO<f8e5m2_t>(tPipe->out_weight), NULL, tPipe->dim, tPipe->vocab_size, dotprod);		
 	// PrintTensor<float>("logits",logits,tPipe->vocab_size,1);//only for debug
 	
 	return 0x0;

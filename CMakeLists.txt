@@ -33,6 +33,12 @@ else()
     endif()
 endif()
 
+if (K_TESTING)
+    add_subdirectory(tests)
+    find_package(gflags REQUIRED)
+    set(DELTA_cc ${DELTA_cc} -D_DO_SOME_TESTING_ )    
+endif()
+
 if (K_USE_CCACHE)
     find_program(_CCACHE_FOUND ccache)
 
@@ -40,13 +46,13 @@ if (K_USE_CCACHE)
         # TODO: should not be set globally
         set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ccache)
         set(ENV{CCACHE_SLOPPINESS} time_macros)
-        message(STATUS "ccache found, compilation results will be cached. Disable with K_USE_CCACHE=OFF.")
+        message(STATUS "ccache found, compilation results will be cached. Disable with GGML_CCACHE=OFF.")
     else()
-        message(STATUS "Warning: ccache not found - consider installing it for faster compilation or disable this warning with K_USE_CCACHE=OFF")
+        message(STATUS "Warning: ccache not found - consider installing it for faster compilation or disable this warning with GGML_CCACHE=OFF")
     endif ()
 endif()
 
-set(DELTA_cc ${DELTA_cc} -mf16c -mavx2 -mfma)
+set(DELTA_cc ${DELTA_cc} -mf16c -mavx2 -mfma -std=c++20)
 if (DELTA_WANDB)
     add_subdirectory(src/pybind11)
     set(DELTA_LIB pybind11::embed)
@@ -65,6 +71,17 @@ endif()
 add_compile_definitions(_TENSOR_G_)  
 
 if(K_USECUDA)
+    # if target == '4090':
+    #     cuda_flags.append('-DCUDA_ADA')
+    #     cuda_flags.append('-arch=sm_89')
+    # elif target == 'h100':
+    #     cuda_flags.append('-DCUDA_HOPPER')
+    #     cuda_flags.append('-arch=sm_90a')
+    # elif target == 'a100':
+    #     cuda_flags.append('-DCUDA_Ampere')
+    #     cuda_flags.append('-arch=sm_80')
+    # else:
+    #     raise ValueError(f'Target {target} not supported')
     cmake_minimum_required(VERSION 3.18)  # for CMAKE_CUDA_ARCHITECTURES
     find_package(CUDAToolkit)
     if (CUDAToolkit_FOUND)
@@ -72,10 +89,10 @@ if(K_USECUDA)
         # set(CMAKE_CUDA_ARCHITECTURES "80;86;87;89")  #BF16  Ref:    https://arnon.dk/matching-sm-architectures-arch-and-gencode-for-various-nvidia-cards/
         set(CMAKE_CUDA_ARCHITECTURES "80") 
         add_compile_definitions(__USE_CUDA__)
-        message(STATUS "CUDA_ARCHITECTURES = ${CMAKE_CUDA_ARCHITECTURES}")
+        message(STATUS "CUDAA ARCH=${CMAKE_CUDA_ARCHITECTURES} DIR=${CUDA_TOOLKIT_ROOT_DIR}")
         enable_language(CUDA)
         
-        set(CUDA_FLAGS -use_fast_math  -DENABLE_BF16 )
+        set(CUDA_FLAGS -use_fast_math  -DENABLE_BF16 --expt-relaxed-constexpr -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -DKITTENS_4090)
         # -mavx512f -mavx512vl  for identifier "__builtin_ia32_ldtilecfg" is undefined
         if (NOT CUDA_CCFULLVER MATCHES clang)
             set(CUDA_CCID "GNU")
@@ -112,9 +129,9 @@ endif()
 
 if(K_USE_CUDNN)    
     set(CUDA_LIB  ${CUDA_LIB} cudnn )   
-    set(CUDA_INC  ${CMAKE_SOURCE_DIR}/cudnn-frontend/include  ) 
+    set(CUDA_INC  ${CMAKE_SOURCE_DIR}/cudnn-frontend/include ${CMAKE_SOURCE_DIR}/src/Device/CUDA/TK/include  ) 
     # set(CUDA_FLAGS ${CUDA_FLAGS} -DENABLE_CUDNN )
-    set(DELTA_cc ${DELTA_cc} -DENABLE_CUDNN)    
+    set(DELTA_cc ${DELTA_cc} -DENABLE_CUDNN -DTEST_ALL_WARP)    
 endif()
 
 if(K_USE_GGML)
@@ -140,11 +157,6 @@ if(K_USE_GBDT)
     add_subdirectory(src/GBDT)
 endif()
 
-if(K_TESTING)
-set(DELTA_cc ${DELTA_cc} -D_DO_SOME_TESTING_ )
-    add_subdirectory(tests)
-endif()
-
 message(STATUS "KOIFISH cc=${DELTA_cc} lib=${DELTA_LIB} PWD=${CMAKE_SOURCE_DIR}")
 
 add_subdirectory(src/Manifold)
@@ -157,23 +169,24 @@ add_subdirectory(src/Utils)
 add_subdirectory(src/TokenSet)
 
 set(sources   ${TGraph_sources} ${util_sources} ${kernel_sources} ${Fuzi_sources} ${ggex_sources} ${device_sources} ${model_sources} 
-    ${token_sources} ${mort_sources} ${blas_sources} ${testing_sources} )
+    ${token_sources} ${mort_sources} ${blas_sources} ${TEST_SRCS} )
 add_executable(koifish ${CMAKE_CURRENT_SOURCE_DIR}/src/koifish.cpp ${sources} )
 message(STATUS "KOIFISH sources=${sources}")
 
 
 foreach(prog koifish )    #finetune koifish train2
     install(TARGETS ${prog} RUNTIME)
-    target_include_directories(${prog} PRIVATE ${CMAKE_SOURCE_DIR}/src/Manifold/ ${CMAKE_SOURCE_DIR}/src/TokenSet/ ${CMAKE_SOURCE_DIR}/src/Utils/ 
-    ${CMAKE_SOURCE_DIR}/src/Device/CUDA ${GG_INC} ${CUDA_INC} ${OPENBLAS_INC})
+    target_include_directories(${prog} PRIVATE ${CMAKE_SOURCE_DIR}/src/Manifold/ ${CMAKE_SOURCE_DIR}/src/TokenSet/ ${CMAKE_SOURCE_DIR}/src/Utils/ ${CMAKE_SOURCE_DIR}/src/Device/CUD
+A 
+        ${GG_INC} ${CUDA_INC} ${OPENBLAS_INC} ${TEST_INC})
 
-    target_link_libraries(${prog} PRIVATE ${GG_LIB} ${CMAKE_THREAD_LIBS_INIT} ${OPENBLAS_LIB} ${DELTA_LIB} ${CUDA_LIB} pthread )
+    target_link_libraries(${prog} PRIVATE ${GG_LIB} ${CMAKE_THREAD_LIBS_INIT} ${OPENBLAS_LIB} ${DELTA_LIB} ${CUDA_LIB} ${GFLAGS_LIBRARIES} pthread )
     target_compile_features(${prog} PRIVATE cxx_std_17)
     target_compile_options(${prog} PRIVATE  -DLLAMA_API_INTERNAL ${cxx_flags} ${DELTA_cc})
     # target_link_libraries(${prog} PRIVATE pybind11::embed)
 endforeach(prog)
 
-if (KOIFISH_BUILD_TESTS)
+if (GGML_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif ()

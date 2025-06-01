@@ -1,9 +1,8 @@
 #include "./cuda_common.h"
 #include "./cublas_common.h"
-#include "./llm_c/matmul.cuh"
-#include "./llm_c/layernorm.cuh"
-#include "./llm_c/encoder.cuh"
-#include "./llm_c/fused_classifier.cuh"
+#include "./kernel/gemm.cuh"
+#include "./kernel/layernorm.cuh"
+#include "./kernel/embed.cuh"
 #include "./kernel/rope.cuh"
 #include "../../Manifold/Neuron.hpp"
 #include "../../Manifold/Fish.hpp"
@@ -29,7 +28,6 @@
 #endif
 
 static cudaEvent_t cuStart, cuEnd;
-#define fuMM matmul_forward_cublaslt
 
 #ifdef ENABLE_CUDNN
 static cudnnHandle_t cudnn_handle;
@@ -80,7 +78,7 @@ auto lookup_cache_or_build_graph_fwd(int B,int H,int T,int HS, int is_inference_
     }
 
     auto graph = std::make_shared<fe::graph::Graph>();
-#if defined(ENABLE_BF16)
+#if defined(ENABLE_BF16) || defined(ENABLE_FP16)
     graph->set_io_data_type(CUDNN_16BIT)
           .set_intermediate_data_type(fe::DataType_t::FLOAT)
           .set_compute_data_type(fe::DataType_t::FLOAT);
@@ -163,7 +161,7 @@ auto lookup_cache_or_build_graph_bwd(int B, int NH, int T, int HS) {
     }
 
     auto graph = std::make_shared<fe::graph::Graph>();
-#if defined(ENABLE_BF16)
+#if defined(ENABLE_BF16) || defined(ENABLE_FP16)
     graph->set_io_data_type(CUDNN_16BIT)
           .set_intermediate_data_type(fe::DataType_t::FLOAT)
           .set_compute_data_type(fe::DataType_t::FLOAT);
@@ -381,6 +379,7 @@ bool InitCUDA(const CLI_params&hparams,EDGE_DEVICES *hDevice,int flag){
 
     // set up cuBLAS and cuBLASLt
     cublasCheck(cublasLtCreate(&cublaslt_handle));
+    cublasCheck(cublasCreate(&cublas_handle));
     cudaCheck(cudaMalloc(&cublaslt_workspace, cublaslt_workspace_size));
 
     // TF32 precision is equivalent to torch.set_float32_matmul_precision('high')
@@ -407,6 +406,17 @@ bool InitCUDA(const CLI_params&hparams,EDGE_DEVICES *hDevice,int flag){
     return true;
 }
 
+bool EDGE_DEVICES::ClearGPU(int flag){    
+    cudaCheck(cudaStreamDestroy(main_stream));
+    cublasCheck(cublasDestroy(cublas_handle));
+
+    cudaCheck(cudaFree(cublaslt_workspace));    
+    cublasCheck(cublasLtDestroy(cublaslt_handle));
+#ifdef ENABLE_CUDNN
+    destroy_cudnn();
+#endif
+    return true;
+}
 /*
     QKV = (B, T, 3, NH, HS) 
 */

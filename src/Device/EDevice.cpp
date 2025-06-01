@@ -187,6 +187,7 @@ EDGE_DEVICES::EDGE_DEVICES(const CLI_params&config, int flag){
     }
     
     EDGE_DEVICES::~EDGE_DEVICES(){
+        ClearGPU(0x0);
     #ifdef __USE_GGML__
        for (auto backend : workers) {
             ggml_backend_free(backend); 

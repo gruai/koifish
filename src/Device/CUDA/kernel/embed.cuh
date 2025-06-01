@@ -10,8 +10,8 @@ In the backward pass, the gradients flow to both, handled by different kernels
 #include <algorithm>
 #include <unordered_map>
 // llmc internal imports
-#include "cuda_common.h"
-#include "cuda_utils.cuh"
+#include "../cuda_common.h"
+#include "utils.cuh"
 
 // ----------------------------------------------------------------------------
 // CUDA kernels

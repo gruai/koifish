@@ -4,7 +4,7 @@ cuDNN (flash) attention
 #ifndef CUDNN_ATT_H
 #define CUDNN_ATT_H
 
-#include "cuda_common.h"
+#include "../cuda_common.h"
 
 // forward declarations of functions defined in cudnn_att.cpp
 void create_cudnn();

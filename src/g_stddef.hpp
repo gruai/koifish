@@ -29,6 +29,9 @@ using namespace std;
 #define BIT_TEST( val,flag ) (((val)&(flag))==(flag))
 #define BIT_IS( val,flag ) (((val)&(flag))!=0)
 #define CEIL_DIV(M, N) (((M) + (N)-1) / (N))
+// inline __device__ __host__ size_t div_ceil(size_t a, size_t b) {
+//     return (a % b != 0) ? (a / b + 1) : (a / b);
+// }
 #define MEM_CLEAR(mem,size)			memset( (mem),(0x0),(size) )
 
 #define UNUSED(x) (void)(x)

@@ -169,7 +169,7 @@ int cdiv(int a, int b) {
   return (a + b - 1) / b;
 }
 
-void matmul(float* xout, float* x, float* w, int n, int d, const int* block_size, float* scale) {
+void S_matmul(float* xout, float* x, float* w, int n, int d, const int* block_size, float* scale) {
   // W (d,n) @ x (n,) -> xout (d,)
   static float one = 1.0f;
   int dummy_block_size[2] = {d, n};
@@ -202,9 +202,9 @@ void matmul(float* xout, float* x, float* w, int n, int d, const int* block_size
   }
 }
 
-// matmul supporting float16 weights via the F16C extension, which allows
+// Scale_matmul supporting float16 weights via the F16C extension, which allows
 // conversion into float32 values before calculations.
-void matmul(float* xout, float* x, __gcc_fp16* w, int n, int d, const int* block_size, float* scale) {
+void S_matmul(float* xout, float* x, __gcc_fp16* w, int n, int d, const int* block_size, float* scale) {
 #if defined(__AVX2__) && defined(__F16C__)
   // W (d,n) @ x (n,) -> xout (d,)
   assert(n % 16 == 0);
@@ -284,8 +284,11 @@ float dotprod_fp32(void* w, int n, int row, float* x) {
 	return val;
 }
 
-// W (nOut,nIn) @ x (nIn) -> xout (nOut)
-void matmul(float* xout, float* x, void* w, float* b, int nIn, int nOut, dotprod_t dotprod) {	
+/*
+   W (nOut,nIn) @ x (nIn) -> xout (nOut)    by dotprod_t  
+*/
+void D_matvec(float* xout, float* x, void* w, float* b, int nIn, int nOut, dotprod_t dotprod) {	
+//  void matmul(float* xout, float* x, void* w, float* b, int n, int d, dotprod_t dotprod)
 	int i;
 #pragma omp parallel for private(i)
 	for (i = 0; i < nOut; i++) {
@@ -297,7 +300,7 @@ void matmul(float* xout, float* x, void* w, float* b, int nIn, int nOut, dotprod
 	}
 }
 
-void matmul_sparse(float* xout, float* x, void* w, float* b, int n, int d,int *hot, dotprod_t dotprod) {
+void D_matmul_sparse(float* xout, float* x, void* w, float* b, int n, int d,int *hot, dotprod_t dotprod) {
 	// W (d,n) @ x (n,) -> xout (d,)
 	// by far the most amount of time is spent inside this little function
 	int i;
@@ -319,7 +322,7 @@ void matmul_sparse(float* xout, float* x, void* w, float* b, int n, int d,int *h
     T_hot=0.2 800  ppl=4.96=>8.2 
     T_hot=0.4 800  ppl=4.96=>5.66 
 */
-void matmul_sparse_2(float* xout, float* x, void* w, float* b, int n, int d,int nHot,int *hot,float *dTemp, dotprod_t dotprod) {
+void D_matmul_sparse_2(float* xout, float* x, void* w, float* b, int n, int d,int nHot,int *hot,float *dTemp, dotprod_t dotprod) {
   int i,c;
   float *x_sub = dTemp;
   char *w_sub = (char*)(dTemp+sizeof(float)*n),*w0=(char*)w;
@@ -337,14 +340,14 @@ void matmul_sparse_2(float* xout, float* x, void* w, float* b, int n, int d,int 
   }
   // assert(no==nHot);
 
-  matmul(xout, x_sub, w_sub, b, nHot, d, dotprod);
+  D_matvec(xout, x_sub, w_sub, b, nHot, d, dotprod);
   //matmul(xout, x, w, b, nHot, d, dotprod);
 }
 
-// matmul supporting float8e5m2 weights via AVX2 and F16C extensions, which (1) 
+// Scale_matmul supporting float8e5m2 weights via AVX2 and F16C extensions, which (1) 
 // allows vectorized conversion from f8e5m2 to float16 and (2) conversion from 
 // float16 to float32 values before calculations.
-void matmul(float* xout, float* x, f8e5m2_t* w, int n, int d, const int* block_size, float* scale) {
+void S_matmul(float* xout, float* x, f8e5m2_t* w, int n, int d, const int* block_size, float* scale) {
 #if defined(__AVX2__) && defined(__F16C__)
   // W (d,n) @ x (n,) -> xout (d,)
   assert(n % 16 == 0);
@@ -762,12 +765,12 @@ void mha_cpu(
 }
 
 void matmul_unscaled(float* xout, float* x, float* w, int n, int d) {
-  matmul(xout, x, w, n, d, nullptr, nullptr);
+  S_matmul(xout, x, w, n, d, nullptr, nullptr);
 }
 void matmul_unscaled(float* xout, float* x, __gcc_fp16* w, int n, int d) {
-  matmul(xout, x, w, n, d, nullptr, nullptr);
+  S_matmul(xout, x, w, n, d, nullptr, nullptr);
 }
 void matmul_unscaled(float* xout, float* x, f8e5m2_t* w, int n, int d) {
-  matmul(xout, x, w, n, d, nullptr, nullptr);
+  S_matmul(xout, x, w, n, d, nullptr, nullptr);
 }
 

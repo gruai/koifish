@@ -117,6 +117,8 @@ std::vector<EDGE_DEVICES::GPU_> EDGE_DEVICES::GPU_::cudaGetDevice(int flag) {
 }
 
 bool InitCUDA(const CLI_params&hparams,EDGE_DEVICES *hDevice,int flag);
+
+
 bool EDGE_DEVICES::InitGPU(const CLI_params&hparams,int flag){
     string sTp = hparams.KV({"train","device"},"");    
     gpus = EDGE_DEVICES::GPU_::cudaGetDevice(flag);

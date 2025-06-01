@@ -8,13 +8,13 @@
  */
 #include "GTensor.hpp"
 #include "GG_util.hpp"
-#ifdef ENABLE_BF16
-   typNUMBER GTensor::tpFloatX = typNUMBER::BF16;
-   typNUMBER GTensor::tpPreLogits = typNUMBER::BF16;
-#else
-   typNUMBER GTensor::tpFloatX = typNUMBER::F32;
-   typNUMBER GTensor::tpPreLogits = typNUMBER::F32;
-#endif
+// #ifdef ENABLE_BF16
+//    typNUMBER GTensor::tpFloatX = typNUMBER::BF16;
+//    typNUMBER GTensor::tpPreLogits = typNUMBER::BF16;
+// #else
+//    typNUMBER GTensor::tpFloatX = typNUMBER::F32;
+//    typNUMBER GTensor::tpPreLogits = typNUMBER::F32;
+// #endif
 
 hGTensor GTensor::outL=nullptr,GTensor::delta=nullptr,GTensor::tmpDelta=nullptr;;
 hGTensor GTensor::bt4c=nullptr,GTensor::scratch=nullptr,GTensor::tmpFF1=nullptr,
@@ -329,8 +329,7 @@ int GTensor::SerialJSON(const std::string& name_, const JSON& val, void* bytes_p
 void GTensor::Print(const string& title0, int x, int flag,size_t nEle)   const {
    assert(nEle>=0);
    bool isDevice = true;
-   if(type==FLOAT_TYPE){
-   }
+
    void *src = x==1 ? grad : data;
    string title = title0;
    if(x==1)    title="GRAD_"+title;
@@ -339,6 +338,7 @@ void GTensor::Print(const string& title0, int x, int flag,size_t nEle)   const {
       sp[0]=nEle,    sp[1]=1;    sp[2]=1;    sp[3]=1;
    }
    switch(type){
+   case typNUMBER::F16:
    case typNUMBER::BF16:
       PrintTensor<floatX>(title.c_str(),(floatX *)src, isDevice,sp[0],sp[1],sp[2],sp[3],flag);
       break;

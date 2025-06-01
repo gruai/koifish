@@ -8,11 +8,8 @@
  *  \author Yingshi Chen
  */
 #include "./Operator.cuh"
-#include "./llm_c/sampler.h"
-#include "./llm_c/layernorm.cuh"
-#include "./llm_c/encoder.cuh"
-#include "./llm_c/cuda_utils.cuh"
-#include "./llm_c/adamw.cuh"
+// #include "./llm_c/sampler.h"
+#include "./kernel/utils.cuh"
 #include "../../Manifold/Neuron.hpp"
 #include "../../Manifold/Fish.hpp"
 #include "../../Manifold/Optimizer.hpp"
@@ -204,7 +201,7 @@ int UpdateTensorParam_cuda(hGTensor tensor,Optimizer *hOPT,float& grad_norm,int 
     // }
     float learning_rate=hOPT->LearningRate(),beta1=adam.beta1, beta2=adam.beta2, eps=adam.eps;
     int num_slices = 1,iter=hOPT->GetITER();
-    unsigned int seed = random_u32(&rng_state);
+    unsigned int seed = 42; //random_u32(&rng_state);
     const char*name = tensor->name;
     ShardInfo shard = {0,tensor->size()};
     float wd = adam.decay;            // we only want to weight decay the 2D tensors and leave all 1D tensors alone
@@ -254,7 +251,7 @@ int RAW_update(std::vector<hGTensor>& tensors,Optimizer *hOPT,float& grad_norm,i
         if(alg==0){
             UpdateTensorParam_cuda(tensor,hOPT,grad_norm,flag);
         }else{
-            unsigned int seed = random_u32(&rng_state);
+            unsigned int seed = 42; //random_u32(&rng_state);
             const char*name = tensor->name;
             ShardInfo shard = {0,tensor->size()};
             float wd = weight_decay;            // we only want to weight decay the 2D tensors and leave all 1D tensors alone

@@ -40,7 +40,7 @@ int Fish_ppl(CLI_params& config)  {
     DEBUG.graph_dump = 1;
     DEBUG.T_cuda_ver = 1;
     DEBUG.T_cpu = 2;
-    GTensor::tpPreLogits = typNUMBER::F32;
+    // GTensor::tpPreLogits = typNUMBER::F32;
     // return run_caml(config.prompt.c_str(),0x0);
     
     hFISH fish = Fish::MakeInstance("PPL_",config,{},Fish::ROLE_TYPE::COMMON,0x110);
