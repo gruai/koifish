@@ -14,6 +14,7 @@
 struct DictVAE;
 #include "../CLI_params.hpp"
 #include "../g_stddef.hpp"
+#include "../Utils/GST_rander.hpp"
 #include "TokenSet.hpp"
 using namespace std;
 // ----------------------------------------------------------------------------
@@ -117,7 +118,7 @@ protected:
     NLP_AutoRegressive *dolphin=nullptr;
 public:
     StepInfos stepis;        // info of each step on train/evaluate/...
-    std::string tpBatchSample,name;       //  "stacking"
+    std::string tpBatchSample,name;       //  
     std::vector<hSAMP> cur_samps;
     int nMostToken = -1;
     int num_batches=-1;    //number of batchs in each epoch
@@ -165,7 +166,8 @@ public:
 
     SampLoader()    {}
     SampLoader(Fish *g_,const string&n,bool isNewTS,int flag=0x0);
-    // virtual bool Init(Fish *g_,const string&n,bool isNewTS,int flag=0x0 ) ;
+    
+    virtual int PickSomeTokens(Grusoft::GRander& rander,int nSample,std::vector<int>& samps,int flag=0x0);
     virtual bool Prepare(Optimizer *hO,hDataToken hT,int flag=0x0 ) ;    
     virtual size_t UpdateBatch(int next_id,Fish* fish);
     virtual ~SampLoader( ) {       

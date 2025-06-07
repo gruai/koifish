@@ -774,7 +774,16 @@ int Fish::BackwardOnRLS(int iter,int flag)  {
 int Fish::ForwardOnRLS(int iter,int flag)  {
     RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();  
     assert(hRLS!=nullptr);
+    double now = GST_ms();
     hRLS->Prepare(iter,0);
+    
+    if(DEBUG.T_cuda_ver==1){    
+        if(DEBUG.T_cpu==1){            
+            T_generate_cpu(SharedThis(), false, flag);
+        }else
+            T_generate_cuda(SharedThis(),false,DEBUG.T_cpu,flag); //  do one inference as warmup
+        return 0x0;        
+    }
     // if(DEBUG.back_graph_version==1)
     // { return ForwardOnNeuron_v0(flag);  }
     
@@ -795,15 +804,7 @@ int Fish::ForwardOnRLS(int iter,int flag)  {
     return 0x0;
 }
 int NLP_AutoRegressive::ForwardOnNeuron_v0(int flag)  {
-    if(DEBUG.T_cuda_ver==1){    
-        if(DEBUG.T_cpu){            
-            T_generate_cpu(SharedThis(), false, flag);
-        }else
-            T_generate_cuda(SharedThis(),false,DEBUG.T_cpu,flag); //  do one inference as warmup
-        return 0x0;        
-    }
-
-    int B,T,C,tpFuseNormal=config.Fuse_Normal,L = config.nLayer(),tpFuseCu=1;      
+    int B,T,C,tpFuseNormal=config.Fuse_Normal,L = config.nLayer();      
     GetBTC(B,T,C);    
     hGensor cur=nullptr;
     LayerNormal* lnf = GetNeuron<LayerNormal>("LayerNormal",0);
@@ -831,12 +832,8 @@ int NLP_AutoRegressive::ForwardOnNeuron_v0(int flag)  {
         cur = lnf->FUSE_cuda(cur); 
     }
     OutCLS* cls = GetNeuron<OutCLS>("OutCLS",0);
-    if(tpFuseCu==1)
-        cls->FUSE_cuda(cur,flag); //embed->w,
-    else    {
-        assert(0);
-        //cls->preLogits = lnf->out*embed->w;   
-    }
+    cls->FUSE_cuda(cur,flag); //embed->w,
+    
     PrintTensor<floatX>("output",ToX(cls->preLogits),true,B,T,C);
     // SYNC_DEVICE();    
     return 0x0;

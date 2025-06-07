@@ -17,7 +17,7 @@ E.g., the layernorms are connected to the residuals so we += in layernorm backwa
 // ----------------------------------------------------------------------------
 // CUDA kernels
 
-__global__ inline void layernorm_forward_kernel3(floatX* __restrict__ out, float* __restrict__ mean, float* __restrict__ rstd,
+__global__ static void layernorm_forward_kernel3(floatX* __restrict__ out, float* __restrict__ mean, float* __restrict__ rstd,
                                     const floatX*  __restrict__ inp, const floatX*  __restrict__ weight,
                                     const floatX* __restrict__ bias, int N, int C) {
     int lane_id = threadIdx.x % WARP_SIZE;
@@ -64,7 +64,7 @@ __global__ inline void layernorm_forward_kernel3(floatX* __restrict__ out, float
     }
 }
 
-__global__ inline void rms_forward_kernel(floatX* __restrict__ out, float* __restrict__ rstd,
+__global__ static void rms_forward_kernel(floatX* __restrict__ out, float* __restrict__ rstd,
                                     const floatX*  __restrict__ inp, const floatX*  __restrict__ weight, int N, int C) {
     assert(blockDim.x == WARP_SIZE);
 
@@ -133,7 +133,7 @@ __global__ inline void rms_forward_kernel(floatX* __restrict__ out, float* __res
     }
 }
 
-__global__ inline void layernorm_forward_kernel6(floatX* __restrict__ out, float* __restrict__ mean, float* __restrict__ rstd,
+__global__ static void layernorm_forward_kernel6(floatX* __restrict__ out, float* __restrict__ mean, float* __restrict__ rstd,
                                     const floatX*  __restrict__ inp, const floatX*  __restrict__ weight,
                                     const floatX* __restrict__ bias, int N, int C) {
     assert(blockDim.x == WARP_SIZE);
@@ -208,7 +208,7 @@ __global__ inline void layernorm_forward_kernel6(floatX* __restrict__ out, float
     }
 }
 
-__global__ inline void fused_residual_forward_kernel5(floatX* residual, floatX* normed, float* mean, float* rstd,
+__global__ static void fused_residual_forward_kernel5(floatX* residual, floatX* normed, float* mean, float* rstd,
                                                const floatX* inp1, const floatX* inp2,
                                                const floatX* weight, const floatX* bias,
                                                int N, int C) {
@@ -287,7 +287,7 @@ __global__ inline void fused_residual_forward_kernel5(floatX* residual, floatX* 
     }
 }
 
-__global__ inline void fused_residual_forward_kernel6(floatX* residual, floatX* normed, float* mean, float* rstd,
+__global__ static void fused_residual_forward_kernel6(floatX* residual, floatX* normed, float* mean, float* rstd,
                                                const floatX* inp1, const floatX* inp2,const floatX* weight,int N, int C) {
     assert(blockDim.x == WARP_SIZE);
 
@@ -365,7 +365,7 @@ __global__ inline void fused_residual_forward_kernel6(floatX* residual, floatX* 
     }
 }
 
-__global__ inline void residual_forward_kernel(floatX* out, const floatX* inp1, const floatX* inp2) {
+__global__ static void residual_forward_kernel(floatX* out, const floatX* inp1, const floatX* inp2) {
     int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
 
     x128 packed_out;
@@ -377,7 +377,7 @@ __global__ inline void residual_forward_kernel(floatX* out, const floatX* inp1, 
     store128(out + idx, packed_out);
 }
 
-__global__ inline void __launch_bounds__(512, 2) // todo - any warnings on Turing with only 1024 threads?
+__global__ static void __launch_bounds__(512, 2) // todo - any warnings on Turing with only 1024 threads?
     layernorm_backward_kernel10(floatX* dinp, floatX* dweight, floatX* dbias, float* scratch,
                                 const floatX* dout, const floatX* inp, const floatX* weight,
                                 const float* mean, const float* rstd,
@@ -573,7 +573,7 @@ __global__ inline void __launch_bounds__(512, 2) // todo - any warnings on Turin
     }
 }
 
-__global__ inline void __launch_bounds__(512, 2) // todo - any warnings on Turing with only 1024 threads?
+__global__ static void __launch_bounds__(512, 2) // todo - any warnings on Turing with only 1024 threads?
     layernorm_backward_kernel11(floatX* dinp, floatX* dweight, float* scratch,
                                 const floatX* dout, const floatX* inp, const floatX* weight,
                                 const float* mean, const float* rstd,
@@ -798,7 +798,7 @@ void inline layernorm_forward(floatX* out, float* mean, float* rstd,
             layernorm_forward_kernel6<<<grid_size, dim3(WARP_SIZE, block_y), smem, stream>>>(out, mean, rstd, inp, weight, bias, N, C);
         } else {
             // fall back to the version without shared memory
-            const int grid_size_fb = CEIL_DIV(N * WARP_SIZE, block_size);
+            const int grid_size_fb = CEIL_DIV(N, (block_size/WARP_SIZE));
             layernorm_forward_kernel3<<<grid_size_fb, block_size, 0, stream>>>(out, mean, rstd, inp, weight, bias, N, C);
         }
     }

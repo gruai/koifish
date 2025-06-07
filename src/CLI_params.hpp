@@ -118,8 +118,10 @@ public:
     std::string sCardPath = "",sTokenPath="";
     std::string sArch,torch_dtype,transformers_version,model_type;
     std::string act_type,norm_type;
-    typNUMBER tpWeight = typNUMBER::BF16,tpActivation = typNUMBER::BF16, tpGradient = typNUMBER::BF16;
-;
+    typNUMBER tpWeight = typNUMBER::BF16,tpActivation = typNUMBER::BF16, 
+        tpPreLogits = typNUMBER::F32,
+        tpGradient = typNUMBER::BF16;
+        
     dotprod_t fDotW;
     JSON jModelParam;   //
     int vocab_size=-1,bos_token_id,eos_token_id;
@@ -179,7 +181,7 @@ struct train_params_ {
     int n_ctx=-1,n_batch=-1,n_threads=-1,n_gradient_accumulation=-1,n_epochs=1,n_gpu_layers=-1;
 
     bool custom_n_ctx;
-
+    bool isSuperBatch = true;
     bool use_flash;
     bool use_checkpointing;
 

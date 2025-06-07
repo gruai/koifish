@@ -120,6 +120,15 @@ void G_SomeXat_( vector<int>& pos, const vector<T>& someX, const vector<T>& allX
     }
 }
 
+
+bool inline G_Has_( const string&title, const vector<string>& values, int flag=0x0 ){
+    for( auto v : values ){
+        if(title.find(v) != std::string::npos)
+            return true;
+    }
+    return false;
+}
+
 inline int CLAMP(const int v, const int min, const int max) {
     return ((v < min) ? (min) : (v > max) ? (max) : v);
 }

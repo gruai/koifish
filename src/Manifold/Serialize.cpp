@@ -12,6 +12,7 @@
 #include "Fish.hpp"
 #include "../TokenSet/Dictionary.hpp"
 #include "Serialize.hpp"
+#include "../Utils/GST_os.hpp"
 
 void* MMAP_json(JSON& header,void**objs,size_t*objs_nz,const std::string&path, bool isSave, int flag){
     int fd = open(path.c_str(), O_RDONLY);
@@ -155,7 +156,9 @@ try{
             if (target->SerialJSON(key, val, objs, objs_size) != 0) {
                 munmap(data, size);
                 return -1;
-            }
+            }   //  
+            // if(G_Has_(target->name,{"layers.27.mlp.w1.weight"}))        //  wk.weight wq.weight wv.weight wo.weight ,"w2.weight","w3.weight"
+            //     target->ToTernary();
             if(DUMP()){
                 _INFO("  >>>>  %d typ=%s\t data=%p grad=%p \t sz=%ld @%s\n",nSerialT,cNameOf(target->type),target->data,target->grad,tBYTE(target),target->name);
             }

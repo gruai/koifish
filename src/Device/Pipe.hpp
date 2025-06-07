@@ -27,6 +27,7 @@ struct CoopLayer {
 template <typename T, typename KVT>
 struct TRANSFORMER_PIPE : public MODEL_CARD {
     CoopLayer<void> *cLayers=nullptr;
+	int layNo=-1;
     hFISH hFish = nullptr;
     hGensor out_weight = nullptr;
 	float *x=nullptr,*xb=nullptr,*xb2=nullptr,*q=nullptr,*k=nullptr,*v=nullptr,*att=nullptr,*exp=nullptr;
@@ -49,6 +50,7 @@ struct TRANSFORMER_PIPE : public MODEL_CARD {
 
 		n_experts = config.model.n_experts;			
 		n_experts_ac = config.model.n_experts_ac;		assert(n_experts_ac==0);
+		n_experts_ac = max(n_experts_ac, 1);		//	???
 		q_dim = head_dim*n_heads, kv_dim = head_dim*n_kv_heads,att_dim=n_heads*config.model.seq_len*2;
 		hb_dim = hidden_dim;	
 		assert(dim % 32 == 0 && kv_dim % 32 == 0 && hidden_dim % 32 == 0);
@@ -93,11 +95,10 @@ struct TRANSFORMER_PIPE : public MODEL_CARD {
 	}
 
     virtual ~TRANSFORMER_PIPE() {
-        //	FREE_a(cLayers);
 		delete[ ] cLayers;
     }
 
-	hGTensor tX = GTensor::scratch;
+	hGTensor tX = GTensor::outL;
 	uint64_t bw;
 	uint64_t* perfstats = nullptr;		//	"CUDA_INJECTION64_PATH"
 	
@@ -131,9 +132,9 @@ struct TRANSFORMER_PIPE : public MODEL_CARD {
 			FFN *ffn=hFish->GetNeuron<FFN>("FFN",l); 
 			cLayers[l].rms_ffn_weight = TO<float>(ffn->norm.w);	//weights->rms_ffn_weight[l];
 			cLayers[l].moegate = nullptr;	//weights->moegate[l];
-			cLayers[l].w1 = TO(ffn->PGensors(),"w1");		//weights->w1[l];
-			cLayers[l].w2 = TO(ffn->PGensors(),"w2");		//weights->w2[l];
-			cLayers[l].w3 = TO(ffn->PGensors(),"w3");		//weights->w3[l];
+			cLayers[l].w1 = TO(ffn->PGensors(),"w1.weight");		//weights->w1[l];
+			cLayers[l].w2 = TO(ffn->PGensors(),"w2.weight");		//weights->w2[l];
+			cLayers[l].w3 = TO(ffn->PGensors(),"w3.weight");		//weights->w3[l];
 		}
     }
 };

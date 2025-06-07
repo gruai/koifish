@@ -240,6 +240,18 @@ OutCLS::OutCLS(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int
     shape={nEmbd,nCls};
 #endif
 }
+
+float *OutCLS::Logits(bool isToHost,int flag) {
+    assert(preLogits!=nullptr);
+    if(isToHost){
+        assert(preLogits->host_data!=nullptr);
+        
+        return (float*)(preLogits->host_data);
+    }else
+        return TO<float>(preLogits);
+    //(float *)(preLogits->data)+i*nVocab;
+}  
+
 bool OutCLS::Build(int flag)   {
     SHAPE sp={shape[0]};
     latent = hFish->config.nEmbed(-1);
@@ -253,12 +265,12 @@ bool OutCLS::Build(int flag)   {
     // hFish->InitGensor(nullptr,"target",target,false);           
     hFish->target_probs = target; 
     out = std::make_shared<huTensor>(hFish,"loss",sp2,typNUMBER::F32,false);     
-    
+    auto tpL = hFish->config.model.tpPreLogits;
     if(hFish->config.isOnlyGPT) {
-        sp3 = {padded_nCls};   preLogits = std::make_shared<huTensor>(hFish,"preLogits",sp3,tpActivation,false);  
-        preLogits->flags |= GTensor::F_HOSTALLOC;
+        preLogits = GT(hFish,tpL,{padded_nCls},0x0,"preLogits");   // std::make_shared<huTensor>(hFish,"preLogits",sp3,tpActivation,false); 
+        preLogits->flags |= GTensor::F_HOSTDATA;    
     }else{
-        preLogits = std::make_shared<huTensor>(hFish,"preLogits",sp3,tpActivation,false);  
+        preLogits = std::make_shared<huTensor>(hFish,"preLogits",sp3,tpL,false);  
     }
 
     delta = GTensor::bt4c;  // !=GTensor::delta
@@ -297,8 +309,7 @@ hGensor OutCLS::Ming(RLS_BP* ctx_,hGensor inpL,int flag)    {
             out->AddSrc({inpL,proj.w,preLogits,target});            
         }
         assert(target!=nullptr);   
-        cur = out;    
-        // hFish->preLogits = preLogits;
+        cur = out; 
     } else{    
         cur = FUSE_cuda(inpL,0x0);     //return preLogits;        
         // hFish->hOPT->UpdateTrainLoss(-1,mean_loss);   
@@ -507,18 +518,14 @@ bool ROPE::Build(int flag)    {
             fsin[t * dim2 + tid] = sinf(t * freq);
         }
     }
-    hSin = GT(hFish, typNUMBER::F32, {T*dim2});     hSin->Alloc();
-    hSin->SerialGP(fsin,nullptr,sizeof(float)*T*dim2,false);
-    hCos = GT(hFish, typNUMBER::F32, {T*dim2});     hCos->Alloc();
-    hCos->SerialGP(fcos,nullptr,sizeof(float)*T*dim2,false);
-    delete[] fcos,fsin;
-   
-#ifdef _TENSOR_G_
-#else
-    KQ_pos = hFish->KQ_pos;    
-#endif
-    shape = {n_embd_head, n_head, T, B};
-    shape = {};     //  only for debug
+    // hSin = GT(hFish, typNUMBER::F32, {T*dim2},0x0,name+".sin");     hSin->Alloc();
+    // hSin->SerialGP(fsin,nullptr,sizeof(float)*T*dim2,false);
+    // hCos = GT(hFish, typNUMBER::F32, {T*dim2},0x0,name+".cos");     hCos->Alloc();
+    // hCos->SerialGP(fcos,nullptr,sizeof(float)*T*dim2,false);
+    delete[] fcos,fsin;  
+
+    // KQ_pos = hFish->KQ_pos;    
+    // shape = {n_embd_head, n_head, T, B};
     return true;
 }
 
@@ -851,51 +858,5 @@ hGTensor operator>>(hGTensor t, const SparseNeuron* neuron){
     return neuron->out;
 }
 
-template<typename Tw, typename Ta>
-void tMM(Ta *lhs,Tw *W, Ta *rhs,Tw *b, size_t M, size_t N, size_t K,bool transAW, cudaStream_t main_stream,int flag=0);
-void inline gelu_forward(floatX* out, const floatX* inp, int N, cudaStream_t stream);
-int SLP::Forw(hGTensor rhs_0,hGTensor lhs_,hGTensor toGelu,int flag){
-try{
-    floatX *rhs=ToX(rhs_0),*to_gelu = ToX0(toGelu),*wX=ToX(w);//,*inp=ToX(lhs_);
-    int OC=nOut,IC=nIn;
-    assert(gelu_fusion==0);    assert(rhs_0->size()>=B*T*OC);        
 
-    inp = lhs_;
-    bool transAW = true;
-    // if(isTransW)        
-    //     transAW = false;
-    if(compression==SAMPLE && subw!=nullptr){
-        subw->SubW(hSamps,true,GTensor::tmpW,samp_type);
-        wX = ToX(GTensor::tmpW);        
-        // GTensor::tmpW->Print("subW",0,-1);    
-    }
-    /*if (gelu_fusion < 1 && to_gelu) {
-        matmul_cublaslt(to_gelu, wX, ToX(lhs_), ToX0(b), OC, B*T, IC, main_stream, transAW, false, 0, 0, 0, 0, false, NULL, false);
-        gelu_forward(rhs, to_gelu, B*T*OC, main_stream);
-    } else {
-        matmul_cublaslt(rhs, wX, ToX(lhs_), ToX0(b), OC, B*T, IC, main_stream, transAW, false, 0, 0, 0, 0, false, to_gelu, false);
-    }*/
-    rhs = to_gelu ? to_gelu : rhs;
-    switch(w->type){
-    case typNUMBER::T_SIGN:
-        assert(0);
-        break;
-    default:
-        tMM<floatX,floatX>(ToX(lhs_), wX, rhs, ToX0(b), B*T, OC, IC,true,main_stream); 
-        break;
-    }
-    if( to_gelu) {
-        gelu_forward(ToX(rhs_0), to_gelu, B*T*OC, main_stream);
-        // swiglu_forward(rhs, to_gelu, B*T*OC, main_stream);
-    }
-    if(compression==SAMPLE) {
-        // rhs_0->Print(rhs_0->name,0,-1);
-    }
-    
-    return 0x0;
-}catch(...){
-    assert(0);
-    return -1;
-}
-}
 

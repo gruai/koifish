@@ -114,8 +114,10 @@ bool SelfAttention::Build(int flag_0)   {
     if(hFish->config.isShareLayerOut()){
         out->SetRefer(GTensor::outL);        
     }    
-    if(hFish->config.model.isRope)
+    if(hFish->config.model.isRope){
         rope.BuildX(name+".ROPE",sp,hFish,flag);
+    }
+        
 
     // Q.BuildX(name+".wq",sp,hFish,flag);          
     // K.BuildX(name+".wk",sp,hFish,flag);              
@@ -1496,7 +1498,28 @@ hNeuron Fish::J2Neuron(void *ctx_,string& dad,int level,const JConfig& jconfig,i
     return hN;
 }
 
+bool GTensor::FreeBuffer(int flag){
+try{
+    bt4c=nullptr,delta=nullptr,tmpDelta=nullptr,outL=nullptr,
+    scratch=nullptr,tmpFF1=nullptr,tmpW=nullptr,tmpGW=nullptr,
+    residual=nullptr;
+    return true;
+}
+catch(const std::exception & e) {
+    _INFO("%s",e.what());   fflush(stdout);
+    return -1000;
+}
+catch(const char* info)  {
+    _INFO("%s",info);       fflush(stdout);
+    return -1001;
+} catch(...)  {
+    _INFO("\r\n%s  Unknown exception !!!",__func__);        fflush(stdout);
+    return -2001;
+}
+}
+
 bool GTensor::AllocBuffer(Fish *hFish,int flag){
+try{
     assert(hFish!=nullptr);
     // TokenEmbed* embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed",0);
     int B,T,C;      hFish->GetBTC(B,T,C);
@@ -1528,8 +1551,21 @@ bool GTensor::AllocBuffer(Fish *hFish,int flag){
     // GTensor::residual = std::make_shared<huTensor>(hFish,"residual",spMost,tpWeight,true); 
     //  may reduce memory by sp0=sp0/VP
     GTensor::scratch = std::make_shared<huTensor>(hFish,"scratch/output",sp0,tpWeight,true);
-
+    GTensor::host_buff = new float[GTensor::scratch->size()];
+    
     return true;
+}
+catch(const std::exception & e) {
+    _INFO("%s",e.what());   fflush(stdout);
+    return -1000;
+}
+catch(const char* info)  {
+    _INFO("%s",info);       fflush(stdout);
+    return -1001;
+} catch(...)  {
+    _INFO("\r\n%s  Unknown exception !!!",__func__);        fflush(stdout);
+    return -2001;
+}
 }
 /*
 

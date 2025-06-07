@@ -455,7 +455,7 @@ try{
         scheduling.strategy = SKDU_params::MEM_SWAP;
     else{
         // scheduling.strategy = SKDU_params::MEM_SWAP;
-        //  scheduling.strategy = SKDU_params::MEM_SWAP_GUOKE;
+        scheduling.strategy = SKDU_params::MEM_SWAP_GUOKE;
     }
     
     if(scheduling.strategy == SKDU_params::MEM_SWAP_GUOKE){
@@ -533,7 +533,7 @@ void CLI_params::OnArch( ){
         model.isSeperateQKV = false;
         model.preLogits_dB = 8;
         model.isFFNShareParam = true;
-        model.isEmbedWeightTying = false;
+        model.isEmbedWeightTying = true;
         DEBUG.check_tensor_norm = true;
         model.isRope = false;       // 2025.5.7 some bugs
         break;
@@ -678,6 +678,7 @@ try{
     common.n_batch = jKV(jConfig,{      "train","batch"},common.n_batch );
     common.n_epochs = jKV(jConfig,{  "train","epoch"},common.n_epochs );
     common.nMostIter = jKV(jConfig,{  "train","adam-iter"},common.nMostIter );
+    // why large "learning-rate" would fail, so strange!
     common.adam.alpha = jKV(jConfig,{   "train","learning-rate"},common.adam.alpha );
     common.adam.decay = jKV(jConfig,{   "train","decay"},common.adam.decay );
     common.n_gradient_accumulation = jKV(jConfig,{ "train","optimizatioin","grad_accumulation"  },common.n_gradient_accumulation );
@@ -686,9 +687,9 @@ try{
 
     // serial_path = jKV(jConfig,{"data","serialize_path"},s0 );
     string dict_type = jKV(jConfig,{"dict","type"},s0 );
-    tpBatchSample = jKV(jConfig,{"data","tpBatchSample"},tpBatchSample ); 
+    tpBatchSample = jKV(jConfig,{"train","batch_sample"},tpBatchSample ); 
     rSplit = jKV(jConfig,{"data","eval_split"},rSplit );
-    string a = tpBatchSample=="stacking" ? tpBatchSample : "";
+    // string a = tpBatchSample=="stacking" ? tpBatchSample : "";
     
     std::vector<string> all_base;
     all_base = jKV_arr(jConfig,{"wiki","path"},all_base,false);
@@ -709,7 +710,7 @@ try{
     // }
     
     JModel2Params(0x0);   
-    // eval_binpath = jKV(jConfig,{"data","eval_binpath"},s0 );   
+   
     model.Init(jConfig);
     
     n_swarm = jKV(jConfig,{"train","swarm"},1 );

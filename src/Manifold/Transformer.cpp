@@ -43,8 +43,6 @@ void attn(float* xout, float* atth, float* qh, kvtype_t* kh, kvtype_t* vh, int h
 //	transfer data between device & host
 TRANSFORMER_PIPE<uint32_t, void> *tPipe=nullptr;
 
-
-
 int FFN::CPU_v0(void *ctx,int layer,int flag)	{
 	auto config = hFish->config;
 	TRANSFORMER_PIPE<uint32_t, void> *tPipe = (TRANSFORMER_PIPE<uint32_t, void>*)(ctx);
@@ -143,9 +141,9 @@ int T_generate_cpu(hFISH hFish, bool isOnlyUpdateKV,unsigned flags)	{
 		kvtype_t* kb = (kvtype_t*)tPipe->key_cache + loff;
 		kvtype_t* vb = (kvtype_t*)tPipe->val_cache + loff;			
 		if(curLay==-1)	{	//only for debug
-			PrintTensor<tpW>("wk",w0->wk,dim,1);			PrintTensor<float>("xb",xb,dim,1);				val = dotprod(w0->wk, dim, 0, xb);			
-			PrintTensor<float>("q",tPipe->q,q_dim,1);		
-			PrintTensor<float>("k",tPipe->k,kv_dim,1);		
+			PrintT<tpW>("wk",w0->wk,dim,1);			PrintT<float>("xb",xb,dim,1);				val = dotprod(w0->wk, dim, 0, xb);			
+			PrintT<float>("q",tPipe->q,q_dim,1);		
+			PrintT<float>("k",tPipe->k,kv_dim,1);		
 		}		// qkv matmuls for this position
 		D_matvec(tPipe->q, xb, w->wq, w->bqkv, dim, q_dim, dotprod);
 		D_matvec(tPipe->k, xb, w->wk, w->bqkv ? w->bqkv + q_dim : NULL, dim, kv_dim, dotprod);
@@ -194,7 +192,7 @@ int T_generate_cpu(hFISH hFish, bool isOnlyUpdateKV,unsigned flags)	{
 		Fish::stat.tQKV += GST_us()-t0;
 		if(curLay==-1)	{
 			float val = dotprod(w->wo, q_dim, 0, xb2);			//	-0.165075183
-			PrintTensor<f8e5m2_t>("wout",w->wo,q_dim,dim);		//	only for debug			
+			PrintT<f8e5m2_t>("wout",w->wo,q_dim,dim);		//	only for debug			
 		}
 		D_matvec(hb, xb2, w->wo, NULL, q_dim, dim, dotprod);		// final matmul to get the output of the attention
 		// residual connection back into x

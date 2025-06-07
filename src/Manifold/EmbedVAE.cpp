@@ -370,7 +370,7 @@ bool FFN::Build(int flag_0)   {
     VarCoder::Build(flag);
     if(isShareParam ){
         TokenEmbed* embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed",0);  
-        down.SetEmbed(embed,0);   
+        down.SetEmbed(embed,0);     //down.isTransW = true;
         up.SetEmbed(embed,1);    
         if(layer==1){
             first = this;         

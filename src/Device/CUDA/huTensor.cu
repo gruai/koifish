@@ -1,7 +1,7 @@
 #include <cuda_fp16.h>
 #include <cuda_fp8.h>
 
-#include "./Operator.cuh"
+#include "./kernel/Operator.cuh"
 #include "./kernel/utils.cuh"
 #include "../../ggex/GTensor.hpp"
 #include "../../Utils/GST_log.hpp" 
@@ -10,7 +10,7 @@
 // const int block_512 = 512;
 huTensor::huTensor(Fish *fish,const string&name_,const SHAPE shape,typNUMBER tpD_,bool isAlloc,int flag) : GTensor(fish,shape,tpD_,false,flag){
     size_t nEle=size();
-    if(DEBUG.T_cpu){
+    if(DEBUG.T_cpu==1){
         flags |= BIT_FLAG::F_HOSTALLOC;
     }else
         flags |= BIT_FLAG::F_GPU;
@@ -29,11 +29,13 @@ size_t GTensor::szMaloc = 0;
 size_t huTensor::mostMemory(int typ)  const {
     if(BIT_TEST(flags,F_NOALLOC))
         return 0x0;
+    // if(BIT_TEST(flags,F_HOSTALLOC))
+    //     return 0x0;
     if(hRef!=nullptr){
         return 0x0;
     }
     size_t most = nByte();
-    if(isParam())   {
+    if(isParam() && hFish->isTrain())   {
         most += nByte();                    // grad
         most += sizeof(float)*size()*2;     // gm,gv is float array
     }
@@ -60,110 +62,25 @@ size_t huTensor::Alloc_1(void **dst,bool isZero,size_t sz0,int flag){
     szMaloc += szAlloc;
     return szAlloc;
 }
-size_t huTensor::Free_1(void **obj,const string&info){
-    
+size_t huTensor::Free_1(void **obj,const string&info){    
     assert(*obj!=nullptr);
     // _INFO("\t%s%s freed@%p(%.3gM)!",name,info.c_str(),*obj,(szData)/1.0e6);   
     if(BIT_TEST(flags,F_HOSTALLOC) )
         cudaFreeHost(*obj); 
     else {
-        cudaFreeCheck(obj);   
+        // cudaFreeCheck(obj);   
+        cudaError_t error = cudaFree(*obj);
+        if (error != cudaSuccess) {
+            // _INFO("[CUDA ERROR] at file %s:%d:\n%s\n", file, line, cudaGetErrorString(error));
+            _INFO("[CUDA] free failed @\"%s\"! err=%s.\n", name, cudaGetErrorString(error));
+            // exit(EXIT_FAILURE);
+        }
+        *obj = nullptr;
     }
         
     *obj=nullptr;   szMaloc -= szData;  
     
     return szMaloc;
-}
-
-bool huTensor::Alloc(int iter,int flagInit){
-    if(strcmp(name,"model.out.weight")==0 || strcmp(name,"model.inp_embd.weight")==0){     //  model.inp_embd.weight       model.out.weight
-        int debug = 0x0;
-    }
-    
-    size_t sz0 = szMaloc;
-    if(BIT_TEST(flags,F_NOALLOC))   // For example: operator fusing, memory reuse,rematerialization
-        return true;
-    if(isParam())   {
-        if(tpInit == SERIALIZE)
-            return true;
-    }
-    if(hRef!=nullptr){
-        ShareWeight(hRef);      //  grad => src->grad;
-        if(DUMP(0))
-            _INFO("\t%s =====> %s\n",name,hRef->name );
-        return true;
-    }        
-       
-    assert(szData>0);
-    bool hostAlloc = BIT_TEST(flags,F_HOSTALLOC);
-    bool isTrain = hFish!=nullptr && hFish->isTrain();
-    if(BIT_TEST(flags,F_HOSTDATA) && host_data==nullptr){
-        host_data = new char[szData];
-    }
-    bool allocData = data == nullptr;
-    if(allocData)   {
-        Alloc_1(&data,true);    
-        // _INFO("\t%s (+%.3gM)\n",name,(szMaloc-sz0)/1.0e6);
-    }
-    if(isParam() && isTrain){        
-        if(allocData)   {
-            InitParam(flagInit);  
-            if(1)  //DEBUG.isParamResident
-                BIT_SET(flags,GTensor::F_RESIDENT); 
-        }
-        size_t szMV = sizeof(float)*size();
-        if(grad==nullptr){
-            Alloc_1(&grad,true,szData+szMV*2);          // sgd_kernel would zero grad!
-            string method = hFish->config.Get({"train","optimizatioin","method"},string("adamw"),false);
-            if(method=="adamw")            { 
-                gm = grad+szData,      gv = gm+szMV;    
-            } else if(method=="lion")            { 
-                gm = grad+szData,      gv = nullptr;    
-            } else{
-                gm = nullptr,      gv = grad+szMV;
-            }
-        }            
-    }else{
-        
-    }    
-    assert(szMaloc-sz0<=mostMemory());
-    if(iter<=1 && szMaloc-sz0>=100*1.0e6){    
-        string sA = hostAlloc?"HostAlloc":"cudaMalloc";
-        if(hFish->isRemater()){
-            sA = "Remater";
-        }
-        if(ne[0]==151936 || ne[1]==151936)
-        {    int isDebug = 0;   }
-        printf("\t %s=%gM@%s type=%s shape=[%ld,%ld,%ld,%ld]%s sum=%gG\n",sA.c_str(),
-            (szMaloc-sz0)*1.0f/1.0e6,name,cNameOf(type),ne[0],ne[1],ne[2],ne[3],grad!=nullptr?"x2":"",szMaloc*1.0/1.0e9);
-    }
-    
-    return true;
-}
-bool huTensor::Free(bool isPassResident) {
-try{    
-    if(isRefer())
-        return true;
-       
-    size_t sz0=szMaloc;
-    if(data!=nullptr)           {    
-        if(isPassResident && BIT_TEST(flags,GTensor::F_RESIDENT) ){
-            int pass = 0;
-        }else{
-            Free_1(&data);  
-            // _INFO("\t%s (-%.3gM)\n",name,(sz0-szMaloc)/1.0e6);
-        }
-    }else{
-        assert(grad==nullptr);      return true;
-    }
-    if(!BIT_TEST(flags,GTensor::F_RESIDENT) && grad!=nullptr)           {  
-        Free_1(&grad,"_grad");
-    }
-    // _INFO("\t%s freed(%.3gM)!",name,(sz0-szMaloc)/1.0e6);
-}catch(...){
-    assert(0);
-}
-    return true;
 }
 
 bool huTensor::InitParam(int tpX){
@@ -332,10 +249,23 @@ bool cuClearGrad(std::vector<hGTensor> tensors,int flag){
     return true;
 }
 
+bool D2H(void *dev,void *host,size_t szData,int flag=0x0){
+try{
+    assert(host!=nullptr && dev!=nullptr);        
+    cudaCheck(cudaMemcpy(host,dev, szData, cudaMemcpyDeviceToHost));    
+    return true;
+}catch(...){
+    return false;
+}        
+}
+
 bool huTensor::SerialData(const string&info,void *host,bool isToHost,int flag) {
 try{
-    assert(host!=nullptr);
-    if(isToHost){
+    if(host==nullptr){
+        assert(host_data!=nullptr);
+        host = host_data;
+    }
+    if(isToHost){        
         //cudaCheck(cudaMemcpyAsync(host,data, szData, cudaMemcpyDeviceToHost));
          cudaCheck(cudaMemcpy(host,data, szData, cudaMemcpyDeviceToHost));
     }else{
@@ -397,15 +327,6 @@ bool huTensor::OverWrite(hGTensor hGT,bool isSrc,int flag) {
 }
 
 
-template<class T>
-__global__ inline void _norm2_kernel(float* out, const T* data,size_t n) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    // need to try grid stride looping for more perf later
-    if (idx < n) {
-        out += data[idx]*data[idx];
-    }
-}
-
 hGTensor huTensor::CrossEntropy( const hGTensor b,int flag ){
     return b;
 }
@@ -426,7 +347,6 @@ inline int get_max_num_block_sums(int* num_slices_all, int numel) {
 
     return max_num_block_sums;
 }
-
 template<class T>
 __device__ inline float global_norm_squared_for_range(const T* data, size_t count) {
     size_t index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -438,9 +358,8 @@ __device__ inline float global_norm_squared_for_range(const T* data, size_t coun
     // block-level reduce
     return blockReduce<warpReduceSum>(accumulator);
 }
-
 template<class T>
-__global__ inline void global_norm_squared_kernel(float* out, const T* data, size_t count, ptrdiff_t stride) {
+__global__ static void global_norm_squared_kernel(float* out, const T* data, size_t count, ptrdiff_t stride) {
     float block_sum = global_norm_squared_for_range(data + blockIdx.y * stride, count);
     // each block accumulates its partial sum to out[out_index]
     // we want to avoid using atomic add here so we combine this kernel with another kernel call
@@ -450,60 +369,57 @@ __global__ inline void global_norm_squared_kernel(float* out, const T* data, siz
         out[out_index] = out[out_index] + block_sum;
     }
 }
-
-__global__ inline void global_norm_aggregate_kernel(float* out, size_t grid_size) {
-    size_t index = threadIdx.x;
-    // grab block sums from the previous kernel, use 0. as the neutral sum element
-    float block_sum = (index < grid_size) ? out[index] : 0.f;
-    float sum = blockReduce<warpReduceSum>(block_sum);
-    if(threadIdx.x == 0) {
-        out[0] = sum;  // out[0] ends up with the final norm squared
-    }
-}
-
 template<typename T>
-inline void global_norm_squared(float* out, const T* values, size_t count, ptrdiff_t stride, int num_slices, int max_num_block_sums, bool reset, cudaStream_t stream) {
-    const int block_size = 512;
+inline float global_norm_squared(float* norm2, const T* values, size_t count, ptrdiff_t stride, int num_slices, int max_num_block_sums, bool reset, cudaStream_t stream) {
+    constexpr int block_size = 512; //256 may be better for shared memory of CU_x2_
     // launch just enough blocks to fill the grid. deliberately no DIV_CEIL.
     // having one block less than possible is a tiny performance hit, having
     // one block too many is catastrophic, since it only can start once all the other
     // blocks finish. anyway, I think cuda_threads_per_SM should be a multiple of 512
     // on all gpus, so the division really is going to be exact.
-    const int grid_size = deviceProp.maxThreadsPerMultiProcessor * deviceProp.multiProcessorCount / block_size;
-    assert(grid_size > 0);      // gives a better error than letting the call below fail
-
-    const int gx = CEIL_DIV(grid_size, num_slices);
-    const int gy = num_slices;
-
-    assert(gx * gy < 1024);  // we want to later accumulate the block sums in a single block
-
-    if (reset) {
-        cudaCheck(cudaMemsetAsync(out, 0, max_num_block_sums * sizeof(float), stream));
+    auto now = GST_us();
+    float a = 0, b = 0;
+    if(1)   {
+        const int grid_size = deviceProp.maxThreadsPerMultiProcessor * deviceProp.multiProcessorCount / block_size;
+        assert(grid_size > 0);      // gives a better error than letting the call below fail
+        const int gx = CEIL_DIV(grid_size, num_slices),gy = num_slices;
+        assert(gx * gy < 1024);  // we want to later accumulate the block sums in a single block        
+        if (reset) {
+            cudaCheck(cudaMemsetAsync(norm2, 0, max_num_block_sums * sizeof(float), stream));
+        }
+        global_norm_squared_kernel<<<dim3(gx, gy), block_size, 0, stream>>>(norm2, values, count, stride);    
+        cudaCheck(cudaGetLastError());
+        global_sum_deterministic(norm2, norm2, max_num_block_sums, main_stream);
+        cudaCheck(cudaMemcpy(&a, norm2, sizeof(float), cudaMemcpyDeviceToHost));
+    }else{
+        cudaCheck(cudaMemsetAsync(norm2, 0, sizeof(float), stream));
+        CU_x2_<T,block_size><<<CEIL_DIV(count,block_size), block_size, 0, main_stream>>>(norm2, values, count);
+        cudaCheck(cudaMemcpy(&a, norm2, sizeof(float), cudaMemcpyDeviceToHost));        
     }
-    global_norm_squared_kernel<<<dim3(gx, gy), block_size, 0, stream>>>(out, values, count, stride);
-    cudaCheck(cudaGetLastError());
+    SUM::tX1 += GST_us()-now;
+    return a;
 }
 
-double tNormOf(const std::vector<hGTensor>& tensors,int flag){
+double tNormOf(const std::vector<hGTensor>& tensors,int flag){    
     float* grad_norm_squared,a,a_pre=0.0;
     grad_norm_squared = (float*)(GTensor::bt4c->data);
     double norm = 0.0f;
     int num_slices[2] = {1, 1},max_num_block_sums = get_max_num_block_sums(num_slices, 2);
     size_t nz=0;
     bool is_first_pass = true;  //i==0    
-    for(auto tensor:tensors){
-        //ShardInfo shard ={0, tensor->size()};
+    for(auto tensor:tensors){     
+        assert(0);      // Deprecated   
+        /*//ShardInfo shard ={0, tensor->size()};
         size_t nEle = tensor->size();       nz+=nEle;
         assert(tensor->grad!=nullptr);
-        floatX* val = (floatX*)(tensor->grad);        
-        // _norm2_kernel<<<dim3(grid_size, 1), block_size, 0, main_stream>>>(grad_norm_squared, val, nEle, nEle);
+        floatX* val = (floatX*)(tensor->grad);   
         global_norm_squared(grad_norm_squared, val, nEle, 0, 1,max_num_block_sums, is_first_pass, main_stream);
         if(DEBUG.check_tensor_norm){
             cudaCheck(cudaMemcpy(&a, grad_norm_squared, sizeof(float), cudaMemcpyDeviceToHost));
             assert(a>=a_pre); 
             tensor->gnorm = sqrt(a-a_pre);           a_pre = a;            
         }        
-        is_first_pass = false;
+        is_first_pass = false;*/
         // PrintTensor<floatX>("tNormOf",val,true,nEle,1);
         // break;
     }
@@ -524,22 +440,45 @@ double tNormOf(const hGTensor tensor,int flag){
         //ShardInfo shard ={0, tensor->size()};
     size_t nEle = tensor->size();       nz+=nEle;
     assert(tensor->grad!=nullptr);
-     
+    
     if(tensor->grad!=nullptr)     {
-        global_norm_squared(norm2, (floatX*)(tensor->grad), nEle, 0, 1,max_num_block_sums, is_first_pass, main_stream);            
-        global_sum_deterministic(norm2, norm2, max_num_block_sums, main_stream);
-        cudaCheck(cudaMemcpy(&a, norm2, sizeof(float), cudaMemcpyDeviceToHost));
+        int block_size=1024,grid_size = deviceProp.maxThreadsPerMultiProcessor*deviceProp.multiProcessorCount/block_size;        
+        a = global_norm_squared(norm2, (floatX*)(tensor->grad), nEle, 0, 1,max_num_block_sums, is_first_pass, main_stream);            
+        // global_sum_deterministic(norm2, norm2, max_num_block_sums, main_stream);
+        // cudaCheck(cudaMemcpy(&a, norm2, sizeof(float), cudaMemcpyDeviceToHost));
         tensor->gnorm = sqrt(a);
         a = sqrt(a/nz);
     }
     if(tensor->data!=nullptr)     {
-        global_norm_squared(norm2, (floatX*)(tensor->data), nEle, 0, 1,max_num_block_sums, is_first_pass, main_stream);            
-        global_sum_deterministic(norm2, norm2, max_num_block_sums, main_stream);
-        cudaCheck(cudaMemcpy(&a, norm2, sizeof(float), cudaMemcpyDeviceToHost));
+        a = global_norm_squared(norm2, (floatX*)(tensor->data), nEle, 0, 1,max_num_block_sums, is_first_pass, main_stream);            
+        // global_sum_deterministic(norm2, norm2, max_num_block_sums, main_stream);
+        // cudaCheck(cudaMemcpy(&a, norm2, sizeof(float), cudaMemcpyDeviceToHost));
         tensor->wnorm = sqrt(a);
     }
     
     return tensor->gnorm;
+}
+
+bool GTensor::ToTernary(int flag)  { 
+    float *xxx = TO<float>(GTensor::scratch);
+    Print("Before",0,-1);
+    size_t count = size();
+    switch(type){
+        case typNUMBER::T_SIGN:
+            break;
+        case typNUMBER::F16:
+            CU_ternary_<<<CEIL_DIV(count,CU_T4B_SMALL), CU_T4B_SMALL, 0, main_stream>>>(xxx,(__nv_bfloat16*)data, count);
+            break;
+        case typNUMBER::F8E5M2:
+            CU_ternary_<<<CEIL_DIV(count,CU_T4B_SMALL), CU_T4B_SMALL, 0, main_stream>>>(xxx,(__nv_fp8_e5m2*)data, count);
+            break;
+        default:
+            break;
+    }
+    D2H(xxx,info,sizeof(info));
+    Print(name,0,-1);
+    // type = typNUMBER::T_SIGN;
+    return true;
 }
 
 hGTensor huTensor::GetRow(hGTensor hOut,hGTensor token,hGTensor pos,int flag)   {
@@ -548,7 +487,7 @@ hGTensor huTensor::GetRow(hGTensor hOut,hGTensor token,hGTensor pos,int flag)   
 }
 
 void huTensor::Print(const string& title, int x, int flag,size_t nEle)   const {
-    bool isDevice = true;
+    bool isDevice = !isAtHost();     
     switch(type){
     case typNUMBER::F8E5M2:
     //    PrintTensor<__nv_fp8_e5m2>(title.c_str(),(__nv_fp8_e5m2 *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
@@ -557,7 +496,7 @@ void huTensor::Print(const string& title, int x, int flag,size_t nEle)   const {
     default:
        GTensor::Print(title,x,flag,nEle);
        break;
-    }    
+    } 
 }
  
 huTensor::~huTensor()  {

@@ -1,5 +1,4 @@
 #include "./cuda_common.h"
-#include "./cublas_common.h"
 #include "./kernel/gemm.cuh"
 #include "./kernel/layernorm.cuh"
 #include "./kernel/embed.cuh"
@@ -11,8 +10,7 @@
 
 // #undef ENABLE_CUDNN
 #ifdef ENABLE_CUDNN
-    #include "cudnn_frontend.h"
-    #include "./llm_c/cudnn_att.h"
+    #include "cudnn_frontend.h"    
     namespace fe = cudnn_frontend;
     #if defined(ENABLE_FP32)
         // static_assert(false, "cuDNN is not supported in FP32 mode.")
@@ -388,23 +386,33 @@ bool InitCUDA(const CLI_params&hparams,EDGE_DEVICES *hDevice,int flag){
 #ifdef ENABLE_CUDNN
     create_cudnn();
 #endif
-
-    printf("+-----------------------+----------------------------------------------------+\n");
+    int precision_mode = MFUH_PRECISION_BF16;
     const char* precision_str = (FLOAT_TYPE == typNUMBER::F32)
                               ? (cublas_compute == CUBLAS_COMPUTE_32F_FAST_TF32 ? "TF32" : "FP32")
                               : (FLOAT_TYPE == typNUMBER::F16 ? "FP16" : "BF16");
-    printf("| device                | %-50s |\n", deviceProp.name);
-    // printf("| peak TFlops           | %-50.1f |\n", get_flops_promised(deviceProp.name, FLOAT_TYPE));
-    printf("| precision             | %-50s |\n", precision_str);
-    printf("+-----------------------+----------------------------------------------------+\n");
+    _INFO("+-----------------------+----------------------------------------------------+\n");
+    _INFO("| device                | %-50s |\n", deviceProp.name);
+    _INFO("| peak flops(BF16) T    | %-50.1f |\n", get_flops_promised(deviceProp.name, precision_mode));
+    _INFO("| precision             | %-50s |\n", precision_str);
+    _INFO("| peak bandwidth GB/s   | %-50.1f |\n", (double)deviceProp.memoryClockRate*(deviceProp.memoryBusWidth / 8) * 2 / 1e6);
+    _INFO("| ECC                   | %-50d |\n", deviceProp.ECCEnabled);
+    _INFO("+-----------------------+----------------------------------------------------+\n");
     fflush(stdout);
     // Streaming Multiprocessors (SMs) of NVIDIA GPUs are roughly analogous to the cores of CPUs. That is, SMs both execute computations and store state available for computation in registers, with associated caches. Compared to CPU cores, GPU SMs are simple, weak processors.
     hDevice->nCore = deviceProp.multiProcessorCount;
     cudaCheck(cudaEventCreate(&cuStart));
     cudaCheck(cudaEventCreate(&cuEnd));
+    //  https://github.com/jonasmr/microprofile
     cudaCheck(cudaProfilerStart());
     return true;
 }
+
+void SYNC_DEVICE(int flag)   {
+#ifdef __USE_CUDA__
+    if(main_stream!=nullptr)
+        cudaCheck(cudaDeviceSynchronize());
+#endif
+} 
 
 bool EDGE_DEVICES::ClearGPU(int flag){    
     cudaCheck(cudaStreamDestroy(main_stream));

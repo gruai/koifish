@@ -143,7 +143,7 @@ inline typNUMBER tpNumOf(const std::string&dtype_str){
 #undef ENABLE_BF16
 #undef ENABLE_FP32
 #undef ENABLE_FP16
-
+#undef ENABLE_FP8
 //  #define ENABLE_FP32
  #define ENABLE_BF16
 //#define ENABLE_FP16
@@ -209,6 +209,8 @@ template <> inline float T2Float<f8e5m2_t>(const f8e5m2_t* a0)   {
     assert(!isnan(a) && !isinf(a));
     return a;
 }
+
+
 
 //  byte per element of this type,  (maybe decimals rather than integers!)
 double BPE(typNUMBER type);

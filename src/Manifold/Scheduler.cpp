@@ -90,12 +90,12 @@ bool RLS_BP::BeforeTrain(int flag){
     return true;
 }
 
-size_t GeNeuron::ManageMemory(DATA_PLACE target,int typ,int flag){
-    if(name=="model.blk.1.attn" && target==FREE_DEV){
+void GeNeuron::ManageMemory(DATA_PLACE target,int typ,int flag){
+    if(name=="model.output.cls" ){   //"model.blk.1.attn"&& target==FREE_DEV        "preLogits"
         int debug = 0;
     }
     if(target == place)
-        return 0x0;
+        return ;
     hOptimizer hOPT = hFish->hOPT;
     bool isSymbolic = target==SYMBOLIC;
     string op = "",stage=hOPT->isBackward?"BACK":"FORE";
@@ -105,7 +105,7 @@ size_t GeNeuron::ManageMemory(DATA_PLACE target,int typ,int flag){
     INIT_WEIGHT tpInitWeight = hFish->tpInitWeight;
     assert(out!=nullptr);
     vector arrT = PGensors();    
-    size_t mem = 0x0;
+    // size_t dev_mem = 0x0,host_mem = 0x0;
     double a=GTensor::szMaloc;
     for(auto t : arrT ){
         if(t==nullptr)  
@@ -119,8 +119,12 @@ size_t GeNeuron::ManageMemory(DATA_PLACE target,int typ,int flag){
         default:
             if(isSymbolic){
                 if(t->isRefer())
-                    continue;            
-                mem+=t->mostMemory();   op="Symbolic";
+                    continue;         
+                if(BIT_TEST(t->flags,GTensor::F_HOSTALLOC))   {
+                    host_most_mem += t->mostMemory();   
+                }else
+                    dev_most_mem += t->mostMemory();   
+                op="Symbolic";
             }else{            
                 if(tpInitWeight==SERIALIZE)        
                     t->tpInit = tpInitWeight;
@@ -147,7 +151,7 @@ size_t GeNeuron::ManageMemory(DATA_PLACE target,int typ,int flag){
     }else{
         xxx = mem;
     }*/
-    return mem;
+    // return mem;
 }
 
 
@@ -197,14 +201,18 @@ void RLS_BP::Dump(int typ)  const {
 void RLS_BP::Init( Fish *hF,std::vector<hNeuron> backbons,int flag){    
     hFish = hF;
     budget = hDevices->mostRAM/1.0e6;     assert(budget>0);
+    
     for(auto n : backbons){
         for(auto t : n->PGensors())
             tensors[t] = FLIP;
-
-        double mem = n->ManageMemory(DATA_PLACE::SYMBOLIC)/1.0e6;
-        Node *node = new RLSchedule::Node( (void*)(n.get()),mem);
+        n->ManageMemory(DATA_PLACE::SYMBOLIC);
+        double mem = n->dev_most_mem/1.0e6;
+        Node *node = new RLSchedule::Node( n->name,(void*)(n.get()),mem);
         nodes.push_back(node);              
     }
+    assert(nodes.size()>=2);
+    Node* last = nodes[nodes.size()-1];
+    _INFO("\tRLS_BP::Init [%s,...,%s]",nodes[0]->name.c_str(),last->name.c_str());
 }
 
 bool RLS_BP::isResident(GeNeuron *neuron,int flag){
@@ -235,9 +243,13 @@ bool RLS_BP::Prepare(int iter,int flag){
     int t = 0;
     
     for(auto node : nodes){
+#ifndef NDEBUG
         if( costs + node->cost>budget )  {
+            _INFO("[RLS]  Outof Budeget@\"%s\"!!! budget=%g,costs=%g+%g\n",node->name.c_str(),budget,costs,node->cost);
+            assert(0);
             break;
         }
+#endif
         node->begin = 0;   
         GeNeuron *neuron = (GeNeuron*)(node->hOBJ); 
         if(iter<0 && isResident(neuron)){

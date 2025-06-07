@@ -7,7 +7,7 @@
  *  \brief Some cuda kernel for Optimizer
  *  \author Yingshi Chen
  */
-#include "./Operator.cuh"
+#include "./kernel/Operator.cuh"
 // #include "./llm_c/sampler.h"
 #include "./kernel/utils.cuh"
 #include "../../Manifold/Neuron.hpp"

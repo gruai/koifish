@@ -97,10 +97,15 @@ namespace Grusoft{
 		}
 
 
-		/*virtual size_t operator()(size_t n)	{
-			std::uniform_int_distribution<size_t> d(0, n ? n - 1 : 0);
-			return d(g);
-		}*/
+		/* Another kSampleInN
+			vector<int> IDs( nVocab );
+			std::iota( IDs.begin(),IDs.end(), 0 );      //  Fills the range [first, last) with ++value.              
+			std::mt19937 g(seed);       //std::random_device rd;  g(rd());
+			std::shuffle(IDs.begin(), IDs.end(),g);    //std::random_shuffle(IDs.begin(), IDs.end());            
+			for(int i=0;i<nSample;i++){
+				samps[i] = IDs[i]; 
+				assert(samps[i]>=0 && samps[i]<nVocab);
+			}    */
 
 		/*
 			K sample in N	(K<=N)

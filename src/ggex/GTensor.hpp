@@ -122,7 +122,8 @@ public:
     static size_t szMaloc;
     static hGTensor bt4c,delta,tmpDelta,outL,scratch,tmpFF1,tmpW,tmpGW,residual;
     static bool AllocBuffer(Fish *hFish,int flag=0x0);
-    static void* buff;      //  temporary shared memory 
+    static bool FreeBuffer(int flag=0x0);
+    static void* buff,* host_buff;      //  temporary shared memory 
     float residual_scale=1.0,wnorm=0,gnorm=0;   // some tricks
     float rLARS(float s0,float T_lars,int flag);
     size_t offset = 0x0;
@@ -138,7 +139,7 @@ public:
         F_INPUT=0x1,F_OUTPUT=0x2,F_PARAM=0x4,F_LOSS=0x8, 
         F_NOALLOC=0x100,F_GPU=0x200,F_HOSTALLOC=0x400,F_MMAP=0x800,
         F_RESIDENT=0x1000,
-        F_HOSTDATA=0x2000,      //for host_data!=nullptr
+        F_HOSTDATA=0x2000,      //always alloc host_data(may also alloc device data)
 
         F_TOX=0x10000,  F_PADDED=0x20000,
         F_DEBUG=0x10000000
@@ -168,7 +169,7 @@ public:
     hGTensor Silu();
     hGTensor Norm(float epsilon,int flag=0x0);
 
-//operationsT_MAX_NAME
+//operations    
     virtual bool OverWrite(struct ggml_tensor*gg_,bool isSrc=true,int flag=0x0);
     virtual bool ShareWeight(hGTensor,int flag=0x0);
     virtual bool OverWrite(hGTensor,bool isSrc=true,int flag=0x0);      
@@ -176,6 +177,9 @@ public:
     virtual hGTensor GetRow(hGTensor, hGTensor token,hGTensor pos,int flag=0x0);
     virtual hGTensor Normal(hGTensor hOut,hGTensor _mean,hGTensor _rstd,hGTensor w,hGTensor b,bool isForward=true,int flag=0x0)   {   assert(0);  return nullptr;}//  Loss
     virtual hGTensor CrossEntropy( const hGTensor b,int flag=0x0 );    
+    //  ternary {-1, 0, 1}
+    virtual bool ToTernary(int flag=0x0);
+    virtual bool ToQuant(int flag=0x0)      {   throw "ToQuant is ....";    }
 
     //row-major order. ne contains the number of elements in each dimension & nb is the number of bytes ("nb", a.k.a. stride). 
     int64_t ne[N_DIMS]; 
@@ -184,7 +188,7 @@ public:
     int32_t flags=0x0,last_stp=-1;
     
     bool isParam()  const       {   return BIT_TEST(flags,F_PARAM);  }
-    bool isGPU()    const       {   return BIT_TEST(flags,F_GPU);  }
+    bool isAtHost()    const;
     bool isRefer(int type=0x0) const     {   return hRef!=nullptr;   }
     hGTensor GetRefer()             {   return hRef;            }
     virtual void SetRefer(hGTensor hR,int flag=0x0){
@@ -198,9 +202,9 @@ public:
     // struct ggml_tensor * view_src=nullptr;
     // size_t               view_offs=0;
     void *host_data=nullptr;        //somtimes, we need data both in device&host
-    void *data=nullptr;
-    void *grad=nullptr; 
-    void *gm=nullptr,*gv=nullptr;     //first moment, second moment of grad
+    void *data=nullptr,*grad=nullptr; 
+    void *gm=nullptr,*gv=nullptr;       //first moment, second moment of grad
+    float info[8];                 //Some info of some operations
     virtual bool SerialGP(void *yD,void *yG,size_t szY,bool isToY,int flag=0x0)   {   assert(0);  return false;   }
     virtual bool SerialData(const string&info,void *host,bool isToHost,int flag=0x0)   {   assert(0);  return false;   }
 
@@ -220,8 +224,7 @@ public:
         return 1;         
     }
     virtual size_t nByte( )  const      {   return szData;        }
-    
-    
+
     virtual bool isEmpty()  const                       {   
         // if(size()>0)    {   assert(B>0 && T>0 && C>0); }
         return size()==0;    

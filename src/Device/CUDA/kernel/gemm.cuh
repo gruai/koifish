@@ -13,7 +13,6 @@
 #include <cuda_fp8.h>     
 #include "../cuda_common.h"
 #include "utils.cuh"
-#include "../cublas_common.h"
 #include "gelu.cuh"
 #include "matmul_1bit.cuh"
 
@@ -87,7 +86,7 @@ __global__ void matmul_backward_bias_kernel9(OutFloat* dbias, const floatX* delt
     }
 }
 
-__global__ void inline reduce_add_sum_kernel(floatX* dst, const float* src, size_t n, size_t m) {
+__global__ void static reduce_add_sum_kernel(floatX* dst, const float* src, size_t n, size_t m) {
     const size_t idx = (blockIdx.x * blockDim.x + threadIdx.x) * f128::size;
     assert(n % x128::size == 0);
     if (idx < n) {
@@ -455,7 +454,7 @@ __global__ void mmaNaiveKernel(const Tw *__restrict__ A, const Ta *__restrict__ 
 
 // C[m,n] = A[m,k]*B[k,n]       A,B,C are all row-major
 template<typename Tw, typename Ta>
-__global__ void inline tABC_0(const Ta *__restrict__ A, const Tw *__restrict__ B, Ta *__restrict__ C, size_t M, size_t N, size_t K) {
+__global__ void static tABC_0(const Ta *__restrict__ A, const Tw *__restrict__ B, Ta *__restrict__ C, size_t M, size_t N, size_t K) {
     size_t row = threadIdx.y + blockDim.y * blockIdx.y;
     size_t col = threadIdx.x + blockDim.x * blockIdx.x;
     if (row >= M && col >= N) {

@@ -146,6 +146,22 @@ bool SampLoader::isHostMask(size_t pos,int flag){
     return m==1;
 }
 
+int SampLoader::PickSomeTokens(Grusoft::GRander& rander,int nMostToken,std::vector<int>& tokens,int flag)   {
+    size_t id = rander.RandU32(),nSamp=len(),starting;
+    while(tokens.size()<nMostToken){
+        id = rander.RandU32()%nSamp;
+        hSAMP samp = SampAt(id);
+        size_t starting=samp->pos+samp->jump,j=0;
+        while(j<samp->len){
+            TOKEN_ID token = TokenAt(starting); starting++;
+            tokens.push_back(token);
+            if(tokens.size()>=nMostToken)
+                break;
+        }
+    }
+    return 0x0;
+}
+
 void SampLoader::Samp2Batch(int k,hSAMP samp,struct train_params_& params,int flag)    {   
     samp_toks.clear();        
     auto dialect = hDict->dialect;
@@ -283,15 +299,9 @@ hSAMP SampLoader::Next(bool isLoop) {
             next_sample ++;
     }
     // next_sample++;
+    shard_samps[idx_]->jump = 0;
     return shard_samps[idx_];
 }
-
-// void BATCH_INPUT::Update(hGTensor batch,int flag){
-//     assert(!batch->isEmpty());
-//     assert(!batch->isGPU());
-//     host = TO<int>(batch);      
-//     pos = 0;        //or 1 ?
-// }
 
 //Important!  this would update input & target_probs of model!
 size_t SampLoader::UpdateBatch(int x,Fish* fish){    
@@ -318,7 +328,10 @@ size_t SampLoader::UpdateBatch(int x,Fish* fish){
     GST_TIC(tic);
     for (k=0; k<nSampInBatch; ++k) { 
         if(tpBatchSample=="stacking"){
-            samp->jump++;
+            if(k==0)
+                samp = Next();
+            else
+                samp->jump++;
         }else{            
             samp = Next();  //SampAt((next_sample + k) % samples_count);  
         }
@@ -368,7 +381,6 @@ size_t SampLoader::UpdateBatch(int x,Fish* fish){
     // Decode(tokens_input);       //only for debug
     if(isLog) _INFO("\tT=%g\n",GST_TOC(T0));
     if(tpBatchSample=="stacking"){
-        CHILD_0909_WIKIS assert(0);
         /*if(fish->wiki->isInduct()){
             GST_TIC(tic);  
             samp->Refresh(this,lctx,samp_toks,0x0);          //refresh samp_toks               
@@ -519,6 +531,7 @@ SampLoader::SampLoader(Fish *g_,const string&n,bool isNewTS,int flag) {
         assert(0);
         return ;
     }
+    tpBatchSample = dolphin->config.tpBatchSample;
     stepis.name = name;
 
 #ifdef _TENSOR_G_
@@ -595,14 +608,14 @@ void SampLoader::SetSamples(std::vector<size_t>& samp_0,std::vector<size_t>& sam
 
     double rSplit = 1.0-dolphin->config.rSplit;
     // hTokens = hDT;
-    size_t nSample = samp_0.size(),pick=(size_t)(nSample*rSplit),i;
+    size_t nSample = samp_0.size(),pick=(size_t)(nSample*rSplit),i,nSampInBatch = dolphin->config.n_batch();
     //    assert(samp_begin.size() == samp_size.size());   
     if(isTrain){
         for(i=0;i<pick;i++){
             shard_samps.push_back(new SAMP(samp_0[i],samp_L[i]));
-        }
+        }    
           
-        Shuffle( );
+        Shuffle( );        
     } else if(pick<nSample) {
         for(i=pick;i<nSample;i++){
             shard_samps.push_back(new SAMP(samp_0[i],samp_L[i]));
@@ -729,7 +742,7 @@ void SampLoader::Shuffle(int flag)  {
     if(empty())
         return;
         
-    size_t count = shard_samps.size(),i;
+    size_t count = shard_samps.size(),i,j,nSampInBatch=dolphin->config.n_batch();
     assert(count>0);
     struct train_params_ _params = hOPT->TrainParams();
     //  hash_combine(samples_begin,samples_size[i],sample_count
@@ -780,6 +793,24 @@ void SampLoader::Shuffle(int flag)  {
     shuffle_rng_state_next = mt19937_get_state(rng); 
     auto samp = shard_samps[0];
     _INFO("[Shuffle]: nSamp=%ld samp_0={%ld:%ld} hash=0x%lX\n", count,samp->pos,samp->len, shuffle_samples_hash);
+    if(tpBatchSample=="super"){
+        size_t ldSuper=16,k,btch_0=0;  
+        hSAMP first=nullptr,cur;
+        i = 0;
+        while(i<count)    {
+            if(i + nSampInBatch*ldSuper>=count)
+                break;            
+            for(j=0;j<nSampInBatch;j++){
+                first = shard_samps[i++];
+                for(k=0;k<ldSuper-1;k++){
+                    cur = shard_samps[i+k*nSampInBatch];
+                    cur->pos = first->pos+k*8;
+                }
+            }
+            i += nSampInBatch*(ldSuper-1);
+        }
+        _INFO("\t super=%d(%d)\n", count/(ldSuper),ldSuper);
+    }
 }
 
 // mark each byte with its utf8 unit number.
@@ -841,7 +872,7 @@ bool DataTokenSet::Load(struct CLI_params& config,void *hLLM,int flag){
         return true;
     auto arch = config.ModelArch();
     GST_TIC(tic);
-    string tpBatchSample = config.KV({"data","tpBatchSample"} ); 
+    string tpBatchSample = config.KV({"train","batch_sample"} ); 
     // rSplit = jKV(jConfig,{"data","eval_split"},rSplit );
     string ssf = "./dataset/Serial/";
     string dict_type = config.KV({"dict","type"} );

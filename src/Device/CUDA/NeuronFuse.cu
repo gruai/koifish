@@ -1,7 +1,7 @@
 
 // #include "../ggex/GG_util.hpp"       //ugly  "__builtin_ia32_ldtilecfg" is undefined
 #include "./cuda_common.h"
-#include "./cublas_common.h"
+// #include "./cublas_common.h"
 #include "./kernel/gemm.cuh"
 #include "./kernel/layernorm.cuh"
 #include "./kernel/embed.cuh"
@@ -18,7 +18,7 @@ const size_t cublaslt_workspace_size = 32 * 1024 * 1024;
 cublasLtHandle_t cublaslt_handle;
 cublasHandle_t cublas_handle;
 void* cublaslt_workspace = NULL;
-cudaStream_t main_stream=nullptr;
+cudaStream_t main_stream = nullptr;
 cudaDeviceProp deviceProp;
 
 hGTensor huTensor::_Multiply(const hGTensor& b) {
@@ -98,7 +98,7 @@ try{
         // encoder_forward(ToX(cur), tokens, ToX(w), ToX0(b), B, T, C, main_stream);
         CU_embed_forw_<<<grid_size, block_size, 0, main_stream>>>(ToX(cur), TO<int>(inp), ToX(curW), ToX0(b), B, T, C);
         w->Print("wte",0,0);        //ToX(w),true,Vp,C
-        PrintTensor<floatX>("wpe",ToX0(b),true,T,C);
+        if(b!=nullptr)  PrintTensor<floatX>("wpe",ToX0(b),true,T,C);
         // PrintTensor<int>("inputs",tokens,true,B,T);            PrintTensor<floatX>("GetRow",ToX(cur),true,B,T,C);
         if(maec!=nullptr){
             maec->ENC(cur);
@@ -144,6 +144,51 @@ try{
 }catch(...){
     assert(0);
     return nullptr;
+}
+}
+
+int SLP::Forw(hGTensor rhs_0,hGTensor lhs_,hGTensor toGelu,int flag){
+try{
+    floatX *rhs=ToX(rhs_0),*to_gelu = ToX0(toGelu),*wX=ToX(w);//,*inp=ToX(lhs_);
+    int OC=nOut,IC=nIn;
+    assert(gelu_fusion==0);    assert(rhs_0->size()>=B*T*OC);        
+
+    inp = lhs_;
+    bool transAW = true;
+    // if(isTransW)        
+    //     transAW = false;
+    if(compression==SAMPLE && subw!=nullptr){
+        subw->SubW(hSamps,true,GTensor::tmpW,samp_type);
+        wX = ToX(GTensor::tmpW);        
+        // GTensor::tmpW->Print("subW",0,-1);    
+    }
+    /*if (gelu_fusion < 1 && to_gelu) {
+        matmul_cublaslt(to_gelu, wX, ToX(lhs_), ToX0(b), OC, B*T, IC, main_stream, transAW, false, 0, 0, 0, 0, false, NULL, false);
+        gelu_forward(rhs, to_gelu, B*T*OC, main_stream);
+    } else {
+        matmul_cublaslt(rhs, wX, ToX(lhs_), ToX0(b), OC, B*T, IC, main_stream, transAW, false, 0, 0, 0, 0, false, to_gelu, false);
+    }*/
+    rhs = to_gelu ? to_gelu : rhs;
+    switch(w->type){
+    case typNUMBER::T_SIGN:
+        assert(0);
+        break;
+    default:
+        tMM<floatX,floatX>(ToX(lhs_), wX, rhs, ToX0(b), B*T, OC, IC,true,main_stream); 
+        break;
+    }
+    if( to_gelu) {
+        gelu_forward(ToX(rhs_0), to_gelu, B*T*OC, main_stream);
+        // swiglu_forward(rhs, to_gelu, B*T*OC, main_stream);
+    }
+    if(compression==SAMPLE) {
+        // rhs_0->Print(rhs_0->name,0,-1);
+    }
+    
+    return 0x0;
+}catch(...){
+    assert(0);
+    return -1;
 }
 }
 

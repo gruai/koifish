@@ -67,13 +67,17 @@ try{
         fish->Train( );
 
     return 0x0;  
-} catch(const char* info)  {
-    _INFO("%s",info);        
-    fflush(stdout);
+} 
+catch(const std::exception & e) {
+    _INFO("%s",e.what());   fflush(stdout);
     return -1000;
-} catch(...)  {
-    _INFO("\r\n%s  Unknown exception !!!",__func__);
+}
+catch(const char* info)  {
+    _INFO("%s",info);       fflush(stdout);
     return -1001;
+} catch(...)  {
+    _INFO("\r\n%s  Unknown exception !!!",__func__);        fflush(stdout);
+    return -2001;
 }
 }
 

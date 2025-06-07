@@ -77,7 +77,7 @@ __global__ void CU_rope_back(typ* inp, typ* out, int seq_len, int head_dim, floa
 
 
 // another index method of rope.
-__global__ inline void CU_rope_f32_v2(float* x, float* out, int seq_len, int N){ 
+__global__ static void CU_rope_f32_v2(float* x, float* out, int seq_len, int N){ 
   int token_pos = blockIdx.x;
   int tid = threadIdx.x;
   float x1 = x[token_pos * N * 2 + tid * 2];
@@ -91,7 +91,7 @@ __global__ inline void CU_rope_f32_v2(float* x, float* out, int seq_len, int N){
   out[token_pos * N * 2 + tid * 2 + 1] = out2;
 }
 
-__global__ inline void rope_f32x4_pack_kernel(float* x, float* out, int seq_len, int N){ 
+__global__ static void rope_f32x4_pack_kernel(float* x, float* out, int seq_len, int N){ 
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   float4 x_v = FLOAT4(x[idx * 4]);
   int token_pos = idx / N; 
@@ -487,7 +487,7 @@ __global__ void apply_rope_backward_kernel1(
  * Similar to Kernel-1 but uses Shared Memory for `freqs_cos` and `freqs_sin`
  * It may help us address our limiting perf factor (Memory Bandwidth), since we will be utilizing SRAM (less latency, faster memory)
  */
-__global__ inline void apply_rope_backward_kernel2(
+__global__ static void apply_rope_backward_kernel2(
     float *dq, float *dk, const float *freqs_cos, const float *freqs_sin,
     int B, int T, int num_kv_heads, int NH, int C_per_NH)
 {
@@ -596,7 +596,7 @@ void inline apply_rope_backward(int kernel_num,
  * - Each thread handles a real/imaginary pair
  * - Can be optimized more, since we can warp-divergence (because of the if condition), making some threads become idle
  */
-__global__ inline void apply_rope_forward_kernel1(
+__global__ static void apply_rope_forward_kernel1(
     float *q, float *k, float *freqs_cos, float *freqs_sin,
     int B, int T, int num_kv_heads, int NH, int C_per_NH)
 {
@@ -681,7 +681,7 @@ __global__ void apply_rope_forward_q1(
     }
 }
 template<typename typ>
-__global__ inline void apply_rope_forward_k1(
+__global__ static void apply_rope_forward_k1(
     typ *k, const float *freqs_cos, const float *freqs_sin,    int B, int T, int NH, int C_per_NH){
     int b = blockIdx.x;
     int t = blockIdx.y;
@@ -714,7 +714,7 @@ __global__ inline void apply_rope_forward_k1(
  * Each thread loads one cos and one sin value, so the total size of shared memory is 2 * blockDim.x * sizeof(float).
  */
 
-__global__ inline void apply_rope_forward_q2(
+__global__ static void apply_rope_forward_q2(
     float *q, const float *freqs_cos, const float *freqs_sin,
     int B, int T, int num_kv_heads, int C_per_NH)
 {
@@ -758,7 +758,7 @@ __global__ inline void apply_rope_forward_q2(
     }
 }
 
-__global__ inline void apply_rope_forward_k2(
+__global__ static void apply_rope_forward_k2(
     float *k, const float *freqs_cos, const float *freqs_sin,
     int B, int T, int NH, int C_per_NH)
 {

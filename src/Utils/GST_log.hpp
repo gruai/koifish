@@ -76,7 +76,7 @@ inline void GG_log_internal(DUMP_LEVEL level, const char * format, ...) {
 void _TIME_INFO(const std::string&info,double fmillis,int flag=0x0);
 
 template <typename T>
-void inline PrintTensor(const char* title,const T *src, int n1,int n2,int n3=1,int n4=1,int flag=0x0){
+void inline PrintT(const char* title,const T *src, int n1,int n2,int n3=1,int n4=1,int flag=0x0){
     if( g_dump_level>0 && flag>=0 ) return;
     const T *cur=src; 
     size_t nElem=(size_t)(n1)*n2*n3*n4,i,nz=0,nEach=2;
@@ -98,5 +98,5 @@ void inline PrintTensor(const char* title,const T *src, int n1,int n2,int n3=1,i
     assert(!isnan(sum2) && !isinf(sum2));
     len = sqrt(sum2/nElem);
     //  printf output is only displayed if the kernel finishes successfully,  cudaDeviceSynchronize()
-    _INFO("\t\"%s\" avg=%g(%ld) avg_len=%g sum2=%g [%f,%f]\n",title,sum/nElem,nElem,len,sum2,a0,a1);
+    _INFO("\t\"%s\" |avg|=%g(%ld) avg_len=%g sum2=%g [%f,%f] nz=%.3g\n",title,sum/nElem,nElem,len,sum2,a0,a1,nz*1.0/nElem);
 }

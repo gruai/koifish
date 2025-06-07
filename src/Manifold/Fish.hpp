@@ -235,11 +235,7 @@ protected:
 
     //Only delete graph/neurons, keep OPT,DataLoader...
     virtual void ClearGraph(int flag=0x0);
-    virtual void Clear() {
-        // if (ctx!=nullptr) {
-        //     ggml_free(ctx);
-        // }
-    }
+    virtual void Clear( );
     
     virtual bool InitInput(void * ctx,bool isMask,int flag=0x0)  {   assert(0);  return false;   }
     

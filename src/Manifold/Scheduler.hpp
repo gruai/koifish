@@ -166,11 +166,12 @@ public:
     };
     
     struct Node{
+        string name;
         void *hOBJ=nullptr;
         double cost=0;        
         tpSTATUS status = FLIP;
 
-        Node(void *h,double v,int flag=0x0) : hOBJ(h),cost(v){
+        Node(const std::string&n,void *h,double v,int flag=0x0) : name(n),hOBJ(h),cost(v){
 
         }
         bool isOn() {   return status == RESIDENT;   }

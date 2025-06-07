@@ -554,13 +554,12 @@ void Fish::Train(  int flag )   {
     
 }
 
-float RAW_backward(Fish *fish,const int* hostInToken,int accum_steps,bool,int flag);
 /*
     1 Forward/Backward on neuron graph
     2 Forward/Backward on tensor graph
 */
 double Optimizer::GraphCompute(hSampLoader hLoader,hTGraph hTG, int flag){
-    double now = GST_ms();
+    double now = GST_ms(),mean_loss=0.0;
     int nThread = TrainParams().n_threads,no=0,nAccum=TrainParams().n_gradient_accumulation;
     bool isOnlyEvaluate = !hTG->isBackward;
     
@@ -571,20 +570,20 @@ double Optimizer::GraphCompute(hSampLoader hLoader,hTGraph hTG, int flag){
 
     isBackward = false;
     _fish->ForwardOnRLS(iter,0x0);
-    if(phase==P_GENERATE || phase==P_PREFILL)
-        return 0.0;
-    float mean_loss = hLoader->hTokens->LossOnResult(hLoader,cls);
-    if(isOnlyEvaluate){
-        return mean_loss;
-    }else{
-        isBackward = true;
-        g_step = 0;
-         _fish->BackwardOnRLS(iter,0x0);
-        //RAW_backward(_fish,nullptr,nAccum,isOnlyEvaluate,flag);        
-        UpdateTrainLoss(-1,mean_loss); 
-    }          
+    if(phase==P_GENERATE || phase==P_PREFILL)   {
 
-    // SUM::tX1 = GST_ms()-now;
+    }else{        
+        mean_loss = hLoader->hTokens->LossOnResult(hLoader,cls);
+        if(isOnlyEvaluate){
+            return mean_loss;
+        }else{
+            isBackward = true;
+            g_step = 0;
+            _fish->BackwardOnRLS(iter,0x0);    
+            UpdateTrainLoss(-1,mean_loss); 
+        }          
+    }
+    // SUM::tX1 += GST_ms()-now;
     return 0.0;
 }
 

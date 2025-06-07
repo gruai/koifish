@@ -157,11 +157,19 @@ __global__ void copy_and_cast_kernel(Td* dst, const Ts* src, size_t n, ptrdiff_t
 // Warp/Block communication primitives
 
 // warp-level reduction for summing values
-__device__ inline float warpReduceSum(float val) {
-    for (int offset = 16; offset > 0; offset /= 2) {
-        val += __shfl_xor_sync(0xFFFFFFFF, val, offset);
-    }
-    return val;
+// __device__ inline float warpReduceSum(float val) {
+//     for (int offset = 16; offset > 0; offset /= 2) {
+//         val += __shfl_xor_sync(0xFFFFFFFF, val, offset);
+//     }
+//     return val;
+// }
+template<const int kWarpSize = WARP_SIZE>
+__device__ __forceinline__ float warpReduceSum(float val) {
+#pragma unroll
+  for (int mask = kWarpSize >> 1; mask >= 1; mask >>= 1) {
+    val += __shfl_xor_sync(0xffffffff, val, mask);
+  }
+  return val;
 }
 // warp-level reduction for finding the maximum value
 __device__ inline float warpReduceMax(float val) {

@@ -12,10 +12,8 @@
 #include <float.h>
 #include <stdint.h>
 #include <cooperative_groups.h>
-#include "./kernel/utils.cuh"
-#include "cuda_common.h"
-
-
+#include "./utils.cuh"
+#include "../cuda_common.h"
 
 __device__ inline float warpreduce_max(float v) {
 #pragma unroll
@@ -24,13 +22,24 @@ __device__ inline float warpreduce_max(float v) {
 	}
 	return v;
 }
-
 __device__ inline int warpreduce_maxi(int v) {
 #pragma unroll
 	for (int mask = warpSize / 2; mask > 0; mask >>= 1) {
 		v = max(v, __shfl_xor_sync(0xffffffff, v, mask));
 	}
 	return v;
+}
+
+template <typename T, int NUM>
+__device__ __inline__ T warpReduceMax(T* val, int thread_group_width = 32) {
+#pragma unroll
+  for (int i = 0; i < NUM; i++) {
+#pragma unroll
+    for (int mask = thread_group_width / 2; mask > 0; mask >>= 1) {
+      val[i] = max(val[i], __shfl_xor_sync(0xffffffff, val[i], mask, 32));
+    }
+  }
+  return (T)(0.0f);
 }
 
 __device__ inline float blocktranspose(float v, float def) {
@@ -56,6 +65,73 @@ __device__ inline float blockreduce_max(float v) {
 	v = blocktranspose(v, -FLT_MAX);
 	v = warpreduce_max(v);
 	return v;
+}
+
+/*
+	It's not deterministic, why?
+	only support CU_x2_<<<grid_size, block_size, 0, main_stream>>> 
+*/
+template<class T,int NUM_THREADS = 256>
+__global__ static void CU_x2_(float* out, const T* x0,size_t N) {
+	int tid = threadIdx.x,warp = tid / WARP_SIZE, lane = tid % WARP_SIZE;
+	int idx = blockIdx.x * NUM_THREADS + tid;
+	constexpr int NUM_WARPS = (NUM_THREADS + WARP_SIZE - 1) / WARP_SIZE;
+	__shared__ float reduce_smem[NUM_WARPS];	// keep the data in register is enough for warp operaion.
+	float a = (idx < N) ? (float)(x0[idx]) : 0.0;
+	float sum = a*a;
+
+	// perform warp sync reduce.
+	sum = warpReduceSum<WARP_SIZE>(sum);	//warp_reduce_sum_f32<WARP_SIZE>(sum);
+	// warp leaders store the data to shared memory.
+	if (lane == 0) reduce_smem[warp] = sum;
+	__syncthreads(); // make sure the data is in shared memory.
+	sum = (lane < NUM_WARPS) ? reduce_smem[lane] : 0.0f;
+	if (warp == 0) sum = warpReduceSum<NUM_WARPS>(sum);	
+	if (tid == 0) atomicAdd(out, sum);
+    /*int lane_id = threadIdx.x % WARP_SIZE, warp_id = threadIdx.x / WARP_SIZE;
+    int num_warps = blockDim.x / WARP_SIZE;
+    int idx = blockIdx.x * num_warps + warp_id,C=n;
+    if(idx >= n) { return; } // guard
+
+    // the row of input that this group of threads is responsible for
+    const T* x = inp + idx * C;
+    // rstd
+    float sum = 0.0f;
+    for (int i = lane_id; i < C; i += WARP_SIZE) {
+        float a = (float)x[i];
+        sum += a * a;
+    }
+    *out = warpReduceSum(sum);*/
+}
+
+template<class T,int NUM_THREADS = CU_T4B_SMALL>
+__global__ static void CU_ternary_(float* out,T* x0,size_t N) {
+	int tid = threadIdx.x,warp = tid / WARP_SIZE, lane = tid % WARP_SIZE;
+	int idx = blockIdx.x * NUM_THREADS + tid;
+	constexpr int NUM_WARPS = (NUM_THREADS + WARP_SIZE - 1) / WARP_SIZE;
+	__shared__ float average;                 
+	// __shared__ T Ta,Tb;
+	__shared__ float reduce_smem[NUM_WARPS];	// keep the data in register is enough for warp operaion.
+	float a = (idx < N) ? (float)(x0[idx]) : 0.0;
+	float sum = fabs(a);
+	sum = warpReduceSum<WARP_SIZE>(sum);	
+	// warp leaders store the data to shared memory.
+	if (lane == 0) reduce_smem[warp] = sum;
+	__syncthreads(); // make sure the data is in shared memory.
+	sum = (lane < NUM_WARPS) ? reduce_smem[lane] : 0.0f;
+	if (warp == 0) sum = warpReduceSum<NUM_WARPS>(sum);	
+	if (tid == 0) {
+		atomicAdd(out, sum);   
+		average = (*out/N)+1.0e-5; 		out[1] = average;
+		// Ta = -average,	Tb = average;
+		average = average/2;
+	}	
+	__syncthreads();			// wait for s_variance in shared memory to be ready for all threads
+	if (idx < N){
+		a = float(x0[idx]);
+		x0[idx] = a	> average ? (T)1.0 : a<-average ? (T)(-1.0) : (T)(0.0);
+		//x0[idx] = a	> average ? Tb : a<-average ? Ta : (T)(0.0);
+	}
 }
 
 // fast fp8x4 => float4 conversion; drops unnecessary NaN handling from __nv_cvt_fp8_to_halfraw
@@ -273,7 +349,7 @@ __device__ static void moe_gate_warp(float* moe_weights, int* moe_experts, float
 }
 
 template <typename T>
-__device__ static float cu_rmsnorm(T* o, float* x, float* weight, int size, float eps, bool ln) {
+__device__ static float CU_rmsnorm(T* o, float* x, float* weight, int size, float eps, bool ln) {
 	int i = threadIdx.x;
 	int blockSize = blockDim.x;
 
@@ -363,7 +439,7 @@ __device__ inline float attn_warpdot(KVT* val, float* atth, int kv_len) {
 	return res / sum;
 }
 
-__device__ static void softmax(float* xout, float* x, int size) {
+__device__ static void CU_softmax_v0(float* xout, float* x, int size) {
 	int i = threadIdx.x;
 
 	// find max value per thread (for numerical stability)
@@ -387,7 +463,7 @@ __global__ static void kernel_output(uint64_t, float* xout, float* x, T* w, floa
 
 	AT* xs = (AT*)smem;
 
-	float rmsscale = cu_rmsnorm(xs, x, rms_weight, n, norm_eps, norm_ln);
+	float rmsscale = CU_rmsnorm(xs, x, rms_weight, n, norm_eps, norm_ln);
 
 	int io = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
 	int ib = (gridDim.x * blockDim.x) / warpSize;
@@ -406,7 +482,7 @@ __global__ static void kernel_output(uint64_t, float* xout, float* x, T* w, floa
 
 #include <curand_kernel.h>
 //	Initialization of the random generator state generally requires more registers and local memory than random number generation. It may be beneficial to separate calls to curand_init() and curand() into separate kernels for maximum performance.
-__global__ inline void CU_initCurand(curandState *state, unsigned long seed, int N) {
+__global__ static void CU_initCurand(curandState *state, unsigned long seed, int N) {
     int id = threadIdx.x + blockIdx.x * blockDim.x;
     if (id < N) {
         curand_init(seed, id, 0, &state[id]);

@@ -194,7 +194,7 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
     if(isInitParam) {
         // assert(rnd!=nullptr);
     }
-    printf("\n\n");
+    _INFO("\n\n");
     assert(optParams.size()==0);
     for(auto it : gensors.infos){
         auto node = it.first;
@@ -210,35 +210,28 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
     }
     nParams = nx;
     assert(optParams.size() < 2048);
-#ifdef __USE_GGML__
-    if(isLocalInfer){  //gb=nullptr
-        assert(hBackTG==nullptr);
-        hEDS->SplitSched(hForwTG);
-        hEDS->AllocGraph(hForwTG);    
-    } else { 
-        hEDS->SplitSched(hBackTG);
-        hEDS->AllocGraph(hBackTG);
-    }     
-    szModel = ggml_used_mem(GetGGCTX()) + hEDS->sz; // ggml_backend_buffer_get_size(back_data);   // (float) (ggml_used_mem(ctx) + ggml_backend_buffer_get_size(back_data)) ;
-#endif    
+    if(nx != nParams){
+        CHECK_SAME_TENSORS("Compare parameter tensors\t",optParams,xGensors); 
+        _ERROR("%s nx(%ld)!=nParams(%ld)\t", __func__,nx,nParams );
+    }
 
-    bool bRet = false;
-    switch (tpInitWeight)    {
+    /*bool bRet = false;
+    switch (tpInitWeight)    {      //Deprecated! InitWeight should after alloc memory, see InitParam@huTensor::Alloc
     case SERIALIZE:
-            if(!config.model.empty()){
-                isLoadCheckpoint = HF_Serialize(false,0x0);
+        if(!config.model.empty()){
+            isLoadCheckpoint = HF_Serialize(false,0x0);
+        }else{
+            string type=FILE_EXT(config.checkpoint.in);
+            if(type==".gguf"){
+                isLoadCheckpoint = GGUF_Serialize(config.checkpoint.in,false,0x0);
+            }else if(type==".calm"){
+                isLoadCheckpoint = CALM_Serialize(config.checkpoint.in,false,0x0);
             }else{
-                string type=FILE_EXT(config.checkpoint.in);
-                if(type==".gguf"){
-                    isLoadCheckpoint = GGUF_Serialize(config.checkpoint.in,false,0x0);
-                }else if(type==".calm"){
-                    isLoadCheckpoint = CALM_Serialize(config.checkpoint.in,false,0x0);
-                }else{
-                    isLoadCheckpoint = YALM_Serialize(config.checkpoint.in,false,0x0);
-                }
+                isLoadCheckpoint = YALM_Serialize(config.checkpoint.in,false,0x0);
             }
-                
-            bRet = isLoadCheckpoint;        
+        }
+            
+        bRet = isLoadCheckpoint;        
         break;
     case COPY_WIKI:
         assert(0);  //  Deprecated
@@ -252,31 +245,44 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
         assert(!isLoadCheckpoint);
         for (auto node : optParams) {  
             if(isInitParam){
-                node->InitParam(tpInitWeight);
-                // if (rnd != nullptr)
-                //     tRAND(node, rnd);
-                // else
-                //     ZERO_(node);    
+                node->InitParam(tpInitWeight);                
             }
-            // _pt_cys_("",node,0x0);         //printf("\n");
         }   
         bRet = true;
         break;
-    }
-    if(!bRet){
-        _INFO("%s Failed to InitWeight from %s! tutor=%s\n",__func__,"",CSTR(wikis[0]));
-        return false;
-    }
+    }*/
        
     if(isTrain())  
         assert(nParams>0);
-    else{
-        /*assert(nParams==0);*/     assert(hBackTG==nullptr);
+    else{ 
+        assert(hBackTG==nullptr);
+        RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();  
+        // hRLS->BeforeTrain( );
+        hRLS->Prepare(-1);      // Memory management
+        for(auto t : hOPT->opt_ps){
+            hRLS->GetTensorStatus(-1,t,0x0);
+        }
+        /*assert(nParams==0);*/    
     }
-    if(nx != nParams){
-        CHECK_SAME_TENSORS("Compare parameter tensors\t",optParams,xGensors); 
-        _ERROR("%s nx(%ld)!=nParams(%ld)\t", __func__,nx,nParams );
+    if(tpInitWeight==SERIALIZE) {
+        if(!config.model.empty()){
+            isLoadCheckpoint = HF_Serialize(false,0x0);
+        }else{
+            string type=FILE_EXT(config.checkpoint.in);
+            if(type==".gguf"){
+                isLoadCheckpoint = GGUF_Serialize(config.checkpoint.in,false,0x0);
+            }else if(type==".calm"){
+                isLoadCheckpoint = CALM_Serialize(config.checkpoint.in,false,0x0);
+            }else{
+                isLoadCheckpoint = YALM_Serialize(config.checkpoint.in,false,0x0);
+            }
+        }
+        if(!isLoadCheckpoint){
+            _INFO("%s Failed to InitWeight from %s! tutor=%s\n",__func__,"",CSTR(wikis[0]));
+            return false;
+        }
     }
+    
     if (!config.only_write_model && hOPT!=nullptr) {
         hOPT->Prepare(nParams);
     }
@@ -303,13 +309,18 @@ bool Fish::AfterBuild(bool isInitParam,int flag)   {
     return true;
 }
 
+void Fish::Clear() {
+    // AllocBuffer @Fish::jToGraph
+    GTensor::FreeBuffer( );    
+}
+
 void Fish::ClearGraph(int flag) {
     hForwTG.reset();                hBackTG.reset();    
     neurons.clear();
     gensors.Clear();
     in_node = nullptr, out_node = nullptr;  
     loss = nullptr, target_probs = nullptr, KQ_pos = nullptr, KQ_mask = nullptr, pos_embd=nullptr;
-    // preLogits = nullptr;        
+        
     xn = nullptr,xxn = nullptr;  
     optParams.clear();      xGensors.clear();
 

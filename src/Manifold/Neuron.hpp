@@ -68,6 +68,7 @@ protected:
     vector<double> jvals;   
     // vector<hGTensor> vRemater;      //support rematerization
     string _repr_1( string& suffix,string& prefix,string info,int flag=0x0);
+    size_t dev_most_mem=0x0,host_most_mem=0x0;      // may at different place
     void *host_inp = nullptr;       // backup of input in device memory
     // 天地本逆旅, 你我皆过客(Guoke)
     GeNeuron *hGuoke = nullptr; 
@@ -107,7 +108,7 @@ public:
     virtual bool Empty()    const { return shape.size() == 0; }
     virtual size_t nElem()  { return 0x0; }
     // memory management at different place
-    virtual size_t ManageMemory(DATA_PLACE target,int typ=0x0,int flag=0x0);
+    virtual void ManageMemory(DATA_PLACE target,int typ=0x0,int flag=0x0);
     virtual hGensor OnInput(hGensor hIn,int flag=0x0);
 
     //  无知觉明
@@ -498,9 +499,7 @@ struct OutCLS : public SparseNeuron  {
     SLP proj; 
     TokenEmbed *hEmbed = nullptr;
     hGTensor target=nullptr,preLogits=nullptr;
-    float *Logits(int flag=0x0) {
-        return TO<float>(preLogits);
-    }  
+    float *Logits(bool isHost,int flag=0x0);
     
     hSampLoader hLoader=nullptr;
     int nCls = 0,dB = 1,nzLoss = 0,latent=0;

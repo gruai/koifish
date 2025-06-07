@@ -9,10 +9,10 @@
 // ----------------------------------------------------------------------------
 // CUDA kernels
 
-__global__ void inline silu_forward_kernel2(floatX* out, const floatX* inp) {
+__global__ void static silu_forward_kernel2(floatX* out, const floatX* inp) {
     
 }
-__global__ void inline silu_backward_inplace_kernel(floatX* d_in_out, const floatX* inp) {
+__global__ void static silu_backward_inplace_kernel(floatX* d_in_out, const floatX* inp) {
     
 }
 
@@ -20,7 +20,7 @@ __global__ void inline silu_backward_inplace_kernel(floatX* d_in_out, const floa
 /**
  * Gaussian Error Linear Unit.  GELU(x)=xG(x), where G(x) is the standard Gaussian cumulative distribution function.
  */
-__global__ void inline gelu_forward_kernel2(floatX* out, const floatX* inp) {
+__global__ void static gelu_forward_kernel2(floatX* out, const floatX* inp) {
     int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
 
     x128 packed_out;
@@ -35,7 +35,7 @@ __global__ void inline gelu_forward_kernel2(floatX* out, const floatX* inp) {
     store128(out + idx, packed_out);
 }
 
-__global__ void inline gelu_backward_inplace_kernel(floatX* d_in_out, const floatX* inp) {
+__global__ void static gelu_backward_inplace_kernel(floatX* d_in_out, const floatX* inp) {
     int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
 
     x128 packed_dinp;
@@ -75,7 +75,7 @@ void inline gelu_backward_inplace(floatX* d_in_out, const floatX* inp, const int
     cudaCheck(cudaGetLastError());
 }
 
-__global__ inline void swiglu_forward_kernel(float *out, const float *inp, const float *gate, int N){
+__global__ static void swiglu_forward_kernel(float *out, const float *inp, const float *gate, int N){
     /**
      * SwiGLU(x) = Swish(x) * Gate(x)
      * SwiGLU(x) = SiLU(x*W) * (x*V)
@@ -99,7 +99,7 @@ void inline swiglu_forward(float *out, const float *inp, const float *gate, int 
     cudaCheck(cudaGetLastError());
 }
 
-__global__ inline void swiglu_backward_kernel(float *dinp, const float *inp, const float *gate, const float *dout, const float *W, const float *V, int N){
+__global__ static void swiglu_backward_kernel(float *dinp, const float *inp, const float *gate, const float *dout, const float *W, const float *V, int N){
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < N)    {
         float xW = (float)inp[i];

@@ -16,7 +16,7 @@ In the backward pass, the gradients flow to both, handled by different kernels
 // ----------------------------------------------------------------------------
 // CUDA kernels
 // out = wte[inp]
-__global__ inline void encoder_forward_kernel3(floatX* out,const int* inp, const floatX* wte, const floatX* wpe,int B, int T, int C) {
+__global__ static void encoder_forward_kernel3(floatX* out,const int* inp, const floatX* wte, const floatX* wpe,int B, int T, int C) {
     int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
     int N = B * T * C;
     if (idx >= N) { return; }
@@ -42,7 +42,7 @@ __global__ inline void encoder_forward_kernel3(floatX* out,const int* inp, const
 }
 
 
-__global__ inline void CU_embed_forw_(floatX* out,const int* tokens, const floatX* wte, const floatX* wpe,int B, int T, int C) {
+__global__ static void CU_embed_forw_(floatX* out,const int* tokens, const floatX* wte, const floatX* wpe,int B, int T, int C) {
     int idx = (blockIdx.x * blockDim.x + threadIdx.x) ;
     int N = B * T * C;
     if (idx >= N) { return; }
@@ -55,7 +55,7 @@ __global__ inline void CU_embed_forw_(floatX* out,const int* tokens, const float
     *out_btc = *wte_ix+*wpe_tc;
 }
 
-__global__ inline void CU_embed_forw_(floatX* out,const int* tokens, const floatX* wte, int T, int C,int ldW,bool isTrans=false) {
+__global__ static void CU_embed_forw_(floatX* out,const int* tokens, const floatX* wte, int T, int C,int ldW,bool isTrans=false) {
     int idx = (blockIdx.x * blockDim.x + threadIdx.x) ;
     int N = T * C;
     if (idx >= N) { return; }
@@ -73,7 +73,7 @@ __global__ inline void CU_embed_forw_(floatX* out,const int* tokens, const float
 }
 
 // no duplicate
-__global__ inline void CU_embed_back_(floatX* dwte,const int* tokens,const floatX* dout, int T, int C,int ldW, floatX scale,bool isTrans=false) {
+__global__ static void CU_embed_back_(floatX* dwte,const int* tokens,const floatX* dout, int T, int C,int ldW, floatX scale,bool isTrans=false) {
     int idx = (blockIdx.x * blockDim.x + threadIdx.x) ;
     int N = T * C;
     if (idx >= N) { return; }
@@ -93,7 +93,7 @@ __global__ inline void CU_embed_back_(floatX* dwte,const int* tokens,const float
 
 
 template <int BLOCK_SIZE=256>
-__global__ inline void wte_backward_kernel(floatX* dwte,
+__global__ static void wte_backward_kernel(floatX* dwte,
                                     const int4* bucket_info, const int* workload_indices, const floatX* dout, const int* inp,
                                     unsigned int seed, int B, int T, int C) {
     // In order to be deterministic, we preprocess the inputs on the cpu into "buckets"
@@ -165,7 +165,7 @@ __global__ inline void wte_backward_kernel(floatX* dwte,
     store128(dwte_ix, packed_in_out);
 }
 
-__global__ inline void wpe_backward_kernel(floatX* dwpe,
+__global__ static void wpe_backward_kernel(floatX* dwpe,
                                     const floatX* dout, const int* inp,
                                     int B, int T, int C, unsigned int seed) {
     // Each thread handles x128::size "channel positions", e.g. 256 per warp for BF16
