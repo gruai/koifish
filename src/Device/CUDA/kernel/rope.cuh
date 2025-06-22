@@ -452,7 +452,8 @@ __global__ void apply_rope_backward_kernel1(
     if (hs < half_hs) // Guard to handle only half_hs elements for real and imaginary pairs
     {
         int freq_index = t * half_hs + hs;
-
+#if defined(ENABLE_FP8)
+#else
         float cos_val = freqs_cos[freq_index];
         float sin_val = freqs_sin[freq_index];
 
@@ -480,6 +481,7 @@ __global__ void apply_rope_backward_kernel1(
         // Backpropagation using chain rule (dout_k)
         dk[k_index] = dk_r * cos_val + dk_i * sin_val;           // (df/dk_r)
         dk[k_index + half_hs] = dk_i * cos_val - dk_r * sin_val; // (df/dk_i)
+#endif
     }
 }
 
@@ -499,7 +501,8 @@ __global__ static void apply_rope_backward_kernel2(
     int t = blockIdx.y;
     int nh = blockIdx.z;
     int hs = threadIdx.x;
-
+#if defined(ENABLE_FP8)
+#else
     // Half of the head size (real and imaginary components)
     int half_hs = C_per_NH / 2;
 
@@ -543,6 +546,7 @@ __global__ static void apply_rope_backward_kernel2(
         dk[k_index] = dk_r * cos_val + dk_i * sin_val;           // (df/dk_r)
         dk[k_index + half_hs] = dk_i * cos_val - dk_r * sin_val; // (df/dk_i)
     }
+#endif
 }
 
 // ----------------------------------------------------------------------------
@@ -669,7 +673,8 @@ __global__ void apply_rope_forward_q1(
     {
         int q_index = b * T * num_kv_heads * C_per_NH + t * num_kv_heads * C_per_NH + kv_head * C_per_NH + hs; // Query (q) index for num_kv_heads shape (B, T, num_kv_heads, C/NH)
         int freq_index = t * half_hs + hs;                                                                     // Frequency index (T, C/2NH)
-
+#if defined(ENABLE_FP8)
+#else
         float cos_val = freqs_cos[freq_index];
         float sin_val = freqs_sin[freq_index];
         float q_r = q[q_index];
@@ -678,6 +683,7 @@ __global__ void apply_rope_forward_q1(
         // Apply RoPE to q (query)
         q[q_index] = q_r * cos_val - q_i * sin_val;           // (ac-bd)
         q[q_index + half_hs] = q_r * sin_val + q_i * cos_val; // (ad+bc) * i
+#endif
     }
 }
 template<typename typ>
@@ -695,14 +701,17 @@ __global__ static void apply_rope_forward_k1(
         int k_index = b * T * NH * C_per_NH + t * NH * C_per_NH + nh * C_per_NH + hs; // Key (k) index for NH shape (B, T, NH, C/NH)
         int freq_index = t * half_hs + hs;                                            // Frequency index (T, C/2NH)
 
+
+#if defined(ENABLE_FP8)
+#else
         float cos_val = freqs_cos[freq_index];
         float sin_val = freqs_sin[freq_index];
         float k_r = k[k_index];
-        float k_i = k[k_index + half_hs];
-
+        float k_i = k[k_index + half_hs];        
         // Apply RoPE to k (key)
         k[k_index] = k_r * cos_val - k_i * sin_val;           // (ac-bd)
         k[k_index + half_hs] = k_r * sin_val + k_i * cos_val; // (ad+bc) * i
+#endif
     }
 }
 // ----------------------------------------------------------------------------
@@ -729,7 +738,8 @@ __global__ static void apply_rope_forward_q2(
 
     // Half of the head size (real and imaginary components)
     int half_hs = C_per_NH / 2;
-
+#if defined(ENABLE_FP8)
+#else
     // Load freqs_cos and freqs_sin into shared memory for reuse
     if (hs < half_hs)
     {
@@ -756,6 +766,7 @@ __global__ static void apply_rope_forward_q2(
         q[q_index] = q_r * cos_val - q_i * sin_val;           // (ac-bd)
         q[q_index + half_hs] = q_r * sin_val + q_i * cos_val; // (ad+bc) * i
     }
+#endif
 }
 
 __global__ static void apply_rope_forward_k2(
@@ -773,7 +784,8 @@ __global__ static void apply_rope_forward_k2(
 
     // Half of the head size (real and imaginary components)
     int half_hs = C_per_NH / 2;
-
+#if defined(ENABLE_FP8)
+#else
     // Load freqs_cos and freqs_sin into shared memory for reuse
     if (hs < half_hs)
     {
@@ -800,6 +812,7 @@ __global__ static void apply_rope_forward_k2(
         k[k_index] = k_r * cos_val - k_i * sin_val;           // (ac-bd)
         k[k_index + half_hs] = k_r * sin_val + k_i * cos_val; // (ad+bc) * i
     }
+#endif
 }
 
 // ----------------------------------------------------------------------------

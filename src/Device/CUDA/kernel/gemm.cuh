@@ -14,10 +14,11 @@
 #include "../cuda_common.h"
 #include "utils.cuh"
 #include "gelu.cuh"
-#include "matmul_1bit.cuh"
+#include "matmul_bit.cuh"
 
-// ----------------------------------------------------------------------------
-// CUDA kernels
+/*  Somte ticks
+    1.  Tensor cores are used to accelerate GEMMs. But it doesn’t mean there’s enough resources to execute other operation with CUDA cores. There are other resources that are shared among the on-chip resources, when kernels are called.
+*/
 
 template<typename OutFloat, bool UseAuxBuffer>
 __global__ void matmul_backward_bias_kernel9(OutFloat* dbias, const floatX* deltaIn, int B, int T, int OC,
@@ -80,7 +81,7 @@ __global__ void matmul_backward_bias_kernel9(OutFloat* dbias, const floatX* delt
             if constexpr (!UseAuxBuffer) {
                 dbias[global_oc + k] = (OutFloat)(a + (float)dbias[global_oc + k]);
             } else {
-                dbias[global_oc + k + blockIdx.y * OC] = a;
+                dbias[global_oc + k + blockIdx.y * OC] = (OutFloat)(a);
             }
         }
     }
@@ -216,7 +217,7 @@ void inline CU_mm_blas(floatX* d, const floatX* a, const floatX* b, const floatX
     cublasLtMatmulAlgoGetHeuristic(cublaslt_handle, operationDesc, ALayout, BLayout, CLayout, DLayout,
                                    preference, 1, &heuristic, &returnedResults);
     if (returnedResults == 0) { //  CUBLAS_STATUS_SUCCESS           
-        printf("No cuBLASLt algorithm: m: %d, n: %d, k: %d, bias: %d\n", n, m, k, has_bias);
+        printf("No cuBLASLt algorithm@%d: m: %d, n: %d, k: %d, bias: %d\n", tpCuBLAS, n, m, k, has_bias);
         exit(EXIT_FAILURE);
     }
 
@@ -247,9 +248,10 @@ void inline matmul_backward(floatX* delta, floatX* dweight, floatX* dbias,
                      floatX* deltaIn, floatX* inp, floatX* weight,
                      float* dbias_buffer,
                      int B, int T, int C, int OC, cudaStream_t stream,bool isTransW = false,
-                     floatX* pre_gelu=NULL, int gelu_fusion=1) {
+                     floatX* pre_gelu=NULL, bool isAccumuDelta=false) {
     NVTX_RANGE_FN();
     bool transAW = false;
+    int gelu_fusion=1;          //assert(gelu_fusion==1);
     // if(isTransW)
     //     transAW = true;
     // backward to bias, if given, does a +=
@@ -281,7 +283,7 @@ void inline matmul_backward(floatX* delta, floatX* dweight, floatX* dbias,
     }
 
     // backward to input, uses = in the backward pass (set the gradient)
-    CU_mm_blas(delta, weight, deltaIn, NULL, C, B*T, OC, stream, transAW, false, 0, 0, 0, 0, false,
+    CU_mm_blas(delta, weight, deltaIn, NULL, C, B*T, OC, stream, transAW, false, 0, 0, 0, 0, isAccumuDelta,
                     gelu_fusion >= 2 ? pre_gelu : NULL, true);
 
     // backward GELU (if it wasn't fused into the matmul above)
@@ -345,6 +347,19 @@ __device__ inline float CU_dot16x8_warppar(half* x, __nv_fp8_e5m2* w, int i, int
 	}
 	return warpreduce_sum(float(val.x + val.y));
 }
+__device__ inline float matmul_warppar(__nv_bfloat16* x, __nv_fp8_e5m2* w, int i, int n) {
+    float val = 0.0f;
+    int lane = threadIdx.x % warpSize;	
+    for(int j = lane * 4; j < n; j += warpSize * 4) {
+        //ablock<__nv_fp8x4_e5m2, 1> wwp = *(ablock<__nv_fp8x4_e5m2, 1>*)&w[i * n + j];
+        float4 ww = fp8x4_e5m2_ff((__nv_fp8x4_e5m2 *)(w+i*n+j));
+        float4 xx = {x[j],x[j+1],x[j+2],x[j+3]};	//*(float4*)&x[j];
+        val += ww.x * xx.x;				val += ww.y * xx.y;				val += ww.z * xx.z;				val += ww.w * xx.w;
+        //val += x[j] * ww.x + x[j+1] * ww.y + x[j+2] * ww.z + x[j+3] * ww.w;
+    }  
+	return warpreduce_sum(val);
+}
+
 __device__ inline float CU_dot16x4_warppar(half* x, uint32_t* w, int i, int n) {
 	int lane = threadIdx.x % warpSize;
 	if (n % (warpSize * 64) == 0) {
@@ -460,12 +475,15 @@ __global__ void static tABC_0(const Ta *__restrict__ A, const Tw *__restrict__ B
     if (row >= M && col >= N) {
         return;
     }
-    Ta tmp = 0.0;
+    Ta tmp = (Ta)(0.0);
+#if defined(ENABLE_FP8)
+#else
  #pragma unroll
     for (size_t i = 0; i < K; ++i) {
         tmp += A[row * K + i] * B[i + col * K];
     }
     C[row * N + col] = tmp;
+#endif
 }
 
 /*
@@ -475,10 +493,6 @@ __global__ void static tABC_0(const Ta *__restrict__ A, const Tw *__restrict__ B
 template<typename Tw, typename Ta>
 void tMM(Ta *lhs,Tw *W, Ta *rhs,Tw *b, size_t M, size_t N, size_t K,bool transAW, cudaStream_t main_stream,int flag=0) {
     assert(typeid(Ta)==typeid(Tw));
-    
-    CU_mm_blas(rhs, W, lhs, b, N, M, K, main_stream, transAW, false, flag, 0, 0, 0, false, NULL, false);
-    return;        
-    
 
     switch(DEBUG.T_GEMM){
     case -1:{
@@ -494,6 +508,7 @@ void tMM(Ta *lhs,Tw *W, Ta *rhs,Tw *b, size_t M, size_t N, size_t K,bool transAW
     }        break;
     case 2:{
         const float alpha = 1.0f,beta = 0.0f;
+        assert(transAW==true);
         cublasGemmEx(cublas_handle, CUBLAS_OP_T, CUBLAS_OP_N,N, M,K,&alpha, W, CUDA_R_16BF, M,        
                     lhs, CUDA_R_16BF, K,&beta, rhs, CUDA_R_16BF, M, CUDA_R_16BF, CUBLAS_GEMM_DEFAULT_TENSOR_OP); }
         break;

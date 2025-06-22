@@ -6,7 +6,11 @@
  *  \author Yingshi Chen
  */
 #pragma once
-#include "../ggex/GTensor.hpp"
+#include <memory>
+#include "../g_float.hpp"
+
+class GTensor;
+typedef std::shared_ptr<GTensor> hGTensor;
 /*
     https://github.com/ggerganov/llama.cpp/discussions/7887
     https://github.com/ggerganov/llama.cpp/discussions/7625
@@ -31,12 +35,12 @@ public:
     };
     KVCache(Fish * ,int max_batch_size=0, int max_seq_len=0, int flag=0x0);
 
-    void update(int batch_size, int start_pos, hGensor xk, hGensor xv);
-    hGensor get(int batch_size, int start_pos, int seq_len);
+    void update(int batch_size, int start_pos, hGTensor xk, hGTensor xv);
+    hGTensor get(int batch_size, int start_pos, int seq_len);
 
     int n_kv();
-    virtual hGensor SerialV(void *ctx,hGensor vCur,int il,bool isSave);
-    virtual hGensor SerialK(void *ctx,hGensor vCur,int il,bool isSave);
+    virtual hGTensor SerialV(void *ctx,hGTensor vCur,int il,bool isSave);
+    virtual hGTensor SerialK(void *ctx,hGTensor vCur,int il,bool isSave);
 
     void *Get(KVCache::CTYPE typ, int flag=0x0);
 

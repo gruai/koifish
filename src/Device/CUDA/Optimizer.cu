@@ -36,9 +36,11 @@ __device__ void sgd_update(Tp* params_memory, float* master_params_memory, Tg* g
     float old_param = (master_params_memory != NULL) ? master_params_memory[idx] : (float)params_memory[idx];
     float param = old_param - ( learning_rate * grad  + weight_decay * old_param);
     // stochastic_rounding(param, &params_memory[idx], seed);
-    params_memory[idx] = param;
-    grads_memory[idx] = 0.0;        
-    if (master_params_memory != NULL) { master_params_memory[idx] = param; }
+    params_memory[idx] = (Tp)(param);
+    grads_memory[idx] = (Tp)(0.0);        
+    if (master_params_memory != NULL) { 
+        master_params_memory[idx] = param; 
+    }
 }
 //  reset grad online
 template <typename Tp, typename Tg>
@@ -69,8 +71,8 @@ __global__ void CU_sgdv(Tp* params_memory, Tg* grads_memory, float* v_memory, si
     float old_param = (float)params_memory[idx];
     float param = old_param - (learning_rate * (grad / (sqrtf(v) + eps) + weight_decay * old_param));
     // stochastic_rounding(param, &params_memory[idx], seed);
-    params_memory[idx] = param;
-    grads_memory[idx] = 0.0;
+    params_memory[idx] = (Tp)(param);
+    grads_memory[idx] = (Tp)(0.0);
 }
 template <typename Tp, typename Tg>
 __global__ void CU_lion_(Tp* params_memory, Tg* grads_memory, float* m_memory, size_t num_parameters,
@@ -89,8 +91,8 @@ __global__ void CU_lion_(Tp* params_memory, Tg* grads_memory, float* m_memory, s
     c = c>0 ? 1 : c==0 ? 0 : -1;
     m_memory[idx] = lerp(grad, m, beta2);       //beta2*m+(1-beta2)*grad;
     float old_param = (float)params_memory[idx];    
-    params_memory[idx] = old_param - learning_rate * (c + weight_decay * old_param);
-    grads_memory[idx] = 0.0;
+    params_memory[idx] = (Tp)(old_param - learning_rate * (c + weight_decay * old_param));
+    grads_memory[idx] = (Tp)(0.0);
 }
 
 template <typename Tp, typename Tg>
@@ -110,8 +112,8 @@ __global__ void CU_adamw_(Tp* params_memory, float* master_params_memory, Tg* gr
     float old_param = (master_params_memory != NULL) ? master_params_memory[idx] : (float)params_memory[idx];
     float param = old_param - (learning_rate * (m / (sqrtf(v) + eps) + weight_decay * old_param));
     // stochastic_rounding(param, &params_memory[idx], seed);
-    params_memory[idx] = param;
-    grads_memory[idx] = 0.0;
+    params_memory[idx] = (Tp)(param);
+    grads_memory[idx] = (Tp)(0.0);
 
     if (master_params_memory != NULL) { master_params_memory[idx] = param; }
 }

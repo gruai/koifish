@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -25,7 +25,17 @@
 #include <cuda.h>
 
 #if defined NV_CUDNN_FRONTEND_USE_DYNAMIC_LOADING
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#define dlerror() static_cast<UINT_PTR>(GetLastError())
+#define dlopen(x, y) LoadLibrary(x)
+#define dlsym(x, y) GetProcAddress(x, y)
+#define dlclose(x) FreeLibrary(x)
+#else
 #include <dlfcn.h>
+#define HMODULE void *
+#endif
 #include <mutex>
 #include <stdexcept>
 #endif
@@ -33,48 +43,92 @@
 namespace cudnn_frontend {
 
 // cudnn package initialization set this global handle
+#if defined NV_CUDNN_FRONTEND_USE_DYNAMIC_LOADING
+#ifdef _WIN32
+extern HMODULE cudnn_dlhandle;
+#else
 extern void *cudnn_dlhandle;
+#endif
+#endif
 
 namespace detail {
 
 #if defined NV_CUDNN_FRONTEND_USE_DYNAMIC_LOADING
 
-inline void *
+inline auto
 get_symbol(const char *function_name) {
-    void *ret = dlsym(cudnn_dlhandle, function_name);
+    auto ret = dlsym(cudnn_dlhandle, function_name);
     return ret;
 }
 
 enum class CudaLibrary { CUDART, CUDA };
 
+inline HMODULE
+load_cuda_so() {
+    // Clear any existing error
+    dlerror();
+
+    // Attempt to open the cuda library
+    HMODULE handle    = dlopen("libcuda.so", RTLD_NOW);
+    const char *error = reinterpret_cast<const char *>(dlerror());
+    if (!handle || error) {
+        // If opening the library fails, throw an exception with the error message
+        throw std::runtime_error("Unable to dlopen libcuda.so : " + std::string(error ? error : "Unknown error"));
+    }
+
+    return handle;
+}
+
+inline HMODULE
+load_cudart_so() {
+    // Clear any existing error
+    dlerror();
+
+    // List of potential libcudart libraries (Adding major version to support python package)
+    constexpr const char *libs[] = {"libcudart.so.12", "libcudart.so.13"};
+    constexpr size_t num_libs    = sizeof(libs) / sizeof(libs[0]);
+
+    HMODULE lib_handle = nullptr;
+    int loaded_index   = -1;
+
+    for (size_t i = 0; i < num_libs; ++i) {
+        HMODULE handle    = dlopen(libs[i], RTLD_NOW);
+        const char *error = reinterpret_cast<const char *>(dlerror());
+
+        if (handle && !error) {
+            if (lib_handle) {
+                // Already loaded one -> multiple found
+                dlclose(handle);
+                throw std::runtime_error("Multiple libcudart libraries found: " + std::string(libs[loaded_index]) +
+                                         " and " + std::string(libs[i]));
+            }
+            lib_handle   = handle;
+            loaded_index = static_cast<int>(i);
+        }
+    }
+
+    // If opening the library fails, throw an exception with the error message
+    if (!lib_handle) {
+        throw std::runtime_error("Unable to load any libcudart.so.* library.");
+    }
+
+    return lib_handle;
+}
+
 inline void *
 get_cuda_symbol(CudaLibrary library, const char *function_name) {
     // Static mutex to ensure thread-safety
+    (void)function_name;
     static std::mutex cuda_lib_mutex;
     // Static map to store handles for different libraries
-    static std::unordered_map<CudaLibrary, void *> dl_handles;
-
-    // Determine the library name based on the provided library parameter
-    const char *library_name = (library == CudaLibrary::CUDART) ? "libcudart.so" : "libcuda.so";
+    static std::unordered_map<CudaLibrary, HMODULE> dl_handles;
 
     // Lock the mutex to ensure thread-safe access
     std::lock_guard<std::mutex> lock(cuda_lib_mutex);
 
-    // If the library hasn't been opened yet, open it
+    // If the library hasn't been opened yet, open it and store the handle to future use
     if (dl_handles.find(library) == dl_handles.end()) {
-        // Clear any existing error
-        dlerror();
-
-        // Attempt to open the specified CUDA library
-        void *handle      = dlopen(library_name, RTLD_NOW);
-        const char *error = dlerror();
-        if (!handle || error) {
-            // If opening the library fails, throw an exception with the error message
-            throw std::runtime_error("Unable to dlopen " + std::string(library_name) + ": " +
-                                     std::string(error ? error : "Unknown error"));
-        }
-        // Store the handle for future use
-        dl_handles[library] = handle;
+        dl_handles[library] = (library == CudaLibrary::CUDART) ? load_cudart_so() : load_cuda_so();
     }
 
     // Clear any existing error before calling dlsym
@@ -82,7 +136,7 @@ get_cuda_symbol(CudaLibrary library, const char *function_name) {
 
     // Try to find the symbol (function) in the library
     void *symbol      = dlsym(dl_handles[library], function_name);
-    const char *error = dlerror();
+    const char *error = reinterpret_cast<const char *>(dlerror());
     if (!symbol || error) {
         // If the symbol is not found, throw an exception with details
         throw std::runtime_error("Unable to find symbol " + std::string(function_name) + ": " +
@@ -210,12 +264,37 @@ cuda_graph_child_graph_node_get_graph(cudaGraphNode_t hNode, cudaGraph_t *phGrap
     NV_FE_CALL_TO_CUDA(cuda_graph_child_graph_node_get_graph, cudaGraphChildGraphNodeGetGraph, hNode, phGraph);
 }
 
+// 4-parameter shim for cudaGraphNodeGetDependentNodes.
+// The underlying CUDA feature was introduced in CUDA 12.3, but
+// for simplicity we support this in 13.0+ only.
+#if (CUDART_VERSION >= 13000)
+inline cudaError_t
+cuda_graph_node_get_dependent_nodes_v2(cudaGraphNode_t node,
+                                       cudaGraphNode_t *pDependentNodes,
+                                       cudaGraphEdgeData *edgeData,
+                                       size_t *pNumDependentNodes) {
+    NV_FE_CALL_TO_CUDA(cuda_graph_node_get_dependent_nodes_v2,
+                       cudaGraphNodeGetDependentNodes,
+                       node,
+                       pDependentNodes,
+                       edgeData,
+                       pNumDependentNodes);
+}
+#endif
+
+// 3-parameter shim for cudaGraphNodeGetDependentNodes.
 inline cudaError_t
 cuda_graph_node_get_dependent_nodes(cudaGraphNode_t node,
                                     cudaGraphNode_t *pDependentNodes,
                                     size_t *pNumDependentNodes) {
+#if (CUDART_VERSION >= 13000)
+    // The 3-parameter version of cudaGraphNodeGetDependentNodes was removed in CUDA 13.0,
+    // so call the other shim.
+    return cuda_graph_node_get_dependent_nodes_v2(node, pDependentNodes, /*edgeData=*/nullptr, pNumDependentNodes);
+#else
     NV_FE_CALL_TO_CUDA(
         cuda_graph_node_get_dependent_nodes, cudaGraphNodeGetDependentNodes, node, pDependentNodes, pNumDependentNodes);
+#endif
 }
 
 inline cudaError_t
@@ -444,7 +523,7 @@ get_last_error_string(char *message, size_t size) {
 #endif
     } else {
         std::string default_message = "Can't retrieve backend error messages for CUDNN version < 9.0";
-        strncpy(message, default_message.c_str(), size - 1);
+        // strncpy(message, default_message.c_str(), size - 1);
         message[size - 1] = '\0';  // Ensure null terminator at the end of the string
     }
 }

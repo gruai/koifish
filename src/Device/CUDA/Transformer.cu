@@ -8,7 +8,7 @@
  *  \author Yingshi Chen
  */
 #include "./kernel/Operator.cuh"
-// #include "./llm_c/sampler.h"
+#include "./kernel/gemm.cuh"
 #include "./kernel/layernorm.cuh"
 #include "./kernel/embed.cuh"
 #include "./kernel/utils.cuh"
@@ -16,147 +16,21 @@
 #include "../../Manifold/Fish.hpp"
 #include "../../Device/Pipe.hpp"
 
-extern int tpFuseCu;
 extern cudaStream_t main_stream;
 
-__global__ void __launch_bounds__(1024) test_print_kernel(half *__restrict__ arr){
-    // printf("test kernel\n");
-    if (((int)blockIdx.x == 0) && ((int)threadIdx.x == 0))    {
-        // arr[0] = ((half)(2));
-        __syncthreads();
-        printf("%f ", __half2float(arr[0]));
+// __global__ void __launch_bounds__(1024) test_print_kernel(half *__restrict__ arr){
+//     // printf("test kernel\n");
+//     if (((int)blockIdx.x == 0) && ((int)threadIdx.x == 0))    {
+//         // arr[0] = ((half)(2));
+//         __syncthreads();
+//         printf("%f ", __half2float(arr[0]));
 
-    }
-}
-
-unsigned long long rng_state=0;
-float* accumulated_mean_loss=nullptr;
-
-static int micro_step=0;    //*workload_indices=nullptr;
-// static int4 *bucket_info=nullptr;
-float RAW_backward(Fish *fish,const int* iX, int grad_accum_steps,bool isOnlyEvaluate,int flag) {    
-    assert(!isOnlyEvaluate);
-    NVTX_RANGE_FN();
-    bool last_step = micro_step == grad_accum_steps - 1;
-    auto config = fish->config;
-    int B,T,C,L = config.nLayer(),NH = config.n_head();      
-    fish->GetBTC(B,T,C);    
-    OutCLS* cls = fish->GetNeuron<OutCLS>("OutCLS",0);
-    hGensor cur=nullptr,delta=cls->delta;      
-    TokenEmbed* embed = fish->GetNeuron<TokenEmbed>("TokenEmbed",0); 
-    if (micro_step == 0) {// on the first micro-step zero the gradients, as we're about to += accumulate into them;     
-        cudaCheck(cudaMemsetAsync(TO<float>(cls->out), 0,B*T* sizeof(float), main_stream));
-    }
-    
-    // floatX *scratchX=(floatX *)GTensor::buff;     
-    GTensor::delta->Zero();         //cudaCheck(cudaMemset(dresidual, 0, B * T * C * sizeof(floatX)));    //???
-    PrintTensor<floatX>("back of P",ToX(GTensor::bt4c),true,B,T,C);
-    NvtxRange classifier_and_loss_range("classifier_and_loss");
-    FFN *ffn=fish->GetNeuron<FFN>("FFN",L-1);  
-    LayerNormal* lnf = fish->GetNeuron<LayerNormal>("LayerNormal",0);    
-    delta = cls->FUSE_cuda(nullptr,0x0);    //some operation fused in forward pass
-    lnf->FUSE_cuda(delta,0x0);  //
-
-    hGensor lastDelta = ffn->out;    
-    for (int l = L-1; l >= 0; l--) {
-        NvtxRange layer_range("Layer", l);
-        SelfAttention *QKV = fish->GetNeuron<SelfAttention>("SelfAttention",l);
-        ffn = fish->GetNeuron<FFN>("FFN",l);        //preFFN = l==0 ? nullptr : fish->GetNeuron<FFN>("FFN",l-1);         
-        // GeNeuron *last = l == 0 ? embed : (GeNeuron *)(fish->GetNeuron<FFN>("FFN",l-1));    //residual = l == 0 ? ToX(embed->out) : ToX(preFFN->out);  
-        // ffn->delta = lastDelta;     ffn->tmpDelta = lastDelta;   
-        // LayerNormal *hNorm = l+1 != L ? &(fish->GetNeuron<SelfAttention>("SelfAttention",l+1)->norm) : lnf;
-        ffn->FUSE_cuda(nullptr, 0x0);   
-        QKV->FUSE_cuda(nullptr,0x0);   //QKV->norm.out,last->out
-    }
-    embed->OnEmbed(nullptr,0x0);    //,random_u32(&rng_state)
-    
-    // Aggregate all gradients that are not part of the transformer blocks5
-    if(tpFuseCu==0 && last_step) {
-        // reduce all the losses within the current GPU (across all microsteps)
-        global_sum_deterministic(accumulated_mean_loss, TO<float>(cls->out), B*T, main_stream);
-        // reduce loss across GPUs to a single, final float across all microsteps and GPUs
-        #if MULTI_GPU
-        ncclCheck(ncclAllReduce(accumulated_mean_loss, accumulated_mean_loss, sizeof(float), ncclFloat, ncclAvg, multi_gpu_config.nccl_comm, main_stream));
-        #endif
-        cudaCheck(cudaMemcpyAsync(&cls->mean_loss, accumulated_mean_loss, sizeof(float), cudaMemcpyDeviceToHost, main_stream));
-        cls->mean_loss /= B*T*grad_accum_steps;
-    }
-    cudaCheck(cudaDeviceSynchronize());
-    if(last_step) {
-        // cls->mean_loss /= B*T*grad_accum_steps;
-        micro_step = 0;
-    } else {
-        cls->mean_loss = -1.f; // no loss available yet
-        micro_step++;
-    }
-    
-    return cls->mean_loss;
-}   
-/*
-void RAW_forward(Fish *fish,int flag) {
-    NVTX_RANGE_FN();
-    auto config = fish->config;
-    int B,T,C,tpFuseNormal=config.Fuse_Normal;      
-    fish->GetBTC(B,T,C);    
-    const size_t L = config.nLayer(),NH = config.n_head();       
-    hGensor cur=nullptr,residual=nullptr;
-    LayerNormal* lnf = fish->GetNeuron<LayerNormal>("LayerNormal",0);
-    TokenEmbed* embed = fish->GetNeuron<TokenEmbed>("TokenEmbed",0);
-    cur = embed->Ming(nullptr,fish->Input());     
-    residual = cur; //embed->out;
-    SelfAttention *QKV0 = fish->GetNeuron<SelfAttention>("SelfAttention",0),*QKV=nullptr;
-
-    if(tpFuseNormal==1){
-        cur=QKV0->norm.FUSE_cuda(cur);   
-    } 
-
-    FFN *ffn=nullptr;
-    for (int l = 0; l < L; l++) {
-        NvtxRange layer_range("Layer", l);
-        QKV = fish->GetNeuron<SelfAttention>("SelfAttention",l);
-        ffn = fish->GetNeuron<FFN>("FFN",l);            //ffn->out = GTensor::delta;
-        LayerNormal *hNorm = l+1 != L ? &(fish->GetNeuron<SelfAttention>("SelfAttention",l+1)->norm) : lnf;
-        ffn->fuseNorm = tpFuseNormal==1?hNorm:nullptr;       
-        QKV->fuseNorm =  tpFuseNormal==1?&(ffn->norm):nullptr;
-        cur = QKV->FUSE_cuda(cur,residual,nullptr,nullptr,flag);        
-        cur = ffn->FUSE_cuda(cur,nullptr, 0x0);  
-        residual = ffn->out;
-    }    
-    if(tpFuseNormal==0){
-        cur = lnf->FUSE_cuda(ffn->out); 
-    }
-    OutCLS* cls = fish->GetNeuron<OutCLS>("OutCLS",0);
-    if(tpFuseCu==1)
-        cls->FUSE_cuda(cur,flag); //embed->w,
-    else
-        assert(0);//cls->preLogits = lnf->out*embed->w;   
-    PrintTensor<floatX>("output",ToX(cls->preLogits),true,B,T,C);
-    // ffn->norm.out->PrintX<floatX>("inp1",0,-1); 
-
-}*/
+//     }
+// }
 
 #define MAX_LAYERS 128
 #define MAX_EXPERTS 64
-__device__ static void syncgrid() {
-	volatile unsigned int* barrier = &cooperative_groups::details::get_grid_workspace()->barrier;
 
-	if (threadIdx.x == 0) {
-		unsigned int nb = 1;
-		if (blockIdx.x == 0) {
-			nb = 0x80000000 - (gridDim.x - 1);
-		}
-
-		unsigned int old_arrive;
-		asm volatile("atom.add.release.gpu.u32 %0,[%1],%2;" : "=r"(old_arrive) : _CG_ASM_PTR_CONSTRAINT(barrier), "r"(nb) : "memory");
-
-		unsigned int current_arrive;
-		do {
-			asm volatile("ld.acquire.gpu.u32 %0,[%1];" : "=r"(current_arrive) : _CG_ASM_PTR_CONSTRAINT(barrier) : "memory");
-		} while (((old_arrive ^ current_arrive) & 0x80000000) == 0);
-	}
-
-	__syncthreads();
-}
 
 __device__ static void coopstage(uint64_t* stats, int stage) {
 	__shared__ uint64_t lastt;
@@ -176,7 +50,7 @@ __device__ static void coopstage(uint64_t* stats, int stage) {
 	AT float			type of activation
 */
 template <typename T, typename KVT, typename AT>
-__global__ __launch_bounds__(1024, 1) static void T_forward_qkv(const __grid_constant__ TRANSFORMER_PIPE<T, KVT> args) {
+__global__ __launch_bounds__(1024, 1) static void T_forward_qkv(const __grid_constant__ KERNEL_PIPE<AT, KVT> args) {
 	extern __shared__ char smem[];
 	__shared__ float rmsscale;
 
@@ -215,8 +89,8 @@ __global__ __launch_bounds__(1024, 1) static void T_forward_qkv(const __grid_con
 			if(k==0){
 				k = 0;
 			}
-			float v0 = matmul_warppar(xs, w, k + 0, dim) * rmsscale;
-			float v1 = matmul_warppar(xs, w, k + 1, dim) * rmsscale;
+			float v0 = matmul_warppar(xs, w, k + 0, dim) * rmsscale;	//	2.92934465
+			float v1 = matmul_warppar(xs, w, k + 1, dim) * rmsscale;	//	2.08009243
 
 			if (L->bqkv) {
 				v0 += L->bqkv[j + 0];
@@ -229,9 +103,9 @@ __global__ __launch_bounds__(1024, 1) static void T_forward_qkv(const __grid_con
 			if (threadIdx.x % warpSize == 0) {
 				int j_head = j % head_dim;
 				float freq = j_head >= args.rotary_dim ? 0.f : exp2f(-args.theta_log2 * (float)j_head / (float)args.rotary_dim);
-				float fcr, fci;
-				sincosf(args.pos * freq, &fci, &fcr);
-
+				float fcr0, fci0;
+				sincosf(args.pos * freq, &fci0, &fcr0);
+				float fcr=fcr0, fci=fci0;
 				if (j < q_dim) {
 					args.q[k + 0] = v0 * fcr - v1 * fci;
 					args.q[k + 1] = v0 * fci + v1 * fcr;
@@ -249,7 +123,7 @@ __global__ __launch_bounds__(1024, 1) static void T_forward_qkv(const __grid_con
 		}
 
 		__syncthreads(); 
-		syncgrid();
+		SYNC_GRID();
 		coopstage(args.perfstats, 0);		
 
 		// attention score
@@ -263,9 +137,9 @@ __global__ __launch_bounds__(1024, 1) static void T_forward_qkv(const __grid_con
 			unsigned active = __ballot_sync(0xffffffff, t < args.kv_len);
 
 			if (t < args.kv_len) {
-				float* qh = args.q + h * head_dim;
+				AT* qh = args.q + h * head_dim;
 				KVT* kh = keyb + kvh * head_dim * args.seq_len;
-				float* atth = args.att + h * args.seq_len * 2;
+				AT* atth = args.att + h * args.seq_len * 2;
 
 				float score = attn_score(kh, qh, head_dim, args.seq_len, t, 4 * (threadIdx.x % 4));
 
@@ -284,16 +158,16 @@ __global__ __launch_bounds__(1024, 1) static void T_forward_qkv(const __grid_con
 			}
 		}
 
-		syncgrid();
+		SYNC_GRID();
 		coopstage(args.perfstats, 1);		
 
 		if (badsoftmax) {			// attention softmax
 			if (blockIdx.x < args.n_heads) {
 				int h = blockIdx.x;
-				float* atth = args.att + h * args.seq_len * 2;
+				AT* atth = args.att + h * args.seq_len * 2;
 				CU_softmax_v0(atth, atth + args.seq_len, args.kv_len);
 			}
-			syncgrid();
+			SYNC_GRID();
 			coopstage(args.perfstats, 2);
 		}
 
@@ -303,7 +177,7 @@ __global__ __launch_bounds__(1024, 1) static void T_forward_qkv(const __grid_con
 			int kvh = h / kv_mul;
 			int j_head = j % head_dim;
 
-			float* atth = args.att + h * args.seq_len * 2;
+			AT* atth = args.att + h * args.seq_len * 2;
 			KVT* vh = valb + kvh * head_dim * args.seq_len;
 			KVT* val = vh + j_head * args.seq_len;
 
@@ -314,7 +188,7 @@ __global__ __launch_bounds__(1024, 1) static void T_forward_qkv(const __grid_con
 			}
 		}
 
-		syncgrid();
+		SYNC_GRID();
 		coopstage(args.perfstats, 3);		// args.att
 
 		// attention output
@@ -326,106 +200,138 @@ __global__ __launch_bounds__(1024, 1) static void T_forward_qkv(const __grid_con
 			}
 		}		
 		__syncthreads(); // TODO: unclear why this is needed for determinism
-		syncgrid();
+		SYNC_GRID();
 		coopstage(args.perfstats, 4);		
 }
 
+template  <typename T>
+__device__ inline void CU_dot16x4_(float *out, T* x, __nv_fp8_e5m2* w, int i, int n) {
+    int tid = threadIdx.x, idx = blockIdx.x * blockDim.x + tid;
+	if(idx*4 >= n) { return; } 
+    float val = 0.0f;
+	int NUM_WARPS = (blockDim.x + WARP_SIZE - 1) / WARP_SIZE;
+	assert(NUM_WARPS<=WARP_SIZE);
+    //for(int j = lane * 4; j < n; j += warpSize * 4) {
+        float4 ww = fp8x4_e5m2_ff((__nv_fp8x4_e5m2 *)(w+i*n+idx*4));
+        float4 xx = {x[idx*4],x[idx*4+1],x[idx*4+2],x[idx*4+3]};	//*(float4*)&x[idx];
+        val += ww.x * xx.x;				val += ww.y * xx.y;				val += ww.z * xx.z;				val += ww.w * xx.w;
+    //}  	
+    // *out = warpreduce_sum(val);
+	float block_sum = blockReduce<warpReduceSum>(val,true);
+	if (tid == 0) atomicAdd(out, block_sum);    
+}
+
+//	T=_nv_fp8_e5m2, KVT=__half, AT=AT
 template <typename T, typename KVT, typename AT>
-__global__ __launch_bounds__(1024, 1) static void T_forward_ffn(const __grid_constant__ TRANSFORMER_PIPE<T, KVT> args) {
+__global__ __launch_bounds__(1024, 1) static void T_forward_ffn(const __grid_constant__ KERNEL_PIPE<AT, KVT> args) {	//KERNEL_PIPE<AT, KVT> args
 	extern __shared__ char smem[];
-	__shared__ float rmsscale;
-	__shared__ float moe_weights[32];
+	__shared__ float rmsscale, moe_weights[32];
 	__shared__ int moe_experts[32];
 
 	AT* xs = (AT*)smem;
-	int dim = args.dim,l=args.layNo;
-	int hidden_dim = args.hidden_dim;
-	int head_dim = args.head_dim;
-	int kv_mul = args.n_heads / args.n_kv_heads;
-	int q_dim = args.head_dim * args.n_heads;
-	int kv_dim = args.head_dim * args.n_kv_heads;
+	int dim = args.dim, hidden_dim = args.hidden_dim;
+	const CoopLayer<T>* L = (const CoopLayer<T>*)(args.cLayers+args.layNo);
 	const int IK = 4; // K consecutive warps per block, groups of K are interleaved across SMs for better work distribution
 	int io = blockIdx.x * IK + (threadIdx.x / warpSize % IK) + gridDim.x * IK * (threadIdx.x / warpSize / IK);
+		// blockIdx.x + threadIdx.x / warpSize + gridDim.x * (threadIdx.x / warpSize )
 	int ib = (gridDim.x * blockDim.x) / warpSize;
 	// dummy moe weights for non-moe models; will be overwritten by moe gate
 	moe_weights[0] = 1.f;
 	moe_experts[0] = 0;
 
 	coopstage(args.perfstats, -1); // init timing
-
-	static __device__ int badsoftmax = 0;
-		const CoopLayer<T>* L = (const CoopLayer<T>*)(args.cLayers+l);	
-		// post-attention CU_rmsnorm (into shared memory)
-		if (L->rms_ffn_weight) {
-			rmsscale = CU_rmsnorm(xs, args.x, L->rms_ffn_weight, dim, args.norm_eps, args.norm_ln);
+	
+	if (L->rms_ffn_weight) {
+		rmsscale = CU_rmsnorm(xs, args.x, L->rms_ffn_weight, dim, args.norm_eps, args.norm_ln);		//5.11613894
+	}
+	// __syncthreads(); 	SYNC_GRID();		return;
+	// moegate
+	if (args.n_experts) {
+		__shared__ float exp[32];
+		int j = threadIdx.x / warpSize;
+		if (j < args.n_experts) {
+			float val = (float)matmul_warppar(xs, L->moegate, j, dim) * rmsscale;
+			exp[j] = val;
 		}
-		// moegate
-		if (args.n_experts) {
-			__shared__ float exp[32];
-			int j = threadIdx.x / warpSize;
-			if (j < args.n_experts) {
-				float val = matmul_warppar(xs, L->moegate, j, dim) * rmsscale;
-				exp[j] = val;
-			}
-			__syncthreads();
-			if (threadIdx.x < warpSize) {
-				moe_gate_warp(moe_weights, moe_experts, exp, args.n_experts, args.n_experts_ac);
-			}
-			__syncthreads();
+		__syncthreads();
+		if (threadIdx.x < warpSize) {
+			moe_gate_warp(moe_weights, moe_experts, exp, args.n_experts, args.n_experts_ac);
 		}
+		__syncthreads();
+	}
 
-		// F.cu_silu(self.w1(x)) * self.w3(x)
-		for (int j = io; j < hidden_dim * args.n_experts_ac; j += ib) {
-			int je = (j % hidden_dim) + moe_experts[j / hidden_dim] * hidden_dim;
-			float v1 = matmul_warppar(xs, L->w1, je, dim) * rmsscale;
-			float v3 = matmul_warppar(xs, L->w3, je, dim) * rmsscale;
+	// F.CU_silu(self.w1(x)) * self.w3(x)
+	for (int j = io; j < hidden_dim * args.n_experts_ac; j += ib) {
+		int je = (j % hidden_dim) + moe_experts[j / hidden_dim] * hidden_dim;
+		// float v1 = matmul_warppar(xs, L->w1, je, dim) ;		
+		float v1 = L->gama_1==nullptr ? matmul_warppar(xs, L->w1, je, dim) : matmul_warppar(xs, L->w1, je, dim)*L->gama_1[j];
+		// CU_dot16x4_(&v1, xs, L->w1, je, dim);			SYNC_GRID();
+		float v3 = matmul_warppar(xs, L->w3, je, dim) ;
+		float val = (args.act_gelu ? CU_gelu(v1*rmsscale) : CU_silu(v1*rmsscale))*v3*rmsscale;
 
-			float val = (args.act_gelu ? cu_gelu(v1) : cu_silu(v1)) * v3;
-
-			if (threadIdx.x % warpSize == 0) {
-				args.hb[j] = val;
-			}
+		if (threadIdx.x % warpSize == 0) {
+			args.hb[j] = (AT)val;
 		}
-		syncgrid();
-		coopstage(args.perfstats, 5);		// args.hb
+	}
+	SYNC_GRID();
+	coopstage(args.perfstats, 5);		// args.hb
 
-		// self.w2(...) + pre-CU_rmsnorm residual
-		for (int j = io; j < dim * args.n_experts_ac; j += ib) {
-			int je = (j % dim) + moe_experts[j / dim] * dim;
-			float val = matmul_warppar(args.hb + (j / dim) * hidden_dim, L->w2, je, hidden_dim);
+	// self.w2(...) + pre-CU_rmsnorm residual
+	for (int j = io; j < dim * args.n_experts_ac; j += ib) {
+		int je = (j % dim) + moe_experts[j / dim] * dim;
+		float val = matmul_warppar(args.hb + (j / dim) * hidden_dim, L->w2, je, hidden_dim) ;
 
-			if (threadIdx.x % warpSize == 0) {
-				atomicAdd(&args.x[j % dim], val * moe_weights[j / dim]);
-			}
+		if (threadIdx.x % warpSize == 0) {
+			atomicAdd(&args.x[j % dim], val * moe_weights[j / dim]);
 		}
+	}
 
-		__syncthreads(); // TODO: unclear why this is needed for determinism
-		syncgrid();
-		coopstage(args.perfstats, 6);
-	//}
+	__syncthreads(); // TODO: unclear why this is needed for determinism
+	SYNC_GRID();
+	coopstage(args.perfstats, 6);
+
 }
-
 typedef __nv_fp8_e5m2 tpEMBED;
-template <> inline float T2Float<__nv_fp8_e5m2>(const __nv_fp8_e5m2* a0)   {
-    float a = float(*a0);	
-	//a = fp8_to_float(*a0);
-    assert(!isnan(a) && !isinf(a));
-    return a;
+
+// classifier into logits		T=__nv_fp8_e5m2, AT=AT
+template <typename T, typename AT>
+__global__ static void kernel_output(uint64_t pTok, float* xout, AT* x, T* w, float* rms_weight, int n, int d, float norm_eps, bool norm_ln) {
+	extern __shared__ char smem[];
+	AT* xs = (AT*)smem;
+	float rmsscale = CU_rmsnorm(xs, x, rms_weight, n, norm_eps, norm_ln);	//	x0=0.626402617	0.286915213
+	int wid = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
+	int NUM_WARPS = (gridDim.x * blockDim.x) / warpSize;
+	for (int j = wid; j < d; j += NUM_WARPS) {
+		float val = matmul_warppar(xs, w, j, n) ;
+		// CU_dot16x4_(&val, xs, w, j, n);	
+		// instead of writing one value per block, we transpose the values and write all results from first warp
+		val = blocktranspose(val*rmsscale, 0.f);
+
+		if (threadIdx.x < blockDim.x / warpSize) {
+			xout[j + threadIdx.x] = val;
+		}
+	}
 }
 
-float* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV,bool isCPU,unsigned flags){	//int token, int pos, 	
+template<typename AT>
+float* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV,int id,unsigned flags){	//int token, int pos, 	
     assert(hFish!=nullptr);
-
+	if(id==0){
+		_INFO("\t %s: |T_weight|=%d |T_kv|=%d |T_activity|=%d \n", __func__,
+				sizeof(__nv_fp8_e5m2), sizeof(__half), sizeof(AT));
+	}
 	TokenEmbed* embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed",0); 
 	int token=embed->hBatch->CurToken(), pos = embed->hBatch->pos++;		
-	TRANSFORMER_PIPE<uint32_t, __nv_fp8_e5m2> args(hFish,pos);	//	kv_len,kv_pos,
+	KERNEL_PIPE<AT, __half> args(hFish,pos);	//	kv_len,kv_pos,
 	
-	hGensor out_weight = args.out_weight;	
-	int dim = args.dim,vocab_size=embed->nVocab;
+	int nActivePC = 1;		//	for __launch_bounds__(MAX_THREADS_PER_BLOCK, MIN_BLOCKS_PER_MULTIPROCESSOR) 
+	// cudaCheck(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&nActivePC, kernel_output<__nv_fp8_e5m2, AT>, dBLOCK, smemPB));
+	int nCore = hFish->curDevice()->nCore,smemPB = args.dim*sizeof(float);
+	int dim = args.dim,vocab_size=embed->nVocab,dBLOCK=1024,dGRID=nCore*nActivePC;
 	// copy the token embedding into x	
 	tpEMBED *token_embedding_table = TO<tpEMBED>(embed->w);
 	kernel_embed<<<dim / 32, 32, 0, main_stream>>>(args.x, token_embedding_table, token, dim);
-	embed->w->Print("wte",0,0);			PrintTensor<float>("GetRow",args.x,true,dim,1);		
+	embed->w->Print("wte",0,0);			PrintTensor<AT>("GetRow",args.x,true,dim,1);		
 	PrintTensor<__nv_fp8_e5m2>("wq",(__nv_fp8_e5m2*)(args.cLayers[0].wq),true,dim,dim);		
 	PrintTensor<__nv_fp8_e5m2>("wk",(__nv_fp8_e5m2*)(args.cLayers[0].wk),true,args.kv_dim,dim);		
 	PrintTensor<__nv_fp8_e5m2>("wv",(__nv_fp8_e5m2*)(args.cLayers[0].wv),true,args.kv_dim,dim);		
@@ -436,47 +342,87 @@ float* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV,bool isCPU,unsigned flag
 	// }
 	OutCLS* cls = hFish->GetNeuron<OutCLS>("OutCLS",0);
 	LayerNormal* lnf = hFish->GetNeuron<LayerNormal>("LayerNormal",0);    
-    float *logits = TO<float>(cls->preLogits),*rms_final_weight = TO<float>(lnf->w); // (dim,);	
+    float *logits = TO<float>(cls->preLogits);
+	float *rms_final_weight = TO<float>(lnf->w); // (dim,);	
     void* argsp = &args;
-	int coopsms = hFish->curDevice()->nCore;
+	
 	// PrintTensor<float>("x_0",args.x,true,dim,1);	uint32_t,__nv_fp8_e5m2,float
-	double now = GST_ms();
+	
 	hGensor cur=GTensor::outL,residual=nullptr;
-    // auto err = cudaLaunchCooperativeKernel((void*)T_forward_qkv<__nv_fp8_e5m2, __half, float>,coopsms, 1024, &argsp, args.dim * sizeof(float), main_stream);
+    // auto err = cudaLaunchCooperativeKernel((void*)T_forward_qkv<__nv_fp8_e5m2, __half, float>,dGRID, dBLOCK, &argsp, smemPB, main_stream);
     // cudaCheck( err );
 	for (int l = 0; l < args.n_layers; ++l) {
 		args.layNo = l;
 		SelfAttention *QKV = hFish->GetNeuron<SelfAttention>("SelfAttention",l);
+		const CoopLayer<__nv_fp8_e5m2>* L = (const CoopLayer<__nv_fp8_e5m2>*)(args.cLayers+l);		//	args.cLayers+l
+		PrintTensor<float>("rms_att_weight",L->rms_att_weight,true,dim,1);			
 		// QKV->FUSE_cuda();
-		auto err = cudaLaunchCooperativeKernel((void*)T_forward_qkv<__nv_fp8_e5m2, __half, float>,coopsms, 1024, &argsp, args.dim * sizeof(float), main_stream);
+		
+		auto err = cudaLaunchCooperativeKernel((void*)T_forward_qkv<__nv_fp8_e5m2, __half, AT>,dGRID, dBLOCK, &argsp, smemPB, main_stream);		
+		PrintTensor<AT>("hb",args.hb,true,args.hb_dim,1);		
+		PrintTensor<AT>("q",args.q,true,args.q_dim,1);	
+		PrintTensor<AT>("att",args.att,true,dim,1);		//why it's inf ???
+		PrintTensor<AT>("x_1",args.x,true,dim,1);
 		cudaCheck( err );
-		if(0){
-			FFN *ffn = hFish->GetNeuron<FFN>("FFN",l);   	
+		cudaCheck(cudaStreamSynchronize(main_stream));
+		double now = GST_ms();
+		FFN *ffn = hFish->GetNeuron<FFN>("FFN",l);  
+		if(DEBUG.cmd_p1){	//	-0.010254 -0.238807 ...0.491514 0.0411605 0.318263 ...0.088502 	"ffn_inp" |avg|=0.115405(1536) avg_len=0.195593 sum2=58.7623 [-1.496535,1.585582] nz=0
+			
+			ffn->OnDebug();
 			ffn->FUSE_cuda(cur,0x0);
 		}else{
-			err = cudaLaunchCooperativeKernel((void*)T_forward_ffn<__nv_fp8_e5m2, __half, float>,coopsms, 1024, &argsp, args.dim * sizeof(float), main_stream);
+			void* kernelArgs[] = { argsp };
+			// err = cudaLaunchCooperativeKernel((void*)T_forward_ffn<__nv_fp8_e5m2, __half, AT>,dGRID, dBLOCK, &argsp, smemPB, main_stream);
+			err = cudaLaunchCooperativeKernel((void*)T_forward_ffn<__nv_fp8_e5m2, __half, AT>,dGRID, dBLOCK, kernelArgs, smemPB, main_stream);
+			// T_forward_ffn<__nv_fp8_e5m2, __half, AT><<<dGRID, dBLOCK, smemPB, main_stream>>>(&args);	//why its slower than cudaLaunchCooperativeKernel
 			cudaCheck( err );
+			
 		}
+		cudaCheck(cudaStreamSynchronize(main_stream));
+		SUM::tX1 += GST_ms()-now;
+		PrintTensor<AT>("x_2",args.x,true,dim,1);	
+
 	}
     if (isOnlyUpdateKV) {
 		return NULL;
-	}
-	PrintTensor<float>("q",args.q,true,args.q_dim,1);	
-	PrintTensor<float>("att",args.att,true,dim,1);		//why it's inf ???
-	PrintTensor<float>("x_1",args.x,true,dim,1);	
-	PrintTensor<float>("hb",args.hb,true,args.hb_dim,1);		
+	}	
 //-0.170935 0.218924 0.0977959 ...0.0455288 0.0808399 -0.204381 0.0195478 ...-0.138804 -0.0699319 	"x" avg=0.111772(1536) avg_len=0.18982 sum2=55.3446 [-0.958953,2.267083]
 	
-	int output_blk = 32 * 32, output_par = 1;
-	cudaCheck(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&output_par, kernel_output<__nv_fp8_e5m2, float>, output_blk, dim * sizeof(float)));
+
+	hGensor out_weight = args.out_weight;	
 	uint64_t pTok = PROF_TOKEN(vocab_size * dim * args.weight_dbits / 8);
-	// // classifier into logits		
-	kernel_output<__nv_fp8_e5m2, float><<<coopsms * output_par, output_blk, dim * sizeof(float), main_stream>>>(
+	// template <typename T, typename AT> (uint64_t, float* xout, AT* x, T* w, float* rms_weight, int n, int d, float norm_eps, bool norm_ln)
+	kernel_output<__nv_fp8_e5m2, AT><<<dGRID, dBLOCK, smemPB, main_stream>>>(
 	    pTok, logits, args.x, TO<__nv_fp8_e5m2>(out_weight), rms_final_weight, dim, vocab_size, args.norm_eps, args.norm_ln);	
 	cudaCheck(cudaStreamSynchronize(main_stream));
 	cudaCheck(cudaGetLastError()); // check for kernel launch errors; they might fail with OOM due to lazy kernel compilation
-	SUM::tX1 += GST_ms()-now;
+	
 	// cls->preLogits->Print("logits",0,-1,dim);
 	cls->preLogits->SerialData("",nullptr,true);
+	return logits;
+}
+
+float* T_generate_(hFISH hFish,int id,typNUMBER tpActivity,unsigned flags){	//int token, int pos, 	
+	float *logits = nullptr;
+	
+	if(DEBUG.T_cpu==1){            
+		// T_generate_cpu(SharedThis(), false, flag);
+	}else{
+		switch(tpActivity){
+		case typNUMBER::F32:
+			logits = T_generate_cuda<float>(hFish,false,id,flags); 
+			break;
+		case typNUMBER::BF16:
+			logits = T_generate_cuda<__nv_bfloat16>(hFish,false,id,flags); 
+			break;
+		// case typNUMBER::F8E5M2:
+		// 	logits = T_generate_cuda<__nv_fp8_e5m2>(hFish,false,id,flags); 
+		// 	break;
+		default:
+			assert(0);
+		}
+		
+	}
 	return logits;
 }

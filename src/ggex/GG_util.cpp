@@ -283,12 +283,13 @@ void CLI_params::Dump( )    {
     _INFO(" n_ff=%u", n_ff());
     _INFO(" n_head=%u", n_head());
     _INFO(" n_head_kv=%u", n_head_kv());
-    _INFO(" n_layer=%u(%u)", nLayer(),n_layer_train);
+    _INFO(" n_layer=%d(%d)", nLayer(),n_layer_train);
     _INFO(" n_rot=%u\n", n_rot());       
     _INFO(" f_norm_rms_eps=%g", model.norm_rms_eps);   
     _INFO(" rope_freq_base=%g", model.rope_freq_base);   
-    _INFO(" rope_freq_scale=%g", model.rope_freq_scale);
-    _INFO("\n lora_r=%d lora_alpha=%d \n", lora_r,lora_alpha); 
+    _INFO(" rope_freq_scale=%g\n", model.rope_freq_scale);
+    // _INFO(" lora_r=%d lora_alpha=%d ", lora_r,lora_alpha); 
+    _INFO(" SepQKV=%d  \n", model.isSeparateQKV);
     // _INFO(" NABLA = %s\n", nabla==0? "" : nabla==3 ? "Embed+AutoEncoder" : (nabla==2 ? "" : "qkv") ); 
     // _INFO(" SIGMA = %s\n", sigma.c_str()); 
 }
@@ -339,15 +340,24 @@ string MODEL_CARD::sAttnOut=".wo";           //  "_output";    //  "_cat"
 
 MODEL_CARD::MODEL_CARD( )    {
 #if defined(ENABLE_FP16)    
-    tpWeight = typNUMBER::F16,      tpActivation = typNUMBER::F16,          tpGradient = typNUMBER::F16;
+    tpWeight = typNUMBER::F16,          tpActivation = typNUMBER::F16,              tpGradient = typNUMBER::F16;
 #elif defined(ENABLE_BF16) 
-    tpWeight = typNUMBER::BF16,     tpActivation = typNUMBER::BF16,         tpGradient = typNUMBER::BF16;
+    tpWeight = typNUMBER::BF16,         tpActivation = typNUMBER::BF16,             tpGradient = typNUMBER::BF16;
+#elif defined(ENABLE_FP8) 
+    tpWeight = typNUMBER::F8E5M2,       tpActivation = typNUMBER::BF16,             tpGradient = typNUMBER::BF16;
+#elif defined(ENABLE_FP32) 
+    tpWeight = typNUMBER::F32,          tpActivation = typNUMBER::F32,              tpGradient = typNUMBER::F32;
 #else
     assert(0);
 #endif
 }
 
 bool MODEL_CARD::Init(const JSON&jConfig,int flag){
+    string sTyp = jKVs(jConfig,{"model","datatype","weight"},string("") );
+    if(!sTyp.empty())    tpWeight = tpNumOf(sTyp);
+    sTyp = jKVs(jConfig,{"model","datatype","embed"},string("") );
+    if(!sTyp.empty())    tpEmbed = tpNumOf(sTyp);
+
     sCardPath = jKV(jConfig,{"model_card"},sCardPath );
     if(sCardPath.empty())
         return false;
@@ -370,6 +380,7 @@ bool MODEL_CARD::Init(const JSON&jConfig,int flag){
             eos_token_id = jKV(jModelParam,{"eos_token_id"},eos_token_id );
         }
     }
+
     return empty();
 }
 
@@ -530,7 +541,7 @@ void CLI_params::OnArch( ){
         model.isNormalBias = true;
         model.isSLPBias = true;         //nealy same
         model.isPaddedCls = true;       //ceil(n/128.0)*128
-        model.isSeperateQKV = false;
+        model.isSeparateQKV = false;
         model.preLogits_dB = 8;
         model.isFFNShareParam = true;
         model.isEmbedWeightTying = true;
@@ -558,6 +569,7 @@ void CLI_params::OnArch( ){
         model.isNormalBias = true;
         model.isSLPBias = true;         //nealy same
         model.isPaddedCls = true;       //  ceil(n/128.0)*128
+        model.isSeparateQKV = false;
         model.isRope = false;
         model.preLogits_dB = 8;
 
@@ -567,7 +579,7 @@ void CLI_params::OnArch( ){
         
         break;
     case NLP_QWEN2:
-        model.isSeperateQKV = true;
+        model.isSeparateQKV = true;
         model.sNorm = ".norm";
         model.sLayer= "layers.";  
         // model.sAttnOut=".wqkv"; 
@@ -817,7 +829,7 @@ bool CLI_params::parse(int argc, char ** argv)  {
             exit(1);
         }
     }    
-    DEBUG.T_GEMM = 1;
+    DEBUG.T_GEMM = 0;       //  0-hybrid cublasLtMatmul/cublasGemmEx  
     if(jPath.empty() || !InitJConfig(jPath))
         return false;
     
@@ -1098,73 +1110,6 @@ try{
 }
 }
 
-#ifdef __USE_GGML__
-struct ggml_context *InitCTX(size_t msize,int flag){
-    struct ggml_init_params ctx_model_params;
-    if(msize==0){
-        msize = ggml_tensor_overhead() * 16384; //LLAMA_TRAIN_MAX_NODES;
-    }
-    ctx_model_params.mem_size   = msize;
-    ctx_model_params.mem_buffer = NULL;
-    ctx_model_params.no_alloc   = true;
-    
-    struct ggml_context * ctx = ggml_init(ctx_model_params);  
-    return ctx;  
-}
-#endif
-
-/*
-static void ggml_compute_forward_scale_q(
-        const struct ggml_compute_params * params,
-        struct ggml_tensor * dst) {
-
-    const struct ggml_tensor * src0 = dst->src[0];
-
-    assert(ggml_is_contiguous(src0));
-    assert(ggml_is_contiguous(dst));
-    assert(ggml_are_same_shape(src0, dst));
-
-    if (params->type == GGML_TASK_TYPE_INIT || params->type == GGML_TASK_TYPE_FINALIZE) {
-        return;
-    }
-    GGML_TENSOR_UNARY_OP_LOCALS
-    // scale factor
-    float v;
-    memcpy(&v, dst->op_params, sizeof(float));
-
-    const int ith = params->ith;
-    const int nth = params->nth;
-
-    const int nc = src0->ne[0];
-    const int nr = ggml_nrows(src0);
-
-    // rows per thread
-    const int dr = (nr + nth - 1)/nth;
-
-    // row range for this thread
-    const int ir0 = dr*ith;
-    const int ir1 = MIN(ir0 + dr, nr);
-
-    // const size_t nb01 = src0->nb[1];
-    // const size_t nb1 = dst->nb[1];    
-    assert(ne00 % 32 == 0);
-    float * wdata = (float *) params->wdata + (ne00 + CACHE_LINE_SIZE_F32) * ith;
-    const enum ggml_type type = src0->type;
-    const enum ggml_type dtype = dst->type;
-    ggml_to_float_t const dequantize_row_q = type_traits[type].to_float;
-    ggml_from_float_t const quantize_row_q = type_traits[dtype].from_float;
-    for (int i1 = ir0; i1 < ir1; i1++) {
-        if (dst->data != src0->data) {            // src0 is same shape as dst => same indices
-            memcpy((char *)dst->data + i1*nb1, (char *)src0->data + i1*nb01, nc * sizeof(float));
-        }
-        void *data = dst->data + i1*nb1;
-        dequantize_row_q(data, wdata, ne00);    // unquantize row from src0 to temp buffer    
-        ggml_vec_scale_f32(nc, wdata, v);
-        // ggml_vec_scale_f32(nc, (float *) ((char *) dst->data + i1*nb1), v);
-        quantize_row_q(wdata, data, ne00);
-    }
-}*/
-
 hGensor GradOf(struct ggml_cgraph *cgraph,hGensor node,int flag){
 #ifdef GG_V12
     assert(0);          return nullptr;
@@ -1187,43 +1132,6 @@ hGensor GradOf(struct ggml_cgraph *cgraph,hGensor node,int flag){
     return node->grad;
 #endif
 }
-
-/*
-    byte per element of this type
-    GGML'type traits don't support 
-    [GGML_TYPE_F16] = {
-        .type_name                = "f16",
-        .blck_size                = 1,
-        .type_size                = sizeof(ggml_fp16_t),
-        .is_quantized             = false,
-        .to_float                 = (ggml_to_float_t) ggml_fp16_to_fp32_row,
-        .from_float_ref           = (ggml_from_float_t) ggml_fp32_to_fp16_row,
-    },
-    [GGML_TYPE_Q4_0] = {
-        .type_name                = "q4_0",
-        .blck_size                = QK4_0,
-        .type_size                = sizeof(block_q4_0),
-        .is_quantized             = true,
-        .to_float                 = (ggml_to_float_t) dequantize_row_q4_0,
-        .from_float_ref           = (ggml_from_float_t) quantize_row_q4_0_ref,
-    },
-    [GGML_TYPE_Q8_0] = {
-        .type_name                = "q8_0",
-        .blck_size                = 32,
-        .type_size                = sizeof(block_q8_0),
-        .is_quantized             = true,
-        .to_float                 = (ggml_to_float_t) dequantize_row_q8_0,
-        .from_float_ref           = (ggml_from_float_t) quantize_row_q8_0_ref,
-    },
-    [GGML_TYPE_Q8_1] = {
-        .type_name                = "q8_1",
-        .blck_size                = 32,
-        .type_size                = sizeof(block_q8_1),
-        .is_quantized             = true,
-        .from_float_ref           = (ggml_from_float_t) quantize_row_q8_1_ref,
-    },
-    ...
-*/
 
 double BitPE(typNUMBER type) {
     if(type==typNUMBER::F8E5M2 || type==typNUMBER::F8E4M3 || type==typNUMBER::I8)

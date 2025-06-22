@@ -78,7 +78,8 @@ SelfAttention::SelfAttention(Fish* hG_,const std::string&key_,JSON::const_iterat
         assert(C_qkv%n_head==0 && (C_qkv/n_head)%8==0);
         shape={C,C_qkv,n_head};
     }
-    
+    isSeparateQKV = hFish->config.model.isSeparateQKV;
+    // dump_flag = -1;
     tpNormal = DEBUG.SelfAttention_noraml;
     assert(shape[0]>0 && shape[1]>0 && shape[2]>0);
     // q.Init(hG_,flag);       k.Init(hG_,flag);       v.Init(hG_,flag);       proj.Init(hG_,flag);
@@ -94,7 +95,7 @@ bool SelfAttention::Build(int flag_0)   {
     norm.BuildX(name+MODEL_CARD::sNorm,{shape[0]},hFish,flag);        
 
     SHAPE sp2={shape[0],shape[1]*3},sp3={B,T,C},spTrans={B,n_head_kv,T};   //,T
-    if(hFish->config.model.isSeperateQKV)   {
+    if(isSeparateQKV)   {
         Q.BuildX(name+".wq",sp,hFish,flag);          
         K.BuildX(name+".wk",sp,hFish,flag);              
         V.BuildX(name+".wv",sp,hFish,flag);
@@ -117,22 +118,27 @@ bool SelfAttention::Build(int flag_0)   {
     if(hFish->config.model.isRope){
         rope.BuildX(name+".ROPE",sp,hFish,flag);
     }
-        
-
-    // Q.BuildX(name+".wq",sp,hFish,flag);          
-    // K.BuildX(name+".wk",sp,hFish,flag);              
-    // V.BuildX(name+".wv",sp,hFish,flag);
-    // rope.BuildX(name+".ROPE",sp,hFish,flag);
-    
+      
     proj_cat.BuildX(name+MODEL_CARD::sAttnOut,(SHAPE){shape[1],shape[0]},hFish,flag );
 
     BIT_SET(proj_cat.out->flags,GTensor::F_NOALLOC);       //memory trick as kGPT
     proj_cat.w->residual_scale = hFish->config.common.residual_scale;
     if(remater_qkv){
-        BIT_SET(Q.out->flags,GTensor::F_NOALLOC);        
+        if(isSeparateQKV)   {
+            BIT_SET(Q.out->flags,GTensor::F_NOALLOC);  BIT_SET(K.out->flags,GTensor::F_NOALLOC);  BIT_SET(V.out->flags,GTensor::F_NOALLOC);
+        }else
+            BIT_SET(Q.out->flags,GTensor::F_NOALLOC);        
     }
-    tmpQKV=remater_qkv?GTensor::tmpFF1:Q.out;
-
+    tmpQKV=remater_qkv?GTensor::tmpFF1:Q.out;       
+    assert(remater_qkv);        // always remater_qkv
+    size_t offset=sizeof(floatX)*C;
+    devPtrQ = ToX(tmpQKV);          devDeltaQ = ToX(GTensor::bt4c);
+    if(isSeparateQKV)     {  
+        offset=Q.out->nByte();
+    }
+    devPtrK = devPtrQ+offset,              devPtrV = devPtrK+offset;   //for cuDNN
+    devDeltaK = devDeltaQ+offset,          devDeltaV = devDeltaK+offset;   
+    
     // tpTrans = RELU2;
     // moe.BuildX(name+".moe",sp,hFish,flag);        //  why this would slow converge???
     return true;
@@ -165,7 +171,7 @@ hGensor SelfAttention::Ming(RLS_BP* hRLS,hGensor inpL,int flag)    {
     
     hGensor cur = inpL,lastResi=inpL;
     if(hFish->isSymbolic()){
-        if(hFish->config.model.isSeperateQKV)
+        if(isSeparateQKV)
             attn->AddSrc({inpL,Q.w,Q.b,Q.out,K.w,K.b,K.out,V.w,V.b,V.out,transition,bqkv});
         else{
             inpL>>Q;       
@@ -1457,6 +1463,9 @@ hNeuron Fish::J2Neuron(void *ctx_,string& dad,int level,const JConfig& jconfig,i
             // BuildMacros();
             continue;
         }
+        if(k=="datatype"){
+            continue;
+        }
         if(k=="arch"){
             continue;
         }
@@ -1533,26 +1542,21 @@ try{
     int dB = hFish->config.model.preLogits_dB;            
     assert(B%dB==0);
     nTmp = std::max(nFFW/dB+1,nTmp);       assert(nTmp<INT_MAX);
-    typNUMBER tpWeight = hFish->config.model.tpWeight;
-
+    typNUMBER tpA = hFish->config.model.tpActivation,tpG=hFish->config.model.tpGradient,tpW=hFish->config.model.tpWeight;
     // cuLiteTest(B,T,C);
     int mostC = C;  //config.nEmbed(-1);      
     SHAPE sp={B,T,C},sp4={B,T,max(nFF,3*C)},sp0={dB, (int)nTmp},spMost={B,T,mostC};
-    GTensor::bt4c = std::make_shared<huTensor>(hFish,"scratch_4c",sp4,tpWeight,true); 
-    GTensor::tmpFF1 = std::make_shared<huTensor>(hFish,"tmpFF1",sp4,tpWeight,true); 
+    GTensor::bt4c = std::make_shared<huTensor>(hFish,"scratch_4c",sp4,tpA,true); 
+    GTensor::tmpFF1 = std::make_shared<huTensor>(hFish,"tmpFF1",sp4,tpA,true); 
+    GTensor::outL = std::make_shared<huTensor>(hFish,"outL",spMost,tpA,true);         
+    GTensor::scratch = std::make_shared<huTensor>(hFish,"scratch/output",sp0,tpA,true);     //  may reduce memory by sp0=sp0/VP
 
+    GTensor::delta = std::make_shared<huTensor>(hFish,"delta",spMost,tpG,true); 
+    GTensor::tmpDelta = std::make_shared<huTensor>(hFish,"delta",spMost,tpG,true);    GTensor::host_buff = new float[GTensor::scratch->size()];
     if(hFish->config.ModelArch()==NLP_GUPPY){
-        GTensor::tmpW = std::make_shared<huTensor>(hFish,"tmpFF1",SHAPE({nEmbed,nFF}),tpWeight,true); 
-        GTensor::tmpGW = std::make_shared<huTensor>(hFish,"tmpFF1",SHAPE({nEmbed,nFF}),tpWeight,true); 
-    }
-    GTensor::delta = std::make_shared<huTensor>(hFish,"delta",spMost,tpWeight,true); 
-    GTensor::tmpDelta = std::make_shared<huTensor>(hFish,"delta",spMost,tpWeight,true); 
-    GTensor::outL = std::make_shared<huTensor>(hFish,"outL",spMost,tpWeight,true); 
-    // GTensor::residual = std::make_shared<huTensor>(hFish,"residual",spMost,tpWeight,true); 
-    //  may reduce memory by sp0=sp0/VP
-    GTensor::scratch = std::make_shared<huTensor>(hFish,"scratch/output",sp0,tpWeight,true);
-    GTensor::host_buff = new float[GTensor::scratch->size()];
-    
+        GTensor::tmpW = std::make_shared<huTensor>(hFish,"tmpW",SHAPE({nEmbed,nFF}),tpW,true); 
+        GTensor::tmpGW = std::make_shared<huTensor>(hFish,"tmpGW",SHAPE({nEmbed,nFF}),tpG,true); 
+    }    
     return true;
 }
 catch(const std::exception & e) {
@@ -1588,11 +1592,11 @@ int Fish::jToGraph( void *ctx_,bool isBuild,int flag)   {
     RLS_BP* hRLS = hEDS->GetScheduler<RLS_BP>();   
 
     FFN *last_ffn=GetNeuron<FFN>("FFN",L-1); 
-    hGensor tmpDelta = GTensor::tmpDelta;       //last_ffn->out;    
+   
     for (int l = L-1; l >= 0; l--) {
         SelfAttention *QKV = GetNeuron<SelfAttention>("SelfAttention",l);
         FFN *ffn = GetNeuron<FFN>("FFN",l);        
-        ffn->delta = nullptr;   //tmpDelta; 
+        ffn->delta = nullptr;   
     }
 
     hCLS = GetNeuron<OutCLS>("OutCLS",0);       assert(hCLS!=nullptr);
@@ -1626,3 +1630,4 @@ int Fish::jToGraph( void *ctx_,bool isBuild,int flag)   {
 
     return 0x0;
 }
+

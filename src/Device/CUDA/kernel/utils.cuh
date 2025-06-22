@@ -11,7 +11,9 @@
 #include <assert.h>
 // #include <float.h>
 #include <stdint.h>
+#include <cooperative_groups.h>
 #include "../cuda_common.h"
+#include "../Tensor/Packed.hpp"
 
 // fused multiply-add: FMA(a, b, c) = a*b + c, where the full product enters into the addition unmodified (neither rounded nor truncated), and there is a single rounding at the end. 
 // One FMA instruction thus comprises two floating-point operations.It's the basic floating-point building block of the GPU.
@@ -20,11 +22,29 @@
 //     return fma(weight, end, fma(-weight, start, start));
 // }
 
-// note: we expect loads to be broken into units of up to 16b due to specified alignment
-template <typename T, int N>
-union alignas(sizeof(T) * N) ablock {
-	T v[N];
-};
+// only for kernels by cudaLaunchCooperativeKernel
+__device__ static void SYNC_GRID() {
+    // cooperative_groups::grid_group grid = cooperative_groups::this_grid();
+    // grid.sync();  
+	volatile unsigned int* barrier = &cooperative_groups::details::get_grid_workspace()->barrier;
+
+	if (threadIdx.x == 0) {
+		unsigned int nb = 1;
+		if (blockIdx.x == 0) {
+			nb = 0x80000000 - (gridDim.x - 1);
+		}
+
+		unsigned int old_arrive;
+		asm volatile("atom.add.release.gpu.u32 %0,[%1],%2;" : "=r"(old_arrive) : _CG_ASM_PTR_CONSTRAINT(barrier), "r"(nb) : "memory");
+
+		unsigned int current_arrive;
+		do {
+			asm volatile("ld.acquire.gpu.u32 %0,[%1];" : "=r"(current_arrive) : _CG_ASM_PTR_CONSTRAINT(barrier) : "memory");
+		} while (((old_arrive ^ current_arrive) & 0x80000000) == 0);
+	}
+
+	__syncthreads();
+}
 
 /*
     An “all reduce” within a warp using
@@ -37,6 +57,69 @@ __device__ inline float warpreduce_sum(float v) {
 	return v;
 }
 
+__device__ inline float warpreduce_max(float v) {
+#pragma unroll
+	for (int mask = warpSize / 2; mask > 0; mask >>= 1) {
+		v = max(v, __shfl_xor_sync(0xffffffff, v, mask));
+	}
+	return v;
+}
+__device__ inline int warpreduce_maxi(int v) {
+#pragma unroll
+	for (int mask = warpSize / 2; mask > 0; mask >>= 1) {
+		v = max(v, __shfl_xor_sync(0xffffffff, v, mask));
+	}
+	return v;
+}
+
+__device__ inline float blocktranspose(float v, float def) {
+	int lane = threadIdx.x % warpSize;
+	int warp = threadIdx.x / warpSize;
+
+	__shared__ float sm[32];
+	sm[warp] = v;
+	__syncthreads();
+
+	return lane < blockDim.x / warpSize ? sm[lane] : def;
+}
+
+
+
+__device__ inline float blockreduce_max(float v) {
+	v = warpreduce_max(v);
+	v = blocktranspose(v, -FLT_MAX);
+	v = warpreduce_max(v);
+	return v;
+}
+
+// fast fp8x4 => float4 conversion; drops unnecessary NaN handling from __nv_cvt_fp8_to_halfraw
+__device__ inline float4 fp8x4_e5m2_ff(__nv_fp8x4_e5m2 v) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+	return float4(v);
+#else
+	unsigned int vlo = v.__x, vhi = v.__x >> 16;
+	__half2_raw hlo = {(unsigned short)(vlo << 8), (unsigned short)(vlo & 0xff00)};
+	__half2_raw hhi = {(unsigned short)(vhi << 8), (unsigned short)(vhi & 0xff00)};
+	float2 rlo = __internal_halfraw2_to_float2(hlo);
+	float2 rhi = __internal_halfraw2_to_float2(hhi);
+	float4 res = {rlo.x, rlo.y, rhi.x, rhi.y};
+	return res;
+#endif
+}
+// fast fp8x4 => float4 conversion; drops unnecessary NaN handling from __nv_cvt_fp8_to_halfraw
+__device__ inline float4 fp8x4_e5m2_ff(__nv_fp8x4_e5m2 *v) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+	return float4(*v);
+#else
+	unsigned int vlo = v->__x, vhi = v->__x >> 16;
+	__half2_raw hlo = {(unsigned short)(vlo << 8), (unsigned short)(vlo & 0xff00)};
+	__half2_raw hhi = {(unsigned short)(vhi << 8), (unsigned short)(vhi & 0xff00)};
+	float2 rlo = __internal_halfraw2_to_float2(hlo);
+	float2 rhi = __internal_halfraw2_to_float2(hhi);
+	float4 res = {rlo.x, rlo.y, rhi.x, rhi.y};
+	return res;
+#endif
+}
 
 __device__ inline half fp8_e5m2_ff(uint8_t v) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
@@ -46,79 +129,26 @@ __device__ inline half fp8_e5m2_ff(uint8_t v) {
 #endif
 	return h;
 }
-// ----------------------------------------------------------------------------
-// Packed128 data structure that forces the compiler to use 128-bit loads/stores
-// in GPUs that support (the LDG.128 and STS.128 instructions)
-// This is a bit similar to the use of float4 in the case of 32-bit floats, but
-// supports arbitrary precision.
 
-template<class ElementType>
-struct alignas(16) Packed128 {
-    Packed128() = default;
-    __device__ explicit Packed128(int4 bits) {
-        static_assert(sizeof(bits) == sizeof(payload), "Size mismatch.");
-        memcpy(&payload, &bits, sizeof(bits));
-    }
 
-    __device__  static Packed128 constant(ElementType value) {
-        Packed128 result;
-        for(int k = 0; k < size; ++k) {
-            result.payload[k] = value;
-        }
-        return result;
-    }
-    __device__ static Packed128 zeros() {
-        return constant(0.f);
-    }
-    __device__ static Packed128 ones() {
-        return constant(1.f);
-    }
-
-    __device__ ElementType& operator[](int index) {
-        return payload[index];
-    }
-    __device__ const ElementType& operator[](int index) const {
-        return payload[index];
-    }
-    __device__ int4 get_bits() const {
-        int4 bits;
-        static_assert(sizeof(bits) == sizeof(payload), "Size mismatch.");
-        memcpy(&bits, &payload, sizeof(bits));
-        return bits;
-    }
-    static constexpr const size_t size = sizeof(int4) / sizeof(ElementType);
-    ElementType payload[size];
-};
-
-// load a Packed128 from an aligned memory address
-template<class ElementType>
-__device__ Packed128<ElementType> load128(const ElementType* address) {
-    return Packed128<ElementType>{*reinterpret_cast<const int4*>(address)};
+template <typename T>
+__device__ inline float CU_T2Float(const T* a0)   {
+    float a = float(*a0);   
+    return a;
 }
-// load a Packed128 from an aligned memory address with streaming cache hint
-template<class ElementType>
-__device__ Packed128<ElementType> load128cs(const ElementType* address) {
-    return Packed128<ElementType>{__ldcs(reinterpret_cast<const int4*>(address))};
+//	Frome smart code of CALM
+template <> __device__ inline float CU_T2Float<__nv_fp8_e5m2>(const __nv_fp8_e5m2 *x) {
+// For Hopper (SM 90+) and later architectures:
+//   asm("cvt.f32.f8.e5m2 %0, %1;" : "=f"(f) : "h"(x));
+// For (SM 80/86 ...)  without native FP8 support:
+	union {
+		unsigned short u;
+		half f;   //   IEEE 754-2008 binary16 (1 sign bit, 5 exponent bits, 10 mantissa bits).
+	} u;
+	u.u = (*(unsigned char*)(x)) << 8;
+	float a = u.f;
+    return a;
 }
-// store a Packed128 to an aligned memory address
-template<class ElementType>
-__device__ void store128(ElementType* target, Packed128<ElementType> value) {
-    *reinterpret_cast<int4*>(target) = value.get_bits();
-}
-// store a Packed128 to an aligned memory address with streaming cache hint
-template<class ElementType>
-__device__ void store128cs(ElementType* target, Packed128<ElementType> value) {
-    __stcs(reinterpret_cast<int4*>(target), value.get_bits());
-}
-// store a Packed128 to an aligned memory address while caching in L2 but bypassing L1
-template<class ElementType>
-__device__ void store128cg(ElementType* target, Packed128<ElementType> value) {
-    __stcg(reinterpret_cast<int4*>(target), value.get_bits());
-}
-
-// short-form typedefs
-typedef Packed128<float> f128;
-typedef Packed128<floatX> x128;
 
 // ----------------------------------------------------------------------------
 // Copy, cast functions
@@ -157,19 +187,14 @@ __global__ void copy_and_cast_kernel(Td* dst, const Ts* src, size_t n, ptrdiff_t
 // Warp/Block communication primitives
 
 // warp-level reduction for summing values
-// __device__ inline float warpReduceSum(float val) {
-//     for (int offset = 16; offset > 0; offset /= 2) {
-//         val += __shfl_xor_sync(0xFFFFFFFF, val, offset);
-//     }
-//     return val;
-// }
 template<const int kWarpSize = WARP_SIZE>
 __device__ __forceinline__ float warpReduceSum(float val) {
+    assert(kWarpSize<=WARP_SIZE);
 #pragma unroll
-  for (int mask = kWarpSize >> 1; mask >= 1; mask >>= 1) {
-    val += __shfl_xor_sync(0xffffffff, val, mask);
-  }
-  return val;
+    for (int offset = kWarpSize >> 1; offset >= 1; offset >>= 1) {  //  performs a butterfly reduction pattern
+        val += __shfl_xor_sync(0xffffffff, val, offset);            // 1-2 cycle
+    }
+    return val;
 }
 // warp-level reduction for finding the maximum value
 __device__ inline float warpReduceMax(float val) {
@@ -178,15 +203,28 @@ __device__ inline float warpReduceMax(float val) {
     }
     return val;
 }
-// requires all 32 threads in the warp to be active, but should work for any block size
-// uses non-dynamic shared memory so every call increases shared memory requirements by 128 bytes
-// the fact it's unique shared memory allows us to avoid an extra __syncthreads() call at the end
-// but if called inside a loop, the shared memory will be implicitly reused, so set final_sync to 1
+
+__device__ inline void bitonicSwap(float& val, int j, int k) {
+    int lane = threadIdx.x % 32;
+    float other = __shfl_xor_sync(0xFFFFFFFF, val, j ^ k);
+    if ((lane & k) == 0 && val > other)
+        val = other;
+}
+
 using reduction_func_t = float (*) (float);
-template<reduction_func_t warp_reduction>
+/*  requires all 32 threads in the warp to be active, but should work for any block size
+    uses non-dynamic shared memory so every call increases shared memory requirements by 128 bytes
+    the fact it's unique shared memory allows us to avoid an extra __syncthreads() call at the end
+    but if called inside a loop, the shared memory will be implicitly reused, so set final_sync to 1
+*/
+
+template<reduction_func_t warp_reduction> 
+/*
+    two reductions of up to 1024 threads!
+    1) inside warp (shuffle), 2) cross-warp (shared memory), 3) inside warp (shuffle)
+*/
 __device__ inline float blockReduce(float val, bool final_sync=false, float out_of_bounds=0.0f) {
-    // two reductions of up to 1024 threads:
-    // 1) inside warp (shuffle), 2) cross-warp (shared memory), 3) inside warp (shuffle)
+    
     __shared__ float shared_val[WARP_SIZE];
     const int lane_id = threadIdx.x % WARP_SIZE;
     const int warp_id = threadIdx.x / WARP_SIZE;
@@ -194,7 +232,7 @@ __device__ inline float blockReduce(float val, bool final_sync=false, float out_
 
     float warp_val = warp_reduction(val);
     if (lane_id == 0) { shared_val[warp_id] = warp_val; }
-    __syncthreads();
+    __syncthreads();        //  make sure the data is in shared memory.
     warp_val = (lane_id < num_warps) ? shared_val[lane_id] : out_of_bounds;
     float block_val = warp_reduction(warp_val);
 
@@ -203,6 +241,21 @@ __device__ inline float blockReduce(float val, bool final_sync=false, float out_
     }
     return block_val;
 }
+/*
+__device__ inline float blockreduce_sum(float v) {
+	v = warpreduce_sum(v);
+	v = blocktranspose(v, 0.f); //very interesting
+      
+        int lane = threadIdx.x % warpSize;
+        int warp = threadIdx.x / warpSize;
+        __shared__ float sm[32];
+        sm[warp] = v;
+        __syncthreads();
+        return lane < blockDim.x / warpSize ? sm[lane] : def;
+    
+	v = warpreduce_sum(v);
+	return v;
+}*/
 
 // Performs a _deterministic_ sum reduction. determinism is achieved by requiring that only
 // a single block be used.
@@ -263,17 +316,25 @@ __device__ __host__ constexpr unsigned int Get2dNoiseUint(int indexX, int indexY
     return SquirrelNoise5(x + (PRIME_NUMBER * y), seed);
 }
 
-// stochastic rounding built on top of Squirel Noise above (with seed updated per step via xorshift)
-__device__ __forceinline__ void stochastic_rounding(float in, __nv_bfloat16 *out, unsigned int seed) {
-    // todo - is this stochastic rounding *too good*? can we cut any corners?
-    // makes sure each thread gets a different random number
-    unsigned int random = Get2dNoiseUint(threadIdx.x, blockIdx.x * blockDim.x + blockIdx.y, seed);
-    unsigned int threshold = random & 0xFFFF;
-    unsigned int float_bits = __float_as_uint(in);
-    unsigned int rounded_bits = float_bits & 0x0000FFFF;
-    float_bits = (rounded_bits > threshold) ? (float_bits | 0xFFFF) : (float_bits  & ~0xFFFF);
-    *out = __float2bfloat16_rn(__uint_as_float(float_bits));
-}
+#if defined(ENABLE_FP8)
+    __device__ __forceinline__ void stochastic_rounding(float in, __nv_fp8_e5m2 *out, unsigned int seed) {
+        assert(0);
+    }
+#endif
+
+#if defined(ENABLE_BF16)
+    // stochastic rounding built on top of Squirel Noise above (with seed updated per step via xorshift)
+    __device__ __forceinline__ void stochastic_rounding(float in, __nv_bfloat16 *out, unsigned int seed) {
+        // todo - is this stochastic rounding *too good*? can we cut any corners?
+        // makes sure each thread gets a different random number
+        unsigned int random = Get2dNoiseUint(threadIdx.x, blockIdx.x * blockDim.x + blockIdx.y, seed);
+        unsigned int threshold = random & 0xFFFF;
+        unsigned int float_bits = __float_as_uint(in);
+        unsigned int rounded_bits = float_bits & 0x0000FFFF;
+        float_bits = (rounded_bits > threshold) ? (float_bits | 0xFFFF) : (float_bits  & ~0xFFFF);
+        *out = __float2bfloat16_rn(__uint_as_float(float_bits));
+    }
+#endif
 
 #if defined(ENABLE_FP16) 
 __device__ __forceinline__ void stochastic_rounding(float in, half *out, unsigned int random) {

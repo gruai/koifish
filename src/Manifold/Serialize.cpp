@@ -157,14 +157,17 @@ try{
                 munmap(data, size);
                 return -1;
             }   //  
-            // if(G_Has_(target->name,{"layers.27.mlp.w1.weight"}))        //  wk.weight wq.weight wv.weight wo.weight ,"w2.weight","w3.weight"
-            //     target->ToTernary();
+            
+            if(G_Has_(target->name,{"mlp.w1.weight"}))  {      // "layers.27.mlp.w1.weight" wk.weight wq.weight wv.weight wo.weight ,"w2.weight","w3.weight"
+                BIT_SET(target->flags,GTensor::F_TERNARY);
+                // target->ToTernary();
+            }
             if(DUMP()){
                 _INFO("  >>>>  %d typ=%s\t data=%p grad=%p \t sz=%ld @%s\n",nSerialT,cNameOf(target->type),target->data,target->grad,tBYTE(target),target->name);
             }
-            if(strcmp(target->name,"model.output.weight")==0){   //only for debug
-                target->Print(key,0,-1);                //PrintTensor<f8e5m2_t>("wout",target->data,target->ne[0],dim);
-            }
+            // if(strcmp(target->name,"model.layers.27.mlp.norm.weight")==0){   //only for debug model.output.weight
+            //     target->Print(key,0,-1);                //PrintTensor<f8e5m2_t>("wout",target->data,target->ne[0],dim);
+            // }
             nSerialT++;
         }
     }

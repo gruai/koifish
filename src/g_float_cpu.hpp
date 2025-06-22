@@ -43,35 +43,25 @@ inline float clip(float x, float v) {
 	assert(!isnan(x) && !isinf(x));
 	return x < -v ? -v : (x > v ? v : x);
 }
-inline float gelu(float x) {
-	return 0.5f * x * (1.0f + tanhf(0.797885f * (x + 0.044715f * x * x * x)));
+template<typename T>
+inline T gelu(T x) {
+	T a = 0.5f * x * (1.0f + tanhf(0.797885f * (x + 0.044715f * x * x * x)));
+	return a;
 }
 
-inline float silu(float x) {
-	return x / (1.0f + expf(-x));
+template<typename T>
+inline T silu(T x) {
+	return T(x / (1.0f + expf(-x)));
 }
 
 float half_to_float(__gcc_fp16 x);
 __gcc_fp16 float_to_half(float x);
 
-inline __gcc_fp16 fp82half(unsigned char v) {
-	union {
-		unsigned short u;
-		__gcc_fp16 f;
-	} u;
-	u.u = v << 8;
-	return u.f;
-}
+/*
+	Lite & Smart conversion from CALM
+	1.	__gcc_fp16 is compiler-dependent (GCC/Clang), IEEE 754-2008 binary16 (1 sign bit, 5 exponent bits, 10 mantissa bits).
+	2. __nv_fp8x4_e5m2 is NVIDIA-specific.
 
-inline float fp8e5m2_to_float(f8e5m2_t x) {
-	__gcc_fp16 val = 0;
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-	memcpy(&val, &x, sizeof(f8e5m2_t));
-#else
-	memcpy((char*)&val + sizeof(f8e5m2_t), &x, sizeof(f8e5m2_t));
-#endif
-	return half_to_float(val);
-}
 inline float fp8_to_float(unsigned char v) {
 	union {
 		unsigned short u;
@@ -80,7 +70,7 @@ inline float fp8_to_float(unsigned char v) {
 	u.u = v << 8;
 	float a = u.f;
 	return a;
-}
+}*/
 
 
 inline f8e5m2_t float_to_fp8e5m2(float x) {
@@ -102,11 +92,7 @@ inline void float_to_fp8e5m2(size_t n,float *x,f8e5m2_t*out,int flag=0x0) {
 	}
 }
 
-inline float gf4_ff(uint32_t v, int k) {
-	float s = fp82half(v & 0xff) ; // we expect compiler to reuse this across multiple calls
-	s = s / -4.f;
-	return ((int)((v >> (8 + k * 3)) & 7) - 4) * s;
-}
+
 
 typedef float (*dotprod_t)(void* w, int n, int i, float* x);
 float dotprod_fp32(void* w, int n, int i, float* x);

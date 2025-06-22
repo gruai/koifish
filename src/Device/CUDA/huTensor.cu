@@ -1,9 +1,9 @@
-#include <cuda_fp16.h>
-#include <cuda_fp8.h>
-
+// #include <cuda_fp16.h>
+// #include <cuda_fp8.h>
+#include "../../g_float.hpp"
 #include "./kernel/Operator.cuh"
 #include "./kernel/utils.cuh"
-#include "../../ggex/GTensor.hpp"
+#include "../../Tensor/GTensor.hpp"
 #include "../../Utils/GST_log.hpp" 
 #include "../../Utils/GST_rander.hpp"
 #include "../../Manifold/Fish.hpp"
@@ -38,6 +38,9 @@ size_t huTensor::mostMemory(int typ)  const {
     if(isParam() && hFish->isTrain())   {
         most += nByte();                    // grad
         most += sizeof(float)*size()*2;     // gm,gv is float array
+    }
+    if(isParam()) {
+        most += sizeof(float)*ne[0];
     }
     return most;
 }
@@ -83,28 +86,29 @@ size_t huTensor::Free_1(void **obj,const string&info){
     return szMaloc;
 }
 
+static mt19937_state rngOfParams;       
 bool huTensor::InitParam(int tpX){
     size_t nElem0 = size(),i;
     size_t nInit = size(1),nB = BPE(type);
     bool isTmp = true;
     if(tpInit>0 && tpInit!=SERIALIZE){
         // _INFO("[InitParam]\t%ld-%ld@%s\n",size(),nInit,name);
-        mt19937_state init_rng;            
+             
         floatX* tmp = new floatX[nInit];
         switch(tpInit){
         case FIX_1:
-            for(i=0;i<nInit;i++)        tmp[i]=1; 
+            for(i=0;i<nInit;i++)        tmp[i]=(floatX)(1.0); 
             break;
         default:
 #ifdef NDEBUG
             {   CU_normal<floatX>(nInit,(floatX*)data,0.02f*residual_scale);     isTmp = false;  }
 #else
-                // manual_seed(&init_rng, 42);     //cys   only for debug
-                float *tmp32 = new float[nInit];
+                // manual_seed(&rngOfParams, 42);     //cys   only for debug
+                // float *tmp32 = new float[nInit];
                 assert(nInit<INT_MAX);
-                normal_(tmp32, nInit, 0.0f, 0.02f*residual_scale, &init_rng);
-                for(i=0;i<nInit;i++)        tmp[i]=tmp32[i];      //ony for debug    
-                delete[] tmp32;   
+                normal_19937<floatX>(tmp, nInit, 0.0f, 0.02f*residual_scale, &rngOfParams);
+                // for(i=0;i<nInit;i++)        tmp[i]=Float2T<floatX>(tmp32+i);      
+                // delete[] tmp32;   
 #endif     
             break;
         }
@@ -249,10 +253,19 @@ bool cuClearGrad(std::vector<hGTensor> tensors,int flag){
     return true;
 }
 
-bool D2H(void *dev,void *host,size_t szData,int flag=0x0){
+bool D2H(void *dev,void *host,size_t szData,int flag){
 try{
     assert(host!=nullptr && dev!=nullptr);        
     cudaCheck(cudaMemcpy(host,dev, szData, cudaMemcpyDeviceToHost));    
+    return true;
+}catch(...){
+    return false;
+}        
+}
+bool H2D(void *dev,void *host,size_t szData,int flag){
+try{
+    assert(host!=nullptr && dev!=nullptr);        
+    cudaCheck(cudaMemcpy(host,dev, szData, cudaMemcpyHostToDevice));    
     return true;
 }catch(...){
     return false;
@@ -392,11 +405,13 @@ inline float global_norm_squared(float* norm2, const T* values, size_t count, pt
         global_sum_deterministic(norm2, norm2, max_num_block_sums, main_stream);
         cudaCheck(cudaMemcpy(&a, norm2, sizeof(float), cudaMemcpyDeviceToHost));
     }else{
-        cudaCheck(cudaMemsetAsync(norm2, 0, sizeof(float), stream));
-        CU_x2_<T,block_size><<<CEIL_DIV(count,block_size), block_size, 0, main_stream>>>(norm2, values, count);
+        size_t smemPB = 1024*sizeof(float);
+        cudaCheck(cudaMemset(norm2, 0, sizeof(float)));
+        CU_x2_<T,block_size><<<CEIL_DIV(count,block_size), block_size, smemPB, main_stream>>>(norm2, values, count);
         cudaCheck(cudaMemcpy(&a, norm2, sizeof(float), cudaMemcpyDeviceToHost));        
+        cudaStreamSynchronize(main_stream);
     }
-    SUM::tX1 += GST_us()-now;
+    // SUM::tX1 += GST_us()-now;
     return a;
 }
 
@@ -440,45 +455,20 @@ double tNormOf(const hGTensor tensor,int flag){
         //ShardInfo shard ={0, tensor->size()};
     size_t nEle = tensor->size();       nz+=nEle;
     assert(tensor->grad!=nullptr);
-    
+    // _INFO("|%s|=...",tensor->name);
     if(tensor->grad!=nullptr)     {
         int block_size=1024,grid_size = deviceProp.maxThreadsPerMultiProcessor*deviceProp.multiProcessorCount/block_size;        
         a = global_norm_squared(norm2, (floatX*)(tensor->grad), nEle, 0, 1,max_num_block_sums, is_first_pass, main_stream);            
-        // global_sum_deterministic(norm2, norm2, max_num_block_sums, main_stream);
-        // cudaCheck(cudaMemcpy(&a, norm2, sizeof(float), cudaMemcpyDeviceToHost));
+        // _INFO("\r|%s|=%g\n",tensor->name,a);
         tensor->gnorm = sqrt(a);
         a = sqrt(a/nz);
     }
     if(tensor->data!=nullptr)     {
         a = global_norm_squared(norm2, (floatX*)(tensor->data), nEle, 0, 1,max_num_block_sums, is_first_pass, main_stream);            
-        // global_sum_deterministic(norm2, norm2, max_num_block_sums, main_stream);
-        // cudaCheck(cudaMemcpy(&a, norm2, sizeof(float), cudaMemcpyDeviceToHost));
         tensor->wnorm = sqrt(a);
     }
     
     return tensor->gnorm;
-}
-
-bool GTensor::ToTernary(int flag)  { 
-    float *xxx = TO<float>(GTensor::scratch);
-    Print("Before",0,-1);
-    size_t count = size();
-    switch(type){
-        case typNUMBER::T_SIGN:
-            break;
-        case typNUMBER::F16:
-            CU_ternary_<<<CEIL_DIV(count,CU_T4B_SMALL), CU_T4B_SMALL, 0, main_stream>>>(xxx,(__nv_bfloat16*)data, count);
-            break;
-        case typNUMBER::F8E5M2:
-            CU_ternary_<<<CEIL_DIV(count,CU_T4B_SMALL), CU_T4B_SMALL, 0, main_stream>>>(xxx,(__nv_fp8_e5m2*)data, count);
-            break;
-        default:
-            break;
-    }
-    D2H(xxx,info,sizeof(info));
-    Print(name,0,-1);
-    // type = typNUMBER::T_SIGN;
-    return true;
 }
 
 hGTensor huTensor::GetRow(hGTensor hOut,hGTensor token,hGTensor pos,int flag)   {
@@ -503,59 +493,135 @@ huTensor::~huTensor()  {
     Free();
 
 }
-
-/*
-float RAW_backward_1{
-if(config.Fuse_Normal==0)
-        lnf = fish->GetNeuron<LayerNormal>("LayerNormal",0);
-    else
-        lnf = &(lastFFN->norm); 
-
-floatX* dresidual = ToX(GTensor::delta),*scratchX = ToX(cls->preLogits),*dl_bt4c = ToX(GTensor::bt4c);   
-        floatX* gb = lnf->b==nullptr ? nullptr : ToG(lnf->b);
-        cudaCheck(cudaMemset(dresidual, 0, B * T * C * sizeof(floatX)));
-        PrintTensor<floatX>("back of P",ToX(GTensor::bt4c),true,B,T,C);
-        // backward the final layernorm
-        SelfAttention *QKV=fish->GetNeuron<SelfAttention>("SelfAttention",L-1),*preQKV=nullptr;
-        FFN *ffn=fish->GetNeuron<FFN>("FFN",L-1),*preFFN=nullptr;  
-        floatX* residual = ToX(ffn->out);   //acts.residual3 + (L-1) * B * T * C; // last residual is in residual3
-        if(config.Fuse_Normal==0){
-            layernorm_backward(dresidual, ToG(lnf->w), gb, (float*)scratchX, ToX(GTensor::bt4c), residual, ToX(lnf->w), TO<float>(lnf->mean), TO<float>(lnf->rstd), B, T, C, main_stream);
-            PrintTensor<floatX>("back of normal",dresidual,true,B,T,C);
-        }
-        // from this point on, we no longer need the values stored in the last residual, so we can reuse that memory as generic
-        // scratch for backward computations
-        floatX* dl_btc = ToX(ffn->out); //residual;
-        for (int l = L-1; l >= 0; l--) {
-            NvtxRange layer_range("Layer", l);
-            QKV = fish->GetNeuron<SelfAttention>("SelfAttention",l);
-            ffn = fish->GetNeuron<FFN>("FFN",l);        preFFN = l==0 ? nullptr : fish->GetNeuron<FFN>("FFN",l-1); 
-            residual = l == 0 ? ToX(embed->out) : ToX(preFFN->out);   //acts.residual3 + (l-1) * B * T * C;
-            ffn->residual=dl_btc;     ffn->lastQKV=QKV;    
-            QKV->dl_btc=dl_btc;   
-            if(config.Fuse_Normal==0){
-                LayerNormal *hNorm = l+1 != L ? &(fish->GetNeuron<SelfAttention>("SelfAttention",l+1)->norm) : lnf;
-                ffn->FUSE_cuda(QKV->out,scratchX, hNorm, 0x0);    
-                QKV->FUSE_cuda(QKV->norm.out,residual,&(ffn->norm),(float*)scratchX,0x0);
-            }else{
-                LayerNormal *hNorm = l>0 ? &(fish->GetNeuron<SelfAttention>("FFN",l-1)->norm) : lnf;
-                ffn->FUSE_cuda(QKV->out,scratchX, &(ffn->norm), 0x0);    
-                QKV->FUSE_cuda(QKV->norm.out,residual,&(QKV->norm),(float*)scratchX,0x0);
-            }         
-        }
-        if(config.Fuse_Normal==1){
-            lnf = fish->GetNeuron<LayerNormal>("LayerNormal",0);
-            layernorm_backward(dresidual, ToG(lnf->w), ToG(lnf->b), (float*)scratchX, ToX(GTensor::bt4c), residual, ToX(lnf->w), TO<float>(lnf->mean), TO<float>(lnf->rstd), B, T, C, main_stream);
-            PrintTensor<floatX>("back of normal",dresidual,true,B,T,C);
-        }
-        int *input = TO<int>(fish->Input());
-        if (bucket_info == NULL) {      //grads_memory
-            // NvtxRange rng("InitGrads");
-            size_t num_c_groups = CEIL_DIV(C, (WARP_SIZE * x128::size));
-            assert((size_t)(B * T) * num_c_groups < (1ULL<<31ULL)); // todo - maybe an issue for llama3-400B(?)
-            workload_indices = (int*)mallocCheck(sizeof(int) * B * T * num_c_groups);
-            bucket_info = (int4*)mallocCheck(sizeof(int4) * B * T * num_c_groups);
-        }
-        encoder_backward(ToG(embed->w), ToG(embed->b), scratchX, workload_indices, bucket_info,dresidual, input, hostInput, B, T, C, random_u32(&rng_state), main_stream);
+template<class T,int NUM_THREADS = CU_T4B_SMALL>
+__global__ static void CU_ternary_(float* gama,T* mat,int M,int N,int update) {		//block version
+	int tid = threadIdx.x,warp = tid / WARP_SIZE, lane = tid % WARP_SIZE;
+	// if(tid==0){//only for debug
+	// 	for (int j = 0; j < M; j ++) {
+	// 		gama[j] = 1.0;	
+	// 	}
+	// 	return;
+	// }
+	int idx = blockIdx.x * NUM_THREADS + tid, ldJ = blockDim.x;
+	T ta=(T)1.0,tb=(T)(-1.0),t0=(T)(0.0);
+	for (int j = tid; j < M; j += ldJ) {
+		float sum = 0.0f,a,average=0.0f;
+		T* x0 = mat+j*N;
+		for(int k=0;k<N;k++){
+			a = CU_T2Float(x0+k);			sum += fabs(a);				
+		}	
+		average = (sum/(N))+1.0e-5;
+		
+		if(update==QUANT_ALG::W_SCALE){
+			gama[j] = average;
+			ta=(T)(average),tb=(T)(-average);
+		}else{
+			gama[j] = 1.0f;
+		}
+		for(int k=0;k<N;k++){
+			a = CU_T2Float(x0+k);
+			x0[k] = a>average/2 ? ta : a<-average/2 ? tb : t0 ;		
+		}
+	}	
+	__syncthreads(); 	
 }
-*/
+
+template<class T,int NUM_THREADS = CU_T4B_SMALL>
+__global__ static void CU_ternary_v0(float* out,T* x0,int N) {		//block version
+	int tid = threadIdx.x,warp = tid / WARP_SIZE, lane = tid % WARP_SIZE;
+	int idx = blockIdx.x * NUM_THREADS + tid, blockSize = blockDim.x;
+// if(idx >= N) { return; } 
+	
+	__shared__ float average;                 
+	// __shared__ T Ta,Tb;	
+	float sum = 0.0f,a;
+	for (int j = tid; j < N; j += blockSize) {
+		a = CU_T2Float(x0+j);
+		sum += fabs(a);		//	6.5
+		// sum += (float)(x0[j]);				//	6.3
+	}
+	float block_sum = blockReduce<warpReduceSum>(sum,true);
+	// if (tid == 0) atomicAdd(out, block_sum);
+	// SYNC_GRID();	
+	if (tid == 0){
+		*out = block_sum;
+		average = (*out/(N))+1.0e-5; 		out[1] = average;	
+		//  average = average/2;	
+	}
+	for (int j = tid; j < N; j += blockSize) {
+		a = CU_T2Float(x0+j);
+		x0[j] = a>average/2 ? (T)1.0 : a<-average/2 ? (T)(-1.0) : (T)(0.0);
+	}
+	__syncthreads(); 	
+}
+
+template<class T,int NUM_THREADS = CU_T4B_SMALL>
+__global__ static void CU_binary_(float* out,T* x0,size_t N) {		//block version
+	int tid = threadIdx.x,warp = tid / WARP_SIZE, lane = tid % WARP_SIZE;
+	int idx = blockIdx.x * NUM_THREADS + tid, blockSize = blockDim.x;
+// if(idx >= N) { return; } 
+	
+	__shared__ float average;                 
+	// __shared__ T Ta,Tb;	
+	float sum = 0.0f,a;
+	for (int j = tid; j < N; j += blockSize) {
+		a = CU_T2Float(x0+j);				//	6.5
+		sum += (float)(a);				//	6.3
+	}
+	float block_sum = blockReduce<warpReduceSum>(sum,true);
+	// if (tid == 0) atomicAdd(out, block_sum);
+	// SYNC_GRID();	
+	if (tid == 0){
+		*out = block_sum;
+		average = (*out/(N))+1.0e-5; 		out[1] = average;	
+		//  average = average/2;	
+	}
+	for (int j = tid; j < N; j += blockSize) {
+		a = CU_T2Float(x0+j);
+		x0[j] = a-average>0 ? (T)1.0 : (T)(-1.0);
+	}
+	__syncthreads(); 	
+}
+
+bool huTensor::ToTernary(int flag)  { 
+    if(!BIT_TEST(flags,GTensor::F_TERNARY))
+        return false;
+
+    if(gama_T==nullptr)
+        Alloc_1((void**)(&gama_T),false,sizeof(float)*ne[0]);  
+
+    assert(this->isParam() && gama_T!=nullptr);
+    assert(ne[2]==1 && ne[3]==1);       //only for 2D weight
+    // Print("Before",0,-1);    
+    size_t count = size(),dBLOCK=CU_T4B_SMALL,smemPB = 1024*sizeof(float);
+    auto dGRID = 1; //hFish->curDevice()->GridDim(count);    
+    void* kernelArgs[] = { (void*)&gama_T,(void*)&data,(void*)&ne[0],(void*)&ne[1],(void*)&tpQuant };
+    cudaError_t err;
+    switch(type){
+        case typNUMBER::T_SIGN:
+            break;
+        case typNUMBER::F16:
+            assert(0);
+            // CU_ternary_<<<, , 0, main_stream>>>(xxx,(__nv_bfloat16*)data, count);
+            break;
+        case typNUMBER::BF16:
+            err = cudaLaunchCooperativeKernel((void*)CU_ternary_<__nv_bfloat16>,dGRID, dBLOCK, kernelArgs, smemPB, main_stream);
+            break;
+        case typNUMBER::F8E5M2:
+            err = cudaLaunchCooperativeKernel((void*)CU_ternary_<__nv_fp8_e5m2>,dGRID, dBLOCK, kernelArgs, smemPB, main_stream);
+            // CU_ternary_<<<CEIL_DIV(count,CU_T4B_SMALL), CU_T4B_SMALL, 0, main_stream>>>(xxx,(__nv_fp8_e5m2*)data, count);
+            break;
+        default:
+            assert(0);
+            break;
+    }
+     
+    cudaCheck( err );
+    D2H(gama_T,info,sizeof(info));             
+    if(tpQuant==QUANT_ALG::W_NOSCALE){
+        assert(info[0]==1.0);
+    }
+    // Print(name,0,-1);
+    // type = typNUMBER::T_SIGN;
+    return true;
+}

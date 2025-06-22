@@ -265,6 +265,12 @@ EDGE_DEVICES::EDGE_DEVICES(const CLI_params&config, int flag){
     }
     #endif
     
+    int EDGE_DEVICES::GridDim(size_t nEle,int typ,int flag){
+        int nActivePC = 1;		//	for __launch_bounds__(MAX_THREADS_PER_BLOCK, MIN_BLOCKS_PER_MULTIPROCESSOR) 
+        // cudaCheck(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&nActivePC, kernel_output<__nv_fp8_e5m2, AT>, dBLOCK, smemPB));        
+        return nCore*nActivePC;
+    }
+    
     int EDGE_DEVICES::SetThread(int nThread,int flag)   {
         assert(0);
         /*int nSet = 0;

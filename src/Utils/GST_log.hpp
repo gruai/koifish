@@ -44,10 +44,16 @@ inline void GG_log_callback_default(DUMP_LEVEL level, const char * text, void * 
     fflush(stderr);
 }
 
+inline void GG_log_head(char*buff,const char*tag="KOIFISH",int flag=0x0){
+    const char* file = (strrchr(__FILE__, '/') ? (strrchr(__FILE__, '/') + 1) : __FILE__);
+    // sprintf(buff, "[%s %s %d:%ld %s:%d %s] ", tag, curr_time(), get_pid(), get_tid(), 
+    //             file, __LINE__,__FUNCTION__ );   
+}                                                                                        
 inline void GG_log_internal_v(DUMP_LEVEL level, const char * format, va_list args) {
     va_list args_copy;
     va_copy(args_copy, args);
     char buffer[256];
+    GG_log_head(buffer);
     int len = vsnprintf(buffer, 256, format, args);
     if (len < 256) {
         GG_log_callback_default(level, buffer, nullptr);
@@ -83,10 +89,9 @@ void inline PrintT(const char* title,const T *src, int n1,int n2,int n3=1,int n4
 	if(nElem==0)	return;
     assert(cur!=nullptr);  
     // if(strlen(title)>0) _INFO("%s\n", title);
-    float a1=-FLT_MAX,a0=FLT_MAX,a;    
-    double sum = 0.0,len=0.0,sum2=0.0;
+    float sum = 0.0,a1=-FLT_MAX,a0=FLT_MAX,a;    
+    double len=0.0,sum2=0.0;
     for (i = 0; i < nElem; i++,cur++) {
-        // a = float(*cur);	
         a = T2Float<T>(cur);        assert(!isnan(a) && !isinf(a));
         if(i<nEach || i>nElem-nEach || fabs(i-nElem/2)<=nEach)
             _INFO("%g ",a);
@@ -99,4 +104,5 @@ void inline PrintT(const char* title,const T *src, int n1,int n2,int n3=1,int n4
     len = sqrt(sum2/nElem);
     //  printf output is only displayed if the kernel finishes successfully,  cudaDeviceSynchronize()
     _INFO("\t\"%s\" |avg|=%g(%ld) avg_len=%g sum2=%g [%f,%f] nz=%.3g\n",title,sum/nElem,nElem,len,sum2,a0,a1,nz*1.0/nElem);
+    fflush(stdout);
 }

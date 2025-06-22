@@ -424,9 +424,9 @@ bool SAMP::Serialize(FSerial&S, bool isSave, int flag){
     if(!S.isValid())
         return false;
 
-    _CHECK( S.Serial(pos,isSave,flag) );
-    _CHECK( S.Serial(len,isSave,flag) );
-    _CHECK( S.Serial(off_cycle,isSave,flag) );
+    CHECK_( S.Serial(pos,isSave,flag) );
+    CHECK_( S.Serial(len,isSave,flag) );
+    CHECK_( S.Serial(off_cycle,isSave,flag) );
     return true;
 }
 
@@ -476,16 +476,16 @@ try{
     int _nvocab = hDict->nVocab();
     uint32_t seed=hOPT->TrainParams().seed;
     _INFO("%s %s@%s...",__func__,isSave?"save@":"load@",path.c_str());
-    _CHECK( S.Serial(_nvocab,isSave,flag) );
-    // _CHECK( S.Serial(tokens,isSave,flag) );
-    // _CHECK( S.Serial(n_unique_tokens,isSave,flag) );
-    _CHECK( S.Serial(shuffle_samples_hash,isSave,flag) );
-    _CHECK( S.Serial(seed,isSave,flag) );
+    CHECK_( S.Serial(_nvocab,isSave,flag) );
+    // CHECK_( S.Serial(tokens,isSave,flag) );
+    // CHECK_( S.Serial(n_unique_tokens,isSave,flag) );
+    CHECK_( S.Serial(shuffle_samples_hash,isSave,flag) );
+    CHECK_( S.Serial(seed,isSave,flag) );
 
-    _CHECK( S.Serial(tpBatchSample,isSave,flag) );
-    // _CHECK( S.Serial(ids,isSave,flag) );
+    CHECK_( S.Serial(tpBatchSample,isSave,flag) );
+    // CHECK_( S.Serial(ids,isSave,flag) );
     bool bRet = S.Serial_Vector<SAMP,SAMP>(shard_samps,isSave,flag);
-    _CHECK(bRet);
+    CHECK_(bRet);
     if(shard_samps.size()==0)
         return false;
     size_t nT = nTokens();

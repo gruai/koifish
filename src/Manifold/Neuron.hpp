@@ -24,7 +24,7 @@
 #include <stack>
 using namespace std;
 
-#include "../ggex/GTensor.hpp"
+
 #include "../TokenSet/DataLoader.hpp"
 #include "../Utils/GST_util.hpp"
 
@@ -98,6 +98,7 @@ public:
     virtual ~GeNeuron();
     //  Gensors with physical memory
     virtual std::vector<hGensor> PGensors(bool isNoRef=true,int flag=0x0);
+    virtual hGensor GetGensor(const std::string &key,int flag=0x0);
     virtual int SetGuoke(GeNeuron *hGuoke_,int flag=0x0);
 
     virtual bool isValid();
@@ -122,7 +123,8 @@ public:
     virtual bool Build(int flag)   {assert(0);     return false;}
     // Init & build with more option
     virtual void BuildX(const std::string &key_, const SHAPE &shape, Fish *hG_, int flag);
-
+    
+    virtual void OnDebug(const std::string&info="",int typ=0x0,int flag=0x0);
     virtual void OnRemater(RLS_BP *schedule,int typ,int flag=0x0);
 
     virtual string __repr__( string& suffix,string& prefix,int flag=0x0);
@@ -237,7 +239,9 @@ struct SLP : public SparseNeuron    {
     int Forw(hGTensor rhs,hGTensor lhs,hGTensor to_gelu=nullptr,int flag=0x0);
     // CPU version
     int Forw(float *rhs,float *lhs,int flag=0x0);
-
+#ifndef ENABLE_FP32
+    int Forw(floatX *rhs,floatX *lhs,int flag=0x0)  {   assert(0);  return 0x0; }
+#endif
     /*  Backward
         inp & to_gelu is defined in forward: inp=GELU(to_gelu)
     */
@@ -250,7 +254,7 @@ struct LayerNormal : public SparseNeuron    {
     bool isRMS = true;               // Root Mean Square Layer Normalization
     //  always float
     hGensor mean=nullptr, rstd=nullptr;
-
+    float scale = 0.0;
     LayerNormal() {}    
     LayerNormal(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag);
     bool Build(int flag)   override;
@@ -283,11 +287,18 @@ class RevNet : public SparseNeuron{
 
 };
 
+enum UIDs {
+    Q_UID,          K_UID,    V_UID,        Attn_scale_UID,     O_UID,    
+    dO_UID,    dQ_UID,      dK_UID,             dV_UID,             
+    STATS_UID,      BIAS_UID,           DBIAS_UID,   SEQ_LEN_Q_UID,  SEQ_LEN_KV_UID,    
+};
 class SelfAttention : public SparseNeuron  {
 protected:
     int tpNormal=1,n_ff=0;
     bool isLinear = false;
     bool isPreNormal = false;      //  Pre /Post Normalization
+    bool isSeparateQKV = false;
+    void* devPtrQ=nullptr,*devPtrK=nullptr,*devPtrV=nullptr,*devDeltaQ=nullptr,*devDeltaK=nullptr,*devDeltaV=nullptr;
     //markov transition matrix from KQ
     enum TRANSITION_MODE{
         SOFT_MAX=0,
@@ -320,6 +331,7 @@ protected:
     hGensor MyAttention(RLS_BP * ctx_,hGensor inpL,int flag);
     hGensor vXattn(void *ctx, hGensor v,hGensor attn,int flag);
     float f_norm_rms_eps, rope_freq_base, rope_freq_scale;
+    std::unordered_map<int64_t , void*> var_packs;
 public:
     bool use_cache = false;
     bool isLast = false;

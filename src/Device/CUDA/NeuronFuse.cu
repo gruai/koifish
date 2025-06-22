@@ -1,16 +1,12 @@
 
 // #include "../ggex/GG_util.hpp"       //ugly  "__builtin_ia32_ldtilecfg" is undefined
 #include "./cuda_common.h"
-// #include "./cublas_common.h"
 #include "./kernel/gemm.cuh"
 #include "./kernel/layernorm.cuh"
 #include "./kernel/embed.cuh"
 #include "./kernel/fused_classifier.cuh"
-// #include "./TE/fused_attn/fused_attn_fp8.cu"
 #include "../../Manifold/Neuron.hpp"
 #include "../../Manifold/Fish.hpp"
-// #include "./EDevice.hpp"
-// #include "./mfu.h"
 #define NOMINMAX
 
 cublasComputeType_t cublas_compute = CUBLAS_COMPUTE_32F;
@@ -137,7 +133,7 @@ try{
         CU_embed_forw_<<<grid_size, block_size, 0, main_stream>>>(ToX(cur), samps, ToX(wSrc), T, C,Vp,flag==1);    
         cur->Print("subW",0,0);     
     }else{             
-        CU_embed_back_<<<grid_size, block_size, 0, main_stream>>>(ToG(wSrc), samps, ToX(cur), T, C,Vp,1.0,flag==1);    
+        CU_embed_back_<<<grid_size, block_size, 0, main_stream>>>(ToG(wSrc), samps, ToX(cur), T, C,Vp,flag==1);    
         // encoder_backward(ToG(wSrc), nullptr, scratchX, workload_indices, bucket_info, ToX(cur), samps, hBatch->host, 1, T, C, seed, main_stream);     
     }
     return cur;
@@ -222,21 +218,24 @@ int SLP::FUSE_cuda_block(hGTensor rhs,hGTensor lhs,hGTensor gelu,bool isForw,int
 
 //  hIn = QKV->out
 hGTensor FFN::FUSE_cuda(hGTensor hIn,int flag){    
-    hGTensor tGelu = GTensor::scratch,down_out = remater_ffn?GTensor::tmpFF1:down.out,up_out=remater_ffn?GTensor::tmpFF1:up.out;
-    // down_out = GTensor::tmpFF1,up_out=GTensor::tmpFF1;
+    hGTensor tGelu = GTensor::scratch,
+        down_out = remater_ffn?GTensor::tmpFF1:down.out,
+        up_out   = remater_ffn?GTensor::tmpFF1:up.out;    
     bool isBias = up.b!=nullptr;      
     if(isForward()){  
         inp = OnInput(hIn);      
-        inp->Print("ffn.in",0,0);
+        inp->Print("ffn.in",0,dump_flag,C);
         GTensor::residual=inp;      // GTensor::residual->OverWrite(inp);          //  
         if(fuseNorm==nullptr){
             norm.FUSE_cuda(inp);       
-        }                   
+        }        
+        norm.out->Print("ffn.norm",0,dump_flag,C);            
         if(!gate.Empty()){
             gate.Forw(tGelu,norm.out,up_out);        
         }
         up.Forw(tGelu,norm.out,up_out);        
-        norm.out->Print("ffn.norm",0,dump_flag);               tGelu->Print("ffn.up+gelu",0,dump_flag);   
+                      
+        tGelu->Print("ffn.up+gelu",0,dump_flag,C);   
         //PrintTensor<floatX>("ffn.norm",ToX(norm.out),true,B,T,C,1,-1);          PrintTensor<floatX>("ff1",ff1,true,B,T,latent,1,-1);  
         down.Forw(down_out,tGelu,nullptr,isSymmetric);       
         down_out->Print("ffn.down",0,dump_flag,B*T*C);          // PrintTensor<floatX>("ffn",scratch,true,B,T,C);
@@ -305,17 +304,44 @@ hGTensor huTensor::Normal(hGTensor hOut,hGTensor _mean,hGTensor _rstd,hGTensor w
 }
 
 hGTensor LayerNormal::FUSE_cuda(hGTensor inpDelta,int flag) {   //,hGTensor deltaIn
-    float* _mean = mean==nullptr ? nullptr : TO<float>(mean);
-    if(isForward()){    //cur = cur->Normal(out,mean,rstd,w,b); 
+    NVTX_RANGE_FN();
+    float* _mean = mean==nullptr ? nullptr : TO<float>(mean), *_rstd=TO<float>(rstd);
+    if(isForward()){    
         inp = inpDelta;  
-        layernorm_forward(ToX(out), _mean,  TO<float>(rstd), ToX(inp),ToX(w),ToX0(b), B, T, C, main_stream);
+        // layernorm_forward(ToX(out), _mean,  TO<float>(rstd), ToX(inp),ToX(w),ToX0(b), B, T, C, main_stream);
+        floatX *weight=ToX(w), *bias=ToX0(b) ,*in=ToX(inp); 
+        const int block_size = 256,N = B * T;
+        int block_y = block_size / WARP_SIZE;
+        const int grid_size = CEIL_DIV(N, block_y);
+        size_t smem = (2 + block_y) * C * sizeof(floatX);
+        // in order to use more than 48 KiB of smem, need to call cudaFuncSetAttribute
+        // this may fail, in which case we fall back to the smem free implementation.
+        if(mean==nullptr){  //RMS
+            // auto status = cudaFuncSetAttribute(CU_rms_forward, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+            // cudaCheck(cudaGetLastError());            assert(status == cudaSuccess);
+            // scale = CU_rmsnorm<<<grid_size, dim3(WARP_SIZE, block_y), smem, main_stream>>>(TOBF(out), TOBF(inp), weight, N*C, 1.0e-5, false);  
+            // _rstd[0] = scale;     
+            CU_rms_forward<<<grid_size, dim3(WARP_SIZE, block_y), smem, main_stream>>>(ToX(out), _rstd, in, weight, N, C);
+
+        }else{
+            auto status = cudaFuncSetAttribute(layernorm_forward_kernel6, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+            cudaCheck(cudaGetLastError());
+            if (status == cudaSuccess) {
+                layernorm_forward_kernel6<<<grid_size, dim3(WARP_SIZE, block_y), smem, main_stream>>>(ToX(out), _mean, _rstd, in, weight, bias, N, C);
+            } else {
+                // fall back to the version without shared memory
+                const int grid_size_fb = CEIL_DIV(N, (block_size/WARP_SIZE));
+                layernorm_forward_kernel3<<<grid_size_fb, block_size, 0, main_stream>>>(ToX(out), _mean, _rstd, in, weight, bias, N, C);
+            }
+        }
+        cudaCheck(cudaGetLastError());
         return out;
     }        
     else{   
         hGTensor deltaIn=inpDelta;     assert(deltaIn!=nullptr);       
         float *scratch=(float *)GTensor::buff;
         deltaIn->Print("LN.delta.in",0,0);
-        layernorm_backward(ToX(delta), ToG(w), ToG0(b), scratch, ToX(deltaIn),ToX(inp), ToX(w), _mean,  TO<float>(rstd), B, T, C, main_stream);
+        layernorm_backward(ToX(delta), ToG(w), ToG0(b), scratch, ToX(deltaIn),ToX(inp), ToX(w), _mean,  _rstd, B, T, C, main_stream);
         delta->Print("back of normal",0,0);
         return delta;
     }

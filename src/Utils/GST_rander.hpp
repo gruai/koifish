@@ -14,6 +14,7 @@
 #include <set>
 #include <assert.h>
 #include <stdint.h>
+#include "../g_float.hpp"
 //#include "pcg_oneil/pcg_basic.h"
 
 #define rotl(r,n) (((r)<<(n)) | ((r)>>((8*sizeof(r))-(n))))
@@ -262,11 +263,12 @@ inline void uniform_(float* data, unsigned int numel, float from, float to, mt19
 
 // Box-Muller transform: maps uniform random numbers to Gaussian distributed numbers
 // https://en.wikipedia.org/wiki/Box%E2%80%93Muller_transform
-inline void normal_fill_16(float* data, float mean, float std) {
+template<typename T>
+inline void normal_fill_16(T* data, float mean, float std) {
     #define EPSILONE 1e-12f
     for (unsigned int t = 0; t < 8; t++) {
-        float u1 = 1 - data[t];
-        float u2 = data[t + 8];
+        float u1 = 1 - T2Float(data+t);
+        float u2 = T2Float(data+t + 8);
         float radius = sqrtf(-2 * logf(u1 + EPSILONE));
         float theta = (float) (2.0 * M_PI * u2);
         data[t] = (radius * cosf(theta) * std + mean);
@@ -274,7 +276,8 @@ inline void normal_fill_16(float* data, float mean, float std) {
     }
 }
 
-inline void normal_fill(float* data, unsigned int numel, float mean, float std, mt19937_torch* state) {
+template<typename T>
+inline void normal_fill(T* data, unsigned int numel, float mean, float std, mt19937_torch* state) {
     assert(numel>0);
     for (unsigned int t = 0; t < numel; t++) {
         data[t] = randfloat32(state);
@@ -292,7 +295,8 @@ inline void normal_fill(float* data, unsigned int numel, float mean, float std, 
     }
 }
 
-inline void normal_(float* data, unsigned int numel, float mean, float std, mt19937_torch* state) {
+template<typename T>
+inline void normal_19937(T* data, unsigned int numel, float mean, float std, mt19937_torch* state) {
     #define EPSILONE 1e-12f
     if (numel >= 16) {
         normal_fill(data, numel, mean, std, state);
@@ -313,7 +317,8 @@ inline void normal_(float* data, unsigned int numel, float mean, float std, mt19
             float theta = (float) (2.0 * M_PI * u1);
             next_double_normal_sample = radius * sinf(theta);
             has_next_double_normal_sample = 1;
-            data[t] = (radius * cosf(theta) * std + mean);
+			float a = (radius * cosf(theta) * std + mean);
+            data[t] = Float2T<T>(&a);
         }
     }
 }

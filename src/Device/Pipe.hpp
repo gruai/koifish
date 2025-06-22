@@ -17,23 +17,26 @@
 //  For cudaLaunchCooperativeKernel
 template <typename T=void>
 struct CoopLayer {
-    float* rms_att_weight=nullptr;
+    float* rms_att_weight=nullptr, *bqkv=nullptr, *rms_ffn_weight=nullptr;
     T* wq=nullptr, *wk=nullptr, *wv=nullptr, *wo=nullptr;
-    float* bqkv=nullptr,*rms_ffn_weight=nullptr;
     T* moegate=nullptr, *w1=nullptr, *w2=nullptr, *w3=nullptr;
+	float *gama_1=nullptr, *gama_2=nullptr,*gama_3=nullptr;
 };
 #define CoopLayer_MAX 128
 #define KV_SINKS 2          // attention sinks for rolling buffer
+/*
+	So strange that no way to call host-function in a CUDA kernel! So have to use this pipe to transfer some data to kernel
+*/
 template <typename T, typename KVT>
-struct TRANSFORMER_PIPE : public MODEL_CARD {
+struct KERNEL_PIPE : public MODEL_CARD {
     CoopLayer<void> *cLayers=nullptr;
 	int layNo=-1;
     hFISH hFish = nullptr;
     hGensor out_weight = nullptr;
-	float *x=nullptr,*xb=nullptr,*xb2=nullptr,*q=nullptr,*k=nullptr,*v=nullptr,*att=nullptr,*exp=nullptr;
-	float *hb=nullptr,*hb2=nullptr,*he=nullptr;
+	T *x=nullptr,*xb=nullptr,*xb2=nullptr,*q=nullptr,*k=nullptr,*v=nullptr,*att=nullptr,*exp=nullptr;
+	T *hb=nullptr,*hb2=nullptr,*he=nullptr;
 
-	TRANSFORMER_PIPE(hFISH hFish_,int pos_,int flag=0) :
+	KERNEL_PIPE(hFISH hFish_,int pos_,int flag=0) :
         hFish(hFish_)	{
 		size_t szMost = hFish->MostMemSize();
 		bw = PROF_TOKEN(szMost);
@@ -60,17 +63,21 @@ struct TRANSFORMER_PIPE : public MODEL_CARD {
 		// 	CUDA_CHECK(cudaMemset(coopperf, 0, sizeof(uint64_t) * 16));
 		// }
 		size_t nzTmp = 0;
-		x = TO<float>(tX);
+		tX = GTensor::outL;			x = TO<T>(tX);
 		if(DEBUG.T_cpu){
 			xb = x+dim;		xb2 = xb+dim;		hb = xb2+dim;		hb2 = hb+hidden_dim;
 			q = hb2+hidden_dim;		k = q+q_dim;	v = k+kv_dim;
 			att = v+kv_dim;		exp = att+n_heads *seq_len;
 			nzTmp = exp-x + n_experts + (n_experts_ac ? n_experts_ac : 1) * 2;
 		}else{			
-			hb = x+dim;		q = hb+hb_dim;		att = q+q_dim;			
-			nzTmp = att+att_dim-x;		
+			hb = x+dim;		q = hb+hb_dim;		att = q+q_dim;		
+			// hb = ToX(GTensor::tmpFF1);	assert(GTensor::tmpFF1->nByte()>=hb_dim*sizeof(float));
+			// q = ToX(GTensor::bt4c);		assert(GTensor::bt4c->nByte()>=q_dim*sizeof(float));
+			// att = ToX(GTensor::scratch);	//	att_dim
+			// assert(GTensor::scratch->nByte()>=att_dim*sizeof(float));
 		}
-		assert(tX->nByte()>=nzTmp*sizeof(float));		tX->Zero();	
+		// assert(tX->nByte()>=nzTmp*sizeof(float));		
+		tX->Zero();	
 
 		hKVCache hCache = hFish->GetOptimizer()->hCache;
 		key_cache = (KVT*)hCache->Get(KVCache::KV_KEY);	
@@ -94,7 +101,7 @@ struct TRANSFORMER_PIPE : public MODEL_CARD {
         kv_len = pos >= seq_len ? seq_len : pos + 1;
 	}
 
-    virtual ~TRANSFORMER_PIPE() {
+    virtual ~KERNEL_PIPE() {
 		delete[ ] cLayers;
     }
 
@@ -132,9 +139,10 @@ struct TRANSFORMER_PIPE : public MODEL_CARD {
 			FFN *ffn=hFish->GetNeuron<FFN>("FFN",l); 
 			cLayers[l].rms_ffn_weight = TO<float>(ffn->norm.w);	//weights->rms_ffn_weight[l];
 			cLayers[l].moegate = nullptr;	//weights->moegate[l];
-			cLayers[l].w1 = TO(ffn->PGensors(),"w1.weight");		//weights->w1[l];
-			cLayers[l].w2 = TO(ffn->PGensors(),"w2.weight");		//weights->w2[l];
-			cLayers[l].w3 = TO(ffn->PGensors(),"w3.weight");		//weights->w3[l];
+			hGensor w1 = ffn->GetGensor("w1.weight"),w2 = ffn->GetGensor("w2.weight"),w3 = ffn->GetGensor("w3.weight");
+			cLayers[l].w1 = w1->data;		cLayers[l].gama_1 = w1->gama_T;	//weights->w1[l];
+			cLayers[l].w2 = w2->data;		cLayers[l].gama_2 = w2->gama_T;		//weights->w2[l];
+			cLayers[l].w3 = w3->data;		cLayers[l].gama_3 = w3->gama_T;		//weights->w3[l];
 		}
     }
 };

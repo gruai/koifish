@@ -13,10 +13,9 @@
 #elif !defined(__FreeBSD__) && !defined(__NetBSD__) && !defined(__OpenBSD__)
 #include <alloca.h>
 #endif
-
-#include "GTensor.hpp"
 #include "../CLI_params.hpp"
 #include "../g_stddef.hpp"
+#include "../Tensor/GTensor.hpp"
 
 #if defined(GGML_USE_ACCELERATE)
     #include <Accelerate/Accelerate.h>
@@ -285,3 +284,5 @@ inline bool CHECK_SHAPE(const SHAPE&shape){
     return isValid;
 }
 
+bool D2H(void *dev,void *host,size_t szData,int flag=0x0);
+bool H2D(void *dev,void *host,size_t szData,int flag=0x0);

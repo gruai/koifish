@@ -55,7 +55,7 @@ using namespace std;
 	// #define G_INT_64  long long
 #endif
 
-#define _CHECK(err)                                               \
+#define CHECK_(err)                                               \
     do {                                                            \
         bool err_ = (err);                                        \
         if (err_ != true) {                                   \
@@ -64,7 +64,15 @@ using namespace std;
             throw("");                                                \
         }                                                           \
     } while (0)
-    
+ 
+// Lite macro like REQUIRE of CATCH2
+#define NEED_(expr) \
+    do { \
+        if (!(expr)) { \
+            std::cerr << "FAIL: " << #expr << " (line " << __LINE__ << ")\n"; \
+            std::terminate(); \
+        } \
+    } while (0)
 //Prefer a struct when you can. It may involve some overhead, but is definitely easier for maintenance.
 /*
     64-bit ID + double weight

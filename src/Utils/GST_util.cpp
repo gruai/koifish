@@ -44,7 +44,7 @@ void _TIME_INFO(const string&info,double fmillis,int flag) {
 }   
 
 double SUM::tX=0.0,SUM::tX1=0.0,SUM::tRemater=0.0;
-double SUM::tQKV=0.0,SUM::tFFN=0.0;
+double SUM::tQKV=0.0,SUM::tFFN=0.0,SUM::tUpload=0.0;
 void SUM::Reset(string typ,int flag) {
     if(typ=="time"){
         tX=0.0,     tX1=0.0,    tRemater=0.0;

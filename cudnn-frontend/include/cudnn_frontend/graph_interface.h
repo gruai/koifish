@@ -1,6 +1,7 @@
 #pragma once
 
 #include <unordered_map>
+#include <string>
 
 #include "../cudnn_frontend_version.h"
 #include "node/batchnorm.h"
@@ -14,6 +15,7 @@
 #include "node/dbn_weight.h"
 #include "node/genstats.h"
 #include "node/layernorm.h"
+#include "node/adaptive_layernorm.h"
 #include "node/instancenorm.h"
 #include "node/rmsnorm.h"
 #include "node/resample.h"
@@ -23,8 +25,13 @@
 #include "node/scaled_dot_product_flash_attention.h"
 #include "node/sdpa_fp8.h"
 #include "node/sdpa_fp8_bwd.h"
+#include "node/block_scale_quantize.h"
+#include "node/block_scale_dequantize.h"
+#include "node/concatenate.h"
 
+#include "backend/backend_descriptor.h"
 #include "plans.h"
+#include "knobs.h"
 #include "graph_helpers.h"
 #include "backend/kernel_cache.h"
 
@@ -280,22 +287,6 @@ class Graph : public ICudnn, public INode {
         CHECK_CUDNN_FRONTEND_ERROR(
             extend_tensor_map_with_pass_by_value_tensors_(uid_to_device_ptrs, tensor_to_pass_by_value));
 
-        // Make sure device pointer is provided for all uids expected for this plan
-        std::vector<void *> device_ptrs;
-        std::vector<uid_t> uids;
-
-        device_ptrs.reserve(variant_pack_uids.size());
-        uids.reserve(variant_pack_uids.size());
-
-        for (auto const &uid : variant_pack_uids) {
-            auto search = uid_to_device_ptrs.find(uid);
-            RETURN_CUDNN_FRONTEND_ERROR_IF(search == uid_to_device_ptrs.end(),
-                                           error_code_t::INVALID_VARIANT_PACK,
-                                           "Uid " + std::to_string(uid) + " does not exist in variant pack.");
-            device_ptrs.push_back(search->second);
-            uids.push_back(uid);
-        }
-
         ////////////////////////////
         //// WORKSPACE HANDLING ////
         ////////////////////////////
@@ -305,8 +296,8 @@ class Graph : public ICudnn, public INode {
         CHECK_CUDNN_FRONTEND_ERROR(collect_tensors_in_workspace_subtree(workspace_modifications, workspace_offset));
 
         for (auto const &[uid, data] : workspace_modifications) {
-            (void)uid;
             const auto &[operation_type, offset, vec_data] = data;
+            uid_to_device_ptrs[uid]                        = static_cast<char *>(workspace) + offset;
 
             // 0 means memcpy
             if (operation_type == 0) {
@@ -316,7 +307,6 @@ class Graph : public ICudnn, public INode {
                                                                      vec_data.data(),
                                                                      vec_data.size() * sizeof(float),
                                                                      cudaMemcpyHostToDevice));
-                uid_to_device_ptrs[uid] = static_cast<char *>(workspace) + offset;
             }
             // 1 means memset
             else if (operation_type == 1) {
@@ -334,12 +324,35 @@ class Graph : public ICudnn, public INode {
 
                 CHECK_CUDA_ERROR(detail::cuda_graph_add_memset_node_set_params(current_node, &params));
             }
-            // Other values do not correspond to cuda APIs
+            // Other values do not correspond to CUDA graph nodes
+            else {
+                continue;
+            }
 
-            CHECK_CUDA_ERROR(detail::cuda_graph_node_get_dependent_nodes(current_node, nullptr, &num_root_nodes));
+            size_t num_dependent_nodes;
+            CHECK_CUDA_ERROR(detail::cuda_graph_node_get_dependent_nodes(current_node, nullptr, &num_dependent_nodes));
             RETURN_CUDNN_FRONTEND_ERROR_IF(
-                num_root_nodes != 1, error_code_t::INVALID_VALUE, "cudnn_cuda_graph should have exactly 1 root node.");
-            CHECK_CUDA_ERROR(detail::cuda_graph_node_get_dependent_nodes(current_node, &current_node, &num_root_nodes));
+                num_dependent_nodes != 1,
+                error_code_t::INVALID_VALUE,
+                "Each node of cudnn_cuda_graph before the backend graph node should have exactly 1 dependent node.");
+            CHECK_CUDA_ERROR(
+                detail::cuda_graph_node_get_dependent_nodes(current_node, &current_node, &num_dependent_nodes));
+        }
+
+        // Make sure device pointer is provided for all uids expected for this plan
+        std::vector<void *> device_ptrs;
+        std::vector<uid_t> uids;
+
+        device_ptrs.reserve(variant_pack_uids.size());
+        uids.reserve(variant_pack_uids.size());
+
+        for (auto const &uid : variant_pack_uids) {
+            auto search = uid_to_device_ptrs.find(uid);
+            RETURN_CUDNN_FRONTEND_ERROR_IF(search == uid_to_device_ptrs.end(),
+                                           error_code_t::INVALID_VARIANT_PACK,
+                                           "Uid " + std::to_string(uid) + " does not exist in variant pack.");
+            device_ptrs.push_back(search->second);
+            uids.push_back(uid);
         }
 
         ///////////////////
@@ -353,7 +366,10 @@ class Graph : public ICudnn, public INode {
                                        error_code_t::CUDNN_BACKEND_API_FAILED,
                                        "Failed to create variant pack's backend descriptor.");
 
-        CHECK_CUDNN_FRONTEND_ERROR(create_variant_pack(variant_pack_descriptor, device_ptrs, uids, workspace));
+        // offset workspace by the already used fe graph workspace
+        // this is where cudnn backend can start using workspace for its execution plans
+        void *cudnn_workspace = static_cast<char *>(workspace) + fe_workspace_size;
+        CHECK_CUDNN_FRONTEND_ERROR(create_variant_pack(variant_pack_descriptor, device_ptrs, uids, cudnn_workspace));
 
         int64_t candidate = plans.candidate;
         CHECK_CUDNN_FRONTEND_ERROR(plans.is_plan_index_executable(candidate));
@@ -363,8 +379,9 @@ class Graph : public ICudnn, public INode {
                                                     backend_cuda_graph));
 
         // There should be nothing after the backend graph
-        CHECK_CUDA_ERROR(detail::cuda_graph_node_get_dependent_nodes(current_node, nullptr, &num_root_nodes));
-        RETURN_CUDNN_FRONTEND_ERROR_IF(num_root_nodes != 0,
+        size_t num_dependent_nodes;
+        CHECK_CUDA_ERROR(detail::cuda_graph_node_get_dependent_nodes(current_node, nullptr, &num_dependent_nodes));
+        RETURN_CUDNN_FRONTEND_ERROR_IF(num_dependent_nodes != 0,
                                        error_code_t::INVALID_VALUE,
                                        "cudnn_cuda_graph should have no graph nodes after the backend graph node.");
 
@@ -427,8 +444,8 @@ class Graph : public ICudnn, public INode {
         CHECK_CUDNN_FRONTEND_ERROR(collect_tensors_in_workspace_subtree(workspace_modifications, workspace_offset));
 
         for (auto const &[uid, data] : workspace_modifications) {
-            (void)uid;
             const auto &[operation_type, offset, vec_data] = data;
+            uid_to_device_ptrs[uid]                        = static_cast<char *>(workspace) + offset;
 
             cudaGraphNode_t node = nullptr;
 
@@ -442,7 +459,6 @@ class Graph : public ICudnn, public INode {
                                                                        vec_data.data(),
                                                                        vec_data.size() * sizeof(float),
                                                                        cudaMemcpyHostToDevice));
-                uid_to_device_ptrs[uid] = static_cast<char *>(workspace) + offset;
             }
             // 1 means memset
             else if (operation_type == 1) {
@@ -461,7 +477,10 @@ class Graph : public ICudnn, public INode {
                 CHECK_CUDA_ERROR(detail::cuda_graph_add_memset_node(
                     &node, cudnn_cuda_graph, &last_node, last_node != nullptr, &params));
             }
-            // Other values do not correspond to cuda APIs
+            // Other values do not correspond to CUDA graph nodes
+            else {
+                continue;
+            }
 
             last_node = node;
         }
@@ -491,7 +510,11 @@ class Graph : public ICudnn, public INode {
         RETURN_CUDNN_FRONTEND_ERROR_IF(variant_pack_descriptor.get_status() != CUDNN_STATUS_SUCCESS,
                                        error_code_t::CUDNN_BACKEND_API_FAILED,
                                        "Failed to create variant pack's backend descriptor.");
-        CHECK_CUDNN_FRONTEND_ERROR(create_variant_pack(variant_pack_descriptor, device_ptrs, uids, workspace));
+
+        // offset workspace by the already used fe graph workspace
+        // this is where cudnn backend can start using workspace for its execution plans
+        void *cudnn_workspace = static_cast<char *>(workspace) + fe_workspace_size;
+        CHECK_CUDNN_FRONTEND_ERROR(create_variant_pack(variant_pack_descriptor, device_ptrs, uids, cudnn_workspace));
 
         // Get the plan candidate. It only makes to sense to make cuda graph after execution plan has been built.
         // And in that case the candidate would have been set.
@@ -535,7 +558,6 @@ class Graph : public ICudnn, public INode {
 
         // Validate the nodes, which in turn also infers missing tensor attributes.
         CHECK_CUDNN_FRONTEND_ERROR(validate_subtree());
-
         // Validate all outputs, which should now have everything set to be lowered to backend.
         for (auto const &output : full_graph_outputs) {
             CHECK_CUDNN_FRONTEND_ERROR(output->validate());
@@ -792,6 +814,8 @@ class Graph : public ICudnn, public INode {
             j["variant_pack_uids"]  = variant_pack_uids;
         }
 
+        j["behavior_notes"] = plans.behavior_notes;
+
         std::unordered_map<uid_t, pass_by_values_t> tensor_to_pass_by_value;
         CHECK_CUDNN_FRONTEND_ERROR(collect_pass_by_value_tensors_subtree(tensor_to_pass_by_value));
         j["pass_by_values"] = tensor_to_pass_by_value;
@@ -830,6 +854,8 @@ class Graph : public ICudnn, public INode {
         auto serialized_plan = j["cudnn_backend_data"];
         CHECK_CUDNN_FRONTEND_ERROR(plans.build_plans(handle, serialized_plan));
 
+        plans.behavior_notes = j["behavior_notes"].get<std::vector<std::vector<BehaviorNote_t>>>();
+
         variant_pack_uids = j["variant_pack_uids"].get<std::unordered_set<graph::Tensor_attributes::uid_t>>();
 
         deserialized_pass_by_value = j["pass_by_values"];
@@ -864,6 +890,8 @@ class Graph : public ICudnn, public INode {
     Graph &
     set_sm_count(int32_t type);
     Graph &
+    set_sm_version(int32_t version);
+    Graph &
     set_kernel_cache(std::shared_ptr<KernelCache> cache);
 
     Graph &
@@ -885,6 +913,11 @@ class Graph : public ICudnn, public INode {
                                                                 std::shared_ptr<Tensor_attributes>,
                                                                 std::shared_ptr<Tensor_attributes>,
                                                                 Layernorm_attributes);
+
+    std::array<std::shared_ptr<Tensor_attributes>, 3> adalayernorm(std::shared_ptr<Tensor_attributes>,
+                                                                   std::shared_ptr<Tensor_attributes>,
+                                                                   std::shared_ptr<Tensor_attributes>,
+                                                                   AdaLayernorm_attributes);
 
     std::array<std::shared_ptr<Tensor_attributes>, 3> instancenorm(std::shared_ptr<Tensor_attributes>,
                                                                    std::shared_ptr<Tensor_attributes>,
@@ -939,6 +972,11 @@ class Graph : public ICudnn, public INode {
                                                                          std::shared_ptr<Tensor_attributes>,
                                                                          std::shared_ptr<Tensor_attributes>,
                                                                          Layernorm_backward_attributes);
+
+    std::array<std::shared_ptr<Tensor_attributes>, 3> adalayernorm_backward(std::shared_ptr<Tensor_attributes>,
+                                                                            std::shared_ptr<Tensor_attributes>,
+                                                                            std::shared_ptr<Tensor_attributes>,
+                                                                            AdaLayernorm_backward_attributes);
 
     std::array<std::shared_ptr<Tensor_attributes>, 3> instancenorm_backward(std::shared_ptr<Tensor_attributes>,
                                                                             std::shared_ptr<Tensor_attributes>,
@@ -1002,6 +1040,16 @@ class Graph : public ICudnn, public INode {
 
     std::shared_ptr<Tensor_attributes> slice(std::shared_ptr<Tensor_attributes>, Slice_attributes);
 
+    std::array<std::shared_ptr<Tensor_attributes>, 2> block_scale_quantize(std::shared_ptr<Tensor_attributes>,
+                                                                           Block_scale_quantize_attributes);
+
+    std::shared_ptr<Tensor_attributes> block_scale_dequantize(std::shared_ptr<Tensor_attributes>,
+                                                              std::shared_ptr<Tensor_attributes>,
+                                                              Block_scale_dequantize_attributes);
+
+    std::shared_ptr<Tensor_attributes> concatenate(std::vector<std::shared_ptr<Tensor_attributes>>,
+                                                   Concatenate_attributes);
+
     [[deprecated]] std::array<std::shared_ptr<Tensor_attributes>, 2>
     scaled_dot_product_flash_attention(std::shared_ptr<Tensor_attributes> q,
                                        std::shared_ptr<Tensor_attributes> k,
@@ -1023,8 +1071,17 @@ class Graph : public ICudnn, public INode {
     error_t
     create_execution_plans(std::vector<HeurMode_t> const &mode);
 
+    error_t
+    create_execution_plan(int64_t const engine_id, std::unordered_map<KnobType_t, int64_t> const &knobs);
+
     int64_t
     get_execution_plan_count() const;
+
+    inline error_t
+    get_engine_count(int64_t &count);
+
+    inline error_t
+    get_knobs_for_engine(int64_t const engine, std::vector<Knob> &);
 
     error_t
     check_support(cudnnHandle_t h) {
@@ -1100,6 +1157,12 @@ class Graph : public ICudnn, public INode {
         return *this;
     }
 
+    error_t
+    get_behavior_notes_for_plan_at_index(int64_t const index, std::vector<BehaviorNote_t> &notes) const;
+
+    error_t
+    get_behavior_notes(std::vector<BehaviorNote_t> &notes) const;
+
 #ifndef CUDNN_FRONTEND_SKIP_JSON_LIB
     virtual void
     serialize(json &j) const override final {
@@ -1129,25 +1192,35 @@ class Graph : public ICudnn, public INode {
         j["nodes"];
         j["tensors"];
         std::unordered_set<std::string> tensors;
-
         for (const auto &sub_node : full_json["nodes"]) {
             // Create a short version of the node
             auto short_node       = sub_node;
             short_node["inputs"]  = {};
             short_node["outputs"] = {};
 
+            auto node_name = sub_node["tag"].get<std::string>();
+            auto i         = 0;
             // Process node inputs
             for (const auto &input : sub_node["inputs"]) {
-                // Extract port_name and tensor_name
-                auto port_name   = input[0].get<std::string>();
-                auto tensor_info = input[1];
+                std::string port_name;
+                json tensor_info;
+
+                if (node_name == "CONCATENATE") {
+                    // Extract port_name and tensor_name
+                    port_name   = std::to_string(i);
+                    tensor_info = input;
+                    i++;
+                } else {
+                    // Extract port_name and tensor_name
+                    port_name   = input[0].get<std::string>();
+                    tensor_info = input[1];
+                }
 
                 if (tensor_info.is_null()) {
                     continue;
                 }
 
                 std::string tensor_name = tensor_info["name"].get<std::string>();
-
                 // Update short_node inputs
                 short_node["inputs"][port_name] = tensor_name;
 
@@ -1365,9 +1438,48 @@ class Graph : public ICudnn, public INode {
     }
 };
 
+inline error_t
+Graph::get_behavior_notes_for_plan_at_index(int64_t const index, std::vector<BehaviorNote_t> &notes) const {
+    CHECK_CUDNN_FRONTEND_ERROR(plans.get_behavior_notes_at_index(index, notes));
+    return {error_code_t::OK, ""};
+}
+
+inline error_t
+Graph::get_behavior_notes(std::vector<BehaviorNote_t> &notes) const {
+    int64_t const candidate = plans.candidate;
+    RETURN_CUDNN_FRONTEND_ERROR_IF(
+        candidate == -1,
+        error_code_t::INVALID_VALUE,
+        "No candiate plan set for the graph. You can set one by building a plan, which in turn sets the "
+        "candidate internally. Do note that you also query behaviour notes for a created-but-not-built plan by using "
+        "get_behavior_notes_for_plan_at_index API.");
+
+    CHECK_CUDNN_FRONTEND_ERROR(get_behavior_notes_for_plan_at_index(candidate, notes));
+    return {error_code_t::OK, ""};
+}
+
 inline int64_t
 Graph::get_execution_plan_count() const {
     return plans.execution_plans.size();
+}
+
+inline error_t
+Graph::get_engine_count(int64_t &count) {
+    CHECK_CUDNN_ERROR(detail::get_attribute(operation_graph->get_raw_desc(),
+                                            CUDNN_ATTR_OPERATIONGRAPH_ENGINE_GLOBAL_COUNT,
+                                            CUDNN_TYPE_INT64,
+                                            1,
+                                            nullptr,
+                                            &count));
+
+    return {error_code_t::OK, ""};
+}
+
+inline error_t
+Graph::get_knobs_for_engine(int64_t const engine, std::vector<Knob> &knobs) {
+    CHECK_CUDNN_FRONTEND_ERROR(detail::query_knobs(engine, operation_graph->get_raw_desc(), knobs));
+
+    return {error_code_t::OK, ""};
 }
 
 inline error_t
@@ -1379,10 +1491,32 @@ Graph::create_execution_plans(std::vector<HeurMode_t> const &mode) {
     CUDNN_FE_LOG_LABEL_ENDL("INFO: Extracting engine configs.");
 
     plans.set_tag(operation_graph->getTag());
-    plans.set_engine_configs(op_graph_to_configs);
+    plans.enqueue_engine_configs(op_graph_to_configs);
     plans.set_kernel_cache(kernel_cache);
 
     CUDNN_FE_LOG_LABEL_ENDL("INFO: Querying engine config properties.");
+    CHECK_CUDNN_FRONTEND_ERROR(plans.query_properties());
+
+    return {error_code_t::OK, ""};
+}
+
+inline error_t
+Graph::create_execution_plan(int64_t const engine_id, std::unordered_map<KnobType_t, int64_t> const &user_knobs) {
+    // first create the engine
+    // this just uses the global engine id and operation graph
+    detail::backend_descriptor engine(CUDNN_BACKEND_ENGINE_DESCRIPTOR);
+    RETURN_CUDNN_FRONTEND_ERROR_IF(engine.get_status() != CUDNN_STATUS_SUCCESS,
+                                   error_code_t::CUDNN_BACKEND_API_FAILED,
+                                   "Failed to create engine's backend descriptor.");
+    CHECK_CUDNN_FRONTEND_ERROR(detail::create_engine(engine, engine_id, operation_graph->get_raw_desc()));
+
+    // Create an array of knob choices
+    std::vector<detail::backend_descriptor> knob_choices;
+    CHECK_CUDNN_FRONTEND_ERROR(detail::set_knob_choices(user_knobs, knob_choices));
+
+    auto engine_config = make_shared_backend_pointer((cudnnBackendDescriptorType_t)CUDNN_BACKEND_ENGINECFG_DESCRIPTOR);
+    CHECK_CUDNN_FRONTEND_ERROR(detail::create_engine_config(engine_config, engine, knob_choices));
+    plans.enqueue_engine_configs({engine_config});
     CHECK_CUDNN_FRONTEND_ERROR(plans.query_properties());
 
     return {error_code_t::OK, ""};
@@ -1446,6 +1580,12 @@ Graph::set_kernel_cache(std::shared_ptr<KernelCache> cache) {
 inline Graph &
 Graph::set_sm_count(int32_t count) {
     context.set_target_sm_count(count);
+    return *this;
+}
+
+inline Graph &
+Graph::set_sm_version(int32_t version) {
+    context.set_sm_version(version);
     return *this;
 }
 
@@ -1565,6 +1705,31 @@ Graph::layernorm(std::shared_ptr<Tensor_attributes> x,
     sub_nodes.emplace_back(std::make_unique<LayerNormNode>(std::move(attributes), context));
 
     return {Y, MEAN, INV_VARIANCE};
+}
+
+inline std::array<std::shared_ptr<Tensor_attributes>, 3>
+Graph::adalayernorm(std::shared_ptr<Tensor_attributes> x,
+                    std::shared_ptr<Tensor_attributes> scale,
+                    std::shared_ptr<Tensor_attributes> bias,
+                    AdaLayernorm_attributes attributes) {
+    // Set outputs
+    auto Y = attributes.outputs[AdaLayernorm_attributes::output_names::Y] = output_tensor(attributes.name + "::Y");
+    std::shared_ptr<Tensor_attributes> MEAN                               = nullptr;
+    std::shared_ptr<Tensor_attributes> INV_VARIANCE                       = nullptr;
+    if (attributes.forward_phase == NormFwdPhase_t::TRAINING) {
+        MEAN = attributes.outputs[AdaLayernorm_attributes::output_names::MEAN] =
+            output_tensor(attributes.name + "::MEAN");
+        INV_VARIANCE = attributes.outputs[AdaLayernorm_attributes::output_names::INV_VARIANCE] =
+            output_tensor(attributes.name + "::INV_VARIANCE");
+    }
+    // Set inputs
+    attributes.inputs[AdaLayernorm_attributes::input_names::X]     = x;
+    attributes.inputs[AdaLayernorm_attributes::input_names::SCALE] = scale;
+    attributes.inputs[AdaLayernorm_attributes::input_names::BIAS]  = bias;
+
+    sub_nodes.emplace_back(std::make_unique<AdaLayerNormNode>(std::move(attributes), context));
+
+    return {std::move(Y), std::move(MEAN), std::move(INV_VARIANCE)};
 }
 
 inline std::array<std::shared_ptr<Tensor_attributes>, 3>
@@ -1714,6 +1879,28 @@ Graph::layernorm_backward(std::shared_ptr<Tensor_attributes> dy,
     sub_nodes.emplace_back(std::make_unique<DLNNode>(std::move(attributes), context));
 
     return {DX, DSCALE, DBIAS};
+}
+
+inline std::array<std::shared_ptr<Tensor_attributes>, 3>
+Graph::adalayernorm_backward(std::shared_ptr<Tensor_attributes> dy,
+                             std::shared_ptr<Tensor_attributes> x,
+                             std::shared_ptr<Tensor_attributes> scale,
+                             AdaLayernorm_backward_attributes attributes) {
+    // Set outputs
+    auto DX = attributes.outputs[AdaLayernorm_backward_attributes::output_names::DX] =
+        output_tensor(attributes.name + "::DX");
+    auto DSCALE = attributes.outputs[AdaLayernorm_backward_attributes::output_names::DSCALE] =
+        output_tensor(attributes.name + "::DSCALE");
+    auto DBIAS = attributes.outputs[AdaLayernorm_backward_attributes::output_names::DBIAS] =
+        output_tensor(attributes.name + "::DBIAS");
+    // Set inputs
+    attributes.inputs[AdaLayernorm_backward_attributes::input_names::DY]    = dy;
+    attributes.inputs[AdaLayernorm_backward_attributes::input_names::X]     = x;
+    attributes.inputs[AdaLayernorm_backward_attributes::input_names::SCALE] = scale;
+
+    sub_nodes.emplace_back(std::make_unique<DAdaLayerNormNode>(std::move(attributes), context));
+
+    return {std::move(DX), std::move(DSCALE), std::move(DBIAS)};
 }
 
 inline std::shared_ptr<Tensor_attributes>
@@ -2026,6 +2213,58 @@ Graph::slice(std::shared_ptr<Tensor_attributes> input, Slice_attributes attribut
     auto Y = attributes.outputs[Slice_attributes::output_names::Y] = output_tensor(attributes.name + "::Y");
 
     sub_nodes.emplace_back(std::make_unique<SliceNode>(std::move(attributes), context));
+    return Y;
+}
+
+inline std::array<std::shared_ptr<Tensor_attributes>, 2>
+Graph::block_scale_quantize(std::shared_ptr<Tensor_attributes> x, Block_scale_quantize_attributes attributes) {
+    // Set outputs
+    auto Y = attributes.outputs[Block_scale_quantize_attributes::output_names::Y] =
+        output_tensor(attributes.name + "::Y");
+    auto scale = attributes.outputs[Block_scale_quantize_attributes::output_names::scale] =
+        output_tensor(attributes.name + "::scale");
+
+    // Set inputs
+    attributes.inputs[Block_scale_quantize_attributes::input_names::X] = x;
+
+    sub_nodes.emplace_back(std::make_unique<BlockScaleQuantizeNode>(std::move(attributes), context));
+
+    return {Y, scale};
+}
+
+inline std::shared_ptr<Tensor_attributes>
+Graph::block_scale_dequantize(std::shared_ptr<Tensor_attributes> x,
+                              std::shared_ptr<Tensor_attributes> scale,
+                              Block_scale_dequantize_attributes attributes) {
+    // Set outputs
+    auto Y = attributes.outputs[Block_scale_dequantize_attributes::output_names::Y] =
+        output_tensor(attributes.name + "::Y");
+
+    // Set inputs
+    attributes.inputs[Block_scale_dequantize_attributes::input_names::X]     = x;
+    attributes.inputs[Block_scale_dequantize_attributes::input_names::scale] = scale;
+
+    sub_nodes.emplace_back(std::make_unique<BlockScaleDequantizeNode>(std::move(attributes), context));
+
+    return Y;
+}
+
+inline std::shared_ptr<Tensor_attributes>
+Graph::concatenate(std::vector<std::shared_ptr<Tensor_attributes>> x, Concatenate_attributes attributes) {
+    if (attributes.name.empty()) {
+        attributes.name += std::to_string(sub_nodes.size());
+    }
+
+    // Set outputs
+    auto Y = attributes.outputs[Concatenate_attributes::output_names::Y] = output_tensor(attributes.name + "::Y");
+
+    // Set inputs
+    for (auto &element : x) {
+        attributes.inputs.push_back(element);
+    }
+
+    sub_nodes.emplace_back(std::make_unique<ConcatenateNode>(std::move(attributes), context));
+
     return Y;
 }
 

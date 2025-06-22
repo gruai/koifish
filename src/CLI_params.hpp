@@ -10,7 +10,7 @@
 #include <cassert>
 #include "g_float.hpp" 
 #include "./Utils/GST_log.hpp" 
-#include "./ggex/json.hpp" 
+#include "./Utils/json.hpp" 
 
 
 /**
@@ -22,6 +22,7 @@ enum COMPRESSIVE_SENSING    {
     SVD_a,
     GBTQ,
     GBDT,
+    EoRA,       //Eigenspace Low-Rank Approximation
     SAMPLE,     //random sub-sampling
 };
 
@@ -118,9 +119,9 @@ public:
     std::string sCardPath = "",sTokenPath="";
     std::string sArch,torch_dtype,transformers_version,model_type;
     std::string act_type,norm_type;
-    typNUMBER tpWeight = typNUMBER::BF16,tpActivation = typNUMBER::BF16, 
-        tpPreLogits = typNUMBER::F32,
-        tpGradient = typNUMBER::BF16;
+    typNUMBER tpWeight = typNUMBER::BF16,tpEmbed = typNUMBER::BF16,        
+        tpPreLogits = typNUMBER::F32,        tpGradient = typNUMBER::BF16,
+        tpActivation = typNUMBER::BF16;
         
     dotprod_t fDotW;
     JSON jModelParam;   //
@@ -136,7 +137,7 @@ public:
 //  ****
     bool isFFNWeightTying = true;
     bool isEmbedWeightTying = true;
-    bool isSeperateQKV = false;
+    bool isSeparateQKV = false;
     float clip_qkv = FLT_MAX;   // Clipping Q/K/V.  to prevent numerical instability
 //  Experts     
     int n_experts=0,n_experts_ac=0; 
@@ -223,6 +224,7 @@ struct DEUG_SWITCH{
     int SelfAttention_noraml=1;
     bool NO_loss = false;
     bool check_tensor_norm = false;
+    int T_ternary = 0;
     
     int dict_latent_dim = -1;
     int graph_dump = 0; //  10 levels of dumps, 0-9. 0 is a full dump,The lower the number the more dump.

@@ -10,9 +10,10 @@
 - Mixture of models
 - CPU, GPU and Hybrid training
 - Json config file
+- Pure C++ tokenizer
 - Self-contained C++/cu project with minimal dependencies
 
-## Minimum dependencies:
+## Minimum dependencies
 - cudnn(may removed in future version)
 - 16GB+ VRAM CUDA Device
 - CUDA Toolkit (12.5+)
@@ -37,6 +38,10 @@ make clean && make VERBOSE=TRUE
 - Subsampling
 - [Weight Tying](cases/tricks/WeightTying.md)
 
+
+## Changelog
+
+* 06/14/2025: Support bit representation(binary[-1,1], ternary[-1,0,1]) 
 
 ## Working plan
 - Hybrid 16/8/1 bit training

@@ -518,22 +518,22 @@ bool Fish::InitDictTokenset(int flag)    {
         // hTokenset = std::make_shared<DataTokenSet>(hDictVAE.get());        
         break;
     }
-    assert(hDict->nVocab()>0);    
+    assert(hDict->nVocab()>0);  
 
-    tokenset = DataTokenSet::MakeInstance(config,hDict,0x0);        
-    if(tokenset.empty() ){
-        _ERROR("\n======== %s Failed to load tokenset!========\n",__func__);
-        return false;
-    };
-    if(config.isOnlyGPT){
-        // may have no train !!!
-    }else{        
-        
+    {        
+        tokenset = DataTokenSet::MakeInstance(config,hDict,0x0);        
+        if(tokenset.empty() ){
+            _ERROR("\n======== %s Failed to load tokenset!========\n",__func__);
+            return false;
+        };        
     } 
     tsTrain = tokenset[0];   
     for(int i=1;i<tokenset.size();i++)  {
         tsEval.push_back(tokenset[i]);
     } 
+    if(config.isOnlyGPT){
+        return true;     // may have no train !!!
+    }
     
     // hDictVAE->mapT2T = tsTrain->mapT2T;        hDictVAE->dialect = tsTrain->dialect;
     // for(auto wiki : wikis){
@@ -597,16 +597,27 @@ void NLP_AutoRegressive::Train(int flag)       {
     // DEBUG.train_datas = 1;
     // DEBUG.train_hyperparams = 1;
     // DEBUG.back_graph_version = 1;        Verified at 05132025
-    
-
+    DEBUG.T_ternary = 0;
+    QUANT_ALG tpQuant = DEBUG.T_ternary==1 ? W_SCALE : W_NOSCALE;
+    string all_tensors;
+    int nTernary = 0;
+    size_t nzT = 0;
     hOPT->BeforeTrain(tokens_input,0x0);
     RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();  
     hRLS->BeforeTrain( );
     hRLS->Prepare(-1);
     for(auto t : hOPT->opt_ps){
+        if(DEBUG.T_ternary>0 && G_Has_(t->name,{"ffn_down.weight","ffn_up.weight"}))  {      // "ffn_down.weight","ffn_up.weight","attn_qkv.weight","attn.wo.weight"
+            BIT_SET(t->flags,GTensor::F_TERNARY);
+            t->tpQuant = tpQuant;       
+            // t->ToTernary();
+            nTernary++;     nzT+=t->size();
+            all_tensors += t->name; all_tensors += " ";
+        }
         hRLS->GetTensorStatus(-1,t,0x0);
     }
-       
+    _INFO("[Ternary] tpQuant=%s tensor=%d(%.3g%%) @{%s}\n",tpQuant==W_SCALE?"W_SCALE":"W_NOSCALE",
+        nTernary,nzT*100.0f/nParams,all_tensors.c_str());  
     int64_t now = GST_ms();
     double ms=0;
     // print_build_info();
@@ -731,7 +742,8 @@ void NLP_AutoRegressive::Dump(int type,int flag)      {
         _INFO("%s: LARS(t_max=%g)\n", __func__,config.lars_ratio);
 }
 
-float* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV,bool isCPU,unsigned flags=0x0);
+// template<typename T>
+// float* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV,bool isCPU,unsigned flags=0x0);
 int T_generate_cpu(hFISH hFish, bool isOnlyUpdateKV,unsigned flags=0x0);
 float RAW_backward(Fish *fish,const int* hostInToken,int accum_steps,bool,int flag);
 int Fish::BackwardOnRLS(int iter,int flag)  {
@@ -779,9 +791,10 @@ int Fish::ForwardOnRLS(int iter,int flag)  {
     
     if(DEBUG.T_cuda_ver==1){    
         if(DEBUG.T_cpu==1){            
-            T_generate_cpu(SharedThis(), false, flag);
-        }else
-            T_generate_cuda(SharedThis(),false,DEBUG.T_cpu,flag); //  do one inference as warmup
+            // T_generate_cpu(SharedThis(), false, flag);
+        }else{
+            // T_generate_cuda<floatX>(SharedThis(),false,DEBUG.T_cpu,flag); //  do one inference as warmup
+        }
         return 0x0;        
     }
     // if(DEBUG.back_graph_version==1)

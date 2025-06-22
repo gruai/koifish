@@ -58,7 +58,7 @@ hGensor GeNeuron::OnInput(hGensor hIn,int flag){
         if(isTemp){
             double now = GST_ms(); 
             hIn->SerialData(name,host_inp,true,dump_flag);
-            SUM::tX1 += GST_ms()-now;
+            SUM::tUpload += GST_ms()-now;
         }
     }else{
 
@@ -78,8 +78,7 @@ bool RLS_BP::BeforeTrain(int flag){
         for (int l = 1; l < nLayer; l++) {
             SelfAttention *QKV = hFish->GetNeuron<SelfAttention>("SelfAttention",l);
             nT += QKV->PGensors().size();
-            nG += QKV->SetGuoke(firstQKV);           
-            // QKV->dump_flag = -1;
+            nG += QKV->SetGuoke(firstQKV);  
             FFN *ffn = hFish->GetNeuron<FFN>("FFN",l);
             nT += ffn->PGensors().size();
             nG += ffn->SetGuoke(firstFFN);
@@ -231,8 +230,7 @@ bool RLS_BP::isResident(GeNeuron *neuron,int flag){
     if(dynamic_cast<SelfAttention*>(neuron)){
         // return neuron->layer==1;
         // return true;
-    }
-        
+    } 
 
     // neuron->dump_flag = -1;
     return false;
@@ -243,13 +241,11 @@ bool RLS_BP::Prepare(int iter,int flag){
     int t = 0;
     
     for(auto node : nodes){
-#ifndef NDEBUG
         if( costs + node->cost>budget )  {
             _INFO("[RLS]  Outof Budeget@\"%s\"!!! budget=%g,costs=%g+%g\n",node->name.c_str(),budget,costs,node->cost);
-            assert(0);
+            // assert(0);
             break;
         }
-#endif
         node->begin = 0;   
         GeNeuron *neuron = (GeNeuron*)(node->hOBJ); 
         if(iter<0 && isResident(neuron)){

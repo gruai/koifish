@@ -10,8 +10,6 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/bin/)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/bin/)
 set(PWD ${CMAKE_CURRENT_SOURCE_DIR})
 
-# find_package(pybind11 REQUIRED)
-option(DELTA_WANDB                  "KOIFISH: wandb support"        OFF)
 option(K_USECUDA                    "KOIFISH: CUDA"                 ON)
 option(K_DEBUGCUDA                  "KOIFISH: DEBUG_CUDA[slow!]"                 OFF)
 option(K_USE_CUDNN                  "KOIFISH: use CUDNN libs"         ON)
@@ -20,7 +18,30 @@ option(K_USE_GGML                   "KOIFISH: use GGML libs"        OFF)
 OPTION(K_USE_OPENMP                 "KOIFISH: Enable OpenMP"                 ON)
 OPTION(K_USE_OPENBLAS               "KOIFISH: Enable OpenBLAS"               OFF)
 OPTION(K_USE_GBDT                   "KOIFISH: Enable Gradient boosting trees"               OFF)
+OPTION(K_USE_EIGEN                  "KOIFISH: Enable Eigen lib"               OFF)
 OPTION(K_TESTING                    "KOIFISH: Do some testing"               OFF)
+# option(K_WANDB                      "KOIFISH: wandb support"        OFF)
+
+# set (CMAKE_C_FLAGS "-std=c11")
+# set (CMAKE_C_FLAGS_DEBUG "$ENV{CFLAGS} -O0 -g2 -ggdb")
+# set (CMAKE_C_FLAGS_RELEASE "$ENV{CFLAGS} -O3")
+
+# set (CMAKE_CXX_FLAGS "-std=c++11")
+# set (CMAKE_CXX_FLAGS_DEBUG "$ENV{CXXFLAGS} -O0 -g2 -ggdb")
+# set (CMAKE_CXX_FLAGS_RELEASE "$ENV{CXXFLAGS} -O3")
+
+# set (CMAKE_EXE_LINKER_FLAGS "-Wl,--as-needed")
+
+# add_compile_options (
+#     -Wall
+#     -Werror
+#     -Wextra
+#     -Wswitch-default
+#     -Wfloat-equal
+#     -Wshadow
+#     -Wcast-qual
+# )
+add_compile_definitions(_TENSOR_G_)
 
 if(K_USE_OPENMP)
     find_package(OpenMP REQUIRED)
@@ -36,7 +57,7 @@ endif()
 if (K_TESTING)
     add_subdirectory(tests)
     find_package(gflags REQUIRED)
-    set(DELTA_cc ${DELTA_cc} -D_DO_SOME_TESTING_ )    
+    add_compile_definitions(_DO_SOME_TESTING_)
 endif()
 
 if (K_USE_CCACHE)
@@ -45,6 +66,7 @@ if (K_USE_CCACHE)
     if (_CCACHE_FOUND)
         # TODO: should not be set globally
         set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ccache)
+        set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK ccache)
         set(ENV{CCACHE_SLOPPINESS} time_macros)
         message(STATUS "ccache found, compilation results will be cached. Disable with GGML_CCACHE=OFF.")
     else()
@@ -53,14 +75,14 @@ if (K_USE_CCACHE)
 endif()
 
 set(DELTA_cc ${DELTA_cc} -mf16c -mavx2 -mfma -std=c++20)
-if (DELTA_WANDB)
-    add_subdirectory(src/pybind11)
-    set(DELTA_LIB pybind11::embed)
-    set(DELTA_cc -D_USE_WANDB_)
-endif()
+# if (K_WANDB)
+#     add_subdirectory(src/pybind11)
+#     set(DELTA_LIB pybind11::embed)
+#     set(DELTA_cc ${DELTA_cc} -D_USE_WANDB_)
+# endif()
 if(K_USE_OPENBLAS)
-    set(DELTA_cc ${DELTA_cc} -D_USE_OPENBLAS_ )
-    set(OPENBLAS_INC /home/cys/Downloads/OpenBLAS-0.3.27/build/generated/ /home/cys/Downloads/OpenBLAS-0.3.27/build/ )
+    add_compile_definitions(_USE_OPENBLAS_)
+    set(MORE_INC /home/cys/Downloads/OpenBLAS-0.3.27/build/generated/ /home/cys/Downloads/OpenBLAS-0.3.27/build/ )
     set(OPENBLAS_LIB  /home/cys/Downloads/OpenBLAS-0.3.27/libopenblas_haswellp-r0.3.27.so  )  
     set(blas_sources ${CMAKE_CURRENT_SOURCE_DIR}/src/Utils/BLAS_t.cpp )
     # add_subdirectory(src/lenda/util)
@@ -68,7 +90,10 @@ if(K_USE_OPENBLAS)
 else()
 endif()
 
-add_compile_definitions(_TENSOR_G_)  
+if(K_USE_EIGEN)
+    add_subdirectory(src/lenda/Cheby)
+    set(MORE_INC ${MORE_INC} /home/cys/rnd/gssx/gsp_3.0/library/eigen-3.4.0/)
+endif()
 
 if(K_USECUDA)
     # if target == '4090':
@@ -92,8 +117,9 @@ if(K_USECUDA)
         message(STATUS "CUDAA ARCH=${CMAKE_CUDA_ARCHITECTURES} DIR=${CUDA_TOOLKIT_ROOT_DIR}")
         enable_language(CUDA)
         
-        set(CUDA_FLAGS -use_fast_math  -DENABLE_BF16 --expt-relaxed-constexpr -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -DKITTENS_4090)
+        set(CUDA_FLAGS -use_fast_math  -DENABLE_BF16 --expt-relaxed-constexpr -std=c++20 )
         # -mavx512f -mavx512vl  for identifier "__builtin_ia32_ldtilecfg" is undefined
+        #  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills
         if (NOT CUDA_CCFULLVER MATCHES clang)
             set(CUDA_CCID "GNU")
             execute_process(
@@ -116,7 +142,7 @@ if(K_USECUDA)
             list(APPEND CUDA_FLAGS -Xcompiler ${CUDA_CXX_FLAGS_JOINED})
         endif()
         if(K_DEBUGCUDA)
-            message(STATUS "CUDA with debug option, very slow!!!")
+            message(STATUS "DEBUG_CUDA - CUDA with debug option, very slow!!!")
             list(APPEND CUDA_FLAGS -G ${CUDA_CXX_FLAGS_JOINED})
         endif()
         message(STATUS "CUDA_FLAGS=${CUDA_FLAGS}")
@@ -131,7 +157,7 @@ if(K_USE_CUDNN)
     set(CUDA_LIB  ${CUDA_LIB} cudnn )   
     set(CUDA_INC  ${CMAKE_SOURCE_DIR}/cudnn-frontend/include ${CMAKE_SOURCE_DIR}/src/Device/CUDA/TK/include  ) 
     # set(CUDA_FLAGS ${CUDA_FLAGS} -DENABLE_CUDNN )
-    set(DELTA_cc ${DELTA_cc} -DENABLE_CUDNN -DTEST_ALL_WARP)    
+    add_compile_definitions(ENABLE_CUDNN)  
 endif()
 
 if(K_USE_GGML)
@@ -146,19 +172,20 @@ if(K_USE_GGML)
     IF(NOT GGML_LIB)
         message(FATAL_ERROR "GGML_LIB library not found @${GG_LIB_PATH}")
     endif()
-    set(DELTA_cc ${DELTA_cc} -D__USE_GGML__)    
+    add_compile_definitions(__USE_GGML__)
     set(GG_LIB  ${GG_LIB_PATH}/libcommon.a ${GG_LIB_PATH}/libllama.so ${GG_LIB_PATH}/libggml.so ${GG_LIB_PATH}/libggml-cpu.so ${GG_LIB_PATH}/libggml-base.so)   
     set(GG_INC ${CMAKE_SOURCE_DIR}/llama.cpp/ggml/include ${CMAKE_SOURCE_DIR}/llama.cpp/ggml/src ${CMAKE_SOURCE_DIR}/llama.cpp/include )
     message(STATUS "KOIFISH GG_LIB=${GG_LIB} GG_INC=${GG_INC}")
 endif()
 
 if(K_USE_GBDT)
-    set(DELTA_cc ${DELTA_cc} -D_USE_GBDT_ )
+    add_compile_definitions(_USE_GBDT_)
     add_subdirectory(src/GBDT)
 endif()
 
 message(STATUS "KOIFISH cc=${DELTA_cc} lib=${DELTA_LIB} PWD=${CMAKE_SOURCE_DIR}")
 
+add_subdirectory(src/Tensor)
 add_subdirectory(src/Manifold)
 add_subdirectory(src/Fuzi)
 add_subdirectory(src/Device)
@@ -168,7 +195,7 @@ add_subdirectory(src/Utils)
 
 add_subdirectory(src/TokenSet)
 
-set(sources   ${TGraph_sources} ${util_sources} ${kernel_sources} ${Fuzi_sources} ${ggex_sources} ${device_sources} ${model_sources} 
+set(sources   ${TGraph_sources} ${util_sources} ${tensor_sources} ${kernel_sources} ${cheby_sources} ${Fuzi_sources} ${ggex_sources} ${device_sources} ${model_sources} 
     ${token_sources} ${mort_sources} ${blas_sources} ${TEST_SRCS} )
 add_executable(koifish ${CMAKE_CURRENT_SOURCE_DIR}/src/koifish.cpp ${sources} )
 message(STATUS "KOIFISH sources=${sources}")
@@ -176,9 +203,8 @@ message(STATUS "KOIFISH sources=${sources}")
 
 foreach(prog koifish )    #finetune koifish train2
     install(TARGETS ${prog} RUNTIME)
-    target_include_directories(${prog} PRIVATE ${CMAKE_SOURCE_DIR}/src/Manifold/ ${CMAKE_SOURCE_DIR}/src/TokenSet/ ${CMAKE_SOURCE_DIR}/src/Utils/ ${CMAKE_SOURCE_DIR}/src/Device/CUD
-A 
-        ${GG_INC} ${CUDA_INC} ${OPENBLAS_INC} ${TEST_INC})
+    target_include_directories(${prog} PRIVATE ${CMAKE_SOURCE_DIR}/src/Manifold/ ${CMAKE_SOURCE_DIR}/src/TokenSet/ ${CMAKE_SOURCE_DIR}/src/Utils/ ${CMAKE_SOURCE_DIR}/src/Device/CUDA 
+        ${GG_INC} ${CUDA_INC} ${MORE_INC} ${TEST_INC})
 
     target_link_libraries(${prog} PRIVATE ${GG_LIB} ${CMAKE_THREAD_LIBS_INIT} ${OPENBLAS_LIB} ${DELTA_LIB} ${CUDA_LIB} ${GFLAGS_LIBRARIES} pthread )
     target_compile_features(${prog} PRIVATE cxx_std_17)

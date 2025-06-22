@@ -6,6 +6,7 @@
 #include <optional>
 #include <unordered_map>
 #include <vector>
+#include <limits.h>
 
 #include "context.h"
 
@@ -264,6 +265,7 @@ class Tensor_attributes {
 
 class Batchnorm_attributes;
 class Batchnorm_backward_attributes;
+class Concatenate_attributes;
 
 template <typename DerivedT>
 class Attributes {
@@ -281,15 +283,27 @@ class Attributes {
     get_non_virtual_uids() const {
         std::vector<int64_t> non_virtual_uids;
         auto derived = static_cast<DerivedT const*>(this);
-        for (auto& [name, tensor] : derived->inputs) {
-            (void)name;
-            if (tensor && tensor->get_is_virtual() == false) {
-                non_virtual_uids.push_back(tensor->get_uid());
-                if (auto ragged_offset = tensor->get_ragged_offset()) {
-                    non_virtual_uids.push_back(ragged_offset->get_uid());
+        if constexpr (std::is_same_v<DerivedT, Concatenate_attributes>) {
+            for (auto tensor : derived->inputs) {
+                if (tensor && tensor->get_is_virtual() == false) {
+                    non_virtual_uids.push_back(tensor->get_uid());
+                    if (auto ragged_offset = tensor->get_ragged_offset()) {
+                        non_virtual_uids.push_back(ragged_offset->get_uid());
+                    }
+                }
+            }
+        } else {
+            for (auto& [name, tensor] : derived->inputs) {
+                (void)name;
+                if (tensor && tensor->get_is_virtual() == false) {
+                    non_virtual_uids.push_back(tensor->get_uid());
+                    if (auto ragged_offset = tensor->get_ragged_offset()) {
+                        non_virtual_uids.push_back(ragged_offset->get_uid());
+                    }
                 }
             }
         }
+
         for (auto& [name, tensor] : derived->outputs) {
             (void)name;
             if (tensor && tensor->get_is_virtual() == false) {
@@ -321,10 +335,18 @@ class Attributes {
     fill_pass_by_value(std::unordered_map<Tensor_attributes::uid_t, Tensor_attributes::pass_by_values_t>&
                            tensor_to_pass_by_value) const {
         auto derived = static_cast<DerivedT const*>(this);
-        for (auto& [name, tensor] : derived->inputs) {
-            (void)name;
-            if (tensor && tensor->get_pass_by_value().has_value()) {
-                tensor_to_pass_by_value.emplace(tensor->get_uid(), tensor->get_pass_by_value().value());
+        if constexpr (std::is_same_v<DerivedT, Concatenate_attributes>) {
+            for (auto& tensor : derived->inputs) {
+                if (tensor && tensor->get_pass_by_value().has_value()) {
+                    tensor_to_pass_by_value.emplace(tensor->get_uid(), tensor->get_pass_by_value().value());
+                }
+            }
+        } else {
+            for (auto& [name, tensor] : derived->inputs) {
+                (void)name;
+                if (tensor && tensor->get_pass_by_value().has_value()) {
+                    tensor_to_pass_by_value.emplace(tensor->get_uid(), tensor->get_pass_by_value().value());
+                }
             }
         }
 
@@ -334,10 +356,19 @@ class Attributes {
     void
     fill_from_context(detail::Context const& context) {
         auto derived = static_cast<DerivedT const*>(this);
-        for (auto& [name, tensor] : derived->inputs) {
-            (void)name;
-            if (tensor) {
-                tensor->fill_from_context(context);
+
+        if constexpr (std::is_same_v<DerivedT, Concatenate_attributes>) {
+            for (auto& tensor : derived->inputs) {
+                if (tensor) {
+                    tensor->fill_from_context(context);
+                }
+            }
+        } else {
+            for (auto& [name, tensor] : derived->inputs) {
+                (void)name;
+                if (tensor) {
+                    tensor->fill_from_context(context);
+                }
             }
         }
         for (auto& [name, tensor] : derived->outputs) {
@@ -364,11 +395,20 @@ class Attributes {
         // Pick number of dimensions from anyone of non-fused-scalar input/output tensors
         // In case, all tensors are fused scalars, just keep them 1D.
         int64_t number_of_dims = 1;
-        for (auto [name, tensor] : derived->inputs) {
-            (void)name;
-            if (tensor && (tensor->get_pass_by_value().has_value() == false)) {
-                number_of_dims = tensor->get_dim().size();
-                break;
+        if constexpr (std::is_same_v<DerivedT, Concatenate_attributes>) {
+            for (auto tensor : derived->inputs) {
+                if (tensor && (tensor->get_pass_by_value().has_value() == false)) {
+                    number_of_dims = tensor->get_dim().size();
+                    break;
+                }
+            }
+        } else {
+            for (auto [name, tensor] : derived->inputs) {
+                (void)name;
+                if (tensor && (tensor->get_pass_by_value().has_value() == false)) {
+                    number_of_dims = tensor->get_dim().size();
+                    break;
+                }
             }
         }
 
@@ -383,11 +423,20 @@ class Attributes {
             }
         }
 
-        for (auto [name, tensor] : derived->inputs) {
-            (void)name;
-            if (tensor && tensor->get_pass_by_value().has_value()) {
-                tensor->set_dim(std::vector<int64_t>(number_of_dims, 1));
-                tensor->set_stride(std::vector<int64_t>(number_of_dims, 1));
+        if constexpr (std::is_same_v<DerivedT, Concatenate_attributes>) {
+            for (auto tensor : derived->inputs) {
+                if (tensor && tensor->get_pass_by_value().has_value()) {
+                    tensor->set_dim(std::vector<int64_t>(number_of_dims, 1));
+                    tensor->set_stride(std::vector<int64_t>(number_of_dims, 1));
+                }
+            }
+        } else {
+            for (auto [name, tensor] : derived->inputs) {
+                (void)name;
+                if (tensor && tensor->get_pass_by_value().has_value()) {
+                    tensor->set_dim(std::vector<int64_t>(number_of_dims, 1));
+                    tensor->set_stride(std::vector<int64_t>(number_of_dims, 1));
+                }
             }
         }
     }
@@ -890,6 +939,54 @@ class Layernorm_attributes : public Attributes<Layernorm_attributes> {
     Layernorm_attributes&
     set_epsilon(std::shared_ptr<Tensor_attributes>& value) {
         inputs[Layernorm_attributes::input_names::EPSILON] = value;
+        return *this;
+    }
+};
+
+class AdaLayernorm_attributes : public Attributes<AdaLayernorm_attributes> {
+    friend class Attributes<AdaLayernorm_attributes>;
+    friend class AdaLayerNormNode;
+    friend class Graph;
+
+    NormFwdPhase_t forward_phase = NormFwdPhase_t::NOT_SET;
+
+   public:
+    enum class input_names { X, SCALE, BIAS, EPSILON };
+    std::unordered_map<input_names, std::shared_ptr<Tensor_attributes>> inputs;
+    enum class output_names { Y, MEAN, INV_VARIANCE };
+    std::unordered_map<output_names, std::shared_ptr<Tensor_attributes>> outputs;
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(AdaLayernorm_attributes, name, compute_data_type, inputs, outputs, forward_phase)
+
+    AdaLayernorm_attributes&
+    set_forward_phase(NormFwdPhase_t const value) {
+        forward_phase = value;
+        return *this;
+    }
+
+    AdaLayernorm_attributes&
+    set_epsilon(std::shared_ptr<Tensor_attributes> value) {
+        inputs[AdaLayernorm_attributes::input_names::EPSILON] = std::move(value);
+        return *this;
+    }
+};
+
+class AdaLayernorm_backward_attributes : public Attributes<AdaLayernorm_backward_attributes> {
+    friend class Attributes<AdaLayernorm_backward_attributes>;
+    friend class DAdaLayerNormNode;
+    friend class Graph;
+
+   public:
+    enum class input_names { DY, X, SCALE, MEAN, INV_VARIANCE, EPSILON };
+    std::unordered_map<input_names, std::shared_ptr<Tensor_attributes>> inputs;
+    enum class output_names { DX, DSCALE, DBIAS };
+    std::unordered_map<output_names, std::shared_ptr<Tensor_attributes>> outputs;
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(AdaLayernorm_backward_attributes, name, compute_data_type, inputs, outputs)
+
+    AdaLayernorm_backward_attributes&
+    set_saved_mean_and_inv_variance(std::shared_ptr<Tensor_attributes> mean,
+                                    std::shared_ptr<Tensor_attributes> inv_variance) {
+        inputs[AdaLayernorm_backward_attributes::input_names::MEAN]         = mean;
+        inputs[AdaLayernorm_backward_attributes::input_names::INV_VARIANCE] = inv_variance;
         return *this;
     }
 };
@@ -1411,18 +1508,29 @@ class SDPA_attributes : public Attributes<SDPA_attributes> {
     using Tensor_t = std::shared_ptr<Tensor_attributes>;
     using Graph_t  = std::shared_ptr<Graph>;
 
-    using AttentionScoreModifier_t = std::function<Tensor_t(Graph_t, Tensor_t)>;
+    using AttentionScoreModifier_t =
+        std::function<Tensor_t(std::shared_ptr<Graph>, std::shared_ptr<Tensor_attributes>)>;
 
     std::optional<bool> is_inference;
-    bool alibi_mask               = false;
-    bool padding_mask             = false;
-    bool causal_mask              = false;
-    bool causal_mask_bottom_right = false;
-    std::optional<int> sliding_window_length;
+    bool alibi_mask   = false;
+    bool padding_mask = false;
+    std::optional<int64_t> left_bound;
+    std::optional<int64_t> right_bound;
+    DiagonalAlignment_t diagonal_alignment = DiagonalAlignment_t::TOP_LEFT;
     std::optional<float> dropout_probability;
     std::optional<float> attn_scale_value;
     std::optional<int> max_seq_len_kv;
     AttentionScoreModifier_t attention_score_modifier = nullptr;
+
+    bool
+    has_causal_like_masking() const {
+        return right_bound.has_value();
+    }
+
+    bool
+    has_causal_mask_bottom_right() const {
+        return right_bound.has_value() && diagonal_alignment == DiagonalAlignment_t::BOTTOM_RIGHT;
+    }
 
    public:
     enum class input_names {
@@ -1450,11 +1558,12 @@ class SDPA_attributes : public Attributes<SDPA_attributes> {
                                    is_inference,
                                    alibi_mask,
                                    padding_mask,
-                                   causal_mask,
-                                   causal_mask_bottom_right,
                                    dropout_probability,
                                    attn_scale_value,
-                                   sliding_window_length)
+                                   max_seq_len_kv,
+                                   left_bound,
+                                   right_bound,
+                                   diagonal_alignment)
 
     SDPA_attributes&
     set_is_inference(bool const value) {
@@ -1505,14 +1614,37 @@ class SDPA_attributes : public Attributes<SDPA_attributes> {
     }
 
     SDPA_attributes&
-    set_causal_mask(bool const value) {
-        causal_mask = value;
+    set_diagonal_alignment(DiagonalAlignment_t const alignment) {
+        diagonal_alignment = alignment;
         return *this;
     }
 
+    // Sets the diagonal position to top left and
+    // calls set_diagonal_band_right_bound(0) if no right_bound was specified
+    // TODO: Deprecate
+    SDPA_attributes&
+    set_causal_mask(bool const value) {
+        if (value) {
+            set_diagonal_alignment(DiagonalAlignment_t::TOP_LEFT);
+            if (!right_bound.has_value()) {
+                set_diagonal_band_right_bound(0);
+            }
+        }
+
+        return *this;
+    }
+
+    // Sets the diagonal position to the bottom right (on a per-sequence basis)
+    // and calls set_diagonal_band_right_bound(0) if no right_bound was specified
+    // TODO: Deprecate
     SDPA_attributes&
     set_causal_mask_bottom_right(bool const value) {
-        causal_mask_bottom_right = value;
+        if (value) {
+            set_diagonal_alignment(DiagonalAlignment_t::BOTTOM_RIGHT);
+            if (!right_bound.has_value()) {
+                set_diagonal_band_right_bound(0);
+            }
+        }
         return *this;
     }
 
@@ -1522,9 +1654,22 @@ class SDPA_attributes : public Attributes<SDPA_attributes> {
         return *this;
     }
 
+    // calls set_diagonal_band_left_bound(value)
+    // TODO: Deprecate
     SDPA_attributes&
     set_sliding_window_length(int const value) {
-        sliding_window_length = value;
+        return set_diagonal_band_left_bound(value);
+    }
+
+    SDPA_attributes&
+    set_diagonal_band_left_bound(int const value) {
+        left_bound = value;
+        return *this;
+    }
+
+    SDPA_attributes&
+    set_diagonal_band_right_bound(int const value) {
+        right_bound = value;
         return *this;
     }
 
@@ -1577,8 +1722,9 @@ class SDPA_fp8_attributes : public Attributes<SDPA_fp8_attributes> {
     friend class Graph;
 
     std::optional<bool> is_inference;
-    bool padding_mask = false;
-    bool causal_mask  = false;
+    bool padding_mask             = false;
+    bool causal_mask              = false;
+    bool causal_mask_bottom_right = false;
     std::optional<float> dropout_probability;
     std::optional<float> attn_scale_value;
 
@@ -1615,6 +1761,7 @@ class SDPA_fp8_attributes : public Attributes<SDPA_fp8_attributes> {
                                    is_inference,
                                    padding_mask,
                                    causal_mask,
+                                   causal_mask_bottom_right,
                                    dropout_probability,
                                    attn_scale_value)
 
@@ -1682,6 +1829,12 @@ class SDPA_fp8_attributes : public Attributes<SDPA_fp8_attributes> {
         inputs[SDPA_fp8_attributes::input_names::Dropout_scale] = scale;
         return *this;
     }
+
+    SDPA_fp8_attributes&
+    set_causal_mask_bottom_right(bool const value) {
+        causal_mask_bottom_right = value;
+        return *this;
+    }
 };
 
 class SDPA_backward_attributes : public Attributes<SDPA_backward_attributes> {
@@ -1691,13 +1844,14 @@ class SDPA_backward_attributes : public Attributes<SDPA_backward_attributes> {
     using Tensor_t = std::shared_ptr<Tensor_attributes>;
     using Graph_t  = std::shared_ptr<Graph>;
 
-    using AttentionScoreModifier_t = std::function<Tensor_t(Graph_t, Tensor_t)>;
+    using AttentionScoreModifier_t =
+        std::function<Tensor_t(std::shared_ptr<Graph>, std::shared_ptr<Tensor_attributes>)>;
 
-    bool alibi_mask               = false;
-    bool padding_mask             = false;
-    bool causal_mask              = false;
-    bool causal_mask_bottom_right = false;
-    std::optional<int> sliding_window_length;
+    bool alibi_mask   = false;
+    bool padding_mask = false;
+    std::optional<int64_t> left_bound;
+    std::optional<int64_t> right_bound;
+    DiagonalAlignment_t diagonal_alignment = DiagonalAlignment_t::TOP_LEFT;
 
     std::optional<float> dropout_probability;
     std::optional<float> attn_scale_value;
@@ -1708,6 +1862,16 @@ class SDPA_backward_attributes : public Attributes<SDPA_backward_attributes> {
     bool is_deterministic_algorithm                         = false;
     AttentionScoreModifier_t attention_score_modifier       = nullptr;
     AttentionScoreModifier_t attention_score_modifier_bprop = nullptr;
+
+    bool
+    has_causal_like_masking() const {
+        return right_bound.has_value();
+    }
+
+    bool
+    has_causal_mask_bottom_right() const {
+        return right_bound.has_value() && diagonal_alignment == DiagonalAlignment_t::BOTTOM_RIGHT;
+    }
 
    public:
     enum class input_names {
@@ -1736,11 +1900,13 @@ class SDPA_backward_attributes : public Attributes<SDPA_backward_attributes> {
                                    outputs,
                                    alibi_mask,
                                    padding_mask,
-                                   causal_mask,
-                                   causal_mask_bottom_right,
                                    dropout_probability,
                                    attn_scale_value,
-                                   sliding_window_length,
+                                   left_bound,
+                                   right_bound,
+                                   diagonal_alignment,
+                                   max_total_seq_len_q,
+                                   max_total_seq_len_kv,
                                    is_deterministic_algorithm)
 
     SDPA_backward_attributes&
@@ -1816,20 +1982,55 @@ class SDPA_backward_attributes : public Attributes<SDPA_backward_attributes> {
     }
 
     SDPA_backward_attributes&
-    set_causal_mask(bool const value) {
-        causal_mask = value;
+    set_diagonal_alignment(DiagonalAlignment_t const alignment) {
+        diagonal_alignment = alignment;
         return *this;
     }
 
+    // Sets the diagonal position to top left and
+    // calls set_diagonal_band_right_bound(0) if no right_bound was specified
+    // TODO: Deprecate
+    SDPA_backward_attributes&
+    set_causal_mask(bool const value) {
+        if (value) {
+            set_diagonal_alignment(DiagonalAlignment_t::TOP_LEFT);
+            if (!right_bound.has_value()) {
+                set_diagonal_band_right_bound(0);
+            }
+        }
+        return *this;
+    }
+
+    // Sets the diagonal position to the bottom right (on a per-sequence basis)
+    // and calls set_diagonal_band_right_bound(0) if no right_bound was specified
+    // TODO: Deprecate
     SDPA_backward_attributes&
     set_causal_mask_bottom_right(bool const value) {
-        causal_mask_bottom_right = value;
+        if (value) {
+            set_diagonal_alignment(DiagonalAlignment_t::BOTTOM_RIGHT);
+            if (!right_bound.has_value()) {
+                set_diagonal_band_right_bound(0);
+            }
+        }
+        return *this;
+    }
+
+    // calls set_diagonal_band_left_bound(value)
+    // TODO: Deprecate
+    SDPA_backward_attributes&
+    set_sliding_window_length(int const value) {
+        return set_diagonal_band_left_bound(value);
+    }
+
+    SDPA_backward_attributes&
+    set_diagonal_band_left_bound(int const value) {
+        left_bound = value;
         return *this;
     }
 
     SDPA_backward_attributes&
-    set_sliding_window_length(int const value) {
-        sliding_window_length = value;
+    set_diagonal_band_right_bound(int const value) {
+        right_bound = value;
         return *this;
     }
 
@@ -1872,8 +2073,9 @@ class SDPA_fp8_backward_attributes : public Attributes<SDPA_fp8_backward_attribu
     friend class SDPAFP8BackwardNode;
     friend class Graph;
 
-    bool padding_mask = false;
-    bool causal_mask  = false;
+    bool padding_mask             = false;
+    bool causal_mask              = false;
+    bool causal_mask_bottom_right = false;
 
     std::optional<float> dropout_probability;
     std::optional<float> attn_scale_value;
@@ -1922,6 +2124,7 @@ class SDPA_fp8_backward_attributes : public Attributes<SDPA_fp8_backward_attribu
                                    padding_mask,
                                    causal_mask,
                                    dropout_probability,
+                                   causal_mask_bottom_right,
                                    attn_scale_value)
 
     SDPA_fp8_backward_attributes&
@@ -1963,6 +2166,12 @@ class SDPA_fp8_backward_attributes : public Attributes<SDPA_fp8_backward_attribu
     SDPA_fp8_backward_attributes&
     set_causal_mask(bool const value) {
         causal_mask = value;
+        return *this;
+    }
+
+    SDPA_fp8_backward_attributes&
+    set_causal_mask_bottom_right(bool const value) {
+        causal_mask_bottom_right = value;
         return *this;
     }
 
@@ -2159,6 +2368,111 @@ class PagedCacheLoad_attributes : public Attributes<PagedCacheLoad_attributes> {
     enum class output_names { yOut };
     std::unordered_map<output_names, std::shared_ptr<Tensor_attributes>> outputs;
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(PagedCacheLoad_attributes, name, compute_data_type, inputs, outputs)
+};
+
+class Block_scale_quantize_attributes : public Attributes<Block_scale_quantize_attributes> {
+    friend class Attributes<Block_scale_quantize_attributes>;
+    friend class BlockScaleQuantizeNode;
+    friend class Graph;
+
+    std::optional<int32_t> block_size;
+    std::optional<int64_t> axis;
+    bool transpose = false;
+
+   public:
+    enum class input_names { X };
+    std::unordered_map<input_names, std::shared_ptr<Tensor_attributes>> inputs;
+    enum class output_names { Y, scale };
+    std::unordered_map<output_names, std::shared_ptr<Tensor_attributes>> outputs;
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Block_scale_quantize_attributes,
+                                   name,
+                                   compute_data_type,
+                                   inputs,
+                                   outputs,
+                                   block_size,
+                                   axis)
+
+    Block_scale_quantize_attributes&
+    set_block_size(int32_t const value) {
+        block_size = value;
+        return *this;
+    }
+
+    Block_scale_quantize_attributes&
+    set_axis(int64_t const value) {
+        axis = value;
+        return *this;
+    }
+
+    Block_scale_quantize_attributes&
+    set_transpose(bool const value) {
+        transpose = value;
+        return *this;
+    }
+};
+
+class Block_scale_dequantize_attributes : public Attributes<Block_scale_dequantize_attributes> {
+    friend class Attributes<Block_scale_dequantize_attributes>;
+    friend class BlockScaleDequantizeNode;
+    friend class Graph;
+
+    std::optional<int32_t> block_size;
+
+   public:
+    enum class input_names { X, scale };
+    std::unordered_map<input_names, std::shared_ptr<Tensor_attributes>> inputs;
+    enum class output_names { Y };
+    std::unordered_map<output_names, std::shared_ptr<Tensor_attributes>> outputs;
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Block_scale_dequantize_attributes,
+                                   name,
+                                   compute_data_type,
+                                   inputs,
+                                   outputs,
+                                   block_size)
+
+    Block_scale_dequantize_attributes&
+    set_block_size(int32_t const value) {
+        block_size = value;
+        return *this;
+    }
+};
+
+#if 0
+class Concatenate_string {
+    friend class Attributes<Concatenate_attributes>;
+    friend class ConcatenateNode;
+    friend class Graph;
+public:
+std::string str;
+NLOHMANN_DEFINE_TYPE_INTRUSIVE(Concatenate_string, str)
+};
+#endif
+
+class Concatenate_attributes : public Attributes<Concatenate_attributes> {
+    friend class Attributes<Concatenate_attributes>;
+    friend class ConcatenateNode;
+    friend class Graph;
+
+    std::optional<int64_t> axis;
+    std::optional<int64_t> in_place_index;
+
+   public:
+    std::vector<std::shared_ptr<Tensor_attributes>> inputs;
+    enum class output_names { Y };
+    std::unordered_map<output_names, std::shared_ptr<Tensor_attributes>> outputs;
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Concatenate_attributes, name, inputs, outputs, axis, in_place_index)
+
+    Concatenate_attributes&
+    set_axis(int64_t const value) {
+        axis = value;
+        return *this;
+    }
+
+    Concatenate_attributes&
+    set_in_place_index(int64_t const value) {
+        in_place_index = value;
+        return *this;
+    }
 };
 
 }  // namespace graph

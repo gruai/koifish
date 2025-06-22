@@ -7,6 +7,35 @@ typedef __gcc_fp16 kvtype_t;
 typedef f8e5m2_t tpEMBED;		//	f8e5m2_t or __gcc_fp16
 typedef f8e5m2_t tpW;
 
+/*
+inline __gcc_fp16 fp82half(unsigned char v) {
+	union {
+		unsigned short u;
+		__gcc_fp16 f;
+	} u;
+	u.u = v << 8;
+	return u.f;
+}
+
+
+	5 exponent bits and 2 mantissa bits (plus an implicit leading 1 for normalized numbers)
+
+inline float fp8e5m2_to_float(f8e5m2_t x) {
+	__gcc_fp16 val = 0;
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+	memcpy(&val, &x, sizeof(f8e5m2_t));
+#else
+	memcpy((char*)&val + sizeof(f8e5m2_t), &x, sizeof(f8e5m2_t));
+#endif
+	return half_to_float(val);
+}*/
+inline float gf4_ff(uint32_t v, int k) {
+	f8e5m2_t a = v & 0xff;
+	float s = T2Float(&a); // fp82half(v & 0xff)
+	s = s / -4.f;
+	return ((int)((v >> (8 + k * 3)) & 7) - 4) * s;
+}
+
 void attn(float* xout, float* atth, float* qh, kvtype_t* kh, kvtype_t* vh, int head_dim, int kv_dim, int kv_len) {
 	float score_max = -FLT_MAX;
 
@@ -41,17 +70,18 @@ void attn(float* xout, float* atth, float* qh, kvtype_t* kh, kvtype_t* vh, int h
 // int Hot_Update(int dim,float *hb,int *hot,int flag=0x0);
 
 //	transfer data between device & host
-TRANSFORMER_PIPE<uint32_t, void> *tPipe=nullptr;
+KERNEL_PIPE<uint32_t, void> *tPipe=nullptr;
 
 int FFN::CPU_v0(void *ctx,int layer,int flag)	{
 	auto config = hFish->config;
-	TRANSFORMER_PIPE<uint32_t, void> *tPipe = (TRANSFORMER_PIPE<uint32_t, void>*)(ctx);
+	KERNEL_PIPE<uint32_t, void> *tPipe = (KERNEL_PIPE<uint32_t, void>*)(ctx);
 	int wbit = BitPE(config.model.tpWeight),dim=tPipe->dim,nHot=-1,hidden_dim=tPipe->hidden_dim;
 	dotprod_t dotprod = fnDot(config.model.tpWeight);	//wbit == 4 ? dotprod_gf4 : (wbit == 8 ? dotprod_fp8 : dotprod_fp16);
-	float* x = tPipe->x,*xb = tPipe->xb,*xb2=tPipe->xb2,*exp=tPipe->exp,*hb=tPipe->hb,*hb2=tPipe->hb2, rmsscale,val,t0,t1;
+	floatX* x = tPipe->x,*xb = tPipe->xb,*xb2=tPipe->xb2,*exp=tPipe->exp,*hb=tPipe->hb,*hb2=tPipe->hb2;
+	float rmsscale,val,t0,t1;
 	const CoopLayer<tpW>* w = (const CoopLayer<tpW>*)(tPipe->cLayers+layer);
 	hCSPicker hPicker = nullptr;	//std::make_shared<CS_Picker>(hFish);
-	float* moe_weights = exp + tPipe->n_experts;
+	floatX* moe_weights = exp + tPipe->n_experts;
 	int* moe_experts = (int*)moe_weights + (tPipe->n_experts_ac ? tPipe->n_experts_ac : 1);
 	assert(tPipe->n_experts==0);
 	if (tPipe->n_experts) {
@@ -96,7 +126,7 @@ int T_generate_cpu(hFISH hFish, bool isOnlyUpdateKV,unsigned flags)	{
 	TokenEmbed* embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed",0); 
 	int token=embed->hBatch->CurToken(), pos = embed->hBatch->pos++;	
 	if(tPipe==nullptr){
-		tPipe = new TRANSFORMER_PIPE<uint32_t, void>(hFish,0x0);
+		tPipe = new KERNEL_PIPE<uint32_t, void>(hFish,0x0);
 	}else
 		tPipe->UpdatePos(pos);
 	
@@ -123,7 +153,7 @@ int T_generate_cpu(hFISH hFish, bool isOnlyUpdateKV,unsigned flags)	{
 		}
 	} else {
 		for (int i = 0; i < dim; ++i) {
-			x[i] = wbit == 8 ? fp8_to_float(content_row[i]) : ((__gcc_fp16*)content_row)[i];
+			x[i] = wbit == 8 ? T2Float(content_row+i) : ((__gcc_fp16*)content_row)[i];
 		}
 	}
 	assert(isValidF(dim,x));

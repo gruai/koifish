@@ -175,6 +175,9 @@ void SparseNeuron::UpdateSamps(int seed,int flag){
 
 }
 
+/*
+    EoRA: Training-free Compensation for Compressed LLM with Eigenspace Low-Rank Approximation
+*/
 bool SparseNeuron::InitSVD(int flag){
     assert(hSVD==nullptr);
     int nIn=w->ne[1],nOut=w->ne[0],rank=min(256,min(nIn,nOut)/5);
@@ -183,7 +186,7 @@ bool SparseNeuron::InitSVD(int flag){
     float *A=new float[nIn*nOut],tol_=0;    //1.0e-3
     f8e5m2_t *src = (f8e5m2_t*)(w->data);
     for(i=0;i<nz;i++)   
-        A[i] = fp8_to_float(src[i]);
+        A[i] = T2Float(src+i);  //fp8_to_float(src[i]);
     hSVD=std::make_shared<LoSVD<float>>(name,A,nIn,nOut,rank,tol_,typNUMBER::F32); 
     if(!hSVD->Build( ))  {
         compression = SKIP;

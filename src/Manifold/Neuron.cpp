@@ -518,10 +518,10 @@ bool ROPE::Build(int flag)    {
             fsin[t * dim2 + tid] = sinf(t * freq);
         }
     }
-    // hSin = GT(hFish, typNUMBER::F32, {T*dim2},0x0,name+".sin");     hSin->Alloc();
-    // hSin->SerialGP(fsin,nullptr,sizeof(float)*T*dim2,false);
-    // hCos = GT(hFish, typNUMBER::F32, {T*dim2},0x0,name+".cos");     hCos->Alloc();
-    // hCos->SerialGP(fcos,nullptr,sizeof(float)*T*dim2,false);
+    hSin = GT(hFish, typNUMBER::F32, {T*dim2},0x0,name+".sin");     hSin->Alloc();
+    hSin->SerialGP(fsin,nullptr,sizeof(float)*T*dim2,false);
+    hCos = GT(hFish, typNUMBER::F32, {T*dim2},0x0,name+".cos");     hCos->Alloc();
+    hCos->SerialGP(fcos,nullptr,sizeof(float)*T*dim2,false);
     delete[] fcos,fsin;  
 
     // KQ_pos = hFish->KQ_pos;    
@@ -619,7 +619,7 @@ bool LayerNormal::Build(int flag0)    {
     if(b!=nullptr)  b->tpInit=W_SKIP;
     // assert(nIn==C || nIn==hFish->config.nEmbed(-1));
     SHAPE sp={B,T},sp3={B,T,nIn};
-    out = std::make_shared<huTensor>(hFish,name+".out",sp3,tpWeight,false);    
+    out = GT(hFish, tpActivation, {B,T,nIn},flag,name+".out");      //std::make_shared<huTensor>(hFish,name+".out",sp3,tpActivation,false);    
  
     if(isRMS){
 
@@ -752,6 +752,10 @@ hGensor GeNeuron::AfterMing(RLS_BP* hRLS,hGensor cur,int flag){
 //     return gensors;
 // }
 
+void GeNeuron::OnDebug(const std::string&info,int typ,int flag){
+    dump_flag = -1;
+}
+
 std::vector<hGensor> GeNeuron::PGensors(bool isNoRef,int flag) {
     assert(out!=nullptr);
     vector arrT = {out};
@@ -762,6 +766,17 @@ std::vector<hGensor> GeNeuron::PGensors(bool isNoRef,int flag) {
     }
     return arrT;
 }
+hGensor GeNeuron::GetGensor(const std::string &key,int flag) {    
+    auto gensors = PGensors();  assert(gensors.size()>0);
+    for(auto gensor:gensors){
+        if(gensor==nullptr) continue;        
+        if(strstr(gensor->name,key.c_str()) != NULL){
+            return gensor; 
+        }
+    }
+    assert(0);
+    return nullptr;
+};
 
 // 天地本逆旅, 你我皆过客(Guoke)
 int GeNeuron::SetGuoke(GeNeuron *hGuoke_,int flag){   

@@ -1,4 +1,4 @@
-// GiFace.cpp : ¶¨Òå¿ØÖÆÌ¨Ó¦ÓÃ³ÌÐòµÄÈë¿Úµã¡£
+// GiFace.cpp : ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ì¨Ó¦ï¿½Ã³ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Úµã¡£
 //
 
 #include "stdafx.h"
@@ -44,7 +44,7 @@ static char sPath[MAX_PATH*2];
 static bool isDetecFace=false;	
 static bool isTestLigner=false;
 static bool isTestMorph=false;
-//Î´¼ûÐ§¹û£¬ÕæÆæ¹Ö¡£ËÆºõÊÇÐèÒª·Å¿í±ß½ç£¬µü´ú¹ý³ÌÖÐ£¬ÓÐÐ©µãµÄÎ»ÖÃÔÚroiÖ®Íâ		1/6/2015
+//Î´ï¿½ï¿½Ð§ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ö¡ï¿½ï¿½Æºï¿½ï¿½ï¿½ï¿½ï¿½Òªï¿½Å¿ï¿½ï¿½ß½ç£¬ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ð£ï¿½ï¿½ï¿½Ð©ï¿½ï¿½ï¿½Î»ï¿½ï¿½ï¿½ï¿½roiÖ®ï¿½ï¿½		1/6/2015
 static bool isNormalFace=false;	
 
 
@@ -168,16 +168,16 @@ char *W2CHAR(const wchar_t *wtxt,char *buffer )	{
 extern "C" int FaceLocate_ge( BIT_8 *pixel,int wth,int hei,int*left,int*rigt,int*botom,int *top,INT_32 detect );
 
 static int nFaceDetect=0;
-//ÔÝÊ±È¡×î´óÈËÁ³
+//ï¿½ï¿½Ê±È¡ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 bool FaceDetect_( GST_BMP *hSrc,BIT_8 *gray,int wth,int hei,RoCLS &roi,int flag=0x0 ){
 	int left,rigt,botom,top,i,box_0=0;
 	double a;
 	GST_TIC( tick );
-	if( 0 ){	//ÎÊÌâÌ«¶à 1 ²»Ö§³Ö64-bit 2 ×¼È·ÂÊ²î
-		if( FaceLocate_ge( gray,wth,hei,&left,&rigt,&botom,&top,0x0 )>0 ){	//È¡¿òÆ«´ó
+	if( 0 ){	//ï¿½ï¿½ï¿½ï¿½Ì«ï¿½ï¿½ 1 ï¿½ï¿½Ö§ï¿½ï¿½64-bit 2 ×¼È·ï¿½Ê²ï¿½
+		if( FaceLocate_ge( gray,wth,hei,&left,&rigt,&botom,&top,0x0 )>0 ){	//È¡ï¿½ï¿½Æ«ï¿½ï¿½
 		}else
 			return false;	
-	}else{		//debugµÄÊ±¼äÊµÔÚÌ«³¤£¬ÄªÃûÆäÃî
+	}else{		//debugï¿½ï¿½Ê±ï¿½ï¿½Êµï¿½ï¿½Ì«ï¿½ï¿½ï¿½ï¿½Äªï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 		dlib::array2d<unsigned char> img(hei,wth);
 		BIT_8 *pixel=&(img[0][0]);
 		int r;
@@ -202,7 +202,7 @@ bool FaceDetect_( GST_BMP *hSrc,BIT_8 *gray,int wth,int hei,RoCLS &roi,int flag=
 	if( (a=GST_TOC( tick ))>1.0 )		printf( "time=%g,",a );
 	roi = RoCLS(left,botom,rigt-left,top-botom,0,0);
 	if( 0 && hSrc!=nullptr ){
-		BMP_DRAW *hTrace=new BMP_DRAW(hSrc);		//BMP_DRAWÓÐÄÚ´æÐ¹Â©
+		BMP_DRAW *hTrace=new BMP_DRAW(hSrc);		//BMP_DRAWï¿½ï¿½ï¿½Ú´ï¿½Ð¹Â©
 		hTrace->Line( left,rigt,botom,botom );		hTrace->Line( rigt,rigt,top,botom );
 		hTrace->Line( left,rigt,top,top );			hTrace->Line( left,left,top,botom );
 		//printf( "%d",rigt-left );
@@ -274,7 +274,7 @@ ShapeBMPfold *Fold_300wMarks( const string&sPath,int flag=0x0 ){
 		while( fgets( sLine,1000,fp )){
 			if( sscanf( sLine,"%f %f",&x,&y)==2 ){
 				x=x*hbmp->init.sW;						
-				y=hei-y*hbmp->init.sH;			//"pts"ÎÄ¼þµÄ×ø±êÔ­µãÔÚ×óÉÏ½Ç
+				y=hei-y*hbmp->init.sH;			//"pts"ï¿½Ä¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ô­ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ï½ï¿½
 				c0=MIN(c0,x);	c1=MAX(c1,x);			r0=MIN(r0,y);	r1=MAX(r1,y);
 				sX[nPt]=x;			sY[nPt]=y;			nPt++;
 			}
@@ -368,7 +368,7 @@ bool ReadLandMarks( string sPicPath,ShapeBMPfold* sfold,bool isDetect,string sOu
 		sfold->SetShapeMarks( pts,_FACE_MARK_0_,&roi );	
 	sMark+="_n";
 	sfold->Serial( sMark,false );	/**/
-	if( 0 ){		//ÓÃÒÔÐ£Ñé±ê¼ÇµÄÊý¾ÝÊÇ·ñ×¼È·		2968784797_1.jpg¾Í²»×¼
+	if( 0 ){		//ï¿½ï¿½ï¿½ï¿½Ð£ï¿½ï¿½ï¿½Çµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ç·ï¿½×¼È·		2968784797_1.jpgï¿½Í²ï¿½×¼
 		SHAPE_IMAGE si(_FACE_NW_,_FACE_NH_,3);		si.bpp=24;
 		sfold->vS=sfold->vY;
 		sfold->TraceBmp( "F:\\GiFace\\trace\\6.bmp",si,0x0 );
@@ -376,7 +376,7 @@ bool ReadLandMarks( string sPicPath,ShapeBMPfold* sfold,bool isDetect,string sOu
 	bRet=true;
 EXIT:
 	delete[] gray;
-	delete sfold->hbmp;		sfold->hbmp=nullptr;		//ÎªÁË½ÚÊ¡ÄÚ´æ
+	delete sfold->hbmp;		sfold->hbmp=nullptr;		//Îªï¿½Ë½ï¿½Ê¡ï¿½Ú´ï¿½
 	return bRet;
 	
 }
@@ -416,7 +416,7 @@ void GetMeanShape( vector<ShapeBMPfold*> &Trains,ShapeBMPfold &meanShape,vector<
 		};
 		bmp.Save( sDumpFolder+"mean.bmp" );
 	}
-	/*double delta[9][2]={//Ê§°ÜµÄ³¢ÊÔ			1/4/2016
+	/*double delta[9][2]={//Ê§ï¿½ÜµÄ³ï¿½ï¿½ï¿½			1/4/2016
 			{-off,-off},	{-off,0},	{-off,off},
 			{-0,-off},		{-0,0},		{-0,off},
 			{off,-off},		{off,0},	{off,off},
@@ -442,7 +442,7 @@ bool LoadSamplesAt( wchar_t *sFolder,vector<ShapeBMPfold*>&Samples,int nMost=100
 	int nImage,nMark=_FACE_MARK_0_,ldMk=2,i=0,samp,wMax=480,hMax=640,nFail=0;
 	SHAPE_PtSet spsv(nMark,ldMk);
 	//if( isNormalFace )	{	wMax*=2,		hMax*=2;	}	
-	//wMax=240,		hMax=320;		//Ì«Ð¡ÁË
+	//wMax=240,		hMax=320;		//Ì«Ð¡ï¿½ï¿½
 	char sPath[_MAX_PATH];
 	for each ( wstring wPath in g_arrPath ){
 		if( arrPath.size()>=nMost )		break;	
@@ -458,7 +458,7 @@ bool LoadSamplesAt( wchar_t *sFolder,vector<ShapeBMPfold*>&Samples,int nMost=100
 		sMark=sMark.substr(0,sMark.size()-3)+"pts_n";
 		if(_access(sMark.c_str(),0)!=0 )			{	
 			if( !isDetecFace ){
-				if( isTestLigner ){		//²âÊÔÍ¼Æ¬£¬ÎÞÐè.pts_n
+				if( isTestLigner ){		//ï¿½ï¿½ï¿½ï¿½Í¼Æ¬ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½.pts_n
 					arrPath.push_back( sPath );
 				}else{
 					if( (nFail++)%100==0)
@@ -495,7 +495,7 @@ bool LoadSamplesAt( wchar_t *sFolder,vector<ShapeBMPfold*>&Samples,int nMost=100
 		//hbm->Normalise( GST_BMP::CONTRAST,0 );		
 		ShapeBMPfold *spY=new ShapeBMPfold(hbm,spsv );		spY->nam=TITLE(arrPath[i]);
 		GST_VERIFY( spY!=nullptr,"spY is 0" );
-		if( ReadLandMarks( arrPath[i].c_str(),spY,isDetecFace,sObjTrainDir ) || isTestLigner ){		//²âÊÔÍ¼Æ¬£¬ÎÞÐè.pts_n
+		if( ReadLandMarks( arrPath[i].c_str(),spY,isDetecFace,sObjTrainDir ) || isTestLigner ){		//ï¿½ï¿½ï¿½ï¿½Í¼Æ¬ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½.pts_n
 #pragma omp critical
 			{	Samples.push_back( spY );	
 				if( spY->vY.size()==0 )		printf( "\n%s: vY is NULL!!!\n",arrPath[i].c_str() );
@@ -524,7 +524,7 @@ bool LoadSamplesAt( wchar_t *sFolder,vector<ShapeBMPfold*>&Samples,int nMost=100
 
 static double tAlign=0,errAlign=0;
 
-//²Î¼ûpertub_1_14_2016.dat
+//ï¿½Î¼ï¿½pertub_1_14_2016.dat
 static float pertub[]={ 0.1,0.05,0.04,0.03,0.02,0.01,0.005 };
 void Pertube( vector<ShapeBMPfold*> &Trains,ShapeBMPfold *hSamp,int no,int flag=0x0 ){
 	Eigen::MatrixXf delta(_FACE_MARK_,2);
@@ -601,7 +601,7 @@ void TestLigner( vector<ShapeBMPfold*>&Samples,ShapeBMPfold::VECT& sp0,int flag=
 	pics.PlotNails( "F:\\GiFace\\trace\\align_test.bmp",siFace,20,true );
 }
 
-//Ã»É¶Ð§¹û	1/17/2016
+//Ã»É¶Ð§ï¿½ï¿½	1/17/2016
 int AdaptiveTrains( int cas,vector<ShapeBMPfold*> &Trains,int nOOB,float T_err,int flag=0x0 ){
 	PICS_N pics;
 	pics.nails.clear( );
@@ -637,9 +637,9 @@ void GruFacer_Test( )	{
 	int nImage=1,i,width,height,mode=0x0,r;
 	float *feat=new float[nImage*GFACE_FEAT_LEN],*info=new float[nImage*GFACE_INFO_LEN];
 	GRAY_PIC *gray=nullptr;
-//µ¥ÕÅÍ¼Æ¬²âÊÔ
+//ï¿½ï¿½ï¿½ï¿½Í¼Æ¬ï¿½ï¿½ï¿½ï¿½
 	for( i=0;i<nImage;i++ ){
-		//GST_BMP bmp( _T("I:\\¿´¿´Êý¾Ý\\Face\\InsidePeople\\chuyanghao_police\\0.jpg") );
+		//GST_BMP bmp( _T("I:\\ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½\\Face\\InsidePeople\\chuyanghao_police\\0.jpg") );
 		//gray=bmp.Gray(),width=bmp.Width(),height=bmp.Height( );
 		dlib::array2d<unsigned char> img;
 		dlib::load_bmp(img, "G:\\KANKAN\\GruFacer_Test\\Model\\0.bmp");
@@ -652,7 +652,7 @@ void GruFacer_Test( )	{
 
 		GFACER_feat_1( gray,width,height,mode,feat+i*GFACE_FEAT_LEN,info+i*GFACE_INFO_LEN,0x0 );
 		delete[] gray;
-		//grayÓÉµ÷ÓÃ³ÌÐò×ÔÐÐÊÍ·Å
+		//grayï¿½Éµï¿½ï¿½Ã³ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í·ï¿½
 	}
 #ifdef _DEBUG
 	for(i=0;i<GFACE_FEAT_LEN;i++ )
@@ -700,8 +700,8 @@ int _tmain( int argc, _TCHAR* argv[] ){
 //	if( !isTestLigner ) LoadSamplesAt( _T("G:\\face\\ibug\\trainset\\"),Samples,nMaxTrain );
 	if( !isTestLigner ) LoadSamplesAt( sTrainSetDir,Samples,nMaxTrain );
 /*
-	1 ¼òµ¥Ôö´ódup£¬ÎÞÐ§¡£
-	2 nStepµÄºÏÊÊÖµ (20ÓÅÓÚ100»ò10£¬why? )
+	1 ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½dupï¿½ï¿½ï¿½ï¿½Ð§ï¿½ï¿½
+	2 nStepï¿½Äºï¿½ï¿½ï¿½Öµ (20ï¿½ï¿½ï¿½ï¿½100ï¿½ï¿½10ï¿½ï¿½why? )
 */
 	int i,ca,nCascade=50,nTree=100,dup=20,nCand=400,cur,next,nSample=Samples.size(),ldPic,nOOB=nMaxTest,samp;
 	int nStep=10;		//MULTI_TREE
@@ -744,7 +744,7 @@ NEXT:
 	LoadSamplesAt( _T("G:\\face\\ibug\\testset\\"),Samples,nOOB );	//test set;
 	//double err=0.0;
 	nOOB=Samples.size( );
-	if( nOOB>0 ){	//Êä³öall_test.bmp
+	if( nOOB>0 ){	//ï¿½ï¿½ï¿½all_test.bmp
 		pics.nails.clear( );
 		for each( ShapeBMPfold *hSamp in Samples )	{
 			hSamp->vS=hSamp->vY;		
@@ -767,7 +767,7 @@ NEXT:
 		}
 	}
 	if( isDetecFace || isTestLigner  )	{	
-		printf("\n********* ALIGN ERR=<%d,%g> time=%g*********\n",nOOB,errAlign/nOOB,tAlign/nOOB );	
+		printf("\n********* ALIGN_ ERR=<%d,%g> time=%g*********\n",nOOB,errAlign/nOOB,tAlign/nOOB );	
 		for each( ShapeBMPfold *hSamp in Trains )
 			delete hSamp;
 		Trains.clear( );

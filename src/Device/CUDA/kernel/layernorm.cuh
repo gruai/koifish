@@ -64,8 +64,66 @@ __global__ static void layernorm_forward_kernel3(floatX* __restrict__ out, float
     }
 }
 
-__global__ static void rms_forward_kernel(floatX* __restrict__ out, float* __restrict__ rstd,
-                                    const floatX*  __restrict__ inp, const floatX*  __restrict__ weight, int N, int C) {
+//deprecated
+template <typename T,typename Tw>
+__device__ static float CU_rmsnorm(T* o, T* x, Tw* weight, int size, float eps, bool ln) {
+	int i = threadIdx.x;
+	int blockSize = blockDim.x;
+
+	float mean = 0.0f;
+	if (ln) {
+		// calculate sum (per thread)
+		float sum = 0.0f;
+		for (int j = i; j < size; j += blockSize) {
+			sum += (float)(x[j]);
+		}		
+		// mean = blockreduce_sum(sum) / size;         // sum across threads in block
+        mean = blockReduce<warpReduceSum>(sum) / size;
+	}
+
+	// calculate sum of squares (per thread)
+	float ss = 0.0f;
+	for (int j = i * 2; j < size; j += blockSize * 2) {
+		float2 xx = {x[j],x[j+1]};                  //*(float2*)&x[j];
+		float2 ww = {weight[j],weight[j+1]};        //*(float2*)&weight[j];
+		float v0 = xx.x - mean;
+		float v1 = xx.y - mean;
+		ss += v0 * v0;
+		ss += v1 * v1;
+		*(ablock<T, 2>*)&o[j] = { v0 * ww.x, v1 * ww.y };
+	}
+
+	// sum across threads in block
+	// ss = blockreduce_sum(ss);
+    ss = blockReduce<warpReduceSum>(ss);
+
+	// caller is responsible for normalization
+	return rsqrtf(ss / size + eps);
+}
+/*
+template <typename T,typename Tw,int NUM_THREADS = 256>
+__global__ static void CU_rmsnorm_v1(T* rms, T* o, T* x, Tw* weight, int size, float eps,bool isScale) {
+    int tid = threadIdx.x, idx = blockIdx.x * NUM_THREADS + tid;
+	if(idx >= N) { return; } // guard
+
+	constexpr int NUM_WARPS = (NUM_THREADS + WARP_SIZE - 1) / WARP_SIZE;
+	assert(NUM_WARPS<=WARP_SIZE);
+	__shared__ float reduce_smem[NUM_WARPS];	// keep the data in register is enough for warp operaion.
+	float a = (idx < N) ? (float)(x[idx]) : 0.0;
+	float sum = a*a;	
+    o[idx] = x[idx]*weight[idx];
+	float block_sum = blockReduce<warpReduceSum>(sum,true);	
+	if (tid == 0) atomicAdd(rms, block_sum);   
+    if(isScale){
+
+    }
+	// caller is responsible for normalization
+	// return rsqrtf(ss / size + eps);
+}*/
+
+template <typename T,typename Tw>
+__global__ static void CU_rms_forward(T* __restrict__ out, float* __restrict__ rstd,
+                                    const T*  __restrict__ inp, const Tw*  __restrict__ weight, int N, int C) {
     assert(blockDim.x == WARP_SIZE);
 
     // load weights and biases into shared memory
@@ -205,163 +263,6 @@ __global__ static void layernorm_forward_kernel6(floatX* __restrict__ out, float
     // store the rstd, no need to cache it
     if(threadIdx.x == 0 && rstd != nullptr) {
         __stcs(rstd + idx, s);
-    }
-}
-
-__global__ static void fused_residual_forward_kernel5(floatX* residual, floatX* normed, float* mean, float* rstd,
-                                               const floatX* inp1, const floatX* inp2,
-                                               const floatX* weight, const floatX* bias,
-                                               int N, int C) {
-    assert(blockDim.x == WARP_SIZE);
-
-    // load weights and biases into shared memory
-    // do this before we allow any threads to exit!
-    extern __shared__ char* params[];
-    // load128/store128 sometimes generated multiple instructions when the types here were floatX*, so
-    // let's keep everything as x128
-    x128* s_weight = reinterpret_cast<x128*>(params);
-    x128* s_bias = reinterpret_cast<x128*>(params) + (C / x128::size);
-    x128* s_res = reinterpret_cast<x128*>(params) + ((2 + threadIdx.y) * C / x128::size);
-
-    int sidx = (threadIdx.x + WARP_SIZE * threadIdx.y) * x128::size;
-    for(int i = sidx; i < C; i += blockDim.y * WARP_SIZE * x128::size) {
-        s_weight[i/x128::size] = load128(weight + i);
-        s_bias[i/x128::size] = load128(bias + i);
-    }
-    __syncthreads();
-
-    int idx = blockIdx.x * blockDim.y + threadIdx.y;
-    if(idx > N) return;
-
-    // adjust pointers to current token
-    residual += C * idx;
-    normed += C * idx;
-    inp1 += C * idx;
-    inp2 += C * idx;
-
-    const float eps = 1e-5f;
-    float sum = 0.0f;
-    for(int c = threadIdx.x * x128::size; c < C; c += WARP_SIZE * x128::size) {
-        const x128 in1 = load128cs(inp1 + c);
-        const x128 in2 = load128cs(inp2 + c);
-        x128 out;
-        for(int k = 0; k < x128::size; ++k) {
-            out[k] = (float)in1[k] + (float)in2[k];
-            sum += (float)out[k];
-        }
-        store128cs(residual + c, out);
-        s_res[c / x128::size] = out;
-    }
-
-    sum = warpReduceSum(sum);
-    float m = sum / C;
-    float v = 0.f;
-
-    for(int c = threadIdx.x * x128::size; c < C; c += WARP_SIZE * x128::size) {
-        const x128 res = s_res[c / x128::size];
-        for(int k = 0; k < x128::size; ++k) {
-            v += ((float)res[k] - m) * ((float)res[k] - m);
-        }
-    }
-
-    v = warpReduceSum(v) / C;
-    float s = rsqrtf(v + eps);
-
-    for(int c = threadIdx.x * x128::size; c < C; c += WARP_SIZE * x128::size) {
-        const x128 res = s_res[c / x128::size];
-        const x128 w = s_weight[c / x128::size];
-        const x128 b = s_bias[c / x128::size];
-        x128 out;
-        for(int k = 0; k < x128::size; ++k) {
-            float n = s * ((float)res[k] - m); // normalized output
-            float o = n * (float)w[k] + (float)b[k]; // scale and shift it
-            out[k] = o;
-        }
-
-        store128cs(normed + c, out);
-    }
-    // cache the mean and rstd for the backward pass later
-    if(threadIdx.x == 0) {
-        mean[idx] = m;
-        rstd[idx] = s;
-    }
-}
-
-__global__ static void fused_residual_forward_kernel6(floatX* residual, floatX* normed, float* mean, float* rstd,
-                                               const floatX* inp1, const floatX* inp2,const floatX* weight,int N, int C) {
-    assert(blockDim.x == WARP_SIZE);
-
-    // load weights and biases into shared memory
-    // do this before we allow any threads to exit!
-    extern __shared__ char* params[];
-    // load128/store128 sometimes generated multiple instructions when the types here were floatX*, so
-    // let's keep everything as x128
-    x128* s_weight = reinterpret_cast<x128*>(params);
-    // x128* s_bias = reinterpret_cast<x128*>(params) + (C / x128::size);
-    x128* s_res = reinterpret_cast<x128*>(params) + ((2 + threadIdx.y) * C / x128::size);
-
-    int sidx = (threadIdx.x + WARP_SIZE * threadIdx.y) * x128::size;
-    for(int i = sidx; i < C; i += blockDim.y * WARP_SIZE * x128::size) {
-        s_weight[i/x128::size] = load128(weight + i);
-        // s_bias[i/x128::size] = load128(bias + i);
-    }
-    __syncthreads();
-
-    int idx = blockIdx.x * blockDim.y + threadIdx.y;
-    if(idx > N) return;
-
-    // adjust pointers to current token
-    residual += C * idx;
-    normed += C * idx;
-    inp1 += C * idx;
-    inp2 += C * idx;
-
-    const float eps = 1e-5f;
-    float sum = 0.0f;
-    for(int c = threadIdx.x * x128::size; c < C; c += WARP_SIZE * x128::size) {
-        const x128 in1 = load128cs(inp1 + c);
-        const x128 in2 = load128cs(inp2 + c);
-        x128 out;
-        for(int k = 0; k < x128::size; ++k) {
-            out[k] = (float)in1[k] + (float)in2[k];
-            sum += (float)out[k];
-        }
-        store128cs(residual + c, out);
-        s_res[c / x128::size] = out;
-    }
-
-    sum = warpReduceSum(sum);
-    float m = sum / C;
-    float v = 0.f;
-
-    for(int c = threadIdx.x * x128::size; c < C; c += WARP_SIZE * x128::size) {
-        const x128 res = s_res[c / x128::size];
-        for(int k = 0; k < x128::size; ++k) {
-            v += ((float)res[k] - m) * ((float)res[k] - m);
-        }
-    }
-
-    v = warpReduceSum(v) / C;
-    float s = rsqrtf(v + eps);
-
-    for(int c = threadIdx.x * x128::size; c < C; c += WARP_SIZE * x128::size) {
-        const x128 res = s_res[c / x128::size];
-        const x128 w = s_weight[c / x128::size];
-        // const x128 b = s_bias[c / x128::size];
-        x128 out;
-        for(int k = 0; k < x128::size; ++k) {
-            float n = s * ((float)res[k] - m); // normalized output
-            // float o = n * (float)w[k] + (float)b[k]; // scale and shift it
-            float o = n * (float)w[k]; // scale and shift it
-            out[k] = o;
-        }
-
-        store128cs(normed + c, out);
-    }
-    // cache the mean and rstd for the backward pass later
-    if(threadIdx.x == 0) {
-        mean[idx] = m;
-        rstd[idx] = s;
     }
 }
 
@@ -787,10 +688,9 @@ void inline layernorm_forward(floatX* out, float* mean, float* rstd,
     // this may fail, in which case we fall back to the smem free implementation.
     cudaCheck(cudaGetLastError());
     if(mean==nullptr){  //RMS
-        auto status = cudaFuncSetAttribute(layernorm_forward_kernel6, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
-        cudaCheck(cudaGetLastError());
-        assert(status == cudaSuccess);
-        rms_forward_kernel<<<grid_size, dim3(WARP_SIZE, block_y), smem, stream>>>(out, rstd, inp, weight, N, C);
+        // auto status = cudaFuncSetAttribute(CU_rms_forward, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+        // cudaCheck(cudaGetLastError());        assert(status == cudaSuccess);
+        CU_rms_forward<<<grid_size, dim3(WARP_SIZE, block_y), smem, stream>>>(out, rstd, inp, weight, N, C);
     }else{
         auto status = cudaFuncSetAttribute(layernorm_forward_kernel6, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
         cudaCheck(cudaGetLastError());
@@ -811,37 +711,6 @@ void inline residual_forward(floatX* out, const floatX* inp1, const floatX* inp2
     assert(N % (block_size * x128::size) == 0);
     const int grid_size = CEIL_DIV(N, block_size * x128::size);
     residual_forward_kernel<<<grid_size, block_size, 0, stream>>>(out, inp1, inp2);
-    cudaCheck(cudaGetLastError());
-}
-
-void inline fused_residual_forward5(floatX* residual, floatX* normed, float* mean, float* rstd,
-                             const floatX* inp1, const floatX* inp2,
-                             const floatX* weight, const floatX* bias,
-                             int N, int C, cudaStream_t stream) {
-    const int block_size = 256;
-    int block_y = block_size / WARP_SIZE;
-    const int grid_size = CEIL_DIV(N, block_y);
-    size_t smem = (2 + block_y) * C * sizeof(floatX);
-
-    // in order to use more than 48 KiB of smem, need to call cudaFuncSetAttribute
-    // this may fail, in which case we fall back to the smem free implementation.
-    cudaCheck(cudaGetLastError());
-    auto status = cudaFuncSetAttribute(fused_residual_forward_kernel5, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
-    cudaCheck(cudaGetLastError());
-    if(status == cudaSuccess) {
-        if(bias==nullptr)
-            fused_residual_forward_kernel6<<<grid_size, dim3(WARP_SIZE, block_y), smem, stream>>>(
-                residual, normed,mean, rstd, inp1, inp2,weight, N, C);
-        else{
-            assert(mean!=nullptr);
-            fused_residual_forward_kernel5<<<grid_size, dim3(WARP_SIZE, block_y), smem, stream>>>(
-                residual, normed,mean, rstd, inp1, inp2,weight, bias, N, C);
-        }
-    } else {
-        assert(mean!=nullptr);
-        residual_forward(residual, inp1, inp2, N*C, stream);
-        layernorm_forward(normed, mean, rstd, residual, weight, bias, N, 1, C, stream);
-    }
     cudaCheck(cudaGetLastError());
 }
 

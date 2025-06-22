@@ -11,70 +11,117 @@
 #include "../../Manifold/gLLM.hpp"
 #include "../../Manifold/Optimizer.hpp"
 
-
+extern int tpFuseCu;
 extern cudaStream_t main_stream;
-
-
-
-/*
-template <typename T, typename KVT>
-struct CoopArgs {
-	CoopArgs(Fish* hFish,int kvlen_,int kvpos_,int pos_,int flag=0) :
-		kv_len(kvlen_),kv_pos(kvpos_),pos(pos_)	{
-		size_t szMost = hFish->MostMemSize();
-		bw = PROF_TOKEN(szMost);
-		auto config = hFish->config;
-		dim = config.nEmbed();
-		n_layers = config.nLayer();
-		hidden_dim = config.n_ff();
-		n_heads = config.n_head();					n_kv_heads = config.n_head_kv();
-		head_dim = config.n_embd_head();
-		seq_len = config.model.seq_len; 
-		// rope_theta = config.model.rope_theta;		
-		rotary_dim = config.model.rotary_dim;		
-
-		n_experts = config.model.n_experts;			
-		n_experts_ac = config.model.n_experts_ac;		assert(n_experts_ac==0);
-		q_dim = head_dim*n_heads, kv_dim = head_dim*n_kv_heads,att_dim=n_heads*config.model.seq_len*2;
-		hb_dim = hidden_dim;	
-		assert(dim % 32 == 0 && kv_dim % 32 == 0 && hidden_dim % 32 == 0);
-		he_dim = n_experts_ac * hidden_dim;			
-		// if (getenv("CUDA_INJECTION64_PATH")) {
-		// 	coopperf = (uint64_t*)cuda_devicealloc(sizeof(uint64_t) * 16);
-		// 	CUDA_CHECK(cudaMemset(coopperf, 0, sizeof(uint64_t) * 16));
-		// }
-		assert(tX!=nullptr && tX->nByte()>=(dim+hb_dim+q_dim+att_dim)*sizeof(float));
-		x = TO<float>(tX);		//dim
-		hb = x+dim;
-		q = hb+hb_dim;			//	(float*)cuda_devicealloc(q_dim * sizeof(float));
-		att = q+q_dim;		//	(float*)cuda_devicealloc(config->n_heads * config->seq_len * 2 * sizeof(float));
-
-		hKVCache hCache = hFish->GetOptimizer()->hCache;
-		key_cache = (KVT*)hCache->Get(KVCache::KV_KEY);	
-		val_cache = (KVT*)hCache->Get(KVCache::KV_VAL);	
-
-		norm_eps = config.model.norm_eps;
-		theta_log2 = log2(config.model.rope_theta);
-		qkv_clip = config.model.clip_qkv;
-		assert(n_layers>0 && dim>0 && hidden_dim>0 && head_dim>0 && n_heads>0 && n_kv_heads>0);
-		norm_ln = config.model.isNormalBias;
-		weight_dbits = BitPE(config.model.tpWeight);
-	}
-	hGTensor tX = GTensor::scratch;
-	uint64_t bw;
-	uint64_t* perfstats = nullptr;		//	"CUDA_INJECTION64_PATH"
-	float* x = nullptr,* hb = nullptr,* he = nullptr,* q = nullptr,* att = nullptr;
-	KVT* key_cache = nullptr;
-	KVT* val_cache = nullptr;    
-	int n_layers,dim,hidden_dim,head_dim,n_heads,n_kv_heads,weight_dbits;
-	int n_experts,n_experts_ac,seq_len,rotary_dim,q_dim=-1,hb_dim=-1,he_dim=-1,kv_dim=-1,att_dim=-1;
-	bool norm_ln = false, act_gelu = false;;	
-	int kv_len,kv_pos,pos;
-	float norm_eps,theta_log2,qkv_clip;
-};*/
 
 // static int coopsms;
 // static __constant__ CoopLayer<> cooplayers[MAX_LAYERS];
 
+
+unsigned long long rng_state=0;
+float* accumulated_mean_loss=nullptr;
+
+static int micro_step=0;    //*workload_indices=nullptr;
+// static int4 *bucket_info=nullptr;
+float RAW_backward(Fish *fish,const int* iX, int grad_accum_steps,bool isOnlyEvaluate,int flag) {    
+    assert(!isOnlyEvaluate);
+    NVTX_RANGE_FN();
+    bool last_step = micro_step == grad_accum_steps - 1;
+    auto config = fish->config;
+    int B,T,C,L = config.nLayer(),NH = config.n_head();      
+    fish->GetBTC(B,T,C);    
+    OutCLS* cls = fish->GetNeuron<OutCLS>("OutCLS",0);
+    hGensor cur=nullptr,delta=cls->delta;      
+    TokenEmbed* embed = fish->GetNeuron<TokenEmbed>("TokenEmbed",0); 
+    if (micro_step == 0) {// on the first micro-step zero the gradients, as we're about to += accumulate into them;     
+        cudaCheck(cudaMemsetAsync(TO<float>(cls->out), 0,B*T* sizeof(float), main_stream));
+    }
+    
+    // floatX *scratchX=(floatX *)GTensor::buff;     
+    GTensor::delta->Zero();         //cudaCheck(cudaMemset(dresidual, 0, B * T * C * sizeof(floatX)));    //???
+    PrintTensor<floatX>("back of P",ToX(GTensor::bt4c),true,B,T,C);
+    NvtxRange classifier_and_loss_range("classifier_and_loss");
+    FFN *ffn=fish->GetNeuron<FFN>("FFN",L-1);  
+    LayerNormal* lnf = fish->GetNeuron<LayerNormal>("LayerNormal",0);    
+    delta = cls->FUSE_cuda(nullptr,0x0);    //some operation fused in forward pass
+    lnf->FUSE_cuda(delta,0x0);  //
+
+    hGensor lastDelta = ffn->out;    
+    for (int l = L-1; l >= 0; l--) {
+        NvtxRange layer_range("Layer", l);
+        SelfAttention *QKV = fish->GetNeuron<SelfAttention>("SelfAttention",l);
+        ffn = fish->GetNeuron<FFN>("FFN",l);        //preFFN = l==0 ? nullptr : fish->GetNeuron<FFN>("FFN",l-1);         
+        // GeNeuron *last = l == 0 ? embed : (GeNeuron *)(fish->GetNeuron<FFN>("FFN",l-1));    //residual = l == 0 ? ToX(embed->out) : ToX(preFFN->out);  
+        // ffn->delta = lastDelta;     ffn->tmpDelta = lastDelta;   
+        // LayerNormal *hNorm = l+1 != L ? &(fish->GetNeuron<SelfAttention>("SelfAttention",l+1)->norm) : lnf;
+        ffn->FUSE_cuda(nullptr, 0x0);   
+        QKV->FUSE_cuda(nullptr,0x0);   //QKV->norm.out,last->out
+    }
+    embed->OnEmbed(nullptr,0x0);    //,random_u32(&rng_state)
+    
+    // Aggregate all gradients that are not part of the transformer blocks5
+    if(tpFuseCu==0 && last_step) {
+        // reduce all the losses within the current GPU (across all microsteps)
+        global_sum_deterministic(accumulated_mean_loss, TO<float>(cls->out), B*T, main_stream);
+        // reduce loss across GPUs to a single, final float across all microsteps and GPUs
+        #if MULTI_GPU
+        ncclCheck(ncclAllReduce(accumulated_mean_loss, accumulated_mean_loss, sizeof(float), ncclFloat, ncclAvg, multi_gpu_config.nccl_comm, main_stream));
+        #endif
+        cudaCheck(cudaMemcpyAsync(&cls->mean_loss, accumulated_mean_loss, sizeof(float), cudaMemcpyDeviceToHost, main_stream));
+        cls->mean_loss /= B*T*grad_accum_steps;
+    }
+    cudaCheck(cudaDeviceSynchronize());
+    if(last_step) {
+        // cls->mean_loss /= B*T*grad_accum_steps;
+        micro_step = 0;
+    } else {
+        cls->mean_loss = -1.f; // no loss available yet
+        micro_step++;
+    }
+    
+    return cls->mean_loss;
+}   
+/*
+void RAW_forward(Fish *fish,int flag) {
+    NVTX_RANGE_FN();
+    auto config = fish->config;
+    int B,T,C,tpFuseNormal=config.Fuse_Normal;      
+    fish->GetBTC(B,T,C);    
+    const size_t L = config.nLayer(),NH = config.n_head();       
+    hGensor cur=nullptr,residual=nullptr;
+    LayerNormal* lnf = fish->GetNeuron<LayerNormal>("LayerNormal",0);
+    TokenEmbed* embed = fish->GetNeuron<TokenEmbed>("TokenEmbed",0);
+    cur = embed->Ming(nullptr,fish->Input());     
+    residual = cur; //embed->out;
+    SelfAttention *QKV0 = fish->GetNeuron<SelfAttention>("SelfAttention",0),*QKV=nullptr;
+
+    if(tpFuseNormal==1){
+        cur=QKV0->norm.FUSE_cuda(cur);   
+    } 
+
+    FFN *ffn=nullptr;
+    for (int l = 0; l < L; l++) {
+        NvtxRange layer_range("Layer", l);
+        QKV = fish->GetNeuron<SelfAttention>("SelfAttention",l);
+        ffn = fish->GetNeuron<FFN>("FFN",l);            //ffn->out = GTensor::delta;
+        LayerNormal *hNorm = l+1 != L ? &(fish->GetNeuron<SelfAttention>("SelfAttention",l+1)->norm) : lnf;
+        ffn->fuseNorm = tpFuseNormal==1?hNorm:nullptr;       
+        QKV->fuseNorm =  tpFuseNormal==1?&(ffn->norm):nullptr;
+        cur = QKV->FUSE_cuda(cur,residual,nullptr,nullptr,flag);        
+        cur = ffn->FUSE_cuda(cur,nullptr, 0x0);  
+        residual = ffn->out;
+    }    
+    if(tpFuseNormal==0){
+        cur = lnf->FUSE_cuda(ffn->out); 
+    }
+    OutCLS* cls = fish->GetNeuron<OutCLS>("OutCLS",0);
+    if(tpFuseCu==1)
+        cls->FUSE_cuda(cur,flag); //embed->w,
+    else
+        assert(0);//cls->preLogits = lnf->out*embed->w;   
+    PrintTensor<floatX>("output",ToX(cls->preLogits),true,B,T,C);
+    // ffn->norm.out->PrintX<floatX>("inp1",0,-1); 
+
+}*/
 
 

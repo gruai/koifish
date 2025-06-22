@@ -23,10 +23,10 @@
 
     "datasets":{
         "train":{
-            "glob":"/hy-tmp/edu_fineweb1B/*train*.bin","most":10, "name":"edu_fineweb1B"
+            "glob":"./Datasets/edu_fineweb1B/*train*.bin","most":10, "name":"edu_fineweb1B"
         },
-        "eval_1": {"glob":"/hy-tmp/edu_fineweb1B/*val*.bin","name":"edu_fineweb1B","eval-every":100        },
-        "eval_2":{"glob":"/hy-tmp/hellaswag_val.bin", "type":"hellaswag","eval-every":500 }        
+        "#eval_1": {"glob":"./Datasets/edu_fineweb1B/*val*.bin","name":"edu_fineweb1B","eval-every":100        },
+        "#eval_2":{"glob":"./Datasets/hellaswag_val.bin", "type":"hellaswag","eval-every":500 }        
     },
     
     "train": {

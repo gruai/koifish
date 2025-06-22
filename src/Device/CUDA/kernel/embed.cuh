@@ -52,7 +52,10 @@ __global__ static void CU_embed_forw_(floatX* out,const int* tokens, const float
     floatX* out_btc = out + b * T * C + t * C + c;
     const floatX* wte_ix = wte + ix * C + c;
     const floatX* wpe_tc = wpe + t * C + c;
+#if defined(ENABLE_FP8)
+#else
     *out_btc = *wte_ix+*wpe_tc;
+#endif
 }
 
 __global__ static void CU_embed_forw_(floatX* out,const int* tokens, const floatX* wte, int T, int C,int ldW,bool isTrans=false) {
@@ -73,7 +76,7 @@ __global__ static void CU_embed_forw_(floatX* out,const int* tokens, const float
 }
 
 // no duplicate
-__global__ static void CU_embed_back_(floatX* dwte,const int* tokens,const floatX* dout, int T, int C,int ldW, floatX scale,bool isTrans=false) {
+__global__ static void CU_embed_back_(floatX* dwte,const int* tokens,const floatX* dout, int T, int C,int ldW, bool isTrans=false) {
     int idx = (blockIdx.x * blockDim.x + threadIdx.x) ;
     int N = T * C;
     if (idx >= N) { return; }
@@ -87,7 +90,10 @@ __global__ static void CU_embed_back_(floatX* dwte,const int* tokens,const float
         // pos_1 = t*C+c, pos_2 = c*ldW+t;
         pos_1 = c*T+t, pos_2 = c*ldW+t;
     }
-    dwte[pos_2] += dout[pos_1]*scale;
+#if defined(ENABLE_FP8)
+#else
+    dwte[pos_2] += dout[pos_1];
+#endif
 }
 
 

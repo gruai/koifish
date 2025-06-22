@@ -4,7 +4,7 @@
 #if defined(__AVX2__) && defined(__F16C__)
   #include <immintrin.h>
 #endif
-#include <immintrin.h>  //"f16cintrin.h"
+// #include "f16cintrin.h"
 #include "../g_float.hpp"
 #include "../g_float_cpu.hpp"
 
@@ -124,46 +124,6 @@ float dotprod_gf4(void* w, int n, int i, float* x) {
 	return val;
 #endif
 }
-
-
-/*
-#if defined(__AVX2__) && defined(__F16C__)
-inline float half_to_float(__gcc_fp16 x) {
-  return _cvtsh_ss(x);
-}
-inline __gcc_fp16 float_to_half(float x) {
-  return _cvtss_sh(x, 0);
-}
-#else
-inline float half_to_float(__gcc_fp16 x) {
-  assert(false && "float16 not supported on this platform");
-  return 0.0f;
-}
-inline __gcc_fp16 float_to_half(float x) {
-  assert(false && "float16 not supported on this platform");
-  return 0;
-}
-#endif
-
-inline float fp8e5m2_to_float(f8e5m2_t x) {
-  __gcc_fp16 val = 0;
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-  memcpy(&val, &x, sizeof(f8e5m2_t));
-#else
-  memcpy((char*)&val + sizeof(f8e5m2_t), &x, sizeof(f8e5m2_t));
-#endif
-  return half_to_float(val);
-}
-[[maybe_unused]] inline f8e5m2_t float_to_fp8e5m2(float x) {
-  __gcc_fp16 val = float_to_half(x);
-  f8e5m2_t out;
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-  memcpy(&out, (char*)&val, sizeof(f8e5m2_t)); // TODO: round instead of truncate?
-#else
-  memcpy(&out, (char*)&val + sizeof(f8e5m2_t), sizeof(f8e5m2_t)); // TODO: round instead of truncate?
-#endif
-  return out;
-}*/
 
 int cdiv(int a, int b) {
   return (a + b - 1) / b;

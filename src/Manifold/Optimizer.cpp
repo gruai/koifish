@@ -357,7 +357,10 @@ double OPT_Adam::UpdateTensorParam(hGensor hP,floatX *gX,float clip){
 #endif    
 #ifdef __USE_CUDA__
     // hP->Print(hP->name,0,-1);         hP->Print(hP->name,1,-1);
-    UpdateTensorParam_cuda(hP,this,grad_norm,0x0);     
+    UpdateTensorParam_cuda(hP,this,grad_norm,0x0);   
+    if(DEBUG.T_ternary>0)  {
+        hP->ToTernary();
+    }
     
     if(!isPreGStep) 
         g_step += grad_norm*grad_norm;

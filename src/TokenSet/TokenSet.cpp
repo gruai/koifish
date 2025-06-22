@@ -256,14 +256,14 @@ try{
         return false;
     
     _INFO("%s %s@%s...",__func__,isSave?"save@":"load@",path.c_str());
-    _CHECK( S.Serial(nVocab,isSave,flag) );
-    _CHECK( S.Serial(nUnique,isSave,flag) );
-    _CHECK( S.Serial(fsize,isSave,flag) );
-    _CHECK( S.Serial(nDialect,isSave,flag) );
-    _CHECK( S.Serial(tokens,isSave,flag) );
+    CHECK_( S.Serial(nVocab,isSave,flag) );
+    CHECK_( S.Serial(nUnique,isSave,flag) );
+    CHECK_( S.Serial(fsize,isSave,flag) );
+    CHECK_( S.Serial(nDialect,isSave,flag) );
+    CHECK_( S.Serial(tokens,isSave,flag) );
     if(nDialect>0){
-        _CHECK( S.Serial(dialect,isSave,flag) );
-        _CHECK( S.Serial(mapT2T,isSave,flag) );
+        CHECK_( S.Serial(dialect,isSave,flag) );
+        CHECK_( S.Serial(mapT2T,isSave,flag) );
     }
     if(isSave){
 

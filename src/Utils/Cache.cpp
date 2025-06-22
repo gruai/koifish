@@ -7,6 +7,7 @@
  */
 
 #include "Cache.hpp"
+#include "../Tensor/GTensor.hpp"
 #include "../Manifold/gLLM.hpp"
 
 KVCache::KVCache(Fish *hF,int max_batch_size, int max_seq_len, int flag) : _fish(hF){   

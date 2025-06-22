@@ -29,21 +29,29 @@ float sample_prob(int idx, float* logits, int size) {
 	return expf(logits[idx] - max_val) / sum;
 }
 
+float* T_generate_(hFISH hFish,int id,typNUMBER tpActivity, unsigned flags);
 int run_caml(const char*prompt,int flag);
 int Fish_ppl(CLI_params& config)  {  
-    g_dump_level = 10;  
+    // g_dump_level = 0;  
+#if defined(K_DEBUGCUDA)
+    g_dump_level = 0;  
+#endif
     config.wiki_actor = "copy";     config.isOnlyGPT = true;
     config.common.remater_ffn = 1;
     config.common.n_batch = 1;
     config.model.preLogits_dB = 1;
     config.model.sparse.method = -1;
     config.scheduling.strategy = SKDU_params::MEM_PRE_ALLOC;
+    // config.SetNCTX(1);       ???
     // config.model.isEmbedWeightTying = false;    //QWEN32B
 
-    DEBUG.graph_dump = 1;
-    DEBUG.T_cuda_ver = 1;
-    DEBUG.T_cpu = 0;
+    
+    DEBUG.T_cuda_ver = 1;    DEBUG.T_cpu = 0;
+    DEBUG.cmd_p1 = 0;       DEBUG.graph_dump = 1;
+    
     config.model.tpPreLogits = typNUMBER::F32;
+    config.model.tpActivation = typNUMBER::F32;     
+    config.model.tpActivation = typNUMBER::BF16;     
     // return run_caml(config.prompt.c_str(),0x0);
     
     hFISH fish = Fish::MakeInstance("PPL_",config,{},Fish::ROLE_TYPE::COMMON,0x110);
@@ -57,17 +65,19 @@ int Fish_ppl(CLI_params& config)  {
     } 
     SUM::tX = 0;
     int nTokens = hLoader->nMostToken;  
-    nTokens = DEBUG.T_cpu == 0 ? 2000 : 200;  
+    nTokens = DEBUG.T_cpu == 0 ? 1024 : 200;  
     // assert(nTokens <= _nctx);
     TOKEN_ID t = -1;
-    _INFO("\n====== %s: %s @%s\n\t", __func__,DEBUG.T_cpu==0 ? "CUDA":"CPU",cDATE);
+    _INFO("\n====== %s: %s FLOAT=%s @%s\n", __func__,DEBUG.T_cpu==0 ? "CUDA":"CPU",
+            cNameOf(config.model.tpActivation), cDATE);
     OutCLS *hCLS = fish->GetNeuron<OutCLS>("OutCLS",0);
     float *logits = hCLS->Logits(true);
 	double sum = 0, ss = 0, nz = 0, ppl = 0, pplerr = 0, tps = 0, t0 = GST_ms(),tAll = 0;
     vector<TOKEN_ID>& tokens = hLoader->GetTokens( );
-    hOPT->SetPhase(Optimizer::P_GENERATE);
+    hOPT->SetPhase(Optimizer::P_GENERATE);          fflush(stdout);
     for (i = 0; i+1 < nTokens; i++)    {  
-        float fLos = hOPT->Evaluate(hLoader,-666);  
+        //float fLos = hOPT->Evaluate(hLoader,-666);  
+        T_generate_(fish,i,config.model.tpActivation,-666);
         double logprob = log(sample_prob(tokens[i + 1], logits, nVocab));
 
         sum += logprob;        ss += logprob * logprob;        nz ++;
