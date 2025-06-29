@@ -6,13 +6,13 @@
 namespace hwinfo {
 
 // _____________________________________________________________________________________________________________________
-const std::string& Disk::vendor() const { return _vendor; }
+const std::string &Disk::vendor() const { return _vendor; }
 
 // _____________________________________________________________________________________________________________________
-const std::string& Disk::model() const { return _model; }
+const std::string &Disk::model() const { return _model; }
 
 // _____________________________________________________________________________________________________________________
-const std::string& Disk::serialNumber() const { return _serialNumber; }
+const std::string &Disk::serialNumber() const { return _serialNumber; }
 
 // _____________________________________________________________________________________________________________________
 int64_t Disk::size_Bytes() const { return _size_Bytes; }

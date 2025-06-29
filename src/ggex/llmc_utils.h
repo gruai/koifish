@@ -7,15 +7,15 @@
 #ifndef UTILS_H
 #define UTILS_H
 
-#include <unistd.h>
-#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 // implementation of dirent for Windows is in dev/unistd.h
 #ifndef _WIN32
-#include <dirent.h>
 #include <arpa/inet.h>
+#include <dirent.h>
 #else
 #pragma comment(lib, "Ws2_32.lib")  // Link Ws2_32.lib for socket functions
 #include <winsock2.h>
@@ -35,7 +35,9 @@ extern inline FILE *fopen_check(const char *path, const char *mode, const char *
         fprintf(stderr, "  Line: %d\n", line);
         fprintf(stderr, "  Path: %s\n", path);
         fprintf(stderr, "  Mode: %s\n", mode);
-        fprintf(stderr, "---> HINT 1: dataset files/code have moved to dev/data recently (May 20, 2024). You may have to mv them from the legacy data/ dir to dev/data/(dataset), or re-run the data preprocessing script. Refer back to the main README\n");
+        fprintf(stderr,
+                "---> HINT 1: dataset files/code have moved to dev/data recently (May 20, 2024). You may have to mv them from the legacy data/ dir to "
+                "dev/data/(dataset), or re-run the data preprocessing script. Refer back to the main README\n");
         fprintf(stderr, "---> HINT 2: possibly try to re-run `python train_gpt2.py`\n");
         exit(EXIT_FAILURE);
     }
@@ -52,8 +54,7 @@ extern inline void fread_check(void *ptr, size_t size, size_t nmemb, FILE *strea
         } else if (ferror(stream)) {
             fprintf(stderr, "Error: File read error at %s:%d\n", file, line);
         } else {
-            fprintf(stderr, "Error: Partial read at %s:%d. Expected %zu elements, read %zu\n",
-                    file, line, nmemb, result);
+            fprintf(stderr, "Error: Partial read at %s:%d. Expected %zu elements, read %zu\n", file, line, nmemb, result);
         }
         fprintf(stderr, "Error details:\n");
         fprintf(stderr, "  File: %s\n", file);
@@ -126,8 +127,7 @@ extern inline void fwrite_check(void *ptr, size_t size, size_t nmemb, FILE *stre
         } else if (ferror(stream)) {
             fprintf(stderr, "Error: File write error at %s:%d\n", file, line);
         } else {
-            fprintf(stderr, "Error: Partial write at %s:%d. Expected %zu elements, wrote %zu\n",
-                    file, line, nmemb, result);
+            fprintf(stderr, "Error: Partial write at %s:%d. Expected %zu elements, wrote %zu\n", file, line, nmemb, result);
         }
         fprintf(stderr, "Error details:\n");
         fprintf(stderr, "  File: %s\n", file);
@@ -158,12 +158,11 @@ extern inline void *malloc_check(size_t size, const char *file, int line) {
 
 #define mallocCheck(size) malloc_check(size, __FILE__, __LINE__)
 
-
 // ----------------------------------------------------------------------------
 // check that all tokens are within range
-extern inline void token_check(const int* tokens, int token_count, int vocab_size, const char *file, int line) {
-    for(int i = 0; i < token_count; i++) {
-        if(!(0 <= tokens[i] && tokens[i] < vocab_size)) {
+extern inline void token_check(const int *tokens, int token_count, int vocab_size, const char *file, int line) {
+    for (int i = 0; i < token_count; i++) {
+        if (!(0 <= tokens[i] && tokens[i] < vocab_size)) {
             fprintf(stderr, "Error: Token out of vocabulary at %s:%d\n", file, line);
             fprintf(stderr, "Error details:\n");
             fprintf(stderr, "  File: %s\n", file);
@@ -181,7 +180,9 @@ extern inline void token_check(const int* tokens, int token_count, int vocab_siz
 // I/O ops
 
 extern inline void create_dir_if_not_exists(const char *dir) {
-    if (dir == NULL) { return; }
+    if (dir == NULL) {
+        return;
+    }
     struct stat st = {0};
     if (stat(dir, &st) == -1) {
         if (mkdir(dir, 0700) == -1) {
@@ -192,14 +193,18 @@ extern inline void create_dir_if_not_exists(const char *dir) {
     }
 }
 
-extern inline int find_max_step(const char* output_log_dir) {
+extern inline int find_max_step(const char *output_log_dir) {
     // find the DONE file in the log dir with highest step count
-    if (output_log_dir == NULL) { return -1; }
-    DIR* dir;
-    struct dirent* entry;
+    if (output_log_dir == NULL) {
+        return -1;
+    }
+    DIR *dir;
+    struct dirent *entry;
     int max_step = -1;
-    dir = opendir(output_log_dir);
-    if (dir == NULL) { return -1; }
+    dir          = opendir(output_log_dir);
+    if (dir == NULL) {
+        return -1;
+    }
     while ((entry = readdir(dir)) != NULL) {
         if (strncmp(entry->d_name, "DONE_", 5) == 0) {
             int step = atoi(entry->d_name + 5);
@@ -212,13 +217,17 @@ extern inline int find_max_step(const char* output_log_dir) {
     return max_step;
 }
 
-extern inline int ends_with_bin(const char* str) {
+extern inline int ends_with_bin(const char *str) {
     // checks if str ends with ".bin". could be generalized in the future.
-    if (str == NULL) { return 0; }
-    size_t len = strlen(str);
-    const char* suffix = ".bin";
-    size_t suffix_len = strlen(suffix);
-    if (len < suffix_len) { return 0; }
+    if (str == NULL) {
+        return 0;
+    }
+    size_t len         = strlen(str);
+    const char *suffix = ".bin";
+    size_t suffix_len  = strlen(suffix);
+    if (len < suffix_len) {
+        return 0;
+    }
     int suffix_matches = strncmp(str + len - suffix_len, suffix, suffix_len) == 0;
     return suffix_matches;
 }

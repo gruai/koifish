@@ -3,31 +3,31 @@ Common utilities for CUDA code.
 */
 #pragma once
 
-#include <stdlib.h>
-#include <stdio.h>
-#include <math.h>
-#include <string>
-#include <type_traits>      // std::bool_constant
+#include <cublasLt.h>
+#include <cublas_v2.h>
+#include <cuda_profiler_api.h>
 #include <cuda_runtime.h>
+#include <math.h>
 #include <nvtx3/nvToolsExt.h>
 #include <nvtx3/nvToolsExtCudaRt.h>
-#include <cuda_profiler_api.h>
-#include <cublas_v2.h>
-#include <cublasLt.h> 
+#include <stdio.h>
+#include <stdlib.h>
+
+#include <string>
+#include <type_traits>  // std::bool_constant
 
 #include "../../CLI_params.hpp"
-#include "../../g_stddef.hpp"
-#include "../../g_float.hpp"
 #include "../../Utils/GST_log.hpp"
 #include "../../Utils/GST_util.hpp"
-
+#include "../../g_float.hpp"
+#include "../../g_stddef.hpp"
 
 // ----------------------------------------------------------------------------
 // cuBLAS globals for workspace, handle, settings
 
 // Hardcoding workspace to 32MiB but only Hopper needs 32 (for others 4 is OK)
 extern const size_t cublaslt_workspace_size;
-extern void* cublaslt_workspace;
+extern void *cublaslt_workspace;
 extern cublasComputeType_t cublas_compute;
 extern cublasLtHandle_t cublaslt_handle;
 extern cublasHandle_t cublas_handle;
@@ -35,14 +35,14 @@ extern cublasHandle_t cublas_handle;
 // Error checking
 
 // cuBLAS error checking
-void inline cublasCheck(cublasStatus_t status, const char *file, int line)
-{
+void inline cublasCheck(cublasStatus_t status, const char *file, int line) {
     if (status != CUBLAS_STATUS_SUCCESS) {
         printf("[cuBLAS ERROR]: %d %s %d\n", status, file, line);
         exit(EXIT_FAILURE);
     }
 }
-#define cublasCheck(status) { cublasCheck((status), __FILE__, __LINE__); }
+#define cublasCheck(status) \
+    { cublasCheck((status), __FILE__, __LINE__); }
 // ----------------------------------------------------------------------------
 // Global defines and settings
 
@@ -53,9 +53,10 @@ extern cudaDeviceProp deviceProp;
 
 // WarpSize is not a compile time constant, Defining here like this possibly allows the compiler to optimize better
 #define WARP_SIZE 32U
-// Thread number of each block  - If each thread requires big private memory, then using less threads per block helps but its not infinite so should be soft-limited to a minimum like 32 or 64 depending on algorithm. But maximum is hard-limited to 1024 threads per block. 
-#define CU_T4B_SMALL    256U
-#define CU_T4B_BIG      1024U
+// Thread number of each block  - If each thread requires big private memory, then using less threads per block helps but its not infinite so should be
+// soft-limited to a minimum like 32 or 64 depending on algorithm. But maximum is hard-limited to 1024 threads per block.
+#define CU_T4B_SMALL 256U
+#define CU_T4B_BIG 1024U
 // try to make sure that 2 blocks fit on A100/H100 to maximise latency tolerance
 // this needs to be defines rather than queried to be used for __launch_bounds__
 #if __CUDA_ARCH__ == 800 || __CUDA_ARCH__ >= 900
@@ -76,24 +77,24 @@ constexpr std::bool_constant<true> False;
 
 // CUDA error checking
 inline void cudaCheck(cudaError_t error, const char *file, int line) {
-  if (error != cudaSuccess) {
-    _INFO("[CUDA ERROR] at file %s:%d:\n\"%s\" (%s code=%d)\n", file, line, cudaGetErrorString(error),cudaGetErrorName(error),error);
-    exit(EXIT_FAILURE);
-  }
+    if (error != cudaSuccess) {
+        _INFO("[CUDA ERROR] at file %s:%d:\n\"%s\" (%s code=%d)\n", file, line, cudaGetErrorString(error), cudaGetErrorName(error), error);
+        exit(EXIT_FAILURE);
+    }
 };
 #define cudaCheck(err) (cudaCheck(err, __FILE__, __LINE__))
 
-#define CUDA_CHECK_RETURN(value) CheckCudaErrorAux(__FILE__,__LINE__, #value, value)
-static void CheckCudaErrorAux (const char *file, unsigned line, const char *statement, cudaError_t err){
+#define CUDA_CHECK_RETURN(value) CheckCudaErrorAux(__FILE__, __LINE__, #value, value)
+static void CheckCudaErrorAux(const char *file, unsigned line, const char *statement, cudaError_t err) {
     if (err == cudaSuccess)
         return;
-    std::cerr << statement<<" returned " << cudaGetErrorString(err) << "("<<err<< ") at "<<file<<":"<<line << std::endl;
-    exit (1);
+    std::cerr << statement << " returned " << cudaGetErrorString(err) << "(" << err << ") at " << file << ":" << line << std::endl;
+    exit(1);
 }
 
 // like cudaFree, but checks for errors _and_ resets the pointer.
-template<class T>
-inline void cudaFreeCheck(T** ptr, const char *file, int line) {
+template <class T>
+inline void cudaFreeCheck(T **ptr, const char *file, int line) {
     cudaError_t error = cudaFree(*ptr);
     if (error != cudaSuccess) {
         _INFO("[CUDA ERROR] at file %s:%d:\n%s\n", file, line, cudaGetErrorString(error));
@@ -106,7 +107,6 @@ inline void cudaFreeCheck(T** ptr, const char *file, int line) {
 // ----------------------------------------------------------------------------
 // CUDA Precision settings and defines
 
-
 // ----------------------------------------------------------------------------
 // Load and store with streaming cache hints
 // Older nvcc does not provide __ldcs and __stcs for bfloat16, despite these
@@ -115,30 +115,27 @@ inline void cudaFreeCheck(T** ptr, const char *file, int line) {
 // If not, you easily get "no viable overload" (for sm52) and "function already exists" (sm_80)
 
 #if defined(ENABLE_BF16) && (__CUDACC_VER_MAJOR__ < 12) && !((__CUDA_ARCH__ >= 800) || !defined(__CUDA_ARCH__))
-__device__ floatX __ldcs(const floatX* address) {
-    unsigned short bf = __ldcs(reinterpret_cast<const unsigned short*>(address));
+__device__ floatX __ldcs(const floatX *address) {
+    unsigned short bf = __ldcs(reinterpret_cast<const unsigned short *>(address));
     return __nv_bfloat16_raw{bf};
 }
 
-__device__ void __stcs(floatX* address, floatX value) {
-    __stcs(reinterpret_cast<unsigned short*>(address), ((__nv_bfloat16_raw)value).x);
-}
+__device__ void __stcs(floatX *address, floatX value) { __stcs(reinterpret_cast<unsigned short *>(address), ((__nv_bfloat16_raw)value).x); }
 #elif defined(ENABLE_FP8)
-__device__ inline floatX __ldcs(const floatX* address) {
-    assert(0);  return (floatX)(0.0);
-}
-__device__ inline void __stcs(floatX* address, floatX value) {
+__device__ inline floatX __ldcs(const floatX *address) {
     assert(0);
+    return (floatX)(0.0);
 }
+__device__ inline void __stcs(floatX *address, floatX value) { assert(0); }
 #endif
 
 // ----------------------------------------------------------------------------
 // Profiler utils
 
 class NvtxRange {
- public:
-    NvtxRange(const char* s) { nvtxRangePush(s); }
-    NvtxRange(const std::string& base_str, int number) {
+   public:
+    NvtxRange(const char *s) { nvtxRangePush(s); }
+    NvtxRange(const std::string &base_str, int number) {
         std::string range_string = base_str + " " + std::to_string(number);
         nvtxRangePush(range_string.c_str());
     }
@@ -150,32 +147,32 @@ class NvtxRange {
 // Utilities to Read & Write between CUDA memory <-> files
 
 // copy num_bytes from device pointer src into file dest, using double buffering running on the given stream.
-inline void device_to_file(FILE* dest, void* src, size_t num_bytes, size_t buffer_size, cudaStream_t stream) {
+inline void device_to_file(FILE *dest, void *src, size_t num_bytes, size_t buffer_size, cudaStream_t stream) {
     // allocate pinned buffer for faster, async transfer
-    char* buffer_space;
-    cudaCheck(cudaMallocHost(&buffer_space, 2*buffer_size));
+    char *buffer_space;
+    cudaCheck(cudaMallocHost(&buffer_space, 2 * buffer_size));
     // split allocation in two
-    void* read_buffer = buffer_space;
-    void* write_buffer = buffer_space + buffer_size;
+    void *read_buffer  = buffer_space;
+    void *write_buffer = buffer_space + buffer_size;
 
     // prime the read buffer; first copy means we have to wait
-    char* gpu_read_ptr = (char*)src;
+    char *gpu_read_ptr = (char *)src;
     size_t copy_amount = std::min(buffer_size, num_bytes);
     cudaCheck(cudaMemcpyAsync(read_buffer, gpu_read_ptr, copy_amount, cudaMemcpyDeviceToHost, stream));
     cudaCheck(cudaStreamSynchronize(stream));
-    size_t rest_bytes = num_bytes - copy_amount;
+    size_t rest_bytes        = num_bytes - copy_amount;
     size_t write_buffer_size = copy_amount;
     gpu_read_ptr += copy_amount;
 
     std::swap(read_buffer, write_buffer);
     // now the main loop; as long as there are bytes left
-    while(rest_bytes > 0) {
+    while (rest_bytes > 0) {
         // initiate next read
         copy_amount = std::min(buffer_size, rest_bytes);
         cudaCheck(cudaMemcpyAsync(read_buffer, gpu_read_ptr, copy_amount, cudaMemcpyDeviceToHost, stream));
         // while this is going on, transfer the write buffer to disk
         fwriteCheck(write_buffer, 1, write_buffer_size, dest);
-        cudaCheck(cudaStreamSynchronize(stream));     // wait for both buffers to be ready.
+        cudaCheck(cudaStreamSynchronize(stream));  // wait for both buffers to be ready.
 
         std::swap(read_buffer, write_buffer);
         rest_bytes -= copy_amount;
@@ -189,34 +186,35 @@ inline void device_to_file(FILE* dest, void* src, size_t num_bytes, size_t buffe
 }
 
 // copy num_bytes from file src into device pointer dest, using double buffering running on the given stream.
-inline void file_to_device(void* dest, FILE* src, size_t num_bytes, size_t buffer_size, cudaStream_t stream) {
-     // allocate pinned buffer for faster, async transfer
-     // from the docs (https://developer.download.nvidia.com/compute/DevZone/docs/html/C/doc/html/group__CUDART__HIGHLEVEL_ge439496de696b166ba457dab5dd4f356.html)
-     // WC memory is a good option for buffers that will be written by the CPU and read by the device via mapped pinned memory or host->device transfers.
-    char* buffer_space;
-    cudaCheck(cudaMallocHost(&buffer_space, 2*buffer_size, cudaHostAllocWriteCombined));
+inline void file_to_device(void *dest, FILE *src, size_t num_bytes, size_t buffer_size, cudaStream_t stream) {
+    // allocate pinned buffer for faster, async transfer
+    // from the docs
+    // (https://developer.download.nvidia.com/compute/DevZone/docs/html/C/doc/html/group__CUDART__HIGHLEVEL_ge439496de696b166ba457dab5dd4f356.html) WC memory is
+    // a good option for buffers that will be written by the CPU and read by the device via mapped pinned memory or host->device transfers.
+    char *buffer_space;
+    cudaCheck(cudaMallocHost(&buffer_space, 2 * buffer_size, cudaHostAllocWriteCombined));
     // split allocation in two
-    void* read_buffer = buffer_space;
-    void* write_buffer = buffer_space + buffer_size;
+    void *read_buffer  = buffer_space;
+    void *write_buffer = buffer_space + buffer_size;
 
     // prime the read buffer;
-    char* gpu_write_ptr = (char*)dest;
-    size_t copy_amount = std::min(buffer_size, num_bytes);
+    char *gpu_write_ptr = (char *)dest;
+    size_t copy_amount  = std::min(buffer_size, num_bytes);
     freadCheck(read_buffer, 1, copy_amount, src);
 
-    size_t rest_bytes = num_bytes - copy_amount;
+    size_t rest_bytes        = num_bytes - copy_amount;
     size_t write_buffer_size = copy_amount;
     std::swap(read_buffer, write_buffer);
 
     // now the main loop; as long as there are bytes left
-    while(rest_bytes > 0) {
+    while (rest_bytes > 0) {
         // initiate next read
         copy_amount = std::min(buffer_size, rest_bytes);
         cudaCheck(cudaMemcpyAsync(gpu_write_ptr, write_buffer, write_buffer_size, cudaMemcpyHostToDevice, stream));
         gpu_write_ptr += write_buffer_size;
         // while this is going on, read from disk
         freadCheck(read_buffer, 1, copy_amount, src);
-        cudaCheck(cudaStreamSynchronize(stream));     // wait for both buffers to be ready.
+        cudaCheck(cudaStreamSynchronize(stream));  // wait for both buffers to be ready.
 
         std::swap(read_buffer, write_buffer);
         rest_bytes -= copy_amount;
@@ -235,26 +233,26 @@ inline void file_to_device(void* dest, FILE* src, size_t num_bytes, size_t buffe
 #define MFUH_PRECISION_BF16 2
 
 typedef struct {
-    float TF_32;       // tensor-core performance 32 bit
-    float BF_16_32;    // bf16 with 32 bit accumulate
-    float FP_16_32;    // fp16 with 32 bit accumulate
-    float FP_16_16;    // fp16 with 16 bit accumulate
-    float FP_8_32;     // and so on
+    float TF_32;     // tensor-core performance 32 bit
+    float BF_16_32;  // bf16 with 32 bit accumulate
+    float FP_16_32;  // fp16 with 32 bit accumulate
+    float FP_16_16;  // fp16 with 16 bit accumulate
+    float FP_8_32;   // and so on
     float FP_8_16;
-    float CLOCK;        // clock frequency from the spec sheet
-    float CORES;        // #TCs from the spec sheet
+    float CLOCK;  // clock frequency from the spec sheet
+    float CORES;  // #TCs from the spec sheet
 } PerfData;
 
 // basic default data from the nvidia whitepapers
-static const PerfData VOLTA = {125.0f, -1.f, 125.f, -1.f, -1.f, -1.f, 1530.f, 640.f};
+static const PerfData VOLTA             = {125.0f, -1.f, 125.f, -1.f, -1.f, -1.f, 1530.f, 640.f};
 static const PerfData AMPERE_DATACENTER = {156.f, 312.f, 312.f, 312.f, -1.f, -1.f, 1410.f, 432.f};
-static const PerfData AMPERE_CONSUMER = {40.f, 80.f, 80.f, 160.f, -1.f, -1.f, 1860.f, 336.f};
-static const PerfData HOPPER = {378.f, 756.f, 756.f, 756.f, 1513.f, 1513.f, 1620.f, 456.f};
-static const PerfData ADA = {82.6f, 165.2f, 165.2f, 330.3f, 330.3f, 660.6f, 2520.f, 512.f};
+static const PerfData AMPERE_CONSUMER   = {40.f, 80.f, 80.f, 160.f, -1.f, -1.f, 1860.f, 336.f};
+static const PerfData HOPPER            = {378.f, 756.f, 756.f, 756.f, 1513.f, 1513.f, 1620.f, 456.f};
+static const PerfData ADA               = {82.6f, 165.2f, 165.2f, 330.3f, 330.3f, 660.6f, 2520.f, 512.f};
 
 typedef struct {
-    const char* name;
-    const PerfData* perf_data;
+    const char *name;
+    const PerfData *perf_data;
     float new_cores;
     float new_mhz;
 } GPUEntry;
@@ -298,10 +296,10 @@ static GPUEntry gpu_db[] = {
     {"NVIDIA GeForce RTX 4060 Ti", &ADA, 136, 2535},
     {"NVIDIA GeForce RTX 4060", &ADA, 96, 2460},
     {"NVIDIA H100 PCIe", &HOPPER, 456, 1620},
-    {"NVIDIA H100 80GB HBM3", &HOPPER, 528, 1830}, // HBM3 = SXM5
+    {"NVIDIA H100 80GB HBM3", &HOPPER, 528, 1830},  // HBM3 = SXM5
 };
 
-inline float get_flops_promised(const char* device, int precision_mode) {
+inline float get_flops_promised(const char *device, int precision_mode) {
     /*
     This function is used to estimate the Model Flops Utilization (MFU)
     basically we have to figure out how many flops the GPU can do per second.
@@ -323,7 +321,7 @@ inline float get_flops_promised(const char* device, int precision_mode) {
     https://images.nvidia.com/aem-dam/Solutions/geforce/ada/nvidia-ada-gpu-architecture.pdf
     */
 
-   // validate the precision mode as one of the three possible values
+    // validate the precision mode as one of the three possible values
     if (!(precision_mode == MFUH_PRECISION_FP32 || precision_mode == MFUH_PRECISION_FP16 || precision_mode == MFUH_PRECISION_BF16)) {
         fprintf(stderr, "Invalid precision mode: %d\n", precision_mode);
         return -1.0f;
@@ -333,13 +331,19 @@ inline float get_flops_promised(const char* device, int precision_mode) {
     int num_gpu_entries = sizeof(gpu_db) / sizeof(gpu_db[0]);
     for (int i = 0; i < num_gpu_entries; i++) {
         if (strcmp(gpu_db[i].name, device) == 0) {
-            const PerfData* perf_data = gpu_db[i].perf_data;
+            const PerfData *perf_data = gpu_db[i].perf_data;
 
             // look up the default flops value for the given precision mode
             float value = -1.0f;
-            if (precision_mode == MFUH_PRECISION_BF16) { value = perf_data->BF_16_32; }
-            if (precision_mode == MFUH_PRECISION_FP32) { value = perf_data->TF_32; }
-            if (precision_mode == MFUH_PRECISION_FP16) { value = perf_data->FP_16_32; }
+            if (precision_mode == MFUH_PRECISION_BF16) {
+                value = perf_data->BF_16_32;
+            }
+            if (precision_mode == MFUH_PRECISION_FP32) {
+                value = perf_data->TF_32;
+            }
+            if (precision_mode == MFUH_PRECISION_FP16) {
+                value = perf_data->FP_16_32;
+            }
 
             // we'd get here if we're e.g. trying to use BF16 on Volta GPU or something...
             if (value < 0.0f) {
@@ -349,36 +353,38 @@ inline float get_flops_promised(const char* device, int precision_mode) {
 
             // adjust flops based on the specific core count and clock frequency of this GPU
             float new_cores = gpu_db[i].new_cores;
-            float new_mhz = gpu_db[i].new_mhz;
-            float adjusted = value * (new_cores / perf_data->CORES) * (new_mhz / perf_data->CLOCK);
+            float new_mhz   = gpu_db[i].new_mhz;
+            float adjusted  = value * (new_cores / perf_data->CORES) * (new_mhz / perf_data->CLOCK);
             return adjusted;
         }
     }
 
-    return -1.0f; // ¯\_(ツ)_/¯
+    return -1.0f;  // ¯\_(ツ)_/¯
 }
 
 extern cudaStream_t main_stream;
 extern int g_dump_level;
 template <typename T>
-void inline PrintTensor(const char* title,const T *src, bool isDevice,int n1,int n2,int n3=1,int n4=1,int flag=0x0){
-    if( g_dump_level>0 && flag>=0 ) return;
-    T *host_dat=(T*)src; 
-    size_t nElem=(size_t)(n1)*n2*n3*n4;
-	if(nElem==0)	return;
-    assert(src!=nullptr);
-    if(isDevice){
-        host_dat = (T*)malloc(sizeof(T)*nElem);
-        cudaCheck(cudaMemcpyAsync(host_dat,src, nElem*sizeof(T), cudaMemcpyDeviceToHost, main_stream));
+void inline PrintTensor(const char *title, const T *src, bool isDevice, int n1, int n2, int n3 = 1, int n4 = 1, int flag = 0x0) {
+    if (g_dump_level > 0 && flag >= 0)
+        return;
+    T *host_dat  = (T *)src;
+    size_t nElem = (size_t)(n1)*n2 * n3 * n4;
+    if (nElem == 0)
+        return;
+    assert(src != nullptr);
+    if (isDevice) {
+        host_dat = (T *)malloc(sizeof(T) * nElem);
+        cudaCheck(cudaMemcpyAsync(host_dat, src, nElem * sizeof(T), cudaMemcpyDeviceToHost, main_stream));
     }
- 
-    PrintT(title,host_dat,n1,n2,n3,n4,flag);    
-    if(isDevice){
+
+    PrintT(title, host_dat, n1, n2, n3, n4, flag);
+    if (isDevice) {
         free(host_dat);
     }
 }
 
-inline size_t   get_compute_capability() {
+inline size_t get_compute_capability() {
     int current_device;
     cudaCheck(cudaGetDevice(&current_device));
     struct cudaDeviceProp prop;
@@ -386,26 +392,22 @@ inline size_t   get_compute_capability() {
     return prop.major * 10 + prop.minor;
 }
 
-inline bool
-is_ampere_arch() {
+inline bool is_ampere_arch() {
     auto cc = get_compute_capability();
     return (80 <= cc) && (cc < 89);
 }
 
-inline bool
-is_ada_arch() {
+inline bool is_ada_arch() {
     auto cc = get_compute_capability();
     return (cc == 89);
 }
 
-inline bool
-is_hopper_arch() {
+inline bool is_hopper_arch() {
     auto cc = get_compute_capability();
     return (90 <= cc) && (cc < 100);
 }
 
-inline bool
-is_blackwell_arch() {
+inline bool is_blackwell_arch() {
     auto cc = get_compute_capability();
     return (100 <= cc);
 }
@@ -418,8 +420,7 @@ is_blackwell_arch() {
 //     return true;
 // }
 
-inline bool
-check_device_arch_newer_than(std::string const& arch) {
+inline bool check_device_arch_newer_than(std::string const &arch) {
     size_t arch_major = 6;
     size_t arch_minor = 0;
     if (arch == "blackwell") {
@@ -449,10 +450,9 @@ check_device_arch_newer_than(std::string const& arch) {
     return false;
 }
 
-static half
-cpu_float2half_rn(float f) {
-    void* f_ptr = &f;
-    unsigned x  = *((int*)f_ptr);
+static half cpu_float2half_rn(float f) {
+    void *f_ptr = &f;
+    unsigned x  = *((int *)f_ptr);
     unsigned u  = (x & 0x7fffffff), remainder, shift, lsb, lsb_s1, lsb_m1;
     unsigned sign, exponent, mantissa;
 
@@ -462,8 +462,8 @@ cpu_float2half_rn(float f) {
     if (u > 0x7f800000) {
         hr.x = 0x7fffU;
         // Add an indirection to get around type aliasing check
-        void* hr_ptr = &hr;
-        return *reinterpret_cast<half*>(hr_ptr);
+        void *hr_ptr = &hr;
+        return *reinterpret_cast<half *>(hr_ptr);
     }
 
     sign = ((x >> 16) & 0x8000);
@@ -472,14 +472,14 @@ cpu_float2half_rn(float f) {
     if (u > 0x477fefff) {
         hr.x = static_cast<unsigned short>(sign | 0x7c00U);
         // Add an indirection to get around type aliasing check
-        void* hr_ptr = &hr;
-        return *reinterpret_cast<half*>(hr_ptr);
+        void *hr_ptr = &hr;
+        return *reinterpret_cast<half *>(hr_ptr);
     }
     if (u < 0x33000001) {
         hr.x = static_cast<unsigned short>(sign | 0x0000U);
         // Add an indirection to get around type aliasing check
-        void* hr_ptr = &hr;
-        return *reinterpret_cast<half*>(hr_ptr);
+        void *hr_ptr = &hr;
+        return *reinterpret_cast<half *>(hr_ptr);
     }
 
     exponent = ((u >> 23) & 0xff);
@@ -511,15 +511,14 @@ cpu_float2half_rn(float f) {
     hr.x = static_cast<unsigned short>((sign | (exponent << 10) | mantissa));
 
     // Add an indirection to get around type aliasing check
-    void* hr_ptr = &hr;
-    return *reinterpret_cast<half*>(hr_ptr);
+    void *hr_ptr = &hr;
+    return *reinterpret_cast<half *>(hr_ptr);
 }
 
-static float
-cpu_half2float(half h) {
+static float cpu_half2float(half h) {
     // Add an indirection to get around type aliasing check
-    void* h_ptr   = &h;
-    __half_raw hr = *reinterpret_cast<__half_raw*>(h_ptr);
+    void *h_ptr   = &h;
+    __half_raw hr = *reinterpret_cast<__half_raw *>(h_ptr);
 
     unsigned sign     = ((hr.x >> 15) & 1);
     unsigned exponent = ((hr.x >> 10) & 0x1f);
@@ -546,14 +545,13 @@ cpu_half2float(half h) {
     int temp = ((sign << 31) | (exponent << 23) | mantissa);
 
     // Add an indirection to get around type aliasing check
-    void* temp_ptr = &temp;
-    float* res_ptr = reinterpret_cast<float*>(temp_ptr);
+    void *temp_ptr = &temp;
+    float *res_ptr = reinterpret_cast<float *>(temp_ptr);
     return *res_ptr;
 }
 
 // Generate uniform numbers [0,1)
-static void
-initImage(float* image, int64_t imageSize) {
+static void initImage(float *image, int64_t imageSize) {
     static unsigned seed = 123456789;
     for (int64_t index = 0; index < imageSize; index++) {
         seed         = (1103515245 * seed + 12345) & 0xffffffff;
@@ -561,8 +559,7 @@ initImage(float* image, int64_t imageSize) {
     }
 }
 
-static void
-initImage(half* image, int64_t imageSize) {
+static void initImage(half *image, int64_t imageSize) {
     static unsigned seed = 123456789;
     for (int64_t index = 0; index < imageSize; index++) {
         seed         = (1103515245 * seed + 12345) & 0xffffffff;
@@ -571,8 +568,7 @@ initImage(half* image, int64_t imageSize) {
 }
 
 // Currently set to generate uniform integers [-2, 2] to avoid int8 overflow
-static void
-initImage(int8_t* image, int64_t imageSize) {
+static void initImage(int8_t *image, int64_t imageSize) {
     static unsigned seed = 123456789;
     for (int64_t index = 0; index < imageSize; index++) {
         seed = (1103515245 * seed + 12345) & 0xffffffff;
@@ -582,8 +578,7 @@ initImage(int8_t* image, int64_t imageSize) {
 }
 
 // Currently set to generate random integers [0, 50] to avoid uint8 overflow
-static void
-initImage(uint8_t* image, int64_t imageSize) {
+static void initImage(uint8_t *image, int64_t imageSize) {
     static unsigned seed = 123456789;
     for (int64_t index = 0; index < imageSize; index++) {
         seed = (1103515245 * seed + 12345) & 0xffffffff;
@@ -593,8 +588,7 @@ initImage(uint8_t* image, int64_t imageSize) {
 }
 
 // Currently set to generate uniform integers [0,1]
-static void
-initImage(int32_t* image, int64_t imageSize) {
+static void initImage(int32_t *image, int64_t imageSize) {
     static unsigned seed = 123456789;
     for (int64_t index = 0; index < imageSize; index++) {
         seed = (1103515245 * seed + 12345) & 0xffffffff;
@@ -604,8 +598,7 @@ initImage(int32_t* image, int64_t imageSize) {
 }
 
 // Currently set to generate uniform integers [0,1]
-static void
-initImage(int64_t* image, int64_t imageSize) {
+static void initImage(int64_t *image, int64_t imageSize) {
     static unsigned seed = 123456789;
     for (int64_t index = 0; index < imageSize; index++) {
         seed = (1103515245 * seed + 12345) & 0xffffffff;
@@ -615,8 +608,7 @@ initImage(int64_t* image, int64_t imageSize) {
 }
 
 // Currently set to generate booleans
-static void
-initImage(bool* image, int64_t imageSize) {
+static void initImage(bool *image, int64_t imageSize) {
     static unsigned seed = 123456789;
     for (int64_t index = 0; index < imageSize; index++) {
         seed = (1103515245 * seed + 12345) & 0xffffffff;
@@ -630,8 +622,8 @@ initImage(bool* image, int64_t imageSize) {
 
 template <typename T_ELEM>
 struct Surface {
-    T_ELEM* devPtr  = NULL;
-    T_ELEM* hostPtr = NULL;
+    T_ELEM *devPtr  = NULL;
+    T_ELEM *hostPtr = NULL;
     int64_t n_elems = 0;
 
    protected:
@@ -639,8 +631,8 @@ struct Surface {
 
    public:
     explicit Surface(int64_t n_elems, [[maybe_unused]] bool hasRef) : n_elems(n_elems) {
-        cudaCheck(cudaMalloc((void**)&(devPtr), (size_t)((n_elems) * sizeof(devPtr[0]))));
-        hostPtr = (T_ELEM*)calloc((size_t)n_elems, sizeof(hostPtr[0]));
+        cudaCheck(cudaMalloc((void **)&(devPtr), (size_t)((n_elems) * sizeof(devPtr[0]))));
+        hostPtr = (T_ELEM *)calloc((size_t)n_elems, sizeof(hostPtr[0]));
         initImage(hostPtr, n_elems);
         cudaCheck(cudaMemcpy(devPtr, hostPtr, size_t(sizeof(hostPtr[0]) * n_elems), cudaMemcpyHostToDevice));
         cudaCheck(cudaDeviceSynchronize());
@@ -648,10 +640,10 @@ struct Surface {
 
     explicit Surface(int64_t n_elems, [[maybe_unused]] bool hasRef, bool isInterleaved) {
         (void)isInterleaved;
-        cudaCheck(cudaMalloc((void**)&(devPtr), (n_elems) * sizeof(devPtr[0])));
-        hostPtr = (T_ELEM*)calloc(n_elems, sizeof(hostPtr[0]));
+        cudaCheck(cudaMalloc((void **)&(devPtr), (n_elems) * sizeof(devPtr[0])));
+        hostPtr = (T_ELEM *)calloc(n_elems, sizeof(hostPtr[0]));
         initImage(hostPtr, n_elems);
-        uint32_t* temp = (uint32_t*)hostPtr;
+        uint32_t *temp = (uint32_t *)hostPtr;
         for (auto i = 0; i < n_elems; i = i + 2) {
             temp[i + 1] = 1u;
         }
@@ -661,8 +653,8 @@ struct Surface {
     }
 
     explicit Surface(int64_t size, [[maybe_unused]] bool hasRef, T_ELEM fillValue) : n_elems(size) {
-        cudaCheck(cudaMalloc((void**)&(devPtr), (size) * sizeof(devPtr[0])));
-        hostPtr = (T_ELEM*)calloc(size, sizeof(hostPtr[0]));
+        cudaCheck(cudaMalloc((void **)&(devPtr), (size) * sizeof(devPtr[0])));
+        hostPtr = (T_ELEM *)calloc(size, sizeof(hostPtr[0]));
         for (int i = 0; i < size; i++) {
             hostPtr[i] = fillValue;
         }
@@ -670,24 +662,22 @@ struct Surface {
         cudaCheck(cudaDeviceSynchronize());
     }
 
-    Surface(const Surface& other) : n_elems(other.n_elems) {
-        cudaCheck(cudaMalloc((void**)&(devPtr), (size_t)((n_elems) * sizeof(devPtr[0]))));
-        hostPtr = (T_ELEM*)calloc((size_t)n_elems, sizeof(hostPtr[0]));
+    Surface(const Surface &other) : n_elems(other.n_elems) {
+        cudaCheck(cudaMalloc((void **)&(devPtr), (size_t)((n_elems) * sizeof(devPtr[0]))));
+        hostPtr = (T_ELEM *)calloc((size_t)n_elems, sizeof(hostPtr[0]));
         std::copy(other.hostPtr, other.hostPtr + n_elems, hostPtr);
         cudaCheck(cudaMemcpy(devPtr, hostPtr, size_t(sizeof(hostPtr[0]) * n_elems), cudaMemcpyHostToDevice));
         cudaCheck(cudaDeviceSynchronize());
     }
 
-    Surface(Surface&& other) noexcept : Surface() { swap(*this, other); }
+    Surface(Surface &&other) noexcept : Surface() { swap(*this, other); }
 
-    Surface&
-    operator=(Surface other) {
+    Surface &operator=(Surface other) {
         swap(*this, other);
         return *this;
     }
 
-    friend void
-    swap(Surface& first, Surface& second) {
+    friend void swap(Surface &first, Surface &second) {
         std::swap(first.n_elems, second.n_elems);
         std::swap(first.hostPtr, second.hostPtr);
         std::swap(first.devPtr, second.devPtr);

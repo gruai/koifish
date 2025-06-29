@@ -10,43 +10,43 @@ namespace hwinfo {
 Battery::Battery(int8_t id) { _id = id; }
 
 // _____________________________________________________________________________________________________________________
-std::string& Battery::vendor() {
-  if (_vendor.empty()) {
-    _vendor = getVendor();
-  }
-  return _vendor;
+std::string &Battery::vendor() {
+    if (_vendor.empty()) {
+        _vendor = getVendor();
+    }
+    return _vendor;
 }
 
 // _____________________________________________________________________________________________________________________
-std::string& Battery::model() {
-  if (_model.empty()) {
-    _model = getModel();
-  }
-  return _model;
+std::string &Battery::model() {
+    if (_model.empty()) {
+        _model = getModel();
+    }
+    return _model;
 }
 
 // _____________________________________________________________________________________________________________________
-std::string& Battery::serialNumber() {
-  if (_serialNumber.empty()) {
-    _serialNumber = getSerialNumber();
-  }
-  return _serialNumber;
+std::string &Battery::serialNumber() {
+    if (_serialNumber.empty()) {
+        _serialNumber = getSerialNumber();
+    }
+    return _serialNumber;
 }
 
 // _____________________________________________________________________________________________________________________
-std::string& Battery::technology() {
-  if (_technology.empty()) {
-    _technology = getTechnology();
-  }
-  return _technology;
+std::string &Battery::technology() {
+    if (_technology.empty()) {
+        _technology = getTechnology();
+    }
+    return _technology;
 }
 
 // _____________________________________________________________________________________________________________________
 uint32_t Battery::energyFull() {
-  if (_energyFull == 0) {
-    _energyFull = getEnergyFull();
-  }
-  return _energyFull;
+    if (_energyFull == 0) {
+        _energyFull = getEnergyFull();
+    }
+    return _energyFull;
 }
 
 // _____________________________________________________________________________________________________________________

@@ -1,17 +1,17 @@
-#define _CRT_SECURE_NO_DEPRECATE // Disables ridiculous "unsafe" warnings on Windows
-#include "ggml.h"
-
+#define _CRT_SECURE_NO_DEPRECATE  // Disables ridiculous "unsafe" warnings on Windows
+#include <cassert>
 #include <cfloat>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cassert>
 #include <initializer_list>
 #include <vector>
 
+#include "ggml.h"
+
 #if defined(_MSC_VER)
-#pragma warning(disable: 4244 4267) // possible loss of data
+#pragma warning(disable : 4244 4267)  // possible loss of data
 #endif
 
 #if defined(__GNUC__)
@@ -51,16 +51,15 @@
 
 #define _INFO(...) printf(__VA_ARGS__)
 
-static float frand(void) {
-    return (float)rand()/(float)RAND_MAX;
-}
+static float frand(void) { return (float)rand() / (float)RAND_MAX; }
 
 static int irand(int n) {
-    if (n == 0) return 0;
-    return rand()%n;
+    if (n == 0)
+        return 0;
+    return rand() % n;
 }
 
-static void get_random_dims(int64_t * dims, int ndims) {
+static void get_random_dims(int64_t *dims, int ndims) {
     dims[0] = dims[1] = dims[2] = dims[3] = 1;
 
     for (int i = 0; i < ndims; i++) {
@@ -68,24 +67,19 @@ static void get_random_dims(int64_t * dims, int ndims) {
     }
 }
 
-static hGensor  get_random_tensor_f32(
-        void * ctx0,
-        int ndims,
-        int64_t ne[],
-        float fmin,
-        float fmax) {
-    hGensor  result = ggml_new_tensor(ctx0, typNUMBER::F32, ndims, ne);
+static hGensor get_random_tensor_f32(void *ctx0, int ndims, int64_t ne[], float fmin, float fmax) {
+    hGensor result = ggml_new_tensor(ctx0, typNUMBER::F32, ndims, ne);
 
     switch (ndims) {
         case 1:
             for (int i0 = 0; i0 < ne[0]; i0++) {
-                ((float *)result->data)[i0] = frand()*(fmax - fmin) + fmin;
+                ((float *)result->data)[i0] = frand() * (fmax - fmin) + fmin;
             }
             break;
         case 2:
             for (int i1 = 0; i1 < ne[1]; i1++) {
                 for (int i0 = 0; i0 < ne[0]; i0++) {
-                    ((float *)result->data)[i1*ne[0] + i0] = frand()*(fmax - fmin) + fmin;
+                    ((float *)result->data)[i1 * ne[0] + i0] = frand() * (fmax - fmin) + fmin;
                 }
             }
             break;
@@ -93,7 +87,7 @@ static hGensor  get_random_tensor_f32(
             for (int i2 = 0; i2 < ne[2]; i2++) {
                 for (int i1 = 0; i1 < ne[1]; i1++) {
                     for (int i0 = 0; i0 < ne[0]; i0++) {
-                        ((float *)result->data)[i2*ne[1]*ne[0] + i1*ne[0] + i0] = frand()*(fmax - fmin) + fmin;
+                        ((float *)result->data)[i2 * ne[1] * ne[0] + i1 * ne[0] + i0] = frand() * (fmax - fmin) + fmin;
                     }
                 }
             }
@@ -103,7 +97,7 @@ static hGensor  get_random_tensor_f32(
                 for (int i2 = 0; i2 < ne[2]; i2++) {
                     for (int i1 = 0; i1 < ne[1]; i1++) {
                         for (int i0 = 0; i0 < ne[0]; i0++) {
-                            ((float *)result->data)[i3*ne[2]*ne[1]*ne[0] + i2*ne[1]*ne[0] + i1*ne[0] + i0] = frand()*(fmax - fmin) + fmin;
+                            ((float *)result->data)[i3 * ne[2] * ne[1] * ne[0] + i2 * ne[1] * ne[0] + i1 * ne[0] + i0] = frand() * (fmax - fmin) + fmin;
                         }
                     }
                 }
@@ -116,24 +110,19 @@ static hGensor  get_random_tensor_f32(
     return result;
 }
 
-static hGensor  get_random_tensor_f16(
-        void * ctx0,
-        int ndims,
-        int64_t ne[],
-        float fmin,
-        float fmax) {
-    hGensor  result = ggml_new_tensor(ctx0, GGML_TYPE_F16, ndims, ne);
+static hGensor get_random_tensor_f16(void *ctx0, int ndims, int64_t ne[], float fmin, float fmax) {
+    hGensor result = ggml_new_tensor(ctx0, GGML_TYPE_F16, ndims, ne);
 
     switch (ndims) {
         case 1:
             for (int i0 = 0; i0 < ne[0]; i0++) {
-                ((ggml_fp16_t *)result->data)[i0] = ggml_fp32_to_fp16(frand()*(fmax - fmin) + fmin);
+                ((ggml_fp16_t *)result->data)[i0] = ggml_fp32_to_fp16(frand() * (fmax - fmin) + fmin);
             }
             break;
         case 2:
             for (int i1 = 0; i1 < ne[1]; i1++) {
                 for (int i0 = 0; i0 < ne[0]; i0++) {
-                    ((ggml_fp16_t *)result->data)[i1*ne[0] + i0] = ggml_fp32_to_fp16(frand()*(fmax - fmin) + fmin);
+                    ((ggml_fp16_t *)result->data)[i1 * ne[0] + i0] = ggml_fp32_to_fp16(frand() * (fmax - fmin) + fmin);
                 }
             }
             break;
@@ -141,7 +130,7 @@ static hGensor  get_random_tensor_f16(
             for (int i2 = 0; i2 < ne[2]; i2++) {
                 for (int i1 = 0; i1 < ne[1]; i1++) {
                     for (int i0 = 0; i0 < ne[0]; i0++) {
-                        ((ggml_fp16_t *)result->data)[i2*ne[1]*ne[0] + i1*ne[0] + i0] = ggml_fp32_to_fp16(frand()*(fmax - fmin) + fmin);
+                        ((ggml_fp16_t *)result->data)[i2 * ne[1] * ne[0] + i1 * ne[0] + i0] = ggml_fp32_to_fp16(frand() * (fmax - fmin) + fmin);
                     }
                 }
             }
@@ -151,7 +140,8 @@ static hGensor  get_random_tensor_f16(
                 for (int i2 = 0; i2 < ne[2]; i2++) {
                     for (int i1 = 0; i1 < ne[1]; i1++) {
                         for (int i0 = 0; i0 < ne[0]; i0++) {
-                            ((ggml_fp16_t *)result->data)[i3*ne[2]*ne[1]*ne[0] + i2*ne[1]*ne[0] + i1*ne[0] + i0] = ggml_fp32_to_fp16(frand()*(fmax - fmin) + fmin);
+                            ((ggml_fp16_t *)result->data)[i3 * ne[2] * ne[1] * ne[0] + i2 * ne[1] * ne[0] + i1 * ne[0] + i0] =
+                                ggml_fp32_to_fp16(frand() * (fmax - fmin) + fmin);
                         }
                     }
                 }
@@ -164,13 +154,8 @@ static hGensor  get_random_tensor_f16(
     return result;
 }
 
-static hGensor  get_random_tensor_i32(
-        void * ctx0,
-        int ndims,
-        int64_t ne[],
-        int32_t imin,
-        int32_t imax) {
-    hGensor  result = ggml_new_tensor(ctx0, typNUMBER::I32, ndims, ne);
+static hGensor get_random_tensor_i32(void *ctx0, int ndims, int64_t ne[], int32_t imin, int32_t imax) {
+    hGensor result = ggml_new_tensor(ctx0, typNUMBER::I32, ndims, ne);
 
     switch (ndims) {
         case 1:
@@ -181,7 +166,7 @@ static hGensor  get_random_tensor_i32(
         case 2:
             for (int i1 = 0; i1 < ne[1]; i1++) {
                 for (int i0 = 0; i0 < ne[0]; i0++) {
-                    ((int32_t *)result->data)[i1*ne[0] + i0] = irand(imax - imin) + imin;
+                    ((int32_t *)result->data)[i1 * ne[0] + i0] = irand(imax - imin) + imin;
                 }
             }
             break;
@@ -189,7 +174,7 @@ static hGensor  get_random_tensor_i32(
             for (int i2 = 0; i2 < ne[2]; i2++) {
                 for (int i1 = 0; i1 < ne[1]; i1++) {
                     for (int i0 = 0; i0 < ne[0]; i0++) {
-                        ((int32_t *)result->data)[i2*ne[1]*ne[0] + i1*ne[0] + i0] = irand(imax - imin) + imin;
+                        ((int32_t *)result->data)[i2 * ne[1] * ne[0] + i1 * ne[0] + i0] = irand(imax - imin) + imin;
                     }
                 }
             }
@@ -199,7 +184,7 @@ static hGensor  get_random_tensor_i32(
                 for (int i2 = 0; i2 < ne[2]; i2++) {
                     for (int i1 = 0; i1 < ne[1]; i1++) {
                         for (int i0 = 0; i0 < ne[0]; i0++) {
-                            ((int32_t *)result->data)[i3*ne[2]*ne[1]*ne[0] + i2*ne[1]*ne[0] + i1*ne[0] + i0] = irand(imax - imin) + imin;
+                            ((int32_t *)result->data)[i3 * ne[2] * ne[1] * ne[0] + i2 * ne[1] * ne[0] + i1 * ne[0] + i0] = irand(imax - imin) + imin;
                         }
                     }
                 }
@@ -212,18 +197,8 @@ static hGensor  get_random_tensor_i32(
     return result;
 }
 
-static bool check_gradient(
-        const char * op_name,
-        void * ctx0,
-        hGensor  x[],
-        hGensor  f,
-        int ndims,
-        int nargs,
-        float eps,
-        float max_error_abs,
-        float max_error_rel,
-        std::vector<double> expected_vals) {
-
+static bool check_gradient(const char *op_name, void *ctx0, hGensor x[], hGensor f, int ndims, int nargs, float eps, float max_error_abs, float max_error_rel,
+                           std::vector<double> expected_vals) {
     static int n_threads = -1;
     if (n_threads < 0) {
         n_threads = GGML_DEFAULT_N_THREADS;
@@ -236,16 +211,16 @@ static bool check_gradient(
         printf("GGML_N_THREADS = %d\n", n_threads);
     }
 
-    struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, GGML_DEFAULT_GRAPH_SIZE, true);
-    struct ggml_cgraph * gb = ggml_new_graph_custom(ctx0, GGML_DEFAULT_GRAPH_SIZE, true);
+    struct ggml_cgraph *gf = ggml_new_graph_custom(ctx0, GGML_DEFAULT_GRAPH_SIZE, true);
+    struct ggml_cgraph *gb = ggml_new_graph_custom(ctx0, GGML_DEFAULT_GRAPH_SIZE, true);
     ggml_build_forward_expand(gf, f);
     ggml_graph_cpy(gf, gb);
     ggml_build_backward_expand(ctx0, gf, gb, false);
 
     ggml_graph_compute_with_ctx(ctx0, gf, n_threads);
 
-    ggml_graph_reset  (gf);
-    ggml_set_f32      (f->grad, 1.0f);
+    ggml_graph_reset(gf);
+    ggml_set_f32(f->grad, 1.0f);
 
     ggml_graph_compute_with_ctx(ctx0, gb, n_threads);
 
@@ -253,7 +228,7 @@ static bool check_gradient(
     // ggml_graph_dump_dot(gb, gf,  "test-grad0-backward.dot");
 
     for (int i = 0; i < nargs; ++i) {
-        bool all_g0_bad = true;
+        bool all_g0_bad     = true;
         const int nelements = tELEM(x[i]);
         for (int k = 0; k < nelements; ++k) {
             // Calculate gradient numerically:
@@ -271,18 +246,18 @@ static bool check_gradient(
             ggml_graph_compute_with_ctx(ctx0, gf, n_threads);
 
             const double f1 = ggml_get_f32_1d(f, 0);
-            const double g0 = (f0 - f1)/(2.0*(double) eps);
+            const double g0 = (f0 - f1) / (2.0 * (double)eps);
 
             // The numerical calculation of the gradient fails around noncontinuities (e.g. 0 for ReLU).
             // In such cases, provide a vector of expected values and skip the comparison for failed calculations.
             if (!expected_vals.empty()) {
                 bool matches_any = false;
-                for (const double & ev : expected_vals) {
+                for (const double &ev : expected_vals) {
                     const double error_abs = std::fabs(g0 - ev);
                     if (error_abs > max_error_abs) {
                         continue;
                     }
-                    const double error_rel = g0 != 0.0 ? fabs(g0 - ev)/fabs(g0) : 0.0;
+                    const double error_rel = g0 != 0.0 ? fabs(g0 - ev) / fabs(g0) : 0.0;
                     if (error_rel > max_error_rel) {
                         continue;
                     }
@@ -298,20 +273,20 @@ static bool check_gradient(
             ggml_set_f32_1d(x[i], k, x0);
 
             // compute gradient using backward graph
-            ggml_graph_reset  (gf);
-            ggml_set_f32      (f->grad, 1.0f);
+            ggml_graph_reset(gf);
+            ggml_set_f32(f->grad, 1.0f);
 
             ggml_graph_compute_with_ctx(ctx0, gb, n_threads);
 
             const double g1 = ggml_get_f32_1d(x[i]->grad, k);
 
             const double error_abs = fabs(g0 - g1);
-            const double error_rel = g0 != 0.0 ? fabs(g0 - g1)/fabs(g0) : 0.0;
+            const double error_rel = g0 != 0.0 ? fabs(g0 - g1) / fabs(g0) : 0.0;
 
             if (error_abs > max_error_abs || error_rel > max_error_rel) {
-                printf("%s: ndims=%d, i=%d, k=%d, x0=%f, xm=%f, xp=%f, f0=%f, f1=%f, g0=%f, g1=%f, eps=%f, error_abs=%f, error_rel=%f\n",
-                            op_name, ndims, i, k, x0, xm, xp, f0, f1, g0, g1, eps, error_abs, error_rel);
-                //assert(false);
+                printf("%s: ndims=%d, i=%d, k=%d, x0=%f, xm=%f, xp=%f, f0=%f, f1=%f, g0=%f, g1=%f, eps=%f, error_abs=%f, error_rel=%f\n", op_name, ndims, i, k,
+                       x0, xm, xp, f0, f1, g0, g1, eps, error_abs, error_rel);
+                // assert(false);
                 return false;
             }
         }
@@ -324,13 +299,10 @@ static bool check_gradient(
     return true;
 }
 
-static bool check_mat_mul(
-        const hGensor  y,
-        const hGensor  x0,
-        const hGensor  x1) {
-    float * dst  = (float *) y->data;
-    float * src0 = (float *) x0->data;
-    float * src1 = (float *) x1->data;
+static bool check_mat_mul(const hGensor y, const hGensor x0, const hGensor x1) {
+    float *dst  = (float *)y->data;
+    float *src0 = (float *)x0->data;
+    float *src1 = (float *)x1->data;
 
     const int nc = x0->ne[1];
     const int nr = x1->ne[1];
@@ -341,7 +313,7 @@ static bool check_mat_mul(
     _INFO("x0:\n");
     for (int j = 0; j < x0->ne[1]; ++j) {
         for (int i = 0; i < x0->ne[0]; ++i) {
-            _INFO("%6.3f ", src0[j*nk + i]);
+            _INFO("%6.3f ", src0[j * nk + i]);
         }
         _INFO("\n");
     }
@@ -350,7 +322,7 @@ static bool check_mat_mul(
     _INFO("x1:\n");
     for (int j = 0; j < x1->ne[1]; ++j) {
         for (int i = 0; i < x1->ne[0]; ++i) {
-            _INFO("%6.3f ", src1[j*nk + i]);
+            _INFO("%6.3f ", src1[j * nk + i]);
         }
         _INFO("\n");
     }
@@ -359,7 +331,7 @@ static bool check_mat_mul(
     _INFO("y: n_dims = %d, (%ld, %ld)\n", y->n_dims, y->ne[0], y->ne[1]);
     for (int j = 0; j < y->ne[1]; ++j) {
         for (int i = 0; i < y->ne[0]; ++i) {
-            _INFO("%6.3f ", dst[j*nr + i]);
+            _INFO("%6.3f ", dst[j * nr + i]);
         }
         _INFO("\n");
     }
@@ -369,11 +341,11 @@ static bool check_mat_mul(
             float sum = 0.0f;
 
             for (int k = 0; k < nk; ++k) {
-                sum += src0[j*nk + k]*src1[i*nk + k];
+                sum += src0[j * nk + k] * src1[i * nk + k];
             }
 
-            if (fabsf(dst[i*nc + j] - sum) > 1e-5f) {
-                fprintf(stderr, "check_mat_mul: dst[%d] = %f, sum = %f\n", i*nc + j, dst[i*nc + j], sum);
+            if (fabsf(dst[i * nc + j] - sum) > 1e-5f) {
+                fprintf(stderr, "check_mat_mul: dst[%d] = %f, sum = %f\n", i * nc + j, dst[i * nc + j], sum);
                 assert(false);
                 return false;
             }
@@ -383,11 +355,11 @@ static bool check_mat_mul(
     return true;
 }
 
-#define NUM_PERMUTATIONS (4*3*2*1)
+#define NUM_PERMUTATIONS (4 * 3 * 2 * 1)
 
-int main(int argc, const char ** argv) {
+int main(int argc, const char **argv) {
     struct ggml_init_params params = {
-        /* .mem_size   = */ 256*1024*1024,
+        /* .mem_size   = */ 256 * 1024 * 1024,
         /* .mem_buffer = */ NULL,
         /* .no_alloc   = */ false,
     };
@@ -397,21 +369,27 @@ int main(int argc, const char ** argv) {
     int all_permutations[4 * NUM_PERMUTATIONS];
     {
         int count = 0;
-        for (int ax0=0; ax0<4; ++ax0) {
-            for (int ax1=0; ax1<4; ++ax1) {
-                if (ax1 == ax0) continue;
-                for (int ax2=0; ax2<4; ++ax2) {
-                    if (ax2 == ax0) continue;
-                    if (ax2 == ax1) continue;
-                    for (int ax3=0; ax3<4; ++ax3) {
-                        if (ax3 == ax0) continue;
-                        if (ax3 == ax1) continue;
-                        if (ax3 == ax2) continue;
+        for (int ax0 = 0; ax0 < 4; ++ax0) {
+            for (int ax1 = 0; ax1 < 4; ++ax1) {
+                if (ax1 == ax0)
+                    continue;
+                for (int ax2 = 0; ax2 < 4; ++ax2) {
+                    if (ax2 == ax0)
+                        continue;
+                    if (ax2 == ax1)
+                        continue;
+                    for (int ax3 = 0; ax3 < 4; ++ax3) {
+                        if (ax3 == ax0)
+                            continue;
+                        if (ax3 == ax1)
+                            continue;
+                        if (ax3 == ax2)
+                            continue;
                         assert(count < NUM_PERMUTATIONS);
-                        all_permutations[count*4+0] = ax0;
-                        all_permutations[count*4+1] = ax1;
-                        all_permutations[count*4+2] = ax2;
-                        all_permutations[count*4+3] = ax3;
+                        all_permutations[count * 4 + 0] = ax0;
+                        all_permutations[count * 4 + 1] = ax1;
+                        all_permutations[count * 4 + 2] = ax2;
+                        all_permutations[count * 4 + 3] = ax3;
                         ++count;
                     }
                 }
@@ -422,7 +400,7 @@ int main(int argc, const char ** argv) {
     unsigned seed_iter = 1;
 
     // original loop: 1000
-    int niter = 4;
+    int niter       = 4;
     const char *env = getenv("GGML_NLOOP");
     if (env != NULL) {
         niter = atoi(env);
@@ -432,15 +410,15 @@ int main(int argc, const char ** argv) {
     }
     for (int iter = 0; iter < niter; ++iter) {
         srand(seed_iter);
-        seed_iter = rand();
+        seed_iter     = rand();
         unsigned seed = rand();
 
-        printf("test-grad0: iter:%d/%d\n", (iter+1), niter);
-        void * ctx0 = ggml_init(params);
+        printf("test-grad0: iter:%d/%d\n", (iter + 1), niter);
+        void *ctx0 = ggml_init(params);
 
         get_random_dims(ne, 4);
 
-        hGensor  x[MAX_NARGS];
+        hGensor x[MAX_NARGS];
 
         // add f32
         {
@@ -453,7 +431,7 @@ int main(int argc, const char ** argv) {
                     ggml_set_param(ctx0, x[i]);
                 }
 
-                hGensor  f = ggml_sum(ctx0, ggml_add(ctx0, x[0], x[1]));
+                hGensor f = ggml_sum(ctx0, ggml_add(ctx0, x[0], x[1]));
 
                 check_gradient("add f32", ctx0, x, f, ndims, nargs, 1e-3f, 2e-3f, 2e-3f, {});
             }
@@ -470,7 +448,7 @@ int main(int argc, const char ** argv) {
                     ggml_set_param(ctx0, x[i]);
                 }
 
-                hGensor  f = ggml_sum(ctx0, ggml_add(ctx0, x[0], x[1]));
+                hGensor f = ggml_sum(ctx0, ggml_add(ctx0, x[0], x[1]));
 
                 check_gradient("add f16", ctx0, x, f, ndims, nargs, 1e-1f, 2e-1f, 2e-1f, {});
             }
@@ -487,7 +465,7 @@ int main(int argc, const char ** argv) {
                     ggml_set_param(ctx0, x[i]);
                 }
 
-                hGensor  f = ggml_sum(ctx0, ggml_sub(ctx0, x[0], x[1]));
+                hGensor f = ggml_sum(ctx0, ggml_sub(ctx0, x[0], x[1]));
 
                 check_gradient("sub", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, 1e-3f, {});
             }
@@ -504,7 +482,7 @@ int main(int argc, const char ** argv) {
                     ggml_set_param(ctx0, x[i]);
                 }
 
-                hGensor  f = ggml_sum(ctx0, ggml_mul(ctx0, x[0], x[1]));
+                hGensor f = ggml_sum(ctx0, ggml_mul(ctx0, x[0], x[1]));
 
                 check_gradient("mul", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
             }
@@ -521,7 +499,7 @@ int main(int argc, const char ** argv) {
                     ggml_set_param(ctx0, x[i]);
                 }
 
-                hGensor  f = ggml_sum(ctx0, ggml_div(ctx0, x[0], x[1]));
+                hGensor f = ggml_sum(ctx0, ggml_div(ctx0, x[0], x[1]));
 
                 check_gradient("div", ctx0, x, f, ndims, nargs, 1e-3f, 1e-1f, 1e-1f, {});
             }
@@ -538,7 +516,7 @@ int main(int argc, const char ** argv) {
                     ggml_set_param(ctx0, x[i]);
                 }
 
-                hGensor  f = ggml_sum(ctx0, ggml_sqr(ctx0, x[0]));
+                hGensor f = ggml_sum(ctx0, ggml_sqr(ctx0, x[0]));
 
                 check_gradient("sqr", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
             }
@@ -551,11 +529,11 @@ int main(int argc, const char ** argv) {
 
             for (int ndims = 1; ndims <= 2; ++ndims) {
                 for (int i = 0; i < nargs; ++i) {
-                    x[i] = get_random_tensor_f32(ctx0, ndims, ne, 2.0f*1e-3f, 1.0f);
+                    x[i] = get_random_tensor_f32(ctx0, ndims, ne, 2.0f * 1e-3f, 1.0f);
                     ggml_set_param(ctx0, x[i]);
                 }
 
-                hGensor  f = ggml_sum(ctx0, ggml_sqrt(ctx0, x[0]));
+                hGensor f = ggml_sum(ctx0, ggml_sqrt(ctx0, x[0]));
 
                 check_gradient("sqrt", ctx0, x, f, ndims, nargs, 1e-3f, 2e-2f, 1e-1f, {});
             }
@@ -568,11 +546,11 @@ int main(int argc, const char ** argv) {
 
             for (int ndims = 1; ndims <= 2; ++ndims) {
                 for (int i = 0; i < nargs; ++i) {
-                    x[i] = get_random_tensor_f32(ctx0, ndims, ne, 2.0f*1e-3f, 1.0f);
+                    x[i] = get_random_tensor_f32(ctx0, ndims, ne, 2.0f * 1e-3f, 1.0f);
                     ggml_set_param(ctx0, x[i]);
                 }
 
-                hGensor  f = ggml_sum(ctx0, ggml_log(ctx0, x[0]));
+                hGensor f = ggml_sum(ctx0, ggml_log(ctx0, x[0]));
 
                 check_gradient("log", ctx0, x, f, ndims, nargs, 1e-3f, INFINITY, 1e-1f, {});
             }
@@ -589,12 +567,11 @@ int main(int argc, const char ** argv) {
                     ggml_set_param(ctx0, x[i]);
                 }
 
-                hGensor  f = ggml_sum(ctx0, x[0]);
+                hGensor f = ggml_sum(ctx0, x[0]);
 
                 check_gradient("sum", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, 1e-3f, {});
             }
         }
-
 
         // sum_rows
         {
@@ -607,15 +584,14 @@ int main(int argc, const char ** argv) {
                     ggml_set_param(ctx0, x[i]);
                 }
 
-                hGensor  f = ggml_sum(ctx0, ggml_sqr(ctx0, ggml_sum_rows(ctx0, x[0])));
+                hGensor f = ggml_sum(ctx0, ggml_sqr(ctx0, ggml_sum_rows(ctx0, x[0])));
 
                 check_gradient("sum_rows", ctx0, x, f, ndims, nargs, 1e-3f, 1e-2f, INFINITY, {});
             }
         }
 
         // mean, not yet fully implemented
-        if(0)
-        {
+        if (0) {
             srand(seed);
             const int nargs = 1;
 
@@ -625,15 +601,14 @@ int main(int argc, const char ** argv) {
                     ggml_set_param(ctx0, x[i]);
                 }
 
-                hGensor  f = ggml_sum(ctx0, ggml_mean(ctx0, x[0]));
+                hGensor f = ggml_sum(ctx0, ggml_mean(ctx0, x[0]));
 
                 check_gradient("mean", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, 1e-3f, {});
             }
         }
 
         // argmax
-        if (0)
-        {
+        if (0) {
             srand(seed);
             const int nargs = 1;
 
@@ -643,7 +618,7 @@ int main(int argc, const char ** argv) {
                     ggml_set_param(ctx0, x[i]);
                 }
 
-                hGensor  f = ggml_sum(ctx0, ggml_argmax(ctx0, x[0]));
+                hGensor f = ggml_sum(ctx0, ggml_argmax(ctx0, x[0]));
 
                 check_gradient("argmax", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, 1e-3f, {});
             }
@@ -666,7 +641,7 @@ int main(int argc, const char ** argv) {
                 x[1] = get_random_tensor_f32(ctx0, ndims, ne2, -1.0f, 1.0f);
                 ggml_set_param(ctx0, x[0]);
 
-                hGensor  f = ggml_sum(ctx0, ggml_sqr(ctx0, ggml_sub(ctx0, x[1], ggml_repeat(ctx0, x[0], x[1]))));
+                hGensor f = ggml_sum(ctx0, ggml_sqr(ctx0, ggml_sub(ctx0, x[1], ggml_repeat(ctx0, x[0], x[1]))));
 
                 check_gradient("repeat", ctx0, x, f, ndims, nargs, 1e-3f, 1e-2f, INFINITY, {});
             }
@@ -689,7 +664,7 @@ int main(int argc, const char ** argv) {
                 x[1] = get_random_tensor_f32(ctx0, ndims, ne2, -1.0f, 1.0f);
                 ggml_set_param(ctx0, x[0]);
 
-                hGensor  f = ggml_sum(ctx0, ggml_sqr(ctx0, ggml_sub(ctx0, x[0], ggml_repeat_back(ctx0, x[1], x[0]))));
+                hGensor f = ggml_sum(ctx0, ggml_sqr(ctx0, ggml_sub(ctx0, x[0], ggml_repeat_back(ctx0, x[1], x[0]))));
 
                 check_gradient("repeat back", ctx0, x, f, ndims, nargs, 1e-3f, 1e-2f, INFINITY, {});
             }
@@ -697,18 +672,18 @@ int main(int argc, const char ** argv) {
 
         // abs
         {
-           const int nargs = 1;
+            const int nargs = 1;
 
-           for (int ndims = 1; ndims <= 4; ++ndims) {
-               for (int i = 0; i < nargs; ++i) {
-                   x[i] = get_random_tensor_f32(ctx0, ndims, ne, -1.0f, 1.0f);
-                   ggml_set_param(ctx0, x[i]);
-               }
+            for (int ndims = 1; ndims <= 4; ++ndims) {
+                for (int i = 0; i < nargs; ++i) {
+                    x[i] = get_random_tensor_f32(ctx0, ndims, ne, -1.0f, 1.0f);
+                    ggml_set_param(ctx0, x[i]);
+                }
 
-               hGensor  f = ggml_sum(ctx0, ggml_abs(ctx0, x[0]));
+                hGensor f = ggml_sum(ctx0, ggml_abs(ctx0, x[0]));
 
-               check_gradient("abs", ctx0, x, f, ndims, nargs, 1e-3f, INFINITY, 1e-3f, {-1.0, 1.0});
-           }
+                check_gradient("abs", ctx0, x, f, ndims, nargs, 1e-3f, INFINITY, 1e-3f, {-1.0, 1.0});
+            }
         }
 
         // sgn
@@ -722,7 +697,7 @@ int main(int argc, const char ** argv) {
                     ggml_set_param(ctx0, x[i]);
                 }
 
-                hGensor  f = ggml_sum(ctx0, ggml_sgn(ctx0, x[0]));
+                hGensor f = ggml_sum(ctx0, ggml_sgn(ctx0, x[0]));
 
                 check_gradient("sgn", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, 1e-3f, {0.0});
             }
@@ -739,7 +714,7 @@ int main(int argc, const char ** argv) {
                     ggml_set_param(ctx0, x[i]);
                 }
 
-                hGensor  f = ggml_sum(ctx0, ggml_neg(ctx0, x[0]));
+                hGensor f = ggml_sum(ctx0, ggml_neg(ctx0, x[0]));
 
                 check_gradient("neg", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, 1e-3f, {});
             }
@@ -756,15 +731,14 @@ int main(int argc, const char ** argv) {
                     ggml_set_param(ctx0, x[i]);
                 }
 
-                hGensor  f = ggml_sum(ctx0, ggml_step(ctx0, x[0]));
+                hGensor f = ggml_sum(ctx0, ggml_step(ctx0, x[0]));
 
                 check_gradient("step", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, 1e-3f, {0.0});
             }
         }
 
         // tanh, not yet fully implemented
-        if(0)
-        {
+        if (0) {
             srand(seed);
             const int nargs = 1;
 
@@ -774,7 +748,7 @@ int main(int argc, const char ** argv) {
                     ggml_set_param(ctx0, x[i]);
                 }
 
-                hGensor  f = ggml_sum(ctx0, ggml_tanh(ctx0, x[0]));
+                hGensor f = ggml_sum(ctx0, ggml_tanh(ctx0, x[0]));
 
                 check_gradient("tanh", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, 1e-3f, {});
             }
@@ -787,7 +761,7 @@ int main(int argc, const char ** argv) {
 
             for (int ndims = 2; ndims <= 4; ++ndims) {
                 int max_nrep = (ndims >= 3) ? 2 : 1;
-                x[0] = get_random_tensor_f32(ctx0, ndims, ne, -1.0f, 1.0f);
+                x[0]         = get_random_tensor_f32(ctx0, ndims, ne, -1.0f, 1.0f);
                 for (int nrep2 = 1; nrep2 < max_nrep; ++nrep2) {
                     for (int nrep3 = 1; nrep3 < max_nrep; ++nrep3) {
                         {
@@ -796,16 +770,17 @@ int main(int argc, const char ** argv) {
                             ne2[0] = ne[0];
                             ne2[2] = nrep2 * ne[2];
                             ne2[3] = nrep3 * ne[3];
-                            x[1] = get_random_tensor_f32(ctx0, ndims, ne2, -1.0f, 1.0f);
+                            x[1]   = get_random_tensor_f32(ctx0, ndims, ne2, -1.0f, 1.0f);
                         }
 
                         ggml_set_param(ctx0, x[0]);
                         ggml_set_param(ctx0, x[1]);
 
-                        hGensor  m = ggml_mul_mat(ctx0, x[1], x[0]);
-                        hGensor  f = ggml_sum(ctx0, m);
+                        hGensor m = ggml_mul_mat(ctx0, x[1], x[0]);
+                        hGensor f = ggml_sum(ctx0, m);
 
-                        _INFO("testing: mul_mat, [%ld, %ld] (%d) * [%ld, %ld] (%d)\n", x[1]->ne[0], x[1]->ne[1], x[1]->n_dims, x[0]->ne[0], x[0]->ne[1], x[0]->n_dims);
+                        _INFO("testing: mul_mat, [%ld, %ld] (%d) * [%ld, %ld] (%d)\n", x[1]->ne[0], x[1]->ne[1], x[1]->n_dims, x[0]->ne[0], x[0]->ne[1],
+                              x[0]->n_dims);
 
                         check_gradient("mul_mat", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
                         if (ndims == 2) {
@@ -818,8 +793,7 @@ int main(int argc, const char ** argv) {
         }
 
         // elu, not yet fully implemented
-        if(0)
-        {
+        if (0) {
             srand(seed);
             const int nargs = 1;
 
@@ -829,7 +803,7 @@ int main(int argc, const char ** argv) {
                     ggml_set_param(ctx0, x[i]);
                 }
 
-                hGensor  f = ggml_sum(ctx0, ggml_elu(ctx0, x[0]));
+                hGensor f = ggml_sum(ctx0, ggml_elu(ctx0, x[0]));
 
                 check_gradient("elu", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, 1e-3f, {});
             }
@@ -846,15 +820,14 @@ int main(int argc, const char ** argv) {
                     ggml_set_param(ctx0, x[i]);
                 }
 
-                hGensor  f = ggml_sum(ctx0, ggml_relu(ctx0, x[0]));
+                hGensor f = ggml_sum(ctx0, ggml_relu(ctx0, x[0]));
 
                 check_gradient("relu", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {0.0, 1.0});
             }
         }
 
         // gelu, not yet fully implemented
-        if(0)
-        {
+        if (0) {
             srand(seed);
             const int nargs = 1;
 
@@ -864,7 +837,7 @@ int main(int argc, const char ** argv) {
                     ggml_set_param(ctx0, x[i]);
                 }
 
-                hGensor  f = ggml_sum(ctx0, ggml_gelu(ctx0, x[0]));
+                hGensor f = ggml_sum(ctx0, ggml_gelu(ctx0, x[0]));
 
                 check_gradient("gelu", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, 1e-3f, {});
             }
@@ -881,7 +854,7 @@ int main(int argc, const char ** argv) {
                     ggml_set_param(ctx0, x[i]);
                 }
 
-                hGensor  f = ggml_sum(ctx0, ggml_silu(ctx0, x[0]));
+                hGensor f = ggml_sum(ctx0, ggml_silu(ctx0, x[0]));
 
 #ifdef GGML_SILU_FP16
                 // due to GGML_SILU_FP16 the finite difference method will be slightly wrong -> increase error bounds.
@@ -903,7 +876,7 @@ int main(int argc, const char ** argv) {
                     ggml_set_param(ctx0, x[i]);
                 }
 
-                hGensor  f = ggml_sum(ctx0, ggml_rms_norm(ctx0, x[0], 1e-6f));
+                hGensor f = ggml_sum(ctx0, ggml_rms_norm(ctx0, x[0], 1e-6f));
 
                 check_gradient("rms_norm", ctx0, x, f, ndims, nargs, 1e-4f, 1.0f, INFINITY, {});
             }
@@ -917,11 +890,11 @@ int main(int argc, const char ** argv) {
             for (int ndims = 1; ndims <= 2; ++ndims) {
                 x[0] = get_random_tensor_f32(ctx0, ndims, ne, -1.0f, 1.0f);
 
-                const float s = -1.0f + 2.0f*frand();
+                const float s = -1.0f + 2.0f * frand();
 
                 ggml_set_param(ctx0, x[0]);
 
-                hGensor  f = ggml_sum(ctx0, ggml_scale(ctx0, x[0], s));
+                hGensor f = ggml_sum(ctx0, ggml_scale(ctx0, x[0], s));
 
                 check_gradient("scale", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
             }
@@ -939,7 +912,7 @@ int main(int argc, const char ** argv) {
                 }
                 // x[1] is overwritten by x[0], so the gradients don't propagate to x[1]
 
-                hGensor  f = ggml_sum(ctx0, ggml_cpy(ctx0, x[0], x[1]));
+                hGensor f = ggml_sum(ctx0, ggml_cpy(ctx0, x[0], x[1]));
 
                 check_gradient("cpy f32", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
             }
@@ -957,7 +930,7 @@ int main(int argc, const char ** argv) {
                 }
                 // x[1] is overwritten by x[0], so the gradients don't propagate to x[1]
 
-                hGensor  f = ggml_sum(ctx0, ggml_cpy(ctx0, x[0], x[1]));
+                hGensor f = ggml_sum(ctx0, ggml_cpy(ctx0, x[0], x[1]));
 
                 check_gradient("cpy f16", ctx0, x, f, ndims, nargs, 1e-1f, 1e-1f, INFINITY, {});
             }
@@ -981,8 +954,7 @@ int main(int argc, const char ** argv) {
                 x[1] = get_random_tensor_f32(ctx0, ndims, ne, -1.0f, 1.0f);
                 ggml_set_param(ctx0, x[0]);
 
-
-                hGensor  f = ggml_sum(ctx0, ggml_reshape(ctx0, x[0], x[1]));
+                hGensor f = ggml_sum(ctx0, ggml_reshape(ctx0, x[0], x[1]));
                 check_gradient("reshape", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
             }
         }
@@ -1005,8 +977,7 @@ int main(int argc, const char ** argv) {
                 x[1] = get_random_tensor_f32(ctx0, 1, ne2, -1.0f, 1.0f);
                 ggml_set_param(ctx0, x[0]);
 
-
-                hGensor  f = ggml_sum(ctx0, ggml_reshape(ctx0, x[0], x[1]));
+                hGensor f = ggml_sum(ctx0, ggml_reshape(ctx0, x[0], x[1]));
                 check_gradient("reshape", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
             }
         }
@@ -1014,11 +985,10 @@ int main(int argc, const char ** argv) {
         // acc 1d
         {
             srand(seed);
-            int64_t ne2[4] = { 1, 1, 1, 1 };
+            int64_t ne2[4] = {1, 1, 1, 1};
 
             const int nargs = 2;
             for (int ndims = 1; ndims <= 4; ++ndims) {
-
                 x[0] = get_random_tensor_f32(ctx0, ndims, ne, -1.0f, 1.0f);
                 ggml_set_param(ctx0, x[0]);
 
@@ -1031,9 +1001,9 @@ int main(int argc, const char ** argv) {
                 ggml_set_param(ctx0, x[1]);
 
                 const int max_offset = MAX(0, tELEM(x[0]) - tELEM(x[1]));
-                const int offset = irand(max_offset) * ggml_element_size(x[0]);
+                const int offset     = irand(max_offset) * ggml_element_size(x[0]);
 
-                hGensor  f = ggml_sum(ctx0, ggml_acc(ctx0, x[0], x[1], x[0]->nb[1], x[0]->nb[2], x[0]->nb[3], offset));
+                hGensor f = ggml_sum(ctx0, ggml_acc(ctx0, x[0], x[1], x[0]->nb[1], x[0]->nb[2], x[0]->nb[3], offset));
 
                 check_gradient("acc 1d", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
             }
@@ -1042,31 +1012,30 @@ int main(int argc, const char ** argv) {
         // acc 2d
         {
             srand(seed);
-            int64_t ne2[4]         = { 1, 1, 1, 1 };
-            int64_t max_offsets[4] = { 0, 0, 0, 0 };
-            int64_t offsets[4]     = { 0, 0, 0, 0 };
+            int64_t ne2[4]         = {1, 1, 1, 1};
+            int64_t max_offsets[4] = {0, 0, 0, 0};
+            int64_t offsets[4]     = {0, 0, 0, 0};
 
             const int nargs = 2;
             for (int ndims = 2; ndims <= 4; ++ndims) {
-
                 x[0] = get_random_tensor_f32(ctx0, ndims, ne, -1.0f, 1.0f);
                 ggml_set_param(ctx0, x[0]);
 
                 get_random_dims(ne2, 2);
-                while ((ne2[0] > ne[0]) || (ne2[1] > ne[1]) || (ne2[0]*ne2[1] > tELEM(x[0]))) {
+                while ((ne2[0] > ne[0]) || (ne2[1] > ne[1]) || (ne2[0] * ne2[1] > tELEM(x[0]))) {
                     get_random_dims(ne2, 2);
                 }
 
                 x[1] = get_random_tensor_f32(ctx0, 2, ne2, -1.0f, 1.0f);
                 ggml_set_param(ctx0, x[1]);
 
-                max_offsets[0] = MAX(0, x[0]->ne[0] - x[1]->ne[0]);
-                max_offsets[1] = MAX(0, x[0]->ne[1] - x[1]->ne[1]);
-                offsets[0] = irand(max_offsets[0]) * x[0]->nb[0];
-                offsets[1] = irand(max_offsets[1]) * x[0]->nb[1];
+                max_offsets[0]   = MAX(0, x[0]->ne[0] - x[1]->ne[0]);
+                max_offsets[1]   = MAX(0, x[0]->ne[1] - x[1]->ne[1]);
+                offsets[0]       = irand(max_offsets[0]) * x[0]->nb[0];
+                offsets[1]       = irand(max_offsets[1]) * x[0]->nb[1];
                 const int offset = offsets[0] + offsets[1];
 
-                hGensor  f = ggml_sum(ctx0, ggml_acc(ctx0, x[0], x[1], x[0]->nb[1], x[0]->nb[2], x[0]->nb[3], offset));
+                hGensor f = ggml_sum(ctx0, ggml_acc(ctx0, x[0], x[1], x[0]->nb[1], x[0]->nb[2], x[0]->nb[3], offset));
 
                 check_gradient("acc 2d", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
             }
@@ -1075,33 +1044,32 @@ int main(int argc, const char ** argv) {
         // acc 3d
         {
             srand(seed);
-            int64_t ne2[4]         = { 1, 1, 1, 1 };
-            int64_t max_offsets[4] = { 0, 0, 0, 0 };
-            int64_t offsets[4]     = { 0, 0, 0, 0 };
+            int64_t ne2[4]         = {1, 1, 1, 1};
+            int64_t max_offsets[4] = {0, 0, 0, 0};
+            int64_t offsets[4]     = {0, 0, 0, 0};
 
             const int nargs = 2;
             for (int ndims = 3; ndims <= 4; ++ndims) {
-
                 x[0] = get_random_tensor_f32(ctx0, ndims, ne, -1.0f, 1.0f);
                 ggml_set_param(ctx0, x[0]);
 
                 get_random_dims(ne2, 3);
-                while ((ne2[0] > ne[0]) || (ne2[1] > ne[1]) || (ne2[2] > ne[2]) || (ne2[0]*ne2[1]*ne2[2] > tELEM(x[0]))) {
+                while ((ne2[0] > ne[0]) || (ne2[1] > ne[1]) || (ne2[2] > ne[2]) || (ne2[0] * ne2[1] * ne2[2] > tELEM(x[0]))) {
                     get_random_dims(ne2, 3);
                 }
 
                 x[1] = get_random_tensor_f32(ctx0, 3, ne2, -1.0f, 1.0f);
                 ggml_set_param(ctx0, x[1]);
 
-                max_offsets[0] = MAX(0, x[0]->ne[0] - x[1]->ne[0]);
-                max_offsets[1] = MAX(0, x[0]->ne[1] - x[1]->ne[1]);
-                max_offsets[2] = MAX(0, x[0]->ne[2] - x[1]->ne[2]);
-                offsets[0] = irand(max_offsets[0]) * x[0]->nb[0];
-                offsets[1] = irand(max_offsets[1]) * x[0]->nb[1];
-                offsets[2] = irand(max_offsets[2]) * x[0]->nb[2];
+                max_offsets[0]   = MAX(0, x[0]->ne[0] - x[1]->ne[0]);
+                max_offsets[1]   = MAX(0, x[0]->ne[1] - x[1]->ne[1]);
+                max_offsets[2]   = MAX(0, x[0]->ne[2] - x[1]->ne[2]);
+                offsets[0]       = irand(max_offsets[0]) * x[0]->nb[0];
+                offsets[1]       = irand(max_offsets[1]) * x[0]->nb[1];
+                offsets[2]       = irand(max_offsets[2]) * x[0]->nb[2];
                 const int offset = offsets[0] + offsets[1] + offsets[2];
 
-                hGensor  f = ggml_sum(ctx0, ggml_acc(ctx0, x[0], x[1], x[0]->nb[1], x[0]->nb[2], x[0]->nb[3], offset));
+                hGensor f = ggml_sum(ctx0, ggml_acc(ctx0, x[0], x[1], x[0]->nb[1], x[0]->nb[2], x[0]->nb[3], offset));
 
                 check_gradient("acc 3d", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
             }
@@ -1110,35 +1078,34 @@ int main(int argc, const char ** argv) {
         // acc 4d
         {
             srand(seed);
-            int64_t ne2[4]         = { 1, 1, 1, 1 };
-            int64_t max_offsets[4] = { 0, 0, 0, 0 };
-            int64_t offsets[4]     = { 0, 0, 0, 0 };
+            int64_t ne2[4]         = {1, 1, 1, 1};
+            int64_t max_offsets[4] = {0, 0, 0, 0};
+            int64_t offsets[4]     = {0, 0, 0, 0};
 
             const int nargs = 2;
             for (int ndims = 4; ndims <= 4; ++ndims) {
-
                 x[0] = get_random_tensor_f32(ctx0, ndims, ne, -1.0f, 1.0f);
                 ggml_set_param(ctx0, x[0]);
 
                 get_random_dims(ne2, 4);
-                while ((ne2[0] > ne[0]) || (ne2[1] > ne[1]) || (ne2[2] > ne[2]) || (ne2[3] > ne[3]) || (ne2[0]*ne2[1]*ne2[2]*ne2[3] > tELEM(x[0]))) {
+                while ((ne2[0] > ne[0]) || (ne2[1] > ne[1]) || (ne2[2] > ne[2]) || (ne2[3] > ne[3]) || (ne2[0] * ne2[1] * ne2[2] * ne2[3] > tELEM(x[0]))) {
                     get_random_dims(ne2, 4);
                 }
 
                 x[1] = get_random_tensor_f32(ctx0, 4, ne2, -1.0f, 1.0f);
                 ggml_set_param(ctx0, x[1]);
 
-                max_offsets[0] = MAX(0, x[0]->ne[0] - x[1]->ne[0]);
-                max_offsets[1] = MAX(0, x[0]->ne[1] - x[1]->ne[1]);
-                max_offsets[2] = MAX(0, x[0]->ne[2] - x[1]->ne[2]);
-                max_offsets[3] = MAX(0, x[0]->ne[3] - x[1]->ne[3]);
-                offsets[0] = irand(max_offsets[0]) * x[0]->nb[0];
-                offsets[1] = irand(max_offsets[1]) * x[0]->nb[1];
-                offsets[2] = irand(max_offsets[2]) * x[0]->nb[2];
-                offsets[3] = irand(max_offsets[3]) * x[0]->nb[3];
+                max_offsets[0]   = MAX(0, x[0]->ne[0] - x[1]->ne[0]);
+                max_offsets[1]   = MAX(0, x[0]->ne[1] - x[1]->ne[1]);
+                max_offsets[2]   = MAX(0, x[0]->ne[2] - x[1]->ne[2]);
+                max_offsets[3]   = MAX(0, x[0]->ne[3] - x[1]->ne[3]);
+                offsets[0]       = irand(max_offsets[0]) * x[0]->nb[0];
+                offsets[1]       = irand(max_offsets[1]) * x[0]->nb[1];
+                offsets[2]       = irand(max_offsets[2]) * x[0]->nb[2];
+                offsets[3]       = irand(max_offsets[3]) * x[0]->nb[3];
                 const int offset = offsets[0] + offsets[1] + offsets[2] + offsets[3];
 
-                hGensor  f = ggml_sum(ctx0, ggml_acc(ctx0, x[0], x[1], x[0]->nb[1], x[0]->nb[2], x[0]->nb[3], offset));
+                hGensor f = ggml_sum(ctx0, ggml_acc(ctx0, x[0], x[1], x[0]->nb[1], x[0]->nb[2], x[0]->nb[3], offset));
 
                 check_gradient("acc 4d", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
             }
@@ -1151,7 +1118,6 @@ int main(int argc, const char ** argv) {
 
             const int nargs = 2;
             for (int ndims = 1; ndims <= 4; ++ndims) {
-
                 x[0] = get_random_tensor_f32(ctx0, ndims, ne, -1.0f, 1.0f);
                 ggml_set_param(ctx0, x[0]);
 
@@ -1164,9 +1130,9 @@ int main(int argc, const char ** argv) {
                 ggml_set_param(ctx0, x[1]);
 
                 const int max_offset = MAX(0, tELEM(x[0]) - tELEM(x[1]));
-                const int offset = irand(max_offset) * ggml_element_size(x[0]);
+                const int offset     = irand(max_offset) * ggml_element_size(x[0]);
 
-                hGensor  f = ggml_sum(ctx0, ggml_set_1d(ctx0, x[0], x[1], offset));
+                hGensor f = ggml_sum(ctx0, ggml_set_1d(ctx0, x[0], x[1], offset));
 
                 check_gradient("set_1d", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
             }
@@ -1176,30 +1142,29 @@ int main(int argc, const char ** argv) {
         {
             srand(seed);
             int64_t ne2[4];
-            int64_t max_offsets[4] = { 0, 0, 0, 0 };
-            int64_t offsets[4]     = { 0, 0, 0, 0 };
+            int64_t max_offsets[4] = {0, 0, 0, 0};
+            int64_t offsets[4]     = {0, 0, 0, 0};
 
             const int nargs = 1;
             for (int ndims = 2; ndims <= 4; ++ndims) {
-
                 x[0] = get_random_tensor_f32(ctx0, ndims, ne, -1.0f, 1.0f);
                 ggml_set_param(ctx0, x[0]);
 
                 get_random_dims(ne2, 2);
-                while ((ne2[0] > ne[0]) || (ne2[1] > ne[1]) || (ne2[0]*ne2[1] > tELEM(x[0]))) {
+                while ((ne2[0] > ne[0]) || (ne2[1] > ne[1]) || (ne2[0] * ne2[1] > tELEM(x[0]))) {
                     get_random_dims(ne2, 2);
                 }
 
                 x[1] = get_random_tensor_f32(ctx0, 2, ne2, -1.0f, 1.0f);
                 ggml_set_param(ctx0, x[1]);
 
-                max_offsets[0] = MAX(0, x[0]->ne[0] - x[1]->ne[0]);
-                max_offsets[1] = MAX(0, x[0]->ne[1] - x[1]->ne[1]);
-                offsets[0] = irand(max_offsets[0]) * x[0]->nb[0];
-                offsets[1] = irand(max_offsets[1]) * x[0]->nb[1];
+                max_offsets[0]   = MAX(0, x[0]->ne[0] - x[1]->ne[0]);
+                max_offsets[1]   = MAX(0, x[0]->ne[1] - x[1]->ne[1]);
+                offsets[0]       = irand(max_offsets[0]) * x[0]->nb[0];
+                offsets[1]       = irand(max_offsets[1]) * x[0]->nb[1];
                 const int offset = offsets[0] + offsets[1];
 
-                hGensor  f = ggml_sum(ctx0, ggml_set_2d(ctx0, x[0], x[1], x[1]->nb[1], offset));
+                hGensor f = ggml_sum(ctx0, ggml_set_2d(ctx0, x[0], x[1], x[1]->nb[1], offset));
 
                 check_gradient("set_2d", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
             }
@@ -1210,7 +1175,6 @@ int main(int argc, const char ** argv) {
             srand(seed);
             const int nargs = 1;
             for (int ndims = 1; ndims <= 4; ++ndims) {
-
                 x[0] = get_random_tensor_f32(ctx0, ndims, ne, -1.0f, 1.0f);
 
                 ggml_set_param(ctx0, x[0]);
@@ -1223,7 +1187,7 @@ int main(int argc, const char ** argv) {
                 const int offset = i0 * sizeof(float);
                 const int nelem  = i1 - i0;
 
-                hGensor  f = ggml_sum(ctx0, ggml_view_1d(ctx0, x[0], nelem, offset));
+                hGensor f = ggml_sum(ctx0, ggml_view_1d(ctx0, x[0], nelem, offset));
 
                 check_gradient("view_1d", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
             }
@@ -1237,24 +1201,23 @@ int main(int argc, const char ** argv) {
 
             const int nargs = 1;
             for (int ndims = 1; ndims <= 4; ++ndims) {
-
                 x[0] = get_random_tensor_f32(ctx0, ndims, ne, -1.0f, 1.0f);
 
                 get_random_dims(ne2, 2);
-                while (ne2[0]*ne2[1] > tELEM(x[0])) {
+                while (ne2[0] * ne2[1] > tELEM(x[0])) {
                     get_random_dims(ne2, 2);
                 }
-                const int count = ne2[0]*ne2[1];
+                const int count = ne2[0] * ne2[1];
 
                 nb2[0] = sizeof(float);
-                nb2[1] = nb2[0]*ne2[0];
+                nb2[1] = nb2[0] * ne2[0];
 
                 ggml_set_param(ctx0, x[0]);
 
                 const int max_offset = tELEM(x[0]) - count;
-                const int offset = irand(max_offset+1) * sizeof(float);
+                const int offset     = irand(max_offset + 1) * sizeof(float);
 
-                hGensor  f = ggml_sum(ctx0, ggml_view_2d(ctx0, x[0], ne2[0], ne2[1], nb2[1], offset));
+                hGensor f = ggml_sum(ctx0, ggml_view_2d(ctx0, x[0], ne2[0], ne2[1], nb2[1], offset));
 
                 check_gradient("view_2d", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
             }
@@ -1263,30 +1226,29 @@ int main(int argc, const char ** argv) {
         // view_3d
         {
             srand(seed);
-            int64_t ne2[4] = {1,1,1,1};
-            int64_t nb2[4] = {0,0,0,0};
+            int64_t ne2[4] = {1, 1, 1, 1};
+            int64_t nb2[4] = {0, 0, 0, 0};
 
             const int nargs = 1;
             for (int ndims = 1; ndims <= 4; ++ndims) {
-
                 x[0] = get_random_tensor_f32(ctx0, ndims, ne, -1.0f, 1.0f);
 
                 get_random_dims(ne2, 3);
-                while (ne2[0]*ne2[1]*ne2[2] > tELEM(x[0])) {
+                while (ne2[0] * ne2[1] * ne2[2] > tELEM(x[0])) {
                     get_random_dims(ne2, 3);
                 }
-                const int count = ne2[0]*ne2[1]*ne2[2];
+                const int count = ne2[0] * ne2[1] * ne2[2];
 
                 nb2[0] = sizeof(float);
-                nb2[1] = nb2[0]*ne2[0];
-                nb2[2] = nb2[1]*ne2[1];
+                nb2[1] = nb2[0] * ne2[0];
+                nb2[2] = nb2[1] * ne2[1];
 
                 ggml_set_param(ctx0, x[0]);
 
                 const int max_offset = tELEM(x[0]) - count;
-                const int offset = irand(max_offset+1) * sizeof(float);
+                const int offset     = irand(max_offset + 1) * sizeof(float);
 
-                hGensor  f = ggml_sum(ctx0, ggml_view_3d(ctx0, x[0], ne2[0], ne2[1], ne2[2], nb2[1], nb2[2], offset));
+                hGensor f = ggml_sum(ctx0, ggml_view_3d(ctx0, x[0], ne2[0], ne2[1], ne2[2], nb2[1], nb2[2], offset));
 
                 check_gradient("view_3d", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
             }
@@ -1298,29 +1260,28 @@ int main(int argc, const char ** argv) {
             int64_t ne2[4];
 
             const int nargs = 1;
-            for (int ndims = 1; ndims <= 4; ++ndims)
-            {
+            for (int ndims = 1; ndims <= 4; ++ndims) {
                 // ggml_permute will set axes of dimensions below n_dims to 1.
                 // to make ggml_permute work correctly on all axes,
                 // the input tensor needs maximal n_dim of 4.
-                for (int i=0; i<ndims; ++i) {
+                for (int i = 0; i < ndims; ++i) {
                     ne2[i] = ne[i];
                 }
-                for (int i=ndims; i<4; ++i) {
+                for (int i = ndims; i < 4; ++i) {
                     ne2[i] = 1;
                 }
                 x[0] = get_random_tensor_f32(ctx0, 4, ne2, -1.0f, 1.0f);
 
                 ggml_set_param(ctx0, x[0]);
 
-                const int p = irand(NUM_PERMUTATIONS);
-                const int ax0 = all_permutations[p*4+0];
-                const int ax1 = all_permutations[p*4+1];
-                const int ax2 = all_permutations[p*4+2];
-                const int ax3 = all_permutations[p*4+3];
+                const int p   = irand(NUM_PERMUTATIONS);
+                const int ax0 = all_permutations[p * 4 + 0];
+                const int ax1 = all_permutations[p * 4 + 1];
+                const int ax2 = all_permutations[p * 4 + 2];
+                const int ax3 = all_permutations[p * 4 + 3];
 
                 // sum requires contiguous tensor rows
-                hGensor  f = ggml_sum(ctx0, ggml_cont(ctx0, ggml_permute(ctx0, x[0], ax0, ax1, ax2, ax3)));
+                hGensor f = ggml_sum(ctx0, ggml_cont(ctx0, ggml_permute(ctx0, x[0], ax0, ax1, ax2, ax3)));
 
                 check_gradient("permute", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
             }
@@ -1332,15 +1293,14 @@ int main(int argc, const char ** argv) {
             int64_t ne2[4];
 
             const int nargs = 1;
-            for (int ndims = 1; ndims <= 4; ++ndims)
-            {
+            for (int ndims = 1; ndims <= 4; ++ndims) {
                 // ggml_transpose will set axes of dimensions below n_dims to 1.
                 // to make ggml_transpose work correctly on all axes,
                 // the input tensor needs maximal n_dim of 4.
-                for (int i=0; i<ndims; ++i) {
+                for (int i = 0; i < ndims; ++i) {
                     ne2[i] = ne[i];
                 }
-                for (int i=ndims; i<4; ++i) {
+                for (int i = ndims; i < 4; ++i) {
                     ne2[i] = 1;
                 }
                 x[0] = get_random_tensor_f32(ctx0, 4, ne2, -1.0f, 1.0f);
@@ -1348,7 +1308,7 @@ int main(int argc, const char ** argv) {
                 ggml_set_param(ctx0, x[0]);
 
                 // sum requires contiguous tensor rows
-                hGensor  f = ggml_sum(ctx0, ggml_cont(ctx0, ggml_transpose(ctx0, x[0])));
+                hGensor f = ggml_sum(ctx0, ggml_cont(ctx0, ggml_transpose(ctx0, x[0])));
 
                 check_gradient("transpose", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
             }
@@ -1357,16 +1317,16 @@ int main(int argc, const char ** argv) {
         // get_rows
         {
             srand(seed);
-            int64_t ne2[4] = {ne[0], ne[1], 1, 1};
-            int64_t ne3[4] = {1+irand(ne[1]), 1, 1, 1};
+            int64_t ne2[4]  = {ne[0], ne[1], 1, 1};
+            int64_t ne3[4]  = {1 + irand(ne[1]), 1, 1, 1};
             const int nargs = 1;
             const int ndims = 2;
-            x[0] = get_random_tensor_f32(ctx0, ndims, ne2, -1.0f, 1.0f);
-            x[1] = get_random_tensor_i32(ctx0, 1, ne3, 0, ne2[1]);
+            x[0]            = get_random_tensor_f32(ctx0, ndims, ne2, -1.0f, 1.0f);
+            x[1]            = get_random_tensor_i32(ctx0, 1, ne3, 0, ne2[1]);
 
             ggml_set_param(ctx0, x[0]);
 
-            hGensor  f = ggml_sum(ctx0, ggml_get_rows(ctx0, x[0], x[1]));
+            hGensor f = ggml_sum(ctx0, ggml_get_rows(ctx0, x[0], x[1]));
 
             check_gradient("get_rows", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
         }
@@ -1382,7 +1342,7 @@ int main(int argc, const char ** argv) {
 
             int n_past = irand(ne[0]);
 
-            hGensor  f = ggml_sum(ctx0, ggml_diag_mask_inf(ctx0, x[0], n_past));
+            hGensor f = ggml_sum(ctx0, ggml_diag_mask_inf(ctx0, x[0], n_past));
 
             check_gradient("diag_mask_inf", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
         }
@@ -1398,7 +1358,7 @@ int main(int argc, const char ** argv) {
 
             int n_past = irand(ne[0]);
 
-            hGensor  f = ggml_sum(ctx0, ggml_diag_mask_zero(ctx0, x[0], n_past));
+            hGensor f = ggml_sum(ctx0, ggml_diag_mask_zero(ctx0, x[0], n_past));
 
             check_gradient("diag_mask_zero", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
         }
@@ -1418,13 +1378,7 @@ int main(int argc, const char ** argv) {
                 float eps = 1e-6f;
                 // dont use only sum as aggregation, because sum of softmax is always 1 -> finite differences should not work
                 // instead use sum(log(soft_max()*(1-eps)+eps)); use eps to avoid log(0)
-                hGensor  f = ggml_sum(ctx0,
-                                            ggml_log(ctx0,
-                                                ggml_add1(ctx0,
-                                                    ggml_scale(ctx0,
-                                                        ggml_soft_max(ctx0, x[0]),
-                                                        1.0f - eps),
-                                                    ggml_new_f32(ctx0, eps))));
+                hGensor f = ggml_sum(ctx0, ggml_log(ctx0, ggml_add1(ctx0, ggml_scale(ctx0, ggml_soft_max(ctx0, x[0]), 1.0f - eps), ggml_new_f32(ctx0, eps))));
 
                 check_gradient("softmax", ctx0, x, f, ndims, nargs, 1e-3f, 2e-1f, INFINITY, {});
                 // NOTE: softmax forward is computed using f16 table lookup instead of using actual expf, but backward assumes actual expf.
@@ -1451,15 +1405,15 @@ int main(int argc, const char ** argv) {
                 for (int ir = 0; ir < nr; ++ir) {
                     float sum = 0;
                     for (int ic = 0; ic < nc; ++ic) {
-                        sum += ((float *) x[1]->data)[ic + ir*nc];
+                        sum += ((float *)x[1]->data)[ic + ir * nc];
                     }
                     for (int ic = 0; ic < nc; ++ic) {
-                        ((float *) x[1]->data)[ic + ir*nc] /= sum;
+                        ((float *)x[1]->data)[ic + ir * nc] /= sum;
                     }
                 }
                 ggml_set_param(ctx0, x[0]);
 
-                hGensor  f = ggml_cross_entropy_loss(ctx0, x[0], x[1]);
+                hGensor f = ggml_cross_entropy_loss(ctx0, x[0], x[1]);
 
                 check_gradient("cross_entropy_loss", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY, {});
             }
@@ -1480,9 +1434,9 @@ int main(int argc, const char ** argv) {
                     for (int n_past = 1; n_past < ne2[2]; ++n_past) {
                         x[0] = get_random_tensor_f32(ctx0, ndims, ne2, -1.0f, 1.0f);
 
-                        hGensor  p = TENSO(ctx0, typNUMBER::I32, ne2[2]);
+                        hGensor p = TENSO(ctx0, typNUMBER::I32, ne2[2]);
                         for (int i = 0; i < ne2[2]; ++i) {
-                            ((int32_t *) p->data)[i] = n_past + i;
+                            ((int32_t *)p->data)[i] = n_past + i;
                         }
 
                         ggml_set_param(ctx0, x[0]);
@@ -1496,7 +1450,7 @@ int main(int argc, const char ** argv) {
                             continue;
                         }
 
-                        hGensor  f = ggml_sum(ctx0, ggml_rope(ctx0, x[0], p, n_rot, mode));
+                        hGensor f = ggml_sum(ctx0, ggml_rope(ctx0, x[0], p, n_rot, mode));
 
                         _INFO("rope f32: n_past: %d n_rot: %d mode: %d\n", n_past, n_rot, mode);
                         check_gradient("rope f32", ctx0, x, f, ndims, nargs, 1e-2f, 1e-3f, INFINITY, {});
@@ -1520,9 +1474,9 @@ int main(int argc, const char ** argv) {
                     for (int n_past = 1; n_past < ne2[2]; ++n_past) {
                         x[0] = get_random_tensor_f16(ctx0, ndims, ne2, -1.0f, 1.0f);
 
-                        hGensor  p = TENSO(ctx0, typNUMBER::I32, ne2[2]);
+                        hGensor p = TENSO(ctx0, typNUMBER::I32, ne2[2]);
                         for (int i = 0; i < ne2[2]; ++i) {
-                            ((int32_t *) p->data)[i] = n_past + i;
+                            ((int32_t *)p->data)[i] = n_past + i;
                         }
 
                         ggml_set_param(ctx0, x[0]);
@@ -1536,7 +1490,7 @@ int main(int argc, const char ** argv) {
                             continue;
                         }
 
-                        hGensor  f = ggml_sum(ctx0, ggml_rope(ctx0, x[0], p, n_rot, mode));
+                        hGensor f = ggml_sum(ctx0, ggml_rope(ctx0, x[0], p, n_rot, mode));
 
                         _INFO("rope f16: n_past: %d n_rot: %d mode: %d\n", n_past, n_rot, mode);
                         check_gradient("rope f16", ctx0, x, f, ndims, nargs, 1e-1f, 1e-1f, INFINITY, {});
@@ -1575,14 +1529,14 @@ int main(int argc, const char ** argv) {
 
                 ggml_set_param(ctx0, x[0]);
 
-                const int s0 =         1 + irand(2);
+                const int s0 = 1 + irand(2);
                 const int s1 = is_2D ? 1 + irand(2) : 0;
-                const int p0 =         0 + irand(2);
+                const int p0 = 0 + irand(2);
                 const int p1 = is_2D ? 0 + irand(2) : 0;
-                const int d0 =         1 + irand(2);
+                const int d0 = 1 + irand(2);
                 const int d1 = is_2D ? 1 + irand(2) : 0;
 
-                hGensor  f = ggml_sum(ctx0, ggml_im2col(ctx0, x[1], x[0], s0, s1, p0, p1, d0, d1, is_2D, typNUMBER::F32));
+                hGensor f = ggml_sum(ctx0, ggml_im2col(ctx0, x[1], x[0], s0, s1, p0, p1, d0, d1, is_2D, typNUMBER::F32));
 
                 _INFO("im2col f32: is_2D=%s, s0=%d, s1=%d, p0=%d, p1=%d, d0=%d, d1=%d\n", is_2D ? "yes" : "no", s0, s1, p0, p1, d0, d1);
                 check_gradient("im2col f32", ctx0, x, f, ndims, nargs, 1e-2f, 1e-3f, INFINITY, {});
@@ -1613,10 +1567,9 @@ int main(int argc, const char ** argv) {
                 const int p0 = 0 + irand(2);
                 const int p1 = 0 + irand(2);
 
-                hGensor  f = ggml_sum(ctx0, ggml_pool_2d(ctx0, x[0], op, k0, k1, s0, s1, p0, p1));
+                hGensor f = ggml_sum(ctx0, ggml_pool_2d(ctx0, x[0], op, k0, k1, s0, s1, p0, p1));
 
-                _INFO("ggml_pool_2d f32: op=%s k0=%d, k1=%d, s0=%d, s1=%d, p0=%d, p1=%d\n",
-                                 op == GGML_OP_POOL_MAX ? "max" : "avg", k0, k1, s0, s1, p0, p1);
+                _INFO("ggml_pool_2d f32: op=%s k0=%d, k1=%d, s0=%d, s1=%d, p0=%d, p1=%d\n", op == GGML_OP_POOL_MAX ? "max" : "avg", k0, k1, s0, s1, p0, p1);
                 std::vector<double> expected_vals;
                 if (op == GGML_OP_POOL_MAX) {
                     expected_vals.push_back(0.0);

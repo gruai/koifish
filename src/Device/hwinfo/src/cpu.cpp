@@ -12,10 +12,10 @@ namespace hwinfo {
 int CPU::id() const { return _id; }
 
 // _____________________________________________________________________________________________________________________
-const std::string& CPU::modelName() const { return _modelName; }
+const std::string &CPU::modelName() const { return _modelName; }
 
 // _____________________________________________________________________________________________________________________
-const std::string& CPU::vendor() const { return _vendor; }
+const std::string &CPU::vendor() const { return _vendor; }
 
 // _____________________________________________________________________________________________________________________
 int64_t CPU::L1CacheSize_Bytes() const { return _L1CacheSize_Bytes; }
@@ -39,6 +39,6 @@ int64_t CPU::maxClockSpeed_MHz() const { return _maxClockSpeed_MHz; }
 int64_t CPU::regularClockSpeed_MHz() const { return _regularClockSpeed_MHz; }
 
 // _____________________________________________________________________________________________________________________
-const std::vector<std::string>& CPU::flags() const { return _flags; }
+const std::vector<std::string> &CPU::flags() const { return _flags; }
 
 }  // namespace hwinfo

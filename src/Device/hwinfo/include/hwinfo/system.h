@@ -14,19 +14,19 @@
 namespace hwinfo {
 
 class System {
- public:
-  System() = default;
+   public:
+    System() = default;
 
-  std::vector<CPU>& CPUs() const;
-  std::vector<GPU>& GPUs() const;
-  std::vector<RAM>& RAMs() const;
-  std::vector<Disk>& Disks() const;
+    std::vector<CPU> &CPUs() const;
+    std::vector<GPU> &GPUs() const;
+    std::vector<RAM> &RAMs() const;
+    std::vector<Disk> &Disks() const;
 
- private:
-  std::vector<CPU> _cpuSockets;
-  std::vector<GPU> _gpus;
-  std::vector<RAM> _ramBars;
-  std::vector<Disk> _disks;
+   private:
+    std::vector<CPU> _cpuSockets;
+    std::vector<GPU> _gpus;
+    std::vector<RAM> _ramBars;
+    std::vector<Disk> _disks;
 };
 
 }  // namespace hwinfo

@@ -1,29 +1,29 @@
 /**
  *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
- *  SPDX-License-Identifier: MIT  
- * 
+ *  SPDX-License-Identifier: MIT
+ *
  *  \brief CUDA&CUDNN
  *  \author Yingshi Chen
  */
 
 #include "../EDevice.hpp"
 #ifdef __USE_GGML__
-    #include "ggml-cuda.h"
-    #include "ggml-sycl.h"
-    #include "ggml-alloc.h"
+#include "ggml-alloc.h"
+#include "ggml-cuda.h"
+#include "ggml-sycl.h"
 #endif
 
-int EDGE_DEVICES::GPU_::MAX_COUNT = 16;     //  16    
+int EDGE_DEVICES::GPU_::MAX_COUNT = 16;  //  16
 std::vector<EDGE_DEVICES::GPU_> EDGE_DEVICES::GPU_::cudaGetDevice(int flag) {
     std::vector<GPU_> devices;
 #ifdef __HIP_PLATFORM_AMD__
     // Workaround for a rocBLAS bug when using multiple graphics cards:
     // https://github.com/ROCmSoftwarePlatform/rocBLAS/issues/1346
     {
-        int major_version = 0;
+        int major_version     = 0;
         size_t version_length = 0;
         if (rocblas_get_version_string_size(&version_length) == rocblas_status_success) {
-            std::vector<char> version(version_length+1, '\0');
+            std::vector<char> version(version_length + 1, '\0');
             if (rocblas_get_version_string(version.data(), version.size()) == rocblas_status_success) {
                 version.resize(::strlen(version.data()));
                 int parsed_value = 0;
@@ -40,7 +40,7 @@ std::vector<EDGE_DEVICES::GPU_> EDGE_DEVICES::GPU_::cudaGetDevice(int flag) {
     }
 #endif
     int device_count = 0;
-    cudaError_t err = cudaGetDeviceCount(&device_count);    //CUDA functions do not throw exceptions, why?
+    cudaError_t err  = cudaGetDeviceCount(&device_count);  // CUDA functions do not throw exceptions, why?
     if (err != cudaSuccess) {
         _ERROR("%s: failed to initialize CUDA: %s\n", __func__, cudaGetErrorString(err));
         return devices;
@@ -51,12 +51,12 @@ std::vector<EDGE_DEVICES::GPU_> EDGE_DEVICES::GPU_::cudaGetDevice(int flag) {
     _INFO("%s: _CUDA_FORCE_MMQ:    yes\n", __func__);
 #else
     _INFO("%s: _CUDA_FORCE_MMQ:    no\n", __func__);
-#endif // _CUDA_FORCE_MMQ
+#endif  // _CUDA_FORCE_MMQ
 #ifdef _CUDA_FORCE_CUBLAS
     _INFO("%s: _CUDA_FORCE_CUBLAS: yes\n", __func__);
 #else
     _INFO("%s: _CUDA_FORCE_CUBLAS: no\n", __func__);
-#endif // _CUDA_FORCE_CUBLAS
+#endif  // _CUDA_FORCE_CUBLAS
     _INFO("%s: found %d CUDA devices:\n", __func__, device_count);
     devices.resize(device_count);
     for (int id = 0; id < device_count; ++id) {
@@ -69,12 +69,12 @@ std::vector<EDGE_DEVICES::GPU_> EDGE_DEVICES::GPU_::cudaGetDevice(int flag) {
 
         if (device_vmm) {
             CUmemAllocationProp alloc_prop = {};
-            alloc_prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
-            alloc_prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-            alloc_prop.location.id = id;
+            alloc_prop.type                = CU_MEM_ALLOCATION_TYPE_PINNED;
+            alloc_prop.location.type       = CU_MEM_LOCATION_TYPE_DEVICE;
+            alloc_prop.location.id         = id;
             CU_CHECK(cuMemGetAllocationGranularity(&devices[id].vmm_granularity, &alloc_prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
         }
-#endif // defined(_USE_VMM)
+#endif  // defined(_USE_VMM)
         devices[id].vmm = !!device_vmm;
         cudaDeviceProp prop;
         cudaCheck(cudaGetDeviceProperties(&prop, id));
@@ -87,8 +87,7 @@ std::vector<EDGE_DEVICES::GPU_> EDGE_DEVICES::GPU_::cudaGetDevice(int flag) {
 
         devices[id].cc = ggml_cuda_parse_id(prop.gcnArchName);
         if ((devices[id].cc & 0xff00) == 0x0) {
-            _LOG_WARN("invalid architecture ID received for device %d %s: %s  cc %d.%d\n",
-                            id, prop.name, prop.gcnArchName, prop.major, prop.minor);
+            _LOG_WARN("invalid architecture ID received for device %d %s: %s  cc %d.%d\n", id, prop.name, prop.gcnArchName, prop.major, prop.minor);
 
             // Fallback to prop.major and prop.minor
             if (prop.major > 0) {
@@ -96,62 +95,55 @@ std::vector<EDGE_DEVICES::GPU_> EDGE_DEVICES::GPU_::cudaGetDevice(int flag) {
                 devices[id].cc += prop.minor * 0x10;
             }
         }
-        _INFO("  Device %d: %s, %s (0x%x), VMM: %s, Wave Size: %d\n",
-                        id, prop.name, prop.gcnArchName, devices[id].cc & 0xffff,
-                        device_vmm ? "yes" : "no", prop.warpSize);
+        _INFO("  Device %d: %s, %s (0x%x), VMM: %s, Wave Size: %d\n", id, prop.name, prop.gcnArchName, devices[id].cc & 0xffff, device_vmm ? "yes" : "no",
+              prop.warpSize);
 #elif defined(_USE_MUSA)
         // TODO: refine the .cc to reflect MUSA's actual CC capabilities
         devices[id].smpbo = prop.sharedMemPerBlockOptin;
-        devices[id].cc = 100*prop.major + 10*prop.minor;
-        _INFO("  Device %d: %s, compute capability %d.%d, VMM: %s\n",
-                        id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no");
+        devices[id].cc    = 100 * prop.major + 10 * prop.minor;
+        _INFO("  Device %d: %s, compute capability %d.%d, VMM: %s\n", id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no");
 #else
         devices[id].smpbo = prop.sharedMemPerBlockOptin;
-        devices[id].cc = 100*prop.major + 10*prop.minor;
-        _INFO("  Device %d: %s(%.6gM), compute capability %d.%d, VMM: %s\n",id, prop.name, devices[id].total_vram/1.0e6,
-            prop.major, prop.minor, device_vmm ? "yes" : "no");
-#endif // defined(_USE_HIP) && defined(__HIP_PLATFORM_AMD__)
+        devices[id].cc    = 100 * prop.major + 10 * prop.minor;
+        _INFO("  Device %d: %s(%.6gM), compute capability %d.%d, VMM: %s\n", id, prop.name, devices[id].total_vram / 1.0e6, prop.major, prop.minor,
+              device_vmm ? "yes" : "no");
+#endif  // defined(_USE_HIP) && defined(__HIP_PLATFORM_AMD__)
     }
 
     return devices;
 }
 
-bool InitCUDA(const CLI_params&hparams,EDGE_DEVICES *hDevice,int flag);
+bool InitCUDA(const CLI_params &hparams, EDGE_DEVICES *hDevice, int flag);
 
-bool EDGE_DEVICES::InitGPU(const CLI_params&hparams,int flag){
-    string sTp = hparams.KV({"train","device"},"");    
-    gpus = EDGE_DEVICES::GPU_::cudaGetDevice(flag);
-    mostRAM = 0;
-    for(auto gpu : gpus)
-    mostRAM += gpu.total_vram;
+bool EDGE_DEVICES::InitGPU(const CLI_params &hparams, int flag) {
+    string sTp = hparams.KV({"train", "device"}, "");
+    gpus       = EDGE_DEVICES::GPU_::cudaGetDevice(flag);
+    mostRAM    = 0;
+    for (auto gpu : gpus) mostRAM += gpu.total_vram;
 #ifdef __USE_CUDA__
-    if(gpus.size()==0)
+    if (gpus.size() == 0)
         return false;
 
-    if(!InitCUDA(hparams,this,flag))
+    if (!InitCUDA(hparams, this, flag))
         return false;
 
-    /*int nGPU = ggml_backend_cuda_get_device_count();     //  ggml_cuda_init: found 1 CUDA devices:    
-    for (int device = 0; device < nGPU; ++device) {
-        ggml_backend_t backend = ggml_backend_cuda_init(device);
-        if (backend == nullptr) {
-            _ERROR("%s: failed to initialize CUDA%d backend\n", __func__, device);
-        }
-        if(sTp=="onlycpu")
-            continue;
-        workers.push_back(backend);
-        bufts.push_back(ggml_backend_get_default_buffer_type(backend));
-        // char *guid = (char*)(backend->guid);
-        _INFO("Fish::%s init CUDA backend @%p\n", __func__, backend);
-    }*/
-    
+        /*int nGPU = ggml_backend_cuda_get_device_count();     //  ggml_cuda_init: found 1 CUDA devices:
+        for (int device = 0; device < nGPU; ++device) {
+            ggml_backend_t backend = ggml_backend_cuda_init(device);
+            if (backend == nullptr) {
+                _ERROR("%s: failed to initialize CUDA%d backend\n", __func__, device);
+            }
+            if(sTp=="onlycpu")
+                continue;
+            workers.push_back(backend);
+            bufts.push_back(ggml_backend_get_default_buffer_type(backend));
+            // char *guid = (char*)(backend->guid);
+            _INFO("Fish::%s init CUDA backend @%p\n", __func__, backend);
+        }*/
+
 #endif
     return true;
 }
-
-
-
-
 
 /*
 void ggml_numa_init(enum ggml_numa_strategy numa_flag) {

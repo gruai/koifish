@@ -15,9 +15,9 @@ namespace hwinfo {
 // =====================================================================================================================
 // _____________________________________________________________________________________________________________________
 std::vector<Disk> getAllDisks() {
-  // TODO: implement
-  std::vector<Disk> disks;
-  return disks;
+    // TODO: implement
+    std::vector<Disk> disks;
+    return disks;
 }
 
 }  // namespace hwinfo

@@ -40,7 +40,7 @@ make clean && make VERBOSE=TRUE
 
 
 ## Changelog
-
+* 06/29/2025: Rope with pre/post normalization 
 * 06/14/2025: Support bit representation(binary[-1,1], ternary[-1,0,1]) 
 
 ## Working plan

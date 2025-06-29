@@ -131,7 +131,7 @@ public:
     bool isSLPBias = true;  
     bool isPaddedCls = false;  
     bool isFFNShareParam = false;
-    bool isRope = true;
+    
 // dim(=head_dim*n_heads)
     int dim=-1,hidden_dim=-1,n_layers=-1,n_heads=-1,n_kv_heads=-1,head_dim=1;
 //  ****
@@ -145,6 +145,7 @@ public:
     float norm_eps = 1e-5f,norm_rms_eps = 1e-5f; 
 //  rope
     float rope_freq_base  = 10000.0f,rope_freq_scale = 1.0f,rope_theta =0;
+    int Rope_version = 2;   // 0-OFF    1,2
     enum tpROPE {
         RT_NONE = -1,        RT_NORM =  0,          RT_NEOX =  2,        RT_GLM  =  4,
     };
@@ -212,7 +213,7 @@ struct train_params_ {
     int   opt_alloc_weight = 0;
 
     int remater_ffn = 0;
-    int remater_qkv = 0;
+    // int remater_qkv = 0;
 
     ADAM_params_ adam;
     float residual_scale = 1.0f;
@@ -297,7 +298,7 @@ struct CLI_params {
         return isLong;
     }
     bool isShareLayerOut()   const;
-
+    std::string jsPath="";
     JSON jConfig;
     nlohmann::ordered_json jModel;
     
@@ -504,7 +505,8 @@ struct CLI_params {
     void Dump( );
 
     bool parse(int argc, char ** argv);
-    virtual bool InitJConfig(const std::string&jPath,int flag=0x0);
+    virtual bool InitJConfig(int flag=0x0);
+    virtual JSON ToJSON(int flag=0x0);
     std::string GetDataPath(const std::string type,int flag=0x0);
     //static bool train_params_parse(int argc, char ** argv, struct CLI_params * params)
 };

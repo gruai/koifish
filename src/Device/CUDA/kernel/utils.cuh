@@ -5,8 +5,8 @@
  *  \brief Some Utilities cuda kernels
  *  \author Yingshi Chen
  */
-#ifndef CUDA_UTILS_CUH
-#define CUDA_UTILS_CUH
+
+#pragma once
 
 #include <assert.h>
 // #include <float.h>
@@ -286,8 +286,7 @@ void global_sum_deterministic(float* result, const Float* values, int count, cud
 // This gives us a random number from threadIdx/blockIdx + a single seed for the entire GPU
 // todo - possibly overkill and we don't need such high quality random numbers? (tbd)
 // http://eiserloh.net/noise/SquirrelNoise5.hpp
-__device__ __host__ constexpr unsigned int SquirrelNoise5(unsigned int positionX, unsigned int seed)
-{
+__device__ __host__ constexpr unsigned int SquirrelNoise5(unsigned int positionX, unsigned int seed){
     constexpr unsigned int SQ5_BIT_NOISE1 = 0xd2a80a3f;	// 11010010101010000000101000111111
     constexpr unsigned int SQ5_BIT_NOISE2 = 0xa884f197;	// 10101000100001001111000110010111
     constexpr unsigned int SQ5_BIT_NOISE3 = 0x6C736F4B; // 01101100011100110110111101001011
@@ -307,8 +306,7 @@ __device__ __host__ constexpr unsigned int SquirrelNoise5(unsigned int positionX
     mangledBits ^= (mangledBits >> 17);
     return mangledBits;
 }
-__device__ __host__ constexpr unsigned int Get2dNoiseUint(int indexX, int indexY, unsigned int seed)
-{
+__device__ __host__ constexpr unsigned int Get2dNoiseUint(int indexX, int indexY, unsigned int seed){
     constexpr unsigned int PRIME_NUMBER = 198491317u; // Large prime number with non-boring bits
     unsigned int x = static_cast<unsigned int>(indexX);
     unsigned int y = static_cast<unsigned int>(indexY);
@@ -316,34 +314,24 @@ __device__ __host__ constexpr unsigned int Get2dNoiseUint(int indexX, int indexY
     return SquirrelNoise5(x + (PRIME_NUMBER * y), seed);
 }
 
-#if defined(ENABLE_FP8)
-    __device__ __forceinline__ void stochastic_rounding(float in, __nv_fp8_e5m2 *out, unsigned int seed) {
-        assert(0);
-    }
-#endif
+// stochastic rounding built on top of Squirel Noise above (with seed updated per step via xorshift)
+static bool isRounding = false; //only for debug
 
-#if defined(ENABLE_BF16)
-    // stochastic rounding built on top of Squirel Noise above (with seed updated per step via xorshift)
-    __device__ __forceinline__ void stochastic_rounding(float in, __nv_bfloat16 *out, unsigned int seed) {
-        // todo - is this stochastic rounding *too good*? can we cut any corners?
-        // makes sure each thread gets a different random number
-        unsigned int random = Get2dNoiseUint(threadIdx.x, blockIdx.x * blockDim.x + blockIdx.y, seed);
-        unsigned int threshold = random & 0xFFFF;
-        unsigned int float_bits = __float_as_uint(in);
-        unsigned int rounded_bits = float_bits & 0x0000FFFF;
-        float_bits = (rounded_bits > threshold) ? (float_bits | 0xFFFF) : (float_bits  & ~0xFFFF);
-        *out = __float2bfloat16_rn(__uint_as_float(float_bits));
-    }
-#endif
-
-#if defined(ENABLE_FP16) 
-__device__ __forceinline__ void stochastic_rounding(float in, half *out, unsigned int random) {
-    *out = (float)in; // todo - implement this...
-}
-#endif
-
-__device__ __forceinline__ void stochastic_rounding(float in, float *out, unsigned int random) {
-    *out = in; // dummy function for when floatX is float (FP32 mode)
+template <typename T>
+__device__ __forceinline__ T CU_Float2T(const float& a0,unsigned int seed)   {
+    T a = a0;  
+    return a;
 }
 
-#endif
+template <>
+__device__ __forceinline__ __nv_bfloat16 CU_Float2T<__nv_bfloat16>(const float& a0, unsigned int seed) {
+    // todo - is this stochastic rounding *too good*? can we cut any corners?
+    // makes sure each thread gets a different random number
+    unsigned int random = Get2dNoiseUint(threadIdx.x, blockIdx.x * blockDim.x + blockIdx.y, seed);
+    unsigned int threshold = random & 0xFFFF;
+    unsigned int float_bits = __float_as_uint(a0);
+    unsigned int rounded_bits = float_bits & 0x0000FFFF;
+    float_bits = (rounded_bits > threshold) ? (float_bits | 0xFFFF) : (float_bits  & ~0xFFFF);
+    __nv_bfloat16 out = __float2bfloat16_rn(__uint_as_float(float_bits));
+    return out;
+}

@@ -17,42 +17,42 @@
 namespace hwinfo {
 
 struct PCIDevice {
-  PCIDevice(std::string d_id, std::string d_name);
+    PCIDevice(std::string d_id, std::string d_name);
 
-  const std::string device_id{};
-  const std::string device_name{};
-  std::map<std::string, std::string> subsystems{};
+    const std::string device_id{};
+    const std::string device_name{};
+    std::map<std::string, std::string> subsystems{};
 };
 
 struct PCIVendor {
-  PCIVendor(std::string v_id, std::string v_name);
+    PCIVendor(std::string v_id, std::string v_name);
 
-  const PCIDevice& operator[](const std::string& device_id) const;
+    const PCIDevice &operator[](const std::string &device_id) const;
 
-  const std::string vendor_id{};
-  const std::string vendor_name{};
-  std::map<std::string, PCIDevice> devices{};
+    const std::string vendor_id{};
+    const std::string vendor_name{};
+    std::map<std::string, PCIDevice> devices{};
 
- private:
-  PCIDevice _invalid_device{"0000", "invalid"};
+   private:
+    PCIDevice _invalid_device{"0000", "invalid"};
 };
 
 class PCIMapper {
- public:
-  explicit PCIMapper();
-  ~PCIMapper() = default;
+   public:
+    explicit PCIMapper();
+    ~PCIMapper() = default;
 
-  const PCIVendor& vendor_from_id(const std::string& vendor_id) const;
+    const PCIVendor &vendor_from_id(const std::string &vendor_id) const;
 
-  const PCIVendor& operator[](const std::string& vendor_id) const;
+    const PCIVendor &operator[](const std::string &vendor_id) const;
 
- private:
-  std::map<std::string, PCIVendor> _vendors{};
-  PCIVendor _invalid_vendor{"0000", "invalid"};
+   private:
+    std::map<std::string, PCIVendor> _vendors{};
+    PCIVendor _invalid_vendor{"0000", "invalid"};
 };
 
 struct PCI {
-  static PCIMapper getMapper();
+    static PCIMapper getMapper();
 };
 
 }  // namespace hwinfo

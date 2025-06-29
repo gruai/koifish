@@ -65,7 +65,7 @@ protected:
     uint64_t train_its=0,train_samples=0,train_tokens=0,train_epochs=0,max_epoch=0;
     double last_time,tData,tUpdate;
     double millis_per_iter=0;
-    std::vector<string> adam_filter =  {"output","norm"};    //{"token_embd","output","norm"};
+    std::vector<string> adam_filter =  {"output","norm"};    //{"token_embd","output","norm"};    
 
     // void *app_ctx = nullptr;
     double zmuv_0 = 0.0,zmuv_1 = 0.0,g_step=0.0,g_ll=0,g2_sum=0;    
@@ -116,6 +116,7 @@ public:
     };
     PHASE phase = P_TRAIN;
     
+    Grusoft::GRander rRounding;      //stochastic rounding
     hSampLoader train_loader=nullptr;
     StepInfos& trainInfos()  {   assert(train_loader!=nullptr);  return train_loader->stepis;    }
     std::vector<hSampLoader> val_loaders;

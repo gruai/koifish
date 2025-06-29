@@ -9,15 +9,15 @@
 namespace hwinfo {
 
 // _____________________________________________________________________________________________________________________
-const std::vector<Memory::Module>& Memory::modules() const { return _modules; }
+const std::vector<Memory::Module> &Memory::modules() const { return _modules; }
 
 // _____________________________________________________________________________________________________________________
 int64_t Memory::total_Bytes() const {
-  int64_t sum = 0;
-  for (const auto& module : _modules) {
-    sum += module.total_Bytes;
-  }
-  return sum;
+    int64_t sum = 0;
+    for (const auto &module : _modules) {
+        sum += module.total_Bytes;
+    }
+    return sum;
 }
 
 }  // namespace hwinfo

@@ -8,13 +8,13 @@
 namespace hwinfo {
 
 // _____________________________________________________________________________________________________________________
-const std::string& GPU::vendor() const { return _vendor; }
+const std::string &GPU::vendor() const { return _vendor; }
 
 // _____________________________________________________________________________________________________________________
-const std::string& GPU::name() const { return _name; }
+const std::string &GPU::name() const { return _name; }
 
 // _____________________________________________________________________________________________________________________
-const std::string& GPU::driverVersion() const { return _driverVersion; }
+const std::string &GPU::driverVersion() const { return _driverVersion; }
 
 // _____________________________________________________________________________________________________________________
 int GPU::id() const { return _id; }
@@ -29,9 +29,9 @@ int64_t GPU::frequency_MHz() const { return _frequency_MHz; }
 int GPU::num_cores() const { return _num_cores; }
 
 // _____________________________________________________________________________________________________________________
-const std::string& GPU::vendor_id() const { return _vendor_id; }
+const std::string &GPU::vendor_id() const { return _vendor_id; }
 
 // _____________________________________________________________________________________________________________________
-const std::string& GPU::device_id() const { return _device_id; }
+const std::string &GPU::device_id() const { return _device_id; }
 
 }  // namespace hwinfo

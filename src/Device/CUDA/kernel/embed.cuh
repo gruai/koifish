@@ -51,11 +51,15 @@ __global__ static void CU_embed_forw_(floatX* out,const int* tokens, const float
     int ix = tokens[b * T + t];
     floatX* out_btc = out + b * T * C + t * C + c;
     const floatX* wte_ix = wte + ix * C + c;
+    if(wpe==nullptr){
+        *out_btc = *wte_ix;
+    }else{
     const floatX* wpe_tc = wpe + t * C + c;
 #if defined(ENABLE_FP8)
 #else
-    *out_btc = *wte_ix+*wpe_tc;
+        *out_btc = *wte_ix+*wpe_tc;
 #endif
+    }
 }
 
 __global__ static void CU_embed_forw_(floatX* out,const int* tokens, const floatX* wte, int T, int C,int ldW,bool isTrans=false) {
@@ -166,7 +170,8 @@ __global__ static void wte_backward_kernel(floatX* dwte,
         // The seed is deterministic and unique for each parameter to guarantee we have determinism AND
         // to avoid **potential** issues with positionX int SquirrelNoise5 argument overflowing which is UB
         // and that somehow messing the quality of random numbers
-        stochastic_rounding(accum[k] + (float)packed_in_out[k], &packed_in_out[k], seed + bucket * WARP_SIZE + threadIdx.x + k);
+        // stochastic_rounding(accum[k] + (float)packed_in_out[k], &packed_in_out[k], seed + bucket * WARP_SIZE + threadIdx.x + k);
+        packed_in_out[k] = CU_Float2T<floatX>(accum[k] + (float)packed_in_out[k], seed + bucket * WARP_SIZE + threadIdx.x + k);
     }
     store128(dwte_ix, packed_in_out);
 }
@@ -201,7 +206,8 @@ __global__ static void wpe_backward_kernel(floatX* dwpe,
         // The seed is deterministic and unique for each parameter to guarantee we have determinism AND
         // to avoid **potential** issues with positionX int SquirrelNoise5 argument overflowing which is UB
         // and that somehow messing the quality of random numbers
-        stochastic_rounding(accum[k] + (float)packed_dwpe[k], &packed_dwpe[k], seed + idx + k);
+        // stochastic_rounding(accum[k] + (float)packed_dwpe[k], &packed_dwpe[k], seed + idx + k);
+        packed_dwpe[k] = CU_Float2T<floatX>(accum[k] + (float)packed_dwpe[k], seed + idx + k);
     }
     store128(dwpe_tc, packed_dwpe);
 }

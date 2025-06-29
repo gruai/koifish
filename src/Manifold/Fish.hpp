@@ -28,6 +28,7 @@
 #include "GoPT.hpp"
 #include "../Utils/GST_util.hpp"
 #include "../Utils/GST_rander.hpp"
+// #include "../Utils/safetensors.hh"
 #include "../Fuzi/Distillation.hpp"
 
 using namespace std;
@@ -169,6 +170,7 @@ protected:
     bool measure_only=false;  
     void *ctx_build = nullptr;    //user context of build graph
 
+    // safetensors::safetensors_t safeTensors;
 #ifdef __USE_GGML__
     struct ggml_cgraph * gb_tmp = NULL;
     struct random_normal_distribution *rnd = nullptr;     
@@ -247,6 +249,8 @@ protected:
     // Smart format of https://github.com/zeux/calm
     virtual bool CALM_Serialize(const std::string&path, bool isSave, int flag=0x0);
     virtual bool YALM_Serialize(const std::string&path, bool isSave, int flag=0x0);
+    virtual bool SAFETENSOR_Serialize(const std::string&path, bool isSave, int flag=0x0);
+    
     MODEL_ARCH arch = MODEL_ARCH::_X_;
     Grusoft::GRander rand_coin;
 public:

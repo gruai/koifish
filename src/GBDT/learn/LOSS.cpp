@@ -1,190 +1,190 @@
 #include "../data_fold/Loss.hpp"
 using namespace Grusoft;
 
-//LambdaRank FeatVec_LOSS::HT_lambda_;
+// LambdaRank FeatVec_LOSS::HT_lambda_;
 
 /*
-	LightGBM
-		$4.7 Applications and Metrics
-		default={l2 for regression}, {binary_logloss for binary classification},{ndcg for lambdarank},
-		$6.6 "metric to be evaluated on the evaluation sets in addition to what is provided in the training argument"
-		type=multi-enum, options=l1,l2,ndcg,auc,binary_logloss,binary_error...
+    LightGBM
+        $4.7 Applications and Metrics
+        default={l2 for regression}, {binary_logloss for binary classification},{ndcg for lambdarank},
+        $6.6 "metric to be evaluated on the evaluation sets in addition to what is provided in the training argument"
+        type=multi-enum, options=l1,l2,ndcg,auc,binary_logloss,binary_error...
 
 */
 void FeatVec_LOSS::Clear() {
-	down.clear();				sample_down.clear();
-	resi.clear();				delta_step.clear();
-	hessian.clear();			sample_hessian.clear();
+    down.clear();
+    sample_down.clear();
+    resi.clear();
+    delta_step.clear();
+    hessian.clear();
+    sample_hessian.clear();
 
-	if (samp_weight != nullptr)			delete[] samp_weight;
-	if (y != nullptr) {
-		//if (y->hDistri != nullptr)
-		//	delete y->hDistri;
-		delete y;
-	}
-	if (predict != nullptr)		delete predict;
+    if (samp_weight != nullptr)
+        delete[] samp_weight;
+    if (y != nullptr) {
+        // if (y->hDistri != nullptr)
+        //	delete y->hDistri;
+        delete y;
+    }
+    if (predict != nullptr)
+        delete predict;
 }
 /*
-	Ŀǰ��UpdateResi
+    Ŀǰ��UpdateResi
 */
-void FeatVec_LOSS::Update(FeatsOnFold *hData_,int round, int flag) {
-	if (tpResi == is_float)
-		UpdateResi<float>(hData_, round,flag);
-	else if (tpResi == is_double)
-		UpdateResi<double>(hData_, round, flag);
-	else
-		throw "FeatVec_LOSS::UpdateResi type is !!!";
-	return;
+void FeatVec_LOSS::Update(FeatsOnFold *hData_, int round, int flag) {
+    if (tpResi == is_float)
+        UpdateResi<float>(hData_, round, flag);
+    else if (tpResi == is_double)
+        UpdateResi<double>(hData_, round, flag);
+    else
+        throw "FeatVec_LOSS::UpdateResi type is !!!";
+    return;
 }
 
 void FeatVec_LOSS::InitSampWeight(int flag) {
-	bool isTrain = BIT_TEST(flag, FeatsOnFold::DF_TRAIN);
-	bool isEval = BIT_TEST(flag, FeatsOnFold::DF_EVAL);
-	bool isPredict = BIT_TEST(flag, FeatsOnFold::DF_PREDIC);
-	size_t nSamp = size();
-	if (isTrain) {
-		samp_weight = new float[nSamp]();
-		for (size_t i = 0; i < nSamp; i++) {
-			samp_weight[i] = 1;	// Y_[i] == 0 ? 1 : 10;
-		}
-	}
+    bool isTrain   = BIT_TEST(flag, FeatsOnFold::DF_TRAIN);
+    bool isEval    = BIT_TEST(flag, FeatsOnFold::DF_EVAL);
+    bool isPredict = BIT_TEST(flag, FeatsOnFold::DF_PREDIC);
+    size_t nSamp   = size();
+    if (isTrain) {
+        samp_weight = new float[nSamp]();
+        for (size_t i = 0; i < nSamp; i++) {
+            samp_weight[i] = 1;  // Y_[i] == 0 ? 1 : 10;
+        }
+    }
 }
 
 string FeatsOnFold::LOSSY_INFO(double err, int flag) {
-	char tmp[1000];
-	if (config.eval_metric == "auc") {
-		sprintf(tmp, "%-8.5g", 1-err);
-	}
-	else {
-		sprintf(tmp, "%-8.5g", err);
-	}
-	return tmp;
+    char tmp[1000];
+    if (config.eval_metric == "auc") {
+        sprintf(tmp, "%-8.5g", 1 - err);
+    } else {
+        sprintf(tmp, "%-8.5g", err);
+    }
+    return tmp;
 }
 
 double FeatVec_LOSS::ERR(int flag) {
-	double err = 0;
-	if (hBaseData_->config.eval_metric == "mse") {
-		err = hBaseData_->lossy->err_rmse;
-		err = err*err;
-	}	else if (hBaseData_->config.eval_metric == "rmse") {
-		err = hBaseData_->lossy->err_rmse;
-	}	else if (hBaseData_->config.eval_metric == "mae") {
-		err = hBaseData_->lossy->err_mae;
-	}
-	else if (hBaseData_->config.eval_metric == "logloss") {
-		err = hBaseData_->lossy->err_logloss;
-	}
-	else if (hBaseData_->config.eval_metric == "auc") {	//��Ҫ��EARLY_STOPPING::isOKͳһ
-		err = 1 - hBaseData_->lossy->err_auc;
-		//err = hData_->lossy->err_auc;
-	}
-	return err;
+    double err = 0;
+    if (hBaseData_->config.eval_metric == "mse") {
+        err = hBaseData_->lossy->err_rmse;
+        err = err * err;
+    } else if (hBaseData_->config.eval_metric == "rmse") {
+        err = hBaseData_->lossy->err_rmse;
+    } else if (hBaseData_->config.eval_metric == "mae") {
+        err = hBaseData_->lossy->err_mae;
+    } else if (hBaseData_->config.eval_metric == "logloss") {
+        err = hBaseData_->lossy->err_logloss;
+    } else if (hBaseData_->config.eval_metric == "auc") {  // ��Ҫ��EARLY_STOPPING::isOKͳһ
+        err = 1 - hBaseData_->lossy->err_auc;
+        // err = hData_->lossy->err_auc;
+    }
+    return err;
 }
 
 bool FeatVec_LOSS::isOK(int typ, double thrsh, int flag) {
-	double err = ERR(flag);
-	if (hBaseData_->config.eval_metric == "auc") {
-		return err < thrsh;
-	}else
-		return err < thrsh;
-	//return err_rmse < thrsh;
+    double err = ERR(flag);
+    if (hBaseData_->config.eval_metric == "auc") {
+        return err < thrsh;
+    } else
+        return err < thrsh;
+    // return err_rmse < thrsh;
 }
 
-void FeatVec_LOSS::EDA( ExploreDA *edaX, int flag) {
-	const LiteBOM_Config&config = hBaseData_->config;
-	size_t nSamp = hBaseData_->nSample();
-	bool isPredict = BIT_TEST(flag, FeatsOnFold::DF_PREDIC);
-	bool isEval = BIT_TEST(flag, FeatsOnFold::DF_EVAL);
-	bool isTrain = BIT_TEST(flag, FeatsOnFold::DF_TRAIN);
-	if(config.verbose>0)
-		printf("********* FeatVec_LOSS::EDA@\"%s\"\tsamp_weight=%p...\n",hBaseData_->nam.c_str(),samp_weight);
-	if (isPredict) {
-
-	}	else {
-		//y->EDA(config,true, nullptr, 0x0);
-		y->InitDistri(hBaseData_, nullptr, nullptr, config.objective == "binary", 0x0);
-		Distribution *disY = y->myDistri();
-		if (disY != nullptr) {
-			disY->Dump(-1, false, flag);
-			assert(disY->rNA==0);
-			if (disY->rNA > 0) {
-				throw "FeatVec_LOSS::EDA disY->rNA > 0!!! Please check the value of Y!!!";
-			}
-		}
-		size_t dim = size(),i,nOutlier;
-		if (config.objective == "outlier") {
-			y->loc(outliers,1);
-			nOutlier = outliers.size();
-			if (nOutlier == 0 && isTrain)
-				throw "FeatVec_LOSS::EDA outlier is 0!!! Please check the value of Y!!!";
-			if (nOutlier == 0) {
-				printf("\toutliers=%ld!!!\n", nOutlier);
-			}	else {
-				printf("\toutliers=%ld(%d,...%d)\n", nOutlier, outliers[0], outliers[nOutlier-1]);
-			}
-		}else if (hBaseData_->config.objective == "binary") {
-			size_t nPosi = 0, nNega = 0;
-			HistoGRAM *histo = disY != nullptr ? disY->histo : nullptr;		assert(histo!=nullptr);
-			if (histo != nullptr) {
-				assert(histo->nBins==2 || histo->nBins == 3);
-				nPosi = histo->bins[1].nz;		nNega = histo->bins[0].nz;
-				printf("\tNumber of positive : %ld, number of negative : %ld\n", nPosi, nNega);
-			}
-		}
-		//printf("********* EDA::Analysis......OK\n");
-
-	}
-	//hFold->lossy.InitScore_(config);
-
+void FeatVec_LOSS::EDA(ExploreDA *edaX, int flag) {
+    const LiteBOM_Config &config = hBaseData_->config;
+    size_t nSamp                 = hBaseData_->nSample();
+    bool isPredict               = BIT_TEST(flag, FeatsOnFold::DF_PREDIC);
+    bool isEval                  = BIT_TEST(flag, FeatsOnFold::DF_EVAL);
+    bool isTrain                 = BIT_TEST(flag, FeatsOnFold::DF_TRAIN);
+    if (config.verbose > 0)
+        printf("********* FeatVec_LOSS::EDA@\"%s\"\tsamp_weight=%p...\n", hBaseData_->nam.c_str(), samp_weight);
+    if (isPredict) {
+    } else {
+        // y->EDA(config,true, nullptr, 0x0);
+        y->InitDistri(hBaseData_, nullptr, nullptr, config.objective == "binary", 0x0);
+        Distribution *disY = y->myDistri();
+        if (disY != nullptr) {
+            disY->Dump(-1, false, flag);
+            assert(disY->rNA == 0);
+            if (disY->rNA > 0) {
+                throw "FeatVec_LOSS::EDA disY->rNA > 0!!! Please check the value of Y!!!";
+            }
+        }
+        size_t dim = size(), i, nOutlier;
+        if (config.objective == "outlier") {
+            y->loc(outliers, 1);
+            nOutlier = outliers.size();
+            if (nOutlier == 0 && isTrain)
+                throw "FeatVec_LOSS::EDA outlier is 0!!! Please check the value of Y!!!";
+            if (nOutlier == 0) {
+                printf("\toutliers=%ld!!!\n", nOutlier);
+            } else {
+                printf("\toutliers=%ld(%d,...%d)\n", nOutlier, outliers[0], outliers[nOutlier - 1]);
+            }
+        } else if (hBaseData_->config.objective == "binary") {
+            size_t nPosi = 0, nNega = 0;
+            HistoGRAM *histo = disY != nullptr ? disY->histo : nullptr;
+            assert(histo != nullptr);
+            if (histo != nullptr) {
+                assert(histo->nBins == 2 || histo->nBins == 3);
+                nPosi = histo->bins[1].nz;
+                nNega = histo->bins[0].nz;
+                printf("\tNumber of positive : %ld, number of negative : %ld\n", nPosi, nNega);
+            }
+        }
+        // printf("********* EDA::Analysis......OK\n");
+    }
+    // hFold->lossy.InitScore_(config);
 }
 
 void LambdaRank::Init(double sigma_, double a_0_, double a_1_, size_t nMost_, int flag) {
-	printf("\n---- LambdaRank::Init..." );
-	if (tables != nullptr) {
-		if (a_0 == a_0_ && a_1 == a_1_ && sigma == sigma_ && nMost_ == nMost)
-			return;
+    printf("\n---- LambdaRank::Init...");
+    if (tables != nullptr) {
+        if (a_0 == a_0_ && a_1 == a_1_ && sigma == sigma_ && nMost_ == nMost)
+            return;
 
-		delete[] tables;
-	}
-	sigma = sigma_;
-	nMost = nMost_;
-	a_0 = a_0_,					a_1 = a_1_;
-	grid = (a_1 - a_0) / nMost;
-	tables = new double[nMost];
-	size_t i;
-	double rou,a,fMin = DBL_MAX,fMax=-DBL_MAX;
-	for (i = 0; i < nMost; i++) {
-		a= a_0+grid*i;
-		rou = 1 / (1 + exp(sigma*a));
-		fMin = MIN2(rou, fMin);			fMax = MAX2(rou, fMax);
-		tables[i] = rou;
-	}
-	printf("\n---- LambdaRank::Init sigma=%g a=[%.3g:-%.3g] rou=[%.3g:-%.3g]\n", sigma,a_0, a_1, fMin, fMax);
+        delete[] tables;
+    }
+    sigma = sigma_;
+    nMost = nMost_;
+    a_0 = a_0_, a_1 = a_1_;
+    grid   = (a_1 - a_0) / nMost;
+    tables = new double[nMost];
+    size_t i;
+    double rou, a, fMin = DBL_MAX, fMax = -DBL_MAX;
+    for (i = 0; i < nMost; i++) {
+        a         = a_0 + grid * i;
+        rou       = 1 / (1 + exp(sigma * a));
+        fMin      = MIN2(rou, fMin);
+        fMax      = MAX2(rou, fMax);
+        tables[i] = rou;
+    }
+    printf("\n---- LambdaRank::Init sigma=%g a=[%.3g:-%.3g] rou=[%.3g:-%.3g]\n", sigma, a_0, a_1, fMin, fMax);
 }
 
 double LambdaRank::At(double a) {
-	if (a < a_0) {
-		nUnderFlow++;
-		return tables[0];
-	}	else if (a > a_1) {
-		nOverFlow++;
-		return tables[nMost-1];
-	}
-	else {
-		int pos = (a - a_0) / grid;
-		return tables[pos];
-
-	}
+    if (a < a_0) {
+        nUnderFlow++;
+        return tables[0];
+    } else if (a > a_1) {
+        nOverFlow++;
+        return tables[nMost - 1];
+    } else {
+        int pos = (a - a_0) / grid;
+        return tables[pos];
+    }
 }
 /*
 �μ�	gradient_boosting.py-(SKLearn)
 LOSS_FUNCTIONS = {
-	'ls': LeastSquaresError,
-	'lad': LeastAbsoluteError,
-	'huber': HuberLossFunction,
-	'quantile': QuantileLossFunction,
-	'deviance': None,    # for both, multinomial and binomial
-	'exponential': ExponentialLoss,
+    'ls': LeastSquaresError,
+    'lad': LeastAbsoluteError,
+    'huber': HuberLossFunction,
+    'quantile': QuantileLossFunction,
+    'deviance': None,    # for both, multinomial and binomial
+    'exponential': ExponentialLoss,
 }
 
 class LeastSquaresError(RegressionLossFunction):

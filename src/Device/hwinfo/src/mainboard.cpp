@@ -6,15 +6,15 @@
 namespace hwinfo {
 
 // _____________________________________________________________________________________________________________________
-const std::string& MainBoard::vendor() const { return _vendor; }
+const std::string &MainBoard::vendor() const { return _vendor; }
 
 // _____________________________________________________________________________________________________________________
-const std::string& MainBoard::name() const { return _name; }
+const std::string &MainBoard::name() const { return _name; }
 
 // _____________________________________________________________________________________________________________________
-const std::string& MainBoard::version() const { return _version; }
+const std::string &MainBoard::version() const { return _version; }
 
 // _____________________________________________________________________________________________________________________
-const std::string& MainBoard::serialNumber() const { return _serialNumber; }
+const std::string &MainBoard::serialNumber() const { return _serialNumber; }
 
 }  // namespace hwinfo
