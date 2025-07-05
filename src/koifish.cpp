@@ -25,6 +25,9 @@ int DoSomeTesting(int argc, char **argv);
 
 int main(int argc, char **argv) {
     try {
+#ifdef _WIN32
+        system("chcp 65001");       // Ensures that Unicode characters (Chinese, emojis, etc.) are displayed correctly in the console output.
+#endif
 #ifdef _DO_SOME_TESTING_
         DoSomeTesting(0, 0);
         return 889;

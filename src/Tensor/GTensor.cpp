@@ -144,8 +144,10 @@ GTensor::~GTensor() {
             FREE_a(grad);
         }
     }
-
-    FREE_a(host_data);
+    if (BIT_TEST(flags, F_MMAP)) {
+    } else {
+        FREE_a(host_data);
+    }
 }
 
 bool GTensor::isAtHost() const {
@@ -200,7 +202,7 @@ bool GTensor::OverWrite(hGTensor hGT, bool isSrc, int flag) {
     return false;
 }
 
-bool GTensor::ShareWeight(hGTensor src, int flag) {
+bool GTensor::ShareMemory(hGTensor src, int flag) {
     assert(src != nullptr && src->data != nullptr);
     data = src->data;
 
@@ -308,8 +310,8 @@ int GTensor::SerialJSON(const std::string &name_, const JSON &val, void *bytes_p
     //    delete[] rows;
     //    // PrintTensor<f8e5m2_t>(name,(f8e5m2_t*)src,ne[0],ne[1]);
     // }
-    if (BIT_TEST(flag, F_NOALLOC)) {
-        data = src;  // ((char*)(src))[szSrc-1]    (char*)bytes_ptr + offset_end-1
+    if (BIT_TEST(flag, F_NOALLOC)) {  //  "tokenizer.tokens","tokenizer.scores"
+        data = src;                   // ((char*)(src))[szSrc-1]    (char*)bytes_ptr + offset_end-1
         BIT_SET(flags, F_MMAP);
     } else {
         if (data != nullptr) {
@@ -451,8 +453,8 @@ bool GTensor::Alloc(int tpInit, int flag) {
 }
 
 bool huTensor::Alloc(int iter, int flagInit) {
-    if (strcmp(name, "model.blk.0.attn.wq.weight") == 0 ||
-        strcmp(name, "model.embed.weight") == 0) {  //  model.inp_embd.weight       model.out.weight model.embed.weight
+    if (strcmp(name, "model.layers.1.attn.wq.weight") == 0
+        /*|| strcmp(name, "model.embed.weight") == 0*/) {  //  model.inp_embd.weight       model.out.weight model.embed.weight model.blk.0.attn.wq.weight
         int debug = 0x0;
     }
 
@@ -461,12 +463,8 @@ bool huTensor::Alloc(int iter, int flagInit) {
         return true;
     if (BIT_TEST(flags, F_MMAP))  // For example: operator fusing, memory reuse,rematerialization
         return true;
-    if (isParam()) {
-        // if(tpInit == SERIALIZE)
-        //    return true;
-    }
-    if (hRef != nullptr) {
-        ShareWeight(hRef);  //  grad => src->grad;
+    if (hRef != nullptr) {  // Activation or Parameters
+        ShareMemory(hRef);  //  grad => src->grad;
         if (DUMP(0))
             _INFO("\t%s =====> %s\n", name, hRef->name);
         return true;
@@ -483,22 +481,22 @@ bool huTensor::Alloc(int iter, int flagInit) {
         Alloc_1(&data, true);
         // _INFO("\t%s (+%.3gM)\n",name,(szMaloc-sz0)/1.0e6);
     }
-    if (isParam() && isTrain) {
+    if (isParam()) {
         if (allocData) {
             InitParam(flagInit);
-            if (1)  // DEBUG.isParamResident
-                BIT_SET(flags, GTensor::F_RESIDENT);
+            BIT_SET(flags, GTensor::F_RESIDENT);  //  guoke ???
         }
-        size_t szMV = sizeof(float) * size();
-        if (grad == nullptr) {
+
+        if (grad == nullptr && isTrain) {
+            size_t szMV = sizeof(floatMV) * size();
             Alloc_1(&grad, true, szData + szMV * 2);  // sgd_kernel would zero grad!
             string method = hFish->config.Get({"train", "optimizatioin", "method"}, string("adamw"), false);
             if (method == "adamw") {
-                gm = (char*)grad + szData, gv = (char*)gm + szMV;
+                gm = (char *)grad + szData, gv = (char *)gm + szMV;
             } else if (method == "lion") {
-                gm = (char*)grad + szData, gv = nullptr;
+                gm = (char *)grad + szData, gv = nullptr;
             } else {
-                gm = nullptr, gv = (char*)grad + szMV;
+                gm = nullptr, gv = (char *)grad + szMV;
             }
         }
     } else {
@@ -519,9 +517,10 @@ bool huTensor::Alloc(int iter, int flagInit) {
         if (ne[0] == 262144 || ne[1] == 151936) {
             int isDebug = 0;
         }
-        if (szMaloc - sz0 >= 100 * 1.0e6 || type == typNUMBER::T_SIGN)
+        if (szMaloc - sz0 >= 100 * 1.0e6 || type == typNUMBER::T_SIGN) {
             printf("\t %s=%gM@%s type=%s shape=[%ld,%ld,%ld,%ld]%s sum=%gG\n", sA.c_str(), (szMaloc - sz0) * 1.0f / 1.0e6, name, cNameOf(type), ne[0], ne[1],
                    ne[2], ne[3], grad != nullptr ? "x2" : "", szMaloc * 1.0 / 1.0e9);
+        }
     }
 
     return true;

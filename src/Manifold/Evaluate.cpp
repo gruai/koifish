@@ -43,7 +43,7 @@ int Fish_ppl(CLI_params &config) {
     config.common.n_batch      = 1;
     config.model.preLogits_dB  = 1;
     config.model.sparse.method = -1;
-    config.scheduling.strategy = SKDU_params::MEM_PRE_ALLOC;
+    // config.scheduling.strategy = MEM_STRATEGY::PRE_ALLOC_GPU;
     // config.SetNCTX(1);       ???
     // config.model.isEmbedWeightTying = false;    //QWEN32B
 
@@ -57,8 +57,11 @@ int Fish_ppl(CLI_params &config) {
     config.model.tpActivation = typNUMBER::BF16;
     // return run_caml(config.prompt.c_str(),0x0);
 
-    hFISH fish         = Fish::MakeInstance("PPL_", config, {}, Fish::ROLE_TYPE::COMMON, 0x110);
-    hOptimizer hOPT    = fish->GetOptimizer();
+    hFISH fish      = Fish::MakeInstance("PPL_", config, {}, Fish::ROLE_TYPE::COMMON, 0x110);
+    hOptimizer hOPT = fish->GetOptimizer();
+    RLS_BP *hRLS    = fish->GetScheduler<RLS_BP>();
+    hRLS->InitGUOKE();
+    hRLS->Prepare(-1);
     uint64_t rng_seed  = 42;
     std::string prompt = LoadSomeText("/home/cys/rnd/lic/models/TinyStories-valid.txt", 64 * 1024);  // shakespeare.txt
     int nVocab = fish->config.model.vocab_size, _nctx = fish->config.n_ctx(), i, j;
@@ -72,12 +75,15 @@ int Fish_ppl(CLI_params &config) {
     // assert(nTokens <= _nctx);
     TOKEN_ID t = -1;
     _INFO("\n====== %s: %s FLOAT=%s @%s\n", __func__, DEBUG.T_cpu == 0 ? "CUDA" : "CPU", cNameOf(config.model.tpActivation), cDATE);
+    hRLS->Dump(0x0);
+
     OutCLS *hCLS  = fish->GetNeuron<OutCLS>("OutCLS", 0);
     float *logits = hCLS->Logits(true);
     double sum = 0, ss = 0, nz = 0, ppl = 0, pplerr = 0, tps = 0, t0 = GST_ms(), tAll = 0;
     vector<TOKEN_ID> &tokens = hLoader->GetTokens();
     hOPT->SetPhase(Optimizer::P_GENERATE);
     fflush(stdout);
+    SUM::Reset("memory");
     for (i = 0; i + 1 < nTokens; i++) {
         // float fLos = hOPT->Evaluate(hLoader,-666);
         T_generate_(fish, i, config.model.tpActivation, -666);
@@ -89,9 +95,12 @@ int Fish_ppl(CLI_params &config) {
         ppl    = exp(-sum / nz);
         pplerr = ppl * sqrt((ss - sum * sum / nz) / nz / nz);
     }
-    tAll = (GST_ms() - t0) / 1000.0;
-    tps  = nz / tAll;
-    _INFO("[PPL] #ppl=%g±%.3f tps=%g(%d) T=%.3g(%.3g)s T_pick=%.3gs\n", ppl, pplerr, tps, nTokens, tAll, SUM::tX1 / 1000.0, CS_Picker::tPick / 1.0e6);
+    tAll            = (GST_ms() - t0) / 1000.0;
+    tps             = nz / tAll;
+    double tRemater = SUM::tRemater / 1000.0;
+    _INFO("[PPL] #ppl=%g ± %.3f tps=%g(%d) T=%.3g(%.3g)s T_remater=%.3gs \n", ppl, pplerr, tps, nTokens, tAll, SUM::tX1 / 1.0e6,
+          tRemater);  // CS_Picker::tPick / 1.0e6
+    _INFO("[PPL] Upload=%.3gG Throughput=%.3g GByte/s \n", SUM::szUpload / 1.0e9, SUM::szUpload / 1.0e9 / tRemater);
     Fish::stat.Dump(0x0);
 
     if (fish->config.model.isSparse()) {

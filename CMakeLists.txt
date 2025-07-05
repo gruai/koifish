@@ -68,9 +68,9 @@ if (K_USE_CCACHE)
         set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ccache)
         set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK ccache)
         set(ENV{CCACHE_SLOPPINESS} time_macros)
-        message(STATUS "ccache found, compilation results will be cached. Disable with GGML_CCACHE=OFF.")
+        message(STATUS "ccache found, compilation results will be cached. Disable with K_USE_CCACHE=OFF.")
     else()
-        message(STATUS "Warning: ccache not found - consider installing it for faster compilation or disable this warning with GGML_CCACHE=OFF")
+        message(STATUS "Warning: ccache not found - consider installing it for faster compilation or disable this warning with K_USE_CCACHE=OFF")
     endif ()
 endif()
 
@@ -208,13 +208,9 @@ foreach(prog koifish )    #finetune koifish train2
 
     target_link_libraries(${prog} PRIVATE ${GG_LIB} ${CMAKE_THREAD_LIBS_INIT} ${OPENBLAS_LIB} ${DELTA_LIB} ${CUDA_LIB} ${GFLAGS_LIBRARIES} pthread )
     target_compile_features(${prog} PRIVATE cxx_std_17)
-    target_compile_options(${prog} PRIVATE  -DLLAMA_API_INTERNAL ${cxx_flags} ${DELTA_cc})
+    target_compile_options(${prog} PRIVATE ${cxx_flags} ${DELTA_cc})
     # target_link_libraries(${prog} PRIVATE pybind11::embed)
 endforeach(prog)
 
-if (GGML_BUILD_TESTS)
-    enable_testing()
-    add_subdirectory(tests)
-endif ()
 
 

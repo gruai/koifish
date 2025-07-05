@@ -296,7 +296,7 @@ hGensor OutCLS::Ming(RLS_BP *ctx_, hGensor inpL, int flag) {
         assert(target != nullptr);
         cur = out;
     } else {
-        cur = FUSE_cuda(inpL, 0x0);  // return preLogits;
+        cur = cuTrain(inpL, 0x0);  // return preLogits;
         // hFish->hOPT->UpdateTrainLoss(-1,mean_loss);
     }
     cur = AfterMing(ctx_, cur, flag);
@@ -305,7 +305,7 @@ hGensor OutCLS::Ming(RLS_BP *ctx_, hGensor inpL, int flag) {
 string OutCLS::__repr__(string &suffix, string &prefix, int flag) {
     char buf[5012]  = "\0";
     const char *tab = prefix.c_str();
-    sprintf(buf + strlen(buf), "%s OutCLS{dB=%d x=%d} %s", tab, dB, padded_nCls, hFish->config.model.isEmbedWeightTying?"Tyring":"");
+    sprintf(buf + strlen(buf), "%s OutCLS{dB=%d x=%d} %s", tab, dB, padded_nCls, hFish->config.model.isEmbedWeightTying ? "Tyring" : "");
     if (flag > 0)
         _INFO("%s", buf);
     return buf;
@@ -565,9 +565,9 @@ bool ROPE::Empty() const {
     return hSin == nullptr;
 }
 string ROPE::__repr__(string &suffix, string &prefix, int flag) {
-    int v = hFish->config.model.Rope_version; 
-    string info = "ROPE_"+std::to_string(v);
-    return _repr_1(suffix, prefix,info); 
+    int v       = hFish->config.model.Rope_version;
+    string info = "ROPE_" + std::to_string(v);
+    return _repr_1(suffix, prefix, info);
 };
 
 LayerSoftmax::LayerSoftmax(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
@@ -662,11 +662,11 @@ hGensor LayerNormal::Ming(RLS_BP *hRLS, hGensor cur, int flag) {
             cur >> *this;
             cur = out;
         } else {
-            cur = FUSE_cuda(cur);
+            cur = cuTrain(cur);
             // cur = cur->Normal(out,mean,rstd,w,b);
         }
     } else {
-        cur = FUSE_cuda(cur);
+        cur = cuTrain(cur);
         // cur->Normal(out,mean,rstd,w,b,false);
     }
     cur = AfterMing(hRLS, cur, flag);
@@ -691,9 +691,8 @@ hGensor GeNeuron::BeforeMing(RLS_BP *hRLS, hGensor cur, int flag) {
     if (hFish->isSymbolic()) {
         // host_inp = new char[GTensor::outL->nByte()];
         cudaHostAlloc(&host_inp, GTensor::outL->nByte(), 0);
-
     } else {
-        SYNC_DEVICE();
+        // SYNC_DEVICE();
         double now = GST_ms();
         ManageMemory(DATA_PLACE::DEV_MEM);
         if (isForward()) {
@@ -704,7 +703,7 @@ hGensor GeNeuron::BeforeMing(RLS_BP *hRLS, hGensor cur, int flag) {
                 hRLS->isRemater = false;
             }
         }
-        SYNC_DEVICE();
+        // SYNC_DEVICE();
         SUM::tRemater += GST_ms() - now;
     }
 
@@ -785,7 +784,8 @@ hGensor GeNeuron::GetGensor(const std::string &key, int flag) {
 };
 
 // 天地本逆旅, 你我皆过客(Guoke)
-int GeNeuron::SetGuoke(GeNeuron *hGuoke_, int flag) {
+int GeNeuron::SetGuoke(GeNeuron *hGuoke_, bool isRefParam, int flag) {
+    size_t szG = 0;
     std::vector<hGensor> gSrc, arrP = PGensors();
     if (hGuoke_ != nullptr) {
         gSrc = hGuoke_->PGensors();
@@ -803,13 +803,24 @@ int GeNeuron::SetGuoke(GeNeuron *hGuoke_, int flag) {
         assert(t != gSrc[i]);
         if (t->isParam()) {
             assert(gSrc[i]->isParam());
-            continue;
+            if (!isRefParam)
+                continue;
+
+            // if (!G_Has_(t->name, {"mlp.w1.weight"}))
+            //     continue;
         }
 
         if (t->isRefer()) {
             continue;
         }
-        t->SetRefer(gSrc[i]);
+        t->SetRefer(gSrc[i]);  //  Activations or Parameters
+        if (t->isParam()) {
+            BIT_SET(t->flags, GTensor::F_RELOAD);
+            BIT_SET(gSrc[i]->flags, GTensor::F_RELOAD);
+            tReloads.insert(t);
+            hGuoke_->tReloads.insert(gSrc[i]);
+        }
+        szG += t->nByte();
         nG++;
     }
     return nG;

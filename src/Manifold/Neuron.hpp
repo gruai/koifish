@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <regex>
+#include <set>
 #include <stack>
 #include <typeinfo>
 #include <vector>
@@ -72,6 +73,7 @@ class GeNeuron {
     void *host_inp = nullptr;                        // backup of input in device memory
     // 天地本逆旅, 你我皆过客(Guoke)
     GeNeuron *hGuoke = nullptr;
+    std::set<hGensor> tReloads;
     // std::vector<shared_ptr<GeNeuron>> brothers;
    public:
     enum BIT_FLAG { F_BIAS = 0x10000, F_DELTA = 0x20000, F_HOTPICK = 0x100000 };
@@ -96,7 +98,8 @@ class GeNeuron {
     //  Gensors with physical memory
     virtual std::vector<hGensor> PGensors(bool isNoRef = true, int flag = 0x0);
     virtual hGensor GetGensor(const std::string &key, int flag = 0x0);
-    virtual int SetGuoke(GeNeuron *hGuoke_, int flag = 0x0);
+    virtual int SetGuoke(GeNeuron *hGuoke_, bool isRefParam, int flag = 0x0);
+    virtual void SetDType(typNUMBER tpW, typNUMBER tpA, typNUMBER tpG) { tpWeight = tpW, tpActivation = tpA, tpGradient = tpG; }
 
     virtual bool isValid();
     virtual bool isOnlyInfer();
@@ -209,7 +212,7 @@ class ROPE : public SparseNeuron {
     ROPE(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag);
     bool Build(int flag) override;
     hGensor Ming(RLS_BP *hRLS, hGensor cur, int flag = 0x0) override;
-    int FUSE_cuda(LayerNormal *normQ, LayerNormal *normK, uint32_t seed, bool isFX = true, int flag = 0x0);
+    int cuTrain(LayerNormal *normQ, LayerNormal *normK, uint32_t seed, bool isFX = true, int flag = 0x0);
     bool isValid() override { return true; }
     bool Empty() const override;
     string __repr__(string &suffix, string &prefix, int flag = 0x0) override;
@@ -268,7 +271,7 @@ struct SLP : public SparseNeuron {
 struct LayerNormal : public SparseNeuron {
     bool isAffineTrans = true;  // Learnable affine transform parameters
     bool isRMS         = true;  // Root Mean Square Layer Normalization
-    int nHead = 0;
+    int nHead          = 0;
     //  always float
     hGensor mean = nullptr, rstd = nullptr;
     float scale = 0.0;
@@ -276,7 +279,7 @@ struct LayerNormal : public SparseNeuron {
     LayerNormal(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag);
     bool Build(int flag) override;
     hGensor Ming(RLS_BP *hRLS, hGensor cur, int flag) override;
-    hGTensor FUSE_cuda(hGTensor inpL, int flag = 0x0);
+    hGTensor cuTrain(hGTensor inpL, int flag = 0x0);
     size_t nElem() override;
     string __repr__(string &suffix, string &prefix, int flag = 0x0) override;
     // hGTensor operator>>(hGTensor & a){  return a;   }
@@ -326,6 +329,7 @@ class SelfAttention : public SparseNeuron {
     bool isQKNormal  = false;
     LayerNormal normQ, normK;  //  Only w vector to save memory
     bool isSeparateQKV = false;
+    bool isBqkv        = false;  // to align with some model
 
     //  tensor format={'SBhd', 'BShd', 'thd'}, default = 'BShd',   t=B*S
     void *devQ = nullptr, *devK = nullptr, *devV = nullptr, *devDeltaQ = nullptr, *devDeltaK = nullptr, *devDeltaV = nullptr;
@@ -390,7 +394,7 @@ class SelfAttention : public SparseNeuron {
     bool isValid() override { return true; }
     string __repr__(string &suffix, string &prefix, int flag = 0x0) override;
 
-    hGTensor FUSE_cuda(hGTensor inpL, int flag);
+    hGTensor cuTrain(hGTensor inpL, int flag);
 };
 
 /*
@@ -488,7 +492,7 @@ struct FFN : public VarCoder {
     bool isValid() override { return true; }
     string __repr__(string &suffix, string &prefix, int flag = 0x0) override;
 
-    hGTensor FUSE_cuda(hGTensor inpL, int flag);
+    hGTensor cuTrain(hGTensor inpL, int flag);
     int CPU_v0(void *ctx, int layer, int flag = 0x0);
 };
 
@@ -563,17 +567,17 @@ struct OutCLS : public SparseNeuron {
     bool isValid() override { return true; }
     string __repr__(string &suffix, string &prefix, int flag = 0x0) override;
     // Backward: return lnf->out;       Forward: return preLogits or loss?
-    virtual hGTensor FUSE_cuda(hGTensor inpL, int flag);
+    virtual hGTensor cuTrain(hGTensor inpL, int flag);
 };
 
 struct OutSimilarity : public OutCLS {
     OutSimilarity(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag);
-    hGTensor FUSE_cuda(hGTensor inpL, int flag) override;
+    hGTensor cuTrain(hGTensor inpL, int flag) override;
 };
 
 struct OutEntropy : public OutCLS {
     OutEntropy(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag);
-    // hGTensor FUSE_cuda(hGTensor inpL,int flag)  override;
+    // hGTensor cuTrain(hGTensor inpL,int flag)  override;
 };
 
 struct NeLayer {  // Neural Layer with many neurons

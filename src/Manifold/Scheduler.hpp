@@ -186,7 +186,7 @@ protected:
     bool isRemater = false;
     double budget = 1000;
     vector<Node*> nodes;
-    //SKDU_params::STRATEGY strategy = SKDU_params::MEM_PRE_ALLOC;
+    
     SKDU_params params;
     string resident_list = "";
 public:
@@ -210,13 +210,15 @@ typedef shared_ptr<RLSchedule> hRLSchedule;
 class RLS_BP : public RLSchedule    {
 protected:
     int T_fore=-1,T_back=-1;
+    int nT_guoke = 0;
+    size_t szGuoke = 0;
     std::map<hGensor,enum tpSTATUS> tensors;
     
 public:
     RLS_BP(EDGE_DEVICES *hED,const CLI_params&config, int flag);
     virtual ~RLS_BP() {}
     virtual void Init( Fish *hF,std::vector<shared_ptr<GeNeuron>> backbons,int flag=0x0);
-    virtual bool BeforeTrain(int flag=0x0);
+    virtual bool InitGUOKE(int flag=0x0);
     virtual bool Prepare(int iter,int flag=0x0);
     virtual tpSTATUS GetTensorStatus(int step,hGTensor tenosr,int flag=0x0);
     virtual tpSTATUS SetTensorStatus(int step,hGTensor tenosr,tpSTATUS sta,int flag=0x0);

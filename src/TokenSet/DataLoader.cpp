@@ -1087,6 +1087,32 @@ std::string shuffle_samples_X(const std::string &rng_state, size_t *shuffled_off
     return mt19937_get_state(rng);
 }
 
+void StepInfos::Init(Optimizer *hO, int flag) { hOpt = hO; }
+
+void StepInfos::Add(STEP step, int flag) {
+    if (step.loss < Best()) {
+        best_id = steps.size() - 1;
+    }
+    double g0 = 0.0, w0 = 0.0;
+    hGensor ten1, ten2;
+    for (auto tensor : hOpt->opt_ps) {
+        size_t nElem = tensor->size();
+        float s      = 1.0 / nElem;
+        if (G_Has_(tensor->name, {"inp_embd"})) {  // inp_embd=
+            continue;
+        }
+        if (tensor->gnorm * s > g0) {
+            g0 = tensor->gnorm * s, ten1 = tensor;
+        }
+        if (tensor->wnorm * s > w0) {
+            w0 = tensor->wnorm * s, ten2 = tensor;
+        }
+    }
+    step.gMax = ten1->gnorm / ten1->size(), step.gMaxName = ten1->name;
+    step.wMax = ten2->wnorm / ten2->size(), step.wMaxName = ten2->name;
+
+    steps.push_back(step);
+}
 bool StepInfos::SaveToCSV(const string &path, int flag) {
     try {
         //  FSerial
@@ -1096,12 +1122,17 @@ bool StepInfos::SaveToCSV(const string &path, int flag) {
             _INFO("%s: warning: empty or not existing training data file '%s'\n", __func__, fpath.c_str());
             return false;
         }
-        fprintf(fp, "epoch iter loss lr gNorm tX dt\n");
+        fprintf(fp, "epoch iter loss lr gNorm tX dt max_|G| name_1 max_|W| name_2\n");
         for (auto step : steps) {
-            fprintf(fp, "%d %d %.3f %.2e %.3f %g %g\n", step.epoch, step.iter, step.loss, step.lr, step.gNorm, step.tX, step.dt);
+            fprintf(fp, "%d %d %.3f %.2e %.3f %g %g ", step.epoch, step.iter, step.loss, step.lr, step.gNorm, step.tX, step.dt);
+
+            fprintf(fp, "%g %s ", step.gMax, step.gMaxName.c_str());
+            fprintf(fp, "%g %s ", step.wMax, step.wMaxName.c_str());
+            fprintf(fp, "\n");
         }
         fclose(fp);
-        _INFO(">>>>>> Save %s to \"%s\", step=%ld\n", name.c_str(), fpath.c_str(), steps.size());
+        if (1/*DUMP()*/)
+            _INFO(">>>>>> Save %s to \"%s\", step=%ld\n", name.c_str(), fpath.c_str(), steps.size());
         return true;
     } catch (...) {
         return false;

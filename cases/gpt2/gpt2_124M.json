@@ -3,6 +3,12 @@
     
     "model":{      
         "arch":"GPT2",
+        "datatype":{
+            "weight":"BF16",
+            "embed":"BF16",
+            "gradient":"BF16",
+            "# ternary":["ffn_down.weight", "ffn_up.weight"]
+        },
         "parameter":{
             "Layer": 12,  
             "transformer":{
@@ -33,12 +39,12 @@
         "save-every":500,
         "dump-every":10,
         "gpt-every":-10,
-        "epoch":2,
+        "epoch":1,
         "batch":80,
         "learning-rate":0.0006,  
 
         "optimizatioin":{
-            "#method":"adamw sgdv hsgd",
+            "#method":"adamw sgdv hsgd lion",
             "method":"adamw",
             "sign":0,
             "grad_accumulation":1,

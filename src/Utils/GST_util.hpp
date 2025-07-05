@@ -151,6 +151,7 @@ std::string FILE_EXT(const std::string &path);
 
 struct SUM {
     static double tX, tX1, tRemater, tQKV, tFFN, tUpload;
+    static size_t szUpload;
     static void Reset(string typ, int flag = 0x0);
     static void TimeInfo(int flag = 0x0);
 };

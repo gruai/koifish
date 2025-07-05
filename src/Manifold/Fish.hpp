@@ -306,6 +306,11 @@ public:
         return nullptr;
     }
     hOptimizer GetOptimizer() {   assert(hOPT!=nullptr);  return hOPT;   }
+    template<typename T>
+    T *GetScheduler()  {    
+        T *hS = hEDS->GetScheduler<T>();    
+        return hS;    
+    }
 
     virtual int ForwardOnRLS(int iter,int flag);
     virtual int BackwardOnRLS(int iter,int flag);
@@ -395,7 +400,7 @@ public:
         int nTensor = gensors.size();
     }
 
-    // If isParam, only alloc grad, no init!
+    // If isParam 1) call InitParam@huTensor::Alloc(random or serialize); 2) alloc grad if isTrain;   
     void InitGensor(void *ctx, const string&name, hGensor gensor, bool isParam, int flag = 0);
 
     void InitGensor(void *ctx, hGensor gensor, const char *name, struct random_normal_distribution *rnd = nullptr, int flag = 0);    

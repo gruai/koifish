@@ -2,7 +2,8 @@
  *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
- *  Optimizer
+ *  1. Spike analysis
+ *      Some cause:   1).Large lr  2) ROPE 
  *
  *  \brief Optimizer
  *  \author Yingshi Chen
@@ -27,7 +28,7 @@ Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params &config, int flag) : _fi
         Although many people think "ADAMw is much better than SGD for attention models"  https://arxiv.org/pdf/2310.01082
         But may litter slower. For example:   jModel_SGD_v.info
     */
-    tpGD = method == "adamw" ? ADAMw : method == "sgdv" ? SGD_v : method == "sgd" ? SGD : method == "hsgd" ? SGD_HYBRID : method == "lion" ? LION : ADAMw_cuda;
+    tpGD = method == "adamw" ? ADAMw : method == "sgdv" ? SGD_v : method == "sgd" ? SGD : method == "hsgd" ? SGD_HYBRID : method == "lion" ? LION : ADAM_spike;
 
     nGradAccum   = std::max(1, train_params.n_gradient_accumulation);
     isGlobalGrad = nGradAccum > 1;  // Nearly same alloc grad or not
@@ -465,7 +466,13 @@ int Optimizer::GetITER(int flag) {
     return iter;
 }
 
+bool Optimizer::isSpike(int flag) {
+    return false;
+}
+
 int RAW_update(std::vector<hGTensor> &tensors, Optimizer *hOPT, float &grad_norm, int alg, int flag);
+/*
+*/
 Optimizer::RESULT Optimizer::Search(void *ctx, hGensor loss_, hGensor target_, CLI_params &config) {
     hEDS = _fish->hEDS;
     assert(hEDS != nullptr);
@@ -803,7 +810,7 @@ void Optimizer::BeforeTrain(hGensor tokens_, int flag) {
         offset += t->nByte();
     }
     if (tpGD == GD_METHOD::LION) {  //  Based on our experience, a suitable learning rate for Lion is typically 3-10x smaller than that for AdamW
-        adam.alpha /= 10;       // little better than /3
+        adam.alpha /= 10;           // little better than /3
         adam.decay *= 10;
         adam.beta1 = 0.9;  //  the default values for β1 and β2 are discovered through the program search process and set as 0.9 and 0.99
         adam.beta2 = 0.99;
@@ -969,13 +976,15 @@ OPT_Adam::OPT_Adam(NLP_AutoRegressive *g_, CLI_params &params_, int flag) : Opti
 
     adam                      = &(_fish->config.common.adam);
     adam->clip_alg            = 1;  // clip_alg=0 little better
+    adam->gclip               = adam->gclip / _fish->config.nLayer();
     _fish->config.Fuse_Normal = 0;  //
     if (g_->isTrain()) {
+        trainInfos().Init(this);
     } else {  // may different
         _fish->config.common.remater_ffn = 1;
         // _fish->config.common.remater_qkv = 1;
     }
-
+    
     // sched              = 1.0f;
 }
 

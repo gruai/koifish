@@ -241,7 +241,7 @@ MAEC::MAEC(Fish *hG_, const std::string &key_, int flag) {
 hGensor MAEC::ENC(hGensor cur, int flag) {
     if (isForward()) {
         if (!normE.Empty()) {
-            normE.FUSE_cuda(cur);
+            normE.cuTrain(cur);
             cur = normE.out;
         }
         for (auto ac : codes) {
@@ -259,7 +259,7 @@ hGensor MAEC::ENC(hGensor cur, int flag) {
             cur = down.delta;
         }
         if (!normE.Empty()) {
-            normE.FUSE_cuda(cur);
+            normE.cuTrain(cur);
             cur = normE.delta;
         }
     }
@@ -310,6 +310,10 @@ VarCoder::VarCoder(Fish *hG_, const std::string &key_, JSON::const_iterator jit,
 
 FFN::FFN(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : VarCoder(hG_, key_, jit, flag) {
     remater_ffn = hFish->config.common.remater_ffn;  // false;
+    tpWeight = TYPE_<floatFFN>(), tpActivation = tpWeight, tpGradient = tpWeight;
+    up.SetDType(tpWeight, tpActivation, tpGradient);
+    down.SetDType(tpWeight, tpActivation, tpGradient);
+    gate.SetDType(tpWeight, tpActivation, tpGradient);
     if (hG_->config.model.isFFNWeightTying) {
         // isSymmetric = true;      Need more time to study its effect
     }
@@ -429,7 +433,7 @@ hGensor FFN::Ming(RLS_BP *ctx_, hGensor inpL, int flag) {
         inpL >> up >> down >> gate >> norm >> this;
         cur = out;
     } else {  //  high performance fused operator
-        cur = FUSE_cuda(cur, 0x0);
+        cur = cuTrain(cur, 0x0);
     }
 
     cur = AfterMing(ctx_, cur, flag);

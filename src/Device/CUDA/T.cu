@@ -42,8 +42,8 @@ float RAW_backward(Fish* fish, const int* iX, int grad_accum_steps, bool isOnlyE
     NvtxRange classifier_and_loss_range("classifier_and_loss");
     FFN* ffn         = fish->GetNeuron<FFN>("FFN", L - 1);
     LayerNormal* lnf = fish->GetNeuron<LayerNormal>("LayerNormal", 0);
-    delta            = cls->FUSE_cuda(nullptr, 0x0);  // some operation fused in forward pass
-    lnf->FUSE_cuda(delta, 0x0);                       //
+    delta            = cls->cuTrain(nullptr, 0x0);  // some operation fused in forward pass
+    lnf->cuTrain(delta, 0x0);                       //
 
     hGensor lastDelta = ffn->out;
     for (int l = L - 1; l >= 0; l--) {
@@ -53,8 +53,8 @@ float RAW_backward(Fish* fish, const int* iX, int grad_accum_steps, bool isOnlyE
         // GeNeuron *last = l == 0 ? embed : (GeNeuron *)(fish->GetNeuron<FFN>("FFN",l-1));    //residual = l == 0 ? ToX(embed->out) : ToX(preFFN->out);
         // ffn->delta = lastDelta;     ffn->tmpDelta = lastDelta;
         // LayerNormal *hNorm = l+1 != L ? &(fish->GetNeuron<SelfAttention>("SelfAttention",l+1)->norm) : lnf;
-        ffn->FUSE_cuda(nullptr, 0x0);
-        QKV->FUSE_cuda(nullptr, 0x0);  // QKV->norm.out,last->out
+        ffn->cuTrain(nullptr, 0x0);
+        QKV->cuTrain(nullptr, 0x0);  // QKV->norm.out,last->out
     }
     embed->OnEmbed(nullptr, 0x0);  //,random_u32(&rng_state)
 
@@ -95,7 +95,7 @@ void RAW_forward(Fish *fish,int flag) {
     SelfAttention *QKV0 = fish->GetNeuron<SelfAttention>("SelfAttention",0),*QKV=nullptr;
 
     if(tpFuseNormal==1){
-        cur=QKV0->norm.FUSE_cuda(cur);
+        cur=QKV0->norm.cuTrain(cur);
     }
 
     FFN *ffn=nullptr;
@@ -106,16 +106,16 @@ void RAW_forward(Fish *fish,int flag) {
         LayerNormal *hNorm = l+1 != L ? &(fish->GetNeuron<SelfAttention>("SelfAttention",l+1)->norm) : lnf;
         ffn->fuseNorm = tpFuseNormal==1?hNorm:nullptr;
         QKV->fuseNorm =  tpFuseNormal==1?&(ffn->norm):nullptr;
-        cur = QKV->FUSE_cuda(cur,residual,nullptr,nullptr,flag);
-        cur = ffn->FUSE_cuda(cur,nullptr, 0x0);
+        cur = QKV->cuTrain(cur,residual,nullptr,nullptr,flag);
+        cur = ffn->cuTrain(cur,nullptr, 0x0);
         residual = ffn->out;
     }
     if(tpFuseNormal==0){
-        cur = lnf->FUSE_cuda(ffn->out);
+        cur = lnf->cuTrain(ffn->out);
     }
     OutCLS* cls = fish->GetNeuron<OutCLS>("OutCLS",0);
     if(tpFuseCu==1)
-        cls->FUSE_cuda(cur,flag); //embed->w,
+        cls->cuTrain(cur,flag); //embed->w,
     else
         assert(0);//cls->preLogits = lnf->out*embed->w;
     PrintTensor<floatX>("output",ToX(cls->preLogits),true,B,T,C);

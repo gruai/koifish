@@ -615,21 +615,20 @@ void NLP_AutoRegressive::Train(int flag) {
     // DEBUG.train_datas = 1;
     // DEBUG.train_hyperparams = 1;
     // DEBUG.back_graph_version = 1;        Verified at 05132025
-    DEBUG.T_ternary   = 0;
+    DEBUG.T_ternary   = 1;
     QUANT_ALG tpQuant = DEBUG.T_ternary == 1 ? W_SCALE : W_NOSCALE;
     string all_tensors;
     int nTernary = 0;
     size_t nzT   = 0;
     hOPT->BeforeTrain(tokens_input, 0x0);
     RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
-    hRLS->BeforeTrain();
+    hRLS->InitGUOKE();
     hRLS->Prepare(-1);
     for (auto t : hOPT->opt_ps) {
         if (DEBUG.T_ternary > 0 &&
-            G_Has_(t->name, {"ffn_down.weight", "ffn_up.weight"})) {  // "ffn_down.weight","ffn_up.weight","attn_qkv.weight","attn.wo.weight"
+            G_Has_(t->name, config.datatypes.Ternary)) {  // {"ffn_down.weight", "ffn_up.weight"}
             BIT_SET(t->flags, GTensor::F_TERNARY);
             t->tpQuant = tpQuant;
-            // t->ToTernary();
             nTernary++;
             nzT += t->size();
             all_tensors += t->name;
@@ -854,7 +853,7 @@ int NLP_AutoRegressive::ForwardOnNeuron_v0(int flag) {
     SelfAttention *QKV0 = GetNeuron<SelfAttention>("SelfAttention", 0), *QKV = nullptr;
 
     if (tpFuseNormal == 1) {
-        cur = QKV0->norm.FUSE_cuda(cur);
+        cur = QKV0->norm.cuTrain(cur);
     }
 
     FFN *ffn = nullptr;
@@ -865,15 +864,15 @@ int NLP_AutoRegressive::ForwardOnNeuron_v0(int flag) {
         LayerNormal *hNorm = l + 1 != L ? &(GetNeuron<SelfAttention>("SelfAttention", l + 1)->norm) : lnf;
         ffn->fuseNorm      = tpFuseNormal == 1 ? hNorm : nullptr;
         QKV->fuseNorm      = tpFuseNormal == 1 ? &(ffn->norm) : nullptr;
-        cur                = QKV->FUSE_cuda(cur, flag);
-        cur                = ffn->FUSE_cuda(cur, 0x0);
+        cur                = QKV->cuTrain(cur, flag);
+        cur                = ffn->cuTrain(cur, 0x0);
         // residual = ffn->out;
     }
     if (tpFuseNormal == 0) {
-        cur = lnf->FUSE_cuda(cur);
+        cur = lnf->cuTrain(cur);
     }
     OutCLS *cls = GetNeuron<OutCLS>("OutCLS", 0);
-    cls->FUSE_cuda(cur, flag);  // embed->w,
+    cls->cuTrain(cur, flag);  // embed->w,
 
     PrintTensor<floatX>("output", ToX(cls->preLogits), true, B, T, C);
     // SYNC_DEVICE();

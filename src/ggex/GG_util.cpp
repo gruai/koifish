@@ -410,11 +410,14 @@ MODEL_ARCH CLI_params::ModelArch() {
     return arch;
 }
 
+bool CLI_params::isValid(int flag) {
+    uint32_t head_dim = n_embd_head();
+    return true;
+}
+
 bool CLI_params::JModel2Params(int flag) {
     string key = "";
     try {
-        // nlohmann::ordered_json jm = jKEY(jConfig,{"model"});
-
         jModel = jKEY(jConfig, {"model"});
         if (jModel.empty()) {
             return false;
@@ -460,16 +463,14 @@ bool CLI_params::JModel2Params(int flag) {
         }
         // Mem 8484=>4772=>4838
         if (DEBUG.cmd_p1 == 1)
-            scheduling.strategy = SKDU_params::MEM_SWAP;
+            scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
         else {
-            // scheduling.strategy = SKDU_params::MEM_SWAP;
-            scheduling.strategy = SKDU_params::MEM_SWAP_GUOKE;
+            // scheduling.strategy = MEM_STRATEGY::MEM_SWAP;
+            scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
         }
 
-        if (scheduling.strategy == SKDU_params::MEM_SWAP_GUOKE) {
-            common.remater_ffn = 0;
-            // common.remater_qkv = 0;
-            // common.remater_ffn = 1;             common.remater_qkv = 1; // more memory, more time
+        if (scheduling.strategy == MEM_STRATEGY::MEM_SWAP_GUOKE) {
+            common.remater_ffn = 0;  // more memory, more time
         } else {
             common.remater_ffn = 1;
             // common.remater_qkv = 1;
@@ -486,10 +487,12 @@ bool CLI_params::JModel2Params(int flag) {
 }
 
 bool CLI_params::isShareLayerOut() const {
-    if (scheduling.strategy == SKDU_params::MEM_PRE_ALLOC)
+    if (scheduling.strategy == MEM_STRATEGY::PRE_ALLOC_GPU || scheduling.strategy == MEM_STRATEGY::PRE_ALLOC_HOST_MAP)
         return false;
     return true;
 }
+
+// Deprecated, only for debug
 bool SKDU_params::isUpdateParamV0() const {
     if (strategy == MEM_SWAP || strategy == MEM_SWAP_GUOKE)
         return false;
@@ -518,11 +521,7 @@ void CLI_params::OnMostToken(size_t nMost, int flag) {
 }
 
 void SKDU_params::Dump(int typ) const {
-    _INFO("[Scheduling] MEM=%s UpdateParam=V%d ParamResident=%d\n",
-          strategy == MEM_PRE_ALLOC ? "PreAlloc"
-          : strategy == MEM_SWAP    ? "Swap"
-                                    : "Guoke",
-          isUpdateParamV0() ? 0 : 1, (int)isParamResident);
+    _INFO("[Scheduling] MEM_STRATEGY=%s UpdateParam=V%d \n", MEM_STRATEGY_desc[strategy].c_str(), isUpdateParamV0() ? 0 : 1);
 }
 
 void CLI_params::OnArch() {
@@ -570,9 +569,14 @@ void CLI_params::OnArch() {
             model.isSLPBias     = true;  // nealy same
             model.isPaddedCls   = true;  //  ceil(n/128.0)*128
             model.isSeparateQKV = true;
-            model.Rope_version  = 2;  // why 1 would fail?  3 litlle slower than 2
+            /* Very strange
+                1. ver_1 would fail, why?
+                2. ver_2 also fail
+                2. ver_3 would stall after 700 steps
+            */
+            model.Rope_version       = 0;
             model.isEmbedWeightTying = true;
-            model.preLogits_dB  = 8;
+            model.preLogits_dB       = 8;
 
             int group = Get({"model_v0", "target_group"}, 1);
             assert(group == 1);
@@ -580,10 +584,13 @@ void CLI_params::OnArch() {
 
         break;
         case NLP_QWEN2:
-            scheduling.strategy = SKDU_params::MEM_SWAP_GUOKE;
-            model.isSeparateQKV = true;
-            model.Rope_version  = 2;
+            // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;  // 5.89 tps
+            // scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;      //  6.53 tps
+            scheduling.paramIsGuoke = true;
+
+            model.isSeparateQKV = true, model.isBqkv = true;
             model.sNorm = ".norm", model.sLayer = "layers.";
+            model.isEmbedWeightTying = true;  //  why false would cause nan
             // model.sAttnOut=".wqkv";
             break;
         case NLP_DEEPSEEK:
@@ -720,6 +727,7 @@ bool CLI_params::InitJConfig(int flag) {
         // if(model_title.empty()){
         //     model_title = "Unknown";
         // }
+        datatypes.Ternary = jKV_arr(jConfig, {"model","datatype", "ternary"}, datatypes.Ternary, false);
 
         JModel2Params(0x0);
 

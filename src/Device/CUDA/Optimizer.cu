@@ -12,12 +12,9 @@
 #include "../../Manifold/Fish.hpp"
 #include "../../Manifold/Neuron.hpp"
 #include "../../Manifold/Optimizer.hpp"
+#include "../Pipe.hpp"
 #include "./kernel/utils.cuh"
 
-// static void *grads_memory=nullptr;
-// static float *m_memory=nullptr;
-//*v_memory=nullptr;
-//*master_weights=nullptr;
 extern unsigned long long rng_state;
 
 typedef struct {
@@ -25,134 +22,167 @@ typedef struct {
     size_t size;
 } ShardInfo;
 //  reset grad online
-template <typename Tp, typename Tg>
-__device__ void sgd_update(Tp* params, float* master_params_memory, Tg* grads_memory, size_t num_parameters, float learning_rate, float beta1, float beta2,
-                           float beta1_correction, float beta2_correction, float eps, float weight_decay, float grad_scale, unsigned int seed) {
+template <typename Tp>
+__device__ void sgd_update(Tp* params, float* tmp, Tp* grads0, size_t num_parameters, float learning_rate, float beta1, float beta2, float beta1_correction,
+                           float beta2_correction, float eps, float weight_decay, float grad_scale, unsigned int seed) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= num_parameters) {
         return;
     }  // guard
 
-    float grad      = grad_scale * (float)grads_memory[idx];
-    float old_param = (master_params_memory != NULL) ? master_params_memory[idx] : (float)params[idx];
+    float grad      = grad_scale * (float)grads0[idx];
+    float old_param = (tmp != NULL) ? tmp[idx] : (float)params[idx];
     float param     = old_param - (learning_rate * grad + weight_decay * old_param);
     // stochastic_rounding(param, &params[idx], seed);
-    params[idx]       = (Tp)(param);
-    grads_memory[idx] = (Tp)(0.0);
-    if (master_params_memory != NULL) {
-        master_params_memory[idx] = param;
+    params[idx] = (Tp)(param);
+    grads0[idx] = (Tp)(0.0);
+    if (tmp != NULL) {
+        tmp[idx] = param;
     }
 }
 //  reset grad online
-template <typename Tp, typename Tg>
-__global__ void CU_sgd(Tp* params, float* master_params_memory, Tg* grads_memory, size_t num_parameters, ptrdiff_t w_stride, ptrdiff_t g_stride,
-                       ptrdiff_t s_stride, float learning_rate, float beta1, float beta2, float beta1_correction, float beta2_correction, float eps,
-                       float weight_decay, float grad_scale, unsigned int seed) {
-    sgd_update(params + blockIdx.y * w_stride, master_params_memory ? master_params_memory + blockIdx.y * s_stride : NULL, grads_memory + blockIdx.y * g_stride,
-               num_parameters, learning_rate, beta1, beta2, beta1_correction, beta2_correction, eps, weight_decay, grad_scale, seed);
+template <typename Tp>
+__global__ void CU_sgd(Tp* params, float* tmp, Tp* grads0, size_t num_parameters, ptrdiff_t w_stride, ptrdiff_t g_stride, ptrdiff_t s_stride,
+                       float learning_rate, float beta1, float beta2, float beta1_correction, float beta2_correction, float eps, float weight_decay,
+                       float grad_scale, unsigned int seed) {
+    sgd_update(params + blockIdx.y * w_stride, tmp ? tmp + blockIdx.y * s_stride : NULL, grads0 + blockIdx.y * g_stride, num_parameters, learning_rate, beta1,
+               beta2, beta1_correction, beta2_correction, eps, weight_decay, grad_scale, seed);
 }
 
-template <typename Tp, typename Tg>
-__global__ void CU_sgdv(Tp* params, Tg* grads_memory, float* v_memory, size_t num_parameters, float learning_rate, float beta1, float beta2,
-                        float beta1_correction, float beta2_correction, float eps, float weight_decay, float grad_scale, unsigned int seed) {
+template <typename Tp, typename Tmv>
+__global__ void CU_sgdv(Tp* params, Tp* grads0, Tmv* gv, size_t num_parameters, float learning_rate, float beta1, float beta2, float beta1_correction,
+                        float beta2_correction, float eps, float weight_decay, float grad_scale, unsigned int seed) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= num_parameters) {
         return;
     }  // guard
 
-    float grad    = grad_scale * (float)grads_memory[idx];
-    float v       = v_memory[idx];
-    v             = lerp(grad * grad, v, beta2);  // beta2*v+(1-beta2)*grad*grad;
-    v_memory[idx] = v;
+    float grad = grad_scale * (float)grads0[idx];
+    float v    = gv[idx];
+    v          = lerp(grad * grad, v, beta2);  // beta2*v+(1-beta2)*grad*grad;
+    gv[idx]    = v;
     v /= beta2_correction;  // v_hat
     float old_param = (float)params[idx];
     float param     = old_param - (learning_rate * (grad / (sqrtf(v) + eps) + weight_decay * old_param));
     // stochastic_rounding(param, &params[idx], seed);
-    params[idx]       = (Tp)(param);
-    grads_memory[idx] = (Tp)(0.0);
+    params[idx] = (Tp)(param);
+    grads0[idx] = (Tp)(0.0);
 }
-template <typename Tp, typename Tg>
-__global__ void CU_lion_(Tp* params, Tg* grads_memory, float* m_memory, size_t num_parameters, float learning_rate, float beta1, float beta2, float eps,
-                         float weight_decay, float grad_scale, unsigned int seed) {
+template <typename Tp, typename Tmv>
+__global__ void CU_lion_(Tp* params, Tp* grads0, Tmv* gm, size_t num_parameters, float learning_rate, float beta1, float beta2, float eps, float weight_decay,
+                         float grad_scale, unsigned int seed) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= num_parameters) {
         return;
     }  // guard
 
-    float grad = grad_scale * (float)grads_memory[idx];
-    float m    = m_memory[idx], c;
+    float grad = grad_scale * (float)grads0[idx];
+    float m    = gm[idx], c;
     /*  Cautious LION
         mask = (update * grad > 0).to(grad.dtype)
         mask = mask * (mask.numel() / (mask.sum() + 1))
     */
     c = lerp(grad, m, beta1);  // beta1*m+(1-beta1)*grad;
     // c                 = c > 0 ? 1 : c == 0 ? 0 : -1;
-    c                 = c > eps ? 1 : c < -eps ? -1 : 0;  // ternary
-    m_memory[idx]     = lerp(grad, m, beta2);             // beta2*m+(1-beta2)*grad;
-    float old_param   = CU_T2Float(params + idx);
-    params[idx]       = CU_Float2T<Tp>(old_param - learning_rate * (c + weight_decay * old_param), seed);
-    grads_memory[idx] = (Tp)(0.0);
+    c               = c > eps ? 1 : c < -eps ? -1 : 0;  // ternary
+    gm[idx]         = lerp(grad, m, beta2);             // beta2*m+(1-beta2)*grad;
+    float old_param = CU_T2Float(params + idx);
+    params[idx]     = CU_Float2T<Tp>(old_param - learning_rate * (c + weight_decay * old_param), seed);
+    grads0[idx]     = (Tp)(0.0);
 }
 
-template <typename Tp, typename Tg>
-__global__ void CU_adamw_(Tp* params, float* master_params_memory, Tg* grads_memory, float* m_memory, float* v_memory, size_t num_parameters,
-                          float learning_rate, float beta1, float beta2, float beta1_correction, float beta2_correction, float eps, float weight_decay,
-                          float grad_scale, unsigned int seed) {
+template <typename Tp, typename Tmv>
+__global__ void CU_adamw_(Tp* params, float* tmp, Tp* grads0, Tmv* gm, Tmv* gv, size_t num_parameters, float learning_rate,uint64_t flags,
+                          float beta1, float beta2, float beta1_correction, float beta2_correction, float eps, float weight_decay, float grad_scale,
+                          unsigned int seed) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= num_parameters) {
         return;
     }  // guard
 
-    float grad    = grad_scale * CU_T2Float(grads_memory + idx);
-    float m       = m_memory[idx];
-    float v       = v_memory[idx];
-    m             = lerp(grad, m, beta1);
-    m_memory[idx] = m;
-    v             = lerp(grad * grad, v, beta2);
-    v_memory[idx] = v;
+    float grad = grad_scale * CU_T2Float(grads0 + idx), m = gm[idx], v = gv[idx];
+    m = lerp(grad, m, beta1), gm[idx] = m;
+    v = lerp(grad * grad, v, beta2), gv[idx] = v;
     m /= beta1_correction;  // m_hat
     v /= beta2_correction;  // v_hat
-    float old_param = (master_params_memory != NULL) ? master_params_memory[idx] : (float)params[idx];
-    float param     = old_param - (learning_rate * (m / (sqrtf(v) + eps) + weight_decay * old_param));
+    float old_param = (tmp != NULL) ? tmp[idx] : (float)params[idx];
+    float step = m / (sqrtf(v) + eps), T_spike = 50;
+    //  Automatic detection of training instability
+    // step = step>T_spike ?  T_spike : step<-T_spike ? -T_spike : step;
+    float param = old_param - learning_rate * weight_decay * old_param - learning_rate * step;
     //  stochastic_rounding(param, &params[idx], seed);
     params[idx] = CU_Float2T<Tp>(param, seed);
     // params[idx] = (Tp)(param);
-    grads_memory[idx] = (Tp)(0.0);
+    grads0[idx] = (Tp)(0.0);
 
-    if (master_params_memory != NULL) {
-        master_params_memory[idx] = param;
+    if (tmp != NULL) {
+        tmp[idx] = param;
+    }
+    if(BIT_TEST(flags,GTensor::F_TERNARY)){
+        // CU_ternary_<__nv_bfloat16>, dGRID, dBLOCK, kernelArgs, smemPB, main_stream
     }
 }
 
-template <typename Tp, typename Tg>
-void Optimizer_update(Tp* params, float* master_params_memory, Tg* grads_memory, float* m_memory, float* v_memory, size_t num_parameters, ptrdiff_t w_stride,
-                      ptrdiff_t g_stride, ptrdiff_t s_stride, int num_slices, float learning_rate, float beta1, float beta2, int t, float eps,
-                      float weight_decay, float grad_scale, float grad_norm, unsigned int seed, cudaStream_t stream) {
-    // AdamW update
-    int block_size         = 512;
-    int num_blocks         = CEIL_DIV(num_parameters, block_size);
-    float beta1_correction = 1.0f - powf(beta1, t);
-    float beta2_correction = 1.0f - powf(beta2, t);
-    assert(num_slices == 1);    // limited gpu memory
-    if (m_memory == nullptr) {  // SGD,SGD_V
-        if (v_memory == nullptr) {
-            CU_sgd<<<dim3(num_blocks, num_slices), block_size, 0, stream>>>(params, master_params_memory, grads_memory, num_parameters, w_stride, g_stride,
-                                                                            s_stride, learning_rate, beta1, beta2, beta1_correction, beta2_correction, eps,
-                                                                            weight_decay, grad_scale, seed);
-        } else {
-            CU_sgdv<<<num_blocks, block_size, 0, stream>>>(params, grads_memory, v_memory, num_parameters, learning_rate, beta1, beta2, beta1_correction,
-                                                           beta2_correction, eps, weight_decay, grad_scale, seed);
-        }
+template <typename Tp, typename Tmv>
+__global__ void CU_adamw_p(PIPE_Optimizer<Tp, Tmv> pipe) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= pipe.num_parameters) {
+        return;
+    }  // guard
+
+    float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx), m = pipe.gm[idx], v = pipe.gv[idx];
+    m = lerp(grad, m, pipe.beta1), pipe.gm[idx] = m;
+    v = lerp(grad * grad, v, pipe.beta2), pipe.gv[idx] = v;
+    m /= pipe.beta1_correction;  // m_hat
+    v /= pipe.beta2_correction;  // v_hat
+    float old_param = (float)pipe.params[idx];
+    float step = m / (sqrtf(v) + pipe.eps);
+    //  Automatic detection of training instability
+    // step = step>T_spike ?  T_spike : step<-T_spike ? -T_spike : step;
+    float param = old_param - pipe.learning_rate * pipe.weight_decay * old_param - pipe.learning_rate * step;
+    //  stochastic_rounding(param, &params[idx], seed);
+    pipe.params[idx] = CU_Float2T<Tp>(param, pipe.seed);
+    // params[idx] = (Tp)(param);
+    pipe.grads0[idx] = (Tp)(0.0);
+
+    if (BIT_TEST(pipe.flags, GTensor::F_TERNARY)) {
+        // CU_ternary_<__nv_bfloat16>, dGRID, dBLOCK, kernelArgs, smemPB, main_stream
+    }
+}
+
+template <typename Tp, typename Tmv>
+void Optimizer_update(PIPE_Optimizer<Tp, Tmv>& pipe, cudaStream_t stream) {
+    cudaError_t err;
+    int dBLOCK            = 512;  //  1024?
+    int dGRID             = CEIL_DIV(pipe.num_parameters, dBLOCK);
+    size_t smemPB         = 1024 * sizeof(float);
+    pipe.beta1_correction = 1.0f - powf(pipe.beta1, pipe.iter);
+    pipe.beta2_correction = 1.0f - powf(pipe.beta2, pipe.iter);
+    void* kernelArgs[]    = {(void*)&pipe};
+    if (pipe.gm == nullptr) {  // SGD,SGD_V
+        // if (gv == nullptr) {
+        //     CU_sgd<<<num_blocks, block_size, 0, stream>>>(params, tmp, grads0, num_parameters, w_stride, g_stride,
+        //                                                                     s_stride, learning_rate, beta1, beta2, beta1_correction, beta2_correction, eps,
+        //                                                                     weight_decay, grad_scale, seed);
+        // } else {
+        //     CU_sgdv<<<num_blocks, block_size, 0, stream>>>(params, grads0, gv, num_parameters, learning_rate, beta1, beta2, beta1_correction,
+        //                                                    beta2_correction, eps, weight_decay, grad_scale, seed);
+        // }
     } else {  // LION ADAMw
-        if (v_memory == nullptr) {
-            eps = grad_norm / num_parameters;
-            CU_lion_<<<num_blocks, block_size, 0, stream>>>(params, grads_memory, m_memory, num_parameters, learning_rate, beta1, beta2, eps, weight_decay,
-                                                            grad_scale, seed);
+        if (pipe.gv == nullptr) {
+            pipe.eps = pipe.grad_norm / pipe.num_parameters;
+            // CU_lion_<<<num_blocks, block_size, 0, stream>>>(params, grads0, gm, num_parameters, learning_rate, beta1, beta2, eps, weight_decay,grad_scale,
+            // seed);
         } else {
-            // CU_sgdv<<<num_blocks, block_size, 0, stream>>>(params, master_params_memory, grads_memory,
-            //          v_memory, num_parameters, learning_rate, beta1, beta2, beta1_correction, beta2_correction, eps, weight_decay,grad_scale, seed);
-            CU_adamw_<<<num_blocks, block_size, 0, stream>>>(params, master_params_memory, grads_memory, m_memory, v_memory, num_parameters, learning_rate,
-                                                             beta1, beta2, beta1_correction, beta2_correction, eps, weight_decay, grad_scale, seed);
+            if(1){
+            // err = cudaLaunchCooperativeKernel((void*)CU_adamw_<Tp,Tmv>, dGRID, dBLOCK, kernelArgs, smemPB, main_stream);
+            // cudaCheck(err);      "too many blocks in cooperative launch"
+                CU_adamw_p<<<dGRID, dBLOCK, 0, stream>>>(pipe);
+            }else{            // result=/home/cys/rnd/lic/log/gpt2/0703_adamw.info
+                CU_adamw_<<<dGRID, dBLOCK, 0, stream>>>(pipe.params, pipe.tmp, pipe.grads0, pipe.gm, pipe.gv, pipe.num_parameters, pipe.learning_rate,pipe.flags,
+                                                             pipe.beta1, pipe.beta2, pipe.beta1_correction, pipe.beta2_correction, pipe.eps, pipe.weight_decay, pipe.grad_scale, pipe.seed);
+            }
+
         }
     }
     cudaCheck(cudaGetLastError());
@@ -164,19 +194,6 @@ void Optimizer::InitOnCUDA(int flag) {
     GD_METHOD tpCurGD = tpGD;
 
     int num_slices = 1, C = _fish->config.nEmbed();
-    // if (m_memory == NULL) {
-    //     NvtxRange rng("InitOpt");
-
-    //     if(tpGD!=SGD){
-    //         _INFO("Optimizer \t cudaMalloc=%zu MiB for v\n", (adam.n_parameters * sizeof(float)) >> 20);
-    //         cudaCheck(cudaMalloc((void**)&v_memory, adam.n_parameters * sizeof(float)));
-    //         cudaCheck(cudaMemset(v_memory, 0, adam.n_parameters * sizeof(float)));
-    //     }
-    // }
-    // if (TrainParams().opt_alloc_weight==1 && master_weights == NULL) {
-    //     _INFO("Optimizer \t cudaMalloc=%zu MiB for parametrs(FP32)\n", (adam.n_parameters * sizeof(float)) >> 20);
-    //     cudaCheck(cudaMalloc((void**)&master_weights, adam.n_parameters * sizeof(float)));
-    // }
     size_t off = 0;
     for (auto tensor : opt_ps) {
         size_t nP = tensor->size(), grid_size = CEIL_DIV(nP, 512);
@@ -213,11 +230,11 @@ int UpdateTensorParam_cuda(hGTensor tensor, Optimizer* hOPT, float& grad_norm, i
     float wd          = adam.decay;  // we only want to weight decay the 2D tensors and leave all 1D tensors alone
     if (tensor->shape.size() == 1)
         wd = 0;
-
+    bool isBIT        = BIT_TEST(tensor->flags, GTensor::F_TERNARY);
     floatX *param_ptr = ToX(tensor), *grad_ptr = ToG(tensor);
-    ptrdiff_t opt_state_offset = tensor->offset;                     // multi_gpu_config->zero_stage < 1 ?  local_offset_full : local_offset_partial;
-    float *m_ptr = (float*)tensor->gm, *v_ptr = (float*)tensor->gv;  // v_memory==nullptr? nullptr : v_memory + opt_state_offset;
-    float* master_ptr = NULL;                                        // why this would slow down converge?
+    ptrdiff_t opt_state_offset = tensor->offset;                           // multi_gpu_config->zero_stage < 1 ?  local_offset_full : local_offset_partial;
+    floatMV *m_ptr = (floatMV*)tensor->gm, *v_ptr = (floatMV*)tensor->gv;  // gv==nullptr? nullptr : gv + opt_state_offset;
+    float* master_ptr = NULL;                                              // why this would slow down converge?
     // if (master_weights != NULL && im.isAdam) {
     //     master_ptr = master_weights + opt_state_offset;
     // }
@@ -233,10 +250,11 @@ int UpdateTensorParam_cuda(hGTensor tensor, Optimizer* hOPT, float& grad_norm, i
     if (config.lars_ratio > 0) {
         grad_scale = tensor->rLARS(grad_scale, config.lars_ratio, 0x0);
     }
-
-    Optimizer_update(param_ptr, master_ptr, grad_ptr, m_ptr, v_ptr, shard.size, shard.size, shard.size, shard.size,
-                     num_slices,  // num_parameters,ptrdiff_t w_stride, ptrdiff_t g_stride, ptrdiff_t s_stride,  int num_slices,
-                     learning_rate, beta1, beta2, iter, eps, wd, grad_scale, grad_norm, seed, main_stream);
+    PIPE_Optimizer pipe(param_ptr, master_ptr, grad_ptr, m_ptr, v_ptr, shard.size, shard.size, shard.size, shard.size, tensor->flags, learning_rate, beta1,
+                        beta2, iter, eps, wd, grad_scale, grad_norm, seed);
+    if (BIT_TEST(tensor->flags, GTensor::F_TERNARY))
+        pipe.learning_rate *= 3;        //  1-bit models often exhibit greater training stability compared to their full-precision counterparts, allowing for more aggressive initial learning steps.
+    Optimizer_update(pipe, main_stream);
 
     cudaCheck(cudaGetLastError());
     return 0x0;
@@ -268,11 +286,11 @@ int RAW_update(std::vector<hGTensor>& tensors, Optimizer* hOPT, float& grad_norm
                 wd = 0;
             // ptrdiff_t local_offset_full=0,local_offset_partial=tensor->offset;
             floatX* param_ptr = ToX(tensor);  //(floatX*)params + local_offset_full;
-            floatX* grad_ptr  = ToG(tensor);  //(floatX*)grads_memory + local_offset_full;
+            floatX* grad_ptr  = ToG(tensor);  //(floatX*)grads0 + local_offset_full;
 
             ptrdiff_t opt_state_offset = np;  // multi_gpu_config->zero_stage < 1 ?  local_offset_full : local_offset_partial;
 
-            // float* m_ptr = m_memory + opt_state_offset,* v_ptr = v_memory + opt_state_offset;
+            // float* m_ptr = gm + opt_state_offset,* v_ptr = gv + opt_state_offset;
             float *m_ptr = (float*)tensor->gm, *v_ptr = (float*)tensor->gv;
             float* master_ptr = NULL;
             // if (master_weights != NULL) { master_ptr = master_weights + opt_state_offset; }

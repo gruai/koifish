@@ -2,6 +2,12 @@
     "version":"0.1.0",
     "model":{    
         "arch":"GPT2",  
+        "datatype":{
+            "weight":"BF16",
+            "embed":"BF16",
+            "gradient":"BF16",
+            "ternary":["ffn_down.weight", "ffn_up.weight"]
+        },
         "parameter":{
             "Layer": 36,  
             "transformer":{                "Ctx":1024,  "Embed":    1280,    "Head": 20,   "Ffn":5120            }

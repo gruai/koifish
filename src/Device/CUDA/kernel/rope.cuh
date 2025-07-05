@@ -33,67 +33,26 @@
     1. Each thread is responsible for one head
     2. out may same as inp
 */
-template <typename Typ>
-__global__ void CU_rope_pre_(Typ *inp, Typ *out, float *scale, int seq_len, int head_dim, float theta, int rotary_dim, int B, int T, int C, uint32_t seed,
-                         bool isBack = false) {  //, int N
-    int b = blockIdx.x, t = blockIdx.y, j_head = blockIdx.z;
-    int c = threadIdx.x, nHead = seq_len / head_dim, h_id = (b * T + t) * nHead + j_head;
-    int half_hs = head_dim / 2;
-    if (c >= half_hs) {
-        return;
-    }
 
-    int idx1 = h_id * head_dim + c, idx2 = idx1 + half_hs;
-    assert(idx2 < B * T * C);
-    float x1 = inp[idx1], x2 = inp[idx2], out1, out2, s = 1.0;
-    if (scale != nullptr) {
-        if (isBack) {
-            s = 1.0 / scale[h_id];
-        } else {
-            int NUM_WARPS = CEIL_DIV(head_dim, WARP_SIZE);
-            assert(NUM_WARPS <= WARP_SIZE);
-            float sum      = x1 * x1 + x2 * x2;
-            float head_sum = blockReduce<warpReduceSum>(sum, true);
-            scale[h_id]    = rsqrtf(head_sum / head_dim + 1.0e-5);
-            x1 *= scale[h_id], x2 *= scale[h_id];
-        }
-    }
-    // float freq = j_head >= rotary_dim ? 0.f : 1.0f / powf(theta, (float)j_head / (float)rotary_dim);
-    // Why c?  the index of pair - similar to an optical splitter functionality where the light can be broken down to multiple signals
-    int c_1    = (c + seed) % head_dim;                               //  c_1 = c
-    float freq = 1.0f / powf(theta, 2.0f * c_1 / (float)rotary_dim);  //  [1,1.0/theta]
-    float val  = t * freq;                                            //(t+seed) * freq;
-    // val = (t%head_dim) * freq;
-    float sin_v = sinf(val), cos_v = cosf(val);
-    if (isBack) {
-        out1 = x1 * cos_v + x2 * sin_v;
-        out2 = x1 * sin_v - x2 * cos_v;
-        out1 *= s, out2 *= s;
-    } else {
-        out1 = x1 * cos_v - x2 * sin_v;
-        out2 = x1 * sin_v + x2 * cos_v;
-    }
-    out[idx1] = CU_Float2T<Typ>(out1, seed + c);
-    out[idx2] = CU_Float2T<Typ>(out2, seed + c);
-    // out[idx] = x1;      out[idx + 1] = x2;
-}
 
 template <typename Typ>
 __global__ void CU_rope_(Typ *inp, Typ *out, float *scale, int seq_len, int head_dim, float theta, int rotary_dim, int B, int T, int C, uint32_t seed,
                          bool isBack = false) {  //, int N
     int b = blockIdx.x, t = blockIdx.y, j_head = blockIdx.z;
-    int c = threadIdx.x, nHead = seq_len / head_dim, h_id = (b * T + t) * nHead + j_head;
+    int c = threadIdx.x, nHead = seq_len / head_dim, h_id = b * T* nHead + t*nHead  + j_head;
     int half_hs = head_dim / 2;
     if (c >= half_hs) {
         return;
     }
+    // h_id = b * T * nHead + t + j_head * T;      // [batch, seq_len, heads, dim] -> [batch, heads, seq_len, dim]  
     // float freq = j_head >= rotary_dim ? 0.f : 1.0f / powf(theta, (float)j_head / (float)rotary_dim);
     // Why c?  the index of pair - similar to an optical splitter functionality where the light can be broken down to multiple signals
-    int c_1    = c; //  |g| would > 1
+    int c_1 = c;  //  |g| would > 1
     // int c_1 = (c + seed) % head_dim;                               // converge much slower
-    float freq = 1.0f / powf(theta, 2.0f * c_1 / (float)rotary_dim);  //  [1,1.0/theta]
-    float val  = t * freq;  
-    float sin_v = sinf(val), cos_v = cosf(val);
+    float sin_v, cos_v, freq = 1.0f / powf(theta, 2.0f * c_1 / (float)rotary_dim);  //  [1,1.0/theta]
+    // float val   = t * freq;
+    // float sin_v = sinf(val), cos_v = cosf(val);
+    __sincosf(t * freq, &sin_v, &cos_v);
     int idx1 = h_id * head_dim + c, idx2 = idx1 + half_hs;
     assert(idx2 < B * T * C);
     float x1 = inp[idx1], x2 = inp[idx2], out1, out2, s = 1.0;
@@ -103,24 +62,26 @@ __global__ void CU_rope_(Typ *inp, Typ *out, float *scale, int seq_len, int head
         } else {
             int NUM_WARPS = CEIL_DIV(head_dim, WARP_SIZE);
             assert(NUM_WARPS <= WARP_SIZE);
-            out1 = x1 * cos_v - x2 * sin_v;        out2 = x1 * sin_v + x2 * cos_v;
+            out1           = x1 * cos_v - x2 * sin_v;
+            out2           = x1 * sin_v + x2 * cos_v;
             float sum      = out1 * out1 + out2 * out2;
             float head_sum = blockReduce<warpReduceSum>(sum, true);
             scale[h_id]    = rsqrtf(head_sum / head_dim + 1.0e-5);
             x1 *= scale[h_id], x2 *= scale[h_id];
         }
-    }                                    
-    
-    if (isBack) {
-        out1 = x1 * cos_v + x2 * sin_v,     out2 = x1 * sin_v - x2 * cos_v;
+    }
+
+    if (isBack) {        
+        out1 = x1 * cos_v + x2 * sin_v, out2 = x1 * sin_v - x2 * cos_v; 
+       //  out1 = x2;          out2 = x1;   // testing: transpos has no influence
     } else {
-        out1 = x1 * cos_v - x2 * sin_v,     out2 = x1 * sin_v + x2 * cos_v;
+        out1 = x1 * cos_v - x2 * sin_v, out2 = x1 * sin_v + x2 * cos_v;
+       //  out1 = x2;          out2 = x1;
     }
     out[idx1] = CU_Float2T<Typ>(out1, seed + c);
     out[idx2] = CU_Float2T<Typ>(out2, seed + c);
     // out[idx] = x1;      out[idx + 1] = x2;
 }
-
 
 __global__ static void rope_f32x4_pack_kernel(float *x, float *out, int seq_len, int N) {
     int idx       = blockIdx.x * blockDim.x + threadIdx.x;
@@ -937,4 +898,49 @@ __global__ void qwen2vl_mrope_kernel(Typ *q,               // [bs*sl, n_qh * hd]
             k_head_ptr[d + half_hd] = new_k2;
         }
     }
+}
+
+template <typename Typ>
+__global__ void CU_rope_prenormal_(Typ *inp, Typ *out, float *scale, int seq_len, int head_dim, float theta, int rotary_dim, int B, int T, int C, uint32_t seed,
+                             bool isBack = false) {  //, int N
+    int b = blockIdx.x, t = blockIdx.y, j_head = blockIdx.z;
+    int c = threadIdx.x, nHead = seq_len / head_dim, h_id = (b * T + t) * nHead + j_head;
+    int half_hs = head_dim / 2;
+    if (c >= half_hs) {
+        return;
+    }
+
+    int idx1 = h_id * head_dim + c, idx2 = idx1 + half_hs;
+    assert(idx2 < B * T * C);
+    float x1 = inp[idx1], x2 = inp[idx2], out1, out2, val, sin_v, cos_v;
+    if (scale != nullptr) {
+        if (isBack) {
+            x1 = x1 / scale[h_id], x2 = x2 / scale[h_id];
+        } else {
+            int NUM_WARPS = CEIL_DIV(head_dim, WARP_SIZE);
+            assert(NUM_WARPS <= WARP_SIZE);
+            float sum      = x1 * x1 + x2 * x2;
+            float head_sum = blockReduce<warpReduceSum>(sum, true);
+            scale[h_id]    = rsqrtf(head_sum / head_dim + 1.0e-5);
+            x1 *= scale[h_id], x2 *= scale[h_id];
+        }
+    }
+    // float freq = j_head >= rotary_dim ? 0.f : 1.0f / powf(theta, (float)j_head / (float)rotary_dim);
+    // Why c?  the index of pair - similar to an optical splitter functionality where the light can be broken down to multiple signals
+    int c_1    = (c + seed) % head_dim;                               //  c_1 = c
+    float freq = 1.0f / powf(theta, 2.0f * c_1 / (float)rotary_dim);  //  [1,1.0/theta]
+    // float val  = t * freq;
+    // float sin_v = sinf(val), cos_v = cosf(val);
+    __sincosf(t * freq, &sin_v, &cos_v);
+
+    if (isBack) {
+        out1 = x1 * cos_v + x2 * sin_v;
+        out2 = x1 * sin_v - x2 * cos_v;
+    } else {
+        out1 = x1 * cos_v - x2 * sin_v;
+        out2 = x1 * sin_v + x2 * cos_v;
+    }
+    out[idx1] = CU_Float2T<Typ>(out1, seed + c);
+    out[idx2] = CU_Float2T<Typ>(out2, seed + c);
+    // out[idx] = x1;      out[idx + 1] = x2;
 }

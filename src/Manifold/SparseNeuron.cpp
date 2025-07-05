@@ -148,7 +148,6 @@ void SparseNeuron::SetEmbed(TokenEmbed *embd_, int type, int flag) {
     } else {
         w->SetRefer(embd_->wInv);
     }
-    // SetRefer(embd_);
 }
 
 // TODO: Weighted sampling

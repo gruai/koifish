@@ -65,34 +65,35 @@ hGensor GeNeuron::OnInput(hGensor hIn, int flag) {
     return hIn;
 }
 
-bool RLS_BP::BeforeTrain(int flag) {
-    if (params.strategy == SKDU_params::MEM_PRE_ALLOC)
+bool RLS_BP::InitGUOKE(int flag) {
+    if (params.strategy == MEM_STRATEGY::PRE_ALLOC_GPU)
         return true;
-    if (params.strategy == SKDU_params::MEM_SWAP_GUOKE) {
-        int nLayer = hFish->config.nLayer(), nG = 0, nT = 0;
+    bool isRefParam = params.paramIsGuoke;
+    if (params.strategy == MEM_STRATEGY::MEM_SWAP_GUOKE) {
+        int nLayer = hFish->config.nLayer(), nT = 0;
         FFN *firstFFN = hFish->GetNeuron<FFN>("FFN", 0);
-        firstFFN->SetGuoke(nullptr);
+        firstFFN->SetGuoke(nullptr, isRefParam);
         SelfAttention *firstQKV = hFish->GetNeuron<SelfAttention>("SelfAttention", 0);
-        firstQKV->SetGuoke(nullptr);
+        firstQKV->SetGuoke(nullptr, isRefParam);
         for (int l = 1; l < nLayer; l++) {
             SelfAttention *QKV = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
             nT += QKV->PGensors().size();
-            nG += QKV->SetGuoke(firstQKV);
+            nT_guoke += QKV->SetGuoke(firstQKV, isRefParam);
             FFN *ffn = hFish->GetNeuron<FFN>("FFN", l);
             nT += ffn->PGensors().size();
-            nG += ffn->SetGuoke(firstFFN);
+            nT_guoke += ffn->SetGuoke(firstFFN, isRefParam);
         }
-        _INFO("[RLS] \tGuoke=%d(%d)\t\n", nG, nT);
+        _INFO("[RLS] \tGuoke=%d(%d)\t\n", nT_guoke, nT);
     }
 
     return true;
 }
 
 void GeNeuron::ManageMemory(DATA_PLACE target, int typ, int flag) {
-    if (name == "model.output.cls") {  //"model.blk.1.attn"&& target==FREE_DEV        "preLogits"
+    if (name == "model.layers.0.mlp" && target != SYMBOLIC) {  //"model.blk.1.attn"&& target==FREE_DEV        "preLogits"   "model.output.cls"
         int debug = 0;
     }
-    if (target == place)
+    if (target == place && tReloads.empty())
         return;
     hOptimizer hOPT = hFish->hOPT;
     bool isSymbolic = target == SYMBOLIC;
@@ -112,7 +113,7 @@ void GeNeuron::ManageMemory(DATA_PLACE target, int typ, int flag) {
             case FREE_DEV:
                 if (t->isRefer())
                     continue;
-                t->Free(hFish->config.scheduling.isParamResident);
+                t->Free(true);  //  hFish->config.scheduling.isParamResident
                 op = "Free";
                 break;
             default:
@@ -128,6 +129,12 @@ void GeNeuron::ManageMemory(DATA_PLACE target, int typ, int flag) {
                     if (tpInitWeight == SERIALIZE)
                         t->tpInit = tpInitWeight;
                     t->Alloc(hOPT->GetITER(), flag);
+                    if (BIT_TEST(t->flags, GTensor::F_RELOAD)) {
+                        auto now = GST_us();
+                        assert(t->host_data != nullptr);
+                        t->SerialGP(t->host_data, nullptr, t->szData, false);  // 0x7ffda0c82300
+                        SUM::tX1 += GST_us() - now;
+                    }
                     op = "Alloc";
                 }
         }
@@ -187,11 +194,15 @@ bool RLSchedule::Planning(int flag) {
 }
 
 RLS_BP::RLS_BP(EDGE_DEVICES *hED_, const CLI_params &config, int flag) : RLSchedule(hED_, config, flag) { params = config.scheduling; }
+
 int RLS_BP::BeforeNextStep(int flag) {
     step++;
     return 0x0;
 }
-void RLS_BP::Dump(int typ) const { params.Dump(typ); }
+void RLS_BP::Dump(int typ) const {
+    params.Dump(typ);
+    _INFO("\tnGuoke=%d(%.3G)\n", nT_guoke, szGuoke / 1.0e9);
+}
 void RLS_BP::Init(Fish *hF, std::vector<hNeuron> backbons, int flag) {
     hFish  = hF;
     budget = hDevices->mostRAM / 1.0e6;
@@ -207,10 +218,11 @@ void RLS_BP::Init(Fish *hF, std::vector<hNeuron> backbons, int flag) {
     assert(nodes.size() >= 2);
     Node *last = nodes[nodes.size() - 1];
     _INFO("\tRLS_BP::Init [%s,...,%s]", nodes[0]->name.c_str(), last->name.c_str());
+    Dump(0x0);
 }
 
 bool RLS_BP::isResident(GeNeuron *neuron, int flag) {
-    if (params.strategy == SKDU_params::MEM_PRE_ALLOC)
+    if (params.strategy == MEM_STRATEGY::PRE_ALLOC_GPU || params.strategy == MEM_STRATEGY::PRE_ALLOC_HOST_MAP)
         return true;
     if (dynamic_cast<TokenEmbed *>(neuron))
         return true;
@@ -248,8 +260,8 @@ bool RLS_BP::Prepare(int iter, int flag) {
         }
         bool isAlloc = false;
         switch (params.strategy) {
-            case SKDU_params::MEM_SWAP_GUOKE:
-            case SKDU_params::MEM_SWAP:
+            case MEM_STRATEGY::MEM_SWAP_GUOKE:
+            case MEM_STRATEGY::MEM_SWAP:
                 isAlloc = isResident(neuron);  //|| iter>0
                 break;
             default:

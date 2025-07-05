@@ -370,8 +370,8 @@ bool Fish::SaveTrain(string sX, int flag) {
 
         // isOK = SAFETENSOR_Serialize(sOut,false); //only for debug
         // assert(isOK);
-    }
-    _INFO("[SAVE] @%s iter=%d\n", sX.c_str(), iter);
+        // _INFO("[SAVE] @%s iter=%d\n", sX.c_str(), iter);
+    }    
 
     return isOK;
 }
@@ -477,14 +477,10 @@ void Fish::InitGensor(void *ctx, const string &name, hGensor gensor, bool isPara
     }
 
     if (isParam /*&& isTrain()*/) {
-#ifdef _TENSOR_G_
+
         gensor->SetFlag(GTensor::GTensor::F_PARAM);
-#else
-        assert(gensor->data == nullptr);
-        ggml_set_param(ctx, gensor);
-#endif
-        gTN(gensor, "");
-        // nParams += tELEM(gensor);
+
+        gTN(gensor, "");        //  ?
         xGensors.push_back(gensor);
     }
     // if(strcmp(gensor->name,"output.bias")==0) {   //only for debug

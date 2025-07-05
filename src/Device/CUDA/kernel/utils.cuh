@@ -335,3 +335,36 @@ __device__ __forceinline__ __nv_bfloat16 CU_Float2T<__nv_bfloat16>(const float& 
     __nv_bfloat16 out = __float2bfloat16_rn(__uint_as_float(float_bits));
     return out;
 }
+
+/*
+    1) PCIe/Communication Bottlenecks: 
+        For data transfer between CPU and GPU, PCIe bandwidth (typically 16-64 GB/s) is far lower than GPU memory bandwidth (e.g., 1 TB/s for high-end GPUs), dragging down overall performance .
+    2) PCIe bandwidth depends on generation (e.g., PCIe 3.0 x16 = ~16 GB/s, PCIe 4.0 x16 = ~32 GB/s).
+        Overhead: Actual bandwidth is lower due to protocol overhead (~20% for PCIe 3.0/4.0).
+        Bidirectional Transfer: PCIe is full-duplex, but simultaneous reads/writes may contend for bandwidth.        
+*/
+void inline PCIE_test(int flag=0x0) {
+    // char pciBusId;
+    // cudaDeviceGetPCIBusId(pciBusId, sizeof(pciBusId), device_id);
+    // Use system tools (e.g., `lspci -vv` on Linux) to check PCIe link speed/lanes
+
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    float* host_data, *device_data;
+    size_t data_size = 1 << 26; // 64 MB
+    cudaMallocHost(&host_data, data_size);
+    cudaMalloc(&device_data, data_size);
+
+    cudaEventRecord(start);
+    cudaMemcpy(device_data, host_data, data_size, cudaMemcpyHostToDevice);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    double bandwidth_GBs = (data_size / 1e9) / (milliseconds / 1000);
+
+    printf("PCIe Bandwidth: %.2f GB/s\n", bandwidth_GBs);
+}

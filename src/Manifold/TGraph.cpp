@@ -80,9 +80,10 @@ SelfAttention::SelfAttention(Fish *hG_, const std::string &key_, JSON::const_ite
         shape = {C, C_qkv, n_head};
     }
     isSeparateQKV = hFish->config.model.isSeparateQKV;
-    Rope_version = hFish->config.model.Rope_version;
-    if (Rope_version>0)
-        isQKNormal    = true;
+    isBqkv        = hFish->config.model.isBqkv;
+    Rope_version  = hFish->config.model.Rope_version;
+    if (Rope_version > 0)
+        isQKNormal = true;
     // dump_flag = -1;
     tpNormal = DEBUG.SelfAttention_noraml;
     assert(shape[0] > 0 && shape[1] > 0 && shape[2] > 0);
@@ -108,8 +109,10 @@ bool SelfAttention::Build(int flag_0) {
         Q.BuildX(name + ".wq", sp, hFish, flag);
         K.BuildX(name + ".wk", sp, hFish, flag);
         V.BuildX(name + ".wv", sp, hFish, flag);
-        bqkv = std::make_shared<huTensor>(hFish, name + ".wqkv.bias", sp, tpWeight, false);  //  model.layers.0.attn.wqkv.bias
-        // hFish->InitGensor(nullptr,bqkv->name,bqkv,hFish->isTrain());
+        if (isBqkv) {
+            bqkv = std::make_shared<huTensor>(hFish, name + ".wqkv.bias", sp, tpWeight, false);  //  model.layers.0.attn.wqkv.bias
+            hFish->InitGensor(nullptr, bqkv->name, bqkv, true);
+        }
     } else {
         Q.BuildX(name + "_qkv", sp2, hFish, flag);
     }
@@ -131,9 +134,7 @@ bool SelfAttention::Build(int flag_0) {
     proj_cat.w->residual_scale = hFish->config.common.residual_scale;
     // if (remater_qkv) {
     if (isSeparateQKV) {
-        BIT_SET(Q.out->flags, GTensor::F_NOALLOC);
-        BIT_SET(K.out->flags, GTensor::F_NOALLOC);
-        BIT_SET(V.out->flags, GTensor::F_NOALLOC);
+        BIT_SET(Q.out->flags, GTensor::F_NOALLOC), BIT_SET(K.out->flags, GTensor::F_NOALLOC), BIT_SET(V.out->flags, GTensor::F_NOALLOC);
     } else
         BIT_SET(Q.out->flags, GTensor::F_NOALLOC);
     //}
@@ -148,7 +149,7 @@ bool SelfAttention::Build(int flag_0) {
     devK = (char *)devQ + offset, devV = (char *)devK + offset;  // for cuDNN
     devDeltaK = (char *)devDeltaQ + offset, devDeltaV = (char *)devDeltaK + offset;
 
-    if (Rope_version>0) {
+    if (Rope_version > 0) {
         assert(isSeparateQKV);
         if (rope == nullptr) {
             rope = std::make_shared<ROPE>();
@@ -166,9 +167,9 @@ bool SelfAttention::Build(int flag_0) {
 string SelfAttention::__repr__(string &suffix, string &prefix, int flag) {
     char buf[5012]  = "\0";
     const char *tab = prefix.c_str();
-    string a,sRope = rope == nullptr ? "" : rope->__repr__(a,a,flag);
-    sprintf(buf + strlen(buf), "{%s QKV%s%s E%d H%d x=%d trans=%d}", tab, moe.Empty() ? "" : "+moe", sRope.c_str(), C, n_head, tpNormal,
-            tpTrans);
+    string a, sRope = rope == nullptr ? "" : rope->__repr__(a, a, flag);
+    sprintf(buf + strlen(buf), "{%s QKV%s%s E%d H%d x=%d trans=%d %s}", tab, moe.Empty() ? "" : "+moe", sRope.c_str(), C, n_head, tpNormal, tpTrans,
+            bqkv == nullptr ? "" : "bqkv");
     if (flag > 0)
         _INFO("%s", buf);
     return buf;
@@ -215,7 +216,7 @@ hGensor SelfAttention::Ming(RLS_BP *hRLS, hGensor inpL, int flag) {
         cur = out;
         // gTN0(cur,"%s_+",name.c_str());
     } else {  // high performace fused operator
-        cur = FUSE_cuda(cur, flag);
+        cur = cuTrain(cur, flag);
     }
 
     cur = AfterMing(hRLS, cur, flag);

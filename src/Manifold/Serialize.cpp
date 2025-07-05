@@ -228,11 +228,13 @@ void *MMAP_json(JSON &header, void **objs, size_t *objs_nz, const std::string &p
 
 bool Fish::HF_Serialize(bool isSave, int flag) { return false; }
 
-bool MODEL_CARD::OnJsonCALM(const std::string &path, const JSON &meta, int flag) {
+bool MODEL_CARD::OnJsonCALM(CLI_params *hConfig, const std::string &path, const JSON &meta, int flag) {
     sTokenPath = path;
-    dim        = jKVs(meta, {"dim"}, dim);                // atoi(meta["dim"]);
+    dim        = jKVs(meta, {"dim"}, dim);  // atoi(meta["dim"]);
+    assert(dim == hConfig->nEmbed());
     hidden_dim = jKVs(meta, {"hidden_dim"}, hidden_dim);  // atoi(meta["hidden_dim"]);
     n_layers   = jKVs(meta, {"n_layers"}, n_layers);      // atoi(meta["n_layers"]);
+    assert(n_layers == hConfig->nLayer());
     n_heads    = jKVs(meta, {"n_heads"}, n_heads);        // atoi(meta["n_heads"]);
     n_kv_heads = jKVs(meta, {"n_kv_heads"}, n_kv_heads);  // atoi(meta["n_kv_heads"]);
     head_dim   = jKVs(meta, {"head_dim"}, head_dim);
@@ -284,6 +286,8 @@ bool MODEL_CARD::OnJsonCALM(const std::string &path, const JSON &meta, int flag)
     // const char* qkv_clip = meta["qkv_clip"];
     // config.qkv_clip = qkv_clip ? atof(qkv_clip) : FLT_MAX;
     clip_qkv = jKVs(meta, {"qkv_clip"}, clip_qkv);
+
+    assert(hConfig->isValid());
     return true;
 }
 
@@ -300,8 +304,9 @@ bool Fish::CALM_Serialize(const std::string &path, bool isOnlyVocab, int flag) {
         for (auto &[key, val] : header.items()) {
             if (key == "__metadata__") {
                 JSON metadata = val;
-                std::cout << "read metadata " << metadata << std::endl << std::endl;
-                config.model.OnJsonCALM(path, metadata, 0x0);
+                std::cout << "\n\t__metadata__ " << metadata << std::endl << std::endl;
+                config.model.OnJsonCALM(&config, path, metadata, 0x0);
+                
                 // InitDictTokenset();
                 if (isOnlyVocab)
                     continue;
@@ -325,7 +330,7 @@ bool Fish::CALM_Serialize(const std::string &path, bool isOnlyVocab, int flag) {
                 }  //
 
                 if (G_Has_(target->name, {"mlp.w1.weight"})) {  // "layers.27.mlp.w1.weight" wk.weight wq.weight wv.weight wo.weight ,"w2.weight","w3.weight"
-                    BIT_SET(target->flags, GTensor::F_TERNARY);
+                    // BIT_SET(target->flags, GTensor::F_TERNARY);
                     // target->ToTernary();
                 }
                 if (DUMP()) {

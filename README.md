@@ -5,10 +5,10 @@
 2. Efficient fine-tuning ~10B LLMs on edge device.
 
 ## Features
-
+- Hybrid 16/8/1 bit training
 - Rematerialisation and fusion of operators
 - Mixture of models
-- CPU, GPU and Hybrid training
+- Automatic detection of training instability
 - Json config file
 - Pure C++ tokenizer
 - Self-contained C++/cu project with minimal dependencies
@@ -44,8 +44,7 @@ make clean && make VERBOSE=TRUE
 * 06/14/2025: Support bit representation(binary[-1,1], ternary[-1,0,1]) 
 
 ## Working plan
-- Hybrid 16/8/1 bit training
-- Support QWen/DeepSeek
+- Support 1-bit version of QWen/DeepSeek
 - Sparsing
 
 ## Contributing

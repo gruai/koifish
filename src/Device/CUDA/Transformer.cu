@@ -92,7 +92,7 @@ __global__ __launch_bounds__(1024, 1) static void T_forward_qkv(const __grid_con
         float v1 = matmul_warppar(xs, w, k + 1, dim) * rmsscale;  //	2.08009243
 
         if (L->bqkv) {
-            v0 += L->bqkv[j + 0];
+            v0 += L->bqkv[j + 0];  // 3.53125
             v1 += L->bqkv[j + 1];
         }
 
@@ -336,9 +336,7 @@ float* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned flags)
     kernel_embed<<<dim / 32, 32, 0, main_stream>>>(args.x, token_embedding_table, token, dim);
     embed->w->Print("wte", 0, 0);
     PrintTensor<AT>("GetRow", args.x, true, dim, 1);
-    PrintTensor<__nv_fp8_e5m2>("wq", (__nv_fp8_e5m2*)(args.cLayers[0].wq), true, dim, dim);
-    PrintTensor<__nv_fp8_e5m2>("wk", (__nv_fp8_e5m2*)(args.cLayers[0].wk), true, args.kv_dim, dim);
-    PrintTensor<__nv_fp8_e5m2>("wv", (__nv_fp8_e5m2*)(args.cLayers[0].wv), true, args.kv_dim, dim);
+
     // rotate sink tokens forward to keep pace with non-sink tokens
     // if (kv_sink > 0) {
     // 	kernel_rotate_sink<<<dim3(kv_sink * kv_dim / 64, p->n_layers), 32, 0, stream>>>(
@@ -356,26 +354,25 @@ float* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned flags)
     // auto err = cudaLaunchCooperativeKernel((void*)T_forward_qkv<__nv_fp8_e5m2, __half, float>,dGRID, dBLOCK, &argsp, smemPB, main_stream);
     // cudaCheck( err );
     for (int l = 0; l < args.n_layers; ++l) {
-        args.layNo                        = l;
+        args.InitLayer(l);
         SelfAttention* QKV                = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
         const CoopLayer<__nv_fp8_e5m2>* L = (const CoopLayer<__nv_fp8_e5m2>*)(args.cLayers + l);  //	args.cLayers+l
         PrintTensor<float>("rms_att_weight", L->rms_att_weight, true, dim, 1);
-        // QKV->FUSE_cuda();
+        // QKV->cuTrain();
 
         auto err = cudaLaunchCooperativeKernel((void*)T_forward_qkv<__nv_fp8_e5m2, __half, AT>, dGRID, dBLOCK, &argsp, smemPB, main_stream);
         PrintTensor<AT>("hb", args.hb, true, args.hb_dim, 1);
         PrintTensor<AT>("q", args.q, true, args.q_dim, 1);
         PrintTensor<AT>("att", args.att, true, dim, 1);  // why it's inf ???
-        PrintTensor<AT>("x_1", args.x, true, dim, 1);
+        PrintTensor<AT>("x_qkv", args.x, true, dim, 1);
         cudaCheck(err);
         cudaCheck(cudaStreamSynchronize(main_stream));
+        // exit(-13);
         double now = GST_ms();
         FFN* ffn   = hFish->GetNeuron<FFN>("FFN", l);
-        if (DEBUG.cmd_p1) {  //	-0.010254 -0.238807 ...0.491514 0.0411605 0.318263 ...0.088502 	"ffn_inp" |avg|=0.115405(1536) avg_len=0.195593 sum2=58.7623
-                             //[-1.496535,1.585582] nz=0
-
-            ffn->OnDebug();
-            ffn->FUSE_cuda(cur, 0x0);
+        if (0) {             //	-0.010254 -0.238807 ...0.491514 0.0411605 0.318263 ...0.088502 	"ffn_inp" |avg|=0.115405(1536) avg_len=0.195593 sum2=58.7623
+            ffn->OnDebug();  //[-1.496535,1.585582] nz=0
+            ffn->cuTrain(cur, 0x0);
         } else {
             void* kernelArgs[] = {argsp};
             // err = cudaLaunchCooperativeKernel((void*)T_forward_ffn<__nv_fp8_e5m2, __half, AT>,dGRID, dBLOCK, &argsp, smemPB, main_stream);
@@ -384,8 +381,9 @@ float* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned flags)
             cudaCheck(err);
         }
         cudaCheck(cudaStreamSynchronize(main_stream));
-        SUM::tX1 += GST_ms() - now;
-        PrintTensor<AT>("x_2", args.x, true, dim, 1);
+        // SUM::tX1 += GST_ms() - now;
+        PrintTensor<AT>("x_ffn", args.x, true, dim, 1);
+        // args.AfterLayer(l);
     }
     if (isOnlyUpdateKV) {
         return NULL;

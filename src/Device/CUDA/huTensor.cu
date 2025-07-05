@@ -10,7 +10,8 @@
 // const int block_512 = 512;
 huTensor::huTensor(Fish* fish, const string& name_, const SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag) : GTensor(fish, shape, tpD_, false, flag) {
     size_t nEle = size();
-    if (DEBUG.T_cpu == 1) {
+    MEM_STRATEGY stra = fish->config.scheduling.strategy;
+    if (stra == MEM_STRATEGY::PRE_ALLOC_HOST_MAP) {
         flags |= BIT_FLAG::F_HOSTALLOC;
     } else
         flags |= BIT_FLAG::F_GPU;
@@ -55,7 +56,7 @@ size_t huTensor::Alloc_1(void** dst, bool isZero, size_t sz0, int flag) {
     cudaError_t error = cudaSuccess;
     size_t szAlloc    = sz0 == 0 ? szData : sz0;
     assert(szAlloc > 0);
-    error = hostAlloc ? cudaHostAlloc(dst, szAlloc, 0) : cudaMalloc(dst, szAlloc);  // 8420
+    error = hostAlloc ? cudaHostAlloc(dst, szAlloc, cudaHostAllocMapped) : cudaMalloc(dst, szAlloc);  // 8420
     // strange behavior of callo
     // data = calloc(szAlloc,1);  sAlloc = "Alloc_c/cu";   //8386
     if (error != cudaSuccess) {
@@ -320,11 +321,13 @@ bool huTensor::SerialGP(void* yD, void* yG, size_t szY, bool isToY, int flag) {
             }
         } else {
             assert(szY <= szData);
+            SUM::szUpload += szY;
             cudaCheck(cudaMemcpy(data, yD, szY, cudaMemcpyHostToDevice));
             if (yG != nullptr) {
                 assert(grad != nullptr);
+                SUM::szUpload += szY;
                 cudaCheck(cudaMemcpy(grad, yG, szY, cudaMemcpyHostToDevice));
-                cudaCheck(cudaMemcpy(grad, yG, szY, cudaMemcpyHostToDevice));
+                // cudaCheck(cudaMemcpy(grad, yG, szY, cudaMemcpyHostToDevice));
             }
         }
         return true;
@@ -497,20 +500,18 @@ void huTensor::Print(const string& title, int x, int flag, size_t nEle) const {
 }
 
 huTensor::~huTensor() { Free(); }
+
+
+// row-scaling  1 thrshold
 template <class T, int NUM_THREADS = CU_T4B_SMALL>
 __global__ static void CU_ternary_(float* gama, T* mat, int M, int N, int update) {  // block version
-    int tid = threadIdx.x, warp = tid / WARP_SIZE, lane = tid % WARP_SIZE;
-    // if(tid==0){//only for debug
-    // 	for (int j = 0; j < M; j ++) {
-    // 		gama[j] = 1.0;
-    // 	}
-    // 	return;
-    // }
-    int idx = blockIdx.x * NUM_THREADS + tid, ldJ = blockDim.x;
+    int tid = threadIdx.x;
+    int idx = blockIdx.x * NUM_THREADS + tid;   //, ldJ = blockDim.x;
+    if(idx>=M)  return;     //guard
     T ta = (T)1.0, tb = (T)(-1.0), t0 = (T)(0.0);
-    for (int j = tid; j < M; j += ldJ) {
+    // for (int j = tid; j < M; j += ldJ) {        
         float sum = 0.0f, a, average = 0.0f;
-        T* x0 = mat + j * N;
+        T* x0 = mat + idx * N;
         for (int k = 0; k < N; k++) {
             a = CU_T2Float(x0 + k);
             sum += fabs(a);
@@ -518,16 +519,23 @@ __global__ static void CU_ternary_(float* gama, T* mat, int M, int N, int update
         average = (sum / (N)) + 1.0e-5;
 
         if (update == QUANT_ALG::W_SCALE) {
-            gama[j] = average;
+            // gama[idx] = average;
             ta = (T)(average), tb = (T)(-average);
         } else {
-            gama[j] = 1.0f;
+            // gama[idx] = 1.0f;
         }
         for (int k = 0; k < N; k++) {
-            a     = CU_T2Float(x0 + k);
-            x0[k] = a > average / 2 ? ta : a < -average / 2 ? tb : t0;
+            a     = CU_T2Float(x0 + k);    
+            if(a > average / 2)
+                x0[k] = ta;
+            else if(a < -average / 2)
+                x0[k] = tb;
+            else{
+                x0[k] = k%2==0 ? ta : tb;
+            }        
+            // x0[k] = a > average / 2 ? ta : a < -average / 2 ? tb : t0;
         }
-    }
+    // }
     __syncthreads();
 }
 
@@ -561,6 +569,7 @@ __global__ static void CU_ternary_v0(float* out, T* x0, int N) {  // block versi
     __syncthreads();
 }
 
+
 template <class T, int NUM_THREADS = CU_T4B_SMALL>
 __global__ static void CU_binary_(float* out, T* x0, size_t N) {  // block version
     int tid = threadIdx.x, warp = tid / WARP_SIZE, lane = tid % WARP_SIZE;
@@ -590,6 +599,47 @@ __global__ static void CU_binary_(float* out, T* x0, size_t N) {  // block versi
     __syncthreads();
 }
 
+// row-scaling  2 thrshold
+template <class T, int NUM_THREADS = CU_T4B_SMALL>
+__global__ static void CU_ternary_2thrshold(float* gama, T* mat, int M, int N, int update) {  
+    int tid = threadIdx.x;
+    int idx = blockIdx.x * NUM_THREADS + tid, ldJ = blockDim.x;
+    float ta = 1.0, tb = (-1.0), t0 = 0.0;
+    for (int j = tid; j < M; j += ldJ) {
+        float sum_1 = 0.0f, sum_2 = 0.0f, a;
+        int n_1=0,n_2=0;
+        T* x0 = mat + j * N;
+        for (int k = 0; k < N; k++) {
+            a = CU_T2Float(x0 + k);
+            if(a>0){
+                sum_1 += a; n_1++;
+            }else{
+                sum_2 -= a; n_2++;
+            }
+        }
+
+        if (update == QUANT_ALG::W_SCALE) {
+            // gama[j] = average;
+            ta = n_1==0 ? t0 : (sum_1/n_1), tb = n_2==0 ? t0 : (-sum_2/n_2);
+        } else {
+            gama[j] = 1.0f;
+        }
+        T xa=(T)ta,xb=(T)tb;
+        for (int k = 0; k < N; k++) {
+            a     = CU_T2Float(x0 + k);
+            if(a > ta / 2)
+                x0[k] = xa;
+            else if(a < tb / 2)
+                x0[k] = xb;
+            else{
+                x0[k] = k%2==0 ? xa : xb;
+            }
+            // x0[k] = a > average / 2 ? ta : a < -average / 2 ? tb : t0;
+        }
+    }
+    __syncthreads();
+}
+
 bool huTensor::ToTernary(int flag) {
     if (!BIT_TEST(flags, GTensor::F_TERNARY))
         return false;
@@ -608,11 +658,11 @@ bool huTensor::ToTernary(int flag) {
         case typNUMBER::T_SIGN:
             break;
         case typNUMBER::F16:
-            assert(0);
-            // CU_ternary_<<<, , 0, main_stream>>>(xxx,(__nv_bfloat16*)data, count);
+            assert(0);            
             break;
         case typNUMBER::BF16:
-            err = cudaLaunchCooperativeKernel((void*)CU_ternary_<__nv_bfloat16>, dGRID, dBLOCK, kernelArgs, smemPB, main_stream);
+            // err = cudaLaunchCooperativeKernel((void*)CU_ternary_<__nv_bfloat16>, dGRID, dBLOCK, kernelArgs, smemPB, main_stream);
+            CU_ternary_<__nv_bfloat16><<<CEIL_DIV(ne[0],CU_T4B_SMALL), dBLOCK, 0, main_stream>>>(gama_T,(__nv_bfloat16*)data, ne[0], ne[1],tpQuant);
             break;
         case typNUMBER::F8E5M2:
             err = cudaLaunchCooperativeKernel((void*)CU_ternary_<__nv_fp8_e5m2>, dGRID, dBLOCK, kernelArgs, smemPB, main_stream);
@@ -623,7 +673,7 @@ bool huTensor::ToTernary(int flag) {
             break;
     }
 
-    cudaCheck(err);
+    // cudaCheck(err);
     D2H(gama_T, info, sizeof(info));
     if (tpQuant == QUANT_ALG::W_NOSCALE) {
         assert(info[0] == 1.0);

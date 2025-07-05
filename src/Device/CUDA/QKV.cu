@@ -557,6 +557,12 @@ void SYNC_DEVICE(int flag) {
         cudaCheck(cudaDeviceSynchronize());
 #endif
 }
+void SYNC_STREAM(int flag) {
+#ifdef __USE_CUDA__
+    if (main_stream != nullptr)
+        cudaCheck(cudaStreamSynchronize(main_stream));
+#endif
+}
 
 bool EDGE_DEVICES::ClearGPU(int flag) {
     cudaCheck(cudaStreamDestroy(main_stream));
@@ -572,23 +578,25 @@ bool EDGE_DEVICES::ClearGPU(int flag) {
 /*
     n_rot >= head_dim
 */
-int ROPE::FUSE_cuda(LayerNormal *normQ, LayerNormal *normK, uint32_t seed, bool isFX, int flag) {
-    assert(devQ != nullptr );   //  && devK != nullptr
+int ROPE::cuTrain(LayerNormal *normQ, LayerNormal *normK, uint32_t seed, bool isFX, int flag) {
+    assert(devQ != nullptr);  //  && devK != nullptr
     int NH = n_head, NH_kv = NH, version = 1;
     hFish->GetBTC(B, T, C);
     dim3 blocks_q(B, T, NH_kv), blocks_k(B, T, NH), blocks(B, T);
     float *fcos = TO<float>(hCos), *fsin = TO<float>(hSin);
     float *scaleQ = normQ == nullptr ? nullptr : TO<float>(normQ->rstd), *scaleK = normK == nullptr ? nullptr : TO<float>(normK->rstd);
-    int threads = head_dim / 2;
-    // uint32_t seed = rRounding.RandU32( );
+    int threads   = head_dim / 2;
+    size_t smemPB = 1024 * sizeof(float);
     if (isForward()) {
         floatX *q = (floatX *)devQ, *k = (floatX *)devK;
         if (version == 0) {
             apply_rope_forward_q1<<<blocks_q, threads, 0, main_stream>>>(q, fcos, fsin, B, T, NH_kv, head_dim);
-            if(k!=nullptr)  apply_rope_forward_k1<<<blocks_k, threads, 0, main_stream>>>(k, fcos, fsin, B, T, NH, head_dim);
+            if (k != nullptr)
+                apply_rope_forward_k1<<<blocks_k, threads, smemPB, main_stream>>>(k, fcos, fsin, B, T, NH, head_dim);
         } else if (version == 1) {
             CU_rope_<<<blocks_q, threads, 0, main_stream>>>(q, q, scaleQ, q_dim, head_dim, theta, n_rot, B, T, C, seed);
-            if(k!=nullptr)  CU_rope_<<<blocks_k, threads, 0, main_stream>>>(k, k, scaleK, kv_dim, head_dim, theta, n_rot, B, T, C, seed);
+            if (k != nullptr)
+                CU_rope_<<<blocks_k, threads, smemPB, main_stream>>>(k, k, scaleK, kv_dim, head_dim, theta, n_rot, B, T, C, seed);
         }
         SYNC_DEVICE();
     } else {
@@ -598,8 +606,9 @@ int ROPE::FUSE_cuda(LayerNormal *normQ, LayerNormal *normK, uint32_t seed, bool 
         } else if (version == 1) {
             PrintTensor<__nv_bfloat16>("q_0", (__nv_bfloat16 *)delta_q, true, B, T, C, 1, 0);
             PrintTensor<__nv_bfloat16>("k_0", (__nv_bfloat16 *)delta_k, true, B, T, C, 1, 0);
-            CU_rope_<<<blocks_q, threads, 0, main_stream>>>(delta_q, delta_q, scaleQ, q_dim, head_dim, theta, n_rot, B, T, C, seed, true);
-            if(delta_k!=nullptr)  CU_rope_<<<blocks_k, threads, 0, main_stream>>>(delta_k, delta_k, scaleK, kv_dim, head_dim, theta, n_rot, B, T, C, seed, true);
+            CU_rope_<<<blocks_q, threads, smemPB, main_stream>>>(delta_q, delta_q, scaleQ, q_dim, head_dim, theta, n_rot, B, T, C, seed, true);
+            if (delta_k != nullptr)
+                CU_rope_<<<blocks_k, threads, smemPB, main_stream>>>(delta_k, delta_k, scaleK, kv_dim, head_dim, theta, n_rot, B, T, C, seed, true);
             PrintTensor<__nv_bfloat16>("q_1", (__nv_bfloat16 *)delta_q, true, B, T, C, 1, 0);
             PrintTensor<__nv_bfloat16>("k_1", (__nv_bfloat16 *)delta_k, true, B, T, C, 1, 0);
         }
@@ -610,30 +619,31 @@ int ROPE::FUSE_cuda(LayerNormal *normQ, LayerNormal *normK, uint32_t seed, bool 
 }
 
 /*
-    Forward:    cur = FUSE_cuda(cur,residual,flag);
-    Backward:   QKV->FUSE_cuda(last->out,QKV->norm.out,0x0);
+    Forward:    cur = cuTrain(cur,residual,flag);
+    Backward:   QKV->cuTrain(last->out,QKV->norm.out,0x0);
 */
-hGTensor SelfAttention::FUSE_cuda(hGTensor inpL, int flag) {
+hGTensor SelfAttention::cuTrain(hGTensor inpL, int flag) {
     floatX *qkvr     = ToX(tmpQKV);            // Q.out/K.out/V.out
     float *l_att     = TO<float>(transition);  //(float*)acts.att + l * B * NH * T; // cuDNN needs a smaller FP32 tensor
-    bool isAlternate = true;// layer%2==1;layer>1;                  
+    bool isAlternate = true;                   // layer%2==1;layer>1;
     LayerNormal *nQ = nullptr, *nK = nullptr;
-    if (isQKNormal && Rope_version!=3) {
-        nQ = &normQ,        nK = &normQ;
+    if (isQKNormal && Rope_version != 3) {
+        nQ = &normQ, nK = &normQ;
     }
     if (isForward()) {                      //  data=ToX(QKV->norm.out)
         inp               = OnInput(inpL);  //         inp->Print("inp",0x0,dump_flag);
         GTensor::residual = inp;            // GTensor::residual->OverWrite(inp);
         hGTensor inpQ     = inpL;
         if (fuseNorm == nullptr) {
-            inpQ = norm.FUSE_cuda(inpL);
+            inpQ = norm.cuTrain(inpL);
             inpQ->Print("qkvn.in", 0x0, dump_flag);
             // norm.w->Print("qkvn.w",0x0,dump_flag);          norm.b->Print("qkvn.b",0x0,dump_flag);
             // norm.mean->Print("qkvn.mean",0x0,dump_flag);       norm.rstd->Print("qkvn.rstd",0x0,dump_flag);
         }
-        if (Rope_version>=2) {
-            rope->devQ = ToX(inpQ);  rope->devK = nullptr;
-            rope->FUSE_cuda(nQ, nK, rope_seed);
+        if (Rope_version >= 2) {
+            rope->devQ = ToX(inpQ);
+            rope->devK = nullptr;
+            rope->cuTrain(nQ, nK, rope_seed);
         }
         if (isSeparateQKV) {
             Q.out->data = devQ, K.out->data = devK, V.out->data = devV;
@@ -646,9 +656,9 @@ hGTensor SelfAttention::FUSE_cuda(hGTensor inpL, int flag) {
         Q.out->Print("Q.out", 0x0, dump_flag);
         K.out->Print("K.out", 0x0, dump_flag);
         V.out->Print("V.out", 0x0, dump_flag);
-        if (Rope_version==1) {
-            rope->FUSE_cuda(nQ, nK, rope_seed);
-            Q.out->Print("Q.rope", 0x0, dump_flag),            K.out->Print("K.rope", 0x0, dump_flag);
+        if (Rope_version == 1) {
+            rope->cuTrain(nQ, nK, rope_seed);
+            Q.out->Print("Q.rope", 0x0, dump_flag), K.out->Print("K.rope", 0x0, dump_flag);
         }
 
 #ifdef ENABLE_CUDNN
@@ -678,12 +688,10 @@ hGTensor SelfAttention::FUSE_cuda(hGTensor inpL, int flag) {
         proj_cat.Back(GTensor::tmpDelta, attn, GTensor::delta, nullptr);
 
         hGensor delta_qkv = GTensor::bt4c;
-        if (hFish->config.scheduling.strategy != SKDU_params::MEM_SWAP_GUOKE) {  //    remater_qkv
+        if (hFish->config.scheduling.strategy != MEM_STRATEGY::MEM_SWAP_GUOKE) {  //    remater_qkv
             hGTensor norm_out = norm.out;
             if (isSeparateQKV) {
-                Q.out->data = devQ;
-                K.out->data = devK;
-                V.out->data = devV;
+                Q.out->data = devQ, K.out->data = devK, V.out->data = devV;
                 Q.Forw(Q.out, norm_out);
                 K.Forw(K.out, norm_out);
                 V.Forw(V.out, norm_out);
@@ -698,8 +706,8 @@ hGTensor SelfAttention::FUSE_cuda(hGTensor inpL, int flag) {
         assert(0);
 #endif
         delta_qkv->Print("delta_qkv", 0x0, dump_flag);  // PrintTensor<floatX>("back of attn",ToX(delta_attn),true,B,T,C);
-        if (Rope_version==1) {
-            rope->FUSE_cuda(nQ, nK, rope_seed);
+        if (Rope_version == 1) {
+            rope->cuTrain(nQ, nK, rope_seed);
             // Q.out->Print("Q.rope",0x0,dump_flag);    K.out->Print("K.rope",0x0,dump_flag);
         }
         if (isSeparateQKV) {
@@ -722,12 +730,13 @@ hGTensor SelfAttention::FUSE_cuda(hGTensor inpL, int flag) {
                             main_stream);
             GTensor::tmpDelta->Print("delta_3", 0, dump_flag);
         }
-        if (Rope_version>=2) {
-            rope->devDeltaQ = ToX(GTensor::tmpDelta);  rope->devDeltaK = nullptr;
-            rope->FUSE_cuda(nQ, nK, rope_seed);
+        if (Rope_version >= 2) {
+            rope->devDeltaQ = ToX(GTensor::tmpDelta);
+            rope->devDeltaK = nullptr;
+            rope->cuTrain(nQ, nK, rope_seed);
         }
         // layernorm backward does += to dresidual, so it correctly accumulates gradient for the Attention block above
-        norm.FUSE_cuda(GTensor::tmpDelta);  // would backpropagatioin to GTensor::delta
+        norm.cuTrain(GTensor::tmpDelta);  // would backpropagatioin to GTensor::delta
         GTensor::delta->Print("back of QKV", 0, dump_flag);
         return GTensor::delta;
     }

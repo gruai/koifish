@@ -89,7 +89,7 @@ hGTensor TokenEmbed::OnEmbed(hGensor inpL, int seed) {
             inp       = inpL;
             grid_size = CEIL_DIV(B * T * C, block_size);
             // if(!lnW.Empty())
-            //     curW = lnW.FUSE_cuda(w);
+            //     curW = lnW.cuTrain(w);
             // encoder_forward(ToX(cur), tokens, ToX(w), ToX0(b), B, T, C, main_stream);
             CU_embed_forw_<<<grid_size, block_size, 0, main_stream>>>(ToX(cur), TO<int>(inp), ToX(curW), ToX0(b), B, T, C);
             w->Print("wte", 0, 0);  // ToX(w),true,Vp,C
@@ -109,7 +109,7 @@ hGTensor TokenEmbed::OnEmbed(hGensor inpL, int seed) {
             }
             // encoder_backward_1(ToG(w), ToG0(b), ToX(cur), tokens, B, T, C, seed, main_stream);
             encoder_backward(ToG(w), ToG0(b), scratchX, workload_indices, bucket_info, ToX(cur), TO<int>(inp), hBatch->host, B, T, C, seed, main_stream);
-            // lnW.FUSE_cuda();   lnf->FUSE_cuda(ToG(w),(float*)scratchX,delta);
+            // lnW.cuTrain();   lnf->cuTrain(ToG(w),(float*)scratchX,delta);
             // PrintTensor<floatX>("grad of wte",grads.wte,true,Vp,C);         PrintTensor<float>("losses",acts.losses,true,B,T);
             // PrintTensor<floatX>("grad of wpe",grads.wpe,true,T,C);
         }
@@ -216,7 +216,7 @@ int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, 
 int SLP::FUSE_cuda_block(hGTensor rhs, hGTensor lhs, hGTensor gelu, bool isForw, int flag) { return 0x0; }
 
 //  hIn = QKV->out
-hGTensor FFN::FUSE_cuda(hGTensor hIn, int flag) {
+hGTensor FFN::cuTrain(hGTensor hIn, int flag) {
     hGTensor tGelu = GTensor::scratch, down_out = remater_ffn ? GTensor::tmpFF1 : down.out, up_out = remater_ffn ? GTensor::tmpFF1 : up.out;
     bool isBias = up.b != nullptr;
     if (isForward()) {
@@ -224,7 +224,7 @@ hGTensor FFN::FUSE_cuda(hGTensor hIn, int flag) {
         inp->Print("ffn.in", 0, dump_flag, C);
         GTensor::residual = inp;  // GTensor::residual->OverWrite(inp);          //
         if (fuseNorm == nullptr) {
-            norm.FUSE_cuda(inp);
+            norm.cuTrain(inp);
         }
         norm.out->Print("ffn.norm", 0, dump_flag, C);
         if (!gate.Empty()) {
@@ -239,7 +239,7 @@ hGTensor FFN::FUSE_cuda(hGTensor hIn, int flag) {
         if (!hFish->isRemater()) {
             residual_forward(ToX(out), ToX(GTensor::residual), ToX(down_out), B * T * C, main_stream);
             if (fuseNorm != nullptr) {
-                return fuseNorm->FUSE_cuda(out);
+                return fuseNorm->cuTrain(out);
                 // layernorm_forward(ToX(fuseNorm->out), TO<float>(fuseNorm->mean),TO<float>(fuseNorm->rstd), ToX(out),ToX(fuseNorm->w), ToX0(fuseNorm->b), B*T,
                 // 1, C, main_stream); return fuseNorm->out;
             }
@@ -265,7 +265,7 @@ hGTensor FFN::FUSE_cuda(hGTensor hIn, int flag) {
         up.Back(GTensor::tmpDelta, norm.out, GTensor::bt4c, nullptr);
 
         // // layernorm backward does += to the dresidual, so it correctly accumulates grad from the MLP block above
-        // norm.FUSE_cuda(residual,scratchF,tmpDelta);
+        // norm.cuTrain(residual,scratchF,tmpDelta);
         float *_mean = norm.mean == nullptr ? nullptr : TO<float>(norm.mean);
         layernorm_backward(ToX(GTensor::delta), ToG(norm.w), ToG0(norm.b), (float *)GTensor::buff, ToX(GTensor::tmpDelta), ToX(inp), ToX(norm.w), _mean,
                            TO<float>(norm.rstd), B, T, C, main_stream);
@@ -302,7 +302,7 @@ hGTensor huTensor::Normal(hGTensor hOut, hGTensor _mean, hGTensor _rstd, hGTenso
     return hOut;
 }
 
-hGTensor LayerNormal::FUSE_cuda(hGTensor inpDelta, int flag) {  //,hGTensor deltaIn
+hGTensor LayerNormal::cuTrain(hGTensor inpDelta, int flag) {  //,hGTensor deltaIn
     NVTX_RANGE_FN();
     float *_mean = mean == nullptr ? nullptr : TO<float>(mean), *_rstd = TO<float>(rstd);
     if (isForward()) {
@@ -346,12 +346,12 @@ hGTensor LayerNormal::FUSE_cuda(hGTensor inpDelta, int flag) {  //,hGTensor delt
     }
 }
 
-hGTensor OutSimilarity::FUSE_cuda(hGTensor inp, int flag) { return nullptr; }
+hGTensor OutSimilarity::cuTrain(hGTensor inp, int flag) { return nullptr; }
 
 // void fused_classifier(Type* logits, float* cuLoss,const float dloss, const int* targets,int B, int T, int V, int P, std::bool_constant<WriteDLogits>
 // write_dlogits, cudaStream_t stream) { float huTensor::FusedLoss(float dloss,hGTensor hLoss,hGTensor hTarget,hGTensor hLastLayer, hGTensor w,int V,bool
 // isForward,int flag){
-hGTensor OutCLS::FUSE_cuda(hGTensor inp_, int flag) {
+hGTensor OutCLS::cuTrain(hGTensor inp_, int flag) {
     int V = nCls, Vp = padded_nCls, gelu_fusion = 1;
     assert(proj.b == nullptr);
     mean_loss          = 0.0f;

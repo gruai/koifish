@@ -96,7 +96,8 @@ enum GD_METHOD {
     SGD_HYBRID,   
     LION,
 
-    ADAMw_cuda,
+    ADAM_spike, 
+    // ADAMw_cuda,
 };
 static string GD_NAME[]={
     "ADAMw","SGD","SGD_v","SGD_blk_v","SGD_HYBRID","LION"   
