@@ -195,15 +195,18 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
     _INFO("\n\n");
     assert(optParams.size() == 0);
     for (auto it : gensors.infos) {
-        auto node = it.first;
-        if (BIT_TEST(node->flags, GTensor::GTensor::F_PARAM)) {
-            if (node->isRefer())
+        auto t = it.first;
+        if (BIT_TEST(t->flags, GTensor::GTensor::F_PARAM)) {
+            if (t->isRefer())
                 continue;
-            optParams.push_back(node);
-            nx += tELEM(node);
+            optParams.push_back(t);
+            nx += tELEM(t);
             n0++;  //
+            if (G_Has_(t->name, config.datatypes.Ternary)) {  // {"ffn_down.weight", "ffn_up.weight"}
+                t->SetTernary(typNUMBER::T_BINARY_3);                
+            }
         }
-        if (BIT_TEST(node->flags, GTensor::F_INPUT)) {
+        if (BIT_TEST(t->flags, GTensor::F_INPUT)) {
             nInput++;
         }
     }
@@ -366,7 +369,7 @@ bool Fish::SaveTrain(string sX, int flag) {
 
     if (!config.checkpoint.out.empty()) {
         sOut = config.checkpoint.out + std::to_string(iter) + sX + ".ck";
-        isOK = SAFETENSOR_Serialize(sOut, true);
+        // isOK = SAFETENSOR_Serialize(sOut, true);
 
         // isOK = SAFETENSOR_Serialize(sOut,false); //only for debug
         // assert(isOK);
@@ -473,14 +476,12 @@ int Fish::BuildGraphFromRaw(int flag) {
 void Fish::InitGensor(void *ctx, const string &name, hGensor gensor, bool isParam, int flag) {
     assert(gensor != nullptr);
     if (!name.empty()) {
-        gTN0(gensor, name.c_str());  // ggml_set_name(gensor, name);        //    gTN0(w,"%s.w",name.c_str());
+        gTN0(gensor, name.c_str());      //    gTN0(w,"%s.w",name.c_str());
     }
 
     if (isParam /*&& isTrain()*/) {
-
         gensor->SetFlag(GTensor::GTensor::F_PARAM);
-
-        gTN(gensor, "");        //  ?
+        // gTN(gensor, "");        //  ?
         xGensors.push_back(gensor);
     }
     // if(strcmp(gensor->name,"output.bias")==0) {   //only for debug
@@ -489,35 +490,7 @@ void Fish::InitGensor(void *ctx, const string &name, hGensor gensor, bool isPara
 }
 
 void Fish::InitGensor(void *ctx, hGensor gensor, const char *name, struct random_normal_distribution *rnd, int flag) {
-    assert(0);  // Deprecated
-    /*if (name != nullptr)    {
-        ggml_set_name(gensor, name);
-    }
-
-    if(isTrain()){
-        ggml_set_param(ctx, gensor);
-        gTN(gensor,"");
-    }
-
-    if (gensor->data == nullptr)        {
-        assert(0);
-    }
-    else        {
-        if (rnd != nullptr)
-            tRAND(gensor, rnd);
-        else
-            ZERO_(gensor);
-    }
-    if (updateTMap)        {
-        gensors.Insert(gensor);
-    }
-    if(isTrain())   {
-        xGensors.push_back(gensor);
-        nParams += tELEM(gensor);
-    }
-    if(strcmp(gensor->name,"output.bias")==0) {   //only for debug
-        // xn= gensor;     xxn = gensor->grad;
-    }*/
+    assert(0);  // Deprecated    
 }
 
 hGensor Fish::AddTensor(void *ctx, const std::string &key_, typNUMBER tp, const SHAPE &shape, bool isParam, int flag) {

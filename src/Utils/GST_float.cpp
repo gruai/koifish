@@ -1,13 +1,41 @@
+/**
+ *  SPDX-FileCopyrightText: 2019-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT
+ *
+ *  \brief  Some functions on float number
+ *  \author Yingshi Chen
+ */
+
 #include <assert.h>
 #include <math.h>
-
 #include <cfloat>
 #if defined(__AVX2__) && defined(__F16C__)
 #include <immintrin.h>
 #endif
 // #include "f16cintrin.h"
+#include "../CLI_params.hpp"
 #include "../g_float.hpp"
 #include "../g_float_cpu.hpp"
+#include "../g_stddef.hpp"
+
+double BitPE(typNUMBER type) {
+    if (type == typNUMBER::F8E5M2 || type == typNUMBER::F8E4M3 || type == typNUMBER::I8)
+        return 8.0;
+    if (type == typNUMBER::F16)
+        return 16.0;
+    if (type == typNUMBER::BF16)
+        return 16.0;
+    if (type == typNUMBER::F32 || type == typNUMBER::I32)
+        return 32.0;
+    if (type == typNUMBER::T_SIGN)
+        return 2.0;
+    if (type == typNUMBER::T_BINARY || type == typNUMBER::T_BINARY_3) {
+        if (DEBUG.T_ternary == 1)  // hack to BF16 to debug some error
+            return 16.0;
+        return 1.0;
+    }
+    exit(KOIFISH_UNSUPPORTED_DATATYPE);
+}
 
 #if defined(__AVX2__) && defined(__F16C__)
 float half_to_float(__gcc_fp16 x) { return _cvtsh_ss(x); }

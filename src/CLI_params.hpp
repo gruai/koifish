@@ -230,6 +230,7 @@ struct DEUG_SWITCH {
     bool NO_loss             = false;
     bool check_tensor_norm   = false;
     int T_ternary            = 0;
+    int algCuX2              = 0;
 
     int dict_latent_dim    = -1;
     int graph_dump         = 0;  //  10 levels of dumps, 0-9. 0 is a full dump,The lower the number the more dump.
@@ -280,7 +281,7 @@ struct CLI_params {
     };
     CheckPoint checkpoint;
 
-    struct DataTypes{
+    struct DataTypes {
         std::vector<std::string> Ternary;
     };
     DataTypes datatypes;

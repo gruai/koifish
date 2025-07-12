@@ -108,6 +108,8 @@ void GeNeuron::Init(Fish *hG_, int flag) {
     tpWeight     = hFish->config.model.tpWeight;
     tpActivation = hFish->config.model.tpActivation;
     tpGradient   = hFish->config.model.tpGradient;
+
+    dump_flag = 0;
 }
 void GeNeuron::SetRefer(const GeNeuron *src, bool isBias, int flag) {
     assert(src != nullptr);
@@ -322,7 +324,7 @@ SLP::SLP(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag)
 bool SLP::Build(int flag) {
     delta  = GTensor::delta;
     isBias = hFish->config.model.isSLPBias || BIT_TEST(flag, F_BIAS);
-    // shape = shape_;
+
     void *ctx        = hFish->GetGGCTX();
     typNUMBER tpData = tpWeight;
     int bFlag        = 0x0;
@@ -339,13 +341,19 @@ bool SLP::Build(int flag) {
     } else {
         assert(0);
     }
-
+    // if(BIT_TEST(flag,F_GRADREF))
+    // if(w->size()<=GTensor::tmpGW->size())
+    //     w->grad_ref = GTensor::tmpGW;
+    // else{
+    //     int debug = 0x0;
+    // }
     string sw = name + MODEL_CARD::sWeight, sb = name + ".bias", so = name + ".out";
     bool isTrain = hFish->isTrain();
     hFish->InitGensor(ctx, sw.c_str(), w, true);
+    
     if (isBias)
         hFish->InitGensor(ctx, sb.c_str(), b, true);
-#ifdef _TENSOR_G_
+
     if (b != nullptr)
         b->tpInit = INIT_WEIGHT::W_SKIP;
     SHAPE s3 = {B, T, nOut}, s4 = {B, T, nIn};
@@ -353,9 +361,8 @@ bool SLP::Build(int flag) {
     if (BIT_TEST(flag, F_DELTA)) {
         delta = GTensor::delta;
     }
-
     // hFish->InitGensor(ctx,so.c_str(),out,false);
-#endif
+
     if (compression == SVD) {
         assert(shape.size() == 2);
         // SVD(w);
@@ -733,7 +740,6 @@ hGensor GeNeuron::AfterMing(RLS_BP *hRLS, hGensor cur, int flag) {
                 for (auto t : PGensors()) {
                     if (t->isRefer() || !t->isParam())  //
                         continue;
-
                     hOPT->UpdateTensorParam(t, nullptr, 0.0);
                     hRLS->SetTensorStatus(hOPT->GetITER(), t, RLSchedule::UPDATE_PARAM);
                 }

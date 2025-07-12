@@ -14,27 +14,34 @@
 
 template <typename Tp, typename Tmv>
 struct PIPE_Optimizer : public MODEL_CARD {
+    GTensor *tensor = nullptr;
+    string name;
     float *tmp = nullptr;
-    Tp *params, *grads0;
+    Tp *params, *grads0, *paramX = nullptr;
     Tmv *gm, *gv;
+    float *gama_T = nullptr;
     size_t num_parameters;
     ptrdiff_t w_stride, g_stride, s_stride;
     float beta1, beta2, beta1_correction, beta2_correction, eps;
     float lr_0, learning_rate;
     int iter;
+    int64_t ne[4] = {0};
     float weight_decay, grad_scale, grad_norm;
     unsigned int seed;
     uint64_t flags;
-    float T_spike = 50;
+    float T_spike             = 50;
+    bool isBitParam           = false;
+    bool isStochasticRounding = true;
+    QUANT_ALG tpQuant;
 
-    PIPE_Optimizer(Tp *_params, float *_tmp, Tp *_grads0, Tmv *_gm, Tmv *_gv, size_t _num_parameters, ptrdiff_t _w_stride, ptrdiff_t _g_stride,
+    PIPE_Optimizer(size_t _num_parameters, ptrdiff_t _w_stride, ptrdiff_t _g_stride,
                    ptrdiff_t _s_stride, uint64_t _flags, float _learning_rate, float _beta1, float _beta2, int _t, float _eps, float _weight_decay,
                    float _grad_scale, float _grad_norm, unsigned int _seed)
-        : params(_params),
+        : /*params(_params),
           tmp(_tmp),
           grads0(_grads0),
           gm(_gm),
-          gv(_gv),
+          gv(_gv),*/
           num_parameters(_num_parameters),
           w_stride(_w_stride),
           g_stride(_g_stride),
@@ -49,8 +56,27 @@ struct PIPE_Optimizer : public MODEL_CARD {
           grad_scale(_grad_scale),
           grad_norm(_grad_norm),
           seed(_seed) {
-            lr_0 = learning_rate;
-          }
+        lr_0 = learning_rate;
+    }
+
+    virtual void Update(GTensor *tensor_, int flag = 0x0) {
+        tensor = tensor_;
+        name = tensor->name;    
+        params = (Tp*)(tensor->data), grads0 = (Tp*)(tensor->grad);
+        gm = (Tmv*)tensor->gm, gv = (Tmv*)tensor->gv;
+
+        memcpy(ne, tensor->ne, sizeof(ne));
+        isBitParam = BIT_TEST(tensor->flags, GTensor::F_TERNARY);
+        if (isBitParam) {
+            assert(ne[2] == 1 && ne[3] == 1);  // only for 2D weight
+            learning_rate *= 3;  //  1-bit models often exhibit greater training stability compared to their full-precision counterparts, allowing for more
+                                 //  aggressive initial learning steps.
+            paramX = ToX(GTensor::tmpTernary);
+            gama_T = tensor->gama_T;
+
+        }
+        tpQuant = tensor->tpQuant;
+    }
 };
 
 #define PROF_TOKEN(bytes) ((0xCDAFull << 48) | (bytes))

@@ -104,8 +104,8 @@ void inline PrintT(const char* title, const T* src, int n1, int n2, int n3 = 1, 
     // if(strlen(title)>0) _INFO("%s\n", title);
     float sum = 0.0, a1 = -FLT_MAX, a0 = FLT_MAX, a;
     double len = 0.0, sum2 = 0.0;
-    for (i = 0; i < nElem; i++, cur++) {
-        a = T2Float<T>(cur);
+    for (i = 0; i < nElem; i++) {
+        a = T2Float<T>(cur,i);
         assert(!isnan(a) && !isinf(a));
         if (i < nEach || i > nElem - nEach || fabs(i - nElem / 2) <= nEach)
             _INFO("%g ", a);

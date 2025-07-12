@@ -169,7 +169,7 @@ hGensor VarCoder::DEC(hGensor x) {
             x = x->Silu();
             break;
         case 2:
-            x = x->Norm(1.0e-5);
+            assert(0);  // x = x->Norm(1.0e-5);
             break;
     }
 
@@ -337,16 +337,17 @@ FFN::FFN(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag)
     tpNorm = 2;
 }
 bool VarCoder::Build(int flag_0) {
-    int flag = flag_0;
+    int flagSLP = flag_0 | F_DELTA;
+    
     if (tpNorm > 0)
-        norm.BuildX(name + MODEL_CARD::sNorm, {nBottom}, hFish, flag);
+        norm.BuildX(name + MODEL_CARD::sNorm, {nBottom}, hFish, flag_0 | F_DELTA);
     if (hFish->isModel({NLP_QWEN2})) {
-        up.BuildX(name + ".w1", {nBottom, nTop}, hFish, flag | F_DELTA);
-        gate.BuildX(name + ".w3", {nBottom, nTop}, hFish, flag | F_DELTA);
-        down.BuildX(name + ".w2", {nTop, nBottom}, hFish, flag | F_DELTA);
+        up.BuildX(name + ".w1", {nBottom, nTop}, hFish, flagSLP);
+        gate.BuildX(name + ".w3", {nBottom, nTop}, hFish, flagSLP);
+        down.BuildX(name + ".w2", {nTop, nBottom}, hFish, flagSLP);
     } else {
-        down.BuildX(name + "_down", {nTop, nBottom}, hFish, flag | F_DELTA);
-        up.BuildX(name + "_up", {nBottom, nTop}, hFish, flag | F_DELTA);
+        down.BuildX(name + "_down", {nTop, nBottom}, hFish, flagSLP);
+        up.BuildX(name + "_up", {nBottom, nTop}, hFish, flagSLP);
         if (isSymmetric) {
             down.w        = nullptr;
             down.w        = up.w;

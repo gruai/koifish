@@ -92,9 +92,8 @@ __global__ void CU_lion_(Tp* params, Tp* grads0, Tmv* gm, size_t num_parameters,
 }
 
 template <typename Tp, typename Tmv>
-__global__ void CU_adamw_(Tp* params, float* tmp, Tp* grads0, Tmv* gm, Tmv* gv, size_t num_parameters, float learning_rate,uint64_t flags,
-                          float beta1, float beta2, float beta1_correction, float beta2_correction, float eps, float weight_decay, float grad_scale,
-                          unsigned int seed) {
+__global__ void CU_adamw_(Tp* params, float* tmp, Tp* grads0, Tmv* gm, Tmv* gv, size_t num_parameters, float learning_rate, uint64_t flags, float beta1,
+                          float beta2, float beta1_correction, float beta2_correction, float eps, float weight_decay, float grad_scale, unsigned int seed) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= num_parameters) {
         return;
@@ -118,9 +117,20 @@ __global__ void CU_adamw_(Tp* params, float* tmp, Tp* grads0, Tmv* gm, Tmv* gv, 
     if (tmp != NULL) {
         tmp[idx] = param;
     }
-    if(BIT_TEST(flags,GTensor::F_TERNARY)){
-        // CU_ternary_<__nv_bfloat16>, dGRID, dBLOCK, kernelArgs, smemPB, main_stream
-    }
+}
+
+template <typename Tp, typename Tmv>
+__device__ inline float _adamw_idx(float old_param, const PIPE_Optimizer<Tp, Tmv>& pipe, float m, float v, int idx) {
+    // float old_param = (float)pipe.params[idx];
+    float step = m / (sqrtf(v) + pipe.eps);
+    //  Automatic detection of training instability
+    // step = step>T_spike ?  T_spike : step<-T_spike ? -T_spike : step;
+    float param = old_param - pipe.learning_rate * pipe.weight_decay * old_param - pipe.learning_rate * step;
+    //  stochastic_rounding(param, &params[idx], seed);
+    param = CU_Float2T<Tp>(param, pipe.seed);
+    // params[idx] = (Tp)(param);
+    pipe.grads0[idx] = (Tp)(0.0);
+    return param;
 }
 
 template <typename Tp, typename Tmv>
@@ -135,24 +145,44 @@ __global__ void CU_adamw_p(PIPE_Optimizer<Tp, Tmv> pipe) {
     v = lerp(grad * grad, v, pipe.beta2), pipe.gv[idx] = v;
     m /= pipe.beta1_correction;  // m_hat
     v /= pipe.beta2_correction;  // v_hat
-    float old_param = (float)pipe.params[idx];
-    float step = m / (sqrtf(v) + pipe.eps);
-    //  Automatic detection of training instability
-    // step = step>T_spike ?  T_spike : step<-T_spike ? -T_spike : step;
-    float param = old_param - pipe.learning_rate * pipe.weight_decay * old_param - pipe.learning_rate * step;
-    //  stochastic_rounding(param, &params[idx], seed);
-    pipe.params[idx] = CU_Float2T<Tp>(param, pipe.seed);
-    // params[idx] = (Tp)(param);
-    pipe.grads0[idx] = (Tp)(0.0);
+    pipe.params[idx] = _adamw_idx((float)pipe.params[idx], pipe, m, v, idx);
+}
 
-    if (BIT_TEST(pipe.flags, GTensor::F_TERNARY)) {
-        // CU_ternary_<__nv_bfloat16>, dGRID, dBLOCK, kernelArgs, smemPB, main_stream
+// row-major  slow versioin
+template <typename Tp, typename Tmv>
+__global__ void CU_adamw_bit(PIPE_Optimizer<Tp, Tmv> pipe) {
+    int M = pipe.ne[0], N = pipe.ne[1], tid = threadIdx.x;
+    int idrow = blockIdx.x * blockDim.x + tid, offset = idrow * N;
+    if (idrow >= M)
+        return;  // guard
+    float average = pipe.gama_T[idrow];
+    Tp ta = (Tp)(average), tb = (Tp)(-average);
+    char* terns  = (char*)(pipe.params) + offset / 8;
+    Tp* params_x = pipe.paramX + offset;
+    for (int k = 0; k < N; k += 8, offset += 8) {
+        unsigned char tbyte = terns[k / 8];
+#pragma unroll
+        for (int kk = 0; kk < 8; kk++) {
+            int bit         = BYTE_bit(tbyte, kk);  //(tbyte >> (7-kk)) & 0x1;
+            float old_param = bit ? ta : tb;
+            // CU_Float2T<Tp>(bit ? ta : tb, pipe.seed);      //
+            int idx    = offset + kk;
+            float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx), m = pipe.gm[idx], v = pipe.gv[idx];
+            m = lerp(grad, m, pipe.beta1), pipe.gm[idx] = m;
+            v = lerp(grad * grad, v, pipe.beta2), pipe.gv[idx] = v;
+            // v = lerp(average * average, v, pipe.beta2), pipe.gv[idx] = v;
+            m /= pipe.beta1_correction, v /= pipe.beta2_correction;
+            params_x[k + kk] = _adamw_idx(old_param, pipe, m, v, idx);
+        }
     }
+    CU_X2ternary_row(pipe.gama_T + idrow, params_x, terns, N);
+    // __syncthreads();
 }
 
 template <typename Tp, typename Tmv>
 void Optimizer_update(PIPE_Optimizer<Tp, Tmv>& pipe, cudaStream_t stream) {
-    cudaError_t err;
+    cudaError_t err       = cudaSuccess;
+    int64_t ne[4]         = {pipe.ne[0], pipe.ne[1], pipe.ne[2], pipe.ne[3]};
     int dBLOCK            = 512;  //  1024?
     int dGRID             = CEIL_DIV(pipe.num_parameters, dBLOCK);
     size_t smemPB         = 1024 * sizeof(float);
@@ -174,15 +204,27 @@ void Optimizer_update(PIPE_Optimizer<Tp, Tmv>& pipe, cudaStream_t stream) {
             // CU_lion_<<<num_blocks, block_size, 0, stream>>>(params, grads0, gm, num_parameters, learning_rate, beta1, beta2, eps, weight_decay,grad_scale,
             // seed);
         } else {
-            if(1){
-            // err = cudaLaunchCooperativeKernel((void*)CU_adamw_<Tp,Tmv>, dGRID, dBLOCK, kernelArgs, smemPB, main_stream);
-            // cudaCheck(err);      "too many blocks in cooperative launch"
+            if (pipe.isBitParam) {
+                // PrintTensor<Tp>("grad", (Tp*)pipe.grads0, true, pipe.num_parameters, 1,1,1,-1);
+                if (DEBUG.T_ternary == 1) {
+                    CU_adamw_p<<<dGRID, dBLOCK, 0, stream>>>(pipe);
+                    CU_ternary_online<<<CEIL_DIV(pipe.ne[0], dBLOCK), dBLOCK, smemPB, stream>>>(pipe.params, pipe.ne[0], pipe.ne[1]);
+                    // PrintTensor<floatX>(pipe.tensor->name, (floatX*)pipe.params, true, pipe.ne[0], pipe.ne[1], pipe.ne[2], pipe.ne[3], -1);
+                } else {
+                    CU_adamw_bit<<<CEIL_DIV(ne[0], dBLOCK), dBLOCK, smemPB, stream>>>(pipe);
+                    // pipe.tensor->GetDataX(dump_flag,"w1");
+                }
+            } else {
+                // err = cudaLaunchCooperativeKernel((void*)CU_adamw_<Tp,Tmv>, dGRID, dBLOCK, kernelArgs, smemPB, main_stream);
+                // cudaCheck(err);      "too many blocks in cooperative launch"
                 CU_adamw_p<<<dGRID, dBLOCK, 0, stream>>>(pipe);
-            }else{            // result=/home/cys/rnd/lic/log/gpt2/0703_adamw.info
-                CU_adamw_<<<dGRID, dBLOCK, 0, stream>>>(pipe.params, pipe.tmp, pipe.grads0, pipe.gm, pipe.gv, pipe.num_parameters, pipe.learning_rate,pipe.flags,
-                                                             pipe.beta1, pipe.beta2, pipe.beta1_correction, pipe.beta2_correction, pipe.eps, pipe.weight_decay, pipe.grad_scale, pipe.seed);
             }
-
+            // {            //  deparecated version result=/home/cys/rnd/lic/log/gpt2/0703_adamw.info
+            //     CU_adamw_<<<dGRID, dBLOCK, 0, stream>>>(pipe.params, pipe.tmp, pipe.grads0, pipe.gm, pipe.gv, pipe.num_parameters,
+            //     pipe.learning_rate,pipe.flags,
+            //                                                  pipe.beta1, pipe.beta2, pipe.beta1_correction, pipe.beta2_correction, pipe.eps,
+            //                                                  pipe.weight_decay, pipe.grad_scale, pipe.seed);
+            // }
         }
     }
     cudaCheck(cudaGetLastError());
@@ -214,6 +256,7 @@ void Optimizer::InitOnCUDA(int flag) {
     }
 }
 
+//  Deprecated
 int UpdateTensorParam_cuda(hGTensor tensor, Optimizer* hOPT, float& grad_norm, int flag) {
     CLI_params config = hOPT->_fish->config;
     ADAM_params_ adam = hOPT->TrainParams().adam;
@@ -230,7 +273,7 @@ int UpdateTensorParam_cuda(hGTensor tensor, Optimizer* hOPT, float& grad_norm, i
     float wd          = adam.decay;  // we only want to weight decay the 2D tensors and leave all 1D tensors alone
     if (tensor->shape.size() == 1)
         wd = 0;
-    bool isBIT        = BIT_TEST(tensor->flags, GTensor::F_TERNARY);
+
     floatX *param_ptr = ToX(tensor), *grad_ptr = ToG(tensor);
     ptrdiff_t opt_state_offset = tensor->offset;                           // multi_gpu_config->zero_stage < 1 ?  local_offset_full : local_offset_partial;
     floatMV *m_ptr = (floatMV*)tensor->gm, *v_ptr = (floatMV*)tensor->gv;  // gv==nullptr? nullptr : gv + opt_state_offset;
@@ -240,8 +283,14 @@ int UpdateTensorParam_cuda(hGTensor tensor, Optimizer* hOPT, float& grad_norm, i
     // }
 
     if (adam.clip_alg != 0 || config.lars_ratio > 0) {
-        grad_norm     = tNormOf(tensor, 0x0);
+        grad_norm     = tensor->Length(1);      //    tNormOf(tensor, 0x0);
         tensor->gnorm = grad_norm;
+        if (fabs(grad_norm) < 1.0e-10) {
+            _INFO("\t|g|=0@%s!", tensor->name);
+        }
+        if (isnan(grad_norm)) {
+            _INFO("!!! NAN |g|@%s !!!\n", tensor->name);
+        }
         if (grad_norm > adam.gclip) {
             // _INFO("\tdelta|%s|=%g scale=%g\n",tensor->name,grad_norm,adam.gclip/grad_norm);
         }
@@ -250,10 +299,9 @@ int UpdateTensorParam_cuda(hGTensor tensor, Optimizer* hOPT, float& grad_norm, i
     if (config.lars_ratio > 0) {
         grad_scale = tensor->rLARS(grad_scale, config.lars_ratio, 0x0);
     }
-    PIPE_Optimizer pipe(param_ptr, master_ptr, grad_ptr, m_ptr, v_ptr, shard.size, shard.size, shard.size, shard.size, tensor->flags, learning_rate, beta1,
-                        beta2, iter, eps, wd, grad_scale, grad_norm, seed);
-    if (BIT_TEST(tensor->flags, GTensor::F_TERNARY))
-        pipe.learning_rate *= 3;        //  1-bit models often exhibit greater training stability compared to their full-precision counterparts, allowing for more aggressive initial learning steps.
+    PIPE_Optimizer<floatX, floatMV> pipe(shard.size, shard.size, shard.size, shard.size, tensor->flags, learning_rate, beta1, beta2, iter, eps, wd, grad_scale,
+                                         grad_norm, seed);
+    pipe.Update(tensor.get());
     Optimizer_update(pipe, main_stream);
 
     cudaCheck(cudaGetLastError());

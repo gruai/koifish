@@ -76,7 +76,7 @@ class GeNeuron {
     std::set<hGensor> tReloads;
     // std::vector<shared_ptr<GeNeuron>> brothers;
    public:
-    enum BIT_FLAG { F_BIAS = 0x10000, F_DELTA = 0x20000, F_HOTPICK = 0x100000 };
+    enum BIT_FLAG { F_BIAS = 0x10000, F_DELTA = 0x20000, F_GRADREF = 0x40000, F_HOTPICK = 0x100000 };
 
     DATA_PLACE place = DATA_PLACE::VOID;
 

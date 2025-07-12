@@ -330,7 +330,7 @@ bool Fish::CALM_Serialize(const std::string &path, bool isOnlyVocab, int flag) {
                 }  //
 
                 if (G_Has_(target->name, {"mlp.w1.weight"})) {  // "layers.27.mlp.w1.weight" wk.weight wq.weight wv.weight wo.weight ,"w2.weight","w3.weight"
-                    // BIT_SET(target->flags, GTensor::F_TERNARY);
+                    // BIT_SET(target->flags, GTensor::F_TERNARY_);
                     // target->ToTernary();
                 }
                 if (DUMP()) {

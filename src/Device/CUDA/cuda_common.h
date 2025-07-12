@@ -374,8 +374,9 @@ void inline PrintTensor(const char *title, const T *src, bool isDevice, int n1, 
         return;
     assert(src != nullptr);
     if (isDevice) {
+        // SYNC_DEVICE();
         host_dat = (T *)malloc(sizeof(T) * nElem);
-        cudaCheck(cudaMemcpyAsync(host_dat, src, nElem * sizeof(T), cudaMemcpyDeviceToHost, main_stream));
+        cudaCheck(cudaMemcpy(host_dat, src, nElem * sizeof(T), cudaMemcpyDeviceToHost));
     }
 
     PrintT(title, host_dat, n1, n2, n3, n4, flag);
@@ -694,3 +695,6 @@ struct Surface {
         }
     }
 };
+
+bool D2H(void *dev,void *host,size_t szData,int flag=0x0);
+bool H2D(void *dev,void *host,size_t szData,int flag=0x0);

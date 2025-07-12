@@ -1607,9 +1607,10 @@ bool GTensor::AllocBuffer(Fish *hFish, int flag) {
         typNUMBER tpA = hFish->config.model.tpActivation, tpG = hFish->config.model.tpGradient, tpW = hFish->config.model.tpWeight;
         // cuLiteTest(B,T,C);
         int mostC = C;  // config.nEmbed(-1);
-        SHAPE sp = {B, T, C}, sp4 = {B, T, max(nFF, 3 * C)}, sp0 = {dB, (int)nTmp}, spMost = {B, T, mostC};
+        SHAPE sp = {B, T, C}, sp4 = {B, T, max(nFF, 3 * C)}, sp0 = {dB, (int)nTmp}, spMost = {B, T, mostC},spW={C, max(nFF, 3 * C)};
         GTensor::bt4c    = std::make_shared<huTensor>(hFish, "scratch_4c", sp4, tpA, true);
         GTensor::tmpFF1  = std::make_shared<huTensor>(hFish, "tmpFF1", sp4, tpA, true);
+        GTensor::tmpTernary = std::make_shared<huTensor>(hFish, "tmpTernary", spW, tpW, true);  // Only weight would in ternay bit
         GTensor::outL    = std::make_shared<huTensor>(hFish, "outL", spMost, tpA, true);
         GTensor::scratch = std::make_shared<huTensor>(hFish, "scratch/output", sp0, tpA, true);  //  may reduce memory by sp0=sp0/VP
 

@@ -268,7 +268,7 @@ void train_print_usage(int argc, char **argv, const struct CLI_params *params) {
 bool CLI_params::operator!=(const CLI_params &other) const { return memcmp(this, &other, sizeof(other)); }
 
 DEUG_SWITCH DEBUG;
-void DEUG_SWITCH::Dump(int typ) { _INFO("\t switch: datas=%d hyperparams=%d attn=%d\n", train_datas, train_hyperparams, SelfAttention_noraml); }
+void DEUG_SWITCH::Dump(int typ) { _INFO("[DEBUG]: ternary=%d\n",T_ternary); }
 void CLI_params::Dump() {
     _INFO("%s::CLI_params: \n", exec_name.c_str());
     // _INFO(" n_vocab: %u", n_vocab);
@@ -462,9 +462,10 @@ bool CLI_params::JModel2Params(int flag) {
             }
         }
         // Mem 8484=>4772=>4838
-        if (DEBUG.cmd_p1 == 1)
-            scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
-        else {
+        if (DEBUG.cmd_p1 == 1){
+            DEBUG.T_ternary = 1;
+            // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
+        }else {
             // scheduling.strategy = MEM_STRATEGY::MEM_SWAP;
             scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
         }
@@ -548,10 +549,8 @@ void CLI_params::OnArch() {
             break;
         case MODEL_ARCH::NLP_GPT2:
         case MODEL_ARCH::NLP_GPT2_char: {
-            // baby_GPT      dropout = 0.2
-            //  n_head = 6;             _embd = 384;           dict_latent_dim=_embd;
-            // 124M
-            //  nH = 12;         _embd = 768;           DEBUG.dict_latent_dim = 768;
+            // DEBUG.cmd_p1 = 1;
+            // DEBUG.T_ternary = 0;
             n_embd_head_v = 64;
             n_embd_head_k = 64;
             // _embd = 128; dict_latent_dim = 128;        n_embd_head_v=n_embd_head_k=2; //only for debug
@@ -727,7 +726,7 @@ bool CLI_params::InitJConfig(int flag) {
         // if(model_title.empty()){
         //     model_title = "Unknown";
         // }
-        datatypes.Ternary = jKV_arr(jConfig, {"model","datatype", "ternary"}, datatypes.Ternary, false);
+        datatypes.Ternary = jKV_arr(jConfig, {"model", "datatype", "ternary"}, datatypes.Ternary, false);
 
         JModel2Params(0x0);
 
@@ -1152,27 +1151,6 @@ hGensor GradOf(struct ggml_cgraph *cgraph, hGensor node, int flag) {
 #endif
 }
 
-double BitPE(typNUMBER type) {
-    if (type == typNUMBER::F8E5M2 || type == typNUMBER::F8E4M3 || type == typNUMBER::I8)
-        return 8.0;
-    if (type == typNUMBER::F16)
-        return 16.0;
-    if (type == typNUMBER::BF16)
-        return 16.0;
-    if (type == typNUMBER::F32 || type == typNUMBER::I32)
-        return 32.0;
-#ifdef __USE_GGML__
-    auto tp      = (enum ggml_type)type;
-    size_t szBlk = ggml_blck_size(tp);
-    double bpe   = ggml_row_size(tp, 1);  // ggml_type_size(type)*ne/ggml_blck_size(type);
-    assert(bpe == 1 || bpe == 2 || bpe == 4);
-    return bpe;
-#else
-    assert(0);
-    exit(-1);
-#endif
-}
-
 dotprod_t fnDot(typNUMBER tp) {
     int wbit = BitPE(tp);
     return wbit == 4 ? dotprod_gf4 : wbit == 8 ? dotprod_fp8 : wbit == 16 ? dotprod_fp16 : dotprod_fp32;
@@ -1183,7 +1161,7 @@ dotprod_t fnDot(typNUMBER tp) {
 */
 double BPE(typNUMBER type) {
     double bp = BitPE(type) / 8.0;
-    assert(bp == 1 || bp == 2 || bp == 4);
+    // assert(bp == 1 || bp == 2 || bp == 4);
     return bp;
 }
 
@@ -1191,20 +1169,21 @@ bool isQuantized(typNUMBER type) {
     if (type == typNUMBER::F8E5M2 || type == typNUMBER::F8E4M3 || type == typNUMBER::F16 || type == typNUMBER::BF16 || type == typNUMBER::F32 ||
         type == typNUMBER::I32 || type == typNUMBER::I8)
         return false;
-#ifdef __USE_GGML__
-    return ggml_is_quantized((enum ggml_type)type);
-#else
+    if (type == typNUMBER::T_SIGN || type == typNUMBER::T_BINARY || type == typNUMBER::T_BINARY_3) {
+        return true;
+    }
     assert(0);
-    exit(-1);
-#endif
+    exit(KOIFISH_UNSUPPORTED_DATATYPE);
 }
+
 /*
     number of elements per blck(as defined in GGML)
-*/
+
 size_t NPBlck(typNUMBER type) {
     if (!isQuantized(type)) {
         return 1;
     }
+    switch (type) {}
 #ifdef __USE_GGML__
     auto tp      = (enum ggml_type)type;
     size_t szBlk = ggml_blck_size(tp);
@@ -1213,7 +1192,7 @@ size_t NPBlck(typNUMBER type) {
     assert(0);
     exit(-1);
 #endif
-}
+}*/
 
 const char *cNameOf(typNUMBER type) {
     if (type == typNUMBER::F8E5M2)
@@ -1242,10 +1221,9 @@ std::string NameOf(typNUMBER type) {
     return name;
 }
 
-double GTensor::bpe() {
-    //  ggml_row_size()
-    return BPE(type);
-}
+// double GTensor::bpe() {
+//     return BitPE(type) / 8.0;
+// }
 size_t GTensor::size(int typ) const {
     size_t nz = 1;
     for (auto a : shape) nz *= a;

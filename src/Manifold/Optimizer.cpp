@@ -11,6 +11,7 @@
 #include "Optimizer.hpp"
 
 #include "../TokenSet/Dictionary.hpp"
+#include "../Device/Pipe.hpp"
 #include "../ggex/GG_util.hpp"
 #include "gLLM.hpp"
 
@@ -212,7 +213,7 @@ int Optimizer::SignStochastic(int nx, CLI_params &config, int flag) {
  */
 void Optimizer::UpdateParams(int nx, CLI_params &config, int flag) {}
 
-void OPT_Adam::UpdateParams(int nx, CLI_params &config, int flag) {
+void OPT_Adam::UpdateParams_V0(int nx, CLI_params &config, int flag) {
     floatX *g = nullptr;
 
     float clip = 0.f, fx = 0, sum, sched;
@@ -220,7 +221,7 @@ void OPT_Adam::UpdateParams(int nx, CLI_params &config, int flag) {
     if (!isAdaptiveSched)  // params.adam->sched;
         sched = 1.0;
     if (isPreGStep)
-        g_step = tNormOf(opt_ps, 0x0);
+        g_step = tNormsOf(opt_ps, 0x0);
     if (DEBUG.train_hyperparams == 1) {
         adam->decay = 0;
         sched       = 1.0;
@@ -237,19 +238,6 @@ void OPT_Adam::UpdateParams(int nx, CLI_params &config, int flag) {
     zmuv_0 = DBL_MAX, zmuv_1 = 0.0;
     if (iter == 1)
         _INFO("clip=%g(%g) lr=%g beta1=%g , beta2=%g,  eps=%g , weight_decay=%g\n", 1.0e-6, 0.0, adam->alpha, adam->beta1, adam->beta2, adam->eps, adam->decay);
-    /*if(0){    //only for debug
-        std::vector<hGensor> arrT;
-        for (auto it = _fish->backbons.rbegin(); it != _fish->backbons.rend(); ++it) {
-            hNeuron neuron = *it;
-            for(auto t : neuron->PGensors()){
-                if(t->isRefer() || !t->isParam())     //
-                    continue;
-                arrT.push_back(t);
-                UpdateTensorParam(t,nullptr,clip);        i += tELEM(t);
-            }
-        }       // CHECK_SAME_TENSORS("Compare Parameters",arrT,opt_ps);
-        // opt_ps = arrT;
-    }   else*/
     {
         for (auto t : opt_ps) {
             // p_decay = ((tDIM(t) >= adam->decay_min_ndim) ? adam->decay : 0.0f) * sched;
@@ -291,10 +279,10 @@ float Optimizer::gClip(int ne, floatX *g, hGensor hP, int flag) {
 
     if (hP != nullptr) {
         if (fabs(a1) < 1.0e-10) {
-            _INFO("\t|g|=0@%s!", hP->name);
+            _INFO("\t|g| = 0@%s!", hP->name);
         }
         if (isnan(avg)) {
-            _INFO("\tNAN |g|@%s!!", hP->name);
+            _INFO("\tNAN  |g|@%s!!", hP->name);
         }
     }
 
@@ -307,6 +295,43 @@ inline bool isStrMatch(const string &target, const vector<string> &words) {
             return true;
     }
     return false;
+}
+
+template <typename Tp, typename Tmv>
+void Optimizer_update(PIPE_Optimizer<Tp, Tmv>& pipe, cudaStream_t stream);
+int GTensor::Dogleg(int flag) {
+    hOptimizer hOPT = hFish->GetOptimizer();
+    int iter        = hOPT->GetITER();
+    if (iter == last_iter)  // may try dogleg more than once in one optimization step
+        return 0x0;
+
+    ADAM_params_ adam   = hOPT->TrainParams().adam;
+    float learning_rate = hOPT->LearningRate(), beta1 = adam.beta1, beta2 = adam.beta2, eps = adam.eps, wd = adam.decay;
+    size_t nEle       = size();
+    
+    if (shape.size() == 1)  // we only want to weight decay the 2D tensors and leave all 1D tensors alone
+        wd = 0;
+    
+    Length(1);    
+    // if(flag==-1)    return 0x0;
+    if (gnorm > adam.gclip) {
+        // _INFO("\tdelta|%s|=%g scale=%g\n",name,grad_norm,adam.gclip/grad_norm);
+    }
+
+    float grad_scale = (gnorm > adam.gclip) ? adam.gclip / gnorm : 1.0f;
+    if (hFish->config.lars_ratio > 0) {
+        grad_scale = rLARS(grad_scale, hFish->config.lars_ratio, 0x0);
+    }
+    unsigned int seed = hOPT->rRounding.RandInt32();
+    PIPE_Optimizer<floatX, floatMV> pipe(nEle, nEle, nEle, nEle, flags, learning_rate, beta1, beta2, iter, eps, wd, grad_scale, gnorm, seed);
+    pipe.Update(this);
+    Optimizer_update(pipe, main_stream);
+    
+    if(flag==-1){
+        // Print(name, 1, -1);
+    }
+    last_iter = iter;
+    return 0;
 }
 
 int UpdateTensorParam_cuda(hGTensor tensor, Optimizer *hOPT, float &grad_norm, int flag);
@@ -355,11 +380,9 @@ double OPT_Adam::UpdateTensorParam(hGensor hP, floatX *gX, float clip) {
     }
 #endif
 #ifdef __USE_CUDA__
-    // hP->Print(hP->name,0,-1);         hP->Print(hP->name,1,-1);
-    UpdateTensorParam_cuda(hP, this, grad_norm, 0x0);
-    if (DEBUG.T_ternary > 0) {
-        hP->ToTernary();
-    }
+    hP->Dogleg(0x0);
+    grad_norm = hP->gnorm;
+    // UpdateTensorParam_cuda(hP, this, grad_norm, 0x0);
 
     if (!isPreGStep)
         g_step += grad_norm * grad_norm;
@@ -460,7 +483,7 @@ void Optimizer::UpdateTrainLoss(int x, float loss, int flag) {
     // fx_prev[0] = fx;
 }
 
-int Optimizer::GetITER(int flag) {
+int Optimizer::GetITER(int flag) const{
     //  first_iter             = iter;
     //  iter = iter0 + t + 1;
     return iter;
@@ -514,6 +537,7 @@ Optimizer::RESULT Optimizer::Search(void *ctx, hGensor loss_, hGensor target_, C
         SetPhase(P_TRAIN);
         if (!BatchGrad(iter, a, 0x0))
             return CANCEL;
+        // if(t==1)    exit(KOIFISH_EXIT_DEBUG);
         // const int64_t t_start_wall = ggml_time_us(),t_start_cpu = ggml_cycles();
         float lr = train_params.LearningRate();
         lr       = hLR->LearningRate(iter);

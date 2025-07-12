@@ -1,7 +1,7 @@
 # Koifish
 
-**Koifish** is a c++ framework focused on efficient training/fine-tuning language model on edge devices & PC. 
-1. Efficient on-device training of ~1B language model.
+**Koifish** is a c++ framework focused on sparse & 1-Bit language model. 
+1. Efficient training of ~1B language models with only one GPU.
 2. Efficient fine-tuning ~10B LLMs on edge device.
 
 ## Features

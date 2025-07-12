@@ -285,5 +285,3 @@ inline bool CHECK_SHAPE(const SHAPE&shape){
     return isValid;
 }
 
-bool D2H(void *dev,void *host,size_t szData,int flag=0x0);
-bool H2D(void *dev,void *host,size_t szData,int flag=0x0);

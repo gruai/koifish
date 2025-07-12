@@ -158,7 +158,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     virtual bool SetPhase(PHASE phase_, int flag = 0x0);
     virtual float Evaluate(hSampLoader loader, int iter, int flag = 0x0);
     // virtual float Prefill(hSampLoader loader,int iter,int flag=0x0);
-    virtual int GetITER(int flag = 0x0);
+    virtual int GetITER(int flag = 0x0) const;
     virtual float LearningRate(int flag = 0x0) { return hLR->LearningRate(iter); }
     virtual void UpdateTrainLoss(int x, float loss, int flag = 0x0);  //
     virtual double UpdateTensorParam(hGensor hP, floatX* g, float gnorm) { return 0.0; }
@@ -206,7 +206,7 @@ class OPT_Adam : public Optimizer {
     // compute grad on batchs
     bool BatchGrad(int iter, float& fx, int flag = 0x0) override;
     double UpdateTensorParam(hGensor hP, floatX* g, float gnorm) override;
-    void UpdateParams(int nx, CLI_params& config, int flag) override;
+    void UpdateParams_V0(int nx, CLI_params& config, int flag);
 
    public:
     OPT_Adam(NLP_AutoRegressive* g_, CLI_params& params_, int flag = 0x0);

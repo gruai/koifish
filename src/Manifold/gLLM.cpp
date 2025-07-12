@@ -615,9 +615,8 @@ void NLP_AutoRegressive::Train(int flag) {
     // DEBUG.train_datas = 1;
     // DEBUG.train_hyperparams = 1;
     // DEBUG.back_graph_version = 1;        Verified at 05132025
-    DEBUG.T_ternary   = 1;
-    QUANT_ALG tpQuant = DEBUG.T_ternary == 1 ? W_SCALE : W_NOSCALE;
-    string all_tensors;
+
+    string bit_tensors;
     int nTernary = 0;
     size_t nzT   = 0;
     hOPT->BeforeTrain(tokens_input, 0x0);
@@ -625,19 +624,14 @@ void NLP_AutoRegressive::Train(int flag) {
     hRLS->InitGUOKE();
     hRLS->Prepare(-1);
     for (auto t : hOPT->opt_ps) {
-        if (DEBUG.T_ternary > 0 &&
-            G_Has_(t->name, config.datatypes.Ternary)) {  // {"ffn_down.weight", "ffn_up.weight"}
-            BIT_SET(t->flags, GTensor::F_TERNARY);
-            t->tpQuant = tpQuant;
+        if (BIT_TEST(t->flags, GTensor::F_TERNARY)) {  // {"ffn_down.weight", "ffn_up.weight"}
             nTernary++;
             nzT += t->size();
-            all_tensors += t->name;
-            all_tensors += " ";
+            bit_tensors += t->name, bit_tensors += " ";
         }
         hRLS->GetTensorStatus(-1, t, 0x0);
     }
-    _INFO("[Ternary] tpQuant=%s tensor=%d(%.3g%%) @{%s}\n", tpQuant == W_SCALE ? "W_SCALE" : "W_NOSCALE", nTernary, nzT * 100.0f / nParams,
-          all_tensors.c_str());
+    _INFO("[Ternary] tpQuant=%s tensor=%d(%.3g%%) @{%s}\n", "W_SCALE", nTernary, nzT * 100.0f / nParams, bit_tensors.c_str());
     int64_t now = GST_ms();
     double ms   = 0;
     // print_build_info();
@@ -791,21 +785,9 @@ int Fish::BackwardOnRLS(int iter, int flag) {
             continue;
         auto t0 = GST_ms();
         cur     = neuron->Ming(hRLS, cur);
-        neuron->stat.tBack += GST_ms() - t0;
-        // if(!config.scheduling.isUpdateParamV0()){
-        //     // if(strcmp(cur->name,"model.blk.11.attn")==0){
-        //     //     int bug = 0x0;
-        //     // }
-        //     vector arrT = neuron->PGensors();
-        //     for(auto t : arrT){
-        //         if(t->isRefer() || !t->isParam())     //
-        //             continue;
-        //         hOPT->UpdateTensorParam(t,nullptr,0.0);
-        //         hRLS->SetTensorStatus(iter,t,RLSchedule::UPDATE_PARAM);
-        //     }
-        // }
+        neuron->stat.tBack += GST_ms() - t0;        
     }
-
+    SYNC_DEVICE();
     return 0x0;
 }
 

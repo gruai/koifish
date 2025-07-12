@@ -1093,8 +1093,8 @@ void StepInfos::Add(STEP step, int flag) {
     if (step.loss < Best()) {
         best_id = steps.size() - 1;
     }
-    double g0 = 0.0, w0 = 0.0;
-    hGensor ten1, ten2;
+    double g0 = -1.0, w0 = -1.0;
+    hGensor ten1=nullptr, ten2=nullptr;
     for (auto tensor : hOpt->opt_ps) {
         size_t nElem = tensor->size();
         float s      = 1.0 / nElem;

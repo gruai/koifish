@@ -2,7 +2,9 @@
 // #include "../ggex/GG_util.hpp"       //ugly  "__builtin_ia32_ldtilecfg" is undefined
 #include "../../Manifold/Fish.hpp"
 #include "../../Manifold/Neuron.hpp"
+#include "../../Manifold/Optimizer.hpp"
 #include "./cuda_common.h"
+#include "./kernel/Operator.cuh"
 #include "./kernel/embed.cuh"
 #include "./kernel/fused_classifier.cuh"
 #include "./kernel/gemm.cuh"
@@ -145,11 +147,11 @@ hGTensor TokenEmbed::SubW(hGTensor hSamp, bool isForw, hGTensor wOut, int flag) 
 
 int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, int flag) {
     try {
-        floatX *rhs = ToX(rhs_0), *to_gelu = ToX0(toGelu), *wX = ToX(w);  //,*inp=ToX(lhs_);
+        floatX *rhs = ToX(rhs_0), *to_gelu = ToX0(toGelu), *wX = w->GetDataX();
         int OC = nOut, IC = nIn;
         assert(gelu_fusion == 0);
         assert(rhs_0->size() >= B * T * OC);
-
+        size_t dBLOCK = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
         inp          = lhs_;
         bool transAW = true;
         // if(isTransW)
@@ -166,14 +168,11 @@ int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, int flag) {
             matmul_cublaslt(rhs, wX, ToX(lhs_), ToX0(b), OC, B*T, IC, main_stream, transAW, false, 0, 0, 0, 0, false, to_gelu, false);
         }*/
         rhs = to_gelu ? to_gelu : rhs;
-        switch (w->type) {
-            case typNUMBER::T_SIGN:
-                assert(0);
-                break;
-            default:
-                tMM<floatX, floatX>(ToX(lhs_), wX, rhs, ToX0(b), B * T, OC, IC, true, main_stream);
-                break;
-        }
+
+        tMM<floatX, floatX>(ToX(lhs_), wX, rhs, ToX0(b), B * T, OC, IC, true, main_stream);
+
+        // if(G_Has_(name,{"ffn_down", "ffn_up"}))
+        //     lhs_->Print(name,0,-1);
         if (to_gelu) {
             gelu_forward(ToX(rhs_0), to_gelu, B * T * OC, main_stream);
             // swiglu_forward(rhs, to_gelu, B*T*OC, main_stream);
@@ -189,9 +188,36 @@ int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, int flag) {
     }
 }
 
+floatX *GTensor::GetDataX(int flag,const string&sX) {
+    size_t dBLOCK = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
+    floatX *wX = (floatX *)(data);
+    switch (type) {
+        case typNUMBER::T_SIGN:
+            assert(0);
+            break;
+        case typNUMBER::T_BINARY:
+        case typNUMBER::T_BINARY_3:
+            if (DEBUG.T_ternary == 1) {
+            } else {
+                wX = ToX(GTensor::tmpTernary);
+                CU_ternary2X_<floatX><<<CEIL_DIV(ne[0], dBLOCK), dBLOCK, 0, main_stream>>>(gama_T, (char *)(data), wX, ne[0], ne[1], 1);
+                SYNC_DEVICE();
+                if(flag==-1)
+                    GTensor::tmpTernary->Print(sX.empty()?name:sX, 0x0, -1);
+            }
+            // PrintTensor<floatX>("wX", wX, true, ne[0], ne[1], ne[2], ne[3], -1);   
+            break;
+        default:
+            break;
+    }
+    
+    return wX;
+}
+
 int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, int flag) {
     try {
-        floatX *wX = ToX(w), *gW = ToG(w);
+        w->isUpdateParam = false;
+        floatX *wX = w->GetDataX(), *gW = ToG(w);
         float *dbias_buffer = (float *)GTensor::buff;
         int OC = nOut, IC = nIn;
         assert(delta != nullptr);
@@ -205,8 +231,10 @@ int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, 
         matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu));
         if (compression == SAMPLE && subw != nullptr) {
             subw->SubW(hSamps, false, GTensor::tmpGW, samp_type);
-        }
-        delta->Print("delta", 0, flag);
+        }     
+        // if(w->grad_ref!=nullptr)
+            w->Dogleg(-1);
+        
         return 0x0;
     } catch (...) {
         assert(0);
@@ -219,6 +247,7 @@ int SLP::FUSE_cuda_block(hGTensor rhs, hGTensor lhs, hGTensor gelu, bool isForw,
 hGTensor FFN::cuTrain(hGTensor hIn, int flag) {
     hGTensor tGelu = GTensor::scratch, down_out = remater_ffn ? GTensor::tmpFF1 : down.out, up_out = remater_ffn ? GTensor::tmpFF1 : up.out;
     bool isBias = up.b != nullptr;
+    
     if (isForward()) {
         inp = OnInput(hIn);
         inp->Print("ffn.in", 0, dump_flag, C);
@@ -249,7 +278,8 @@ hGTensor FFN::cuTrain(hGTensor hIn, int flag) {
             // inp->Print("ffn.in",0,-1);
         }
     } else {
-        // dump_flag=-1;
+        SelfAttention* lastQKV = hFish->GetNeuron<SelfAttention>("SelfAttention", layer-1);
+        dump_flag=0;
         assert(hIn == GTensor::delta);
         norm.out->Print("ffn.norm", 0, dump_flag);
         if (remater_ffn) {
@@ -262,8 +292,7 @@ hGTensor FFN::cuTrain(hGTensor hIn, int flag) {
 
         down.Back(GTensor::bt4c, tGelu, GTensor::delta, up_out);
         GTensor::delta->Print("ffn.up.delta", 0, dump_flag);
-        up.Back(GTensor::tmpDelta, norm.out, GTensor::bt4c, nullptr);
-
+        up.Back(GTensor::tmpDelta, norm.out, GTensor::bt4c, nullptr);        
         // // layernorm backward does += to the dresidual, so it correctly accumulates grad from the MLP block above
         // norm.cuTrain(residual,scratchF,tmpDelta);
         float *_mean = norm.mean == nullptr ? nullptr : TO<float>(norm.mean);
@@ -274,6 +303,7 @@ hGTensor FFN::cuTrain(hGTensor hIn, int flag) {
             inp->Print("ffn.norm.inp", 0, dump_flag);
             norm.w->Print("ffn.norm.w", 1, dump_flag);
             GTensor::delta->Print("back of ffn0", 0, dump_flag);
+            lastQKV->Q.w->Print("Qw1", 1, dump_flag);   //  0x7ffe5bc00000
             dump_flag = 0;
         }
         return GTensor::delta;

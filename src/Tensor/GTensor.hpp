@@ -38,16 +38,7 @@ class EDGE_DEVICES;
 typedef shared_ptr<GTensor> hGTensor;
 typedef std::vector<int> SHAPE;
 
-#ifdef _TENSOR_G_
 #include "../Device/CUDA/cuda_common.h"
-#else
-typedef float floatX;
-#endif
-
-// #define BIT_SET(val, flag) ((val) |= (flag))
-// #define BIT_RESET(val, flag) ((val) &= (~(flag)))
-// #define BIT_TEST(val, flag) (((val) & (flag)) == (flag))
-// #define BIT_IS(val, flag) (((val) & (flag)) != 0)
 
 // set name of a tensor if its name is "\0" & its grad
 int gTN(hGTensor, const char *format, ...);
@@ -89,10 +80,28 @@ enum QUANT_ALG {
     W_NOSCALE  //
 };
 
+#include <cstdlib>
+#include <memory>
+
+template <typename T>
+struct VirtualAllocator {
+    using value_type = T;
+    T *allocate(size_t n) { return static_cast<T *>(std::malloc(n * sizeof(T))); }
+    void deallocate(T *p, size_t n) { std::free(p); }
+
+    VirtualAllocator() = default;
+    template <typename U>
+    VirtualAllocator(const VirtualAllocator<U> &) {}
+};
+
+template <typename T>
+struct GPUAllocator : public VirtualAllocator<T> {};
+
 /**
- * 1.   Support dynamic change shape & type!
- * 2.   Row-major order (first index varies most slowly and last index varies most quickly)
- * 3.   May not contiguous in memory! All tensor operations have to take the stride into account and not assume that the tensor is contiguous in memory!
+ * 1.   Support dynamic online change shape & type!
+ * 2.   Support BIT representation
+ * 3.   Row-major order (first index varies most slowly and last index varies most quickly)
+ * 4.   May not contiguous in memory! All tensor operations have to take the stride into account and not assume that the tensor is contiguous in memory!
  */
 class GTensor {
    private:
@@ -104,8 +113,7 @@ class GTensor {
     std::vector<GTensor *> refered;
     std::shared_ptr<EDGE_DEVICES> hDevice = nullptr;
     size_t szData                         = 0;
-    int recompute                         = 1;
-
+    int last_iter = -1;
     //  support dynamic change shape&type!
     virtual bool ReShape(SHAPE shape_, typNUMBER tpD_, int flag = 0x0);
     virtual hGTensor _Multiply(const hGTensor &other) {
@@ -118,7 +126,7 @@ class GTensor {
     static const int N_DIMS   = 4;
 
     static size_t szMaloc;
-    static hGTensor bt4c, delta, tmpDelta, outL, scratch, tmpFF1, tmpW, tmpGW, residual;
+    static hGTensor bt4c, delta, tmpDelta, outL, scratch, tmpFF1, tmpW, tmpGW, residual, tmpTernary;
     static bool AllocBuffer(Fish *hFish, int flag = 0x0);
     static bool FreeBuffer(int flag = 0x0);
     static void *buff, *host_buff;                     //  temporary shared memory
@@ -128,9 +136,19 @@ class GTensor {
     SHAPE shape;
     SHAPE x_shape;  //  1.padded for high performance or menory alignment(x_shape<=shape)
     // shape=>x_shape
+    vector<hGOP> src;
+    virtual void AddSrc(const vector<hGTensor> &ts, int flag = 0x0);
+    float *gama_T   = nullptr;  // scaling coefficient of 1-bit weight
+    void *host_data = nullptr;  // somtimes, we need data both in device&host
+    void *data = nullptr;
+    floatGrad *grad = nullptr;  // 
+    hGTensor grad_ref = nullptr;
+    void *gm = nullptr, *gv = nullptr;  // first moment, second moment of grad
+    bool isUpdateParam = false;
+    float info[8];                      // Some info of some operations
+
     virtual void *DataPad(void *src0, int flag = 0x0);
 
-    // static typNUMBER tpFloatX,tpPreLogits;
     typNUMBER type;
     INIT_WEIGHT tpInit = INIT_WEIGHT::RANDOM;
     enum BIT_FLAG {
@@ -150,7 +168,6 @@ class GTensor {
 
         F_TERNARY = 0x100000,
         F_DEBUG   = 0x10000000
-
     };
 
     QUANT_ALG tpQuant = W_SCALE;
@@ -178,7 +195,7 @@ class GTensor {
 
     hGTensor Relu();
     hGTensor Silu();
-    hGTensor Norm(float epsilon, int flag = 0x0);
+    double Length(int type, int flag = 0x0);
 
     // operations
     virtual bool OverWrite(struct ggml_tensor *gg_, bool isSrc = true, int flag = 0x0);
@@ -192,13 +209,11 @@ class GTensor {
     }  //  Loss
     virtual hGTensor CrossEntropy(const hGTensor b, int flag = 0x0);
     //  ternary {-1, 0, 1}
-    virtual bool ToTernary(int flag = 0x0) { throw "ToTernary is ...."; }
+    virtual bool ToTernary(floatX *, int flag = 0x0) { throw "ToTernary is ...."; }
     virtual bool ToQuant(int flag = 0x0) { throw "ToQuant is ...."; }
 
     // row-major order. ne contains the number of elements in each dimension & nb is the number of bytes ("nb", a.k.a. stride).
     int64_t ne[N_DIMS];
-    // stride in bytes:  nb[0]=type_size(type);    nb[i]=nb[i-1]*ne[i-1]
-    size_t nb[N_DIMS];
     int32_t flags = 0x0, last_stp = -1;
 
     bool isParam() const { return BIT_TEST(flags, F_PARAM); }
@@ -210,17 +225,7 @@ class GTensor {
         hR->refered.push_back(this);
         _INFO("\t%s =====> %s\n", name, hR->name);
     }
-
-    vector<hGOP> src;
-    // virtual void AddSrc(const hGOP t,int type,int flag=0x0);
-    virtual void AddSrc(const vector<hGTensor> &ts, int flag = 0x0);
-    // struct ggml_tensor * view_src=nullptr;
-    // size_t               view_offs=0;
-    void *host_data = nullptr;  // somtimes, we need data both in device&host
-    float *gama_T   = nullptr;  // scaling coefficient of 1-bit weight
-    void *data = nullptr, *grad = nullptr;
-    void *gm = nullptr, *gv = nullptr;  // first moment, second moment of grad
-    float info[8];                      // Some info of some operations
+    virtual bool SetTernary(typNUMBER typ, int flag = 0x0);
     virtual bool SerialGP(void *yD, void *yG, size_t szY, bool isToY, int flag = 0x0) {
         assert(0);
         return false;
@@ -229,14 +234,22 @@ class GTensor {
         assert(0);
         return false;
     }
+    virtual floatX *GetDataX(int flag = 0x0,const string&sX="");
+
+    //Some optimization function
+    virtual int Dogleg(int flag=0x0);
 
     char name[MAX_NAME] = "\0";
     void *extra;  // extra things e.g. for ggml-cuda.cu
     //  return ggml_tensor
     struct ggml_tensor *GG();
     struct ggml_context *CTX() { return nullptr; }
-    //  byte per element, may be fraction!!!
+    /*  byte per element, may be fraction!!!
     virtual double bpe();
+    virtual size_t ld(int no) {
+        assert(no >= 0 && no < 4);
+        return nb[no] / bpe();
+    }*/
     virtual size_t size(int typ = 0) const;
     virtual size_t mostMemory(int typ = 0) const { return nByte(); }
     virtual int dims() const {
@@ -248,22 +261,21 @@ class GTensor {
         return 1;
     }
     virtual size_t nByte() const { return szData; }
+    //  The offset of (i0,i1,i2,i3) in byte
+    virtual size_t Offset(int i0, int i1, int i2, int i3,int flag=0x0)  const;
 
     virtual bool isEmpty() const {
         // if(size()>0)    {   assert(B>0 && T>0 && C>0); }
         return size() == 0;
     }
-    virtual size_t ld(int no) {
-        assert(no >= 0 && no < 4);
-        return nb[no] / bpe();
-    }
+
     virtual bool isSameShape(const hGTensor b) const { return szData == b->szData; }
     virtual void Zero() { Set(0.0); }
     virtual void ZeroGrad() { assert(0); }
     virtual void Set(float a, int flag = 0x0);
     template <typename T>
     void Set(int i0, int i1, int i2, int i3, T value) {
-        void *val = (char *)data + i0 * nb[0] + i1 * nb[1] + i2 * nb[2] + i3 * nb[3];
+        void *val = (char *)data + Offset(i0,i1,i2,i3);
         switch (type) {
             case typNUMBER::I8: {
                 ((int8_t *)(val))[0] = value;
@@ -276,11 +288,9 @@ class GTensor {
             } break;
             case typNUMBER::F16: {
                 assert(0 && "fatal error");
-                // ((ggml_fp16_t *)(val))[0] = GGML_FP32_TO_FP16(value);
             } break;
             case typNUMBER::BF16: {
                 assert(0 && "fatal error");
-                // ((ggml_bf16_t *)(val))[0] = GGML_FP32_TO_BF16(value);
             } break;
             case typNUMBER::F32: {
                 ((float *)(val))[0] = value;
@@ -289,7 +299,7 @@ class GTensor {
                 assert(0 && "fatal error");
             }
         }
-    }
+    }/**/
 
     virtual void SetFlag(int64_t flag) { flags |= (int32_t)flag; }
     virtual float Get(int i, int flag = 0x0) const;
@@ -359,8 +369,8 @@ inline int tDIM(hGensor T) { return T == nullptr ? 0 : T->dims(); }
 inline float tGET(hGensor T, int i) { return T->Get(i); }
 inline void tSET(hGensor T, float a) { T->Set(a); }
 inline void tFLAG(hGensor T, int64_t flag) { T->SetFlag(flag); }
-double tNormOf(const std::vector<hGTensor> &tensors, int flag);
-double tNormOf(const hGTensor tensor, int flag = 0x0);
+double tNormsOf(const std::vector<hGTensor> &tensors, int flag);
+// double tNormOf(const hGTensor tensor, int flag = 0x0);
 #else
 int gTN(struct ggml_tensor *cur, const char *format, ...);
 int gTN0(struct ggml_tensor *cur, const char *format, ...);
@@ -398,6 +408,7 @@ inline floatX *ToX0(hGensor t) {
 inline floatX *ToG(hGTensor t) {
     assert(t != nullptr);
     assert(t != nullptr && t->grad != nullptr);
+    assert(typeid(floatGrad)==typeid(floatX));
     return (floatX *)(t->grad);
 }
 inline floatX *ToG0(hGTensor t) {
@@ -442,9 +453,9 @@ class huTensor : public GTensor {
     hGTensor CrossEntropy(const hGTensor b, int flag = 0x0) override;
     hGTensor GetRow(hGTensor, hGTensor token, hGTensor pos, int flag) override;
     hGTensor Normal(hGTensor hOut, hGTensor _mean, hGTensor _rstd, hGTensor w, hGTensor b, bool isForward = true, int flag = 0x0) override;
-    void Print(const string &title, int typ, int flag, size_t nEle = 0) const override;
+    // void Print(const string &title, int typ, int flag, size_t nEle = 0) const override;
 
-    bool ToTernary(int flag = 0x0) override;
+    bool ToTernary(floatX *tmp, int flag = 0x0) override;
 };
 
 struct GENSOR_INFO {

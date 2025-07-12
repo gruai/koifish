@@ -13,8 +13,8 @@
 
 hGTensor GTensor::outL = nullptr, GTensor::delta = nullptr, GTensor::tmpDelta = nullptr;
 ;
-hGTensor GTensor::bt4c = nullptr, GTensor::scratch = nullptr, GTensor::tmpFF1 = nullptr, GTensor::tmpW = nullptr, GTensor::tmpGW = nullptr,
-         GTensor::residual = nullptr;
+hGTensor GTensor::bt4c = nullptr, GTensor::scratch = nullptr, GTensor::tmpW = nullptr, GTensor::tmpGW = nullptr, GTensor::tmpFF1 = nullptr,
+         GTensor::tmpTernary = nullptr, GTensor::residual = nullptr;
 void *GTensor::buff = nullptr, *GTensor::host_buff = nullptr;
 
 float GTensor::rLARS(float s0, float T_lars, int flag) {
@@ -44,12 +44,36 @@ hGTensor GT(Fish *hFish, typNUMBER type, SHAPE shape, int flag, const string &na
     return hT;
 }
 
-//  https://stackoverflow.com/questions/16468440/how-to-split-class-definition-between-multiple-cpp-and-cu-files
-// hGensor TENSO(void* ctx0,typNUMBER typ,SHAPE shape,int flag,const string&name ) {
-//    auto type = (typNUMBER)(typ);
-//    hGensor hT = std::make_shared<huTensor>((Fish*)ctx0,name,shape,type,false,flag);
-//    return hT;
-// }
+size_t GTensor::Offset(int i0, int i1, int i2, int i3, int flag) const {
+    size_t off = i0 + i1 * ne[0] + i2 * ne[0] * ne[1] + i3 * ne[0] * ne[1] * ne[2];
+    //  off = i0 * nb[0] + i1 * nb[1] + i2 * nb[2] + i3 * nb[3];
+    double nBit = BitPE(type);
+    switch (type) {
+        case typNUMBER::T_SIGN:
+        case typNUMBER::T_BINARY:
+        case typNUMBER::T_BINARY_3:
+            assert(0);
+            break;
+        default:
+            off *= (nBit / 8);
+            break;
+    }
+
+    // if (nBit >= 8.0) {
+    //     nb[0] = (size_t)(nBit / 8.0);
+    //     nb[1] = nb[0] * ne[0];
+    //     assert(nb[0] * 8 == nBit);
+    // } else {  // For bit-representation of ld
+    //     assert(ne[0] % 8 == 0);
+    //     nb[0] = 1, nb[1] = nb[0] * (ne[0] / 8);
+    // }
+    // // nb[1] = nb[0] * (ne[0] / szBlk);
+    // for (int i = 2; i < N_DIMS; i++) {
+    //     nb[i] = nb[i - 1] * ne[i - 1];
+    // }
+    assert(off < szData);
+    return off;
+}
 
 bool GTensor::ReShape(SHAPE shape_, typNUMBER tpD_, int falg) {
     if (type == tpD_ && shape == shape_)
@@ -60,29 +84,29 @@ bool GTensor::ReShape(SHAPE shape_, typNUMBER tpD_, int falg) {
     int i = 0;
     for (auto n : shape) {
         ne[i++] = n;
-        assert(n > 0 && "");
+        assert(n > 0 && "Invalid ne");
     }
     for (i = shape.size(); i < N_DIMS; i++) ne[i] = 1;
-
-    // from ggml_new_tensor
-    size_t szBlk = NPBlck(type);
-    nb[0]        = BPE(type);
-    assert(szBlk == 1);
-    nb[1] = nb[0] * (ne[0] / szBlk);
-    for (int i = 2; i < N_DIMS; i++) {
-        nb[i] = nb[i - 1] * ne[i - 1];
-    }
-
-    double nB = BPE(type);
-    assert(nB >= 1.0);
-    szData = size() * nB;
-
+    double nBit = BitPE(type);
+    szData = (size_t)(size() / 8 * nBit);
     if (data != nullptr) {
         Free();
         Alloc();
     }
     // _INFO();
     return true;
+}
+
+bool GTensor::SetTernary(typNUMBER tpT_, int flag) {
+    if (type == tpT_)
+        return true;
+    BIT_SET(flags, GTensor::F_TERNARY);
+    tpQuant = W_SCALE;
+    if (DEBUG.T_ternary == 1) {  //  only for debug
+        type = tpT_;
+        return true;
+    }
+    return ReShape(shape, tpT_);
 }
 
 float GTensor::Get(int i, int flag) const {
@@ -175,7 +199,6 @@ void GTensor::Set(float a, int flag) {
     } else {
         assert(0);
     }
-    // ggml_set_f32(gg, 1.0f);
 }
 bool GTensor::OverWrite(struct ggml_tensor *gg_, bool isSrc, int flag) {
 #ifdef __USE_GGML__
@@ -222,7 +245,6 @@ hGTensor GTensor::Silu() {
     // auto cur=ggml_silu(nullptr, (struct ggml_tensor *)gg);  return NEW_(cur);
     return nullptr;
 }
-hGTensor GTensor::Norm(float epsilon, int flag) { return nullptr; }
 
 hGTensor GTensor::CrossEntropy(const hGTensor b, int flag) {
     // auto cur = ggml_cross_entropy_loss(nullptr,(struct ggml_tensor *)gg, b->GG() );      // ggml_cross_entropy_loss_1(_ctx, cur, target_probs);
@@ -330,10 +352,18 @@ int GTensor::SerialJSON(const std::string &name_, const JSON &val, void *bytes_p
 }
 
 void GTensor::Print(const string &title0, int x, int flag, size_t nEle) const {
-    assert(nEle >= 0);
-    bool isDevice = true;
-
-    void *src    = x == 1 ? grad : data;
+    if (g_dump_level > 0 && flag >= 0)
+        return;
+    assert(nEle >= 0);    
+    bool isDevice = !isAtHost();
+    void *src    = x == 1 ? grad : data,*hData=nullptr;
+    if(isDevice){
+        SYNC_DEVICE();
+        hData = new char[szData];
+        D2H(data,hData,szData);
+        src = hData;
+    }
+    
     string title = title0;
     if (x == 1)
         title = "GRAD_" + title;
@@ -344,19 +374,27 @@ void GTensor::Print(const string &title0, int x, int flag, size_t nEle) const {
         sp[3] = 1;
     }
     switch (type) {
+        case typNUMBER::T_BINARY:       case typNUMBER::T_BINARY_3:            
+            assert(0);       
+            break;
+        case typNUMBER::F8E5M2:
+            //    PrintTensor<__nv_fp8_e5m2>(title.c_str(),(__nv_fp8_e5m2 *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
+            PrintTensor<f8e5m2_t>(title.c_str(), (f8e5m2_t*)src, false, ne[0], ne[1], ne[2], ne[3], flag);
+            break;
         case typNUMBER::F16:
-            PrintTensor<half>(title.c_str(), (half *)src, isDevice, sp[0], sp[1], sp[2], sp[3], flag);
+            PrintTensor<half>(title.c_str(), (half *)src, false, sp[0], sp[1], sp[2], sp[3], flag);
             break;
         case typNUMBER::BF16:
-            PrintTensor<__nv_bfloat16>(title.c_str(), (__nv_bfloat16 *)src, isDevice, sp[0], sp[1], sp[2], sp[3], flag);
+            PrintTensor<__nv_bfloat16>(title.c_str(), (__nv_bfloat16 *)src, false, sp[0], sp[1], sp[2], sp[3], flag);
             break;
         case typNUMBER::F32:
-            PrintTensor<float>(title.c_str(), (float *)src, isDevice, sp[0], sp[1], sp[2], sp[3], flag);
+            PrintTensor<float>(title.c_str(), (float *)src, false, sp[0], sp[1], sp[2], sp[3], flag);
             break;
         default:
             assert(0);
             break;
     }
+    if(hData!=nullptr)  delete[] (char*)hData;
 }
 
 bool GTensor::Dump(int tpDump, const string &title, int flag) const {
@@ -447,13 +485,13 @@ bool GTensor::Alloc(int tpInit, int flag) {
     data = new char[szData];
     if (isParam()) {
         // if(hFish!=nullptr && hFish->isTrain())
-        grad = new char[szData];
+        grad = new floatGrad[size()];
     }
     return true;
 }
 
 bool huTensor::Alloc(int iter, int flagInit) {
-    if (strcmp(name, "model.layers.1.attn.wq.weight") == 0
+    if (strcmp(name, "model.layer.ffn_up.weight") == 0
         /*|| strcmp(name, "model.embed.weight") == 0*/) {  //  model.inp_embd.weight       model.out.weight model.embed.weight model.blk.0.attn.wq.weight
         int debug = 0x0;
     }
@@ -480,7 +518,11 @@ bool huTensor::Alloc(int iter, int flagInit) {
     if (allocData) {
         Alloc_1(&data, true);
         // _INFO("\t%s (+%.3gM)\n",name,(szMaloc-sz0)/1.0e6);
+        if(BIT_TEST(flags, F_TERNARY)){
+            Alloc_1((void**)(&gama_T), false, sizeof(float) * ne[0]);
+        }
     }
+    
     if (isParam()) {
         if (allocData) {
             InitParam(flagInit);
@@ -488,26 +530,24 @@ bool huTensor::Alloc(int iter, int flagInit) {
         }
 
         if (grad == nullptr && isTrain) {
-            size_t szMV = sizeof(floatMV) * size();
-            Alloc_1(&grad, true, szData + szMV * 2);  // sgd_kernel would zero grad!
+            size_t szMV = sizeof(floatMV) * size(), szGrad = sizeof(floatGrad) * size();
+            if (grad_ref != nullptr)
+                grad = ToX(grad_ref);
+            else {
+                Alloc_1((void **)(&grad), true, szGrad);  // sgd_kernel would zero grad!
+            }
             string method = hFish->config.Get({"train", "optimizatioin", "method"}, string("adamw"), false);
             if (method == "adamw") {
-                gm = (char *)grad + szData, gv = (char *)gm + szMV;
+                Alloc_1(&gm, true, szMV * 2), gv = (char *)gm + szMV;
             } else if (method == "lion") {
-                gm = (char *)grad + szData, gv = nullptr;
+                Alloc_1(&gm, true, szMV);
             } else {
-                gm = nullptr, gv = (char *)grad + szMV;
+                Alloc_1(&gv, true, szMV);  // gm = nullptr, gv = (char *)grad + szMV;
             }
         }
     } else {
     }
-    // if(isParam())      {
-    //    Alloc_1((void**)(&gama_T),false,sizeof(float)*ne[0]);
-    //    float *tmp = new float[ne[0]];
-    //    for(int i=0;i<ne[0];i++)   tmp[i]=1;
-    //    H2D(gama_T,tmp,sizeof(float)*ne[0]);
-    //    delete[] tmp;
-    // }
+
     assert(szMaloc - sz0 <= mostMemory());
     if (iter <= 1 /*&& */) {
         string sA = hostAlloc ? "HostAlloc" : "cudaMalloc";
@@ -536,6 +576,8 @@ bool huTensor::Free(bool isPassResident) {
                 int pass = 0;
             } else {
                 Free_1(&data);
+                if (gama_T != nullptr)
+                    Free_1((void **)(&gama_T));
                 // _INFO("\t%s (-%.3gM)\n",name,(sz0-szMaloc)/1.0e6);
             }
         } else {
@@ -543,10 +585,9 @@ bool huTensor::Free(bool isPassResident) {
             return true;
         }
         if (!BIT_TEST(flags, GTensor::F_RESIDENT) && grad != nullptr) {
-            Free_1(&grad, "_grad");
+            Free_1((void **)(&grad), "_grad");
         }
-        if (gama_T != nullptr)
-            Free_1((void **)(&gama_T));
+        
         // _INFO("\t%s freed(%.3gM)!",name,(sz0-szMaloc)/1.0e6);
     } catch (...) {
         assert(0);
