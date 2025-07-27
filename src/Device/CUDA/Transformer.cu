@@ -12,7 +12,7 @@
 #include "../../Manifold/Neuron.hpp"
 #include "./kernel/Operator.cuh"
 #include "./kernel/embed.cuh"
-#include "./kernel/gemm.cuh"
+// #include "./kernel/gemm.cuh"
 #include "./kernel/layernorm.cuh"
 #include "./kernel/utils.cuh"
 

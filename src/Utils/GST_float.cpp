@@ -8,6 +8,7 @@
 
 #include <assert.h>
 #include <math.h>
+
 #include <cfloat>
 #if defined(__AVX2__) && defined(__F16C__)
 #include <immintrin.h>
@@ -33,6 +34,9 @@ double BitPE(typNUMBER type) {
         if (DEBUG.T_ternary == 1)  // hack to BF16 to debug some error
             return 16.0;
         return 1.0;
+    }
+    if (type == typNUMBER::T_BINARY_TILE) {
+        return 0;   //0.125;
     }
     exit(KOIFISH_UNSUPPORTED_DATATYPE);
 }

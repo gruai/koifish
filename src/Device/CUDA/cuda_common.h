@@ -50,9 +50,13 @@ void inline cublasCheck(cublasStatus_t status, const char *file, int line) {
 // defined as extern here because the individual kernels wish to use it
 // but it is actually created and instantiated in the main program file
 extern cudaDeviceProp deviceProp;
-
+// #define THREAD_TILE_M 8U
+// #define THREAD_TILE_N 8U
+#define THREAD_TILE_M 4U
+#define THREAD_TILE_N 4U
 // WarpSize is not a compile time constant, Defining here like this possibly allows the compiler to optimize better
 #define WARP_SIZE 32U
+
 // Thread number of each block  - If each thread requires big private memory, then using less threads per block helps but its not infinite so should be
 // soft-limited to a minimum like 32 or 64 depending on algorithm. But maximum is hard-limited to 1024 threads per block.
 #define CU_T4B_SMALL 256U
@@ -84,6 +88,18 @@ inline void cudaCheck(cudaError_t error, const char *file, int line) {
 };
 #define cudaCheck(err) (cudaCheck(err, __FILE__, __LINE__))
 
+
+inline void cudaCheckLast(const char* const file, const int line){
+    cudaError_t const err{cudaGetLastError()};
+    if (err != cudaSuccess)    {
+        std::cerr << "CUDA Runtime Error at: " << file << ":" << line
+                  << std::endl;
+        std::cerr << cudaGetErrorString(err) << std::endl;
+        // std::exit(EXIT_FAILURE);
+    }
+}
+#define CHECK_LAST_CUDA_ERROR() cudaCheckLast(__FILE__, __LINE__)
+
 #define CUDA_CHECK_RETURN(value) CheckCudaErrorAux(__FILE__, __LINE__, #value, value)
 static void CheckCudaErrorAux(const char *file, unsigned line, const char *statement, cudaError_t err) {
     if (err == cudaSuccess)
@@ -91,6 +107,7 @@ static void CheckCudaErrorAux(const char *file, unsigned line, const char *state
     std::cerr << statement << " returned " << cudaGetErrorString(err) << "(" << err << ") at " << file << ":" << line << std::endl;
     exit(1);
 }
+
 
 // like cudaFree, but checks for errors _and_ resets the pointer.
 template <class T>
@@ -696,5 +713,34 @@ struct Surface {
     }
 };
 
+void inline D20(void *dev,size_t szData,int flag=0x0){
+    cudaCheck(cudaMemset(dev, 0, szData));
+}
+
 bool D2H(void *dev,void *host,size_t szData,int flag=0x0);
 bool H2D(void *dev,void *host,size_t szData,int flag=0x0);
+
+// copy value of one elemetn from device
+template<typename T>
+bool D2e(void *dev,T& host,int flag=0x0){
+    return D2H(dev,&host,sizeof(T),flag);
+}
+
+typedef int (*fnPOS)(int r, int c, int M, int N);
+// Column major to be compatible with cuBlas
+#define CR2POS(r, c, M, N) ((c) * (M) + (r))
+__device__ inline int fnCR2POS(int r, int c, int M, int N) {
+// #ifndef NDEBUG
+//     assert(r>=0 && r<M && c>=0 && c<N);
+// #endif
+    return c * M + r;
+}
+
+// Row major to be compatible with cuBlas
+#define RC2POS(r, c, M, N) ((r) * (N) + (c))
+__device__ inline int fnRC2POS(int r, int c, int M, int N) {
+// #ifndef NDEBUG
+//     assert(r>=0 && r<M && c>=0 && c<N);
+// #endif
+    return r * N + c;
+}

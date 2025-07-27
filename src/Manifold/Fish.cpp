@@ -201,16 +201,19 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
                 continue;
             optParams.push_back(t);
             nx += tELEM(t);
-            n0++;  //
-            if (G_Has_(t->name, config.datatypes.Ternary)) {  // {"ffn_down.weight", "ffn_up.weight"}
-                t->SetTernary(typNUMBER::T_BINARY_3);                
+            n0++;                                                //
+            if (G_Has_(t->name, config.datatypes.arrTernary)) {  // {"ffn_down.weight", "ffn_up.weight"}
+                t->SetTernary(typNUMBER::T_BINARY_3);
+            }
+            if (G_Has_(t->name, config.datatypes.arrTile)) {  // {"ffn_down.weight", "ffn_up.weight"}
+                t->SetTernary(typNUMBER::T_BINARY_TILE);
             }
         }
         if (BIT_TEST(t->flags, GTensor::F_INPUT)) {
             nInput++;
         }
     }
-    nParams = nx;  // 1653757440
+    nParams = nx;
     assert(optParams.size() < 2048);
     if (nx != nParams) {
         CHECK_SAME_TENSORS("Compare parameter tensors\t", optParams, xGensors);
@@ -374,7 +377,7 @@ bool Fish::SaveTrain(string sX, int flag) {
         // isOK = SAFETENSOR_Serialize(sOut,false); //only for debug
         // assert(isOK);
         // _INFO("[SAVE] @%s iter=%d\n", sX.c_str(), iter);
-    }    
+    }
 
     return isOK;
 }
@@ -476,7 +479,7 @@ int Fish::BuildGraphFromRaw(int flag) {
 void Fish::InitGensor(void *ctx, const string &name, hGensor gensor, bool isParam, int flag) {
     assert(gensor != nullptr);
     if (!name.empty()) {
-        gTN0(gensor, name.c_str());      //    gTN0(w,"%s.w",name.c_str());
+        gTN0(gensor, name.c_str());  //    gTN0(w,"%s.w",name.c_str());
     }
 
     if (isParam /*&& isTrain()*/) {
@@ -490,7 +493,7 @@ void Fish::InitGensor(void *ctx, const string &name, hGensor gensor, bool isPara
 }
 
 void Fish::InitGensor(void *ctx, hGensor gensor, const char *name, struct random_normal_distribution *rnd, int flag) {
-    assert(0);  // Deprecated    
+    assert(0);  // Deprecated
 }
 
 hGensor Fish::AddTensor(void *ctx, const std::string &key_, typNUMBER tp, const SHAPE &shape, bool isParam, int flag) {
@@ -589,7 +592,14 @@ bool Fish::CopyGensors(hWIKI wiki, int flag) {
 
 bool Fish::BeforeNextStep(int iter, int flag) {
     int nLayer = config.nLayer(), l;
-    for (auto neuron : backbons) neuron->stat.Reset();
+    for (auto neuron : backbons) {
+        neuron->stat.Reset();        
+    }
+    for(auto t : optParams){
+        t->tile_r0 = t->tile_r1,        t->tile_c0 = t->tile_c1;
+        // t->tile_r1 = rand_coin.RandU32()%THREAD_TILE_M;
+        // t->tile_c1 = rand_coin.RandU32()%THREAD_TILE_N;
+    }
 
     for (l = 0; l < nLayer; l++) {
         FFN *ffn           = GetNeuron<FFN>("FFN", l);

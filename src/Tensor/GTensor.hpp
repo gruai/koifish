@@ -112,20 +112,20 @@ class GTensor {
     hGTensor hRef = nullptr;
     std::vector<GTensor *> refered;
     std::shared_ptr<EDGE_DEVICES> hDevice = nullptr;
-    size_t szData                         = 0;
+    size_t szData = 0, szGama = 0, szUse = 0;
     int last_iter = -1;
     //  support dynamic change shape&type!
     virtual bool ReShape(SHAPE shape_, typNUMBER tpD_, int flag = 0x0);
     virtual hGTensor _Multiply(const hGTensor &other) {
         assert(0);
         return nullptr;
-    }
+    }    
 
    public:
     static const int MAX_NAME = 64;
     static const int N_DIMS   = 4;
 
-    static size_t szMaloc;
+    static size_t szGlobalMaloc;
     static hGTensor bt4c, delta, tmpDelta, outL, scratch, tmpFF1, tmpW, tmpGW, residual, tmpTernary;
     static bool AllocBuffer(Fish *hFish, int flag = 0x0);
     static bool FreeBuffer(int flag = 0x0);
@@ -138,14 +138,16 @@ class GTensor {
     // shape=>x_shape
     vector<hGOP> src;
     virtual void AddSrc(const vector<hGTensor> &ts, int flag = 0x0);
-    float *gama_T   = nullptr;  // scaling coefficient of 1-bit weight
+
     void *host_data = nullptr;  // somtimes, we need data both in device&host
-    void *data = nullptr;
-    floatGrad *grad = nullptr;  // 
+    void *data      = nullptr;
+    floatGama *gama_T();  // scaling coefficient of bit weight
+    int tile_r0 = 0, tile_r1 = 0, tile_c0 = 0, tile_c1 = 0;
+    floatGrad *grad   = nullptr;  //
     hGTensor grad_ref = nullptr;
     void *gm = nullptr, *gv = nullptr;  // first moment, second moment of grad
     bool isUpdateParam = false;
-    float info[8];                      // Some info of some operations
+    float info[8];  // Some info of some operations
 
     virtual void *DataPad(void *src0, int flag = 0x0);
 
@@ -189,7 +191,7 @@ class GTensor {
     }
     virtual bool Free(bool isPassResident = false) { return true; }
     virtual void Print(const string &title, int typ, int flag, size_t nEle = 0) const;
-    virtual bool Dump(int type, const string &title = "", int flag = 0x0) const;
+    virtual bool DumpX(int type, const string &title = "", int flag = 0x0) const;
     // operations
     hGTensor operator*(const hGTensor &other) { return _Multiply(other); }
 
@@ -223,6 +225,7 @@ class GTensor {
     virtual void SetRefer(hGTensor hR, int flag = 0x0) {
         hRef = hR;
         hR->refered.push_back(this);
+        type = hRef->type;
         _INFO("\t%s =====> %s\n", name, hR->name);
     }
     virtual bool SetTernary(typNUMBER typ, int flag = 0x0);
@@ -234,22 +237,16 @@ class GTensor {
         assert(0);
         return false;
     }
-    virtual floatX *GetDataX(int flag = 0x0,const string&sX="");
+    virtual floatX *GetDataX(int flag = 0x0, const string &sX = "");
 
-    //Some optimization function
-    virtual int Dogleg(int flag=0x0);
+    // Some optimization function
+    virtual int Dogleg(int flag = 0x0);
 
     char name[MAX_NAME] = "\0";
     void *extra;  // extra things e.g. for ggml-cuda.cu
     //  return ggml_tensor
     struct ggml_tensor *GG();
     struct ggml_context *CTX() { return nullptr; }
-    /*  byte per element, may be fraction!!!
-    virtual double bpe();
-    virtual size_t ld(int no) {
-        assert(no >= 0 && no < 4);
-        return nb[no] / bpe();
-    }*/
     virtual size_t size(int typ = 0) const;
     virtual size_t mostMemory(int typ = 0) const { return nByte(); }
     virtual int dims() const {
@@ -262,7 +259,7 @@ class GTensor {
     }
     virtual size_t nByte() const { return szData; }
     //  The offset of (i0,i1,i2,i3) in byte
-    virtual size_t Offset(int i0, int i1, int i2, int i3,int flag=0x0)  const;
+    virtual size_t Offset(int i0, int i1, int i2, int i3, int flag = 0x0) const;
 
     virtual bool isEmpty() const {
         // if(size()>0)    {   assert(B>0 && T>0 && C>0); }
@@ -275,7 +272,7 @@ class GTensor {
     virtual void Set(float a, int flag = 0x0);
     template <typename T>
     void Set(int i0, int i1, int i2, int i3, T value) {
-        void *val = (char *)data + Offset(i0,i1,i2,i3);
+        void *val = (char *)data + Offset(i0, i1, i2, i3);
         switch (type) {
             case typNUMBER::I8: {
                 ((int8_t *)(val))[0] = value;
@@ -299,7 +296,7 @@ class GTensor {
                 assert(0 && "fatal error");
             }
         }
-    }/**/
+    } /**/
 
     virtual void SetFlag(int64_t flag) { flags |= (int32_t)flag; }
     virtual float Get(int i, int flag = 0x0) const;
@@ -408,7 +405,7 @@ inline floatX *ToX0(hGensor t) {
 inline floatX *ToG(hGTensor t) {
     assert(t != nullptr);
     assert(t != nullptr && t->grad != nullptr);
-    assert(typeid(floatGrad)==typeid(floatX));
+    assert(typeid(floatGrad) == typeid(floatX));
     return (floatX *)(t->grad);
 }
 inline floatX *ToG0(hGTensor t) {

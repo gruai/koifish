@@ -497,7 +497,8 @@ bool Fish::InitDictTokenset(int flag) {
                     hDict->eos_id = wikis[0]->eos;
                     // hLLM = wikis[0]->lmodel;
                 } else {
-                    hDict->vocab.resize(50257);
+                    int n_vocab = CEIL_DIV(50257, 128) * 128;   //  50257 =>  50304 
+                    hDict->vocab.resize(n_vocab);
                     hDict->bos_id = 1;
                     hDict->eos_id = 2;
                 }
@@ -611,27 +612,38 @@ bool NLP_AutoRegressive::CreateExlogists(hWIKI wiki, uint32_t n_ctx, uint32_t n_
     return false;
 }
 
-void NLP_AutoRegressive::Train(int flag) {
-    // DEBUG.train_datas = 1;
-    // DEBUG.train_hyperparams = 1;
-    // DEBUG.back_graph_version = 1;        Verified at 05132025
-
+void Fish::UpdateTernary(int flag) {
+    RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
     string bit_tensors;
     int nTernary = 0;
-    size_t nzT   = 0;
-    hOPT->BeforeTrain(tokens_input, 0x0);
-    RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
-    hRLS->InitGUOKE();
-    hRLS->Prepare(-1);
+    size_t nzT = 0, nzP = 0, nzBit = 0;
     for (auto t : hOPT->opt_ps) {
+        nzP += t->size();
+        nzBit += t->nByte() * 8.0;
         if (BIT_TEST(t->flags, GTensor::F_TERNARY)) {  // {"ffn_down.weight", "ffn_up.weight"}
             nTernary++;
             nzT += t->size();
             bit_tensors += t->name, bit_tensors += " ";
         }
         hRLS->GetTensorStatus(-1, t, 0x0);
+
+        t->DumpX(0x0);
     }
-    _INFO("[Ternary] tpQuant=%s tensor=%d(%.3g%%) @{%s}\n", "W_SCALE", nTernary, nzT * 100.0f / nParams, bit_tensors.c_str());
+    double bpp = nzBit * 1.0 / nzP;  // bit per parameter
+    _INFO("\n[BIT_QUANT] bit_per_parameter=%.4g szGama=%d pQuant=%s tensor=%d(%.3g%%) \n\t@{%s}\n", bpp, sizeof(floatGama), "W_SCALE", nTernary,
+          nzT * 100.0f / nParams, bit_tensors.c_str());
+}
+
+void NLP_AutoRegressive::Train(int flag) {
+    // DEBUG.train_datas = 1;
+    // DEBUG.train_hyperparams = 1;
+    // DEBUG.back_graph_version = 1;        Verified at 05132025
+
+    hOPT->BeforeTrain(tokens_input, 0x0);
+    RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
+    hRLS->InitGUOKE();
+    hRLS->Prepare(-1);
+    UpdateTernary(flag);
     int64_t now = GST_ms();
     double ms   = 0;
     // print_build_info();
@@ -785,7 +797,7 @@ int Fish::BackwardOnRLS(int iter, int flag) {
             continue;
         auto t0 = GST_ms();
         cur     = neuron->Ming(hRLS, cur);
-        neuron->stat.tBack += GST_ms() - t0;        
+        neuron->stat.tBack += GST_ms() - t0;
     }
     SYNC_DEVICE();
     return 0x0;

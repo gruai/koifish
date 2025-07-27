@@ -81,7 +81,7 @@ class GeNeuron {
     DATA_PLACE place = DATA_PLACE::VOID;
 
     static shared_ptr<GeNeuron> MakeInstance(Fish *hG_, void *ctx_build, const string &guid, JSON::const_iterator jit, int flag = 0x0);
-
+    
     hGensor w = nullptr, b = nullptr, out = nullptr;
 
     hGensor inp   = nullptr;  //  may change! maybe nullptr!

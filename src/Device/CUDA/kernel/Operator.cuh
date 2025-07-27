@@ -30,9 +30,9 @@ __device__ __inline__ T warpReduceMax(T* val, int thread_group_width = 32) {
 }
 
 /*
-    It's not deterministic, why?    
-        atomicAdd in CUDA is not deterministic because it involves race conditions when multiple threads attempt to modify the same memory location simultaneously.
-    only support CU_x2_<<<grid_size, block_size, 0, main_stream>>>
+    It's not deterministic, why?
+        atomicAdd in CUDA is not deterministic because it involves race conditions when multiple threads attempt to modify the same memory location
+   simultaneously. only support CU_x2_<<<grid_size, block_size, 0, main_stream>>>
 */
 template <class T, int NUM_THREADS = 256>
 __global__ static void CU_x2_atomic(float* out, const T* x0, size_t N) {
@@ -44,8 +44,8 @@ __global__ static void CU_x2_atomic(float* out, const T* x0, size_t N) {
     constexpr int NUM_WARPS = (NUM_THREADS + WARP_SIZE - 1) / WARP_SIZE;
     assert(NUM_WARPS <= WARP_SIZE);
     // __shared__ float reduce_smem[NUM_WARPS];	// keep the data in register is enough for warp operaion.
-    float a   = (idx < N) ? (float)(x0[idx]) : 0.0;
-    float sum = a * a;
+    float a         = (idx < N) ? (float)(x0[idx]) : 0.0;
+    float sum       = a * a;
     float block_sum = blockReduce<warpReduceSum>(sum, true);
     if (tid == 0)
         atomicAdd(out, block_sum);
@@ -56,16 +56,16 @@ __global__ static void CU_x2_atomic(float* out, const T* x0, size_t N) {
 template <class T>
 __global__ static void CU_x2_(float* out, const T* x0, size_t N) {
     size_t index      = blockIdx.x * blockDim.x + threadIdx.x;
-    size_t ldT = blockDim.x * gridDim.x;
-    float accumulator = 0.f,a,block_sum=0;
+    size_t ldT        = blockDim.x * gridDim.x;
+    float accumulator = 0.f, a, block_sum = 0;
     for (size_t i = index; i < N; i += ldT) {
         a = (float)x0[i];
         accumulator += a * a;
     }
     out[blockIdx.x] = blockReduce<warpReduceSum>(accumulator);
-    if(blockIdx.x==0 && threadIdx.x == 0){    
-        float sum = 0.0;   
-        for (size_t i = 0; i < blockDim.x; i ++) {
+    if (blockIdx.x == 0 && threadIdx.x == 0) {
+        float sum = 0.0;
+        for (size_t i = 0; i < blockDim.x; i++) {
             sum += out[i];
         }
         *out = sum;
@@ -371,7 +371,7 @@ __device__ static void CU_softmax_v0(T* xout, T* x, int size) {
 #include <curand_kernel.h>
 //	Initialization of the random generator state generally requires more registers and local memory than random number generation. It may be beneficial to
 // separate calls to curand_init() and curand() into separate kernels for maximum performance.
-__global__ static void CU_initCurand(curandState* state, unsigned long seed, int N) {
+__global__ static void CU_initrand(curandState* state, uint32_t seed, int N) {
     int id = threadIdx.x + blockIdx.x * blockDim.x;
     if (id < N) {
         curand_init(seed, id, 0, &state[id]);
@@ -387,9 +387,13 @@ __global__ void CU_normal_generate(curandState* state, typ* results, int N, floa
         results[id]    = (typ)rand_val;
     }
 }
-//	results[id] = __float2bfloat16(rand_val); // convert to bf16
+
+/*
+    seed:   curand_init(seed, id, 0, &state[id]);
+    results[id] = __float2bfloat16(rand_val); // convert to bf16
+*/
 template <typename typ>
-void CU_normal(int N, typ* out, float devia, unsigned long seed = 42, bool isToHost = false) {
+void CU_normal(int N, typ* out, float devia, uint32_t seed = 42, bool isToHost = false) {
     typ* d_results;
     curandState* d_states;
     if (isToHost) {
@@ -399,7 +403,7 @@ void CU_normal(int N, typ* out, float devia, unsigned long seed = 42, bool isToH
     }
     cudaMalloc(&d_states, N * sizeof(curandState));
 
-    CU_initCurand<<<(N + 255) / 256, 256>>>(d_states, seed, N);
+    CU_initrand<<<(N + 255) / 256, 256>>>(d_states, seed, N);
     CU_normal_generate<typ><<<(N + 255) / 256, 256>>>(d_states, d_results, N, devia);
     cudaCheck(cudaDeviceSynchronize());
     // Copy back results if needed
@@ -415,7 +419,7 @@ void CU_normal(int N, typ* out, float devia, unsigned long seed = 42, bool isToH
 
 // row-scaling  2 thrshold
 template <class T, int NUM_THREADS = CU_T4B_SMALL>
-__global__ static void CU_ternary_2thrshold(float* gama, T* mat, int M, int N, int update) {
+__global__ static void CU_ternary_2thrshold(floatGama* gama, T* mat, int M, int N, int update) {
     int tid = threadIdx.x;
     int idx = blockIdx.x * NUM_THREADS + tid, ldJ = blockDim.x;
     float ta = 1.0, tb = (-1.0), t0 = 0.0;
@@ -458,7 +462,7 @@ __global__ static void CU_ternary_2thrshold(float* gama, T* mat, int M, int N, i
 
 /*
 template <class T>
-__device__ inline void CU_ternary_row(float* gama, T* row, int N, int update) {
+__device__ inline void CU_ternary_row(floatGama* gama, T* row, int N, int update) {
     T ta = (T)1.0, tb = (T)(-1.0), t0 = (T)(0.0);
     float sum = 0.0f, a, average = 0.0f;
     for (int k = 0; k < N; k++) {
@@ -517,7 +521,7 @@ __global__ static void CU_ternary_online(T* mat, int M, int N, int seed = 0x0) {
 }
 
 template <class T>
-__device__ inline void CU_X2ternary_row(float* gama, T* row, char* terns, int N, bool isOverwrite = false) {
+__device__ inline void CU_X2ternary_row(floatGama* gama, T* row, char* terns, int N, bool isOverwrite = false, float T_zeroRow = 1.0e-5) {
     // T ta = (T)1.0, tb = (T)(-1.0), t0 = (T)(0.0);
 
     float sum = 0.0f, a, average = 0.0f;
@@ -526,21 +530,27 @@ __device__ inline void CU_X2ternary_row(float* gama, T* row, char* terns, int N,
         sum += fabs(a);
     }
     average = (sum / (N));
-    *gama   = average;
+    if (average < T_zeroRow) {
+        *gama = 0.0;
+        return;
+    }
+    *gama = average;
     // ta = (T)(average), tb = (T)(-average);
     for (int k = 0; k < N; k += 8) {
         unsigned char tbyte = 0, bit;
         // #pragma unroll
-        for (int kk = 0; kk < 8; kk++, row++) {
+        for (int bpos = 0; bpos < 8; bpos++, row++) {
             a = CU_T2Float(row);
-            if (a > average / 2)
-                bit = 1;  // x0[pos] = ta;
-            else if (a < -average / 2)
-                bit = 0;  // x0[pos] = tb;
-            else {
-                bit = kk % 2 == 0;  // x0[pos] = pos%2==0 ? ta : tb;
-            }
-            tbyte |= bit << (7 - kk);
+            // bit = (a < -average / 2 || a > average / 2) ? 1 : 0; // would explode
+            bit = (a > average / 2) ? 1 : 0;  // binary quant after Implicit RELU
+            // if (a > average / 2)
+            //     bit = 1;  // x0[pos] = ta;
+            // else if (a < -average / 2)
+            //     bit = 0;  // x0[pos] = tb;
+            // else {
+            //     bit = bpos % 2 == 0;  // x0[pos] = pos%2==0 ? ta : tb;
+            // }
+            tbyte |= bit << (7 - bpos);
             // x0[pos] = a > average / 2 ? ta : a < -average / 2 ? tb : t0;    }
             if (isOverwrite)
                 *row = bit ? (T)(average) : (T)(-average);
@@ -551,7 +561,7 @@ __device__ inline void CU_X2ternary_row(float* gama, T* row, char* terns, int N,
 
 // row-scaling  1 thrshold
 template <class T>
-__global__ static void CU_X2ternary_(float* gama, T* mat0, char* terns, int M, int N, int bpe, bool isOverwrite = false) {
+__global__ static void CU_X2ternary_(floatGama* gama, T* mat0, char* terns, int M, int N, int bpe, bool isOverwrite = false) {
     int tid = threadIdx.x, idrow = blockIdx.x * blockDim.x + tid, bit = 0;
     if (idrow >= M)
         return;  // guard
@@ -562,30 +572,108 @@ __global__ static void CU_X2ternary_(float* gama, T* mat0, char* terns, int M, i
 
 // row-scaling  1 thrshold
 template <class T>
-__global__ void CU_ternary2X_(float* gama, const char* terns, T* mat0, int M, int N, int seed = 0x0) {
+__global__ void CU_ternary2X_(floatGama* gama, const char* terns, T* mat0, int M, int N, int seed = 0x0) {
     int tid = threadIdx.x, idrow = blockIdx.x * blockDim.x + tid, bit = 0;
     if (idrow >= M)
         return;  // guard
 
     float average = gama[idrow];
-    T ta = (T)(average), tb = (T)(-average);
+    T* x0         = mat0 + idrow * N;
+    if (average == 0) {
+        memset(x0, 0x0, sizeof(T) * N);
+        return;
+    }
+    T ta = (T)(average), tb = (T)(-average), t0 = (T)(0);
     // T ta = CU_Float2T<T>(average, seed), tb = CU_Float2T<T>(-average, seed);
-    T* x0      = mat0 + idrow * N;
     const char* tern = terns + (idrow * N) / 8;
     for (int k = 0; k < N; k += 8, tern++) {
         unsigned char tbyte = *tern;  // terns[(idrow * N + k) / 8];
 #pragma unroll
-        for (int kk = 0; kk < 8; kk++, x0++) {
-            // int idx = idrow * N + k + kk;
+        for (int bpos = 0; bpos < 8; bpos++, x0++) {
+            // int idx = idrow * N + k + bpos;
             // if (idx == 0) {
             //     int debug = 0;
             // }
-            bit = BYTE_bit(tbyte, kk);  //(tbyte >> (7-kk)) & 0x1;
-            *x0 = bit ? ta : tb;
+            bit = BYTE_bit(tbyte, bpos);  //(tbyte >> (7-bpos)) & 0x1;
+            *x0 = bit ? ta : t0;          // binary quant after Implicit RELU
+            // *x0 = bit ? ta : tb;
+            // *x0 = bit ? (bpos%2==1 ? ta : tb) : t0;      // would explode
         }
     }
 
     // __syncthreads();
+}
+
+template <const int BM, const int BN, class T>
+__global__ static void CU_X2Tile_v0(floatGama* gama, T* mat0, float T_x, bool isOverwrite = false, int trans = 1) {
+    /*const int TM=THREAD_TILE_M, TN=THREAD_TILE_N;
+    int bx = blockIdx.x, by = blockIdx.y, thread_num = blockDim.x;
+    int block_row_thread = BN / TN, block_col_thread = BM / TM;
+    assert(thread_num == block_row_thread * block_col_thread);
+    int tx = (threadIdx.x % block_row_thread) * TN;  // Each thread for [ty:ty+tM,tx:tx+TN]
+    int ty = (threadIdx.x / block_row_thread) * TM;
+    __shared__ float As[BM * BK];
+    fnPOS pA = transA == 0 ? fnCR2POS : fnRC2POS;
+    A = A + pA(by * BM, 0, M, K);
+    int a_tile_row = threadIdx.x / BK, a_tile_col = threadIdx.x % BK, a_tile_stride = thread_num / BK;  // 32
+    int nG2A = (BM * BK / thread_num), curA = threadIdx.x * nG2A;
+    int stepA = pA(0, BK, M, K), r, c;
+
+#pragma unroll
+    for (int k = 0; k < K; k += BK, A += stepA) {
+#pragma unroll
+        for (int i = curA; i < curA + nG2A; i++) {  //[BM:Bk]
+            r = i / BK, c = i % BK;         //r = i % BM, c = i / BM;
+            As[i] = A[pA(r, c, M, K)];  // CR2POS(r, c, BM, BK)
+        }
+        __syncthreads();
+        float sum = 0;
+        UNROLL for (int j = 0; j < TM; j++) {
+            UNROLL for (int l = 0; l < TN; l++) {
+                UNROLL for (int i = 0; i < BK; i++) sum += As[RC2POS((ty + j), i, BM, BK)] ;
+            }
+        }
+        gama[RC2POS((by* BM+ty)/TM,(bx * BN+ty)/TN)] = sum/TM/TN;
+        if(isOverwrite){
+
+        }
+        __syncthreads();
+    }*/
+}
+
+template <typename T>
+__global__ static void CU_X2Tile_(T* A, floatGama* gama, float T_x, int M, int N, int r0 = 0, int c0 = 0, bool isOverwrite = false, int trans = 1) {
+    const int TM = THREAD_TILE_M, TN = THREAD_TILE_N, thread_num = blockDim.x;
+    int tid = threadIdx.x, idrow, idcol;
+    idrow   = blockIdx.x * TM + tid / TM + r0;
+    idcol   = blockIdx.y * TN + tid % TM + c0;
+    if (idrow >= M || idcol >= N)
+        return;  // guard
+    fnPOS pA = trans == 0 ? fnCR2POS : fnRC2POS;
+    int pos = pA(idrow, idcol, M, N), gpos = blockIdx.x * gridDim.y + blockIdx.y;  // 13825
+    float a   = A[pos];
+    float sum = blockReduce<warpReduceSum>(a, true);
+    if (tid == 0) {
+        // if (idrow == 288 && idcol == 8) {
+        //     int debug = 0;  //-0.005210
+        // }
+        gama[gpos] = sum / TM / TN;
+    }
+    if (isOverwrite) {
+        A[pos] = gama[gpos];
+    }
+}
+template <typename T>
+__global__ static void CU_Tile2X_(T* A, floatGama* gama, float T_x, int M, int N, int r0 = 0, int c0 = 0, int trans = 1) {
+    const int TM = THREAD_TILE_M, TN = THREAD_TILE_N, thread_num = blockDim.x;
+    int tid = threadIdx.x, idrow, idcol;
+    idrow   = blockIdx.x * TM + tid / TM + r0;
+    idcol   = blockIdx.y * TN + tid % TM + c0;
+    if (idrow >= M || idcol >= N)
+        return;  // guard
+    fnPOS pA = trans == 0 ? fnCR2POS : fnRC2POS;
+    int pos = pA(idrow, idcol, M, N), gpos = blockIdx.x * gridDim.y + blockIdx.y;
+    A[pos] = gama[gpos];
 }
 
 template <class T, int NUM_THREADS = CU_T4B_SMALL>
@@ -620,3 +708,12 @@ double OFF_(T* A, T* B, size_t N, bool isCU = true, int flag = 0x0) {
     }
     return res;
 }
+
+void CU_abc(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int transB = 0,
+            bool accumulate = false, floatX* pre_gelu = NULL, bool backward = false);
+void CU_mm_(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int transB = 0,
+            bool accumulate = false, floatX* pre_gelu = NULL, bool backward = false);
+void CU_mm_blas(floatX* d, const floatX* a, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int transB = 0,
+                bool accumulate = false, floatX* pre_gelu = NULL, bool backward = false);
+void matmul_backward(floatX* delta, floatX* dweight, floatX* dbias, floatX* deltaIn, floatX* inp, floatX* weight, float* dbias_buffer, int B, int T, int C,
+                     int OC, cudaStream_t stream, bool isTransW = false, floatX* pre_gelu = NULL, bool isAccumuDelta = false);

@@ -44,12 +44,7 @@ namespace Grusoft{
 
 	public:
 		GRander() {
-			// std::random_device rd;
-			// auto genrator = std::mt19937(rd());
-			// std::uniform_int_distribution<int> distribution(0, x);
-			// x = distribution(genrator);
-
-			//pcg32_srandom_r(&rng_neil, 42u, 54u);
+			Init(20070514);
 		}
 		GRander(uint32_t seed_) { Init(seed_);	 }
 

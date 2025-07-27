@@ -98,7 +98,6 @@ int DTS_GPT2::STR2T(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>&
 
 CDict_GPT2::CDict_GPT2(Fish *nlp_, int flag) : DictVAE(nlp_, flag) {
     int n_batch = config.n_batch(), n_ctx = config.n_ctx(), n_ctx_train = config.n_ctx_train, n_embd = config.nEmbed();
-    // n_vocab=50257;
 }
 
 CDict_CHAR::CDict_CHAR(Fish *nlp_, int flag) : DictVAE(nlp_, flag) {

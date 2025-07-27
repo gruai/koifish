@@ -20,17 +20,10 @@
 #pragma warning(disable : 4244 4267)  // possible loss of data
 #endif
 
-int g_dump_level = 1;
-int DoSomeTesting(int argc, char **argv);
-
 int main(int argc, char **argv) {
     try {
 #ifdef _WIN32
         system("chcp 65001");       // Ensures that Unicode characters (Chinese, emojis, etc.) are displayed correctly in the console output.
-#endif
-#ifdef _DO_SOME_TESTING_
-        DoSomeTesting(0, 0);
-        return 889;
 #endif
         // print_build_info();
         _INFO("[ARCH] token=%ld,floatX=%ld\n", sizeof(TOKEN_ID), sizeof(floatX));
@@ -40,21 +33,7 @@ int main(int argc, char **argv) {
             return -1;
         }
 
-        params.OnArch();
-        // if(params.test=="GPT_work")      //  Deprecated
-        //     return GPT_work(params);
-        if (params.test == "fish_1")
-            return fish_1(params);
-        if (params.test == "GGUF_list")
-            return GGUF_list(params);
-        if (params.test == "bubble")
-            return Fish_bubble(params);
-        if (params.test == "token")
-            return Fish_token(params);
-        if (params.test == "ppl")
-            return Fish_ppl(params);
-        // if(params.test=="tutor")
-        //     return Tutor(params);
+        params.OnArch();        
 
         hFISH fish = nullptr;
         if (params.n_swarm > 1) {
@@ -72,6 +51,7 @@ int main(int argc, char **argv) {
         if (fish && fish->isTrain())
             fish->Train();
 
+        // CHECK_LAST_CUDA_ERROR();
         return 0x0;
     } catch (const std::exception &e) {
         _INFO("%s", e.what());

@@ -86,7 +86,7 @@ int Fish_ppl(CLI_params &config) {
     SUM::Reset("memory");
     for (i = 0; i + 1 < nTokens; i++) {
         // float fLos = hOPT->Evaluate(hLoader,-666);
-        T_generate_(fish, i, config.model.tpActivation, -666);
+        assert(0);  // T_generate_(fish, i, config.model.tpActivation, -666);
         double logprob = log(sample_prob(tokens[i + 1], logits, nVocab));
 
         sum += logprob;

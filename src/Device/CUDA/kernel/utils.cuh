@@ -372,7 +372,7 @@ inline int get_max_num_block_sums(int* num_slices_all, int numel) {
 }
 
 template <class T>
-__global__ inline void CU_X2_partial(float* out,const T* data, size_t count) {
+__global__ static void CU_X2_partial(float* out,const T* data, size_t count) {
     size_t index      = blockIdx.x * blockDim.x + threadIdx.x;
     size_t grid_width = blockDim.x * gridDim.x;
     float accumulator = 0.f,a;
@@ -413,6 +413,7 @@ __global__ static void global_norm_squared_2D(float* out, const T* data, size_t 
         // assert(!isnan(block_sum) && !isinf(block_sum));
     }
 }
+/*  Deprecated
 template <typename T>
 inline float global_norm_squared(const T* values, size_t count, ptrdiff_t stride, int num_slices, bool reset, cudaStream_t stream, int flag = 0) {
     float a, *norm2 = (float*)(GTensor::bt4c->data);
@@ -448,4 +449,4 @@ inline float global_norm_squared(const T* values, size_t count, ptrdiff_t stride
     }
     // SUM::tX1 += GST_us()-now;
     return a;
-}
+}*/

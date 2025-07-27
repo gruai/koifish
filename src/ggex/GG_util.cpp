@@ -28,6 +28,8 @@
 #include "../lenda/kernel/SVD.hpp"
 #include "json.hpp"
 
+int g_dump_level = 1;
+
 #define ARG2STR(format, len)                  \
     {                                         \
         va_list args;                         \
@@ -268,7 +270,7 @@ void train_print_usage(int argc, char **argv, const struct CLI_params *params) {
 bool CLI_params::operator!=(const CLI_params &other) const { return memcmp(this, &other, sizeof(other)); }
 
 DEUG_SWITCH DEBUG;
-void DEUG_SWITCH::Dump(int typ) { _INFO("[DEBUG]: ternary=%d\n",T_ternary); }
+void DEUG_SWITCH::Dump(int typ) { _INFO("[DEBUG]: gemm=%d\n", T_GEMM); }
 void CLI_params::Dump() {
     _INFO("%s::CLI_params: \n", exec_name.c_str());
     // _INFO(" n_vocab: %u", n_vocab);
@@ -462,12 +464,12 @@ bool CLI_params::JModel2Params(int flag) {
             }
         }
         // Mem 8484=>4772=>4838
-        if (DEBUG.cmd_p1 == 1){
-            DEBUG.T_ternary = 1;
+        if (DEBUG.cmd_p1 == 1) {
+            DEBUG.T_GEMM = -1;
             // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
-        }else {
+        } else {
             // scheduling.strategy = MEM_STRATEGY::MEM_SWAP;
-            scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
+            // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
         }
 
         if (scheduling.strategy == MEM_STRATEGY::MEM_SWAP_GUOKE) {
@@ -550,7 +552,6 @@ void CLI_params::OnArch() {
         case MODEL_ARCH::NLP_GPT2:
         case MODEL_ARCH::NLP_GPT2_char: {
             // DEBUG.cmd_p1 = 1;
-            // DEBUG.T_ternary = 0;
             n_embd_head_v = 64;
             n_embd_head_k = 64;
             // _embd = 128; dict_latent_dim = 128;        n_embd_head_v=n_embd_head_k=2; //only for debug
@@ -726,7 +727,8 @@ bool CLI_params::InitJConfig(int flag) {
         // if(model_title.empty()){
         //     model_title = "Unknown";
         // }
-        datatypes.Ternary = jKV_arr(jConfig, {"model", "datatype", "ternary"}, datatypes.Ternary, false);
+        datatypes.arrTernary = jKV_arr(jConfig, {"model", "datatype", "ternary"}, datatypes.arrTernary, false);
+        datatypes.arrTile    = jKV_arr(jConfig, {"model", "datatype", "tile"}, datatypes.arrTile, false);
 
         JModel2Params(0x0);
 
@@ -842,7 +844,7 @@ bool CLI_params::parse(int argc, char **argv) {
             exit(1);
         }
     }
-    DEBUG.T_GEMM = 0;  //  0-hybrid cublasLtMatmul/cublasGemmEx
+    DEBUG.T_GEMM = -1;  //  so many version of gemm
     if (jConfig.empty() || !InitJConfig())
         return false;
 
@@ -1169,30 +1171,12 @@ bool isQuantized(typNUMBER type) {
     if (type == typNUMBER::F8E5M2 || type == typNUMBER::F8E4M3 || type == typNUMBER::F16 || type == typNUMBER::BF16 || type == typNUMBER::F32 ||
         type == typNUMBER::I32 || type == typNUMBER::I8)
         return false;
-    if (type == typNUMBER::T_SIGN || type == typNUMBER::T_BINARY || type == typNUMBER::T_BINARY_3) {
+    if (type == typNUMBER::T_SIGN || type == typNUMBER::T_BINARY || type == typNUMBER::T_BINARY_3 || type == typNUMBER::T_BINARY_TILE) {
         return true;
     }
     assert(0);
     exit(KOIFISH_UNSUPPORTED_DATATYPE);
 }
-
-/*
-    number of elements per blck(as defined in GGML)
-
-size_t NPBlck(typNUMBER type) {
-    if (!isQuantized(type)) {
-        return 1;
-    }
-    switch (type) {}
-#ifdef __USE_GGML__
-    auto tp      = (enum ggml_type)type;
-    size_t szBlk = ggml_blck_size(tp);
-    return szBlk;
-#else
-    assert(0);
-    exit(-1);
-#endif
-}*/
 
 const char *cNameOf(typNUMBER type) {
     if (type == typNUMBER::F8E5M2)
@@ -1209,13 +1193,18 @@ const char *cNameOf(typNUMBER type) {
         return "I32";
     if (type == typNUMBER::I8)
         return "I8";
-#ifdef __USE_GGML__
-    return ggml_type_name((enum ggml_type)type);
-#else
-    assert(0);
-    exit(-1);
-#endif
+    if (type == typNUMBER::T_BINARY)
+        return "BINARY";
+    if (type == typNUMBER::T_BINARY_3)
+        return "BINARY(3)";
+    if (type == typNUMBER::T_SIGN)
+        return "TERNARY";
+    if (type == typNUMBER::T_BINARY_TILE)
+        return "TILE(One float for each tile)";
+    assert(0 && "cNameOf of UNSUPPORTED_DATATYPE");
+    exit(KOIFISH_UNSUPPORTED_DATATYPE);
 }
+
 std::string NameOf(typNUMBER type) {
     std::string name = cNameOf(type);
     return name;

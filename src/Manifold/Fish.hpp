@@ -352,7 +352,7 @@ public:
     virtual bool BeforeBuild(int flag=0x0);
     virtual bool AfterBuild(bool isInitParam,int flag=0x0);
     virtual bool UpdateNCTX(int _nctx,int flag=0x0);
-
+    virtual void UpdateTernary(int flag=0x0);
 
     virtual int BuildComputeGraph(int order,void * ctx,int flag);
     virtual hGensor BuildLoss( void * ctx,hGensor cur,int flag=0x0); 

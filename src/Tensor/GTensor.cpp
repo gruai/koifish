@@ -52,6 +52,7 @@ size_t GTensor::Offset(int i0, int i1, int i2, int i3, int flag) const {
         case typNUMBER::T_SIGN:
         case typNUMBER::T_BINARY:
         case typNUMBER::T_BINARY_3:
+        case typNUMBER::T_BINARY_TILE:
             assert(0);
             break;
         default:
@@ -87,8 +88,9 @@ bool GTensor::ReShape(SHAPE shape_, typNUMBER tpD_, int falg) {
         assert(n > 0 && "Invalid ne");
     }
     for (i = shape.size(); i < N_DIMS; i++) ne[i] = 1;
-    double nBit = BitPE(type);
-    szData = (size_t)(size() / 8 * nBit);
+    double nBit = BitPE(type), a = size() / 8.0 * nBit;
+    szData = (size_t)(a);
+    assert(szData * 1.0 == a);
     if (data != nullptr) {
         Free();
         Alloc();
@@ -105,6 +107,9 @@ bool GTensor::SetTernary(typNUMBER tpT_, int flag) {
     if (DEBUG.T_ternary == 1) {  //  only for debug
         type = tpT_;
         return true;
+    }
+    for(auto t : refered){
+        t->type = tpT_;
     }
     return ReShape(shape, tpT_);
 }
@@ -347,23 +352,23 @@ int GTensor::SerialJSON(const std::string &name_, const JSON &val, void *bytes_p
         }
     }
     if (strlen(name) > 0 && flag > 0)
-        Dump(0);
+        DumpX(0);
     return 0;
 }
 
 void GTensor::Print(const string &title0, int x, int flag, size_t nEle) const {
     if (g_dump_level > 0 && flag >= 0)
         return;
-    assert(nEle >= 0);    
+    assert(nEle >= 0);
     bool isDevice = !isAtHost();
-    void *src    = x == 1 ? grad : data,*hData=nullptr;
-    if(isDevice){
+    void *src = x == 1 ? grad : data, *hData = nullptr;
+    if (isDevice) {
         SYNC_DEVICE();
         hData = new char[szData];
-        D2H(data,hData,szData);
+        D2H(data, hData, szData);
         src = hData;
     }
-    
+
     string title = title0;
     if (x == 1)
         title = "GRAD_" + title;
@@ -374,12 +379,14 @@ void GTensor::Print(const string &title0, int x, int flag, size_t nEle) const {
         sp[3] = 1;
     }
     switch (type) {
-        case typNUMBER::T_BINARY:       case typNUMBER::T_BINARY_3:            
-            assert(0);       
+        case typNUMBER::T_BINARY:
+        case typNUMBER::T_BINARY_3:
+        case typNUMBER::T_BINARY_TILE:
+            assert(0);
             break;
         case typNUMBER::F8E5M2:
             //    PrintTensor<__nv_fp8_e5m2>(title.c_str(),(__nv_fp8_e5m2 *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
-            PrintTensor<f8e5m2_t>(title.c_str(), (f8e5m2_t*)src, false, ne[0], ne[1], ne[2], ne[3], flag);
+            PrintTensor<f8e5m2_t>(title.c_str(), (f8e5m2_t *)src, false, ne[0], ne[1], ne[2], ne[3], flag);
             break;
         case typNUMBER::F16:
             PrintTensor<half>(title.c_str(), (half *)src, false, sp[0], sp[1], sp[2], sp[3], flag);
@@ -394,10 +401,11 @@ void GTensor::Print(const string &title0, int x, int flag, size_t nEle) const {
             assert(0);
             break;
     }
-    if(hData!=nullptr)  delete[] (char*)hData;
+    if (hData != nullptr)
+        delete[] (char *)hData;
 }
 
-bool GTensor::Dump(int tpDump, const string &title, int flag) const {
+bool GTensor::DumpX(int tpDump, const string &title, int flag) const {
     size_t nz = 0, nElems = size(), i = 0, n = 10;
     float *fdata = (float *)data, a1 = -FLT_MAX, a0 = FLT_MAX;
     const char *A = "d";
@@ -433,12 +441,12 @@ bool GTensor::Dump(int tpDump, const string &title, int flag) const {
                     a0 = std::min(a0, fdata[i]);
                 }
             }
-            printf("\t%s %s %s \t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n", title.c_str(), name, A, ne[0], ne[1], ne[2], ne[3],
-                   cNameOf(type));
+            _INFO("\t%s %-36s %-4s szAlloc=%6gM\t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n", title.c_str(), name, A, szUse / 1.0e6, ne[0],
+                  ne[1], ne[2], ne[3], cNameOf(type));
             if (n > 0 && a1 != -FLT_MAX) {
-                printf("\nsum=%g data=[%f : %f] rZ=%.3g%%\n\t", sum, a0, a1, nz * 100.0 / nElems);
+                _INFO("\nsum=%g data=[%f : %f] rZ=%.3g%%\n\t", sum, a0, a1, nz * 100.0 / nElems);
                 for (int i = 0; i < std::min((size_t)(ne[0] * ne[1]), n); i++) {
-                    printf("%.5f ", fdata[i]);
+                    _INFO("%.5f ", fdata[i]);
                     if (i != 0 && i % ne[0] == 0) {
                         // printf("\n");
                     }
@@ -475,8 +483,8 @@ void _T_repr_(hGensor t, const char *tab, char *buf, const GENSOR_INFO &info) {
     auto ne   = t->ne;
     size_t n0 = strlen(buf), n1;                      // char buf[64*1024]="\0";
     string suf, pref, sX = info.__repr__(suf, pref);  //    info.sX;
-    sprintf(buf + strlen(buf), "%s %s %s %s \tdata=%p grad=>%p\t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n", tab, sX.c_str(), A, t->name,
-            t->data, t->grad, ne[0], ne[1], ne[2], ne[3], cNameOf(t->type));
+    sprintf(buf + strlen(buf), "%s %s %s %s \tdata=%p grad=>%p\t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " ] \n", tab, sX.c_str(), A, t->name,
+            t->data, t->grad, ne[0], ne[1], ne[2], ne[3]);  // cNameOf(t->type)
     n1 = strlen(buf);
 }
 
@@ -490,13 +498,21 @@ bool GTensor::Alloc(int tpInit, int flag) {
     return true;
 }
 
+// first moment, second moment of grad
+floatGama *GTensor::gama_T() {  // scaling coefficient of 1-bit weight
+    if(hRef!=nullptr)
+        return hRef->gama_T();
+    assert(data != nullptr);
+    return (floatGama *)data + szData;
+}
+
 bool huTensor::Alloc(int iter, int flagInit) {
-    if (strcmp(name, "model.layer.ffn_up.weight") == 0
+    if (strcmp(name, "model.blk.0.ffn_up.weight") == 0
         /*|| strcmp(name, "model.embed.weight") == 0*/) {  //  model.inp_embd.weight       model.out.weight model.embed.weight model.blk.0.attn.wq.weight
         int debug = 0x0;
     }
 
-    size_t sz0 = szMaloc;
+    size_t sz0 = szGlobalMaloc;
     if (BIT_TEST(flags, F_NOALLOC))  // For example: operator fusing, memory reuse,rematerialization
         return true;
     if (BIT_TEST(flags, F_MMAP))  // For example: operator fusing, memory reuse,rematerialization
@@ -508,21 +524,28 @@ bool huTensor::Alloc(int iter, int flagInit) {
         return true;
     }
 
-    assert(szData > 0);
+    assert(szData > 0 || type == typNUMBER::T_BINARY_TILE);
     bool hostAlloc = BIT_TEST(flags, F_HOSTALLOC);
     bool isTrain   = hFish != nullptr && hFish->isTrain();
     if (BIT_TEST(flags, F_HOSTDATA) && host_data == nullptr) {
         host_data = new char[szData];
     }
     bool allocData = data == nullptr;
+    size_t szMV = sizeof(floatMV) * size(), szGrad = sizeof(floatGrad) * size();
+    szGama = 0x0;
     if (allocData) {
-        Alloc_1(&data, true);
-        // _INFO("\t%s (+%.3gM)\n",name,(szMaloc-sz0)/1.0e6);
-        if(BIT_TEST(flags, F_TERNARY)){
-            Alloc_1((void**)(&gama_T), false, sizeof(float) * ne[0]);
+        if (type == typNUMBER::T_BINARY_TILE) {
+            size_t nTile = (size_t)(CEIL_DIV(ne[0], THREAD_TILE_M) * CEIL_DIV(ne[1], THREAD_TILE_N));
+            szGama       = sizeof(floatGama) * nTile;
+            // Alloc_1((void **)(&gama_T), false, sizeof(float) * nTile);
+            szMV /= THREAD_TILE_M * THREAD_TILE_N;
+        } else if (BIT_TEST(flags, F_TERNARY)) {
+            szGama = sizeof(floatGama) * ne[0];
+            // Alloc_1((void **)(&gama_T), false, sizeof(float) * ne[0]);
         }
+        Alloc_1(&data, true, szData + szGama);
     }
-    
+
     if (isParam()) {
         if (allocData) {
             InitParam(flagInit);
@@ -530,7 +553,6 @@ bool huTensor::Alloc(int iter, int flagInit) {
         }
 
         if (grad == nullptr && isTrain) {
-            size_t szMV = sizeof(floatMV) * size(), szGrad = sizeof(floatGrad) * size();
             if (grad_ref != nullptr)
                 grad = ToX(grad_ref);
             else {
@@ -547,8 +569,8 @@ bool huTensor::Alloc(int iter, int flagInit) {
         }
     } else {
     }
-
-    assert(szMaloc - sz0 <= mostMemory());
+    szUse = szGlobalMaloc - sz0;
+    assert(szGlobalMaloc - sz0 <= mostMemory());
     if (iter <= 1 /*&& */) {
         string sA = hostAlloc ? "HostAlloc" : "cudaMalloc";
         if (hFish->isRemater()) {
@@ -557,9 +579,9 @@ bool huTensor::Alloc(int iter, int flagInit) {
         if (ne[0] == 262144 || ne[1] == 151936) {
             int isDebug = 0;
         }
-        if (szMaloc - sz0 >= 100 * 1.0e6 || type == typNUMBER::T_SIGN) {
-            printf("\t %s=%gM@%s type=%s shape=[%ld,%ld,%ld,%ld]%s sum=%gG\n", sA.c_str(), (szMaloc - sz0) * 1.0f / 1.0e6, name, cNameOf(type), ne[0], ne[1],
-                   ne[2], ne[3], grad != nullptr ? "x2" : "", szMaloc * 1.0 / 1.0e9);
+        if (szGlobalMaloc - sz0 >= 100 * 1.0e6 || type == typNUMBER::T_SIGN) {
+            printf("\t %s=%gM@%s type=%s shape=[%ld,%ld,%ld,%ld]%s sum=%gG\n", sA.c_str(), (szGlobalMaloc - sz0) * 1.0f / 1.0e6, name, cNameOf(type), ne[0],
+                   ne[1], ne[2], ne[3], grad != nullptr ? "x2" : "", szGlobalMaloc * 1.0 / 1.0e9);
         }
     }
 
@@ -570,15 +592,14 @@ bool huTensor::Free(bool isPassResident) {
         if (isRefer())
             return true;
 
-        size_t sz0 = szMaloc;
+        size_t sz0 = szGlobalMaloc;
         if (data != nullptr) {
             if (isPassResident && BIT_TEST(flags, GTensor::F_RESIDENT)) {
                 int pass = 0;
             } else {
                 Free_1(&data);
-                if (gama_T != nullptr)
-                    Free_1((void **)(&gama_T));
-                // _INFO("\t%s (-%.3gM)\n",name,(sz0-szMaloc)/1.0e6);
+                // if (gama_T != nullptr)     Free_1((void **)(&gama_T));
+                // _INFO("\t%s (-%.3gM)\n",name,(sz0-szGlobalMaloc)/1.0e6);
             }
         } else {
             assert(grad == nullptr);
@@ -587,8 +608,8 @@ bool huTensor::Free(bool isPassResident) {
         if (!BIT_TEST(flags, GTensor::F_RESIDENT) && grad != nullptr) {
             Free_1((void **)(&grad), "_grad");
         }
-        
-        // _INFO("\t%s freed(%.3gM)!",name,(sz0-szMaloc)/1.0e6);
+
+        // _INFO("\t%s freed(%.3gM)!",name,(sz0-szGlobalMaloc)/1.0e6);
     } catch (...) {
         assert(0);
     }

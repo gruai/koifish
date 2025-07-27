@@ -67,19 +67,20 @@ struct ALIGN(16) Packed128 {
 typedef Packed128<float> f128;
 typedef Packed128<floatX> x128;
 
-// load a Packed128 from an aligned memory address
+#define FETCH_FLOAT4(pointer) (reinterpret_cast<float4 *>(&(pointer))[0])
+// load a Packed128 from an aligned memory address      reinterpret_cast is not SAFE!
 template<class T>
-__device__ Packed128<T> load128(const T* address) {
+__device__ inline Packed128<T> load128(const T* address) {
     return Packed128<T>{*reinterpret_cast<const int4*>(address)};
 }
 // load a Packed128 from an aligned memory address with streaming cache hint
 template<class T>
-__device__ Packed128<T> load128cs(const T* address) {
+__device__ inline Packed128<T> load128cs(const T* address) {
     return Packed128<T>{__ldcs(reinterpret_cast<const int4*>(address))};
 }
 // store a Packed128 to an aligned memory address
 template<class T>
-__device__ void store128(T* target, Packed128<T> value) {
+__device__ inline void store128(T* target, Packed128<T> value) {
     *reinterpret_cast<int4*>(target) = value.get_bits();
 }
 // store a Packed128 to an aligned memory address with streaming cache hint
@@ -93,7 +94,82 @@ __device__ void store128cg(T* target, Packed128<T> value) {
     __stcg(reinterpret_cast<int4*>(target), value.get_bits());
 }
 
+#define LDMATRIX_X2(R0, R1, addr) asm volatile("ldmatrix.sync.aligned.x2.m8n8.shared.b16 {%0, %1}, [%2];\n" : "=r"(R0), "=r"(R1) : "r"(addr))
+#define LDMATRIX_X4(R0, R1, R2, R3, addr) \
+    asm volatile("ldmatrix.sync.aligned.x4.m8n8.shared.b16 {%0, %1, %2, %3}, [%4];\n" : "=r"(R0), "=r"(R1), "=r"(R2), "=r"(R3) : "r"(addr))
+#define CVTA_TO_SHARED_PTX(addr, smem_ptr) asm volatile("cvta.to.shared.u64 %0, %1;" : "=l"(addr) : "l"(smem_ptr));
 
+#define LDG32_GUARD_PTX(reg, ptr, guard)      \
+    {                                         \
+        asm volatile(                         \
+            "{.reg .pred p;\n\t"              \
+            "setp.ne.u32 p, %2, 0;\n\t"       \
+            "@p ld.global.f32 %0, [%1];}\n\t" \
+            : "=f"(reg)                       \
+            : "l"(ptr), "r"(guard));          \
+    }
+
+#define LDG32_GUARD_MOV0_PTX(reg, ptr, guard) \
+    {                                         \
+        asm volatile(                         \
+            "{.reg .pred p;\n\t"              \
+            "setp.ne.u32 p, %2, 0;\n\t"       \
+            "@!p mov.b32 %0, 0;\n\t"          \
+            "@p ld.global.f32 %0, [%1];}\n\t" \
+            : "=f"(reg)                       \
+            : "l"(ptr), "r"(guard));          \
+    }
+
+#define STS128_PTX(reg0, reg1, reg2, reg3, addr)                                                                                \
+    {                                                                                                                           \
+        asm volatile("st.shared.v4.f32 [%0], {%1, %2, %3, %4};\n\t" : : "l"(addr), "f"(reg0), "f"(reg1), "f"(reg2), "f"(reg3)); \
+    }
+
+#define LDS128_PTX(reg0, reg1, reg2, reg3, addr)                                                                                   \
+    {                                                                                                                              \
+        asm volatile("ld.shared.v4.f32 {%0, %1, %2, %3}, [%4];\n\t" : "=f"(reg0), "=f"(reg1), "=f"(reg2), "=f"(reg3) : "l"(addr)); \
+    }
+
+#define STS32_PTX(reg, addr)                                               \
+    {                                                                      \
+        asm volatile("st.shared.f32 [%0], %1;\n" : : "l"(addr), "f"(reg)); \
+    }
+
+#define STG32_GUARD_PTX(reg, ptr, guard)       \
+    {                                          \
+        asm volatile(                          \
+            "{.reg .pred p;\n\t"               \
+            "setp.ne.u32 p, %2, 0;\n\t"        \
+            "@p st.global.f32 [%0], %1;}\n\t"  \
+            :                                  \
+            : "l"(ptr), "f"(reg), "r"(guard)); \
+    }
+
+__device__  __forceinline__ uint32_t ld_shared(const uint32_t* __restrict__ ptr) {
+    uint32_t ret;
+    asm volatile("ld.shared.u32 %0, [%1];" : "=r"(ret) : "l"(ptr));
+    return ret;
+}
+
+__device__  __forceinline__ int4 ld_shared(const int4* __restrict__ ptr) {
+    int4 ret;
+    asm volatile("ld.shared.v4.s32 {%0, %1, %2, %3}, [%4];" : "=r"(ret.x), "=r"(ret.y), "=r"(ret.z), "=r"(ret.w) : "l"(ptr));
+    return ret;
+}
+
+__device__  __forceinline__ float ld_shared(const float* __restrict__ ptr) {
+    float ret;
+    asm volatile("ld.shared.f32 %0, [%1];" : "=f"(ret) : "l"(ptr));
+    return ret;
+}
+
+__device__ __forceinline__ void st_shared(const float* ptr, float val) {
+    asm volatile("st.shared.f32 [%0], %1;" :: "l"(ptr), "f"(val));
+}
+
+__device__ __forceinline__ void st_shared(const uint32_t* ptr, uint32_t val) {
+    asm volatile("st.shared.u32 [%0], %1;" :: "l"(ptr), "r"(val));
+}
 /**
  * @brief Provides information about Pack2 of elements for a given type.
  *

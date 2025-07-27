@@ -26,9 +26,10 @@
 using namespace std;
 
 //  ERR code of exit
-#define KOIFISH_UNSUPPORTED_DATATYPE    -1000
-#define KOIFISH_GNORM_EXPLODE           -1100
-#define KOIFISH_EXIT_DEBUG              -2000
+#define KOIFISH_UNSUPPORTED_DATATYPE -1000
+#define KOIFISH_GRAD_EXPLODE -1100
+#define KOIFISH_BLAS_UNALIGN -1200
+#define KOIFISH_EXIT_DEBUG -2000
 
 #define CEIL_DIV(M, N) (((M) + (N) - 1) / (N))
 

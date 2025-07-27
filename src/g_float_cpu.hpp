@@ -92,8 +92,6 @@ inline void float_to_fp8e5m2(size_t n,float *x,f8e5m2_t*out,int flag=0x0) {
 	}
 }
 
-
-
 typedef float (*dotprod_t)(void* w, int n, int i, float* x);
 float dotprod_fp32(void* w, int n, int i, float* x);
 float dotprod_fp16(void* w, int n, int i, float* x);

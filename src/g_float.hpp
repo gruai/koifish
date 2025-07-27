@@ -58,13 +58,12 @@ enum class typNUMBER : uint8_t {
     T_SIGN,      //  ternary {-1, 0, 1}
     T_BINARY,    //  binary {-1,  1}
     T_BINARY_3,  //  binary {-1,  1} from three partition
+    T_BINARY_TILE,
 
     COUNT = 39,
 };
 
-struct tpBIT2 {
-    
-};
+struct tpBIT2 {};
 
 template <typename T>
 inline typNUMBER TYPE_() {
@@ -186,6 +185,8 @@ typedef __nv_bfloat16 floatFFN;
 #define tpCuBLAS CUDA_R_16BF
 #define tpCuBLASCOMPUTE CUBLAS_COMPUTE_32F
 #endif
+typedef floatX floatGama;
+// typedef float floatGama;
 
 using bf16   = __nv_bfloat16;
 using bf16_2 = __nv_bfloat162;
@@ -224,12 +225,12 @@ inline float T2Float(const T* a0) {
 }
 
 template <typename T>
-inline float T2Float(const T* a0,size_t offset) {
-    return T2Float(a0+offset);
+inline float T2Float(const T* a0, size_t offset) {
+    return T2Float(a0 + offset);
 }
 
 template <>
-inline float T2Float<tpBIT2>(const tpBIT2* a0,size_t offset) {
+inline float T2Float<tpBIT2>(const tpBIT2* a0, size_t offset) {
     assert(0x0);
     return 0.0;
 }

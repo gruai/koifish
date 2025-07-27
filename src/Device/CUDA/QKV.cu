@@ -13,7 +13,7 @@
 #include "../../Manifold/Neuron.hpp"
 #include "./cuda_common.h"
 #include "./kernel/embed.cuh"
-#include "./kernel/gemm.cuh"
+#include "./kernel/Operator.cuh"
 #include "./kernel/layernorm.cuh"
 #include "./kernel/rope.cuh"
 // #include "./EDevice.hpp"
@@ -715,15 +715,15 @@ hGTensor SelfAttention::cuTrain(hGTensor inpL, int flag) {
             // Q.Back(GTensor::tmpDelta,norm.out,Q.tmpDelta);            // K.Back(GTensor::tmpDelta,norm.out,K.tmpDelta);            // V.Back(GTensor::tmpDelta,norm.out,V.tmpDelta);
             Q.w->Print("Qw", 1, dump_flag);
             // Q.w->Print("Qw", 0, dump_flag);  Q.b->Print("Qb", 0, dump_flag);   norm.out->Print("norm.out", 0, dump_flag);            
-            matmul_backward(ToX(GTensor::tmpDelta), ToG(Q.w), ToG0(Q.b), (floatX *)devDeltaQ, ToX(norm.out), ToX(Q.w), scratchF, B, T, C_qkv, C_qkv,
+            matmul_backward(ToX(GTensor::tmpDelta), ToG(Q.w), ToG0(Q.b), (floatX *)devDeltaQ, ToX(norm.out), Q.w->GetDataX(), scratchF, B, T, C_qkv, C_qkv,
                             main_stream, false, NULL, false);
             GTensor::tmpDelta->Print("delta_0", 0, dump_flag);
             Q.w->Print("Qw", 1, dump_flag);
-            matmul_backward(ToX(GTensor::tmpDelta), ToG(K.w), ToG0(K.b), (floatX *)devDeltaK, ToX(norm.out), ToX(K.w), scratchF, B, T, C_qkv, C_qkv,
+            matmul_backward(ToX(GTensor::tmpDelta), ToG(K.w), ToG0(K.b), (floatX *)devDeltaK, ToX(norm.out), K.w->GetDataX(), scratchF, B, T, C_qkv, C_qkv,
                             main_stream, false, NULL, true);
             GTensor::tmpDelta->Print("delta_1", 0, dump_flag);
             K.w->Print("Kw", 1, dump_flag);
-            matmul_backward(ToX(GTensor::tmpDelta), ToG(V.w), ToG0(V.b), (floatX *)devDeltaV, ToX(norm.out), ToX(V.w), scratchF, B, T, C_qkv, C_qkv,
+            matmul_backward(ToX(GTensor::tmpDelta), ToG(V.w), ToG0(V.b), (floatX *)devDeltaV, ToX(norm.out), V.w->GetDataX(), scratchF, B, T, C_qkv, C_qkv,
                             main_stream, false, NULL, true);
             GTensor::tmpDelta->Print("delta_2", 0, dump_flag);
             V.w->Print("Vw", 1, dump_flag);

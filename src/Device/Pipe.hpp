@@ -19,13 +19,15 @@ struct PIPE_Optimizer : public MODEL_CARD {
     float *tmp = nullptr;
     Tp *params, *grads0, *paramX = nullptr;
     Tmv *gm, *gv;
-    float *gama_T = nullptr;
+    floatGama *gama_T = nullptr;
+    float *wNorms = nullptr;
     size_t num_parameters;
     ptrdiff_t w_stride, g_stride, s_stride;
     float beta1, beta2, beta1_correction, beta2_correction, eps;
     float lr_0, learning_rate;
-    int iter;
+    int iter,tile_r0,tile_r1,tile_c0,tile_c1;
     int64_t ne[4] = {0};
+    int ldT = 64;
     float weight_decay, grad_scale, grad_norm;
     unsigned int seed;
     uint64_t flags;
@@ -57,6 +59,8 @@ struct PIPE_Optimizer : public MODEL_CARD {
           grad_norm(_grad_norm),
           seed(_seed) {
         lr_0 = learning_rate;
+        wNorms = (float*)GTensor::buff;
+        assert(wNorms!=nullptr);
     }
 
     virtual void Update(GTensor *tensor_, int flag = 0x0) {
@@ -64,16 +68,14 @@ struct PIPE_Optimizer : public MODEL_CARD {
         name = tensor->name;    
         params = (Tp*)(tensor->data), grads0 = (Tp*)(tensor->grad);
         gm = (Tmv*)tensor->gm, gv = (Tmv*)tensor->gv;
-
+        tile_r0 = tensor->tile_r0,tile_r1= tensor->tile_r1,tile_c0= tensor->tile_c0,tile_c1= tensor->tile_c1;
         memcpy(ne, tensor->ne, sizeof(ne));
         isBitParam = BIT_TEST(tensor->flags, GTensor::F_TERNARY);
         if (isBitParam) {
             assert(ne[2] == 1 && ne[3] == 1);  // only for 2D weight
-            learning_rate *= 3;  //  1-bit models often exhibit greater training stability compared to their full-precision counterparts, allowing for more
-                                 //  aggressive initial learning steps.
+            learning_rate *= 3;  //  1-bit models often exhibit greater training stability compared to their full-precision counterparts, allowing for more aggressive initial learning steps.
             paramX = ToX(GTensor::tmpTernary);
-            gama_T = tensor->gama_T;
-
+            gama_T = tensor->gama_T();
         }
         tpQuant = tensor->tpQuant;
     }
@@ -87,7 +89,7 @@ struct CoopLayer {
     float *rms_att_weight = nullptr, *bqkv = nullptr, *rms_ffn_weight = nullptr;
     T *wq = nullptr, *wk = nullptr, *wv = nullptr, *wo = nullptr;
     T *moegate = nullptr, *w1 = nullptr, *w2 = nullptr, *w3 = nullptr;
-    float *gama_1 = nullptr, *gama_2 = nullptr, *gama_3 = nullptr;
+    floatGama *gama_1 = nullptr, *gama_2 = nullptr, *gama_3 = nullptr;
 };
 #define CoopLayer_MAX 128
 #define KV_SINKS 2  // attention sinks for rolling buffer
@@ -214,9 +216,9 @@ struct KERNEL_PIPE : public MODEL_CARD {
         cLayers[l].rms_ffn_weight = TO<float>(ffn->norm.w);  // weights->rms_ffn_weight[l];
         cLayers[l].moegate        = nullptr;                 // weights->moegate[l];
         hGensor w1 = ffn->GetGensor("w1.weight"), w2 = ffn->GetGensor("w2.weight"), w3 = ffn->GetGensor("w3.weight");
-        cLayers[l].w1 = w1->data, cLayers[l].gama_1 = w1->gama_T;
-        cLayers[l].w2 = w2->data, cLayers[l].gama_2 = w2->gama_T;
-        cLayers[l].w3 = w3->data, cLayers[l].gama_3 = w3->gama_T;
+        cLayers[l].w1 = w1->data, cLayers[l].gama_1 = w1->gama_T();
+        cLayers[l].w2 = w2->data, cLayers[l].gama_2 = w2->gama_T();
+        cLayers[l].w3 = w3->data, cLayers[l].gama_3 = w3->gama_T();
         PrintTensor<float>("bqkv", (float *)(cLayers[l].bqkv), true, dim, 1);
         PrintTensor<__nv_fp8_e5m2>("wq", (__nv_fp8_e5m2 *)(cLayers[l].wq), true, dim, dim);
         PrintTensor<__nv_fp8_e5m2>("wk", (__nv_fp8_e5m2 *)(cLayers[l].wk), true, kv_dim, dim);

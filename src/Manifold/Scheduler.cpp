@@ -105,7 +105,7 @@ void GeNeuron::ManageMemory(DATA_PLACE target, int typ, int flag) {
     assert(out != nullptr);
     vector arrT = PGensors();
     // size_t dev_mem = 0x0,host_mem = 0x0;
-    double a = GTensor::szMaloc;
+    double a = GTensor::szGlobalMaloc;
     for (auto t : arrT) {
         if (t == nullptr)
             continue;
@@ -146,13 +146,13 @@ void GeNeuron::ManageMemory(DATA_PLACE target, int typ, int flag) {
     if (DUMP(0)) {
         size_t szFree, szTotal;
         cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
-        _INFO("[RLS] %s %s@%d_%s(%.3gM) mGPU=%.6gM\n", name.c_str(), op.c_str(), hOPT->GetITER(), stage.c_str(), (GTensor::szMaloc - a) / 1.0e6,
+        _INFO("[RLS] %s %s@%d_%s(%.3gM) mGPU=%.6gM\n", name.c_str(), op.c_str(), hOPT->GetITER(), stage.c_str(), (GTensor::szGlobalMaloc - a) / 1.0e6,
               (szTotal - szFree) / 1.0e6);
     }
 
     /*if(!isSymbolic){
         place = DEV_MEM;
-        if(GTensor::szMaloc-sz0!=xxx){   //only for debug
+        if(GTensor::szGlobalMaloc-sz0!=xxx){   //only for debug
             ManageMemory(DATA_PLACE::SYMBOLIC);
         }
     }else{
@@ -277,7 +277,7 @@ bool RLS_BP::Prepare(int iter, int flag) {
     step = 0;
     if (iter < 0)
         _INFO("[RLS] resident={%s}\n", resident_list.c_str());
-    if (DUMP(1) && iter<=2) {  
+    if (DUMP(1) && iter <= 2) {
         size_t szFree, szTotal;
         cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
         _INFO("[MEMORY] mGPU=%.6gM(free=%.6gM)\n", (szTotal - szFree) / 1.0e6, szFree / 1.0e6);

@@ -239,7 +239,7 @@ struct DEUG_SWITCH {
     int back_graph_version = 0;
     int T_cuda_ver         = 0;
     int T_cpu              = 0;
-    int T_GEMM             = 0;
+    int T_GEMM             = -1;
 
     int cmd_p1 = 0, cmd_p2 = 0, cmd_p3 = 0;  // some commandline parameter for debug
 
@@ -262,12 +262,7 @@ static std::map<MEM_STRATEGY, std::string> MEM_STRATEGY_desc = {
 // parameters of scheduling
 struct SKDU_params {
     MEM_STRATEGY strategy = PRE_ALLOC_GPU;
-    /*enum PARAM_RESIDENT {
-        ALL_GPU,
-        ALL_HOST_MAP,
-        RELOAD_MMAP,
-    };*/
-    bool paramIsGuoke = false;
+    bool paramIsGuoke     = false;
     // int tpParamResident = 0;  //  0-      1-
     bool isUpdateParamV0() const;
     void Dump(int typ) const;
@@ -282,7 +277,8 @@ struct CLI_params {
     CheckPoint checkpoint;
 
     struct DataTypes {
-        std::vector<std::string> Ternary;
+        std::vector<std::string> arrTernary;
+        std::vector<std::string> arrTile;
     };
     DataTypes datatypes;
 
@@ -293,6 +289,7 @@ struct CLI_params {
         common.use_flash = false;
         return common.use_flash;
     }
+
     uint32_t nThread() const;
     uint32_t nEmbed(int flag = 0x0) const;
     uint32_t nLayer() {

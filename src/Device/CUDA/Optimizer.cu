@@ -120,7 +120,8 @@ __global__ void CU_adamw_(Tp* params, float* tmp, Tp* grads0, Tmv* gm, Tmv* gv, 
 }
 
 template <typename Tp, typename Tmv>
-__device__ inline float _adamw_idx(float old_param, const PIPE_Optimizer<Tp, Tmv>& pipe, float m, float v, int idx) {
+__device__ inline float _adamw_idx(float old_param, const PIPE_Optimizer<Tp, Tmv>& pipe, float& m, float& v, int idx) {
+    m /= pipe.beta1_correction, v /= pipe.beta2_correction;  // m_hat    v_hat
     // float old_param = (float)pipe.params[idx];
     float step = m / (sqrtf(v) + pipe.eps);
     //  Automatic detection of training instability
@@ -143,14 +144,18 @@ __global__ void CU_adamw_p(PIPE_Optimizer<Tp, Tmv> pipe) {
     float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx), m = pipe.gm[idx], v = pipe.gv[idx];
     m = lerp(grad, m, pipe.beta1), pipe.gm[idx] = m;
     v = lerp(grad * grad, v, pipe.beta2), pipe.gv[idx] = v;
-    m /= pipe.beta1_correction;  // m_hat
-    v /= pipe.beta2_correction;  // v_hat
-    pipe.params[idx] = _adamw_idx((float)pipe.params[idx], pipe, m, v, idx);
+    // m /= pipe.beta1_correction;  // m_hat
+    // v /= pipe.beta2_correction;  // v_hat
+    float x = _adamw_idx((float)pipe.params[idx], pipe, m, v, idx), x2 = x * x;
+    pipe.params[idx] = x;
+    float block_sum  = blockReduce<warpReduceSum>(x2, true);
+    if (idx == 0)
+        atomicAdd(pipe.wNorms, block_sum);
 }
 
 // row-major  slow versioin
 template <typename Tp, typename Tmv>
-__global__ void CU_adamw_bit(PIPE_Optimizer<Tp, Tmv> pipe) {
+__global__ void CU_adamw_ternary(PIPE_Optimizer<Tp, Tmv> pipe) {
     int M = pipe.ne[0], N = pipe.ne[1], tid = threadIdx.x;
     int idrow = blockIdx.x * blockDim.x + tid, offset = idrow * N;
     if (idrow >= M)
@@ -170,8 +175,7 @@ __global__ void CU_adamw_bit(PIPE_Optimizer<Tp, Tmv> pipe) {
             float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx), m = pipe.gm[idx], v = pipe.gv[idx];
             m = lerp(grad, m, pipe.beta1), pipe.gm[idx] = m;
             v = lerp(grad * grad, v, pipe.beta2), pipe.gv[idx] = v;
-            // v = lerp(average * average, v, pipe.beta2), pipe.gv[idx] = v;
-            m /= pipe.beta1_correction, v /= pipe.beta2_correction;
+            // m /= pipe.beta1_correction, v /= pipe.beta2_correction;
             params_x[k + kk] = _adamw_idx(old_param, pipe, m, v, idx);
         }
     }
@@ -180,15 +184,122 @@ __global__ void CU_adamw_bit(PIPE_Optimizer<Tp, Tmv> pipe) {
 }
 
 template <typename Tp, typename Tmv>
+__global__ static void CU_adamw_Tile_v0(PIPE_Optimizer<Tp, Tmv> pipe) {
+    const int TM = THREAD_TILE_M, TN = THREAD_TILE_N, thread_num = blockDim.x;
+    int tid = threadIdx.x, idrow, idcol, M = pipe.ne[0], N = pipe.ne[1], trans = 1;
+    idrow = blockIdx.x * TM + tid / TM;
+    idcol = blockIdx.y * TN + tid % TM;
+    if (idrow >= M || idcol >= N)
+        return;  // guard
+    fnPOS pA = trans == 0 ? fnCR2POS : fnRC2POS;
+    int pos = pA(idrow, idcol, M, N), idx = pos, gpos = blockIdx.x * gridDim.y + blockIdx.y;
+    float old_param = pipe.gama_T[gpos];
+    float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx), m = pipe.gm[idx], v = pipe.gv[idx];
+    m = lerp(grad, m, pipe.beta1), pipe.gm[idx] = m;
+    v = lerp(grad * grad, v, pipe.beta2), pipe.gv[idx] = v;
+    // m /= pipe.beta1_correction, v /= pipe.beta2_correction;
+    float a   = _adamw_idx(old_param, pipe, m, v, idx);
+    float sum = blockReduce<warpReduceSum>(a, true);
+    if (tid == 0) {
+        pipe.gama_T[gpos] = sum / TM / TN;
+    }
+}
+//  all element in tile has one mv
+template <typename Tp, typename Tmv>
+__global__ static void CU_adamw_Tile(PIPE_Optimizer<Tp, Tmv> pipe) {
+    const int TM = THREAD_TILE_M, TN = THREAD_TILE_N, thread_num = blockDim.x;
+    int tid = threadIdx.x, idrow, idcol, M = pipe.ne[0], N = pipe.ne[1], trans = 1;
+    idrow = blockIdx.x * TM + tid / TM;
+    idcol = blockIdx.y * TN + tid % TM;
+    if (idrow >= M || idcol >= N)
+        return;  // guard
+    fnPOS pA = trans == 0 ? fnCR2POS : fnRC2POS;
+    int pos = pA(idrow, idcol, M, N), idx = pos, gpos = blockIdx.x * gridDim.y + blockIdx.y;
+    float old_param = pipe.gama_T[gpos], m = pipe.gm[gpos], v = pipe.gv[gpos];
+    float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx);
+    float sum  = blockReduce<warpReduceSum>(grad, true);
+    grad       = sum / TM / TN;
+    m = lerp(grad, m, pipe.beta1), pipe.gm[gpos] = m;
+    v = lerp(grad * grad, v, pipe.beta2), pipe.gv[gpos] = v;
+    float a = _adamw_idx(old_param, pipe, m, v, idx);
+    sum     = blockReduce<warpReduceSum>(a, true);
+    if (tid == 0) {
+        pipe.gama_T[gpos] = sum / TM / TN;
+    }
+}
+
+#define RC2TILE(r,c)    (((r)/THREAD_TILE_M)*gridDim.y + ((c)/THREAD_TILE_N))
+//  all element in tile has one mv
+template <typename Tp, typename Tmv>
+__global__ static void CU_adamw_Tile_RC(PIPE_Optimizer<Tp, Tmv> pipe) {
+    const int TM = THREAD_TILE_M, TN = THREAD_TILE_N, thread_num = blockDim.x;
+    int tid = threadIdx.x, idrow_1, idcol_1, idrow_0, idcol_0, M = pipe.ne[0], N = pipe.ne[1], trans = 1;
+
+    idrow_1 = blockIdx.x * TM + tid / TM + pipe.tile_r1;
+    idcol_1 = blockIdx.y * TN + tid % TM + pipe.tile_c1;
+    idrow_0 = blockIdx.x * TM + tid / TM + pipe.tile_r0;
+    idcol_0 = blockIdx.y * TN + tid % TM + pipe.tile_c0;
+    if (idrow_1 >= M || idcol_1 >= N)
+        return;  // guard
+    if (idrow_0 >= M || idcol_0 >= N)
+        return;  // guard
+    fnPOS pA = trans == 0 ? fnCR2POS : fnRC2POS;
+    int g_pos0 = RC2TILE(idrow_0,idcol_0);
+    int pos = pA(idrow_1, idcol_1, M, N), idx = pos, gpos_1 = RC2TILE(idrow_1,idcol_1); //blockIdx.x * gridDim.y + blockIdx.y;
+    float old_param = pipe.gama_T[g_pos0], m = pipe.gm[g_pos0], v = pipe.gv[g_pos0];
+    float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx);
+    float sum  = blockReduce<warpReduceSum>(grad, true);
+    grad       = sum / TM / TN;
+    m = lerp(grad, m, pipe.beta1), 
+    v = lerp(grad * grad, v, pipe.beta2);
+    float sum_m = blockReduce<warpReduceSum>(m, true);
+    float sum_v = blockReduce<warpReduceSum>(v, true);
+    float a = _adamw_idx(old_param, pipe, m, v, idx);
+    sum     = blockReduce<warpReduceSum>(a, true);
+    if (tid == 0) {
+        pipe.gama_T[gpos_1] = sum / TM / TN;
+        pipe.gv[gpos_1]     = sum_v / TM / TN;
+        pipe.gm[gpos_1]     = sum_m / TM / TN;
+    }
+}
+//  each element in tile has different mv
+template <typename Tp, typename Tmv>
+__global__ static void CU_adamw_Tile_each_mv(PIPE_Optimizer<Tp, Tmv> pipe) {
+    const int TM = THREAD_TILE_M, TN = THREAD_TILE_N, thread_num = blockDim.x;
+    int tid = threadIdx.x, idrow, idcol, M = pipe.ne[0], N = pipe.ne[1], trans = 1;
+    idrow = blockIdx.x * TM + tid / TM;
+    idcol = blockIdx.y * TN + tid % TM;
+    if (idrow >= M || idcol >= N)
+        return;  // guard
+    fnPOS pA = trans == 0 ? fnCR2POS : fnRC2POS;
+    int pos = pA(idrow, idcol, M, N), idx = pos, gpos = blockIdx.x * gridDim.y + blockIdx.y;
+    float old_param = pipe.gama_T[gpos], m = pipe.gm[gpos], v = pipe.gv[gpos];
+    float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx);
+    m = lerp(grad, m, pipe.beta1), v = lerp(grad * grad, v, pipe.beta2);
+
+    float sum   = blockReduce<warpReduceSum>(grad, true);
+    float sum_m = blockReduce<warpReduceSum>(m, true);
+    float sum_v = blockReduce<warpReduceSum>(v, true);
+    float a     = _adamw_idx(old_param, pipe, m, v, idx);  //  m,v => m_hat,v_hat
+    sum         = blockReduce<warpReduceSum>(a, true);
+    if (tid == 0) {
+        pipe.gama_T[gpos] = sum / TM / TN;
+        pipe.gv[gpos]     = sum_v / TM / TN;
+        pipe.gm[gpos]     = sum_m / TM / TN;
+    }
+}
+
+template <typename Tp, typename Tmv>
 void Optimizer_update(PIPE_Optimizer<Tp, Tmv>& pipe, cudaStream_t stream) {
     cudaError_t err       = cudaSuccess;
     int64_t ne[4]         = {pipe.ne[0], pipe.ne[1], pipe.ne[2], pipe.ne[3]};
-    int dBLOCK            = 512;  //  1024?
-    int dGRID             = CEIL_DIV(pipe.num_parameters, dBLOCK);
+    int dT4B              = 512;  //  1024?
+    int dGRID             = CEIL_DIV(pipe.num_parameters, dT4B);
     size_t smemPB         = 1024 * sizeof(float);
     pipe.beta1_correction = 1.0f - powf(pipe.beta1, pipe.iter);
     pipe.beta2_correction = 1.0f - powf(pipe.beta2, pipe.iter);
     void* kernelArgs[]    = {(void*)&pipe};
+    D20(pipe.wNorms, sizeof(float) * 1);
     if (pipe.gm == nullptr) {  // SGD,SGD_V
         // if (gv == nullptr) {
         //     CU_sgd<<<num_blocks, block_size, 0, stream>>>(params, tmp, grads0, num_parameters, w_stride, g_stride,
@@ -206,21 +317,31 @@ void Optimizer_update(PIPE_Optimizer<Tp, Tmv>& pipe, cudaStream_t stream) {
         } else {
             if (pipe.isBitParam) {
                 // PrintTensor<Tp>("grad", (Tp*)pipe.grads0, true, pipe.num_parameters, 1,1,1,-1);
-                if (DEBUG.T_ternary == 1) {
-                    CU_adamw_p<<<dGRID, dBLOCK, 0, stream>>>(pipe);
-                    CU_ternary_online<<<CEIL_DIV(pipe.ne[0], dBLOCK), dBLOCK, smemPB, stream>>>(pipe.params, pipe.ne[0], pipe.ne[1]);
-                    // PrintTensor<floatX>(pipe.tensor->name, (floatX*)pipe.params, true, pipe.ne[0], pipe.ne[1], pipe.ne[2], pipe.ne[3], -1);
-                } else {
-                    CU_adamw_bit<<<CEIL_DIV(ne[0], dBLOCK), dBLOCK, smemPB, stream>>>(pipe);
-                    // pipe.tensor->GetDataX(dump_flag,"w1");
+                switch (pipe.tensor->type) {
+                    case typNUMBER::T_BINARY_TILE: {
+                        dim3 dBlock(THREAD_TILE_M * THREAD_TILE_N), dGrid(CEIL_DIV(ne[0], THREAD_TILE_M), CEIL_DIV(ne[1], THREAD_TILE_N));
+                        CU_adamw_Tile<<<dGrid, dBlock, smemPB, stream>>>(pipe);
+                    } break;
+                    default:
+                        if (DEBUG.T_ternary == 1) {
+                            CU_adamw_p<<<dGRID, dT4B, 0, stream>>>(pipe);
+                            CU_ternary_online<<<CEIL_DIV(pipe.ne[0], dT4B), dT4B, smemPB, stream>>>(pipe.params, pipe.ne[0], pipe.ne[1]);
+                            // PrintTensor<floatX>(pipe.tensor->name, (floatX*)pipe.params, true, pipe.ne[0], pipe.ne[1], pipe.ne[2], pipe.ne[3], -1);
+                        } else {
+                            CU_adamw_ternary<<<CEIL_DIV(ne[0], dT4B), dT4B, smemPB, stream>>>(pipe);
+                            // pipe.tensor->GetDataX(dump_flag,"w1");
+                        }
+                        break;
                 }
             } else {
-                // err = cudaLaunchCooperativeKernel((void*)CU_adamw_<Tp,Tmv>, dGRID, dBLOCK, kernelArgs, smemPB, main_stream);
+                // err = cudaLaunchCooperativeKernel((void*)CU_adamw_<Tp,Tmv>, dGRID, dT4B, kernelArgs, smemPB, main_stream);
                 // cudaCheck(err);      "too many blocks in cooperative launch"
-                CU_adamw_p<<<dGRID, dBLOCK, 0, stream>>>(pipe);
+                CU_adamw_p<<<dGRID, dT4B, 0, stream>>>(pipe);
             }
+            D2e(pipe.wNorms, pipe.tensor->wnorm, 0x0);
+            pipe.tensor->wnorm = sqrt(pipe.tensor->wnorm);
             // {            //  deparecated version result=/home/cys/rnd/lic/log/gpt2/0703_adamw.info
-            //     CU_adamw_<<<dGRID, dBLOCK, 0, stream>>>(pipe.params, pipe.tmp, pipe.grads0, pipe.gm, pipe.gv, pipe.num_parameters,
+            //     CU_adamw_<<<dGRID, dT4B, 0, stream>>>(pipe.params, pipe.tmp, pipe.grads0, pipe.gm, pipe.gv, pipe.num_parameters,
             //     pipe.learning_rate,pipe.flags,
             //                                                  pipe.beta1, pipe.beta2, pipe.beta1_correction, pipe.beta2_correction, pipe.eps,
             //                                                  pipe.weight_decay, pipe.grad_scale, pipe.seed);
@@ -283,7 +404,7 @@ int UpdateTensorParam_cuda(hGTensor tensor, Optimizer* hOPT, float& grad_norm, i
     // }
 
     if (adam.clip_alg != 0 || config.lars_ratio > 0) {
-        grad_norm     = tensor->Length(1);      //    tNormOf(tensor, 0x0);
+        grad_norm     = tensor->Length(1);  //    tNormOf(tensor, 0x0);
         tensor->gnorm = grad_norm;
         if (fabs(grad_norm) < 1.0e-10) {
             _INFO("\t|g|=0@%s!", tensor->name);

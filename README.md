@@ -1,6 +1,6 @@
 # Koifish
 
-**Koifish** is a c++ framework focused on sparse & 1-Bit language model. 
+**Koifish** is a c++ framework focused on sparse & quantized language model. 
 1. Efficient training of ~1B language models with only one GPU.
 2. Efficient fine-tuning ~10B LLMs on edge device.
 
@@ -35,17 +35,18 @@ make clean && make VERBOSE=TRUE
 1.    [Training of GPT2(774M/124M) on single 3090](cases/tutorial_gpt2.md)
 
 ## Training tricks
+- One bit for each parameter
 - Subsampling
 - [Weight Tying](cases/tricks/WeightTying.md)
 
-
 ## Changelog
+* 07/24/2025: Support tile quantization 
 * 06/29/2025: Rope with pre/post normalization 
 * 06/14/2025: Support bit representation(binary[-1,1], ternary[-1,0,1]) 
 
 ## Working plan
 - Support 1-bit version of QWen/DeepSeek
-- Sparsing
+- Sparsing(Predict sparse neurons by GBDT method)
 
 ## Contributing
 
