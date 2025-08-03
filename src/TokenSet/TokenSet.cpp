@@ -385,6 +385,36 @@ bool Tokenset_HellaSwag::Shard2Sample(int flag) {
     }
 }
 
+/*
+ */
+double DataTokenSet::Evaluate(Fish *hFish, hSampLoader loader0, int flag) {
+    hSampLoader loader = loader0;
+    if (loader == nullptr) {
+        loader       = std::make_shared<SampLoader>(hFish, "Eval", false);
+        loader->type = SampLoader::TYPE::DT_EVAL;
+        loader->Prepare(nullptr, shared_from_this());
+    }
+    int i, nB = 0, step = loader->StepOfEvaluate(), iter = -1;
+    double a, mean_loss = 0, now;
+    hSAMP samp = nullptr;
+    for (int i = 0; i < loader->num_batches; i += step) {
+        loader->UpdateBatch(i, hFish);
+        samp = loader->cur_samps[i];
+
+        now               = GST_ms();
+        OutCLS *cls       = hFish->GetNeuron<OutCLS>("OutCLS", 0);
+        TokenEmbed *embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
+        embed->hBatch     = loader->GetCurBatch();
+        hFish->ForwardOnRLS(iter, 0x0);
+        mean_loss += LossOnResult(loader, cls);  // loader->hTokens->LossOnResult(loader, cls);
+        // mean_loss += GraphCompute(loader, _fish->hForwTG);
+        nB++;
+    }
+    mean_loss /= nB;
+
+    return mean_loss;
+}
+
 double Tokenset_HellaSwag::LossOnResult(hSampLoader hLoader, OutCLS *cls, int flag) {
     assert(cls != nullptr);
     double mean_loss = 0, a = 0, a_0 = DBL_MAX;

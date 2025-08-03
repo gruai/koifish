@@ -62,7 +62,7 @@ class GeNeuron {
     SHAPE shape;
     COMPRESSIVE_SENSING compression = SKIP;
     typNUMBER tpWeight = typNUMBER::BF16, tpActivation = typNUMBER::BF16, tpGradient = typNUMBER::BF16;
-
+    bool isPassBack = false;
     int level = -1, ID = -1, dad, c_id;  // topo info
     int layer = -1;                      // no of layer in LLM/Brain structure
     int xxx   = 0;

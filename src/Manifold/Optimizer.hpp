@@ -117,24 +117,13 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
         FAIL,
         CANCEL,
     };
-    enum PHASE {
-        // Pre-training
-        P_TRAIN,
-        P_SFT,  //  supervised fine-tuning
-        P_DPO,  //  direct preference optimization
 
-        // evaluate
-        P_EVAL_,
-        // Inference     fish->isLocalInfer = true
-        P_PREFILL,
-        P_GENERATE
-    };
-    PHASE phase = P_TRAIN;
+    LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;
 
-    struct STAGE{
+    struct STAGE {
         string name;
-        PHASE phase;
-        double lr,w_decay;
+        LIFE_PHASE phase;
+        double lr, w_decay;
     };
     vector<STAGE> stages;
     // PIPE_Optimizer pipe;
@@ -155,7 +144,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     Optimizer(NLP_AutoRegressive* g_, CLI_params& params_, int flag = 0x0);
     // Deprecated need refactor!!!       9/30/2024
     virtual double GraphCompute(hSampLoader loader, hTGraph, int flag = 0x0);
-    virtual bool SetPhase(PHASE phase_, int flag = 0x0);
+    virtual bool SetPhase(LIFE_PHASE phase_, int flag = 0x0);
     virtual float Evaluate(hSampLoader loader, int iter, int flag = 0x0);
     // virtual float Prefill(hSampLoader loader,int iter,int flag=0x0);
     virtual int GetITER(int flag = 0x0) const;

@@ -466,11 +466,11 @@ bool CLI_params::JModel2Params(int flag) {
         // Mem 8484=>4772=>4838
         if (DEBUG.cmd_p1 == 1) {
             DEBUG.T_GEMM = -1;
-            // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
         } else {
             // scheduling.strategy = MEM_STRATEGY::MEM_SWAP;
             // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
         }
+        scheduling.InitSection(nLayer(), jKV(jConfig, {"train", "branch"}, scheduling.nLayerInBranch));
 
         if (scheduling.strategy == MEM_STRATEGY::MEM_SWAP_GUOKE) {
             common.remater_ffn = 0;  // more memory, more time
@@ -501,6 +501,28 @@ bool SKDU_params::isUpdateParamV0() const {
         return false;
 
     return false;
+}
+
+bool SKDU_params::canSave(int iter, int flag) const {
+    if (LIB_iter4save > 0) {
+        return iter >= LIB_iter4save;
+    }
+    return true;
+}
+
+bool SKDU_params::InitSection(int nLayer, int nLS, int flag) {
+    if (nLS <= 0)
+        return false;
+    assert(nLayer % nLS == 0);
+    nLayerInBranch = nLS;
+    LIB_0          = 0;
+    LIB_1          = 0;  // nLayerInBranch;
+    int nSwitch    = nLayer / nLayerInBranch;
+
+    LIB_iter_switch = 100;  // only for debug
+    LIB_iter4save   = LIB_iter_switch * nSwitch;
+
+    return true;
 }
 
 uint32_t CLI_params::nThread() const {
@@ -1179,6 +1201,7 @@ bool isQuantized(typNUMBER type) {
 }
 
 const char *cNameOf(typNUMBER type) {
+    static char buf[128];  // Not thread-safe if modified concurrently.
     if (type == typNUMBER::F8E5M2)
         return "F8E5M2";
     if (type == typNUMBER::F8E4M3)
@@ -1199,8 +1222,11 @@ const char *cNameOf(typNUMBER type) {
         return "BINARY(3)";
     if (type == typNUMBER::T_SIGN)
         return "TERNARY";
-    if (type == typNUMBER::T_BINARY_TILE)
-        return "TILE(One float for each tile)";
+    if (type == typNUMBER::T_BINARY_TILE) {
+        sprintf(buf, "TILE(%dx%d)", THREAD_TILE_M, THREAD_TILE_N);
+        return buf;  //"TILE(One float for each tile)";
+    }
+
     assert(0 && "cNameOf of UNSUPPORTED_DATATYPE");
     exit(KOIFISH_UNSUPPORTED_DATATYPE);
 }

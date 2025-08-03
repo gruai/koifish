@@ -5,10 +5,11 @@ In the backward pass, the gradients flow to both, handled by different kernels
 */
 #include <assert.h>
 #include <stdint.h>
-#include <utility>              // std::pair
-#include <vector>
+
 #include <algorithm>
 #include <unordered_map>
+#include <utility>  // std::pair
+#include <vector>
 // llmc internal imports
 #include "../cuda_common.h"
 #include "utils.cuh"
@@ -16,83 +17,144 @@ In the backward pass, the gradients flow to both, handled by different kernels
 // ----------------------------------------------------------------------------
 // CUDA kernels
 // out = wte[inp]
-__global__ static void encoder_forward_kernel3(floatX* out,const int* inp, const floatX* wte, const floatX* wpe,int B, int T, int C) {
+__global__ static void encoder_forward_kernel3(floatX* out, const int* inp, const floatX* wte, const floatX* wpe, int B, int T, int C) {
     int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
-    int N = B * T * C;
-    if (idx >= N) { return; }
+    int N   = B * T * C;
+    if (idx >= N) {
+        return;
+    }
 
-    int bt = idx / C,b = bt / T,t = bt % T,c = idx % C;
-    int ix = inp[b * T + t];
-    floatX* out_btc = out + b * T * C + t * C + c;
+    int bt = idx / C, b = bt / T, t = bt % T, c = idx % C;
+    int ix               = inp[b * T + t];
+    floatX* out_btc      = out + b * T * C + t * C + c;
     const floatX* wte_ix = wte + ix * C + c;
-    const floatX* wpe_tc = wpe==nullptr ? nullptr : wpe + t * C + c;
+    const floatX* wpe_tc = wpe == nullptr ? nullptr : wpe + t * C + c;
 
-    x128 packed_out,wte128 = load128cs(wte_ix);
-    if(wpe_tc==nullptr){
+    x128 packed_out, wte128 = load128cs(wte_ix);
+    if (wpe_tc == nullptr) {
         for (int k = 0; k < x128::size; k++) {
             packed_out[k] = (floatX)((float)wte128[k]);
         }
-    }else{
+    } else {
         x128 wpe128 = load128cs(wpe_tc);
         for (int k = 0; k < x128::size; k++) {
             packed_out[k] = (floatX)((float)wte128[k] + (float)wpe128[k]);
         }
     }
-    store128(out_btc, packed_out);      //  store packed(128-BIT) wte to out_btc(aligned memory address)
+    store128(out_btc, packed_out);  //  store packed(128-BIT) wte to out_btc(aligned memory address)
 }
 
+// each thread for one element
+__global__ static void CU_embed_forw_v0(floatX* out, const int* tokens, const floatX* wte, const floatX* wpe, int B, int T, int C) {
+    int idx = (blockIdx.x * blockDim.x + threadIdx.x);
+    int N   = B * T * C;
+    if (idx >= N) {
+        return;
+    }
 
-__global__ static void CU_embed_forw_(floatX* out,const int* tokens, const floatX* wte, const floatX* wpe,int B, int T, int C) {
-    int idx = (blockIdx.x * blockDim.x + threadIdx.x) ;
-    int N = B * T * C;
-    if (idx >= N) { return; }
-
-    int bt = idx / C,b = bt / T,t = bt % T,c = idx % C;
-    int ix = tokens[b * T + t];
-    floatX* out_btc = out + b * T * C + t * C + c;
+    int bt = idx / C, b = bt / T, t = bt % T, c = idx % C;
+    int ix               = tokens[b * T + t];
+    floatX* out_btc      = out + b * T * C + t * C + c;
     const floatX* wte_ix = wte + ix * C + c;
-    if(wpe==nullptr){
+    if (wpe == nullptr) {
         *out_btc = *wte_ix;
-    }else{
-    const floatX* wpe_tc = wpe + t * C + c;
+    } else {
+        const floatX* wpe_tc = wpe + t * C + c;
 #if defined(ENABLE_FP8)
 #else
-        *out_btc = *wte_ix+*wpe_tc;
+        *out_btc = *wte_ix + *wpe_tc;
 #endif
     }
 }
 
-__global__ static void CU_embed_forw_(floatX* out,const int* tokens, const floatX* wte, int T, int C,int ldW,bool isTrans=false) {
-    int idx = (blockIdx.x * blockDim.x + threadIdx.x) ;
-    int N = T * C;
-    if (idx >= N) { return; }
+// each thread for one token(C elements)
+__global__ static void CU_embed_forw_(floatX* out, const int* tokens, const floatX* wte, const floatX* wpe, int B, int T, int C) {
+    int idx = (blockIdx.x * blockDim.x + threadIdx.x);
+    int N   = B * T;
+    if (idx >= N) {
+        return;
+    }
+    int ix = tokens[idx], pos = idx % T;
+    const floatX* wpe_tc = wpe + pos * C;
+    for (int c = 0; c < C; c++) {
+        floatX* out_btc      = out + idx * C + c;
+        const floatX* wte_ix = wte + ix * C + c;
+        if (wpe == nullptr) {
+            *out_btc = *wte_ix;
+        } else {
+#if defined(ENABLE_FP8)
+#else
+            *out_btc = *wte_ix + wpe_tc[c];
+#endif
+        }
+    }
+}
+
+template <class Typ>
+__global__ void CU_embed_ternary_forw_(Typ* out, const int* tokens, floatGama* gama, const char* wte, const Typ* wpe, int B, int T, int C) {
+    int idx = (blockIdx.x * blockDim.x + threadIdx.x);
+    if (idx >= B * T) {
+        return;
+    }
+
+    int ix = tokens[idx], pos = idx % T;
+    const Typ* wpe_tc = wpe + pos * C;
+    float average     = gama[ix];
+    Typ ta = (Typ)(average), tb = (Typ)(-average), t0 = (Typ)(0), a;
+    for (int c = 0; c < C; c += 8) {
+        Typ* out_btc = out + idx * C + c;
+        // const floatX* wte_ix = wte + ix * C + c;
+        unsigned char tbyte = wte[(ix * C + c) / 8],bit;
+        for (int bpos = 0; bpos < 8; bpos++, out_btc++) {
+            bit = BYTE_bit(tbyte, bpos);  //(tbyte >> (7-bpos)) & 0x1;
+            a   = bit ? ta : t0;          // binary quant after Implicit RELU
+            if (wpe == nullptr) {
+                *out_btc = a;
+            } else {
+#if defined(ENABLE_FP8)
+#else
+                *out_btc = a + wpe_tc[c];
+#endif
+            }
+        }
+    }
+}
+
+__global__ static void CU_embed_forw_tc(floatX* out, const int* tokens, const floatX* wte, int T, int C, int ldW, bool isTrans = false) {
+    int idx = (blockIdx.x * blockDim.x + threadIdx.x);
+    int N   = T * C;
+    if (idx >= N) {
+        return;
+    }
 
     int t = idx % T, c = idx % C, ix = tokens[t];
-    size_t pos_1=t*C+c,pos_2=ix*C+c;
+    size_t pos_1 = t * C + c, pos_2 = ix * C + c;
     // floatX* out_btc = out + t * C + c;
     // const floatX *wte_ix = wte + ix * C + c;
     // *out_btc = *wte_ix;
-    if(isTrans){
+    if (isTrans) {
         // pos_1 = t*C+c, pos_2 = c*ldW+t;
-        pos_1 = c*T+t, pos_2 = c*ldW+t;
+        pos_1 = c * T + t, pos_2 = c * ldW + t;
     }
-    out[pos_1] = wte[pos_2];    // why result is not deterministic?
+    out[pos_1] = wte[pos_2];  // why result is not deterministic?
 }
 
 // no duplicate
-__global__ static void CU_embed_back_(floatX* dwte,const int* tokens,const floatX* dout, int T, int C,int ldW, bool isTrans=false) {
-    int idx = (blockIdx.x * blockDim.x + threadIdx.x) ;
-    int N = T * C;
-    if (idx >= N) { return; }
+__global__ static void CU_embed_back_(floatX* dwte, const int* tokens, const floatX* dout, int T, int C, int ldW, bool isTrans = false) {
+    int idx = (blockIdx.x * blockDim.x + threadIdx.x);
+    int N   = T * C;
+    if (idx >= N) {
+        return;
+    }
 
     int t = idx % T, c = idx % C, ix = tokens[t];
-    size_t pos_1= t * C + c,pos_2=ix*C+c;
+    size_t pos_1 = t * C + c, pos_2 = ix * C + c;
     // floatX out_btc = dout[t * C + c]*scale;
     // floatX* wte_ix = dwte + ix * C + c;
     // *wte_ix += out_btc;
-    if(isTrans){
+    if (isTrans) {
         // pos_1 = t*C+c, pos_2 = c*ldW+t;
-        pos_1 = c*T+t, pos_2 = c*ldW+t;
+        pos_1 = c * T + t, pos_2 = c * ldW + t;
     }
 #if defined(ENABLE_FP8)
 #else
@@ -100,12 +162,9 @@ __global__ static void CU_embed_back_(floatX* dwte,const int* tokens,const float
 #endif
 }
 
-
-
-template <int BLOCK_SIZE=256>
-__global__ static void wte_backward_kernel(floatX* dwte,
-                                    const int4* bucket_info, const int* workload_indices, const floatX* dout, const int* inp,
-                                    unsigned int seed, int B, int T, int C) {
+template <int BLOCK_SIZE = 256>
+__global__ static void wte_backward_kernel(floatX* dwte, const int4* bucket_info, const int* workload_indices, const floatX* dout, const int* inp,
+                                           unsigned int seed, int B, int T, int C) {
     // In order to be deterministic, we preprocess the inputs on the cpu into "buckets"
     // Each bucket corresponds to (WARP_SIZE * x128::size) channels for a single vocabulary token
     // Each thread handles x128::size channels, e.g. 256 per warp for BF16
@@ -113,30 +172,34 @@ __global__ static void wte_backward_kernel(floatX* dwte,
     // If a bucket has less than 8 elements, some warps will return immediately
     // If a bucket has more than 8 elements, we will loop over all of them
     // The buckets are sorted on the CPU so the largest buckets start 1st
-    int bucket = blockIdx.x;
-    int warp_id = threadIdx.x / WARP_SIZE;
-    int lane_id = threadIdx.x % WARP_SIZE;
+    int bucket     = blockIdx.x;
+    int warp_id    = threadIdx.x / WARP_SIZE;
+    int lane_id    = threadIdx.x % WARP_SIZE;
     int c_per_warp = WARP_SIZE * x128::size;
 
     int bucket_start_idx = bucket_info[bucket].x;
-    int bucket_size = bucket_info[bucket].y;
-    int bucket_ix = bucket_info[bucket].z;
-    int c = bucket_info[bucket].w * c_per_warp + (lane_id * x128::size);
+    int bucket_size      = bucket_info[bucket].y;
+    int bucket_ix        = bucket_info[bucket].z;
+    int c                = bucket_info[bucket].w * c_per_warp + (lane_id * x128::size);
 
     // Each thread handles "x128::size" channels, so at fp8, each warp would handle 512 channels
     // If C is not a multiple of this (e.g. 768), some buckets/c_groups cannot use the entire warp
-    if (c >= C) { return; }
+    if (c >= C) {
+        return;
+    }
     // Exit early if this is a small bucket and this warp doesn't have any items to process
-    if (warp_id >= bucket_size) { return; }
+    if (warp_id >= bucket_size) {
+        return;
+    }
 
     float accum[x128::size] = {0.0f};
     __shared__ float accum_shared[x128::size * BLOCK_SIZE];
 
-    for(int item = warp_id; item < bucket_size; item += BLOCK_SIZE/WARP_SIZE) {
+    for (int item = warp_id; item < bucket_size; item += BLOCK_SIZE / WARP_SIZE) {
         int bt = workload_indices[bucket_start_idx + item];
 
         const floatX* dout_btc = dout + bt * C + c;
-        x128 packed_inp1 = load128cs(dout_btc);
+        x128 packed_inp1       = load128cs(dout_btc);
         for (int k = 0; k < packed_inp1.size; k++) {
             accum[k] += (float)packed_inp1[k];
         }
@@ -147,18 +210,18 @@ __global__ static void wte_backward_kernel(floatX* dwte,
         for (int k = 0; k < x128::size; k++) {
             accum_shared[threadIdx.x + k * BLOCK_SIZE] = accum[k];
         }
-        return; // only warp 0 is needed after writing to shared memory
+        return;  // only warp 0 is needed after writing to shared memory
     }
 
     // Read dwte for warp 0 even if other warps are not finished yet to maximise latency tolerance
-    floatX* dwte_ix = dwte + bucket_ix * C + c;
+    floatX* dwte_ix    = dwte + bucket_ix * C + c;
     x128 packed_in_out = load128(dwte_ix);
 
     // note: threads which have returned are considered synchronised by CUDA so no risk of deadlock
     __syncthreads();
 
     // Accumulate into warp 0's registers by reading the values of the other warps in shared memory
-    for (int i = threadIdx.x+WARP_SIZE; i < min(BLOCK_SIZE, bucket_size*WARP_SIZE); i += WARP_SIZE) {
+    for (int i = threadIdx.x + WARP_SIZE; i < min(BLOCK_SIZE, bucket_size * WARP_SIZE); i += WARP_SIZE) {
         for (int k = 0; k < x128::size; k++) {
             accum[k] += accum_shared[i + k * BLOCK_SIZE];
         }
@@ -176,30 +239,30 @@ __global__ static void wte_backward_kernel(floatX* dwte,
     store128(dwte_ix, packed_in_out);
 }
 
-__global__ static void wpe_backward_kernel(floatX* dwpe,
-                                    const floatX* dout, const int* inp,
-                                    int B, int T, int C, unsigned int seed) {
+__global__ static void wpe_backward_kernel(floatX* dwpe, const floatX* dout, const int* inp, int B, int T, int C, unsigned int seed) {
     // Each thread handles x128::size "channel positions", e.g. 256 per warp for BF16
     // For gpt2-124M BF16, C=768 and T=1024, so 3 warps per channel and 3072 warps in total
     // For each "channel position" we sum the gradients for every batch at that C/T element
     // This way each dwte element is only updated once, and the kernel is fully deterministic!
     // The previous kernel was not deterministic, as batches were aggregated with atomicAdd
     int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
-    if (idx >= T * C) { return; }
+    if (idx >= T * C) {
+        return;
+    }
 
     // if C is not a multiple of WARP_SIZE*x128::size, it's OK for some warps to handle multiple t
-    int t = idx / C;
-    int c = idx % C;
+    int t                   = idx / C;
+    int c                   = idx % C;
     float accum[x128::size] = {0.0f};
 
     for (int b = 0; b < B; b++) {
-        x128 packed_dout = load128cs(dout + (b * T * C) + (t * C) + c); // will never be read again
+        x128 packed_dout = load128cs(dout + (b * T * C) + (t * C) + c);  // will never be read again
         for (int k = 0; k < x128::size; k++) {
             accum[k] += (float)packed_dout[k];
         }
     }
 
-    floatX* dwpe_tc = dwpe + (t * C) + c;
+    floatX* dwpe_tc  = dwpe + (t * C) + c;
     x128 packed_dwpe = load128(dwpe_tc);
     for (unsigned int k = 0; k < x128::size; k++) {
         // We use stochastic rounding to go from FP32 to BF16
@@ -215,29 +278,27 @@ __global__ static void wpe_backward_kernel(floatX* dwpe,
 // ----------------------------------------------------------------------------
 // kernel launchers
 
-inline void encoder_forward(floatX* out,
-                     const int* inp, const floatX* wte, const floatX* wpe,
-                     int B, int T, int C, cudaStream_t stream) {
+inline void encoder_forward(floatX* out, const int* inp, const floatX* wte, const floatX* wpe, int B, int T, int C, cudaStream_t stream) {
     NVTX_RANGE_FN();
     const int block_size = 256;
-    const int N = B * T * C;
-    const int grid_size = CEIL_DIV(N, (int)(block_size * x128::size));
+    const int N          = B * T * C;
+    const int grid_size  = CEIL_DIV(N, (int)(block_size * x128::size));
     encoder_forward_kernel3<<<grid_size, block_size, 0, stream>>>(out, inp, wte, wpe, B, T, C);
     cudaCheck(cudaGetLastError());
 }
 
 // Fully deterministic (see comments in wte_backward_kernel and wpe_backward_kernel for more details)
-inline void encoder_backward(floatX* dwte, floatX* dwpe, floatX* scratch, // gpu outputs & scratch
-                      int* workload_indices, int4* bucket_info,    // cpu scratch buffers
-                      const floatX* dout, const int* inp, const int* inputs_cpu, // cpu/gpu inputs
-                      int B, int T, int C, unsigned int seed, cudaStream_t stream) {
+inline void encoder_backward(floatX* dwte, floatX* dwpe, floatX* scratch,                // gpu outputs & scratch
+                             int* workload_indices, int4* bucket_info,                   // cpu scratch buffers
+                             const floatX* dout, const int* inp, const int* inputs_cpu,  // cpu/gpu inputs
+                             int B, int T, int C, unsigned int seed, cudaStream_t stream) {
     NVTX_RANGE_FN();
 
     // Launch wpe kernel first (so it runs on the GPU in parallel with the CPU pre-processing for wte)
     const int block_size = 256;
-    const int N = T * C / x128::size;
-    const int grid_size = CEIL_DIV(N, block_size);
-    if(dwpe!=nullptr)
+    const int N          = T * C / x128::size;
+    const int grid_size  = CEIL_DIV(N, block_size);
+    if (dwpe != nullptr)
         wpe_backward_kernel<<<grid_size, block_size, 0, stream>>>(dwpe, dout, inp, B, T, C, seed);
     cudaCheck(cudaGetLastError());
     //  dwte,const int* inp,const floatX* dout, int B, int T, int C,unsigned int seed
@@ -246,7 +307,7 @@ inline void encoder_backward(floatX* dwte, floatX* dwpe, floatX* scratch, // gpu
     // check the GPU scratch buffer is large enough to hold the bucket info and workload indices
     // todo - this is trivially true given hardcoded scratch buffer size here, is this useful?
     int num_c_groups = CEIL_DIV(C, x128::size * WARP_SIZE);
-    assert(B*T*num_c_groups * (sizeof(int4)+sizeof(int)) <= B*T*3*C * sizeof(floatX));
+    assert(B * T * num_c_groups * (sizeof(int4) + sizeof(int)) <= B * T * 3 * C * sizeof(floatX));
 
     // Step 1: Sort inputs into buckets
     int total_items = 0;
@@ -254,7 +315,7 @@ inline void encoder_backward(floatX* dwte, floatX* dwpe, floatX* scratch, // gpu
     for (uint64_t bt = 0; bt < B * T; bt++) {
         for (uint64_t c_group = 0; c_group < num_c_groups; c_group++) {
             // todo - passing c_group/inputs_cpu[bt] in data to avoid a second hash lookup is a bit hacky
-            uint64_t data = bt + (c_group<<32ULL) + ((uint64_t)inputs_cpu[bt]<<42ULL);
+            uint64_t data = bt + (c_group << 32ULL) + ((uint64_t)inputs_cpu[bt] << 42ULL);
             buckets[c_group + num_c_groups * inputs_cpu[bt]].push_back(data);
             total_items++;
         }
@@ -264,30 +325,30 @@ inline void encoder_backward(floatX* dwte, floatX* dwpe, floatX* scratch, // gpu
     // this is so the largest buckets are processed first by the GPU
     // otherwise, if they started late, they would still be running with the rest of the GPU idle
     std::vector<std::pair<uint64_t, std::vector<uint64_t>>> sortedBuckets(buckets.begin(), buckets.end());
-    std::sort(sortedBuckets.begin(), sortedBuckets.end(), // ugly because we don't have a typedef for the std::pair
+    std::sort(sortedBuckets.begin(), sortedBuckets.end(),  // ugly because we don't have a typedef for the std::pair
               [](const std::pair<uint64_t, std::vector<uint64_t>>& a, const std::pair<uint64_t, std::vector<uint64_t>>& b) {
                   return a.second.size() > b.second.size();
               });
 
-    int num_buckets = buckets.size();
-    int bucket_index = 0;
+    int num_buckets    = buckets.size();
+    int bucket_index   = 0;
     int workload_index = 0;
     for (const auto& bucket : sortedBuckets) {
-        bucket_info[bucket_index].x = workload_index; // bucket start
-        bucket_info[bucket_index].y = bucket.second.size(); // bucket size
-        bucket_info[bucket_index].z = (bucket.second[0] >> 42ULL) & ((1ULL<<20ULL)-1); // bucket ix
-        bucket_info[bucket_index].w = (bucket.second[0] >> 32ULL) & ((1ULL<<10ULL)-1); // bucket c
+        bucket_info[bucket_index].x = workload_index;                                       // bucket start
+        bucket_info[bucket_index].y = bucket.second.size();                                 // bucket size
+        bucket_info[bucket_index].z = (bucket.second[0] >> 42ULL) & ((1ULL << 20ULL) - 1);  // bucket ix
+        bucket_info[bucket_index].w = (bucket.second[0] >> 32ULL) & ((1ULL << 10ULL) - 1);  // bucket c
 
         for (uint64_t idx : bucket.second) {
-            workload_indices[workload_index++] = (int)(idx & ((1ULL<<31ULL)-1ULL));
+            workload_indices[workload_index++] = (int)(idx & ((1ULL << 31ULL) - 1ULL));
         }
         bucket_index++;
     }
 
     // Step 3: Copy data from host to device (async until the last one to avoid synchronising CPU/GPU twice)
     // todo - could use CUDA events (even without streams) to avoid CPU/GPU synchronisation completely
-    int4* d_bucket_info = (int4*)scratch;
-    int*  d_workload_indices = (int*)(scratch + B*T*num_c_groups * sizeof(int4));
+    int4* d_bucket_info     = (int4*)scratch;
+    int* d_workload_indices = (int*)(scratch + B * T * num_c_groups * sizeof(int4));
     cudaCheck(cudaMemcpyAsync(d_bucket_info, bucket_info, num_buckets * sizeof(int4), cudaMemcpyHostToDevice, stream));
     cudaCheck(cudaMemcpyAsync(d_workload_indices, workload_indices, total_items * sizeof(int), cudaMemcpyHostToDevice, stream));
 
@@ -297,21 +358,21 @@ inline void encoder_backward(floatX* dwte, floatX* dwpe, floatX* scratch, // gpu
     cudaCheck(cudaGetLastError());
 }
 
-inline void encoder_backward_1(floatX* dwte, floatX* dwpe, const floatX* deltaIn, const int* inp,
-            int B, int T, int C, floatX* scratch, int num_buckets, unsigned int seed, cudaStream_t stream) {
+inline void encoder_backward_1(floatX* dwte, floatX* dwpe, const floatX* deltaIn, const int* inp, int B, int T, int C, floatX* scratch, int num_buckets,
+                               unsigned int seed, cudaStream_t stream) {
     NVTX_RANGE_FN();
 
     // Launch wpe kernel first (so it runs on the GPU in parallel with the CPU pre-processing for wte)
     const int block_size = 256;
-    const int N = T * C / x128::size;
-    const int grid_size = CEIL_DIV(N, block_size);
-    if(dwpe!=nullptr)
+    const int N          = T * C / x128::size;
+    const int grid_size  = CEIL_DIV(N, block_size);
+    if (dwpe != nullptr)
         wpe_backward_kernel<<<grid_size, block_size, 0, stream>>>(dwpe, deltaIn, inp, B, T, C, seed);
     cudaCheck(cudaGetLastError());
-    
-    int num_c_groups = CEIL_DIV(C, (WARP_SIZE * x128::size));
-    int4* d_bucket_info = (int4*)scratch;
-    int*  d_workload_indices = (int*)(scratch + B*T*num_c_groups * sizeof(int4));
+
+    int num_c_groups        = CEIL_DIV(C, (WARP_SIZE * x128::size));
+    int4* d_bucket_info     = (int4*)scratch;
+    int* d_workload_indices = (int*)(scratch + B * T * num_c_groups * sizeof(int4));
     // Launch wte kernel
     // todo - profile block sizes on more content (depends on number of buckets and on GPU?)
     wte_backward_kernel<256><<<num_buckets, 256, 0, stream>>>(dwte, d_bucket_info, d_workload_indices, deltaIn, inp, seed, B, T, C);

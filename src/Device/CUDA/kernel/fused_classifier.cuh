@@ -54,9 +54,9 @@ __device__ inline SoftmaxParams prepare_softmax_blockwide3(int64_t idx, const fl
     }
 
     // Block Max Reduction -> Maths -> Block Sum Reduction
-    float block_maxval = blockReduce<warpReduceMax>(thread_maxval, false, -INFINITY);
+    float block_maxval = blockReduce_v0<warpReduceMax>(thread_maxval, false, -INFINITY);
     thread_sumval *= expf(thread_maxval - block_maxval);
-    float block_sumval = blockReduce<warpReduceSum>(thread_sumval);
+    float block_sumval = blockReduce_v0<warpReduceSum>(thread_sumval);
 
     // return the softmax parameters
     return SoftmaxParams{1.f / block_sumval, block_maxval};

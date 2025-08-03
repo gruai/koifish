@@ -148,7 +148,7 @@ __global__ void CU_adamw_p(PIPE_Optimizer<Tp, Tmv> pipe) {
     // v /= pipe.beta2_correction;  // v_hat
     float x = _adamw_idx((float)pipe.params[idx], pipe, m, v, idx), x2 = x * x;
     pipe.params[idx] = x;
-    float block_sum  = blockReduce<warpReduceSum>(x2, true);
+    float block_sum  = blockReduce_v0<warpReduceSum>(x2, true);
     if (idx == 0)
         atomicAdd(pipe.wNorms, block_sum);
 }
@@ -199,67 +199,83 @@ __global__ static void CU_adamw_Tile_v0(PIPE_Optimizer<Tp, Tmv> pipe) {
     v = lerp(grad * grad, v, pipe.beta2), pipe.gv[idx] = v;
     // m /= pipe.beta1_correction, v /= pipe.beta2_correction;
     float a   = _adamw_idx(old_param, pipe, m, v, idx);
-    float sum = blockReduce<warpReduceSum>(a, true);
+    float sum = blockReduce_v0<warpReduceSum>(a, true);
     if (tid == 0) {
         pipe.gama_T[gpos] = sum / TM / TN;
     }
 }
+
+#define RC2TILE(r, c) (((r) / THREAD_TILE_M) * gridDim.y + ((c) / THREAD_TILE_N))
 //  all element in tile has one mv
 template <typename Tp, typename Tmv>
 __global__ static void CU_adamw_Tile(PIPE_Optimizer<Tp, Tmv> pipe) {
     const int TM = THREAD_TILE_M, TN = THREAD_TILE_N, thread_num = blockDim.x;
     int tid = threadIdx.x, idrow, idcol, M = pipe.ne[0], N = pipe.ne[1], trans = 1;
+    // const int nWrapT = std::min(WARP_SIZE,THREAD_TILE_M*THREAD_TILE_N);
     idrow = blockIdx.x * TM + tid / TM;
     idcol = blockIdx.y * TN + tid % TM;
     if (idrow >= M || idcol >= N)
         return;  // guard
     fnPOS pA = trans == 0 ? fnCR2POS : fnRC2POS;
-    int pos = pA(idrow, idcol, M, N), idx = pos, gpos = blockIdx.x * gridDim.y + blockIdx.y;
+    int pos = pA(idrow, idcol, M, N), idx = pos, gpos = RC2TILE(idrow, idcol);  // blockIdx.x * gridDim.y + blockIdx.y;
     float old_param = pipe.gama_T[gpos], m = pipe.gm[gpos], v = pipe.gv[gpos];
     float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx);
-    float sum  = blockReduce<warpReduceSum>(grad, true);
-    grad       = sum / TM / TN;
+    float sum =
+        CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(grad);  // nWrapT<=WARP_SIZE ? warpReduceSum<nWrapT>(grad) : blockReduce_v0<warpReduceSum>(grad, true);
+    grad = sum / TM / TN;
     m = lerp(grad, m, pipe.beta1), pipe.gm[gpos] = m;
     v = lerp(grad * grad, v, pipe.beta2), pipe.gv[gpos] = v;
     float a = _adamw_idx(old_param, pipe, m, v, idx);
-    sum     = blockReduce<warpReduceSum>(a, true);
+    sum     = CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(a);  // nWrapT<=WARP_SIZE ? warpReduceSum<nWrapT>(a) :blockReduce_v0<warpReduceSum>(a, true);
     if (tid == 0) {
-        pipe.gama_T[gpos] = sum / TM / TN;
+        a = sum / TM / TN;
+        pipe.gama_T[gpos] = a;  //CU_Float2T<Tp>(a, pipe.seed);   //
+        atomicAdd(pipe.wNorms, a*a*TM*TN);
     }
 }
 
-#define RC2TILE(r,c)    (((r)/THREAD_TILE_M)*gridDim.y + ((c)/THREAD_TILE_N))
 //  all element in tile has one mv
 template <typename Tp, typename Tmv>
 __global__ static void CU_adamw_Tile_RC(PIPE_Optimizer<Tp, Tmv> pipe) {
     const int TM = THREAD_TILE_M, TN = THREAD_TILE_N, thread_num = blockDim.x;
-    int tid = threadIdx.x, idrow_1, idcol_1, idrow_0, idcol_0, M = pipe.ne[0], N = pipe.ne[1], trans = 1;
+    int tid = threadIdx.x, idrow, idcol, idrow_0, idcol_0, M = pipe.ne[0], N = pipe.ne[1], trans = 1;
 
-    idrow_1 = blockIdx.x * TM + tid / TM + pipe.tile_r1;
-    idcol_1 = blockIdx.y * TN + tid % TM + pipe.tile_c1;
-    idrow_0 = blockIdx.x * TM + tid / TM + pipe.tile_r0;
-    idcol_0 = blockIdx.y * TN + tid % TM + pipe.tile_c0;
-    if (idrow_1 >= M || idcol_1 >= N)
+    idrow = blockIdx.x * TM + tid / TM, idcol = blockIdx.y * TN + tid % TM;
+    idrow_0 = blockIdx.x * TM + tid / TM + pipe.tile_r1;
+    idcol_0 = blockIdx.y * TN + tid % TM + pipe.tile_c1;
+    if (idrow >= M || idcol >= N)
         return;  // guard
-    if (idrow_0 >= M || idcol_0 >= N)
-        return;  // guard
-    fnPOS pA = trans == 0 ? fnCR2POS : fnRC2POS;
-    int g_pos0 = RC2TILE(idrow_0,idcol_0);
-    int pos = pA(idrow_1, idcol_1, M, N), idx = pos, gpos_1 = RC2TILE(idrow_1,idcol_1); //blockIdx.x * gridDim.y + blockIdx.y;
-    float old_param = pipe.gama_T[g_pos0], m = pipe.gm[g_pos0], v = pipe.gv[g_pos0];
-    float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx);
-    float sum  = blockReduce<warpReduceSum>(grad, true);
+    if (idrow_0 < 0)
+        idrow_0 = 0;
+    if (idrow_0 >= M)
+        idrow_0 = M - 1;
+    if (idcol_0 <0) 
+        idcol_0 = 0;
+    if (idcol_0 >= N) 
+        idcol_0 = N - 1;
+
+    fnPOS pA   = trans == 0 ? fnCR2POS : fnRC2POS;
+    int gpos_0 = RC2TILE(idrow_0, idcol_0);
+    int pos_0 = pA(idrow_0, idcol_0, M, N), idx_0 = pos_0, gpos = RC2TILE(idrow, idcol);  // blockIdx.x * gridDim.y + blockIdx.y;
+    if (gpos_0 != gpos) {
+        int debug = 0;
+    }
+    float old_param = pipe.gama_T[gpos_0], m = pipe.gm[gpos_0], v = pipe.gv[gpos_0];
+    float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx_0);
+    float sum  = CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(grad);  // blockReduce_v0<warpReduceSum>(grad, true);
     grad       = sum / TM / TN;
-    m = lerp(grad, m, pipe.beta1), 
-    v = lerp(grad * grad, v, pipe.beta2);
-    float sum_m = blockReduce<warpReduceSum>(m, true);
-    float sum_v = blockReduce<warpReduceSum>(v, true);
-    float a = _adamw_idx(old_param, pipe, m, v, idx);
-    sum     = blockReduce<warpReduceSum>(a, true);
+    m = lerp(grad, m, pipe.beta1), v = lerp(grad * grad, v, pipe.beta2);
+    float sum_m = CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(m);  // blockReduce_v0<warpReduceSum>(m, true);
+    float sum_v = CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(v);  // blockReduce_v0<warpReduceSum>(v, true);
+    float a     = _adamw_idx(old_param, pipe, m, v, idx_0);
+    sum         = CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(a);  // blockReduce_v0<warpReduceSum>(a, true);
     if (tid == 0) {
-        pipe.gama_T[gpos_1] = sum / TM / TN;
-        pipe.gv[gpos_1]     = sum_v / TM / TN;
-        pipe.gm[gpos_1]     = sum_m / TM / TN;
+        assert(!(isnan(sum) || isinf(sum)));
+        assert(!(isnan(sum_v) || isinf(sum_v)));
+        assert(!(isnan(sum_m) || isinf(sum_m)));
+        pipe.gama_T[gpos] = sum / TM / TN;
+        pipe.gv[gpos]     = sum_v / TM / TN;
+        pipe.gm[gpos]     = sum_m / TM / TN;
     }
 }
 //  each element in tile has different mv
@@ -277,11 +293,11 @@ __global__ static void CU_adamw_Tile_each_mv(PIPE_Optimizer<Tp, Tmv> pipe) {
     float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx);
     m = lerp(grad, m, pipe.beta1), v = lerp(grad * grad, v, pipe.beta2);
 
-    float sum   = blockReduce<warpReduceSum>(grad, true);
-    float sum_m = blockReduce<warpReduceSum>(m, true);
-    float sum_v = blockReduce<warpReduceSum>(v, true);
+    float sum   = blockReduce_v0<warpReduceSum>(grad, true);
+    float sum_m = blockReduce_v0<warpReduceSum>(m, true);
+    float sum_v = blockReduce_v0<warpReduceSum>(v, true);
     float a     = _adamw_idx(old_param, pipe, m, v, idx);  //  m,v => m_hat,v_hat
-    sum         = blockReduce<warpReduceSum>(a, true);
+    sum         = blockReduce_v0<warpReduceSum>(a, true);
     if (tid == 0) {
         pipe.gama_T[gpos] = sum / TM / TN;
         pipe.gv[gpos]     = sum_v / TM / TN;
@@ -291,14 +307,14 @@ __global__ static void CU_adamw_Tile_each_mv(PIPE_Optimizer<Tp, Tmv> pipe) {
 
 template <typename Tp, typename Tmv>
 void Optimizer_update(PIPE_Optimizer<Tp, Tmv>& pipe, cudaStream_t stream) {
-    cudaError_t err       = cudaSuccess;
+    // cudaError_t err       = cudaSuccess;
     int64_t ne[4]         = {pipe.ne[0], pipe.ne[1], pipe.ne[2], pipe.ne[3]};
     int dT4B              = 512;  //  1024?
     int dGRID             = CEIL_DIV(pipe.num_parameters, dT4B);
     size_t smemPB         = 1024 * sizeof(float);
     pipe.beta1_correction = 1.0f - powf(pipe.beta1, pipe.iter);
     pipe.beta2_correction = 1.0f - powf(pipe.beta2, pipe.iter);
-    void* kernelArgs[]    = {(void*)&pipe};
+    
     D20(pipe.wNorms, sizeof(float) * 1);
     if (pipe.gm == nullptr) {  // SGD,SGD_V
         // if (gv == nullptr) {
@@ -334,6 +350,7 @@ void Optimizer_update(PIPE_Optimizer<Tp, Tmv>& pipe, cudaStream_t stream) {
                         break;
                 }
             } else {
+                //  void* kernelArgs[]    = {(void*)&pipe};
                 // err = cudaLaunchCooperativeKernel((void*)CU_adamw_<Tp,Tmv>, dGRID, dT4B, kernelArgs, smemPB, main_stream);
                 // cudaCheck(err);      "too many blocks in cooperative launch"
                 CU_adamw_p<<<dGRID, dT4B, 0, stream>>>(pipe);
@@ -356,10 +373,10 @@ void Optimizer::InitOnCUDA(int flag) {
     ADAM_params_ adam = TrainParams().adam;
     GD_METHOD tpCurGD = tpGD;
 
-    int num_slices = 1, C = _fish->config.nEmbed();
+    int C = _fish->config.nEmbed(); //num_slices = 1, 
     size_t off = 0;
     for (auto tensor : opt_ps) {
-        size_t nP = tensor->size(), grid_size = CEIL_DIV(nP, 512);
+        size_t nP = tensor->size(); //, grid_size = CEIL_DIV(nP, 512);
         auto& im = _fish->GetGensorInfo(tensor);
         if (tpGD == SGD_HYBRID) {
             tpCurGD = im.isAdam ? ADAMw : SGD;
@@ -387,7 +404,7 @@ int UpdateTensorParam_cuda(hGTensor tensor, Optimizer* hOPT, float& grad_norm, i
     //     tpCurGD = im.isAdam ? ADAMw : SGD;
     // }
     float learning_rate = hOPT->LearningRate(), beta1 = adam.beta1, beta2 = adam.beta2, eps = adam.eps;
-    int num_slices = 1, iter = hOPT->GetITER();
+    int iter = hOPT->GetITER(); //num_slices = 1, 
     unsigned int seed = hOPT->rRounding.RandInt32();  // random_u32(&rng_state);
     const char* name  = tensor->name;
     ShardInfo shard   = {0, tensor->size()};
@@ -398,7 +415,7 @@ int UpdateTensorParam_cuda(hGTensor tensor, Optimizer* hOPT, float& grad_norm, i
     floatX *param_ptr = ToX(tensor), *grad_ptr = ToG(tensor);
     ptrdiff_t opt_state_offset = tensor->offset;                           // multi_gpu_config->zero_stage < 1 ?  local_offset_full : local_offset_partial;
     floatMV *m_ptr = (floatMV*)tensor->gm, *v_ptr = (floatMV*)tensor->gv;  // gv==nullptr? nullptr : gv + opt_state_offset;
-    float* master_ptr = NULL;                                              // why this would slow down converge?
+    // float* master_ptr = NULL;                                              // why this would slow down converge?
     // if (master_weights != NULL && im.isAdam) {
     //     master_ptr = master_weights + opt_state_offset;
     // }

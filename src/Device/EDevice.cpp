@@ -36,7 +36,7 @@ bool RLS_BP::Planning(int flag) {
     T_fore = 10, T_back = 10;
     int t        = 0;
     double costs = 0;
-    for (auto node : nodes) {
+    for (auto node : curTasks) {
         if (costs + node->cost > budget) {
             T_fore = t;
             break;
@@ -47,8 +47,8 @@ bool RLS_BP::Planning(int flag) {
     }
 
     costs = 0;
-    for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
-        Node *node = *it;
+    for (auto it = curTasks.rbegin(); it != curTasks.rend(); ++it) {
+        TaskNode *node = *it;
         if (costs + node->cost > budget) {
             T_back = t;
             break;
@@ -64,7 +64,7 @@ bool RLS_BP::Planning(int flag) {
 
 bool RLS_BP::Verify(int flag) {
     int t = 0;
-    for (auto node : nodes) {  // validate
+    for (auto node : curTasks) {  // validate
         t++;
     }
     return true;
@@ -100,14 +100,14 @@ RLSchedule::tpSTATUS RLS_BP::SetTensorStatus(int step, hGTensor tensor, tpSTATUS
 RLSchedule::tpSTATUS RLS_BP::GetStatus(int t, void *hObj, int flag) {
     tpSTATUS status   = PASS;
     GeNeuron *hNeuron = (GeNeuron *)(hObj);
-    int nN            = nodes.size();
+    int nN            = curTasks.size();
     assert(t < 2 * nN);
-    Node *hNode = nullptr;
+    TaskNode *hNode = nullptr;
     if (t < nN) {
         if (t < T_fore)
             ;  // hNeuron->OnRemater(this);
     } else {
-        // t<nN ? nodes[t] : nodes[2*nN-t];
+        // t<nN ? curTasks[t] : curTasks[2*nN-t];
     }
     assert(hNode->hOBJ == hObj);
 

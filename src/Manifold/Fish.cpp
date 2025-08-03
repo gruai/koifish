@@ -121,6 +121,10 @@ bool Fish::isRemater(int flag) const {
     return false;
 }
 
+bool Fish::isAtPhase(LIFE_PHASE ph)    const   { 
+    return GetOptimizer()->phase == ph ; 
+}
+
 hFISH Fish::MakeSwarm(const std::string nam_, struct CLI_params &params, int flag) {
     vector<hWIKI> wikis = WIKI::MakeInstance(nam_, params, 0x0);
     // if(params.tpWiki!="off") {//wiki is so heavy(ugly) that only load one instance here!
@@ -369,13 +373,29 @@ bool Fish::SaveTrain(string sX, int flag) {
     string sit       = "IT", sOut;
     string sBaseName = config.checkpoint.model_out;  // get_train_filename(.c_str(),sit.c_str(), "", -1  );
     bool isOK        = false;
-
+    if (!config.scheduling.canSave(iter, flag)) {
+        return false;
+    }
+    for (auto t : optParams) {
+        if (!t->isUpdateParam()) {
+            return false;
+        }
+    }
     if (!config.checkpoint.out.empty()) {
-        sOut = config.checkpoint.out + std::to_string(iter) + sX + ".ck";
-        // isOK = SAFETENSOR_Serialize(sOut, true);
-
-        // isOK = SAFETENSOR_Serialize(sOut,false); //only for debug
-        // assert(isOK);
+        if (!sX.empty()) {
+            sOut = config.checkpoint.out + sX + ".ck";  //+ std::to_string(iter)
+        } else
+            sOut = config.checkpoint.out + "latest" + ".ck";
+        isOK = SAFETENSOR_Serialize(sOut, true);
+        assert(isOK);
+        if (isOK && sX == "warmup") {  // only for debug
+            for (int i = 0; i < 1; i++) {
+                isOK = SAFETENSOR_Serialize(sOut, false);
+                assert(isOK);
+                isOK = SAFETENSOR_Serialize(sOut, true);
+                assert(isOK);
+            }
+        }
         // _INFO("[SAVE] @%s iter=%d\n", sX.c_str(), iter);
     }
 
@@ -402,7 +422,8 @@ bool Fish::LoadCheckPoint(int flag) {
             isLoadCheckpoint = CALM_Serialize(config.checkpoint.in, false, 0x0);
             // isLoadCheckpoint = YALM_Serialize(config.checkpoint.in,false,0x0);
         } else {
-            assert(0);
+            // just try, may fail!
+            isLoadCheckpoint = SAFETENSOR_Serialize(config.checkpoint.in, false, 0x0);
             //  Deprecated - Since koifish support 1-bit parameters, why need GGUF?
             // isLoadCheckpoint = GGUF_Serialize(config.checkpoint.in,false,0x0);
         }
@@ -592,13 +613,11 @@ bool Fish::CopyGensors(hWIKI wiki, int flag) {
 
 bool Fish::BeforeNextStep(int iter, int flag) {
     int nLayer = config.nLayer(), l;
-    for (auto neuron : backbons) {
-        neuron->stat.Reset();        
-    }
-    for(auto t : optParams){
-        t->tile_r0 = t->tile_r1,        t->tile_c0 = t->tile_c1;
-        // t->tile_r1 = rand_coin.RandU32()%THREAD_TILE_M;
-        // t->tile_c1 = rand_coin.RandU32()%THREAD_TILE_N;
+
+    for (auto t : optParams) {
+        // t->tile_r0 = t->tile_r1,        t->tile_c0 = t->tile_c1;
+        t->tile_r1 = rand_coin.RandU32() % THREAD_TILE_M - THREAD_TILE_M / 2;
+        t->tile_c1 = rand_coin.RandU32() % THREAD_TILE_N - THREAD_TILE_N / 2;
     }
 
     for (l = 0; l < nLayer; l++) {
@@ -610,6 +629,12 @@ bool Fish::BeforeNextStep(int iter, int flag) {
         // QKV->isShortcut = isPass;
     }
     return true;
+}
+
+int Fish::GetCurIter(int flag) const {
+    if (hOPT == nullptr)
+        return -1;
+    return hOPT->GetITER();
 }
 
 bool Fish::AfterNextStep(int iter, int flag) {

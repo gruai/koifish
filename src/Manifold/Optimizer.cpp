@@ -3,15 +3,15 @@
  *  SPDX-License-Identifier: MIT
  *
  *  1. Spike analysis
- *      Some cause:   1).Large lr  2) ROPE 
+ *      Some cause:   1).Large lr  2) ROPE
  *
  *  \brief Optimizer
  *  \author Yingshi Chen
  */
 #include "Optimizer.hpp"
 
-#include "../TokenSet/Dictionary.hpp"
 #include "../Device/Pipe.hpp"
+#include "../TokenSet/Dictionary.hpp"
 #include "../ggex/GG_util.hpp"
 #include "gLLM.hpp"
 
@@ -50,8 +50,9 @@ Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params &config, int flag) : _fi
     }
 }
 
-bool Optimizer::SetPhase(PHASE phase_, int flag) {
+bool Optimizer::SetPhase(LIFE_PHASE phase_, int flag) {
     phase = phase_;
+    _fish->GetScheduler<RLS_BP>()->SetPhase(phase);
     return true;
 }
 
@@ -298,7 +299,7 @@ inline bool isStrMatch(const string &target, const vector<string> &words) {
 }
 
 template <typename Tp, typename Tmv>
-void Optimizer_update(PIPE_Optimizer<Tp, Tmv>& pipe, cudaStream_t stream);
+void Optimizer_update(PIPE_Optimizer<Tp, Tmv> &pipe, cudaStream_t stream);
 int GTensor::Dogleg(int flag) {
     hOptimizer hOPT = hFish->GetOptimizer();
     int iter        = hOPT->GetITER();
@@ -307,12 +308,12 @@ int GTensor::Dogleg(int flag) {
 
     ADAM_params_ adam   = hOPT->TrainParams().adam;
     float learning_rate = hOPT->LearningRate(), beta1 = adam.beta1, beta2 = adam.beta2, eps = adam.eps, wd = adam.decay;
-    size_t nEle       = size();
-    
+    size_t nEle = size();
+
     if (shape.size() == 1)  // we only want to weight decay the 2D tensors and leave all 1D tensors alone
         wd = 0;
-    
-    Length(1);    
+
+    Length(1);
     // if(flag==-1)    return 0x0;
     if (gnorm > adam.gclip) {
         // _INFO("\tdelta|%s|=%g scale=%g\n",name,grad_norm,adam.gclip/grad_norm);
@@ -322,12 +323,12 @@ int GTensor::Dogleg(int flag) {
     if (hFish->config.lars_ratio > 0) {
         grad_scale = rLARS(grad_scale, hFish->config.lars_ratio, 0x0);
     }
-    unsigned int seed = hOPT->rRounding.RandInt32();
+    seed = hOPT->rRounding.RandInt32();
     PIPE_Optimizer<floatX, floatMV> pipe(nEle, nEle, nEle, nEle, flags, learning_rate, beta1, beta2, iter, eps, wd, grad_scale, gnorm, seed);
     pipe.Update(this);
     Optimizer_update(pipe, main_stream);
-    
-    if(flag==-1){
+
+    if (flag == -1) {
         // Print(name, 1, -1);
     }
     last_iter = iter;
@@ -483,19 +484,17 @@ void Optimizer::UpdateTrainLoss(int x, float loss, int flag) {
     // fx_prev[0] = fx;
 }
 
-int Optimizer::GetITER(int flag) const{
+int Optimizer::GetITER(int flag) const {
     //  first_iter             = iter;
     //  iter = iter0 + t + 1;
     return iter;
 }
 
-bool Optimizer::isSpike(int flag) {
-    return false;
-}
+bool Optimizer::isSpike(int flag) { return false; }
 
 int RAW_update(std::vector<hGTensor> &tensors, Optimizer *hOPT, float &grad_norm, int alg, int flag);
 /*
-*/
+ */
 Optimizer::RESULT Optimizer::Search(void *ctx, hGensor loss_, hGensor target_, CLI_params &config) {
     hEDS = _fish->hEDS;
     assert(hEDS != nullptr);
@@ -534,7 +533,7 @@ Optimizer::RESULT Optimizer::Search(void *ctx, hGensor loss_, hGensor target_, C
         }
         iter = iter0 + t + 1;
         SUM::Reset("time");
-        SetPhase(P_TRAIN);
+        SetPhase(LIFE_PHASE::P_TRAIN);
         if (!BatchGrad(iter, a, 0x0))
             return CANCEL;
         // if(t==1)    exit(KOIFISH_EXIT_DEBUG);
@@ -565,10 +564,11 @@ Optimizer::RESULT Optimizer::Search(void *ctx, hGensor loss_, hGensor target_, C
         }
         if (t % 100 == 0)
             trainInfos().SaveToCSV("_info_.csv");
-        SetPhase(P_EVAL_);
+        SetPhase(LIFE_PHASE::P_EVAL_);
         for (auto vl : val_loaders) {
             if (vl->isEval(t)) {
-                val_loss = Evaluate(vl, iter);
+                val_loss = Evaluate(vl, iter);  //  0.272727281
+                //val_loss = vl->hTokens->Evaluate(_fish,vl,0x0);                // 
             }
         }
 #ifdef _TENSOR_G_
@@ -606,12 +606,12 @@ double Optimizer::GraphCompute(hSampLoader hLoader, hTGraph hTG, int flag) {
 
     OutCLS *cls       = _fish->GetNeuron<OutCLS>("OutCLS", 0);
     TokenEmbed *embed = _fish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
-    if (phase != P_GENERATE && phase != P_PREFILL)
+    if (phase != LIFE_PHASE::P_GENERATE && phase != LIFE_PHASE::P_PREFILL)
         embed->hBatch = hLoader->hBatch;
 
     isBackward = false;
     _fish->ForwardOnRLS(iter, 0x0);
-    if (phase == P_GENERATE || phase == P_PREFILL) {
+    if (phase == LIFE_PHASE::P_GENERATE || phase == LIFE_PHASE::P_PREFILL) {
     } else {
         mean_loss = hLoader->hTokens->LossOnResult(hLoader, cls);
         if (isOnlyEvaluate) {
@@ -621,6 +621,7 @@ double Optimizer::GraphCompute(hSampLoader hLoader, hTGraph hTG, int flag) {
             g_step     = 0;
             _fish->BackwardOnRLS(iter, 0x0);
             UpdateTrainLoss(-1, mean_loss);
+            isBackward = false;
         }
     }
     // SUM::tX1 += GST_ms()-now;
@@ -641,14 +642,14 @@ float Optimizer::Evaluate(hSampLoader loader, int iter, int flag) {
     }
     assert(loader->num_batches > 0);
     switch (phase) {
-        case P_EVAL_:
+        case LIFE_PHASE::P_EVAL_:
             _INFO("[eval] ");
             break;
-        case P_PREFILL:
+        case LIFE_PHASE::P_PREFILL:
             // _INFO("[prefill] " );
             assert(loader->num_batches == 1);
             break;
-        case P_GENERATE:
+        case LIFE_PHASE::P_GENERATE:
             // _INFO("[generate] " );
             assert(loader->num_batches == 1);
             break;
@@ -669,7 +670,7 @@ float Optimizer::Evaluate(hSampLoader loader, int iter, int flag) {
     const float *wLog   = nullptr;
     loader->next_sample = 0;  // fix this to keep same acc on each experiment
     for (i = 0; i < loader->num_batches; i += step) {
-        if (tokens_input != nullptr && (phase != P_PREFILL && phase != P_GENERATE)) {  // in some debug mode, tokens_input maybe null
+        if (tokens_input != nullptr && (phase != LIFE_PHASE::P_PREFILL && phase != LIFE_PHASE::P_GENERATE)) {  // in some debug mode, tokens_input maybe null
             TIMING_ms(loader->UpdateBatch(i, _fish), tX);
             samp = loader->cur_samps[i];
         }
@@ -801,6 +802,8 @@ bool Optimizer::OnNextShard(int flag) {
         float b = vl->stepis.Best();
         vl->stepis.SaveToCSV("_info_.csv");
     }
+    // _fish->SaveTrain("");
+    // Fish_ppl();
 
     return true;
 }
@@ -1008,7 +1011,10 @@ OPT_Adam::OPT_Adam(NLP_AutoRegressive *g_, CLI_params &params_, int flag) : Opti
         _fish->config.common.remater_ffn = 1;
         // _fish->config.common.remater_qkv = 1;
     }
-    
+    for(auto loader : val_loaders){
+        loader->stepis.Init(this);
+    }
+
     // sched              = 1.0f;
 }
 

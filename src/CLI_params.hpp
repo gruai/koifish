@@ -13,10 +13,25 @@
 #include "./Utils/json.hpp"
 #include "./g_float.hpp"
 
-struct CLI_params;
 /**
  *  All paramters defined here
  */
+struct CLI_params;
+
+//  生者一过客，逝者一归尘；天地一逆旅，只待骑鹤人
+enum LIFE_PHASE {
+    // Pre-training
+    P_TRAIN,
+    P_SFT,  //  supervised fine-tuning
+    P_DPO,  //  direct preference optimization
+
+    // evaluate
+    P_EVAL_,
+    // Inference     fish->isLocalInfer = true
+    P_PREFILL,
+    P_GENERATE
+};
+
 enum COMPRESSIVE_SENSING {
     SKIP,
     SVD,
@@ -263,8 +278,12 @@ static std::map<MEM_STRATEGY, std::string> MEM_STRATEGY_desc = {
 struct SKDU_params {
     MEM_STRATEGY strategy = PRE_ALLOC_GPU;
     bool paramIsGuoke     = false;
+    // layer in branch
+    int nLayerInBranch = -1, LIB_0 = -1, LIB_1 = 0, LIB_iter_switch = 100, LIB_iter4save = -1;
     // int tpParamResident = 0;  //  0-      1-
+    bool InitSection(int nLayer, int nLS, int flag = 0x0);
     bool isUpdateParamV0() const;
+    bool canSave(int iter, int flag = 0x0) const;
     void Dump(int typ) const;
 };
 struct CLI_params {

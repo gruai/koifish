@@ -162,6 +162,9 @@ static std::map <typNUMBER, std::vector <std::string> > name2TP = {
 typedef float floatX;
 #define PARAMS_TYPE typNUMBER::F32
 #define tpCuBLAS CUDA_R_32F
+typedef float floatGrad;
+typedef float floatFFN;
+typedef float floatMV;
 #elif defined(ENABLE_FP8)
 typedef __nv_fp8_e5m2 floatX;
 #define PARAMS_TYPE typNUMBER::F8E5M2

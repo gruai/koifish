@@ -138,17 +138,17 @@ __global__ void static reduce_add_sum_kernel(floatX* dst, const float* src, size
     Wrapper around cublasLtMatmul(https://docs.nvidia.com/cuda/cublas/#cublasltmatmul)
 */
 void CU_mm_blas(floatX* d, const floatX* a, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int transB = 0,
-                bool accumulate = false, floatX* pre_gelu = NULL, bool backward = false) {
+                float alpha=1.0, float beta = 0.0, floatX* pre_gelu = NULL, bool backward = false) {
     NVTX_RANGE_FN();
     // check alignment (some modes work unaligned but it always best to be aligned for performance)
     if (((uintptr_t)a % 16) != 0 || ((uintptr_t)b % 16) != 0 || ((uintptr_t)d % 16) != 0 || ((uintptr_t)bias % 16) != 0) {
-        _INFO("All CU_mm_blas pointers must be aligned!\n");
+        _INFO("All CU_mm_blas_ pointers must be aligned!\n");
         exit(KOIFISH_BLAS_UNALIGN);
     }
 
     // assert(batch_count==0);
     bool has_bias = (bias != NULL), has_gelu = (pre_gelu != NULL);
-    const float alpha = 1.0f, beta = accumulate ? 1.0f : 0.0f;
+    //,const float alpha = 1.0f;    beta = accumulate ? 1.0f : 0.0f;
     cublasOperation_t opA = (transA) ? CUBLAS_OP_T : CUBLAS_OP_N, opB = (transB) ? CUBLAS_OP_T : CUBLAS_OP_N;
     /*if (bias == nullptr && pre_gelu == nullptr) {
         int lda = transA ? k : m, ldb = transB ? n : k;
@@ -308,11 +308,11 @@ void matmul_backward(floatX* delta, floatX* dweight, floatX* dbias, floatX* delt
             reduce_add_sum_kernel<<<CEIL_DIV(OC, 256 * f128::size), 256, 0, stream>>>(dbias, dbias_buffer, OC, grid_size_y);
             cudaCheck(cudaGetLastError());
         }
-        dbias = NULL;  // prevent dbias calculation from also being fused in CU_mm_blas below (if we enabled fusion)
+        dbias = NULL;  // prevent dbias calculation from also being fused in CU_mm_blas_ below (if we enabled fusion)
     }
 
     // backward to input, uses = in the backward pass (set the gradient)
-    CU_mm_blas(delta, weight, deltaIn, NULL, C, B * T, OC, stream, transAW, false, isAccumuDelta, gelu_fusion >= 2 ? pre_gelu : NULL, true);
+    CU_mm_blas(delta, weight, deltaIn, NULL, C, B * T, OC, stream, transAW, false, 1.0, isAccumuDelta, gelu_fusion >= 2 ? pre_gelu : NULL, true);
 
     // backward GELU (if it wasn't fused into the matmul above)
     if (gelu_fusion < 2 && pre_gelu) {
@@ -320,7 +320,7 @@ void matmul_backward(floatX* delta, floatX* dweight, floatX* dbias, floatX* delt
     }
 
     // backward to weight, uses += in the backward pass (accumulate the gradient) by setting alpha=one
-    CU_mm_blas(dweight, inp, deltaIn, NULL /*dbias*/, C, OC, B * T, stream, transAW, true, true /* accumulate */, NULL, true);
+    CU_mm_blas(dweight, inp, deltaIn, NULL /*dbias*/, C, OC, B * T, stream, transAW, true, 1.0, 1 /* accumulate */, NULL, true);
 }
 
 // fast fp8x2 => half2 conversion; drops unnecessary NaN handling from __nv_cvt_fp8_to_halfraw

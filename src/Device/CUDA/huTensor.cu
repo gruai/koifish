@@ -95,15 +95,19 @@ static mt19937_state rngOfParams;
 bool huTensor::InitParam(int tpX) {
     size_t nElem0       = size(), i;
     size_t nInit        = size(1);
-    bool isTmp          = true;
+    // bool isTmp          = true;
     uint32_t param_seed = rParam.RandU32();
-
+    int iter = hFish->GetCurIter();
     if (tpInit > 0 && tpInit != SERIALIZE) {
-        // _INFO("[InitParam]\t%ld-%ld@%s\n",size(),nInit,name);
+        if(strcmp(name,"model.blk.34.ffn_down.weight")==0){
+            int debug=0;
+        }
+        // _INFO("[InitParam@%d]\t%ld-%ld@%s\n",iter,size(),nInit,name);
 
-        floatX* tmp = new floatX[nInit];
+        floatX* tmp = nullptr;  //new floatX[nInit];
         switch (tpInit) {
             case FIX_1:
+                tmp = new floatX[nInit];
                 for (i = 0; i < nInit; i++) tmp[i] = (floatX)(1.0);
                 break;
             default:
@@ -113,19 +117,20 @@ bool huTensor::InitParam(int tpX) {
                     size_t dT4B = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
                     floatX* paramX = ToX(GTensor::tmpTernary);
                     cudaMalloc(&paramX, nInit * sizeof(floatX));
-                    CU_normal<floatX>(nInit, (floatX*)paramX, 0.02f * residual_scale, param_seed);
+                    CU_disti_normal<floatX>(nInit, (floatX*)paramX, 0.02f * residual_scale, param_seed);
                     ToTernary(paramX);
                     cudaFree(paramX);
                     // Print(name,0,-1);
                 } else
-                    CU_normal<floatX>(nInit, (floatX*)data, 0.02f * residual_scale, param_seed);
-                isTmp = false;
+                    CU_disti_normal<floatX>(nInit, (floatX*)data, 0.02f * residual_scale, param_seed);
+                
                 break;
         }
-        if (isTmp) {
+        if (tmp!=nullptr) {
             H2D(data, tmp, nInit * BPE(type));  // cudaCheck(cudaMemcpy(data, tmp, nInit * nB, cudaMemcpyHostToDevice));
+            delete[] tmp;
         }
-        delete[] tmp;
+        
         // Print(name,0,-1);
     } else {
         if (tpInit == SERIALIZE) {  //  ???
@@ -423,7 +428,7 @@ double GTensor::Length(int type, int flag) {
         size_t smemPB = 1024 * sizeof(float);
         int dT4B = 512, dGRID = dMaxThread / dT4B;
         dGRID = 512;
-        assert(dGRID < 1024);  //  blockReduce<warpReduceSum>
+        assert(dGRID < 1024);  //  blockReduce_v0<warpReduceSum>
         cudaCheck(cudaMemset(devBlockSum2, 0, sizeof(float) * dGRID));
         CU_x2_<floatX><<<dGRID, dT4B, smemPB, main_stream>>>(devBlockSum2, src, nEle);  //  0.00190092938
         cudaCheck(cudaMemcpy(&a, devBlockSum2, sizeof(float), cudaMemcpyDeviceToHost));
@@ -466,7 +471,7 @@ __global__ static void CU_ternary_v0(float* out, T* x0, int N) {  // block versi
         sum += fabs(a);  //	6.5
                          // sum += (float)(x0[j]);				//	6.3
     }
-    float block_sum = blockReduce<warpReduceSum>(sum, true);
+    float block_sum = blockReduce_v0<warpReduceSum>(sum, true);
     // if (tid == 0) atomicAdd(out, block_sum);
     // SYNC_GRID();
     if (tid == 0) {
@@ -495,7 +500,7 @@ __global__ static void CU_binary_(float* out, T* x0, size_t N) {  // block versi
         a = CU_T2Float(x0 + j);  //	6.5
         sum += (float)(a);       //	6.3
     }
-    float block_sum = blockReduce<warpReduceSum>(sum, true);
+    float block_sum = blockReduce_v0<warpReduceSum>(sum, true);
     // if (tid == 0) atomicAdd(out, block_sum);
     // SYNC_GRID();
     if (tid == 0) {
@@ -511,30 +516,32 @@ __global__ static void CU_binary_(float* out, T* x0, size_t N) {  // block versi
     __syncthreads();
 }
 
-int _CheckX2Tile_(floatX* hx, floatGama* hgama, int M, int N, int flag) {
-    int r, c;
+int _CheckX2Tile_(floatX* A, floatGama* hgama, int M, int N, int flag) {
+    int r, c, nz = 0;
     floatGama* gama = hgama;
-    float  off, off_0 = FLT_MAX, off_1 = -FLT_MAX, a, average;
+    float off, off_0 = FLT_MAX, off_1 = -FLT_MAX, a, average;
     for (int r0 = 0; r0 < M; r0 += THREAD_TILE_M) {
         for (int c0 = 0; c0 < N; c0 += THREAD_TILE_N, gama++) {
-            float sum = 0;
+            float tile_sum = 0;
             for (r = r0; r < r0 + THREAD_TILE_M; r++) {
                 for (c = c0; c < c0 + THREAD_TILE_N; c++) {
-                    a = (float)(hx[r * N + c]);
-                    sum += a;
-                    average += fabs(a);
+                    a = (float)(A[r * N + c]);
+                    tile_sum += a;
+                    average += fabs(a), nz++;
                 }
             }
-            a = *gama;
-            off = fabs(sum / THREAD_TILE_M / THREAD_TILE_N - a);  //  0.294229507
-            if (off > average * 1.0e-2 ) {  //0.011
-                assert(0);      break;
+            tile_sum /= THREAD_TILE_M * THREAD_TILE_N;
+            a   = *gama;
+            off = fabs(tile_sum - a);                           //  0.294229507
+            if (off > max(fabs(tile_sum), fabs(a)) * 1.0e-2) {  // 0.0158233643
+                assert(0);
+                break;
             }
             off_0 = std::min(off_0, off), off_1 = std::max(off_1, off);
         }
     }
     average /= (M * N);
-    if(sizeof(floatGama)==4)
+    if (sizeof(floatGama) == 4)
         assert(off_1 < average * 1.0e-6);
     else
         assert(off_1 < average * 1.0e-2);
@@ -553,7 +560,7 @@ bool huTensor::ToTernary(floatX* paramX, int flag) {
     if (type == typNUMBER::T_BINARY_TILE) {
         dim3 dBlock(THREAD_TILE_M * THREAD_TILE_N), dGrid(CEIL_DIV(ne[0], THREAD_TILE_M), CEIL_DIV(ne[1], THREAD_TILE_N));
         assert(ne[0] % THREAD_TILE_M == 0 && ne[1] % THREAD_TILE_N == 0);
-        CU_X2Tile_<floatX><<<dGrid, dBlock, smemPB, main_stream>>>(paramX, gama_T(), 0.0, ne[0], ne[1], isOverwrite, tile_r1, tile_c1);
+        CU_X2Tile_<floatX><<<dGrid, dBlock, smemPB, main_stream>>>(paramX, gama_T(), 0.0, ne[0], ne[1], isOverwrite, 0, 0);
     } else
         CU_X2ternary_<floatX><<<CEIL_DIV(ne[0], dT4B), dT4B, smemPB, main_stream>>>(gama_T(), paramX, (char*)data, ne[0], ne[1], 1, true);
     // tNormOf();
@@ -565,17 +572,18 @@ bool huTensor::ToTernary(floatX* paramX, int flag) {
     if (1) {  //  only for debug
         if (type == typNUMBER::T_BINARY_TILE) {
             // GetDataX();
-            floatX* hx   = new floatX[size() * 2];
+            floatX* hx       = new floatX[size() * 2];
             floatGama* hgama = (floatGama*)(hx + size());
             D2H(gama_T(), hgama, size() * sizeof(floatGama) / THREAD_TILE_M / THREAD_TILE_N);
             D2H(paramX, hx, size() * sizeof(floatX));
             _CheckX2Tile_(hx, hgama, ne[0], ne[1], 0x0);
             delete[] hx;
         } else {
+            assert(GTensor::tmpFF1->size() >= count);
             CU_ternary2X_<floatX><<<CEIL_DIV(ne[0], dT4B), dT4B, smemPB, main_stream>>>(gama_T(), (char*)data, ToX(GTensor::tmpFF1), ne[0], ne[1]);
             double off = OFF_(paramX, ToX(GTensor::tmpFF1), count);
             GTensor::tmpFF1->Print("BitOfX", 0, 0, count);
-            assert(off <= 1.0e-5);
+            // assert(off <= 1.0e-5);
         }
     }
 

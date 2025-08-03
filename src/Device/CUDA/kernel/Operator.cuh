@@ -46,7 +46,7 @@ __global__ static void CU_x2_atomic(float* out, const T* x0, size_t N) {
     // __shared__ float reduce_smem[NUM_WARPS];	// keep the data in register is enough for warp operaion.
     float a         = (idx < N) ? (float)(x0[idx]) : 0.0;
     float sum       = a * a;
-    float block_sum = blockReduce<warpReduceSum>(sum, true);
+    float block_sum = CU_BlockSum<NUM_THREADS>(sum, true);  // blockReduce_v0<warpReduceSum>(sum, true);
     if (tid == 0)
         atomicAdd(out, block_sum);
     // __syncthreads();
@@ -62,7 +62,7 @@ __global__ static void CU_x2_(float* out, const T* x0, size_t N) {
         a = (float)x0[i];
         accumulator += a * a;
     }
-    out[blockIdx.x] = blockReduce<warpReduceSum>(accumulator);
+    out[blockIdx.x] = blockReduce_v0<warpReduceSum>(accumulator);
     if (blockIdx.x == 0 && threadIdx.x == 0) {
         float sum = 0.0;
         for (size_t i = 0; i < blockDim.x; i++) {
@@ -379,7 +379,7 @@ __global__ static void CU_initrand(curandState* state, uint32_t seed, int N) {
 }
 
 template <typename typ>
-__global__ void CU_normal_generate(curandState* state, typ* results, int N, float devia) {
+__global__ void CU_disti_normal_generate(curandState* state, typ* results, int N, float devia) {
     int id = threadIdx.x + blockIdx.x * blockDim.x;
     if (id < N) {
         //	Normally distributed float with mean 0.0f and standard deviation 1.0f
@@ -388,32 +388,49 @@ __global__ void CU_normal_generate(curandState* state, typ* results, int N, floa
     }
 }
 
+template <typename typ>
+__global__ void CU_disti_normal_N(curandState* state, typ* results, int N, int ldB, float devia) {
+    int id = threadIdx.x + blockIdx.x * blockDim.x;
+    if (id < N) {
+        int no = id*ldB;
+        for(int i=0; i<ldB; i++,no++){
+            if(no>=N)
+                continue;
+            float rand_val = curand_normal(&state[id]) * devia;
+            results[no]    = (typ)rand_val;
+        }        
+    }
+}
+
 /*
     seed:   curand_init(seed, id, 0, &state[id]);
     results[id] = __float2bfloat16(rand_val); // convert to bf16
 */
 template <typename typ>
-void CU_normal(int N, typ* out, float devia, uint32_t seed = 42, bool isToHost = false) {
+void CU_disti_normal(int N, typ* out, float devia, uint32_t seed = 42, bool isToHost = false) {
     typ* d_results;
     curandState* d_states;
     if (isToHost) {
-        cudaMalloc(&d_results, N * sizeof(typ));
+        cudaCheck(cudaMalloc(&d_results, N * sizeof(typ)));
     } else {
         d_results = out;
     }
-    cudaMalloc(&d_states, N * sizeof(curandState));
+    //  nRander=N use too many space!       sizeof(curandState)=48  
+    int ldB=480, nRander = CEIL_DIV(N,ldB); 
+    cudaCheck(cudaMalloc(&d_states, nRander * sizeof(curandState)));
 
-    CU_initrand<<<(N + 255) / 256, 256>>>(d_states, seed, N);
-    CU_normal_generate<typ><<<(N + 255) / 256, 256>>>(d_states, d_results, N, devia);
+    CU_initrand<<<CEIL_DIV(nRander,256), 256>>>(d_states, seed, nRander);
+    // CU_disti_normal_generate<typ><<<(N + 255) / 256, 256>>>(d_states, d_results, N, devia);
+    CU_disti_normal_N<typ><<<CEIL_DIV(nRander,256), 256>>>(d_states, d_results, N, ldB, devia);
     cudaCheck(cudaDeviceSynchronize());
     // Copy back results if needed
     // __nv_bfloat16 *h_results = new __nv_bfloat16[N];
     if (isToHost) {
         cudaMemcpy(out, d_results, N * sizeof(typ), cudaMemcpyDeviceToHost);
-        cudaFree(d_results);
+        cudaCheck(cudaFree(d_results));
     }
 
-    cudaFree(d_states);
+    cudaCheck(cudaFree(d_states));
     return;
 }
 
@@ -645,16 +662,18 @@ template <typename T>
 __global__ static void CU_X2Tile_(T* A, floatGama* gama, float T_x, int M, int N, int r0 = 0, int c0 = 0, bool isOverwrite = false, int trans = 1) {
     const int TM = THREAD_TILE_M, TN = THREAD_TILE_N, thread_num = blockDim.x;
     int tid = threadIdx.x, idrow, idcol;
-    idrow   = blockIdx.x * TM + tid / TM + r0;
-    idcol   = blockIdx.y * TN + tid % TM + c0;
+    // const int nWrapT = std::min(WARP_SIZE,THREAD_TILE_M*THREAD_TILE_N);
+    idrow = blockIdx.x * TM + tid / TM + r0;
+    idcol = blockIdx.y * TN + tid % TM + c0;
     if (idrow >= M || idcol >= N)
         return;  // guard
     fnPOS pA = trans == 0 ? fnCR2POS : fnRC2POS;
     int pos = pA(idrow, idcol, M, N), gpos = blockIdx.x * gridDim.y + blockIdx.y;  // 13825
-    float a   = A[pos];
-    float sum = blockReduce<warpReduceSum>(a, true);
+    float a = A[pos];
+    float sum =
+        CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(a, true);  // nWrapT<=WARP_SIZE ? warpReduceSum<nWrapT>(a) : blockReduce_v0<warpReduceSum<nWrapT>>(a, true);
     if (tid == 0) {
-        // if (idrow == 288 && idcol == 8) {
+        // if (idrow == 0 && idcol == 0) {
         //     int debug = 0;  //-0.005210
         // }
         gama[gpos] = sum / TM / TN;
@@ -664,16 +683,19 @@ __global__ static void CU_X2Tile_(T* A, floatGama* gama, float T_x, int M, int N
     }
 }
 template <typename T>
-__global__ static void CU_Tile2X_(T* A, floatGama* gama, float T_x, int M, int N, int r0 = 0, int c0 = 0, int trans = 1) {
+__global__ static void CU_Tile2X_(T* A, floatGama* gama, float T_x, int M, int N, unsigned int seed, int trans = 1) {
     const int TM = THREAD_TILE_M, TN = THREAD_TILE_N, thread_num = blockDim.x;
     int tid = threadIdx.x, idrow, idcol;
-    idrow   = blockIdx.x * TM + tid / TM + r0;
-    idcol   = blockIdx.y * TN + tid % TM + c0;
+    idrow   = blockIdx.x * TM + tid / TM;
+    idcol   = blockIdx.y * TN + tid % TM;
     if (idrow >= M || idcol >= N)
         return;  // guard
     fnPOS pA = trans == 0 ? fnCR2POS : fnRC2POS;
     int pos = pA(idrow, idcol, M, N), gpos = blockIdx.x * gridDim.y + blockIdx.y;
     A[pos] = gama[gpos];
+    //  same
+    // float fgama = gama[gpos];
+    // A[pos] = CU_Float2T<T>(fgama,seed+pos);
 }
 
 template <class T, int NUM_THREADS = CU_T4B_SMALL>
@@ -687,7 +709,7 @@ __global__ static void CU_OFF(float* out, T* A, T* B, size_t N, int flag) {
     assert(NUM_WARPS <= WARP_SIZE);
     float a         = (idx < N) ? (float)(A[idx] - B[idx]) : 0.0;
     float sum       = a * a;
-    float block_sum = blockReduce<warpReduceSum>(sum, true);
+    float block_sum = CU_BlockSum<CU_T4B_SMALL>(sum, true);  // blockReduce_v0<warpReduceSum>(sum, true);
     if (tid == 0)
         atomicAdd(out, block_sum);
 }
@@ -710,10 +732,10 @@ double OFF_(T* A, T* B, size_t N, bool isCU = true, int flag = 0x0) {
 }
 
 void CU_abc(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int transB = 0,
-            bool accumulate = false, floatX* pre_gelu = NULL, bool backward = false);
+            float beta = 0.0, floatX* pre_gelu = NULL, bool backward = false);
 void CU_mm_(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int transB = 0,
-            bool accumulate = false, floatX* pre_gelu = NULL, bool backward = false);
+            float beta = 0.0, floatX* pre_gelu = NULL, bool backward = false);
 void CU_mm_blas(floatX* d, const floatX* a, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int transB = 0,
-                bool accumulate = false, floatX* pre_gelu = NULL, bool backward = false);
+                float alpha = 0.0, float beta = 0.0, floatX* pre_gelu = NULL, bool backward = false);
 void matmul_backward(floatX* delta, floatX* dweight, floatX* dbias, floatX* deltaIn, floatX* inp, floatX* weight, float* dbias_buffer, int B, int T, int C,
                      int OC, cudaStream_t stream, bool isTransW = false, floatX* pre_gelu = NULL, bool isAccumuDelta = false);

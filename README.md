@@ -7,7 +7,7 @@
 ## Features
 - Hybrid 16/8/1 bit training
 - Rematerialisation and fusion of operators
-- Mixture of models
+- Mixture of models (Wide training)
 - Automatic detection of training instability
 - Json config file
 - Pure C++ tokenizer
@@ -32,6 +32,7 @@ make clean && make VERBOSE=TRUE
 
 ## Tutorial
 
+1.    [Training of GPT2_1558M_ on single 4090]
 1.    [Training of GPT2(774M/124M) on single 3090](cases/tutorial_gpt2.md)
 
 ## Training tricks
@@ -40,6 +41,7 @@ make clean && make VERBOSE=TRUE
 - [Weight Tying](cases/tricks/WeightTying.md)
 
 ## Changelog
+* 08/01/2025: Training GPT2_1558M on single 4090 with throughput > 20K tokens/second
 * 07/24/2025: Support tile quantization 
 * 06/29/2025: Rope with pre/post normalization 
 * 06/14/2025: Support bit representation(binary[-1,1], ternary[-1,0,1]) 

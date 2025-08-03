@@ -1,63 +1,65 @@
 /**
  *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
- *  SPDX-License-Identifier: MIT  
- * 
+ *  SPDX-License-Identifier: MIT
+ *
  *  \brief Scheduling
  *  \author Yingshi Chen
  */
 #pragma once
 #include <memory>
+
 #include "../CLI_params.hpp"
+#include "../Device/EDevice.hpp"
 #include "Neuron.hpp"
 #include "TGraph.hpp"
-#include "../Device/EDevice.hpp"
 
 class EDGE_DEVICES;
+
 /**
  * https://towardsdatascience.com/learning-rate-schedules-and-adaptive-learning-rate-methods-for-deep-learning-2c8f433990d1
  * time-based decay, step decay and exponential decay.
-*/
+ */
 struct LearnSKDU {
-    typedef enum{
-        STATIC,TRI_LINE,
-        COSINE,COSINE_EPOCH
-    }POLICY;
-    POLICY policy=COSINE;
+    typedef enum { STATIC, TRI_LINE, COSINE, COSINE_EPOCH } POLICY;
+    POLICY policy = COSINE;
 
     train_params_ _params;
     const static int TIMESTEPS = 1000;
-    int warmup = 1,mostIter = 1;
+    int warmup = 1, mostIter = 1;
     float alphas_cumprod[TIMESTEPS];
     float sigmas[TIMESTEPS];
     float log_sigmas[TIMESTEPS];
 
-    float LearningRate(int64_t step, int flag=0x0);
+    float LearningRate(int64_t step, int flag = 0x0);
     float cosine_decay(int64_t step, int64_t decay_steps, float minimum) {
         if (step > decay_steps) {
             step = decay_steps;
         }
-        const float cosine_decay = 0.50f*(1.0f + cosf(3.14159265359f*step/decay_steps));
-        const float decay = (1 - minimum)*cosine_decay + minimum;
+        const float cosine_decay = 0.50f * (1.0f + cosf(3.14159265359f * step / decay_steps));
+        const float decay        = (1 - minimum) * cosine_decay + minimum;
         return decay;
     }
 
     float cosine_decay_restart(int64_t step, int64_t decay_steps, float minimum, float restart_step_mult) {
         while (step > decay_steps) {
             step -= decay_steps;
-            decay_steps = (int64_t) (restart_step_mult * decay_steps);
+            decay_steps = (int64_t)(restart_step_mult * decay_steps);
         }
         return cosine_decay(step, decay_steps, minimum);
     }
 
-    struct _HISTORY {        
+    struct _HISTORY {
         std::vector<float> vals;
     };
     _HISTORY history;
-    
-    float Last()            {   assert(history.vals.size()>0);  return history.vals[history.vals.size()-1];  }
-    void Append(float a)    {   history.vals.push_back(a);   }
 
-    LearnSKDU(struct train_params_& train_params);
+    float Last() {
+        assert(history.vals.size() > 0);
+        return history.vals[history.vals.size() - 1];
+    }
+    void Append(float a) { history.vals.push_back(a); }
+
+    LearnSKDU(struct train_params_ &train_params);
     virtual void Dump(int typ);
     virtual std::vector<float> get_sigmas(uint32_t n) = 0;
 
@@ -106,7 +108,7 @@ struct LearnSKDU {
 typedef std::shared_ptr<LearnSKDU> hLearnSKDU;
 
 struct DiscreteSchedule : LearnSKDU {
-    DiscreteSchedule(struct train_params_& train_params) : LearnSKDU(train_params)  {}
+    DiscreteSchedule(struct train_params_ &train_params) : LearnSKDU(train_params) {}
     std::vector<float> get_sigmas(uint32_t n) {
         std::vector<float> result;
 
@@ -154,81 +156,101 @@ struct KarrasSchedule : LearnSKDU {
 /*
     Resource limited scheduling / resource planning
     budget/availability/capacity/costs  workload management
-    Resource-constrained 
+    Resource-constrained
 */
-class RLSchedule{
-public:
-    enum tpSTATUS  {
-        PASS,   
+class RLSchedule {
+   public:
+    enum tpSTATUS {
+        PASS,
         RESIDENT,
         FLIP,
         UPDATE_PARAM,
     };
-    
-    struct Node{
+
+    struct TaskNode {
         string name;
-        void *hOBJ=nullptr;
-        double cost=0;        
+        void *hOBJ      = nullptr;
+        double cost     = 0;
         tpSTATUS status = FLIP;
 
-        Node(const std::string&n,void *h,double v,int flag=0x0) : name(n),hOBJ(h),cost(v){
-
-        }
-        bool isOn() {   return status == RESIDENT;   }
-        int begin=-1,end=-1;
-
+        TaskNode(const std::string &n, void *h, double v, int flag = 0x0) : name(n), hOBJ(h), cost(v) {}
+        bool isOn() { return status == RESIDENT; }
+        int begin = -1, end = -1;
     };
-protected:
+    typedef vector<TaskNode *> arrTask;
+
+   protected:
     EDGE_DEVICES *hDevices = nullptr;
-    Fish *hFish = nullptr;
-    int step = 0x0;
-    bool isPrefill = true;
-    bool isRemater = false;
-    double budget = 1000;
-    vector<Node*> nodes;
-    
+    Fish *hFish            = nullptr;
+    int step               = 0x0;
+    bool isPrefill         = true;
+    bool isRemater         = false;
+    double budget          = 1000;
+
+    vector<arrTask> allTasks;
+    arrTask curTasks;
+    int curBranch = 0;
+
+    LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;
+    Grusoft::GRander rand_branch;
+
     SKDU_params params;
     string resident_list = "";
-public:
-    RLSchedule(EDGE_DEVICES *hED,const CLI_params&config, int flag) : hDevices(hED)    {
-        
-    }
+
+   public:
+    RLSchedule(EDGE_DEVICES *hED, const CLI_params &config, int flag) : hDevices(hED) { rand_branch.Init(654321); }
     virtual ~RLSchedule() {}
-    virtual void BeforeStart(int flag=0x0);
-    virtual bool Planning(int flag=0x0);
-    virtual bool Verify(int flag=0x0)       {   assert(0);  return false;   }
-    virtual int BeforeNextStep(int flag=0x0)    {   assert(0);  return 0x0;  }
-    virtual tpSTATUS GetStatus(int step,void *hObj,int flag) {   return FLIP;    }
-    virtual void Dump(int typ)   const   {}
-friend class EDGE_DEVICES;
-friend class NLP_AutoRegressive;
-friend class Fish;
+    virtual void BeforeStart(int flag = 0x0);
+    virtual bool Planning(int flag = 0x0);
+    virtual bool Verify(int flag = 0x0) {
+        assert(0);
+        return false;
+    }
+    virtual int BeforeNextStep(int flag = 0x0) {
+        assert(0);
+        return 0x0;
+    }
+    bool SetPhase(LIFE_PHASE phase_, int flag = 0x0) {
+        phase = phase_;
+        return true;
+    }
+    virtual tpSTATUS GetStatus(int step, void *hObj, int flag) { return FLIP; }
+    virtual void Dump(int typ) const {}
+    virtual int nBranch()   {
+        int nB = allTasks.size();       assert(nB>=0);
+        return nB;
+    }
+    friend class EDGE_DEVICES;
+    friend class NLP_AutoRegressive;
+    friend class Fish;
 };
 typedef shared_ptr<RLSchedule> hRLSchedule;
 
 //  Resource limited scheduling of BackPropagation
-class RLS_BP : public RLSchedule    {
-protected:
-    int T_fore=-1,T_back=-1;
-    int nT_guoke = 0;
+class RLS_BP : public RLSchedule {
+   protected:
+    int T_fore = -1, T_back = -1;
+    int nT_guoke   = 0;
     size_t szGuoke = 0;
-    std::map<hGensor,enum tpSTATUS> tensors;
-    
-public:
-    RLS_BP(EDGE_DEVICES *hED,const CLI_params&config, int flag);
+    std::map<hGensor, enum tpSTATUS> tensors;
+    virtual bool UpdateBackbone(int iter, int flag = 0x0);
+
+   public:
+    RLS_BP(EDGE_DEVICES *hED, const CLI_params &config, int flag);
     virtual ~RLS_BP() {}
-    virtual void Init( Fish *hF,std::vector<shared_ptr<GeNeuron>> backbons,int flag=0x0);
-    virtual bool InitGUOKE(int flag=0x0);
-    virtual bool Prepare(int iter,int flag=0x0);
-    virtual tpSTATUS GetTensorStatus(int step,hGTensor tenosr,int flag=0x0);
-    virtual tpSTATUS SetTensorStatus(int step,hGTensor tenosr,tpSTATUS sta,int flag=0x0);
-    tpSTATUS GetStatus(int step,void *hObj,int flag) override;
-    bool isResident(GeNeuron *neuron,int flag=0x0);
-    
-    bool Planning(int flag=0x0) override;
-    bool Verify(int flag=0x0)   override;
-    int BeforeNextStep(int flag=0x0) override;
-    void Dump(int typ)   const   override;
-friend class EDGE_DEVICES;
-friend class GeNeuron;
+    virtual void Init(Fish *hF, std::vector<shared_ptr<GeNeuron>> backbons, int flag = 0x0);
+    virtual bool InitGUOKE(int flag = 0x0);
+    virtual bool InitBranch(int flag = 0x0);
+    virtual bool Prepare(int iter, int flag = 0x0);
+    virtual tpSTATUS GetTensorStatus(int step, hGTensor tenosr, int flag = 0x0);
+    virtual tpSTATUS SetTensorStatus(int step, hGTensor tenosr, tpSTATUS sta, int flag = 0x0);
+    tpSTATUS GetStatus(int step, void *hObj, int flag) override;
+    bool isResident(GeNeuron *neuron, int flag = 0x0);
+
+    bool Planning(int flag = 0x0) override;
+    bool Verify(int flag = 0x0) override;
+    int BeforeNextStep(int flag = 0x0) override;
+    void Dump(int typ) const override;
+    friend class EDGE_DEVICES;
+    friend class GeNeuron;
 };

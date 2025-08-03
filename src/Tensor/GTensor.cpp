@@ -498,18 +498,25 @@ bool GTensor::Alloc(int tpInit, int flag) {
     return true;
 }
 
-// first moment, second moment of grad
-floatGama *GTensor::gama_T() {  // scaling coefficient of 1-bit weight
+// in many case, params are not update, even data is not allocated!
+bool GTensor::isUpdateParam(int iter,int flag) const{
+    if(data==nullptr)
+        return false;
+    return true;
+}
+
+// scaling coefficient of 1-bit weight, length of gama_T is always ne[0]
+floatGama *GTensor::gama_T() {  
     if(hRef!=nullptr)
         return hRef->gama_T();
     assert(data != nullptr);
-    return (floatGama *)data + szData;
+    return reinterpret_cast<floatGama*>((char*)data + szData);
 }
 
 bool huTensor::Alloc(int iter, int flagInit) {
-    if (strcmp(name, "model.blk.0.ffn_up.weight") == 0
+    if (strcmp(name, "model.inp_embd.weight") == 0
         /*|| strcmp(name, "model.embed.weight") == 0*/) {  //  model.inp_embd.weight       model.out.weight model.embed.weight model.blk.0.attn.wq.weight
-        int debug = 0x0;
+        int debug = 0x0;    //  
     }
 
     size_t sz0 = szGlobalMaloc;
@@ -571,7 +578,7 @@ bool huTensor::Alloc(int iter, int flagInit) {
     }
     szUse = szGlobalMaloc - sz0;
     assert(szGlobalMaloc - sz0 <= mostMemory());
-    if (iter <= 1 /*&& */) {
+    if (iter <= 1000 /*&& */) {
         string sA = hostAlloc ? "HostAlloc" : "cudaMalloc";
         if (hFish->isRemater()) {
             sA = "Remater";

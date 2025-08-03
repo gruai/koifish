@@ -561,8 +561,8 @@ bool SampLoader::Prepare(Optimizer *hO, hDataToken hT, int flag) {
     } else
         hTokens = hT;  // dolphin->hTokenset;
     assert(hTokens != nullptr && hDict != nullptr);
-    hOPT = hO;  // dolphin->hOPT.get();
-    assert(hOPT != nullptr);
+    hOPT = hO;  // maybe nullptr
+    // assert(hOPT != nullptr);
 
     if (hTokens != nullptr && hTokens->nMostShard > 0) {
         if (!hTokens->LoadNextShard(this))
@@ -575,8 +575,9 @@ bool SampLoader::Prepare(Optimizer *hO, hDataToken hT, int flag) {
     // bos = hDict->bos;
     // eos = hDict->eos;
     // Batch tensor would be set @UpdateBatch!
-    struct train_params_ _params = hOPT->TrainParams();
-    T = _params.n_ctx, B = _params.n_batch;
+    // struct train_params_ _params = hOPT->TrainParams();
+    // T = _params.n_ctx, B = _params.n_batch;
+    dolphin->GetBTC(B,T,C);
     assert(T > 0 && B > 0);
     SHAPE shape = {T, B}, sp1 = {1, T, B};
     hBatch = std::make_shared<BATCH_INPUT>(shape);
@@ -1087,7 +1088,9 @@ std::string shuffle_samples_X(const std::string &rng_state, size_t *shuffled_off
     return mt19937_get_state(rng);
 }
 
-void StepInfos::Init(Optimizer *hO, int flag) { hOpt = hO; }
+void StepInfos::Init(Optimizer *hO, int flag) { 
+    hOpt = hO; 
+}
 
 void StepInfos::Add(STEP step, int flag) {
     if (step.loss < Best()) {

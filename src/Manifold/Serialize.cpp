@@ -76,9 +76,9 @@ bool SAFETENSOR_Load_jconfig(const std::string &path, JSON &jsConfig, int flag) 
     return true;
 }
 
+static string ST_config_key_ = "__json__config__";
 bool Fish::SAFETENSOR_Serialize(const std::string &path, bool isSave, int flag) {
     string jPath = path + ".json";
-
     size_t data_offset_base = 0;
     std::string warn, err;
     JSON jsConfig;
@@ -89,6 +89,10 @@ bool Fish::SAFETENSOR_Serialize(const std::string &path, bool isSave, int flag) 
             jsConfig["tokenizer"]["tokens"] = "";
             safeTensors.Clear();
             for (auto t : optParams) {
+                if(t->GetDataX()==nullptr){
+                    _INFO("[ST_SERIALIZE] \"%s\" is empty!\n",t->name);
+                    return false;
+                }
                 std::vector<floatX> weight;
                 size_t dst_offset = safeTensors.storage.size();
                 size_t sz         = t->nByte();  // expand
@@ -108,10 +112,9 @@ bool Fish::SAFETENSOR_Serialize(const std::string &path, bool isSave, int flag) 
                 jsConfig["tensors"][t->name]  = "";  // tensor->Dump(100,"");
                 jsConfig["tensors"]["offset"] = dst_offset;
             }
-            safeTensors.insertJS(jsConfig);
+            // safeTensors.insertJS(jsConfig);
             // __metadata__
             safeTensors.metadata.insert("vendor", "gruai");
-
             bool ret = safetensors::save_to_file(safeTensors, path, &warn, &err);
             if (warn.size()) {
                 std::cout << "WARN: " << warn << "\n";
@@ -127,7 +130,7 @@ bool Fish::SAFETENSOR_Serialize(const std::string &path, bool isSave, int flag) 
             //  save json file
             std::ofstream o(jPath);
             o << std::setw(4) << jsConfig << std::endl;
-            _INFO("[SAFETENSOR] save@%s iter=%d\n", path.c_str(), flag);
+            _INFO("[ST_SERIALIZE] save@%s iter=%d\n", path.c_str(), flag);
             return true;
         } else {
             int nSerialT = 0;
@@ -146,6 +149,16 @@ bool Fish::SAFETENSOR_Serialize(const std::string &path, bool isSave, int flag) 
                 std::string key = safeTensors.tensors.keys()[i];
                 safetensors::tensor_t tensor;
                 safeTensors.tensors.at(i, &tensor);
+                if(key==ST_config_key_){
+                    safeTensors.loadJS(tensor,databuffer, safeTensors.mmap_size);
+                    jsConfig = safeTensors.jsConfig["CLI_params"]["config"];                    
+                    std::ofstream file("ST_SERIALIZE.json");
+                    if (file.is_open()) {
+                        file << jsConfig.dump(4); 
+                        file.close();
+                    }
+                    continue;
+                }
                 hGensor target = GetGensor(key);  //  "model.embed.weight"    model.layers.0.attn_norm.weight
                 if (target == nullptr) {
                     _INFO("\t[SERIAL] Failed @%s!\n", key.c_str());
@@ -154,10 +167,6 @@ bool Fish::SAFETENSOR_Serialize(const std::string &path, bool isSave, int flag) 
                 JSON jdesc = tensor.jDesc();
                 if (target->SerialJSON(key, jdesc, (void *)databuffer, safeTensors.mmap_size) != 0) {
                     return false;
-                }
-                if (G_Has_(target->name, {"mlp.w1.weight"})) {  // "layers.27.mlp.w1.weight" wk.weight wq.weight wv.weight wo.weight ,"w2.weight","w3.weight"
-                    BIT_SET(target->flags, GTensor::F_TERNARY);
-                    // target->ToTernary();
                 }
                 if (DUMP()) {
                     tensor.Dump(key, databuffer);
@@ -170,7 +179,7 @@ bool Fish::SAFETENSOR_Serialize(const std::string &path, bool isSave, int flag) 
 
                 nSerialT++;
             }
-            _INFO("[SAFETENSOR] load@%s nSerialT=%d iter=%d\n", path.c_str(), nSerialT, flag);
+            _INFO("[ST_SERIALIZE] load@%s nSerialT=%d iter=%d\n", path.c_str(), nSerialT, flag);
             return true;
         }
     } catch (JSON::parse_error &e) {

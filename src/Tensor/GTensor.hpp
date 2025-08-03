@@ -119,7 +119,8 @@ class GTensor {
     virtual hGTensor _Multiply(const hGTensor &other) {
         assert(0);
         return nullptr;
-    }    
+    }
+    unsigned int seed=88888888;
 
    public:
     static const int MAX_NAME = 64;
@@ -141,12 +142,14 @@ class GTensor {
 
     void *host_data = nullptr;  // somtimes, we need data both in device&host
     void *data      = nullptr;
-    floatGama *gama_T();  // scaling coefficient of bit weight
-    int tile_r0 = 0, tile_r1 = 0, tile_c0 = 0, tile_c1 = 0;
-    floatGrad *grad   = nullptr;  //
+
+    floatGama *gama_T();           // scaling coefficient of bit weight
+    virtual bool isUpdateParam(int iter=-1,int flag=0x0) const;     // in many case, params are not update, even data is not allocated!
+    int tile_r1 = 0, tile_c1 = 0;  //  tile_r0 = 0,tile_c0 = 0,
+    floatGrad *grad   = nullptr;   //
     hGTensor grad_ref = nullptr;
     void *gm = nullptr, *gv = nullptr;  // first moment, second moment of grad
-    bool isUpdateParam = false;
+    // bool isUpdateParam = false;
     float info[8];  // Some info of some operations
 
     virtual void *DataPad(void *src0, int flag = 0x0);
@@ -260,7 +263,7 @@ class GTensor {
     virtual size_t nByte() const { return szData; }
     //  The offset of (i0,i1,i2,i3) in byte
     virtual size_t Offset(int i0, int i1, int i2, int i3, int flag = 0x0) const;
-
+    
     virtual bool isEmpty() const {
         // if(size()>0)    {   assert(B>0 && T>0 && C>0); }
         return size() == 0;

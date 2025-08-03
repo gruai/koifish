@@ -37,9 +37,9 @@ struct StepInfos {
     string name = "", sRoot = "./";
     Optimizer *hOpt = nullptr;
     struct STEP {
-        float loss, lr, gNorm, tX, dt,gMax,wMax;
-        int iter, epoch;        
-        string gMaxName,wMaxName;
+        float loss, lr, gNorm, tX, dt, gMax, wMax;
+        int iter, epoch;
+        string gMaxName, wMaxName;
         virtual string Info(int flag);
 
         STEP(float los_, int it_, int epo_, float lr_ = 0, float g_ = 0, float tX_ = 0, float dt_ = 0)
@@ -110,7 +110,7 @@ class SampLoader {
     std::vector<hSAMP> cur_samps;
     int nMostToken  = -1;
     int num_batches = -1;                // number of batchs in each epoch
-    int B = -1, T = -1;                  // number of samples in each batch,  number of tokens in each sample
+    int B = -1, T = -1, C = -1;                  // number of samples in each batch,  number of tokens in each sample
     int StepOfEvaluate(int flag = 0x0);  //  smaple to reduce eval time
 
     shared_ptr<GTensor> hostTargetProbs = nullptr;  // hostBatch=nullptr,hostBatchMask=nullptr,
@@ -123,6 +123,7 @@ class SampLoader {
         assert(idx_ < nShard());
         return shard_samps[idx_];
     }
+    hBATCH GetCurBatch(int flag = 0x0) const { return hBatch; }
     virtual bool isEval(int t, int flag = 0x0);
     virtual hSAMP Next(bool isLoop = true);
     virtual bool NextEpoch(int flag = 0x0);

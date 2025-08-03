@@ -552,9 +552,9 @@ int NLP_AutoRegressive::GenSentence(int flag) {
     float *logits = hCLS->Logits(true);  //(float *)(preLogits->data)+i*nVocab;
     for (i = 0; i < nPrompToken + genT; i++) {
         if (i < nPrompToken - 1)
-            hOPT->SetPhase(Optimizer::P_PREFILL);
+            hOPT->SetPhase(LIFE_PHASE::P_PREFILL);
         else
-            hOPT->SetPhase(Optimizer::P_GENERATE);
+            hOPT->SetPhase(LIFE_PHASE::P_GENERATE);
         // // LocalFeeling(piffle,preP);
         float fLos = hOPT->Evaluate(hLoader, -666);
         if (i < nPrompToken - 1)

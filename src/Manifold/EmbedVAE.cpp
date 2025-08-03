@@ -67,14 +67,16 @@ bool TokenEmbed::Build(int flag) {
         padded_nCls = ceil(n / 128.0) * 128;
     } else
         padded_nCls = n;
-    w = GT(hFish, tpData, {latent, padded_nCls}, flagW);  // padded_nCls
+    // w = GT(hFish, tpData, {latent, padded_nCls}, flagW);  // padded_nCls
+    w = GT(hFish, tpData, {padded_nCls, latent}, flagW);
     hFish->InitGensor(ctx, sw.c_str(), w, true);
     if (!hFish->config.model.isEmbedWeightTying) {
         wInv = GT(hFish, tpData, {padded_nCls, latent}, flagW);
         if (padded_nCls > n) {
             wInv->x_shape = {n, latent};
         }
-        sw += ".inv";
+        // sw += ".inv";
+        sw = "embed_inv.weight";
         hFish->InitGensor(ctx, sw.c_str(), wInv, true);
     } else {
         wInv = w;

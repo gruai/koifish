@@ -329,7 +329,7 @@ bool NLP_AutoRegressive::LocalFeeling(hSampLoader hLoader, vector<float> &result
     auto hSamp = hLoader->shard_samps[0];
     int i, nTok = hSamp->len, _nctx = config.n_ctx();
     // assert(!hDictVAE->hDict->tokenizer_add_bos);
-    hOPT->SetPhase(Optimizer::P_EVAL_);
+    hOPT->SetPhase(LIFE_PHASE::P_EVAL_);
     hOPT->Evaluate(hLoader, -666);
     if (DUMP())
         _INFO("\t%s @\"%s\"\n", __func__, hLoader->sentence.c_str());
@@ -497,7 +497,8 @@ bool Fish::InitDictTokenset(int flag) {
                     hDict->eos_id = wikis[0]->eos;
                     // hLLM = wikis[0]->lmodel;
                 } else {
-                    int n_vocab = CEIL_DIV(50257, 128) * 128;   //  50257 =>  50304 
+                    int n_vocab = 50257;
+                    // int n_vocab = CEIL_DIV(50257, 128) * 128;   //  50257 =>  50304
                     hDict->vocab.resize(n_vocab);
                     hDict->bos_id = 1;
                     hDict->eos_id = 2;
@@ -630,8 +631,11 @@ void Fish::UpdateTernary(int flag) {
         t->DumpX(0x0);
     }
     double bpp = nzBit * 1.0 / nzP;  // bit per parameter
-    _INFO("\n[BIT_QUANT] bit_per_parameter=%.4g szGama=%d pQuant=%s tensor=%d(%.3g%%) \n\t@{%s}\n", bpp, sizeof(floatGama), "W_SCALE", nTernary,
-          nzT * 100.0f / nParams, bit_tensors.c_str());
+    _INFO("\n%s bit_per_parameter=%.4g szGama=%d TILEQ=(%d,%d) pQuant=%s tensor=%d(%.3g%%) \n", bit_tensors.empty() ? "[NO_QUANT]" : "[BIT_QUANT]", bpp,
+          sizeof(floatGama), THREAD_TILE_M, THREAD_TILE_N, "W_SCALE", nTernary, nzT * 100.0f / nParams);
+    if (!bit_tensors.empty()) {
+        _INFO("\t@{%s}\n", bit_tensors.c_str());
+    }
 }
 
 void NLP_AutoRegressive::Train(int flag) {
@@ -641,6 +645,7 @@ void NLP_AutoRegressive::Train(int flag) {
 
     hOPT->BeforeTrain(tokens_input, 0x0);
     RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
+    hRLS->InitBranch();
     hRLS->InitGUOKE();
     hRLS->Prepare(-1);
     UpdateTernary(flag);
@@ -791,9 +796,13 @@ int Fish::BackwardOnRLS(int iter, int flag) {
     RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
     assert(hRLS != nullptr);
     hGensor cur = cls->delta;
-    for (auto it = backbons.rbegin(); it != backbons.rend(); ++it) {
-        hNeuron neuron = *it;
+    // for (auto it = backbons.rbegin(); it != backbons.rend(); ++it) {
+    //     hNeuron neuron = *it;
+    for (auto it = hRLS->curTasks.rbegin(); it != hRLS->curTasks.rend(); ++it) {
+        GeNeuron *neuron = (GeNeuron *)((*it)->hOBJ);
         if (neuron->isShortcut)
+            continue;
+        if (neuron->isPassBack)
             continue;
         auto t0 = GST_ms();
         cur     = neuron->Ming(hRLS, cur);
@@ -804,35 +813,45 @@ int Fish::BackwardOnRLS(int iter, int flag) {
 }
 
 int Fish::ForwardOnRLS(int iter, int flag) {
+    // if(DEBUG.back_graph_version==1)
+    // { return ForwardOnNeuron_v0(flag);  }
+
     RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
     assert(hRLS != nullptr);
     double now = GST_ms();
     hRLS->Prepare(iter, 0);
-
-    if (DEBUG.T_cuda_ver == 1) {
-        if (DEBUG.T_cpu == 1) {
-            // T_generate_cpu(SharedThis(), false, flag);
-        } else {
-            // T_generate_cuda<floatX>(SharedThis(),false,DEBUG.T_cpu,flag); //  do one inference as warmup
-        }
-        return 0x0;
-    }
-    // if(DEBUG.back_graph_version==1)
-    // { return ForwardOnNeuron_v0(flag);  }
+    vector<RLSchedule::arrTask> branches = {hRLS->curTasks};
+    OutCLS *cls                          = GetNeuron<OutCLS>("OutCLS", 0);
+    int L = config.nLayer(), nCls = nClass(), i;
+    float *tmpLoss = nullptr, *loss = cls->hostLoss;
+    // if (isAtPhase(LIFE_PHASE::P_EVAL_)) {
+    //     branches = hRLS->allTasks;
+    // }
+    int nB = branches.size();
+    if (nB > 1)
+        tmpLoss = new float[nCls]();
 
     hGensor cur = Input(), residual = nullptr;
-    int L = config.nLayer();
-    assert(backbons.size() == 2 * L + 3);
-    for (auto neuron : backbons) {
-        if (hRLS->step > 2 * L) {
-            int debug = 0x0;
+    for (auto branch : branches) {
+        for (auto task : branch) {
+            GeNeuron *neuron = (GeNeuron *)(task->hOBJ);
+            // for (auto neuron : backbons) {
+            if (hRLS->step > 2 * L) {
+                int debug = 0x0;
+            }
+            if (neuron->isShortcut)
+                continue;
+            auto t0 = GST_ms();
+            neuron->BeforeForward(iter);
+            cur = neuron->Ming(hRLS, cur);
+            neuron->stat.tFore += GST_ms() - t0;SYNC_DEVICE();
         }
-        if (neuron->isShortcut)
-            continue;
-        auto t0 = GST_ms();
-        neuron->BeforeForward(iter);
-        cur = neuron->Ming(hRLS, cur);
-        neuron->stat.tFore += GST_ms() - t0;
+        if (tmpLoss != nullptr)
+            ;  // for (i = 0; i < nCls; i++) tmpLoss[i] += loss[i];
+    }
+    if (nB > 1) {
+        for (i = 0; i < nCls; i++) loss[i] = tmpLoss[i] / nB;
+        delete[] tmpLoss;
     }
     // SYNC_DEVICE();
     return 0x0;

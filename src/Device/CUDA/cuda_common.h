@@ -50,10 +50,12 @@ void inline cublasCheck(cublasStatus_t status, const char *file, int line) {
 // defined as extern here because the individual kernels wish to use it
 // but it is actually created and instantiated in the main program file
 extern cudaDeviceProp deviceProp;
-// #define THREAD_TILE_M 8U
-// #define THREAD_TILE_N 8U
-#define THREAD_TILE_M 4U
-#define THREAD_TILE_N 4U
+// #define THREAD_TILE_M 16U
+// #define THREAD_TILE_N 16U
+#define THREAD_TILE_M 8U
+#define THREAD_TILE_N 8U
+// #define THREAD_TILE_M 4U
+// #define THREAD_TILE_N 4U
 // WarpSize is not a compile time constant, Defining here like this possibly allows the compiler to optimize better
 #define WARP_SIZE 32U
 

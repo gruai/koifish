@@ -89,11 +89,12 @@ hGTensor TokenEmbed::OnEmbed(hGensor inpL, int seed) {
         hGTensor cur = out, curW = w;
         if (isForward()) {
             inp       = inpL;
-            grid_size = CEIL_DIV(B * T * C, block_size);
-            // if(!lnW.Empty())
-            //     curW = lnW.cuTrain(w);
-            // encoder_forward(ToX(cur), tokens, ToX(w), ToX0(b), B, T, C, main_stream);
-            CU_embed_forw_<<<grid_size, block_size, 0, main_stream>>>(ToX(cur), TO<int>(inp), ToX(curW), ToX0(b), B, T, C);
+            // grid_size = CEIL_DIV(B * T * C, block_size);
+            // CU_embed_forw_v0<<<grid_size, block_size, 0, main_stream>>>(ToX(cur), TO<int>(inp), ToX(curW), ToX0(b), B, T, C);
+            if(w->type==typNUMBER::T_BINARY_3){
+                CU_embed_ternary_forw_<floatX><<<CEIL_DIV(B * T, block_size), block_size, 0, main_stream>>>(ToX(cur), TO<int>(inp), curW->gama_T(), TO<char>(curW), ToX0(b), B, T, C);
+            }else
+                CU_embed_forw_<<<CEIL_DIV(B * T, block_size), block_size, 0, main_stream>>>(ToX(cur), TO<int>(inp), ToX(curW), ToX0(b), B, T, C);
             w->Print("wte", 0, 0);  // ToX(w),true,Vp,C
             if (b != nullptr)
                 PrintTensor<floatX>("wpe", ToX0(b), true, T, C);
@@ -132,7 +133,7 @@ hGTensor TokenEmbed::SubW(hGTensor hSamp, bool isForw, hGTensor wOut, int flag) 
 
         if (isForw) {
             // encoder_forward(ToX(cur), samps, ToX(wSrc), nullptr, 1, T, C, main_stream);
-            CU_embed_forw_<<<grid_size, block_size, 0, main_stream>>>(ToX(cur), samps, ToX(wSrc), T, C, Vp, flag == 1);
+            CU_embed_forw_tc<<<grid_size, block_size, 0, main_stream>>>(ToX(cur), samps, ToX(wSrc), T, C, Vp, flag == 1);
             cur->Print("subW", 0, 0);
         } else {
             CU_embed_back_<<<grid_size, block_size, 0, main_stream>>>(ToG(wSrc), samps, ToX(cur), T, C, Vp, flag == 1);
@@ -146,20 +147,20 @@ hGTensor TokenEmbed::SubW(hGTensor hSamp, bool isForw, hGTensor wOut, int flag) 
 }
 
 // wrapper of CU_abc_ & cublasGemmEx & more ...
-void CU_mm_(floatX *d, hGTensor gensor, const floatX *b, const floatX *bias, int m, int n, int k, cudaStream_t stream, int transA, int transB, bool accumulate,
+void CU_mm_(floatX *d, hGTensor gensor, const floatX *b, const floatX *bias, int m, int n, int k, cudaStream_t stream, int transA, int transB, float beta,
             floatX *pre_gelu, bool backward) {
-    const float alpha = 1.0f, beta = accumulate ? 1.0f : 0.0f;
+    const float alpha = 1.0f;   //, beta = accumulate ? 1.0f : 0.0f;
     cublasOperation_t opA = (transA) ? CUBLAS_OP_T : CUBLAS_OP_N, opB = (transB) ? CUBLAS_OP_T : CUBLAS_OP_N;
     if (bias != nullptr || pre_gelu != nullptr) {  //  bias != nullptr || pre_gelu != nullptr
         floatX *wX = gensor->GetDataX();
-        CU_mm_blas(d, wX, b, bias, m, n, k, main_stream, transA, transB, accumulate, pre_gelu, backward);
+        CU_mm_blas(d, wX, b, bias, m, n, k, main_stream, transA, transB, 1.0, beta, pre_gelu, backward);
         return;
     }
     bool isBlas = true;
     int lda = transA ? k : m, ldb = transB ? n : k;
     if (!transB && DEBUG.T_GEMM >= 0) {  //  !transA && !transB && DEBUG.T_GEMM >= 0
         // Back of delta: [768,50304] x [50304,8192] => [768,8192]
-        CU_abc(d, gensor, b, bias, m, n, k, stream, transA, transB, accumulate, pre_gelu, backward);
+        CU_abc(d, gensor, b, bias, m, n, k, stream, transA, transB, beta, pre_gelu, backward);
         isBlas = false;
     }
     if (isBlas) {
@@ -211,6 +212,7 @@ int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, int flag) {
 
 floatX *GTensor::GetDataX(int flag, const string &sX) {
     size_t dT4B = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
+    // int seed = 42;
     floatX *wX = (floatX *)(data);
     if(hRef!=nullptr){
         int debug=0x0;
@@ -240,7 +242,7 @@ floatX *GTensor::GetDataX(int flag, const string &sX) {
             assert(ne[0]%THREAD_TILE_M==0 && ne[1]%THREAD_TILE_N==0);
             wX      = ToX(GTensor::tmpTernary); 
             floatGama *gam_ = gama_T();     //
-            CU_Tile2X_<floatX><<<dGrid, dBlock, smemPB, main_stream>>>(wX, gam_, 0.0, ne[0], ne[1],tile_r1,tile_c1);
+            CU_Tile2X_<floatX><<<dGrid, dBlock, smemPB, main_stream>>>(wX, gam_, 0.0, ne[0], ne[1],seed);
             // SYNC_DEVICE();
             if (flag == -1)
                 GTensor::tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1);
@@ -254,7 +256,7 @@ floatX *GTensor::GetDataX(int flag, const string &sX) {
 
 int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, int flag) {
     try {
-        w->isUpdateParam = false;
+        // w->isUpdateParam = false;
         floatX *wX = w->GetDataX(), *gW = ToG(w);
         float *dbias_buffer = (float *)GTensor::buff;
         int OC = nOut, IC = nIn;
@@ -426,7 +428,7 @@ hGTensor OutCLS::cuTrain(hGTensor inp_, int flag) {
     const int *targets = (int *)(target->data);
     float *cuLoss      = (float *)out->data;
     hGTensor cur = preLogits, w = proj.w;  
-    float alpha = 1.0f;  //dB*1.0/B;
+    float alpha4g = 1.0, beta4g = 1.0; //  alpha4g = dB*1.0/B
     if (isForward()) {
         inp = inp_;
         if (maec != nullptr) {
@@ -444,12 +446,12 @@ hGTensor OutCLS::cuTrain(hGTensor inp_, int flag) {
             size_t off = i * T * Vp, n1 = i * T, nZ = i * T * C;
             off = 0;  // reduce memory
             // PrintTensor<floatX>("OutCLS.proj.w", w->GetDataX(), true, w->ne[0], w->ne[1], w->ne[2], w->ne[3], -1);
-            //CU_mm_blas(ToX(cur) + off, w->GetDataX(), z0 + nZ, NULL, Vp, dB * T, C, main_stream, true, false, false);
+            // [50304,768] x [768,8192] => [50304,8192]
             CU_mm_(ToX(cur) + off, w, z0 + nZ, NULL, Vp, dB * T, C, main_stream, true, false, false);
             fused_classifier(ToX(cur) + off, cuLoss + n1, rLoss, targets + n1, dB, T, V, Vp, cuFalse, main_stream);  // target=[32,1024]
-            if (ToG0(w) != nullptr && delta != nullptr) {                                                            //  back of delta & grad
-                CU_mm_(ToX(delta) + nZ, w, ToX(cur) + off, NULL, C, dB * T, Vp, main_stream, 0, 0, false, gelu_fusion >= 2 ? to_gelu : NULL, true);
-                CU_mm_blas(ToG(w), z0 + nZ, ToX(cur) + off, NULL, C, Vp, dB * T, main_stream, false, true, true /* accumulate */, NULL, true);
+            if (ToG0(w) != nullptr && delta != nullptr && !hFish->isAtPhase(LIFE_PHASE::P_EVAL_)) {                                                            //  back of delta & grad
+                CU_mm_(ToX(delta) + nZ, w, ToX(cur) + off, NULL, C, dB * T, Vp, main_stream, 0, 0, 0, gelu_fusion >= 2 ? to_gelu : NULL, true);
+                CU_mm_blas(ToG(w), z0 + nZ, ToX(cur) + off, NULL, C, Vp, dB * T, main_stream, false, true, alpha4g, beta4g /* accumulate */, NULL, true);
             }
         }
         // fused_classifier(errLogits, cuLoss, rLoss, targets, B, T, V, Vp, cuFalse, main_stream);        //target=[32,1024]

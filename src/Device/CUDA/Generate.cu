@@ -4,7 +4,7 @@
  *
  *  Some idea is from https://github.com/karpathy/llm.c/blob/master/train_gpt2.cu
  *
- *  \brief Transformer in cuda kernel
+ *  \brief A large kernel to generate tokens
  *  \author Yingshi Chen
  */
 #include "../../Device/Pipe.hpp"
@@ -221,7 +221,7 @@ __device__ inline void CU_dot16x4_(float* out, T* x, __nv_fp8_e5m2* w, int i, in
     val += ww.w * xx.w;
     //}
     // *out = warpreduce_sum(val);
-    float block_sum = blockReduce<warpReduceSum>(val, true);
+    float block_sum = blockReduce_v0<warpReduceSum>(val, true);
     if (tid == 0)
         atomicAdd(out, block_sum);
 }
@@ -268,8 +268,9 @@ __global__ __launch_bounds__(1024, 1) static void T_forward_ffn(const __grid_con
     // F.CU_silu(self.w1(x)) * self.w3(x)
     for (int j = io; j < hidden_dim * args.n_experts_ac; j += ib) {
         int je = (j % hidden_dim) + moe_experts[j / hidden_dim] * hidden_dim;
+        float gama = L->gama_1 == nullptr ? 1.0f : (float)(L->gama_1[j]);
+        float v1 =  matmul_warppar(xs, L->w1, je, dim) * gama;        
         // float v1 = matmul_warppar(xs, L->w1, je, dim) ;
-        float v1 = L->gama_1 == nullptr ? matmul_warppar(xs, L->w1, je, dim) : matmul_warppar(xs, L->w1, je, dim) * L->gama_1[j];
         // CU_dot16x4_(&v1, xs, L->w1, je, dim);			SYNC_GRID();
         float v3  = matmul_warppar(xs, L->w3, je, dim);
         float val = (args.act_gelu ? CU_gelu(v1 * rmsscale) : CU_silu(v1 * rmsscale)) * v3 * rmsscale;
@@ -414,9 +415,9 @@ float* T_generate_(hFISH hFish, int id, typNUMBER tpActivity, unsigned flags) { 
             case typNUMBER::F32:
                 logits = T_generate_cuda<float>(hFish, false, id, flags);
                 break;
-            case typNUMBER::BF16:
-                logits = T_generate_cuda<__nv_bfloat16>(hFish, false, id, flags);
-                break;
+            // case typNUMBER::BF16:
+            //     logits = T_generate_cuda<__nv_bfloat16>(hFish, false, id, flags);
+            //     break;
             // case typNUMBER::F8E5M2:
             // 	logits = T_generate_cuda<__nv_fp8_e5m2>(hFish,false,id,flags);
             // 	break;

@@ -12,7 +12,7 @@
 #include "../../Manifold/Fish.hpp"
 #include "../../Manifold/Neuron.hpp"
 #include "./cuda_common.h"
-#include "./kernel/embed.cuh"
+// #include "./kernel/embed.cuh"
 #include "./kernel/Operator.cuh"
 #include "./kernel/layernorm.cuh"
 #include "./kernel/rope.cuh"

@@ -65,7 +65,7 @@ __global__ void CU_rope_(Typ *inp, Typ *out, float *scale, int seq_len, int head
             out1           = x1 * cos_v - x2 * sin_v;
             out2           = x1 * sin_v + x2 * cos_v;
             float sum      = out1 * out1 + out2 * out2;
-            float head_sum = blockReduce<warpReduceSum>(sum, true);
+            float head_sum = blockReduce_v0<warpReduceSum>(sum, true);
             scale[h_id]    = rsqrtf(head_sum / head_dim + 1.0e-5);
             x1 *= scale[h_id], x2 *= scale[h_id];
         }
@@ -106,7 +106,7 @@ struct rope_corr_dims {
     float v[2];
 };
 
-struct mrope_sections {
+struct mrope_dims {
     int v[4];
 };
 
@@ -226,7 +226,7 @@ static __global__ void rope_neox(const T *x, T *dst, const int ne0, const int ne
 template <bool forward, bool has_ff, typename T>
 static __global__ void rope_multi(const T *x, T *dst, const int ne0, const int ne1, const int ne2, const int s1, const int s2, const int n_dims,
                                   const int32_t *pos, const float freq_scale, const float ext_factor, const float attn_factor, const rope_corr_dims corr_dims,
-                                  const float theta_scale, const float *freq_factors, const mrope_sections sections) {
+                                  const float theta_scale, const float *freq_factors, const mrope_dims sections) {
     const int i0 = 2 * (blockDim.y * blockIdx.y + threadIdx.y);
 
     if (i0 >= ne0) {
@@ -282,7 +282,7 @@ static __global__ void rope_multi(const T *x, T *dst, const int ne0, const int n
 template <bool forward, bool has_ff, typename T>
 static __global__ void rope_vision(const T *x, T *dst, const int ne0, const int ne1, const int ne2, const int s1, const int s2, const int n_dims,
                                    const int32_t *pos, const float freq_scale, const float ext_factor, const float attn_factor, const rope_corr_dims corr_dims,
-                                   const float theta_scale, const float *freq_factors, const mrope_sections sections) {
+                                   const float theta_scale, const float *freq_factors, const mrope_dims sections) {
     const int i0 = 2 * (blockDim.y * blockIdx.y + threadIdx.y);
 
     if (i0 >= ne0) {
@@ -367,7 +367,7 @@ static void rope_neox_cuda(const T *x, T *dst, const int ne0, const int ne1, con
 template <bool forward, typename T>
 static void rope_multi_cuda(const T *x, T *dst, const int ne0, const int ne1, const int ne2, const int s1, const int s2, const int n_dims, const int nr,
                             const int32_t *pos, const float freq_scale, const float freq_base, const float ext_factor, const float attn_factor,
-                            const rope_corr_dims corr_dims, const float *freq_factors, const mrope_sections sections, cudaStream_t stream) {
+                            const rope_corr_dims corr_dims, const float *freq_factors, const mrope_dims sections, cudaStream_t stream) {
     assert(ne0 % 2 == 0);
     const dim3 block_dims(1, CUDA_ROPE_BLOCK_SIZE, 1);
     const int n_blocks_x = (ne0 + 2 * CUDA_ROPE_BLOCK_SIZE - 1) / (2 * CUDA_ROPE_BLOCK_SIZE);
@@ -387,7 +387,7 @@ static void rope_multi_cuda(const T *x, T *dst, const int ne0, const int ne1, co
 template <bool forward, typename T>
 static void rope_vision_cuda(const T *x, T *dst, const int ne0, const int ne1, const int ne2, const int s1, const int s2, const int n_dims, const int nr,
                              const int32_t *pos, const float freq_scale, const float freq_base, const float ext_factor, const float attn_factor,
-                             const rope_corr_dims corr_dims, const float *freq_factors, const mrope_sections sections, cudaStream_t stream) {
+                             const rope_corr_dims corr_dims, const float *freq_factors, const mrope_dims sections, cudaStream_t stream) {
     assert(ne0 % 2 == 0);
     const dim3 block_dims(1, CUDA_ROPE_BLOCK_SIZE, 1);
     const int n_blocks_x = (ne0 + 2 * CUDA_ROPE_BLOCK_SIZE - 1) / (2 * CUDA_ROPE_BLOCK_SIZE);
@@ -920,7 +920,7 @@ __global__ void CU_rope_prenormal_(Typ *inp, Typ *out, float *scale, int seq_len
             int NUM_WARPS = CEIL_DIV(head_dim, WARP_SIZE);
             assert(NUM_WARPS <= WARP_SIZE);
             float sum      = x1 * x1 + x2 * x2;
-            float head_sum = blockReduce<warpReduceSum>(sum, true);
+            float head_sum = blockReduce_v0<warpReduceSum>(sum, true);
             scale[h_id]    = rsqrtf(head_sum / head_dim + 1.0e-5);
             x1 *= scale[h_id], x2 *= scale[h_id];
         }

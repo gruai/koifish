@@ -185,16 +185,6 @@ __global__ void copy_and_cast_kernel(Td* dst, const Ts* src, size_t n, ptrdiff_t
 // ----------------------------------------------------------------------------
 // Warp/Block communication primitives
 
-// warp-level reduction for summing values
-template <const int kWarpSize = WARP_SIZE>
-__device__ __forceinline__ float warpReduceSum(float val) {
-    assert(kWarpSize <= WARP_SIZE);
- #pragma unroll
-    for (int offset = kWarpSize >> 1; offset >= 1; offset >>= 1) {  //  performs a butterfly reduction pattern
-        val += __shfl_xor_sync(0xffffffff, val, offset);            // 1-2 cycle
-    }
-    return val;
-}           
 // warp-level reduction for finding the maximum value
 __device__ inline float warpReduceMax(float val) {
     for (int offset = 16; offset > 0; offset /= 2) {
@@ -217,13 +207,49 @@ using reduction_func_t = float (*)(float);
     but if called inside a loop, the shared memory will be implicitly reused, so set final_sync to 1
 */
 
+// warp-level reduction for summing values
+template <const int kWarpSize = WARP_SIZE>
+__device__ __forceinline__ float warpReduceSum(float val) {
+    assert(kWarpSize <= WARP_SIZE);
+#pragma unroll
+    for (int offset = kWarpSize >> 1; offset >= 1; offset >>= 1) {  //  performs a butterfly reduction pattern
+        val += __shfl_xor_sync(0xffffffff, val, offset);            // 1-2 cycle
+    }
+    return val;
+}
+
+// constexpr int nT = blockDim.x
+template <const int nT>
+__device__ inline float CU_BlockSum(float val, bool final_sync = false, float out_of_bounds = 0.0f) {
+    assert(blockDim.x > 0);    
+    if (nT <= WARP_SIZE)
+        return warpReduceSum<nT>(val);
+
+    const int lane_id = threadIdx.x % WARP_SIZE, warp_id = threadIdx.x / WARP_SIZE;
+    const int num_warps = blockDim.x / WARP_SIZE;        
+    __shared__ float shared_val[WARP_SIZE];
+    float warp_val = warpReduceSum(val);
+    if (lane_id == 0) {
+        shared_val[warp_id] = warp_val;
+    }
+    __syncthreads();  //  make sure the data is in shared memory.
+    warp_val        = (lane_id < num_warps) ? shared_val[lane_id] : out_of_bounds;
+    float block_val = warpReduceSum(warp_val);
+
+    if (final_sync) {
+        __syncthreads();  // only needed in loops when effectively reusing shared memory etc.
+    }
+    return block_val;
+}
+
 template <reduction_func_t warp_reduction>
 /*
     two reductions of up to 1024 threads!
     1) inside warp (shuffle), 2) cross-warp (shared memory), 3) inside warp (shuffle)
 */
-__device__ inline float blockReduce(float val, bool final_sync = false, float out_of_bounds = 0.0f) {
+__device__ inline float blockReduce_v0(float val, bool final_sync = false, float out_of_bounds = 0.0f) {
     __shared__ float shared_val[WARP_SIZE];
+    assert(blockDim.x > 0);
     const int lane_id   = threadIdx.x % WARP_SIZE;
     const int warp_id   = threadIdx.x / WARP_SIZE;
     const int num_warps = blockDim.x / WARP_SIZE;
@@ -251,7 +277,7 @@ __global__ void global_sum_single_block_kernel(float* result, const Float* value
         thread_sum += (float)values[index];
     }
 
-    float reduction = blockReduce<warpReduceSum>(thread_sum, true);
+    float reduction = blockReduce_v0<warpReduceSum>(thread_sum, true);
     if (threadIdx.x == 0) {
         *result = reduction;
     }
@@ -372,15 +398,15 @@ inline int get_max_num_block_sums(int* num_slices_all, int numel) {
 }
 
 template <class T>
-__global__ static void CU_X2_partial(float* out,const T* data, size_t count) {
+__global__ static void CU_X2_partial(float* out, const T* data, size_t count) {
     size_t index      = blockIdx.x * blockDim.x + threadIdx.x;
     size_t grid_width = blockDim.x * gridDim.x;
-    float accumulator = 0.f,a;
+    float accumulator = 0.f, a;
     for (size_t i = index; i < count; i += grid_width) {
         a = (float)data[i];
         accumulator += a * a;
-    }    
-    float block_sum = blockReduce<warpReduceSum>(accumulator);
+    }
+    float block_sum = blockReduce_v0<warpReduceSum>(accumulator);
     if (threadIdx.x == 0) {
         size_t out_index = blockIdx.x;
         out[out_index]   = block_sum;
@@ -391,19 +417,19 @@ template <class T>
 __device__ inline float global_norm_squared_for_range(const T* data, size_t count) {
     size_t index      = blockIdx.x * blockDim.x + threadIdx.x;
     size_t grid_width = blockDim.x * gridDim.x;
-    float accumulator = 0.f,a;
+    float accumulator = 0.f, a;
     for (size_t i = index; i < count; i += grid_width) {
         a = (float)data[i];
         accumulator += a * a;
         // assert(!isnan(a) && !isinf(a));
     }
     // block-level reduce
-    return blockReduce<warpReduceSum>(accumulator);
+    return blockReduce_v0<warpReduceSum>(accumulator);
 }
 template <class T>
 __global__ static void global_norm_squared_2D(float* out, const T* data, size_t count, ptrdiff_t stride) {
     float block_sum = global_norm_squared_for_range(data + blockIdx.y * stride, count);
-    
+
     // each block accumulates its partial sum to out[out_index]
     // we want to avoid using atomic add here so we combine this kernel with another kernel call
     // that sums up the partial block sums
@@ -413,40 +439,3 @@ __global__ static void global_norm_squared_2D(float* out, const T* data, size_t 
         // assert(!isnan(block_sum) && !isinf(block_sum));
     }
 }
-/*  Deprecated
-template <typename T>
-inline float global_norm_squared(const T* values, size_t count, ptrdiff_t stride, int num_slices, bool reset, cudaStream_t stream, int flag = 0) {
-    float a, *norm2 = (float*)(GTensor::bt4c->data);
-    // int slices[2] = {1, 1}, max_num_block_sums = get_max_num_block_sums(slices, 2);
-    constexpr int block_size = 512;  // 256 may be better for shared memory of CU_x2_
-    // launch just enough blocks to fill the grid. deliberately no DIV_CEIL.
-    // having one block less than possible is a tiny performance hit, having
-    // one block too many is catastrophic, since it only can start once all the other
-    // blocks finish. anyway, I think cuda_threads_per_SM should be a multiple of 512
-    // on all gpus, so the division really is going to be exact .
-    auto now             = GST_us();
-    const int dMaxThread = deviceProp.maxThreadsPerMultiProcessor * deviceProp.multiProcessorCount, grid_size = dMaxThread / block_size;
-    if (DEBUG.algCuX2 == 0) {   // too complex
-        assert(grid_size > 0);  // gives a better error than letting the call below fail
-        const int gx = CEIL_DIV(grid_size, num_slices), gy = num_slices;
-        assert(gx * gy < 1024);  // we want to later accumulate the block sums in a single block
-        if (reset) {
-            cudaCheck(cudaMemsetAsync(norm2, 0, grid_size * sizeof(float), stream));
-        }
-        global_norm_squared_2D<<<dim3(gx, gy), block_size, 0, stream>>>(norm2, values, count, stride);
-        cudaCheck(cudaGetLastError());
-        global_sum_deterministic(norm2, norm2, grid_size, main_stream);
-        cudaCheck(cudaMemcpy(&a, norm2, sizeof(float), cudaMemcpyDeviceToHost));
-    } else {
-        size_t smemPB = 1024 * sizeof(float);
-        int dBLOCK = 512, dGRID = dMaxThread / dBLOCK;
-        dGRID = 512;
-        assert(dGRID < 1024);  //  blockReduce<warpReduceSum>
-        cudaCheck(cudaMemset(norm2, 0, sizeof(float)*dGRID));
-        CU_x2_<T><<<dGRID, dBLOCK, smemPB, main_stream>>>(norm2, values, count);  //  0.00190092938
-        cudaCheck(cudaMemcpy(&a, norm2, sizeof(float), cudaMemcpyDeviceToHost));
-        cudaStreamSynchronize(main_stream);
-    }
-    // SUM::tX1 += GST_us()-now;
-    return a;
-}*/

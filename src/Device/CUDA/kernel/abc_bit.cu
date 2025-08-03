@@ -316,7 +316,7 @@ __global__ void ABC_v6(Ta *A, floatX *B, floatX *C, int M, int N, int K, int fla
 /*
     c(m,n) = op(a)*op(b) + bias
 */
-void CU_abc(floatX *d, hGTensor gensor, const floatX *b, const floatX *bias, int m, int n, int k, cudaStream_t stream, int transA, int transB, bool accumulate,
+void CU_abc(floatX *d, hGTensor gensor, const floatX *b, const floatX *bias, int m, int n, int k, cudaStream_t stream, int transA, int transB, float beta,
             floatX *pre_gelu, bool backward) {
     NVTX_RANGE_FN();
     // check alignment (some modes work unaligned but it always best to be aligned for performance)
@@ -347,7 +347,7 @@ void CU_abc(floatX *d, hGTensor gensor, const floatX *b, const floatX *bias, int
    
     // assert(batch_count==0);
     bool has_bias = (bias != nullptr), has_gelu = (pre_gelu != nullptr);
-    const float alpha = 1.0f, beta = accumulate ? 1.0f : 0.0f;
+    const float alpha = 1.0f;   //, beta = accumulate ? 1.0f : 0.0f;
     assert(pre_gelu == nullptr);
     floatX *a = gensor->GetDataX();
     // [50304,768] x [768,8192] => [50304,8192]         or(transA) [768,50304]' x [768,8192] => [50304,8192]

@@ -20,14 +20,14 @@ struct PIPE_Optimizer : public MODEL_CARD {
     Tp *params, *grads0, *paramX = nullptr;
     Tmv *gm, *gv;
     floatGama *gama_T = nullptr;
-    float *wNorms = nullptr;
+    float *wNorms     = nullptr;
     size_t num_parameters;
     ptrdiff_t w_stride, g_stride, s_stride;
     float beta1, beta2, beta1_correction, beta2_correction, eps;
     float lr_0, learning_rate;
-    int iter,tile_r0,tile_r1,tile_c0,tile_c1;
+    int iter, tile_r1, tile_c1;
     int64_t ne[4] = {0};
-    int ldT = 64;
+    int ldT       = 64;
     float weight_decay, grad_scale, grad_norm;
     unsigned int seed;
     uint64_t flags;
@@ -36,9 +36,8 @@ struct PIPE_Optimizer : public MODEL_CARD {
     bool isStochasticRounding = true;
     QUANT_ALG tpQuant;
 
-    PIPE_Optimizer(size_t _num_parameters, ptrdiff_t _w_stride, ptrdiff_t _g_stride,
-                   ptrdiff_t _s_stride, uint64_t _flags, float _learning_rate, float _beta1, float _beta2, int _t, float _eps, float _weight_decay,
-                   float _grad_scale, float _grad_norm, unsigned int _seed)
+    PIPE_Optimizer(size_t _num_parameters, ptrdiff_t _w_stride, ptrdiff_t _g_stride, ptrdiff_t _s_stride, uint64_t _flags, float _learning_rate, float _beta1,
+                   float _beta2, int _t, float _eps, float _weight_decay, float _grad_scale, float _grad_norm, unsigned int _seed)
         : /*params(_params),
           tmp(_tmp),
           grads0(_grads0),
@@ -58,22 +57,24 @@ struct PIPE_Optimizer : public MODEL_CARD {
           grad_scale(_grad_scale),
           grad_norm(_grad_norm),
           seed(_seed) {
-        lr_0 = learning_rate;
-        wNorms = (float*)GTensor::buff;
-        assert(wNorms!=nullptr);
+        lr_0   = learning_rate;
+        wNorms = (float *)GTensor::buff;
+        assert(wNorms != nullptr);
     }
 
     virtual void Update(GTensor *tensor_, int flag = 0x0) {
         tensor = tensor_;
-        name = tensor->name;    
-        params = (Tp*)(tensor->data), grads0 = (Tp*)(tensor->grad);
-        gm = (Tmv*)tensor->gm, gv = (Tmv*)tensor->gv;
-        tile_r0 = tensor->tile_r0,tile_r1= tensor->tile_r1,tile_c0= tensor->tile_c0,tile_c1= tensor->tile_c1;
+        name   = tensor->name;
+        params = (Tp *)(tensor->data), grads0 = (Tp *)(tensor->grad);
+        gm = (Tmv *)tensor->gm, gv = (Tmv *)tensor->gv;
+        // tile_r0 = tensor->tile_r0,tile_c0= tensor->tile_c0;
+        tile_r1 = tensor->tile_r1, tile_c1 = tensor->tile_c1;
         memcpy(ne, tensor->ne, sizeof(ne));
         isBitParam = BIT_TEST(tensor->flags, GTensor::F_TERNARY);
         if (isBitParam) {
             assert(ne[2] == 1 && ne[3] == 1);  // only for 2D weight
-            learning_rate *= 3;  //  1-bit models often exhibit greater training stability compared to their full-precision counterparts, allowing for more aggressive initial learning steps.
+            learning_rate *= 3;  //  1-bit models often exhibit greater training stability compared to their full-precision counterparts, allowing for more
+                                 //  aggressive initial learning steps.
             paramX = ToX(GTensor::tmpTernary);
             gama_T = tensor->gama_T();
         }
