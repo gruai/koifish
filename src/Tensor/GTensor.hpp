@@ -112,7 +112,7 @@ class GTensor {
     hGTensor hRef = nullptr;
     std::vector<GTensor *> refered;
     std::shared_ptr<EDGE_DEVICES> hDevice = nullptr;
-    size_t szData = 0, szGama = 0, szUse = 0;
+    size_t szData = 0, szGama = 0, szUse = 0;    
     int last_iter = -1;
     //  support dynamic change shape&type!
     virtual bool ReShape(SHAPE shape_, typNUMBER tpD_, int flag = 0x0);
@@ -120,7 +120,7 @@ class GTensor {
         assert(0);
         return nullptr;
     }
-    unsigned int seed=88888888;
+    uint32_t seed=88888888, param_seed = 0x0;
 
    public:
     static const int MAX_NAME = 64;
@@ -239,6 +239,10 @@ class GTensor {
     virtual bool SerialData(const string &info, void *host, bool isToHost, int flag = 0x0) {
         assert(0);
         return false;
+    }
+    template<typename T>
+    T *GetHostData(int flag = 0x0, const string &sX = ""){
+        return nullptr;
     }
     virtual floatX *GetDataX(int flag = 0x0, const string &sX = "");
 
@@ -412,7 +416,7 @@ inline floatX *ToG(hGTensor t) {
     return (floatX *)(t->grad);
 }
 inline floatX *ToG0(hGTensor t) {
-    if (t == nullptr)
+    if (t == nullptr || t->grad == nullptr)
         return nullptr;
     return ToG(t);
 }
@@ -432,7 +436,7 @@ hGensor tRAND(hGensor tensor, struct random_normal_distribution *rnd);
 class huTensor : public GTensor {
    protected:
     hGTensor _Multiply(const hGTensor &other);
-    size_t Alloc_1(void **dst, bool isZero, size_t sz = 0x0, int flag = 0x0);
+    size_t Alloc_1(void **dst, bool isZero, string desc, size_t sz = 0x0, int flag = 0x0);
     size_t Free_1(void **obj, const string &info = "");
 
    public:

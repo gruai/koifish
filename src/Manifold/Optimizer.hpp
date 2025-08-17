@@ -72,6 +72,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     double zmuv_0 = 0.0, zmuv_1 = 0.0, g_step = 0.0, g_ll = 0, g2_sum = 0;
 
     hGensor hLoss();
+    //  return _fish->target_probs = OutCLS->target
     hGensor hTargetProbs();
     hGensor hPreLogits();
     hGensor GradOf(hGensor node, int flag = 0);
@@ -145,7 +146,8 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     // Deprecated need refactor!!!       9/30/2024
     virtual double GraphCompute(hSampLoader loader, hTGraph, int flag = 0x0);
     virtual bool SetPhase(LIFE_PHASE phase_, int flag = 0x0);
-    virtual float Evaluate(hSampLoader loader, int iter, int flag = 0x0);
+    virtual float EvaluateSamps(hSampLoader loader, int iter, int flag = 0x0);
+    virtual bool Evaluate(int type=0x0,int flag=0x0);
     // virtual float Prefill(hSampLoader loader,int iter,int flag=0x0);
     virtual int GetITER(int flag = 0x0) const;
     virtual float LearningRate(int flag = 0x0) { return hLR->LearningRate(iter); }

@@ -217,23 +217,29 @@ OutCLS::OutCLS(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int
     */
     // hFish->config.model.isEmbedWeightTying = false;
 
-#ifdef _TENSOR_G_
+
     shape = {nEmbd, padded_nCls};
     rLoss = 1.0f / (B * T);  //* grad_accum_steps
     rLoss /= hG_->config.nGradAccumulate();
-#else
-    shape = {nEmbd, nCls};
-#endif
 }
 
-float *OutCLS::Logits(bool isToHost, int flag) {
+float *OutCLS::fLogits(int flag) {
     assert(preLogits != nullptr);
-    if (isToHost) {
-        assert(preLogits->host_data != nullptr);
-
-        return (float *)(preLogits->host_data);
-    } else
-        return TO<float>(preLogits);
+    size_t n = preLogits->size(),i;
+    // if (isToHost) {     
+    if(preLogits->host_data == nullptr)   {
+        preLogits->host_data = new float[n*2];
+    }
+    float *logits =  (float *)(preLogits->host_data);
+    floatX *tmp = (floatX*)(logits+n);
+    D2H(preLogits->data,tmp,preLogits->nByte());
+    for(i=0;i<n;i++){
+        logits[i] = tmp[i];
+    }
+    assert(preLogits->host_data != nullptr);
+    return logits;
+    // } else  
+    //     return TO<float>(preLogits);
     //(float *)(preLogits->data)+i*nVocab;
 }
 
@@ -246,17 +252,22 @@ bool OutCLS::Build(int flag) {
     SHAPE sp2 = {B, T}, sp3 = {dB, T, padded_nCls}, sp4 = {B, T, latent};
     nzLoss   = B * T;
     hostLoss = new float[nzLoss];
-    target   = std::make_shared<huTensor>(hFish, "target", sp2, typNUMBER::F32, false);
+    // isTarget_1 always true @SampLoader::Samp2Batch
+    target   = std::make_shared<huTensor>(hFish, "target", sp2, typNUMBER::I32, false);
     target->Alloc();
     // hFish->InitGensor(nullptr,"target",target,false);
     hFish->target_probs = target;
     out                 = std::make_shared<huTensor>(hFish, "loss", sp2, typNUMBER::F32, false);
+    BIT_SET(out->flags,GTensor::F_LOSS);
     auto tpL            = hFish->config.model.tpPreLogits;
     if (hFish->config.isOnlyGPT) {
         preLogits = GT(hFish, tpL, {padded_nCls}, 0x0, "preLogits");  // std::make_shared<huTensor>(hFish,"preLogits",sp3,tpActivation,false);
         preLogits->flags |= GTensor::F_HOSTDATA;
     } else {
+        // size_t nz = std::max(GTensor::scratch->size(),(size_t)dB*T*padded_nCls);        assert(nz<INT_MAX);
+        // sp3 = {(int)nz};
         preLogits = std::make_shared<huTensor>(hFish, "preLogits", sp3, tpL, false);
+        // GTensor::scratch = preLogits;
     }
 
     delta = GTensor::bt4c;  // !=GTensor::delta

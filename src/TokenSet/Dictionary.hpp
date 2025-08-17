@@ -264,6 +264,13 @@ friend class NLP_AutoRegressive;
 };
 typedef std::shared_ptr<GTokenizer> hTokenizer;
 
+class GTokenizer_GPT2 : public GTokenizer   {
+protected:
+public:
+    GTokenizer_GPT2(Fish *,int flag=0x0);
+    std::string T2STR(TOKEN_ID tok,int flag=0x0 )   override;
+};
+
 class GTokenizer_Heap : public GTokenizer   {
 protected:
     struct TokenIndex {
@@ -384,6 +391,7 @@ public:
 
 };
 
+// Deprecated!
 struct DictVAE : public VariationaAE    {    
     enum OUTPUT_OP {
         ONLY_LOAD=0x0,          //lr=0.001 much more oscillation than 0.0001
@@ -453,6 +461,8 @@ class CDict_LLAMA : public DictVAE{
 public:
     CDict_LLAMA(Fish *nlp_,int flag=0x0);
 };
+
+// Deprecated!
 class CDict_GPT2 : public DictVAE{
 protected:
     // uint32_t vocab_size;

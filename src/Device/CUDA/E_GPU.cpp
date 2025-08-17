@@ -115,6 +115,7 @@ std::vector<EDGE_DEVICES::GPU_> EDGE_DEVICES::GPU_::cudaGetDevice(int flag) {
 
 bool InitCUDA(const CLI_params &hparams, EDGE_DEVICES *hDevice, int flag);
 
+//  Destroy @EDGE_DEVICES::ClearGPU
 bool EDGE_DEVICES::InitGPU(const CLI_params &hparams, int flag) {
     string sTp = hparams.KV({"train", "device"}, "");
     gpus       = EDGE_DEVICES::GPU_::cudaGetDevice(flag);
@@ -126,21 +127,6 @@ bool EDGE_DEVICES::InitGPU(const CLI_params &hparams, int flag) {
 
     if (!InitCUDA(hparams, this, flag))
         return false;
-
-        /*int nGPU = ggml_backend_cuda_get_device_count();     //  ggml_cuda_init: found 1 CUDA devices:
-        for (int device = 0; device < nGPU; ++device) {
-            ggml_backend_t backend = ggml_backend_cuda_init(device);
-            if (backend == nullptr) {
-                _ERROR("%s: failed to initialize CUDA%d backend\n", __func__, device);
-            }
-            if(sTp=="onlycpu")
-                continue;
-            workers.push_back(backend);
-            bufts.push_back(ggml_backend_get_default_buffer_type(backend));
-            // char *guid = (char*)(backend->guid);
-            _INFO("Fish::%s init CUDA backend @%p\n", __func__, backend);
-        }*/
-
 #endif
     return true;
 }

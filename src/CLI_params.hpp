@@ -18,7 +18,16 @@
  */
 struct CLI_params;
 
-//  生者一过客，逝者一归尘；天地一逆旅，只待骑鹤人
+/*
+    生者一过客，
+        (activations)
+    逝者一归尘；
+        (sparse)
+    天地一逆旅，
+        (back propagation)
+    知止一至人
+        (local minima)
+*/
 enum LIFE_PHASE {
     // Pre-training
     P_TRAIN,
@@ -31,6 +40,13 @@ enum LIFE_PHASE {
     P_PREFILL,
     P_GENERATE
 };
+
+enum MODEL_ENSEMBLE {
+    AGGREGATION,
+    RANDOM_1,
+};
+
+enum METRIC { M_VOID, CLS_LOSS, PPL, METRIC_MOST };
 
 enum COMPRESSIVE_SENSING {
     SKIP,
@@ -132,6 +148,7 @@ class MODEL_CARD {
         std::string model_path;
     };
     Sparsing sparse;
+    MODEL_ENSEMBLE ensemble = MODEL_ENSEMBLE::AGGREGATION;
 
     std::string sCardPath = "", sTokenPath = "";
     std::string sArch, torch_dtype, transformers_version, model_type;
@@ -174,7 +191,8 @@ class MODEL_CARD {
 
     MODEL_CARD();
     virtual bool OnJsonCALM(CLI_params* hConfig, const std::string& path, const JSON& meta, int flag = 0X0);
-    virtual bool Init(const JSON& jConfig, int flag = 0x0);
+    // more param from HF's "model_card"
+    virtual bool InitHF(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
     bool empty() { return sCardPath.empty(); }
     void Dump(int typ);
 
@@ -253,11 +271,12 @@ struct DEUG_SWITCH {
     int train_datas        = 0;
     int back_graph_version = 0;
     int T_cuda_ver         = 0;
+    int T_classifier_ver   = 0;
     int T_cpu              = 0;
     int T_GEMM             = -1;
 
     int cmd_p1 = 0, cmd_p2 = 0, cmd_p3 = 0;  // some commandline parameter for debug
-
+    float Time_most = 60;
     void Dump(int typ);
 };
 extern DEUG_SWITCH DEBUG;
@@ -302,6 +321,8 @@ struct CLI_params {
     DataTypes datatypes;
 
     SKDU_params scheduling;
+
+    std::string eval_metric = "";
 
     // Always false,     GGML don't support back of FLASH_ATTEN !
     bool isFlashAtten() {
@@ -415,7 +436,8 @@ struct CLI_params {
         T val = jKV(jConfig, keys, v0, false);
         return val;
     }
-
+    // 1. step of eval   2.
+    float step                      = 1.0f;
     float f_clamp_kqv               = 0.0f;
     float f_max_alibi_bias          = 0.0f;
     float f_logit_scale             = 0.0f;
@@ -538,7 +560,7 @@ struct CLI_params {
 
     bool operator!=(const CLI_params& other) const;
 
-    void Dump();
+    void Dump(int flag = 0x0);
 
     bool parse(int argc, char** argv);
     virtual bool InitJConfig(int flag = 0x0);

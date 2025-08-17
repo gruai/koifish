@@ -85,7 +85,7 @@ bool RLS_BP::InitGUOKE(int flag) {
                     nT_guoke += ffn->SetGuoke(firstFFN, isRefParam);
                 }
             }
-            _INFO("[RLS_section] \tGuoke=%d(%d) nSection=%d\t\n", nT_guoke, nT, nSection);
+            _INFO("[RLS_branch] \tGuoke=%d(%d) nSection=%d isRefParam=%d\t\n", nT_guoke, nT, nSection, isRefParam);
         }
         return true;
     }
@@ -221,7 +221,9 @@ int RLS_BP::BeforeNextStep(int flag) {
 }
 void RLS_BP::Dump(int typ) const {
     params.Dump(typ);
-    _INFO("\tnGuoke=%d(%.3G)\n", nT_guoke, szGuoke / 1.0e9);
+    size_t szFree, szTotal;
+    cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
+    _INFO("[RLS]\tnGuoke=%d(%.3G) Memory of GPU=%.6gM(free=%.6gM)\n", nT_guoke, szGuoke / 1.0e9,(szTotal - szFree) / 1.0e6, szFree / 1.0e6);
 }
 
 bool RLS_BP::isResident(GeNeuron *neuron, int flag) {
@@ -260,17 +262,25 @@ void RLS_BP::Init(Fish *hF, std::vector<hNeuron> backbons, int flag) {
     }
     assert(curTasks.size() >= 2);
     TaskNode *last = curTasks[curTasks.size() - 1];
-    _INFO("\tRLS_BP::Init [%s,...,%s]", curTasks[0]->name.c_str(), last->name.c_str());
+    _INFO("[RLS]\tInit [%s,...,%s]", curTasks[0]->name.c_str(), last->name.c_str());
     Dump(0x0);
 }
 
 bool RLS_BP::InitBranch(int flag) {
     int L = hFish->config.nLayer(), t0 = params.LIB_0, t1 = params.LIB_1, LIS = params.nLayerInBranch, nPass = 0;
-    if(LIS<=0)
+    if (LIS <= 0){
+        assert(allTasks.size()==0);
+        allTasks = {curTasks};        // Ref RLS_BP::Init
         return true;
+    }
         
+    if (allTasks.size() > 0) {
+        return true;
+    }
+
     assert(L % LIS == 0);
     int nSwitch = L / LIS;
+    _INFO("[RLS_branch] branches=%d(%d/%d) ", nSwitch, L, LIS);
     curTasks.clear();
     for (int b = 0; b < nSwitch; b++) {
         int LIB_0 = b * LIS, LIB_1 = std::min((b + 1) * LIS, L);
@@ -294,9 +304,11 @@ bool RLS_BP::InitBranch(int flag) {
             tasks.push_back(node);
             n->stat.Reset();
         }
+        _INFO(" %d@{L%d:L%d}", tasks.size(),LIB_0,LIB_1);
         allTasks.push_back(tasks);
     }
-    assert(allTasks.size()==nSwitch);
+    assert(allTasks.size() == nSwitch);
+    _INFO("\n");
     return true;
 }
 /*
@@ -309,34 +321,17 @@ bool RLS_BP::UpdateBackbone(int iter, int flag) {
 
     assert(L % LIS == 0);
     int nSwitch  = L / LIS;
-    curBranch    = iter == -1 ? 0 : rand_branch.RandU32() % nSwitch;
-    params.LIB_0 = curBranch * LIS, params.LIB_1 = params.LIB_0 + LIS;
+    // curBranchID    = iter == -1 ? 0 : rand_branch.RandU32() % nSwitch;
+    curBranchID    = iter == -1 ? 0 : (curBranchID+1) % nSwitch;
+    // curBranch = 0;       // only for debug
+    params.LIB_0 = curBranchID * LIS, params.LIB_1 = params.LIB_0 + LIS;
     assert(params.LIB_1 <= L);
-    curTasks = allTasks[curBranch];
-    for(auto node : curTasks){
+    curTasks = allTasks[curBranchID];
+    for (auto node : curTasks) {
         GeNeuron *neuron = (GeNeuron *)(node->hOBJ);
         neuron->stat.Reset();
     }
-    /*curTasks.clear();
-    for (auto n : hFish->backbons) {  //  @Fish::jToGraph(void *ctx_, bool isBuild, int flag)
-        bool isPass = true, isGrad = true;
-        if (n->layer == 0 || n->layer > L)
-            isPass = false;                                                      // backbons.push_back(n);
-        else if (params.LIB_0 <= n->layer - 1 && n->layer - 1 < params.LIB_1) {  // QKV,FFN
-            isPass = false;
-            isGrad = n->layer - 1 >= params.LIB_1 - LIS;  // backbons.push_back(n);
-            // n->isPassBack = n->layer - 1 < params.LIB_1 - LIS;
-            // if (n->isPassBack)
-            //     nPass++;  // backbons.push_back(n);
-        }
-        if (isPass) {
-            continue;
-        }
-        double mem     = n->dev_most_mem / 1.0e6;
-        TaskNode *node = new RLSchedule::TaskNode(n->name, (void *)(n.get()), mem);
-        curTasks.push_back(node);
-        n->stat.Reset();
-    }*/
+
     size_t szFree, szTotal;
     cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
     // assert(curTasks.size() == LIS * 2 + 3);
@@ -353,8 +348,17 @@ bool RLS_BP::UpdateBackbone(int iter, int flag) {
     Fish::ForwardOnRLS would call this before each step
 */
 bool RLS_BP::Prepare(int iter, int flag) {
+    if (iter == -1) {  // only call once!
+        InitBranch();
+        InitGUOKE();
+        Dump(0x0);
+    }
     switch (phase) {
         case LIFE_PHASE::P_EVAL_:
+        case LIFE_PHASE::P_GENERATE:
+            for (auto neuron : hFish->backbons) {
+                neuron->ManageMemory(DATA_PLACE::DEV_MEM);
+            }
             return true;
             break;
         case LIFE_PHASE::P_TRAIN:
@@ -398,9 +402,9 @@ bool RLS_BP::Prepare(int iter, int flag) {
     if (iter < 0)
         _INFO("[RLS] resident={%s}\n", resident_list.c_str());
     if (DUMP(1) && iter <= 2 && phase != LIFE_PHASE::P_EVAL_) {
-        size_t szFree, szTotal;
-        cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
-        _INFO("[MEMORY] mGPU=%.6gM(free=%.6gM)\n", (szTotal - szFree) / 1.0e6, szFree / 1.0e6);
+        // size_t szFree, szTotal;
+        // cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
+        // _INFO("[MEMORY] mGPU=%.6gM(free=%.6gM)\n", (szTotal - szFree) / 1.0e6, szFree / 1.0e6);
     }
     return true;
 }

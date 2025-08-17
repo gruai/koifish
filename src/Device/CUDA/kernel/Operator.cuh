@@ -14,6 +14,7 @@
 #include <stdint.h>
 
 #include "../Tensor/GTensor.hpp"
+#include "../Device/EDevice.hpp"
 #include "../cuda_common.h"
 #include "./utils.cuh"
 
@@ -416,13 +417,13 @@ void CU_disti_normal(int N, typ* out, float devia, uint32_t seed = 42, bool isTo
         d_results = out;
     }
     //  nRander=N use too many space!       sizeof(curandState)=48  
-    int ldB=480, nRander = CEIL_DIV(N,ldB); 
+    int ldB=480, nRander = max(CEIL_DIV(N,ldB),1); 
     cudaCheck(cudaMalloc(&d_states, nRander * sizeof(curandState)));
 
     CU_initrand<<<CEIL_DIV(nRander,256), 256>>>(d_states, seed, nRander);
     // CU_disti_normal_generate<typ><<<(N + 255) / 256, 256>>>(d_states, d_results, N, devia);
     CU_disti_normal_N<typ><<<CEIL_DIV(nRander,256), 256>>>(d_states, d_results, N, ldB, devia);
-    cudaCheck(cudaDeviceSynchronize());
+    SYNC_DEVICE("disti_normal");  //    cudaCheck(cudaDeviceSynchronize());
     // Copy back results if needed
     // __nv_bfloat16 *h_results = new __nv_bfloat16[N];
     if (isToHost) {

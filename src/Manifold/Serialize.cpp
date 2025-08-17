@@ -23,18 +23,18 @@
 #endif
 #include "../Tensor/safetensors.hh"
 
-static safetensors::safetensors_t safeTensors;
+std::string safetensors::safetensors_t::config_key_ = "__json__config__";
 
 bool SAFETENSOR_Load(const std::string &path, safetensors::safetensors_t &st, int flag) {
+    _INFO("\n>>>>>> ST_SERIALIZE load@\"%s\" f=%d......\n", path.c_str(), flag);
     try {
         std::string warn, err;
         bool ret = safetensors::mmap_from_file(path.c_str(), &st, &warn, &err);  //   safetensors::load_from_file();
         if (warn.size()) {
-            std::cout << "WARN: " << warn << "\n";
+            _INFO(">>>>>> WARN: %s\n",warn.c_str());      //std::cout << "WARN: " << warn << "\n";
         }
         if (!ret) {
-            std::cerr << "Failed to load: " << path << "\n";
-            std::cerr << "  ERR: " << err << "\n";
+            _INFO(">>>>>> ERR: %s\n",err.c_str());
             return false;
         }
         if (!safetensors::validate_data_offsets(st, err)) {
@@ -47,6 +47,32 @@ bool SAFETENSOR_Load(const std::string &path, safetensors::safetensors_t &st, in
             for (size_t i = 0; i < st.metadata.size(); i++) {
                 std::string key = st.metadata.keys()[i], value;
                 st.metadata.at(i, &value);
+            }
+        }
+        const uint8_t *databuffer{nullptr};
+        if (st.mmaped) {
+            databuffer = st.databuffer_addr;  // st->mmap_addr + 8 + st->header_size;
+        } else {
+            databuffer = st.storage.data();
+        }
+        int nT = st.tensors.size();
+        assert(nT > 0);
+        // Print Tensor info & value.
+        for (size_t i = 0; i < nT; i++) {
+            std::string key = st.tensors.keys()[i];
+            if (key == safetensors::safetensors_t::config_key_) {
+                safetensors::tensor_t tensor;
+                st.tensors.at(i, &tensor);
+                st.loadJS(tensor, databuffer, st.mmap_size);
+                if (true) {
+                    JSON jsConfig = st.jsConfig["CLI_params"]["config"];
+                    std::ofstream file("_koifish_tmp_config_.json");
+                    if (file.is_open()) {
+                        file << jsConfig.dump(4);
+                        file.close();
+                    }
+                }
+                continue;
             }
         }
 
@@ -64,21 +90,27 @@ bool SAFETENSOR_Load_jconfig(const std::string &path, JSON &jsConfig, int flag) 
     bool bLoad = SAFETENSOR_Load(path, st, flag);
     if (!bLoad)
         return false;
-    if (st.jsConfig.empty())
+    if (st.jsConfig.empty()) {
+        _INFO(">>>>>> \"%s\" has no jConfig! \n", path.c_str());
         return false;
+    }
 
-    jsConfig = st.jsConfig;
-    assert(!jsConfig.empty());
-    std::ofstream o("_koifish_tmp_config_.json");
-    o << std::setw(4) << jsConfig << std::endl;
-    jsConfig = jsConfig["CLI_params"]["config"];
-    assert(!jsConfig.empty());
+    // jsConfig = st.jsConfig;
+    // assert(!jsConfig.empty());
+    // std::ofstream o("_koifish_tmp_config_.json");
+    // o << std::setw(4) << jsConfig << std::endl;
+    jsConfig = st.jsConfig["CLI_params"]["config"];
+    if (jsConfig.empty()) {
+        assert(0);
+        return false;
+    }
+
     return true;
 }
 
-static string ST_config_key_ = "__json__config__";
+static safetensors::safetensors_t safeTensors;
 bool Fish::SAFETENSOR_Serialize(const std::string &path, bool isSave, int flag) {
-    string jPath = path + ".json";
+    string jPath            = path + ".json";
     size_t data_offset_base = 0;
     std::string warn, err;
     JSON jsConfig;
@@ -89,8 +121,8 @@ bool Fish::SAFETENSOR_Serialize(const std::string &path, bool isSave, int flag) 
             jsConfig["tokenizer"]["tokens"] = "";
             safeTensors.Clear();
             for (auto t : optParams) {
-                if(t->GetDataX()==nullptr){
-                    _INFO("[ST_SERIALIZE] \"%s\" is empty!\n",t->name);
+                if (t->GetDataX() == nullptr) {
+                    _INFO("[ST_SERIALIZE] \"%s\" is empty!\n", t->name);
                     return false;
                 }
                 std::vector<floatX> weight;
@@ -112,7 +144,7 @@ bool Fish::SAFETENSOR_Serialize(const std::string &path, bool isSave, int flag) 
                 jsConfig["tensors"][t->name]  = "";  // tensor->Dump(100,"");
                 jsConfig["tensors"]["offset"] = dst_offset;
             }
-            // safeTensors.insertJS(jsConfig);
+            safeTensors.insertJS(jsConfig);
             // __metadata__
             safeTensors.metadata.insert("vendor", "gruai");
             bool ret = safetensors::save_to_file(safeTensors, path, &warn, &err);
@@ -130,11 +162,12 @@ bool Fish::SAFETENSOR_Serialize(const std::string &path, bool isSave, int flag) 
             //  save json file
             std::ofstream o(jPath);
             o << std::setw(4) << jsConfig << std::endl;
-            _INFO("[ST_SERIALIZE] save@%s iter=%d\n", path.c_str(), flag);
+            _INFO(">>>>>> ST_SERIALIZE save @\"%s\" iter=%d\n", path.c_str(), flag);
             return true;
         } else {
             int nSerialT = 0;
-            bool bLoad   = SAFETENSOR_Load(path, safeTensors, flag);
+            safeTensors.Clear();
+            bool bLoad = SAFETENSOR_Load(path, safeTensors, flag);
             if (!bLoad)
                 return false;
             const uint8_t *databuffer{nullptr};
@@ -149,14 +182,14 @@ bool Fish::SAFETENSOR_Serialize(const std::string &path, bool isSave, int flag) 
                 std::string key = safeTensors.tensors.keys()[i];
                 safetensors::tensor_t tensor;
                 safeTensors.tensors.at(i, &tensor);
-                if(key==ST_config_key_){
-                    safeTensors.loadJS(tensor,databuffer, safeTensors.mmap_size);
-                    jsConfig = safeTensors.jsConfig["CLI_params"]["config"];                    
-                    std::ofstream file("ST_SERIALIZE.json");
-                    if (file.is_open()) {
-                        file << jsConfig.dump(4); 
-                        file.close();
-                    }
+                if (key == safetensors::safetensors_t::config_key_) {
+                    /*    safeTensors.loadJS(tensor, databuffer, safeTensors.mmap_size);
+                        jsConfig = safeTensors.jsConfig["CLI_params"]["config"];
+                        std::ofstream file("ST_SERIALIZE.json");
+                        if (file.is_open()) {
+                            file << jsConfig.dump(4);
+                            file.close();
+                        }*/
                     continue;
                 }
                 hGensor target = GetGensor(key);  //  "model.embed.weight"    model.layers.0.attn_norm.weight
@@ -179,7 +212,8 @@ bool Fish::SAFETENSOR_Serialize(const std::string &path, bool isSave, int flag) 
 
                 nSerialT++;
             }
-            _INFO("[ST_SERIALIZE] load@%s nSerialT=%d iter=%d\n", path.c_str(), nSerialT, flag);
+            // config.model.Init(jsConfig)
+            _INFO("\n>>>>>> ST_SERIALIZE load@\"%s\" nSerialT=%d iter=%d\n", path.c_str(), nSerialT, flag);
             return true;
         }
     } catch (JSON::parse_error &e) {
@@ -300,6 +334,52 @@ bool MODEL_CARD::OnJsonCALM(CLI_params *hConfig, const std::string &path, const 
     return true;
 }
 
+bool MODEL_CARD::InitHF(CLI_params *hConfig, const JSON &jConfig, int flag) {
+    n_layers = hConfig->nLayer();
+    for (int i = 0; i < n_layers; i++) {
+        int nH = hConfig->n_head(i), nF = hConfig->n_ff(i);
+        assert(nH > 0 && nF > 0);
+    }
+    
+    string sTyp = jKVs(jConfig, {"model", "datatype", "weight"}, string(""));
+    if (!sTyp.empty())
+        tpWeight = tpNumOf(sTyp);
+    sTyp = jKVs(jConfig, {"model", "datatype", "embed"}, string(""));
+    if (!sTyp.empty())
+        tpEmbed = tpNumOf(sTyp);
+    head_dim = hConfig->n_embd_head();
+    n_kv_heads = hConfig->n_head_kv();
+    seq_len = hConfig->n_ctx();
+    assert(seq_len < 4096);  // for now limit seq_len to 4096 to avoid KV cache OOM for models like Mistral since window size isn't correctly
+                             // specified if (context) { 	config.seq_len = context;
+
+    sCardPath = jKV(jConfig, {"model_card"}, sCardPath);
+    if (sCardPath.empty()) {
+        return false;
+    }
+    string jPath = sCardPath + "config.json";
+    LoadJsonFile(jPath, jModelParam);
+    sTokenPath = sCardPath + "tokenizer.json";
+    // LoadJsonFile(sTokenPath,jTokenizer);                             // }
+
+    if (jModelParam.empty()) {
+        sCardPath = "";
+    } else {
+        model_type = jKV(jModelParam, {"model_type"}, model_type);
+        if (model_type == "")
+            sCardPath = "";
+        else {
+            vocab_size           = jKV(jModelParam, {"vocab_size"}, vocab_size);
+            torch_dtype          = jKV(jModelParam, {"torch_dtype"}, torch_dtype);
+            transformers_version = jKV(jModelParam, {"transformers_version"}, transformers_version);
+            bos_token_id         = jKV(jModelParam, {"bos_token_id"}, bos_token_id);
+            eos_token_id         = jKV(jModelParam, {"eos_token_id"}, eos_token_id);
+        }
+    }
+
+    return empty();
+}
+
 bool Fish::CALM_Serialize(const std::string &path, bool isOnlyVocab, int flag) {
     try {
         JSON header;
@@ -315,7 +395,7 @@ bool Fish::CALM_Serialize(const std::string &path, bool isOnlyVocab, int flag) {
                 JSON metadata = val;
                 std::cout << "\n\t__metadata__ " << metadata << std::endl << std::endl;
                 config.model.OnJsonCALM(&config, path, metadata, 0x0);
-                
+
                 // InitDictTokenset();
                 if (isOnlyVocab)
                     continue;

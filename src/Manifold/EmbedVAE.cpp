@@ -378,15 +378,15 @@ bool FFN::Build(int flag_0) {
     bool isTrain = hFish->isTrain();
     int flag     = flag_0;
     latent       = shape[1];
-#ifdef _TENSOR_G_
+
     // flag |= GeNeuron::F_BIAS;
     assert(C == shape[0]);
     sp3 = {B, T, latent};
     sp2 = {B, T, C};
+    // dump_flag = -1;
     // relu.out = std::make_shared<huTensor>(name+"_relu",sp3,tpWeight,false);
-#else
-    gate.BuildX(name + "_gate", {shape[0], shape[1]}, hFish, flag);
-#endif
+    // gate.BuildX(name + "_gate", {shape[0], shape[1]}, hFish, flag);
+
     VarCoder::Build(flag);
     if (isShareParam) {
         TokenEmbed *embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);

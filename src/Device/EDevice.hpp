@@ -76,4 +76,4 @@ public:
 };
 typedef shared_ptr<EDGE_DEVICES>hEDevices;
 
-void SYNC_DEVICE(int flag=0x0);
+bool SYNC_DEVICE(const std::string&sX="", int flag=0x0);

@@ -47,10 +47,20 @@ extern inline const std::string DATE(int fmt = 0x0) {
     char buf[80];
     tstruct = *localtime(&now);
     // Visit http://en.cppreference.com/w/cpp/chrono/c/strftime for more information about date/time format
-    strftime(buf, sizeof(buf), "%Y-%m-%d.%X", &tstruct);
+    switch(fmt){
+    case 100:
+        strftime(buf, sizeof(buf), "%Y-%m-%d", &tstruct);
+        break;
+    default:
+        strftime(buf, sizeof(buf), "\"%Y-%m-%d.%X\"", &tstruct);
+        break;
+    }
+    
     std::string sDate = buf;
-    sDate             = "\"" + sDate + "\"";
+    // sDate             = "" + sDate + "";
     return sDate;
 }
+
+void GRUAI_KOIFISH_VERSION(char *str,int flag);
 
 #define cDATE DATE().c_str()

@@ -47,12 +47,12 @@ struct StepInfos {
     };
     vector<STEP> steps;
     // vector<float> curve;
-    int best_id = -1;
-
+    int best_id     = -1;
+    bool isAccuracy = false;
     virtual void Init(Optimizer *hO, int flag = 0x0);
     float Last() { return steps.empty() ? FLT_MAX : steps[steps.size() - 1].loss; }
     virtual bool SaveToCSV(const string &sPath, int flag = 0x0);
-    float Best() { return best_id == -1 ? FLT_MAX : steps[best_id].loss; }
+    float Best() const;
 
     void Add(STEP step, int flag = 0x0);
 };
@@ -76,9 +76,14 @@ struct BATCH_INPUT {
     virtual size_t size() { return hostToken->size(); }
 };
 typedef shared_ptr<BATCH_INPUT> hBATCH;
-class SampLoader {
+class SampLoader : public std::enable_shared_from_this<SampLoader> {
    protected:
     typedef std::string mt19937_state;
+
+    Distri_ARRAY iiLoss;
+    // ppl(Perplexity) is the exponential of the average cross entropy; or geometric mean of the inverse probabilities of each token
+    Distri_ARRAY iiPPL;
+
     //  Store tokens from source.  always in CPU
 
     int eval_every = -1, tokens_per_iter = 0;
@@ -109,8 +114,9 @@ class SampLoader {
     std::string tpBatchSample, name;  //
     std::vector<hSAMP> cur_samps;
     int nMostToken  = -1;
-    int num_batches = -1;                // number of batchs in each epoch
-    int B = -1, T = -1, C = -1;                  // number of samples in each batch,  number of tokens in each sample
+    int num_batches = -1;        // number of batchs in each epoch
+    int B = -1, T = -1, C = -1;  // number of samples in each batch,  number of tokens in each sample
+    size_t nEvalTokens = 0;
     int StepOfEvaluate(int flag = 0x0);  //  smaple to reduce eval time
 
     shared_ptr<GTensor> hostTargetProbs = nullptr;  // hostBatch=nullptr,hostBatchMask=nullptr,
@@ -122,6 +128,12 @@ class SampLoader {
     hSAMP SampAt(size_t idx_) {
         assert(idx_ < nShard());
         return shard_samps[idx_];
+    }
+    virtual void ClearII()  {
+        iiLoss.Clear();     iiPPL.Clear();
+    }
+    virtual void UpdateII()  {
+        iiLoss.Stat();     iiPPL.Stat();
     }
     hBATCH GetCurBatch(int flag = 0x0) const { return hBatch; }
     virtual bool isEval(int t, int flag = 0x0);
@@ -149,7 +161,9 @@ class SampLoader {
 
     virtual int PickSomeTokens(Grusoft::GRander &rander, int nSample, std::vector<int> &samps, int flag = 0x0);
     virtual bool Prepare(Optimizer *hO, hDataToken hT, int flag = 0x0);
+    virtual void UpdateStepInfos(float mean_loss, int nB, int flag = 0x0);
     virtual size_t UpdateBatch(int next_id, Fish *fish);
+    virtual double Evaluate(int flag = 0x0);
     virtual ~SampLoader() {
         if (!shard_samps.empty()) {
         }

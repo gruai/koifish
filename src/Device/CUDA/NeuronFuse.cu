@@ -88,12 +88,13 @@ hGTensor TokenEmbed::OnEmbed(hGensor inpL, int seed) {
         int OC = w->ne[1], Vp = padded_nCls;
         hGTensor cur = out, curW = w;
         if (isForward()) {
-            inp       = inpL;
+            inp = inpL;
             // grid_size = CEIL_DIV(B * T * C, block_size);
             // CU_embed_forw_v0<<<grid_size, block_size, 0, main_stream>>>(ToX(cur), TO<int>(inp), ToX(curW), ToX0(b), B, T, C);
-            if(w->type==typNUMBER::T_BINARY_3){
-                CU_embed_ternary_forw_<floatX><<<CEIL_DIV(B * T, block_size), block_size, 0, main_stream>>>(ToX(cur), TO<int>(inp), curW->gama_T(), TO<char>(curW), ToX0(b), B, T, C);
-            }else
+            if (w->type == typNUMBER::T_BINARY_3) {
+                CU_embed_ternary_forw_<floatX>
+                    <<<CEIL_DIV(B * T, block_size), block_size, 0, main_stream>>>(ToX(cur), TO<int>(inp), curW->gama_T(), TO<char>(curW), ToX0(b), B, T, C);
+            } else
                 CU_embed_forw_<<<CEIL_DIV(B * T, block_size), block_size, 0, main_stream>>>(ToX(cur), TO<int>(inp), ToX(curW), ToX0(b), B, T, C);
             w->Print("wte", 0, 0);  // ToX(w),true,Vp,C
             if (b != nullptr)
@@ -149,7 +150,7 @@ hGTensor TokenEmbed::SubW(hGTensor hSamp, bool isForw, hGTensor wOut, int flag) 
 // wrapper of CU_abc_ & cublasGemmEx & more ...
 void CU_mm_(floatX *d, hGTensor gensor, const floatX *b, const floatX *bias, int m, int n, int k, cudaStream_t stream, int transA, int transB, float beta,
             floatX *pre_gelu, bool backward) {
-    const float alpha = 1.0f;   //, beta = accumulate ? 1.0f : 0.0f;
+    const float alpha     = 1.0f;  //, beta = accumulate ? 1.0f : 0.0f;
     cublasOperation_t opA = (transA) ? CUBLAS_OP_T : CUBLAS_OP_N, opB = (transB) ? CUBLAS_OP_T : CUBLAS_OP_N;
     if (bias != nullptr || pre_gelu != nullptr) {  //  bias != nullptr || pre_gelu != nullptr
         floatX *wX = gensor->GetDataX();
@@ -214,10 +215,10 @@ floatX *GTensor::GetDataX(int flag, const string &sX) {
     size_t dT4B = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
     // int seed = 42;
     floatX *wX = (floatX *)(data);
-    if(hRef!=nullptr){
-        int debug=0x0;
+    if (hRef != nullptr) {
+        int debug = 0x0;
     }
-        
+
     switch (type) {
         case typNUMBER::T_SIGN:
             assert(0);
@@ -238,11 +239,11 @@ floatX *GTensor::GetDataX(int flag, const string &sX) {
             // PrintTensor<floatX>("wX", wX, true, ne[0], ne[1], ne[2], ne[3], -1);
             break;
         case typNUMBER::T_BINARY_TILE: {
-            dim3 dBlock(THREAD_TILE_M*THREAD_TILE_N), dGrid(CEIL_DIV(ne[0], THREAD_TILE_M), CEIL_DIV(ne[1], THREAD_TILE_N));
-            assert(ne[0]%THREAD_TILE_M==0 && ne[1]%THREAD_TILE_N==0);
-            wX      = ToX(GTensor::tmpTernary); 
-            floatGama *gam_ = gama_T();     //
-            CU_Tile2X_<floatX><<<dGrid, dBlock, smemPB, main_stream>>>(wX, gam_, 0.0, ne[0], ne[1],seed);
+            dim3 dBlock(THREAD_TILE_M * THREAD_TILE_N), dGrid(CEIL_DIV(ne[0], THREAD_TILE_M), CEIL_DIV(ne[1], THREAD_TILE_N));
+            assert(ne[0] % THREAD_TILE_M == 0 && ne[1] % THREAD_TILE_N == 0);
+            wX              = ToX(GTensor::tmpTernary);
+            floatGama *gam_ = gama_T();  //
+            CU_Tile2X_<floatX><<<dGrid, dBlock, smemPB, main_stream>>>(wX, gam_, 0.0, ne[0], ne[1], seed);
             // SYNC_DEVICE();
             if (flag == -1)
                 GTensor::tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1);
@@ -285,7 +286,7 @@ int SLP::FUSE_cuda_block(hGTensor rhs, hGTensor lhs, hGTensor gelu, bool isForw,
 
 //  hIn = QKV->out
 hGTensor FFN::cuTrain(hGTensor hIn, int flag) {
-    hGTensor tGelu = GTensor::scratch, down_out = remater_ffn ? GTensor::tmpFF1 : down.out, up_out = remater_ffn ? GTensor::tmpFF1 : up.out;
+    hGTensor tGelu = GTensor::scratch, up_out = remater_ffn ? GTensor::tmpFF1 : up.out;
     bool isBias = up.b != nullptr;
 
     if (isForward()) {
@@ -299,9 +300,11 @@ hGTensor FFN::cuTrain(hGTensor hIn, int flag) {
         if (!gate.Empty()) {
             gate.Forw(tGelu, norm.out, up_out);
         }
+        // up.dump_flag = dump_flag;
+        up.w->Print("ffn.up.w", 0, dump_flag);
         up.Forw(tGelu, norm.out, up_out);
-
         tGelu->Print("ffn.up+gelu", 0, dump_flag, C);
+        hGTensor down_out = GTensor::delta;  // remater_ffn ? GTensor::tmpFF1 : down.out;
         // PrintTensor<floatX>("ffn.norm",ToX(norm.out),true,B,T,C,1,-1);          PrintTensor<floatX>("ff1",ff1,true,B,T,latent,1,-1);
         down.Forw(down_out, tGelu, nullptr, isSymmetric);
         down_out->Print("ffn.down", 0, dump_flag, B * T * C);  // PrintTensor<floatX>("ffn",scratch,true,B,T,C);
@@ -332,6 +335,7 @@ hGTensor FFN::cuTrain(hGTensor hIn, int flag) {
 
         down.Back(GTensor::bt4c, tGelu, GTensor::delta, up_out);
         GTensor::delta->Print("ffn.up.delta", 0, dump_flag);
+        // hGensor tmpDelta = GTensor::FromBuffer();
         up.Back(GTensor::tmpDelta, norm.out, GTensor::bt4c, nullptr);
         // // layernorm backward does += to the dresidual, so it correctly accumulates grad from the MLP block above
         // norm.cuTrain(residual,scratchF,tmpDelta);
@@ -418,17 +422,58 @@ hGTensor LayerNormal::cuTrain(hGTensor inpDelta, int flag) {  //,hGTensor deltaI
 
 hGTensor OutSimilarity::cuTrain(hGTensor inp, int flag) { return nullptr; }
 
-// void fused_classifier(Type* logits, float* cuLoss,const float dloss, const int* targets,int B, int T, int V, int P, std::bool_constant<WriteDLogits>
-// write_dlogits, cudaStream_t stream) { float huTensor::FusedLoss(float dloss,hGTensor hLoss,hGTensor hTarget,hGTensor hLastLayer, hGTensor w,int V,bool
-// isForward,int flag){
+/*
+    Each block for one token
+    todo - 1.   fuse CU_mm_ &replace MM with dot-function
+*/
+__global__ static void CU_classifier_(floatX *logits_BT, float *losses, floatX *probs, const float dloss, const int *targets, int B, int T, int V, int P,
+                                      float *metric, bool WriteDLogits = true) {
+    // int64_t idx = gridDim.x - (blockIdx.x + 1);
+    int idx = blockIdx.x, tid = threadIdx.x, token = targets[idx];
+    bool WriteProbs = probs != nullptr;
+    floatX *logits  = logits_BT + (size_t)(idx)*P;
+
+    // SoftmaxParams sp = CU_prepare_softmax(logits, V);    //
+    float thread_maxval = -INFINITY, thread_sumval = 0.0f, sum = 0.0f;
+    for (int i = tid; i < V; i += blockDim.x) {
+        float v       = (float)logits[i];
+        thread_maxval = fmaxf(thread_maxval, v);
+    }
+    float block_maxval = blockReduce_v0<warpReduceMax>(thread_maxval, false, -INFINITY);
+    for (int i = tid; i < V; i += blockDim.x) {
+        float v = (float)logits[i];
+        thread_sumval += expf(v - block_maxval);
+    }
+    float partition = blockReduce_v0<warpReduceSum>(thread_sumval);  //  canonical partition function
+                                                                     // calculate the probability needed for the loss and update (single-threaded)
+    __shared__ float pAt;                                            // prob of target token
+    if (threadIdx.x == 0) {
+        pAt = expf((float)logits[token] - block_maxval) / partition;
+        losses[idx] -= logf(pAt);
+        // metric[METRIC::LOSS] += losses[idx], metric[METRIC::PPL] += -losses[idx];
+    }
+    __syncthreads();
+    if (WriteDLogits) {
+        for (int i = tid; i < V; i += blockDim.x) {
+            float v = (float)logits[i], prob = expf(v - block_maxval) / partition;
+            // prob            = i == token ? pAt : (1.0 - pAt) / (V - 1);  //  from cys
+            float indicator = (i == token) ? 1.0f : 0.0f;
+            float dlogit    = (prob - indicator) * dloss;
+            logits[i]       = (floatX)dlogit;
+        }
+    }
+    __syncthreads();
+}
+
 hGTensor OutCLS::cuTrain(hGTensor inp_, int flag) {
-    int V = nCls, Vp = padded_nCls, gelu_fusion = 1;
+    int V = nCls, Vp = padded_nCls, gelu_fusion = 1, i;
     assert(proj.b == nullptr);
     mean_loss          = 0.0f;
     const int *targets = (int *)(target->data);
-    float *cuLoss      = (float *)out->data;
-    hGTensor cur = preLogits, w = proj.w;  
-    float alpha4g = 1.0, beta4g = 1.0; //  alpha4g = dB*1.0/B
+
+    float *cuLoss = (float *)out->data;
+    hGTensor cur = preLogits, w = proj.w;
+    float alpha4g = 1.0, beta4g = 1.0, logprob = 0;  //  rLoss = 1.0f / (B * T)
     if (isForward()) {
         inp = inp_;
         if (maec != nullptr) {
@@ -438,39 +483,42 @@ hGTensor OutCLS::cuTrain(hGTensor inp_, int flag) {
         floatX *z0 = ToX(inp), *to_gelu = nullptr;  //* errLogits = ToX(preLogits),
         cudaCheck(cudaMemset(cuLoss, 0, B * T * sizeof(float)));
         assert(target->isSameShape(out));
-        constexpr std::bool_constant<true> cuFalse;
-        // if(ToG0(w)!=nullptr && delta!=nullptr){
-        //     w->ZeroGrad();
-        // }
-        for (size_t i = 0; i < B; i += dB) {
+        bool isBack = ToG0(w) != nullptr && delta != nullptr && !hFish->isAtPhase(LIFE_PHASE::P_EVAL_), write_dlogits = isBack;
+        // target->Print("oucls.target", 1, -1), isBack = false, write_dlogits = false;  //   Debug_PPL
+        w->Print("oucls.proj.w", 1, dump_flag);
+        for (i = 0; i < B; i += dB) {
             size_t off = i * T * Vp, n1 = i * T, nZ = i * T * C;
             off = 0;  // reduce memory
             // PrintTensor<floatX>("OutCLS.proj.w", w->GetDataX(), true, w->ne[0], w->ne[1], w->ne[2], w->ne[3], -1);
             // [50304,768] x [768,8192] => [50304,8192]
             CU_mm_(ToX(cur) + off, w, z0 + nZ, NULL, Vp, dB * T, C, main_stream, true, false, false);
-            fused_classifier(ToX(cur) + off, cuLoss + n1, rLoss, targets + n1, dB, T, V, Vp, cuFalse, main_stream);  // target=[32,1024]
-            if (ToG0(w) != nullptr && delta != nullptr && !hFish->isAtPhase(LIFE_PHASE::P_EVAL_)) {                                                            //  back of delta & grad
+            // SYNC_DEVICE();
+            if (DEBUG.T_classifier_ver == 1) {
+                CU_classifier_<<<dB * T, 1024, 0, main_stream>>>(ToX(cur) + off, cuLoss + n1, nullptr, rLoss, targets + n1, dB, T, V, Vp, dev_metric,
+                                                                 write_dlogits);
+            } else
+                fused_classifier_kernel5<<<dB * T, 1024, 0, main_stream>>>(ToX(cur) + off, cuLoss + n1, nullptr, rLoss, targets + n1, dB, T, V, Vp,
+                                                                           write_dlogits);
+            if (isBack) {  //  back of delta & grad
                 CU_mm_(ToX(delta) + nZ, w, ToX(cur) + off, NULL, C, dB * T, Vp, main_stream, 0, 0, 0, gelu_fusion >= 2 ? to_gelu : NULL, true);
                 CU_mm_blas(ToG(w), z0 + nZ, ToX(cur) + off, NULL, C, Vp, dB * T, main_stream, false, true, alpha4g, beta4g /* accumulate */, NULL, true);
             }
         }
-        // fused_classifier(errLogits, cuLoss, rLoss, targets, B, T, V, Vp, cuFalse, main_stream);        //target=[32,1024]
-        cudaCheck(cudaMemcpy(hostLoss, cuLoss, B * T * sizeof(float), cudaMemcpyDeviceToHost));
-        SYNC_DEVICE();  // cudaCheck(cudaDeviceSynchronize());
-        w->Print("oucls.proj.w", 1, dump_flag);
-
-        /*if(flag==0x1001 && gw!=nullptr && errOut!=nullptr){            //matmul_backward(errOut, gw, NULL, errLogits, z0, w, NULL, B, T, C, Vp, main_stream);
-        //accumulate=true CU_mm_blas(errOut, w, errLogits, NULL, C, B*T, Vp, main_stream, false, false, 0, 0, 0, 0, false,gelu_fusion >= 2 ? to_gelu : NULL,
-        true); if (gelu_fusion < 2 && to_gelu) { gelu_backward_inplace(errOut, to_gelu, B*T*C, main_stream);
-            }
-            CU_mm_blas(gw, z0, errLogits, NULL , C, Vp, B*T, main_stream, false, true, 0, 0, 0, 0,true , NULL, true);
-        }*/
-
-        for (int i = 0; i < B * T; i++) {
+        // fused_classifier(errLogits, cuLoss, rLoss, targets, B, T, V, Vp, write_dlogits, main_stream);        //target=[32,1024]
+        cudaMemcpy(hostLoss, cuLoss, B * T * sizeof(float), cudaMemcpyDeviceToHost);
+        if (!SYNC_DEVICE("OutCLS", 1)) {
+            assert(0);
+            exit(KOIFISH_EXIT_OUT_CLS);
+        }
+        for (logprob = 0, i = 0; i < B * T; i++) {
             assert(!std::isnan(hostLoss[i]));
             mean_loss += hostLoss[i];
+            logprob += -hostLoss[i];
         }
         mean_loss /= B * T;
+        float ppl = exp(-logprob / (B * T));    //  just exp(mean_loss)
+        hLoader->iiLoss.Add(mean_loss);
+        hLoader->iiPPL.Add(ppl);
     } else {
         // matmul_backward(errOut, gw, NULL, errLogits, z0, w, NULL, B, T, C, Vp, main_stream);
         if (maec != nullptr) {

@@ -68,7 +68,6 @@ namespace Grusoft{
 		inline uint32_t RandU32()		{
 			x = RandRersResrResdra();
 			uint32_t i = static_cast<uint32_t>(x & 0x7FFFFFFF);
-			// assert(i>=0);
 			return i;
 		};
 		inline double Uniform_(double a0,double a1) {

@@ -188,8 +188,9 @@ class RLSchedule {
     double budget          = 1000;
 
     vector<arrTask> allTasks;
+    vector<arrTask> curBranches;    // may varied at different stage & models
     arrTask curTasks;
-    int curBranch = 0;
+    int curBranchID = 0;    
 
     LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;
     Grusoft::GRander rand_branch;
@@ -198,6 +199,8 @@ class RLSchedule {
     string resident_list = "";
 
    public:
+    
+
     RLSchedule(EDGE_DEVICES *hED, const CLI_params &config, int flag) : hDevices(hED) { rand_branch.Init(654321); }
     virtual ~RLSchedule() {}
     virtual void BeforeStart(int flag = 0x0);
@@ -216,8 +219,13 @@ class RLSchedule {
     }
     virtual tpSTATUS GetStatus(int step, void *hObj, int flag) { return FLIP; }
     virtual void Dump(int typ) const {}
-    virtual int nBranch()   {
-        int nB = allTasks.size();       assert(nB>=0);
+    // if type==1 return curBraches, otherwise, return allBraches
+    virtual int nBranch(int type)   {        
+        int nB = allTasks.size();       
+        if(type==1){
+            nB = curBranches.size();
+        }
+        assert(nB>=0);
         return nB;
     }
     friend class EDGE_DEVICES;

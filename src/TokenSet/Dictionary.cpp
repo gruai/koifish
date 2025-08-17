@@ -472,6 +472,16 @@ GTokenizer::GTokenizer(Fish *dolphin, int flag) {
         bool bRet = InitHF(dolphin, flag);
     }
 }
+GTokenizer_GPT2::GTokenizer_GPT2(Fish *dolphin, int flag) {
+    config = dolphin->config;
+    assert(dolphin->config.model.empty());
+}
+
+// todo - call gpt2 tokenizer in next version
+std::string GTokenizer_GPT2::T2STR(TOKEN_ID tok,int flag )   {
+    return std::to_string((int)(tok)%10);
+}
+
 GTokenizer_Heap::GTokenizer_Heap(Fish *dolphin, int flag) {
     config = dolphin->config;
     assert(dolphin->config.model.empty());

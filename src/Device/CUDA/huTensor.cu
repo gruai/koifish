@@ -7,7 +7,8 @@
 #include "../../g_float.hpp"
 #include "./kernel/Operator.cuh"
 #include "./kernel/utils.cuh"
-// const int block_512 = 512;
+
+static Grusoft::GRander randParam;
 huTensor::huTensor(Fish* fish, const string& name_, const SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag) : GTensor(fish, shape, tpD_, false, flag) {
     size_t nEle       = size();
     MEM_STRATEGY stra = fish->config.scheduling.strategy;
@@ -20,7 +21,7 @@ huTensor::huTensor(Fish* fish, const string& name_, const SHAPE shape, typNUMBER
         snprintf(name, sizeof(name), "%s", name_.c_str());
     else
         name[0] = '\0';
-
+    param_seed = randParam.RandU32();
     if (isAlloc) {
         Alloc(0x0, flag);
     }
@@ -49,7 +50,7 @@ size_t huTensor::mostMemory(int typ) const {
     cudaHostAlloc is a function used to allocate pinned (page-locked) host memory, which can improve data transfer performance between the host (CPU) and device
    (GPU). Pinned memory allows for faster transfers because it bypasses the operating system's virtual memory system.
 */
-size_t huTensor::Alloc_1(void** dst, bool isZero, size_t sz0, int flag) {
+size_t huTensor::Alloc_1(void** dst, bool isZero, string desc, size_t sz0, int flag) {
     assert(*dst == nullptr);
 
     bool hostAlloc    = BIT_TEST(flags, F_HOSTALLOC);
@@ -66,6 +67,7 @@ size_t huTensor::Alloc_1(void** dst, bool isZero, size_t sz0, int flag) {
     if (isZero)
         cudaCheck(cudaMemset(*dst, 0, szAlloc));
     szGlobalMaloc += szAlloc;
+    SUM::mems.push_back(MEM_USAGE(szAlloc,desc,this));
     return szAlloc;
 }
 size_t huTensor::Free_1(void** obj, const string& info) {
@@ -74,11 +76,10 @@ size_t huTensor::Free_1(void** obj, const string& info) {
     if (BIT_TEST(flags, F_HOSTALLOC))
         cudaFreeHost(*obj);
     else {
-        // cudaFreeCheck(obj);
         cudaError_t error = cudaFree(*obj);
-        if (error != cudaSuccess) {
-            // _INFO("[CUDA ERROR] at file %s:%d:\n%s\n", file, line, cudaGetErrorString(error));
-            _INFO("[CUDA] free failed @\"%s\"! err=%s.\n", name, cudaGetErrorString(error));
+        if (error != cudaSuccess) {  
+            cudaError_t const last_err{cudaGetLastError()};
+            _INFO("[CUDA] free failed @\"%s\"! err=%s(%s).\n", name, cudaGetErrorString(error),cudaGetErrorString(last_err));
             // exit(EXIT_FAILURE);
         }
         *obj = nullptr;
@@ -90,13 +91,12 @@ size_t huTensor::Free_1(void** obj, const string& info) {
     return szGlobalMaloc;
 }
 
-static Grusoft::GRander rParam;
 static mt19937_state rngOfParams;
 bool huTensor::InitParam(int tpX) {
     size_t nElem0       = size(), i;
     size_t nInit        = size(1);
     // bool isTmp          = true;
-    uint32_t param_seed = rParam.RandU32();
+    // uint32_t param_seed = rParam.RandU32();
     int iter = hFish->GetCurIter();
     if (tpInit > 0 && tpInit != SERIALIZE) {
         if(strcmp(name,"model.blk.34.ffn_down.weight")==0){
@@ -346,6 +346,7 @@ bool huTensor::SerialGP(void* yD, void* yG, size_t szY, bool isToY, int flag) {
 
 bool huTensor::OverWrite(hGTensor hGT, bool isSrc, int flag) {
     size_t nEle = size();
+    assert(hGT->type == type);
     assert(isSameShape(hGT) && szData > 0);
     if (isSrc) {
         huTensor* src = dynamic_cast<huTensor*>(hGT.get());

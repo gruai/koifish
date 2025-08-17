@@ -121,9 +121,7 @@ bool Fish::isRemater(int flag) const {
     return false;
 }
 
-bool Fish::isAtPhase(LIFE_PHASE ph)    const   { 
-    return GetOptimizer()->phase == ph ; 
-}
+bool Fish::isAtPhase(LIFE_PHASE ph) const { return GetOptimizer()->phase == ph; }
 
 hFISH Fish::MakeSwarm(const std::string nam_, struct CLI_params &params, int flag) {
     vector<hWIKI> wikis = WIKI::MakeInstance(nam_, params, 0x0);
@@ -227,34 +225,17 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
     if (isTrain())
         assert(nParams > 0);
     else {
+        hOPT->SetPhase(LIFE_PHASE::P_EVAL_);
         assert(hBackTG == nullptr);
-        RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
-        // hRLS->BeforeTrain( );
-        hRLS->Prepare(-1);  // Memory management
-        for (auto t : hOPT->opt_ps) {
-            hRLS->GetTensorStatus(-1, t, 0x0);
-        }
-        /*assert(nParams==0);*/
+    }       
+    RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
+    hRLS->Prepare(-1);  // Memory management
+    for (auto t : hOPT->opt_ps) {
+        hRLS->GetTensorStatus(-1, t, 0x0);
     }
     if (tpInitWeight == SERIALIZE) {
         if (!LoadCheckPoint(flag))
-            return false;
-        /*if(!config.model.empty()){
-            isLoadCheckpoint = HF_Serialize(false,0x0);
-        }else{
-            string type=FILE_EXT(config.checkpoint.in);
-            if(type==".gguf"){
-                isLoadCheckpoint = GGUF_Serialize(config.checkpoint.in,false,0x0);
-            }else if(type==".calm"){
-                isLoadCheckpoint = CALM_Serialize(config.checkpoint.in,false,0x0);
-            }else{
-                isLoadCheckpoint = YALM_Serialize(config.checkpoint.in,false,0x0);
-            }
-        }
-        if(!isLoadCheckpoint){
-            _INFO("%s Failed to InitWeight from %s! tutor=%s\n",__func__,"",CSTR(wikis[0]));
-            return false;
-        }*/
+            return false;       
     }
 
     if (!config.only_write_model && hOPT != nullptr) {
@@ -368,11 +349,20 @@ bool Fish::Build(int flag) {
 static const char *vendor = "gruai";  // llm_arch_from_string
 bool Fish::SaveTrain(string sX, int flag) {
     assert(hOPT != nullptr);
+    if (config.checkpoint.out.empty()) {
+        return false;
+    }
     int iter = hOPT->iter;  //     train->opt->iter;
     // _INFO("%s: iter_%ld\n", __func__, iter);
     string sit       = "IT", sOut;
     string sBaseName = config.checkpoint.model_out;  // get_train_filename(.c_str(),sit.c_str(), "", -1  );
     bool isOK        = false;
+    if (!sX.empty()) {
+        sOut = config.checkpoint.out + sX + ".ck";  //+ std::to_string(iter)
+    } else
+        sOut = config.checkpoint.out + "latest" + ".ck";
+    VERIFY_DIR_EXIST(sOut,true);
+
     if (!config.scheduling.canSave(iter, flag)) {
         return false;
     }
@@ -381,28 +371,24 @@ bool Fish::SaveTrain(string sX, int flag) {
             return false;
         }
     }
-    if (!config.checkpoint.out.empty()) {
-        if (!sX.empty()) {
-            sOut = config.checkpoint.out + sX + ".ck";  //+ std::to_string(iter)
-        } else
-            sOut = config.checkpoint.out + "latest" + ".ck";
-        isOK = SAFETENSOR_Serialize(sOut, true);
-        assert(isOK);
-        if (isOK && sX == "warmup") {  // only for debug
-            for (int i = 0; i < 1; i++) {
-                isOK = SAFETENSOR_Serialize(sOut, false);
-                assert(isOK);
-                isOK = SAFETENSOR_Serialize(sOut, true);
-                assert(isOK);
-            }
+
+    isOK = SAFETENSOR_Serialize(sOut, true);
+    assert(isOK);
+    if (isOK && sX == "warmup") {  // only for debug
+        for (int i = 0; i < 1; i++) {
+            isOK = SAFETENSOR_Serialize(sOut, false);
+            assert(isOK);
+            isOK = SAFETENSOR_Serialize(sOut, true);
+            assert(isOK);
         }
-        // _INFO("[SAVE] @%s iter=%d\n", sX.c_str(), iter);
     }
+    // _INFO("[SAVE] @%s iter=%d\n", sX.c_str(), iter);
 
     return isOK;
 }
 
 bool Fish::LoadCheckPoint(int flag) {
+    assert( tpInitWeight == INIT_WEIGHT::SERIALIZE );
     std::string fpCheck = config.checkpoint.in;
     if (!config.model.empty()) {
         isLoadCheckpoint = HF_Serialize(false, 0x0);
@@ -415,7 +401,7 @@ bool Fish::LoadCheckPoint(int flag) {
             return true;
         }
 
-        _INFO("[CHECKPOINT]: \"%s\"@%s......", type.c_str() + 1, fpCheck.c_str());
+        _INFO("[CHECKPOINT]: load \"%s\", type=\"%s\" ......", fpCheck.c_str(), type.c_str());
         if (type == "fish") {
             isLoadCheckpoint = SAFETENSOR_Serialize(config.checkpoint.in, false, 0x0);
         } else if (type == "calm") {
@@ -430,7 +416,7 @@ bool Fish::LoadCheckPoint(int flag) {
     }
 
     if (!isLoadCheckpoint) {
-        _INFO("\r[LoadCheckPoint] failed!  please check checkpoint file @\"%s\"\n", fpCheck.c_str());
+        _INFO("\r[LoadCheckPoint] failed!  please check file @\"%s\"!\n", fpCheck.c_str());
         return false;
     }
 

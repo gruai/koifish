@@ -221,12 +221,12 @@ __device__ __forceinline__ float warpReduceSum(float val) {
 // constexpr int nT = blockDim.x
 template <const int nT>
 __device__ inline float CU_BlockSum(float val, bool final_sync = false, float out_of_bounds = 0.0f) {
-    assert(blockDim.x > 0);    
+    assert(blockDim.x > 0);
     if (nT <= WARP_SIZE)
         return warpReduceSum<nT>(val);
 
     const int lane_id = threadIdx.x % WARP_SIZE, warp_id = threadIdx.x / WARP_SIZE;
-    const int num_warps = blockDim.x / WARP_SIZE;        
+    const int num_warps = blockDim.x / WARP_SIZE;
     __shared__ float shared_val[WARP_SIZE];
     float warp_val = warpReduceSum(val);
     if (lane_id == 0) {
@@ -363,13 +363,13 @@ void inline PCIE_test(int flag = 0x0) {
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
 
-    float *host_data, *device_data;
+    float *hostdata, *device_data;
     size_t data_size = 1 << 26;  // 64 MB
-    cudaMallocHost(&host_data, data_size);
+    cudaMallocHost(&hostdata, data_size);
     cudaMalloc(&device_data, data_size);
 
     cudaEventRecord(start);
-    cudaMemcpy(device_data, host_data, data_size, cudaMemcpyHostToDevice);
+    cudaMemcpy(device_data, hostdata, data_size, cudaMemcpyHostToDevice);
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
 
@@ -439,3 +439,38 @@ __global__ static void global_norm_squared_2D(float* out, const T* data, size_t 
         // assert(!isnan(block_sum) && !isinf(block_sum));
     }
 }
+
+struct SoftmaxParams {
+    float Scale;
+    float Offset;
+};
+
+/*
+ each block for one row of inp, i.e. inp[idx, :] of shape (V,)
+*/
+__device__ inline SoftmaxParams CU_prepare_softmax(const floatX* logits, int V) {
+    float thread_maxval = -INFINITY, thread_sumval = 0.0f, sum = 0.0f;
+    floatX max_val = logits[0];
+    int tid        = threadIdx.x;
+    /*if (threadIdx.x == 0) {  //  cpu version=P_softmax
+        for (int i = 0; i < V; i++) {
+            max_val = fmaxf(logits[i], max_val);
+        }
+        for (int i = 0; i < V; i++) {
+            sum += expf(logits[i] - max_val);
+        }
+        float a = 1.0 / sum;        //  0.07178,    715.412964
+    }*/
+    for (int i = tid; i < V; i += blockDim.x) {
+        float v       = (float)logits[i];
+        thread_maxval = fmaxf(thread_maxval, v);
+    }
+    float block_maxval = blockReduce_v0<warpReduceMax>(thread_maxval, false, -INFINITY);
+    for (int i = tid; i < V; i += blockDim.x) {
+        float v = (float)logits[i];
+        thread_sumval += expf(v - block_maxval);
+    }
+    float block_sumval = blockReduce_v0<warpReduceSum>(thread_sumval);    
+    return SoftmaxParams{1.f / block_sumval, block_maxval};
+}
+

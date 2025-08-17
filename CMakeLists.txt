@@ -54,12 +54,6 @@ else()
     endif()
 endif()
 
-if (K_TESTING)
-    add_subdirectory(tests)
-    find_package(gflags REQUIRED)
-    add_compile_definitions(_DO_SOME_TESTING_)
-endif()
-
 if (K_USE_CCACHE)
     find_program(_CCACHE_FOUND ccache)
 
@@ -143,7 +137,7 @@ if(K_USECUDA)
         endif()
         if(K_DEBUGCUDA)
             message(STATUS "DEBUG_CUDA - CUDA with debug option, very slow!!!")
-            list(APPEND CUDA_FLAGS -G ${CUDA_CXX_FLAGS_JOINED})
+            list(APPEND CUDA_FLAGS -G -O0 ${CUDA_CXX_FLAGS_JOINED})
         endif()
         message(STATUS "CUDA_FLAGS=${CUDA_FLAGS}")
         add_compile_options("$<$<COMPILE_LANGUAGE:CUDA>:${CUDA_FLAGS}>")
@@ -198,19 +192,36 @@ add_subdirectory(src/TokenSet)
 set(sources   ${TGraph_sources} ${util_sources} ${tensor_sources} ${kernel_sources} ${cheby_sources} ${Fuzi_sources} ${ggex_sources} ${device_sources} ${model_sources} 
     ${token_sources} ${mort_sources} ${blas_sources} ${TEST_SRCS} )
 add_executable(koifish ${CMAKE_CURRENT_SOURCE_DIR}/src/koifish.cpp ${sources} )
+add_executable(bubble ${CMAKE_CURRENT_SOURCE_DIR}/src/bubble.cpp ${sources} )
 message(STATUS "KOIFISH sources=${sources}")
 
 
-foreach(prog koifish )    #finetune koifish train2
+foreach(prog koifish bubble)    
     install(TARGETS ${prog} RUNTIME)
     target_include_directories(${prog} PRIVATE ${CMAKE_SOURCE_DIR}/src/Manifold/ ${CMAKE_SOURCE_DIR}/src/TokenSet/ ${CMAKE_SOURCE_DIR}/src/Utils/ ${CMAKE_SOURCE_DIR}/src/Device/CUDA 
-        ${GG_INC} ${CUDA_INC} ${MORE_INC} ${TEST_INC})
+        ${GG_INC} ${CUDA_INC} ${MORE_INC} )
 
     target_link_libraries(${prog} PRIVATE ${GG_LIB} ${CMAKE_THREAD_LIBS_INIT} ${OPENBLAS_LIB} ${DELTA_LIB} ${CUDA_LIB} ${GFLAGS_LIBRARIES} pthread )
     target_compile_features(${prog} PRIVATE cxx_std_17)
     target_compile_options(${prog} PRIVATE ${cxx_flags} ${DELTA_cc})
     # target_link_libraries(${prog} PRIVATE pybind11::embed)
 endforeach(prog)
+
+if (K_TESTING)
+    add_subdirectory(tests)
+    find_package(gflags REQUIRED)
+    add_executable(k_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_main.cpp ${sources} )
+    foreach(prog k_test )    
+        target_include_directories(${prog} PRIVATE ${CMAKE_SOURCE_DIR}/src/Manifold/ ${CMAKE_SOURCE_DIR}/src/TokenSet/ ${CMAKE_SOURCE_DIR}/src/Utils/ ${CMAKE_SOURCE_DIR}/src/Device/CUDA 
+            ${GG_INC} ${CUDA_INC} ${MORE_INC} )
+
+        target_link_libraries(${prog} PRIVATE ${GG_LIB} ${CMAKE_THREAD_LIBS_INIT} ${OPENBLAS_LIB} ${DELTA_LIB} ${CUDA_LIB} ${GFLAGS_LIBRARIES} pthread )
+        target_compile_features(${prog} PRIVATE cxx_std_17)
+        target_compile_options(${prog} PRIVATE ${cxx_flags} ${DELTA_cc})
+        # target_link_libraries(${prog} PRIVATE pybind11::embed)
+    endforeach(prog)
+
+endif()
 
 
 

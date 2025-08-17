@@ -153,9 +153,6 @@ struct KERNEL_PIPE : public MODEL_CARD {
             q   = hb + hb_dim;
             att = q + q_dim;
             // hb = ToX(GTensor::tmpFF1);	assert(GTensor::tmpFF1->nByte()>=hb_dim*sizeof(float));
-            // q = ToX(GTensor::bt4c);		assert(GTensor::bt4c->nByte()>=q_dim*sizeof(float));
-            // att = ToX(GTensor::scratch);	//	att_dim
-            // assert(GTensor::scratch->nByte()>=att_dim*sizeof(float));
         }
         // assert(tX->nByte()>=nzTmp*sizeof(float));
         tX->Zero();

@@ -397,6 +397,9 @@ void GTensor::Print(const string &title0, int x, int flag, size_t nEle) const {
         case typNUMBER::F32:
             PrintTensor<float>(title.c_str(), (float *)src, false, sp[0], sp[1], sp[2], sp[3], flag);
             break;
+        case typNUMBER::I32:
+            PrintTensor<int>(title.c_str(), (int *)src, false, sp[0], sp[1], sp[2], sp[3], flag);
+            break;
         default:
             assert(0);
             break;
@@ -514,7 +517,7 @@ floatGama *GTensor::gama_T() {
 }
 
 bool huTensor::Alloc(int iter, int flagInit) {
-    if (strcmp(name, "model.inp_embd.weight") == 0
+    if (strcmp(name, "model.blk.0.attn.wq.weight") == 0
         /*|| strcmp(name, "model.embed.weight") == 0*/) {  //  model.inp_embd.weight       model.out.weight model.embed.weight model.blk.0.attn.wq.weight
         int debug = 0x0;    //  
     }
@@ -540,6 +543,7 @@ bool huTensor::Alloc(int iter, int flagInit) {
     bool allocData = data == nullptr;
     size_t szMV = sizeof(floatMV) * size(), szGrad = sizeof(floatGrad) * size();
     szGama = 0x0;
+    string desc = name;
     if (allocData) {
         if (type == typNUMBER::T_BINARY_TILE) {
             size_t nTile = (size_t)(CEIL_DIV(ne[0], THREAD_TILE_M) * CEIL_DIV(ne[1], THREAD_TILE_N));
@@ -550,7 +554,7 @@ bool huTensor::Alloc(int iter, int flagInit) {
             szGama = sizeof(floatGama) * ne[0];
             // Alloc_1((void **)(&gama_T), false, sizeof(float) * ne[0]);
         }
-        Alloc_1(&data, true, szData + szGama);
+        Alloc_1(&data, true, desc+".w",szData + szGama);
     }
 
     if (isParam()) {
@@ -563,15 +567,15 @@ bool huTensor::Alloc(int iter, int flagInit) {
             if (grad_ref != nullptr)
                 grad = ToX(grad_ref);
             else {
-                Alloc_1((void **)(&grad), true, szGrad);  // sgd_kernel would zero grad!
+                Alloc_1((void **)(&grad), true, desc+".g",szGrad);  // sgd_kernel would zero grad!
             }
             string method = hFish->config.Get({"train", "optimizatioin", "method"}, string("adamw"), false);
             if (method == "adamw") {
-                Alloc_1(&gm, true, szMV * 2), gv = (char *)gm + szMV;
+                Alloc_1(&gm, true, desc+".mv", szMV * 2), gv = (char *)gm + szMV;
             } else if (method == "lion") {
-                Alloc_1(&gm, true, szMV);
+                Alloc_1(&gm, true, desc+".mv", szMV);
             } else {
-                Alloc_1(&gv, true, szMV);  // gm = nullptr, gv = (char *)grad + szMV;
+                Alloc_1(&gv, true, desc+".mv", szMV);  // gm = nullptr, gv = (char *)grad + szMV;
             }
         }
     } else {
@@ -596,6 +600,10 @@ bool huTensor::Alloc(int iter, int flagInit) {
 }
 bool huTensor::Free(bool isPassResident) {
     try {
+        if(strcmp(name,"model.blk.4.attn.wq.out")==0){
+            int debug = 0x0;
+        }
+
         if (isRefer())
             return true;
 

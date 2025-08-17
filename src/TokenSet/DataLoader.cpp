@@ -35,35 +35,6 @@ std::string mt19937_seed_to_state(unsigned seed) {
     std::mt19937 rng(seed);
     return mt19937_get_state(rng);
 }
-/*
-void SAMP::Refresh(SampLoader *loader,void *ctx,std::vector<int32_t>& tok_ids,int typ)  {
-    assert(0);      // Deprecated
-    auto target_probs = loader->hOPT->hTargetProbs();
-    int64_t nVocab()=target_probs->ne[0],n_tokens=target_probs->ne[1],nSampInBatch=target_probs->ne[2];
-    std::string sentence;
-    struct llama_context * lctx = static_cast<llama_context *>(ctx);
-    if(typ==-1)     //tpBatchSample=="stacking"
-        _INFO(" (%ld,%d)@\"%s...\"",pos,jump,sentence.c_str());     //sample_size
-    else{
-        tok_ids.clear();
-        int nz=len+nSampInBatch,i;
-        for(i=0;i<nz;i++){
-            TOKEN_ID tok = loader->TokenAt(pos+i);
-            tok_ids.push_back(tok);
-            string word = llama_token_to_piece(lctx, tok);
-            if(word=="\n" || word=="\r\n")  {
-                word=" ";
-            }
-
-            sentence += word;
-            if(i>64){
-
-            }
-        }
-        // _INFO("\t%ld@\"%.*s...\"\n",pos,64,sentence.c_str());     //sample_size
-        desc = sentence;
-    }
-}*/
 
 double SampLoader::DecodeVerify(hSAMP samp, hGensor tokens, hGensor logits, int flag) {
     int nC = tokens->ne[0], nB = tokens->ne[1], b, c, j, cand = -1, nz = 0;
@@ -204,11 +175,8 @@ void SampLoader::Samp2Batch(int k, hSAMP samp, struct train_params_ &params, int
         if (hostTargetProbs == nullptr) {
         } else {
             if (isTarget_1) {
-#ifdef _TENSOR_G_
                 hostTargetProbs->Set((int)i, (int)k, 0, 0, token);
-#else
-                hostTargetProbs->Set(0, (int)i, (int)k, 0, token);
-#endif
+                // hostTargetProbs->Set(0, (int)i, (int)k, 0, token);
             } else {
                 hostTargetProbs->Set(token, (int)i, (int)k, 0, +1.0f);
             }
@@ -227,10 +195,11 @@ void SampLoader::Samp2Batch(int k, hSAMP samp, struct train_params_ &params, int
 bool SampLoader::isEval(int t, int flag) {
     assert(type == DT_EVAL);
     if (eval_every > 0 && t % eval_every == 0) {
+        float train_last = hOPT->trainInfos().Last();
         if (t == 0) {
-            // if(hTokens->tpSample==DataTokenSet::HellaSwag){ //too long!
-            //     return false;
-            // }
+        }
+        if (hTokens->tpSample == DataTokenSet::HellaSwag) {  // too long!
+            // return train_last<5.0;
         }
         return true;
     }
@@ -351,7 +320,7 @@ size_t SampLoader::UpdateBatch(int x, Fish *fish) {
         cur_samps.push_back(samp);
         Samp2Batch(k, samp, _params);
         if (isLog && k < 6 && tpBatchSample != "stacking") {
-            sentence = dolphin->T2STR(samp_toks, 0x0);                           // llama_token_to_piece(lctx, samp_toks[0]);
+            sentence = dolphin->T2STR(samp_toks, 16, 0x0);                       // llama_token_to_piece(lctx, samp_toks[0]);
             _INFO(" (%ld,%d)@\"%s\"", samp->pos, samp->jump, sentence.c_str());  // sample_size
         } else if (type == SampLoader::TYPE::DT_EVAL) {
             if (k == 0) {
@@ -374,9 +343,9 @@ size_t SampLoader::UpdateBatch(int x, Fish *fish) {
     assert(hDict->isInRange(hBatch->host, hBatch->size(), 0));  //(int*)(hostBatch->data)
     // int *raw_t = (int*)(tokens_input->data);
 
-    tokens_input->OverWrite(hBatch->hostToken);
+    tokens_input->OverWrite(hBatch->hostToken);  // H2D
     if (target_probs != nullptr) {
-        target_probs->OverWrite(hostTargetProbs);
+        target_probs->OverWrite(hostTargetProbs);  // H2D
     }
 
     t_Samp = GST_TOC(tic);
@@ -433,39 +402,41 @@ bool SAMP::Serialize(FSerial &S, bool isSave, int flag) {
     return true;
 }
 
-std::vector<hDataToken> DataTokenSet::MakeInstance(struct CLI_params &params, hTokenizer hDict, int flag) {
+std::vector<hDataToken> DataTokenSet::MakeInstance(struct CLI_params &params, hTokenizer hDict, bool isLocalInfer, int flag) {
     DataTokens dts;
-    JSON jdata  = jKEY(params.jConfig, {"datasets"});
-    string type = "";
-    if (jdata.empty()) {  // Deprecated
-        auto hTokenset = std::make_shared<DataTokenSet>(hDict);
+    if (isLocalInfer) {  // Deprecated
+        /*auto hTokenset = std::make_shared<DataTokenSet>(hDict);
         // hTokenset->serial_root = "/home/cys/rnd/lic/datasets/story19M___[gpt2char]_"; //only for debug"
         hTokenset->serial_root = "./datasets/story19M___[gpt2.Q8_0]_";
         // hTokenset->serial_root = "./datasets/story19M___[bitnet-m7-70m.Q8_0]_";
         dts.push_back(hTokenset);
-    } else {
-        for (JSON::const_iterator it = jdata.begin(); it != jdata.end(); ++it) {
-            auto k = it.key();
-            if (!k.empty() && k[0] == '#')
-                continue;
-            if (k == "debug") {
-                continue;
-            }
-            auto v               = it.value();
-            hDataToken hTokenset = nullptr;
-            type                 = jKV(v, {"type"}, type);
-            if (type == "hellaswag")
-                hTokenset = std::make_shared<Tokenset_HellaSwag>(it, hDict);
-            else {
-                if (v.find("prompt") != v.end())
-                    hTokenset = std::make_shared<PromptTokenset>(it, hDict);
-                else if (v.find("glob") != v.end())
-                    hTokenset = std::make_shared<GlobTokenset>(it, hDict);
-                else
-                    assert(0);
-            }
-            dts.push_back(hTokenset);
+        return dts;*/
+    }
+
+    JSON jdata  = jKEY(params.jConfig, {"datasets"});
+    string type = "";
+    assert(!jdata.empty());
+    for (JSON::const_iterator it = jdata.begin(); it != jdata.end(); ++it) {
+        auto k = it.key();
+        if (!k.empty() && k[0] == '#')
+            continue;
+        if (k == "debug") {
+            continue;
         }
+        auto v               = it.value();
+        hDataToken hTokenset = nullptr;
+        type                 = jKV(v, {"type"}, type);
+        if (type == "hellaswag")
+            hTokenset = std::make_shared<Tokenset_HellaSwag>(it, hDict);
+        else {
+            if (v.find("prompt") != v.end())
+                hTokenset = std::make_shared<PromptTokenset>(it, hDict);
+            else if (v.find("glob") != v.end())
+                hTokenset = std::make_shared<GlobTokenset>(it, hDict);
+            else
+                assert(0);
+        }
+        dts.push_back(hTokenset);
     }
 
     return dts;
@@ -534,12 +505,9 @@ SampLoader::SampLoader(Fish *g_, const string &n, bool isNewTS, int flag) {
     }
     tpBatchSample = dolphin->config.tpBatchSample;
     stepis.name   = name;
+    isTarget_1    = true;
+    // isTarget_1 = g_->config.is({"model_v0", "target"}, string("OneHot"));
 
-#ifdef _TENSOR_G_
-    isTarget_1 = true;
-#else
-    isTarget_1 = g_->config.is({"model_v0", "target"}, string("OneHot"));
-#endif
     return;
 }
 
@@ -563,7 +531,9 @@ bool SampLoader::Prepare(Optimizer *hO, hDataToken hT, int flag) {
     assert(hTokens != nullptr && hDict != nullptr);
     hOPT = hO;  // maybe nullptr
     // assert(hOPT != nullptr);
-
+    if (dynamic_cast<Tokenset_HellaSwag *>(hT.get()) != nullptr) {
+        stepis.isAccuracy = true;
+    }
     if (hTokens != nullptr && hTokens->nMostShard > 0) {
         if (!hTokens->LoadNextShard(this))
             return false;
@@ -577,7 +547,7 @@ bool SampLoader::Prepare(Optimizer *hO, hDataToken hT, int flag) {
     // Batch tensor would be set @UpdateBatch!
     // struct train_params_ _params = hOPT->TrainParams();
     // T = _params.n_ctx, B = _params.n_batch;
-    dolphin->GetBTC(B,T,C);
+    dolphin->GetBTC(B, T, C);
     assert(T > 0 && B > 0);
     SHAPE shape = {T, B}, sp1 = {1, T, B};
     hBatch = std::make_shared<BATCH_INPUT>(shape);
@@ -1088,16 +1058,26 @@ std::string shuffle_samples_X(const std::string &rng_state, size_t *shuffled_off
     return mt19937_get_state(rng);
 }
 
-void StepInfos::Init(Optimizer *hO, int flag) { 
-    hOpt = hO; 
-}
+void StepInfos::Init(Optimizer *hO, int flag) { hOpt = hO; }
 
+float StepInfos::Best() const {
+    if (isAccuracy) {
+        return best_id == -1 ? -FLT_MAX : steps[best_id].loss;
+    } else
+        return best_id == -1 ? FLT_MAX : steps[best_id].loss;
+}
 void StepInfos::Add(STEP step, int flag) {
-    if (step.loss < Best()) {
-        best_id = steps.size() - 1;
+    if (isAccuracy) {
+        if (step.loss > Best()) {
+            best_id = steps.size() - 1;
+        }
+    } else {
+        if (step.loss < Best()) {
+            best_id = steps.size() - 1;
+        }
     }
     double g0 = -1.0, w0 = -1.0;
-    hGensor ten1=nullptr, ten2=nullptr;
+    hGensor ten1 = nullptr, ten2 = nullptr;
     for (auto tensor : hOpt->opt_ps) {
         size_t nElem = tensor->size();
         float s      = 1.0 / nElem;
@@ -1134,7 +1114,7 @@ bool StepInfos::SaveToCSV(const string &path, int flag) {
             fprintf(fp, "\n");
         }
         fclose(fp);
-        if (1/*DUMP()*/)
+        if (DUMP())
             _INFO(">>>>>> Save %s to \"%s\", step=%ld\n", name.c_str(), fpath.c_str(), steps.size());
         return true;
     } catch (...) {

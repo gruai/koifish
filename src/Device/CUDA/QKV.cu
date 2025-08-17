@@ -12,7 +12,6 @@
 #include "../../Manifold/Fish.hpp"
 #include "../../Manifold/Neuron.hpp"
 #include "./cuda_common.h"
-// #include "./kernel/embed.cuh"
 #include "./kernel/Operator.cuh"
 #include "./kernel/layernorm.cuh"
 #include "./kernel/rope.cuh"
@@ -551,11 +550,21 @@ bool InitCUDA(const CLI_params &hparams, EDGE_DEVICES *hDevice, int flag) {
 }
 
 //  cudaStreamSynchronize(stream)/cudaEventSynchronize(event) maybe better
-void SYNC_DEVICE(int flag) {
+bool SYNC_DEVICE(const std::string &sX, int flag) {
 #ifdef __USE_CUDA__
-    if (main_stream != nullptr)
-        cudaCheck(cudaDeviceSynchronize());
+    if (main_stream != nullptr) {
+        cudaError_t error = cudaDeviceSynchronize();
+        if (error != cudaSuccess) {
+            _INFO("SYNC_DEVICE err=\"%s\" (%s code=%d)\t%s\n", cudaGetErrorString(error), cudaGetErrorName(error), error, sX.c_str());
+            if (flag == 1)
+                return false;
+
+            exit(KOIFISH_EXIT_SYNC_DEVICE);
+        }
+        return true;
+    }
 #endif
+    return true;
 }
 void SYNC_STREAM(int flag) {
 #ifdef __USE_CUDA__
@@ -682,7 +691,8 @@ hGTensor SelfAttention::cuTrain(hGTensor inpL, int flag) {
         }
         return out;
     } else {  //  Backward
-        dump_flag = 0;     Q.w->Print("Qw", 1, dump_flag);
+        dump_flag = 0;
+        Q.w->Print("Qw", 1, dump_flag);
         float *scratchF = (float *)GTensor::buff;
         assert(inpL == GTensor::delta);
         delta->Print("delta", 0x0, dump_flag);
@@ -712,9 +722,10 @@ hGTensor SelfAttention::cuTrain(hGTensor inpL, int flag) {
             // Q.out->Print("Q.rope",0x0,dump_flag);    K.out->Print("K.rope",0x0,dump_flag);
         }
         if (isSeparateQKV) {
-            // Q.Back(GTensor::tmpDelta,norm.out,Q.tmpDelta);            // K.Back(GTensor::tmpDelta,norm.out,K.tmpDelta);            // V.Back(GTensor::tmpDelta,norm.out,V.tmpDelta);
+            // Q.Back(GTensor::tmpDelta,norm.out,Q.tmpDelta);            // K.Back(GTensor::tmpDelta,norm.out,K.tmpDelta);            //
+            // V.Back(GTensor::tmpDelta,norm.out,V.tmpDelta);
             Q.w->Print("Qw", 1, dump_flag);
-            // Q.w->Print("Qw", 0, dump_flag);  Q.b->Print("Qb", 0, dump_flag);   norm.out->Print("norm.out", 0, dump_flag);            
+            // Q.w->Print("Qw", 0, dump_flag);  Q.b->Print("Qb", 0, dump_flag);   norm.out->Print("norm.out", 0, dump_flag);
             matmul_backward(ToX(GTensor::tmpDelta), ToG(Q.w), ToG0(Q.b), (floatX *)devDeltaQ, ToX(norm.out), Q.w->GetDataX(), scratchF, B, T, C_qkv, C_qkv,
                             main_stream, false, NULL, false);
             GTensor::tmpDelta->Print("delta_0", 0, dump_flag);

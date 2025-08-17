@@ -105,7 +105,7 @@ class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
     }
     // int UniqueTokens(const std::vector<TOKEN_ID>& tokens,size_t n_1,int flag=0x0);
    public:
-    static std::vector<hDataToken> MakeInstance(struct CLI_params &params, hTokenizer, int flag);
+    static std::vector<hDataToken> MakeInstance(struct CLI_params &params, hTokenizer, bool isLocalInfer, int flag);
 
     std::vector<TOKEN_ID> tokens, masks;
     DataTokenSet(hTokenizer hDictVAE);
@@ -122,7 +122,7 @@ class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
     bool InitSamps(unsigned context_length, std::vector<size_t> &samples_begin, std::vector<size_t> &samples_size, int flag = 0x0);
 
     virtual double LossOnResult(hSampLoader hLoader, OutCLS *cls, int flag = 0x0);
-    virtual double Evaluate(Fish *fish, hSampLoader loader0, int flag = 0x0);
+    // virtual double Evaluate(Fish *fish, hSampLoader loader0, int flag = 0x0);
 
     friend class NLP_AutoRegressive;
     friend class Fish;

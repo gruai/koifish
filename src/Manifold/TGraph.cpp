@@ -1098,10 +1098,10 @@ bool TGraph::isValid() {
     // if(nDup>0)
     //     return false;
     bool any_params = false, any_loss = false;
-    for (auto node : all_nodes) {
-        any_params = any_params || (node->flags & GTensor::F_PARAM);
-        any_loss   = any_loss || (node->flags & GTensor::F_LOSS);
-        if (node->flags & GTensor::F_INPUT) {
+    for (auto gensor : all_nodes) {
+        any_params = any_params || (gensor->flags & GTensor::F_PARAM);
+        any_loss   = any_loss || (gensor->flags & GTensor::F_LOSS);
+        if (gensor->flags & GTensor::F_INPUT) {
             nInput++;
         }
     }
@@ -1571,6 +1571,7 @@ bool GTensor::FreeBuffer(int flag) {
     try {
         bt4c = nullptr, delta = nullptr, tmpDelta = nullptr, outL = nullptr, scratch = nullptr, tmpFF1 = nullptr, tmpW = nullptr, tmpGW = nullptr,
         residual = nullptr;
+        tmpTernary = nullptr;
         return true;
     } catch (const std::exception &e) {
         _INFO("%s", e.what());

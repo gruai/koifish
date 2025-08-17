@@ -270,8 +270,17 @@ void train_print_usage(int argc, char **argv, const struct CLI_params *params) {
 bool CLI_params::operator!=(const CLI_params &other) const { return memcmp(this, &other, sizeof(other)); }
 
 DEUG_SWITCH DEBUG;
-void DEUG_SWITCH::Dump(int typ) { _INFO("[DEBUG]: gemm=%d\n", T_GEMM); }
-void CLI_params::Dump() {
+void DEUG_SWITCH::Dump(int typ) { _INFO("[DEBUG]: gemm=%d classifier=%d\n", T_GEMM, T_classifier_ver); }
+void CLI_params::Dump(int flag) {
+    if (flag == 0x100) {  // only dump jConfig
+        std::ofstream file("_koifish_tmp_config_.json");
+        if (file.is_open()) {
+            file << jConfig.dump(4);
+            file.close();
+        }
+        return;
+    }
+
     _INFO("%s::CLI_params: \n", exec_name.c_str());
     // _INFO(" n_vocab: %u", n_vocab);
     _INFO(" n_ctx=%u", n_ctx());
@@ -346,40 +355,6 @@ MODEL_CARD::MODEL_CARD() {
 #else
     assert(0);
 #endif
-}
-
-bool MODEL_CARD::Init(const JSON &jConfig, int flag) {
-    string sTyp = jKVs(jConfig, {"model", "datatype", "weight"}, string(""));
-    if (!sTyp.empty())
-        tpWeight = tpNumOf(sTyp);
-    sTyp = jKVs(jConfig, {"model", "datatype", "embed"}, string(""));
-    if (!sTyp.empty())
-        tpEmbed = tpNumOf(sTyp);
-
-    sCardPath = jKV(jConfig, {"model_card"}, sCardPath);
-    if (sCardPath.empty())
-        return false;
-    string jPath = sCardPath + "config.json";
-    LoadJsonFile(jPath, jModelParam);
-    sTokenPath = sCardPath + "tokenizer.json";
-    // LoadJsonFile(sTokenPath,jTokenizer);
-
-    if (jModelParam.empty()) {
-        sCardPath = "";
-    } else {
-        model_type = jKV(jModelParam, {"model_type"}, model_type);
-        if (model_type == "")
-            sCardPath = "";
-        else {
-            vocab_size           = jKV(jModelParam, {"vocab_size"}, vocab_size);
-            torch_dtype          = jKV(jModelParam, {"torch_dtype"}, torch_dtype);
-            transformers_version = jKV(jModelParam, {"transformers_version"}, transformers_version);
-            bos_token_id         = jKV(jModelParam, {"bos_token_id"}, bos_token_id);
-            eos_token_id         = jKV(jModelParam, {"eos_token_id"}, eos_token_id);
-        }
-    }
-
-    return empty();
 }
 
 MODEL_ARCH CLI_params::ModelArch() {
@@ -465,7 +440,7 @@ bool CLI_params::JModel2Params(int flag) {
         }
         // Mem 8484=>4772=>4838
         if (DEBUG.cmd_p1 == 1) {
-            DEBUG.T_GEMM = -1;
+            scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;  // DEBUG.T_GEMM = -1;
         } else {
             // scheduling.strategy = MEM_STRATEGY::MEM_SWAP;
             // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
@@ -474,7 +449,10 @@ bool CLI_params::JModel2Params(int flag) {
 
         if (scheduling.strategy == MEM_STRATEGY::MEM_SWAP_GUOKE) {
             common.remater_ffn = 0;  // more memory, more time
-        } else {
+        } else {                     //  remater_ffn=1: reduce memory & little slower
+                                     // if(scheduling.nLayerInBranch>0)
+                                     //     common.remater_ffn = 0;
+                                     // else
             common.remater_ffn = 1;
             // common.remater_qkv = 1;
         }
@@ -504,9 +482,9 @@ bool SKDU_params::isUpdateParamV0() const {
 }
 
 bool SKDU_params::canSave(int iter, int flag) const {
-    if (LIB_iter4save > 0) {
-        return iter >= LIB_iter4save;
-    }
+    // if (LIB_iter4save > 0) {
+    //     return iter >= LIB_iter4save;
+    // }
     return true;
 }
 
@@ -519,7 +497,7 @@ bool SKDU_params::InitSection(int nLayer, int nLS, int flag) {
     LIB_1          = 0;  // nLayerInBranch;
     int nSwitch    = nLayer / nLayerInBranch;
 
-    LIB_iter_switch = 100;  // only for debug
+    LIB_iter_switch = 100;  // 100,10
     LIB_iter4save   = LIB_iter_switch * nSwitch;
 
     return true;
@@ -546,10 +524,12 @@ void CLI_params::OnMostToken(size_t nMost, int flag) {
 }
 
 void SKDU_params::Dump(int typ) const {
-    _INFO("[Scheduling] MEM_STRATEGY=%s UpdateParam=V%d \n", MEM_STRATEGY_desc[strategy].c_str(), isUpdateParamV0() ? 0 : 1);
+    _INFO("[Scheduling] MEM_STRATEGY=%s UpdateParam=V%d %s\n", MEM_STRATEGY_desc[strategy].c_str(), isUpdateParamV0() ? 0 : 1,
+          paramIsGuoke ? "\"Only cur params in GPU-memor!\"" : "\"All params in GPU-memory\"");
 }
 
 void CLI_params::OnArch() {
+    _INFO("[ARCH] sizeof(token)=%ld,sizeof(floatX)=%ld sizeof(Grad)=%d(%d)\n", sizeof(TOKEN_ID), sizeof(floatX), sizeof(floatGrad), sizeof(floatMV));
     int nH        = -1;
     bool isJModel = !jModel.empty();
 
@@ -574,18 +554,19 @@ void CLI_params::OnArch() {
         case MODEL_ARCH::NLP_GPT2:
         case MODEL_ARCH::NLP_GPT2_char: {
             // DEBUG.cmd_p1 = 1;
-            n_embd_head_v = 64;
-            n_embd_head_k = 64;
+            DEBUG.T_classifier_ver = 1;
+            n_embd_head_v          = 64;
+            n_embd_head_k          = 64;
             // _embd = 128; dict_latent_dim = 128;        n_embd_head_v=n_embd_head_k=2; //only for debug
             n_ctx_train = 1024;
-            if (model.layerps.size() == 0 && !isJModel) {
-                // TO_DO: why grad vanish @/home/cys/rnd/lic/log/gpt2/10_29_bug.info
+            if (model.layerps.size() == 0 && !isJModel) {  //  deprecated
                 int n_ff0 = jKV(jConfig, {"model_v0", "ffn", "length"}, 3072, false), nLay = nLayer();
                 for (int i = 0; i < nLayer(); i++) {
                     MODEL_CARD::LAY_PARAM lay(nH, nH, n_ff0);
                     model.layerps.push_back(lay);
                 }
             }
+            model.tpPreLogits = typNUMBER::BF16;
             //  need new GEMM! cuBLASLt requires bias in FP8 mode to be BF16... (sigh)
             model.isNormalBias  = true;
             model.isSLPBias     = true;  // nealy same
@@ -599,7 +580,7 @@ void CLI_params::OnArch() {
             model.Rope_version       = 0;
             model.isEmbedWeightTying = true;
             model.preLogits_dB       = 8;
-
+            // scheduling.paramIsGuoke = true;  @/home/cys/rnd/lic/log/gpt2/0801_774M_section=9.info
             int group = Get({"model_v0", "target_group"}, 1);
             assert(group == 1);
         }
@@ -754,7 +735,7 @@ bool CLI_params::InitJConfig(int flag) {
 
         JModel2Params(0x0);
 
-        model.Init(jConfig);
+        model.InitHF(this, jConfig);
 
         n_swarm           = jKV(jConfig, {"train", "swarm"}, 1);
         common.save_every = jKV(jConfig, {"train", "save-every"}, common.save_every);
@@ -832,7 +813,7 @@ bool CLI_params::InitJConfig(int flag) {
 }
 
 bool CLI_params::parse(int argc, char **argv) {
-    std::string arg_prefix = "--";
+    std::string arg_prefix = "--", key, value;
     exec_name              = EXE_name();
 
     for (int i = 1; i < argc; i++) {
@@ -852,7 +833,11 @@ bool CLI_params::parse(int argc, char **argv) {
                 jfile >> jConfig;
             } else if (sExt == "fish") {
                 SAFETENSOR_Load_jconfig(arg, jConfig);
+            } else if (sExt == "ck") {
+                SAFETENSOR_Load_jconfig(arg, jConfig);
             }
+            if (jConfig.empty())
+                return false;
         } else if (arg == "--version") {
         } else if (arg == "p0") {
         } else if (arg == "p1") {
@@ -860,6 +845,18 @@ bool CLI_params::parse(int argc, char **argv) {
             _INFO("******************* DEBUG.cmd_p1=%d ******************************\n", DEBUG.cmd_p1);
         } else if (arg == "p2") {
             DEBUG.cmd_p2 = 1;
+        } else if (arg == "--hellaswag") {
+            eval_metric = "hellaswag";
+            assert(i + 1 < argc);
+            JSON jEval;
+            jEval["type"] = "hellaswag", jEval["glob"] = argv[++i];
+            jEval["step"] = 0.01;
+            // jEval["glob"] = argv[i++];
+            jConfig["datasets_new"]["eval"] = jEval;
+        } else if (arg == "--step") {
+            eval_metric = "hellaswag";
+            assert(i + 1 < argc);
+            sscanf(argv[++i], "%f", &step);
         } else {
             _ERROR("error: invalid parameter for argument: %s\n", arg.c_str());
             train_print_usage(argc, argv, this);
@@ -867,7 +864,8 @@ bool CLI_params::parse(int argc, char **argv) {
         }
     }
     DEBUG.T_GEMM = -1;  //  so many version of gemm
-    if (jConfig.empty() || !InitJConfig())
+
+    if (!InitJConfig())
         return false;
 
     // finish_processing_train_args(&common);
@@ -932,9 +930,24 @@ int Gensor_SVD(struct ggml_context *ctx0, hGensor w, int nHeavy, hGensor U, hGen
     return 0x0;
 }
 
-// float ggml_vec_soft_max_f32(const int n, float * y, const float * x, float max);
-// void ggml_vec_max_f32(const int n, float * s, const float * x);
-// inline void ggml_vec_scale_f32(const int n, float * y, const float   v);
+/*
+    return probability(from softmax transformantion) of the given index
+
+    1. Softmax often seems to be over confident in it's prediction based on the way the softmax was trained to map the raw scores to probabilities.
+*/
+double P_softmax(int idx, float *logits, int size) {
+    float max_val = -FLT_MAX;
+    for (int i = 0; i < size; i++) {
+        max_val = logits[i] > max_val ? logits[i] : max_val;
+    }
+    float partition = 0.0f;
+    for (int i = 0; i < size; i++) {
+        partition += expf(logits[i] - max_val);
+    }
+    //
+    return expf(logits[idx] - max_val) / partition;
+}
+
 float SOFT_MAX(const int n, float *y, const float *x) {
     float x1 = -INFINITY;
     int i;

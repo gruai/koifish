@@ -53,6 +53,16 @@ class GeNeuron {
     GeNeuron &operator=(const GeNeuron &) = default;
 
    protected:
+    struct STATISTIC {
+        double time = 0.0, tFore = 0.0, tBack = 0.0;
+        double mem = 0.0;
+
+        virtual void Reset() {
+            time = 0.0, tFore = 0.0, tBack = 0.0;
+            mem = 0.0;
+        }
+    };
+
     STATISTIC stat;
     int block_size = 256, grid_size = 0;  // for cuda kernel function
     int B, T, C;                          // n_batch,n_ctx,n_embd,
@@ -81,7 +91,7 @@ class GeNeuron {
     DATA_PLACE place = DATA_PLACE::VOID;
 
     static shared_ptr<GeNeuron> MakeInstance(Fish *hG_, void *ctx_build, const string &guid, JSON::const_iterator jit, int flag = 0x0);
-    
+
     hGensor w = nullptr, b = nullptr, out = nullptr;
 
     hGensor inp   = nullptr;  //  may change! maybe nullptr!
@@ -549,9 +559,11 @@ struct OutCLS : public SparseNeuron {
     LayerNormal norm;
     SLP proj;
     TokenEmbed *hEmbed = nullptr;
+    // host version of target is SampLoader::hostTargetProbs
     hGTensor target = nullptr, preLogits = nullptr;
-    float *Logits(bool isHost, int flag = 0x0);
-
+    //  device=>host    floatX=>float
+    float *fLogits(int flag = 0x0);
+    float metric[METRIC_MOST], *dev_metric = nullptr;
     hSampLoader hLoader = nullptr;
     int nCls = 0, dB = 1, nzLoss = 0, latent = 0;
     int padded_nCls;  // padded to e.g. %128==0,

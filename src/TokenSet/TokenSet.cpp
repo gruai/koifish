@@ -289,10 +289,12 @@ bool DataTokenSet::Serialize(const std::string &path, bool isSave, int flag) {
 
 double DataTokenSet::LossOnResult(hSampLoader hLoader, OutCLS *cls, int flag) {
     assert(cls != nullptr);
-    double mean_loss = 0;
+    double mean_loss = 0, sum = 0, ss = 0, ppl = 0, sigma = 0, logprob = 0;
     int *mask = hLoader->hBatch->mask, n = 0, nzLoss = cls->nzLoss;
-    float *loss = cls->hostLoss;
-    TOKEN_ID token;
+    int nVocab = cls->nCls, ldP = cls->padded_nCls;
+    float *loss      = cls->hostLoss;
+    TOKEN_ID *tokens = TO<TOKEN_ID>(hLoader->hostTargetProbs);  // hLoader->hBatch->hostToken
+    float *logits    = nullptr;
     // if(hasMask()){
     //     mask = TO<int>(hLoader->hostBatchMask);
     // }
@@ -302,6 +304,19 @@ double DataTokenSet::LossOnResult(hSampLoader hLoader, OutCLS *cls, int flag) {
         }
         mean_loss += loss[i];
         n++;
+
+        if (0) {  //  Debug_PPL   t=921 -10.825027195036846   [1.30967237e-09,...,2.09547579e-09]
+            if (logits == nullptr)
+                logits = cls->fLogits();
+            logprob = log(P_softmax(tokens[i], logits + ldP * i, nVocab));
+            assert(fabs(logprob + loss[i]) < 1.0e-5 * fabs(logprob));
+        } else {
+            logprob = -loss[i];
+        }
+        sum += logprob;
+        ss += logprob * logprob;
+        ppl   = exp(-sum / n);
+        sigma = ppl * sqrt((ss - sum * sum / n) / n / n);
     }
     assert(n > 0);
     mean_loss /= n;
@@ -386,33 +401,79 @@ bool Tokenset_HellaSwag::Shard2Sample(int flag) {
 }
 
 /*
+    A lite version of Optimizer::Evaluate
  */
-double DataTokenSet::Evaluate(Fish *hFish, hSampLoader loader0, int flag) {
-    hSampLoader loader = loader0;
-    if (loader == nullptr) {
-        loader       = std::make_shared<SampLoader>(hFish, "Eval", false);
-        loader->type = SampLoader::TYPE::DT_EVAL;
-        loader->Prepare(nullptr, shared_from_this());
-    }
-    int i, nB = 0, step = loader->StepOfEvaluate(), iter = -1;
-    double a, mean_loss = 0, now;
-    hSAMP samp = nullptr;
-    for (int i = 0; i < loader->num_batches; i += step) {
-        loader->UpdateBatch(i, hFish);
-        samp = loader->cur_samps[i];
-
-        now               = GST_ms();
-        OutCLS *cls       = hFish->GetNeuron<OutCLS>("OutCLS", 0);
-        TokenEmbed *embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
-        embed->hBatch     = loader->GetCurBatch();
+double SampLoader::Evaluate(int flag) {
+    Fish *hFish  = dolphin;
+    RLS_BP *hRLS = hFish->GetScheduler<RLS_BP>();
+    double tic = GST_ms(), tps, tRemain = 0.0, tpi = 0, relax = 0.9, dt, tCur, tLast;
+    int i, nB = 0, step = StepOfEvaluate(), iter = hOPT->GetITER(), nMost = CEIL_DIV(num_batches, step);
+    // double a, a0 = DBL_MAX, a1 = -DBL_MAX, mean_loss = 0, ss = 0, sigma, sum = 0;
+    hGensor target_probs = hFish->Target();
+    OutCLS *cls          = hFish->GetNeuron<OutCLS>("OutCLS", 0);
+    TokenEmbed *embed    = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
+    // hSAMP samp = nullptr;
+    next_sample = 0;  // fix this to keep same acc on each experiment
+    nEvalTokens = 0;
+    tLast       = GST_ms();
+    ClearII();
+    for (int i = 0; i < nMost; i++) {
+        UpdateBatch(min(i * step, num_batches), hFish);
+        // samp = cur_samps[0];
+        embed->hBatch = GetCurBatch();
         hFish->ForwardOnRLS(iter, 0x0);
-        mean_loss += LossOnResult(loader, cls);  // loader->hTokens->LossOnResult(loader, cls);
-        // mean_loss += GraphCompute(loader, _fish->hForwTG);
-        nB++;
+        float a = hTokens->LossOnResult(shared_from_this(), cls);  // loader->hTokens->LossOnResult(loader, cls);
+        nEvalTokens += embed->hBatch->size(), nB++;
+        tCur = GST_ms(), dt = tCur - tLast, tLast = tCur;
+        tpi = tpi * (1.0 - relax) + dt * relax, tRemain = (nMost - i) * tpi;
+        if (i % 10 == 0) {
+            _INFO("\r\t%d/%d a=[%.3g,%.3g] %.4gk/s ...\t", i, nMost, iiLoss.a0, iiLoss.a1, nEvalTokens / (tCur - tic));
+            _TIME_INFO("remain=", tRemain), _INFO("        ");
+        }
+        if ((tCur - tic) / 1.0e3 > DEBUG.Time_most)
+            break;
     }
-    mean_loss /= nB;
+    UpdateII();     //    iiLoss.Stat();
+    // mean_loss = sum / nB;
+    // sigma     = std::max(0.0, ss / nB - mean_loss * mean_loss);  // float point error
+    // sigma     = sqrt(sigma);                                     //  one-pass Variance
+    _INFO("\n\t");
+    SUM::tEval_1 = (GST_ms() - tic) / 1.0e3;
+    if (!hFish->isLocalInfer)
+        UpdateStepInfos(iiLoss.average, nB);
+    tps = nEvalTokens / SUM::tEval_1 / 1.0e3;
+    // nBranch = hRLS->curBranches.size();
+    _INFO("\t#%g±%.4f tps=%.3gK(%gM) a=[%g,%g] T=%g(sec)\n", "", iiLoss.average, iiLoss.sigma, tps, nEvalTokens / 1.0e6, iiLoss.a0, iiLoss.a1, SUM::tEval_1);
+    return iiLoss.average;
+}
 
-    return mean_loss;
+void SampLoader::UpdateStepInfos(float mean_loss, int nB, int flag) {
+    int iter = hOPT->GetITER(), nBranch = dolphin->nBranch(1);
+    float last          = stepis.Last();  //[eval]   Loss@Evaluation=7.302641 T=0.232s ======
+    float train_last    = hOPT->trainInfos().Last();
+    bool isFirst        = stepis.steps.empty();
+    StepInfos::STEP stp = StepInfos::STEP(mean_loss, iter, hOPT->train_epochs);
+    stepis.Add(stp);
+    if (isFirst) {
+        _INFO(" Loss@\"%s\"=%.3f nBranch=%d ", sTokenSet().c_str(), mean_loss, nBranch);
+        return;
+    }
+
+    float delta = last - mean_loss, best = stepis.Best(), ee = 0;
+    bool isOverfit = delta < 0 && abs(mean_loss - best) > best / 10;
+    // if(isOverfit)   {
+    //     _INFO(" !OVERFIT! ");
+    // }
+    double a = nB * hOPT->TrainParams().nTokenInBatch() / 1.0e6;
+    _INFO(" Loss@\"%s\"=%.3f(%.2g) nBranch=%d nToken=%.3gM best=%.4f(%d) E2T=%.3g T=%g(%.3g)s x=%.3g\n", sTokenSet().c_str(), mean_loss, nBranch, delta, a,
+          best, stepis.best_id, mean_loss - train_last, SUM::tEval_1, SUM::tLoadData / 1000.0, ee);  //
+
+    // if (wLog == nullptr) {
+    // } else
+    //     _INFO("\t Loss@Evaluation=%f delta=%g(%.5g) T=%gs\n", mean_loss, delta_max, delta_ / nB, GST_TOC(tic));
+    string sX = "_loss=" + std::to_string(mean_loss);
+
+    stepis.SaveToCSV("_info_.csv");
 }
 
 double Tokenset_HellaSwag::LossOnResult(hSampLoader hLoader, OutCLS *cls, int flag) {

@@ -179,7 +179,7 @@ struct safetensors_t {
     JSON jsConfig;
     std::vector<uint8_t> storage;  // empty when mmap'ed
     size_t header_size{0};         // JSON size
-
+    static string config_key_;
     bool mmaped{false};
     virtual void Clear(int flag = 0x0) {
         tensors.Clear();
@@ -208,7 +208,7 @@ struct safetensors_t {
         tensor.data_offsets[0] = dst_offset;
         tensor.data_offsets[1] = dst_offset + sz;
         tensor.shape           = {sz};
-        tensors.insert("__json__config__", tensor);
+        tensors.insert(config_key_, tensor);
 
         storage.resize(dst_offset + sz);
         memcpy(storage.data() + dst_offset, msgpack.data(), sz);  //  6441  [132...160]
@@ -243,7 +243,7 @@ struct safetensors_t {
                 databuffer = storage.data();
             }
             tensor_t tensor;
-            if (!tensors.at("__json__config__", &tensor))
+            if (!tensors.at(config_key_, &tensor))
                 return false;
 
             size_t start = tensor.data_offsets[0], end = tensor.data_offsets[1];
@@ -3831,7 +3831,7 @@ struct safetensors_file {
     safetensors_file(const char *fname, const char *mode) {
         fp = std::fopen(fname, mode);
         if (fp == nullptr) {
-            _err   = "failed to open " + std::string(fname) + ":" + std::string(strerror(errno)) + "\n";
+            _err   = "failed to open safetensors @" + std::string(fname) + ":\t" + std::string(strerror(errno)) + "!\n";
             _valid = false;
         } else {
             seek(0, SEEK_END);

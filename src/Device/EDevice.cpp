@@ -18,8 +18,6 @@ size_t EDGE_DEVICES::AfterBuild(hTGraph hTG, void *ctx, int flag) {
         for (auto tensor : hTG->gset) {
             assert(hRLS->tensors.find(tensor) != hRLS->tensors.end());
         }
-        // hRLS->Prepare();
-
     } else /**/ {
         for (auto tensor : hTG->gset) {
             if (tpInitWeight == SERIALIZE)

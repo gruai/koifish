@@ -15,21 +15,6 @@
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
 
-float sample_prob(int idx, float *logits, int size) {
-    // find max value (for numerical stability)
-    float max_val = -FLT_MAX;
-    for (int i = 0; i < size; i++) {
-        max_val = logits[i] > max_val ? logits[i] : max_val;
-    }
-    // exp and sum
-    float sum = 0.0f;
-    for (int i = 0; i < size; i++) {
-        sum += expf(logits[i] - max_val);
-    }
-    // return probability of the given index
-    return expf(logits[idx] - max_val) / sum;
-}
-
 float *T_generate_(hFISH hFish, int id, typNUMBER tpActivity, unsigned flags);
 int run_caml(const char *prompt, int flag);
 int Fish_ppl(CLI_params &config) {
@@ -60,7 +45,7 @@ int Fish_ppl(CLI_params &config) {
     hFISH fish      = Fish::MakeInstance("PPL_", config, {}, Fish::ROLE_TYPE::COMMON, 0x110);
     hOptimizer hOPT = fish->GetOptimizer();
     RLS_BP *hRLS    = fish->GetScheduler<RLS_BP>();
-    hRLS->InitGUOKE();
+    // hRLS->InitGUOKE();
     hRLS->Prepare(-1);
     uint64_t rng_seed  = 42;
     std::string prompt = LoadSomeText("/home/cys/rnd/lic/models/TinyStories-valid.txt", 64 * 1024);  // shakespeare.txt
@@ -78,7 +63,7 @@ int Fish_ppl(CLI_params &config) {
     hRLS->Dump(0x0);
 
     OutCLS *hCLS  = fish->GetNeuron<OutCLS>("OutCLS", 0);
-    float *logits = hCLS->Logits(true);
+    float *logits = hCLS->fLogits( );
     double sum = 0, ss = 0, nz = 0, ppl = 0, pplerr = 0, tps = 0, t0 = GST_ms(), tAll = 0;
     vector<TOKEN_ID> &tokens = hLoader->GetTokens();
     hOPT->SetPhase(LIFE_PHASE::P_GENERATE);
@@ -87,7 +72,7 @@ int Fish_ppl(CLI_params &config) {
     for (i = 0; i + 1 < nTokens; i++) {
         // float fLos = hOPT->Evaluate(hLoader,-666);
         T_generate_(fish, i, config.model.tpActivation, -666);
-        double logprob = log(sample_prob(tokens[i + 1], logits, nVocab));
+        double logprob = log(P_softmax(tokens[i + 1], logits, nVocab));
 
         sum += logprob;
         ss += logprob * logprob;
@@ -128,7 +113,7 @@ double Fish::Eval_ppl(int flag) {
     hRLS->Dump(0x0);
 
     OutCLS *hCLS  = GetNeuron<OutCLS>("OutCLS", 0);
-    float *logits = hCLS->Logits(true);
+    float *logits = hCLS->fLogits( );
     double sum = 0, ss = 0, nz = 0, pplerr = 0, tps = 0, t0 = GST_ms(), tAll = 0;
     vector<TOKEN_ID> &tokens = hLoader->GetTokens();
     hOPT->SetPhase(LIFE_PHASE::P_GENERATE);
@@ -137,7 +122,7 @@ double Fish::Eval_ppl(int flag) {
     for (i = 0; i + 1 < nTokens; i++) {
         // float fLos = hOPT->Evaluate(hLoader,-666);
         T_generate_(shared_from_this(), i, config.model.tpActivation, -666);
-        double logprob = log(sample_prob(tokens[i + 1], logits, nVocab));
+        double logprob = log(P_softmax(tokens[i + 1], logits, nVocab));
 
         sum += logprob;
         ss += logprob * logprob;

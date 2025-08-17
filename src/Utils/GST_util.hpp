@@ -148,21 +148,48 @@ std::string G_STR(const T &x) {
 
 std::string EXE_name(int flag = 0x0);
 std::string FILE_EXT(const std::string &path);
-
+bool VERIFY_DIR_EXIST(const std::string &path, bool isCreate = false);
+struct MEM_USAGE {
+    void *hData = nullptr;
+    size_t sz;
+    string desc;
+    MEM_USAGE(size_t sz_, string d_, void *hData = nullptr, int flag = 0x0) : sz(sz_), desc(d_) {}
+};
 struct SUM {
-    static double tX, tX1, tRemater, tQKV, tFFN, tUpload;
+    static std::vector<MEM_USAGE> mems;
+
+    static double tX, tX1, tRemater, tQKV, tFFN, tUpload, tLoadData, tEval_0, tEval_1;
     static size_t szUpload;
     static void Reset(string typ, int flag = 0x0);
     static void TimeInfo(int flag = 0x0);
+    static void MemoryInfo(int type, int flag = 0x0);
 };
 
-struct STATISTIC {
-    double time = 0.0, tFore = 0.0, tBack = 0.0;
-    double mem = 0.0;
+// Discrete Distribution of array
+struct Distri_ARRAY {
+    std::vector<float> distri;
+    double mean = 0, sigma = 0, sum = 0, ss = 0, average = 0;
+    float a0 = FLT_MAX, a1 = -FLT_MAX;
 
-    virtual void Reset() {
-        time = 0.0, tFore = 0.0, tBack = 0.0;
-        mem = 0.0;
+    virtual void Clear() {
+        distri.clear();
+        mean = 0, sigma = 0, average = 0;
+        sum = 0, ss = 0;
+        a0 = DBL_MAX, a1 = -DBL_MAX;
+    }
+    virtual void Add(float a) {
+        distri.push_back(a);
+        sum += a;
+        ss += a * a;
+        a0 = std::min(a0, a), a1 = std::max(a1, a);
+    }
+
+    virtual void Stat() {
+        int n = distri.size();
+        assert(n>0)    ;
+        average = sum / n;
+        sigma     = std::max(0.0, ss / n - average * average);  // float point error
+        sigma     = sqrt(sigma);
     }
 };
 

@@ -217,7 +217,6 @@ int Fish_bubble(CLI_params &config) {
     DEBUG.graph_dump          = 1;
     DEBUG.T_cuda_ver          = 1;
     DEBUG.T_cpu               = 0;
-    // GTensor::tpPreLogits = typNUMBER::F32;
 
     arrHWIKI wikis = WIKI::MakeInstance("wikis", config, 0x0);
 #if !defined(NDEBUG)
@@ -549,14 +548,14 @@ int NLP_AutoRegressive::GenSentence(int flag) {
     // nPrompToken = 1;			//	only for debug
     TOKEN_ID t = -1;
     _INFO("%s: <--- \n\t", __func__);
-    float *logits = hCLS->Logits(true);  //(float *)(preLogits->data)+i*nVocab;
+    float *logits = hCLS->fLogits( );  //(float *)(preLogits->data)+i*nVocab;
     for (i = 0; i < nPrompToken + genT; i++) {
         if (i < nPrompToken - 1)
             hOPT->SetPhase(LIFE_PHASE::P_PREFILL);
         else
             hOPT->SetPhase(LIFE_PHASE::P_GENERATE);
         // // LocalFeeling(piffle,preP);
-        float fLos = hOPT->Evaluate(hLoader, -666);
+        float fLos = hOPT->EvaluateSamps(hLoader, -666);
         if (i < nPrompToken - 1)
             continue;
 

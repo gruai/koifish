@@ -215,6 +215,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     hEDevices hEDS = nullptr;
 
     bool updateTMap       = false;
+    // Ref@isTrain      No training process! only Evaluate/GPT/...
     bool isLocalInfer     = false;
     bool isLoadCheckpoint = false;
     // bool isBias()   const  {   return config.model.isBias; }
@@ -328,9 +329,9 @@ class Fish : public std::enable_shared_from_this<Fish> {
         return hOPT;
     }
     int GetCurIter(int flag = 0x0) const;
-
-    int nBranch()   {
-        return (GetScheduler<RLSchedule>())->nBranch();
+    // if type==1 return curBraches, otherwise, return allBraches
+    int nBranch(int type)   {
+        return (GetScheduler<RLSchedule>())->nBranch(type);
     }
     template <typename T>
     T *GetScheduler() {
@@ -409,8 +410,9 @@ class Fish : public std::enable_shared_from_this<Fish> {
 
     virtual void Statistic(int typ, int flag = 0x0);
     // virtual void CreateWiki(int flag=0x0)   {}
-
-    virtual hGensor Target() { return target_probs; }
+    
+    //return target_probs = OutCLS->target
+    virtual hGensor Target() { return target_probs; }   
     virtual hGensor Output() {
         assert(out_node != nullptr);
         return out_node;
@@ -539,6 +541,9 @@ class Fish : public std::enable_shared_from_this<Fish> {
     friend class RLS_BP;
 };
 
+/*
+    1. similar idea @"Model Swarms: Collaborative Search to AdaptLLM Experts via Swarm Intelligence"
+*/
 struct LogicSalp : public Fish {
     hFISH head = nullptr;
 

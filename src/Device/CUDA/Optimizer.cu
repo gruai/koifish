@@ -371,7 +371,7 @@ void Optimizer_update(PIPE_Optimizer<Tp, Tmv>& pipe, cudaStream_t stream) {
 void Optimizer::ClearOnCUDA(int flag) {}
 void Optimizer::InitOnCUDA(int flag) {
     ADAM_params_ adam = TrainParams().adam;
-    GD_METHOD tpCurGD = tpGD;
+    // GD_METHOD tpCurGD = tpGD;
 
     int C = _fish->config.nEmbed(); //num_slices = 1, 
     size_t off = 0;
@@ -379,7 +379,7 @@ void Optimizer::InitOnCUDA(int flag) {
         size_t nP = tensor->size(); //, grid_size = CEIL_DIV(nP, 512);
         auto& im = _fish->GetGensorInfo(tensor);
         if (tpGD == SGD_HYBRID) {
-            tpCurGD = im.isAdam ? ADAMw : SGD;
+            // tpCurGD = im.isAdam ? ADAMw : SGD;
         }
         // if(tpCurGD==ADAMw){
         //     // _INFO("Optimizer allocating %zu MiB for m\n", (adam.n_parameters * sizeof(float)) >> 20);

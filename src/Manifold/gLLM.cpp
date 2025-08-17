@@ -49,7 +49,7 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI> &wikis_, int flag) {
 
     if (hOPT != nullptr) {
         // hOPT->Dump(1);
-        if (config.isOnlyGPT)
+        if (config.isOnlyGPT || !isTrain())
             return true;
         if (!hOPT->PrepareData(config, flag))
             return false;
@@ -330,7 +330,7 @@ bool NLP_AutoRegressive::LocalFeeling(hSampLoader hLoader, vector<float> &result
     int i, nTok = hSamp->len, _nctx = config.n_ctx();
     // assert(!hDictVAE->hDict->tokenizer_add_bos);
     hOPT->SetPhase(LIFE_PHASE::P_EVAL_);
-    hOPT->Evaluate(hLoader, -666);
+    hOPT->EvaluateSamps(hLoader, -666);
     if (DUMP())
         _INFO("\t%s @\"%s\"\n", __func__, hLoader->sentence.c_str());
     assert(preLogits->type == typNUMBER::F32);
@@ -457,13 +457,16 @@ hGensor NLP_AutoRegressive::BuildTarget(void *ctx, hGensor cur, int flag) {
     return out_node;
 }
 
-std::string NLP_AutoRegressive::T2STR(const std::vector<TOKEN_ID> &toks, int flag) {
+std::string NLP_AutoRegressive::T2STR(const std::vector<TOKEN_ID> &toks,int nMost, int flag) {
     std::string str = "";
+    int i = 0;
     for (auto tok : toks) {
         if (tok == hDict->eos_id)
             break;
         std::string a = hDict->T2STR(tok, flag);
         str += a;
+        if(++i>=nMost)  
+            break;
     }
 
     return str;
@@ -491,6 +494,7 @@ bool Fish::InitDictTokenset(int flag) {
                 // hDictVAE->LoadVocab("",0x0);
             } else {
                 // hDictVAE = std::make_shared<CDict_GPT2>(this);
+                hDict = std::make_shared<GTokenizer_GPT2>(this);
                 if (wikis.size() > 0) {  // lama()!= nullptr
                     hDict->vocab.resize(wikis[0]->n_vocab);
                     hDict->bos_id = wikis[0]->bos;
@@ -542,7 +546,7 @@ bool Fish::InitDictTokenset(int flag) {
     assert(hDict->nVocab() > 0);
 
     {
-        tokenset = DataTokenSet::MakeInstance(config, hDict, 0x0);
+        tokenset = DataTokenSet::MakeInstance(config, hDict, isLocalInfer, 0x0);
         if (tokenset.empty()) {
             _ERROR("\n======== %s Failed to load tokenset!========\n", __func__);
             return false;
@@ -551,9 +555,6 @@ bool Fish::InitDictTokenset(int flag) {
     tsTrain = tokenset[0];
     for (int i = 1; i < tokenset.size(); i++) {
         tsEval.push_back(tokenset[i]);
-    }
-    if (config.isOnlyGPT) {
-        return true;  // may have no train !!!
     }
 
     // hDictVAE->mapT2T = tsTrain->mapT2T;        hDictVAE->dialect = tsTrain->dialect;
@@ -564,6 +565,10 @@ bool Fish::InitDictTokenset(int flag) {
     if (isTrain()) {
         if (tsTrain != nullptr && tsTrain->nMostTok > 0)
             config.OnMostToken(tsTrain->nMostTok);
+    }else{  //  config.isOnlyGPT
+        tsTrain = nullptr;
+        tsEval = tokenset;
+        return true;  // may have no train !!!
     }
 
     return true;
@@ -613,6 +618,7 @@ bool NLP_AutoRegressive::CreateExlogists(hWIKI wiki, uint32_t n_ctx, uint32_t n_
     return false;
 }
 
+//  NLP_AutoRegressive::Train would call this function
 void Fish::UpdateTernary(int flag) {
     RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
     string bit_tensors;
@@ -644,10 +650,8 @@ void NLP_AutoRegressive::Train(int flag) {
     // DEBUG.back_graph_version = 1;        Verified at 05132025
 
     hOPT->BeforeTrain(tokens_input, 0x0);
-    RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
-    hRLS->InitBranch();
-    hRLS->InitGUOKE();
-    hRLS->Prepare(-1);
+    // RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
+    // hRLS->Prepare(-1);
     UpdateTernary(flag);
     int64_t now = GST_ms();
     double ms   = 0;
@@ -815,28 +819,40 @@ int Fish::BackwardOnRLS(int iter, int flag) {
 int Fish::ForwardOnRLS(int iter, int flag) {
     // if(DEBUG.back_graph_version==1)
     // { return ForwardOnNeuron_v0(flag);  }
-
     RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
     assert(hRLS != nullptr);
     double now = GST_ms();
-    hRLS->Prepare(iter, 0);
+    if(iter<0 || isTrain())
+        hRLS->Prepare(iter, 0);
     vector<RLSchedule::arrTask> branches = {hRLS->curTasks};
     OutCLS *cls                          = GetNeuron<OutCLS>("OutCLS", 0);
-    int L = config.nLayer(), nCls = nClass(), i;
+    int L = config.nLayer(), nzLoss = cls->nzLoss, i;
     float *tmpLoss = nullptr, *loss = cls->hostLoss;
-    // if (isAtPhase(LIFE_PHASE::P_EVAL_)) {
-    //     branches = hRLS->allTasks;
-    // }
-    int nB = branches.size();
-    if (nB > 1)
-        tmpLoss = new float[nCls]();
-
-    hGensor cur = Input(), residual = nullptr;
-    for (auto branch : branches) {
+    if (isAtPhase(LIFE_PHASE::P_EVAL_) || isAtPhase(LIFE_PHASE::P_GENERATE)) {        
+        if(config.model.ensemble==MODEL_ENSEMBLE::RANDOM_1 && hRLS->allTasks.size()>1){     //  random ensembling
+            branches = hRLS->allTasks;
+            uint32_t pick = rand_coin.RandU32()%hRLS->allTasks.size();
+            branches = {hRLS->allTasks[pick]};
+        }else{
+            uint32_t pick = hRLS->allTasks.size()-1;
+            branches = hRLS->allTasks;
+            // branches = {hRLS->allTasks[pick]};      //only for debug
+        }
+    }
+    int nB = branches.size(), curB = 0;
+    if (nB > 1){
+        tmpLoss = new float[nzLoss]();        
+    }else{
+        assert(nB>0);
+    }
+    hRLS->curBranches = branches;
+    for (auto branch : branches) {        
+        hGensor cur = Input(), residual = nullptr;
+        assert(branch.size()>0);
+        // GetNeuron<SelfAttention>("QKV", 0)->ManageMemory(DATA_PLACE::DEV_MEM);  //only for debug
         for (auto task : branch) {
             GeNeuron *neuron = (GeNeuron *)(task->hOBJ);
-            // for (auto neuron : backbons) {
-            if (hRLS->step > 2 * L) {
+            if (neuron->name == "model.blk.10.attn" && curB > 0) { //   model.inp_embd
                 int debug = 0x0;
             }
             if (neuron->isShortcut)
@@ -844,16 +860,24 @@ int Fish::ForwardOnRLS(int iter, int flag) {
             auto t0 = GST_ms();
             neuron->BeforeForward(iter);
             cur = neuron->Ming(hRLS, cur);
-            neuron->stat.tFore += GST_ms() - t0;SYNC_DEVICE();
+            neuron->stat.tFore += GST_ms() - t0;
+            // if (!SYNC_DEVICE(neuron->name, 1))
+            //     assert(0);
         }
+        curB++;
         if (tmpLoss != nullptr)
-            ;  // for (i = 0; i < nCls; i++) tmpLoss[i] += loss[i];
+            for (i = 0; i < nzLoss; i++) tmpLoss[i] += loss[i];
+        // break;
     }
     if (nB > 1) {
-        for (i = 0; i < nCls; i++) loss[i] = tmpLoss[i] / nB;
+        for (i = 0; i < nzLoss; i++) {
+            loss[i] = tmpLoss[i] / curB;
+            assert(isValidF(loss+i) && loss[i]>0 && loss[i]<100.0);
+        }
         delete[] tmpLoss;
     }
-    // SYNC_DEVICE();
+    // if (!SYNC_DEVICE("ForwardOnRLS", 1))
+    //     assert(0);
     return 0x0;
 }
 int NLP_AutoRegressive::ForwardOnNeuron_v0(int flag) {

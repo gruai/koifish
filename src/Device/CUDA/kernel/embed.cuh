@@ -73,7 +73,7 @@ __global__ static void CU_embed_forw_(floatX* out, const int* tokens, const floa
     int N   = B * T;
     if (idx >= N) {
         return;
-    }
+    }    
     int ix = tokens[idx], pos = idx % T;
     const floatX* wpe_tc = wpe + pos * C;
     for (int c = 0; c < C; c++) {
@@ -88,6 +88,7 @@ __global__ static void CU_embed_forw_(floatX* out, const int* tokens, const floa
 #endif
         }
     }
+    
 }
 
 template <class Typ>

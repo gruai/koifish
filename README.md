@@ -1,8 +1,8 @@
 # Koifish
 
-**Koifish** is a c++ framework focused on sparse & quantized language model. 
-1. Efficient training of ~1B language models with only one GPU.
-2. Efficient fine-tuning ~10B LLMs on edge device.
+Sparse & quantized LLM training in C/C++.
+
+Training of ~1B language models with only one GPU.
 
 ## Features
 - Hybrid 16/8/1 bit training
@@ -32,7 +32,7 @@ make clean && make VERBOSE=TRUE
 
 ## Tutorial
 
-1.    [Training of GPT2_1558M_ on single 4090]
+1.    [Training of GPT2_1558M_ on single 4090](cases/tutorial_gpt2_1558M.md)
 1.    [Training of GPT2(774M/124M) on single 3090](cases/tutorial_gpt2.md)
 
 ## Training tricks
@@ -40,7 +40,8 @@ make clean && make VERBOSE=TRUE
 - Subsampling
 - [Weight Tying](cases/tricks/WeightTying.md)
 
-## Changelog
+## History
+* 08/17/2025: A new framework of multi-level deep learning
 * 08/01/2025: Training GPT2_1558M on single 4090 with throughput > 20K tokens/second
 * 07/24/2025: Support tile quantization 
 * 06/29/2025: Rope with pre/post normalization 
@@ -57,3 +58,6 @@ make clean && make VERBOSE=TRUE
 ## Acknowledgements
 
 * Thanks very much for the highly instructive work of [calm](https://github.com/zeux/calm), [llm.c](https://github.com/karpathy/llm.c) & [ggml](https://github.com/ggerganov/ggml).
+
+## More
+QQ group: 167653113
