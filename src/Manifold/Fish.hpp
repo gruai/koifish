@@ -1,7 +1,12 @@
 /**
  *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
- *
+ * 
+ *  Some key characteristics & design goals
+ *      1.  Flex - it may have different structures/parameters at different phase!
+ *      2.  Sparse
+ *      3.  Lite - need much less resource than any other
+ * 
  *  \brief Fish - Life is just a random swimming fish.
  *  \author Yingshi Chen
  */
@@ -29,6 +34,7 @@
 #include "../ggex/GG_util.hpp"
 #include "GoPT.hpp"
 #include "Neuron.hpp"
+#include "SLP.hpp"
 #include "TGraph.hpp"
 // #include "../Utils/safetensors.hh"
 #include "../Fuzi/Distillation.hpp"
@@ -209,8 +215,12 @@ class Fish : public std::enable_shared_from_this<Fish> {
     }
 #endif
     std::vector<hNeuron> neurons, backbons;
-
+    // @TGraph::TopoOrder
     GENSORS gensors;
+    //  paramter tensors updated by hOPT    @Fish::AfterBuild
+    vector<hGensor> optParams;   
+    vector<hGensor> loadGensors;
+    std::vector<hGensor> xGensors;
 
     hEDevices hEDS = nullptr;
 
@@ -241,9 +251,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     DataTokens tsEval;             //  support multiple eval set!
 
     hOptimizer hOPT;
-    vector<hGensor> optParams;  // paramter tensors updated by hOPT
-    vector<hGensor> loadGensors;
-    std::vector<hGensor> xGensors;
+    
     hDistillation hDistler;
     // performance
     int perf_runs       = 0;
@@ -387,6 +395,8 @@ class Fish : public std::enable_shared_from_this<Fish> {
     virtual bool BeforeBuild(int flag = 0x0);
     virtual bool AfterBuild(bool isInitParam, int flag = 0x0);
     virtual bool UpdateNCTX(int _nctx, int flag = 0x0);
+    // Koifish is so flex than it would has different parameters at different phase!
+    virtual bool UpdateParams(int flag = 0x0);
     virtual void UpdateTernary(int flag = 0x0);
 
     virtual int BuildComputeGraph(int order, void *ctx, int flag);

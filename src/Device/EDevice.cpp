@@ -16,7 +16,7 @@ size_t EDGE_DEVICES::AfterBuild(hTGraph hTG, void *ctx, int flag) {
     INIT_WEIGHT tpInitWeight = hTG->hFish->tpInitWeight;
     if (hRLS != nullptr) {
         for (auto tensor : hTG->gset) {
-            assert(hRLS->tensors.find(tensor) != hRLS->tensors.end());
+            assert(hRLS->tMaps.find(tensor) != hRLS->tMaps.end());
         }
     } else /**/ {
         for (auto tensor : hTG->gset) {
@@ -84,15 +84,15 @@ void GeNeuron::OnRemater(RLS_BP *schedule, int typ, int flag) {
 }
 
 RLSchedule::tpSTATUS RLS_BP::GetTensorStatus(int step, hGTensor tensor, int flag) {
-    assert(tensors.find(tensor) != tensors.end());
-    return tensors[tensor];
+    assert(tMaps.find(tensor) != tMaps.end());
+    return tMaps[tensor];
 }
 RLSchedule::tpSTATUS RLS_BP::SetTensorStatus(int step, hGTensor tensor, tpSTATUS sta, int flag) {
     // int iter = hFish->hOPT->GetIter();
-    assert(tensors.find(tensor) != tensors.end());
+    assert(tMaps.find(tensor) != tMaps.end());
     tensor->last_stp = step;
-    tensors[tensor]  = sta;
-    return tensors[tensor];
+    tMaps[tensor]  = sta;
+    return tMaps[tensor];
 }
 
 RLSchedule::tpSTATUS RLS_BP::GetStatus(int t, void *hObj, int flag) {

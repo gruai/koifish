@@ -198,6 +198,71 @@ bool SparseNeuron::InitSVD(int flag) {
     return true;
 }
 
+string HIERARCH_LoRA::sNeurons = "";
+HIERARCH_LoRA::HIERARCH_LoRA(SparseNeuron *neuron, hGensor w_, int r_, int flag) : wBase(w_), rank(r_), spNeuron(neuron) {
+    hFish = neuron->hFish;
+    assert(w_->is2D() && rank > 0);
+    int m = w_->ne[0], n = w_->ne[1], c0;
+    B = neuron->B, T = neuron->T;
+    assert(rank * 10 < neuron->C);  // low rank
+    string title = w_->name;
+    a            = GT(hFish, w_->type, {m, rank}, flag | GTensor::F_LORA_A, title + "_a");
+    b            = GT(hFish, w_->type, {rank, n}, flag | GTensor::F_LORA_B, title + "_b");
+    hFish->InitGensor(nullptr, "", a, true);
+    hFish->InitGensor(nullptr, "", b, true);
+
+    // tmp          = GTensor::bt4c;
+    // assert(m * rank <= tmp->size() && n * rank <= tmp->size());
+    huTensor *ta   = dynamic_cast<huTensor *>(a.get());
+    size_t szAlloc = ta->Alloc_1(&Ax, false, "", sizeof(floatX) * B * T * rank);
+    szAlloc += ta->Alloc_1(&Adelta, false, "", sizeof(floatX) * B * T * rank);
+
+    UpdateAdapt(flag);
+    // _INFO("[H_LORA]");
+}
+HIERARCH_LoRA::~HIERARCH_LoRA() {
+    huTensor *ta = dynamic_cast<huTensor *>(a.get());
+    ta->Free_1(&Ax, "");
+    ta->Free_1(&Adelta, "");
+}
+
+void HIERARCH_LoRA::UpdateAdapt(int flag) {
+    switch (spNeuron->tpLORA) {
+        case W0:  //  x = W*x
+            break;
+        case AB:  //  x = (BA)*x = B*(Ax)
+            beta_F        = 0.0f;
+            isAccumuDelta = false;
+            break;
+        case W_AB:  //  x = (W+AB)*x
+            beta_F        = 1.0f;
+            isAccumuDelta = true;
+            break;
+        case refW_AB:  //  Foreward:    x = (W+AB)*x    Backward: delta'=>(AB)delta
+            beta_F        = 1.0f;
+            isAccumuDelta = false;
+            break;
+        default:
+            assert(0); 
+            break;
+    }
+}
+/*
+    Since low rank, no need to quantize/ramater/guoke...
+*/
+bool SparseNeuron::InitLoRA(LORA_ADAPT_W tpLora, int flag) {
+    assert(w->is2D());
+    tpLORA = tpLora;
+    if (tpLORA == LORA_ADAPT_W::W0)
+        return false;
+    HIERARCH_LoRA::sNeurons = HIERARCH_LoRA::sNeurons + "" + name + ",";
+    int rank                = 32;
+    H_LORA lora             = std::make_shared<HIERARCH_LoRA>(this, w, rank);
+    wLORAs.push_back(lora);
+    _INFO("[H_LORA] rank=%d adapt=%d @\"%s\"\n", rank, tpLORA, w->name);
+    return true;
+}
+
 bool SparseNeuron::Sparsing(int flag) {
     if (hPicker == nullptr)
         return false;

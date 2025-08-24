@@ -44,6 +44,20 @@ hGTensor GT(Fish *hFish, typNUMBER type, SHAPE shape, int flag, const string &na
     return hT;
 }
 
+
+bool GTensor::isSameShape(SHAPE sp,int flag) const{
+    assert(sp.size()<=4);
+    size_t nz_0=1,i=0;
+    for(auto s : sp){
+        if(s!=ne[i++])
+            return false;
+        nz_0 *= s;
+    }
+    if(nz_0!=size())
+        return false;
+    return true;
+}
+
 size_t GTensor::Offset(int i0, int i1, int i2, int i3, int flag) const {
     size_t off = i0 + i1 * ne[0] + i2 * ne[0] * ne[1] + i3 * ne[0] * ne[1] * ne[2];
     //  off = i0 * nb[0] + i1 * nb[1] + i2 * nb[2] + i3 * nb[3];
@@ -97,6 +111,17 @@ bool GTensor::ReShape(SHAPE shape_, typNUMBER tpD_, int falg) {
     }
     // _INFO();
     return true;
+}
+
+void GTensor::SetRefer(hGTensor hR, int flag) {
+    if(strcmp(name,"model.blk.6.attn.wq.weight")==0){
+        int flag = 0x0;
+    }
+    assert(hRef==nullptr);      //  only ref once 
+    hRef = hR;
+    hR->refered.push_back(this);
+    type = hRef->type;
+    _INFO("\t%s =====> %s\n", name, hR->name);
 }
 
 bool GTensor::SetTernary(typNUMBER tpT_, int flag) {
@@ -192,8 +217,7 @@ void GTensor::AddSrc(const vector<hGTensor> &ts, int flag) {
         if (t == nullptr)
             continue;
         hGOP hop = std::make_shared<GENSOR_OP>(t);
-        // AddSrc(hop,0x0);
-        src.push_back(hop);
+        src.push_back(hop);           
     }
 }
 
@@ -362,10 +386,14 @@ void GTensor::Print(const string &title0, int x, int flag, size_t nEle) const {
     assert(nEle >= 0);
     bool isDevice = !isAtHost();
     void *src = x == 1 ? grad : data, *hData = nullptr;
+    if(src==nullptr){
+        _INFO("Failed to print! %s of \"%s\" is nullptr!",x == 1 ? "grad" : "data",name );    
+        return;
+    }
     if (isDevice) {
         SYNC_DEVICE();
         hData = new char[szData];
-        D2H(data, hData, szData);
+        D2H(src, hData, szData);
         src = hData;
     }
 
@@ -517,7 +545,7 @@ floatGama *GTensor::gama_T() {
 }
 
 bool huTensor::Alloc(int iter, int flagInit) {
-    if (strcmp(name, "model.blk.0.attn.wq.weight") == 0
+    if (strcmp(name, "model.blk.6.attn.wo.weight") == 0
         /*|| strcmp(name, "model.embed.weight") == 0*/) {  //  model.inp_embd.weight       model.out.weight model.embed.weight model.blk.0.attn.wq.weight
         int debug = 0x0;    //  
     }
@@ -574,7 +602,9 @@ bool huTensor::Alloc(int iter, int flagInit) {
                 Alloc_1(&gm, true, desc+".mv", szMV * 2), gv = (char *)gm + szMV;
             } else if (method == "lion") {
                 Alloc_1(&gm, true, desc+".mv", szMV);
-            } else {
+            } else if (method == "adams") {
+                Alloc_1(&gm, true, desc+".mv", szMV);
+            }else {
                 Alloc_1(&gv, true, desc+".mv", szMV);  // gm = nullptr, gv = (char *)grad + szMV;
             }
         }

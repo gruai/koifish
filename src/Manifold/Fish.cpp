@@ -189,12 +189,8 @@ size_t Fish::MostMemSize(int typ) {
     return bw;
 }
 
-bool Fish::AfterBuild(bool isInitParam, int flag) {
-    int64_t nx = 0, n0 = 0, nInput = 0, i;
-    if (isInitParam) {
-        // assert(rnd!=nullptr);
-    }
-    _INFO("\n\n");
+bool Fish::UpdateParams(int flag){
+    size_t nx = 0;
     assert(optParams.size() == 0);
     for (auto it : gensors.infos) {
         auto t = it.first;
@@ -202,7 +198,35 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
             if (t->isRefer())
                 continue;
             optParams.push_back(t);
-            nx += tELEM(t);
+            nx += tELEM(t);                          //
+        }        
+    }
+    nParams = nx;
+    assert(optParams.size() < 20480);
+    if (nx != nParams) {
+        CHECK_SAME_TENSORS("Compare parameter tensors\t", optParams, xGensors);
+        _ERROR("%s nx(%ld)!=nParams(%ld)\t", __func__, nx, nParams);
+    }
+    if(nParams==0)
+        exit(KOIFISH_ZERO_PARAMETERS);
+
+    return true;
+}
+
+bool Fish::AfterBuild(bool isInitParam, int flag) {
+    size_t n0 = 0, nInput = 0, i;
+    if (isInitParam) {
+        // assert(rnd!=nullptr);
+    }
+    _INFO("\n\n");
+    // assert(optParams.size() == 0);
+    for (auto it : gensors.infos) {
+        auto t = it.first;
+        if (BIT_TEST(t->flags, GTensor::GTensor::F_PARAM)) {
+            if (t->isRefer())
+                continue;
+            // optParams.push_back(t);
+            // nx += tELEM(t);
             n0++;                                                //
             if (G_Has_(t->name, config.datatypes.arrTernary)) {  // {"ffn_down.weight", "ffn_up.weight"}
                 t->SetTernary(typNUMBER::T_BINARY_3);
@@ -215,16 +239,16 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
             nInput++;
         }
     }
-    nParams = nx;
-    assert(optParams.size() < 2048);
-    if (nx != nParams) {
-        CHECK_SAME_TENSORS("Compare parameter tensors\t", optParams, xGensors);
-        _ERROR("%s nx(%ld)!=nParams(%ld)\t", __func__, nx, nParams);
-    }
+    // nParams = nx;
+    // assert(optParams.size() < 20480);
+    // if (nx != nParams) {
+    //     CHECK_SAME_TENSORS("Compare parameter tensors\t", optParams, xGensors);
+    //     _ERROR("%s nx(%ld)!=nParams(%ld)\t", __func__, nx, nParams);
+    // }
 
-    if (isTrain())
-        assert(nParams > 0);
-    else {
+    if (isTrain()){
+
+    }  else {
         hOPT->SetPhase(LIFE_PHASE::P_EVAL_);
         assert(hBackTG == nullptr);
     }       
@@ -233,6 +257,8 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
     for (auto t : hOPT->opt_ps) {
         hRLS->GetTensorStatus(-1, t, 0x0);
     }
+    UpdateParams();
+
     if (tpInitWeight == SERIALIZE) {
         if (!LoadCheckPoint(flag))
             return false;       

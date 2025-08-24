@@ -34,6 +34,7 @@ using namespace std;
 class GTensor;
 class huTensor;
 class Fish;
+class SparseNeuron;
 class EDGE_DEVICES;
 typedef shared_ptr<GTensor> hGTensor;
 typedef std::vector<int> SHAPE;
@@ -112,7 +113,7 @@ class GTensor {
     hGTensor hRef = nullptr;
     std::vector<GTensor *> refered;
     std::shared_ptr<EDGE_DEVICES> hDevice = nullptr;
-    size_t szData = 0, szGama = 0, szUse = 0;    
+    size_t szData = 0, szGama = 0, szUse = 0;
     int last_iter = -1;
     //  support dynamic change shape&type!
     virtual bool ReShape(SHAPE shape_, typNUMBER tpD_, int flag = 0x0);
@@ -120,7 +121,7 @@ class GTensor {
         assert(0);
         return nullptr;
     }
-    uint32_t seed=88888888, param_seed = 0x0;
+    uint32_t seed = 88888888, param_seed = 0x0;
 
    public:
     static const int MAX_NAME = 64;
@@ -140,13 +141,13 @@ class GTensor {
     vector<hGOP> src;
     virtual void AddSrc(const vector<hGTensor> &ts, int flag = 0x0);
 
-    void *host_data = nullptr;  // somtimes, we need data both in device&host
-    void *data      = nullptr;
-
-    floatGama *gama_T();           // scaling coefficient of bit weight
-    virtual bool isUpdateParam(int iter=-1,int flag=0x0) const;     // in many case, params are not update, even data is not allocated!
-    int tile_r1 = 0, tile_c1 = 0;  //  tile_r0 = 0,tile_c0 = 0,
-    floatGrad *grad   = nullptr;   //
+    void *host_data     = nullptr;  // somtimes, we need data both in device&host
+    void *data          = nullptr;
+                                                   // a serial of LORA for weight
+    floatGama *gama_T();                                              // scaling coefficient of bit weight
+    virtual bool isUpdateParam(int iter = -1, int flag = 0x0) const;  // in many case, params are not update, even data is not allocated!
+    int tile_r1 = 0, tile_c1 = 0;                                     //  tile_r0 = 0,tile_c0 = 0,
+    floatGrad *grad   = nullptr;                                      //
     hGTensor grad_ref = nullptr;
     void *gm = nullptr, *gv = nullptr;  // first moment, second moment of grad
     // bool isUpdateParam = false;
@@ -170,9 +171,13 @@ class GTensor {
         F_RELOAD    = 0x4000,
         F_TOX       = 0x10000,
         F_PADDED    = 0x20000,
+        F_ONLYREF   = 0x40000,  // Partial/Sub tensor
 
         F_TERNARY = 0x100000,
-        F_DEBUG   = 0x10000000
+        F_LORA_A = 0x200000,
+        F_LORA_B = 0x400000,
+
+        F_DEBUG = 0x10000000
     };
 
     QUANT_ALG tpQuant = W_SCALE;
@@ -185,8 +190,12 @@ class GTensor {
         assert(0);
         return false;
     }
-
+    virtual hGTensor Partial(size_t offset, SHAPE shape, int flag = 0x0) {
+        assert(0);
+        return nullptr;
+    }
     virtual ~GTensor();
+
     virtual bool Alloc(int tpInit = 0, int flag = 0x0);
     virtual bool InitParam(int tpInit) {
         assert(0);
@@ -225,12 +234,7 @@ class GTensor {
     bool isAtHost() const;
     bool isRefer(int type = 0x0) const { return hRef != nullptr; }
     hGTensor GetRefer() { return hRef; }
-    virtual void SetRefer(hGTensor hR, int flag = 0x0) {
-        hRef = hR;
-        hR->refered.push_back(this);
-        type = hRef->type;
-        _INFO("\t%s =====> %s\n", name, hR->name);
-    }
+    virtual void SetRefer(hGTensor hR, int flag = 0x0);
     virtual bool SetTernary(typNUMBER typ, int flag = 0x0);
     virtual bool SerialGP(void *yD, void *yG, size_t szY, bool isToY, int flag = 0x0) {
         assert(0);
@@ -240,8 +244,8 @@ class GTensor {
         assert(0);
         return false;
     }
-    template<typename T>
-    T *GetHostData(int flag = 0x0, const string &sX = ""){
+    template <typename T>
+    T *GetHostData(int flag = 0x0, const string &sX = "") {
         return nullptr;
     }
     virtual floatX *GetDataX(int flag = 0x0, const string &sX = "");
@@ -265,15 +269,21 @@ class GTensor {
         return 1;
     }
     virtual size_t nByte() const { return szData; }
+
+    virtual bool is2D() const { return ne[2] == 1 && ne[3] == 1; }
     //  The offset of (i0,i1,i2,i3) in byte
     virtual size_t Offset(int i0, int i1, int i2, int i3, int flag = 0x0) const;
-    
+
     virtual bool isEmpty() const {
         // if(size()>0)    {   assert(B>0 && T>0 && C>0); }
         return size() == 0;
     }
-
-    virtual bool isSameShape(const hGTensor b) const { return szData == b->szData; }
+    virtual bool isSameShape(SHAPE shape, int flag = 0x0) const;
+    virtual bool isSameShape(const hGTensor b) const {
+        if (szData != b->szData)
+            return false;
+        return true; /*isSameShape(b->shape);    */
+    }
     virtual void Zero() { Set(0.0); }
     virtual void ZeroGrad() { assert(0); }
     virtual void Set(float a, int flag = 0x0);
@@ -442,6 +452,7 @@ class huTensor : public GTensor {
    public:
     huTensor(Fish *hFish, const string &name_, const SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag = 0x0);
     virtual ~huTensor();
+    hGTensor Partial(size_t offset, SHAPE shape, int flag = 0x0) override;
 
     bool Alloc(int tpInit = 0, int flag = 0x0) override;
     size_t mostMemory(int typ = 0) const override;
@@ -460,6 +471,7 @@ class huTensor : public GTensor {
     // void Print(const string &title, int typ, int flag, size_t nEle = 0) const override;
 
     bool ToTernary(floatX *tmp, int flag = 0x0) override;
+    friend class HIERARCH_LoRA;
 };
 
 struct GENSOR_INFO {

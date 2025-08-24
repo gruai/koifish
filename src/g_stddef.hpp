@@ -26,6 +26,8 @@
 using namespace std;
 
 //  ERR code of exit
+#define KOIFISH_ZERO_PARAMETERS -200
+
 #define KOIFISH_UNSUPPORTED_DATATYPE -1000
 #define KOIFISH_GRAD_EXPLODE -1100
 #define KOIFISH_BLAS_UNALIGN -1200

@@ -31,12 +31,13 @@ Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params &config, int flag) : _fi
     */
 
     if (!_fish->isLocalInfer) {
-        tpGD         = method == "adamw"  ? ADAMw
-                       : method == "sgdv" ? SGD_v
-                       : method == "sgd"  ? SGD
-                       : method == "hsgd" ? SGD_HYBRID
-                       : method == "lion" ? LION
-                                          : ADAM_spike;
+        tpGD         = method == "adamw"   ? ADAMw
+                       : method == "adams" ? ADAM_S
+                       : method == "sgdv"  ? SGD_v
+                       : method == "sgd"   ? SGD
+                       : method == "hsgd"  ? SGD_HYBRID
+                       : method == "lion"  ? LION
+                                           : ADAM_spike;
         nGradAccum   = std::max(1, train_params.n_gradient_accumulation);
         isGlobalGrad = nGradAccum > 1;  // Nearly same alloc grad or not
         train_loader = std::make_shared<SampLoader>(_fish, "Train", false);
@@ -137,7 +138,8 @@ bool Optimizer::OnLogits(int flag) {
 }
 
 bool cuClearGrad(std::vector<hGTensor> tensors, int flag);
-bool OPT_Adam::BatchGrad(int iter, float &fx, int flag) {
+bool Optimizer::BatchGrad(int iter, float &fx, int flag) {
+    RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
     fx           = 0;
     auto loss    = hLoss();
     float *fLoss = (float *)(loss->data), *g = nullptr, accum_norm = 1.0f / (float)nGradAccum;
@@ -151,44 +153,22 @@ bool OPT_Adam::BatchGrad(int iter, float &fx, int flag) {
     bool bench = false;
 
     for (int accum_step = 0; accum_step < 1 /*nGradAccum*/; ++accum_step) {
-        auto now      = GST_ms();
-        int64_t nSamp = train_loader->UpdateBatch(-1, _fish);
-        tData         = GST_ms() - now;
-        if (nSamp == 0) {
-            _WARN("<%s> Failed to get next batch!!!\n", __func__);
-            return false;
+        auto now = GST_ms();
+        if (hRLS->isUpdateBatch(GetITER())) {
+            int64_t nSamp = train_loader->UpdateBatch(-1, _fish);
+            tData         = GST_ms() - now;
+            if (nSamp == 0) {
+                _WARN("<%s> Failed to get next batch!!!\n", __func__);
+                return false;
+            }
+
+            train_samples += nSamp;
+            if (!AfterLoadBatch(accum_step)) {
+                return false;
+            }
         }
 
-        train_samples += nSamp;
-        if (!AfterLoadBatch(accum_step)) {
-            return false;
-        }
-
-#ifdef _TENSOR_G_
-        // cuClearGrad(opt_ps,0x0);    //  reset grad online, no need this
-        // double a = tNormOf(opt_ps,0x0);
         GraphCompute(train_loader, _fish->hBackTG);
-#else
-        auto grad = GradOf(loss);
-        tSET(grad, 1.0f);  // ggml_set_f32      (grad, 1.0f);
-        if (bench) {       //  only for performance benchmark
-            GST_TIC(t0);
-            // ggml_graph_comp0(_gf,0x0);
-            // ggml_graph_comp0(_gb,0x0);
-            _INFO("gb_compute %s T=%.3g", "", GST_TOC(t0));
-            exit(-666);
-        } else {
-            GraphCompute(train_loader, _fish->hBackTG);
-        }
-
-        OnLogits();
-        if (isGlobalGrad) {
-            ggml_opt_acc_grad(opt_ps.size(), opt_ps.data(), g, accum_norm);
-        } else {  //  g[i++] += ggml_get_f32_1d(ps[p]->grad, j) * scale;
-        }
-        fx += tGET(loss, 0);
-        UpdateTrainLoss(-1, fx);
-#endif
 
         if (accum_step == 0) {
             // sched = UpdateSchedule(flag);
@@ -325,6 +305,9 @@ inline bool isStrMatch(const string &target, const vector<string> &words) {
 template <typename Tp, typename Tmv>
 void Optimizer_update(PIPE_Optimizer<Tp, Tmv> &pipe, cudaStream_t stream);
 int GTensor::Dogleg(int flag) {
+    if (strcmp(name, "model.blk.11.attn.wo.weight_a") == 0) {
+        int debug = 0x0;
+    }
     hOptimizer hOPT = hFish->GetOptimizer();
     int iter        = hOPT->GetITER();
     if (iter == last_iter)  // may try dogleg more than once in one optimization step
@@ -533,12 +516,12 @@ Optimizer::RESULT Optimizer::Search(void *ctx, hGensor loss_, hGensor target_, C
     _INFO("\t%s@<%s> %s device=[%s] \n", __func__, _fish->hBackTG->name.c_str(), _fish->isLoadCheckpoint ? config.checkpoint.in.c_str() : "",
           hEDS->__repr__(suf, pref, 0).c_str());
     _INFO("\t Accumulation=%d AdaptiveSched=%d GRAP=%p rZMUV=%g rLARS=%g \n", nGradAccum, (int)isAdaptiveSched, grad, config.ZMUV_ratio, config.lars_ratio);
-    // tpGD=SGD_HYBRID;    //ADAMw      SGD_v    SGD_HYBRID        SGD_blk_v
+    // tpGD=SGD_HYBRID;    //ADAMw    ADAM_S  SGD_v    SGD_HYBRID        SGD_blk_v
     _INFO("\tDECENT=%d(%s) SIGN=%d tpFuseCu=%d\n\n", tpGD, GD_NAME[tpGD].c_str(), tpSign, tpFuseCu);
     DEBUG.Dump(0);
 
     float a = 0, grad_norm = 0;
-    if(_fish->isLoadCheckpoint){
+    if (_fish->isLoadCheckpoint) {
         Evaluate(1);
     }
     if (isWarmup && !BatchGrad(0, a, 0x0))  //  warmup
@@ -644,19 +627,19 @@ double Optimizer::GraphCompute(hSampLoader hLoader, hTGraph hTG, int flag) {
     return 0.0;
 }
 
-bool Optimizer::Evaluate(int type,int flag) {
-    OutCLS *cls  = _fish->GetNeuron<OutCLS>("OutCLS", 0);
+bool Optimizer::Evaluate(int type, int flag) {
+    OutCLS *cls = _fish->GetNeuron<OutCLS>("OutCLS", 0);
 
-    int iter = GetITER();
+    int iter       = GetITER();
     float val_loss = 0;
-    if(type==1){
+    if (type == 1) {
         assert(_fish->isLoadCheckpoint);
-        _INFO("[checkpoint] Evaluate the checkpoint of \"%s\"\n",_fish->config.checkpoint.in.c_str());
+        _INFO("[checkpoint] Evaluate the checkpoint of \"%s\"\n", _fish->config.checkpoint.in.c_str());
     }
     for (auto vl : val_loaders) {
-        if (type==1 || vl->isEval(iter+1)) {
+        if (type == 1 || vl->isEval(iter + 1)) {
             SetPhase(LIFE_PHASE::P_EVAL_);
-            cls->hLoader = vl;            
+            cls->hLoader = vl;
             // for(int i=0;i<10;i++)
             // val_loss = EvaluateSamps(vl, iter), a = val_loss;       //  0.272727281
             val_loss = vl->Evaluate(0x0);
@@ -734,7 +717,7 @@ float Optimizer::EvaluateSamps(hSampLoader loader, int iter, int flag) {
 #else
         a  = ((float *)hPreLogits()->data)[0];  //  -6.60046101     -4.3040733
         ee = loader->DecodeVerify(samp, tokens_input, _fish->preLogits);
-        mean_loss += loss == nullptr ? 0 : ((float *)(loss->data))[0];  // float *fLoss = (float*)(loss->data)
+        mean_loss += loss == nullptr ? 0 : ((float *)(loss->data))[0];
         break;
 #endif
         if (_fish->wikis.size() > 0)  // too long
@@ -746,33 +729,13 @@ float Optimizer::EvaluateSamps(hSampLoader loader, int iter, int flag) {
     }
     SUM::tEval_1 = GST_TOC(tic);
     loader->UpdateStepInfos(mean_loss, nB);
-    // float last = loader->stepis.Last();  //[eval]   Loss@Evaluation=7.302641 T=0.232s ======
-    // auto stp   = StepInfos::STEP(mean_loss, iter, train_epochs);
-    // loader->stepis.Add(stp);
-    // float delta = last - mean_loss, best = loader->stepis.Best();
-    // bool isOverfit = delta < 0 && abs(mean_loss - best) > best / 10;
-    // // if(isOverfit)   {
-    // //     _INFO(" !OVERFIT! ");
-    // // }
-    // a = nB * TrainParams().nTokenInBatch() / 1.0e6;
-    // _INFO(" Loss@\"%s\"=%.3f(%.2g) nToken=%.3gM best=%.4f(eval_%d) E2T=%.3g T=%g(%.3g)s x=%.3g\n", loader->sTokenSet().c_str(), mean_loss, delta, a, best,
-    //       loader->stepis.best_id, mean_loss - trainInfos().Last(), GST_TOC(tic), tX / 1000.0, ee);  //
-
-    // if (wLog == nullptr) {
-    // } else
-    //     _INFO("\t Loss@Evaluation=%f delta=%g(%.5g) T=%gs\n", mean_loss, delta_max, delta_ / nB, GST_TOC(tic));
-    // string sX = "_loss=" + std::to_string(mean_loss);
-    // // if(delta>0)
-    // //     _fish->SaveTrain(sX);
-
-    // loader->stepis.SaveToCSV("_info_.csv");
 
     return mean_loss;
 }
 
 string StepInfos::STEP::Info(int flag) {
     char buffer[256] = "\0";
-    // _INFO("loss=%f |g|=%g\tlr=%.2e", loss,gNorm,lr);
+
     return buffer;
 }
 
@@ -1064,6 +1027,9 @@ OPT_Adam::OPT_Adam(NLP_AutoRegressive *g_, CLI_params &params_, int flag) : Opti
 void Optimizer::Dump(int typ) {
     if (NOT_DUMP(1))
         return;
+    if (0) {
+        SUM::MemoryInfo(0x0);
+    }
     auto train_params = TrainParams();
     _INFO("========\n");
     fflush(stdout);
@@ -1085,7 +1051,7 @@ void Optimizer::Dump(int typ) {
 
     string path = _fish->config.checkpoint.out;
     if (path.empty()) {
-        _INFO("[Save] path is empty! To save model, please set the key of \"checkpoint-out\" in json config file(\"%s\").", _fish->config.jsPath.c_str());
+        _INFO("[Save] path is empty! To save model, please set the key of \"checkpoint-out\" in json config file(\"%s\").\n", _fish->config.jsPath.c_str());
     } else {
         if (VERIFY_DIR_EXIST(path, true))
             _INFO("[Save] path=\"%s\", save_every=%d\n", path.c_str(), train_params.save_every);
@@ -1093,8 +1059,8 @@ void Optimizer::Dump(int typ) {
             _INFO("[Save] Invalid path@\"%s\"!\n", path.c_str());
         }
     }
-    if (1) {
-        SUM::MemoryInfo(0x0);
+    if (!HIERARCH_LoRA::sNeurons.empty()) {  // HIERARCH_LoRA::tpLORA == LORA_ADAPT_W::AB ? "AB" : "W_AB",
+        _INFO("[H_LORA] neurons={%s}\n", HIERARCH_LoRA::sNeurons.c_str());
     }
 }
 
@@ -1135,6 +1101,6 @@ void OPT_Adam::Dump(int typ) {
     adam->Dump(typ);
     if (hLR != nullptr)
         hLR->Dump(typ);
-    _INFO("\tnParams = %ld(%.6gM)\n", nParams, nParams / 1.0e6);
+    _INFO("\tnParams = %ld(%.6gM nT = %ld)\n", nParams, nParams / 1.0e6, opt_ps.size());
     fflush(stdout);
 }

@@ -72,7 +72,7 @@ struct PIPE_Optimizer : public MODEL_CARD {
         memcpy(ne, tensor->ne, sizeof(ne));
         isBitParam = BIT_TEST(tensor->flags, GTensor::F_TERNARY);
         if (isBitParam) {
-            assert(ne[2] == 1 && ne[3] == 1);  // only for 2D weight
+            assert(tensor->is2D());      // only for 2D weight
             learning_rate *= 3;  //  1-bit models often exhibit greater training stability compared to their full-precision counterparts, allowing for more
                                  //  aggressive initial learning steps.
             paramX = ToX(GTensor::tmpTernary);

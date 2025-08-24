@@ -217,7 +217,6 @@ OutCLS::OutCLS(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int
     */
     // hFish->config.model.isEmbedWeightTying = false;
 
-
     shape = {nEmbd, padded_nCls};
     rLoss = 1.0f / (B * T);  //* grad_accum_steps
     rLoss /= hG_->config.nGradAccumulate();
@@ -225,20 +224,20 @@ OutCLS::OutCLS(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int
 
 float *OutCLS::fLogits(int flag) {
     assert(preLogits != nullptr);
-    size_t n = preLogits->size(),i;
-    // if (isToHost) {     
-    if(preLogits->host_data == nullptr)   {
-        preLogits->host_data = new float[n*2];
+    size_t n = preLogits->size(), i;
+    // if (isToHost) {
+    if (preLogits->host_data == nullptr) {
+        preLogits->host_data = new float[n * 2];
     }
-    float *logits =  (float *)(preLogits->host_data);
-    floatX *tmp = (floatX*)(logits+n);
-    D2H(preLogits->data,tmp,preLogits->nByte());
-    for(i=0;i<n;i++){
+    float *logits = (float *)(preLogits->host_data);
+    floatX *tmp   = (floatX *)(logits + n);
+    D2H(preLogits->data, tmp, preLogits->nByte());
+    for (i = 0; i < n; i++) {
         logits[i] = tmp[i];
     }
     assert(preLogits->host_data != nullptr);
     return logits;
-    // } else  
+    // } else
     //     return TO<float>(preLogits);
     //(float *)(preLogits->data)+i*nVocab;
 }
@@ -253,13 +252,13 @@ bool OutCLS::Build(int flag) {
     nzLoss   = B * T;
     hostLoss = new float[nzLoss];
     // isTarget_1 always true @SampLoader::Samp2Batch
-    target   = std::make_shared<huTensor>(hFish, "target", sp2, typNUMBER::I32, false);
+    target = std::make_shared<huTensor>(hFish, "target", sp2, typNUMBER::I32, false);
     target->Alloc();
     // hFish->InitGensor(nullptr,"target",target,false);
     hFish->target_probs = target;
     out                 = std::make_shared<huTensor>(hFish, "loss", sp2, typNUMBER::F32, false);
-    BIT_SET(out->flags,GTensor::F_LOSS);
-    auto tpL            = hFish->config.model.tpPreLogits;
+    BIT_SET(out->flags, GTensor::F_LOSS);
+    auto tpL = hFish->config.model.tpPreLogits;
     if (hFish->config.isOnlyGPT) {
         preLogits = GT(hFish, tpL, {padded_nCls}, 0x0, "preLogits");  // std::make_shared<huTensor>(hFish,"preLogits",sp3,tpActivation,false);
         preLogits->flags |= GTensor::F_HOSTDATA;
@@ -274,8 +273,11 @@ bool OutCLS::Build(int flag) {
 
     // hFish->InitGensor(nullptr,"loss",out,false);
     hFish->loss = out;  //
+    // proj.B = dB;
     proj.BuildX(name, {shape[0], shape[1]}, hFish, flag);
-    proj.b = nullptr;
+    proj.b = nullptr, proj.B = dB;
+    // proj.InitCompression(COMPRESSIVE_SENSING::LORA);     //Very large gradient ,so strange!
+
     if (!hFish->config.model.isEmbedWeightTying) {
         if (hFish->config.ModelArch() == NLP_GUPPY) {
             // assert(FFN::first!=nullptr);
@@ -300,12 +302,8 @@ hGensor OutCLS::Ming(RLS_BP *ctx_, hGensor inpL, int flag) {
     hGensor cur = nullptr;
 
     if (hFish->isSymbolic()) {
-        if (!hFish->config.model.isEmbedWeightTying) {
-            // inpL >> proj;               // out->AddSrc({proj.out,target});
-            out->AddSrc({inpL, proj.w, preLogits, target});
-        } else {
-            out->AddSrc({inpL, proj.w, preLogits, target});
-        }
+        out->AddSrc({inpL, proj.w, preLogits, target});
+
         assert(target != nullptr);
         cur = out;
     } else {
@@ -361,7 +359,7 @@ bool SLP::Build(int flag) {
     string sw = name + MODEL_CARD::sWeight, sb = name + ".bias", so = name + ".out";
     bool isTrain = hFish->isTrain();
     hFish->InitGensor(ctx, sw.c_str(), w, true);
-    
+
     if (isBias)
         hFish->InitGensor(ctx, sb.c_str(), b, true);
 
@@ -372,14 +370,27 @@ bool SLP::Build(int flag) {
     if (BIT_TEST(flag, F_DELTA)) {
         delta = GTensor::delta;
     }
+    out->AddSrc({w, b});  //  wLORAs contain more!
     // hFish->InitGensor(ctx,so.c_str(),out,false);
-
-    if (compression == SVD) {
-        assert(shape.size() == 2);
-        // SVD(w);
-    }
     return true;
 }
+
+bool SparseNeuron::InitCompression(COMPRESSIVE_SENSING type, LORA_ADAPT_W tpLora, int flag) {
+    bool bRet   = false;
+    compression = type;
+    switch (compression) {
+        case SVD:
+            assert(shape.size() == 2);
+            break;
+        case LORA:
+            bRet = InitLoRA(tpLora, flag);
+            break;
+        default:
+            break;
+    }
+    return bRet;
+}
+
 hGensor SLP::Ming(RLS_BP *hRLS, hGensor cur, int flag) {
     string prefix = "";    // sT+".";   //+
     if (cur == nullptr) {  // symbolic analysis
@@ -704,7 +715,7 @@ hGensor GeNeuron::BeforeMing(RLS_BP *hRLS, hGensor cur, int flag) {
     if (hRLS->isRemater) {
         return cur;
     }
-    vector arrT          = PGensors();
+    // vector arrT          = PickGensors();
     DATA_PLACE old_place = place;
     if (hFish->isSymbolic()) {
         // host_inp = new char[GTensor::outL->nByte()];
@@ -748,7 +759,7 @@ hGensor GeNeuron::AfterMing(RLS_BP *hRLS, hGensor cur, int flag) {
                 // if(strcmp(cur->name,"model.blk.11.attn")==0){
                 //     int bug = 0x0;
                 // }
-                for (auto t : PGensors()) {
+                for (auto t : PickGensors()) {
                     if (t->isRefer() || !t->isParam())  //
                         continue;
                     hOPT->UpdateTensorParam(t, nullptr, 0.0);
@@ -765,29 +776,56 @@ hGensor GeNeuron::AfterMing(RLS_BP *hRLS, hGensor cur, int flag) {
     return cur;
 }
 
-// std::vector<hGensor> GeNeuron::Gensors(bool isNoRef) {
-//     std::vector<hGensor> gensors={  w,b };
-//     if(!isNoRef)   {
-//         std::vector<hGensor> refs={  inp,out,delta };
-//         gensors.insert(gensors.end(), refs.begin(), refs.end());
-//     }
-//     return gensors;
-// }
-
 void GeNeuron::OnDebug(const std::string &info, int typ, int flag) { dump_flag = -1; }
 
-std::vector<hGensor> GeNeuron::PGensors(bool isNoRef, int flag) {
+// SelfAttention::_PickGensors
+std::vector<hGensor> GeNeuron::PickGensors(bool isLORA, int flag) {
     assert(out != nullptr);
-    vector arrT = {out};
+    vector tmp = {out};
     for (auto op : out->src) {
         if (op->_t == nullptr)
             continue;
-        arrT.push_back(op->_t);
+        if (BIT_TEST(op->_t->flags, GTensor::F_LORA_A) || BIT_TEST(op->_t->flags, GTensor::F_LORA_B)) {
+            if (!isLORA)
+                continue;
+        }
+        tmp.push_back(op->_t);
+        if (strcmp(op->_t->name, "model.blk.0.attn.wo.weight") == 0) {
+            int debug = 0;
+        }
     }
+    for (auto nn : SubNeurons()) {  //  @SetGuoke
+        if (nn->name == "model.blk.0.attn_norm") {
+            int debug = 0;
+        }
+        GPLUS(tmp, nn->PickGensors(isLORA));
+        //  @   hGTensor operator>>(hGTensor t, const SLP &slp)
+        /*if (isLORA) {
+            for (auto lora : nn->wLORAs) {
+                arrT.push_back(lora->a);
+                arrT.push_back(lora->b);
+            }
+        }*/
+    }
+    std::vector<hGensor> arrT;
+    std::map<hGensor, std::string> mapT;
+    for (auto t : tmp) {
+        if (strcmp(t->name, "model.blk.0.attn.wo.weight") == 0) {
+            int debug = 0;
+        }
+        if (t == nullptr)
+            continue;
+        if (mapT.find(t) != mapT.end()) {  //  remove duplicate !
+            continue;
+        }
+        mapT[t] = t->name;
+        arrT.push_back(t);
+    }
+
     return arrT;
 }
 hGensor GeNeuron::GetGensor(const std::string &key, int flag) {
-    auto gensors = PGensors();
+    auto gensors = PickGensors();
     assert(gensors.size() > 0);
     for (auto gensor : gensors) {
         if (gensor == nullptr)
@@ -803,10 +841,13 @@ hGensor GeNeuron::GetGensor(const std::string &key, int flag) {
 // 天地本逆旅, 你我皆过客(Guoke)
 int GeNeuron::SetGuoke(GeNeuron *hGuoke_, bool isRefParam, int flag) {
     size_t szG = 0;
-    std::vector<hGensor> gSrc, arrP = PGensors();
+    std::vector<hGensor> gSrc, arrP = PickGensors(false);
     if (hGuoke_ != nullptr) {
-        gSrc = hGuoke_->PGensors();
-        assert(gSrc.size() == arrP.size());
+        gSrc = hGuoke_->PickGensors();
+        if (gSrc.size() != arrP.size()) {
+            arrP = PickGensors(false);  // only for debug
+            assert(0);
+        }
     }
     int nG = 0, i, nT = arrP.size();
     for (i = 0; i < nT; i++) {
@@ -816,6 +857,7 @@ int GeNeuron::SetGuoke(GeNeuron *hGuoke_, bool isRefParam, int flag) {
                 BIT_SET(t->flags, GTensor::F_RESIDENT);
             continue;
         }
+
         assert(gSrc[i]->isSameShape(t));
         assert(t != gSrc[i]);
         if (t->isParam()) {
@@ -832,15 +874,54 @@ int GeNeuron::SetGuoke(GeNeuron *hGuoke_, bool isRefParam, int flag) {
         }
         t->SetRefer(gSrc[i]);  //  Activations or Parameters
         if (t->isParam()) {
-            BIT_SET(t->flags, GTensor::F_RELOAD);
-            BIT_SET(gSrc[i]->flags, GTensor::F_RELOAD);
-            tReloads.insert(t);
-            hGuoke_->tReloads.insert(gSrc[i]);
+            //  F_RELOAD would call SerialGP(t->host_data, nullptr, t->szData, false) @GeNeuron::ManageMemory
+            // BIT_SET(t->flags, GTensor::F_RELOAD);
+            // BIT_SET(gSrc[i]->flags, GTensor::F_RELOAD);
+            // tReloads.insert(t);
+            // hGuoke_->tReloads.insert(gSrc[i]);
         }
         szG += t->nByte();
         nG++;
     }
     return nG;
+}
+
+int SelfAttention::SetGuoke(GeNeuron *hGuoke_, bool isRefParam, int flag) {
+    SelfAttention *firstQKV = dynamic_cast<SelfAttention *>(hGuoke_);
+    int nG                  = GeNeuron::SetGuoke(hGuoke_, isRefParam, flag);
+    if(isRefParam){ //no need to ref two time!
+
+    }else{
+        nG += Q.OnMultiscale(&(firstQKV->Q));
+        nG += K.OnMultiscale(&(firstQKV->K));
+        nG += V.OnMultiscale(&(firstQKV->V));
+        nG += proj_cat.OnMultiscale(&(firstQKV->proj_cat));
+    }
+
+    return nG;
+}
+
+int FFN::SetGuoke(GeNeuron *hGuoke_, bool isRefParam, int flag) {
+    FFN *firstFFN = dynamic_cast<FFN *>(hGuoke_);
+    int nG        = GeNeuron::SetGuoke(hGuoke_, isRefParam, flag);
+    if(isRefParam){ //no need to ref two time!
+
+    }else{
+        nG += up.OnMultiscale(&(firstFFN->up));
+        nG += down.OnMultiscale(&(firstFFN->down));
+    }
+
+    return nG;
+}
+int SLP::OnMultiscale(SLP *src, int flag) {
+    if (tpLORA == LORA_ADAPT_W::refW_AB) {
+        w->SetRefer(src->w);
+        if (b != nullptr) {
+            b->SetRefer(src->b);
+        }
+        return 2;
+    }
+    return 0;
 }
 
 void GeNeuron::BuildX(const std::string &key_, const SHAPE &shp_, Fish *hG_, int flag) {
@@ -849,6 +930,7 @@ void GeNeuron::BuildX(const std::string &key_, const SHAPE &shp_, Fish *hG_, int
         assert(0);
         return;
     }
+
     assert(hG_ != nullptr);
     Init(hG_, flag);
 
@@ -890,6 +972,9 @@ hGTensor operator>>(hGTensor t, const SLP &slp) {
         return t;
     assert(slp.out != nullptr);
     slp.out->AddSrc({t, slp.w, slp.b});
+    for (auto lora : slp.wLORAs) {
+        slp.out->AddSrc({lora->a, lora->b});
+    }
     return slp.out;
 }
 hGTensor operator>>(hGTensor t, const Relu &relu) {

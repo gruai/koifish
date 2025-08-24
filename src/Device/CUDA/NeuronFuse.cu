@@ -174,6 +174,15 @@ void CU_mm_(floatX *d, hGTensor gensor, const floatX *b, const floatX *bias, int
     return;
 }
 
+//  W'=b(:,rank)*a(rank,:)  => rhs = b*(a*lhs)
+int HIERARCH_LoRA::Forw(floatX *rhs, floatX *lhs, int BT, int flag) {
+    int ldA = a->ne[0], ldB = b->ne[1], dump_flag = -1;
+    // b->Print(b->name, 1, dump_flag);
+    CU_mm_((floatX *)Ax, a, lhs, nullptr, rank, BT, ldA, main_stream, 1, 0, 0.0f);
+    CU_mm_(rhs, b, (floatX *)Ax, nullptr, ldB, BT, rank, main_stream, 1, 0, beta_F);
+    // b->Print(b->name, 1, dump_flag);
+    return 0x0;
+}
 int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, int flag) {
     try {
         floatX *rhs = ToX(rhs_0), *to_gelu = ToX0(toGelu);
@@ -185,24 +194,120 @@ int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, int flag) {
         bool transAW = true;
         // if(isTransW)
         //     transAW = false;
-        if (compression == SAMPLE && subw != nullptr) {
-            subw->SubW(hSamps, true, GTensor::tmpW, samp_type);
-            // wX = ToX(GTensor::tmpW);
-            // GTensor::tmpW->Print("subW",0,-1);
+        switch (compression) {
+            case SAMPLE:
+                assert(subw != nullptr);
+                subw->SubW(hSamps, true, GTensor::tmpW, samp_type);
+                // wX = ToX(GTensor::tmpW);
+                // GTensor::tmpW->Print("subW",0,-1);
+                break;
+            case LORA:
+                break;
+            default:
+                break;
         }
 
         rhs = to_gelu ? to_gelu : rhs;
-        CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, B * T, IC, main_stream, true);
+
         // CU_mm_blas(rhs, wX, ToX(lhs_), ToX0(b), OC, B * T,  IC, main_stream, true);
         // if(G_Has_(name,{"ffn_down", "ffn_up"}))
         //     lhs_->Print(name,0,-1);
+
+        switch (compression) {
+            case SAMPLE:
+                CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, B * T, IC, main_stream, true);
+                break;
+            case LORA:  //  rhs += a*b*lhs_
+                if (tpLORA != LORA_ADAPT_W::AB)
+                    CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, B * T, IC, main_stream, true);
+                // rhs_0->Print(rhs_0->name, 0, -1);   //w->Print(w->name, 0, -1), 
+                if (tpLORA != LORA_ADAPT_W::W0) {
+                    for (auto lora : wLORAs) {
+                        lora->Forw(rhs, ToX(lhs_), B * T, flag);
+                    }
+                }
+                // rhs_0->Print(rhs_0->name,0,-1);
+                break;
+            default:
+                CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, B * T, IC, main_stream, true);
+                break;
+        }
         if (to_gelu) {
             gelu_forward(ToX(rhs_0), to_gelu, B * T * OC, main_stream);
             // swiglu_forward(rhs, to_gelu, B*T*OC, main_stream);
         }
-        if (compression == SAMPLE) {
-            // rhs_0->Print(rhs_0->name,0,-1);
+        return 0x0;
+    } catch (...) {
+        assert(0);
+        return -1;
+    }
+}
+
+//  Forward: rhs = b*(a*inp)
+int HIERARCH_LoRA::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, int flag) {
+    if (!isBack)
+        return 0x0;
+
+    int ldA = a->ne[0], ldB = b->ne[1], dump_flag = 0;
+    delta->Print("delta_0", 0, dump_flag);
+    float *dbias_buffer = (float *)GTensor::buff;
+    bool isTransW       = False;
+    //  delta->Print(delta->name, 0, dump_flag);
+    a->Print(a->name, 0, dump_flag), b->Print(b->name, 0, dump_flag);
+    // assert(inp->isSameShape({B, T, ldA}) && deltaIn->isSameShape({B, T, ldB}));
+    //  Forward: rhs = b*Ax
+    matmul_backward((floatX *)Adelta, ToG(b), nullptr, ToX(deltaIn), (floatX *)Ax, ToX(b), dbias_buffer, B, T, rank, ldB, main_stream, isTransW);
+    b->Print(b->name, 1, dump_flag);
+    inp->Print("inp", 0, dump_flag), PrintTensor<floatX>("A_delta", (floatX *)Adelta, true, B, T, rank, 1, dump_flag);
+    //  Forward: Ax = a*Inp     [64,8192] x [8192,768]=>[64,768]
+    matmul_backward(ToX(delta), ToG(a), nullptr, (floatX *)Adelta, ToX(inp), ToX(a), dbias_buffer, B, T, ldA, rank, main_stream, isTransW, nullptr,
+                    isAccumuDelta);
+    a->Print(a->name, 0, dump_flag), a->Print(a->name, 1, dump_flag);
+    delta->Print("delta_1", 0, dump_flag);
+    return 0x0;
+}
+
+int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, int flag) {
+    try {
+        // w->isUpdateParam = false;
+        floatX *wX = w->GetDataX(), *gW = ToG(w);
+        float *dbias_buffer = (float *)GTensor::buff;
+        int OC = nOut, IC = nIn;
+        assert(delta != nullptr);
+        // assert(inp->isSameShape({B, T, IC}) && deltaIn->isSameShape({B, T, OC}));
+        deltaIn->Print("delta_in", 0, flag);
+        switch (compression) {
+            case SAMPLE:  // remater to get wX
+                subw->SubW(hSamps, true, GTensor::tmpW, samp_type);
+                wX = ToX(GTensor::tmpW);  // assert(nSample==OC || nSample==IC);
+                gW = ToX(GTensor::tmpGW);
+                cudaCheck(cudaMemsetAsync(gW, 0, GTensor::tmpGW->nByte(), main_stream));
+                break;
+            default:
+                break;
         }
+
+        switch (compression) {
+            case SAMPLE:
+                matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu));
+                subw->SubW(hSamps, false, GTensor::tmpGW, samp_type);
+                break;
+            case LORA:
+                if (tpLORA != LORA_ADAPT_W::AB && tpLORA != LORA_ADAPT_W::refW_AB)
+                    matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu));
+                if (tpLORA != LORA_ADAPT_W::W0)
+                    for (auto lora : wLORAs) {
+                        lora->Back(delta, inp, deltaIn, flag);
+                    }
+                break;
+            default:
+                matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu));
+                break;
+        }
+
+        // if(w->grad_ref!=nullptr)
+        if (flag != 0x100)
+            w->Dogleg(-1);
 
         return 0x0;
     } catch (...) {
@@ -255,33 +360,6 @@ floatX *GTensor::GetDataX(int flag, const string &sX) {
     return wX;
 }
 
-int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, int flag) {
-    try {
-        // w->isUpdateParam = false;
-        floatX *wX = w->GetDataX(), *gW = ToG(w);
-        float *dbias_buffer = (float *)GTensor::buff;
-        int OC = nOut, IC = nIn;
-        assert(delta != nullptr);
-        deltaIn->Print("delta_in", 0, flag);
-        if (compression == SAMPLE && subw != nullptr) {  // remater to get wX
-            subw->SubW(hSamps, true, GTensor::tmpW, samp_type);
-            wX = ToX(GTensor::tmpW);  // assert(nSample==OC || nSample==IC);
-            gW = ToX(GTensor::tmpGW);
-            cudaCheck(cudaMemsetAsync(gW, 0, GTensor::tmpGW->nByte(), main_stream));
-        }
-        matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu));
-        if (compression == SAMPLE && subw != nullptr) {
-            subw->SubW(hSamps, false, GTensor::tmpGW, samp_type);
-        }
-        // if(w->grad_ref!=nullptr)
-        w->Dogleg(-1);
-
-        return 0x0;
-    } catch (...) {
-        assert(0);
-        return -1;
-    }
-}
 int SLP::FUSE_cuda_block(hGTensor rhs, hGTensor lhs, hGTensor gelu, bool isForw, int flag) { return 0x0; }
 
 //  hIn = QKV->out
@@ -491,7 +569,9 @@ hGTensor OutCLS::cuTrain(hGTensor inp_, int flag) {
             off = 0;  // reduce memory
             // PrintTensor<floatX>("OutCLS.proj.w", w->GetDataX(), true, w->ne[0], w->ne[1], w->ne[2], w->ne[3], -1);
             // [50304,768] x [768,8192] => [50304,8192]
-            CU_mm_(ToX(cur) + off, w, z0 + nZ, NULL, Vp, dB * T, C, main_stream, true, false, false);
+            hGensor subZ = inp->Partial(nZ, {dB, T, C}), subDelta = delta->Partial(nZ, {dB, T, C});
+            proj.Forw(cur, subZ);
+            // CU_mm_(ToX(cur) + off, w, z0 + nZ, NULL, Vp, dB * T, C, main_stream, true, false, false);
             // SYNC_DEVICE();
             if (DEBUG.T_classifier_ver == 1) {
                 CU_classifier_<<<dB * T, 1024, 0, main_stream>>>(ToX(cur) + off, cuLoss + n1, nullptr, rLoss, targets + n1, dB, T, V, Vp, dev_metric,
@@ -499,9 +579,10 @@ hGTensor OutCLS::cuTrain(hGTensor inp_, int flag) {
             } else
                 fused_classifier_kernel5<<<dB * T, 1024, 0, main_stream>>>(ToX(cur) + off, cuLoss + n1, nullptr, rLoss, targets + n1, dB, T, V, Vp,
                                                                            write_dlogits);
-            if (isBack) {  //  back of delta & grad
-                CU_mm_(ToX(delta) + nZ, w, ToX(cur) + off, NULL, C, dB * T, Vp, main_stream, 0, 0, 0, gelu_fusion >= 2 ? to_gelu : NULL, true);
-                CU_mm_blas(ToG(w), z0 + nZ, ToX(cur) + off, NULL, C, Vp, dB * T, main_stream, false, true, alpha4g, beta4g /* accumulate */, NULL, true);
+            if (isBack) {                                        //  back of delta & grad
+                proj.Back(subDelta, subZ, cur, nullptr, 0x100);  // hGTensor delta, hGTensor inp, hGTensor deltaIn
+                // CU_mm_(ToX(delta) + nZ, w, ToX(cur) + off, NULL, C, dB * T, Vp, main_stream, 0, 0, 0, gelu_fusion >= 2 ? to_gelu : NULL, true);
+                // CU_mm_blas(ToG(w), z0 + nZ, ToX(cur) + off, NULL, C, Vp, dB * T, main_stream, false, true, alpha4g, beta4g /* accumulate */, NULL, true);
             }
         }
         // fused_classifier(errLogits, cuLoss, rLoss, targets, B, T, V, Vp, write_dlogits, main_stream);        //target=[32,1024]
@@ -516,7 +597,7 @@ hGTensor OutCLS::cuTrain(hGTensor inp_, int flag) {
             logprob += -hostLoss[i];
         }
         mean_loss /= B * T;
-        float ppl = exp(-logprob / (B * T));    //  just exp(mean_loss)
+        float ppl = exp(-logprob / (B * T));  //  just exp(mean_loss)
         hLoader->iiLoss.Add(mean_loss);
         hLoader->iiPPL.Add(ppl);
     } else {

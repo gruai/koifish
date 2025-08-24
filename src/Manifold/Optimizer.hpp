@@ -42,7 +42,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     // std::map<hGensor, GENSOR_INFO> gimap;
 
     void* _ctx = nullptr;
-    std::vector<hGensor> opt_ps;
+    std::vector<hGensor> opt_ps;    //  =_fish->optParams;
     size_t nParams = 0, nMostParam = 0;
     float* _tmp           = nullptr;
     bool just_initialized = false, isAdaptiveSched = false, isGlobalGrad = true;
@@ -101,11 +101,8 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     virtual int SignStochastic(int nx, CLI_params& config, int flag = 0x0);
     virtual float gClip(int nx, floatX* g, hGensor hP, int flag = 0x0);
     virtual void UpdateParams(int nx, CLI_params& config, int flag);
-    // virtual void AdamMiniV(float gnorm,int nx,CLI_params& config,int flag);
-    virtual bool BatchGrad(int iter, float& fx, int flag = 0x0) {
-        assert(0);
-        return false;
-    }
+    // compute grad on batchs
+    virtual bool BatchGrad(int iter, float& fx, int flag = 0x0);
     bool OnLogits(int flag = 0x0);
 
    public:
@@ -195,7 +192,7 @@ class OPT_Adam : public Optimizer {
 
     void Prepare(size_t nx, int flag = 0x0) override;
     // compute grad on batchs
-    bool BatchGrad(int iter, float& fx, int flag = 0x0) override;
+    // bool BatchGrad(int iter, float& fx, int flag = 0x0) override;
     double UpdateTensorParam(hGensor hP, floatX* g, float gnorm) override;
     void UpdateParams_V0(int nx, CLI_params& config, int flag);
 

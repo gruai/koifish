@@ -33,7 +33,7 @@ class Fish;
 struct NeLayer;
 struct LayerNormal;
 class RLS_BP;
-
+class SparseNeuron;
 /**
  * Each Neuron has
  * 1. inp,out,w
@@ -47,6 +47,34 @@ class RLS_BP;
  * Rematerization
  * 1.   vRemater
  */
+
+/*
+   Hierarchical lora representation of a sparse matrix
+     1. LORA - LOW-RANK ADAPTATION    w=b(:,rank)*a(rank,:)
+*/
+struct HIERARCH_LoRA {
+    static string sNeurons;
+
+    float beta_F       = 1.0f;
+    bool isAccumuDelta = true;
+
+    Fish *hFish            = nullptr;
+    SparseNeuron *spNeuron = nullptr;
+    bool isBack            = true;
+    int B, T, rankMode, rank = -1, nHeavy = -1;
+    hGTensor wBase = nullptr;
+    void *Adelta = nullptr, *Ax = nullptr;
+    hGTensor a = nullptr, b = nullptr;
+    HIERARCH_LoRA(SparseNeuron *hF, hGTensor w_, int r_, int flag = 0x0);
+    virtual ~HIERARCH_LoRA();
+
+    virtual void UpdateAdapt(int flag = 0x0);
+
+    virtual int Forw(floatX *rhs, floatX *lhs, int BT, int flag = 0x0);
+    virtual int Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, int flag = 0x0);
+};
+typedef std::shared_ptr<HIERARCH_LoRA> H_LORA;
+typedef std::vector<H_LORA> arrLORA;
 
 class GeNeuron {
     // GeNeuron(const GeNeuron&)=default;
@@ -65,7 +93,7 @@ class GeNeuron {
 
     STATISTIC stat;
     int block_size = 256, grid_size = 0;  // for cuda kernel function
-    int B, T, C;                          // n_batch,n_ctx,n_embd,
+
     int n_embd_head, n_head;
     int gelu_fusion = 0, dump_flag = 0;
     Fish *hFish = nullptr;
@@ -75,6 +103,7 @@ class GeNeuron {
     bool isPassBack = false;
     int level = -1, ID = -1, dad, c_id;  // topo info
     int layer = -1;                      // no of layer in LLM/Brain structure
+    int branch = 0, hierarch = 0;
     int xxx   = 0;
     vector<double> jvals;
     // vector<hGTensor> vRemater;      //support rematerization
@@ -85,14 +114,22 @@ class GeNeuron {
     GeNeuron *hGuoke = nullptr;
     std::set<hGensor> tReloads;
     // std::vector<shared_ptr<GeNeuron>> brothers;
+
    public:
     enum BIT_FLAG { F_BIAS = 0x10000, F_DELTA = 0x20000, F_GRADREF = 0x40000, F_HOTPICK = 0x100000 };
 
     DATA_PLACE place = DATA_PLACE::VOID;
 
     static shared_ptr<GeNeuron> MakeInstance(Fish *hG_, void *ctx_build, const string &guid, JSON::const_iterator jit, int flag = 0x0);
+    int B, T, C;  // from n_batch,n_ctx,n_embd
 
-    hGensor w = nullptr, b = nullptr, out = nullptr;
+    // w is the 道 of neuron.   道者,千变万化之动(wLORAs)
+    hGensor w = nullptr;
+    ;
+    arrLORA wLORAs;  // LORA of w
+    LORA_ADAPT_W tpLORA = LORA_ADAPT_W::W0;
+
+    hGensor b = nullptr, out = nullptr;
 
     hGensor inp   = nullptr;  //  may change! maybe nullptr!
     hGensor delta = nullptr;  //  backward-error tensor at each layer(may share memory!)
@@ -106,7 +143,9 @@ class GeNeuron {
     GeNeuron(const std::string &key_, JSON::const_iterator jit, Fish *hG_, int flag);
     virtual ~GeNeuron();
     //  Gensors with physical memory
-    virtual std::vector<hGensor> PGensors(bool isNoRef = true, int flag = 0x0);
+    virtual std::vector<hGensor> PhysicalGensors(bool isNoRef = true, int flag = 0x0) { return {}; }
+    // Pick gensors(child,partial,vitual,ref,lora,...)
+    virtual std::vector<hGensor> PickGensors(bool isLORA = true, int flag = 0x0);
     virtual hGensor GetGensor(const std::string &key, int flag = 0x0);
     virtual int SetGuoke(GeNeuron *hGuoke_, bool isRefParam, int flag = 0x0);
     virtual void SetDType(typNUMBER tpW, typNUMBER tpA, typNUMBER tpG) { tpWeight = tpW, tpActivation = tpA, tpGradient = tpG; }
@@ -141,6 +180,7 @@ class GeNeuron {
     }
     // Init & build with more option
     virtual void BuildX(const std::string &key_, const SHAPE &shape, Fish *hG_, int flag);
+    virtual bool InitCompression(COMPRESSIVE_SENSING type, LORA_ADAPT_W tpLora, int flag = 0x0) { return false; }
 
     virtual void OnDebug(const std::string &info = "", int typ = 0x0, int flag = 0x0);
     virtual void OnRemater(RLS_BP *schedule, int typ, int flag = 0x0);
@@ -149,17 +189,20 @@ class GeNeuron {
     virtual bool isGang() { return false; }
 
     virtual void SetRefer(const GeNeuron *src, bool isBias = false, int flag = 0x0);
+    virtual std::vector<GeNeuron *> SubNeurons(int flag = 0x0) { return {}; }
     virtual bool OnData(hGTensor X, hGTensor Y, int *hot, int flag = 0x0) { return false; }
     virtual bool Sparsing(int flag = 0x0) { return false; }
     friend class Fish;
     friend class NLP_AutoRegressive;
     friend class RLS_BP;
+    friend class HIERARCH_LoRA;
 };
 
 class HotPicker;
 class TokenEmbed;
 template <typename T>
 class LoSVD;
+
 /*
 How get sparse index
     1. Learing by GBDT/NN/
@@ -176,7 +219,12 @@ class SparseNeuron : public GeNeuron {
     TokenEmbed *subw = nullptr;
 
     shared_ptr<HotPicker> hPicker = nullptr;
+
+    // hGensor u = nullptr, s = nullptr, v = nullptr;
     shared_ptr<LoSVD<float>> hSVD = nullptr;
+
+    virtual bool InitSVD(int flag = 0x0);
+    virtual bool InitLoRA(LORA_ADAPT_W tpLora, int flag = 0x0);
 
    public:
     SparseNeuron() {}
@@ -186,7 +234,7 @@ class SparseNeuron : public GeNeuron {
     bool OnData(hGTensor X, hGTensor Y, int *hot, int flag = 0x0) override;
     virtual bool GetHotIndex(int nPoint, floatI *data, int *hot, int flag = 0x0);
     bool Sparsing(int flag = 0x0) override;
-    virtual bool InitSVD(int flag = 0x0);
+    bool InitCompression(COMPRESSIVE_SENSING type, LORA_ADAPT_W tpLora, int flag = 0x0) override;
     virtual void SetGanglia(const SparseNeuron *gang, int flag = 0x0) {
         compression = gang->compression;
         layer       = gang->layer;
@@ -246,7 +294,6 @@ struct Drop : public SparseNeuron {
 
 // single layer perceptron
 struct SLP : public SparseNeuron {
-    hGensor u = nullptr, s = nullptr, v = nullptr;
     SLP() {}
     SLP(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag);
     // The channel/neuron number of input&output
@@ -257,6 +304,8 @@ struct SLP : public SparseNeuron {
     // only for deprecated function"UpdateGensor"
     hGensor UpdateGensor(int flag = 0x0);
     size_t nElem() override;
+    virtual int OnMultiscale(SLP *src, int flag = 0x0);
+
     // hGTensor operator<<(hGTensor a);
     /*  Forward or remate in Back
         1.  rhs = SLP(lhs)  or rhs = W*lhs+b
@@ -398,7 +447,9 @@ class SelfAttention : public SparseNeuron {
     SelfAttention() {}
     SelfAttention(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag);
     bool Build(int flag) override;
-    std::vector<hGensor> PGensors(bool isNoRef = true, int flag = 0x0) override;
+    // std::vector<hGensor> PickGensors(bool isLORA = true, int flag = 0x0) override;
+    std::vector<GeNeuron *> SubNeurons(int flag = 0x0) override;
+    int SetGuoke(GeNeuron *hGuoke_, bool isRefParam, int flag = 0x0) override;
     bool BeforeForward(int iter, int lay = 0x0, int flag = 0x0) override;
     hGensor Ming(RLS_BP *hRLS, hGensor cur, int flag = 0x0) override;
     bool isValid() override { return true; }
@@ -477,7 +528,7 @@ class VarCoder : public SparseNeuron {
     virtual hGensor ENC(const hGensor x0);
     virtual hGensor DEC(hGensor x);
     string __repr__(string &suffix, string &prefix, int flag = 0x0) override;
-    std::vector<hGensor> PGensors(bool isNoRef = true, int flag = 0x0) override;
+    // std::vector<hGensor> PickGensors(bool isNoRef = true, int flag = 0x0) override;
     friend class TokenEmbed;
     friend class MAEC;
     friend class OutCLS;
@@ -497,7 +548,10 @@ struct FFN : public VarCoder {
     FFN(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag);
     virtual ~FFN() {}
     bool Build(int flag) override;
-    std::vector<hGensor> PGensors(bool isNoRef = true, int flag = 0x0) override;
+    std::vector<GeNeuron *> SubNeurons(int flag = 0x0) override;
+    // std::vector<hGensor> PickGensors(bool isNoRef = true, int flag = 0x0) override;
+    int SetGuoke(GeNeuron *hGuoke_, bool isRefParam, int flag = 0x0) override;
+
     hGensor Ming(RLS_BP *hRLS, hGensor cur, int flag = 0x0) override;
     bool isValid() override { return true; }
     string __repr__(string &suffix, string &prefix, int flag = 0x0) override;

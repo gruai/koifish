@@ -184,6 +184,25 @@ __global__ void CU_adamw_ternary(PIPE_Optimizer<Tp, Tmv> pipe) {
 }
 
 template <typename Tp, typename Tmv>
+__global__ void CU_adamw_s(PIPE_Optimizer<Tp, Tmv> pipe) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= pipe.num_parameters) {
+        return;
+    }  // guard
+
+    float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx), m = pipe.gm[idx], v;
+    v = lerp(grad * grad, m*m, pipe.beta2);
+    m = lerp(grad, m, pipe.beta1), pipe.gm[idx] = m;    
+    // m /= pipe.beta1_correction;  // m_hat
+    // v /= pipe.beta2_correction;  // v_hat
+    float x = _adamw_idx((float)pipe.params[idx], pipe, m, v, idx), x2 = x * x;
+    pipe.params[idx] = x;
+    float block_sum  = blockReduce_v0<warpReduceSum>(x2, true);
+    if (idx == 0)
+        atomicAdd(pipe.wNorms, block_sum);
+}
+
+template <typename Tp, typename Tmv>
 __global__ static void CU_adamw_Tile_v0(PIPE_Optimizer<Tp, Tmv> pipe) {
     const int TM = THREAD_TILE_M, TN = THREAD_TILE_N, thread_num = blockDim.x;
     int tid = threadIdx.x, idrow, idcol, M = pipe.ne[0], N = pipe.ne[1], trans = 1;
@@ -325,9 +344,10 @@ void Optimizer_update(PIPE_Optimizer<Tp, Tmv>& pipe, cudaStream_t stream) {
         //     CU_sgdv<<<num_blocks, block_size, 0, stream>>>(params, grads0, gv, num_parameters, learning_rate, beta1, beta2, beta1_correction,
         //                                                    beta2_correction, eps, weight_decay, grad_scale, seed);
         // }
-    } else {  // LION ADAMw
+    } else {  //   ADAM_S LION(locked!!!)
         if (pipe.gv == nullptr) {
             pipe.eps = pipe.grad_norm / pipe.num_parameters;
+            CU_adamw_s<<<dGRID, dT4B, 0, stream>>>(pipe);
             // CU_lion_<<<num_blocks, block_size, 0, stream>>>(params, grads0, gm, num_parameters, learning_rate, beta1, beta2, eps, weight_decay,grad_scale,
             // seed);
         } else {
@@ -349,7 +369,7 @@ void Optimizer_update(PIPE_Optimizer<Tp, Tmv>& pipe, cudaStream_t stream) {
                         }
                         break;
                 }
-            } else {
+            } else {    //  ADAMw
                 //  void* kernelArgs[]    = {(void*)&pipe};
                 // err = cudaLaunchCooperativeKernel((void*)CU_adamw_<Tp,Tmv>, dGRID, dT4B, kernelArgs, smemPB, main_stream);
                 // cudaCheck(err);      "too many blocks in cooperative launch"
@@ -399,10 +419,6 @@ int UpdateTensorParam_cuda(hGTensor tensor, Optimizer* hOPT, float& grad_norm, i
     CLI_params config = hOPT->_fish->config;
     ADAM_params_ adam = hOPT->TrainParams().adam;
     auto& im          = hOPT->_fish->GetGensorInfo(tensor);
-    // GD_METHOD tpCurGD = hOPT->tpGD;
-    // if(hOPT->tpGD==SGD_HYBRID){
-    //     tpCurGD = im.isAdam ? ADAMw : SGD;
-    // }
     float learning_rate = hOPT->LearningRate(), beta1 = adam.beta1, beta2 = adam.beta2, eps = adam.eps;
     int iter = hOPT->GetITER(); //num_slices = 1, 
     unsigned int seed = hOPT->rRounding.RandInt32();  // random_u32(&rng_state);

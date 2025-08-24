@@ -199,14 +199,6 @@ VarCoder::VarCoder(Fish *hG_, std::vector<int> &dims, int level, bool isR, bool 
     assert(nTop >= nBottom && nBottom > 0);
     Build(flag);
 }
-std::vector<hGensor> VarCoder::PGensors(bool isNoRef, int flag) {
-    std::vector<hGensor> gensors;
-    GPLUS(gensors, up.PGensors());
-    GPLUS(gensors, down.PGensors());
-    if (gate.out != nullptr)
-        GPLUS(gensors, gate.PGensors());
-    return gensors;
-}
 
 MAEC::MAEC(Fish *hG_, const std::string &key_, int flag) {
     name = "MAEC_";  //+key;
@@ -340,7 +332,7 @@ FFN::FFN(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag)
 }
 bool VarCoder::Build(int flag_0) {
     int flagSLP = flag_0 | F_DELTA;
-    
+
     if (tpNorm > 0)
         norm.BuildX(name + MODEL_CARD::sNorm, {nBottom}, hFish, flag_0 | F_DELTA);
     if (hFish->isModel({NLP_QWEN2})) {
@@ -416,16 +408,19 @@ bool FFN::Build(int flag_0) {
     }
 
     up.w->residual_scale = hFish->config.common.residual_scale;
+    if (layer > 6) {        //  Gradient would explode!
+        // up.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);
+        // down.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);       //  down.Back(GTensor::bt4c, tGelu, GTensor::delta, up_out);
+    }
 
     return true;
 }
 
-std::vector<hGensor> FFN::PGensors(bool isNoRef, int flag) {
-    std::vector<hGensor> gensors = VarCoder::PGensors(isNoRef, flag);
-    GPLUS(gensors, norm.PGensors());
-    GPLUS(gensors, {out});
-    return gensors;
+std::vector<GeNeuron *> FFN::SubNeurons(int flag) {
+    std::vector<GeNeuron *> neurons = {&up, &down, &norm};  // gate
+    return neurons;
 }
+
 hGensor FFN::Ming(RLS_BP *ctx_, hGensor inpL, int flag) {
     GeNeuron::BeforeMing(ctx_, inpL, flag);
 

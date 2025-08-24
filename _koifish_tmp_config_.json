@@ -18,8 +18,13 @@
             ]
         },
         "parameter": {
-            "Layer": 48,  
-            "transformer":{                "Ctx":1024,  "Embed":    1600,    "Head": 25,   "Ffn":6400            }
+            "Layer": 48,
+            "transformer": {
+                "Ctx": 1024,
+                "Embed": 1600,
+                "Head": 25,
+                "Ffn": 6400
+            }
         },
         "inp_embd": {
             "Embedding+": []
@@ -75,7 +80,7 @@
             "sign": 0,
             "grad_accumulation": 1,
             "lars_ratio": 0,
-            "ZMUV_ratio": 0.00
+            "ZMUV_ratio": 0.0
         }
     },
     "# checkpoint-in": "./hy-tmp/checkpoint/chk-GPT2_9001.gguf",

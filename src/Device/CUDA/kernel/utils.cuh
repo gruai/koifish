@@ -449,8 +449,8 @@ struct SoftmaxParams {
  each block for one row of inp, i.e. inp[idx, :] of shape (V,)
 */
 __device__ inline SoftmaxParams CU_prepare_softmax(const floatX* logits, int V) {
-    float thread_maxval = -INFINITY, thread_sumval = 0.0f, sum = 0.0f;
-    floatX max_val = logits[0];
+    float thread_maxval = -INFINITY, thread_sumval = 0.0f;  //, sum = 0.0f;
+    // floatX max_val = logits[0];
     int tid        = threadIdx.x;
     /*if (threadIdx.x == 0) {  //  cpu version=P_softmax
         for (int i = 0; i < V; i++) {

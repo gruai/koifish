@@ -240,9 +240,9 @@ class RLS_BP : public RLSchedule {
     int T_fore = -1, T_back = -1;
     int nT_guoke   = 0;
     size_t szGuoke = 0;
-    std::map<hGensor, enum tpSTATUS> tensors;
+    std::map<hGensor, enum tpSTATUS> tMaps;
     virtual bool UpdateBackbone(int iter, int flag = 0x0);
-
+    virtual bool isUpdateBatch(int iter, int flag = 0x0);
    public:
     RLS_BP(EDGE_DEVICES *hED, const CLI_params &config, int flag);
     virtual ~RLS_BP() {}
@@ -261,4 +261,5 @@ class RLS_BP : public RLSchedule {
     void Dump(int typ) const override;
     friend class EDGE_DEVICES;
     friend class GeNeuron;
+    friend class Optimizer;
 };

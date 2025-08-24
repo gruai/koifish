@@ -132,6 +132,13 @@ bool SelfAttention::Build(int flag_0) {
 
     BIT_SET(proj_cat.out->flags, GTensor::F_NOALLOC);  // memory trick as kGPT
     proj_cat.w->residual_scale = hFish->config.common.residual_scale;
+    if (layer > 6) {
+        // Q.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);
+        // K.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);
+        // Lora of V+proj would slow convergence
+        // V.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);
+        // proj_cat.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);
+    }
     // if (remater_qkv) {
     if (isSeparateQKV) {
         BIT_SET(Q.out->flags, GTensor::F_NOALLOC), BIT_SET(K.out->flags, GTensor::F_NOALLOC), BIT_SET(V.out->flags, GTensor::F_NOALLOC);
@@ -174,21 +181,41 @@ string SelfAttention::__repr__(string &suffix, string &prefix, int flag) {
         _INFO("%s", buf);
     return buf;
 };
-std::vector<hGensor> SelfAttention::PGensors(bool isNoRef, int flag) {
-    std::vector<hGensor> gensors, tmp = {Q.w, Q.b, Q.out, K.w, K.b, K.out, V.w, V.b, V.out, transition, bqkv, attn, proj_cat.w, proj_cat.b, proj_cat.out, out};
-    GPLUS(tmp, norm.PGensors()); /*norm.w, norm.b, norm.out, norm.mean, norm.rstd,*/
-    if (isQKNormal) {
-        // GPLUS(tmp, normQ.PGensors()), GPLUS(tmp, normK.PGensors());
-        GPLUS(tmp, {normQ.rstd, normK.rstd});
-    }
 
-    for (auto t : tmp) {
-        if (t == nullptr)
-            continue;
-        gensors.push_back(t);
+std::vector<GeNeuron *> SelfAttention::SubNeurons(int flag) {
+    std::vector<GeNeuron *> neurons = {&Q, &K, &V, &proj_cat, &norm};
+    if (isQKNormal) {
+        neurons.push_back(&normQ), neurons.push_back(&normK);
     }
-    return gensors;
+    return neurons;
 }
+
+/*std::vector<hGensor> SelfAttention::PickGensors(bool isLORA, int flag) {
+    return GeNeuron::PickGensors(isLORA, flag);
+    std::vector<hGensor> gens, tmp; // = {Q.w, Q.b, Q.out, K.w, K.b, K.out, V.w, V.b, V.out, transition, bqkv, attn, proj_cat.w, proj_cat.b, proj_cat.out,
+     out}; tmp = {transition, bqkv, attn, out};
+
+     std::vector<hGensor> t1 = Q.PickGensors(isLORA);
+     GPLUS(tmp, Q.PickGensors(isLORA));
+     GPLUS(tmp, K.PickGensors(isLORA));
+     GPLUS(tmp, V.PickGensors(isLORA));
+     GPLUS(tmp, proj_cat.PickGensors(isLORA));
+     GPLUS(tmp, norm.PickGensors()); //norm.w, norm.b, norm.out, norm.mean, norm.rstd,
+     if (isQKNormal) {
+         // GPLUS(tmp, normQ.PickGensors()), GPLUS(tmp, normK.PickGensors());
+         GPLUS(tmp, {normQ.rstd, normK.rstd});
+     }
+
+     for (auto t : tmp) {
+         if (t == nullptr)
+             continue;
+         gens.push_back(t);
+         if (strcmp(t->name, "model.blk.0.attn.wo.weight") == 0) {
+             int debug = 0;
+         }
+     }
+     return gens;
+}*/
 
 bool SelfAttention::BeforeForward(int iter, int op, int flag) {
     if (rope != nullptr) {
@@ -213,6 +240,7 @@ hGensor SelfAttention::Ming(RLS_BP *hRLS, hGensor inpL, int flag) {
             attn->AddSrc({normQ.rstd, normK.rstd});
         }
         attn >> proj_cat >> norm >> this;
+        out->AddSrc({transition, bqkv, attn});  // duplicate!
         cur = out;
         // gTN0(cur,"%s_+",name.c_str());
     } else {  // high performace fused operator
@@ -804,7 +832,7 @@ bool TGraph::TopoOrder(int flag) {
 #endif
 
     hGensor cur, son;
-    // std::vector<hGensor> gensors;
+
     assert(sinks.size() > 0);
     for (auto r : sinks) {
         topo_nodes.push_back(r);
@@ -1526,6 +1554,9 @@ hNeuron Fish::J2Neuron(void *ctx_, string &dad, int level, const JConfig &jconfi
         if (k == "datatype") {
             continue;
         }
+        if (k == "multiscale") {
+            continue;
+        }
         if (k == "arch") {
             continue;
         }
@@ -1570,7 +1601,7 @@ hNeuron Fish::J2Neuron(void *ctx_, string &dad, int level, const JConfig &jconfi
 bool GTensor::FreeBuffer(int flag) {
     try {
         bt4c = nullptr, delta = nullptr, tmpDelta = nullptr, outL = nullptr, scratch = nullptr, tmpFF1 = nullptr, tmpW = nullptr, tmpGW = nullptr,
-        residual = nullptr;
+        residual   = nullptr;
         tmpTernary = nullptr;
         return true;
     } catch (const std::exception &e) {
@@ -1609,12 +1640,12 @@ bool GTensor::AllocBuffer(Fish *hFish, int flag) {
         // cuLiteTest(B,T,C);
         int mostC = C;  // config.nEmbed(-1);
         SHAPE sp = {B, T, C}, sp4 = {B, T, max(nFF, 3 * C)}, sp0 = {dB, (int)nTmp}, spMost = {B, T, mostC};
-        GTensor::bt4c    = std::make_shared<huTensor>(hFish, "scratch_4c", sp4, tpA, true);
-        GTensor::tmpFF1  = std::make_shared<huTensor>(hFish, "tmpFF1", sp4, tpA, true);
-        SHAPE spTernary={C, max(nVocab, 3 * C)};
+        GTensor::bt4c       = std::make_shared<huTensor>(hFish, "scratch_4c", sp4, tpA, true);
+        GTensor::tmpFF1     = std::make_shared<huTensor>(hFish, "tmpFF1", sp4, tpA, true);
+        SHAPE spTernary     = {C, max(nVocab, 3 * C)};
         GTensor::tmpTernary = std::make_shared<huTensor>(hFish, "tmpTernary", spTernary, tpW, true);  // Only weight would in ternay bit
-        GTensor::outL    = std::make_shared<huTensor>(hFish, "outL", spMost, tpA, true);
-        GTensor::scratch = std::make_shared<huTensor>(hFish, "scratch/output", sp0, tpA, true);  //  may reduce memory by sp0=sp0/VP
+        GTensor::outL       = std::make_shared<huTensor>(hFish, "outL", spMost, tpA, true);
+        GTensor::scratch    = std::make_shared<huTensor>(hFish, "scratch/output", sp0, tpA, true);  //  may reduce memory by sp0=sp0/VP
 
         GTensor::delta     = std::make_shared<huTensor>(hFish, "delta", spMost, tpG, true);
         GTensor::tmpDelta  = std::make_shared<huTensor>(hFish, "delta", spMost, tpG, true);

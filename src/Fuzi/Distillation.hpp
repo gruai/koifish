@@ -30,7 +30,7 @@ class Fish;
 class Distillation {
     float alpha = 0.5;
 protected:
-    std::vector<hGensor> gensors;
+    std::vector<hGensor> dist_gensors;
     std::vector<float> sigmas;
     hLearnSKDU scheduler = nullptr; 
     Fish *hFish=nullptr;
@@ -60,7 +60,7 @@ public:
         switch(alg){
         case SIGMA:
             gensor = nullptr;   //gg_axpy_f32(ctx,G(gensor),sigma,G(delta),1-sigma);
-            gensors.push_back(gensor);
+            dist_gensors.push_back(gensor);
             result = gensor;
             break;
         case SIGMA_0:

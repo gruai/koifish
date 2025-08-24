@@ -98,17 +98,7 @@ string NLP_AutoRegressive::__repr__(string &suffix, string &prefix, int flag) {
     // Fish::__repr__(suffix,prefix,flag);
     char buf[50120] = "\0";
     const char *tab = prefix.c_str();
-#ifdef _TENSOR_G_
-#else
-    auto gb = GetBackRaw(), gf = hForwTG->raw();
-    ;
-    sprintf(buf + strlen(buf), "\n%s(%s):nParams = %ld(%.6gM)", tab, name.c_str(), nParams, nParams / 1.0e6);
-    if (gb != nullptr)
-        sprintf(buf + strlen(buf), "\n%s  tensors=%ld %s=(%d %d)  %s=(%d %d) ffn_use_gate=%d", tab, gensors.size(), hForwTG->name.c_str(), gf->n_nodes,
-                gf->n_leafs, hBackTG->name.c_str(), gb->n_nodes, gb->n_leafs, config.ffn_use_gate);
-    else
-        sprintf(buf + strlen(buf), "\n%s  tensors=%ld gf=(%d %d) ", tab, gensors.size(), gf->n_nodes, gf->n_leafs);
-#endif
+
     string s = "\n", p = prefix + "\t";
     int i;
     _T_repr_(KQ_pos, "\n\tKQ_pos: ", buf);
@@ -767,7 +757,7 @@ void NLP_AutoRegressive::Dump(int type, int flag) {
     string suffix = "\n========\n", prefix;
     __repr__(suffix, prefix);
     config.Dump();  //        print_params(&config)
-    _INFO("====== nParams = %ld(%.6gM) ======\n", nParams, nParams / 1.0e6);
+    _INFO("====== nParams = %ld(%.6gM nT=%ld) ======\n", nParams, nParams / 1.0e6, optParams.size());
     _INFO("%s: nParams=%zu model_size = %zu bytes (%.1f MB)\n", __func__, nParams, szModel, szModel / (1024.0f * 1024.0f));
     _INFO("%s: n_vocab=%d t_vocab=%d,n_batch=%d,n_ctx=%d,n_embd=%d,n_head=%d,n_rot=%d,n_ff=%d\n", __func__, n_vocab, tVocab(), n_batch, n_ctx, n_embd,
           config.n_head(), config.n_rot(), config.n_ff());
@@ -820,7 +810,6 @@ int Fish::ForwardOnRLS(int iter, int flag) {
     // if(DEBUG.back_graph_version==1)
     // { return ForwardOnNeuron_v0(flag);  }
     RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
-    assert(hRLS != nullptr);
     double now = GST_ms();
     if(iter<0 || isTrain())
         hRLS->Prepare(iter, 0);

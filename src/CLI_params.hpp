@@ -44,6 +44,7 @@ enum LIFE_PHASE {
 enum MODEL_ENSEMBLE {
     AGGREGATION,
     RANDOM_1,
+    MULTI_SCALE,
 };
 
 enum METRIC { M_VOID, CLS_LOSS, PPL, METRIC_MOST };
@@ -54,6 +55,7 @@ enum COMPRESSIVE_SENSING {
     SVD_a,
     GBTQ,
     GBDT,
+    LORA,
     EoRA,    // Eigenspace Low-Rank Approximation
     SAMPLE,  // random sub-sampling
 };
@@ -75,6 +77,32 @@ enum MODEL_ARCH {
               //////
     SCORE_,
     SAM_
+};
+
+enum MEM_STRATEGY {
+    PRE_ALLOC_GPU,
+    PRE_ALLOC_HOST_MAP,
+    MEM_SWAP,  //  deprecated
+    MEM_SWAP_GUOKE,
+};
+static std::map<MEM_STRATEGY, std::string> MEM_STRATEGY_desc = {
+    {PRE_ALLOC_GPU, "PRE_ALLOC_GPU"},
+    {PRE_ALLOC_HOST_MAP, "PRE_ALLOC_HOST_MAP"},
+    {MEM_SWAP, "SWAP"},
+    {MEM_SWAP_GUOKE, "SWAP_GUOKE"},
+};
+// parameters of scheduling
+struct SKDU_params {
+    MEM_STRATEGY strategy = PRE_ALLOC_GPU;
+    bool paramIsGuoke     = false;
+    // layer in branch
+    int nLayerInBranch = -1, LIB_0 = -1, LIB_1 = 0, LIB_iter_switch = 100;
+    // int LIB_iter4save = -1;
+    // int tpParamResident = 0;  //  0-      1-
+    bool InitSection(int nLayer, int nLS, int nSwitch=100, int flag = 0x0);
+    bool isUpdateParamV0() const;
+    bool canSave(int iter, int flag = 0x0) const;
+    void Dump(int typ) const;
 };
 
 /**
@@ -281,30 +309,8 @@ struct DEUG_SWITCH {
 };
 extern DEUG_SWITCH DEBUG;
 
-enum MEM_STRATEGY {
-    PRE_ALLOC_GPU,
-    PRE_ALLOC_HOST_MAP,
-    MEM_SWAP,  //  deprecated
-    MEM_SWAP_GUOKE,
-};
-static std::map<MEM_STRATEGY, std::string> MEM_STRATEGY_desc = {
-    {PRE_ALLOC_GPU, "PRE_ALLOC_GPU"},
-    {PRE_ALLOC_HOST_MAP, "PRE_ALLOC_HOST_MAP"},
-    {MEM_SWAP, "SWAP"},
-    {MEM_SWAP_GUOKE, "SWAP_GUOKE"},
-};
-// parameters of scheduling
-struct SKDU_params {
-    MEM_STRATEGY strategy = PRE_ALLOC_GPU;
-    bool paramIsGuoke     = false;
-    // layer in branch
-    int nLayerInBranch = -1, LIB_0 = -1, LIB_1 = 0, LIB_iter_switch = 100, LIB_iter4save = -1;
-    // int tpParamResident = 0;  //  0-      1-
-    bool InitSection(int nLayer, int nLS, int flag = 0x0);
-    bool isUpdateParamV0() const;
-    bool canSave(int iter, int flag = 0x0) const;
-    void Dump(int typ) const;
-};
+enum LORA_ADAPT_W { W0, AB, W_AB, refW_AB, refW_AB_ffn };
+
 struct CLI_params {
     struct train_params_ common;
     MODEL_CARD model;
@@ -321,6 +327,8 @@ struct CLI_params {
     DataTypes datatypes;
 
     SKDU_params scheduling;
+
+    LORA_ADAPT_W tpLORA = LORA_ADAPT_W::W0;
 
     std::string eval_metric = "";
 
@@ -453,7 +461,7 @@ struct CLI_params {
 
     // bool only_infer = false;
 
-    enum TUNE_ALG {
+    /*enum TUNE_ALG {
         OFF = 0,
         LORA,
         LORA_SVD,
@@ -467,7 +475,7 @@ struct CLI_params {
             "", "_AB", "_SVD", "_SVD_AB", "_VARIATIONAL",
         };
         return tune_desc[tune];
-    }
+    }*/
 
     // parameters of datasets
     float rSplit = 0.1;

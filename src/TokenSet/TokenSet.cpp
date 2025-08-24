@@ -422,7 +422,7 @@ double SampLoader::Evaluate(int flag) {
         // samp = cur_samps[0];
         embed->hBatch = GetCurBatch();
         hFish->ForwardOnRLS(iter, 0x0);
-        float a = hTokens->LossOnResult(shared_from_this(), cls);  // loader->hTokens->LossOnResult(loader, cls);
+        // float a = hTokens->LossOnResult(shared_from_this(), cls);  // loader->hTokens->LossOnResult(loader, cls);
         nEvalTokens += embed->hBatch->size(), nB++;
         tCur = GST_ms(), dt = tCur - tLast, tLast = tCur;
         tpi = tpi * (1.0 - relax) + dt * relax, tRemain = (nMost - i) * tpi;

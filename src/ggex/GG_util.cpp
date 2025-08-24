@@ -488,17 +488,17 @@ bool SKDU_params::canSave(int iter, int flag) const {
     return true;
 }
 
-bool SKDU_params::InitSection(int nLayer, int nLS, int flag) {
+bool SKDU_params::InitSection(int nLayer, int nLS, int nSwitch, int flag) {
     if (nLS <= 0)
         return false;
     assert(nLayer % nLS == 0);
     nLayerInBranch = nLS;
     LIB_0          = 0;
     LIB_1          = 0;  // nLayerInBranch;
-    int nSwitch    = nLayer / nLayerInBranch;
-
-    LIB_iter_switch = 100;  // 100,10
-    LIB_iter4save   = LIB_iter_switch * nSwitch;
+    int nBranch    = nLayer / nLayerInBranch;
+    assert(nSwitch >= 1);
+    LIB_iter_switch = nSwitch;  // 100,10
+    // LIB_iter4save   = LIB_iter_switch * nBranch;
 
     return true;
 }
@@ -528,6 +528,7 @@ void SKDU_params::Dump(int typ) const {
           paramIsGuoke ? "\"Only cur params in GPU-memor!\"" : "\"All params in GPU-memory\"");
 }
 
+// LORA_ADAPT_W HIERARCH_LoRA::tpLORA = HIERARCH_LoRA::W_AB;      //  W0, AB, W_AB
 void CLI_params::OnArch() {
     _INFO("[ARCH] sizeof(token)=%ld,sizeof(floatX)=%ld sizeof(Grad)=%d(%d)\n", sizeof(TOKEN_ID), sizeof(floatX), sizeof(floatGrad), sizeof(floatMV));
     int nH        = -1;
@@ -553,10 +554,15 @@ void CLI_params::OnArch() {
             break;
         case MODEL_ARCH::NLP_GPT2:
         case MODEL_ARCH::NLP_GPT2_char: {
-            // DEBUG.cmd_p1 = 1;
-            DEBUG.T_classifier_ver = 1;
-            n_embd_head_v          = 64;
-            n_embd_head_k          = 64;
+            // DEBUG.cmd_p1 = 1;            
+            tpLORA                     = LORA_ADAPT_W::refW_AB;  // refW_AB      W_AB
+            if(tpLORA!=LORA_ADAPT_W::W0){
+                scheduling.paramIsGuoke    = true;      //  @/home/cys/rnd/lic/log/gpt2/0801_774M_section=9.info
+            }
+            scheduling.LIB_iter_switch = 100;                     // 100,10
+            DEBUG.T_classifier_ver     = 1;
+            n_embd_head_v              = 64;
+            n_embd_head_k              = 64;
             // _embd = 128; dict_latent_dim = 128;        n_embd_head_v=n_embd_head_k=2; //only for debug
             n_ctx_train = 1024;
             if (model.layerps.size() == 0 && !isJModel) {  //  deprecated
@@ -566,6 +572,7 @@ void CLI_params::OnArch() {
                     model.layerps.push_back(lay);
                 }
             }
+            // model.ensemble = MODEL_ENSEMBLE::MULTI_SCALE;
             model.tpPreLogits = typNUMBER::BF16;
             //  need new GEMM! cuBLASLt requires bias in FP8 mode to be BF16... (sigh)
             model.isNormalBias  = true;
@@ -580,7 +587,7 @@ void CLI_params::OnArch() {
             model.Rope_version       = 0;
             model.isEmbedWeightTying = true;
             model.preLogits_dB       = 8;
-            // scheduling.paramIsGuoke = true;  @/home/cys/rnd/lic/log/gpt2/0801_774M_section=9.info
+            
             int group = Get({"model_v0", "target_group"}, 1);
             assert(group == 1);
         }
@@ -607,6 +614,9 @@ void CLI_params::OnArch() {
         default:
             _INFO("[ARCH]=%s\n", "");
             break;
+    }
+    if (model.ensemble == MODEL_ENSEMBLE::MULTI_SCALE) {
+        scheduling.LIB_iter_switch = 1;
     }
 }
 
@@ -797,9 +807,8 @@ bool CLI_params::InitJConfig(int flag) {
         /*
             on some ealy testing on finetune/distillation, it seems that less layers would get nealy same accuracy
         */
-
-        tune   = jKV(jConfig, {"lora", "tune"}, tune);    //"lora_tune"
-        lora_r = jKV(jConfig, {"lora", "rank"}, lora_r);  //{"lora-r"}
+        // tune   = jKV(jConfig, {"lora", "tune"}, tune);    //"lora_tune"
+        // lora_r = jKV(jConfig, {"lora", "rank"}, lora_r);  //{"lora-r"}
 
         // train = jKV(jConfig,{"train"},train );
         return true;

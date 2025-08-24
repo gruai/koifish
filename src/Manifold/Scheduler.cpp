@@ -71,17 +71,18 @@ bool RLS_BP::InitGUOKE(int flag) {
     if (params.strategy == MEM_STRATEGY::PRE_ALLOC_GPU) {
         int LIS = params.nLayerInBranch;
         if (LIS > 0) {
-            int nSection = nLayer / LIS;
+            int nSection = nLayer / LIS;  // brach or hierarch
             for (int i = 1; i < nSection; i++) {
                 for (int l = 0; l < LIS; l++) {
                     int lay0 = l, lay1 = i * LIS + l;
-                    SelfAttention *firstQKV = hFish->GetNeuron<SelfAttention>("SelfAttention", lay0);
-                    SelfAttention *QKV      = hFish->GetNeuron<SelfAttention>("SelfAttention", lay1);
-                    nT += QKV->PGensors().size();
+                    SelfAttention *firstQKV = hFish->GetNeuron<SelfAttention>("SelfAttention", lay0),
+                                  *QKV      = hFish->GetNeuron<SelfAttention>("SelfAttention", lay1);
+                    QKV->branch             = i;
+                    nT += QKV->PickGensors().size();
                     nT_guoke += QKV->SetGuoke(firstQKV, isRefParam);
-                    FFN *firstFFN = hFish->GetNeuron<FFN>("FFN", lay0);
-                    FFN *ffn      = hFish->GetNeuron<FFN>("FFN", lay1);
-                    nT += ffn->PGensors().size();
+                    FFN *firstFFN = hFish->GetNeuron<FFN>("FFN", lay0), *ffn = hFish->GetNeuron<FFN>("FFN", lay1);
+                    ffn->branch = i;
+                    nT += ffn->PickGensors().size();
                     nT_guoke += ffn->SetGuoke(firstFFN, isRefParam);
                 }
             }
@@ -97,10 +98,10 @@ bool RLS_BP::InitGUOKE(int flag) {
         firstQKV->SetGuoke(nullptr, isRefParam);
         for (int l = 1; l < nLayer; l++) {
             SelfAttention *QKV = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
-            nT += QKV->PGensors().size();
+            nT += QKV->PickGensors().size();
             nT_guoke += QKV->SetGuoke(firstQKV, isRefParam);
             FFN *ffn = hFish->GetNeuron<FFN>("FFN", l);
-            nT += ffn->PGensors().size();
+            nT += ffn->PickGensors().size();
             nT_guoke += ffn->SetGuoke(firstFFN, isRefParam);
         }
         _INFO("[RLS] \tGuoke=%d(%d)\t\n", nT_guoke, nT);
@@ -123,10 +124,14 @@ void GeNeuron::ManageMemory(DATA_PLACE target, int typ, int flag) {
     }
     INIT_WEIGHT tpInitWeight = hFish->tpInitWeight;
     assert(out != nullptr);
-    vector arrT = PGensors();
+    vector arrT = PickGensors();
     // size_t dev_mem = 0x0,host_mem = 0x0;
     double a = GTensor::szGlobalMaloc;
     for (auto t : arrT) {
+        if (strcmp(t->name, "model.blk.0.attn.wq.weight") == 0 &&
+            target == DEV_MEM) {  //"model.blk.1.attn"&& target==FREE_DEV        "preLogits"   "model.output.cls"
+            int debug = 0;
+        }
         if (t == nullptr)
             continue;
         switch (target) {
@@ -223,7 +228,7 @@ void RLS_BP::Dump(int typ) const {
     params.Dump(typ);
     size_t szFree, szTotal;
     cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
-    _INFO("[RLS]\tnGuoke=%d(%.3G) Memory of GPU=%.6gM(free=%.6gM)\n", nT_guoke, szGuoke / 1.0e9,(szTotal - szFree) / 1.0e6, szFree / 1.0e6);
+    _INFO("[RLS]\tnGuoke=%d(%.3G) Memory of GPU=%.6gM(free=%.6gM)\n", nT_guoke, szGuoke / 1.0e9, (szTotal - szFree) / 1.0e6, szFree / 1.0e6);
 }
 
 bool RLS_BP::isResident(GeNeuron *neuron, int flag) {
@@ -254,7 +259,9 @@ void RLS_BP::Init(Fish *hF, std::vector<hNeuron> backbons, int flag) {
     assert(budget > 0);
 
     for (auto n : backbons) {
-        for (auto t : n->PGensors()) tensors[t] = FLIP;
+        for (auto t : n->PickGensors()) {
+            tMaps[t] = FLIP;
+        }
         n->ManageMemory(DATA_PLACE::SYMBOLIC);
         double mem     = n->dev_most_mem / 1.0e6;
         TaskNode *node = new RLSchedule::TaskNode(n->name, (void *)(n.get()), mem);
@@ -268,12 +275,12 @@ void RLS_BP::Init(Fish *hF, std::vector<hNeuron> backbons, int flag) {
 
 bool RLS_BP::InitBranch(int flag) {
     int L = hFish->config.nLayer(), t0 = params.LIB_0, t1 = params.LIB_1, LIS = params.nLayerInBranch, nPass = 0;
-    if (LIS <= 0){
-        assert(allTasks.size()==0);
-        allTasks = {curTasks};        // Ref RLS_BP::Init
+    if (LIS <= 0) {
+        assert(allTasks.size() == 0);
+        allTasks = {curTasks};  // Ref RLS_BP::Init
         return true;
     }
-        
+
     if (allTasks.size() > 0) {
         return true;
     }
@@ -304,13 +311,21 @@ bool RLS_BP::InitBranch(int flag) {
             tasks.push_back(node);
             n->stat.Reset();
         }
-        _INFO(" %d@{L%d:L%d}", tasks.size(),LIB_0,LIB_1);
+        _INFO(" %d@{L%d:L%d}", tasks.size(), LIB_0, LIB_1);
         allTasks.push_back(tasks);
     }
     assert(allTasks.size() == nSwitch);
     _INFO("\n");
     return true;
 }
+
+bool RLS_BP::isUpdateBatch(int iter, int flag) {
+    bool isUpdate = true;
+    if (hFish->config.model.ensemble == MODEL_ENSEMBLE::MULTI_SCALE)
+        isUpdate = curBranchID == 0;
+    return isUpdate;
+}
+
 /*
     1 train LIB_0/LIB_1/LIS_2 ....
     2 train LIB_0/{LIB_0,LIB_1}/{LIB_0,LIB_1,LIS_2} ...
@@ -318,17 +333,18 @@ bool RLS_BP::InitBranch(int flag) {
  */
 bool RLS_BP::UpdateBackbone(int iter, int flag) {
     int L = hFish->config.nLayer(), t0 = params.LIB_0, t1 = params.LIB_1, LIS = params.nLayerInBranch, nPass = 0;
-
     assert(L % LIS == 0);
-    int nSwitch  = L / LIS;
+    string s = "\n", p = "\t";
+    int nSwitch = L / LIS;
     // curBranchID    = iter == -1 ? 0 : rand_branch.RandU32() % nSwitch;
-    curBranchID    = iter == -1 ? 0 : (curBranchID+1) % nSwitch;
+    curBranchID = iter == -1 ? 0 : (curBranchID + 1) % nSwitch;
     // curBranch = 0;       // only for debug
     params.LIB_0 = curBranchID * LIS, params.LIB_1 = params.LIB_0 + LIS;
     assert(params.LIB_1 <= L);
     curTasks = allTasks[curBranchID];
     for (auto node : curTasks) {
         GeNeuron *neuron = (GeNeuron *)(node->hOBJ);
+        // _INFO("%s\n",neuron->__repr__(s,p).c_str());
         neuron->stat.Reset();
     }
 

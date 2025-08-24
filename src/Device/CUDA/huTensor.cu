@@ -27,6 +27,18 @@ huTensor::huTensor(Fish* fish, const string& name_, const SHAPE shape, typNUMBER
     }
 }
 
+hGTensor huTensor::Partial(size_t nOff, SHAPE shape, int flag) {
+    hGTensor sub = GT(hFish, type, shape);
+    assert(nOff + sub->size() <= size());
+    assert(BitPE(type) == 8 || BitPE(type) == 16);
+    int nB     = (int)(BitPE(type) / 8);
+    sub->data  = (char*)data + nOff * nB;
+    sub->grad  = grad + nOff;
+    sub->flags = flags;
+    BIT_SET(sub->flags, F_ONLYREF);
+    return sub;
+}
+
 size_t GTensor::szGlobalMaloc = 0;
 size_t huTensor::mostMemory(int typ) const {
     if (BIT_TEST(flags, F_NOALLOC))
@@ -67,19 +79,22 @@ size_t huTensor::Alloc_1(void** dst, bool isZero, string desc, size_t sz0, int f
     if (isZero)
         cudaCheck(cudaMemset(*dst, 0, szAlloc));
     szGlobalMaloc += szAlloc;
-    SUM::mems.push_back(MEM_USAGE(szAlloc,desc,this));
+    SUM::mems.push_back(MEM_USAGE(szAlloc, desc, this));
     return szAlloc;
 }
 size_t huTensor::Free_1(void** obj, const string& info) {
+    if (BIT_TEST(flags, F_ONLYREF))
+        return 0x0;
+
     assert(*obj != nullptr);
     // _INFO("\t%s%s freed@%p(%.3gM)!",name,info.c_str(),*obj,(szData)/1.0e6);
     if (BIT_TEST(flags, F_HOSTALLOC))
         cudaFreeHost(*obj);
     else {
         cudaError_t error = cudaFree(*obj);
-        if (error != cudaSuccess) {  
+        if (error != cudaSuccess) {
             cudaError_t const last_err{cudaGetLastError()};
-            _INFO("[CUDA] free failed @\"%s\"! err=%s(%s).\n", name, cudaGetErrorString(error),cudaGetErrorString(last_err));
+            _INFO("[CUDA] free failed @\"%s\"! err=%s(%s).\n", name, cudaGetErrorString(error), cudaGetErrorString(last_err));
             // exit(EXIT_FAILURE);
         }
         *obj = nullptr;
@@ -93,18 +108,19 @@ size_t huTensor::Free_1(void** obj, const string& info) {
 
 static mt19937_state rngOfParams;
 bool huTensor::InitParam(int tpX) {
-    size_t nElem0       = size(), i;
-    size_t nInit        = size(1);
+    size_t nElem0 = size(), i;
+    size_t nInit  = size(1);
     // bool isTmp          = true;
-    // uint32_t param_seed = rParam.RandU32();
     int iter = hFish->GetCurIter();
     if (tpInit > 0 && tpInit != SERIALIZE) {
-        if(strcmp(name,"model.blk.34.ffn_down.weight")==0){
-            int debug=0;
+        if (strcmp(name, "model.out.weight_b") == 0) {  //  model.blk.34.ffn_down.weight
+            int debug = 0;                              // Print(name, 1, -1);
         }
         // _INFO("[InitParam@%d]\t%ld-%ld@%s\n",iter,size(),nInit,name);
-
-        floatX* tmp = nullptr;  //new floatX[nInit];
+        if (BIT_TEST(flags, F_LORA_B)) {
+            return true;
+        }
+        floatX* tmp = nullptr;  // new floatX[nInit];
         switch (tpInit) {
             case FIX_1:
                 tmp = new floatX[nInit];
@@ -123,14 +139,14 @@ bool huTensor::InitParam(int tpX) {
                     // Print(name,0,-1);
                 } else
                     CU_disti_normal<floatX>(nInit, (floatX*)data, 0.02f * residual_scale, param_seed);
-                
+
                 break;
         }
-        if (tmp!=nullptr) {
+        if (tmp != nullptr) {
             H2D(data, tmp, nInit * BPE(type));  // cudaCheck(cudaMemcpy(data, tmp, nInit * nB, cudaMemcpyHostToDevice));
             delete[] tmp;
         }
-        
+
         // Print(name,0,-1);
     } else {
         if (tpInit == SERIALIZE) {  //  ???
@@ -139,7 +155,8 @@ bool huTensor::InitParam(int tpX) {
             }
         }
     }
-
+    if (DUMP())
+        Print(name, 0, -1);  // dump some value
     return true;
 }
 
@@ -555,7 +572,7 @@ bool huTensor::ToTernary(floatX* paramX, int flag) {
     size_t count = size(), dT4B = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
     bool isOverwrite = false;
     assert(this->isParam() && paramX != nullptr);
-    assert(ne[2] == 1 && ne[3] == 1);  // only for 2D weight
+    assert(is2D() /*ne[2] == 1 && ne[3] == 1*/);  // only for 2D weight
     // auto dGRID         = 1;  // hFish->curDevice()->GridDim(count);
     // void* kernelArgs[] = {(void*)&gama_T, (void*)&data, (void*)&ne[0], (void*)&ne[1], (void*)&tpQuant};
     if (type == typNUMBER::T_BINARY_TILE) {
