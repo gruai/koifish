@@ -1,11 +1,11 @@
 #include "Fish.hpp"
 
 tpSWARM Fish::swarm = {};
-// LogicSalp::LogicSalp(const int dim, int flag) {
+// Pangpi::Pangpi(const int dim, int flag) {
 // 	position.resize(dim);
 // }
 
-// LogicSalp::LogicSalp(const int dim, const vector<int>&picks, int flag) {
+// Pangpi::Pangpi(const int dim, const vector<int>&picks, int flag) {
 // 	position.resize(dim);
 // 	for (int i = 0; i < dim; i++) {
 // 		position[i] = 0;
@@ -15,7 +15,7 @@ tpSWARM Fish::swarm = {};
 // 	}
 // }
 
-LogicSalp::LogicSalp(const std::string &nam_, struct CLI_params params, int flag) {
+Pangpi::Pangpi(const std::string &nam_, struct CLI_params params, int flag) {
     assert(swarm.size() > 0);
     for (auto fish : swarm) {
         if (fish->role == ROLE_TYPE::SWARM_HEAD) {
@@ -26,7 +26,7 @@ LogicSalp::LogicSalp(const std::string &nam_, struct CLI_params params, int flag
     assert(head != nullptr);
 }
 
-void LogicSalp::Train(int flag) {
+void Pangpi::Train(int flag) {
     assert(head != nullptr);
     if (0) {
         for (auto hFish : swarm) {
@@ -37,7 +37,7 @@ void LogicSalp::Train(int flag) {
     }
 }
 
-void LogicSalp::cross_over(const LogicSalp *A, const LogicSalp *B, int flag) {
+void Pangpi::cross_over(const Pangpi *A, const Pangpi *B, int flag) {
     assert(space == BIT_MASK);
     int DIM = position.size(), i;
     int pos = 0;  // rander_.RandInt32() % DIM;
@@ -46,7 +46,7 @@ void LogicSalp::cross_over(const LogicSalp *A, const LogicSalp *B, int flag) {
     }
 }
 
-void LogicSalp::mutatioin(double T_mut, int flag) {
+void Pangpi::mutatioin(double T_mut, int flag) {
     assert(space == BIT_MASK);
     int DIM = position.size(), i;
     for (i = 0; i < DIM; i++) {

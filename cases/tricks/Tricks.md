@@ -7,7 +7,7 @@ The following table lists some tricks and its working status.
 | Rope    | 🧪      | ★ ★ ☆ ☆ ☆     ||
 | Rematerialisation    | ✔️      | ★ ★ ★ ★ ☆     ||
 | Weight Tying    | ✔️      | ★ ★ ★ ☆ ☆     ||
-| AdamS    | ✔️      | ★ ★ ★ ☆ ☆     ||
+| Hybrid Adam    | ✔️      | ★ ★ ★ ☆ ☆     ||
 | Lion         | 🔒           | ★ ★ ☆ ☆ ☆        ||
 | Subsampling    | 🌿      |  ★ ☆ ☆ ☆ ☆    ||
 | LORA    |    🧪   | ★ ★ ☆ ☆ ☆     ||

@@ -142,7 +142,7 @@ hFISH Fish::MakeSwarm(const std::string nam_, struct CLI_params &params, int fla
             Fish::swarm.push_back(fish);
         }
     }
-    hSALP salp = std::make_shared<LogicSalp>(nam_, params);
+    hPangpi salp = std::make_shared<Pangpi>(nam_, params);
     return salp;
 }
 
@@ -189,7 +189,7 @@ size_t Fish::MostMemSize(int typ) {
     return bw;
 }
 
-bool Fish::UpdateParams(int flag){
+bool Fish::UpdateParams(int flag) {
     size_t nx = 0;
     assert(optParams.size() == 0);
     for (auto it : gensors.infos) {
@@ -198,8 +198,8 @@ bool Fish::UpdateParams(int flag){
             if (t->isRefer())
                 continue;
             optParams.push_back(t);
-            nx += tELEM(t);                          //
-        }        
+            nx += tELEM(t);  //
+        }
     }
     nParams = nx;
     assert(optParams.size() < 20480);
@@ -207,7 +207,7 @@ bool Fish::UpdateParams(int flag){
         CHECK_SAME_TENSORS("Compare parameter tensors\t", optParams, xGensors);
         _ERROR("%s nx(%ld)!=nParams(%ld)\t", __func__, nx, nParams);
     }
-    if(nParams==0)
+    if (nParams == 0)
         exit(KOIFISH_ZERO_PARAMETERS);
 
     return true;
@@ -246,12 +246,11 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
     //     _ERROR("%s nx(%ld)!=nParams(%ld)\t", __func__, nx, nParams);
     // }
 
-    if (isTrain()){
-
-    }  else {
+    if (isTrain()) {
+    } else {
         hOPT->SetPhase(LIFE_PHASE::P_EVAL_);
         assert(hBackTG == nullptr);
-    }       
+    }
     RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
     hRLS->Prepare(-1);  // Memory management
     for (auto t : hOPT->opt_ps) {
@@ -261,7 +260,7 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
 
     if (tpInitWeight == SERIALIZE) {
         if (!LoadCheckPoint(flag))
-            return false;       
+            return false;
     }
 
     if (!config.only_write_model && hOPT != nullptr) {
@@ -387,7 +386,7 @@ bool Fish::SaveTrain(string sX, int flag) {
         sOut = config.checkpoint.out + sX + ".ck";  //+ std::to_string(iter)
     } else
         sOut = config.checkpoint.out + "latest" + ".ck";
-    VERIFY_DIR_EXIST(sOut,true);
+    VERIFY_DIR_EXIST(sOut, true);
 
     if (!config.scheduling.canSave(iter, flag)) {
         return false;
@@ -414,7 +413,7 @@ bool Fish::SaveTrain(string sX, int flag) {
 }
 
 bool Fish::LoadCheckPoint(int flag) {
-    assert( tpInitWeight == INIT_WEIGHT::SERIALIZE );
+    assert(tpInitWeight == INIT_WEIGHT::SERIALIZE);
     std::string fpCheck = config.checkpoint.in;
     if (!config.model.empty()) {
         isLoadCheckpoint = HF_Serialize(false, 0x0);

@@ -414,6 +414,16 @@ __global__ static void CU_X2_partial(float* out, const T* data, size_t count) {
 }
 
 template <class T>
+__global__ static void CU_mix_(float alpha, T* x, float beta, const T* y, size_t count) {
+    size_t index      = blockIdx.x * blockDim.x + threadIdx.x;
+    // size_t grid_width = blockDim.x * gridDim.x;
+    if(index>=count)
+        return;
+
+    x[index] = (T)alpha*x[index] + (T)beta*y[index];
+}
+
+template <class T>
 __device__ inline float global_norm_squared_for_range(const T* data, size_t count) {
     size_t index      = blockIdx.x * blockDim.x + threadIdx.x;
     size_t grid_width = blockDim.x * gridDim.x;

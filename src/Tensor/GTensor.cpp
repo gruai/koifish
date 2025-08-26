@@ -602,8 +602,11 @@ bool huTensor::Alloc(int iter, int flagInit) {
                 Alloc_1(&gm, true, desc+".mv", szMV * 2), gv = (char *)gm + szMV;
             } else if (method == "lion") {
                 Alloc_1(&gm, true, desc+".mv", szMV);
-            } else if (method == "adams") {
-                Alloc_1(&gm, true, desc+".mv", szMV);
+            } else if (method == "adams") { // why converge so slow for 1445M?
+                /*if(isStrMatch(name, {"embd","output","norm"})){
+                    Alloc_1(&gm, true, desc+".mv", szMV * 2), gv = (char *)gm + szMV;
+                }else*/
+                    Alloc_1(&gm, true, desc+".mv", szMV);
             }else {
                 Alloc_1(&gv, true, desc+".mv", szMV);  // gm = nullptr, gv = (char *)grad + szMV;
             }

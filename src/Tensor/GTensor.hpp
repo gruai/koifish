@@ -112,6 +112,7 @@ class GTensor {
     Fish *hFish   = nullptr;
     hGTensor hRef = nullptr;
     std::vector<GTensor *> refered;
+    std::vector<hGTensor> fuyous;
     std::shared_ptr<EDGE_DEVICES> hDevice = nullptr;
     size_t szData = 0, szGama = 0, szUse = 0;
     int last_iter = -1;
@@ -327,6 +328,7 @@ class GTensor {
     friend class GeNeuron;
     friend class huTensor;
     friend class OPT_Adam;
+    friend class Fuyou;
 };
 
 template <typename T>

@@ -763,7 +763,7 @@ hGensor GeNeuron::AfterMing(RLS_BP *hRLS, hGensor cur, int flag) {
                     if (t->isRefer() || !t->isParam())  //
                         continue;
                     hOPT->UpdateTensorParam(t, nullptr, 0.0);
-                    hRLS->SetTensorStatus(hOPT->GetITER(), t, RLSchedule::UPDATE_PARAM);
+                    hRLS->SetTensorStatus(hOPT->GetITER(), t, TASK_STATUS::UPDATE_PARAM);
                 }
             }
         }
@@ -862,6 +862,8 @@ int GeNeuron::SetGuoke(GeNeuron *hGuoke_, bool isRefParam, int flag) {
         assert(t != gSrc[i]);
         if (t->isParam()) {
             assert(gSrc[i]->isParam());
+            t->fuyous.push_back(gSrc[i]);
+            gSrc[i]->fuyous.push_back(t);
             if (!isRefParam)
                 continue;
 
@@ -889,9 +891,9 @@ int GeNeuron::SetGuoke(GeNeuron *hGuoke_, bool isRefParam, int flag) {
 int SelfAttention::SetGuoke(GeNeuron *hGuoke_, bool isRefParam, int flag) {
     SelfAttention *firstQKV = dynamic_cast<SelfAttention *>(hGuoke_);
     int nG                  = GeNeuron::SetGuoke(hGuoke_, isRefParam, flag);
-    if(isRefParam){ //no need to ref two time!
+    if (isRefParam) {  // no need to ref two time!
 
-    }else{
+    } else {
         nG += Q.OnMultiscale(&(firstQKV->Q));
         nG += K.OnMultiscale(&(firstQKV->K));
         nG += V.OnMultiscale(&(firstQKV->V));
@@ -904,9 +906,9 @@ int SelfAttention::SetGuoke(GeNeuron *hGuoke_, bool isRefParam, int flag) {
 int FFN::SetGuoke(GeNeuron *hGuoke_, bool isRefParam, int flag) {
     FFN *firstFFN = dynamic_cast<FFN *>(hGuoke_);
     int nG        = GeNeuron::SetGuoke(hGuoke_, isRefParam, flag);
-    if(isRefParam){ //no need to ref two time!
+    if (isRefParam) {  // no need to ref two time!
 
-    }else{
+    } else {
         nG += up.OnMultiscale(&(firstFFN->up));
         nG += down.OnMultiscale(&(firstFFN->down));
     }

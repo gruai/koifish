@@ -191,8 +191,8 @@ __global__ void CU_adamw_s(PIPE_Optimizer<Tp, Tmv> pipe) {
     }  // guard
 
     float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx), m = pipe.gm[idx], v;
-    v = lerp(grad * grad, m*m, pipe.beta2);
-    m = lerp(grad, m, pipe.beta1), pipe.gm[idx] = m;    
+    v = lerp(grad * grad, m * m, pipe.beta2);
+    m = lerp(grad, m, pipe.beta1), pipe.gm[idx] = m;
     // m /= pipe.beta1_correction;  // m_hat
     // v /= pipe.beta2_correction;  // v_hat
     float x = _adamw_idx((float)pipe.params[idx], pipe, m, v, idx), x2 = x * x;
@@ -247,9 +247,9 @@ __global__ static void CU_adamw_Tile(PIPE_Optimizer<Tp, Tmv> pipe) {
     float a = _adamw_idx(old_param, pipe, m, v, idx);
     sum     = CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(a);  // nWrapT<=WARP_SIZE ? warpReduceSum<nWrapT>(a) :blockReduce_v0<warpReduceSum>(a, true);
     if (tid == 0) {
-        a = sum / TM / TN;
-        pipe.gama_T[gpos] = a;  //CU_Float2T<Tp>(a, pipe.seed);   //
-        atomicAdd(pipe.wNorms, a*a*TM*TN);
+        a                 = sum / TM / TN;
+        pipe.gama_T[gpos] = a;  // CU_Float2T<Tp>(a, pipe.seed);   //
+        atomicAdd(pipe.wNorms, a * a * TM * TN);
     }
 }
 
@@ -268,9 +268,9 @@ __global__ static void CU_adamw_Tile_RC(PIPE_Optimizer<Tp, Tmv> pipe) {
         idrow_0 = 0;
     if (idrow_0 >= M)
         idrow_0 = M - 1;
-    if (idcol_0 <0) 
+    if (idcol_0 < 0)
         idcol_0 = 0;
-    if (idcol_0 >= N) 
+    if (idcol_0 >= N)
         idcol_0 = N - 1;
 
     fnPOS pA   = trans == 0 ? fnCR2POS : fnRC2POS;
@@ -324,6 +324,35 @@ __global__ static void CU_adamw_Tile_each_mv(PIPE_Optimizer<Tp, Tmv> pipe) {
     }
 }
 
+// bool Fuyou::Exploitation(hGensor cur, int flag) {
+//     int nP = cur->size(), dT4B = 512 ,nF = cur->fuyous.size();  //
+//     int dGRID = CEIL_DIV(nP, dT4B);
+//     for (auto t : cur->fuyous) {
+//         //  position[i] = alpha*A->position[i] + beta*B->position[i];
+//         CU_mix_<<<dGRID, dT4B, 0, main_stream>>>(alpha, ToX(cur), beta, ToX(t),nP);
+//     }
+//     return true;
+// }
+
+bool Fuyou::Exploitation(ALGORITHM algorithm, hGensor tHead, hGensor tNext, int flag) {
+    int nP = tHead->size(), dT4B = 512;  //
+    int dGRID = CEIL_DIV(nP, dT4B);
+    switch (algorithm) {
+        case PARTICLE_GENETIC:
+            // if(tHead->is2D()){
+            //     CU_crossover_<<<dGRID, dT4B, 0, main_stream>>>(alpha, ToX(tNext), beta, ToX(tHead), nP);
+            //     CU_mutation_<<<dGRID, dT4B, 0, main_stream>>>(alpha, ToX(tNext), beta, ToX(tHead), nP);
+            // }
+            CU_mix_<<<dGRID, dT4B, 0, main_stream>>>(alpha, ToX(tNext), beta, ToX(tHead), nP);
+            break;
+        default:
+            CU_mix_<<<dGRID, dT4B, 0, main_stream>>>(alpha, ToX(tNext), beta, ToX(tHead), nP);
+            break;
+    }
+
+    return true;
+}
+
 template <typename Tp, typename Tmv>
 void Optimizer_update(PIPE_Optimizer<Tp, Tmv>& pipe, cudaStream_t stream) {
     // cudaError_t err       = cudaSuccess;
@@ -333,7 +362,7 @@ void Optimizer_update(PIPE_Optimizer<Tp, Tmv>& pipe, cudaStream_t stream) {
     size_t smemPB         = 1024 * sizeof(float);
     pipe.beta1_correction = 1.0f - powf(pipe.beta1, pipe.iter);
     pipe.beta2_correction = 1.0f - powf(pipe.beta2, pipe.iter);
-    
+
     D20(pipe.wNorms, sizeof(float) * 1);
     if (pipe.gm == nullptr) {  // SGD,SGD_V
         // if (gv == nullptr) {
@@ -345,9 +374,9 @@ void Optimizer_update(PIPE_Optimizer<Tp, Tmv>& pipe, cudaStream_t stream) {
         //                                                    beta2_correction, eps, weight_decay, grad_scale, seed);
         // }
     } else {  //   ADAM_S LION(locked!!!)
-        if (pipe.gv == nullptr) {
-            pipe.eps = pipe.grad_norm / pipe.num_parameters;
+        if (pipe.gv == nullptr) {            
             CU_adamw_s<<<dGRID, dT4B, 0, stream>>>(pipe);
+            //  pipe.eps = pipe.grad_norm / pipe.num_parameters;    for lion
             // CU_lion_<<<num_blocks, block_size, 0, stream>>>(params, grads0, gm, num_parameters, learning_rate, beta1, beta2, eps, weight_decay,grad_scale,
             // seed);
         } else {
@@ -369,7 +398,7 @@ void Optimizer_update(PIPE_Optimizer<Tp, Tmv>& pipe, cudaStream_t stream) {
                         }
                         break;
                 }
-            } else {    //  ADAMw
+            } else {  //  ADAMw
                 //  void* kernelArgs[]    = {(void*)&pipe};
                 // err = cudaLaunchCooperativeKernel((void*)CU_adamw_<Tp,Tmv>, dGRID, dT4B, kernelArgs, smemPB, main_stream);
                 // cudaCheck(err);      "too many blocks in cooperative launch"
@@ -393,11 +422,11 @@ void Optimizer::InitOnCUDA(int flag) {
     ADAM_params_ adam = TrainParams().adam;
     // GD_METHOD tpCurGD = tpGD;
 
-    int C = _fish->config.nEmbed(); //num_slices = 1, 
+    int C      = _fish->config.nEmbed();  // num_slices = 1,
     size_t off = 0;
     for (auto tensor : opt_ps) {
-        size_t nP = tensor->size(); //, grid_size = CEIL_DIV(nP, 512);
-        auto& im = _fish->GetGensorInfo(tensor);
+        size_t nP = tensor->size();  //, grid_size = CEIL_DIV(nP, 512);
+        auto& im  = _fish->GetGensorInfo(tensor);
         if (tpGD == SGD_HYBRID) {
             // tpCurGD = im.isAdam ? ADAMw : SGD;
         }
@@ -416,11 +445,11 @@ void Optimizer::InitOnCUDA(int flag) {
 
 //  Deprecated
 int UpdateTensorParam_cuda(hGTensor tensor, Optimizer* hOPT, float& grad_norm, int flag) {
-    CLI_params config = hOPT->_fish->config;
-    ADAM_params_ adam = hOPT->TrainParams().adam;
-    auto& im          = hOPT->_fish->GetGensorInfo(tensor);
+    CLI_params config   = hOPT->_fish->config;
+    ADAM_params_ adam   = hOPT->TrainParams().adam;
+    auto& im            = hOPT->_fish->GetGensorInfo(tensor);
     float learning_rate = hOPT->LearningRate(), beta1 = adam.beta1, beta2 = adam.beta2, eps = adam.eps;
-    int iter = hOPT->GetITER(); //num_slices = 1, 
+    int iter          = hOPT->GetITER();              // num_slices = 1,
     unsigned int seed = hOPT->rRounding.RandInt32();  // random_u32(&rng_state);
     const char* name  = tensor->name;
     ShardInfo shard   = {0, tensor->size()};

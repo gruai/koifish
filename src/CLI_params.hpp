@@ -43,6 +43,7 @@ enum LIFE_PHASE {
 
 enum MODEL_ENSEMBLE {
     AGGREGATION,
+    FUYOU_BEST,
     RANDOM_1,
     MULTI_SCALE,
 };
@@ -97,9 +98,10 @@ struct SKDU_params {
     bool paramIsGuoke     = false;
     // layer in branch
     int nLayerInBranch = -1, LIB_0 = -1, LIB_1 = 0, LIB_iter_switch = 100;
-    // int LIB_iter4save = -1;
+    int nBranch = -1;
+    int nFuyouWarmup(int flag = 0x0);
     // int tpParamResident = 0;  //  0-      1-
-    bool InitSection(int nLayer, int nLS, int nSwitch=100, int flag = 0x0);
+    bool InitSection(int nLayer, int nLS, int nSwitch = 100, int flag = 0x0);
     bool isUpdateParamV0() const;
     bool canSave(int iter, int flag = 0x0) const;
     void Dump(int typ) const;
@@ -176,7 +178,7 @@ class MODEL_CARD {
         std::string model_path;
     };
     Sparsing sparse;
-    MODEL_ENSEMBLE ensemble = MODEL_ENSEMBLE::AGGREGATION;
+    MODEL_ENSEMBLE ensemble = MODEL_ENSEMBLE::FUYOU_BEST;
 
     std::string sCardPath = "", sTokenPath = "";
     std::string sArch, torch_dtype, transformers_version, model_type;
@@ -302,6 +304,7 @@ struct DEUG_SWITCH {
     int T_classifier_ver   = 0;
     int T_cpu              = 0;
     int T_GEMM             = -1;
+    int T_fuyou            = 1;
 
     int cmd_p1 = 0, cmd_p2 = 0, cmd_p3 = 0;  // some commandline parameter for debug
     float Time_most = 60;

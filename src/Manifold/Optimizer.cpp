@@ -294,14 +294,6 @@ float Optimizer::gClip(int ne, floatX *g, hGensor hP, int flag) {
     return clip;
 }
 
-inline bool isStrMatch(const string &target, const vector<string> &words) {
-    for (auto w : words) {
-        if (target.find(w) != std::string::npos)
-            return true;
-    }
-    return false;
-}
-
 template <typename Tp, typename Tmv>
 void Optimizer_update(PIPE_Optimizer<Tp, Tmv> &pipe, cudaStream_t stream);
 int GTensor::Dogleg(int flag) {
@@ -334,6 +326,9 @@ int GTensor::Dogleg(int flag) {
     PIPE_Optimizer<floatX, floatMV> pipe(nEle, nEle, nEle, nEle, flags, learning_rate, beta1, beta2, iter, eps, wd, grad_scale, gnorm, seed);
     pipe.Update(this);
     Optimizer_update(pipe, main_stream);
+    if(1){  //fuyou
+        // for(auto t : fuyous)
+    }
 
     if (flag == -1) {
         // Print(name, 1, -1);

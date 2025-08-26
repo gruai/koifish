@@ -34,7 +34,7 @@ bool RLS_BP::Planning(int flag) {
     T_fore = 10, T_back = 10;
     int t        = 0;
     double costs = 0;
-    for (auto node : curTasks) {
+    for (auto node : curTasks()) {
         if (costs + node->cost > budget) {
             T_fore = t;
             break;
@@ -45,7 +45,7 @@ bool RLS_BP::Planning(int flag) {
     }
 
     costs = 0;
-    for (auto it = curTasks.rbegin(); it != curTasks.rend(); ++it) {
+    for (auto it = curTasks().rbegin(); it != curTasks().rend(); ++it) {
         TaskNode *node = *it;
         if (costs + node->cost > budget) {
             T_back = t;
@@ -62,7 +62,7 @@ bool RLS_BP::Planning(int flag) {
 
 bool RLS_BP::Verify(int flag) {
     int t = 0;
-    for (auto node : curTasks) {  // validate
+    for (auto node : curTasks()) {  // validate
         t++;
     }
     return true;
@@ -83,22 +83,22 @@ void GeNeuron::OnRemater(RLS_BP *schedule, int typ, int flag) {
     }
 }
 
-RLSchedule::tpSTATUS RLS_BP::GetTensorStatus(int step, hGTensor tensor, int flag) {
+TASK_STATUS RLS_BP::GetTensorStatus(int step, hGTensor tensor, int flag) {
     assert(tMaps.find(tensor) != tMaps.end());
     return tMaps[tensor];
 }
-RLSchedule::tpSTATUS RLS_BP::SetTensorStatus(int step, hGTensor tensor, tpSTATUS sta, int flag) {
+TASK_STATUS RLS_BP::SetTensorStatus(int step, hGTensor tensor, TASK_STATUS sta, int flag) {
     // int iter = hFish->hOPT->GetIter();
     assert(tMaps.find(tensor) != tMaps.end());
     tensor->last_stp = step;
-    tMaps[tensor]  = sta;
+    tMaps[tensor]    = sta;
     return tMaps[tensor];
 }
 
-RLSchedule::tpSTATUS RLS_BP::GetStatus(int t, void *hObj, int flag) {
-    tpSTATUS status   = PASS;
-    GeNeuron *hNeuron = (GeNeuron *)(hObj);
-    int nN            = curTasks.size();
+TASK_STATUS RLS_BP::GetStatus(int t, void *hObj, int flag) {
+    TASK_STATUS status = PASS;
+    GeNeuron *hNeuron  = (GeNeuron *)(hObj);
+    int nN             = curTasks().size();
     assert(t < 2 * nN);
     TaskNode *hNode = nullptr;
     if (t < nN) {

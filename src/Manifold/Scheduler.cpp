@@ -192,7 +192,7 @@ bool RLSchedule::Planning(int flag) {
     double costs = 0;
     int t        = 0;
     if (isPrefill) {
-        for (auto node : curTasks) {
+        for (auto node : curTasks()) {
             if (costs + node->cost > budget) {
                 break;
             }
@@ -201,7 +201,7 @@ bool RLSchedule::Planning(int flag) {
             t++;
         }
     }
-    for (auto node : curTasks) {
+    for (auto node : curTasks()) {
         if (node->isOn())
             continue;
         if (costs + node->cost > budget) {
@@ -218,7 +218,11 @@ bool RLSchedule::Planning(int flag) {
     return true;
 }
 
-RLS_BP::RLS_BP(EDGE_DEVICES *hED_, const CLI_params &config, int flag) : RLSchedule(hED_, config, flag) { params = config.scheduling; }
+RLS_BP::RLS_BP(EDGE_DEVICES *hED_, const CLI_params &config, int flag) : RLSchedule(hED_, config, flag) {
+    params = config.scheduling;
+    vector<TaskNode *> arrT;
+    afu = std::make_shared<Fuyou>("afu", this, hFish, arrT, 0x0);
+}
 
 int RLS_BP::BeforeNextStep(int flag) {
     step++;
@@ -229,6 +233,13 @@ void RLS_BP::Dump(int typ) const {
     size_t szFree, szTotal;
     cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
     _INFO("[RLS]\tnGuoke=%d(%.3G) Memory of GPU=%.6gM(free=%.6gM)\n", nT_guoke, szGuoke / 1.0e9, (szTotal - szFree) / 1.0e6, szFree / 1.0e6);
+
+    if (fuyous.size() > 1) {
+        // hFuyou first = fuyous[0];
+        string sType[] = {"AGGREGATION", "BEST", "RANDOM_1", "MULTI_SCALE"};  //@MODEL_ENSEMBLE
+        _INFO("[Fuyou] n=%d switch=%d algorithm=%d ensembler=\"%s\"\n", fuyous.size(), params.LIB_iter_switch, afu->algorithm,
+              sType[hFish->config.model.ensemble].c_str());
+    }
 }
 
 bool RLS_BP::isResident(GeNeuron *neuron, int flag) {
@@ -264,34 +275,79 @@ void RLS_BP::Init(Fish *hF, std::vector<hNeuron> backbons, int flag) {
         }
         n->ManageMemory(DATA_PLACE::SYMBOLIC);
         double mem     = n->dev_most_mem / 1.0e6;
-        TaskNode *node = new RLSchedule::TaskNode(n->name, (void *)(n.get()), mem);
-        curTasks.push_back(node);
+        TaskNode *node = new TaskNode(n->name, (void *)(n.get()), mem);
+        afu->Add(node);  // curTasks.push_back(node);
     }
-    assert(curTasks.size() >= 2);
-    TaskNode *last = curTasks[curTasks.size() - 1];
-    _INFO("[RLS]\tInit [%s,...,%s]", curTasks[0]->name.c_str(), last->name.c_str());
+    // assert(curTasks.size() >= 2);
+    TaskNode *last = afu->Last();  // curTasks[curTasks.size() - 1];
+    _INFO("[RLS]\tInit [%s,...,%s]", afu->First()->name.c_str(), last->name.c_str());
     Dump(0x0);
+}
+
+Fuyou::Fuyou(const string &n, RLS_BP *hRL, Fish *hF, vector<TaskNode *> arrT, int flag) : name(n), hRLS(hRL), hFish(hF) {
+    tasks = arrT;
+    if (tasks.size() == 0)
+        return;
+
+    // auto allParams = hFish->optParams;
+    for (auto task : tasks) {
+        GeNeuron *neuron = (GeNeuron *)(task->hOBJ);
+        bool isFy        = dynamic_cast<FFN *>(neuron) || dynamic_cast<SelfAttention *>(neuron);
+        if (!isFy)
+            continue;
+
+        for (auto t : neuron->PickGensors()) {
+            if (BIT_TEST(t->flags, GTensor::F_PARAM)) {
+                optParams.push_back(t);
+            }
+        }
+    }
+    _INFO("\t fuyou_%s nP=%ld\n", name.c_str(), optParams.size());
+}
+
+bool Fuyou::UpdateFollower(std::shared_ptr<Fuyou> follower, int flag) {
+    int nP = optParams.size(), i;
+    assert(nP > 0 && optParams.size() == follower->optParams.size());
+    for (int i = 0; i < nP; i++) {
+        auto tNext = follower->optParams[i], tHead = optParams[i];
+        assert(tNext->isSameShape(tHead));
+        Exploitation(algorithm, tHead, tNext);
+    }
+    return true;
+}
+
+bool RLSchedule::ExploreOptimization(int iter, int flag) {
+    if (fuyous.size() <= 1)
+        return false;
+
+    hFuyou head = fuyous[curBranchID];
+    for (auto fuyou : fuyous) {
+        if (fuyou == head)
+            continue;
+        head->UpdateFollower(fuyou);
+    }
+    return true;
 }
 
 bool RLS_BP::InitBranch(int flag) {
     int L = hFish->config.nLayer(), t0 = params.LIB_0, t1 = params.LIB_1, LIS = params.nLayerInBranch, nPass = 0;
     if (LIS <= 0) {
-        assert(allTasks.size() == 0);
-        allTasks = {curTasks};  // Ref RLS_BP::Init
+        assert(fuyous.size() == 0);
+        fuyous = {afu};  // Ref RLS_BP::Init
         return true;
     }
 
-    if (allTasks.size() > 0) {
+    if (fuyous.size() > 0) {
         return true;
     }
 
     assert(L % LIS == 0);
     int nSwitch = L / LIS;
     _INFO("[RLS_branch] branches=%d(%d/%d) ", nSwitch, L, LIS);
-    curTasks.clear();
+    // curTasks.clear();
     for (int b = 0; b < nSwitch; b++) {
         int LIB_0 = b * LIS, LIB_1 = std::min((b + 1) * LIS, L);
-        arrTask tasks;
+        vector<TaskNode *> tasks;
         for (auto n : hFish->backbons) {
             bool isPass = true, isGrad = true;
             if (n->layer == 0 || n->layer > L)
@@ -307,14 +363,14 @@ bool RLS_BP::InitBranch(int flag) {
                 continue;
             }
             double mem     = n->dev_most_mem / 1.0e6;
-            TaskNode *node = new RLSchedule::TaskNode(n->name, (void *)(n.get()), mem);
+            TaskNode *node = new TaskNode(n->name, (void *)(n.get()), mem);
             tasks.push_back(node);
             n->stat.Reset();
         }
         _INFO(" %d@{L%d:L%d}", tasks.size(), LIB_0, LIB_1);
-        allTasks.push_back(tasks);
+        fuyous.push_back(std::make_shared<Fuyou>(std::to_string(b), this, hFish, tasks));
     }
-    assert(allTasks.size() == nSwitch);
+    assert(fuyous.size() == nSwitch);
     _INFO("\n");
     return true;
 }
@@ -341,8 +397,9 @@ bool RLS_BP::UpdateBackbone(int iter, int flag) {
     // curBranch = 0;       // only for debug
     params.LIB_0 = curBranchID * LIS, params.LIB_1 = params.LIB_0 + LIS;
     assert(params.LIB_1 <= L);
-    curTasks = allTasks[curBranchID];
-    for (auto node : curTasks) {
+    // curTasks = fuyous[curBranchID];
+    afu = fuyous[curBranchID];
+    for (auto node : curTasks()) {
         GeNeuron *neuron = (GeNeuron *)(node->hOBJ);
         // _INFO("%s\n",neuron->__repr__(s,p).c_str());
         neuron->stat.Reset();
@@ -351,7 +408,7 @@ bool RLS_BP::UpdateBackbone(int iter, int flag) {
     size_t szFree, szTotal;
     cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
     // assert(curTasks.size() == LIS * 2 + 3);
-    _INFO("[Section@%d] layer[%d-%d] curTasks=%ld(nPassBack=%d) mGPU=%.6gM(free=%.6gM)\n", iter, params.LIB_0, params.LIB_1, curTasks.size(), nPass,
+    _INFO("[Section@%d] layer[%d-%d] tasks=%ld(nPassBack=%d) mGPU=%.6gM(free=%.6gM)\n", iter, params.LIB_0, params.LIB_1, curTasks().size(), nPass,
           (szTotal - szFree) / 1.0e6, szFree / 1.0e6);
 
     return true;
@@ -359,6 +416,8 @@ bool RLS_BP::UpdateBackbone(int iter, int flag) {
     //     assert(backbons.size() == 2 * L + 3);
     // }
 }
+
+bool RLSchedule::isSwitchFuyou(int iter, int flag) { return iter % params.LIB_iter_switch == 0; }
 
 /*
     Fish::ForwardOnRLS would call this before each step
@@ -378,16 +437,23 @@ bool RLS_BP::Prepare(int iter, int flag) {
             return true;
             break;
         case LIFE_PHASE::P_TRAIN:
-            if (params.nLayerInBranch > 0 && (iter == -1 || iter % params.LIB_iter_switch == 0)) {
-                UpdateBackbone(iter, flag);
+            if (fuyous.size() > 1) {
+                if (iter == -1 || isSwitchFuyou(iter)) {
+                    UpdateBackbone(iter, flag);
+                }
+                //  gradient is released or zero at this time!
+                // if (iter > hFish->config.scheduling.nFuyouWarmup() && DEBUG.T_fuyou==1 && isSwitchFuyou(iter)) {
+                //     ExploreOptimization(iter);
+                // }
             }
+            break;
         default:
             break;
     }
 
     double costs = 0;
     int t        = 0;
-    for (auto node : curTasks) {
+    for (auto node : curTasks()) {
         // if (costs + node->cost > budget) {
         //     _INFO("[RLS]  Outof Budeget@\"%s\"!!! budget=%g,costs=%g+%g\n", node->name.c_str(), budget, costs, node->cost);
         //     assert(0);

@@ -495,12 +495,16 @@ bool SKDU_params::InitSection(int nLayer, int nLS, int nSwitch, int flag) {
     nLayerInBranch = nLS;
     LIB_0          = 0;
     LIB_1          = 0;  // nLayerInBranch;
-    int nBranch    = nLayer / nLayerInBranch;
+    nBranch        = nLayer / nLayerInBranch;
     assert(nSwitch >= 1);
     LIB_iter_switch = nSwitch;  // 100,10
-    // LIB_iter4save   = LIB_iter_switch * nBranch;
 
     return true;
+}
+
+int SKDU_params::nFuyouWarmup(int flag) {
+    // return LIB_iter_switch * nBranch;
+    return LIB_iter_switch * (nBranch - 1);
 }
 
 uint32_t CLI_params::nThread() const {
@@ -554,17 +558,16 @@ void CLI_params::OnArch() {
             break;
         case MODEL_ARCH::NLP_GPT2:
         case MODEL_ARCH::NLP_GPT2_char: {
-            // DEBUG.cmd_p1 = 1;            
-            tpLORA                     = LORA_ADAPT_W::refW_AB;  // refW_AB      W_AB
-            if(tpLORA!=LORA_ADAPT_W::W0){
-                scheduling.paramIsGuoke    = true;      //  @/home/cys/rnd/lic/log/gpt2/0801_774M_section=9.info
+            // DEBUG.cmd_p1 = 1;
+            tpLORA = LORA_ADAPT_W::W0;  // refW_AB      W_AB
+            if (tpLORA != LORA_ADAPT_W::W0) {
+                scheduling.paramIsGuoke = true;  //  @/home/cys/rnd/lic/log/gpt2/0801_774M_section=9.info
             }
-            scheduling.LIB_iter_switch = 100;                     // 100,10
+            DEBUG.T_fuyou              = 1;
+            scheduling.LIB_iter_switch = 100;  // 100,10
             DEBUG.T_classifier_ver     = 1;
-            n_embd_head_v              = 64;
-            n_embd_head_k              = 64;
+            n_embd_head_v = 64, n_embd_head_k = 64, n_ctx_train = 1024;
             // _embd = 128; dict_latent_dim = 128;        n_embd_head_v=n_embd_head_k=2; //only for debug
-            n_ctx_train = 1024;
             if (model.layerps.size() == 0 && !isJModel) {  //  deprecated
                 int n_ff0 = jKV(jConfig, {"model_v0", "ffn", "length"}, 3072, false), nLay = nLayer();
                 for (int i = 0; i < nLayer(); i++) {
@@ -587,7 +590,7 @@ void CLI_params::OnArch() {
             model.Rope_version       = 0;
             model.isEmbedWeightTying = true;
             model.preLogits_dB       = 8;
-            
+
             int group = Get({"model_v0", "target_group"}, 1);
             assert(group == 1);
         }

@@ -433,7 +433,7 @@ double SampLoader::Evaluate(int flag) {
         if ((tCur - tic) / 1.0e3 > DEBUG.Time_most)
             break;
     }
-    UpdateII();     //    iiLoss.Stat();
+    UpdateII();  //    iiLoss.Stat();
     // mean_loss = sum / nB;
     // sigma     = std::max(0.0, ss / nB - mean_loss * mean_loss);  // float point error
     // sigma     = sqrt(sigma);                                     //  one-pass Variance
@@ -442,7 +442,7 @@ double SampLoader::Evaluate(int flag) {
     if (!hFish->isLocalInfer)
         UpdateStepInfos(iiLoss.average, nB);
     tps = nEvalTokens / SUM::tEval_1 / 1.0e3;
-    // nBranch = hRLS->curBranches.size();
+    // nBranch = hRLS->curFuyous.size();
     _INFO("\t#%g±%.4f tps=%.3gK(%gM) a=[%g,%g] T=%g(sec)\n", "", iiLoss.average, iiLoss.sigma, tps, nEvalTokens / 1.0e6, iiLoss.a0, iiLoss.a1, SUM::tEval_1);
     return iiLoss.average;
 }

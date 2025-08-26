@@ -196,12 +196,36 @@ class GeNeuron {
     friend class NLP_AutoRegressive;
     friend class RLS_BP;
     friend class HIERARCH_LoRA;
+    friend class Fuyou;
 };
 
 class HotPicker;
 class TokenEmbed;
 template <typename T>
 class LoSVD;
+
+// Pick some neurons from context sparcity
+class CS_Picker {
+   protected:
+    bool isMerge = false;
+    int dim = -1, nLastHot = -1;
+    float T_hot = 0.2, T_zero = 1.0e-3;
+
+   public:
+    int *hot     = nullptr;
+    float *dTemp = nullptr;
+    static double tPick;  //  Picker should much fast than dot!
+    CS_Picker() {}
+    CS_Picker(shared_ptr<Fish> hFish, int flag = 0x0);
+    //  uses the first layer’s attention output to predict the sparsity pattern for the entire model
+    virtual ~CS_Picker() {
+        FREE_a(hot);
+        FREE_a(dTemp);
+    }
+
+    int Update(int level, float *hb, int flag = 0x0);
+};
+typedef shared_ptr<CS_Picker> hCSPicker;
 
 /*
 How get sparse index
