@@ -66,6 +66,8 @@ void SUM::TimeInfo(int flag) {
     // _TIME_INFO(" R=",SUM::tRemater);
     _TIME_INFO(" QKV=", tQKV);
     _TIME_INFO(" FFN=", tFFN);
+    if(tX1>0)
+        _TIME_INFO(" X=", tX1);
 }
 
 void SUM::MemoryInfo(int type, int flag) {

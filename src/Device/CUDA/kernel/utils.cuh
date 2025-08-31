@@ -413,6 +413,8 @@ __global__ static void CU_X2_partial(float* out, const T* data, size_t count) {
     }
 }
 
+
+
 template <class T>
 __device__ inline float global_norm_squared_for_range(const T* data, size_t count) {
     size_t index      = blockIdx.x * blockDim.x + threadIdx.x;
@@ -451,7 +453,7 @@ struct SoftmaxParams {
 __device__ inline SoftmaxParams CU_prepare_softmax(const floatX* logits, int V) {
     float thread_maxval = -INFINITY, thread_sumval = 0.0f;  //, sum = 0.0f;
     // floatX max_val = logits[0];
-    int tid        = threadIdx.x;
+    int tid = threadIdx.x;
     /*if (threadIdx.x == 0) {  //  cpu version=P_softmax
         for (int i = 0; i < V; i++) {
             max_val = fmaxf(logits[i], max_val);
@@ -470,7 +472,6 @@ __device__ inline SoftmaxParams CU_prepare_softmax(const floatX* logits, int V) 
         float v = (float)logits[i];
         thread_sumval += expf(v - block_maxval);
     }
-    float block_sumval = blockReduce_v0<warpReduceSum>(thread_sumval);    
+    float block_sumval = blockReduce_v0<warpReduceSum>(thread_sumval);
     return SoftmaxParams{1.f / block_sumval, block_maxval};
 }
-

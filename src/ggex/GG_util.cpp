@@ -445,7 +445,8 @@ bool CLI_params::JModel2Params(int flag) {
             // scheduling.strategy = MEM_STRATEGY::MEM_SWAP;
             // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
         }
-        scheduling.InitSection(nLayer(), jKV(jConfig, {"train", "branch"}, scheduling.nLayerInBranch));
+        fuyou.Init(this, jConfig);
+        // fuyou.InitSection(nLayer(), jKV(jConfig, {"model","fuyou", "branch"}, fuyou.nLayerInBranch));
 
         if (scheduling.strategy == MEM_STRATEGY::MEM_SWAP_GUOKE) {
             common.remater_ffn = 0;  // more memory, more time
@@ -488,19 +489,54 @@ bool SKDU_params::canSave(int iter, int flag) const {
     return true;
 }
 
-bool SKDU_params::InitSection(int nLayer, int nLS, int nSwitch, int flag) {
+bool Fuyou_params::Init(CLI_params *hConfig, const JSON &jConfig, int flag) {
+    nLayerInBranch = jKV(jConfig, {"model", "fuyou", "branch"}, nLayerInBranch);
+    if (nLayerInBranch <= 0)
+        return false;
+    T_crossover = jKV(jConfig, {"model", "fuyou", "crossover"}, T_crossover);
+    T_mutation = jKV(jConfig, {"model", "fuyou", "mutation"}, T_mutation);
+    social = jKV(jConfig, {"model", "fuyou", "social"}, social);
+    int nLayer = hConfig->nLayer();
+    assert(nLayer % nLayerInBranch == 0);
+    string a  = "pso";
+    a         = jKV(jConfig, {"model", "fuyou", "method"}, a);
+    for(auto an : Algo2Name){
+        if(an.second==a){
+            algorithm = an.first;
+        }
+    }    
+    assert(Algo2Name[algorithm]==a);
+
+    LIB_0           = 0;
+    LIB_1           = 0;  // nLayerInBranch;
+    nBranch         = nLayer / nLayerInBranch;
+    LIB_iter_switch = jKV(jConfig, {"model", "fuyou", "switch"}, LIB_iter_switch);
+    assert(LIB_iter_switch >= 1);
+
+    if (ensemble == Fuyou_params::MULTI_SCALE) {
+        LIB_iter_switch = 1;
+    }
+    return true;
+}
+
+// Deprecated
+bool Fuyou_params::InitSection(int nLayer, int nLS, int nSwitch, int flag) {
     if (nLS <= 0)
         return false;
     assert(nLayer % nLS == 0);
     nLayerInBranch = nLS;
     LIB_0          = 0;
     LIB_1          = 0;  // nLayerInBranch;
-    int nBranch    = nLayer / nLayerInBranch;
+    nBranch        = nLayer / nLayerInBranch;
     assert(nSwitch >= 1);
     LIB_iter_switch = nSwitch;  // 100,10
-    // LIB_iter4save   = LIB_iter_switch * nBranch;
 
     return true;
+}
+
+int Fuyou_params::nWarmup(int flag) {
+    // return LIB_iter_switch * nBranch;
+    return LIB_iter_switch * (nBranch - 1);
 }
 
 uint32_t CLI_params::nThread() const {
@@ -526,6 +562,11 @@ void CLI_params::OnMostToken(size_t nMost, int flag) {
 void SKDU_params::Dump(int typ) const {
     _INFO("[Scheduling] MEM_STRATEGY=%s UpdateParam=V%d %s\n", MEM_STRATEGY_desc[strategy].c_str(), isUpdateParamV0() ? 0 : 1,
           paramIsGuoke ? "\"Only cur params in GPU-memor!\"" : "\"All params in GPU-memory\"");
+}
+
+void Fuyou_params::Dump(int typ) const {
+    string sType[] = {"AGGREGATION", "BEST", "RANDOM_1", "MULTI_SCALE"};  //@MODEL_ENSEMBLE
+    _INFO("algorithm=%d ensembler=\"%s\" nSwitch=%d\n", algorithm, sType[ensemble].c_str(), LIB_iter_switch);
 }
 
 // LORA_ADAPT_W HIERARCH_LoRA::tpLORA = HIERARCH_LoRA::W_AB;      //  W0, AB, W_AB
@@ -554,17 +595,20 @@ void CLI_params::OnArch() {
             break;
         case MODEL_ARCH::NLP_GPT2:
         case MODEL_ARCH::NLP_GPT2_char: {
-            // DEBUG.cmd_p1 = 1;            
-            tpLORA                     = LORA_ADAPT_W::refW_AB;  // refW_AB      W_AB
-            if(tpLORA!=LORA_ADAPT_W::W0){
-                scheduling.paramIsGuoke    = true;      //  @/home/cys/rnd/lic/log/gpt2/0801_774M_section=9.info
+            // DEBUG.cmd_p1 = 1;
+            tpLORA = LORA_ADAPT_W::W0;  // refW_AB      W_AB
+            if (tpLORA != LORA_ADAPT_W::W0) {
+                scheduling.paramIsGuoke = true;  //
             }
-            scheduling.LIB_iter_switch = 100;                     // 100,10
-            DEBUG.T_classifier_ver     = 1;
-            n_embd_head_v              = 64;
-            n_embd_head_k              = 64;
+            // scheduling.paramIsGuoke = true;         // Reduce memory greaty, for example @@@0801_774M_section=9.info
+            DEBUG.T_fuyou = 1;
+            // fuyou.algorithm        = Fuyou_params::PARTICLE_SWARM;  //  PARTICLE_SWARM  GENE_MIX
+            // fuyou.LIB_iter_switch  = 100;                           // 100,10
+            // fuyou.ensemble = Fuyou_params::MULTI_SCALE;
+
+            DEBUG.T_classifier_ver = 1;
+            n_embd_head_v = 64, n_embd_head_k = 64, n_ctx_train = 1024;
             // _embd = 128; dict_latent_dim = 128;        n_embd_head_v=n_embd_head_k=2; //only for debug
-            n_ctx_train = 1024;
             if (model.layerps.size() == 0 && !isJModel) {  //  deprecated
                 int n_ff0 = jKV(jConfig, {"model_v0", "ffn", "length"}, 3072, false), nLay = nLayer();
                 for (int i = 0; i < nLayer(); i++) {
@@ -572,7 +616,7 @@ void CLI_params::OnArch() {
                     model.layerps.push_back(lay);
                 }
             }
-            // model.ensemble = MODEL_ENSEMBLE::MULTI_SCALE;
+
             model.tpPreLogits = typNUMBER::BF16;
             //  need new GEMM! cuBLASLt requires bias in FP8 mode to be BF16... (sigh)
             model.isNormalBias  = true;
@@ -587,7 +631,7 @@ void CLI_params::OnArch() {
             model.Rope_version       = 0;
             model.isEmbedWeightTying = true;
             model.preLogits_dB       = 8;
-            
+
             int group = Get({"model_v0", "target_group"}, 1);
             assert(group == 1);
         }
@@ -614,9 +658,6 @@ void CLI_params::OnArch() {
         default:
             _INFO("[ARCH]=%s\n", "");
             break;
-    }
-    if (model.ensemble == MODEL_ENSEMBLE::MULTI_SCALE) {
-        scheduling.LIB_iter_switch = 1;
     }
 }
 

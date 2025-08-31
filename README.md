@@ -38,8 +38,9 @@ make clean && make VERBOSE=TRUE
 ## [Techniques/Tricks](cases/tricks/Tricks.md)
 
 ## History
+* 08/31/2025: Training 1558M sparse GPT2 model on single 4090 with throughput > 40K tokens/second
 * 08/17/2025: A new framework of multiscale deep learning
-* 08/01/2025: Training GPT2_1558M on single 4090 with throughput > 20K tokens/second
+* 08/01/2025: Training 1558M sparse GPT2 model on single 4090 with throughput > 20K tokens/second
 * 07/24/2025: Support tile quantization 
 * 06/29/2025: Rope with pre/post normalization 
 * 06/14/2025: Support bit representation(binary[-1,1], ternary[-1,0,1]) 

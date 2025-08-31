@@ -152,8 +152,7 @@ struct ggml_tensor *GTensor::GG() {
     ggml_tensor *hgg = (ggml_tensor *)gg;
     if (hgg == nullptr) {
         hgg = new ggml_tensor();
-#ifdef GG_V12
-#else
+
         *hgg = (struct ggml_tensor){
             // @ggml_new_tensor_impl
             /*.type         =*/type,
@@ -173,7 +172,7 @@ struct ggml_tensor *GTensor::GG() {
             /*.extra        =*/NULL,
             ///*.padding      =*/ { 0 },
         };
-#endif
+
         hgg->data = new char[szData];
         memcpy(hgg->name, name, sizeof(char) * GGML_MAX_NAME);
     }
@@ -602,8 +601,11 @@ bool huTensor::Alloc(int iter, int flagInit) {
                 Alloc_1(&gm, true, desc+".mv", szMV * 2), gv = (char *)gm + szMV;
             } else if (method == "lion") {
                 Alloc_1(&gm, true, desc+".mv", szMV);
-            } else if (method == "adams") {
-                Alloc_1(&gm, true, desc+".mv", szMV);
+            } else if (method == "adams") { // why converge so slow for 1445M?
+                /*if(isStrMatch(name, {"embd","output","norm"})){
+                    Alloc_1(&gm, true, desc+".mv", szMV * 2), gv = (char *)gm + szMV;
+                }else*/
+                    Alloc_1(&gm, true, desc+".mv", szMV);
             }else {
                 Alloc_1(&gv, true, desc+".mv", szMV);  // gm = nullptr, gv = (char *)grad + szMV;
             }

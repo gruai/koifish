@@ -13,8 +13,8 @@
 #include <float.h>
 #include <stdint.h>
 
-#include "../Tensor/GTensor.hpp"
 #include "../Device/EDevice.hpp"
+#include "../Tensor/GTensor.hpp"
 #include "../cuda_common.h"
 #include "./utils.cuh"
 
@@ -393,13 +393,81 @@ template <typename typ>
 __global__ void CU_disti_normal_N(curandState* state, typ* results, int N, int ldB, float devia) {
     int id = threadIdx.x + blockIdx.x * blockDim.x;
     if (id < N) {
-        int no = id*ldB;
-        for(int i=0; i<ldB; i++,no++){
-            if(no>=N)
+        int no = id * ldB;
+        for (int i = 0; i < ldB; i++, no++) {
+            if (no >= N)
                 continue;
             float rand_val = curand_normal(&state[id]) * devia;
             results[no]    = (typ)rand_val;
-        }        
+        }
+    }
+}
+
+template <class T>
+__global__ static void CU_mix_(float alpha, T* x, float beta, const T* y, size_t count) {
+    size_t index = blockIdx.x * blockDim.x + threadIdx.x;
+    // size_t grid_width = blockDim.x * gridDim.x;
+    if (index >= count)
+        return;
+
+    x[index] = (T)alpha * x[index] + (T)beta * y[index];
+}
+
+//  kernel of particle-swarm-optimization
+template <class T>
+__global__ static void CU_PSO_2D(curandState* state, float alpha, T* x, float social, const T* gBest, size_t N, int ldB) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x, no = tid * ldB;
+    for (int i = 0; i < ldB; i++, no++) {
+        if (no >= N)
+            continue;
+        float r = (curand_normal(&state[tid]) + 3.f) / 6.f;
+        if (r <= 0)
+            continue;
+        if (r > 1)
+            r = 1;
+        // results[no]    = (typ)rand_val;
+        // x[no] = (T)alpha * x[no] + (T)(social*r) * (gBest[no]-x[no]);
+        x[no] += (T)(social * r) * (gBest[no] - x[no]);
+    }
+}
+
+//  todo - try Cauchy Mutation
+template <class T>
+__global__ static void CU_mutation_(curandState* state, float T_mutation, T* x, const T* y, size_t N, int ldB) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x, no = tid * ldB;
+    for (int i = 0; i < ldB; i++, no++) {
+        if (no >= N)
+            continue;
+
+        float a          = curand_normal(&state[tid]);
+        int max_position = (int)(1.0f / T_mutation);
+        int pick         = curand(&state[tid]) % max_position;
+        // if(a < 3.0)     //  0.135%
+        //     continue;
+        if (pick == 0) {
+            // a = curand_normal(&state[tid]);       //  Gaussian (Normal) Mutation
+            // x[no] += a;
+            x[no] = y[no];
+        }
+    }
+}
+
+template <class T>
+__global__ static void CU_crossover_(curandState* state, float T_cross, T* x, const T* y, size_t N, int ldB) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x, no = tid * ldB;
+    for (int i = 0; i < ldB; i++, no++) {
+        if (no >= N)
+            continue;
+
+        float a          = curand_normal(&state[tid]);
+        int max_position = 1000, pick = curand(&state[tid]) % max_position;
+        // if(a < 3.0)     //  0.135%
+        //     continue;
+        if (pick < T_cross * max_position) {
+            // a = curand_normal(&state[tid]);       //  Gaussian (Normal) Mutation
+            // x[no] += a;
+            x[no] = y[no];
+        }
     }
 }
 
@@ -416,13 +484,13 @@ void CU_disti_normal(int N, typ* out, float devia, uint32_t seed = 42, bool isTo
     } else {
         d_results = out;
     }
-    //  nRander=N use too many space!       sizeof(curandState)=48  
-    int ldB=480, nRander = max(CEIL_DIV(N,ldB),1); 
+    //  nRander=N use too many space!       sizeof(curandState)=48
+    int ldB = 480, nRander = max(CEIL_DIV(N, ldB), 1);
     cudaCheck(cudaMalloc(&d_states, nRander * sizeof(curandState)));
 
-    CU_initrand<<<CEIL_DIV(nRander,256), 256>>>(d_states, seed, nRander);
+    CU_initrand<<<CEIL_DIV(nRander, 256), 256>>>(d_states, seed, nRander);
     // CU_disti_normal_generate<typ><<<(N + 255) / 256, 256>>>(d_states, d_results, N, devia);
-    CU_disti_normal_N<typ><<<CEIL_DIV(nRander,256), 256>>>(d_states, d_results, N, ldB, devia);
+    CU_disti_normal_N<typ><<<CEIL_DIV(nRander, 256), 256>>>(d_states, d_results, N, ldB, devia);
     SYNC_DEVICE("disti_normal");  //    cudaCheck(cudaDeviceSynchronize());
     // Copy back results if needed
     // __nv_bfloat16 *h_results = new __nv_bfloat16[N];

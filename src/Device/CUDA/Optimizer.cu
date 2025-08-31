@@ -14,7 +14,6 @@
 #include "../../Manifold/Optimizer.hpp"
 #include "../Pipe.hpp"
 #include "./kernel/utils.cuh"
-
 extern unsigned long long rng_state;
 
 typedef struct {
@@ -191,8 +190,8 @@ __global__ void CU_adamw_s(PIPE_Optimizer<Tp, Tmv> pipe) {
     }  // guard
 
     float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx), m = pipe.gm[idx], v;
-    v = lerp(grad * grad, m*m, pipe.beta2);
-    m = lerp(grad, m, pipe.beta1), pipe.gm[idx] = m;    
+    v = lerp(grad * grad, m * m, pipe.beta2);
+    m = lerp(grad, m, pipe.beta1), pipe.gm[idx] = m;
     // m /= pipe.beta1_correction;  // m_hat
     // v /= pipe.beta2_correction;  // v_hat
     float x = _adamw_idx((float)pipe.params[idx], pipe, m, v, idx), x2 = x * x;
@@ -247,9 +246,9 @@ __global__ static void CU_adamw_Tile(PIPE_Optimizer<Tp, Tmv> pipe) {
     float a = _adamw_idx(old_param, pipe, m, v, idx);
     sum     = CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(a);  // nWrapT<=WARP_SIZE ? warpReduceSum<nWrapT>(a) :blockReduce_v0<warpReduceSum>(a, true);
     if (tid == 0) {
-        a = sum / TM / TN;
-        pipe.gama_T[gpos] = a;  //CU_Float2T<Tp>(a, pipe.seed);   //
-        atomicAdd(pipe.wNorms, a*a*TM*TN);
+        a                 = sum / TM / TN;
+        pipe.gama_T[gpos] = a;  // CU_Float2T<Tp>(a, pipe.seed);   //
+        atomicAdd(pipe.wNorms, a * a * TM * TN);
     }
 }
 
@@ -268,9 +267,9 @@ __global__ static void CU_adamw_Tile_RC(PIPE_Optimizer<Tp, Tmv> pipe) {
         idrow_0 = 0;
     if (idrow_0 >= M)
         idrow_0 = M - 1;
-    if (idcol_0 <0) 
+    if (idcol_0 < 0)
         idcol_0 = 0;
-    if (idcol_0 >= N) 
+    if (idcol_0 >= N)
         idcol_0 = N - 1;
 
     fnPOS pA   = trans == 0 ? fnCR2POS : fnRC2POS;
@@ -324,6 +323,52 @@ __global__ static void CU_adamw_Tile_each_mv(PIPE_Optimizer<Tp, Tmv> pipe) {
     }
 }
 
+// bool Fuyou::Exploitation(hGensor cur, int flag) {
+//     int nP = cur->size(), dT4B = 512 ,nF = cur->fuyous.size();  //
+//     int dGRID = CEIL_DIV(nP, dT4B);
+//     for (auto t : cur->fuyous) {
+//         //  position[i] = alpha*A->position[i] + beta*B->position[i];
+//         CU_mix_<<<dGRID, dT4B, 0, main_stream>>>(alpha, ToX(cur), beta, ToX(t),nP);
+//     }
+//     return true;
+// }
+
+bool Fuyou::Exploitation(hGensor tHead, hGensor tNext, int flag) {
+    if (!tHead->is2D())
+        return false;
+    int nParam = tHead->size(), dT4B = 512, M = tHead->ne[0], N = tHead->ne[1], nRander = M;  //
+    // int dGRID = CEIL_DIV(nParam, dT4B);
+    int mGRID = CEIL_DIV(M, dT4B),pGRID = CEIL_DIV(nParam, dT4B);
+
+    curandState* d_states;
+    cudaCheck(cudaMalloc(&d_states, nRander * sizeof(curandState)));
+    seed = rander.RandU32();
+    CU_initrand<<<CEIL_DIV(nRander, 256), 256>>>(d_states, seed, nRander);
+
+    switch (params.algorithm) {
+        case Fuyou_params::GENE_MIX:
+            CU_mix_<<<pGRID, dT4B, 0, main_stream>>>(params.alpha, ToX(tNext), 1.0 - params.alpha, ToX(tHead), nParam);
+            break;
+        case Fuyou_params::GENE_MUTATION:
+            // CU_mutation_<<<mGRID, dT4B, 0, main_stream>>>(d_states, T_mutation, ToX(tNext), nParam, N);
+            break;
+        case Fuyou_params::PARTICLE_GENETIC:
+            CU_PSO_2D<<<mGRID, dT4B, 0, main_stream>>>(d_states, params.alpha, ToX(tNext), params.social, ToX(tHead), nParam, N);
+            // CU_mutation_<<<mGRID, dT4B, 0, main_stream>>>(d_states, T_mutation, ToX(tNext), ToX(tHead), nParam, N);
+            // why T_crossover=0.6 is still effective
+            CU_crossover_<<<mGRID, dT4B, 0, main_stream>>>(d_states, params.T_crossover, ToX(tNext), ToX(tHead), nParam, N);    
+            break;
+        case Fuyou_params::PARTICLE_SWARM:
+        default:
+            // CU_mix_<<<dGRID, dT4B, 0, main_stream>>>(alpha, ToX(tNext), beta, ToX(tHead), nP);
+            CU_PSO_2D<<<mGRID, dT4B, 0, main_stream>>>(d_states, params.alpha, ToX(tNext), params.social, ToX(tHead), nParam, N);
+            break;
+    }
+    cudaCheck(cudaFree(d_states));
+
+    return true;
+}
+
 template <typename Tp, typename Tmv>
 void Optimizer_update(PIPE_Optimizer<Tp, Tmv>& pipe, cudaStream_t stream) {
     // cudaError_t err       = cudaSuccess;
@@ -333,7 +378,7 @@ void Optimizer_update(PIPE_Optimizer<Tp, Tmv>& pipe, cudaStream_t stream) {
     size_t smemPB         = 1024 * sizeof(float);
     pipe.beta1_correction = 1.0f - powf(pipe.beta1, pipe.iter);
     pipe.beta2_correction = 1.0f - powf(pipe.beta2, pipe.iter);
-    
+
     D20(pipe.wNorms, sizeof(float) * 1);
     if (pipe.gm == nullptr) {  // SGD,SGD_V
         // if (gv == nullptr) {
@@ -346,8 +391,8 @@ void Optimizer_update(PIPE_Optimizer<Tp, Tmv>& pipe, cudaStream_t stream) {
         // }
     } else {  //   ADAM_S LION(locked!!!)
         if (pipe.gv == nullptr) {
-            pipe.eps = pipe.grad_norm / pipe.num_parameters;
             CU_adamw_s<<<dGRID, dT4B, 0, stream>>>(pipe);
+            //  pipe.eps = pipe.grad_norm / pipe.num_parameters;    for lion
             // CU_lion_<<<num_blocks, block_size, 0, stream>>>(params, grads0, gm, num_parameters, learning_rate, beta1, beta2, eps, weight_decay,grad_scale,
             // seed);
         } else {
@@ -369,7 +414,7 @@ void Optimizer_update(PIPE_Optimizer<Tp, Tmv>& pipe, cudaStream_t stream) {
                         }
                         break;
                 }
-            } else {    //  ADAMw
+            } else {  //  ADAMw
                 //  void* kernelArgs[]    = {(void*)&pipe};
                 // err = cudaLaunchCooperativeKernel((void*)CU_adamw_<Tp,Tmv>, dGRID, dT4B, kernelArgs, smemPB, main_stream);
                 // cudaCheck(err);      "too many blocks in cooperative launch"
@@ -393,11 +438,11 @@ void Optimizer::InitOnCUDA(int flag) {
     ADAM_params_ adam = TrainParams().adam;
     // GD_METHOD tpCurGD = tpGD;
 
-    int C = _fish->config.nEmbed(); //num_slices = 1, 
+    int C      = _fish->config.nEmbed();  // num_slices = 1,
     size_t off = 0;
     for (auto tensor : opt_ps) {
-        size_t nP = tensor->size(); //, grid_size = CEIL_DIV(nP, 512);
-        auto& im = _fish->GetGensorInfo(tensor);
+        size_t nP = tensor->size();  //, grid_size = CEIL_DIV(nP, 512);
+        auto& im  = _fish->GetGensorInfo(tensor);
         if (tpGD == SGD_HYBRID) {
             // tpCurGD = im.isAdam ? ADAMw : SGD;
         }
@@ -416,11 +461,11 @@ void Optimizer::InitOnCUDA(int flag) {
 
 //  Deprecated
 int UpdateTensorParam_cuda(hGTensor tensor, Optimizer* hOPT, float& grad_norm, int flag) {
-    CLI_params config = hOPT->_fish->config;
-    ADAM_params_ adam = hOPT->TrainParams().adam;
-    auto& im          = hOPT->_fish->GetGensorInfo(tensor);
+    CLI_params config   = hOPT->_fish->config;
+    ADAM_params_ adam   = hOPT->TrainParams().adam;
+    auto& im            = hOPT->_fish->GetGensorInfo(tensor);
     float learning_rate = hOPT->LearningRate(), beta1 = adam.beta1, beta2 = adam.beta2, eps = adam.eps;
-    int iter = hOPT->GetITER(); //num_slices = 1, 
+    int iter          = hOPT->GetITER();              // num_slices = 1,
     unsigned int seed = hOPT->rRounding.RandInt32();  // random_u32(&rng_state);
     const char* name  = tensor->name;
     ShardInfo shard   = {0, tensor->size()};

@@ -158,16 +158,17 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
 
     SampLoader() {}
     SampLoader(Fish *g_, const string &n, bool isNewTS, int flag = 0x0);
+    virtual ~SampLoader() {
+        if (!shard_samps.empty()) {
+        }
+    }
 
     virtual int PickSomeTokens(Grusoft::GRander &rander, int nSample, std::vector<int> &samps, int flag = 0x0);
     virtual bool Prepare(Optimizer *hO, hDataToken hT, int flag = 0x0);
     virtual void UpdateStepInfos(float mean_loss, int nB, int flag = 0x0);
     virtual size_t UpdateBatch(int next_id, Fish *fish);
     virtual double Evaluate(int flag = 0x0);
-    virtual ~SampLoader() {
-        if (!shard_samps.empty()) {
-        }
-    }
+    
 #ifdef _DATA_LOADER_LITE_
 #else
     virtual bool Serialize(const std::string &path, bool isSave, int flag = 0x0);
@@ -175,6 +176,7 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
     void Shuffle(int flag = 0x0);
     bool TopoOrder(std::vector<size_t> &ids, std::mt19937 &rng, int flag = 0x0);
 #endif
+    virtual void Dump(int typ);
     friend class NLP_AutoRegressive;
     friend class Optimizer;
     friend class Fish;

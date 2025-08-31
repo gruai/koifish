@@ -433,3 +433,11 @@ class GST_util {
         }
     }
 };
+
+inline bool isStrMatch(const string &target, const vector<string> &words) {
+    for (auto w : words) {
+        if (target.find(w) != std::string::npos)
+            return true;
+    }
+    return false;
+}

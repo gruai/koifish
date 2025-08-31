@@ -4,13 +4,13 @@ The following table lists some tricks and its working status.
 | Tricks | Maturity  | Effectiveness |Todo
 |:-------------:|:--------------:|:--------------:|:--------------:|
 | Bit weight         | 🧪           | ★ ★ ★ ☆ ☆        ||
-| Rope    | 🧪      | ★ ★ ☆ ☆ ☆     ||
+| xRope    | 🧪      | ★ ★ ☆ ☆ ☆     ||
 | Rematerialisation    | ✔️      | ★ ★ ★ ★ ☆     ||
 | Weight Tying    | ✔️      | ★ ★ ★ ☆ ☆     ||
-| AdamS    | ✔️      | ★ ★ ★ ☆ ☆     ||
+| Hybrid Adam    | ✔️      | ★ ★ ★ ☆ ☆     ||
 | Lion         | 🔒           | ★ ★ ☆ ☆ ☆        ||
 | Subsampling    | 🌿      |  ★ ☆ ☆ ☆ ☆    ||
-| LORA    |    🧪   | ★ ★ ☆ ☆ ☆     ||
+| LORA    |    🧪   | ★ ★ ☆ ☆ ☆     |DropLORA|
 | Mixture of models    |    🌿   | ★ ★ ☆ ☆ ☆     ||
 | Sparse model    |    🌱   |     ||
 

@@ -153,6 +153,67 @@ struct KarrasSchedule : LearnSKDU {
     }
 };
 
+enum TASK_STATUS {
+    PASS,
+    RESIDENT,
+    FLIP,
+    UPDATE_PARAM,
+};
+struct TaskNode {
+    string name;
+    void *hOBJ         = nullptr;
+    double cost        = 0;
+    TASK_STATUS status = FLIP;
+
+    TaskNode(const std::string &n, void *h, double v, int flag = 0x0) : name(n), hOBJ(h), cost(v) {}
+    bool isOn() { return status == RESIDENT; }
+    int begin = -1, end = -1;
+};
+// typedef vector<TaskNode *> hFuyou;
+
+/*
+    Only for back-propagation of neurons
+
+    蜉蝣 - 寄蜉蝣之天地，渺沧海之一粟
+*/
+class Fuyou {
+   protected:
+    Fuyou_params params;
+    Grusoft::GRander rander;
+    uint32_t seed = 42;
+    string name;
+    float loss      = FLT_MAX;
+    vector<TaskNode *> tasks;
+    RLS_BP *hRLS = nullptr;
+    Fish *hFish  = nullptr;
+    vector<hGensor> optParams;  // from Fish::optParams
+   public:
+    
+    
+    // Fuyou() {}
+    Fuyou(const string &name, RLS_BP *hRL, Fish *hFish, vector<TaskNode *> arrT, int flag = 0x0);
+    vector<TaskNode *> Tasks(int flag = 0x0) { return tasks; }
+    virtual bool empty() { return tasks.size() == 0; }
+    virtual void Clear() { tasks.clear(); }
+    virtual void Add(TaskNode *node, int flag = 0x0) { tasks.push_back(node); }
+    virtual TaskNode *Last() {
+        assert(!empty());
+        return tasks[tasks.size() - 1];
+    }
+    virtual TaskNode *First() {
+        assert(!empty());
+        return tasks[0];
+    }
+    virtual bool UpdateFollower(std::shared_ptr<Fuyou> follower, int flag = 0x0);
+    virtual bool Backward(hGensor cur, int flag = 0x0);
+    // bool Exploitation(hGensor cur, int flag = 0x0);
+    virtual bool Exploitation(hGensor tHead, hGensor tNext, int flag = 0x0);
+    // virtual void CrossOver(hGensor tHead, hGensor tNext, int flag = 0x0);
+    // virtual void Mutation(double T_mut, int flag = 0x0);
+    friend class RLSchedule;
+    friend class Optimizer;
+};
+typedef std::shared_ptr<Fuyou> hFuyou;
 /*
     Resource limited scheduling / resource planning
     budget/availability/capacity/costs  workload management
@@ -160,25 +221,6 @@ struct KarrasSchedule : LearnSKDU {
 */
 class RLSchedule {
    public:
-    enum tpSTATUS {
-        PASS,
-        RESIDENT,
-        FLIP,
-        UPDATE_PARAM,
-    };
-
-    struct TaskNode {
-        string name;
-        void *hOBJ      = nullptr;
-        double cost     = 0;
-        tpSTATUS status = FLIP;
-
-        TaskNode(const std::string &n, void *h, double v, int flag = 0x0) : name(n), hOBJ(h), cost(v) {}
-        bool isOn() { return status == RESIDENT; }
-        int begin = -1, end = -1;
-    };
-    typedef vector<TaskNode *> arrTask;
-
    protected:
     EDGE_DEVICES *hDevices = nullptr;
     Fish *hFish            = nullptr;
@@ -187,10 +229,10 @@ class RLSchedule {
     bool isRemater         = false;
     double budget          = 1000;
 
-    vector<arrTask> allTasks;
-    vector<arrTask> curBranches;    // may varied at different stage & models
-    arrTask curTasks;
-    int curBranchID = 0;    
+    vector<hFuyou> fuyous;
+    vector<hFuyou> curFuyous;  // may varied at different stage & models
+    hFuyou afu      = nullptr;
+    int curBranchID = 0;
 
     LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;
     Grusoft::GRander rand_branch;
@@ -199,8 +241,6 @@ class RLSchedule {
     string resident_list = "";
 
    public:
-    
-
     RLSchedule(EDGE_DEVICES *hED, const CLI_params &config, int flag) : hDevices(hED) { rand_branch.Init(654321); }
     virtual ~RLSchedule() {}
     virtual void BeforeStart(int flag = 0x0);
@@ -217,16 +257,24 @@ class RLSchedule {
         phase = phase_;
         return true;
     }
-    virtual tpSTATUS GetStatus(int step, void *hObj, int flag) { return FLIP; }
+    virtual TASK_STATUS GetStatus(int step, void *hObj, int flag) { return FLIP; }
     virtual void Dump(int typ) const {}
+
+    virtual bool isSwitchFuyou(int iter, int flag = 0x0);
+    virtual bool ExploreOptimization(int iter, int flag = 0x0);
     // if type==1 return curBraches, otherwise, return allBraches
-    virtual int nBranch(int type)   {        
-        int nB = allTasks.size();       
-        if(type==1){
-            nB = curBranches.size();
+    virtual int nBranch(int type) {
+        int nB = fuyous.size();
+        if (type == 1) {
+            nB = curFuyous.size();
         }
-        assert(nB>=0);
+        assert(nB >= 0);
         return nB;
+    }
+
+    vector<TaskNode *> curTasks(int flag = 0x0) {
+        assert(afu != nullptr);
+        return afu->Tasks();
     }
     friend class EDGE_DEVICES;
     friend class NLP_AutoRegressive;
@@ -240,9 +288,10 @@ class RLS_BP : public RLSchedule {
     int T_fore = -1, T_back = -1;
     int nT_guoke   = 0;
     size_t szGuoke = 0;
-    std::map<hGensor, enum tpSTATUS> tMaps;
+    std::map<hGensor, enum TASK_STATUS> tMaps;
     virtual bool UpdateBackbone(int iter, int flag = 0x0);
     virtual bool isUpdateBatch(int iter, int flag = 0x0);
+
    public:
     RLS_BP(EDGE_DEVICES *hED, const CLI_params &config, int flag);
     virtual ~RLS_BP() {}
@@ -250,9 +299,10 @@ class RLS_BP : public RLSchedule {
     virtual bool InitGUOKE(int flag = 0x0);
     virtual bool InitBranch(int flag = 0x0);
     virtual bool Prepare(int iter, int flag = 0x0);
-    virtual tpSTATUS GetTensorStatus(int step, hGTensor tenosr, int flag = 0x0);
-    virtual tpSTATUS SetTensorStatus(int step, hGTensor tenosr, tpSTATUS sta, int flag = 0x0);
-    tpSTATUS GetStatus(int step, void *hObj, int flag) override;
+
+    virtual TASK_STATUS GetTensorStatus(int step, hGTensor tenosr, int flag = 0x0);
+    virtual TASK_STATUS SetTensorStatus(int step, hGTensor tenosr, TASK_STATUS sta, int flag = 0x0);
+    TASK_STATUS GetStatus(int step, void *hObj, int flag) override;
     bool isResident(GeNeuron *neuron, int flag = 0x0);
 
     bool Planning(int flag = 0x0) override;

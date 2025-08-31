@@ -7,6 +7,8 @@
  */
 #include "Scheduler.hpp"
 
+#include <functional>
+
 #include "../ggex/GG_util.hpp"
 #include "Fish.hpp"
 #include "Optimizer.hpp"
@@ -69,7 +71,7 @@ bool RLS_BP::InitGUOKE(int flag) {
     bool isRefParam = params.paramIsGuoke;
     int nLayer = hFish->config.nLayer(), nT = 0;
     if (params.strategy == MEM_STRATEGY::PRE_ALLOC_GPU) {
-        int LIS = params.nLayerInBranch;
+        int LIS = hFish->config.fuyou.nLayerInBranch;
         if (LIS > 0) {
             int nSection = nLayer / LIS;  // brach or hierarch
             for (int i = 1; i < nSection; i++) {
@@ -192,7 +194,7 @@ bool RLSchedule::Planning(int flag) {
     double costs = 0;
     int t        = 0;
     if (isPrefill) {
-        for (auto node : curTasks) {
+        for (auto node : curTasks()) {
             if (costs + node->cost > budget) {
                 break;
             }
@@ -201,7 +203,7 @@ bool RLSchedule::Planning(int flag) {
             t++;
         }
     }
-    for (auto node : curTasks) {
+    for (auto node : curTasks()) {
         if (node->isOn())
             continue;
         if (costs + node->cost > budget) {
@@ -218,7 +220,11 @@ bool RLSchedule::Planning(int flag) {
     return true;
 }
 
-RLS_BP::RLS_BP(EDGE_DEVICES *hED_, const CLI_params &config, int flag) : RLSchedule(hED_, config, flag) { params = config.scheduling; }
+RLS_BP::RLS_BP(EDGE_DEVICES *hED_, const CLI_params &config, int flag) : RLSchedule(hED_, config, flag) {
+    params = config.scheduling;
+    vector<TaskNode *> arrT;
+    afu = std::make_shared<Fuyou>("afu", this, hFish, arrT, 0x0);
+}
 
 int RLS_BP::BeforeNextStep(int flag) {
     step++;
@@ -229,6 +235,14 @@ void RLS_BP::Dump(int typ) const {
     size_t szFree, szTotal;
     cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
     _INFO("[RLS]\tnGuoke=%d(%.3G) Memory of GPU=%.6gM(free=%.6gM)\n", nT_guoke, szGuoke / 1.0e9, (szTotal - szFree) / 1.0e6, szFree / 1.0e6);
+    auto &fuyou = hFish->config.fuyou;
+    if (fuyous.size() > 1) {
+        // hFuyou first = fuyous[0];
+
+        _INFO("[Fuyou] n=%d", fuyous.size());
+        hFish->config.fuyou.Dump(0x0);
+        _INFO("\n");
+    }
 }
 
 bool RLS_BP::isResident(GeNeuron *neuron, int flag) {
@@ -264,42 +278,131 @@ void RLS_BP::Init(Fish *hF, std::vector<hNeuron> backbons, int flag) {
         }
         n->ManageMemory(DATA_PLACE::SYMBOLIC);
         double mem     = n->dev_most_mem / 1.0e6;
-        TaskNode *node = new RLSchedule::TaskNode(n->name, (void *)(n.get()), mem);
-        curTasks.push_back(node);
+        TaskNode *node = new TaskNode(n->name, (void *)(n.get()), mem);
+        afu->Add(node);  // curTasks.push_back(node);
     }
-    assert(curTasks.size() >= 2);
-    TaskNode *last = curTasks[curTasks.size() - 1];
-    _INFO("[RLS]\tInit [%s,...,%s]", curTasks[0]->name.c_str(), last->name.c_str());
+    // assert(curTasks.size() >= 2);
+    TaskNode *last = afu->Last();  // curTasks[curTasks.size() - 1];
+    _INFO("[RLS]\tInit [%s,...,%s]", afu->First()->name.c_str(), last->name.c_str());
     Dump(0x0);
 }
 
+Fuyou::Fuyou(const string &n, RLS_BP *hRL, Fish *hF, vector<TaskNode *> arrT, int flag) : name(n), hRLS(hRL), hFish(hF) {
+    if (hFish != nullptr)
+        params = hFish->config.fuyou;
+    tasks = arrT;
+    if (tasks.size() == 0)
+        return;
+    std::hash<std::string> hasher;
+    size_t hash = hasher(n);  // Returns a size_t (unsigned integer)
+    rander.Init(hash);
+    // auto allParams = hFish->optParams;
+    for (auto task : tasks) {
+        GeNeuron *neuron = (GeNeuron *)(task->hOBJ);
+        bool isFy        = dynamic_cast<FFN *>(neuron) || dynamic_cast<SelfAttention *>(neuron);
+        if (!isFy)
+            continue;
+
+        for (auto t : neuron->PickGensors()) {
+            if (BIT_TEST(t->flags, GTensor::F_PARAM)) {
+                optParams.push_back(t);
+            }
+        }
+    }
+    _INFO("\t fuyou_%s nP=%ld\n", name.c_str(), optParams.size());
+}
+
+bool Fuyou::UpdateFollower(std::shared_ptr<Fuyou> follower, int flag) {
+    int nP = optParams.size(), i;
+    assert(nP > 0 && optParams.size() == follower->optParams.size());
+    for (int i = 0; i < nP; i++) {
+        auto tNext = follower->optParams[i], tHead = optParams[i];
+        assert(tNext->isSameShape(tHead));
+
+        Exploitation(tHead, tNext);
+    }
+    return true;
+}
+/**/
+bool RLSchedule::ExploreOptimization(int iter, int flag) {
+    if (fuyous.size() <= 1)
+        return false;
+    double now  = GST_ms();
+    hFuyou head = fuyous[curBranchID];  //  afu = fuyous[curBranchID];
+    for (auto fuyou : fuyous) {
+        if (fuyou == head)
+            continue;
+        head->UpdateFollower(fuyou);
+    }
+    if (DEBUG.T_fuyou == 1) {
+        _INFO("[Fuyou] head=\"%s\" update algorithm=%d", head->name.c_str(), head->params.algorithm);
+        _TIME_INFO(" t=", GST_ms() - now), _INFO("\n");
+    }
+    return true;
+}
+
+/*
+bool RLSchedule::ExploreOpt_v1(int iter, int flag) {
+    if (fuyous.size() <= 1)
+        return false;
+
+    double now = GST_ms();
+    vector<hFuyou> cands;
+    for (auto fuyou : fuyous) {
+        if (fuyou == afu)
+            continue;
+        cands.push_back(fuyou);
+    }
+    std::sort(cands.begin(), cands.end(),  // ugly because we don't have a typedef for the std::pair
+              [](const hFuyou &a, const hFuyou &b) { return a->loss < b->loss; });
+    if (cands[0]->loss == FLT_MAX)
+        return false;
+    hFuyou head = cands[0];  //  afu = fuyous[curBranchID];
+    assert(head != afu);
+    head->UpdateFollower(afu);
+    bool doMore = iter >= hFish->config.fuyou.nWarmup();
+    if(doMore){
+        for(int i=1;i < cands.size(); i++){
+            assert(head != cands[i]);
+            head->UpdateFollower(cands[i]);
+        }
+    }
+
+    if (DEBUG.T_fuyou == 1) {
+        _INFO("[Fuyou] \"%s\" update from\"%s\",  algorithm=%d", afu->name.c_str(), head->name.c_str(), head->params.algorithm);
+        _TIME_INFO(" t=", GST_ms() - now), _INFO("\n");
+    }
+    return true;
+}*/
+
 bool RLS_BP::InitBranch(int flag) {
-    int L = hFish->config.nLayer(), t0 = params.LIB_0, t1 = params.LIB_1, LIS = params.nLayerInBranch, nPass = 0;
+    auto fy = hFish->config.fuyou;
+    int L = hFish->config.nLayer(), t0 = fy.LIB_0, t1 = fy.LIB_1, LIS = fy.nLayerInBranch, nPass = 0;
     if (LIS <= 0) {
-        assert(allTasks.size() == 0);
-        allTasks = {curTasks};  // Ref RLS_BP::Init
+        assert(fuyous.size() == 0);
+        fuyous = {afu};  // Ref RLS_BP::Init
         return true;
     }
 
-    if (allTasks.size() > 0) {
+    if (fuyous.size() > 0) {
         return true;
     }
 
     assert(L % LIS == 0);
     int nSwitch = L / LIS;
     _INFO("[RLS_branch] branches=%d(%d/%d) ", nSwitch, L, LIS);
-    curTasks.clear();
+    // curTasks.clear();
     for (int b = 0; b < nSwitch; b++) {
         int LIB_0 = b * LIS, LIB_1 = std::min((b + 1) * LIS, L);
-        arrTask tasks;
+        vector<TaskNode *> tasks;
         for (auto n : hFish->backbons) {
             bool isPass = true, isGrad = true;
             if (n->layer == 0 || n->layer > L)
                 isPass = false;                                        // backbons.push_back(n);
             else if (LIB_0 <= n->layer - 1 && n->layer - 1 < LIB_1) {  // QKV,FFN
                 isPass = false;
-                isGrad = n->layer - 1 >= params.LIB_1 - LIS;  // backbons.push_back(n);
-                // n->isPassBack = n->layer - 1 < params.LIB_1 - LIS;
+                isGrad = n->layer - 1 >= fy.LIB_1 - LIS;  // backbons.push_back(n);
+                // n->isPassBack = n->layer - 1 < fy.LIB_1 - LIS;
                 // if (n->isPassBack)
                 //     nPass++;  // backbons.push_back(n);
             }
@@ -307,21 +410,21 @@ bool RLS_BP::InitBranch(int flag) {
                 continue;
             }
             double mem     = n->dev_most_mem / 1.0e6;
-            TaskNode *node = new RLSchedule::TaskNode(n->name, (void *)(n.get()), mem);
+            TaskNode *node = new TaskNode(n->name, (void *)(n.get()), mem);
             tasks.push_back(node);
             n->stat.Reset();
         }
         _INFO(" %d@{L%d:L%d}", tasks.size(), LIB_0, LIB_1);
-        allTasks.push_back(tasks);
+        fuyous.push_back(std::make_shared<Fuyou>(std::to_string(b), this, hFish, tasks));
     }
-    assert(allTasks.size() == nSwitch);
+    assert(fuyous.size() == nSwitch);
     _INFO("\n");
     return true;
 }
 
 bool RLS_BP::isUpdateBatch(int iter, int flag) {
     bool isUpdate = true;
-    if (hFish->config.model.ensemble == MODEL_ENSEMBLE::MULTI_SCALE)
+    if (hFish->config.fuyou.ensemble == Fuyou_params::MULTI_SCALE)
         isUpdate = curBranchID == 0;
     return isUpdate;
 }
@@ -332,17 +435,19 @@ bool RLS_BP::isUpdateBatch(int iter, int flag) {
     3 train LIB_0/{LIB_0,LIB_1}/{LIB_0,LIB_1,LIS_2} ...  only last branch do back-propagation
  */
 bool RLS_BP::UpdateBackbone(int iter, int flag) {
-    int L = hFish->config.nLayer(), t0 = params.LIB_0, t1 = params.LIB_1, LIS = params.nLayerInBranch, nPass = 0;
+    auto fy = hFish->config.fuyou;
+    int L = hFish->config.nLayer(), t0 = fy.LIB_0, t1 = fy.LIB_1, LIS = fy.nLayerInBranch, nPass = 0;
     assert(L % LIS == 0);
     string s = "\n", p = "\t";
     int nSwitch = L / LIS;
     // curBranchID    = iter == -1 ? 0 : rand_branch.RandU32() % nSwitch;
     curBranchID = iter == -1 ? 0 : (curBranchID + 1) % nSwitch;
     // curBranch = 0;       // only for debug
-    params.LIB_0 = curBranchID * LIS, params.LIB_1 = params.LIB_0 + LIS;
-    assert(params.LIB_1 <= L);
-    curTasks = allTasks[curBranchID];
-    for (auto node : curTasks) {
+    fy.LIB_0 = curBranchID * LIS, fy.LIB_1 = fy.LIB_0 + LIS;
+    assert(fy.LIB_1 <= L);
+    // curTasks = fuyous[curBranchID];
+    afu = fuyous[curBranchID];
+    for (auto node : curTasks()) {
         GeNeuron *neuron = (GeNeuron *)(node->hOBJ);
         // _INFO("%s\n",neuron->__repr__(s,p).c_str());
         neuron->stat.Reset();
@@ -351,7 +456,7 @@ bool RLS_BP::UpdateBackbone(int iter, int flag) {
     size_t szFree, szTotal;
     cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
     // assert(curTasks.size() == LIS * 2 + 3);
-    _INFO("[Section@%d] layer[%d-%d] curTasks=%ld(nPassBack=%d) mGPU=%.6gM(free=%.6gM)\n", iter, params.LIB_0, params.LIB_1, curTasks.size(), nPass,
+    _INFO("[Section@%d] layer[%d-%d] tasks=%ld(nPassBack=%d) mGPU=%.6gM(free=%.6gM)\n", iter, fy.LIB_0, fy.LIB_1, curTasks().size(), nPass,
           (szTotal - szFree) / 1.0e6, szFree / 1.0e6);
 
     return true;
@@ -359,6 +464,8 @@ bool RLS_BP::UpdateBackbone(int iter, int flag) {
     //     assert(backbons.size() == 2 * L + 3);
     // }
 }
+
+bool RLSchedule::isSwitchFuyou(int iter, int flag) { return iter % hFish->config.fuyou.LIB_iter_switch == 0; }
 
 /*
     Fish::ForwardOnRLS would call this before each step
@@ -378,16 +485,23 @@ bool RLS_BP::Prepare(int iter, int flag) {
             return true;
             break;
         case LIFE_PHASE::P_TRAIN:
-            if (params.nLayerInBranch > 0 && (iter == -1 || iter % params.LIB_iter_switch == 0)) {
-                UpdateBackbone(iter, flag);
+            if (fuyous.size() > 1) {
+                if (iter == -1 || isSwitchFuyou(iter)) {
+                    UpdateBackbone(iter, flag);
+                }
+                //  gradient is released or zero at this time!
+                // if (iter > hFish->config.fuyou.nWarmup() && DEBUG.T_fuyou==1 && isSwitchFuyou(iter)) {
+                //     ExploreOptimization(iter);
+                // }
             }
+            break;
         default:
             break;
     }
 
     double costs = 0;
     int t        = 0;
-    for (auto node : curTasks) {
+    for (auto node : curTasks()) {
         // if (costs + node->cost > budget) {
         //     _INFO("[RLS]  Outof Budeget@\"%s\"!!! budget=%g,costs=%g+%g\n", node->name.c_str(), budget, costs, node->cost);
         //     assert(0);
@@ -418,9 +532,9 @@ bool RLS_BP::Prepare(int iter, int flag) {
     if (iter < 0)
         _INFO("[RLS] resident={%s}\n", resident_list.c_str());
     if (DUMP(1) && iter <= 2 && phase != LIFE_PHASE::P_EVAL_) {
-        // size_t szFree, szTotal;
-        // cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
-        // _INFO("[MEMORY] mGPU=%.6gM(free=%.6gM)\n", (szTotal - szFree) / 1.0e6, szFree / 1.0e6);
+        size_t szFree, szTotal;
+        cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
+        _INFO("[MEMORY] mGPU=%.6gM(free=%.6gM)\n", (szTotal - szFree) / 1.0e6, szFree / 1.0e6);
     }
     return true;
 }

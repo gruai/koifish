@@ -447,15 +447,15 @@ hGensor NLP_AutoRegressive::BuildTarget(void *ctx, hGensor cur, int flag) {
     return out_node;
 }
 
-std::string NLP_AutoRegressive::T2STR(const std::vector<TOKEN_ID> &toks,int nMost, int flag) {
+std::string NLP_AutoRegressive::T2STR(const std::vector<TOKEN_ID> &toks, int nMost, int flag) {
     std::string str = "";
-    int i = 0;
+    int i           = 0;
     for (auto tok : toks) {
         if (tok == hDict->eos_id)
             break;
         std::string a = hDict->T2STR(tok, flag);
         str += a;
-        if(++i>=nMost)  
+        if (++i >= nMost)
             break;
     }
 
@@ -555,9 +555,9 @@ bool Fish::InitDictTokenset(int flag) {
     if (isTrain()) {
         if (tsTrain != nullptr && tsTrain->nMostTok > 0)
             config.OnMostToken(tsTrain->nMostTok);
-    }else{  //  config.isOnlyGPT
+    } else {  //  config.isOnlyGPT
         tsTrain = nullptr;
-        tsEval = tokenset;
+        tsEval  = tokenset;
         return true;  // may have no train !!!
     }
 
@@ -771,28 +771,10 @@ void NLP_AutoRegressive::Dump(int type, int flag) {
         _INFO("%s: LARS(t_max=%g)\n", __func__, config.lars_ratio);
 }
 
-// template<typename T>
-// float* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV,bool isCPU,unsigned flags=0x0);
-int T_generate_cpu(hFISH hFish, bool isOnlyUpdateKV, unsigned flags = 0x0);
-float RAW_backward(Fish *fish, const int *hostInToken, int accum_steps, bool, int flag);
-int Fish::BackwardOnRLS(int iter, int flag) {
-    int nAccum          = config.common.n_gradient_accumulation;
-    bool isOnlyEvaluate = false;
-    GTensor::delta->Zero();
-    OutCLS *cls   = GetNeuron<OutCLS>("OutCLS", 0);
-    GTensor::buff = hCLS->preLogits->data;  // reused in many place!
-
-    if (DEBUG.back_graph_version == 1) {
-        float loss = RAW_backward(this, nullptr, nAccum, isOnlyEvaluate, flag);
-        return 0x0;
-    }
-
-    RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
-    assert(hRLS != nullptr);
-    hGensor cur = cls->delta;
-    // for (auto it = backbons.rbegin(); it != backbons.rend(); ++it) {
-    //     hNeuron neuron = *it;
-    for (auto it = hRLS->curTasks.rbegin(); it != hRLS->curTasks.rend(); ++it) {
+//  @GeNeuron::SetGuoke
+bool Fuyou::Backward(hGensor cur, int flag) {
+    bool isMix = true;
+    for (auto it = tasks.rbegin(); it != tasks.rend(); ++it) {
         GeNeuron *neuron = (GeNeuron *)((*it)->hOBJ);
         if (neuron->isShortcut)
             continue;
@@ -801,8 +783,43 @@ int Fish::BackwardOnRLS(int iter, int flag) {
         auto t0 = GST_ms();
         cur     = neuron->Ming(hRLS, cur);
         neuron->stat.tBack += GST_ms() - t0;
+        if (isMix) {
+        }
     }
-    SYNC_DEVICE();
+    // SYNC_DEVICE();
+    return true;
+}
+
+float RAW_backward(Fish *fish, const int *hostInToken, int accum_steps, bool, int flag);
+int Fish::BackwardOnRLS(int iter, int flag) {
+    GTensor::delta->Zero();
+    OutCLS *cls   = GetNeuron<OutCLS>("OutCLS", 0);
+    GTensor::buff = hCLS->preLogits->data;  // reused in many place!
+    if (DEBUG.back_graph_version == 1) {
+        int nAccum          = config.common.n_gradient_accumulation;
+        bool isOnlyEvaluate = false;
+        float loss          = RAW_backward(this, nullptr, nAccum, isOnlyEvaluate, flag);
+        return 0x0;
+    }
+
+    RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
+    hGensor cur  = cls->delta;
+    hFuyou afu   = hRLS->afu;
+    afu->Backward(cur);
+
+    //  Head to follower
+    if (iter >= config.fuyou.nWarmup() && hRLS->fuyous.size() > 1) {  //  memory
+        if (DEBUG.T_fuyou == 0 || hRLS->isSwitchFuyou(iter + 1)) {
+            hRLS->ExploreOptimization(iter);
+        }
+    }
+
+    // afu update from Head
+    /*if (hRLS->fuyous.size() > 1) {  //  memory
+        if (DEBUG.T_fuyou == 0 || hRLS->isSwitchFuyou(iter)) {
+            hRLS->ExploreOptimization(iter);
+        }
+    }*/
     return 0x0;
 }
 
@@ -810,38 +827,38 @@ int Fish::ForwardOnRLS(int iter, int flag) {
     // if(DEBUG.back_graph_version==1)
     // { return ForwardOnNeuron_v0(flag);  }
     RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
-    double now = GST_ms();
-    if(iter<0 || isTrain())
+    double now   = GST_ms();
+    if (iter < 0 || isTrain())
         hRLS->Prepare(iter, 0);
-    vector<RLSchedule::arrTask> branches = {hRLS->curTasks};
-    OutCLS *cls                          = GetNeuron<OutCLS>("OutCLS", 0);
-    int L = config.nLayer(), nzLoss = cls->nzLoss, i;
+    vector<hFuyou> branches = {hRLS->afu};  // curTasks
+    OutCLS *cls             = GetNeuron<OutCLS>("OutCLS", 0);
+    int L = config.nLayer(), nzLoss = cls->nzLoss, i, nFuyou = hRLS->fuyous.size();
     float *tmpLoss = nullptr, *loss = cls->hostLoss;
-    if (isAtPhase(LIFE_PHASE::P_EVAL_) || isAtPhase(LIFE_PHASE::P_GENERATE)) {        
-        if(config.model.ensemble==MODEL_ENSEMBLE::RANDOM_1 && hRLS->allTasks.size()>1){     //  random ensembling
-            branches = hRLS->allTasks;
-            uint32_t pick = rand_coin.RandU32()%hRLS->allTasks.size();
-            branches = {hRLS->allTasks[pick]};
-        }else{
-            uint32_t pick = hRLS->allTasks.size()-1;
-            branches = hRLS->allTasks;
-            // branches = {hRLS->allTasks[pick]};      //only for debug
+    if (isAtPhase(LIFE_PHASE::P_EVAL_) || isAtPhase(LIFE_PHASE::P_GENERATE)) {
+        if (config.fuyou.ensemble == Fuyou_params::RANDOM_1 && nFuyou > 1) {  //  random ensembling
+            branches      = hRLS->fuyous;
+            uint32_t pick = rand_coin.RandU32() % hRLS->fuyous.size();
+            branches      = {hRLS->fuyous[pick]};
+        } else if (config.fuyou.ensemble == Fuyou_params::AGGREGATION && nFuyou > 1) {
+            branches = hRLS->fuyous;
+        } else {
+            // branches = {hRLS->fuyous[pick]};      //only for debug
         }
     }
     int nB = branches.size(), curB = 0;
-    if (nB > 1){
-        tmpLoss = new float[nzLoss]();        
-    }else{
-        assert(nB>0);
+    if (nB > 1) {
+        tmpLoss = new float[nzLoss]();
+    } else {
+        assert(nB > 0);
     }
-    hRLS->curBranches = branches;
-    for (auto branch : branches) {        
+    hRLS->curFuyous = branches;
+    for (auto branch : branches) {
         hGensor cur = Input(), residual = nullptr;
-        assert(branch.size()>0);
+        assert(!branch->empty());
         // GetNeuron<SelfAttention>("QKV", 0)->ManageMemory(DATA_PLACE::DEV_MEM);  //only for debug
-        for (auto task : branch) {
+        for (auto task : branch->Tasks()) {
             GeNeuron *neuron = (GeNeuron *)(task->hOBJ);
-            if (neuron->name == "model.blk.10.attn" && curB > 0) { //   model.inp_embd
+            if (neuron->name == "model.blk.10.attn" && curB > 0) {  //   model.inp_embd
                 int debug = 0x0;
             }
             if (neuron->isShortcut)
@@ -861,7 +878,7 @@ int Fish::ForwardOnRLS(int iter, int flag) {
     if (nB > 1) {
         for (i = 0; i < nzLoss; i++) {
             loss[i] = tmpLoss[i] / curB;
-            assert(isValidF(loss+i) && loss[i]>0 && loss[i]<100.0);
+            assert(isValidF(loss + i) && loss[i] > 0 && loss[i] < 100.0);
         }
         delete[] tmpLoss;
     }

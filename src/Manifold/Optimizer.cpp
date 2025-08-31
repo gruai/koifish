@@ -294,14 +294,6 @@ float Optimizer::gClip(int ne, floatX *g, hGensor hP, int flag) {
     return clip;
 }
 
-inline bool isStrMatch(const string &target, const vector<string> &words) {
-    for (auto w : words) {
-        if (target.find(w) != std::string::npos)
-            return true;
-    }
-    return false;
-}
-
 template <typename Tp, typename Tmv>
 void Optimizer_update(PIPE_Optimizer<Tp, Tmv> &pipe, cudaStream_t stream);
 int GTensor::Dogleg(int flag) {
@@ -334,6 +326,9 @@ int GTensor::Dogleg(int flag) {
     PIPE_Optimizer<floatX, floatMV> pipe(nEle, nEle, nEle, nEle, flags, learning_rate, beta1, beta2, iter, eps, wd, grad_scale, gnorm, seed);
     pipe.Update(this);
     Optimizer_update(pipe, main_stream);
+    if (1) {  // fuyou
+        // for(auto t : fuyous)
+    }
 
     if (flag == -1) {
         // Print(name, 1, -1);
@@ -471,6 +466,9 @@ void Optimizer::UpdateTrainLoss(int x, float loss, int flag) {
         fx_best.push_back(loss);  //   only 1 element  ???
         loss_before = loss;
     }
+    RLS_BP *hRLS = _fish->hEDS->GetScheduler<RLS_BP>();
+    if (hRLS->afu != nullptr)
+        hRLS->afu->loss = loss;
     loss_after = loss;
     hLR->Append(loss);
 
@@ -534,6 +532,7 @@ Optimizer::RESULT Optimizer::Search(void *ctx, hGensor loss_, hGensor target_, C
     // g_dump_level = 0;
     int iter0 = 0, t;  // opt->iter;
     for (t = 0; t < train_params.nMostIter; ++t) {
+        // exit(KOIFISH_EXIT_DEBUG);
         _fish->BeforeNextStep(t, 0x0);
         if (t == train_params.nMostIter - 1) {
             if (train_loader != nullptr) {
@@ -771,10 +770,8 @@ float Optimizer::UpdateLossCurve(int flag) {
         _INFO("[epoch_%d]_%-6d loss=%f |g|=%.3g\tlr=%.2e | %s ", train_epochs, iter, loss_after, g_step, last_lr,
               train_loader->IterInfo().c_str());  //,zmuv_0,zmuv_1
         if (millis_per_iter > 0) {
-            _TIME_INFO(" T=", millis_per_iter);
-            _TIME_INFO("(data=", tData);
+            _TIME_INFO(" T=", millis_per_iter), _TIME_INFO("(data=", tData);
             SUM::TimeInfo();  // _TIME_INFO(" R=",SUM::tRemater);
-            _TIME_INFO(" X=", SUM::tX1);
             _TIME_INFO(") eta=", remaining_millis);
         }
         size_t tokens_processed = _fish->config.nTokensPerGrad();  //(size_t) * B * T * grad_accum_steps;
@@ -1031,7 +1028,7 @@ void Optimizer::Dump(int typ) {
         SUM::MemoryInfo(0x0);
     }
     auto train_params = TrainParams();
-    _INFO("========\n");
+    _INFO("======== nEopch=%d most_iter=%d\n", train_params.n_epochs, train_params.nMostIter);  //,train_params.nEpochIter
     fflush(stdout);
     RLS_BP *hRLS = _fish->hEDS->GetScheduler<RLS_BP>();
     hRLS->Dump(typ);
@@ -1096,6 +1093,12 @@ void OPT_Adam::Dump(int typ) {
         printf("| gelu_fusion           | %-50d |\n", gelu_fusion);
         printf("| recompute             | %-50d |\n", recompute);*/
     // if(NOT_DUMP())  return;
+    if (train_loader != nullptr)
+        train_loader->Dump(typ);
+    for (auto vl : val_loaders) {
+        vl->Dump(typ);
+    }
+
     _INFO("[OPT_Adam]\tsRESI=%g s_rounding=%d alloc_w=%d remater[ffn=%d ]\n", TrainParams().residual_scale, TrainParams().opt_alloc_weight,
           TrainParams().opt_alloc_weight, TrainParams().remater_ffn);
     adam->Dump(typ);

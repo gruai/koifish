@@ -511,6 +511,18 @@ SampLoader::SampLoader(Fish *g_, const string &n, bool isNewTS, int flag) {
     return;
 }
 
+void SampLoader::Dump(int typ) {
+    size_t nShardFile = 0, nBatch = 0, nMostTok = 0;
+    if (hTokens != nullptr) {
+        nShardFile = hTokens->shard_paths.size();
+        nBatch     = hTokens->nBatch();
+        nMostTok   = hTokens->nMostTok;
+        // nShardSamp = hTokens->nMostShard();
+    }
+    double nToken = nMostTok / 1.0e6;  // nTokens() / 1.0e6 * nShardFile;
+    _INFO("[Dataset]_\"%s\" nShard=%ld(T=%.6gM) EachShard(nSamp=%ld,nBatch=%ld)\n", name.c_str(), nShardFile, nToken, nShard(), nBatch);
+}
+
 BATCH_INPUT::BATCH_INPUT(SHAPE shape, int flag) {
     hostToken = std::make_shared<GTensor>(nullptr, shape, typNUMBER::I32);
     hostToken->Alloc();

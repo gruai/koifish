@@ -25,9 +25,9 @@ using namespace std;
 #include <stdio.h>
 #include <string.h>
 
-#ifdef __USE_GGML__
-#include "ggml.h"
-#endif
+// #ifdef __USE_GGML__      //
+// #include "ggml.h"
+// #endif
 
 #define GG_V12
 
@@ -112,6 +112,7 @@ class GTensor {
     Fish *hFish   = nullptr;
     hGTensor hRef = nullptr;
     std::vector<GTensor *> refered;
+    std::vector<hGTensor> fuyous;
     std::shared_ptr<EDGE_DEVICES> hDevice = nullptr;
     size_t szData = 0, szGama = 0, szUse = 0;
     int last_iter = -1;
@@ -141,9 +142,9 @@ class GTensor {
     vector<hGOP> src;
     virtual void AddSrc(const vector<hGTensor> &ts, int flag = 0x0);
 
-    void *host_data     = nullptr;  // somtimes, we need data both in device&host
-    void *data          = nullptr;
-                                                   // a serial of LORA for weight
+    void *host_data = nullptr;  // somtimes, we need data both in device&host
+    void *data      = nullptr;
+    // a serial of LORA for weight
     floatGama *gama_T();                                              // scaling coefficient of bit weight
     virtual bool isUpdateParam(int iter = -1, int flag = 0x0) const;  // in many case, params are not update, even data is not allocated!
     int tile_r1 = 0, tile_c1 = 0;                                     //  tile_r0 = 0,tile_c0 = 0,
@@ -174,8 +175,8 @@ class GTensor {
         F_ONLYREF   = 0x40000,  // Partial/Sub tensor
 
         F_TERNARY = 0x100000,
-        F_LORA_A = 0x200000,
-        F_LORA_B = 0x400000,
+        F_LORA_A  = 0x200000,
+        F_LORA_B  = 0x400000,
 
         F_DEBUG = 0x10000000
     };
@@ -327,6 +328,7 @@ class GTensor {
     friend class GeNeuron;
     friend class huTensor;
     friend class OPT_Adam;
+    friend class Fuyou;
 };
 
 template <typename T>
@@ -367,8 +369,7 @@ inline hGTensor operator+=(const hGTensor &a, const hGTensor &b) {
     return nullptr;
 }
 
-#ifdef _TENSOR_G_
-typedef hGTensor hGensor;
+typedef hGTensor hGensor;  // some trick
 inline struct ggml_tensor *G(hGensor T) {
     assert(T != nullptr);
     return T->GG();
@@ -385,30 +386,7 @@ inline void tSET(hGensor T, float a) { T->Set(a); }
 inline void tFLAG(hGensor T, int64_t flag) { T->SetFlag(flag); }
 double tNormsOf(const std::vector<hGTensor> &tensors, int flag);
 // double tNormOf(const hGTensor tensor, int flag = 0x0);
-#else
-int gTN(struct ggml_tensor *cur, const char *format, ...);
-int gTN0(struct ggml_tensor *cur, const char *format, ...);
 
-typedef struct ggml_tensor *hGensor;
-inline struct ggml_tensor *G(hGensor T) { return (struct ggml_tensor *)(T); }
-
-inline hGensor NEW_(hGensor gg) { return gg; }
-inline void ZERO_(hGensor gg) { ggml_set_zero(gg); }
-inline size_t tELEM(hGensor gg) { return ggml_nelements(gg); }
-inline size_t tBYTE(hGensor gg) { return ggml_nbytes(gg); }
-inline int tDIM(hGensor gg) { return ggml_n_dims(gg); }
-inline float tGET(hGensor gg, int i) { return ggml_get_f32_1d(gg, i); }
-inline void tSET(hGensor gg, float a) { ggml_set_f32(gg, a); }
-inline void tSET_nd(hGensor gg, int i0, int i1, int i2, int i3, int32_t value) { ggml_set_i32_nd(gg, i0, i1, i2, i3, value); }
-inline void tFLAG(hGensor gg, int64_t a) { gg->flags |= (int32_t)a; }
-hGensor tSCAL(struct ggml_context *_ctx, struct ggml_tensor *a, float s, int flag = 0x0);
-hGensor Permute(struct ggml_context *ctx_, struct ggml_tensor *cur, int64_t n1, int64_t n2, int64_t n3, int64_t n4, bool isCont = true);
-template <typename T>
-inline float T2Float(T *a0) {
-    float a = *a0;
-    return a;
-}
-#endif
 inline floatX *ToX(hGensor t) {
     assert(t != nullptr);
     BIT_SET(t->flags, GTensor::F_TOX);

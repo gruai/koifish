@@ -1,12 +1,13 @@
 /**
  *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
- * 
+ *
  *  Some key characteristics & design goals
  *      1.  Flex - it may have different structures/parameters at different phase!
  *      2.  Sparse
  *      3.  Lite - need much less resource than any other
- * 
+ *      4.  Tough
+ *
  *  \brief Fish - Life is just a random swimming fish.
  *  \author Yingshi Chen
  */
@@ -48,65 +49,6 @@ typedef shared_ptr<Fish> hFISH;
 typedef vector<hFISH> tpSWARM;
 class NLP_AutoRegressive;
 
-enum FFN_TYPE {
-    SWIGLU = 0,
-    VANILLA,
-    ONLY_LNormal,
-    ONLY_RMSNormal,
-    VAR_0,
-    VAR_LAST,  // last layer with gaussian noise
-    SMOE,      // Sparsely-Gated Mixture-of-Experts Layer
-    GATE_CYS,
-};
-
-// Deprecated, repalce by SelfAttention+FFN
-struct QKV_LAY : public NeLayer {
-    hGensor eps = nullptr;
-    LayerNormal att_norm, ffn_norm;
-    SLP Q, K, V, proj, up, down;
-    hGensor ffn_gate = nullptr;
-    // attention
-    hGensor wk = nullptr, wv = nullptr;
-    hGensor wo = nullptr;
-
-    // SMOE
-    hGensor ffn_gate_inp = nullptr, ffn_gate_exps = nullptr, ffn_down_exps = nullptr, ffn_up_exps = nullptr;
-    hGensor ffn_gate_inp_shexp = nullptr, ffn_gate_shexp = nullptr, ffn_down_shexp = nullptr, ffn_up_shexp = nullptr;
-
-    // long rope factors
-    hGensor rope_long = nullptr, rope_short = nullptr, rope_freqs = nullptr;
-    hGensor rope_(bool isLong) const {
-        if (rope_freqs != nullptr) {
-            return rope_freqs;
-        }
-        if (isLong) {
-            return rope_long;
-        }
-        return rope_short;
-    }
-
-    QKV_LAY(Fish *hF_, int id);
-    int64_t parameter_count() {
-        int64_t nx = 0;
-        nx += att_norm.nElem();  // tELEM(attention_norm);
-
-        nx += Q.nElem();
-        nx += tELEM(wk);
-        nx += tELEM(wv);
-        nx += tELEM(wo);
-        nx += ffn_norm.nElem();  // tELEM(ffn_norm);
-        nx += tELEM(ffn_gate);
-        nx += down.nElem();
-        nx += up.nElem();  //(ffn_down); nx += tELEM(ffn_up);
-        return nx;
-    }
-    virtual bool CreateFFN(const CLI_params &config, ggml_context *ctx, FFN_TYPE tpFFN, int flag = 0x0);
-    string __repr__(string &suffix, string &prefix, int flag = 0x0) override;
-
-    virtual void save_gguf(struct gguf_context *fctx, int flag);
-};
-typedef std::shared_ptr<QKV_LAY> hLQKV;
-
 struct MixOfModels {
     bool isRes = true, isSiLU = false;
     vector<hGensor> exs;
@@ -124,30 +66,7 @@ struct MixOfSwarm : public MixOfModels {
     hGensor Build(CLI_params &config, void *ctx, hGensor cur, int flag = 0x0) override;
 };
 
-// Pick some neurons from context sparcity
-class CS_Picker {
-   protected:
-    bool isMerge = false;
-    int dim = -1, nLastHot = -1;
-    float T_hot = 0.2, T_zero = 1.0e-3;
-
-   public:
-    int *hot     = nullptr;
-    float *dTemp = nullptr;
-    static double tPick;  //  Picker should much fast than dot!
-    CS_Picker() {}
-    CS_Picker(hFISH hFish, int flag = 0x0);
-    //  uses the first layer’s attention output to predict the sparsity pattern for the entire model
-    virtual ~CS_Picker() {
-        FREE_a(hot);
-        FREE_a(dTemp);
-    }
-
-    int Update(int level, float *hb, int flag = 0x0);
-};
-typedef shared_ptr<CS_Picker> hCSPicker;
-
-class Fish : public std::enable_shared_from_this<Fish> {
+class Fish :public std::enable_shared_from_this<Fish> {
     Fish(const Fish &);
     Fish &operator=(const Fish &);
 
@@ -218,13 +137,13 @@ class Fish : public std::enable_shared_from_this<Fish> {
     // @TGraph::TopoOrder
     GENSORS gensors;
     //  paramter tensors updated by hOPT    @Fish::AfterBuild
-    vector<hGensor> optParams;   
+    vector<hGensor> optParams;
     vector<hGensor> loadGensors;
     std::vector<hGensor> xGensors;
 
     hEDevices hEDS = nullptr;
 
-    bool updateTMap       = false;
+    bool updateTMap = false;
     // Ref@isTrain      No training process! only Evaluate/GPT/...
     bool isLocalInfer     = false;
     bool isLoadCheckpoint = false;
@@ -251,7 +170,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     DataTokens tsEval;             //  support multiple eval set!
 
     hOptimizer hOPT;
-    
+
     hDistillation hDistler;
     // performance
     int perf_runs       = 0;
@@ -312,9 +231,9 @@ class Fish : public std::enable_shared_from_this<Fish> {
     virtual bool isRemater(int flag = 0x0) const;
     virtual bool isTemporaryMemory(GeNeuron *neuron, int flag = 0x0) const;
 
-    bool isTrain()      const   { return !isLocalInfer; }
-    bool isSymbolic()   const   { return isSymbolicAnalysis; }
-    bool isAtPhase(LIFE_PHASE ph)    const;
+    bool isTrain() const { return !isLocalInfer; }
+    bool isSymbolic() const { return isSymbolicAnalysis; }
+    bool isAtPhase(LIFE_PHASE ph) const;
     bool hasWiki() { return wikis.size() > 0; }
 
     template <typename T>
@@ -332,15 +251,13 @@ class Fish : public std::enable_shared_from_this<Fish> {
         assert(0);
         return nullptr;
     }
-    hOptimizer GetOptimizer()   const {
+    hOptimizer GetOptimizer() const {
         assert(hOPT != nullptr);
         return hOPT;
     }
     int GetCurIter(int flag = 0x0) const;
     // if type==1 return curBraches, otherwise, return allBraches
-    int nBranch(int type)   {
-        return (GetScheduler<RLSchedule>())->nBranch(type);
-    }
+    int nBranch(int type) { return (GetScheduler<RLSchedule>())->nBranch(type); }
     template <typename T>
     T *GetScheduler() {
         T *hS = hEDS->GetScheduler<T>();
@@ -390,7 +307,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
         return nullptr;
     }
     //  Activations would creat at Symbolic Analysis stage
-    
+
     virtual bool Build(int flag = 0x0);
     virtual bool BeforeBuild(int flag = 0x0);
     virtual bool AfterBuild(bool isInitParam, int flag = 0x0);
@@ -420,9 +337,9 @@ class Fish : public std::enable_shared_from_this<Fish> {
 
     virtual void Statistic(int typ, int flag = 0x0);
     // virtual void CreateWiki(int flag=0x0)   {}
-    
-    //return target_probs = OutCLS->target
-    virtual hGensor Target() { return target_probs; }   
+
+    // return target_probs = OutCLS->target
+    virtual hGensor Target() { return target_probs; }
     virtual hGensor Output() {
         assert(out_node != nullptr);
         return out_node;
@@ -552,9 +469,10 @@ class Fish : public std::enable_shared_from_this<Fish> {
 };
 
 /*
+    鳑鲏
     1. similar idea @"Model Swarms: Collaborative Search to AdaptLLM Experts via Swarm Intelligence"
 */
-struct LogicSalp : public Fish {
+struct Pangpi : public Fish {
     hFISH head = nullptr;
 
     typedef enum { BIT_MASK } SPACE_TYPE;
@@ -563,29 +481,87 @@ struct LogicSalp : public Fish {
     int x = 0;
     float fitness;  // greater fitness will have a greater probability of being selected for recombination.
     vector<double> position;
-    // LogicSalp(const int dim, int flag = 0x0);
-    // LogicSalp(const int dim, const vector<int>&picks, int flag = 0x0);
-    LogicSalp(const std::string &nam_, struct CLI_params params, int flag = 0x0);
+    // Pangpi(const int dim, int flag = 0x0);
+    // Pangpi(const int dim, const vector<int>&picks, int flag = 0x0);
+    Pangpi(const std::string &nam_, struct CLI_params params, int flag = 0x0);
 
     void Train(int flag = 0x0) override;
 
     int DIM() const { return position.size(); }
 
-    virtual void Copy(const LogicSalp *src, int flag = 0x0) {
+    virtual void Copy(const Pangpi *src, int flag = 0x0) {
         position = src->position;
         fitness  = src->fitness;
         x        = src->x;
     }
 
     // aA+b*B
-    virtual void MixPosition(double alpha, const LogicSalp *A, double beta, const LogicSalp *B, int flag) {
+    virtual void MixPosition(double alpha, const Pangpi *A, double beta, const Pangpi *B, int flag) {
         int dim = position.size(), i;
         for (i = 0; i < dim; i++) {
             position[i] = alpha * A->position[i] + beta * B->position[i];
         }
     }
 
-    virtual void cross_over(const LogicSalp *A, const LogicSalp *B, int flag = 0x0);
+    virtual void cross_over(const Pangpi *A, const Pangpi *B, int flag = 0x0);
     virtual void mutatioin(double T_mut, int flag = 0x0);
 };
-typedef shared_ptr<LogicSalp> hSALP;
+typedef shared_ptr<Pangpi> hPangpi;
+
+enum FFN_TYPE {
+    SWIGLU = 0,
+    VANILLA,
+    ONLY_LNormal,
+    ONLY_RMSNormal,
+    VAR_0,
+    VAR_LAST,  // last layer with gaussian noise
+    SMOE,      // Sparsely-Gated Mixture-of-Experts Layer
+    GATE_CYS,
+};
+// Deprecated, repalce by SelfAttention+FFN
+struct QKV_LAY : public NeLayer {
+    hGensor eps = nullptr;
+    LayerNormal att_norm, ffn_norm;
+    SLP Q, K, V, proj, up, down;
+    hGensor ffn_gate = nullptr;
+    // attention
+    hGensor wk = nullptr, wv = nullptr;
+    hGensor wo = nullptr;
+
+    // SMOE
+    hGensor ffn_gate_inp = nullptr, ffn_gate_exps = nullptr, ffn_down_exps = nullptr, ffn_up_exps = nullptr;
+    hGensor ffn_gate_inp_shexp = nullptr, ffn_gate_shexp = nullptr, ffn_down_shexp = nullptr, ffn_up_shexp = nullptr;
+
+    // long rope factors
+    hGensor rope_long = nullptr, rope_short = nullptr, rope_freqs = nullptr;
+    hGensor rope_(bool isLong) const {
+        if (rope_freqs != nullptr) {
+            return rope_freqs;
+        }
+        if (isLong) {
+            return rope_long;
+        }
+        return rope_short;
+    }
+
+    QKV_LAY(Fish *hF_, int id);
+    int64_t parameter_count() {
+        int64_t nx = 0;
+        nx += att_norm.nElem();  // tELEM(attention_norm);
+
+        nx += Q.nElem();
+        nx += tELEM(wk);
+        nx += tELEM(wv);
+        nx += tELEM(wo);
+        nx += ffn_norm.nElem();  // tELEM(ffn_norm);
+        nx += tELEM(ffn_gate);
+        nx += down.nElem();
+        nx += up.nElem();  //(ffn_down); nx += tELEM(ffn_up);
+        return nx;
+    }
+    virtual bool CreateFFN(const CLI_params &config, ggml_context *ctx, FFN_TYPE tpFFN, int flag = 0x0);
+    string __repr__(string &suffix, string &prefix, int flag = 0x0) override;
+
+    virtual void save_gguf(struct gguf_context *fctx, int flag);
+};
+typedef std::shared_ptr<QKV_LAY> hLQKV;

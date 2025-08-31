@@ -1557,6 +1557,9 @@ hNeuron Fish::J2Neuron(void *ctx_, string &dad, int level, const JConfig &jconfi
         if (k == "multiscale") {
             continue;
         }
+        if (k == "fuyou") {
+            continue;
+        }
         if (k == "arch") {
             continue;
         }
