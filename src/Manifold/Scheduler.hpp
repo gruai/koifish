@@ -259,7 +259,6 @@ class RLSchedule {
     }
     virtual TASK_STATUS GetStatus(int step, void *hObj, int flag) { return FLIP; }
     virtual void Dump(int typ) const {}
-
     virtual bool isSwitchFuyou(int iter, int flag = 0x0);
     virtual bool ExploreOptimization(int iter, int flag = 0x0);
     // if type==1 return curBraches, otherwise, return allBraches
@@ -299,7 +298,6 @@ class RLS_BP : public RLSchedule {
     virtual bool InitGUOKE(int flag = 0x0);
     virtual bool InitBranch(int flag = 0x0);
     virtual bool Prepare(int iter, int flag = 0x0);
-
     virtual TASK_STATUS GetTensorStatus(int step, hGTensor tenosr, int flag = 0x0);
     virtual TASK_STATUS SetTensorStatus(int step, hGTensor tenosr, TASK_STATUS sta, int flag = 0x0);
     TASK_STATUS GetStatus(int step, void *hObj, int flag) override;

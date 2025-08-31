@@ -71,7 +71,7 @@
         "decay": 0.1,
         "optimizatioin": {
             "#method": "adamw sgdv hsgd lion adams",
-            "method": "adams",
+            "method": "adamw",
             "sign": 0,
             "grad_accumulation": 1,
             "lars_ratio": 0,
