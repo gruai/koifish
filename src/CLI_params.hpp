@@ -89,6 +89,7 @@ static std::map<MEM_STRATEGY, std::string> MEM_STRATEGY_desc = {
 struct SKDU_params {
     MEM_STRATEGY strategy = PRE_ALLOC_GPU;
     bool paramIsGuoke     = false;
+
     bool isUpdateParamV0() const;
     bool canSave(int iter, int flag = 0x0) const;
     void Dump(int typ) const;
