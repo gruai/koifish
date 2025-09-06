@@ -13,7 +13,7 @@
 #include "Fish.hpp"
 #include "Optimizer.hpp"
 
-LearnSKDU::LearnSKDU(struct train_params_ &train_params) : _params(train_params) {
+LearnSKDU::LearnSKDU(TRAIN_CARD &train_params) : _params(train_params) {
     if (_params.lr_restart == 1)
         policy = COSINE_EPOCH;
     warmup = _params.warmup, mostIter = _params.nMostIter;
@@ -26,25 +26,39 @@ LearnSKDU::LearnSKDU(struct train_params_ &train_params) : _params(train_params)
     }
 }
 
-void LearnSKDU::Dump(int typ) { _INFO("\tLR policy=%s warmup=%d@%d\n", policy == COSINE ? "COSINE" : "COSINE_EPOCH", warmup, mostIter); }
+void LearnSKDU::Dump(int typ) { _INFO("\tLR policy=%s warmup=%d@%d\n", policy == COSINE ? "Cosine" : "Cosine_EPOCH", warmup, mostIter); }
 
 float LearnSKDU::LearningRate(int64_t step, int flag) {
-    float lr0                    = _params.LearningRate(), lr;
-    int final_learning_rate_frac = 0;
+    float lr0                      = _params.LearningRate(), lr;
+    float final_learning_rate_frac = 0.01, min_lr = lr0 * final_learning_rate_frac;
     if (policy == COSINE_EPOCH) {
         step = step % _params.nEpochIter;
     }
-
-    if (step < warmup) {
-        lr = lr0 * ((float)(step + 1)) / warmup;
-    } else {
-        float decay_ratio = ((float)(step - warmup)) / (mostIter - warmup);
-        assert(0.0f <= decay_ratio && decay_ratio <= 1.0f);
-        float coeff = 0.5f * (1.0f + cosf(M_PI * decay_ratio));  // coeff starts at 1 and goes to 0
-        assert(0.0f <= coeff && coeff <= 1.0f);
-        float min_lr = lr0 * final_learning_rate_frac;
-        lr           = min_lr + coeff * (lr0 - min_lr);
+    switch (policy) {
+        case WSD: {
+            int iter_decay = mostIter * 0.9;
+            if (step < warmup) {
+                lr = lr0 * ((float)(step + 1)) / warmup;
+            } else if (step > iter_decay) {
+                lr = min_lr + (lr0 - min_lr) * (1.0 - (step - iter_decay) / (mostIter - iter_decay));
+            } else {
+                lr = lr0;
+            }
+        } break;
+        default:
+            if (step < warmup) {
+                lr = lr0 * ((float)(step + 1)) / warmup;
+            } else {
+                float decay_ratio = ((float)(step - warmup)) / (mostIter - warmup);
+                assert(0.0f <= decay_ratio && decay_ratio <= 1.0f);
+                float coeff = 0.5f * (1.0f + cosf(M_PI * decay_ratio));  // coeff starts at 1 and goes to 0
+                assert(0.0f <= coeff && coeff <= 1.0f);
+                float min_lr = lr0 * final_learning_rate_frac;
+                lr           = min_lr + coeff * (lr0 - min_lr);
+            }
+            break;
     }
+
     return lr;
 }
 
@@ -236,10 +250,10 @@ void RLS_BP::Dump(int typ) const {
     cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
     _INFO("[RLS]\tnGuoke=%d(%.3G) Memory of GPU=%.6gM(free=%.6gM)\n", nT_guoke, szGuoke / 1.0e9, (szTotal - szFree) / 1.0e6, szFree / 1.0e6);
     auto &fuyou = hFish->config.fuyou;
-    if (fuyous.size() > 1) {
-        // hFuyou first = fuyous[0];
+    if (fuyouSwarm.size() > 1) {
+        // hFuyou first = fuyouSwarm[0];
 
-        _INFO("[Fuyou] n=%d", fuyous.size());
+        _INFO("[Fuyou] n=%d ", fuyouSwarm.size());
         hFish->config.fuyou.Dump(0x0);
         _INFO("\n");
     }
@@ -325,11 +339,19 @@ bool Fuyou::UpdateFollower(std::shared_ptr<Fuyou> follower, int flag) {
 }
 /**/
 bool RLSchedule::ExploreOptimization(int iter, int flag) {
-    if (fuyous.size() <= 1)
+    if (fuyouSwarm.size() <= 1)
         return false;
-    double now  = GST_ms();
-    hFuyou head = fuyous[curBranchID];  //  afu = fuyous[curBranchID];
-    for (auto fuyou : fuyous) {
+    double now           = GST_ms();
+    hFuyou first         = fuyouSwarm[curBranchID];  //  afu = fuyouSwarm[curBranchID];
+    vector<hFuyou> cands = fuyouSwarm;
+    std::sort(cands.begin(), cands.end(),  // ugly because we don't have a typedef for the std::pair
+              [](const hFuyou &a, const hFuyou &b) { return a->loss < b->loss; });
+    hFuyou head = cands[0];
+    head        = first;
+    if (head->loss == FLT_MAX)
+        return false;
+
+    for (auto fuyou : fuyouSwarm) {
         if (fuyou == head)
             continue;
         head->UpdateFollower(fuyou);
@@ -343,12 +365,12 @@ bool RLSchedule::ExploreOptimization(int iter, int flag) {
 
 /*
 bool RLSchedule::ExploreOpt_v1(int iter, int flag) {
-    if (fuyous.size() <= 1)
+    if (fuyouSwarm.size() <= 1)
         return false;
 
     double now = GST_ms();
     vector<hFuyou> cands;
-    for (auto fuyou : fuyous) {
+    for (auto fuyou : fuyouSwarm) {
         if (fuyou == afu)
             continue;
         cands.push_back(fuyou);
@@ -357,7 +379,7 @@ bool RLSchedule::ExploreOpt_v1(int iter, int flag) {
               [](const hFuyou &a, const hFuyou &b) { return a->loss < b->loss; });
     if (cands[0]->loss == FLT_MAX)
         return false;
-    hFuyou head = cands[0];  //  afu = fuyous[curBranchID];
+    hFuyou head = cands[0];  //  afu = fuyouSwarm[curBranchID];
     assert(head != afu);
     head->UpdateFollower(afu);
     bool doMore = iter >= hFish->config.fuyou.nWarmup();
@@ -379,12 +401,12 @@ bool RLS_BP::InitBranch(int flag) {
     auto fy = hFish->config.fuyou;
     int L = hFish->config.nLayer(), t0 = fy.LIB_0, t1 = fy.LIB_1, LIS = fy.nLayerInBranch, nPass = 0;
     if (LIS <= 0) {
-        assert(fuyous.size() == 0);
-        fuyous = {afu};  // Ref RLS_BP::Init
+        assert(fuyouSwarm.size() == 0);
+        fuyouSwarm = {afu};  // Ref RLS_BP::Init
         return true;
     }
 
-    if (fuyous.size() > 0) {
+    if (fuyouSwarm.size() > 0) {
         return true;
     }
 
@@ -415,9 +437,9 @@ bool RLS_BP::InitBranch(int flag) {
             n->stat.Reset();
         }
         _INFO(" %d@{L%d:L%d}", tasks.size(), LIB_0, LIB_1);
-        fuyous.push_back(std::make_shared<Fuyou>(std::to_string(b), this, hFish, tasks));
+        fuyouSwarm.push_back(std::make_shared<Fuyou>(std::to_string(b), this, hFish, tasks));
     }
-    assert(fuyous.size() == nSwitch);
+    assert(fuyouSwarm.size() == nSwitch);
     _INFO("\n");
     return true;
 }
@@ -429,6 +451,7 @@ bool RLS_BP::isUpdateBatch(int iter, int flag) {
     return isUpdate;
 }
 
+bool RLSchedule::isSwitchFuyou(int iter, int flag) { return iter % hFish->config.fuyou.LIB_iter_switch == 0; }
 /*
     1 train LIB_0/LIB_1/LIS_2 ....
     2 train LIB_0/{LIB_0,LIB_1}/{LIB_0,LIB_1,LIS_2} ...
@@ -440,24 +463,30 @@ bool RLS_BP::UpdateBackbone(int iter, int flag) {
     assert(L % LIS == 0);
     string s = "\n", p = "\t";
     int nSwitch = L / LIS;
+    hFuyou last = fuyouSwarm[curBranchID];
     // curBranchID    = iter == -1 ? 0 : rand_branch.RandU32() % nSwitch;
     curBranchID = iter == -1 ? 0 : (curBranchID + 1) % nSwitch;
     // curBranch = 0;       // only for debug
     fy.LIB_0 = curBranchID * LIS, fy.LIB_1 = fy.LIB_0 + LIS;
     assert(fy.LIB_1 <= L);
-    // curTasks = fuyous[curBranchID];
-    afu = fuyous[curBranchID];
+    // curTasks = fuyouSwarm[curBranchID];
+    afu         = fuyouSwarm[curBranchID];
+    afu->loss_0 = afu->loss;
     for (auto node : curTasks()) {
         GeNeuron *neuron = (GeNeuron *)(node->hOBJ);
         // _INFO("%s\n",neuron->__repr__(s,p).c_str());
         neuron->stat.Reset();
     }
 
-    size_t szFree, szTotal;
-    cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
     // assert(curTasks.size() == LIS * 2 + 3);
-    _INFO("[Section@%d] layer[%d-%d] tasks=%ld(nPassBack=%d) mGPU=%.6gM(free=%.6gM)\n", iter, fy.LIB_0, fy.LIB_1, curTasks().size(), nPass,
-          (szTotal - szFree) / 1.0e6, szFree / 1.0e6);
+    _INFO("[Section@%d] layer[%d-%d] tasks=%ld(nPassBack=%d) last_loss=%g(%g)\n", iter, fy.LIB_0, fy.LIB_1, curTasks().size(), nPass, last->loss,
+          last->loss_0 - last->loss);
+
+    if (0) {
+        size_t szFree, szTotal;
+        cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
+        // mGPU=%.6gM(free=%.6gM)(szTotal - szFree) / 1.0e6, szFree / 1.0e6);
+    }
 
     return true;
     // if (LIS == -1) {
@@ -465,7 +494,26 @@ bool RLS_BP::UpdateBackbone(int iter, int flag) {
     // }
 }
 
-bool RLSchedule::isSwitchFuyou(int iter, int flag) { return iter % hFish->config.fuyou.LIB_iter_switch == 0; }
+vector<hFuyou> RLSchedule::ActiveFuyous(int flag) {
+    assert(hFish != nullptr);
+    vector<hFuyou> fuyous           = {afu};  // afu is set @UpdateBackbone
+    Fuyou_params::ENSEMBLE ensemble = hFish->config.fuyou.ensemble;
+    int nFuyou                      = fuyouSwarm.size();
+
+    if (hFish->isAtPhase(LIFE_PHASE::P_EVAL_) || hFish->isAtPhase(LIFE_PHASE::P_GENERATE)) {
+        if (ensemble == Fuyou_params::RANDOM_1 && nFuyou > 1) {  //  random ensembling
+            uint32_t pick = rand() % nFuyou;                     // rand_coin.RandU32() % fuyouSwarm.size();
+            fuyous        = {fuyouSwarm[pick]};
+        } else if (ensemble == Fuyou_params::AGGREGATION && nFuyou > 1) {
+            fuyous = fuyouSwarm;
+        } else if (ensemble == Fuyou_params::FUYOU_BEST && nFuyou > 1) {
+            // fuyous = fuyouSwarm;  // only for debug
+        } else {
+            // fuyous      = fuyouSwarm;      //only for debug
+        }
+    }
+    return fuyous;
+}
 
 /*
     Fish::ForwardOnRLS would call this before each step
@@ -485,7 +533,7 @@ bool RLS_BP::Prepare(int iter, int flag) {
             return true;
             break;
         case LIFE_PHASE::P_TRAIN:
-            if (fuyous.size() > 1) {
+            if (fuyouSwarm.size() > 1) {
                 if (iter == -1 || isSwitchFuyou(iter)) {
                     UpdateBackbone(iter, flag);
                 }

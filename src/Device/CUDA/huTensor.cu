@@ -566,6 +566,28 @@ int _CheckX2Tile_(floatX* A, floatGama* hgama, int M, int N, int flag) {
     return 0x0;
 }
 
+bool huTensor::Mutation(int flag) {
+    if (!is2D())
+        return false;
+    float w0 = wnorm;
+    if(0){  
+        Print(name,0,-1);
+        Length(0);      //  type == 1 ? (floatX*)grad : (floatX*)data;
+        assert(fabs(w0-wnorm)<1.0e-5*wnorm);
+    }
+    
+    int nParam = size(), dT4B = 512, M = ne[0], N = ne[1], mGRID = CEIL_DIV(M, dT4B), pGRID = CEIL_DIV(nParam, dT4B), nRander = M;
+    curandState* d_states;
+    cudaCheck(cudaMalloc(&d_states, nRander * sizeof(curandState)));
+    int seed = 42;  //rander.RandU32();
+    CU_initrand<<<CEIL_DIV(nRander, 256), 256>>>(d_states, seed, nRander);
+
+    float T_scale = wnorm == 0 ? 1.0 : sqrt(wnorm*wnorm / M / N), T_mutation = 1.0e-5;       //  1.0e-4 would explode
+    CU_mutation_<<<mGRID, dT4B, 0, main_stream>>>(d_states, T_mutation, T_scale*0.01, (floatX*)(data), (floatX*)nullptr, nParam, N);
+    cudaCheck(cudaFree(d_states));
+    return true;
+}
+
 bool huTensor::ToTernary(floatX* paramX, int flag) {
     if (!BIT_TEST(flags, GTensor::F_TERNARY))
         return false;

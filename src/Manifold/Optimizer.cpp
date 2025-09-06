@@ -16,7 +16,7 @@
 #include "gLLM.hpp"
 
 int tpFuseCu = 1;
-struct train_params_ Optimizer::TrainParams() { return _fish->config.common; }
+TRAIN_CARD Optimizer::TrainParams() { return _fish->config.common; }
 
 Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params &config, int flag) : _fish(g_) {
     // adam_filter =  {"output","norm","embd"};
@@ -37,6 +37,7 @@ Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params &config, int flag) : _fi
                        : method == "sgd"   ? SGD
                        : method == "hsgd"  ? SGD_HYBRID
                        : method == "lion"  ? LION
+                       : method == "muon"  ? MUON
                                            : ADAM_spike;
         nGradAccum   = std::max(1, train_params.n_gradient_accumulation);
         isGlobalGrad = nGradAccum > 1;  // Nearly same alloc grad or not
@@ -152,7 +153,7 @@ bool Optimizer::BatchGrad(int iter, float &fx, int flag) {
     }
     bool bench = false;
 
-    for (int accum_step = 0; accum_step < 1 /*nGradAccum*/; ++accum_step) {
+    for (int accum_step = 0; accum_step < 1; ++accum_step) {
         auto now = GST_ms();
         if (hRLS->isUpdateBatch(GetITER())) {
             int64_t nSamp = train_loader->UpdateBatch(-1, _fish);
@@ -188,6 +189,7 @@ bool isGensor(hGensor gensor, vector<string> keys, int flag = 0x0) {
     return false;
 }
 
+// [Experimental]
 int Optimizer::SignStochastic(int nx, CLI_params &config, int flag) {
     if (tpSign <= 0)
         return tpSign;
@@ -294,8 +296,6 @@ float Optimizer::gClip(int ne, floatX *g, hGensor hP, int flag) {
     return clip;
 }
 
-template <typename Tp, typename Tmv>
-void Optimizer_update(PIPE_Optimizer<Tp, Tmv> &pipe, cudaStream_t stream);
 int GTensor::Dogleg(int flag) {
     if (strcmp(name, "model.blk.11.attn.wo.weight_a") == 0) {
         int debug = 0x0;
@@ -308,8 +308,8 @@ int GTensor::Dogleg(int flag) {
     ADAM_params_ adam   = hOPT->TrainParams().adam;
     float learning_rate = hOPT->LearningRate(), beta1 = adam.beta1, beta2 = adam.beta2, eps = adam.eps, wd = adam.decay;
     size_t nEle = size();
-
-    if (shape.size() == 1)  // we only want to weight decay the 2D tensors and leave all 1D tensors alone
+    //  Weight decay is typically disabled for 1D parameters (like biases and LayerNorm weights) and enabled for all other parameters.
+    if (shape.size() < adam.decay_min_ndim)
         wd = 0;
 
     Length(1);
@@ -322,10 +322,14 @@ int GTensor::Dogleg(int flag) {
     if (hFish->config.lars_ratio > 0) {
         grad_scale = rLARS(grad_scale, hFish->config.lars_ratio, 0x0);
     }
-    seed = hOPT->rRounding.RandInt32();
-    PIPE_Optimizer<floatX, floatMV> pipe(nEle, nEle, nEle, nEle, flags, learning_rate, beta1, beta2, iter, eps, wd, grad_scale, gnorm, seed);
-    pipe.Update(this);
-    Optimizer_update(pipe, main_stream);
+    seed            = hOPT->rRounding.RandInt32();
+    hPipeOpt hPipe0 = hOPT->hPipe;
+    // hPipeOpt hPipe  = std::make_shared<PIPE_Adamw<floatX, floatMV>>(hOPT.get(), nEle, nEle, nEle, nEle, flags, learning_rate, beta1, beta2, iter, eps, wd);
+    // // PIPE_Adamw<floatX, floatMV> pipe(nEle, nEle, nEle, nEle, flags, learning_rate, beta1, beta2, iter, eps, wd, grad_scale, gnorm, seed);
+    // hPipe->Update(this, wd, grad_scale, seed);
+    hPipe0->Update(this, wd, grad_scale, seed);
+    hPipe0->CU_core(main_stream);
+    // Optimizer_update(pipe, main_stream);
     if (1) {  // fuyou
         // for(auto t : fuyous)
     }
@@ -335,6 +339,16 @@ int GTensor::Dogleg(int flag) {
     }
     last_iter = iter;
     return 0;
+}
+
+double Optimizer::UpdateTensorParam(hGensor hP, floatX* g, float gnorm) { 
+    float grad_norm = g_step;
+    hP->Dogleg(0x0);
+    grad_norm = hP->gnorm;
+    if (!isPreGStep)
+        g_step += grad_norm * grad_norm;
+    
+    return 0.0; 
 }
 
 int UpdateTensorParam_cuda(hGTensor tensor, Optimizer *hOPT, float &grad_norm, int flag);
@@ -530,7 +544,7 @@ Optimizer::RESULT Optimizer::Search(void *ctx, hGensor loss_, hGensor target_, C
         just_initialized = false;
     }
     // g_dump_level = 0;
-    int iter0 = 0, t;  // opt->iter;
+    int iter0 = 0, t;
     for (t = 0; t < train_params.nMostIter; ++t) {
         // exit(KOIFISH_EXIT_DEBUG);
         _fish->BeforeNextStep(t, 0x0);
@@ -546,10 +560,6 @@ Optimizer::RESULT Optimizer::Search(void *ctx, hGensor loss_, hGensor target_, C
         if (!BatchGrad(iter, a, 0x0))
             return CANCEL;
         // if(t==1)    exit(KOIFISH_EXIT_DEBUG);
-        // const int64_t t_start_wall = ggml_time_us(),t_start_cpu = ggml_cycles();
-        float lr = train_params.LearningRate();
-        lr       = hLR->LearningRate(iter);
-        last_lr  = lr;
 
         SignStochastic(nParams, config);
         if (_fish->config.scheduling.isUpdateParamV0()) {
@@ -665,21 +675,7 @@ float Optimizer::EvaluateSamps(hSampLoader loader, int iter, int flag) {
         return 0;
     }
     assert(loader->num_batches > 0);
-    // switch (phase) {
-    //     case LIFE_PHASE::P_EVAL_:
-    //         _INFO("[eval] ");
-    //         break;
-    //     case LIFE_PHASE::P_PREFILL:
-    //         // _INFO("[prefill] " );
-    //         assert(loader->num_batches == 1);
-    //         break;
-    //     case LIFE_PHASE::P_GENERATE:
-    //         // _INFO("[generate] " );
-    //         assert(loader->num_batches == 1);
-    //         break;
-    //     default:
-    //         assert(0);
-    // }
+    assert(0);  // Deprecated due to code refactor
 
     GST_TIC(tic);
     OutCLS *cls  = _fish->GetNeuron<OutCLS>("OutCLS", 0);
@@ -739,7 +735,7 @@ string StepInfos::STEP::Info(int flag) {
 }
 
 float Optimizer::UpdateLossCurve(int flag) {
-    struct train_params_ _params = TrainParams();
+    TRAIN_CARD _params = TrainParams();
     int n_batch = _params.n_batch, n_ctx = _params.n_ctx;
     double now = GST_ms();
     if (now > last_time && iter > first_iter) {
@@ -852,6 +848,23 @@ void Optimizer::BeforeTrain(hGensor tokens_, int flag) {
     assert(_fish->config.common.nMostIter > 0);
 }
 
+void OPT_Muon::BeforeTrain(hGensor tokens_input, int flag)    {
+    Optimizer::BeforeTrain(tokens_input, flag);
+
+    ADAM_params_ *adam = &(_fish->config.common.adam);
+    MUON_params_ *muon = &(_fish->config.common.muon);
+    muon->ldAB = 0;
+    for(auto t : opt_ps){
+        if(!t->is2D())
+            continue;
+        int n = min(t->ne[0],t->ne[1]);
+        muon->ldAB = max(muon->ldAB,n);
+    }
+    // hPipe              = std::make_shared<PIPE_Adamw<floatX, floatMV>>(this, flag, adam->alpha, adam->beta1, adam->beta2, adam->eps, adam->decay);  //only for debug
+    hPipe              = std::make_shared<PIPE_Muon<floatX, floatMV>>(this, flag, adam->alpha, adam->beta1, adam->beta2, adam->eps, adam->decay);    
+
+}
+
 size_t TGraph::Prepare4Train(void *ctx_, GD_METHOD tpGD, int flag) {
     hOptimizer hOpt = hFish->hOPT;
     assert(hOpt != nullptr);
@@ -902,16 +915,6 @@ void Optimizer::Prepare(size_t nx_, int flag) {
     size_t nz                   = 0;
     NLP_AutoRegressive *dolphin = dynamic_cast<NLP_AutoRegressive *>(_fish);
     if (nParams > 0) {
-#ifdef __USE_GGML__
-        struct ggml_init_params ctx_opt_params;
-        ctx_opt_params.mem_size = GGML_MEM_ALIGN * 3 + ggml_tensor_overhead() * 3 + BPE(typNUMBER::F32) * nParams * 3;
-        if (past > 0) {
-            ctx_opt_params.mem_size += GGML_MEM_ALIGN + ggml_tensor_overhead() + BPE(typNUMBER::F32) * past;
-        }
-        ctx_opt_params.mem_buffer = NULL;
-        ctx_opt_params.no_alloc   = false;
-        _ctx                      = ggml_init(ctx_opt_params);
-#endif
         if (_fish->isTrain()) {
             if (isGlobalGrad) {
                 assert(nParams < INT_MAX);
@@ -924,11 +927,9 @@ void Optimizer::Prepare(size_t nx_, int flag) {
         }
         // train_loader->Init(dolphin,"Train",false);     //train_loader->Prepare(this);
     }
-#ifdef _TENSOR_G_
+
     if (_fish->isTrain())
         _tmp = new float[nParams]();
-#else
-#endif
     // val_loader->Init(dolphin,"Eval",false);            //val_loader->Prepare(this);
 }
 
@@ -994,16 +995,34 @@ void OPT_Adam::Prepare(size_t nx_, int flag) {
     }
 }
 
+void OPT_Muon::Prepare(size_t nx_, int flag) {
+    Optimizer::Prepare(nx_, flag);
+
+    }
+
 /*
     https://github.com/KellerJordan/muon
     https://x.com/Kimi_Moonshot/status/1897929976948965870
 */
-OPT_Muon::OPT_Muon(NLP_AutoRegressive *g_, CLI_params &params_, int flag) : Optimizer(g_, params_, flag) {}
+OPT_Muon::OPT_Muon(NLP_AutoRegressive *g_, CLI_params &params_, int flag) : Optimizer(g_, params_, flag) {
+    // adam->clip_alg            = 1;  // clip_alg=0 little better
+    // adam->gclip               = adam->gclip / _fish->config.nLayer();
+    _fish->config.Fuse_Normal = 0;  //
+    if (g_->isTrain()) {
+        trainInfos().Init(this);
+    } else {  // may different
+        _fish->config.common.remater_ffn = 1;
+        // _fish->config.common.remater_qkv = 1;
+    }
+    for (auto loader : val_loaders) {
+        loader->stepis.Init(this);
+    }
+    }
 
 OPT_Adam::OPT_Adam(NLP_AutoRegressive *g_, CLI_params &params_, int flag) : Optimizer(g_, params_, flag) {
     // auto train_params = TrainParams();
     //  0.9f, 0.95f, 1e-8f      decay=0.1
-
+    
     adam                      = &(_fish->config.common.adam);
     adam->clip_alg            = 1;  // clip_alg=0 little better
     adam->gclip               = adam->gclip / _fish->config.nLayer();
@@ -1017,7 +1036,8 @@ OPT_Adam::OPT_Adam(NLP_AutoRegressive *g_, CLI_params &params_, int flag) : Opti
     for (auto loader : val_loaders) {
         loader->stepis.Init(this);
     }
-
+    hPipe = std::make_shared<PIPE_Adamw<floatX, floatMV>>(this, flag, adam->alpha, adam->beta1, adam->beta2, adam->eps, adam->decay);
+    // hPipe = std::make_shared<PIPE_Muon<floatX, floatMV>>(this, flag, adam->alpha, adam->beta1, adam->beta2, adam->eps, adam->decay);    //only for debug
     // sched              = 1.0f;
 }
 
@@ -1107,3 +1127,5 @@ void OPT_Adam::Dump(int typ) {
     _INFO("\tnParams = %ld(%.6gM nT = %ld)\n", nParams, nParams / 1.0e6, opt_ps.size());
     fflush(stdout);
 }
+
+void OPT_Muon::Dump(int typ) { Optimizer::Dump(typ); }

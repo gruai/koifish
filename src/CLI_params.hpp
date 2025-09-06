@@ -110,7 +110,7 @@ struct Fuyou_params {
         F_FOLLOWER,
     };
     enum ALGORITHM {
-        GENETIC,
+        NO_EVOL,
         PARTICLE_SWARM,
         GENE_MIX,
         GENE_MUTATION,
@@ -121,13 +121,9 @@ struct Fuyou_params {
         SALP,
     };
     std::map<ALGORITHM, std::string> Algo2Name = {
-        {GENETIC, ""},
-        {PARTICLE_SWARM, "pso"},
-        {GENE_MIX, "mix"},
-        {GENE_MUTATION, "mutation"},
-        {PARTICLE_GENETIC, "pso_ga"},
+        {NO_EVOL, ""}, {PARTICLE_SWARM, "pso"}, {GENE_MIX, "mix"}, {GENE_MUTATION, "mutation"}, {PARTICLE_GENETIC, "pso_ga"},
     };
-    ALGORITHM algorithm = PARTICLE_SWARM;
+    ALGORITHM algorithm = NO_EVOL;
 
     // layer in branch
     int nLayerInBranch = -1, LIB_0 = -1, LIB_1 = 0, LIB_iter_switch = 100;
@@ -277,7 +273,15 @@ struct ADAM_params_ {
     void Dump(int typ);
 };
 
-struct train_params_ {
+struct MUON_params_ {
+    size_t n_parameters;
+    float eps      = 1e-8f;  // epsilon for numerical stability
+    float eps_loss = 1e-5f;  // epsilon for convergence test
+    int ldAB = 0;
+    // void Dump(int typ);
+};
+
+struct TRAIN_CARD {
     int save_every, dump_every = 1;
     int gpt_every = -1;  // eval_every=-1,
 
@@ -317,11 +321,13 @@ struct train_params_ {
 
     int remater_ffn = 0;
     // int remater_qkv = 0;
-
+    std::string method = "muon";
     ADAM_params_ adam;
+    MUON_params_ muon;
     float residual_scale = 1.0f;
     float LearningRate() const { return adam.alpha; }
     size_t nTokenInBatch() const { return n_batch * n_ctx; }
+    bool Init(CLI_params * hConfig, const JSON& jConfig, int flag = 0x0);
 };
 
 struct DEUG_SWITCH {
@@ -341,6 +347,7 @@ struct DEUG_SWITCH {
     int T_cpu              = 0;
     int T_GEMM             = -1;
     int T_fuyou            = 1;
+    int N_mostiter         = 1000;
 
     int cmd_p1 = 0, cmd_p2 = 0, cmd_p3 = 0;  // some commandline parameter for debug
     float Time_most = 60;
@@ -351,7 +358,7 @@ extern DEUG_SWITCH DEBUG;
 enum LORA_ADAPT_W { W0, AB, W_AB, refW_AB, refW_AB_ffn };
 
 struct CLI_params {
-    struct train_params_ common;
+    TRAIN_CARD common;
     MODEL_CARD model;
     struct CheckPoint {
         std::string in, out;

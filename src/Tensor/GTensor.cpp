@@ -16,6 +16,7 @@ hGTensor GTensor::outL = nullptr, GTensor::delta = nullptr, GTensor::tmpDelta = 
 hGTensor GTensor::bt4c = nullptr, GTensor::scratch = nullptr, GTensor::tmpW = nullptr, GTensor::tmpGW = nullptr, GTensor::tmpFF1 = nullptr,
          GTensor::tmpTernary = nullptr, GTensor::residual = nullptr;
 void *GTensor::buff = nullptr, *GTensor::host_buff = nullptr;
+size_t GTensor::buff_len = 0;
 
 float GTensor::rLARS(float s0, float T_lars, int flag) {
     if (shape.size() <= 1)
@@ -601,6 +602,9 @@ bool huTensor::Alloc(int iter, int flagInit) {
                 Alloc_1(&gm, true, desc+".mv", szMV * 2), gv = (char *)gm + szMV;
             } else if (method == "lion") {
                 Alloc_1(&gm, true, desc+".mv", szMV);
+            } else if (method == "muon") {
+                Alloc_1(&gm, true, desc+".mv", szMV * 2), gv = (char *)gm + szMV;
+                // Alloc_1(&gm, true, desc+".mv", szMV);
             } else if (method == "adams") { // why converge so slow for 1445M?
                 /*if(isStrMatch(name, {"embd","output","norm"})){
                     Alloc_1(&gm, true, desc+".mv", szMV * 2), gv = (char *)gm + szMV;
@@ -609,6 +613,7 @@ bool huTensor::Alloc(int iter, int flagInit) {
             }else {
                 Alloc_1(&gv, true, desc+".mv", szMV);  // gm = nullptr, gv = (char *)grad + szMV;
             }
+            assert(gm!=nullptr && "gm is nullptr@huTensor::Alloc" );
         }
     } else {
     }

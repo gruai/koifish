@@ -494,18 +494,19 @@ bool Fuyou_params::Init(CLI_params *hConfig, const JSON &jConfig, int flag) {
     if (nLayerInBranch <= 0)
         return false;
     T_crossover = jKV(jConfig, {"model", "fuyou", "crossover"}, T_crossover);
-    T_mutation = jKV(jConfig, {"model", "fuyou", "mutation"}, T_mutation);
-    social = jKV(jConfig, {"model", "fuyou", "social"}, social);
-    int nLayer = hConfig->nLayer();
+    T_mutation  = jKV(jConfig, {"model", "fuyou", "mutation"}, T_mutation);
+    social      = jKV(jConfig, {"model", "fuyou", "social"}, social);
+    int nLayer  = hConfig->nLayer();
     assert(nLayer % nLayerInBranch == 0);
-    string a  = "pso";
+    string a  = "";  //"pso";
     a         = jKV(jConfig, {"model", "fuyou", "method"}, a);
-    for(auto an : Algo2Name){
-        if(an.second==a){
+    algorithm = NO_EVOL;
+    for (auto an : Algo2Name) {
+        if (an.second == a) {
             algorithm = an.first;
         }
-    }    
-    assert(Algo2Name[algorithm]==a);
+    }
+    assert(algorithm == Fuyou_params::NO_EVOL || Algo2Name[algorithm] == a);
 
     LIB_0           = 0;
     LIB_1           = 0;  // nLayerInBranch;
@@ -661,8 +662,8 @@ void CLI_params::OnArch() {
     }
 }
 
-struct train_params_ get_default_train_params_common() {
-    struct train_params_ params;
+TRAIN_CARD get_default_train_params_common() {
+    TRAIN_CARD params;
     // params.print_usage = false;
 
     params.save_every = 10;
@@ -735,6 +736,40 @@ JSON CLI_params::ToJSON(int flag) {
     return json;
 }
 
+bool TRAIN_CARD::Init(CLI_params *hConfig, const JSON &jConfig, int flag) {
+    method = jKV(jConfig, {"train", "optimizatioin", "method"}, method);
+
+    n_batch   = jKV(jConfig, {"train", "batch"}, n_batch);
+    n_epochs  = jKV(jConfig, {"train", "epoch"}, n_epochs);
+    nMostIter = jKV(jConfig, {"train", "adam-iter"}, nMostIter);
+    // why large "learning-rate" would fail, so strange!
+    adam.alpha              = jKV(jConfig, {"train", "learning-rate"}, adam.alpha);
+    adam.decay              = jKV(jConfig, {"train", "decay"}, adam.decay);
+    n_gradient_accumulation = jKV(jConfig, {"train", "optimizatioin", "grad_accumulation"}, n_gradient_accumulation);
+
+    save_every = jKV(jConfig, {"train", "save-every"}, save_every);
+    dump_every = jKV(jConfig, {"train", "dump-every"}, dump_every);
+    // eval_every = jKV(jConfig,{"train","eval-every"},eval_every );
+    gpt_every = jKV(jConfig, {"train", "gpt-every"}, gpt_every);
+    // eval_every = eval_every<=0 ? 100000000 : eval_every;
+    // if( eval_every>0 ){
+    //     _INFO("\r\n%s  eval@every %d steps.",__func__,eval_every );
+    // }
+    rSubSample = jKV(jConfig, {"train", "sample"}, rSubSample);
+    if (rSubSample < 0)
+        rSubSample = 1;
+    if (rSubSample < 1) {
+        lr_restart = 1;
+    }
+
+    seed = jKV(jConfig, {"seed"}, seed);
+
+    custom_n_ctx = true;
+    n_threads    = jKV(jConfig, {"threads"}, n_threads);
+    n_gpu_layers = jKV(jConfig, {"n-gpu-layers"}, n_gpu_layers);
+    return true;
+}
+
 /*
     Some trick
     1 Large batch size would decrease osillation
@@ -747,16 +782,17 @@ bool CLI_params::InitJConfig(int flag) {
 
         common = get_default_train_params_common();
 
-        std::string s    = jConfig.dump(), s0;
-        common.n_batch   = jKV(jConfig, {"train", "batch"}, common.n_batch);
+        std::string s = jConfig.dump(), s0;
+        common.Init(this, jConfig);
+        /*common.n_batch   = jKV(jConfig, {"train", "batch"}, common.n_batch);
         common.n_epochs  = jKV(jConfig, {"train", "epoch"}, common.n_epochs);
         common.nMostIter = jKV(jConfig, {"train", "adam-iter"}, common.nMostIter);
         // why large "learning-rate" would fail, so strange!
         common.adam.alpha              = jKV(jConfig, {"train", "learning-rate"}, common.adam.alpha);
         common.adam.decay              = jKV(jConfig, {"train", "decay"}, common.adam.decay);
-        common.n_gradient_accumulation = jKV(jConfig, {"train", "optimizatioin", "grad_accumulation"}, common.n_gradient_accumulation);
-        lars_ratio                     = jKV(jConfig, {"train", "optimizatioin", "lars_ratio"}, lars_ratio);
-        ZMUV_ratio                     = jKV(jConfig, {"train", "optimizatioin", "ZMUV_ratio"}, ZMUV_ratio);
+        common.n_gradient_accumulation = jKV(jConfig, {"train", "optimizatioin", "grad_accumulation"}, common.n_gradient_accumulation);*/
+        lars_ratio = jKV(jConfig, {"train", "optimizatioin", "lars_ratio"}, lars_ratio);
+        ZMUV_ratio = jKV(jConfig, {"train", "optimizatioin", "ZMUV_ratio"}, ZMUV_ratio);
 
         // serial_path = jKV(jConfig,{"data","serialize_path"},s0 );
         string dict_type = jKV(jConfig, {"dict", "type"}, s0);
@@ -788,23 +824,23 @@ bool CLI_params::InitJConfig(int flag) {
 
         model.InitHF(this, jConfig);
 
-        n_swarm           = jKV(jConfig, {"train", "swarm"}, 1);
-        common.save_every = jKV(jConfig, {"train", "save-every"}, common.save_every);
-        common.dump_every = jKV(jConfig, {"train", "dump-every"}, common.dump_every);
-        // common.eval_every = jKV(jConfig,{"train","eval-every"},common.eval_every );
-        common.gpt_every = jKV(jConfig, {"train", "gpt-every"}, common.gpt_every);
-        // common.eval_every = common.eval_every<=0 ? 100000000 : common.eval_every;
-        // if( eval_every>0 ){
-        //     _INFO("\r\n%s  eval@every %d steps.",__func__,eval_every );
+        n_swarm = jKV(jConfig, {"train", "swarm"}, 1);
+        // common.save_every = jKV(jConfig, {"train", "save-every"}, common.save_every);
+        // common.dump_every = jKV(jConfig, {"train", "dump-every"}, common.dump_every);
+        // // common.eval_every = jKV(jConfig,{"train","eval-every"},common.eval_every );
+        // common.gpt_every = jKV(jConfig, {"train", "gpt-every"}, common.gpt_every);
+        // // common.eval_every = common.eval_every<=0 ? 100000000 : common.eval_every;
+        // // if( eval_every>0 ){
+        // //     _INFO("\r\n%s  eval@every %d steps.",__func__,eval_every );
+        // // }
+        // common.rSubSample = jKV(jConfig, {"train", "sample"}, common.rSubSample);
+        // if (common.rSubSample < 0)
+        //     common.rSubSample = 1;
+        // if (common.rSubSample < 1) {
+        //     common.lr_restart = 1;
         // }
-        common.rSubSample = jKV(jConfig, {"train", "sample"}, common.rSubSample);
-        if (common.rSubSample < 0)
-            common.rSubSample = 1;
-        if (common.rSubSample < 1) {
-            common.lr_restart = 1;
-        }
 
-        common.seed = jKV(jConfig, {"seed"}, common.seed);
+        // common.seed = jKV(jConfig, {"seed"}, common.seed);
         wiki_actor  = jKV(jConfig, {"wiki", "actor"}, wiki_actor);
         wiki_logits = jKV(jConfig, {"wiki", "logits"}, wiki_logits);
         tpWiki      = jKV(jConfig, {"wiki", "induct"}, tpWiki);
@@ -820,9 +856,9 @@ bool CLI_params::InitJConfig(int flag) {
         } else {
         }
 
-        common.custom_n_ctx = true;
-        common.n_threads    = jKV(jConfig, {"threads"}, common.n_threads);
-        common.n_gpu_layers = jKV(jConfig, {"n-gpu-layers"}, common.n_gpu_layers);
+        // common.custom_n_ctx = true;
+        // common.n_threads    = jKV(jConfig, {"threads"}, common.n_threads);
+        // common.n_gpu_layers = jKV(jConfig, {"n-gpu-layers"}, common.n_gpu_layers);
 
         // _embd = jKV(jConfig,{"wiki","embd"},_embd );
 
@@ -1413,7 +1449,7 @@ void Gensor2float_(const hGensor w, float *A, int flag) { assert(0); }
 #endif
 
 void ADAM_params_::Dump(int typ) {
-    _INFO("\tADAM lr=%g,beta=[%g-%g] decay=%g(%d) clip=%g(alg=%d)\n", alpha, beta1, beta2, decay, decay_min_ndim, gclip, clip_alg);
+    _INFO("\tADAM lr=%g,beta=[%g,%g] decay=%g(dim>=%d) clip=%g(alg=%d)\n", alpha, beta1, beta2, decay, decay_min_ndim, gclip, clip_alg);
 }
 
 void MODEL_CARD::Dump(int typ) {

@@ -99,10 +99,11 @@ enum GD_METHOD {
     ADAM_S,             //  https://arxiv.org/pdf/2505.16363
     ADAM_GALORE, 
     ADAM_spike, 
+    MUON,
     // ADAMw_cuda,
 };
 static string GD_NAME[]={
-    "ADAMw","SGD","SGD_v","SGD_blk_v","SGD_HYBRID","LION","ADAM_MINI","ADAM_S","ADAM_GALORE"
+    "ADAMw","SGD","SGD_v","SGD_blk_v","SGD_HYBRID","LION","ADAM_MINI","ADAM_S","ADAM_GALORE","MUON"
 }; 
 
 void _T_repr_(hGensor t,const char*tab,char *buf,int typ=0x0);

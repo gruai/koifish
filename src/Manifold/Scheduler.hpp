@@ -18,12 +18,21 @@ class EDGE_DEVICES;
 /**
  * https://towardsdatascience.com/learning-rate-schedules-and-adaptive-learning-rate-methods-for-deep-learning-2c8f433990d1
  * time-based decay, step decay and exponential decay.
+ * 1. A critical limitation of cosine learning rate decay is that it achieves optimal performance only when performing an entire cosine period [4], forcing
+ * practitioners to fix the number of steps beforehand, which poses a significant hurdle if we want to continue pre-training later when more data or/and compute
+ * becomes available.
  */
 struct LearnSKDU {
-    typedef enum { STATIC, TRI_LINE, COSINE, COSINE_EPOCH } POLICY;
+    typedef enum {
+        STATIC,
+        TRI_LINE,
+        COSINE,
+        COSINE_EPOCH,
+        WSD,  //  Warmup-Stable-Decay (WSD), might be less stable with spike loss curve
+    } POLICY;
     POLICY policy = COSINE;
 
-    train_params_ _params;
+    TRAIN_CARD _params;
     const static int TIMESTEPS = 1000;
     int warmup = 1, mostIter = 1;
     float alphas_cumprod[TIMESTEPS];
@@ -59,7 +68,7 @@ struct LearnSKDU {
     }
     void Append(float a) { history.vals.push_back(a); }
 
-    LearnSKDU(struct train_params_ &train_params);
+    LearnSKDU(TRAIN_CARD &train_params);
     virtual void Dump(int typ);
     virtual std::vector<float> get_sigmas(uint32_t n) = 0;
 
@@ -108,7 +117,7 @@ struct LearnSKDU {
 typedef std::shared_ptr<LearnSKDU> hLearnSKDU;
 
 struct DiscreteSchedule : LearnSKDU {
-    DiscreteSchedule(struct train_params_ &train_params) : LearnSKDU(train_params) {}
+    DiscreteSchedule(TRAIN_CARD &train_params) : LearnSKDU(train_params) {}
     std::vector<float> get_sigmas(uint32_t n) {
         std::vector<float> result;
 
@@ -182,14 +191,12 @@ class Fuyou {
     Grusoft::GRander rander;
     uint32_t seed = 42;
     string name;
-    float loss      = FLT_MAX;
+    float loss = FLT_MAX, loss_0 = FLT_MAX;
     vector<TaskNode *> tasks;
     RLS_BP *hRLS = nullptr;
     Fish *hFish  = nullptr;
     vector<hGensor> optParams;  // from Fish::optParams
    public:
-    
-    
     // Fuyou() {}
     Fuyou(const string &name, RLS_BP *hRL, Fish *hFish, vector<TaskNode *> arrT, int flag = 0x0);
     vector<TaskNode *> Tasks(int flag = 0x0) { return tasks; }
@@ -211,6 +218,7 @@ class Fuyou {
     // virtual void CrossOver(hGensor tHead, hGensor tNext, int flag = 0x0);
     // virtual void Mutation(double T_mut, int flag = 0x0);
     friend class RLSchedule;
+    friend class RLS_BP;
     friend class Optimizer;
 };
 typedef std::shared_ptr<Fuyou> hFuyou;
@@ -229,8 +237,9 @@ class RLSchedule {
     bool isRemater         = false;
     double budget          = 1000;
 
-    vector<hFuyou> fuyous;
-    vector<hFuyou> curFuyous;  // may varied at different stage & models
+    vector<hFuyou> fuyouSwarm;
+    //  active subset of hRLS->fuyouSwarm,  may varied at different stage & models
+    vector<hFuyou> ActiveFuyous(int flag = 0x0);  //
     hFuyou afu      = nullptr;
     int curBranchID = 0;
 
@@ -263,10 +272,10 @@ class RLSchedule {
     virtual bool isSwitchFuyou(int iter, int flag = 0x0);
     virtual bool ExploreOptimization(int iter, int flag = 0x0);
     // if type==1 return curBraches, otherwise, return allBraches
-    virtual int nBranch(int type) {
-        int nB = fuyous.size();
+    virtual int nFuyou(int type) {
+        int nB = fuyouSwarm.size();
         if (type == 1) {
-            nB = curFuyous.size();
+            nB = ActiveFuyous().size();
         }
         assert(nB >= 0);
         return nB;

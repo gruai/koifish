@@ -32,8 +32,10 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI> &wikis_, int flag) {
         if (!InitDictTokenset())  //  hDictVAE
             return false;
     }
-
-    hOPT = std::make_shared<OPT_Adam>(this, config, flag);
+    if( config.common.method == "muon" )
+        hOPT = std::make_shared<OPT_Muon>(this, config, flag);
+    else
+        hOPT = std::make_shared<OPT_Adam>(this, config, flag);
     if (wikis.size() == 0) {
         _INFO("====== NO WIKI !!! ======\n");  // return false;
     } else {
@@ -780,10 +782,11 @@ bool Fuyou::Backward(hGensor cur, int flag) {
             continue;
         if (neuron->isPassBack)
             continue;
-        auto t0 = GST_ms();
-        cur     = neuron->Ming(hRLS, cur);
-        neuron->stat.tBack += GST_ms() - t0;
+        auto t0            = GST_ms();
+        cur                = neuron->Ming(hRLS, cur);
+        neuron->stat.tBack = GST_ms() - t0;
         if (isMix) {
+            int debug = 0;
         }
     }
     // SYNC_DEVICE();
@@ -795,6 +798,8 @@ int Fish::BackwardOnRLS(int iter, int flag) {
     GTensor::delta->Zero();
     OutCLS *cls   = GetNeuron<OutCLS>("OutCLS", 0);
     GTensor::buff = hCLS->preLogits->data;  // reused in many place!
+    GTensor::buff_len = hCLS->preLogits->size()*sizeof(floatX);
+
     if (DEBUG.back_graph_version == 1) {
         int nAccum          = config.common.n_gradient_accumulation;
         bool isOnlyEvaluate = false;
@@ -808,14 +813,14 @@ int Fish::BackwardOnRLS(int iter, int flag) {
     afu->Backward(cur);
 
     //  Head to follower
-    if (iter >= config.fuyou.nWarmup() && hRLS->fuyous.size() > 1) {  //  memory
+    if (iter >= config.fuyou.nWarmup() && hRLS->fuyouSwarm.size() > 1) {  //  memory
         if (DEBUG.T_fuyou == 0 || hRLS->isSwitchFuyou(iter + 1)) {
             hRLS->ExploreOptimization(iter);
         }
     }
 
     // afu update from Head
-    /*if (hRLS->fuyous.size() > 1) {  //  memory
+    /*if (hRLS->fuyouSwarm.size() > 1) {  //  memory
         if (DEBUG.T_fuyou == 0 || hRLS->isSwitchFuyou(iter)) {
             hRLS->ExploreOptimization(iter);
         }
@@ -830,28 +835,32 @@ int Fish::ForwardOnRLS(int iter, int flag) {
     double now   = GST_ms();
     if (iter < 0 || isTrain())
         hRLS->Prepare(iter, 0);
-    vector<hFuyou> branches = {hRLS->afu};  // curTasks
-    OutCLS *cls             = GetNeuron<OutCLS>("OutCLS", 0);
-    int L = config.nLayer(), nzLoss = cls->nzLoss, i, nFuyou = hRLS->fuyous.size();
+
+    OutCLS *cls = GetNeuron<OutCLS>("OutCLS", 0);
+    int L = config.nLayer(), nzLoss = cls->nzLoss, i, nFuyou = hRLS->fuyouSwarm.size();
     float *tmpLoss = nullptr, *loss = cls->hostLoss;
+    vector<hFuyou> branches = hRLS->ActiveFuyous();
+    /*vector<hFuyou> branches = {hRLS->afu};  // curTasks
     if (isAtPhase(LIFE_PHASE::P_EVAL_) || isAtPhase(LIFE_PHASE::P_GENERATE)) {
         if (config.fuyou.ensemble == Fuyou_params::RANDOM_1 && nFuyou > 1) {  //  random ensembling
-            branches      = hRLS->fuyous;
-            uint32_t pick = rand_coin.RandU32() % hRLS->fuyous.size();
-            branches      = {hRLS->fuyous[pick]};
+            branches      = hRLS->fuyouSwarm;
+            uint32_t pick = rand_coin.RandU32() % hRLS->fuyouSwarm.size();
+            branches      = {hRLS->fuyouSwarm[pick]};
         } else if (config.fuyou.ensemble == Fuyou_params::AGGREGATION && nFuyou > 1) {
-            branches = hRLS->fuyous;
+            branches = hRLS->fuyouSwarm;
         } else {
-            // branches = {hRLS->fuyous[pick]};      //only for debug
+            // branches = {hRLS->fuyouSwarm[pick]};      //only for debug
         }
     }
+        hRLS->curFuyous = branches;
+        */
     int nB = branches.size(), curB = 0;
     if (nB > 1) {
         tmpLoss = new float[nzLoss]();
     } else {
         assert(nB > 0);
     }
-    hRLS->curFuyous = branches;
+
     for (auto branch : branches) {
         hGensor cur = Input(), residual = nullptr;
         assert(!branch->empty());
@@ -865,8 +874,8 @@ int Fish::ForwardOnRLS(int iter, int flag) {
                 continue;
             auto t0 = GST_ms();
             neuron->BeforeForward(iter);
-            cur = neuron->Ming(hRLS, cur);
-            neuron->stat.tFore += GST_ms() - t0;
+            cur                = neuron->Ming(hRLS, cur);
+            neuron->stat.tFore = GST_ms() - t0;
             // if (!SYNC_DEVICE(neuron->name, 1))
             //     assert(0);
         }

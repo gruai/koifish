@@ -26,8 +26,8 @@ Tokenset_HellaSwag::Tokenset_HellaSwag(JSON::const_iterator jit, hTokenizer hDic
     // rStepOfEval = 0.0;  //  no sample on evaluate
     auto k      = jit.key();
     auto v      = jit.value();
-    rStepOfEval = 0;
-    rStepOfEval = jKV(v, {"step"}, rStepOfEval);
+    rSampling = 0;
+    rSampling = jKV(v, {"samp"}, rSampling);
     int nFile   = shard_paths.size();
     assert(nFile == 1);
 }
@@ -44,8 +44,8 @@ GlobTokenset::GlobTokenset(JSON::const_iterator jit, hTokenizer hDict, int flag)
     string pattern = v["glob"];
     name           = jKV(v, {"name"}, name);
     eval_every     = jKV(v, {"eval-every"}, eval_every);
-    rStepOfEval    = 0.1;
-    rStepOfEval    = jKV(v, {"step"}, rStepOfEval);
+    // rSampling    = 0.01;
+    rSampling    = jKV(v, {"samp"}, rSampling);
     if (v.find("most") == v.end())
         nMostShard = 100000;
     else
@@ -425,8 +425,8 @@ double SampLoader::Evaluate(int flag) {
         // float a = hTokens->LossOnResult(shared_from_this(), cls);  // loader->hTokens->LossOnResult(loader, cls);
         nEvalTokens += embed->hBatch->size(), nB++;
         tCur = GST_ms(), dt = tCur - tLast, tLast = tCur;
-        tpi = tpi * (1.0 - relax) + dt * relax, tRemain = (nMost - i) * tpi;
-        if (i % 10 == 0) {
+        tpi = tpi * (1.0 - relax) + dt * relax, tRemain = (nMost - i) * tpi;        //  ms
+        if (i % 10 == 0 && tRemain>60*1000) {
             _INFO("\r\t%d/%d a=[%.3g,%.3g] %.4gk/s ...\t", i, nMost, iiLoss.a0, iiLoss.a1, nEvalTokens / (tCur - tic));
             _TIME_INFO("remain=", tRemain), _INFO("        ");
         }
@@ -442,20 +442,20 @@ double SampLoader::Evaluate(int flag) {
     if (!hFish->isLocalInfer)
         UpdateStepInfos(iiLoss.average, nB);
     tps = nEvalTokens / SUM::tEval_1 / 1.0e3;
-    // nBranch = hRLS->curFuyous.size();
+    
     _INFO("\t#%g±%.4f tps=%.3gK(%gM) a=[%g,%g] T=%g(sec)\n", "", iiLoss.average, iiLoss.sigma, tps, nEvalTokens / 1.0e6, iiLoss.a0, iiLoss.a1, SUM::tEval_1);
     return iiLoss.average;
 }
 
 void SampLoader::UpdateStepInfos(float mean_loss, int nB, int flag) {
-    int iter = hOPT->GetITER(), nBranch = dolphin->nBranch(1);
+    int iter = hOPT->GetITER(), nFuyou = dolphin->nFuyou(1);
     float last          = stepis.Last();  //[eval]   Loss@Evaluation=7.302641 T=0.232s ======
     float train_last    = hOPT->trainInfos().Last();
     bool isFirst        = stepis.steps.empty();
     StepInfos::STEP stp = StepInfos::STEP(mean_loss, iter, hOPT->train_epochs);
     stepis.Add(stp);
     if (isFirst) {
-        _INFO(" Loss@\"%s\"=%.3f nBranch=%d ", sTokenSet().c_str(), mean_loss, nBranch);
+        _INFO(" Loss@\"%s\"=%.3f nFuyou=%d ", sTokenSet().c_str(), mean_loss, nFuyou);
         return;
     }
 
@@ -465,7 +465,7 @@ void SampLoader::UpdateStepInfos(float mean_loss, int nB, int flag) {
     //     _INFO(" !OVERFIT! ");
     // }
     double a = nB * hOPT->TrainParams().nTokenInBatch() / 1.0e6;
-    _INFO(" Loss@\"%s\"=%.3f(%.2g) nBranch=%d nToken=%.3gM best=%.4f(%d) E2T=%.3g T=%g(%.3g)s x=%.3g\n", sTokenSet().c_str(), mean_loss, nBranch, delta, a,
+    _INFO(" Loss@\"%s\"=%.3f(%.2g) nBranch=%d nToken=%.3gM best=%.4f(%d) E2T=%.3g T=%g(%.3g)s x=%.3g\n", sTokenSet().c_str(), mean_loss, nFuyou, delta, a,
           best, stepis.best_id, mean_loss - train_last, SUM::tEval_1, SUM::tLoadData / 1000.0, ee);  //
 
     // if (wLog == nullptr) {

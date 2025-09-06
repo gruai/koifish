@@ -433,21 +433,18 @@ __global__ static void CU_PSO_2D(curandState* state, float alpha, T* x, float so
 
 //  todo - try Cauchy Mutation
 template <class T>
-__global__ static void CU_mutation_(curandState* state, float T_mutation, T* x, const T* y, size_t N, int ldB) {
+__global__ static void CU_mutation_(curandState* state, float T_mutation, float T_scale, T* x, const T* y, size_t N, int ldB) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x, no = tid * ldB;
     for (int i = 0; i < ldB; i++, no++) {
         if (no >= N)
             continue;
 
-        float a          = curand_normal(&state[tid]);
-        int max_position = (int)(1.0f / T_mutation);
-        int pick         = curand(&state[tid]) % max_position;
+        int max_position = 1000000, pick = curand(&state[tid]) % max_position;
         // if(a < 3.0)     //  0.135%
         //     continue;
-        if (pick == 0) {
-            // a = curand_normal(&state[tid]);       //  Gaussian (Normal) Mutation
-            // x[no] += a;
-            x[no] = y[no];
+        if (pick < T_mutation * max_position) {
+            float a = curand_normal(&state[tid]) * T_scale;  //  Gaussian (Normal) Mutation
+            x[no] += a;
         }
     }
 }
@@ -459,13 +456,10 @@ __global__ static void CU_crossover_(curandState* state, float T_cross, T* x, co
         if (no >= N)
             continue;
 
-        float a          = curand_normal(&state[tid]);
         int max_position = 1000, pick = curand(&state[tid]) % max_position;
         // if(a < 3.0)     //  0.135%
         //     continue;
         if (pick < T_cross * max_position) {
-            // a = curand_normal(&state[tid]);       //  Gaussian (Normal) Mutation
-            // x[no] += a;
             x[no] = y[no];
         }
     }
@@ -804,7 +798,7 @@ void CU_abc(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int
             float beta = 0.0, floatX* pre_gelu = NULL, bool backward = false);
 void CU_mm_(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int transB = 0,
             float beta = 0.0, floatX* pre_gelu = NULL, bool backward = false);
-void CU_mm_blas(floatX* d, const floatX* a, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int transB = 0,
-                float alpha = 0.0, float beta = 0.0, floatX* pre_gelu = NULL, bool backward = false);
+void CU_mm_blasLt(floatX* d, const floatX* a, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int transB = 0,
+                  float alpha = 0.0, float beta = 0.0, floatX* pre_gelu = NULL, bool backward = false);
 void matmul_backward(floatX* delta, floatX* dweight, floatX* dbias, floatX* deltaIn, floatX* inp, floatX* weight, float* dbias_buffer, int B, int T, int C,
                      int OC, cudaStream_t stream, bool isTransW = false, floatX* pre_gelu = NULL, bool isAccumuDelta = false);

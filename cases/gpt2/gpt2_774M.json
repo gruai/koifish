@@ -2,11 +2,18 @@
     "version":"0.1.0",
     "model":{    
         "arch":"GPT2",  
+        "fuyou":{
+            "branch":6, "switch":100,
+            "#method":["pso","mix","ga","pso_ga"],
+            "method":"pso_ga",
+            "crossover":0.6, "mutation":0.001, "social":2
+        },
         "datatype":{
             "weight":"BF16",
             "embed":"BF16",
-            "gradient":"BF16",
-            "ternary":["ffn_down.weight", "ffn_up.weight"]
+            "#gradient":"BF16",
+            "#ternary":["attn.wq.weight","attn.wk.weight","attn.wv.weight","attn.wo.weight"],
+            "#tile":["ffn_down.weight", "ffn_up.weight"]
         },
         "parameter":{
             "Layer": 36,  
@@ -26,10 +33,10 @@
     
     "datasets":{
         "train":{
-            "glob":"./Datasets/edu_fineweb1B/*train*.bin","most":10,"name":"edu_fineweb1B"
+            "glob":"./Datasets/edu_fineweb1B/*train*.bin","most":50,"name":"edu_fineweb1B"
         },
-        "#eval_1": {"glob":"./Datasets/edu_fineweb1B/*val*.bin","name":"edu_fineweb1B","most":10,"eval-every":100        },
-        "# eval_2":{"glob":"./Datasets/hellaswag_val.bin", "type":"hellaswag","eval-every":100     }
+        "eval_1": {"glob":"./Datasets/edu_fineweb1B/*val*.bin","name":"edu_fineweb1B","most":10,"eval-every":200  ,"samp":0.04      },
+        "#eval_2":{"glob":"./Datasets/hellaswag_val.bin", "type":"hellaswag","eval-every":500,"samp":0.04     }
     },
     
     "train": {
@@ -37,9 +44,8 @@
         "dump-every":10,
         "gpt-every":-10,
 
-
         "epoch":1,
-        "batch":80,
+        "batch":40,
         "learning-rate":0.0006,  
 
         "decay":0.1,
@@ -51,14 +57,10 @@
             "grad_accumulation":1,
             "lars_ratio":0,      "ZMUV_ratio":0.00    
         }              
-    },    
-    
-    
+    },       
 
     "# checkpoint-in":"./hy-tmp/checkpoint/chk-GPT2_9001.gguf",
-    "# checkpoint-out":"./hy-tmp/checkpoint/chk-GPT2_",
-    "# model-out":"gpt2_cys.gguf",
-    
+    "checkpoint-out":"./hy-tmp/checkpoint/GPT2_774M_",
 
     "threads":20,            
     "seed":42

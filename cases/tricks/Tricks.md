@@ -13,6 +13,7 @@ The following table lists some tricks and its working status.
 | LORA    |    🧪   | ★ ★ ☆ ☆ ☆     |DropLORA|
 | Mixture of models    |    🌿   | ★ ★ ☆ ☆ ☆     ||
 | Sparse model    |    🌱   |     ||
+| Muon    |    🌿   |     ||
 
 Note 1.  The meaning of symbols for maturity 
 1. 🌱 Prototype      

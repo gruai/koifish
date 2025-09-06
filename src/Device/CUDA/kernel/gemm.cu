@@ -137,8 +137,8 @@ __global__ void static reduce_add_sum_kernel(floatX* dst, const float* src, size
 /*  d(m,n) = alpha*a'*b + beta*d + bias
     Wrapper around cublasLtMatmul(https://docs.nvidia.com/cuda/cublas/#cublasltmatmul)
 */
-void CU_mm_blas(floatX* d, const floatX* a, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int transB = 0,
-                float alpha=1.0, float beta = 0.0, floatX* pre_gelu = NULL, bool backward = false) {
+void CU_mm_blasLt(floatX* d, const floatX* a, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int transB = 0,
+                  float alpha = 1.0, float beta = 0.0, floatX* pre_gelu = NULL, bool backward = false) {
     NVTX_RANGE_FN();
     // check alignment (some modes work unaligned but it always best to be aligned for performance)
     if (((uintptr_t)a % 16) != 0 || ((uintptr_t)b % 16) != 0 || ((uintptr_t)d % 16) != 0 || ((uintptr_t)bias % 16) != 0) {
@@ -312,7 +312,7 @@ void matmul_backward(floatX* delta, floatX* dweight, floatX* dbias, floatX* delt
     }
 
     // backward to input, uses = in the backward pass (set the gradient)
-    CU_mm_blas(delta, weight, deltaIn, NULL, C, B * T, OC, stream, transAW, false, 1.0, isAccumuDelta, gelu_fusion >= 2 ? pre_gelu : NULL, true);
+    CU_mm_blasLt(delta, weight, deltaIn, NULL, C, B * T, OC, stream, transAW, false, 1.0, isAccumuDelta, gelu_fusion >= 2 ? pre_gelu : NULL, true);
 
     // backward GELU (if it wasn't fused into the matmul above)
     if (gelu_fusion < 2 && pre_gelu) {
@@ -320,7 +320,7 @@ void matmul_backward(floatX* delta, floatX* dweight, floatX* dbias, floatX* delt
     }
 
     // backward to weight, uses += in the backward pass (accumulate the gradient) by setting alpha=one
-    CU_mm_blas(dweight, inp, deltaIn, NULL /*dbias*/, C, OC, B * T, stream, transAW, true, 1.0, 1 /* accumulate */, NULL, true);
+    CU_mm_blasLt(dweight, inp, deltaIn, NULL /*dbias*/, C, OC, B * T, stream, transAW, true, 1.0, 1 /* accumulate */, NULL, true);
 }
 
 // fast fp8x2 => half2 conversion; drops unnecessary NaN handling from __nv_cvt_fp8_to_halfraw

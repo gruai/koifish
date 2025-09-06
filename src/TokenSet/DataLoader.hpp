@@ -39,6 +39,7 @@ struct StepInfos {
     struct STEP {
         float loss, lr, gNorm, tX, dt, gMax, wMax;
         int iter, epoch;
+        std::vector<float> nrmG, nrmW;
         string gMaxName, wMaxName;
         virtual string Info(int flag);
 
@@ -85,7 +86,6 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
     Distri_ARRAY iiPPL;
 
     //  Store tokens from source.  always in CPU
-
     int eval_every = -1, tokens_per_iter = 0;
     // CLI_params config;
     std::string fp_data;
@@ -93,7 +93,7 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
     std::vector<TOKEN_ID> samp_toks;
     std::vector<hSAMP> shard_samps;
     // std::vector<size_t> idcs;      //would change epoch by epoch(shuffle,subsampling...)
-    int64_t nShard() { return shard_samps.size(); }
+    size_t nShard() { return shard_samps.size(); }
     // std::shared_ptr<DictVAE> hDictVAE;
     hDataToken hTokens = nullptr;
     hTokenizer hDict   = nullptr;
@@ -129,11 +129,13 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
         assert(idx_ < nShard());
         return shard_samps[idx_];
     }
-    virtual void ClearII()  {
-        iiLoss.Clear();     iiPPL.Clear();
+    virtual void ClearII() {
+        iiLoss.Clear();
+        iiPPL.Clear();
     }
-    virtual void UpdateII()  {
-        iiLoss.Stat();     iiPPL.Stat();
+    virtual void UpdateII() {
+        iiLoss.Stat();
+        iiPPL.Stat();
     }
     hBATCH GetCurBatch(int flag = 0x0) const { return hBatch; }
     virtual bool isEval(int t, int flag = 0x0);
@@ -149,7 +151,7 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
     std::vector<std::string> curDeTexts;
     virtual hSAMP InitOneSamp(const string &prompt, hGensor input, Fish *hFish, int flag = 0x0);
     virtual double DecodeVerify(hSAMP samp, hGensor tokens, hGensor logits, int flag = 0x0);
-    void Samp2Batch(int k, hSAMP samp, struct train_params_ &params, int flag = 0x0);
+    void Samp2Batch(int k, hSAMP samp, TRAIN_CARD &params, int flag = 0x0);
 
     enum TYPE { DT_TRAIN = 1, DT_EVAL, DT_PREDICT, DT_MERGE };
     TYPE type = DT_TRAIN;
@@ -168,7 +170,7 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
     virtual void UpdateStepInfos(float mean_loss, int nB, int flag = 0x0);
     virtual size_t UpdateBatch(int next_id, Fish *fish);
     virtual double Evaluate(int flag = 0x0);
-    
+
 #ifdef _DATA_LOADER_LITE_
 #else
     virtual bool Serialize(const std::string &path, bool isSave, int flag = 0x0);

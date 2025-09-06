@@ -74,6 +74,8 @@ def plt_losscurve(dfTrain,dfEval=None,df_hellaswag=None):
     plt.show(block=True) 
     path = args.train+".png"
     plt.savefig(path)
+    
+    print(f"Save losscurve@{path} train={dfTrain.shape}  eval={dfEval.shape}")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

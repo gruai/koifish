@@ -257,7 +257,7 @@ class Fish :public std::enable_shared_from_this<Fish> {
     }
     int GetCurIter(int flag = 0x0) const;
     // if type==1 return curBraches, otherwise, return allBraches
-    int nBranch(int type) { return (GetScheduler<RLSchedule>())->nBranch(type); }
+    int nFuyou(int type) { return (GetScheduler<RLSchedule>())->nFuyou(type); }
     template <typename T>
     T *GetScheduler() {
         T *hS = hEDS->GetScheduler<T>();

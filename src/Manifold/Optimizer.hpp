@@ -32,7 +32,7 @@ using namespace std;
 #include "TGraph.hpp"
 
 class Fish;
-
+struct PIPE_Optimizer;
 class Optimizer : public std::enable_shared_from_this<Optimizer> {
     Optimizer(const Optimizer&);
     Optimizer& operator=(const Optimizer&);
@@ -42,7 +42,9 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     // std::map<hGensor, GENSOR_INFO> gimap;
 
     void* _ctx = nullptr;
-    std::vector<hGensor> opt_ps;    //  =_fish->optParams;
+    std::vector<hGensor> opt_ps;  //  =_fish->optParams;
+
+    // std::vector<hFuyou> fuyous;
     size_t nParams = 0, nMostParam = 0;
     float* _tmp           = nullptr;
     bool just_initialized = false, isAdaptiveSched = false, isGlobalGrad = true;
@@ -124,7 +126,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
         double lr, w_decay;
     };
     vector<STAGE> stages;
-    // PIPE_Optimizer pipe;
+    std::shared_ptr<PIPE_Optimizer> hPipe = nullptr;
     Grusoft::GRander rRounding;  // stochastic rounding
     hSampLoader train_loader = nullptr;
     StepInfos& trainInfos() {
@@ -137,19 +139,23 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     Fish* _fish     = nullptr;  // ref only
     hEDevices hEDS  = nullptr;  // ref only
     hKVCache hCache = nullptr;
-    struct train_params_ TrainParams();
+    TRAIN_CARD TrainParams();
 
     Optimizer(NLP_AutoRegressive* g_, CLI_params& params_, int flag = 0x0);
     // Deprecated need refactor!!!       9/30/2024
     virtual double GraphCompute(hSampLoader loader, hTGraph, int flag = 0x0);
     virtual bool SetPhase(LIFE_PHASE phase_, int flag = 0x0);
     virtual float EvaluateSamps(hSampLoader loader, int iter, int flag = 0x0);
-    virtual bool Evaluate(int type=0x0,int flag=0x0);
+    virtual bool Evaluate(int type = 0x0, int flag = 0x0);
     // virtual float Prefill(hSampLoader loader,int iter,int flag=0x0);
     virtual int GetITER(int flag = 0x0) const;
-    virtual float LearningRate(int flag = 0x0) { return hLR->LearningRate(iter); }
+    virtual float LearningRate(int flag = 0x0) {
+        float lr = hLR->LearningRate(iter);
+        last_lr  = lr;
+        return lr;  // hLR->LearningRate(iter);
+    }
     virtual void UpdateTrainLoss(int x, float loss, int flag = 0x0);  //
-    virtual double UpdateTensorParam(hGensor hP, floatX* g, float gnorm) { return 0.0; }
+    virtual double UpdateTensorParam(hGensor hP, floatX* g, float gnorm);
     virtual bool isStopImproving() { return isStopImprove; }
 
     virtual void Dump(int typ);
@@ -158,13 +164,13 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     virtual void InitOnCUDA(int flag);
     virtual void ClearOnCUDA(int flag);
     virtual bool PrepareData(CLI_params& config, int flag);
-    virtual void Shuffle(int n_vocab, struct train_params_& train_params, int flag = 0x0) { assert(0); }
+    virtual void Shuffle(int n_vocab, TRAIN_CARD& train_params, int flag = 0x0) { assert(0); }
 
     virtual bool isSpike(int flag = 0x0);
 
     virtual void Prepare(size_t nx, int flag = 0x0);
 
-    // virtual void InitOpt(struct train_params_& params_,int flag=0x0);
+    // virtual void InitOpt(TRAIN_CARD& params_,int flag=0x0);
 
     virtual ~Optimizer() {
         // ggml_free(_ctx);
@@ -191,9 +197,9 @@ class OPT_Adam : public Optimizer {
     float beta1h, beta2h;
 
     void Prepare(size_t nx, int flag = 0x0) override;
-    // compute grad on batchs
-    // bool BatchGrad(int iter, float& fx, int flag = 0x0) override;
+
     double UpdateTensorParam(hGensor hP, floatX* g, float gnorm) override;
+    // Deprecated
     void UpdateParams_V0(int nx, CLI_params& config, int flag);
 
    public:
@@ -202,6 +208,11 @@ class OPT_Adam : public Optimizer {
 };
 
 class OPT_Muon : public Optimizer {
+   protected:
+    void Prepare(size_t nx, int flag = 0x0) override;
+
    public:
     OPT_Muon(NLP_AutoRegressive* g_, CLI_params& params_, int flag = 0x0);
+    void BeforeTrain(hGensor tokens_input, int flag)    override;
+    void Dump(int typ) override;
 };

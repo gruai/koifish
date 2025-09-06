@@ -67,6 +67,10 @@ struct SAMP {
 // typedef std::shared_ptr<SAMP> hSAMP;
 typedef SAMP *hSAMP;
 
+/*
+    v0.2    09/02/2025
+        Support multiple shard_samps for multiple hSample
+*/
 class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
    public:
     enum SAMPLE_TYPE {
@@ -80,7 +84,8 @@ class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
     int nMostShard    = -1;
     int shard_index   = 0;
     int eval_every    = -1;
-    float rStepOfEval = 0.1;
+    //float rStepOfEval = 0;
+    float rSampling = 1.0;
     // bool isNextEpoch = false;
     string name;
     string serial_root;

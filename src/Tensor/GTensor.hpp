@@ -132,7 +132,9 @@ class GTensor {
     static hGTensor bt4c, delta, tmpDelta, outL, scratch, tmpFF1, tmpW, tmpGW, residual, tmpTernary;
     static bool AllocBuffer(Fish *hFish, int flag = 0x0);
     static bool FreeBuffer(int flag = 0x0);
-    static void *buff, *host_buff;                     //  temporary shared memory
+    //  temporary shared memory 1) buff sz>=8*nCTX*nToken(from preLogits)
+    static void *buff, *host_buff;  
+    static size_t buff_len;                   
     float residual_scale = 1.0, wnorm = 0, gnorm = 0;  // some tricks
     float rLARS(float s0, float T_lars, int flag);
     size_t offset = 0x0;
@@ -226,6 +228,7 @@ class GTensor {
     //  ternary {-1, 0, 1}
     virtual bool ToTernary(floatX *, int flag = 0x0) { throw "ToTernary is ...."; }
     virtual bool ToQuant(int flag = 0x0) { throw "ToQuant is ...."; }
+    virtual bool Mutation(int flag = 0x0) { throw "Mutation is ...."; }
 
     // row-major order. ne contains the number of elements in each dimension & nb is the number of bytes ("nb", a.k.a. stride).
     int64_t ne[N_DIMS];
@@ -271,7 +274,7 @@ class GTensor {
     }
     virtual size_t nByte() const { return szData; }
 
-    virtual bool is2D() const { return ne[2] == 1 && ne[3] == 1; }
+    virtual bool is2D() const { return ne[0] > 1 && ne[1] > 1 && ne[2] == 1 && ne[3] == 1; }
     //  The offset of (i0,i1,i2,i3) in byte
     virtual size_t Offset(int i0, int i1, int i2, int i3, int flag = 0x0) const;
 
@@ -449,6 +452,7 @@ class huTensor : public GTensor {
     // void Print(const string &title, int typ, int flag, size_t nEle = 0) const override;
 
     bool ToTernary(floatX *tmp, int flag = 0x0) override;
+    bool Mutation(int flag = 0x0) override;
     friend class HIERARCH_LoRA;
 };
 

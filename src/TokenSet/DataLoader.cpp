@@ -77,7 +77,9 @@ double SampLoader::DecodeVerify(hSAMP samp, hGensor tokens, hGensor logits, int 
 }
 
 int SampLoader::StepOfEvaluate(int flag) {  //  smaple to reduce eval time
-    int step = num_batches * hTokens->rStepOfEval;
+    int nSamp        = num_batches * hTokens->rSampling;
+    int step         = (int)(num_batches / nSamp);
+    float realSample = (ceil)(num_batches * 1.0 / step) / (num_batches);
     return max(step, 1);
 }
 int SampLoader::nLeastCTX(int flag) {
@@ -137,7 +139,7 @@ int SampLoader::PickSomeTokens(Grusoft::GRander &rander, int nMostToken, std::ve
     return 0x0;
 }
 
-void SampLoader::Samp2Batch(int k, hSAMP samp, struct train_params_ &params, int flag) {
+void SampLoader::Samp2Batch(int k, hSAMP samp, TRAIN_CARD &params, int flag) {
     samp_toks.clear();
     auto dialect                = hDict->dialect;
     bool fill_with_next_samples = params.fill_with_next_samples, isDialect = hDict->isDialect;
@@ -259,11 +261,11 @@ hSAMP SampLoader::Next(bool isLoop) {
         next_sample = 0;
     }
 
-    int64_t idx_ = next_sample;
+    size_t idx_ = next_sample, step = StepOfEvaluate();
     assert(idx_ < nShard());
-    if (type == SampLoader::TYPE::DT_TRAIN)
-        next_sample++;
-    else {
+    if (type == SampLoader::TYPE::DT_TRAIN) {
+        next_sample = min(next_sample + step, nShard());
+    } else {
         if (!isFixEvalSample)
             next_sample++;
     }
@@ -274,7 +276,7 @@ hSAMP SampLoader::Next(bool isLoop) {
 
 // Important!  this would update input & target_probs of model!
 size_t SampLoader::UpdateBatch(int x, Fish *fish) {
-    struct train_params_ _params = hOPT->TrainParams();
+    TRAIN_CARD _params = hOPT->TrainParams();
     assert(fish == hOPT->_fish);
     // struct llama_context * lctx=(struct llama_context *)(hOPT->app_ctx);
     cur_samps.clear();
@@ -520,7 +522,8 @@ void SampLoader::Dump(int typ) {
         // nShardSamp = hTokens->nMostShard();
     }
     double nToken = nMostTok / 1.0e6;  // nTokens() / 1.0e6 * nShardFile;
-    _INFO("[Dataset]_\"%s\" nShard=%ld(T=%.6gM) EachShard(nSamp=%ld,nBatch=%ld)\n", name.c_str(), nShardFile, nToken, nShard(), nBatch);
+    _INFO("[Dataset]_\"%s\" nShard=%ld(T=%.6gM) samping=%g(%d) EachShard(nSamp=%ld,nBatch=%ld)\n", name.c_str(), nShardFile, nToken, hTokens->rSampling,
+          (int)(nBatch * hTokens->rSampling), nShard(), nBatch);
 }
 
 BATCH_INPUT::BATCH_INPUT(SHAPE shape, int flag) {
@@ -557,7 +560,7 @@ bool SampLoader::Prepare(Optimizer *hO, hDataToken hT, int flag) {
     // bos = hDict->bos;
     // eos = hDict->eos;
     // Batch tensor would be set @UpdateBatch!
-    // struct train_params_ _params = hOPT->TrainParams();
+    // TRAIN_CARD _params = hOPT->TrainParams();
     // T = _params.n_ctx, B = _params.n_batch;
     dolphin->GetBTC(B, T, C);
     assert(T > 0 && B > 0);
@@ -730,7 +733,7 @@ void SampLoader::Shuffle(int flag) {
 
     size_t count = shard_samps.size(), i, j, nSampInBatch = dolphin->config.n_batch();
     assert(count > 0);
-    struct train_params_ _params = hOPT->TrainParams();
+    TRAIN_CARD _params = hOPT->TrainParams();
     //  hash_combine(samples_begin,samples_size[i],sample_count
 
     const bool changed_train_data = false;  //(shuffle_samples_hash != hOPT->shuffle_samples_hash) || (train->shuffle_sample_count != shard_samps.size());
@@ -1102,6 +1105,8 @@ void StepInfos::Add(STEP step, int flag) {
         if (tensor->wnorm * s > w0) {
             w0 = tensor->wnorm * s, ten2 = tensor;
         }
+        step.nrmG.push_back(tensor->gnorm);
+        step.nrmW.push_back(tensor->wnorm);
     }
     step.gMax = ten1->gnorm / ten1->size(), step.gMaxName = ten1->name;
     step.wMax = ten2->wnorm / ten2->size(), step.wMaxName = ten2->name;
@@ -1111,18 +1116,45 @@ void StepInfos::Add(STEP step, int flag) {
 bool StepInfos::SaveToCSV(const string &path, int flag) {
     try {
         //  FSerial
-        string fpath = sRoot + name + path;
-        FILE *fp     = fopen(fpath.c_str(), "wt");
+        bool isDumpG = false;
+#ifndef NDEBUG
+        isDumpG = true;
+#endif
+        string fpath = sRoot + name + path, sHeadG = "";
+        FILE *fp = fopen(fpath.c_str(), "wt");
         if (fp == NULL) {
             _INFO("%s: warning: empty or not existing training data file '%s'\n", __func__, fpath.c_str());
             return false;
         }
-        fprintf(fp, "epoch iter loss lr gNorm tX dt max_|G| name_1 max_|W| name_2\n");
+        int i = 0, nCat = 0;
+        if (isDumpG) {
+            for (auto tensor : hOpt->opt_ps) {
+                string pre = " G";
+                if (tensor->is2D()) {
+                    if (G_Has_(tensor->name, {"wq", "wk", "wv", "QKV"}))
+                        pre = " G_qkv_";
+                    if (G_Has_(tensor->name, {"wo"})) {
+                        pre = " G_cat_", nCat++;
+                    }
+                    if (G_Has_(tensor->name, {"ffn_up"}))
+                        pre = " G_ffn_up_";
+                    if (G_Has_(tensor->name, {"ffn_down"}))
+                        pre = " G_ffn_down_";
+                }
+                sHeadG += pre + std::to_string(i++);
+            }
+        }
+        fprintf(fp, "epoch iter loss lr gNorm tX dt max_|G| name_1 max_|W| name_2 %s\n", sHeadG.c_str());
         for (auto step : steps) {
             fprintf(fp, "%d %d %.3f %.2e %.3f %g %g ", step.epoch, step.iter, step.loss, step.lr, step.gNorm, step.tX, step.dt);
 
             fprintf(fp, "%g %s ", step.gMax, step.gMaxName.c_str());
             fprintf(fp, "%g %s ", step.wMax, step.wMaxName.c_str());
+            if (isDumpG) {
+                for (auto g : step.nrmG) {
+                    fprintf(fp, "%g ", g);
+                }
+            }
             fprintf(fp, "\n");
         }
         fclose(fp);

@@ -119,6 +119,7 @@ hGTensor TokenEmbed::OnEmbed(hGensor inpL, int seed) {
         }
         return cur;
     } catch (...) {
+        bool isF = isForward();
         assert(0);
         return nullptr;
     }
@@ -154,7 +155,7 @@ void CU_mm_(floatX *d, hGTensor gensor, const floatX *b, const floatX *bias, int
     cublasOperation_t opA = (transA) ? CUBLAS_OP_T : CUBLAS_OP_N, opB = (transB) ? CUBLAS_OP_T : CUBLAS_OP_N;
     if (bias != nullptr || pre_gelu != nullptr) {  //  bias != nullptr || pre_gelu != nullptr
         floatX *wX = gensor->GetDataX();
-        CU_mm_blas(d, wX, b, bias, m, n, k, main_stream, transA, transB, 1.0, beta, pre_gelu, backward);
+        CU_mm_blasLt(d, wX, b, bias, m, n, k, main_stream, transA, transB, 1.0, beta, pre_gelu, backward);
         return;
     }
     bool isBlas = true;
@@ -209,7 +210,7 @@ int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, int flag) {
 
         rhs = to_gelu ? to_gelu : rhs;
 
-        // CU_mm_blas(rhs, wX, ToX(lhs_), ToX0(b), OC, B * T,  IC, main_stream, true);
+        // CU_mm_blasLt(rhs, wX, ToX(lhs_), ToX0(b), OC, B * T,  IC, main_stream, true);
         // if(G_Has_(name,{"ffn_down", "ffn_up"}))
         //     lhs_->Print(name,0,-1);
 
@@ -220,7 +221,7 @@ int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, int flag) {
             case LORA:  //  rhs += a*b*lhs_
                 if (tpLORA != LORA_ADAPT_W::AB)
                     CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, B * T, IC, main_stream, true);
-                // rhs_0->Print(rhs_0->name, 0, -1);   //w->Print(w->name, 0, -1), 
+                // rhs_0->Print(rhs_0->name, 0, -1);   //w->Print(w->name, 0, -1),
                 if (tpLORA != LORA_ADAPT_W::W0) {
                     for (auto lora : wLORAs) {
                         lora->Forw(rhs, ToX(lhs_), B * T, flag);
@@ -582,7 +583,7 @@ hGTensor OutCLS::cuTrain(hGTensor inp_, int flag) {
             if (isBack) {                                        //  back of delta & grad
                 proj.Back(subDelta, subZ, cur, nullptr, 0x100);  // hGTensor delta, hGTensor inp, hGTensor deltaIn
                 // CU_mm_(ToX(delta) + nZ, w, ToX(cur) + off, NULL, C, dB * T, Vp, main_stream, 0, 0, 0, gelu_fusion >= 2 ? to_gelu : NULL, true);
-                // CU_mm_blas(ToG(w), z0 + nZ, ToX(cur) + off, NULL, C, Vp, dB * T, main_stream, false, true, alpha4g, beta4g /* accumulate */, NULL, true);
+                // CU_mm_blasLt(ToG(w), z0 + nZ, ToX(cur) + off, NULL, C, Vp, dB * T, main_stream, false, true, alpha4g, beta4g /* accumulate */, NULL, true);
             }
         }
         // fused_classifier(errLogits, cuLoss, rLoss, targets, B, T, V, Vp, write_dlogits, main_stream);        //target=[32,1024]

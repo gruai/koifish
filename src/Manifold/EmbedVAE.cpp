@@ -23,6 +23,7 @@ TokenEmbed::TokenEmbed(Fish *hG_, const std::string &key_, JSON::const_iterator 
     latent    = hFish->config.nEmbed(-1);
     shape.clear();
     hostID = new int[nVocab];
+    rRounding.Init(20250903);
     /*if(jvals.size()==2){
         shape={(int)(jvals[0]),(int)(jvals[1])};
     }else{
@@ -108,7 +109,7 @@ bool TokenEmbed::Build(int flag) {
 */
 hGensor TokenEmbed::Ming(RLS_BP *ctx_, hGensor tokens, int flag) {
     // GeNeuron::BeforeMing(ctx_,tokens,flag);
-
+    int seed = 0;   //  rRounding.RandInt32();       //Nearly same as 0
     string sw   = name + "_rows";
     hGensor cur = nullptr;
     if (hFish->isSymbolic()) {
@@ -119,7 +120,7 @@ hGensor TokenEmbed::Ming(RLS_BP *ctx_, hGensor tokens, int flag) {
             out->AddSrc({w, tokens, b, lnW.w});
         cur = out;
     } else {
-        cur = OnEmbed(tokens, 0x0);
+        cur = OnEmbed(tokens, seed);
     }
 
     cur = AfterMing(ctx_, cur, flag);

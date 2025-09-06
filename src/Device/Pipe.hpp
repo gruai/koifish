@@ -12,19 +12,17 @@
 #include "../Manifold/Fish.hpp"
 #include "../Manifold/Optimizer.hpp"
 
-template <typename Tp, typename Tmv>
-struct PIPE_Optimizer : public MODEL_CARD {
+struct PIPE_Optimizer {
+    Optimizer *hOPT = nullptr;
     GTensor *tensor = nullptr;
     string name;
-    float *tmp = nullptr;
-    Tp *params, *grads0, *paramX = nullptr;
-    Tmv *gm, *gv;
-    floatGama *gama_T = nullptr;
-    float *wNorms     = nullptr;
-    size_t num_parameters;
+    float *tmp            = nullptr;
+    floatGama *gama_T     = nullptr;
+    float *arrNorm        = nullptr;  // store norms of some(<=8) tensor
+    size_t num_parameters = 0;
     ptrdiff_t w_stride, g_stride, s_stride;
-    float beta1, beta2, beta1_correction, beta2_correction, eps;
-    float lr_0, learning_rate;
+
+    float learning_rate;
     int iter, tile_r1, tile_c1;
     int64_t ne[4] = {0};
     int ldT       = 64;
@@ -36,35 +34,45 @@ struct PIPE_Optimizer : public MODEL_CARD {
     bool isStochasticRounding = true;
     QUANT_ALG tpQuant;
 
-    PIPE_Optimizer(size_t _num_parameters, ptrdiff_t _w_stride, ptrdiff_t _g_stride, ptrdiff_t _s_stride, uint64_t _flags, float _learning_rate, float _beta1,
-                   float _beta2, int _t, float _eps, float _weight_decay, float _grad_scale, float _grad_norm, unsigned int _seed)
-        : /*params(_params),
-          tmp(_tmp),
-          grads0(_grads0),
-          gm(_gm),
-          gv(_gv),*/
-          num_parameters(_num_parameters),
-          w_stride(_w_stride),
-          g_stride(_g_stride),
-          s_stride(_s_stride),
-          flags(_flags),
-          learning_rate(_learning_rate),
-          beta1(_beta1),
-          beta2(_beta2),
-          iter(_t),
-          eps(_eps),
-          weight_decay(_weight_decay),
-          grad_scale(_grad_scale),
-          grad_norm(_grad_norm),
-          seed(_seed) {
-        lr_0   = learning_rate;
-        wNorms = (float *)GTensor::buff;
-        assert(wNorms != nullptr);
+    virtual void Update(GTensor *tensor_, float wd, float _grad_scale, unsigned int _seed, int flag = 0x0) {}
+    virtual void CU_core(cudaStream_t stream, int flag = 0x0) {}
+};
+typedef std::shared_ptr<PIPE_Optimizer> hPipeOpt;
+
+template <typename Tp, typename Tmv>
+// struct PIPE_Adamw : public MODEL_CARD {
+struct PIPE_Adamw : public PIPE_Optimizer {
+    // GTensor *tensor = nullptr;
+    // string name;
+    // float *tmp = nullptr;
+
+    Tp *params, *grads0, *paramX = nullptr;
+    Tmv *gm = nullptr;
+    Tmv *gv = nullptr;
+    float beta1, beta2, beta1_correction, beta2_correction, eps;
+
+    PIPE_Adamw(Optimizer *hOPT_, int _flags, float _learning_rate, float _beta1, float _beta2, float _eps, float _weight_decay) {
+        hOPT = hOPT_;
+        // num_parameters = _num_parameters, w_stride = _w_stride, g_stride = _g_stride, s_stride = _s_stride;
+        flags = _flags, learning_rate = _learning_rate, beta1 = _beta1, beta2 = _beta2, eps = _eps, weight_decay = _weight_decay;
+        //  grad_scale = _grad_scale, grad_norm = _grad_norm, seed = _seed;
+        // lr_0 = learning_rate;
     }
 
-    virtual void Update(GTensor *tensor_, int flag = 0x0) {
+    void Update(GTensor *tensor_, float wd, float _grad_scale, unsigned int _seed, int flag = 0x0) override {
         tensor = tensor_;
-        name   = tensor->name;
+        assert(tensor != nullptr);
+        num_parameters = tensor->size();
+        w_stride = num_parameters, g_stride = num_parameters, s_stride = num_parameters;
+        name       = tensor->name;
+        flags      = tensor->flags;
+        grad_scale = _grad_scale, grad_norm = tensor->gnorm, seed = _seed;
+        weight_decay  = wd;
+        learning_rate = hOPT->LearningRate();
+        iter          = hOPT->GetITER();
+        arrNorm       = (float *)GTensor::buff;
+        assert(arrNorm != nullptr);
+
         params = (Tp *)(tensor->data), grads0 = (Tp *)(tensor->grad);
         gm = (Tmv *)tensor->gm, gv = (Tmv *)tensor->gv;
         // tile_r0 = tensor->tile_r0,tile_c0= tensor->tile_c0;
@@ -72,14 +80,46 @@ struct PIPE_Optimizer : public MODEL_CARD {
         memcpy(ne, tensor->ne, sizeof(ne));
         isBitParam = BIT_TEST(tensor->flags, GTensor::F_TERNARY);
         if (isBitParam) {
-            assert(tensor->is2D());      // only for 2D weight
-            learning_rate *= 3;  //  1-bit models often exhibit greater training stability compared to their full-precision counterparts, allowing for more
-                                 //  aggressive initial learning steps.
+            assert(tensor->is2D());  // only for 2D weight
+            learning_rate *= 3;      //  1-bit models often exhibit greater training stability compared to their full-precision counterparts, allowing for more
+                                     //  aggressive initial learning steps.
             paramX = ToX(GTensor::tmpTernary);
             gama_T = tensor->gama_T();
         }
         tpQuant = tensor->tpQuant;
     }
+
+    void CU_core(cudaStream_t stream, int flag = 0x0) override;
+};
+
+template <typename Tp, typename Tmv>
+struct PIPE_Muon : public PIPE_Adamw<Tp, Tmv> {
+    Tp *params, *grads0, *paramX = nullptr;
+    float mui = 1.0, eps = 1e-7;
+    float a = 3.4445, b = -4.7750, c = 2.0315;
+    int most_iter = 5, ldAB = 0;                                                 //  A[ldAB:ldAB]
+    Tmv *mG = nullptr, *A = nullptr, *B = nullptr, *BX = nullptr, *X = nullptr;  //  mG - Momentum matrix
+    PIPE_Muon(Optimizer *hOPT_, int _flags, float _learning_rate, float _beta1, float _beta2, float _eps, float _weight_decay)
+        : PIPE_Adamw<Tp, Tmv>(hOPT_, _flags, _learning_rate, _beta1, _beta2, _eps, _weight_decay) {
+        ldAB = this->hOPT->TrainParams().muon.ldAB;
+    }
+
+    void Update(GTensor *tensor_, float wd, float _grad_scale, unsigned int _seed, int flag = 0x0) override {
+        PIPE_Adamw<Tp, Tmv>::Update(tensor_, wd, _grad_scale, _seed, flag);
+        mG = (Tmv *)this->tensor->gm;
+        assert(GTensor::buff != nullptr);
+        size_t offset = 0;
+        this->arrNorm = (float *)GTensor::buff, offset += sizeof(float) * 8;
+        cudaCheck(cudaMalloc(&(this->arrNorm), sizeof(float) * 8));
+        A  = (Tmv *)((char *)(GTensor::buff) + offset), offset += sizeof(Tmv) * ldAB * ldAB;
+        B  = (Tmv *)((char *)A + offset), offset += sizeof(Tmv) * ldAB * ldAB;
+        BX = (Tmv *)((char *)B + offset), offset += sizeof(Tmv) * tensor_->size();
+        X  = (Tmv *)((char *)BX + offset), offset += sizeof(Tmv) * tensor_->size();
+        assert(offset <= GTensor::buff_len);
+        // assert(this->tensor->gv == nullptr);
+    }
+
+    void CU_core(cudaStream_t stream, int flag = 0x0) override;
 };
 
 #define PROF_TOKEN(bytes) ((0xCDAFull << 48) | (bytes))

@@ -614,7 +614,8 @@ struct TokenEmbed : public SparseNeuron {
     hGensor wInv = nullptr;
     virtual bool SetMAEC(hMAEC maec, int flag = 0x0);
     hMAEC maec = nullptr;
-
+    Grusoft::GRander rRounding;
+    
     TokenEmbed() {}
     TokenEmbed(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag);
     virtual ~TokenEmbed();

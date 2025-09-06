@@ -427,7 +427,7 @@ bool Fish::LoadCheckPoint(int flag) {
         }
 
         _INFO("[CHECKPOINT]: load \"%s\", type=\"%s\" ......", fpCheck.c_str(), type.c_str());
-        if (type == "fish") {
+        if (type == "fish" || type == "fuyou") {
             isLoadCheckpoint = SAFETENSOR_Serialize(config.checkpoint.in, false, 0x0);
         } else if (type == "calm") {
             isLoadCheckpoint = CALM_Serialize(config.checkpoint.in, false, 0x0);

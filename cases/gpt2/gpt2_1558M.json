@@ -2,6 +2,12 @@
     "version": "0.1.0",
     "model": {
         "arch": "GPT2",
+        "fuyou":{
+            "branch":8, "switch":100,
+            "#method":["pso","mix","ga","pso_ga"],
+            "method":"pso_ga",
+            "crossover":0.6, "mutation":0.001, "social":2
+        },
         "datatype": {
             "weight": "BF16",
             "embed": "BF16",
@@ -52,7 +58,7 @@
             "glob": "./Datasets/edu_fineweb1B/*val*.bin",
             "name": "edu_fineweb1B",
             "most": 10,
-            "eval-every": 100
+            "eval-every": 200,"samp":0.04
         },
         "#eval_2": {
             "glob": "./Datasets/hellaswag_val.bin",
@@ -64,9 +70,8 @@
         "save-every": 500,
         "dump-every": 10,
         "gpt-every": -10,
-        "branch": 6,
-        "epoch": 2,
-        "batch": 40,
+        "epoch": 1,
+        "batch": 80,
         "learning-rate": 0.0006,
         "decay": 0.1,
         "optimizatioin": {
@@ -80,7 +85,7 @@
     },
     "# checkpoint-in": "./hy-tmp/checkpoint/chk-GPT2_9001.gguf",
     "checkpoint-out": "./hy-tmp/checkpoint/GPT2_1558M_",
-    "# model-out": "gpt2_cys.gguf",
+
     "threads": 20,
     "seed": 42
 }
