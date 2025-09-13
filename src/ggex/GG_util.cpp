@@ -270,7 +270,10 @@ void train_print_usage(int argc, char **argv, const struct CLI_params *params) {
 bool CLI_params::operator!=(const CLI_params &other) const { return memcmp(this, &other, sizeof(other)); }
 
 DEUG_SWITCH DEBUG;
-void DEUG_SWITCH::Dump(int typ) { _INFO("[DEBUG]: gemm=%d classifier=%d\n", T_GEMM, T_classifier_ver); }
+void DEUG_SWITCH::Dump(int typ) {
+    _INFO("[DEBUG]: gemm=%d classifier=%d", T_GEMM, T_classifier_ver);
+    _INFO("\n");
+}
 void CLI_params::Dump(int flag) {
     if (flag == 0x100) {  // only dump jConfig
         std::ofstream file("_koifish_tmp_config_.json");
@@ -490,6 +493,7 @@ bool SKDU_params::canSave(int iter, int flag) const {
 }
 
 bool Fuyou_params::Init(CLI_params *hConfig, const JSON &jConfig, int flag) {
+    filter_reload = {"ffn", "attn.wq", "attn.wk", "attn.wv", "attn.wo"};
     nLayerInBranch = jKV(jConfig, {"model", "fuyou", "branch"}, nLayerInBranch);
     if (nLayerInBranch <= 0)
         return false;
@@ -517,7 +521,18 @@ bool Fuyou_params::Init(CLI_params *hConfig, const JSON &jConfig, int flag) {
     if (ensemble == Fuyou_params::MULTI_SCALE) {
         LIB_iter_switch = 1;
     }
+    if (nBranch > 1) {
+        paramIsGuoke = true;    //DEBUG.x_str.empty();  // Reduce memory greaty, for example @@@0801_774M_section=9.info
+    } else {
+        paramIsGuoke = false;
+    }
     return true;
+}
+
+bool Fuyou_params::isFirst(int layer, int flag) {
+    if (layer <= nLayerInBranch)
+        return true;
+    return false;
 }
 
 // Deprecated
@@ -561,13 +576,14 @@ void CLI_params::OnMostToken(size_t nMost, int flag) {
 }
 
 void SKDU_params::Dump(int typ) const {
-    _INFO("[Scheduling] MEM_STRATEGY=%s UpdateParam=V%d %s\n", MEM_STRATEGY_desc[strategy].c_str(), isUpdateParamV0() ? 0 : 1,
-          paramIsGuoke ? "\"Only cur params in GPU-memor!\"" : "\"All params in GPU-memory\"");
+    _INFO("[Scheduling] MEM_STRATEGY=%s UpdateParam=V%d\n", MEM_STRATEGY_desc[strategy].c_str(), isUpdateParamV0() ? 0 : 1);
 }
 
 void Fuyou_params::Dump(int typ) const {
     string sType[] = {"AGGREGATION", "BEST", "RANDOM_1", "MULTI_SCALE"};  //@MODEL_ENSEMBLE
-    _INFO("algorithm=%d ensembler=\"%s\" nSwitch=%d\n", algorithm, sType[ensemble].c_str(), LIB_iter_switch);
+    string sAlgo = Algo2Name.at(algorithm);
+    _INFO("Explorer=[%s] ensembler=\"%s\" nSwitch=%d %s\n", sAlgo.c_str(), sType[ensemble].c_str(), LIB_iter_switch,
+          paramIsGuoke ? "\"Only cur fuyou's params in GPU-memor!\"" : "\"All params in GPU-memory\"");
 }
 
 // LORA_ADAPT_W HIERARCH_LoRA::tpLORA = HIERARCH_LoRA::W_AB;      //  W0, AB, W_AB
@@ -599,9 +615,9 @@ void CLI_params::OnArch() {
             // DEBUG.cmd_p1 = 1;
             tpLORA = LORA_ADAPT_W::W0;  // refW_AB      W_AB
             if (tpLORA != LORA_ADAPT_W::W0) {
-                scheduling.paramIsGuoke = true;  //
+                fuyou.paramIsGuoke = true;  //
             }
-            // scheduling.paramIsGuoke = true;         // Reduce memory greaty, for example @@@0801_774M_section=9.info
+
             DEBUG.T_fuyou = 1;
             // fuyou.algorithm        = Fuyou_params::PARTICLE_SWARM;  //  PARTICLE_SWARM  GENE_MIX
             // fuyou.LIB_iter_switch  = 100;                           // 100,10
@@ -641,8 +657,6 @@ void CLI_params::OnArch() {
         case NLP_QWEN2:
             // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;  // 5.89 tps
             // scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;      //  6.53 tps
-            scheduling.paramIsGuoke = true;
-
             model.isSeparateQKV = true, model.isBqkv = true;
             model.sNorm = ".norm", model.sLayer = "layers.";
             model.isEmbedWeightTying = true;  //  why false would cause nan
@@ -665,11 +679,7 @@ void CLI_params::OnArch() {
 TRAIN_CARD get_default_train_params_common() {
     TRAIN_CARD params;
     // params.print_usage = false;
-
-    params.save_every = 10;
-
     params.seed = -1;
-
     params.n_ctx                   = 128;
     params.n_threads               = 6;
     params.n_batch                 = 8;
@@ -747,7 +757,7 @@ bool TRAIN_CARD::Init(CLI_params *hConfig, const JSON &jConfig, int flag) {
     adam.decay              = jKV(jConfig, {"train", "decay"}, adam.decay);
     n_gradient_accumulation = jKV(jConfig, {"train", "optimizatioin", "grad_accumulation"}, n_gradient_accumulation);
 
-    save_every = jKV(jConfig, {"train", "save-every"}, save_every);
+
     dump_every = jKV(jConfig, {"train", "dump-every"}, dump_every);
     // eval_every = jKV(jConfig,{"train","eval-every"},eval_every );
     gpt_every = jKV(jConfig, {"train", "gpt-every"}, gpt_every);
@@ -784,13 +794,7 @@ bool CLI_params::InitJConfig(int flag) {
 
         std::string s = jConfig.dump(), s0;
         common.Init(this, jConfig);
-        /*common.n_batch   = jKV(jConfig, {"train", "batch"}, common.n_batch);
-        common.n_epochs  = jKV(jConfig, {"train", "epoch"}, common.n_epochs);
-        common.nMostIter = jKV(jConfig, {"train", "adam-iter"}, common.nMostIter);
-        // why large "learning-rate" would fail, so strange!
-        common.adam.alpha              = jKV(jConfig, {"train", "learning-rate"}, common.adam.alpha);
-        common.adam.decay              = jKV(jConfig, {"train", "decay"}, common.adam.decay);
-        common.n_gradient_accumulation = jKV(jConfig, {"train", "optimizatioin", "grad_accumulation"}, common.n_gradient_accumulation);*/
+
         lars_ratio = jKV(jConfig, {"train", "optimizatioin", "lars_ratio"}, lars_ratio);
         ZMUV_ratio = jKV(jConfig, {"train", "optimizatioin", "ZMUV_ratio"}, ZMUV_ratio);
 
@@ -824,21 +828,7 @@ bool CLI_params::InitJConfig(int flag) {
 
         model.InitHF(this, jConfig);
 
-        n_swarm = jKV(jConfig, {"train", "swarm"}, 1);
-        // common.save_every = jKV(jConfig, {"train", "save-every"}, common.save_every);
-        // common.dump_every = jKV(jConfig, {"train", "dump-every"}, common.dump_every);
-        // // common.eval_every = jKV(jConfig,{"train","eval-every"},common.eval_every );
-        // common.gpt_every = jKV(jConfig, {"train", "gpt-every"}, common.gpt_every);
-        // // common.eval_every = common.eval_every<=0 ? 100000000 : common.eval_every;
-        // // if( eval_every>0 ){
-        // //     _INFO("\r\n%s  eval@every %d steps.",__func__,eval_every );
-        // // }
-        // common.rSubSample = jKV(jConfig, {"train", "sample"}, common.rSubSample);
-        // if (common.rSubSample < 0)
-        //     common.rSubSample = 1;
-        // if (common.rSubSample < 1) {
-        //     common.lr_restart = 1;
-        // }
+        n_swarm = jKV(jConfig, {"train", "swarm"}, 1);        
 
         // common.seed = jKV(jConfig, {"seed"}, common.seed);
         wiki_actor  = jKV(jConfig, {"wiki", "actor"}, wiki_actor);
@@ -856,15 +846,10 @@ bool CLI_params::InitJConfig(int flag) {
         } else {
         }
 
-        // common.custom_n_ctx = true;
-        // common.n_threads    = jKV(jConfig, {"threads"}, common.n_threads);
-        // common.n_gpu_layers = jKV(jConfig, {"n-gpu-layers"}, common.n_gpu_layers);
-
-        // _embd = jKV(jConfig,{"wiki","embd"},_embd );
-
         checkpoint.model_out = jKV(jConfig, {"model-out"}, checkpoint.model_out);
-        checkpoint.in        = jKV(jConfig, {"checkpoint-in"}, checkpoint.in);
-        checkpoint.out       = jKV(jConfig, {"checkpoint-out"}, checkpoint.out);
+        checkpoint.in        = jKV(jConfig, {"checkpoint","in"}, checkpoint.in);
+        checkpoint.out       = jKV(jConfig, {"checkpoint","out"}, checkpoint.out);
+        checkpoint.save_every = jKV(jConfig, {"checkpoint", "save-every"}, checkpoint.save_every);
 
         // f_norm_rms_eps = jKV(jConfig,{"norm-rms-eps"},f_norm_rms_eps );
         // rope_freq_base = jKV(jConfig,{"rope-freq-base"},rope_freq_base );
@@ -886,7 +871,9 @@ bool CLI_params::InitJConfig(int flag) {
         */
         // tune   = jKV(jConfig, {"lora", "tune"}, tune);    //"lora_tune"
         // lora_r = jKV(jConfig, {"lora", "rank"}, lora_r);  //{"lora-r"}
-
+        
+        DEBUG.x1 = jKV(jConfig, {"debug", "x"}, DEBUG.x1);
+        DEBUG.x_str = jKV(jConfig, {"debug", "x_str"}, DEBUG.x_str);
         // train = jKV(jConfig,{"train"},train );
         return true;
     } catch (JSON::parse_error &e) {

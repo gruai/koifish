@@ -179,7 +179,7 @@ __global__ void CU_adamw_p(PIPE_Adamw<Tp, Tmv> pipe) {
     float x = _adamw_idx((float)pipe.params[idx], pipe, m, v, idx), x2 = x * x;
     pipe.params[idx] = x;
     float block_sum  = blockReduce_v0<warpReduceSum>(x2, true);
-    if (threadIdx.x==0)     //  idx == 0
+    if (threadIdx.x == 0)  //  idx == 0
         atomicAdd(pipe.arrNorm, block_sum);
 }
 
@@ -370,6 +370,13 @@ bool Fuyou::Exploitation(hGensor tHead, hGensor tNext, int flag) {
     int nParam = tHead->size(), dT4B = 512, M = tHead->ne[0], N = tHead->ne[1], nRander = M;  //
     // int dGRID = CEIL_DIV(nParam, dT4B);
     int mGRID = CEIL_DIV(M, dT4B), pGRID = CEIL_DIV(nParam, dT4B);
+    bool isReload = BIT_TEST(tNext->flags, GTensor::F_RELOAD);
+    floatX* x     = ToX(tNext);
+    if (isReload) {
+        x = (floatX*)GTensor::buff;  // load x from mmap
+        tNext->Serial_MMAP_x((void*)x, false);
+    } else {
+    }
     float T_scale = tNext->wnorm == 0 ? 1.0 : tNext->wnorm / M / N;
     curandState* d_states;
     cudaCheck(cudaMalloc(&d_states, nRander * sizeof(curandState)));
@@ -380,25 +387,27 @@ bool Fuyou::Exploitation(hGensor tHead, hGensor tNext, int flag) {
         case Fuyou_params::NO_EVOL:
             break;
         case Fuyou_params::GENE_MIX:
-            CU_mix_<<<pGRID, dT4B, 0, main_stream>>>(params.alpha, ToX(tNext), 1.0 - params.alpha, ToX(tHead), nParam);
+            CU_mix_<<<pGRID, dT4B, 0, main_stream>>>(params.alpha, x, 1.0 - params.alpha, ToX(tHead), nParam);
             break;
         case Fuyou_params::GENE_MUTATION:
-            // CU_mutation_<<<mGRID, dT4B, 0, main_stream>>>(d_states, T_mutation, ToX(tNext), nParam, N);
+            // CU_mutation_<<<mGRID, dT4B, 0, main_stream>>>(d_states, T_mutation, x, nParam, N);
             break;
         case Fuyou_params::PARTICLE_GENETIC:
-            CU_PSO_2D<<<mGRID, dT4B, 0, main_stream>>>(d_states, params.alpha, ToX(tNext), params.social, ToX(tHead), nParam, N);
-            // CU_mutation_<<<mGRID, dT4B, 0, main_stream>>>(d_states, params.T_mutation,T_scale, ToX(tNext), ToX(tHead), nParam, N);
+            CU_PSO_2D<<<mGRID, dT4B, 0, main_stream>>>(d_states, params.alpha, x, params.social, ToX(tHead), nParam, N);
+            // CU_mutation_<<<mGRID, dT4B, 0, main_stream>>>(d_states, params.T_mutation,T_scale, x, ToX(tHead), nParam, N);
             // why T_crossover=0.6 is still effective
-            CU_crossover_<<<mGRID, dT4B, 0, main_stream>>>(d_states, params.T_crossover, ToX(tNext), ToX(tHead), nParam, N);
+            CU_crossover_<<<mGRID, dT4B, 0, main_stream>>>(d_states, params.T_crossover, x, ToX(tHead), nParam, N);
             break;
         case Fuyou_params::PARTICLE_SWARM:
         default:
-            // CU_mix_<<<dGRID, dT4B, 0, main_stream>>>(alpha, ToX(tNext), beta, ToX(tHead), nP);
-            CU_PSO_2D<<<mGRID, dT4B, 0, main_stream>>>(d_states, params.alpha, ToX(tNext), params.social, ToX(tHead), nParam, N);
+            // CU_mix_<<<dGRID, dT4B, 0, main_stream>>>(alpha, x, beta, ToX(tHead), nP);
+            CU_PSO_2D<<<mGRID, dT4B, 0, main_stream>>>(d_states, params.alpha, x, params.social, ToX(tHead), nParam, N);
             break;
     }
     cudaCheck(cudaFree(d_states));
-
+    if (isReload) {
+        tNext->Serial_MMAP_x((void*)x, true);  // save x to mmap
+    }
     return true;
 }
 
@@ -427,6 +436,8 @@ void PIPE_Muon<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
     int dT4B = 512, dGRID = CEIL_DIV(this->num_parameters, dT4B);
     D20(this->arrNorm, sizeof(float) * 1);
     // D2e(this->arrNorm, xNrm);
+    // PrintTensor<floatX>("grads0", (floatX*)(paramX), true, m,n,1,1,-1);
+    PrintTensor<floatX>("grads0", (floatX*)(grads0), true, m, n, 1, 1, -1);
     CU_muon_mG<<<dGRID, dT4B, 0, stream>>>(*this);
     D2e(this->arrNorm, xNrm);
     alpha = beta = 1.0 / (xNrm + eps);
@@ -436,7 +447,7 @@ void PIPE_Muon<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
     }
 
     cublasOperation_t opT = CUBLAS_OP_T, opN = CUBLAS_OP_N;
-    //X = G.bfloat16()    X /= (X.norm() + eps)
+    // X = G.bfloat16()    X /= (X.norm() + eps)
     cublasAxpyEx(cublas_handle, m * n, &alpha, CUDA_R_16BF, mG, CUDA_R_16BF, 1, X, CUDA_R_16BF, 1, CUDA_R_16BF);
     for (int i = 0; i < most_iter; i++) {
         //     A = X @ X.T
@@ -451,7 +462,7 @@ void PIPE_Muon<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
                      CUBLAS_GEMM_DEFAULT);
         //  X = a*X + BX
         cublasAxpyEx(cublas_handle, m * n, &a, CUDA_R_16BF, X, CUDA_R_16BF, 1, BX, CUDA_R_16BF, 1, CUDA_R_16BF);
-        cudaMemcpy(BX, X, sizeof(Tmv)*m*n, cudaMemcpyDeviceToDevice);   //cudaMemcpyAsync        
+        cudaMemcpy(BX, X, sizeof(Tmv) * m * n, cudaMemcpyDeviceToDevice);  // cudaMemcpyAsync
     }
     if (isTrans) {  // if G.size(0) > G.size(1):
         //     X = X.T
@@ -468,7 +479,7 @@ template struct PIPE_Adamw<floatX, floatMV>;  // Force compilation
 template <typename Tp, typename Tmv>
 void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
     // cudaError_t err       = cudaSuccess;
-    int64_t ne[4]    = {ne[0], ne[1], ne[2], ne[3]};
+    // int64_t ne[4]    = {ne[0], ne[1], ne[2], ne[3]};
     int dT4B         = 512;  //  1024?
     int dGRID        = CEIL_DIV(num_parameters, dT4B);
     size_t smemPB    = 1024 * sizeof(float);

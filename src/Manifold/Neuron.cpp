@@ -350,11 +350,8 @@ bool SLP::Build(int flag) {
     } else {
         assert(0);
     }
-    // if(BIT_TEST(flag,F_GRADREF))
-    // if(w->size()<=GTensor::tmpGW->size())
-    //     w->grad_ref = GTensor::tmpGW;
-    // else{
-    //     int debug = 0x0;
+    // if (isStrMatch(name,hFish->config.filter_tmp_grad)) {  //  ,"attn.wq","attn.wk","attn.wv","attn.wo"
+    //     BIT_SET(w->flags, GTensor::F_TMP_GRAD);
     // }
     string sw = name + MODEL_CARD::sWeight, sb = name + ".bias", so = name + ".out";
     bool isTrain = hFish->isTrain();
@@ -760,7 +757,7 @@ hGensor GeNeuron::AfterMing(RLS_BP *hRLS, hGensor cur, int flag) {
                 //     int bug = 0x0;
                 // }
                 for (auto t : PickGensors()) {
-                    if (t->isRefer() || !t->isParam())  //
+                    if (!t->needUpdateParam )  //t->isRefer() || !t->isParam()
                         continue;
                     hOPT->UpdateTensorParam(t, nullptr, 0.0);
                     hRLS->SetTensorStatus(hOPT->GetITER(), t, TASK_STATUS::UPDATE_PARAM);
@@ -839,7 +836,7 @@ hGensor GeNeuron::GetGensor(const std::string &key, int flag) {
 };
 
 // 天地本逆旅, 你我皆过客(Guoke)
-int GeNeuron::SetGuoke(GeNeuron *hGuoke_, bool isRefParam, int flag) {
+int GeNeuron::SetGuoke(GeNeuron *hGuoke_, bool isX, int flag) {
     size_t szG = 0;
     std::vector<hGensor> gSrc, arrP = PickGensors(false);
     if (hGuoke_ != nullptr) {
@@ -864,8 +861,11 @@ int GeNeuron::SetGuoke(GeNeuron *hGuoke_, bool isRefParam, int flag) {
             assert(gSrc[i]->isParam());
             t->fuyous.push_back(gSrc[i]);
             gSrc[i]->fuyous.push_back(t);
-            if (!isRefParam)
+            if (hFish->config.fuyou.paramIsGuoke && BIT_TEST(t->flags,GTensor::F_RELOAD)){
+                int debug = 0x0;
+            }   else
                 continue;
+            
 
             // if (!G_Has_(t->name, {"mlp.w1.weight"}))
             //     continue;

@@ -70,7 +70,7 @@ struct PIPE_Adamw : public PIPE_Optimizer {
         weight_decay  = wd;
         learning_rate = hOPT->LearningRate();
         iter          = hOPT->GetITER();
-        arrNorm       = (float *)GTensor::buff;
+        arrNorm       = (float *)GTensor::stat_info;
         assert(arrNorm != nullptr);
 
         params = (Tp *)(tensor->data), grads0 = (Tp *)(tensor->grad);

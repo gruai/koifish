@@ -268,11 +268,13 @@ int HIERARCH_LoRA::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, int flag
     return 0x0;
 }
 
-int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, int flag) {
+int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, bool isAccumuDelta, int flag) {
     try {
-        // w->isUpdateParam = false;
+        size_t szBuf = 0x0;
+        w->BeforeBackward(szBuf, true);
         floatX *wX = w->GetDataX(), *gW = ToG(w);
-        float *dbias_buffer = (float *)GTensor::buff;
+        float *dbias_buffer = (float *)((char*)GTensor::buff + szBuf);
+
         int OC = nOut, IC = nIn;
         assert(delta != nullptr);
         // assert(inp->isSameShape({B, T, IC}) && deltaIn->isSameShape({B, T, OC}));
@@ -290,23 +292,22 @@ int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, 
 
         switch (compression) {
             case SAMPLE:
-                matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu));
+                matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu),isAccumuDelta);
                 subw->SubW(hSamps, false, GTensor::tmpGW, samp_type);
                 break;
             case LORA:
                 if (tpLORA != LORA_ADAPT_W::AB && tpLORA != LORA_ADAPT_W::refW_AB)
-                    matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu));
+                    matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu),isAccumuDelta);
                 if (tpLORA != LORA_ADAPT_W::W0)
                     for (auto lora : wLORAs) {
                         lora->Back(delta, inp, deltaIn, flag);
                     }
                 break;
             default:
-                matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu));
+                matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu),isAccumuDelta);
                 break;
         }
 
-        // if(w->grad_ref!=nullptr)
         if (flag != 0x100)
             w->Dogleg(-1);
 
@@ -315,6 +316,25 @@ int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, 
         assert(0);
         return -1;
     }
+}
+
+bool SLP::PrepareMemory(bool isBack, int flag) {
+    /*assert(isBack);
+    int m = w->ne[0], n = w->ne[1];
+    if (BIT_TEST(w->flags, GTensor::F_TMP_GRAD)) {
+        size_t off = 0;
+        w->grad    = (floatX *)GTensor::buff, off += w->szGrad;
+        w->BeforeBackward();
+        gW           = w->grad;
+        dbias_buffer = (float *)(GTensor::buff + off), off += sizeof(float) * m;
+        assert(off < GTensor::buff_len);
+    } else {
+        //
+        gW           = ToG(w);
+        dbias_buffer = (float *)GTensor::buff;
+    }*/
+
+    return true;
 }
 
 floatX *GTensor::GetDataX(int flag, const string &sX) {
@@ -570,7 +590,7 @@ hGTensor OutCLS::cuTrain(hGTensor inp_, int flag) {
             off = 0;  // reduce memory
             // PrintTensor<floatX>("OutCLS.proj.w", w->GetDataX(), true, w->ne[0], w->ne[1], w->ne[2], w->ne[3], -1);
             // [50304,768] x [768,8192] => [50304,8192]
-            hGensor subZ = inp->Partial(nZ, {dB, T, C}), subDelta = delta->Partial(nZ, {dB, T, C});
+            hGensor subZ = inp->Partial("partialZ",nZ, {dB, T, C}), subDelta = delta->Partial("partialDeltaZ",nZ, {dB, T, C});
             proj.Forw(cur, subZ);
             // CU_mm_(ToX(cur) + off, w, z0 + nZ, NULL, Vp, dB * T, C, main_stream, true, false, false);
             // SYNC_DEVICE();
@@ -581,7 +601,7 @@ hGTensor OutCLS::cuTrain(hGTensor inp_, int flag) {
                 fused_classifier_kernel5<<<dB * T, 1024, 0, main_stream>>>(ToX(cur) + off, cuLoss + n1, nullptr, rLoss, targets + n1, dB, T, V, Vp,
                                                                            write_dlogits);
             if (isBack) {                                        //  back of delta & grad
-                proj.Back(subDelta, subZ, cur, nullptr, 0x100);  // hGTensor delta, hGTensor inp, hGTensor deltaIn
+                proj.Back(subDelta, subZ, cur, nullptr, false, 0x100);  // hGTensor delta, hGTensor inp, hGTensor deltaIn
                 // CU_mm_(ToX(delta) + nZ, w, ToX(cur) + off, NULL, C, dB * T, Vp, main_stream, 0, 0, 0, gelu_fusion >= 2 ? to_gelu : NULL, true);
                 // CU_mm_blasLt(ToG(w), z0 + nZ, ToX(cur) + off, NULL, C, Vp, dB * T, main_stream, false, true, alpha4g, beta4g /* accumulate */, NULL, true);
             }

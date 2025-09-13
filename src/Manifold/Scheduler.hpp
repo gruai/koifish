@@ -195,10 +195,13 @@ class Fuyou {
     vector<TaskNode *> tasks;
     RLS_BP *hRLS = nullptr;
     Fish *hFish  = nullptr;
-    vector<hGensor> optParams;  // from Fish::optParams
+    vector<hGensor> fParams;    // from Fish::optParams
+    vector<hGensor> tReloads;   //  subset of fParams
    public:
     // Fuyou() {}
     Fuyou(const string &name, RLS_BP *hRL, Fish *hFish, vector<TaskNode *> arrT, int flag = 0x0);
+    virtual bool Serialize(bool isSave, int flag = 0x0);
+
     vector<TaskNode *> Tasks(int flag = 0x0) { return tasks; }
     virtual bool empty() { return tasks.size() == 0; }
     virtual void Clear() { tasks.clear(); }

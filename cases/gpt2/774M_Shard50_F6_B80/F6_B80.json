@@ -2,11 +2,19 @@
     "version": "0.1.0",
     "model": {
         "arch": "GPT2",
-        "fuyou":{
-            "branch":6, "switch":100,
-            "#method":["pso","mix","ga","pso_ga"],
-            "method":"pso_ga",
-            "crossover":0.6, "mutation":0.001, "social":2
+        "fuyou": {
+            "branch": 6,
+            "switch": 100,
+            "#method": [
+                "pso",
+                "mix",
+                "ga",
+                "pso_ga"
+            ],
+            "method": "pso_ga",
+            "crossover": 0.6,
+            "mutation": 0.001,
+            "social": 2
         },
         "datatype": {
             "weight": "BF16",
@@ -16,17 +24,21 @@
                 "attn.wq.weight",
                 "attn.wk.weight",
                 "attn.wv.weight",
-                "attn.wo.weight",
-                "ffn_down.weight",
-                "ffn_up.weight"
+                "attn.wo.weight"
             ],
             "#tile": [
-                
+                "ffn_down.weight",
+                "ffn_up.weight"
             ]
         },
         "parameter": {
-            "Layer": 48,  
-            "transformer":{                "Ctx":1024,  "Embed":    1600,    "Head": 25,   "Ffn":6400            }
+            "Layer": 36,
+            "transformer": {
+                "Ctx": 1024,
+                "Embed": 1280,
+                "Head": 20,
+                "Ffn": 5120
+            }
         },
         "inp_embd": {
             "Embedding+": []
@@ -52,43 +64,42 @@
     "datasets": {
         "train": {
             "glob": "./Datasets/edu_fineweb1B/*train*.bin",
-            "most": 20,
+            "most": 50,
             "name": "edu_fineweb1B"
         },
         "eval_1": {
             "glob": "./Datasets/edu_fineweb1B/*val*.bin",
             "name": "edu_fineweb1B",
             "most": 10,
-            "eval-every": 200,"samp":0.04
+            "eval-every": 200,
+            "samp": 0.04
         },
         "#eval_2": {
             "glob": "./Datasets/hellaswag_val.bin",
             "type": "hellaswag",
-            "eval-every": 1000
+            "eval-every": 500,
+            "samp": 0.04
         }
     },
     "train": {
+        "save-every": 500,
         "dump-every": 10,
         "gpt-every": -10,
         "epoch": 1,
-        "batch": 64,
-        "learning-rate": 0.0006,
+        "batch": 80,
+        "learning-rate": 0.001,
         "decay": 0.1,
         "optimizatioin": {
-            "#method": "adamw sgdv hsgd lion adams",
+            "#method": "adamw sgdv hsgd lion",
             "method": "adamw",
             "sign": 0,
             "grad_accumulation": 1,
             "lars_ratio": 0,
-            "ZMUV_ratio": 0.00
+            "ZMUV_ratio": 0.0
         }
     },
-    "checkpoint":{        
-        "save-every":-500,
-        "# in": "./hy-tmp/checkpoint/chk-GPT2_9001.gguf",
-        "out": "./hy-tmp/checkpoint/GPT2_1558M_"
-    },
-
+    "# checkpoint-in": "./hy-tmp/checkpoint/chk-GPT2_9001.gguf",
+    "checkpoint-out": "./hy-tmp/checkpoint/GPT2_774M_",
     "threads": 20,
     "seed": 42
 }

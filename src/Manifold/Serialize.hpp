@@ -15,6 +15,10 @@ class FSerial{
     FILE *_stream=NULL;
     bool _valid = false;
 public:
+    enum STATUS {
+        INIT_MMAP = 0x100,
+    };
+
     FSerial(const std::string& sPath,bool isSave,int flag){
     try{
         if(isSave){

@@ -190,14 +190,16 @@ size_t Fish::MostMemSize(int typ) {
 }
 
 bool Fish::UpdateParams(int flag) {
-    size_t nx = 0;
+    size_t nx = 0,nR=0;
     assert(optParams.size() == 0);
     for (auto it : gensors.infos) {
         auto t = it.first;
         if (BIT_TEST(t->flags, GTensor::GTensor::F_PARAM)) {
-            if (t->isRefer())
-                continue;
+            if (t->isRefer()){
+                nR++;   continue;
+            }                
             optParams.push_back(t);
+            t->needUpdateParam = true;
             nx += tELEM(t);  //
         }
     }
@@ -245,18 +247,18 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
     //     CHECK_SAME_TENSORS("Compare parameter tensors\t", optParams, xGensors);
     //     _ERROR("%s nx(%ld)!=nParams(%ld)\t", __func__, nx, nParams);
     // }
-
+    UpdateParams();
     if (isTrain()) {
+        SaveTrain("", true);  //  Init checkpoint
     } else {
         hOPT->SetPhase(LIFE_PHASE::P_EVAL_);
         assert(hBackTG == nullptr);
     }
     RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
-    hRLS->Prepare(-1);  // Memory management
+    hRLS->Prepare(-1);  // Memory management; InitParams of current fuyou!
     for (auto t : hOPT->opt_ps) {
         hRLS->GetTensorStatus(-1, t, 0x0);
     }
-    UpdateParams();
 
     if (tpInitWeight == SERIALIZE) {
         if (!LoadCheckPoint(flag))
@@ -372,42 +374,66 @@ bool Fish::Build(int flag) {
 }
 
 static const char *vendor = "gruai";  // llm_arch_from_string
-bool Fish::SaveTrain(string sX, int flag) {
+bool Fish::SaveTrain(string sX, bool isInit, int flag) {
     assert(hOPT != nullptr);
-    if (config.checkpoint.out.empty()) {
-        return false;
-    }
-    int iter = hOPT->iter;  //     train->opt->iter;
-    // _INFO("%s: iter_%ld\n", __func__, iter);
-    string sit       = "IT", sOut;
-    string sBaseName = config.checkpoint.model_out;  // get_train_filename(.c_str(),sit.c_str(), "", -1  );
-    bool isOK        = false;
-    if (!sX.empty()) {
-        sOut = config.checkpoint.out + sX + ".ck";  //+ std::to_string(iter)
-    } else
-        sOut = config.checkpoint.out + "latest" + ".ck";
-    VERIFY_DIR_EXIST(sOut, true);
+    string sBaseName = config.checkpoint.out, sit = "IT", sOut;
+    if (sBaseName.empty()) {
+        if (isInit) {
+            _INFO("[Save] path is empty! To save model, please set the key of \"checkpoint-out\" in json config file(\"%s\").\n", config.jsPath.c_str());
+            // if (VERIFY_DIR_EXIST(path, true))
+            //     _INFO("[Save] path=\"%s\", save_every=%d\n", path.c_str(), train_params.save_every);
+            // else {
+            //     _INFO("[Save] Invalid path@\"%s\"!\n", path.c_str());
+            // }
 
+            sBaseName = "./hy-tmp/checkpoint/Koifish_";
+        } else
+            return false;
+    }
+    if (!sX.empty()) {
+        sOut = sBaseName + sX + ".ck";  //+ std::to_string(iter)
+    } else
+        sOut = sBaseName + "latest" + ".ck";
+
+    int iter = hOPT->iter, nReload = 0;  //     train->opt->iter;
+    // _INFO("%s: iter_%ld\n", __func__, iter);
+    bool isOK = false;
+    VERIFY_DIR_EXIST(sOut, true);  // always create file
     if (!config.scheduling.canSave(iter, flag)) {
         return false;
     }
-    for (auto t : optParams) {
-        if (!t->isUpdateParam()) {
-            return false;
+    assert(optParams.size() > 0);
+    if (isInit) {
+        if (config.fuyou.paramIsGuoke) {
+            // config.fuyou.filter_reload = {DEBUG.x_str};  //only for debug   "ffn_up.weight" blk.2.ffn_up.weight
+            for (auto t : optParams) {
+                if (isStrMatch(t->name, config.fuyou.filter_reload)) {
+                    // if(t->is2D()){  // why norm woul faile. so strange!
+                        BIT_SET(t->flags, GTensor::F_RELOAD);
+                        nReload++;
+                    // }
+                }
+            }
         }
+        _INFO("[Save] @\"%s\" nParams=%d nReloads=%d  save_every=%d\n", sOut.c_str(), optParams.size(), nReload, config.checkpoint.save_every);
+    }
+    for (auto t : optParams) {
+        
     }
 
-    isOK = SAFETENSOR_Serialize(sOut, true);
+    isOK = SAFETENSOR_Serialize(sOut, true, isInit ? FSerial::INIT_MMAP : 0x0);
     assert(isOK);
-    if (isOK && sX == "warmup") {  // only for debug
-        for (int i = 0; i < 1; i++) {
-            isOK = SAFETENSOR_Serialize(sOut, false);
-            assert(isOK);
-            isOK = SAFETENSOR_Serialize(sOut, true);
-            assert(isOK);
-        }
+    if (isOK && isInit) {
+        isOK = SAFETENSOR_Serialize(sOut, false);  // to set host_data of each tensor
+        // if (sX == "warmup") {   // more profiling
+        //     for (int i = 0; i < 1; i++) {
+        //         isOK = SAFETENSOR_Serialize(sOut, false);
+        //         assert(isOK);
+        //         isOK = SAFETENSOR_Serialize(sOut, true);
+        //         assert(isOK);
+        //     }
+        // }
     }
-    // _INFO("[SAVE] @%s iter=%d\n", sX.c_str(), iter);
 
     return isOK;
 }

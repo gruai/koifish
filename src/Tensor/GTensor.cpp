@@ -8,11 +8,15 @@
  */
 #include "GTensor.hpp"
 
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <unistd.h>
+
 #include "../Manifold/Fish.hpp"
 #include "../ggex/GG_util.hpp"
 
 hGTensor GTensor::outL = nullptr, GTensor::delta = nullptr, GTensor::tmpDelta = nullptr;
-;
+float *GTensor::stat_info = nullptr;
 hGTensor GTensor::bt4c = nullptr, GTensor::scratch = nullptr, GTensor::tmpW = nullptr, GTensor::tmpGW = nullptr, GTensor::tmpFF1 = nullptr,
          GTensor::tmpTernary = nullptr, GTensor::residual = nullptr;
 void *GTensor::buff = nullptr, *GTensor::host_buff = nullptr;
@@ -45,16 +49,15 @@ hGTensor GT(Fish *hFish, typNUMBER type, SHAPE shape, int flag, const string &na
     return hT;
 }
 
-
-bool GTensor::isSameShape(SHAPE sp,int flag) const{
-    assert(sp.size()<=4);
-    size_t nz_0=1,i=0;
-    for(auto s : sp){
-        if(s!=ne[i++])
+bool GTensor::isSameShape(SHAPE sp, int flag) const {
+    assert(sp.size() <= 4);
+    size_t nz_0 = 1, i = 0;
+    for (auto s : sp) {
+        if (s != ne[i++])
             return false;
         nz_0 *= s;
     }
-    if(nz_0!=size())
+    if (nz_0 != size())
         return false;
     return true;
 }
@@ -115,10 +118,10 @@ bool GTensor::ReShape(SHAPE shape_, typNUMBER tpD_, int falg) {
 }
 
 void GTensor::SetRefer(hGTensor hR, int flag) {
-    if(strcmp(name,"model.blk.6.attn.wq.weight")==0){
+    if (strcmp(name, "model.blk.6.attn.wq.weight") == 0) {
         int flag = 0x0;
     }
-    assert(hRef==nullptr);      //  only ref once 
+    assert(hRef == nullptr);  //  only ref once
     hRef = hR;
     hR->refered.push_back(this);
     type = hRef->type;
@@ -134,7 +137,7 @@ bool GTensor::SetTernary(typNUMBER tpT_, int flag) {
         type = tpT_;
         return true;
     }
-    for(auto t : refered){
+    for (auto t : refered) {
         t->type = tpT_;
     }
     return ReShape(shape, tpT_);
@@ -217,7 +220,7 @@ void GTensor::AddSrc(const vector<hGTensor> &ts, int flag) {
         if (t == nullptr)
             continue;
         hGOP hop = std::make_shared<GENSOR_OP>(t);
-        src.push_back(hop);           
+        src.push_back(hop);
     }
 }
 
@@ -229,8 +232,8 @@ void GTensor::Set(float a, int flag) {
         assert(0);
     }
 }
-bool GTensor::OverWrite(struct ggml_tensor *gg_, bool isSrc, int flag) {
 #ifdef __USE_GGML__
+bool GTensor::OverWrite(struct ggml_tensor *gg_, bool isSrc, int flag) {
     assert(size() == ggml_nelements(gg_));
     assert(type == (typNUMBER)gg_->type);
     if (isSrc) {
@@ -238,9 +241,10 @@ bool GTensor::OverWrite(struct ggml_tensor *gg_, bool isSrc, int flag) {
     } else {
         memcpy(gg_->data, data, szData);
     }
-#endif
+
     return true;
 }
+#endif
 
 bool GTensor::OverWrite(hGTensor hGT, bool isSrc, int flag) {
     /*huTensor *src = dynamic_cast<huTensor *>(hGT.get());
@@ -257,6 +261,9 @@ bool GTensor::OverWrite(hGTensor hGT, bool isSrc, int flag) {
 bool GTensor::ShareMemory(hGTensor src, int flag) {
     assert(src != nullptr && src->data != nullptr);
     data = src->data;
+    // if (flag == 0x100) {  //  from GTensor::Serial_MMAP
+    //     return true;
+    // }
 
     if (src->grad != nullptr) {
         grad = src->grad;
@@ -348,12 +355,14 @@ int GTensor::SerialJSON(const std::string &name_, const JSON &val, void *bytes_p
     }
     size_t szSrc = offset_end - offset_start;
     // validate the shape matches the size
-    if (szData != szSrc) {
-        std::cerr << "bad size" << std::endl;
+    if (szData != szSrc && szData * 3 != szSrc) {
+        _INFO("GTensor::SerialJSON failed! size mismach[%ld!=%ld] @%s", szData * 3, szSrc, name);
+        // std::cerr << "bad size" << std::endl;
         return -1;
     }
 
     void *src = (char *)bytes_ptr + offset_start;
+
     // if(G_Has_(name,{"layers.27.mlp.w1.weight"})){   //only for debug    815288320
     //    float *rows = new float[ne[0]];
     //    T2Float_arr(ne[0],(f8e5m2_t*)src,rows);
@@ -373,6 +382,12 @@ int GTensor::SerialJSON(const std::string &name_, const JSON &val, void *bytes_p
                 data = src;
                 BIT_SET(flags, F_MMAP);
             }
+            if (G_Has_(name, {"model.blk.0.attn.wq.weight"})) {  // only for debug
+                /*char *tmpData = new char[szData];
+                memcpy(host_data, tmpData, szData);
+                msync(host_data, szData, MS_SYNC);*/
+                int debug = 0x0;
+            }
         }
     }
     if (strlen(name) > 0 && flag > 0)
@@ -385,9 +400,10 @@ void GTensor::Print(const string &title0, int x, int flag, size_t nEle) const {
         return;
     assert(nEle >= 0);
     bool isDevice = !isAtHost();
-    void *src = x == 1 ? grad : data, *hData = nullptr;
-    if(src==nullptr){
-        _INFO("Failed to print! %s of \"%s\" is nullptr!",x == 1 ? "grad" : "data",name );    
+    void *src = x == 3 ? gv : x == 2 ? gm : x == 1 ? grad : data, *hData = nullptr;
+    string suffix = x == 3 ? "GV_" : x == 2 ? "GM_" : x == 1 ? "GRAD_" : "";
+    if (src == nullptr) {
+        _INFO("Failed to print! %s of \"%s\" is nullptr!", x == 3 ? "gv" : x == 2 ? "gm" : x == 1 ? "grad" : "data", name);
         return;
     }
     if (isDevice) {
@@ -397,9 +413,9 @@ void GTensor::Print(const string &title0, int x, int flag, size_t nEle) const {
         src = hData;
     }
 
-    string title = title0;
-    if (x == 1)
-        title = "GRAD_" + title;
+    string title = suffix + title0;
+    // if (x == 1)
+    //     title = "GRAD_" + title;
     int64_t sp[N_DIMS] = {ne[0], ne[1], ne[2], ne[3]};
     if (nEle > 0 && nEle != ne[0] * ne[1] * ne[2] * ne[3]) {
         sp[0] = nEle, sp[1] = 1;
@@ -526,28 +542,49 @@ bool GTensor::Alloc(int tpInit, int flag) {
         // if(hFish!=nullptr && hFish->isTrain())
         grad = new floatGrad[size()];
     }
+    mem_status = 1;
     return true;
 }
 
-// in many case, params are not update, even data is not allocated!
-bool GTensor::isUpdateParam(int iter,int flag) const{
-    if(data==nullptr)
+/*in many case, params are not update, even data is not allocated!
+bool GTensor::isUpdateParam(int iter, int flag) const {
+    if (data == nullptr)
         return false;
     return true;
-}
+}*/
 
 // scaling coefficient of 1-bit weight, length of gama_T is always ne[0]
-floatGama *GTensor::gama_T() {  
-    if(hRef!=nullptr)
+floatGama *GTensor::gama_T() {
+    if (hRef != nullptr)
         return hRef->gama_T();
     assert(data != nullptr);
-    return reinterpret_cast<floatGama*>((char*)data + szData);
+    return reinterpret_cast<floatGama *>((char *)data + szData);
+}
+
+bool huTensor::BeforeBackward(size_t &off, int flag) {
+    off = 0x0;
+    if (hRef != nullptr)
+        return true;
+
+    assert(szGrad > 0);
+    int m = ne[0], n = ne[1];
+    if (BIT_TEST(flags, GTensor::F_TMP_GRAD)) {
+        grad = (floatX *)GTensor::buff, off += szGrad;
+        // BeforeBackward();
+        D20(grad, szGrad);
+        assert(off < GTensor::buff_len);
+    } else {
+        // gW           = ToG(w);
+        // dbias_buffer = (float *)GTensor::buff;
+    }
+
+    return true;
 }
 
 bool huTensor::Alloc(int iter, int flagInit) {
-    if (strcmp(name, "model.blk.6.attn.wo.weight") == 0
+    if (strcmp(name, "model.blk.4.attn") == 0
         /*|| strcmp(name, "model.embed.weight") == 0*/) {  //  model.inp_embd.weight       model.out.weight model.embed.weight model.blk.0.attn.wq.weight
-        int debug = 0x0;    //  
+        int debug = 0x0;                                   //
     }
 
     size_t sz0 = szGlobalMaloc;
@@ -555,11 +592,14 @@ bool huTensor::Alloc(int iter, int flagInit) {
         return true;
     if (BIT_TEST(flags, F_MMAP))  // For example: operator fusing, memory reuse,rematerialization
         return true;
-    if (hRef != nullptr) {  // Activation or Parameters
-        ShareMemory(hRef);  //  grad => src->grad;
-        if (DUMP(0))
+    if (hRef != nullptr) {  // Activation or Parameters        
+        // if (DUMP(0))
+        if (BIT_TEST(flags, GTensor::F_RELOAD)){
             _INFO("\t%s =====> %s\n", name, hRef->name);
-        return true;
+        }else{
+            ShareMemory(hRef);  //  grad => src->grad;
+            return true;
+        }            
     }
 
     assert(szData > 0 || type == typNUMBER::T_BINARY_TILE);
@@ -569,20 +609,23 @@ bool huTensor::Alloc(int iter, int flagInit) {
         host_data = new char[szData];
     }
     bool allocData = data == nullptr;
-    size_t szMV = sizeof(floatMV) * size(), szGrad = sizeof(floatGrad) * size();
-    szGama = 0x0;
+    szM = sizeof(floatMV) * size(), szV = sizeof(floatMV) * size();
+    szGrad = sizeof(floatGrad) * size(), szGama = 0x0;
     string desc = name;
     if (allocData) {
         if (type == typNUMBER::T_BINARY_TILE) {
             size_t nTile = (size_t)(CEIL_DIV(ne[0], THREAD_TILE_M) * CEIL_DIV(ne[1], THREAD_TILE_N));
             szGama       = sizeof(floatGama) * nTile;
             // Alloc_1((void **)(&gama_T), false, sizeof(float) * nTile);
-            szMV /= THREAD_TILE_M * THREAD_TILE_N;
+            szM /= THREAD_TILE_M * THREAD_TILE_N;
+            szV = szM;
         } else if (BIT_TEST(flags, F_TERNARY)) {
             szGama = sizeof(floatGama) * ne[0];
             // Alloc_1((void **)(&gama_T), false, sizeof(float) * ne[0]);
         }
-        Alloc_1(&data, true, desc+".w",szData + szGama);
+        string suffix = isParam() ? ".w" : ".a";  //  weight or activation
+        Alloc_1(&data, true, desc + suffix, szData + szGama);
+        raw_data = data;
     }
 
     if (isParam()) {
@@ -592,33 +635,33 @@ bool huTensor::Alloc(int iter, int flagInit) {
         }
 
         if (grad == nullptr && isTrain) {
-            if (grad_ref != nullptr)
-                grad = ToX(grad_ref);
-            else {
-                Alloc_1((void **)(&grad), true, desc+".g",szGrad);  // sgd_kernel would zero grad!
+            if (BIT_TEST(flags, F_TMP_GRAD)) {  // grad_ref != nullptrgrad = ToX(grad_ref);
+                grad = nullptr;
+            } else {
+                Alloc_1((void **)(&grad), true, desc + ".g", szGrad);  // sgd_kernel would zero grad!
             }
             string method = hFish->config.Get({"train", "optimizatioin", "method"}, string("adamw"), false);
             if (method == "adamw") {
-                Alloc_1(&gm, true, desc+".mv", szMV * 2), gv = (char *)gm + szMV;
+                Alloc_1(&gm, true, desc + ".m", szM + szV), gv = (char *)gm + szM;
             } else if (method == "lion") {
-                Alloc_1(&gm, true, desc+".mv", szMV);
+                Alloc_1(&gm, true, desc + ".m", szM), szV = 0;
             } else if (method == "muon") {
-                Alloc_1(&gm, true, desc+".mv", szMV * 2), gv = (char *)gm + szMV;
-                // Alloc_1(&gm, true, desc+".mv", szMV);
-            } else if (method == "adams") { // why converge so slow for 1445M?
-                /*if(isStrMatch(name, {"embd","output","norm"})){
-                    Alloc_1(&gm, true, desc+".mv", szMV * 2), gv = (char *)gm + szMV;
-                }else*/
-                    Alloc_1(&gm, true, desc+".mv", szMV);
-            }else {
-                Alloc_1(&gv, true, desc+".mv", szMV);  // gm = nullptr, gv = (char *)grad + szMV;
+                Alloc_1(&gm, true, desc + ".m", szM + szV), gv = (char *)gm + szM;
+                // Alloc_1(&gm, true, desc+".m", szMV);
+            } else if (method == "adams") {  // why converge so slow for 1445M?
+                                             /*if(isStrMatch(name, {"embd","output","norm"})){
+                                                 Alloc_1(&gm, true, desc+".m", szMV * 2), gv = (char *)gm + szMV;
+                                             }else*/
+                Alloc_1(&gm, true, desc + ".m", szM), szV = 0;
+            } else {
+                Alloc_1(&gv, true, desc + ".m", szM), szV = 0;
             }
-            assert(gm!=nullptr && "gm is nullptr@huTensor::Alloc" );
+            assert(gm != nullptr && "gm is nullptr@huTensor::Alloc");
         }
     } else {
     }
     szUse = szGlobalMaloc - sz0;
-    assert(szGlobalMaloc - sz0 <= mostMemory());
+    // assert(szGlobalMaloc - sz0 <= mostMemory());
     if (iter <= 1000 /*&& */) {
         string sA = hostAlloc ? "HostAlloc" : "cudaMalloc";
         if (hFish->isRemater()) {
@@ -632,21 +675,25 @@ bool huTensor::Alloc(int iter, int flagInit) {
                    ne[1], ne[2], ne[3], grad != nullptr ? "x2" : "", szGlobalMaloc * 1.0 / 1.0e9);
         }
     }
-
+    mem_status = 1;
     return true;
 }
 bool huTensor::Free(bool isPassResident) {
     try {
-        if(strcmp(name,"model.blk.4.attn.wq.out")==0){
+        if (strcmp(name, "model.blk.4.ffn") == 0) {
             int debug = 0x0;
         }
 
-        if (isRefer())
-            return true;
-
-        size_t sz0 = szGlobalMaloc;
+        if (isRefer()){
+            if (BIT_TEST(flags, GTensor::F_RELOAD)){
+                int debug = 0x0;
+            }else
+                return true;
+        }
+        bool isPass = isPassResident && BIT_TEST(flags, GTensor::F_RESIDENT);
+        size_t sz0  = szGlobalMaloc;
         if (data != nullptr) {
-            if (isPassResident && BIT_TEST(flags, GTensor::F_RESIDENT)) {
+            if (isPass) {
                 int pass = 0;
             } else {
                 Free_1(&data);
@@ -657,8 +704,11 @@ bool huTensor::Free(bool isPassResident) {
             assert(grad == nullptr);
             return true;
         }
-        if (!BIT_TEST(flags, GTensor::F_RESIDENT) && grad != nullptr) {
-            Free_1((void **)(&grad), "_grad");
+        if (!isPass) {  //! BIT_TEST(flags, GTensor::F_RESIDENT)
+            if (grad != nullptr)
+                Free_1((void **)(&grad), "_grad");
+            if (gm != nullptr)
+                Free_1((void **)(&gm), "_m");
         }
 
         // _INFO("\t%s freed(%.3gM)!",name,(sz0-szGlobalMaloc)/1.0e6);

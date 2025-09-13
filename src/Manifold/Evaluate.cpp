@@ -45,7 +45,7 @@ int Fish_ppl(CLI_params &config) {
     hFISH fish      = Fish::MakeInstance("PPL_", config, {}, Fish::ROLE_TYPE::COMMON, 0x110);
     hOptimizer hOPT = fish->GetOptimizer();
     RLS_BP *hRLS    = fish->GetScheduler<RLS_BP>();
-    // hRLS->InitGUOKE();
+
     hRLS->Prepare(-1);
     uint64_t rng_seed  = 42;
     std::string prompt = LoadSomeText("/home/cys/rnd/lic/models/TinyStories-valid.txt", 64 * 1024);  // shakespeare.txt

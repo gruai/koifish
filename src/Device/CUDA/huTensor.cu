@@ -1,5 +1,16 @@
-// #include <cuda_fp16.h>
-// #include <cuda_fp8.h>
+
+/**
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT
+ *
+ *  \brief Functions of huTensor
+ *  \author Yingshi Che
+ */
+
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <unistd.h>
+
 #include "../../Manifold/Fish.hpp"
 #include "../../Tensor/GTensor.hpp"
 #include "../../Utils/GST_log.hpp"
@@ -7,7 +18,6 @@
 #include "../../g_float.hpp"
 #include "./kernel/Operator.cuh"
 #include "./kernel/utils.cuh"
-
 static Grusoft::GRander randParam;
 huTensor::huTensor(Fish* fish, const string& name_, const SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag) : GTensor(fish, shape, tpD_, false, flag) {
     size_t nEle       = size();
@@ -27,8 +37,12 @@ huTensor::huTensor(Fish* fish, const string& name_, const SHAPE shape, typNUMBER
     }
 }
 
-hGTensor huTensor::Partial(size_t nOff, SHAPE shape, int flag) {
+hGTensor huTensor::Partial(const string& name_, size_t nOff, SHAPE shape, int flag) {
     hGTensor sub = GT(hFish, type, shape);
+    if (!name_.empty())
+        snprintf(sub->name, sizeof(name), "%s", name_.c_str());
+    else
+        sub->name[0] = '\0';
     assert(nOff + sub->size() <= size());
     assert(BitPE(type) == 8 || BitPE(type) == 16);
     int nB     = (int)(BitPE(type) / 8);
@@ -69,17 +83,25 @@ size_t huTensor::Alloc_1(void** dst, bool isZero, string desc, size_t sz0, int f
     cudaError_t error = cudaSuccess;
     size_t szAlloc    = sz0 == 0 ? szData : sz0;
     assert(szAlloc > 0);
+    if (!hostAlloc) {
+        size_t szFree, szTotal;
+        cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
+        if (szAlloc > szFree) {
+            _ERROR("[CUDA Alloc] Outof GPU Memory @%s!  Free=%gM < Need=%gM.\n", name, szFree / 1.0e6, szAlloc / 1.0e6);
+            exit(KOIFISH_OUTOF_GPUMEMORY);
+        }
+    }
     error = hostAlloc ? cudaHostAlloc(dst, szAlloc, cudaHostAllocMapped) : cudaMalloc(dst, szAlloc);  // 8420
     // strange behavior of callo
     // data = calloc(szAlloc,1);  sAlloc = "Alloc_c/cu";   //8386
     if (error != cudaSuccess) {
-        printf("[CUDA Alloc] failed @%s, ERR=%s!\n", name, cudaGetErrorString(error));
+        _INFO("[CUDA Alloc] failed @%s, ERR=%s!\n", name, cudaGetErrorString(error));
         exit(EXIT_FAILURE);
     }
     if (isZero)
         cudaCheck(cudaMemset(*dst, 0, szAlloc));
     szGlobalMaloc += szAlloc;
-    SUM::mems.push_back(MEM_USAGE(szAlloc, desc, this));
+    SUM::mems.push_back(MEM_USAGE(szAlloc, desc, *dst));
     return szAlloc;
 }
 size_t huTensor::Free_1(void** obj, const string& info) {
@@ -97,12 +119,11 @@ size_t huTensor::Free_1(void** obj, const string& info) {
             _INFO("[CUDA] free failed @\"%s\"! err=%s(%s).\n", name, cudaGetErrorString(error), cudaGetErrorString(last_err));
             // exit(EXIT_FAILURE);
         }
-        *obj = nullptr;
     }
-
+    SUM::FreeMem(*obj);
     *obj = nullptr;
     szGlobalMaloc -= szData;
-
+    
     return szGlobalMaloc;
 }
 
@@ -112,6 +133,7 @@ bool huTensor::InitParam(int tpX) {
     size_t nInit  = size(1);
     // bool isTmp          = true;
     int iter = hFish->GetCurIter();
+    SUM::nInitParam++;  // may skip(bias is always init to 0)
     if (tpInit > 0 && tpInit != SERIALIZE) {
         if (strcmp(name, "model.out.weight_b") == 0) {  //  model.blk.34.ffn_down.weight
             int debug = 0;                              // Print(name, 1, -1);
@@ -236,7 +258,7 @@ bool huTensor::CopyGG(struct ggml_tensor* gg_, int flag) {
 }
 __global__ void clear_scratch_space_with_coalesced_writes_kernel(int * data, int blocks, int threads) {
     if (COUNT % (blocks * threads) != 0) {
-        printf("Adjust the SIZE_OF_DATA so it's divisible by the number of (blocks * threads)\n");
+        _INFO("Adjust the SIZE_OF_DATA so it's divisible by the number of (blocks * threads)\n");
     }
     const long count_of_ints_in_each_blocks_chunk = COUNT / blocks;
 
@@ -247,7 +269,7 @@ __global__ void clear_scratch_space_with_coalesced_writes_kernel(int * data, int
 
     const long this_blocks_starting_offset = block * count_of_ints_in_each_blocks_chunk;
 
-    //printf("Clearing %li ints starting at offset %li\n", count_of_ints_in_each_blocks_chunk, this_blocks_starting_offset);
+    //_INFO("Clearing %li ints starting at offset %li\n", count_of_ints_in_each_blocks_chunk, this_blocks_starting_offset);
 
     int * this_threads_base_pointer = &data[this_blocks_starting_offset + thread];
     for (int round = 0; round < rounds_needed; ++round) {
@@ -263,7 +285,7 @@ void check_gpu_data_is_zeroes(int * data_on_gpu, char * data_on_cpu) {
     cudaMemcpy(data_on_cpu, data_on_gpu, SIZE_OF_DATA, cudaMemcpyDeviceToHost);
     for (long i = 0; i < SIZE_OF_DATA; ++i) {
         if (data_on_cpu[i] != 0) {
-            printf("Failed to zero-out byte offset %i in the data\n", i);
+            _INFO("Failed to zero-out byte offset %i in the data\n", i);
         }
     }
 }*/
@@ -334,11 +356,87 @@ bool huTensor::SerialData(const string& info, void* host, bool isToHost, int fla
         return false;
     }
 }
+
+//  如果CUDA支持统一内存（Unified Memory） 或GPUDirect RDMA，可以直接映射 GPU 内存到文件：
+static bool isGPUDirectMMap = true;
+//
+bool GTensor::Serial_MMAP(bool isSave, bool isReset, int flag) {
+    try {
+        assert(isParam() && isGPUDirectMMap);
+        bool bRet     = true;
+        int dumpFlag  = 0;
+        char* tmpData = (char*)host_data;  // new char[szData];
+        assert(tmpData != nullptr);
+        floatX* x = (floatX*)(tmpData);
+
+        if (isSave) {
+            assert(data != nullptr && gm != nullptr);
+            // cudaCheck(cudaMemcpyAsync(host,data, szData, cudaMemcpyDeviceToHost));
+            Print("mmap_save", 0, dumpFlag);
+            cudaCheck(cudaMemcpy(tmpData, data, szData, cudaMemcpyDeviceToHost));
+            if (tmpData != host_data) {
+                memcpy(host_data, tmpData, szData), msync(host_data, szData, MS_SYNC);
+            }
+
+            cudaCheck(cudaMemcpy(tmpData + szData, gm, szM + szV, cudaMemcpyDeviceToHost));
+            if (hRef != nullptr && isReset) {
+                data = nullptr, gm = nullptr, gv = nullptr;
+            }
+            SUM::nSaveParam++;
+        } else {
+            if (hRef != nullptr) {  // huTensor::Alloc
+                ShareMemory(hRef, 0x100);
+            }
+            assert(data != nullptr);
+            SUM::szUpload += szData;
+            if (tmpData != host_data) {
+                memcpy(tmpData, host_data, szData), msync(host_data, szData, MS_SYNC);
+            }
+            // cudaCheck(cudaMemcpyAsync(data, host,szData, cudaMemcpyHostToDevice));
+            cudaCheck(cudaMemcpy(data, tmpData, szData, cudaMemcpyHostToDevice));
+            cudaCheck(cudaMemcpy(gm, tmpData + szData, szM + szV, cudaMemcpyHostToDevice));
+            Print("mmap_load", 0, dumpFlag);
+            Print("mmap_load", 3, dumpFlag), Print("mmap_load", 2, dumpFlag);
+            SUM::nLoadParam++;
+        }
+        if (tmpData != host_data)
+            delete[] tmpData;
+        return bRet;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool GTensor::Serial_MMAP_x(void* xdata, bool isSave, int flag) {
+    try {
+        assert(isParam() && isGPUDirectMMap);
+        bool bRet     = true;
+        int dumpFlag  = 0;
+        char* tmpData = (char*)host_data;  // new char[szData];
+        assert(tmpData != nullptr);
+        assert(xdata != nullptr);
+        if (isSave) {
+            // cudaCheck(cudaMemcpyAsync(host,data, szData, cudaMemcpyDeviceToHost));
+            Print("mmap_save_x", 0, dumpFlag);
+            cudaCheck(cudaMemcpy(tmpData, xdata, szData, cudaMemcpyDeviceToHost));
+            // SUM::nSaveParam++;
+        } else {
+            SUM::szUpload += szData;
+            cudaCheck(cudaMemcpy(xdata, tmpData, szData, cudaMemcpyHostToDevice));
+            // SUM::nLoadParam++;
+        }
+        return bRet;
+    } catch (...) {
+        return false;
+    }
+}
+
 //  this <=> Y
 bool huTensor::SerialGP(void* yD, void* yG, size_t szY, bool isToY, int flag) {
     try {
         if (isToY) {
             assert(szY >= szData);
+            assert(data != nullptr);
             cudaCheck(cudaMemcpy(yD, data, szY, cudaMemcpyDeviceToHost));
             if (yG != nullptr) {
                 assert(grad != nullptr);
@@ -570,20 +668,20 @@ bool huTensor::Mutation(int flag) {
     if (!is2D())
         return false;
     float w0 = wnorm;
-    if(0){  
-        Print(name,0,-1);
-        Length(0);      //  type == 1 ? (floatX*)grad : (floatX*)data;
-        assert(fabs(w0-wnorm)<1.0e-5*wnorm);
+    if (0) {
+        Print(name, 0, -1);
+        Length(0);  //  type == 1 ? (floatX*)grad : (floatX*)data;
+        assert(fabs(w0 - wnorm) < 1.0e-5 * wnorm);
     }
-    
+
     int nParam = size(), dT4B = 512, M = ne[0], N = ne[1], mGRID = CEIL_DIV(M, dT4B), pGRID = CEIL_DIV(nParam, dT4B), nRander = M;
     curandState* d_states;
     cudaCheck(cudaMalloc(&d_states, nRander * sizeof(curandState)));
-    int seed = 42;  //rander.RandU32();
+    int seed = 42;  // rander.RandU32();
     CU_initrand<<<CEIL_DIV(nRander, 256), 256>>>(d_states, seed, nRander);
 
-    float T_scale = wnorm == 0 ? 1.0 : sqrt(wnorm*wnorm / M / N), T_mutation = 1.0e-5;       //  1.0e-4 would explode
-    CU_mutation_<<<mGRID, dT4B, 0, main_stream>>>(d_states, T_mutation, T_scale*0.01, (floatX*)(data), (floatX*)nullptr, nParam, N);
+    float T_scale = wnorm == 0 ? 1.0 : sqrt(wnorm * wnorm / M / N), T_mutation = 1.0e-5;  //  1.0e-4 would explode
+    CU_mutation_<<<mGRID, dT4B, 0, main_stream>>>(d_states, T_mutation, T_scale * 0.01, (floatX*)(data), (floatX*)nullptr, nParam, N);
     cudaCheck(cudaFree(d_states));
     return true;
 }

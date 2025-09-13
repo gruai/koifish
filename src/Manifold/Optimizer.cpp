@@ -297,8 +297,8 @@ float Optimizer::gClip(int ne, floatX *g, hGensor hP, int flag) {
 }
 
 int GTensor::Dogleg(int flag) {
-    if (strcmp(name, "model.blk.11.attn.wo.weight_a") == 0) {
-        int debug = 0x0;
+    if (isStrMatch(name, {"blk.2.attn.wq"})) {  //model.blk.11.attn.wo.weight_a
+        int debug = 0x0;        flag = -2;
     }
     hOptimizer hOPT = hFish->GetOptimizer();
     int iter        = hOPT->GetITER();
@@ -334,10 +334,11 @@ int GTensor::Dogleg(int flag) {
         // for(auto t : fuyous)
     }
 
-    if (flag == -1) {
+    if (flag == -2) {
         // Print(name, 1, -1);
     }
     last_iter = iter;
+    SUM::nDogLeg ++; 
     return 0;
 }
 
@@ -352,7 +353,10 @@ double Optimizer::UpdateTensorParam(hGensor hP, floatX* g, float gnorm) {
 }
 
 int UpdateTensorParam_cuda(hGTensor tensor, Optimizer *hOPT, float &grad_norm, int flag);
+//  Always call Optimizer::UpdateTensorParam          Deprecated
 double OPT_Adam::UpdateTensorParam(hGensor hP, floatX *gX, float clip) {
+    // return Optimizer::UpdateTensorParam(hP, gX, clip);
+    
     // assert(gimap.find(hP)!=gimap.end());
     float alpha = adam->alpha, beta1 = adam->beta1, beta2 = adam->beta2, eps = adam->eps, grad_norm = g_step;
     auto &im = _fish->GetGensorInfo(hP);  // gimap[hP];
@@ -518,6 +522,7 @@ Optimizer::RESULT Optimizer::Search(void *ctx, hGensor loss_, hGensor target_, C
     hEDS = _fish->hEDS;
     assert(hEDS != nullptr);
     auto train_params = TrainParams();
+    auto checkpoint = _fish->config.checkpoint;
 
     last_time                = GST_ms();
     Optimizer::RESULT result = DID_NOT_CONVERGE;
@@ -529,7 +534,7 @@ Optimizer::RESULT Optimizer::Search(void *ctx, hGensor loss_, hGensor target_, C
           hEDS->__repr__(suf, pref, 0).c_str());
     _INFO("\t Accumulation=%d AdaptiveSched=%d GRAP=%p rZMUV=%g rLARS=%g \n", nGradAccum, (int)isAdaptiveSched, grad, config.ZMUV_ratio, config.lars_ratio);
     // tpGD=SGD_HYBRID;    //ADAMw    ADAM_S  SGD_v    SGD_HYBRID        SGD_blk_v
-    _INFO("\tDECENT=%d(%s) SIGN=%d tpFuseCu=%d\n\n", tpGD, GD_NAME[tpGD].c_str(), tpSign, tpFuseCu);
+    _INFO("\tDECENT=%d(%s) SIGN=%d tpFuseCu=%d filter=%d\n\n", tpGD, GD_NAME[tpGD].c_str(), tpSign, tpFuseCu, _fish->config.filter_tmp_grad.size());
     DEBUG.Dump(0);
 
     float a = 0, grad_norm = 0;
@@ -578,7 +583,7 @@ Optimizer::RESULT Optimizer::Search(void *ctx, hGensor loss_, hGensor target_, C
         UpdateLossCurve(0x0);
         // throw "DEBUG exit@";        //only for debug
 
-        if (train_params.save_every > 0 && t % train_params.save_every == 0) {
+        if (checkpoint.save_every > 0 && t % checkpoint.save_every == 0) {
             _fish->SaveTrain("");
         }
         if (t % 100 == 0)
@@ -1044,9 +1049,9 @@ OPT_Adam::OPT_Adam(NLP_AutoRegressive *g_, CLI_params &params_, int flag) : Opti
 void Optimizer::Dump(int typ) {
     if (NOT_DUMP(1))
         return;
-    if (0) {
-        SUM::MemoryInfo(0x0);
-    }
+
+    SUM::MemoryInfo(0x0);
+    
     auto train_params = TrainParams();
     _INFO("======== nEopch=%d most_iter=%d\n", train_params.n_epochs, train_params.nMostIter);  //,train_params.nEpochIter
     fflush(stdout);
@@ -1066,16 +1071,16 @@ void Optimizer::Dump(int typ) {
               train_its, train_samples, train_tokens, train_epochs);
     }
 
-    string path = _fish->config.checkpoint.out;
-    if (path.empty()) {
-        _INFO("[Save] path is empty! To save model, please set the key of \"checkpoint-out\" in json config file(\"%s\").\n", _fish->config.jsPath.c_str());
-    } else {
-        if (VERIFY_DIR_EXIST(path, true))
-            _INFO("[Save] path=\"%s\", save_every=%d\n", path.c_str(), train_params.save_every);
-        else {
-            _INFO("[Save] Invalid path@\"%s\"!\n", path.c_str());
-        }
-    }
+    // string path = _fish->config.checkpoint.out;
+    // if (path.empty()) {
+    //     _INFO("[Save] path is empty! To save model, please set the key of \"checkpoint-out\" in json config file(\"%s\").\n", _fish->config.jsPath.c_str());
+    // } else {
+    //     if (VERIFY_DIR_EXIST(path, true))
+    //         _INFO("[Save] path=\"%s\", save_every=%d\n", path.c_str(), train_params.save_every);
+    //     else {
+    //         _INFO("[Save] Invalid path@\"%s\"!\n", path.c_str());
+    //     }
+    // }
     if (!HIERARCH_LoRA::sNeurons.empty()) {  // HIERARCH_LoRA::tpLORA == LORA_ADAPT_W::AB ? "AB" : "W_AB",
         _INFO("[H_LORA] neurons={%s}\n", HIERARCH_LoRA::sNeurons.c_str());
     }
@@ -1124,7 +1129,13 @@ void OPT_Adam::Dump(int typ) {
     adam->Dump(typ);
     if (hLR != nullptr)
         hLR->Dump(typ);
-    _INFO("\tnParams = %ld(%.6gM nT = %ld)\n", nParams, nParams / 1.0e6, opt_ps.size());
+    int nG0 = 0;
+    for(auto t : opt_ps){
+        if(BIT_TEST(t->flags,GTensor::F_TMP_GRAD)){
+            nG0++;
+        }
+    }
+    _INFO("\tnParams = %ld(%.6gM, nT=%ld nG0=%d)\n", nParams, nParams / 1.0e6, opt_ps.size(),nG0);
     fflush(stdout);
 }
 

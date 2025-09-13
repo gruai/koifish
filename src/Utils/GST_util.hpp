@@ -150,19 +150,24 @@ std::string EXE_name(int flag = 0x0);
 std::string FILE_EXT(const std::string &path);
 bool VERIFY_DIR_EXIST(const std::string &path, bool isCreate = false);
 struct MEM_USAGE {
+    static size_t szA, szW, szG, szMoment, szTemp, szOther;
+    enum TYPE { ACTIVATION, WEIGHT, MOMENT, GRAD, TEMP, OTHER };
+
+    TYPE type;
     void *hData = nullptr;
     size_t sz;
     string desc;
-    MEM_USAGE(size_t sz_, string d_, void *hData = nullptr, int flag = 0x0) : sz(sz_), desc(d_) {}
+    MEM_USAGE(size_t sz_, string d_, void *hData = nullptr, int flag = 0x0);
 };
 struct SUM {
     static std::vector<MEM_USAGE> mems;
-
-    static double tX, tX1, tRemater, tQKV, tFFN, tUpload, tLoadData, tEval_0, tEval_1;
+    static int nInitParam,nSaveParam,nLoadParam,nDogLeg;
+    static double tX, tX1, tRemater, tQKV, tFFN, tUpload, tLoadData, tLoadParam, tEval_0, tEval_1;
     static size_t szUpload;
     static void Reset(string typ, int flag = 0x0);
     static void TimeInfo(int flag = 0x0);
     static void MemoryInfo(int type, int flag = 0x0);
+    static bool FreeMem(void *hData,int flag=0x0);
 };
 
 // Discrete Distribution of array
@@ -186,10 +191,10 @@ struct Distri_ARRAY {
 
     virtual void Stat() {
         int n = distri.size();
-        assert(n>0)    ;
+        assert(n > 0);
         average = sum / n;
-        sigma     = std::max(0.0, ss / n - average * average);  // float point error
-        sigma     = sqrt(sigma);
+        sigma   = std::max(0.0, ss / n - average * average);  // float point error
+        sigma   = sqrt(sigma);
     }
 };
 
@@ -436,6 +441,8 @@ class GST_util {
 
 inline bool isStrMatch(const string &target, const vector<string> &words) {
     for (auto w : words) {
+        if(w.empty())
+            continue;
         if (target.find(w) != std::string::npos)
             return true;
     }

@@ -109,12 +109,12 @@ class GTensor {
     void *gg = nullptr;
 
    protected:
-    Fish *hFish   = nullptr;
-    hGTensor hRef = nullptr;
+    Fish *hFish = nullptr;
+
     std::vector<GTensor *> refered;
     std::vector<hGTensor> fuyous;
     std::shared_ptr<EDGE_DEVICES> hDevice = nullptr;
-    size_t szData = 0, szGama = 0, szUse = 0;
+    size_t szData = 0, szGama = 0, szUse = 0, szGrad = 0, szM = 0, szV = 0;
     int last_iter = -1;
     //  support dynamic change shape&type!
     virtual bool ReShape(SHAPE shape_, typNUMBER tpD_, int flag = 0x0);
@@ -122,7 +122,16 @@ class GTensor {
         assert(0);
         return nullptr;
     }
+    int mem_status = -1;
     uint32_t seed = 88888888, param_seed = 0x0;
+    enum REF_TYPE {
+        NO,
+        ALL,
+        PARAM,
+    };
+    REF_TYPE tpRef = REF_TYPE::NO;
+    hGTensor hRef  = nullptr;
+    void *raw_data = nullptr;
 
    public:
     static const int MAX_NAME = 64;
@@ -133,8 +142,10 @@ class GTensor {
     static bool AllocBuffer(Fish *hFish, int flag = 0x0);
     static bool FreeBuffer(int flag = 0x0);
     //  temporary shared memory 1) buff sz>=8*nCTX*nToken(from preLogits)
-    static void *buff, *host_buff;  
-    static size_t buff_len;                   
+    static void *buff, *host_buff;
+    // float stat_info[1024] in GPU
+    static float *stat_info;
+    static size_t buff_len;
     float residual_scale = 1.0, wnorm = 0, gnorm = 0;  // some tricks
     float rLARS(float s0, float T_lars, int flag);
     size_t offset = 0x0;
@@ -147,13 +158,14 @@ class GTensor {
     void *host_data = nullptr;  // somtimes, we need data both in device&host
     void *data      = nullptr;
     // a serial of LORA for weight
-    floatGama *gama_T();                                              // scaling coefficient of bit weight
-    virtual bool isUpdateParam(int iter = -1, int flag = 0x0) const;  // in many case, params are not update, even data is not allocated!
-    int tile_r1 = 0, tile_c1 = 0;                                     //  tile_r0 = 0,tile_c0 = 0,
-    floatGrad *grad   = nullptr;                                      //
+    floatGama *gama_T();  // scaling coefficient of bit weight
+    // virtual bool isUpdateParam(int iter = -1, int flag = 0x0) const;  // in many case, params are not update, even data is not allocated!
+    bool needUpdateParam = false;
+    int tile_r1 = 0, tile_c1 = 0;  //  tile_r0 = 0,tile_c0 = 0,
+    floatGrad *grad   = nullptr;   //
     hGTensor grad_ref = nullptr;
     void *gm = nullptr, *gv = nullptr;  // first moment, second moment of grad
-    // bool isUpdateParam = false;
+
     float info[8];  // Some info of some operations
 
     virtual void *DataPad(void *src0, int flag = 0x0);
@@ -175,6 +187,7 @@ class GTensor {
         F_TOX       = 0x10000,
         F_PADDED    = 0x20000,
         F_ONLYREF   = 0x40000,  // Partial/Sub tensor
+        F_TMP_GRAD  = 0x80000,
 
         F_TERNARY = 0x100000,
         F_LORA_A  = 0x200000,
@@ -193,7 +206,7 @@ class GTensor {
         assert(0);
         return false;
     }
-    virtual hGTensor Partial(size_t offset, SHAPE shape, int flag = 0x0) {
+    virtual hGTensor Partial(const string &name, size_t offset, SHAPE shape, int flag = 0x0) {
         assert(0);
         return nullptr;
     }
@@ -204,7 +217,13 @@ class GTensor {
         assert(0);
         return false;
     }
+    // Init to zero in default
+    virtual bool BeforeBackward(size_t &szBuf, int flag = 0x0) {
+        assert(0);
+        return false;
+    }
     virtual bool Free(bool isPassResident = false) { return true; }
+    //   x==3 ? gv : x==2 ? gm : x == 1 ? grad : data
     virtual void Print(const string &title, int typ, int flag, size_t nEle = 0) const;
     virtual bool DumpX(int type, const string &title = "", int flag = 0x0) const;
     // operations
@@ -215,7 +234,7 @@ class GTensor {
     double Length(int type, int flag = 0x0);
 
     // operations
-    virtual bool OverWrite(struct ggml_tensor *gg_, bool isSrc = true, int flag = 0x0);
+    // virtual bool OverWrite(struct ggml_tensor *gg_, bool isSrc = true, int flag = 0x0);
     virtual bool ShareMemory(hGTensor, int flag = 0x0);
     virtual bool OverWrite(hGTensor, bool isSrc = true, int flag = 0x0);
 
@@ -240,6 +259,8 @@ class GTensor {
     hGTensor GetRefer() { return hRef; }
     virtual void SetRefer(hGTensor hR, int flag = 0x0);
     virtual bool SetTernary(typNUMBER typ, int flag = 0x0);
+    virtual bool Serial_MMAP(bool isSave, bool isX = true, int flag = 0x0);
+    virtual bool Serial_MMAP_x(void *dest, bool isSave, int flag = 0x0);
     virtual bool SerialGP(void *yD, void *yG, size_t szY, bool isToY, int flag = 0x0) {
         assert(0);
         return false;
@@ -332,6 +353,8 @@ class GTensor {
     friend class huTensor;
     friend class OPT_Adam;
     friend class Fuyou;
+    friend class SLP;
+    friend class Fish;
 };
 
 template <typename T>
@@ -433,11 +456,12 @@ class huTensor : public GTensor {
    public:
     huTensor(Fish *hFish, const string &name_, const SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag = 0x0);
     virtual ~huTensor();
-    hGTensor Partial(size_t offset, SHAPE shape, int flag = 0x0) override;
+    hGTensor Partial(const string &, size_t offset, SHAPE shape, int flag = 0x0) override;
 
     bool Alloc(int tpInit = 0, int flag = 0x0) override;
     size_t mostMemory(int typ = 0) const override;
     bool InitParam(int tpInit) override;
+    bool BeforeBackward(size_t &szBuf, int flag = 0x0) override;
     bool CopyGG(struct ggml_tensor *gg_, int flag = 0x0) override;
     bool Free(bool isPassResident = false) override;
     void Zero() override;

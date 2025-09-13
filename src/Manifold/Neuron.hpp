@@ -116,7 +116,7 @@ class GeNeuron {
     // std::vector<shared_ptr<GeNeuron>> brothers;
 
    public:
-    enum BIT_FLAG { F_BIAS = 0x10000, F_DELTA = 0x20000, F_GRADREF = 0x40000, F_HOTPICK = 0x100000 };
+    enum BIT_FLAG { F_BIAS = 0x10000, F_DELTA = 0x20000,  F_HOTPICK = 0x100000 };
 
     DATA_PLACE place = DATA_PLACE::VOID;
 
@@ -147,7 +147,7 @@ class GeNeuron {
     // Pick gensors(child,partial,vitual,ref,lora,...)
     virtual std::vector<hGensor> PickGensors(bool isLORA = true, int flag = 0x0);
     virtual hGensor GetGensor(const std::string &key, int flag = 0x0);
-    virtual int SetGuoke(GeNeuron *hGuoke_, bool isRefParam, int flag = 0x0);
+    virtual int SetGuoke(GeNeuron *hGuoke_, bool isX, int flag = 0x0);
     virtual void SetDType(typNUMBER tpW, typNUMBER tpA, typNUMBER tpG) { tpWeight = tpW, tpActivation = tpA, tpGradient = tpG; }
 
     virtual bool isValid();
@@ -318,6 +318,8 @@ struct Drop : public SparseNeuron {
 
 // single layer perceptron
 struct SLP : public SparseNeuron {
+    float *dbias_buffer = nullptr;    //SLP::Back
+    floatX *gW = nullptr;
     SLP() {}
     SLP(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag);
     // The channel/neuron number of input&output
@@ -347,7 +349,9 @@ struct SLP : public SparseNeuron {
     /*  Backward
         inp & to_gelu is defined in forward: inp=GELU(to_gelu)
     */
-    int Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu = nullptr, int flag = 0x0);
+    int Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu = nullptr,bool isAccumuDelta = false, int flag = 0x0);
+    // int Back(hGTensor delta, hGTensor inp, void* deltaIn, hGTensor to_gelu = nullptr, int flag = 0x0);
+    virtual bool PrepareMemory(bool isBack=true,int flag=0x0);
     int FUSE_cuda_block(hGTensor rhs, hGTensor lhs, hGTensor gelu = nullptr, bool isForw = true, int flag = 0x0);
 };
 
@@ -416,6 +420,7 @@ class SelfAttention : public SparseNeuron {
 
     //  tensor format={'SBhd', 'BShd', 'thd'}, default = 'BShd',   t=B*S
     void *devQ = nullptr, *devK = nullptr, *devV = nullptr, *devDeltaQ = nullptr, *devDeltaK = nullptr, *devDeltaV = nullptr;
+    hGensor deltaQ = nullptr,deltaK = nullptr,deltaV = nullptr;     // wrap of devDeltaQ,devDeltaK,devDeltaV
     // markov transition matrix from KQ
     enum TRANSITION_MODE {
         SOFT_MAX = 0,

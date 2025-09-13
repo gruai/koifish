@@ -152,9 +152,13 @@ bool SelfAttention::Build(int flag_0) {
     devDeltaQ = ToX(GTensor::bt4c);
     if (isSeparateQKV) {
         offset = Q.out->nByte();
+        deltaQ = GTensor::bt4c->Partial("partialDeltaQ", 0, {B, T, C});      //  devDeltaQ = deltaQ->data
+        deltaK = GTensor::bt4c->Partial("partialDeltaK", B*T*C, {B, T, C});
+        deltaV = GTensor::bt4c->Partial("partialDeltaV", B*T*C*2, {B, T, C});
     }
     devK = (char *)devQ + offset, devV = (char *)devK + offset;  // for cuDNN
     devDeltaK = (char *)devDeltaQ + offset, devDeltaV = (char *)devDeltaK + offset;
+    
 
     if (Rope_version > 0) {
         assert(isSeparateQKV);
@@ -1643,20 +1647,22 @@ bool GTensor::AllocBuffer(Fish *hFish, int flag) {
         // cuLiteTest(B,T,C);
         int mostC = C;  // config.nEmbed(-1);
         SHAPE sp = {B, T, C}, sp4 = {B, T, max(nFF, 3 * C)}, sp0 = {dB, (int)nTmp}, spMost = {B, T, mostC};
-        GTensor::bt4c       = std::make_shared<huTensor>(hFish, "scratch_4c", sp4, tpA, true);
+        GTensor::bt4c       = std::make_shared<huTensor>(hFish, "tmpBT4c", sp4, tpA, true);
         GTensor::tmpFF1     = std::make_shared<huTensor>(hFish, "tmpFF1", sp4, tpA, true);
         SHAPE spTernary     = {C, max(nVocab, 3 * C)};
         GTensor::tmpTernary = std::make_shared<huTensor>(hFish, "tmpTernary", spTernary, tpW, true);  // Only weight would in ternay bit
-        GTensor::outL       = std::make_shared<huTensor>(hFish, "outL", spMost, tpA, true);
-        GTensor::scratch    = std::make_shared<huTensor>(hFish, "scratch/output", sp0, tpA, true);  //  may reduce memory by sp0=sp0/VP
+        GTensor::outL       = std::make_shared<huTensor>(hFish, "tmpOutL", spMost, tpA, true);
+        GTensor::scratch    = std::make_shared<huTensor>(hFish, "tmpScratch/output", sp0, tpA, true);  //  may reduce memory by sp0=sp0/VP
 
-        GTensor::delta     = std::make_shared<huTensor>(hFish, "delta", spMost, tpG, true);
-        GTensor::tmpDelta  = std::make_shared<huTensor>(hFish, "delta", spMost, tpG, true);
+        GTensor::delta     = std::make_shared<huTensor>(hFish, "tmpDelta", spMost, tpG, true);
+        GTensor::tmpDelta  = std::make_shared<huTensor>(hFish, "tmpDelta2", spMost, tpG, true);
         GTensor::host_buff = new float[GTensor::scratch->size()];
         if (hFish->config.ModelArch() == NLP_GUPPY) {
-            GTensor::tmpW  = std::make_shared<huTensor>(hFish, "tmpW", SHAPE({nEmbed, nFF}), tpW, true);
-            GTensor::tmpGW = std::make_shared<huTensor>(hFish, "tmpGW", SHAPE({nEmbed, nFF}), tpG, true);
+            GTensor::tmpW = std::make_shared<huTensor>(hFish, "tmpW", SHAPE({nEmbed, nFF}), tpW, true);
         }
+        // GTensor::tmpGW = std::make_shared<huTensor>(hFish, "tmpGW", SHAPE({nEmbed, nFF}), tpG, true);
+        cudaCheck( cudaMalloc(&GTensor::stat_info,sizeof(float)*1024) );
+
         return true;
     } catch (const std::exception &e) {
         _INFO("%s", e.what());

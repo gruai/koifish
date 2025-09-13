@@ -76,8 +76,8 @@ enum MODEL_ARCH {
 enum MEM_STRATEGY {
     PRE_ALLOC_GPU,
     PRE_ALLOC_HOST_MAP,
-    MEM_SWAP,  //  deprecated
-    MEM_SWAP_GUOKE,
+    MEM_SWAP,        //  deprecated
+    MEM_SWAP_GUOKE,  //  deprecated
 };
 static std::map<MEM_STRATEGY, std::string> MEM_STRATEGY_desc = {
     {PRE_ALLOC_GPU, "PRE_ALLOC_GPU"},
@@ -88,7 +88,6 @@ static std::map<MEM_STRATEGY, std::string> MEM_STRATEGY_desc = {
 // parameters of scheduling
 struct SKDU_params {
     MEM_STRATEGY strategy = PRE_ALLOC_GPU;
-    bool paramIsGuoke     = false;
 
     bool isUpdateParamV0() const;
     bool canSave(int iter, int flag = 0x0) const;
@@ -102,8 +101,10 @@ struct Fuyou_params {
         RANDOM_1,
         MULTI_SCALE,
     };
-    ENSEMBLE ensemble = FUYOU_BEST;
-
+    ENSEMBLE ensemble                      = FUYOU_BEST;
+    std::vector<std::string> filter_reload = {"ffn", "attn.wq", "attn.wk", "attn.wv", "attn.wo"};
+    // Only current fuyou's param in GPU, others in MMAP
+    bool paramIsGuoke = false;
     enum ROLE {
         F_COMMON,
         F_HEAD,
@@ -132,7 +133,7 @@ struct Fuyou_params {
     // int tpParamResident = 0;  //  0-      1-
     bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
     bool InitSection(int nLayer, int nLS, int nSwitch = 100, int flag = 0x0);
-
+    bool isFirst(int layer,int flag=0x0);
     float alpha     = 0.9;
     float cognitive = 0, social = 2;              // exploration and exploitation
     float T_crossover = 0.6, T_mutation = 0.001;  //  mutation:   [0.001–0.1]
@@ -277,12 +278,12 @@ struct MUON_params_ {
     size_t n_parameters;
     float eps      = 1e-8f;  // epsilon for numerical stability
     float eps_loss = 1e-5f;  // epsilon for convergence test
-    int ldAB = 0;
+    int ldAB       = 0;
     // void Dump(int typ);
 };
 
 struct TRAIN_CARD {
-    int save_every, dump_every = 1;
+    int dump_every = 1;
     int gpt_every = -1;  // eval_every=-1,
 
     int seed = -1;
@@ -327,7 +328,7 @@ struct TRAIN_CARD {
     float residual_scale = 1.0f;
     float LearningRate() const { return adam.alpha; }
     size_t nTokenInBatch() const { return n_batch * n_ctx; }
-    bool Init(CLI_params * hConfig, const JSON& jConfig, int flag = 0x0);
+    bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
 };
 
 struct DEUG_SWITCH {
@@ -350,6 +351,9 @@ struct DEUG_SWITCH {
     int N_mostiter         = 1000;
 
     int cmd_p1 = 0, cmd_p2 = 0, cmd_p3 = 0;  // some commandline parameter for debug
+    int x1 = 0;
+    std::string x_str;
+
     float Time_most = 60;
     void Dump(int typ);
 };
@@ -363,6 +367,7 @@ struct CLI_params {
     struct CheckPoint {
         std::string in, out;
         std::string model_out, model_base;
+        int save_every=-1;
     };
     CheckPoint checkpoint;
 
@@ -376,7 +381,8 @@ struct CLI_params {
     Fuyou_params fuyou;
     LORA_ADAPT_W tpLORA = LORA_ADAPT_W::W0;
 
-    std::string eval_metric = "";
+    std::string eval_metric                  = "";
+    std::vector<std::string> filter_tmp_grad = {"ffn", "attn.wq", "attn.wk", "attn.wv", "attn.wo"};
 
     // Always false,     GGML don't support back of FLASH_ATTEN !
     bool isFlashAtten() {

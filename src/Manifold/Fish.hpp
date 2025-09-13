@@ -442,7 +442,7 @@ class Fish :public std::enable_shared_from_this<Fish> {
     static hFISH MakeSwarm(const std::string nam_, struct CLI_params &params, int flag);
     static hFISH MakeInstance(const std::string nam_, struct CLI_params &params, const Fish *hSrc_, int flag);
     // static Fish* Copy(const Fish* src,int flag=0x0);
-    virtual bool SaveTrain(string sX, int flag = 0x0);
+    virtual bool SaveTrain(string sX, bool isInit=false, int flag = 0x0);
     virtual bool LoadCheckPoint(int flag = 0x0);
 
     friend class GeNeuron;

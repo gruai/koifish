@@ -103,8 +103,8 @@ def plt_df(df,title,path ):
     nResult = len(df.columns)
     plt.figure(figsize=(20, 12))  # Width=10 inches, Height=6 inches
     plt.grid(True)
-    palette='Dark2'      # palette='Set2')  # Other options: 'Paired', 'Dark2', 'tab10'
-    sns.lineplot(data=df,linewidth=1,palette=palette) #   The smallest usable linewidth is 0.1
+    # palette='Dark2'      # palette='Set2')  # Other options: 'Paired', 'Dark2', 'tab10'
+    sns.lineplot(data=df,linewidth=1) #   The smallest usable linewidth is 0.1
     # sns.scatterplot(data=df)
     plt.title(title)
     plt.savefig(path)
@@ -206,7 +206,7 @@ if __name__ == '__main__':
     # parser.add_argument("--stat", action='store_true')    
     args = parser.parse_args()
     if args.dir:
-        SWEEP_stat(args.dir,args.dir+"/sweep_0901.png")
+        SWEEP_stat(args.dir,args.dir+"/sweep_results.png")
     elif args.csv:
         Plot_csv(args.csv)
     exit()    

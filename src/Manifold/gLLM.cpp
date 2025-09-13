@@ -649,7 +649,6 @@ void NLP_AutoRegressive::Train(int flag) {
     double ms   = 0;
     // print_build_info();
 
-    SaveTrain("warmup");  // warmup save
     Optimizer::RESULT result = hOPT->Search(nullptr, loss, target_probs, config);
     assert(result == Optimizer::OK || result == Optimizer::DID_NOT_CONVERGE);
     ms = GST_ms() - now;

@@ -138,6 +138,8 @@ struct tensor_t {
     safetensors::dtype dtype;
     std::vector<size_t> shape;
     std::array<size_t, 2> data_offsets;
+    void *hUserData = nullptr;
+    std::vector<uint8_t> msgpack;
 
     virtual JSON jDesc(int flag = 0x0) {
         JSON js;
@@ -177,7 +179,7 @@ struct safetensors_t {
     ordered_dict<tensor_t> tensors;
     ordered_dict<std::string> metadata;
     JSON jsConfig;
-    std::vector<uint8_t> storage;  // empty when mmap'ed
+    // std::vector<uint8_t> storage;  // would explode!     empty when mmap'ed
     size_t header_size{0};         // JSON size
     static string config_key_;
     bool mmaped{false};
@@ -185,7 +187,7 @@ struct safetensors_t {
         tensors.Clear();
         metadata.Clear();
         jsConfig.clear();
-        storage.clear();
+        // storage.clear();
         header_size = 0x0;
     }
     //
@@ -199,19 +201,19 @@ struct safetensors_t {
     void *st_file{nullptr};
     void *st_mmap{nullptr};
 
-    void insertJS(const JSON &js, int flag = 0x0) {
+    void insertJS(const JSON &js,size_t dst_offset, int flag = 0x0) {
         jsConfig = js;
         tensor_t tensor;
-        std::vector<uint8_t> msgpack = JSON::to_msgpack(js);
+        tensor.msgpack = JSON::to_msgpack(js);
         tensor.dtype                 = dtype::kUINT8;
-        size_t sz = msgpack.size(), dst_offset = storage.size();
+        size_t sz = tensor.msgpack.size();   //storage.size();
         tensor.data_offsets[0] = dst_offset;
         tensor.data_offsets[1] = dst_offset + sz;
         tensor.shape           = {sz};
         tensors.insert(config_key_, tensor);
 
-        storage.resize(dst_offset + sz);
-        memcpy(storage.data() + dst_offset, msgpack.data(), sz);  //  6441  [132...160]
+        // storage.resize(dst_offset + sz);
+        // memcpy(storage.data() + dst_offset, msgpack.data(), sz);  //  6441  [132...160]
     }
     int loadJS(tensor_t &tensor, const uint8_t *bytes_ptr, size_t bytes_size, int flag = 0x0) {
         /*JSON jdesc = tensor.jDesc();
@@ -240,7 +242,8 @@ struct safetensors_t {
             if (mmaped) {
                 databuffer = databuffer_addr;  // st->mmap_addr + 8 + st->header_size;
             } else {
-                databuffer = storage.data();
+                assert(0);      //only mmap is support LLM
+                //databuffer = storage.data();
             }
             tensor_t tensor;
             if (!tensors.at(config_key_, &tensor))
@@ -337,7 +340,7 @@ bool mmap_from_memory(const uint8_t *arr, const size_t nbytes, const std::string
 // message)
 //
 // @return true upon success. `err` will be filled when false.
-bool save_to_file(const safetensors_t &st, const std::string &filename, std::string *warn, std::string *err);
+bool save_to_file(const safetensors_t &st, const std::string &filename, size_t &sz, std::string *warn, std::string *err, int flag);
 
 //
 // Save safetensors to memory.
@@ -3898,7 +3901,7 @@ struct safetensors_mmap {
 #ifdef _POSIX_MAPPED_FILES
     static constexpr bool SUPPORTED = true;
 
-    safetensors_mmap(struct safetensors_file *file, size_t prefetch = (size_t)-1 /* -1 = max value */, bool numa = false) {
+    safetensors_mmap(struct safetensors_file *file, int __prot, size_t prefetch = (size_t)-1 /* -1 = max value */, bool numa = false) {
         size      = file->size;
         int fd    = fileno(file->fp);
         int flags = MAP_SHARED;
@@ -3911,14 +3914,13 @@ struct safetensors_mmap {
             flags |= MAP_POPULATE;
         }
 #endif
-        addr = reinterpret_cast<uint8_t *>(mmap(NULL, file->size, PROT_READ, flags, fd, 0));
+        // addr = reinterpret_cast<uint8_t *>(mmap(NULL, file->size, PROT_READ, flags, fd, 0));
+        addr = reinterpret_cast<uint8_t *>(mmap(NULL, file->size, __prot, flags, fd, 0));
         if (addr == MAP_FAILED) {
             _valid = false;
             _err   = "mmap failed: " + std::string(strerror(errno)) + "\n";
-
-            size = 0;
-            addr = nullptr;
-
+            size   = 0;
+            addr   = nullptr;
             return;
         }
 
@@ -4092,16 +4094,16 @@ uint16_t float_to_bfloat16(float src_val) {
        // This causes the bfloat16's mantissa to be incremented by 1 if the 16
        // least significant bits of the float mantissa are greater than 0x8000,
        // or if they are equal to 0x8000 and the least significant bit of the
-        // bfloat16 mantissa is 1 (odd). This causes it to be rounded to even when
-        // the lower 16 bits are exactly 0x8000. If the bfloat16 mantissa already
-        // has the value 0x7f, then incrementing it causes it to become 0x00 and
-        // the exponent is incremented by one, which is the next higher FP value
-        // to the unrounded bfloat16 value. When the bfloat16 value is subnormal
-        // with an exponent of 0x00 and a mantissa of 0x7F, it may be rounded up
-        // to a normal value with an exponent of 0x01 and a mantissa of 0x00.
-        // When the bfloat16 value has an exponent of 0xFE and a mantissa of 0x7F,
-        // incrementing it causes it to become an exponent of 0xFF and a mantissa
-        // of 0x00, which is Inf, the next higher value to the unrounded value.
+       // bfloat16 mantissa is 1 (odd). This causes it to be rounded to even when
+       // the lower 16 bits are exactly 0x8000. If the bfloat16 mantissa already
+       // has the value 0x7f, then incrementing it causes it to become 0x00 and
+       // the exponent is incremented by one, which is the next higher FP value
+       // to the unrounded bfloat16 value. When the bfloat16 value is subnormal
+       // with an exponent of 0x00 and a mantissa of 0x7F, it may be rounded up
+       // to a normal value with an exponent of 0x01 and a mantissa of 0x00.
+       // When the bfloat16 value has an exponent of 0xFE and a mantissa of 0x7F,
+       // incrementing it causes it to become an exponent of 0xFF and a mantissa
+       // of 0x00, which is Inf, the next higher value to the unrounded value.
         target_val.u32 += (0x7fff + (target_val.ushortvec[1] & 1));
 #endif  // MIOPEN_USE_RNE_BFLOAT16
     }
@@ -4359,8 +4361,8 @@ bool load_from_memory(const uint8_t *addr, const size_t nbytes, const std::strin
 
     size_t databuffer_size = nbytes - st->header_size - 8;
 
-    st->storage.resize(databuffer_size);
-    memcpy(st->storage.data(), addr + 8 + st->header_size, databuffer_size);
+    // st->storage.resize(databuffer_size);
+    // memcpy(st->storage.data(), addr + 8 + st->header_size, databuffer_size);
 
     st->mmaped          = false;
     st->mmap_addr       = nullptr;
@@ -4371,29 +4373,29 @@ bool load_from_memory(const uint8_t *addr, const size_t nbytes, const std::strin
     return true;
 }
 
-bool mmap_from_file(const std::string &filename, safetensors_t *st, std::string *warn, std::string *err) {
+bool mmap_from_file(const std::string &filename, safetensors_t *st, std::string &warn, std::string &err, int __prot) {
     if (!st) {
         return false;
     }
-
-    detail::safetensors_file *pf = new detail::safetensors_file(filename.c_str(), "rb");
+    detail::safetensors_file *pf = new detail::safetensors_file(filename.c_str(), "r+b");
+    // detail::safetensors_file *pf = new detail::safetensors_file(filename.c_str(), "rb");
     if (!pf->is_valid()) {
-        if (err) {
-            (*err) += pf->get_error();
-        }
+        err += pf->get_error();
         delete pf;
         return false;
     }
-
     // TODO: prefetch, numa
-    detail::safetensors_mmap *pm = new detail::safetensors_mmap(pf);
+    detail::safetensors_mmap *pm = new detail::safetensors_mmap(pf, __prot);
+    if (!pm->is_valid()) {
+        err += pm->get_error();
+        delete pm;
+        return false;
+    }
 
-    bool ret = mmap_from_memory(pm->addr, pm->size, filename, st, warn, err);
+    bool ret = mmap_from_memory(pm->addr, pm->size, filename, st, &warn, &err);
 
     if (!ret) {
-        delete pm;
-        delete pf;
-
+        delete pm, delete pf;
         return false;
     }
 
@@ -4564,7 +4566,8 @@ bool validate_data_offsets(const safetensors_t &st, std::string &err) {
     if (st.mmaped) {
         databuffersize = st.databuffer_size;
     } else {
-        databuffersize = st.storage.size();
+        assert(0);
+        // databuffersize = st.storage.size();
     }
 
     size_t ntensors{0};
@@ -4605,7 +4608,7 @@ bool validate_data_offsets(const safetensors_t &st, std::string &err) {
 
         size_t data_size = tensor.data_offsets[1] - tensor.data_offsets[0];
 
-        if (tensor_size != data_size) {
+        if (tensor_size != data_size && tensor_size * 3 != data_size) {  // [data,gm,gv]
             ss << "Data size mismatch. The size in Tensor `" << key << "` is " << tensor_size << ", but the size from data_offsets is " << data_size << "\n";
             valid = false;
         }
@@ -4627,6 +4630,7 @@ bool validate_data_offsets(const safetensors_t &st, std::string &err) {
     return valid;
 }
 
+//  [bug]
 bool save_to_memory(const safetensors_t &st, std::vector<uint8_t> &buffer, std::string *warn, std::string *err) {
     // directly serialize JSON string.
     std::stringstream ss;
@@ -4710,8 +4714,9 @@ bool save_to_memory(const safetensors_t &st, std::vector<uint8_t> &buffer, std::
         databuffer_size = st.databuffer_size;
         databuffer_addr = st.databuffer_addr;
     } else {
-        databuffer_size = st.storage.size();
-        databuffer_addr = reinterpret_cast<const void *>(st.storage.data());
+        assert(0);
+        // databuffer_size = st.storage.size();
+        // databuffer_addr = reinterpret_cast<const void *>(st.storage.data());
     }
 
     // make databuffer addr start from the multiple of 8.
@@ -4721,9 +4726,9 @@ bool save_to_memory(const safetensors_t &st, std::vector<uint8_t> &buffer, std::
     }
     // printf("header_size = %d\n", int(header_size));
     // printf("pad_bytes = %d\n", int(pad_bytes));
-    size_t padded_header_size = header_size + pad_bytes;    //20856
+    size_t padded_header_size = header_size + pad_bytes;  // 20856
     buffer.resize(8 + padded_header_size + databuffer_size);
-    size_t szDst = buffer.size();   //  248972672,  248951808
+    size_t szDst = buffer.size();  //  248972672,  248951808
     // write padded header_size
     memcpy(buffer.data(), &padded_header_size, sizeof(size_t));
     // write header
@@ -4734,15 +4739,14 @@ bool save_to_memory(const safetensors_t &st, std::vector<uint8_t> &buffer, std::
 
     return true;
 }
+bool save_to_ofs(const safetensors_t &st, std::ofstream &ofs, size_t &szAll, std::string *warn, std::string *err,int flag);
 
-bool save_to_file(const safetensors_t &st, const std::string &filename, std::string *warn, std::string *err) {
+bool save_to_file(const safetensors_t &st, const std::string &filename, size_t &sz, std::string *warn, std::string *err,int flag) {
     bool isRemoveOld = false;
     if (std::remove(filename.c_str()) == 0) {
         isRemoveOld = true;
     } else {
-      
     }
-
     std::ofstream ofs(filename, std::ios::binary);
     if (!ofs) {
         if (err) {
@@ -4752,17 +4756,22 @@ bool save_to_file(const safetensors_t &st, const std::string &filename, std::str
         }
         return false;
     }
-
-    std::vector<uint8_t> buf;
-    if (!save_to_memory(st, buf, warn, err)) {
-        return false;
+    if (1) {
+        if (!save_to_ofs(st, ofs, sz, warn, err,flag)) {
+            return false;
+        }
+    } else {  //  avoid huge array out of memory
+        std::vector<uint8_t> buf;
+        if (!save_to_memory(st, buf, warn, err)) {
+            return false;
+        }
+        ofs.write(reinterpret_cast<const char *>(buf.data()), buf.size());
+        sz = buf.size();
     }
 
-    ofs.write(reinterpret_cast<const char *>(buf.data()), buf.size());
     if (!ofs) {
         if (err) {
-            (*err) +=
-                "Failed to write safetensor data to `" + filename + "`. Maybe no disk space available?(Required bytes : " + std::to_string(buf.size()) + "\n";
+            (*err) += "Failed to write safetensor data to `" + filename + "`. Maybe no disk space available?(Required bytes : " + std::to_string(sz) + "\n";
         }
         return false;
     }

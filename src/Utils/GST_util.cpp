@@ -49,8 +49,40 @@ void _TIME_INFO(const string &info, double fmillis, int flag) {
 double SUM::tX = 0.0, SUM::tX1 = 0.0, SUM::tRemater = 0.0;
 size_t SUM::szUpload = 0;
 double SUM::tQKV = 0.0, SUM::tFFN = 0.0, SUM::tUpload = 0.0;
-double SUM::tLoadData = 0.0, SUM::tEval_1 = 0.0, SUM::tEval_0 = 0.0;
+double SUM::tLoadData = 0.0, SUM::tLoadParam = 0.0, SUM::tEval_1 = 0.0, SUM::tEval_0 = 0.0;
+int SUM::nInitParam = 0, SUM::nSaveParam = 0, SUM::nLoadParam = 0, SUM::nDogLeg = 0;
 std::vector<MEM_USAGE> SUM::mems;
+
+size_t MEM_USAGE::szA = 0, MEM_USAGE::szW = 0, MEM_USAGE::szG = 0, MEM_USAGE::szMoment = 0, MEM_USAGE::szTemp = 0, MEM_USAGE::szOther = 0;
+MEM_USAGE::MEM_USAGE(size_t sz_, string d_, void *hData_, int flag) : sz(sz_), desc(d_),hData(hData_) {
+    char last = desc[desc.length() - 1];
+    switch (last) {
+        case 'a':
+            if (desc.substr(0, 3) == "tmp") {
+                type = TYPE::TEMP, szTemp += sz;
+            } else {
+                type = TYPE::ACTIVATION, szA += sz;
+            }
+
+            break;
+        case 'w':
+            type = TYPE::WEIGHT, szW += sz;
+            break;
+        case 'g':
+            type = TYPE::GRAD, szG += sz;
+            break;
+        case 'm':
+            type = TYPE::MOMENT, szMoment += sz;
+            break;
+        case 't':
+            type = TYPE::TEMP, szTemp += sz;
+            break;
+        default:
+            type = TYPE::OTHER, szA += sz;
+            ;
+            break;
+    }
+}
 void SUM::Reset(string typ, int flag) {
     if (typ == "time") {
         tX = 0.0, tX1 = 0.0, tRemater = 0.0;
@@ -66,10 +98,22 @@ void SUM::TimeInfo(int flag) {
     // _TIME_INFO(" R=",SUM::tRemater);
     _TIME_INFO(" QKV=", tQKV);
     _TIME_INFO(" FFN=", tFFN);
-    if(tX1>0)
+    if (tX1 > 0)
         _TIME_INFO(" X=", tX1);
 }
 
+bool SUM::FreeMem(void *hObj,int flag){
+    int id=0;
+    for(auto mem:mems){
+        if(mem.hData == hObj){
+            mems.erase(mems.begin() + id);
+            return true;
+        }
+        id++;
+    }
+    assert(0 && "SUM::FreeMem failed");
+    return false;
+}
 void SUM::MemoryInfo(int type, int flag) {
     std::sort(mems.begin(), mems.end(),  // ugly because we don't have a typedef for the std::pair
               [](const MEM_USAGE &a, const MEM_USAGE &b) { return a.sz > b.sz; });
@@ -77,15 +121,19 @@ void SUM::MemoryInfo(int type, int flag) {
     for (auto mem : mems) {
         szTotal += mem.sz;
     }
-    _INFO("%ld mem-blocks \t%.3gG\n",mems.size(),szTotal/1.0e9);
-    szTotal = 0;
-    for (auto mem : mems) {
-        szTotal += mem.sz;
-        _INFO("\t%ld\t%6gM  @%s \t%.3gG\n", i++, mem.sz / 1.0e6, mem.desc.c_str(), szTotal / 1.0e9);
-        if(i>100)
-            break;
+    _INFO("%ld mem-blocks \tTotal=%.3gG activation=%.5gM weight=%.5gM grad=%.5gM moments=%.5gM temp=%.5gM other=%.5gM\n", mems.size(), szTotal / 1.0e9,
+          MEM_USAGE::szA / 1.0e6, MEM_USAGE::szW / 1.0e6, MEM_USAGE::szG / 1.0e6, MEM_USAGE::szMoment / 1.0e6, MEM_USAGE::szTemp / 1.0e6,
+          MEM_USAGE::szOther / 1.0e6);
+    if (1) {  // decsend by memory size
+        szTotal = 0;
+        for (auto mem : mems) {
+            szTotal += mem.sz;
+            _INFO("\t%ld\t%6gM  @%s \t%.3gG\n", i++, mem.sz / 1.0e6, mem.desc.c_str(), szTotal / 1.0e9);
+            if (i > 100)
+                break;
+        }
+        _INFO("\n");
     }
-    _INFO("\n");
 }
 
 #ifdef _GST_MATLAB_

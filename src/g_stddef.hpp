@@ -26,6 +26,9 @@
 using namespace std;
 
 //  ERR code of exit
+#define KOIFISH_OUTOF_GPUMEMORY -100
+#define KOIFISH_OUTOF_CPUMEMORY -101
+
 #define KOIFISH_ZERO_PARAMETERS -200
 
 #define KOIFISH_UNSUPPORTED_DATATYPE -1000
@@ -381,7 +384,7 @@ T remove_extension(T const& filename) {
 
 template <class T>
 const char* CSTR(const std::vector<T>& arr, int flag = 0x0) {
-    string info = "[]";
+    string info = "[";
     for (auto n : arr) {
         info += std::to_string(n);
         info += ",";
@@ -389,6 +392,17 @@ const char* CSTR(const std::vector<T>& arr, int flag = 0x0) {
     info += "]";
     return info.c_str();
 }
+template <>
+inline const char* CSTR<std::string>(const std::vector<std::string>& arr, int flag) {
+    string info = "[";
+    for (auto n : arr) {
+        info += n;
+        info += ",";
+    }
+    info += "]";
+    return info.c_str();
+}
+
 template <class T>
 const char* CSTR(const T& obj, int flag = 0x0) {
     string suffix, prefix;
