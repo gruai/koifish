@@ -201,7 +201,7 @@ bool SparseNeuron::InitSVD(int flag) {
 string HIERARCH_LoRA::sNeurons = "";
 HIERARCH_LoRA::HIERARCH_LoRA(SparseNeuron *neuron, hGensor w_, int r_, int flag) : wBase(w_), rank(r_), spNeuron(neuron) {
     hFish = neuron->hFish;
-    assert(w_->is2D() && rank > 0);
+    assert(w_->isWMAT() && rank > 0);
     int m = w_->ne[0], n = w_->ne[1], c0;
     B = neuron->B, T = neuron->T;
     assert(rank * 10 < neuron->C);  // low rank
@@ -243,7 +243,7 @@ void HIERARCH_LoRA::UpdateAdapt(int flag) {
             isAccumuDelta = false;
             break;
         default:
-            assert(0); 
+            assert(0);
             break;
     }
 }
@@ -251,7 +251,7 @@ void HIERARCH_LoRA::UpdateAdapt(int flag) {
     Since low rank, no need to quantize/ramater/guoke...
 */
 bool SparseNeuron::InitLoRA(LORA_ADAPT_W tpLora, int flag) {
-    assert(w->is2D());
+    assert(w->isWMAT());
     tpLORA = tpLora;
     if (tpLORA == LORA_ADAPT_W::W0)
         return false;

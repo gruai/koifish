@@ -402,6 +402,18 @@ __global__ void CU_disti_normal_N(curandState* state, typ* results, int N, int l
         }
     }
 }
+/*
+    cublasGemmEx(cublas_handle, opT, opN, n, m, 1, &one, X, bf16, m, nullptr, bf16, 1, &zero, Xt, bf16, n, CUDA_R_32F, CUBLAS_GEMM_DEFAULT);
+    cudaMemcpy(X, Xt, sizeof(Tmv) * m * n, cudaMemcpyDeviceToDevice);  // cudaMemcpyAsync
+*/
+template <typename typ>
+__global__ void CU_transpose(const typ* input, typ* output, int rows, int cols) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x < cols && y < rows) {
+        output[x * rows + y] = input[y * cols + x];
+    }
+}
 
 template <class T>
 __global__ static void CU_mix_(float alpha, T* x, float beta, const T* y, size_t count) {

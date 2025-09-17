@@ -1130,7 +1130,7 @@ bool StepInfos::SaveToCSV(const string &path, int flag) {
         if (isDumpG) {
             for (auto tensor : hOpt->opt_ps) {
                 string pre = " G";
-                if (tensor->is2D()) {
+                if (tensor->isWMAT()) {
                     if (G_Has_(tensor->name, {"wq", "wk", "wv", "QKV"}))
                         pre = " G_qkv_";
                     if (G_Has_(tensor->name, {"wo"})) {

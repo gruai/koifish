@@ -124,14 +124,15 @@ __global__ void CU_muon_mG(PIPE_Muon<Tp, Tmv> pipe) {
     if (idx >= pipe.num_parameters) {
         return;
     }  // guard
-    float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx), m = pipe.mG[idx], x2;
-    m = lerp(grad, m, pipe.mui);
-
-    float G_norm = pipe.grad_scale;  //
-    pipe.mG[idx] = m, x2 = m * m;
+    float grad = CU_T2Float(pipe.grads0 + idx);       //  pipe.grad_scale * CU_T2Float(pipe.grads0 + idx);
+    float m    = pipe.mG[idx], x2, m1;
+    m = lerp(m, grad, 1 - pipe.mui);  //  momentum.lerp_(grad, 1 - beta)    
+    pipe.mG[idx] = m; 
+    m = lerp(grad, m, pipe.mui);      // update = grad.lerp_(momentum, beta) if nesterov
+    pipe.X[idx] = m,    x2 = m * m;
     float block_sum = blockReduce_v0<warpReduceSum>(x2, true);
-    if (threadIdx.x == 0)
-        atomicAdd(pipe.arrNorm, block_sum);
+    if (threadIdx.x == 0)  //  Floating-point determinism is hard: True determinism requires fixed summation order and error compensation.
+        atomicAdd(pipe.arrNorm, (double)block_sum);
 }
 
 template <typename Tp, typename Tmv>
@@ -142,11 +143,12 @@ __global__ void CU_muon_update(PIPE_Muon<Tp, Tmv> pipe) {
     }  // guard
     float old_param = (float)pipe.params[idx], step = (float)pipe.X[idx];
     float param = old_param - pipe.learning_rate * pipe.weight_decay * old_param - pipe.learning_rate * step, x2 = param * param;
+    // float param = old_param - pipe.learning_rate * step, x2 = param * param;
     pipe.params[idx] = CU_Float2T<Tp>(param, pipe.seed);
     pipe.grads0[idx] = (Tp)(0.0);
     float block_sum  = blockReduce_v0<warpReduceSum>(x2, true);
     if (threadIdx.x == 0)
-        atomicAdd(pipe.arrNorm, block_sum);
+        atomicAdd(pipe.arrNorm, (double)block_sum);
 }
 
 template <typename Tp, typename Tmv>
@@ -156,6 +158,7 @@ __device__ inline float _adamw_idx(float old_param, const PIPE_Adamw<Tp, Tmv>& p
     float step = m / (sqrtf(v) + pipe.eps);
     //  Automatic detection of training instability
     // step = step>T_spike ?  T_spike : step<-T_spike ? -T_spike : step;
+    //  Decoupled weight decay is unstable in adaptive gradient methods!
     float param = old_param - pipe.learning_rate * pipe.weight_decay * old_param - pipe.learning_rate * step;
     //  stochastic_rounding(param, &params[idx], seed);
     param = CU_Float2T<Tp>(param, pipe.seed);
@@ -180,10 +183,13 @@ __global__ void CU_adamw_p(PIPE_Adamw<Tp, Tmv> pipe) {
     pipe.params[idx] = x;
     float block_sum  = blockReduce_v0<warpReduceSum>(x2, true);
     if (threadIdx.x == 0)  //  idx == 0
-        atomicAdd(pipe.arrNorm, block_sum);
+        atomicAdd((float*)pipe.arrNorm, block_sum);
 }
 
-// row-major  slow versioin
+/*
+    row-major  slow versioin
+    [todo] trust gradient estimator - https://arxiv.org/html/2502.05003v2
+*/ 
 template <typename Tp, typename Tmv>
 __global__ void CU_adamw_ternary(PIPE_Adamw<Tp, Tmv> pipe) {
     int M = pipe.ne[0], N = pipe.ne[1], tid = threadIdx.x;
@@ -229,7 +235,7 @@ __global__ void CU_adamw_s(PIPE_Adamw<Tp, Tmv> pipe) {
     pipe.params[idx] = x;
     float block_sum  = blockReduce_v0<warpReduceSum>(x2, true);
     if (threadIdx.x == 0)
-        atomicAdd(pipe.arrNorm, block_sum);
+        atomicAdd((float*)pipe.arrNorm, block_sum);
 }
 
 template <typename Tp, typename Tmv>
@@ -279,7 +285,7 @@ __global__ static void CU_adamw_Tile(PIPE_Adamw<Tp, Tmv> pipe) {
     if (tid == 0) {
         a                 = sum / TM / TN;
         pipe.gama_T[gpos] = a;  // CU_Float2T<Tp>(a, pipe.seed);   //
-        atomicAdd(pipe.arrNorm, a * a * TM * TN);
+        atomicAdd((float*)pipe.arrNorm, a * a * TM * TN);
     }
 }
 
@@ -365,7 +371,7 @@ __global__ static void CU_adamw_Tile_each_mv(PIPE_Adamw<Tp, Tmv> pipe) {
 // }
 
 bool Fuyou::Exploitation(hGensor tHead, hGensor tNext, int flag) {
-    if (!tHead->is2D() || params.algorithm == Fuyou_params::NO_EVOL)
+    if (!tHead->isWMAT() || params.algorithm == Fuyou_params::NO_EVOL)
         return false;
     int nParam = tHead->size(), dT4B = 512, M = tHead->ne[0], N = tHead->ne[1], nRander = M;  //
     // int dGRID = CEIL_DIV(nParam, dT4B);
@@ -425,52 +431,77 @@ from https://github.com/KellerJordan/Muon/blob/master/muon.py
 */
 template <typename Tp, typename Tmv>
 void PIPE_Muon<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
-    int64_t m = this->ne[0], n = this->ne[1], ldG = m, lda = std::min(m, n);
-    bool isAdamw = !this->tensor->is2D() || m > n;
-    if (isAdamw) {
+    if (this->name == "model.blk.11.ffn_down.weight") {
+        int debug = 0;  // only for debug
+    }
+    int64_t m = this->ne[0], n = this->ne[1];
+    bool isAdamw_ = muon.isAdamW(this->tensor);
+    if (isAdamw_) {
         PIPE_Adamw<Tp, Tmv>::CU_core(stream, flag);
         return;
     }
-
-    float alpha = 1.0f, beta = 1.0f, zero = 0.f, one = 1.0f, xNrm = 0;
-    int dT4B = 512, dGRID = CEIL_DIV(this->num_parameters, dT4B);
-    D20(this->arrNorm, sizeof(float) * 1);
-    // D2e(this->arrNorm, xNrm);
-    // PrintTensor<floatX>("grads0", (floatX*)(paramX), true, m,n,1,1,-1);
-    PrintTensor<floatX>("grads0", (floatX*)(grads0), true, m, n, 1, 1, -1);
+    float alpha = 1.0f, zero = 0.f, one = 1.0f;
+    double xNrm = 0;  // to reduce Non-Determinism in CUDA Sums!
+    int dT4B = 512, dGRID = CEIL_DIV(this->num_parameters, dT4B), dump_flag = 0;
+    D20(this->arrNorm, sizeof(double));
+    // PrintTensor<floatX>("grads0", (floatX*)(grads0), true, m,n,1,1,-1);
     CU_muon_mG<<<dGRID, dT4B, 0, stream>>>(*this);
+    // PrintTensor<floatX>("mG", (floatX*)(mG), true, m, n, 1, 1, -1);
     D2e(this->arrNorm, xNrm);
-    alpha = beta = 1.0 / (xNrm + eps);
-    bool isTrans = m > n;  //  ;
+    alpha = 1.0 / (sqrt(xNrm) + eps_muon);  //  Ensure spectral norm is at most 1
+    assert(sizeof(Tmv) == sizeof(floatX));
+    cudaDataType bf16     = CUDA_R_16BF;
+    cublasOperation_t opT = CUBLAS_OP_T, opN = CUBLAS_OP_N;    
+    if(0){  // X = G.bfloat16()    X /= (X.norm() + eps)
+        D20(X, sizeof(floatX) * m * n);
+        cublasAxpyEx(cublas_handle, m * n, &alpha, CUDA_R_32F, mG, bf16, 1, X, bf16, 1, CUDA_R_32F);        
+    }else{
+        alpha -= 1.0f;
+        cublasAxpyEx(cublas_handle, m * n, &alpha, CUDA_R_32F, X, bf16, 1, X, bf16, 1, CUDA_R_32F);  
+    }
+    // PrintTensor<floatX>("X0", (floatX*)(X), true, m, n, 1, 1, -1);
     if (isTrans) {
-        //     G = G.T
+        dim3 block(16, 16),grid(CEIL_DIV(m,block.x), CEIL_DIV(n,block.y));
+        CU_transpose<<<grid, block>>>(X, Xt, m, n);
+        cudaMemcpy(X, Xt, sizeof(Tmv) * m * n, cudaMemcpyDeviceToDevice);  // cudaMemcpyAsync
+        // PrintTensor<floatX>("Xt", (floatX*)(X), true, m, n, 1, 1, -1);
+        std::swap(m,n);
     }
-
-    cublasOperation_t opT = CUBLAS_OP_T, opN = CUBLAS_OP_N;
-    // X = G.bfloat16()    X /= (X.norm() + eps)
-    cublasAxpyEx(cublas_handle, m * n, &alpha, CUDA_R_16BF, mG, CUDA_R_16BF, 1, X, CUDA_R_16BF, 1, CUDA_R_16BF);
-    for (int i = 0; i < most_iter; i++) {
+    for (int i = 0; i < most_iter; i++) {  //   orthogonalization routine
+        PrintTensor<floatX>("Xi", (floatX*)(X), true, m, n, 1, 1, dump_flag);
         //     A = X @ X.T
-        cublasGemmEx(cublas_handle, opN, opT, m, n, n, &alpha, X, CUDA_R_16BF, m, X, CUDA_R_16BF, n, &zero, A, CUDA_R_16BF, lda, CUDA_R_32F,
-                     CUBLAS_GEMM_DEFAULT);
+        cublasGemmEx(cublas_handle, opN, opT, dimA, dimA, n, &one, X, bf16, m, X, bf16, m, &zero, A, bf16, dimA, CUDA_R_32F, CUBLAS_GEMM_DEFAULT);
+        // cublasGemmEx(cublas_handle, opN, opT, m, n, n, &one, X, bf16, m, X, bf16, n, &zero, A, bf16, dimA, CUDA_R_32F, CUBLAS_GEMM_DEFAULT);
+        PrintTensor<floatX>("A", (floatX*)(A), true, dimA, dimA, 1, 1, dump_flag);
         //     B = b * A + c * A @ A
-        cublasGemmEx(cublas_handle, opN, opN, lda, lda, lda, &c, A, CUDA_R_16BF, lda, A, CUDA_R_16BF, lda, &zero, B, CUDA_R_16BF, lda, CUDA_R_32F,
-                     CUBLAS_GEMM_DEFAULT);
-        cublasAxpyEx(cublas_handle, lda * lda, &b, CUDA_R_16BF, A, CUDA_R_16BF, 1, B, CUDA_R_16BF, 1, CUDA_R_16BF);
+        cublasGemmEx(cublas_handle, opN, opN, dimA, dimA, dimA, &c, A, bf16, dimA, A, bf16, dimA, &zero, B, bf16, dimA, CUDA_R_32F, CUBLAS_GEMM_DEFAULT);
+        PrintTensor<floatX>("B0", (floatX*)(B), true, dimA, dimA, 1, 1, dump_flag);
+        cublasAxpyEx(cublas_handle, dimA * dimA, &b, CUDA_R_32F, A, bf16, 1, B, bf16, 1, CUDA_R_32F);
+        PrintTensor<floatX>("B", (floatX*)(B), true, dimA, dimA, 1, 1, dump_flag);
         //     BX =  B @ X
-        cublasGemmEx(cublas_handle, opN, opN, m, n, m, &a, B, CUDA_R_16BF, lda, X, CUDA_R_16BF, lda, &zero, BX, CUDA_R_16BF, ldG, CUDA_R_32F,
-                     CUBLAS_GEMM_DEFAULT);
+        cublasGemmEx(cublas_handle, opN, opN, m, n, m, &one, B, bf16, dimA, X, bf16, m, &zero, BX, bf16, dimA, CUDA_R_32F, CUBLAS_GEMM_DEFAULT);
+        PrintTensor<floatX>("BX0", (floatX*)(BX), true, m, n, 1, 1, dump_flag);
         //  X = a*X + BX
-        cublasAxpyEx(cublas_handle, m * n, &a, CUDA_R_16BF, X, CUDA_R_16BF, 1, BX, CUDA_R_16BF, 1, CUDA_R_16BF);
-        cudaMemcpy(BX, X, sizeof(Tmv) * m * n, cudaMemcpyDeviceToDevice);  // cudaMemcpyAsync
+        cublasAxpyEx(cublas_handle, m * n, &a, CUDA_R_32F, X, bf16, 1, BX, bf16, 1, CUDA_R_32F);
+        PrintTensor<floatX>("BX", (floatX*)(BX), true, m, n, 1, 1, dump_flag);
+        cudaMemcpy(X, BX, sizeof(Tmv) * m * n, cudaMemcpyDeviceToDevice);  // cudaMemcpyAsync
     }
-    if (isTrans) {  // if G.size(0) > G.size(1):
-        //     X = X.T
+    if (isTrans) {//     X = X.T
+        dim3 block(16, 16),grid(CEIL_DIV(m,block.x), CEIL_DIV(n,block.y));
+        CU_transpose<<<grid, block>>>(X, Xt, m, n);
+        cudaMemcpy(X, Xt, sizeof(Tmv) * m * n, cudaMemcpyDeviceToDevice);  // cudaMemcpyAsync
+        std::swap(m,n);
     }
+    // PrintTensor<floatX>("X1", (floatX*)(X), true, m, n, 1, 1, -1);
+    float beta = sqrt(max(1.0f, m * 1.0f / n)) - 1.0f;  // update *= max(1, grad.size(-2) / grad.size(-1))**0.5
+    //float beta = 0.2 * sqrt(max(m,n)) - 1.0f;   // why this ?
+    if (beta != 0.0f)
+        cublasAxpyEx(cublas_handle, m * n, &beta, CUDA_R_32F, X, bf16, 1, X, bf16, 1, CUDA_R_32F);
+    
 
     CU_muon_update<<<dGRID, dT4B, 0, stream>>>(*this);
-    D2e(this->arrNorm, this->tensor->wnorm, 0x0), assert(isValidF(&(this->tensor->wnorm)));
-    this->tensor->wnorm = sqrt(this->tensor->wnorm);
+    D2e(this->arrNorm, xNrm, 0x0), assert(!(isnan(xNrm) || isinf(xNrm)));
+    this->tensor->wnorm = sqrt(xNrm);
     cudaCheck(cudaGetLastError());
 }
 template struct PIPE_Muon<floatX, floatMV>;   // Force compilation

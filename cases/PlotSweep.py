@@ -1,5 +1,6 @@
 import csv
 import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
 import pandas as pd
 import numpy as np
 from pathlib import Path  
@@ -104,12 +105,19 @@ def plt_df(df,title,path ):
     plt.figure(figsize=(20, 12))  # Width=10 inches, Height=6 inches
     plt.grid(True)
     # palette='Dark2'      # palette='Set2')  # Other options: 'Paired', 'Dark2', 'tab10'
-    sns.lineplot(data=df,linewidth=1) #   The smallest usable linewidth is 0.1
+    sns.lineplot(data=df,linewidth=2) #   The smallest usable linewidth is 0.1
     # sns.scatterplot(data=df)
+    plt.xlabel("Iter", fontsize=18, fontweight="bold")#fontsize=14, color="blue", 
+    plt.ylabel("Loss", fontsize=18, fontweight="bold")  #, fontsize=14, color="red"
     plt.title(title)
     plt.savefig(path)
-    plt.show(block=True)                    
-    print(f"Save losscurve@{path} n={nResult}"  )
+    print(f"Save losscurve@{path} n={nResult}"  )    
+    if plt.isinteractive():
+        plt.show(block=True)   
+    else:         
+        cmd = "code " + path
+        os.system(cmd)
+    # timg /root/lic/SWEEP/1558M/sweep_results.png
 
 def SWEEP_plt(all_results,path,yCol='loss'):
     nResult = len(all_results)
@@ -128,59 +136,61 @@ def SWEEP_plt(all_results,path,yCol='loss'):
         # indices = np.linspace(0, rows-1, 200, dtype=int)  # 20 evenly spaced points
         new_df[str(minY)+"@"+result.title] = dfSrc[yCol]        #.iloc[:,2]         
         
-        print(f"new_df shape={new_df.shape} head = {new_df.head()}")    
-        df = pd.concat([df, new_df], axis=1)
-        
+        # print(f"new_df shape={new_df.shape} head = {new_df.head()}")    
+        df = pd.concat([df, new_df], axis=1)        
         no = no+1
     # Melt DataFrame for seaborn
     # df_melted = df.melt(id_vars='x', var_name='curve', value_name='y')
     plt_df(df,title = f"\"{yCol}\" {nResult} sweeps @'{path}'",path=path)
 
-    # plt.figure(figsize=(20, 12))  # Width=10 inches, Height=6 inches
-    # plt.grid(True)
-    # sns.lineplot(data=df,linewidth=0.5) #   The smallest usable linewidth is 0.1
-    # # sns.scatterplot(data=df)
-    # title = f"\"{yCol}\" {nResult} sweeps @'{path}'"
-    # plt.title(title)
-    # plt.savefig(path)
-    # plt.show(block=True)                    
-    # print(f"Save losscurve@{path} n={nResult}"  )
-
 # 
-def SWEEP_stat(root_dir,plot_path,isNeedLog=False):
-    all_results = []
+def GetAllPlotPath(root_dir,append_pwd):
+    all_path = []
     for root, dirs, files in os.walk(root_dir):
         for cur_dir in dirs:
             # if cur_dir != "fuyouo6_crossover0.6_B40":                continue
             cur_path = os.path.join(root, cur_dir)
-            jConfig = None; fLog=None;  dfTrain=None;  dfEval=None
-            for f in os.listdir(cur_path):
-                f = cur_path + "/" + f 
-                if not os.path.isfile(f):   continue                
-                fsize = os.path.getsize(f)
-                file_path = Path(f)
-                if file_path.suffix==".json":
+            all_path.append(cur_path)
+    if len(all_path)==0:
+        all_path.append(root_dir)
+    if append_pwd:
+        all_path.append(".")
+        # all_path.append("./SWEEP/tmp/")
+    # all_path = ["./SWEEP/tmp/"]
+    return all_path
+
+def SWEEP_stat(root_dir,plot_path,append_pwd=True,isNeedLog=False):
+    all_results = []
+    all_path = GetAllPlotPath(root_dir,append_pwd)
+    for cur_path in all_path:
+        title = cur_path if cur_path=="." else Path(cur_path).name
+        jConfig = None; fLog=None;  dfTrain=None;  dfEval=None
+        for f in os.listdir(cur_path):
+            f = cur_path + "/" + f 
+            if not os.path.isfile(f):   continue                
+            fsize = os.path.getsize(f)
+            file_path = Path(f)
+            if file_path.suffix==".json":
+                with open(f, 'r') as fr:
+                    jConfig = json.load(fr)  
+            if file_path.suffix==".info":
+                if fsize>2048:
                     with open(f, 'r') as fr:
-                        jConfig = json.load(fr)  
-                if file_path.suffix==".info":
-                    if fsize>2048:
-                        with open(f, 'r') as fr:
-                            fLog = fr.read() 
-                if file_path.suffix==".csv":
-                    if fnmatch.fnmatch(f,"*Train*"):
-                        dfTrain = pd.read_csv(f, sep=' ',index_col=False)
-                    else:
-                        dfEval = pd.read_csv(f, sep=' ',index_col=False)        
-                        # print(dfEval)    
-            if dfTrain is None or dfEval is None:
-                continue   
-            if isNeedLog and fLog is None:
-                continue
-            print(f"dfTrain shape={dfTrain.shape} head = {dfTrain.head()}\n loss={dfTrain["loss"]}")    
-            title = cur_dir
-            result = SWEEP_result(title, cur_dir,jConfig,dfTrain,dfEval,fLog)
-            all_results.append(result)
-            # SWEEP_plt(all_results,plot_path)
+                        fLog = fr.read() 
+            if file_path.suffix==".csv":
+                if fnmatch.fnmatch(f,"*Train*"):
+                    dfTrain = pd.read_csv(f, sep=' ',index_col=False)
+                else:
+                    dfEval = pd.read_csv(f, sep=' ',index_col=False)        
+                    # print(dfEval)    
+        if dfTrain is None or dfEval is None:
+            continue   
+        if isNeedLog and fLog is None:
+            continue
+        print(f"dfTrain shape={dfTrain.shape} head = {dfTrain.head()}\n loss={dfTrain["loss"]}")    
+        result = SWEEP_result(title, cur_path, jConfig,dfTrain,dfEval,fLog)
+        all_results.append(result)
+        # SWEEP_plt(all_results,plot_path)
     assert(len(all_results)>0)
     yCol='loss'     #   loss  lr max_|G|  max_|W| gNorm
     SWEEP_plt(all_results,plot_path,yCol=yCol)
@@ -203,10 +213,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--dir", type=str, help="log path of sweep test")
     parser.add_argument("--csv", type=str, help="log path of single csv file")
+    parser.add_argument("--x", action='store_false') 
     # parser.add_argument("--stat", action='store_true')    
     args = parser.parse_args()
     if args.dir:
-        SWEEP_stat(args.dir,args.dir+"/sweep_results.png")
+        SWEEP_stat(args.dir,args.dir+"/sweep_results.png",append_pwd=args.x)
     elif args.csv:
         Plot_csv(args.csv)
     exit()    

@@ -52,14 +52,14 @@
     "datasets": {
         "train": {
             "glob": "./Datasets/edu_fineweb1B/*train*.bin",
-            "most": 20,
+            "most": 50,
             "name": "edu_fineweb1B"
         },
         "eval_1": {
             "glob": "./Datasets/edu_fineweb1B/*val*.bin",
             "name": "edu_fineweb1B",
-            "most": 10,
-            "eval-every": 200,"samp":0.04
+            "most": 1,
+            "eval-every": 200,"samp":0.06
         },
         "#eval_2": {
             "glob": "./Datasets/hellaswag_val.bin",

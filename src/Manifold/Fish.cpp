@@ -190,14 +190,15 @@ size_t Fish::MostMemSize(int typ) {
 }
 
 bool Fish::UpdateParams(int flag) {
-    size_t nx = 0,nR=0;
+    size_t nx = 0, nR = 0;
     assert(optParams.size() == 0);
     for (auto it : gensors.infos) {
         auto t = it.first;
         if (BIT_TEST(t->flags, GTensor::GTensor::F_PARAM)) {
-            if (t->isRefer()){
-                nR++;   continue;
-            }                
+            if (t->isRefer()) {
+                nR++;
+                continue;
+            }
             optParams.push_back(t);
             t->needUpdateParam = true;
             nx += tELEM(t);  //
@@ -408,9 +409,9 @@ bool Fish::SaveTrain(string sX, bool isInit, int flag) {
             // config.fuyou.filter_reload = {DEBUG.x_str};  //only for debug   "ffn_up.weight" blk.2.ffn_up.weight
             for (auto t : optParams) {
                 if (isStrMatch(t->name, config.fuyou.filter_reload)) {
-                    // if(t->is2D()){  // why norm woul faile. so strange!
-                        BIT_SET(t->flags, GTensor::F_RELOAD);
-                        nReload++;
+                    // if(t->isWMAT()){  // why norm woul faile. so strange!
+                    BIT_SET(t->flags, GTensor::F_RELOAD);
+                    nReload++;
                     // }
                 }
             }
@@ -418,7 +419,6 @@ bool Fish::SaveTrain(string sX, bool isInit, int flag) {
         _INFO("[Save] @\"%s\" nParams=%d nReloads=%d  save_every=%d\n", sOut.c_str(), optParams.size(), nReload, config.checkpoint.save_every);
     }
     for (auto t : optParams) {
-        
     }
 
     isOK = SAFETENSOR_Serialize(sOut, true, isInit ? FSerial::INIT_MMAP : 0x0);

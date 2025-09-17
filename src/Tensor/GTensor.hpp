@@ -177,6 +177,7 @@ class GTensor {
         F_OUTPUT    = 0x2,
         F_PARAM     = 0x4,
         F_LOSS      = 0x8,
+        F_WMATRIX   = 0x10,     // A weight matrix is a linear operator on RMS-normed vector spaces.
         F_NOALLOC   = 0x100,
         F_GPU       = 0x200,
         F_HOSTALLOC = 0x400,
@@ -294,8 +295,8 @@ class GTensor {
         return 1;
     }
     virtual size_t nByte() const { return szData; }
-
-    virtual bool is2D() const { return ne[0] > 1 && ne[1] > 1 && ne[2] == 1 && ne[3] == 1; }
+    //   A weight matrix is a linear operator on RMS-normed vector spaces.
+    virtual bool isWMAT(int flag = 0x0) const;
     //  The offset of (i0,i1,i2,i3) in byte
     virtual size_t Offset(int i0, int i1, int i2, int i3, int flag = 0x0) const;
 

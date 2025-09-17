@@ -2,7 +2,16 @@
 
 Sparse & quantized LLM training in C++/cu.
 
-Training of ~2B language models with only one GPU.
+Koifish needs much less training resource than other frameworks. It needs only one day to train ~2B model on single 4090 as shown in the following table.
+
+| Model | Parameter  | Loss(Baseline) |GPU Memory|Training Time|Throughput|
+|:-------------:|:--------------:|:--------------:|:--------------:|:--------------:|:--------------:|
+| GPT2-124M         | 124M           | 3.287(3.425)  | ~6.8G   |~8 hours|~140k/s|
+| GPT2-774M         | 774M           | 3.146(3.00)   | ~15G |~18 hours|~70k/s|
+| GPT2-1558M         | 1558M           | 3.04(2.83)   | ~23G   |~30 hours|~50k/s|
+
+Note
+1. The baseline results are from [GPT2](https://github.com/openai/gpt-2), which are trained with 10 billion tokens of FineWeb. Our training only used 5B tokens of FineWeb.   
 
 ## Features
 - Hybrid 16/8/1 bit training
@@ -38,9 +47,8 @@ make clean && make VERBOSE=TRUE
 ## [Techniques/Tricks](cases/tricks/Tricks.md)
 
 ## History
-* 08/31/2025: Training 1558M sparse GPT2 model on single 4090 with throughput > 40K tokens/second
 * 08/17/2025: A new framework of multiscale deep learning
-* 08/01/2025: Training 1558M sparse GPT2 model on single 4090 with throughput > 20K tokens/second
+* 08/01/2025: Training GPT2_1558M on single 4090 with throughput > 20K tokens/second
 * 07/24/2025: Support tile quantization 
 * 06/29/2025: Rope with pre/post normalization 
 * 06/14/2025: Support bit representation(binary[-1,1], ternary[-1,0,1]) 

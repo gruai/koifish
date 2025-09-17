@@ -208,10 +208,12 @@ class OPT_Adam : public Optimizer {
 };
 
 class OPT_Muon : public Optimizer {
-   protected:
+   protected:    
+    std::vector<hGensor> tMuons; 
+    size_t nmParams = 0;
     void Prepare(size_t nx, int flag = 0x0) override;
-
-   public:
+    MUON_params_* muon = nullptr;  // may be modified
+   public:    
     OPT_Muon(NLP_AutoRegressive* g_, CLI_params& params_, int flag = 0x0);
     void BeforeTrain(hGensor tokens_input, int flag)    override;
     void Dump(int typ) override;

@@ -1661,7 +1661,7 @@ bool GTensor::AllocBuffer(Fish *hFish, int flag) {
             GTensor::tmpW = std::make_shared<huTensor>(hFish, "tmpW", SHAPE({nEmbed, nFF}), tpW, true);
         }
         // GTensor::tmpGW = std::make_shared<huTensor>(hFish, "tmpGW", SHAPE({nEmbed, nFF}), tpG, true);
-        cudaCheck( cudaMalloc(&GTensor::stat_info,sizeof(float)*1024) );
+        cudaCheck( cudaMalloc(&GTensor::stat_info,sizeof(float)*5120) );
 
         return true;
     } catch (const std::exception &e) {

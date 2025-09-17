@@ -49,6 +49,20 @@ hGTensor GT(Fish *hFish, typNUMBER type, SHAPE shape, int flag, const string &na
     return hT;
 }
 
+/*
+    A weight matrix is a linear operator between RMS-normed vector spaces.
+    Let y = Wx, then |y|/|x| ~ ||W|| the spectral norm(largest singular value)
+
+    1. fan-out,fan-in are the dimensions of the weight matrix
+    1. No Embedding layer that takes one-hot inputs.
+*/
+bool GTensor::isWMAT(int flag) const {
+    if (!BIT_TEST(flags, F_WMATRIX) || !BIT_TEST(flags, F_PARAM))
+        return false;
+    assert(ne[0] > 1 && ne[1] > 1 && ne[2] == 1 && ne[3] == 1);
+    return true;
+}
+
 bool GTensor::isSameShape(SHAPE sp, int flag) const {
     assert(sp.size() <= 4);
     size_t nz_0 = 1, i = 0;
@@ -592,14 +606,14 @@ bool huTensor::Alloc(int iter, int flagInit) {
         return true;
     if (BIT_TEST(flags, F_MMAP))  // For example: operator fusing, memory reuse,rematerialization
         return true;
-    if (hRef != nullptr) {  // Activation or Parameters        
+    if (hRef != nullptr) {  // Activation or Parameters
         // if (DUMP(0))
-        if (BIT_TEST(flags, GTensor::F_RELOAD)){
+        if (BIT_TEST(flags, GTensor::F_RELOAD)) {
             _INFO("\t%s =====> %s\n", name, hRef->name);
-        }else{
+        } else {
             ShareMemory(hRef);  //  grad => src->grad;
             return true;
-        }            
+        }
     }
 
     assert(szData > 0 || type == typNUMBER::T_BINARY_TILE);
@@ -646,7 +660,11 @@ bool huTensor::Alloc(int iter, int flagInit) {
             } else if (method == "lion") {
                 Alloc_1(&gm, true, desc + ".m", szM), szV = 0;
             } else if (method == "muon") {
-                Alloc_1(&gm, true, desc + ".m", szM + szV), gv = (char *)gm + szM;
+                if(hFish->config.common.muon.isAdamW(this)){
+                    Alloc_1(&gm, true, desc + ".m", szM + szV), gv = (char *)gm + szM;
+                }else{
+                    Alloc_1(&gm, true, desc + ".m", szM), szV = 0;
+                }
                 // Alloc_1(&gm, true, desc+".m", szMV);
             } else if (method == "adams") {  // why converge so slow for 1445M?
                                              /*if(isStrMatch(name, {"embd","output","norm"})){
@@ -684,10 +702,10 @@ bool huTensor::Free(bool isPassResident) {
             int debug = 0x0;
         }
 
-        if (isRefer()){
-            if (BIT_TEST(flags, GTensor::F_RELOAD)){
+        if (isRefer()) {
+            if (BIT_TEST(flags, GTensor::F_RELOAD)) {
                 int debug = 0x0;
-            }else
+            } else
                 return true;
         }
         bool isPass = isPassResident && BIT_TEST(flags, GTensor::F_RESIDENT);

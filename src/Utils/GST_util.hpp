@@ -439,6 +439,7 @@ class GST_util {
     }
 };
 
+//  G_Has
 inline bool isStrMatch(const string &target, const vector<string> &words) {
     for (auto w : words) {
         if(w.empty())
@@ -447,4 +448,11 @@ inline bool isStrMatch(const string &target, const vector<string> &words) {
             return true;
     }
     return false;
+}
+
+/*
+    CUBLAS: Base addresses of A, B, C matrices should be aligned to 256-byte boundaries for optimal performance.
+*/
+inline bool PTR_is_aligned(const void* ptr, size_t alignment = 256) { 
+    return (reinterpret_cast<uintptr_t>(ptr) % alignment) == 0; 
 }

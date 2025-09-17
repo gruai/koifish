@@ -123,7 +123,7 @@ size_t huTensor::Free_1(void** obj, const string& info) {
     SUM::FreeMem(*obj);
     *obj = nullptr;
     szGlobalMaloc -= szData;
-    
+
     return szGlobalMaloc;
 }
 
@@ -665,7 +665,7 @@ int _CheckX2Tile_(floatX* A, floatGama* hgama, int M, int N, int flag) {
 }
 
 bool huTensor::Mutation(int flag) {
-    if (!is2D())
+    if (!isWMAT())
         return false;
     float w0 = wnorm;
     if (0) {
@@ -692,7 +692,7 @@ bool huTensor::ToTernary(floatX* paramX, int flag) {
     size_t count = size(), dT4B = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
     bool isOverwrite = false;
     assert(this->isParam() && paramX != nullptr);
-    assert(is2D() /*ne[2] == 1 && ne[3] == 1*/);  // only for 2D weight
+    assert(isWMAT());  // only for 2D weight
     // auto dGRID         = 1;  // hFish->curDevice()->GridDim(count);
     // void* kernelArgs[] = {(void*)&gama_T, (void*)&data, (void*)&ne[0], (void*)&ne[1], (void*)&tpQuant};
     if (type == typNUMBER::T_BINARY_TILE) {

@@ -129,7 +129,7 @@ bool safetensors::save_to_ofs(const safetensors_t &st, std::ofstream &ofs, size_
     bool isInitMMap = BIT_TEST(flag, FSerial::INIT_MMAP);
     try {
         fflush(stdout);
-        _INFO(">>>>>> saveto_ofs ......\n");
+        // _INFO(">>>>>> saveto_ofs ......\n");
         // directly serialize JSON string.
         std::stringstream ss;
         // By default, std::stringstream does not throw exceptions for stream failures (e.g., failbit).
@@ -173,7 +173,7 @@ bool safetensors::save_to_ofs(const safetensors_t &st, std::ofstream &ofs, size_
             std::string key = st.tensors.keys()[i];
             safetensors::tensor_t tensor;
             st.tensors.at(i, &tensor);
-            _INFO("\r\t %d/%d\t\"%s\"", i, st.tensors.size(), key.c_str());
+            // _INFO("\r\t %d/%d\t\"%s\"", i, st.tensors.size(), key.c_str());
             fflush(stdout);
             if (tensor.shape.size() > safetensors::kMaxDim) {
                 if (err) {
@@ -226,7 +226,7 @@ bool safetensors::save_to_ofs(const safetensors_t &st, std::ofstream &ofs, size_
         size_t szOFS              = 8 + padded_header_size + databuffer_size;
         szAll                     = szOFS;
         fflush(stdout);
-        _INFO(">>>>>> saveto_ofs ......sz=%.6gM...", szAll / 1.0e6);
+        // _INFO(">>>>>> saveto_ofs ......sz=%.6gM...", szAll / 1.0e6);
         // std::vector<uint8_t> buffer;
         // buffer.resize(8 + padded_header_size + databuffer_size);
         // size_t szDst = buffer.size();  //  248972672,  248951808
@@ -281,7 +281,7 @@ bool safetensors::save_to_ofs(const safetensors_t &st, std::ofstream &ofs, size_
         }
 
         fflush(stdout);
-        _INFO(">>>>>> saveto_ofs ......OK\n");
+        // _INFO(">>>>>> saveto_ofs ......OK\n");
         return true;
     } catch (const std::exception &e) {
         _INFO("\n!!!!saveto_ofs excetioin=%s sz=%ld!!!\n", e.what(), szAll);

@@ -278,7 +278,7 @@ int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, 
         int OC = nOut, IC = nIn;
         assert(delta != nullptr);
         // assert(inp->isSameShape({B, T, IC}) && deltaIn->isSameShape({B, T, OC}));
-        deltaIn->Print("delta_in", 0, flag);
+        // deltaIn->Print("delta_in", 0, flag);
         switch (compression) {
             case SAMPLE:  // remater to get wX
                 subw->SubW(hSamps, true, GTensor::tmpW, samp_type);

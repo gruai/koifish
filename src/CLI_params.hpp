@@ -133,7 +133,7 @@ struct Fuyou_params {
     // int tpParamResident = 0;  //  0-      1-
     bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
     bool InitSection(int nLayer, int nLS, int nSwitch = 100, int flag = 0x0);
-    bool isFirst(int layer,int flag=0x0);
+    bool isFirst(int layer, int flag = 0x0);
     float alpha     = 0.9;
     float cognitive = 0, social = 2;              // exploration and exploitation
     float T_crossover = 0.6, T_mutation = 0.001;  //  mutation:   [0.001–0.1]
@@ -276,15 +276,30 @@ struct ADAM_params_ {
 
 struct MUON_params_ {
     size_t n_parameters;
-    float eps      = 1e-8f;  // epsilon for numerical stability
+    enum Orthogonalization{
+        NewtonSchulz,
+        Chebyshev       //  https://github.com/GrishKate/accelerating_orthogonalization
+
+    };
+    Orthogonalization tpOrthogonal = NewtonSchulz;
+    MUON_params_();
+    bool isNesterov = true;
+    bool isTransDown = true;
+    bool isAdamW(void *hUserData, int flag=0x0);
+    float lr_scale = 50.f;  //100.f 50.f?
+    //  torch:  self←self+λ⋅(b−self)          lerp(a, b, λ):  a+λ*(b-a)
+    float mui      = 0.95;  
+    float eps      = 1e-7f;  // epsilon for numerical stability
     float eps_loss = 1e-5f;  // epsilon for convergence test
     int ldAB       = 0;
-    // void Dump(int typ);
+    //  0:No decay 1: equal decay  2:  high decay due to high LR!
+    int tpDecay = 0;
+    void Dump(int typ);
 };
 
 struct TRAIN_CARD {
     int dump_every = 1;
-    int gpt_every = -1;  // eval_every=-1,
+    int gpt_every  = -1;  // eval_every=-1,
 
     int seed = -1;
 
@@ -348,7 +363,7 @@ struct DEUG_SWITCH {
     int T_cpu              = 0;
     int T_GEMM             = -1;
     int T_fuyou            = 1;
-    int N_mostiter         = 1000;
+    int N_mostiter         = -1;
 
     int cmd_p1 = 0, cmd_p2 = 0, cmd_p3 = 0;  // some commandline parameter for debug
     int x1 = 0;
@@ -367,7 +382,7 @@ struct CLI_params {
     struct CheckPoint {
         std::string in, out;
         std::string model_out, model_base;
-        int save_every=-1;
+        int save_every = -1;
     };
     CheckPoint checkpoint;
 
