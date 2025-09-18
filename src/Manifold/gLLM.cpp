@@ -724,7 +724,7 @@ void NLP_AutoRegressive::InitModel(int flag) {
     } else {
     }
 
-    _INFO("\nLLaMeta%s: init model embed=%d layer=%d ff=%d tpFFN=%d\n", __func__, n_embd, n_layer, n_ff, tpFFN);
+    _INFO("\n Init model embed=%d layer=%d ff=%d tpFFN=%d\n", n_embd, n_layer, n_ff, tpFFN);
     _INFO("\t type of FFN=%s\n", tpFFN == FFN_TYPE::SWIGLU           ? "MLP"
                                  : tpFFN == FFN_TYPE::VAR_LAST       ? "Variation@last_layer"
                                  : tpFFN == FFN_TYPE::ONLY_RMSNormal ? "RMS Normal"

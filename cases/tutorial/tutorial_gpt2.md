@@ -46,8 +46,8 @@ git clone https://github.com/NVIDIA/cudnn-frontend.git
 
 ## 4. Train 
 ```shell
-    ./bin/koifish ./cases/gpt2/gpt2_124M.json
-    ./bin/koifish ./cases/gpt2/gpt2_774M.json
+    ./bin/koifish ./cases/gpt2/124M_shard50_F6_lr0.001/F6_lr0.001.json
+    ./bin/koifish ./cases/gpt2/774M_Shard50_F6_B80/F6_B80.json
 ```
    
 ## 5. Results
@@ -58,12 +58,12 @@ Koifish would save each step info to three csv files:
 * Eval@[HellaSwag]_info_.csv
 
 ### Results of GPT2-124M 
-[Json config file](./gpt2/gpt2_124M.json). Model parameters:
+[Json config file](./gpt2/124M_shard50_F6_lr0.001/F6_lr0.001.json). Model parameters:
     The loss curve is as follows:
 ![Training curves & results](./gpt2_124M_losscurve.png).
 
    
 ### Results of GPT2-774M 
-[Json config file](./gpt2/gpt2_774M.json).Model parameters:
+[Json config file](./gpt2/774M_Shard50_F6_B80/F6_B80.json).Model parameters:
 The loss curve is as follows:
 ![Training curves & results](./gpt2_774M_losscurve.png).

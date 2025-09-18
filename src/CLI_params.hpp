@@ -276,19 +276,19 @@ struct ADAM_params_ {
 
 struct MUON_params_ {
     size_t n_parameters;
-    enum Orthogonalization{
+    enum Orthogonalization {
         NewtonSchulz,
-        Chebyshev       //  https://github.com/GrishKate/accelerating_orthogonalization
+        Chebyshev  //  https://github.com/GrishKate/accelerating_orthogonalization
 
     };
     Orthogonalization tpOrthogonal = NewtonSchulz;
     MUON_params_();
-    bool isNesterov = true;
+    bool isNesterov  = true;
     bool isTransDown = true;
-    bool isAdamW(void *hUserData, int flag=0x0);
-    float lr_scale = 50.f;  //100.f 50.f?
+    bool isAdamW(void* hUserData, int flag = 0x0);
+    float lr_scale = 50.f;  // 100.f 50.f?
     //  torch:  self←self+λ⋅(b−self)          lerp(a, b, λ):  a+λ*(b-a)
-    float mui      = 0.95;  
+    float mui      = 0.95;
     float eps      = 1e-7f;  // epsilon for numerical stability
     float eps_loss = 1e-5f;  // epsilon for convergence test
     int ldAB       = 0;
@@ -346,6 +346,11 @@ struct TRAIN_CARD {
     bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
 };
 
+struct DUMP_SWITCH {
+    int tensor_ref = 0;
+    int train_time = 0;
+};
+
 struct DEUG_SWITCH {
     int SelfAttention_noraml = 1;
     bool NO_loss             = false;
@@ -354,7 +359,7 @@ struct DEUG_SWITCH {
     int algCuX2              = 0;
 
     int dict_latent_dim    = -1;
-    int graph_dump         = 0;  //  10 levels of dumps, 0-9. 0 is a full dump,The lower the number the more dump.
+    int graph_dump         = 0;  //  10 levels of dumps, 0-9. 0 is a full dump_,The lower the number the more dump_.
     int train_hyperparams  = 0;
     int train_datas        = 0;
     int back_graph_version = 0;
@@ -385,6 +390,7 @@ struct CLI_params {
         int save_every = -1;
     };
     CheckPoint checkpoint;
+    DUMP_SWITCH dumpSwitch;
 
     struct DataTypes {
         std::vector<std::string> arrTernary;

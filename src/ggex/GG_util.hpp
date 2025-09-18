@@ -98,7 +98,7 @@ enum GD_METHOD {
     ADAM_MINI,          //  https://arxiv.org/pdf/2406.16793
     ADAM_S,             //  https://arxiv.org/pdf/2505.16363
     ADAM_GALORE, 
-    ADAM_spike, 
+    // ADAM_spike, 
     MUON,
     // ADAMw_cuda,
 };

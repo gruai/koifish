@@ -66,7 +66,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     float loss_before = 0, loss_after = 0, tokens_per_second = 0, ema_tps = 0, last_lr = 0;
     int first_epoch = 0, iter_at_last_epoch = -1, first_iter = -1, iter = -1;
     uint64_t train_its = 0, train_samples = 0, train_tokens = 0, train_epochs = 0, max_epoch = 0;
-    double last_time, tData, tUpdate;
+    double last_time, tUpdate;
     double millis_per_iter          = 0;
     std::vector<string> adam_filter = {"output", "norm"};  //{"token_embd","output","norm"};
 

@@ -160,12 +160,13 @@ struct MEM_USAGE {
     MEM_USAGE(size_t sz_, string d_, void *hData = nullptr, int flag = 0x0);
 };
 struct SUM {
+    static int nMostMemItem;
     static std::vector<MEM_USAGE> mems;
     static int nInitParam,nSaveParam,nLoadParam,nDogLeg;
-    static double tX, tX1, tRemater, tQKV, tFFN, tUpload, tLoadData, tLoadParam, tEval_0, tEval_1;
+    static double tX, tX1, tData, tRemater, tQKV, tFFN, tUpload, tLoadData, tLoadParam, tEval_0, tEval_1;
     static size_t szUpload;
     static void Reset(string typ, int flag = 0x0);
-    static void TimeInfo(int flag = 0x0);
+    static void TimeInfo(int typ, int flag = 0x0);
     static void MemoryInfo(int type, int flag = 0x0);
     static bool FreeMem(void *hData,int flag=0x0);
 };

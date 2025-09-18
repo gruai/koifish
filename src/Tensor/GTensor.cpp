@@ -139,7 +139,8 @@ void GTensor::SetRefer(hGTensor hR, int flag) {
     hRef = hR;
     hR->refered.push_back(this);
     type = hRef->type;
-    _INFO("\t%s =====> %s\n", name, hR->name);
+    if(hFish->config.dumpSwitch.tensor_ref>0)
+        _INFO("\t%s =====> %s\n", name, hR->name);
 }
 
 bool GTensor::SetTernary(typNUMBER tpT_, int flag) {
@@ -609,7 +610,8 @@ bool huTensor::Alloc(int iter, int flagInit) {
     if (hRef != nullptr) {  // Activation or Parameters
         // if (DUMP(0))
         if (BIT_TEST(flags, GTensor::F_RELOAD)) {
-            _INFO("\t%s =====> %s\n", name, hRef->name);
+            if(hFish->config.dumpSwitch.tensor_ref>0)
+                _INFO("\t%s =====> %s\n", name, hRef->name);
         } else {
             ShareMemory(hRef);  //  grad => src->grad;
             return true;

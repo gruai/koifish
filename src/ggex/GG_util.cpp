@@ -877,6 +877,10 @@ bool CLI_params::InitJConfig(int flag) {
         DEBUG.x1         = jKV(jConfig, {"debug", "x"}, DEBUG.x1);
         DEBUG.x_str      = jKV(jConfig, {"debug", "x_str"}, DEBUG.x_str);
         DEBUG.N_mostiter = jKV(jConfig, {"debug", "most_iter"}, DEBUG.N_mostiter);
+
+        SUM::nMostMemItem = jKV(jConfig, {"dump", "most_mem_item"}, SUM::nMostMemItem);
+
+        dumpSwitch.train_time = jKV(jConfig, {"dump", "train_time"}, dumpSwitch.train_time);
         // train = jKV(jConfig,{"train"},train );
         return true;
     } catch (JSON::parse_error &e) {

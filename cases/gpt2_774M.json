@@ -50,8 +50,8 @@
         "decay":0.1,
 
         "optimizatioin":{
-            "#method":"adamw sgdv hsgd lion",
-            "method":"adamw",
+            "#method":"adamw sgdv hsgd lion muon",
+            "method":"muon",
             "sign":0,
             "grad_accumulation":1,
             "lars_ratio":0,      "ZMUV_ratio":0.00    
@@ -61,6 +61,15 @@
         "save-every":500,
         "#in":"./hy-tmp/checkpoint/chk-GPT2_9001.gguf",
         "out":"./hy-tmp/checkpoint/GPT2_774M_"
+    },
+
+    "debug": {
+        "#x_str":"blk.2.attn.wq.weight",
+        "most_iter":-2
+    },
+    "dump": {
+        "operator_time" : 0,
+        "most_mem_item" : 6
     },
 
     "threads":20,            

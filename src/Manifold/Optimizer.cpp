@@ -38,7 +38,7 @@ Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params &config, int flag) : _fi
                        : method == "hsgd"  ? SGD_HYBRID
                        : method == "lion"  ? LION
                        : method == "muon"  ? MUON
-                                           : ADAM_spike;
+                                           : ADAMw;
         nGradAccum   = std::max(1, train_params.n_gradient_accumulation);
         isGlobalGrad = nGradAccum > 1;  // Nearly same alloc grad or not
         train_loader = std::make_shared<SampLoader>(_fish, "Train", false);
@@ -157,7 +157,7 @@ bool Optimizer::BatchGrad(int iter, float &fx, int flag) {
         auto now = GST_ms();
         if (hRLS->isUpdateBatch(GetITER())) {
             int64_t nSamp = train_loader->UpdateBatch(-1, _fish);
-            tData         = GST_ms() - now;
+            SUM::tData         = GST_ms() - now;
             if (nSamp == 0) {
                 _WARN("<%s> Failed to get next batch!!!\n", __func__);
                 return false;
@@ -773,9 +773,9 @@ float Optimizer::UpdateLossCurve(int flag) {
         _INFO("[epoch_%d]_%-6d loss=%f |g|=%.3g\tlr=%.2e | %s ", train_epochs, iter, loss_after, g_step, last_lr,
               train_loader->IterInfo().c_str());  //,zmuv_0,zmuv_1
         if (millis_per_iter > 0) {
-            _TIME_INFO(" T=", millis_per_iter), _TIME_INFO("(data=", tData);
-            SUM::TimeInfo();  // _TIME_INFO(" R=",SUM::tRemater);
-            _TIME_INFO(") eta=", remaining_millis);
+            _TIME_INFO(" T=", millis_per_iter);            
+            SUM::TimeInfo(_fish->config.dumpSwitch.train_time);  
+            _TIME_INFO(" eta=", remaining_millis);
         }
         size_t tokens_processed = _fish->config.nTokensPerGrad();  //(size_t) * B * T * grad_accum_steps;
         float tokens_per_second = tokens_processed / millis_per_iter * 1000.0f;

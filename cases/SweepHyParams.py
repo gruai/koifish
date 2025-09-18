@@ -117,10 +117,10 @@ if __name__ == '__main__':
     
     # batch_size = [200,160,40,80,120]
     #   cross_over=[0.6,0.4,0.2,0.1]
-    branches = [6,2]     #48
+    branches = [6,9]     #48
     lrs =[0.0006]    #[0.002,0.001,0.0006,0.0002]
     lr = 0.0006
-    no = 0;     batchs = [40,80]   
+    no = 0;     batchs = [80,40]   
     for branch in branches:        
         for b in batchs:
             title = "F"+ str(branch)  + "_B" + str(b)      #+ "_crossover"+ str(cross)

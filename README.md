@@ -4,14 +4,15 @@ Sparse & quantized LLM training in C++/cu.
 
 Koifish needs much less training resource than other frameworks. It needs only one day to train ~2B model on single 4090 as shown in the following table.
 
-| Model | Parameter  | Loss(Baseline) |GPU Memory|Training Time|Throughput|
-|:-------------:|:--------------:|:--------------:|:--------------:|:--------------:|:--------------:|
-| GPT2-124M         | 124M           | 3.287(3.425)  | ~6.8G   |~8 hours|~140k/s|
-| GPT2-774M         | 774M           | 3.146(3.00)   | ~15G |~18 hours|~70k/s|
-| GPT2-1558M         | 1558M           | 3.04(2.83)   | ~23G   |~30 hours|~50k/s|
+| Model | Parameter  | Loss(Baseline) |GPU Memory|Total Time (Training+Evaluating)|Throughput|Log|
+|:-------------:|:--------------:|:--------------:|:--------------:|:--------------:|:--------------:|:--------------:|
+| GPT2-124M         | 124M           | 3.287(3.425)  | ~6.8G   |~8 hours|~140k/s|[log](cases/gpt2/124M_shard50_F6_lr0.001)|
+| GPT2-774M         | 774M           | 3.146(3.00)   | ~15G |~18 hours|~70k/s|[log](cases/gpt2/774M_Shard50_F6_B80)|
+| GPT2-1558M         | 1558M           | 3.04(2.83)   | ~23G   |~30 hours|~50k/s|[log](cases/gpt2/1558M_F8_B80)|
 
 Note
-1. The baseline results are from [GPT2](https://github.com/openai/gpt-2), which are trained with 10 billion tokens of FineWeb. Our training only used 5B tokens of FineWeb.   
+1. The baseline results are from [GPT2](https://github.com/openai/gpt-2). Our training only used 5B tokens of FineWeb.   
+2. The evaluating time depends on the frequency of testing and the sampling ratio(We use only ~10% randomely sampled tokens to reduce total time). 
 
 ## Features
 - Hybrid 16/8/1 bit training
@@ -41,8 +42,8 @@ make clean && make VERBOSE=TRUE
 
 ## Tutorial
 
-1.    [Training of GPT2_1558M_ on single 4090](cases/tutorial_gpt2_1558M.md)
-1.    [Training of GPT2(774M/124M) on single 3090](cases/tutorial_gpt2.md)
+1.    [Training of GPT2_1558M_ on single 4090](cases/tutorial/tutorial_gpt2_1558M.md)
+1.    [Training of GPT2(774M/124M) on single 3090](cases/tutorial/tutorial_gpt2.md)
 
 ## [Techniques/Tricks](cases/tricks/Tricks.md)
 

@@ -11,7 +11,7 @@ sudo apt-get -y install libcudnn9-dev-cuda-12
 
 ## 2. Download project & build
 ```bash
-# export CPATH=/usr/local/cuda-12.5/include:$CPATH        # maybe need this to export CPATH
+# export CPATH=/usr/local/cuda/include:$CPATH        # maybe need this to export CPATH
 git clone https://github.com/gruai/koifish
 cd koifish
 mkdir build && cd build && cmake ..
@@ -21,9 +21,9 @@ make clean && make VERBOSE=TRUE
 ## 3. Datasets & Tokenizer   
 The datasets for this tutorial comes from [karpathy/fineweb-edu-100B-gpt2-token-shards](https://huggingface.co/datasets/karpathy/fineweb-edu-100B-gpt2-token-shards), which includes about 1000 .bin files. Each file contain 100M tokens.    Thank Andrej K very much for providing this dataset!
 
-As the following json configuration shows, Koifish would load token files from user specified folder. In this tutorial, "most"=20, so Koifish would only load at most 20 train*.bin files(with 2B tokens). Users could try more tokens to get higher accuracy with more time.
+As the following json configuration shows, Koifish would load token files from user specified folder. In this tutorial, "most"=50, so Koifish would only load at most 50 train*.bin files(5B tokens). Users could try more tokens to get higher accuracy with more time.
 
 ## 4. Train 
 ```shell
-    ./bin/koifish ./cases/gpt2/gpt2_1558M.json
+    ./bin/koifish ./cases/gpt2/1558M_F8_B80/F8_B80.json
 ```

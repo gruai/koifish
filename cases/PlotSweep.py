@@ -144,7 +144,7 @@ def SWEEP_plt(all_results,path,yCol='loss'):
     plt_df(df,title = f"\"{yCol}\" {nResult} sweeps @'{path}'",path=path)
 
 # 
-def GetAllPlotPath(root_dir,append_pwd):
+def GetAllPlotPath(root_dir,append_dir):
     all_path = []
     for root, dirs, files in os.walk(root_dir):
         for cur_dir in dirs:
@@ -153,15 +153,15 @@ def GetAllPlotPath(root_dir,append_pwd):
             all_path.append(cur_path)
     if len(all_path)==0:
         all_path.append(root_dir)
-    if append_pwd:
-        all_path.append(".")
-        # all_path.append("./SWEEP/tmp/")
+    if append_dir:
+        all_path.append(append_dir)
+
     # all_path = ["./SWEEP/tmp/"]
     return all_path
 
-def SWEEP_stat(root_dir,plot_path,append_pwd=True,isNeedLog=False):
+def SWEEP_stat(root_dir,plot_path,append_dir=None,isNeedLog=False):
     all_results = []
-    all_path = GetAllPlotPath(root_dir,append_pwd)
+    all_path = GetAllPlotPath(root_dir,append_dir)
     for cur_path in all_path:
         title = cur_path if cur_path=="." else Path(cur_path).name
         jConfig = None; fLog=None;  dfTrain=None;  dfEval=None
@@ -183,15 +183,16 @@ def SWEEP_stat(root_dir,plot_path,append_pwd=True,isNeedLog=False):
                 else:
                     dfEval = pd.read_csv(f, sep=' ',index_col=False)        
                     # print(dfEval)    
-        if dfTrain is None or dfEval is None:
+        if dfEval is None:  #dfTrain is None or
             continue   
         if isNeedLog and fLog is None:
             continue
-        print(f"dfTrain shape={dfTrain.shape} head = {dfTrain.head()}\n loss={dfTrain["loss"]}")    
+        # print(f"dfTrain shape={dfTrain.shape} head = {dfTrain.head()}\n loss={dfTrain["loss"]}")    
         result = SWEEP_result(title, cur_path, jConfig,dfTrain,dfEval,fLog)
         all_results.append(result)
         # SWEEP_plt(all_results,plot_path)
     assert(len(all_results)>0)
+    print(*all_results)
     yCol='loss'     #   loss  lr max_|G|  max_|W| gNorm
     SWEEP_plt(all_results,plot_path,yCol=yCol)
     pass
@@ -213,11 +214,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--dir", type=str, help="log path of sweep test")
     parser.add_argument("--csv", type=str, help="log path of single csv file")
+    parser.add_argument("--x_dir", type=str)
     parser.add_argument("--x", action='store_false') 
     # parser.add_argument("--stat", action='store_true')    
     args = parser.parse_args()
     if args.dir:
-        SWEEP_stat(args.dir,args.dir+"/sweep_results.png",append_pwd=args.x)
+        SWEEP_stat(args.dir,args.dir+"/sweep_results.png",append_dir=args.x_dir)
     elif args.csv:
         Plot_csv(args.csv)
     exit()    
