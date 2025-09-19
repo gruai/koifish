@@ -55,6 +55,8 @@ src/LLAMA/common/build-info.cpp
 *.train
 *.csv
 *.info
+!./cases/gpt2/*.info
+!./cases/gpt2/*.csv
 *.sh
 *.ck
 checkpoint

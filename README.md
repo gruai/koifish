@@ -6,13 +6,13 @@ Koifish needs much less training resource than other frameworks. It needs only o
 
 | Model | Parameter  | Loss(Baseline) |GPU Memory|Total Time (Training+Evaluating)|Throughput|Log|
 |:-------------:|:--------------:|:--------------:|:--------------:|:--------------:|:--------------:|:--------------:|
-| GPT2-124M         | 124M           | 3.287(3.425)  | ~6.8G   |~8 hours|~140k/s|[log](cases/gpt2/124M_shard50_F6_lr0.001)|
-| GPT2-774M         | 774M           | 3.146(3.00)   | ~15G |~18 hours|~70k/s|[log](cases/gpt2/774M_Shard50_F6_B80)|
-| GPT2-1558M         | 1558M           | 3.04(2.83)   | ~23G   |~30 hours|~50k/s|[log](cases/gpt2/1558M_F8_B80)|
+| [GPT2-124M](./cases/gpt2/124M_shard50_F6_lr0.001/F6_lr0.001.json)         | 124M           | 3.287(3.425)  | ~6.8G   |~8 hours|~140k/s|[log](cases/gpt2/124M_shard50_F6_lr0.001)|
+| [GPT2-774M](./cases/gpt2/774M_Shard50_F6_B80/F6_B80.json)         | 774M           | 3.146(3.00)   | ~15G |~18 hours|~70k/s|[log](cases/gpt2/774M_Shard50_F6_B80)|
+| [GPT2-1558M](./cases/gpt2/1558M_F8_B80/F8_B80.json)        | 1558M           | 3.04(2.83)   | ~23G   |~30 hours|~50k/s|[log](cases/gpt2/1558M_F8_B80)|
 
 Note
 1. The baseline results are from [GPT2](https://github.com/openai/gpt-2). Our training only used 5B tokens of FineWeb.   
-2. The evaluating time depends on the frequency of testing and the sampling ratio(We use only ~10% randomely sampled tokens to reduce total time). 
+2. The evaluating time depends on the frequency of testing and the sampling ratio(We use only ~10% randomly sampled tokens to reduce total time). 
 
 ## Features
 - Hybrid 16/8/1 bit training
@@ -20,7 +20,6 @@ Note
 - Mixture of models 
 - Automatic detection of training instability
 - Json config file
-- Pure C++ tokenizer
 - Self-contained C++/cu project with minimal dependencies
 
 ## Minimum dependencies

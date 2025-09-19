@@ -71,7 +71,7 @@
         "dump-every": 10,
         "gpt-every": -10,
         "epoch": 1,
-        "batch": 64,
+        "batch": 80,
         "learning-rate": 0.0006,
         "decay": 0.1,
         "optimizatioin": {
