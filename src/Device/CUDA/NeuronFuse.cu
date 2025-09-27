@@ -89,6 +89,7 @@ hGTensor TokenEmbed::OnEmbed(hGensor inpL, int seed) {
         hGTensor cur = out, curW = w;
         if (isForward()) {
             inp = inpL;
+            inp->Print("wte", 0, 0);        curW->Print("curW", 0, 0);      b->Print("b", 0, 0);      
             // grid_size = CEIL_DIV(B * T * C, block_size);
             // CU_embed_forw_v0<<<grid_size, block_size, 0, main_stream>>>(ToX(cur), TO<int>(inp), ToX(curW), ToX0(b), B, T, C);
             if (w->type == typNUMBER::T_BINARY_3) {

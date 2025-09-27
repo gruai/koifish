@@ -248,7 +248,7 @@ int fish_1(CLI_params &config) {
     fish_1->LocalFeeling(nullptr, logits);
     return 666;
 }
-
+/*
 bool _LoadCheckPoint(CLI_params &config, arrHWIKI &wikis, int flag = 0x0) {
     if (config.checkpoint.in.empty())
         return false;
@@ -257,7 +257,7 @@ bool _LoadCheckPoint(CLI_params &config, arrHWIKI &wikis, int flag = 0x0) {
     if (fish == nullptr || !fish->LoadCheckPoint())
         return false;
     return true;
-}
+}*/
 
 int GPT_work(CLI_params &config) {
     //  GRUS_Get_SystemInfo
@@ -284,7 +284,7 @@ int GPT_work(CLI_params &config) {
 
     if (isMakeFish) {
         fish = Fish::MakeInstance("Fish_", config, wikis, Fish::ROLE_TYPE::COMMON, 0x110);
-        if (fish == nullptr || !fish->LoadCheckPoint()) {
+        if (fish == nullptr || !fish->LoadCheckPoint(config.ckp_in[0])) {
             _ERROR("%s has no WIKI or FISH!\n", __func__);
             return 0;
         }

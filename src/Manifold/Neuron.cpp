@@ -498,6 +498,10 @@ int SLP::Forw(float *rhs, float *lhs, int flag) {
     return 0x0;
 }
 
+/*
+    From https://www.reddit.com/r/LocalLLaMA/comments/1npbxpw/reproducing_gpt2_124m_from_scratch_results_notes/ & https://github.com/garg-aayush/building-from-scratch/blob/main/gpt-2/
+    A better gpt2-rope	2.987392	0.320155	Replaced learned embeddings with RoPE
+*/
 ROPE::ROPE(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     assert(jvals.size() >= 1 && jvals[0] > 0);
     alg = hG_->config.model.rope_type;
@@ -876,11 +880,6 @@ int GeNeuron::SetGuoke(GeNeuron *hGuoke_, bool isX, int flag) {
         }
         t->SetRefer(gSrc[i]);  //  Activations or Parameters
         if (t->isParam()) {
-            //  F_RELOAD would call SerialGP(t->host_data, nullptr, t->szData, false) @GeNeuron::ManageMemory
-            // BIT_SET(t->flags, GTensor::F_RELOAD);
-            // BIT_SET(gSrc[i]->flags, GTensor::F_RELOAD);
-            // tReloads.insert(t);
-            // hGuoke_->tReloads.insert(gSrc[i]);
         }
         szG += t->nByte();
         nG++;

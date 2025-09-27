@@ -24,6 +24,7 @@ int main(int argc, char *argv[]) {
         assert(argc >= 3);
         std::string arg_prefix = "--", exec_name = EXE_name(), jsPath = "", eval_metric = "";
         CLI_params config;
+        config.phase = LIFE_PHASE::P_EVAL_;
         if (!config.parse(argc, argv)) {
             return -1;
         }
@@ -34,21 +35,19 @@ int main(int argc, char *argv[]) {
         }
         if (config.jConfig["datasets"].empty())
             return KOIFISH_DATASET_EMPTY;
-        config.checkpoint.in = argv[1];  //  would call LoadCheckPoint()
-        // config.checkpoint.in = "";      //why this would crash!     SYNC_DEVICE err="an illegal memory access was encountered" (cudaErrorIllegalAddress
-        // code=700)   disti_normal g_dump_level = 0;
+
         config.wiki_actor = "copy";
         //  if isOnlyGPT, batch_size is always 1 !
         config.isOnlyGPT = config.eval_metric != "hellaswag";  // true;
         // config.common.n_batch      = 1;
         config.model.preLogits_dB  = config.eval_metric == "hellaswag" ? config.model.preLogits_dB : 1;
         config.model.sparse.method = -1;
-        // config.scheduling.strategy = MEM_STRATEGY::PRE_ALLOC_GPU;
+        SUM::nMinTensorAlloc = 1;       // g_dump_level = -1;
 
         DEBUG.T_cuda_ver = 1, DEBUG.T_cpu = 0, DEBUG.cmd_p1 = 0, DEBUG.graph_dump = 0, DEBUG.Time_most = 60;
         config.Dump(0x100);
 
-        // hEDevices hEDS = EDGE_DEVICES::GetInstance(config);
+        // fish->isLocalInfer = flag == 0x110;
         hFISH fish      = Fish::MakeInstance("PPL_", config, {}, Fish::ROLE_TYPE::COMMON, 0x110);
         hOptimizer hOPT = fish->GetOptimizer();
         if (hOPT->val_loaders.empty())
@@ -64,6 +63,7 @@ int main(int argc, char *argv[]) {
         _INFO("\n====== %s: %s FLOAT=%s @%s\n[BUBBLE]\t", __func__, DEBUG.T_cpu == 0 ? "CUDA" : "CPU", cNameOf(config.model.tpActivation), cDATE);
 
         OutCLS *hCLS = fish->GetNeuron<OutCLS>("OutCLS", 0);
+        hCLS->hLoader = hLoader;
         double sum = 0, ss = 0, tps = 0, t0 = GST_ms(), tAll = 0, eval, delta = 0;
         vector<TOKEN_ID> &tokens = hLoader->GetTokens();
         hOPT->SetPhase(LIFE_PHASE::P_GENERATE);

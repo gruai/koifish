@@ -6,7 +6,7 @@ Koifish needs much less training resource than other frameworks. It needs only o
 
 | Model | Parameter  | Loss(Baseline) |GPU Memory|Total Time (Training+Evaluating)|Throughput|Log|
 |:-------------:|:--------------:|:--------------:|:--------------:|:--------------:|:--------------:|:--------------:|
-| [GPT2-124M](./cases/gpt2/124M_shard50_F6_lr0.001/F6_lr0.001.json)         | 124M           | 3.287(3.425)  | ~6.8G   |~8 hours|~140k/s|[log](cases/gpt2/124M_shard50_F6_lr0.001)|
+| [GPT2-124M](./cases/gpt2/124M_shard50_F6_lr0.001/F6_lr0.001.json)         | 124M           | 3.293(3.425)  | ~6.8G   |~8 hours|~140k/s|[log](cases/gpt2/124M_shard50_F6_lr0.001)|
 | [GPT2-774M](./cases/gpt2/774M_Shard50_F6_B80/F6_B80.json)         | 774M           | 3.146(3.00)   | ~15G |~18 hours|~70k/s|[log](cases/gpt2/774M_Shard50_F6_B80)|
 | [GPT2-1558M](./cases/gpt2/1558M_F8_B80/F8_B80.json)        | 1558M           | 3.04(2.83)   | ~23G   |~30 hours|~50k/s|[log](cases/gpt2/1558M_F8_B80)|
 
@@ -47,6 +47,7 @@ make clean && make VERBOSE=TRUE
 ## [Techniques/Tricks](cases/tricks/Tricks.md)
 
 ## History
+* 09/18/2025: v0.1 released
 * 08/17/2025: A new framework of multiscale deep learning
 * 08/01/2025: Training GPT2_1558M on single 4090 with throughput > 20K tokens/second
 * 07/24/2025: Support tile quantization 

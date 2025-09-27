@@ -89,7 +89,7 @@ Fish::Fish(const std::string &nam_, struct CLI_params params, ROLE_TYPE role_, i
     arch = params.ModelArch();
 
     string w    = config.KV({"model", "parameter", "debug_init_weight"});  // hack parameter only for debug
-    bool isLoad = !config.checkpoint.in.empty() || !config.model.empty();
+    bool isLoad = !config.ckp_in.empty() || !config.model.empty();
     if (role == SWARM_FOLLOWER) {
         tpInitWeight = INIT_WEIGHT::COPY_SWARM_HEAD;
     } else {
@@ -190,7 +190,7 @@ size_t Fish::MostMemSize(int typ) {
 }
 
 bool Fish::UpdateParams(int flag) {
-    size_t nx = 0, nR = 0;
+    size_t nx = 0, nR = 0, nReload = 0;
     assert(optParams.size() == 0);
     for (auto it : gensors.infos) {
         auto t = it.first;
@@ -217,7 +217,7 @@ bool Fish::UpdateParams(int flag) {
 }
 
 bool Fish::AfterBuild(bool isInitParam, int flag) {
-    size_t n0 = 0, nInput = 0, i;
+    int n0 = 0, nInput = 0, i, nReload = 0;
     if (isInitParam) {
         // assert(rnd!=nullptr);
     }
@@ -242,15 +242,26 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
             nInput++;
         }
     }
-    // nParams = nx;
-    // assert(optParams.size() < 20480);
-    // if (nx != nParams) {
-    //     CHECK_SAME_TENSORS("Compare parameter tensors\t", optParams, xGensors);
-    //     _ERROR("%s nx(%ld)!=nParams(%ld)\t", __func__, nx, nParams);
-    // }
-    UpdateParams();
+    UpdateParams();                //  optParams
+    if (!config.ckp_in.empty()) {  // would update paramIsGuoke
+        if (!LoadCheckPoint(config.ckp_in[0], flag))
+            return false;
+    }
+    if (config.fuyou.paramIsGuoke) {  // F_RELOAD_
+        // config.fuyou.filter_reload = {DEBUG.x_str};  //only for debug   "ffn_up.weight" blk.2.ffn_up.weight
+        for (auto t : optParams) {
+            if (isStrMatch(t->name, config.fuyou.filter_reload)) {
+                // if(t->isWMAT()){  // why norm woul faile. so strange!
+                BIT_SET(t->flags, GTensor::F_RELOAD);
+                nReload++;
+                // }
+            }
+        }
+        _INFO("[Fuyou] nReloads=%d\n", nReload);
+    }
+
     if (isTrain()) {
-        SaveTrain("", true);  //  Init checkpoint
+        SaveTrain(config.state, true);  //  Init checkpoint
     } else {
         hOPT->SetPhase(LIFE_PHASE::P_EVAL_);
         assert(hBackTG == nullptr);
@@ -261,10 +272,10 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
         hRLS->GetTensorStatus(-1, t, 0x0);
     }
 
-    if (tpInitWeight == SERIALIZE) {
-        if (!LoadCheckPoint(flag))
+    /*if (tpInitWeight == SERIALIZE) {
+        if (!LoadCheckPoint(config.fish_in, flag))
             return false;
-    }
+    }*/
 
     if (!config.only_write_model && hOPT != nullptr) {
         hOPT->Prepare(nParams);
@@ -374,29 +385,39 @@ bool Fish::Build(int flag) {
     return true;
 }
 
-static const char *vendor = "gruai";  // llm_arch_from_string
-bool Fish::SaveTrain(string sX, bool isInit, int flag) {
-    assert(hOPT != nullptr);
-    string sBaseName = config.checkpoint.out, sit = "IT", sOut;
-    if (sBaseName.empty()) {
-        if (isInit) {
-            _INFO("[Save] path is empty! To save model, please set the key of \"checkpoint-out\" in json config file(\"%s\").\n", config.jsPath.c_str());
-            // if (VERIFY_DIR_EXIST(path, true))
-            //     _INFO("[Save] path=\"%s\", save_every=%d\n", path.c_str(), train_params.save_every);
-            // else {
-            //     _INFO("[Save] Invalid path@\"%s\"!\n", path.c_str());
-            // }
-
-            sBaseName = "./hy-tmp/checkpoint/Koifish_";
-        } else
-            return false;
+bool Fish::UpdateCheckPoint(CheckPoint_Params &ckp, bool isSave, int flag) {
+    if (isSave) {
+        assert(hOPT != nullptr);
+        hFuyou afu   = GetFuyou(-1);
+        RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
+        ckp.curEpoch = hOPT->train_epochs;
+        ckp.curIter  = hOPT->GetITER();
+        ckp.curFuyou = hRLS->curFuyouID;
+        ckp.fuyou_filter_reload.clear();
+        for (auto t : afu->ckpParams) {
+            ckp.seeds[t->name] = t->param_seed;
+            ckp.fuyou_filter_reload.push_back(t->name);
+        }
+        ckp.SerialSnap(config.jConfig, isSave);
+    } else {
+        ckp.SerialSnap(config.jConfig, isSave);
     }
-    if (!sX.empty()) {
-        sOut = sBaseName + sX + ".ck";  //+ std::to_string(iter)
-    } else
-        sOut = sBaseName + "latest" + ".ck";
+    return true;
+}
+/*
+    1. SaveCheckpoint save more temporary tensors than SaveModel
+*/
+static const char *vendor = "gruai";  // llm_arch_from_string
+bool Fish::SaveTrain(CheckPoint_Params &ckp, bool isInit, int flag) {
+    assert(hOPT != nullptr);
+    int iter = hOPT->iter, nReload = 0;
+    string sBaseName = ckp.sDir, sit = "IT", sOut = ckp.FullPath(iter);
 
-    int iter = hOPT->iter, nReload = 0;  //     train->opt->iter;
+    // if (!ckp.sX.empty()) {
+    //     sOut = sBaseName + ckp.sX + ".ck";  //+ std::to_string(iter)
+    // } else
+    //     sOut = sBaseName + "latest" + ".ck";
+
     // _INFO("%s: iter_%ld\n", __func__, iter);
     bool isOK = false;
     VERIFY_DIR_EXIST(sOut, true);  // always create file
@@ -404,27 +425,13 @@ bool Fish::SaveTrain(string sX, bool isInit, int flag) {
         return false;
     }
     assert(optParams.size() > 0);
-    if (isInit) {
-        if (config.fuyou.paramIsGuoke) {
-            // config.fuyou.filter_reload = {DEBUG.x_str};  //only for debug   "ffn_up.weight" blk.2.ffn_up.weight
-            for (auto t : optParams) {
-                if (isStrMatch(t->name, config.fuyou.filter_reload)) {
-                    // if(t->isWMAT()){  // why norm woul faile. so strange!
-                    BIT_SET(t->flags, GTensor::F_RELOAD);
-                    nReload++;
-                    // }
-                }
-            }
-        }
-        _INFO("[Save] @\"%s\" nParams=%d nReloads=%d  save_every=%d\n", sOut.c_str(), optParams.size(), nReload, config.checkpoint.save_every);
-    }
-    for (auto t : optParams) {
-    }
 
-    isOK = SAFETENSOR_Serialize(sOut, true, isInit ? FSerial::INIT_MMAP : 0x0);
-    assert(isOK);
-    if (isOK && isInit) {
-        isOK = SAFETENSOR_Serialize(sOut, false);  // to set host_data of each tensor
+    if (isInit) {
+        isOK = SAFETENSOR_Serialize(ckp, true, isInit ? FSerial::INIT_MMAP : 0x0);
+        assert(isOK);
+        ckp.sModelPath = ckp.FullPath(true);
+        _INFO("[Save] @\"%s\" nParams=%d save_every=%d\n", sOut.c_str(), optParams.size(), ckp.save_every);
+        isOK = SAFETENSOR_Serialize(ckp, false);  // to set host_data of each tensor
         // if (sX == "warmup") {   // more profiling
         //     for (int i = 0; i < 1; i++) {
         //         isOK = SAFETENSOR_Serialize(sOut, false);
@@ -433,13 +440,16 @@ bool Fish::SaveTrain(string sX, bool isInit, int flag) {
         //         assert(isOK);
         //     }
         // }
+    } else {
+        UpdateCheckPoint(ckp, true);
+        isOK = SAFETENSOR_Serialize(ckp, true, isInit ? FSerial::INIT_MMAP : 0x0);
     }
 
     return isOK;
 }
 
-bool Fish::LoadCheckPoint(int flag) {
-    assert(tpInitWeight == INIT_WEIGHT::SERIALIZE);
+bool Fish::SaveCheckPoint(int flag) {
+    /*assert(tpInitWeight == INIT_WEIGHT::SERIALIZE);
     std::string fpCheck = config.checkpoint.in;
     if (!config.model.empty()) {
         isLoadCheckpoint = HF_Serialize(false, 0x0);
@@ -467,9 +477,49 @@ bool Fish::LoadCheckPoint(int flag) {
     }
 
     if (!isLoadCheckpoint) {
+        _INFO("\r[SaveCheckPoint] failed!  please check file @\"%s\"!\n", fpCheck.c_str());
+        return false;
+    }
+
+    assert(vendor == "gruai");
+    _INFO("\r[SaveCheckPoint] OK @\"%s\"\n", fpCheck.c_str());*/
+    return true;
+}
+
+bool Fish::LoadCheckPoint(CheckPoint_Params &ckp, int flag) {
+    assert(tpInitWeight == INIT_WEIGHT::SERIALIZE);
+    std::string fpCheck = ckp.sModelPath;
+    if (!config.model.empty()) {
+        isLoadCheckpoint = HF_Serialize(false, 0x0);
+    } else {
+        string type = FILE_EXT(fpCheck);
+        bool isCopy = config.is({"wiki", "actor"}, "copy") && wikis.size() > 0;
+        if (fpCheck.empty()) {
+            // if(wiki_tutor!=nullptr)
+            //     return true;
+            return true;
+        }
+
+        _INFO("[CHECKPOINT]: load \"%s\", type=\"%s\" ......", fpCheck.c_str(), type.c_str());
+        if (type == "fish" || type == "fuyou") {
+            isLoadCheckpoint = SAFETENSOR_Serialize(ckp, false, 0x0);
+        } else if (type == "calm") {
+            isLoadCheckpoint = CALM_Serialize(fpCheck, false, 0x0);
+            // isLoadCheckpoint = YALM_Serialize(config.checkpoint.in,false,0x0);
+        } else {
+            // just try, may fail!
+            isLoadCheckpoint = SAFETENSOR_Serialize(ckp, false, 0x0);
+            //  Deprecated - Since koifish support 1-bit parameters, why need GGUF?
+            // isLoadCheckpoint = GGUF_Serialize(config.checkpoint.in,false,0x0);
+        }
+    }
+
+    if (!isLoadCheckpoint) {
         _INFO("\r[LoadCheckPoint] failed!  please check file @\"%s\"!\n", fpCheck.c_str());
         return false;
     }
+    UpdateCheckPoint(ckp, false);
+    config.fuyou.filter_reload = {};  // ckp.fuyou_filter_reload;        // Don't reload
 
     assert(vendor == "gruai");
     _INFO("\r[LoadCheckPoint] OK @\"%s\"\n", fpCheck.c_str());

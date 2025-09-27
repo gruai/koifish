@@ -278,7 +278,8 @@ struct MUON_params_ {
     size_t n_parameters;
     enum Orthogonalization {
         NewtonSchulz,
-        Chebyshev  //  https://github.com/GrishKate/accelerating_orthogonalization
+        Chebyshev,  //  https://github.com/GrishKate/accelerating_orthogonalization
+        Gluon,      //  https://arxiv.org/pdf/2505.13416
 
     };
     Orthogonalization tpOrthogonal = NewtonSchulz;
@@ -381,15 +382,69 @@ extern DEUG_SWITCH DEBUG;
 
 enum LORA_ADAPT_W { W0, AB, W_AB, refW_AB, refW_AB_ffn };
 
-struct CLI_params {
-    TRAIN_CARD common;
-    MODEL_CARD model;
-    struct CheckPoint {
-        std::string in, out;
-        std::string model_out, model_base;
-        int save_every = -1;
+/*
+    1. Genenal checkpoint(Koifsh support load/save multiple checkpoints/model files)
+    2. Has at least one checkpoint (with all parameters & its moments)
+*/
+struct CheckPoint_Params {
+    std::string jKey = "";  //  unique id of checkpoint
+
+    enum TYPE {
+        STATE,  //  Has all parameters & its moments
+        BEST,   //  Only has parameters of best fuyou
+        FULL,   //  Has parameters of all fuyou
     };
-    CheckPoint checkpoint;
+
+    int curEpoch = -1, curIter = -1, curFuyou = -1;
+    std::vector<std::string> fuyou_filter_reload;
+
+    std::map<std::string, uint32_t> seeds;
+    // More variables of current state
+    std::map<std::string, double> variabls;
+
+    TYPE type       = BEST;
+    int iter        = -1;
+    void* hUserData = nullptr;
+    CheckPoint_Params() {}
+    CheckPoint_Params(const JSON& jConfig, const std::string& key, bool isSave, int flag = 0x0);
+    // CheckPoint_Params(const std::string& tp, const std::string& p, int x, bool in = false);
+    // bool isIn = false;
+    // std::string in, out;
+    // std::string model_out, model_base;
+    std::string sDir, sModelPath, sX;
+    int save_every = -1;
+    std::string FullPath(bool isSave, int flag = 0x0);
+    bool empty() { return sDir.empty(); }
+    bool needSave(int it, int flag = 0x0) {
+        if (save_every > 0 && it % save_every == 0) {
+            return true;
+        }
+        return false;
+    }
+
+    virtual void Init(int flag = 0x0);
+    virtual bool SerialSnap(JSON& jSnapshot, bool isSave, int flag = 0x0);
+};
+static std::map<CheckPoint_Params::TYPE, std::string> CKP_ext = {
+    {CheckPoint_Params::STATE, "ckp"},
+    {CheckPoint_Params::BEST, "fish"},
+    {CheckPoint_Params::FULL, "fish"},
+};
+static std::map<CheckPoint_Params::TYPE, std::string> CKP_desc = {
+    {CheckPoint_Params::STATE, "state"},
+    {CheckPoint_Params::BEST, "best"},
+    {CheckPoint_Params::FULL, "full"},
+};
+
+struct CLI_params {
+    LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;
+
+    TRAIN_CARD common;
+
+    MODEL_CARD model;
+    std::vector<CheckPoint_Params> ckp_in, ckp_out;
+    CheckPoint_Params state;
+
     DUMP_SWITCH dumpSwitch;
 
     struct DataTypes {
@@ -645,6 +700,7 @@ struct CLI_params {
 
     bool parse(int argc, char** argv);
     virtual bool InitJConfig(int flag = 0x0);
-    virtual JSON ToJSON(int flag = 0x0);
+    virtual bool InitChekcpoints(int argc, char** argv, const std::string& ckp_queue, int flag = 0x0);
+    virtual JSON ToJSON(int type, int flag = 0x0);
     std::string GetDataPath(const std::string type, int flag = 0x0);
 };

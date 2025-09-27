@@ -32,7 +32,7 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI> &wikis_, int flag) {
         if (!InitDictTokenset())  //  hDictVAE
             return false;
     }
-    if( config.common.method == "muon" )
+    if (config.common.method == "muon")
         hOPT = std::make_shared<OPT_Muon>(this, config, flag);
     else
         hOPT = std::make_shared<OPT_Adam>(this, config, flag);
@@ -758,18 +758,24 @@ void NLP_AutoRegressive::Dump(int type, int flag) {
     string suffix = "\n========\n", prefix;
     __repr__(suffix, prefix);
     config.Dump();  //        print_params(&config)
-    _INFO("====== nParams = %ld(%.6gM nT=%ld) ======\n", nParams, nParams / 1.0e6, optParams.size());
-    _INFO("%s: nParams=%zu model_size = %zu bytes (%.1f MB)\n", __func__, nParams, szModel, szModel / (1024.0f * 1024.0f));
-    _INFO("%s: n_vocab=%d t_vocab=%d,n_batch=%d,n_ctx=%d,n_embd=%d,n_head=%d,n_rot=%d,n_ff=%d\n", __func__, n_vocab, tVocab(), n_batch, n_ctx, n_embd,
+    hFuyou afu = GetFuyou(-1);
+    if(afu!=nullptr){
+        int nAfuParam = afu->nParams;
+        _INFO("====== nParams = %ld(%.6gM nT=%ld) allParams = %ld(%.6gM nT=%ld) ======\n", nAfuParam, nAfuParam / 1.0e6, afu->ckpParams.size(),
+            nParams, nParams / 1.0e6, optParams.size());
+    }   else
+        _INFO("====== nParams = %ld(%.6gM nT=%ld) ======\n", nParams, nParams / 1.0e6, optParams.size());
+    _INFO("\t nParams=%zu model_size = %zu bytes (%.1f MB)\n", nParams, szModel, szModel / (1024.0f * 1024.0f));
+    _INFO("\t n_vocab=%d t_vocab=%d,n_batch=%d,n_ctx=%d,n_embd=%d,n_head=%d,n_rot=%d,n_ff=%d\n", n_vocab, tVocab(), n_batch, n_ctx, n_embd,
           config.n_head(), config.n_rot(), config.n_ff());
-    _INFO("%s: loader=%s\n", __func__, config.tpBatchSample.c_str());
+    _INFO("\t loader=%s\n", config.tpBatchSample.c_str());
     if (hOPT != nullptr) {
         // hOPT->Dump( 1 );
     } else {
         _INFO("hOPT is NULL\n");
     }
     if (config.lars_ratio > 0)
-        _INFO("%s: LARS(t_max=%g)\n", __func__, config.lars_ratio);
+        _INFO("\t LARS(t_max=%g)\n", config.lars_ratio);
 }
 
 //  @GeNeuron::SetGuoke
@@ -795,9 +801,9 @@ bool Fuyou::Backward(hGensor cur, int flag) {
 float RAW_backward(Fish *fish, const int *hostInToken, int accum_steps, bool, int flag);
 int Fish::BackwardOnRLS(int iter, int flag) {
     GTensor::delta->Zero();
-    OutCLS *cls   = GetNeuron<OutCLS>("OutCLS", 0);
-    GTensor::buff = hCLS->preLogits->data;  // reused in many place!
-    GTensor::buff_len = hCLS->preLogits->size()*sizeof(floatX);
+    OutCLS *cls       = GetNeuron<OutCLS>("OutCLS", 0);
+    GTensor::buff     = hCLS->preLogits->data;  // reused in many place!
+    GTensor::buff_len = hCLS->preLogits->size() * sizeof(floatX);
 
     if (DEBUG.back_graph_version == 1) {
         int nAccum          = config.common.n_gradient_accumulation;
@@ -825,6 +831,24 @@ int Fish::BackwardOnRLS(int iter, int flag) {
         }
     }*/
     return 0x0;
+}
+
+const CheckPoint_Params &Fish::SnapShot(int flag) const { 
+    if (isLocalInfer) {
+        assert(config.ckp_in.size()>0);
+        return config.ckp_in[0];
+    }
+    return config.state; 
+}
+
+hFuyou Fish::GetFuyou(int no, int flag) const {
+    RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
+    if (no == -1) {
+        return hRLS->afu;
+    }
+    assert(no >= 0 && no < hRLS->fuyouSwarm.size());
+    hFuyou fuyou = hRLS->fuyouSwarm[no];
+    return fuyou;
 }
 
 int Fish::ForwardOnRLS(int iter, int flag) {

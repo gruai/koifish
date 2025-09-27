@@ -2,9 +2,8 @@
  *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
- *  Perceptrons
  *
- *  \brief Neurons & Perceptrons
+ *  \brief main 
  *  \author Yingshi Chen
  */
 

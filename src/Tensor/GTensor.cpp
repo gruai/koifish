@@ -336,9 +336,9 @@ void ToChebyshev(int N, float *rows, int flag = 0x0);
     device_to_file   using double buffering running on the given stream.
 */
 int GTensor::SerialJSON(const std::string &name_, const JSON &val, void *bytes_ptr, size_t bytes_size, int flag) {
-    // if(name=="tokenizer.tokens"){
-    //    std::cerr << name << std::endl;
-    // }
+    if(strcmp(name,"model.out.weight")==0){   //  "tokenizer.tokens"
+       int debug = 0x0;
+    }
     if (strcmp(name, name_.c_str()) != 0) {
         strcpy(name, name_.c_str());
     }
@@ -397,7 +397,12 @@ int GTensor::SerialJSON(const std::string &name_, const JSON &val, void *bytes_p
                 data = src;
                 BIT_SET(flags, F_MMAP);
             }
-            if (G_Has_(name, {"model.blk.0.attn.wq.weight"})) {  // only for debug
+            if(!hFish->isTrain()){  // otherwize, mmap file is free & host_data is invalid
+                Alloc(-1, flag);
+                Serial_MMAP(false, false); 
+                host_data = nullptr;
+            }
+            if (G_Has_(name, {"model.inp_embd.weight"})) {  // only for debug
                 /*char *tmpData = new char[szData];
                 memcpy(host_data, tmpData, szData);
                 msync(host_data, szData, MS_SYNC);*/
@@ -597,7 +602,7 @@ bool huTensor::BeforeBackward(size_t &off, int flag) {
 }
 
 bool huTensor::Alloc(int iter, int flagInit) {
-    if (strcmp(name, "model.blk.4.attn") == 0
+    if (strcmp(name, "model.inp_embd") == 0
         /*|| strcmp(name, "model.embed.weight") == 0*/) {  //  model.inp_embd.weight       model.out.weight model.embed.weight model.blk.0.attn.wq.weight
         int debug = 0x0;                                   //
     }
@@ -677,6 +682,8 @@ bool huTensor::Alloc(int iter, int flagInit) {
                 Alloc_1(&gv, true, desc + ".m", szM), szV = 0;
             }
             assert(gm != nullptr && "gm is nullptr@huTensor::Alloc");
+        }else{
+            szV = 0;    szM = 0;
         }
     } else {
     }
@@ -690,7 +697,7 @@ bool huTensor::Alloc(int iter, int flagInit) {
         if (ne[0] == 262144 || ne[1] == 151936) {
             int isDebug = 0;
         }
-        if (szGlobalMaloc - sz0 >= 100 * 1.0e6 || type == typNUMBER::T_SIGN) {
+        if (szGlobalMaloc - sz0 >= SUM::nMinTensorAlloc || type == typNUMBER::T_SIGN) {     //100 * 1.0e6
             printf("\t %s=%gM@%s type=%s shape=[%ld,%ld,%ld,%ld]%s sum=%gG\n", sA.c_str(), (szGlobalMaloc - sz0) * 1.0f / 1.0e6, name, cNameOf(type), ne[0],
                    ne[1], ne[2], ne[3], grad != nullptr ? "x2" : "", szGlobalMaloc * 1.0 / 1.0e9);
         }

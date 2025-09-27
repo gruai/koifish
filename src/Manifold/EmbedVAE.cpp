@@ -97,11 +97,11 @@ bool TokenEmbed::Build(int flag) {
         // if(wInv!=w)
         //     lnWInv.BuildX(name+MODEL_CARD::sNorm+".inv",{padded_nCls},hFish,flag);
     }
-#ifdef _TENSOR_G_
+
     SHAPE s3 = {B, T, latent};
     out      = std::make_shared<huTensor>(hFish, name + ".batch", s3, w->type, false);
     // hFish->InitGensor(ctx,name+".batch",out,false);
-#endif
+
     return true;
 }
 /*

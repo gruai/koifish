@@ -28,6 +28,7 @@ Tokenset_HellaSwag::Tokenset_HellaSwag(JSON::const_iterator jit, hTokenizer hDic
     auto v      = jit.value();
     rSampling = 0;
     rSampling = jKV(v, {"samp"}, rSampling);
+    assert(rSampling>0.0);
     int nFile   = shard_paths.size();
     assert(nFile == 1);
 }

@@ -1,78 +1,124 @@
-{        
-    "version":"0.1.0",
-    "model":{    
-        "arch":"GPT2",  
-        "fuyou":{
-            "branch":6, "switch":100,
-            "#method":["pso","mix","ga","pso_ga"],
-            "method":"pso_ga",
-            "crossover":0.6, "mutation":0.001, "social":2
+{
+    "version": "0.1.0",
+    "model": {
+        "arch": "GPT2",
+        "fuyou": {
+            "branch": 6,
+            "switch": 100,
+            "#method": [
+                "pso",
+                "mix",
+                "ga",
+                "pso_ga"
+            ],
+            "method": "pso_ga",
+            "crossover": 0.6,
+            "mutation": 0.001,
+            "social": 2
         },
-        "datatype":{
-            "weight":"BF16",
-            "embed":"BF16",
-            "#gradient":"BF16",
-            "#ternary":["attn.wq.weight","attn.wk.weight","attn.wv.weight","attn.wo.weight"],
-            "#tile":["ffn_down.weight", "ffn_up.weight"]
+        "datatype": {
+            "weight": "BF16",
+            "embed": "BF16",
+            "#gradient": "BF16",
+            "#ternary": [
+                "attn.wq.weight",
+                "attn.wk.weight",
+                "attn.wv.weight",
+                "attn.wo.weight"
+            ],
+            "#tile": [
+                "ffn_down.weight",
+                "ffn_up.weight"
+            ]
         },
-        "parameter":{
-            "Layer": 36,  
-            "transformer":{                "Ctx":1024,  "Embed":    1280,    "Head": 20,   "Ffn":5120            }
-        },  
-        "inp_embd": {"Embedding+":[]},    
-        "Layer":  {      
-            "attn":{"QKV":[]},               
-            "ffn":{"FFN":[]},       
-            "# gattn":{"GAU":[]}
-                                  
+        "parameter": {
+            "Layer": 36,
+            "transformer": {
+                "Ctx": 1024,
+                "Embed": 1280,
+                "Head": 20,
+                "Ffn": 5120
+            }
         },
-        "output_norm":{"Normal":[]},
-        "out": {"CLASIFY":[]}
+        "inp_embd": {
+            "Embedding+": []
+        },
+        "Layer": {
+            "attn": {
+                "QKV": []
+            },
+            "ffn": {
+                "FFN": []
+            },
+            "# gattn": {
+                "GAU": []
+            }
+        },
+        "output_norm": {
+            "Normal": []
+        },
+        "out": {
+            "CLASIFY": []
+        }
     },
-
-    
-    "datasets":{
-        "train":{
-            "glob":"./Datasets/edu_fineweb1B/*train*.bin","most":50,"name":"edu_fineweb1B"
+    "datasets": {
+        "train": {
+            "glob": "./Datasets/edu_fineweb1B/*train*.bin",
+            "most": 50,
+            "name": "edu_fineweb1B"
         },
-        "eval_1": {"glob":"./Datasets/edu_fineweb1B/*val*.bin","name":"edu_fineweb1B","most":10,"eval-every":200  ,"samp":0.04      },
-        "#eval_2":{"glob":"./Datasets/hellaswag_val.bin", "type":"hellaswag","eval-every":500,"samp":0.04     }
+        "eval_1": {
+            "glob": "./Datasets/edu_fineweb1B/*val*.bin",
+            "name": "edu_fineweb1B",
+            "most": 10,
+            "eval-every": 200,
+            "samp": 0.1
+        },
+        "#eval_2": {
+            "glob": "./Datasets/hellaswag_val.bin",
+            "type": "hellaswag",
+            "eval-every": 500,
+            "samp": 0.04
+        }
     },
-    
     "train": {
-        "dump-every":10,
-        "gpt-every":-10,
-
-        "epoch":1,
-        "batch":40,
-        "learning-rate":0.0006,  
-
-        "decay":0.1,
-
-        "optimizatioin":{
-            "#method":"adamw sgdv hsgd lion muon",
-            "method":"muon",
-            "sign":0,
-            "grad_accumulation":1,
-            "lars_ratio":0,      "ZMUV_ratio":0.00    
-        }              
-    },       
-    "checkpoint":{        
-        "save-every":500,
-        "#in":"./hy-tmp/checkpoint/chk-GPT2_9001.gguf",
-        "out":"./hy-tmp/checkpoint/GPT2_774M_"
+        "dump-every": 10,
+        "gpt-every": -10,
+        "epoch": 1,
+        "batch": 80,
+        "learning-rate": 0.001,
+        "decay": 0.1,
+        "optimizatioin": {
+            "#method": "adamw sgdv hsgd lion muon",
+            "method": "adamw",
+            "sign": 0,
+            "grad_accumulation": 1,
+            "lars_ratio": 0,
+            "ZMUV_ratio": 0.00
+        }
     },
-
     "debug": {
-        "#x_str":"blk.2.attn.wq.weight",
-        "most_iter":-2
+        "#x_str": "blk.2.attn.wq.weight",
+        "most_iter": -2
     },
     "dump": {
-        "operator_time" : 0,
-        "most_mem_item" : 6
+        "train_time": 0,
+        "most_mem_item": 6
     },
-
-    "threads":20,            
-    "seed":42
-
+    "checkpoint_out": {
+        "GPT2_fuyou": {
+            "path": "./hy-tmp/checkpoint/",
+            "#type": "best full state",
+            "type": "best",
+            "save-every": 500,
+            "snapshot": {
+                "curFuyou": -1
+            }
+        }
+    },
+    "checkpoint_in": {
+        "#tmp": "./hy-tmp/checkpoint/GPT2_144M.fuyou"
+    },
+    "threads": 20,
+    "seed": 42
 }

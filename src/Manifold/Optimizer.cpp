@@ -157,7 +157,7 @@ bool Optimizer::BatchGrad(int iter, float &fx, int flag) {
         auto now = GST_ms();
         if (hRLS->isUpdateBatch(GetITER())) {
             int64_t nSamp = train_loader->UpdateBatch(-1, _fish);
-            SUM::tData         = GST_ms() - now;
+            SUM::tData    = GST_ms() - now;
             if (nSamp == 0) {
                 _WARN("<%s> Failed to get next batch!!!\n", __func__);
                 return false;
@@ -523,7 +523,7 @@ Optimizer::RESULT Optimizer::Search(void *ctx, hGensor loss_, hGensor target_, C
     hEDS = _fish->hEDS;
     assert(hEDS != nullptr);
     auto train_params = TrainParams();
-    auto checkpoint   = _fish->config.checkpoint;
+    // auto fish_in      = _fish->config.ckp_in[0];_fish->isLoadCheckpoint ? fish_in.sDir.c_str() : ""
 
     last_time                = GST_ms();
     Optimizer::RESULT result = DID_NOT_CONVERGE;
@@ -531,7 +531,7 @@ Optimizer::RESULT Optimizer::Search(void *ctx, hGensor loss_, hGensor target_, C
     bool cancel = false, isWarmup = false;
     string suf, pref;
     Dump(0x0);
-    _INFO("\t%s@<%s> %s device=[%s] \n", __func__, _fish->hBackTG->name.c_str(), _fish->isLoadCheckpoint ? config.checkpoint.in.c_str() : "",
+    _INFO("\t%s@<%s> %s device=[%s] \n", __func__, _fish->hBackTG->name.c_str(), "",
           hEDS->__repr__(suf, pref, 0).c_str());
     _INFO("\t Accumulation=%d AdaptiveSched=%d GRAP=%p rZMUV=%g rLARS=%g \n", nGradAccum, (int)isAdaptiveSched, grad, config.ZMUV_ratio, config.lars_ratio);
     // tpGD=SGD_HYBRID;    //ADAMw    ADAM_S  SGD_v    SGD_HYBRID        SGD_blk_v
@@ -584,9 +584,9 @@ Optimizer::RESULT Optimizer::Search(void *ctx, hGensor loss_, hGensor target_, C
 
         UpdateLossCurve(0x0);
         // throw "DEBUG exit@";        //only for debug
-
-        if (checkpoint.save_every > 0 && t % checkpoint.save_every == 0) {
-            _fish->SaveTrain("");
+        for (auto ck : _fish->config.ckp_out) {
+            if (ck.needSave(t))
+                _fish->SaveTrain(ck);
         }
         if (t % 100 == 0)
             trainInfos().SaveToCSV("_info_.csv");
@@ -650,7 +650,7 @@ bool Optimizer::Evaluate(int type, int flag) {
     float val_loss = 0;
     if (type == 1) {
         assert(_fish->isLoadCheckpoint);
-        _INFO("[checkpoint] Evaluate the checkpoint of \"%s\"\n", _fish->config.checkpoint.in.c_str());
+        _INFO("[checkpoint] Evaluate the checkpoint of \"%s\"\n","" );  //_fish->config.fish_in.sDir.c_str()
     }
     for (auto vl : val_loaders) {
         if (type == 1 || vl->isEval(iter + 1)) {
@@ -773,8 +773,8 @@ float Optimizer::UpdateLossCurve(int flag) {
         _INFO("[epoch_%d]_%-6d loss=%f |g|=%.3g\tlr=%.2e | %s ", train_epochs, iter, loss_after, g_step, last_lr,
               train_loader->IterInfo().c_str());  //,zmuv_0,zmuv_1
         if (millis_per_iter > 0) {
-            _TIME_INFO(" T=", millis_per_iter);            
-            SUM::TimeInfo(_fish->config.dumpSwitch.train_time);  
+            _TIME_INFO(" T=", millis_per_iter);
+            SUM::TimeInfo(_fish->config.dumpSwitch.train_time);
             _TIME_INFO(" eta=", remaining_millis);
         }
         size_t tokens_processed = _fish->config.nTokensPerGrad();  //(size_t) * B * T * grad_accum_steps;
@@ -868,7 +868,7 @@ bool MUON_params_::isAdamW(void *hUserData, int flag) {
     // }else
     //     return true;
     if (m <= n)  // m <= n
-        return false;   
+        return false;
     return true;
 }
 
@@ -1138,8 +1138,8 @@ void OPT_Adam::Dump(int typ) {
 void OPT_Muon::Dump(int typ) {
     Optimizer::Dump(typ);
     auto muon = TrainParams().muon;
-    
-    _INFO("[OPT_Muon]\tnT=%ld muon_params=%ld(%.3g)\n", tMuons.size(), nmParams, nmParams*1.0 / nParams);
+
+    _INFO("[OPT_Muon]\tnT=%ld muon_params=%ld(%.3g)\n", tMuons.size(), nmParams, nmParams * 1.0 / nParams);
     muon.Dump(0x0);
     fflush(stdout);
 }

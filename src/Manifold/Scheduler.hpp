@@ -188,6 +188,7 @@ struct TaskNode {
 class Fuyou {
    protected:
     Fuyou_params params;
+    size_t nParams = 0, nMostParam = 0;
     Grusoft::GRander rander;
     uint32_t seed = 42;
     string name;
@@ -195,6 +196,8 @@ class Fuyou {
     vector<TaskNode *> tasks;
     RLS_BP *hRLS = nullptr;
     Fish *hFish  = nullptr;
+
+    vector<hGensor> ckpParams;  // Save/Load from checkpoint
     vector<hGensor> fParams;    // from Fish::optParams
     vector<hGensor> tReloads;   //  subset of fParams
    public:
@@ -223,6 +226,8 @@ class Fuyou {
     friend class RLSchedule;
     friend class RLS_BP;
     friend class Optimizer;
+    friend class Fish;
+    friend class NLP_AutoRegressive;
 };
 typedef std::shared_ptr<Fuyou> hFuyou;
 /*
@@ -243,8 +248,8 @@ class RLSchedule {
     vector<hFuyou> fuyouSwarm;
     //  active subset of hRLS->fuyouSwarm,  may varied at different stage & models
     vector<hFuyou> ActiveFuyous(int flag = 0x0);  //
-    hFuyou afu      = nullptr;
-    int curBranchID = 0;
+    hFuyou afu     = nullptr;
+    int curFuyouID = 0;
 
     LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;
     Grusoft::GRander rand_branch;

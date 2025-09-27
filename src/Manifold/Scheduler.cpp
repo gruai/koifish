@@ -86,6 +86,13 @@ bool RLS_BP::InitGUOKE(int flag) {
     int nLayer = hFish->config.nLayer(), nT = 0;
     if (params.strategy == MEM_STRATEGY::PRE_ALLOC_GPU) {
         int LIS = hFish->config.fuyou.nLayerInBranch;
+        if (hFish->isLocalInfer) {
+            for (auto task : afu->tasks) {
+                GeNeuron *neuron = (GeNeuron *)(task->hOBJ);
+                neuron->ManageMemory(DATA_PLACE::DEV_MEM);
+            }
+            return true;
+        }
         if (LIS > 0) {
             int nSection = nLayer / LIS;  // brach or hierarch
             for (int i = 1; i < nSection; i++) {
@@ -103,8 +110,8 @@ bool RLS_BP::InitGUOKE(int flag) {
                 }
             }
             _INFO("[RLS_branch] \tGuoke=%d(%d) nSection=%d isRefParam=%d\t\n", nT_guoke, nT, nSection, isRefParam);
-        }        
-    }else if (params.strategy == MEM_STRATEGY::MEM_SWAP_GUOKE) {
+        }
+    } else if (params.strategy == MEM_STRATEGY::MEM_SWAP_GUOKE) {
         FFN *firstFFN = hFish->GetNeuron<FFN>("FFN", 0);
         firstFFN->SetGuoke(nullptr, isRefParam);
         SelfAttention *firstQKV = hFish->GetNeuron<SelfAttention>("SelfAttention", 0);
@@ -119,9 +126,11 @@ bool RLS_BP::InitGUOKE(int flag) {
         }
         _INFO("[RLS] \tGuoke=%d(%d)\t\n", nT_guoke, nT);
     }
-
-    for (auto neuron : hFish->backbons) {
-        neuron->ManageMemory(DATA_PLACE::DEV_MEM);
+    if (hFish->isLocalInfer) {
+    } else {
+        for (auto neuron : hFish->backbons) {
+            neuron->ManageMemory(DATA_PLACE::DEV_MEM);
+        }
     }
 
     return true;
@@ -178,22 +187,11 @@ void GeNeuron::ManageMemory(DATA_PLACE target, int typ, int flag) {
                     op = "Alloc";
                     if (BIT_TEST(t->flags, GTensor::F_RELOAD)) {
                         bool isFree = !hFish->config.fuyou.isFirst(layer);
-                        t->Serial_MMAP(true,false);     // no reset, should free all memory
-                        if (isFree){
+                        t->Serial_MMAP(true, false);  // no reset, should free all memory
+                        if (isFree) {
                             t->Free();
-                        }                            
+                        }
                     }
-
-                    /*if (tpInitWeight == SERIALIZE)
-                        t->tpInit = tpInitWeight;
-                    t->Alloc(hOPT->GetITER(), flag);
-                    if (BIT_TEST(t->flags, GTensor::F_RELOAD)) {
-                        auto now = GST_us();
-                        assert(t->host_data != nullptr);
-                        t->SerialGP(t->host_data, nullptr, t->szData, false);  // 0x7ffda0c82300
-                        SUM::tX1 += GST_us() - now;
-                    }
-                    op = "Alloc";*/
                 }
         }
     }
@@ -319,9 +317,21 @@ Fuyou::Fuyou(const string &n, RLS_BP *hRL, Fish *hF, vector<TaskNode *> arrT, in
     rander.Init(hash);
     // auto allParams = hFish->optParams;
     string sT = "";
+    nParams   = 0;
     for (auto task : tasks) {
         GeNeuron *neuron = (GeNeuron *)(task->hOBJ);
-        bool isFy        = dynamic_cast<FFN *>(neuron) || dynamic_cast<SelfAttention *>(neuron);
+        for (auto t : neuron->PickGensors()) {
+            if (BIT_TEST(t->flags, GTensor::F_PARAM)) {
+                ckpParams.push_back(t);
+                if(t->isRefer())    //  "model.out.weight"
+                    continue;
+                nParams += t->size();
+                if(!hFish->isTrain())   //  loadCheckPoint
+                    _INFO("\t%.5gM@%s\n", nParams / 1.0e6, t->name);
+            }
+        }
+
+        bool isFy = dynamic_cast<FFN *>(neuron) || dynamic_cast<SelfAttention *>(neuron);
         if (!isFy)
             continue;
 
@@ -335,7 +345,8 @@ Fuyou::Fuyou(const string &n, RLS_BP *hRL, Fish *hF, vector<TaskNode *> arrT, in
             }
         }
     }
-    _INFO("\t fuyou_%s nParam=%ld nReload=%ld(%s)\n", name.c_str(), fParams.size(), tReloads.size(), sT.c_str());
+    _INFO("\t fuyou_%s nParam=%ld(T=%ld) nReload=%ld(%s)\n", name.c_str(), nParams, fParams.size(), tReloads.size(), sT.c_str());
+    fflush(stdout);
 }
 
 bool Fuyou::UpdateFollower(std::shared_ptr<Fuyou> follower, int flag) {
@@ -353,8 +364,8 @@ bool Fuyou::UpdateFollower(std::shared_ptr<Fuyou> follower, int flag) {
     for (int i = 0; i < nP; i++) {
         auto tNext = follower->fParams[i], tHead = fParams[i];
         assert(tNext->isSameShape(tHead));
-        if(tHead->data == tNext->data){
-            bool isReload = BIT_TEST(tNext->flags, GTensor::F_RELOAD) || BIT_TEST(tHead->flags, GTensor::F_RELOAD) ;
+        if (tHead->data == tNext->data) {
+            bool isReload = BIT_TEST(tNext->flags, GTensor::F_RELOAD) || BIT_TEST(tHead->flags, GTensor::F_RELOAD);
             assert(isReload);
         }
         Exploitation(tHead, tNext);
@@ -375,7 +386,7 @@ bool RLSchedule::ExploreOptimization(int iter, int flag) {
         return false;
 
     double now           = GST_ms();
-    hFuyou first         = fuyouSwarm[curBranchID];  //  afu = fuyouSwarm[curBranchID];
+    hFuyou first         = fuyouSwarm[curFuyouID];  //  afu = fuyouSwarm[curFuyouID];
     vector<hFuyou> cands = fuyouSwarm;
     std::sort(cands.begin(), cands.end(),  // ugly because we don't have a typedef for the std::pair
               [](const hFuyou &a, const hFuyou &b) { return a->loss < b->loss; });
@@ -412,7 +423,7 @@ bool RLSchedule::ExploreOpt_v1(int iter, int flag) {
               [](const hFuyou &a, const hFuyou &b) { return a->loss < b->loss; });
     if (cands[0]->loss == FLT_MAX)
         return false;
-    hFuyou head = cands[0];  //  afu = fuyouSwarm[curBranchID];
+    hFuyou head = cands[0];  //  afu = fuyouSwarm[curFuyouID];
     assert(head != afu);
     head->UpdateFollower(afu);
     bool doMore = iter >= hFish->config.fuyou.nWarmup();
@@ -444,10 +455,18 @@ bool RLS_BP::InitBranch(int flag) {
     }
 
     assert(L % LIS == 0);
-    int nSwitch = L / LIS;
-    _INFO("[RLS_branch] branches=%d(%d/%d) ", nSwitch, L, LIS);
+    int nSwitch = L / LIS, fy0 = 0, fy1 = nSwitch;
+    if (hFish->isLocalInfer) {  // only one best fuyou do infer
+        int b = hFish->SnapShot().curFuyou;
+        assert(b >= 0 && b < nSwitch);
+        nSwitch = 1;
+        fy0 = b, fy1 = b + 1;
+        auto fy  = hFish->config.fuyou;
+        fy.LIB_0 = b * LIS, fy.LIB_1 = fy.LIB_0 + LIS;
+    }
+    _INFO("\n[RLS_branch] branches=%d(%d/%d) ", nSwitch, L, LIS);
     // curTasks.clear();
-    for (int b = 0; b < nSwitch; b++) {
+    for (int b = fy0; b < fy1; b++) {
         int LIB_0 = b * LIS, LIB_1 = std::min((b + 1) * LIS, L);
         vector<TaskNode *> tasks;
         for (auto n : hFish->backbons) {
@@ -461,6 +480,7 @@ bool RLS_BP::InitBranch(int flag) {
                 // if (n->isPassBack)
                 //     nPass++;  // backbons.push_back(n);
             }
+
             if (isPass) {
                 continue;
             }
@@ -473,6 +493,11 @@ bool RLS_BP::InitBranch(int flag) {
         fuyouSwarm.push_back(std::make_shared<Fuyou>(std::to_string(b), this, hFish, tasks));
     }
     assert(fuyouSwarm.size() == nSwitch);
+    if (hFish->isLocalInfer) {
+        curFuyouID = 0;
+        afu        = fuyouSwarm[curFuyouID];
+        assert(afu->nParams == SUM::nzLoadParam);
+    }
     _INFO("\n");
     return true;
 }
@@ -480,7 +505,7 @@ bool RLS_BP::InitBranch(int flag) {
 bool RLS_BP::isUpdateBatch(int iter, int flag) {
     bool isUpdate = true;
     if (hFish->config.fuyou.ensemble == Fuyou_params::MULTI_SCALE)
-        isUpdate = curBranchID == 0;
+        isUpdate = curFuyouID == 0;
     return isUpdate;
 }
 
@@ -496,16 +521,16 @@ bool RLS_BP::UpdateBackbone(int iter, int flag) {
     assert(L % LIS == 0);
     string s = "\n", p = "\t";
     int nSwitch = L / LIS;
-    hFuyou last = fuyouSwarm[curBranchID];
+    hFuyou last = fuyouSwarm[curFuyouID];
     if (iter > 0)
         last->Serialize(true);
-    // curBranchID    = iter == -1 ? 0 : rand_branch.RandU32() % nSwitch;
-    curBranchID = iter == -1 ? 0 : (curBranchID + 1) % nSwitch;
+    // curFuyouID    = iter == -1 ? 0 : rand_branch.RandU32() % nSwitch;
+    curFuyouID = iter == -1 ? 0 : (curFuyouID + 1) % nSwitch;
     // curBranch = 0;       // only for debug
-    fy.LIB_0 = curBranchID * LIS, fy.LIB_1 = fy.LIB_0 + LIS;
+    fy.LIB_0 = curFuyouID * LIS, fy.LIB_1 = fy.LIB_0 + LIS;
     assert(fy.LIB_1 <= L);
-    // curTasks = fuyouSwarm[curBranchID];
-    afu = fuyouSwarm[curBranchID];
+    // curTasks = fuyouSwarm[curFuyouID];
+    afu = fuyouSwarm[curFuyouID];
     // if(iter>0)   //data is null now!!!
     //     afu->Serialize(false);
     afu->loss_0 = afu->loss;

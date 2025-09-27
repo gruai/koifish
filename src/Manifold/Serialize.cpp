@@ -25,17 +25,19 @@
 
 std::string safetensors::safetensors_t::config_key_ = "__json__config__";
 
-bool SAFETENSOR_Load(const std::string &path, safetensors::safetensors_t &st, int flag) {
-    _INFO("\n>>>>>> ST_SERIALIZE load@\"%s\" f=%d......\n", path.c_str(), flag);
+bool SAFETENSOR_mmap(const std::string &path, safetensors::safetensors_t &st, int flag) {
+    _INFO("\n>>>>>> SAFETENSOR_mmap mmap@\"%s\" f=%d......", path.c_str(), flag);
     try {
         std::string warn, err;
         int __prot = PROT_READ | PROT_WRITE;                                             // PROT_READ
         bool ret   = safetensors::mmap_from_file(path.c_str(), &st, warn, err, __prot);  //   safetensors::load_from_file();
+        int nT = (int)(st.tensors.size());
+        // assert(nT > 1);
         if (warn.size()) {
-            _INFO(">>>>>> WARN: %s\n", warn.c_str());  // std::cout << "WARN: " << warn << "\n";
+            _INFO(">>>>>> WARN: \"%s\"\n", warn.c_str());  // std::cout << "WARN: " << warn << "\n";
         }
         if (!ret) {
-            _INFO(">>>>>> ERR: %s\n", err.c_str());
+            _INFO(">>>>>> ERR: \"%s\"\n", err.c_str());
             return false;
         }
         if (!safetensors::validate_data_offsets(st, err)) {
@@ -57,8 +59,7 @@ bool SAFETENSOR_Load(const std::string &path, safetensors::safetensors_t &st, in
             assert(0);
             //  databuffer = st.storage.data();
         }
-        int nT = st.tensors.size();
-        assert(nT > 0);
+
         // Print Tensor info & value.
         for (size_t i = 0; i < nT; i++) {
             std::string key = st.tensors.keys()[i];
@@ -77,7 +78,8 @@ bool SAFETENSOR_Load(const std::string &path, safetensors::safetensors_t &st, in
                 continue;
             }
         }
-
+        size_t szIFS = std::filesystem::file_size(path);
+        _INFO("\r>>>>>> SAFETENSOR_mmap mmap@\"%s\" f=%d nT=%d fsize=%.4gM\n", path.c_str(), flag, nT, szIFS / 1.0e6);
         return true;
     } catch (JSON::parse_error &e) {
         _INFO("\r\n%s  Failed to open %s!!! ERR=%s", __func__, path.c_str(), e.what());
@@ -89,7 +91,7 @@ bool SAFETENSOR_Load(const std::string &path, safetensors::safetensors_t &st, in
 
 bool SAFETENSOR_Load_jconfig(const std::string &path, JSON &jsConfig, int flag) {
     safetensors::safetensors_t st;
-    bool bLoad = SAFETENSOR_Load(path, st, flag);
+    bool bLoad = SAFETENSOR_mmap(path, st, flag);
     if (!bLoad)
         return false;
     if (st.jsConfig.empty()) {
@@ -254,8 +256,8 @@ bool safetensors::save_to_ofs(const safetensors_t &st, std::ofstream &ofs, size_
                 assert(dst_offset == tensor.data_offsets[0]);
                 if (key != safetensors::safetensors_t::config_key_) {
                     GTensor *t = (GTensor *)(tensor.hUserData);
-                    sz  = t->nByte() * 3;
-                    assert(tensor.data_offsets[1] - dst_offset == sz);
+                    sz         = tensor.data_offsets[1] - dst_offset;  // t->nByte() * 3;
+                    assert(sz == t->nByte() || sz == t->nByte() * 3);
                     char *tmp = new char[sz]();
                     if (t->GetDataX() == nullptr) {
                         if (isInitMMap) {
@@ -272,7 +274,7 @@ bool safetensors::save_to_ofs(const safetensors_t &st, std::ofstream &ofs, size_
                     ofs.write(reinterpret_cast<const char *>(tmp), sz);
                     delete[] tmp;
                 } else {
-                    sz = tensor.msgpack.size();
+                    sz              = tensor.msgpack.size();
                     const char *tmp = (const char *)tensor.msgpack.data();
                     ofs.write(tmp, sz);
                 }
@@ -292,47 +294,63 @@ bool safetensors::save_to_ofs(const safetensors_t &st, std::ofstream &ofs, size_
     }
 }
 
-static safetensors::safetensors_t safeTensors;
-bool Fish::SAFETENSOR_Serialize(const std::string &path, bool isSave, int flag) {
-    double t0               = GST_ms();
-    string jPath            = path + ".json";
+static safetensors::safetensors_t all_states;
+void CheckPoint_Params::Init(int flag) {
+    switch (type) {
+        case STATE:
+            // To read/write mmap many times, a hack for the poor design of safetensors
+            hUserData = &all_states;
+            break;
+        default:
+            break;
+    }
+}
+bool Fish::SAFETENSOR_Serialize(CheckPoint_Params &ckp, bool isSave, int flag) {
+    double t0   = GST_ms();
+    string path = ckp.FullPath(isSave), jPath = path + ".json";
+    if(path.empty()){
+        _INFO("\r\n%s failed: empty path!!! ", __func__);
+        return false;
+    }
+
     size_t data_offset_base = 0, nInit = 0, szOFS = 0;
     std::string warn, err;
     JSON jsConfig;
+    bool isInitMMap           = BIT_TEST(flag, FSerial::INIT_MMAP);
+    vector<hGensor> curParams = optParams;
+    safetensors::safetensors_t st, *hst = (safetensors::safetensors_t *)(ckp.hUserData);
+    switch (ckp.type) {
+        case CheckPoint_Params::STATE:
+            assert(hst != nullptr);
+            break;
+        case CheckPoint_Params::BEST:
+            curParams = GetFuyou(-1)->ckpParams;
+            hst       = &st;
+            break;
+        case CheckPoint_Params::FULL:
+            assert(0);
+            hst = &st;
+            break;
+        default:
+            assert(0);
+    }
+
     try {
         if (isSave) {
             fflush(stdout);
             _INFO(">>>>>> ST_SERIALIZE save @\"%s\" nInit=%ld ......", path.c_str(), nInit);
-
-            bool isInitMMap                 = BIT_TEST(flag, FSerial::INIT_MMAP);
             jsConfig["vendor"]              = "gruai";
-            jsConfig["CLI_params"]          = config.ToJSON();
+            jsConfig["CLI_params"]          = config.ToJSON(0x100);
             jsConfig["tokenizer"]["tokens"] = "";
-            safeTensors.Clear();
+            hst->Clear();
             size_t dst_offset = 0;
-            for (auto t : optParams) {
+            for (auto t : curParams) {
                 std::vector<floatX> weight;
                 // size_t dst_offset = safeTensors.storage.size();
                 size_t sz = t->nByte();  // expand
-                sz *= 3;
+                if (ckp.type == CheckPoint_Params::STATE)
+                    sz *= 3;
                 assert(sz > 0);
-                /*safeTensors.storage.resize(dst_offset + sz);
-                char *dst = (char *)(safeTensors.storage.data());
-                if (t->GetDataX() == nullptr) {
-                    if (isInitMMap) {
-                        nInit++;
-                    } else {
-                        _INFO("[ST_SERIALIZE] \"%s\" is empty!\n", t->name);
-                        return false;
-                    }
-                    // memset(dst + dst_offset, 0x0, sz);
-                } else {
-                    assert(0);  // should never call this!
-                    assert(t->data != nullptr && t->gm != nullptr);
-                    // D2H(t->data, (char *)dst + dst_offset, t->szData);
-                    // D2H(t->gm, (char *)dst + dst_offset + t->szData, t->szM + t->szV);
-                }*/
-                // memcpy(safeTensors.storage.data() + dst_offset, t->data, sz);
                 safetensors::tensor_t tensor;
                 tensor.dtype           = t->type == typNUMBER::F32   ? safetensors::dtype::kFLOAT32
                                          : t->type == typNUMBER::F16 ? safetensors::dtype::kFLOAT16
@@ -341,16 +359,16 @@ bool Fish::SAFETENSOR_Serialize(const std::string &path, bool isSave, int flag) 
                 tensor.data_offsets[0] = dst_offset;
                 tensor.data_offsets[1] = dst_offset + sz;
                 tensor.shape.insert(tensor.shape.end(), t->shape.begin(), t->shape.end());
-                safeTensors.tensors.insert(t->name, tensor);
+                hst->tensors.insert(t->name, tensor);
 
-                jsConfig["tensors"][t->name]  = "";  // tensor->Dump(100,"");
-                jsConfig["tensors"]["offset"] = dst_offset;
+                jsConfig["tensors"][t->name] = dst_offset;  // tensor->Dump(100,"");
+                // jsConfig["tensors"]["offset"] = dst_offset;
                 dst_offset += sz;
             }
-            safeTensors.insertJS(jsConfig,dst_offset);
+            hst->insertJS(jsConfig, dst_offset);
             // __metadata__
-            safeTensors.metadata.insert("vendor", "gruai");
-            bool ret = safetensors::save_to_file(safeTensors, path, dst_offset, &warn, &err, flag);
+            hst->metadata.insert("vendor", "gruai");
+            bool ret = safetensors::save_to_file(*hst, path, dst_offset, &warn, &err, flag);
             if (warn.size()) {
                 std::cout << "WARN: " << warn << "\n";
             }
@@ -361,7 +379,7 @@ bool Fish::SAFETENSOR_Serialize(const std::string &path, bool isSave, int flag) 
                 }
                 return false;
             }
-
+            szOFS = std::filesystem::file_size(path);
             //  save json file
             std::ofstream o(jPath);
             o << std::setw(4) << jsConfig << std::endl;
@@ -370,23 +388,23 @@ bool Fish::SAFETENSOR_Serialize(const std::string &path, bool isSave, int flag) 
             return true;
         } else {
             int nSerialT = 0;
-            safeTensors.Clear();
-            bool bLoad = SAFETENSOR_Load(path, safeTensors, flag);
+            hst->Clear();
+            bool bLoad = SAFETENSOR_mmap(path, *hst, flag);     //*hst
             if (!bLoad)
                 return false;
             const uint8_t *databuffer{nullptr};
-            if (safeTensors.mmaped) {
-                databuffer = safeTensors.databuffer_addr;  // safeTensors->mmap_addr + 8 + safeTensors->header_size;
+            if (hst->mmaped) {
+                databuffer = hst->databuffer_addr;  // safeTensors->mmap_addr + 8 + safeTensors->header_size;
             } else {
                 assert(0);
                 // databuffer = safeTensors.storage.data();
             }
 
             // Print Tensor info & value.
-            for (size_t i = 0; i < safeTensors.tensors.size(); i++) {
-                std::string key = safeTensors.tensors.keys()[i];
+            for (size_t i = 0; i < hst->tensors.size(); i++) {
+                std::string key = hst->tensors.keys()[i];
                 safetensors::tensor_t tensor;
-                safeTensors.tensors.at(i, &tensor);
+                hst->tensors.at(i, &tensor);
                 if (key == safetensors::safetensors_t::config_key_) {
                     /*    safeTensors.loadJS(tensor, databuffer, safeTensors.mmap_size);
                         jsConfig = safeTensors.jsConfig["CLI_params"]["config"];
@@ -403,12 +421,12 @@ bool Fish::SAFETENSOR_Serialize(const std::string &path, bool isSave, int flag) 
                     continue;
                 }
                 JSON jdesc = tensor.jDesc();
-                if (target->SerialJSON(key, jdesc, (void *)databuffer, safeTensors.mmap_size) != 0) {
+                if (target->SerialJSON(key, jdesc, (void *)databuffer, hst->mmap_size) != 0) {
                     return false;
                 }
                 if (DUMP()) {
-                    tensor.Dump(key, databuffer);
-                    _INFO("  >>>>  %d typ=%s\t data=%p grad=%p \t sz=%ld @%s\n", nSerialT, cNameOf(target->type), target->data, target->grad, tBYTE(target),
+                    tensor.Dump("  >>>>  "+key, databuffer);
+                    _INFO("  >>>>  [%d] typ=%s\t data=%p grad=%p \t sz=%ld @%s\n", nSerialT, cNameOf(target->type), target->data, target->grad, tBYTE(target),
                           target->name);
                 }
                 // if(strcmp(target->name,"model.layers.27.mlp.norm.weight")==0){   //only for debug model.output.weight
@@ -418,13 +436,14 @@ bool Fish::SAFETENSOR_Serialize(const std::string &path, bool isSave, int flag) 
                 nSerialT++;
             }
             // config.model.Init(jsConfig)
-            _INFO("\n>>>>>> ST_SERIALIZE load@\"%s\" nSerialT=%d iter=%d\n", path.c_str(), nSerialT, flag);
+            _INFO(">>>>>> ST_SERIALIZE load@\"%s\" nSerialT=%d iter=%d\n", path.c_str(), nSerialT, flag);
             return true;
         }
     } catch (JSON::parse_error &e) {
-        _INFO("\r\n%s  Failed to open %s!!! ERR=%s", __func__, jPath.c_str(), e.what());
+        _INFO("\r\n%s  Failed to serialize @\"%s\"!!! ERR=%s", __func__, jPath.c_str(), e.what());
         return false;
     } catch (...) {
+        _INFO("\r\n%s  Failed to serialize @\"%s\"!!! ", __func__, path.c_str());
         return false;
     }
 }

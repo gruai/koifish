@@ -117,10 +117,10 @@ if __name__ == '__main__':
     
     # batch_size = [200,160,40,80,120]
     #   cross_over=[0.6,0.4,0.2,0.1]
-    branches = [6,8]     #48
-    lrs =[0.0006]    #[0.002,0.001,0.0006,0.0002]
+    branches = [6]     #48
+    lrs =[0.0006,0.001]    #[0.002,0.001,0.0006,0.0002]
     lr = 0.0006
-    no = 0;     batchs = [80,96]   
+    no = 0;     batchs = [80,120,160,200,240]   
     for branch in branches:        
         for b in batchs:
             title = "F"+ str(branch)  + "_B" + str(b)      #+ "_crossover"+ str(cross)
@@ -133,7 +133,9 @@ if __name__ == '__main__':
                     
             jConfig = jConfig_0
             jConfig["train"]["batch"] = b
+            jConfig["datasets"]["train"]["most"] = 100
             jConfig["train"]["learning-rate"] = lr
+            # jConfig["model"]["parameter"]["transformer"]["Ctx"] = 1536        # needs much more memory
             # jConfig["model"]["fuyou"]["crossover"] = cross
             jConfig["model"]["fuyou"]["branch"] = branch
             with open(path+title+".json", 'w') as f:

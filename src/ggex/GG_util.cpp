@@ -743,9 +743,19 @@ std::string CLI_params::GetDataPath(const string type, int flag) {
     return fp;
 }
 
-JSON CLI_params::ToJSON(int flag) {
-    JSON json;
-    json["config"] = jConfig;
+JSON CLI_params::ToJSON(int type, int flag) {
+    JSON json, jOut = jConfig;
+    switch (type) {
+        case 0x100:  //@Fish::SAFETENSOR_Serialize
+            jOut["checkpoint_in"] = jConfig["checkpoint_out"];
+            jOut.erase("checkpoint_out");
+
+            break;
+        default:
+            assert(0);
+            break;
+    }
+    json["config"] = jOut;
     return json;
 }
 
@@ -779,6 +789,124 @@ bool TRAIN_CARD::Init(CLI_params *hConfig, const JSON &jConfig, int flag) {
     custom_n_ctx = true;
     n_threads    = jKV(jConfig, {"threads"}, n_threads);
     n_gpu_layers = jKV(jConfig, {"n-gpu-layers"}, n_gpu_layers);
+    return true;
+}
+
+CheckPoint_Params::CheckPoint_Params(const JSON &jData, const std::string &key, bool isSave, int flag) : jKey(key) {
+    if (key.empty()) {  //  default checkpoints to store all info of current state
+        //"state", "./hy-tmp/checkpoint/", -1, false
+        jKey = "._koifish_state_";
+        sDir = "./hy-tmp/checkpoint/";
+        type = CheckPoint_Params::STATE;
+        // isIn = false;
+    } else {
+        if (!jData.contains(key)) {
+            _INFO("");
+        }
+        JSON jdata = jData[key];
+        assert(!jdata.empty());
+        // const std::string &tp, const std::string &p, int x, bool in
+        bool isFind = false;
+        // type        = CheckPoint_Params::BEST;
+        std::string stp = jdata["type"];
+        for (auto kv : CKP_desc) {
+            if (stp == kv.second) {
+                type   = kv.first;
+                isFind = true;
+            }
+        }
+        sDir       = jKV(jdata, {"path"}, sDir);
+        save_every = jKV(jdata, {"save-every"}, save_every);
+        // isIn       = key == "in";  // hack
+    }
+    if (isSave) {  //  Verify ouput dir
+        if (sDir.empty()) {
+            sDir = "./hy-tmp/checkpoint/Koifish_";
+            _INFO("[Save] path is empty! Koifish would save file to a tmp path@\"%s\"!\n", sDir.c_str());
+            // _INFO("[Save] path is empty! To save model, please set the key of \"checkpoint-out\" in json config file(\"%s\").\n", config.jsPath.c_str());
+            // if (VERIFY_DIR_EXIST(path, true))
+            //     _INFO("[Save] path=\"%s\", save_every=%d\n", path.c_str(), train_params.save_every);
+            // else {
+            //     _INFO("[Save] Invalid path@\"%s\"!\n", path.c_str());
+            // }
+        }
+        VERIFY_DIR_EXIST(sDir, true);
+    }
+}
+
+std::string CheckPoint_Params::FullPath(bool isSave, int flag) {
+    string sOut = "", sExt = CKP_ext[type];
+    if(isSave)    {
+        if (!sX.empty()) {
+            sOut = sDir + sX;  //+ std::to_string(iter)
+        } else
+            sOut = sDir + jKey;
+        sOut += "." + sExt;
+    }else{
+        sOut = sModelPath;
+    }
+    assert(!sOut.empty());
+    return sOut;
+}
+
+bool CheckPoint_Params::SerialSnap(JSON &jConfig, bool isSave, int flag) {
+    if (isSave) {
+        JSON &jSnapshot       = jConfig["checkpoint_out"][jKey]["snapshot"];
+        jSnapshot["curFuyou"] = curFuyou;
+        jSnapshot["curIter"]  = curIter;
+        jSnapshot["curEpoch"] = curEpoch;
+        for (auto seed : seeds) {
+            jSnapshot["seeds"][seed.first] = seed.second;
+        }
+        // JSON j_array = fuyou_filter_reload;
+        jSnapshot["fuyou_filter"] = fuyou_filter_reload;
+        
+    } else {
+        JSON &jSnapshot = jConfig["checkpoint_in"][jKey]["snapshot"];
+        assert(!jSnapshot.empty());
+        curFuyou = jKV(jSnapshot,{"curFuyou"},curFuyou);
+        curIter  = jKV(jSnapshot,{"curIter"},curIter);
+        curEpoch = jKV(jSnapshot,{"curEpoch"},curEpoch);
+        fuyou_filter_reload = jKV_arr(jSnapshot,{"fuyou_filter"},fuyou_filter_reload);
+    }
+    return true;
+}
+
+bool CLI_params::InitChekcpoints(int argc, char **argv, const std::string &ckp_queue, int flag) {
+    try {
+        JSON jdata = jKEY(jConfig, {ckp_queue});
+        string type    = "", path;
+        int save_every = -1;
+        for (JSON::const_iterator it = jdata.begin(); it != jdata.end(); ++it) {
+            auto k = it.key();
+            if (!k.empty() && k[0] == '#')
+                continue;
+            if (k == "debug") {
+                continue;
+            }
+            if (ckp_queue == "checkpoint_out")
+                ckp_out.push_back(CheckPoint_Params(jdata, k, true));
+            else {  //  "checkpoint_in"
+                ckp_in.push_back(CheckPoint_Params(jdata, k, false));
+            }
+        }
+        if (phase == P_EVAL_) {
+            assert(argc > 2);
+            auto& fish_in = ckp_in[ckp_in.size()-1];
+            fish_in.sModelPath = argv[1];
+        } else {
+            // default checkpoints to store all info of current state
+            state = CheckPoint_Params(jConfig, "", true);
+            state.Init();
+            // checkpoints.push_back(state);
+        }
+    } catch (JSON::parse_error &e) {
+        _INFO("\r\n%s  Failed to open %s!!! ERR=%s", __func__, ckp_queue.c_str(), e.what());
+        return false;
+    } catch (...) {
+        _INFO("\r\n%s  Unknown exception @%s!!!", __func__, ckp_queue.c_str());
+        return false;
+    }
     return true;
 }
 
@@ -848,15 +976,6 @@ bool CLI_params::InitJConfig(int flag) {
         } else {
         }
 
-        checkpoint.model_out  = jKV(jConfig, {"model-out"}, checkpoint.model_out);
-        checkpoint.in         = jKV(jConfig, {"checkpoint", "in"}, checkpoint.in);
-        checkpoint.out        = jKV(jConfig, {"checkpoint", "out"}, checkpoint.out);
-        checkpoint.save_every = jKV(jConfig, {"checkpoint", "save-every"}, checkpoint.save_every);
-
-        // f_norm_rms_eps = jKV(jConfig,{"norm-rms-eps"},f_norm_rms_eps );
-        // rope_freq_base = jKV(jConfig,{"rope-freq-base"},rope_freq_base );
-        // rope_freq_scale = jKV(jConfig,{"rope-freq-scale"},rope_freq_scale );
-
         prompt = jKV(jConfig, {"gpt", "prompt"}, prompt);
 
         dict_vae_dims = jKV(jConfig, {"dict", "vae", "dims"}, dict_vae_dims);
@@ -879,8 +998,10 @@ bool CLI_params::InitJConfig(int flag) {
         DEBUG.N_mostiter = jKV(jConfig, {"debug", "most_iter"}, DEBUG.N_mostiter);
 
         SUM::nMostMemItem = jKV(jConfig, {"dump", "most_mem_item"}, SUM::nMostMemItem);
+        SUM::nMinTensorAlloc = jKV(jConfig, {"dump", "min_tensor_alloc"}, SUM::nMinTensorAlloc);
 
         dumpSwitch.train_time = jKV(jConfig, {"dump", "train_time"}, dumpSwitch.train_time);
+        dumpSwitch.tensor_ref = jKV(jConfig, {"dump", "tensor_ref"}, dumpSwitch.tensor_ref);
         // train = jKV(jConfig,{"train"},train );
         return true;
     } catch (JSON::parse_error &e) {
@@ -930,7 +1051,7 @@ bool CLI_params::parse(int argc, char **argv) {
             assert(i + 1 < argc);
             JSON jEval;
             jEval["type"] = "hellaswag", jEval["glob"] = argv[++i];
-            jEval["step"] = 0.01;
+            jEval["samp"] = 1.0;
             // jEval["glob"] = argv[i++];
             jConfig["datasets_new"]["eval"] = jEval;
         } else if (arg == "--step") {
@@ -947,6 +1068,15 @@ bool CLI_params::parse(int argc, char **argv) {
 
     if (!InitJConfig())
         return false;
+    switch (phase) {
+        case P_EVAL_:
+            InitChekcpoints(argc, argv, "checkpoint_in");
+            break;
+        default:
+            InitChekcpoints(argc, argv, "checkpoint_in");
+            InitChekcpoints(argc, argv, "checkpoint_out");
+            break;
+    }
 
     // finish_processing_train_args(&common);
     return true;
@@ -1446,9 +1576,9 @@ void ADAM_params_::Dump(int typ) {
     _INFO("\tADAM lr=%g,beta=[%g,%g] decay=%g(dim>=%d) clip=%g(alg=%d)\n", alpha, beta1, beta2, decay, decay_min_ndim, gclip, clip_alg);
 }
 
-MUON_params_::MUON_params_()    {
+MUON_params_::MUON_params_() {
     tpDecay = 1;
-    //lr_scale = 100.f;     // gradient would explode
+    // lr_scale = 100.f;     // gradient would explode
 }
 void MUON_params_::Dump(int typ) {
     // float decay = DecayScale();

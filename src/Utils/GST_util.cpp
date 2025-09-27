@@ -47,11 +47,13 @@ void _TIME_INFO(const string &info, double fmillis, int flag) {
 }
 
 int SUM::nMostMemItem;
+int SUM::nMinTensorAlloc = 100 * 1024 * 1024;
 double SUM::tX = 0.0, SUM::tX1 = 0.0, SUM::tRemater = 0.0;
 size_t SUM::szUpload = 0;
 double SUM::tQKV = 0.0, SUM::tFFN = 0.0, SUM::tUpload = 0.0, SUM::tData = 0.0;
 double SUM::tLoadData = 0.0, SUM::tLoadParam = 0.0, SUM::tEval_1 = 0.0, SUM::tEval_0 = 0.0;
 int SUM::nInitParam = 0, SUM::nSaveParam = 0, SUM::nLoadParam = 0, SUM::nDogLeg = 0;
+int SUM::nzLoadParam = 0, SUM::nzSaveParam = 0;
 std::vector<MEM_USAGE> SUM::mems;
 
 size_t MEM_USAGE::szA = 0, MEM_USAGE::szW = 0, MEM_USAGE::szG = 0, MEM_USAGE::szMoment = 0, MEM_USAGE::szTemp = 0, MEM_USAGE::szOther = 0;
@@ -145,6 +147,7 @@ void SUM::MemoryInfo(int type, int flag) {
         "other=%.5gM\n",
         mems.size(), szNow / 1.0e9, szFree / 1.0e9, MEM_USAGE::szA / 1.0e6, MEM_USAGE::szW / 1.0e6, MEM_USAGE::szG / 1.0e6, MEM_USAGE::szMoment / 1.0e6,
         MEM_USAGE::szTemp / 1.0e6, MEM_USAGE::szOther / 1.0e6);
+    _INFO("\tcurBrach=%.5gM mUsed==%.5gM\n", (MEM_USAGE::szA + MEM_USAGE::szW + MEM_USAGE::szG + MEM_USAGE::szMoment) / 1.0e6, mUsed);
     if (nMostMemItem > 0) {  // decsend by memory size
         size_t szTotal = 0;
         for (auto mem : mems) {

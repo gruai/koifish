@@ -359,8 +359,14 @@ bool huTensor::SerialData(const string& info, void* host, bool isToHost, int fla
 
 //  如果CUDA支持统一内存（Unified Memory） 或GPUDirect RDMA，可以直接映射 GPU 内存到文件：
 static bool isGPUDirectMMap = true;
-//
+/*
+1. Train: Fuyou would call Serial_MMAP many times. Each tensor should have F_RELOAD flag
+2. Eval: Only call once at loadCheckpoint
+*/
 bool GTensor::Serial_MMAP(bool isSave, bool isReset, int flag) {
+    if (isRefer() && !BIT_TEST(flags,F_RELOAD)) 
+        return true;
+
     try {
         assert(isParam() && isGPUDirectMMap);
         bool bRet     = true;
@@ -382,7 +388,7 @@ bool GTensor::Serial_MMAP(bool isSave, bool isReset, int flag) {
             if (hRef != nullptr && isReset) {
                 data = nullptr, gm = nullptr, gv = nullptr;
             }
-            SUM::nSaveParam++;
+            SUM::nSaveParam++;      SUM::nzSaveParam += size();
         } else {
             if (hRef != nullptr) {  // huTensor::Alloc
                 ShareMemory(hRef, 0x100);
@@ -394,10 +400,12 @@ bool GTensor::Serial_MMAP(bool isSave, bool isReset, int flag) {
             }
             // cudaCheck(cudaMemcpyAsync(data, host,szData, cudaMemcpyHostToDevice));
             cudaCheck(cudaMemcpy(data, tmpData, szData, cudaMemcpyHostToDevice));
-            cudaCheck(cudaMemcpy(gm, tmpData + szData, szM + szV, cudaMemcpyHostToDevice));
             Print("mmap_load", 0, dumpFlag);
-            Print("mmap_load", 3, dumpFlag), Print("mmap_load", 2, dumpFlag);
-            SUM::nLoadParam++;
+            if (szM + szV > 0) {
+                cudaCheck(cudaMemcpy(gm, tmpData + szData, szM + szV, cudaMemcpyHostToDevice));
+                Print("mmap_load", 3, dumpFlag), Print("mmap_load", 2, dumpFlag);
+            }
+            SUM::nLoadParam++;          SUM::nzLoadParam += size();
         }
         if (tmpData != host_data)
             delete[] tmpData;

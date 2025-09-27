@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "../Device/EDevice.hpp"
+#include "../Fuzi/Distillation.hpp"
 #include "../Utils/GST_rander.hpp"
 #include "../Utils/GST_util.hpp"
 #include "../ggex/GG_util.hpp"
@@ -37,8 +38,6 @@
 #include "Neuron.hpp"
 #include "SLP.hpp"
 #include "TGraph.hpp"
-// #include "../Utils/safetensors.hh"
-#include "../Fuzi/Distillation.hpp"
 
 using namespace std;
 
@@ -66,7 +65,7 @@ struct MixOfSwarm : public MixOfModels {
     hGensor Build(CLI_params &config, void *ctx, hGensor cur, int flag = 0x0) override;
 };
 
-class Fish :public std::enable_shared_from_this<Fish> {
+class Fish : public std::enable_shared_from_this<Fish> {
     Fish(const Fish &);
     Fish &operator=(const Fish &);
 
@@ -196,7 +195,7 @@ class Fish :public std::enable_shared_from_this<Fish> {
     // Smart format of https://github.com/zeux/calm
     virtual bool CALM_Serialize(const std::string &path, bool isSave, int flag = 0x0);
     virtual bool YALM_Serialize(const std::string &path, bool isSave, int flag = 0x0);
-    virtual bool SAFETENSOR_Serialize(const std::string &path, bool isSave, int flag = 0x0);
+    virtual bool SAFETENSOR_Serialize(CheckPoint_Params &ckp, bool isSave, int flag = 0x0);
 
     MODEL_ARCH arch = MODEL_ARCH::_X_;
     Grusoft::GRander rand_coin;
@@ -256,7 +255,9 @@ class Fish :public std::enable_shared_from_this<Fish> {
         return hOPT;
     }
     int GetCurIter(int flag = 0x0) const;
-    // if type==1 return curBraches, otherwise, return allBraches
+    const CheckPoint_Params &SnapShot(int flag = 0x0) const;
+    // if type<0 return afu
+    hFuyou GetFuyou(int no, int flag = 0x0) const;
     int nFuyou(int type) { return (GetScheduler<RLSchedule>())->nFuyou(type); }
     template <typename T>
     T *GetScheduler() {
@@ -442,8 +443,10 @@ class Fish :public std::enable_shared_from_this<Fish> {
     static hFISH MakeSwarm(const std::string nam_, struct CLI_params &params, int flag);
     static hFISH MakeInstance(const std::string nam_, struct CLI_params &params, const Fish *hSrc_, int flag);
     // static Fish* Copy(const Fish* src,int flag=0x0);
-    virtual bool SaveTrain(string sX, bool isInit=false, int flag = 0x0);
-    virtual bool LoadCheckPoint(int flag = 0x0);
+    virtual bool SaveTrain(CheckPoint_Params &ckp, bool isInit = false, int flag = 0x0);
+    virtual bool UpdateCheckPoint(CheckPoint_Params &ckp, bool isSave, int flag = 0x0);
+    virtual bool LoadCheckPoint(CheckPoint_Params &ckp, int flag = 0x0);
+    virtual bool SaveCheckPoint(int flag = 0x0);
 
     friend class GeNeuron;
     friend class SLP;

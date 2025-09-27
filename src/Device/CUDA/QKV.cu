@@ -558,7 +558,7 @@ bool SYNC_DEVICE(const std::string &sX, int flag) {
             _INFO("SYNC_DEVICE err=\"%s\" (%s code=%d)\t%s\n", cudaGetErrorString(error), cudaGetErrorName(error), error, sX.c_str());
             if (flag == 1)
                 return false;
-
+            assert(0 && "SYNC_DEVICE");
             exit(KOIFISH_EXIT_SYNC_DEVICE);
         }
         return true;

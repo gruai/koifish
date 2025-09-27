@@ -160,15 +160,15 @@ struct MEM_USAGE {
     MEM_USAGE(size_t sz_, string d_, void *hData = nullptr, int flag = 0x0);
 };
 struct SUM {
-    static int nMostMemItem;
+    static int nMostMemItem, nMinTensorAlloc;
     static std::vector<MEM_USAGE> mems;
-    static int nInitParam,nSaveParam,nLoadParam,nDogLeg;
+    static int nInitParam, nSaveParam, nzSaveParam, nLoadParam, nzLoadParam, nDogLeg;
     static double tX, tX1, tData, tRemater, tQKV, tFFN, tUpload, tLoadData, tLoadParam, tEval_0, tEval_1;
     static size_t szUpload;
     static void Reset(string typ, int flag = 0x0);
     static void TimeInfo(int typ, int flag = 0x0);
     static void MemoryInfo(int type, int flag = 0x0);
-    static bool FreeMem(void *hData,int flag=0x0);
+    static bool FreeMem(void *hData, int flag = 0x0);
 };
 
 // Discrete Distribution of array
@@ -443,7 +443,7 @@ class GST_util {
 //  G_Has
 inline bool isStrMatch(const string &target, const vector<string> &words) {
     for (auto w : words) {
-        if(w.empty())
+        if (w.empty())
             continue;
         if (target.find(w) != std::string::npos)
             return true;
@@ -454,6 +454,4 @@ inline bool isStrMatch(const string &target, const vector<string> &words) {
 /*
     CUBLAS: Base addresses of A, B, C matrices should be aligned to 256-byte boundaries for optimal performance.
 */
-inline bool PTR_is_aligned(const void* ptr, size_t alignment = 256) { 
-    return (reinterpret_cast<uintptr_t>(ptr) % alignment) == 0; 
-}
+inline bool PTR_is_aligned(const void *ptr, size_t alignment = 256) { return (reinterpret_cast<uintptr_t>(ptr) % alignment) == 0; }

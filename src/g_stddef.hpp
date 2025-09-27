@@ -369,8 +369,6 @@ struct COMPACT_I {
     virtual void ToFile(const std::string& sPath, int flag);
     virtual void Dump(int flag = 0x0);
 };
-bool VerifyFile(const std::string& path, bool isCreate = false);
-bool VerifyDirectory(const std::string& path, bool isDelAll = false);
 
 template <class T>
 T base_name(T const& path, T const& delims = "/\\") {

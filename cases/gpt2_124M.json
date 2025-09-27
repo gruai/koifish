@@ -52,12 +52,5 @@
     
 
     "# checkpoint-in":"./hy-tmp/checkpoint/chk-GPT2_9001.gguf",
-    "# checkpoint-out":"./hy-tmp/checkpoint/chk-GPT2_",
-    
-    
-
-    "threads":20,            
-    "seed":42,
-    "use-checkpointing":true,   
-    "n-gpu-layers":100
+    "# checkpoint-out":"./hy-tmp/checkpoint/chk-GPT2_"
 }
