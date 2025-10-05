@@ -301,6 +301,8 @@ int GTensor::Dogleg(int flag) {
         int debug = 0x0;
         flag      = -2;
     }
+    assert(needUpdateParam);
+
     hOptimizer hOPT = hFish->GetOptimizer();
     int iter        = hOPT->GetITER();
     if (iter == last_iter)  // may try dogleg more than once in one optimization step
@@ -514,10 +516,38 @@ int Optimizer::GetITER(int flag) const {
     return iter;
 }
 
+bool Optimizer::isAtLongtail(int flag) {
+    bool isPass = false;  
+    float fLT = DEBUG.fLongTail;
+    if(fLT<=0)
+        return false;
+    int nMostIter = TrainParams().nMostIter, T_iter = fLT<1.0 ? nMostIter *fLT : (int)fLT ;   //
+    if (GetITER() >= T_iter) {
+        if (GetITER() == T_iter) {
+            _INFO("[Longtail] iter=%d(%g)\n", T_iter, fLT);
+        }
+        return true;
+    }
+    return isPass;
+}
+
 bool Optimizer::isSpike(int flag) { return false; }
 
 int RAW_update(std::vector<hGTensor> &tensors, Optimizer *hOPT, float &grad_norm, int alg, int flag);
+
+void Optimizer::CheckExitSearch(int t,int flag){
+    bool isExit = false;
+    if (DEBUG.N_mostiter > 0 && t > DEBUG.N_mostiter)  {// only for debug
+        isExit = true;
+    }
+    if(isExit){
+        trainInfos().SaveToCSV("_info_.csv");
+        // release more resource here
+        exit(KOIFISH_EXIT_DEBUG);
+    }
+}
 /*
+    10/04/2025  行走于天地之间，所见大美，皆为人心
  */
 Optimizer::RESULT Optimizer::Search(void *ctx, hGensor loss_, hGensor target_, CLI_params &config) {
     hEDS = _fish->hEDS;
@@ -531,8 +561,7 @@ Optimizer::RESULT Optimizer::Search(void *ctx, hGensor loss_, hGensor target_, C
     bool cancel = false, isWarmup = false;
     string suf, pref;
     Dump(0x0);
-    _INFO("\t%s@<%s> %s device=[%s] \n", __func__, _fish->hBackTG->name.c_str(), "",
-          hEDS->__repr__(suf, pref, 0).c_str());
+    _INFO("\t%s@<%s> %s device=[%s] \n", __func__, _fish->hBackTG->name.c_str(), "", hEDS->__repr__(suf, pref, 0).c_str());
     _INFO("\t Accumulation=%d AdaptiveSched=%d GRAP=%p rZMUV=%g rLARS=%g \n", nGradAccum, (int)isAdaptiveSched, grad, config.ZMUV_ratio, config.lars_ratio);
     // tpGD=SGD_HYBRID;    //ADAMw    ADAM_S  SGD_v    SGD_HYBRID        SGD_blk_v
     _INFO("\tDECENT=%d(%s) SIGN=%d tpFuseCu=%d filter=%d\n\n", tpGD, GD_NAME[tpGD].c_str(), tpSign, tpFuseCu, _fish->config.filter_tmp_grad.size());
@@ -552,8 +581,8 @@ Optimizer::RESULT Optimizer::Search(void *ctx, hGensor loss_, hGensor target_, C
     // g_dump_level = -1;
     int iter0 = 0, t;
     for (t = 0; t < train_params.nMostIter; ++t) {
-        if (DEBUG.N_mostiter > 0 && t > DEBUG.N_mostiter)  // only for debug
-            exit(KOIFISH_EXIT_DEBUG);
+        CheckExitSearch(t);
+        
         _fish->BeforeNextStep(t, 0x0);
         if (t == train_params.nMostIter - 1) {
             if (train_loader != nullptr) {
@@ -650,7 +679,7 @@ bool Optimizer::Evaluate(int type, int flag) {
     float val_loss = 0;
     if (type == 1) {
         assert(_fish->isLoadCheckpoint);
-        _INFO("[checkpoint] Evaluate the checkpoint of \"%s\"\n","" );  //_fish->config.fish_in.sDir.c_str()
+        _INFO("[checkpoint] Evaluate the checkpoint of \"%s\"\n", "");  //_fish->config.fish_in.sDir.c_str()
     }
     for (auto vl : val_loaders) {
         if (type == 1 || vl->isEval(iter + 1)) {
@@ -781,7 +810,7 @@ float Optimizer::UpdateLossCurve(int flag) {
         float tokens_per_second = tokens_processed / millis_per_iter * 1000.0f;
         ema_tps                 = iter == 1 ? tokens_per_second : 0.95f * ema_tps + 0.05f * tokens_per_second;
         _INFO(" | %.1fK token/s | %s", ema_tps / 1000.0, _fish->DebugInfo().c_str());
-        _INFO("\n");
+        _INFO(" x=%d\n",SUM::nUpdateParam);
     }
     float improvement = loss_before - loss_after;
     return improvement;

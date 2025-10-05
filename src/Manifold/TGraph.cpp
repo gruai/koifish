@@ -152,13 +152,12 @@ bool SelfAttention::Build(int flag_0) {
     devDeltaQ = ToX(GTensor::bt4c);
     if (isSeparateQKV) {
         offset = Q.out->nByte();
-        deltaQ = GTensor::bt4c->Partial("partialDeltaQ", 0, {B, T, C});      //  devDeltaQ = deltaQ->data
-        deltaK = GTensor::bt4c->Partial("partialDeltaK", B*T*C, {B, T, C});
-        deltaV = GTensor::bt4c->Partial("partialDeltaV", B*T*C*2, {B, T, C});
+        deltaQ = GTensor::bt4c->Partial("partialDeltaQ", 0, {B, T, C});  //  devDeltaQ = deltaQ->data
+        deltaK = GTensor::bt4c->Partial("partialDeltaK", B * T * C, {B, T, C});
+        deltaV = GTensor::bt4c->Partial("partialDeltaV", B * T * C * 2, {B, T, C});
     }
     devK = (char *)devQ + offset, devV = (char *)devK + offset;  // for cuDNN
     devDeltaK = (char *)devDeltaQ + offset, devDeltaV = (char *)devDeltaK + offset;
-    
 
     if (Rope_version > 0) {
         assert(isSeparateQKV);
@@ -1661,7 +1660,7 @@ bool GTensor::AllocBuffer(Fish *hFish, int flag) {
             GTensor::tmpW = std::make_shared<huTensor>(hFish, "tmpW", SHAPE({nEmbed, nFF}), tpW, true);
         }
         // GTensor::tmpGW = std::make_shared<huTensor>(hFish, "tmpGW", SHAPE({nEmbed, nFF}), tpG, true);
-        cudaCheck( cudaMalloc(&GTensor::stat_info,sizeof(float)*5120) );
+        cudaCheck(cudaMalloc(&GTensor::stat_info, sizeof(float) * 5120));
 
         return true;
     } catch (const std::exception &e) {
@@ -1723,14 +1722,17 @@ int Fish::jToGraph(void *ctx_, bool isBuild, int flag) {
     for (auto nn : neurons) {  // Symbolic Ming
         no++;
         assert(cur != nullptr);
-        if (nn->name == "model.output_norm") {
+        if (nn->name != "model.output_norm") {//"model.output_norm"     "model.blk.31.attn"
             int only_for_debug = 0;
         }
-        cur = nn->Ming(hRLS, cur);
+        double t0 = GST_ms(), a;
+        cur       = nn->Ming(hRLS, cur);
         if (nn->isGang()) {
         } else {
             // _INFO("%d\t%s\n",no,nn->__repr__(suffix,prefix).c_str());
         }
+        if ((a = (GST_ms() - t0)) > 1000)       // why take so long?
+            _INFO("\t%s T=%.3gs\n", nn->name.c_str(), a/1000.0);
     }
 
     hRLS->Init(this, backbons);

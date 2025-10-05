@@ -51,5 +51,17 @@
                 "--hellaswag","log/0314/Eval@[HellaSwag]_info_.csv"
             ],
         },  
+
+        {
+            "name": "test",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "cases/test_lite.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {"PYTHONPATH": "$PYTHONPATH:${workspaceFolder}/cases/"}, 
+            "args": [               
+            ],
+        },  
     ]
 }

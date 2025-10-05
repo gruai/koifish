@@ -12,8 +12,9 @@ The following table lists some tricks and its working status.
 | Subsampling    | 🌿      |  ★ ☆ ☆ ☆ ☆    ||
 | LORA    |    🧪   | ★ ★ ☆ ☆ ☆     |DropLORA|
 | Mixture of models    |    🌿   | ★ ★ ☆ ☆ ☆     ||
-| Sparse model    |    🌱   |     ||
+| Sparse model    |    🌱   |  ★ ★ ★ ☆ ☆     ||
 | Muon    |    🌿   |     ||
+| Evolutionary Optimization |    🧪   |  ★ ★ ★ ★ ☆    ||
 
 Note 1.  The meaning of symbols for maturity 
 1. 🌱 Prototype      

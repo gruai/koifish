@@ -178,12 +178,13 @@ struct TaskNode {
     bool isOn() { return status == RESIDENT; }
     int begin = -1, end = -1;
 };
-// typedef vector<TaskNode *> hFuyou;
 
 /*
-    Only for back-propagation of neurons
+    蜉蝣 - 寄蜉蝣与天地，渺沧海之一粟
 
-    蜉蝣 - 寄蜉蝣之天地，渺沧海之一粟
+    1. Each expert is just a fuyou
+        Ref:EOE: Evolutionary Optimization of Experts for Training Language Models https://arxiv.org/abs/2509.24436
+    
 */
 class Fuyou {
    protected:
@@ -202,7 +203,7 @@ class Fuyou {
     vector<hGensor> tReloads;   //  subset of fParams
    public:
     // Fuyou() {}
-    Fuyou(const string &name, RLS_BP *hRL, Fish *hFish, vector<TaskNode *> arrT, int flag = 0x0);
+    Fuyou(const string &name, RLS_BP *hRL, Fish *hFish, vector<TaskNode *> arrT, int l0, int l1, int flag = 0x0);
     virtual bool Serialize(bool isSave, int flag = 0x0);
 
     vector<TaskNode *> Tasks(int flag = 0x0) { return tasks; }

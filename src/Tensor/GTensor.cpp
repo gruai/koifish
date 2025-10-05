@@ -52,9 +52,9 @@ hGTensor GT(Fish *hFish, typNUMBER type, SHAPE shape, int flag, const string &na
 /*
     A weight matrix is a linear operator between RMS-normed vector spaces.
     Let y = Wx, then |y|/|x| ~ ||W|| the spectral norm(largest singular value)
-
+    报元（ 酉矩阵）守一（1-norm vector）
     1. fan-out,fan-in are the dimensions of the weight matrix
-    1. No Embedding layer that takes one-hot inputs.
+    2. No Embedding layer that takes one-hot inputs.
 */
 bool GTensor::isWMAT(int flag) const {
     if (!BIT_TEST(flags, F_WMATRIX) || !BIT_TEST(flags, F_PARAM))

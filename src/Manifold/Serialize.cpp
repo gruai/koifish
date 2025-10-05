@@ -574,7 +574,7 @@ bool MODEL_CARD::InitHF(CLI_params *hConfig, const JSON &jConfig, int flag) {
     head_dim   = hConfig->n_embd_head();
     n_kv_heads = hConfig->n_head_kv();
     seq_len    = hConfig->n_ctx();
-    assert(seq_len < 4096);  // for now limit seq_len to 4096 to avoid KV cache OOM for models like Mistral since window size isn't correctly
+    assert(seq_len <= 4096);  // for now limit seq_len to 4096 to avoid KV cache OOM for models like Mistral since window size isn't correctly
                              // specified if (context) { 	config.seq_len = context;
 
     sCardPath = jKV(jConfig, {"model_card"}, sCardPath);

@@ -157,6 +157,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     virtual void UpdateTrainLoss(int x, float loss, int flag = 0x0);  //
     virtual double UpdateTensorParam(hGensor hP, floatX* g, float gnorm);
     virtual bool isStopImproving() { return isStopImprove; }
+    virtual bool isAtLongtail(int flag=0x0);
 
     virtual void Dump(int typ);
     virtual void AfterBuild(int flag = 0x0);
@@ -177,7 +178,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
         if (_tmp != nullptr)
             delete[] _tmp;
     }
-
+    virtual void CheckExitSearch(int t, int flag=0x0);
     RESULT Search(void* ctx, hGensor loss_, hGensor target_, CLI_params& config);
 
     friend class Fish;

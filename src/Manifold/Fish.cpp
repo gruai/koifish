@@ -699,22 +699,53 @@ bool Fish::CopyGensors(hWIKI wiki, int flag) {
 }
 
 bool Fish::BeforeNextStep(int iter, int flag) {
-    int nLayer = config.nLayer(), l;
-
+    int nLayer = config.nLayer(), l, l_0 = 0, l_1 = nLayer, nPass = 0;
+    hFuyou afu = GetFuyou(-1);
+    if (afu != nullptr) {
+        nLayer = afu->params.LIB_1 - afu->params.LIB_0;
+        l_0 = afu->params.LIB_0, l_1 = afu->params.LIB_1;
+    }
+    assert(nLayer > 0);
     for (auto t : optParams) {
         // t->tile_r0 = t->tile_r1,        t->tile_c0 = t->tile_c1;
         t->tile_r1 = rand_coin.RandU32() % THREAD_TILE_M - THREAD_TILE_M / 2;
         t->tile_c1 = rand_coin.RandU32() % THREAD_TILE_N - THREAD_TILE_N / 2;
     }
 
-    for (l = 0; l < nLayer; l++) {
+    int tpPass  = -1;
+    float thrsh = 0.5;
+    if (GetOptimizer()->isAtLongtail()) {
+        tpPass = 0;
+        // thrsh  = 1.0 / nLayer;
+    }
+    if (tpPass < 0)
+        return true;
+    SUM::nUpdateParam = 0;
+    for (l = l_0; l < l_1; l++) {
         FFN *ffn           = GetNeuron<FFN>("FFN", l);
         SelfAttention *QKV = GetNeuron<SelfAttention>("QKV", l);
-
-        bool isPass = rand_coin.NextCoin();
-        // ffn->isShortcut = isPass;       // converge too slow
-        // QKV->isShortcut = isPass;
+        bool isUpdate = rand_coin.NextCoin(thrsh);
+        if(l==0 && isUpdate){
+            int debug = 0;
+        }
+        ffn->UpdateShortcut(!isUpdate);
+        QKV->UpdateShortcut(!isUpdate);
+        if (!isUpdate) {  // converge too slow
+            nPass++;
+            // ffn->isShortcut = isPass, QKV->isShortcut = isPass;
+        }
     }
+    if (SUM::nUpdateParam==0) {  // at least one layer
+        assert(nPass==l_1-l_0);
+        l = l_0 + rand() % nLayer;
+        assert(l>=l_0 && l<l_1);
+        if(l==0){
+            int debug = 0;
+        }
+        GetNeuron<FFN>("FFN", l)->UpdateShortcut(false);
+        GetNeuron<SelfAttention>("QKV", l)->UpdateShortcut(false);
+    }
+    assert(SUM::nUpdateParam > 0);
     return true;
 }
 

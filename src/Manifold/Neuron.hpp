@@ -148,6 +148,7 @@ class GeNeuron {
     virtual std::vector<hGensor> PickGensors(bool isLORA = true, int flag = 0x0);
     virtual hGensor GetGensor(const std::string &key, int flag = 0x0);
     virtual int SetGuoke(GeNeuron *hGuoke_, bool isX, int flag = 0x0);
+    virtual bool UpdateShortcut(bool isShortcut, int flag = 0x0);
     virtual void SetDType(typNUMBER tpW, typNUMBER tpA, typNUMBER tpG) { tpWeight = tpW, tpActivation = tpA, tpGradient = tpG; }
 
     virtual bool isValid();

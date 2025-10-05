@@ -499,8 +499,8 @@ int SLP::Forw(float *rhs, float *lhs, int flag) {
 }
 
 /*
-    From https://www.reddit.com/r/LocalLLaMA/comments/1npbxpw/reproducing_gpt2_124m_from_scratch_results_notes/ & https://github.com/garg-aayush/building-from-scratch/blob/main/gpt-2/
-    A better gpt2-rope	2.987392	0.320155	Replaced learned embeddings with RoPE
+    From https://www.reddit.com/r/LocalLLaMA/comments/1npbxpw/reproducing_gpt2_124m_from_scratch_results_notes/ &
+   https://github.com/garg-aayush/building-from-scratch/blob/main/gpt-2/ A better gpt2-rope	2.987392	0.320155	Replaced learned embeddings with RoPE
 */
 ROPE::ROPE(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     assert(jvals.size() >= 1 && jvals[0] > 0);
@@ -721,7 +721,8 @@ hGensor GeNeuron::BeforeMing(RLS_BP *hRLS, hGensor cur, int flag) {
     DATA_PLACE old_place = place;
     if (hFish->isSymbolic()) {
         // host_inp = new char[GTensor::outL->nByte()];
-        cudaHostAlloc(&host_inp, GTensor::outL->nByte(), 0);
+        if (hFish->isRemater())
+            cudaHostAlloc(&host_inp, GTensor::outL->nByte(), 0);
     } else {
         // SYNC_DEVICE();
         double now = GST_ms();
@@ -763,7 +764,9 @@ hGensor GeNeuron::AfterMing(RLS_BP *hRLS, hGensor cur, int flag) {
                 // }
                 for (auto t : PickGensors()) {
                     if (!t->needUpdateParam)  // t->isRefer() || !t->isParam()
+                    {
                         continue;
+                    }
                     hOPT->UpdateTensorParam(t, nullptr, 0.0);
                     hRLS->SetTensorStatus(hOPT->GetITER(), t, TASK_STATUS::UPDATE_PARAM);
                 }
@@ -839,6 +842,23 @@ hGensor GeNeuron::GetGensor(const std::string &key, int flag) {
     assert(0);
     return nullptr;
 };
+
+bool GeNeuron::UpdateShortcut(bool isShort, int flag) {
+    isShortcut = isShort;
+    assert(hFish->isTrain());
+    for (auto t : PickGensors()) {  //  ref :Fuyou::Fuyou
+        if (BIT_TEST(t->flags, GTensor::F_PARAM)) {
+            // ckpParams.push_back(t);
+            t->needUpdateParam = true;
+            if (isShort) {
+                t->needUpdateParam = false;
+            }
+            if (t->needUpdateParam)
+                SUM::nUpdateParam++;
+        }
+    }
+    return true;
+}
 
 // 天地本逆旅, 你我皆过客(Guoke)
 int GeNeuron::SetGuoke(GeNeuron *hGuoke_, bool isX, int flag) {

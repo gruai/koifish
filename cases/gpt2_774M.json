@@ -64,7 +64,7 @@
     "datasets": {
         "train": {
             "glob": "./Datasets/edu_fineweb1B/*train*.bin",
-            "most": 50,
+            "most": 100,
             "name": "edu_fineweb1B"
         },
         "eval_1": {

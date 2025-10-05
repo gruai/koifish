@@ -9,7 +9,7 @@
 #include "GST_util.hpp"
 
 #include <filesystem>  // C++17
-
+#include <sys/resource.h>
 #include "../g_float.hpp"
 #include "GST_log.hpp"
 #include "GST_os.hpp"
@@ -46,6 +46,7 @@ void _TIME_INFO(const string &info, double fmillis, int flag) {
         _INFO("%02lld:%02lld:%02lld", (long long int)hours, (long long int)minutes, (long long int)seconds);
 }
 
+int SUM::nUpdateParam = 0;
 int SUM::nMostMemItem;
 int SUM::nMinTensorAlloc = 100 * 1024 * 1024;
 double SUM::tX = 0.0, SUM::tX1 = 0.0, SUM::tRemater = 0.0;
@@ -107,6 +108,27 @@ void SUM::TimeInfo(int type, int flag) {
     if (tX1 > 0)
         _TIME_INFO(" X=", tX1);
     _INFO(")");
+}
+
+std::string SUM::CPU_MemoryInfo(int flag) {
+    struct rusage usage;
+    getrusage(RUSAGE_SELF, &usage);
+    float mCPU = usage.ru_maxrss / 1000.0, mFreeCPU = 0.0;
+
+    std::ifstream meminfo("/proc/meminfo");
+    std::string line;
+    uint64_t freeMemoryKB = 0;
+
+    while (std::getline(meminfo, line)) {
+        if (line.find("MemAvailable:") != std::string::npos) {
+            sscanf(line.c_str(), "MemAvailable: %lu kB", &freeMemoryKB);
+            break;
+        }
+    }
+    // return freeMemoryKB * 1024; // Convert KB to bytes
+    char buf[1024];
+    sprintf(buf,"mCPU=%.6gM(free=%.6gM)",mCPU,freeMemoryKB/1000.0);
+    return buf;
 }
 
 bool SUM::FreeMem(void *hObj, int flag) {

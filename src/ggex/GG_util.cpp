@@ -836,13 +836,13 @@ CheckPoint_Params::CheckPoint_Params(const JSON &jData, const std::string &key, 
 
 std::string CheckPoint_Params::FullPath(bool isSave, int flag) {
     string sOut = "", sExt = CKP_ext[type];
-    if(isSave)    {
+    if (isSave) {
         if (!sX.empty()) {
             sOut = sDir + sX;  //+ std::to_string(iter)
         } else
             sOut = sDir + jKey;
         sOut += "." + sExt;
-    }else{
+    } else {
         sOut = sModelPath;
     }
     assert(!sOut.empty());
@@ -860,21 +860,21 @@ bool CheckPoint_Params::SerialSnap(JSON &jConfig, bool isSave, int flag) {
         }
         // JSON j_array = fuyou_filter_reload;
         jSnapshot["fuyou_filter"] = fuyou_filter_reload;
-        
+
     } else {
         JSON &jSnapshot = jConfig["checkpoint_in"][jKey]["snapshot"];
         assert(!jSnapshot.empty());
-        curFuyou = jKV(jSnapshot,{"curFuyou"},curFuyou);
-        curIter  = jKV(jSnapshot,{"curIter"},curIter);
-        curEpoch = jKV(jSnapshot,{"curEpoch"},curEpoch);
-        fuyou_filter_reload = jKV_arr(jSnapshot,{"fuyou_filter"},fuyou_filter_reload);
+        curFuyou            = jKV(jSnapshot, {"curFuyou"}, curFuyou);
+        curIter             = jKV(jSnapshot, {"curIter"}, curIter);
+        curEpoch            = jKV(jSnapshot, {"curEpoch"}, curEpoch);
+        fuyou_filter_reload = jKV_arr(jSnapshot, {"fuyou_filter"}, fuyou_filter_reload);
     }
     return true;
 }
 
 bool CLI_params::InitChekcpoints(int argc, char **argv, const std::string &ckp_queue, int flag) {
     try {
-        JSON jdata = jKEY(jConfig, {ckp_queue});
+        JSON jdata     = jKEY(jConfig, {ckp_queue});
         string type    = "", path;
         int save_every = -1;
         for (JSON::const_iterator it = jdata.begin(); it != jdata.end(); ++it) {
@@ -892,7 +892,7 @@ bool CLI_params::InitChekcpoints(int argc, char **argv, const std::string &ckp_q
         }
         if (phase == P_EVAL_) {
             assert(argc > 2);
-            auto& fish_in = ckp_in[ckp_in.size()-1];
+            auto &fish_in      = ckp_in[ckp_in.size() - 1];
             fish_in.sModelPath = argv[1];
         } else {
             // default checkpoints to store all info of current state
@@ -996,12 +996,14 @@ bool CLI_params::InitJConfig(int flag) {
         DEBUG.x1         = jKV(jConfig, {"debug", "x"}, DEBUG.x1);
         DEBUG.x_str      = jKV(jConfig, {"debug", "x_str"}, DEBUG.x_str);
         DEBUG.N_mostiter = jKV(jConfig, {"debug", "most_iter"}, DEBUG.N_mostiter);
+        DEBUG.fLongTail  = jKV(jConfig, {"debug", "long_tail"}, DEBUG.fLongTail);
 
-        SUM::nMostMemItem = jKV(jConfig, {"dump", "most_mem_item"}, SUM::nMostMemItem);
+        SUM::nMostMemItem    = jKV(jConfig, {"dump", "most_mem_item"}, SUM::nMostMemItem);
         SUM::nMinTensorAlloc = jKV(jConfig, {"dump", "min_tensor_alloc"}, SUM::nMinTensorAlloc);
 
         dumpSwitch.train_time = jKV(jConfig, {"dump", "train_time"}, dumpSwitch.train_time);
         dumpSwitch.tensor_ref = jKV(jConfig, {"dump", "tensor_ref"}, dumpSwitch.tensor_ref);
+        dumpSwitch.train_csv_path = jKV(jConfig, {"dump", "train_csv_path"}, dumpSwitch.train_csv_path);
         // train = jKV(jConfig,{"train"},train );
         return true;
     } catch (JSON::parse_error &e) {

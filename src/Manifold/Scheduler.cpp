@@ -7,6 +7,8 @@
  */
 #include "Scheduler.hpp"
 
+#include <sys/resource.h>
+
 #include <functional>
 
 #include "../ggex/GG_util.hpp"
@@ -31,7 +33,7 @@ void LearnSKDU::Dump(int typ) { _INFO("\tLR policy=%s warmup=%d@%d\n", policy ==
 float LearnSKDU::LearningRate(int64_t step, int flag) {
     float lr0                      = _params.LearningRate(), lr;
     float final_learning_rate_frac = 0.01, min_lr = lr0 * final_learning_rate_frac;
-    if (policy == COSINE_EPOCH) {
+    if (policy == COSINE_EPOCH) {  //  9799        60999
         step = step % _params.nEpochIter;
     }
     switch (policy) {
@@ -242,7 +244,9 @@ bool RLSchedule::Planning(int flag) {
 RLS_BP::RLS_BP(EDGE_DEVICES *hED_, const CLI_params &config, int flag) : RLSchedule(hED_, config, flag) {
     params = config.scheduling;
     vector<TaskNode *> arrT;
-    afu = std::make_shared<Fuyou>("afu", this, hFish, arrT, 0x0);
+    // if(config.fuyou.nLayerInBranch>0)
+    int l_1 = config.nLayer();
+    afu     = std::make_shared<Fuyou>("afu", this, hFish, arrT, 0, l_1, 0x0);
 }
 
 int RLS_BP::BeforeNextStep(int flag) {
@@ -306,10 +310,12 @@ void RLS_BP::Init(Fish *hF, std::vector<hNeuron> backbons, int flag) {
     Dump(0x0);
 }
 
-Fuyou::Fuyou(const string &n, RLS_BP *hRL, Fish *hF, vector<TaskNode *> arrT, int flag) : name(n), hRLS(hRL), hFish(hF) {
+Fuyou::Fuyou(const string &n, RLS_BP *hRL, Fish *hF, vector<TaskNode *> arrT, int l0, int l1, int flag) : name(n), hRLS(hRL), hFish(hF) {
     if (hFish != nullptr)
         params = hFish->config.fuyou;
-    tasks = arrT;
+    params.LIB_0 = l0;
+    params.LIB_1 = l1;
+    tasks        = arrT;
     if (tasks.size() == 0)
         return;
     std::hash<std::string> hasher;
@@ -323,10 +329,10 @@ Fuyou::Fuyou(const string &n, RLS_BP *hRL, Fish *hF, vector<TaskNode *> arrT, in
         for (auto t : neuron->PickGensors()) {
             if (BIT_TEST(t->flags, GTensor::F_PARAM)) {
                 ckpParams.push_back(t);
-                if(t->isRefer())    //  "model.out.weight"
+                if (t->isRefer())  //  "model.out.weight"
                     continue;
                 nParams += t->size();
-                if(!hFish->isTrain())   //  loadCheckPoint
+                if (!hFish->isTrain())  //  loadCheckPoint
                     _INFO("\t%.5gM@%s\n", nParams / 1.0e6, t->name);
             }
         }
@@ -490,7 +496,7 @@ bool RLS_BP::InitBranch(int flag) {
             n->stat.Reset();
         }
         _INFO(" %d@{L%d:L%d}", tasks.size(), LIB_0, LIB_1);
-        fuyouSwarm.push_back(std::make_shared<Fuyou>(std::to_string(b), this, hFish, tasks));
+        fuyouSwarm.push_back(std::make_shared<Fuyou>(std::to_string(b), this, hFish, tasks, LIB_0, LIB_1));
     }
     assert(fuyouSwarm.size() == nSwitch);
     if (hFish->isLocalInfer) {
@@ -567,7 +573,7 @@ vector<hFuyou> RLSchedule::ActiveFuyous(int flag) {
 
     if (hFish->isAtPhase(LIFE_PHASE::P_EVAL_) || hFish->isAtPhase(LIFE_PHASE::P_GENERATE)) {
         if (ensemble == Fuyou_params::RANDOM_1 && nFuyou > 1) {  //  random ensembling
-            uint32_t pick = rand() % nFuyou;                     // rand_coin.RandU32() % fuyouSwarm.size();
+            uint32_t pick = rand() % nFuyou;                     // rand_fuyou.RandU32() % fuyouSwarm.size();
             fuyous        = {fuyouSwarm[pick]};
         } else if (ensemble == Fuyou_params::AGGREGATION && nFuyou > 1) {
             fuyous = fuyouSwarm;
@@ -650,8 +656,8 @@ bool RLS_BP::Prepare(int iter, int flag) {
         _INFO("[RLS] resident={%s}\n", resident_list.c_str());
     if (DUMP(1) && iter <= 2 && phase != LIFE_PHASE::P_EVAL_) {
         size_t szFree, szTotal;
-        cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
-        _INFO("[MEMORY] mGPU=%.6gM(free=%.6gM)\n", (szTotal - szFree) / 1.0e6, szFree / 1.0e6);
+        cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);                
+        _INFO("[MEMORY] mGPU=%.6gM(free=%.6gM) %s\n", (szTotal - szFree) / 1.0e6, szFree / 1.0e6, SUM::CPU_MemoryInfo().c_str());
     }
     fflush(stdout);
     assert(SUM::nInitParam == hFish->optParams.size());

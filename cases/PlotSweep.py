@@ -199,12 +199,16 @@ def SWEEP_stat(root_dir,plot_path,append_dir=None,isNeedLog=False):
 
 def Plot_csv(path):
     dfAll = pd.read_csv(path, sep=' ',index_col=False)
+    df = pd.DataFrame()
     picks = []
-    filter = ("loss")      #   "G_ffn_up" G_qkv   G_cat_ G_ffn_down loss
+    filter = ("loss","lr","gNorm")      #   "G_ffn_up" G_qkv   G_cat_ G_ffn_down loss
     for column in dfAll:        
         if str(column).startswith(filter):
             picks.append(column)
-    df = dfAll[picks]
+            minY,maxY = dfAll[column].min(),dfAll[column].max()  
+            scale = 1.0/maxY
+            df[column] = dfAll[column]*scale
+    # df = dfAll[picks]
     rows,cols = df.shape
     plot_path = path + ".png"
     plt_df(df,f"{filter}_{cols}_.png",plot_path )

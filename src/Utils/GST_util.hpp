@@ -161,6 +161,7 @@ struct MEM_USAGE {
 };
 struct SUM {
     static int nMostMemItem, nMinTensorAlloc;
+    static int nUpdateParam;
     static std::vector<MEM_USAGE> mems;
     static int nInitParam, nSaveParam, nzSaveParam, nLoadParam, nzLoadParam, nDogLeg;
     static double tX, tX1, tData, tRemater, tQKV, tFFN, tUpload, tLoadData, tLoadParam, tEval_0, tEval_1;
@@ -169,6 +170,7 @@ struct SUM {
     static void TimeInfo(int typ, int flag = 0x0);
     static void MemoryInfo(int type, int flag = 0x0);
     static bool FreeMem(void *hData, int flag = 0x0);
+    static std::string CPU_MemoryInfo(int flag=0x0);
 };
 
 // Discrete Distribution of array

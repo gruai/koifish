@@ -350,9 +350,11 @@ struct TRAIN_CARD {
 struct DUMP_SWITCH {
     int tensor_ref = 0;
     int train_time = 0;
+    std::string train_csv_path = "";
 };
 
 struct DEUG_SWITCH {
+    float fLongTail = -1;
     int SelfAttention_noraml = 1;
     bool NO_loss             = false;
     bool check_tensor_norm   = false;
@@ -468,7 +470,7 @@ struct CLI_params {
 
     uint32_t nThread() const;
     uint32_t nEmbed(int flag = 0x0) const;
-    uint32_t nLayer() {
+    uint32_t nLayer()   const {
         if (nLayerX > 0)
             return nLayerX;
         assert(n_layer_train > 0);

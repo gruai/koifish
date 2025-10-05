@@ -89,6 +89,44 @@ def MessageBox(msg):
     except tk.TclError as e:
         print(f"Tkinter failed: {e} (DISPLAY issue)")
 
+def koifish_one(title, sExe, jsFile0, path="./tests/", most_iter=-1):
+    with open(jsFile0, 'r') as f:
+        jConfig = json.load(f)  
+    if most_iter>0:
+        if  "debug" not in jConfig:
+            jConfig["debug"] = {}
+        jConfig["debug"]["most_iter"] = most_iter
+        # jConfig["train"]["dump-every"] = 1
+    
+    jsFile = path+title+".json"
+    sOutput = title+".info"
+    with open(jsFile, 'w') as f:
+        json.dump(jConfig, f, indent=4)  # Write JSON to file       
+    
+    # if b==200:                continue
+    get_gpu_stats()
+    cmd = sExe + jsFile + "> "+path+sOutput + " 2>&1"        # cmd = sExe+ path+title+".json 2>&1 | tee "+path+sOutput 
+    print(f"{title}\t{cmd} ...")
+    start = time.time()    
+    exit_code = os.system(cmd)
+    elapsed = time.time() - start
+    
+    # get_gpu_stats()
+    dfTrain = None
+    szTrain, szEval = 0, 0
+    if os.path.exists('./Train@[edu_fineweb1B]_info_.csv'):
+        shutil.copy('./Train@[edu_fineweb1B]_info_.csv', path+"./Train.csv")
+        szTrain = os.path.getsize(path+"./Train.csv")
+        dfTrain = pd.read_csv(path+"./Train.csv", sep=' ',index_col=False)
+    if os.path.exists('./Eval@[edu_fineweb1B]_info_.csv'):
+        shutil.copy('./Eval@[edu_fineweb1B]_info_.csv', path+"./Eval.csv")
+        szEval = os.path.getsize(path+"./Eval.csv")
+    print(f"{title}...OK! code={exit_code}. nByte of fTrain={szTrain}; nByte of fEval={szEval} Time={elapsed:.4f} seconds")
+    assert dfTrain is not None
+    assert "loss" in dfTrain.columns
+    
+    return dfTrain
+    
 # python cases/SweepHyParams.py --dir ./SWEEP/124M --json ./scripts/gpt2.json   
 #  python cases/SweepHyParams.py --dir ./SWEEP/Shard50 --json ./scripts/gpt2.json
 #  python cases/SweepHyParams.py --dir ./SWEEP/Shard50 --json ./cases/gpt2/gpt2_774M.json

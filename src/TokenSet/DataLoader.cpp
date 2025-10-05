@@ -505,9 +505,9 @@ SampLoader::SampLoader(Fish *g_, const string &n, bool isNewTS, int flag) {
         assert(0);
         return;
     }
-    tpBatchSample = dolphin->config.tpBatchSample;
-    stepis.name   = name;
-    isTarget_1    = true;
+    tpBatchSample    = dolphin->config.tpBatchSample;
+    stepis.sTokenSet = name;
+    isTarget_1       = true;
     // isTarget_1 = g_->config.is({"model_v0", "target"}, string("OneHot"));
 
     return;
@@ -552,10 +552,10 @@ bool SampLoader::Prepare(Optimizer *hO, hDataToken hT, int flag) {
     if (hTokens != nullptr && hTokens->nMostShard > 0) {
         if (!hTokens->LoadNextShard(this))
             return false;
-        shard_samps = hTokens->shard_samps;
-        num_batches = hTokens->nBatch();
-        stepis.name = name + "@[" + hTokens->name + "]";
-        eval_every  = hTokens->eval_every;
+        shard_samps      = hTokens->shard_samps;
+        num_batches      = hTokens->nBatch();
+        stepis.sTokenSet = name + "@[" + hTokens->name + "]";
+        eval_every       = hTokens->eval_every;
     }
     // bos = hDict->bos;
     // eos = hDict->eos;
@@ -1113,14 +1113,14 @@ void StepInfos::Add(STEP step, int flag) {
 
     steps.push_back(step);
 }
-bool StepInfos::SaveToCSV(const string &path, int flag) {
+bool StepInfos::SaveToCSV(const string &x, int flag) {
     try {
         //  FSerial
         bool isDumpG = false;
 #ifndef NDEBUG
         isDumpG = true;
 #endif
-        string fpath = sRoot + name + path, sHeadG = "";
+        string fpath = sRoot + sTokenSet + x, sHeadG = "";  //
         FILE *fp = fopen(fpath.c_str(), "wt");
         if (fp == NULL) {
             _INFO("%s: warning: empty or not existing training data file '%s'\n", __func__, fpath.c_str());
@@ -1159,7 +1159,7 @@ bool StepInfos::SaveToCSV(const string &path, int flag) {
         }
         fclose(fp);
         if (DUMP())
-            _INFO(">>>>>> Save %s to \"%s\", step=%ld\n", name.c_str(), fpath.c_str(), steps.size());
+            _INFO(">>>>>> Save csv @\"%s\"(%s), step=%ld\n", fpath.c_str(), sTokenSet.c_str(), steps.size());
         return true;
     } catch (...) {
         return false;

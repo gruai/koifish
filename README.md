@@ -17,7 +17,7 @@ Note
 ## Features
 - Hybrid 16/8/1 bit training
 - Rematerialisation and fusion of operators
-- Mixture of models 
+- Evolutionary Optimization of experts 
 - Automatic detection of training instability
 - Json config file
 - Self-contained C++/cu project with minimal dependencies
@@ -57,6 +57,17 @@ make clean && make VERBOSE=TRUE
 ## Working plan
 - Support 1-bit version of QWen/DeepSeek
 - Sparsing(Predict sparse neurons by GBDT method)
+
+## Citation
+Please use the following bibtex entry:
+```bibtex
+@article{chen2025eoe,
+  title={EOE: Evolutionary Optimization of Experts for Training Language Models},
+  author={Chen, Yingshi},
+  journal={arXiv preprint arXiv:2509.24436},
+  year={2025}
+}
+```
 
 ## Contributing
 

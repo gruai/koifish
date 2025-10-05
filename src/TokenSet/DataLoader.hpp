@@ -34,7 +34,7 @@ class NLP_AutoRegressive;
 class SampLoader;
 
 struct StepInfos {
-    string name = "", sRoot = "./";
+    string sTokenSet = "", sRoot = "./";
     Optimizer *hOpt = nullptr;
     struct STEP {
         float loss, lr, gNorm, tX, dt, gMax, wMax;
