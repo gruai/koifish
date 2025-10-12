@@ -36,7 +36,7 @@ Note
 git clone https://github.com/gruai/koifish
 cd koifish
 mkdir build && cd build && cmake ..
-make clean && make VERBOSE=TRUE
+make clean && make -j$(nproc)
 ```
 
 ## Tutorial

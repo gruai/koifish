@@ -5,12 +5,15 @@
  *  \brief Utility functions
  *  \author Yingshi Chen
  */
-
 #include "GST_util.hpp"
 
-#include <filesystem>  // C++17
 #include <sys/resource.h>
+
+#include <cstdio>
+#include <filesystem>  // C++17
+
 #include "../g_float.hpp"
+#include "../g_stddef.hpp"
 #include "GST_log.hpp"
 #include "GST_os.hpp"
 
@@ -127,7 +130,7 @@ std::string SUM::CPU_MemoryInfo(int flag) {
     }
     // return freeMemoryKB * 1024; // Convert KB to bytes
     char buf[1024];
-    sprintf(buf,"mCPU=%.6gM(free=%.6gM)",mCPU,freeMemoryKB/1000.0);
+    sprintf(buf, "mCPU=%.6gM(free=%.6gM)", mCPU, freeMemoryKB / 1000.0);
     return buf;
 }
 
@@ -175,7 +178,7 @@ void SUM::MemoryInfo(int type, int flag) {
         for (auto mem : mems) {
             szTotal += mem.sz;
             _INFO("\t%ld\t%6gM  @%s \t%.3gG\n", i++, mem.sz / 1.0e6, mem.desc.c_str(), szTotal / 1.0e9);
-            if (i > nMostMemItem)
+            if (i > nMostMemItem && type != KOIFISH_OUTOF_GPUMEMORY)
                 break;
         }
         _INFO("\n");
@@ -318,4 +321,39 @@ void GRUAI_KOIFISH_VERSION(char *str, int flag = 0x0) {
         std::cout << "Clang Version: " << __clang_major__ << "." << __clang_minor__ << "." << __clang_patchlevel__ << "\n";
     #endif*/
     return;
+}
+
+void GG_log_callback_default(DUMP_LEVEL level, const char *text, void *user_data) {
+    (void)level;
+    (void)user_data;
+    fputs(text, stderr);
+    fflush(stderr);
+}
+
+static char log_buffer[5000], coloredMsg[5120];
+void GG_log_internal_v(DUMP_LEVEL level, const char *format, va_list args) {
+    va_list args_copy;
+    va_copy(args_copy, args);
+    GG_log_head(log_buffer);
+    //  If>5000 Output is ​​truncated but valid​​.
+    int len = vsnprintf(log_buffer, 5000, format, args);
+    va_end(args_copy);
+
+    const char *color_0 = "";
+    coloredMsg[0] = '\0';
+    switch (level) {
+        case DUMP_ERROR:
+            snprintf(coloredMsg, sizeof(coloredMsg), "%s error:%s%s", COLOR_RED, log_buffer, COLOR_RESET);
+            break;
+        case DUMP_WARN:
+            snprintf(coloredMsg, sizeof(coloredMsg), "%s warning:%s%s", COLOR_RED, log_buffer, COLOR_RESET);
+            break;
+        default:
+            snprintf(coloredMsg, sizeof(coloredMsg), "%s", log_buffer);
+            break;
+    }
+    
+    fputs(coloredMsg, stderr);
+    // fputs(log_buffer, stderr);
+    fflush(stderr);
 }

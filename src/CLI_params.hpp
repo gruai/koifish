@@ -63,6 +63,7 @@ enum MODEL_ARCH {
     NLP_MAMBA,
 
     NLP_QWEN2,
+    NLP_QWEN3,
     NLP_DEEPSEEK,
 
     NLP_GUPPY,
@@ -204,7 +205,7 @@ class MODEL_CARD {
 
    public:
     static std::string sWeight, sBias, sNorm, sLayer, sAttnOut;
-
+    bool enable_thinking = false;
     bool isSparse() { return sparse.method != 0; }
     struct Sparsing {
         int method = 0;  //  1-GBDT
@@ -255,7 +256,7 @@ class MODEL_CARD {
     MODEL_CARD();
     virtual bool OnJsonCALM(CLI_params* hConfig, const std::string& path, const JSON& meta, int flag = 0X0);
     // more param from HF's "model_card"
-    virtual bool InitHF(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
+    virtual bool InitHugFace(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
     bool empty() { return sCardPath.empty(); }
     void Dump(int typ);
 
@@ -302,9 +303,11 @@ struct TRAIN_CARD {
     int dump_every = 1;
     int gpt_every  = -1;  // eval_every=-1,
 
-    int seed = -1;
+    int seed     = -1;
+    int n_epochs = -1;
+    bool Empty() { return n_epochs < 0; }
 
-    int n_ctx = -1, n_batch = -1, n_threads = -1, n_gradient_accumulation = -1, n_epochs = 1, n_gpu_layers = -1;
+    int n_ctx = -1, n_batch = -1, n_threads = -1, n_gradient_accumulation = -1, n_gpu_layers = -1;
 
     bool custom_n_ctx;
     bool isSuperBatch = true;
@@ -344,17 +347,18 @@ struct TRAIN_CARD {
     float residual_scale = 1.0f;
     float LearningRate() const { return adam.alpha; }
     size_t nTokenInBatch() const { return n_batch * n_ctx; }
+    TRAIN_CARD();
     bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
 };
 
 struct DUMP_SWITCH {
-    int tensor_ref = 0;
-    int train_time = 0;
+    int tensor_ref             = 0;
+    int train_time             = 0;
     std::string train_csv_path = "";
 };
 
 struct DEUG_SWITCH {
-    float fLongTail = -1;
+    float fLongTail          = -1;
     int SelfAttention_noraml = 1;
     bool NO_loss             = false;
     bool check_tensor_norm   = false;
@@ -470,7 +474,7 @@ struct CLI_params {
 
     uint32_t nThread() const;
     uint32_t nEmbed(int flag = 0x0) const;
-    uint32_t nLayer()   const {
+    uint32_t nLayer() const {
         if (nLayerX > 0)
             return nLayerX;
         assert(n_layer_train > 0);

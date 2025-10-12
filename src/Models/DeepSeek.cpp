@@ -17,7 +17,7 @@ Mistral::Mistral(const std::string &nam_, struct CLI_params params, ROLE_TYPE ro
 }
 
 QWen::QWen(const std::string &nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
-    assert(arch == MODEL_ARCH::NLP_QWEN2);
+    assert(arch == MODEL_ARCH::NLP_QWEN2 || arch == MODEL_ARCH::NLP_QWEN3);
     config.model.isSLPBias    = false;
     config.model.isNormalBias = false;
 }

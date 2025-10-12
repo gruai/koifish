@@ -539,3 +539,5 @@ struct GENSORS {
         // sort(gimap.begin(), gimap.end(), comp);
     }
 };
+
+bool Gensors2File(std::vector<hGensor> gset,const std::string&path,int flag=0x0);

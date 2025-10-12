@@ -31,7 +31,7 @@ bool SAFETENSOR_mmap(const std::string &path, safetensors::safetensors_t &st, in
         std::string warn, err;
         int __prot = PROT_READ | PROT_WRITE;                                             // PROT_READ
         bool ret   = safetensors::mmap_from_file(path.c_str(), &st, warn, err, __prot);  //   safetensors::load_from_file();
-        int nT = (int)(st.tensors.size());
+        int nT     = (int)(st.tensors.size());
         // assert(nT > 1);
         if (warn.size()) {
             _INFO(">>>>>> WARN: \"%s\"\n", warn.c_str());  // std::cout << "WARN: " << warn << "\n";
@@ -79,7 +79,7 @@ bool SAFETENSOR_mmap(const std::string &path, safetensors::safetensors_t &st, in
             }
         }
         size_t szIFS = std::filesystem::file_size(path);
-        _INFO("\r>>>>>> SAFETENSOR_mmap mmap@\"%s\" f=%d nT=%d fsize=%.4gM\n", path.c_str(), flag, nT, szIFS / 1.0e6);
+        _INFO("\r>>>>>> SAFETENSOR_mmap mmap@\"%s\" f=%d nT=%d fsize=%.7gM\n", path.c_str(), flag, nT, szIFS / 1.0e6);
         return true;
     } catch (JSON::parse_error &e) {
         _INFO("\r\n%s  Failed to open %s!!! ERR=%s", __func__, path.c_str(), e.what());
@@ -308,7 +308,7 @@ void CheckPoint_Params::Init(int flag) {
 bool Fish::SAFETENSOR_Serialize(CheckPoint_Params &ckp, bool isSave, int flag) {
     double t0   = GST_ms();
     string path = ckp.FullPath(isSave), jPath = path + ".json";
-    if(path.empty()){
+    if (path.empty()) {
         _INFO("\r\n%s failed: empty path!!! ", __func__);
         return false;
     }
@@ -389,7 +389,7 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params &ckp, bool isSave, int flag) {
         } else {
             int nSerialT = 0;
             hst->Clear();
-            bool bLoad = SAFETENSOR_mmap(path, *hst, flag);     //*hst
+            bool bLoad = SAFETENSOR_mmap(path, *hst, flag);  //*hst
             if (!bLoad)
                 return false;
             const uint8_t *databuffer{nullptr};
@@ -425,7 +425,7 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params &ckp, bool isSave, int flag) {
                     return false;
                 }
                 if (DUMP()) {
-                    tensor.Dump("  >>>>  "+key, databuffer);
+                    tensor.Dump("  >>>>  " + key, databuffer);
                     _INFO("  >>>>  [%d] typ=%s\t data=%p grad=%p \t sz=%ld @%s\n", nSerialT, cNameOf(target->type), target->data, target->grad, tBYTE(target),
                           target->name);
                 }
@@ -493,7 +493,55 @@ void *MMAP_json(JSON &header, void **objs, size_t *objs_nz, const std::string &p
     return data;
 }
 
-bool Fish::HF_Serialize(bool isSave, int flag) { return false; }
+bool Fish::HF_Serialize(bool isSave, int flag) {
+    string path = config.model.sCardPath + "model.safetensors";
+
+    safetensors::safetensors_t st, *hst = &st;
+    int nSerialT = 0;
+    hst->Clear();
+    bool bLoad = SAFETENSOR_mmap(path, *hst, flag);  //*hst
+    if (!bLoad)
+        return false;
+    const uint8_t *databuffer{nullptr};
+    if (hst->mmaped) {
+        databuffer = hst->databuffer_addr;  // safeTensors->mmap_addr + 8 + safeTensors->header_size;
+    } else {
+        assert(0);
+        // databuffer = safeTensors.storage.data();
+    }
+
+    // Print Tensor info & value.
+    for (size_t i = 0; i < hst->tensors.size(); i++) {
+        std::string key = hst->tensors.keys()[i];
+        safetensors::tensor_t tensor;
+        hst->tensors.at(i, &tensor);
+        if (key == safetensors::safetensors_t::config_key_) {
+            continue;
+        }
+        hGensor target = GetGensor(key);  //  "model.embed.weight"    model.layers.0.attn_norm.weight
+        if (target == nullptr) {
+            _INFO("\t[SERIAL] Failed @%s!\n", key.c_str());
+            continue;
+        }
+        JSON jdesc = tensor.jDesc();
+        if (target->SerialJSON(key, jdesc, (void *)databuffer, hst->mmap_size) != 0) {
+            return false;
+        }
+        if (DUMP()) {
+            tensor.Dump("  >>>>  " + key, databuffer);
+            _INFO("  >>>>  [%d] typ=%s\t data=%p grad=%p \t sz=%ld @%s\n", nSerialT, cNameOf(target->type), target->data, target->grad, tBYTE(target),
+                  target->name);
+        }
+        // if(strcmp(target->name,"model.layers.27.mlp.norm.weight")==0){   //only for debug model.output.weight
+        //     target->Print(key,0,-1);                //PrintTensor<f8e5m2_t>("wout",target->data,target->ne[0],dim);
+        // }
+
+        nSerialT++;
+    }
+    // config.model.Init(jsConfig)
+    _INFO(">>>>>> ST_SERIALIZE load@\"%s\" nSerialT=%d iter=%d\n", path.c_str(), nSerialT, flag);
+    return true;
+}
 
 bool MODEL_CARD::OnJsonCALM(CLI_params *hConfig, const std::string &path, const JSON &meta, int flag) {
     sTokenPath = path;
@@ -558,7 +606,7 @@ bool MODEL_CARD::OnJsonCALM(CLI_params *hConfig, const std::string &path, const 
     return true;
 }
 
-bool MODEL_CARD::InitHF(CLI_params *hConfig, const JSON &jConfig, int flag) {
+bool MODEL_CARD::InitHugFace(CLI_params *hConfig, const JSON &jConfig, int flag) {
     n_layers = hConfig->nLayer();
     for (int i = 0; i < n_layers; i++) {
         int nH = hConfig->n_head(i), nF = hConfig->n_ff(i);
@@ -575,9 +623,9 @@ bool MODEL_CARD::InitHF(CLI_params *hConfig, const JSON &jConfig, int flag) {
     n_kv_heads = hConfig->n_head_kv();
     seq_len    = hConfig->n_ctx();
     assert(seq_len <= 4096);  // for now limit seq_len to 4096 to avoid KV cache OOM for models like Mistral since window size isn't correctly
-                             // specified if (context) { 	config.seq_len = context;
+                              // specified if (context) { 	config.seq_len = context;
 
-    sCardPath = jKV(jConfig, {"model_card"}, sCardPath);
+    sCardPath = jKV(jConfig, {"model", "card"}, sCardPath);
     if (sCardPath.empty()) {
         return false;
     }

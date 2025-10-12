@@ -8,6 +8,18 @@
 
 #pragma once
 
+// ANSI Color Codes
+#define COLOR_RED "\033[31m"
+#define COLOR_GREEN "\033[32m"
+#define COLOR_YELLOW "\033[33m"  // Often used as "orange"
+#define COLOR_BLUE "\033[34m"
+#define COLOR_MAGENTA "\033[35m"
+#define COLOR_CYAN "\033[36m"
+#define COLOR_WHITE "\033[37m"
+#define COLOR_RESET "\033[0m"
+// Bright/Vivid variants (often supported)
+#define COLOR_ORANGE "\033[93m"  // Bright Yellow (common "orange")
+
 #include <cstdarg>
 #include <iostream>
 
@@ -44,35 +56,14 @@ inline bool DUMP(int t = 0) { return !NOT_DUMP(t); }
 
 #define MAX_LOG_BUFFER
 
-inline void GG_log_callback_default(DUMP_LEVEL level, const char* text, void* user_data) {
-    (void)level;
-    (void)user_data;
-    fputs(text, stderr);
-    fflush(stderr);
-}
+void GG_log_callback_default(DUMP_LEVEL level, const char* text, void* user_data);
 
 inline void GG_log_head(char* buff, const char* tag = "KOIFISH", int flag = 0x0) {
     const char* file = (strrchr(__FILE__, '/') ? (strrchr(__FILE__, '/') + 1) : __FILE__);
     // sprintf(buff, "[%s %s %d:%ld %s:%d %s] ", tag, curr_time(), get_pid(), get_tid(),
     //             file, __LINE__,__FUNCTION__ );
 }
-inline void GG_log_internal_v(DUMP_LEVEL level, const char* format, va_list args) {
-    va_list args_copy;
-    va_copy(args_copy, args);
-    char buffer[256];
-    GG_log_head(buffer);
-    int len = vsnprintf(buffer, 256, format, args);
-    if (len < 256) {
-        GG_log_callback_default(level, buffer, nullptr);
-    } else {
-        char* buffer2 = new char[len + 1];
-        vsnprintf(buffer2, len + 1, format, args_copy);
-        buffer2[len] = 0;
-        GG_log_callback_default(level, buffer2, nullptr);
-        delete[] buffer2;
-    }
-    va_end(args_copy);
-}
+void GG_log_internal_v(DUMP_LEVEL level, const char* format, va_list args);
 
 inline void GG_log_internal(DUMP_LEVEL level, const char* format, ...) {
     va_list args;
@@ -105,7 +96,7 @@ void inline PrintT(const char* title, const T* src, int n1, int n2, int n3 = 1, 
     float sum = 0.0, a1 = -FLT_MAX, a0 = FLT_MAX, a;
     double len = 0.0, sum2 = 0.0;
     for (i = 0; i < nElem; i++) {
-        a = T2Float<T>(cur,i);
+        a = T2Float<T>(cur, i);
         assert(!isnan(a) && !isinf(a));
         if (i < nEach || i > nElem - nEach || fabs(i - nElem / 2) <= nEach)
             _INFO("%g ", a);

@@ -306,7 +306,7 @@ void RLS_BP::Init(Fish *hF, std::vector<hNeuron> backbons, int flag) {
     }
     // assert(curTasks.size() >= 2);
     TaskNode *last = afu->Last();  // curTasks[curTasks.size() - 1];
-    _INFO("[RLS]\tInit [%s,...,%s]", afu->First()->name.c_str(), last->name.c_str());
+    _INFO("[RLS]\tInit n_tMaps=%ld task_of_afu=%d[%s,...,%s]", tMaps.size(), afu->tasks.size(), afu->First()->name.c_str(), last->name.c_str());
     Dump(0x0);
 }
 
@@ -656,7 +656,7 @@ bool RLS_BP::Prepare(int iter, int flag) {
         _INFO("[RLS] resident={%s}\n", resident_list.c_str());
     if (DUMP(1) && iter <= 2 && phase != LIFE_PHASE::P_EVAL_) {
         size_t szFree, szTotal;
-        cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);                
+        cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
         _INFO("[MEMORY] mGPU=%.6gM(free=%.6gM) %s\n", (szTotal - szFree) / 1.0e6, szFree / 1.0e6, SUM::CPU_MemoryInfo().c_str());
     }
     fflush(stdout);

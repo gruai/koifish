@@ -197,6 +197,8 @@ protected:
     // convenience array containing the decodings for the fixed 256 byte fallbacks '{0x00}\0', '{0x01}\0', ..., '{0xFF}\0'.
     // TODO: use constexpr?
     std::string byte_pieces[256];
+    char prompt_template[1024];
+    char system_prompt_template[1024];
 
     virtual std::vector<TOKEN_ID> Encode_TokenTrie(const std::string& text, bool encode_bos=false) const;
 public:
@@ -269,6 +271,14 @@ protected:
 public:
     GTokenizer_GPT2(Fish *,int flag=0x0);
     std::string T2STR(TOKEN_ID tok,int flag=0x0 )   override;
+};
+
+class GTokenizer_QWEN3 : public GTokenizer   {
+protected:
+public:
+    GTokenizer_QWEN3(Fish *,int flag=0x0);
+    std::string T2STR(TOKEN_ID tok,int flag=0x0 )   override;
+    bool InitHF(Fish *dolphin,int flag=0x0) override;
 };
 
 class GTokenizer_Heap : public GTokenizer   {

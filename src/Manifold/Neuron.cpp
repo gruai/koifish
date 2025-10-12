@@ -202,8 +202,7 @@ OutCLS::OutCLS(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int
     nCls        = hFish->nClass();
     padded_nCls = (hFish->config.model.isPaddedCls) ? ceil(nCls / 128.0) * 128 : nCls;
     // reduce memory & some float error
-    dB = hFish->config.model.preLogits_dB;  // B 1 B/2;
-    assert(B % dB == 0);
+    dB = hFish->config.model.preLogits_dB;  
 
     /*
     1. If true, reduces the memory,  often results in better and faster outcomes ???

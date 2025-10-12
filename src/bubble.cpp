@@ -2,9 +2,9 @@
  *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *  Some user cases
- *      1.  dolphin ./hy-tmp/checkpoint/gpt_1.fish --hellaswag ./cases/datasets/hellaswag_val.bin
+ *      1.  bubble ./hy-tmp/checkpoint/gpt_1.fish --hellaswag ./cases/datasets/hellaswag_val.bin
  *
- *  \brief Some user cases
+ *  \brief Some evaluation cases(Hellaswag,...,)
  *  \author Yingshi Chen
  */
 #include <filesystem>

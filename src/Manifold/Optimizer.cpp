@@ -1153,6 +1153,7 @@ void Optimizer::Dump(int typ) {
         }
     }
     _INFO("\tnParams = %ld(%.6gM, nT=%ld nG0=%d)\n", nParams, nParams / 1.0e6, opt_ps.size(), nG0);
+    fflush(stdout);
 }
 
 void OPT_Adam::Dump(int typ) {
@@ -1160,7 +1161,7 @@ void OPT_Adam::Dump(int typ) {
     adam->Dump(typ);
     _INFO("[OPT_Adam]\tsRESI=%g s_rounding=%d alloc_w=%d remater[ffn=%d ]\n", TrainParams().residual_scale, TrainParams().opt_alloc_weight,
           TrainParams().opt_alloc_weight, TrainParams().remater_ffn);
-
+    
     fflush(stdout);
 }
 

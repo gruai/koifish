@@ -18,31 +18,42 @@ import sys
 import math #Use math.isclose(a, b, *, rel_tol=1e-09, abs_tol=0.0)
 from SweepHyParams import koifish_one
 
+# source /home/cys/anaconda3/bin/activate base
 # pytest -v -s ./cases/
+
 def add(a, b):
     return a + b
 
 sExe = "./bin/koifish "
 most_iter = 10
+def CheckResult(df,iter,golden,title=""):
+    # print(df)
+    a = df["loss"][iter]
+    print(f"{title} loss={a} golden={golden}\n")
+    assert math.isclose(a,golden,rel_tol=1e-05, abs_tol=0.0) 
+
+def test_gpt2_124M_fuyou6():    
+    most_iter = 70
+    title = "124M"
+    dfTrain = koifish_one(title, sExe, "./cases/gpt2/124M_shard50_F6_lr0.001/F6_lr0.001.json", most_iter=most_iter)    
+    CheckResult(dfTrain,most_iter,7.498,title=title)
+
 def test_gpt2_124M():    
     most_iter = 70
-    dfTrain = koifish_one("124M", sExe, "./cases/gpt2/124M_shard50_F6_lr0.001/F6_lr0.001.json", most_iter=most_iter)    
-    # print(dfTrain)
-    a = dfTrain["loss"][most_iter]
-    assert math.isclose(a,7.498,rel_tol=1e-05, abs_tol=0.0) 
-    #   [epoch_0]_601    loss=6.142322
+    title = "124M_no_fuyou"
+    dfTrain = koifish_one(title, sExe, "./cases/gpt2/124M_shard50_F6_lr0.001/no_fuyou.json", most_iter=most_iter)    
+    CheckResult(dfTrain,most_iter,7.467,title=title)
 
 def test_gpt2_774M():    
-    dfTrain = koifish_one("774M", sExe, "./cases/gpt2/774M_Shard50_F6_B80/F6_B80.json", most_iter=most_iter)
-    # print(dfTrain)
-    a = dfTrain["loss"][most_iter]
-    assert math.isclose(a,9.504,rel_tol=1e-05, abs_tol=0.0) 
+    title = "774M"
+    dfTrain = koifish_one(title, sExe, "./cases/gpt2/774M_Shard50_F6_B80/F9_B40.json", most_iter=most_iter)
+    CheckResult(dfTrain,most_iter,9.409,title=title)    #   61     loss=7.318967
+    # assert math.isclose(a,9.504,rel_tol=1e-05, abs_tol=0.0) 
     
 def test_gpt2_1558M():    
-    dfTrain = koifish_one("774M", sExe, "./cases/gpt2/1558M_F8_B80/F8_B80.json", most_iter=most_iter)
-    # print(dfTrain)
-    a = dfTrain["loss"][most_iter]
-    assert math.isclose(a,9.463,rel_tol=1e-05, abs_tol=0.0)
+    title = "1558M"
+    dfTrain = koifish_one(title, sExe, "./cases/gpt2/1558M_F8_B80/F8_B40.json", most_iter=most_iter)
+    CheckResult(dfTrain,most_iter,9.472,title=title) 
 
 # def test_add_negative_numbers():
 #     assert add(-1, -5) == -6
@@ -62,7 +73,8 @@ if __name__ == '__main__':
     
     sExe = "./bin/koifish "
     test_gpt2_124M()
-    # test_gpt2_774M()
+    # test_gpt2_124M_fuyou6()
+    # # test_gpt2_774M()
     # test_gpt2_1558M()
     # koifish_one("124M", sExe, "./cases/gpt2/124M_shard50_F6_lr0.001/F6_lr0.001.json", most_iter=most_iter)
     

@@ -25,6 +25,9 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI> &wikis_, int flag) {
         train_params.seed = time(NULL);
     }
     wikis = wikis_;
+    // if (!config.model.empty()) {
+    //     isLoadCheckpoint = HF_Serialize(false, 0x0);
+    // }
     // if(!LoadCheckPoint())        //  refactor to AfterBuild
     //     return false;
 
@@ -476,7 +479,7 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag) {
 bool Fish::InitDictTokenset(int flag) {
     void *hLLM = nullptr;
     // hDict = std::make_shared<GTokenizer>(this);     //  entence != prompt
-    hDict = std::make_shared<GTokenizer_Heap>(this);
+    // hDict = std::make_shared<GTokenizer_Heap>(this);
 
     switch (config.ModelArch()) {
         case MODEL_ARCH::NLP_GPT2:
@@ -525,7 +528,12 @@ bool Fish::InitDictTokenset(int flag) {
             hDict->bos_id = 151643;
             hDict->eos_id = 151645;
             break;
-
+        case MODEL_ARCH::NLP_QWEN3:
+            hDict = std::make_shared<GTokenizer_QWEN3>(this);
+            hDict->vocab.resize(151936);
+            hDict->bos_id = 151643;
+            hDict->eos_id = 151645;
+            break;
         default:
             // hDictVAE = std::make_shared<DictVAE>(this);
             if (wikis.size() > 0) {
@@ -626,7 +634,7 @@ void Fish::UpdateTernary(int flag) {
         }
         hRLS->GetTensorStatus(-1, t, 0x0);
 
-        t->DumpX(0x0);
+        // t->DumpX(0x0);
     }
     double bpp = nzBit * 1.0 / nzP;  // bit per parameter
     _INFO("\n%s bit_per_parameter=%.4g szGama=%d TILEQ=(%d,%d) pQuant=%s tensor=%d(%.3g%%) \n", bit_tensors.empty() ? "[NO_QUANT]" : "[BIT_QUANT]", bpp,
@@ -753,29 +761,41 @@ void NLP_AutoRegressive::InitModel(int flag) {
 void NLP_AutoRegressive::Dump(int type, int flag) {
     if (NOT_DUMP(5))
         return;
-
+    fflush(stdout);
     int n_vocab = hDictVAE->hDict->nVocab(), n_batch = config.common.n_batch, n_ctx = config.common.n_ctx, n_embd = config.nEmbed();
     string suffix = "\n========\n", prefix;
     __repr__(suffix, prefix);
     config.Dump();  //        print_params(&config)
     hFuyou afu = GetFuyou(-1);
-    if(afu!=nullptr){
+    if (afu != nullptr) {
         int nAfuParam = afu->nParams;
-        _INFO("====== nParams = %ld(%.6gM nT=%ld) allParams = %ld(%.6gM nT=%ld) ======\n", nAfuParam, nAfuParam / 1.0e6, afu->ckpParams.size(),
-            nParams, nParams / 1.0e6, optParams.size());
-    }   else
+        _INFO("====== nParams = %ld(%.6gM nT=%ld) allParams = %ld(%.6gM nT=%ld) ======\n", nAfuParam, nAfuParam / 1.0e6, afu->ckpParams.size(), nParams,
+              nParams / 1.0e6, optParams.size());
+    } else
         _INFO("====== nParams = %ld(%.6gM nT=%ld) ======\n", nParams, nParams / 1.0e6, optParams.size());
     _INFO("\t nParams=%zu model_size = %zu bytes (%.1f MB)\n", nParams, szModel, szModel / (1024.0f * 1024.0f));
-    _INFO("\t n_vocab=%d t_vocab=%d,n_batch=%d,n_ctx=%d,n_embd=%d,n_head=%d,n_rot=%d,n_ff=%d\n", n_vocab, tVocab(), n_batch, n_ctx, n_embd,
-          config.n_head(), config.n_rot(), config.n_ff());
+    _INFO("\t n_vocab=%d t_vocab=%d,n_batch=%d,n_ctx=%d,n_embd=%d,n_head=%d,n_rot=%d,n_ff=%d\n", n_vocab, tVocab(), n_batch, n_ctx, n_embd, config.n_head(),
+          config.n_rot(), config.n_ff());
     _INFO("\t loader=%s\n", config.tpBatchSample.c_str());
     if (hOPT != nullptr) {
-        // hOPT->Dump( 1 );
     } else {
         _INFO("hOPT is NULL\n");
     }
     if (config.lars_ratio > 0)
         _INFO("\t LARS(t_max=%g)\n", config.lars_ratio);
+    
+    switch(type){
+    case KOIFISH_OUTOF_GPUMEMORY:
+        SUM::MemoryInfo(type);
+        break;
+    default:
+        break;
+    }
+    _INFO("====== Params Table ======\n");
+    for (auto t : optParams) {
+        t->DumpX(0x0);
+    }
+    fflush(stdout);
 }
 
 //  @GeNeuron::SetGuoke
@@ -833,12 +853,12 @@ int Fish::BackwardOnRLS(int iter, int flag) {
     return 0x0;
 }
 
-const CheckPoint_Params &Fish::SnapShot(int flag) const { 
+const CheckPoint_Params &Fish::SnapShot(int flag) const {
     if (isLocalInfer) {
-        assert(config.ckp_in.size()>0);
+        assert(config.ckp_in.size() > 0);
         return config.ckp_in[0];
     }
-    return config.state; 
+    return config.state;
 }
 
 hFuyou Fish::GetFuyou(int no, int flag) const {

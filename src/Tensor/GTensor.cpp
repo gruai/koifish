@@ -745,6 +745,21 @@ bool huTensor::Free(bool isPassResident) {
     return true;
 }
 
+bool Gensors2File(std::vector<hGensor> gensors,const std::string&path,int flag){
+    /*FILE* logFile = freopen(path.c_str(), "w", stderr);
+    if (!logFile) {
+        perror("Failed to redirect stderr");
+        return false;
+    }*/
+    _INFO("\n>>>> %ld Gensors to File@%s",gensors.size(),path.c_str());
+    for(auto t : gensors){
+        t->DumpX(0x0);
+    }
+    
+    //If you want to restore it back to the console, you typically need ​​low-level file descriptor redirection (dup2)​​, which is ​​POSIX-specific (Linux/macOS)​​. Not available in pure standard C++.
+    return true;
+}
+
 // inline hGensor To4D(struct ggml_context * ctx_build,hGensor cur,int64_t n1,int64_t n2,int64_t n3,int64_t n4){
 //     cur = ggml_reshape_4d(ctx_build, cur, n1, n2,n3,n4);
 //     return cur;

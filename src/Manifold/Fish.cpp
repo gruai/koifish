@@ -34,7 +34,10 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params &params, vect
             fish = std::make_shared<DeepSeek>(nam_ + "_DS", params, role_);
             break;
         case MODEL_ARCH::NLP_QWEN2:
-            fish = std::make_shared<QWen>(nam_ + "_DS", params, role_);
+            fish = std::make_shared<QWen>(nam_ + "_QW2", params, role_);
+            break;
+        case MODEL_ARCH::NLP_QWEN3:
+            fish = std::make_shared<QWen>(nam_ + "_QW3", params, role_);
             break;
         case MODEL_ARCH::NLP_MISTRAL:
             fish = std::make_shared<Mistral>(nam_ + "_mistral", params, role_);
@@ -68,8 +71,10 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params &params, vect
                     assert(0);
             }
     }
-
-    fish->isLocalInfer = flag == 0x110;
+    if(params.common.Empty())
+        fish->isLocalInfer = true;
+    else
+        fish->isLocalInfer = flag == 0x110;
     if (!fish->Init(wikis))
         return nullptr;
     if (!fish->Build())
@@ -430,7 +435,7 @@ bool Fish::SaveTrain(CheckPoint_Params &ckp, bool isInit, int flag) {
         isOK = SAFETENSOR_Serialize(ckp, true, isInit ? FSerial::INIT_MMAP : 0x0);
         assert(isOK);
         ckp.sModelPath = ckp.FullPath(true);
-        _INFO("[Save] @\"%s\" nParams=%d save_every=%d\n", sOut.c_str(), optParams.size(), ckp.save_every);
+        _INFO("[SAFETENSOR] Init@\"%s\" nParams=%d save_every=%d\n", sOut.c_str(), optParams.size(), ckp.save_every);
         isOK = SAFETENSOR_Serialize(ckp, false);  // to set host_data of each tensor
         // if (sX == "warmup") {   // more profiling
         //     for (int i = 0; i < 1; i++) {

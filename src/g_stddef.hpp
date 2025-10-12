@@ -31,6 +31,10 @@ using namespace std;
 
 #define KOIFISH_ZERO_PARAMETERS -200
 
+#define KOIFISH_LOAD_TOKENIZER  -300
+
+#define KOIFISH_INVALID_GSET    -600
+
 #define KOIFISH_UNSUPPORTED_DATATYPE -1000
 #define KOIFISH_GRAD_EXPLODE -1100
 #define KOIFISH_BLAS_UNALIGN -1200
@@ -411,6 +415,18 @@ const char* CSTR(const T& obj, int flag = 0x0) {
 template <class T>
 const char* CSTR(const shared_ptr<T> obj, int flag = 0x0) {
     return CSTR(*obj, flag);
+}
+
+/* One-liner helper function to convert any range (like set) to vector
+template<typename T>
+std::vector<T> TO_VECTOR(const T& container) {
+    return {container.begin(), container.end()};
+}*/
+// Or more generic version (works with any iterable range)
+template<typename Iterable>
+auto TO_VECTOR(const Iterable& iterable) {
+    using ValueType = typename std::iterator_traits<decltype(iterable.begin())>::value_type;
+    return std::vector<ValueType>(iterable.begin(), iterable.end());
 }
 
 #define HACK_07092024 assert(0)

@@ -1566,6 +1566,9 @@ hNeuron Fish::J2Neuron(void *ctx_, string &dad, int level, const JConfig &jconfi
         if (k == "arch") {
             continue;
         }
+        if (k == "card") {
+            continue;
+        }
         auto v = it.value();
         if (it->is_array()) {
         } else if (it->is_structured()) {
@@ -1639,7 +1642,8 @@ bool GTensor::AllocBuffer(Fish *hFish, int flag) {
         size_t nTmp = ((size_t)T) * std::max(nFF, std::max(NH, Vp)), nFFW = (size_t)(B)*T * nFF;
         // config.model.preLogits_dB = 8; //(int)ceil(B*4.0f*C/nTmp);
         int dB = hFish->config.model.preLogits_dB;
-        assert(B % dB == 0);
+        if(hFish->isTrain())
+            assert(B % dB == 0);
         nTmp = std::max(nFFW / dB + 1, nTmp);
         assert(nTmp < INT_MAX);
         typNUMBER tpA = hFish->config.model.tpActivation, tpG = hFish->config.model.tpGradient, tpW = hFish->config.model.tpWeight;

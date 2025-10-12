@@ -109,7 +109,7 @@ bool TokenEmbed::Build(int flag) {
 */
 hGensor TokenEmbed::Ming(RLS_BP *ctx_, hGensor tokens, int flag) {
     // GeNeuron::BeforeMing(ctx_,tokens,flag);
-    int seed = 0;   //  rRounding.RandInt32();       //Nearly same as 0
+    int seed    = 0;  //  rRounding.RandInt32();       //Nearly same as 0
     string sw   = name + "_rows";
     hGensor cur = nullptr;
     if (hFish->isSymbolic()) {
@@ -340,6 +340,10 @@ bool VarCoder::Build(int flag_0) {
         up.BuildX(name + ".w1", {nBottom, nTop}, hFish, flagSLP);
         gate.BuildX(name + ".w3", {nBottom, nTop}, hFish, flagSLP);
         down.BuildX(name + ".w2", {nTop, nBottom}, hFish, flagSLP);
+    } else if (hFish->isModel({NLP_QWEN3})) {
+        up.BuildX(name + ".w1", {nBottom, nTop}, hFish, flagSLP);
+        gate.BuildX(name + ".w3", {nBottom, nTop}, hFish, flagSLP);
+        down.BuildX(name + ".w2", {nTop, nBottom}, hFish, flagSLP);
     } else {
         down.BuildX(name + "_down", {nTop, nBottom}, hFish, flagSLP);
         up.BuildX(name + "_up", {nBottom, nTop}, hFish, flagSLP);
@@ -409,7 +413,7 @@ bool FFN::Build(int flag_0) {
     }
 
     up.w->residual_scale = hFish->config.common.residual_scale;
-    if (layer > 6) {        //  Gradient would explode!
+    if (layer > 6) {  //  Gradient would explode!
         // up.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);
         // down.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);       //  down.Back(GTensor::bt4c, tGelu, GTensor::delta, up_out);
     }
@@ -419,6 +423,9 @@ bool FFN::Build(int flag_0) {
 
 std::vector<GeNeuron *> FFN::SubNeurons(int flag) {
     std::vector<GeNeuron *> neurons = {&up, &down, &norm};  // gate
+    if(!gate.Empty()){
+        neurons.push_back(&gate);
+    }
     return neurons;
 }
 

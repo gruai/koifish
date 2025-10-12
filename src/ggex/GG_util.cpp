@@ -379,9 +379,8 @@ MODEL_ARCH CLI_params::ModelArch() {
            : info == "GUPPY"    ? MODEL_ARCH::NLP_GUPPY
            : info == "DEEPSEEK" ? MODEL_ARCH::NLP_DEEPSEEK
            : info == "QWEN2"    ? MODEL_ARCH::NLP_QWEN2
-                                :
-                             // info=="QWEN" ? MODEL_ARCH::NLP_QWEN :
-               info == "GPT2"   ? MODEL_ARCH::NLP_GPT2
+           : info == "QWEN3"    ? MODEL_ARCH::NLP_QWEN3
+           : info == "GPT2"     ? MODEL_ARCH::NLP_GPT2
            : info == "GPT2CHAR" ? MODEL_ARCH::NLP_GPT2_char
            : info == "LAMA"     ? MODEL_ARCH::NLP_LLAMA
            : info == "MISTRAL"  ? MODEL_ARCH::NLP_MISTRAL
@@ -475,6 +474,9 @@ bool CLI_params::JModel2Params(int flag) {
 }
 
 bool CLI_params::isShareLayerOut() const {
+    // if(common.Empty())  //no training,only infer or evaluate
+    //     return true;
+
     if (scheduling.strategy == MEM_STRATEGY::PRE_ALLOC_GPU || scheduling.strategy == MEM_STRATEGY::PRE_ALLOC_HOST_MAP)
         return false;
     return true;
@@ -665,6 +667,14 @@ void CLI_params::OnArch() {
             model.isEmbedWeightTying = true;  //  why false would cause nan
             // model.sAttnOut=".wqkv";
             break;
+        case NLP_QWEN3:
+            scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;  // 5.89 tps
+            // scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;      //  6.53 tps
+            model.isSeparateQKV = true, model.isBqkv = true;
+            model.sNorm = ".norm", model.sLayer = "layers.";
+            model.isEmbedWeightTying = true;  //  why false would cause nan
+            // model.sAttnOut=".wqkv";
+            break;
         case NLP_DEEPSEEK:
             model.sNorm = ".norm", model.sLayer = "layers.";
             break;
@@ -679,50 +689,46 @@ void CLI_params::OnArch() {
     }
 }
 
-TRAIN_CARD get_default_train_params_common() {
-    TRAIN_CARD params;
-    // params.print_usage = false;
-    params.seed                    = -1;
-    params.n_ctx                   = 128;
-    params.n_threads               = 6;
-    params.n_batch                 = 8;
-    params.n_gradient_accumulation = 1;
-    params.n_epochs                = -1;
-    params.n_gpu_layers            = 0;
+TRAIN_CARD::TRAIN_CARD() {
+    // seed                    = -1;
+    // n_ctx                   = 128;
+    // n_threads               = 6;
+    n_batch = 1;
+    // n_gradient_accumulation = 1;
+    // n_epochs                = -1;
+    // n_gpu_layers            = 0;
 
-    params.custom_n_ctx = false;
+    custom_n_ctx = false;
 
-    params.use_flash         = false;
-    params.use_checkpointing = true;
+    use_flash         = false;
+    use_checkpointing = true;
 
-    params.sample_start           = "";
-    params.include_sample_start   = false;
-    params.escape                 = false;
-    params.overlapping_samples    = false;
-    params.fill_with_next_samples = false;
-    params.separate_with_eos      = false;
-    params.separate_with_bos      = true;
-    params.sample_random_offsets  = false;
-    params.force_reshuffle        = false;
+    sample_start           = "";
+    include_sample_start   = false;
+    escape                 = false;
+    overlapping_samples    = false;
+    fill_with_next_samples = false;
+    separate_with_eos      = false;
+    separate_with_bos      = true;
+    sample_random_offsets  = false;
+    force_reshuffle        = false;
 
-    params.opt_past               = 0;
-    params.opt_delta              = 1e-5f;
-    params.opt_max_no_improvement = 0;
+    opt_past               = 0;
+    opt_delta              = 1e-5f;
+    opt_max_no_improvement = 0;
 
-    params.warmup     = 600;
-    params.lr_restart = 0;
+    warmup     = 600;
+    lr_restart = 0;
 
-    // params.adam.n_iter         = -1;
-    params.adam.alpha          = 1e-3f;
-    params.adam.min_alpha      = 0;
-    params.adam.decay          = 1e-1f;
-    params.adam.decay_min_ndim = 2;
-    params.adam.beta1          = 0.9f;
-    params.adam.beta2          = 0.95f;  // 0.999f;
-    params.adam.gclip          = 1.0f;
-    params.adam.eps_loss       = 1e-5f;
-
-    return params;
+    // adam.n_iter         = -1;
+    adam.alpha          = 1e-3f;
+    adam.min_alpha      = 0;
+    adam.decay          = 1e-1f;
+    adam.decay_min_ndim = 2;
+    adam.beta1          = 0.9f;
+    adam.beta2          = 0.95f;  // 0.999f;
+    adam.gclip          = 1.0f;
+    adam.eps_loss       = 1e-5f;
 }
 
 std::string CLI_params::GetDataPath(const string type, int flag) {
@@ -920,7 +926,7 @@ bool CLI_params::InitJConfig(int flag) {
         char *env_str = getenv("PATH");
         env_str       = getenv("LD_LIBRARY_PATH");
 
-        common = get_default_train_params_common();
+        // common = get_default_train_params_common();
 
         std::string s = jConfig.dump(), s0;
         common.Init(this, jConfig);
@@ -956,7 +962,7 @@ bool CLI_params::InitJConfig(int flag) {
 
         JModel2Params(0x0);
 
-        model.InitHF(this, jConfig);
+        model.InitHugFace(this, jConfig);
 
         n_swarm = jKV(jConfig, {"train", "swarm"}, 1);
 
@@ -1001,8 +1007,8 @@ bool CLI_params::InitJConfig(int flag) {
         SUM::nMostMemItem    = jKV(jConfig, {"dump", "most_mem_item"}, SUM::nMostMemItem);
         SUM::nMinTensorAlloc = jKV(jConfig, {"dump", "min_tensor_alloc"}, SUM::nMinTensorAlloc);
 
-        dumpSwitch.train_time = jKV(jConfig, {"dump", "train_time"}, dumpSwitch.train_time);
-        dumpSwitch.tensor_ref = jKV(jConfig, {"dump", "tensor_ref"}, dumpSwitch.tensor_ref);
+        dumpSwitch.train_time     = jKV(jConfig, {"dump", "train_time"}, dumpSwitch.train_time);
+        dumpSwitch.tensor_ref     = jKV(jConfig, {"dump", "tensor_ref"}, dumpSwitch.tensor_ref);
         dumpSwitch.train_csv_path = jKV(jConfig, {"dump", "train_csv_path"}, dumpSwitch.train_csv_path);
         // train = jKV(jConfig,{"train"},train );
         return true;
@@ -1071,6 +1077,8 @@ bool CLI_params::parse(int argc, char **argv) {
     if (!InitJConfig())
         return false;
     switch (phase) {
+        case P_GENERATE:
+            break;
         case P_EVAL_:
             InitChekcpoints(argc, argv, "checkpoint_in");
             break;
@@ -1080,7 +1088,6 @@ bool CLI_params::parse(int argc, char **argv) {
             break;
     }
 
-    // finish_processing_train_args(&common);
     return true;
 }
 

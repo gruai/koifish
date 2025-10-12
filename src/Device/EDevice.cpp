@@ -15,8 +15,18 @@
 size_t EDGE_DEVICES::AfterBuild(hTGraph hTG, void *ctx, int flag) {
     INIT_WEIGHT tpInitWeight = hTG->hFish->tpInitWeight;
     if (hRLS != nullptr) {
+        std::vector<hGensor> tInMaps;
+        for(auto gt : hRLS->tMaps){
+            tInMaps.push_back(gt.first);
+        }
+        // assert(hRLS->tMaps.size()>=hTG->gset.size());
         for (auto tensor : hTG->gset) {
-            assert(hRLS->tMaps.find(tensor) != hRLS->tMaps.end());
+            if(hRLS->tMaps.find(tensor) == hRLS->tMaps.end()){      
+                //  CHECK_SAME_TENSORS???
+                Gensors2File(TO_VECTOR(hTG->gset),"~/gset_1.info");
+                Gensors2File(tInMaps,"~/gset_2.info");                
+                exit(KOIFISH_INVALID_GSET);
+            }
         }
     } else /**/ {
         for (auto tensor : hTG->gset) {

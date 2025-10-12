@@ -469,7 +469,7 @@ GTokenizer::GTokenizer(Fish *dolphin, int flag) {
     config = dolphin->config;
     if (dolphin->config.model.empty()) {
     } else {
-        bool bRet = InitHF(dolphin, flag);
+        bool bRet = this->InitHF(dolphin, flag);
     }
 }
 GTokenizer_GPT2::GTokenizer_GPT2(Fish *dolphin, int flag) {
@@ -478,9 +478,18 @@ GTokenizer_GPT2::GTokenizer_GPT2(Fish *dolphin, int flag) {
 }
 
 // todo - call gpt2 tokenizer in next version
-std::string GTokenizer_GPT2::T2STR(TOKEN_ID tok,int flag )   {
-    return std::to_string((int)(tok)%10);
+std::string GTokenizer_GPT2::T2STR(TOKEN_ID tok, int flag) { return std::to_string((int)(tok) % 10); }
+
+GTokenizer_QWEN3::GTokenizer_QWEN3(Fish *dolphin, int flag) {
+    config = dolphin->config;
+    assert(!dolphin->config.model.empty());
+    bool bRet = InitHF(dolphin, flag);
+    if(!bRet){
+        vocab.clear();
+    }
 }
+
+std::string GTokenizer_QWEN3::T2STR(TOKEN_ID tok, int flag) { return std::to_string((int)(tok) % 10); }
 
 GTokenizer_Heap::GTokenizer_Heap(Fish *dolphin, int flag) {
     config = dolphin->config;
@@ -610,6 +619,73 @@ bool GTokenizer::InitHF(Fish *dolphin, int flag) {
         InitTrier(flag);
     }
     return true;
+}
+
+void load_single_template(char *buffer, size_t buffer_size, const string &dir_path, const char *filename) {
+    string full_path = dir_path + filename;
+    // construct_path(full_path, sizeof(full_path), dir_path, filename);
+
+    memset(buffer, 0, buffer_size);
+    FILE *file = fopen(full_path.c_str(), "rb");
+    if (!file) {
+        fprintf(stderr, "Error: Couldn't load template file %s\n", full_path.c_str());
+        exit(EXIT_FAILURE);
+    }
+    // Read up to buffer_size - 1 to ensure null termination
+    fread(buffer, 1, buffer_size - 1, file);
+    fclose(file);
+}
+
+bool GTokenizer_QWEN3::InitHF(Fish *dolphin, int flag) {
+try{
+    char tmp_word[MAX_TOKEN_LENGTH];
+    string sRoot          = dolphin->config.model.sCardPath;
+    string tokenizer_path = sRoot + "tokenizer.bin";
+    int vocab_size        = dolphin->config.model.vocab_size;  // 151936
+    // vocab.resize(vocab_size); // = (char **)malloc(vocab_size * sizeof(char *));
+    scores = (float *)malloc(vocab_size * sizeof(float));
+
+    FILE *file = fopen(tokenizer_path.c_str(), "rb");
+    if (!file) {
+        _ERROR("[QWEN3] Couldn't load tokenizer model %s\n", tokenizer_path.c_str());
+        exit(KOIFISH_LOAD_TOKENIZER);
+    }
+    int len, nz = 0, max_token_length;
+    fread(&max_token_length, sizeof(int), 1, file);      //  512?
+    assert(max_token_length<=MAX_TOKEN_LENGTH);
+    fread(&bos_id, sizeof(int), 1, file);
+    fread(&eos_id, sizeof(int), 1, file);
+
+    
+    for (int i = 0; i < vocab_size; i++) {
+        if (fread(scores + i, sizeof(float), 1, file) != 1) {
+            // vocab[i] = (char *)malloc(1);
+            // vocab[i][0] = 0;
+            tmp_word[0] = '\0';
+            nz++;
+        } else {
+            fread(&len, sizeof(int), 1, file);
+            assert(len <= max_token_length);
+            fread(tmp_word, 1, len, file);
+            tmp_word[len] = '\0';
+        }
+        vocab.push_back(tmp_word);
+    }
+    fclose(file);
+
+    if (dolphin->config.model.enable_thinking) {
+        // load the "thinking" versions of the templates
+        load_single_template(prompt_template, sizeof(prompt_template), sRoot, "template_user_thinking.txt");
+        load_single_template(system_prompt_template, sizeof(system_prompt_template), sRoot, "template_system_thinking.txt");
+    } else {
+        // load the standard versions of the templates
+        load_single_template(prompt_template, sizeof(prompt_template), sRoot, "template_user.txt");
+        load_single_template(system_prompt_template, sizeof(system_prompt_template), sRoot, "template_system.txt");
+    }
+    return true;
+}catch(...){
+    return false;
+}
 }
 
 int GTokenizer::nVocab(int flag) const {

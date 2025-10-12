@@ -87,7 +87,8 @@ size_t huTensor::Alloc_1(void** dst, bool isZero, string desc, size_t sz0, int f
         size_t szFree, szTotal;
         cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
         if (szAlloc > szFree) {
-            _ERROR("[CUDA Alloc] Outof GPU Memory @%s!  Free=%gM < Need=%gM.\n", name, szFree / 1.0e6, szAlloc / 1.0e6);
+            _ERROR("[CUDA Alloc] Outof GPU Memory @%s!  Free=%gM < Need=%gM.\n ----------------------- more infomation -----------------------\n", name, szFree / 1.0e6, szAlloc / 1.0e6);
+            hFish->Dump(KOIFISH_OUTOF_GPUMEMORY);
             exit(KOIFISH_OUTOF_GPUMEMORY);
         }
     }

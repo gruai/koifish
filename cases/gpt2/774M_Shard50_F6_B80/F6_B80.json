@@ -3,7 +3,7 @@
     "model": {
         "arch": "GPT2",
         "fuyou": {
-            "branch": 6,
+            "branch": 9,
             "switch": 100,
             "#method": [
                 "pso",
