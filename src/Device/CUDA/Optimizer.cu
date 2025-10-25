@@ -7,7 +7,7 @@
  *  \brief cuda kernel of Optimizer
  *  \author Yingshi Chen
  */
-#include "./kernel/Operator.cuh"
+#include "./kernel/operator.cuh"
 // #include "./llm_c/sampler.h"
 #include "../../Manifold/Fish.hpp"
 #include "../../Manifold/Neuron.hpp"
@@ -124,12 +124,12 @@ __global__ void CU_muon_mG(PIPE_Muon<Tp, Tmv> pipe) {
     if (idx >= pipe.num_parameters) {
         return;
     }  // guard
-    float grad = CU_T2Float(pipe.grads0 + idx);       //  pipe.grad_scale * CU_T2Float(pipe.grads0 + idx);
-    float m    = pipe.mG[idx], x2, m1;
-    m = lerp(m, grad, 1 - pipe.mui);  //  momentum.lerp_(grad, 1 - beta)    
-    pipe.mG[idx] = m; 
-    m = lerp(grad, m, pipe.mui);      // update = grad.lerp_(momentum, beta) if nesterov
-    pipe.X[idx] = m,    x2 = m * m;
+    float grad   = CU_T2Float(pipe.grads0 + idx);  //  pipe.grad_scale * CU_T2Float(pipe.grads0 + idx);
+    float m      = pipe.mG[idx], x2, m1;
+    m            = lerp(m, grad, 1 - pipe.mui);  //  momentum.lerp_(grad, 1 - beta)
+    pipe.mG[idx] = m;
+    m            = lerp(grad, m, pipe.mui);  // update = grad.lerp_(momentum, beta) if nesterov
+    pipe.X[idx] = m, x2 = m * m;
     float block_sum = blockReduce_v0<warpReduceSum>(x2, true);
     if (threadIdx.x == 0)  //  Floating-point determinism is hard: True determinism requires fixed summation order and error compensation.
         atomicAdd(pipe.arrNorm, (double)block_sum);
@@ -189,7 +189,7 @@ __global__ void CU_adamw_p(PIPE_Adamw<Tp, Tmv> pipe) {
 /*
     row-major  slow versioin
     [todo] trust gradient estimator - https://arxiv.org/html/2502.05003v2
-*/ 
+*/
 template <typename Tp, typename Tmv>
 __global__ void CU_adamw_ternary(PIPE_Adamw<Tp, Tmv> pipe) {
     int M = pipe.ne[0], N = pipe.ne[1], tid = threadIdx.x;
@@ -451,21 +451,21 @@ void PIPE_Muon<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
     alpha = 1.0 / (sqrt(xNrm) + eps_muon);  //  Ensure spectral norm is at most 1
     assert(sizeof(Tmv) == sizeof(floatX));
     cudaDataType bf16     = CUDA_R_16BF;
-    cublasOperation_t opT = CUBLAS_OP_T, opN = CUBLAS_OP_N;    
-    if(0){  // X = G.bfloat16()    X /= (X.norm() + eps)
+    cublasOperation_t opT = CUBLAS_OP_T, opN = CUBLAS_OP_N;
+    if (0) {  // X = G.bfloat16()    X /= (X.norm() + eps)
         D20(X, sizeof(floatX) * m * n);
-        cublasAxpyEx(cublas_handle, m * n, &alpha, CUDA_R_32F, mG, bf16, 1, X, bf16, 1, CUDA_R_32F);        
-    }else{
+        cublasAxpyEx(cublas_handle, m * n, &alpha, CUDA_R_32F, mG, bf16, 1, X, bf16, 1, CUDA_R_32F);
+    } else {
         alpha -= 1.0f;
-        cublasAxpyEx(cublas_handle, m * n, &alpha, CUDA_R_32F, X, bf16, 1, X, bf16, 1, CUDA_R_32F);  
+        cublasAxpyEx(cublas_handle, m * n, &alpha, CUDA_R_32F, X, bf16, 1, X, bf16, 1, CUDA_R_32F);
     }
     // PrintTensor<floatX>("X0", (floatX*)(X), true, m, n, 1, 1, -1);
     if (isTrans) {
-        dim3 block(16, 16),grid(CEIL_DIV(m,block.x), CEIL_DIV(n,block.y));
+        dim3 block(16, 16), grid(CEIL_DIV(m, block.x), CEIL_DIV(n, block.y));
         CU_transpose<<<grid, block>>>(X, Xt, m, n);
         cudaMemcpy(X, Xt, sizeof(Tmv) * m * n, cudaMemcpyDeviceToDevice);  // cudaMemcpyAsync
         // PrintTensor<floatX>("Xt", (floatX*)(X), true, m, n, 1, 1, -1);
-        std::swap(m,n);
+        std::swap(m, n);
     }
     for (int i = 0; i < most_iter; i++) {  //   orthogonalization routine
         PrintTensor<floatX>("Xi", (floatX*)(X), true, m, n, 1, 1, dump_flag);
@@ -486,18 +486,17 @@ void PIPE_Muon<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
         PrintTensor<floatX>("BX", (floatX*)(BX), true, m, n, 1, 1, dump_flag);
         cudaMemcpy(X, BX, sizeof(Tmv) * m * n, cudaMemcpyDeviceToDevice);  // cudaMemcpyAsync
     }
-    if (isTrans) {//     X = X.T
-        dim3 block(16, 16),grid(CEIL_DIV(m,block.x), CEIL_DIV(n,block.y));
+    if (isTrans) {  //     X = X.T
+        dim3 block(16, 16), grid(CEIL_DIV(m, block.x), CEIL_DIV(n, block.y));
         CU_transpose<<<grid, block>>>(X, Xt, m, n);
         cudaMemcpy(X, Xt, sizeof(Tmv) * m * n, cudaMemcpyDeviceToDevice);  // cudaMemcpyAsync
-        std::swap(m,n);
+        std::swap(m, n);
     }
     // PrintTensor<floatX>("X1", (floatX*)(X), true, m, n, 1, 1, -1);
     float beta = sqrt(max(1.0f, m * 1.0f / n)) - 1.0f;  // update *= max(1, grad.size(-2) / grad.size(-1))**0.5
-    //float beta = 0.2 * sqrt(max(m,n)) - 1.0f;   // why this ?
+    // float beta = 0.2 * sqrt(max(m,n)) - 1.0f;   // why this ?
     if (beta != 0.0f)
         cublasAxpyEx(cublas_handle, m * n, &beta, CUDA_R_32F, X, bf16, 1, X, bf16, 1, CUDA_R_32F);
-    
 
     CU_muon_update<<<dGRID, dT4B, 0, stream>>>(*this);
     D2e(this->arrNorm, xNrm, 0x0), assert(!(isnan(xNrm) || isinf(xNrm)));

@@ -38,6 +38,7 @@ class SparseNeuron;
 class EDGE_DEVICES;
 typedef shared_ptr<GTensor> hGTensor;
 typedef std::vector<int> SHAPE;
+bool Gensors2File(std::vector<hGTensor> gset, const std::string &path, int flag = 0x0);
 
 #include "../Device/CUDA/cuda_common.h"
 
@@ -177,7 +178,7 @@ class GTensor {
         F_OUTPUT    = 0x2,
         F_PARAM     = 0x4,
         F_LOSS      = 0x8,
-        F_WMATRIX   = 0x10,     // A weight matrix is a linear operator on RMS-normed vector spaces.
+        F_WMATRIX   = 0x10,  // A weight matrix is a linear operator on RMS-normed vector spaces.
         F_NOALLOC   = 0x100,
         F_GPU       = 0x200,
         F_HOSTALLOC = 0x400,
@@ -509,23 +510,8 @@ struct GENSORS {
     // name_ and gg_tensor
     std::map<std::string, hGensor> nag;
     std::map<hGensor, GENSOR_INFO> infos;
-    virtual bool has(hGensor gensor) {
-        assert(nag.size() == infos.size());
-        bool b1 = nag.find(gensor->name) != nag.end(), b2 = infos.find(gensor) != infos.end();
-        assert(b1 == b2);
-        return b2;
-    }
-
-    void Insert(hGensor gensor, const GENSOR_INFO &gi, int flag = 0x0) {
-        auto key = gensor->name;
-        // assert(strlen(key)>0);
-        assert(nag.find(key) == nag.end());
-        nag[key] = gensor;
-
-        assert(infos.find(gensor) == infos.end());
-        infos[gensor]    = gi;
-        infos[gensor].sX = gensor->name;
-    }
+    virtual bool has(hGensor gensor);
+    void Insert(hGensor gensor, const GENSOR_INFO &gi, int flag = 0x0);
 
     void Insert(const std::map<std::string, hGensor> &src) { nag.insert(src.begin(), src.end()); }
     size_t size() { return nag.size(); }
@@ -539,5 +525,3 @@ struct GENSORS {
         // sort(gimap.begin(), gimap.end(), comp);
     }
 };
-
-bool Gensors2File(std::vector<hGensor> gset,const std::string&path,int flag=0x0);

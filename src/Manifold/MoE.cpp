@@ -10,63 +10,6 @@
 
 #include "gLLM.hpp"
 
-bool QKV_LAY::CreateFFN(const CLI_params &config, ggml_context *ctx, FFN_TYPE tpFFN, int flag) {
-    const int n_embd = config.nEmbed(), n_ctx = config.n_ctx(), n_ff = config.n_ff(), n_batch = config.n_batch();
-    const int n_expert = config.n_expert;
-    switch (tpFFN) {
-        case VAR_LAST:
-        case SWIGLU:
-            if (config.ZMUV_ratio > 0)
-                ffn_norm.w = nullptr;
-            else
-                ffn_norm.w = GT(hFish, typNUMBER::F32, {n_embd});
-            if (config.ffn_use_gate)
-                ffn_gate = GT(hFish, typNUMBER::F32, {n_embd, n_ff});
-            down.w = GT(hFish, typNUMBER::F32, {n_ff, n_embd});
-            up.w   = GT(hFish, typNUMBER::F32, {n_embd, n_ff});
-            if (tpFFN == VAR_LAST && isLast) { /*i==n_layer-1*/
-                eps = GT(hFish, typNUMBER::F32, {n_embd, n_batch * n_ctx});
-            }
-            break;
-        case ONLY_LNormal:
-        case ONLY_RMSNormal:
-            ffn_norm.w = GT(hFish, typNUMBER::F32, {n_embd});
-            break;
-        case VAR_0:
-            eps = GT(hFish, typNUMBER::F32, {n_embd, n_batch * n_ctx});
-            break;
-        case GATE_CYS:
-            assert(0);
-            break;
-        case SMOE: {  // MoE branch
-            assert(n_expert > 0 && config.n_expert_used > 0);
-            ffn_gate_inp = GT(hFish, typNUMBER::F32, {n_embd, n_expert});
-            // ffn_gate_inp = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_GATE_INP, "weight", i), {n_embd, n_expert});
-            const int n_ff_exp = config.n_ff_exp ? config.n_ff_exp : n_ff / config.n_expert_used;
-            ffn_gate_exps      = GT(hFish, typNUMBER::F32, {n_embd, n_ff_exp, n_expert});
-            // ffn_gate_exps = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_GATE_EXPS, "weight", i), {  n_embd, n_ff_exp, n_expert});
-            ffn_down_exps = GT(hFish, typNUMBER::F32, {n_ff_exp, n_embd, n_expert});
-            // ffn_down_exps = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_DOWN_EXPS, "weight", i), {n_ff_exp,   n_embd, n_expert});
-            ffn_up_exps = GT(hFish, typNUMBER::F32, {n_embd, n_ff_exp, n_expert});
-            // ffn_up_exps   = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_UP_EXPS,   "weight", i), {  n_embd, n_ff_exp, n_expert});
-
-            // Shared expert branch
-            const int n_ff_shexp = config.n_ff_shexp ? config.n_ff_shexp : n_ff;
-            ffn_gate_inp_shexp   = GT(hFish, typNUMBER::F32, {n_embd});
-            // ffn_gate_inp_shexp = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_GATE_INP_SHEXP, "weight", i), {n_embd});
-            ffn_gate_shexp = GT(hFish, typNUMBER::F32, {n_embd, n_ff_shexp});
-            // ffn_gate_shexp = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_GATE_SHEXP, "weight", i), {    n_embd, n_ff_shexp});
-            ffn_down_shexp = GT(hFish, typNUMBER::F32, {n_ff_shexp, n_embd});
-            // ffn_down_shexp = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_DOWN_SHEXP, "weight", i), {n_ff_shexp,     n_embd});
-            ffn_up_shexp = GT(hFish, typNUMBER::F32, {n_embd, n_ff_shexp});
-            // ffn_up_shexp   = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_UP_SHEXP,   "weight", i), {    n_embd, n_ff_shexp});
-        } break;
-        default:
-            TO_DO;
-    }
-    return true;
-}
-
 LLM_MOE::LLM_MOE(const std::string &nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
     assert(arch == MODEL_ARCH::NLP_MOE);
 

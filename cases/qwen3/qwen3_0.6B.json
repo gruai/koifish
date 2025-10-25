@@ -1,0 +1,68 @@
+{        
+    "version":"0.1.0",     
+    "model":{   
+        "card":"/home/cys/hugging/unsloth/Qwen3-0.6B/",
+        "parameter":{
+            "Layer": 28,  
+            "transformer":  {
+                "Ctx":8192,     "Embed":  1024,     "Ffn":3072,
+                "Head": 16,     "KVHead": 8,        "head_dim": 128          
+            }
+        },          
+        "embed_tokens": {"Embedding":[]},    
+        "layer":  {      
+            "self_attn":{"QKV":[]},               
+            "mlp":{"FFN":[ ]},       
+            "# gattn":{"GAU":[]}
+                                  
+        },
+        "norm":{"Normal":[]},
+        "output": {"CLASIFY":[]}
+    },
+    
+
+    "#test":"GGUF_list GPT_work fish_1 bubble tutor ppl",      
+
+    "gpt":{
+        "# prompt":"Once upon a time, there was a little girl named Lily. She had a",
+        "c_graph":"raw0",
+        "prompt":"when the smoke is going down,",
+        "# prompt":"Some glory in their birth,"
+    },
+    
+    "sparsing":{
+        "activation":"ffn qkv",
+        "model":"/home/cys/QWEN_sparse_"
+    },
+    
+    "#train": {
+        "save-every":500,
+        "dump-every":10,
+        
+        "gpt-every":-10,
+        "epoch":2,
+        "batch":8,
+        "learning-rate":0.0006,  
+
+        "optimizatioin":{
+            "#method":"adamw sgdv hsgd sgd",
+            "method":"adamw",
+            "sign":0,
+            "grad_accumulation":1,
+            "lars_ratio":0,      "ZMUV_ratio":0.00    
+        }              
+    },  
+    "debug": {
+        "prompts":["hello"],
+        "most_iter":-25,
+        "eval_samp":0.04,
+        "#long_tail":10
+    },
+    "dump": {
+        "train_time" : 0,
+        "# tensor_ref" : 1,
+        "most_mem_item" : 6
+    },
+    
+    "seed":42
+}

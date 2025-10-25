@@ -275,14 +275,6 @@ bool VERIFY_DIR_EXIST(const std::string &path, bool isCreate) {
     }
 }
 
-std::string FILE_EXT(const std::string &path) {
-    std::filesystem::path filePath = path;
-    std::string sExt               = filePath.extension().string();
-    if (sExt.size() > 1)
-        sExt = sExt.substr(1);  // substr(1) to remove the dot
-    return sExt;
-}
-
 /**
  *  v0.1    20250918
  */
@@ -291,14 +283,9 @@ void GRUAI_KOIFISH_VERSION(char *str, int flag = 0x0) {
     char sName[80] = "\0";
     int i, nLen = (int)strlen(GRUAI_KOIFISH_APP_NAME), nFrame = 68, off;
     std::string sDat = DATE(100);
-    sprintf(sName, "%s (%s by gcc %s)", GRUAI_KOIFISH_APP_NAME, sDat.c_str(), __VERSION__);
+    sprintf(sName, " %s %s %s (%s by gcc %s)", COLOR_ORANGE, GRUAI_KOIFISH_APP_NAME, COLOR_RESET, sDat.c_str(), __VERSION__);
     int pad = (nFrame - strlen(sName)) / 2 - 1;
     assert(pad >= 0);
-    // for (i = 0; i < nFrame; i++) sName[i] = i == 0 || i == nFrame - 1 ? '*' : ' ';
-    // sName[nFrame]     = '\n';
-    // sName[nFrame + 1] = '\0';
-    // off               = (nFrame - 2 - nLen) / 2 + 1;
-    // for (i = 0; i < nLen; i++) sName[i + off] = GRUAI_KOIFISH_APP_NAME[i];
 
     sprintf(str, "%s*%*s%s%*s*\n%s", "********************************************************************\n", pad, "", sName,
             (int)(nFrame - strlen(sName) - pad - 2), "",
@@ -340,20 +327,101 @@ void GG_log_internal_v(DUMP_LEVEL level, const char *format, va_list args) {
     va_end(args_copy);
 
     const char *color_0 = "";
-    coloredMsg[0] = '\0';
+    coloredMsg[0]       = '\0';
     switch (level) {
         case DUMP_ERROR:
             snprintf(coloredMsg, sizeof(coloredMsg), "%s error:%s%s", COLOR_RED, log_buffer, COLOR_RESET);
             break;
         case DUMP_WARN:
-            snprintf(coloredMsg, sizeof(coloredMsg), "%s warning:%s%s", COLOR_RED, log_buffer, COLOR_RESET);
+            snprintf(coloredMsg, sizeof(coloredMsg), "%s warning:%s%s", COLOR_YELLOW, log_buffer, COLOR_RESET);
+            break;
+        case DUMP_WARN0:
+            snprintf(coloredMsg, sizeof(coloredMsg), "%s %s%s", COLOR_YELLOW, log_buffer, COLOR_RESET);
             break;
         default:
             snprintf(coloredMsg, sizeof(coloredMsg), "%s", log_buffer);
             break;
     }
-    
+
     fputs(coloredMsg, stderr);
     // fputs(log_buffer, stderr);
     fflush(stderr);
+}
+
+void read_stdin(const char *guide, char *buffer, size_t bufsize) {
+    // read a line from stdin, up to but not including \n
+    printf("%s", guide);
+    if (fgets(buffer, bufsize, stdin) != NULL) {
+        size_t len = strlen(buffer);
+        if (len > 0 && buffer[len - 1] == '\n') {
+            // strip newline
+            buffer[len - 1] = '\0';
+        }
+    }
+}
+
+std::string FILE2STR(const std::string fPath, int flag) {
+    std::string info;
+    std::ifstream file(fPath);
+    if (!file.is_open()) {
+        _ERROR("<<<<<<< FILE2STR failed @%s\n", fPath.c_str());
+        return "";
+    }
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    info = buffer.str();
+    file.close();
+
+    return info;
+}
+
+bool STR2FILE(const std::string fPath, const std::string &info, int flag) {
+    std::ofstream file(fPath);
+    if (!file.is_open()) {
+        _ERROR("STR2FILE failed @%s", fPath.c_str());
+        return "";
+    }
+    file << info << std::endl;
+
+    return true;
+}
+
+std::string FILE_EXT(const std::string &path) {
+    std::filesystem::path filePath = path;
+    std::string sExt               = filePath.extension().string();
+    if (sExt.size() > 1)
+        sExt = sExt.substr(1);  // substr(1) to remove the dot
+    return sExt;
+}
+
+std::vector<std::string> FilesOfDir(const std::string &path, const std::vector<std::string> &keys, int flag) {
+    std::vector<std::string> files;
+    DIR *dir = opendir(path.c_str());
+    if (dir == nullptr) {
+        std::cout << "failed to open directory" << std::endl;
+        return files;
+    }
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != nullptr) {
+        std::string filename = entry->d_name;
+        // Skip . and .. directory entries
+        if (filename == "." || filename == "..") {
+            continue;
+        }
+        // if(!keys.empty() && !G_Has_(filename,keys))
+        //     continue;
+        string sExt = FILE_EXT(filename);
+        if(!keys.empty() && !G_Has_(sExt,keys))
+            continue;
+        files.push_back(path + "/" + filename);
+    }
+    closedir(dir);
+    if (files.empty()) {
+        std::cout << "no files found" << std::endl;
+        return files;
+    }
+    std::sort(files.begin(), files.end());
+
+    return files;
 }

@@ -14,22 +14,17 @@
 #include "Fish.hpp"
 #include "Optimizer.hpp"
 
-shared_ptr<EDGE_DEVICES> EDGE_DEVICES::GetInstance(const CLI_params &config, int flag) {
+shared_ptr<EDGE_DEVICES> EDGE_DEVICES::GetInstance(const CLI_params& config, int flag) {
     static shared_ptr<EDGE_DEVICES> hEDS = std::make_shared<EDGE_DEVICES>(config, flag);
     return hEDS;
 }
 
-bool NLP_AutoRegressive::Init(const vector<hWIKI> &wikis_, int flag) {
+bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_, int flag) {
     auto train_params = config.common;
     if (train_params.seed == -1) {
         train_params.seed = time(NULL);
     }
     wikis = wikis_;
-    // if (!config.model.empty()) {
-    //     isLoadCheckpoint = HF_Serialize(false, 0x0);
-    // }
-    // if(!LoadCheckPoint())        //  refactor to AfterBuild
-    //     return false;
 
     if (hDict == nullptr) {
         if (!InitDictTokenset())  //  hDictVAE
@@ -62,7 +57,7 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI> &wikis_, int flag) {
     return true;
 }
 
-NLP_AutoRegressive::NLP_AutoRegressive(const std::string &nam_, struct CLI_params params, ROLE_TYPE role_, int flag) : Fish(nam_, params, role_) {
+NLP_AutoRegressive::NLP_AutoRegressive(const std::string& nam_, struct CLI_params params, ROLE_TYPE role_, int flag) : Fish(nam_, params, role_) {
     if (!config.is({"wiki", "actor"}, "copy")) {
     }
     config.ffn_use_gate = true;
@@ -74,7 +69,7 @@ NLP_AutoRegressive::NLP_AutoRegressive(const std::string &nam_, struct CLI_param
     tpFFN     = (FFN_TYPE)(jKV(params.jConfig, {"model_v0", "ffn", "type"}, 5, false));
 }
 // params!=src->params
-NLP_AutoRegressive::NLP_AutoRegressive(const std::string &nam_, const NLP_AutoRegressive *src, struct CLI_params params, int flag) : Fish(nam_, params) {
+NLP_AutoRegressive::NLP_AutoRegressive(const std::string& nam_, const NLP_AutoRegressive* src, struct CLI_params params, int flag) : Fish(nam_, params) {
     // hDictVAE = src->hDictVAE;
     // tensors = src->tensors;
     // for(auto it : tensors){
@@ -99,10 +94,10 @@ NLP_AutoRegressive::NLP_AutoRegressive(const std::string &nam_, const NLP_AutoRe
     // InitModel();
 }
 
-string NLP_AutoRegressive::__repr__(string &suffix, string &prefix, int flag) {
+string NLP_AutoRegressive::__repr__(string& suffix, string& prefix, int flag) {
     // Fish::__repr__(suffix,prefix,flag);
     char buf[50120] = "\0";
-    const char *tab = prefix.c_str();
+    const char* tab = prefix.c_str();
 
     string s = "\n", p = prefix + "\t";
     int i;
@@ -152,9 +147,9 @@ string NLP_AutoRegressive::__repr__(string &suffix, string &prefix, int flag) {
     return buf;
 }
 
-string Ganglia::__repr__(string &suffix, string &prefix, int flag) {
+string Ganglia::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]  = "\0";
-    const char *tab = prefix.c_str();
+    const char* tab = prefix.c_str();
     sprintf(buf + strlen(buf), "%s %s", tab, name.c_str());
     string s, p;
     for (auto child : ns) {
@@ -166,7 +161,7 @@ string Ganglia::__repr__(string &suffix, string &prefix, int flag) {
     return buf;
 };
 
-string GeNeuron::__repr__(string &suffix, string &prefix, int flag) {
+string GeNeuron::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012] = "\0";
     // const char*tab=prefix.c_str();
     // sprintf(buf+strlen(buf),"\n%s %s",tab,name.c_str());
@@ -197,35 +192,7 @@ string GeNeuron::__repr__(string &suffix, string &prefix, int flag) {
     }
 */
 
-string QKV_LAY::__repr__(string &suffix, string &prefix, int flag) {
-    char buf[5012]  = "\0";
-    const char *tab = prefix.c_str();
-    _T_repr_(att_norm.w, tab, buf);
-    _T_repr_(att_norm.b, tab, buf);
-    _T_repr_(Q.w, tab, buf);
-    _T_repr_(Q.b, tab, buf);
-    _T_repr_(K.w, tab, buf);
-    _T_repr_(K.b, tab, buf);
-    _T_repr_(V.w, tab, buf);
-    _T_repr_(V.b, tab, buf);
-    _T_repr_(proj.w, tab, buf);
-    _T_repr_(proj.b, tab, buf);
-    // _T_repr_(wk,tab,buf);       _T_repr_(wv,tab,buf);
-    _T_repr_(wo, tab, buf);
-    _T_repr_(ffn_norm.w, tab, buf);
-    _T_repr_(ffn_norm.b, tab, buf);
-    _T_repr_(ffn_gate, tab, buf);
-    _T_repr_(up.w, tab, buf);
-    _T_repr_(up.b, tab, buf);
-    _T_repr_(down.w, tab, buf);
-    _T_repr_(down.b, tab, buf);
-    _T_repr_(eps, tab, buf);
-    if (flag > 0)
-        _INFO("%s", buf);
-    return buf;
-}
-
-void NLP_AutoRegressive::build_inp_KQ_(void *ctx, bool isMask, bool causal) {
+void NLP_AutoRegressive::build_inp_KQ_(void* ctx, bool isMask, bool causal) {
 #ifdef __USE_GGML__
     char nam_[128];
     bool isFlash       = config.isFlashAtten();
@@ -239,7 +206,7 @@ void NLP_AutoRegressive::build_inp_KQ_(void *ctx, bool isMask, bool causal) {
     KQ_pos = GT(this, typNUMBER::I32, {n_ctx});
     gTN(KQ_pos, "inp_pos");
     tFLAG(KQ_pos, GTensor::F_INPUT);  //    ggml_set_input(KQ_pos);
-    int *data = (int *)KQ_pos->data;
+    int* data = (int*)KQ_pos->data;
     // @BuildComputeGraph After ggml_gallocr_alloc_graph(alloc, gb)!
     // for (int i = 0; i < n_tokens; ++i) {
     //     data[i] = n_past + i;
@@ -253,7 +220,7 @@ void NLP_AutoRegressive::build_inp_KQ_(void *ctx, bool isMask, bool causal) {
         KQ_mask = GT(this, dt, {n_ctx, pad});
         gTN(KQ_mask, "KQ_mask");
         tFLAG(KQ_mask, GTensor::F_INPUT);  // ggml_set_input(KQ_mask);        //  flags |= GGML_TENSOR_FLAG_INPUT;
-        float *mask = (float *)(KQ_mask->data);
+        float* mask = (float*)(KQ_mask->data);
         //  KQ_mask = isFlash ? ggml_cast(ctx, KQ_mask, GGML_TYPE_F16) : KQ_mask;
     }
 #endif
@@ -268,7 +235,7 @@ hGensor SLP::UpdateGensor(int flag) {
 std::string NLP_AutoRegressive::Name() { return "LAMA"; }
 
 // REF: ggml_compute_forward_dup_bytes
-void Fish::CopyWeight(const Fish *src, int flag) {
+void Fish::CopyWeight(const Fish* src, int flag) {
     if (wiki_tutor != nullptr) {
         assert(wiki_tutor == src->wiki_tutor);
         return;
@@ -317,7 +284,7 @@ void Fish::CopyWeight(const Fish *src, int flag) {
 /*
     would affect training process?
 */
-bool NLP_AutoRegressive::LocalFeeling(hSampLoader hLoader, vector<float> &result, int flag) {
+bool NLP_AutoRegressive::LocalFeeling(hSampLoader hLoader, vector<float>& result, int flag) {
     assert(hOPT != nullptr);
     auto preLogits = hCLS->preLogits;
     assert(hLoader->shard_samps.size() == 1);
@@ -334,7 +301,7 @@ bool NLP_AutoRegressive::LocalFeeling(hSampLoader hLoader, vector<float> &result
 
     // out is last distribution of Causal Language Modeling
     size_t off = (nTok)*nVocabInWiki;
-    float *out = (float *)(preLogits->data) + off;
+    float* out = (float*)(preLogits->data) + off;
     if (result.size() != nVocabInWiki) {
         result.clear();
         result.resize(nVocabInWiki);
@@ -350,7 +317,7 @@ size_t NLP_AutoRegressive::tVocab() {
     return hDict->nVocab();
 }
 
-hGensor Fish::BuildLoss(void *ctx, hGensor cur, int flag) {
+hGensor Fish::BuildLoss(void* ctx, hGensor cur, int flag) {
     if (DEBUG.NO_loss) {
         assert(cur == hCLS->preLogits);
         out_node = cur;
@@ -366,7 +333,7 @@ hGensor Fish::BuildLoss(void *ctx, hGensor cur, int flag) {
     return loss;
 }
 
-hGensor NLP_AutoRegressive::BuildTarget(void *ctx, hGensor cur, int flag) {
+hGensor NLP_AutoRegressive::BuildTarget(void* ctx, hGensor cur, int flag) {
     hGensor _tNorm = UpdateGensor(hDictVAE->_norm.w->name);
     int n_vocab = tVocab(), n_batch = config.common.n_batch, n_ctx = config.common.n_ctx, n_embd = config.nEmbed();
     auto train_params              = config.common;
@@ -452,7 +419,7 @@ hGensor NLP_AutoRegressive::BuildTarget(void *ctx, hGensor cur, int flag) {
     return out_node;
 }
 
-std::string NLP_AutoRegressive::T2STR(const std::vector<TOKEN_ID> &toks, int nMost, int flag) {
+std::string NLP_AutoRegressive::T2STR(const std::vector<TOKEN_ID>& toks, int nMost, int flag) {
     std::string str = "";
     int i           = 0;
     for (auto tok : toks) {
@@ -477,7 +444,7 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag) {
     return true;
 }
 bool Fish::InitDictTokenset(int flag) {
-    void *hLLM = nullptr;
+    void* hLLM = nullptr;
     // hDict = std::make_shared<GTokenizer>(this);     //  entence != prompt
     // hDict = std::make_shared<GTokenizer_Heap>(this);
 
@@ -523,7 +490,7 @@ bool Fish::InitDictTokenset(int flag) {
             hDict->eos_id = 100001;
             break;
         case MODEL_ARCH::NLP_QWEN2:
-            // hDictVAE = std::make_shared<DictVAE>(this);
+            hDict = std::make_shared<GTokenizer>(this);
             hDict->vocab.resize(151936);
             hDict->bos_id = 151643;
             hDict->eos_id = 151645;
@@ -574,7 +541,7 @@ bool Fish::InitDictTokenset(int flag) {
     return true;
 }
 
-bool NLP_AutoRegressive::InitInput(void *ctx_build, bool isMask, int flag) {
+bool NLP_AutoRegressive::InitInput(void* ctx_build, bool isMask, int flag) {
     auto train_params = config.common;
     int n_ctx = train_params.n_ctx, n_vocab = tVocab(), n_batch = train_params.n_batch;
     assert(n_ctx > 0 && n_batch > 0);
@@ -620,7 +587,7 @@ bool NLP_AutoRegressive::CreateExlogists(hWIKI wiki, uint32_t n_ctx, uint32_t n_
 
 //  NLP_AutoRegressive::Train would call this function
 void Fish::UpdateTernary(int flag) {
-    RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
+    RLS_BP* hRLS = hEDS->GetScheduler<RLS_BP>();
     string bit_tensors;
     int nTernary = 0;
     size_t nzT = 0, nzP = 0, nzBit = 0;
@@ -668,10 +635,10 @@ void NLP_AutoRegressive::Train(int flag) {
 #ifdef __USE_GGML__
 #include "ggml-impl.h"
 #endif
-static struct random_normal_distribution *rnd = nullptr;
+static struct random_normal_distribution* rnd = nullptr;
 // TO DO :  refactor
 void NLP_AutoRegressive::InitGensors(int flag) {
-    auto ctx               = GetGGCTX();
+    /*auto ctx               = GetGGCTX();
     const uint32_t n_layer = layers.size();
     for (u_int i = 0; i < n_layer; i++) {
         auto layer = dynamic_pointer_cast<QKV_LAY>(layers[i]);
@@ -717,7 +684,7 @@ void NLP_AutoRegressive::InitGensors(int flag) {
             InitGensor(ctx, wiki->t2t, nullptr, rnd);
 #endif
         }
-    }
+    }*/
 }
 
 void NLP_AutoRegressive::InitModel(int flag) {
@@ -783,13 +750,13 @@ void NLP_AutoRegressive::Dump(int type, int flag) {
     }
     if (config.lars_ratio > 0)
         _INFO("\t LARS(t_max=%g)\n", config.lars_ratio);
-    
-    switch(type){
-    case KOIFISH_OUTOF_GPUMEMORY:
-        SUM::MemoryInfo(type);
-        break;
-    default:
-        break;
+
+    switch (type) {
+        case KOIFISH_OUTOF_GPUMEMORY:
+            SUM::MemoryInfo(type);
+            break;
+        default:
+            break;
     }
     _INFO("====== Params Table ======\n");
     for (auto t : optParams) {
@@ -802,7 +769,7 @@ void NLP_AutoRegressive::Dump(int type, int flag) {
 bool Fuyou::Backward(hGensor cur, int flag) {
     bool isMix = true;
     for (auto it = tasks.rbegin(); it != tasks.rend(); ++it) {
-        GeNeuron *neuron = (GeNeuron *)((*it)->hOBJ);
+        GeNeuron* neuron = (GeNeuron*)((*it)->hOBJ);
         if (neuron->isShortcut)
             continue;
         if (neuron->isPassBack)
@@ -818,10 +785,10 @@ bool Fuyou::Backward(hGensor cur, int flag) {
     return true;
 }
 
-float RAW_backward(Fish *fish, const int *hostInToken, int accum_steps, bool, int flag);
+float RAW_backward(Fish* fish, const int* hostInToken, int accum_steps, bool, int flag);
 int Fish::BackwardOnRLS(int iter, int flag) {
     GTensor::delta->Zero();
-    OutCLS *cls       = GetNeuron<OutCLS>("OutCLS", 0);
+    OutCLS* cls       = GetNeuron<OutCLS>("OutCLS", 0);
     GTensor::buff     = hCLS->preLogits->data;  // reused in many place!
     GTensor::buff_len = hCLS->preLogits->size() * sizeof(floatX);
 
@@ -832,7 +799,7 @@ int Fish::BackwardOnRLS(int iter, int flag) {
         return 0x0;
     }
 
-    RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
+    RLS_BP* hRLS = hEDS->GetScheduler<RLS_BP>();
     hGensor cur  = cls->delta;
     hFuyou afu   = hRLS->afu;
     afu->Backward(cur);
@@ -853,7 +820,7 @@ int Fish::BackwardOnRLS(int iter, int flag) {
     return 0x0;
 }
 
-const CheckPoint_Params &Fish::SnapShot(int flag) const {
+const CheckPoint_Params& Fish::SnapShot(int flag) const {
     if (isLocalInfer) {
         assert(config.ckp_in.size() > 0);
         return config.ckp_in[0];
@@ -862,7 +829,7 @@ const CheckPoint_Params &Fish::SnapShot(int flag) const {
 }
 
 hFuyou Fish::GetFuyou(int no, int flag) const {
-    RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
+    RLS_BP* hRLS = hEDS->GetScheduler<RLS_BP>();
     if (no == -1) {
         return hRLS->afu;
     }
@@ -871,15 +838,31 @@ hFuyou Fish::GetFuyou(int no, int flag) const {
     return fuyou;
 }
 
+float Fish::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
+    hOptimizer hOPT     = GetOptimizer();
+    hSampLoader hLoader = hOPT->val_loaders[0];
+    // switch (type) {
+    //     case 1:
+    //     // TokenEmbed* embed = GetNeuron<TokenEmbed>("TokenEmbed", 0);
+    //     // embed->hBatch     = hBatch;
+    //         hLoader->num_batches = 1;
+    //         break;
+    //     default:
+    //     break;
+    // }
+    float eval = hLoader->Evaluate(tpBatch, 0x0);
+    return eval;
+}
+
 int Fish::ForwardOnRLS(int iter, int flag) {
     // if(DEBUG.back_graph_version==1)
     // { return ForwardOnNeuron_v0(flag);  }
-    RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
+    RLS_BP* hRLS = hEDS->GetScheduler<RLS_BP>();
     double now   = GST_ms();
     if (iter < 0 || isTrain())
         hRLS->Prepare(iter, 0);
 
-    OutCLS *cls = GetNeuron<OutCLS>("OutCLS", 0);
+    OutCLS* cls = GetNeuron<OutCLS>("OutCLS", 0);
     int L = config.nLayer(), nzLoss = cls->nzLoss, i, nFuyou = hRLS->fuyouSwarm.size();
     float *tmpLoss = nullptr, *loss = cls->hostLoss;
     vector<hFuyou> branches = hRLS->ActiveFuyous();
@@ -909,7 +892,7 @@ int Fish::ForwardOnRLS(int iter, int flag) {
         assert(!branch->empty());
         // GetNeuron<SelfAttention>("QKV", 0)->ManageMemory(DATA_PLACE::DEV_MEM);  //only for debug
         for (auto task : branch->Tasks()) {
-            GeNeuron *neuron = (GeNeuron *)(task->hOBJ);
+            GeNeuron* neuron = (GeNeuron*)(task->hOBJ);
             if (neuron->name == "model.blk.10.attn" && curB > 0) {  //   model.inp_embd
                 int debug = 0x0;
             }
@@ -942,8 +925,8 @@ int NLP_AutoRegressive::ForwardOnNeuron_v0(int flag) {
     int B, T, C, tpFuseNormal = config.Fuse_Normal, L = config.nLayer();
     GetBTC(B, T, C);
     hGensor cur         = nullptr;
-    LayerNormal *lnf    = GetNeuron<LayerNormal>("LayerNormal", 0);
-    TokenEmbed *embed   = GetNeuron<TokenEmbed>("TokenEmbed", 0);
+    LayerNormal* lnf    = GetNeuron<LayerNormal>("LayerNormal", 0);
+    TokenEmbed* embed   = GetNeuron<TokenEmbed>("TokenEmbed", 0);
     cur                 = embed->OnEmbed(Input(), 0x0);  //  ->Ming(nullptr,Input());
     SelfAttention *QKV0 = GetNeuron<SelfAttention>("SelfAttention", 0), *QKV = nullptr;
 
@@ -951,12 +934,12 @@ int NLP_AutoRegressive::ForwardOnNeuron_v0(int flag) {
         cur = QKV0->norm.cuTrain(cur);
     }
 
-    FFN *ffn = nullptr;
+    FFN* ffn = nullptr;
     for (int l = 0; l < L; l++) {
         NvtxRange layer_range("Layer", l);
         QKV                = GetNeuron<SelfAttention>("SelfAttention", l);
         ffn                = GetNeuron<FFN>("FFN", l);  // ffn->out = GTensor::delta;
-        LayerNormal *hNorm = l + 1 != L ? &(GetNeuron<SelfAttention>("SelfAttention", l + 1)->norm) : lnf;
+        LayerNormal* hNorm = l + 1 != L ? &(GetNeuron<SelfAttention>("SelfAttention", l + 1)->norm) : lnf;
         ffn->fuseNorm      = tpFuseNormal == 1 ? hNorm : nullptr;
         QKV->fuseNorm      = tpFuseNormal == 1 ? &(ffn->norm) : nullptr;
         cur                = QKV->cuTrain(cur, flag);
@@ -966,7 +949,7 @@ int NLP_AutoRegressive::ForwardOnNeuron_v0(int flag) {
     if (tpFuseNormal == 0) {
         cur = lnf->cuTrain(cur);
     }
-    OutCLS *cls = GetNeuron<OutCLS>("OutCLS", 0);
+    OutCLS* cls = GetNeuron<OutCLS>("OutCLS", 0);
     cls->cuTrain(cur, flag);  // embed->w,
 
     PrintTensor<floatX>("output", ToX(cls->preLogits), true, B, T, C);

@@ -163,6 +163,7 @@ protected:
 
     // vector where the index is the token id and the value is the token string
     std::vector<std::string> vocab;
+    virtual int Lookup(const std::string&word,int flag=0x0);
     // trie mapping token strings to token ids
     TokenTrie vocab_trie;
     JSON jTokenizer,jVocab;
@@ -197,14 +198,15 @@ protected:
     // convenience array containing the decodings for the fixed 256 byte fallbacks '{0x00}\0', '{0x01}\0', ..., '{0xFF}\0'.
     // TODO: use constexpr?
     std::string byte_pieces[256];
-    char prompt_template[1024];
-    char system_prompt_template[1024];
 
     virtual std::vector<TOKEN_ID> Encode_TokenTrie(const std::string& text, bool encode_bos=false) const;
 public:
     static const int MAX_TOKEN_LENGTH = 512;
+    static const int MAX_TEMPLATE = 1024;
     int sep_id=-1,pad_id=-1,cls_id=-1,mask_id=-1;
+    // 1. in some model, no bos_token_id!(GPT-2/GPT-3,unsloth/Qwen3-4B-Base,...)
     int bos_id = -1,eos_id = -1,eot_id = -1;
+    
 
     enum BIT_FLAG {        
 
@@ -279,6 +281,7 @@ public:
     GTokenizer_QWEN3(Fish *,int flag=0x0);
     std::string T2STR(TOKEN_ID tok,int flag=0x0 )   override;
     bool InitHF(Fish *dolphin,int flag=0x0) override;
+    std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos=false, bool encode_eos=false) override;
 };
 
 class GTokenizer_Heap : public GTokenizer   {

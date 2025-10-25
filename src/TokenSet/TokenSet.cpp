@@ -20,16 +20,20 @@ PromptTokenset::PromptTokenset(JSON::const_iterator jit, hTokenizer hDict, int f
     name    = sPrompt;
     // hDict->eos = 0;
 }
+PromptTokenset::PromptTokenset(const string& prompt, hTokenizer hDict, int flag) : DataTokenSet(hDict) {
+    sPrompt = prompt;
+    name    = sPrompt;
+}
 
 Tokenset_HellaSwag::Tokenset_HellaSwag(JSON::const_iterator jit, hTokenizer hDict, int flag) : GlobTokenset(jit, hDict, flag) {
     name = "HellaSwag";
     // rStepOfEval = 0.0;  //  no sample on evaluate
-    auto k      = jit.key();
-    auto v      = jit.value();
+    auto k    = jit.key();
+    auto v    = jit.value();
     rSampling = 0;
     rSampling = jKV(v, {"samp"}, rSampling);
-    assert(rSampling>0.0);
-    int nFile   = shard_paths.size();
+    assert(rSampling > 0.0);
+    int nFile = shard_paths.size();
     assert(nFile == 1);
 }
 
@@ -46,7 +50,7 @@ GlobTokenset::GlobTokenset(JSON::const_iterator jit, hTokenizer hDict, int flag)
     name           = jKV(v, {"name"}, name);
     eval_every     = jKV(v, {"eval-every"}, eval_every);
     // rSampling    = 0.01;
-    rSampling    = jKV(v, {"samp"}, rSampling);
+    rSampling = jKV(v, {"samp"}, rSampling);
     if (v.find("most") == v.end())
         nMostShard = 100000;
     else
@@ -99,7 +103,7 @@ size_t DataTokenSet::nBatch(int flag) {
     return nBatches;
 }
 
-bool GlobTokenset::LoadNextShard(SampLoader *hLoader, int flag) {
+bool GlobTokenset::LoadNextShard(SampLoader* hLoader, int flag) {
     if (shard_index > 0)
         _INFO("-------- End of shard_%d@\"%s\"-------- \n", shard_index, shard_paths[shard_index - 1].c_str());
     if (shard_index == shard_paths.size()) {
@@ -123,7 +127,7 @@ bool GlobTokenset::Shard2Sample(int flag) {
         assert(nT == nShardToks);
         // tokens.resize(nT);
         fseekCheck(fpShard, (int)header_bytes, SEEK_SET);
-        uint16_t *tmp16 = new uint16_t[nT];
+        uint16_t* tmp16 = new uint16_t[nT];
         if (fread(tmp16, szT, nT, fpShard) != nT) {
             _INFO("Error: file size is not as expected\n");
             return 0x0;
@@ -167,7 +171,7 @@ size_t GlobTokenset::OnShardFile(int id0, bool load, int flag) {
         return -1;
     }
     // use the first glob match as the filename for now
-    const char *filename = shard_paths[id].c_str();
+    const char* filename = shard_paths[id].c_str();
     assert(fpShard == NULL);
     fpShard = fopenCheck(filename, "rb");
     // validate the header
@@ -255,7 +259,7 @@ TOKEN_ID DataTokenSet::At(size_t pos) {
     return token;
 }
 
-bool DataTokenSet::Serialize(const std::string &path, bool isSave, int flag) {
+bool DataTokenSet::Serialize(const std::string& path, bool isSave, int flag) {
     try {
         FSerial S(path, isSave, flag);
         if (!S.isValid())
@@ -288,14 +292,14 @@ bool DataTokenSet::Serialize(const std::string &path, bool isSave, int flag) {
     }
 }
 
-double DataTokenSet::LossOnResult(hSampLoader hLoader, OutCLS *cls, int flag) {
+double DataTokenSet::LossOnResult(hSampLoader hLoader, OutCLS* cls, int flag) {
     assert(cls != nullptr);
     double mean_loss = 0, sum = 0, ss = 0, ppl = 0, sigma = 0, logprob = 0;
     int *mask = hLoader->hBatch->mask, n = 0, nzLoss = cls->nzLoss;
     int nVocab = cls->nCls, ldP = cls->padded_nCls;
-    float *loss      = cls->hostLoss;
-    TOKEN_ID *tokens = TO<TOKEN_ID>(hLoader->hostTargetProbs);  // hLoader->hBatch->hostToken
-    float *logits    = nullptr;
+    float* loss      = cls->hostLoss;
+    TOKEN_ID* tokens = TO<TOKEN_ID>(hLoader->hostTargetProbs);  // hLoader->hBatch->hostToken
+    float* logits    = nullptr;
     // if(hasMask()){
     //     mask = TO<int>(hLoader->hostBatchMask);
     // }
@@ -330,7 +334,7 @@ bool Tokenset_HellaSwag::Shard2Sample(int flag) {
         int batch_dim_offset, nComplete       = 0;
         int can_fit_examples = (int)(B / nMostCompletion), examples_per_process = nShardSamples, end_example_index = examples_per_process,
             start_example_index = 0;
-        uint16_t *buffer16      = new uint16_t[longest_example_bytes];
+        uint16_t* buffer16      = new uint16_t[longest_example_bytes];
         assert(can_fit_examples > 0);
         tokens.resize(nShardSamples * nMostCompletion * T);
         masks.resize(tokens.size());
@@ -358,8 +362,8 @@ bool Tokenset_HellaSwag::Shard2Sample(int flag) {
             hQuestion question = new QUESTION(l, batch_dim_offset, batch_dim_offset + nComplete);
             assert(nComplete == nMostCompletion);  // we expect 4 completions for now
             // assert(batch_dim_offset + c <= B); // we expect to fit in the batch
-            assert(context_length > 0 && context_length < T);             // context is non-empty and up to T
-            uint16_t *context_tokens_start = (uint16_t *)(buffer16 + 3);  // where the tokens start
+            assert(context_length > 0 && context_length < T);            // context is non-empty and up to T
+            uint16_t* context_tokens_start = (uint16_t*)(buffer16 + 3);  // where the tokens start
             for (int b = 0; b < nComplete; b++) {
                 for (int i = 0; i < context_length; i++) {
                     int boff             = batch_dim_offset + b;
@@ -368,11 +372,11 @@ bool Tokenset_HellaSwag::Shard2Sample(int flag) {
                 }
             }
             // process the completions, insert them in their row, right after the (shared) context
-            uint16_t *completions_iter = buffer16 + 3 + context_length;
+            uint16_t* completions_iter = buffer16 + 3 + context_length;
             for (int c = 0; c < nComplete; c++) {
                 int coff                          = batch_dim_offset + c;
                 int completion_length             = (int)completions_iter[0];
-                uint16_t *completion_tokens_start = completions_iter + 1;
+                uint16_t* completion_tokens_start = completions_iter + 1;
                 assert(completion_length > 0 && context_length + completion_length < T);  // things fit?
                 for (int i = 0; i < completion_length; i++) {
                     int tok_cur                           = (int)completion_tokens_start[i];
@@ -388,7 +392,7 @@ bool Tokenset_HellaSwag::Shard2Sample(int flag) {
                 }
                 completions_iter += 1 + completion_length;  // move to the next completion
                 hSAMP samp   = new SAMP(coff * T, T);
-                samp->target = (void *)question;
+                samp->target = (void*)question;
                 shard_samps.push_back(samp);
             }
             questions.push_back(question);
@@ -404,30 +408,38 @@ bool Tokenset_HellaSwag::Shard2Sample(int flag) {
 /*
     A lite version of Optimizer::Evaluate
  */
-double SampLoader::Evaluate(int flag) {
-    Fish *hFish  = dolphin;
-    RLS_BP *hRLS = hFish->GetScheduler<RLS_BP>();
+double SampLoader::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
+    Fish* hFish  = dolphin;
+    RLS_BP* hRLS = hFish->GetScheduler<RLS_BP>();
     double tic = GST_ms(), tps, tRemain = 0.0, tpi = 0, relax = 0.9, dt, tCur, tLast;
     int i, nB = 0, step = StepOfEvaluate(), iter = hOPT->GetITER(), nMost = CEIL_DIV(num_batches, step);
+    switch (tpBatch) {
+        case BATCHofEMBED:
+            nMost = 1;
+            break;
+        default:
+            break;
+    }
     // double a, a0 = DBL_MAX, a1 = -DBL_MAX, mean_loss = 0, ss = 0, sigma, sum = 0;
     hGensor target_probs = hFish->Target();
-    OutCLS *cls          = hFish->GetNeuron<OutCLS>("OutCLS", 0);
-    TokenEmbed *embed    = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
+    OutCLS* cls          = hFish->GetNeuron<OutCLS>("OutCLS", 0);
+    TokenEmbed* embed    = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
     // hSAMP samp = nullptr;
     next_sample = 0;  // fix this to keep same acc on each experiment
     nEvalTokens = 0;
     tLast       = GST_ms();
     ClearII();
     for (int i = 0; i < nMost; i++) {
-        UpdateBatch(min(i * step, num_batches), hFish);
+        if (tpBatch == SAMPLEofSHARD)
+            UpdateBatch(min(i * step, num_batches), hFish);
         // samp = cur_samps[0];
         embed->hBatch = GetCurBatch();
         hFish->ForwardOnRLS(iter, 0x0);
         // float a = hTokens->LossOnResult(shared_from_this(), cls);  // loader->hTokens->LossOnResult(loader, cls);
         nEvalTokens += embed->hBatch->size(), nB++;
         tCur = GST_ms(), dt = tCur - tLast, tLast = tCur;
-        tpi = tpi * (1.0 - relax) + dt * relax, tRemain = (nMost - i) * tpi;        //  ms
-        if (i % 10 == 0 && tRemain>60*1000) {
+        tpi = tpi * (1.0 - relax) + dt * relax, tRemain = (nMost - i) * tpi;  //  ms
+        if (i % 10 == 0 && tRemain > 60 * 1000) {
             _INFO("\r\t%d/%d a=[%.3g,%.3g] %.4gk/s ...\t", i, nMost, iiLoss.a0, iiLoss.a1, nEvalTokens / (tCur - tic));
             _TIME_INFO("remain=", tRemain), _INFO("        ");
         }
@@ -443,8 +455,9 @@ double SampLoader::Evaluate(int flag) {
     if (!hFish->isLocalInfer)
         UpdateStepInfos(iiLoss.average, nB);
     tps = nEvalTokens / SUM::tEval_1 / 1.0e3;
-    
+
     _INFO("\t#%g±%.4f tps=%.3gK(%gM) a=[%g,%g] T=%g(sec)\n", "", iiLoss.average, iiLoss.sigma, tps, nEvalTokens / 1.0e6, iiLoss.a0, iiLoss.a1, SUM::tEval_1);
+    iiLoss.SaveToCSV(name + "_loss.csv", 0x0);
     return iiLoss.average;
 }
 
@@ -466,8 +479,8 @@ void SampLoader::UpdateStepInfos(float mean_loss, int nB, int flag) {
     //     _INFO(" !OVERFIT! ");
     // }
     double a = nB * hOPT->TrainParams().nTokenInBatch() / 1.0e6;
-    _INFO(" Loss@\"%s\"=%.3f(%.2g) nBranch=%d nToken=%.3gM best=%.4f(%d) E2T=%.3g T=%g(%.3g)s x=%.3g\n", sTokenSet().c_str(), mean_loss, nFuyou, delta, a,
-          best, stepis.best_id, mean_loss - train_last, SUM::tEval_1, SUM::tLoadData / 1000.0, ee);  //
+    _INFO(" Loss@\"%s\"=%.3f(%.2g) nBranch=%d nToken=%.3gM best=%.4f(%d) E2T=%.3g T=%g(%.3g)s x=%.3g\n", sTokenSet().c_str(), mean_loss, nFuyou, delta, a, best,
+          stepis.best_id, mean_loss - train_last, SUM::tEval_1, SUM::tLoadData / 1000.0, ee);  //
 
     // if (wLog == nullptr) {
     // } else
@@ -477,7 +490,7 @@ void SampLoader::UpdateStepInfos(float mean_loss, int nB, int flag) {
     stepis.SaveToCSV("_info_.csv");
 }
 
-double Tokenset_HellaSwag::LossOnResult(hSampLoader hLoader, OutCLS *cls, int flag) {
+double Tokenset_HellaSwag::LossOnResult(hSampLoader hLoader, OutCLS* cls, int flag) {
     assert(cls != nullptr);
     double mean_loss = 0, a = 0, a_0 = DBL_MAX;
     // auto sp = hLoader->hostBatch->shape;
@@ -487,7 +500,7 @@ double Tokenset_HellaSwag::LossOnResult(hSampLoader hLoader, OutCLS *cls, int fl
     int *mask = nullptr, n = 0, nzLoss = cls->nzLoss, i = 0, t, b = 0, q, no = -1, nOK = 0, nQ = 0, s = 0;
     assert(nB % nMostCompletion == 0);
 
-    float *loss = cls->hostLoss;
+    float* loss = cls->hostLoss;
     TOKEN_ID token;
     quesInBatch.clear();
     while (s < hLoader->cur_samps.size()) {

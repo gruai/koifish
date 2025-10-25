@@ -3901,6 +3901,7 @@ struct safetensors_mmap {
 #ifdef _POSIX_MAPPED_FILES
     static constexpr bool SUPPORTED = true;
 
+    //  support multiple mmap @ different files
     safetensors_mmap(struct safetensors_file *file, int __prot, size_t prefetch = (size_t)-1 /* -1 = max value */, bool numa = false) {
         size      = file->size;
         int fd    = fileno(file->fp);

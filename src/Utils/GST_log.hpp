@@ -19,6 +19,7 @@
 #define COLOR_RESET "\033[0m"
 // Bright/Vivid variants (often supported)
 #define COLOR_ORANGE "\033[93m"  // Bright Yellow (common "orange")
+#define COLOR_BOLD_RED "\x1b[1;31m"
 
 #include <cstdarg>
 #include <iostream>
@@ -44,6 +45,7 @@ enum DUMP_LEVEL {
     DUMP_DEBUG = 1,
     DUMP_INFO  = 2,
     DUMP_WARN  = 3,
+    DUMP_WARN0  = 30,
     DUMP_ERROR = 4,
     DUMP_CONT  = 5,  // continue previous log
 };
@@ -74,6 +76,7 @@ inline void GG_log_internal(DUMP_LEVEL level, const char* format, ...) {
 
 #define _INFO(...) GG_log_internal(DUMP_INFO, __VA_ARGS__)
 #define _WARN(...) GG_log_internal(DUMP_WARN, __VA_ARGS__)
+#define _WARN0(...) GG_log_internal(DUMP_WARN0, __VA_ARGS__)
 #define _ERROR(...) GG_log_internal(DUMP_ERROR, __VA_ARGS__)
 #define _INFO_IF(...)                                \
     {                                                \

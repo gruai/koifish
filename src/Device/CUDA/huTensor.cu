@@ -16,7 +16,7 @@
 #include "../../Utils/GST_log.hpp"
 #include "../../Utils/GST_rander.hpp"
 #include "../../g_float.hpp"
-#include "./kernel/Operator.cuh"
+#include "./kernel/operator.cuh"
 #include "./kernel/utils.cuh"
 static Grusoft::GRander randParam;
 huTensor::huTensor(Fish* fish, const string& name_, const SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag) : GTensor(fish, shape, tpD_, false, flag) {
@@ -87,7 +87,8 @@ size_t huTensor::Alloc_1(void** dst, bool isZero, string desc, size_t sz0, int f
         size_t szFree, szTotal;
         cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
         if (szAlloc > szFree) {
-            _ERROR("[CUDA Alloc] Outof GPU Memory @%s!  Free=%gM < Need=%gM.\n ----------------------- more infomation -----------------------\n", name, szFree / 1.0e6, szAlloc / 1.0e6);
+            _ERROR("[CUDA Alloc] Outof GPU Memory @%s!  Free=%gM < Need=%gM.\n ----------------------- more infomation -----------------------\n", name,
+                   szFree / 1.0e6, szAlloc / 1.0e6);
             hFish->Dump(KOIFISH_OUTOF_GPUMEMORY);
             exit(KOIFISH_OUTOF_GPUMEMORY);
         }
@@ -365,7 +366,7 @@ static bool isGPUDirectMMap = true;
 2. Eval: Only call once at loadCheckpoint
 */
 bool GTensor::Serial_MMAP(bool isSave, bool isReset, int flag) {
-    if (isRefer() && !BIT_TEST(flags,F_RELOAD)) 
+    if (isRefer() && !BIT_TEST(flags, F_RELOAD))
         return true;
 
     try {
@@ -389,7 +390,8 @@ bool GTensor::Serial_MMAP(bool isSave, bool isReset, int flag) {
             if (hRef != nullptr && isReset) {
                 data = nullptr, gm = nullptr, gv = nullptr;
             }
-            SUM::nSaveParam++;      SUM::nzSaveParam += size();
+            SUM::nSaveParam++;
+            SUM::nzSaveParam += size();
         } else {
             if (hRef != nullptr) {  // huTensor::Alloc
                 ShareMemory(hRef, 0x100);
@@ -406,7 +408,8 @@ bool GTensor::Serial_MMAP(bool isSave, bool isReset, int flag) {
                 cudaCheck(cudaMemcpy(gm, tmpData + szData, szM + szV, cudaMemcpyHostToDevice));
                 Print("mmap_load", 3, dumpFlag), Print("mmap_load", 2, dumpFlag);
             }
-            SUM::nLoadParam++;          SUM::nzLoadParam += size();
+            SUM::nLoadParam++;
+            SUM::nzLoadParam += size();
         }
         if (tmpData != host_data)
             delete[] tmpData;

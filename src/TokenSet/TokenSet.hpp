@@ -142,6 +142,7 @@ class PromptTokenset : public DataTokenSet {
 
    public:
     PromptTokenset(JSON::const_iterator jit, hTokenizer hDictVAE, int flag = 0x0);
+    PromptTokenset(const string&prompt, hTokenizer hDictVAE, int flag = 0x0);
 };
 class GlobTokenset : public DataTokenSet {
    protected:

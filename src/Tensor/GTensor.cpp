@@ -139,7 +139,7 @@ void GTensor::SetRefer(hGTensor hR, int flag) {
     hRef = hR;
     hR->refered.push_back(this);
     type = hRef->type;
-    if(hFish->config.dumpSwitch.tensor_ref>0)
+    if (hFish->config.dumpSwitch.tensor_ref > 0)
         _INFO("\t%s =====> %s\n", name, hR->name);
 }
 
@@ -328,7 +328,7 @@ hGensor GENSORS::Get(const string &name, int flag) {
             return nullptr;
         }
         return nag[name];
-    }
+    }  //  model.layers.0.input_layernorm.weight
 }
 void ToChebyshev(int N, float *rows, int flag = 0x0);
 /*
@@ -336,8 +336,8 @@ void ToChebyshev(int N, float *rows, int flag = 0x0);
     device_to_file   using double buffering running on the given stream.
 */
 int GTensor::SerialJSON(const std::string &name_, const JSON &val, void *bytes_ptr, size_t bytes_size, int flag) {
-    if(strcmp(name,"model.out.weight")==0){   //  "tokenizer.tokens"
-       int debug = 0x0;
+    if (strcmp(name, "model.out.weight") == 0) {  //  "tokenizer.tokens"
+        int debug = 0x0;
     }
     if (strcmp(name, name_.c_str()) != 0) {
         strcpy(name, name_.c_str());
@@ -378,7 +378,7 @@ int GTensor::SerialJSON(const std::string &name_, const JSON &val, void *bytes_p
 
     void *src = (char *)bytes_ptr + offset_start;
 
-    // if(G_Has_(name,{"layers.27.mlp.w1.weight"})){   //only for debug    815288320
+    // if(G_Has_(name,{"layers.27.mlp.weight"})){   //only for debug    815288320
     //    float *rows = new float[ne[0]];
     //    T2Float_arr(ne[0],(f8e5m2_t*)src,rows);
     //    ToChebyshev(ne[0],rows);
@@ -397,9 +397,9 @@ int GTensor::SerialJSON(const std::string &name_, const JSON &val, void *bytes_p
                 data = src;
                 BIT_SET(flags, F_MMAP);
             }
-            if(!hFish->isTrain()){  // otherwize, mmap file is free & host_data is invalid
+            if (!hFish->isTrain()) {  // otherwize, mmap file is free & host_data is invalid
                 Alloc(-1, flag);
-                Serial_MMAP(false, false); 
+                Serial_MMAP(false, false);
                 host_data = nullptr;
             }
             if (G_Has_(name, {"model.inp_embd.weight"})) {  // only for debug
@@ -473,6 +473,9 @@ void GTensor::Print(const string &title0, int x, int flag, size_t nEle) const {
 }
 
 bool GTensor::DumpX(int tpDump, const string &title, int flag) const {
+    if (strcmp(name, "model.layers.0.self_attn.wqkv.bias") == 0) {
+        int debug = 0x0;
+    }
     size_t nz = 0, nElems = size(), i = 0, n = 10;
     float *fdata = (float *)data, a1 = -FLT_MAX, a0 = FLT_MAX;
     const char *A = "d";
@@ -508,8 +511,12 @@ bool GTensor::DumpX(int tpDump, const string &title, int flag) const {
                     a0 = std::min(a0, fdata[i]);
                 }
             }
-            _INFO("\t%s %-36s %-4s szAlloc=%6gM\t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " %s] \n", title.c_str(), name, A, szUse / 1.0e6, ne[0],
-                  ne[1], ne[2], ne[3], cNameOf(type));
+            if (szUse == 0x0) {
+                _INFO("\t%s %-36s %-4s", title.c_str(), name, A); _WARN0(" NO ALLOC ");
+                _INFO(" \t[%" PRId64 " %" PRId64 " %" PRId64 " %" PRId64 " %s] \n", ne[0], ne[1], ne[2], ne[3], cNameOf(type));
+            } else
+                _INFO("\t%s %-36s %-4s szAlloc=%6gM\t[%" PRId64 " %" PRId64 " %" PRId64 " %" PRId64 " %s] \n", title.c_str(), name, A, szUse / 1.0e6, ne[0],
+                      ne[1], ne[2], ne[3], cNameOf(type));
             if (n > 0 && a1 != -FLT_MAX) {
                 _INFO("\nsum=%g data=[%f : %f] rZ=%.3g%%\n\t", sum, a0, a1, nz * 100.0 / nElems);
                 for (int i = 0; i < std::min((size_t)(ne[0] * ne[1]), n); i++) {
@@ -550,8 +557,8 @@ void _T_repr_(hGensor t, const char *tab, char *buf, const GENSOR_INFO &info) {
     auto ne   = t->ne;
     size_t n0 = strlen(buf), n1;                      // char buf[64*1024]="\0";
     string suf, pref, sX = info.__repr__(suf, pref);  //    info.sX;
-    sprintf(buf + strlen(buf), "%s %s %s %s \tdata=%p grad=>%p\t[% " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " ] \n", tab, sX.c_str(), A, t->name,
-            t->data, t->grad, ne[0], ne[1], ne[2], ne[3]);  // cNameOf(t->type)
+    sprintf(buf + strlen(buf), "%s %s %s %s \tdata=%p grad=>%p\t[%" PRId64 " %" PRId64 " %" PRId64 " %" PRId64 " ] \n", tab, sX.c_str(), A, t->name, t->data,
+            t->grad, ne[0], ne[1], ne[2], ne[3]);  // cNameOf(t->type)
     n1 = strlen(buf);
 }
 
@@ -601,9 +608,18 @@ bool huTensor::BeforeBackward(size_t &off, int flag) {
     return true;
 }
 
+/**
+ * Train
+ *      1. AfterBuild->Prepare->InitGUOKE->ManegeMemory-> Alloc each of Neuron::PickGensors
+ *
+ * Evaluate/Chat
+ *      1. AfterBuild->HF_Serialize->SerialJSON
+ *      2.
+ */
 bool huTensor::Alloc(int iter, int flagInit) {
-    if (strcmp(name, "model.inp_embd") == 0
-        /*|| strcmp(name, "model.embed.weight") == 0*/) {  //  model.inp_embd.weight       model.out.weight model.embed.weight model.blk.0.attn.wq.weight
+    if (strcmp(name, "model.layers.0.self_attn.q_proj.weight") == 0
+        /*|| strcmp(name, "model.embed.weight") == 0*/) {  //  model.inp_embd.weight  preLogits     model.out.weight model.embed.weight
+                                                           //  model.blk.0.attn.wq.weight
         int debug = 0x0;                                   //
     }
 
@@ -615,7 +631,7 @@ bool huTensor::Alloc(int iter, int flagInit) {
     if (hRef != nullptr) {  // Activation or Parameters
         // if (DUMP(0))
         if (BIT_TEST(flags, GTensor::F_RELOAD)) {
-            if(hFish->config.dumpSwitch.tensor_ref>0)
+            if (hFish->config.dumpSwitch.tensor_ref > 0)
                 _INFO("\t%s =====> %s\n", name, hRef->name);
         } else {
             ShareMemory(hRef);  //  grad => src->grad;
@@ -667,9 +683,9 @@ bool huTensor::Alloc(int iter, int flagInit) {
             } else if (method == "lion") {
                 Alloc_1(&gm, true, desc + ".m", szM), szV = 0;
             } else if (method == "muon") {
-                if(hFish->config.common.muon.isAdamW(this)){
+                if (hFish->config.common.muon.isAdamW(this)) {
                     Alloc_1(&gm, true, desc + ".m", szM + szV), gv = (char *)gm + szM;
-                }else{
+                } else {
                     Alloc_1(&gm, true, desc + ".m", szM), szV = 0;
                 }
                 // Alloc_1(&gm, true, desc+".m", szMV);
@@ -682,8 +698,9 @@ bool huTensor::Alloc(int iter, int flagInit) {
                 Alloc_1(&gv, true, desc + ".m", szM), szV = 0;
             }
             assert(gm != nullptr && "gm is nullptr@huTensor::Alloc");
-        }else{
-            szV = 0;    szM = 0;
+        } else {
+            szV = 0;
+            szM = 0;
         }
     } else {
     }
@@ -697,9 +714,9 @@ bool huTensor::Alloc(int iter, int flagInit) {
         if (ne[0] == 262144 || ne[1] == 151936) {
             int isDebug = 0;
         }
-        if (szGlobalMaloc - sz0 >= SUM::nMinTensorAlloc || type == typNUMBER::T_SIGN) {     //100 * 1.0e6
-            printf("\t %s=%gM@%s type=%s shape=[%ld,%ld,%ld,%ld]%s sum=%gG\n", sA.c_str(), (szGlobalMaloc - sz0) * 1.0f / 1.0e6, name, cNameOf(type), ne[0],
-                   ne[1], ne[2], ne[3], grad != nullptr ? "x2" : "", szGlobalMaloc * 1.0 / 1.0e9);
+        if (szGlobalMaloc - sz0 >= SUM::nMinTensorAlloc || type == typNUMBER::T_SIGN) {  // 100 * 1.0e6
+            _INFO("\t %s=%gM@%s type=%s shape=[%ld,%ld,%ld,%ld]%s sum=%gG\n", sA.c_str(), (szGlobalMaloc - sz0) * 1.0f / 1.0e6, name, cNameOf(type), ne[0],
+                  ne[1], ne[2], ne[3], grad != nullptr ? "x2" : "", szGlobalMaloc * 1.0 / 1.0e9);
         }
     }
     mem_status = 1;
@@ -745,18 +762,19 @@ bool huTensor::Free(bool isPassResident) {
     return true;
 }
 
-bool Gensors2File(std::vector<hGensor> gensors,const std::string&path,int flag){
+bool Gensors2File(std::vector<hGensor> gensors, const std::string &path, int flag) {
     /*FILE* logFile = freopen(path.c_str(), "w", stderr);
     if (!logFile) {
         perror("Failed to redirect stderr");
         return false;
     }*/
-    _INFO("\n>>>> %ld Gensors to File@%s",gensors.size(),path.c_str());
-    for(auto t : gensors){
+    _INFO("\n>>>> %ld Gensors to File@%s", gensors.size(), path.c_str());
+    for (auto t : gensors) {
         t->DumpX(0x0);
     }
-    
-    //If you want to restore it back to the console, you typically need ​​low-level file descriptor redirection (dup2)​​, which is ​​POSIX-specific (Linux/macOS)​​. Not available in pure standard C++.
+
+    // If you want to restore it back to the console, you typically need ​​low-level file descriptor redirection (dup2)​​, which is ​​POSIX-specific
+    // (Linux/macOS)​​. Not available in pure standard C++.
     return true;
 }
 

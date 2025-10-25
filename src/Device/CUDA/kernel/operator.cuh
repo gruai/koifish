@@ -114,6 +114,16 @@ __device__ inline float matmul_warppar(float* x, half* w, int i, int n) {
     return warpreduce_sum(val);
 }
 
+// todo
+__device__ inline float matmul_warppar(__nv_bfloat16* x, half* w, int i, int n) {
+    assert(0);
+    return 0.0;
+}
+__device__ inline float matmul_warppar(__nv_bfloat16* x, __nv_fp8_e5m2* w, int i, int n) {
+    assert(0);
+    return 0.0;
+}
+
 // warp-parallel mat*vec; each warp collaboratively computes mat*vec for a single row
 // specialized for fp8 weights and ensures that we maximize transaction sizes by reading 4 bytes per thread
 __device__ inline float matmul_warppar(float* x, __nv_fp8_e5m2* w, int i, int n) {
@@ -403,8 +413,9 @@ __global__ void CU_disti_normal_N(curandState* state, typ* results, int N, int l
     }
 }
 /*
-    cublasGemmEx(cublas_handle, opT, opN, n, m, 1, &one, X, bf16, m, nullptr, bf16, 1, &zero, Xt, bf16, n, CUDA_R_32F, CUBLAS_GEMM_DEFAULT);
-    cudaMemcpy(X, Xt, sizeof(Tmv) * m * n, cudaMemcpyDeviceToDevice);  // cudaMemcpyAsync
+    May faster by call blas:
+        cublasGemmEx(cublas_handle, opT, opN, n, m, 1, &one, X, bf16, m, nullptr, bf16, 1, &zero, Xt, bf16, n, CUDA_R_32F, CUBLAS_GEMM_DEFAULT);
+        cudaMemcpy(X, Xt, sizeof(Tmv) * m * n, cudaMemcpyDeviceToDevice);  // cudaMemcpyAsync
 */
 template <typename typ>
 __global__ void CU_transpose(const typ* input, typ* output, int rows, int cols) {
@@ -810,6 +821,8 @@ void CU_abc(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int
             float beta = 0.0, floatX* pre_gelu = NULL, bool backward = false);
 void CU_mm_(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int transB = 0,
             float beta = 0.0, floatX* pre_gelu = NULL, bool backward = false);
+//  y=W*x
+void CU_mv_(floatX* y, const floatX* W, const floatX* x, int m, int n, float alpha = 1.0f, float beta = 0.0f);
 void CU_mm_blasLt(floatX* d, const floatX* a, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int transB = 0,
                   float alpha = 0.0, float beta = 0.0, floatX* pre_gelu = NULL, bool backward = false);
 void matmul_backward(floatX* delta, floatX* dweight, floatX* dbias, floatX* deltaIn, floatX* inp, floatX* weight, float* dbias_buffer, int B, int T, int C,

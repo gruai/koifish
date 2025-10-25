@@ -342,9 +342,10 @@ bool LoadJsonFile(const string &jPath, JSON &jObj, int flag) {
     "vocab_size": 32000
 */
 string MODEL_CARD::sWeight = ".weight", MODEL_CARD::sBias = ".bias";  //".w"
-string MODEL_CARD::sNorm    = "_norm";                                //".norm"
-string MODEL_CARD::sLayer   = "blk.";                                 //".norm"
-string MODEL_CARD::sAttnOut = ".wo";                                  //  "_output";    //  "_cat"
+
+string MODEL_CARD::sLayer = "blk.";  //".norm"
+// string MODEL_CARD::sAttnOut = ".wo";                                  //  "_output";    //  "_cat"
+string MODEL_CARD::sEmbed = "embed", MODEL_CARD::sInvEmbed = "embed_inv";
 
 MODEL_CARD::MODEL_CARD() {
 #if defined(ENABLE_FP16)
@@ -389,10 +390,7 @@ MODEL_ARCH CLI_params::ModelArch() {
     return arch;
 }
 
-bool CLI_params::isValid(int flag) {
-    uint32_t head_dim = n_embd_head();
-    return true;
-}
+bool CLI_params::isValid(int flag) { return true; }
 
 bool CLI_params::JModel2Params(int flag) {
     string key = "";
@@ -411,6 +409,8 @@ bool CLI_params::JModel2Params(int flag) {
         auto jTrans = jKEY(jConfig, {"model", "parameter", "transformer"});
         if (!jTrans.empty()) {
             int nH = jKV(jTrans, {"Head"}, -1), nF = jKV(jTrans, {"Ffn"}, -1), nE = -1, nC = jKV(jTrans, {"Ctx"}, -1);
+            assert(nH > 0);
+            int nKV   = jKV(jTrans, {"KVHead"}, nH);
             auto item = jKEY(jTrans, {"Embed"});
             std::vector<int> embeds;
             if (item.is_string()) {
@@ -428,7 +428,8 @@ bool CLI_params::JModel2Params(int flag) {
                 nF = nEmbed() * 4;
 
             if (nH > 0 && nF > 0) {
-                for (int i = 0; i < nLayerX; i++) model.layerps.push_back(MODEL_CARD::LAY_PARAM(nH, nH, nF));
+                int hd = nEmbed() / nH;
+                for (int i = 0; i < nLayerX; i++) model.layerps.push_back(MODEL_CARD::LAY_PARAM(nH, nKV, hd, nF));
             } else {
                 assert(0);
             }
@@ -633,8 +634,9 @@ void CLI_params::OnArch() {
             // _embd = 128; dict_latent_dim = 128;        n_embd_head_v=n_embd_head_k=2; //only for debug
             if (model.layerps.size() == 0 && !isJModel) {  //  deprecated
                 int n_ff0 = jKV(jConfig, {"model_v0", "ffn", "length"}, 3072, false), nLay = nLayer();
+                int hd = nEmbed() / n_head();
                 for (int i = 0; i < nLayer(); i++) {
-                    MODEL_CARD::LAY_PARAM lay(nH, nH, n_ff0);
+                    MODEL_CARD::LAY_PARAM lay(nH, nH, hd, n_ff0);
                     model.layerps.push_back(lay);
                 }
             }
@@ -663,23 +665,23 @@ void CLI_params::OnArch() {
             // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;  // 5.89 tps
             // scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;      //  6.53 tps
             model.isSeparateQKV = true, model.isBqkv = true;
-            model.sNorm = ".norm", model.sLayer = "layers.";
+            model.sLayer             = "layers.";
             model.isEmbedWeightTying = true;  //  why false would cause nan
-            // model.sAttnOut=".wqkv";
             break;
         case NLP_QWEN3:
             scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;  // 5.89 tps
             // scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;      //  6.53 tps
-            model.isSeparateQKV = true, model.isBqkv = true;
-            model.sNorm = ".norm", model.sLayer = "layers.";
-            model.isEmbedWeightTying = true;  //  why false would cause nan
-            // model.sAttnOut=".wqkv";
+            model.isSeparateQKV = true;
+            model.isBqkv        = true;  //  0.6B has no bias!
+            model.isQKNormal    = true;
+            model.sLayer        = "layers.";
+            model.sEmbed = "embed_tokens", model.sInvEmbed = "lm_head";
+            // model.isEmbedWeightTying = false;   //  0.6B has no tying, but 4B is tying       isEmbedWeightTying = jKV(jModelParam, {"tie_word_embeddings"}, isEmbedWeightTying};
             break;
         case NLP_DEEPSEEK:
-            model.sNorm = ".norm", model.sLayer = "layers.";
+            model.sLayer = "layers.";
             break;
         case NLP_MISTRAL:
-            model.sNorm  = ".norm";
             model.sLayer = "layers.";
             break;
 
@@ -1003,6 +1005,7 @@ bool CLI_params::InitJConfig(int flag) {
         DEBUG.x_str      = jKV(jConfig, {"debug", "x_str"}, DEBUG.x_str);
         DEBUG.N_mostiter = jKV(jConfig, {"debug", "most_iter"}, DEBUG.N_mostiter);
         DEBUG.fLongTail  = jKV(jConfig, {"debug", "long_tail"}, DEBUG.fLongTail);
+        DEBUG.prompts  = jKV_arr(jConfig, {"debug", "prompts"}, DEBUG.prompts);
 
         SUM::nMostMemItem    = jKV(jConfig, {"dump", "most_mem_item"}, SUM::nMostMemItem);
         SUM::nMinTensorAlloc = jKV(jConfig, {"dump", "min_tensor_alloc"}, SUM::nMinTensorAlloc);

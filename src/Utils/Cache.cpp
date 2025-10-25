@@ -15,7 +15,7 @@ KVCache::KVCache(Fish *hF, int max_batch_size, int max_seq_len, int flag) : _fis
     // init_lamakv();
     auto modep  = _fish->config.model;
     max_seq_len = std::max(max_seq_len, modep.seq_len);
-    int kv_dim  = modep.head_dim * modep.n_kv_heads;
+    int kv_dim  = hF->config.KV_dim( );
     assert(kv_dim>0);
     //  GTensor::scratch = std::make_shared<huTensor>("scratch_output",sp0,GTensor::tpFloatX,false);
     SHAPE sp = {modep.n_layers, max_seq_len, kv_dim};

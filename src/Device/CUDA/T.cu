@@ -9,13 +9,10 @@
 #include "../../Manifold/Neuron.hpp"
 #include "../../Manifold/Optimizer.hpp"
 #include "../../Manifold/gLLM.hpp"
-#include "./kernel/Operator.cuh"
+#include "./kernel/operator.cuh"
 
 extern int tpFuseCu;
 extern cudaStream_t main_stream;
-
-// static int coopsms;
-// static __constant__ CoopLayer<> cooplayers[MAX_LAYERS];
 
 unsigned long long rng_state = 0;
 float* accumulated_mean_loss = nullptr;

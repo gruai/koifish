@@ -12,8 +12,8 @@
 #include "../../Manifold/Fish.hpp"
 #include "../../Manifold/Neuron.hpp"
 #include "./cuda_common.h"
-#include "./kernel/Operator.cuh"
 #include "./kernel/layernorm.cuh"
+#include "./kernel/operator.cuh"
 #include "./kernel/rope.cuh"
 // #include "./EDevice.hpp"
 #define NOMINMAX
@@ -40,9 +40,9 @@ static cudaEvent_t cuStart, cuEnd;
 #ifdef ENABLE_CUDNN
 static cudnnHandle_t cudnn_handle;
 static size_t cudnn_workspace_size = 0;  // dynamically allocated as needed (up to 256MiB!)
-static void *cudnn_workspace       = NULL;
+static void* cudnn_workspace       = NULL;
 
-static void cuDNNCheck(cudnnStatus_t error, const char *file, int line) {
+static void cuDNNCheck(cudnnStatus_t error, const char* file, int line) {
     if (error != CUDNN_STATUS_SUCCESS) {
         printf("[CUDNN ERROR] at file %s:%d:\n%s\n", file, line, cudnnGetErrorString(error));
         exit(EXIT_FAILURE);
@@ -50,7 +50,7 @@ static void cuDNNCheck(cudnnStatus_t error, const char *file, int line) {
 };
 #define cuDNNCheck(err) (cuDNNCheck(err, __FILE__, __LINE__))
 
-static void checkCudnnFE(const fe::error_object &e, const char *file, int line) {
+static void checkCudnnFE(const fe::error_object& e, const char* file, int line) {
     if (!e.is_good()) {
         printf("[CUDNN ERROR] at file %s:%d:\n%s\n", file, line, e.err_msg.c_str());
         exit(EXIT_FAILURE);
@@ -383,12 +383,12 @@ auto cudnn_qkv_bwd(int B, int NH, int T, int HS, float attn_scale, int ld, bool 
 }
 
 //
-bool SelfAttention::FUSE_cudnn(floatX *dqkvr, floatX *dout, int flag) {
+bool SelfAttention::FUSE_cudnn(floatX* dqkvr, floatX* dout, int flag) {
     assert(cudnn_handle != nullptr);
     NVTX_RANGE_FN();
     int NH = n_head, HS = C / n_head, stride = 3 * NH * HS;
     float attn_scale = 1.0 / sqrtf(HS * 1.0), *stats = TO<float>(transition);
-    void *devPtrO = attn->data;  // out;
+    void* devPtrO = attn->data;  // out;
     cuDNNCheck(cudnnSetStream(cudnn_handle, main_stream));
     // if(var_packs.empty()){}
     var_packs = {{Q_UID, devQ},       {K_UID, devK},       {V_UID, devV},       {O_UID, devPtrO},  {dO_UID, dout},
@@ -414,7 +414,7 @@ bool SelfAttention::FUSE_cudnn(floatX *dqkvr, floatX *dout, int flag) {
 }
 
 struct CudnnHandleDeleter {
-    void operator()(cudnnHandle_t *handle) const {
+    void operator()(cudnnHandle_t* handle) const {
         if (handle) {
             cuDNNCheck(cudnnDestroy(*handle));
             delete handle;
@@ -467,7 +467,7 @@ inline int convert_SM_to_cores(int major, int minor) {
     return nGpuArchCoresPerSM[index - 1].cores;
 }
 
-bool InitCUDA(const CLI_params &hparams, EDGE_DEVICES *hDevice, int flag) {
+bool InitCUDA(const CLI_params& hparams, EDGE_DEVICES* hDevice, int flag) {
     int local_device_idx = 0, override_enable_tf32 = 1;
     cudaError_t err = cudaSetDevice(0);
     if (err != cudaSuccess) {
@@ -497,7 +497,7 @@ bool InitCUDA(const CLI_params &hparams, EDGE_DEVICES *hDevice, int flag) {
     InitCUDNN();
 #endif
     int precision_mode        = MFUH_PRECISION_BF16;
-    const char *precision_str = PARAMS_TYPE == typNUMBER::F32      ? (cublas_compute == CUBLAS_COMPUTE_32F_FAST_TF32 ? "TF32" : "FP32")
+    const char* precision_str = PARAMS_TYPE == typNUMBER::F32      ? (cublas_compute == CUBLAS_COMPUTE_32F_FAST_TF32 ? "TF32" : "FP32")
                                 : PARAMS_TYPE == typNUMBER::F16    ? "FP16"
                                 : PARAMS_TYPE == typNUMBER::BF16   ? "BF16"
                                 : PARAMS_TYPE == typNUMBER::F8E5M2 ? "F8E5M2"
@@ -550,7 +550,7 @@ bool InitCUDA(const CLI_params &hparams, EDGE_DEVICES *hDevice, int flag) {
 }
 
 //  cudaStreamSynchronize(stream)/cudaEventSynchronize(event) maybe better
-bool SYNC_DEVICE(const std::string &sX, int flag) {
+bool SYNC_DEVICE(const std::string& sX, int flag) {
 #ifdef __USE_CUDA__
     if (main_stream != nullptr) {
         cudaError_t error = cudaDeviceSynchronize();
@@ -587,7 +587,7 @@ bool EDGE_DEVICES::ClearGPU(int flag) {
 /*
     n_rot >= head_dim
 */
-int ROPE::cuTrain(LayerNormal *normQ, LayerNormal *normK, uint32_t seed, bool isFX, int flag) {
+int ROPE::cuTrain(LayerNormal* normQ, LayerNormal* normK, uint32_t seed, bool isFX, int flag) {
     assert(devQ != nullptr);  //  && devK != nullptr
     int NH = n_head, NH_kv = NH, version = 1;
     hFish->GetBTC(B, T, C);
@@ -597,7 +597,7 @@ int ROPE::cuTrain(LayerNormal *normQ, LayerNormal *normK, uint32_t seed, bool is
     int threads   = head_dim / 2;
     size_t smemPB = 1024 * sizeof(float);
     if (isForward()) {
-        floatX *q = (floatX *)devQ, *k = (floatX *)devK;
+        floatX *q = (floatX*)devQ, *k = (floatX*)devK;
         if (version == 0) {
             apply_rope_forward_q1<<<blocks_q, threads, 0, main_stream>>>(q, fcos, fsin, B, T, NH_kv, head_dim);
             if (k != nullptr)
@@ -609,17 +609,17 @@ int ROPE::cuTrain(LayerNormal *normQ, LayerNormal *normK, uint32_t seed, bool is
         }
         SYNC_DEVICE();
     } else {
-        floatX *delta_q = (floatX *)devDeltaQ, *delta_k = (floatX *)devDeltaK;
+        floatX *delta_q = (floatX*)devDeltaQ, *delta_k = (floatX*)devDeltaK;
         if (version == 0) {
             apply_rope_backward_kernel1<<<blocks, threads, 0, main_stream>>>(delta_q, delta_k, fcos, fsin, B, T, NH_kv, NH, head_dim);
         } else if (version == 1) {
-            PrintTensor<__nv_bfloat16>("q_0", (__nv_bfloat16 *)delta_q, true, B, T, C, 1, 0);
-            PrintTensor<__nv_bfloat16>("k_0", (__nv_bfloat16 *)delta_k, true, B, T, C, 1, 0);
+            PrintTensor<__nv_bfloat16>("q_0", (__nv_bfloat16*)delta_q, true, B, T, C, 1, 0);
+            PrintTensor<__nv_bfloat16>("k_0", (__nv_bfloat16*)delta_k, true, B, T, C, 1, 0);
             CU_rope_<<<blocks_q, threads, smemPB, main_stream>>>(delta_q, delta_q, scaleQ, q_dim, head_dim, theta, n_rot, B, T, C, seed, true);
             if (delta_k != nullptr)
                 CU_rope_<<<blocks_k, threads, smemPB, main_stream>>>(delta_k, delta_k, scaleK, kv_dim, head_dim, theta, n_rot, B, T, C, seed, true);
-            PrintTensor<__nv_bfloat16>("q_1", (__nv_bfloat16 *)delta_q, true, B, T, C, 1, 0);
-            PrintTensor<__nv_bfloat16>("k_1", (__nv_bfloat16 *)delta_k, true, B, T, C, 1, 0);
+            PrintTensor<__nv_bfloat16>("q_1", (__nv_bfloat16*)delta_q, true, B, T, C, 1, 0);
+            PrintTensor<__nv_bfloat16>("k_1", (__nv_bfloat16*)delta_k, true, B, T, C, 1, 0);
         }
         SYNC_DEVICE();
     }
@@ -632,8 +632,8 @@ int ROPE::cuTrain(LayerNormal *normQ, LayerNormal *normK, uint32_t seed, bool is
     Backward:   QKV->cuTrain(last->out,QKV->norm.out,0x0);
 */
 hGTensor SelfAttention::cuTrain(hGTensor inpL, int flag) {
-    floatX *qkvr     = ToX(tmpQKV);            // Q.out/K.out/V.out
-    float *l_att     = TO<float>(transition);  //(float*)acts.att + l * B * NH * T; // cuDNN needs a smaller FP32 tensor
+    floatX* qkvr     = ToX(tmpQKV);            // Q.out/K.out/V.out
+    float* l_att     = TO<float>(transition);  //(float*)acts.att + l * B * NH * T; // cuDNN needs a smaller FP32 tensor
     bool isAlternate = true;                   // layer%2==1;layer>1;
     LayerNormal *nQ = nullptr, *nK = nullptr;
     if (isQKNormal && Rope_version != 3) {
@@ -690,12 +690,12 @@ hGTensor SelfAttention::cuTrain(hGTensor inpL, int flag) {
         } else {
         }
         return out;
-    } else {  //  Backward        
-        dump_flag = 0;       //hFish->GetOptimizer()->GetITER() >9 ? -1 : 0
+    } else {            //  Backward
+        dump_flag = 0;  // hFish->GetOptimizer()->GetITER() >9 ? -1 : 0
         // if(layer==3)
         //     dump_flag = -1;
         Q.w->Print("Qw", 1, dump_flag);
-        float *scratchF = (float *)GTensor::buff;
+        float* scratchF = (float*)GTensor::buff;
         assert(inpL == GTensor::delta);
         delta->Print("delta", 0x0, dump_flag);
         proj_cat.Back(GTensor::tmpDelta, attn, GTensor::delta, nullptr);
@@ -729,17 +729,17 @@ hGTensor SelfAttention::cuTrain(hGTensor inpL, int flag) {
             Q.w->Print("Qw", 1, dump_flag);
             // Q.w->Print("Qw", 0, dump_flag);  Q.b->Print("Qb", 0, dump_flag);   norm.out->Print("norm.out", 0, dump_flag);
             // Q.Back(GTensor::tmpDelta, norm.out, deltaQ, nullptr);
-            matmul_backward(ToX(GTensor::tmpDelta), ToG(Q.w), ToG0(Q.b), (floatX *)devDeltaQ, ToX(norm.out), Q.w->GetDataX(), scratchF, B, T, C_qkv, C_qkv,
-                             main_stream, false, NULL, false);
+            matmul_backward(ToX(GTensor::tmpDelta), ToG(Q.w), ToG0(Q.b), (floatX*)devDeltaQ, ToX(norm.out), Q.w->GetDataX(), scratchF, B, T, C_qkv, C_qkv,
+                            main_stream, false, NULL, false);
             GTensor::tmpDelta->Print("delta_0", 0, dump_flag);
             Q.w->Print("Qw", 1, dump_flag);
             // K.Back(GTensor::tmpDelta, norm.out, deltaK, nullptr, true);
-            matmul_backward(ToX(GTensor::tmpDelta), ToG(K.w), ToG0(K.b), (floatX *)devDeltaK, ToX(norm.out), K.w->GetDataX(), scratchF, B, T, C_qkv, C_qkv,
+            matmul_backward(ToX(GTensor::tmpDelta), ToG(K.w), ToG0(K.b), (floatX*)devDeltaK, ToX(norm.out), K.w->GetDataX(), scratchF, B, T, C_qkv, C_qkv,
                             main_stream, false, NULL, true);
-            GTensor::tmpDelta->Print("delta_1", 0, dump_flag);            
+            GTensor::tmpDelta->Print("delta_1", 0, dump_flag);
             K.w->Print("Kw", 1, dump_flag);
             // V.Back(GTensor::tmpDelta, norm.out, deltaV, nullptr, true);
-            matmul_backward(ToX(GTensor::tmpDelta), ToG(V.w), ToG0(V.b), (floatX *)devDeltaV, ToX(norm.out), V.w->GetDataX(), scratchF, B, T, C_qkv, C_qkv,
+            matmul_backward(ToX(GTensor::tmpDelta), ToG(V.w), ToG0(V.b), (floatX*)devDeltaV, ToX(norm.out), V.w->GetDataX(), scratchF, B, T, C_qkv, C_qkv,
                             main_stream, false, NULL, true);
             GTensor::tmpDelta->Print("delta_2", 0, dump_flag);
             V.w->Print("Vw", 1, dump_flag);

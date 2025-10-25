@@ -46,14 +46,6 @@ make clean && make -j$(nproc)
 
 ## [Techniques/Tricks](cases/tricks/Tricks.md)
 
-## History
-* 09/18/2025: v0.1 released
-* 08/17/2025: A new framework of multiscale deep learning
-* 08/01/2025: Training GPT2_1558M on single 4090 with throughput > 20K tokens/second
-* 07/24/2025: Support tile quantization 
-* 06/29/2025: Rope with pre/post normalization 
-* 06/14/2025: Support bit representation(binary[-1,1], ternary[-1,0,1]) 
-
 ## Working plan
 - Support 1-bit version of QWen/DeepSeek
 - Sparsing(Predict sparse neurons by GBDT method)
@@ -75,7 +67,9 @@ Please use the following bibtex entry:
   
 ## Acknowledgements
 
-* Thanks very much for the highly instructive work of [calm](https://github.com/zeux/calm), [llm.c](https://github.com/karpathy/llm.c) & [ggml](https://github.com/ggerganov/ggml).
+* Thanks very much for the highly instructive work of [qwen600](https://github.com/yassa9/qwen600), [calm](https://github.com/zeux/calm), [llm.c](https://github.com/karpathy/llm.c)
+ & [ggml](https://github.com/ggerganov/ggml).
 
 ## More
+### [History](cases/tutorial/history.md)
 QQ group: 167653113

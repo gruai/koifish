@@ -139,15 +139,20 @@ int SampLoader::PickSomeTokens(Grusoft::GRander &rander, int nMostToken, std::ve
     return 0x0;
 }
 
+/*
+    1. i_off 1 for traing & 0 for chat(InitOneSamp)
+*/
 void SampLoader::Samp2Batch(int k, hSAMP samp, TRAIN_CARD &params, int flag) {
     samp_toks.clear();
     auto dialect                = hDict->dialect;
     bool fill_with_next_samples = params.fill_with_next_samples, isDialect = hDict->isDialect;
     size_t starting = samp->pos + samp->jump, _nctx = params.n_ctx, _nToken = nTokens(), tok_pos = 0;  //    tokens_input->ne[0];
+    size_t i_off = 0;                                                                                  // 1 for traing & 0 for chat(InitOneSamp)
     if (isNeedBOS) {
         hBatch->Set(0, k, 0, 0, hDict->bos_id);  // ggml_set_i32_nd(G(tokens_input), 0, k, 0, 0, hDict->bos);
         samp_toks.push_back(hDict->bos_id);
         tok_pos = 1;
+        i_off   = 1;
     }
     if (nMostToken > 0)
         _nctx = std::min((int)_nctx, nMostToken);
@@ -170,7 +175,7 @@ void SampLoader::Samp2Batch(int k, hSAMP samp, TRAIN_CARD &params, int flag) {
         if (DEBUG.train_datas == 1)
             token = i;  // only for debug
         if (MaskAt(starting, mask)) {
-            if (i + 1 < _nctx)
+            if (i + i_off < _nctx)
                 hBatch->SetMask((int)tok_pos, (int)k, 0, 0, mask);
         }
         ++starting;
@@ -185,7 +190,7 @@ void SampLoader::Samp2Batch(int k, hSAMP samp, TRAIN_CARD &params, int flag) {
         }
         samp_toks.push_back(token);
 
-        if (i + 1 < _nctx) {
+        if (i + i_off < _nctx) {
             // assert(tok_pos<=hBatch->hostToken->size());
             hBatch->Set((int)tok_pos, (int)k, 0, 0, token);
         } else {
@@ -417,7 +422,11 @@ std::vector<hDataToken> DataTokenSet::MakeInstance(struct CLI_params &params, hT
 
     JSON jdata  = jKEY(params.jConfig, {"datasets"});
     string type = "";
-    assert(!jdata.empty());
+    if (jdata.empty()) {  // no dataset in chat-mode
+        hDataToken hTokenset = std::make_shared<PromptTokenset>("", hDict);
+        dts.push_back(hTokenset);
+    } else {
+    }
     for (JSON::const_iterator it = jdata.begin(); it != jdata.end(); ++it) {
         auto k = it.key();
         if (!k.empty() && k[0] == '#')
@@ -526,16 +535,6 @@ void SampLoader::Dump(int typ) {
           (int)(nBatch * hTokens->rSampling), nShard(), nBatch);
 }
 
-BATCH_INPUT::BATCH_INPUT(SHAPE shape, int flag) {
-    hostToken = std::make_shared<GTensor>(nullptr, shape, typNUMBER::I32);
-    hostToken->Alloc();
-    hostMask = std::make_shared<GTensor>(nullptr, shape, typNUMBER::I32);
-    hostMask->Alloc();
-
-    host = TO<int>(hostToken), mask = TO<int>(hostMask);
-    pos     = 0;
-    int tok = CurToken();
-}
 bool SampLoader::Prepare(Optimizer *hO, hDataToken hT, int flag) {
     bool isNewTS = hT == nullptr;
     hDict        = dolphin->hDict;
@@ -950,6 +949,7 @@ hSAMP SampLoader::InitOneSamp(const string &prompt, hGensor input, Fish *hFish, 
     const char *buf = prompt.c_str();
     // std::vector<TOKEN_ID> btch;
     // btch.resize(10*1024*1024);
+    hTokens->tokens.clear();
     assert(hTokens != nullptr && hTokens->tokens.size() == 0);
     // hTokens->tokens.clear();
     int n_tokens = hDict->STR2T(buf, prompt.size(), hTokens->tokens, flag);
@@ -1163,5 +1163,42 @@ bool StepInfos::SaveToCSV(const string &x, int flag) {
         return true;
     } catch (...) {
         return false;
+    }
+}
+
+bool Distri_ARRAY::SaveToCSV(const string &fpath, int flag) {
+    try {
+        FILE *fp = fopen(fpath.c_str(), "wt");
+        if (fp == NULL) {
+            _INFO("%s: warning: empty or not existing training data file '%s'\n", __func__, fpath.c_str());
+            return false;
+        }
+        fprintf(fp, "loss sigma\n");
+        fprintf(fp, "%.8f %.8f", average, sigma);
+        fclose(fp);
+        if (DUMP())
+            _INFO(">>>>>> Distri_ARRAY::Save csv @\"%s\"(%s), len=%ld\n", fpath.c_str(), distri.size());
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+BATCH_INPUT::BATCH_INPUT(SHAPE shape, int flag) {
+    hostToken = std::make_shared<GTensor>(nullptr, shape, typNUMBER::I32);
+    hostToken->Alloc();
+    hostMask = std::make_shared<GTensor>(nullptr, shape, typNUMBER::I32);
+    hostMask->Alloc();
+
+    host = TO<int>(hostToken), mask = TO<int>(hostMask);
+    pos     = 0;
+    int tok = CurToken();       //???
+}
+
+void BATCH_INPUT::Reset(const TOKENS &tokens, int flag) {
+    pos = tokens.size() > 0 ? 0 : -1;
+    hostToken->Zero();
+    for (int i = 0; i < tokens.size(); i++) {
+        Set(i, 0, 0, 0, tokens[i]);
     }
 }

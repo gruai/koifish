@@ -26,6 +26,8 @@
 using namespace std;
 
 //  ERR code of exit
+#define KOIFISH_INVALID_ARGS    -10
+
 #define KOIFISH_OUTOF_GPUMEMORY -100
 #define KOIFISH_OUTOF_CPUMEMORY -101
 
@@ -34,6 +36,7 @@ using namespace std;
 #define KOIFISH_LOAD_TOKENIZER  -300
 
 #define KOIFISH_INVALID_GSET    -600
+#define KOIFISH_INVALID_NAG     -601
 
 #define KOIFISH_UNSUPPORTED_DATATYPE -1000
 #define KOIFISH_GRAD_EXPLODE -1100

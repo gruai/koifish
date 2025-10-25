@@ -77,7 +77,7 @@ bool TokenEmbed::Build(int flag) {
             wInv->x_shape = {n, latent};
         }
         // sw += ".inv";
-        sw = "embed_inv.weight";
+        sw = hFish->config.model.sInvEmbed + ".weight";  //"embed_inv.weight";
         hFish->InitGensor(ctx, sw.c_str(), wInv, true);
     } else {
         wInv = w;
@@ -93,9 +93,9 @@ bool TokenEmbed::Build(int flag) {
         hFish->InitGensor(ctx, sb.c_str(), b, true);
     }
     if (hFish->isModel({NLP_GUPPY})) {
-        // lnW.BuildX(name+MODEL_CARD::sNorm,{padded_nCls},hFish,flag);
+        // lnW.BuildX(name+".norm",{padded_nCls},hFish,flag);
         // if(wInv!=w)
-        //     lnWInv.BuildX(name+MODEL_CARD::sNorm+".inv",{padded_nCls},hFish,flag);
+        //     lnWInv.BuildX(name+".norm"+".inv",{padded_nCls},hFish,flag);
     }
 
     SHAPE s3 = {B, T, latent};
@@ -335,15 +335,15 @@ bool VarCoder::Build(int flag_0) {
     int flagSLP = flag_0 | F_DELTA;
 
     if (tpNorm > 0)
-        norm.BuildX(name + MODEL_CARD::sNorm, {nBottom}, hFish, flag_0 | F_DELTA);
+        norm.BuildX(_NAME(name,FFN_PRE_NORMAL), {nBottom}, hFish, flag_0 | F_DELTA);        //name + ".norm",
     if (hFish->isModel({NLP_QWEN2})) {
         up.BuildX(name + ".w1", {nBottom, nTop}, hFish, flagSLP);
         gate.BuildX(name + ".w3", {nBottom, nTop}, hFish, flagSLP);
         down.BuildX(name + ".w2", {nTop, nBottom}, hFish, flagSLP);
     } else if (hFish->isModel({NLP_QWEN3})) {
-        up.BuildX(name + ".w1", {nBottom, nTop}, hFish, flagSLP);
-        gate.BuildX(name + ".w3", {nBottom, nTop}, hFish, flagSLP);
-        down.BuildX(name + ".w2", {nTop, nBottom}, hFish, flagSLP);
+        up.BuildX(_NAME(name,FFN_UP), {nBottom, nTop}, hFish, flagSLP);             //  name + ".up_proj"
+        gate.BuildX(_NAME(name,FFN_GATE), {nBottom, nTop}, hFish, flagSLP);         //  name + ".gate_proj"
+        down.BuildX(_NAME(name,FFN_DOWN), {nTop, nBottom}, hFish, flagSLP);         //  name + ".down_proj"
     } else {
         down.BuildX(name + "_down", {nTop, nBottom}, hFish, flagSLP);
         up.BuildX(name + "_up", {nBottom, nTop}, hFish, flagSLP);
@@ -423,7 +423,7 @@ bool FFN::Build(int flag_0) {
 
 std::vector<GeNeuron *> FFN::SubNeurons(int flag) {
     std::vector<GeNeuron *> neurons = {&up, &down, &norm};  // gate
-    if(!gate.Empty()){
+    if (!gate.Empty()) {
         neurons.push_back(&gate);
     }
     return neurons;

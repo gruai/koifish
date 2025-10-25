@@ -307,20 +307,39 @@ int GPT_work(CLI_params &config) {
 }
 
 hGOPT GeneratOnPrompt::MakeInstance(struct CLI_params &config, arrHWIKI &wikis, const Fish *fish_0, int flag) {
-    // gopt = std::make_shared<GeneratOnPrompt>(wiki,this,0x0);
-    hGOPT gopt = std::make_shared<GOPT_Metropolis>(config, wikis, fish_0, 0x0);
-    if (gopt != nullptr && gopt->Init(config.prompt)) {
-        // gopt->Generate(0); //only for debug
-    } else {
-        gopt.reset();
-        gopt = nullptr;
+    hGOPT gopt = nullptr;    
+    
+    switch (config.chat_mode) {
+        case CHATML_ASSIST:
+        case CHATML_THINK:{
+            gopt = std::make_shared<GeneratOnPrompt>(config, wikis, fish_0, 0x0);
+        }
+            break;
+        case CHAT_SMOKE: {
+            gopt = std::make_shared<GOPT_Metropolis>(config, wikis, fish_0, 0x0);
+            if (gopt != nullptr && gopt->Init(config.prompt)) {
+                // gopt->Generate(0); //only for debug
+            } else {
+                gopt.reset();
+                gopt = nullptr;
+            }
+            const char *promt              = "when the smoke is going down,";
+            std::vector<TOKEN_ID> some_inp = {9493, 279, 16603, 374, 2133, 1523, 11};  // const char* promt = "when the smoke is going down,";
+        } break;
+        default:
+            assert(0);
     }
-    const char *promt              = "when the smoke is going down,";
-    std::vector<TOKEN_ID> some_inp = {9493, 279, 16603, 374, 2133, 1523, 11};  // const char* promt = "when the smoke is going down,";
 
     // wiki->Decode(embd_inp,0,0x0);
     // wiki->Answer(embd_inp);      //only for debug
     return gopt;
+}
+
+CHAT_MODE GeneratOnPrompt::ChatMode(int flag) const {
+    if (config.isOnlyGPT) {
+        return CHAT_MODE::CHATML_ASSIST;
+    } else
+        return CHAT_MODE::YABA;
 }
 
 std::string GeneratOnPrompt::GetPrompt(int flag) { return config.prompt; }
@@ -363,6 +382,7 @@ void GeneratOnPrompt::InitInput(int flag) {
     return;
 }
 
+// Deprecated
 GeneratOnPrompt::GeneratOnPrompt(struct gpt_params &par_, int flag) {
     /*LOG("%s logits_all=%d\n", __func__,params.logits_all );
     llama_numa_init(params.numa);
@@ -395,6 +415,7 @@ void GeneratOnPrompt::Clear() {
 // only for debug
 GeneratOnPrompt::GeneratOnPrompt(CLI_params &cp_, arrHWIKI &wiki_, const Fish *hG_, int flag) : config(cp_), fish_0(hG_), wikis(wiki_) {
     if (fish_0 != nullptr) {
+        samp_params = config.chat_sampler;
         auto gang_param   = config;
         gang_param.tpWiki = "off";
         assert(gang_param.tpWiki == "off");
@@ -402,7 +423,13 @@ GeneratOnPrompt::GeneratOnPrompt(CLI_params &cp_, arrHWIKI &wiki_, const Fish *h
         fish_1                    = (Fish *)fish_0;
         // fish_1 = Fish::MakeInstance("4GPT_",gang_param,wikis,Fish::ROLE_TYPE::SWARM_FOLLOWER,0x110);        //  isLocalInfer = flag==0x110;
         // fish_1->Dump(0x0);
-
+        OutCLS *cls   = ((Fish *)fish_0)->GetNeuron<OutCLS>("OutCLS", 0);        
+        int n_vocab = fish_1->nClass();
+        _logits = new float[n_vocab];
+        probindex = new ProbIndex[n_vocab];
+        rng_state = 20251021;
+        assert(cls->preLogits->host_data==nullptr);
+        cls->preLogits->host_data = _logits;
         _arch = fish_0->arch;
     } else {
         _arch = config.ModelArch();
@@ -415,11 +442,12 @@ bool GeneratOnPrompt::Init(const std::string &prompt_, int flag) {
     // std::tie(model, ctx) = llama_init_from_gpt_params(params);
     int n_vocab = 0;
     if (fish_1 != nullptr) {
+        /*  may deprecated*/
         dialogs = std::make_shared<SampLoader>(fish_1, "gpt", true);
         dialogs->Prepare(fish_1->hOPT.get(), fish_1->tsEval[0]);
         dialogs->isRecycle = false;
         dialogs->type      = SampLoader::TYPE::DT_EVAL;
-        n_vocab            = fish_1->nClass();
+        n_vocab = fish_1->nClass();
     }
 
     if (wikis.empty()) {
@@ -548,7 +576,7 @@ int NLP_AutoRegressive::GenSentence(int flag) {
     // nPrompToken = 1;			//	only for debug
     TOKEN_ID t = -1;
     _INFO("%s: <--- \n\t", __func__);
-    float *logits = hCLS->fLogits( );  //(float *)(preLogits->data)+i*nVocab;
+    float *logits = hCLS->fLogits();  //(float *)(preLogits->data)+i*nVocab;
     for (i = 0; i < nPrompToken + genT; i++) {
         if (i < nPrompToken - 1)
             hOPT->SetPhase(LIFE_PHASE::P_PREFILL);
@@ -662,146 +690,115 @@ TOKEN_ID GOPT_Metropolis::Sample(int idx, bool is_resampling) {
     return next_token;
 }
 
+// only for debug
+static inline unsigned int random_u32(uint64_t *state) {
+    *state ^= *state >> 12;
+    *state ^= *state << 25;
+    *state ^= *state >> 27;
+    return (*state * 0x2545F4914F6CDD1Dull) >> 32;
+}
+static inline float random_f32(uint64_t *state) { return (random_u32(state) >> 8) / 16777216.0f; }
+
+static inline int sample_argmax(int n_vocab, float *logits) {
+    int max_i   = 0;
+    float max_p = logits[0];
+    for (int i = 1; i < n_vocab; i++) {
+        if (logits[i] > max_p) {
+            max_i = i;
+            max_p = logits[i];
+        }
+    }
+    return max_i;
+}
+
+static void quick_select(ProbIndex *arr, int n, int k) {
+    int l = 0, r = n - 1;
+    while (l < r) {
+        ProbIndex pivot = arr[k];
+        int i = l, j = r;
+        do {
+            while (arr[i].prob > pivot.prob) i++;
+            while (arr[j].prob < pivot.prob) j--;
+            if (i <= j) {
+                ProbIndex temp = arr[i];
+                arr[i]         = arr[j];
+                arr[j]         = temp;
+                i++;
+                j--;
+            }
+        } while (i <= j);
+
+        if (j < k)
+            l = i;
+        if (i > k)
+            r = j;
+    }
+}
+static int compare_prob_desc(const void *a, const void *b) {
+    ProbIndex *pa = (ProbIndex *)a;
+    ProbIndex *pb = (ProbIndex *)b;
+    if (pa->prob > pb->prob)
+        return -1;
+    if (pa->prob < pb->prob)
+        return 1;
+    return 0;
+}
+
 TOKEN_ID GeneratOnPrompt::Sample(int idx, bool is_resampling) {
     TOKEN_ID id = 0;
-    /*const llama_sampling_params &params = ctx_sampling->params;
-    const float temp = params.temp, mirostat_tau = params.mirostat_tau, mirostat_eta = params.mirostat_eta;
-    const int mirostat = params.mirostat;
-    // const float         temp              = params.temp;
-    const float dynatemp_range = params.dynatemp_range;
-    const float dynatemp_exponent = params.dynatemp_exponent;
-    const int32_t top_k = params.top_k;
-    const float top_p = params.top_p;
-    const float min_p = params.min_p;
-    const float tfs_z = params.tfs_z;
-    const float typical_p = params.typical_p;
-    const std::vector<llama_sampler_type> &samplers_sequence = params.samplers_sequence;
-
-
-    std::vector<float> original_logits, x_logits;
-    auto ctx_main = ctx, ctx_cfg = ctx_guidance;
-    auto cur_p = llama_sampling_prepare(ctx_sampling, ctx_main, ctx_cfg, idx, !is_resampling, &original_logits);
-    if (!is_resampling)    {
-        assert(!original_logits.empty());
+    int n_vocab = fish_1 == nullptr ? wiki0->n_vocab : fish_1->nClass();
+    if (samp_params.temperature == 0.0f || samp_params.top_k == 1) {
+        return sample_argmax(n_vocab, _logits);
     }
-    if (fish_1 != nullptr)    {   //time bottleneck
-        x_logits.resize(original_logits.size());
-        if (fish_1->LocalFeeling(&dialogs, x_logits))        {
-            std::transform(original_logits.begin(), original_logits.end(), x_logits.begin(),
-                           original_logits.begin(), std::plus<float>());
+    for (int i = 0; i < n_vocab; i++) {
+        probindex[i].prob  = _logits[i];
+        probindex[i].index = i;
+    }
+
+    int n_cands = (samp_params.top_k < n_vocab) ? samp_params.top_k : n_vocab;
+    quick_select(probindex, n_vocab, n_cands);
+    float max_logit = probindex[0].prob;
+    for (int i = 1; i < n_cands; i++) {
+        if (probindex[i].prob > max_logit) {
+            max_logit = probindex[i].prob;
         }
     }
 
-    // Get a pointer to the logits
-    float *logits = llama_get_logits_ith(ctx_main, idx);
-
-    if (temp < 0.0)
-    {
-        // greedy sampling, with probs
-        llama_sample_softmax(ctx_main, &cur_p);
-        id = cur_p.data[0].id;
+    float prob_sum = 0.0f;
+    for (int i = 0; i < n_cands; i++) {
+        float prob        = expf((probindex[i].prob - max_logit) / samp_params.temperature);
+        probindex[i].prob = prob;
+        prob_sum += prob;
     }
-    else if (temp == 0.0)
-    {
-        // greedy sampling, no probs
-        id = llama_sample_token_greedy(ctx_main, &cur_p);
+
+    for (int i = 0; i < n_cands; i++) {
+        probindex[i].prob /= prob_sum;
     }
-    else
-    {
-        if (mirostat == 1)
-        {
-            const int mirostat_m = 100;
-            llama_sample_temp(ctx_main, &cur_p, temp);
-            id = llama_sample_token_mirostat(ctx_main, &cur_p, mirostat_tau, mirostat_eta, mirostat_m, &ctx_sampling->mirostat_mu);
-        }
-        else if (mirostat == 2)
-        {
-            llama_sample_temp(ctx_main, &cur_p, temp);
-            id = llama_sample_token_mirostat_v2(ctx_main, &cur_p, mirostat_tau, mirostat_eta, &ctx_sampling->mirostat_mu);
-        }
-        else
-        {
-            // temperature sampling
-            size_t min_keep = std::max(1, params.min_keep);
 
-            // sampler_queue(ctx_main, params, cur_p, min_keep);
-
-            for (auto sampler_type : samplers_sequence)
-            {
-                switch (sampler_type)
-                {
-                case llama_sampler_type::TOP_K:
-                    llama_sample_top_k(ctx_main, &cur_p, top_k, min_keep);
-                    break;
-                case llama_sampler_type::TFS_Z:
-                    llama_sample_tail_free(ctx_main, &cur_p, tfs_z, min_keep);
-                    break;
-                case llama_sampler_type::TYPICAL_P:
-                    llama_sample_typical(ctx_main, &cur_p, typical_p, min_keep);
-                    break;
-                case llama_sampler_type::TOP_P:
-                    llama_sample_top_p(ctx_main, &cur_p, top_p, min_keep);
-                    break;
-                case llama_sampler_type::MIN_P:
-                    llama_sample_min_p(ctx_main, &cur_p, min_p, min_keep);
-                    break;
-                case llama_sampler_type::TEMPERATURE:
-                    if (dynatemp_range > 0)
-                    {
-                        float dynatemp_min = std::max(0.0f, temp - dynatemp_range);
-                        float dynatemp_max = std::max(0.0f, temp + dynatemp_range);
-                        llama_sample_entropy(ctx_main, &cur_p, dynatemp_min, dynatemp_max, dynatemp_exponent);
-                    }
-                    else
-                    {
-                        llama_sample_temp(ctx_main, &cur_p, temp);
-                    }
-                    break;
-                default:
-                    break;
-                }
+    if (samp_params.top_p > 0.0f && samp_params.top_p < 1.0f) {
+        qsort(probindex, n_cands, sizeof(ProbIndex), compare_prob_desc);
+        float cumulative_prob = 0.0f;
+        int last_idx          = n_cands - 1;
+        for (int i = 0; i < n_cands; i++) {
+            cumulative_prob += probindex[i].prob;
+            if (cumulative_prob > samp_params.top_p) {
+                last_idx = i;
+                break;
             }
-
-            id = llama_sample_token_with_rng(ctx_main, &cur_p, ctx_sampling->rng);
-
-            //{
-            //    const int n_top = 10;
-            //    LOG("top %d candidates:\n", n_top);
-
-            //    for (int i = 0; i < n_top; i++) {
-            //        const TOKEN_ID id = cur_p.data[i].id;
-            //        (void)id; // To avoid a warning that id is unused when logging is disabled.
-            //        LOG(" - %5d: '%12s' (%.3f)\n", id, llama_token_to_piece(ctx_main, id).c_str(), cur_p.data[i].p);
-            //    }
-            //}
-
-            // LOG("sampled token: %5d: '%s'\n", id, llama_token_to_piece(ctx_main, id).c_str());
         }
+        n_cands  = last_idx + 1;
+        prob_sum = cumulative_prob;
     }
 
-    if (ctx_sampling->grammar != NULL && !is_resampling)
-    {
-        // Create an array with a single token data element for the sampled id
-        llama_token_data single_token_data = {id, logits[id], 0.0f};
-        llama_token_data_array single_token_data_array = {&single_token_data, 1, false};
-
-        // Apply grammar constraints to the single token
-        llama_sample_grammar(ctx_main, &single_token_data_array, ctx_sampling->grammar);
-
-        // Check if the token is valid according to the grammar by seeing if its logit has been set to -INFINITY
-        bool is_valid = single_token_data_array.data[0].logit != -INFINITY;
-
-        // If the token is not valid according to the grammar, perform resampling
-        if (!is_valid)
-        {
-            assert(0);
-
-            // Pass true for is_resampling
+    float coin = random_f32(&rng_state) * prob_sum;     //  0.00294704828
+    float cdf  = 0.0f;
+    for (int i = 0; i < n_cands; i++) {
+        cdf += probindex[i].prob;
+        if (coin < cdf) {
+            return probindex[i].index;
         }
     }
-
-    ctx_sampling->n_valid = temp == 0.0f ? 0 : cur_p.size;*/
-
+    id = probindex[n_cands - 1].index;
     return id;
 }
 
@@ -1036,56 +1033,5 @@ int GeneratOnPrompt::Tokenize(int flag) {
     }
 
     // number of tokens to keep when resetting context
-
-    /*    // prefix & suffix for instruct mode
-    inp_pfx = ::llama_tokenize(ctx, "\n\n### Instruction:\n\n", add_bos, true);
-    inp_sfx = ::llama_tokenize(ctx, "\n\n### Response:\n\n",    false,   true);
-
-    LOG("inp_pfx: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, inp_pfx).c_str());
-    LOG("inp_sfx: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, inp_sfx).c_str());
-
-    // chatml prefix & suffix
-    cml_pfx = ::llama_tokenize(ctx, "\n<|im_start|>user\n", add_bos, true);
-    cml_sfx = ::llama_tokenize(ctx, "<|im_end|>\n<|im_start|>assistant\n", false, true);
-
-    LOG("cml_pfx: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, cml_pfx).c_str());
-    LOG("cml_sfx: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, cml_sfx).c_str());
-
-    // enable interactive mode if interactive start is specified
-    if (params.interactive_first) {
-        params.interactive = true;
-    }
-
-    if (params.verbose_prompt) {
-        LOG("\n");
-        LOG("%s: prompt: '%s'\n", __func__, GetPrompt().c_str());
-        LOG("%s: number of tokens in prompt = %zu\n", __func__, embd_inp.size());
-        for (int i = 0; i < (int) embd_inp.size(); i++) {
-            LOG("%6d -> '%s'\n", embd_inp[i], llama_token_to_piece(ctx, embd_inp[i]).c_str());
-        }
-
-        if (ctx_guidance) {
-            LOG("\n");
-            LOG("%s: negative prompt: '%s'\n", __func__, sparams.cfg_negative_prompt.c_str());
-            LOG("%s: number of tokens in negative prompt = %zu\n", __func__, guidance_inp.size());
-            for (int i = 0; i < (int) guidance_inp.size(); i++) {
-                LOG("%6d -> '%s'\n", guidance_inp[i], llama_token_to_piece(ctx, guidance_inp[i]).c_str());
-            }
-        }
-
-        if (params.n_keep > add_bos) {
-            LOG("%s: static prompt based on n_keep: '", __func__);
-            for (int i = 0; i < params.n_keep; i++) {
-                LOG("%s", llama_token_to_piece(ctx, embd_inp[i]).c_str());
-            }
-            LOG("'\n");
-        }
-        LOG("\n");
-    }
-    LOG("sampling: \n%s\n", llama_sampling_print(sparams).c_str());
-    LOG("sampling order: \n%s\n", llama_sampling_order_print(sparams).c_str());
-    LOG("generate: n_ctx = %d, n_batch = %d, n_predict = %d, n_keep = %d\n", n_ctx,
-        params.n_batch, params.n_predict, params.n_keep);*/
-    // Handle_CtrlC();
     return 0x0;
 }

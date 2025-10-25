@@ -33,9 +33,15 @@ class Optimizer;
 class NLP_AutoRegressive;
 class SampLoader;
 
+// the type of update each batch
+enum DL_BATCH_UPATE {
+    SAMPLEofSHARD,          //  SampLoader::Samp2Batch -> hBatch->Set(...);
+    BATCHofEMBED = 1        //  TokenEmbed::hBatch
+};
+
 struct StepInfos {
     string sTokenSet = "", sRoot = "./";
-    Optimizer *hOpt = nullptr;
+    Optimizer* hOpt = nullptr;
     struct STEP {
         float loss, lr, gNorm, tX, dt, gMax, wMax;
         int iter, epoch;
@@ -50,9 +56,9 @@ struct StepInfos {
     // vector<float> curve;
     int best_id     = -1;
     bool isAccuracy = false;
-    virtual void Init(Optimizer *hO, int flag = 0x0);
+    virtual void Init(Optimizer* hO, int flag = 0x0);
     float Last() { return steps.empty() ? FLT_MAX : steps[steps.size() - 1].loss; }
-    virtual bool SaveToCSV(const string &sPath, int flag = 0x0);
+    virtual bool SaveToCSV(const string& sPath, int flag = 0x0);
     float Best() const;
 
     void Add(STEP step, int flag = 0x0);
@@ -60,9 +66,9 @@ struct StepInfos {
 
 struct BATCH_INPUT {
     shared_ptr<GTensor> hostToken = nullptr, hostMask = nullptr;
-
+    //  host = TO<int>(hostToken), mask = TO<int>(hostMask);
     int *host = nullptr, *mask = nullptr;
-    void *dev = nullptr;
+    void* dev = nullptr;
     int pos   = -1;
 
     BATCH_INPUT(SHAPE sp, int flag = 0x0);
@@ -72,6 +78,7 @@ struct BATCH_INPUT {
         // assert(host[pos] < embed->nVocab);
         return host[pos];
     }
+    virtual void Reset(const std::vector<TOKEN_ID>& tokens, int flag = 0x0);
     virtual void Set(int i0, int i1, int i2, int i3, int tok) { hostToken->Set(i0, i1, i2, i3, tok); }
     virtual void SetMask(int i0, int i1, int i2, int i3, int tok) { hostMask->Set(i0, i1, i2, i3, tok); }
     virtual size_t size() { return hostToken->size(); }
@@ -107,7 +114,7 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
     mt19937_state shuffle_rng_state_next;
     size_t shuffle_sample_count = 0, next_sample = 0, shuffle_samples_hash = 0x0;
     hBATCH hBatch               = nullptr;
-    NLP_AutoRegressive *dolphin = nullptr;
+    NLP_AutoRegressive* dolphin = nullptr;
 
    public:
     StepInfos stepis;                 // info of each step on train/evaluate/...
@@ -137,46 +144,51 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
         iiLoss.Stat();
         iiPPL.Stat();
     }
-    hBATCH GetCurBatch(int flag = 0x0) const { return hBatch; }
+    hBATCH GetCurBatch(int flag = 0x0) const {
+        assert(hBatch != nullptr);
+        return hBatch;
+    }
     virtual bool isEval(int t, int flag = 0x0);
     virtual hSAMP Next(bool isLoop = true);
     virtual bool NextEpoch(int flag = 0x0);
     virtual string IterInfo(int flag = 0x0);
     virtual string sTokenSet(int flag = 0x0);
-    vector<TOKEN_ID> &GetTokens() { return hTokens->tokens; }
+    vector<TOKEN_ID>& GetTokens() { return hTokens->tokens; }
 
     TOKEN_ID TokenAt(size_t pos) { return hTokens->At(pos); }
-    bool MaskAt(size_t pos, TOKEN_ID &mask);
+    bool MaskAt(size_t pos, TOKEN_ID& mask);
     bool isHostMask(size_t pos, int flag = 0x0);
     std::vector<std::string> curDeTexts;
-    virtual hSAMP InitOneSamp(const string &prompt, hGensor input, Fish *hFish, int flag = 0x0);
+
+    // 1. prompt=>tokens 2. hTokens->tokens=tokens 3.Samp2Batch 4. hBatch->Set(i, token)
+    virtual hSAMP InitOneSamp(const string& prompt, hGensor input, Fish* hFish, int flag = 0x0);
     virtual double DecodeVerify(hSAMP samp, hGensor tokens, hGensor logits, int flag = 0x0);
-    void Samp2Batch(int k, hSAMP samp, TRAIN_CARD &params, int flag = 0x0);
+    void Samp2Batch(int k, hSAMP samp, TRAIN_CARD& params, int flag = 0x0);
 
     enum TYPE { DT_TRAIN = 1, DT_EVAL, DT_PREDICT, DT_MERGE };
     TYPE type = DT_TRAIN;
 
-    Optimizer *hOPT = nullptr;
+    Optimizer* hOPT = nullptr;
 
     SampLoader() {}
-    SampLoader(Fish *g_, const string &n, bool isNewTS, int flag = 0x0);
+    SampLoader(Fish* g_, const string& n, bool isNewTS, int flag = 0x0);
     virtual ~SampLoader() {
         if (!shard_samps.empty()) {
         }
     }
 
-    virtual int PickSomeTokens(Grusoft::GRander &rander, int nSample, std::vector<int> &samps, int flag = 0x0);
-    virtual bool Prepare(Optimizer *hO, hDataToken hT, int flag = 0x0);
+    virtual int PickSomeTokens(Grusoft::GRander& rander, int nSample, std::vector<int>& samps, int flag = 0x0);
+    virtual bool Prepare(Optimizer* hO, hDataToken hT, int flag = 0x0);
     virtual void UpdateStepInfos(float mean_loss, int nB, int flag = 0x0);
-    virtual size_t UpdateBatch(int next_id, Fish *fish);
-    virtual double Evaluate(int flag = 0x0);
+    virtual size_t UpdateBatch(int next_id, Fish* fish);
+    virtual double Evaluate(DL_BATCH_UPATE tpBatch, int flag = 0x0);
 
 #ifdef _DATA_LOADER_LITE_
 #else
-    virtual bool Serialize(const std::string &path, bool isSave, int flag = 0x0);
-    virtual void SetSamples(std::vector<size_t> &begin_, std::vector<size_t> &size_, bool isTrain, CLI_params &train_params, int flag = 0x0);
+    virtual bool Serialize(const std::string& path, bool isSave, int flag = 0x0);
+    virtual void SetSamples(std::vector<size_t>& begin_, std::vector<size_t>& size_, bool isTrain, CLI_params& train_params, int flag = 0x0);
     void Shuffle(int flag = 0x0);
-    bool TopoOrder(std::vector<size_t> &ids, std::mt19937 &rng, int flag = 0x0);
+    bool TopoOrder(std::vector<size_t>& ids, std::mt19937& rng, int flag = 0x0);
 #endif
     virtual void Dump(int typ);
     friend class NLP_AutoRegressive;

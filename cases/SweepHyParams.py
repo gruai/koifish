@@ -126,6 +126,49 @@ def koifish_one(title, sExe, jsFile0, path="./tests/", most_iter=-1):
     assert "loss" in dfTrain.columns
     
     return dfTrain
+
+def pangpi_one(title, sExe, sArgs, path="./tests/", most_iter=-1):    
+    sOutput = title+".info"   
+    
+    get_gpu_stats()
+    cmd = sExe + sArgs + "> "+path+sOutput + " 2>&1"        # cmd = sExe+ path+title+".json 2>&1 | tee "+path+sOutput 
+    print(f"{title}\t{cmd} ...")
+    start = time.time()    
+    exit_code = os.system(cmd)
+    elapsed = time.time() - start
+    
+    # get_gpu_stats()
+    dfLoss = None
+    szLoss = 0
+    fSrc,ftarget = './Eval_loss.csv',path+"./loss.csv"
+    if os.path.exists(fSrc):
+        shutil.copy(fSrc, ftarget)
+        szLoss = os.path.getsize(ftarget)
+        dfLoss = pd.read_csv(ftarget, sep=' ',index_col=False)
+    print(f"{title}...OK! code={exit_code}. nByte of fLoss={szLoss} Time={elapsed:.4f} seconds")
+    assert dfLoss is not None
+    
+    return dfLoss
+
+def bubble_one(title,  sArgs, sExe ="./bin/bubble ", path="./tests/", most_iter=-1):    
+    sOutput = title+".info"   
+    cmd = sExe + sArgs + "> "+path+sOutput + " 2>&1"        # cmd = sExe+ path+title+".json 2>&1 | tee "+path+sOutput 
+    print(f"{title}\t{cmd} ...")    
+
+    if os.path.exists('chat.csv'):
+        os.remove('chat.csv')
+    exit_code = os.system(cmd)
+    if not os.path.exists('chat.csv'):
+        return ""
+    
+    with open('chat.csv', 'r', encoding='utf-8') as file:
+        content = file.read()  # 读取全部内容（返回字符串）
+    print(content)    
+    lines = content.splitlines()
+    line_numbers = list(range(1, len(lines) + 1))
+    # Get the last line
+    last_line = lines[-1] if lines else None
+    return last_line
     
 # python cases/SweepHyParams.py --dir ./SWEEP/124M --json ./scripts/gpt2.json   
 #  python cases/SweepHyParams.py --dir ./SWEEP/Shard50 --json ./scripts/gpt2.json

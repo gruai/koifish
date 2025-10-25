@@ -1,19 +1,7 @@
 #include "Fish.hpp"
 
 tpSWARM Fish::swarm = {};
-// Pangpi::Pangpi(const int dim, int flag) {
-// 	position.resize(dim);
-// }
 
-// Pangpi::Pangpi(const int dim, const vector<int>&picks, int flag) {
-// 	position.resize(dim);
-// 	for (int i = 0; i < dim; i++) {
-// 		position[i] = 0;
-// 	}
-// 	for (auto x : picks) {
-// 		position[x] = 1;
-// 	}
-// }
 
 Pangpi::Pangpi(const std::string &nam_, struct CLI_params params, int flag) {
     assert(swarm.size() > 0);

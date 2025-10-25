@@ -149,6 +149,8 @@ std::string G_STR(const T &x) {
 std::string EXE_name(int flag = 0x0);
 std::string FILE_EXT(const std::string &path);
 bool VERIFY_DIR_EXIST(const std::string &path, bool isCreate = false);
+std::vector<std::string> FilesOfDir(const std::string &path, const std::vector<std::string> &keys={}, int flag=0x0);
+
 struct MEM_USAGE {
     static size_t szA, szW, szG, szMoment, szTemp, szOther;
     enum TYPE { ACTIVATION, WEIGHT, MOMENT, GRAD, TEMP, OTHER };
@@ -170,7 +172,7 @@ struct SUM {
     static void TimeInfo(int typ, int flag = 0x0);
     static void MemoryInfo(int type, int flag = 0x0);
     static bool FreeMem(void *hData, int flag = 0x0);
-    static std::string CPU_MemoryInfo(int flag=0x0);
+    static std::string CPU_MemoryInfo(int flag = 0x0);
 };
 
 // Discrete Distribution of array
@@ -199,6 +201,8 @@ struct Distri_ARRAY {
         sigma   = std::max(0.0, ss / n - average * average);  // float point error
         sigma   = sqrt(sigma);
     }
+
+    virtual bool SaveToCSV(const string &x, int flag);
 };
 
 #ifndef _WIN32
@@ -266,7 +270,7 @@ extern inline void fclose_check(FILE *fp, const char *file, int line) {
 }
 
 #define fcloseCheck(fp) fclose_check(fp, __FILE__, __LINE__)
-
+/*
 extern inline void sclose_check(int sockfd, const char *file, int line) {
     if (close(sockfd) != 0) {
         fprintf(stderr, "Error: Failed to close socket at %s:%d\n", file, line);
@@ -277,7 +281,7 @@ extern inline void sclose_check(int sockfd, const char *file, int line) {
     }
 }
 
-#define scloseCheck(sockfd) sclose_check(sockfd, __FILE__, __LINE__)
+#define scloseCheck(sockfd) sclose_check(sockfd, __FILE__, __LINE__)*/
 
 #ifdef _WIN32
 extern inline void closesocket_check(int sockfd, const char *file, int line) {
@@ -453,6 +457,10 @@ inline bool isStrMatch(const string &target, const vector<string> &words) {
     return false;
 }
 
+void read_stdin(const char *guide, char *buffer, size_t bufsize);
+
+std::string FILE2STR(const std::string fPath, int flag = 0x0);
+bool STR2FILE(const std::string fPath, const std::string &text, int flag = 0x0);
 /*
     CUBLAS: Base addresses of A, B, C matrices should be aligned to 256-byte boundaries for optimal performance.
 */

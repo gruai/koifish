@@ -484,12 +484,15 @@ GTokenizer_QWEN3::GTokenizer_QWEN3(Fish *dolphin, int flag) {
     config = dolphin->config;
     assert(!dolphin->config.model.empty());
     bool bRet = InitHF(dolphin, flag);
-    if(!bRet){
+    if (!bRet) {
         vocab.clear();
     }
 }
 
-std::string GTokenizer_QWEN3::T2STR(TOKEN_ID tok, int flag) { return std::to_string((int)(tok) % 10); }
+std::string GTokenizer_QWEN3::T2STR(TOKEN_ID tok, int flag) { 
+    assert(tok<vocab.size());
+    return vocab[tok]; 
+}
 
 GTokenizer_Heap::GTokenizer_Heap(Fish *dolphin, int flag) {
     config = dolphin->config;
@@ -620,7 +623,7 @@ bool GTokenizer::InitHF(Fish *dolphin, int flag) {
     }
     return true;
 }
-
+/*
 void load_single_template(char *buffer, size_t buffer_size, const string &dir_path, const char *filename) {
     string full_path = dir_path + filename;
     // construct_path(full_path, sizeof(full_path), dir_path, filename);
@@ -634,58 +637,158 @@ void load_single_template(char *buffer, size_t buffer_size, const string &dir_pa
     // Read up to buffer_size - 1 to ensure null termination
     fread(buffer, 1, buffer_size - 1, file);
     fclose(file);
-}
+}*/
 
 bool GTokenizer_QWEN3::InitHF(Fish *dolphin, int flag) {
-try{
-    char tmp_word[MAX_TOKEN_LENGTH];
-    string sRoot          = dolphin->config.model.sCardPath;
-    string tokenizer_path = sRoot + "tokenizer.bin";
-    int vocab_size        = dolphin->config.model.vocab_size;  // 151936
-    // vocab.resize(vocab_size); // = (char **)malloc(vocab_size * sizeof(char *));
-    scores = (float *)malloc(vocab_size * sizeof(float));
+    try {
+        char tmp_word[MAX_TOKEN_LENGTH];
+        string sRoot          = dolphin->config.model.sCardPath;
+        string tokenizer_path = sRoot + "tokenizer.bin";
+        int vocab_size        = dolphin->config.model.vocab_size;  // 151936
+        // vocab.resize(vocab_size); // = (char **)malloc(vocab_size * sizeof(char *));
+        scores = (float *)malloc(vocab_size * sizeof(float));
 
-    FILE *file = fopen(tokenizer_path.c_str(), "rb");
-    if (!file) {
-        _ERROR("[QWEN3] Couldn't load tokenizer model %s\n", tokenizer_path.c_str());
-        exit(KOIFISH_LOAD_TOKENIZER);
-    }
-    int len, nz = 0, max_token_length;
-    fread(&max_token_length, sizeof(int), 1, file);      //  512?
-    assert(max_token_length<=MAX_TOKEN_LENGTH);
-    fread(&bos_id, sizeof(int), 1, file);
-    fread(&eos_id, sizeof(int), 1, file);
-
-    
-    for (int i = 0; i < vocab_size; i++) {
-        if (fread(scores + i, sizeof(float), 1, file) != 1) {
-            // vocab[i] = (char *)malloc(1);
-            // vocab[i][0] = 0;
-            tmp_word[0] = '\0';
-            nz++;
-        } else {
-            fread(&len, sizeof(int), 1, file);
-            assert(len <= max_token_length);
-            fread(tmp_word, 1, len, file);
-            tmp_word[len] = '\0';
+        FILE *file = fopen(tokenizer_path.c_str(), "rb");
+        if (!file) {
+            _ERROR("[QWEN3] Couldn't load tokenizer model %s\n", tokenizer_path.c_str());
+            exit(KOIFISH_LOAD_TOKENIZER);
         }
-        vocab.push_back(tmp_word);
-    }
-    fclose(file);
+        int len, nz = 0, max_token_length;
+        fread(&max_token_length, sizeof(int), 1, file);  //  512?
+        assert(max_token_length <= MAX_TOKEN_LENGTH);
+        fread(&bos_id, sizeof(int), 1, file);
+        fread(&eos_id, sizeof(int), 1, file);
 
-    if (dolphin->config.model.enable_thinking) {
-        // load the "thinking" versions of the templates
-        load_single_template(prompt_template, sizeof(prompt_template), sRoot, "template_user_thinking.txt");
-        load_single_template(system_prompt_template, sizeof(system_prompt_template), sRoot, "template_system_thinking.txt");
-    } else {
-        // load the standard versions of the templates
-        load_single_template(prompt_template, sizeof(prompt_template), sRoot, "template_user.txt");
-        load_single_template(system_prompt_template, sizeof(system_prompt_template), sRoot, "template_system.txt");
+        for (int i = 0; i < vocab_size; i++) {
+            if (fread(scores + i, sizeof(float), 1, file) != 1) {
+                // vocab[i] = (char *)malloc(1);
+                // vocab[i][0] = 0;
+                tmp_word[0] = '\0';
+                nz++;
+            } else {
+                fread(&len, sizeof(int), 1, file);
+                assert(len <= max_token_length);
+                fread(tmp_word, 1, len, file);
+                tmp_word[len] = '\0';
+            }
+            vocab.push_back(tmp_word);
+        }
+        fclose(file);
+        
+        return true;
+    } catch (...) {
+        return false;
     }
-    return true;
-}catch(...){
-    return false;
 }
+
+int GTokenizer::Lookup(const std::string &word, int flag) {
+    for (int i = 0; i < vocab.size(); i++)
+        if (vocab[i] == word)
+            return i;
+    return -1;
+}
+
+//      void Encode(char *text, int *tokens, int *n_tokens,int flag);
+TOKENS GTokenizer_QWEN3::Encode(const std::string &sText, bool encode_bos, bool encode_eos) {
+    // encode the string text (input) into an upper-bound preallocated tokens[] array
+    TOKENS tokens;
+    // create a temporary buffer that will store merge candidates of always two consecutive tokens
+    // *2 for concat, +1 for null terminator +2 for UTF8 (in case max_token_length is 1)
+    char *str_buffer = (char *)malloc((MAX_TOKEN_LENGTH * 2 + 1 + 2) * sizeof(char));
+    char special_token[64 + 1];
+    const char *text = sText.c_str();
+    int nPass = 0, turn = 0, dump = 0;
+    // start at 0 tokens
+    // *n_tokens = 0;
+    // _INFO("\n [cat] %s", sText.c_str());
+    // process the raw (UTF-8) byte sequence of the input string
+    for (const char *c = text; *c != 0; c++) {
+        int id, found_special_token = 0;
+
+        // set the buffer to the current byte
+        str_buffer[0] = *c;
+        str_buffer[1] = 0;
+
+        // special tokens begin with < and end with >. If we find a substring beginning with <
+        // and ending with > and there's a token in the vocab for it, use that instead of parsing into
+        // shorter tokens
+        if (*c == '<') {
+            int end_of_token_pos = -1;
+            found_special_token  = 0;
+            for (int k = 0; *c != 0 && k < 64; k++) {
+                if (c[k] == '>') {
+                    end_of_token_pos = k;
+                    break;
+                }
+            }
+
+            if (end_of_token_pos != -1) {
+                strncpy(special_token, c, end_of_token_pos + 1);
+                special_token[end_of_token_pos + 1] = 0;
+
+                id = Lookup(special_token);
+                if (id != -1) {
+                    c += end_of_token_pos;
+                    found_special_token = 1;
+                }
+            }
+        }
+
+        // not a special token, just look up the single character
+        if (!found_special_token)
+            id = Lookup(str_buffer);
+
+        if (id != -1) {
+            // we found this codepoint in vocab, add it as a token
+            tokens.push_back(id);
+            // tokens[(*n_tokens)++] = id;
+        } else {
+            _WARN("Warning: unknown character code point %d in input, skipping.\n", *str_buffer);
+            nPass++;  //(*n_tokens)++;
+        }
+    }
+    if (dump) {
+        printf("\n[cat] tokens=%ld\t", tokens.size());
+        for (int i = 0; i < tokens.size(); i++) {
+            printf("%d ", tokens[i]);
+        }
+    }
+
+    while (1) {            // merge the best consecutive pair each iteration
+        if (turn == 13) {  // 151668
+            int debug = 0;
+        }
+        float best_score = -1e10;
+        int best_id = -1, best_idx = -1;
+        for (int i = 0; i < tokens.size() - 1; i++) {
+            string tt = vocab[tokens[i]] + vocab[tokens[i + 1]];
+            int id    = Lookup(tt);
+
+            if (id != -1 && scores[id] > best_score) {
+                // this merge pair exists in vocab! record its score and position
+                best_score = scores[id];
+                best_id    = id;
+                best_idx   = i;
+            }
+        }
+        if (best_idx == -1) {
+            break;
+        }
+
+        string tt        = vocab[tokens[best_idx]] + vocab[tokens[best_idx + 1]];
+        tokens[best_idx] = best_id;
+        tokens.erase(tokens.begin() + best_idx + 1);
+        if (dump) {
+            printf("[merge]_%d n=%ld best=%d(%d,%.4g)\t", turn++, tokens.size(), best_idx, best_id, best_score);
+            for (int i = 0; i < tokens.size(); i++) {
+                printf("%d ", tokens[i]);
+            }
+            printf("\n");
+        }
+    }
+
+    free(str_buffer);
+    return tokens;
 }
 
 int GTokenizer::nVocab(int flag) const {
@@ -1202,27 +1305,6 @@ void CDict_CHAR::LoadVocab(const char *model_path, int flag) {
     }*/
 }
 
-void QKV_LAY::save_gguf(struct gguf_context *fctx, int flag) {
-#ifdef _TENSOR_G_
-#else
-    gguf_add_tensor(fctx, att_norm.w);
-    gguf_add_tensor(fctx, Q.w);
-    if (K.w != nullptr)
-        gguf_add_tensor(fctx, K.w);
-    if (V.w != nullptr)
-        gguf_add_tensor(fctx, V.w);
-    if (wo != nullptr)
-        gguf_add_tensor(fctx, wo);
-    if (ffn_norm.w != nullptr)
-        gguf_add_tensor(fctx, ffn_norm.w);
-    if (ffn_gate != nullptr)
-        gguf_add_tensor(fctx, ffn_gate);
-    if (down.w != nullptr)
-        gguf_add_tensor(fctx, down.w);
-    if (up.w != nullptr)
-        gguf_add_tensor(fctx, up.w);
-#endif
-}
 
 void VariationaAE::save_gguf(struct gguf_context *fctx, int flag) {
 #ifdef _TENSOR_G_

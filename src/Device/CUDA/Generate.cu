@@ -10,11 +10,11 @@
 #include "../../Device/Pipe.hpp"
 #include "../../Manifold/Fish.hpp"
 #include "../../Manifold/Neuron.hpp"
-#include "./kernel/Operator.cuh"
 #include "./kernel/embed.cuh"
-// #include "./kernel/gemm.cuh"
 #include "./kernel/layernorm.cuh"
+#include "./kernel/operator.cuh"
 #include "./kernel/utils.cuh"
+#include "qwen_v0.cuh"
 
 extern cudaStream_t main_stream;
 
@@ -27,10 +27,6 @@ extern cudaStream_t main_stream;
 
 //     }
 // }
-
-#define MAX_LAYERS 128
-#define MAX_EXPERTS 64
-
 __device__ static void coopstage(uint64_t* stats, int stage) {
     __shared__ uint64_t lastt;
     if (stats && blockIdx.x == 0 && threadIdx.x == 0) {
@@ -49,7 +45,7 @@ __device__ static void coopstage(uint64_t* stats, int stage) {
     AT float			type of activation
 */
 template <typename T, typename KVT, typename AT>
-__global__ __launch_bounds__(1024, 1) static void T_forward_qkv(const __grid_constant__ KERNEL_PIPE<AT, KVT> args) {
+__global__ __launch_bounds__(1024, 1) static void T_forward_qkv(const __grid_constant__ KERNEL_PIPE<AT, KVT, T> args) {
     extern __shared__ char smem[];
     __shared__ float rmsscale;
 
@@ -228,7 +224,7 @@ __device__ inline void CU_dot16x4_(float* out, T* x, __nv_fp8_e5m2* w, int i, in
 
 //	T=_nv_fp8_e5m2, KVT=__half, AT=AT
 template <typename T, typename KVT, typename AT>
-__global__ __launch_bounds__(1024, 1) static void T_forward_ffn(const __grid_constant__ KERNEL_PIPE<AT, KVT> args) {  // KERNEL_PIPE<AT, KVT> args
+__global__ __launch_bounds__(1024, 1) static void T_forward_ffn(const __grid_constant__ KERNEL_PIPE<AT, KVT, T> args) {  // KERNEL_PIPE<AT, KVT> args
     extern __shared__ char smem[];
     __shared__ float rmsscale, moe_weights[32];
     __shared__ int moe_experts[32];
@@ -267,9 +263,9 @@ __global__ __launch_bounds__(1024, 1) static void T_forward_ffn(const __grid_con
 
     // F.CU_silu(self.w1(x)) * self.w3(x)
     for (int j = io; j < hidden_dim * args.n_experts_ac; j += ib) {
-        int je = (j % hidden_dim) + moe_experts[j / hidden_dim] * hidden_dim;
+        int je     = (j % hidden_dim) + moe_experts[j / hidden_dim] * hidden_dim;
         float gama = L->gama_1 == nullptr ? 1.0f : (float)(L->gama_1[j]);
-        float v1 =  matmul_warppar(xs, L->w1, je, dim) * gama;        
+        float v1   = matmul_warppar(xs, L->w1, je, dim) * gama;
         // float v1 = matmul_warppar(xs, L->w1, je, dim) ;
         // CU_dot16x4_(&v1, xs, L->w1, je, dim);			SYNC_GRID();
         float v3  = matmul_warppar(xs, L->w3, je, dim);
@@ -296,7 +292,9 @@ __global__ __launch_bounds__(1024, 1) static void T_forward_ffn(const __grid_con
     SYNC_GRID();
     coopstage(args.perfstats, 6);
 }
-typedef __nv_fp8_e5m2 tpEMBED;
+
+// typedef __nv_fp8_e5m2 tpEMBED;
+typedef __nv_bfloat16 tpEMBED;
 
 // classifier into logits		T=__nv_fp8_e5m2, AT=AT
 template <typename T, typename AT>
@@ -318,15 +316,17 @@ __global__ static void kernel_output(uint64_t pTok, float* xout, AT* x, T* w, fl
     }
 }
 
+/*  may have high performance than T_generate_cuda
 template <typename AT>
-float* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned flags) {  // int token, int pos,
+float* T_generate_Cooperative(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned flags) {  // int token, int pos,
     assert(hFish != nullptr);
     if (id == 0) {
         _INFO("\t %s: |T_weight|=%d |T_kv|=%d |T_activity|=%d \n", __func__, sizeof(__nv_fp8_e5m2), sizeof(__half), sizeof(AT));
     }
     TokenEmbed* embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
     int token = embed->hBatch->CurToken(), pos = embed->hBatch->pos++;
-    KERNEL_PIPE<AT, __half> args(hFish, pos);  //	kv_len,kv_pos,
+    QWEN3_PIPE args(hFish, pos);
+    // QWEN_CALM_PIPE args(hFish, pos);  //	kv_len,kv_pos,
 
     int nActivePC = 1;  //	for __launch_bounds__(MAX_THREADS_PER_BLOCK, MIN_BLOCKS_PER_MULTIPROCESSOR)
     // cudaCheck(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&nActivePC, kernel_output<__nv_fp8_e5m2, AT>, dBLOCK, smemPB));
@@ -335,13 +335,13 @@ float* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned flags)
     // copy the token embedding into x
     tpEMBED* token_embedding_table = TO<tpEMBED>(embed->w);
     kernel_embed<<<dim / 32, 32, 0, main_stream>>>(args.x, token_embedding_table, token, dim);
-    embed->w->Print("wte", 0, 0);
+    // embed->w->Print("wte", 0, 0);
     PrintTensor<AT>("GetRow", args.x, true, dim, 1);
 
     // rotate sink tokens forward to keep pace with non-sink tokens
     // if (kv_sink > 0) {
     // 	kernel_rotate_sink<<<dim3(kv_sink * kv_dim / 64, p->n_layers), 32, 0, stream>>>(
-    // 	    PROF_TOKEN(kv_sink * kv_dim * sizeof(KVT)), kv_dim, (KVT*)s->key_cache, p->head_dim, kv_sink, log2(p->rope_theta), p->seq_len, p->rotary_dim);
+    // 	    PROF_TOKEN(kv_sink * kv_dim * sizeof(KVT)), kv_dim, (KVT*)args.key_cache, p->head_dim, kv_sink, log2(p->rope_theta), p->seq_len, p->rotary_dim);
     // }
     OutCLS* cls             = hFish->GetNeuron<OutCLS>("OutCLS", 0);
     LayerNormal* lnf        = hFish->GetNeuron<LayerNormal>("LayerNormal", 0);
@@ -352,16 +352,14 @@ float* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned flags)
     // PrintTensor<float>("x_0",args.x,true,dim,1);	uint32_t,__nv_fp8_e5m2,float
 
     hGensor cur = GTensor::outL, residual = nullptr;
-    // auto err = cudaLaunchCooperativeKernel((void*)T_forward_qkv<__nv_fp8_e5m2, __half, float>,dGRID, dBLOCK, &argsp, smemPB, main_stream);
-    // cudaCheck( err );
     for (int l = 0; l < args.n_layers; ++l) {
         args.InitLayer(l);
         SelfAttention* QKV                = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
-        const CoopLayer<__nv_fp8_e5m2>* L = (const CoopLayer<__nv_fp8_e5m2>*)(args.cLayers + l);  //	args.cLayers+l
-        PrintTensor<float>("rms_att_weight", L->rms_att_weight, true, dim, 1);
+        const CoopLayer<QWEN3_PIPE::tpWeight>* L = (const CoopLayer<QWEN3_PIPE::tpWeight>*)(args.cLayers + l);  //	args.cLayers+l
+        PrintTensor<QWEN3_PIPE::tpWeight>("rms_att_weight", L->rms_att_weight, true, dim, 1);
         // QKV->cuTrain();
 
-        auto err = cudaLaunchCooperativeKernel((void*)T_forward_qkv<__nv_fp8_e5m2, __half, AT>, dGRID, dBLOCK, &argsp, smemPB, main_stream);
+        cudaError_t err = cudaLaunchCooperativeKernel((void*)T_forward_qkv<__nv_fp8_e5m2, __half, AT>, dGRID, dBLOCK, &argsp, smemPB, main_stream);
         PrintTensor<AT>("hb", args.hb, true, args.hb_dim, 1);
         PrintTensor<AT>("q", args.q, true, args.q_dim, 1);
         PrintTensor<AT>("att", args.att, true, dim, 1);  // why it's inf ???
@@ -389,9 +387,6 @@ float* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned flags)
     if (isOnlyUpdateKV) {
         return NULL;
     }
-    //-0.170935 0.218924 0.0977959 ...0.0455288 0.0808399 -0.204381 0.0195478 ...-0.138804 -0.0699319 	"x" avg=0.111772(1536) avg_len=0.18982 sum2=55.3446
-    //[-0.958953,2.267083]
-
     hGensor out_weight = args.out_weight;
     uint64_t pTok      = PROF_TOKEN(vocab_size * dim * args.weight_dbits / 8);
     // template <typename T, typename AT> (uint64_t, float* xout, AT* x, T* w, float* rms_weight, int n, int d, float norm_eps, bool norm_ln)
@@ -401,6 +396,132 @@ float* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned flags)
     cudaCheck(cudaGetLastError());  // check for kernel launch errors; they might fail with OOM due to lazy kernel compilation
 
     // cls->preLogits->Print("logits",0,-1,dim);
+    cls->preLogits->SerialData("", nullptr, true);
+    return logits;
+}*/
+
+template <typename AT>
+float* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned flags) {  // int token, int pos,
+    constexpr int HEAD_DIM = 128;
+    int PROMPT_BUFFER_SIZE = hFish->config.model.PROMPT_BUFFER_SIZE;
+    int seq_len            = hFish->config.model.SEQ_LEN;
+    int N_HEADS            = hFish->config.n_head();
+    int N_KV_HEADS = hFish->config.n_head_kv(), KV_DIM = N_KV_HEADS * HEAD_DIM;
+    float rope_theta = hFish->config.model.rope_theta;
+    assert(hFish != nullptr);
+    if (id == 0) {
+        // _INFO("\t %s: |T_weight|=%d |T_kv|=%d |T_activity|=%d \n", __func__, sizeof(__nv_fp8_e5m2), sizeof(__half), sizeof(AT));
+    }
+    TokenEmbed* embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
+    int token = embed->hBatch->CurToken(), pos = embed->hBatch->pos++;
+    QWEN3_PIPE args(hFish, pos);
+    // QWEN_CALM_PIPE args(hFish, pos);  //	kv_len,kv_pos,
+
+    int nActivePC = 1;  //	for __launch_bounds__(MAX_THREADS_PER_BLOCK, MIN_BLOCKS_PER_MULTIPROCESSOR)
+    // cudaCheck(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&nActivePC, kernel_output<__nv_fp8_e5m2, AT>, dBLOCK, smemPB));
+    int nCore = hFish->curDevice()->nCore, smemPB = args.dim * sizeof(float);
+    int dim = args.dim, vocab_size = embed->nVocab, dBLOCK = 1024, dGRID = nCore * nActivePC;
+    // copy the token embedding into x
+    tpEMBED* token_embedding_table = TO<tpEMBED>(embed->w);
+    kernel_embed<<<dim / 32, 32, 0, main_stream>>>(args.x, token_embedding_table, token, dim);
+    // embed->w->Print("wte", 0, 0);
+    PrintTensor<AT>("GetRow", args.x, true, dim, 1);
+
+    OutCLS* cls              = hFish->GetNeuron<OutCLS>("OutCLS", 0);
+    float* logits            = TO<float>(cls->preLogits);
+    LayerNormal* lnf         = hFish->GetNeuron<LayerNormal>("LayerNormal", 0);
+    floatX* rms_final_weight = TO<floatX>(lnf->w);  // (dim,);
+    void* argsp              = &args;
+    // PrintTensor<float>("x_0",args.x,true,dim,1);	uint32_t,__nv_fp8_e5m2,float
+
+    hGensor cur = GTensor::outL, residual = nullptr;
+    for (int l = 0; l < args.n_layers; ++l) {
+        if (l == 7) {
+            int debug = 0x0;
+        }
+        args.InitLayer(l);
+        SelfAttention* QKV                       = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
+        const CoopLayer<QWEN3_PIPE::tpWeight>* L = (const CoopLayer<QWEN3_PIPE::tpWeight>*)(args.cLayers + l);  //	args.cLayers+l
+        PrintTensor<QWEN3_PIPE::tpWeight>("rms_att_weight", L->rms_att_weight, true, dim, 1);
+        CU_rms_v2(args.xb, args.x, L->rms_att_weight, args.dim);
+        PrintTensor<QWEN3_PIPE::tpActivation>("rms_0", args.x, true, dim, 1);
+        PrintTensor<QWEN3_PIPE::tpActivation>("rms_xb", args.xb, true, dim, 1);
+        bf16* k_cache_pos = args.key_cache + (size_t)l * seq_len * args.kv_dim + (size_t)pos * args.kv_dim;
+        bf16* v_cache_pos = args.val_cache + (size_t)l * seq_len * args.kv_dim + (size_t)pos * args.kv_dim;
+        CU_mv_(args.q, L->wq, args.xb, args.q_dim, args.dim);
+        PrintTensor<QWEN3_PIPE::tpWeight>("wq", L->wq, true, args.q_dim, args.dim);
+        PrintTensor<QWEN3_PIPE::tpActivation>("q", args.q, true, args.q_dim, 1);
+        CU_mv_(k_cache_pos, L->wk, args.xb, args.kv_dim, args.dim);
+        PrintTensor<QWEN3_PIPE::tpActivation>("k", k_cache_pos, true, args.kv_dim, 1);
+        CU_mv_(v_cache_pos, L->wv, args.xb, args.kv_dim, args.dim);
+        PrintTensor<QWEN3_PIPE::tpActivation>("v", v_cache_pos, true, args.kv_dim, 1);
+
+        // qk_norm_fused_gpu(args.q, k_cache_pos, L->wq_norm, L->wk_norm);
+        constexpr int QK_NORM_THREADS_PER_BLOCK = 64;
+        // launching ONE kernel for all query heads
+        fused_multi_rmsnorm_kernel<QK_NORM_THREADS_PER_BLOCK, HEAD_DIM><<<N_HEADS, QK_NORM_THREADS_PER_BLOCK>>>(args.q, L->wq_norm, N_HEADS, 1.0f / HEAD_DIM);
+        // launching ONE kernel for all key heads
+        fused_multi_rmsnorm_kernel<QK_NORM_THREADS_PER_BLOCK, HEAD_DIM>
+            <<<N_KV_HEADS, QK_NORM_THREADS_PER_BLOCK>>>(k_cache_pos, L->wk_norm, N_KV_HEADS, 1.0f / HEAD_DIM);
+
+        rope_gpu_naive(args.q, k_cache_pos, pos, N_HEADS, N_KV_HEADS, HEAD_DIM, rope_theta);
+        // 6. MHA (QK^T V)
+        bf16 *layer_key_cache = args.key_cache + (size_t)l * seq_len * KV_DIM, *layer_value_cache = args.val_cache + (size_t)l * seq_len * KV_DIM;
+        // 6.1: calculate QK scores
+        int qk_threads_per_block = std::min(1024, pos + 1);
+        attention_qk_kernel<<<N_HEADS, qk_threads_per_block>>>(args.att, args.q, layer_key_cache, pos, seq_len, N_HEADS, N_KV_HEADS, HEAD_DIM);
+        // 6.2: softmax
+        softmax_kernel<<<N_HEADS, 1>>>(args.att, pos, seq_len);
+        // 6.3: aggregate V values
+        attention_v_kernel<<<N_HEADS, HEAD_DIM>>>(args.q, args.att, layer_value_cache, pos, seq_len, N_HEADS, N_KV_HEADS, HEAD_DIM);
+        cudaCheck(cudaStreamSynchronize(main_stream));
+        cudaError_t err{cudaGetLastError()};
+        // PrintTensor<AT>("hb", args.hb, true, args.hb_dim, 1);
+        PrintTensor<AT>("q", args.q, true, args.q_dim, 1);
+        // PrintTensor<float>("att", args.att, true, dim, 1);  // why it's inf ???
+        // 7. final attention output projection and residual connection (fused)        
+        CU_mv_(args.x, L->wo, args.q, args.dim, args.q_dim, 1.0f, 1.0f);        // matmul_cublas(cublas_handle, args.x, L->wo, args.q, args.dim, args.q_dim, 1.0f, 1.0f);
+        PrintTensor<QWEN3_PIPE::tpActivation>("att_x", args.x, true, args.dim, 1);
+        cudaCheck(err);
+
+        // exit(-13);
+        double now = GST_ms();
+        FFN* ffn   = hFish->GetNeuron<FFN>("FFN", l);
+        if (0) {             //	-0.010254 -0.238807 ...0.491514 0.0411605 0.318263 ...0.088502 	"ffn_inp" |avg|=0.115405(1536) avg_len=0.195593 sum2=58.7623
+            ffn->OnDebug();  //[-1.496535,1.585582] nz=0
+            ffn->cuTrain(cur, 0x0);
+        } else {
+            CU_rms_v2(args.xb, args.x, L->rms_ffn_weight, args.dim);
+            // 9. FFN projections (Gate and Up)
+            // output of w1 matmul is args.hb. output of w3 matmul is args.hb2.            
+            CU_mv_(args.hb, L->w3, args.xb, args.hidden_dim, args.dim);     // matmul_cublas(cublas_handle, args.hb, L->w3, args.xb, args.hidden_dim, args.dim);
+            CU_mv_(args.hb2, L->w1, args.xb, args.hidden_dim, args.dim);     // matmul_cublas(cublas_handle, args.hb2, L->w1, args.xb, args.hidden_dim, args.dim);
+            // 9. SwiGLU
+            // in-place operation on args.hb, using args.hb2 as the gate.
+            swiglu_gpu(args.hb, args.hb2, args.hidden_dim);
+            // 10. final FFN Down Projection matmul and residual connection (fused)
+            CU_mv_(args.x, L->w2, args.hb, args.dim, args.hidden_dim, 1.0f, 1.0f);     //matmul_cublas(cublas_handle, args.x, L->w2, args.hb, args.dim, args.hidden_dim, 1.0f, 1.0f);
+            cudaCheck(cudaGetLastError());
+        }
+        cudaCheck(cudaStreamSynchronize(main_stream));
+        // SUM::tX1 += GST_ms() - now;
+        PrintTensor<AT>("x_ffn", args.x, true, dim, 1, 1, 1, 0);
+        // args.AfterLayer(l);
+    }
+    if (isOnlyUpdateKV) {
+        return NULL;
+    }
+    // 11. final RMSNorm
+    // in-place operation on args.x
+    CU_rms_v2(args.x, args.x, rms_final_weight, args.dim);
+    // 12. classifier Matmul
+    hGensor out_weight = args.out_weight;
+    CU_mv_(args.xlogit, ToX(out_weight), args.x, args.vocab_size, args.dim);     //matmul_cublas(cublas_handle, args.xlogit, ToX(out_weight), args.x, args.vocab_size, args.dim);
+    int grid_size = (args.vocab_size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    convert_bf16_to_fp32_kernel<<<grid_size, THREADS_PER_BLOCK>>>(args.xlogit, logits, args.vocab_size);
+    // cudaMemcpy(transformer->h_logits, args.d_logits_fp32, (size_t)args.vocab_size * sizeof(float), cudaMemcpyDeviceToHost);
+
+    // cls->preLogits->Print("logits",0,-1,args.vocab_size);
     cls->preLogits->SerialData("", nullptr, true);
     return logits;
 }
@@ -413,11 +534,11 @@ float* T_generate_(hFISH hFish, int id, typNUMBER tpActivity, unsigned flags) { 
     } else {
         switch (tpActivity) {
             case typNUMBER::F32:
-                logits = T_generate_cuda<float>(hFish, false, id, flags);
+                // logits = T_generate_cuda<float>(hFish, false, id, flags);
                 break;
-            // case typNUMBER::BF16:
-            //     logits = T_generate_cuda<__nv_bfloat16>(hFish, false, id, flags);
-            //     break;
+            case typNUMBER::BF16:
+                logits = T_generate_cuda<__nv_bfloat16>(hFish, false, id, flags);
+                break;
             // case typNUMBER::F8E5M2:
             // 	logits = T_generate_cuda<__nv_fp8_e5m2>(hFish,false,id,flags);
             // 	break;

@@ -102,9 +102,9 @@ void GeNeuron::Init(Fish *hG_, int flag) {
     auto &config = hG_->config;
     // n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_embd=config.nEmbed();
     hG_->GetBTC(B, T, C);
-    n_embd_head = config.n_embd_head();
+    n_embd_head = config.head_dim();
     n_head      = config.n_head();
-    assert(n_embd_head * n_head == C);
+    // assert(n_embd_head * n_head == C);
     tpWeight     = hFish->config.model.tpWeight;
     tpActivation = hFish->config.model.tpActivation;
     tpGradient   = hFish->config.model.tpGradient;
@@ -120,6 +120,11 @@ void GeNeuron::SetRefer(const GeNeuron *src, bool isBias, int flag) {
             b->SetRefer(src->b);
         }
     }
+}
+
+std::string GeNeuron::_NAME(const std::string &prefix, tpNEURON4NAME neron, const std::string &suffix, int flag) {
+    assert(hFish != nullptr);
+    return hFish->NN2NAME(prefix, neron, suffix, flag);
 }
 
 string GeNeuron::_repr_1(string &suffix, string &prefix, string info, int flag) {
@@ -202,7 +207,7 @@ OutCLS::OutCLS(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int
     nCls        = hFish->nClass();
     padded_nCls = (hFish->config.model.isPaddedCls) ? ceil(nCls / 128.0) * 128 : nCls;
     // reduce memory & some float error
-    dB = hFish->config.model.preLogits_dB;  
+    dB = hFish->config.model.preLogits_dB;
 
     /*
     1. If true, reduces the memory,  often results in better and faster outcomes ???
@@ -260,12 +265,11 @@ bool OutCLS::Build(int flag) {
     auto tpL = hFish->config.model.tpPreLogits;
     if (hFish->config.isOnlyGPT) {
         preLogits = GT(hFish, tpL, {padded_nCls}, 0x0, "preLogits");  // std::make_shared<huTensor>(hFish,"preLogits",sp3,tpActivation,false);
-        preLogits->flags |= GTensor::F_HOSTDATA;
+        // preLogits->flags |= GTensor::F_HOSTDATA;
     } else {
         // size_t nz = std::max(GTensor::scratch->size(),(size_t)dB*T*padded_nCls);        assert(nz<INT_MAX);
         // sp3 = {(int)nz};
         preLogits = std::make_shared<huTensor>(hFish, "preLogits", sp3, tpL, false);
-        // GTensor::scratch = preLogits;
     }
 
     delta = GTensor::bt4c;  // !=GTensor::delta
@@ -515,7 +519,7 @@ bool ROPE::Build(int flag) {
     auto &config = hFish->config;
     n_rot        = config.n_rot();
     int n_embed  = config.nEmbed();
-    head_dim     = config.n_embd_head();
+    head_dim     = config.head_dim();
     int n_heads = config.n_head(), n_kv_heads = config.n_head_kv();
     q_dim = head_dim * n_heads, kv_dim = head_dim * n_kv_heads;
     assert(head_dim > 0 && q_dim > 0 && kv_dim > 0);
@@ -662,9 +666,9 @@ bool LayerNormal::Build(int flag0) {
         mean = GT(hFish, typNUMBER::F32, {B, T}, flag, name + ".mean");  // std::make_shared<huTensor>(hFish,name+".mean",sp,typNUMBER::F32,false);
     }
     if (nHead > 0) {
-        rstd = GT(hFish, typNUMBER::F32, {B, T, nHead}, flag, name + ".rstd");
+        rstd = GT(hFish, typNUMBER::F32, {B, T, nHead}, flag, _NAME(name, LN_RSTD));  //  name + ".rstd"
     } else
-        rstd = GT(hFish, typNUMBER::F32, {B, T}, flag, name + ".rstd");  // std::make_shared<huTensor>(hFish,name+".rstd",sp,typNUMBER::F32,false);
+        rstd = GT(hFish, typNUMBER::F32, {B, T}, flag, _NAME(name, LN_RSTD));  // name + ".rstd"
 
     return true;
 }
@@ -828,6 +832,10 @@ std::vector<hGensor> GeNeuron::PickGensors(bool isLORA, int flag) {
 
     return arrT;
 }
+hGensor GeNeuron::GetGensor(const std::string &prefix, tpNEURON4NAME neron, const std::string &suffix, int flag) {
+    string key = _NAME(prefix, neron, suffix);
+    return GetGensor(key, flag);
+}
 hGensor GeNeuron::GetGensor(const std::string &key, int flag) {
     auto gensors = PickGensors();
     assert(gensors.size() > 0);
@@ -890,7 +898,7 @@ int GeNeuron::SetGuoke(GeNeuron *hGuoke_, bool isX, int flag) {
             } else
                 continue;
 
-            // if (!G_Has_(t->name, {"mlp.w1.weight"}))
+            // if (!G_Has_(t->name, {"mlp.weight"}))
             //     continue;
         }
 

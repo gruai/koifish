@@ -41,6 +41,13 @@ enum LIFE_PHASE {
     P_GENERATE
 };
 
+enum CHAT_MODE {
+    YABA,
+    CHAT_SMOKE,
+    CHATML_ASSIST,
+    CHATML_THINK,
+};
+
 enum METRIC { M_VOID, CLS_LOSS, PPL, METRIC_MOST };
 
 enum COMPRESSIVE_SENSING {
@@ -141,6 +148,9 @@ struct Fuyou_params {
 
     void Dump(int typ) const;
 };
+
+enum tpNEURON4NAME { ATTN_PRE_NORMAL, ATTN_Q_NORM, ATTN_K_NORM, ATTN_Q, ATTN_K, ATTN_V, ATTN_OUT, FFN_PRE_NORMAL, FFN_UP, FFN_DOWN, FFN_GATE, LN_RSTD };
+
 /**
  * should have config.json,tokenizer.json & tokenizer_config.json
  * generation_config.json
@@ -163,21 +173,22 @@ class MODEL_CARD {
             // moe gate weights (mixtral)
             void* moegate[MAX_LAYERS]; // (n_experts, dim)
          */
-        uint32_t head, kv_head;
+        uint32_t _head, _kv_head, _head_dim;
         uint32_t ff;
-        LAY_PARAM(uint32_t h, uint32_t k, uint32_t f) : head(h), kv_head(k), ff(f) { assert(h > 0 && k > 0 && f > 0); }
-
-        uint32_t n_head() const { return head; }
+        LAY_PARAM(uint32_t h, uint32_t k, uint32_t hd, uint32_t f) : _head(h), _kv_head(k), _head_dim(hd), ff(f) { assert(h > 0 && k > 0 && f > 0 && hd > 0); }
         virtual void SetHead(int nH) {
             assert(nH > 0 && nH < 1024 * 1024);
-            head    = nH;
-            kv_head = nH;
+            _head    = nH;
+            _kv_head = nH;
         }
         virtual void SetFF(int nF) {
             assert(nF > 0 && nF < 1024 * 1024);
             ff = nF;
         }
-        uint32_t n_head_kv() const { return kv_head; }
+
+        uint32_t n_head() const { return _head; }
+        uint32_t n_head_dim() const { return _head_dim; }
+        uint32_t n_head_kv() const { return _kv_head; }
         uint32_t n_ff() const { return ff; }
 
         /**
@@ -186,25 +197,19 @@ class MODEL_CARD {
          * fewer groups (near to MQA) boost speed at the risk of sacrificing quality.
          */
         uint32_t n_gqa() const {
-            assert(head >= kv_head && head % kv_head == 0);
-            return head / kv_head;
-        }
-        uint32_t n_embd_head(int _embd) const {
-            assert(_embd > 0 && _embd % head == 0 && _embd >= head);
-            return _embd / head;
-        }
-
-        uint32_t n_embd_gqa(int _embd) const {
-            int gqa = n_gqa();
-            assert(_embd % gqa == 0 && _embd >= gqa);
-            return _embd / gqa;
+            assert(_head >= _kv_head && _head % _kv_head == 0);
+            return _head / _kv_head;
         }
     };
 
     std::vector<LAY_PARAM> layerps;
 
    public:
-    static std::string sWeight, sBias, sNorm, sLayer, sAttnOut;
+    int SEQ_LEN = 8192;
+    int PROMPT_BUFFER_SIZE = 32768;
+    
+    static std::string sWeight, sBias, sLayer, sEmbed, sInvEmbed;  // sNorm,, sAttnOut
+    // static std::string sWq, sWq_norm, sWk, sWk_norm, sWv, sWv_norm;
     bool enable_thinking = false;
     bool isSparse() { return sparse.method != 0; }
     struct Sparsing {
@@ -220,8 +225,16 @@ class MODEL_CARD {
     typNUMBER tpWeight = typNUMBER::BF16, tpEmbed = typNUMBER::BF16, tpPreLogits = typNUMBER::F32, tpGradient = typNUMBER::BF16, tpActivation = typNUMBER::BF16;
 
     dotprod_t fDotW;
-    JSON jModelParam;  //
-    int vocab_size       = -1, bos_token_id, eos_token_id;
+    JSON jModelParam, jSafetensorsIndex;  //
+    int vocab_size = -1;
+    // 1. in some model, no bos_token_id!(GPT-2/GPT-3,unsloth/Qwen3-4B-Base,...)
+    int bos_token_id, eos_token_id;
+    // Instruct model always has there templates! Base Model may has no template
+    std::string prompt_template, system_prompt_template;
+    bool isInstructModel() {
+        // system_prompt_template.empty()
+        return !prompt_template.empty();
+    }
     int preLogits_dB     = 2;  // epsilon for convergence test
     bool isNormalBias    = true;
     bool isSLPBias       = true;
@@ -229,14 +242,21 @@ class MODEL_CARD {
     bool isFFNShareParam = false;
 
     // dim(=head_dim*n_heads)
-    int dim = -1, hidden_dim = -1, n_layers = -1, n_heads = -1, n_kv_heads = -1, head_dim = 1;
+    int dim = -1, hidden_dim = -1, n_layers = -1, hidden_size = -1, intermediate_size = -1;
+    int max_pos_embeddings = -1, num_attention_heads = -1, num_key_value_heads = -1;
+
     //  ****
     bool isFFNWeightTying   = true;
-    bool isEmbedWeightTying = true;
+    bool isEmbedWeightTying = false;
+    std::vector<std::string> skip_st;
+
     bool isSeparateQKV      = false;
+    bool isQKNormal         = false;
     bool isBqkv             = false;
     float clip_qkv          = FLT_MAX;  // Clipping Q/K/V.  to prevent numerical instability
-                                        //  Experts
+    size_t nTotalSize = 0x0;
+    std::map<std::string, void*> st_map;    //map of st in jSafetensorsIndex
+    //  Experts                             
     int n_experts = 0, n_experts_ac = 0;
     //  eps
     float norm_eps = 1e-5f, norm_rms_eps = 1e-5f;
@@ -257,6 +277,7 @@ class MODEL_CARD {
     virtual bool OnJsonCALM(CLI_params* hConfig, const std::string& path, const JSON& meta, int flag = 0X0);
     // more param from HF's "model_card"
     virtual bool InitHugFace(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
+    virtual bool InitChatTemplate(CLI_params* hConfig, int flag = 0x0);
     bool empty() { return sCardPath.empty(); }
     void Dump(int typ);
 
@@ -351,9 +372,28 @@ struct TRAIN_CARD {
     bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
 };
 
+struct CHAT_SAMPLER {
+    enum METHOD { TEMPERATURE, Top_K, Top_P, Min_P, BEAM };
+    METHOD method = METHOD::TEMPERATURE;
+
+    float temperature = 0.6f;
+    float top_p       = 0.95f;
+    int top_k         = 20;
+    bool ignore_eos   = false;  // ignore EOS token when generating text
+
+    int repeat_last_n        = 64;
+    float repeat_penalty     = 1.00f;
+    bool interactive         = false;
+    int32_t interactive_port = -1;
+
+    std::string prompt     = "";
+    std::string token_test = "";
+};
+
 struct DUMP_SWITCH {
     int tensor_ref             = 0;
     int train_time             = 0;
+    int tensor_load            = 0;
     std::string train_csv_path = "";
 };
 
@@ -380,6 +420,7 @@ struct DEUG_SWITCH {
     int cmd_p1 = 0, cmd_p2 = 0, cmd_p3 = 0;  // some commandline parameter for debug
     int x1 = 0;
     std::string x_str;
+    std::vector<std::string> prompts;
 
     float Time_most = 60;
     void Dump(int typ);
@@ -515,14 +556,18 @@ struct CLI_params {
     // std::string fp_train_data;   serial_path
     std::string train = "";  //"scratch"
 
-    bool isOnlyGPT        = false;
+    bool isOnlyGPT      = false;
+    CHAT_MODE chat_mode = CHAT_MODE::YABA;
+    CHAT_SAMPLER chat_sampler;
+
     bool passLoadToken    = false;
     bool only_write_model = false;
     bool ffn_use_gate     = false;
     uint32_t n_swarm      = 1;
     // uint32_t n_outputs = 1;
     int n_embd_head_k = -1, n_embd_head_v = -1;  // nEmbed() = -1,
-    std::vector<int> token_embeds, qkv_embeds;
+    std::vector<int> token_embeds;
+    std::vector<int> qkv_embeds;  // try multi-level embed of QKV
 
     int n_layer_train = -1, nLayerX = -1, nFFX = -1;
     int Fuse_Normal = 0;
@@ -645,18 +690,23 @@ struct CLI_params {
         else
             return nFFX;
     }
-    uint32_t n_embd_head(int il = 0) const {
+    uint32_t head_dim(int il = 0) const {
         assert(il >= 0 && il < model.layerps.size());
-        return model.layerps[il].n_embd_head(nEmbed());
+        int h_dim = model.layerps[il].n_head_dim();
+        assert(h_dim > 0 && h_dim < 10240);
+        return h_dim;
     }
+
+    uint32_t Q_dim(int il = 0) const { return head_dim(il) * n_head(il); }
+    uint32_t KV_dim(int il = 0) const { return head_dim(il) * n_head_kv(il); }
     // uint32_t n_rot = 64;
     uint32_t n_rot(int il = 0) const {  //  n_rot to be exactly nEmbed() / n_head
         return nEmbed() / n_head(il);
     }
-    uint32_t n_embd_gqa(int il = 0) const {
-        assert(il >= 0 && il < model.layerps.size());
-        return model.layerps[il].n_embd_gqa(nEmbed());
-    }
+    // uint32_t n_embd_gqa(int il = 0) const {
+    //     assert(il >= 0 && il < model.layerps.size());
+    //     return model.layerps[il].n_embd_gqa(nEmbed());
+    // }
     uint32_t n_gqa(int il = 0) const {
         assert(il >= 0 && il < model.layerps.size());
         return model.layerps[il].n_gqa();

@@ -114,6 +114,7 @@ class GeNeuron {
     GeNeuron *hGuoke = nullptr;
     std::set<hGensor> tReloads;
     // std::vector<shared_ptr<GeNeuron>> brothers;
+    virtual std::string _NAME(const std::string &prefix, tpNEURON4NAME neron, const std::string &suffix = "", int flag = 0x0);
 
    public:
     enum BIT_FLAG { F_BIAS = 0x10000, F_DELTA = 0x20000, F_HOTPICK = 0x100000 };
@@ -147,6 +148,7 @@ class GeNeuron {
     // Pick gensors(child,partial,vitual,ref,lora,...)
     virtual std::vector<hGensor> PickGensors(bool isLORA = true, int flag = 0x0);
     virtual hGensor GetGensor(const std::string &key, int flag = 0x0);
+    virtual hGensor GetGensor(const std::string &prefix, tpNEURON4NAME neron, const std::string &suffix = "", int flag = 0x0);
     virtual int SetGuoke(GeNeuron *hGuoke_, bool isX, int flag = 0x0);
     virtual bool UpdateShortcut(bool isShortcut, int flag = 0x0);
     virtual void SetDType(typNUMBER tpW, typNUMBER tpA, typNUMBER tpG) { tpWeight = tpW, tpActivation = tpA, tpGradient = tpG; }
@@ -181,6 +183,7 @@ class GeNeuron {
     }
     // Init & build with more option
     virtual void BuildX(const std::string &key_, const SHAPE &shape, Fish *hG_, int flag);
+
     virtual bool InitCompression(COMPRESSIVE_SENSING type, LORA_ADAPT_W tpLora, int flag = 0x0) { return false; }
 
     virtual void OnDebug(const std::string &info = "", int typ = 0x0, int flag = 0x0);
@@ -415,10 +418,10 @@ class SelfAttention : public SparseNeuron {
     bool isLinear    = false;
     bool isPreNormal = false;  //  Pre /Post Normalization
     bool isQKNormal  = false;
-    LayerNormal normQ, normK;  //  Only w vector to save memory
+    
     bool isSeparateQKV = false;
     bool isBqkv        = false;  // to align with some model
-
+    SHAPE spQ, spKV;
     //  tensor format={'SBhd', 'BShd', 'thd'}, default = 'BShd',   t=B*S
     void *devQ = nullptr, *devK = nullptr, *devV = nullptr, *devDeltaQ = nullptr, *devDeltaK = nullptr, *devDeltaV = nullptr;
     hGensor deltaQ = nullptr, deltaK = nullptr, deltaV = nullptr;  // wrap of devDeltaQ,devDeltaK,devDeltaV
@@ -462,10 +465,12 @@ class SelfAttention : public SparseNeuron {
     bool use_cache = false;
     bool isLast    = false;
     float f_max_alibi_bias;
-    int n_head_kv, n_embd_gqa, n_tokens, C_qkv = -1;
+    int n_head_kv, n_embd_gqa, n_tokens;
+    int C_qkv      = -1;       //  C_qkv maybe much less than C
     hGensor bqkv   = nullptr;  //  biases for qkv (qwen)
     hGensor KQ_pos = nullptr, KQ_mask = nullptr;
     LayerNormal norm, *fuseNorm       = nullptr;
+    LayerNormal normQ, normK;  //  Only w vector to save memory
 
     hGensor attn = nullptr, transition = nullptr;
 

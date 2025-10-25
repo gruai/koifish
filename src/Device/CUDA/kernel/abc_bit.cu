@@ -17,13 +17,13 @@ using namespace nvcuda;
 
 #include "../../g_stddef.hpp"
 #include "../cuda_common.h"
-#include "Operator.cuh"
 #include "_bit_utils.cuh"
+#include "operator.cuh"
 #include "utils.cuh"
 
 //  So slow, so strange!
 template <typename Tb, typename Tc, const int BM, const int BN, const int BK, const int TM = 8, const int TN = 8>
-__global__ void ABC_bit_v0(char *A, float *gama_T, Tb *B, Tc *C, const Tc *bias, int M, int N, int K, int transA = 0, int transB = 0, int flag = 0x0) {
+__global__ void ABC_bit_v0(char* A, float* gama_T, Tb* B, Tc* C, const Tc* bias, int M, int N, int K, int transA = 0, int transB = 0, int flag = 0x0) {
     int bx = blockIdx.x, by = blockIdx.y, thread_num = blockDim.x;
     const int NPB = 8;  // number of element per byte
     fnPOS pA = transA == 0 ? fnCR2POS : fnRC2POS, pB = transB == 0 ? fnCR2POS : fnRC2POS, pC = fnCR2POS;
@@ -46,7 +46,7 @@ __global__ void ABC_bit_v0(char *A, float *gama_T, Tb *B, Tc *C, const Tc *bias,
     for (int k = 0; k < K; k += BK, A += stepA, B += stepB) {
 #pragma unroll
         for (int i = curA; i < curA + nG2A; i++) {  //[BM:Bk]
-            r = i / BK, c = i % BK;         //r = i % BM, c = i / BM;
+            r = i / BK, c = i % BK;                 // r = i % BM, c = i / BM;
             As[i / NPB] = A[pA(r, c, M, K) / NPB];  // CR2POS(r, c, BM, BK)
         }
 #pragma unroll
@@ -80,7 +80,7 @@ __global__ void ABC_bit_v0(char *A, float *gama_T, Tb *B, Tc *C, const Tc *bias,
 
 // ~3.3s
 template <const int BM, const int BN, const int BK, const int TM, const int TN, typename Ta, typename Tb, typename Tc>
-__global__ void ABC_v2(Ta *A, Tb *B, Tc *C, int M, int N, int K, int flag = 0x0) {
+__global__ void ABC_v2(Ta* A, Tb* B, Tc* C, int M, int N, int K, int flag = 0x0) {
     int bx = blockIdx.x, by = blockIdx.y, thread_num = blockDim.x;
 
     int tx = threadIdx.x % BN;
@@ -129,7 +129,7 @@ __global__ void ABC_v2(Ta *A, Tb *B, Tc *C, int M, int N, int K, int flag = 0x0)
 
 */
 template <const int BM, const int BN, const int BK, const int TM, const int TN, typename Ta, typename Tb, typename Tc>
-__global__ void ABC_v4(Ta *A, Tb *B, Tc *C, const Tc *bias, int M, int N, int K, int transA = 0, int transB = 0, int flag = 0x0) {
+__global__ void ABC_v4(Ta* A, Tb* B, Tc* C, const Tc* bias, int M, int N, int K, int transA = 0, int transB = 0, int flag = 0x0) {
     int bx = blockIdx.x, by = blockIdx.y, thread_num = blockDim.x;
     int block_row_thread = BN / TN, block_col_thread = BM / TM;
     assert(thread_num == block_row_thread * block_col_thread);
@@ -189,7 +189,7 @@ __global__ void ABC_v4(Ta *A, Tb *B, Tc *C, const Tc *bias, int M, int N, int K,
     2. Each block load As & Bs
 */
 template <const int BM, const int BN, const int BK, const int TM, const int TN, typename Ta, typename Tb, typename Tc>
-__global__ void ABC_v5(Ta *A, Tb *B, Tc *C, int M, int N, int K, int flag = 0x0) {
+__global__ void ABC_v5(Ta* A, Tb* B, Tc* C, int M, int N, int K, int flag = 0x0) {
     int bx = blockIdx.x, by = blockIdx.y, thread_num = blockDim.x;
     A = A + CR2POS(by * BM, 0, M, K), B = B + CR2POS(0, bx * BN, K, N), C = C + CR2POS(by * BM, bx * BN, M, N);
 
@@ -205,7 +205,7 @@ __global__ void ABC_v5(Ta *A, Tb *B, Tc *C, int M, int N, int K, int flag = 0x0)
     int stepA = CR2POS(0, BK, M, K), stepB = CR2POS(BK, 0, K, N), r, c;
     float tmp[TM][TN] = {0.};
     float a_frag[TM] = {0.}, b_frag[TN] = {0.};  // share memory->register
-    floatX *tileA = ((floatX *)As) + CR2POS(ty, 0, BM, BK), *tileB = ((floatX *)Bs) + RC2POS(0, tx, BK, BN);
+    floatX *tileA = ((floatX*)As) + CR2POS(ty, 0, BM, BK), *tileB = ((floatX*)Bs) + RC2POS(0, tx, BK, BN);
 #pragma unroll
     for (int k = 0; k < K; k += BK, A += stepA, B += stepB) {
 #pragma unroll
@@ -246,7 +246,7 @@ __global__ void ABC_v5(Ta *A, Tb *B, Tc *C, int M, int N, int K, int flag = 0x0)
     2. Each block load As & Bs
 */
 template <const int BM, const int BN, const int BK, const int TM, const int TN, typename Ta>
-__global__ void ABC_v6(Ta *A, floatX *B, floatX *C, int M, int N, int K, int flag = 0x0) {
+__global__ void ABC_v6(Ta* A, floatX* B, floatX* C, int M, int N, int K, int flag = 0x0) {
     int bx = blockIdx.x, by = blockIdx.y, thread_num = blockDim.x;
     A = A + CR2POS(by * BM, 0, M, K), B = B + CR2POS(0, bx * BN, K, N), C = C + CR2POS(by * BM, bx * BN, M, N);
     const int ld128      = 16 / sizeof(Ta);
@@ -265,7 +265,7 @@ __global__ void ABC_v6(Ta *A, floatX *B, floatX *C, int M, int N, int K, int fla
     float tmp[TM][TN] = {0.};
     float a_frag[TM] = {0.}, b_frag[TN] = {0.};  // share memory->register
     // floatX *tileA = (floatX *)As, *tileB = (floatX *)Bs;
-    floatX *tileA = ((floatX *)As) + CR2POS(ty, 0, BM, BK), *tileB = ((floatX *)Bs) + CR2POS(0, tx, BK, BN);
+    floatX *tileA = ((floatX*)As) + CR2POS(ty, 0, BM, BK), *tileB = ((floatX*)Bs) + CR2POS(0, tx, BK, BN);
 
 #pragma unroll
     for (int k = 0; k < K; k += BK, A += stepA, B += stepB) {
@@ -316,8 +316,8 @@ __global__ void ABC_v6(Ta *A, floatX *B, floatX *C, int M, int N, int K, int fla
 /*
     c(m,n) = op(a)*op(b) + bias
 */
-void CU_abc(floatX *d, hGTensor gensor, const floatX *b, const floatX *bias, int m, int n, int k, cudaStream_t stream, int transA, int transB, float beta,
-            floatX *pre_gelu, bool backward) {
+void CU_abc(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream, int transA, int transB, float beta,
+            floatX* pre_gelu, bool backward) {
     NVTX_RANGE_FN();
     // check alignment (some modes work unaligned but it always best to be aligned for performance)
     if (((uintptr_t)b % 16) != 0 || ((uintptr_t)d % 16) != 0 || ((uintptr_t)bias % 16) != 0) {
@@ -344,12 +344,12 @@ void CU_abc(floatX *d, hGTensor gensor, const floatX *b, const floatX *bias, int
 
             break;
     }*/
-   
+
     // assert(batch_count==0);
     bool has_bias = (bias != nullptr), has_gelu = (pre_gelu != nullptr);
-    const float alpha = 1.0f;   //, beta = accumulate ? 1.0f : 0.0f;
+    const float alpha = 1.0f;  //, beta = accumulate ? 1.0f : 0.0f;
     assert(pre_gelu == nullptr);
-    floatX *a = gensor->GetDataX();
+    floatX* a = gensor->GetDataX();
     // [50304,768] x [768,8192] => [50304,8192]         or(transA) [768,50304]' x [768,8192] => [50304,8192]
     int lda = transA ? k : m, ldb = transB ? n : k;
 
@@ -358,28 +358,28 @@ void CU_abc(floatX *d, hGTensor gensor, const floatX *b, const floatX *bias, int
             const int BM = 64, BN = 64, BK = 8, TM = 8, TN = 8;
             dim3 dBlock(512), dGrid(CEIL_DIV(n, BM), CEIL_DIV(m, BN));
             assert(k % BK == 0 && dBlock.x == BM * BK && dBlock.x == BK * BN);
-            ABC_v2<BM, BN, BK, TM, TN, floatX, floatX, floatX><<<dGrid, dBlock, smem_max_size, stream>>>((floatX *)a, (floatX *)b, d, m, n, k);
+            ABC_v2<BM, BN, BK, TM, TN, floatX, floatX, floatX><<<dGrid, dBlock, smem_max_size, stream>>>((floatX*)a, (floatX*)b, d, m, n, k);
             break;
         }
         case 4: {
             const int BM = 128, BN = 128, BK = 8, TM = 8, TN = 8;
             dim3 dBlock(256), dGrid(CEIL_DIV(n, BM), CEIL_DIV(m, BN));
             ABC_v4<BM, BN, BK, TM, TN, floatX, floatX, floatX>
-                <<<dGrid, dBlock, smem_max_size, stream>>>((floatX *)a, (floatX *)b, d, bias, m, n, k, transA, transB);
+                <<<dGrid, dBlock, smem_max_size, stream>>>((floatX*)a, (floatX*)b, d, bias, m, n, k, transA, transB);
             break;
         }
         case 5: {
             const int BM = 128, BN = 128, BK = 16, TM = 8, TN = 8, nT = BM * BN / TM / TN;  // 256
             dim3 dBlock(nT), dGrid(CEIL_DIV(n, BM), CEIL_DIV(m, BN));
             assert(dBlock.x > BN && dBlock.x >= BK);
-            ABC_v5<BM, BN, BK, TM, TN, floatX, floatX, floatX><<<dGrid, dBlock, smem_max_size, stream>>>((floatX *)a, (floatX *)b, d, m, n, k);
+            ABC_v5<BM, BN, BK, TM, TN, floatX, floatX, floatX><<<dGrid, dBlock, smem_max_size, stream>>>((floatX*)a, (floatX*)b, d, m, n, k);
             break;
         }
         case 6: {
             const int BM = 128, BN = 128, BK = 16, TM = 8, TN = 8, nT = BM * BN / TM / TN;  // 256
             dim3 dBlock(nT), dGrid(CEIL_DIV(n, BM), CEIL_DIV(m, BN));
             assert(sizeof(floatX) * BK % 16 == 0 && TN == x128::size);  // x128
-            ABC_v6<BM, BN, BK, TM, TN, floatX><<<dGrid, dBlock, smem_max_size, stream>>>((floatX *)a, (floatX *)b, d, m, n, k);
+            ABC_v6<BM, BN, BK, TM, TN, floatX><<<dGrid, dBlock, smem_max_size, stream>>>((floatX*)a, (floatX*)b, d, m, n, k);
             break;
         }
         default:
@@ -404,9 +404,9 @@ void CU_abc(floatX *d, hGTensor gensor, const floatX *b, const floatX *bias, int
 
 //  Deprecated sample code from BitNet
 template <typename T1, typename T2>
-__device__ void decode_i2s_to_i8s(T1 *_i2s, T2 *_i8s, const int N = 16) {
+__device__ void decode_i2s_to_i8s(T1* _i2s, T2* _i8s, const int N = 16) {
     // convert 8 int2b_t to 8 int8b_t -> 2 int32
-    uint *i8s = reinterpret_cast<uint *>(_i8s);
+    uint* i8s = reinterpret_cast<uint*>(_i8s);
 
     // i2s = {e0, e4, e8, e12, e1, e5, e9, e13, e2, e6, e10, e14, e3, e7, e11, e15}
     uint const i2s = *_i2s;
@@ -423,8 +423,8 @@ __device__ void decode_i2s_to_i8s(T1 *_i2s, T2 *_i8s, const int N = 16) {
 }
 
 template <int M, int N, int K, int ws_num, int K_block_size, int N_block_size>
-__global__ void __launch_bounds__(128) ladder_int8xint2_kernel(int8_t *__restrict__ A, int8_t *__restrict__ B, __nv_bfloat16 *__restrict__ dtype_transform,
-                                                               __nv_bfloat16 *__restrict__ s, __nv_bfloat16 *__restrict__ ws) {
+__global__ void __launch_bounds__(128) ladder_int8xint2_kernel(int8_t* __restrict__ A, int8_t* __restrict__ B, __nv_bfloat16* __restrict__ dtype_transform,
+                                                               __nv_bfloat16* __restrict__ s, __nv_bfloat16* __restrict__ ws) {
     constexpr int K_per_loop = 16;
     constexpr int wmma_K     = 32;
     constexpr int wmma_N     = 16;
@@ -436,14 +436,14 @@ __global__ void __launch_bounds__(128) ladder_int8xint2_kernel(int8_t *__restric
     in_thread_C_local[0] = 0;
 #pragma unroll
     for (int k_0 = 0; k_0 < K / (K_per_loop * K_block_size); ++k_0) {
-        *(int4 *)(A_local + 0) = *(int4 *)(A + ((k_0 * K_per_loop * K_block_size) + (((int)threadIdx.x) * K_per_loop)));
-        B_reshape_local[0]     = *(int *)(B + (((int)bx) * N_block_size * K / 4) + (k_0 * K_block_size * K_per_loop * wmma_N / 4) +
-                                      ((((int)threadIdx.x) >> 1) * wmma_K * wmma_N / 4) + ((((int)threadIdx.y) >> 3) * (wmma_K * wmma_N / 2) / 4) +
-                                      ((((int)threadIdx.x) & 1) * (wmma_K * wmma_N / 4) / 4) + ((((int)threadIdx.y) & 7) * (wmma_K / 2) / 4));
+        *(int4*)(A_local + 0) = *(int4*)(A + ((k_0 * K_per_loop * K_block_size) + (((int)threadIdx.x) * K_per_loop)));
+        B_reshape_local[0]    = *(int*)(B + (((int)bx) * N_block_size * K / 4) + (k_0 * K_block_size * K_per_loop * wmma_N / 4) +
+                                     ((((int)threadIdx.x) >> 1) * wmma_K * wmma_N / 4) + ((((int)threadIdx.y) >> 3) * (wmma_K * wmma_N / 2) / 4) +
+                                     ((((int)threadIdx.x) & 1) * (wmma_K * wmma_N / 4) / 4) + ((((int)threadIdx.y) & 7) * (wmma_K / 2) / 4));
         decode_i2s_to_i8s(B_reshape_local, B_decode_local, 16);
 #pragma unroll
         for (int k_2_0 = 0; k_2_0 < 4; ++k_2_0) {
-            in_thread_C_local[0] = __dp4a(*(int *)&A_local[((k_2_0 * 4))], *(int *)&B_decode_local[((k_2_0 * 4))], in_thread_C_local[0]);
+            in_thread_C_local[0] = __dp4a(*(int*)&A_local[((k_2_0 * 4))], *(int*)&B_decode_local[((k_2_0 * 4))], in_thread_C_local[0]);
         }
     }
     red_buf0[0] = in_thread_C_local[0];
@@ -457,7 +457,7 @@ __global__ void __launch_bounds__(128) ladder_int8xint2_kernel(int8_t *__restric
         dtype_transform[out_idx] = (__nv_bfloat16)(((float)red_buf0[0]) / (float)s[0] * (float)ws[ws_idx]);
 }
 
-inline void bitlinear_int8xint2(int8_t *input0, int8_t *input1, __nv_bfloat16 *output0, __nv_bfloat16 *s, __nv_bfloat16 *ws, int M, int N, int K,
+inline void bitlinear_int8xint2(int8_t* input0, int8_t* input1, __nv_bfloat16* output0, __nv_bfloat16* s, __nv_bfloat16* ws, int M, int N, int K,
                                 cudaStream_t stream) {
     if (M == 1 && N == 3840 && K == 2560) {
         ladder_int8xint2_kernel<1, 3840, 2560, 3, 8, 16><<<dim3(240, 1, 1), dim3(8, 16, 1), 0, stream>>>(input0, input1, output0, s, ws);
@@ -499,8 +499,8 @@ inline void bitlinear_int8xint2(int8_t *input0, int8_t *input1, __nv_bfloat16 *o
  * @param[in] c0 The first half of the float2 accumulator matrix C.
  * @param[in] c1 The second half of the float2 accumulator matrix C.
  */
-__device__ static inline void hmma16816(float2 &d0, float2 &d1, const bf16_2 &a0, const bf16_2 &a1, const bf16_2 &a2, const bf16_2 &a3, const bf16_2 &b0,
-                                        const bf16_2 &b1, const float2 &c0, const float2 &c1) {
+__device__ static inline void hmma16816(float2& d0, float2& d1, const bf16_2& a0, const bf16_2& a1, const bf16_2& a2, const bf16_2& a3, const bf16_2& b0,
+                                        const bf16_2& b1, const float2& c0, const float2& c1) {
     asm volatile(
         // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#multiply-and-accumulate-instruction-mma
         "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 "
@@ -513,10 +513,10 @@ __device__ static inline void hmma16816(float2 &d0, float2 &d1, const bf16_2 &a0
         : "+f"(d0.x), "+f"(d0.y), "+f"(d1.x), "+f"(d1.y)
 
         // A matrix
-        : "r"(*(uint32_t *)(&a0)), "r"(*(uint32_t *)(&a1)), "r"(*(uint32_t *)(&a2)), "r"(*(uint32_t *)(&a3)),
+        : "r"(*(uint32_t*)(&a0)), "r"(*(uint32_t*)(&a1)), "r"(*(uint32_t*)(&a2)), "r"(*(uint32_t*)(&a3)),
 
           // B matrix
-          "r"(*(uint32_t *)(&b0)), "r"(*(uint32_t *)(&b1)),
+          "r"(*(uint32_t*)(&b0)), "r"(*(uint32_t*)(&b1)),
 
           // C matrix
           "f"(c0.x), "f"(c0.y), "f"(c1.x), "f"(c1.y));
@@ -536,8 +536,8 @@ __device__ static inline void hmma16816(float2 &d0, float2 &d1, const bf16_2 &a0
  * @param[in] c0 The first half of the half_2 accumulator matrix C.
  * @param[in] c1 The second half of the half_2 accumulator matrix C.
  */
-__device__ static inline void hmma16816(half_2 &d0, half_2 &d1, const half_2 &a0, const half_2 &a1, const half_2 &a2, const half_2 &a3, const half_2 &b0,
-                                        const half_2 &b1, const half_2 &c0, const half_2 &c1) {
+__device__ static inline void hmma16816(half_2& d0, half_2& d1, const half_2& a0, const half_2& a1, const half_2& a2, const half_2& a3, const half_2& b0,
+                                        const half_2& b1, const half_2& c0, const half_2& c1) {
     asm volatile(
         // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#multiply-and-accumulate-instruction-mma
         "mma.sync.aligned.m16n8k16.row.col.f16.f16.f16.f16 "
@@ -547,16 +547,16 @@ __device__ static inline void hmma16816(half_2 &d0, half_2 &d1, const half_2 &a0
         "{%8, %9};"
 
         // D matrix
-        : "=r"(*(uint32_t *)(&d0)), "=r"(*(uint32_t *)(&d1))
+        : "=r"(*(uint32_t*)(&d0)), "=r"(*(uint32_t*)(&d1))
 
         // A matrix
-        : "r"(*(uint32_t *)(&a0)), "r"(*(uint32_t *)(&a1)), "r"(*(uint32_t *)(&a2)), "r"(*(uint32_t *)(&a3)),
+        : "r"(*(uint32_t*)(&a0)), "r"(*(uint32_t*)(&a1)), "r"(*(uint32_t*)(&a2)), "r"(*(uint32_t*)(&a3)),
 
           // B matrix
-          "r"(*(uint32_t *)(&b0)), "r"(*(uint32_t *)(&b1)),
+          "r"(*(uint32_t*)(&b0)), "r"(*(uint32_t*)(&b1)),
 
           // C matrix
-          "r"(*(uint32_t *)(&c0)), "r"(*(uint32_t *)(&c1)));
+          "r"(*(uint32_t*)(&c0)), "r"(*(uint32_t*)(&c1)));
 }
 
 #ifdef CUDA_HOPPER
@@ -578,8 +578,8 @@ __device__ static inline void hmma16816(half_2 &d0, half_2 &d1, const half_2 &a0
  * @param[in] b0,b1 Input FP8 matrix B values
  * @param[in] c0,c1 Input float2 accumulator matrix C values
  */
-__device__ static inline void hmma16816(float2 &d0, float2 &d1, const fp8e4m3_4 &a0, const fp8e4m3_4 &a1, const fp8e4m3_4 &a2, const fp8e4m3_4 &a3,
-                                        const fp8e4m3_4 &b0, const fp8e4m3_4 &b1, const float2 &c0, const float2 &c1) {
+__device__ static inline void hmma16816(float2& d0, float2& d1, const fp8e4m3_4& a0, const fp8e4m3_4& a1, const fp8e4m3_4& a2, const fp8e4m3_4& a3,
+                                        const fp8e4m3_4& b0, const fp8e4m3_4& b1, const float2& c0, const float2& c1) {
     asm volatile(
         "mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32 "
         "{%0, %1, %2, %3}, "
@@ -591,10 +591,10 @@ __device__ static inline void hmma16816(float2 &d0, float2 &d1, const fp8e4m3_4 
         : "+f"(d0.x), "+f"(d0.y), "+f"(d1.x), "+f"(d1.y)
 
         // A matrix
-        : "r"(*(uint32_t *)(&a0)), "r"(*(uint32_t *)(&a1)), "r"(*(uint32_t *)(&a2)), "r"(*(uint32_t *)(&a3)),
+        : "r"(*(uint32_t*)(&a0)), "r"(*(uint32_t*)(&a1)), "r"(*(uint32_t*)(&a2)), "r"(*(uint32_t*)(&a3)),
 
           // B matrix
-          "r"(*(uint32_t *)(&b0)), "r"(*(uint32_t *)(&b1)),
+          "r"(*(uint32_t*)(&b0)), "r"(*(uint32_t*)(&b1)),
 
           // C matrix
           "f"(c0.x), "f"(c0.y), "f"(c1.x), "f"(c1.y));

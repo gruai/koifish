@@ -24,7 +24,12 @@
 #include "../Tensor/safetensors.hh"
 
 std::string safetensors::safetensors_t::config_key_ = "__json__config__";
-
+/*
+     support multiple mmap @ different files
+     1. AfterBuild->HF_Serialize
+     2. AfterBuild->SaveTrain->SAFETENSOR_Serialize
+     3.
+*/
 bool SAFETENSOR_mmap(const std::string &path, safetensors::safetensors_t &st, int flag) {
     _INFO("\n>>>>>> SAFETENSOR_mmap mmap@\"%s\" f=%d......", path.c_str(), flag);
     try {
@@ -34,15 +39,15 @@ bool SAFETENSOR_mmap(const std::string &path, safetensors::safetensors_t &st, in
         int nT     = (int)(st.tensors.size());
         // assert(nT > 1);
         if (warn.size()) {
-            _INFO(">>>>>> WARN: \"%s\"\n", warn.c_str());  // std::cout << "WARN: " << warn << "\n";
+            _WARN(">>>>>> WARN: SAFETENSOR_mmap@\"%s\" \"%s\"\n", path.c_str(), warn.c_str());  // std::cout << "WARN: " << warn << "\n";
         }
         if (!ret) {
-            _INFO(">>>>>> ERR: \"%s\"\n", err.c_str());
+            _ERROR("\n>>>>>> ERR: SAFETENSOR_mmap@\"%s\" \"%s\"\n", path.c_str(), err.c_str());
             return false;
         }
         if (!safetensors::validate_data_offsets(st, err)) {
-            std::cerr << "Invalid data_offsets\n";
-            std::cerr << err << "\n";
+            _ERROR(">>>>>> Invalid data_offsets: \"%s\"\n", err.c_str());
+            // std::cerr << err << "\n";
             return false;
         }
 
@@ -305,6 +310,54 @@ void CheckPoint_Params::Init(int flag) {
             break;
     }
 }
+
+int SAFETENSOR2Gensors(Fish *hFish, const std::string &path, safetensors::safetensors_t *hst, int flag) {
+    int nSerialT = 0;
+    hst->Clear();
+    bool bLoad = SAFETENSOR_mmap(path, *hst, flag);  //*hst
+    if (!bLoad)
+        return false;
+    const uint8_t *databuffer{nullptr};
+    if (hst->mmaped) {
+        databuffer = hst->databuffer_addr;  // safeTensors->mmap_addr + 8 + safeTensors->header_size;
+    } else {
+        assert(0);
+        // databuffer = safeTensors.storage.data();
+    }
+
+    // Print Tensor info & value.
+    for (size_t i = 0; i < hst->tensors.size(); i++) {
+        std::string key = hst->tensors.keys()[i];
+        safetensors::tensor_t tensor;
+        hst->tensors.at(i, &tensor);
+        if (key == safetensors::safetensors_t::config_key_) {
+            continue;
+        }
+        if (G_Has_(key, hFish->config.model.skip_st))
+            continue;
+        hGensor target = hFish->GetGensor(key);  //  "model.embed.weight"    model.layers.0.attn_norm.weight
+        if (target == nullptr) {
+            _ERROR("\t[SERIAL] Failed @%s!\n", key.c_str());
+            continue;
+        }
+        JSON jdesc = tensor.jDesc();
+        if (target->SerialJSON(key, jdesc, (void *)databuffer, hst->mmap_size) != 0) {
+            return false;
+        }
+        if (DUMP() || hFish->config.dumpSwitch.tensor_load > 0) {
+            tensor.Dump("  >>>>  " + key, databuffer);
+            _INFO("  >>>>  [%d] typ=%s\t data=%p grad=%p \t sz=%ld @%s\n", nSerialT, cNameOf(target->type), target->data, target->grad, tBYTE(target),
+                  target->name);
+        }
+        // if(strcmp(target->name,"model.layers.27.mlp.norm.weight")==0){   //only for debug model.output.weight
+        //     target->Print(key,0,-1);                //PrintTensor<f8e5m2_t>("wout",target->data,target->ne[0],dim);
+        // }
+
+        nSerialT++;
+    }
+    return nSerialT;
+}
+
 bool Fish::SAFETENSOR_Serialize(CheckPoint_Params &ckp, bool isSave, int flag) {
     double t0   = GST_ms();
     string path = ckp.FullPath(isSave), jPath = path + ".json";
@@ -321,7 +374,7 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params &ckp, bool isSave, int flag) {
     safetensors::safetensors_t st, *hst = (safetensors::safetensors_t *)(ckp.hUserData);
     switch (ckp.type) {
         case CheckPoint_Params::STATE:
-            assert(hst != nullptr);
+            assert(hst != nullptr);  // hst=&all_states, so mmp would keep open
             break;
         case CheckPoint_Params::BEST:
             curParams = GetFuyou(-1)->ckpParams;
@@ -387,55 +440,7 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params &ckp, bool isSave, int flag) {
                   (GST_ms() - t0) / 1000.0);
             return true;
         } else {
-            int nSerialT = 0;
-            hst->Clear();
-            bool bLoad = SAFETENSOR_mmap(path, *hst, flag);  //*hst
-            if (!bLoad)
-                return false;
-            const uint8_t *databuffer{nullptr};
-            if (hst->mmaped) {
-                databuffer = hst->databuffer_addr;  // safeTensors->mmap_addr + 8 + safeTensors->header_size;
-            } else {
-                assert(0);
-                // databuffer = safeTensors.storage.data();
-            }
-
-            // Print Tensor info & value.
-            for (size_t i = 0; i < hst->tensors.size(); i++) {
-                std::string key = hst->tensors.keys()[i];
-                safetensors::tensor_t tensor;
-                hst->tensors.at(i, &tensor);
-                if (key == safetensors::safetensors_t::config_key_) {
-                    /*    safeTensors.loadJS(tensor, databuffer, safeTensors.mmap_size);
-                        jsConfig = safeTensors.jsConfig["CLI_params"]["config"];
-                        std::ofstream file("ST_SERIALIZE.json");
-                        if (file.is_open()) {
-                            file << jsConfig.dump(4);
-                            file.close();
-                        }*/
-                    continue;
-                }
-                hGensor target = GetGensor(key);  //  "model.embed.weight"    model.layers.0.attn_norm.weight
-                if (target == nullptr) {
-                    _INFO("\t[SERIAL] Failed @%s!\n", key.c_str());
-                    continue;
-                }
-                JSON jdesc = tensor.jDesc();
-                if (target->SerialJSON(key, jdesc, (void *)databuffer, hst->mmap_size) != 0) {
-                    return false;
-                }
-                if (DUMP()) {
-                    tensor.Dump("  >>>>  " + key, databuffer);
-                    _INFO("  >>>>  [%d] typ=%s\t data=%p grad=%p \t sz=%ld @%s\n", nSerialT, cNameOf(target->type), target->data, target->grad, tBYTE(target),
-                          target->name);
-                }
-                // if(strcmp(target->name,"model.layers.27.mlp.norm.weight")==0){   //only for debug model.output.weight
-                //     target->Print(key,0,-1);                //PrintTensor<f8e5m2_t>("wout",target->data,target->ne[0],dim);
-                // }
-
-                nSerialT++;
-            }
-            // config.model.Init(jsConfig)
+            int nSerialT = SAFETENSOR2Gensors(this, path, hst, 0x0);
             _INFO(">>>>>> ST_SERIALIZE load@\"%s\" nSerialT=%d iter=%d\n", path.c_str(), nSerialT, flag);
             return true;
         }
@@ -494,52 +499,24 @@ void *MMAP_json(JSON &header, void **objs, size_t *objs_nz, const std::string &p
 }
 
 bool Fish::HF_Serialize(bool isSave, int flag) {
-    string path = config.model.sCardPath + "model.safetensors";
-
-    safetensors::safetensors_t st, *hst = &st;
-    int nSerialT = 0;
-    hst->Clear();
-    bool bLoad = SAFETENSOR_mmap(path, *hst, flag);  //*hst
-    if (!bLoad)
+    std::vector<std::string> paths = FilesOfDir(config.model.sCardPath, {"safetensors"}, 0x0);
+    if (paths.empty())
         return false;
-    const uint8_t *databuffer{nullptr};
-    if (hst->mmaped) {
-        databuffer = hst->databuffer_addr;  // safeTensors->mmap_addr + 8 + safeTensors->header_size;
-    } else {
-        assert(0);
-        // databuffer = safeTensors.storage.data();
-    }
 
-    // Print Tensor info & value.
-    for (size_t i = 0; i < hst->tensors.size(); i++) {
-        std::string key = hst->tensors.keys()[i];
-        safetensors::tensor_t tensor;
-        hst->tensors.at(i, &tensor);
-        if (key == safetensors::safetensors_t::config_key_) {
-            continue;
-        }
-        hGensor target = GetGensor(key);  //  "model.embed.weight"    model.layers.0.attn_norm.weight
-        if (target == nullptr) {
-            _INFO("\t[SERIAL] Failed @%s!\n", key.c_str());
-            continue;
-        }
-        JSON jdesc = tensor.jDesc();
-        if (target->SerialJSON(key, jdesc, (void *)databuffer, hst->mmap_size) != 0) {
-            return false;
-        }
-        if (DUMP()) {
-            tensor.Dump("  >>>>  " + key, databuffer);
-            _INFO("  >>>>  [%d] typ=%s\t data=%p grad=%p \t sz=%ld @%s\n", nSerialT, cNameOf(target->type), target->data, target->grad, tBYTE(target),
-                  target->name);
-        }
-        // if(strcmp(target->name,"model.layers.27.mlp.norm.weight")==0){   //only for debug model.output.weight
-        //     target->Print(key,0,-1);                //PrintTensor<f8e5m2_t>("wout",target->data,target->ne[0],dim);
-        // }
-
-        nSerialT++;
+    int nSerialT = 0;
+    for (auto path : paths) {
+        safetensors::safetensors_t st, *hst = &st;
+        nSerialT += SAFETENSOR2Gensors(this, path, hst, 0x0);
     }
-    // config.model.Init(jsConfig)
-    _INFO(">>>>>> ST_SERIALIZE load@\"%s\" nSerialT=%d iter=%d\n", path.c_str(), nSerialT, flag);
+    if (!config.model.st_map.empty()) {  //  "model.safetensors.index.json"
+        assert(nSerialT == config.model.st_map.size());
+        for (auto kv : config.model.st_map) {
+            hGensor target = GetGensor(kv.first);
+            assert(target->data != nullptr);
+            kv.second = target->data;
+        }
+    }
+    _INFO(">>>>>> HF_Serialize load@\"%s\" nSerialT=%d iter=%d\n", config.model.sCardPath.c_str(), nSerialT, flag);
     return true;
 }
 
@@ -550,13 +527,14 @@ bool MODEL_CARD::OnJsonCALM(CLI_params *hConfig, const std::string &path, const 
     hidden_dim = jKVs(meta, {"hidden_dim"}, hidden_dim);  // atoi(meta["hidden_dim"]);
     n_layers   = jKVs(meta, {"n_layers"}, n_layers);      // atoi(meta["n_layers"]);
     assert(n_layers == hConfig->nLayer());
+    int n_heads = -1, n_kv_heads = -1, head_dim = 1;
     n_heads    = jKVs(meta, {"n_heads"}, n_heads);        // atoi(meta["n_heads"]);
     n_kv_heads = jKVs(meta, {"n_kv_heads"}, n_kv_heads);  // atoi(meta["n_kv_heads"]);
     head_dim   = jKVs(meta, {"head_dim"}, head_dim);
     assert(dim == head_dim * n_heads);
     layerps.clear();
     for (int i = 0; i < n_layers; i++) {
-        LAY_PARAM lay(n_heads, n_kv_heads, hidden_dim);
+        LAY_PARAM lay(n_heads, n_kv_heads, head_dim, hidden_dim);
         layerps.push_back(lay);
     }
     string info = "";
@@ -577,8 +555,6 @@ bool MODEL_CARD::OnJsonCALM(CLI_params *hConfig, const std::string &path, const 
                                         // specified if (context) { 	config.seq_len = context;
                                         // }
 
-    // config.rope_theta = atof(meta["rope_theta"]);
-    // config.rotary_dim = atoi(meta["rotary_dim"]);
     rope_theta = jKVs(meta, {"rope_theta"}, rope_theta);
     rotary_dim = jKVs(meta, {"rotary_dim"}, rotary_dim);
     // if (meta["n_experts"]) {
@@ -606,6 +582,52 @@ bool MODEL_CARD::OnJsonCALM(CLI_params *hConfig, const std::string &path, const 
     return true;
 }
 
+/**
+ * def build_prompts(model, output_dir):
+    template = Template(model.tokenizer.chat_template)
+
+    # Template 1: User
+    messages = [{"role": "user", "content": "%s"}]
+    rendered_prompt = template.render(messages=messages, add_generation_prompt=True, enable_thinking=False)
+    with open(os.path.join(output_dir, 'template_user.txt'), 'w', encoding='utf-8', newline='') as f:
+        f.write(rendered_prompt)
+
+    # Template 2: User with Thinking
+    rendered_prompt = template.render(messages=messages, add_generation_prompt=True, enable_thinking=True)
+    with open(os.path.join(output_dir, 'template_user_thinking.txt'), 'w', encoding='utf-8', newline='') as f:
+        f.write(rendered_prompt)
+
+    # Template 3: System + User
+    messages = [{"role": "system", "content": "%s"}, {"role": "user", "content": "%s"}]
+    rendered_prompt = template.render(messages=messages, add_generation_prompt=True, enable_thinking=False)
+    with open(os.path.join(output_dir, 'template_system.txt'), 'w', encoding='utf-8', newline='') as f:
+        f.write(rendered_prompt)
+
+    # Template 4: System + User with Thinking
+    rendered_prompt = template.render(messages=messages, add_generation_prompt=True, enable_thinking=True)
+    with open(os.path.join(output_dir, 'template_system_thinking.txt'), 'w', encoding='utf-8', newline='') as f:
+        f.write(rendered_prompt)
+ */
+bool MODEL_CARD::InitChatTemplate(CLI_params *hConfig, int flag) {
+    // string fPrompt = sCardPath + "template_user_thinking.txt", fSysPromt = sCardPath + "template_system_thinking.txt";
+    // if (enable_thinking) {  // load the "thinking" versions of the templates
+
+    // } else {  // load the standard versions of the templates
+    //     fPrompt = sCardPath + "template_user.txt", fSysPromt = sCardPath + "template_system.txt";
+    // }
+    // prompt_template        = FILE2STR(fPrompt);
+    // system_prompt_template = FILE2STR(fSysPromt);
+
+    if (enable_thinking) {  //
+        prompt_template        = "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n";
+        system_prompt_template = "<|im_start|>system\n%s<|im_end|>\n<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n";
+    } else {  //
+        prompt_template        = "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
+        system_prompt_template = "<|im_start|>system\n%s<|im_end|>\n<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
+    }
+
+    return true;
+}
 bool MODEL_CARD::InitHugFace(CLI_params *hConfig, const JSON &jConfig, int flag) {
     n_layers = hConfig->nLayer();
     for (int i = 0; i < n_layers; i++) {
@@ -619,11 +641,9 @@ bool MODEL_CARD::InitHugFace(CLI_params *hConfig, const JSON &jConfig, int flag)
     sTyp = jKVs(jConfig, {"model", "datatype", "embed"}, string(""));
     if (!sTyp.empty())
         tpEmbed = tpNumOf(sTyp);
-    head_dim   = hConfig->n_embd_head();
-    n_kv_heads = hConfig->n_head_kv();
-    seq_len    = hConfig->n_ctx();
-    assert(seq_len <= 4096);  // for now limit seq_len to 4096 to avoid KV cache OOM for models like Mistral since window size isn't correctly
-                              // specified if (context) { 	config.seq_len = context;
+    int head_dim = hConfig->head_dim();
+    int n_heads = hConfig->n_head(), n_kv_heads = hConfig->n_head_kv();
+    seq_len = hConfig->n_ctx();
 
     sCardPath = jKV(jConfig, {"model", "card"}, sCardPath);
     if (sCardPath.empty()) {
@@ -637,7 +657,20 @@ bool MODEL_CARD::InitHugFace(CLI_params *hConfig, const JSON &jConfig, int flag)
     if (jModelParam.empty()) {
         sCardPath = "";
     } else {
-        model_type = jKV(jModelParam, {"model_type"}, model_type);
+        isEmbedWeightTying = jKV(jModelParam, {"tie_word_embeddings"}, isEmbedWeightTying);
+        if (isEmbedWeightTying) {
+            skip_st.push_back("lm_head.weight");  //  so strange: Qwen/Qwen3-0.6B has this & unsloth/Qwen3-0.6B-Base remove this
+        }
+        model_type          = jKV(jModelParam, {"model_type"}, model_type);
+        num_attention_heads = jKV(jModelParam, {"num_attention_heads"}, n_heads);
+        num_key_value_heads = jKV(jModelParam, {"num_key_value_heads"}, n_kv_heads);
+        assert(num_attention_heads == n_heads && num_key_value_heads == n_kv_heads);
+        int hd = jKV(jModelParam, {"head_dim"}, head_dim);
+        if (hd != head_dim) {
+            for (auto &lay : layerps) {
+                lay._head_dim = hd;
+            }
+        }
         if (model_type == "")
             sCardPath = "";
         else {
@@ -646,6 +679,23 @@ bool MODEL_CARD::InitHugFace(CLI_params *hConfig, const JSON &jConfig, int flag)
             transformers_version = jKV(jModelParam, {"transformers_version"}, transformers_version);
             bos_token_id         = jKV(jModelParam, {"bos_token_id"}, bos_token_id);
             eos_token_id         = jKV(jModelParam, {"eos_token_id"}, eos_token_id);
+            rope_theta           = jKV(jModelParam, {"rope_theta"}, rope_theta);
+            hidden_size          = jKV(jModelParam, {"hidden_size"}, hidden_size);
+            intermediate_size    = jKV(jModelParam, {"intermediate_size"}, intermediate_size);
+            max_pos_embeddings   = jKV(jModelParam, {"max_position_embeddings"}, max_pos_embeddings);
+            // rotary_dim           = jKVs(jModelParam, {"rope_scaling"}, rotary_dim);
+        }
+
+        InitChatTemplate(hConfig);
+    }
+
+    LoadJsonFile(sCardPath + "model.safetensors.index.json", jSafetensorsIndex);
+    if (!jSafetensorsIndex.empty()) {
+        nTotalSize = jKV(jSafetensorsIndex, {"metadata", "total_size"}, nTotalSize);
+        auto jMap  = jSafetensorsIndex["weight_map"];
+        for (JSON::iterator it = jMap.begin(); it != jMap.end(); ++it) {
+            std::string key = it.key();
+            st_map.insert(std::make_pair(key, nullptr));
         }
     }
 
@@ -690,7 +740,7 @@ bool Fish::CALM_Serialize(const std::string &path, bool isOnlyVocab, int flag) {
                     return -1;
                 }  //
 
-                if (G_Has_(target->name, {"mlp.w1.weight"})) {  // "layers.27.mlp.w1.weight" wk.weight wq.weight wv.weight wo.weight ,"w2.weight","w3.weight"
+                if (G_Has_(target->name, {"mlp.weight"})) {  // "layers.27.mlp.weight" wk.weight wq.weight wv.weight wo.weight ,"w2.weight","w3.weight"
                     // BIT_SET(target->flags, GTensor::F_TERNARY_);
                     // target->ToTernary();
                 }
@@ -713,7 +763,8 @@ bool Fish::CALM_Serialize(const std::string &path, bool isOnlyVocab, int flag) {
         return false;
     }
 }
-/**/
+
+/*Deprecated*/
 bool Fish::YALM_Serialize(const std::string &path, bool isSave, int flag) {
     try {
         if (isSave) {

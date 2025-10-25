@@ -16,21 +16,44 @@ import glob
 import atexit
 import sys
 import math #Use math.isclose(a, b, *, rel_tol=1e-09, abs_tol=0.0)
-from SweepHyParams import koifish_one
+from SweepHyParams import koifish_one,bubble_one,pangpi_one
 
 # source /home/cys/anaconda3/bin/activate base
-# pytest -v -s ./cases/
+# clear && pytest -v -s ./cases/
 
 def add(a, b):
     return a + b
 
 sExe = "./bin/koifish "
 most_iter = 10
-def CheckResult(df,iter,golden,title=""):
+def CheckResult(df,iter,golden,title="",rel_tol=1e-05):
     # print(df)
     a = df["loss"][iter]
     print(f"{title} loss={a} golden={golden}\n")
-    assert math.isclose(a,golden,rel_tol=1e-05, abs_tol=0.0) 
+    assert math.isclose(a,golden,rel_tol=rel_tol, abs_tol=0.0) 
+
+def test_chat_qwen3_0_6B():  
+    content = bubble_one("chat_qwen3_0.6b","./cases/qwen3/qwen3_0.6B.json")  
+    assert content=="Hello! How can I assist you today?"
+
+def test_chat_qwen3_4B():    
+    content = bubble_one("chat_qwen3_4B","./cases/qwen3/qwen3_4B.json")  
+    assert content=="Answer: 1"
+    # assert content=="Hello! How can I assist you today? 😊\n" or content=="Hello! It seems there was a small glitch. 😊 How can I assist you today?\n"
+
+def test_pp_gpt2():    
+    most_iter = 70
+    title = "bubble_gpt2"
+    sExe = "./bin/pangpi "
+    dfLoss = pangpi_one(title, sExe, "./hy-tmp/case/124M/GPT2_fuyou.fish --hellaswag ./cases/datasets/hellaswag_val.bin") 
+    # dfLoss = pd.read_csv("/home/cys/rnd/lic/Eval_loss.csv", sep=' ',index_col=False)
+    # print(dfLoss)
+    CheckResult(dfLoss,0,0.2476,title=title,rel_tol=1e-03)       #   0.24766387 0.01475318    
+
+def test_gpt2_1558M():    
+    title = "1558M"
+    dfTrain = koifish_one(title, sExe, "./cases/gpt2/1558M_F8_B80/F8_B32.json", most_iter=most_iter)
+    CheckResult(dfTrain,most_iter,9.446,title=title) 
 
 def test_gpt2_124M_fuyou6():    
     most_iter = 70
@@ -48,13 +71,11 @@ def test_gpt2_774M():
     title = "774M"
     dfTrain = koifish_one(title, sExe, "./cases/gpt2/774M_Shard50_F6_B80/F9_B40.json", most_iter=most_iter)
     CheckResult(dfTrain,most_iter,9.409,title=title)    #   61     loss=7.318967
-    # assert math.isclose(a,9.504,rel_tol=1e-05, abs_tol=0.0) 
-    
-def test_gpt2_1558M():    
-    title = "1558M"
-    dfTrain = koifish_one(title, sExe, "./cases/gpt2/1558M_F8_B80/F8_B40.json", most_iter=most_iter)
-    CheckResult(dfTrain,most_iter,9.472,title=title) 
+    # assert math.isclose(a,9.504,rel_tol=1e-05, abs_tol=0.0)     
 
+
+
+    
 # def test_add_negative_numbers():
 #     assert add(-1, -5) == -6
 
@@ -72,7 +93,11 @@ if __name__ == '__main__':
     args = parser.parse_args()    
     
     sExe = "./bin/koifish "
-    test_gpt2_124M()
+    test_chat_qwen3_0_6B()  
+    #test_chat_qwen3_4B()
+
+    # test_pp_gpt2()
+    # test_gpt2_124M()
     # test_gpt2_124M_fuyou6()
     # # test_gpt2_774M()
     # test_gpt2_1558M()

@@ -18,7 +18,7 @@
 int tpFuseCu = 1;
 TRAIN_CARD Optimizer::TrainParams() { return _fish->config.common; }
 
-Optimizer::Optimizer(NLP_AutoRegressive *g_, CLI_params &config, int flag) : _fish(g_) {
+Optimizer::Optimizer(NLP_AutoRegressive* g_, CLI_params& config, int flag) : _fish(g_) {
     // adam_filter =  {"output","norm","embd"};
     adam_filter = {"output", "norm"};
     rRounding.Init(1314);
@@ -127,7 +127,7 @@ bool Optimizer::OnLogits(int flag) {
     assert(pLogits != nullptr);
     assert(pLogits->type == typNUMBER::F32);
 
-    float *p = (float *)(pLogits->data), sum = 0;  // target_probs->data
+    float *p = (float*)(pLogits->data), sum = 0;  // target_probs->data
 
     for (int k = 0; k < n_ctx; k++) {
         sum = 0;
@@ -139,17 +139,17 @@ bool Optimizer::OnLogits(int flag) {
 }
 
 bool cuClearGrad(std::vector<hGTensor> tensors, int flag);
-bool Optimizer::BatchGrad(int iter, float &fx, int flag) {
-    RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
+bool Optimizer::BatchGrad(int iter, float& fx, int flag) {
+    RLS_BP* hRLS = hEDS->GetScheduler<RLS_BP>();
     fx           = 0;
     auto loss    = hLoss();
-    float *fLoss = (float *)(loss->data), *g = nullptr, accum_norm = 1.0f / (float)nGradAccum;
-    OutCLS *cls  = _fish->GetNeuron<OutCLS>("OutCLS", 0);
+    float *fLoss = (float*)(loss->data), *g = nullptr, accum_norm = 1.0f / (float)nGradAccum;
+    OutCLS* cls  = _fish->GetNeuron<OutCLS>("OutCLS", 0);
     cls->hLoader = train_loader;
     train_loader->ClearII();
     if (grad != nullptr) {
         ZERO_(grad);
-        g = (float *)grad->data;
+        g = (float*)grad->data;
     }
     bool bench = false;
 
@@ -190,19 +190,19 @@ bool isGensor(hGensor gensor, vector<string> keys, int flag = 0x0) {
 }
 
 // [Experimental]
-int Optimizer::SignStochastic(int nx, CLI_params &config, int flag) {
+int Optimizer::SignStochastic(int nx, CLI_params& config, int flag) {
     if (tpSign <= 0)
         return tpSign;
     if (grad == nullptr) {
         for (auto hP : opt_ps) {
             size_t ne = tELEM(hP);
-            float *g  = (float *)(GradOf(hP)->data);
+            float* g  = (float*)(GradOf(hP)->data);
             for (int64_t i = 0; i < ne; ++i) {
                 g[i] = g[i] > 0 ? 1 : -1;
             }
         }
     } else {
-        float *g   = (float *)grad->data;
+        float* g   = (float*)grad->data;
         double sum = 0.0, norm = 0;
         for (int64_t i = 0; i < nx; ++i) {
             g[i] = g[i] > 0 ? 1 : -1;  // signed
@@ -218,10 +218,10 @@ int Optimizer::SignStochastic(int nx, CLI_params &config, int flag) {
 /**
  * 1. LARS/LAMB  trus_ratio - ratio between the norm of the layer weights and norm of gradients update
  */
-void Optimizer::UpdateParams(int nx, CLI_params &config, int flag) {}
+void Optimizer::UpdateParams(int nx, CLI_params& config, int flag) {}
 
-void OPT_Adam::UpdateParams_V0(int nx, CLI_params &config, int flag) {
-    floatX *g = nullptr;
+void OPT_Adam::UpdateParams_V0(int nx, CLI_params& config, int flag) {
+    floatX* g = nullptr;
 
     float clip = 0.f, fx = 0, sum, sched;
     g2_sum = 0;
@@ -235,7 +235,7 @@ void OPT_Adam::UpdateParams_V0(int nx, CLI_params &config, int flag) {
     }
 
     if (grad != nullptr) {
-        g    = (floatX *)grad->data;  // gradients
+        g    = (floatX*)grad->data;  // gradients
         clip = gClip(nParams, g, nullptr);
     }
     auto now = GST_ms();
@@ -262,7 +262,7 @@ void OPT_Adam::UpdateParams_V0(int nx, CLI_params &config, int flag) {
     tUpdate = GST_ms() - now;
 }
 
-float Optimizer::gClip(int ne, floatX *g, hGensor hP, int flag) {
+float Optimizer::gClip(int ne, floatX* g, hGensor hP, int flag) {
     float clip = 1.0f, a, a1 = -FLT_MAX;
     double sum = 0.0;
 
@@ -345,7 +345,7 @@ int GTensor::Dogleg(int flag) {
     return 0;
 }
 
-double Optimizer::UpdateTensorParam(hGensor hP, floatX *g, float gnorm) {
+double Optimizer::UpdateTensorParam(hGensor hP, floatX* g, float gnorm) {
     float grad_norm = g_step;
     hP->Dogleg(0x0);
     grad_norm = hP->gnorm;
@@ -355,23 +355,23 @@ double Optimizer::UpdateTensorParam(hGensor hP, floatX *g, float gnorm) {
     return 0.0;
 }
 
-int UpdateTensorParam_cuda(hGTensor tensor, Optimizer *hOPT, float &grad_norm, int flag);
+int UpdateTensorParam_cuda(hGTensor tensor, Optimizer* hOPT, float& grad_norm, int flag);
 //  Always call Optimizer::UpdateTensorParam          Deprecated
-double OPT_Adam::UpdateTensorParam(hGensor hP, floatX *gX, float clip) {
+double OPT_Adam::UpdateTensorParam(hGensor hP, floatX* gX, float clip) {
     // return Optimizer::UpdateTensorParam(hP, gX, clip);
 
     // assert(gimap.find(hP)!=gimap.end());
     float alpha = adam->alpha, beta1 = adam->beta1, beta2 = adam->beta2, eps = adam->eps, grad_norm = g_step;
-    auto &im = _fish->GetGensorInfo(hP);  // gimap[hP];
+    auto& im = _fish->GetGensorInfo(hP);  // gimap[hP];
     float *m = im.gm, *v = im.gv;
     bool isToHost    = false;  // out of GPU memory!
     const int64_t ne = tELEM(hP);
-    floatX *paramX   = (floatX *)(hP->data), *paramX0, *gX0;
+    floatX *paramX   = (floatX*)(hP->data), *paramX0, *gX0;
     float mh, vh, g0, x, x0, x00;
 #ifdef __USE_CUDA__
     if (isToHost) {
         assert(_tmp != nullptr);
-        paramX  = (floatX *)_tmp;
+        paramX  = (floatX*)_tmp;
         gX      = paramX + hP->szData;
         paramX0 = paramX, gX0 = gX;
         hP->SerialGP(paramX, gX, hP->szData, true);
@@ -487,7 +487,7 @@ void Optimizer::UpdateTrainLoss(int x, float loss, int flag) {
         fx_best.push_back(loss);  //   only 1 element  ???
         loss_before = loss;
     }
-    RLS_BP *hRLS = _fish->hEDS->GetScheduler<RLS_BP>();
+    RLS_BP* hRLS = _fish->hEDS->GetScheduler<RLS_BP>();
     if (hRLS->afu != nullptr)
         hRLS->afu->loss = loss;
     loss_after = loss;
@@ -517,11 +517,11 @@ int Optimizer::GetITER(int flag) const {
 }
 
 bool Optimizer::isAtLongtail(int flag) {
-    bool isPass = false;  
-    float fLT = DEBUG.fLongTail;
-    if(fLT<=0)
+    bool isPass = false;
+    float fLT   = DEBUG.fLongTail;
+    if (fLT <= 0)
         return false;
-    int nMostIter = TrainParams().nMostIter, T_iter = fLT<1.0 ? nMostIter *fLT : (int)fLT ;   //
+    int nMostIter = TrainParams().nMostIter, T_iter = fLT < 1.0 ? nMostIter * fLT : (int)fLT;  //
     if (GetITER() >= T_iter) {
         if (GetITER() == T_iter) {
             _INFO("[Longtail] iter=%d(%g)\n", T_iter, fLT);
@@ -533,14 +533,14 @@ bool Optimizer::isAtLongtail(int flag) {
 
 bool Optimizer::isSpike(int flag) { return false; }
 
-int RAW_update(std::vector<hGTensor> &tensors, Optimizer *hOPT, float &grad_norm, int alg, int flag);
+int RAW_update(std::vector<hGTensor>& tensors, Optimizer* hOPT, float& grad_norm, int alg, int flag);
 
-void Optimizer::CheckExitSearch(int t,int flag){
+void Optimizer::CheckExitSearch(int t, int flag) {
     bool isExit = false;
-    if (DEBUG.N_mostiter > 0 && t > DEBUG.N_mostiter)  {// only for debug
+    if (DEBUG.N_mostiter > 0 && t > DEBUG.N_mostiter) {  // only for debug
         isExit = true;
     }
-    if(isExit){
+    if (isExit) {
         trainInfos().SaveToCSV("_info_.csv");
         // release more resource here
         exit(KOIFISH_EXIT_DEBUG);
@@ -549,7 +549,7 @@ void Optimizer::CheckExitSearch(int t,int flag){
 /*
     10/04/2025  行走于天地之间，所见大美，皆为人心
  */
-Optimizer::RESULT Optimizer::Search(void *ctx, hGensor loss_, hGensor target_, CLI_params &config) {
+Optimizer::RESULT Optimizer::Search(void* ctx, hGensor loss_, hGensor target_, CLI_params& config) {
     hEDS = _fish->hEDS;
     assert(hEDS != nullptr);
     auto train_params = TrainParams();
@@ -557,7 +557,7 @@ Optimizer::RESULT Optimizer::Search(void *ctx, hGensor loss_, hGensor target_, C
 
     last_time                = GST_ms();
     Optimizer::RESULT result = DID_NOT_CONVERGE;
-    RLS_BP *hRLS             = _fish->hEDS->GetScheduler<RLS_BP>();
+    RLS_BP* hRLS             = _fish->hEDS->GetScheduler<RLS_BP>();
     bool cancel = false, isWarmup = false;
     string suf, pref;
     Dump(0x0);
@@ -582,7 +582,7 @@ Optimizer::RESULT Optimizer::Search(void *ctx, hGensor loss_, hGensor target_, C
     int iter0 = 0, t;
     for (t = 0; t < train_params.nMostIter; ++t) {
         CheckExitSearch(t);
-        
+
         _fish->BeforeNextStep(t, 0x0);
         if (t == train_params.nMostIter - 1) {
             if (train_loader != nullptr) {
@@ -648,8 +648,8 @@ double Optimizer::GraphCompute(hSampLoader hLoader, hTGraph hTG, int flag) {
     int nThread = TrainParams().n_threads, no = 0, nAccum = TrainParams().n_gradient_accumulation;
     bool isOnlyEvaluate = !hTG->isBackward;
 
-    OutCLS *cls       = _fish->GetNeuron<OutCLS>("OutCLS", 0);
-    TokenEmbed *embed = _fish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
+    OutCLS* cls       = _fish->GetNeuron<OutCLS>("OutCLS", 0);
+    TokenEmbed* embed = _fish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
     if (phase != LIFE_PHASE::P_GENERATE && phase != LIFE_PHASE::P_PREFILL)
         embed->hBatch = hLoader->hBatch;
 
@@ -673,7 +673,7 @@ double Optimizer::GraphCompute(hSampLoader hLoader, hTGraph hTG, int flag) {
 }
 
 bool Optimizer::Evaluate(int type, int flag) {
-    OutCLS *cls = _fish->GetNeuron<OutCLS>("OutCLS", 0);
+    OutCLS* cls = _fish->GetNeuron<OutCLS>("OutCLS", 0);
 
     int iter       = GetITER();
     float val_loss = 0;
@@ -687,7 +687,7 @@ bool Optimizer::Evaluate(int type, int flag) {
             cls->hLoader = vl;
             // for(int i=0;i<10;i++)
             // val_loss = EvaluateSamps(vl, iter), a = val_loss;       //  0.272727281
-            val_loss = vl->Evaluate(0x0);
+            val_loss = vl->Evaluate(SAMPLEofSHARD, 0x0);
         }
     }
     // exit(KOIFISH_EXIT_DEBUG);
@@ -714,7 +714,7 @@ float Optimizer::EvaluateSamps(hSampLoader loader, int iter, int flag) {
     assert(0);  // Deprecated due to code refactor
 
     GST_TIC(tic);
-    OutCLS *cls  = _fish->GetNeuron<OutCLS>("OutCLS", 0);
+    OutCLS* cls  = _fish->GetNeuron<OutCLS>("OutCLS", 0);
     cls->hLoader = loader;
     auto loss    = hLoss();
     double l2, delta_max = 0, delta_ = 0, a, mean_loss = 0, ee = 0;
@@ -723,7 +723,7 @@ float Optimizer::EvaluateSamps(hSampLoader loader, int iter, int flag) {
     size_t nz           = 0, j;
     TOKEN_ID tMost      = (TOKEN_ID)(_fish->nClass() - 1);
     hSAMP samp          = nullptr;
-    const float *wLog   = nullptr;
+    const float* wLog   = nullptr;
     loader->next_sample = 0;  // fix this to keep same acc on each experiment
     for (i = 0; i < loader->num_batches; i += step) {
         if (tokens_input != nullptr && (phase != LIFE_PHASE::P_PREFILL && phase != LIFE_PHASE::P_GENERATE)) {  // in some debug mode, tokens_input maybe null
@@ -746,9 +746,9 @@ float Optimizer::EvaluateSamps(hSampLoader loader, int iter, int flag) {
         }
 #ifdef _TENSOR_G_
 #else
-        a  = ((float *)hPreLogits()->data)[0];  //  -6.60046101     -4.3040733
+        a  = ((float*)hPreLogits()->data)[0];  //  -6.60046101     -4.3040733
         ee = loader->DecodeVerify(samp, tokens_input, _fish->preLogits);
-        mean_loss += loss == nullptr ? 0 : ((float *)(loss->data))[0];
+        mean_loss += loss == nullptr ? 0 : ((float*)(loss->data))[0];
         break;
 #endif
         if (_fish->wikis.size() > 0)  // too long
@@ -810,7 +810,7 @@ float Optimizer::UpdateLossCurve(int flag) {
         float tokens_per_second = tokens_processed / millis_per_iter * 1000.0f;
         ema_tps                 = iter == 1 ? tokens_per_second : 0.95f * ema_tps + 0.05f * tokens_per_second;
         _INFO(" | %.1fK token/s | %s", ema_tps / 1000.0, _fish->DebugInfo().c_str());
-        _INFO(" x=%d\n",SUM::nUpdateParam);
+        _INFO(" x=%d\n", SUM::nUpdateParam);
     }
     float improvement = loss_before - loss_after;
     return improvement;
@@ -859,7 +859,7 @@ void Optimizer::AfterBuild(int flag) {
 void Optimizer::BeforeTrain(hGensor tokens_, int flag) {
     first_iter = iter;
 
-    auto &adam        = _fish->config.common.adam;  // TrainParams().
+    auto& adam        = _fish->config.common.adam;  // TrainParams().
     adam.n_parameters = nParams;
 
     opt_ps        = _fish->optParams;
@@ -884,8 +884,8 @@ void Optimizer::BeforeTrain(hGensor tokens_, int flag) {
     assert(_fish->config.common.nMostIter > 0);
 }
 
-bool MUON_params_::isAdamW(void *hUserData, int flag) {
-    GTensor *tensor = (GTensor *)(hUserData);
+bool MUON_params_::isAdamW(void* hUserData, int flag) {
+    GTensor* tensor = (GTensor*)(hUserData);
     if (!tensor->isWMAT())
         return true;
     if (G_Has_(tensor->name, {"embd", "embed"}))
@@ -904,8 +904,8 @@ bool MUON_params_::isAdamW(void *hUserData, int flag) {
 void OPT_Muon::BeforeTrain(hGensor tokens_input, int flag) {
     Optimizer::BeforeTrain(tokens_input, flag);
     int version        = 1;
-    ADAM_params_ *adam = &(_fish->config.common.adam);
-    MUON_params_ *muon = &(_fish->config.common.muon);
+    ADAM_params_* adam = &(_fish->config.common.adam);
+    MUON_params_* muon = &(_fish->config.common.muon);
     muon->ldAB         = 0;
     string sNames;
     for (auto t : opt_ps) {
@@ -924,11 +924,11 @@ void OPT_Muon::BeforeTrain(hGensor tokens_input, int flag) {
     _INFO("[Muon] version=%d filter=\"%s\"", version, sNames.c_str());
 }
 
-size_t TGraph::Prepare4Train(void *ctx_, GD_METHOD tpGD, int flag) {
+size_t TGraph::Prepare4Train(void* ctx_, GD_METHOD tpGD, int flag) {
     hOptimizer hOpt = hFish->hOPT;
     assert(hOpt != nullptr);
     size_t nP = 0, nz = 0, nzAll = 0, id = 0, n1 = hFish->gensors.size();
-    for (auto &gi : hFish->gensors.infos) {
+    for (auto& gi : hFish->gensors.infos) {
         auto gensor = gi.first;
         int nParam  = (int)tELEM(gensor);
         if (strcmp(gensor->name, "output.weight") == 0) {
@@ -972,7 +972,7 @@ void Optimizer::Prepare(size_t nx_, int flag) {
     just_initialized            = true;
     double s                    = 0;
     size_t nz                   = 0;
-    NLP_AutoRegressive *dolphin = dynamic_cast<NLP_AutoRegressive *>(_fish);
+    NLP_AutoRegressive* dolphin = dynamic_cast<NLP_AutoRegressive*>(_fish);
     if (nParams > 0) {
         if (_fish->isTrain()) {
             if (isGlobalGrad) {
@@ -992,7 +992,7 @@ void Optimizer::Prepare(size_t nx_, int flag) {
     // val_loader->Init(dolphin,"Eval",false);            //val_loader->Prepare(this);
 }
 
-bool Optimizer::PrepareData(CLI_params &config, int flag) {
+bool Optimizer::PrepareData(CLI_params& config, int flag) {
     GST_TIC(tic);
 
     bool isLoadOK = false;
@@ -1060,8 +1060,8 @@ void OPT_Muon::Prepare(size_t nx_, int flag) { Optimizer::Prepare(nx_, flag); }
     https://github.com/KellerJordan/muon
     https://x.com/Kimi_Moonshot/status/1897929976948965870
 */
-OPT_Muon::OPT_Muon(NLP_AutoRegressive *g_, CLI_params &params_, int flag) : Optimizer(g_, params_, flag) {
-    ADAM_params_ *adam        = &(_fish->config.common.adam);
+OPT_Muon::OPT_Muon(NLP_AutoRegressive* g_, CLI_params& params_, int flag) : Optimizer(g_, params_, flag) {
+    ADAM_params_* adam        = &(_fish->config.common.adam);
     adam->clip_alg            = 1;  // clip_alg=0 little better
     adam->gclip               = adam->gclip / _fish->config.nLayer();
     _fish->config.Fuse_Normal = 0;  //
@@ -1076,7 +1076,7 @@ OPT_Muon::OPT_Muon(NLP_AutoRegressive *g_, CLI_params &params_, int flag) : Opti
     }
 }
 
-OPT_Adam::OPT_Adam(NLP_AutoRegressive *g_, CLI_params &params_, int flag) : Optimizer(g_, params_, flag) {
+OPT_Adam::OPT_Adam(NLP_AutoRegressive* g_, CLI_params& params_, int flag) : Optimizer(g_, params_, flag) {
     // auto train_params = TrainParams();
     //  0.9f, 0.95f, 1e-8f      decay=0.1
 
@@ -1107,13 +1107,13 @@ void Optimizer::Dump(int typ) {
     auto train_params = TrainParams();
     _INFO("======== nEopch=%d most_iter=%d\n", train_params.n_epochs, train_params.nMostIter);  //,train_params.nEpochIter
     fflush(stdout);
-    RLS_BP *hRLS = _fish->hEDS->GetScheduler<RLS_BP>();
+    RLS_BP* hRLS = _fish->hEDS->GetScheduler<RLS_BP>();
     hRLS->Dump(typ);
     _INFO("\tType weight=%s activation=%s", cNameOf(_fish->config.model.tpWeight), cNameOf(_fish->config.model.tpActivation));
     fflush(stdout);
 
     size_t sz         = 0x0;
-    const char *title = "OPT";  //__func__
+    const char* title = "OPT";  //__func__
     if (_ctx != nullptr)
         _INFO("%s: mem_size  = %zu bytes (%.1f MB)\n", title, sz, (float)sz / (1024.0f * 1024.0f));
     _INFO("%s: iter = %d\n", title, iter);
@@ -1161,7 +1161,7 @@ void OPT_Adam::Dump(int typ) {
     adam->Dump(typ);
     _INFO("[OPT_Adam]\tsRESI=%g s_rounding=%d alloc_w=%d remater[ffn=%d ]\n", TrainParams().residual_scale, TrainParams().opt_alloc_weight,
           TrainParams().opt_alloc_weight, TrainParams().remater_ffn);
-    
+
     fflush(stdout);
 }
 

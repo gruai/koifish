@@ -129,6 +129,8 @@ bool RLS_BP::InitGUOKE(int flag) {
         _INFO("[RLS] \tGuoke=%d(%d)\t\n", nT_guoke, nT);
     }
     if (hFish->isLocalInfer) {
+        OutCLS *cls = hFish->GetNeuron<OutCLS>("OutCLS", 0);
+        cls->ManageMemory(DATA_PLACE::DEV_MEM);
     } else {
         for (auto neuron : hFish->backbons) {
             neuron->ManageMemory(DATA_PLACE::DEV_MEM);

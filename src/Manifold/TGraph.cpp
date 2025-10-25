@@ -37,13 +37,6 @@ hGensor Fish::AddTensor(const std::string &key_, typNUMBER tp, const SHAPE &shap
     return gg_tensor;
 }
 
-QKV_LAY::QKV_LAY(Fish *hF_, int id) : NeLayer(id) {
-    name = "QKV_LAY";
-    att_norm.Init(hF_, 0x0), ffn_norm.Init(hF_, 0x0);
-    Q.Init(hF_, 0x0), K.Init(hF_, 0x0), V.Init(hF_, 0x0), up.Init(hF_, 0x0), down.Init(hF_, 0x0);
-    proj.Init(hF_, 0x0);
-}
-
 size_t SLP::nElem() {
     size_t nX = 0;
     nX += tELEM(w);
@@ -67,13 +60,15 @@ SelfAttention::SelfAttention(Fish *hG_, const std::string &key_, JSON::const_ite
 
     n_ff      = hFish->config.n_ff(ID);
     n_head_kv = config.n_head_kv(ID);
-    assert(n_embd_head * n_head == C);
+    // assert(n_embd_head * n_head == C);
     C_qkv = C;
+    /**/ 
     if (jvals.size() >= 3) {
         shape = {(int)(jvals[0]), (int)(jvals[1]), (int)(jvals[2])};
     } else {  //"attn":{"QKV":[]},
         if (config.qkv_embeds.size() > 1) {
-            C_qkv = config.qkv_embeds[1];
+            assert(0);
+            // C_qkv = config.qkv_embeds[1];
         }
         //  hidden_dim shoud be less than 256 and hidden_dim should be multiple of 8
         assert(C_qkv % n_head == 0 && (C_qkv / n_head) % 8 == 0);
@@ -82,39 +77,38 @@ SelfAttention::SelfAttention(Fish *hG_, const std::string &key_, JSON::const_ite
     isSeparateQKV = hFish->config.model.isSeparateQKV;
     isBqkv        = hFish->config.model.isBqkv;
     Rope_version  = hFish->config.model.Rope_version;
-    if (Rope_version > 0)
+    isQKNormal    = hFish->config.model.isQKNormal;
+    if (Rope_version > 0 && !isQKNormal) {  // try QKNormal to help rope stable
         isQKNormal = true;
+    }
     // dump_flag = -1;
     tpNormal = DEBUG.SelfAttention_noraml;
-    assert(shape[0] > 0 && shape[1] > 0 && shape[2] > 0);
-    // q.Init(hG_,flag);       k.Init(hG_,flag);       v.Init(hG_,flag);       proj.Init(hG_,flag);
+    // assert(shape[0] > 0 && shape[1] > 0 && shape[2] > 0);
+    spQ = {(int)(hG_->config.Q_dim(layer-1)), C_qkv};
+    spKV = {(int)(hG_->config.KV_dim(layer-1)), C_qkv};
 }
 
 bool SelfAttention::Build(int flag_0) {
-    SHAPE sp = {shape[0], shape[1]};
+    // SHAPE sp = {shape[0], shape[1]};
     int flag = flag_0;
-#ifdef _TENSOR_G_
-    // flag |= GeNeuron::F_BIAS;       //  s_bias[i/x128::size] = load128(bias + i);
-#endif
-
-    norm.BuildX(name + MODEL_CARD::sNorm, {shape[0]}, hFish, flag);
+    norm.BuildX(_NAME(name, ATTN_PRE_NORMAL), {C_qkv}, hFish, flag);  
     if (isQKNormal) {
         normQ.nHead = n_head, normK.nHead = n_head_kv;
-        normQ.BuildX(name + "Q" + MODEL_CARD::sNorm, {shape[0]}, hFish, flag);
-        normK.BuildX(name + "K" + MODEL_CARD::sNorm, {shape[0]}, hFish, flag);
+        normQ.BuildX(_NAME(name, ATTN_Q_NORM), {C_qkv}, hFish, flag);  
+        normK.BuildX(_NAME(name, ATTN_K_NORM), {C_qkv}, hFish, flag);  
     }
 
-    SHAPE sp2 = {shape[0], shape[1] * 3}, sp3 = {B, T, C}, spTrans = {B, n_head_kv, T};  //,T
+    SHAPE sp3 = {B, T, C}, spTrans = {B, n_head_kv, T};  //,T
     if (isSeparateQKV) {
-        Q.BuildX(name + ".wq", sp, hFish, flag);
-        K.BuildX(name + ".wk", sp, hFish, flag);
-        V.BuildX(name + ".wv", sp, hFish, flag);
+        Q.BuildX(_NAME(name, ATTN_Q), spQ, hFish, flag);  //".wq"
+        K.BuildX(_NAME(name, ATTN_K), spKV, hFish, flag);  //".wk"
+        V.BuildX(_NAME(name, ATTN_V), spKV, hFish, flag);  //".wv"
         if (isBqkv) {
-            bqkv = std::make_shared<huTensor>(hFish, name + ".wqkv.bias", sp, tpWeight, false);  //  model.layers.0.attn.wqkv.bias
+            bqkv = std::make_shared<huTensor>(hFish, name + ".wqkv.bias", spQ, tpWeight, false);  //  model.layers.0.attn.wqkv.bias
             hFish->InitGensor(nullptr, bqkv->name, bqkv, true);
         }
     } else {
-        Q.BuildX(name + "_qkv", sp2, hFish, flag);
+        Q.BuildX(name + "_qkv", {shape[0], shape[1] * 3}, hFish, flag);
     }
     attn = std::make_shared<huTensor>(hFish, name + ".attn", (SHAPE){B, T, C_qkv}, tpWeight, false);  // B * T * C
 #ifdef ENABLE_CUDNN
@@ -128,7 +122,7 @@ bool SelfAttention::Build(int flag_0) {
         out->SetRefer(GTensor::outL);
     }
 
-    proj_cat.BuildX(name + MODEL_CARD::sAttnOut, (SHAPE){shape[1], shape[0]}, hFish, flag);
+    proj_cat.BuildX(_NAME(name, ATTN_OUT), (SHAPE){shape[1], shape[0]}, hFish, flag);     //name + MODEL_CARD::sAttnOut
 
     BIT_SET(proj_cat.out->flags, GTensor::F_NOALLOC);  // memory trick as kGPT
     proj_cat.w->residual_scale = hFish->config.common.residual_scale;
@@ -163,7 +157,7 @@ bool SelfAttention::Build(int flag_0) {
         assert(isSeparateQKV);
         if (rope == nullptr) {
             rope = std::make_shared<ROPE>();
-            rope->BuildX(name + ".ROPE", sp, hFish, flag);
+            rope->BuildX(name + ".ROPE", spQ, hFish, flag);
             rope->devQ      = devQ;
             rope->devK      = devK;
             rope->devDeltaQ = devDeltaQ;
@@ -189,36 +183,14 @@ std::vector<GeNeuron *> SelfAttention::SubNeurons(int flag) {
     std::vector<GeNeuron *> neurons = {&Q, &K, &V, &proj_cat, &norm};
     if (isQKNormal) {
         neurons.push_back(&normQ), neurons.push_back(&normK);
+        /*auto gensors = normQ.PickGensors();
+        for(auto t : gensors){  //only for debug
+            t->DumpX(0x0);
+        }*/
     }
     return neurons;
 }
 
-/*std::vector<hGensor> SelfAttention::PickGensors(bool isLORA, int flag) {
-    return GeNeuron::PickGensors(isLORA, flag);
-    std::vector<hGensor> gens, tmp; // = {Q.w, Q.b, Q.out, K.w, K.b, K.out, V.w, V.b, V.out, transition, bqkv, attn, proj_cat.w, proj_cat.b, proj_cat.out,
-     out}; tmp = {transition, bqkv, attn, out};
-
-     std::vector<hGensor> t1 = Q.PickGensors(isLORA);
-     GPLUS(tmp, Q.PickGensors(isLORA));
-     GPLUS(tmp, K.PickGensors(isLORA));
-     GPLUS(tmp, V.PickGensors(isLORA));
-     GPLUS(tmp, proj_cat.PickGensors(isLORA));
-     GPLUS(tmp, norm.PickGensors()); //norm.w, norm.b, norm.out, norm.mean, norm.rstd,
-     if (isQKNormal) {
-         // GPLUS(tmp, normQ.PickGensors()), GPLUS(tmp, normK.PickGensors());
-         GPLUS(tmp, {normQ.rstd, normK.rstd});
-     }
-
-     for (auto t : tmp) {
-         if (t == nullptr)
-             continue;
-         gens.push_back(t);
-         if (strcmp(t->name, "model.blk.0.attn.wo.weight") == 0) {
-             int debug = 0;
-         }
-     }
-     return gens;
-}*/
 
 bool SelfAttention::BeforeForward(int iter, int op, int flag) {
     if (rope != nullptr) {
@@ -239,10 +211,10 @@ hGensor SelfAttention::Ming(RLS_BP *hRLS, hGensor inpL, int flag) {
             attn->AddSrc({Q.out, transition});
         }
         if (isQKNormal) {
-            // attn->AddSrc({normQ.out});         attn->AddSrc({normK.out});
-            attn->AddSrc({normQ.rstd, normK.rstd});
-        }
-        attn >> proj_cat >> norm >> this;
+            // attn->AddSrc({normQ.rstd, normK.rstd});
+            attn >> proj_cat >> norm >> normQ >> normK >> this;
+        }else
+            attn >> proj_cat >> norm >> this;
         out->AddSrc({transition, bqkv, attn});  // duplicate!
         cur = out;
         // gTN0(cur,"%s_+",name.c_str());
@@ -355,7 +327,7 @@ BROWN_attn::BROWN_attn(Fish *hG_, const std::string &key_, JSON::const_iterator 
 bool BROWN_attn::Build(int flag) {
     // SelfAttention::Build(flag);
     SHAPE sp = {shape[0], shape[1]};
-    norm.BuildX(name + MODEL_CARD::sNorm, {shape[0]}, hFish, 0x0);
+    norm.BuildX(name + ".norm", {shape[0]}, hFish, 0x0);
     Q.BuildX(name + ".tmp", {T, T, n_head, B}, hFish, flag);  // transition as property
     proj_cat.BuildX(name + ".proj", sp, hFish, flag);
     // moe.BuildX(name+".moe",sp,hFish,flag);
@@ -446,7 +418,7 @@ GatedAttention::GatedAttention(Fish *hG_, const std::string &key_, JSON::const_i
         tpTrans = (TRANSITION_MODE)(jvals[0]);
 }
 bool GatedAttention::Build(int flag) {
-    norm.BuildX(name + MODEL_CARD::sNorm, {shape[0]}, hFish, 0x0);  // layer->ffn_norm.sT="f";
+    norm.BuildX(name + ".norm", {shape[0]}, hFish, 0x0);  // layer->ffn_norm.sT="f";
     upU.BuildX(name + ".upU", {shape[0], shape[1]}, hFish, flag);
     upV.BuildX(name + ".upV", {shape[0], shape[1]}, hFish, flag);
     down.BuildX(name + ".down", {shape[1], shape[0]}, hFish, flag);
@@ -816,6 +788,40 @@ static void ggml_graph_compute_thread_sync_task(int * task_phase, struct ggml_co
     }
 }*/
 
+bool GENSORS::has(hGensor gensor) {
+    assert(nag.size() == infos.size());
+    bool b1 = nag.find(gensor->name) != nag.end(), b2 = infos.find(gensor) != infos.end();
+    if (b1 != b2) {
+        std::vector<hGTensor> gensors_1, gensors_2;
+        for (auto gt : nag) {
+            gensors_1.push_back(gt.second);
+        }
+        for (auto gt : infos) {
+            gensors_2.push_back(gt.first);
+        }
+        std::sort(gensors_1.begin(), gensors_1.end(), [](const hGTensor &a, const hGTensor &b) { return strcmp(a->name, b->name) < 0; });
+        std::sort(gensors_2.begin(), gensors_2.end(), [](const hGTensor &a, const hGTensor &b) { return strcmp(a->name, b->name) < 0; });
+        Gensors2File(gensors_1, "~/gset_1.info");
+        Gensors2File(gensors_2, "~/gset_2.info");
+        exit(KOIFISH_INVALID_NAG);
+    }
+    assert(b1 == b2);
+    return b2;
+}
+
+void GENSORS::Insert(hGensor gensor, const GENSOR_INFO &gi, int flag) {
+    auto key = gensor->name;
+    if (strcmp(key, "model.norm.weight") == 0) {
+        int debug = 0x0;
+    }
+    // assert(strlen(key)>0);
+    assert(nag.find(key) == nag.end());
+    nag[key] = gensor;
+
+    assert(infos.find(gensor) == infos.end());
+    infos[gensor]    = gi;
+    infos[gensor].sX = gensor->name;
+}
 /*
 
 */
@@ -1642,7 +1648,7 @@ bool GTensor::AllocBuffer(Fish *hFish, int flag) {
         size_t nTmp = ((size_t)T) * std::max(nFF, std::max(NH, Vp)), nFFW = (size_t)(B)*T * nFF;
         // config.model.preLogits_dB = 8; //(int)ceil(B*4.0f*C/nTmp);
         int dB = hFish->config.model.preLogits_dB;
-        if(hFish->isTrain())
+        if (hFish->isTrain())
             assert(B % dB == 0);
         nTmp = std::max(nFFW / dB + 1, nTmp);
         assert(nTmp < INT_MAX);
@@ -1726,7 +1732,7 @@ int Fish::jToGraph(void *ctx_, bool isBuild, int flag) {
     for (auto nn : neurons) {  // Symbolic Ming
         no++;
         assert(cur != nullptr);
-        if (nn->name != "model.output_norm") {//"model.output_norm"     "model.blk.31.attn"
+        if (nn->name != "model.output_norm") {  //"model.output_norm"     "model.blk.31.attn"
             int only_for_debug = 0;
         }
         double t0 = GST_ms(), a;
@@ -1735,8 +1741,8 @@ int Fish::jToGraph(void *ctx_, bool isBuild, int flag) {
         } else {
             // _INFO("%d\t%s\n",no,nn->__repr__(suffix,prefix).c_str());
         }
-        if ((a = (GST_ms() - t0)) > 1000)       // why take so long?
-            _INFO("\t%s T=%.3gs\n", nn->name.c_str(), a/1000.0);
+        if ((a = (GST_ms() - t0)) > 1000)  // why take so long?
+            _INFO("\t%s T=%.3gs\n", nn->name.c_str(), a / 1000.0);
     }
 
     hRLS->Init(this, backbons);

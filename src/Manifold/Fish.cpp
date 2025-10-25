@@ -16,14 +16,14 @@ void Fish::STAT::Dump(int typ, int flag) {
     if (NOT_DUMP(0))
         return;
     size_t sz         = 0x0;
-    const char *title = "OPT";  //__func__
+    const char* title = "OPT";  //__func__
     switch (typ) {
         default:
             _INFO("\tTIME: qkv=%.3g(s),ffn=%.3g(s)\n", tQKV / 1.0e6, tFFN / 1.0e6);
     }
 }
 
-hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params &params, vector<hWIKI> wikis, ROLE_TYPE role_, int flag) {
+hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vector<hWIKI> wikis, ROLE_TYPE role_, int flag) {
     assert(wikis.size() >= 0);
     hFISH fish = nullptr;
     switch (params.ModelArch()) {
@@ -37,7 +37,7 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params &params, vect
             fish = std::make_shared<QWen>(nam_ + "_QW2", params, role_);
             break;
         case MODEL_ARCH::NLP_QWEN3:
-            fish = std::make_shared<QWen>(nam_ + "_QW3", params, role_);
+            fish = std::make_shared<QWen3>(nam_ + "_QW3", params, role_);
             break;
         case MODEL_ARCH::NLP_MISTRAL:
             fish = std::make_shared<Mistral>(nam_ + "_mistral", params, role_);
@@ -71,26 +71,31 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params &params, vect
                     assert(0);
             }
     }
-    if(params.common.Empty())
+    if (params.common.Empty()) {
         fish->isLocalInfer = true;
-    else
+    } else
         fish->isLocalInfer = flag == 0x110;
     if (!fish->Init(wikis))
         return nullptr;
     if (!fish->Build())
         return nullptr;
-    if (fish->role == SWARM_FOLLOWER) {
+
+    if (fish->config.chat_mode != CHAT_MODE::YABA) {  //  only for chat
+        fish->gopt = GeneratOnPrompt::MakeInstance(params, wikis, fish.get(), flag);
     } else {
-        if (!wikis.empty()) {  // generate some sentence
-            if (params.common.gpt_every > 0 && !fish->isLocalInfer)
-                fish->gopt = GeneratOnPrompt::MakeInstance(params, wikis, fish.get(), flag);
+        if (fish->role == SWARM_FOLLOWER) {
+        } else {
+            if (!wikis.empty()) {  // generate some sentence
+                if (params.common.gpt_every > 0 && !fish->isLocalInfer)
+                    fish->gopt = GeneratOnPrompt::MakeInstance(params, wikis, fish.get(), flag);
+            }
         }
     }
     // fish->Dump(0x0);
     return fish;
 }
 
-Fish::Fish(const std::string &nam_, struct CLI_params params, ROLE_TYPE role_, int flag) : name(nam_), config(params), role(role_) {
+Fish::Fish(const std::string& nam_, struct CLI_params params, ROLE_TYPE role_, int flag) : name(nam_), config(params), role(role_) {
     arch = params.ModelArch();
 
     string w    = config.KV({"model", "parameter", "debug_init_weight"});  // hack parameter only for debug
@@ -115,7 +120,7 @@ bool Fish::isModel(std::vector<MODEL_ARCH> arcs, int flag) {
     }
     return false;
 }
-bool Fish::isTemporaryMemory(GeNeuron *neuron, int flag) const {
+bool Fish::isTemporaryMemory(GeNeuron* neuron, int flag) const {
     assert(hEDS != nullptr);
     return !hEDS->hRLS->isResident(neuron);
 }
@@ -128,7 +133,7 @@ bool Fish::isRemater(int flag) const {
 
 bool Fish::isAtPhase(LIFE_PHASE ph) const { return GetOptimizer()->phase == ph; }
 
-hFISH Fish::MakeSwarm(const std::string nam_, struct CLI_params &params, int flag) {
+hFISH Fish::MakeSwarm(const std::string nam_, struct CLI_params& params, int flag) {
     vector<hWIKI> wikis = WIKI::MakeInstance(nam_, params, 0x0);
     // if(params.tpWiki!="off") {//wiki is so heavy(ugly) that only load one instance here!
     //     for(auto path : params.fn_model_base){
@@ -150,8 +155,8 @@ hFISH Fish::MakeSwarm(const std::string nam_, struct CLI_params &params, int fla
     hPangpi salp = std::make_shared<Pangpi>(nam_, params);
     return salp;
 }
-
-hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params &params, const Fish *hSrc_, int flag) {
+/**/
+hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, const Fish* hSrc_, int flag) {
     hFISH fish     = nullptr;
     ROLE_TYPE role = ROLE_TYPE::COMMON;
     switch (params.nabla) {
@@ -181,7 +186,7 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params &params, cons
     return fish;
 }
 size_t Fish::MostMemSize(int typ) {
-    size_t head_dim = config.n_embd_head();
+    size_t head_dim = config.head_dim();
     /*size_t kvbw = config.n_head_kv() * head_dim * kv_len * sizeof(KVT) + p->n_heads * kv_len * sizeof(float);
 
     uint64_t bw = 0;
@@ -190,6 +195,17 @@ size_t Fish::MostMemSize(int typ) {
     bw += p->head_dim * p->n_heads * dim * dbits / 8; // attn output
     bw += 3 * (hidden_dim * dim * dbits / 8) * max(p->n_experts_ac, 1); // MLP
     bw *= p->n_layers;*/
+    /*
+    // mem_size = 2*LLAMA_TRAIN_MAX_NODES*ggml_tensor_overhead() +(config.common.use_checkpointing ? 3 :
+        // 2)*(GGML_OBJECT_SIZE+ggml_graph_overhead_custom(LLAMA_TRAIN_MAX_NODES, true));
+        int n_layer = config.nLayer();
+        int nHead   = hDictVAE != nullptr ? hDictVAE->nLevel * 3 + 2 + 6 : 6;
+        int nMost   = LLAMA_TRAIN_MAX_NODES;  //  16384
+        assert(nHead * 2 + n_layer * 18 < nMost);
+        size_t sz       = ggml_tensor_overhead() * 2 * nMost;
+        size_t overhead = GGML_OBJECT_MAX_SIZE + ggml_graph_overhead_custom(LLAMA_TRAIN_MAX_NODES, true);
+        sz += (config.common.use_checkpointing ? 3 : 2) * overhead;
+    */
     size_t bw = 1310227072;
     return bw;
 }
@@ -247,11 +263,16 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
             nInput++;
         }
     }
-    UpdateParams();                //  optParams
-    if (!config.ckp_in.empty()) {  // would update paramIsGuoke
+    UpdateParams();  //  optParams
+    if (!config.model.empty()) {
+        isLoadCheckpoint = HF_Serialize(false, 0x0);
+        if (!isLoadCheckpoint)
+            return false;
+    } else if (!config.ckp_in.empty()) {  // would update paramIsGuoke
         if (!LoadCheckPoint(config.ckp_in[0], flag))
             return false;
     }
+
     if (config.fuyou.paramIsGuoke) {  // F_RELOAD_
         // config.fuyou.filter_reload = {DEBUG.x_str};  //only for debug   "ffn_up.weight" blk.2.ffn_up.weight
         for (auto t : optParams) {
@@ -271,7 +292,7 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
         hOPT->SetPhase(LIFE_PHASE::P_EVAL_);
         assert(hBackTG == nullptr);
     }
-    RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
+    RLS_BP* hRLS = hEDS->GetScheduler<RLS_BP>();
     hRLS->Prepare(-1);  // Memory management; InitParams of current fuyou!
     for (auto t : hOPT->opt_ps) {
         hRLS->GetTensorStatus(-1, t, 0x0);
@@ -298,7 +319,7 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
 
 #else
     // ugly code!
-    int *data = (int *)KQ_pos->data;
+    int* data = (int*)KQ_pos->data;
     for (int i = 0; i < config.n_ctx(); ++i) {
         data[i] = 0 + i;  // n_past=0
     }
@@ -390,11 +411,11 @@ bool Fish::Build(int flag) {
     return true;
 }
 
-bool Fish::UpdateCheckPoint(CheckPoint_Params &ckp, bool isSave, int flag) {
+bool Fish::UpdateCheckPoint(CheckPoint_Params& ckp, bool isSave, int flag) {
     if (isSave) {
         assert(hOPT != nullptr);
         hFuyou afu   = GetFuyou(-1);
-        RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
+        RLS_BP* hRLS = hEDS->GetScheduler<RLS_BP>();
         ckp.curEpoch = hOPT->train_epochs;
         ckp.curIter  = hOPT->GetITER();
         ckp.curFuyou = hRLS->curFuyouID;
@@ -412,8 +433,8 @@ bool Fish::UpdateCheckPoint(CheckPoint_Params &ckp, bool isSave, int flag) {
 /*
     1. SaveCheckpoint save more temporary tensors than SaveModel
 */
-static const char *vendor = "gruai";  // llm_arch_from_string
-bool Fish::SaveTrain(CheckPoint_Params &ckp, bool isInit, int flag) {
+static const char* vendor = "gruai";  // llm_arch_from_string
+bool Fish::SaveTrain(CheckPoint_Params& ckp, bool isInit, int flag) {
     assert(hOPT != nullptr);
     int iter = hOPT->iter, nReload = 0;
     string sBaseName = ckp.sDir, sit = "IT", sOut = ckp.FullPath(iter);
@@ -491,7 +512,7 @@ bool Fish::SaveCheckPoint(int flag) {
     return true;
 }
 
-bool Fish::LoadCheckPoint(CheckPoint_Params &ckp, int flag) {
+bool Fish::LoadCheckPoint(CheckPoint_Params& ckp, int flag) {
     assert(tpInitWeight == INIT_WEIGHT::SERIALIZE);
     std::string fpCheck = ckp.sModelPath;
     if (!config.model.empty()) {
@@ -510,7 +531,6 @@ bool Fish::LoadCheckPoint(CheckPoint_Params &ckp, int flag) {
             isLoadCheckpoint = SAFETENSOR_Serialize(ckp, false, 0x0);
         } else if (type == "calm") {
             isLoadCheckpoint = CALM_Serialize(fpCheck, false, 0x0);
-            // isLoadCheckpoint = YALM_Serialize(config.checkpoint.in,false,0x0);
         } else {
             // just try, may fail!
             isLoadCheckpoint = SAFETENSOR_Serialize(ckp, false, 0x0);
@@ -589,7 +609,7 @@ int Fish::BuildGraphFromRaw(int flag) {
 }
 
 // If isParam, only alloc grad, no init!
-void Fish::InitGensor(void *ctx, const string &name, hGensor gensor, bool isParam, int flag) {
+void Fish::InitGensor(void* ctx, const string& name, hGensor gensor, bool isParam, int flag) {
     assert(gensor != nullptr);
     if (!name.empty()) {
         gTN0(gensor, name.c_str());  //    gTN0(w,"%s.w",name.c_str());
@@ -605,11 +625,11 @@ void Fish::InitGensor(void *ctx, const string &name, hGensor gensor, bool isPara
     // }
 }
 
-void Fish::InitGensor(void *ctx, hGensor gensor, const char *name, struct random_normal_distribution *rnd, int flag) {
+void Fish::InitGensor(void* ctx, hGensor gensor, const char* name, struct random_normal_distribution* rnd, int flag) {
     assert(0);  // Deprecated
 }
 
-hGensor Fish::AddTensor(void *ctx, const std::string &key_, typNUMBER tp, const SHAPE &shape, bool isParam, int flag) {
+hGensor Fish::AddTensor(void* ctx, const std::string& key_, typNUMBER tp, const SHAPE& shape, bool isParam, int flag) {
     CHECK_SHAPE(shape);
     hGensor gensor = nullptr;
     if (shape.size() == 4) {
@@ -643,8 +663,8 @@ bool TGraph::SchedulerOnNeurons(int flag)    {
 bool Fish::ComputePlan(int flag) {
 #ifdef __USE_GGML__
     assert(0);
-    auto &train_params         = config.common;
-    struct ggml_cgraph *cgraph = GetBackRaw();
+    auto& train_params         = config.common;
+    struct ggml_cgraph* cgraph = GetBackRaw();
     if (cgraph == nullptr) {  //  OnlyInfer
         cgraph = hForwTG->raw();
     }
@@ -653,7 +673,7 @@ bool Fish::ComputePlan(int flag) {
     _INFO("%s: work_size = %zu bytes (%.1f MB)\n", __func__, max_work_size, (float)max_work_size / (1024.0f * 1024.0f));
     // ggml_free(ctx_build);         ctx_build = nullptr;
     ctx_work                = ggml_init({max_work_size, NULL, false});
-    struct ggml_object *obj = ggml_new_object(ctx_work, GGML_OBJECT_TYPE_WORK_BUFFER, gb_plan.work_size);
+    struct ggml_object* obj = ggml_new_object(ctx_work, GGML_OBJECT_TYPE_WORK_BUFFER, gb_plan.work_size);
     // gb_plan.work_data = (uint8_t *)ggml_get_mem_buffer(ctx_work)+ obj->offs;
     gf_plan = gb_plan;  //  ???
     return true;
@@ -686,14 +706,14 @@ bool Fish::CopyGensors(hWIKI wiki, int flag) {
             return false;
         if (tELEM(src) != tELEM(dst))  // if(!ggml_are_same_shape(src,dst))
             return false;
-        float *arr = (float *)(dst->data), a = arr[0];
+        float *arr = (float*)(dst->data), a = arr[0];
         // _INFO("\t copy %s nbyte=%ld...\n",nam.c_str(),nbyte);
         // should replace by ggml_compute_forward_dup (memcpy only support CPU!)
         if (src->type == dst->type) {
             memcpy(dst->data, src->data, nbyte);
         } else if (dst->type == typNUMBER::F32) {
             assert(isQuantized(src->type));
-            Gensor2float_(src, (float *)(dst->data), flag);
+            Gensor2float_(src, (float*)(dst->data), flag);
         } else {
             assert(0);
         }
@@ -727,10 +747,10 @@ bool Fish::BeforeNextStep(int iter, int flag) {
         return true;
     SUM::nUpdateParam = 0;
     for (l = l_0; l < l_1; l++) {
-        FFN *ffn           = GetNeuron<FFN>("FFN", l);
-        SelfAttention *QKV = GetNeuron<SelfAttention>("QKV", l);
-        bool isUpdate = rand_coin.NextCoin(thrsh);
-        if(l==0 && isUpdate){
+        FFN* ffn           = GetNeuron<FFN>("FFN", l);
+        SelfAttention* QKV = GetNeuron<SelfAttention>("QKV", l);
+        bool isUpdate      = rand_coin.NextCoin(thrsh);
+        if (l == 0 && isUpdate) {
             int debug = 0;
         }
         ffn->UpdateShortcut(!isUpdate);
@@ -740,11 +760,11 @@ bool Fish::BeforeNextStep(int iter, int flag) {
             // ffn->isShortcut = isPass, QKV->isShortcut = isPass;
         }
     }
-    if (SUM::nUpdateParam==0) {  // at least one layer
-        assert(nPass==l_1-l_0);
+    if (SUM::nUpdateParam == 0) {  // at least one layer
+        assert(nPass == l_1 - l_0);
         l = l_0 + rand() % nLayer;
-        assert(l>=l_0 && l<l_1);
-        if(l==0){
+        assert(l >= l_0 && l < l_1);
+        if (l == 0) {
             int debug = 0;
         }
         GetNeuron<FFN>("FFN", l)->UpdateShortcut(false);
@@ -760,11 +780,23 @@ int Fish::GetCurIter(int flag) const {
     return hOPT->GetITER();
 }
 
+hBATCH Fish::GetCurBatch(bool isUpate, int flag) {
+    if (hOPT == nullptr)
+        return nullptr;
+    hSampLoader hLoader = hOPT->val_loaders[0];
+    hBATCH hBatch       = hLoader->GetCurBatch();
+    if (isUpate) {
+        TokenEmbed* embed = GetNeuron<TokenEmbed>("TokenEmbed", 0);
+        embed->hBatch     = hBatch;
+    }
+    return hBatch;
+}
+
 bool Fish::AfterNextStep(int iter, int flag) {
     int nLayer = config.nLayer(), l;
     for (l = 0; l < nLayer; l++) {
-        FFN *ffn           = GetNeuron<FFN>("FFN", l);
-        SelfAttention *QKV = GetNeuron<SelfAttention>("QKV", l);
+        FFN* ffn           = GetNeuron<FFN>("FFN", l);
+        SelfAttention* QKV = GetNeuron<SelfAttention>("QKV", l);
         SUM::tFFN += ffn->stat.tFore;
         SUM::tFFN += ffn->stat.tBack;
         SUM::tQKV += QKV->stat.tFore;

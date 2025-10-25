@@ -15,7 +15,7 @@
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
 
-float *T_generate_(hFISH hFish, int id, typNUMBER tpActivity, unsigned flags);
+
 int run_caml(const char *prompt, int flag);
 int Fish_ppl(CLI_params &config) {
     // g_dump_level = 0;

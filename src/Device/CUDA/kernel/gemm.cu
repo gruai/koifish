@@ -134,6 +134,50 @@ __global__ void static reduce_add_sum_kernel(floatX* dst, const float* src, size
     }
 }
 
+/*
+    d(m,n) = a'*b
+    Wrapper around cublasLtMatmul(https://docs.nvidia.com/cuda/cublas/#cublasltmatmul)
+
+    transA = 1: in cuBLAS, matrices are column-major by default. W matrix is (m, n) in row-major layout, which is (n, m) in column-major.
+*/
+void CU_mm_blas(floatX* d, const floatX* wX, const floatX* b, int m, int n, int k, float beta = 0.0, int transA = 1, int transB = 0, int flag = 0x0) {
+    const float alpha = 1.0f;
+    int lda = transA ? k : m, ldb = transB ? n : k;
+    cublasOperation_t opA = (transA) ? CUBLAS_OP_T : CUBLAS_OP_N, opB = (transB) ? CUBLAS_OP_T : CUBLAS_OP_N;
+    cublasGemmEx(cublas_handle, opA, opB, m, n, k, &alpha, wX, CUDA_R_16BF, lda, b, CUDA_R_16BF, ldb, &beta, d, CUDA_R_16BF, m, CUDA_R_32F,
+                 CUBLAS_GEMM_DEFAULT);  //  CUBLAS_GEMM_DEFAULT_TENSOR_OP[DEPRECATED]
+    /*cublasGemmEx(handle,
+                 CUBLAS_OP_T,        // Transpose W (since it's row-major)
+                 CUBLAS_OP_N,        // Don't transpose x
+                 m,                  // rows of C (output y)
+                 1,                  // columns of C (output y is a vector)
+                 n,                  // common dimension (k)
+
+                 &alpha,             // host pointer
+                 W,                  // A matrix (W)
+                 CUDA_R_16BF,        // A datatype
+                 n,                  // leading dimension of A
+
+                 x,                  // B matrix (x)
+                 CUDA_R_16BF,        // B datatype
+                 n,                  // leading dimension of B
+
+                 &beta,              // host pointer
+                 y,                  // C matrix (y)
+                 CUDA_R_16BF,        // C datatype
+                 m,                  // leading dimension of C
+
+                 CUDA_R_32F,         // compute type: use fp32 for precision
+                 CUBLAS_GEMM_DEFAULT_TENSOR_OP);*/
+
+    return;
+}
+
+void CU_mv_(floatX* y, const floatX* W, const floatX* x, int m, int n, float alpha, float beta) { 
+    assert(alpha == 1.0f); //&& beta == 0.0f
+    CU_mm_blas(y, W, x, m, 1, n, beta); 
+}
+
 /*  d(m,n) = alpha*a'*b + beta*d + bias
     Wrapper around cublasLtMatmul(https://docs.nvidia.com/cuda/cublas/#cublasltmatmul)
 */
@@ -150,26 +194,8 @@ void CU_mm_blasLt(floatX* d, const floatX* a, const floatX* b, const floatX* bia
     bool has_bias = (bias != NULL), has_gelu = (pre_gelu != NULL);
     //,const float alpha = 1.0f;    beta = accumulate ? 1.0f : 0.0f;
     cublasOperation_t opA = (transA) ? CUBLAS_OP_T : CUBLAS_OP_N, opB = (transB) ? CUBLAS_OP_T : CUBLAS_OP_N;
-    /*if (bias == nullptr && pre_gelu == nullptr) {
-        int lda = transA ? k : m, ldb = transB ? n : k;
-        if (!transA && !transB) {
-            //Back of delta: [768,50304] x [50304,8192] => [768,8192]
-            if (DEBUG.T_GEMM >= 0)
-                CU_abc(d, a, b, bias, m, n, k, stream, transA, transB, accumulate, pre_gelu, backward);
-            else
-                cublasGemmEx(cublas_handle, opA, opB, m, n, k, &alpha, a, CUDA_R_16BF, lda, b, CUDA_R_16BF, ldb, &beta, d, CUDA_R_16BF, m, CUDA_R_32F,
-                             CUBLAS_GEMM_DEFAULT);
-            // PrintTensor("d=axb", d, true, m, n, 1, 1, -1);
-            // exit(KOIFISH_EXIT_DEBUG);
-        } else {
-            // [50304,768] x [768,8192] => [50304,8192]         or(transA) [768,50304]' x [768,8192] => [50304,8192]
-            cublasGemmEx(cublas_handle, opA, opB, m, n, k, &alpha, a, CUDA_R_16BF, lda, b, CUDA_R_16BF, ldb, &beta, d, CUDA_R_16BF, m, CUDA_R_32F,
-                         CUBLAS_GEMM_DEFAULT);  //  CUBLAS_GEMM_DEFAULT_TENSOR_OP[DEPRECATED]
-        }
 
-        return;
-    }*/
-
+    
     // create the operation descriptor
     cublasLtMatmulDesc_t operationDesc;
     cublasCheck(cublasLtMatmulDescCreate(&operationDesc, cublas_compute, CUDA_R_32F));

@@ -19,10 +19,10 @@ struct PIPE_Optimizer {
     Optimizer *hOPT = nullptr;
     GTensor *tensor = nullptr;
     string name;
-    float *tmp            = nullptr;
-    floatGama *gama_T     = nullptr;
+    float *tmp        = nullptr;
+    floatGama *gama_T = nullptr;
     // use double to reduce Non-Determinism in CUDA Sums!
-    double *arrNorm        = nullptr;  
+    double *arrNorm       = nullptr;
     size_t num_parameters = 0;
     ptrdiff_t w_stride, g_stride, s_stride;
 
@@ -70,7 +70,7 @@ struct PIPE_Adamw : public PIPE_Optimizer {
         weight_decay  = wd;
         learning_rate = hOPT->LearningRate();
         iter          = hOPT->GetITER();
-        arrNorm       = (double *)GTensor::stat_info;       //  sizeof(float)*5120
+        arrNorm       = (double *)GTensor::stat_info;  //  sizeof(float)*5120
         assert(arrNorm != nullptr);
 
         params = (Tp *)(tensor->data), grads0 = (Tp *)(tensor->grad);
@@ -98,7 +98,7 @@ struct PIPE_Muon : public PIPE_Adamw<Tp, Tmv> {
     float a = 3.4445, b = -4.7750, c = 2.0315;
     int most_iter = 5, ldAB = 0, dimA = -1;
     bool isTrans = false;
-    MUON_params_ muon;                                                           //  A[ldAB:ldAB]
+    MUON_params_ muon;                                                                          //  A[ldAB:ldAB]
     Tmv *mG = nullptr, *A = nullptr, *B = nullptr, *BX = nullptr, *X = nullptr, *Xt = nullptr;  //  mG - Momentum matrix
     PIPE_Muon(Optimizer *hOPT_, int _flags, float _learning_rate, float _beta1, float _beta2, float _eps, float _weight_decay)
         : PIPE_Adamw<Tp, Tmv>(hOPT_, _flags, _learning_rate, _beta1, _beta2, _eps, _weight_decay) {
@@ -118,24 +118,36 @@ struct PIPE_Muon : public PIPE_Adamw<Tp, Tmv> {
 //  For cudaLaunchCooperativeKernel
 template <typename T = void>
 struct CoopLayer {
-    float *rms_att_weight = nullptr, *bqkv = nullptr, *rms_ffn_weight = nullptr;
-    T *wq = nullptr, *wk = nullptr, *wv = nullptr, *wo = nullptr;
+    // float *rms_att_weight = nullptr, *bqkv = nullptr, *rms_ffn_weight = nullptr;     maybe float would increase accuracy
+
+    T *rms_att_weight = nullptr, *bqkv = nullptr, *rms_ffn_weight = nullptr;
+    T *wq = nullptr, *wk = nullptr, *wq_norm = nullptr, *wk_norm = nullptr, *wv = nullptr, *wo = nullptr;
     T *moegate = nullptr, *w1 = nullptr, *w2 = nullptr, *w3 = nullptr;
     floatGama *gama_1 = nullptr, *gama_2 = nullptr, *gama_3 = nullptr;
 };
 #define CoopLayer_MAX 128
 #define KV_SINKS 2  // attention sinks for rolling buffer
+
 /*
     So strange that no way to call host-function in a CUDA kernel! So have to use this pipe to transfer some data to kernel
+    T - type of activation
+    KVT
+    Tw - type of weight
 */
-template <typename T, typename KVT>
+template <typename T, typename KVT, typename Tw>
 struct KERNEL_PIPE : public MODEL_CARD {
+    using tpActivation = T;
+    using tpKV         = T;
+    using tpWeight     = Tw;
+
     CoopLayer<void> *cLayers = nullptr;
     int layNo                = -1;
     hFISH hFish              = nullptr;
     hGensor out_weight       = nullptr;
-    T *x = nullptr, *xb = nullptr, *xb2 = nullptr, *q = nullptr, *k = nullptr, *v = nullptr, *att = nullptr, *exp = nullptr;
+    float *att               = nullptr;  // buffer for scores/attention values (N_HEADS, seq_len)
+    T *x = nullptr, *xb = nullptr, *xb2 = nullptr, *q = nullptr, *k = nullptr, *v = nullptr, *exp = nullptr;
     T *hb = nullptr, *hb2 = nullptr, *he = nullptr;
+    T *xlogit = nullptr;
 
     KERNEL_PIPE(hFISH hFish_, int pos_, int flag = 0) : hFish(hFish_) {
         size_t szMost = hFish->MostMemSize();
@@ -148,16 +160,17 @@ struct KERNEL_PIPE : public MODEL_CARD {
         hidden_dim = config.n_ff();
         n_heads    = config.n_head();
         n_kv_heads = config.n_head_kv();
-        head_dim   = config.n_embd_head();
+        head_dim   = config.head_dim();
         seq_len    = config.model.seq_len;
         rope_theta = config.model.rope_theta;
         rotary_dim = config.model.rotary_dim;
+        q_dim = config.Q_dim(), kv_dim = config.KV_dim(), att_dim = n_heads * config.model.seq_len * 2;
 
         n_experts    = config.model.n_experts;
         n_experts_ac = config.model.n_experts_ac;
         assert(n_experts_ac == 0);
         n_experts_ac = max(n_experts_ac, 1);  //	???
-        q_dim = head_dim * n_heads, kv_dim = head_dim * n_kv_heads, att_dim = n_heads * config.model.seq_len * 2;
+
         hb_dim = hidden_dim;
         assert(dim % 32 == 0 && kv_dim % 32 == 0 && hidden_dim % 32 == 0);
         he_dim = n_experts_ac * hidden_dim;
@@ -169,23 +182,23 @@ struct KERNEL_PIPE : public MODEL_CARD {
         tX           = GTensor::outL;
         x            = TO<T>(tX);
         if (DEBUG.T_cpu) {
-            xb    = x + dim;
-            xb2   = xb + dim;
-            hb    = xb2 + dim;
-            hb2   = hb + hidden_dim;
+            xb = x + dim, xb2 = xb + dim;
+            hb = xb2 + dim, hb2 = hb + hidden_dim;
             q     = hb2 + hidden_dim;
             k     = q + q_dim;
             v     = k + kv_dim;
-            att   = v + kv_dim;
-            exp   = att + n_heads * seq_len;
+            att   = (float *)(v + kv_dim);
+            exp   = (T *)(att + n_heads * seq_len);
             nzTmp = exp - x + n_experts + (n_experts_ac ? n_experts_ac : 1) * 2;
         } else {
-            hb  = x + dim;
-            q   = hb + hb_dim;
-            att = q + q_dim;
-            // hb = ToX(GTensor::tmpFF1);	assert(GTensor::tmpFF1->nByte()>=hb_dim*sizeof(float));
+            xb = x + dim, xb2 = xb + dim;
+            hb = xb2 + dim, hb2 = hb + hb_dim;
+            q   = hb2 + hb_dim;
+            att = (float *)(q + q_dim);  //  hard-code
+            xlogit = (T *)(att + dim);
+            nzTmp = (char*)(xlogit + vocab_size) - (char*)x;
         }
-        // assert(tX->nByte()>=nzTmp*sizeof(float));
+        assert(tX->nByte()>=nzTmp);
         tX->Zero();
 
         hKVCache hCache = hFish->GetOptimizer()->hCache;
@@ -222,8 +235,9 @@ struct KERNEL_PIPE : public MODEL_CARD {
 
     KVT *key_cache = nullptr;
     KVT *val_cache = nullptr;
-    int n_layers, dim, hidden_dim, head_dim, n_heads, n_kv_heads, weight_dbits;
-    int n_experts, n_experts_ac, seq_len, rotary_dim, q_dim = -1, hb_dim = -1, he_dim = -1, kv_dim = -1, att_dim = -1;
+    //  dim=config.nEmbed();
+    int dim, hidden_dim, head_dim, q_dim = -1, hb_dim = -1, he_dim = -1, kv_dim = -1, att_dim = -1, rotary_dim;
+    int n_layers, n_heads, n_kv_heads, weight_dbits, n_experts, n_experts_ac, seq_len;
     bool norm_ln = false, act_gelu = false;
     bool norm_par = false;  // use parallel MLP/attention by omitting intermediate normalization
     int kv_len, kv_pos, pos;
@@ -235,23 +249,25 @@ struct KERNEL_PIPE : public MODEL_CARD {
         assert(l >= 0 && l < n_layers);
         layNo              = l;
         SelfAttention *QKV = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
-        QKV->BeforeMing(hRLS, nullptr);
+        // QKV->BeforeMing(hRLS, nullptr);
         cLayers[l].rms_att_weight = TO<float>(QKV->norm.w);  // weights->rms_att_weight[l];
-        cLayers[l].wq = ToX(QKV->Q.w), cLayers[l].wk = ToX(QKV->K.w), cLayers[l].wv = ToX(QKV->V.w),
+        cLayers[l].wq = ToX(QKV->Q.w), cLayers[l].wk = ToX(QKV->K.w), cLayers[l].wv = ToX(QKV->V.w);
+        cLayers[l].wq_norm = ToX(QKV->normQ.w), cLayers[l].wk_norm = ToX(QKV->normK.w);
         cLayers[l].wo   = ToX(QKV->proj_cat.w);  // weights->wo[l];
-        cLayers[l].bqkv = TO<float>(QKV->bqkv);  // weights->bqkv[l];
+        cLayers[l].bqkv = ToX0(QKV->bqkv);       // weights->bqkv[l];
         FFN *ffn        = hFish->GetNeuron<FFN>("FFN", l);
-        ffn->BeforeMing(hRLS, nullptr);
+        // ffn->BeforeMing(hRLS, nullptr);
         cLayers[l].rms_ffn_weight = TO<float>(ffn->norm.w);  // weights->rms_ffn_weight[l];
         cLayers[l].moegate        = nullptr;                 // weights->moegate[l];
-        hGensor w1 = ffn->GetGensor("w1.weight"), w2 = ffn->GetGensor("w2.weight"), w3 = ffn->GetGensor("w3.weight");
+        hGensor w1 = ffn->GetGensor("", FFN_UP, ".weight"), w2 = ffn->GetGensor("", FFN_DOWN, ".weight"), w3 = ffn->GetGensor("", FFN_GATE, ".weight");
         cLayers[l].w1 = w1->data, cLayers[l].gama_1 = w1->gama_T();
         cLayers[l].w2 = w2->data, cLayers[l].gama_2 = w2->gama_T();
         cLayers[l].w3 = w3->data, cLayers[l].gama_3 = w3->gama_T();
-        PrintTensor<float>("bqkv", (float *)(cLayers[l].bqkv), true, dim, 1);
-        PrintTensor<__nv_fp8_e5m2>("wq", (__nv_fp8_e5m2 *)(cLayers[l].wq), true, dim, dim);
-        PrintTensor<__nv_fp8_e5m2>("wk", (__nv_fp8_e5m2 *)(cLayers[l].wk), true, kv_dim, dim);
-        PrintTensor<__nv_fp8_e5m2>("wv", (__nv_fp8_e5m2 *)(cLayers[l].wv), true, kv_dim, dim);
+        if (cLayers[l].bqkv != nullptr)
+            PrintTensor<Tw>("bqkv", (Tw *)(cLayers[l].bqkv), true, dim, 1);
+        PrintTensor<Tw>("wq", (Tw *)(cLayers[l].wq), true, q_dim, dim);
+        PrintTensor<Tw>("wk", (Tw *)(cLayers[l].wk), true, kv_dim, dim);
+        PrintTensor<Tw>("wv", (Tw *)(cLayers[l].wv), true, kv_dim, dim);
     }
 
     virtual void AfterLayer(int l, int flag = 0x0) {
@@ -264,3 +280,6 @@ struct KERNEL_PIPE : public MODEL_CARD {
         ffn->AfterMing(hRLS, nullptr);
     }
 };
+
+typedef KERNEL_PIPE<bf16, bf16, bf16> QWEN3_PIPE;  // all types are bf16
+typedef KERNEL_PIPE<float, bf16, __nv_fp8_e5m2> QWEN_CALM_PIPE;

@@ -10,9 +10,12 @@ E.g., the layernorms are connected to the residuals so we += in layernorm backwa
 */
 
 #include <assert.h>
+
+#include <cub/cub.cuh>
 // llmc internal imports
 #include "../cuda_common.h"
 #include "utils.cuh"
+
 
 // ----------------------------------------------------------------------------
 // CUDA kernels
@@ -101,26 +104,6 @@ __device__ static float CU_rmsnorm(T* o, T* x, Tw* weight, int size, float eps, 
     // caller is responsible for normalization
     return rsqrtf(ss / size + eps);
 }
-/*
-template <typename T,typename Tw,int NUM_THREADS = 256>
-__global__ static void CU_rmsnorm_v1(T* rms, T* o, T* x, Tw* weight, int size, float eps,bool isScale) {
-    int tid = threadIdx.x, idx = blockIdx.x * NUM_THREADS + tid;
-    if(idx >= N) { return; } // guard
-
-    constexpr int NUM_WARPS = (NUM_THREADS + WARP_SIZE - 1) / WARP_SIZE;
-    assert(NUM_WARPS<=WARP_SIZE);
-    __shared__ float reduce_smem[NUM_WARPS];	// keep the data in register is enough for warp operaion.
-    float a = (idx < N) ? (float)(x[idx]) : 0.0;
-    float sum = a*a;
-    o[idx] = x[idx]*weight[idx];
-    float block_sum = blockReduce_v0<warpReduceSum>(sum,true);
-    if (tid == 0) atomicAdd(rms, block_sum);
-    if(isScale){
-
-    }
-    // caller is responsible for normalization
-    // return rsqrtf(ss / size + eps);
-}*/
 
 template <typename T, typename Tw>
 __global__ static void CU_rms_forward(T* __restrict__ out, float* __restrict__ rstd, const T* __restrict__ inp, const Tw* __restrict__ weight, int N, int C) {
@@ -192,6 +175,19 @@ __global__ static void CU_rms_forward(T* __restrict__ out, float* __restrict__ r
         __stcs(rstd + idx, s);
     }
 }
+
+// inline void CU_rms_v2(__nv_bfloat16* o, const __nv_bfloat16* x, const __nv_bfloat16* weight, int dim) {
+//     if (dim % 2 != 0) {
+//         fprintf(stderr, "FATAL: rmsnorm dim %d is not divisible by 2. Vectorized kernel cannot run.\n", dim);
+//         exit(EXIT_FAILURE);
+//     }
+//     // if dim > (THREADS_PER_BLOCK * some_threshold), a multi-block reduction might be needed,
+//     // but for typical dimensions up to 8192, a single block is sufficient and simpler.
+//     const int num_blocks = 1;
+
+//     kernel_rms_norm_v2<THREADS_PER_BLOCK><<<num_blocks, THREADS_PER_BLOCK>>>(o, x, weight, dim);
+// }
+
 
 __global__ static void layernorm_forward_kernel6(floatX* __restrict__ out, float* __restrict__ mean, float* __restrict__ rstd, const floatX* __restrict__ inp,
                                                  const floatX* __restrict__ weight, const floatX* __restrict__ bias, int N, int C) {

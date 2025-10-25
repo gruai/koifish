@@ -56,23 +56,23 @@ struct MixOfModels {
     hGensor embed2w = nullptr;
     hGensor gat_    = nullptr;
 
-    virtual hGensor Build(CLI_params &config, void *ctx, hGensor cur, int flag = 0x0) { return nullptr; }
-    hGensor Forward(void *ctx, hGensor cur, hGensor w);
+    virtual hGensor Build(CLI_params& config, void* ctx, hGensor cur, int flag = 0x0) { return nullptr; }
+    hGensor Forward(void* ctx, hGensor cur, hGensor w);
 };
 
 struct MixOfSwarm : public MixOfModels {
-    virtual void Init(tpSWARM &swarm, void *ctx, int n_embd, int flag = 0x0);
-    hGensor Build(CLI_params &config, void *ctx, hGensor cur, int flag = 0x0) override;
+    virtual void Init(tpSWARM& swarm, void* ctx, int n_embd, int flag = 0x0);
+    hGensor Build(CLI_params& config, void* ctx, hGensor cur, int flag = 0x0) override;
 };
 
 class Fish : public std::enable_shared_from_this<Fish> {
-    Fish(const Fish &);
-    Fish &operator=(const Fish &);
+    Fish(const Fish&);
+    Fish& operator=(const Fish&);
 
     struct JConfig {
         int ID = -1;
         JSON js;
-        JConfig(const JSON &j, int id = -1) : js(j), ID(id) {}
+        JConfig(const JSON& j, int id = -1) : js(j), ID(id) {}
     };
 
    protected:
@@ -85,7 +85,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     */
     vector<hWIKI> wikis;
 
-    WIKI *wiki_tutor = nullptr;
+    WIKI* wiki_tutor = nullptr;
     bool CopyGensors(hWIKI wiki, int flag);
     vector<hGensor> tmpExLogis;
     WIKI::INDUCT_MODE teach = WIKI::_LOGITS;
@@ -98,15 +98,15 @@ class Fish : public std::enable_shared_from_this<Fish> {
     int graph_order = -1, graph_update = -1;
     std::vector<hGensor> checkpoints;
     bool measure_only = false;
-    void *ctx_build   = nullptr;  // user context of build graph
+    void* ctx_build   = nullptr;  // user context of build graph
 
     // safetensors::safetensors_t safeTensors;
 #ifdef __USE_GGML__
-    struct ggml_cgraph *gb_tmp             = NULL;
-    struct random_normal_distribution *rnd = nullptr;
+    struct ggml_cgraph* gb_tmp             = NULL;
+    struct random_normal_distribution* rnd = nullptr;
     struct ggml_cplan gf_plan, gb_plan;
-    struct ggml_context *ctx_work = nullptr;  // training ctx
-    virtual bool BuildOperators(void *ctx, ggml_gallocr_t alloc, bool m_only, int flag = 0x0) {
+    struct ggml_context* ctx_work = nullptr;  // training ctx
+    virtual bool BuildOperators(void* ctx, ggml_gallocr_t alloc, bool m_only, int flag = 0x0) {
         assert(0);
         return false;
     }
@@ -116,15 +116,15 @@ class Fish : public std::enable_shared_from_this<Fish> {
         true,
     };
 
-    virtual void Build(void *ctx0, ggml_gallocr_t &allocr, bool isOnlySymbol, int flag = 0x0) {
+    virtual void Build(void* ctx0, ggml_gallocr_t& allocr, bool isOnlySymbol, int flag = 0x0) {
         assert(0);  //  Deprecated
     }
-    virtual struct ggml_cgraph *BuildRawGraph(void *, bool isBuild, int flag = 0x0) { return nullptr; }
-    virtual struct ggml_cgraph *GetForwRaw(int flag = 0x0) const {
+    virtual struct ggml_cgraph* BuildRawGraph(void*, bool isBuild, int flag = 0x0) { return nullptr; }
+    virtual struct ggml_cgraph* GetForwRaw(int flag = 0x0) const {
         assert(hForwTG != nullptr);
         return hForwTG->raw();
     }
-    virtual struct ggml_cgraph *GetBackRaw(int flag = 0x0) const {
+    virtual struct ggml_cgraph* GetBackRaw(int flag = 0x0) const {
         if (hBackTG == nullptr) {
             assert(isLocalInfer);
             return nullptr;
@@ -155,8 +155,8 @@ class Fish : public std::enable_shared_from_this<Fish> {
     hGensor in_node = nullptr, out_node = nullptr;  // maybe GPU tensor
     hGensor loss = nullptr, target_mask = nullptr, target_probs = nullptr, KQ_pos = nullptr, pos_embd = nullptr;
     hGensor KQ_mask    = nullptr;  //  mask for 1 head, it will be broadcasted to all heads
-    TokenEmbed *hEmbed = nullptr;
-    OutCLS *hCLS       = nullptr;  //  GetNeuron<OutCLS>("OutCLS",0);
+    TokenEmbed* hEmbed = nullptr;
+    OutCLS* hCLS       = nullptr;  //  GetNeuron<OutCLS>("OutCLS",0);
 
     // hGensor gate=nullptr;      //create@InitModel update@
     MixOfModels mom;
@@ -182,22 +182,24 @@ class Fish : public std::enable_shared_from_this<Fish> {
     virtual void ClearGraph(int flag = 0x0);
     virtual void Clear();
 
-    virtual bool InitInput(void *ctx, bool isMask, int flag = 0x0) {
+    virtual bool InitInput(void* ctx, bool isMask, int flag = 0x0) {
         assert(0);
         return false;
     }
 
     std::vector<std::string> to_quant, to_skip;
 
-    virtual bool GGUF_Serialize(const std::string &path, bool isSave, int flag = 0x0);
+    virtual bool GGUF_Serialize(const std::string& path, bool isSave, int flag = 0x0);
     // Load model wight from hugging face model
     virtual bool HF_Serialize(bool isSave, int flag = 0x0);
     // Smart format of https://github.com/zeux/calm
-    virtual bool CALM_Serialize(const std::string &path, bool isSave, int flag = 0x0);
-    virtual bool YALM_Serialize(const std::string &path, bool isSave, int flag = 0x0);
-    virtual bool SAFETENSOR_Serialize(CheckPoint_Params &ckp, bool isSave, int flag = 0x0);
+    virtual bool CALM_Serialize(const std::string& path, bool isSave, int flag = 0x0);
+    virtual bool YALM_Serialize(const std::string& path, bool isSave, int flag = 0x0);
+    virtual bool SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag = 0x0);
 
     MODEL_ARCH arch = MODEL_ARCH::_X_;
+    virtual std::string NN2NAME(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix = "", int flag = 0x0);
+
     Grusoft::GRander rand_coin;
 
    public:
@@ -219,27 +221,32 @@ class Fish : public std::enable_shared_from_this<Fish> {
     ROLE_TYPE role = ROLE_TYPE::COMMON;
 
     Fish() {}
-    Fish(const std::string &nam_, struct CLI_params params, ROLE_TYPE role_ = COMMON, int flag = 0x0);
-    Fish(const std::string &nam_, void *ctx_, int flag = 0x0) : name(nam_) /*,ctx(ctx_)*/ {
+    Fish(const std::string& nam_, struct CLI_params params, ROLE_TYPE role_ = COMMON, int flag = 0x0);
+    Fish(const std::string& nam_, void* ctx_, int flag = 0x0) : name(nam_) /*,ctx(ctx_)*/ {
         assert(0);  // Deprecated
         _INFO("=== %s ===\n", __func__);
         // allocr = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
     }
+    virtual ~Fish() { Clear(); }
     std::shared_ptr<Fish> SharedThis() { return shared_from_this(); }
+
     virtual bool isModel(std::vector<MODEL_ARCH> arcs, int flag = 0x0);
     virtual bool isRemater(int flag = 0x0) const;
-    virtual bool isTemporaryMemory(GeNeuron *neuron, int flag = 0x0) const;
-
+    virtual bool isTemporaryMemory(GeNeuron* neuron, int flag = 0x0) const;
     bool isTrain() const { return !isLocalInfer; }
     bool isSymbolic() const { return isSymbolicAnalysis; }
     bool isAtPhase(LIFE_PHASE ph) const;
+    CHAT_MODE ChatMode(int flag = 0x0) const {
+        assert(gopt != nullptr);
+        return gopt->ChatMode(flag);
+    }
     bool hasWiki() { return wikis.size() > 0; }
 
     template <typename T>
-    T *GetNeuron(const string &desc, int no = 0, int flag = 0x0) {
+    T* GetNeuron(const string& desc, int no = 0, int flag = 0x0) {
         int k = 0;
         for (auto n : neurons) {
-            T *t = dynamic_cast<T *>(n.get());
+            T* t = dynamic_cast<T*>(n.get());
             if (t == nullptr) {
                 continue;
             }
@@ -254,20 +261,27 @@ class Fish : public std::enable_shared_from_this<Fish> {
         assert(hOPT != nullptr);
         return hOPT;
     }
+    hGOPT GetGOPT() const {
+        assert(gopt != nullptr);
+        return gopt;
+    }
+    hBATCH GetCurBatch(bool isUpate, int flag = 0x0);
     int GetCurIter(int flag = 0x0) const;
-    const CheckPoint_Params &SnapShot(int flag = 0x0) const;
+    const CheckPoint_Params& SnapShot(int flag = 0x0) const;
     // if type<0 return afu
     hFuyou GetFuyou(int no, int flag = 0x0) const;
+    // Fish can talk, at least it would bubble...
+    hTokenizer GetTokenizer(int flag = 0x0) const {
+        assert(hDict != nullptr);
+        return hDict;
+    }
     int nFuyou(int type) { return (GetScheduler<RLSchedule>())->nFuyou(type); }
     template <typename T>
-    T *GetScheduler() {
-        T *hS = hEDS->GetScheduler<T>();
+    T* GetScheduler() {
+        T* hS = hEDS->GetScheduler<T>();
         return hS;
     }
 
-    virtual int ForwardOnRLS(int iter, int flag);
-    virtual int BackwardOnRLS(int iter, int flag);
-    virtual ~Fish() { Clear(); }
     virtual std::string Name() { return name.c_str(); }
     virtual size_t MostMemSize(int typ = 0x0);
     virtual size_t Size(int flag = 0x0) { return ctx_size; }
@@ -281,9 +295,9 @@ class Fish : public std::enable_shared_from_this<Fish> {
         return 0;
     }
 
-    virtual bool Init(const vector<hWIKI> &wikis, int flag = 0x0) { throw "Fish::Init is ..."; }
+    virtual bool Init(const vector<hWIKI>& wikis, int flag = 0x0) { throw "Fish::Init is ..."; }
     // shortcut parameter of LLM models
-    virtual void GetBTC(int &B, int &T, int &C) {
+    virtual void GetBTC(int& B, int& T, int& C) {
         B = config.n_batch();
         C = config.nEmbed();
         T = config.n_ctx();
@@ -295,7 +309,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
         assert(hEDS != nullptr);
         return hEDS;
     }
-    virtual void *GetGGCTX(int typ = 0x0) {
+    virtual void* GetGGCTX(int typ = 0x0) {
         /*switch(typ){
         case 1:
             return ctx_build;
@@ -317,16 +331,16 @@ class Fish : public std::enable_shared_from_this<Fish> {
     virtual bool UpdateParams(int flag = 0x0);
     virtual void UpdateTernary(int flag = 0x0);
 
-    virtual int BuildComputeGraph(int order, void *ctx, int flag);
-    virtual hGensor BuildLoss(void *ctx, hGensor cur, int flag = 0x0);
-    virtual hGensor BuildTarget(void *ctx, hGensor cur, int flag = 0x0) { return nullptr; }
-    virtual hGensor GetGensor(const string &name, int flag = 0x0) { return gensors.Get(name, flag); }
-    virtual GENSOR_INFO &GetGensorInfo(hGensor hP, int flag = 0x0) {
+    virtual int BuildComputeGraph(int order, void* ctx, int flag);
+    virtual hGensor BuildLoss(void* ctx, hGensor cur, int flag = 0x0);
+    virtual hGensor BuildTarget(void* ctx, hGensor cur, int flag = 0x0) { return nullptr; }
+    virtual hGensor GetGensor(const string& name, int flag = 0x0) { return gensors.Get(name, flag); }
+    virtual GENSOR_INFO& GetGensorInfo(hGensor hP, int flag = 0x0) {
         assert(gensors.infos.find(hP) != gensors.infos.end());
         return gensors.infos[hP];
     }
 
-    virtual string __repr__(string &suffix, string &prefix, int flag = 0x0) {
+    virtual string __repr__(string& suffix, string& prefix, int flag = 0x0) {
         _INFO("Ganlia (");
         prefix += "\t";
         suffix += "\n)\n";
@@ -364,14 +378,14 @@ class Fish : public std::enable_shared_from_this<Fish> {
     }
 
     // If isParam 1) call InitParam@huTensor::Alloc(random or serialize); 2) alloc grad if isTrain;
-    void InitGensor(void *ctx, const string &name, hGensor gensor, bool isParam, int flag = 0);
+    void InitGensor(void* ctx, const string& name, hGensor gensor, bool isParam, int flag = 0);
 
-    void InitGensor(void *ctx, hGensor gensor, const char *name, struct random_normal_distribution *rnd = nullptr, int flag = 0);
+    void InitGensor(void* ctx, hGensor gensor, const char* name, struct random_normal_distribution* rnd = nullptr, int flag = 0);
 
-    void SetTensor(const int nx, const int ny, const std::vector<float> &arr_data, const char *name, int flag = 0x0) {
+    void SetTensor(const int nx, const int ny, const std::vector<float>& arr_data, const char* name, int flag = 0x0) {
         assert(0);  //  Drepecated
         hGensor inp = GetGensor("inp");
-        float *data = (float *)inp->data;  // ggml_get_data(inp);
+        float* data = (float*)inp->data;  // ggml_get_data(inp);
         assert(data != nullptr);
         const int n = nx * ny;
         // assert(nx == n_img_size && ny == n_img_size);
@@ -384,12 +398,12 @@ class Fish : public std::enable_shared_from_this<Fish> {
         }
     }
 
-    void SetInput(const int nx, const int ny, const std::vector<float> &arr_data, int flag = 0x0) { SetTensor(nx, ny, arr_data, "inp", flag); }
+    void SetInput(const int nx, const int ny, const std::vector<float>& arr_data, int flag = 0x0) { SetTensor(nx, ny, arr_data, "inp", flag); }
 
-    virtual void Neck(const std::string &key_, const SHAPE &shape, int flag = 0x0) { ; }
+    virtual void Neck(const std::string& key_, const SHAPE& shape, int flag = 0x0) { ; }
     // Deprecated
-    hGensor AddTensor(const std::string &key_, typNUMBER tp, const SHAPE &shape, int flag = 0x0);
-    hGensor AddTensor(void *ctx, const std::string &key_, typNUMBER tp, const SHAPE &shape, bool isParam, int flag = 0x0);
+    hGensor AddTensor(const std::string& key_, typNUMBER tp, const SHAPE& shape, int flag = 0x0);
+    hGensor AddTensor(void* ctx, const std::string& key_, typNUMBER tp, const SHAPE& shape, bool isParam, int flag = 0x0);
 
     std::vector<hLayer> layers;
     virtual void BeforeAddLayer() { ; }
@@ -406,7 +420,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     virtual void AfterAddNeuron(hNeuron hN, int flag = 0x0) { ; }
 
     template <typename T>
-    void AddLayer(hFISH graph, const std::string &key_, const SHAPE &shape, int flag) {  // neural layer with only one neruon
+    void AddLayer(hFISH graph, const std::string& key_, const SHAPE& shape, int flag) {  // neural layer with only one neruon
         hNeuron hN   = std::make_shared<T>(graph, key_, shape, flag);
         hLayer layer = std::make_shared<NeLayer>(key_, flag);
         layer->Add(hN);
@@ -419,18 +433,21 @@ class Fish : public std::enable_shared_from_this<Fish> {
     virtual bool AfterNextStep(int iter, int flag = 0x0);
 
     virtual int GenSentence(int flag = 0x0) { return -1; }
+    virtual float Evaluate(DL_BATCH_UPATE tpBatch, int flag = 0x0);
+    virtual int ForwardOnRLS(int iter, int flag);
+    virtual int BackwardOnRLS(int iter, int flag);
 
     virtual bool ComputePlan(int flag = 0x0);
     int BuildGraphFromRaw(int flag);
-    hNeuron J2Neuron(void *ctx_build, string &, int level, const JConfig &j, int flag);
-    virtual int jToGraph(void *, bool isBuild, int flag = 0x0);
+    hNeuron J2Neuron(void* ctx_build, string&, int level, const JConfig& j, int flag);
+    virtual int jToGraph(void*, bool isBuild, int flag = 0x0);
 
     virtual void Train(int flag = 0x0);
     virtual void Loss(int flag = 0x0) {}
     virtual double Eval_ppl(int flag = 0x0);
 
-    virtual void CopyWeight(const Fish *src, int flag = 0x0);
-    virtual bool LocalFeeling(hSampLoader hLoader, vector<float> &result, int flag = 0x0) { return false; }
+    virtual void CopyWeight(const Fish* src, int flag = 0x0);
+    virtual bool LocalFeeling(hSampLoader hLoader, vector<float>& result, int flag = 0x0) { return false; }
 
     virtual bool isValid() { return true; }
 
@@ -439,13 +456,13 @@ class Fish : public std::enable_shared_from_this<Fish> {
         _WANDB_log(1.0);
 #endif
     }
-    static hFISH MakeInstance(const std::string nam_, struct CLI_params &params, vector<hWIKI> wikis, ROLE_TYPE role, int flag);
-    static hFISH MakeSwarm(const std::string nam_, struct CLI_params &params, int flag);
-    static hFISH MakeInstance(const std::string nam_, struct CLI_params &params, const Fish *hSrc_, int flag);
+    static hFISH MakeInstance(const std::string nam_, struct CLI_params& params, vector<hWIKI> wikis, ROLE_TYPE role, int flag);
+    static hFISH MakeSwarm(const std::string nam_, struct CLI_params& params, int flag);
+    static hFISH MakeInstance(const std::string nam_, struct CLI_params& params, const Fish* hSrc_, int flag);
     // static Fish* Copy(const Fish* src,int flag=0x0);
-    virtual bool SaveTrain(CheckPoint_Params &ckp, bool isInit = false, int flag = 0x0);
-    virtual bool UpdateCheckPoint(CheckPoint_Params &ckp, bool isSave, int flag = 0x0);
-    virtual bool LoadCheckPoint(CheckPoint_Params &ckp, int flag = 0x0);
+    virtual bool SaveTrain(CheckPoint_Params& ckp, bool isInit = false, int flag = 0x0);
+    virtual bool UpdateCheckPoint(CheckPoint_Params& ckp, bool isSave, int flag = 0x0);
+    virtual bool LoadCheckPoint(CheckPoint_Params& ckp, int flag = 0x0);
     virtual bool SaveCheckPoint(int flag = 0x0);
 
     friend class GeNeuron;
@@ -486,27 +503,27 @@ struct Pangpi : public Fish {
     vector<double> position;
     // Pangpi(const int dim, int flag = 0x0);
     // Pangpi(const int dim, const vector<int>&picks, int flag = 0x0);
-    Pangpi(const std::string &nam_, struct CLI_params params, int flag = 0x0);
+    Pangpi(const std::string& nam_, struct CLI_params params, int flag = 0x0);
 
     void Train(int flag = 0x0) override;
 
     int DIM() const { return position.size(); }
 
-    virtual void Copy(const Pangpi *src, int flag = 0x0) {
+    virtual void Copy(const Pangpi* src, int flag = 0x0) {
         position = src->position;
         fitness  = src->fitness;
         x        = src->x;
     }
 
     // aA+b*B
-    virtual void MixPosition(double alpha, const Pangpi *A, double beta, const Pangpi *B, int flag) {
+    virtual void MixPosition(double alpha, const Pangpi* A, double beta, const Pangpi* B, int flag) {
         int dim = position.size(), i;
         for (i = 0; i < dim; i++) {
             position[i] = alpha * A->position[i] + beta * B->position[i];
         }
     }
 
-    virtual void cross_over(const Pangpi *A, const Pangpi *B, int flag = 0x0);
+    virtual void cross_over(const Pangpi* A, const Pangpi* B, int flag = 0x0);
     virtual void mutatioin(double T_mut, int flag = 0x0);
 };
 typedef shared_ptr<Pangpi> hPangpi;
@@ -521,50 +538,5 @@ enum FFN_TYPE {
     SMOE,      // Sparsely-Gated Mixture-of-Experts Layer
     GATE_CYS,
 };
-// Deprecated, repalce by SelfAttention+FFN
-struct QKV_LAY : public NeLayer {
-    hGensor eps = nullptr;
-    LayerNormal att_norm, ffn_norm;
-    SLP Q, K, V, proj, up, down;
-    hGensor ffn_gate = nullptr;
-    // attention
-    hGensor wk = nullptr, wv = nullptr;
-    hGensor wo = nullptr;
 
-    // SMOE
-    hGensor ffn_gate_inp = nullptr, ffn_gate_exps = nullptr, ffn_down_exps = nullptr, ffn_up_exps = nullptr;
-    hGensor ffn_gate_inp_shexp = nullptr, ffn_gate_shexp = nullptr, ffn_down_shexp = nullptr, ffn_up_shexp = nullptr;
-
-    // long rope factors
-    hGensor rope_long = nullptr, rope_short = nullptr, rope_freqs = nullptr;
-    hGensor rope_(bool isLong) const {
-        if (rope_freqs != nullptr) {
-            return rope_freqs;
-        }
-        if (isLong) {
-            return rope_long;
-        }
-        return rope_short;
-    }
-
-    QKV_LAY(Fish *hF_, int id);
-    int64_t parameter_count() {
-        int64_t nx = 0;
-        nx += att_norm.nElem();  // tELEM(attention_norm);
-
-        nx += Q.nElem();
-        nx += tELEM(wk);
-        nx += tELEM(wv);
-        nx += tELEM(wo);
-        nx += ffn_norm.nElem();  // tELEM(ffn_norm);
-        nx += tELEM(ffn_gate);
-        nx += down.nElem();
-        nx += up.nElem();  //(ffn_down); nx += tELEM(ffn_up);
-        return nx;
-    }
-    virtual bool CreateFFN(const CLI_params &config, ggml_context *ctx, FFN_TYPE tpFFN, int flag = 0x0);
-    string __repr__(string &suffix, string &prefix, int flag = 0x0) override;
-
-    virtual void save_gguf(struct gguf_context *fctx, int flag);
-};
-typedef std::shared_ptr<QKV_LAY> hLQKV;
+float* T_generate_(hFISH hFish, int id, typNUMBER tpActivity, unsigned flags);
