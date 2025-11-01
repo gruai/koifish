@@ -76,6 +76,23 @@ bool GTensor::isSameShape(SHAPE sp, int flag) const {
     return true;
 }
 
+size_t GTensor::Offset(size_t nEle,int flag)  const{
+    size_t off = nEle;
+    double nBit = BitPE(type);
+    switch (type) {
+        case typNUMBER::T_SIGN:
+        case typNUMBER::T_BINARY:
+        case typNUMBER::T_BINARY_3:
+        case typNUMBER::T_BINARY_TILE:
+            assert(0);
+            break;
+        default:
+            off *= (nBit / 8);
+            break;
+    }
+    return off;
+}
+
 size_t GTensor::Offset(int i0, int i1, int i2, int i3, int flag) const {
     size_t off = i0 + i1 * ne[0] + i2 * ne[0] * ne[1] + i3 * ne[0] * ne[1] * ne[2];
     //  off = i0 * nb[0] + i1 * nb[1] + i2 * nb[2] + i3 * nb[3];
@@ -275,6 +292,7 @@ bool GTensor::OverWrite(hGTensor hGT, bool isSrc, int flag) {
 
 bool GTensor::ShareMemory(hGTensor src, int flag) {
     assert(src != nullptr && src->data != nullptr);
+    // assert(src->nByte()>=nByte());   // may fail
     data = src->data;
     // if (flag == 0x100) {  //  from GTensor::Serial_MMAP
     //     return true;
@@ -303,16 +321,6 @@ hGTensor GTensor::CrossEntropy(const hGTensor b, int flag) {
     return nullptr;
 }
 
-hGTensor GTensor::GetRow(hGTensor, hGTensor tokens, hGTensor pos, int flag) {
-    assert(0);  // GGML VERSION
-    // assert(ne[1]==shape[0]);
-    // struct ggml_tensor *cur = ggml_get_rows(_ctx, gg, tokens->gg);       gTN(cur, name);
-    // if(pos!=nullptr)        {
-    //    cur = ggml_add(_ctx, cur, pos->gg);
-    // }
-    // return GTensor::NEW_(cur);
-    return nullptr;
-}
 
 hGensor GENSORS::Get(const string &name, int flag) {
     if (flag == 0x100) {  //  .weight=>.w
@@ -428,8 +436,9 @@ void GTensor::Print(const string &title0, int x, int flag, size_t nEle) const {
     }
     if (isDevice) {
         SYNC_DEVICE();
-        hData = new char[szData];
-        D2H(src, hData, szData);
+        size_t szHost = nEle>0 ? (nEle * BitPE(type))/8 : szData;
+        hData = new char[szHost];
+        D2H(src, hData, szHost);
         src = hData;
     }
 
@@ -617,7 +626,7 @@ bool huTensor::BeforeBackward(size_t &off, int flag) {
  *      2.
  */
 bool huTensor::Alloc(int iter, int flagInit) {
-    if (strcmp(name, "model.layers.0.self_attn.q_proj.weight") == 0
+    if (G_Has_(name, {"model.layers.0.post_attention_layernorm.out","model.blk.0.ffn_norm.out"}) 
         /*|| strcmp(name, "model.embed.weight") == 0*/) {  //  model.inp_embd.weight  preLogits     model.out.weight model.embed.weight
                                                            //  model.blk.0.attn.wq.weight
         int debug = 0x0;                                   //

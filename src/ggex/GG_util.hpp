@@ -122,7 +122,8 @@ double NRM_2( const T *X,size_t dim )		{
     }
     return sqrt(sum);
 }
-double P_softmax(int idx, float *logits, int size);
+template<typename T>
+double P_softmax(int idx, T *logits, int size);
 float SOFT_MAX(const int n, float * y, const float * x);
 
 //Py=Py-Px

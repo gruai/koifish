@@ -17,7 +17,7 @@
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
 
-TokenEmbed::TokenEmbed(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
+TokenEmbed::TokenEmbed(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     auto dims = hFish->config.token_embeds;
     nVocab    = hG_->nClass();
     latent    = hFish->config.nEmbed(-1);
@@ -52,7 +52,7 @@ bool TokenEmbed::SetMAEC(hMAEC mae_, int flag) {
 }
 
 bool TokenEmbed::Build(int flag) {
-    void *ctx     = hFish->GetGGCTX(1);
+    void* ctx     = hFish->GetGGCTX(1);
     hFish->hEmbed = this;
     int flagW = flag, n = nVocab;
 
@@ -100,6 +100,10 @@ bool TokenEmbed::Build(int flag) {
 
     SHAPE s3 = {B, T, latent};
     out      = std::make_shared<huTensor>(hFish, name + ".batch", s3, w->type, false);
+    if (hFish->config.isShareLayerOut()) {
+        out->SetRefer(GTensor::outL);
+    }
+
     // hFish->InitGensor(ctx,name+".batch",out,false);
 
     return true;
@@ -107,7 +111,7 @@ bool TokenEmbed::Build(int flag) {
 /*
    batch(tokens) embeddings from glob token embedding(w)
 */
-hGensor TokenEmbed::Ming(RLS_BP *ctx_, hGensor tokens, int flag) {
+hGensor TokenEmbed::Ming(RLS_BP* ctx_, hGensor tokens, int flag) {
     // GeNeuron::BeforeMing(ctx_,tokens,flag);
     int seed    = 0;  //  rRounding.RandInt32();       //Nearly same as 0
     string sw   = name + "_rows";
@@ -126,9 +130,9 @@ hGensor TokenEmbed::Ming(RLS_BP *ctx_, hGensor tokens, int flag) {
     cur = AfterMing(ctx_, cur, flag);
     return cur;
 }
-string TokenEmbed::__repr__(string &suffix, string &prefix, int flag) {
+string TokenEmbed::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]  = "\0";
-    const char *tab = prefix.c_str();
+    const char* tab = prefix.c_str();
     bool isSym      = hFish->config.model.isEmbedWeightTying;
     sprintf(buf + strlen(buf), "%s {EMBED n=%d %s} %s", tab, nVocab, isAddPos ? "+POS" : "", isSym ? "SYM" : "");
     if (flag > 0)
@@ -179,9 +183,9 @@ hGensor VarCoder::DEC(hGensor x) {
     return x;
 }
 
-string VarCoder::__repr__(string &suffix, string &prefix, int flag) {
+string VarCoder::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]  = "\0";
-    const char *tab = prefix.c_str();
+    const char* tab = prefix.c_str();
     sprintf(buf + strlen(buf), "\n%s\t[%d=>%d]%s resi=%d tpNorm=%d", tab, nTop, nBottom, prefix.c_str(), isResi, tpNorm);
     // _T_repr_(encode,tab,buf);
     // _T_repr_(decode,tab,buf);
@@ -192,7 +196,7 @@ string VarCoder::__repr__(string &suffix, string &prefix, int flag) {
     return buf;
 }
 
-VarCoder::VarCoder(Fish *hG_, std::vector<int> &dims, int level, bool isR, bool isB, int tpN, int flag)
+VarCoder::VarCoder(Fish* hG_, std::vector<int>& dims, int level, bool isR, bool isB, int tpN, int flag)
     : nTop(dims[level]), nBottom(dims[level + 1]), isResi(isR), tpNorm(tpN) {
     isBias = isB;
     name   = "AE_" + std::to_string(level);
@@ -201,7 +205,7 @@ VarCoder::VarCoder(Fish *hG_, std::vector<int> &dims, int level, bool isR, bool 
     Build(flag);
 }
 
-MAEC::MAEC(Fish *hG_, const std::string &key_, int flag) {
+MAEC::MAEC(Fish* hG_, const std::string& key_, int flag) {
     name = "MAEC_";  //+key;
     Init(hG_, 0x0);
     auto dims = hFish->config.token_embeds;
@@ -236,11 +240,11 @@ MAEC::MAEC(Fish *hG_, const std::string &key_, int flag) {
 hGensor MAEC::ENC(hGensor cur, int flag) {
     if (isForward()) {
         if (!normE.Empty()) {
-            normE.cuTrain(cur);
+            normE.cuFlow(cur);
             cur = normE.out;
         }
         for (auto ac : codes) {
-            SLP &down = ac->down;
+            SLP& down = ac->down;
             //    cur->PrintX<floatX>("ac_in",0,-1);
             down.Forw(down.out, cur);
             cur = down.out;  // cur->PrintX<floatX>("ac_out",0,-1);
@@ -248,13 +252,13 @@ hGensor MAEC::ENC(hGensor cur, int flag) {
     } else {
         for (auto it = codes.rbegin(); it != codes.rend(); ++it) {
             hVarCoder ac = *it;  // cur->PrintX<floatX>("ac_in",0,-1);
-            SLP &down    = ac->down;
+            SLP& down    = ac->down;
             assert(down.inp != nullptr);
             down.Back(down.delta, down.inp, cur, nullptr, 0);
             cur = down.delta;
         }
         if (!normE.Empty()) {
-            normE.cuTrain(cur);
+            normE.cuFlow(cur);
             cur = normE.delta;
         }
     }
@@ -264,7 +268,7 @@ hGensor MAEC::ENC(hGensor cur, int flag) {
 hGensor MAEC::DEC(hGensor cur, bool isForw, int flag) {
     if (isForw) {  //  !=isForward()
         for (auto ac : codes) {
-            SLP &up = ac->up;
+            SLP& up = ac->up;
             //    cur->PrintX<floatX>("ac_in",0,-1);
             up.Forw(up.out, cur);
             cur = up.out;  // cur->PrintX<floatX>("ac_out",0,-1);
@@ -272,7 +276,7 @@ hGensor MAEC::DEC(hGensor cur, bool isForw, int flag) {
     } else {
         for (auto it = codes.rbegin(); it != codes.rend(); ++it) {
             hVarCoder ac = *it;  // cur->PrintX<floatX>("ac_in",0,-1);
-            SLP &up      = ac->up;
+            SLP& up      = ac->up;
             assert(up.inp != nullptr);
             up.Back(up.delta, up.inp, cur, nullptr, 0);
             cur = up.delta;
@@ -280,7 +284,7 @@ hGensor MAEC::DEC(hGensor cur, bool isForw, int flag) {
     }
     return cur;
 }
-string MAEC::__repr__(string &suffix, string &prefix, int flag) {
+string MAEC::__repr__(string& suffix, string& prefix, int flag) {
     string p    = prefix + "\t";
     string info = p + name + "{ bias=" + std::to_string(isBias);
     info += "\n" + normE.__repr__(suffix, p, flag);
@@ -292,7 +296,7 @@ string MAEC::__repr__(string &suffix, string &prefix, int flag) {
     return info;
 };
 
-VarCoder::VarCoder(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
+VarCoder::VarCoder(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     if (jvals.size() >= 2) {
         shape = {(int)(jvals[0]), (int)(jvals[1])};
     } else {
@@ -303,7 +307,7 @@ VarCoder::VarCoder(Fish *hG_, const std::string &key_, JSON::const_iterator jit,
     nBottom = shape[0], nTop = shape[1];
 }
 
-FFN::FFN(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : VarCoder(hG_, key_, jit, flag) {
+FFN::FFN(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : VarCoder(hG_, key_, jit, flag) {
     remater_ffn = hFish->config.common.remater_ffn;  // false;
     tpWeight = TYPE_<floatFFN>(), tpActivation = tpWeight, tpGradient = tpWeight;
     up.SetDType(tpWeight, tpActivation, tpGradient);
@@ -335,15 +339,15 @@ bool VarCoder::Build(int flag_0) {
     int flagSLP = flag_0 | F_DELTA;
 
     if (tpNorm > 0)
-        norm.BuildX(_NAME(name,FFN_PRE_NORMAL), {nBottom}, hFish, flag_0 | F_DELTA);        //name + ".norm",
+        norm.BuildX(_NAME(name, FFN_PRE_NORMAL), {nBottom}, hFish, flag_0 | F_DELTA);  // name + ".norm",
     if (hFish->isModel({NLP_QWEN2})) {
         up.BuildX(name + ".w1", {nBottom, nTop}, hFish, flagSLP);
         gate.BuildX(name + ".w3", {nBottom, nTop}, hFish, flagSLP);
         down.BuildX(name + ".w2", {nTop, nBottom}, hFish, flagSLP);
     } else if (hFish->isModel({NLP_QWEN3})) {
-        up.BuildX(_NAME(name,FFN_UP), {nBottom, nTop}, hFish, flagSLP);             //  name + ".up_proj"
-        gate.BuildX(_NAME(name,FFN_GATE), {nBottom, nTop}, hFish, flagSLP);         //  name + ".gate_proj"
-        down.BuildX(_NAME(name,FFN_DOWN), {nTop, nBottom}, hFish, flagSLP);         //  name + ".down_proj"
+        up.BuildX(_NAME(name, FFN_UP), {nBottom, nTop}, hFish, flagSLP);      //  name + ".up_proj"
+        gate.BuildX(_NAME(name, FFN_GATE), {nBottom, nTop}, hFish, flagSLP);  //  name + ".gate_proj"
+        down.BuildX(_NAME(name, FFN_DOWN), {nTop, nBottom}, hFish, flagSLP);  //  name + ".down_proj"
     } else {
         down.BuildX(name + "_down", {nTop, nBottom}, hFish, flagSLP);
         up.BuildX(name + "_up", {nBottom, nTop}, hFish, flagSLP);
@@ -367,11 +371,11 @@ bool VarCoder::Build(int flag_0) {
     return true;
 }
 
-FFN *FFN::first = nullptr;
+FFN* FFN::first = nullptr;
 bool FFN::Build(int flag_0) {
     delta        = GTensor::delta;
     SHAPE sp     = {shape[0]}, sp3, sp2;
-    void *ctx_   = hFish->GetGGCTX(1);
+    void* ctx_   = hFish->GetGGCTX(1);
     bool isTrain = hFish->isTrain();
     int flag     = flag_0;
     latent       = shape[1];
@@ -386,7 +390,7 @@ bool FFN::Build(int flag_0) {
 
     VarCoder::Build(flag);
     if (isShareParam) {
-        TokenEmbed *embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
+        TokenEmbed* embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
         down.SetEmbed(embed, 0);  // down.isTransW = true;
         up.SetEmbed(embed, 1);
         if (layer == 1) {
@@ -421,15 +425,15 @@ bool FFN::Build(int flag_0) {
     return true;
 }
 
-std::vector<GeNeuron *> FFN::SubNeurons(int flag) {
-    std::vector<GeNeuron *> neurons = {&up, &down, &norm};  // gate
+std::vector<GeNeuron*> FFN::SubNeurons(int flag) {
+    std::vector<GeNeuron*> neurons = {&up, &down, &norm};  // gate
     if (!gate.Empty()) {
         neurons.push_back(&gate);
     }
     return neurons;
 }
 
-hGensor FFN::Ming(RLS_BP *ctx_, hGensor inpL, int flag) {
+hGensor FFN::Ming(RLS_BP* ctx_, hGensor inpL, int flag) {
     GeNeuron::BeforeMing(ctx_, inpL, flag);
 
     hGensor cur      = inpL;
@@ -438,16 +442,18 @@ hGensor FFN::Ming(RLS_BP *ctx_, hGensor inpL, int flag) {
         // out = inpL >> up >> relu >> down >> norm;
         inpL >> up >> down >> gate >> norm >> this;
         cur = out;
+    } else if (hFish->isAtPhase(LIFE_PHASE::P_GENERATE)) {
+        cur = cuInfer(cur, flag);
     } else {  //  high performance fused operator
-        cur = cuTrain(cur, 0x0);
+        cur = cuFlow(cur, 0x0);
     }
 
     cur = AfterMing(ctx_, cur, flag);
     return cur;
 }
-string FFN::__repr__(string &suffix, string &prefix, int flag) {
+string FFN::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]  = "\0";
-    const char *tab = prefix.c_str();
+    const char* tab = prefix.c_str();
     string sS       = "";
     int n           = 0;
     switch (compression) {

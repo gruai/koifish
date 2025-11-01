@@ -291,7 +291,7 @@ bool NLP_AutoRegressive::LocalFeeling(hSampLoader hLoader, vector<float>& result
     auto hSamp = hLoader->shard_samps[0];
     int i, nTok = hSamp->len, _nctx = config.n_ctx();
     // assert(!hDictVAE->hDict->tokenizer_add_bos);
-    hOPT->SetPhase(LIFE_PHASE::P_EVAL_);
+    SetPhase(LIFE_PHASE::P_EVAL_);
     hOPT->EvaluateSamps(hLoader, -666);
     if (DUMP())
         _INFO("\t%s @\"%s\"\n", __func__, hLoader->sentence.c_str());
@@ -866,7 +866,9 @@ int Fish::ForwardOnRLS(int iter, int flag) {
     int L = config.nLayer(), nzLoss = cls->nzLoss, i, nFuyou = hRLS->fuyouSwarm.size();
     float *tmpLoss = nullptr, *loss = cls->hostLoss;
     vector<hFuyou> branches = hRLS->ActiveFuyous();
+
     /*vector<hFuyou> branches = {hRLS->afu};  // curTasks
+
     if (isAtPhase(LIFE_PHASE::P_EVAL_) || isAtPhase(LIFE_PHASE::P_GENERATE)) {
         if (config.fuyou.ensemble == Fuyou_params::RANDOM_1 && nFuyou > 1) {  //  random ensembling
             branches      = hRLS->fuyouSwarm;
@@ -889,6 +891,13 @@ int Fish::ForwardOnRLS(int iter, int flag) {
 
     for (auto branch : branches) {
         hGensor cur = Input(), residual = nullptr;
+        switch (phase) {
+            case P_GENERATE:
+                cur = GTensor::outL;
+                break;
+            default:
+                break;
+        }
         assert(!branch->empty());
         // GetNeuron<SelfAttention>("QKV", 0)->ManageMemory(DATA_PLACE::DEV_MEM);  //only for debug
         for (auto task : branch->Tasks()) {
@@ -931,7 +940,7 @@ int NLP_AutoRegressive::ForwardOnNeuron_v0(int flag) {
     SelfAttention *QKV0 = GetNeuron<SelfAttention>("SelfAttention", 0), *QKV = nullptr;
 
     if (tpFuseNormal == 1) {
-        cur = QKV0->norm.cuTrain(cur);
+        cur = QKV0->norm.cuFlow(cur);
     }
 
     FFN* ffn = nullptr;
@@ -942,15 +951,15 @@ int NLP_AutoRegressive::ForwardOnNeuron_v0(int flag) {
         LayerNormal* hNorm = l + 1 != L ? &(GetNeuron<SelfAttention>("SelfAttention", l + 1)->norm) : lnf;
         ffn->fuseNorm      = tpFuseNormal == 1 ? hNorm : nullptr;
         QKV->fuseNorm      = tpFuseNormal == 1 ? &(ffn->norm) : nullptr;
-        cur                = QKV->cuTrain(cur, flag);
-        cur                = ffn->cuTrain(cur, 0x0);
+        cur                = QKV->cuFlow(cur, flag);
+        cur                = ffn->cuFlow(cur, 0x0);
         // residual = ffn->out;
     }
     if (tpFuseNormal == 0) {
-        cur = lnf->cuTrain(cur);
+        cur = lnf->cuFlow(cur);
     }
     OutCLS* cls = GetNeuron<OutCLS>("OutCLS", 0);
-    cls->cuTrain(cur, flag);  // embed->w,
+    cls->cuFlow(cur, flag);  // embed->w,
 
     PrintTensor<floatX>("output", ToX(cls->preLogits), true, B, T, C);
     // SYNC_DEVICE();

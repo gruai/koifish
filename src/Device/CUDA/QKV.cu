@@ -231,11 +231,11 @@ auto cudnn_qkv_graph(int B, int NH, int T, int HS, float attn_scale, int ld, int
     std::shared_ptr<fe::graph::Graph> graph = nullptr;
     bool causal_mask = true, padding_mask = false, alibi_mask = false, has_attn_bias = false;
     if (isSepQKV) {
-        int64_t h_q = NH, h_k = NH, h_v = NH, b = B;
-        int64_t s_q  = T;   // q tensor  seq length
-        int64_t s_kv = T;   // k and v tensor  seq length
-        int64_t d_qk = HS;  // hidden dim
-        int64_t d_v  = HS;  // hidden dim
+        int64_t h_q = NH, h_k = NH, h_v = NH;  // b = B;
+        int64_t s_q  = T;                      // q tensor  seq length
+        int64_t s_kv = T;                      // k and v tensor  seq length
+        int64_t d_qk = HS;                     // hidden dim
+        int64_t d_v  = HS;                     // hidden dim
         graph        = cudnn_sdpa_forward_graph(B, h_q, h_k, h_v, s_q, s_kv, d_qk, d_v, attn_scale, is_inference_only, causal_mask, alibi_mask, padding_mask,
                                                 has_attn_bias);
     } else {
@@ -311,11 +311,11 @@ auto cudnn_qkv_bwd(int B, int NH, int T, int HS, float attn_scale, int ld, bool 
     std::shared_ptr<fe::graph::Graph> graph = nullptr;
     bool causal_mask = true, padding_mask = false, alibi_mask = false, has_attn_bias = false;
     if (isSepQKV) {
-        int64_t h_q = NH, h_k = NH, h_v = NH, b = B;
-        int64_t s_q  = T;   // q tensor  seq length
-        int64_t s_kv = T;   // k and v tensor  seq length
-        int64_t d_qk = HS;  // hidden dim
-        int64_t d_v  = HS;  // hidden dim
+        int64_t h_q = NH, h_k = NH, h_v = NH;  // b = B;
+        int64_t s_q  = T;                      // q tensor  seq length
+        int64_t s_kv = T;                      // k and v tensor  seq length
+        int64_t d_qk = HS;                     // hidden dim
+        int64_t d_v  = HS;                     // hidden dim
         graph = cudnn_sdpa_backward_graph(B, h_q, h_k, h_v, s_q, s_kv, d_qk, d_v, attn_scale, false, causal_mask, alibi_mask, padding_mask, has_attn_bias);
     } else {
         graph = std::make_shared<fe::graph::Graph>();
@@ -496,12 +496,11 @@ bool InitCUDA(const CLI_params& hparams, EDGE_DEVICES* hDevice, int flag) {
 #ifdef ENABLE_CUDNN
     InitCUDNN();
 #endif
-    int precision_mode        = MFUH_PRECISION_BF16;
-    const char* precision_str = PARAMS_TYPE == typNUMBER::F32      ? (cublas_compute == CUBLAS_COMPUTE_32F_FAST_TF32 ? "TF32" : "FP32")
-                                : PARAMS_TYPE == typNUMBER::F16    ? "FP16"
-                                : PARAMS_TYPE == typNUMBER::BF16   ? "BF16"
-                                : PARAMS_TYPE == typNUMBER::F8E5M2 ? "F8E5M2"
-                                                                   : "X";
+    // const char* precision_str = PARAMS_TYPE == typNUMBER::F32      ? (cublas_compute == CUBLAS_COMPUTE_32F_FAST_TF32 ? "TF32" : "FP32")
+    //                             : PARAMS_TYPE == typNUMBER::F16    ? "FP16"
+    //                             : PARAMS_TYPE == typNUMBER::BF16   ? "BF16"
+    //                             : PARAMS_TYPE == typNUMBER::F8E5M2 ? "F8E5M2"
+    //                                                                : "X";
     int driver_version = 0, runtime_version = 0;
     cudaDriverGetVersion(&driver_version);
     cudaRuntimeGetVersion(&runtime_version);
@@ -587,7 +586,7 @@ bool EDGE_DEVICES::ClearGPU(int flag) {
 /*
     n_rot >= head_dim
 */
-int ROPE::cuTrain(LayerNormal* normQ, LayerNormal* normK, uint32_t seed, bool isFX, int flag) {
+int ROPE::cuFlow(LayerNormal* normQ, LayerNormal* normK, uint32_t seed, bool isFX, int flag) {
     assert(devQ != nullptr);  //  && devK != nullptr
     int NH = n_head, NH_kv = NH, version = 1;
     hFish->GetBTC(B, T, C);
@@ -627,14 +626,100 @@ int ROPE::cuTrain(LayerNormal* normQ, LayerNormal* normK, uint32_t seed, bool is
     return 0x0;
 }
 
+hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
+    assert(hCache != nullptr && isSeparateQKV);
+    hBATCH hBatch     = hFish->GetCurBatch(true);
+    int pos           = hBatch->tok_pos;
+    floatX *key_cache = (floatX*)hCache->Get(KVCache::KV_KEY, layer - 1, 0), *val_cache = (floatX*)hCache->Get(KVCache::KV_VAL, layer - 1, 0);
+    K.out->data = key_cache + (size_t)pos * kv_dim, V.out->data = val_cache + (size_t)pos * kv_dim;
+
+    floatX* qkvr     = ToX(tmpQKV);  // Q.out/K.out/V.out
+    LayerNormal *hnQ = nullptr, *hnK = nullptr;
+    if (isQKNormal && Rope_version != 3) {
+        hnQ = &normQ, hnK = &normK;
+    }
+    int nToken = nBatchToken(), seq_len = hFish->config.n_ctx();
+    inp = OnInput(inpL);  //  may remater by hIn->SerialData
+    inp->Print("inp", 0x0, dump_flag);
+    GTensor::residual = inp;
+    hGTensor inpQ     = inpL;
+    if (fuseNorm == nullptr) {
+        inpQ = norm.cuFlow(inpL);
+        inpQ->Print("qkv.in", 0x0, dump_flag, nToken * C);
+        // norm.w->Print("qkvn.w",0x0,dump_flag);          norm.b->Print("qkvn.b",0x0,dump_flag);
+        // norm.mean->Print("qkvn.mean",0x0,dump_flag);       norm.rstd->Print("qkvn.rstd",0x0,dump_flag);
+    }
+    if (Rope_version >= 2) {
+        rope->devQ = ToX(inpQ), rope->devK = nullptr;
+        rope->cuFlow(hnQ, hnK, rope_seed);
+    }
+    if (isSeparateQKV) {
+        Q.out->data = devQ;  // K.out->data = devK, V.out->data = devV;
+        Q.Forw(Q.out, inpQ);
+        K.Forw(K.out, inpQ);
+        V.Forw(V.out, inpQ);
+    } else {
+        Q.Forw(tmpQKV, inpQ);
+        // Q.w->Print("Q.w",0x0,dump_flag);     Q.b->Print("Q.b",0x0,dump_flag);
+    }
+    // tmpQKV->Print("QKV",0x0,dump_flag);
+    Q.out->Print("Q.out", 0x0, dump_flag, nToken * q_dim), K.out->Print("K.out", 0x0, dump_flag, nToken * kv_dim),
+        V.out->Print("V.out", 0x0, dump_flag, nToken * kv_dim);
+    if (hnQ != nullptr) {
+        // hnQ->w->Print("qnw", 0x0, dump_flag), hnK->w->Print("knw", 0x0, dump_flag);
+        CU_rmsnorm_multihead<<<n_head, 64>>>(ToX(Q.out), ToX(hnQ->w), n_head, head_dim);
+        CU_rmsnorm_multihead<<<n_head_kv, 64>>>(ToX(K.out), ToX(hnK->w), n_head_kv, head_dim);
+    }
+    Q.out->Print("Q.norm", 0x0, dump_flag, nToken * q_dim), K.out->Print("K.norm", 0x0, dump_flag, nToken * kv_dim);
+
+    if (Rope_version == 1) {
+        CU_rope_forward<<<dim3(n_head, 1, 1), dim3(head_dim / 2, 1, 1)>>>(ToX(Q.out), ToX(K.out), pos, n_head, n_head_kv, head_dim, rope->theta);
+        // rope->cuFlow(hnQ, hnK, rope_seed);
+        Q.out->Print("Q.rope", 0x0, dump_flag, nToken * q_dim), K.out->Print("K.rope", 0x0, dump_flag, nToken * kv_dim);
+    }
+
+    if (1) {
+        int qk_threads_per_block = std::min(1024, pos + 1);
+        attention_qk_kernel<<<n_head, qk_threads_per_block>>>(ToX(attn), ToX(Q.out), key_cache, pos, seq_len, n_head, n_head_kv, head_dim);
+        // // 6.2: softmax
+        CU_softmax_multihead<<<n_head, 1>>>(ToX(attn), pos, seq_len);
+        attn->Print("attn", 0x0, dump_flag, pos + 1);
+        // // 6.3: aggregate V values
+        attention_v_kernel<<<n_head, head_dim>>>(ToX(Q.out), ToX(attn), val_cache, pos, seq_len, n_head, n_head_kv, head_dim);
+        Q.out->Print("att_out", 0x0, dump_flag, nToken * q_dim);
+    } else {
+        FUSE_cudnn(nullptr, nullptr, flag);
+        attn->Print("l_atty", 0x0, dump_flag);
+    }
+    if (1)
+        CU_mv_(ToX(inpL), ToX(proj_cat.w), ToX(Q.out), C, q_dim, 1.0f, 1.0f);
+    else {  //       From cuFlow
+        proj_cat.Forw(GTensor::scratch, Q.out);
+        GTensor::scratch->Print("proj_cat", 0x0, dump_flag, nToken * C);
+        // fused_residual_forward5(ouput, normed,mean,rstd, residual, scratch, ToX(fuseNorm->w), ToX0(fuseNorm->b), B*T, C, main_stream);
+        if (!hFish->isRemater()) {
+            GTensor::residual->Print("residual", 0x0, dump_flag, nToken * C);
+            residual_forward(ToX(out), ToX(GTensor::residual), ToX(GTensor::scratch), nToken * C, main_stream);
+            if (fuseNorm != nullptr) {
+                float *mean = TO<float>(fuseNorm->mean), *rstd = TO<float>(fuseNorm->rstd);
+                layernorm_forward(ToX(fuseNorm->out), mean, rstd, ToX(out), ToX(fuseNorm->w), ToX0(fuseNorm->b), nToken, 1, C, main_stream);
+            }
+
+        } else {
+        }
+    }
+    out->Print("qkv.out", 0x0, 0);
+    return out;
+};
+
 /*
-    Forward:    cur = cuTrain(cur,residual,flag);
-    Backward:   QKV->cuTrain(last->out,QKV->norm.out,0x0);
+    Forward:    cur = cuFlow(cur,residual,flag);
+    Backward:   QKV->cuFlow(last->out,QKV->norm.out,0x0);
 */
-hGTensor SelfAttention::cuTrain(hGTensor inpL, int flag) {
-    floatX* qkvr     = ToX(tmpQKV);            // Q.out/K.out/V.out
-    float* l_att     = TO<float>(transition);  //(float*)acts.att + l * B * NH * T; // cuDNN needs a smaller FP32 tensor
-    bool isAlternate = true;                   // layer%2==1;layer>1;
+hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
+    floatX* qkvr = ToX(tmpQKV);            // Q.out/K.out/V.out
+    float* l_att = TO<float>(transition);  //(float*)acts.att + l * B * NH * T; // cuDNN needs a smaller FP32 tensor
+    // bool isAlternate = true;                   // layer%2==1;layer>1;
     LayerNormal *nQ = nullptr, *nK = nullptr;
     if (isQKNormal && Rope_version != 3) {
         nQ = &normQ, nK = &normQ;
@@ -644,7 +729,7 @@ hGTensor SelfAttention::cuTrain(hGTensor inpL, int flag) {
         GTensor::residual = inp;            // GTensor::residual->OverWrite(inp);
         hGTensor inpQ     = inpL;
         if (fuseNorm == nullptr) {
-            inpQ = norm.cuTrain(inpL);
+            inpQ = norm.cuFlow(inpL);
             inpQ->Print("qkvn.in", 0x0, dump_flag);
             // norm.w->Print("qkvn.w",0x0,dump_flag);          norm.b->Print("qkvn.b",0x0,dump_flag);
             // norm.mean->Print("qkvn.mean",0x0,dump_flag);       norm.rstd->Print("qkvn.rstd",0x0,dump_flag);
@@ -652,7 +737,7 @@ hGTensor SelfAttention::cuTrain(hGTensor inpL, int flag) {
         if (Rope_version >= 2) {
             rope->devQ = ToX(inpQ);
             rope->devK = nullptr;
-            rope->cuTrain(nQ, nK, rope_seed);
+            rope->cuFlow(nQ, nK, rope_seed);
         }
         if (isSeparateQKV) {
             Q.out->data = devQ, K.out->data = devK, V.out->data = devV;
@@ -666,7 +751,7 @@ hGTensor SelfAttention::cuTrain(hGTensor inpL, int flag) {
         K.out->Print("K.out", 0x0, dump_flag);
         V.out->Print("V.out", 0x0, dump_flag);
         if (Rope_version == 1) {
-            rope->cuTrain(nQ, nK, rope_seed);
+            rope->cuFlow(nQ, nK, rope_seed);
             Q.out->Print("Q.rope", 0x0, dump_flag), K.out->Print("K.rope", 0x0, dump_flag);
         }
 
@@ -720,7 +805,7 @@ hGTensor SelfAttention::cuTrain(hGTensor inpL, int flag) {
 #endif
         delta_qkv->Print("delta_qkv", 0x0, dump_flag);  // PrintTensor<floatX>("back of attn",ToX(delta_attn),true,B,T,C);
         if (Rope_version == 1) {
-            rope->cuTrain(nQ, nK, rope_seed);
+            rope->cuFlow(nQ, nK, rope_seed);
             // Q.out->Print("Q.rope",0x0,dump_flag);    K.out->Print("K.rope",0x0,dump_flag);
         }
         if (isSeparateQKV) {
@@ -751,10 +836,10 @@ hGTensor SelfAttention::cuTrain(hGTensor inpL, int flag) {
         if (Rope_version >= 2) {
             rope->devDeltaQ = ToX(GTensor::tmpDelta);
             rope->devDeltaK = nullptr;
-            rope->cuTrain(nQ, nK, rope_seed);
+            rope->cuFlow(nQ, nK, rope_seed);
         }
         // layernorm backward does += to dresidual, so it correctly accumulates gradient for the Attention block above
-        norm.cuTrain(GTensor::tmpDelta);  // would backpropagatioin to GTensor::delta
+        norm.cuFlow(GTensor::tmpDelta);  // would backpropagatioin to GTensor::delta
         GTensor::delta->Print("back of QKV", 0, dump_flag);
         dump_flag = 0;
         return GTensor::delta;

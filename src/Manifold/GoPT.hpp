@@ -22,6 +22,7 @@
 #include <typeinfo>
 #include <vector>
 using namespace std;
+#include "../g_float.hpp"
 #include "../TokenSet/DataLoader.hpp"
 #include "../ggex/GG_util.hpp"
 #include "../ggex/WIKI.hpp"
@@ -47,8 +48,7 @@ class GeneratOnPrompt {
     CHAT_SAMPLER samp_params;
 
     ProbIndex* probindex = nullptr;
-
-    float* _logits = nullptr;
+    floatLogist* _logits = nullptr;     //  cls->preLogits->host_data = _logits
     std::vector<float> x_logits;
     float delta_max = 0, delta_a = 0;
     bool display = true;

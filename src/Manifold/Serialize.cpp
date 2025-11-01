@@ -520,6 +520,7 @@ bool Fish::HF_Serialize(bool isSave, int flag) {
     return true;
 }
 
+/*  Deprecated
 bool MODEL_CARD::OnJsonCALM(CLI_params *hConfig, const std::string &path, const JSON &meta, int flag) {
     sTokenPath = path;
     dim        = jKVs(meta, {"dim"}, dim);  // atoi(meta["dim"]);
@@ -580,7 +581,7 @@ bool MODEL_CARD::OnJsonCALM(CLI_params *hConfig, const std::string &path, const 
 
     assert(hConfig->isValid());
     return true;
-}
+}*/
 
 /**
  * def build_prompts(model, output_dir):
@@ -643,7 +644,7 @@ bool MODEL_CARD::InitHugFace(CLI_params *hConfig, const JSON &jConfig, int flag)
         tpEmbed = tpNumOf(sTyp);
     int head_dim = hConfig->head_dim();
     int n_heads = hConfig->n_head(), n_kv_heads = hConfig->n_head_kv();
-    seq_len = hConfig->n_ctx();
+    // seq_len = hConfig->n_ctx_orig();
 
     sCardPath = jKV(jConfig, {"model", "card"}, sCardPath);
     if (sCardPath.empty()) {
@@ -692,16 +693,27 @@ bool MODEL_CARD::InitHugFace(CLI_params *hConfig, const JSON &jConfig, int flag)
     LoadJsonFile(sCardPath + "model.safetensors.index.json", jSafetensorsIndex);
     if (!jSafetensorsIndex.empty()) {
         nTotalSize = jKV(jSafetensorsIndex, {"metadata", "total_size"}, nTotalSize);
+        
         auto jMap  = jSafetensorsIndex["weight_map"];
         for (JSON::iterator it = jMap.begin(); it != jMap.end(); ++it) {
             std::string key = it.key();
             st_map.insert(std::make_pair(key, nullptr));
         }
     }
+    switch(hConfig->ModelArch()){
+    case NLP_QWEN3:
+        if(nTotalSize==8045591552){     //  https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
+            hConfig->n_ctx_train = 262144;           //  Context Length: 262,144 natively
+        }
+        break;
+    default:
+        break;
+    }
 
     return empty();
 }
 
+// Deprecated
 bool Fish::CALM_Serialize(const std::string &path, bool isOnlyVocab, int flag) {
     try {
         JSON header;
@@ -716,7 +728,7 @@ bool Fish::CALM_Serialize(const std::string &path, bool isOnlyVocab, int flag) {
             if (key == "__metadata__") {
                 JSON metadata = val;
                 std::cout << "\n\t__metadata__ " << metadata << std::endl << std::endl;
-                config.model.OnJsonCALM(&config, path, metadata, 0x0);
+                //  config.model.OnJsonCALM(&config, path, metadata, 0x0);
 
                 // InitDictTokenset();
                 if (isOnlyVocab)

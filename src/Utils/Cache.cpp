@@ -11,11 +11,11 @@
 #include "../Manifold/gLLM.hpp"
 #include "../Tensor/GTensor.hpp"
 
-KVCache::KVCache(Fish *hF, int max_batch_size, int max_seq_len, int flag) : _fish(hF) {
+KVCache::KVCache(Fish *hF, int max_batch_size, int max_slen, int flag) : _fish(hF) {
     // init_lamakv();
     auto modep  = _fish->config.model;
-    max_seq_len = std::max(max_seq_len, modep.seq_len);
-    int kv_dim  = hF->config.KV_dim( );
+    max_seq_len = std::max(max_slen, (int)_fish->config.n_ctx());
+    kv_dim  = hF->config.KV_dim( );
     assert(kv_dim>0);
     //  GTensor::scratch = std::make_shared<huTensor>("scratch_output",sp0,GTensor::tpFloatX,false);
     SHAPE sp = {modep.n_layers, max_seq_len, kv_dim};
@@ -33,6 +33,23 @@ void *KVCache::Get(KVCache::CTYPE typ, int flag) {
         case KV_VAL:
             assert(key != nullptr);
             return value->data;
+        default:
+            assert(0);
+    }
+    return nullptr;
+}
+
+char *KVCache::Get(KVCache::CTYPE typ,int lay, int pos, int flag) {
+    size_t nEle = (size_t)(lay * max_seq_len + pos) * kv_dim;
+    assert(key != nullptr);
+    assert(nEle+kv_dim<=key->size());
+    
+    switch (typ) {
+        case KV_KEY:
+            return (char *)key->data + key->Offset(nEle);
+        case KV_VAL:
+            assert(value != nullptr);
+            return (char *)value->data + value->Offset(nEle);
         default:
             assert(0);
     }

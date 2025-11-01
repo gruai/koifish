@@ -16,13 +16,13 @@
 #include "../Manifold/Optimizer.hpp"
 
 struct PIPE_Optimizer {
-    Optimizer *hOPT = nullptr;
-    GTensor *tensor = nullptr;
+    Optimizer* hOPT = nullptr;
+    GTensor* tensor = nullptr;
     string name;
-    float *tmp        = nullptr;
-    floatGama *gama_T = nullptr;
+    float* tmp        = nullptr;
+    floatGama* gama_T = nullptr;
     // use double to reduce Non-Determinism in CUDA Sums!
-    double *arrNorm       = nullptr;
+    double* arrNorm       = nullptr;
     size_t num_parameters = 0;
     ptrdiff_t w_stride, g_stride, s_stride;
 
@@ -38,7 +38,7 @@ struct PIPE_Optimizer {
     bool isStochasticRounding = true;
     QUANT_ALG tpQuant;
 
-    virtual void Update(GTensor *tensor_, float wd, float _grad_scale, unsigned int _seed, int flag = 0x0) {}
+    virtual void Update(GTensor* tensor_, float wd, float _grad_scale, unsigned int _seed, int flag = 0x0) {}
     virtual void CU_core(cudaStream_t stream, int flag = 0x0) {}
 };
 typedef std::shared_ptr<PIPE_Optimizer> hPipeOpt;
@@ -47,11 +47,11 @@ template <typename Tp, typename Tmv>
 // struct PIPE_Adamw : public MODEL_CARD {
 struct PIPE_Adamw : public PIPE_Optimizer {
     Tp *params, *grads0, *paramX = nullptr;
-    Tmv *gm = nullptr;
-    Tmv *gv = nullptr;
+    Tmv* gm = nullptr;
+    Tmv* gv = nullptr;
     float beta1, beta2, beta1_correction, beta2_correction, eps;
 
-    PIPE_Adamw(Optimizer *hOPT_, int _flags, float _learning_rate, float _beta1, float _beta2, float _eps, float _weight_decay) {
+    PIPE_Adamw(Optimizer* hOPT_, int _flags, float _learning_rate, float _beta1, float _beta2, float _eps, float _weight_decay) {
         hOPT = hOPT_;
         // num_parameters = _num_parameters, w_stride = _w_stride, g_stride = _g_stride, s_stride = _s_stride;
         flags = _flags, learning_rate = _learning_rate, beta1 = _beta1, beta2 = _beta2, eps = _eps, weight_decay = _weight_decay;
@@ -59,7 +59,7 @@ struct PIPE_Adamw : public PIPE_Optimizer {
         // lr_0 = learning_rate;
     }
 
-    void Update(GTensor *tensor_, float wd, float _grad_scale, unsigned int _seed, int flag = 0x0) override {
+    void Update(GTensor* tensor_, float wd, float _grad_scale, unsigned int _seed, int flag = 0x0) override {
         tensor = tensor_;
         assert(tensor != nullptr);
         num_parameters = tensor->size();
@@ -70,11 +70,11 @@ struct PIPE_Adamw : public PIPE_Optimizer {
         weight_decay  = wd;
         learning_rate = hOPT->LearningRate();
         iter          = hOPT->GetITER();
-        arrNorm       = (double *)GTensor::stat_info;  //  sizeof(float)*5120
+        arrNorm       = (double*)GTensor::stat_info;  //  sizeof(float)*5120
         assert(arrNorm != nullptr);
 
-        params = (Tp *)(tensor->data), grads0 = (Tp *)(tensor->grad);
-        gm = (Tmv *)tensor->gm, gv = (Tmv *)tensor->gv;
+        params = (Tp*)(tensor->data), grads0 = (Tp*)(tensor->grad);
+        gm = (Tmv*)tensor->gm, gv = (Tmv*)tensor->gv;
         // tile_r0 = tensor->tile_r0,tile_c0= tensor->tile_c0;
         tile_r1 = tensor->tile_r1, tile_c1 = tensor->tile_c1;
         memcpy(ne, tensor->ne, sizeof(ne));
@@ -100,7 +100,7 @@ struct PIPE_Muon : public PIPE_Adamw<Tp, Tmv> {
     bool isTrans = false;
     MUON_params_ muon;                                                                          //  A[ldAB:ldAB]
     Tmv *mG = nullptr, *A = nullptr, *B = nullptr, *BX = nullptr, *X = nullptr, *Xt = nullptr;  //  mG - Momentum matrix
-    PIPE_Muon(Optimizer *hOPT_, int _flags, float _learning_rate, float _beta1, float _beta2, float _eps, float _weight_decay)
+    PIPE_Muon(Optimizer* hOPT_, int _flags, float _learning_rate, float _beta1, float _beta2, float _eps, float _weight_decay)
         : PIPE_Adamw<Tp, Tmv>(hOPT_, _flags, _learning_rate, _beta1, _beta2, _eps, _weight_decay) {
         muon           = this->hOPT->TrainParams().muon;
         ldAB           = muon.ldAB;
@@ -108,7 +108,7 @@ struct PIPE_Muon : public PIPE_Adamw<Tp, Tmv> {
         this->mui      = muon.mui;
     }
 
-    void Update(GTensor *tensor_, float wd, float _grad_scale, unsigned int _seed, int flag = 0x0) override;
+    void Update(GTensor* tensor_, float wd, float _grad_scale, unsigned int _seed, int flag = 0x0) override;
 
     void CU_core(cudaStream_t stream, int flag = 0x0) override;
 };
@@ -140,14 +140,15 @@ struct KERNEL_PIPE : public MODEL_CARD {
     using tpKV         = T;
     using tpWeight     = Tw;
 
-    CoopLayer<void> *cLayers = nullptr;
+    CoopLayer<void>* cLayers = nullptr;
     int layNo                = -1;
     hFISH hFish              = nullptr;
-    hGensor out_weight       = nullptr;
-    float *att               = nullptr;  // buffer for scores/attention values (N_HEADS, seq_len)
+    hGensor out_weight = nullptr, inpL = nullptr;
+    float* att = nullptr;  // buffer for scores/attention values (N_HEADS, seq_len)
+    //T *att = nullptr;     nearly same as float*att !
     T *x = nullptr, *xb = nullptr, *xb2 = nullptr, *q = nullptr, *k = nullptr, *v = nullptr, *exp = nullptr;
     T *hb = nullptr, *hb2 = nullptr, *he = nullptr;
-    T *xlogit = nullptr;
+    T* xlogit = nullptr;
 
     KERNEL_PIPE(hFISH hFish_, int pos_, int flag = 0) : hFish(hFish_) {
         size_t szMost = hFish->MostMemSize();
@@ -161,10 +162,10 @@ struct KERNEL_PIPE : public MODEL_CARD {
         n_heads    = config.n_head();
         n_kv_heads = config.n_head_kv();
         head_dim   = config.head_dim();
-        seq_len    = config.model.seq_len;
+        seq_len    = config.n_ctx();  // model.seq_len;
         rope_theta = config.model.rope_theta;
         rotary_dim = config.model.rotary_dim;
-        q_dim = config.Q_dim(), kv_dim = config.KV_dim(), att_dim = n_heads * config.model.seq_len * 2;
+        q_dim = config.Q_dim(), kv_dim = config.KV_dim(), att_dim = n_heads * seq_len * 2;
 
         n_experts    = config.model.n_experts;
         n_experts_ac = config.model.n_experts_ac;
@@ -178,32 +179,38 @@ struct KERNEL_PIPE : public MODEL_CARD {
         // 	coopperf = (uint64_t*)cuda_devicealloc(sizeof(uint64_t) * 16);
         // 	CUDA_CHECK(cudaMemset(coopperf, 0, sizeof(uint64_t) * 16));
         // }
-        size_t nzTmp = 0;
-        tX           = GTensor::outL;
-        x            = TO<T>(tX);
+        size_t nzTmp  = 0;
+        typNUMBER tpD = typNUMBER::BF16;  // TYPE_<T>();
+        if (tX == nullptr) {
+            //  GTensor::outL->ReShape({dim * 16 + vocab_size}, tpD);
+            tX = GTensor::outL;
+        }        
+        x    = TO<T>(tX);
+
+        inpL = tX->Partial("inpL", 0, {dim, 1, 1});  //  ->Partial("partialZ", nZ, {dB, T, C}), subDelta = delta->Partial("partialDeltaZ", nZ, {dB, T, C});
         if (DEBUG.T_cpu) {
             xb = x + dim, xb2 = xb + dim;
             hb = xb2 + dim, hb2 = hb + hidden_dim;
             q     = hb2 + hidden_dim;
             k     = q + q_dim;
             v     = k + kv_dim;
-            att   = (float *)(v + kv_dim);
-            exp   = (T *)(att + n_heads * seq_len);
+            att   = (float*)(v + kv_dim);
+            exp   = (T*)(att + n_heads * seq_len);
             nzTmp = exp - x + n_experts + (n_experts_ac ? n_experts_ac : 1) * 2;
         } else {
             xb = x + dim, xb2 = xb + dim;
             hb = xb2 + dim, hb2 = hb + hb_dim;
-            q   = hb2 + hb_dim;
-            att = (float *)(q + q_dim);  //  hard-code
-            xlogit = (T *)(att + dim);
-            nzTmp = (char*)(xlogit + vocab_size) - (char*)x;
+            q      = hb2 + hb_dim;
+            att    = (float*)(q + q_dim);  //  hard-code
+            // xlogit = (T*)(att + dim);
+            nzTmp  = (char*)(att + n_heads * seq_len) - (char*)x;
         }
-        assert(tX->nByte()>=nzTmp);
+        assert(tX->nByte() >= nzTmp);
         tX->Zero();
 
-        hKVCache hCache = hFish->GetOptimizer()->hCache;
-        key_cache       = (KVT *)hCache->Get(KVCache::KV_KEY);
-        val_cache       = (KVT *)hCache->Get(KVCache::KV_VAL);
+        hCache = hFish->curCache();
+        // key_cache       = (KVT*)hCache->Get(KVCache::KV_KEY);
+        // val_cache       = (KVT*)hCache->Get(KVCache::KV_VAL);
 
         norm_eps   = config.model.norm_eps;
         theta_log2 = log2(config.model.rope_theta);
@@ -216,7 +223,7 @@ struct KERNEL_PIPE : public MODEL_CARD {
         out_weight = hFish->GetGensor("model.output.weight", 0);
         cLayers    = new CoopLayer<void>[CoopLayer_MAX];
 
-        UpdatePos(pos_);
+        // UpdatePos(pos_);
     }
     virtual void UpdatePos(int pos_) {
         // following "attention sinks" from StreamingLLM we keep the first few tokens in the KV cache as is
@@ -225,16 +232,18 @@ struct KERNEL_PIPE : public MODEL_CARD {
         int kv_sink = pos >= seq_len ? KV_SINKS : 0;
         kv_pos      = kv_sink + (pos - kv_sink) % (seq_len - kv_sink);
         kv_len      = pos >= seq_len ? seq_len : pos + 1;
+
+        tX->Zero();
     }
 
     virtual ~KERNEL_PIPE() { delete[] cLayers; }
 
-    hGTensor tX = GTensor::outL;
+    static hGTensor tX;  // GTensor::outL;
     uint64_t bw;
-    uint64_t *perfstats = nullptr;  //	"CUDA_INJECTION64_PATH"
-
-    KVT *key_cache = nullptr;
-    KVT *val_cache = nullptr;
+    uint64_t* perfstats = nullptr;  //	"CUDA_INJECTION64_PATH"
+    hKVCache hCache = nullptr;
+    // KVT* key_cache = nullptr;
+    // KVT* val_cache = nullptr;
     //  dim=config.nEmbed();
     int dim, hidden_dim, head_dim, q_dim = -1, hb_dim = -1, he_dim = -1, kv_dim = -1, att_dim = -1, rotary_dim;
     int n_layers, n_heads, n_kv_heads, weight_dbits, n_experts, n_experts_ac, seq_len;
@@ -244,18 +253,18 @@ struct KERNEL_PIPE : public MODEL_CARD {
     float norm_eps, theta_log2, qkv_clip;
 
     virtual void InitLayer(int l, int flag = 0x0) {
-        RLS_BP *hRLS = hFish->GetScheduler<RLS_BP>();
+        RLS_BP* hRLS = hFish->GetScheduler<RLS_BP>();
         assert(hRLS != nullptr);
         assert(l >= 0 && l < n_layers);
         layNo              = l;
-        SelfAttention *QKV = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
+        SelfAttention* QKV = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
         // QKV->BeforeMing(hRLS, nullptr);
         cLayers[l].rms_att_weight = TO<float>(QKV->norm.w);  // weights->rms_att_weight[l];
         cLayers[l].wq = ToX(QKV->Q.w), cLayers[l].wk = ToX(QKV->K.w), cLayers[l].wv = ToX(QKV->V.w);
         cLayers[l].wq_norm = ToX(QKV->normQ.w), cLayers[l].wk_norm = ToX(QKV->normK.w);
         cLayers[l].wo   = ToX(QKV->proj_cat.w);  // weights->wo[l];
         cLayers[l].bqkv = ToX0(QKV->bqkv);       // weights->bqkv[l];
-        FFN *ffn        = hFish->GetNeuron<FFN>("FFN", l);
+        FFN* ffn        = hFish->GetNeuron<FFN>("FFN", l);
         // ffn->BeforeMing(hRLS, nullptr);
         cLayers[l].rms_ffn_weight = TO<float>(ffn->norm.w);  // weights->rms_ffn_weight[l];
         cLayers[l].moegate        = nullptr;                 // weights->moegate[l];
@@ -264,19 +273,19 @@ struct KERNEL_PIPE : public MODEL_CARD {
         cLayers[l].w2 = w2->data, cLayers[l].gama_2 = w2->gama_T();
         cLayers[l].w3 = w3->data, cLayers[l].gama_3 = w3->gama_T();
         if (cLayers[l].bqkv != nullptr)
-            PrintTensor<Tw>("bqkv", (Tw *)(cLayers[l].bqkv), true, dim, 1);
-        PrintTensor<Tw>("wq", (Tw *)(cLayers[l].wq), true, q_dim, dim);
-        PrintTensor<Tw>("wk", (Tw *)(cLayers[l].wk), true, kv_dim, dim);
-        PrintTensor<Tw>("wv", (Tw *)(cLayers[l].wv), true, kv_dim, dim);
+            PrintTensor<Tw>("bqkv", (Tw*)(cLayers[l].bqkv), true, dim, 1);
+        PrintTensor<Tw>("wq", (Tw*)(cLayers[l].wq), true, q_dim, dim);
+        PrintTensor<Tw>("wk", (Tw*)(cLayers[l].wk), true, kv_dim, dim);
+        PrintTensor<Tw>("wv", (Tw*)(cLayers[l].wv), true, kv_dim, dim);
     }
 
     virtual void AfterLayer(int l, int flag = 0x0) {
-        RLS_BP *hRLS = hFish->GetScheduler<RLS_BP>();
+        RLS_BP* hRLS = hFish->GetScheduler<RLS_BP>();
         assert(hRLS != nullptr);
         assert(layNo == l);
-        SelfAttention *QKV = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
+        SelfAttention* QKV = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
         QKV->AfterMing(hRLS, nullptr);
-        FFN *ffn = hFish->GetNeuron<FFN>("FFN", l);
+        FFN* ffn = hFish->GetNeuron<FFN>("FFN", l);
         ffn->AfterMing(hRLS, nullptr);
     }
 };

@@ -445,7 +445,8 @@ bool CLI_params::JModel2Params(int flag) {
         if (DEBUG.cmd_p1 == 1) {
             // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;  // DEBUG.T_GEMM = -1;
             // common.method = "adamw";
-            common.muon.isTransDown = false;
+            // common.muon.isTransDown = false;
+            DEBUG.T_generate_qkv = 1;
         } else {
             // common.method = "muon";
             // scheduling.strategy = MEM_STRATEGY::MEM_SWAP;
@@ -481,6 +482,23 @@ bool CLI_params::isShareLayerOut() const {
     if (scheduling.strategy == MEM_STRATEGY::PRE_ALLOC_GPU || scheduling.strategy == MEM_STRATEGY::PRE_ALLOC_HOST_MAP)
         return false;
     return true;
+}
+
+/*
+    REF 1.n_ctx_orig 2.n_ctx_train
+*/
+uint32_t CLI_params::n_ctx() const { 
+    int n = -1;
+    switch(phase){
+    case P_GENERATE:    //case P_CHAT:
+        n = chat_sampler.seq_len;
+        if(n_ctx_train>0)
+            assert(n <= n_ctx_train);
+        break;
+    default:
+        return common.n_ctx; 
+    }
+    return n;
 }
 
 // Deprecated, only for debug
@@ -641,7 +659,7 @@ void CLI_params::OnArch() {
                 }
             }
 
-            model.tpPreLogits = typNUMBER::BF16;
+            // model.tpPreLogits = typNUMBER::BF16;
             //  need new GEMM! cuBLASLt requires bias in FP8 mode to be BF16... (sigh)
             model.isNormalBias  = true;
             model.isSLPBias     = true;  // nealy same
@@ -655,6 +673,7 @@ void CLI_params::OnArch() {
             model.Rope_version       = 0;
             model.isEmbedWeightTying = true;
             model.preLogits_dB       = 8;
+            model.fActSLP = GELU;
 
             int group = Get({"model_v0", "target_group"}, 1);
             assert(group == 1);
@@ -676,6 +695,7 @@ void CLI_params::OnArch() {
             model.isQKNormal    = true;
             model.sLayer        = "layers.";
             model.sEmbed = "embed_tokens", model.sInvEmbed = "lm_head";
+            model.Rope_version = 1;
             // model.isEmbedWeightTying = false;   //  0.6B has no tying, but 4B is tying       isEmbedWeightTying = jKV(jModelParam, {"tie_word_embeddings"}, isEmbedWeightTying};
             break;
         case NLP_DEEPSEEK:
@@ -1157,18 +1177,22 @@ int Gensor_SVD(struct ggml_context *ctx0, hGensor w, int nHeavy, hGensor U, hGen
 
     1. Softmax often seems to be over confident in it's prediction based on the way the softmax was trained to map the raw scores to probabilities.
 */
-double P_softmax(int idx, float *logits, int size) {
+template<typename T>
+double P_softmax(int idx, T *logits, int size) {
     float max_val = -FLT_MAX;
     for (int i = 0; i < size; i++) {
-        max_val = logits[i] > max_val ? logits[i] : max_val;
+        float a = logits[i];
+        max_val = a > max_val ? a : max_val;
     }
     float partition = 0.0f;
     for (int i = 0; i < size; i++) {
-        partition += expf(logits[i] - max_val);
+        float a = logits[i];
+        partition += expf(a - max_val);
     }
     //
-    return expf(logits[idx] - max_val) / partition;
+    return expf(float(logits[idx]) - max_val) / partition;
 }
+template double P_softmax<floatLogist>(int idx, floatLogist *logits, int size);
 
 float SOFT_MAX(const int n, float *y, const float *x) {
     float x1 = -INFINITY;

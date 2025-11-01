@@ -310,12 +310,13 @@ double DataTokenSet::LossOnResult(hSampLoader hLoader, OutCLS* cls, int flag) {
         mean_loss += loss[i];
         n++;
 
-        if (0) {  //  Debug_PPL   t=921 -10.825027195036846   [1.30967237e-09,...,2.09547579e-09]
+        /*if (0) {  //  Debug_PPL   t=921 -10.825027195036846   [1.30967237e-09,...,2.09547579e-09]
             if (logits == nullptr)
                 logits = cls->fLogits();
             logprob = log(P_softmax(tokens[i], logits + ldP * i, nVocab));
             assert(fabs(logprob + loss[i]) < 1.0e-5 * fabs(logprob));
-        } else {
+        } else*/
+        {
             logprob = -loss[i];
         }
         sum += logprob;
@@ -447,17 +448,23 @@ double SampLoader::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
             break;
     }
     UpdateII();  //    iiLoss.Stat();
-    // mean_loss = sum / nB;
-    // sigma     = std::max(0.0, ss / nB - mean_loss * mean_loss);  // float point error
-    // sigma     = sqrt(sigma);                                     //  one-pass Variance
-    _INFO("\n\t");
+    // _INFO("\n\t");
     SUM::tEval_1 = (GST_ms() - tic) / 1.0e3;
     if (!hFish->isLocalInfer)
         UpdateStepInfos(iiLoss.average, nB);
-    tps = nEvalTokens / SUM::tEval_1 / 1.0e3;
+        
+    switch (tpBatch) {
+        case BATCHofEMBED:
+            nMost = 1;
+            break;
+        default:
+            tps = nEvalTokens / SUM::tEval_1 / 1.0e3;
+            _INFO("\t#%g±%.4f tps=%.3gK(%gM) a=[%g,%g] T=%g(sec)\n", "", iiLoss.average, iiLoss.sigma, tps, nEvalTokens / 1.0e6, iiLoss.a0, iiLoss.a1,
+                  SUM::tEval_1);
+            iiLoss.SaveToCSV(name + "_loss.csv", 0x0);
+            break;
+    }
 
-    _INFO("\t#%g±%.4f tps=%.3gK(%gM) a=[%g,%g] T=%g(sec)\n", "", iiLoss.average, iiLoss.sigma, tps, nEvalTokens / 1.0e6, iiLoss.a0, iiLoss.a1, SUM::tEval_1);
-    iiLoss.SaveToCSV(name + "_loss.csv", 0x0);
     return iiLoss.average;
 }
 

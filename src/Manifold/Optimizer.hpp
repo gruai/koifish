@@ -26,7 +26,6 @@ using namespace std;
 
 #include "../Device/EDevice.hpp"
 #include "../TokenSet/DataLoader.hpp"
-#include "../Utils/Cache.hpp"
 #include "../ggex/GG_util.hpp"
 #include "Scheduler.hpp"
 #include "TGraph.hpp"
@@ -118,7 +117,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
         CANCEL,
     };
 
-    LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;
+    // LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;
 
     struct STAGE {
         string name;
@@ -138,13 +137,13 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
 
     Fish* _fish     = nullptr;  // ref only
     hEDevices hEDS  = nullptr;  // ref only
-    hKVCache hCache = nullptr;
+    
     TRAIN_CARD TrainParams();
 
     Optimizer(NLP_AutoRegressive* g_, CLI_params& params_, int flag = 0x0);
     // Deprecated need refactor!!!       9/30/2024
     virtual double GraphCompute(hSampLoader loader, hTGraph, int flag = 0x0);
-    virtual bool SetPhase(LIFE_PHASE phase_, int flag = 0x0);
+    // virtual bool SetPhase(LIFE_PHASE phase_, int flag = 0x0);
     virtual float EvaluateSamps(hSampLoader loader, int iter, int flag = 0x0);
     virtual bool Evaluate(int type = 0x0, int flag = 0x0);
     // virtual float Prefill(hSampLoader loader,int iter,int flag=0x0);

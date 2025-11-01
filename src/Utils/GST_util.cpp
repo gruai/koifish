@@ -101,6 +101,20 @@ void SUM::Reset(string typ, int flag) {
         mems.clear();
     }
 }
+
+/*  CUDA version
+__device__ static void coopstage(uint64_t* stats, int stage) {
+    __shared__ uint64_t lastt;
+    if (stats && blockIdx.x == 0 && threadIdx.x == 0) {
+        uint64_t t;
+        asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t));
+        if (stage >= 0) {
+            stats[stage] += t - lastt;
+        }
+        lastt = t;
+    }
+}
+*/
 void SUM::TimeInfo(int type, int flag) {
     if (type <= 0)
         return;
@@ -112,6 +126,18 @@ void SUM::TimeInfo(int type, int flag) {
         _TIME_INFO(" X=", tX1);
     _INFO(")");
 }
+
+/*
+void Fish::STAT::Dump(int typ, int flag) {
+    if (NOT_DUMP(0))
+        return;
+    size_t sz         = 0x0;
+    const char* title = "OPT";  //__func__
+    switch (typ) {
+        default:
+            _INFO("\tTIME: qkv=%.3g(s),ffn=%.3g(s)\n", tQKV / 1.0e6, tFFN / 1.0e6);
+    }
+}*/
 
 std::string SUM::CPU_MemoryInfo(int flag) {
     struct rusage usage;
@@ -342,6 +368,9 @@ void GG_log_internal_v(DUMP_LEVEL level, const char *format, va_list args) {
             snprintf(coloredMsg, sizeof(coloredMsg), "%s", log_buffer);
             break;
     }
+    // if(strcmp(coloredMsg,"\n")==0){
+    //     int debug = 0;
+    // }
 
     fputs(coloredMsg, stderr);
     // fputs(log_buffer, stderr);
@@ -376,8 +405,8 @@ std::string FILE2STR(const std::string fPath, int flag) {
     return info;
 }
 
-bool STR2FILE(const std::string fPath, const std::string &info, int flag) {
-    std::ofstream file(fPath);
+bool STR2FILE(const std::string fPath, const std::string &info, std::ofstream::openmode mode, int flag) {
+    std::ofstream file(fPath, mode);
     if (!file.is_open()) {
         _ERROR("STR2FILE failed @%s", fPath.c_str());
         return "";

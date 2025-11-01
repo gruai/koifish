@@ -125,7 +125,7 @@ __global__ void CU_muon_mG(PIPE_Muon<Tp, Tmv> pipe) {
         return;
     }  // guard
     float grad   = CU_T2Float(pipe.grads0 + idx);  //  pipe.grad_scale * CU_T2Float(pipe.grads0 + idx);
-    float m      = pipe.mG[idx], x2, m1;
+    float m      = pipe.mG[idx], x2;
     m            = lerp(m, grad, 1 - pipe.mui);  //  momentum.lerp_(grad, 1 - beta)
     pipe.mG[idx] = m;
     m            = lerp(grad, m, pipe.mui);  // update = grad.lerp_(momentum, beta) if nesterov
@@ -264,7 +264,7 @@ __global__ static void CU_adamw_Tile_v0(PIPE_Adamw<Tp, Tmv> pipe) {
 //  all element in tile has one mv
 template <typename Tp, typename Tmv>
 __global__ static void CU_adamw_Tile(PIPE_Adamw<Tp, Tmv> pipe) {
-    const int TM = THREAD_TILE_M, TN = THREAD_TILE_N, thread_num = blockDim.x;
+    const int TM = THREAD_TILE_M, TN = THREAD_TILE_N;   //, thread_num = blockDim.x;
     int tid = threadIdx.x, idrow, idcol, M = pipe.ne[0], N = pipe.ne[1], trans = 1;
     // const int nWrapT = std::min(WARP_SIZE,THREAD_TILE_M*THREAD_TILE_N);
     idrow = blockIdx.x * TM + tid / TM;
@@ -432,7 +432,7 @@ from https://github.com/KellerJordan/Muon/blob/master/muon.py
 template <typename Tp, typename Tmv>
 void PIPE_Muon<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
     if (this->name == "model.blk.11.ffn_down.weight") {
-        int debug = 0;  // only for debug
+        //int debug = 0;   only for debug
     }
     int64_t m = this->ne[0], n = this->ne[1];
     bool isAdamw_ = muon.isAdamW(this->tensor);

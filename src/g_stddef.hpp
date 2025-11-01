@@ -205,7 +205,7 @@ T* NEW_(size_t len, T a0) {
 // delete[] array
 template <typename T>
 void FREE_a(T*& ptr) {
-    if (ptr != nullptr) {
+    if (ptr != nullptr) {   
         delete[] ptr;
         ptr = nullptr;
     }

@@ -139,8 +139,10 @@ class GTensor {
     static const int N_DIMS   = 4;
 
     static size_t szGlobalMaloc;
-    static hGTensor bt4c, delta, tmpDelta, outL, scratch, tmpFF1, tmpW, tmpGW, residual, tmpTernary;
-    static bool AllocBuffer(Fish *hFish, int flag = 0x0);
+    static hGTensor bt4c, delta, tmpDelta, scratch, tmpFF1, tmpW, tmpGW, residual, tmpTernary;
+    //  If config.isShareLayerOut(), all layers' output share this tensor!
+    static hGTensor outL;
+    
     static bool FreeBuffer(int flag = 0x0);
     //  temporary shared memory 1) buff sz>=8*nCTX*nToken(from preLogits)
     static void *buff, *host_buff;
@@ -203,11 +205,11 @@ class GTensor {
     static size_t MostOverhead() { return sizeof(GTensor) * 2; }
     GTensor() {}
     GTensor(Fish *hFish, SHAPE shape_, typNUMBER tpD_, bool isAlloc = true, int flag = 0x0);
-    GTensor(struct ggml_tensor *gg_, int flag = 0x0) : gg(gg_) { assert(0); }
-    virtual bool CopyGG(struct ggml_tensor *gg_, int flag = 0x0) {
-        assert(0);
-        return false;
-    }
+    // GTensor(struct ggml_tensor *gg_, int flag = 0x0) : gg(gg_) { assert(0); }
+    // virtual bool CopyGG(struct ggml_tensor *gg_, int flag = 0x0) {
+    //     assert(0);
+    //     return false;
+    // }
     virtual hGTensor Partial(const string &name, size_t offset, SHAPE shape, int flag = 0x0) {
         assert(0);
         return nullptr;
@@ -233,14 +235,14 @@ class GTensor {
 
     hGTensor Relu();
     hGTensor Silu();
-    double Length(int type, int flag = 0x0);
+    double Length(int tp, int flag = 0x0);        //  return ||x||
 
     // operations
     // virtual bool OverWrite(struct ggml_tensor *gg_, bool isSrc = true, int flag = 0x0);
     virtual bool ShareMemory(hGTensor, int flag = 0x0);
     virtual bool OverWrite(hGTensor, bool isSrc = true, int flag = 0x0);
 
-    virtual hGTensor GetRow(hGTensor, hGTensor token, hGTensor pos, int flag = 0x0);
+
     virtual hGTensor Normal(hGTensor hOut, hGTensor _mean, hGTensor _rstd, hGTensor w, hGTensor b, bool isForward = true, int flag = 0x0) {
         assert(0);
         return nullptr;
@@ -257,7 +259,7 @@ class GTensor {
 
     bool isParam() const { return BIT_TEST(flags, F_PARAM); }
     bool isAtHost() const;
-    bool isRefer(int type = 0x0) const { return hRef != nullptr; }
+    bool isRefer(int tp = 0x0) const { return hRef != nullptr; }
     hGTensor GetRefer() { return hRef; }
     virtual void SetRefer(hGTensor hR, int flag = 0x0);
     virtual bool SetTernary(typNUMBER typ, int flag = 0x0);
@@ -300,6 +302,8 @@ class GTensor {
     virtual bool isWMAT(int flag = 0x0) const;
     //  The offset of (i0,i1,i2,i3) in byte
     virtual size_t Offset(int i0, int i1, int i2, int i3, int flag = 0x0) const;
+    //  The offset of N-th elemen in byte
+    virtual size_t Offset(size_t N,int flag=0x0)  const;
 
     virtual bool isEmpty() const {
         // if(size()>0)    {   assert(B>0 && T>0 && C>0); }
@@ -402,9 +406,7 @@ inline struct ggml_tensor *G(hGensor T) {
     assert(T != nullptr);
     return T->GG();
 }
-// inline hGensor NEW_(struct ggml_tensor*gg,int flag=0x0) {
-//         return GTensor::NEW_(gg,flag);
-// };
+
 inline void ZERO_(hGensor T) { T->Zero(); }
 inline size_t tELEM(hGensor T) { return T == nullptr ? 0 : T->size(); }
 inline size_t tBYTE(hGensor T) { return T == nullptr ? 0 : T->nByte(); }
@@ -456,7 +458,7 @@ class huTensor : public GTensor {
     size_t Free_1(void **obj, const string &info = "");
 
    public:
-    huTensor(Fish *hFish, const string &name_, const SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag = 0x0);
+    huTensor(Fish *hFish, const string &name_, SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag = 0x0);
     virtual ~huTensor();
     hGTensor Partial(const string &, size_t offset, SHAPE shape, int flag = 0x0) override;
 
@@ -464,7 +466,7 @@ class huTensor : public GTensor {
     size_t mostMemory(int typ = 0) const override;
     bool InitParam(int tpInit) override;
     bool BeforeBackward(size_t &szBuf, int flag = 0x0) override;
-    bool CopyGG(struct ggml_tensor *gg_, int flag = 0x0) override;
+    // bool CopyGG(struct ggml_tensor *gg_, int flag = 0x0) override;
     bool Free(bool isPassResident = false) override;
     void Zero() override;
     void ZeroGrad() override;
@@ -473,7 +475,7 @@ class huTensor : public GTensor {
     bool SerialData(const string &info, void *host, bool isToHost, int flag = 0x0) override;
     bool OverWrite(hGTensor, bool isSrc = true, int flag = 0x0) override;
     hGTensor CrossEntropy(const hGTensor b, int flag = 0x0) override;
-    hGTensor GetRow(hGTensor, hGTensor token, hGTensor pos, int flag) override;
+
     hGTensor Normal(hGTensor hOut, hGTensor _mean, hGTensor _rstd, hGTensor w, hGTensor b, bool isForward = true, int flag = 0x0) override;
     // void Print(const string &title, int typ, int flag, size_t nEle = 0) const override;
 

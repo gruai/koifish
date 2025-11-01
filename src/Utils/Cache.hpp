@@ -20,28 +20,29 @@ class Fish;
 class NLP_AutoRegressive;
 
 class KVCache {
-    void *lamakv = nullptr;
+    void* lamakv = nullptr;
     int kv_n     = -1;
     void init_lamakv(int n_batch);
 
    protected:
-    Fish *_fish = nullptr;
-
+    Fish* _fish = nullptr;
+    int kv_dim = -1, max_seq_len = -1;
     typNUMBER tpCache = typNUMBER::BF16;
-    hGTensor key      = nullptr;  // (layer, seq_len, dim)
-    hGTensor value    = nullptr;  // (layer, seq_len, dim)
-                                  // void *raw_key=nullptr,*raw_val=nullptr;
+    hGTensor key      = nullptr;  // (layer, seq_len, kv_dim)
+    hGTensor value    = nullptr;  // (layer, seq_len, kv_dim)
+
    public:
     enum CTYPE { KV_KEY = 1, KV_VAL };
-    KVCache(Fish *, int max_batch_size = 0, int max_seq_len = 0, int flag = 0x0);
+    KVCache(Fish*, int max_batch_size = 0, int max_seq_len = 0, int flag = 0x0);
 
     void update(int batch_size, int start_pos, hGTensor xk, hGTensor xv);
     hGTensor get(int batch_size, int start_pos, int seq_len);
 
     int n_kv();
-    virtual hGTensor SerialV(void *ctx, hGTensor vCur, int il, bool isSave);
-    virtual hGTensor SerialK(void *ctx, hGTensor vCur, int il, bool isSave);
+    virtual hGTensor SerialV(void* ctx, hGTensor vCur, int il, bool isSave);
+    virtual hGTensor SerialK(void* ctx, hGTensor vCur, int il, bool isSave);
 
-    void *Get(KVCache::CTYPE typ, int flag = 0x0);
+    void* Get(KVCache::CTYPE typ, int flag = 0x0);
+    char* Get(KVCache::CTYPE typ, int lay, int pos, int flag = 0x0);
 };
 typedef std::shared_ptr<KVCache> hKVCache;

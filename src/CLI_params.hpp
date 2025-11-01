@@ -38,7 +38,8 @@ enum LIFE_PHASE {
     P_EVAL_,
     // Inference     fish->isLocalInfer = true
     P_PREFILL,
-    P_GENERATE
+    P_GENERATE,
+    P_CHAT = P_GENERATE
 };
 
 enum CHAT_MODE {
@@ -59,6 +60,25 @@ enum COMPRESSIVE_SENSING {
     LORA,
     EoRA,    // Eigenspace Low-Rank Approximation
     SAMPLE,  // random sub-sampling
+};
+
+/**
+ *
+ */
+enum ACTIVATION_FUNC { SIGMOID, RELU2, RELU_, LINEAR, GELU, GLU, SWIG };
+
+/**
+ *
+ */
+enum FFN_TYPE {
+    SWIGLU = 0,
+    VANILLA,
+    ONLY_LNormal,
+    ONLY_RMSNormal,
+    VAR_0,
+    VAR_LAST,  // last layer with gaussian noise
+    SMOE,      // Sparsely-Gated Mixture-of-Experts Layer
+    GATE_CYS,
 };
 
 enum MODEL_ARCH {
@@ -205,9 +225,6 @@ class MODEL_CARD {
     std::vector<LAY_PARAM> layerps;
 
    public:
-    int SEQ_LEN = 8192;
-    int PROMPT_BUFFER_SIZE = 32768;
-    
     static std::string sWeight, sBias, sLayer, sEmbed, sInvEmbed;  // sNorm,, sAttnOut
     // static std::string sWq, sWq_norm, sWk, sWk_norm, sWv, sWv_norm;
     bool enable_thinking = false;
@@ -218,12 +235,13 @@ class MODEL_CARD {
     };
     Sparsing sparse;
     // MODEL_ENSEMBLE ensemble = Fuyou_params::FUYOU_BEST;
+    ACTIVATION_FUNC fActFFN = SWIG, fActSLP = SWIG;
 
     std::string sCardPath = "", sTokenPath = "";
     std::string sArch, torch_dtype, transformers_version, model_type;
     std::string act_type, norm_type;
-    typNUMBER tpWeight = typNUMBER::BF16, tpEmbed = typNUMBER::BF16, tpPreLogits = typNUMBER::F32, tpGradient = typNUMBER::BF16, tpActivation = typNUMBER::BF16;
-
+    typNUMBER tpWeight = typNUMBER::BF16, tpEmbed = typNUMBER::BF16, tpGradient = typNUMBER::BF16, tpActivation = typNUMBER::BF16;
+    // typNUMBER tpPreLogits = typNUMBER::F32;
     dotprod_t fDotW;
     JSON jModelParam, jSafetensorsIndex;  //
     int vocab_size = -1;
@@ -250,13 +268,13 @@ class MODEL_CARD {
     bool isEmbedWeightTying = false;
     std::vector<std::string> skip_st;
 
-    bool isSeparateQKV      = false;
-    bool isQKNormal         = false;
-    bool isBqkv             = false;
-    float clip_qkv          = FLT_MAX;  // Clipping Q/K/V.  to prevent numerical instability
-    size_t nTotalSize = 0x0;
-    std::map<std::string, void*> st_map;    //map of st in jSafetensorsIndex
-    //  Experts                             
+    bool isSeparateQKV = false;
+    bool isQKNormal    = false;
+    bool isBqkv        = false;
+    float clip_qkv     = FLT_MAX;  // Clipping Q/K/V.  to prevent numerical instability
+    size_t nTotalSize  = 0x0;
+    std::map<std::string, void*> st_map;  // map of st in jSafetensorsIndex
+    //  Experts
     int n_experts = 0, n_experts_ac = 0;
     //  eps
     float norm_eps = 1e-5f, norm_rms_eps = 1e-5f;
@@ -271,10 +289,10 @@ class MODEL_CARD {
     };
     tpROPE rope_type = RT_NORM;
     int rotary_dim   = 0;
-    int seq_len      = 0;
+    // int seq_len      = 0;
 
     MODEL_CARD();
-    virtual bool OnJsonCALM(CLI_params* hConfig, const std::string& path, const JSON& meta, int flag = 0X0);
+    // virtual bool OnJsonCALM(CLI_params* hConfig, const std::string& path, const JSON& meta, int flag = 0X0);
     // more param from HF's "model_card"
     virtual bool InitHugFace(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
     virtual bool InitChatTemplate(CLI_params* hConfig, int flag = 0x0);
@@ -374,7 +392,8 @@ struct TRAIN_CARD {
 
 struct CHAT_SAMPLER {
     enum METHOD { TEMPERATURE, Top_K, Top_P, Min_P, BEAM };
-    METHOD method = METHOD::TEMPERATURE;
+    METHOD method  = METHOD::TEMPERATURE;
+    CHAT_MODE mode = CHAT_MODE::YABA;
 
     float temperature = 0.6f;
     float top_p       = 0.95f;
@@ -388,6 +407,9 @@ struct CHAT_SAMPLER {
 
     std::string prompt     = "";
     std::string token_test = "";
+    // Define the length of batch input,   different with n_ctx_train, n_ctrx_origin !!!
+    int seq_len  = 8192;
+    int szBuffer = 32768;
 };
 
 struct DUMP_SWITCH {
@@ -415,6 +437,8 @@ struct DEUG_SWITCH {
     int T_cpu              = 0;
     int T_GEMM             = -1;
     int T_fuyou            = 1;
+    int T_generate_qkv     = 0;
+    int T_generate_most_layer     = 10000000;
     int N_mostiter         = -1;
 
     int cmd_p1 = 0, cmd_p2 = 0, cmd_p3 = 0;  // some commandline parameter for debug
@@ -521,24 +545,26 @@ struct CLI_params {
         assert(n_layer_train > 0);
         return n_layer_train;
     }
-    uint32_t n_ctx() const { return common.n_ctx; }  // number of tokens in each sample
-    uint32_t n_ctx_orig() const { return n_ctx_orig_yarn != 0 ? n_ctx_orig_yarn : n_ctx_train; }
 
+    uint32_t n_ctx() const;  // number of tokens in each sample
+    uint32_t n_ctx_orig() const { return n_ctx_orig_yarn != 0 ? n_ctx_orig_yarn : n_ctx_train; }
     void SetNCTX(int _nctx) {
         assert(_nctx > 0 && _nctx < 1024 * 1024);
         common.n_ctx = _nctx;
     }
-    uint32_t n_batch() const { return common.n_batch; }  // number of samps in each batch
-    uint32_t nGradAccumulate() const { return common.n_gradient_accumulation; }
-    size_t nTokenInBatch() const { return common.n_batch * common.n_ctx; }
-    size_t nTokensPerGrad() const { return nTokenInBatch() * common.n_gradient_accumulation; }
-    uint32_t max_seq_len, n_ctx_orig_yarn, n_ctx_train = 0;
+    uint32_t max_seq_len = 0, n_ctx_orig_yarn = 0, n_ctx_train = 0;
     bool isLongRope(int il = 0) const {
         assert(il >= 0 && il < model.layerps.size());
         const auto n_ctx_pre_seq = n_ctx() / max_seq_len;
         bool isLong              = n_ctx_pre_seq > n_ctx_orig_yarn;
         return isLong;
     }
+
+    uint32_t n_batch() const { return common.n_batch; }  // number of samps in each batch
+    uint32_t nGradAccumulate() const { return common.n_gradient_accumulation; }
+    size_t nTokenInBatch() const { return common.n_batch * common.n_ctx; }
+    size_t nTokensPerGrad() const { return nTokenInBatch() * common.n_gradient_accumulation; }
+
     bool isShareLayerOut() const;
     std::string jsPath = "";
     JSON jConfig;
@@ -556,9 +582,10 @@ struct CLI_params {
     // std::string fp_train_data;   serial_path
     std::string train = "";  //"scratch"
 
-    bool isOnlyGPT      = false;
-    CHAT_MODE chat_mode = CHAT_MODE::YABA;
+    bool isOnlyGPT = false;
+
     CHAT_SAMPLER chat_sampler;
+    CHAT_MODE ChatMode() { return chat_sampler.mode; }
 
     bool passLoadToken    = false;
     bool only_write_model = false;

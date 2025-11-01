@@ -33,6 +33,7 @@
 #include "../Fuzi/Distillation.hpp"
 #include "../Utils/GST_rander.hpp"
 #include "../Utils/GST_util.hpp"
+#include "../Utils/Cache.hpp"
 #include "../ggex/GG_util.hpp"
 #include "GoPT.hpp"
 #include "Neuron.hpp"
@@ -93,7 +94,9 @@ class Fish : public std::enable_shared_from_this<Fish> {
     // Generate some results on prompt
     hGOPT gopt = nullptr;
 
-    // ggml_gallocr_t alloc;
+    //  Ref: 1. isAtPhase 2.SetPhase
+    LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;
+
     hTGraph hForwTG = nullptr, hBackTG = nullptr;
     int graph_order = -1, graph_update = -1;
     std::vector<hGensor> checkpoints;
@@ -101,37 +104,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     void* ctx_build   = nullptr;  // user context of build graph
 
     // safetensors::safetensors_t safeTensors;
-#ifdef __USE_GGML__
-    struct ggml_cgraph* gb_tmp             = NULL;
-    struct random_normal_distribution* rnd = nullptr;
-    struct ggml_cplan gf_plan, gb_plan;
-    struct ggml_context* ctx_work = nullptr;  // training ctx
-    virtual bool BuildOperators(void* ctx, ggml_gallocr_t alloc, bool m_only, int flag = 0x0) {
-        assert(0);
-        return false;
-    }
-    struct ggml_init_params ctx_compute_params = {
-        0,
-        NULL,
-        true,
-    };
 
-    virtual void Build(void* ctx0, ggml_gallocr_t& allocr, bool isOnlySymbol, int flag = 0x0) {
-        assert(0);  //  Deprecated
-    }
-    virtual struct ggml_cgraph* BuildRawGraph(void*, bool isBuild, int flag = 0x0) { return nullptr; }
-    virtual struct ggml_cgraph* GetForwRaw(int flag = 0x0) const {
-        assert(hForwTG != nullptr);
-        return hForwTG->raw();
-    }
-    virtual struct ggml_cgraph* GetBackRaw(int flag = 0x0) const {
-        if (hBackTG == nullptr) {
-            assert(isLocalInfer);
-            return nullptr;
-        }
-        return hBackTG->raw();
-    }
-#endif
     std::vector<hNeuron> neurons, backbons;
     // @TGraph::TopoOrder
     GENSORS gensors;
@@ -141,7 +114,8 @@ class Fish : public std::enable_shared_from_this<Fish> {
     std::vector<hGensor> xGensors;
 
     hEDevices hEDS = nullptr;
-
+    hKVCache hCache = nullptr;
+    
     bool updateTMap = false;
     // Ref@isTrain      No training process! only Evaluate/GPT/...
     bool isLocalInfer     = false;
@@ -181,7 +155,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     // Only delete graph/neurons, keep OPT,DataLoader...
     virtual void ClearGraph(int flag = 0x0);
     virtual void Clear();
-
+    virtual bool AllocBuffer(int flag = 0x0);
     virtual bool InitInput(void* ctx, bool isMask, int flag = 0x0) {
         assert(0);
         return false;
@@ -204,11 +178,6 @@ class Fish : public std::enable_shared_from_this<Fish> {
 
    public:
     hGensor xn = nullptr, xxn = nullptr;  // only for debug
-    struct STAT {
-        double tFFN = 0, tQKV = 0;
-        virtual void Dump(int typ, int flag = 0x0);
-    };
-    static STAT stat;
 
     struct CLI_params config;
     static tpSWARM swarm;
@@ -225,7 +194,6 @@ class Fish : public std::enable_shared_from_this<Fish> {
     Fish(const std::string& nam_, void* ctx_, int flag = 0x0) : name(nam_) /*,ctx(ctx_)*/ {
         assert(0);  // Deprecated
         _INFO("=== %s ===\n", __func__);
-        // allocr = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
     }
     virtual ~Fish() { Clear(); }
     std::shared_ptr<Fish> SharedThis() { return shared_from_this(); }
@@ -236,8 +204,10 @@ class Fish : public std::enable_shared_from_this<Fish> {
     bool isTrain() const { return !isLocalInfer; }
     bool isSymbolic() const { return isSymbolicAnalysis; }
     bool isAtPhase(LIFE_PHASE ph) const;
+    virtual bool SetPhase(LIFE_PHASE phase_, int flag = 0x0);
     CHAT_MODE ChatMode(int flag = 0x0) const {
-        assert(gopt != nullptr);
+        if (gopt == nullptr)
+            return CHAT_MODE::YABA;
         return gopt->ChatMode(flag);
     }
     bool hasWiki() { return wikis.size() > 0; }
@@ -297,17 +267,13 @@ class Fish : public std::enable_shared_from_this<Fish> {
 
     virtual bool Init(const vector<hWIKI>& wikis, int flag = 0x0) { throw "Fish::Init is ..."; }
     // shortcut parameter of LLM models
-    virtual void GetBTC(int& B, int& T, int& C) {
-        B = config.n_batch();
-        C = config.nEmbed();
-        T = config.n_ctx();
-        assert(B > 0);
-        assert(T > 0);
-        assert(C > 0);
-    };
+    virtual void GetBTC(int& B, int& T, int& C, int flag = 0x0) const;
     virtual hEDevices curDevice(int flag = 0x0) {
         assert(hEDS != nullptr);
         return hEDS;
+    }
+    virtual hKVCache curCache(int flag = 0x0) {
+        return hCache;
     }
     virtual void* GetGGCTX(int typ = 0x0) {
         /*switch(typ){
@@ -385,7 +351,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     void SetTensor(const int nx, const int ny, const std::vector<float>& arr_data, const char* name, int flag = 0x0) {
         assert(0);  //  Drepecated
         hGensor inp = GetGensor("inp");
-        float* data = (float*)inp->data;  // ggml_get_data(inp);
+        float* data = (float*)inp->data;
         assert(data != nullptr);
         const int n = nx * ny;
         // assert(nx == n_img_size && ny == n_img_size);
@@ -528,15 +494,4 @@ struct Pangpi : public Fish {
 };
 typedef shared_ptr<Pangpi> hPangpi;
 
-enum FFN_TYPE {
-    SWIGLU = 0,
-    VANILLA,
-    ONLY_LNormal,
-    ONLY_RMSNormal,
-    VAR_0,
-    VAR_LAST,  // last layer with gaussian noise
-    SMOE,      // Sparsely-Gated Mixture-of-Experts Layer
-    GATE_CYS,
-};
-
-float* T_generate_(hFISH hFish, int id, typNUMBER tpActivity, unsigned flags);
+floatLogist* T_generate_(hFISH hFish, MODEL_CARD* hPipe, typNUMBER tpActivity, int flags);

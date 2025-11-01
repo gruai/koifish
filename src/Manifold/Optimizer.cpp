@@ -59,9 +59,9 @@ Optimizer::Optimizer(NLP_AutoRegressive* g_, CLI_params& config, int flag) : _fi
     }
 }
 
-bool Optimizer::SetPhase(LIFE_PHASE phase_, int flag) {
+bool Fish::SetPhase(LIFE_PHASE phase_, int flag) {
     phase = phase_;
-    _fish->GetScheduler<RLS_BP>()->SetPhase(phase);
+    // _fish->GetScheduler<RLS_BP>()->SetPhase(phase);
 
     switch (phase) {
         case LIFE_PHASE::P_EVAL_:
@@ -72,7 +72,7 @@ bool Optimizer::SetPhase(LIFE_PHASE phase_, int flag) {
             // assert(loader->num_batches == 1);
             break;
         case LIFE_PHASE::P_GENERATE:
-            // _INFO("[generate] " );
+            _INFO("[generate] " );
             // assert(loader->num_batches == 1);
             break;
         default:
@@ -592,7 +592,7 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGensor loss_, hGensor target_, C
         }
         iter = iter0 + t + 1;
         SUM::Reset("time");
-        SetPhase(LIFE_PHASE::P_TRAIN);
+        _fish->SetPhase(LIFE_PHASE::P_TRAIN);
         if (!BatchGrad(iter, a, 0x0))
             return CANCEL;
         // if(t==1)    exit(KOIFISH_EXIT_DEBUG);
@@ -650,12 +650,12 @@ double Optimizer::GraphCompute(hSampLoader hLoader, hTGraph hTG, int flag) {
 
     OutCLS* cls       = _fish->GetNeuron<OutCLS>("OutCLS", 0);
     TokenEmbed* embed = _fish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
-    if (phase != LIFE_PHASE::P_GENERATE && phase != LIFE_PHASE::P_PREFILL)
+    if (_fish->phase != LIFE_PHASE::P_GENERATE && _fish->phase != LIFE_PHASE::P_PREFILL)
         embed->hBatch = hLoader->hBatch;
 
     isBackward = false;
     _fish->ForwardOnRLS(iter, 0x0);
-    if (phase == LIFE_PHASE::P_GENERATE || phase == LIFE_PHASE::P_PREFILL) {
+    if (_fish->phase == LIFE_PHASE::P_GENERATE || _fish->phase == LIFE_PHASE::P_PREFILL) {
     } else {
         mean_loss = hLoader->hTokens->LossOnResult(hLoader, cls);
         if (isOnlyEvaluate) {
@@ -683,7 +683,7 @@ bool Optimizer::Evaluate(int type, int flag) {
     }
     for (auto vl : val_loaders) {
         if (type == 1 || vl->isEval(iter + 1)) {
-            SetPhase(LIFE_PHASE::P_EVAL_);
+            _fish->SetPhase(LIFE_PHASE::P_EVAL_);
             cls->hLoader = vl;
             // for(int i=0;i<10;i++)
             // val_loss = EvaluateSamps(vl, iter), a = val_loss;       //  0.272727281
@@ -726,7 +726,7 @@ float Optimizer::EvaluateSamps(hSampLoader loader, int iter, int flag) {
     const float* wLog   = nullptr;
     loader->next_sample = 0;  // fix this to keep same acc on each experiment
     for (i = 0; i < loader->num_batches; i += step) {
-        if (tokens_input != nullptr && (phase != LIFE_PHASE::P_PREFILL && phase != LIFE_PHASE::P_GENERATE)) {  // in some debug mode, tokens_input maybe null
+        if (tokens_input != nullptr && (_fish->phase != LIFE_PHASE::P_PREFILL && _fish->phase != LIFE_PHASE::P_GENERATE)) {  // in some debug mode, tokens_input maybe null
             TIMING_ms(loader->UpdateBatch(i, _fish), SUM::tLoadData);
             samp = loader->cur_samps[i];
         }
@@ -852,8 +852,8 @@ bool Optimizer::OnNextEpoch(int flag) {
 }
 
 void Optimizer::AfterBuild(int flag) {
-    if (_fish->isLocalInfer)
-        hCache = std::make_shared<KVCache>(_fish);
+    // if (_fish->isLocalInfer)
+    //     _fish->hCache = std::make_shared<KVCache>(_fish);
 }
 
 void Optimizer::BeforeTrain(hGensor tokens_, int flag) {

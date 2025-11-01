@@ -15,9 +15,8 @@
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
 
-
-int run_caml(const char *prompt, int flag);
-int Fish_ppl(CLI_params &config) {
+int run_caml(const char* prompt, int flag);
+int Fish_ppl(CLI_params& config) {
     // g_dump_level = 0;
 #if defined(K_DEBUGCUDA)
     g_dump_level = 0;
@@ -37,14 +36,14 @@ int Fish_ppl(CLI_params &config) {
     DEBUG.cmd_p1     = 0;
     DEBUG.graph_dump = 1;
 
-    config.model.tpPreLogits  = typNUMBER::F32;
+    // config.model.tpPreLogits  = typNUMBER::F32;
     config.model.tpActivation = typNUMBER::F32;
     // config.model.tpActivation = typNUMBER::BF16;
     // return run_caml(config.prompt.c_str(),0x0);
 
     hFISH fish      = Fish::MakeInstance("PPL_", config, {}, Fish::ROLE_TYPE::COMMON, 0x110);
     hOptimizer hOPT = fish->GetOptimizer();
-    RLS_BP *hRLS    = fish->GetScheduler<RLS_BP>();
+    RLS_BP* hRLS    = fish->GetScheduler<RLS_BP>();
 
     hRLS->Prepare(-1);
     uint64_t rng_seed  = 42;
@@ -62,16 +61,16 @@ int Fish_ppl(CLI_params &config) {
     _INFO("\n====== %s: %s FLOAT=%s @%s\n", __func__, DEBUG.T_cpu == 0 ? "CUDA" : "CPU", cNameOf(config.model.tpActivation), cDATE);
     hRLS->Dump(0x0);
 
-    OutCLS *hCLS  = fish->GetNeuron<OutCLS>("OutCLS", 0);
-    float *logits = hCLS->fLogits( );
+    OutCLS* hCLS  = fish->GetNeuron<OutCLS>("OutCLS", 0);
+    floatLogist* logits = hCLS->fLogits();
     double sum = 0, ss = 0, nz = 0, ppl = 0, pplerr = 0, tps = 0, t0 = GST_ms(), tAll = 0;
-    vector<TOKEN_ID> &tokens = hLoader->GetTokens();
-    hOPT->SetPhase(LIFE_PHASE::P_GENERATE);
+    vector<TOKEN_ID>& tokens = hLoader->GetTokens();
+    fish->SetPhase(LIFE_PHASE::P_GENERATE);
     fflush(stdout);
     SUM::Reset("memory");
     for (i = 0; i + 1 < nTokens; i++) {
         // float fLos = hOPT->Evaluate(hLoader,-666);
-        T_generate_(fish, i, config.model.tpActivation, -666);
+        T_generate_(fish, nullptr, config.model.tpActivation, -666);
         double logprob = log(P_softmax(tokens[i + 1], logits, nVocab));
 
         sum += logprob;
@@ -86,7 +85,7 @@ int Fish_ppl(CLI_params &config) {
     _INFO("[PPL] #ppl=%g ± %.3f tps=%g(%d) T=%.3g(%.3g)s T_remater=%.3gs \n", ppl, pplerr, tps, nTokens, tAll, SUM::tX1 / 1.0e6,
           tRemater);  // CS_Picker::tPick / 1.0e6
     _INFO("[PPL] Upload=%.3gG Throughput=%.3g GByte/s \n", SUM::szUpload / 1.0e9, SUM::szUpload / 1.0e9 / tRemater);
-    Fish::stat.Dump(0x0);
+    // Fish::stat.Dump(0x0);
 
     if (fish->config.model.isSparse()) {
         // fish->Sparsing();
@@ -97,7 +96,7 @@ int Fish_ppl(CLI_params &config) {
 double Fish::Eval_ppl(int flag) {
     double ppl         = DBL_MAX;
     uint64_t rng_seed  = 42;
-    RLS_BP *hRLS       = GetScheduler<RLS_BP>();
+    RLS_BP* hRLS       = GetScheduler<RLS_BP>();
     std::string prompt = LoadSomeText("/home/cys/rnd/lic/models/TinyStories-valid.txt", 64 * 1024);  // shakespeare.txt
     int nVocab = config.model.vocab_size, _nctx = config.n_ctx(), i, j;
     hSampLoader hLoader = hOPT->val_loaders[0];
@@ -112,16 +111,16 @@ double Fish::Eval_ppl(int flag) {
     _INFO("\n====== %s: %s FLOAT=%s @%s\n", __func__, DEBUG.T_cpu == 0 ? "CUDA" : "CPU", cNameOf(config.model.tpActivation), cDATE);
     hRLS->Dump(0x0);
 
-    OutCLS *hCLS  = GetNeuron<OutCLS>("OutCLS", 0);
-    float *logits = hCLS->fLogits( );
+    OutCLS* hCLS  = GetNeuron<OutCLS>("OutCLS", 0);
+    floatLogist* logits = hCLS->fLogits();
     double sum = 0, ss = 0, nz = 0, pplerr = 0, tps = 0, t0 = GST_ms(), tAll = 0;
-    vector<TOKEN_ID> &tokens = hLoader->GetTokens();
-    hOPT->SetPhase(LIFE_PHASE::P_GENERATE);
+    vector<TOKEN_ID>& tokens = hLoader->GetTokens();
+    SetPhase(LIFE_PHASE::P_GENERATE);
     fflush(stdout);
     SUM::Reset("memory");
     for (i = 0; i + 1 < nTokens; i++) {
         // float fLos = hOPT->Evaluate(hLoader,-666);
-        T_generate_(shared_from_this(), i, config.model.tpActivation, -666);
+        T_generate_(shared_from_this(), nullptr, config.model.tpActivation, -666);
         double logprob = log(P_softmax(tokens[i + 1], logits, nVocab));
 
         sum += logprob;
@@ -136,6 +135,6 @@ double Fish::Eval_ppl(int flag) {
     _INFO("[PPL] #ppl=%g ± %.3f tps=%g(%d) T=%.3g(%.3g)s T_remater=%.3gs \n", ppl, pplerr, tps, nTokens, tAll, SUM::tX1 / 1.0e6,
           tRemater);  // CS_Picker::tPick / 1.0e6
     _INFO("[PPL] Upload=%.3gG Throughput=%.3g GByte/s \n", SUM::szUpload / 1.0e9, SUM::szUpload / 1.0e9 / tRemater);
-    Fish::stat.Dump(0x0);
+    // Fish::stat.Dump(0x0);
     return ppl;
 }

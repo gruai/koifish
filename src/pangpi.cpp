@@ -70,7 +70,7 @@ int main(int argc, char* argv[]) {
         hCLS->hLoader = hLoader;
         double sum = 0, ss = 0, tps = 0, t0 = GST_ms(), tAll = 0, eval, delta = 0;
         vector<TOKEN_ID>& tokens = hLoader->GetTokens();
-        hOPT->SetPhase(LIFE_PHASE::P_GENERATE);
+        fish->SetPhase(LIFE_PHASE::P_EVAL_);
         SUM::Reset("memory");
         //  fish = nullptr;     return KOIFISH_EXIT_DEBUG;
         if (config.eval_metric == "hellaswag") {  //[eval]  Loss@"HellaSwag"=0.300 nBranch=2
@@ -94,7 +94,7 @@ int main(int argc, char* argv[]) {
         }
         tAll = (GST_ms() - t0) / 1000.0;
         tps  = nz / tAll / 1.0e3;
-        Fish::stat.Dump(0x0);
+        // Fish::stat.Dump(0x0);
         _INFO("[BUBBLE] Upload=%.3gG Throughput=%.3g GByte/s \n", SUM::szUpload / 1.0e9, SUM::szUpload / 1.0e6 / SUM::tRemater);
         if (fish->config.model.isSparse()) {
             // fish->Sparsing();

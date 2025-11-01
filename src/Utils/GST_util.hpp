@@ -100,13 +100,13 @@ inline double GST_us(void) {
 struct Dataset {
     enum { TAG_ZERO = 0x10 };
     typedef double T;
-    void _mean(T *x, int flag);
-    void _normal(int nz, T *x, int type, int flag);
+    void _mean(T* x, int flag);
+    void _normal(int nz, T* x, int type, int flag);
 
     int nMost, ldX, *tag, type;
-    T *X;
+    T* X;
 
-    Dataset(int n, int ld, int tp = 0x0, double *x = nullptr);
+    Dataset(int n, int ld, int tp = 0x0, double* x = nullptr);
     ~Dataset() { Clear(); /*operator delete[] (tag);		operator delete[] (X);*/ }
     void Clear();
 
@@ -121,45 +121,45 @@ struct Dataset {
         return i;
     }
 
-    double *Sample(int k) const {
+    double* Sample(int k) const {
         assert(k >= 0 && k < nMost);
         return X + ldX * k;
     }
-    void Copy(int i, const Dataset &hS, int no, int nSample = 1, int flag = 0x0);
+    void Copy(int i, const Dataset& hS, int no, int nSample = 1, int flag = 0x0);
 //	double Cost( NeuralNet*hNN,int flag );
 #ifdef _GST_MATLAB_
-    static Dataset *ImportMat(const char *sPath, const char *sVar, int flag);
+    static Dataset* ImportMat(const char* sPath, const char* sVar, int flag);
 #endif
 
     int Load(const std::wstring sPath, int flag);
     int Save(const std::wstring sPath, int flag);
     int ToBmp(int epoch, int _x = 0, int flag = 0x0);
 };
-typedef Dataset *hDATASET;
-double Err_Tag(int lenT, double *acti, int tag, int &nOK, int flag);
-double Err_Auto(int lenT, double *in, double *out, int &nOK, int flag);
+typedef Dataset* hDATASET;
+double Err_Tag(int lenT, double* acti, int tag, int& nOK, int flag);
+double Err_Auto(int lenT, double* in, double* out, int& nOK, int flag);
 
 template <typename T>
-std::string G_STR(const T &x) {
+std::string G_STR(const T& x) {
     std::stringstream ss;
     ss << x;
     return ss.str();
 }
 
 std::string EXE_name(int flag = 0x0);
-std::string FILE_EXT(const std::string &path);
-bool VERIFY_DIR_EXIST(const std::string &path, bool isCreate = false);
-std::vector<std::string> FilesOfDir(const std::string &path, const std::vector<std::string> &keys={}, int flag=0x0);
+std::string FILE_EXT(const std::string& path);
+bool VERIFY_DIR_EXIST(const std::string& path, bool isCreate = false);
+std::vector<std::string> FilesOfDir(const std::string& path, const std::vector<std::string>& keys = {}, int flag = 0x0);
 
 struct MEM_USAGE {
     static size_t szA, szW, szG, szMoment, szTemp, szOther;
     enum TYPE { ACTIVATION, WEIGHT, MOMENT, GRAD, TEMP, OTHER };
 
     TYPE type;
-    void *hData = nullptr;
+    void* hData = nullptr;
     size_t sz;
     string desc;
-    MEM_USAGE(size_t sz_, string d_, void *hData = nullptr, int flag = 0x0);
+    MEM_USAGE(size_t sz_, string d_, void* hData = nullptr, int flag = 0x0);
 };
 struct SUM {
     static int nMostMemItem, nMinTensorAlloc;
@@ -171,7 +171,7 @@ struct SUM {
     static void Reset(string typ, int flag = 0x0);
     static void TimeInfo(int typ, int flag = 0x0);
     static void MemoryInfo(int type, int flag = 0x0);
-    static bool FreeMem(void *hData, int flag = 0x0);
+    static bool FreeMem(void* hData, int flag = 0x0);
     static std::string CPU_MemoryInfo(int flag = 0x0);
 };
 
@@ -195,14 +195,16 @@ struct Distri_ARRAY {
     }
 
     virtual void Stat() {
-        int n = distri.size();
-        assert(n > 0);
+        size_t n = distri.size();
+        if(n== 0)
+            return;
+            
         average = sum / n;
         sigma   = std::max(0.0, ss / n - average * average);  // float point error
         sigma   = sqrt(sigma);
     }
 
-    virtual bool SaveToCSV(const string &x, int flag);
+    virtual bool SaveToCSV(const string& x, int flag);
 };
 
 #ifndef _WIN32
@@ -218,8 +220,8 @@ struct Distri_ARRAY {
 // simple replace fopen, fread, fclose, fseek
 // with fopenCheck, freadCheck, fcloseCheck, fseekCheck
 
-extern inline FILE *fopen_check(const char *path, const char *mode, const char *file, int line) {
-    FILE *fp = fopen(path, mode);
+extern inline FILE* fopen_check(const char* path, const char* mode, const char* file, int line) {
+    FILE* fp = fopen(path, mode);
     if (fp == NULL) {
         fprintf(stderr, "Error: Failed to open file '%s' at %s:%d\n", path, file, line);
         fprintf(stderr, "Error details:\n");
@@ -238,7 +240,7 @@ extern inline FILE *fopen_check(const char *path, const char *mode, const char *
 
 #define fopenCheck(path, mode) fopen_check(path, mode, __FILE__, __LINE__)
 
-extern inline void fread_check(void *ptr, size_t size, size_t nmemb, FILE *stream, const char *file, int line) {
+extern inline void fread_check(void* ptr, size_t size, size_t nmemb, FILE* stream, const char* file, int line) {
     size_t result = fread(ptr, size, nmemb, stream);
     if (result != nmemb) {
         if (feof(stream)) {
@@ -259,7 +261,7 @@ extern inline void fread_check(void *ptr, size_t size, size_t nmemb, FILE *strea
 
 #define freadCheck(ptr, size, nmemb, stream) fread_check(ptr, size, nmemb, stream, __FILE__, __LINE__)
 
-extern inline void fclose_check(FILE *fp, const char *file, int line) {
+extern inline void fclose_check(FILE* fp, const char* file, int line) {
     if (fclose(fp) != 0) {
         fprintf(stderr, "Error: Failed to close file at %s:%d\n", file, line);
         fprintf(stderr, "Error details:\n");
@@ -284,7 +286,7 @@ extern inline void sclose_check(int sockfd, const char *file, int line) {
 #define scloseCheck(sockfd) sclose_check(sockfd, __FILE__, __LINE__)*/
 
 #ifdef _WIN32
-extern inline void closesocket_check(int sockfd, const char *file, int line) {
+extern inline void closesocket_check(int sockfd, const char* file, int line) {
     if (closesocket(sockfd) != 0) {
         fprintf(stderr, "Error: Failed to close socket at %s:%d\n", file, line);
         fprintf(stderr, "Error details:\n");
@@ -297,7 +299,7 @@ extern inline void closesocket_check(int sockfd, const char *file, int line) {
 #define closesocketCheck(sockfd) closesocket_check(sockfd, __FILE__, __LINE__)
 #endif
 
-extern inline void fseek_check(FILE *fp, long off, int whence, const char *file, int line) {
+extern inline void fseek_check(FILE* fp, long off, int whence, const char* file, int line) {
     if (fseek(fp, off, whence) != 0) {
         fprintf(stderr, "Error: Failed to seek in file at %s:%d\n", file, line);
         fprintf(stderr, "Error details:\n");
@@ -311,7 +313,7 @@ extern inline void fseek_check(FILE *fp, long off, int whence, const char *file,
 
 #define fseekCheck(fp, off, whence) fseek_check(fp, off, whence, __FILE__, __LINE__)
 
-extern inline void fwrite_check(void *ptr, size_t size, size_t nmemb, FILE *stream, const char *file, int line) {
+extern inline void fwrite_check(void* ptr, size_t size, size_t nmemb, FILE* stream, const char* file, int line) {
     size_t result = fwrite(ptr, size, nmemb, stream);
     if (result != nmemb) {
         if (feof(stream)) {
@@ -335,8 +337,8 @@ extern inline void fwrite_check(void *ptr, size_t size, size_t nmemb, FILE *stre
 // ----------------------------------------------------------------------------
 // malloc error-handling wrapper util
 
-extern inline void *malloc_check(size_t size, const char *file, int line) {
-    void *ptr = malloc(size);
+extern inline void* malloc_check(size_t size, const char* file, int line) {
+    void* ptr = malloc(size);
     if (ptr == NULL) {
         fprintf(stderr, "Error: Memory allocation failed at %s:%d\n", file, line);
         fprintf(stderr, "Error details:\n");
@@ -352,7 +354,7 @@ extern inline void *malloc_check(size_t size, const char *file, int line) {
 
 // ----------------------------------------------------------------------------
 // check that all tokens are within range
-extern inline void token_check(const int *tokens, int token_count, int vocab_size, const char *file, int line) {
+extern inline void token_check(const int* tokens, int token_count, int vocab_size, const char* file, int line) {
     for (int i = 0; i < token_count; i++) {
         if (!(0 <= tokens[i] && tokens[i] < vocab_size)) {
             fprintf(stderr, "Error: Token out of vocabulary at %s:%d\n", file, line);
@@ -368,13 +370,13 @@ extern inline void token_check(const int *tokens, int token_count, int vocab_siz
 }
 #define tokenCheck(tokens, count, vocab) token_check(tokens, count, vocab, __FILE__, __LINE__)
 
-extern inline int find_max_step(const char *output_log_dir) {
+extern inline int find_max_step(const char* output_log_dir) {
     // find the DONE file in the log dir with highest step count
     if (output_log_dir == NULL) {
         return -1;
     }
-    DIR *dir;
-    struct dirent *entry;
+    DIR* dir;
+    struct dirent* entry;
     int max_step = -1;
     dir          = opendir(output_log_dir);
     if (dir == NULL) {
@@ -392,13 +394,13 @@ extern inline int find_max_step(const char *output_log_dir) {
     return max_step;
 }
 
-extern inline int ends_with_bin(const char *str) {
+extern inline int ends_with_bin(const char* str) {
     // checks if str ends with ".bin". could be generalized in the future.
     if (str == NULL) {
         return 0;
     }
     size_t len         = strlen(str);
-    const char *suffix = ".bin";
+    const char* suffix = ".bin";
     size_t suffix_len  = strlen(suffix);
     if (len < suffix_len) {
         return 0;
@@ -418,7 +420,7 @@ class GST_util {
         VERIRY_I_MAT       = 2,
         VERIRY_TRI_MAT     = 2,
     };
-    static void print(const char *format, ...) {
+    static void print(const char* format, ...) {
         if (dump == 0)
             return;
         char buffer[1000];
@@ -430,11 +432,11 @@ class GST_util {
         va_end(args);
     }
 #ifdef _GST_MATLAB_
-    static int LoadDoubleMAT(const char *sPath, const char *sVar, int *nRow, int *nCol, double **val, int flag);
+    static int LoadDoubleMAT(const char* sPath, const char* sVar, int* nRow, int* nCol, double** val, int flag);
 #endif
     //	friend std::ostream& operator<<( std::ostream& os,const hGMAT &mat )	{	mat->dump(os);		return os; }
     template <typename T>
-    static void Output(char *sPath, int m, int n, T *dat, int flag = 0x0) {
+    static void Output(char* sPath, int m, int n, T* dat, int flag = 0x0) {
         std::ofstream file;
         file.open(sPath, std::ios::out);
         if (file.is_open()) {
@@ -447,7 +449,7 @@ class GST_util {
 };
 
 //  G_Has
-inline bool isStrMatch(const string &target, const vector<string> &words) {
+inline bool isStrMatch(const string& target, const vector<string>& words) {
     for (auto w : words) {
         if (w.empty())
             continue;
@@ -457,11 +459,11 @@ inline bool isStrMatch(const string &target, const vector<string> &words) {
     return false;
 }
 
-void read_stdin(const char *guide, char *buffer, size_t bufsize);
+void read_stdin(const char* guide, char* buffer, size_t bufsize);
 
 std::string FILE2STR(const std::string fPath, int flag = 0x0);
-bool STR2FILE(const std::string fPath, const std::string &text, int flag = 0x0);
+bool STR2FILE(const std::string fPath, const std::string& text, std::ofstream::openmode mode, int flag = 0x0);
 /*
     CUBLAS: Base addresses of A, B, C matrices should be aligned to 256-byte boundaries for optimal performance.
 */
-inline bool PTR_is_aligned(const void *ptr, size_t alignment = 256) { return (reinterpret_cast<uintptr_t>(ptr) % alignment) == 0; }
+inline bool PTR_is_aligned(const void* ptr, size_t alignment = 256) { return (reinterpret_cast<uintptr_t>(ptr) % alignment) == 0; }

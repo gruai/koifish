@@ -11,8 +11,10 @@
 #include "../../Manifold/Fish.hpp"
 #include "../../Manifold/Neuron.hpp"
 #include "./kernel/embed.cuh"
+#include "./kernel/gelu.cuh"
 #include "./kernel/layernorm.cuh"
 #include "./kernel/operator.cuh"
+#include "./kernel/rope.cuh"
 #include "./kernel/utils.cuh"
 #include "qwen_v0.cuh"
 
@@ -27,17 +29,6 @@ extern cudaStream_t main_stream;
 
 //     }
 // }
-__device__ static void coopstage(uint64_t* stats, int stage) {
-    __shared__ uint64_t lastt;
-    if (stats && blockIdx.x == 0 && threadIdx.x == 0) {
-        uint64_t t;
-        asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t));
-        if (stage >= 0) {
-            stats[stage] += t - lastt;
-        }
-        lastt = t;
-    }
-}
 
 /*
     T(__nv_fp8_e5m2)	type of weight
@@ -74,8 +65,8 @@ __global__ __launch_bounds__(1024, 1) static void T_forward_qkv(const __grid_con
     // pre-attention CU_rmsnorm (into shared memory)
     rmsscale    = CU_rmsnorm(xs, args.x, L->rms_att_weight, dim, args.norm_eps, args.norm_ln);  // 57.1846123
     size_t loff = (size_t)l * args.seq_len * kv_dim;                                            // kv cache layer offset for convenience
-    KVT* keyb   = args.key_cache + loff;
-    KVT* valb   = args.val_cache + loff;
+    KVT* keyb   = (KVT*)args.hCache->Get(KVCache::KV_KEY) + loff;                               // args.key_cache
+    KVT* valb   = (KVT*)args.hCache->Get(KVCache::KV_VAL) + loff;                               // args.val_cache
 
     // qkv matmul + RoPE encoding + update KV cache
     for (int j = io * 2; j < q_dim + kv_dim * 2; j += ib * 2) {
@@ -278,7 +269,7 @@ __global__ __launch_bounds__(1024, 1) static void T_forward_ffn(const __grid_con
     SYNC_GRID();
     coopstage(args.perfstats, 5);  // args.hb
 
-    // self.w2(...) + pre-CU_rmsnorm residual
+    // self.w2(...) + pre-CU_rmsnorm resi
     for (int j = io; j < dim * args.n_experts_ac; j += ib) {
         int je    = (j % dim) + moe_experts[j / dim] * dim;
         float val = matmul_warppar(args.hb + (j / dim) * hidden_dim, L->w2, je, hidden_dim);
@@ -334,9 +325,9 @@ float* T_generate_Cooperative(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned
     int dim = args.dim, vocab_size = embed->nVocab, dBLOCK = 1024, dGRID = nCore * nActivePC;
     // copy the token embedding into x
     tpEMBED* token_embedding_table = TO<tpEMBED>(embed->w);
-    kernel_embed<<<dim / 32, 32, 0, main_stream>>>(args.x, token_embedding_table, token, dim);
+    CU_embed_forw_1<<<dim / 32, 32, 0, main_stream>>>(args.x, token_embedding_table, token, dim);
     // embed->w->Print("wte", 0, 0);
-    PrintTensor<AT>("GetRow", args.x, true, dim, 1);
+    PrintTensor<AT>("token_embed", args.x, true, dim, 1);
 
     // rotate sink tokens forward to keep pace with non-sink tokens
     // if (kv_sink > 0) {
@@ -357,7 +348,7 @@ float* T_generate_Cooperative(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned
         SelfAttention* QKV                = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
         const CoopLayer<QWEN3_PIPE::tpWeight>* L = (const CoopLayer<QWEN3_PIPE::tpWeight>*)(args.cLayers + l);  //	args.cLayers+l
         PrintTensor<QWEN3_PIPE::tpWeight>("rms_att_weight", L->rms_att_weight, true, dim, 1);
-        // QKV->cuTrain();
+        // QKV->cuFlow();
 
         cudaError_t err = cudaLaunchCooperativeKernel((void*)T_forward_qkv<__nv_fp8_e5m2, __half, AT>, dGRID, dBLOCK, &argsp, smemPB, main_stream);
         PrintTensor<AT>("hb", args.hb, true, args.hb_dim, 1);
@@ -371,7 +362,7 @@ float* T_generate_Cooperative(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned
         FFN* ffn   = hFish->GetNeuron<FFN>("FFN", l);
         if (0) {             //	-0.010254 -0.238807 ...0.491514 0.0411605 0.318263 ...0.088502 	"ffn_inp" |avg|=0.115405(1536) avg_len=0.195593 sum2=58.7623
             ffn->OnDebug();  //[-1.496535,1.585582] nz=0
-            ffn->cuTrain(cur, 0x0);
+            ffn->cuFlow(cur, 0x0);
         } else {
             void* kernelArgs[] = {argsp};
             // err = cudaLaunchCooperativeKernel((void*)T_forward_ffn<__nv_fp8_e5m2, __half, AT>,dGRID, dBLOCK, &argsp, smemPB, main_stream);
@@ -400,147 +391,170 @@ float* T_generate_Cooperative(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned
     return logits;
 }*/
 
-template <typename AT>
-float* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned flags) {  // int token, int pos,
-    constexpr int HEAD_DIM = 128;
-    int PROMPT_BUFFER_SIZE = hFish->config.model.PROMPT_BUFFER_SIZE;
-    int seq_len            = hFish->config.model.SEQ_LEN;
-    int N_HEADS            = hFish->config.n_head();
-    int N_KV_HEADS = hFish->config.n_head_kv(), KV_DIM = N_KV_HEADS * HEAD_DIM;
-    float rope_theta = hFish->config.model.rope_theta;
-    assert(hFish != nullptr);
-    if (id == 0) {
-        // _INFO("\t %s: |T_weight|=%d |T_kv|=%d |T_activity|=%d \n", __func__, sizeof(__nv_fp8_e5m2), sizeof(__half), sizeof(AT));
-    }
-    TokenEmbed* embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
-    int token = embed->hBatch->CurToken(), pos = embed->hBatch->pos++;
-    QWEN3_PIPE args(hFish, pos);
-    // QWEN_CALM_PIPE args(hFish, pos);  //	kv_len,kv_pos,
+template <>
+hGTensor QWEN3_PIPE::tX = nullptr;
 
-    int nActivePC = 1;  //	for __launch_bounds__(MAX_THREADS_PER_BLOCK, MIN_BLOCKS_PER_MULTIPROCESSOR)
-    // cudaCheck(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&nActivePC, kernel_output<__nv_fp8_e5m2, AT>, dBLOCK, smemPB));
-    int nCore = hFish->curDevice()->nCore, smemPB = args.dim * sizeof(float);
-    int dim = args.dim, vocab_size = embed->nVocab, dBLOCK = 1024, dGRID = nCore * nActivePC;
+template <typename AT>
+floatLogist* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe, unsigned flags) {  // int token, int pos,
+    constexpr int HEAD_DIM = 128;
+    int szBuffer           = hFish->config.chat_sampler.szBuffer;
+    int seq_len            = hFish->config.chat_sampler.seq_len;
+    int N_HEADS = hFish->config.n_head(), N_KV_HEADS = hFish->config.n_head_kv();
+    float rope_theta = hFish->config.model.rope_theta;
+    assert(hFish != nullptr && hPipe != nullptr);
+
+    TokenEmbed* embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
+    int token = embed->hBatch->CurToken(), pos = embed->hBatch->tok_pos;
+    QWEN3_PIPE* hQwen = dynamic_cast<QWEN3_PIPE*>(hPipe);
+    // QWEN3_PIPE qwen_pipe(hFish, pos);
+    // QWEN3_PIPE *hQwen = &qwen_pipe;
+    // hQwen->UpdatePos(0x0);
+    int nCore = hFish->curDevice()->nCore, dim = hQwen->dim;
     // copy the token embedding into x
     tpEMBED* token_embedding_table = TO<tpEMBED>(embed->w);
-    kernel_embed<<<dim / 32, 32, 0, main_stream>>>(args.x, token_embedding_table, token, dim);
+    CU_embed_forw_1<<<dim / 32, 32, 0, main_stream>>>(hQwen->x, token_embedding_table, token, dim);
     // embed->w->Print("wte", 0, 0);
-    PrintTensor<AT>("GetRow", args.x, true, dim, 1);
+    PrintTensor<AT>("token_embed", hQwen->x, true, dim, 1, 1, 1, -1);
 
     OutCLS* cls              = hFish->GetNeuron<OutCLS>("OutCLS", 0);
-    float* logits            = TO<float>(cls->preLogits);
+    floatLogist* logits      = TO<floatLogist>(cls->preLogits);
     LayerNormal* lnf         = hFish->GetNeuron<LayerNormal>("LayerNormal", 0);
     floatX* rms_final_weight = TO<floatX>(lnf->w);  // (dim,);
-    void* argsp              = &args;
-    // PrintTensor<float>("x_0",args.x,true,dim,1);	uint32_t,__nv_fp8_e5m2,float
-
-    hGensor cur = GTensor::outL, residual = nullptr;
-    for (int l = 0; l < args.n_layers; ++l) {
-        if (l == 7) {
-            int debug = 0x0;
+    // PrintTensor<float>("x_0",hQwen->x,true,dim,1);	uint32_t,__nv_fp8_e5m2,float
+    // printf("\tpos=%d\n", pos);
+    for (int l = 0; l < hQwen->n_layers; ++l) {
+        // bf16 *layer_key_cache = hQwen->key_cache + (size_t)l * seq_len * KV_DIM, *layer_value_cache = hQwen->val_cache + (size_t)l * seq_len * KV_DIM;
+        bf16 *layer_key_cache = (bf16*)hQwen->hCache->Get(KVCache::KV_KEY, l, 0), *layer_value_cache = (bf16*)hQwen->hCache->Get(KVCache::KV_VAL, l, 0);
+        bf16* k_cache_pos = layer_key_cache + (size_t)pos * hQwen->kv_dim;
+        bf16* v_cache_pos = layer_value_cache + (size_t)pos * hQwen->kv_dim;
+        if (pos == 1) {
+            // g_dump_level = 0;
+            int debug = 0x0;  // STOP_HERE_FOR_DEBUG
         }
-        args.InitLayer(l);
+        hQwen->InitLayer(l);
+        const CoopLayer<QWEN3_PIPE::tpWeight>* L = (const CoopLayer<QWEN3_PIPE::tpWeight>*)(hQwen->cLayers + l);  //	hQwen->cLayers+l
         SelfAttention* QKV                       = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
-        const CoopLayer<QWEN3_PIPE::tpWeight>* L = (const CoopLayer<QWEN3_PIPE::tpWeight>*)(args.cLayers + l);  //	args.cLayers+l
-        PrintTensor<QWEN3_PIPE::tpWeight>("rms_att_weight", L->rms_att_weight, true, dim, 1);
-        CU_rms_v2(args.xb, args.x, L->rms_att_weight, args.dim);
-        PrintTensor<QWEN3_PIPE::tpActivation>("rms_0", args.x, true, dim, 1);
-        PrintTensor<QWEN3_PIPE::tpActivation>("rms_xb", args.xb, true, dim, 1);
-        bf16* k_cache_pos = args.key_cache + (size_t)l * seq_len * args.kv_dim + (size_t)pos * args.kv_dim;
-        bf16* v_cache_pos = args.val_cache + (size_t)l * seq_len * args.kv_dim + (size_t)pos * args.kv_dim;
-        CU_mv_(args.q, L->wq, args.xb, args.q_dim, args.dim);
-        PrintTensor<QWEN3_PIPE::tpWeight>("wq", L->wq, true, args.q_dim, args.dim);
-        PrintTensor<QWEN3_PIPE::tpActivation>("q", args.q, true, args.q_dim, 1);
-        CU_mv_(k_cache_pos, L->wk, args.xb, args.kv_dim, args.dim);
-        PrintTensor<QWEN3_PIPE::tpActivation>("k", k_cache_pos, true, args.kv_dim, 1);
-        CU_mv_(v_cache_pos, L->wv, args.xb, args.kv_dim, args.dim);
-        PrintTensor<QWEN3_PIPE::tpActivation>("v", v_cache_pos, true, args.kv_dim, 1);
+        if (flags == 1) {
+            // QKV->OnDebug();
+            QKV->cuInfer(hQwen->inpL, 0x0);
+        } else {
+            // PrintTensor<QWEN3_PIPE::tpWeight>("rms_att_weight", L->rms_att_weight, true, dim, 1);
+            CU_rms_v2(hQwen->xb, hQwen->x, L->rms_att_weight, hQwen->dim);
+            // PrintTensor<QWEN3_PIPE::tpActivation>("rms_0", hQwen->x, true, dim, 1);
+            PrintTensor<QWEN3_PIPE::tpActivation>("rms_xb", hQwen->xb, true, dim, 1);
 
-        // qk_norm_fused_gpu(args.q, k_cache_pos, L->wq_norm, L->wk_norm);
-        constexpr int QK_NORM_THREADS_PER_BLOCK = 64;
-        // launching ONE kernel for all query heads
-        fused_multi_rmsnorm_kernel<QK_NORM_THREADS_PER_BLOCK, HEAD_DIM><<<N_HEADS, QK_NORM_THREADS_PER_BLOCK>>>(args.q, L->wq_norm, N_HEADS, 1.0f / HEAD_DIM);
-        // launching ONE kernel for all key heads
-        fused_multi_rmsnorm_kernel<QK_NORM_THREADS_PER_BLOCK, HEAD_DIM>
-            <<<N_KV_HEADS, QK_NORM_THREADS_PER_BLOCK>>>(k_cache_pos, L->wk_norm, N_KV_HEADS, 1.0f / HEAD_DIM);
+            CU_mv_(hQwen->q, L->wq, hQwen->xb, hQwen->q_dim, hQwen->dim);
+            // PrintTensor<QWEN3_PIPE::tpWeight>("wq", L->wq, true, hQwen->q_dim, hQwen->dim);
+            PrintTensor<QWEN3_PIPE::tpActivation>("q", hQwen->q, true, hQwen->q_dim, 1);
+            CU_mv_(k_cache_pos, L->wk, hQwen->xb, hQwen->kv_dim, hQwen->dim);
+            PrintTensor<QWEN3_PIPE::tpActivation>("k", k_cache_pos, true, hQwen->kv_dim, 1);
+            CU_mv_(v_cache_pos, L->wv, hQwen->xb, hQwen->kv_dim, hQwen->dim);
+            PrintTensor<QWEN3_PIPE::tpActivation>("v", v_cache_pos, true, hQwen->kv_dim, 1);
 
-        rope_gpu_naive(args.q, k_cache_pos, pos, N_HEADS, N_KV_HEADS, HEAD_DIM, rope_theta);
-        // 6. MHA (QK^T V)
-        bf16 *layer_key_cache = args.key_cache + (size_t)l * seq_len * KV_DIM, *layer_value_cache = args.val_cache + (size_t)l * seq_len * KV_DIM;
-        // 6.1: calculate QK scores
-        int qk_threads_per_block = std::min(1024, pos + 1);
-        attention_qk_kernel<<<N_HEADS, qk_threads_per_block>>>(args.att, args.q, layer_key_cache, pos, seq_len, N_HEADS, N_KV_HEADS, HEAD_DIM);
-        // 6.2: softmax
-        softmax_kernel<<<N_HEADS, 1>>>(args.att, pos, seq_len);
-        // 6.3: aggregate V values
-        attention_v_kernel<<<N_HEADS, HEAD_DIM>>>(args.q, args.att, layer_value_cache, pos, seq_len, N_HEADS, N_KV_HEADS, HEAD_DIM);
-        cudaCheck(cudaStreamSynchronize(main_stream));
-        cudaError_t err{cudaGetLastError()};
-        // PrintTensor<AT>("hb", args.hb, true, args.hb_dim, 1);
-        PrintTensor<AT>("q", args.q, true, args.q_dim, 1);
-        // PrintTensor<float>("att", args.att, true, dim, 1);  // why it's inf ???
-        // 7. final attention output projection and residual connection (fused)        
-        CU_mv_(args.x, L->wo, args.q, args.dim, args.q_dim, 1.0f, 1.0f);        // matmul_cublas(cublas_handle, args.x, L->wo, args.q, args.dim, args.q_dim, 1.0f, 1.0f);
-        PrintTensor<QWEN3_PIPE::tpActivation>("att_x", args.x, true, args.dim, 1);
-        cudaCheck(err);
+            // qk_norm_fused_gpu(hQwen->q, k_cache_pos, L->wq_norm, L->wk_norm);
+            constexpr int QK_NORM_THREADS_PER_BLOCK = 64;
+            if (1) {
+                CU_rmsnorm_multihead<<<N_HEADS, QK_NORM_THREADS_PER_BLOCK>>>(hQwen->q, L->wq_norm, N_HEADS, HEAD_DIM);
+                PrintTensor<QWEN3_PIPE::tpActivation>("q.norm", hQwen->q, true, hQwen->q_dim, 1);
+                CU_rmsnorm_multihead<<<N_KV_HEADS, QK_NORM_THREADS_PER_BLOCK>>>(k_cache_pos, L->wk_norm, N_KV_HEADS, HEAD_DIM);
+                PrintTensor<QWEN3_PIPE::tpActivation>("k.norm", k_cache_pos, true, hQwen->kv_dim, 1);
+            } else {
+                fused_multi_rmsnorm_kernel<QK_NORM_THREADS_PER_BLOCK, HEAD_DIM>
+                    <<<N_HEADS, QK_NORM_THREADS_PER_BLOCK>>>(hQwen->q, L->wq_norm, N_HEADS, 1.0f / HEAD_DIM);
+                fused_multi_rmsnorm_kernel<QK_NORM_THREADS_PER_BLOCK, HEAD_DIM>
+                    <<<N_KV_HEADS, QK_NORM_THREADS_PER_BLOCK>>>(k_cache_pos, L->wk_norm, N_KV_HEADS, 1.0f / HEAD_DIM);
+            }
 
-        // exit(-13);
+            // rope_gpu_naive(hQwen->q, k_cache_pos, pos, N_HEADS, N_KV_HEADS, HEAD_DIM, rope_theta);
+            CU_rope_forward<<<dim3(N_HEADS, 1, 1), dim3(HEAD_DIM / 2, 1, 1)>>>(hQwen->q, k_cache_pos, pos, N_HEADS, N_KV_HEADS, HEAD_DIM, rope_theta);
+            PrintTensor<QWEN3_PIPE::tpActivation>("q.rope", hQwen->q, true, hQwen->q_dim, 1),
+                PrintTensor<QWEN3_PIPE::tpActivation>("k.rope", k_cache_pos, true, hQwen->kv_dim, 1);
+
+            // 6. MHA (QK^T V)
+            // 6.1: calculate QK scores
+            int qk_threads_per_block = std::min(1024, pos + 1);
+            attention_qk_kernel<<<N_HEADS, qk_threads_per_block>>>(hQwen->att, hQwen->q, layer_key_cache, pos, seq_len, N_HEADS, N_KV_HEADS, HEAD_DIM);
+            // 6.2: softmax
+            CU_softmax_multihead<<<N_HEADS, 1>>>(hQwen->att, pos, seq_len);
+            PrintTensor<float>("attn", hQwen->att, true, pos + 1, 1);
+            // 6.3: aggregate V values
+            attention_v_kernel<<<N_HEADS, HEAD_DIM>>>(hQwen->q, hQwen->att, layer_value_cache, pos, seq_len, N_HEADS, N_KV_HEADS, HEAD_DIM);
+            // PrintTensor<AT>("hb", hQwen->hb, true, hQwen->hb_dim, 1);
+            PrintTensor<AT>("att_out", hQwen->q, true, hQwen->q_dim, 1);
+            // PrintTensor<float>("att", hQwen->att, true, dim, 1);  // why it's inf ???
+            // 7. final attention output projection and resi connection (fused)
+            CU_mv_(hQwen->x, L->wo, hQwen->q, hQwen->dim, hQwen->q_dim, 1.0f, 1.0f);
+            PrintTensor<QWEN3_PIPE::tpActivation>("att_x", hQwen->x, true, hQwen->dim, 1);
+        }
+        cudaCheck(cudaStreamSynchronize(main_stream)), cudaCheck(cudaGetLastError());
+        hQwen->inpL->Print("x_qkv", 0x0, -1);
+        // if (pos == 1) {            exit(-13);        }
         double now = GST_ms();
         FFN* ffn   = hFish->GetNeuron<FFN>("FFN", l);
-        if (0) {             //	-0.010254 -0.238807 ...0.491514 0.0411605 0.318263 ...0.088502 	"ffn_inp" |avg|=0.115405(1536) avg_len=0.195593 sum2=58.7623
-            ffn->OnDebug();  //[-1.496535,1.585582] nz=0
-            ffn->cuTrain(cur, 0x0);
+        if (1) {
+            // ffn->OnDebug();
+            ffn->cuInfer(hQwen->inpL, 0x0);
         } else {
-            CU_rms_v2(args.xb, args.x, L->rms_ffn_weight, args.dim);
+            CU_rms_v2(hQwen->xb, hQwen->x, L->rms_ffn_weight, hQwen->dim);
             // 9. FFN projections (Gate and Up)
-            // output of w1 matmul is args.hb. output of w3 matmul is args.hb2.            
-            CU_mv_(args.hb, L->w3, args.xb, args.hidden_dim, args.dim);     // matmul_cublas(cublas_handle, args.hb, L->w3, args.xb, args.hidden_dim, args.dim);
-            CU_mv_(args.hb2, L->w1, args.xb, args.hidden_dim, args.dim);     // matmul_cublas(cublas_handle, args.hb2, L->w1, args.xb, args.hidden_dim, args.dim);
+            // output of w1 matmul is hQwen->hb. output of w3 matmul is hQwen->hb2.
+            CU_mv_(hQwen->hb, L->w3, hQwen->xb, hQwen->hidden_dim,
+                   hQwen->dim);  // matmul_cublas(cublas_handle, hQwen->hb, L->w3, hQwen->xb, hQwen->hidden_dim, hQwen->dim);
+            CU_mv_(hQwen->hb2, L->w1, hQwen->xb, hQwen->hidden_dim,
+                   hQwen->dim);  // matmul_cublas(cublas_handle, hQwen->hb2, L->w1, hQwen->xb, hQwen->hidden_dim, hQwen->dim);
             // 9. SwiGLU
-            // in-place operation on args.hb, using args.hb2 as the gate.
-            swiglu_gpu(args.hb, args.hb2, args.hidden_dim);
-            // 10. final FFN Down Projection matmul and residual connection (fused)
-            CU_mv_(args.x, L->w2, args.hb, args.dim, args.hidden_dim, 1.0f, 1.0f);     //matmul_cublas(cublas_handle, args.x, L->w2, args.hb, args.dim, args.hidden_dim, 1.0f, 1.0f);
+            // in-place operation on hQwen->hb, using hQwen->hb2 as the gate.
+            swiglu_forward(hQwen->hb, hQwen->hb, hQwen->hb2, hQwen->hidden_dim);
+            // 10. final FFN Down Projection matmul and resi connection (fused)
+            CU_mv_(hQwen->x, L->w2, hQwen->hb, hQwen->dim, hQwen->hidden_dim, 1.0f,
+                   1.0f);  // matmul_cublas(cublas_handle, hQwen->x, L->w2, hQwen->hb, hQwen->dim, hQwen->hidden_dim, 1.0f, 1.0f);
             cudaCheck(cudaGetLastError());
         }
         cudaCheck(cudaStreamSynchronize(main_stream));
         // SUM::tX1 += GST_ms() - now;
-        PrintTensor<AT>("x_ffn", args.x, true, dim, 1, 1, 1, 0);
-        // args.AfterLayer(l);
+        PrintTensor<AT>("x_ffn", hQwen->x, true, dim, 1, 1, 1, -1);
+        // hQwen->AfterLayer(l);
+        if (l > DEBUG.T_generate_most_layer)
+            exit(KOIFISH_EXIT_DEBUG);
     }
     if (isOnlyUpdateKV) {
         return NULL;
     }
     // 11. final RMSNorm
-    // in-place operation on args.x
-    CU_rms_v2(args.x, args.x, rms_final_weight, args.dim);
+    // in-place operation on hQwen->x
+    CU_rms_v2(hQwen->x, hQwen->x, rms_final_weight, hQwen->dim);
     // 12. classifier Matmul
-    hGensor out_weight = args.out_weight;
-    CU_mv_(args.xlogit, ToX(out_weight), args.x, args.vocab_size, args.dim);     //matmul_cublas(cublas_handle, args.xlogit, ToX(out_weight), args.x, args.vocab_size, args.dim);
-    int grid_size = (args.vocab_size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-    convert_bf16_to_fp32_kernel<<<grid_size, THREADS_PER_BLOCK>>>(args.xlogit, logits, args.vocab_size);
-    // cudaMemcpy(transformer->h_logits, args.d_logits_fp32, (size_t)args.vocab_size * sizeof(float), cudaMemcpyDeviceToHost);
+    if (1) {
+        cls->cuInfer(hQwen->inpL, 0x0);
+    } else {
+        CU_rms_v2(hQwen->x, hQwen->x, rms_final_weight, hQwen->dim);
+        hGensor out_weight = hQwen->out_weight;
+        CU_mv_(hQwen->xlogit, ToX(out_weight), hQwen->x, hQwen->vocab_size, hQwen->dim);
+        int grid_size = (hQwen->vocab_size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        // only for using floatLogist = float;
+        // convert_bf16_to_fp32_kernel<<<grid_size, THREADS_PER_BLOCK>>>(hQwen->xlogit, logits, hQwen->vocab_size);
+        cls->preLogits->SerialData("", nullptr, true);
+    }
+    // cls->preLogits->Print("logits",0,-1,hQwen->vocab_size);
 
-    // cls->preLogits->Print("logits",0,-1,args.vocab_size);
-    cls->preLogits->SerialData("", nullptr, true);
     return logits;
 }
 
-float* T_generate_(hFISH hFish, int id, typNUMBER tpActivity, unsigned flags) {  // int token, int pos,
-    float* logits = nullptr;
+floatLogist* T_generate_(hFISH hFish, MODEL_CARD* hPipe, typNUMBER tpActivity, int flags) {  // int token, int pos,
+    floatLogist* logits = nullptr;
 
     if (DEBUG.T_cpu == 1) {
         // T_generate_cpu(SharedThis(), false, flag);
     } else {
         switch (tpActivity) {
             case typNUMBER::F32:
-                // logits = T_generate_cuda<float>(hFish, false, id, flags);
+                // logits = T_generate_cuda<float>(hFish, false, hPipe, flags);
                 break;
             case typNUMBER::BF16:
-                logits = T_generate_cuda<__nv_bfloat16>(hFish, false, id, flags);
+                logits = T_generate_cuda<__nv_bfloat16>(hFish, false, hPipe, flags);
                 break;
             // case typNUMBER::F8E5M2:
-            // 	logits = T_generate_cuda<__nv_fp8_e5m2>(hFish,false,id,flags);
+            // 	logits = T_generate_cuda<__nv_fp8_e5m2>(hFish,false,hPipe,flags);
             // 	break;
             default:
                 assert(0);

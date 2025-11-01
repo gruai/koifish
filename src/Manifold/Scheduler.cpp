@@ -71,6 +71,9 @@ hGensor GeNeuron::OnInput(hGensor hIn, int flag) {
         assert(isTemp);
         hIn->SerialData(name, host_inp, false, dump_flag);
     }
+    if(hFish->ChatMode()!=CHAT_MODE::YABA){     //  ???
+        return hIn;
+    }
 
     if (!hFish->hOPT->isBackward) {  // Forward
         if (isTemp) {
@@ -129,8 +132,11 @@ bool RLS_BP::InitGUOKE(int flag) {
         _INFO("[RLS] \tGuoke=%d(%d)\t\n", nT_guoke, nT);
     }
     if (hFish->isLocalInfer) {
-        OutCLS *cls = hFish->GetNeuron<OutCLS>("OutCLS", 0);
-        cls->ManageMemory(DATA_PLACE::DEV_MEM);
+        // OutCLS *cls = hFish->GetNeuron<OutCLS>("OutCLS", 0);
+        // cls->ManageMemory(DATA_PLACE::DEV_MEM);
+        for (auto neuron : hFish->backbons) {
+            neuron->ManageMemory(DATA_PLACE::DEV_MEM);
+        }
     } else {
         for (auto neuron : hFish->backbons) {
             neuron->ManageMemory(DATA_PLACE::DEV_MEM);
@@ -602,7 +608,7 @@ bool RLS_BP::Prepare(int iter, int flag) {
         }*/
     }
 
-    switch (phase) {
+    switch (hFish->phase) {
         case LIFE_PHASE::P_EVAL_:
         case LIFE_PHASE::P_GENERATE:
             return true;
@@ -656,7 +662,7 @@ bool RLS_BP::Prepare(int iter, int flag) {
     step = 0;
     if (iter < 0)
         _INFO("[RLS] resident={%s}\n", resident_list.c_str());
-    if (DUMP(1) && iter <= 2 && phase != LIFE_PHASE::P_EVAL_) {
+    if (DUMP(1) && iter <= 2 && hFish->phase != LIFE_PHASE::P_EVAL_) {
         size_t szFree, szTotal;
         cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
         _INFO("[MEMORY] mGPU=%.6gM(free=%.6gM) %s\n", (szTotal - szFree) / 1.0e6, szFree / 1.0e6, SUM::CPU_MemoryInfo().c_str());

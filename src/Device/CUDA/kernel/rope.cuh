@@ -55,7 +55,7 @@ __global__ void CU_rope_(Typ *inp, Typ *out, float *scale, int seq_len, int head
     __sincosf(t * freq, &sin_v, &cos_v);
     int idx1 = h_id * head_dim + c, idx2 = idx1 + half_hs;
     assert(idx2 < B * T * C);
-    float x1 = inp[idx1], x2 = inp[idx2], out1, out2, s = 1.0;
+    float x1 = inp[idx1], x2 = inp[idx2], out1, out2;
     if (scale != nullptr) {
         if (isBack) {
             x1 /= scale[h_id], x2 /= scale[h_id];
@@ -943,4 +943,48 @@ __global__ void CU_rope_prenormal_(Typ *inp, Typ *out, float *scale, int seq_len
     out[idx1] = CU_Float2T<Typ>(out1, seed + c);
     out[idx2] = CU_Float2T<Typ>(out2, seed + c);
     // out[idx] = x1;      out[idx + 1] = x2;
+}
+
+__global__ static void CU_rope_forward(bf16* q, bf16* k_cache_pos, int pos, int N_HEADS, int N_KV_HEADS, int HEAD_DIM, float ROPE_THETA) {
+    // `blockIdx.x` will correspond to the head index 'h'
+    int h = blockIdx.x;
+    // `threadIdx.x` will correspond to the inner loop index 'j'
+    int j = threadIdx.x;
+
+    if (h < N_HEADS && j < HEAD_DIM / 2) {
+        bf16* q_head = q + h * HEAD_DIM;
+
+        float freq = 1.0f / powf(ROPE_THETA, (float)(j * 2) / (float)HEAD_DIM);
+        float val  = (float)pos * freq;
+        float fcr, fci;
+        sincosf(val, &fci, &fcr);
+
+        float q_real = __bfloat162float(q_head[j]);
+        float q_imag = __bfloat162float(q_head[j + HEAD_DIM / 2]);
+
+        float q_rotated_real = q_real * fcr - q_imag * fci;
+        float q_rotated_imag = q_real * fci + q_imag * fcr;
+
+        q_head[j]                = __float2bfloat16_rn(q_rotated_real);
+        q_head[j + HEAD_DIM / 2] = __float2bfloat16_rn(q_rotated_imag);
+    }
+
+    if (h < N_KV_HEADS && j < HEAD_DIM / 2) {
+        bf16* k_head = k_cache_pos + h * HEAD_DIM;
+
+        float freq = 1.0f / powf(ROPE_THETA, (float)(j * 2) / (float)HEAD_DIM);
+        float val  = (float)pos * freq;
+        float fcr, fci;
+        sincosf(val, &fci, &fcr);
+
+        float k_real = __bfloat162float(k_head[j]);
+        float k_imag = __bfloat162float(k_head[j + HEAD_DIM / 2]);
+
+        // perform rotation in fp32
+        float k_rotated_real = k_real * fcr - k_imag * fci;
+        float k_rotated_imag = k_real * fci + k_imag * fcr;
+
+        k_head[j]                = __float2bfloat16_rn(k_rotated_real);
+        k_head[j + HEAD_DIM / 2] = __float2bfloat16_rn(k_rotated_imag);
+    }
 }

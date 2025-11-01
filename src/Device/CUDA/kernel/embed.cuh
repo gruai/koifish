@@ -44,6 +44,21 @@ __global__ static void encoder_forward_kernel3(floatX* out, const int* inp, cons
     store128(out_btc, packed_out);  //  store packed(128-BIT) wte to out_btc(aligned memory address)
 }
 
+// __device__ inline float embed_gf4(uint32_t* weight, int idx) { return cu_gf4_ff(weight[idx / 8], idx % 8); }
+
+// template <typename T>
+// __device__ inline float embed(T* weight, int idx) {
+//     return float(weight[idx]);
+// }
+
+template <typename T_out, typename T>
+__global__ static void CU_embed_forw_1(T_out* o, T* weight, int token, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    assert(i < n);
+    
+    o[i] = weight[token * n + i];    //embed(weight, token * n + i);
+}
+
 // each thread for one element
 __global__ static void CU_embed_forw_v0(floatX* out, const int* tokens, const floatX* wte, const floatX* wpe, int B, int T, int C) {
     int idx = (blockIdx.x * blockDim.x + threadIdx.x);

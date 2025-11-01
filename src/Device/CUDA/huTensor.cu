@@ -19,7 +19,7 @@
 #include "./kernel/operator.cuh"
 #include "./kernel/utils.cuh"
 static Grusoft::GRander randParam;
-huTensor::huTensor(Fish* fish, const string& name_, const SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag) : GTensor(fish, shape, tpD_, false, flag) {
+huTensor::huTensor(Fish* fish, const string& name_, SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag) : GTensor(fish, shape, tpD_, false, flag) {
     size_t nEle       = size();
     MEM_STRATEGY stra = fish->config.scheduling.strategy;
     if (stra == MEM_STRATEGY::PRE_ALLOC_HOST_MAP) {
@@ -87,9 +87,9 @@ size_t huTensor::Alloc_1(void** dst, bool isZero, string desc, size_t sz0, int f
         size_t szFree, szTotal;
         cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
         if (szAlloc > szFree) {
-            _ERROR("[CUDA Alloc] Outof GPU Memory @%s!  Free=%gM < Need=%gM.\n ----------------------- more infomation -----------------------\n", name,
-                   szFree / 1.0e6, szAlloc / 1.0e6);
             hFish->Dump(KOIFISH_OUTOF_GPUMEMORY);
+            _ERROR("[CUDA Alloc] Outof GPU Memory @%s!  Free=%gM < Need=%gM.\n ----------------------- more infomation -----------------------\n", name,
+                   szFree / 1.0e6, szAlloc / 1.0e6);            
             exit(KOIFISH_OUTOF_GPUMEMORY);
         }
     }
@@ -183,12 +183,12 @@ bool huTensor::InitParam(int tpX) {
         Print(name, 0, -1);  // dump some value
     return true;
 }
-
+#ifdef __USE_GGML__
 /*
    Only for gguf-serialize
 */
 bool huTensor::CopyGG(struct ggml_tensor* gg_, int flag) {
-#ifdef __USE_GGML__
+
     int i = 0;
     assert(gg == nullptr);
     bool isAlloc = data != nullptr;
@@ -229,10 +229,11 @@ bool huTensor::CopyGG(struct ggml_tensor* gg_, int flag) {
     bool toDevice = SerialGP(src, nullptr, szSrc, false, 0x0);
     assert(toDevice);
 #endif
-#endif
+
     // if(src!=data)       delete[] src;
     return true;
 }
+#endif
 
 //  From:   https://stackoverflow.com/questions/57948643/whats-a-good-way-to-zero-out-cudamallocd-data
 /*__global__ void clear_scratch_space_kernel(int * data, int blocks, int threads) {
@@ -580,8 +581,6 @@ double GTensor::Length(int type, int flag) {
 
     return gnorm;
 }
-
-hGTensor huTensor::GetRow(hGTensor hOut, hGTensor token, hGTensor pos, int flag) { return hOut; }
 
 huTensor::~huTensor() { Free(); }
 

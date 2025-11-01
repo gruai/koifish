@@ -22,7 +22,7 @@ namespace fs = std::filesystem;
 
 #ifdef __USE_GGML__
 #else
-std::vector<hWIKI> WIKI::MakeInstance(const std::string nam_, struct CLI_params &params, int flag) {
+std::vector<hWIKI> WIKI::MakeInstance(const std::string nam_, struct CLI_params& params, int flag) {
     std::vector<hWIKI> wikis;
     if (params.tpWiki != "off") {  // wiki is so heavy(ugly) that only load one instance here!
         for (auto path : params.fn_model_base) {
@@ -35,7 +35,7 @@ std::vector<hWIKI> WIKI::MakeInstance(const std::string nam_, struct CLI_params 
 }
 #endif
 
-double WIKI::InductLogits(const CLI_params &config, int nSampInBatch, std::vector<TOKEN_ID> &tok_ids, struct ggml_tensor *target_probs, int flag) {
+double WIKI::InductLogits(const CLI_params& config, int nSampInBatch, std::vector<TOKEN_ID>& tok_ids, struct ggml_tensor* target_probs, int flag) {
     if (!isInduct())
         return -1.0;
 
@@ -63,19 +63,19 @@ double WIKI::InductLogits(const CLI_params &config, int nSampInBatch, std::vecto
         }else*/
         {
             target = exLogits + nSampInBatch * n_ctx * n_vocab;
-            memcpy((void *)target, (void *)all_logits, sizeof(float) * n_ctx * n_vocab);  // memcpy(g->data+off,(void*)(logits),ld2);
+            memcpy((void*)target, (void*)all_logits, sizeof(float) * n_ctx * n_vocab);  // memcpy(g->data+off,(void*)(logits),ld2);
         }
     } else {
 #ifdef __USE_GGML__
         for (k = 0; k < nSampInBatch; ++k) {
-            const float *from = all_logits + k * n_vocab;
-            a1                = NRM_2_((float *)(from), n_ctx * n_vocab);
+            const float* from = all_logits + k * n_vocab;
+            a1                = NRM_2_((float*)(from), n_ctx * n_vocab);
             nrm               = max(nrm, a1 / n_vocab);
             if (teach == WIKI::_TARGET) {
                 assert(exLogits == nullptr);
                 for (j = 0; j < n_ctx; j++) {
                     logit  = from + j * n_vocab;
-                    target = (float *)target_probs->data + (k * n_ctx + j) * n_vocab;
+                    target = (float*)target_probs->data + (k * n_ctx + j) * n_vocab;
                     //  SOFT_MAX_minus(n_vocab,target,logit);
                     // SOFT_MAX(n_vocab,p,logit);
                     for (a1 = 0, a2 = 0, i = 0; i < n_vocab; i++) {
@@ -91,8 +91,8 @@ double WIKI::InductLogits(const CLI_params &config, int nSampInBatch, std::vecto
                 assert(exLogits != nullptr);
                 if (exLogits != from) {
                     // target = (float*)exLogits->data+k*n_ctx*n_vocab;
-                    target = (float *)exLogits + k * n_ctx * n_vocab;
-                    memcpy((void *)target, (void *)from, sizeof(float) * n_ctx * n_vocab);
+                    target = (float*)exLogits + k * n_ctx * n_vocab;
+                    memcpy((void*)target, (void*)from, sizeof(float) * n_ctx * n_vocab);
                 }
             }
         }
@@ -103,25 +103,27 @@ double WIKI::InductLogits(const CLI_params &config, int nSampInBatch, std::vecto
 }
 
 static Grusoft::GRander rand_gopt(42 * 666);
-int Sample_CDF_T(int n, float *logits, float minp, float temperature, uint64_t *rng_seed, int flag = 0x0) {
+int Sample_CDF_T(int n, floatLogist* logits, float minp, float temperature, uint64_t* rng_seed, int flag = 0x0) {
     float coin = rand_gopt.NextFloat_01();  // random_f32(rng_seed);
     // find max logit; we will use this to derive minp cutoff (in log space), since minp is scale-invariant (wrt softmax)
     float max_logit = -FLT_MAX;
     for (int i = 0; i < n; i++) {
-        max_logit = logits[i] > max_logit ? logits[i] : max_logit;
+        float a = logits[i];
+        max_logit = a > max_logit ? a : max_logit;
     }
 
     // exp(logit / temp) <= exp(max_logit / temp) * minp -> logit <= max_logit + log(minp) * temp
     float logit_cutoff = max_logit + logf(minp) * temperature;
 
     // convert from logits to probabilities in-place while simultaneously doing (unscaled) softmax; we'll rescale later
-    float *probs          = logits;
+    floatLogist* probs          = logits;
     int fallback          = 0;
     float cumulative_prob = 0.0f;
     for (int i = 0; i < n; i++) {
-        if (logits[i] >= logit_cutoff) {
-            probs[i] = expf((logits[i] - max_logit) / temperature);
-            cumulative_prob += probs[i];
+        float a = logits[i];
+        if (a >= logit_cutoff) {
+            probs[i] = expf((a - max_logit) / temperature);
+            cumulative_prob += (float)(probs[i]);
             fallback = i;  // for fallback due to rounding errors
         } else {
             probs[i] = 0.0f;
@@ -132,7 +134,7 @@ int Sample_CDF_T(int n, float *logits, float minp, float temperature, uint64_t *
     float r   = coin * cumulative_prob;
     float cdf = 0.0f;
     for (int i = 0; i < n; i++) {
-        cdf += probs[i];
+        cdf += (float)(probs[i]);
         if (r < cdf) {
             return i;
         }
@@ -140,22 +142,23 @@ int Sample_CDF_T(int n, float *logits, float minp, float temperature, uint64_t *
     return fallback;  // in case of rounding errors
 }
 
-int Sample_CDF(int n, float *preP, uint64_t *rng_seed, int flag = 0x0) {
+int Sample_CDF(int n, floatLogist *preP, uint64_t* rng_seed, int flag = 0x0) {
     float sum = 0, cdf = 0, pMin, pMax, a;
     int j, next_token  = -1;
     for (pMin = FLT_MAX, pMax = -FLT_MAX, j = 0; j < n; j++) {
-        a    = preP[j];
+        a    = (float)(preP[j]);
         pMin = min(a, pMin);
         pMax = max(a, pMax);
     }
     for (sum = 0, j = 0; j < n; j++) {
-        preP[j] = exp(preP[j] - pMax);
-        sum += preP[j];
+        a    = (float)(preP[j]);
+        preP[j] = exp(a - pMax);
+        sum += a;
     }
     assert(sum > 0 && sum < FLT_MAX);
     float coin = rand_gopt.NextFloat_01();  // random_f32(rng_seed);
     for (cdf = 0, j = 0; j < n; j++) {
-        cdf += preP[j];
+        cdf += (float)(preP[j]);
         if (coin < cdf / sum) {
             next_token = j;
             break;
@@ -164,17 +167,17 @@ int Sample_CDF(int n, float *preP, uint64_t *rng_seed, int flag = 0x0) {
     return next_token;
 }
 
-int GGUF_list(CLI_params &config) {
+int GGUF_list(CLI_params& config) {
     std::vector<string> paths;
     std::string root = "/media/cys/E0/", path;
     root             = "/home/cys/rnd/lic/models/";
-    for (const auto &entry : fs::directory_iterator(root)) {
+    for (const auto& entry : fs::directory_iterator(root)) {
         fs::path filePath = entry.path();
         if (filePath.extension() == ".gguf")
             paths.push_back(entry.path());
     }
     int nP = paths.size(), i = 0;
-    FILE *fp = fopen("./log/GGUF_list.log", "wt");
+    FILE* fp = fopen("./log/GGUF_list.log", "wt");
     string sToken, info, suffix = "\t", prefix;
     fprintf(fp, "%s LOAD %d @%s\n", __func__, nP, root.c_str());
     fflush(fp);
@@ -194,7 +197,7 @@ int GGUF_list(CLI_params &config) {
             hWIKI wiki = nullptr;  //  WIKI::MakeInstance
             assert(wiki != nullptr);
             info = wiki == nullptr ? "" : wiki->__repr__(suffix, prefix);
-        } catch (const std::exception &e) {
+        } catch (const std::exception& e) {
             info = std::string(e.what());
         } catch (...) {
             info = "!!! UNKNOW EXCEPTION !!!";
@@ -207,9 +210,9 @@ int GGUF_list(CLI_params &config) {
     return 0x0;
 }
 
-int run_caml(const char *prompt, int flag);
+int run_caml(const char* prompt, int flag);
 
-int Fish_bubble(CLI_params &config) {
+int Fish_bubble(CLI_params& config) {
     g_dump_level              = 0;
     config.wiki_actor         = "copy";
     config.common.n_batch     = 1;
@@ -229,7 +232,7 @@ int Fish_bubble(CLI_params &config) {
     return 666;
 }
 
-int fish_1(CLI_params &config) {
+int fish_1(CLI_params& config) {
     auto param_1 = config, param_2 = config;
     param_1.tpWiki         = "logits";
     param_1.common.n_batch = 1;
@@ -259,7 +262,7 @@ bool _LoadCheckPoint(CLI_params &config, arrHWIKI &wikis, int flag = 0x0) {
     return true;
 }*/
 
-int GPT_work(CLI_params &config) {
+int GPT_work(CLI_params& config) {
     //  GRUS_Get_SystemInfo
     _INFO("[%s] threads=%d \n%s\n", __func__, std::thread::hardware_concurrency(), "");  // llama_print_system_info()
     // ggml_numa_init(GGML_NUMA_STRATEGY_DISABLED);
@@ -306,15 +309,14 @@ int GPT_work(CLI_params &config) {
     return 666;
 }
 
-hGOPT GeneratOnPrompt::MakeInstance(struct CLI_params &config, arrHWIKI &wikis, const Fish *fish_0, int flag) {
-    hGOPT gopt = nullptr;    
-    
-    switch (config.chat_mode) {
+hGOPT GeneratOnPrompt::MakeInstance(struct CLI_params& config, arrHWIKI& wikis, const Fish* fish_0, int flag) {
+    hGOPT gopt = nullptr;
+
+    switch (config.ChatMode()) {
         case CHATML_ASSIST:
-        case CHATML_THINK:{
+        case CHATML_THINK: {
             gopt = std::make_shared<GeneratOnPrompt>(config, wikis, fish_0, 0x0);
-        }
-            break;
+        } break;
         case CHAT_SMOKE: {
             gopt = std::make_shared<GOPT_Metropolis>(config, wikis, fish_0, 0x0);
             if (gopt != nullptr && gopt->Init(config.prompt)) {
@@ -323,7 +325,7 @@ hGOPT GeneratOnPrompt::MakeInstance(struct CLI_params &config, arrHWIKI &wikis, 
                 gopt.reset();
                 gopt = nullptr;
             }
-            const char *promt              = "when the smoke is going down,";
+            const char* promt              = "when the smoke is going down,";
             std::vector<TOKEN_ID> some_inp = {9493, 279, 16603, 374, 2133, 1523, 11};  // const char* promt = "when the smoke is going down,";
         } break;
         default:
@@ -383,7 +385,7 @@ void GeneratOnPrompt::InitInput(int flag) {
 }
 
 // Deprecated
-GeneratOnPrompt::GeneratOnPrompt(struct gpt_params &par_, int flag) {
+GeneratOnPrompt::GeneratOnPrompt(struct gpt_params& par_, int flag) {
     /*LOG("%s logits_all=%d\n", __func__,params.logits_all );
     llama_numa_init(params.numa);
     // prompt = GetPrompt();
@@ -413,24 +415,24 @@ void GeneratOnPrompt::Clear() {
     FREE_a(_logits);
 }
 // only for debug
-GeneratOnPrompt::GeneratOnPrompt(CLI_params &cp_, arrHWIKI &wiki_, const Fish *hG_, int flag) : config(cp_), fish_0(hG_), wikis(wiki_) {
+GeneratOnPrompt::GeneratOnPrompt(CLI_params& cp_, arrHWIKI& wiki_, const Fish* hG_, int flag) : config(cp_), fish_0(hG_), wikis(wiki_) {
     if (fish_0 != nullptr) {
-        samp_params = config.chat_sampler;
+        samp_params       = config.chat_sampler;
         auto gang_param   = config;
         gang_param.tpWiki = "off";
         assert(gang_param.tpWiki == "off");
         gang_param.common.n_batch = 1;
-        fish_1                    = (Fish *)fish_0;
+        fish_1                    = (Fish*)fish_0;
         // fish_1 = Fish::MakeInstance("4GPT_",gang_param,wikis,Fish::ROLE_TYPE::SWARM_FOLLOWER,0x110);        //  isLocalInfer = flag==0x110;
         // fish_1->Dump(0x0);
-        OutCLS *cls   = ((Fish *)fish_0)->GetNeuron<OutCLS>("OutCLS", 0);        
+        OutCLS* cls = ((Fish*)fish_0)->GetNeuron<OutCLS>("OutCLS", 0);
         int n_vocab = fish_1->nClass();
-        _logits = new float[n_vocab];
-        probindex = new ProbIndex[n_vocab];
-        rng_state = 20251021;
-        assert(cls->preLogits->host_data==nullptr);
+        _logits     = new floatLogist[n_vocab];
+        probindex   = new ProbIndex[n_vocab];
+        rng_state   = 20251021;
+        assert(cls->preLogits->host_data == nullptr);
         cls->preLogits->host_data = _logits;
-        _arch = fish_0->arch;
+        _arch                     = fish_0->arch;
     } else {
         _arch = config.ModelArch();
     }
@@ -438,7 +440,7 @@ GeneratOnPrompt::GeneratOnPrompt(CLI_params &cp_, arrHWIKI &wiki_, const Fish *h
         wiki0 = wikis[0];
 }
 
-bool GeneratOnPrompt::Init(const std::string &prompt_, int flag) {
+bool GeneratOnPrompt::Init(const std::string& prompt_, int flag) {
     // std::tie(model, ctx) = llama_init_from_gpt_params(params);
     int n_vocab = 0;
     if (fish_1 != nullptr) {
@@ -447,13 +449,13 @@ bool GeneratOnPrompt::Init(const std::string &prompt_, int flag) {
         dialogs->Prepare(fish_1->hOPT.get(), fish_1->tsEval[0]);
         dialogs->isRecycle = false;
         dialogs->type      = SampLoader::TYPE::DT_EVAL;
-        n_vocab = fish_1->nClass();
+        n_vocab            = fish_1->nClass();
     }
 
     if (wikis.empty()) {
         CHILD_0909_WIKIS
         n_ctx   = config.n_ctx();
-        _logits = new float[n_vocab];
+        _logits = new floatLogist[n_vocab];
         // dialogs->init(config.prompt.c_str(), B, T, 0, 1, 0);
 
         InitInput();
@@ -462,7 +464,7 @@ bool GeneratOnPrompt::Init(const std::string &prompt_, int flag) {
         n_ctx   = wiki0->nCTX();
         n_vocab = wiki0->n_vocab;
     }
-    _logits = new float[n_vocab];
+    _logits = new floatLogist[n_vocab];
 
     /*llama_backend_init(); // ggml_time_init();
     LAMA *lama = dynamic_cast<LAMA *>(wikis[0].get());
@@ -509,7 +511,7 @@ bool GeneratOnPrompt::Init(const std::string &prompt_, int flag) {
 }
 
 void GeneratOnPrompt::DisplayEmbd(bool input_echo, int n_consumed, int flag) {
-    NLP_AutoRegressive *dolphin = dynamic_cast<NLP_AutoRegressive *>(fish_1);
+    NLP_AutoRegressive* dolphin = dynamic_cast<NLP_AutoRegressive*>(fish_1);
     std::string token_str;
     if (input_echo && display) {
         for (auto id : tokens) {
@@ -576,12 +578,12 @@ int NLP_AutoRegressive::GenSentence(int flag) {
     // nPrompToken = 1;			//	only for debug
     TOKEN_ID t = -1;
     _INFO("%s: <--- \n\t", __func__);
-    float *logits = hCLS->fLogits();  //(float *)(preLogits->data)+i*nVocab;
+    floatLogist* logits = hCLS->fLogits();  //(float *)(preLogits->data)+i*nVocab;
     for (i = 0; i < nPrompToken + genT; i++) {
         if (i < nPrompToken - 1)
-            hOPT->SetPhase(LIFE_PHASE::P_PREFILL);
+            SetPhase(LIFE_PHASE::P_PREFILL);
         else
-            hOPT->SetPhase(LIFE_PHASE::P_GENERATE);
+            SetPhase(LIFE_PHASE::P_GENERATE);
         // // LocalFeeling(piffle,preP);
         float fLos = hOPT->EvaluateSamps(hLoader, -666);
         if (i < nPrompToken - 1)
@@ -616,7 +618,7 @@ TOKEN_ID GOPT_Metropolis::Sample(int idx, bool is_resampling) {
     hWIKI wiki              = wikis.size() > 0 ? wikis[0] : nullptr;
     WIKI::INDUCT_MODE teach = wiki == nullptr ? WIKI::_OFF : wiki->teach;
     assert(idx == -1);
-    const float *wLog = nullptr;
+    const float* wLog = nullptr;
     float l1 = 0, sum1 = 0, l2 = 0, delta, a;
     if (teach == WIKI::_OFF) {
     } else {
@@ -630,11 +632,8 @@ TOKEN_ID GOPT_Metropolis::Sample(int idx, bool is_resampling) {
     }
 
     if (fish_1 != nullptr) {  // time bottleneck, so share wiki to reduce time & memory
-        // SOFT_MAX(nTokens,_logits,wLog);     //soft merge ???
-        /*fish_1->UpdateNCTX(dialogs->nLeastCTX());
-        fish_1->CopyWeight(fish_0);
-        if (fish_1->LocalFeeling(&dialogs, x_logits,0))        {*/
-        assert(x_logits.size() == nVocab);
+        assert(0);
+        /*assert(x_logits.size() == nVocab);
         // SOFT_MAX(x_logits);
         switch (teach) {
             case WIKI::_OFF:
@@ -645,13 +644,13 @@ TOKEN_ID GOPT_Metropolis::Sample(int idx, bool is_resampling) {
                     _logits[j] = a;
                 }
                 break;
-            /*case WIKI::_LOGITS:
+            case WIKI::_LOGITS:
                 for (j = 0; j < nTokens; j++    ) {
                     a = x_logits[j];                    l1+=a*a;
                     _logits[j] = a;
                 }
                 delta = l2==0 ? 0 : sqrt(l1)/sqrt(l2)-1.0;
-            break;*/
+            break;
             case WIKI::_TARGET:
                 SOFT_MAX(nVocab, _logits, wLog);
                 for (j = 0; j < nVocab; j++) {
@@ -664,8 +663,7 @@ TOKEN_ID GOPT_Metropolis::Sample(int idx, bool is_resampling) {
             case WIKI::_LOGITS_SCALE:
                 for (j = 0; j < nVocab; j++) {
                     a = x_logits[j];
-                    sum1 += a;
-                    l1 += a * a;
+                    sum1 += a,                    l1 += a * a;
                     l2 += _logits[j] * _logits[j];
                     // a = max(a,0.f);      relu
                     _logits[j] *= a;
@@ -684,24 +682,24 @@ TOKEN_ID GOPT_Metropolis::Sample(int idx, bool is_resampling) {
                 // assert(fabs(sum1-1.0)<0.001);       //softmax->logits
         }
         delta_a += delta;
-        delta_max = max(delta_max, delta);
+        delta_max = max(delta_max, delta);*/
     }
     int next_token = Sample_CDF(nVocab, _logits, &rng_state);
     return next_token;
 }
 
 // only for debug
-static inline unsigned int random_u32(uint64_t *state) {
+static inline unsigned int random_u32(uint64_t* state) {
     *state ^= *state >> 12;
     *state ^= *state << 25;
     *state ^= *state >> 27;
     return (*state * 0x2545F4914F6CDD1Dull) >> 32;
 }
-static inline float random_f32(uint64_t *state) { return (random_u32(state) >> 8) / 16777216.0f; }
+static inline float random_f32(uint64_t* state) { return (random_u32(state) >> 8) / 16777216.0f; }
 
-static inline int sample_argmax(int n_vocab, float *logits) {
+static inline int sample_argmax(int n_vocab, floatLogist* logits) {
     int max_i   = 0;
-    float max_p = logits[0];
+    floatLogist max_p = logits[0];
     for (int i = 1; i < n_vocab; i++) {
         if (logits[i] > max_p) {
             max_i = i;
@@ -711,7 +709,7 @@ static inline int sample_argmax(int n_vocab, float *logits) {
     return max_i;
 }
 
-static void quick_select(ProbIndex *arr, int n, int k) {
+static void quick_select(ProbIndex* arr, int n, int k) {
     int l = 0, r = n - 1;
     while (l < r) {
         ProbIndex pivot = arr[k];
@@ -734,9 +732,9 @@ static void quick_select(ProbIndex *arr, int n, int k) {
             r = j;
     }
 }
-static int compare_prob_desc(const void *a, const void *b) {
-    ProbIndex *pa = (ProbIndex *)a;
-    ProbIndex *pb = (ProbIndex *)b;
+static int compare_prob_desc(const void* a, const void* b) {
+    ProbIndex* pa = (ProbIndex*)a;
+    ProbIndex* pb = (ProbIndex*)b;
     if (pa->prob > pb->prob)
         return -1;
     if (pa->prob < pb->prob)
@@ -790,7 +788,7 @@ TOKEN_ID GeneratOnPrompt::Sample(int idx, bool is_resampling) {
         prob_sum = cumulative_prob;
     }
 
-    float coin = random_f32(&rng_state) * prob_sum;     //  0.00294704828
+    float coin = random_f32(&rng_state) * prob_sum;  //  0.00294704828
     float cdf  = 0.0f;
     for (int i = 0; i < n_cands; i++) {
         cdf += probindex[i].prob;
@@ -853,7 +851,7 @@ void GeneratOnPrompt::OnAntiPrompt(int flag) {
 }
 
 std::string GeneratOnPrompt::T2STR(TOKEN_ID tok, int flag) {
-    NLP_AutoRegressive *dolphin = dynamic_cast<NLP_AutoRegressive *>(fish_1);
+    NLP_AutoRegressive* dolphin = dynamic_cast<NLP_AutoRegressive*>(fish_1);
     std::string token_str;
     if (dolphin != nullptr)
         token_str = dolphin->hDictVAE->T2STR(tok);
@@ -863,7 +861,7 @@ std::string GeneratOnPrompt::T2STR(TOKEN_ID tok, int flag) {
     return token_str;
 }
 
-bool GeneratOnPrompt::Inference(hSAMP samp, int &n_past, int flag) {
+bool GeneratOnPrompt::Inference(hSAMP samp, int& n_past, int flag) {
     int n_eval = (int)tokens.size();
     // LOG("eval: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, tokens).c_str());
     bool bRet = false;

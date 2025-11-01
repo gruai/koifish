@@ -202,20 +202,8 @@ __device__ inline float matmul_warppar(float* x, uint32_t* w, int i, int n) {
     }
 }
 
-template <typename T>
-__device__ inline float embed(T* weight, int idx) {
-    return float(weight[idx]);
-}
 
-__device__ inline float embed(uint32_t* weight, int idx) { return cu_gf4_ff(weight[idx / 8], idx % 8); }
 
-template <typename T_out, typename T>
-__global__ static void kernel_embed(T_out* o, T* weight, int token, int n) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    assert(i < n);
-
-    o[i] = embed(weight, token * n + i);
-}
 
 template <typename KVT>
 __global__ static void kernel_rotate_sink(uint64_t, int kvd, KVT* key_cache, int head_dim, int kv_sink, float theta_log2, int seq_len, int rotary_dim) {
@@ -376,6 +364,35 @@ __device__ static void CU_softmax_v0(T* xout, T* x, int size) {
     // exp per thread
     for (int j = i; j < size; j += blockDim.x) {
         xout[j] = expf(x[j] - a1);
+    }
+}
+
+// grid: N_HEADS, block: 1
+template <typename T>
+__global__ static void CU_softmax_multihead(T* att, int pos, int seq_len) {
+    int h = blockIdx.x;
+
+    T* scores = att + (size_t)h * seq_len;
+    int len   = pos + 1;
+
+    // find max value for numerical stability
+    // float max_val = -HUGE_VALF;
+    T max_val = -1e9f;
+    for (int i = 0; i < len; i++) {
+        if (scores[i] > max_val) {
+            max_val = scores[i];
+        }
+    }
+
+    float sum = 0.0f, a;
+    for (int i = 0; i < len; i++) {  // exp and sum
+        a         = expf(scores[i] - max_val), sum += a;
+        scores[i] = a;
+    }
+
+    float inv_sum = 1.0f / sum;
+    for (int i = 0; i < len; i++) {  // normalize
+        scores[i] *= inv_sum;
     }
 }
 
@@ -770,7 +787,7 @@ __global__ static void CU_X2Tile_(T* A, floatGama* gama, float T_x, int M, int N
 }
 template <typename T>
 __global__ static void CU_Tile2X_(T* A, floatGama* gama, float T_x, int M, int N, unsigned int seed, int trans = 1) {
-    const int TM = THREAD_TILE_M, TN = THREAD_TILE_N, thread_num = blockDim.x;
+    const int TM = THREAD_TILE_M, TN = THREAD_TILE_N;  //, thread_num = blockDim.x;
     int tid = threadIdx.x, idrow, idcol;
     idrow   = blockIdx.x * TM + tid / TM;
     idcol   = blockIdx.y * TN + tid % TM;
@@ -815,6 +832,59 @@ double OFF_(T* A, T* B, size_t N, bool isCU = true, int flag = 0x0) {
         assert(0);
     }
     return res;
+}
+
+// ================================================================
+// Attention
+// ================================================================
+template <typename tpATT>
+__global__ static void attention_qk_kernel(tpATT* att, const bf16* q, const bf16* k_cache, int pos, int seq_len, int N_HEADS, int N_KV_HEADS, int HEAD_DIM) {
+    // grid: N_HEADS, block: pos + 1 (up to 1024)
+    int h      = blockIdx.x;
+    int t      = threadIdx.x;
+    int kv_mul = N_HEADS / N_KV_HEADS, KV_DIM = N_KV_HEADS * HEAD_DIM;
+    if (t <= pos) {
+        const bf16* q_head = q + h * HEAD_DIM;
+        int kv_head_idx    = h / kv_mul;
+        const bf16* k_vec  = k_cache + (size_t)t * KV_DIM + (size_t)kv_head_idx * HEAD_DIM;
+
+        float score = 0.0f;
+        for (int i = 0; i < HEAD_DIM / 2; i++) {
+            __nv_bfloat162 q_pair = reinterpret_cast<const __nv_bfloat162*>(q_head)[i];
+            __nv_bfloat162 k_pair = reinterpret_cast<const __nv_bfloat162*>(k_vec)[i];
+
+            float2 q_vals = __bfloat1622float2(q_pair);
+            float2 k_vals = __bfloat1622float2(k_pair);
+
+            // score += q_vals.x * k_vals.x + q_vals.y * k_vals.y;
+            score = __fmaf_rn(q_vals.x, k_vals.x, score);
+            score = __fmaf_rn(q_vals.y, k_vals.y, score);
+        }
+
+        score /= sqrtf((float)HEAD_DIM);
+        att[(size_t)h * seq_len + t] = score;
+    }
+}
+
+template <typename tpATT>
+__global__ static void attention_v_kernel(bf16* out, const tpATT* att, const bf16* v_cache, int pos, int seq_len, int N_HEADS, int N_KV_HEADS, int HEAD_DIM) {
+    // grid: N_HEADS, block: HEAD_DIM
+    int h      = blockIdx.x;
+    int i      = threadIdx.x;  // idx within the head dimension
+    int kv_mul = N_HEADS / N_KV_HEADS, KV_DIM = N_KV_HEADS * HEAD_DIM;
+
+    bf16* out_head        = out + (size_t)h * HEAD_DIM;
+    const tpATT* att_head = att + (size_t)h * seq_len;
+    int kv_head_idx       = h / kv_mul;
+
+    float weighted_sum = 0.0f;
+    for (int t = 0; t <= pos; t++) {
+        const bf16* v_vec = v_cache + (size_t)t * KV_DIM + (size_t)kv_head_idx * HEAD_DIM;
+
+        // weighted_sum += att_head[t] * __bfloat162float(v_vec[i]);
+        weighted_sum = __fmaf_rn(att_head[t], __bfloat162float(v_vec[i]), weighted_sum);
+    }
+    out_head[i] = __float2bfloat16_rn(weighted_sum);
 }
 
 void CU_abc(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int transB = 0,

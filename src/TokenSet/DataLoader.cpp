@@ -556,12 +556,11 @@ bool SampLoader::Prepare(Optimizer *hO, hDataToken hT, int flag) {
         stepis.sTokenSet = name + "@[" + hTokens->name + "]";
         eval_every       = hTokens->eval_every;
     }
-    // bos = hDict->bos;
-    // eos = hDict->eos;
-    // Batch tensor would be set @UpdateBatch!
-    // TRAIN_CARD _params = hOPT->TrainParams();
-    // T = _params.n_ctx, B = _params.n_batch;
+
     dolphin->GetBTC(B, T, C);
+    if(dolphin->isAtPhase(LIFE_PHASE::P_GENERATE)){
+        T = dolphin->config.chat_sampler.seq_len;
+    }
     assert(T > 0 && B > 0);
     SHAPE shape = {T, B}, sp1 = {1, T, B};
     hBatch = std::make_shared<BATCH_INPUT>(shape);
@@ -1191,12 +1190,12 @@ BATCH_INPUT::BATCH_INPUT(SHAPE shape, int flag) {
     hostMask->Alloc();
 
     host = TO<int>(hostToken), mask = TO<int>(hostMask);
-    pos     = 0;
+    tok_pos     = 0;
     int tok = CurToken();       //???
 }
 
 void BATCH_INPUT::Reset(const TOKENS &tokens, int flag) {
-    pos = tokens.size() > 0 ? 0 : -1;
+    tok_pos = tokens.size() > 0 ? 0 : -1;
     hostToken->Zero();
     for (int i = 0; i < tokens.size(); i++) {
         Set(i, 0, 0, 0, tokens[i]);

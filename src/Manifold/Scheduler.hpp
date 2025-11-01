@@ -252,7 +252,7 @@ class RLSchedule {
     hFuyou afu     = nullptr;
     int curFuyouID = 0;
 
-    LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;
+    // LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;
     Grusoft::GRander rand_branch;
 
     SKDU_params params;
@@ -271,10 +271,10 @@ class RLSchedule {
         assert(0);
         return 0x0;
     }
-    bool SetPhase(LIFE_PHASE phase_, int flag = 0x0) {
-        phase = phase_;
-        return true;
-    }
+    // bool SetPhase(LIFE_PHASE phase_, int flag = 0x0) {
+    //     phase = phase_;
+    //     return true;
+    // }
     virtual TASK_STATUS GetStatus(int step, void *hObj, int flag) { return FLIP; }
     virtual void Dump(int typ) const {}
 

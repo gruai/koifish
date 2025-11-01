@@ -68,22 +68,27 @@ struct BATCH_INPUT {
     shared_ptr<GTensor> hostToken = nullptr, hostMask = nullptr;
     //  host = TO<int>(hostToken), mask = TO<int>(hostMask);
     int *host = nullptr, *mask = nullptr;
-    void* dev = nullptr;
-    int pos   = -1;
+    //  NLP_AutoRegressive::tokens_input->OverWrite(hBatch->hostToken);
+    //void* dev = nullptr;
+
+    //  always point to last token when P_GENERATE
+    int tok_pos   = -1;
+    int CurToken() {
+        assert(tok_pos >= 0 && host != nullptr);
+        // assert(host[pos] < embed->nVocab);
+        return host[tok_pos];
+    }
 
     BATCH_INPUT(SHAPE sp, int flag = 0x0);
     // virtual void Update(hGTensor batch,int flag=0x0);
-    int CurToken() {
-        assert(pos >= 0 && host != nullptr);
-        // assert(host[pos] < embed->nVocab);
-        return host[pos];
-    }
+
     virtual void Reset(const std::vector<TOKEN_ID>& tokens, int flag = 0x0);
     virtual void Set(int i0, int i1, int i2, int i3, int tok) { hostToken->Set(i0, i1, i2, i3, tok); }
     virtual void SetMask(int i0, int i1, int i2, int i3, int tok) { hostMask->Set(i0, i1, i2, i3, tok); }
     virtual size_t size() { return hostToken->size(); }
 };
 typedef shared_ptr<BATCH_INPUT> hBATCH;
+
 class SampLoader : public std::enable_shared_from_this<SampLoader> {
    protected:
     typedef std::string mt19937_state;

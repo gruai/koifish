@@ -11,18 +11,6 @@
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
 
-Fish::STAT Fish::stat;
-void Fish::STAT::Dump(int typ, int flag) {
-    if (NOT_DUMP(0))
-        return;
-    size_t sz         = 0x0;
-    const char* title = "OPT";  //__func__
-    switch (typ) {
-        default:
-            _INFO("\tTIME: qkv=%.3g(s),ffn=%.3g(s)\n", tQKV / 1.0e6, tFFN / 1.0e6);
-    }
-}
-
 hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vector<hWIKI> wikis, ROLE_TYPE role_, int flag) {
     assert(wikis.size() >= 0);
     hFISH fish = nullptr;
@@ -80,7 +68,7 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vect
     if (!fish->Build())
         return nullptr;
 
-    if (fish->config.chat_mode != CHAT_MODE::YABA) {  //  only for chat
+    if (fish->config.ChatMode() != CHAT_MODE::YABA) {  //  only for chat
         fish->gopt = GeneratOnPrompt::MakeInstance(params, wikis, fish.get(), flag);
     } else {
         if (fish->role == SWARM_FOLLOWER) {
@@ -107,6 +95,7 @@ Fish::Fish(const std::string& nam_, struct CLI_params params, ROLE_TYPE role_, i
     }
     rand_coin.Init(42);
 
+    SetPhase(config.phase);
     if (jKEY(params.jConfig, {"train"}).empty()) {
         isLocalInfer = true;
     }
@@ -131,7 +120,7 @@ bool Fish::isRemater(int flag) const {
     return false;
 }
 
-bool Fish::isAtPhase(LIFE_PHASE ph) const { return GetOptimizer()->phase == ph; }
+bool Fish::isAtPhase(LIFE_PHASE ph) const { return phase == ph; }
 
 hFISH Fish::MakeSwarm(const std::string nam_, struct CLI_params& params, int flag) {
     vector<hWIKI> wikis = WIKI::MakeInstance(nam_, params, 0x0);
@@ -289,7 +278,7 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
     if (isTrain()) {
         SaveTrain(config.state, true);  //  Init checkpoint
     } else {
-        hOPT->SetPhase(LIFE_PHASE::P_EVAL_);
+        SetPhase(config.phase);
         assert(hBackTG == nullptr);
     }
     RLS_BP* hRLS = hEDS->GetScheduler<RLS_BP>();
@@ -792,6 +781,24 @@ hBATCH Fish::GetCurBatch(bool isUpate, int flag) {
     return hBatch;
 }
 
+void Fish::GetBTC(int& B, int& T, int& C, int flag) const {
+    B = config.n_batch();
+    C = config.nEmbed();
+    T = config.n_ctx();
+    switch (phase) {
+        case LIFE_PHASE::P_GENERATE:
+            assert(B == 1);
+            T = 1;
+            break;
+        default:
+            break;
+    }
+
+    assert(B > 0);
+    assert(T > 0);
+    assert(C > 0);
+};
+
 bool Fish::AfterNextStep(int iter, int flag) {
     int nLayer = config.nLayer(), l;
     for (l = 0; l < nLayer; l++) {
@@ -803,4 +810,72 @@ bool Fish::AfterNextStep(int iter, int flag) {
         SUM::tQKV += QKV->stat.tBack;
     }
     return true;
+}
+
+bool Fish::AllocBuffer(int flag) {
+    try {
+        // TokenEmbed* embed = GetNeuron<TokenEmbed>("TokenEmbed",0);
+        int B, T, C;
+        GetBTC(B, T, C);
+        if (isLocalInfer)
+            hCache = std::make_shared<KVCache>(this);
+            
+        int nVocab = nClass();
+        if (config.model.isPaddedCls) {
+            nVocab = ceil(nVocab / 128.0) * 128;
+        }
+        int Vp = (int)(nVocab * 1.1), NH = config.n_head(), nFF = config.n_ff(), nEmbed = config.nEmbed(), q_dim = config.Q_dim(), kv_dim = config.KV_dim(),
+            nCTX    = config.n_ctx();
+        size_t nTmp = ((size_t)T) * std::max(nFF, std::max(NH, Vp)), nFFW = (size_t)(B)*T * nFF;
+        // config.model.preLogits_dB = 8; //(int)ceil(B*4.0f*C/nTmp);
+        int dB = config.model.preLogits_dB;
+        if (isTrain())
+            assert(B % dB == 0);
+        nTmp = std::max(nFFW / dB + 1, nTmp);
+        assert(nTmp < INT_MAX);
+        typNUMBER tpA = config.model.tpActivation, tpG = config.model.tpGradient, tpW = config.model.tpWeight;
+        // cuLiteTest(B,T,C);
+        int mostC = C;  // config.nEmbed(-1);
+        SHAPE sp = {B, T, C}, sp4 = {B, T, max(nFF, q_dim + kv_dim * 2)}, sp0 = {dB, (int)nTmp}, spMost = {B, T, mostC};
+        GTensor::bt4c       = std::make_shared<huTensor>(this, "tmpBT4c", sp4, tpA, true);
+        GTensor::tmpFF1     = std::make_shared<huTensor>(this, "tmpFF1", sp4, tpA, true);
+        SHAPE spTernary     = {C, max(nVocab, 3 * C)};
+        GTensor::tmpTernary = std::make_shared<huTensor>(this, "tmpTernary", spTernary, tpW, true);  // Only weight would in ternay bit
+
+        GTensor::scratch = std::make_shared<huTensor>(this, "tmpScratch/output", sp0, tpA, true);  //  may reduce memory by sp0=sp0/VP
+
+        GTensor::delta     = std::make_shared<huTensor>(this, "tmpDelta", spMost, tpG, true);
+        GTensor::tmpDelta  = std::make_shared<huTensor>(this, "tmpDelta2", spMost, tpG, true);
+        GTensor::host_buff = new float[GTensor::scratch->size()];
+        if (config.ModelArch() == NLP_GUPPY) {
+            GTensor::tmpW = std::make_shared<huTensor>(this, "tmpW", SHAPE({nEmbed, nFF}), tpW, true);
+        }
+        switch (phase) {
+            case P_GENERATE:
+                //  @KERNEL_PIPE
+                GTensor::outL = std::make_shared<huTensor>(this, "tmpOutL", SHAPE({nEmbed * 3 + q_dim + nFF * 2 + NH * nCTX * 2}), tpA, true);
+                // GTensor::outL = std::make_shared<huTensor>(this, "tmpOutL", spMost, tpA, true);
+                break;
+            default:
+                GTensor::outL = std::make_shared<huTensor>(this, "tmpOutL", spMost, tpA, true);
+                break;
+        }
+
+        // GTensor::tmpGW = std::make_shared<huTensor>(this, "tmpGW", SHAPE({nEmbed, nFF}), tpG, true);
+        cudaCheck(cudaMalloc(&GTensor::stat_info, sizeof(float) * 5120));
+
+        return true;
+    } catch (const std::exception& e) {
+        _INFO("%s", e.what());
+        fflush(stdout);
+        return -1000;
+    } catch (const char* info) {
+        _INFO("%s", info);
+        fflush(stdout);
+        return -1001;
+    } catch (...) {
+        _INFO("\r\n%s  Unknown exception !!!", __func__);
+        fflush(stdout);
+        return -2001;
+    }
 }

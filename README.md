@@ -17,7 +17,7 @@ Note
 ## Features
 - Hybrid 16/8/1 bit training
 - Rematerialisation and fusion of operators
-- Evolutionary Optimization of experts 
+- [Evolutionary optimization of experts](https://arxiv.org/abs/2509.24436)
 - Automatic detection of training instability
 - Json config file
 - Self-contained C++/cu project with minimal dependencies

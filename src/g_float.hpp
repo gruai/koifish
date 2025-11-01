@@ -180,10 +180,11 @@ typedef half floatX;
 #define tpCuBLASCOMPUTE CUBLAS_COMPUTE_16F
 //  #define tpCuBLASCOMPUTE  CUBLAS_COMPUTE_32F_FAST_16F
 #elif defined(ENABLE_BF16)
-typedef __nv_bfloat16 floatX;
-typedef __nv_bfloat16 floatMV;
-typedef __nv_bfloat16 floatGrad;
-typedef __nv_bfloat16 floatFFN;
+using floatX      = __nv_bfloat16;
+using floatMV     = __nv_bfloat16;
+using floatGrad   = __nv_bfloat16;
+using floatFFN    = __nv_bfloat16;
+using floatLogist = __nv_bfloat16;  //float;
 #define PARAMS_TYPE typNUMBER::BF16
 #define tpCuBLAS CUDA_R_16BF
 #define tpCuBLASCOMPUTE CUBLAS_COMPUTE_32F
@@ -193,7 +194,6 @@ typedef floatX floatGama;
 
 using bf16   = __nv_bfloat16;
 using bf16_2 = __nv_bfloat162;
-
 using half   = __half;
 using half_2 = __half2;
 

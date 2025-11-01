@@ -20,6 +20,33 @@
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
 
+std::string UserPrompt(hFISH fish, int pos, int nRound, int flag = 0x0) {
+    char* cli_user_prompt = nullptr;
+    char* system_prompt   = nullptr;
+    int szBuffer          = fish->config.chat_sampler.szBuffer;
+    char user_prompt[szBuffer], rendered_prompt[szBuffer];
+    if (cli_user_prompt != NULL) {
+        if (pos > 0)
+            return "";
+        strcpy(user_prompt, cli_user_prompt);
+    } else {
+        if (nRound < DEBUG.prompts.size())
+            strcpy(user_prompt, DEBUG.prompts[nRound].c_str());  //
+        else
+            read_stdin("\n>> ", user_prompt, sizeof(user_prompt));
+        if (!user_prompt[0])
+            return "";  // exit on empty prompt
+    }
+
+    // render the prompt with the correct template
+    if (pos == 0 && system_prompt) {
+        sprintf(rendered_prompt, fish->config.model.system_prompt_template.c_str(), system_prompt, user_prompt);
+    } else {
+        sprintf(rendered_prompt, fish->config.model.prompt_template.c_str(), user_prompt);
+    }
+    return rendered_prompt;
+}
+
 /*
     hello
         Hello! How can I assist you today?
@@ -31,8 +58,9 @@
         4. How many games did Arsenal FC go unbeaten during the 2003-2004 season of the English Premier League         correct_answer: "38"
         5. Write a function to print the Fibonacci sequence to the nth digit, but write and comment it like a pirate
         6. I get out on the top floor (third floor) at street level. How many stories is the building above the ground?
-        7. why "无知觉明" ?
+        7. "无知觉明",无是指什么? 知是指什么? 觉是指什么? 明是指什么?
         8. 天命玄鸟,降而生生. 玄鸟是什么鸟?
+        9. 尚书·商书·胤征
 
     Common sense
         What is the capital of Shanghai?
@@ -41,91 +69,78 @@
         What is the chemical symbol for the element gold?
         What is the longest river in the world?
 */
-int Chat(hFISH fish, char* cli_user_prompt, char* system_prompt, int enable_thinking) {
-    int PROMPT_BUFFER_SIZE = fish->config.model.PROMPT_BUFFER_SIZE;
-    int seq_len            = fish->config.model.SEQ_LEN;
-    char user_prompt[PROMPT_BUFFER_SIZE], rendered_prompt[PROMPT_BUFFER_SIZE];
-    int num_prompt_tokens = 0, user_turn = 1, next, token, pos = 0, generated_tokens = 0, nRound = 0;
+int Chat(hFISH fish, int enable_thinking) {
+    int seq_len           = fish->config.chat_sampler.seq_len;
+    int num_prompt_tokens = 0, user_turn = 1, next, token, generated_tokens = 0, nRound = 0;  // pos = 0,
     TOKENS prompt_tokens;
     hTokenizer tokenizer = fish->GetTokenizer();
     double start_time    = 0;
-    string cur_answer;
-    g_dump_level        = 1;
-    hGOPT gopt          = fish->GetGOPT();
-    hBATCH hBatch       = fish->GetCurBatch(true);
+    string cur_answer, rendered_prompt;
+
+    hGOPT gopt    = fish->GetGOPT();
+    hBATCH hBatch = fish->GetCurBatch(true);
+    assert(hBatch->size() == seq_len);
+    QWEN3_PIPE qwen_pipe(fish, 0x0);
+
+    // DEBUG.T_generate_most_layer = 1;
+    DEBUG.T_generate_qkv = 0;
+    g_dump_level         = 1;
 
     while (1) {
-        if (pos >= seq_len) {
-            printf("\n%s(context window full, clearing)%s\n", COLOR_YELLOW, COLOR_RESET);
+        if (hBatch->tok_pos >= seq_len) {
+            _INFO("\n%s(context window full, clearing)%s\n", COLOR_YELLOW, COLOR_RESET);
             user_turn = 1;
-            pos       = 0;
         }
 
         if (user_turn) {
-            if (cli_user_prompt != NULL) {
-                if (pos > 0)
-                    break;
-                strcpy(user_prompt, cli_user_prompt);
-            } else {
-                if (nRound < DEBUG.prompts.size())
-                    strcpy(user_prompt, DEBUG.prompts[nRound].c_str());  //
-                else
-                    read_stdin("\n>> ", user_prompt, sizeof(user_prompt));
-                if (!user_prompt[0])
-                    break;  // exit on empty prompt
-            }
-
-            // render the prompt with the correct template
-            if (pos == 0 && system_prompt) {
-                sprintf(rendered_prompt, fish->config.model.system_prompt_template.c_str(), system_prompt, user_prompt);
-            } else {
-                sprintf(rendered_prompt, fish->config.model.prompt_template.c_str(), user_prompt);
-            }
-
-            // encode the prompt & reset the position for the new sequence
-            prompt_tokens     = tokenizer->Encode(rendered_prompt);
-            num_prompt_tokens = prompt_tokens.size();
-            pos               = 0;
-            user_turn         = 0, nRound++;
-            hBatch->Reset(prompt_tokens);
-            // hLoader->InitOneSamp(rendered_prompt, nullptr, fish.get(), 0x110);
-            printf("\n");
-        }
-
-        if (pos == num_prompt_tokens) {
-            start_time       = GST_ms();
+            rendered_prompt = UserPrompt(fish, hBatch->tok_pos, nRound);
+            prompt_tokens          = tokenizer->Encode(rendered_prompt);
+            num_prompt_tokens      = prompt_tokens.size();
             generated_tokens = 0;
             cur_answer       = "";
+            user_turn        = 0, nRound++;
+            hBatch->Reset(prompt_tokens);
+            // hLoader->InitOneSamp(rendered_prompt, nullptr, fish.get(), 0x110);
+            _INFO("\n");
         }
-        if (nRound == 2) {  // pos == 13
+
+        if (hBatch->tok_pos == num_prompt_tokens-1) {
+            start_time = GST_ms();
+        }
+        if (hBatch->tok_pos==1) {  // nRound == 2
             int debug = 0;
-            // g_dump_level = 0, printf("\n");
+            // exit(KOIFISH_EXIT_DEBUG);
         }
-        if (pos < num_prompt_tokens)
-            token = prompt_tokens[pos];
-        else {
-            token = next;
-            hBatch->Set(pos, 0, 0, 0, token);
-        }
-        if(0)
+        if (DEBUG.T_generate_qkv) {
             float eval = fish->Evaluate(DL_BATCH_UPATE::BATCHofEMBED);
-        else
-            T_generate_(fish, token, fish->config.model.tpActivation, -666);
-        pos++;
-        next = gopt->Sample(pos);
-        // printf(" %d[%d->%d]", pos, token, next), fflush(stdout);
-        if (pos > num_prompt_tokens) {
+        } else {  // qwen_pipe.UpdatePos(token);
+            T_generate_(fish, &qwen_pipe, fish->config.model.tpActivation, 1);
+        }        
+        hBatch->tok_pos++;           
+        // _INFO(" %d[%d->%d]", pos, token, next), fflush(stdout);
+        if (hBatch->tok_pos >= num_prompt_tokens) {
+            token   = gopt->Sample(-1);
             generated_tokens++;
+            if (token == tokenizer->eos_id) {       //  stop generation if get EOS token
+                double elapsed_s = (double)(GST_ms() - start_time) / 1000.0;
+                double tps       = (generated_tokens > 0 && elapsed_s > 0) ? (generated_tokens - 1) / elapsed_s : 0.0;
+                _INFO("\n\n%s[%.2f tk/s, %d tokens in %.2fs]%s\n===================================\n", COLOR_GREEN, tps, generated_tokens - 1, elapsed_s, COLOR_RESET);
+                user_turn = 1;
+                STR2FILE("chat.csv", cur_answer, nRound == 1 ? std::ofstream::out : std::ofstream::app);
+                if (nRound == DEBUG.prompts.size()) {  // only for debug
+                    return 0x0;
+                }
+                continue;
+            }
+            hBatch->Set(hBatch->tok_pos, 0, 0, 0, token);
 
             static int in_thinking_section = 0;
             static int in_bold_section     = 0;
-
-            if (pos == num_prompt_tokens + 1) {
-                // first token of the response
+            if (hBatch->tok_pos == num_prompt_tokens) {             // first token of the response
                 in_thinking_section = enable_thinking;  // reset thinking state
                 in_bold_section     = 0;                // reset bold state
                 if (in_thinking_section) {
-                    printf(COLOR_YELLOW);
+                    _INFO(COLOR_YELLOW);
                 }
             }
 
@@ -133,7 +148,7 @@ int Chat(hFISH fish, char* cli_user_prompt, char* system_prompt, int enable_thin
             if (strcmp(piece, "</think>") == 0) {
                 in_thinking_section = 0;
                 if (!in_bold_section) {
-                    printf(COLOR_RESET);
+                    _INFO(COLOR_RESET);
                 }
             } else {
                 const char *current_pos = piece, *marker;
@@ -144,34 +159,22 @@ int Chat(hFISH fish, char* cli_user_prompt, char* system_prompt, int enable_thin
                     // flip the bold state and change color accordingly
                     in_bold_section = !in_bold_section;
                     if (in_bold_section) {
-                        printf(COLOR_BOLD_RED);
+                        _INFO(COLOR_BOLD_RED);
                     } else if (in_thinking_section) {
-                        printf(COLOR_YELLOW);
+                        _INFO(COLOR_YELLOW);
                     } else {
-                        printf(COLOR_RESET);
+                        _INFO(COLOR_RESET);
                     }
                     current_pos = marker + 2;  // Move past the "**"
                 }
                 // print any remaining text after the last marker
-                printf("%s", current_pos);
-                cur_answer += current_pos;
-            }
-
-            fflush(stdout);
-
-            // stop generation if we sample an EOS token
-            if (next == tokenizer->eos_id) {
-                double elapsed_s = (double)(GST_ms() - start_time) / 1000.0;
-                double tps       = (generated_tokens > 0 && elapsed_s > 0) ? (generated_tokens - 1) / elapsed_s : 0.0;
-                printf("\n\n%s[%.2f tk/s, %d tokens in %.2fs]%s", COLOR_GREEN, tps, generated_tokens - 1, elapsed_s, COLOR_RESET);
-                printf("\n===================================\n");
-                user_turn = 1;
-                if (nRound == DEBUG.prompts.size()) {  // only for debug
-                    STR2FILE("chat.csv", cur_answer);
-                    return 0x0;
+                if (token != tokenizer->eos_id) {
+                    _INFO("%s", current_pos);
+                    cur_answer += current_pos;
                 }
-                continue;
             }
+
+            fflush(stdout);            
         }
     }
     // free(prompt_tokens);
@@ -191,7 +194,7 @@ int main(int argc, char* argv[]) {
         config.OnArch();
 
         config.isOnlyGPT              = true;
-        config.chat_mode              = enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
+        config.chat_sampler.mode      = enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
         config.model.preLogits_dB     = 1;
         config.model.sparse.method    = -1;
         config.dumpSwitch.tensor_load = 1;
@@ -206,9 +209,7 @@ int main(int argc, char* argv[]) {
         if (hOPT->val_loaders.empty())
             return KOIFISH_DATALOADER_EMPTY;
 
-        char *prompt = NULL, *system_prompt = NULL;
-
-        Chat(fish, prompt, system_prompt, enable_thinking);
+        Chat(fish, enable_thinking);
 
         return 0x0;
     } catch (const std::exception& e) {

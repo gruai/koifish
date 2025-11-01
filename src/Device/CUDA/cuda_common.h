@@ -62,6 +62,7 @@ extern cudaDeviceProp deviceProp;
 // Thread number of each block  - If each thread requires big private memory, then using less threads per block helps but its not infinite so should be
 // soft-limited to a minimum like 32 or 64 depending on algorithm. But maximum is hard-limited to 1024 threads per block.
 #define CU_T4B_SMALL 256U
+#define CU_T4B_MIDDLE 512U
 #define CU_T4B_BIG 1024U
 // try to make sure that 2 blocks fit on A100/H100 to maximise latency tolerance
 // this needs to be defines rather than queried to be used for __launch_bounds__

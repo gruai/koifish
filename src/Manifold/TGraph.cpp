@@ -20,7 +20,7 @@
 
 hRope SelfAttention::rope = nullptr;
 
-hGensor Fish::AddTensor(const std::string &key_, typNUMBER tp, const SHAPE &shape, int flag) {
+hGensor Fish::AddTensor(const std::string& key_, typNUMBER tp, const SHAPE& shape, int flag) {
     auto ctx          = GetGGCTX();
     hGensor gg_tensor = nullptr;
     if (shape.size() == 4) {
@@ -45,24 +45,25 @@ size_t SLP::nElem() {
     return nX;
 }
 
-SelfAttention::SelfAttention(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
+SelfAttention::SelfAttention(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     assert(hFish != nullptr);
     delta = GTensor::delta;
 
-    auto &config     = hG_->config;
+    auto& config     = hG_->config;
     f_max_alibi_bias = config.f_max_alibi_bias;
-    // n_embd_head = config.n_embd_head_v;
-    n_embd_gqa = config.n_embd_v_gqa();
-    n_tokens   = T * B;  // n_ctx*n_batch;
+    n_embd_gqa       = config.n_embd_v_gqa();
     KQ_mask = hFish->KQ_mask, KQ_pos = hFish->KQ_pos;
     ID = 0;
     // remater_qkv = hFish->config.common.remater_qkv;
 
     n_ff      = hFish->config.n_ff(ID);
     n_head_kv = config.n_head_kv(ID);
+    n_head    = config.n_head(ID);
+    head_dim  = config.head_dim(ID);
+    q_dim = config.Q_dim(), kv_dim = config.KV_dim();
     // assert(n_embd_head * n_head == C);
     C_qkv = C;
-    /**/ 
+    /**/
     if (jvals.size() >= 3) {
         shape = {(int)(jvals[0]), (int)(jvals[1]), (int)(jvals[2])};
     } else {  //"attn":{"QKV":[]},
@@ -83,24 +84,28 @@ SelfAttention::SelfAttention(Fish *hG_, const std::string &key_, JSON::const_ite
     }
     // dump_flag = -1;
     tpNormal = DEBUG.SelfAttention_noraml;
-    // assert(shape[0] > 0 && shape[1] > 0 && shape[2] > 0);
-    spQ = {(int)(hG_->config.Q_dim(layer-1)), C_qkv};
-    spKV = {(int)(hG_->config.KV_dim(layer-1)), C_qkv};
+    //  nIn = shape[0], nOut = shape[1];
+    spQ  = {C_qkv, (int)(hG_->config.Q_dim(layer - 1))};
+    spKV = {C_qkv, (int)(hG_->config.KV_dim(layer - 1))};
 }
 
 bool SelfAttention::Build(int flag_0) {
+    hCache = hFish->hCache;  // may nullptr
+
     // SHAPE sp = {shape[0], shape[1]};
-    int flag = flag_0;
-    norm.BuildX(_NAME(name, ATTN_PRE_NORMAL), {C_qkv}, hFish, flag);  
+    int flag = flag_0, nTokens = nBatchToken();
+    bool isTrain = hFish->isTrain();
+
+    norm.BuildX(_NAME(name, ATTN_PRE_NORMAL), {C_qkv}, hFish, flag);
     if (isQKNormal) {
         normQ.nHead = n_head, normK.nHead = n_head_kv;
-        normQ.BuildX(_NAME(name, ATTN_Q_NORM), {C_qkv}, hFish, flag);  
-        normK.BuildX(_NAME(name, ATTN_K_NORM), {C_qkv}, hFish, flag);  
+        normQ.BuildX(_NAME(name, ATTN_Q_NORM), {C_qkv}, hFish, flag);
+        normK.BuildX(_NAME(name, ATTN_K_NORM), {C_qkv}, hFish, flag);
     }
 
     SHAPE sp3 = {B, T, C}, spTrans = {B, n_head_kv, T};  //,T
     if (isSeparateQKV) {
-        Q.BuildX(_NAME(name, ATTN_Q), spQ, hFish, flag);  //".wq"
+        Q.BuildX(_NAME(name, ATTN_Q), spQ, hFish, flag);   //".wq"
         K.BuildX(_NAME(name, ATTN_K), spKV, hFish, flag);  //".wk"
         V.BuildX(_NAME(name, ATTN_V), spKV, hFish, flag);  //".wv"
         if (isBqkv) {
@@ -110,7 +115,11 @@ bool SelfAttention::Build(int flag_0) {
     } else {
         Q.BuildX(name + "_qkv", {shape[0], shape[1] * 3}, hFish, flag);
     }
-    attn = std::make_shared<huTensor>(hFish, name + ".attn", (SHAPE){B, T, C_qkv}, tpWeight, false);  // B * T * C
+    if (hFish->isAtPhase(LIFE_PHASE::P_GENERATE)) {
+        attn = std::make_shared<huTensor>(hFish, name + ".attn", (SHAPE){n_head, hFish->config.chat_sampler.seq_len}, tpWeight, false);
+    } else {
+        attn = std::make_shared<huTensor>(hFish, name + ".attn", (SHAPE){B, T, C_qkv}, tpWeight, false);  // B * T * C
+    }
 #ifdef ENABLE_CUDNN
     transition = GT(hFish, typNUMBER::F32, {B, n_head_kv, T}, 0x0, name + ".trans");  // ENABLE_CUDNN need float array
 #else
@@ -122,7 +131,7 @@ bool SelfAttention::Build(int flag_0) {
         out->SetRefer(GTensor::outL);
     }
 
-    proj_cat.BuildX(_NAME(name, ATTN_OUT), (SHAPE){shape[1], shape[0]}, hFish, flag);     //name + MODEL_CARD::sAttnOut
+    proj_cat.BuildX(_NAME(name, ATTN_OUT), (SHAPE){spQ[1], spQ[0]}, hFish, flag);
 
     BIT_SET(proj_cat.out->flags, GTensor::F_NOALLOC);  // memory trick as kGPT
     proj_cat.w->residual_scale = hFish->config.common.residual_scale;
@@ -139,19 +148,25 @@ bool SelfAttention::Build(int flag_0) {
     } else
         BIT_SET(Q.out->flags, GTensor::F_NOALLOC);
     //}
-    tmpQKV        = GTensor::tmpFF1;  // remater_qkv ? GTensor::tmpFF1 : Q.out;
-    size_t offset = sizeof(floatX) * C;
-    devQ          = ToX(tmpQKV);
+    tmpQKV = GTensor::tmpFF1;  // remater_qkv ? GTensor::tmpFF1 : Q.out;
+
+    devQ = ToX(tmpQKV);
     assert(devQ != nullptr);  // always true
     devDeltaQ = ToX(GTensor::bt4c);
     if (isSeparateQKV) {
-        offset = Q.out->nByte();
-        deltaQ = GTensor::bt4c->Partial("partialDeltaQ", 0, {B, T, C});  //  devDeltaQ = deltaQ->data
-        deltaK = GTensor::bt4c->Partial("partialDeltaK", B * T * C, {B, T, C});
-        deltaV = GTensor::bt4c->Partial("partialDeltaV", B * T * C * 2, {B, T, C});
+        // offset = Q.out->nByte();
+        if (isTrain) {
+            deltaQ = GTensor::bt4c->Partial("partialDeltaQ", 0, {B, T, C});  //  devDeltaQ = deltaQ->data
+            deltaK = GTensor::bt4c->Partial("partialDeltaK", B * T * C, {B, T, C});
+            deltaV = GTensor::bt4c->Partial("partialDeltaV", B * T * C * 2, {B, T, C});
+        }
     }
-    devK = (char *)devQ + offset, devV = (char *)devK + offset;  // for cuDNN
-    devDeltaK = (char *)devDeltaQ + offset, devDeltaV = (char *)devDeltaK + offset;
+    devK = (char*)devQ + Q.out->nByte(), devV = (char*)devK + K.out->nByte();           // for cuDNN
+    assert((char*)(devV) + V.out->nByte() - (char*)(tmpQKV->data) <= tmpQKV->nByte());  // may fail!!!
+
+    if (isTrain) {
+        devDeltaK = (char*)devDeltaQ + Q.out->nByte(), devDeltaV = (char*)devDeltaK + K.out->nByte();
+    }
 
     if (Rope_version > 0) {
         assert(isSeparateQKV);
@@ -168,9 +183,9 @@ bool SelfAttention::Build(int flag_0) {
     // moe.BuildX(name+".moe",sp,hFish,flag);        //  why this would slow converge???
     return true;
 }
-string SelfAttention::__repr__(string &suffix, string &prefix, int flag) {
+string SelfAttention::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]  = "\0";
-    const char *tab = prefix.c_str();
+    const char* tab = prefix.c_str();
     string a, sRope = rope == nullptr ? "" : rope->__repr__(a, a, flag);
     sprintf(buf + strlen(buf), "{%s QKV%s%s E%d H%d x=%d trans=%d %s}", tab, moe.Empty() ? "" : "+moe", sRope.c_str(), C, n_head, tpNormal, tpTrans,
             bqkv == nullptr ? "" : "bqkv");
@@ -179,8 +194,8 @@ string SelfAttention::__repr__(string &suffix, string &prefix, int flag) {
     return buf;
 };
 
-std::vector<GeNeuron *> SelfAttention::SubNeurons(int flag) {
-    std::vector<GeNeuron *> neurons = {&Q, &K, &V, &proj_cat, &norm};
+std::vector<GeNeuron*> SelfAttention::SubNeurons(int flag) {
+    std::vector<GeNeuron*> neurons = {&Q, &K, &V, &proj_cat, &norm};
     if (isQKNormal) {
         neurons.push_back(&normQ), neurons.push_back(&normK);
         /*auto gensors = normQ.PickGensors();
@@ -191,7 +206,6 @@ std::vector<GeNeuron *> SelfAttention::SubNeurons(int flag) {
     return neurons;
 }
 
-
 bool SelfAttention::BeforeForward(int iter, int op, int flag) {
     if (rope != nullptr) {
         rope_seed = rope->rRounding.RandU32();
@@ -199,7 +213,7 @@ bool SelfAttention::BeforeForward(int iter, int op, int flag) {
     return true;
 }
 
-hGensor SelfAttention::Ming(RLS_BP *hRLS, hGensor inpL, int flag) {
+hGensor SelfAttention::Ming(RLS_BP* hRLS, hGensor inpL, int flag) {
     GeNeuron::BeforeMing(hRLS, inpL, flag);
 
     hGensor cur = inpL, lastResi = inpL;
@@ -213,20 +227,22 @@ hGensor SelfAttention::Ming(RLS_BP *hRLS, hGensor inpL, int flag) {
         if (isQKNormal) {
             // attn->AddSrc({normQ.rstd, normK.rstd});
             attn >> proj_cat >> norm >> normQ >> normK >> this;
-        }else
+        } else
             attn >> proj_cat >> norm >> this;
         out->AddSrc({transition, bqkv, attn});  // duplicate!
         cur = out;
         // gTN0(cur,"%s_+",name.c_str());
+    } else if (hFish->isAtPhase(LIFE_PHASE::P_GENERATE)) {
+        cur = cuInfer(cur, flag);
     } else {  // high performace fused operator
-        cur = cuTrain(cur, flag);
+        cur = cuFlow(cur, flag);
     }
 
     cur = AfterMing(hRLS, cur, flag);
     return cur;
 }
 
-hGensor SelfAttention::MyAttention(RLS_BP *ctx_, hGensor cur, int flag) {
+hGensor SelfAttention::MyAttention(RLS_BP* ctx_, hGensor cur, int flag) {
     float kq_scale = 1.0f / sqrtf(float(n_embd_head)), s;
 
     hGensor q, k, kq = nullptr;  //  assert(KQ_mask!=nullptr);
@@ -317,8 +333,8 @@ hGensor SelfAttention::MyAttention(RLS_BP *ctx_, hGensor cur, int flag) {
     return kq;
 }
 
-BROWN_attn::BROWN_attn(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : SelfAttention(hG_, key_, jit, flag) {
-    auto &config    = hG_->config;
+BROWN_attn::BROWN_attn(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SelfAttention(hG_, key_, jit, flag) {
+    auto& config    = hG_->config;
     n_rot           = config.n_rot();
     rope_freq_base  = config.model.rope_freq_base;
     rope_freq_scale = config.model.rope_freq_scale;
@@ -333,7 +349,7 @@ bool BROWN_attn::Build(int flag) {
     // moe.BuildX(name+".moe",sp,hFish,flag);
     return true;
 }
-hGensor BROWN_attn::Ming(RLS_BP *ctx_, hGensor teb, int flag) {
+hGensor BROWN_attn::Ming(RLS_BP* ctx_, hGensor teb, int flag) {
     assert_shape_2d(teb, C, T * B);
     hGensor cur = BeforeMing(ctx_, teb, flag);
     if (cur == nullptr)
@@ -400,19 +416,19 @@ hGensor BROWN_attn::Ming(RLS_BP *ctx_, hGensor teb, int flag) {
     return cur;
 }
 
-string BROWN_attn::__repr__(string &suffix, string &prefix, int flag) {
+string BROWN_attn::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]  = "\0";
-    const char *tab = prefix.c_str();
+    const char* tab = prefix.c_str();
     sprintf(buf + strlen(buf), "%s BROWN_attn %s", tab, moe.Empty() ? "" : "+moe");
     if (flag > 0)
         _INFO("%s", buf);
     return buf;
 };
 
-GatedAttention::GatedAttention(Fish *hG_, const std::string &key_, JSON::const_iterator jit, int flag) : SelfAttention(hG_, key_, jit, flag) {
-    auto &config = hG_->config;
+GatedAttention::GatedAttention(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SelfAttention(hG_, key_, jit, flag) {
+    auto& config = hG_->config;
     shape        = {C, n_ff};
-    tpTrans      = RELU2;
+    tpTrans      = T_RELU2;
     // tpTrans = LINEAR;
     if (jvals.size() > 0)
         tpTrans = (TRANSITION_MODE)(jvals[0]);
@@ -431,7 +447,7 @@ bool GatedAttention::Build(int flag) {
 
     return true;
 }
-hGensor GatedAttention::Ming(RLS_BP *ctx_, hGensor inpL, int flag) {
+hGensor GatedAttention::Ming(RLS_BP* ctx_, hGensor inpL, int flag) {
     if (inpL == nullptr) {  // symbolic analysis
         return GeNeuron::BeforeMing(ctx_, nullptr, flag);
     }
@@ -460,9 +476,9 @@ hGensor GatedAttention::Ming(RLS_BP *ctx_, hGensor inpL, int flag) {
     cur = AfterMing(ctx_, cur, flag);
     return cur;
 }
-string GatedAttention::__repr__(string &suffix, string &prefix, int flag) {
+string GatedAttention::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]  = "\0";
-    const char *tab = prefix.c_str();
+    const char* tab = prefix.c_str();
     sprintf(buf + strlen(buf), "%s {GatedAttention attn_mode=(%d trans=%d)}", tab, attn_mode, tpTrans);
     if (flag > 0)
         _INFO("%s", buf);
@@ -475,7 +491,7 @@ bool cuAttention::Build(int flag) {
 #endif
     return true;
 }
-hGensor cuAttention::Ming(RLS_BP *ctx_, hGensor inpL, int flag) {
+hGensor cuAttention::Ming(RLS_BP* ctx_, hGensor inpL, int flag) {
     if (inpL == nullptr) {  // symbolic analysis
         return GeNeuron::BeforeMing(ctx_, nullptr, flag);
     }
@@ -486,16 +502,16 @@ hGensor cuAttention::Ming(RLS_BP *ctx_, hGensor inpL, int flag) {
     cur = AfterMing(ctx_, cur, flag);
     return cur;
 }
-string cuAttention::__repr__(string &suffix, string &prefix, int flag) {
+string cuAttention::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]  = "\0";
-    const char *tab = prefix.c_str();
+    const char* tab = prefix.c_str();
     sprintf(buf + strlen(buf), "%s {cuAttention attn_mode=(%d trans=%d)}", tab, attn_mode, tpTrans);
     if (flag > 0)
         _INFO("%s", buf);
     return buf;
 };
 
-hGensor SelfAttention::vXattn(void *ctx_, hGensor v, hGensor attn, int flag) {
+hGensor SelfAttention::vXattn(void* ctx_, hGensor v, hGensor attn, int flag) {
     float kq_scale = 1.0f / sqrtf(float(n_embd_head)), s;
     if (attn == nullptr) {
         if (isLinear) {
@@ -799,8 +815,8 @@ bool GENSORS::has(hGensor gensor) {
         for (auto gt : infos) {
             gensors_2.push_back(gt.first);
         }
-        std::sort(gensors_1.begin(), gensors_1.end(), [](const hGTensor &a, const hGTensor &b) { return strcmp(a->name, b->name) < 0; });
-        std::sort(gensors_2.begin(), gensors_2.end(), [](const hGTensor &a, const hGTensor &b) { return strcmp(a->name, b->name) < 0; });
+        std::sort(gensors_1.begin(), gensors_1.end(), [](const hGTensor& a, const hGTensor& b) { return strcmp(a->name, b->name) < 0; });
+        std::sort(gensors_2.begin(), gensors_2.end(), [](const hGTensor& a, const hGTensor& b) { return strcmp(a->name, b->name) < 0; });
         Gensors2File(gensors_1, "~/gset_1.info");
         Gensors2File(gensors_2, "~/gset_2.info");
         exit(KOIFISH_INVALID_NAG);
@@ -809,7 +825,7 @@ bool GENSORS::has(hGensor gensor) {
     return b2;
 }
 
-void GENSORS::Insert(hGensor gensor, const GENSOR_INFO &gi, int flag) {
+void GENSORS::Insert(hGensor gensor, const GENSOR_INFO& gi, int flag) {
     auto key = gensor->name;
     if (strcmp(key, "model.norm.weight") == 0) {
         int debug = 0x0;
@@ -884,8 +900,8 @@ bool TGraph::TopoOrder(int flag) {
     return true;
 }
 
-string TGraph::__repr__(string &suffix, string &prefix, hGensor root_0, int flag) {
-    const char *tab      = prefix.c_str();
+string TGraph::__repr__(string& suffix, string& prefix, hGensor root_0, int flag) {
+    const char* tab      = prefix.c_str();
     string root_name     = "";
     const size_t MAX_BUF = 640 * 1024;
     char buf[MAX_BUF]    = "\0";
@@ -958,7 +974,7 @@ string TGraph::__repr__(string &suffix, string &prefix, hGensor root_0, int flag
     return buf;
 }
 
-TGraph::TGraph(Fish *hF_, const string &nam_, void *ctx_, bool isGrad, int flag) : hFish(hF_), ctx(ctx_), name(nam_) {
+TGraph::TGraph(Fish* hF_, const string& nam_, void* ctx_, bool isGrad, int flag) : hFish(hF_), ctx(ctx_), name(nam_) {
     size_t nVisi = gset.size();
 #ifdef _TENSOR_G_
 #else
@@ -976,7 +992,7 @@ bool TGraph::empty() {
 
 void TGraph::PushBack(hGensor node, int flag) {
     assert(node != nullptr && strlen(node->name) > 0);
-    const char *name = node->name;
+    const char* name = node->name;
 
     if (gset.find(node) != gset.end())
         return;
@@ -999,7 +1015,7 @@ bool TGraph::isSink(hGensor node, int flag) {
     return false;
 }
 
-int Fish::BuildComputeGraph(int order, void *ctx, int flag) {
+int Fish::BuildComputeGraph(int order, void* ctx, int flag) {
     const int N = config.n_ctx(), n_past = 0;
     if (N == 19) {
         int debug = 0x0;
@@ -1073,7 +1089,7 @@ int Fish::BuildComputeGraph(int order, void *ctx, int flag) {
     return 0x0;
 }
 
-int TGraph::has(const string &name, int flag) {
+int TGraph::has(const string& name, int flag) {
     std::map<std::string, int> msg;
 #ifdef __USE_GGML__
     int nLeaf = cgraph->n_leafs, nNode = cgraph->n_nodes, no = 1, nDup = 0;
@@ -1162,9 +1178,9 @@ bool TGraph::isValid() {
     };
     */
 #ifndef GG_V12
-extern "C" void ggml_compute_backward(void *ctx, hGensor tensor, struct ggml_hash_set *zero_table);
-struct ggml_cgraph *TGraph::BuildBackward(void *ctx_, hTGraph hFore, bool accumulate, int flag) {
-    struct ggml_cgraph *gb = cgraph;
+extern "C" void ggml_compute_backward(void* ctx, hGensor tensor, struct ggml_hash_set* zero_table);
+struct ggml_cgraph* TGraph::BuildBackward(void* ctx_, hTGraph hFore, bool accumulate, int flag) {
+    struct ggml_cgraph* gb = cgraph;
     assert(isBackward && hFore != nullptr);
     auto gf = hFore->raw();
     nForwN = gf->n_nodes, nForwL = gf->n_leafs;
@@ -1182,7 +1198,7 @@ struct ggml_cgraph *TGraph::BuildBackward(void *ctx_, hTGraph hFore, bool accumu
 
     if (isKeep) {
         for (int i = 0; i < gf->n_nodes; i++) {
-            struct ggml_tensor *node = gf->nodes[i];
+            struct ggml_tensor* node = gf->nodes[i];
             assert(0);
             CHILD_1218_GRAD
             if (node->grad) {
@@ -1203,7 +1219,7 @@ struct ggml_cgraph *TGraph::BuildBackward(void *ctx_, hTGraph hFore, bool accumu
     //  1 ggml_set_param would set FLAG & init grad(zero)  2 dst would create grad if its src has grad
     n_grad = 0, n_param = 0, n_p0 = 0;
     for (int i = gf->n_nodes - 1; i >= 0; i--) {
-        struct ggml_tensor *node = gf->nodes[i];
+        struct ggml_tensor* node = gf->nodes[i];
         if (node == xn) {  // only for debug
             int xxx = 0;
         }
@@ -1255,17 +1271,17 @@ struct ggml_cgraph *TGraph::BuildBackward(void *ctx_, hTGraph hFore, bool accumu
 }
 #else  //
 // extern "C" void ggml_compute_backward(void * ctx, struct ggml_cgraph * cgraph, int i, bool * grads_needed);
-struct ggml_cgraph *TGraph::BuildBackward(void *ctx_0, hTGraph hFore, bool accumulate, int flag) {
+struct ggml_cgraph* TGraph::BuildBackward(void* ctx_0, hTGraph hFore, bool accumulate, int flag) {
 #ifdef __USE_GGML__
-    struct ggml_context *ctx_ = (struct ggml_context *)ctx_0;
+    struct ggml_context* ctx_ = (struct ggml_context*)ctx_0;
     auto gf                   = hFore->raw();
     nForwN = gf->n_nodes, nForwL = gf->n_leafs;
     int n_grad = 0, n_param = 0, n_p0 = 0;
     size_t sz                       = gf->size;
-    struct ggml_cgraph *gb          = GG_dup_graph(ctx_, gf);
+    struct ggml_cgraph* gb          = GG_dup_graph(ctx_, gf);
     cgraph                          = gb;  //  ggml_build_backward_expand
     const size_t size_meta          = (3 * hFore->nNeedGrad + 9) * ggml_tensor_overhead();
-    struct ggml_context *ctx_static = ggml_init({size_meta, nullptr, true});
+    struct ggml_context* ctx_static = ggml_init({size_meta, nullptr, true});
     if (DEBUG.back_graph_version == 1) {
         ggml_build_backward_expand(ctx_static, ctx_, gb, accumulate);
         return gb;
@@ -1277,10 +1293,10 @@ struct ggml_cgraph *TGraph::BuildBackward(void *ctx_0, hTGraph hFore, bool accum
     const int n_nodes_f = cgraph->n_nodes, nHash = cgraph->visited_hash_set.size;
     memset(cgraph->grads, 0, cgraph->visited_hash_set.size * sizeof(hGensor));
     memset(cgraph->grad_accs, 0, cgraph->visited_hash_set.size * sizeof(hGensor));
-    bool *grads_needed = new bool[nHash]();  // calloc(cgraph->visited_hash_set.size, sizeof(bool));
+    bool* grads_needed = new bool[nHash]();  // calloc(cgraph->visited_hash_set.size, sizeof(bool));
     // bool accumulate = false;
     for (int i = 0; i < n_nodes_f; ++i) {
-        struct ggml_tensor *node = cgraph->nodes[i];
+        struct ggml_tensor* node = cgraph->nodes[i];
         if (typNUMBER(node->type) == typNUMBER::I32) {
             continue;
         }
@@ -1349,7 +1365,7 @@ struct ggml_cgraph *TGraph::BuildBackward(void *ctx_0, hTGraph hFore, bool accum
     for (int i = n_nodes_f - 1; i >= 0; --i) {
         // inplace operations to add gradients are not created by ggml_compute_backward except for gradient accumulation
         // use allocator to automatically make inplace operations
-        struct ggml_tensor *node = cgraph->nodes[i];
+        struct ggml_tensor* node = cgraph->nodes[i];
         // auto grad = GradOf(cgraph,node);
         // if(grad==nullptr)   continue;
         // ggml_compute_backward(ctx_, cgraph, i, grads_needed);
@@ -1390,7 +1406,7 @@ void TGraph::Traverse(int flag) {
     int node_n                               = -1;
     while (true) {
         if (node_n != -1) { /* FINALIZE */
-            struct ggml_tensor *node = cgraph->nodes[node_n];
+            struct ggml_tensor* node = cgraph->nodes[node_n];
             if (GGML_OP_HAS_FINALIZE[node->op]) {
                 // params.nth = ggml_get_n_tasks(node, n_threads);
             }
@@ -1398,7 +1414,7 @@ void TGraph::Traverse(int flag) {
 
         while (++node_n < cgraph->n_nodes) {  // distribute new work or execute it direct if 1T
             _INFO("%s: %d/%d\n", __func__, node_n, cgraph->n_nodes);
-            struct ggml_tensor *node = cgraph->nodes[node_n];
+            struct ggml_tensor* node = cgraph->nodes[node_n];
             if (1) {
                 if (GGML_OP_HAS_INIT[node->op]) {
                     // params.type = GGML_TASK_TYPE_INIT;
@@ -1416,7 +1432,7 @@ void TGraph::Traverse(int flag) {
 #endif
 }
 
-int TGraph::compute_on_plan(struct ggml_cplan *cplan, int flag) {
+int TGraph::compute_on_plan(struct ggml_cplan* cplan, int flag) {
     return -1;
     /*return ggml_graph_compute(cgraph, cplan);
     int compute_status = GGML_EXIT_ABORTED;
@@ -1509,11 +1525,11 @@ int TGraph::compute_on_plan(struct ggml_cplan *cplan, int flag) {
     return compute_status;*/
 }
 
-void s2layerinfo(struct CLI_params &config, const string &root, const string &jkey, std::vector<string> &lays) {
+void s2layerinfo(struct CLI_params& config, const string& root, const string& jkey, std::vector<string>& lays) {
     lays.clear();
-    const char *seps = " ,:;{}()\t=";
+    const char* seps = " ,:;{}()\t=";
     string nam_0;
-    char *token = strtok((char *)jkey.c_str(), seps);
+    char* token = strtok((char*)jkey.c_str(), seps);
     int no = 0, nLay = 1;
     while (token != NULL) {
         if (no == 0) {
@@ -1545,7 +1561,7 @@ void s2layerinfo(struct CLI_params &config, const string &root, const string &jk
 }
 
 int TGraph::curLayer = -1;
-hNeuron Fish::J2Neuron(void *ctx_, string &dad, int level, const JConfig &jconfig, int flag) {
+hNeuron Fish::J2Neuron(void* ctx_, string& dad, int level, const JConfig& jconfig, int flag) {
     hNeuron hN = nullptr, cur = nullptr;
     std::vector<hNeuron> vNN;
     string k, nam_, prefix;
@@ -1619,11 +1635,11 @@ bool GTensor::FreeBuffer(int flag) {
         residual   = nullptr;
         tmpTernary = nullptr;
         return true;
-    } catch (const std::exception &e) {
+    } catch (const std::exception& e) {
         _INFO("%s", e.what());
         fflush(stdout);
         return -1000;
-    } catch (const char *info) {
+    } catch (const char* info) {
         _INFO("%s", info);
         fflush(stdout);
         return -1001;
@@ -1634,84 +1650,31 @@ bool GTensor::FreeBuffer(int flag) {
     }
 }
 
-bool GTensor::AllocBuffer(Fish *hFish, int flag) {
-    try {
-        assert(hFish != nullptr);
-        // TokenEmbed* embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed",0);
-        int B, T, C;
-        hFish->GetBTC(B, T, C);
-        int nVocab = hFish->nClass();
-        if (hFish->config.model.isPaddedCls) {
-            nVocab = ceil(nVocab / 128.0) * 128;
-        }
-        int Vp = (int)(nVocab * 1.1), NH = hFish->config.n_head(), nFF = hFish->config.n_ff(), nEmbed = hFish->config.nEmbed();
-        size_t nTmp = ((size_t)T) * std::max(nFF, std::max(NH, Vp)), nFFW = (size_t)(B)*T * nFF;
-        // config.model.preLogits_dB = 8; //(int)ceil(B*4.0f*C/nTmp);
-        int dB = hFish->config.model.preLogits_dB;
-        if (hFish->isTrain())
-            assert(B % dB == 0);
-        nTmp = std::max(nFFW / dB + 1, nTmp);
-        assert(nTmp < INT_MAX);
-        typNUMBER tpA = hFish->config.model.tpActivation, tpG = hFish->config.model.tpGradient, tpW = hFish->config.model.tpWeight;
-        // cuLiteTest(B,T,C);
-        int mostC = C;  // config.nEmbed(-1);
-        SHAPE sp = {B, T, C}, sp4 = {B, T, max(nFF, 3 * C)}, sp0 = {dB, (int)nTmp}, spMost = {B, T, mostC};
-        GTensor::bt4c       = std::make_shared<huTensor>(hFish, "tmpBT4c", sp4, tpA, true);
-        GTensor::tmpFF1     = std::make_shared<huTensor>(hFish, "tmpFF1", sp4, tpA, true);
-        SHAPE spTernary     = {C, max(nVocab, 3 * C)};
-        GTensor::tmpTernary = std::make_shared<huTensor>(hFish, "tmpTernary", spTernary, tpW, true);  // Only weight would in ternay bit
-        GTensor::outL       = std::make_shared<huTensor>(hFish, "tmpOutL", spMost, tpA, true);
-        GTensor::scratch    = std::make_shared<huTensor>(hFish, "tmpScratch/output", sp0, tpA, true);  //  may reduce memory by sp0=sp0/VP
-
-        GTensor::delta     = std::make_shared<huTensor>(hFish, "tmpDelta", spMost, tpG, true);
-        GTensor::tmpDelta  = std::make_shared<huTensor>(hFish, "tmpDelta2", spMost, tpG, true);
-        GTensor::host_buff = new float[GTensor::scratch->size()];
-        if (hFish->config.ModelArch() == NLP_GUPPY) {
-            GTensor::tmpW = std::make_shared<huTensor>(hFish, "tmpW", SHAPE({nEmbed, nFF}), tpW, true);
-        }
-        // GTensor::tmpGW = std::make_shared<huTensor>(hFish, "tmpGW", SHAPE({nEmbed, nFF}), tpG, true);
-        cudaCheck(cudaMalloc(&GTensor::stat_info, sizeof(float) * 5120));
-
-        return true;
-    } catch (const std::exception &e) {
-        _INFO("%s", e.what());
-        fflush(stdout);
-        return -1000;
-    } catch (const char *info) {
-        _INFO("%s", info);
-        fflush(stdout);
-        return -1001;
-    } catch (...) {
-        _INFO("\r\n%s  Unknown exception !!!", __func__);
-        fflush(stdout);
-        return -2001;
-    }
-}
 /*
 
 */
-int Fish::jToGraph(void *ctx_, bool isBuild, int flag) {
+int Fish::jToGraph(void* ctx_, bool isBuild, int flag) {
     JConfig js(config.jModel);
     string sRoot = "model";  // jModel = jKEY(jConfig,{"model"});
 
-    GTensor::AllocBuffer(this);
+    AllocBuffer();
 
     J2Neuron(ctx_, sRoot, 0, js, flag);
     int L = config.nLayer();
     for (auto n : neurons) {
-        if (dynamic_cast<Ganglia *>(n.get()) != nullptr)
+        if (dynamic_cast<Ganglia*>(n.get()) != nullptr)
             continue;
         backbons.push_back(n);
     }
     assert(backbons.size() == 2 * L + 3);
     // RLScheduling
-    RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
+    RLS_BP* hRLS = hEDS->GetScheduler<RLS_BP>();
 
-    FFN *last_ffn = GetNeuron<FFN>("FFN", L - 1);
+    FFN* last_ffn = GetNeuron<FFN>("FFN", L - 1);
 
     for (int l = L - 1; l >= 0; l--) {
-        SelfAttention *QKV = GetNeuron<SelfAttention>("SelfAttention", l);
-        FFN *ffn           = GetNeuron<FFN>("FFN", l);
+        SelfAttention* QKV = GetNeuron<SelfAttention>("SelfAttention", l);
+        FFN* ffn           = GetNeuron<FFN>("FFN", l);
         ffn->delta         = nullptr;
     }
 
@@ -1720,7 +1683,7 @@ int Fish::jToGraph(void *ctx_, bool isBuild, int flag) {
     if (config.token_embeds.size() > 1) {
         auto nn = std::make_shared<MAEC>(this, "MAEC", flag);
         neurons.push_back(nn);
-        TokenEmbed *embed = GetNeuron<TokenEmbed>("TokenEmbed", 0);
+        TokenEmbed* embed = GetNeuron<TokenEmbed>("TokenEmbed", 0);
         embed->SetMAEC(nn);
         hCLS->maec = nn;
     }
