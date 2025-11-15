@@ -15,8 +15,8 @@
 #include "./kernel/layernorm.cuh"
 #include "./kernel/operator.cuh"
 #include "./kernel/rope.cuh"
+#include "./kernel/sort_rank.cuh"
 #include "./kernel/utils.cuh"
-#include "qwen_v0.cuh"
 
 extern cudaStream_t main_stream;
 
@@ -284,9 +284,6 @@ __global__ __launch_bounds__(1024, 1) static void T_forward_ffn(const __grid_con
     coopstage(args.perfstats, 6);
 }
 
-// typedef __nv_fp8_e5m2 tpEMBED;
-typedef __nv_bfloat16 tpEMBED;
-
 // classifier into logits		T=__nv_fp8_e5m2, AT=AT
 template <typename T, typename AT>
 __global__ static void kernel_output(uint64_t pTok, float* xout, AT* x, T* w, float* rms_weight, int n, int d, float norm_eps, bool norm_ln) {
@@ -356,7 +353,7 @@ float* T_generate_Cooperative(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned
         PrintTensor<AT>("att", args.att, true, dim, 1);  // why it's inf ???
         PrintTensor<AT>("x_qkv", args.x, true, dim, 1);
         cudaCheck(err);
-        cudaCheck(cudaStreamSynchronize(main_stream));
+        SYNC_DEVICE();
         // exit(-13);
         double now = GST_ms();
         FFN* ffn   = hFish->GetNeuron<FFN>("FFN", l);
@@ -370,7 +367,7 @@ float* T_generate_Cooperative(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned
             // T_forward_ffn<__nv_fp8_e5m2, __half, AT><<<dGRID, dBLOCK, smemPB, main_stream>>>(&args);	//why its slower than cudaLaunchCooperativeKernel
             cudaCheck(err);
         }
-        cudaCheck(cudaStreamSynchronize(main_stream));
+        SYNC_DEVICE();
         // SUM::tX1 += GST_ms() - now;
         PrintTensor<AT>("x_ffn", args.x, true, dim, 1);
         // args.AfterLayer(l);
@@ -383,7 +380,7 @@ float* T_generate_Cooperative(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned
     // template <typename T, typename AT> (uint64_t, float* xout, AT* x, T* w, float* rms_weight, int n, int d, float norm_eps, bool norm_ln)
     kernel_output<__nv_fp8_e5m2, AT><<<dGRID, dBLOCK, smemPB, main_stream>>>(pTok, logits, args.x, TO<__nv_fp8_e5m2>(out_weight), rms_final_weight, dim,
                                                                              vocab_size, args.norm_eps, args.norm_ln);
-    cudaCheck(cudaStreamSynchronize(main_stream));
+    SYNC_DEVICE();
     cudaCheck(cudaGetLastError());  // check for kernel launch errors; they might fail with OOM due to lazy kernel compilation
 
     // cls->preLogits->Print("logits",0,-1,dim);
@@ -391,11 +388,108 @@ float* T_generate_Cooperative(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned
     return logits;
 }*/
 
+// fp32_out should not share same address of bf16_in
+__global__ void convert_bf16_to_fp32_kernel(__nv_bfloat16* bf16_in, float* fp32_out, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        fp32_out[i] = __bfloat162float(bf16_in[i]);
+    }
+}
+
+bool LogitsInfo::Init(int n_vocab, bool isCPU_, hGensor hClsLogits, int flag) {
+    isCPU = isCPU_;
+    dim   = n_vocab;
+
+    // assert(cls->preLogits->host_data == nullptr);
+    index = new int[n_vocab];
+    for (int i = 0; i < n_vocab; i++) {
+        index[i] = i;
+    }
+    if (isCPU) {
+        logits = new floatLogits[n_vocab];
+
+        hClsLogits->host_data = logits;
+    } else {
+        logits = TO<floatLogits>(hClsLogits);
+
+        int* host_index = index;
+        cudaCheck(cudaMalloc(&index, n_vocab * sizeof(int)));
+        H2D(index, host_index, n_vocab * sizeof(int));
+        delete[] host_index;
+
+        cudaCheck(cudaMalloc(&index_sorted, n_vocab * sizeof(int)));
+        cudaCheck(cudaMalloc(&logits_sorted, n_vocab * sizeof(floatLogits)));
+    }
+    return true;
+}
+
+__global__ void CU_init_i(int* vec, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        vec[i] = i;
+    }
+}
+
+void LogitsInfo::SortPair(int nPick, int flag) {
+    if (nPick <= 0)
+        nPick = dim;
+    if (isCPU) {
+        // qsort(probindex, n_cands, sizeof(ProbIndex), compare_prob_desc);
+        assert(nPick <= dim);
+        for (int i = 0; i < nPick; i++) {
+            for (int j = 1; j < nPick; j++) {
+                if (logits[i] < logits[j]) {
+                    Swap(i, j);
+                }
+            }
+        }
+    } else {
+        // CU_RadixSorter sorter(_logits,n_vocab);
+        if (d_temp == nullptr) {
+            cub::DeviceRadixSort::SortPairs(d_temp, szTemp, logits, logits_sorted, index, index_sorted, nPick);
+            cudaCheck(cudaMalloc(&d_temp, szTemp));  //
+        }
+        CU_init_i<<<CEIL_DIV(nPick, CU_T4B_SMALL), CU_T4B_SMALL>>>(index, nPick);
+        // cub::DeviceRadixSort::SortKeys(d_temp, szTemp, logits, logits, nPick);
+        //  In-place operations are not supported. There must be no overlap between any of the provided ranges!!!
+        // cudaMemcpy(index_out, index, sizeof(int) * nPick, cudaMemcpyDeviceToDevice);
+        // cudaMemcpy(logits_out, logits, sizeof(floatLogits) * nPick, cudaMemcpyDeviceToDevice);
+        cub::DeviceRadixSort::SortPairs(d_temp, szTemp, logits, logits_sorted, index, index_sorted, nPick);
+        PrintTensor<floatLogits>("sort_logits", logits_sorted, true, nPick, 1, 1, 1, 0);
+        PrintTensor<int>("sort_index", index_sorted, true, nPick, 1, 1, 1, 0);
+    }
+}
+
+template <typename T>
+__global__ void CU_sample(T* prelogitst, int* index, int dim, float coin, int flag) {
+    return;
+}
+
+TOKEN_ID GeneratOnPrompt::Sample(int idx, bool is_resampling) {
+    if (samp_params.isSampleCPU)
+        return Sample_cpu(idx, is_resampling);
+
+    TOKEN_ID id = 0;
+    int n_vocab = fish_1 == nullptr ? wiki0->n_vocab : fish_1->nClass();
+    assert(n_vocab == gpuLogits.dim);
+    PrintTensor<floatLogits>("_logits", gpuLogits.logits, true, n_vocab, 1, 1, 1, 0);
+    gpuLogits.SortPair(-1);
+
+    // float coin  = 0.1;  // random_f32(&rng_state);
+    // CU_sample<<<1, 1>>>(gpuLogits.logits_sorted, gpuLogits.index_sorted, n_cands, coin, 0x0);
+    // H2D(&id, gpuLogits.index_sorted, sizeof(int));
+    //  return id
+    size_t off = gpuLogits.dim - nCanTopK;
+    D2H(gpuLogits.index_sorted + off, cpuLogits.index, sizeof(int) * nCanTopK);
+    D2H(gpuLogits.logits_sorted + off, cpuLogits.logits, sizeof(floatLogits) * nCanTopK);
+    return Sample_cpu(idx, true);
+}
+
 template <>
 hGTensor QWEN3_PIPE::tX = nullptr;
 
 template <typename AT>
-floatLogist* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe, unsigned flags) {  // int token, int pos,
+floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe, unsigned flags) {  // int token, int pos,
     constexpr int HEAD_DIM = 128;
     int szBuffer           = hFish->config.chat_sampler.szBuffer;
     int seq_len            = hFish->config.chat_sampler.seq_len;
@@ -410,31 +504,38 @@ floatLogist* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
     // QWEN3_PIPE *hQwen = &qwen_pipe;
     // hQwen->UpdatePos(0x0);
     int nCore = hFish->curDevice()->nCore, dim = hQwen->dim;
-    // copy the token embedding into x
-    tpEMBED* token_embedding_table = TO<tpEMBED>(embed->w);
-    CU_embed_forw_1<<<dim / 32, 32, 0, main_stream>>>(hQwen->x, token_embedding_table, token, dim);
-    // embed->w->Print("wte", 0, 0);
-    PrintTensor<AT>("token_embed", hQwen->x, true, dim, 1, 1, 1, -1);
+
+    // tpEMBED* token_embedding_table = TO<tpEMBED>(embed->w);
+    switch (embed->w->type) {
+        case typNUMBER::F8E5M2:
+            CU_embed_forw_1<<<dim / 32, 32, 0, main_stream>>>(hQwen->x, TO<f8e5>(embed->w), token, dim, 0);
+            break;
+        default:
+            CU_embed_forw_1<<<dim / 32, 32, 0, main_stream>>>(hQwen->x, TO<bf16>(embed->w), token, dim, 0);
+            break;
+    }
+    embed->w->Print("wte", 0, 0), PrintTensor<AT>("token_embed", hQwen->x, true, dim, 1, 1, 1, 0);
 
     OutCLS* cls              = hFish->GetNeuron<OutCLS>("OutCLS", 0);
-    floatLogist* logits      = TO<floatLogist>(cls->preLogits);
+    floatLogits* logits      = TO<floatLogits>(cls->preLogits);
     LayerNormal* lnf         = hFish->GetNeuron<LayerNormal>("LayerNormal", 0);
     floatX* rms_final_weight = TO<floatX>(lnf->w);  // (dim,);
     // PrintTensor<float>("x_0",hQwen->x,true,dim,1);	uint32_t,__nv_fp8_e5m2,float
     // printf("\tpos=%d\n", pos);
     for (int l = 0; l < hQwen->n_layers; ++l) {
+        double now = GST_us();
         // bf16 *layer_key_cache = hQwen->key_cache + (size_t)l * seq_len * KV_DIM, *layer_value_cache = hQwen->val_cache + (size_t)l * seq_len * KV_DIM;
         bf16 *layer_key_cache = (bf16*)hQwen->hCache->Get(KVCache::KV_KEY, l, 0), *layer_value_cache = (bf16*)hQwen->hCache->Get(KVCache::KV_VAL, l, 0);
         bf16* k_cache_pos = layer_key_cache + (size_t)pos * hQwen->kv_dim;
         bf16* v_cache_pos = layer_value_cache + (size_t)pos * hQwen->kv_dim;
         if (pos == 1) {
             // g_dump_level = 0;
-            int debug = 0x0;  // STOP_HERE_FOR_DEBUG
+            // int debug = 0x0;  // STOP_HERE_FOR_DEBUG
         }
         hQwen->InitLayer(l);
         const CoopLayer<QWEN3_PIPE::tpWeight>* L = (const CoopLayer<QWEN3_PIPE::tpWeight>*)(hQwen->cLayers + l);  //	hQwen->cLayers+l
         SelfAttention* QKV                       = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
-        if (flags == 1) {
+        if (flags == 0) {
             // QKV->OnDebug();
             QKV->cuInfer(hQwen->inpL, 0x0);
         } else {
@@ -473,7 +574,11 @@ floatLogist* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
             // 6. MHA (QK^T V)
             // 6.1: calculate QK scores
             int qk_threads_per_block = std::min(1024, pos + 1);
-            attention_qk_kernel<<<N_HEADS, qk_threads_per_block>>>(hQwen->att, hQwen->q, layer_key_cache, pos, seq_len, N_HEADS, N_KV_HEADS, HEAD_DIM);
+            if (DEBUG.T_cuQK == 0)
+                attention_qk_kernel<<<N_HEADS, qk_threads_per_block>>>(hQwen->att, hQwen->q, layer_key_cache, pos, seq_len, N_HEADS, N_KV_HEADS, HEAD_DIM);
+            else
+                attention_qk_kernel_v2<<<dim3(N_HEADS, pos + 1, 1), HEAD_DIM>>>(hQwen->att, hQwen->q, layer_key_cache, pos, seq_len, N_HEADS, N_KV_HEADS,
+                                                                                HEAD_DIM);
             // 6.2: softmax
             CU_softmax_multihead<<<N_HEADS, 1>>>(hQwen->att, pos, seq_len);
             PrintTensor<float>("attn", hQwen->att, true, pos + 1, 1);
@@ -486,11 +591,12 @@ floatLogist* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
             CU_mv_(hQwen->x, L->wo, hQwen->q, hQwen->dim, hQwen->q_dim, 1.0f, 1.0f);
             PrintTensor<QWEN3_PIPE::tpActivation>("att_x", hQwen->x, true, hQwen->dim, 1);
         }
-        cudaCheck(cudaStreamSynchronize(main_stream)), cudaCheck(cudaGetLastError());
-        hQwen->inpL->Print("x_qkv", 0x0, -1);
+        cudaCheck(cudaGetLastError());
+        hQwen->inpL->Print("x_qkv", 0x0, 0);
         // if (pos == 1) {            exit(-13);        }
-        double now = GST_ms();
-        FFN* ffn   = hFish->GetNeuron<FFN>("FFN", l);
+        SUM::GPU_TIME(SUM::tQKV, now);  // += GST_us() - now;
+        now      = GST_us();
+        FFN* ffn = hFish->GetNeuron<FFN>("FFN", l);
         if (1) {
             // ffn->OnDebug();
             ffn->cuInfer(hQwen->inpL, 0x0);
@@ -510,9 +616,8 @@ floatLogist* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
                    1.0f);  // matmul_cublas(cublas_handle, hQwen->x, L->w2, hQwen->hb, hQwen->dim, hQwen->hidden_dim, 1.0f, 1.0f);
             cudaCheck(cudaGetLastError());
         }
-        cudaCheck(cudaStreamSynchronize(main_stream));
-        // SUM::tX1 += GST_ms() - now;
-        PrintTensor<AT>("x_ffn", hQwen->x, true, dim, 1, 1, 1, -1);
+        SUM::GPU_TIME(SUM::tFFN, now);  // SUM::tFFN += GST_us() - now;
+        PrintTensor<AT>("x_ffn", hQwen->x, true, dim, 1, 1, 1, 0);
         // hQwen->AfterLayer(l);
         if (l > DEBUG.T_generate_most_layer)
             exit(KOIFISH_EXIT_DEBUG);
@@ -520,6 +625,7 @@ floatLogist* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
     if (isOnlyUpdateKV) {
         return NULL;
     }
+
     // 11. final RMSNorm
     // in-place operation on hQwen->x
     CU_rms_v2(hQwen->x, hQwen->x, rms_final_weight, hQwen->dim);
@@ -530,9 +636,9 @@ floatLogist* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
         CU_rms_v2(hQwen->x, hQwen->x, rms_final_weight, hQwen->dim);
         hGensor out_weight = hQwen->out_weight;
         CU_mv_(hQwen->xlogit, ToX(out_weight), hQwen->x, hQwen->vocab_size, hQwen->dim);
-        int grid_size = (hQwen->vocab_size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-        // only for using floatLogist = float;
-        // convert_bf16_to_fp32_kernel<<<grid_size, THREADS_PER_BLOCK>>>(hQwen->xlogit, logits, hQwen->vocab_size);
+        // int grid_size = (hQwen->vocab_size + CU_T4B_SMALL - 1) / CU_T4B_SMALL;
+        // only for using floatLogits = float;
+        // convert_bf16_to_fp32_kernel<<<grid_size, CU_T4B_SMALL>>>(hQwen->xlogit, logits, hQwen->vocab_size);
         cls->preLogits->SerialData("", nullptr, true);
     }
     // cls->preLogits->Print("logits",0,-1,hQwen->vocab_size);
@@ -540,8 +646,8 @@ floatLogist* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
     return logits;
 }
 
-floatLogist* T_generate_(hFISH hFish, MODEL_CARD* hPipe, typNUMBER tpActivity, int flags) {  // int token, int pos,
-    floatLogist* logits = nullptr;
+floatLogits* T_generate_(hFISH hFish, MODEL_CARD* hPipe, typNUMBER tpActivity, int flags) {  // int token, int pos,
+    floatLogits* logits = nullptr;
 
     if (DEBUG.T_cpu == 1) {
         // T_generate_cpu(SharedThis(), false, flag);

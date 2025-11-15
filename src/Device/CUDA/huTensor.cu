@@ -89,7 +89,7 @@ size_t huTensor::Alloc_1(void** dst, bool isZero, string desc, size_t sz0, int f
         if (szAlloc > szFree) {
             hFish->Dump(KOIFISH_OUTOF_GPUMEMORY);
             _ERROR("[CUDA Alloc] Outof GPU Memory @%s!  Free=%gM < Need=%gM.\n ----------------------- more infomation -----------------------\n", name,
-                   szFree / 1.0e6, szAlloc / 1.0e6);            
+                   szFree / 1.0e6, szAlloc / 1.0e6);
             exit(KOIFISH_OUTOF_GPUMEMORY);
         }
     }
@@ -137,10 +137,11 @@ bool huTensor::InitParam(int tpX) {
     int iter = hFish->GetCurIter();
     SUM::nInitParam++;  // may skip(bias is always init to 0)
     if (tpInit > 0 && tpInit != SERIALIZE) {
+        assert(type == typNUMBER::BF16);
         if (strcmp(name, "model.out.weight_b") == 0) {  //  model.blk.34.ffn_down.weight
-            int debug = 0;                              // Print(name, 1, -1);
+            DEBUG_BREAK;                           // Print(name, 1, -1);
         }
-        // _INFO("[InitParam@%d]\t%ld-%ld@%s\n",iter,size(),nInit,name);
+        // _INFO("[InitParam_@%d]\t%ld-%ld@%s\n",iter,size(),nInit,name);
         if (BIT_TEST(flags, F_LORA_B)) {
             return true;
         }
@@ -149,6 +150,9 @@ bool huTensor::InitParam(int tpX) {
             case FIX_1:
                 tmp = new floatX[nInit];
                 for (i = 0; i < nInit; i++) tmp[i] = (floatX)(1.0);
+                break;
+            case GAUSSIAN_NORMAL:
+                CU_disti_normal<floatX>(nInit, (floatX*)data, 1.0f, param_seed);
                 break;
             default:
                 if (BIT_TEST(flags, F_TERNARY)) {
@@ -188,7 +192,6 @@ bool huTensor::InitParam(int tpX) {
    Only for gguf-serialize
 */
 bool huTensor::CopyGG(struct ggml_tensor* gg_, int flag) {
-
     int i = 0;
     assert(gg == nullptr);
     bool isAlloc = data != nullptr;
@@ -695,6 +698,35 @@ bool huTensor::Mutation(int flag) {
     CU_mutation_<<<mGRID, dT4B, 0, main_stream>>>(d_states, T_mutation, T_scale * 0.01, (floatX*)(data), (floatX*)nullptr, nParam, N);
     cudaCheck(cudaFree(d_states));
     return true;
+}
+
+float huTensor::ToF8Ex(int tpX, int flag) {
+    void *data_old = data, *data_fp8 = nullptr;
+    /*typNUMBER oldType = type;    
+    Print("BF16", 0, 0);
+    if (!ReShape(shape, typNUMBER::F8E5M2, F_OP_NO_REALLOC))
+        return 0.0;
+    */
+    size_t nEle = size(), dGrid = CEIL_DIV(nEle, CU_T4B_MIDDLE);
+    string desc = name, suffix = isParam() ? ".w" : ".a";
+    Alloc_1(&data_fp8, true, desc + suffix, szData + szGama);
+    switch (type) {
+        case typNUMBER::BF16:
+            CU_Float2F8<bf16><<<dGrid, CU_T4B_MIDDLE>>>((bf16*)data, (f8e5*)data_fp8, nEle, 0, 0);
+            break;
+        default:
+            assert(0);
+            break;
+    }
+    AfterQuant(nullptr, typNUMBER::F8E5M2, data_fp8);
+    /*Free_1(&data_old);
+    data = data_fp8;
+    Print("F8Ex", 0, 0);
+    for (auto t : refered) {
+        assert(t->type == oldType);
+        t->type = type;
+    }*/
+    return 1.0;
 }
 
 bool huTensor::ToTernary(floatX* paramX, int flag) {

@@ -22,19 +22,31 @@
 #include <typeinfo>
 #include <vector>
 using namespace std;
-#include "../g_float.hpp"
 #include "../TokenSet/DataLoader.hpp"
+#include "../g_float.hpp"
 #include "../ggex/GG_util.hpp"
 #include "../ggex/WIKI.hpp"
-#ifdef __USE_GGML__
-#include "../../llama.cpp/common/common.h"
-#endif
+
 class Fish;
 
-typedef struct {
-    float prob;
-    int index;
-} ProbIndex;
+// multiple arr design for GPU version
+struct LogitsInfo {
+    void* d_temp  = nullptr;
+    size_t szTemp = 0;
+
+    int dim             = -1;
+    bool isCPU          = true;
+    //  cls->preLogits->host_data = _logits
+    floatLogits* logits = nullptr, *logits_sorted = nullptr;  
+    int* index          = nullptr, *index_sorted = nullptr;
+    floatLogits maxLogit = 0.0;
+
+    virtual void Swap(int i, int j) { std::swap(logits[i], logits[j]), std::swap(index[i], index[j]); }
+    virtual bool Init(int n_vocab, bool isCPU, hGensor hCls, int flag = 0x0);
+    virtual void quick_select(int n, int k);
+    virtual void SortPair(int nPick, int flag = 0x0);
+    virtual ~LogitsInfo();
+};
 
 /*
     Ref     https://github.com/karpathy/llama2.c
@@ -47,9 +59,10 @@ class GeneratOnPrompt {
     CLI_params config;
     CHAT_SAMPLER samp_params;
 
-    ProbIndex* probindex = nullptr;
-    floatLogist* _logits = nullptr;     //  cls->preLogits->host_data = _logits
-    std::vector<float> x_logits;
+    LogitsInfo cpuLogits, gpuLogits;
+    // ProbIndex* probindex = nullptr;
+
+    //  std::vector<float> x_logits;
     float delta_max = 0, delta_a = 0;
     bool display = true;
 
@@ -62,11 +75,8 @@ class GeneratOnPrompt {
     // bool input_echo           = true;
     bool isCTXSampling = true;
     int n_ctx = -1, n_ctx_train = -1;
-#ifdef __USE_GGML__
-    llama_context* ctx                          = nullptr;
-    llama_context* ctx_guidance                 = NULL;
-    struct llama_sampling_context* ctx_sampling = NULL;
-#endif
+    int nCanTopK = -1;
+
     // std::string path_session = params.path_prompt_cache;
     std::vector<TOKEN_ID> session_tokens;
     std::vector<TOKEN_ID> embd_inp;
@@ -125,11 +135,13 @@ class GeneratOnPrompt {
 
     virtual int Generate(int nJob, int flag = 0x0);
     virtual int Generate_v0(int nJob, int flag = 0x0);
+    virtual TOKEN_ID Sample_cpu(int idx = -1, bool isSorted = false);
     virtual TOKEN_ID Sample(int idx = -1, bool is_resampling = false);
 
     virtual void DisplayEmbd(bool input_echo, int n_consumed, int flag = 0x0);
 };
-typedef shared_ptr<GeneratOnPrompt> hGOPT;
+typedef shared_ptr<GeneratOnPrompt> hGENERATOR;
+using hChater = hGENERATOR;
 
 class GOPT_infinite : public GeneratOnPrompt {
    protected:

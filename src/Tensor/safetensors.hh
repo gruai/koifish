@@ -168,7 +168,7 @@ struct tensor_t {
             std::cout << std::to_string(shape[i]);
         }
         std::cout << "] ";
-        std::cout << "  data_offsets[" << std::to_string(data_offsets[0]) << ", " << std::to_string(data_offsets[1]) << "]\n";
+        std::cout << "  offsets=[" << std::to_string(data_offsets[0]) << ", " << std::to_string(data_offsets[1]) << "]\n";
         // std::cout << "  " << to_string_snipped(*this, databuffer) << "\n";
     }
 };

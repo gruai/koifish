@@ -1,12 +1,20 @@
+/**
+ *  SPDX-FileCopyrightText: 2013-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT
+ *
+ *  \brief
+ *  \author Yingshi Chen
+ */
+
 #pragma once
 
 #include <cassert>
 
 #define SMAT_CONTROL_ITEM 32
 /*
-    Ñ¹ËõÁÐ¸ñÊ½´æ´¢µÄÏ¡Êè¾ØÕó
-    ×¢Òâ£º
-        Ö»Ö§³Ö·½Õó£¡
+    Ñ¹ï¿½ï¿½ï¿½Ð¸ï¿½Ê½ï¿½æ´¢ï¿½ï¿½Ï¡ï¿½ï¿½ï¿½ï¿½ï¿½
+    ×¢ï¿½â£º
+        Ö»Ö§ï¿½Ö·ï¿½ï¿½ï¿½
 */
 class CCS_pattern {
    private:

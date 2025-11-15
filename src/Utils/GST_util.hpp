@@ -139,13 +139,6 @@ typedef Dataset* hDATASET;
 double Err_Tag(int lenT, double* acti, int tag, int& nOK, int flag);
 double Err_Auto(int lenT, double* in, double* out, int& nOK, int flag);
 
-template <typename T>
-std::string G_STR(const T& x) {
-    std::stringstream ss;
-    ss << x;
-    return ss.str();
-}
-
 std::string EXE_name(int flag = 0x0);
 std::string FILE_EXT(const std::string& path);
 bool VERIFY_DIR_EXIST(const std::string& path, bool isCreate = false);
@@ -166,14 +159,18 @@ struct SUM {
     static int nUpdateParam;
     static std::vector<MEM_USAGE> mems;
     static int nInitParam, nSaveParam, nzSaveParam, nLoadParam, nzLoadParam, nDogLeg;
-    static double tX, tX1, tData, tRemater, tQKV, tFFN, tUpload, tLoadData, tLoadParam, tEval_0, tEval_1;
+    static double tX, tX1, tData, tRemater, tQKV, tFFN, tPreLogits, tUpload, tLoadData, tLoadParam, tEval_0, tEval_1;
     static size_t szUpload;
     static void Reset(string typ, int flag = 0x0);
     static void TimeInfo(int typ, int flag = 0x0);
     static void MemoryInfo(int type, int flag = 0x0);
     static bool FreeMem(void* hData, int flag = 0x0);
-    static std::string CPU_MemoryInfo(int flag = 0x0);
+    static std::string CPU_Info(int flag = 0x0);
+    static std::string GPU_Info(int flag = 0x0);
+    static void GPU_TIME(double& a, const double b, int flag = 0x0);
 };
+
+// #define GPU_TIME_a(a,b)   {SYNC_DEVICE(); (a) += GST_us() - (b);}
 
 // Discrete Distribution of array
 struct Distri_ARRAY {
@@ -196,9 +193,9 @@ struct Distri_ARRAY {
 
     virtual void Stat() {
         size_t n = distri.size();
-        if(n== 0)
+        if (n == 0)
             return;
-            
+
         average = sum / n;
         sigma   = std::max(0.0, ss / n - average * average);  // float point error
         sigma   = sqrt(sigma);

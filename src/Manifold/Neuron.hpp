@@ -35,6 +35,7 @@ struct LayerNormal;
 class RLS_BP;
 class SparseNeuron;
 class KVCache;
+class GeQuant;
 /**
  * Each Neuron has
  * 1. inp,out,w
@@ -114,6 +115,7 @@ class GeNeuron {
     // 天地本逆旅, 你我皆过客(Guoke)
     GeNeuron* hGuoke = nullptr;
     std::set<hGensor> tReloads;
+    shared_ptr<GeQuant> hQuant = nullptr;
     // std::vector<shared_ptr<GeNeuron>> brothers;
     virtual std::string _NAME(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix = "", int flag = 0x0);
 
@@ -144,11 +146,17 @@ class GeNeuron {
     GeNeuron() {}
     GeNeuron(const std::string& key_, JSON::const_iterator jit, Fish* hG_, int flag);
     virtual ~GeNeuron();
+
+    CLI_params& Config( )    const;
     //  Gensors with physical memory
     virtual std::vector<hGensor> PhysicalGensors(bool isNoRef = true, int flag = 0x0) { return {}; }
     // Pick gensors(child,partial,vitual,ref,lora,...)
     virtual std::vector<hGensor> PickGensors(bool isLORA = true, int flag = 0x0);
     virtual int nBatchToken(int flag = 0x0);
+    virtual Fish* GetFish() const {
+        assert(hFish != nullptr);
+        return hFish;
+    }
     virtual hGensor GetGensor(const std::string& key, int flag = 0x0);
     virtual hGensor GetGensor(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix = "", int flag = 0x0);
     virtual int SetGuoke(GeNeuron* hGuoke_, bool isX, int flag = 0x0);
@@ -273,12 +281,12 @@ class SparseNeuron : public GeNeuron {
     virtual void SetEmbed(TokenEmbed* embd_, int type, int flag = 0x0);
     virtual void UpdateSamps(int seed, int flag = 0x0);
 };
-typedef shared_ptr<GeNeuron> hNeuron;
+typedef shared_ptr<GeNeuron> hNEURON;
 
 // Collection of neurons, only special operation!
 struct Ganglia : public SparseNeuron {
-    std::vector<hNeuron> ns;
-    Ganglia(Fish* hG_, const string& guid, std::vector<hNeuron>& ns_, int flag);
+    std::vector<hNEURON> ns;
+    Ganglia(Fish* hG_, const string& guid, std::vector<hNEURON>& ns_, int flag);
     bool isValid() override { return ns.size() > 0; }
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
     bool isGang() override { return true; }
@@ -456,6 +464,13 @@ class SelfAttention : public SparseNeuron {
         POOLING   = 0x1,
         LINFORMER = 0x2,
     };
+    enum ATTENTION_MODE {
+        MHA,  //  Multi-Head Attention (MHA) [Vaswani et al., 2017],
+        MQA,  //  Shazeer [2019] proposed Multi-Query Attention (MQA)
+        GQA,  //  Ainslie et al. later generalized to Grouped-Query Attention (GQA)
+        CLA,  //  Cross-Layer Attention   [William Brandon et al., 2025],
+        MLA,  //  Multi-head Latent Attention by DeepSeek V2
+    };
     bool remater_qkv                = false;
     bool isAttOnBC                  = false;  //  // Nearly same. If true,attenion on all tokens, memory would explode!
     int Rope_version                = 0;
@@ -491,7 +506,7 @@ class SelfAttention : public SparseNeuron {
     SelfAttention() {}
     SelfAttention(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
     bool Build(int flag) override;
-    // std::vector<hGensor> PickGensors(bool isLORA = true, int flag = 0x0) override;
+
     std::vector<GeNeuron*> SubNeurons(int flag = 0x0) override;
     int SetGuoke(GeNeuron* hGuoke_, bool isRefParam, int flag = 0x0) override;
     bool BeforeForward(int iter, int lay = 0x0, int flag = 0x0) override;
@@ -573,7 +588,7 @@ class VarCoder : public SparseNeuron {
     virtual hGensor ENC(const hGensor x0);
     virtual hGensor DEC(hGensor x);
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
-    // std::vector<hGensor> PickGensors(bool isNoRef = true, int flag = 0x0) override;
+
     friend class TokenEmbed;
     friend class MAEC;
     friend class OutCLS;
@@ -594,7 +609,7 @@ struct FFN : public VarCoder {
     virtual ~FFN() {}
     bool Build(int flag) override;
     std::vector<GeNeuron*> SubNeurons(int flag = 0x0) override;
-    // std::vector<hGensor> PickGensors(bool isNoRef = true, int flag = 0x0) override;
+
     int SetGuoke(GeNeuron* hGuoke_, bool isRefParam, int flag = 0x0) override;
 
     hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag = 0x0) override;
@@ -665,7 +680,7 @@ struct OutCLS : public SparseNeuron {
     // host version of target is SampLoader::hostTargetProbs
     hGTensor target = nullptr, preLogits = nullptr;
     //  Deprecated!     device=>host    floatX=>float
-    floatLogist* fLogits(int flag = 0x0);
+    floatLogits* fLogits(int flag = 0x0);
     float metric[METRIC_MOST], *dev_metric = nullptr;
     hSampLoader hLoader = nullptr;
     int nCls = 0, dB = 1, nzLoss = 0, latent = 0;
@@ -701,9 +716,9 @@ struct NeLayer {  // Neural Layer with many neurons
     int id      = -1;
     bool isLast = false;
     std::string name;
-    std::vector<hNeuron> neurons;
+    std::vector<hNEURON> neurons;
 
-    void Add(hNeuron hN, int flag = 0x0) {
+    void Add(hNEURON hN, int flag = 0x0) {
         neurons.push_back(hN);
         hN->hLay = this;  //???
     }

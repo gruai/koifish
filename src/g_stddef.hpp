@@ -25,24 +25,26 @@
 #include <vector>
 using namespace std;
 
+using SHAPE = std::vector<int>;
+
 //  ERR code of exit
-#define KOIFISH_INVALID_ARGS    -10
+#define KOIFISH_INVALID_ARGS -10
 
 #define KOIFISH_OUTOF_GPUMEMORY -100
 #define KOIFISH_OUTOF_CPUMEMORY -101
 
 #define KOIFISH_ZERO_PARAMETERS -200
 
-#define KOIFISH_LOAD_TOKENIZER  -300
+#define KOIFISH_LOAD_TOKENIZER -300
 
-#define KOIFISH_INVALID_GSET    -600
-#define KOIFISH_INVALID_NAG     -601
+#define KOIFISH_INVALID_GSET -600
+#define KOIFISH_INVALID_NAG -601
 
 #define KOIFISH_UNSUPPORTED_DATATYPE -1000
 #define KOIFISH_GRAD_EXPLODE -1100
 #define KOIFISH_BLAS_UNALIGN -1200
 #define KOIFISH_DATASET_EMPTY -1300
-#define KOIFISH_DATALOADER_EMPTY    -1310
+#define KOIFISH_DATALOADER_EMPTY -1310
 
 #define KOIFISH_EXIT_DEBUG -2000
 #define KOIFISH_EXIT_SYNC_DEVICE -2100
@@ -99,6 +101,7 @@ typedef __int64 INT_63;
             std::terminate();                                                 \
         }                                                                     \
     } while (0)
+
 // Prefer a struct when you can. It may involve some overhead, but is definitely easier for maintenance.
 /*
     64-bit ID + double weight
@@ -109,6 +112,22 @@ struct N64w {
     N64w() {}
     N64w(INT_63 id_, double w_) : id(id_), w(w_) {}
 };
+
+template <typename T>
+std::string G_STR(const T& x) {
+    std::stringstream ss;
+    ss << x;
+    return ss.str();
+}
+
+template <>
+inline std::string G_STR<vector<string>>(const vector<string>& words) {
+    std::stringstream ss;
+    ss << "{";
+    for (auto x : words) ss << x << ",";
+    ss << "}";
+    return ss.str();
+}
 
 template <typename T>
 T G_S2T_(const string& s, T init) {
@@ -205,7 +224,7 @@ T* NEW_(size_t len, T a0) {
 // delete[] array
 template <typename T>
 void FREE_a(T*& ptr) {
-    if (ptr != nullptr) {   
+    if (ptr != nullptr) {
         delete[] ptr;
         ptr = nullptr;
     }
@@ -426,7 +445,7 @@ std::vector<T> TO_VECTOR(const T& container) {
     return {container.begin(), container.end()};
 }*/
 // Or more generic version (works with any iterable range)
-template<typename Iterable>
+template <typename Iterable>
 auto TO_VECTOR(const Iterable& iterable) {
     using ValueType = typename std::iterator_traits<decltype(iterable.begin())>::value_type;
     return std::vector<ValueType>(iterable.begin(), iterable.end());
@@ -438,3 +457,18 @@ auto TO_VECTOR(const Iterable& iterable) {
 #define CHILD_1218_GRAD  //
 
 #define CHILD_1012_CACHE true
+
+#ifndef NDEBUG
+#define DEBUG_BREAK                     \
+    do {                                \
+        volatile int __debug_break = 0; \
+        (void)__debug_break;            \
+    } while (0);
+#define DEBUG_MARKER(msg)                           \
+    do {                                            \
+        std::cout << "DEBUG: " << msg << std::endl; \
+    } while (0);
+#else  // Eliminated in release builds
+#define DEBUG_BREAK ((void)0);
+#define DEBUG_MARKER(msg) ((void)0);
+#endif

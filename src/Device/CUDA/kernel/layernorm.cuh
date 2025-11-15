@@ -737,6 +737,57 @@ void inline layernorm_backward(floatX* delta, floatX* dweight, floatX* dbias, fl
 }
 
 
+template <int THREADS_PER_BLOCK, int HEAD_DIM>
+__global__ void __launch_bounds__(THREADS_PER_BLOCK)
+    fused_multi_rmsnorm_kernel(bf16* __restrict__ vecs, const bf16* __restrict__ weight, int num_vecs, float inv_head_dim, float EPS = 1e-6f) {
+    // each block processes one vector/head
+    const int vec_idx = blockIdx.x;
+    if (vec_idx >= num_vecs)
+        return;
+
+    const int t_idx     = threadIdx.x;
+    const int vec_iters = HEAD_DIM / 2;
+
+    bf16* vec_start = vecs + vec_idx * HEAD_DIM;
+
+    const __nv_bfloat162* row_in    = reinterpret_cast<const __nv_bfloat162*>(vec_start);
+    const __nv_bfloat162* weight_in = reinterpret_cast<const __nv_bfloat162*>(weight);
+    __nv_bfloat162* row_out         = reinterpret_cast<__nv_bfloat162*>(vec_start);
+
+    // 1. calculate sum of squares
+    float lsum = 0.0f;
+    for (int idx = t_idx; idx < vec_iters; idx += THREADS_PER_BLOCK) {
+        __nv_bfloat162 v_bf16 = __ldg(&row_in[idx]);
+        float2 v_fp32         = __bfloat1622float2(v_bf16);
+        lsum += v_fp32.x * v_fp32.x + v_fp32.y * v_fp32.y;
+    }
+
+    // 2. reduce sum within the block
+    using BlockReduce = cub::BlockReduce<float, THREADS_PER_BLOCK>;
+    __shared__ typename BlockReduce::TempStorage tmp;
+    float block_sum = BlockReduce(tmp).Sum(lsum);
+
+    // 3. calculate the normalization factor
+    __shared__ float mul_val;
+    if (t_idx == 0) {
+        mul_val = rsqrtf(block_sum * inv_head_dim + EPS);
+    }
+    __syncthreads();
+
+    // 4. applying the normalization
+    for (int idx = t_idx; idx < vec_iters; idx += THREADS_PER_BLOCK) {
+        __nv_bfloat162 v_in_bf16     = __ldg(&row_in[idx]);
+        __nv_bfloat162 v_weight_bf16 = __ldg(&weight_in[idx]);
+        float2 v_in_fp32             = __bfloat1622float2(v_in_bf16);
+        float2 v_weight_fp32         = __bfloat1622float2(v_weight_bf16);
+
+        v_in_fp32.x = (v_in_fp32.x * mul_val) * v_weight_fp32.x;
+        v_in_fp32.y = (v_in_fp32.y * mul_val) * v_weight_fp32.y;
+
+        row_out[idx] = __float22bfloat162_rn(v_in_fp32);
+    }
+}
+
 __global__ static void CU_rmsnorm_multihead(bf16* __restrict__ vecs, const bf16* __restrict__ weight, int nHead, int HEAD_DIM, float EPS = 1e-6f) {
     // each block processes one vector/head
     const int vec_idx = blockIdx.x;

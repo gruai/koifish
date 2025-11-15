@@ -14,8 +14,8 @@
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
 
-hNeuron GeNeuron::MakeInstance(Fish* hG_, void* ctx, const string& guid, JSON::const_iterator jit, int flag) {
-    hNeuron nn = nullptr;
+hNEURON GeNeuron::MakeInstance(Fish* hG_, void* ctx, const string& guid, JSON::const_iterator jit, int flag) {
+    hNEURON nn = nullptr;
     // assert(j.is_object());
     auto typ_0 = jit.key();
     auto v     = jit.value();
@@ -97,6 +97,11 @@ GeNeuron::~GeNeuron() {
     // FREE_a( host_inp );
 }
 
+CLI_params& GeNeuron::Config() const {
+    assert(hFish != nullptr);
+    return hFish->config;
+}
+
 void GeNeuron::Init(Fish* hG_, int flag) {
     hFish        = hG_;
     auto& config = hG_->config;
@@ -146,7 +151,7 @@ string GeNeuron::_repr_1(string& suffix, string& prefix, string info, int flag) 
     return buf;
 }
 
-Ganglia::Ganglia(Fish* hG_, const string& key_, std::vector<hNeuron>& ns_, int flag) : ns(ns_) {
+Ganglia::Ganglia(Fish* hG_, const string& key_, std::vector<hNEURON>& ns_, int flag) : ns(ns_) {
     name  = "{" + key_ + "}";
     hFish = hG_;
 }
@@ -211,6 +216,12 @@ OutSimilarity::OutSimilarity(Fish* hG_, const std::string& key_, JSON::const_ite
 //  The Unreasonable Effectiveness of Entropy Minimization in LLM Reasoning
 OutEntropy::OutEntropy(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : OutCLS(hG_, key_, jit, flag) { dB = 0; }
 
+/*
+    Alias of lm_head - final layer of a language model that:
+        1. Takes the hidden states from the transformer backbone
+        3. Projects them to the vocabulary space
+        3. Produces probability distributions over tokens
+*/
 OutCLS::OutCLS(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     int nEmbd = hFish->config.nEmbed();
     // _target = hFish->Target();   //null now
@@ -237,7 +248,7 @@ OutCLS::OutCLS(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int
 }
 
 //  Deprecated!
-floatLogist* OutCLS::fLogits(int flag) {
+floatLogits* OutCLS::fLogits(int flag) {
     assert(0);
     assert(preLogits != nullptr);
     size_t n = preLogits->size(), i;
@@ -245,8 +256,8 @@ floatLogist* OutCLS::fLogits(int flag) {
     if (preLogits->host_data == nullptr) {
         preLogits->host_data = new float[n * 2];
     }
-    floatLogist* logits = (floatLogist*)(preLogits->host_data);
-    floatLogist* tmp    = logits + n;
+    floatLogits* logits = (floatLogits*)(preLogits->host_data);
+    floatLogits* tmp    = logits + n;
     D2H(preLogits->data, tmp, preLogits->nByte());
     for (i = 0; i < n; i++) {
         logits[i] = tmp[i];
@@ -274,7 +285,7 @@ bool OutCLS::Build(int flag) {
     hFish->target_probs = target;
     out                 = std::make_shared<huTensor>(hFish, "loss", sp2, typNUMBER::F32, false);
     BIT_SET(out->flags, GTensor::F_LOSS);
-    typNUMBER tpL = typeid(floatLogist) == typeid(float) ? typNUMBER::F32 : typNUMBER::BF16;  // hFish->config.model.tpPreLogits;
+    typNUMBER tpL = typeid(floatLogits) == typeid(float) ? typNUMBER::F32 : typNUMBER::BF16;  // hFish->config.model.tpPreLogits;
     if (hFish->config.isOnlyGPT) {
         preLogits = GT(hFish, tpL, {padded_nCls}, 0x0, "preLogits");  // std::make_shared<huTensor>(hFish,"preLogits",sp3,tpActivation,false);
         // preLogits->flags |= GTensor::F_HOSTDATA;
@@ -731,7 +742,7 @@ hGensor GeNeuron::BeforeMing(RLS_BP* hRLS, hGensor cur, int flag) {
     if (hRLS->isRemater) {
         return cur;
     }
-    // vector arrT          = PickGensors();
+
     DATA_PLACE old_place = place;
     if (hFish->isSymbolic()) {
         if (hFish->isRemater())

@@ -8,7 +8,6 @@
  *  \author Yingshi Chen
  */
 #include "./kernel/operator.cuh"
-// #include "./llm_c/sampler.h"
 #include "../../Manifold/Fish.hpp"
 #include "../../Manifold/Neuron.hpp"
 #include "../../Manifold/Optimizer.hpp"

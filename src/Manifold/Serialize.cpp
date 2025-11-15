@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <set>
 
+#include "../Tensor/GeQuant.hpp"
 #include "../TokenSet/Dictionary.hpp"
 #include "../Utils/GST_os.hpp"
 #include "Fish.hpp"
@@ -30,7 +31,7 @@ std::string safetensors::safetensors_t::config_key_ = "__json__config__";
      2. AfterBuild->SaveTrain->SAFETENSOR_Serialize
      3.
 */
-bool SAFETENSOR_mmap(const std::string &path, safetensors::safetensors_t &st, int flag) {
+bool SAFETENSOR_mmap(const std::string& path, safetensors::safetensors_t& st, int flag) {
     _INFO("\n>>>>>> SAFETENSOR_mmap mmap@\"%s\" f=%d......", path.c_str(), flag);
     try {
         std::string warn, err;
@@ -57,7 +58,7 @@ bool SAFETENSOR_mmap(const std::string &path, safetensors::safetensors_t &st, in
                 st.metadata.at(i, &value);
             }
         }
-        const uint8_t *databuffer{nullptr};
+        const uint8_t* databuffer{nullptr};
         if (st.mmaped) {
             databuffer = st.databuffer_addr;  // st->mmap_addr + 8 + st->header_size;
         } else {
@@ -86,7 +87,7 @@ bool SAFETENSOR_mmap(const std::string &path, safetensors::safetensors_t &st, in
         size_t szIFS = std::filesystem::file_size(path);
         _INFO("\r>>>>>> SAFETENSOR_mmap mmap@\"%s\" f=%d nT=%d fsize=%.7gM\n", path.c_str(), flag, nT, szIFS / 1.0e6);
         return true;
-    } catch (JSON::parse_error &e) {
+    } catch (JSON::parse_error& e) {
         _INFO("\r\n%s  Failed to open %s!!! ERR=%s", __func__, path.c_str(), e.what());
         return false;
     } catch (...) {
@@ -94,7 +95,7 @@ bool SAFETENSOR_mmap(const std::string &path, safetensors::safetensors_t &st, in
     }
 }
 
-bool SAFETENSOR_Load_jconfig(const std::string &path, JSON &jsConfig, int flag) {
+bool SAFETENSOR_Load_jconfig(const std::string& path, JSON& jsConfig, int flag) {
     safetensors::safetensors_t st;
     bool bLoad = SAFETENSOR_mmap(path, st, flag);
     if (!bLoad)
@@ -132,7 +133,7 @@ bool Fuyou::Serialize(bool isSave, int flag) {
 
 using namespace safetensors;
 
-bool safetensors::save_to_ofs(const safetensors_t &st, std::ofstream &ofs, size_t &szAll, std::string *warn, std::string *err, int flag) {
+bool safetensors::save_to_ofs(const safetensors_t& st, std::ofstream& ofs, size_t& szAll, std::string* warn, std::string* err, int flag) {
     bool isInitMMap = BIT_TEST(flag, FSerial::INIT_MMAP);
     try {
         fflush(stdout);
@@ -211,7 +212,7 @@ bool safetensors::save_to_ofs(const safetensors_t &st, std::ofstream &ofs, size_
 
         std::string header_str = ss.str();
         uint64_t header_size   = header_str.size();  // do not include '\n'
-        const void *databuffer_addr{nullptr};
+        const void* databuffer_addr{nullptr};
         size_t databuffer_size{0};
         if (st.mmaped) {
             databuffer_size = st.databuffer_size;
@@ -239,19 +240,19 @@ bool safetensors::save_to_ofs(const safetensors_t &st, std::ofstream &ofs, size_
         // size_t szDst = buffer.size();  //  248972672,  248951808
         // // write padded header_size
         // memcpy(buffer.data(), &padded_header_size, sizeof(size_t));
-        ofs.write(reinterpret_cast<const char *>(&padded_header_size), sizeof(size_t));
+        ofs.write(reinterpret_cast<const char*>(&padded_header_size), sizeof(size_t));
         // // write header
         // memcpy(buffer.data() + 8, header_str.data(), header_size);
-        ofs.write(reinterpret_cast<const char *>(header_str.data()), header_size);
+        ofs.write(reinterpret_cast<const char*>(header_str.data()), header_size);
         // // Use whitespace for trailing padding.
         // memset(buffer.data() + 8 + header_size, 0x20, pad_bytes);
         std::vector<uint8_t> pad;
         pad.resize(pad_bytes);
         memset(pad.data(), 0x20, pad_bytes);
-        ofs.write(reinterpret_cast<const char *>(pad.data()), pad_bytes);
+        ofs.write(reinterpret_cast<const char*>(pad.data()), pad_bytes);
         // memcpy(buffer.data() + 8 + padded_header_size, databuffer_addr, databuffer_size);
         if (databuffer_addr != nullptr)  // mmap file
-            ofs.write(reinterpret_cast<const char *>(databuffer_addr), databuffer_size);
+            ofs.write(reinterpret_cast<const char*>(databuffer_addr), databuffer_size);
         else {
             size_t dst_offset = 0, sz;
             for (size_t i = 0; i < st.tensors.size(); i++) {
@@ -260,10 +261,10 @@ bool safetensors::save_to_ofs(const safetensors_t &st, std::ofstream &ofs, size_
                 st.tensors.at(i, &tensor);
                 assert(dst_offset == tensor.data_offsets[0]);
                 if (key != safetensors::safetensors_t::config_key_) {
-                    GTensor *t = (GTensor *)(tensor.hUserData);
+                    GTensor* t = (GTensor*)(tensor.hUserData);
                     sz         = tensor.data_offsets[1] - dst_offset;  // t->nByte() * 3;
                     assert(sz == t->nByte() || sz == t->nByte() * 3);
-                    char *tmp = new char[sz]();
+                    char* tmp = new char[sz]();
                     if (t->GetDataX() == nullptr) {
                         if (isInitMMap) {
                             nInit++;
@@ -276,11 +277,11 @@ bool safetensors::save_to_ofs(const safetensors_t &st, std::ofstream &ofs, size_
                         assert(t->data != nullptr && t->gm != nullptr);
                         t->SerialData("", tmp, true);
                     }
-                    ofs.write(reinterpret_cast<const char *>(tmp), sz);
+                    ofs.write(reinterpret_cast<const char*>(tmp), sz);
                     delete[] tmp;
                 } else {
                     sz              = tensor.msgpack.size();
-                    const char *tmp = (const char *)tensor.msgpack.data();
+                    const char* tmp = (const char*)tensor.msgpack.data();
                     ofs.write(tmp, sz);
                 }
                 dst_offset += sz;
@@ -290,7 +291,7 @@ bool safetensors::save_to_ofs(const safetensors_t &st, std::ofstream &ofs, size_
         fflush(stdout);
         // _INFO(">>>>>> saveto_ofs ......OK\n");
         return true;
-    } catch (const std::exception &e) {
+    } catch (const std::exception& e) {
         _INFO("\n!!!!saveto_ofs excetioin=%s sz=%ld!!!\n", e.what(), szAll);
         return false;
     } catch (...) {
@@ -311,13 +312,13 @@ void CheckPoint_Params::Init(int flag) {
     }
 }
 
-int SAFETENSOR2Gensors(Fish *hFish, const std::string &path, safetensors::safetensors_t *hst, int flag) {
+int Fish::SAFETENSOR2Gensors(const std::string& path, safetensors::safetensors_t* hst, int flag) {
     int nSerialT = 0;
     hst->Clear();
     bool bLoad = SAFETENSOR_mmap(path, *hst, flag);  //*hst
     if (!bLoad)
         return false;
-    const uint8_t *databuffer{nullptr};
+    const uint8_t* databuffer{nullptr};
     if (hst->mmaped) {
         databuffer = hst->databuffer_addr;  // safeTensors->mmap_addr + 8 + safeTensors->header_size;
     } else {
@@ -333,24 +334,34 @@ int SAFETENSOR2Gensors(Fish *hFish, const std::string &path, safetensors::safete
         if (key == safetensors::safetensors_t::config_key_) {
             continue;
         }
-        if (G_Has_(key, hFish->config.model.skip_st))
+        // if (isOnlyVocab)
+        //     continue;
+
+        if (G_Has_(key, config.model.skip_st))
             continue;
-        hGensor target = hFish->GetGensor(key);  //  "model.embed.weight"    model.layers.0.attn_norm.weight
+        if (G_Has_(key, {"model.embed_tokens.weight"}) == 0) {
+            DEBUG_BREAK;  
+        }
+        hGensor target = GetGensor(key);  //  "model.embed.weight"    model.layers.0.attn_norm.weight
         if (target == nullptr) {
             _ERROR("\t[SERIAL] Failed @%s!\n", key.c_str());
             continue;
         }
+        auto ginfo = GetGensorInfo(target);
         JSON jdesc = tensor.jDesc();
-        if (target->SerialJSON(key, jdesc, (void *)databuffer, hst->mmap_size) != 0) {
+        if (target->SerialJSON(key, jdesc, (void*)databuffer, hst->mmap_size) != 0) {
             return false;
         }
-        if (DUMP() || hFish->config.dumpSwitch.tensor_load > 0) {
+        if (ginfo.hNeron->hQuant != nullptr)
+            ginfo.hNeron->hQuant->Update(target);
+
+        if (DUMP() || config.dumpSwitch.tensor_load > 0) {
             tensor.Dump("  >>>>  " + key, databuffer);
             _INFO("  >>>>  [%d] typ=%s\t data=%p grad=%p \t sz=%ld @%s\n", nSerialT, cNameOf(target->type), target->data, target->grad, tBYTE(target),
                   target->name);
         }
         // if(strcmp(target->name,"model.layers.27.mlp.norm.weight")==0){   //only for debug model.output.weight
-        //     target->Print(key,0,-1);                //PrintTensor<f8e5m2_t>("wout",target->data,target->ne[0],dim);
+        //     target->Print(key,0,-1);                //PrintTensor<f8e5>("wout",target->data,target->ne[0],dim);
         // }
 
         nSerialT++;
@@ -358,7 +369,7 @@ int SAFETENSOR2Gensors(Fish *hFish, const std::string &path, safetensors::safete
     return nSerialT;
 }
 
-bool Fish::SAFETENSOR_Serialize(CheckPoint_Params &ckp, bool isSave, int flag) {
+bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
     double t0   = GST_ms();
     string path = ckp.FullPath(isSave), jPath = path + ".json";
     if (path.empty()) {
@@ -371,7 +382,7 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params &ckp, bool isSave, int flag) {
     JSON jsConfig;
     bool isInitMMap           = BIT_TEST(flag, FSerial::INIT_MMAP);
     vector<hGensor> curParams = optParams;
-    safetensors::safetensors_t st, *hst = (safetensors::safetensors_t *)(ckp.hUserData);
+    safetensors::safetensors_t st, *hst = (safetensors::safetensors_t*)(ckp.hUserData);
     switch (ckp.type) {
         case CheckPoint_Params::STATE:
             assert(hst != nullptr);  // hst=&all_states, so mmp would keep open
@@ -440,11 +451,11 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params &ckp, bool isSave, int flag) {
                   (GST_ms() - t0) / 1000.0);
             return true;
         } else {
-            int nSerialT = SAFETENSOR2Gensors(this, path, hst, 0x0);
+            int nSerialT = SAFETENSOR2Gensors(path, hst, 0x0);
             _INFO(">>>>>> ST_SERIALIZE load@\"%s\" nSerialT=%d iter=%d\n", path.c_str(), nSerialT, flag);
             return true;
         }
-    } catch (JSON::parse_error &e) {
+    } catch (JSON::parse_error& e) {
         _INFO("\r\n%s  Failed to serialize @\"%s\"!!! ERR=%s", __func__, jPath.c_str(), e.what());
         return false;
     } catch (...) {
@@ -453,7 +464,7 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params &ckp, bool isSave, int flag) {
     }
 }
 
-void *MMAP_json(JSON &header, void **objs, size_t *objs_nz, const std::string &path, bool isSave, int flag) {
+void* MMAP_json(JSON& header, void** objs, size_t* objs_nz, const std::string& path, bool isSave, int flag) {
     int fd = open(path.c_str(), O_RDONLY);
     if (fd == -1) {
         return nullptr;
@@ -464,7 +475,7 @@ void *MMAP_json(JSON &header, void **objs, size_t *objs_nz, const std::string &p
         return nullptr;
     }
     size_t size = st.st_size;
-    void *data  = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+    void* data  = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
     if (data == MAP_FAILED) {
         close(fd);
         return nullptr;
@@ -481,14 +492,14 @@ void *MMAP_json(JSON &header, void **objs, size_t *objs_nz, const std::string &p
         return nullptr;
     }
 
-    uint64_t json_size = *(uint64_t *)data;
+    uint64_t json_size = *(uint64_t*)data;
     if (json_size == 0 || json_size > size - sizeof(uint64_t)) {
         munmap(data, size);
         return nullptr;
     }
 
-    char *json_ptr    = (char *)data + sizeof(uint64_t);
-    void *bytes_ptr   = (char *)data + sizeof(uint64_t) + json_size;
+    char* json_ptr    = (char*)data + sizeof(uint64_t);
+    void* bytes_ptr   = (char*)data + sizeof(uint64_t) + json_size;
     size_t bytes_size = size - sizeof(uint64_t) - json_size;
 
     std::string json_str(json_ptr, json_size);
@@ -506,7 +517,7 @@ bool Fish::HF_Serialize(bool isSave, int flag) {
     int nSerialT = 0;
     for (auto path : paths) {
         safetensors::safetensors_t st, *hst = &st;
-        nSerialT += SAFETENSOR2Gensors(this, path, hst, 0x0);
+        nSerialT += SAFETENSOR2Gensors(path, hst, 0x0);
     }
     if (!config.model.st_map.empty()) {  //  "model.safetensors.index.json"
         assert(nSerialT == config.model.st_map.size());
@@ -609,7 +620,7 @@ bool MODEL_CARD::OnJsonCALM(CLI_params *hConfig, const std::string &path, const 
     with open(os.path.join(output_dir, 'template_system_thinking.txt'), 'w', encoding='utf-8', newline='') as f:
         f.write(rendered_prompt)
  */
-bool MODEL_CARD::InitChatTemplate(CLI_params *hConfig, int flag) {
+bool MODEL_CARD::InitChatTemplate(CLI_params* hConfig, int flag) {
     // string fPrompt = sCardPath + "template_user_thinking.txt", fSysPromt = sCardPath + "template_system_thinking.txt";
     // if (enable_thinking) {  // load the "thinking" versions of the templates
 
@@ -629,7 +640,7 @@ bool MODEL_CARD::InitChatTemplate(CLI_params *hConfig, int flag) {
 
     return true;
 }
-bool MODEL_CARD::InitHugFace(CLI_params *hConfig, const JSON &jConfig, int flag) {
+bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, int flag) {
     n_layers = hConfig->nLayer();
     for (int i = 0; i < n_layers; i++) {
         int nH = hConfig->n_head(i), nF = hConfig->n_ff(i);
@@ -639,9 +650,9 @@ bool MODEL_CARD::InitHugFace(CLI_params *hConfig, const JSON &jConfig, int flag)
     string sTyp = jKVs(jConfig, {"model", "datatype", "weight"}, string(""));
     if (!sTyp.empty())
         tpWeight = tpNumOf(sTyp);
-    sTyp = jKVs(jConfig, {"model", "datatype", "embed"}, string(""));
-    if (!sTyp.empty())
-        tpEmbed = tpNumOf(sTyp);
+    // sTyp = jKVs(jConfig, {"model", "datatype", "embed"}, string(""));
+    // if (!sTyp.empty())
+    //     tpEmbed = tpNumOf(sTyp);
     int head_dim = hConfig->head_dim();
     int n_heads = hConfig->n_head(), n_kv_heads = hConfig->n_head_kv();
     // seq_len = hConfig->n_ctx_orig();
@@ -668,7 +679,7 @@ bool MODEL_CARD::InitHugFace(CLI_params *hConfig, const JSON &jConfig, int flag)
         assert(num_attention_heads == n_heads && num_key_value_heads == n_kv_heads);
         int hd = jKV(jModelParam, {"head_dim"}, head_dim);
         if (hd != head_dim) {
-            for (auto &lay : layerps) {
+            for (auto& lay : layerps) {
                 lay._head_dim = hd;
             }
         }
@@ -693,101 +704,38 @@ bool MODEL_CARD::InitHugFace(CLI_params *hConfig, const JSON &jConfig, int flag)
     LoadJsonFile(sCardPath + "model.safetensors.index.json", jSafetensorsIndex);
     if (!jSafetensorsIndex.empty()) {
         nTotalSize = jKV(jSafetensorsIndex, {"metadata", "total_size"}, nTotalSize);
-        
-        auto jMap  = jSafetensorsIndex["weight_map"];
+
+        auto jMap = jSafetensorsIndex["weight_map"];
         for (JSON::iterator it = jMap.begin(); it != jMap.end(); ++it) {
             std::string key = it.key();
             st_map.insert(std::make_pair(key, nullptr));
         }
     }
-    switch(hConfig->ModelArch()){
-    case NLP_QWEN3:
-        if(nTotalSize==8045591552){     //  https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
-            hConfig->n_ctx_train = 262144;           //  Context Length: 262,144 natively
-        }
-        break;
-    default:
-        break;
+    switch (hConfig->ModelArch()) {
+        case NLP_QWEN3:
+            if (nTotalSize == 8045591552) {     //  https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
+                hConfig->n_ctx_train = 262144;  //  Context Length: 262,144 natively
+            }
+            break;
+        default:
+            break;
     }
 
     return empty();
 }
 
-// Deprecated
-bool Fish::CALM_Serialize(const std::string &path, bool isOnlyVocab, int flag) {
-    try {
-        JSON header;
-        size_t objs_size;
-        int nSerialT = 0;
-        void *objs, *data = MMAP_json(header, &objs, &objs_size, path, false, flag);
-        hGTensor tokens = std::make_shared<GTensor>(), scores = std::make_shared<GTensor>();
-        if (data == nullptr)
-            return false;
-
-        for (auto &[key, val] : header.items()) {
-            if (key == "__metadata__") {
-                JSON metadata = val;
-                std::cout << "\n\t__metadata__ " << metadata << std::endl << std::endl;
-                //  config.model.OnJsonCALM(&config, path, metadata, 0x0);
-
-                // InitDictTokenset();
-                if (isOnlyVocab)
-                    continue;
-            } else if (key == "tokenizer.tokens") {
-                tokens->SerialJSON(key, val, objs, objs_size, flag | GTensor::F_NOALLOC);
-            } else if (key == "tokenizer.scores") {
-                scores->SerialJSON(key, val, objs, objs_size, flag | GTensor::F_NOALLOC);
-            } else {
-                if (isOnlyVocab)
-                    continue;
-
-                hGensor target = GetGensor(key);  //  "model.embed.weight"    model.layers.0.attn_norm.weight
-                if (target == nullptr) {
-                    _INFO("\t[SERIAL] Failed @%s!\n", key.c_str());
-                    continue;
-                }
-
-                if (target->SerialJSON(key, val, objs, objs_size) != 0) {
-                    munmap(data, size);
-                    return -1;
-                }  //
-
-                if (G_Has_(target->name, {"mlp.weight"})) {  // "layers.27.mlp.weight" wk.weight wq.weight wv.weight wo.weight ,"w2.weight","w3.weight"
-                    // BIT_SET(target->flags, GTensor::F_TERNARY_);
-                    // target->ToTernary();
-                }
-                if (DUMP()) {
-                    _INFO("  >>>>  %d typ=%s\t data=%p grad=%p \t sz=%ld @%s\n", nSerialT, cNameOf(target->type), target->data, target->grad, tBYTE(target),
-                          target->name);
-                }
-                // if(strcmp(target->name,"model.layers.27.mlp.norm.weight")==0){   //only for debug model.output.weight
-                //     target->Print(key,0,-1);                //PrintTensor<f8e5m2_t>("wout",target->data,target->ne[0],dim);
-                // }
-                nSerialT++;
-            }
-        }
-        _INFO("[SERIAL] n_T=%d\n", nSerialT);
-        hDict->InitFrom(this, tokens, scores, 0x0);
-        tokens.reset();
-        scores.reset();
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
 /*Deprecated*/
-bool Fish::YALM_Serialize(const std::string &path, bool isSave, int flag) {
+bool Fish::YALM_Serialize(const std::string& path, bool isSave, int flag) {
     try {
         if (isSave) {
         } else {
             std::vector<std::string> files;
-            DIR *dir = opendir(path.c_str());
+            DIR* dir = opendir(path.c_str());
             if (dir == nullptr) {
                 std::cout << "failed to open directory" << std::endl;
                 return -1;
             }
-            struct dirent *entry;
+            struct dirent* entry;
             while ((entry = readdir(dir)) != nullptr) {
                 std::string filename = entry->d_name;
                 // Skip . and .. directory entries
@@ -803,7 +751,7 @@ bool Fish::YALM_Serialize(const std::string &path, bool isSave, int flag) {
             std::sort(files.begin(), files.end());
 
             // Read first file with metadata
-            if (CALM_Serialize(files[0], true) != 0) {
+            /*if (CALM_Serialize(files[0], true) != 0) {
                 std::cout << "failed to read metadata" << std::endl;
                 return -1;
             }
@@ -813,7 +761,7 @@ bool Fish::YALM_Serialize(const std::string &path, bool isSave, int flag) {
                     std::cout << "failed to read file " << files[i] << std::endl;
                     return -1;
                 }
-            }
+            }*/
 
             return true;
         }
@@ -823,10 +771,10 @@ bool Fish::YALM_Serialize(const std::string &path, bool isSave, int flag) {
     }
 }
 
-std::string LoadSomeText(const string &fpath, const int nMost, int flag) {
+std::string LoadSomeText(const string& fpath, const int nMost, int flag) {
     assert(nMost > 0);
     string txt = "";
-    FILE *fp   = std::fopen(fpath.c_str(), "rt");
+    FILE* fp   = std::fopen(fpath.c_str(), "rt");
     if (fp == NULL)
         return txt;
 

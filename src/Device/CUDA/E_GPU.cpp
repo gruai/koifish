@@ -7,11 +7,15 @@
  */
 
 #include "../EDevice.hpp"
-#ifdef __USE_GGML__
-#include "ggml-alloc.h"
-#include "ggml-cuda.h"
-#include "ggml-sycl.h"
+
+void SUM::GPU_TIME(double& a, const double b, int flag) {
+    return;
+#ifndef NDEBUG
+    //cudaCheck(cudaStreamSynchronize(main_stream));
+     SYNC_DEVICE();      // Ensure all GPU work is complete, slow, only for debug version
 #endif
+    a += GST_us() - b;
+}
 
 int EDGE_DEVICES::GPU_::MAX_COUNT = 16;  //  16
 std::vector<EDGE_DEVICES::GPU_> EDGE_DEVICES::GPU_::cudaGetDevice(int flag) {

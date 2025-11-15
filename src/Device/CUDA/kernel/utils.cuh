@@ -2,7 +2,7 @@
  *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
- *  \brief Some Utilities cuda kernels
+ *  \brief Some simple utilities cuda kernels
  *  \author Yingshi Chen
  */
 
@@ -147,6 +147,10 @@ __device__ inline float CU_T2Float<__nv_fp8_e5m2>(const __nv_fp8_e5m2* x) {
     u.u     = (*(unsigned char*)(x)) << 8;
     float a = u.f;
     return a;
+}
+template <>
+__device__ inline float CU_T2Float<f8e5>(const f8e5* x) {
+    return CU_T2Float<__nv_fp8_e5m2>((const __nv_fp8_e5m2*) x);
 }
 
 // ----------------------------------------------------------------------------
@@ -347,6 +351,30 @@ __device__ __forceinline__ __nv_bfloat16 CU_Float2T<__nv_bfloat16>(const float& 
     return out;
 }
 
+template <typename T>
+__device__ __forceinline__ T CU_16BF2T(const bf16* a0, unsigned int seed) {
+    T a = (T)(*a0);
+    return a;
+}
+
+template <>
+__device__ __forceinline__ f8e5 CU_16BF2T<f8e5>(const bf16* a0, unsigned int seed) {
+    /*    unsigned int random       = Get2dNoiseUint(threadIdx.x, blockIdx.x * blockDim.x + blockIdx.y, seed);
+        unsigned int threshold    = random & 0xFFFF;
+        unsigned int float_bits   = __float_as_uint(a0);
+        unsigned int rounded_bits = float_bits & 0x0000FFFF;
+        float_bits                = (rounded_bits > threshold) ? (float_bits | 0xFFFF) : (float_bits & ~0xFFFF);
+        __nv_bfloat16 out         = __float2bfloat16_rn(__uint_as_float(float_bits));*/
+    __half val = __half(*a0);  //__gcc_fp16 & half are bit-identical according to the IEEE 754 binary16 Specification
+    f8e5* out  = (f8e5*)(&val);
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+
+#else
+    out = out + sizeof(f8e5);
+#endif
+    return *out;
+}
+
 /*
     1) PCIe/Communication Bottlenecks:
         For data transfer between CPU and GPU, PCIe bandwidth (typically 16-64 GB/s) is far lower than GPU memory bandwidth (e.g., 1 TB/s for high-end GPUs),
@@ -473,4 +501,3 @@ __device__ inline SoftmaxParams CU_prepare_softmax(const floatX* logits, int V) 
     float block_sumval = blockReduce_v0<warpReduceSum>(thread_sumval);
     return SoftmaxParams{1.f / block_sumval, block_maxval};
 }
-

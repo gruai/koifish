@@ -1,3 +1,11 @@
+/**
+ *  SPDX-FileCopyrightText: 2013-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT
+ *
+ *  \brief
+ *  \author Yingshi Chen
+ */
+
 #pragma once
 
 #include <cassert>
@@ -6,6 +14,7 @@
 //#define __STDC_WANT_LIB_EXT1__ 1
 #include <string.h>
 #include "GVMAT.h"
+// #include "GeQuant.hpp"
 #include "Pattern.h"
 #include "../../Utils/BLAS_t.hpp"
 #include "../../Utils/GST_util.hpp"
@@ -275,10 +284,10 @@ void MIN_MAX( size_t len,T *arr,double&a_0,double&a_1,int flag=0x0 ){
 		}
 	}
 }*/
-
-	virtual double Quanti_col(shared_ptr<Quantizer<T>> hQuant,int no,int type,T d,_MyPTR hERR ,int flag=0x0)	{
-		T *scale=hQuant->scale,*zero=hQuant->zero,maxq=hQuant->maxq,loss=0;
-		// hQuant->Update<T>(type,nRow,val+no,q,0x0);
+/*
+	virtual double Quanti_col(shared_ptr<Quantizer<T>> hQunt,int no,int type,T d,_MyPTR hERR ,int flag=0x0)	{
+		T *scale=hQunt->scale,*zero=hQunt->zero,maxq=hQunt->maxq,loss=0;
+		// hQunt->Update<T>(type,nRow,val+no,q,0x0);
 		if( maxq < 0){
 //return (x > scale / 2).float() * scale + (x < zero / 2).float() * zero
 			return loss;
@@ -301,7 +310,8 @@ void MIN_MAX( size_t len,T *arr,double&a_0,double&a_1,int flag=0x0 ){
 		}
 		//GST_util::print();
 		return loss;	
-	}
+	}*/
+
 	virtual G_DATATYPE DataType() override	{ 		return	GeMAT::_dataType<T>(); 	}
 //	virtual typename Vector<T>::handle operator*( const Vector<T> &vec ) const	{		throw std::runtime_error( "operator*" );	}
 

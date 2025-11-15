@@ -52,11 +52,14 @@ __global__ static void encoder_forward_kernel3(floatX* out, const int* inp, cons
 // }
 
 template <typename T_out, typename T>
-__global__ static void CU_embed_forw_1(T_out* o, T* weight, int token, int n) {
+__global__ static void CU_embed_forw_1(T_out* o, T* weight, int token, int n, unsigned int seed) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    assert(i < n);
-    
-    o[i] = weight[token * n + i];    //embed(weight, token * n + i);
+    if (i >= n)
+        return;
+
+    // o[i] = weight[token * n + i];
+    float a = CU_T2Float<T>(weight + token * n + i);
+    o[i]    = CU_Float2T<T_out>(a, seed);
 }
 
 // each thread for one element
@@ -88,7 +91,7 @@ __global__ static void CU_embed_forw_(floatX* out, const int* tokens, const floa
     int N   = B * T;
     if (idx >= N) {
         return;
-    }    
+    }
     int ix = tokens[idx], pos = idx % T;
     const floatX* wpe_tc = wpe + pos * C;
     for (int c = 0; c < C; c++) {
@@ -103,7 +106,6 @@ __global__ static void CU_embed_forw_(floatX* out, const int* tokens, const floa
 #endif
         }
     }
-    
 }
 
 template <class Typ>
@@ -120,7 +122,7 @@ __global__ void CU_embed_ternary_forw_(Typ* out, const int* tokens, floatGama* g
     for (int c = 0; c < C; c += 8) {
         Typ* out_btc = out + idx * C + c;
         // const floatX* wte_ix = wte + ix * C + c;
-        unsigned char tbyte = wte[(ix * C + c) / 8],bit;
+        unsigned char tbyte = wte[(ix * C + c) / 8], bit;
         for (int bpos = 0; bpos < 8; bpos++, out_btc++) {
             bit = BYTE_bit(tbyte, bpos);  //(tbyte >> (7-bpos)) & 0x1;
             a   = bit ? ta : t0;          // binary quant after Implicit RELU

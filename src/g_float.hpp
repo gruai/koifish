@@ -25,12 +25,16 @@
     1. 32bit for DEEPSEEK
     2. 32bit for QWEN(151936)
 */
-typedef uint32_t TOKEN_ID;
-// typedef uint16_t TOKEN_ID;
+using TOKEN_ID = uint32_t;
+// using TOKEN_ID = uint16_t;
 const TOKEN_ID TOKEN_MAX = TOKEN_ID(-1);
 
-//  Default type of activation of inferrence
-typedef float floatI;
+//
+using floatI = float;
+
+// 1 sign, 5 exponent, 1 implicit and 2 explicit mantissa bits, just like _nv_fp8_e5m2
+using f8e5   = uint8_t;  
+   
 
 /*
     Type of numbers
@@ -77,6 +81,8 @@ inline typNUMBER TYPE_() {
         return typNUMBER::F32;
     } else if (typeid(T) == typeid(int)) {
         return typNUMBER::I32;
+    } else if (typeid(T) == typeid(f8e5)) {
+        return typNUMBER::F8E5M2;
     } else if (typeid(T) == typeid(uint8_t)) {
         return typNUMBER::I8;
     } else {
@@ -166,7 +172,7 @@ typedef float floatGrad;
 typedef float floatFFN;
 typedef float floatMV;
 #elif defined(ENABLE_FP8)
-typedef __nv_fp8_e5m2 floatX;
+typedef f8e5 floatX;
 #define PARAMS_TYPE typNUMBER::F8E5M2
 #define tpCuBLAS CUDA_R_8F_E5M2
 #elif defined(ENABLE_FP8_1)
@@ -180,20 +186,21 @@ typedef half floatX;
 #define tpCuBLASCOMPUTE CUBLAS_COMPUTE_16F
 //  #define tpCuBLASCOMPUTE  CUBLAS_COMPUTE_32F_FAST_16F
 #elif defined(ENABLE_BF16)
-using floatX      = __nv_bfloat16;
-using floatMV     = __nv_bfloat16;
-using floatGrad   = __nv_bfloat16;
-using floatFFN    = __nv_bfloat16;
-using floatLogist = __nv_bfloat16;  //float;
 #define PARAMS_TYPE typNUMBER::BF16
 #define tpCuBLAS CUDA_R_16BF
 #define tpCuBLASCOMPUTE CUBLAS_COMPUTE_32F
 #endif
-typedef floatX floatGama;
-// typedef float floatGama;
+
+using floatX      = __nv_bfloat16;
+using floatMV     = __nv_bfloat16;
+using floatGrad   = __nv_bfloat16;
+using floatFFN    = __nv_bfloat16;
+using floatLogits = __nv_bfloat16;
+
 
 using bf16   = __nv_bfloat16;
 using bf16_2 = __nv_bfloat162;
+
 using half   = __half;
 using half_2 = __half2;
 
@@ -205,6 +212,11 @@ inline typNUMBER TYPE_<__nv_bfloat16>() {
 #else
 
 #endif
+
+
+// more datatypes on both floatX & float
+using floatGama   = floatX;
+// using floatGama   = float;
 
 #include "g_float_cpu.hpp"
 
@@ -243,7 +255,7 @@ inline float T2Float<tpBIT2>(const tpBIT2* a0, size_t offset) {
     2. __nv_fp8x4_e5m2 is NVIDIA-specific.
 */
 template <>
-inline float T2Float<f8e5m2_t>(const f8e5m2_t* a0) {
+inline float T2Float<f8e5>(const f8e5* a0) {
     union {
         unsigned short u;
         half f;  //__gcc_fp16 f;
@@ -269,7 +281,7 @@ inline float T2Float<f8e5m2_t>(const f8e5m2_t* a0) {
 }
 template <>
 inline float T2Float<__nv_fp8_e5m2>(const __nv_fp8_e5m2* a0) {
-    float a = T2Float<f8e5m2_t>((const f8e5m2_t*)a0);
+    float a = T2Float<f8e5>((const f8e5*)a0);
     return a;
 }
 template <typename T>
@@ -293,20 +305,20 @@ inline T Float2T(const float* a0) {
 }
 
 template <>
-inline f8e5m2_t Float2T<f8e5m2_t>(const float* a0) {
+inline f8e5 Float2T<f8e5>(const float* a0) {
     assert(!isnan(*a0) && !isinf(*a0));
     __gcc_fp16 val = float_to_half(*a0);
-    f8e5m2_t out   = f8e5m2_t(0);
+    f8e5 out       = f8e5(0);
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-    memcpy(&out, (char*)&val, sizeof(f8e5m2_t));  // TODO: round instead of truncate?
+    memcpy(&out, (char*)&val, sizeof(f8e5));  // TODO: round instead of truncate?
 #else
-    memcpy(&out, (char*)&val + sizeof(f8e5m2_t), sizeof(f8e5m2_t));  // TODO: round instead of truncate?
+    memcpy(&out, (char*)&val + sizeof(f8e5), sizeof(f8e5));  // TODO: round instead of truncate?
 #endif
     return out;
 }
 template <>
 inline __nv_fp8_e5m2 Float2T<__nv_fp8_e5m2>(const float* a0) {
-    f8e5m2_t a = Float2T<f8e5m2_t>(a0);
+    f8e5 a = Float2T<f8e5>(a0);
     return (__nv_fp8_e5m2)(a);
 }
 
@@ -383,11 +395,11 @@ struct FP8E5M2_LUT {
 
 void matmul_unscaled(float* xout, float* x, float* w, int n, int d);
 void matmul_unscaled(float* xout, float* x, __gcc_fp16* w, int n, int d);
-void matmul_unscaled(float* xout, float* x, f8e5m2_t* w, int n, int d);
+void matmul_unscaled(float* xout, float* x, f8e5* w, int n, int d);
 
 void S_matmul(float* xout, float* x, float* w, int n, int d, const int* block_size, float* scale);
 void S_matmul(float* xout, float* x, __gcc_fp16* w, int n, int d, const int* block_size, float* scale);
-void S_matmul(float* xout, float* x, f8e5m2_t* w, int n, int d, const int* block_size, float* scale);
+void S_matmul(float* xout, float* x, f8e5* w, int n, int d, const int* block_size, float* scale);
 
 float rmsnorm(float* o, float* x, float* weight, int size, float eps, bool ln);
 float rmsnorm(float* o, float* x, float* weight, int size, float eps);

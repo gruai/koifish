@@ -39,7 +39,7 @@ int g_dump_level = 1;
         assert(strlen(buffer) <= len);        \
     }
 
-int gTN(hGTensor cur, const char *format, ...) {
+int gTN(hGTensor cur, const char* format, ...) {
     int iRet = 0;
     if (strlen(cur->name) == 0) {
         ARG2STR(format, GTensor::MAX_NAME);
@@ -49,13 +49,13 @@ int gTN(hGTensor cur, const char *format, ...) {
     return iRet;
 }
 
-int gTN0(hGTensor cur, const char *format, ...) {
+int gTN0(hGTensor cur, const char* format, ...) {
     ARG2STR(format, GTensor::MAX_NAME);
     snprintf(cur->name, sizeof(cur->name), "%s", buffer);
     return 0x0;
 }
 #ifdef __USE_GGML__
-int gTN(struct ggml_tensor *cur, const char *format, ...) {
+int gTN(struct ggml_tensor* cur, const char* format, ...) {
     int iRet = 0;
     if (strlen(cur->name) == 0) {
         ARG2STR(format, GTensor::MAX_NAME);
@@ -88,7 +88,7 @@ int gTN(struct ggml_tensor *cur, const char *format, ...) {
         return iRet;
 }
 
-int gTN0(struct ggml_tensor *cur, const char *format, ...) {
+int gTN0(struct ggml_tensor* cur, const char* format, ...) {
     int iRet = 0;
     ARG2STR(format, GTensor::MAX_NAME);
     // va_list args;
@@ -122,28 +122,28 @@ void assert_shape_2d(hGTensor tensor, int64_t ne0, int64_t ne1) {}
 void assert_shape_3d(hGTensor tensor, int64_t ne0, int64_t ne1, int64_t ne2) {}
 void assert_shape_4d(hGTensor tensor, int64_t ne0, int64_t ne1, int64_t ne2, int64_t ne3) {}
 #ifdef __USE_GGML__
-void assert_shape_1d(struct ggml_tensor *tensor, int64_t ne0) {
+void assert_shape_1d(struct ggml_tensor* tensor, int64_t ne0) {
     assert(tensor->ne[0] == ne0);
     assert(tensor->ne[1] == 1);
     assert(tensor->ne[2] == 1);
     assert(tensor->ne[3] == 1);
 }
 
-void assert_shape_2d(struct ggml_tensor *tensor, int64_t ne0, int64_t ne1) {
+void assert_shape_2d(struct ggml_tensor* tensor, int64_t ne0, int64_t ne1) {
     assert(tensor->ne[0] == ne0);
     assert(tensor->ne[1] == ne1);
     assert(tensor->ne[2] == 1);
     assert(tensor->ne[3] == 1);
 }
 
-void assert_shape_3d(struct ggml_tensor *tensor, int64_t ne0, int64_t ne1, int64_t ne2) {
+void assert_shape_3d(struct ggml_tensor* tensor, int64_t ne0, int64_t ne1, int64_t ne2) {
     assert(tensor->ne[0] == ne0);
     assert(tensor->ne[1] == ne1);
     assert(tensor->ne[2] == ne2);
     assert(tensor->ne[3] == 1);
 }
 
-void assert_shape_4d(struct ggml_tensor *tensor, int64_t ne0, int64_t ne1, int64_t ne2, int64_t ne3) {
+void assert_shape_4d(struct ggml_tensor* tensor, int64_t ne0, int64_t ne1, int64_t ne2, int64_t ne3) {
     assert(tensor->ne[0] == ne0);
     assert(tensor->ne[1] == ne1);
     assert(tensor->ne[2] == ne2);
@@ -152,13 +152,13 @@ void assert_shape_4d(struct ggml_tensor *tensor, int64_t ne0, int64_t ne1, int64
 #endif
 
 #ifdef __USE_GGML__
-struct ggml_tensor *tRAND(struct ggml_tensor *tensor, struct random_normal_distribution *rnd) {
+struct ggml_tensor* tRAND(struct ggml_tensor* tensor, struct random_normal_distribution* rnd) {
     float scale = 1.0f;  // xavier
     switch (ggml_n_dims(tensor)) {
         case 1:
             scale /= sqrtf((float)tensor->ne[0]);
             for (int i0 = 0; i0 < tensor->ne[0]; i0++) {
-                float *dst = (float *)((char *)tensor->data + i0 * tensor->nb[0]);
+                float* dst = (float*)((char*)tensor->data + i0 * tensor->nb[0]);
                 *dst       = scale * frand_normal(rnd);
             }
             break;
@@ -166,7 +166,7 @@ struct ggml_tensor *tRAND(struct ggml_tensor *tensor, struct random_normal_distr
             scale /= sqrtf((float)tensor->ne[0] + tensor->ne[1]);
             for (int i1 = 0; i1 < tensor->ne[1]; i1++) {
                 for (int i0 = 0; i0 < tensor->ne[0]; i0++) {
-                    float *dst = (float *)((char *)tensor->data + i0 * tensor->nb[0] + i1 * tensor->nb[1]);
+                    float* dst = (float*)((char*)tensor->data + i0 * tensor->nb[0] + i1 * tensor->nb[1]);
                     *dst       = scale * frand_normal(rnd);
                 }
             }
@@ -176,7 +176,7 @@ struct ggml_tensor *tRAND(struct ggml_tensor *tensor, struct random_normal_distr
             for (int i2 = 0; i2 < tensor->ne[2]; i2++) {
                 for (int i1 = 0; i1 < tensor->ne[1]; i1++) {
                     for (int i0 = 0; i0 < tensor->ne[0]; i0++) {
-                        float *dst = (float *)((char *)tensor->data + i0 * tensor->nb[0] + i1 * tensor->nb[1] + i2 * tensor->nb[2]);
+                        float* dst = (float*)((char*)tensor->data + i0 * tensor->nb[0] + i1 * tensor->nb[1] + i2 * tensor->nb[2]);
                         *dst       = scale * frand_normal(rnd);
                     }
                 }
@@ -188,7 +188,7 @@ struct ggml_tensor *tRAND(struct ggml_tensor *tensor, struct random_normal_distr
                 for (int i2 = 0; i2 < tensor->ne[2]; i2++) {
                     for (int i1 = 0; i1 < tensor->ne[1]; i1++) {
                         for (int i0 = 0; i0 < tensor->ne[0]; i0++) {
-                            float *dst = (float *)((char *)tensor->data + i0 * tensor->nb[0] + i1 * tensor->nb[1] + i2 * tensor->nb[2] + i3 * tensor->nb[3]);
+                            float* dst = (float*)((char*)tensor->data + i0 * tensor->nb[0] + i1 * tensor->nb[1] + i2 * tensor->nb[2] + i3 * tensor->nb[3]);
                             *dst       = scale * frand_normal(rnd);
                         }
                     }
@@ -202,9 +202,9 @@ struct ggml_tensor *tRAND(struct ggml_tensor *tensor, struct random_normal_distr
 }
 #endif
 
-hGTensor tRAND(hGTensor tensor, struct random_normal_distribution *rnd) { return nullptr; }
+hGTensor tRAND(hGTensor tensor, struct random_normal_distribution* rnd) { return nullptr; }
 
-JSON jKEY(const JSON &jConfig, const std::vector<std::string> &keys, int flag) {
+JSON jKEY(const JSON& jConfig, const std::vector<std::string>& keys, int flag) {
     assert(keys.size() > 0);
     JSON cur = (JSON)jConfig;
     std::string key;
@@ -224,7 +224,7 @@ JSON jKEY(const JSON &jConfig, const std::vector<std::string> &keys, int flag) {
     return cur;
 }
 // bool jK2S(const JSON& jConfig,const std::vector<std::string>&keys,(const char*) &str,int flag=0x0);
-bool jK2S(const JSON &jConfig, const std::vector<std::string> &keys, char **str, int flag = 0x0) {
+bool jK2S(const JSON& jConfig, const std::vector<std::string>& keys, char** str, int flag = 0x0) {
     JSON cur = jKEY(jConfig, keys);
     if (cur.is_null() || cur.empty()) {
         assert(0);
@@ -236,7 +236,7 @@ bool jK2S(const JSON &jConfig, const std::vector<std::string> &keys, char **str,
     return true;
 }
 
-void UpdateJConfig(JSON &jConfig, const std::string &jPath) {
+void UpdateJConfig(JSON& jConfig, const std::string& jPath) {
     try {
         std::ifstream jfile(jPath);
         if (jfile.fail()) {
@@ -244,7 +244,7 @@ void UpdateJConfig(JSON &jConfig, const std::string &jPath) {
         }
         jfile >> jConfig;
         std::string s = jConfig.dump();
-    } catch (JSON::parse_error &e) {
+    } catch (JSON::parse_error& e) {
         _INFO("\r\n%s  Failed to open %s!!! ERR=%s", __func__, jPath.c_str(), e.what());
     } catch (...) {
         _INFO("\r\n%s  Unknown exception @%s!!!", __func__, jPath.c_str());
@@ -265,9 +265,9 @@ std::string EXE_name(int flag) {
 #endif
 }
 
-void train_print_usage(int argc, char **argv, const struct CLI_params *params) {}
+void train_print_usage(int argc, char** argv, const struct CLI_params* params) {}
 
-bool CLI_params::operator!=(const CLI_params &other) const { return memcmp(this, &other, sizeof(other)); }
+bool CLI_params::operator!=(const CLI_params& other) const { return memcmp(this, &other, sizeof(other)); }
 
 DEUG_SWITCH DEBUG;
 void DEUG_SWITCH::Dump(int typ) {
@@ -302,7 +302,7 @@ void CLI_params::Dump(int flag) {
     // _INFO(" SIGMA = %s\n", sigma.c_str());
 }
 
-bool LoadJsonFile(const string &jPath, JSON &jObj, int flag) {
+bool LoadJsonFile(const string& jPath, JSON& jObj, int flag) {
     try {
         std::ifstream jfile(jPath);
         std::string info;
@@ -359,6 +359,14 @@ MODEL_CARD::MODEL_CARD() {
 #else
     assert(0);
 #endif
+}
+
+QUANT_MODE QUANT_CARD::Type(std::string name, int flag) {
+    // if (G_Has_(name, filter_KVcache))
+    //     return KV_JL;
+    if (G_Has_(name, filter_SINQ))
+        return SINQ;
+    return NO_QUANT;
 }
 
 MODEL_ARCH CLI_params::ModelArch() {
@@ -466,7 +474,7 @@ bool CLI_params::JModel2Params(int flag) {
         }
 
         return true;
-    } catch (JSON::parse_error &e) {
+    } catch (JSON::parse_error& e) {
         _INFO("\r\n%s  Failed to open %s!!! ERR=%s", __func__, key.c_str(), e.what());
         return false;
     } catch (...) {
@@ -487,16 +495,16 @@ bool CLI_params::isShareLayerOut() const {
 /*
     REF 1.n_ctx_orig 2.n_ctx_train
 */
-uint32_t CLI_params::n_ctx() const { 
+uint32_t CLI_params::n_ctx() const {
     int n = -1;
-    switch(phase){
-    case P_GENERATE:    //case P_CHAT:
-        n = chat_sampler.seq_len;
-        if(n_ctx_train>0)
-            assert(n <= n_ctx_train);
-        break;
-    default:
-        return common.n_ctx; 
+    switch (phase) {
+        case P_GENERATE:  // case P_CHAT:
+            n = chat_sampler.seq_len;
+            if (n_ctx_train > 0)
+                assert(n <= n_ctx_train);
+            break;
+        default:
+            return common.n_ctx;
     }
     return n;
 }
@@ -516,7 +524,7 @@ bool SKDU_params::canSave(int iter, int flag) const {
     return true;
 }
 
-bool Fuyou_params::Init(CLI_params *hConfig, const JSON &jConfig, int flag) {
+bool Fuyou_params::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
     filter_reload  = {"ffn", "attn.wq", "attn.wk", "attn.wv", "attn.wo"};
     nLayerInBranch = jKV(jConfig, {"model", "fuyou", "branch"}, nLayerInBranch);
     if (nLayerInBranch <= 0)
@@ -673,7 +681,7 @@ void CLI_params::OnArch() {
             model.Rope_version       = 0;
             model.isEmbedWeightTying = true;
             model.preLogits_dB       = 8;
-            model.fActSLP = GELU;
+            model.fActSLP            = GELU;
 
             int group = Get({"model_v0", "target_group"}, 1);
             assert(group == 1);
@@ -696,7 +704,8 @@ void CLI_params::OnArch() {
             model.sLayer        = "layers.";
             model.sEmbed = "embed_tokens", model.sInvEmbed = "lm_head";
             model.Rope_version = 1;
-            // model.isEmbedWeightTying = false;   //  0.6B has no tying, but 4B is tying       isEmbedWeightTying = jKV(jModelParam, {"tie_word_embeddings"}, isEmbedWeightTying};
+            // model.isEmbedWeightTying = false;   //  0.6B has no tying, but 4B is tying       isEmbedWeightTying = jKV(jModelParam, {"tie_word_embeddings"},
+            // isEmbedWeightTying};
             break;
         case NLP_DEEPSEEK:
             model.sLayer = "layers.";
@@ -787,7 +796,7 @@ JSON CLI_params::ToJSON(int type, int flag) {
     return json;
 }
 
-bool TRAIN_CARD::Init(CLI_params *hConfig, const JSON &jConfig, int flag) {
+bool TRAIN_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
     method = jKV(jConfig, {"train", "optimizatioin", "method"}, method);
 
     n_batch   = jKV(jConfig, {"train", "batch"}, n_batch);
@@ -820,7 +829,7 @@ bool TRAIN_CARD::Init(CLI_params *hConfig, const JSON &jConfig, int flag) {
     return true;
 }
 
-CheckPoint_Params::CheckPoint_Params(const JSON &jData, const std::string &key, bool isSave, int flag) : jKey(key) {
+CheckPoint_Params::CheckPoint_Params(const JSON& jData, const std::string& key, bool isSave, int flag) : jKey(key) {
     if (key.empty()) {  //  default checkpoints to store all info of current state
         //"state", "./hy-tmp/checkpoint/", -1, false
         jKey = "._koifish_state_";
@@ -877,9 +886,9 @@ std::string CheckPoint_Params::FullPath(bool isSave, int flag) {
     return sOut;
 }
 
-bool CheckPoint_Params::SerialSnap(JSON &jConfig, bool isSave, int flag) {
+bool CheckPoint_Params::SerialSnap(JSON& jConfig, bool isSave, int flag) {
     if (isSave) {
-        JSON &jSnapshot       = jConfig["checkpoint_out"][jKey]["snapshot"];
+        JSON& jSnapshot       = jConfig["checkpoint_out"][jKey]["snapshot"];
         jSnapshot["curFuyou"] = curFuyou;
         jSnapshot["curIter"]  = curIter;
         jSnapshot["curEpoch"] = curEpoch;
@@ -890,7 +899,7 @@ bool CheckPoint_Params::SerialSnap(JSON &jConfig, bool isSave, int flag) {
         jSnapshot["fuyou_filter"] = fuyou_filter_reload;
 
     } else {
-        JSON &jSnapshot = jConfig["checkpoint_in"][jKey]["snapshot"];
+        JSON& jSnapshot = jConfig["checkpoint_in"][jKey]["snapshot"];
         assert(!jSnapshot.empty());
         curFuyou            = jKV(jSnapshot, {"curFuyou"}, curFuyou);
         curIter             = jKV(jSnapshot, {"curIter"}, curIter);
@@ -900,7 +909,7 @@ bool CheckPoint_Params::SerialSnap(JSON &jConfig, bool isSave, int flag) {
     return true;
 }
 
-bool CLI_params::InitChekcpoints(int argc, char **argv, const std::string &ckp_queue, int flag) {
+bool CLI_params::InitChekcpoints(int argc, char** argv, const std::string& ckp_queue, int flag) {
     try {
         JSON jdata     = jKEY(jConfig, {ckp_queue});
         string type    = "", path;
@@ -920,7 +929,7 @@ bool CLI_params::InitChekcpoints(int argc, char **argv, const std::string &ckp_q
         }
         if (phase == P_EVAL_) {
             assert(argc > 2);
-            auto &fish_in      = ckp_in[ckp_in.size() - 1];
+            auto& fish_in      = ckp_in[ckp_in.size() - 1];
             fish_in.sModelPath = argv[1];
         } else {
             // default checkpoints to store all info of current state
@@ -928,7 +937,7 @@ bool CLI_params::InitChekcpoints(int argc, char **argv, const std::string &ckp_q
             state.Init();
             // checkpoints.push_back(state);
         }
-    } catch (JSON::parse_error &e) {
+    } catch (JSON::parse_error& e) {
         _INFO("\r\n%s  Failed to open %s!!! ERR=%s", __func__, ckp_queue.c_str(), e.what());
         return false;
     } catch (...) {
@@ -945,7 +954,7 @@ bool CLI_params::InitChekcpoints(int argc, char **argv, const std::string &ckp_q
 */
 bool CLI_params::InitJConfig(int flag) {
     try {
-        char *env_str = getenv("PATH");
+        char* env_str = getenv("PATH");
         env_str       = getenv("LD_LIBRARY_PATH");
 
         // common = get_default_train_params_common();
@@ -1025,7 +1034,7 @@ bool CLI_params::InitJConfig(int flag) {
         DEBUG.x_str      = jKV(jConfig, {"debug", "x_str"}, DEBUG.x_str);
         DEBUG.N_mostiter = jKV(jConfig, {"debug", "most_iter"}, DEBUG.N_mostiter);
         DEBUG.fLongTail  = jKV(jConfig, {"debug", "long_tail"}, DEBUG.fLongTail);
-        DEBUG.prompts  = jKV_arr(jConfig, {"debug", "prompts"}, DEBUG.prompts);
+        DEBUG.prompts    = jKV_arr(jConfig, {"debug", "prompts"}, DEBUG.prompts);
 
         SUM::nMostMemItem    = jKV(jConfig, {"dump", "most_mem_item"}, SUM::nMostMemItem);
         SUM::nMinTensorAlloc = jKV(jConfig, {"dump", "min_tensor_alloc"}, SUM::nMinTensorAlloc);
@@ -1035,7 +1044,7 @@ bool CLI_params::InitJConfig(int flag) {
         dumpSwitch.train_csv_path = jKV(jConfig, {"dump", "train_csv_path"}, dumpSwitch.train_csv_path);
         // train = jKV(jConfig,{"train"},train );
         return true;
-    } catch (JSON::parse_error &e) {
+    } catch (JSON::parse_error& e) {
         _INFO("\r\n%s  Failed to open %s!!! ERR=%s", __func__, jsPath.c_str(), e.what());
         return false;
     } catch (...) {
@@ -1044,7 +1053,7 @@ bool CLI_params::InitJConfig(int flag) {
     }
 }
 
-bool CLI_params::parse(int argc, char **argv) {
+bool CLI_params::parse(int argc, char** argv) {
     std::string arg_prefix = "--", key, value;
     exec_name              = EXE_name();
 
@@ -1114,14 +1123,14 @@ bool CLI_params::parse(int argc, char **argv) {
     return true;
 }
 
-int Gensor_loab(struct ggml_context *ctx0, hGensor w, int nHeavy, hGensor ga, hGensor gb, int flag) {
+int Gensor_loab(struct ggml_context* ctx0, hGensor w, int nHeavy, hGensor ga, hGensor gb, int flag) {
     printf("%s@%s <== %s x %s\n\t", __func__, w->name, ga->name, gb->name);
     auto shape = w->ne;
     int nIn = shape[0], nOut = shape[1], rank = nHeavy;  // min(64,min(nIn,nOut)/10);
     size_t ne00 = tELEM(w);
     assert(nIn > 0 && nOut > 0 && ne00 == nIn * nOut);
     assert(nIn > nHeavy && nOut > nHeavy && nHeavy > 0);
-    float *A = Gensor2float(ctx0, w, flag);
+    float* A = Gensor2float(ctx0, w, flag);
     auto svd = std::make_shared<LoSVD<float>>("Gensor_loab", A, nIn, nOut, rank, 1.0e-3);  // 1.0e-3
     assert(ga->type == typNUMBER::F32 && gb->type == typNUMBER::F32);
     if (!svd->Build()) {
@@ -1130,14 +1139,14 @@ int Gensor_loab(struct ggml_context *ctx0, hGensor w, int nHeavy, hGensor ga, hG
         if (tELEM(ga) != nIn * rank || tELEM(gb) != nOut * rank) {
             return -2;
         }
-        svd->US((float *)((char *)ga->data));
+        svd->US((float*)((char*)ga->data));
         memcpy(gb->data, svd->V(), sizeof(float) * rank * nOut);
     }
     delete[] A;
     return 0x0;
 }
 
-int Gensor_SVD(struct ggml_context *ctx0, hGensor w, int nHeavy, hGensor U, hGensor D, hGensor V, int flag) {
+int Gensor_SVD(struct ggml_context* ctx0, hGensor w, int nHeavy, hGensor U, hGensor D, hGensor V, int flag) {
     printf("%s@%s \t ......", __func__, w->name);
 
     auto shape = w->ne;
@@ -1145,7 +1154,7 @@ int Gensor_SVD(struct ggml_context *ctx0, hGensor w, int nHeavy, hGensor U, hGen
     size_t ne00 = tELEM(w);
     assert(nIn > 0 && nOut > 0 && ne00 == nIn * nOut);
     assert(nIn > nHeavy && nOut > nHeavy && nHeavy > 0);
-    float *A = Gensor2float(ctx0, w, flag);
+    float* A = Gensor2float(ctx0, w, flag);
     GST_TIC(tic);
     auto svd = std::make_shared<LoSVD<float>>("Gensor_SVD", A, nIn, nOut, rank, 1.0e-3);  // 1.0e-3
     float t0 = GST_TOC(tic);
@@ -1160,7 +1169,7 @@ int Gensor_SVD(struct ggml_context *ctx0, hGensor w, int nHeavy, hGensor U, hGen
         {
             memcpy(U->data, svd->U(), sizeof(float) * nIn * rank);
             memcpy(V->data, svd->V(), sizeof(float) * rank * nOut);
-            float *Sigma = svd->S(), *mD = (float *)(D->data);
+            float *Sigma = svd->S(), *mD = (float*)(D->data);
             // memcpy(D->data,Sigma,sizeof(float)*rank);
             memset(mD, 0x0, sizeof(float) * rank * rank);
             for (int i = 0; i < rank; i++) mD[i * rank + i] = Sigma[i];
@@ -1177,8 +1186,8 @@ int Gensor_SVD(struct ggml_context *ctx0, hGensor w, int nHeavy, hGensor U, hGen
 
     1. Softmax often seems to be over confident in it's prediction based on the way the softmax was trained to map the raw scores to probabilities.
 */
-template<typename T>
-double P_softmax(int idx, T *logits, int size) {
+template <typename T>
+double P_softmax(int idx, T* logits, int size) {
     float max_val = -FLT_MAX;
     for (int i = 0; i < size; i++) {
         float a = logits[i];
@@ -1192,9 +1201,9 @@ double P_softmax(int idx, T *logits, int size) {
     //
     return expf(float(logits[idx]) - max_val) / partition;
 }
-template double P_softmax<floatLogist>(int idx, floatLogist *logits, int size);
+template double P_softmax<floatLogits>(int idx, floatLogits* logits, int size);
 
-float SOFT_MAX(const int n, float *y, const float *x) {
+float SOFT_MAX(const int n, float* y, const float* x) {
     float x1 = -INFINITY;
     int i;
     // ggml_vec_max_f32(n, &x1, x);
@@ -1232,7 +1241,7 @@ float SOFT_MAX(const int n, float *y, const float *x) {
 }
 
 // Py=Py-Px
-float SOFT_MAX_minus(const int n, float *y, const float *x) {
+float SOFT_MAX_minus(const int n, float* y, const float* x) {
     assert(0);
     float x1 = -INFINITY, a;
     int i;
@@ -1267,7 +1276,7 @@ float SOFT_MAX_minus(const int n, float *y, const float *x) {
         log(1 + exp(input_data[i] - 2 * input_data[i] * (input_data[i] >= 0)));
   }
 */
-float LOSS_cross_entropy_1(int n, const float *preP, int target, int &cand, int flag) {
+float LOSS_cross_entropy_1(int n, const float* preP, int target, int& cand, int flag) {
     assert(target >= 0 && target < n);
     float sum = 0, loss = 0, pMin, pMax, a;
     int j, next_token   = -1;
@@ -1295,7 +1304,7 @@ float LOSS_cross_entropy_1(int n, const float *preP, int target, int &cand, int 
     return loss;
 }
 
-struct ggml_tensor *ggml_cross_entropy_loss_1(struct ggml_context *ctx, struct ggml_tensor *a, struct ggml_tensor *b) {
+struct ggml_tensor* ggml_cross_entropy_loss_1(struct ggml_context* ctx, struct ggml_tensor* a, struct ggml_tensor* b) {
 #ifndef GG_V12
     bool is_node = false;
 
@@ -1303,7 +1312,7 @@ struct ggml_tensor *ggml_cross_entropy_loss_1(struct ggml_context *ctx, struct g
         is_node = true;
     }
 
-    struct ggml_tensor *result = ggml_new_tensor_1d(ctx, a->type, 1);
+    struct ggml_tensor* result = ggml_new_tensor_1d(ctx, a->type, 1);
 
     result->op     = GGML_OP_CROSS_ENTROPY_LOSS_1;
     result->grad   = is_node ? ggml_dup_tensor(ctx, result) : NULL;
@@ -1315,7 +1324,7 @@ struct ggml_tensor *ggml_cross_entropy_loss_1(struct ggml_context *ctx, struct g
     return nullptr;
 }
 
-void _T_repr_(hGensor t, const char *tab, char *buf, int typ) {
+void _T_repr_(hGensor t, const char* tab, char* buf, int typ) {
     if (t == nullptr)
         return;
     bool isInput = t->flags & GTensor::F_INPUT;
@@ -1343,7 +1352,7 @@ void _T_repr_(hGensor t, const char *tab, char *buf, int typ) {
     }
 }
 
-int CHECK_SAME_TENSORS(const string &desc, const std::vector<hGensor> &arrA, const std::vector<hGensor> &arrB, int flag) {
+int CHECK_SAME_TENSORS(const string& desc, const std::vector<hGensor>& arrA, const std::vector<hGensor>& arrB, int flag) {
     _INFO("\n======== %s @[%s]...", __func__, desc.c_str());
     size_t nA = arrA.size(), nB = arrB.size(), nDup = 0, nMiss = 0;
     bool isSame = arrA.size() == arrB.size();
@@ -1382,9 +1391,9 @@ int CHECK_SAME_TENSORS(const string &desc, const std::vector<hGensor> &arrA, con
     return 0x0;
 }
 
-size_t F_SIZE(const std::string &fpath, FILE *fp0, int flag) {
+size_t F_SIZE(const std::string& fpath, FILE* fp0, int flag) {
     try {
-        FILE *fp = fp0;
+        FILE* fp = fp0;
         if (fp0 == NULL) {
             fp = std::fopen(fpath.c_str(), "rb");
             assert(fp != NULL);
@@ -1410,7 +1419,7 @@ size_t F_SIZE(const std::string &fpath, FILE *fp0, int flag) {
     }
 }
 
-hGensor GradOf(struct ggml_cgraph *cgraph, hGensor node, int flag) {
+hGensor GradOf(struct ggml_cgraph* cgraph, hGensor node, int flag) {
 #ifdef GG_V12
     assert(0);
     return nullptr;
@@ -1459,7 +1468,7 @@ bool isQuantized(typNUMBER type) {
     exit(KOIFISH_UNSUPPORTED_DATATYPE);
 }
 
-const char *cNameOf(typNUMBER type) {
+const char* cNameOf(typNUMBER type) {
     static char buf[128];  // Not thread-safe if modified concurrently.
     if (type == typNUMBER::F8E5M2)
         return "F8E5M2";
@@ -1516,17 +1525,17 @@ size_t GTensor::size(int typ) const {
     return nz;
 }
 
-void *GTensor::DataPad(void *src0, int flag) { return nullptr; }
+void* GTensor::DataPad(void* src0, int flag) { return nullptr; }
 
 #ifdef __USE_GGML__
-hGensor tSCAL(struct ggml_context *ctx, struct ggml_tensor *a, float s, int flag) {
+hGensor tSCAL(struct ggml_context* ctx, struct ggml_tensor* a, float s, int flag) {
     // hGensor b = ggml_scale_inplace( ctx,a,s);    // inplace operations are currently not supported!!!
     hGensor b = ggml_scale(ctx, a, s);
     gTN(b, "%s_s", a->name);
     return b;
 }
 
-hGensor Permute(struct ggml_context *ctx_, struct ggml_tensor *cur, int64_t n1, int64_t n2, int64_t n3, int64_t n4, bool isCont) {
+hGensor Permute(struct ggml_context* ctx_, struct ggml_tensor* cur, int64_t n1, int64_t n2, int64_t n3, int64_t n4, bool isCont) {
     hGensor q = ggml_permute(ctx_, cur, n1, n2, n3, n4);
     gTN0(q, "%s.#", cur->name);
     if (isCont) {
@@ -1536,7 +1545,7 @@ hGensor Permute(struct ggml_context *ctx_, struct ggml_tensor *cur, int64_t n1, 
     return q;
 }
 
-hGensor TENSO(void *ctx0, int typ, SHAPE shape, int flag, const string &name) {
+hGensor TENSO(void* ctx0, int typ, SHAPE shape, int flag, const string& name) {
     /*va_list args;   //  In C/C++, you can not determine the number of arguments that were passed to a "variadic" function!!!
     va_start( args, typ );
     SHAPE shape;
@@ -1545,10 +1554,10 @@ hGensor TENSO(void *ctx0, int typ, SHAPE shape, int flag, const string &name) {
         shape.push_back(val);
     }
     va_end(args);*/
-    struct ggml_context *ctx = (struct ggml_context *)(ctx0);
+    struct ggml_context* ctx = (struct ggml_context*)(ctx0);
     assert(ctx0 != nullptr);
     enum ggml_type type    = (enum ggml_type)typ;
-    struct ggml_tensor *gg = nullptr;
+    struct ggml_tensor* gg = nullptr;
     switch (shape.size()) {
         case 1:
             gg = ggml_new_tensor_1d(ctx, type, shape[0]);
@@ -1569,11 +1578,11 @@ hGensor TENSO(void *ctx0, int typ, SHAPE shape, int flag, const string &name) {
     return gg;
 }
 
-void Gensor2float_(const hGensor w, float *A, int flag) {
+void Gensor2float_(const hGensor w, float* A, int flag) {
     size_t ne00 = tELEM(w), nbyte = tBYTE(w);
-    void *data_0       = w->data;
+    void* data_0       = w->data;
     enum ggml_type tp0 = (enum ggml_type)w->type;
-    void *src0_row     = (void *)((char *)w->data);
+    void* src0_row     = (void*)((char*)w->data);
     assert(ggml_is_quantized(tp0));
     switch (w->type) {
         // case typNUMBER::F16:
@@ -1582,19 +1591,19 @@ void Gensor2float_(const hGensor w, float *A, int flag) {
         case typNUMBER::F32:
             break;
         case typNUMBER::Q2_K:
-            dequantize_row_q2_K((const block_q2_K *)src0_row, A, ne00);  //-0.00318908691
+            dequantize_row_q2_K((const block_q2_K*)src0_row, A, ne00);  //-0.00318908691
             break;
         case typNUMBER::Q3_K:
-            dequantize_row_q3_K((const block_q3_K *)src0_row, A, ne00);
+            dequantize_row_q3_K((const block_q3_K*)src0_row, A, ne00);
             break;
         case typNUMBER::Q4_K:
-            dequantize_row_q4_K((const block_q4_K *)src0_row, A, ne00);
+            dequantize_row_q4_K((const block_q4_K*)src0_row, A, ne00);
             break;
         case typNUMBER::Q6_K:
-            dequantize_row_q6_K((const block_q6_K *)src0_row, A, ne00);
+            dequantize_row_q6_K((const block_q6_K*)src0_row, A, ne00);
             break;
         case typNUMBER::Q8_0:
-            dequantize_row_q8_0((const block_q8_0 *)src0_row, A, ne00);
+            dequantize_row_q8_0((const block_q8_0*)src0_row, A, ne00);
             break;
         default:
             assert(0);
@@ -1605,7 +1614,7 @@ void Gensor2float_(const hGensor w, float *A, int flag) {
     }
 }
 #else
-void Gensor2float_(const hGensor w, float *A, int flag) { assert(0); }
+void Gensor2float_(const hGensor w, float* A, int flag) { assert(0); }
 #endif
 
 void ADAM_params_::Dump(int typ) {
@@ -1625,7 +1634,7 @@ void MODEL_CARD::Dump(int typ) {
     // _INFO("\tMODEL card=%s\n", sCardPath.c_str());
 }
 
-ggml_cgraph *GG_dup_graph(ggml_context *ctx, ggml_cgraph *src) {
+ggml_cgraph* GG_dup_graph(ggml_context* ctx, ggml_cgraph* src) {
     assert(0);
     return nullptr;
 }
@@ -1637,15 +1646,15 @@ ggml_cgraph *GG_dup_graph(ggml_context *ctx, ggml_cgraph *src) {
 /*
     1.  gguf_get_tensor_offset
 */
-bool Fish::GGUF_Serialize(const std::string &path, bool isSave, int flag) {
+bool Fish::GGUF_Serialize(const std::string& path, bool isSave, int flag) {
 #ifdef __USE_GGML__
     try {
         if (path.empty())
             return false;
         GST_TIC(tic);
         char buf[1024];
-        struct ggml_context *fctx_data = NULL;
-        struct gguf_context *fctx      = NULL;
+        struct ggml_context* fctx_data = NULL;
+        struct gguf_context* fctx      = NULL;
         int n_kv = 0, n_tensors = 0;
         if (isSave) {  // KV pairs
             fctx = gguf_init_empty();
@@ -1662,16 +1671,16 @@ bool Fish::GGUF_Serialize(const std::string &path, bool isSave, int flag) {
             n_kv = gguf_get_n_kv(fctx);
             _INFO("%s: n_kv: %d\n", __func__, n_kv);
             for (int i = 0; i < n_kv; ++i) {
-                const char *key = gguf_get_key(fctx, i);
+                const char* key = gguf_get_key(fctx, i);
                 _INFO_IF("%s: kv[%d]: key = %s\n", __func__, i, key);
             }
             if (0) {  // find kv string
-                const char *findkey = "some.parameter.string";
+                const char* findkey = "some.parameter.string";
                 const int keyidx    = gguf_find_key(fctx, findkey);
                 if (keyidx == -1) {
                     printf("%s: find key: %s not found.\n", __func__, findkey);
                 } else {
-                    const char *key_value = gguf_get_val_str(fctx, keyidx);
+                    const char* key_value = gguf_get_val_str(fctx, keyidx);
                     printf("%s: find key: %s found, kv[%d] value = %s\n", __func__, findkey, keyidx, key_value);
                 }
             }
@@ -1697,8 +1706,8 @@ bool Fish::GGUF_Serialize(const std::string &path, bool isSave, int flag) {
             _INFO("[Serialize] n_tensors: %d\n", n_tensors);
             loadGensors.clear();
             for (int i = 0; i < n_tensors; ++i) {
-                const char *name = gguf_get_tensor_name(fctx, i);
-                ggml_tensor *cur = ggml_get_tensor(fctx_data, name);
+                const char* name = gguf_get_tensor_name(fctx, i);
+                ggml_tensor* cur = ggml_get_tensor(fctx_data, name);
                 if (cur == nullptr) {
                     _INFO("%s failed to load tensor(%s) @%s!", __func__, name, path.c_str());
                     return false;
@@ -1729,7 +1738,7 @@ bool Fish::GGUF_Serialize(const std::string &path, bool isSave, int flag) {
                     continue;
                 }
                 if (target->type != cur->type) {
-                    Gensor2float_(cur, (float *)target->data, 0x0);
+                    Gensor2float_(cur, (float*)target->data, 0x0);
                 } else
                     memcpy(target->data, cur->data, sz);
 #endif

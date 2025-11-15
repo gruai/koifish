@@ -47,6 +47,19 @@ std::string UserPrompt(hFISH fish, int pos, int nRound, int flag = 0x0) {
     return rendered_prompt;
 }
 
+//  Keeping the prefill process uncompressed is crucial for performance maintenance
+int Prefill(hFISH fish, int enable_thinking) { return 0x0; }
+
+int OnEOS(hFISH fish, int flag = 0x0) {
+    hChater gopt = fish->GetGenerator();
+    _INFO("[MEMORY] %s\t%s\n", SUM::GPU_Info(0x0).c_str(), SUM::CPU_Info(0x0).c_str());
+    string info = G_STR(fish->config.quant.filter_WeightF8Ex);
+    _INFO("F8E5=%s\n", info.c_str());
+    _INFO("\tDEBUG_switch={%d %d}", DEBUG.T_generate_qkv, DEBUG.T_cuQK);
+    _INFO("\n\n");  // next turn
+    return 0x0;
+}
+
 /*
     hello
         Hello! How can I assist you today?
@@ -77,14 +90,15 @@ int Chat(hFISH fish, int enable_thinking) {
     double start_time    = 0;
     string cur_answer, rendered_prompt;
 
-    hGOPT gopt    = fish->GetGOPT();
+    hChater gopt  = fish->GetGenerator();
     hBATCH hBatch = fish->GetCurBatch(true);
     assert(hBatch->size() == seq_len);
     QWEN3_PIPE qwen_pipe(fish, 0x0);
 
     // DEBUG.T_generate_most_layer = 1;
-    DEBUG.T_generate_qkv = 0;
-    g_dump_level         = 1;
+    DEBUG.T_generate_qkv = 0, DEBUG.T_cuQK = 0;
+    DEBUG.T_kvcache_quant = 0;
+    g_dump_level          = 1;
 
     while (1) {
         if (hBatch->tok_pos >= seq_len) {
@@ -93,40 +107,43 @@ int Chat(hFISH fish, int enable_thinking) {
         }
 
         if (user_turn) {
-            rendered_prompt = UserPrompt(fish, hBatch->tok_pos, nRound);
-            prompt_tokens          = tokenizer->Encode(rendered_prompt);
-            num_prompt_tokens      = prompt_tokens.size();
-            generated_tokens = 0;
-            cur_answer       = "";
-            user_turn        = 0, nRound++;
+            rendered_prompt   = UserPrompt(fish, hBatch->tok_pos, nRound);
+            prompt_tokens     = tokenizer->Encode(rendered_prompt);
+            num_prompt_tokens = prompt_tokens.size();
+            generated_tokens  = 0;
+            cur_answer        = "";
+            user_turn         = 0, nRound++;
             hBatch->Reset(prompt_tokens);
             // hLoader->InitOneSamp(rendered_prompt, nullptr, fish.get(), 0x110);
             _INFO("\n");
         }
 
-        if (hBatch->tok_pos == num_prompt_tokens-1) {
+        if (hBatch->tok_pos == num_prompt_tokens - 1) {
             start_time = GST_ms();
+            SUM::tX1 = 0.0, SUM::tQKV = 0.0, SUM::tFFN = 0.0, SUM::tPreLogits = 0.0;
         }
-        if (hBatch->tok_pos==1) {  // nRound == 2
-            int debug = 0;
+        if (hBatch->tok_pos == 1) {  // nRound == 2
+            DEBUG_BREAK;
             // exit(KOIFISH_EXIT_DEBUG);
         }
         if (DEBUG.T_generate_qkv) {
             float eval = fish->Evaluate(DL_BATCH_UPATE::BATCHofEMBED);
         } else {  // qwen_pipe.UpdatePos(token);
             T_generate_(fish, &qwen_pipe, fish->config.model.tpActivation, 1);
-        }        
-        hBatch->tok_pos++;           
+        }
+        hBatch->tok_pos++;
         // _INFO(" %d[%d->%d]", pos, token, next), fflush(stdout);
         if (hBatch->tok_pos >= num_prompt_tokens) {
-            token   = gopt->Sample(-1);
+            token = gopt->Sample(-1);
             generated_tokens++;
-            if (token == tokenizer->eos_id) {       //  stop generation if get EOS token
+            if (token == tokenizer->eos_id) {  //  stop generation if get EOS token
                 double elapsed_s = (double)(GST_ms() - start_time) / 1000.0;
                 double tps       = (generated_tokens > 0 && elapsed_s > 0) ? (generated_tokens - 1) / elapsed_s : 0.0;
-                _INFO("\n\n%s[%.2f tk/s, %d tokens in %.2fs]%s\n===================================\n", COLOR_GREEN, tps, generated_tokens - 1, elapsed_s, COLOR_RESET);
+                _INFO("\n%s[%.2f tk/s, %d tokens in %.2fs(qkv=%.3fs ffn=%.3fs PreLogits=%.3fs X=%.3fs)]%s\n===================================\n", COLOR_GREEN,
+                      tps, generated_tokens - 1, elapsed_s, SUM::tQKV / 1.0e6, SUM::tFFN / 1.0e6, SUM::tPreLogits / 1.0e6, SUM::tX1 / 1.0e6, COLOR_RESET);
                 user_turn = 1;
                 STR2FILE("chat.csv", cur_answer, nRound == 1 ? std::ofstream::out : std::ofstream::app);
+                OnEOS(fish);
                 if (nRound == DEBUG.prompts.size()) {  // only for debug
                     return 0x0;
                 }
@@ -136,9 +153,9 @@ int Chat(hFISH fish, int enable_thinking) {
 
             static int in_thinking_section = 0;
             static int in_bold_section     = 0;
-            if (hBatch->tok_pos == num_prompt_tokens) {             // first token of the response
-                in_thinking_section = enable_thinking;  // reset thinking state
-                in_bold_section     = 0;                // reset bold state
+            if (hBatch->tok_pos == num_prompt_tokens) {  // first token of the response
+                in_thinking_section = enable_thinking;   // reset thinking state
+                in_bold_section     = 0;                 // reset bold state
                 if (in_thinking_section) {
                     _INFO(COLOR_YELLOW);
                 }
@@ -174,7 +191,7 @@ int Chat(hFISH fish, int enable_thinking) {
                 }
             }
 
-            fflush(stdout);            
+            fflush(stdout);
         }
     }
     // free(prompt_tokens);
@@ -193,22 +210,27 @@ int main(int argc, char* argv[]) {
         }
         config.OnArch();
 
-        config.isOnlyGPT              = true;
-        config.chat_sampler.mode      = enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
-        config.model.preLogits_dB     = 1;
-        config.model.sparse.method    = -1;
-        config.dumpSwitch.tensor_load = 1;
-        SUM::nMinTensorAlloc          = 1;  // g_dump_level = -1;
+        config.isOnlyGPT                = true;
+        config.chat_sampler.mode        = enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
+        config.chat_sampler.isSampleCPU = true;
+        config.model.preLogits_dB       = 1;
+        config.model.sparse.method      = -1;
+        config.dumpSwitch.tensor_load   = 1;
+        config.quant.filter_WeightF8Ex  = {"model.embed_tokens.weight", "mlp.down_proj.weight", "mlp.up_proj.weight",
+                                           "mlp.gate_proj.weight"};  //  "model.embed_tokens.weight"   "mlp.down_proj.weight"  layers.0.mlp.down_proj.weight
+        // config.quant.filter_SINQ        = {"mlp"};                        //  mlp.down_proj.weight "mlp"
+        // config.quant.filter_KVcache = {"0.self_attn"};    //   "layers.27.mlp" model.blk.0.attn
+        SUM::nMinTensorAlloc = 1;  // g_dump_level = -1;
 
         DEBUG.T_cuda_ver = 1, DEBUG.T_cpu = 0, DEBUG.cmd_p1 = 0, DEBUG.graph_dump = 0, DEBUG.Time_most = 60;
         config.Dump(0x100);
 
         // fish->isLocalInfer = flag == 0x110;
-        hFISH fish      = Fish::MakeInstance("PPL_", config, {}, Fish::ROLE_TYPE::COMMON, 0x110);
-        hOptimizer hOPT = fish->GetOptimizer();
-        if (hOPT->val_loaders.empty())
-            return KOIFISH_DATALOADER_EMPTY;
-
+        hFISH fish = Fish::MakeInstance("PPL_", config, {}, Fish::ROLE_TYPE::COMMON, 0x110);
+        // hOptimizer hOPT = fish->GetOptimizer();
+        // if (hOPT->val_loaders.empty())
+        //     return KOIFISH_DATALOADER_EMPTY;
+        SUM::MemoryInfo(0x0, 0x0);
         Chat(fish, enable_thinking);
 
         return 0x0;

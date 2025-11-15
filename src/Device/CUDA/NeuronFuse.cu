@@ -91,7 +91,7 @@ hGTensor TokenEmbed::OnEmbed(hGensor inpL, int seed) {
         if (isForward()) {
             if (hFish->isAtPhase(LIFE_PHASE::P_GENERATE)) {
                 int token = hBatch->CurToken();
-                CU_embed_forw_1<<<C / 32, 32, 0, main_stream>>>(ToX(cur), ToX(curW), token, C);
+                CU_embed_forw_1<<<C / 32, 32, 0, main_stream>>>(ToX(cur), ToX(curW), token, C, 0);
             } else {
                 inp = inpL;
                 inp->Print("token_input", 0, 0), curW->Print("curW", 0, 0);
@@ -356,7 +356,7 @@ bool SLP::PrepareMemory(bool isBack, int flag) {
 
 floatX* GTensor::GetDataX(int flag, const string& sX) {
     size_t dT4B = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
-    // int seed = 42;
+    size_t nEle = size();
     floatX* wX = (floatX*)(data);
     if (hRef != nullptr) {
         int debug = 0x0;
@@ -391,6 +391,12 @@ floatX* GTensor::GetDataX(int flag, const string& sX) {
             if (flag == -1)
                 GTensor::tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1);
         } break;
+        case typNUMBER::F8E5M2: {
+            wX              = ToX(GTensor::tmpTernary);
+            assert(GTensor::tmpTernary->size()>=nEle);
+            CU_F82Float<bf16><<<CEIL_DIV(nEle,CU_T4B_MIDDLE),CU_T4B_MIDDLE>>>((f8e5*)data, wX, nEle, 0, 0);
+            break;
+        }
         default:
             break;
     }
@@ -620,13 +626,19 @@ __global__ static void CU_classifier_(floatX* logits_BT, float* losses, floatX* 
 }
 
 hGTensor OutCLS::cuInfer(hGTensor inp_, int flag) {
+    double now = GST_us();
     assert(norm.Empty());
     LayerNormal* lnf = hFish->GetNeuron<LayerNormal>("LayerNormal", 0);
     lnf->cuFlow(inp_);  // CU_rms_v2(hQwen->x, hQwen->x, rms_final_weight, hQwen->dim);
 
     proj.Forw(preLogits, inp_);
-    // convert_bf16_to_fp32_kernel<<<CEIL_DIV(hQwen->vocab_size, THREADS_PER_BLOCK), THREADS_PER_BLOCK>>>(ToX(GTensor::scratch), logits, hQwen->vocab_size);
-    preLogits->SerialData("", nullptr, true);
+    SUM::GPU_TIME(SUM::tPreLogits, now);
+    if (hFish->config.chat_sampler.isSampleCPU)
+        preLogits->SerialData("", nullptr, true);
+    else {
+        ;  // preLogits->Print("preLogits",0, -1);
+    }
+
     return preLogits;
 }
 

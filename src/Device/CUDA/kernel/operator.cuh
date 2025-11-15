@@ -3,7 +3,7 @@
  *  SPDX-License-Identifier: MIT
  *
  *
- *  \brief From good job of CALM
+ *  \brief Some cuda kernels
  *  \author Yingshi Chen
  */
 #include <assert.h>
@@ -71,6 +71,33 @@ __global__ static void CU_x2_(float* out, const T* x0, size_t N) {
         }
         *out = sum;
     }
+}
+// Kernel to compute row standard deviations of a matrix
+template <typename T>
+__global__ static void CU_RowStdDev(T* matrix, floatGama* rowStdDev, int rows, int cols) {
+    int row = blockIdx.x * blockDim.x + threadIdx.x, col;
+    if (row >= rows)
+        return;
+    float sum = 0.f, sum2 = 0.f;
+    for(col = 0; col < cols; col++){
+        float a = CU_T2Float(matrix + row * cols + col);
+        sum += a;       sum2 += a*a;
+    }
+    float variance = (sum2 / cols) - ((sum / cols) * (sum / cols));
+    rowStdDev[row] = (floatGama)(sqrtf(variance));
+}
+template <typename T>
+__global__ static void CU_ColStdDev(T* matrix, floatGama* colStdDev, int rows, int cols) {
+    int col = blockIdx.x * blockDim.x + threadIdx.x, row;
+    if (col >= cols)
+        return;
+    float sum = 0.f, sum2 = 0.f;
+    for(row = 0; row < rows; row++){
+        float a = CU_T2Float(matrix + row * cols + col);
+        sum += a;       sum2 += a*a;
+    }
+    float variance = (sum2 / rows) - ((sum / rows) * (sum / rows));
+    colStdDev[col] = (floatGama)(sqrtf(variance));
 }
 
 // __device__ inline  float4 bf16x4_to_float4(__nv_bfloat16x4 bf16_vec) {
@@ -201,9 +228,6 @@ __device__ inline float matmul_warppar(float* x, uint32_t* w, int i, int n) {
         return warpreduce_sum(val);
     }
 }
-
-
-
 
 template <typename KVT>
 __global__ static void kernel_rotate_sink(uint64_t, int kvd, KVT* key_cache, int head_dim, int kv_sink, float theta_log2, int seq_len, int rotary_dim) {
@@ -367,7 +391,7 @@ __device__ static void CU_softmax_v0(T* xout, T* x, int size) {
     }
 }
 
-// grid: N_HEADS, block: 1
+// grid: n_heads, block: 1
 template <typename T>
 __global__ static void CU_softmax_multihead(T* att, int pos, int seq_len) {
     int h = blockIdx.x;
@@ -505,6 +529,7 @@ __global__ static void CU_crossover_(curandState* state, float T_cross, T* x, co
     }
 }
 
+
 /*
     seed:   curand_init(seed, id, 0, &state[id]);
     results[id] = __float2bfloat16(rand_val); // convert to bf16
@@ -535,193 +560,6 @@ void CU_disti_normal(int N, typ* out, float devia, uint32_t seed = 42, bool isTo
 
     cudaCheck(cudaFree(d_states));
     return;
-}
-
-// row-scaling  2 thrshold
-template <class T, int NUM_THREADS = CU_T4B_SMALL>
-__global__ static void CU_ternary_2thrshold(floatGama* gama, T* mat, int M, int N, int update) {
-    int tid = threadIdx.x;
-    int idx = blockIdx.x * NUM_THREADS + tid, ldJ = blockDim.x;
-    float ta = 1.0, tb = (-1.0), t0 = 0.0;
-    for (int j = tid; j < M; j += ldJ) {
-        float sum_1 = 0.0f, sum_2 = 0.0f, a;
-        int n_1 = 0, n_2 = 0;
-        T* x0 = mat + j * N;
-        for (int k = 0; k < N; k++) {
-            a = CU_T2Float(x0 + k);
-            if (a > 0) {
-                sum_1 += a;
-                n_1++;
-            } else {
-                sum_2 -= a;
-                n_2++;
-            }
-        }
-
-        if (update == QUANT_ALG::W_SCALE) {
-            // gama[j] = average;
-            ta = n_1 == 0 ? t0 : (sum_1 / n_1), tb = n_2 == 0 ? t0 : (-sum_2 / n_2);
-        } else {
-            gama[j] = 1.0f;
-        }
-        T xa = (T)ta, xb = (T)tb;
-        for (int k = 0; k < N; k++) {
-            a = CU_T2Float(x0 + k);
-            if (a > ta / 2)
-                x0[k] = xa;
-            else if (a < tb / 2)
-                x0[k] = xb;
-            else {
-                x0[k] = k % 2 == 0 ? xa : xb;
-            }
-            // x0[k] = a > average / 2 ? ta : a < -average / 2 ? tb : t0;
-        }
-    }
-    __syncthreads();
-}
-
-/*
-template <class T>
-__device__ inline void CU_ternary_row(floatGama* gama, T* row, int N, int update) {
-    T ta = (T)1.0, tb = (T)(-1.0), t0 = (T)(0.0);
-    float sum = 0.0f, a, average = 0.0f;
-    for (int k = 0; k < N; k++) {
-        a = CU_T2Float(row + k);
-        sum += fabs(a);
-    }
-    average = (sum / (N)) + 1.0e-5;
-
-    if (update == QUANT_ALG::W_SCALE) {
-        // gama[idx] = average;
-        ta = (T)(average), tb = (T)(-average);
-    } else {
-        // gama[idx] = 1.0f;
-    }
-    for (int k = 0; k < N; k++) {
-        a = CU_T2Float(row + k);
-        if (a > average / 2)
-            row[k] = ta;
-        else if (a < -average / 2)
-            row[k] = tb;
-        else {
-            row[k] = k % 2 == 0 ? ta : tb;
-        }
-        // x0[k] = a > average / 2 ? ta : a < -average / 2 ? tb : t0;
-    }
-}*/
-// row-scaling  & online update
-template <class T>
-__global__ static void CU_ternary_online(T* mat, int M, int N, int seed = 0x0) {
-    int tid = threadIdx.x, idrow = blockIdx.x * blockDim.x + tid;
-    if (idrow >= M)
-        return;
-
-    float sum = 0.0f, a, average = 0.0f;
-    T* x0 = mat + idrow * N;
-    for (int k = 0; k < N; k++) {
-        a = CU_T2Float(x0 + k);
-        sum += fabs(a);
-    }
-    average     = sum / N;
-    float thrsh = average / 2;
-    T ta = CU_Float2T<T>(average, seed), tb = CU_Float2T<T>(-average, seed);
-    for (int k = 0; k < N; k++) {
-        a = CU_T2Float(x0 + k);
-        if (a > thrsh)
-            x0[k] = ta;
-        else if (a < -thrsh)
-            x0[k] = tb;
-        else {
-            x0[k] = k % 2 == 0 ? ta : tb;
-        }
-        // x0[k] = a > average / 2 ? ta : a < -average / 2 ? tb : t0;
-    }
-
-    // __syncthreads();
-}
-
-template <class T>
-__device__ inline void CU_X2ternary_row(floatGama* gama, T* row, char* terns, int N, bool isOverwrite = false, float T_zeroRow = 1.0e-5) {
-    // T ta = (T)1.0, tb = (T)(-1.0), t0 = (T)(0.0);
-
-    float sum = 0.0f, a, average = 0.0f;
-    for (int k = 0; k < N; k++) {
-        a = CU_T2Float(row + k);
-        sum += fabs(a);
-    }
-    average = (sum / (N));
-    if (average < T_zeroRow) {
-        *gama = 0.0;
-        return;
-    }
-    *gama = average;
-    // ta = (T)(average), tb = (T)(-average);
-    for (int k = 0; k < N; k += 8) {
-        unsigned char tbyte = 0, bit;
-        // #pragma unroll
-        for (int bpos = 0; bpos < 8; bpos++, row++) {
-            a = CU_T2Float(row);
-            // bit = (a < -average / 2 || a > average / 2) ? 1 : 0; // would explode
-            bit = (a > average / 2) ? 1 : 0;  // binary quant after Implicit RELU
-            // if (a > average / 2)
-            //     bit = 1;  // x0[pos] = ta;
-            // else if (a < -average / 2)
-            //     bit = 0;  // x0[pos] = tb;
-            // else {
-            //     bit = bpos % 2 == 0;  // x0[pos] = pos%2==0 ? ta : tb;
-            // }
-            tbyte |= bit << (7 - bpos);
-            // x0[pos] = a > average / 2 ? ta : a < -average / 2 ? tb : t0;    }
-            if (isOverwrite)
-                *row = bit ? (T)(average) : (T)(-average);
-        }
-        terns[k / 8] = tbyte;
-    }
-}
-
-// row-scaling  1 thrshold
-template <class T>
-__global__ static void CU_X2ternary_(floatGama* gama, T* mat0, char* terns, int M, int N, int bpe, bool isOverwrite = false) {
-    int tid = threadIdx.x, idrow = blockIdx.x * blockDim.x + tid, bit = 0;
-    if (idrow >= M)
-        return;  // guard
-    CU_X2ternary_row(gama + idrow, mat0 + idrow * N, terns + (idrow * N) / 8, N, isOverwrite);
-
-    // __syncthreads();
-}
-
-// row-scaling  1 thrshold
-template <class T>
-__global__ void CU_ternary2X_(floatGama* gama, const char* terns, T* mat0, int M, int N, int seed = 0x0) {
-    int tid = threadIdx.x, idrow = blockIdx.x * blockDim.x + tid, bit = 0;
-    if (idrow >= M)
-        return;  // guard
-
-    float average = gama[idrow];
-    T* x0         = mat0 + idrow * N;
-    if (average == 0) {
-        memset(x0, 0x0, sizeof(T) * N);
-        return;
-    }
-    T ta = (T)(average), tb = (T)(-average), t0 = (T)(0);
-    // T ta = CU_Float2T<T>(average, seed), tb = CU_Float2T<T>(-average, seed);
-    const char* tern = terns + (idrow * N) / 8;
-    for (int k = 0; k < N; k += 8, tern++) {
-        unsigned char tbyte = *tern;  // terns[(idrow * N + k) / 8];
-#pragma unroll
-        for (int bpos = 0; bpos < 8; bpos++, x0++) {
-            // int idx = idrow * N + k + bpos;
-            // if (idx == 0) {
-            //     int debug = 0;
-            // }
-            bit = BYTE_bit(tbyte, bpos);  //(tbyte >> (7-bpos)) & 0x1;
-            *x0 = bit ? ta : t0;          // binary quant after Implicit RELU
-            // *x0 = bit ? ta : tb;
-            // *x0 = bit ? (bpos%2==1 ? ta : tb) : t0;      // would explode
-        }
-    }
-
-    // __syncthreads();
 }
 
 template <const int BM, const int BN, class T>
@@ -805,8 +643,8 @@ template <class T, int NUM_THREADS = CU_T4B_SMALL>
 __global__ static void CU_OFF(float* out, T* A, T* B, size_t N, int flag) {
     int tid = threadIdx.x, idx = blockIdx.x * NUM_THREADS + tid;
     if (idx >= N) {
-        return;
-    }  // guard
+        return;  // guard
+    }
 
     constexpr int NUM_WARPS = (NUM_THREADS + WARP_SIZE - 1) / WARP_SIZE;
     assert(NUM_WARPS <= WARP_SIZE);
@@ -815,6 +653,33 @@ __global__ static void CU_OFF(float* out, T* A, T* B, size_t N, int flag) {
     float block_sum = CU_BlockSum<CU_T4B_SMALL>(sum, true);  // blockReduce_v0<warpReduceSum>(sum, true);
     if (tid == 0)
         atomicAdd(out, block_sum);
+}
+
+template <typename T>
+__global__ static void CU_Float2F8(const T* src, f8e5* dst, size_t N, int seed, int flag) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= N) {
+        return;  // guard
+    }
+    dst[tid] = f8e5(src[tid]);
+}
+template <>
+__global__ inline void CU_Float2F8<bf16>(const bf16* src, f8e5* dst, size_t N, int seed, int flag) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= N) {
+        return;  // guard
+    }
+    dst[tid] = CU_16BF2T<f8e5>(src + tid, seed);
+}
+
+template <typename T>
+__global__ static void CU_F82Float(const f8e5* src, T* dst, size_t N, int seed, int flag) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= N) {
+        return;  // guard
+    }
+    float a  = CU_T2Float<f8e5>(src + tid);
+    dst[tid] = T(a);
 }
 
 template <class T>
@@ -834,58 +699,153 @@ double OFF_(T* A, T* B, size_t N, bool isCU = true, int flag = 0x0) {
     return res;
 }
 
-// ================================================================
-// Attention
-// ================================================================
+/**
+ *      grid: n_heads, block: pos + 1 (up to 1024)
+ *      attention_qk_kernel<<<N_HEADS, qk_threads_per_block>>>(hQwen->att, hQwen->q, layer_key_cache, pos, seq_len, N_HEADS, N_KV_HEADS, HEAD_DIM);
+ */
 template <typename tpATT>
-__global__ static void attention_qk_kernel(tpATT* att, const bf16* q, const bf16* k_cache, int pos, int seq_len, int N_HEADS, int N_KV_HEADS, int HEAD_DIM) {
-    // grid: N_HEADS, block: pos + 1 (up to 1024)
-    int h      = blockIdx.x;
-    int t      = threadIdx.x;
-    int kv_mul = N_HEADS / N_KV_HEADS, KV_DIM = N_KV_HEADS * HEAD_DIM;
-    if (t <= pos) {
-        const bf16* q_head = q + h * HEAD_DIM;
-        int kv_head_idx    = h / kv_mul;
-        const bf16* k_vec  = k_cache + (size_t)t * KV_DIM + (size_t)kv_head_idx * HEAD_DIM;
-
-        float score = 0.0f;
-        for (int i = 0; i < HEAD_DIM / 2; i++) {
-            __nv_bfloat162 q_pair = reinterpret_cast<const __nv_bfloat162*>(q_head)[i];
-            __nv_bfloat162 k_pair = reinterpret_cast<const __nv_bfloat162*>(k_vec)[i];
-
-            float2 q_vals = __bfloat1622float2(q_pair);
-            float2 k_vals = __bfloat1622float2(k_pair);
-
-            // score += q_vals.x * k_vals.x + q_vals.y * k_vals.y;
-            score = __fmaf_rn(q_vals.x, k_vals.x, score);
-            score = __fmaf_rn(q_vals.y, k_vals.y, score);
+__global__ static void attention_qk_kernel(tpATT* att, bf16* q, bf16* k_cache, int pos, int seq_len, int n_heads, int n_kv_heads, int head_dim) {
+    int h = blockIdx.x, t = threadIdx.x;
+    int kv_mul = n_heads / n_kv_heads, KV_DIM = n_kv_heads * head_dim;
+    if (t > pos) {
+        return;  // guard
+    }
+    bf16* q_head    = q + h * head_dim;
+    int kv_head_idx = h / kv_mul;
+    bf16* k_vec     = k_cache + (size_t)t * KV_DIM + (size_t)kv_head_idx * head_dim;
+    if (0) {  // try 1-bit quant
+        float sum = 0.0f, a, average = 0.0f;
+        bf16* row = k_vec;  // q_head;
+        for (int k = 0; k < head_dim; k++) {
+            a = CU_T2Float(row + k);
+            sum += fabs(a);
         }
+        average = sum / head_dim;
+        // if (average < 1.0e-5) {  // T_zeroRow
+        //     att[(size_t)h * seq_len + t] = 0.0;
+        //     return;
+        // }
+        // *gama = average;
+        for (int k = 0; k < head_dim; k += 8) {
+            unsigned char tbyte = 0, bit;
+            // #pragma unroll
+            for (int bpos = 0; bpos < 8; bpos++, row++) {
+                a = CU_T2Float(row);
+                // bit = (a < -average / 2 || a > average / 2) ? 1 : 0; // would explode
+                bit = (a > average / 2) ? 1 : 0;  // binary quant after Implicit RELU
+                // if (a > average / 2)
+                //     bit = 1;  // x0[pos] = ta;
+                // else if (a < -average / 2)
+                //     bit = 0;  // x0[pos] = tb;
+                // else {
+                //     bit = bpos % 2 == 0;  // x0[pos] = pos%2==0 ? ta : tb;
+                // }
+                tbyte |= bit << (7 - bpos);
+                // x0[pos] = a > average / 2 ? ta : a < -average / 2 ? tb : t0;    }
+                if (1)                                           // isOverwrite
+                    *row = bit ? (bf16)(average) : (bf16)(0.f);  //(bf16)(-average);
+            }
+            // terns[k / 8] = tbyte;
+        }
+    }
+    float score = 0.0f;
+    for (int i = 0; i < head_dim / 2; i++) {
+        __nv_bfloat162 q_pair = reinterpret_cast<const __nv_bfloat162*>(q_head)[i];
+        __nv_bfloat162 k_pair = reinterpret_cast<const __nv_bfloat162*>(k_vec)[i];
 
-        score /= sqrtf((float)HEAD_DIM);
-        att[(size_t)h * seq_len + t] = score;
+        float2 q_vals = __bfloat1622float2(q_pair);
+        float2 k_vals = __bfloat1622float2(k_pair);
+
+        // score += q_vals.x * k_vals.x + q_vals.y * k_vals.y;
+        score = __fmaf_rn(q_vals.x, k_vals.x, score);  //  _rn= Round to nearest even (IEEE-754 default)
+        score = __fmaf_rn(q_vals.y, k_vals.y, score);
+    }
+
+    score /= sqrtf((float)head_dim);
+    att[(size_t)h * seq_len + t] = score;
+}
+
+template <typename tpATT>
+__global__ static void attention_qk_kernel_v2(tpATT* att, bf16* q, bf16* k_cache, int pos, int seq_len, int n_heads, int n_kv_heads, int head_dim) {
+    int hid = blockIdx.x, token = blockIdx.y, tid = threadIdx.x;
+    int kv_mul = n_heads / n_kv_heads, kv_head_idx = hid / kv_mul, KV_DIM = n_kv_heads * head_dim;
+
+    bf16* q_head = q + hid * head_dim;
+    bf16* k_vec  = k_cache + (size_t)token * KV_DIM + (size_t)kv_head_idx * head_dim;
+    float a      = q_head[tid] * k_vec[tid];
+    float score  = blockReduce_v0<warpReduceSum>(a, true);
+    if (tid == 0) {
+        score /= sqrtf((float)head_dim);
+        att[hid * seq_len + token] = score;
     }
 }
 
 template <typename tpATT>
-__global__ static void attention_v_kernel(bf16* out, const tpATT* att, const bf16* v_cache, int pos, int seq_len, int N_HEADS, int N_KV_HEADS, int HEAD_DIM) {
-    // grid: N_HEADS, block: HEAD_DIM
+__global__ static void attention_v_kernel(bf16* out, const tpATT* att, const bf16* v_cache, int pos, int seq_len, int n_heads, int n_kv_heads, int head_dim) {
+    // grid: n_heads, block: head_dim
     int h      = blockIdx.x;
     int i      = threadIdx.x;  // idx within the head dimension
-    int kv_mul = N_HEADS / N_KV_HEADS, KV_DIM = N_KV_HEADS * HEAD_DIM;
+    int kv_mul = n_heads / n_kv_heads, KV_DIM = n_kv_heads * head_dim;
 
-    bf16* out_head        = out + (size_t)h * HEAD_DIM;
+    bf16* out_head        = out + (size_t)h * head_dim;
     const tpATT* att_head = att + (size_t)h * seq_len;
     int kv_head_idx       = h / kv_mul;
 
     float weighted_sum = 0.0f;
     for (int t = 0; t <= pos; t++) {
-        const bf16* v_vec = v_cache + (size_t)t * KV_DIM + (size_t)kv_head_idx * HEAD_DIM;
+        const bf16* v_vec = v_cache + (size_t)t * KV_DIM + (size_t)kv_head_idx * head_dim;
 
         // weighted_sum += att_head[t] * __bfloat162float(v_vec[i]);
         weighted_sum = __fmaf_rn(att_head[t], __bfloat162float(v_vec[i]), weighted_sum);
     }
     out_head[i] = __float2bfloat16_rn(weighted_sum);
 }
+
+template <class T>
+__device__ inline void CU_X2ternary_row(floatGama* gama, T* row, char* terns, int N, bool isOverwrite = false, float T_zeroRow = 1.0e-5) {
+    // T ta = (T)1.0, tb = (T)(-1.0), t0 = (T)(0.0);
+
+    float sum = 0.0f, a, average = 0.0f;
+    for (int k = 0; k < N; k++) {
+        a = CU_T2Float(row + k);
+        sum += fabs(a);
+    }
+    average = (sum / (N));
+    if (average < T_zeroRow) {
+        *gama = 0.0;
+        return;
+    }
+    *gama = average;
+    // ta = (T)(average), tb = (T)(-average);
+    for (int k = 0; k < N; k += 8) {
+        unsigned char tbyte = 0, bit;
+        // #pragma unroll
+        for (int bpos = 0; bpos < 8; bpos++, row++) {
+            a = CU_T2Float(row);
+            // bit = (a < -average / 2 || a > average / 2) ? 1 : 0; // would explode
+            bit = (a > average / 2) ? 1 : 0;  // binary quant after Implicit RELU
+            // if (a > average / 2)
+            //     bit = 1;  // x0[pos] = ta;
+            // else if (a < -average / 2)
+            //     bit = 0;  // x0[pos] = tb;
+            // else {
+            //     bit = bpos % 2 == 0;  // x0[pos] = pos%2==0 ? ta : tb;
+            // }
+            tbyte |= bit << (7 - bpos);
+            // x0[pos] = a > average / 2 ? ta : a < -average / 2 ? tb : t0;    }
+            if (isOverwrite)
+                *row = bit ? (T)(average) : (T)(-average);
+        }
+        terns[k / 8] = tbyte;
+    }
+}
+
+template <class T>
+__global__ void CU_ternary_online(T* mat, int M, int N, int seed = 0x0);
+template <class T>
+__global__ void CU_ternary2X_(floatGama* gama, const char* terns, T* mat0, int M, int N, int seed = 0x0);
+template <class T>
+__global__ void CU_X2ternary_(floatGama* gama, T* mat0, char* terns, int M, int N, int bpe, bool isOverwrite = false);
 
 void CU_abc(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int transB = 0,
             float beta = 0.0, floatX* pre_gelu = NULL, bool backward = false);

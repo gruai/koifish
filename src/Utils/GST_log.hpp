@@ -101,9 +101,9 @@ void inline PrintT(const char* title, const T* src, int n1, int n2, int n3 = 1, 
     for (i = 0; i < nElem; i++) {
         a = T2Float<T>(cur, i);
         assert(!isnan(a) && !isinf(a));
-        if (i < nEach || i > nElem - nEach || fabs(i - nElem / 2) <= nEach)
+        if (i < nEach || i >= nElem - nEach || fabs(i - nElem / 2) <= nEach)
             _INFO("%g ", a);
-        if (i == nEach || i == nElem - nEach)
+        if (i == nEach || i == nElem - nEach -1)
             _INFO("...");
         sum += fabs(a);
         sum2 += a * a;

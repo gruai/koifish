@@ -15,7 +15,7 @@
 #include "Fish.hpp"
 #include "Optimizer.hpp"
 
-LearnSKDU::LearnSKDU(TRAIN_CARD &train_params) : _params(train_params) {
+LearnSKDU::LearnSKDU(TRAIN_CARD& train_params) : _params(train_params) {
     if (_params.lr_restart == 1)
         policy = COSINE_EPOCH;
     warmup = _params.warmup, mostIter = _params.nMostIter;
@@ -71,7 +71,7 @@ hGensor GeNeuron::OnInput(hGensor hIn, int flag) {
         assert(isTemp);
         hIn->SerialData(name, host_inp, false, dump_flag);
     }
-    if(hFish->ChatMode()!=CHAT_MODE::YABA){     //  ???
+    if (hFish->ChatMode() != CHAT_MODE::YABA) {  //  ???
         return hIn;
     }
 
@@ -93,7 +93,7 @@ bool RLS_BP::InitGUOKE(int flag) {
         int LIS = hFish->config.fuyou.nLayerInBranch;
         if (hFish->isLocalInfer) {
             for (auto task : afu->tasks) {
-                GeNeuron *neuron = (GeNeuron *)(task->hOBJ);
+                GeNeuron* neuron = (GeNeuron*)(task->hOBJ);
                 neuron->ManageMemory(DATA_PLACE::DEV_MEM);
             }
             return true;
@@ -117,15 +117,15 @@ bool RLS_BP::InitGUOKE(int flag) {
             _INFO("[RLS_branch] \tGuoke=%d(%d) nSection=%d isRefParam=%d\t\n", nT_guoke, nT, nSection, isRefParam);
         }
     } else if (params.strategy == MEM_STRATEGY::MEM_SWAP_GUOKE) {
-        FFN *firstFFN = hFish->GetNeuron<FFN>("FFN", 0);
+        FFN* firstFFN = hFish->GetNeuron<FFN>("FFN", 0);
         firstFFN->SetGuoke(nullptr, isRefParam);
-        SelfAttention *firstQKV = hFish->GetNeuron<SelfAttention>("SelfAttention", 0);
+        SelfAttention* firstQKV = hFish->GetNeuron<SelfAttention>("SelfAttention", 0);
         firstQKV->SetGuoke(nullptr, isRefParam);
         for (int l = 1; l < nLayer; l++) {
-            SelfAttention *QKV = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
+            SelfAttention* QKV = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
             nT += QKV->PickGensors().size();
             nT_guoke += QKV->SetGuoke(firstQKV, isRefParam);
-            FFN *ffn = hFish->GetNeuron<FFN>("FFN", l);
+            FFN* ffn = hFish->GetNeuron<FFN>("FFN", l);
             nT += ffn->PickGensors().size();
             nT_guoke += ffn->SetGuoke(firstFFN, isRefParam);
         }
@@ -249,9 +249,9 @@ bool RLSchedule::Planning(int flag) {
     return true;
 }
 
-RLS_BP::RLS_BP(EDGE_DEVICES *hED_, const CLI_params &config, int flag) : RLSchedule(hED_, config, flag) {
+RLS_BP::RLS_BP(EDGE_DEVICES* hED_, const CLI_params& config, int flag) : RLSchedule(hED_, config, flag) {
     params = config.scheduling;
-    vector<TaskNode *> arrT;
+    vector<TaskNode*> arrT;
     // if(config.fuyou.nLayerInBranch>0)
     int l_1 = config.nLayer();
     afu     = std::make_shared<Fuyou>("afu", this, hFish, arrT, 0, l_1, 0x0);
@@ -266,7 +266,7 @@ void RLS_BP::Dump(int typ) const {
     size_t szFree, szTotal;
     cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
     _INFO("[RLS]\tnGuoke=%d(%.3G) Memory of GPU=%.6gM(free=%.6gM)\n", nT_guoke, szGuoke / 1.0e9, (szTotal - szFree) / 1.0e6, szFree / 1.0e6);
-    auto &fuyou = hFish->config.fuyou;
+    auto& fuyou = hFish->config.fuyou;
     if (fuyouSwarm.size() > 1) {
         // hFuyou first = fuyouSwarm[0];
 
@@ -276,20 +276,20 @@ void RLS_BP::Dump(int typ) const {
     }
 }
 
-bool RLS_BP::isResident(GeNeuron *neuron, int flag) {
+bool RLS_BP::isResident(GeNeuron* neuron, int flag) {
     if (params.strategy == MEM_STRATEGY::PRE_ALLOC_GPU || params.strategy == MEM_STRATEGY::PRE_ALLOC_HOST_MAP)
         return true;
-    if (dynamic_cast<TokenEmbed *>(neuron))
+    if (dynamic_cast<TokenEmbed*>(neuron))
         return true;
-    if (dynamic_cast<OutCLS *>(neuron))
+    if (dynamic_cast<OutCLS*>(neuron))
         return true;
-    if (dynamic_cast<LayerNormal *>(neuron))
+    if (dynamic_cast<LayerNormal*>(neuron))
         return true;
-    if (dynamic_cast<FFN *>(neuron)) {
+    if (dynamic_cast<FFN*>(neuron)) {
         // neuron->dump_flag = -1;
         //  return neuron->layer==1;
     }
-    if (dynamic_cast<SelfAttention *>(neuron)) {
+    if (dynamic_cast<SelfAttention*>(neuron)) {
         // return neuron->layer==1;
         // return true;
     }
@@ -298,7 +298,7 @@ bool RLS_BP::isResident(GeNeuron *neuron, int flag) {
     return false;
 }
 
-void RLS_BP::Init(Fish *hF, std::vector<hNeuron> backbons, int flag) {
+void RLS_BP::Init(Fish* hF, std::vector<hNEURON> backbons, int flag) {
     hFish  = hF;
     budget = hDevices->mostRAM / 1.0e6;
     assert(budget > 0);
@@ -309,16 +309,16 @@ void RLS_BP::Init(Fish *hF, std::vector<hNeuron> backbons, int flag) {
         }
         n->ManageMemory(DATA_PLACE::SYMBOLIC);
         double mem     = n->dev_most_mem / 1.0e6;
-        TaskNode *node = new TaskNode(n->name, (void *)(n.get()), mem);
+        TaskNode* node = new TaskNode(n->name, (void*)(n.get()), mem);
         afu->Add(node);  // curTasks.push_back(node);
     }
     // assert(curTasks.size() >= 2);
-    TaskNode *last = afu->Last();  // curTasks[curTasks.size() - 1];
+    TaskNode* last = afu->Last();  // curTasks[curTasks.size() - 1];
     _INFO("[RLS]\tInit n_tMaps=%ld task_of_afu=%d[%s,...,%s]", tMaps.size(), afu->tasks.size(), afu->First()->name.c_str(), last->name.c_str());
     Dump(0x0);
 }
 
-Fuyou::Fuyou(const string &n, RLS_BP *hRL, Fish *hF, vector<TaskNode *> arrT, int l0, int l1, int flag) : name(n), hRLS(hRL), hFish(hF) {
+Fuyou::Fuyou(const string& n, RLS_BP* hRL, Fish* hF, vector<TaskNode*> arrT, int l0, int l1, int flag) : name(n), hRLS(hRL), hFish(hF) {
     if (hFish != nullptr)
         params = hFish->config.fuyou;
     params.LIB_0 = l0;
@@ -333,7 +333,7 @@ Fuyou::Fuyou(const string &n, RLS_BP *hRL, Fish *hF, vector<TaskNode *> arrT, in
     string sT = "";
     nParams   = 0;
     for (auto task : tasks) {
-        GeNeuron *neuron = (GeNeuron *)(task->hOBJ);
+        GeNeuron* neuron = (GeNeuron*)(task->hOBJ);
         for (auto t : neuron->PickGensors()) {
             if (BIT_TEST(t->flags, GTensor::F_PARAM)) {
                 ckpParams.push_back(t);
@@ -345,7 +345,7 @@ Fuyou::Fuyou(const string &n, RLS_BP *hRL, Fish *hF, vector<TaskNode *> arrT, in
             }
         }
 
-        bool isFy = dynamic_cast<FFN *>(neuron) || dynamic_cast<SelfAttention *>(neuron);
+        bool isFy = dynamic_cast<FFN*>(neuron) || dynamic_cast<SelfAttention*>(neuron);
         if (!isFy)
             continue;
 
@@ -403,7 +403,7 @@ bool RLSchedule::ExploreOptimization(int iter, int flag) {
     hFuyou first         = fuyouSwarm[curFuyouID];  //  afu = fuyouSwarm[curFuyouID];
     vector<hFuyou> cands = fuyouSwarm;
     std::sort(cands.begin(), cands.end(),  // ugly because we don't have a typedef for the std::pair
-              [](const hFuyou &a, const hFuyou &b) { return a->loss < b->loss; });
+              [](const hFuyou& a, const hFuyou& b) { return a->loss < b->loss; });
     hFuyou head = cands[0];
     head        = first;
     if (head->loss == FLT_MAX)
@@ -482,7 +482,7 @@ bool RLS_BP::InitBranch(int flag) {
     // curTasks.clear();
     for (int b = fy0; b < fy1; b++) {
         int LIB_0 = b * LIS, LIB_1 = std::min((b + 1) * LIS, L);
-        vector<TaskNode *> tasks;
+        vector<TaskNode*> tasks;
         for (auto n : hFish->backbons) {
             bool isPass = true, isGrad = true;
             if (n->layer == 0 || n->layer > L)
@@ -499,7 +499,7 @@ bool RLS_BP::InitBranch(int flag) {
                 continue;
             }
             double mem     = n->dev_most_mem / 1.0e6;
-            TaskNode *node = new TaskNode(n->name, (void *)(n.get()), mem);
+            TaskNode* node = new TaskNode(n->name, (void*)(n.get()), mem);
             tasks.push_back(node);
             n->stat.Reset();
         }
@@ -549,7 +549,7 @@ bool RLS_BP::UpdateBackbone(int iter, int flag) {
     //     afu->Serialize(false);
     afu->loss_0 = afu->loss;
     for (auto node : curTasks()) {
-        GeNeuron *neuron = (GeNeuron *)(node->hOBJ);
+        GeNeuron* neuron = (GeNeuron*)(node->hOBJ);
         // _INFO("%s\n",neuron->__repr__(s,p).c_str());
         neuron->stat.Reset();
     }
@@ -637,7 +637,7 @@ bool RLS_BP::Prepare(int iter, int flag) {
         //     break;
         // }
         node->begin      = 0;
-        GeNeuron *neuron = (GeNeuron *)(node->hOBJ);
+        GeNeuron* neuron = (GeNeuron*)(node->hOBJ);
         if (iter < 0 && isResident(neuron)) {
             resident_list += neuron->name + ", ";
         }
@@ -665,7 +665,7 @@ bool RLS_BP::Prepare(int iter, int flag) {
     if (DUMP(1) && iter <= 2 && hFish->phase != LIFE_PHASE::P_EVAL_) {
         size_t szFree, szTotal;
         cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
-        _INFO("[MEMORY] mGPU=%.6gM(free=%.6gM) %s\n", (szTotal - szFree) / 1.0e6, szFree / 1.0e6, SUM::CPU_MemoryInfo().c_str());
+        _INFO("[MEMORY] mGPU=%.6gM(free=%.6gM) %s\n", (szTotal - szFree) / 1.0e6, szFree / 1.0e6, SUM::CPU_Info().c_str());
     }
     fflush(stdout);
     assert(SUM::nInitParam == hFish->optParams.size());

@@ -16,6 +16,7 @@
 #include "Neuron.hpp"
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
+#include "../Tensor/GeQuant.hpp"
 
 TokenEmbed::TokenEmbed(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     auto dims = hFish->config.token_embeds;
@@ -421,6 +422,8 @@ bool FFN::Build(int flag_0) {
         // up.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);
         // down.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);       //  down.Back(GTensor::bt4c, tGelu, GTensor::delta, up_out);
     }
+
+    hQuant = GeQuant::MakeInstance(this, name + "_quant",  0x0);
 
     return true;
 }

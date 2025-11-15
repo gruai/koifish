@@ -61,8 +61,8 @@ int Fish_ppl(CLI_params& config) {
     _INFO("\n====== %s: %s FLOAT=%s @%s\n", __func__, DEBUG.T_cpu == 0 ? "CUDA" : "CPU", cNameOf(config.model.tpActivation), cDATE);
     hRLS->Dump(0x0);
 
-    OutCLS* hCLS  = fish->GetNeuron<OutCLS>("OutCLS", 0);
-    floatLogist* logits = hCLS->fLogits();
+    OutCLS* hCLS        = fish->GetNeuron<OutCLS>("OutCLS", 0);
+    floatLogits* logits = hCLS->fLogits();
     double sum = 0, ss = 0, nz = 0, ppl = 0, pplerr = 0, tps = 0, t0 = GST_ms(), tAll = 0;
     vector<TOKEN_ID>& tokens = hLoader->GetTokens();
     fish->SetPhase(LIFE_PHASE::P_GENERATE);
@@ -111,8 +111,8 @@ double Fish::Eval_ppl(int flag) {
     _INFO("\n====== %s: %s FLOAT=%s @%s\n", __func__, DEBUG.T_cpu == 0 ? "CUDA" : "CPU", cNameOf(config.model.tpActivation), cDATE);
     hRLS->Dump(0x0);
 
-    OutCLS* hCLS  = GetNeuron<OutCLS>("OutCLS", 0);
-    floatLogist* logits = hCLS->fLogits();
+    OutCLS* hCLS        = GetNeuron<OutCLS>("OutCLS", 0);
+    floatLogits* logits = hCLS->fLogits();
     double sum = 0, ss = 0, nz = 0, pplerr = 0, tps = 0, t0 = GST_ms(), tAll = 0;
     vector<TOKEN_ID>& tokens = hLoader->GetTokens();
     SetPhase(LIFE_PHASE::P_GENERATE);

@@ -1,7 +1,7 @@
 {        
     "version":"0.1.0",     
     "model":{   
-        "card":"/home/cys/hugging/unsloth/Qwen3-0.6B/",
+        "card":"/home/cys/hugging/QWen/Qwen3-0.6B/",
         "parameter":{
             "Layer": 28,  
             "transformer":  {

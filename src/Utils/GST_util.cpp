@@ -21,7 +21,7 @@ int GST_util::dump = 10;
 
 int GST_util::verify = 0;
 
-void _TIME_INFO(const string &info, double fmillis, int flag) {
+void _TIME_INFO(const string& info, double fmillis, int flag) {
     _INFO("%s", info.c_str());
     if (fmillis < 1000.0f) {
         _INFO("%.1fms", (float)fmillis);
@@ -52,7 +52,7 @@ void _TIME_INFO(const string &info, double fmillis, int flag) {
 int SUM::nUpdateParam = 0;
 int SUM::nMostMemItem;
 int SUM::nMinTensorAlloc = 100 * 1024 * 1024;
-double SUM::tX = 0.0, SUM::tX1 = 0.0, SUM::tRemater = 0.0;
+double SUM::tX = 0.0, SUM::tX1 = 0.0, SUM::tRemater = 0.0, SUM::tPreLogits = 0.0;
 size_t SUM::szUpload = 0;
 double SUM::tQKV = 0.0, SUM::tFFN = 0.0, SUM::tUpload = 0.0, SUM::tData = 0.0;
 double SUM::tLoadData = 0.0, SUM::tLoadParam = 0.0, SUM::tEval_1 = 0.0, SUM::tEval_0 = 0.0;
@@ -61,7 +61,7 @@ int SUM::nzLoadParam = 0, SUM::nzSaveParam = 0;
 std::vector<MEM_USAGE> SUM::mems;
 
 size_t MEM_USAGE::szA = 0, MEM_USAGE::szW = 0, MEM_USAGE::szG = 0, MEM_USAGE::szMoment = 0, MEM_USAGE::szTemp = 0, MEM_USAGE::szOther = 0;
-MEM_USAGE::MEM_USAGE(size_t sz_, string d_, void *hData_, int flag) : sz(sz_), desc(d_), hData(hData_) {
+MEM_USAGE::MEM_USAGE(size_t sz_, string d_, void* hData_, int flag) : sz(sz_), desc(d_), hData(hData_) {
     char last = desc[desc.length() - 1];
     switch (last) {
         case 'a':
@@ -139,7 +139,7 @@ void Fish::STAT::Dump(int typ, int flag) {
     }
 }*/
 
-std::string SUM::CPU_MemoryInfo(int flag) {
+std::string SUM::CPU_Info(int flag) {
     struct rusage usage;
     getrusage(RUSAGE_SELF, &usage);
     float mCPU = usage.ru_maxrss / 1000.0, mFreeCPU = 0.0;
@@ -160,7 +160,7 @@ std::string SUM::CPU_MemoryInfo(int flag) {
     return buf;
 }
 
-bool SUM::FreeMem(void *hObj, int flag) {
+bool SUM::FreeMem(void* hObj, int flag) {
     int id = 0;
     for (auto mem : mems) {
         if (mem.hData == hObj) {
@@ -186,7 +186,7 @@ void SUM::MemoryInfo(int type, int flag) {
     size_t sz0, sz1;
     cudaError_t err = cudaMemGetInfo(&sz0, &sz1);
     std::sort(mems.begin(), mems.end(),  // ugly because we don't have a typedef for the std::pair
-              [](const MEM_USAGE &a, const MEM_USAGE &b) { return a.sz > b.sz; });
+              [](const MEM_USAGE& a, const MEM_USAGE& b) { return a.sz > b.sz; });
     size_t szNow = 0, i = 0, szFree = 0;
     double mUsed = (sz1 - sz0) / 1.0e6;
     for (auto mem : mems) {
@@ -218,8 +218,8 @@ void SUM::MemoryInfo(int type, int flag) {
 #pragma comment(lib, "G:\\MATLAB\\R2011a\\extern\\lib\\win32\\microsoft\\libmat.lib")
 #pragma comment(lib, "G:\\MATLAB\\R2011a\\extern\\lib\\win32\\microsoft\\libmx.lib")
 
-int GST_util::LoadDoubleMAT(const char *sPath, const char *sVar, int *nRow, int *nCol, double **val, int flag) {
-    MATFile *pMat;
+int GST_util::LoadDoubleMAT(const char* sPath, const char* sVar, int* nRow, int* nCol, double** val, int flag) {
+    MATFile* pMat;
     mxArray *problem, *A;
     mxClassID cls;
     double *Ax, *Az;
@@ -276,7 +276,7 @@ int GST_util::LoadDoubleMAT(const char *sPath, const char *sVar, int *nRow, int 
     return fp;
 }*/
 
-bool VERIFY_DIR_EXIST(const std::string &path, bool isCreate) {
+bool VERIFY_DIR_EXIST(const std::string& path, bool isCreate) {
     if (path.empty())
         return false;
 
@@ -295,7 +295,7 @@ bool VERIFY_DIR_EXIST(const std::string &path, bool isCreate) {
         }
         isExist = std::filesystem::exists(dir_path);
         return isExist;
-    } catch (const std::filesystem::filesystem_error &e) {
+    } catch (const std::filesystem::filesystem_error& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         return isExist;
     }
@@ -304,8 +304,8 @@ bool VERIFY_DIR_EXIST(const std::string &path, bool isCreate) {
 /**
  *  v0.1    20250918
  */
-const char *GRUAI_KOIFISH_APP_NAME = "Koifish-v0.1";
-void GRUAI_KOIFISH_VERSION(char *str, int flag = 0x0) {
+const char* GRUAI_KOIFISH_APP_NAME = "Koifish-v0.1";
+void GRUAI_KOIFISH_VERSION(char* str, int flag = 0x0) {
     char sName[80] = "\0";
     int i, nLen = (int)strlen(GRUAI_KOIFISH_APP_NAME), nFrame = 68, off;
     std::string sDat = DATE(100);
@@ -336,7 +336,7 @@ void GRUAI_KOIFISH_VERSION(char *str, int flag = 0x0) {
     return;
 }
 
-void GG_log_callback_default(DUMP_LEVEL level, const char *text, void *user_data) {
+void GG_log_callback_default(DUMP_LEVEL level, const char* text, void* user_data) {
     (void)level;
     (void)user_data;
     fputs(text, stderr);
@@ -344,7 +344,7 @@ void GG_log_callback_default(DUMP_LEVEL level, const char *text, void *user_data
 }
 
 static char log_buffer[5000], coloredMsg[5120];
-void GG_log_internal_v(DUMP_LEVEL level, const char *format, va_list args) {
+void GG_log_internal_v(DUMP_LEVEL level, const char* format, va_list args) {
     va_list args_copy;
     va_copy(args_copy, args);
     GG_log_head(log_buffer);
@@ -352,7 +352,7 @@ void GG_log_internal_v(DUMP_LEVEL level, const char *format, va_list args) {
     int len = vsnprintf(log_buffer, 5000, format, args);
     va_end(args_copy);
 
-    const char *color_0 = "";
+    const char* color_0 = "";
     coloredMsg[0]       = '\0';
     switch (level) {
         case DUMP_ERROR:
@@ -377,7 +377,7 @@ void GG_log_internal_v(DUMP_LEVEL level, const char *format, va_list args) {
     fflush(stderr);
 }
 
-void read_stdin(const char *guide, char *buffer, size_t bufsize) {
+void read_stdin(const char* guide, char* buffer, size_t bufsize) {
     // read a line from stdin, up to but not including \n
     printf("%s", guide);
     if (fgets(buffer, bufsize, stdin) != NULL) {
@@ -405,7 +405,7 @@ std::string FILE2STR(const std::string fPath, int flag) {
     return info;
 }
 
-bool STR2FILE(const std::string fPath, const std::string &info, std::ofstream::openmode mode, int flag) {
+bool STR2FILE(const std::string fPath, const std::string& info, std::ofstream::openmode mode, int flag) {
     std::ofstream file(fPath, mode);
     if (!file.is_open()) {
         _ERROR("STR2FILE failed @%s", fPath.c_str());
@@ -416,7 +416,7 @@ bool STR2FILE(const std::string fPath, const std::string &info, std::ofstream::o
     return true;
 }
 
-std::string FILE_EXT(const std::string &path) {
+std::string FILE_EXT(const std::string& path) {
     std::filesystem::path filePath = path;
     std::string sExt               = filePath.extension().string();
     if (sExt.size() > 1)
@@ -424,14 +424,14 @@ std::string FILE_EXT(const std::string &path) {
     return sExt;
 }
 
-std::vector<std::string> FilesOfDir(const std::string &path, const std::vector<std::string> &keys, int flag) {
+std::vector<std::string> FilesOfDir(const std::string& path, const std::vector<std::string>& keys, int flag) {
     std::vector<std::string> files;
-    DIR *dir = opendir(path.c_str());
+    DIR* dir = opendir(path.c_str());
     if (dir == nullptr) {
         std::cout << "failed to open directory" << std::endl;
         return files;
     }
-    struct dirent *entry;
+    struct dirent* entry;
     while ((entry = readdir(dir)) != nullptr) {
         std::string filename = entry->d_name;
         // Skip . and .. directory entries
@@ -441,7 +441,7 @@ std::vector<std::string> FilesOfDir(const std::string &path, const std::vector<s
         // if(!keys.empty() && !G_Has_(filename,keys))
         //     continue;
         string sExt = FILE_EXT(filename);
-        if(!keys.empty() && !G_Has_(sExt,keys))
+        if (!keys.empty() && !G_Has_(sExt, keys))
             continue;
         files.push_back(path + "/" + filename);
     }

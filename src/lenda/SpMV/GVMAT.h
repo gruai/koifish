@@ -1,8 +1,13 @@
+/**
+ *  SPDX-FileCopyrightText: 2013-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT
+ *
+ *  \brief
+ *  \author Yingshi Chen
+ */
+
 #pragma once
 
-/*
-
-*/
 #include <float.h>
 
 #include <cassert>
@@ -10,8 +15,9 @@
 #include <memory>
 #include <typeinfo>
 #include <vector>
+#include <fstream>
 
-#include "GeQuant.hpp"
+#include "../g_stddef.hpp"
 #include "Pattern.h"
 using namespace std;
 
@@ -22,14 +28,6 @@ typedef std::complex<double> Z;
 typedef std::complex<float> C;
 typedef float S;
 typedef double D;
-
-// λ
-// #define BIT_SET(val, flag) ((val) |= (flag))
-// #define BIT_RESET(val, flag) ((val) &= (~(flag)))
-// #define BIT_TEST(val, flag) (((val) & (flag)) == (flag))
-// #define BIT_IS(val, flag) (((val) & (flag)) != 0)
-
-// #define MEM_CLEAR(mem, size) memset((mem), (0x0), (size))
 
 enum G_DATATYPE {
     DATA_UNKNOWN,
@@ -49,7 +47,6 @@ typedef shared_ptr<GeMAT> hGMAT;
 class GeVEC;
 typedef shared_ptr<GeVEC> hGVEC;
 
-typedef std::vector<int> SHAPE;
 
 /*
  */
@@ -239,100 +236,6 @@ class Filter : public GeMAT {
     virtual hGVEC TransSpectral(const hGVEC &vLenda, bool inverse, int flag = 0x0) { return vLenda; }
 };
 typedef shared_ptr<Filter> hFILTER;
-
-template <typename T>
-struct Quantizer {
-    // TODO: len(shape)=4,3,2
-    SHAPE shape;
-    int bits = -1;
-    double maxq, maxshrink, mse, norm, grid;
-    T *scale = nullptr, *zero = nullptr;
-    bool trits, perchannel = false, sym = false;
-
-    virtual void Flattern() {}
-
-    Quantizer(int bits_, bool perchannel_ = false, bool sym_ = true, bool mse_ = false, double norm_ = 2.4, int grid_ = 100, double maxshrink_ = .8,
-              bool trits_ = false)
-        : bits(bits_), trits(trits_), perchannel(perchannel_), sym(sym_) {
-        maxq = pow(2.0, bits) - 1;
-        if (trits)
-            maxq = -1;
-    }
-
-    // onlys support shape==2
-    void Init(hGMAT x, bool weight = false) {
-        shape = x->Shape();
-        assert(shape.size() == 2);
-        int i, ld = shape[0];
-        double *xmax = new double[ld](), *xmin = new double[ld]();
-        x->Range(xmin, xmax, perchannel ? 1 : 0);
-        scale = new T[ld];
-        zero  = new T[ld];
-
-        if (maxq < 0) {
-            for (i = 0; i < ld; i++) {
-                scale[i] = xmin[i];
-                zero[i]  = xmax[i];
-            }
-        } else {
-            for (i = 0; i < ld; i++) {
-                scale[i] = (xmax[i] - xmin[i]) / maxq;
-                // On CPU tensors rounds half-to-even and on GPU tensor rounds away-from-zero !
-                zero[i] = round(-xmin[i] / scale[i]);  // torch.round(-xmin / self.scale)
-            }
-            double T_zero = (maxq + 1) / 2;
-            if (sym) {
-                for (i = 0; i < ld; i++) {
-                    zero[i] = T_zero;  // torch.full_like(self.scale, (self.maxq + 1) / 2)
-                }
-            }
-        }
-        if (GST_util::dump > 0) {
-            GST_util::print("+ %s x=[%g-%g] scale=[%g,%g] zero=[%g,%g]\n", __func__, xmin[0], xmax[0], scale[0], scale[ld - 1], zero[0], zero[ld - 1]);
-            if (ld < 16) {
-                for (i = 0; i < ld; i++) printf("%g ", scale[i]);
-                printf("\n");
-                for (i = 0; i < ld; i++) printf("%g ", zero[i]);
-                printf("\n");
-            }
-        }
-
-        delete[] xmax;
-        delete[] xmin;
-    }
-
-    virtual double Update(int len, T *col, T *q, int type, T d, T *err, int ld, int flag = 0x0) {
-        double loss = 0;
-        if (maxq < 0) {
-            // return (x > scale / 2).float() * scale + (x < zero / 2).float() * zero
-            return loss;
-        }
-        double a = 0, w;
-        // T *col=val+no,*q=val+no,*err=hERR->val+no;
-        for (int i = 0; i < len; i++, col += ld) {
-            if (i == 3)  // only for debug
-                i = 3;
-            w = *col;
-            a = round((*col) / scale[i] + zero[i]);  // 10., 13., 10.,
-            if (a < 0)
-                a = 0;
-            if (a > maxq)
-                a = maxq;
-            *q = scale[i] * (a - zero[i]);  // 0.0618,  0.1926,  0.0604, -0.0526,  0.0000,  0.1382, -0.1075, -0.0445,
-            w -= *q;
-            *err = w / d;           // err1 = (w - q) / d
-            loss += w * w / d / d;  // Losses1[:, i] = (w - q) ** 2 / d ** 2
-            q += ld;
-            err += ld;
-        }
-        // GST_util::print();
-        return loss;
-    }
-    virtual ~Quantizer() {
-        delete[] scale;
-        delete[] zero;
-    }
-};
 
 void Unitary(hGVEC &mV, int flag = 0);
 

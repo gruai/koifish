@@ -32,7 +32,7 @@ CS_Picker::CS_Picker(hFISH hFish, int flag) {
 //  Picker should much fast than dot!
 double CS_Picker::tPick = 0.0;
 
-int CS_Picker::Update(int level, float *hb, int flag) {
+int CS_Picker::Update(int level, float* hb, int flag) {
     return -1;
     double t0 = GST_us();
     if (level > 0)
@@ -41,7 +41,7 @@ int CS_Picker::Update(int level, float *hb, int flag) {
     nEx = ((nHot * 2) / 16) * 16 - nHot;
     // nEx = ((nHot)/16)*16-nHot;
     float *tmp = dTemp, prev = FLT_MAX, a;
-    int *map = hot + dim;
+    int* map = hot + dim;
     // for(i=0; i<dim; i++)    hot[i]=1;   return dim;
 
     for (i = 0; i < dim; i++) {
@@ -92,28 +92,28 @@ int CS_Picker::Update(int level, float *hb, int flag) {
     return nHot;
 }
 
-HotPicker::HotPicker(SparseNeuron *n, int flag) {
+HotPicker::HotPicker(SparseNeuron* n, int flag) {
     name = n->name;
     // config.num_trees = 256;
 }
 
-string HotPicker::__repr__(string &suffix, string &prefix, int flag) {
+string HotPicker::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]  = "\0";
-    const char *tab = prefix.c_str();
+    const char* tab = prefix.c_str();
     sprintf(buf + strlen(buf), "sparse_%s", "GBDT");
     if (flag > 0)
         _INFO("%s", buf);
     return buf;
 }
 
-int HotPicker::Predict(int nPoint, floatI *data, int *hot, int flag) { return 0x0; }
+int HotPicker::Predict(int nPoint, floatI* data, int* hot, int flag) { return 0x0; }
 
-bool HotPicker::SerialModel(const std::string &sPath, bool isSave, int flag) { return false; }
+bool HotPicker::SerialModel(const std::string& sPath, bool isSave, int flag) { return false; }
 
 int HotPicker::Train(int flag) {
 #ifdef _USE_GBDT_
     string title    = name + "_GBDT";
-    ExploreDA *edaX = new ExploreDA(config, title, flag);
+    ExploreDA* edaX = new ExploreDA(config, title, flag);
     hTrainData      = std::make_shared<FeatsOnFold>(config, edaX, title, flag);  //  from X,Y
     size_t nSamp_   = arrX.size();
     hTrainData->InitMost(nSamp_);
@@ -129,7 +129,7 @@ int HotPicker::Train(int flag) {
 }
 int HotPicker::Eval(int flag) { return 0x0; }
 
-SparseNeuron::SparseNeuron(const std::string &key_, JSON::const_iterator jit, Fish *hG_, int flag) : GeNeuron(key_, jit, hG_, flag) {
+SparseNeuron::SparseNeuron(const std::string& key_, JSON::const_iterator jit, Fish* hG_, int flag) : GeNeuron(key_, jit, hG_, flag) {
     if (BIT_TEST(flag, F_HOTPICK)) {
         isSparse = true;
     }
@@ -139,7 +139,7 @@ SparseNeuron::SparseNeuron(const std::string &key_, JSON::const_iterator jit, Fi
     }
 }
 
-void SparseNeuron::SetEmbed(TokenEmbed *embd_, int type, int flag) {
+void SparseNeuron::SetEmbed(TokenEmbed* embd_, int type, int flag) {
     assert(embd_ != nullptr);
     subw      = embd_;
     samp_type = type;
@@ -153,7 +153,7 @@ void SparseNeuron::SetEmbed(TokenEmbed *embd_, int type, int flag) {
 // TODO: Weighted sampling
 void SparseNeuron::UpdateSamps(int seed, int flag) {
     assert(hSamps != nullptr);
-    float *weight = nullptr;  // TODO: Weighted sampling
+    float* weight = nullptr;  // TODO: Weighted sampling
     int nVocab = hFish->nClass(), nSample = hSamps->size();
     // int *samps=new int[nSample];
     // samp_1 = nVocab;
@@ -183,14 +183,14 @@ bool SparseNeuron::InitSVD(int flag) {
     size_t i, nz = w->size();
     assert(nz == nIn * nOut);
     float *A = new float[nIn * nOut], tol_ = 0;  // 1.0e-3
-    f8e5m2_t *src = (f8e5m2_t *)(w->data);
+    f8e5* src = (f8e5*)(w->data);
     for (i = 0; i < nz; i++) A[i] = T2Float(src + i);  // fp8_to_float(src[i]);
     hSVD = std::make_shared<LoSVD<float>>(name, A, nIn, nOut, rank, tol_, typNUMBER::F32);
     if (!hSVD->Build()) {
         compression = SKIP;
     } else {
         if (compression == SVD_a) {  // keep same graph
-            float *approx = hSVD->Approx();
+            float* approx = hSVD->Approx();
         } else {
         }
     }
@@ -199,7 +199,7 @@ bool SparseNeuron::InitSVD(int flag) {
 }
 
 string HIERARCH_LoRA::sNeurons = "";
-HIERARCH_LoRA::HIERARCH_LoRA(SparseNeuron *neuron, hGensor w_, int r_, int flag) : wBase(w_), rank(r_), spNeuron(neuron) {
+HIERARCH_LoRA::HIERARCH_LoRA(SparseNeuron* neuron, hGensor w_, int r_, int flag) : wBase(w_), rank(r_), spNeuron(neuron) {
     hFish = neuron->hFish;
     assert(w_->isWMAT() && rank > 0);
     int m = w_->ne[0], n = w_->ne[1], c0;
@@ -213,7 +213,7 @@ HIERARCH_LoRA::HIERARCH_LoRA(SparseNeuron *neuron, hGensor w_, int r_, int flag)
 
     // tmp          = GTensor::bt4c;
     // assert(m * rank <= tmp->size() && n * rank <= tmp->size());
-    huTensor *ta   = dynamic_cast<huTensor *>(a.get());
+    huTensor* ta   = dynamic_cast<huTensor*>(a.get());
     size_t szAlloc = ta->Alloc_1(&Ax, false, "", sizeof(floatX) * B * T * rank);
     szAlloc += ta->Alloc_1(&Adelta, false, "", sizeof(floatX) * B * T * rank);
 
@@ -221,7 +221,7 @@ HIERARCH_LoRA::HIERARCH_LoRA(SparseNeuron *neuron, hGensor w_, int r_, int flag)
     // _INFO("[H_LORA]");
 }
 HIERARCH_LoRA::~HIERARCH_LoRA() {
-    huTensor *ta = dynamic_cast<huTensor *>(a.get());
+    huTensor* ta = dynamic_cast<huTensor*>(a.get());
     ta->Free_1(&Ax, "");
     ta->Free_1(&Adelta, "");
 }
@@ -270,14 +270,14 @@ bool SparseNeuron::Sparsing(int flag) {
     return iRet;
 };
 
-bool SparseNeuron::GetHotIndex(int nPoint, floatI *data, int *hot, int flag) {
+bool SparseNeuron::GetHotIndex(int nPoint, floatI* data, int* hot, int flag) {
     if (hPicker == nullptr)
         return false;
     hPicker->Predict(nPoint, data, hot);
     return true;
 }
 
-bool SparseNeuron::OnData(hGTensor X, hGTensor Y, int *hot, int flag) {
+bool SparseNeuron::OnData(hGTensor X, hGTensor Y, int* hot, int flag) {
     if (hPicker == nullptr)
         return false;
     if (method == 1) {

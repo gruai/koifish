@@ -81,7 +81,7 @@ __global__ void CU_T82X_(float* gama, const char* terns, T* mat0, int M, int N, 
 }
 
 template <typename T>
-__device__ inline  T ByteDot(const char &wA, T *B, int flag = 0x0) {
+__device__ inline T ByteDot(const char& wA, T* B, int flag = 0x0) {
     T sum = (T)0.0;
     switch (wA) {
         case 0:;
@@ -857,7 +857,7 @@ __device__ inline  T ByteDot(const char &wA, T *B, int flag = 0x0) {
 
 // only for debug
 template <typename T>
-__device__ inline T AT_(T *mat, int r, int c, int M, int N) {
+__device__ inline T AT_(T* mat, int r, int c, int M, int N) {
 #ifndef NDEBUG
     if (r >= M) {
         return T(0);
@@ -868,8 +868,6 @@ __device__ inline T AT_(T *mat, int r, int c, int M, int N) {
 #endif
     return mat[c * M + r];
 }
-
-
 
 //  just like mma.sync.aligned.m16n8k16.row.col.f16.f16.f16.f16
 // template <typename Ta, typename Tb, typename Tc, const int BM, const int BN, const int BK = 16, const int TM = 8, const int TN = 8>
@@ -892,20 +890,14 @@ __device__ inline T AT_(T *mat, int r, int c, int M, int N) {
 //         // 		}
 //     }
 // }
-#define     UNROLL _Pragma("unroll")
+#define UNROLL _Pragma("unroll")
 //  just like mma.sync.aligned.m16n8k16.row.col.f16.f16.f16.f16
-#define SYNC_AtBC_m8n8k16(a_,b_,sum)   \
-UNROLL for (int i = 0; i < 16; i++) {                  \
-	UNROLL for (int j = 0; j < 8; j++) {           \              
-                a_[j] = tileA[CR2POS(j, i, BM, BK)];  \
-            }   \
-	UNROLL for (int l = 0; l < 8; l++) {      \            
-                b_[l] = tileB[RC2POS(i, l, Bk, BN)];  \
-            }   \
-    UNROLL for (int j = 0; j < 8; j++) {   \
-            UNROLL for (int l = 0; l < 8; l++) sum[j][l] += a_[j] * b_[l];\
-            }   \
-        }
+#define SYNC_AtBC_m8n8k16(a_, b_, sum)                                                                        \
+    UNROLL for (int i = 0; i < 16; i++) {                                                                     \
+        UNROLL for (int j = 0; j < 8; j++) { a_[j] = tileA[CR2POS(j, i, BM, BK)]; }                           \
+        UNROLL for (int l = 0; l < 8; l++) { b_[l] = tileB[RC2POS(i, l, Bk, BN)]; }                           \
+        UNROLL for (int j = 0; j < 8; j++) { UNROLL for (int l = 0; l < 8; l++) sum[j][l] += a_[j] * b_[l]; } \
+    }
 
 // Register=>Global memory
 // #define SYNC_REG2M_m8n8(a_,b_,sum)   	\

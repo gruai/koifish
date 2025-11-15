@@ -31,9 +31,9 @@
 
 #include "../Device/EDevice.hpp"
 #include "../Fuzi/Distillation.hpp"
+#include "../Utils/Cache.hpp"
 #include "../Utils/GST_rander.hpp"
 #include "../Utils/GST_util.hpp"
-#include "../Utils/Cache.hpp"
 #include "../ggex/GG_util.hpp"
 #include "GoPT.hpp"
 #include "Neuron.hpp"
@@ -48,6 +48,9 @@ typedef shared_ptr<Optimizer> hOptimizer;
 typedef shared_ptr<Fish> hFISH;
 typedef vector<hFISH> tpSWARM;
 class NLP_AutoRegressive;
+namespace safetensors {
+class safetensors_t;
+}
 
 struct MixOfModels {
     bool isRes = true, isSiLU = false;
@@ -92,7 +95,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     WIKI::INDUCT_MODE teach = WIKI::_LOGITS;
 
     // Generate some results on prompt
-    hGOPT gopt = nullptr;
+    hGENERATOR gopt = nullptr;
 
     //  Ref: 1. isAtPhase 2.SetPhase
     LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;
@@ -105,7 +108,8 @@ class Fish : public std::enable_shared_from_this<Fish> {
 
     // safetensors::safetensors_t safeTensors;
 
-    std::vector<hNeuron> neurons, backbons;
+    std::vector<hNEURON> neurons, backbons;
+
     // @TGraph::TopoOrder
     GENSORS gensors;
     //  paramter tensors updated by hOPT    @Fish::AfterBuild
@@ -113,9 +117,9 @@ class Fish : public std::enable_shared_from_this<Fish> {
     vector<hGensor> loadGensors;
     std::vector<hGensor> xGensors;
 
-    hEDevices hEDS = nullptr;
+    hEDevices hEDS  = nullptr;
     hKVCache hCache = nullptr;
-    
+
     bool updateTMap = false;
     // Ref@isTrain      No training process! only Evaluate/GPT/...
     bool isLocalInfer     = false;
@@ -166,9 +170,9 @@ class Fish : public std::enable_shared_from_this<Fish> {
     virtual bool GGUF_Serialize(const std::string& path, bool isSave, int flag = 0x0);
     // Load model wight from hugging face model
     virtual bool HF_Serialize(bool isSave, int flag = 0x0);
-    // Smart format of https://github.com/zeux/calm
-    virtual bool CALM_Serialize(const std::string& path, bool isSave, int flag = 0x0);
     virtual bool YALM_Serialize(const std::string& path, bool isSave, int flag = 0x0);
+
+    int SAFETENSOR2Gensors(const std::string& path, safetensors::safetensors_t* hst, int flag);
     virtual bool SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag = 0x0);
 
     MODEL_ARCH arch = MODEL_ARCH::_X_;
@@ -231,7 +235,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
         assert(hOPT != nullptr);
         return hOPT;
     }
-    hGOPT GetGOPT() const {
+    hGENERATOR GetGenerator() const {
         assert(gopt != nullptr);
         return gopt;
     }
@@ -272,9 +276,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
         assert(hEDS != nullptr);
         return hEDS;
     }
-    virtual hKVCache curCache(int flag = 0x0) {
-        return hCache;
-    }
+    virtual hKVCache curCache(int flag = 0x0) { return hCache; }
     virtual void* GetGGCTX(int typ = 0x0) {
         /*switch(typ){
         case 1:
@@ -383,11 +385,11 @@ class Fish : public std::enable_shared_from_this<Fish> {
         AfterAddLayer(hLay);
     }
     virtual void AfterAddLayer(hLayer hLay, int flag = 0x0) { ; }
-    virtual void AfterAddNeuron(hNeuron hN, int flag = 0x0) { ; }
+    virtual void AfterAddNeuron(hNEURON hN, int flag = 0x0) { ; }
 
     template <typename T>
     void AddLayer(hFISH graph, const std::string& key_, const SHAPE& shape, int flag) {  // neural layer with only one neruon
-        hNeuron hN   = std::make_shared<T>(graph, key_, shape, flag);
+        hNEURON hN   = std::make_shared<T>(graph, key_, shape, flag);
         hLayer layer = std::make_shared<NeLayer>(key_, flag);
         layer->Add(hN);
         AddLayer(layer, flag);
@@ -405,7 +407,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
 
     virtual bool ComputePlan(int flag = 0x0);
     int BuildGraphFromRaw(int flag);
-    hNeuron J2Neuron(void* ctx_build, string&, int level, const JConfig& j, int flag);
+    hNEURON J2Neuron(void* ctx_build, string&, int level, const JConfig& j, int flag);
     virtual int jToGraph(void*, bool isBuild, int flag = 0x0);
 
     virtual void Train(int flag = 0x0);
@@ -494,4 +496,4 @@ struct Pangpi : public Fish {
 };
 typedef shared_ptr<Pangpi> hPangpi;
 
-floatLogist* T_generate_(hFISH hFish, MODEL_CARD* hPipe, typNUMBER tpActivity, int flags);
+floatLogits* T_generate_(hFISH hFish, MODEL_CARD* hPipe, typNUMBER tpActivity, int flags);

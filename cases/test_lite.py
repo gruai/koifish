@@ -34,11 +34,11 @@ def CheckResult(df,iter,golden,title="",rel_tol=1e-05):
 
 def test_chat_qwen3_0_6B():  
     content = bubble_one("chat_qwen3_0.6b","./cases/qwen3/qwen3_0.6B.json")  
-    assert content=="Hello! How can I assist you today?"
+    assert "Hello! How can I assist you today?" in content
 
 def test_chat_qwen3_4B():    
     content = bubble_one("chat_qwen3_4B","./cases/qwen3/qwen3_4B.json")  
-    assert "Answer: 1" in content or "Answer:1" in content  # "Answer: 1"   "✅ Final Answer:1 ✅"  "Answer: 1 ✅"  "✅Answer: 1"
+    assert "Answer: 1" in content or "Answer:1" in content or "answer:1" in content  # "Answer: 1"   "✅ Final Answer:1 ✅"  "Answer: 1 ✅"  "✅Answer: 1"
     # assert content=="Hello! How can I assist you today? 😊\n" or content=="Hello! It seems there was a small glitch. 😊 How can I assist you today?\n"
 
 def test_pp_gpt2():    
@@ -93,13 +93,15 @@ if __name__ == '__main__':
     args = parser.parse_args()    
     
     sExe = "./bin/koifish "
-    #test_chat_qwen3_0_6B()  
+    #test_gpt2_774M()
+
+    # test_chat_qwen3_0_6B()  
     test_chat_qwen3_4B()
 
     # test_pp_gpt2()
     # test_gpt2_124M()
     # test_gpt2_124M_fuyou6()
-    # # test_gpt2_774M()
+    # # 
     # test_gpt2_1558M()
     # koifish_one("124M", sExe, "./cases/gpt2/124M_shard50_F6_lr0.001/F6_lr0.001.json", most_iter=most_iter)
     

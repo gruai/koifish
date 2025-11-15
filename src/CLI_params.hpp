@@ -240,8 +240,8 @@ class MODEL_CARD {
     std::string sCardPath = "", sTokenPath = "";
     std::string sArch, torch_dtype, transformers_version, model_type;
     std::string act_type, norm_type;
-    typNUMBER tpWeight = typNUMBER::BF16, tpEmbed = typNUMBER::BF16, tpGradient = typNUMBER::BF16, tpActivation = typNUMBER::BF16;
-    // typNUMBER tpPreLogits = typNUMBER::F32;
+    typNUMBER tpWeight = typNUMBER::BF16, tpGradient = typNUMBER::BF16, tpActivation = typNUMBER::BF16;
+    // typNUMBER tpPreLogits = typNUMBER::F32;tpEmbed = typNUMBER::BF16,
     dotprod_t fDotW;
     JSON jModelParam, jSafetensorsIndex;  //
     int vocab_size = -1;
@@ -300,6 +300,43 @@ class MODEL_CARD {
     void Dump(int typ);
 
     friend class CLI_params;
+};
+
+enum EVICTION_MODE {
+    NO_EVICTION,
+    H2O,  //  Heavy Hitter Oracle
+};
+
+/**
+ * Quantizer is much complex & hard than most people think. It refects the essence of our world, just like quantum mechanics
+ */
+enum QUANT_MODE {
+    NO_QUANT,
+    RTN,  //  Round-to-Nearest
+    RTN_4,
+    RTN_3,
+    RTN_2,
+
+    SINQ,      // Sinkhorn-Normalized Quantization
+    KV_JL,     //  Johnson-Lindenstrauss (JL) transform
+    KV_AQUA,   //  https://arxiv.org/pdf/2501.19392
+    KV_SQUAT,  //  Subspace-orthogonal KV cache quantization   https://arxiv.org/pdf/2503.24358
+    KV_PolarQuant
+};
+
+// Deprecated
+enum QUANT_ALG {
+    // Ternary
+    // Value of weights
+    W_SCALE = 0X100,
+    W_NOSCALE  //
+};
+struct QUANT_CARD {
+    std::vector<std::string> filter_KVcache;
+    std::vector<std::string> filter_SINQ;
+    std::vector<std::string> filter_WeightF8Ex;
+
+    QUANT_MODE Type(std::string name, int flag = 0);
 };
 
 struct ADAM_params_ {
@@ -399,6 +436,7 @@ struct CHAT_SAMPLER {
     float top_p       = 0.95f;
     int top_k         = 20;
     bool ignore_eos   = false;  // ignore EOS token when generating text
+    bool isSampleCPU  = false;
 
     int repeat_last_n        = 64;
     float repeat_penalty     = 1.00f;
@@ -427,19 +465,21 @@ struct DEUG_SWITCH {
     int T_ternary            = 0;
     int algCuX2              = 0;
 
-    int dict_latent_dim    = -1;
-    int graph_dump         = 0;  //  10 levels of dumps, 0-9. 0 is a full dump_,The lower the number the more dump_.
-    int train_hyperparams  = 0;
-    int train_datas        = 0;
-    int back_graph_version = 0;
-    int T_cuda_ver         = 0;
-    int T_classifier_ver   = 0;
-    int T_cpu              = 0;
-    int T_GEMM             = -1;
-    int T_fuyou            = 1;
-    int T_generate_qkv     = 0;
-    int T_generate_most_layer     = 10000000;
-    int N_mostiter         = -1;
+    int dict_latent_dim       = -1;
+    int graph_dump            = 0;  //  10 levels of dumps, 0-9. 0 is a full dump_,The lower the number the more dump_.
+    int train_hyperparams     = 0;
+    int train_datas           = 0;
+    int back_graph_version    = 0;
+    int T_cuda_ver            = 0;
+    int T_classifier_ver      = 0;
+    int T_cpu                 = 0;
+    int T_GEMM                = -1;
+    int T_fuyou               = 1;
+    int T_generate_qkv        = 0;
+    int T_cuQK                = 0;
+    int T_generate_most_layer = 10000000;
+    int T_kvcache_quant       = 0;
+    int N_mostiter            = -1;
 
     int cmd_p1 = 0, cmd_p2 = 0, cmd_p3 = 0;  // some commandline parameter for debug
     int x1 = 0;
@@ -513,6 +553,7 @@ struct CLI_params {
     TRAIN_CARD common;
 
     MODEL_CARD model;
+    QUANT_CARD quant;
     std::vector<CheckPoint_Params> ckp_in, ckp_out;
     CheckPoint_Params state;
 

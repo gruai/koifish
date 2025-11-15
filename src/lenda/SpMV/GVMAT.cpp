@@ -1,3 +1,11 @@
+/**
+ *  SPDX-FileCopyrightText: 2013-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT
+ *
+ *  \brief
+ *  \author Yingshi Chen
+ */
+
 #include "GVMAT.h"
 
 #include <fstream>

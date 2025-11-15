@@ -37,19 +37,21 @@ class Fish;
 class SparseNeuron;
 class EDGE_DEVICES;
 typedef shared_ptr<GTensor> hGTensor;
-typedef std::vector<int> SHAPE;
-bool Gensors2File(std::vector<hGTensor> gset, const std::string &path, int flag = 0x0);
+class GeQuant;
+class GeNeuron;
+
+bool Gensors2File(std::vector<hGTensor> gset, const std::string& path, int flag = 0x0);
 
 #include "../Device/CUDA/cuda_common.h"
 
 // set name of a tensor if its name is "\0" & its grad
-int gTN(hGTensor, const char *format, ...);
+int gTN(hGTensor, const char* format, ...);
 // clear then set name of a tensor & its grad
-int gTN0(hGTensor cur, const char *format, ...);
+int gTN0(hGTensor cur, const char* format, ...);
 
 enum DATA_PLACE { VOID, SYMBOLIC, REFER, MEMORY, DEV_MEM, MMAP, DISK, CLOUD, FREE_DEV };
 
-enum INIT_WEIGHT { W_SKIP = 0X0, FIX_1, RANDOM, COPY_WIKI, COPY_SWARM_HEAD, SERIALIZE };
+enum INIT_WEIGHT { W_SKIP = 0X0, FIX_1, RANDOM, GAUSSIAN_NORMAL, COPY_WIKI, COPY_SWARM_HEAD, SERIALIZE };
 /**
  *  Edge of Operation(TASK) GRAPH
  */
@@ -62,7 +64,7 @@ struct GENSOR_OP {
     GENSOR_OP(hGTensor t, int flag = 0x0) : _t(t) { ; }
     static std::shared_ptr<GENSOR_OP> Inst(hGTensor t, int flag = 0x0) { return std::make_shared<GENSOR_OP>(t, flag); }
 
-    string __repr__(string &suffix, string &prefix, int flag = 0x0) const {
+    string __repr__(string& suffix, string& prefix, int flag = 0x0) const {
         char buf[512] = "\0";
         if (dad == -1) {
             sprintf(buf + strlen(buf), "ROOT");
@@ -71,16 +73,9 @@ struct GENSOR_OP {
         return buf;
     }
 
-    static bool comp(GENSOR_OP &a, GENSOR_OP &b) { return a.ID < b.ID; }
+    static bool comp(GENSOR_OP& a, GENSOR_OP& b) { return a.ID < b.ID; }
 };
 typedef shared_ptr<GENSOR_OP> hGOP;
-
-enum QUANT_ALG {
-    // Ternary
-    // Value of weights
-    W_SCALE = 0X100,
-    W_NOSCALE  //
-};
 
 #include <cstdlib>
 #include <memory>
@@ -88,12 +83,12 @@ enum QUANT_ALG {
 template <typename T>
 struct VirtualAllocator {
     using value_type = T;
-    T *allocate(size_t n) { return static_cast<T *>(std::malloc(n * sizeof(T))); }
-    void deallocate(T *p, size_t n) { std::free(p); }
+    T* allocate(size_t n) { return static_cast<T*>(std::malloc(n * sizeof(T))); }
+    void deallocate(T* p, size_t n) { std::free(p); }
 
     VirtualAllocator() = default;
     template <typename U>
-    VirtualAllocator(const VirtualAllocator<U> &) {}
+    VirtualAllocator(const VirtualAllocator<U>&) {}
 };
 
 template <typename T>
@@ -107,19 +102,19 @@ struct GPUAllocator : public VirtualAllocator<T> {};
  */
 class GTensor {
    private:
-    void *gg = nullptr;
+    void* gg = nullptr;
 
    protected:
-    Fish *hFish = nullptr;
+    Fish* hFish = nullptr;
 
-    std::vector<GTensor *> refered;
+    std::vector<GTensor*> refered;
     std::vector<hGTensor> fuyous;
     std::shared_ptr<EDGE_DEVICES> hDevice = nullptr;
     size_t szData = 0, szGama = 0, szUse = 0, szGrad = 0, szM = 0, szV = 0;
     int last_iter = -1;
-    //  support dynamic change shape&type!
+    //  support dynamic change shape&type!  return false if not change anything
     virtual bool ReShape(SHAPE shape_, typNUMBER tpD_, int flag = 0x0);
-    virtual hGTensor _Multiply(const hGTensor &other) {
+    virtual hGTensor _Multiply(const hGTensor& other) {
         assert(0);
         return nullptr;
     }
@@ -132,7 +127,9 @@ class GTensor {
     };
     REF_TYPE tpRef = REF_TYPE::NO;
     hGTensor hRef  = nullptr;
-    void *raw_data = nullptr;
+    void* raw_data = nullptr;
+    virtual size_t Alloc_1(void** dst, bool isZero, string desc, size_t sz = 0x0, int flag = 0x0) { return 0x0; };
+    virtual size_t Free_1(void** obj, const string& info = "") { return 0x0; };
 
    public:
     static const int MAX_NAME = 64;
@@ -142,12 +139,12 @@ class GTensor {
     static hGTensor bt4c, delta, tmpDelta, scratch, tmpFF1, tmpW, tmpGW, residual, tmpTernary;
     //  If config.isShareLayerOut(), all layers' output share this tensor!
     static hGTensor outL;
-    
+
     static bool FreeBuffer(int flag = 0x0);
     //  temporary shared memory 1) buff sz>=8*nCTX*nToken(from preLogits)
     static void *buff, *host_buff;
     // float stat_info[1024] in GPU
-    static float *stat_info;
+    static float* stat_info;
     static size_t buff_len;
     float residual_scale = 1.0, wnorm = 0, gnorm = 0;  // some tricks
     float rLARS(float s0, float T_lars, int flag);
@@ -156,22 +153,22 @@ class GTensor {
     SHAPE x_shape;  //  1.padded for high performance or menory alignment(x_shape<=shape)
     // shape=>x_shape
     vector<hGOP> src;
-    virtual void AddSrc(const vector<hGTensor> &ts, int flag = 0x0);
+    virtual void AddSrc(const vector<hGTensor>& ts, int flag = 0x0);
 
-    void *host_data = nullptr;  // somtimes, we need data both in device&host
-    void *data      = nullptr;
+    void* host_data = nullptr;  // somtimes, we need data both in device&host
+    void* data      = nullptr;
     // a serial of LORA for weight
-    floatGama *gama_T();  // scaling coefficient of bit weight
+    floatGama* gama_T();  // scaling coefficient of bit weight
     // virtual bool isUpdateParam(int iter = -1, int flag = 0x0) const;  // in many case, params are not update, even data is not allocated!
     bool needUpdateParam = false;
     int tile_r1 = 0, tile_c1 = 0;  //  tile_r0 = 0,tile_c0 = 0,
-    floatGrad *grad   = nullptr;   //
+    floatGrad* grad   = nullptr;   //
     hGTensor grad_ref = nullptr;
     void *gm = nullptr, *gv = nullptr;  // first moment, second moment of grad
 
     float info[8];  // Some info of some operations
 
-    virtual void *DataPad(void *src0, int flag = 0x0);
+    virtual void* DataPad(void* src0, int flag = 0x0);
 
     typNUMBER type;
     INIT_WEIGHT tpInit = INIT_WEIGHT::RANDOM;
@@ -200,17 +197,21 @@ class GTensor {
         F_DEBUG = 0x10000000
     };
 
+    enum BIT_OP_FLAG {
+        F_OP_NO_REALLOC = 0x10000,
+    };
+
     QUANT_ALG tpQuant = W_SCALE;
 
     static size_t MostOverhead() { return sizeof(GTensor) * 2; }
     GTensor() {}
-    GTensor(Fish *hFish, SHAPE shape_, typNUMBER tpD_, bool isAlloc = true, int flag = 0x0);
+    GTensor(Fish* hFish, SHAPE shape_, typNUMBER tpD_, bool isAlloc = true, int flag = 0x0);
     // GTensor(struct ggml_tensor *gg_, int flag = 0x0) : gg(gg_) { assert(0); }
     // virtual bool CopyGG(struct ggml_tensor *gg_, int flag = 0x0) {
     //     assert(0);
     //     return false;
     // }
-    virtual hGTensor Partial(const string &name, size_t offset, SHAPE shape, int flag = 0x0) {
+    virtual hGTensor Partial(const string& name, size_t offset, SHAPE shape, int flag = 0x0) {
         assert(0);
         return nullptr;
     }
@@ -222,26 +223,25 @@ class GTensor {
         return false;
     }
     // Init to zero in default
-    virtual bool BeforeBackward(size_t &szBuf, int flag = 0x0) {
+    virtual bool BeforeBackward(size_t& szBuf, int flag = 0x0) {
         assert(0);
         return false;
     }
     virtual bool Free(bool isPassResident = false) { return true; }
     //   x==3 ? gv : x==2 ? gm : x == 1 ? grad : data
-    virtual void Print(const string &title, int typ, int flag, size_t nEle = 0) const;
-    virtual bool DumpX(int type, const string &title = "", int flag = 0x0) const;
+    virtual void Print(const string& title, int typ, int flag, size_t nEle = 0) const;
+    virtual bool DumpX(int type, const string& title = "", int flag = 0x0) const;
     // operations
-    hGTensor operator*(const hGTensor &other) { return _Multiply(other); }
+    hGTensor operator*(const hGTensor& other) { return _Multiply(other); }
 
     hGTensor Relu();
     hGTensor Silu();
-    double Length(int tp, int flag = 0x0);        //  return ||x||
+    double Length(int tp, int flag = 0x0);  //  return ||x||
 
     // operations
     // virtual bool OverWrite(struct ggml_tensor *gg_, bool isSrc = true, int flag = 0x0);
     virtual bool ShareMemory(hGTensor, int flag = 0x0);
     virtual bool OverWrite(hGTensor, bool isSrc = true, int flag = 0x0);
-
 
     virtual hGTensor Normal(hGTensor hOut, hGTensor _mean, hGTensor _rstd, hGTensor w, hGTensor b, bool isForward = true, int flag = 0x0) {
         assert(0);
@@ -249,8 +249,10 @@ class GTensor {
     }  //  Loss
     virtual hGTensor CrossEntropy(const hGTensor b, int flag = 0x0);
     //  ternary {-1, 0, 1}
-    virtual bool ToTernary(floatX *, int flag = 0x0) { throw "ToTernary is ...."; }
-    virtual bool ToQuant(int flag = 0x0) { throw "ToQuant is ...."; }
+    virtual bool ToTernary(floatX*, int flag = 0x0) { throw "ToTernary is ...."; }
+    virtual void *BeforeQuant(GeQuant* hQuant, int flag = 0x0);
+    virtual bool AfterQuant(GeQuant* hQuant, typNUMBER type_quant, void* data_quant, int flag = 0x0);
+    virtual float ToF8Ex(int type, int flag = 0x0) { throw "ToF8Ex is ...."; }
     virtual bool Mutation(int flag = 0x0) { throw "Mutation is ...."; }
 
     // row-major order. ne contains the number of elements in each dimension & nb is the number of bytes ("nb", a.k.a. stride).
@@ -264,29 +266,29 @@ class GTensor {
     virtual void SetRefer(hGTensor hR, int flag = 0x0);
     virtual bool SetTernary(typNUMBER typ, int flag = 0x0);
     virtual bool Serial_MMAP(bool isSave, bool isX = true, int flag = 0x0);
-    virtual bool Serial_MMAP_x(void *dest, bool isSave, int flag = 0x0);
-    virtual bool SerialGP(void *yD, void *yG, size_t szY, bool isToY, int flag = 0x0) {
+    virtual bool Serial_MMAP_x(void* dest, bool isSave, int flag = 0x0);
+    virtual bool SerialGP(void* yD, void* yG, size_t szY, bool isToY, int flag = 0x0) {
         assert(0);
         return false;
     }
-    virtual bool SerialData(const string &info, void *host, bool isToHost, int flag = 0x0) {
+    virtual bool SerialData(const string& info, void* host, bool isToHost, int flag = 0x0) {
         assert(0);
         return false;
     }
     template <typename T>
-    T *GetHostData(int flag = 0x0, const string &sX = "") {
+    T* GetHostData(int flag = 0x0, const string& sX = "") {
         return nullptr;
     }
-    virtual floatX *GetDataX(int flag = 0x0, const string &sX = "");
+    virtual floatX* GetDataX(int flag = 0x0, const string& sX = "");
 
     // Some optimization function
     virtual int Dogleg(int flag = 0x0);
 
     char name[MAX_NAME] = "\0";
-    void *extra;  // extra things e.g. for ggml-cuda.cu
+    void* extra;  // extra things e.g. for ggml-cuda.cu
     //  return ggml_tensor
-    struct ggml_tensor *GG();
-    struct ggml_context *CTX() { return nullptr; }
+    struct ggml_tensor* GG();
+    struct ggml_context* CTX() { return nullptr; }
     virtual size_t size(int typ = 0) const;
     virtual size_t mostMemory(int typ = 0) const { return nByte(); }
     virtual int dims() const {
@@ -303,7 +305,7 @@ class GTensor {
     //  The offset of (i0,i1,i2,i3) in byte
     virtual size_t Offset(int i0, int i1, int i2, int i3, int flag = 0x0) const;
     //  The offset of N-th elemen in byte
-    virtual size_t Offset(size_t N,int flag=0x0)  const;
+    virtual size_t Offset(size_t N, int flag = 0x0) const;
 
     virtual bool isEmpty() const {
         // if(size()>0)    {   assert(B>0 && T>0 && C>0); }
@@ -320,16 +322,16 @@ class GTensor {
     virtual void Set(float a, int flag = 0x0);
     template <typename T>
     void Set(int i0, int i1, int i2, int i3, T value) {
-        void *val = (char *)data + Offset(i0, i1, i2, i3);
+        void* val = (char*)data + Offset(i0, i1, i2, i3);
         switch (type) {
             case typNUMBER::I8: {
-                ((int8_t *)(val))[0] = value;
+                ((int8_t*)(val))[0] = value;
             } break;
             case typNUMBER::I16: {
-                ((int16_t *)(val))[0] = value;
+                ((int16_t*)(val))[0] = value;
             } break;
             case typNUMBER::I32: {
-                ((int32_t *)(val))[0] = value;
+                ((int32_t*)(val))[0] = value;
             } break;
             case typNUMBER::F16: {
                 assert(0 && "fatal error");
@@ -338,7 +340,7 @@ class GTensor {
                 assert(0 && "fatal error");
             } break;
             case typNUMBER::F32: {
-                ((float *)(val))[0] = value;
+                ((float*)(val))[0] = value;
             } break;
             default: {
                 assert(0 && "fatal error");
@@ -354,7 +356,7 @@ class GTensor {
         return Get(0);
     }
 
-    virtual int SerialJSON(const std::string &name, const JSON &val, void *bytes_ptr, size_t bytes_size, int flag = 0x0);
+    virtual int SerialJSON(const std::string& name, const JSON& val, void* bytes_ptr, size_t bytes_size, int flag = 0x0);
     friend class GeNeuron;
     friend class huTensor;
     friend class OPT_Adam;
@@ -364,7 +366,7 @@ class GTensor {
 };
 
 template <typename T>
-T *TO(hGTensor t) {
+T* TO(hGTensor t) {
     assert(t != nullptr);
     if (t->isRefer()) {
         t = t->GetRefer();
@@ -372,12 +374,12 @@ T *TO(hGTensor t) {
     assert(t->data != nullptr);
     // assert(t->type==TYPE_<T>())
     BIT_SET(t->flags, GTensor::F_TOX);
-    return (T *)(t->data);
+    return (T*)(t->data);
 }
 #define TOBF TO<__nv_bfloat16>
 
 template <typename T = floatX>
-T *TO(const std::vector<hGTensor> &gensors, const std::string &key, int flag = 0x0) {
+T* TO(const std::vector<hGTensor>& gensors, const std::string& key, int flag = 0x0) {
     assert(gensors.size() > 0);
     for (auto gensor : gensors) {
         if (gensor == nullptr)
@@ -390,19 +392,19 @@ T *TO(const std::vector<hGTensor> &gensors, const std::string &key, int flag = 0
     return nullptr;
 }
 
-inline hGTensor operator+(const hGTensor &a, const hGTensor &b) {
+inline hGTensor operator+(const hGTensor& a, const hGTensor& b) {
     // auto cur = ggml_add(a->CTX(), a->GG(), b->GG() );
     // return GTensor::NEW_(cur);
     return nullptr;
 }
-inline hGTensor operator+=(const hGTensor &a, const hGTensor &b) {
+inline hGTensor operator+=(const hGTensor& a, const hGTensor& b) {
     // auto cur = ggml_add(a->CTX(), a->GG(), b->GG() );
     // return GTensor::NEW_(cur);
     return nullptr;
 }
 
 typedef hGTensor hGensor;  // some trick
-inline struct ggml_tensor *G(hGensor T) {
+inline struct ggml_tensor* G(hGensor T) {
     assert(T != nullptr);
     return T->GG();
 }
@@ -414,26 +416,26 @@ inline int tDIM(hGensor T) { return T == nullptr ? 0 : T->dims(); }
 inline float tGET(hGensor T, int i) { return T->Get(i); }
 inline void tSET(hGensor T, float a) { T->Set(a); }
 inline void tFLAG(hGensor T, int64_t flag) { T->SetFlag(flag); }
-double tNormsOf(const std::vector<hGTensor> &tensors, int flag);
+double tNormsOf(const std::vector<hGTensor>& tensors, int flag);
 // double tNormOf(const hGTensor tensor, int flag = 0x0);
 
-inline floatX *ToX(hGensor t) {
+inline floatX* ToX(hGensor t) {
     assert(t != nullptr);
     BIT_SET(t->flags, GTensor::F_TOX);
-    return (floatX *)(t->data);
+    return (floatX*)(t->data);
 }
-inline floatX *ToX0(hGensor t) {
+inline floatX* ToX0(hGensor t) {
     if (t == nullptr)
         return nullptr;
     return ToX(t);
 }
-inline floatX *ToG(hGTensor t) {
+inline floatX* ToG(hGTensor t) {
     assert(t != nullptr);
     assert(t != nullptr && t->grad != nullptr);
     assert(typeid(floatGrad) == typeid(floatX));
-    return (floatX *)(t->grad);
+    return (floatX*)(t->grad);
 }
-inline floatX *ToG0(hGTensor t) {
+inline floatX* ToG0(hGTensor t) {
     if (t == nullptr || t->grad == nullptr)
         return nullptr;
     return ToG(t);
@@ -442,44 +444,46 @@ inline floatX *ToG0(hGTensor t) {
 // hGensor TENSO(void* ctx0,typNUMBER typ,SHAPE,int flag=0x0,const string&name="" );
 
 // Generate GTensor
-hGTensor GT(Fish *hFish, typNUMBER typ, SHAPE, int flag = 0x0, const string &name = "");
+hGTensor GT(Fish* hFish, typNUMBER typ, SHAPE, int flag = 0x0, const string& name = "");
 //  Create GTensor & alloc & copy data
-hGTensor GT(SHAPE shape_, void *data, typNUMBER tpD_, int flag = 0x0);
+hGTensor GT(SHAPE shape_, void* data, typNUMBER tpD_, int flag = 0x0);
 
-hGensor tRAND(hGensor tensor, struct random_normal_distribution *rnd);
+hGensor tRAND(hGensor tensor, struct random_normal_distribution* rnd);
 
 /**
  *  tensor stored in hybrid memory of(CPU/GPU/DISK...)
  */
 class huTensor : public GTensor {
    protected:
-    hGTensor _Multiply(const hGTensor &other);
-    size_t Alloc_1(void **dst, bool isZero, string desc, size_t sz = 0x0, int flag = 0x0);
-    size_t Free_1(void **obj, const string &info = "");
+    hGTensor _Multiply(const hGTensor& other);
+    size_t Alloc_1(void** dst, bool isZero, string desc, size_t sz = 0x0, int flag = 0x0) override;
+    size_t Free_1(void** obj, const string& info = "") override;
 
    public:
-    huTensor(Fish *hFish, const string &name_, SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag = 0x0);
+    huTensor(Fish* hFish, const string& name_, SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag = 0x0);
     virtual ~huTensor();
-    hGTensor Partial(const string &, size_t offset, SHAPE shape, int flag = 0x0) override;
+    hGTensor Partial(const string&, size_t offset, SHAPE shape, int flag = 0x0) override;
 
     bool Alloc(int tpInit = 0, int flag = 0x0) override;
     size_t mostMemory(int typ = 0) const override;
     bool InitParam(int tpInit) override;
-    bool BeforeBackward(size_t &szBuf, int flag = 0x0) override;
+    bool BeforeBackward(size_t& szBuf, int flag = 0x0) override;
     // bool CopyGG(struct ggml_tensor *gg_, int flag = 0x0) override;
     bool Free(bool isPassResident = false) override;
     void Zero() override;
     void ZeroGrad() override;
     void Set(float a, int flag = 0x0) override { assert(0); }
-    bool SerialGP(void *yD, void *yG, size_t szY, bool isToY, int flag = 0x0) override;
-    bool SerialData(const string &info, void *host, bool isToHost, int flag = 0x0) override;
+    bool SerialGP(void* yD, void* yG, size_t szY, bool isToY, int flag = 0x0) override;
+    bool SerialData(const string& info, void* host, bool isToHost, int flag = 0x0) override;
     bool OverWrite(hGTensor, bool isSrc = true, int flag = 0x0) override;
     hGTensor CrossEntropy(const hGTensor b, int flag = 0x0) override;
 
     hGTensor Normal(hGTensor hOut, hGTensor _mean, hGTensor _rstd, hGTensor w, hGTensor b, bool isForward = true, int flag = 0x0) override;
     // void Print(const string &title, int typ, int flag, size_t nEle = 0) const override;
 
-    bool ToTernary(floatX *tmp, int flag = 0x0) override;
+    bool ToTernary(floatX* tmp, int flag = 0x0) override;
+    // float AfterQuant(GeQuant* hQuant, int flag = 0x0) override;
+    float ToF8Ex(int type, int flag = 0x0) override;
     bool Mutation(int flag = 0x0) override;
     friend class HIERARCH_LoRA;
 };
@@ -487,7 +491,8 @@ class huTensor : public GTensor {
 struct GENSOR_INFO {
     string sX;
     int level = -1, ID = -1, dad = -1, c_id = -1;
-    bool isAdam = true;
+    bool isAdam                 = true;
+    shared_ptr<GeNeuron> hNeron = nullptr;
     // first moment, second moment,past function values of Optimizer
     // hGensor gm=nullptr,gv=nullptr,gpf=nullptr; //
     float *gm = nullptr, *gv = nullptr, *gpf = nullptr;
@@ -497,7 +502,7 @@ struct GENSOR_INFO {
         string suffix, prefix;
         sX = __repr__(suffix, prefix);
     }
-    string __repr__(string &suffix, string &prefix, int flag = 0x0) const {
+    string __repr__(string& suffix, string& prefix, int flag = 0x0) const {
         char buf[512] = "\0";
         if (dad == -1) {
             sprintf(buf + strlen(buf), "ROOT");
@@ -506,18 +511,20 @@ struct GENSOR_INFO {
         return buf;
     }
 
-    static bool comp(GENSOR_INFO &a, GENSOR_INFO &b) { return a.ID < b.ID; }
+    static bool comp(GENSOR_INFO& a, GENSOR_INFO& b) { return a.ID < b.ID; }
 };
 struct GENSORS {
     // name_ and gg_tensor
     std::map<std::string, hGensor> nag;
+    //  gensor => info
     std::map<hGensor, GENSOR_INFO> infos;
-    virtual bool has(hGensor gensor);
-    void Insert(hGensor gensor, const GENSOR_INFO &gi, int flag = 0x0);
 
-    void Insert(const std::map<std::string, hGensor> &src) { nag.insert(src.begin(), src.end()); }
+    virtual bool has(hGensor gensor);
+    void Insert(hGensor gensor, const GENSOR_INFO& gi, int flag = 0x0);
+
+    void Insert(const std::map<std::string, hGensor>& src) { nag.insert(src.begin(), src.end()); }
     size_t size() { return nag.size(); }
-    virtual hGensor Get(const string &name, int flag = 0x0);
+    virtual hGensor Get(const string& name, int flag = 0x0);
     virtual void Clear() {
         nag.clear();
         infos.clear();

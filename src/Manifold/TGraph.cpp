@@ -10,6 +10,7 @@
 
 #include <sched.h>
 
+#include "../Tensor/GeQuant.hpp"
 #include "../ggex/GG_util.hpp"
 #include "../lenda/kernel/SVD.hpp"
 #include "Fish.hpp"
@@ -47,6 +48,7 @@ size_t SLP::nElem() {
 
 SelfAttention::SelfAttention(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     assert(hFish != nullptr);
+
     delta = GTensor::delta;
 
     auto& config     = hG_->config;
@@ -82,6 +84,13 @@ SelfAttention::SelfAttention(Fish* hG_, const std::string& key_, JSON::const_ite
     if (Rope_version > 0 && !isQKNormal) {  // try QKNormal to help rope stable
         isQKNormal = true;
     }
+
+    hQuant = GeQuant::MakeInstance(this, name + "_quant",  0x0);
+
+    // if (hFish->config.quant.Type(name) != QUANT_MODE::NO_QUANT) {  // "layers.27.mlp.weight" wk.weight wq.weight wv.weight wo.weight ,"w2.weight","w3.weight"
+    //     hQuant = std::make_shared<Q_JL<float, float>>(name + "_quant", SHAPE({head_dim, head_dim * 2}), 256, this, 0x0);
+    // }
+
     // dump_flag = -1;
     tpNormal = DEBUG.SelfAttention_noraml;
     //  nIn = shape[0], nOut = shape[1];
@@ -1085,6 +1094,12 @@ int Fish::BuildComputeGraph(int order, void* ctx, int flag) {
     } else {
 
     }*/
+    for (auto nn : backbons) {
+        for (auto t : nn->PickGensors()) {
+            auto& ginfo  = GetGensorInfo(t);
+            ginfo.hNeron = nn;
+        }
+    }
 
     return 0x0;
 }
@@ -1561,9 +1576,9 @@ void s2layerinfo(struct CLI_params& config, const string& root, const string& jk
 }
 
 int TGraph::curLayer = -1;
-hNeuron Fish::J2Neuron(void* ctx_, string& dad, int level, const JConfig& jconfig, int flag) {
-    hNeuron hN = nullptr, cur = nullptr;
-    std::vector<hNeuron> vNN;
+hNEURON Fish::J2Neuron(void* ctx_, string& dad, int level, const JConfig& jconfig, int flag) {
+    hNEURON hN = nullptr, cur = nullptr;
+    std::vector<hNEURON> vNN;
     string k, nam_, prefix;
     std::vector<string> lay_names;
     int i, nLay;

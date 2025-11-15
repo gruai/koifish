@@ -548,7 +548,9 @@ bool InitCUDA(const CLI_params& hparams, EDGE_DEVICES* hDevice, int flag) {
     return true;
 }
 
-//  cudaStreamSynchronize(stream)/cudaEventSynchronize(event) maybe better
+/*
+      cudaStreamSynchronize(stream)/cudaEventSynchronize(event) maybe better
+*/
 bool SYNC_DEVICE(const std::string& sX, int flag) {
 #ifdef __USE_CUDA__
     if (main_stream != nullptr) {
@@ -628,8 +630,9 @@ int ROPE::cuFlow(LayerNormal* normQ, LayerNormal* normK, uint32_t seed, bool isF
 
 hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
     assert(hCache != nullptr && isSeparateQKV);
-    hBATCH hBatch     = hFish->GetCurBatch(true);
-    int pos           = hBatch->tok_pos;
+    hBATCH hBatch = hFish->GetCurBatch(true);
+    int pos       = hBatch->tok_pos;
+    // hCache:   (layer, seq_len, kv_dim)
     floatX *key_cache = (floatX*)hCache->Get(KVCache::KV_KEY, layer - 1, 0), *val_cache = (floatX*)hCache->Get(KVCache::KV_VAL, layer - 1, 0);
     K.out->data = key_cache + (size_t)pos * kv_dim, V.out->data = val_cache + (size_t)pos * kv_dim;
 
@@ -677,9 +680,13 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
         // rope->cuFlow(hnQ, hnK, rope_seed);
         Q.out->Print("Q.rope", 0x0, dump_flag, nToken * q_dim), K.out->Print("K.rope", 0x0, dump_flag, nToken * kv_dim);
     }
-
+    if (DEBUG.T_kvcache_quant == 1) {
+        // size_t smemPB = head_dim * sizeof(float);
+        // CU_X2ternary_multihead<floatX><<<n_head_kv, head_dim, smemPB, main_stream>>>(nullptr, ToX(K.out), (char*)key_cache, n_head_kv, head_dim, true);
+    }
     if (1) {
         int qk_threads_per_block = std::min(1024, pos + 1);
+
         attention_qk_kernel<<<n_head, qk_threads_per_block>>>(ToX(attn), ToX(Q.out), key_cache, pos, seq_len, n_head, n_head_kv, head_dim);
         // // 6.2: softmax
         CU_softmax_multihead<<<n_head, 1>>>(ToX(attn), pos, seq_len);
