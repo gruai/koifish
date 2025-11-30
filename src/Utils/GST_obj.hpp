@@ -2,7 +2,7 @@
  *  SPDX-FileCopyrightText: 2018-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
- *  \brief GRUS SPARSE TEMPLATE	- common definition
+ *  \brief GRUS SPARSE TEMPLATE	- some obj & functions on STL
  *  \author Yingshi Chen
  */
 
@@ -14,8 +14,10 @@
 #include <stdio.h>
 
 #include <algorithm>
+#include <chrono>
 #include <complex>
 #include <cstring>
+#include <exception>
 #include <map>
 #include <memory>  //for shared_ptr
 #include <random>
@@ -24,48 +26,6 @@
 #include <unordered_map>
 #include <vector>
 using namespace std;
-
-using SHAPE = std::vector<int>;
-
-//  ERR code of exit
-#define KOIFISH_INVALID_ARGS -10
-
-#define KOIFISH_OUTOF_GPUMEMORY -100
-#define KOIFISH_OUTOF_CPUMEMORY -101
-
-#define KOIFISH_ZERO_PARAMETERS -200
-
-#define KOIFISH_LOAD_TOKENIZER -300
-
-#define KOIFISH_INVALID_GSET -600
-#define KOIFISH_INVALID_NAG -601
-
-#define KOIFISH_UNSUPPORTED_DATATYPE -1000
-#define KOIFISH_GRAD_EXPLODE -1100
-#define KOIFISH_BLAS_UNALIGN -1200
-#define KOIFISH_DATASET_EMPTY -1300
-#define KOIFISH_DATALOADER_EMPTY -1310
-
-#define KOIFISH_EXIT_DEBUG -2000
-#define KOIFISH_EXIT_SYNC_DEVICE -2100
-#define KOIFISH_EXIT_OUT_CLS -2200
-
-#define CEIL_DIV(M, N) (((M) + (N) - 1) / (N))
-
-#define BIT_SET(val, flag) ((val) |= (flag))
-#define BIT_RESET(val, flag) ((val) &= (~(flag)))
-#define BIT_TEST(val, flag) (((val) & (flag)) == (flag))
-#define BIT_IS(val, flag) (((val) & (flag)) != 0)
-
-#define BYTE_bit(byt, k) (((byt) >> (7 - (k))) & 0x1)
-
-#define BIT_STREAM_SET(char_arr, n) ((char_arr)[(n) / 8] |= (1 << (7 - ((n) % 8))))
-#define BIT_STREAM_CLEAR(char_arr, n) ((char_arr)[(n) / 8] &= ~(1 << (7 - ((n) % 8))))
-#define BIT_STREAM_GET(char_arr, n) (((char_arr)[(n) / 8] >> (7 - ((n) % 8))) & 1)
-
-#define MEM_CLEAR(mem, size) memset((mem), (0x0), (size))
-
-#define UNUSED(x) (void)(x)
 
 #ifdef WIN32
 #define G_INT_64 __int64
@@ -102,6 +62,13 @@ typedef __int64 INT_63;
         }                                                                     \
     } while (0)
 
+/*
+class GObject{
+public:
+    string name;
+    virtual string ToString(int format=0x0){	return name;	}
+};
+*/
 // Prefer a struct when you can. It may involve some overhead, but is definitely easier for maintenance.
 /*
     64-bit ID + double weight
@@ -451,24 +418,34 @@ auto TO_VECTOR(const Iterable& iterable) {
     return std::vector<ValueType>(iterable.begin(), iterable.end());
 }
 
-#define HACK_07092024 assert(0)
+class SafeExit : public std::exception {
+   private:
+    std::string message;
+    int exit_code;
+    std::chrono::system_clock::time_point timestamp;
+    std::string location;
 
-#define CHILD_0909_WIKIS
-#define CHILD_1218_GRAD  //
+   public:
+    enum class ExitReason { NORMAL, DEBUG, ERROR, USER_REQUEST, SYSTEM_FAILURE, VALIDATION_ERROR };
 
-#define CHILD_1012_CACHE true
+    SafeExit(const std::string& msg, int code = 1, ExitReason reason = ExitReason::ERROR, const std::string& loc = "")
+        : message(msg), exit_code(code), timestamp(std::chrono::system_clock::now()), location(loc), reason(reason) {}
 
-#ifndef NDEBUG
-#define DEBUG_BREAK                     \
-    do {                                \
-        volatile int __debug_break = 0; \
-        (void)__debug_break;            \
-    } while (0);
-#define DEBUG_MARKER(msg)                           \
-    do {                                            \
-        std::cout << "DEBUG: " << msg << std::endl; \
-    } while (0);
-#else  // Eliminated in release builds
-#define DEBUG_BREAK ((void)0);
-#define DEBUG_MARKER(msg) ((void)0);
-#endif
+    const char* what() const noexcept override { return message.c_str(); }
+
+    int getExitCode() const { return exit_code; }
+    ExitReason getReason() const { return reason; }
+    auto getTimestamp() const { return timestamp; }
+    std::string getLocation() const { return location; }
+
+    std::string getFormattedInfo() const {
+        std::ostringstream oss;
+        auto time_t = std::chrono::system_clock::to_time_t(timestamp);
+        oss << "Exit Exception: " << message << "\n\tCode=" << exit_code << "\tReason=" << static_cast<int>(reason) 
+            << "\n\t" << std::ctime(&time_t) << "\tLocation@" << location << std::endl;
+        return oss.str();
+    }
+
+   private:
+    ExitReason reason;
+};

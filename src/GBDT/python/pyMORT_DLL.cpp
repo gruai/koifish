@@ -2,7 +2,9 @@
  *  SPDX-FileCopyrightText: 2019-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
- *  \brief Python interface of LiteMORT
+ *  Keep coding on GBDT from 2019 to 2025
+ *
+ *  \brief interface of LiteMORT(python,...)
  *  \author Yingshi Chen
  */
 
@@ -20,28 +22,18 @@
 
 using namespace Grusoft;
 
-struct MORT {
-    LiteBOM_Config config;
-    GBRT *hGBRT           = nullptr;
-    ExploreDA *hEDA_train = nullptr;
-    vector<FeatsOnFold *> merge_folds;
-    string merge_info;
+FeatsOnFold* FeatsOnFold_InitInstance(LiteBOM_Config config, ExploreDA* edaX, PY_DATASET* dataset_, DORT_wrap* mort, int flag);
 
-    MORT() {}
-
-    static MORT *From(void *mort_0, int flag = 0x0) {
-        MORT *mort = static_cast<MORT *>(mort_0);
-        return mort;
+DORT_wrap::~DORT_wrap() {
+    if (hGBRT != nullptr) {
+        hGBRT->ClearData();
+        hGBRT->ClearHisto();
+        delete hGBRT;
     }
-    virtual ~MORT() {
-        if (hGBRT != nullptr)
-            delete hGBRT;
-        if (hEDA_train != nullptr)
-            delete hEDA_train;
-    }
-};
 
-FeatsOnFold *FeatsOnFold_InitInstance(LiteBOM_Config config, ExploreDA *edaX, PY_DATASET *dataset_, MORT *mort, int flag);
+    if (hEDA_train != nullptr)
+        delete hEDA_train;
+}
 
 // LiteBOM_Config config;
 // ExploreDA *g_hEDA=nullptr;
@@ -67,7 +59,7 @@ void LiteBOM_Config::OnObjective() {
     // nBlitThread = 8;	//���е��½�����ٿ��ظ�
 }
 
-void OnUserParams(LiteBOM_Config &config, PY_ITEM *params, int nParam, int flag = 0x0) {
+void OnUserParams(LiteBOM_Config& config, PY_ITEM* params, int nParam, int flag = 0x0) {
     char sERR[10000];
     int i, err = 0;
     for (i = 0; i < nParam; ++i) {
@@ -111,7 +103,7 @@ void OnUserParams(LiteBOM_Config &config, PY_ITEM *params, int nParam, int flag 
             config.adaptive_sample_weight = strcmp(params[i].text, "weight") == 0;
         }
         if (strcmp(params[i].Keys, "feat_factor") == 0) {
-            float *factor        = (float *)params[i].arr;
+            float* factor        = (float*)params[i].arr;
             config.feat_selector = factor;
         }
         if (strcmp(params[i].Keys, "n_estimators") == 0) {
@@ -169,7 +161,6 @@ void OnUserParams(LiteBOM_Config &config, PY_ITEM *params, int nParam, int flag 
         if (strcmp(params[i].Keys, "iter_refine") == 0) {
             config.T_iterrefine = params[i].Values;
         }
-        // ����Metric Parameters in lightgbm.pdf
         if (strcmp(params[i].Keys, "metric") == 0 || strcmp(params[i].Keys, "binary") == 0) {
             if (strcmp(params[i].text, "binary_logloss") == 0)
                 config.eval_metric = "logloss";
@@ -193,16 +184,16 @@ END:
         printf("********* OnUserParams ********* \n\n");
 }
 
-PYMORT_DLL_API void LiteMORT_set_mergesets(void *mort_0, PY_DATASET_LIST *merge_list, int64_t flag) {
-    MORT *mort = MORT::From(mort_0);
+PYMORT_DLL_API void LiteMORT_set_mergesets(void* mort_0, PY_DATASET_LIST* merge_list, int64_t flag) {
+    DORT_wrap* mort = DORT_wrap::From(mort_0);
     mort->merge_folds.clear();
     int nMergeFeat = 0;
     if (merge_list != nullptr) {
         for (int i = 0; i < merge_list->nSet; i++) {
-            PY_DATASET *set = merge_list->list + i;
+            PY_DATASET* set = merge_list->list + i;
             printf("\n\t------MERGE@[\"%s\"](%ldx%d)......", set->name, set->nSamp, set->ldFeat);
-            ExploreDA *hEDA     = new ExploreDA(mort->config, set->name, flag);
-            FeatsOnFold *hMerge = FeatsOnFold_InitInstance(mort->config, hEDA, set, nullptr, flag | FeatsOnFold::DF_MERGE);
+            ExploreDA* hExDA    = new ExploreDA(mort->config, set->name, flag);
+            FeatsOnFold* hMerge = FeatsOnFold_InitInstance(mort->config, hExDA, set, nullptr, flag | FeatsOnFold::DF_MERGE);
             nMergeFeat += hMerge->feats.size();
             // hMerge->merge_right = set->merge_rigt;
             mort->merge_folds.push_back(hMerge);
@@ -215,17 +206,17 @@ PYMORT_DLL_API void LiteMORT_set_mergesets(void *mort_0, PY_DATASET_LIST *merge_
 }
 
 // GBRT *hGBRT = nullptr;
-PYMORT_DLL_API void *LiteMORT_init(PY_ITEM *params, int nParam, PY_DATASET_LIST *null_list, int64_t flag = 0x0) {
+PYMORT_DLL_API void* LiteMORT_init(PY_ITEM* params, int nParam, PY_DATASET_LIST* null_list, int64_t flag = 0x0) {
     try {
-        printf("\n======LiteMORT_api init......");  // �������
+        _INFO_IF("\n======LiteMORT_api init......");
 
-        MORT *mort = new MORT();
+        DORT_wrap* mort = new DORT_wrap();
         OnUserParams(mort->config, params, nParam);
-        mort->hEDA_train = new ExploreDA(mort->config, "MORT", flag);
-        printf("======LiteMORT_api init @%p(hEDA=%p,hGBRT=%p)...OK\n", mort, mort->hEDA_train, mort->hGBRT);
+        mort->hEDA_train = new ExploreDA(mort->config, "DORT_wrap", flag);
+        _INFO_IF("======LiteMORT_api init @%p(hExDA=%p,hGBRT=%p)...OK\n", mort, mort->hEDA_train, mort->hGBRT);
 
         return mort;
-    } catch (char *sInfo) {
+    } catch (char* sInfo) {
         printf("\n!!!!!! EXCEPTION@LiteMORT_init \n!!!!!! %s\n\n", sInfo);
         throw sInfo;
     } catch (...) {
@@ -233,14 +224,14 @@ PYMORT_DLL_API void *LiteMORT_init(PY_ITEM *params, int nParam, PY_DATASET_LIST 
         return nullptr;
     }
 }
-PYMORT_DLL_API void LiteMORT_clear(void *mort_0) {
-    MORT *mort = MORT::From(mort_0);
-    // printf("\n======LiteMORT_api clear @%p(hEDA=%p,hGBRT=%p)...", mort_0,mort->hEDA, mort->hGBRT);
+PYMORT_DLL_API void LiteMORT_clear(void* mort_0) {
+    DORT_wrap* mort = DORT_wrap::From(mort_0);
+    // printf("\n======LiteMORT_api clear @%p(hExDA=%p,hGBRT=%p)...", mort_0,mort->hExDA, mort->hGBRT);
     delete mort;
     printf("\r======LiteMORT_api clear @%p...OK\n", mort_0);
 }
 
-PYMORT_DLL_API void LiteMORT_set_feat(PY_ITEM *params, int nParam, int flag = 0x0) {
+PYMORT_DLL_API void LiteMORT_set_feat(PY_ITEM* params, int nParam, int flag = 0x0) {
     // OnUserParams(config, params, nParam);
     try {
     } catch (...) {
@@ -249,16 +240,16 @@ PYMORT_DLL_API void LiteMORT_set_feat(PY_ITEM *params, int nParam, int flag = 0x
 }
 
 namespace Grusoft {
-FeatVector *FeatVecQ_InitInstance(FeatsOnFold *hFold, FeatVector *hFeat, int x, int flag) {
+FeatVector* FeatVecQ_InitInstance(FeatsOnFold* hFold, FeatVector* hFeat, int x, int flag) {
     int nBins = hFold->config.feat_quanti;
     // assert(hFeat != nullptr && hFeat->hDistri != nullptr);
-    Distribution *distri = hFold->histoDistri(hFeat);
-    HistoGRAM *histo     = distri->histo;
+    Distribution* distri = hFold->histoDistri(hFeat);
+    HistoGRAM* histo     = distri->histo;
     if (histo != nullptr) {
         nBins = histo->nBins;
     }
     assert(nBins > 0);
-    FeatVector *hFQ = nullptr;
+    FeatVector* hFQ = nullptr;
     if (nBins <= 256) {
         hFQ = new FeatVec_Q<uint8_t>(hFold, hFeat, x);
         // hFQ = new FeatVec_Q<uint16_t>(hFold, hFeat, x);		printf("----%d\t \"%s\" nBins=%d\n", hFeat->id, hFeat->nam.c_str(), nBins);
@@ -283,10 +274,10 @@ FeatVector *FeatVecQ_InitInstance(FeatsOnFold *hFold, FeatVector *hFeat, int x, 
     v0.1	cys
         11/11/2019
 */
-FeatVector *PY_COL2FEAT(const FeatsOnFold *hFold, PY_COLUMN *col, size_t nSamp_, int id, bool isMergePivot, int flag) {
+FeatVector* PY_COL2FEAT(const FeatsOnFold* hFold, PY_COLUMN* col, size_t nSamp_, int id, bool isMergePivot, int flag) {
     string desc       = "feat_" + std::to_string(id);
     desc              = col->name;
-    FeatVector *hFeat = nullptr;
+    FeatVector* hFeat = nullptr;
     int flagF         = flag | FeatVector::VAL_REFER;
     if (hFold->isTrain() && !isMergePivot) {
         hFold->edaX->AddDistri(col, id);  // col
@@ -320,7 +311,7 @@ FeatVector *PY_COL2FEAT(const FeatsOnFold *hFold, PY_COLUMN *col, size_t nSamp_,
 
     hFeat->Set(nSamp_, col);
     if (hFold->isTrain() && !isMergePivot) {
-        Distribution *tDistri = hFold->edaX->GetDistri(id);  // hFold->edaX == nullptr ? nullptr : &(hFold->edaX->arrDistri[i]);
+        Distribution* tDistri = hFold->edaX->GetDistri(id);  // hFold->edaX == nullptr ? nullptr : &(hFold->edaX->arrDistri[i]);
         hFeat->InitDistri(hFold, tDistri, nullptr, true, 0x0);
     } else {
         hFeat->InitDistri(hFold, nullptr, nullptr, false, 0x0);
@@ -328,30 +319,28 @@ FeatVector *PY_COL2FEAT(const FeatsOnFold *hFold, PY_COLUMN *col, size_t nSamp_,
     return hFeat;
 }
 
-// FeatsOnFold *FeatsOnFold_InitInstance(LiteBOM_Config config, ExploreDA *edaX, string nam_, PY_COLUMN *cX_, PY_COLUMN *cY_, size_t nSamp_, size_t ldX_, size_t
-// ldY_, int flag) {
-FeatsOnFold *FeatsOnFold_InitInstance(LiteBOM_Config config, ExploreDA *edaX, PY_DATASET *dataset_, MORT *mort, int flag) {
+FeatsOnFold* FeatsOnFold_InitInstance(LiteBOM_Config config, ExploreDA* edaX, PY_DATASET* dataset_, DORT_wrap* mort, int flag) {
     clock_t t0 = clock();
     assert(BIT_IS(flag, FeatsOnFold::DF_FLAG));
     if (config.eda_Normal == LiteBOM_Config::NORMAL_gaussian) {
         edaX = nullptr;
         printf("\n---- !!! Data normalization by gaussian So edaX is nullptr@FeatsOnFold_InitInstance !!!----\n");
     }
-    // bool isQuanti = config.feat_quanti >0 && BIT_TEST(flag, FeatsOnFold::DF_TRAIN);	// BIT_TEST(flag, FAST_QUANTI);
+
     bool isTrain   = BIT_TEST(flag, FeatsOnFold::DF_TRAIN);
     bool isPredict = BIT_TEST(flag, FeatsOnFold::DF_PREDIC);
     bool isMerge   = BIT_TEST(flag, FeatsOnFold::DF_MERGE);
     double sparse = 0, nana = 0;
     size_t nSamp_ = dataset_->nSamp, nMostQ = config.feat_quanti, nConstFeat = 0, nMergedFeat = 0, nLocalConst = 0, nQuant = 0;
-    FeatsOnFold *hFold = new FeatsOnFold(config, edaX, dataset_->name, flag);
+    FeatsOnFold* hFold = new FeatsOnFold(config, edaX, dataset_->name, flag);
     hFold->InitRanders();
-    PY_COLUMN *cY_ = dataset_->columnY;
+    PY_COLUMN* cY_ = dataset_->columnY;
     hFold->InitMost(dataset_->nSamp);
     // hFold->nMost = nSamp_;
     int rnd_seed = 0, nThread = config.num_threads, flagF = flag | FeatVector::VAL_REFER;
     for (size_t i = 0; i < dataset_->ldFeat; i++) {
         string desc    = "feat_";
-        PY_COLUMN *col = dataset_->columnX + i;  // Ψһ��dtype����
+        PY_COLUMN* col = dataset_->columnX + i;  // Ψһ��dtype����
         if (i != 18)
             ;  // continue;
                // Distribution *hD_ = hFold->edaX == nullptr ? nullptr : &(hFold->edaX->arrDistri[i]);
@@ -363,8 +352,8 @@ FeatsOnFold *FeatsOnFold_InitInstance(LiteBOM_Config config, ExploreDA *edaX, PY
     if (mort != nullptr && mort->merge_folds.size() > 0) {
         int i, nMerge = mort->merge_folds.size();
         for (i = 0; i < nMerge; i++) {
-            PY_COLUMN *col    = dataset_->merge_left + i;
-            FeatVector *hFeat = PY_COL2FEAT(hFold, col, nSamp_, hFold->nFeat() + i, true, flag);
+            PY_COLUMN* col    = dataset_->merge_left + i;
+            FeatVector* hFeat = PY_COL2FEAT(hFold, col, nSamp_, hFold->nFeat() + i, true, flag);
             BIT_SET(hFeat->type, FeatVector::AGGREGATE);
             hFeat->map4set = new tpSAMP_ID[nSamp_ * 2];  // hFeat->map4feat = hFeat->map4set + nSamp_;
             hFold->merge_lefts.push_back(hFeat);
@@ -379,7 +368,7 @@ FeatsOnFold *FeatsOnFold_InitInstance(LiteBOM_Config config, ExploreDA *edaX, PY
         hFold->lossy->Init_T<tpDOWN>(hFold, nSamp_, 0x0, rnd_seed, flag);
         if (isPredict) {
         } else {
-            FeatVector *Y = hFold->GetY();
+            FeatVector* Y = hFold->GetY();
             // Y->Set(nSamp_, (void*)(Y_));
             Y->Set(nSamp_, cY_);
         }
@@ -397,11 +386,11 @@ FeatsOnFold *FeatsOnFold_InitInstance(LiteBOM_Config config, ExploreDA *edaX, PY
 
     // #pragma omp parallel for num_threads(nThread) schedule(dynamic) reduction(+ : sparse,nana,nConstFeat,nLocalConst,nQuant)
     for (int feat = 0; feat < nFeat; feat++) {
-        FeatVector *hFQ   = nullptr;
-        FeatVector *hFeat = hFold->Feat(feat);
+        FeatVector* hFQ   = nullptr;
+        FeatVector* hFeat = hFold->Feat(feat);
         if (feat == 77)
             feat = 77;
-        Distribution *fDistri = hFeat->myDistri();
+        Distribution* fDistri = hFeat->myDistri();
         sparse += fDistri->rSparse * nSamp_;
         nana += fDistri->rNA * nSamp_;
         // if (BIT_TEST(hFeat->type, FeatVector::V_ZERO_DEVIA)) {
@@ -426,13 +415,13 @@ FeatsOnFold *FeatsOnFold_InitInstance(LiteBOM_Config config, ExploreDA *edaX, PY
     }
     int nTotalBins = 0;
     for (int feat = 0; feat < hFold->nFeat(); feat++) {
-        FeatVector *hFeat = hFold->Feat(feat);
+        FeatVector* hFeat = hFold->Feat(feat);
         if (config.feat_selector != nullptr) {
             hFeat->select.user_rate = config.feat_selector[feat];
             printf("%d(%.3g)\t", feat, hFeat->select.user_rate);
         }
         if (BIT_TEST(hFeat->type, FeatVector::REPRESENT_)) {
-            PY_COLUMN *col = hFeat->PY;  // dataset_->columnX + feat;
+            PY_COLUMN* col = hFeat->PY;  // dataset_->columnX + feat;
             assert(hFeat->select.isPick = true);
             hFeat->select.isPick = false;
             hFold->present.Append(hFeat, col->representive);
@@ -441,7 +430,7 @@ FeatsOnFold *FeatsOnFold_InitInstance(LiteBOM_Config config, ExploreDA *edaX, PY
             hFeat->myDistri()->Dump(feat, false, flag);  // Train���distribution��Ϣ
         }
         if (!isMerge) {
-            Distribution *hDistri = hFold->histoDistri(hFeat);
+            Distribution* hDistri = hFold->histoDistri(hFeat);
             nTotalBins += hDistri->nHistoBin();
         }
     }
@@ -464,7 +453,7 @@ printf("\n********* FeatsOnFold::QUANTI nMostQ=%d\r\n", nMostQ);
     �ǳ���֣�Ϊɶa=0����õ�
 */
 template <typename Tx, typename Ty>
-void Imputer_At_(Tx *X_, Ty *y, size_t nFeat, size_t nSamp_, size_t flag) {
+void Imputer_At_(Tx* X_, Ty* y, size_t nFeat, size_t nSamp_, size_t flag) {
     // distri.Imputer_at(config, nSamp_, x, 0x0);
     LiteBOM_Config config;
     GST_TIC(tick);
@@ -498,8 +487,8 @@ void Imputer_At_(Tx *X_, Ty *y, size_t nFeat, size_t nSamp_, size_t flag) {
     v0.1
 
 PYMORT_DLL_API void LiteMORT_predict(void *mort_0,float *X, tpY *y, size_t nFeat_0, size_t nSamp, size_t flag) {
-    MORT *mort = MORT::From(mort_0);
-    ExploreDA *hEDA = mort->hEDA;
+    DORT_wrap *mort = DORT_wrap::From(mort_0);
+    ExploreDA *hExDA = mort->hExDA;
     LiteBOM_Config& config = mort->config;
     if (mort->hGBRT == nullptr) {
         printf("********* LiteMORT_predict model is NULL!!!\n" );
@@ -517,8 +506,8 @@ PYMORT_DLL_API void LiteMORT_predict(void *mort_0,float *X, tpY *y, size_t nFeat
     }
 
     //yӦ��Ϊnullptr
-    FeatsOnFold *hDat = FeatsOnFold_InitInstance<float, tpY>(config, hEDA, "predict",X, y, nSamp, nFeat_0, 1, flag| FeatsOnFold::DF_PREDIC);
-    printf("\n********* LiteMORT_predict nSamp=%d,nFeat=%ld hEDA=%p********* \n\n", nSamp, nFeat_0, hEDA);
+    FeatsOnFold *hDat = FeatsOnFold_InitInstance<float, tpY>(config, hExDA, "predict",X, y, nSamp, nFeat_0, 1, flag| FeatsOnFold::DF_PREDIC);
+    printf("\n********* LiteMORT_predict nSamp=%d,nFeat=%ld hExDA=%p********* \n\n", nSamp, nFeat_0, hExDA);
     //hDat->nam = "predict";
     mort->hGBRT->Predict(hDat);
     FeatVector *pred = hDat->GetPrecict();
@@ -539,31 +528,31 @@ PYMORT_DLL_API void LiteMORT_predict(void *mort_0,float *X, tpY *y, size_t nFeat
 /*
     v0.2
 */
-PYMORT_DLL_API void LiteMORT_predict_1(void *mort_0, PY_DATASET_LIST *predict_list, size_t flag) {
-    PY_DATASET *predict_set = PY_DATASET_LIST::GetSet(predict_list, 0);
+PYMORT_DLL_API void LiteMORT_predict_1(void* mort_0, PY_DATASET_LIST* predict_list, size_t flag) {
+    PY_DATASET* predict_set = PY_DATASET_LIST::GetSet(predict_list, 0);
     PY_COLUMN *col_y = predict_set->columnY, *X = predict_set->columnX;
     size_t nSamp           = predict_set->nSamp;
-    tpY *y                 = (tpY *)col_y->data;
-    MORT *mort             = MORT::From(mort_0);
-    ExploreDA *hEDA        = mort->hEDA_train;
-    LiteBOM_Config &config = mort->config;
+    tpY* y                 = (tpY*)col_y->data;
+    DORT_wrap* mort        = DORT_wrap::From(mort_0);
+    ExploreDA* hExDA       = mort->hEDA_train;
+    LiteBOM_Config& config = mort->config;
     if (mort->hGBRT == nullptr) {
         printf("********* LiteMORT_predict model is NULL!!!\n");
         return;
     }
 
     // yӦ��Ϊnullptr
-    // FeatsOnFold *hDat = FeatsOnFold_InitInstance(config, hEDA, "predict", X, col_y, nSamp, predict_set->ldFeat, 1, flag | FeatsOnFold::DF_PREDIC);
-    FeatsOnFold *hDat = FeatsOnFold_InitInstance(config, hEDA, PY_DATASET_LIST::GetSet(predict_list), mort, flag | FeatsOnFold::DF_PREDIC);
+    // FeatsOnFold *hDat = FeatsOnFold_InitInstance(config, hExDA, "predict", X, col_y, nSamp, predict_set->ldFeat, 1, flag | FeatsOnFold::DF_PREDIC);
+    FeatsOnFold* hDat = FeatsOnFold_InitInstance(config, hExDA, PY_DATASET_LIST::GetSet(predict_list), mort, flag | FeatsOnFold::DF_PREDIC);
 
     if (config.verbose > 0)
-        printf("\n********* LiteMORT_predict nSamp=%ld,nFeat=%ld hEDA=%p********* \n\n", nSamp, hDat->nFeat(), hEDA);
+        printf("\n********* LiteMORT_predict nSamp=%ld,nFeat=%ld hExDA=%p********* \n\n", nSamp, hDat->nFeat(), hExDA);
     // hDat->nam = "predict";
     mort->hGBRT->Predict(hDat);
-    FeatVector *pred      = hDat->GetPrecict();
-    FeatVec_T<tpDOWN> *fY = dynamic_cast<FeatVec_T<tpDOWN> *>(pred);
+    FeatVector* pred      = hDat->GetPrecict();
+    FeatVec_T<tpDOWN>* fY = dynamic_cast<FeatVec_T<tpDOWN>*>(pred);
     assert(fY != nullptr);
-    tpDOWN *p_val = fY->arr();
+    tpDOWN* p_val = fY->arr();
     for (size_t i = 0; i < nSamp; i++) y[i] = p_val[i];
     if (config.objective == "binary") {
         // vEXP(nSamp, y);
@@ -581,8 +570,8 @@ PYMORT_DLL_API void LiteMORT_predict_1(void *mort_0, PY_DATASET_LIST *predict_li
         10/26/2018
     ���ݻᱻ�޸ģ�����
 */
-PYMORT_DLL_API void LiteMORT_Imputer_f(float *X, tpY *y, size_t nFeat, size_t nSamp_, size_t flag) { Imputer_At_(X, y, nFeat, nSamp_, flag); }
-PYMORT_DLL_API void LiteMORT_Imputer_d(double *X, tpY *y, size_t nFeat, size_t nSamp_, size_t flag) { Imputer_At_(X, y, nFeat, nSamp_, flag); }
+PYMORT_DLL_API void LiteMORT_Imputer_f(float* X, tpY* y, size_t nFeat, size_t nSamp_, size_t flag) { Imputer_At_(X, y, nFeat, nSamp_, flag); }
+PYMORT_DLL_API void LiteMORT_Imputer_d(double* X, tpY* y, size_t nFeat, size_t nSamp_, size_t flag) { Imputer_At_(X, y, nFeat, nSamp_, flag); }
 
 /*
     EDAֻ�������ݣ���Ӧ���κ��޸�
@@ -591,7 +580,7 @@ PYMORT_DLL_API void LiteMORT_Imputer_d(double *X, tpY *y, size_t nFeat, size_t n
 // PYMORT_DLL_API void LiteMORT_EDA(const float *X, const tpY *y, size_t nFeat_0, size_t nSamp, size_t flag) {
 /*
 void LiteMORT_EDA(void *mort_0, const size_t nFeat_0, const size_t nSamp_,const size_t nValid, PY_ITEM* descs, int nParam, const size_t flag)		{
-    MORT *mort = MORT::From(mort_0);
+    DORT_wrap *mort = DORT_wrap::From(mort_0);
     assert(nValid>=0 && nValid <= nSamp_);
     LiteBOM_Config& config = mort->config;
     //if (g_hEDA == nullptr)
@@ -640,7 +629,7 @@ void LiteMORT_EDA(void *mort_0, const size_t nFeat_0, const size_t nSamp_,const 
     //g_hEDA->InitBundle(config, X, nSamp, nFeat_0, flag);
 }*/
 
-PYMORT_DLL_API void cpp_test(void *mort_0, PY_DATASET *dat) { printf("%s", dat->name); }
+PYMORT_DLL_API void cpp_test(void* mort_0, PY_DATASET* dat) { printf("%s", dat->name); }
 
 // some EDA functions
 /*
@@ -650,22 +639,22 @@ PYMORT_DLL_API void LiteMORT_fit(void *mort_0, float *train_data, tpY *train_tar
         float *eval_data, tpY *eval_target,size_t nEval,size_t flag) {
     try {
     GST_TIC(tick);
-    MORT *mort = MORT::From(mort_0);
+    DORT_wrap *mort = DORT_wrap::From(mort_0);
     LiteBOM_Config& config = mort->config;
     //if(hGBRT!=nullptr)
     //	LiteMORT_clear();
     bool isDelEDA = false;
-    ExploreDA *hEDA = (ExploreDA *)(mort->hEDA);
-    if (hEDA == nullptr) {
+    ExploreDA *hExDA = (ExploreDA *)(mort->hExDA);
+    if (hExDA == nullptr) {
         printf("\n********* g_hEDA on train_data ********* \n");
         LiteMORT_EDA(mort,train_data, train_target, nFeat_0, nSamp,0,nullptr,0x0,flag );
-        hEDA = mort->hEDA;		//isDelEDA = true;
+        hExDA = mort->hExDA;		//isDelEDA = true;
     }
     size_t nFeat = nFeat_0,i,feat, nTrain= nSamp;
-    printf( "\n********* LiteMORT_fit nSamp=%d,nFeat=%ld hEDA=%p********* \n\n", nSamp, nFeat, hEDA);
+    printf( "\n********* LiteMORT_fit nSamp=%d,nFeat=%ld hExDA=%p********* \n\n", nSamp, nFeat, hExDA);
     size_t f1= FeatsOnFold::DF_TRAIN ;
     vector<FeatsOnFold*> folds;
-    FeatsOnFold *hFold = FeatsOnFold_InitInstance<float, tpY>(config, hEDA, "train",train_data, train_target, nSamp, nFeat_0, 1, flag | f1),
+    FeatsOnFold *hFold = FeatsOnFold_InitInstance<float, tpY>(config, hExDA, "train",train_data, train_target, nSamp, nFeat_0, 1, flag | f1),
         *hEval=nullptr;
     folds.push_back(hFold);
     //hFold->lossy->Stat_Dump("",0x0);	//��Ҫ��� Y�ķֲ�
@@ -673,7 +662,7 @@ PYMORT_DLL_API void LiteMORT_fit(void *mort_0, float *train_data, tpY *train_tar
     //int nTree = 501;		//���ֹ����
     int nTree = hFold->config.num_trees;
     if (nEval > 0) {
-        ExploreDA *edaX_ = isDelEDA ? nullptr : hEDA;
+        ExploreDA *edaX_ = isDelEDA ? nullptr : hExDA;
         hEval= FeatsOnFold_InitInstance<float, tpY>(config, edaX_, "eval",eval_data,eval_target, nEval,nFeat_0, 1,flag | FeatsOnFold::DF_EVAL);
         //hEval->nam = "eval";
         folds.push_back(hEval);
@@ -684,10 +673,10 @@ PYMORT_DLL_API void LiteMORT_fit(void *mort_0, float *train_data, tpY *train_tar
     mort->hGBRT->Train("", 50, 0x0);
     //delete mort;		//�����ڲ���
     if (isDelEDA) {
-        delete hEDA;			hEDA = nullptr;
+        delete hExDA;			hExDA = nullptr;
     }
 
-    //@%p(hEDA=%p,hGBRT=%p)	mort,mort->hEDA,mort->hGBRT,
+    //@%p(hExDA=%p,hGBRT=%p)	mort,mort->hExDA,mort->hGBRT,
     printf("\n********* LiteMORT_api fit  time=%.3g(%.3g)......OK\n\n", GST_TOC(tick), FeatsOnFold::stat.tX+ DCRIMI_2::tX );
 
     }
@@ -707,7 +696,7 @@ PYMORT_DLL_API void LiteMORT_fit(void *mort_0, float *train_data, tpY *train_tar
     v0.1	cys
         10/22/2019
 */
-void Feats_one_by_one(FeatsOnFold *hTrain, FeatsOnFold *hEval, BoostingForest::MODEL mod_, int nTre_, int flag) {
+void Feats_one_by_one(FeatsOnFold* hTrain, FeatsOnFold* hEval, BoostingForest::MODEL mod_, int nTre_, int flag) {
     LiteBOM_Config config_0 = hTrain->config;
     GBRT *hGBRT_0 = new GBRT(hTrain, hEval, 0, flag == 0 ? BoostingForest::REGRESSION : BoostingForest::CLASIFY, nTre_), *hGBRT = nullptr;
     int nFeat = hTrain->nFeat(), i, nSelect = 0, nFix = 0, cand, x = 0, cand_best = -1;
@@ -717,10 +706,10 @@ void Feats_one_by_one(FeatsOnFold *hTrain, FeatsOnFold *hEval, BoostingForest::M
     FeatVector *T_predict = hTrain->GetPrecict(), *E_predict = hEval->GetPrecict(), *hBestFeat = nullptr;
     FeatVector *T_best_predict = new FeatVec_T<tpDOWN>(nullptr, T_predict->size(), 0, "T_best"),
                *E_best_predict = new FeatVec_T<tpDOWN>(nullptr, E_predict->size(), 0, "E_best");
-    float *selector            = hTrain->config.feat_selector;  // ����ֵ
+    float* selector            = hTrain->config.feat_selector;  // ����ֵ
     for (i = 0; i < nFeat; i++) {
-        FeatVector *hFeat     = hTrain->Feat(i);
-        Distribution *hDistri = hTrain->histoDistri(hFeat);
+        FeatVector* hFeat     = hTrain->Feat(i);
+        Distribution* hDistri = hTrain->histoDistri(hFeat);
         // if (hFeat->hDistri != nullptr && hFeat->hDistri->isPass())
         if (hDistri->isPass())
             continue;
@@ -748,7 +737,7 @@ void Feats_one_by_one(FeatsOnFold *hTrain, FeatsOnFold *hEval, BoostingForest::M
     hTrain->config.early_stopping_round /= 2;
     for (i = 0; i < nSelect; i++) {
         cand              = cands[i];
-        FeatVector *hFeat = hTrain->Feat(cand);
+        FeatVector* hFeat = hTrain->Feat(cand);
         assert(hFeat->select.isPick == false);
         hFeat->select.isPick = true;
         hEval->nam           = "eval_" + hFeat->nam;
@@ -792,7 +781,7 @@ void Feats_one_by_one(FeatsOnFold *hTrain, FeatsOnFold *hEval, BoostingForest::M
     for (i = 0; i < nFeat; i++) {  // update selector
         if (selector[i] == 1)
             continue;
-        FeatVector *hFeat = hTrain->Feat(i);
+        FeatVector* hFeat = hTrain->Feat(i);
         // selector[i] = hFeat->select.vari_1;
     }
     if (cand_best != -1) {
@@ -813,39 +802,39 @@ void Feats_one_by_one(FeatsOnFold *hTrain, FeatsOnFold *hEval, BoostingForest::M
 */
 // PYMORT_DLL_API void LiteMORT_fit_1(void *mort_0, PY_COLUMN *train_data, PY_COLUMN *train_target, size_t nFeat_0, size_t nSamp, PY_COLUMN *eval_data,
 // PY_COLUMN *eval_target, size_t nEval, size_t flag) {
-PYMORT_DLL_API void LiteMORT_fit_1(void *mort_0, PY_DATASET_LIST *train_list, PY_DATASET_LIST *eval_list, size_t flag) {
+PYMORT_DLL_API void LiteMORT_fit_1(void* mort_0, PY_DATASET_LIST* train_list, PY_DATASET_LIST* eval_list, size_t flag) {
     try {
         GST_TIC(tick);
         assert(train_list != nullptr && train_list->nSet == 1);
-        PY_DATASET *train_set  = PY_DATASET_LIST::GetSet(train_list);
-        PY_DATASET *eval_set   = (eval_list == nullptr || eval_list->nSet == 0) ? nullptr : eval_list->list;
-        MORT *mort             = MORT::From(mort_0);
-        LiteBOM_Config &config = mort->config;
+        PY_DATASET* train_set  = PY_DATASET_LIST::GetSet(train_list);
+        PY_DATASET* eval_set   = (eval_list == nullptr || eval_list->nSet == 0) ? nullptr : eval_list->list;
+        DORT_wrap* mort        = DORT_wrap::From(mort_0);
+        LiteBOM_Config& config = mort->config;
         size_t nSamp = train_set->nSamp, nEval = eval_set == nullptr ? 0 : eval_set->nSamp;
         int nFeat_0 = train_set->ldFeat;
         assert(nSamp > 0 && nFeat_0 > 0);
         // if(hGBRT!=nullptr)
         //	LiteMORT_clear();
-        bool isDelEDA   = false;
-        ExploreDA *hEDA = (ExploreDA *)(mort->hEDA_train);
-        /*if (hEDA == nullptr) {
+        bool isDelEDA    = false;
+        ExploreDA* hExDA = (ExploreDA*)(mort->hEDA_train);
+        /*if (hExDA == nullptr) {
             printf("\n********* g_hEDA on train_data ********* \n");
             LiteMORT_EDA(mort, nFeat_0*4, nSamp, 0, nullptr, 0x0, flag);
-            hEDA = mort->hEDA_train;		//isDelEDA = true;
+            hExDA = mort->hEDA_train;		//isDelEDA = true;
         }*/
         size_t i, feat, nTrain = nSamp;
-        printf("\n********* LiteMORT_fit nSamp=%ld,nFeat_0=%d %s hEDA=%p********* \n\n", nSamp, nFeat_0, mort->merge_info.c_str(), hEDA);
+        printf("\n********* LiteMORT_fit nSamp=%ld,nFeat_0=%d %s hExDA=%p********* \n\n", nSamp, nFeat_0, mort->merge_info.c_str(), hExDA);
 
         size_t f1 = FeatsOnFold::DF_TRAIN;
-        vector<FeatsOnFold *> folds;
-        FeatsOnFold *hFold = FeatsOnFold_InitInstance(config, hEDA, train_set, mort, flag | f1);
-        FeatsOnFold *hEval = nullptr;
+        vector<FeatsOnFold*> folds;
+        FeatsOnFold* hFold = FeatsOnFold_InitInstance(config, hExDA, train_set, mort, flag | f1);
+        FeatsOnFold* hEval = nullptr;
         folds.push_back(hFold);
 
         // int nTree = 501;		//���ֹ����
         int nTree = hFold->config.num_trees;
         if (nEval > 0) {
-            ExploreDA *edaX_ = isDelEDA ? nullptr : hEDA;
+            ExploreDA* edaX_ = isDelEDA ? nullptr : hExDA;
             // hEval = FeatsOnFold_InitInstance(config, edaX_, "eval", eval_set->columnX, eval_set->columnY, nEval, nFeat_0, 1, flag | FeatsOnFold::DF_EVAL);
             hEval = FeatsOnFold_InitInstance(config, edaX_, PY_DATASET_LIST::GetSet(eval_list), mort, flag | FeatsOnFold::DF_EVAL);
             folds.push_back(hEval);
@@ -859,17 +848,17 @@ PYMORT_DLL_API void LiteMORT_fit_1(void *mort_0, PY_DATASET_LIST *train_list, PY
         }
         // delete mort;		//�����ڲ���
         if (isDelEDA) {
-            delete hEDA;
-            hEDA = nullptr;
+            delete hExDA;
+            hExDA = nullptr;
         }
         // memory
         mort->hGBRT->ClearData();
         mort->hGBRT->ClearHisto();
-        // delete hEDA;		//�����ڵ���
-        //@%p(hEDA=%p,hGBRT=%p)	mort,mort->hEDA,mort->hGBRT,
+        // delete hExDA;		//�����ڵ���
+        //@%p(hExDA=%p,hGBRT=%p)	mort,mort->hExDA,mort->hGBRT,
         // FeatsOnFold::stat.tX += GST_TOC(tick);
         printf("\n********* LiteMORT_fit_1  time=%.3g(%.3g)......OK\n\n", GST_TOC(tick), FeatsOnFold::stat.tX + DCRIMI_2::tX);
-    } catch (char *sInfo) {
+    } catch (char* sInfo) {
         printf("\n!!!!!! EXCEPTION@LiteMORT_fit \n!!!!!!\"%s\"\n\n", sInfo);
         system("pause");
         throw sInfo;
@@ -880,12 +869,12 @@ PYMORT_DLL_API void LiteMORT_fit_1(void *mort_0, PY_DATASET_LIST *train_list, PY
     return;
 }
 
-PYMORT_DLL_API void LiteMORT_feats_one_by_one(void *mort_0, PY_COLUMN *train_data, PY_COLUMN *train_target, size_t nFeat_0, size_t nSamp, PY_COLUMN *eval_data,
-                                              PY_COLUMN *eval_target, size_t nEval, size_t flag) {}
+PYMORT_DLL_API void LiteMORT_feats_one_by_one(void* mort_0, PY_COLUMN* train_data, PY_COLUMN* train_target, size_t nFeat_0, size_t nSamp, PY_COLUMN* eval_data,
+                                              PY_COLUMN* eval_target, size_t nEval, size_t flag) {}
 
-const char *GRUS_LITEMORT_APP_NAME = "LiteMORT-beta";
+const char* GRUS_LITEMORT_APP_NAME = "LiteMORT-beta";
 
-void GRUS_LITEMORT_VERSION(char *str) {
+void GRUS_LITEMORT_VERSION(char* str) {
     char sName[80];
     int i, nLen = (int)strlen(GRUS_LITEMORT_APP_NAME), nFrame = 68, off;
 
@@ -902,33 +891,152 @@ void GRUS_LITEMORT_VERSION(char *str) {
             "*                         gsp@grusoft.com                          *\n"
             "********************************************************************\n");
 }
+
 /*
-#if (defined _WINDOWS) || (defined WIN32)
-    BOOL APIENTRY DllMain(HANDLE hModule,DWORD  ul_reason_for_call,	LPVOID lpReserved){
-        char str_version[1000];
-        switch (ul_reason_for_call) {
-        case DLL_PROCESS_ATTACH:
-            GRUS_LITEMORT_VERSION(str_version);
-            printf("%s", str_version);
+    v0.1	cys
+        11/17/2025
+*/
+FeatVector* MAT_ROW2FEAT(const FeatsOnFold* hFold, typNUMBER tpN, void* hData, size_t nSamp_, int id, bool isMergePivot, int flag) {
+    string desc       = "feat_" + std::to_string(id);
+    FeatVector* hFeat = nullptr;
+    int flagF         = flag;
+    // if (hFold->isTrain() && !isMergePivot) {
+    //     hFold->edaX->AddDistri(nullptr, id);  // col
+    // }
+    switch (tpN) {
+        case typNUMBER::BF16:
+            assert(!BIT_TEST(flagF, FeatVector::VAL_REFER));
+            hFeat = new FeatVec_T<float>(hFold, nSamp_, id, desc, flagF);
+            hFeat->Set_bf16(nSamp_, (bf16*)hData + nSamp_ * id);
             break;
-        case DLL_THREAD_ATTACH:
+        case typNUMBER::F32:
+            hFeat = new FeatVec_T<float>(hFold, nSamp_, id, desc, flagF | FeatVector::VAL_REFER);
+            hFeat->Set(nSamp_, hData);
             break;
         default:
+            assert(0);
+            throw "MAT_ROW2FEAT col->dtype is XXX";
             break;
+    }
+    /*
+    hFeat->PY  = col;
+    hFeat->nam = col->type_x;
+    hFeat->nam += col->name;
+    hFeat->UpdateType();
+    */
+    hFeat->nam = desc;
+
+    Distribution* tDistri = hFold->edaX->GetDistri(id);  // hFold->edaX == nullptr ? nullptr : &(hFold->edaX->arrDistri[i]);
+    hFeat->InitDistri(hFold, tDistri, nullptr, true, 0x0);
+
+    return hFeat;
+}
+
+//  PY_DATASET *dataset_
+FeatsOnFold* Mat2DORT(LiteBOM_Config config, ExploreDA* edaX, typNUMBER tpN, void* hData, int nMostFeat, int nSamp, DORT_wrap* mort, int flag) {
+    clock_t t0 = GST_ms();
+    assert(BIT_IS(flag, FeatsOnFold::DF_FLAG));
+    if (config.eda_Normal == LiteBOM_Config::NORMAL_gaussian) {
+        edaX = nullptr;
+        _INFO("\n---- !!! Data normalization by gaussian So edaX is nullptr@FeatsOnFold_InitInstance !!!----\n");
+    }
+
+    bool isTrain   = BIT_TEST(flag, FeatsOnFold::DF_TRAIN);
+    bool isPredict = BIT_TEST(flag, FeatsOnFold::DF_PREDIC);
+    bool isMerge   = BIT_TEST(flag, FeatsOnFold::DF_MERGE);
+    assert(!isMerge);
+    double sparse = 0, nana = 0;
+    size_t nMostQ = config.feat_quanti, nConstFeat = 0, nMergedFeat = 0, nLocalConst = 0, nQuant = 0;
+    FeatsOnFold* hFold = new FeatsOnFold(config, edaX, "Mat2DORT", flag);
+    hFold->InitRanders();
+    hFold->InitMost(nSamp);
+    // hFold->nMost = nSamp_;
+    int rnd_seed = 0, nThread = config.num_threads, flagF = flag | FeatVector::VAL_REFER;
+    for (int i = 0; i < nMostFeat; i++) {
+        hFold->edaX->AddDistri(nullptr, i);
+    }
+    hFold->feats.resize(nMostFeat);
+#pragma omp parallel for
+    for (int i = 0; i < nMostFeat; i++) {
+        hFold->feats[i] = MAT_ROW2FEAT(hFold, tpN, hData, nSamp, i, false, flag);
+    }
+
+    /*if (!isMerge) {  // lossy and importance
+        hFold->importance = new Feat_Importance(hFold);
+        hFold->lossy->Init_T<tpDOWN>(hFold, nSamp, 0x0, rnd_seed, flag);
+        if (isPredict) {
+        } else {
+            FeatVector *Y = hFold->GetY();
+            Y->Set_bf16(nSamp, (bf16*)hData);
         }
+        hFold->lossy->EDA(nullptr, flag);
+    }*/
 
-        return TRUE;
-    }
-#else
-//https://stackoverflow.com/questions/22763945/dll-main-on-windows-vs-attribute-constructor-entry-points-on-linux
-    __attribute__((constructor)) void dllLoad() {
-        char str_version[1000];
-        GRUS_LITEMORT_VERSION(str_version);
-        printf("%s", str_version);
+    GST_TIC(t1);
+    int nFeat = hFold->nFeat();
+    if (false) {  // Ϊ�˵��� ���Ǻ�FeatVector::Feat(int no)��ͻ��
+        std::sort(hFold->feats.begin(), hFold->feats.end(), FeatVector::OrderByName);
+        for (int i = 0; i < nFeat; i++) {
+            // hFold->feats[i]->id = i;		ָ��eda->distribution�����ܸ�
+        }
     }
 
-    __attribute__((destructor)) void dllUnload() {
-
+    // #pragma omp parallel for num_threads(nThread) schedule(dynamic) reduction(+ : sparse,nana,nConstFeat,nLocalConst,nQuant)
+    for (int feat = 0; feat < nFeat; feat++) {
+        FeatVector* hFQ   = nullptr;
+        FeatVector* hFeat = hFold->Feat(feat);
+        if (feat == 77)
+            feat = 77;
+        Distribution* fDistri = hFeat->myDistri();
+        sparse += fDistri->rSparse * nSamp;
+        nana += fDistri->rNA * nSamp;
+        // if (BIT_TEST(hFeat->type, FeatVector::V_ZERO_DEVIA)) {
+        if (fDistri->isPass()) {
+            // printf("%d\n", feat);
+            nConstFeat++;
+            nLocalConst++;
+        } else if (config.objective == "quant") {
+        } else {  //  FeatVecQ only support uint8_t/uint16_t
+            if (hFold->isQuanti || hFeat->isCategory()) {
+                hFold->feats[feat] = hFQ = FeatVecQ_InitInstance(hFold, hFeat, 0x0);  // new FeatVec_Q<short>(hFold, hFeat, nMostQ);
+                nQuant++;                                                             // delete hFeat;
+            }
+        }
     }
-#endif
-*/
+    // FeatsOnFold::stat.tX += GST_TOC(t1);
+    // if (hFold->isQuanti) {
+    //     hFold->Feature_Bundling();  //  just return
+    // }
+    int nTotalBins = 0;
+    for (int feat = 0; feat < hFold->nFeat(); feat++) {
+        FeatVector* hFeat = hFold->Feat(feat);
+        if (config.feat_selector != nullptr) {
+            hFeat->select.user_rate = config.feat_selector[feat];
+            printf("%d(%.3g)\t", feat, hFeat->select.user_rate);
+        }
+        if (BIT_TEST(hFeat->type, FeatVector::REPRESENT_)) {
+            PY_COLUMN* col = hFeat->PY;  // dataset_->columnX + feat;
+            assert(hFeat->select.isPick = true);
+            hFeat->select.isPick = false;
+            hFold->present.Append(hFeat, col->representive);
+        }
+        if (hFold->config.verbose > 666) {
+            // hFeat->myDistri()->Dump(feat, false, flag);
+        }
+        if (!isMerge) {
+            Distribution* hDistri = hFold->histoDistri(hFeat);
+            nTotalBins += hDistri->nHistoBin();
+        }
+    }
+
+    sparse /= (nSamp * hFold->nFeat());
+    nana /= (nSamp * hFold->nFeat());
+    // assert(nana == 0.0);
+    if (config.verbose > 0) {
+        // printf("\r********* Fold_[%s] nSamp=%d nFeat=%ld(const=%ld) QUANT=%ld Total Bins=%d\n\tsparse=%g NAN=%g nLocalConst=%ld time=%g sec\r\n",
+        //        hFold->nam.c_str(), nSamp, hFold->nFeat(), nConstFeat, nQuant, nTotalBins, sparse, nana, nLocalConst, (GST_ms() - t0) / 1000.0);
+    }
+    // if(nLocalConst>0)
+    //	printf("\t!!! [%s] nLocalConst=%ld !!! \n",hFold->nam.c_str(), nLocalConst);
+    return hFold;
+}

@@ -118,8 +118,6 @@ struct PIPE_Muon : public PIPE_Adamw<Tp, Tmv> {
 //  For cudaLaunchCooperativeKernel
 template <typename T = void>
 struct CoopLayer {
-    // float *rms_att_weight = nullptr, *bqkv = nullptr, *rms_ffn_weight = nullptr;     maybe float would increase accuracy
-
     T *rms_att_weight = nullptr, *bqkv = nullptr, *rms_ffn_weight = nullptr;
     T *wq = nullptr, *wk = nullptr, *wq_norm = nullptr, *wk_norm = nullptr, *wv = nullptr, *wo = nullptr;
     T *moegate = nullptr, *w1 = nullptr, *w2 = nullptr, *w3 = nullptr;
@@ -262,8 +260,8 @@ struct KERNEL_PIPE : public MODEL_CARD {
         cLayers[l].rms_att_weight = TO<float>(QKV->norm.w);  // weights->rms_att_weight[l];
         cLayers[l].wq = ToX(QKV->Q.w), cLayers[l].wk = ToX(QKV->K.w), cLayers[l].wv = ToX(QKV->V.w);
         cLayers[l].wq_norm = ToX(QKV->normQ.w), cLayers[l].wk_norm = ToX(QKV->normK.w);
-        cLayers[l].wo   = ToX(QKV->proj_cat.w);  // weights->wo[l];
-        cLayers[l].bqkv = ToX0(QKV->bqkv);       // weights->bqkv[l];
+        cLayers[l].wo   = ToX(QKV->proj_cat.w);  
+        cLayers[l].bqkv = ToX0(QKV->bqkv);       
         FFN* ffn        = hFish->GetNeuron<FFN>("FFN", l);
         // ffn->BeforeMing(hRLS, nullptr);
         cLayers[l].rms_ffn_weight = TO<float>(ffn->norm.w);  // weights->rms_ffn_weight[l];

@@ -7,7 +7,6 @@
  */
 #include "Fish.hpp"
 
-#include "../g_stddef.hpp"
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
 
@@ -817,7 +816,7 @@ bool Fish::AllocBuffer(int flag) {
         GetBTC(B, T, C);
         if (isLocalInfer)
             hCache = std::make_shared<KVCache>(this);
-            
+
         int nVocab = nClass();
         if (config.model.isPaddedCls) {
             nVocab = ceil(nVocab / 128.0) * 128;

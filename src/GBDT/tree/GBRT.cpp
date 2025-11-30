@@ -7,7 +7,7 @@
 #include "../learn/Pruning.hpp"
 #include "../util/Object.hpp"
 
-GBRT::GBRT(FeatsOnFold *hTrain, FeatsOnFold *hEval, double sOOB, MODEL mod_, int nTre_, int flag) : BoostingForest() {
+GBRT::GBRT(FeatsOnFold* hTrain, FeatsOnFold* hEval, double sOOB, MODEL mod_, int nTre_, int flag) : BoostingForest() {
     double rou = 1.0;
 
     model       = mod_;
@@ -30,7 +30,7 @@ GBRT::GBRT(FeatsOnFold *hTrain, FeatsOnFold *hEval, double sOOB, MODEL mod_, int
     maxDepth = hTrain->config.max_depth;
     // int histo = hTrain->config.histo_bins;
     nThread = hTrain->config.num_threads <= 0 ? nMostThread : hTrain->config.num_threads;
-    assert(nThread > 0 && nThread < 32);
+    assert(nThread > 0);
     omp_set_num_threads(nThread);
     omp_set_nested(0);
 #pragma omp parallel
@@ -63,7 +63,7 @@ GBRT::GBRT(FeatsOnFold *hTrain, FeatsOnFold *hEval, double sOOB, MODEL mod_, int
     if (hTrain->config.nMostPrune > 0)
         prune = new EnsemblePruning(this, hPruneData, hTrain->config.nMostPrune);
 
-    const char *mod = model == CLASIFY ? "CLASIFY" : "REGRESSION";
+    const char* mod = model == CLASIFY ? "CLASIFY" : "REGRESSION";
     printf("\n\n********* GBRT[%s]\n\tnTrainSamp=%d,nTree=%d,thread=%d...", mod, nTrain, nTree, nThread);
     hTrain->config.dump();
     hTrain->present.dump();
@@ -72,7 +72,7 @@ GBRT::GBRT(FeatsOnFold *hTrain, FeatsOnFold *hEval, double sOOB, MODEL mod_, int
     //	lr, hTrain->config.leaf_optimal.c_str(),hTrain->config.num_leaves);
 }
 
-void GBRT::BeforeTrain(FeatsOnFold *hData_, int flag) {
+void GBRT::BeforeTrain(FeatsOnFold* hData_, int flag) {
     hData_->BeforeTrain(this, flag);
     if (0) {  // ��ֵƽ�ƣ��ƺ�û�б�Ҫ
         /*mSum /= nSample;	a = nSample*mSum.squaredNorm();
@@ -90,14 +90,14 @@ void GBRT::BeforeTrain(FeatsOnFold *hData_, int flag) {
     v0.1	����hMove����
     v0.2	root->samp_set�����ǿ�
 */
-double GBRT::Predict(FeatsOnFold *hData_, bool updateStopping, bool checkLossy, bool resumeLast, int flag) {
+double GBRT::Predict(FeatsOnFold* hData_, bool updateStopping, bool checkLossy, bool resumeLast, int flag) {
     size_t nSamp = hData_->nSample(), t;
     bool isEval  = hData_->isEval();
     hData_->BeforePredict();
-    ManifoldTree *lastTree = nullptr;
+    ManifoldTree* lastTree = nullptr;
     bool isResetZero       = false;  // init_score�����˺ܶ����⣬��Ҫ�������,�μ�ManifoldTree::Train֮AddScore
     if (resumeLast && forest.size() > 0) {
-        lastTree = (ManifoldTree *)forest[forest.size() - 1];
+        lastTree = (ManifoldTree*)forest[forest.size() - 1];
     } else {
         hData_->GetPrecict()->Empty();
         if (hData_->init_score.fVec != nullptr) {
@@ -109,13 +109,13 @@ double GBRT::Predict(FeatsOnFold *hData_, bool updateStopping, bool checkLossy, 
             isResetZero = true;
         }
     }
-    FeatVec_T<tpDOWN> *predict = dynamic_cast<FeatVec_T<tpDOWN> *>(hData_->GetPrecict());
+    FeatVec_T<tpDOWN>* predict = dynamic_cast<FeatVec_T<tpDOWN>*>(hData_->GetPrecict());
     assert(predict != nullptr);
-    tpDOWN *allx = predict->arr();
+    tpDOWN* allx = predict->arr();
 
     GST_TIC(t1);
     for (auto tree : forest) {
-        ManifoldTree *hTree = dynamic_cast<ManifoldTree *>(tree);
+        ManifoldTree* hTree = dynamic_cast<ManifoldTree*>(tree);
         assert(hTree != nullptr);
         if (lastTree != nullptr && hTree != lastTree)
             continue;
@@ -211,7 +211,7 @@ void EARLY_STOPPING::CheckBrae(int flag) {
     }
 }
 
-void EARLY_STOPPING::Add(double err, int best_tree, bool &isLRjump, int flag) {
+void EARLY_STOPPING::Add(double err, int best_tree, bool& isLRjump, int flag) {
     nLeastOsci = max(1, early_round / 20);
     isLRjump   = false;
     errors.push_back(err);
@@ -221,7 +221,7 @@ void EARLY_STOPPING::Add(double err, int best_tree, bool &isLRjump, int flag) {
         best_round = best_tree;
     } else {
         if (isOscillate == false && best_no + nLeastOsci <= errors.size() - 1) {  // first isOscillate
-            printf("\n-------- Oscillate@(%d,%g) best=(%d,%g) -------- \n", errors.size(), err, best_no + 1, e_best);
+            printf("\n-------- Oscillate@(%ld,%g) best=(%d,%g) -------- \n", errors.size(), err, best_no + 1, e_best);
             assert(err >= e_best);
             isOscillate = true;
         }
@@ -274,7 +274,7 @@ bool EARLY_STOPPING::isOK(int cur_round) {
 
 int GBRT::IterTrain(int round, int flag) {
     GST_TIC(tick);
-    ManifoldTree *hTree = forest.size() == 0 ? nullptr : dynamic_cast<ManifoldTree *>(forest[forest.size() - 1]);
+    ManifoldTree* hTree = forest.size() == 0 ? nullptr : dynamic_cast<ManifoldTree*>(forest[forest.size() - 1]);
 
     size_t nPickSamp = 0;
     int nIns = 0, no = 0, total, i, j, nzNode = 0, nIter = 0;
@@ -283,8 +283,8 @@ int GBRT::IterTrain(int round, int flag) {
     // vector<double> err_eval;
     do {
         if (isEvalTrain) {
-            FeatVector *hY1 = hTrainData->GetPrecict();
-            tpDOWN *hDown   = hTrainData->GetDownDirection();
+            FeatVector* hY1 = hTrainData->GetPrecict();
+            tpDOWN* hDown   = hTrainData->GetDownDirection();
             err_0           = this->Predict(hTrainData, hEvalData == nullptr, true, true);  // ���Լ����Ż�
             if (hTrainData->lossy->isOK(0x0, FLT_EPSILON)) {
                 eOOB = 0;
@@ -301,7 +301,7 @@ int GBRT::IterTrain(int round, int flag) {
         }
         if (hEvalData != nullptr) {
             if (round > 0) {
-                hMTNode hRoot = (dynamic_cast<ManifoldTree *>(forest[round - 1]))->hRoot();  // im1 = hRoot->impuri;
+                hMTNode hRoot = (dynamic_cast<ManifoldTree*>(forest[round - 1]))->hRoot();  // im1 = hRoot->impuri;
                 assert(hRoot->nSample() == 0);
             }
             err = this->Predict(hEvalData, true, true, true);  // ����У�飬ͬ��������resumeLast
@@ -346,7 +346,7 @@ int GBRT::Train(string sTitle, int x, int flag) {
     double err_0 = DBL_MAX, err = DBL_MAX, a, t_train = 0;
     size_t nPickSamp = 0;
     if (hTrainData->merge_lefts.size() > 0) {
-        printf("----MERGE_sets=%d\n", hTrainData->merge_lefts.size());
+        printf("----MERGE_sets=%ld\n", hTrainData->merge_lefts.size());
     }
     if (stopping.LR_jump > 0) {
         hTrainData->config.learning_rate *= 2;
@@ -362,8 +362,8 @@ int GBRT::Train(string sTitle, int x, int flag) {
         if (t == 67) {  // �����ڵ���
             t = 67;
         }
-        FeatVector *hY1 = hTrainData->GetPrecict();
-        tpDOWN *hDown   = hTrainData->GetDownDirection();
+        FeatVector* hY1 = hTrainData->GetPrecict();
+        tpDOWN* hDown   = hTrainData->GetDownDirection();
         if (hTrainData->config.T_iterrefine > 0)
             IterTrain(t, flag);
         else {
@@ -420,7 +420,7 @@ int GBRT::Train(string sTitle, int x, int flag) {
         }
         this->BeforeTrain(hTrainData);
         // gradients = self.loss.negative_gradient(preds, y)
-        ManifoldTree *hTree = new ManifoldTree(this, hTrainData, "666_" + to_string(t));
+        ManifoldTree* hTree = new ManifoldTree(this, hTrainData, "666_" + to_string(t));
         // if (hEvalData != nullptr)		//case_higgs.pyʵ��ȷʵ��BUG
         //	hTree->SetGuideTree(new ManifoldTree(this, hEvalData, "777_" + to_string(t)));
         nPickSamp = hTree->hRoot()->nSample();
@@ -448,10 +448,10 @@ int GBRT::Train(string sTitle, int x, int flag) {
     }
     string sEval  = hEvalData == nullptr ? (isEvalTrain ? hTrainData->nam : "None") : hEvalData->nam;
     string sLossE = hEvalData == nullptr ? "" : hEvalData->LOSSY_INFO(stopping.e_best), sLossT = hTrainData->LOSSY_INFO(err_0);
-    printf("\n====== LOOP=%d: ERR=[~%s,%s] time=%.3g(%.3g) ======\n", skdu.noT, sLossT.c_str(), sLossE.c_str(), GST_TOC(tick), 0);
+    printf("\n====== LOOP=%d: ERR=[~%s,%s] time=%.3g(%.3g) ======\n", skdu.noT, sLossT.c_str(), sLossE.c_str(), GST_TOC(tick), 0.f);
     double aNode = nzNode * 1.0 / forest.size();
     for (i = stopping.best_round; i < forest.size(); i++) {
-        ManifoldTree *hTree = dynamic_cast<ManifoldTree *>(forest[i]);
+        ManifoldTree* hTree = dynamic_cast<ManifoldTree*>(forest[i]);
         // nzNode -= hTree->nodes.size();
         delete forest[i];
     }
@@ -466,8 +466,8 @@ int GBRT::Train(string sTitle, int x, int flag) {
     }
     if (hTrainData->config.verbose > 0) {
         printf(
-            "\n********* GBRT::Train ERR@train=%s E_best@%s=%s nTree=%d nFeat={%d-%d} aNode=%.6g maxDepth=%d thread=%d"
-            "\n********* train=%g(hTree->Train=%g,tCheckGain=%g,tHisto=%g(%d,%g),tX=%g) sec\r\n",
+            "\n********* GBRT::Train ERR@train=%s E_best@%s=%s nTree=%ld nFeat={%d-%d} aNode=%.6g maxDepth=%d thread=%d"
+            "\n********* train=%g(hTree->Train=%g,tCheckGain=%g,tHisto=%g(%ld,%g),tX=%g) sec\r\n",
             sLossT.c_str(), sEval.c_str(), sLossE.c_str(), forest.size(), stat.nMinFeat, stat.nMaxFeat, aNode, maxDepth, nThread, GST_TOC(tick), t_train,
             FeatsOnFold::stat.tCheckGain, FeatsOnFold::stat.tHisto, HistoGRAM::nAlloc, FeatsOnFold::stat.tSamp2Histo, FeatsOnFold::stat.tX);
     }
@@ -493,7 +493,7 @@ int GBRT::Train(string sTitle, int x, int flag) {
         9/17/2019
     v0.2	cys
         9/29/2019
-    ûɶЧ��������		�μ�[MORT]_None_0.97700_F8_0.9487_prune.info
+    ûɶЧ��������		�μ�[DORT_wrap]_None_0.97700_F8_0.9487_prune.info
 */
 int GBRT::Prune(int flag) {
     if (hEvalData == nullptr) {
@@ -506,7 +506,7 @@ int GBRT::Prune(int flag) {
     int nTree = forest.size(), nPrune = min(hTrainData->config.nMostPrune, nTree / 2), i;
     VALID_HANDLE(prune);
     for (i = 0; i < nTree; i++) {
-        ManifoldTree *hTree = (ManifoldTree *)forest[i];
+        ManifoldTree* hTree = (ManifoldTree*)forest[i];
         assert(hTree->ArrTree_data != nullptr);
         if (i < nTree - nPrune)
             continue;
@@ -530,7 +530,7 @@ int GBRT::Prune(int flag) {
         // delete prune;		prune = nullptr;	return 0;
         for (i = 0; i < prune->nWeak; i++) {
             double w                    = prune->cc_1[i];
-            ManifoldTree *hMT           = dynamic_cast<ManifoldTree *>(prune->forest[i]);
+            ManifoldTree* hMT           = dynamic_cast<ManifoldTree*>(prune->forest[i]);
             hMT->weight                 = w;
             hMT->ArrTree_quanti->weight = w;
             hMT->ArrTree_data->weight   = w;
@@ -543,7 +543,7 @@ int GBRT::Prune(int flag) {
         hEvalData->GetPrecict()->Empty();
         errE = this->Predict(hEvalData, true, true, true);
         for (i = 0; i < nTree; i++) {
-            ManifoldTree *hTree = (ManifoldTree *)trees_0[i];
+            ManifoldTree* hTree = (ManifoldTree*)trees_0[i];
             if (hTree->weight == 0) {
                 deads.push_back(hTree);
                 delete hTree;  // deads.push_back(tree);
@@ -566,9 +566,9 @@ int GBRT::Prune(int flag) {
     return 0x0;
 }
 
-void GBRT::AfterTrain(FeatsOnFold *hData, int cas, int nMulti, int flag) {
+void GBRT::AfterTrain(FeatsOnFold* hData, int cas, int nMulti, int flag) {
     if (model != REGRESSION) {
-        float *dtr = hData->distri;
+        float* dtr = hData->distri;
         int i, j, total = hData->nSample(), cls, d1, nCls = hData->nCls, *tag = hData->Tag();
         double mae = 0, rOK = 0;
         for (i = 0; i < total; i++, dtr += nCls) {
@@ -608,7 +608,7 @@ void GBRT::AfterTrain(FeatsOnFold *hData, int cas, int nMulti, int flag) {
     return;
 }
 
-void GBRT::GetYDistri(WeakLearner *hWeak, float *distri, int flag) {
+void GBRT::GetYDistri(WeakLearner* hWeak, float* distri, int flag) {
     /*
     double *Y, a;
     int i = 0, nSampe = hTrainData->nSample();
@@ -627,7 +627,7 @@ void GBRT::GetYDistri(WeakLearner *hWeak, float *distri, int flag) {
     v0.1	cys
         7/18/2018
 */
-bool GBRT::GetFeatDistri(WeakLearner *hWeak, float *distri, int flag) {
+bool GBRT::GetFeatDistri(WeakLearner* hWeak, float* distri, int flag) {
     /*GST_THROW("GBRT::GetFeatDistri is ...");
     BLIT_Diff *hBlit = dynamic_cast<BLIT_Diff*>(hWeak->hBlit);
     GST_VERIFY(hBlit != nullptr, "RF_ShapeRegress::Split is 0");
@@ -649,7 +649,7 @@ bool GBRT::GetFeatDistri(WeakLearner *hWeak, float *distri, int flag) {
     return true;
 }
 
-bool GBRT::isPassNode(FeatsOnFold *hData_, hMTNode hNode, int flag) {
+bool GBRT::isPassNode(FeatsOnFold* hData_, hMTNode hNode, int flag) {
     if (hNode->nSample() < Config().min_data_in_leaf * 2)
         return true;
     if (!hData_->present.isValid(hNode)) {
@@ -663,7 +663,7 @@ bool GBRT::isPassNode(FeatsOnFold *hData_, hMTNode hNode, int flag) {
     return false;
 }
 
-int GBRT::Test(string sTitle, BoostingForest::CASEs &TestSet, int nCls, int flag) {
+int GBRT::Test(string sTitle, BoostingForest::CASEs& TestSet, int nCls, int flag) {
     GST_TIC(tick);
     stage     = RF_TEST;
     int nTest = TestSet.size(), i;
@@ -681,7 +681,7 @@ int GBRT::Test(string sTitle, BoostingForest::CASEs &TestSet, int nCls, int flag
     for (auto hTree : forest) {
         // for each(DecisionTree *hTree in forest) {
         hTree->oob.clear();
-        WeakLearner *hRoot = hTree->hRoot();
+        WeakLearner* hRoot = hTree->hRoot();
         BootSample(hTree, hRoot->samps, hTree->oob, hTestData);
         assert(hTree->oob.size() == 0);
         hTree->Clasify(hTestData, hRoot->samps, hTestData->distri);
@@ -695,14 +695,14 @@ int GBRT::Test(string sTitle, BoostingForest::CASEs &TestSet, int nCls, int flag
 
 void Representive::dump(int flag) {
     for (auto present : arrPFeat) {
-        FeatVector *hFeat = present->hFeat;
+        FeatVector* hFeat = present->hFeat;
         printf("\n\tRepresentive@\"%s\">%.5g", hFeat->nam.c_str(), present->T_min);
     }
 }
 
-bool Representive::isValid(const MT_BiSplit *hNode, int flag) {
+bool Representive::isValid(const MT_BiSplit* hNode, int flag) {
     for (auto present : arrPFeat) {
-        FeatVector *hFeat = present->hFeat;
+        FeatVector* hFeat = present->hFeat;
         size_t nUnique    = hFeat->UniqueCount(hNode->samp_set, 0x0);
         if (nUnique <= present->T_min) {
             // printf("present=%d<%g\t", nUnique, present->T_min);

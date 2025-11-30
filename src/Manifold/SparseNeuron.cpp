@@ -7,7 +7,6 @@
  */
 #include <memory>
 
-#include "../g_stddef.hpp"
 #include "Fish.hpp"
 #include "HotPicker.hpp"
 #include "Optimizer.hpp"

@@ -24,10 +24,7 @@
 using namespace std;
 #include <stdio.h>
 #include <string.h>
-
-// #ifdef __USE_GGML__      //
-// #include "ggml.h"
-// #endif
+#include "../g_def_x.hpp"
 
 #define GG_V12
 
@@ -39,6 +36,8 @@ class EDGE_DEVICES;
 typedef shared_ptr<GTensor> hGTensor;
 class GeQuant;
 class GeNeuron;
+struct GENSOR_INFO;
+struct GENSOR_TOPU;
 
 bool Gensors2File(std::vector<hGTensor> gset, const std::string& path, int flag = 0x0);
 
@@ -100,12 +99,14 @@ struct GPUAllocator : public VirtualAllocator<T> {};
  * 3.   Row-major order (first index varies most slowly and last index varies most quickly)
  * 4.   May not contiguous in memory! All tensor operations have to take the stride into account and not assume that the tensor is contiguous in memory!
  */
-class GTensor {
+class GTensor : public std::enable_shared_from_this<GTensor> {
    private:
     void* gg = nullptr;
 
    protected:
     Fish* hFish = nullptr;
+    // include neuron,hquant,...
+    GENSOR_INFO* ginfo = nullptr;
 
     std::vector<GTensor*> refered;
     std::vector<hGTensor> fuyous;
@@ -128,6 +129,11 @@ class GTensor {
     REF_TYPE tpRef = REF_TYPE::NO;
     hGTensor hRef  = nullptr;
     void* raw_data = nullptr;
+    int rc_normal = 0;
+    // may different wit hQuant
+    shared_ptr<GeQuant> GetDynamicQuant(int flag = 0x0) const;
+    // @GetDynamicQuant
+    shared_ptr<GeQuant> hQuant = nullptr;
     virtual size_t Alloc_1(void** dst, bool isZero, string desc, size_t sz = 0x0, int flag = 0x0) { return 0x0; };
     virtual size_t Free_1(void** obj, const string& info = "") { return 0x0; };
 
@@ -158,7 +164,7 @@ class GTensor {
     void* host_data = nullptr;  // somtimes, we need data both in device&host
     void* data      = nullptr;
     // a serial of LORA for weight
-    floatGama* gama_T();  // scaling coefficient of bit weight
+    floatGama* gama_T(int type=0x0);  // scaling coefficient of bit weight
     // virtual bool isUpdateParam(int iter = -1, int flag = 0x0) const;  // in many case, params are not update, even data is not allocated!
     bool needUpdateParam = false;
     int tile_r1 = 0, tile_c1 = 0;  //  tile_r0 = 0,tile_c0 = 0,
@@ -250,7 +256,7 @@ class GTensor {
     virtual hGTensor CrossEntropy(const hGTensor b, int flag = 0x0);
     //  ternary {-1, 0, 1}
     virtual bool ToTernary(floatX*, int flag = 0x0) { throw "ToTernary is ...."; }
-    virtual void *BeforeQuant(GeQuant* hQuant, int flag = 0x0);
+    virtual void* BeforeQuant(GeQuant* hQuant, int flag = 0x0);
     virtual bool AfterQuant(GeQuant* hQuant, typNUMBER type_quant, void* data_quant, int flag = 0x0);
     virtual float ToF8Ex(int type, int flag = 0x0) { throw "ToF8Ex is ...."; }
     virtual bool Mutation(int flag = 0x0) { throw "Mutation is ...."; }
@@ -265,6 +271,7 @@ class GTensor {
     hGTensor GetRefer() { return hRef; }
     virtual void SetRefer(hGTensor hR, int flag = 0x0);
     virtual bool SetTernary(typNUMBER typ, int flag = 0x0);
+    //  load mapping-memory would do Quant !
     virtual bool Serial_MMAP(bool isSave, bool isX = true, int flag = 0x0);
     virtual bool Serial_MMAP_x(void* dest, bool isSave, int flag = 0x0);
     virtual bool SerialGP(void* yD, void* yG, size_t szY, bool isToY, int flag = 0x0) {
@@ -312,11 +319,7 @@ class GTensor {
         return size() == 0;
     }
     virtual bool isSameShape(SHAPE shape, int flag = 0x0) const;
-    virtual bool isSameShape(const hGTensor b) const {
-        if (szData != b->szData)
-            return false;
-        return true; /*isSameShape(b->shape);    */
-    }
+    virtual bool isSameShape(const hGTensor b) const;
     virtual void Zero() { Set(0.0); }
     virtual void ZeroGrad() { assert(0); }
     virtual void Set(float a, int flag = 0x0);
@@ -358,11 +361,13 @@ class GTensor {
 
     virtual int SerialJSON(const std::string& name, const JSON& val, void* bytes_ptr, size_t bytes_size, int flag = 0x0);
     friend class GeNeuron;
+    friend class GeQuant;
     friend class huTensor;
     friend class OPT_Adam;
     friend class Fuyou;
     friend class SLP;
     friend class Fish;
+    friend class GENSOR_TOPU;
 };
 
 template <typename T>
@@ -493,6 +498,8 @@ struct GENSOR_INFO {
     int level = -1, ID = -1, dad = -1, c_id = -1;
     bool isAdam                 = true;
     shared_ptr<GeNeuron> hNeron = nullptr;
+    float imbalance = 0.0;
+    double sum_1 = 0.0, sum_2 = 0.0, nrm_1 = 0.0;
     // first moment, second moment,past function values of Optimizer
     // hGensor gm=nullptr,gv=nullptr,gpf=nullptr; //
     float *gm = nullptr, *gv = nullptr, *gpf = nullptr;
@@ -513,8 +520,10 @@ struct GENSOR_INFO {
 
     static bool comp(GENSOR_INFO& a, GENSOR_INFO& b) { return a.ID < b.ID; }
 };
-struct GENSORS {
-    // name_ and gg_tensor
+
+// gensors & its topu relation
+struct GENSOR_TOPU {
+    // name_ => tensor
     std::map<std::string, hGensor> nag;
     //  gensor => info
     std::map<hGensor, GENSOR_INFO> infos;

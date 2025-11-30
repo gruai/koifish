@@ -4,10 +4,11 @@
 #include <string.h>
 #include <assert.h>
 #include "Parallel_t.hpp"
+#include "GST_def.h"
 
 using namespace std;
 
-typedef int tpSAMP_ID;			//SAMP_SET需要节省内存
+typedef int tpSAMP_ID;			
 #define tpSAMP_ID_NAN		INT_MAX
 #define tpSAMP_ID_MAX		INT_MAX/2
 
@@ -33,9 +34,9 @@ public:
 	size_t nSamp = 0, nLeft=0,nRigt=0;
 	bool isRef = true;
 	tpSAMP_ID *root_set = nullptr;
-	//samps当前节点，总是指向root_set的某个位置
+	//samps锟斤拷前锟节点，锟斤拷锟斤拷指锟斤拷root_set锟斤拷某锟斤拷位锟斤拷
 	tpSAMP_ID *samps=nullptr,*left = nullptr, *rigt = nullptr;
-	//实际上是down vector的sum_1, 参见samp_set.STA_at<tpDOWN>(down, a2, mean, y_0, y_1,true)
+	//实锟斤拷锟斤拷锟斤拷down vector锟斤拷sum_1, 锟轿硷拷samp_set.STA_at<tpDOWN>(down, a2, mean, y_0, y_1,true)
 	double Y_sum_1 = 0;
 	double Y_sum_2 = 0, Y_0 = DBL_MAX, Y_1 = -DBL_MAX;
 	double a2_sum = 0, a1_sum = 0;
@@ -49,7 +50,7 @@ public:
 	SAMP_SET( )	{}
 	SAMP_SET(size_t nSamp, tpSAMP_ID *samp_0, int flag = 0x0);
 
-	//很重要，原则上每棵树的样本可以任意重设
+	//锟斤拷锟斤拷要锟斤拷原锟斤拷锟斤拷每锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷
 	virtual void SampleFrom(FeatsOnFold *hData_, const BoostingForest *hBoosting, const SAMP_SET *,size_t nMost,int rnd_seed, int flag = 0x0);
 	void Alloc(FeatsOnFold *hData_, size_t nSamp_, int flag = 0x0);
 	void Alloc(size_t nSamp_, int flag = 0x0);
@@ -108,7 +109,7 @@ public:
 		size_t i;
 		for (i = 0; i<nSamp; i++) {
 			samp = samps[i];
-			val[samp] += step;		//对应于UpdateResi
+			val[samp] += step;		//锟斤拷应锟斤拷UpdateResi
 			assert(!IS_NAN_INF(val[samp]));
 		}
 	}
@@ -138,7 +139,7 @@ public:
 			{	x_0 = MIN2(local_0, x_0);			x_1 = MAX2(local_1, x_1);	}
 		}
 		a2_ = a2;	sum_ = sum;
-		//记录统计信息
+		//锟斤拷录统锟斤拷锟斤拷息
 		a2_sum = a2;		a1_sum = sum;
 		if (hasY) {
 			Y_sum_1 = sum;		Y_sum_2 = a2;

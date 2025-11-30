@@ -137,7 +137,7 @@ class GeneratOnPrompt {
     virtual int Generate_v0(int nJob, int flag = 0x0);
     virtual TOKEN_ID Sample_cpu(int idx = -1, bool isSorted = false);
     virtual TOKEN_ID Sample(int idx = -1, bool is_resampling = false);
-
+    virtual bool VerifyLogits(int flag=0x0);
     virtual void DisplayEmbd(bool input_echo, int n_consumed, int flag = 0x0);
 };
 typedef shared_ptr<GeneratOnPrompt> hGENERATOR;

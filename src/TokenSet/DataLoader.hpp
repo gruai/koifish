@@ -13,8 +13,8 @@
 #include "../ggex/GG_util.hpp"
 struct DictVAE;
 #include "../CLI_params.hpp"
+#include "../Utils/GST_obj.hpp"
 #include "../Utils/GST_rander.hpp"
-#include "../g_stddef.hpp"
 #include "TokenSet.hpp"
 using namespace std;
 // ----------------------------------------------------------------------------
@@ -35,8 +35,8 @@ class SampLoader;
 
 // the type of update each batch
 enum DL_BATCH_UPATE {
-    SAMPLEofSHARD,          //  SampLoader::Samp2Batch -> hBatch->Set(...);
-    BATCHofEMBED = 1        //  TokenEmbed::hBatch
+    SAMPLEofSHARD,    //  SampLoader::Samp2Batch -> hBatch->Set(...);
+    BATCHofEMBED = 1  //  TokenEmbed::hBatch
 };
 
 struct StepInfos {
@@ -69,10 +69,10 @@ struct BATCH_INPUT {
     //  host = TO<int>(hostToken), mask = TO<int>(hostMask);
     int *host = nullptr, *mask = nullptr;
     //  NLP_AutoRegressive::tokens_input->OverWrite(hBatch->hostToken);
-    //void* dev = nullptr;
+    // void* dev = nullptr;
 
     //  always point to last token when P_GENERATE
-    int tok_pos   = -1;
+    int tok_pos = -1;
     int CurToken() {
         assert(tok_pos >= 0 && host != nullptr);
         // assert(host[pos] < embed->nVocab);

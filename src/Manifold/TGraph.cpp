@@ -85,7 +85,7 @@ SelfAttention::SelfAttention(Fish* hG_, const std::string& key_, JSON::const_ite
         isQKNormal = true;
     }
 
-    hQuant = GeQuant::MakeInstance(this, name + "_quant",  0x0);
+    // hQuant = GeQuant::MakeInstance(this, name + "_quant", config.quant, 0x0);
 
     // if (hFish->config.quant.Type(name) != QUANT_MODE::NO_QUANT) {  // "layers.27.mlp.weight" wk.weight wq.weight wv.weight wo.weight ,"w2.weight","w3.weight"
     //     hQuant = std::make_shared<Q_JL<float, float>>(name + "_quant", SHAPE({head_dim, head_dim * 2}), 256, this, 0x0);
@@ -94,8 +94,8 @@ SelfAttention::SelfAttention(Fish* hG_, const std::string& key_, JSON::const_ite
     // dump_flag = -1;
     tpNormal = DEBUG.SelfAttention_noraml;
     //  nIn = shape[0], nOut = shape[1];
-    spQ  = {C_qkv, (int)(hG_->config.Q_dim(layer - 1))};
-    spKV = {C_qkv, (int)(hG_->config.KV_dim(layer - 1))};
+    spQ  = {C_qkv, (int)(hG_->config.Q_dim(layid - 1))};
+    spKV = {C_qkv, (int)(hG_->config.KV_dim(layid - 1))};
 }
 
 bool SelfAttention::Build(int flag_0) {
@@ -144,7 +144,7 @@ bool SelfAttention::Build(int flag_0) {
 
     BIT_SET(proj_cat.out->flags, GTensor::F_NOALLOC);  // memory trick as kGPT
     proj_cat.w->residual_scale = hFish->config.common.residual_scale;
-    if (layer > 6) {
+    if (layid > 6) {
         // Q.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);
         // K.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);
         // Lora of V+proj would slow convergence
@@ -279,8 +279,8 @@ hGensor SelfAttention::MyAttention(RLS_BP* ctx_, hGensor cur, int flag) {
     if (tpNormal == 1 /*&& n_embd_head>=1*/) {
         Qcur = ggml_rms_norm(ctx_, Qcur, 1.0e-5);
         Kcur = ggml_rms_norm(ctx_, Kcur, 1.0e-5);  // Vcur=ggml_rms_norm(ctx_,Vcur,1.0e-5);
-        gTN(Qcur, "%s.Q4", name.c_str());
-        gTN(Kcur, "%s.K4", name.c_str());  // gTN(Vcur,"%s.V4",name.c_str());
+        gTN(Qcur, "%s.Q04", name.c_str());
+        gTN(Kcur, "%s.K04", name.c_str());  // gTN(Vcur,"%s.V4",name.c_str());
     }
 
     if (tpTrans == LINEAR && 0) {  //  ???
@@ -813,7 +813,7 @@ static void ggml_graph_compute_thread_sync_task(int * task_phase, struct ggml_co
     }
 }*/
 
-bool GENSORS::has(hGensor gensor) {
+bool GENSOR_TOPU::has(hGensor gensor) {
     assert(nag.size() == infos.size());
     bool b1 = nag.find(gensor->name) != nag.end(), b2 = infos.find(gensor) != infos.end();
     if (b1 != b2) {
@@ -834,7 +834,7 @@ bool GENSORS::has(hGensor gensor) {
     return b2;
 }
 
-void GENSORS::Insert(hGensor gensor, const GENSOR_INFO& gi, int flag) {
+void GENSOR_TOPU::Insert(hGensor gensor, const GENSOR_INFO& gi, int flag) {
     auto key = gensor->name;
     if (strcmp(key, "model.norm.weight") == 0) {
         int debug = 0x0;
@@ -846,6 +846,8 @@ void GENSORS::Insert(hGensor gensor, const GENSOR_INFO& gi, int flag) {
     assert(infos.find(gensor) == infos.end());
     infos[gensor]    = gi;
     infos[gensor].sX = gensor->name;
+
+    gensor->ginfo = &(infos[gensor]);
 }
 /*
 

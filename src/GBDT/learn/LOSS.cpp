@@ -4,12 +4,10 @@ using namespace Grusoft;
 // LambdaRank FeatVec_LOSS::HT_lambda_;
 
 /*
-    LightGBM
-        $4.7 Applications and Metrics
-        default={l2 for regression}, {binary_logloss for binary classification},{ndcg for lambdarank},
-        $6.6 "metric to be evaluated on the evaluation sets in addition to what is provided in the training argument"
-        type=multi-enum, options=l1,l2,ndcg,auc,binary_logloss,binary_error...
-
+    $4.7 Applications and Metrics
+    default={l2 for regression}, {binary_logloss for binary classification},{ndcg for lambdarank},
+    $6.6 "metric to be evaluated on the evaluation sets in addition to what is provided in the training argument"
+    type=multi-enum, options=l1,l2,ndcg,auc,binary_logloss,binary_error...
 */
 void FeatVec_LOSS::Clear() {
     down.clear();

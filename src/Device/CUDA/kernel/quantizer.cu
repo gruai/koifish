@@ -12,8 +12,8 @@
 
 #include <cmath>
 
-#include "../../Tensor/GTensor.hpp"
-#include "../../Tensor/GeQuant.hpp"
+#include "../../../Tensor/GTensor.hpp"
+#include "../../../Tensor/GeQuant.hpp"
 #include "../cuda_common.h"
 #include "../g_float.hpp"
 #include "operator.cuh"
@@ -26,7 +26,7 @@ __global__ void CU_KMeans_asign(const T* data, const floatGama* centroids, int* 
     if (idx >= n)
         return;
 
-    float min_dist = FLT_MAX, a = CU_T2Float(data+idx);
+    float min_dist = FLT_MAX, a = CU_T2Float(data + idx);
     int best_cluster = 0;
     for (int cluster = 0; cluster < k; cluster++) {
         float diff = fabs(a - (float)(centroids[cluster]));
@@ -41,22 +41,24 @@ __global__ void CU_KMeans_asign(const T* data, const floatGama* centroids, int* 
 
 template <typename T>
 __global__ void CU_KMeans_update(const T* data, floatGama* centroids, const int* assignments, int* cluster_counts, int n, int k) {
-    int cluster = blockIdx.x * blockDim.x + threadIdx.x;
-    if (cluster >= k)
-        return;
+    /*  Some bug here
 
-    centroids[cluster] = 0.0f, cluster_counts[cluster] = 0;
-    for (int i = 0; i < n; i++) {
-        if (assignments[i] == cluster) {
-            atomicAdd(&centroids[cluster], (floatGama)CU_T2Float(data+i));
-            atomicAdd(&cluster_counts[cluster], 1);
+        int cluster = blockIdx.x * blockDim.x + threadIdx.x;
+        if (cluster >= k)
+            return;
+
+        centroids[cluster] = 0.0f, cluster_counts[cluster] = 0;
+        for (int i = 0; i < n; i++) {
+            if (assignments[i] == cluster) {
+                atomicAdd(&centroids[cluster], (floatGama)CU_T2Float(data+i));
+                atomicAdd(&cluster_counts[cluster], 1);
+            }
         }
-    }
-    // Compute new centroid (average)
-    int count = cluster_counts[cluster];
-    if (count > 0) {
-        centroids[cluster] /= count;
-    }
+        // Compute new centroid (average)
+        int count = cluster_counts[cluster];
+        if (count > 0) {
+            centroids[cluster] /= count;
+        }*/
 }
 
 // row-scaling  2 thrshold
@@ -175,7 +177,7 @@ __global__ void CU_X2ternary_(floatGama* gama, T* mat0, char* terns, int M, int 
 
 // row-scaling  1 thrshold
 template <class T>
-__global__ void CU_ternary2X_(floatGama* gama, const char* terns, T* mat0, int M, int N, int seed) {
+__global__ void CU_ternary2X_(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int seed) {
     int tid = threadIdx.x, idrow = blockIdx.x * blockDim.x + tid, bit = 0;
     if (idrow >= M)
         return;  // guard
@@ -188,7 +190,7 @@ __global__ void CU_ternary2X_(floatGama* gama, const char* terns, T* mat0, int M
     }
     T ta = (T)(average), tb = (T)(-average), t0 = (T)(0);
     // T ta = CU_Float2T<T>(average, seed), tb = CU_Float2T<T>(-average, seed);
-    const char* tern = terns + (idrow * N) / 8;
+    hBITARR tern = terns + (idrow * N) / 8;
     for (int k = 0; k < N; k += 8, tern++) {
         unsigned char tbyte = *tern;  // terns[(idrow * N + k) / 8];
 #pragma unroll
@@ -205,6 +207,121 @@ __global__ void CU_ternary2X_(floatGama* gama, const char* terns, T* mat0, int M
     }
 
     // __syncthreads();
+}
+
+// rc_normal - row-scaling
+template <class T>
+__global__ void CU_Q42X_(floatGama* gamas, const hBITARR quants, T* mat0, int M, int N, int rc_normal, int seed) {
+    int tid = threadIdx.x, idrow = blockIdx.x, bit = 0, npt = N / blockDim.x;
+    if (idrow >= M)
+        return;  // guard
+
+    size_t offset  = idrow * N + tid * npt;
+    T* x0          = mat0 + offset;
+    hBITARR q_row  = quants + offset / 2;
+    floatGama *lut = gamas + M + N + idrow * 16, *gamaCol = gamas + M + tid * npt;
+    floatGama sR = 1.0, sC = 1.0;
+    if (rc_normal > 0) {
+        sR = gamas[idrow];
+    }
+    for (int k = 0; k < npt / 2; k++, x0 += 2) {
+        BIT_8 id0 = ((q_row[k]) >> 4) & 0x0F, id1 = (q_row[k]) & 0x0F;
+        floatGama g0 = lut[id0] * sR, g1 = lut[id1] * sR;
+        if (rc_normal > 0) {
+            g0 *= gamaCol[2 * k];
+            g1 *= gamaCol[2 * k + 1];
+        }
+        *x0       = g0;  // CU_Float2T<T>(g0, seed);
+        *(x0 + 1) = g1;  // CU_Float2T<T>(g1, seed);
+    }
+}
+
+template <class T>
+__global__ void CU_Q42X_RTN(floatGama* gamas, const hBITARR quants, T* mat0, int M, int N, int rc_normal, int seed) {
+    int tid = threadIdx.x, idrow = blockIdx.x, bit = 0, npt = N / blockDim.x;
+    if (idrow >= M)
+        return;  // guard
+
+    size_t offset      = idrow * N + tid * npt;
+    T* x0              = mat0 + offset;
+    hBITARR q_row      = quants + offset / 2;
+    floatGama* gamaCol = gamas + M + tid * npt;
+    floatGama sR = 1.0, sC = 1.0, zero = gamas[M + N + idrow * 2], step = gamas[M + N + idrow * 2 + 1];
+    // zero += step/(floatGama)(2.0);
+    if (rc_normal > 0) {
+        sR = gamas[idrow];
+    }
+    for (int k = 0; k < npt / 2; k++, x0 += 2) {
+        BIT_8 id0 = ((q_row[k]) >> 4) & 0x0F, id1 = (q_row[k]) & 0x0F;
+        floatGama g0 = (zero + step * (floatGama)id0) * sR, g1 = (zero + step * (floatGama)id1) * sR;
+        if (rc_normal > 0) {
+            g0 *= gamaCol[2 * k];
+            g1 *= gamaCol[2 * k + 1];
+        }
+        *x0       = g0;  // CU_Float2T<T>(g0, seed);
+        *(x0 + 1) = g1;  // CU_Float2T<T>(g1, seed);
+    }
+}
+
+static constexpr uint8_t MASK_2BIT = 0x03;  // 00000011
+template <class T>
+__global__ void CU_Q22X_RTN(floatGama* gamas, const hBITARR quants, T* mat0, int M, int N, int rc_normal, int seed) {
+    int tid = threadIdx.x, idrow = blockIdx.x, bit = 0, npt = N / blockDim.x;
+    if (idrow >= M)
+        return;  // guard
+
+    size_t offset      = idrow * N + tid * npt;
+    T* x0              = mat0 + offset;
+    hBITARR q_row      = quants + offset / 4;
+    floatGama* gamaCol = gamas + M + tid * npt;
+    floatGama sR = 1.0, sC = 1.0, zero = gamas[M + N + idrow * 2], step = gamas[M + N + idrow * 2 + 1];
+    // zero += step/(floatGama)(2.0);
+    if (rc_normal > 0) {
+        sR = gamas[idrow];
+    }
+    for (int k = 0; k < npt / 4; k++, x0 += 4) {
+        BIT_8 id0    = static_cast<BIT_8>((q_row[k] >> 6) & MASK_2BIT);
+        BIT_8 id1    = static_cast<BIT_8>((q_row[k] >> 4) & MASK_2BIT);
+        BIT_8 id2    = static_cast<BIT_8>((q_row[k] >> 2) & MASK_2BIT);
+        BIT_8 id3    = static_cast<BIT_8>((q_row[k]) & MASK_2BIT);
+        floatGama g0 = (zero + step * (floatGama)id0) * sR, g1 = (zero + step * (floatGama)id1) * sR;
+        floatGama g2 = (zero + step * (floatGama)id2) * sR, g3 = (zero + step * (floatGama)id3) * sR;
+        if (rc_normal > 0) {
+            g0 *= gamaCol[4 * k], g1 *= gamaCol[4 * k + 1];
+            g2 *= gamaCol[4 * k + 2], g3 *= gamaCol[4 * k + 3];
+        }
+        *x0 = g0, *(x0 + 1) = g1;
+        *(x0 + 2) = g2, *(x0 + 3) = g3;
+    }
+}
+template <class T>
+__global__ void CU_Q22X_(floatGama* gamas, const hBITARR quants, T* mat0, int M, int N, int rc_normal, int seed) {
+    int tid = threadIdx.x, idrow = blockIdx.x, bit = 0, npt = N / blockDim.x;
+    if (idrow >= M)
+        return;  // guard
+
+    size_t offset  = idrow * N + tid * npt;
+    T* x0          = mat0 + offset;
+    hBITARR q_row  = quants + offset / 4;
+    floatGama *lut = gamas + M + N + idrow * 4, *gamaCol = gamas + M + tid * npt;
+    floatGama sR = 1.0, sC = 1.0;
+    if (rc_normal > 0) {
+        sR = gamas[idrow];
+    }
+    for (int k = 0; k < npt / 4; k++, x0 += 4) {
+        BIT_8 id0    = static_cast<BIT_8>((q_row[k] >> 6) & MASK_2BIT);
+        BIT_8 id1    = static_cast<BIT_8>((q_row[k] >> 4) & MASK_2BIT);
+        BIT_8 id2    = static_cast<BIT_8>((q_row[k] >> 2) & MASK_2BIT);
+        BIT_8 id3    = static_cast<BIT_8>((q_row[k]) & MASK_2BIT);
+        floatGama g0 = lut[id0] * sR, g1 = lut[id1] * sR;
+        floatGama g2 = lut[id2] * sR, g3 = lut[id3] * sR;
+        if (rc_normal > 0) {
+            g0 *= gamaCol[4 * k], g1 *= gamaCol[4 * k + 1];
+            g2 *= gamaCol[4 * k + 2], g3 *= gamaCol[4 * k + 3];
+        }
+        *x0 = g0, *(x0 + 1) = g1;
+        *(x0 + 2) = g2, *(x0 + 3) = g3;
+    }
 }
 
 #define WARPS_PER_BLOCK 32
@@ -461,7 +578,8 @@ template class Q_JL<float, float>;
 template class Q_JL<bf16, bf16>;
 
 template <typename T>
-float Q_Cluster<T>::Update(shared_ptr<GTensor> hTensor, int flag) {
+float Q_Cluster<T>::Update_KMeans(shared_ptr<GTensor> hTensor, int flag) {
+    assert(0);  // Deprecated
     size_t nEle = hTensor->size(), dGrid = CEIL_DIV(nEle, CU_T4B_MIDDLE);
     void* quant = hTensor->BeforeQuant(this);
     T* mat0     = TO<T>(hTensor);
@@ -480,34 +598,15 @@ float Q_Cluster<T>::Update(shared_ptr<GTensor> hTensor, int flag) {
         //     break;
         // }
     }
-    return this->imbalance;
+    return this->impurity;
 }
 template class Q_Cluster<bf16>;
 template class Q_Cluster<float>;
 
-template <typename T>
-float Q_SinkNormal<T>::Update(shared_ptr<GTensor> hTensor, int flag) {
-    size_t nEle = hTensor->size(), dGrid = CEIL_DIV(nEle, CU_T4B_MIDDLE);
-    void* quant = hTensor->BeforeQuant(this);
-    int nRow = hTensor->shape[0], nCol = hTensor->shape[1];
-    floatGama *rowStdDev = hTensor->gama_T(), *colStdDev = rowStdDev + nRow;
-
-    T* mat0 = TO<T>(hTensor);
-    for (int loop = 0; loop < this->nMostLoop; loop++) {
-        CU_RowStdDev<<<CEIL_DIV(nRow, CU_T4B_MIDDLE), CU_T4B_MIDDLE>>>(mat0, rowStdDev, nRow, nCol);
-        CU_ColStdDev<<<CEIL_DIV(nCol, CU_T4B_MIDDLE), CU_T4B_MIDDLE>>>(mat0, colStdDev, nRow, nCol);
-        // CU_DualScale<<<CEIL_DIV(M*N,CU_T4B_MIDDLE),CU_T4B_MIDDLE>>>(mat0, rowStdDev,colStdDev, M, N);
-        if (this->imbalance > 1.0)
-            break;
-    }
-    // CU_X2ternary_<<<CEIL_DIV(M*N,CU_T4B_MIDDLE),CU_T4B_MIDDLE>>>(mat0, rowStdDev,colStdDev, M, N);
-
-    hTensor->AfterQuant(this, typNUMBER::F8E5M2, nullptr);
-    return this->imbalance;
-}
-template class Q_SinkNormal<bf16>;
-template class Q_SinkNormal<float>;
-
 template __global__ void CU_ternary_online<bf16>(bf16* mat, int M, int N, int seed = 0x0);
-template __global__ void CU_ternary2X_<bf16>(floatGama* gama, const char* terns, bf16* mat0, int M, int N, int seed = 0x0);
+template __global__ void CU_ternary2X_<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int seed = 0x0);
+template __global__ void CU_Q42X_<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
+template __global__ void CU_Q22X_<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
+template __global__ void CU_Q42X_RTN<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
+template __global__ void CU_Q22X_RTN<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
 template __global__ void CU_X2ternary_<bf16>(floatGama* gama, bf16* mat0, char* terns, int M, int N, int bpe, bool isOverwrite = false);

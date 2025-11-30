@@ -25,35 +25,61 @@
     return 0;
 
 struct PY_ITEM {
-    char *Keys;
+    char* Keys;
     float Values;
-    char *text;
-    void *arr;
+    char* text;
+    void* arr;
+};
+
+namespace Grusoft {
+class GBRT;
+class ExploreDA;
+class FeatsOnFold;
+}  // namespace Grusoft
+#include "../include/LiteBOM_config.h"
+
+/*
+    Data on random trees
+*/
+struct DORT_wrap {
+    Grusoft::LiteBOM_Config config;
+    Grusoft::GBRT* hGBRT           = nullptr;
+    Grusoft::ExploreDA* hEDA_train = nullptr;
+    vector<Grusoft::FeatsOnFold*> merge_folds;
+    string merge_info;
+
+    DORT_wrap() {}
+
+    static DORT_wrap* From(void* mort_0, int flag = 0x0) {
+        DORT_wrap* mort = static_cast<DORT_wrap*>(mort_0);
+        return mort;
+    }
+    virtual ~DORT_wrap();
 };
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-PYMORT_DLL_API void *LiteMORT_init(PY_ITEM *params, int nParam, PY_DATASET_LIST *merge_list, int64_t flag);
-PYMORT_DLL_API void LiteMORT_clear(void *);
+PYMORT_DLL_API void* LiteMORT_init(PY_ITEM* params, int nParam, PY_DATASET_LIST* merge_list, int64_t flag);
+PYMORT_DLL_API void LiteMORT_clear(void*);
 
-PYMORT_DLL_API void LiteMORT_set_mergesets(void *, PY_DATASET_LIST *train, int64_t flag);
+PYMORT_DLL_API void LiteMORT_set_mergesets(void*, PY_DATASET_LIST* train, int64_t flag);
 
 // PYMORT_DLL_API void LiteMORT_set_feat(PY_ITEM* params, int nParam, int flag);
-PYMORT_DLL_API void LiteMORT_fit(void *, float *h_data, tpY *h_target, size_t nSamp, size_t ldS, float *eval_data, tpY *eval_target, size_t nEval, size_t flag);
-PYMORT_DLL_API void LiteMORT_predict(void *, float *X, tpY *y, size_t nFeat_0, size_t nSamp, size_t flag);
-PYMORT_DLL_API void LiteMORT_Imputer_f(float *X, tpY *y, size_t nFeat_0, size_t nSamp, size_t flag);
-PYMORT_DLL_API void LiteMORT_Imputer_d(double *X, tpY *y, size_t nFeat_0, size_t nSamp, size_t flag);
+PYMORT_DLL_API void LiteMORT_fit(void*, float* h_data, tpY* h_target, size_t nSamp, size_t ldS, float* eval_data, tpY* eval_target, size_t nEval, size_t flag);
+PYMORT_DLL_API void LiteMORT_predict(void*, float* X, tpY* y, size_t nFeat_0, size_t nSamp, size_t flag);
+PYMORT_DLL_API void LiteMORT_Imputer_f(float* X, tpY* y, size_t nFeat_0, size_t nSamp, size_t flag);
+PYMORT_DLL_API void LiteMORT_Imputer_d(double* X, tpY* y, size_t nFeat_0, size_t nSamp, size_t flag);
 // PYMORT_DLL_API void LiteMORT_EDA(void *, const float *X, const tpY *y, const size_t nFeat_0, const size_t nn, const size_t nValid,
 //	PY_ITEM* params, int nParam, const size_t flag);
 
 // PYMORT_DLL_API void LiteMORT_fit_1(void *, PY_COLUMN *train, PY_COLUMN *target, size_t nSamp, size_t nFeat_0, PY_COLUMN *eval, PY_COLUMN *eval_target, size_t
 // nEval, size_t flag);
-PYMORT_DLL_API void LiteMORT_fit_1(void *, PY_DATASET_LIST *train, PY_DATASET_LIST *eval, size_t flag);
+PYMORT_DLL_API void LiteMORT_fit_1(void*, PY_DATASET_LIST* train, PY_DATASET_LIST* eval, size_t flag);
 // PYMORT_DLL_API void LiteMORT_predict_1(void *, PY_COLUMN *X, PY_COLUMN *y, size_t nFeat_0,size_t nSamp,  size_t flag);
-PYMORT_DLL_API void LiteMORT_predict_1(void *, PY_DATASET_LIST *predict, size_t flag);
-PYMORT_DLL_API void cpp_test(void *, PY_DATASET *dat);
+PYMORT_DLL_API void LiteMORT_predict_1(void*, PY_DATASET_LIST* predict, size_t flag);
+PYMORT_DLL_API void cpp_test(void*, PY_DATASET* dat);
 
 #ifdef __cplusplus
 }

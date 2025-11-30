@@ -16,9 +16,3 @@ set(mort_sources ${PWD}/LiteMORT.cpp ${PWD}/python/pyMORT_DLL.cpp
     PARENT_SCOPE )
 # add_compile_options(-Wunused -Wextra -Wcast-qual -Wno-unused-variable -Wunused-parameter -D_USE_OPENBLAS_)
 
-# SET(SOURCE_FILES ${SOURCE_DIR}/LiteMORT.cpp ${SOURCE_DIR}/python/pyMORT_DLL.cpp)
-# add_subdirectory(${SOURCE_DIR}/data_fold)
-# add_subdirectory(${SOURCE_DIR}/tree)
-# add_subdirectory(${SOURCE_DIR}/util)
-# add_subdirectory(${SOURCE_DIR}/learn)
-# add_subdirectory(${SOURCE_DIR}/EDA)

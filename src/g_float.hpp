@@ -8,17 +8,13 @@
 
 #pragma once
 
-#include <assert.h>
-#include <float.h>
-#include <math.h>
-#include <stdint.h>
-#include <string.h>
-
 #include <algorithm>
+#include <cassert>
 #include <cfloat>
 #include <cstdint>
 #include <string>
 #include <typeinfo>
+#include <vector>
 
 /*
     Type of Tokens
@@ -29,13 +25,26 @@ using TOKEN_ID = uint32_t;
 // using TOKEN_ID = uint16_t;
 const TOKEN_ID TOKEN_MAX = TOKEN_ID(-1);
 
+// 8-bit bytes
+using hBITARR = uint8_t*;
+using BIT_8   = uint8_t;
+
+using SHAPE = std::vector<int>;
+
 //
 using floatI = float;
 
-// 1 sign, 5 exponent, 1 implicit and 2 explicit mantissa bits, just like _nv_fp8_e5m2
-using f8e5   = uint8_t;  
-   
+//  __fp16 is not part of standard C++!
+// using half = __fp16;
 
+// 1 sign, 5 exponent, 1 implicit and 2 explicit mantissa bits, just like _nv_fp8_e5m2
+using f8e5 = uint8_t;
+
+struct FLOAT_META {
+    int bis = 0;
+    std::string name;
+    std::string alias;
+};
 /*
     Type of numbers
 */
@@ -59,12 +68,36 @@ enum class typNUMBER : uint8_t {
     F8E5M2,  //  1 sign, 5 exponent, 1 implicit and 2 explicit mantissa bits
     F8E4M3,  //  1 sign, 4 exponent, 1 implicit and 3 explicit mantissa bits
 
+    Q4,
+    Q3,
+    Q2,
+
     T_SIGN,      //  ternary {-1, 0, 1}
     T_BINARY,    //  binary {-1,  1}
     T_BINARY_3,  //  binary {-1,  1} from three partition
     T_BINARY_TILE,
 
     COUNT = 39,
+};
+
+inline FLOAT_META K_FLOATS[] = {
+    {32, "F32"},           // F32
+    {16, "F16"},           // F16
+    {8, "I8"},             // I8
+    {16, "I16"},           // I16
+    {32, "I32"},           // I32
+    {64, "I64"},           // I64
+    {64, "F64"},           // F64
+    {16, "BF16"},          // BF16
+    {8, "F8E5M2"},         // F8E5M2
+    {8, "F8E4M3"},         // F8E4M3
+    {4, "Q4"},             // Q4
+    {3, "Q3"},             // Q3
+    {2, "Q2"},             // Q2
+    {1, "T_SIGN"},         // T_SIGN
+    {1, "T_BINARY"},       // T_BINARY
+    {1, "T_BINARY_3"},     // T_BINARY_3
+    {0, "T_BINARY_TILE"},  // T_BINARY_TILE
 };
 
 struct tpBIT2 {};
@@ -134,16 +167,6 @@ inline typNUMBER tpNumOf(const std::string& dtype_str) {
     return type;
 }
 
-/*
-static std::map <typNUMBER, std::vector <std::string> > name2TP = {
-    {typNUMBER::T_SIGN, {"ternary"}}, {typNUMBER::T_BINARY, {"binary"}}
-    {typNUMBER::F32, {"float32", "fp32"}},
-    {typNUMBER::F16, {"float16", "fp16", "half"}},
-    {typNUMBER::BF16, {"bfloat32", "bf32"}}, {typNUMBER::I16, {"int16"}},
-    {typNUMBER::I8, {"int8"}},
-    {typNUMBER::F8E5M2, {"float8", "fp8", "fp8_e5m2"}},{typNUMBER::F8E4M3, {"float8", "fp8", "fp8_e4m3"}},
-};*/
-
 #undef ENABLE_BF16
 #undef ENABLE_FP32
 #undef ENABLE_FP16
@@ -197,7 +220,6 @@ using floatGrad   = __nv_bfloat16;
 using floatFFN    = __nv_bfloat16;
 using floatLogits = __nv_bfloat16;
 
-
 using bf16   = __nv_bfloat16;
 using bf16_2 = __nv_bfloat162;
 
@@ -208,14 +230,18 @@ template <>
 inline typNUMBER TYPE_<__nv_bfloat16>() {
     return typNUMBER::BF16;
 }
+template <>
+inline typNUMBER TYPE_<half>() {
+    return typNUMBER::F16;
+}
 
 #else
 
 #endif
 
-
 // more datatypes on both floatX & float
-using floatGama   = floatX;
+using floatGama = floatX;
+// using floatGama   = half;
 // using floatGama   = float;
 
 #include "g_float_cpu.hpp"
@@ -226,11 +252,11 @@ inline float T2Float(const T* a0) {
 
     if (typeid(T) == typeid(half)) {
         a = __half2float(*(half*)a0);
-    } else if (typeid(T) == typeid(nv_bfloat16)) {
-        a = __bfloat162float(*(nv_bfloat16*)a0);
     } else if (typeid(T) == typeid(float)) {
         a = *a0;
-    } else if (typeid(T) == typeid(int)) {
+    } else if (typeid(T) == typeid(double)) {
+        a = *a0;
+    }else if (typeid(T) == typeid(int)) {
         a = *a0;
     } else {
         assert(0);
@@ -249,6 +275,7 @@ inline float T2Float<tpBIT2>(const tpBIT2* a0, size_t offset) {
     assert(0x0);
     return 0.0;
 }
+
 /*
     Lite & Smart conversion from CALM
     1.	__gcc_fp16 is compiler-dependent (GCC/Clang), IEEE 754-2008 binary16 (1 sign bit, 5 exponent bits, 10 mantissa bits).
@@ -284,26 +311,41 @@ inline float T2Float<__nv_fp8_e5m2>(const __nv_fp8_e5m2* a0) {
     float a = T2Float<f8e5>((const f8e5*)a0);
     return a;
 }
+template <>
+inline float T2Float<nv_bfloat16>(const nv_bfloat16* a0) {
+/*  trick*/
+    uint16_t x =*((uint16_t*)(a0));
+    uint32_t tmp = static_cast<uint32_t>(x) << 16;
+    float a;
+    memcpy(&a, &tmp, sizeof(a));
+
+    // float a =  __bfloat162float(*a0);
+    return a;
+}
 template <typename T>
 inline void T2Float_arr(const size_t N, const T* in, float* out) {
     for (size_t i = 0; i < N; i++) {
         out[i] = T2Float(in + i);
     }
 }
+template <typename T>
+inline float T2Float_delta( const T* dat0, const T* dat1, const size_t pos, int flag=0x0) {
+    T delta = dat0[pos] - dat1[pos];
+    return T2Float(&delta);
+}
 
 template <typename T>
 inline T Float2T(const float* a0) {
     assert(!isnan(*a0) && !isinf(*a0));
     T a = T(*a0);
-    /*if(typeid(T)==typeid(half)){
-        a = (half)__float2half(*a0);
-    } else
-    if(typeid(T)==typeid(nv_bfloat16)) {
-        a = (nv_bfloat16)__float2bfloat16(*a0);
-    }*/
     return a;
 }
-
+template <>
+inline bf16 Float2T<bf16>(const float* a0) {
+    assert(!isnan(*a0) && !isinf(*a0));
+    bf16 out = (nv_bfloat16)__float2bfloat16(*a0);
+    return out;
+}
 template <>
 inline f8e5 Float2T<f8e5>(const float* a0) {
     assert(!isnan(*a0) && !isinf(*a0));
@@ -320,6 +362,22 @@ template <>
 inline __nv_fp8_e5m2 Float2T<__nv_fp8_e5m2>(const float* a0) {
     f8e5 a = Float2T<f8e5>(a0);
     return (__nv_fp8_e5m2)(a);
+}
+
+inline void Float2T(typNUMBER typ, void* arr, size_t offset, float a) {
+    switch (typ) {
+        case typNUMBER::BF16: {
+            bf16 out               = Float2T<bf16>(&a);
+            ((bf16*)(arr))[offset] = out;
+            break;
+        }
+        case typNUMBER::F32:
+            ((float*)(arr))[offset] = a;
+            break;
+        default:
+            assert(0);
+            break;
+    }
 }
 
 //  Deprecated!!!   byte per element of this type,  (maybe decimals rather than integers!)
@@ -393,20 +451,32 @@ struct FP8E5M2_LUT {
         -416.0,       -448.0,       -480};
 };
 
-void matmul_unscaled(float* xout, float* x, float* w, int n, int d);
-void matmul_unscaled(float* xout, float* x, __gcc_fp16* w, int n, int d);
-void matmul_unscaled(float* xout, float* x, f8e5* w, int n, int d);
+struct Q4_LUT {
+    float table[16] = {-1.0,
+                       -0.6961928009986877,
+                       -0.5250730514526367,
+                       -0.39491748809814453,
+                       -0.28444138169288635,
+                       -0.18477343022823334,
+                       -0.09105003625154495,
+                       0.0,
+                       0.07958029955625534,
+                       0.16093020141124725,
+                       0.24611230194568634,
+                       0.33791524171829224,
+                       0.44070982933044434,
+                       0.5626170039176941,
+                       0.7229568362236023,
+                       1.0};
+};
 
-void S_matmul(float* xout, float* x, float* w, int n, int d, const int* block_size, float* scale);
-void S_matmul(float* xout, float* x, __gcc_fp16* w, int n, int d, const int* block_size, float* scale);
-void S_matmul(float* xout, float* x, f8e5* w, int n, int d, const int* block_size, float* scale);
+struct Q3_LUT {
+    float table[8] = {-1.0, -0.5350227355957031, -0.2469314038753510, 0.0, 0.1833375245332718, 0.3819939494132996, 0.6229856610298157, 1.0};
+};
 
-float rmsnorm(float* o, float* x, float* weight, int size, float eps, bool ln);
-float rmsnorm(float* o, float* x, float* weight, int size, float eps);
+void BIT_SET_k(hBITARR array, size_t offset, BIT_8 elem, int bits);
+BIT_8 BIT_GET_k(hBITARR array, size_t offset, int bits);
 
-void rope(float* vec, int d, int head_dim, int pos, float theta, int rotary_dim);
-void rope(float* buf, float* vec, int d, int head_dim, int pos, float theta);
-void rope(float* buf, __gcc_fp16* vec, int d, int head_dim, int pos, float theta);
 #if defined(_USE_CUDA_FLOAT_)
 #else
 

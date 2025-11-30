@@ -339,9 +339,9 @@ int Fish::SAFETENSOR2Gensors(const std::string& path, safetensors::safetensors_t
 
         if (G_Has_(key, config.model.skip_st))
             continue;
-        if (G_Has_(key, {"model.embed_tokens.weight"}) == 0) {
-            DEBUG_BREAK;  
-        }
+        if (G_Has_(key, {"model.layers.19.mlp.down_proj.weight"})) {  // model.embed_tokens.weight
+            DEBUG_HERE;
+        } 
         hGensor target = GetGensor(key);  //  "model.embed.weight"    model.layers.0.attn_norm.weight
         if (target == nullptr) {
             _ERROR("\t[SERIAL] Failed @%s!\n", key.c_str());
@@ -352,8 +352,6 @@ int Fish::SAFETENSOR2Gensors(const std::string& path, safetensors::safetensors_t
         if (target->SerialJSON(key, jdesc, (void*)databuffer, hst->mmap_size) != 0) {
             return false;
         }
-        if (ginfo.hNeron->hQuant != nullptr)
-            ginfo.hNeron->hQuant->Update(target);
 
         if (DUMP() || config.dumpSwitch.tensor_load > 0) {
             tensor.Dump("  >>>>  " + key, databuffer);
@@ -528,6 +526,8 @@ bool Fish::HF_Serialize(bool isSave, int flag) {
         }
     }
     _INFO(">>>>>> HF_Serialize load@\"%s\" nSerialT=%d iter=%d\n", config.model.sCardPath.c_str(), nSerialT, flag);
+    // if(!config.quant.filter_MIQ.empty())
+    //     throw SafeExit("", KOIFISH_EXIT_DEBUG, SafeExit::ExitReason::SYSTEM_FAILURE, __func__);
     return true;
 }
 
@@ -640,30 +640,37 @@ bool MODEL_CARD::InitChatTemplate(CLI_params* hConfig, int flag) {
 
     return true;
 }
-bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, int flag) {
-    n_layers = hConfig->nLayer();
-    for (int i = 0; i < n_layers; i++) {
-        int nH = hConfig->n_head(i), nF = hConfig->n_ff(i);
-        assert(nH > 0 && nF > 0);
+bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, const std::string& sCardPath_0, int flag) {
+    bool isInitFromPath = !sCardPath_0.empty();
+    int head_dim = -1, n_heads = -1, n_kv_heads = -1, n_FF = -1;
+    if (!isInitFromPath) {
+        sTokenBinPath = "/home/cys/rnd/lic/assets/tokenizer_151936.bin";
+        n_layers      = hConfig->nLayer();
+        for (int i = 0; i < n_layers; i++) {
+            int nH = hConfig->n_head(i), nF = hConfig->n_ff(i);
+            assert(nH > 0 && nF > 0);
+        }
+
+        string sTyp = jKVs(jConfig, {"model", "datatype", "weight"}, string(""));
+        if (!sTyp.empty())
+            tpWeight = tpNumOf(sTyp);
+        // sTyp = jKVs(jConfig, {"model", "datatype", "embed"}, string(""));
+        // if (!sTyp.empty())
+        //     tpEmbed = tpNumOf(sTyp);
+        head_dim = hConfig->head_dim();
+        n_heads = hConfig->n_head(), n_kv_heads = hConfig->n_head_kv();
+        // seq_len = hConfig->n_ctx_orig();
+
+        sCardPath = jKV(jConfig, {"model", "card"}, sCardPath);
+    } else {
+        sCardPath = sCardPath_0;
     }
-
-    string sTyp = jKVs(jConfig, {"model", "datatype", "weight"}, string(""));
-    if (!sTyp.empty())
-        tpWeight = tpNumOf(sTyp);
-    // sTyp = jKVs(jConfig, {"model", "datatype", "embed"}, string(""));
-    // if (!sTyp.empty())
-    //     tpEmbed = tpNumOf(sTyp);
-    int head_dim = hConfig->head_dim();
-    int n_heads = hConfig->n_head(), n_kv_heads = hConfig->n_head_kv();
-    // seq_len = hConfig->n_ctx_orig();
-
-    sCardPath = jKV(jConfig, {"model", "card"}, sCardPath);
     if (sCardPath.empty()) {
         return false;
     }
     string jPath = sCardPath + "config.json";
     LoadJsonFile(jPath, jModelParam);
-    sTokenPath = sCardPath + "tokenizer.json";
+    sTokenJsonPath = sCardPath + "tokenizer.json";
     // LoadJsonFile(sTokenPath,jTokenizer);                             // }
 
     if (jModelParam.empty()) {
@@ -673,29 +680,34 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, int flag)
         if (isEmbedWeightTying) {
             skip_st.push_back("lm_head.weight");  //  so strange: Qwen/Qwen3-0.6B has this & unsloth/Qwen3-0.6B-Base remove this
         }
-        model_type          = jKV(jModelParam, {"model_type"}, model_type);
+        model_type = jKV(jModelParam, {"model_type"}, model_type);
+        assert(model_type != "");
         num_attention_heads = jKV(jModelParam, {"num_attention_heads"}, n_heads);
         num_key_value_heads = jKV(jModelParam, {"num_key_value_heads"}, n_kv_heads);
-        assert(num_attention_heads == n_heads && num_key_value_heads == n_kv_heads);
+
         int hd = jKV(jModelParam, {"head_dim"}, head_dim);
         if (hd != head_dim) {
             for (auto& lay : layerps) {
                 lay._head_dim = hd;
             }
         }
-        if (model_type == "")
-            sCardPath = "";
+        vocab_size           = jKV(jModelParam, {"vocab_size"}, vocab_size);
+        torch_dtype          = jKV(jModelParam, {"torch_dtype"}, torch_dtype);
+        transformers_version = jKV(jModelParam, {"transformers_version"}, transformers_version);
+        bos_token_id         = jKV(jModelParam, {"bos_token_id"}, bos_token_id);
+        eos_token_id         = jKV(jModelParam, {"eos_token_id"}, eos_token_id);
+        rope_theta           = jKV(jModelParam, {"rope_theta"}, rope_theta);
+        hidden_size          = jKV(jModelParam, {"hidden_size"}, hidden_size);
+        intermediate_size    = jKV(jModelParam, {"intermediate_size"}, intermediate_size);
+        max_pos_embeddings   = jKV(jModelParam, {"max_position_embeddings"}, max_pos_embeddings);
+        // rotary_dim           = jKVs(jModelParam, {"rope_scaling"}, rotary_dim);
+
+        if (!isInitFromPath)
+            assert(num_attention_heads == n_heads && num_key_value_heads == n_kv_heads);
         else {
-            vocab_size           = jKV(jModelParam, {"vocab_size"}, vocab_size);
-            torch_dtype          = jKV(jModelParam, {"torch_dtype"}, torch_dtype);
-            transformers_version = jKV(jModelParam, {"transformers_version"}, transformers_version);
-            bos_token_id         = jKV(jModelParam, {"bos_token_id"}, bos_token_id);
-            eos_token_id         = jKV(jModelParam, {"eos_token_id"}, eos_token_id);
-            rope_theta           = jKV(jModelParam, {"rope_theta"}, rope_theta);
-            hidden_size          = jKV(jModelParam, {"hidden_size"}, hidden_size);
-            intermediate_size    = jKV(jModelParam, {"intermediate_size"}, intermediate_size);
-            max_pos_embeddings   = jKV(jModelParam, {"max_position_embeddings"}, max_pos_embeddings);
-            // rotary_dim           = jKVs(jModelParam, {"rope_scaling"}, rotary_dim);
+            n_layers         = jKV(jModelParam, {"num_hidden_layers"}, n_layers);
+            hConfig->nLayerX = n_layers;
+            for (int i = 0; i < n_layers; i++) layerps.push_back(MODEL_CARD::LAY_PARAM(num_attention_heads, num_key_value_heads, hd, intermediate_size));
         }
 
         InitChatTemplate(hConfig);
@@ -721,7 +733,7 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, int flag)
             break;
     }
 
-    return empty();
+    return !empty();
 }
 
 /*Deprecated*/

@@ -17,16 +17,15 @@ option(K_USE_CCACHE                 "KOIFISH: use ccache if available"       ON)
 option(K_USE_GGML                   "KOIFISH: use GGML libs"        OFF)
 OPTION(K_USE_OPENMP                 "KOIFISH: Enable OpenMP"                 ON)
 OPTION(K_USE_OPENBLAS               "KOIFISH: Enable OpenBLAS"               OFF)
-OPTION(K_USE_GBDT                   "KOIFISH: Enable Gradient boosting trees"               OFF)
+OPTION(K_USE_GBDT                   "KOIFISH: Enable Gradient boosting trees"               ON)
 OPTION(K_USE_EIGEN                  "KOIFISH: Enable Eigen lib"               OFF)
 OPTION(K_TESTING                    "KOIFISH: Do some testing"               OFF)
-# option(K_WANDB                      "KOIFISH: wandb support"        OFF)
 
-# set (CMAKE_C_FLAGS "-std=c11")
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 # set (CMAKE_C_FLAGS_DEBUG "$ENV{CFLAGS} -O0 -g2 -ggdb")
 # set (CMAKE_C_FLAGS_RELEASE "$ENV{CFLAGS} -O3")
-
-# set (CMAKE_CXX_FLAGS "-std=c++11")
 # set (CMAKE_CXX_FLAGS_DEBUG "$ENV{CXXFLAGS} -O0 -g2 -ggdb")
 # set (CMAKE_CXX_FLAGS_RELEASE "$ENV{CXXFLAGS} -O3")
 
@@ -68,7 +67,7 @@ if (K_USE_CCACHE)
     endif ()
 endif()
 
-set(DELTA_cc ${DELTA_cc} -mf16c -mavx2 -mfma -std=c++20)
+set(DELTA_cc ${DELTA_cc} -mf16c -mavx2 -mfma)
 # if (K_WANDB)
 #     add_subdirectory(src/pybind11)
 #     set(DELTA_LIB pybind11::embed)
@@ -105,8 +104,8 @@ if(K_USECUDA)
     find_package(CUDAToolkit)
     if (CUDAToolkit_FOUND)
         # set(cdir _cuda)
-        # set(CMAKE_CUDA_ARCHITECTURES "80;86;87;89")  #BF16  Ref:    https://arnon.dk/matching-sm-architectures-arch-and-gencode-for-various-nvidia-cards/
-        set(CMAKE_CUDA_ARCHITECTURES "80") 
+        # set(CMAKE_CUDA_ARCHITECTURES "80;86;87;89")  BF16  Ref:    https://arnon.dk/matching-sm-architectures-arch-and-gencode-for-various-nvidia-cards/
+        set(CMAKE_CUDA_ARCHITECTURES "80;89") 
         add_compile_definitions(__USE_CUDA__)
         message(STATUS "CUDAA ARCH=${CMAKE_CUDA_ARCHITECTURES} DIR=${CUDA_TOOLKIT_ROOT_DIR}")
         enable_language(CUDA)
@@ -186,19 +185,20 @@ add_subdirectory(src/Device)
 add_subdirectory(src/ggex)
 add_subdirectory(src/Models)
 add_subdirectory(src/Utils)
-
 add_subdirectory(src/TokenSet)
 
 set(sources   ${TGraph_sources} ${util_sources} ${tensor_sources} ${kernel_sources} ${cheby_sources} ${Fuzi_sources} ${ggex_sources} ${device_sources} ${model_sources} 
     ${token_sources} ${mort_sources} ${blas_sources} ${TEST_SRCS} )
 add_executable(koifish ${CMAKE_CURRENT_SOURCE_DIR}/src/koifish.cpp ${sources} )
 add_executable(bubble ${CMAKE_CURRENT_SOURCE_DIR}/src/bubble.cpp ${sources} )
+add_executable(pangpi ${CMAKE_CURRENT_SOURCE_DIR}/src/pangpi.cpp ${sources} )
 message(STATUS "KOIFISH sources=${sources}")
 
 
-foreach(prog koifish bubble)    
+foreach(prog koifish bubble pangpi)    
     install(TARGETS ${prog} RUNTIME)
-    target_include_directories(${prog} PRIVATE ${CMAKE_SOURCE_DIR}/src/Manifold/ ${CMAKE_SOURCE_DIR}/src/TokenSet/ ${CMAKE_SOURCE_DIR}/src/Utils/ ${CMAKE_SOURCE_DIR}/src/Device/CUDA 
+    target_include_directories(${prog} PRIVATE ${CMAKE_SOURCE_DIR}/src/Manifold/ ${CMAKE_SOURCE_DIR}/src/TokenSet/ ${CMAKE_SOURCE_DIR}/src/Utils/ ${CMAKE_SOURCE_DIR}/src/Device/CUD
+A 
         ${GG_INC} ${CUDA_INC} ${MORE_INC} )
 
     target_link_libraries(${prog} PRIVATE ${GG_LIB} ${CMAKE_THREAD_LIBS_INIT} ${OPENBLAS_LIB} ${DELTA_LIB} ${CUDA_LIB} ${GFLAGS_LIBRARIES} pthread )
@@ -209,10 +209,12 @@ endforeach(prog)
 
 if (K_TESTING)
     add_subdirectory(tests)
+    add_subdirectory(tests/fp6)
     find_package(gflags REQUIRED)
-    add_executable(k_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_main.cpp ${sources} )
+    add_executable(k_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_main.cpp ${sources} ${FP6_sources} )
     foreach(prog k_test )    
-        target_include_directories(${prog} PRIVATE ${CMAKE_SOURCE_DIR}/src/Manifold/ ${CMAKE_SOURCE_DIR}/src/TokenSet/ ${CMAKE_SOURCE_DIR}/src/Utils/ ${CMAKE_SOURCE_DIR}/src/Device/CUDA 
+        target_include_directories(${prog} PRIVATE ${CMAKE_SOURCE_DIR}/src/Manifold/ ${CMAKE_SOURCE_DIR}/src/TokenSet/ ${CMAKE_SOURCE_DIR}/src/Utils/ ${CMAKE_SOURCE_DIR}/src/Device
+/CUDA 
             ${GG_INC} ${CUDA_INC} ${MORE_INC} )
 
         target_link_libraries(${prog} PRIVATE ${GG_LIB} ${CMAKE_THREAD_LIBS_INIT} ${OPENBLAS_LIB} ${DELTA_LIB} ${CUDA_LIB} ${GFLAGS_LIBRARIES} pthread )

@@ -15,7 +15,7 @@ The following table lists some tricks and its working status.
 | Sparse model    |    🌱   |  ★ ★ ★ ☆ ☆     ||
 | Muon    |    🌿   |     ||
 | Evolutionary Optimization |    🧪   |  ★ ★ ★ ★ ☆    ||
-| Adaptive quantization |    🌿   |      ||
+| Adaptive quantization |    🧪   |  ★ ★ ☆ ☆ ☆    ||
 
 Note 1.  The meaning of symbols for maturity 
 1. 🌱 Prototype      

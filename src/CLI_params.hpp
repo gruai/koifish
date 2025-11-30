@@ -237,7 +237,7 @@ class MODEL_CARD {
     // MODEL_ENSEMBLE ensemble = Fuyou_params::FUYOU_BEST;
     ACTIVATION_FUNC fActFFN = SWIG, fActSLP = SWIG;
 
-    std::string sCardPath = "", sTokenPath = "";
+    std::string sCardPath = "", sTokenJsonPath = "", sTokenBinPath = "";
     std::string sArch, torch_dtype, transformers_version, model_type;
     std::string act_type, norm_type;
     typNUMBER tpWeight = typNUMBER::BF16, tpGradient = typNUMBER::BF16, tpActivation = typNUMBER::BF16;
@@ -294,7 +294,7 @@ class MODEL_CARD {
     MODEL_CARD();
     // virtual bool OnJsonCALM(CLI_params* hConfig, const std::string& path, const JSON& meta, int flag = 0X0);
     // more param from HF's "model_card"
-    virtual bool InitHugFace(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
+    virtual bool InitHugFace(CLI_params* hConfig, const JSON& jConfig, const std::string& sCardPath, int flag = 0x0);
     virtual bool InitChatTemplate(CLI_params* hConfig, int flag = 0x0);
     bool empty() { return sCardPath.empty(); }
     void Dump(int typ);
@@ -317,7 +317,8 @@ enum QUANT_MODE {
     RTN_3,
     RTN_2,
 
-    SINQ,      // Sinkhorn-Normalized Quantization
+    MIQ,  // Minimise impurity
+
     KV_JL,     //  Johnson-Lindenstrauss (JL) transform
     KV_AQUA,   //  https://arxiv.org/pdf/2501.19392
     KV_SQUAT,  //  Subspace-orthogonal KV cache quantization   https://arxiv.org/pdf/2503.24358
@@ -332,11 +333,27 @@ enum QUANT_ALG {
     W_NOSCALE  //
 };
 struct QUANT_CARD {
+    int bits = 4;
+    SHAPE spMost;
+
+    enum DYNAMIC_MODE { NO_DYNAMIC };
+    DYNAMIC_MODE dynamic = NO_DYNAMIC;
+    // dynamic & adpative, only set type at runtime
+    QUANT_MODE type = NO_QUANT;
+    QUANT_MODE TypeOf(std::string name, int flag = 0);
+
     std::vector<std::string> filter_KVcache;
-    std::vector<std::string> filter_SINQ;
+    std::vector<std::string> filter_MIQ;
     std::vector<std::string> filter_WeightF8Ex;
 
-    QUANT_MODE Type(std::string name, int flag = 0);
+    
+    virtual bool isValid()  {
+        if(bits<0 || bits>8)
+            return false;
+        return true;
+    }
+
+    std::size_t Hash(const QUANT_CARD&params, const std::type_info& ti, const std::string& desc) const;
 };
 
 struct ADAM_params_ {

@@ -10,6 +10,21 @@
 
 #include "../Manifold/gLLM.hpp"
 
+void matmul_unscaled(float* xout, float* x, float* w, int n, int d);
+void matmul_unscaled(float* xout, float* x, __gcc_fp16* w, int n, int d);
+void matmul_unscaled(float* xout, float* x, f8e5* w, int n, int d);
+
+void S_matmul(float* xout, float* x, float* w, int n, int d, const int* block_size, float* scale);
+void S_matmul(float* xout, float* x, __gcc_fp16* w, int n, int d, const int* block_size, float* scale);
+void S_matmul(float* xout, float* x, f8e5* w, int n, int d, const int* block_size, float* scale);
+
+float rmsnorm(float* o, float* x, float* weight, int size, float eps, bool ln);
+float rmsnorm(float* o, float* x, float* weight, int size, float eps);
+
+void rope(float* vec, int d, int head_dim, int pos, float theta, int rotary_dim);
+void rope(float* buf, float* vec, int d, int head_dim, int pos, float theta);
+void rope(float* buf, __gcc_fp16* vec, int d, int head_dim, int pos, float theta);
+
 Mistral::Mistral(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
     assert(arch == MODEL_ARCH::NLP_MISTRAL);
     config.model.isSLPBias    = false;

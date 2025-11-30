@@ -13,8 +13,8 @@
 #include <filesystem>  // C++17
 
 #include "../g_float.hpp"
-#include "../g_stddef.hpp"
 #include "GST_log.hpp"
+#include "GST_obj.hpp"
 #include "GST_os.hpp"
 
 int GST_util::dump = 10;
@@ -59,6 +59,9 @@ double SUM::tLoadData = 0.0, SUM::tLoadParam = 0.0, SUM::tEval_1 = 0.0, SUM::tEv
 int SUM::nInitParam = 0, SUM::nSaveParam = 0, SUM::nLoadParam = 0, SUM::nDogLeg = 0;
 int SUM::nzLoadParam = 0, SUM::nzSaveParam = 0;
 std::vector<MEM_USAGE> SUM::mems;
+
+int SUM::nQuantTensor = 0;
+size_t SUM::szQuantBits = 0;
 
 size_t MEM_USAGE::szA = 0, MEM_USAGE::szW = 0, MEM_USAGE::szG = 0, MEM_USAGE::szMoment = 0, MEM_USAGE::szTemp = 0, MEM_USAGE::szOther = 0;
 MEM_USAGE::MEM_USAGE(size_t sz_, string d_, void* hData_, int flag) : sz(sz_), desc(d_), hData(hData_) {
@@ -453,4 +456,34 @@ std::vector<std::string> FilesOfDir(const std::string& path, const std::vector<s
     std::sort(files.begin(), files.end());
 
     return files;
+}
+
+void PrintQ4(const char* title, const hBITARR src, int n1, int n2, int n3, int n4, int flag) {
+    size_t nElem = (size_t)(n1)*n2 * n3 * n4/2, i, nz = 0, nEach = 2;
+    if (nElem == 0)
+        return;
+    assert(src != nullptr);
+    // if(strlen(title)>0) _INFO("%s\n", title);
+    float sum = 0.0, a1 = 16, a0 = 0;
+    BIT_8 hi,lo;
+    double len = 0.0, sum2 = 0.0;
+    for (i = 0; i < nElem; i++) {
+        hi = ((src[i]) >> 4) & 0x0F;
+        lo = (src[i]) & 0x0F;
+        if (i < nEach || i >= nElem - nEach || fabs(i - nElem / 2) <= nEach)
+            _INFO("%d %d ", hi,lo);
+        if (i == nEach || i == nElem - nEach - 1)
+            _INFO("...");
+        sum += fabs(hi+lo);
+        sum2 += hi*hi+lo*lo;
+        // if (a == 0)
+        //     nz++;
+        // a1 = std::max(a1, a);
+        // a0 = std::min(a0, a);
+    }
+    assert(!isnan(sum2) && !isinf(sum2));
+    len = sqrt(sum2 / nElem);
+    //  printf output is only displayed if the kernel finishes successfully,  cudaDeviceSynchronize()
+    _INFO("\t\"%s\" |avg|=%g(%ld) avg_len=%g sum2=%g [%f,%f] nz=%.3g\n", title, sum / nElem, nElem, len, sum2, a0, a1, nz * 1.0 / nElem);
+    fflush(stdout);
 }

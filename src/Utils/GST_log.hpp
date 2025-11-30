@@ -118,3 +118,5 @@ void inline PrintT(const char* title, const T* src, int n1, int n2, int n3 = 1, 
     _INFO("\t\"%s\" |avg|=%g(%ld) avg_len=%g sum2=%g [%f,%f] nz=%.3g\n", title, sum / nElem, nElem, len, sum2, a0, a1, nz * 1.0 / nElem);
     fflush(stdout);
 }
+
+void PrintQ4(const char* title, const hBITARR src, int n1, int n2, int n3 = 1, int n4 = 1, int flag = 0x0);

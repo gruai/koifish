@@ -160,15 +160,17 @@ def bubble_one(title,  sArgs, sExe ="./bin/bubble ", path="./tests/", most_iter=
     exit_code = os.system(cmd)
     if not os.path.exists('chat.csv'):
         return ""
-    
-    with open('chat.csv', 'r', encoding='utf-8') as file:
-        content = file.read()  # 读取全部内容（返回字符串）
-    print(content)    
-    lines = content.splitlines()
-    line_numbers = list(range(1, len(lines) + 1))
-    # Get the last line
-    last_line = lines[-1] if lines else None
-    return last_line
+    try:
+        with open('chat.csv', 'r', encoding='utf-8', errors='replace') as file:
+            content = file.read()  # 读取全部内容（返回字符串）
+        print(content)    
+        lines = content.splitlines()
+        line_numbers = list(range(1, len(lines) + 1))
+        # Get the last line
+        last_line = lines[-1] if lines else None
+        return last_line
+    except UnicodeDecodeError:
+        return(f"Failed with encoding: utf-8")
     
 # python cases/SweepHyParams.py --dir ./SWEEP/124M --json ./scripts/gpt2.json   
 #  python cases/SweepHyParams.py --dir ./SWEEP/Shard50 --json ./scripts/gpt2.json

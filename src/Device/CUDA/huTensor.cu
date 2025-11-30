@@ -13,6 +13,7 @@
 
 #include "../../Manifold/Fish.hpp"
 #include "../../Tensor/GTensor.hpp"
+#include "../../Tensor/GeQuant.hpp"
 #include "../../Utils/GST_log.hpp"
 #include "../../Utils/GST_rander.hpp"
 #include "../../g_float.hpp"
@@ -139,7 +140,7 @@ bool huTensor::InitParam(int tpX) {
     if (tpInit > 0 && tpInit != SERIALIZE) {
         assert(type == typNUMBER::BF16);
         if (strcmp(name, "model.out.weight_b") == 0) {  //  model.blk.34.ffn_down.weight
-            DEBUG_BREAK;                           // Print(name, 1, -1);
+            DEBUG_HERE;                                 // Print(name, 1, -1);
         }
         // _INFO("[InitParam_@%d]\t%ld-%ld@%s\n",iter,size(),nInit,name);
         if (BIT_TEST(flags, F_LORA_B)) {
@@ -332,6 +333,7 @@ bool H2D(void* dev, void* host, size_t szData, int flag) {
     try {
         assert(host != nullptr && dev != nullptr);
         cudaCheck(cudaMemcpy(dev, host, szData, cudaMemcpyHostToDevice));
+        // cudaCheck(cudaMemcpyAsync(data, host,szData, cudaMemcpyHostToDevice));
         return true;
     } catch (...) {
         return false;
@@ -363,6 +365,24 @@ bool huTensor::SerialData(const string& info, void* host, bool isToHost, int fla
     }
 }
 
+// memcpy(tmpData, host_data, szData), msync(host_data, szData, MS_SYNC);
+hBITARR SAFE_read_mmap(hBITARR dst, hBITARR mmp_data, size_t length, int flag = 0x0) {
+    if (msync(mmp_data, length, MS_SYNC) == -1) {
+        // perror("msync failed");
+        //  Continue anyway - data might still be valid
+    }
+    // Memory barrier to ensure we read after sync
+    std::atomic_thread_fence(std::memory_order_acquire);
+    memcpy(dst, mmp_data, length);
+
+    // Verify the copy (optional but recommended)
+    if (memcmp(dst, mmp_data, length) != 0) {
+        std::cerr << "WARNING: Copy verification failed!" << std::endl;
+    }
+
+    return dst;
+}
+
 //  如果CUDA支持统一内存（Unified Memory） 或GPUDirect RDMA，可以直接映射 GPU 内存到文件：
 static bool isGPUDirectMMap = true;
 /*
@@ -375,9 +395,9 @@ bool GTensor::Serial_MMAP(bool isSave, bool isReset, int flag) {
 
     try {
         assert(isParam() && isGPUDirectMMap);
-        bool bRet     = true;
-        int dumpFlag  = 0;
-        char* tmpData = (char*)host_data;  // new char[szData];
+        bool bRet       = true;
+        int dumpFlag    = 0;
+        hBITARR tmpData = (hBITARR)host_data;  // new char[szData];
         assert(tmpData != nullptr);
         floatX* x = (floatX*)(tmpData);
 
@@ -397,23 +417,35 @@ bool GTensor::Serial_MMAP(bool isSave, bool isReset, int flag) {
             SUM::nSaveParam++;
             SUM::nzSaveParam += size();
         } else {
-            if (hRef != nullptr) {  // huTensor::Alloc
+            hQUANT quant        = GetDynamicQuant();
+            bool isAllocTmpData = quant != nullptr;
+            if (isAllocTmpData) {
+                tmpData = new BIT_8[szData + szM + szV];  //  mmap read need proper synchronization!
+            }
+            tpInit = INIT_WEIGHT::W_SKIP;  // don't do anything @huTensor::Alloc -> InitParam
+            if (hRef != nullptr) {         // huTensor::Alloc
                 ShareMemory(hRef, 0x100);
             }
             assert(data != nullptr);
             SUM::szUpload += szData;
             if (tmpData != host_data) {
-                memcpy(tmpData, host_data, szData), msync(host_data, szData, MS_SYNC);
+                SAFE_read_mmap(tmpData, (hBITARR)host_data, szData + szM + szV);
             }
-            // cudaCheck(cudaMemcpyAsync(data, host,szData, cudaMemcpyHostToDevice));
-            cudaCheck(cudaMemcpy(data, tmpData, szData, cudaMemcpyHostToDevice));
+
+            if (quant != nullptr) {
+                G_NORM_STAT<bf16>(size(), (bf16*)tmpData, ginfo->sum_2, ginfo->sum_1, ginfo->nrm_1);
+                quant->LowBit(shared_from_this(), tmpData);
+            } else {
+                // H2D(data, tmpData, szData);
+                cudaCheck(cudaMemcpy(data, tmpData, szData, cudaMemcpyHostToDevice));
+            }
+
             Print("mmap_load", 0, dumpFlag);
             if (szM + szV > 0) {
                 cudaCheck(cudaMemcpy(gm, tmpData + szData, szM + szV, cudaMemcpyHostToDevice));
                 Print("mmap_load", 3, dumpFlag), Print("mmap_load", 2, dumpFlag);
             }
-            SUM::nLoadParam++;
-            SUM::nzLoadParam += size();
+            SUM::nLoadParam++, SUM::nzLoadParam += size();
         }
         if (tmpData != host_data)
             delete[] tmpData;
@@ -478,7 +510,8 @@ bool huTensor::SerialGP(void* yD, void* yG, size_t szY, bool isToY, int flag) {
 bool huTensor::OverWrite(hGTensor hGT, bool isSrc, int flag) {
     size_t nEle = size();
     assert(hGT->type == type);
-    assert(isSameShape(hGT) && szData > 0);
+    // assert(isSameShape(hGT) && szData > 0);
+    assert(szData == hGT->szData);
     if (isSrc) {
         huTensor* src = dynamic_cast<huTensor*>(hGT.get());
         if (src == nullptr)  //  hGT => this
@@ -702,7 +735,7 @@ bool huTensor::Mutation(int flag) {
 
 float huTensor::ToF8Ex(int tpX, int flag) {
     void *data_old = data, *data_fp8 = nullptr;
-    /*typNUMBER oldType = type;    
+    /*typNUMBER oldType = type;
     Print("BF16", 0, 0);
     if (!ReShape(shape, typNUMBER::F8E5M2, F_OP_NO_REALLOC))
         return 0.0;
@@ -761,7 +794,7 @@ bool huTensor::ToTernary(floatX* paramX, int flag) {
             delete[] hx;
         } else {
             assert(GTensor::tmpFF1->size() >= count);
-            CU_ternary2X_<floatX><<<CEIL_DIV(ne[0], dT4B), dT4B, smemPB, main_stream>>>(gama_T(), (char*)data, ToX(GTensor::tmpFF1), ne[0], ne[1]);
+            CU_ternary2X_<floatX><<<CEIL_DIV(ne[0], dT4B), dT4B, smemPB, main_stream>>>(gama_T(), (hBITARR)data, ToX(GTensor::tmpFF1), ne[0], ne[1]);
             double off = OFF_(paramX, ToX(GTensor::tmpFF1), count);
             GTensor::tmpFF1->Print("BitOfX", 0, 0, count);
             // assert(off <= 1.0e-5);

@@ -10,7 +10,6 @@
 
 #include "gLLM.hpp"
 
-#include "../g_stddef.hpp"
 #include "Fish.hpp"
 #include "Optimizer.hpp"
 
@@ -545,7 +544,7 @@ bool NLP_AutoRegressive::InitInput(void* ctx_build, bool isMask, int flag) {
     auto train_params = config.common;
     int n_ctx = train_params.n_ctx, n_vocab = tVocab(), n_batch = train_params.n_batch;
     assert(n_ctx > 0 && n_batch > 0);
-    SHAPE shape = {n_ctx, n_batch};
+    SHAPE shape = {n_batch, n_ctx};
 
     // tokens_input copy values from Batch tensor
     tokens_input = GT(this, typNUMBER::I32, shape, GTensor::F_INPUT, "inp_tokens");  // gTN(tokens_input, "inp_tokens");

@@ -15,6 +15,67 @@
 #include <cstdint>
 
 /*
+//  Welford's Algorithm to get variance with single pas. numerical stable!
+double G_Variance(const std::vector<double>& data) {
+    if (data.empty()) return 0.0;
+
+    int n = 0;
+    double mean = 0.0;
+    double M2 = 0.0;  // Sum of squares of differences from current mean
+
+    for (double x : data) {
+        n++;
+        double delta = x - mean;
+        mean += delta / n;
+        M2 += delta * (x - mean);
+    }
+
+    return (n > 1) ? M2 / (n - 1) : 0.0;  // Sample variance (n-1)
+    // return (n > 1) ? M2 / n : 0.0;     // Population variance (n)
+}*/
+
+//  Population variance with single pass: suffer from catastrophic cancellation​ when numbers are large but their differences are small:
+template <typename T>
+double G_Variance(int N, const T* arr, int stp, double clip_min = -DBL_MAX, double clip_max = DBL_MAX, int flag = 0x0) {
+    assert(N >= 1);
+    if (N == 1)
+        return 0.0;
+
+    double sum_1 = 0.0, sum_2 = 0.0, a;
+    for (int i = 0; i < N; i++) {
+        a = (double)(arr[i * stp]);
+        sum_1 += a, sum_2 += a * a;
+    }
+
+    // Population variance: (Σx² - (Σx)²/n) / n
+    double variance = (sum_2 - (sum_1 * sum_1) / N) / N;
+    // double sample_variance = (sum_2 - (sum_1 * sum_1) / n) / (n - 1);    // Sample variance: (Σx² - (Σx)²/n) / (n-1)
+    variance = std::min(variance, clip_max);
+    variance = std::max(variance, clip_min);
+    return variance;
+}
+
+// Standard Deviation
+template <typename T>
+double G_StdDev(int N, const T* arr, int stp, double clip_min = -DBL_MAX, double clip_max = DBL_MAX, int flag = 0x0) {
+    double variance = G_Variance(N, arr, stp, clip_min, clip_max, flag);
+    return sqrt(variance);
+}
+
+template <typename T>
+double G_NORM_STAT(size_t N, const T* arr, double& sum_2, double& sum_1, double& norm_1, int flag = 0x0) {
+    double a;
+    sum_2 = 0.0, sum_1 = 0.0, norm_1 = 0.0;
+    for (int i = 0; i < N; i++) {
+        a = T2Float(arr + i);
+        sum_2 += a * a;
+        sum_1 += a;
+        norm_1 += fabs(a);
+    }
+    return sum_2;
+}
+
+/*
     For half-precision floating-point numbers, __FLT16_MANT_DIG__ typically has a value of 11, indicating that the mantissa has 11 bits. This is important for
    understanding the precision and range of values that can be represented with this type.
 */

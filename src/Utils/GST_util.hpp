@@ -27,6 +27,8 @@
 #include <typeinfo>
 #include <unordered_map>
 #include <vector>
+#include "../g_def_x.hpp"
+
 using namespace std;
 
 #if defined(_MSC_VER) || defined(__MINGW32__) || defined(WIN32)
@@ -68,6 +70,12 @@ typedef std::chrono::high_resolution_clock Clock;
 #define GST_TOC(tick) ((std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - (tick)).count()) / 1000000.0)
 
 inline void GST_time_init(void) {}
+
+inline double GST_sec(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec  + (int64_t)ts.tv_nsec / 1000000000.0;
+}
 
 //	A millisecond is a unit of time in the International System of Units equal to one thousandth of a second or 1000 microseconds
 inline double GST_ms(void) {
@@ -158,6 +166,8 @@ struct SUM {
     static int nMostMemItem, nMinTensorAlloc;
     static int nUpdateParam;
     static std::vector<MEM_USAGE> mems;
+    static int nQuantTensor;
+    static size_t szQuantBits;
     static int nInitParam, nSaveParam, nzSaveParam, nLoadParam, nzLoadParam, nDogLeg;
     static double tX, tX1, tData, tRemater, tQKV, tFFN, tPreLogits, tUpload, tLoadData, tLoadParam, tEval_0, tEval_1;
     static size_t szUpload;
@@ -172,7 +182,7 @@ struct SUM {
 
 // #define GPU_TIME_a(a,b)   {SYNC_DEVICE(); (a) += GST_us() - (b);}
 
-// Discrete Distribution of array
+// Discrete distribution of array
 struct Distri_ARRAY {
     std::vector<float> distri;
     double mean = 0, sigma = 0, sum = 0, ss = 0, average = 0;

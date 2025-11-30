@@ -63,7 +63,8 @@ void SAMP_SET::SampleFrom(FeatsOnFold *hData_, const BoostingForest *hBoosting, 
     float *samp_weight = hData_->lossy->samp_weight;  // assert(samp_weight!=nullptr);
     if (hData_->isTrain() && rElitism > 0) {
         T_grad = hData_->lossy->DOWN_sum_2;
-        assert(T_grad > 0);
+        if(hData_->config.objective!="quant")
+            assert(T_grad > 0);
         T_grad = sqrt(T_grad / nFrom);
         // T_grad = hData_->lossy->DOWN_mean+hData_->lossy->DOWN_devia/2;
     }
@@ -163,7 +164,7 @@ MT_BiSplit::MT_BiSplit(FeatsOnFold *hData_, const BoostingForest *hBoosting_, in
     }
     size_t nPickSamp = samp_set.nSamp;
     // Init_BFold(hData_);
-    if (hData_->atTrainTask()) {
+    if (hData_->atTrainTask() && hData_->config.objective!="quant") {
         Observation_AtLocalSamp(hData_);
         hData_->stat.dY = samp_set.Y_1 - samp_set.Y_0;
     }

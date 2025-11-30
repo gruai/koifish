@@ -26,7 +26,7 @@
 #include <sentencepiece_processor.h>
 {
     sentencepiece::SentencePieceProcessor processor;
-    const auto status = processor.Load(sTokenPath);
+    const auto status = processor.Load(sTokenJsonPath);
     if (!status.ok()) {
         std::cerr << status.ToString() << std::endl;
         // error
@@ -39,12 +39,12 @@
    - pair of sequences: `[CLS] A [SEP] B [SEP]`
  */
 
-std::string wstring_to_utf8(const std::wstring &wstr) {
+std::string wstring_to_utf8(const std::wstring& wstr) {
     std::wstring_convert<std::codecvt_utf8<wchar_t>, wchar_t> converter;
     return converter.to_bytes(wstr);
 }
 
-std::wstring utf8_to_wstring(const std::string &str) {
+std::wstring utf8_to_wstring(const std::string& str) {
     std::wstring_convert<std::codecvt_utf8<wchar_t>, wchar_t> converter;
     return converter.from_bytes(str);
 }
@@ -52,10 +52,10 @@ std::wstring utf8_to_wstring(const std::string &str) {
 template <std::ctype_base::mask mask>
 class IsNot {
     std::locale myLocale;
-    std::ctype<char> const *myCType;
+    std::ctype<char> const* myCType;
 
    public:
-    IsNot(std::locale const &l = std::locale()) : myLocale(l), myCType(&std::use_facet<std::ctype<char>>(l)) {}
+    IsNot(std::locale const& l = std::locale()) : myLocale(l), myCType(&std::use_facet<std::ctype<char>>(l)) {}
     bool operator()(char ch) const { return !myCType->is(mask, ch); }
 };
 
@@ -113,9 +113,9 @@ bool _is_chinese_char(UChar32 c) {
     return false;
 }
 
-wstring pad_chinese_chars(const wstring &text) {
+wstring pad_chinese_chars(const wstring& text) {
     vector<wchar_t> vec_padded_chars;
-    for (auto &c : text) {
+    for (auto& c : text) {
         if (_is_chinese_char(static_cast<UChar32>(c))) {
             vec_padded_chars.push_back(L' ');  // wide-character representation of space
             vec_padded_chars.push_back(c);
@@ -127,7 +127,7 @@ wstring pad_chinese_chars(const wstring &text) {
     return wstring(vec_padded_chars.begin(), vec_padded_chars.end());
 }
 
-vector<wstring> run_split_on_punctuation(const wstring &text, bool split_specials, const vector<wstring> &special_tokens) {
+vector<wstring> run_split_on_punctuation(const wstring& text, bool split_specials, const vector<wstring>& special_tokens) {
     if (!split_specials && find(special_tokens.begin(), special_tokens.end(), text) != special_tokens.end()) {
         // we do not want to split special tokens and we found the text in the vector of special tokens
         return vector<wstring>{text};
@@ -162,13 +162,13 @@ vector<wstring> run_split_on_punctuation(const wstring &text, bool split_special
     return out_str;
 }
 #else
-vector<wstring> run_split_on_punctuation(const wstring &text, bool split_specials, const vector<wstring> &special_tokens) {
+vector<wstring> run_split_on_punctuation(const wstring& text, bool split_specials, const vector<wstring>& special_tokens) {
     vector<wstring> output;
     return output;
 }
-wstring pad_chinese_chars(const wstring &text) { return L""; }
+wstring pad_chinese_chars(const wstring& text) { return L""; }
 #endif
-std::string GTokenizer::Decode(const TOKENS &ids, bool skip_special_tokens) {
+std::string GTokenizer::Decode(const TOKENS& ids, bool skip_special_tokens) {
     string line;
     int nV = nVocab(), i = 0;
     for (auto id : ids) {
@@ -186,7 +186,7 @@ bool GTokenizer::isValid(int flag) const {
 
     return true;
 }
-TOKENS GTokenizer::Encode(const std::wstring &wtext, bool encode_bos, bool encode_eos) {
+TOKENS GTokenizer::Encode(const std::wstring& wtext, bool encode_bos, bool encode_eos) {
     using convert_type = std::codecvt_utf8<wchar_t>;
     std::wstring_convert<convert_type, wchar_t> converter;
     // use converter (.to_bytes: wstr->str, .from_bytes: str->wstr)
@@ -195,15 +195,15 @@ TOKENS GTokenizer::Encode(const std::wstring &wtext, bool encode_bos, bool encod
     return Encode(text, encode_bos);
 }
 
-int GTokenizer_Heap::sLookup(const char *str, int flag) {
+int GTokenizer_Heap::sLookup(const char* str, int flag) {
     // efficiently find the perfect match for str in vocab, return its index or -1 if not found
     int vocab_size         = nVocab();
     struct TokenIndex tok  = {str, -1};  // acts as the key to search for
-    struct TokenIndex *res = (struct TokenIndex *)bsearch(&tok, sorted_vocab, vocab_size, sizeof(struct TokenIndex), compare_tokens);
+    struct TokenIndex* res = (struct TokenIndex*)bsearch(&tok, sorted_vocab, vocab_size, sizeof(struct TokenIndex), compare_tokens);
     return res != NULL ? res->id : -1;
 }
 
-int GTokenizer_Heap::merge_tokens_tryadd(struct Merge *heap, int n_heap, int lpos, int lid, int rpos, int rid) {
+int GTokenizer_Heap::merge_tokens_tryadd(struct Merge* heap, int n_heap, int lpos, int lid, int rpos, int rid) {
     char str_buffer[MAX_TOKEN_LENGTH * 2 + 1];
     strcpy(str_buffer, vocab[lid].c_str());
     strcat(str_buffer, vocab[rid].c_str());
@@ -216,10 +216,10 @@ int GTokenizer_Heap::merge_tokens_tryadd(struct Merge *heap, int n_heap, int lpo
     return n_heap;
 }
 
-int GTokenizer_Heap::merge_tokens(std::vector<TOKEN_ID> &tokens, int flag) {
+int GTokenizer_Heap::merge_tokens(std::vector<TOKEN_ID>& tokens, int flag) {
     // create heap for all token merge pairs
     size_t n_tokens = tokens.size(), nV = nVocab();
-    struct Merge *heap = new Merge[2 * n_tokens];  // malloc(2 * n_tokens * sizeof(struct Merge));
+    struct Merge* heap = new Merge[2 * n_tokens];  // malloc(2 * n_tokens * sizeof(struct Merge));
     int n_heap         = 0;
 
     // insert all initial pairs
@@ -272,19 +272,19 @@ int GTokenizer_Heap::merge_tokens(std::vector<TOKEN_ID> &tokens, int flag) {
     return nm_tokens;
 }
 
-std::vector<TOKEN_ID> GTokenizer_Heap::Encode(const std::string &text, bool encode_bos, bool encode_eos) {
+std::vector<TOKEN_ID> GTokenizer_Heap::Encode(const std::string& text, bool encode_bos, bool encode_eos) {
     TOKENS out_tokens;
     if (encode_bos) {
         out_tokens.push_back(bos_id);
     }
     // process the raw (UTF-8) byte sequence of the input string
-    char *c = (char *)text.c_str();
+    char* c = (char*)text.c_str();
     while (*c != '\0') {
         char codepoint[5] = {};
         codepoint[0]      = *c++;
 
         if (codepoint[0] == '<' && *c == '|') {  // special token, skip until '|>'
-            char *e = c + 1;
+            char* e = c + 1;
             while (*e && !(e[0] == '|' && e[1] == '>')) {
                 e++;
             }
@@ -316,7 +316,7 @@ std::vector<TOKEN_ID> GTokenizer_Heap::Encode(const std::string &text, bool enco
             out_tokens.push_back(id);  // tokens[n_tokens++] = id;
         } else if (byte_fallback >= 0) {
             // byte_fallback encoding: just encode each byte as a token
-            for (char *fb = codepoint; *fb != '\0'; ++fb) {
+            for (char* fb = codepoint; *fb != '\0'; ++fb) {
                 out_tokens.push_back((unsigned char)*fb + byte_fallback);  // tokens[n_tokens++] = (unsigned char)*fb + byte_fallbacks;
             }
         }
@@ -332,7 +332,7 @@ std::vector<TOKEN_ID> GTokenizer_Heap::Encode(const std::string &text, bool enco
     // assert(n_tokens <= tokenizer_bound(strlen(text)));
     return out_tokens;
 }
-std::vector<TOKEN_ID> GTokenizer::Encode_TokenTrie(const std::string &text, bool encode_bos) const {
+std::vector<TOKEN_ID> GTokenizer::Encode_TokenTrie(const std::string& text, bool encode_bos) const {
     TOKENS out_tokens;
     if (encode_bos) {
         out_tokens.push_back(bos_id);
@@ -341,8 +341,8 @@ std::vector<TOKEN_ID> GTokenizer::Encode_TokenTrie(const std::string &text, bool
     for (size_t i = 0; i < text.size();) {
         size_t l                 = 0;
         size_t valid_l           = 0;
-        const TokenTrie *p       = &vocab_trie;
-        const TokenTrie *valid_p = nullptr;
+        const TokenTrie* p       = &vocab_trie;
+        const TokenTrie* valid_p = nullptr;
         while (i + l < text.size()) {
             char c = text[i + l];
             if (p->children.count(c)) {
@@ -371,23 +371,23 @@ std::vector<TOKEN_ID> GTokenizer::Encode_TokenTrie(const std::string &text, bool
     return out_tokens;
 }
 
-TOKENS GTokenizer::Encode(const std::string &text, bool encode_bos, bool encode_eos) {
+TOKENS GTokenizer::Encode(const std::string& text, bool encode_bos, bool encode_eos) {
     assert(isValid());
     return Encode_TokenTrie(text, encode_bos);
 }
 
-TOKENS WordPieceTokenizer::Encode(const std::string &text, bool encode_bos, bool encode_eos) {
+TOKENS WordPieceTokenizer::Encode(const std::string& text, bool encode_bos, bool encode_eos) {
     // wstring wText(text.begin(),text.end());
     std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
     std::wstring wText = converter.from_bytes(text);
     return Encode(wText, encode_bos);
 }
 
-vector<wstring> WordPieceTokenizer::wordpiece_tokenize(const wstring &input_text) const {
+vector<wstring> WordPieceTokenizer::wordpiece_tokenize(const wstring& input_text) const {
     vector<wstring> tokens = split(input_text);
     vector<wstring> output_tokens;
     for (size_t i = 0; i < tokens.size(); i++) {
-        auto &tok = tokens[i];
+        auto& tok = tokens[i];
         if (tok.length() > max_input_chars_per_word) {
             output_tokens.push_back(wunk);
             continue;
@@ -430,7 +430,7 @@ vector<wstring> WordPieceTokenizer::wordpiece_tokenize(const wstring &input_text
     return output_tokens;
 }
 
-TOKENS WordPieceTokenizer::Encode(const wstring &input_text, bool split_specials) {
+TOKENS WordPieceTokenizer::Encode(const wstring& input_text, bool split_specials) {
     wstring padded_text    = pad_chinese_chars(input_text);
     vector<wstring> tokens = split(padded_text);
 
@@ -465,14 +465,14 @@ TOKENS WordPieceTokenizer::Encode(const wstring &input_text, bool split_specials
     return tokenized_ids;
 }
 
-GTokenizer::GTokenizer(Fish *dolphin, int flag) {
+GTokenizer::GTokenizer(Fish* dolphin, int flag) {
     config = dolphin->config;
     if (dolphin->config.model.empty()) {
     } else {
         bool bRet = this->InitHF(dolphin, flag);
     }
 }
-GTokenizer_GPT2::GTokenizer_GPT2(Fish *dolphin, int flag) {
+GTokenizer_GPT2::GTokenizer_GPT2(Fish* dolphin, int flag) {
     config = dolphin->config;
     assert(dolphin->config.model.empty());
 }
@@ -480,7 +480,7 @@ GTokenizer_GPT2::GTokenizer_GPT2(Fish *dolphin, int flag) {
 // todo - call gpt2 tokenizer in next version
 std::string GTokenizer_GPT2::T2STR(TOKEN_ID tok, int flag) { return std::to_string((int)(tok) % 10); }
 
-GTokenizer_QWEN3::GTokenizer_QWEN3(Fish *dolphin, int flag) {
+GTokenizer_QWEN3::GTokenizer_QWEN3(Fish* dolphin, int flag) {
     config = dolphin->config;
     assert(!dolphin->config.model.empty());
     bool bRet = InitHF(dolphin, flag);
@@ -489,24 +489,24 @@ GTokenizer_QWEN3::GTokenizer_QWEN3(Fish *dolphin, int flag) {
     }
 }
 
-std::string GTokenizer_QWEN3::T2STR(TOKEN_ID tok, int flag) { 
-    assert(tok<vocab.size());
-    return vocab[tok]; 
+std::string GTokenizer_QWEN3::T2STR(TOKEN_ID tok, int flag) {
+    assert(tok < vocab.size());
+    return vocab[tok];
 }
 
-GTokenizer_Heap::GTokenizer_Heap(Fish *dolphin, int flag) {
+GTokenizer_Heap::GTokenizer_Heap(Fish* dolphin, int flag) {
     config = dolphin->config;
     assert(dolphin->config.model.empty());
 }
 
-bool GTokenizer_Heap::InitFrom(Fish *dolphin, hGTensor gTokens, hGTensor scores, int flag) {
+bool GTokenizer_Heap::InitFrom(Fish* dolphin, hGTensor gTokens, hGTensor scores, int flag) {
     config         = dolphin->config;
     bos_id         = config.model.bos_token_id;
     eos_id         = config.model.eos_token_id;
     int vocab_size = config.model.vocab_size;
     assert(vocab_size < TOKEN_MAX);
 
-    char *tokens = (char *)(gTokens->data);
+    char* tokens = (char*)(gTokens->data);
     size_t szT = gTokens->nByte(), off = 0;
     // sorted_vocab = (struct TokenIndex*)malloc(vocab_size * sizeof(struct TokenIndex));
     // vocab_scores = scores;
@@ -544,14 +544,14 @@ bool GTokenizer_Heap::InitFrom(Fish *dolphin, hGTensor gTokens, hGTensor scores,
     if (eot_id < 0) {
         eot_id = sLookup("<|im_end|>");
     }
-    _INFO("\n[Tokenizer_HEAP] Init from \"%s\", n_vocab=%d eot_id=%d\n", config.model.sTokenPath.c_str(), vocab_size, eot_id);
+    _INFO("\n[Tokenizer_HEAP] Init from \"%s\", n_vocab=%d eot_id=%d\n", config.model.sTokenJsonPath.c_str(), vocab_size, eot_id);
 
     return true;
 }
 
-bool GTokenizer::InitFrom(Fish *dolphin, hGTensor gTokens, hGTensor scores, int flag) {
+bool GTokenizer::InitFrom(Fish* dolphin, hGTensor gTokens, hGTensor scores, int flag) {
     config       = dolphin->config;
-    char *tokens = (char *)(gTokens->data);
+    char* tokens = (char*)(gTokens->data);
     size_t szT = gTokens->nByte(), off = 0;
     int vocab_size = config.model.vocab_size;
     assert(vocab_size < TOKEN_MAX);
@@ -585,20 +585,20 @@ bool GTokenizer::InitFrom(Fish *dolphin, hGTensor gTokens, hGTensor scores, int 
         jVocab.clear();
         InitTrier(flag);
     }
-    _INFO("\n[Tokenizer] Init from \"%s\", n_vocab=%d\n", config.model.sTokenPath.c_str(), vocab_size);
+    _INFO("\n[Tokenizer] Init from \"%s\", n_vocab=%d\n", config.model.sTokenJsonPath.c_str(), vocab_size);
 
     return true;
 }
-bool GTokenizer::InitHF(Fish *dolphin, int flag) {
+bool GTokenizer::InitHF(Fish* dolphin, int flag) {
     // const JSON& jToken = dolphin->config.model.jTokenizer;
-    const JSON &jMParam = dolphin->config.model.jModelParam;
-    string sTokenPath   = dolphin->config.model.sTokenPath;
-    size_t szF          = F_SIZE(sTokenPath);
+    const JSON& jMParam = dolphin->config.model.jModelParam;
+    string sTokenJsonPath   = dolphin->config.model.sTokenJsonPath;
+    size_t szF          = F_SIZE(sTokenJsonPath);
     if (szF == 0)
         return false;
     bos_id = jKV(jMParam, {"bos_token_id"}, bos_id);  // std::stoi(data.metadata.at("bos_token_id").get<std::string>());
     eos_id = jKV(jMParam, {"eos_token_id"}, eos_id);  // std::stoi(data.metadata.at("eos_token_id").get<std::string>());
-    LoadHFJson(sTokenPath);
+    LoadHFJson(sTokenJsonPath);
     size_t nV = jVocab.size();  // vocab.resize(nV);
     assert(nV > 0);
     sep_id  = jKV(jVocab, {sep_token}, sep_id);
@@ -639,49 +639,74 @@ void load_single_template(char *buffer, size_t buffer_size, const string &dir_pa
     fclose(file);
 }*/
 
-bool GTokenizer_QWEN3::InitHF(Fish *dolphin, int flag) {
+std::string LoadBytesFromFile(const std::string& path) {
+  std::ifstream fs(path, std::ios::in | std::ios::binary);
+  if (fs.fail()) {
+    std::cerr << "Cannot open " << path << std::endl;
+    exit(1);
+  }
+  std::string data;
+  fs.seekg(0, std::ios::end);
+  size_t size = static_cast<size_t>(fs.tellg());
+  fs.seekg(0, std::ios::beg);
+  data.resize(size);
+  fs.read(data.data(), size);
+  return data;
+}
+
+bool GTokenizer_QWEN3::InitHF(Fish* dolphin, int flag) {
     try {
         char tmp_word[MAX_TOKEN_LENGTH];
         string sRoot          = dolphin->config.model.sCardPath;
-        string tokenizer_path = sRoot + "tokenizer.bin";
+        string tokenizer_path = dolphin->config.model.sTokenBinPath;     // + "tokenizer.bin";
         int vocab_size        = dolphin->config.model.vocab_size;  // 151936
         // vocab.resize(vocab_size); // = (char **)malloc(vocab_size * sizeof(char *));
-        scores = (float *)malloc(vocab_size * sizeof(float));
+        scores = (float*)malloc(vocab_size * sizeof(float));
 
-        FILE *file = fopen(tokenizer_path.c_str(), "rb");
-        if (!file) {
+        FILE* file = fopen(tokenizer_path.c_str(), "rb");
+        if (file==NULL) {
+            // bos_id = dolphin->config.model.bos_token_id;
+            // eos_id = dolphin->config.model.eos_token_id;
+            // auto blob = LoadBytesFromFile("dist/tokenizer.json");
+            // auto tok = Tokenizer::FromBlobJSON(blob);
+            // TestTokenizer(std::move(tok), false, true);
+
             _ERROR("[QWEN3] Couldn't load tokenizer model %s\n", tokenizer_path.c_str());
             exit(KOIFISH_LOAD_TOKENIZER);
-        }
-        int len, nz = 0, max_token_length;
-        fread(&max_token_length, sizeof(int), 1, file);  //  512?
-        assert(max_token_length <= MAX_TOKEN_LENGTH);
-        fread(&bos_id, sizeof(int), 1, file);
-        fread(&eos_id, sizeof(int), 1, file);
 
-        for (int i = 0; i < vocab_size; i++) {
-            if (fread(scores + i, sizeof(float), 1, file) != 1) {
-                // vocab[i] = (char *)malloc(1);
-                // vocab[i][0] = 0;
-                tmp_word[0] = '\0';
-                nz++;
-            } else {
-                fread(&len, sizeof(int), 1, file);
-                assert(len <= max_token_length);
-                fread(tmp_word, 1, len, file);
-                tmp_word[len] = '\0';
+
+            //  max_token_length = max(len(t) for t in all_tokens)
+        } else {
+            int len, nz = 0, max_token_length;
+            fread(&max_token_length, sizeof(int), 1, file);  //  512?
+            assert(max_token_length <= MAX_TOKEN_LENGTH);
+            fread(&bos_id, sizeof(int), 1, file);
+            fread(&eos_id, sizeof(int), 1, file);
+
+            for (int i = 0; i < vocab_size; i++) {
+                if (fread(scores + i, sizeof(float), 1, file) != 1) {
+                    // vocab[i] = (char *)malloc(1);
+                    // vocab[i][0] = 0;
+                    tmp_word[0] = '\0';
+                    nz++;
+                } else {
+                    fread(&len, sizeof(int), 1, file);
+                    assert(len <= max_token_length);
+                    fread(tmp_word, 1, len, file);
+                    tmp_word[len] = '\0';
+                }
+                vocab.push_back(tmp_word);
             }
-            vocab.push_back(tmp_word);
+            fclose(file);
         }
-        fclose(file);
-        
+
         return true;
     } catch (...) {
         return false;
     }
 }
 
-int GTokenizer::Lookup(const std::string &word, int flag) {
+int GTokenizer::Lookup(const std::string& word, int flag) {
     for (int i = 0; i < vocab.size(); i++)
         if (vocab[i] == word)
             return i;
@@ -689,20 +714,20 @@ int GTokenizer::Lookup(const std::string &word, int flag) {
 }
 
 //      void Encode(char *text, int *tokens, int *n_tokens,int flag);
-TOKENS GTokenizer_QWEN3::Encode(const std::string &sText, bool encode_bos, bool encode_eos) {
+TOKENS GTokenizer_QWEN3::Encode(const std::string& sText, bool encode_bos, bool encode_eos) {
     // encode the string text (input) into an upper-bound preallocated tokens[] array
     TOKENS tokens;
     // create a temporary buffer that will store merge candidates of always two consecutive tokens
     // *2 for concat, +1 for null terminator +2 for UTF8 (in case max_token_length is 1)
-    char *str_buffer = (char *)malloc((MAX_TOKEN_LENGTH * 2 + 1 + 2) * sizeof(char));
+    char* str_buffer = (char*)malloc((MAX_TOKEN_LENGTH * 2 + 1 + 2) * sizeof(char));
     char special_token[64 + 1];
-    const char *text = sText.c_str();
+    const char* text = sText.c_str();
     int nPass = 0, turn = 0, dump = 0;
     // start at 0 tokens
     // *n_tokens = 0;
     // _INFO("\n [cat] %s", sText.c_str());
     // process the raw (UTF-8) byte sequence of the input string
-    for (const char *c = text; *c != 0; c++) {
+    for (const char* c = text; *c != 0; c++) {
         int id, found_special_token = 0;
 
         // set the buffer to the current byte
@@ -801,7 +826,7 @@ int GTokenizer::nVocab(int flag) const {
     }
 }
 
-bool GTokenizer::isInRange(const int *inp, size_t nz, int flag) {
+bool GTokenizer::isInRange(const int* inp, size_t nz, int flag) {
     int t0 = min(0, bos_id), t1 = nVocab();  // some token maybe -1 in some case
     for (size_t i = 0; i < nz; i++, inp++) {
         if (*inp == bos_id)
@@ -842,10 +867,10 @@ void GTokenizer::InitTrier(int flag) {
     }
     // init vocab trie
     for (size_t i = 0; i < vocab.size(); i++) {
-        const std::string &word = vocab[i];
+        const std::string& word = vocab[i];
         if (word.empty())
             continue;  // so strange!
-        TokenTrie *p = &vocab_trie;
+        TokenTrie* p = &vocab_trie;
         for (char c : word) {
             if (p->children.count(c) == 0) {
                 p->children[c] = std::make_shared<TokenTrie>();
@@ -856,13 +881,13 @@ void GTokenizer::InitTrier(int flag) {
     }
 }
 
-WordPieceTokenizer::WordPieceTokenizer(Fish *dolphin, int flag) : GTokenizer(dolphin, flag | F_JVOCAB) { wunk = utf8_to_wstring(unk_token); }
+WordPieceTokenizer::WordPieceTokenizer(Fish* dolphin, int flag) : GTokenizer(dolphin, flag | F_JVOCAB) { wunk = utf8_to_wstring(unk_token); }
 
-bool GTokenizer::LoadHFJson(const string &sTokenPath, int flag) {
+bool GTokenizer::LoadHFJson(const string& sTokenJsonPath, int flag) {
     try {
         // std::ifstream file(config_path);
         // file >> jTokenizer;
-        LoadJsonFile(sTokenPath, jTokenizer);
+        LoadJsonFile(sTokenJsonPath, jTokenizer);
         auto jTokModel = jTokenizer["model"];
         jVocab         = jTokModel["vocab"];
         assert(!jTokModel.empty() && !jVocab.empty());
@@ -878,25 +903,25 @@ bool GTokenizer::LoadHFJson(const string &sTokenPath, int flag) {
                 // special_tokens.push_back(utf8_to_wstring(item["content"]));
             }
         }
-        _INFO("[Tokenizer] UNK=%s special=%ld @%s\n", unk_token.c_str(), special_tokens.size(), sTokenPath.c_str());
+        _INFO("[Tokenizer] UNK=%s special=%ld @%s\n", unk_token.c_str(), special_tokens.size(), sTokenJsonPath.c_str());
         return true;
-    } catch (JSON::parse_error &ex) {
-        _INFO("[Tokenizer] Failed @%s! ERR=%s \n", sTokenPath.c_str(), ex.what());
+    } catch (JSON::parse_error& ex) {
+        _INFO("[Tokenizer] Failed @%s! ERR=%s \n", sTokenJsonPath.c_str(), ex.what());
         return false;
         // std::cerr << "parse error at byte " << ex.byte << std::endl;
     } catch (...) {
-        _INFO("[Tokenizer] Failed @%s!\n", sTokenPath.c_str());
+        _INFO("[Tokenizer] Failed @%s!\n", sTokenJsonPath.c_str());
         assert(0);
         return false;
     }
 }
-WordPieceTokenizer::WordPieceTokenizer(const string &config_path) {
+WordPieceTokenizer::WordPieceTokenizer(const string& config_path) {
     LoadHFJson(config_path, 0x0);
     assert(!jVocab.empty());
 }
 
 // -1 is Valid!
-int WordPieceTokenizer::get_word_index(const wstring &word) const {
+int WordPieceTokenizer::get_word_index(const wstring& word) const {
     string w_word = wstring_to_utf8(word);
 
     if (jVocab.find(w_word) != jVocab.end()) {
@@ -907,7 +932,7 @@ int WordPieceTokenizer::get_word_index(const wstring &word) const {
     }
 }
 std::string WordPieceTokenizer::decode_one(int prev_token, int token) const {
-    const std::string &piece = vocab[token];
+    const std::string& piece = vocab[token];
     // if following BOS token, sentencepiece decoder strips any leading whitespace
     if (prev_token == bos_id && piece[0] == ' ') {
         return piece.substr(1);
@@ -920,7 +945,7 @@ std::string WordPieceTokenizer::decode_one(int prev_token, int token) const {
 }
 
 std::string GTokenizer::decode_one(int prev_token, int token) const {
-    const std::string &piece = vocab[token];
+    const std::string& piece = vocab[token];
     // if following BOS token, sentencepiece decoder strips any leading whitespace
     if (prev_token == bos_id && piece[0] == ' ') {
         return piece.substr(1);
@@ -932,7 +957,7 @@ std::string GTokenizer::decode_one(int prev_token, int token) const {
     return piece;
 }
 
-std::string GTokenizer::encoding_to_debug_string(const std::vector<TOKEN_ID> &encoding) const {
+std::string GTokenizer::encoding_to_debug_string(const std::vector<TOKEN_ID>& encoding) const {
     std::string token_encoding_debug_str = "";
     for (int token_id : encoding) {
         if (token_id == bos_id) {
@@ -946,54 +971,54 @@ std::string GTokenizer::encoding_to_debug_string(const std::vector<TOKEN_ID> &en
     return token_encoding_debug_str;
 }
 
-static const char *LLM_KV_GENERAL_NAME         = "general.name";
-static const char *LLM_KV_GENERAL_ARCHITECTURE = "general.architecture";
-static const char *LLM_KV_GENERAL_FILE_TYPE    = "general.file_type";
-static const char *LLM_KV_VOCAB_SIZE           = "%s.vocab_size";
-static const char *LLM_KV_CONTEXT_LENGTH       = "%s.context_length";
-static const char *LLM_KV_EMBEDDING_LENGTH     = "%s.embedding_length";
+static const char* LLM_KV_GENERAL_NAME         = "general.name";
+static const char* LLM_KV_GENERAL_ARCHITECTURE = "general.architecture";
+static const char* LLM_KV_GENERAL_FILE_TYPE    = "general.file_type";
+static const char* LLM_KV_VOCAB_SIZE           = "%s.vocab_size";
+static const char* LLM_KV_CONTEXT_LENGTH       = "%s.context_length";
+static const char* LLM_KV_EMBEDDING_LENGTH     = "%s.embedding_length";
 
-static const char *LLM_KV_BLOCK_COUNT                 = "%s.block_count";
-static const char *LLM_KV_FEED_FORWARD_LENGTH         = "%s.feed_forward_length";
-static const char *LLM_KV_ATTENTION_HEAD_COUNT        = "%s.attention.head_count";
-static const char *LLM_KV_ATTENTION_LAYERNORM_RMS_EPS = "%s.attention.layer_norm_rms_epsilon";
-static const char *LLM_KV_ROPE_DIMENSION_COUNT        = "%s.rope.dimension_count";
-static const char *LLM_KV_ROPE_FREQ_BASE              = "%s.rope.freq_base";  // TODO load in llama.cpp
-static const char *LLM_KV_ROPE_SCALE_LINEAR           = "%s.rope.scale_linear";
-static const char *LLM_KV_ATTENTION_HEAD_COUNT_KV     = "%s.attention.head_count_kv";
+static const char* LLM_KV_BLOCK_COUNT                 = "%s.block_count";
+static const char* LLM_KV_FEED_FORWARD_LENGTH         = "%s.feed_forward_length";
+static const char* LLM_KV_ATTENTION_HEAD_COUNT        = "%s.attention.head_count";
+static const char* LLM_KV_ATTENTION_LAYERNORM_RMS_EPS = "%s.attention.layer_norm_rms_epsilon";
+static const char* LLM_KV_ROPE_DIMENSION_COUNT        = "%s.rope.dimension_count";
+static const char* LLM_KV_ROPE_FREQ_BASE              = "%s.rope.freq_base";  // TODO load in llama.cpp
+static const char* LLM_KV_ROPE_SCALE_LINEAR           = "%s.rope.scale_linear";
+static const char* LLM_KV_ATTENTION_HEAD_COUNT_KV     = "%s.attention.head_count_kv";
 
-static const char *LLM_KV_TOKENIZER_MODEL      = "tokenizer.ggml.model";
-static const char *LLM_KV_TOKENIZER_LIST       = "tokenizer.ggml.tokens";
-static const char *LLM_KV_TOKENIZER_TOKEN_TYPE = "tokenizer.ggml.token_type";
-static const char *LLM_KV_TOKENIZER_SCORES     = "tokenizer.ggml.scores";
-static const char *LLM_KV_TOKENIZER_MERGES     = "tokenizer.ggml.merges";
-static const char *LLM_KV_TOKENIZER_BOS_ID     = "tokenizer.ggml.bos_token_id";
-static const char *LLM_KV_TOKENIZER_EOS_ID     = "tokenizer.ggml.eos_token_id";
-static const char *LLM_KV_TOKENIZER_UNK_ID     = "tokenizer.ggml.unknown_token_id";
-static const char *LLM_KV_TOKENIZER_SEP_ID     = "tokenizer.ggml.seperator_token_id";
-static const char *LLM_KV_TOKENIZER_PAD_ID     = "tokenizer.ggml.padding_token_id";
+static const char* LLM_KV_TOKENIZER_MODEL      = "tokenizer.ggml.model";
+static const char* LLM_KV_TOKENIZER_LIST       = "tokenizer.ggml.tokens";
+static const char* LLM_KV_TOKENIZER_TOKEN_TYPE = "tokenizer.ggml.token_type";
+static const char* LLM_KV_TOKENIZER_SCORES     = "tokenizer.ggml.scores";
+static const char* LLM_KV_TOKENIZER_MERGES     = "tokenizer.ggml.merges";
+static const char* LLM_KV_TOKENIZER_BOS_ID     = "tokenizer.ggml.bos_token_id";
+static const char* LLM_KV_TOKENIZER_EOS_ID     = "tokenizer.ggml.eos_token_id";
+static const char* LLM_KV_TOKENIZER_UNK_ID     = "tokenizer.ggml.unknown_token_id";
+static const char* LLM_KV_TOKENIZER_SEP_ID     = "tokenizer.ggml.seperator_token_id";
+static const char* LLM_KV_TOKENIZER_PAD_ID     = "tokenizer.ggml.padding_token_id";
 
 // { LLM_KV_DICT_VAE_LAYERS,               "dict.vae.layers"       },
 // { LLM_KV_DICT_LATENT_DIM,                  "%s.dict_latent_dim"},
-static const char *LLM_KV_DICT_VAE_LAYERS = "dict.vae.layers";
-static const char *LLM_KV_DICT_LATENT_DIM = "%s.dict_latent_dim";
+static const char* LLM_KV_DICT_VAE_LAYERS = "dict.vae.layers";
+static const char* LLM_KV_DICT_LATENT_DIM = "%s.dict_latent_dim";
 
-static const char *arch_str = "gruai";  // llm_arch_from_string
+static const char* arch_str = "gruai";  // llm_arch_from_string
 static char keybuf[512];
-const char *kv(const char *key) {
+const char* kv(const char* key) {
     snprintf(keybuf, 512, key, arch_str);
     return keybuf;
 };
 
-string DictVAE::__repr__(string &suffix, string &prefix, int flag) {
+string DictVAE::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]     = "\0";
-    const char *_ops[] = {
+    const char* _ops[] = {
         "ONLY_LOAD",
         "RND_GRAD",
         "LOAD_GRAD,",
         "LOAD_GRAD_norm",
     };
-    const char *tab = prefix.c_str();
+    const char* tab = prefix.c_str();
     sprintf(buf + strlen(buf), "\n%s[%s]:resi=%d tpNorm=%d opOut=\"%s\" nLevel=%d\n", prefix.c_str(), "DictVAE", (int)(reserve_x), tpNorm, _ops[opOut], nLevel);
 
     _T_repr_(tok_embeddings, tab, buf);
@@ -1023,7 +1048,7 @@ string DictVAE::__repr__(string &suffix, string &prefix, int flag) {
     return buf;
 }
 
-DictVAE::DictVAE(Fish *dolphin, int flag) : VariationaAE(), dolphin(dolphin) {
+DictVAE::DictVAE(Fish* dolphin, int flag) : VariationaAE(), dolphin(dolphin) {
     assert(dolphin->isValid());
     config = dolphin->config;
     // isDialect = config.dict_dialect == "on";
@@ -1119,7 +1144,7 @@ void DictVAE::CreateEmbeddings(int flag) {
     }
 }
 
-hGensor DictVAE::Embed2Output(void *ctx, hGensor t33, int flag) {
+hGensor DictVAE::Embed2Output(void* ctx, hGensor t33, int flag) {
     hGensor tOutput = nullptr;
 #ifdef _TENSOR_G_
 #else
@@ -1174,7 +1199,7 @@ hGensor DictVAE::Embed2Output(void *ctx, hGensor t33, int flag) {
     return tOutput;
 }
 
-void DictVAE::Update_0(struct random_normal_distribution *rnd, int flag) {
+void DictVAE::Update_0(struct random_normal_distribution* rnd, int flag) {
 #ifdef _TENSOR_G_
 #else
     const uint32_t n_embd = config.nEmbed();
@@ -1215,7 +1240,7 @@ void DictVAE::Update_0(struct random_normal_distribution *rnd, int flag) {
 #endif
 }
 
-void DictVAE::Update_1(struct random_normal_distribution *rnd, int flag) {
+void DictVAE::Update_1(struct random_normal_distribution* rnd, int flag) {
     const uint32_t n_embd = config.nEmbed();
 #ifdef __USE_GGML__
     bool isParam = false;
@@ -1279,7 +1304,7 @@ void DictVAE::Update_1(struct random_normal_distribution *rnd, int flag) {
 #endif
 }
 
-void CDict_CHAR::LoadVocab(const char *model_path, int flag) {
+void CDict_CHAR::LoadVocab(const char* model_path, int flag) {
     assert(strlen(model_path) == 0 || std::filesystem::exists(model_path));
     string word;
     /*enum llama_ftype ftype = LLAMA_FTYPE_MOSTLY_Q8_0;
@@ -1305,8 +1330,7 @@ void CDict_CHAR::LoadVocab(const char *model_path, int flag) {
     }*/
 }
 
-
-void VariationaAE::save_gguf(struct gguf_context *fctx, int flag) {
+void VariationaAE::save_gguf(struct gguf_context* fctx, int flag) {
 #ifdef _TENSOR_G_
 #else
     if (MAEC.size() == 0)
@@ -1323,9 +1347,9 @@ void VariationaAE::save_gguf(struct gguf_context *fctx, int flag) {
 }
 
 //  llama.cpp/examples/tokenize/tokenize.cpp
-CDict_LLAMA::CDict_LLAMA(Fish *nlp_, int flag) : DictVAE(nlp_, flag) {}
+CDict_LLAMA::CDict_LLAMA(Fish* nlp_, int flag) : DictVAE(nlp_, flag) {}
 
-int Fish_token(CLI_params &config) {
+int Fish_token(CLI_params& config) {
     g_dump_level              = 0;
     config.wiki_actor         = "copy";
     config.common.n_batch     = 1;
@@ -1368,7 +1392,7 @@ int Fish_token(CLI_params &config) {
         // Tokenize the input text
         auto r = hTok->Encode(input_text);
         std::wcout << "===== START=====" << std::endl;
-        for (auto &x : r) {
+        for (auto& x : r) {
             std::wcout << x << std::endl;
         }
         std::wcout << "===== END ======" << std::endl;

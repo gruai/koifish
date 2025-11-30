@@ -14,6 +14,7 @@
 
 #include "../Manifold/Fish.hpp"
 #include "../ggex/GG_util.hpp"
+#include "GeQuant.hpp"
 
 hGTensor GTensor::outL = nullptr, GTensor::delta = nullptr, GTensor::tmpDelta = nullptr;
 float* GTensor::stat_info = nullptr;
@@ -73,6 +74,20 @@ bool GTensor::isSameShape(SHAPE sp, int flag) const {
     }
     if (nz_0 != size())
         return false;
+    return true;
+}
+bool GTensor::isSameShape(const hGTensor b) const {
+    // different layer may use differnt Q4->Q3->Q2
+    bool isMatch = isSameShape(b->shape);
+    return isMatch;
+    /*
+        if (szData != b->szData) {
+            if (isMatch) {
+                DEBUG_HERE;
+            }
+            return false;
+        }
+        assert(isMatch);*/
     return true;
 }
 
@@ -153,27 +168,32 @@ bool GTensor::ReShape(SHAPE shape_, typNUMBER tpD_, int flag) {
     return true;
 }
 
+void* GTensor::BeforeQuant(GeQuant* hQuant, int flag0) {
+    assert(size() <= hQuant->nzMost);
+    bool bRet = ReShape(shape, hQuant->tpQuant(), flag0);
+    //      hTensor->Alloc_1(&data_fp8, true, nam_, szData);
+    return nullptr;
+}
+
 // TODO - Shrink memory. But CUDA does not​ provide a direct way to shrink an existing allocation!
 bool GTensor::AfterQuant(GeQuant* hQuant, typNUMBER type_quant, void* data_quant, int flag) {
     typNUMBER oldType = type;
     void* data_old    = data;
     bool bRet         = ReShape(shape, type_quant, F_OP_NO_REALLOC);
     assert(bRet);
-
-    Free_1(&data_old);
-    data = data_quant;
-    Print("F8Ex", 0, 0);
-    for (auto t : refered) {
-        assert(t->type == oldType);
-        t->type = type;
+    if (hQuant != nullptr && hQuant->isCPU) {
+        H2D(data, data_quant, szData);
+    } else {
+        Free_1(&data_old);
+        data = data_quant;
+        Print("F8Ex", 0, 0);
+        for (auto t : refered) {
+            assert(t->type == oldType);
+            t->type = type;
+        }
     }
 
     return true;
-}
-
-void* GTensor::BeforeQuant(GeQuant* hQuant, int flag0) { 
-    //      hTensor->Alloc_1(&data_fp8, true, nam_, szData);
-    return nullptr; 
 }
 
 void GTensor::SetRefer(hGTensor hR, int flag) {
@@ -206,7 +226,23 @@ bool GTensor::SetTernary(typNUMBER tpT_, int flag) {
 float GTensor::Get(int i, int flag) const {
     assert(0);
     return 0.f;
-    // return ggml_get_f32_1d(gg, i);
+}
+
+hQUANT GTensor::GetDynamicQuant(int flag) const {
+    //  GetGensorInfo   std::map<hGensor, GENSOR_INFO> infos;
+    assert(ginfo != nullptr && ginfo->hNeron != nullptr);
+
+    if (hQuant == nullptr)
+        return nullptr;
+    if (size() > hQuant->nzMost)
+        return nullptr;
+    // if(!G_Has_(name,{"model.layers.1.mlp.down_proj.weight"})){
+    //     return nullptr;
+    // }
+    int lay = ginfo->hNeron->layid - 1;
+    // if (lay !=6)     //      lay <= 1 || lay>10
+    //     return nullptr;
+    return hQuant;
 }
 /*
    Only for gguf-serialize
@@ -349,7 +385,7 @@ hGTensor GTensor::CrossEntropy(const hGTensor b, int flag) {
     return nullptr;
 }
 
-hGensor GENSORS::Get(const string& name, int flag) {
+hGensor GENSOR_TOPU::Get(const string& name, int flag) {
     if (flag == 0x100) {  //  .weight=>.w
         for (auto ng : nag) {
             if (strstr(name.c_str(), ng.first.c_str()) != NULL) {
@@ -476,11 +512,29 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
         sp[2] = 1;
         sp[3] = 1;
     }
+    floatGama *rNormal = (floatGama*)((char*)data + szData), *cNormal = rNormal + shape[0];
+    floatGama* gamaQ = cNormal + shape[1];
     switch (type) {
         case typNUMBER::T_BINARY:
         case typNUMBER::T_BINARY_3:
         case typNUMBER::T_BINARY_TILE:
             assert(0);
+            break;
+        case typNUMBER::Q4:
+            PrintQ4("_Q4", (hBITARR)src, ne[0], ne[1], ne[2], ne[3], flag);
+            if(rc_normal>0){
+                PrintTensor<floatGama>("_rNormal", rNormal, true, ne[0], 1, 1, 1, flag);
+                PrintTensor<floatGama>("_cNormal", cNormal, true, ne[1], 1, 1, 1, flag);
+            }
+            PrintTensor<floatGama>("_gamaQ", gamaQ, true, ne[0], 2, 1, 1, flag);
+            break;
+        case typNUMBER::Q2:
+            // PrintQ2("_Q2", (hBITARR)src, ne[0], ne[1], ne[2], ne[3], flag);
+            if(rc_normal>0){
+                PrintTensor<floatGama>("_rNormal", rNormal, true, ne[0], 1, 1, 1, flag);
+                PrintTensor<floatGama>("_cNormal", cNormal, true, ne[1], 1, 1, 1, flag);
+            }
+            PrintTensor<floatGama>("_gamaQ", gamaQ, true, ne[0], 2, 1, 1, flag);
             break;
         case typNUMBER::F8E5M2:
             //    PrintTensor<__nv_fp8_e5m2>(title.c_str(),(__nv_fp8_e5m2 *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
@@ -490,7 +544,7 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
             PrintTensor<half>(title.c_str(), (half*)src, false, sp[0], sp[1], sp[2], sp[3], flag);
             break;
         case typNUMBER::BF16:
-            PrintTensor<__nv_bfloat16>(title.c_str(), (__nv_bfloat16*)src, false, sp[0], sp[1], sp[2], sp[3], flag);
+            PrintTensor<bf16>(title.c_str(), (__nv_bfloat16*)src, false, sp[0], sp[1], sp[2], sp[3], flag);
             break;
         case typNUMBER::F32:
             PrintTensor<float>(title.c_str(), (float*)src, false, sp[0], sp[1], sp[2], sp[3], flag);
@@ -616,7 +670,7 @@ bool GTensor::isUpdateParam(int iter, int flag) const {
 }*/
 
 // scaling coefficient of 1-bit weight, length of gama_T is always ne[0]
-floatGama* GTensor::gama_T() {
+floatGama* GTensor::gama_T(int type) {
     if (hRef != nullptr)
         return hRef->gama_T();
     assert(data != nullptr);
@@ -652,12 +706,9 @@ bool huTensor::BeforeBackward(size_t& off, int flag) {
  *      2.
  */
 bool huTensor::Alloc(int iter, int flagInit) {
-    if (G_Has_(name, {"model.layers.0.post_attention_layernorm.out", "model.blk.0.ffn_norm.out"})
-        /*|| strcmp(name, "model.embed.weight") == 0*/) {  //  model.inp_embd.weight  preLogits     model.out.weight model.embed.weight
-                                                           //  model.blk.0.attn.wq.weight
-        int debug = 0x0;                                   //
+    if (G_Has_(name, {"preLogits"})) {  // model.layers.0.mlp.down_proj.weight
+        DEBUG_HERE;                     //
     }
-
     size_t sz0 = szGlobalMaloc;
     if (BIT_TEST(flags, F_NOALLOC))  // For example: operator fusing, memory reuse,rematerialization
         return true;
@@ -691,6 +742,10 @@ bool huTensor::Alloc(int iter, int flagInit) {
             // Alloc_1((void **)(&gama_T), false, sizeof(float) * nTile);
             szM /= THREAD_TILE_M * THREAD_TILE_N;
             szV = szM;
+        } else if (type == typNUMBER::Q4 || type == typNUMBER::Q3 || type == typNUMBER::Q2) {
+            int bits = BitPE(type), nQuant = 1 << bits;
+            szGama = sizeof(floatGama) * (shape[0] * nQuant + shape[0] + shape[1]);  // 36/1024=0.035
+            szM = 0, szV = 0;                                                        // only used at infer stage
         } else if (BIT_TEST(flags, F_TERNARY)) {
             szGama = sizeof(floatGama) * ne[0];
             // Alloc_1((void **)(&gama_T), false, sizeof(float) * ne[0]);
@@ -734,8 +789,7 @@ bool huTensor::Alloc(int iter, int flagInit) {
             }
             assert(gm != nullptr && "gm is nullptr@huTensor::Alloc");
         } else {
-            szV = 0;
-            szM = 0;
+            szV = 0, szGrad = 0, szM = 0;
         }
     } else {
     }

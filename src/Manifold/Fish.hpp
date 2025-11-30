@@ -31,6 +31,7 @@
 
 #include "../Device/EDevice.hpp"
 #include "../Fuzi/Distillation.hpp"
+#include "../Tensor/GeQuant.hpp"
 #include "../Utils/Cache.hpp"
 #include "../Utils/GST_rander.hpp"
 #include "../Utils/GST_util.hpp"
@@ -81,7 +82,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
 
    protected:
     INIT_WEIGHT tpInitWeight = INIT_WEIGHT::RANDOM;
-
+    QUANT_FACTORY quants;
     std::string name;
 
     /*  wiki contains knowledge reflect the founation of our world
@@ -111,7 +112,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     std::vector<hNEURON> neurons, backbons;
 
     // @TGraph::TopoOrder
-    GENSORS gensors;
+    GENSOR_TOPU gensors;
     //  paramter tensors updated by hOPT    @Fish::AfterBuild
     vector<hGensor> optParams;
     vector<hGensor> loadGensors;
@@ -434,10 +435,12 @@ class Fish : public std::enable_shared_from_this<Fish> {
     virtual bool SaveCheckPoint(int flag = 0x0);
 
     friend class GeNeuron;
+    friend class GeQuant;
     friend class SLP;
     friend class LayerNormal;
     friend class NT_SAM;
     friend class SelfAttention;
+    friend class FFN;
     friend class ROPE;
     friend class OutCLS;
     friend class TokenEmbed;

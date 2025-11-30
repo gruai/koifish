@@ -357,7 +357,7 @@ bool SLP::PrepareMemory(bool isBack, int flag) {
 floatX* GTensor::GetDataX(int flag, const string& sX) {
     size_t dT4B = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
     size_t nEle = size();
-    floatX* wX = (floatX*)(data);
+    floatX* wX  = (floatX*)(data);
     if (hRef != nullptr) {
         int debug = 0x0;
     }
@@ -366,6 +366,27 @@ floatX* GTensor::GetDataX(int flag, const string& sX) {
         case typNUMBER::T_SIGN:
             assert(0);
             break;
+        case typNUMBER::Q4: {
+            // dT4B = CU_T4B_MIDDLE;
+            wX = ToX(GTensor::tmpTernary);
+            assert(GTensor::tmpTernary->size() >= nEle);
+            assert(ne[1]%dT4B==0 && (ne[1]/dT4B)%2==0);      //1 byre for 2 quant
+            if(hQuant->isRTN()){
+                CU_Q42X_RTN<floatX><<<ne[0], dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, ne[0], ne[1], rc_normal, 1 );
+            }else
+                CU_Q42X_<floatX><<<ne[0], dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, ne[0], ne[1], rc_normal, 1 );
+            // GTensor::tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, ne[0]*ne[1]);
+        } break;
+        case typNUMBER::Q2: {
+            wX = ToX(GTensor::tmpTernary);
+            assert(GTensor::tmpTernary->size() >= nEle);
+            assert(ne[1]%dT4B==0 && (ne[1]/dT4B)%4==0);      //1 byre for 2 quant
+            if(hQuant->isRTN()){
+                CU_Q22X_RTN<floatX><<<ne[0], dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, ne[0], ne[1], rc_normal, 1 );
+            }else
+                CU_Q22X_<floatX><<<ne[0], dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, ne[0], ne[1], rc_normal, 1 );
+            // GTensor::tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, ne[0]*ne[1]);
+        } break;
         case typNUMBER::T_BINARY:
         case typNUMBER::T_BINARY_3:
             if (DEBUG.T_ternary == 1) {          // each weight(floatX) is {-1,0,1}, no need to extract
@@ -373,7 +394,7 @@ floatX* GTensor::GetDataX(int flag, const string& sX) {
                 return nullptr;
             } else {  // extract each weight {-1,0,1} to floatX
                 wX = ToX(GTensor::tmpTernary);
-                CU_ternary2X_<floatX><<<CEIL_DIV(ne[0], dT4B), dT4B, 0, main_stream>>>(gama_T(), (char*)(data), wX, ne[0], ne[1], 1);
+                CU_ternary2X_<floatX><<<CEIL_DIV(ne[0], dT4B), dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, ne[0], ne[1], 1);
                 SYNC_DEVICE();
                 if (flag == -1)
                     GTensor::tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1);
@@ -392,9 +413,9 @@ floatX* GTensor::GetDataX(int flag, const string& sX) {
                 GTensor::tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1);
         } break;
         case typNUMBER::F8E5M2: {
-            wX              = ToX(GTensor::tmpTernary);
-            assert(GTensor::tmpTernary->size()>=nEle);
-            CU_F82Float<bf16><<<CEIL_DIV(nEle,CU_T4B_MIDDLE),CU_T4B_MIDDLE>>>((f8e5*)data, wX, nEle, 0, 0);
+            wX = ToX(GTensor::tmpTernary);
+            assert(GTensor::tmpTernary->size() >= nEle);
+            CU_F82Float<bf16><<<CEIL_DIV(nEle, CU_T4B_MIDDLE), CU_T4B_MIDDLE>>>((f8e5*)data, wX, nEle, 0, 0);
             break;
         }
         default:
@@ -482,7 +503,7 @@ hGTensor FFN::cuFlow(hGTensor hIn, int flag) {
             // inp->Print("ffn.in",0,-1);
         }
     } else {
-        SelfAttention* lastQKV = hFish->GetNeuron<SelfAttention>("SelfAttention", layer - 1);
+        SelfAttention* lastQKV = hFish->GetNeuron<SelfAttention>("SelfAttention", layid - 1);
         dump_flag              = 0;
         assert(hIn == GTensor::delta);
         norm.out->Print("ffn.norm", 0, dump_flag);

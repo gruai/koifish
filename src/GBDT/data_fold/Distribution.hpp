@@ -1,554 +1,638 @@
+/**
+ *  SPDX-FileCopyrightText: 2018-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT
+ *
+ *  \brief Distribution
+ *  \author Yingshi Chen
+ */
+
 #pragma once
-#include <vector>
+
 #include <math.h>
-#include "./Histogram.hpp"
-#include "../util/GST_def.h"
+
+#include <vector>
+
+#include "../../g_def_x.hpp"
 #include "../learn/DCRIMI_.hpp"
-#include "GST_rander.hpp"
+#include "../util/GST_def.h"
 #include "../util/PY_obj.hpp"
+#include "./Histogram.hpp"
+#include "GST_rander.hpp"
 
 using namespace std;
 #define ZERO_REGION 1.0e-16
-#define IS_ZERO_RANGE(x)	( fabs(x)<ZERO_REGION )
+#define IS_ZERO_RANGE(x) (fabs(x) < ZERO_REGION)
 
 namespace Grusoft {
-	/*
-		v0.1	cys
-			��samp_set���
-	*/
+/*
+    v0.1	cys
+        ��samp_set���
+*/
 
-	struct COR_RELATION {
-		float *dcrimi = nullptr;	//ע�⣬����֮���
-		double D_sum = 0;
+struct COR_RELATION {
+    float* dcrimi = nullptr;  // ע�⣬����֮���
+    double D_sum  = 0;
 
-		void Clear() {
-			if (dcrimi != nullptr)			{
-				delete dcrimi;	dcrimi = nullptr;
-			}
-		}
-		virtual ~COR_RELATION() {
-			Clear();
-		}
+    void Clear() {
+        if (dcrimi != nullptr) {
+            delete dcrimi;
+            dcrimi = nullptr;
+        }
+    }
+    virtual ~COR_RELATION() { Clear(); }
 
-		template<typename Tx, typename Ty>
-		void DCRIMI_2(const LiteBOM_Config&config, Tx *val, Ty *y, const vector<tpSAMP_ID>& sort_ids, int flag = 0x0) {
-			size_t i, jj,noBin = 0, pos, nA = sort_ids.size(), n_1, n_0, nA_0 = 0, nA_1 = 0;
-			G_INT_64 i_0 = 0, i_1;
-			D_sum = 0;
-			double density_1, density_0,rWin=1.0/ config.feat_quanti/10,a0=val[sort_ids[0]], a1 = val[sort_ids[nA-1]];
-			assert(a1>a0);
-			double step = (a1 - a0)*rWin,a,cur;
-			//int step = max(3, (int)(nA*rWin));
-			for (i = 0; i < nA; i++) {
-				y[i] == 1 ? nA_1++ : nA_0++;
-			}
-			if (nA_0 == 0 || nA_1 == 0)
-				return;
+    template <typename Tx, typename Ty>
+    void DCRIMI_2(const LiteBOM_Config& config, Tx* val, Ty* y, const vector<tpSAMP_ID>& sort_ids, int flag = 0x0) {
+        size_t i, jj, noBin = 0, pos, nA = sort_ids.size(), n_1, n_0, nA_0 = 0, nA_1 = 0;
+        G_INT_64 i_0 = 0, i_1;
+        D_sum        = 0;
+        double density_1, density_0, rWin = 1.0 / config.feat_quanti / 10, a0 = val[sort_ids[0]], a1 = val[sort_ids[nA - 1]];
+        assert(a1 > a0);
+        double step = (a1 - a0) * rWin, a, cur;
+        // int step = max(3, (int)(nA*rWin));
+        for (i = 0; i < nA; i++) {
+            y[i] == 1 ? nA_1++ : nA_0++;
+        }
+        if (nA_0 == 0 || nA_1 == 0)
+            return;
 
-			dcrimi = new float[nA]();
-			for (i = 0; i < nA; i++) {
-				pos = sort_ids[i];		cur = val[pos];
-				i_0 = i_1 = i;			n_1 = 0, n_0 = 0;
-				while (--i_0 >= 0) {
-					pos = sort_ids[i_0];
-					a = val[pos];
-					if (a + step < cur)
-						break;
-					y[pos] == 1 ? n_1++ : n_0++;
-				}
-				while (++i_1<nA) {
-					pos = sort_ids[i_1];
-					a = val[pos];
-					if (a - step > cur)
-						break;
-					y[pos] == 1 ? n_1++ : n_0++;
-				}
-				/*i_0 = i>step?i-step:0, i_1 = min(nA-1,i + step);
-				for (n_1 = 0, n_0 = 0, jj = i_0; jj < i_1; jj++) {
-					if (y[jj] == 1) {
-						n_1++;
-					}
-					else {
-						n_0++;
-					}
-				}*/
-				density_1 = n_1*1.0 / nA_1, density_0 = n_0*1.0 / nA_0;
-				dcrimi[i] = fabs(density_1 - density_0);
-				D_sum += dcrimi[i];
-			}
-		}
-	};
+        dcrimi = new float[nA]();
+        for (i = 0; i < nA; i++) {
+            pos = sort_ids[i];
+            cur = val[pos];
+            i_0 = i_1 = i;
+            n_1 = 0, n_0 = 0;
+            while (--i_0 >= 0) {
+                pos = sort_ids[i_0];
+                a   = val[pos];
+                if (a + step < cur)
+                    break;
+                y[pos] == 1 ? n_1++ : n_0++;
+            }
+            while (++i_1 < nA) {
+                pos = sort_ids[i_1];
+                a   = val[pos];
+                if (a - step > cur)
+                    break;
+                y[pos] == 1 ? n_1++ : n_0++;
+            }
+            /*i_0 = i>step?i-step:0, i_1 = min(nA-1,i + step);
+            for (n_1 = 0, n_0 = 0, jj = i_0; jj < i_1; jj++) {
+                if (y[jj] == 1) {
+                    n_1++;
+                }
+                else {
+                    n_0++;
+                }
+            }*/
+            density_1 = n_1 * 1.0 / nA_1, density_0 = n_0 * 1.0 / nA_0;
+            dcrimi[i] = fabs(density_1 - density_0);
+            D_sum += dcrimi[i];
+        }
+    }
+};
 
-	/*
-		��� һ�Թ�֮(Only init once before the train stage)
-	*/
-	struct Distribution {
-		static GRander rander_;
-		enum {
-			CATEGORY = 0x100, DISCRETE = 0x200,
-			V_ZERO_DEVIA = 0x10000,	//��ֵ��һ��ɺ���
-			DISTRI_OUTSIDE = 0x40000,
-		};
+/*
+    Only init once before the train stage
+*/
+class Distribution {
+   public:
+    static GRander rander_;
+    enum {
+        CATEGORY       = 0x100,
+        DISCRETE       = 0x200,
+        V_ZERO_DEVIA   = 0x10000,  //
+        DISTRI_OUTSIDE = 0x40000,
+    };
 
-		struct vDISTINCT{
-			enum {
-				BASIC,LARGE=0x10,TINY=0x20,
-			};
-			vDISTINCT(double v_,size_t n_) : val(v_),nz(n_)	{
-			}
-			double val=-1; 
-			size_t nz=0;
-			int type = BASIC;
-		};			
-		double IMPUT_most_freq = -1;
-		string nam,desc;
-		vector<tpSAMP_ID> sortedA;		//����������������(NA-����������)
-		//vector<double>  vUnique;		
-		vector<vDISTINCT>  vUnique;		//vThrsh
-		MAP_CATEGORY mapCategory;
-		HistoGRAM *histo = nullptr;
+    struct vDISTINCT {
+        enum {
+            BASIC,
+            LARGE = 0x10,
+            TINY  = 0x20,
+        };
+        vDISTINCT(double v_, size_t n_) : val(v_), nz(n_) {}
+        double val = -1;
+        size_t nz  = 0;
+        int type   = BASIC;
+    };
+    double IMPUT_most_freq = -1;
+    string nam, desc;
+    vector<tpSAMP_ID> sortedA;  //
+    // vector<double>  vUnique;
+    vector<vDISTINCT> vUnique;  // vThrsh
+    MAP_CATEGORY mapCategory;
+    HistoGRAM* histo = nullptr;
 
-		int nHistoBin() {	return histo == nullptr ? 0 : histo->nBins;		}
-		
-		vector<BIN_FEATA> binFeatas;
-		double split_F(int no, int flag=0x0) const;
-		bool isUnique = false;
-		bool isValidFeatas();
+    int nHistoBin() { return histo == nullptr ? 0 : histo->nBins; }
 
-		size_t nSamp, nZERO = 0, nNA = 0;
-		size_t type = 0x0;
-		double vMin = DBL_MAX, vMax = -DBL_MAX,q1=-DBL_MAX,q2 = -DBL_MAX,q3 = -DBL_MAX;
-		double H_q0 = 0, H_q1 = 0, H_q2 = 0, H_q3 = 0, H_q4 = 0;
-		double rNA = 0, rSparse = 0;
-		double mean = 0, median = 0, most_often = 0, devia = 0, impuri = 0;
-		COR_RELATION corr;	//����Y����������
+    vector<BIN_FEATA> binFeatas;
+    double split_F(int no, int flag = 0x0) const;
+    bool isUnique = false;
+    bool isValidFeatas();
 
-		virtual void ClearHisto() {
-			//vThrsh.clear();
-			vUnique.clear();
-			if (histo != nullptr)			{
-				delete histo;		histo = nullptr;
-			}
-		}
-		virtual ~Distribution();
+    size_t nSamp, nZERO = 0, nNA = 0;
+    size_t type = 0x0;
+    double vMin = DBL_MAX, vMax = -DBL_MAX, q1 = -DBL_MAX, q2 = -DBL_MAX, q3 = -DBL_MAX;
+    double H_q0 = 0, H_q1 = 0, H_q2 = 0, H_q3 = 0, H_q4 = 0;
+    double rNA = 0, rSparse = 0;
+    double mean = 0, median = 0, most_often = 0, devia = 0, impuri = 0;
+    COR_RELATION corr;  //
 
-		virtual void Dump(int feat,bool isQuanti, int flag);
+    virtual void ClearHisto() {
+        // vThrsh.clear();
+        vUnique.clear();
+        if (histo != nullptr) {
+            delete histo;
+            histo = nullptr;
+        }
+    }
+    virtual ~Distribution();
 
-		Distribution() {}
-		bool VerifySame(const Distribution& rhs) const;
+    virtual void Dump(int feat, bool isQuanti, int flag);
 
-		bool isPass()	const {
-			if (rNA == 1)
-				return true;
-			if (ZERO_DEVIA(vMin, vMax))
-				return true;
+    Distribution() {}
+    bool VerifySame(const Distribution& rhs) const;
 
-			return false;
-		}
+    bool isPass() const {
+        if (rNA == 1)
+            return true;
+        if (ZERO_DEVIA(vMin, vMax))
+            return true;
 
-		void Merge(const Distribution& next) {
-		}
+        return false;
+    }
 
-		void STA_at(size_t N, const PY_COLUMN *col, bool isSparse, int flag) {
-			STA_at(N, (float*)col->data, isSparse, flag);
-		}
+    void Merge(const Distribution& next) {}
 
-		/*
-			��֧�������������������ӦMERGE
-		*/
-		template<typename Tx>
-		void STA_at(size_t N, const Tx *vec, bool isSparse, int flag) {
-			nSamp = N;
-			vMin = DBL_MAX, vMax = -DBL_MAX;
-			mean = nan("");		median = nan("");
-			nZERO = 0, nNA = 0;
-			double a, a2 = 0, sum = 0, x_0, x_1;
-			size_t i = 0, i_0 = 0, nA = 0;
-			while (i_0 < N) {
-				if (IS_NAN_INF(vec[i_0]))		{
-					nNA++;	i_0++;
-				}	else	{
-					break;
-				}
-			}
-			if (i_0 == N) {
-				//printf("!!!All NA at dim=%d!!!\n", N);
-				goto END;
-			}
-			x_0 = vec[i_0], x_1 = x_0;
-			for (i = i_0; i < N; i++) {
-				if (IS_NAN_INF(vec[i])) {
-					nNA++;	continue;
-				}
-				if (IS_ZERO_RANGE(vec[i])) {
-					nZERO++;
-				}/**/
-				a = vec[i];
-				a2 += a*a;				sum += a;
-				x_0 = MIN2(x_0, a);		x_1 = MAX2(x_1, a);
-			}
-			vMax = MAX2(vMax, x_1);				vMin = MIN2(vMin, x_0);
-		END:
-			if (1) {
-				rNA = nNA*1.0 / N;					rSparse = nZERO*1.0 / N;
-			}
+    void STA_at(size_t N, const PY_COLUMN* col, bool isSparse, int flag) { STA_at(N, (float*)col->data, isSparse, flag); }
 
-			if (nNA > 0 && nNA < N && isSparse) {
-				vector<Tx> A;
-				vector<tpSAMP_ID> map;
-				A.resize(N - nNA);
-				map.resize(N - nNA);
-				for (i = 0; i < N; i++) {
-					if (IS_NAN_INF(vec[i])) {
-						continue;
-					}
-					A[nA] = vec[i];	map[nA++] = i;
-				}
-				assert(N - nNA == nA);
+    /*
+        ��֧�������������������ӦMERGE
+    */
+    template <typename Tx>
+    void STA_at(size_t N, const Tx* vec, bool isSparse, int flag) {
+        nSamp = N;
+        vMin = DBL_MAX, vMax = -DBL_MAX;
+        mean   = nan("");
+        median = nan("");
+        nZERO = 0, nNA = 0;
+        double a, a2 = 0, sum = 0, x_0, x_1;
+        size_t i = 0, i_0 = 0, nA = 0;
+        while (i_0 < N) {
+            if (IS_NAN_INF(vec[i_0])) {
+                nNA++;
+                i_0++;
+            } else {
+                break;
+            }
+        }
+        if (i_0 == N) {
+            // printf("!!!All NA at dim=%d!!!\n", N);
+            goto END;
+        }
+        x_0 = vec[i_0], x_1 = x_0;
+        for (i = i_0; i < N; i++) {
+            if (IS_NAN_INF(vec[i])) {
+                nNA++;
+                continue;
+            }
+            if (IS_ZERO_RANGE(vec[i])) {
+                nZERO++;
+            } /**/
+            a = vec[i];
+            a2 += a * a;
+            sum += a;
+            x_0 = MIN2(x_0, a);
+            x_1 = MAX2(x_1, a);
+        }
+        vMax = MAX2(vMax, x_1);
+        vMin = MIN2(vMin, x_0);
+    END:
+        if (1) {
+            rNA     = nNA * 1.0 / N;
+            rSparse = nZERO * 1.0 / N;
+        }
 
-				vector<tpSAMP_ID> idx;
-				sort_indexes(A, idx);
-				sortedA.resize(N - nNA);
-				for (i = 0; i < nA; i++) {
-					sortedA[i] = map[idx[i]];
-				}
-				for (i = 0; i < nA - 1; i++) {
-					assert(!IS_NAN_INF(vec[sortedA[i]]));
-					assert(vec[sortedA[i]] <= vec[sortedA[i + 1]]);
-				}
-			}
+        if (nNA > 0 && nNA < N && isSparse) {
+            vector<Tx> A;
+            vector<tpSAMP_ID> map;
+            A.resize(N - nNA);
+            map.resize(N - nNA);
+            for (i = 0; i < N; i++) {
+                if (IS_NAN_INF(vec[i])) {
+                    continue;
+                }
+                A[nA]     = vec[i];
+                map[nA++] = i;
+            }
+            assert(N - nNA == nA);
 
-			if (N > nNA) {
-				mean = sum / (N - nNA);
-				impuri = a2 - (N - nNA)*mean*mean;
-				if(impuri<0 && fabs(impuri)<1.0e-6*a2)
-					impuri=0;
+            vector<tpSAMP_ID> idx;
+            sort_indexes(A, idx);
+            sortedA.resize(N - nNA);
+            for (i = 0; i < nA; i++) {
+                sortedA[i] = map[idx[i]];
+            }
+            for (i = 0; i < nA - 1; i++) {
+                assert(!IS_NAN_INF(vec[sortedA[i]]));
+                assert(vec[sortedA[i]] <= vec[sortedA[i + 1]]);
+            }
+        }
+
+        if (N > nNA) {
+            mean   = sum / (N - nNA);
+            impuri = a2 - (N - nNA) * mean * mean;
+            if (impuri < 0 && fabs(impuri) < 1.0e-6 * a2)
+                impuri = 0;
 #ifdef _DEBUG
-				assert(impuri >= 0);
+            assert(impuri >= 0);
 #endif
-				if (impuri < 0) {
-					printf("!!!!!! impur=%g !!!!!!\n", impuri);
-					devia = 0;		impuri = 0;
-				}else
-					devia = sqrt(impuri / (N - nNA));
-			}
-			else {
-				assert(nNA == 0 || nNA == N);
-			}
-		}
+            if (impuri < 0) {
+                printf("!!!!!! impur=%g !!!!!!\n", impuri);
+                devia  = 0;
+                impuri = 0;
+            } else
+                devia = sqrt(impuri / (N - nNA));
+        } else {
+            assert(nNA == 0 || nNA == N);
+        }
+    }
 
-		template<typename Tx>
-		void STA_at(const vector<Tx>& vec, bool isSparse, int flag) {
-			Tx *arr = (Tx*)(vec.data());
-			size_t nSamp = vec.size(), i;
-			STA_at(vec.size(), arr, isSparse, flag);
-		}
+    template <typename Tx>
+    void STA_at(const vector<Tx>& vec, bool isSparse, int flag) {
+        Tx* arr      = (Tx*)(vec.data());
+        size_t nSamp = vec.size(), i;
+        STA_at(vec.size(), arr, isSparse, flag);
+    }
 
-		//�����ز���
-		template<typename Tx>
-		void EDA(const LiteBOM_Config&config, size_t nSamp_, const SAMP_SET *samp_set, const Tx*samp_val_0,bool isGenHisto,int flag) {
-			Tx *samp_val = (Tx*)samp_val_0;
-			size_t i;
-			if (samp_set != nullptr) {//EDA on replacement sampling
-				nSamp_ = samp_set->nSamp;
-				samp_val = new Tx[nSamp_];
-				tpSAMP_ID *samps = samp_set->samps;
-				for (i = 0; i < nSamp_; i++) {
-					samp_val[i] = samp_val_0[samps[i]];
-				}
-			}
-			/**/
-			//hDistri->nam = nam;
-			STA_at<Tx>(nSamp_, samp_val, true, 0x0);
-			/*else if (config.eda_Normal != LiteBOM_Config::NORMAL_off) {
-				Tx *val_c = arr();
-				double mean = hDistri->mean, s = 1.0 / hDistri->devia;
-				//for each(tpSAMP_ID samp in hDistri->sortedA
-				for (i = 0; i < nSamp_; i++) {
-				val_c[i] = (val_c[i] - mean)*s;
-				}
-				hDistri->STA_at(nSamp_, val, true, 0x0);
-			}*/
-			assert(histo == nullptr);
-			if (isGenHisto) {	//Loss�еĸ���featû��Ҫ����histo
-				X2Histo_(config, nSamp_, samp_val, (double*)nullptr);
-			}
+    // �����ز���
+    template <typename Tx>
+    void EDA(const LiteBOM_Config& config, size_t nSamp_, const SAMP_SET* samp_set, const Tx* samp_val_0, bool isGenHisto, int flag) {
+        Tx* samp_val = (Tx*)samp_val_0;
+        size_t i;
+        if (samp_set != nullptr) {  // EDA on replacement sampling
+            nSamp_           = samp_set->nSamp;
+            samp_val         = new Tx[nSamp_];
+            tpSAMP_ID* samps = samp_set->samps;
+            for (i = 0; i < nSamp_; i++) {
+                samp_val[i] = samp_val_0[samps[i]];
+            }
+        }
+        /**/
+        // hDistri->nam = nam;
+        STA_at<Tx>(nSamp_, samp_val, true, 0x0);
+        /*else if (config.eda_Normal != LiteBOM_Config::NORMAL_off) {
+            Tx *val_c = arr();
+            double mean = hDistri->mean, s = 1.0 / hDistri->devia;
+            //for each(tpSAMP_ID samp in hDistri->sortedA
+            for (i = 0; i < nSamp_; i++) {
+            val_c[i] = (val_c[i] - mean)*s;
+            }
+            hDistri->STA_at(nSamp_, val, true, 0x0);
+        }*/
+        assert(histo == nullptr);
+        if (isGenHisto) {  // Loss�еĸ���featû��Ҫ����histo
+            X2Histo_(config, nSamp_, samp_val, (double*)nullptr);
+        }
 
-			//https://stackoverflow.com/questions/13944886/is-stdvector-memory-freed-upon-a-clear
-			vector<tpSAMP_ID>().swap(sortedA);
-			vector<Distribution::vDISTINCT>().swap(vUnique);
-			if (samp_val != samp_val_0)
-				delete[] samp_val;
-		}
+        // https://stackoverflow.com/questions/13944886/is-stdvector-memory-freed-upon-a-clear
+        vector<tpSAMP_ID>().swap(sortedA);
+        vector<Distribution::vDISTINCT>().swap(vUnique);
+        if (samp_val != samp_val_0)
+            delete[] samp_val;
+    }
 
-		template<typename Tx>
-		void CheckUnique(LiteBOM_Config config, size_t nSamp_, const Tx *val, const vector<tpSAMP_ID>& idx, vector<vDISTINCT>& vUnique, /*int nMostUnique,*/ int flag = 0x0) {
-			size_t nA = idx.size(), i;
-			Tx a0 = val[idx[0]], a1 = val[idx[nA - 1]], pre = a0;
-			size_t nz=1;
-			//vUnique.push_back((double)a0);
-			for (i = 1; i < nA; i++) {
-				if (val[idx[i]] == pre)
-				{		nz++;	 continue;		}
-				assert(val[idx[i]] > pre);
-				vUnique.push_back(vDISTINCT(pre, nz));		nz = 1;
-				pre = val[idx[i]];
-				/*if (vUnique.size() >= nMostUnique - 1) {
-					vUnique.clear();	return;
-				}*/
-				//vUnique.push_back((double)pre);
-			}
-			vUnique.push_back(vDISTINCT(pre, nz));
-			nz = 0;
-			for (auto b : vUnique)	nz += b.nz;
-			assert(nz == nA);
-		}
+    template <typename Tx>
+    void CheckUnique(LiteBOM_Config config, size_t nSamp_, const Tx* val, const vector<tpSAMP_ID>& idx, vector<vDISTINCT>& vUnique,
+                     /*int nMostUnique,*/ int flag = 0x0) {
+        size_t nA = idx.size(), i;
+        Tx a0 = val[idx[0]], a1 = val[idx[nA - 1]], pre = a0;
+        size_t nz = 1;
+        // vUnique.push_back((double)a0);
+        for (i = 1; i < nA; i++) {
+            if (val[idx[i]] == pre) {
+                nz++;
+                continue;
+            }
+            assert(val[idx[i]] > pre);
+            vUnique.push_back(vDISTINCT(pre, nz));
+            nz  = 1;
+            pre = val[idx[i]];
+            /*if (vUnique.size() >= nMostUnique - 1) {
+                vUnique.clear();	return;
+            }*/
+            // vUnique.push_back((double)pre);
+        }
+        vUnique.push_back(vDISTINCT(pre, nz));
+        nz = 0;
+        for (auto b : vUnique) nz += b.nz;
+        assert(nz == nA);
+    }
 
-		BIN_FEATA& AddBin(const LiteBOM_Config&config, size_t nz,double pre, double cur, int flag);		//����FEATA������������Ϣ
-		int HistoOnFrequncy_small(const LiteBOM_Config&config, vector<vDISTINCT>& vUnique, int i_0, int i_1, size_t T, int flag);
-		//always last bin for NA
-		void HistoOnFrequncy_1(const LiteBOM_Config&config, vector<vDISTINCT>& vUnique, size_t nA0, size_t nMostBin, int flag = 0x0);
-		void HistoOnUnique_1(const LiteBOM_Config&config, vector<vDISTINCT>& vUnique, size_t nA0, bool isMap, int flag = 0x0);
+    BIN_FEATA& AddBin(const LiteBOM_Config& config, size_t nz, double pre, double cur, int flag);  // ����FEATA������������Ϣ
+    int HistoOnFrequncy_small(const LiteBOM_Config& config, vector<vDISTINCT>& vUnique, int i_0, int i_1, size_t T, int flag);
+    // always last bin for NA
+    void HistoOnFrequncy_1(const LiteBOM_Config& config, vector<vDISTINCT>& vUnique, size_t nA0, size_t nMostBin, int flag = 0x0);
+    void HistoOnUnique_1(const LiteBOM_Config& config, vector<vDISTINCT>& vUnique, size_t nA0, bool isMap, int flag = 0x0);
 
-		/*	
-			v0.2	cys
-				1/15/2019
-			v0.3	cys
-				4/8/2019
-		*/
-		template<typename Tx>
-		void HistoOnFrequncy(const LiteBOM_Config&config, Tx *val, const vector<tpSAMP_ID>& sort_ids,
-			size_t nMostBin, int flag = 0x0) {
-			assert(histo != nullptr);
-			size_t i, i_0 = 0, i_1, noBin = 0, pos, nA = sort_ids.size(), T_min_count = int(nA / nMostBin) + 1;
-			Tx a0 = val[sort_ids[0]], a1 = val[sort_ids[nA - 1]], v0;
-			double T_min_decrimi = 0,crimi=0;
-			//vThrsh.clear();
-			bool isDcrimi = corr.dcrimi != nullptr;
-			if (isDcrimi) {
-				T_min_count /= 2;  T_min_decrimi = corr.D_sum / nMostBin;
-			}
-			while (i_0 < nA) {
-				v0 = val[sort_ids[i_0]];			i_1 = i_0;
-				//noBin = vThrsh.size();
-				if (isDcrimi) {
-					crimi = corr.dcrimi[i_0];
-				}
-				HISTO_BIN& bin = histo->bins[noBin];
-				bin.tic = noBin;	//tic split_F����һ��
-				//bin.split_F = i_0 > 0 ? (v0 + val[sort_ids[i_0 - 1]]) / 2 : v0;
-				/*//vThrsh.push_back(v1_last);
-				if (i_0 > 0)
-					vThrsh.push_back((v0 + val[sort_ids[i_0 - 1]]) / 2);
-				else
-					vThrsh.push_back(v0);
-				*/
-				while (++i_1 < nA) {
-					pos = sort_ids[i_1];
-					assert(!IS_NAN_INF(val[pos]));
-					if( isDcrimi ){						
-						if (i_1 - i_0 >= T_min_count && val[pos] > v0 && crimi > T_min_decrimi) {
-							break;
-						}
-						crimi += corr.dcrimi[i_1];
-					}else	if (i_1 - i_0 >= T_min_count && val[pos] > v0)
-						break;
-					v0 = val[pos];
-				}
-				assert(i_1 == nA || val[pos] > v0);
-				bin.nz = i_1 - i_0;				
-				i_0 = i_1;		
-				noBin = noBin + 1;
-			}
-			//histo->bins.resize(noBin+1);
-			histo->nBins = noBin + 1;
-			assert(i_0 == nA);
-			double delta = double(fabs(a1 - a0)) / nMostBin / 100.0;
-			//histo->bins[noBin].split_F = a1 + delta;		//�Ͻ�,Ϊ�˵�
-			//assert(histo->bins[histo->bins.size()-1].split_F>a1);
-			//vThrsh.push_back(a1 + delta);
-		}
+    /*
+        v0.2	cys
+            1/15/2019
+        v0.3	cys
+            4/8/2019
+    */
+    template <typename Tx>
+    void HistoOnFrequncy(const LiteBOM_Config& config, Tx* val, const vector<tpSAMP_ID>& sort_ids, size_t nMostBin, int flag = 0x0) {
+        assert(histo != nullptr);
+        size_t i, i_0 = 0, i_1, noBin = 0, pos, nA = sort_ids.size(), T_min_count = int(nA / nMostBin) + 1;
+        Tx a0 = val[sort_ids[0]], a1 = val[sort_ids[nA - 1]], v0;
+        double T_min_decrimi = 0, crimi = 0;
+        // vThrsh.clear();
+        bool isDcrimi = corr.dcrimi != nullptr;
+        if (isDcrimi) {
+            T_min_count /= 2;
+            T_min_decrimi = corr.D_sum / nMostBin;
+        }
+        while (i_0 < nA) {
+            v0  = val[sort_ids[i_0]];
+            i_1 = i_0;
+            // noBin = vThrsh.size();
+            if (isDcrimi) {
+                crimi = corr.dcrimi[i_0];
+            }
+            HISTO_BIN& bin = histo->bins[noBin];
+            bin.tic        = noBin;  // tic split_F����һ��
+            // bin.split_F = i_0 > 0 ? (v0 + val[sort_ids[i_0 - 1]]) / 2 : v0;
+            /*//vThrsh.push_back(v1_last);
+            if (i_0 > 0)
+                vThrsh.push_back((v0 + val[sort_ids[i_0 - 1]]) / 2);
+            else
+                vThrsh.push_back(v0);
+            */
+            while (++i_1 < nA) {
+                pos = sort_ids[i_1];
+                assert(!IS_NAN_INF(val[pos]));
+                if (isDcrimi) {
+                    if (i_1 - i_0 >= T_min_count && val[pos] > v0 && crimi > T_min_decrimi) {
+                        break;
+                    }
+                    crimi += corr.dcrimi[i_1];
+                } else if (i_1 - i_0 >= T_min_count && val[pos] > v0)
+                    break;
+                v0 = val[pos];
+            }
+            assert(i_1 == nA || val[pos] > v0);
+            bin.nz = i_1 - i_0;
+            i_0    = i_1;
+            noBin  = noBin + 1;
+        }
+        // histo->bins.resize(noBin+1);
+        histo->nBins = noBin + 1;
+        assert(i_0 == nA);
+        double delta = double(fabs(a1 - a0)) / nMostBin / 100.0;
+        // histo->bins[noBin].split_F = a1 + delta;		//�Ͻ�,Ϊ�˵�
+        // assert(histo->bins[histo->bins.size()-1].split_F>a1);
+        // vThrsh.push_back(a1 + delta);
+    }
 
-		/*
-			v0.1
-			v0.2	cys	
-				10/10/2019
-			The most common and popular approach is to model the missing value in a categorical column as a new category called ��Unknown.��
-		*/
-		template<typename Tx>
-		void HistoOnUnique(const LiteBOM_Config&config, Tx *val, const vector<tpSAMP_ID>& sort_ids, vector<vDISTINCT>&uniques, int flag = 0x0) {
-			size_t nMostBin = uniques.size();
-			assert(histo != nullptr);
-			size_t i, i_0 = 0, i_1, noBin = -1, pos, nA = sort_ids.size(), T_min = int(nA / nMostBin) + 1, nz_1=0;
-			Tx a0 = val[sort_ids[0]], a1 = val[sort_ids[nA - 1]], v0;
-			//vThrsh.clear();		
-			binFeatas.resize(nMostBin);
-			mapCategory.clear();		
-			while (i_0 < nA) {
-				v0 = val[sort_ids[i_0]];			i_1 = i_0;
-				HISTO_BIN& bin = histo->bins[++noBin];
-				BIN_FEATA& feata = binFeatas[noBin];
-				bin.tic = noBin;
-				mapCategory.insert(pair<int, int>((int)(v0), noBin));
-				feata.split_F = noBin > 0 ? (v0 + uniques[noBin - 1].val) / 2 : v0;
-				while (++i_1 < nA) {
-					pos = sort_ids[i_1];
-					assert(!IS_NAN_INF(val[pos]));
-					if (val[pos] > v0)
-						break;
-					v0 = val[pos];
-				}
-				assert(i_1 == nA || val[pos] > v0);
-				bin.nz = i_1 - i_0;
-				i_0 = i_1;
-			}
-			assert(i_0 == nA);			assert(noBin== nMostBin-1);
-			histo->nBins = noBin + 1;
-			//AddBin(config, noBin + 1, a1, DBL_MAX, -0x0);	//last bin for NA
-			binFeatas[noBin].split_F = DBL_MAX;
+    /*
+        v0.1
+        v0.2	cys
+            10/10/2019
+        The most common and popular approach is to model the missing value in a categorical column as a new category called ��Unknown.��
+    */
+    template <typename Tx>
+    void HistoOnUnique(const LiteBOM_Config& config, Tx* val, const vector<tpSAMP_ID>& sort_ids, vector<vDISTINCT>& uniques, int flag = 0x0) {
+        size_t nMostBin = uniques.size();
+        assert(histo != nullptr);
+        size_t i, i_0 = 0, i_1, noBin = -1, pos, nA = sort_ids.size(), T_min = int(nA / nMostBin) + 1, nz_1 = 0;
+        Tx a0 = val[sort_ids[0]], a1 = val[sort_ids[nA - 1]], v0;
+        // vThrsh.clear();
+        binFeatas.resize(nMostBin);
+        mapCategory.clear();
+        while (i_0 < nA) {
+            v0               = val[sort_ids[i_0]];
+            i_1              = i_0;
+            HISTO_BIN& bin   = histo->bins[++noBin];
+            BIN_FEATA& feata = binFeatas[noBin];
+            bin.tic          = noBin;
+            mapCategory.insert(pair<int, int>((int)(v0), noBin));
+            feata.split_F = noBin > 0 ? (v0 + uniques[noBin - 1].val) / 2 : v0;
+            while (++i_1 < nA) {
+                pos = sort_ids[i_1];
+                assert(!IS_NAN_INF(val[pos]));
+                if (val[pos] > v0)
+                    break;
+                v0 = val[pos];
+            }
+            assert(i_1 == nA || val[pos] > v0);
+            bin.nz = i_1 - i_0;
+            i_0    = i_1;
+        }
+        assert(i_0 == nA);
+        assert(noBin == nMostBin - 1);
+        histo->nBins = noBin + 1;
+        // AddBin(config, noBin + 1, a1, DBL_MAX, -0x0);	//last bin for NA
+        binFeatas[noBin].split_F = DBL_MAX;
 
-			IMPUT_most_freq = -1;
-			for (nz_1=0,i = 0; i < histo->nBins; i++) {
-				if (histo->bins[i].nz > nz_1) {
-					nz_1 = histo->bins[i].nz;
-					IMPUT_most_freq = i;
-				}
-			}
+        IMPUT_most_freq = -1;
+        for (nz_1 = 0, i = 0; i < histo->nBins; i++) {
+            if (histo->bins[i].nz > nz_1) {
+                nz_1            = histo->bins[i].nz;
+                IMPUT_most_freq = i;
+            }
+        }
 
-			size_t n1 = ceil(noBin / 4.0), n2 = ceil(noBin / 2.0), n3 = ceil(noBin *3.0 / 4);
-			H_q0 = uniques[0].val,			H_q4 = uniques[noBin].val;
-			H_q1 = q1 = uniques[n1].val,	H_q2 = q2 = uniques[n2].val;		H_q3 = q3 = uniques[n3].val;/**/
-		}
+        size_t n1 = ceil(noBin / 4.0), n2 = ceil(noBin / 2.0), n3 = ceil(noBin * 3.0 / 4);
+        H_q0 = uniques[0].val, H_q4 = uniques[noBin].val;
+        H_q1 = q1 = uniques[n1].val, H_q2 = q2 = uniques[n2].val;
+        H_q3 = q3 = uniques[n3].val; /**/
+    }
 
-		/*���Լ���histo��bin��������׼ȷ���ƺ�ûɶӰ��
-			https://stats.stackexchange.com/questions/798/calculating-optimal-number-of-bins-in-a-histogram/862
-		*/
-		template<typename Tx>
-		int Freedman_Diaconis_(const Tx * val, const vector<tpSAMP_ID>& idx,int flag=0x0) {
-			size_t  nA = idx.size();
-			assert(nA >= 4);
-			Tx a0 = val[idx[0]], a1 = val[idx[nA - 1]], q3,q1;
-			q3 = val[idx[nA * 3 / 4]], q1 = val[idx[nA / 4]];
-			assert(q3>=q1);
-			double IQR = q3-q1;
-			if(IQR==0){
-			//if (IQR <(a1-a0)/1000.0 ) {	//���������쳣�ܳ�����
-				IQR = a1 - a0;
-			}
-			double h = 2* IQR/pow(nA, 1.0 / 3);
-			int nBin = (int)((a1 - a0) / h)+1;
-			assert(nBin > 0);
-			return nBin;
-		}
+    /*
+        https://stats.stackexchange.com/questions/798/calculating-optimal-number-of-bins-in-a-histogram/862
+    */
+    template <typename Tx>
+    int Freedman_Diaconis_(const Tx* val, const vector<tpSAMP_ID>& idx, int flag = 0x0) {
+        size_t nA = idx.size();
+        assert(nA >= 4);
+        Tx a0 = val[idx[0]], a1 = val[idx[nA - 1]], q3, q1;
+        q3 = val[idx[nA * 3 / 4]], q1 = val[idx[nA / 4]];
+        assert(q3 >= q1);
+        double IQR = q3 - q1;
+        if (IQR == 0) {
+            // if (IQR <(a1-a0)/1000.0 ) {	//
+            IQR = a1 - a0;
+        }
+        double h = 2 * IQR / pow(nA, 1.0 / 3);
+        int nBin = (int)((a1 - a0) / h) + 1;
+        assert(nBin > 0);
+        return nBin;
+    }
 
-		//ֻ�޸�split_F
-		virtual void UpdateHistoByW(const LiteBOM_Config&config, int nTree,float *wBins,int flag=0x0);
+    // ֻsplit_F
+    virtual void UpdateHistoByW(const LiteBOM_Config& config, int nTree, float* wBins, int flag = 0x0);
 
-		/*
-		���뱣֤histo��vThrsh�ϸ�һ��		��Ҫ�������histo��vThrsh		3/11/2019
-		Issue-Needed:
-			how dividing the bins on the gradient statistics		http://mlexplained.com/2018/01/05/lightgbm-and-xgboost-explained/
-		һЩ����
-			https://github.com/Microsoft/LightGBM/issues/583
-		*/
-		template<typename Tx, typename Ty>
-		void X2Histo_(const LiteBOM_Config&config, size_t nSamp_, Tx *val, Ty *y, int flag = 0x0) {
-			assert(histo == nullptr);
-			//histo = optimal == "grad_variance" ? new HistoGRAM(nSamp_) : new Histo_CTQ(nSamp_);
-			histo = new HistoGRAM(nullptr,nSamp_);
-			if (rNA == 1.0) {	//���ڸ��ӵ�pandas������ȷʵ���ڿ���
-				if(config.verbose>0)	printf("X2Histo_::!!!\"%s\"-%s is all NAN!!!\n", nam.c_str(),desc.c_str());
-				return;
-			}
-			if (vMin == vMax) {
-				if (config.verbose>0)	printf("X2Histo_::\"%s\"-%s is const(%g)!!!", nam.c_str(), desc.c_str(), (double)val[0]);
-				return;
-			}			
+    /*
+    3/11/2019
+    Issue-Needed:
+        how dividing the bins on the gradient statistics
+    */
+    template <typename Tx, typename Ty>
+    void X2Histo_(const LiteBOM_Config& config, size_t nSamp_, Tx* val, Ty* y, int flag = 0x0) {
+        assert(histo == nullptr);
+        // histo = optimal == "grad_variance" ? new HistoGRAM(nSamp_) : new Histo_CTQ(nSamp_);
+        histo = new HistoGRAM(nullptr, nSamp_);
+        if (rNA == 1.0) {  // ���ڸ��ӵ�pandas������ȷʵ���ڿ���
+            if (config.verbose > 0)
+                printf("X2Histo_::!!!\"%s\"-%s is all NAN!!!\n", nam.c_str(), desc.c_str());
+            return;
+        }
+        if (vMin == vMax) {
+            if (config.verbose > 0)
+                printf("X2Histo_::\"%s\"-%s is const(%g)!!!", nam.c_str(), desc.c_str(), (double)val[0]);
+            return;
+        }
 
-			string optimal = config.leaf_optimal;
+        string optimal = config.leaf_optimal;
 
-			int nMostBin = config.feat_quanti;		
-			//if(BIT_TEST(type,Distribution::DISCRETE))
-			assert(nMostBin > 0);
-			//nMostBin = max(1, config.feat_quanti / 4);
-			vector<tpSAMP_ID> idx;
-			if (sortedA.size() > 0)
-				idx = sortedA;
-			else
-				sort_indexes(nSamp_, val, idx);
-			size_t i, i_0 = 0, i_1, noBin = 0, pos, nA = idx.size();
-			Tx a0 = val[idx[0]], a1 = val[idx[nA - 1]], v0 = a0;
-			if (nA > 4 && a1>a0) {
-				q1 = val[idx[nA / 4]], q2 = val[idx[nA / 2]], q3 = val[idx[nA*3/4]];
-				//nMostBin = MIN2(nMostBin,Freedman_Diaconis_(val, idx));
-			}	else {
-				q1 = q2 = q3 = a0;
-			}
-			assert(a0 <= a1 && a0 == vMin && a1 == vMax);
-			//histo->a0 = a0;		histo->a1 = a1;
-			if (a0 == a1) { return; }/**/
-			Tx step = (a1 - a0) / nMostBin, v1_last = a0;
-			CheckUnique(config, nSamp_, val, idx, vUnique, nMostBin*10);
-			if (BIT_TEST(type, Distribution::DISCRETE))
-				nMostBin = vUnique.size() + 3;
-			if (BIT_TEST(type, Distribution::CATEGORY) || BIT_TEST(type, Distribution::DISCRETE)) {
-				if (vUnique.size() > 0) {
-					assert(config.feat_quanti > 1);
-					assert(histo->bins == nullptr);
-					histo->bins = new HISTO_BIN[vUnique.size()+1];		binFeatas.resize(vUnique.size() + 1);
-					HistoOnUnique_1(config, vUnique, nA, BIT_TEST(type, Distribution::CATEGORY));
-					//if(config.isDebug_1)
-					//else
-					//	HistoOnUnique(config, val, idx, vUnique);
-					//histo->Dump(this->binFeatas, mapCategory);		//���Histogram����Ϣ
-					vUnique.clear();
-					return;		//���뱣��һ��
-				}
-			}
+        int nMostBin = config.feat_quanti;
+        // if(BIT_TEST(type,Distribution::DISCRETE))
+        assert(nMostBin > 0);
+        // nMostBin = max(1, config.feat_quanti / 4);
+        vector<tpSAMP_ID> idx;
+        if (sortedA.size() > 0)
+            idx = sortedA;
+        else
+            sort_indexes(nSamp_, val, idx);
+        size_t i, i_0 = 0, i_1, noBin = 0, pos, nA = idx.size();
+        Tx a0 = val[idx[0]], a1 = val[idx[nA - 1]], v0 = a0;
+        if (nA > 4 && a1 > a0) {
+            q1 = val[idx[nA / 4]], q2 = val[idx[nA / 2]], q3 = val[idx[nA * 3 / 4]];
+            // nMostBin = MIN2(nMostBin,Freedman_Diaconis_(val, idx));
+        } else {
+            q1 = q2 = q3 = a0;
+        }
+        assert(a0 <= a1 && a0 == vMin && a1 == vMax);
+        if (config.objective == "quant") {
+            Histo4Quant(config, nA, val, idx, 0x0);
+            return;
+        }
+        // histo->a0 = a0;		histo->a1 = a1;
+        if (a0 == a1) {
+            return;
+        } /**/
+        Tx step = (a1 - a0) / nMostBin, v1_last = a0;
+        CheckUnique(config, nSamp_, val, idx, vUnique, nMostBin * 10);
+        if (BIT_TEST(type, Distribution::DISCRETE))
+            nMostBin = vUnique.size() + 3;
+        if (BIT_TEST(type, Distribution::CATEGORY) || BIT_TEST(type, Distribution::DISCRETE)) {
+            if (vUnique.size() > 0) {
+                assert(config.feat_quanti > 1);
+                assert(histo->bins == nullptr);
+                histo->bins = new HISTO_BIN[vUnique.size() + 1];
+                binFeatas.resize(vUnique.size() + 1);
+                HistoOnUnique_1(config, vUnique, nA, BIT_TEST(type, Distribution::CATEGORY));
+                // if(config.isDebug_1)
+                // else
+                //	HistoOnUnique(config, val, idx, vUnique);
+                // histo->Dump(this->binFeatas, mapCategory);		//���Histogram����Ϣ
+                vUnique.clear();
+                return;  // ���뱣��һ��
+            }
+        }
 
-			//int histo_alg = config.histo_algorithm;
-			//histo->bins.resize(nMostBin + 3);
-			assert(histo->bins==nullptr);
-			histo->bins = new HISTO_BIN[nMostBin + 3];
-			binFeatas.resize(nMostBin + 3);		
-			switch (config.histo_bin_map) {
-			case LiteBOM_Config::HISTO_BINS_MAP::onUNIQUE:
-				
-				break;
-			case LiteBOM_Config::HISTO_BINS_MAP::on_FREQ_and_Y:
-			case LiteBOM_Config::HISTO_BINS_MAP::on_FREQ:
-				if( y!=nullptr && config.histo_bin_map== LiteBOM_Config::HISTO_BINS_MAP::on_FREQ_and_Y)
-					corr.DCRIMI_2(config, val,y, idx,flag );
-				/**/if (vUnique.size() <= nMostBin - 1) {	
-					HistoOnUnique_1(config, vUnique, nA, false);
-					//HistoOnUnique(config, val, idx, vUnique);
-				}	else {
-					HistoOnFrequncy_1(config, vUnique, nA, nMostBin-1);
-				}
-				corr.Clear();
-				break;
-				
-			default:		//on_QUANTILE
-				throw "!!!HISTO_BINS_MAP::on_QUANTILE is ...!!!";			
-				break;
-			}
-			vUnique.clear();
-			int nBin = histo->nBins;	// bins.size();		//always last bin for NA
-			histo->nMostBins = histo->nBins;	// bins.size();
-			assert(binFeatas.size()>=nBin );
-			binFeatas.resize(nBin);
-			//histo->bins.resize(nBin + 1);
-			/*if (vUnique.size() > 0) {	//�ѵ���BUG???
-			}	else {
+        // int histo_alg = config.histo_algorithm;
+        // histo->bins.resize(nMostBin + 3);
+        assert(histo->bins == nullptr);
+        histo->bins = new HISTO_BIN[nMostBin + 3];
+        binFeatas.resize(nMostBin + 3);
+        switch (config.histo_bin_map) {
+            case LiteBOM_Config::HISTO_BINS_MAP::onUNIQUE:
 
-			}*/
-			if (nBin >= 2) {
-				size_t n1 = ceil(nBin / 4.0), n2 = ceil(nBin / 2.0), n3 = ceil(nBin *3.0 / 4) - 1;
-				HISTO_BIN&b0 = histo->bins[0], &b1 = histo->bins[n1], &b2 = histo->bins[n2], &b3 = histo->bins[n3], &b4 = histo->bins[nBin - 1];
-				//H_q0 = b0.split_F, H_q4 = b4.split_F;
-				//H_q1 = q1 = b1.split_F, H_q2 = q2 = b2.split_F;		H_q3 = q3 = b3.split_F;/**/
-			}
-		}
+                break;
+            case LiteBOM_Config::HISTO_BINS_MAP::on_FREQ_and_Y:
+            case LiteBOM_Config::HISTO_BINS_MAP::on_FREQ:
+                if (y != nullptr && config.histo_bin_map == LiteBOM_Config::HISTO_BINS_MAP::on_FREQ_and_Y)
+                    corr.DCRIMI_2(config, val, y, idx, flag);
+                /**/ if (vUnique.size() <= nMostBin - 1) {
+                    HistoOnUnique_1(config, vUnique, nA, false);
+                    // HistoOnUnique(config, val, idx, vUnique);
+                } else {
+                    HistoOnFrequncy_1(config, vUnique, nA, nMostBin - 1);
+                }
+                corr.Clear();
+                break;
 
-	};
-}
+            default:  // on_QUANTILE
+                throw "!!!HISTO_BINS_MAP::on_QUANTILE is ...!!!";
+                break;
+        }
+        vUnique.clear();
+        int nBin         = histo->nBins;  // bins.size();		//always last bin for NA
+        histo->nMostBins = histo->nBins;  // bins.size();
+        assert(binFeatas.size() >= nBin);
+        binFeatas.resize(nBin);
+        // histo->bins.resize(nBin + 1);
+        /*if (vUnique.size() > 0) {	//�ѵ���BUG???
+        }	else {
+
+        }*/
+        if (nBin >= 2) {
+            size_t n1 = ceil(nBin / 4.0), n2 = ceil(nBin / 2.0), n3 = ceil(nBin * 3.0 / 4) - 1;
+            HISTO_BIN &b0 = histo->bins[0], &b1 = histo->bins[n1], &b2 = histo->bins[n2], &b3 = histo->bins[n3], &b4 = histo->bins[nBin - 1];
+            // H_q0 = b0.split_F, H_q4 = b4.split_F;
+            // H_q1 = q1 = b1.split_F, H_q2 = q2 = b2.split_F;		H_q3 = q3 = b3.split_F;/**/
+        }
+    }
+
+    template <typename Tx>
+    void Histo4Quant(const LiteBOM_Config& config, size_t nA0, Tx* val, const vector<tpSAMP_ID>& idx, int flag) {
+        assert(histo != nullptr);
+        size_t i = -1, nMostBin = idx.size(), nz = 0, nz_1 = 0, nUinque = 0;
+        double a0 = val[idx[0]], a1 = val[idx[nMostBin - 1]], vLeftOuter, sum_1 = 0, sum_2 = 0, next = FLT_MAX, pre = a0;
+        assert(a0 < a1);
+        Tx v0 = val[idx[0]];
+        histo->bins = new HISTO_BIN[nMostBin + 1];
+        binFeatas.resize(nMostBin + 1);
+
+        while (++i < nMostBin) {
+            v0 = val[idx[i]];
+            nz++, sum_1 += v0, sum_2 += v0 * v0;
+            if (i == nMostBin - 1) {
+                DEBUG_HERE;
+            }
+            next = i + 1 < nMostBin ? val[idx[i + 1]] : a1 + (a1 - a0);
+            if (v0 == next) {
+                continue;
+            }
+            assert(v0 < next);
+
+            vLeftOuter       = nUinque > 0 ? pre : a0;
+            BIN_FEATA& feata = AddBin(config, nz, vLeftOuter, v0, flag);
+            feata.sum_1      = sum_1;
+            feata.sum_2      = sum_2;
+            pre = v0, nz = 0, sum_1 = 0, sum_2 = 0;
+            nUinque++;
+        }
+        double delta = double(fabs(a1 - a0)) / nMostBin / 100.0;
+        AddBin(config, nSamp - nA0, a1, a1 + delta, nSamp == nA0 ? -1 : flag);  // always last bin for NA
+
+        int nBin         = histo->nBins;  // always last bin for NA
+        histo->nMostBins = histo->nBins;
+        assert(binFeatas.size() >= nBin);
+        binFeatas.resize(nBin);
+
+        IMPUT_most_freq = -1;
+        for (nz_1 = 0, i = 0; i < histo->nBins; i++) {
+            if (histo->bins[i].nz > nz_1) {
+                nz_1            = histo->bins[i].nz;
+                IMPUT_most_freq = i;
+            }
+        } /**/
+
+        histo->CheckValid(config);
+    }
+};
+}  // namespace Grusoft

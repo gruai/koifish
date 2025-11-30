@@ -7,7 +7,6 @@
 #include <math.h>
 
 #include "../../Utils/BLAS_t.hpp"
-#include "../../g_stddef.hpp"
 #include "../SpMV/GVMAT.h"
 #include "../SpMV/Matrix.hpp"
 // #include "lapacke.h"

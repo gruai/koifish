@@ -465,11 +465,16 @@ __global__ void CU_sample(T* prelogitst, int* index, int dim, float coin, int fl
     return;
 }
 
+bool GeneratOnPrompt::VerifyLogits(int flag){
+    // PrintTensor<floatLogits>("_logits", logits, true, tokenizer->nVocab(), 1, 1, 1, -1);
+    return true;
+}
+
 TOKEN_ID GeneratOnPrompt::Sample(int idx, bool is_resampling) {
     if (samp_params.isSampleCPU)
         return Sample_cpu(idx, is_resampling);
 
-    TOKEN_ID id = 0;
+    // TOKEN_ID id = 0;
     int n_vocab = fish_1 == nullptr ? wiki0->n_vocab : fish_1->nClass();
     assert(n_vocab == gpuLogits.dim);
     PrintTensor<floatLogits>("_logits", gpuLogits.logits, true, n_vocab, 1, 1, 1, 0);

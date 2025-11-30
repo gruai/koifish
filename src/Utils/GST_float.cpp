@@ -14,11 +14,12 @@
 #include <immintrin.h>
 #endif
 // #include "f16cintrin.h"
+#include "../g_def_x.hpp"
 #include "../CLI_params.hpp"
 #include "../g_float.hpp"
 #include "../g_float_cpu.hpp"
-#include "../g_stddef.hpp"
 
+//
 double BitPE(typNUMBER type) {
     if (type == typNUMBER::F8E5M2 || type == typNUMBER::F8E4M3 || type == typNUMBER::I8)
         return 8.0;
@@ -29,6 +30,12 @@ double BitPE(typNUMBER type) {
     if (type == typNUMBER::F32 || type == typNUMBER::I32)
         return 32.0;
     if (type == typNUMBER::T_SIGN)
+        return 2.0;
+    if (type == typNUMBER::Q4)
+        return 4.0;
+    if (type == typNUMBER::Q3)
+        return 3.0;
+    if (type == typNUMBER::Q2)
         return 2.0;
     if (type == typNUMBER::T_BINARY || type == typNUMBER::T_BINARY_3) {
         if (DEBUG.T_ternary == 1)  // hack to BF16 to debug some error

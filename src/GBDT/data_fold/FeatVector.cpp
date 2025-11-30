@@ -26,7 +26,6 @@ void FeatVector::SetDistri(Distribution *d_, int flag) {
     distri_->type = this->type;
 }
 
-// �μ�ExploreDA::AddDistri
 void FeatVector::UpdateType(int flag) {
     assert(PY != nullptr);
     if (PY->isCategory()) {

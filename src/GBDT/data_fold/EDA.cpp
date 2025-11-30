@@ -22,7 +22,7 @@ GRander Distribution::rander_(42);
     - If "most_frequent", then replace missing using the most frequent
         value along the axis.
 */
-ExploreDA::ExploreDA(LiteBOM_Config &config, const string &nam_, int flag) : name(nam_) {
+ExploreDA::ExploreDA(LiteBOM_Config& config, const string& nam_, int flag) : name(nam_) {
     // arrDistri.resize(nFeat);
 }
 ExploreDA::~ExploreDA() {
@@ -33,24 +33,27 @@ ExploreDA::~ExploreDA() {
     mapDistri.clear();
 }
 
-void ExploreDA::AddDistri(const PY_COLUMN *PY, int id, int flag) {
+void ExploreDA::AddDistri(const PY_COLUMN* PY, int id, int flag) {
     assert(mapDistri.find(id) == mapDistri.end());
 
-    Distribution *distri = new Distribution();
-    distri->nam          = PY->name;
-    if (PY->isCategory()) {
-        BIT_SET(distri->type, Distribution::CATEGORY);
+    Distribution* distri = new Distribution();
+    if (PY == nullptr) {
+    } else {
+        distri->nam = PY->name;
+        if (PY->isCategory()) {
+            BIT_SET(distri->type, Distribution::CATEGORY);
+        }
+        if (PY->isDiscrete()) {
+            BIT_SET(distri->type, Distribution::DISCRETE);
+        }
+        if (PY->representive > 0) {
+            BIT_SET(distri->type, Distribution::DISCRETE);
+        }
     }
-    if (PY->isDiscrete()) {
-        BIT_SET(distri->type, Distribution::DISCRETE);
-    }
-    if (PY->representive > 0) {
-        BIT_SET(distri->type, Distribution::DISCRETE);
-    }
-    mapDistri.insert(pair<int, Distribution *>(id, distri));
+    mapDistri.insert(pair<int, Distribution*>(id, distri));
 }
 
-Distribution *ExploreDA::GetDistri(int id) {
+Distribution* ExploreDA::GetDistri(int id) {
     if (mapDistri.find(id) == mapDistri.end()) {
         printf("\nEDA_%s::GetDistri id=%d is XXX\n", name.c_str(), id);
         throw "!!!!!! ExploreDA::GetDistri id is XXX	!!!!!!";
@@ -74,7 +77,7 @@ double Distribution::split_F(int no, int flag) const {
     return a;
 }
 //
-void Distribution::UpdateHistoByW(const LiteBOM_Config &config, int nTree, float *wBins, int flag) {
+void Distribution::UpdateHistoByW(const LiteBOM_Config& config, int nTree, float* wBins, int flag) {
     // histo->nMostBins = config.feat_quanti;
     size_t nBin_0 = histo->nBins, i, nMaxSplit = int((nBin_0 - 1) / 10.0), nSplit = 0, id, nDrop = 0;
     if (nMaxSplit == 0)
@@ -86,7 +89,7 @@ void Distribution::UpdateHistoByW(const LiteBOM_Config &config, int nTree, float
         w_avg += wBins[i] * wBins[i];
     }
     w_avg     = sqrt(w_avg / (nBin_0 - 1));
-    int *mask = new int[nBin_0]();
+    int* mask = new int[nBin_0]();
     vector<tpSAMP_ID> idx;
     double split_1 = 0;
     // sort_indexes(nBin_0, wBins, idx);
@@ -192,7 +195,7 @@ bool Distribution::isValidFeatas() {
     return true;
 }
 
-bool Distribution::VerifySame(const Distribution &rhs) const {
+bool Distribution::VerifySame(const Distribution& rhs) const {
     if (nSamp != rhs.nSamp)
         return false;
     if (type != rhs.type)
@@ -228,11 +231,11 @@ void Distribution::Dump(int feat, bool isQuanti, int flag) {
         // printf("%4d %c%12s [%.3g,%.3g,%.3g,%.3g,%.3g]\tnBin=%d[%.3g,%.3g,%.3g,%.3g,%.3g]%s \n", feat, typ, nam.c_str(),
         //	vMin, q1, q2, q3, vMax,
         // ��Ҫ�����λ��
-        printf("%4d %c%12s [%.4g-%.8g]\t[%.4g,%.4g,%.4g,%.4g,%.4g]%s \n", feat, typ, nam.c_str(), vMin, vMax, H_q0, H_q1, H_q2, H_q3, H_q4, tmp);
+        printf("%4d %c%12s [%.4g-%.8g]\t H_q4=[%.4g,%.4g,%.4g,%.4g,%.4g]%s \n", feat, typ, nam.c_str(), vMin, vMax, H_q0, H_q1, H_q2, H_q3, H_q4, tmp);
     }
 }
 
-void Distribution::HistoOnUnique_1(const LiteBOM_Config &config, vector<vDISTINCT> &uniques, size_t nA0, bool isMap, int flag) {
+void Distribution::HistoOnUnique_1(const LiteBOM_Config& config, vector<vDISTINCT>& uniques, size_t nA0, bool isMap, int flag) {
     isUnique        = true;
     size_t nMostBin = uniques.size();
     assert(histo != nullptr);
@@ -267,26 +270,18 @@ void Distribution::HistoOnUnique_1(const LiteBOM_Config &config, vector<vDISTINC
     assert(binFeatas.size() >= nBin);
     binFeatas.resize(nBin);
 
-    IMPUT_most_freq = -1;
-    for (nz_1 = 0, i = 0; i < histo->nBins; i++) {
-        if (histo->bins[i].nz > nz_1) {
-            nz_1            = histo->bins[i].nz;
-            IMPUT_most_freq = i;
-        }
-    }
-
     histo->CheckValid(config);
 }
 
-BIN_FEATA &Distribution::AddBin(const LiteBOM_Config &config, size_t nz, double left_outer, double left_inner, int flag) {
+BIN_FEATA& Distribution::AddBin(const LiteBOM_Config& config, size_t nz, double left_outer, double left_inner, int flag) {
     assert(left_inner >= left_outer);
     if (nz > 0) {
     } else {
         assert(flag == -1);  // always last bin for NA
     }
     int noBin        = histo->nBins;
-    HISTO_BIN &bin   = histo->bins[noBin];
-    BIN_FEATA &feata = binFeatas[noBin];
+    HISTO_BIN& bin   = histo->bins[noBin];
+    BIN_FEATA& feata = binFeatas[noBin];
     bin.tic          = noBin;  // tic split_F����һ��
                                // bin.split_F = i_0 > 0 ? (v0 + vUnique[i_0 - 1].val) / 2 : v0;
     feata.split_F = (left_outer + left_inner) / 2;
@@ -298,7 +293,7 @@ BIN_FEATA &Distribution::AddBin(const LiteBOM_Config &config, size_t nz, double 
     return feata;
 }
 
-int Distribution::HistoOnFrequncy_small(const LiteBOM_Config &config, vector<vDISTINCT> &vUnique, int i_0, int i_1, size_t T_bin, int flag) {
+int Distribution::HistoOnFrequncy_small(const LiteBOM_Config& config, vector<vDISTINCT>& vUnique, int i_0, int i_1, size_t T_bin, int flag) {
     size_t nz = 0, mimimum = config.min_data_in_bin, nBin0 = histo->nBins;
     double v0;
     int i;
@@ -329,12 +324,12 @@ int Distribution::HistoOnFrequncy_small(const LiteBOM_Config &config, vector<vDI
     v0.2	cys
         10/31/2019
 */
-void Distribution::HistoOnFrequncy_1(const LiteBOM_Config &config, vector<vDISTINCT> &vUnique, size_t nA0, size_t nMostBin, int flag) {
+void Distribution::HistoOnFrequncy_1(const LiteBOM_Config& config, vector<vDISTINCT>& vUnique, size_t nA0, size_t nMostBin, int flag) {
     nMostBin = MIN2(vUnique.size(), nMostBin);
     assert(histo != nullptr);
     size_t nA = 0, avg = nA0 * 1.0 / nMostBin, SMALL_na_0 = 0, BIG_bins_0 = 0, nUnique = vUnique.size(), nz, minimum = config.min_data_in_bin, T_222;
     // size_t
-    double a0 = vUnique[0].val, a1 = vUnique[vUnique.size() - 1].val;
+    double a0 = vUnique[0].val, a1 = vUnique[vUnique.size() - 1].val, gama = 0;
     for (int i = 0; i < nUnique; i++) {
         nA += vUnique[i].nz;
         if (vUnique[i].nz <= avg) {
@@ -360,7 +355,7 @@ void Distribution::HistoOnFrequncy_1(const LiteBOM_Config &config, vector<vDISTI
     while (i_0 < nUnique) {
         vLeftInner = vUnique[i_0].val;
         vLeftOuter = i_0 > 0 ? vUnique[i_0 - 1].val : vLeftInner;
-        nz         = 0;
+        nz         = 0;     gama = vUnique[i_0].val*vUnique[i_0].nz;
         i_1        = i_0;
         if (histo->nBins == nMostBin)
             T_next = nA * 10;
@@ -383,7 +378,7 @@ void Distribution::HistoOnFrequncy_1(const LiteBOM_Config &config, vector<vDISTI
         if (T_next > nA) {
             printf("\tHisto  undesirable BIN(nz=%ld)@[%d-%d] nUnique=%ld\n", nz, i_0, i_1, nUnique);
         }
-        vDISTINCT &last = vUnique[i_1 - 1];
+        vDISTINCT& last = vUnique[i_1 - 1];
         if (i_1 == i_0 + 1 || last.type != vDISTINCT::LARGE) {
             AddBin(config, nz, vLeftOuter, vLeftInner, 0x0);
         } else {  // maybe split
@@ -505,4 +500,4 @@ void Distribution::HistoOnFrequncy_1(const LiteBOM_Config&config, vector<vDISTIN
 }*/
 
 #define IS_INT(dtype) (true)
-#define CAST_ON_STR(x, dtype) IS_INT(dtype) ? (int *)(x) : (float *)(x)
+#define CAST_ON_STR(x, dtype) IS_INT(dtype) ? (int*)(x) : (float*)(x)

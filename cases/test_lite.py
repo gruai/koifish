@@ -41,6 +41,23 @@ def test_chat_qwen3_4B():
     assert "Answer: 1" in content or "Answer:1" in content or "answer:1" in content  # "Answer: 1"   "✅ Final Answer:1 ✅"  "Answer: 1 ✅"  "✅Answer: 1"
     # assert content=="Hello! How can I assist you today? 😊\n" or content=="Hello! It seems there was a small glitch. 😊 How can I assist you today?\n"
 
+def xtest_batch_qwen3_4B():  
+    with open("./cases/qwen3/qwen3_4B.json", 'r') as f:
+        jConfig_0 = json.load(f)    
+    start = time.time()
+    for layer in range (36):
+        jConfig = jConfig_0
+        jPath = f"./tests/qwen3_4B_layer{layer}.json"
+        with open(jPath, 'w') as f:
+            jConfig.setdefault("quantizer", {})["MIQ"] = [f"model.layers.{layer}.mlp"]
+            jConfig["debug"]["prompts"] = ["hello"]
+            jConfig["gpt"]["max_seq_len"] = 128
+            json.dump(jConfig, f, indent=4)  # Write JSON to file   
+        print(f"\n------- @LAY_{layer} {time.time() - start :.3f}s------")    # ~5s
+        content = bubble_one("chat_qwen3_4B",jPath)  
+        # Hello! It seems like there might be a small mix-up. I'm Qwen, a large-scale language model developed by Alibaba Cloud. I'm here to help you with any questions or tasks you might have. How can I assist you today? 😊
+
+
 def test_pp_gpt2():    
     most_iter = 70
     title = "bubble_gpt2"
@@ -96,7 +113,7 @@ if __name__ == '__main__':
     #test_gpt2_774M()
 
     # test_chat_qwen3_0_6B()  
-    test_chat_qwen3_4B()
+    xtest_batch_qwen3_4B()
 
     # test_pp_gpt2()
     # test_gpt2_124M()

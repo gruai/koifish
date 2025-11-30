@@ -15,7 +15,6 @@
 using namespace nvcuda;
 #include <iostream>
 
-#include "../../g_stddef.hpp"
 #include "../cuda_common.h"
 #include "_bit_utils.cuh"
 #include "operator.cuh"

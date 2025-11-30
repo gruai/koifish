@@ -1,3 +1,11 @@
+/**
+ *  SPDX-FileCopyrightText: 2019-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT
+ *  
+ *  \brief boosting forest
+ *  \author Yingshi Chen
+ */
+
 #include "./BoostingForest.hpp"
 
 #include <time.h>
@@ -5,6 +13,8 @@
 #include <random>
 #include <stack>
 #include <thread>
+
+#include "../learn/Pruning.hpp"
 
 // double WeakLearner::minSet=0.01;
 // double WeakLearner::minGain=0.01;
@@ -16,7 +26,7 @@ static char ssPath[256];  // only for debug
 #define thread_local __thread
 #endif
 
-void BoostingForest::VerifyTree(DecisionTree hTree, FeatsOnFold *hDat, int flag) {
+void BoostingForest::VerifyTree(DecisionTree hTree, FeatsOnFold* hDat, int flag) {
     /*	int nSamp=hDat->nSample( ),i,tag;
         double *distri=new double[nClass*2];
         for( i=0; i<nSamp; i++ ){
@@ -27,9 +37,9 @@ void BoostingForest::VerifyTree(DecisionTree hTree, FeatsOnFold *hDat, int flag)
         delete[] distri;*/
 }
 
-void BoostingForest::ErrEstimate(FeatsOnFold *hData, DForest &trees, int dataset, int flag) {}
+void BoostingForest::ErrEstimate(FeatsOnFold* hData, DForest& trees, int dataset, int flag) {}
 
-void BoostingForest::TestOOB(FeatsOnFold *hData, int flag) {
+void BoostingForest::TestOOB(FeatsOnFold* hData, int flag) {
     int nzLeaf = 0, total = hData->nSample();
     double a, sOOb        = 0;
     stage = RF_TEST;
@@ -49,9 +59,9 @@ void BoostingForest::TestOOB(FeatsOnFold *hData, int flag) {
             hTree->Regress(hTree->oob);
             eOOB += ErrorAt(hTree->oob);
         }
-        eOOB = sOOb == 0.0 ? DBL_MAX : eOOB;  // δУ��OOB
+        eOOB = sOOb == 0.0 ? DBL_MAX : eOOB;  // δУ��OOB
     } else {
-        float *distri = hData->distri;
+        float* distri = hData->distri;
         hData->Distri2Tag(nullptr, nClass, 0x0);
         eInB = 1.0 - hData->rOK;
         memset(distri, 0x0, sizeof(float) * total * nClass);
@@ -74,7 +84,7 @@ void BoostingForest::TestOOB(FeatsOnFold *hData, int flag) {
     //	printf( "\r%d(%d,%d)\toob=%g,pt@leaf=%.4g,err=(%3.2g,%3.2g)\n",skdu.step,total,curF.size(),sOOb,a,eInB*100,eOOB );
     //	printf( "\r\noob=%g,pt@leaf=%.4g,err=(%4.3g%%,%4.3g%%)\n",sOOb,a,eInB*100,eOOB*100 );
 }
-void BoostingForest::Train(FeatsOnFold *hData, int flag) {
+void BoostingForest::Train(FeatsOnFold* hData, int flag) {
     if (hData == nullptr)
         hData = hTrainData;
     stage    = RF_TRAIN;
@@ -84,14 +94,14 @@ void BoostingForest::Train(FeatsOnFold *hData, int flag) {
     assert(nClass > 0);
     float *distri = hData->distri, *dtr = nullptr, tag, d1, rOK = 0;
     memset(distri, 0x0, sizeof(float) * total * nClass);
-    WeakLearner *hWL = nullptr;
+    WeakLearner* hWL = nullptr;
     impurity         = 0;
     double a, sOOb = 0;
     //	DForest curF;
 
 #pragma omp parallel for num_threads(nThread) private(i)
     for (i = 0; i < nTree; i++) {
-        DecisionTree *hTree = forest[i];
+        DecisionTree* hTree = forest[i];
         skdu.noT            = no++;  // printf( "\nTree_%d...",no );
         if (hTree->isTrained(flag) || hTree->hData_ != hData)
             continue;
@@ -104,7 +114,7 @@ void BoostingForest::Train(FeatsOnFold *hData, int flag) {
     //	curF.clear( );
 }
 
-void BoostingForest::Clasify(int nSamp, FeatsOnFold *hSamp, int *cls, int flag) {
+void BoostingForest::Clasify(int nSamp, FeatsOnFold* hSamp, int* cls, int flag) {
     stage = RF_TEST;
 
     int i, j, nz, sum = 0, tag, no;
@@ -136,7 +146,7 @@ void BoostingForest::Clasify(int nSamp, FeatsOnFold *hSamp, int *cls, int flag) 
     }
     delete[] distri;
 }
-void BoostingForest::Clasify(int nSamp, FeatsOnFold *hSamp, int flag) {
+void BoostingForest::Clasify(int nSamp, FeatsOnFold* hSamp, int flag) {
     stage = RF_TEST;
     GST_VERIFY(nSamp <= hSamp->nSample(), "");
     int i, j, nz, sum = 0, tag, no;
@@ -166,7 +176,7 @@ void BoostingForest::InitFeat(int type, int nFlag) {
     }
 }
 
-void BoostingForest::SetUserData(void *ud_, isTrueObj hf, int flag) {
+void BoostingForest::SetUserData(void* ud_, isTrueObj hf, int flag) {
     assert(ud_ != nullptr && hf != nullptr);
     hfIsObj   = hf;
     user_data = ud_;

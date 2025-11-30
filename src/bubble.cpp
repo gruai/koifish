@@ -15,7 +15,6 @@
 #include "./Device/Pipe.hpp"
 #include "./Manifold/Fish.hpp"
 #include "./Utils/GST_os.hpp"
-#include "./g_stddef.hpp"
 #include "GoPT.hpp"
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
@@ -55,8 +54,11 @@ int OnEOS(hFISH fish, int flag = 0x0) {
     _INFO("[MEMORY] %s\t%s\n", SUM::GPU_Info(0x0).c_str(), SUM::CPU_Info(0x0).c_str());
     string info = G_STR(fish->config.quant.filter_WeightF8Ex);
     _INFO("F8E5=%s\n", info.c_str());
-    _INFO("\tDEBUG_switch={%d %d}", DEBUG.T_generate_qkv, DEBUG.T_cuQK);
-    _INFO("\n\n");  // next turn
+    _INFO("\tDEBUG_switch={%d %d}\n", DEBUG.T_generate_qkv, DEBUG.T_cuQK);
+
+    _INFO("[QUANT] nT=%d\n", SUM::nQuantTensor);
+
+    _INFO("\n");  // next turn
     return 0x0;
 }
 
@@ -89,9 +91,9 @@ int Chat(hFISH fish, int enable_thinking) {
     hTokenizer tokenizer = fish->GetTokenizer();
     double start_time    = 0;
     string cur_answer, rendered_prompt;
-
-    hChater gopt  = fish->GetGenerator();
-    hBATCH hBatch = fish->GetCurBatch(true);
+    floatLogits* logits = nullptr;
+    hChater gopt        = fish->GetGenerator();
+    hBATCH hBatch       = fish->GetCurBatch(true);
     assert(hBatch->size() == seq_len);
     QWEN3_PIPE qwen_pipe(fish, 0x0);
 
@@ -101,11 +103,6 @@ int Chat(hFISH fish, int enable_thinking) {
     g_dump_level          = 1;
 
     while (1) {
-        if (hBatch->tok_pos >= seq_len) {
-            _INFO("\n%s(context window full, clearing)%s\n", COLOR_YELLOW, COLOR_RESET);
-            user_turn = 1;
-        }
-
         if (user_turn) {
             rendered_prompt   = UserPrompt(fish, hBatch->tok_pos, nRound);
             prompt_tokens     = tokenizer->Encode(rendered_prompt);
@@ -123,24 +120,32 @@ int Chat(hFISH fish, int enable_thinking) {
             SUM::tX1 = 0.0, SUM::tQKV = 0.0, SUM::tFFN = 0.0, SUM::tPreLogits = 0.0;
         }
         if (hBatch->tok_pos == 1) {  // nRound == 2
-            DEBUG_BREAK;
+            DEBUG_HERE;
             // exit(KOIFISH_EXIT_DEBUG);
         }
         if (DEBUG.T_generate_qkv) {
             float eval = fish->Evaluate(DL_BATCH_UPATE::BATCHofEMBED);
         } else {  // qwen_pipe.UpdatePos(token);
-            T_generate_(fish, &qwen_pipe, fish->config.model.tpActivation, 1);
+            logits = T_generate_(fish, &qwen_pipe, fish->config.model.tpActivation, 1);
+        }
+        if (!gopt->VerifyLogits()) {
+            _INFO("\n%s(Invalid logits!)%s\n", COLOR_RED, COLOR_RESET);
         }
         hBatch->tok_pos++;
+
         // _INFO(" %d[%d->%d]", pos, token, next), fflush(stdout);
         if (hBatch->tok_pos >= num_prompt_tokens) {
             token = gopt->Sample(-1);
             generated_tokens++;
-            if (token == tokenizer->eos_id) {  //  stop generation if get EOS token
+            if (token == tokenizer->eos_id || hBatch->tok_pos >= seq_len) {  //  stop generation if get EOS token
                 double elapsed_s = (double)(GST_ms() - start_time) / 1000.0;
                 double tps       = (generated_tokens > 0 && elapsed_s > 0) ? (generated_tokens - 1) / elapsed_s : 0.0;
+                if (hBatch->tok_pos >= seq_len) {
+                    _WARN("%scontext window full!%s\t", COLOR_YELLOW, COLOR_RESET);
+                }
                 _INFO("\n%s[%.2f tk/s, %d tokens in %.2fs(qkv=%.3fs ffn=%.3fs PreLogits=%.3fs X=%.3fs)]%s\n===================================\n", COLOR_GREEN,
                       tps, generated_tokens - 1, elapsed_s, SUM::tQKV / 1.0e6, SUM::tFFN / 1.0e6, SUM::tPreLogits / 1.0e6, SUM::tX1 / 1.0e6, COLOR_RESET);
+
                 user_turn = 1;
                 STR2FILE("chat.csv", cur_answer, nRound == 1 ? std::ofstream::out : std::ofstream::app);
                 OnEOS(fish);
@@ -201,7 +206,6 @@ int Chat(hFISH fish, int enable_thinking) {
 int main(int argc, char* argv[]) {
     try {
         assert(argc >= 2);
-        int enable_thinking    = 0;
         std::string arg_prefix = "--", exec_name = EXE_name(), jsPath = "", eval_metric = "";
         CLI_params config;
         config.phase = LIFE_PHASE::P_GENERATE;
@@ -211,16 +215,17 @@ int main(int argc, char* argv[]) {
         config.OnArch();
 
         config.isOnlyGPT                = true;
-        config.chat_sampler.mode        = enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
+        config.chat_sampler.mode        = config.model.enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
         config.chat_sampler.isSampleCPU = true;
         config.model.preLogits_dB       = 1;
         config.model.sparse.method      = -1;
+        config.quant.bits               = 2;
         config.dumpSwitch.tensor_load   = 1;
-        config.quant.filter_WeightF8Ex  = {"model.embed_tokens.weight", "mlp.down_proj.weight", "mlp.up_proj.weight",
-                                           "mlp.gate_proj.weight"};  //  "model.embed_tokens.weight"   "mlp.down_proj.weight"  layers.0.mlp.down_proj.weight
-        // config.quant.filter_SINQ        = {"mlp"};                        //  mlp.down_proj.weight "mlp"
+        // SUM::nMinTensorAlloc = 1;
+        // config.quant.filter_WeightF8Ex  = {"model.embed_tokens.weight", "mlp.down_proj.weight", "mlp.up_proj.weight",
+        //                                    "mlp.gate_proj.weight"};  //  "model.embed_tokens.weight"   "mlp.down_proj.weight"  layers.0.mlp.down_proj.weight
+        // config.quant.filter_MIQ         = {"mlp"};                   //  mlp.down_proj.weight "mlp"
         // config.quant.filter_KVcache = {"0.self_attn"};    //   "layers.27.mlp" model.blk.0.attn
-        SUM::nMinTensorAlloc = 1;  // g_dump_level = -1;
 
         DEBUG.T_cuda_ver = 1, DEBUG.T_cpu = 0, DEBUG.cmd_p1 = 0, DEBUG.graph_dump = 0, DEBUG.Time_most = 60;
         config.Dump(0x100);
@@ -231,9 +236,15 @@ int main(int argc, char* argv[]) {
         // if (hOPT->val_loaders.empty())
         //     return KOIFISH_DATALOADER_EMPTY;
         SUM::MemoryInfo(0x0, 0x0);
-        Chat(fish, enable_thinking);
+        Chat(fish, config.model.enable_thinking);
 
         return 0x0;
+    } catch (const SafeExit& ex) {
+        std::string info = ex.getFormattedInfo();
+        _WARN("KOIFISH exit: %s %s", ex.what(), info.c_str());
+        // std::cerr << info << std::endl;
+        // cleanup();
+        return ex.getExitCode();
     } catch (const std::exception& e) {
         _INFO("%s", e.what());
         fflush(stdout);

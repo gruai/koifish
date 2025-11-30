@@ -901,7 +901,7 @@ void ManifoldTree::Dump(int flag) {
     for (auto node : nodes) {
         // for each(hMTNode node in nodes) {
         if (node->isLeaf()) {
-            printf("%d ", node->samp_set.nSamp);
+            printf("%ld ", node->samp_set.nSamp);
         }
     }
     printf("%d\n", hForest->skdu.noT);

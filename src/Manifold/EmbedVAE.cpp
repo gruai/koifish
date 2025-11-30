@@ -9,14 +9,13 @@
  */
 #include <set>
 
-#include "../g_stddef.hpp"
+#include "../Tensor/GeQuant.hpp"
 #include "../lenda/kernel/SVD.hpp"
 #include "Fish.hpp"
 #include "HotPicker.hpp"
 #include "Neuron.hpp"
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
-#include "../Tensor/GeQuant.hpp"
 
 TokenEmbed::TokenEmbed(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     auto dims = hFish->config.token_embeds;
@@ -394,7 +393,7 @@ bool FFN::Build(int flag_0) {
         TokenEmbed* embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
         down.SetEmbed(embed, 0);  // down.isTransW = true;
         up.SetEmbed(embed, 1);
-        if (layer == 1) {
+        if (layid == 1) {
             first = this;
         } else {
         }
@@ -418,13 +417,14 @@ bool FFN::Build(int flag_0) {
     }
 
     up.w->residual_scale = hFish->config.common.residual_scale;
-    if (layer > 6) {  //  Gradient would explode!
+    if (layid > 6) {  //  Gradient would explode!
         // up.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);
         // down.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);       //  down.Back(GTensor::bt4c, tGelu, GTensor::delta, up_out);
     }
-
-    hQuant = GeQuant::MakeInstance(this, name + "_quant",  0x0);
-
+    QUANT_CARD quant_params = hFish->config.quant;
+    quant_params.spMost     = up.w->shape;
+    hQuant                  = GeQuant::MakeInstance(this, name + "_quant", quant_params, {up.w,down.w,gate.w}, 0x0);      //  {up.w, down.w, gate.w}
+    
     return true;
 }
 

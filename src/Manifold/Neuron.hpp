@@ -104,7 +104,7 @@ class GeNeuron {
     typNUMBER tpWeight = typNUMBER::BF16, tpActivation = typNUMBER::BF16, tpGradient = typNUMBER::BF16;
     bool isPassBack = false;
     int level = -1, ID = -1, dad, c_id;  // topo info
-    int layer  = -1;                     // no of layer in LLM/Brain structure
+    int layid  = -1;                     // no of layer in LLM/Brain structure
     int branch = 0, hierarch = 0;
     int xxx = 0;
     vector<double> jvals;
@@ -211,6 +211,7 @@ class GeNeuron {
     friend class RLS_BP;
     friend class HIERARCH_LoRA;
     friend class Fuyou;
+    friend class GTensor;
 };
 
 class HotPicker;
@@ -275,7 +276,7 @@ class SparseNeuron : public GeNeuron {
     bool InitCompression(COMPRESSIVE_SENSING type, LORA_ADAPT_W tpLora, int flag = 0x0) override;
     virtual void SetGanglia(const SparseNeuron* gang, int flag = 0x0) {
         compression = gang->compression;
-        layer       = gang->layer;
+        layid       = gang->layid;
         hSamps      = gang->hSamps;
     }
     virtual void SetEmbed(TokenEmbed* embd_, int type, int flag = 0x0);

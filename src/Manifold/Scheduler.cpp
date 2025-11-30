@@ -132,7 +132,7 @@ bool RLS_BP::InitGUOKE(int flag) {
         _INFO("[RLS] \tGuoke=%d(%d)\t\n", nT_guoke, nT);
     }
     if (hFish->isLocalInfer) {
-        // OutCLS *cls = hFish->GetNeuron<OutCLS>("OutCLS", 0);
+        OutCLS *cls = hFish->GetNeuron<OutCLS>("OutCLS", 0);
         // cls->ManageMemory(DATA_PLACE::DEV_MEM);
         for (auto neuron : hFish->backbons) {
             neuron->ManageMemory(DATA_PLACE::DEV_MEM);
@@ -170,12 +170,12 @@ void GeNeuron::ManageMemory(DATA_PLACE target, int typ, int flag) {
     double a = GTensor::szGlobalMaloc;
     int nX   = 0;
     for (auto t : arrT) {
-        if (strcmp(t->name, "model.blk.0.attn.wq.weight") == 0 &&
-            target == DEV_MEM) {  //"model.blk.1.attn"&& target==FREE_DEV        "preLogits"   "model.output.cls"
-            int debug = 0;
-        }
         if (t == nullptr)
             continue;
+        if (strcmp(t->name, "preLogits") == 0 /*&& target == DEV_MEM*/) {  //"model.blk.1.attn"&& target==FREE_DEV        "preLogits"   "model.output.cls"
+            DEBUG_HERE;
+        }
+        
         switch (target) {
             case FREE_DEV:
                 if (t->isRefer())
@@ -193,21 +193,26 @@ void GeNeuron::ManageMemory(DATA_PLACE target, int typ, int flag) {
                         dev_most_mem += t->mostMemory();
                     op = "Symbolic";
                 } else {
+                    if (!hFish->isTrain() &&  t->isParam() ) {  //when infer, all parameters are load from mmp
+                        if (t->hRef != nullptr){
+                            t->ShareMemory(t->hRef); 
+                        }
+                        DEBUG_HERE;  
+                        continue;
+                    }
                     t->Alloc(hOPT->GetITER(), flag);
                     op = "Alloc";
                     if (BIT_TEST(t->flags, GTensor::F_RELOAD)) {
-                        bool isFree = !hFish->config.fuyou.isFirst(layer);
+                        bool isFree = !hFish->config.fuyou.isFirst(layid);
                         t->Serial_MMAP(true, false);  // no reset, should free all memory
                         if (isFree) {
                             t->Free();
                         }
-                    }
+                    }                    
                 }
         }
     }
-    if (op == "Alloc") {
-        int bug = 0x0;
-    }
+
     place = target;
     if (DUMP(0)) {
         size_t szFree, szTotal;
@@ -485,11 +490,11 @@ bool RLS_BP::InitBranch(int flag) {
         vector<TaskNode*> tasks;
         for (auto n : hFish->backbons) {
             bool isPass = true, isGrad = true;
-            if (n->layer == 0 || n->layer > L)
+            if (n->layid == 0 || n->layid > L)
                 isPass = false;                                        // backbons.push_back(n);
-            else if (LIB_0 <= n->layer - 1 && n->layer - 1 < LIB_1) {  // QKV,FFN
+            else if (LIB_0 <= n->layid - 1 && n->layid - 1 < LIB_1) {  // QKV,FFN
                 isPass = false;
-                isGrad = n->layer - 1 >= fy.LIB_1 - LIS;  // backbons.push_back(n);
+                isGrad = n->layid - 1 >= fy.LIB_1 - LIS;  // backbons.push_back(n);
                 // n->isPassBack = n->layer - 1 < fy.LIB_1 - LIS;
                 // if (n->isPassBack)
                 //     nPass++;  // backbons.push_back(n);

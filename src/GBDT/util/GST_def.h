@@ -7,14 +7,14 @@
 #include <string>
 #include <vector>
 
-typedef uint8_t BIT_8;
+//  typedef uint8_t BIT_8;  //  @g_float.hpp
 typedef uint64_t BIT_64;
 typedef uint32_t BIT_32;
 typedef int32_t INT_32;
 typedef uint64_t UINT_64;
 typedef int64_t G_INT_64;
 
-// ÃèÊöÏÂ½µµÄ·½Ïò£¬ËÆºõfloatÒ²¿ÉÒÔ£¬ÒÔ½ÚÊ¡ÄÚ´æ
+// ï¿½ï¿½ï¿½ï¿½ï¿½Â½ï¿½ï¿½Ä·ï¿½ï¿½ï¿½ï¿½Æºï¿½floatÒ²ï¿½ï¿½ï¿½Ô£ï¿½ï¿½Ô½ï¿½Ê¡ï¿½Ú´ï¿½
 // typedef double tpDOWN;
 typedef float tpDOWN;
 typedef uint8_t tpFOLD;
@@ -56,7 +56,7 @@ typedef int (*ON_TRAVEL_wpath_)(void *user_data, const wchar_t *sPath, int flag)
 // #define G_INT_64  long long
 #endif
 
-// ËÆºõ±Èstd::min std::max¸üÊÊºÏ±È½Ï²»Í¬µÄÊý¾ÝÀàÐÍ		7/11/2015	cys
+// ï¿½Æºï¿½ï¿½ï¿½std::min std::maxï¿½ï¿½ï¿½ÊºÏ±È½Ï²ï¿½Í¬ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½		7/11/2015	cys
 // #undef MAX2
 // #undef MIN2
 #define MAX2(a, b) ((a) > (b) ? (a) : (b))
@@ -97,11 +97,11 @@ typedef int (*ON_TRAVEL_wpath_)(void *user_data, const wchar_t *sPath, int flag)
 #define SCALAR_IS_NONZERO(x) ((x) != 0.)
 #define SCALAR_IS_LTZERO(x) ((x) < 0.)
 
-#define IS_NAN_INF(x) ((x) * 0 != 0)
-#define IS_FLOAT(x) ((x) * 0 == 0)
+#define IS_NAN_INF(x) ((float)(x) * 0.f != 0.f)
+#define IS_FLOAT(x) ((float)(x) * 0.f == 0.f)
 #endif
 
-// Î»²Ù×÷
+// Î»ï¿½ï¿½ï¿½ï¿½
 #define BIT_FLAG_1 0x00000001
 #define BIT_FLAG_H 0x80
 #define BIT_SET(val, flag) ((val) |= (flag))
@@ -109,7 +109,7 @@ typedef int (*ON_TRAVEL_wpath_)(void *user_data, const wchar_t *sPath, int flag)
 #define BIT_TEST(val, flag) (((val) & (flag)) == (flag))
 #define BIT_IS(val, flag) (((val) & (flag)) != 0)
 
-//(r,c) <==> pos	ÐÐÓÅÏÈÅÅÐò		5/30/2008
+//(r,c) <==> pos	ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½		5/30/2008
 #define G_RC2POS(r, c, ld) ((r) * (ld) + (c))
 #define G_POS2R(pos, ld) ((pos) / (ld))
 #define G_POS2C(pos, ld) ((pos) % (ld))
@@ -126,7 +126,7 @@ typedef int (*ON_TRAVEL_wpath_)(void *user_data, const wchar_t *sPath, int flag)
         (y0) = MIN2((y), (y0)); \
     }
 
-// ·µ»Ø¾àa×î½üµÄÕûÊý£¬²ÉÓÃ(int)²Ù×÷(ÉáÈ¥Ð¡Êý²¿·Ö)		2/11/2010	cys
+// ï¿½ï¿½ï¿½Ø¾ï¿½aï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½(int)ï¿½ï¿½ï¿½ï¿½(ï¿½ï¿½È¥Ð¡ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½)		2/11/2010	cys
 // #define G_DOUBLE2INT(a)			(int)( (a)+0.5 )
 #define G_DOUBLE2INT(a) (int)(a >= 0.0 ? (a) + 0.5 : (a) - 0.5)
 #define G_DOUBLE2BYTE(a) ((a) > 255.5 ? 0xFF : (G_U8)((a) + 0.5))
@@ -140,13 +140,13 @@ typedef int (*ON_TRAVEL_wpath_)(void *user_data, const wchar_t *sPath, int flag)
 
 #define I2STR(i) (std::to_string(_ULonglong(i)).c_str())
 
-/****	std::string ¶ÁÐ´	****/
+/****	std::string ï¿½ï¿½Ð´	****/
 #define SREAD_i(str, num, err_info) \
     { GST_VERIFY(sscanf((str).c_str(), "%d", &(num)) == 1, (err_info)); }
 #define SREAD_d(str, num, err_info) \
     { GST_VERIFY(sscanf((str).c_str(), "%lf", &(num)) == 1, (err_info)); }
 
-/****	ÎÄ¼þ¶ÁÐ´	****/
+/****	ï¿½Ä¼ï¿½ï¿½ï¿½Ð´	****/
 #define FREAD_I64(num, fp) \
     { GST_VERIFY(fread(&(num), sizeof(int64_t), 1, (fp)) == 1, ""); }
 #define FWRIT_I64(num, fp) \
@@ -171,7 +171,7 @@ typedef int (*ON_TRAVEL_wpath_)(void *user_data, const wchar_t *sPath, int flag)
 #define FWRIT_arr(arr, size, count, fp) \
     { GST_VERIFY(fwrite((arr), (size_t)(size), (size_t)(count), (fp)) == ((size_t)count), ""); }
 
-/*	¶Ábuffer */
+/*	ï¿½ï¿½buffer */
 // #define FREAD_i(num,fp) if( (iRet=fread( &(num),sizeof(int),1,(fp) ))!=1 )	throw -104;
 #define READ_buf(dst, size, pb)      \
     {                                \
@@ -185,7 +185,7 @@ typedef enum {
     HPU_MODE
 } GST_PROCESS_UNIT;
 
-// ¸÷ÖÖ²â¶È
+// ï¿½ï¿½ï¿½Ö²ï¿½ï¿½
 typedef enum {
     MESER_L2  = 0x1,
     MESER_COS = 10,

@@ -1,187 +1,203 @@
 #pragma once
+/**
+ *  SPDX-FileCopyrightText: 2018-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT
+ *
+ *  \brief
+ *  \author Yingshi Chen
+ */
 
-#include <memory>
-#include <string>
-#include <vector>
+#include <time.h>
+
 #include <algorithm>
 #include <map>
+#include <memory>
 #include <numeric>
-#include <time.h>
+#include <string>
+#include <vector>
 using namespace std;
+#include "../EDA/Feat_Selection.hpp"
 #include "../include/LiteBOM_config.h"
 #include "../tree/BiSplit.hpp"
 #include "../util/GST_def.h"
-#include "../EDA/Feat_Selection.hpp"
-
 #include "EDA.hpp"
 
 #ifdef WIN32
+#include <assert.h>
 #include <tchar.h>
+#else
 #include <assert.h>
-#else    
-#include <assert.h>
-//#define assert(cond)
+// #define assert(cond)
 #endif
 
 /*
-	&v[0]	since the spec now guarantees vectors store their elements contiguously:
-	using c++0x better to use v.data().
+    &v[0]	since the spec now guarantees vectors store their elements contiguously:
+    using c++0x better to use v.data().
 */
-template<typename T>
+template <typename T>
 T* VECTOR2ARR(vector<T>& vecs) {
-	return (T*)(vecs.data());
+    return (T*)(vecs.data());
 }
 
 namespace Grusoft {
-	class FeatsOnFold;
-	class Distribution;
+class FeatsOnFold;
+class Distribution;
 
-	class ARR_TREE {
-	public:
-		typedef tpFOLD * FOLD_MAP;
-		int nNodes = 0;
-		double *thrsh_step = nullptr, weight = 1.0;
-		int *feat_ids = nullptr, *left = nullptr, *rigt = nullptr, *info = nullptr;
-		FOLD_MAP *folds = nullptr;
+class ARR_TREE {
+   public:
+    typedef tpFOLD* FOLD_MAP;
+    int nNodes         = 0;
+    double *thrsh_step = nullptr, weight = 1.0;
+    int *feat_ids = nullptr, *left = nullptr, *rigt = nullptr, *info = nullptr;
+    FOLD_MAP* folds = nullptr;
 
-		virtual void Init(int nNode_, int flag = 0x0) {
-			nNodes = nNode_;
-			thrsh_step = new double[nNodes];
-			feat_ids = new int[nNodes * 4];
-			left = feat_ids + nNodes;		rigt = left + nNodes;
-			info = rigt + nNodes;
-			folds = new FOLD_MAP[nNodes];
-			for (int i = 0; i < nNodes; i++)
-				folds[i] = nullptr;
-		}
-		~ARR_TREE() {
-			if (thrsh_step != nullptr)			delete[] thrsh_step;
-			if (feat_ids != nullptr)			delete[] feat_ids;
-			if (folds != nullptr) {
-				for (int i = 0; i < nNodes; i++) {
-					if (folds[i] != nullptr)
-						delete[] folds[i];
-				}
-				delete[] folds;
-			}
-		}
-	};
+    virtual void Init(int nNode_, int flag = 0x0) {
+        nNodes     = nNode_;
+        thrsh_step = new double[nNodes];
+        feat_ids   = new int[nNodes * 4];
+        left       = feat_ids + nNodes;
+        rigt       = left + nNodes;
+        info       = rigt + nNodes;
+        folds      = new FOLD_MAP[nNodes];
+        for (int i = 0; i < nNodes; i++) folds[i] = nullptr;
+    }
+    ~ARR_TREE() {
+        if (thrsh_step != nullptr)
+            delete[] thrsh_step;
+        if (feat_ids != nullptr)
+            delete[] feat_ids;
+        if (folds != nullptr) {
+            for (int i = 0; i < nNodes; i++) {
+                if (folds[i] != nullptr)
+                    delete[] folds[i];
+            }
+            delete[] folds;
+        }
+    }
+};
 
-	class FeatVector {
-	protected:
-		const FeatsOnFold *hFold_ = nullptr;
-		Distribution *distri_ = nullptr;
-	public:
-		static bool OrderByName(const FeatVector *l, const FeatVector *r) { return l->nam<r->nam; }
+class FeatVector {
+   protected:
+    const FeatsOnFold* hFold_ = nullptr;
+    Distribution* distri_     = nullptr;
 
-		PY_COLUMN *PY;
-		struct SELECT {
-			double vari_1=0;
-			float user_rate=0;
-			bool isPick = true;
-			bool hasCheckGain = false;
-		};
-		//FeatVector *fvMergeLeft = nullptr;			//½öÖ¸Ïò
+   public:
+    static bool OrderByName(const FeatVector* l, const FeatVector* r) { return l->nam < r->nam; }
+    queMIHISTO miniTree;
 
-		void SetDistri(Distribution*d_, int flag = 0x0);
-		Distribution *myDistri(int flag = 0x0) {
-			return distri_;
-		}	
+    PY_COLUMN* PY = nullptr;
+    struct SELECT {
+        double vari_1     = 0;
+        float user_rate   = 0;
+        bool isPick       = true;
+        bool hasCheckGain = false;
+    };
+    // FeatVector *fvMergeLeft = nullptr;			//ï¿½ï¿½Ö¸ï¿½ï¿½
 
-		/*
-		Distribution *histoDistri(int flag = 0x0)	const;	
-		//histo¿Õ¼ä£¬×ÜÊÇÀ´×ÔÓÚtrain_data
-		HistoGRAM *tHISTO(int flag = 0x0);*/
+    void SetDistri(Distribution* d_, int flag = 0x0);
+    Distribution* myDistri(int flag = 0x0) { return distri_; }
 
-		Feature_Selection* select_bins=nullptr;
-		double wSplit=0, wSplit_last=0;		//"split", result contains numbers of times the feature is used in a model.
-		double wGain=0;			//"gain", result contains total gains of splits which use the feature.
-		float *wBins = nullptr;
-		enum {		//ÐèÒªºÍDistributionºÏ²¢
-			//CATEGORY = 0x100,		DISCRETE = 0x200,
-			VAL_REFER = 0x1000,
-			//V_ZERO_DEVIA = 0x10000,	//³£Öµ£¬Ò»°ã¿ÉºöÂÔ
-			IS_BUNDLE = 0x20000,	//in Feature Bundle	²Î¼ûFeatsOnFold::nPick4Split
-			AGGREGATE = 0x80000,
-			REPRESENT_ = 0x1000000,
-			//RIGTH_MERGE = 0x2000000
-		};
-		size_t type = 0x0;
-		tpSAMP_ID *map4set = nullptr;// , *map4feat = nullptr;
-		//bool isSelect = false;
-		//float select_factor = 1;
-		SELECT select;
-		bool isCategory()	const	{ return	BIT_TEST(type, Distribution::CATEGORY); }	
-		bool isReferVal()	const	{ return	BIT_TEST(type, VAL_REFER); }		
-		virtual bool isMerged()	const { return	false; }
-		const FeatsOnFold *AtFold_()		{ return	hFold_; }
-		//virtual bool isPass()	const;
-		typedef enum {
-			COPY_MEAN,
-		}BINARY_OPERATE;
-		int id = -1;		//·Ç³£ÖØÒª£¬Î¨Ò»±êÊ¶
-		int agg_no = -1;		//Õ¹¿ªÎªÒ»ÏµÁÐ¾ÛºÏÌØÕ÷
-		
-		string nam = "", desc = "";
+    /*
+    Distribution *histoDistri(int flag = 0x0)	const;
+    //histoï¿½Õ¼ä£¬ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½train_data
+    HistoGRAM *tHISTO(int flag = 0x0);*/
 
-		FeatVector()	{}
-		virtual ~FeatVector();
-		virtual inline size_t size()	const	{ throw"FeatVector::size() is ..."; }
+    Feature_Selection* select_bins = nullptr;
+    double wSplit = 0, wSplit_last = 0;  //"split", result contains numbers of times the feature is used in a model.
+    double wGain = 0;                    //"gain", result contains total gains of splits which use the feature.
+    float* wBins = nullptr;
+    enum {  // ï¿½ï¿½Òªï¿½ï¿½Distributionï¿½Ï²ï¿½
+        // CATEGORY = 0x100,		DISCRETE = 0x200,
+        VAL_REFER = 0x1000,
+        // V_ZERO_DEVIA = 0x10000,	//ï¿½ï¿½Öµï¿½ï¿½Ò»ï¿½ï¿½Éºï¿½ï¿½ï¿½
+        IS_BUNDLE  = 0x20000,  // in Feature Bundle	ï¿½Î¼ï¿½FeatsOnFold::nPick4Split
+        AGGREGATE  = 0x80000,
+        REPRESENT_ = 0x1000000,
+        // RIGTH_MERGE = 0x2000000
+    };
+    size_t type        = 0x0;
+    tpSAMP_ID* map4set = nullptr;  // , *map4feat = nullptr;
+    // bool isSelect = false;
+    // float select_factor = 1;
+    SELECT select;
+    bool isCategory() const { return BIT_TEST(type, Distribution::CATEGORY); }
+    bool isReferVal() const { return BIT_TEST(type, VAL_REFER); }
+    virtual bool isMerged() const { return false; }
+    const FeatsOnFold* AtFold_() { return hFold_; }
+    // virtual bool isPass()	const;
+    typedef enum {
+        COPY_MEAN,
+    } BINARY_OPERATE;
+    int id     = -1;  // ï¿½Ç³ï¿½ï¿½ï¿½Òªï¿½ï¿½Î¨Ò»ï¿½ï¿½Ê¶
+    int agg_no = -1;  // Õ¹ï¿½ï¿½ÎªÒ»Ïµï¿½Ð¾Ûºï¿½ï¿½ï¿½ï¿½ï¿½
 
-		//virtual void GetMergeSampSet(const SAMP_SET&samp_set,int * int flag = 0x0);
+    string nam = "", desc = "";
 
-		virtual void Empty(int flag = 0x0)		{		}
-		virtual void FreeVals(int flag = 0x0)	{		}
-		virtual void Set(size_t len, void* p, int flag = 0x0) { throw"FeatVector::Set_void_p is ..."; }
-		virtual void Set(size_t len, PY_COLUMN *col, int flag = 0x0) { throw"FeatVector::Set_PY_COLUMN is ..."; }
-		virtual void Set(size_t pos, double a, int flag = 0x0) { throw"FeatVector::Set_a is ..."; }
-		virtual void CopyFrom(const FeatVector*src, int flag = 0x0) { throw"FeatVector::CopyFrom is ..."; }
-		virtual void loc(vector<tpSAMP_ID>&poss, double target, int flag = 0x0) { throw"FeatVector::loc is ..."; }
+    FeatVector() {}
+    virtual ~FeatVector();
+    virtual inline size_t size() const { throw "FeatVector::size() is ..."; }
 
-		virtual void UpdateType(int flag=0x0);
-		//virtual tpQUANTI *GetQuantiBins(int flag=0x0) { throw"FeatVector::GetQuantiBins is ..."; }
-		virtual inline int left_rigt(const size_t& t, const double& thrsh, const int lft, const int rgt, int flag = 0x0) { throw"FeatVector::left_rigt is ..."; }
-		virtual inline int left_rigt(const void *pVal, const ARR_TREE*arr_tree,int no, int flag = 0x0) { throw"FeatVector::left_rigt is ..."; }
-		virtual void SplitOn(FeatsOnFold *hData_, MT_BiSplit *hBest, int flag = 0x0) { 
-			throw"FeatVector::Split is ..."; 
-		}
-		//¸ù¾ÝMT_BLITµÄÄ£ÐÍ£¬À´Ô¤²â
-		virtual void Update_step(FeatsOnFold *hData_, MT_BiSplit *hBlit, int flag = 0x0) { throw"FeatVector::UpdatePredict is ..."; }
-		virtual void Update_regression(FeatsOnFold *hData_, MT_BiSplit *hBlit, tpY* target, int flag = 0x0) { throw"FeatVector::UpdatePredict is ..."; }
-		//ÓëUpdatePredictÅä¶ÔÊ¹ÓÃ
-		virtual Regression *InitRegression(FeatsOnFold *hData_, MT_BiSplit *hBlit, int flag = 0x0) { throw"FeatVector::RegressionAt is ..."; }
+    // virtual void GetMergeSampSet(const SAMP_SET&samp_set,int * int flag = 0x0);
 
-		virtual void Set(double a, int flag = 0x0) { throw "FeatVector::Set is ..."; }
-		//×¢Òâ£¬Í³¼ÆÐÅÏ¢¼ÇÂ¼ÔÚsome_set
-		virtual void STA_at(SAMP_SET& some_set, int flag = 0x0) { throw "FeatVector::STA_at is ..."; }
-		virtual void Value_AtSamp(const SAMP_SET*samp_set, void *samp_values, int flag = 0x0) { throw "FeatVector::Values_AtSamp is ..."; }
-		virtual inline void *pValue_AtSamp(const size_t&, int flag = 0x0) { throw "FeatVector::One_Value_AtSamp is ..."; }
-		virtual void Observation_AtSamp(LiteBOM_Config config, SAMP_SET& samp, Distribution&distri, int flag=0x0)	{	throw "FeatVector::Observation_AtSamp is ...";	}
-		virtual size_t UniqueCount(const SAMP_SET&samp_set, int flag=0x0)				{ throw "FeatVector::UniqueCount is ..."; }
-		/*vResi=predict-target		pDown=target-predict*/
-		virtual double UpdateResi(FeatsOnFold *hData_, int flag = 0x0) { throw "FeatVector::UpdateResi is ..."; }
+    virtual void Empty(int flag = 0x0) {}
+    virtual void FreeVals(int flag = 0x0) {}
+    virtual void Set(size_t len, void* p, int flag = 0x0) { throw "FeatVector::Set_void_p is ..."; }
+    virtual void Set_bf16(size_t len, bf16* p, int flag = 0x0) { throw "FeatVector::Set_bf16_p is ..."; }
+    virtual void Set(size_t len, PY_COLUMN* col, int flag = 0x0) { throw "FeatVector::Set_PY_COLUMN is ..."; }
+    virtual void Set(size_t pos, double a, int flag = 0x0) { throw "FeatVector::Set_a is ..."; }
+    virtual void CopyFrom(const FeatVector* src, int flag = 0x0) { throw "FeatVector::CopyFrom is ..."; }
+    virtual void loc(vector<tpSAMP_ID>& poss, double target, int flag = 0x0) { throw "FeatVector::loc is ..."; }
 
-		//virtual HistoGRAM *GetHisto(int flag = 0x0) {	return nullptr; }
-		//static bin mapping	Éú³É»ùÓÚEDAµÄ¸ñ×Ó	²Î¼ûSamp2Histo
-		virtual void UpdateHisto(const FeatsOnFold *hData_, bool isOnY, bool isFirst, int flag = 0x0) { throw "FeatVector::UpdateHisto is ..."; }
-		virtual void PerturbeHisto(const FeatsOnFold *hData_, int flag = 0x0) { throw "FeatVector::PerturbeHisto is ..."; }
-		
-		virtual void Merge4Quanti(const SAMP_SET*samp_0, int flag=0x0)	{ throw "FeatVector::Merge4Quanti is ..."; }
-		virtual void Samp2Histo(const FeatsOnFold *hData_, const SAMP_SET&samp_set, HistoGRAM* histo, int nMostBin, const tpSAMP_ID *samps4quanti=nullptr, int flag = 0x0) const
-		{ throw "FeatVector::_Samp2Histo_ is ..."; }
-		virtual void InitDistri(const FeatsOnFold *hFold, Distribution *tDistri, const SAMP_SET *samp_set, bool isGenHisto, int flag) { throw "FeatVector::InitDistri is ..."; }
-		virtual void Distri4Merge(const FeatsOnFold *hFold, Distribution *M_Distri, const SAMP_SET *samp_set, bool isGenHisto, int flag) { throw "FeatVector::Distri4Merge is ..."; }
+    virtual void UpdateType(int flag = 0x0);
+    // virtual tpQUANTI *GetQuantiBins(int flag=0x0) { throw"FeatVector::GetQuantiBins is ..."; }
+    virtual inline int left_rigt(const size_t& t, const double& thrsh, const int lft, const int rgt, int flag = 0x0) { throw "FeatVector::left_rigt is ..."; }
+    virtual inline int left_rigt(const void* pVal, const ARR_TREE* arr_tree, int no, int flag = 0x0) { throw "FeatVector::left_rigt is ..."; }
+    virtual void SplitOn(FeatsOnFold* hData_, MT_BiSplit* hBest, int flag = 0x0) { throw "FeatVector::Split is ..."; }
+    // ï¿½ï¿½ï¿½ï¿½MT_BLITï¿½ï¿½Ä£ï¿½Í£ï¿½ï¿½ï¿½Ô¤ï¿½ï¿½
+    virtual void Update_step(FeatsOnFold* hData_, MT_BiSplit* hBlit, int flag = 0x0) { throw "FeatVector::UpdatePredict is ..."; }
+    virtual void Update_regression(FeatsOnFold* hData_, MT_BiSplit* hBlit, tpY* target, int flag = 0x0) { throw "FeatVector::UpdatePredict is ..."; }
+    // ï¿½ï¿½UpdatePredictï¿½ï¿½ï¿½Ê¹ï¿½ï¿½
+    virtual Regression* InitRegression(FeatsOnFold* hData_, MT_BiSplit* hBlit, int flag = 0x0) { throw "FeatVector::RegressionAt is ..."; }
 
-		virtual void QuantiAtEDA(ExploreDA *eda, void *quanti, int sizeofQ, int nMostBin, const FeatsOnFold *hData_, int flag) { ; }
-		//virtual void Split2Quanti(const LiteBOM_Config&config, const ExploreDA *eda, vector<double>& vThrsh, HistoGRAM *qHisto, tpDOWN *yDown, int nMostBin, int flag = 0x0) { throw "FeatVector::SplitSort is ..."; }
-		//virtual void UpdateFruit(const FeatsOnFold*,MT_BiSplit *hBlit, int flag = 0x0) {}
-		virtual void RefineThrsh(const FeatsOnFold *hData_, const MT_BiSplit *hBlit, int flag = 0x0) {}
-		//virtual void SetSplitInfo(MT_BiSplit *hBlit, FeatBlit&box, int flag = 0x0) { throw "FeatVector::SetSplit is ..."; }
-		virtual void BinaryOperate(FeatVector*, BINARY_OPERATE opt, int flag = 0x0) { throw "FeatVector::BinaryOperate is ..."; }
-	};
-	
-	FeatVector *FeatVecQ_InitInstance(FeatsOnFold *hFold, FeatVector *hFeat, int x, int flag = 0x0);
+    virtual void Set(double a, int flag = 0x0) { throw "FeatVector::Set is ..."; }
+    // ×¢ï¿½â£¬Í³ï¿½ï¿½ï¿½ï¿½Ï¢ï¿½ï¿½Â¼ï¿½ï¿½some_set
+    virtual void STA_at(SAMP_SET& some_set, int flag = 0x0) { throw "FeatVector::STA_at is ..."; }
+    virtual void Value_AtSamp(const SAMP_SET* samp_set, void* samp_values, int flag = 0x0) { throw "FeatVector::Values_AtSamp is ..."; }
+    virtual inline void* pValue_AtSamp(const size_t&, int flag = 0x0) { throw "FeatVector::One_Value_AtSamp is ..."; }
+    virtual void Observation_AtSamp(LiteBOM_Config config, SAMP_SET& samp, Distribution& distri, int flag = 0x0) {
+        throw "FeatVector::Observation_AtSamp is ...";
+    }
+    virtual size_t UniqueCount(const SAMP_SET& samp_set, int flag = 0x0) { throw "FeatVector::UniqueCount is ..."; }
+    /*vResi=predict-target		pDown=target-predict*/
+    virtual double UpdateResi(FeatsOnFold* hData_, int flag = 0x0) { throw "FeatVector::UpdateResi is ..."; }
 
-}
+    // virtual HistoGRAM *GetHisto(int flag = 0x0) {	return nullptr; }
+    // static bin mapping	ï¿½ï¿½ï¿½É»ï¿½ï¿½ï¿½EDAï¿½Ä¸ï¿½ï¿½ï¿½	ï¿½Î¼ï¿½Samp2Histo
+    virtual void UpdateHisto(const FeatsOnFold* hData_, bool isOnY, bool isFirst, int flag = 0x0) { throw "FeatVector::UpdateHisto is ..."; }
+    virtual void PerturbeHisto(const FeatsOnFold* hData_, int flag = 0x0) { throw "FeatVector::PerturbeHisto is ..."; }
 
+    virtual void Merge4Quanti(const SAMP_SET* samp_0, int flag = 0x0) { throw "FeatVector::Merge4Quanti is ..."; }
+    virtual void Samp2Histo(const FeatsOnFold* hData_, const SAMP_SET& samp_set, HistoGRAM* histo, int nMostBin, const tpSAMP_ID* samps4quanti = nullptr,
+                            int flag = 0x0) const {
+        throw "FeatVector::_Samp2Histo_ is ...";
+    }
+    virtual void InitDistri(const FeatsOnFold* hFold, Distribution* tDistri, const SAMP_SET* samp_set, bool isGenHisto, int flag) {
+        throw "FeatVector::InitDistri is ...";
+    }
+    virtual void Distri4Merge(const FeatsOnFold* hFold, Distribution* M_Distri, const SAMP_SET* samp_set, bool isGenHisto, int flag) {
+        throw "FeatVector::Distri4Merge is ...";
+    }
 
+    virtual float Quant_RTN(int nQuant, typNUMBER tpGama, void* gama, hBITARR quanti, const FeatsOnFold* hData_, int flag) { throw "FeatVector::Quant is ..."; }
+    virtual float Quant_MITREE(int nQuant, typNUMBER tpGama, void* gama, hBITARR quanti, int flag) { throw "FeatVector::Quant is ..."; }
+    virtual void QuantiAtEDA(ExploreDA* eda, void* quanti, int sizeofQ, int nMostBin, const FeatsOnFold* hData_, int flag) { ; }
+    // virtual void Split2Quanti(const LiteBOM_Config&config, const ExploreDA *eda, vector<double>& vThrsh, HistoGRAM *qHisto, tpDOWN *yDown, int nMostBin, int
+    // flag = 0x0) { throw "FeatVector::SplitSort is ..."; } virtual void UpdateFruit(const FeatsOnFold*,MT_BiSplit *hBlit, int flag = 0x0) {}
+    virtual void RefineThrsh(const FeatsOnFold* hData_, const MT_BiSplit* hBlit, int flag = 0x0) {}
+    // virtual void SetSplitInfo(MT_BiSplit *hBlit, FeatBlit&box, int flag = 0x0) { throw "FeatVector::SetSplit is ..."; }
+    virtual void BinaryOperate(FeatVector*, BINARY_OPERATE opt, int flag = 0x0) { throw "FeatVector::BinaryOperate is ..."; }
+};
+
+FeatVector* FeatVecQ_InitInstance(FeatsOnFold* hFold, FeatVector* hFeat, int x, int flag = 0x0);
+
+}  // namespace Grusoft

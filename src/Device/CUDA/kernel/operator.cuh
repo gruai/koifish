@@ -79,9 +79,9 @@ __global__ static void CU_RowStdDev(T* matrix, floatGama* rowStdDev, int rows, i
     if (row >= rows)
         return;
     float sum = 0.f, sum2 = 0.f;
-    for(col = 0; col < cols; col++){
+    for (col = 0; col < cols; col++) {
         float a = CU_T2Float(matrix + row * cols + col);
-        sum += a;       sum2 += a*a;
+        sum += a,        sum2 += a * a;
     }
     float variance = (sum2 / cols) - ((sum / cols) * (sum / cols));
     rowStdDev[row] = (floatGama)(sqrtf(variance));
@@ -92,9 +92,9 @@ __global__ static void CU_ColStdDev(T* matrix, floatGama* colStdDev, int rows, i
     if (col >= cols)
         return;
     float sum = 0.f, sum2 = 0.f;
-    for(row = 0; row < rows; row++){
+    for (row = 0; row < rows; row++) {
         float a = CU_T2Float(matrix + row * cols + col);
-        sum += a;       sum2 += a*a;
+        sum += a,        sum2 += a * a;
     }
     float variance = (sum2 / rows) - ((sum / rows) * (sum / rows));
     colStdDev[col] = (floatGama)(sqrtf(variance));
@@ -529,7 +529,6 @@ __global__ static void CU_crossover_(curandState* state, float T_cross, T* x, co
     }
 }
 
-
 /*
     seed:   curand_init(seed, id, 0, &state[id]);
     results[id] = __float2bfloat16(rand_val); // convert to bf16
@@ -664,7 +663,7 @@ __global__ static void CU_Float2F8(const T* src, f8e5* dst, size_t N, int seed, 
     dst[tid] = f8e5(src[tid]);
 }
 template <>
-__global__ inline void CU_Float2F8<bf16>(const bf16* src, f8e5* dst, size_t N, int seed, int flag) {
+__global__ void CU_Float2F8<bf16>(const bf16* src, f8e5* dst, size_t N, int seed, int flag) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N) {
         return;  // guard
@@ -843,7 +842,15 @@ __device__ inline void CU_X2ternary_row(floatGama* gama, T* row, char* terns, in
 template <class T>
 __global__ void CU_ternary_online(T* mat, int M, int N, int seed = 0x0);
 template <class T>
-__global__ void CU_ternary2X_(floatGama* gama, const char* terns, T* mat0, int M, int N, int seed = 0x0);
+__global__ void CU_ternary2X_(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int seed = 0x0);
+template <class T>
+__global__ void CU_Q42X_(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int rc_normal = 0x0, int seed = 0x0);
+template <class T>
+__global__ void CU_Q22X_(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int rc_normal = 0x0, int seed = 0x0);
+template <class T>
+__global__ void CU_Q42X_RTN(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int rc_normal = 0x0, int seed = 0x0);
+template <class T>
+__global__ void CU_Q22X_RTN(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int rc_normal = 0x0, int seed = 0x0);
 template <class T>
 __global__ void CU_X2ternary_(floatGama* gama, T* mat0, char* terns, int M, int N, int bpe, bool isOverwrite = false);
 

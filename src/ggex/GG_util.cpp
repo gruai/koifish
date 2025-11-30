@@ -361,12 +361,24 @@ MODEL_CARD::MODEL_CARD() {
 #endif
 }
 
-QUANT_MODE QUANT_CARD::Type(std::string name, int flag) {
+QUANT_MODE QUANT_CARD::TypeOf(std::string name, int flag) {
     // if (G_Has_(name, filter_KVcache))
     //     return KV_JL;
-    if (G_Has_(name, filter_SINQ))
-        return SINQ;
+    if (G_Has_(name, filter_MIQ))
+        return MIQ;
     return NO_QUANT;
+}
+
+std::size_t QUANT_CARD::Hash(const QUANT_CARD& params, const std::type_info& ti, const std::string& desc) const {
+    // Combine hashes of all elements in the tuple
+    auto h1    = std::hash<int>{}(params.bits);
+    auto h2    = std::hash<QUANT_MODE>{}(type);
+    string sTi = ti.name();
+    auto h3    = std::hash<std::string>{}(sTi);
+    auto h4    = std::hash<std::string>{}(desc);
+
+    // A simple way to combine hashes (boost-style or similar)
+    return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3);
 }
 
 MODEL_ARCH CLI_params::ModelArch() {
@@ -703,7 +715,7 @@ void CLI_params::OnArch() {
             model.isQKNormal    = true;
             model.sLayer        = "layers.";
             model.sEmbed = "embed_tokens", model.sInvEmbed = "lm_head";
-            model.Rope_version = 1;
+            model.Rope_version = 0;
             // model.isEmbedWeightTying = false;   //  0.6B has no tying, but 4B is tying       isEmbedWeightTying = jKV(jModelParam, {"tie_word_embeddings"},
             // isEmbedWeightTying};
             break;
@@ -991,9 +1003,14 @@ bool CLI_params::InitJConfig(int flag) {
         datatypes.arrTernary = jKV_arr(jConfig, {"model", "datatype", "ternary"}, datatypes.arrTernary, false);
         datatypes.arrTile    = jKV_arr(jConfig, {"model", "datatype", "tile"}, datatypes.arrTile, false);
 
+        quant.filter_MIQ = jKV_arr(jConfig, {"quantizer", "MIQ"}, quant.filter_MIQ, false);
+        chat_sampler.seq_len = jKV(jConfig, {"gpt", "max_seq_len"}, chat_sampler.seq_len); //128
+        if(chat_sampler.seq_len<=0)
+            chat_sampler.seq_len = 8192;
+
         JModel2Params(0x0);
 
-        model.InitHugFace(this, jConfig);
+        model.InitHugFace(this, jConfig, "");
 
         n_swarm = jKV(jConfig, {"train", "swarm"}, 1);
 
@@ -1056,7 +1073,7 @@ bool CLI_params::InitJConfig(int flag) {
 bool CLI_params::parse(int argc, char** argv) {
     std::string arg_prefix = "--", key, value;
     exec_name              = EXE_name();
-
+    bool isJConfig         = false;
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         // if (arg.compare(0, arg_prefix.size(), arg_prefix) == 0) {
@@ -1079,6 +1096,7 @@ bool CLI_params::parse(int argc, char** argv) {
             }
             if (jConfig.empty())
                 return false;
+            isJConfig = true;
         } else if (arg == "--version") {
         } else if (arg == "p0") {
         } else if (arg == "p1") {
@@ -1094,6 +1112,12 @@ bool CLI_params::parse(int argc, char** argv) {
             jEval["samp"] = 1.0;
             // jEval["glob"] = argv[i++];
             jConfig["datasets_new"]["eval"] = jEval;
+        } else if (arg == "--hf") {  // directory of hf model
+            assert(i + 1 < argc);
+            model.sCardPath = argv[++i];
+        } else if (arg == "--tokenizer") {  // directory of hf model
+            assert(i + 1 < argc);
+            model.sTokenBinPath = argv[++i];
         } else if (arg == "--step") {
             eval_metric = "hellaswag";
             assert(i + 1 < argc);
@@ -1105,9 +1129,14 @@ bool CLI_params::parse(int argc, char** argv) {
         }
     }
     DEBUG.T_GEMM = -1;  //  so many version of gemm
+    if (isJConfig) {
+        if (!InitJConfig())
+            return false;
+    } else {
+        if (!model.InitHugFace(this, jConfig, model.sCardPath, 0x0))
+            return false;
+    }
 
-    if (!InitJConfig())
-        return false;
     switch (phase) {
         case P_GENERATE:
             break;
@@ -1490,6 +1519,12 @@ const char* cNameOf(typNUMBER type) {
         return "BINARY(3)";
     if (type == typNUMBER::T_SIGN)
         return "TERNARY";
+    if (type == typNUMBER::Q4)
+        return "Q<4>";
+    if (type == typNUMBER::Q3)
+        return "Q<3>";
+    if (type == typNUMBER::Q2)
+        return "Q<2>";
     if (type == typNUMBER::T_BINARY_TILE) {
         sprintf(buf, "TILE(%dx%d)", THREAD_TILE_M, THREAD_TILE_N);
         return buf;  //"TILE(One float for each tile)";
@@ -1760,4 +1795,34 @@ bool Fish::GGUF_Serialize(const std::string& path, bool isSave, int flag) {
     assert(0);
     return false;
 #endif
+}
+
+// array: a bit stream from left to right
+void BIT_SET_k(hBITARR array, size_t offset, BIT_8 elem, int bits) {
+    size_t boff = offset * bits;
+    for (int i = 0; i < bits; i++, boff++) {
+        size_t id = boff / 8, shift = 7 - boff % 8, flag = 1 << shift;
+        BIT_8 bit = (elem >> (bits - 1 - i)) & 0x1;
+        if (bit)
+            BIT_SET(array[id], flag);
+        else
+            BIT_RESET(array[id], flag);
+    }
+}
+BIT_8 BIT_GET_k(hBITARR array, size_t offset, int bits) {
+    BIT_8 elem  = 0x0;
+    size_t boff = offset * bits;
+    for (int i = 0; i < bits; i++, boff++) {
+        size_t id = boff / 8, shift = 7 - boff % 8, flag = 1 << (bits - 1 - i);
+        BIT_8 bit = (array[id] >> shift) & 0x1;
+        if (bit)
+            BIT_SET(elem, flag);
+        // else
+        //     BIT_RESET(elem, flag);
+    }
+    return elem;
+}
+void BIT_SET_4(hBITARR array, size_t offset, BIT_8 elem) {
+    assert(0);
+    return;
 }

@@ -8,7 +8,6 @@
  */
 #include <set>
 
-#include "../g_stddef.hpp"
 #include "../lenda/kernel/SVD.hpp"
 #include "Fish.hpp"
 #include "Optimizer.hpp"
@@ -60,8 +59,8 @@ hNEURON GeNeuron::MakeInstance(Fish* hG_, void* ctx, const string& guid, JSON::c
 GeNeuron::GeNeuron(const std::string& key_, JSON::const_iterator jit, Fish* hG_, int flag) : name(key_), hFish(hG_), ID(0) {
     try {
         Init(hG_, 0x0);
-        layer = TGraph::curLayer;
-        assert(layer >= 0);
+        layid = TGraph::curLayer;
+        assert(layid >= 0);
         if ((*jit).contains(std::string{"#id"})) {
             ID = (*jit)["id"];
         }
@@ -503,7 +502,7 @@ int SLP::Forw(float* rhs, float* lhs, int flag) {
     }
 
     if (compression == SVD || compression == SVD_a) {  // A=UDV
-        if (hSVD == nullptr && (layer > 20)) {         /*&& (layer==27)*/
+        if (hSVD == nullptr && (layid > 20)) {         /*&& (layer==27)*/
             InitSVD();
             if (hSVD->rHeavy() < 1.5) {
                 _INFO("\t...drop!");

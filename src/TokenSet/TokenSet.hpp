@@ -23,7 +23,7 @@
 
 #include "../CLI_params.hpp"
 #include "../Manifold/Serialize.hpp"
-#include "../g_stddef.hpp"
+#include "../Utils/GST_obj.hpp"
 
 struct DictVAE;
 class GTokenizer;
@@ -40,19 +40,19 @@ struct SAMP {
     int jump             = 0;
     TOKEN_ID last_target = (TOKEN_ID)(-1);
     std::string desc;
-    char *mask   = nullptr;
-    void *target = nullptr;
+    char* mask   = nullptr;
+    void* target = nullptr;
     // int label=-1;
 
     SAMP() {}
     SAMP(size_t p, size_t l) : pos(p), len(l) {}
     virtual ~SAMP() {}
 
-    bool Serialize(FSerial &S, bool isSave, int flag);
+    bool Serialize(FSerial& S, bool isSave, int flag);
     // void Refresh(SampLoader *loader,void *ctx,std::vector<int32_t>& samp_toks,int typ);
-    virtual double UpdateTag(hDataToken hDT, int *tag, int step, bool flip, int flag = 0x0);
+    virtual double UpdateTag(hDataToken hDT, int* tag, int step, bool flip, int flag = 0x0);
 
-    static size_t HASH(const char *fn, const std::vector<SAMP *> &samps) {
+    static size_t HASH(const char* fn, const std::vector<SAMP*>& samps) {
         std::hash<std::string> h_string;
         std::hash<unsigned long long> h_ull;
         size_t h = h_string(std::string(fn)), sample_count = samps.size();
@@ -65,7 +65,7 @@ struct SAMP {
     }
 };
 // typedef std::shared_ptr<SAMP> hSAMP;
-typedef SAMP *hSAMP;
+typedef SAMP* hSAMP;
 
 /*
     v0.2    09/02/2025
@@ -81,16 +81,16 @@ class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
    protected:
     SAMPLE_TYPE tpSample = RANDOM_GENERATE;
     std::vector<string> shard_paths;
-    int nMostShard    = -1;
-    int shard_index   = 0;
-    int eval_every    = -1;
-    //float rStepOfEval = 0;
+    int nMostShard  = -1;
+    int shard_index = 0;
+    int eval_every  = -1;
+    // float rStepOfEval = 0;
     float rSampling = 1.0;
     // bool isNextEpoch = false;
     string name;
     string serial_root;
     // hTokenizer hDictVAE = nullptr;
-    Fish *hFish      = nullptr;
+    Fish* hFish      = nullptr;
     hTokenizer hDict = nullptr;
     std::map<TOKEN_ID, TOKEN_ID> mapT2T;
     std::vector<TOKEN_ID> dialect;
@@ -100,7 +100,7 @@ class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
     size_t nBatch(int flag = 0x0);
     // char *buffer = nullptr;
 
-    void seek(FILE *fp, size_t offset, int whence) {
+    void seek(FILE* fp, size_t offset, int whence) {
 #ifdef _WIN32
         int ret = _fseeki64(fp, (__int64)offset, whence);
 #else
@@ -110,7 +110,7 @@ class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
     }
     // int UniqueTokens(const std::vector<TOKEN_ID>& tokens,size_t n_1,int flag=0x0);
    public:
-    static std::vector<hDataToken> MakeInstance(struct CLI_params &params, hTokenizer, bool isLocalInfer, int flag);
+    static std::vector<hDataToken> MakeInstance(struct CLI_params& params, hTokenizer, bool isLocalInfer, int flag);
 
     std::vector<TOKEN_ID> tokens, masks;
     DataTokenSet(hTokenizer hDictVAE);
@@ -119,14 +119,14 @@ class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
 
     TOKEN_ID At(size_t pos);
 
-    bool Serialize(const std::string &path, bool isSave, int flag = 0x0);
-    virtual bool LoadNextShard(SampLoader *hLoader, int flag = 0x0) { return true; }
-    virtual bool Load(struct CLI_params &config, void *hLLM, int flag = 0x0);
+    bool Serialize(const std::string& path, bool isSave, int flag = 0x0);
+    virtual bool LoadNextShard(SampLoader* hLoader, int flag = 0x0) { return true; }
+    virtual bool Load(struct CLI_params& config, void* hLLM, int flag = 0x0);
     virtual void Append(TOKEN_ID id, int flag = 0x0);
     int UniqueTokens(size_t n_1, int flag = 0x0);
-    bool InitSamps(unsigned context_length, std::vector<size_t> &samples_begin, std::vector<size_t> &samples_size, int flag = 0x0);
+    bool InitSamps(unsigned context_length, std::vector<size_t>& samples_begin, std::vector<size_t>& samples_size, int flag = 0x0);
 
-    virtual double LossOnResult(hSampLoader hLoader, OutCLS *cls, int flag = 0x0);
+    virtual double LossOnResult(hSampLoader hLoader, OutCLS* cls, int flag = 0x0);
     // virtual double Evaluate(Fish *fish, hSampLoader loader0, int flag = 0x0);
 
     friend class NLP_AutoRegressive;
@@ -142,16 +142,16 @@ class PromptTokenset : public DataTokenSet {
 
    public:
     PromptTokenset(JSON::const_iterator jit, hTokenizer hDictVAE, int flag = 0x0);
-    PromptTokenset(const string&prompt, hTokenizer hDictVAE, int flag = 0x0);
+    PromptTokenset(const string& prompt, hTokenizer hDictVAE, int flag = 0x0);
 };
 class GlobTokenset : public DataTokenSet {
    protected:
-    FILE *fpShard  = nullptr;
+    FILE* fpShard  = nullptr;
     bool isShuffle = false;
     virtual bool Shard2Sample(int flag = 0x0);
 
     size_t OnShardFile(int id, bool load = false, int flag = 0x0);
-    bool LoadNextShard(SampLoader *hLoader, int flag = 0x0) override;
+    bool LoadNextShard(SampLoader* hLoader, int flag = 0x0) override;
     size_t total_batch_size_bytes;    // total across all processes
     size_t local_batch_offset_bytes;  // inner-sample offset for this process
     size_t longest_example_bytes;
@@ -175,7 +175,7 @@ class Tokenset_HellaSwag : public GlobTokenset {
         QUESTION(int l, int _b0, int _b1, int flag = 0x0) : label(l), b0(_b0), b1(_b1) {}
     };
     // typedef std::shared_ptr<QUESTION> hQuestion;
-    typedef QUESTION *hQuestion;
+    typedef QUESTION* hQuestion;
     std::vector<hQuestion> questions;
     std::vector<hQuestion> quesInBatch;
 
@@ -184,7 +184,7 @@ class Tokenset_HellaSwag : public GlobTokenset {
         for (auto q : questions) delete q;
         questions.clear();
     }
-    double LossOnResult(hSampLoader hLoader, OutCLS *cls, int flag = 0x0) override;
+    double LossOnResult(hSampLoader hLoader, OutCLS* cls, int flag = 0x0) override;
 };
 
 class DTS_GPT2 : public DataTokenSet {

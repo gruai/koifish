@@ -1,3 +1,11 @@
+/**
+ *  SPDX-FileCopyrightText: 2018-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT
+ *
+ *  \brief
+ *  \author Yingshi Chen
+ */
+
 #include <omp.h>
 // #include <io.h>
 #include <time.h>
@@ -33,10 +41,10 @@ FeatsOnFold::STAT FeatsOnFold::stat;
 ���ţ��׶�		�ο�PYTHON,	û��Ҫ����C++��Ī���﷨
 
 */
-FeatsOnFold::FeatsOnFold(LiteBOM_Config confi_, ExploreDA *eda_, string nam_, int dtype) : config(confi_), edaX(eda_), nam(nam_) {
+FeatsOnFold::FeatsOnFold(LiteBOM_Config confi_, ExploreDA* eda_, string nam_, int dtype) : config(confi_), edaX(eda_), nam(nam_) {
     dType    = dtype;
     isQuanti = config.feat_quanti > 0 && (BIT_TEST(dType, FeatsOnFold::DF_TRAIN) || BIT_TEST(dType, FeatsOnFold::DF_MERGE));
-    // isQuanti = config.feat_quanti > 0;
+
     /*https://stackoverflow.com/questions/9878965/rand-between-0-and-1
         uint64_t timeSeed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
         std::seed_seq ss{ uint32_t(timeSeed & 0xffffffff), uint32_t(timeSeed >> 32) };
@@ -88,13 +96,13 @@ void FeatsOnFold::InitRanders(int flag) {
     }
 }
 
-Feat_Importance::Feat_Importance(FeatsOnFold *hData_, int flag) {
+Feat_Importance::Feat_Importance(FeatsOnFold* hData_, int flag) {
     size_t nFeat = hData_->feats.size();
     split_sum.resize(nFeat);
     gain_sum.resize(nFeat);
 }
 
-FeatsOnFold *FeatsOnFold::read_json(const string &sPath, int flag) {
+FeatsOnFold* FeatsOnFold::read_json(const string& sPath, int flag) {
     /*	LiteBOM_Config config;
         std::ifstream ifile(sPath);
         json js;
@@ -122,9 +130,9 @@ FeatsOnFold *FeatsOnFold::read_json(const string &sPath, int flag) {
     return nullptr;
 }
 
-void FeatsOnFold::Distri2Tag(int *mark, int nCls, int flag) {
+void FeatsOnFold::Distri2Tag(int* mark, int nCls, int flag) {
     float *dtr = distri, d1 = 0;
-    int *tag = Tag();
+    int* tag = Tag();
     size_t i, j, total = nSample(), cls;
     rOK = 0;
     for (i = 0; i < total; i++, dtr += nCls) {
@@ -176,20 +184,20 @@ feat_salps->AddSalp(nFeat, picks, nTree);
     v0.1	cys
         8/30/2019
 */
-void FeatsOnFold::nPick4Split(vector<int> &picks, GRander &rander, BoostingForest *hBooster, int flag) {
+void FeatsOnFold::nPick4Split(vector<int>& picks, GRander& rander, BoostingForest* hBooster, int flag) {
     int i, nFeat = feats.size(), nPick = (int)(sqrt(nFeat));
     int nTree = hBooster->forest.size();
-    int *mask = new int[nFeat]();
+    int* mask = new int[nFeat]();
     // picks.resize(nFeat);
     for (i = 0; i < nFeat; i++) {
-        FeatVector *hFeat          = Feat(i);
+        FeatVector* hFeat          = Feat(i);
         hFeat->select.hasCheckGain = false;
         if (i != 30) {  // �����ڵ���
 #ifdef _DEBUG
             ;  // hFeat->select.isPick = false;
 #endif
         }
-        Distribution *hDistri = histoDistri(hFeat);
+        Distribution* hDistri = histoDistri(hFeat);
         if (hDistri != nullptr && hDistri->isPass())
             continue;
         if (BIT_TEST(hFeat->type, FeatVector::IS_BUNDLE))
@@ -218,12 +226,12 @@ void FeatsOnFold::nPick4Split(vector<int> &picks, GRander &rander, BoostingFores
         nPick = MAX2(1, picks.size() * config.feature_fraction + 0.5);
         hBooster->stopping.CheckBrae();
         vector<int> no_k = rander.kSampleInN(nPick, picks.size()), pick_1;
-        double *w        = new double[nFeat]();
+        double* w        = new double[nFeat]();
         for (auto x : no_k) {
             int no = picks[x];
             pick_1.push_back(no);
             assert(mask[no] == 1);
-            FeatVector *hFeat = Feat(no);
+            FeatVector* hFeat = Feat(no);
             w[no]             = -hFeat->wSplit;  // ����˼
             w[no]             = -hFeat->wGain;
         }
@@ -252,12 +260,12 @@ void FeatsOnFold::nPick4Split(vector<int> &picks, GRander &rander, BoostingFores
     assert(nPickFeat > 0);
 }
 
-int *FeatsOnFold::Rank4Feat(int type, int flag) {
+int* FeatsOnFold::Rank4Feat(int type, int flag) {
     int i, nFeat = feats.size();
-    double *wFeat = new double[nFeat]();
-    int *rank     = new int[nFeat]();
+    double* wFeat = new double[nFeat]();
+    int* rank     = new int[nFeat]();
     for (i = 0; i < nFeat; i++) {
-        FeatVector *hFeat = Feat(i);
+        FeatVector* hFeat = Feat(i);
         wFeat[i]          = hFeat->wSplit;
     }
     vector<tpSAMP_ID> idx;
@@ -280,15 +288,15 @@ void FeatsOnFold::Feature_Bundling(int flag) {
         return;
     if (config.feat_quanti <= 0)
         return;
-    vector<vector<int>> &buns = edaX->bundle.buns;
+    vector<vector<int>>& buns = edaX->bundle.buns;
     vector<int> dels;
     for (auto bun : buns) {
         // r each (vector<int> bun in buns) {
-        FeatVector *hBundle = new FeatVec_Bundle(this, feats.size(), bun, edaX->bundle.nMostDup);  // new FeatVector(feats,bun);
+        FeatVector* hBundle = new FeatVec_Bundle(this, feats.size(), bun, edaX->bundle.nMostDup);  // new FeatVector(feats,bun);
         feats.push_back(hBundle);
         for (auto no : bun) {
             // for each(int no in bun) {
-            FeatVector *hFeat = Feat(no);
+            FeatVector* hFeat = Feat(no);
             BIT_SET(hFeat->type, FeatVector::IS_BUNDLE);
             // dels.push_back(no);
         }
@@ -309,7 +317,7 @@ bool LiteBOM_Config::histo_bins_onY() const {
 
 /*
  */
-void FeatsOnFold::BeforeTrain(BoostingForest *hGBRT, int flag) {
+void FeatsOnFold::BeforeTrain(BoostingForest* hGBRT, int flag) {
     config.task = LiteBOM_Config::kTrain;
     size_t i, nFeat = feats.size();
     if (edaX != nullptr) {
@@ -325,8 +333,8 @@ void FeatsOnFold::BeforeTrain(BoostingForest *hGBRT, int flag) {
     size_t nTotalBin0 = 0, nTotalBin1 = 0, nValidFeat = 0;
     for (i = 0; i < nFeat; i++) {
         // printf("\rFeatsOnFold::BeforeTrain\tfeat=%d\t......", i);
-        FeatVector *hFeat     = Feat(i);
-        Distribution *hDistri = histoDistri(hFeat);
+        FeatVector* hFeat     = Feat(i);
+        Distribution* hDistri = histoDistri(hFeat);
         if (hDistri != nullptr) {
             if (hDistri->histo == nullptr) {
                 continue;
@@ -334,7 +342,7 @@ void FeatsOnFold::BeforeTrain(BoostingForest *hGBRT, int flag) {
             nValidFeat++;
         }
         // FeatVec_Q *hFQ = dynamic_cast<FeatVec_Q *>(hFeat);
-        HistoGRAM *fHisto = hDistri->histo;
+        HistoGRAM* fHisto = hDistri->histo;
         if (fHisto != nullptr) {
             nTotalBin0 += fHisto->nBins;
             if (isUpdate) {  // �ܶ�ԭ����update
@@ -347,9 +355,9 @@ void FeatsOnFold::BeforeTrain(BoostingForest *hGBRT, int flag) {
                 // else if (hGBRT->stopping.isOscillate && hFeat->wSplit_last>64 && !hFeat->hDistri->isUnique) {
                 else if (config.isDynamicHisto) {
                     // if (/*hFeat->wSplit_last>1024 &&*/ !hFeat->hDistri->isUnique && !BIT_TEST(hFeat->hDistri->type, Distribution::CATEGORY)) {
-                    Distribution *hDistri = histoDistri(hFeat);
+                    Distribution* hDistri = histoDistri(hFeat);
                     bool isDiscrete       = hDistri->isUnique || BIT_TEST(hDistri->type, Distribution::CATEGORY);
-                    bool isUpdate = hFeat->wSplit_last > 1024;  // future-sales,geotab�ȱ�����֤��ȷʵ��Ч�������ǡ�����
+                    bool isUpdate         = hFeat->wSplit_last > 1024;  // future-sales,geotab�ȱ�����֤��ȷʵ��Ч�������ǡ�����
                     if (isUpdate && !isDiscrete) {
                         hDistri->UpdateHistoByW(this->config, hGBRT->forest.size(), hFeat->wBins);
                         // GST_TIC(t1);
@@ -366,15 +374,15 @@ void FeatsOnFold::BeforeTrain(BoostingForest *hGBRT, int flag) {
         printf("Total Bins=[%ld,%ld,%.4g]\r\n", nTotalBin0, nTotalBin1, nTotalBin1 * 1.0 / nValidFeat);
 }
 
-void FeatsOnFold::PickSample_GH(MT_BiSplit *hBlit, int flag) {
-    const SAMP_SET &samp_set = hBlit->samp_set;
+void FeatsOnFold::PickSample_GH(MT_BiSplit* hBlit, int flag) {
+    const SAMP_SET& samp_set = hBlit->samp_set;
     size_t nSamp             = samp_set.nSamp;
     G_INT_64 i;
     tpSAMP_ID samp, *samps = samp_set.samps;
-    tpDOWN *hessian   = GetHessian();
-    tpDOWN *down      = GetDownDirection();
-    tpDOWN *s_hessian = GetSampleHessian();
-    tpDOWN *s_down    = GetSampleDown();
+    tpDOWN* hessian   = GetHessian();
+    tpDOWN* down      = GetDownDirection();
+    tpDOWN* s_hessian = GetSampleHessian();
+    tpDOWN* s_down    = GetSampleDown();
 #pragma omp parallel for schedule(static)
     for (i = 0; i < nSamp; i++) {
         s_down[i] = down[samps[i]];
@@ -439,13 +447,13 @@ struct LOOP_unroll<0> {
 // https://stackoverflow.com/questions/18971401/sparse-array-compression-using-simd-avx2
 #define TO_BIN_0(pBins, quanti, samps, down, i)      \
     {                                                \
-        HISTO_BIN *pB0 = pBins + (quanti[samps[i]]); \
+        HISTO_BIN* pB0 = pBins + (quanti[samps[i]]); \
         pB0->G_sum -= down[i];                       \
         pB0->nz++;                                   \
     }
 #define TO_BIN_01(pBins, quanti, samps, down)        \
     {                                                \
-        HISTO_BIN *pB0 = pBins + (quanti[*(samps)]); \
+        HISTO_BIN* pB0 = pBins + (quanti[*(samps)]); \
         pB0->G_sum -= *(down);                       \
         pB0->nz++;                                   \
     }
@@ -579,7 +587,7 @@ size_t FeatVec_Q::UniqueCount(const SAMP_SET&samp_set, int flag) {
     v0.1	cys
         10/19/2013
 */
-FeatVec_Bundle::FeatVec_Bundle(FeatsOnFold *hData_, int id_, const vector<int> &bun, size_t nMostDup, int flag) {
+FeatVec_Bundle::FeatVec_Bundle(FeatsOnFold* hData_, int id_, const vector<int>& bun, size_t nMostDup, int flag) {
     /*id=id_;
     //const SAMP_SET&samp_set = hData_->samp_set;
     size_t nSamp = hData_->nSample(),nnz = 0, i, nMerge = 0,stp=0,off=0, nDup=0;
@@ -673,15 +681,17 @@ FeatVec_Q::FeatVec_Q(const FeatsOnFold *hData_, FeatVector *hFeat,int nMostBin, 
 }*/
 
 /*
-    �μ�lightGBM::BoostFromScore
     v0.1	cys
         11/8/2018
 */
-void INIT_SCORE::Init(FeatsOnFold *hData_, int flag) {
-    LiteBOM_Config &config = hData_->config;
+void INIT_SCORE::Init(FeatsOnFold* hData_, int flag) {
+    LiteBOM_Config& config = hData_->config;
+    if(config.objective=="quant")
+        return;
+
     // hLoss->predict->Set(mean);
     // size_t nSamp=down.size(),i;
-    Distribution *yDis = hData_->GetY()->myDistri();
+    Distribution* yDis = hData_->GetY()->myDistri();
     assert(yDis != nullptr);
     if (config.init_scor == "mean") {
         double mean = yDis->mean;
@@ -700,25 +710,25 @@ void INIT_SCORE::Init(FeatsOnFold *hData_, int flag) {
     printf("\n");
 }
 
-FeatVector *FeatsOnFold::GetPrecict() {
+FeatVector* FeatsOnFold::GetPrecict() {
     assert(lossy != nullptr);
     return lossy->predict;
 }
-FeatVector *FeatsOnFold::GetY() {
+FeatVector* FeatsOnFold::GetY() {
     assert(lossy != nullptr);
     return lossy->GetY();
 }
 
 // pDown=target-predict
-tpDOWN *FeatsOnFold::GetDownDirection() const {
+tpDOWN* FeatsOnFold::GetDownDirection() const {
     assert(lossy != nullptr);
     return lossy->GetDownDirection();
 }
-tpDOWN *FeatsOnFold::GetDeltaStep() const {
+tpDOWN* FeatsOnFold::GetDeltaStep() const {
     assert(lossy != nullptr);
     return lossy->GetDeltaStep();
 }
-tpDOWN *FeatsOnFold::GetHessian() const {
+tpDOWN* FeatsOnFold::GetHessian() const {
     assert(lossy != nullptr);
     if (lossy->hessian.size() == 0)
         return nullptr;
@@ -726,11 +736,11 @@ tpDOWN *FeatsOnFold::GetHessian() const {
         return VECTOR2ARR(lossy->hessian);
 }
 
-tpDOWN *FeatsOnFold::GetSampleDown() const {
+tpDOWN* FeatsOnFold::GetSampleDown() const {
     assert(lossy != nullptr);
     return lossy->GetSampleDown();
 }
-tpDOWN *FeatsOnFold::GetSampleHessian() const {
+tpDOWN* FeatsOnFold::GetSampleHessian() const {
     assert(lossy != nullptr);
     if (lossy->sample_hessian.size() == 0)
         return nullptr;
@@ -738,7 +748,7 @@ tpDOWN *FeatsOnFold::GetSampleHessian() const {
         return VECTOR2ARR(lossy->sample_hessian);
 }
 
-int *FeatsOnFold::Tag() { return lossy->Tag(); }
+int* FeatsOnFold::Tag() { return lossy->Tag(); }
 
 /*
     hFeat���뱣�ֲ�����
@@ -747,25 +757,25 @@ int *FeatsOnFold::Tag() { return lossy->Tag(); }
     v0.2	cys
         12/1/2019
 */
-void FeatsOnFold::ExpandMerge(const vector<FeatsOnFold *> &merge_folds, int flag) {
+void FeatsOnFold::ExpandMerge(const vector<FeatsOnFold*>& merge_folds, int flag) {
     int i, j, nMerge = 0, nExFeat = 0;
     assert(merge_lefts.size() == merge_folds.size());
     for (auto fold : merge_folds) {
         assert(BIT_TEST(fold->dType, FeatsOnFold::DF_MERGE));
-        FeatVector *hLeft = this->merge_lefts[nMerge++];
+        FeatVector* hLeft = this->merge_lefts[nMerge++];
         // FeatVector *hRight = fold->Feat(fold->merge_right);		assert(hRight != nullptr);
         hLeft->Merge4Quanti(nullptr, 0x0);
         SAMP_SET samp1(hLeft->size(), hLeft->map4set);
         // for (auto hFeat : fold->feats) {
         for (i = 0; i < fold->feats.size(); i++) {
-            FeatVector *hFeat = fold->feats[i];
+            FeatVector* hFeat = fold->feats[i];
             hFeat->id         = feats.size();         // ��������
             if (hFeat->nam == "precip_depth_1_hr") {  // �����ڵ���
                 j = i;
             }
 
-            FeatVector *hRight    = hFeat;
-            Distribution *mDistri = nullptr;
+            FeatVector* hRight    = hFeat;
+            Distribution* mDistri = nullptr;
             if (isTrain()) {
                 edaX->AddDistri(hRight->PY, feats.size());
                 mDistri = edaX->GetDistri(feats.size());  // hFold->edaX == nullptr ? nullptr : &(hFold->edaX->arrDistri[i]);
@@ -780,18 +790,18 @@ void FeatsOnFold::ExpandMerge(const vector<FeatsOnFold *> &merge_folds, int flag
             }else
                 hFeat->EDA(config, true, &samp1, 0x0);*/
 
-            Distribution *hDistri = edaX->GetDistri(feats.size());
+            Distribution* hDistri = edaX->GetDistri(feats.size());
             if (hDistri->histo->nBins == 0) {  // train�޷����ø�feat��Ϣ
 
             } else {
                 if (isQuanti || hFeat->isCategory()) {
                     // assert(isTrain());
-                    FeatVector *hFQ = FeatVecQ_InitInstance(this, hFeat, 0x0);  // new FeatVec_Q<short>(hFold, hFeat, nMostQ);
+                    FeatVector* hFQ = FeatVecQ_InitInstance(this, hFeat, 0x0);  // new FeatVec_Q<short>(hFold, hFeat, nMostQ);
                     hRight          = hFQ;                                      // delete hFeat;
                 }
             }
             // assert(hRight->arr() != nullptr);
-            FeatVector *hEXP = nullptr;
+            FeatVector* hEXP = nullptr;
             if (hLeft->PY->isInt8())
                 hEXP = new FeatVec_EXP<uint8_t>(this, hRight->nam + "@" + hLeft->nam, hLeft, hRight);
             else if (hLeft->PY->isInt16())
@@ -811,8 +821,8 @@ void FeatsOnFold::ExpandMerge(const vector<FeatsOnFold *> &merge_folds, int flag
 }
 
 // ���ĺ���
-void FeatsOnFold::SplitOn(MT_BiSplit *hBlit, int flag) {
-    FeatVector *hF_ = Feat(hBlit->feat_id);
+void FeatsOnFold::SplitOn(MT_BiSplit* hBlit, int flag) {
+    FeatVector* hF_ = Feat(hBlit->feat_id);
     assert(hBlit->samp_set.nSamp <= hF_->size());
     // if (hBlit->samp_set.nSamp == 139)	//�����ڵ���
     //	int i = 0;
@@ -823,8 +833,8 @@ void FeatsOnFold::SplitOn(MT_BiSplit *hBlit, int flag) {
 void FeatsOnFold::ExpandFeat(int flag) { return; }
 
 // histo�ռ������ݵ�Distri������������train_data
-Distribution *FeatsOnFold::histoDistri(const FeatVector *hFeat, int flag) const {
-    Distribution *distri = edaX->GetDistri(hFeat->id);
+Distribution* FeatsOnFold::histoDistri(const FeatVector* hFeat, int flag) const {
+    Distribution* distri = edaX->GetDistri(hFeat->id);
     assert(distri != nullptr && distri->histo != nullptr);
     return distri;
 }
@@ -854,15 +864,28 @@ void FeatVec_Q::UpdateFruit(const FeatsOnFold *hData_, MT_BiSplit *hBlit, int fl
     }
 }*/
 
-/*
-https://ask.julyedu.com/question/7603
-
-    - ���ȶ�ԭ��������
-    - Ȼ��ͳ�Ƴ�distinct value �Լ���Ӧ�� count��
-    - ���distinct value��ĿС��max bin����������ÿ��value����һ��bin��
-    - ���distinct value����max bin������bin��С�ľ�ֵ����һ������sample����bin����֤��ͬvalue�ķ���ͬһbin��bin������sample������ƽ����
-    - ע��max bin��Ĭ��ֵ��256��
-
-    ����category���͵�feature������ÿһ��ȡֵ����һ��bin���ҵ�ȡֵ�ĸ�������max bin��ʱ���������Щ���ٳ��ֵ�categoryֵ��
-    ����splitʱ������category���͵�feature�������"���Ƿ�����ĳ��categoryֵ����"��gain�������ֵ��feature����ȫ��ͬ�ģ�����ʵ��Ч����������one-hot�ı��뷽����
-*/
+// Ref QuantiAtEDA_
+float FeatsOnFold::Quant(int bits, typNUMBER tpGama, floatGama* gama0, hBITARR quant_data0, const std::string& desc, int flag) {
+    assert(bits > 0 && bits <= 8);
+    size_t offset = 0, nSamp = this->nSample();
+    int nQuant     = 0x1 << bits;
+    float impurity = 0.f, a, a0 = FLT_MAX, a1 = 0.f, t0 = GST_ms();
+    vector<float> errs;
+    assert(nSamp % 8 == 0);
+    errs.resize(feats.size());
+//  #pragma omp parallel for
+    for (auto hFeat : feats) {
+        // if (hFeat->id != 23)
+        //     continue;  // ony for debug
+        floatGama* gama    = gama0 + nQuant * hFeat->id;
+        hBITARR quant_data = quant_data0 + nSamp * bits / 8 * hFeat->id;
+        errs[hFeat->id]    = hFeat->Quant_RTN(bits, tpGama, gama, quant_data, this, flag);
+        // PrintT<floatGama>("feat_gama", gama, 16, 1, 1, 1, -1);
+    }
+    for (auto a : errs) {
+        a1 = std::max(a, a1), a0 = std::min(a, a0), impurity += a;
+    }
+    impurity /= feats.size();
+    _INFO("<QUANT_%d>@%s nF=%d(%ld) impurity=%g[%g-%g]\t t=%.5gms\n", bits, desc.c_str(), feats.size(), nSamp, impurity, a0, a1, GST_ms() - t0);
+    return impurity;  //  0.18
+}
