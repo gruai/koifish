@@ -47,7 +47,7 @@ int main(int argc, char* argv[]) {
         config.dumpSwitch.tensor_load = 1;
         SUM::nMinTensorAlloc          = 1;  // g_dump_level = -1;
 
-        DEBUG.T_cuda_ver = 1, DEBUG.T_cpu = 0, DEBUG.cmd_p1 = 0, DEBUG.graph_dump = 0, DEBUG.Time_most = 60;
+        DEBUG.verCuda = 1, DEBUG.T_cpu = 0, DEBUG.cmd_p1 = 0, DEBUG.graph_dump = 0, DEBUG.Time_most = 60;
         config.Dump(0x100);
 
         // fish->isLocalInfer = flag == 0x110;

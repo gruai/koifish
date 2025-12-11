@@ -52,12 +52,8 @@ int Prefill(hFISH fish, int enable_thinking) { return 0x0; }
 int OnEOS(hFISH fish, int flag = 0x0) {
     hChater gopt = fish->GetGenerator();
     _INFO("[MEMORY] %s\t%s\n", SUM::GPU_Info(0x0).c_str(), SUM::CPU_Info(0x0).c_str());
-    string info = G_STR(fish->config.quant.filter_WeightF8Ex);
-    _INFO("F8E5=%s\n", info.c_str());
-    _INFO("\tDEBUG_switch={%d %d}\n", DEBUG.T_generate_qkv, DEBUG.T_cuQK);
-
-    _INFO("[QUANT] nT=%d\n", SUM::nQuantTensor);
-
+    _INFO("\t quant=%s\tDEBUG_switch={%d %d} QKV=%d FFN=%d\n", SUM::sQuantInfo.c_str(), DEBUG.T_generate_qkv, DEBUG.T_cuQK, DEBUG.verInferQKV,
+          DEBUG.verInferFFN);
     _INFO("\n");  // next turn
     return 0x0;
 }
@@ -85,6 +81,8 @@ int OnEOS(hFISH fish, int flag = 0x0) {
         What is the longest river in the world?
 */
 int Chat(hFISH fish, int enable_thinking) {
+    fish->Statistic(0x100);
+
     int seq_len           = fish->config.chat_sampler.seq_len;
     int num_prompt_tokens = 0, user_turn = 1, next, token, generated_tokens = 0, nRound = 0;  // pos = 0,
     TOKENS prompt_tokens;
@@ -123,7 +121,7 @@ int Chat(hFISH fish, int enable_thinking) {
             DEBUG_HERE;
             // exit(KOIFISH_EXIT_DEBUG);
         }
-        if (DEBUG.T_generate_qkv) {
+        if (DEBUG.T_generate_qkv) {  //  much slower with some bug
             float eval = fish->Evaluate(DL_BATCH_UPATE::BATCHofEMBED);
         } else {  // qwen_pipe.UpdatePos(token);
             logits = T_generate_(fish, &qwen_pipe, fish->config.model.tpActivation, 1);
@@ -147,6 +145,7 @@ int Chat(hFISH fish, int enable_thinking) {
                       tps, generated_tokens - 1, elapsed_s, SUM::tQKV / 1.0e6, SUM::tFFN / 1.0e6, SUM::tPreLogits / 1.0e6, SUM::tX1 / 1.0e6, COLOR_RESET);
 
                 user_turn = 1;
+                cur_answer += "\t\t" + SUM::sQuantInfo;
                 STR2FILE("chat.csv", cur_answer, nRound == 1 ? std::ofstream::out : std::ofstream::app);
                 OnEOS(fish);
                 if (nRound == DEBUG.prompts.size()) {  // only for debug
@@ -219,25 +218,24 @@ int main(int argc, char* argv[]) {
         config.chat_sampler.isSampleCPU = true;
         config.model.preLogits_dB       = 1;
         config.model.sparse.method      = -1;
-        config.quant.bits               = 2;
-        config.dumpSwitch.tensor_load   = 1;
+        // config.quant.T_errQ             = 0.3;
+        // config.quant.isNormalFloat = true, config.quant.isSymmetric = false;       //use_double_quant
+        // config.quant.default_bits       = 2;
+        config.dumpSwitch.tensor_load  = 0;
+        config.dumpSwitch.nn_structure = 0;
         // SUM::nMinTensorAlloc = 1;
-        // config.quant.filter_WeightF8Ex  = {"model.embed_tokens.weight", "mlp.down_proj.weight", "mlp.up_proj.weight",
-        //                                    "mlp.gate_proj.weight"};  //  "model.embed_tokens.weight"   "mlp.down_proj.weight"  layers.0.mlp.down_proj.weight
-        // config.quant.filter_MIQ         = {"mlp"};                   //  mlp.down_proj.weight "mlp"
+        // config.quant.filter_MIQ         = {"mlp"};                   //  mlp.down_proj.weight "mlp"  
         // config.quant.filter_KVcache = {"0.self_attn"};    //   "layers.27.mlp" model.blk.0.attn
 
-        DEBUG.T_cuda_ver = 1, DEBUG.T_cpu = 0, DEBUG.cmd_p1 = 0, DEBUG.graph_dump = 0, DEBUG.Time_most = 60;
+        DEBUG.verCuda = 1, DEBUG.T_cpu = 0, DEBUG.graph_dump = 0, DEBUG.Time_most = 60;
+        // DEBUG.verInferQKV = 0, DEBUG.verInferFFN = 0;
         config.Dump(0x100);
-
-        // fish->isLocalInfer = flag == 0x110;
         hFISH fish = Fish::MakeInstance("PPL_", config, {}, Fish::ROLE_TYPE::COMMON, 0x110);
-        // hOptimizer hOPT = fish->GetOptimizer();
-        // if (hOPT->val_loaders.empty())
-        //     return KOIFISH_DATALOADER_EMPTY;
         SUM::MemoryInfo(0x0, 0x0);
-        Chat(fish, config.model.enable_thinking);
+        if (fish == nullptr)
+            return KOIFISH_NULL_FISH;
 
+        Chat(fish, config.model.enable_thinking);
         return 0x0;
     } catch (const SafeExit& ex) {
         std::string info = ex.getFormattedInfo();

@@ -104,7 +104,7 @@ class FeatVector {
 
     Feature_Selection* select_bins = nullptr;
     double wSplit = 0, wSplit_last = 0;  //"split", result contains numbers of times the feature is used in a model.
-    double wGain = 0;                    //"gain", result contains total gains of splits which use the feature.
+    double wGain = 0, errQ = 0;                    //"gain", result contains total gains of splits which use the feature.
     float* wBins = nullptr;
     enum {  // ��Ҫ��Distribution�ϲ�
         // CATEGORY = 0x100,		DISCRETE = 0x200,

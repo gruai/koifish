@@ -12,7 +12,11 @@ Common utilities for CUDA code.
 #include <nvtx3/nvToolsExtCudaRt.h>
 #include <stdio.h>
 #include <stdlib.h>
-
+#include <iostream>
+#include <vector>
+#include <memory>
+#include <mutex>
+#include <atomic>
 #include <string>
 #include <type_traits>  // std::bool_constant
 
@@ -743,3 +747,124 @@ __device__ inline int fnRC2POS(int r, int c, int M, int N) {
     // #endif
     return r * N + c;
 }
+
+
+
+class CudaDriverManager {
+private:
+    static std::atomic<int> allocation_count;
+    static std::mutex shutdown_mutex;
+    static bool driver_initialized;
+    static bool shutdown_initiated;
+
+    // Private constructor for singleton
+    CudaDriverManager() {
+        initialize_driver();
+    }
+
+    void initialize_driver() {
+        if (!driver_initialized) {
+            cudaError_t err = cudaFree(0); // Forces driver initialization
+            if (err == cudaSuccess) {
+                driver_initialized = true;
+                std::atexit([]() { shutdown_driver(); });
+            }
+        }
+    }
+
+public:
+    static CudaDriverManager& getInstance() {
+        static CudaDriverManager instance;
+        return instance;
+    }
+
+    template<typename T>
+    class CudaPtr {
+    private:
+        T* ptr = nullptr;
+        size_t count = 0;
+
+    public:
+        CudaPtr(size_t elements) : count(elements) {
+            cudaMalloc(&ptr, elements * sizeof(T));
+            if (ptr != nullptr) {
+                allocation_count.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+
+        ~CudaPtr() {
+            if (ptr != nullptr) {
+                cudaFree(ptr);
+                allocation_count.fetch_sub(1, std::memory_order_relaxed);
+            }
+        }
+
+        // Delete copy operations
+        CudaPtr(const CudaPtr&) = delete;
+        CudaPtr& operator=(const CudaPtr&) = delete;
+
+        // Allow move operations
+        CudaPtr(CudaPtr&& other) noexcept : ptr(other.ptr), count(other.count) {
+            other.ptr = nullptr;
+            other.count = 0;
+        }
+
+        CudaPtr& operator=(CudaPtr&& other) noexcept {
+            if (this != &other) {
+                if (ptr != nullptr) {
+                    cudaFree(ptr);
+                    allocation_count.fetch_sub(1, std::memory_order_relaxed);
+                }
+                ptr = other.ptr;
+                count = other.count;
+                other.ptr = nullptr;
+                other.count = 0;
+            }
+            return *this;
+        }
+
+        T* get() const { return ptr; }
+        size_t size() const { return count; }
+    };
+
+    static void shutdown_driver() {
+        std::lock_guard<std::mutex> lock(shutdown_mutex);
+        
+        if (shutdown_initiated) return;
+        shutdown_initiated = true;
+
+        // Wait for all allocations to be freed
+        int wait_count = 0;
+        const int max_wait = 100; // 10 seconds max
+        while (allocation_count.load(std::memory_order_acquire) > 0 && wait_count < max_wait) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            wait_count++;
+            
+            if (wait_count % 10 == 0) {
+                std::cout << "Waiting for " << allocation_count.load() 
+                         << " CUDA allocations to be freed... (" 
+                         << wait_count / 10 << "s)" << std::endl;
+            }
+        }
+
+        if (allocation_count.load() > 0) {
+            std::cerr << "Warning: " << allocation_count.load() 
+                     << " CUDA allocations still exist during shutdown" << std::endl;
+        }
+
+        // Force driver shutdown
+        cudaDeviceReset();
+        driver_initialized = false;
+        
+        std::cout << "CUDA driver shutdown completed" << std::endl;
+    }
+
+    static int getAllocationCount() {
+        return allocation_count.load();
+    }
+
+    // Prevent copy
+    CudaDriverManager(const CudaDriverManager&) = delete;
+    CudaDriverManager& operator=(const CudaDriverManager&) = delete;
+};
+

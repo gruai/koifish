@@ -1454,7 +1454,9 @@ class FeatVec_T : public FeatVector {
         // _INFO("%4d Q<%d> %12s [%.4g-%.8g]\t \n", id, bits, nam.c_str(), v0, v2);
         a = sqrt(err / len2);
         wGain = a;  //hack wGain to record error
-        return a;
+        // return a;        
+        errQ = err;
+        return err;
     }
 
     virtual void QuantiAtEDA(ExploreDA* edaX, void* quanti, int sizeofQ, int nMostBin, const FeatsOnFold* hData_, int flag) {

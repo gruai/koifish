@@ -1,5 +1,6 @@
 ## History
-* 11/30/2025: Support inference of QWen3-32B on single 4090
+* 12/10/2025: Support inference of QWen3-32B on single 4090
+* 11/30/2025: Support inference of QWen3-8B on single 4090
 * 10/24/2025: Support inference of QWen3-4B
 * 09/18/2025: v0.1 released
 * 08/17/2025: A new framework of multiscale deep learning

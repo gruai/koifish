@@ -573,14 +573,14 @@ bool ROPE::Build(int flag) {
             assert(fabs(a * a + b * b - 1.0) < 1.0e-6);
         }
     }
-    hSin = GT(hFish, typNUMBER::F32, {T * dim2}, 0x0, name + ".sin");
-    hSin->Alloc();
-    hSin->SerialGP(fsin, nullptr, sizeof(float) * T * dim2, false);
-    hCos = GT(hFish, typNUMBER::F32, {T * dim2}, 0x0, name + ".cos");
-    hCos->Alloc();
-    hCos->SerialGP(fcos, nullptr, sizeof(float) * T * dim2, false);
-    hSin->Print("sin", 0x0, -1);
-    hCos->Print("cos", 0x0, -1);
+    // hSin = GT(hFish, typNUMBER::F32, {T * dim2}, 0x0, name + ".sin");
+    // hSin->Alloc();
+    // hSin->SerialGP(fsin, nullptr, sizeof(float) * T * dim2, false);
+    // hCos = GT(hFish, typNUMBER::F32, {T * dim2}, 0x0, name + ".cos");
+    // hCos->Alloc();
+    // hCos->SerialGP(fcos, nullptr, sizeof(float) * T * dim2, false);
+    // hSin->Print("sin", 0x0, -1);
+    // hCos->Print("cos", 0x0, -1);
     delete[] fcos, fsin;
 
     // KQ_pos = hFish->KQ_pos;
@@ -914,7 +914,7 @@ int GeNeuron::SetGuoke(GeNeuron* hGuoke_, bool isX, int flag) {
             t->fuyous.push_back(gSrc[i]);
             gSrc[i]->fuyous.push_back(t);
             if (hFish->config.fuyou.paramIsGuoke && BIT_TEST(t->flags, GTensor::F_RELOAD)) {
-                int debug = 0x0;
+                DEBUG_HERE;
             } else
                 continue;
 

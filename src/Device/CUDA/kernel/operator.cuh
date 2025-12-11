@@ -846,9 +846,17 @@ __global__ void CU_ternary2X_(floatGama* gama, const hBITARR terns, T* mat0, int
 template <class T>
 __global__ void CU_Q42X_(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int rc_normal = 0x0, int seed = 0x0);
 template <class T>
+__global__ void CU_Q32X_(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int rc_normal = 0x0, int seed = 0x0);
+template <class T>
 __global__ void CU_Q22X_(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int rc_normal = 0x0, int seed = 0x0);
 template <class T>
 __global__ void CU_Q42X_RTN(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int rc_normal = 0x0, int seed = 0x0);
+template <class T>
+__global__ void CU_Q42X_NF4(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int rc_normal = 0x0, int seed = 0x0);
+template <class T>
+__global__ void CU_Q32X_NF3(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int rc_normal = 0x0, int seed = 0x0);
+template <class T>
+__global__ void CU_Q32X_RTN(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int rc_normal = 0x0, int seed = 0x0);
 template <class T>
 __global__ void CU_Q22X_RTN(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int rc_normal = 0x0, int seed = 0x0);
 template <class T>

@@ -27,6 +27,7 @@
 #include <typeinfo>
 #include <unordered_map>
 #include <vector>
+
 #include "../g_def_x.hpp"
 
 using namespace std;
@@ -74,7 +75,7 @@ inline void GST_time_init(void) {}
 inline double GST_sec(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (int64_t)ts.tv_sec  + (int64_t)ts.tv_nsec / 1000000000.0;
+    return (int64_t)ts.tv_sec + (int64_t)ts.tv_nsec / 1000000000.0;
 }
 
 //	A millisecond is a unit of time in the International System of Units equal to one thousandth of a second or 1000 microseconds
@@ -170,7 +171,10 @@ struct SUM {
     static size_t szQuantBits;
     static int nInitParam, nSaveParam, nzSaveParam, nLoadParam, nzLoadParam, nDogLeg;
     static double tX, tX1, tData, tRemater, tQKV, tFFN, tPreLogits, tUpload, tLoadData, tLoadParam, tEval_0, tEval_1;
+    static double tQuant, tF8Ex;
     static size_t szUpload;
+    static string sQuantInfo;
+
     static void Reset(string typ, int flag = 0x0);
     static void TimeInfo(int typ, int flag = 0x0);
     static void MemoryInfo(int type, int flag = 0x0);
@@ -182,7 +186,7 @@ struct SUM {
 
 // #define GPU_TIME_a(a,b)   {SYNC_DEVICE(); (a) += GST_us() - (b);}
 
-// Discrete distribution of array
+// Discrete distribution of array   @/home/cys/rnd/lic/src/GBDT/data_fold/Distribution.hpp
 struct Distri_ARRAY {
     std::vector<float> distri;
     double mean = 0, sigma = 0, sum = 0, ss = 0, average = 0;

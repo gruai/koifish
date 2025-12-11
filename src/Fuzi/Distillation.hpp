@@ -1,25 +1,26 @@
 /**
  *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
- *  SPDX-License-Identifier: MIT  
- * 
+ *  SPDX-License-Identifier: MIT
+ *
  *  \brief NLP_AutoRegressive Model(https://llama.meta.com/)
  *  \author Yingshi Chen
  */
 #pragma once
 
+#include <float.h>
+#include <inttypes.h>
+#include <stdio.h>
+
+#include <atomic>
 #include <cassert>
 #include <complex>
-#include <memory>
-#include <vector>
 #include <map>
-#include <typeinfo>
-#include <float.h>
-#include <stdio.h>
-#include <threads.h>
-#include <atomic>
-#include <inttypes.h> 
+#include <memory>
 #include <regex>
 #include <stack>
+#include <thread>
+#include <typeinfo>
+#include <vector>
 using namespace std;
 
 #include "../ggex/GG_util.hpp"
@@ -29,52 +30,50 @@ using namespace std;
 class Fish;
 class Distillation {
     float alpha = 0.5;
-protected:
+
+   protected:
     std::vector<hGensor> dist_gensors;
     std::vector<float> sigmas;
-    hLearnSKDU scheduler = nullptr; 
-    Fish *hFish=nullptr;
-    
-public:
-    enum ALG   {
-        ADD=0,
+    hLearnSKDU scheduler = nullptr;
+    Fish* hFish          = nullptr;
+
+   public:
+    enum ALG {
+        ADD = 0,
         SIGMA,
         SIGMA_0,
     };
-    ALG alg;    
+    ALG alg;
 
-    Distillation(Fish *hGang_,struct CLI_params&param,int flag)  : hFish(hGang_)   {
-        alg = SIGMA;    //param.sigma=="add" ? ADD : SIGMA;
+    Distillation(Fish* hGang_, struct CLI_params& param, int flag) : hFish(hGang_) {
+        alg       = SIGMA;  // param.sigma=="add" ? ADD : SIGMA;
         scheduler = std::make_shared<DiscreteSchedule>(param.common);
-        sigmas = scheduler->get_sigmas(100);
-        _INFO("%s: alg=%d(%s)\n", __func__, alg,alg==SIGMA?"sigma":"add");
+        sigmas    = scheduler->get_sigmas(100);
+        _INFO("%s: alg=%d(%s)\n", __func__, alg, alg == SIGMA ? "sigma" : "add");
     }
-    virtual ~Distillation() {
-
-    }
+    virtual ~Distillation() {}
 
     //  ref:    ggml_scale_impl     ggml_compute_forward_timestep_embedding_f32
-    virtual hGensor UpdateGG(struct ggml_context * ctx,hGensor gensor,hGensor delta,int flag=0x0){
+    virtual hGensor UpdateGG(struct ggml_context* ctx, hGensor gensor, hGensor delta, int flag = 0x0) {
         // float sigma = 0.5;
-        hGensor result=nullptr;
-        switch(alg){
-        case SIGMA:
-            gensor = nullptr;   //gg_axpy_f32(ctx,G(gensor),sigma,G(delta),1-sigma);
-            dist_gensors.push_back(gensor);
-            result = gensor;
-            break;
-        case SIGMA_0:
-            gensor = delta;
-            break;
-        default:
-            gensor = nullptr;   //add_to_f32(ctx, G(gensor), G(delta));
-            break;
-        }      
-        
-        return gensor;  
+        hGensor result = nullptr;
+        switch (alg) {
+            case SIGMA:
+                gensor = nullptr;  // gg_axpy_f32(ctx,G(gensor),sigma,G(delta),1-sigma);
+                dist_gensors.push_back(gensor);
+                result = gensor;
+                break;
+            case SIGMA_0:
+                gensor = delta;
+                break;
+            default:
+                gensor = nullptr;  // add_to_f32(ctx, G(gensor), G(delta));
+                break;
+        }
+
+        return gensor;
     }
 
-    virtual void UpdateSigma( int step,int flag=0x0);
-
+    virtual void UpdateSigma(int step, int flag = 0x0);
 };
 typedef shared_ptr<Distillation> hDistillation;

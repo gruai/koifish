@@ -69,7 +69,7 @@ SelfAttention::SelfAttention(Fish* hG_, const std::string& key_, JSON::const_ite
     if (jvals.size() >= 3) {
         shape = {(int)(jvals[0]), (int)(jvals[1]), (int)(jvals[2])};
     } else {  //"attn":{"QKV":[]},
-        if (config.qkv_embeds.size() > 1) {
+        if (config.model.qkv_embeds.size() > 1) {
             assert(0);
             // C_qkv = config.qkv_embeds[1];
         }
@@ -187,6 +187,14 @@ bool SelfAttention::Build(int flag_0) {
             rope->devDeltaQ = devDeltaQ;
             rope->devDeltaK = devDeltaK;
         }
+    }
+
+    // QUANT_CARD quant_params = hFish->config.quant;
+    quant_params.Init(name, hFish->config.jQuant);
+    if (layid > quant_params.nPassLayer) {
+        quant_params.spMost       = Q.w->shape;
+        quant_params.default_bits = layid > 0 ? 3 : 4;
+        hQuant                    = GeQuant::MakeInstance(this, name, quant_params, {Q.w, K.w, V.w, proj_cat.w}, 0x0);  //  {Q.w,proj_cat.w}
     }
     // tpTrans = RELU2;
     // moe.BuildX(name+".moe",sp,hFish,flag);        //  why this would slow converge???
@@ -837,7 +845,7 @@ bool GENSOR_TOPU::has(hGensor gensor) {
 void GENSOR_TOPU::Insert(hGensor gensor, const GENSOR_INFO& gi, int flag) {
     auto key = gensor->name;
     if (strcmp(key, "model.norm.weight") == 0) {
-        int debug = 0x0;
+        DEBUG_HERE;
     }
     // assert(strlen(key)>0);
     assert(nag.find(key) == nag.end());
@@ -1029,7 +1037,7 @@ bool TGraph::isSink(hGensor node, int flag) {
 int Fish::BuildComputeGraph(int order, void* ctx, int flag) {
     const int N = config.n_ctx(), n_past = 0;
     if (N == 19) {
-        int debug = 0x0;
+        DEBUG_HERE;
     }
 
     if (order >= 0) {  // order<0: we have build it in other way
@@ -1646,38 +1654,17 @@ hNEURON Fish::J2Neuron(void* ctx_, string& dad, int level, const JConfig& jconfi
     return hN;
 }
 
-bool GTensor::FreeBuffer(int flag) {
-    try {
-        bt4c = nullptr, delta = nullptr, tmpDelta = nullptr, outL = nullptr, scratch = nullptr, tmpFF1 = nullptr, tmpW = nullptr, tmpGW = nullptr,
-        residual   = nullptr;
-        tmpTernary = nullptr;
-        return true;
-    } catch (const std::exception& e) {
-        _INFO("%s", e.what());
-        fflush(stdout);
-        return -1000;
-    } catch (const char* info) {
-        _INFO("%s", info);
-        fflush(stdout);
-        return -1001;
-    } catch (...) {
-        _INFO("\r\n%s  Unknown exception !!!", __func__);
-        fflush(stdout);
-        return -2001;
-    }
-}
-
 /*
 
 */
 int Fish::jToGraph(void* ctx_, bool isBuild, int flag) {
     JConfig js(config.jModel);
-    string sRoot = "model";  // jModel = jKEY(jConfig,{"model"});
+    string sRoot = "model";  // jModel <= jKEY(jConfig,{"model"});
 
     AllocBuffer();
-
-    J2Neuron(ctx_, sRoot, 0, js, flag);
     int L = config.nLayer();
+    J2Neuron(ctx_, sRoot, 0, js, flag);
+    L = config.nLayer();
     for (auto n : neurons) {
         if (dynamic_cast<Ganglia*>(n.get()) != nullptr)
             continue;
@@ -1697,7 +1684,7 @@ int Fish::jToGraph(void* ctx_, bool isBuild, int flag) {
 
     hCLS = GetNeuron<OutCLS>("OutCLS", 0);
     assert(hCLS != nullptr);
-    if (config.token_embeds.size() > 1) {
+    if (config.model.token_embeds.size() > 1) {
         auto nn = std::make_shared<MAEC>(this, "MAEC", flag);
         neurons.push_back(nn);
         TokenEmbed* embed = GetNeuron<TokenEmbed>("TokenEmbed", 0);

@@ -860,7 +860,7 @@ PYMORT_DLL_API void LiteMORT_fit_1(void* mort_0, PY_DATASET_LIST* train_list, PY
         printf("\n********* LiteMORT_fit_1  time=%.3g(%.3g)......OK\n\n", GST_TOC(tick), FeatsOnFold::stat.tX + DCRIMI_2::tX);
     } catch (char* sInfo) {
         printf("\n!!!!!! EXCEPTION@LiteMORT_fit \n!!!!!!\"%s\"\n\n", sInfo);
-        system("pause");
+        (void)system("pause");
         throw sInfo;
     } catch (...) {
         printf("\n!!!!!! EXCEPTION@LiteMORT_fit %s!!!!!!\n\n", "...");

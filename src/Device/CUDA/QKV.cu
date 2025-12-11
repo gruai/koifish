@@ -698,7 +698,7 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
         FUSE_cudnn(nullptr, nullptr, flag);
         attn->Print("l_atty", 0x0, dump_flag);
     }
-    if (1)
+    if (0   )  // ShareLayerOut: inpL/out is same data
         CU_mv_(ToX(inpL), ToX(proj_cat.w), ToX(Q.out), C, q_dim, 1.0f, 1.0f);
     else {  //       From cuFlow
         proj_cat.Forw(GTensor::scratch, Q.out);

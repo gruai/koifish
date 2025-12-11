@@ -72,7 +72,7 @@ bool Fish::SetPhase(LIFE_PHASE phase_, int flag) {
             // assert(loader->num_batches == 1);
             break;
         case LIFE_PHASE::P_GENERATE:
-            _INFO("[generate] " );
+            _INFO("[generate] ");
             // assert(loader->num_batches == 1);
             break;
         default:
@@ -298,8 +298,8 @@ float Optimizer::gClip(int ne, floatX* g, hGensor hP, int flag) {
 
 int GTensor::Dogleg(int flag) {
     if (isStrMatch(name, {"blk.2.attn.wq"})) {  // model.blk.11.attn.wo.weight_a
-        int debug = 0x0;
-        flag      = -2;
+        DEBUG_HERE;
+        flag = -2;
     }
     assert(needUpdateParam);
 
@@ -726,7 +726,8 @@ float Optimizer::EvaluateSamps(hSampLoader loader, int iter, int flag) {
     const float* wLog   = nullptr;
     loader->next_sample = 0;  // fix this to keep same acc on each experiment
     for (i = 0; i < loader->num_batches; i += step) {
-        if (tokens_input != nullptr && (_fish->phase != LIFE_PHASE::P_PREFILL && _fish->phase != LIFE_PHASE::P_GENERATE)) {  // in some debug mode, tokens_input maybe null
+        if (tokens_input != nullptr &&
+            (_fish->phase != LIFE_PHASE::P_PREFILL && _fish->phase != LIFE_PHASE::P_GENERATE)) {  // in some debug mode, tokens_input maybe null
             TIMING_ms(loader->UpdateBatch(i, _fish), SUM::tLoadData);
             samp = loader->cur_samps[i];
         }

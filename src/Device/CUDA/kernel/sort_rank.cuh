@@ -197,7 +197,7 @@ __global__ void bitonicSortRankKernelXBlock1_fp32(float* mem, unsigned int* inde
     _bitonic_rank_Step1_fp32(mem, index, tid, tpp, d);
 }
 __global__ void bitonicSortRankKernelXBlock2_fp32(float* mem, unsigned int* index, int blockNum, int d) {
-    int bid = blockIdx.x;                             // Block UID
+    // int bid = blockIdx.x;                             // Block UID
     int tpp = threadIdx.x;                            // Thread position in block
     int tid = blockIdx.x * blockDim.x + threadIdx.x;  // Thread global UID
     _bitonic_rank_Step2_fp32(mem, index, tid, tpp, d);

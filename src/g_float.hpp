@@ -44,24 +44,25 @@ struct FLOAT_META {
     int bis = 0;
     std::string name;
     std::string alias;
+    bool isQuantized() { return bis < 8; }
 };
 /*
     Type of numbers
 */
 enum class typNUMBER : uint8_t {
     F32 = 0,
-    F16 = 1,  //  1 sign, 5 exponent, 10 mantissa(significand) bits; 15361 numbers in [0.0, 1.0], endpoints included.  On average, log10(2**11) ~ 3.311 decimal
-              //  digits.
-    /*Q4_0    = 2,    Q4_1    = 3,    Q5_0    = 6,    Q5_1    = 7,    Q8_0    = 8,    Q8_1    = 9,    Q2_K    = 10,    Q3_K    = 11,    Q4_K    = 12,
-    Q5_K    = 13,    Q6_K    = 14,    Q8_K    = 15,    IQ2_XXS = 16,    IQ2_XS  = 17,    IQ3_XXS = 18,    IQ1_S   = 19,    IQ4_NL  = 20,    IQ3_S   = 21, IQ2_S
-    = 22, IQ4_XS  = 23,*/
-    I8  = 24,
-    I16 = 25,
-    I32 = 26,
-    I64 = 27,
-    F64 = 28,
-    // IQ1_M   = 29,
-    BF16 = 30,  //  1 sign, 8 exponent, and the significand is being stored in 7 bits.
+    F16,  //  1 sign, 5 exponent, 10 mantissa(significand) bits; 15361 numbers in [0.0, 1.0], endpoints included.  On average, log10(2**11) ~ 3.311 decimal
+          //  digits.
+    U8,
+    I8,
+    U16,
+    I16,
+    U32,
+    I32,
+    U64,
+    I64,
+    F64,
+    BF16,  //  1 sign, 8 exponent, and the significand is being stored in 7 bits.
 
     // TQ1_0   = 34,    TQ2_0   = 35,
 
@@ -71,6 +72,7 @@ enum class typNUMBER : uint8_t {
     Q4,
     Q3,
     Q2,
+    BOOL1,
 
     T_SIGN,      //  ternary {-1, 0, 1}
     T_BINARY,    //  binary {-1,  1}
@@ -83,9 +85,13 @@ enum class typNUMBER : uint8_t {
 inline FLOAT_META K_FLOATS[] = {
     {32, "F32"},           // F32
     {16, "F16"},           // F16
+    {8, "U8"},             // U8
     {8, "I8"},             // I8
+    {16, "U16"},           // U16
     {16, "I16"},           // I16
+    {32, "U32"},           // U32
     {32, "I32"},           // I32
+    {64, "U64"},           // U64
     {64, "I64"},           // I64
     {64, "F64"},           // F64
     {16, "BF16"},          // BF16
@@ -94,6 +100,7 @@ inline FLOAT_META K_FLOATS[] = {
     {4, "Q4"},             // Q4
     {3, "Q3"},             // Q3
     {2, "Q2"},             // Q2
+    {1, "BOOL1"},          // BOOL1
     {1, "T_SIGN"},         // T_SIGN
     {1, "T_BINARY"},       // T_BINARY
     {1, "T_BINARY_3"},     // T_BINARY_3
@@ -256,7 +263,7 @@ inline float T2Float(const T* a0) {
         a = *a0;
     } else if (typeid(T) == typeid(double)) {
         a = *a0;
-    }else if (typeid(T) == typeid(int)) {
+    } else if (typeid(T) == typeid(int)) {
         a = *a0;
     } else {
         assert(0);
@@ -313,8 +320,8 @@ inline float T2Float<__nv_fp8_e5m2>(const __nv_fp8_e5m2* a0) {
 }
 template <>
 inline float T2Float<nv_bfloat16>(const nv_bfloat16* a0) {
-/*  trick*/
-    uint16_t x =*((uint16_t*)(a0));
+    /*  trick*/
+    uint16_t x   = *((uint16_t*)(a0));
     uint32_t tmp = static_cast<uint32_t>(x) << 16;
     float a;
     memcpy(&a, &tmp, sizeof(a));
@@ -329,7 +336,7 @@ inline void T2Float_arr(const size_t N, const T* in, float* out) {
     }
 }
 template <typename T>
-inline float T2Float_delta( const T* dat0, const T* dat1, const size_t pos, int flag=0x0) {
+inline float T2Float_delta(const T* dat0, const T* dat1, const size_t pos, int flag = 0x0) {
     T delta = dat0[pos] - dat1[pos];
     return T2Float(&delta);
 }
@@ -387,7 +394,7 @@ double BitPE(typNUMBER type);
 // size_t NPBlck(typNUMBER type);
 const char* cNameOf(typNUMBER type);
 std::string NameOf(typNUMBER type);
-bool isQuantized(typNUMBER type);
+// bool isQuantized(typNUMBER type);
 
 struct BF16_LUT {
     float table[65536];
@@ -451,27 +458,34 @@ struct FP8E5M2_LUT {
         -416.0,       -448.0,       -480};
 };
 
-struct Q4_LUT {
-    float table[16] = {-1.0,
-                       -0.6961928009986877,
-                       -0.5250730514526367,
-                       -0.39491748809814453,
-                       -0.28444138169288635,
-                       -0.18477343022823334,
-                       -0.09105003625154495,
-                       0.0,
-                       0.07958029955625534,
-                       0.16093020141124725,
-                       0.24611230194568634,
-                       0.33791524171829224,
-                       0.44070982933044434,
-                       0.5626170039176941,
-                       0.7229568362236023,
-                       1.0};
+//  normal-float-4 (NF4)
+struct NF4_LUT {
+    float table[16] = {-1.0f,
+                       -0.6961928009986877f,
+                       -0.5250730514526367f,
+                       -0.39491748809814453f,
+                       -0.28444138169288635f,
+                       -0.18477343022823334f,
+                       -0.09105003625154495f,
+                       0.0f,
+                       0.07958029955625534f,
+                       0.16093020141124725f,
+                       0.24611230194568634f,
+                       0.33791524171829224f,
+                       0.44070982933044434f,
+                       0.5626170039176941f,
+                       0.7229568362236023f,
+                       1.0f};
+    // midpoints between NF4_LUT
+    float mids[16] = {-0.8480964004993438f,  -0.6106329262256622f,   -0.4599952697753906f, -0.33967943489551544f, -0.23460715460772705f,
+                      -0.13791173315048218f, -0.045525018125772475f, 0.03979014977812767f, 0.1202552504837513f,   0.20352124667733002f,
+                      0.2920137718319893f,   0.3893125355243683f,    0.5016634166240692f,  0.6427869200706482f,   0.8614784181118011f};
 };
 
-struct Q3_LUT {
-    float table[8] = {-1.0, -0.5350227355957031, -0.2469314038753510, 0.0, 0.1833375245332718, 0.3819939494132996, 0.6229856610298157, 1.0};
+struct NF3_LUT {
+    float table[8]     = {-1.0, -0.5350227355957031, -0.2469314038753510, 0.0, 0.1833375245332718, 0.3819939494132996, 0.6229856610298157, 1.0};
+    float nf4_scale[8] = {-1.0f, -0.6961928009986877f * 0.7f, -0.5250730514526367f * 0.7f, -0.18477343022823334f * 0.7f,
+                          0.0f,  0.18477343022823334f * 0.7f, 0.5250730514526367f * 0.7f,  1.0f};
 };
 
 void BIT_SET_k(hBITARR array, size_t offset, BIT_8 elem, int bits);

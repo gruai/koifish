@@ -8,6 +8,12 @@
 
 #include "../EDevice.hpp"
 
+// Static member definitions
+std::atomic<int> CudaDriverManager::allocation_count{0};
+std::mutex CudaDriverManager::shutdown_mutex;
+bool CudaDriverManager::driver_initialized = false;
+bool CudaDriverManager::shutdown_initiated = false;
+
 void SUM::GPU_TIME(double& a, const double b, int flag) {
     return;
 #ifndef NDEBUG

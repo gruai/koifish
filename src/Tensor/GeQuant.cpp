@@ -17,7 +17,6 @@ using namespace Grusoft;
 
 hQUANT GeQuant::MakeInstance(GeNeuron* hNeuron, const std::string& nam_, QUANT_CARD& params, std::vector<hGensor> tensors, int flag) {
     hQUANT hQuant = nullptr;
-    params.type   = params.TypeOf(nam_);
     if (params.type == NO_QUANT)
         return hQuant;
 
@@ -27,7 +26,7 @@ hQUANT GeQuant::MakeInstance(GeNeuron* hNeuron, const std::string& nam_, QUANT_C
         hQuant = quants[key];
     } else {
         switch (params.type) {
-            case MIQ:
+            case MINI:
                 hQuant = std::make_shared<Q_Impurity<float>>(nam_ + "_quant", hNeuron, params, 0x0);
                 break;
             case KV_JL: {
@@ -45,6 +44,7 @@ hQUANT GeQuant::MakeInstance(GeNeuron* hNeuron, const std::string& nam_, QUANT_C
         for (auto t : tensors) {
             assert(t->hQuant == nullptr);
             t->hQuant = hQuant;
+            // assert(hTensor->isWMAT());
         }
     }
     return hQuant;
@@ -55,7 +55,7 @@ GeQuant::GeQuant(const std::string& nam_, void* hBase, QUANT_CARD& param_, int f
     std::hash<std::string> hasher;
     size_t hash = hasher(name);  // Returns a size_t (unsigned integer)
     rander.Init(hash);
-    bits = params.bits;
+    bits = params.default_bits;
     assert(params.isValid());
     tpGama = TYPE_<floatGama>();
 
@@ -64,12 +64,17 @@ GeQuant::GeQuant(const std::string& nam_, void* hBase, QUANT_CARD& param_, int f
     for (auto n : params.spMost) nzMost *= n;
     if (nzMost > 1) {
         assert(nzMost * bits % 8 == 0);
-        szQuant    = nzMost * bits / 8;
-        quant_data = new BIT_8[szQuant];
+        szMostQuant = nzMost * bits / 8;
+        quant_data  = new BIT_8[szMostQuant * 2];
+        best_quant  = quant_data + szMostQuant;
     }
+    int nRow = params.spMost[0], nCol = params.spMost[1], nQuant = 0x1 << bits;
+    nMostGama = std::max(nRow, nCol) * nQuant + nRow + nCol;
+    gama      = new floatGama[nMostGama * 2];
+    best_gama = this->gama + nMostGama;
 }
 
-typNUMBER GeQuant::tpQuant(int flag) {
+typNUMBER GeQuant::bit2typ(int flag) {
     switch (bits) {
         case 4:
             return typNUMBER::Q4;
@@ -77,14 +82,17 @@ typNUMBER GeQuant::tpQuant(int flag) {
             return typNUMBER::Q3;
         case 2:
             return typNUMBER::Q2;
-        defaut:
+        default:
             assert(0);
             break;
     }
     return typNUMBER::Q4;
 }
 
-GeQuant::~GeQuant() { FREE_a(quant_data); }
+GeQuant::~GeQuant() {
+    FREE_a(quant_data);
+    FREE_a(gama);
+}
 
 /*
 template <typename T, typename Tproj>
@@ -155,76 +163,116 @@ template class Q_JL<bf16, bf16>;
 using namespace Grusoft;
 
 template <typename T>
-Q_Impurity<T>::Q_Impurity(const std::string& nam_, void* hN, QUANT_CARD& params, int flag) : Quantizer<T>(nam_, hN, params, flag) {
+Q_Impurity<T>::Q_Impurity(const std::string& nam_, void* hN, QUANT_CARD& param_, int flag) : Quantizer<T>(nam_, hN, param_, flag) {
     assert(this->bits > 0 && this->bits <= 8);
-    this->isSinkNormal = true;
-    // this->params.type  = this->bits==2 ? QUANT_MODE::RTN_2 : QUANT_MODE::RTN_4;
+
     // if (dort == nullptr)
     //     dort = static_cast<DORT_wrap*>(LiteMORT_init(nullptr, 0, nullptr, 0x0));
-    // LiteBOM_Config& config = dort->config;
-    // config.feat_quanti     = 1024;
-    // config.verbose         = 1000;
-    // config.objective       = "quant";
 }
 
-float GeQuant::AfterLowBit(shared_ptr<GTensor> hTensor, void* srcData, int flag) {
+float GeQuant::AfterLowBit(shared_ptr<GTensor> hTensor, const void* srcData, int flag) {
     SUM::nQuantTensor++;
     SUM::szQuantBits += 0;
-    hTensor->rc_normal = this->isSinkNormal;
-    double e, e_0, e_1, err = 0, err_1 = -DBL_MAX, err_0 = DBL_MAX, len, a, avg = 0, a_0 = DBL_MAX, a_1 = -DBL_MAX;
-    auto ginfo = hTensor->ginfo;
-    if (0) {  // verify
-        int nRow = hTensor->shape[0], nCol = hTensor->shape[1], i, j, pos = 0;
-        floatX *devX = hTensor->GetDataX(), *dat0 = (floatX*)srcData, *dat1 = new floatX[nRow * nCol], *gama = new floatX[nRow * 16];
+    hTensor->disq.rc_normal = this->params.norm;
+
+    double e, e_0, e_1, err = 0, err_1 = -DBL_MAX, err_0 = DBL_MAX, len, a, avg = 0, a_0 = DBL_MAX, a_1 = -DBL_MAX, errQ = 0;
+    auto disq = hTensor->disq;
+    int nRow = hTensor->shape[0], nCol = hTensor->shape[1], i, j, pos = 0, outlier = 0;
+    double average = hTensor->disq.nrm_1 / nRow / nCol, rOutlier = 0;
+    if (isCheckErr) {  // verify
+        floatX *devX = hTensor->GetDataX(), *dat0 = (floatX*)srcData, *dat1 = new floatX[nRow * nCol], *host_gama = new floatX[nRow * 16 + nRow + nCol];
         D2H(devX, dat1, sizeof(floatX) * nRow * nCol);
-        D2H(hTensor->gama_T() + nRow + nCol, gama, sizeof(floatX) * nRow * 2);
-        for (i = 0; i < nRow; i++) {
-            float zero = T2Float(gama + 2 * i), step = T2Float(gama + 2 * i + 1);
-            for (e_0 = DBL_MAX, e_1 = -DBL_MAX, err = 0, len = 0, j = 0; j < nCol; j++, pos++) {
-                a   = T2Float(dat0 + pos);
+        D2H(hTensor->gama_T(), host_gama, sizeof(floatX) * (nRow * 2 + nRow + nCol));
+        for (i = 0; i < nRow; i++, pos += nCol) {
+            // if (i != 151644)                continue;
+            float f1 = T2Float(host_gama + nRow + nCol + 2 * i), f2 = T2Float(host_gama + nRow + nCol + 2 * i + 1);
+            for (e_0 = DBL_MAX, e_1 = -DBL_MAX, err = 0, len = 0, j = 0; j < nCol; j++) {
+                a   = T2Float(dat0 + pos + j);
                 a_0 = std::min(a, a_0), a_1 = std::max(a, a_1);
                 len += a * a;
-                e = T2Float_delta(dat1, dat0, pos);
-                if (j == 369 && i == 0) {  // j=369 -0.6015625
+                e = T2Float_delta(dat1, dat0, pos + j);
+                // printf("%g\t%g\n", T2Float(dat1 + pos + j), T2Float(dat0 + pos + j));
+                if (fabs(e / average) > rOutlier) {
+                    rOutlier = fabs(e / average);
+                    outlier  = pos + j;
+                }
+                if (pos + j == 393712) {  // i=384 j=496    -0.2578=>0.2578
                     DEBUG_HERE;
+                    Distri_QUANT disR(f1, f2);
+                    int qid = disR.X2NormalF(bits, a);
                 }
                 e_1 = std::max(e_1, e), e_0 = std::min(e_0, e);
                 err += e * e;
             }
+            errQ += err;
             err /= len, avg += err;
-            err_0 = std::min(err, err_0), err_1 = std::max(err, err_1);
-            if (i < 16) {
-                _INFO("[RTN]_%d arr=[%.4g-%.4g] err=[%.4g-%.4g]\n", i, a_0, a_1, e_0, e_1);
+            if (err_1 < err) {  // get max_err row
+                err_1 = err;
             }
+            err_0 = std::min(err, err_0);
+            // if (i < 16) {
+            //     _INFO("[]_%d arr=[%.4g-%.4g] err=[%.4g-%.4g]\n", i, a_0, a_1, e_0, e_1);
+            // }
         }
         delete[] dat1;
-        _INFO("[Quant] average=%.4g sum=[%.4g,%.4g]\t@%s\n", ginfo->nrm_1 / nRow / nCol, ginfo->sum_1, ginfo->sum_2, hTensor->name);
+        errQ     = sqrt(errQ / nRow / nCol);
+        impurity = errQ / average;
+        _INFO("[Quant] average=%.4g sum=[%.4g,%.4g]\t@%s\n", disq.nrm_1 / nRow / nCol, disq.sum_1, disq.sum_2, hTensor->name);
         _INFO("\terr=%.4g[%.4g-%.4g] A=[%.4g-%.4g]", avg / nRow, err_0, err_1, a_0, a_1);
     }
+
+    hTensor->disq.err  = impurity;
+    hTensor->disq.info = best_.ToString();
+    for (auto t : hTensor->refered) {
+        assert(t->type != hTensor->type);
+        t->type = hTensor->type;
+        assert(t->hQuant == nullptr);
+        t->hQuant = hTensor->hQuant;
+    }
+
+    e = hTensor->disq.nrm_1 / nRow / nCol;
+    float T_errQ = bits==3 ? params.T_errQ+0.1 : params.T_errQ;
+    if (impurity >= T_errQ) {
+        _WARN("[]_Q<%d>_fnorm=%d impurity=%.3g |a|=%.3g @%s\n", bits, params.norm, impurity, e, hTensor->name);
+    }
+    hTensor->Print(hTensor->name, 0, 0);
+
     return err;
 }
 
-float GeQuant::RTN(shared_ptr<GTensor> hTensor, void* cpuData, int flag) {
-    double t0 = GST_ms(), err = 0, e = 0, e_0, e_1;
-    assert(hTensor->isWMAT());
-    int nRow = hTensor->shape[0], nCol = hTensor->shape[1], nQuant = 0x1 << this->bits, i, pos, row;
-    floatX *mat0 = (floatX*)(cpuData), *dat = nullptr, b;
+float GeQuant::RTN(shared_ptr<GTensor> hTensor, const void* srcData, int flag) {
+    if (params.isNormalFloat)
+        return RT_NormalF(hTensor, srcData, flag);
 
+    double t0 = GST_ms(), err = 0, e = 0, e_0, e_1;
+
+    int nRow = hTensor->shape[0], nCol = hTensor->shape[1], nQuant = 0x1 << this->bits, i, pos, row;
+    const floatX *mat0 = (floatX*)(srcData), *dat = nullptr;
+    floatX b;
+    floatGama *gamaRow = gama, *gamaCol = gamaRow + nRow;
+    float sR = 1.0, sC = 1.0, *tmpRow = new float[nCol];
     for (row = 0; row < nRow; row++) {
-        float vmax = -FLT_MAX, vmin = FLT_MAX, a;
+        float vmax = -FLT_MAX, vmin = FLT_MAX, a, a0 = 0;
+        assert(0);  // RT_NormalF is much better than RTN!
+        /*if (isSinkNormal)
+            sR = gamaRow[row];
         dat = mat0 + row * nCol;
         for (i = 0; i < nCol; i++) {
-            a    = T2Float(dat + i);
+            if (isSinkNormal)
+                sC = T2Float(gamaCol + i);
+            a         = T2Float(dat + i) / sR / sC;
+            tmpRow[i] = a;
             vmax = std::max(vmax, a), vmin = std::min(vmin, a);
         }
 
-        floatGama* gama_ = this->gama + 2 * row;
+        floatGama* gama_ = this->gama + nRow + nCol + 2 * row;
         float step = (vmax - vmin) / (nQuant - 1), zero = vmin;
         gama_[0] = zero, gama_[1] = step;
         hBITARR quanti = quant_data + nCol * row * this->bits / 8;
         for (e_0 = DBL_MAX, e_1 = -DBL_MAX, i = 0; i < nCol; i++) {
             pos = i;
-            a   = T2Float(dat + i);
+            // a0  = T2Float(dat + i);
+            a = tmpRow[i];
             // value = std::clamp(value, min_val, max_val);
             int qid = std::round((a - zero) / step);
             assert(qid >= 0 && qid < nQuant);
@@ -233,19 +281,141 @@ float GeQuant::RTN(shared_ptr<GTensor> hTensor, void* cpuData, int flag) {
             e   = a - (zero + step * qid);  //+ step*0.5
             e_1 = std::max(e_1, e), e_0 = std::min(e_0, e);
             err += e * e;
-            if (i == 369 && row == 0) {
-                DEBUG_HERE;
+            // if (i == 369 && row == 0) {
+            //     DEBUG_HERE;
+            // }
+        }*/
+    }
+    delete[] tmpRow;
+    err = sqrt(err / nRow / nCol);  // 0.00369
+    e   = hTensor->disq.nrm_1 / nRow / nCol;
+    // if (err >= e) {
+    //     _WARN("[RTN]_Q<%d>_%s %g>%g\n", this->bits, isSinkNormal ? "normal" : "", err, e);
+    // }
+    return err;
+}
+float Distri_QUANT::Normal01(const float weight, int flag) {
+    float normalized = (weight - zero) * scale;  // map weights to [-1, 1] range
+    normalized       = std::clamp(normalized, -1.0f, 1.0f);
+    return normalized;
+}
+
+static NF4_LUT LUT_nf4;
+static NF3_LUT LUT_nf3;
+/*
+    1.  weight matrices (often symmetric) & activations (often non-negative & highly asymmetric)
+*/
+void Distri_QUANT::Prepare(int nQuant, int flag) {
+    abs_max  = std::max(std::abs(vmin), std::abs(vmax));
+    int QMAX = nQuant - 1, QMIN = 0;
+    maxP = std::max(0.f, vmax), minN = std::min(0.f, vmin);
+    auto table = nQuant == 16 ? LUT_nf4.table : LUT_nf3.table;
+    float a    = 0;
+    switch (asymmetry) {
+        case ZERO_OFF: {
+            assert(0);
+            scale = (vmax - vmin) / static_cast<float>(QMAX - QMIN);
+            // Calculate zero point: zp = qmin - round(min / scale)
+            // This ensures: min ≈ (qmin - zp) * scale
+            float zero_point_f = QMIN - std::round(vmin / scale);
+            // Clamp zero point to quantized range
+            zero = std::max(static_cast<float>(QMIN), std::min(static_cast<float>(QMAX), zero_point_f));
+        } break;
+        case PN_SCALE:
+            scaleP = maxP > 0 ? maxP : 1.0f;
+            scaleN = -minN > 0 ? -minN : 1.0f;
+            for (int i = 0; i < nQuant; i++) {
+                if(table[i]<0){
+                    a = table[i] * scaleN;
+                }else{
+                    a = table[i] * scaleP;
+                }
+                codebook.push_back(a);
             }
+            break;
+        default:  // symmetric:  zero_point = 0,        Zero maps exactly to quantized value 0
+            scale = (abs_max > 0) ? (1.0f / abs_max) : 1.0f;
+            zero  = 0.f;
+            for (int i = 0; i < nQuant; i++) {
+                a = table[i] / scale;
+                codebook.push_back(a);
+            }
+            break;
+    }
+}
+
+BIT_8 Distri_QUANT::X2NormalF(int bits, const float weight, int flag) {
+    int nBin       = codebook.size();
+    float min_dist = std::numeric_limits<float>::max();
+    BIT_8 best_idx = 0;
+    for (BIT_8 i = 0; i < nBin; i++) {
+        float dist = std::abs(weight - codebook[i]);
+        if (dist < min_dist) {
+            min_dist = dist;
+            best_idx = i;
         }
-        // if (row < 16) {
-        //     _INFO("[RTN]_%d arr=[%.4g-%.4g] err=[%.4g-%.4g]\n", row, vmin, vmax, e_0, e_1);
-        // }
     }
-    err = sqrt(err / nRow / nCol);  // 0.004094
-    e   = hTensor->ginfo->nrm_1 / nRow / nCol;
-    if (err >= e) {
-        _WARN("[RTN]_Q<%d> %g>%g\n", this->bits, err, e);
+    float e = fabs(weight - codebook[best_idx]);
+    e_1 = std::max(e_1, e), e_0 = std::min(e_0, e);
+    err += e * e;
+    return best_idx;
+} 
+
+// thread-safe single row quant on LUT
+float GeQuant::_row_lut(int row, shared_ptr<GTensor> hTensor, const floatX* dat, float* tmpRow, int flag) {
+    int nRow = hTensor->shape[0], nCol = hTensor->shape[1], nQuant = 0x1 << bits;
+    floatGama *gamaRow = gama, *gamaCol = gamaRow + nRow;
+    float sR = 1.0, sC = 1.0, a, a0 = 0;
+    // if (row != 151644)            continue;
+    Distri_QUANT disR;//(Distri_QUANT::PN_SCALE);
+    bool isColNorm = params.norm == NORMAL_MODE::SINKHORN;
+    if (params.norm != NORMAL_MODE::NO_NORMAL)
+        sR = gamaRow[row];
+    for (int i = 0; i < nCol; i++) {
+        if (isColNorm)
+            sC = T2Float(gamaCol + i);
+        a         = T2Float(dat + i) / sR / sC;
+        tmpRow[i] = a;
+        disR.Next(a);
     }
+
+    floatGama* gama_ = gama + nRow + nCol + nQuant * row;
+    disR.Prepare(nQuant);
+    // gama_[0] = disR.zero, gama_[1] = 1.0 / disR.scale;    // to be consistent with gamaR
+    assert(disR.codebook.size()==nQuant);
+    for(int i = 0; i<disR.codebook.size(); i++ )
+        gama_[i] = Float2T<floatGama>(disR.codebook.data()+i);
+    hBITARR quanti = quant_data + nCol * row * bits / 8;  // quanti[77641728]=0x00
+    for (int i = 0; i < nCol; i++) {
+        a       = tmpRow[i];
+        int qid = disR.X2NormalF(bits, a);
+        assert(qid >= 0 && qid < nQuant);
+        BIT_SET_k(quanti, i, qid, bits);
+        assert(BIT_GET_k(quanti, i, bits) == qid);
+    }
+    return disR.err;
+}
+/*
+    1.  quantization bins are placed to be “information-theoretically optimal” for normally distributed values-N(0,1)
+*/
+float GeQuant::RT_NormalF(shared_ptr<GTensor> hTensor, const void* srcData, int flag) {
+    assert(bits == 4 || bits == 3);
+    double t0 = GST_ms(), err = 0;
+    int nRow = hTensor->shape[0], nCol = hTensor->shape[1], nQuant = 0x1 << bits, nMostThread = omp_get_max_threads();
+    const floatX *mat0 = (floatX*)(srcData), *dat = nullptr;
+    floatX b;
+    floatGama *gamaRow = gama, *gamaCol = gamaRow + nRow;
+    float* tmpRows = new float[nCol * nMostThread];
+    vector<double> err_rows(nRow);
+#pragma omp parallel for
+    for (int row = 0; row < nRow; row++) {
+        int thread_id = omp_get_thread_num();
+        err_rows[row] = _row_lut(row, hTensor, mat0 + row * nCol, tmpRows + nCol * thread_id, flag);
+    }
+    delete[] tmpRows;
+    for (int row = 0; row < nRow; row++) err += err_rows[row];
+    err     = sqrt(err / nRow / nCol);  // 0.00282
+    float e = err / (hTensor->disq.nrm_1 / nRow / nCol);
     return err;
 }
 
@@ -258,7 +428,7 @@ FeatsOnFold* Mat2DORT(LiteBOM_Config config, ExploreDA* edaX, typNUMBER tpN, voi
     It's really a suprize to find that GBDT would improve quant.    cys 11/22/2025
 */
 template <typename T>
-float Q_Impurity<T>::LowBit_GBDT(shared_ptr<GTensor> hTensor, void* srcData, int flag) {
+float Q_Impurity<T>::LowBit_GBDT(shared_ptr<GTensor> hTensor, const void* srcData, int flag) {
     double t0 = GST_ms();
     assert(hTensor->isWMAT());
     int nRow = hTensor->shape[0], nCol = hTensor->shape[1];
@@ -269,7 +439,7 @@ float Q_Impurity<T>::LowBit_GBDT(shared_ptr<GTensor> hTensor, void* srcData, int
         LiteBOM_Config& config = dort->config;
         // config.objective       = "quant";
         // _INFO("\n[DORT] nSamp=%d,nFeat_0=%d %s hExDA=%p********* \n\n", nSamp, nFeat_0, dort->merge_info.c_str(), dort->hEDA_train);
-        FeatsOnFold* hFold = Mat2DORT(config, dort->hEDA_train, hTensor->type, srcData, nFeat_0, nSamp, dort, flag | FeatsOnFold::DF_TRAIN);
+        FeatsOnFold* hFold = Mat2DORT(config, dort->hEDA_train, hTensor->type, (void*)srcData, nFeat_0, nSamp, dort, flag | FeatsOnFold::DF_TRAIN);
         this->gama         = new floatGama[nRow * nQuant];
         if (config.objective == "quant") {
             // this->impurity = hFold->Quant(this->bits, this->tpGama, this->gama, this->quant_data, string(hTensor->name), 0x0);
@@ -300,13 +470,14 @@ float Q_Impurity<T>::LowBit_GBDT(shared_ptr<GTensor> hTensor, void* srcData, int
             dort->hGBRT->ClearData(), dort->hGBRT->ClearHisto();
         }
 
-        hTensor->BeforeQuant(this);
-        H2D(hTensor->data, this->quant_data, this->szQuant);
-        H2D(hTensor->gama_T(), this->gama, sizeof(floatGama) * (nRow+nCol+nRow * nQuant));
-        delete[] this->gama;
+        // hTensor->BeforeQuant(this);
+        // H2D(hTensor->data, this->quant_data, this->szQuant);
+        // H2D(hTensor->gama_T(), this->gama, sizeof(floatGama) * (nRow + nCol + nRow * nQuant));
+        // hTensor->Print(hTensor->name, 0x0, -1);
+        // delete[] this->gama;
         delete hFold;
         delete dort;
-        hTensor->Print(hTensor->name, 0x0, -1);
+
         //_INFO("<QUANT_%d> @\"%s\" t=%.3gms\t \n", this->bits, hTensor->name, GST_ms() - t0);
         GeQuant::LowBit(hTensor, srcData, flag);  //
     } catch (char* sInfo) {
@@ -321,35 +492,84 @@ float Q_Impurity<T>::LowBit_GBDT(shared_ptr<GTensor> hTensor, void* srcData, int
     return this->impurity;
 }
 
-// the shape&type of srcData is defined in hTensor
+/*
+    1. errQ = err/average   (average = disq.nrm_1 / nRow / nCol);
+*/
+float GeQuant::LowBit(shared_ptr<GTensor> hTensor, const void* srcData, int flag) {
+    int nRow = hTensor->shape[0], nCol = hTensor->shape[1], nTry = 0;  // 4-bit is enough
+    int nBit0 = params.default_bits;
+    // std::vector<GeQuant::_q_sweep> methods = {{NORMAL_MODE::ROW_01, 4, 1}};  //{0,2} ,{0,8},{true, 2}, {false, 3, 1}, {false, 4}
+    std::vector<GeQuant::_q_sweep> methods = {{NORMAL_MODE::NO_NORMAL, nBit0, 0}};
+    float errQ = FLT_MAX, err, average = hTensor->disq.nrm_1 / nRow / nCol;
+
+    for (auto method : methods) {
+        bits        = method.bits;
+        params.norm = method.normal;
+        params.type = method.mi == 0 ? (params.isNormalFloat ? QUANT_MODE::RTNf : QUANT_MODE::RTN) : QUANT_MODE::MINI;
+        assert(bits <= params.default_bits);
+        method.szQuant = hTensor->size() * bits / 8;
+        err            = Core(hTensor, srcData, gama, flag);  // 0.021420
+        err /= average;
+        if (err < errQ) {
+            errQ  = err;
+            best_ = method;
+            memcpy(best_gama, gama, sizeof(floatGama) * nMostGama);
+            memcpy(best_quant, quant_data, method.szQuant);
+            if (errQ < params.T_errQ)
+                break;
+        }
+        nTry++;
+    }
+    int nQuant = 1 << best_.bits, nGama = nRow * nQuant + nRow + nCol;
+    assert(nGama <= nMostGama);
+    bits = best_.bits;
+    hTensor->BeforeQuant(this);
+    assert(hTensor->size() <= nzMost);  // K.w->size()<Q.w->size()
+    H2D(hTensor->data, best_quant, best_.szQuant);
+    H2D(hTensor->gama_T(), best_gama, sizeof(floatGama) * nGama);
+    // FREE_a(gama);
+
+    //_INFO("<QUANT_%d> @\"%s\" t=%.3gms\t \n", bits, hTensor->name, GST_ms() - t0);
+    impurity = errQ;                               // may update if isCheckErr=true
+    GeQuant::AfterLowBit(hTensor, srcData, flag);  // may update impurity
+    return impurity;
+}
+
+// the shape&type of srcDat is defined in hTensor
 template <typename T>
-float Q_Impurity<T>::LowBit(shared_ptr<GTensor> hTensor, void* srcData, int flag) {
+float Q_Impurity<T>::Core(shared_ptr<GTensor> hTensor, const void* srcData, floatGama* curGama, int flag) {
     // return LowBit_GBDT(hTensor, srcData, flag);
     double t0 = GST_ms(), a0 = DBL_MAX, a1 = 0;
-    assert(hTensor->isWMAT());
-    int nRow = hTensor->shape[0], nCol = hTensor->shape[1], minLeaf = 2, gama_off = nRow + nCol;
-
-    int nSplit = -1, nQuant = 0x1 << this->bits;  // hFold->config.num_trees;
-    this->gama = new floatGama[nRow * nQuant + nRow + nCol];
-    if (this->isSinkNormal) {
-        this->SinkNormal(hTensor, srcData, flag);
-
-        if (!this->isSinkNormal) {  // sinknormal may fail, so all rs & cs are 1.0
-        }
+    // assert(hTensor->isWMAT());
+    int nRow = hTensor->shape[0], nCol = hTensor->shape[1], minLeaf = 2, nSplit = -1, nQuant = 0x1 << this->bits;  // hFold->config.num_trees;
+    const floatX* mat0 = (floatX*)(srcData);
+    floatX* mat1       = (floatX*)mat0;
+    if (this->params.norm != NORMAL_MODE::NO_NORMAL) {
+        mat1 = new floatX[nRow * nCol];
+        memcpy(mat1, mat0, sizeof(floatX) * nRow * nCol);
     }
-    if (this->params.type == QUANT_MODE::MIQ) {
+    this->isCheckErr = false;
+    switch (this->params.norm) {
+        case NORMAL_MODE::SINKHORN:
+            this->SinkNormal(hTensor, srcData, curGama, flag);  // sinknormal may fail, so all rs & cs are 1.0
+            break;
+        case NORMAL_MODE::ROW_01:
+            this->Normal_ROW01(hTensor, mat1, curGama, flag);
+            break;
+        default:
+            break;
+    }
+    if (this->params.type == QUANT_MODE::MINI) {
         dort                   = static_cast<DORT_wrap*>(LiteMORT_init(nullptr, 0, nullptr, 0x0));
         LiteBOM_Config& config = dort->config;
-        config.feat_quanti     = 1024;
-        config.verbose         = 1000;
-        config.objective       = "quant";
+        config.feat_quanti = 1024, config.verbose = 1000, config.objective = "quant";
         // return this->imbalance;  // only for debug
-        FeatsOnFold* hFold = Mat2DORT(dort->config, dort->hEDA_train, hTensor->type, srcData, nRow, nCol, dort, flag | FeatsOnFold::DF_TRAIN);
+        FeatsOnFold* hFold = Mat2DORT(dort->config, dort->hEDA_train, hTensor->type, mat1, nRow, nCol, dort, flag | FeatsOnFold::DF_TRAIN);
 
-#pragma omp parallel for
+        // #pragma omp parallel for
         for (int id = 0; id < nRow; id++) {
             auto hFeat       = hFold->feats[id];
-            floatGama* gama_ = this->gama + nQuant * id;
+            floatGama* gama_ = curGama + nRow + nCol + nQuant * id;
             hBITARR quant_   = this->quant_data + nCol * this->bits / 8 * id;
             T* val           = TO<T>(hTensor) + nCol * id;
             // Quant_TREE(this->bits, this->tpGama, gama_, quant_, flag);
@@ -367,24 +587,19 @@ float Q_Impurity<T>::LowBit(shared_ptr<GTensor> hTensor, void* srcData, int flag
             //  PrintT<floatGama>("feat_gama", gama, 16, 1, 1, 1, -1);
         }
         for (auto hFeat : hFold->feats) {
-            a1 = std::max(hFeat->wGain, a1), a0 = std::min(hFeat->wGain, a0), this->impurity += hFeat->wGain;
+            a1 = std::max(hFeat->wGain, a1), a0 = std::min(hFeat->wGain, a0);  // this->impurity += hFeat->wGain;
+            this->impurity += hFeat->errQ;
         }
-        this->impurity /= nRow;
+        this->impurity = sqrt(this->impurity / nRow / nCol);
         _INFO("<QUANT_MI_%d>@%s nF=%d(%ld) impurity=%g[%g-%g]\t split=%g t=%.5gms\n", this->bits, "", nRow, nCol, this->impurity, a0, a1, nSplit * 1.0 / nRow,
               GST_ms() - t0);
         delete hFold;
         delete dort;
     } else {
-        Quantizer<T>::RTN(hTensor, srcData, flag);
+        this->impurity = Quantizer<T>::RTN(hTensor, srcData, flag);
     }
-    hTensor->BeforeQuant(this);
-    H2D(hTensor->data, this->quant_data, this->szQuant);
-    H2D(hTensor->gama_T() + gama_off, this->gama, sizeof(floatGama) * nRow * nQuant);
-    delete[] this->gama;
-
-    hTensor->Print(hTensor->name, 0x0, -1);
-    //_INFO("<QUANT_%d> @\"%s\" t=%.3gms\t \n", this->bits, hTensor->name, GST_ms() - t0);
-    GeQuant::AfterLowBit(hTensor, srcData, flag);  //
+    if (mat1 != srcData)
+        delete[] mat1;
     return this->impurity;
 }
 
@@ -435,20 +650,16 @@ double G_Scale_RC(T* mat, int nRow, int nCol, Tscal* row_scal, Tscal* col_scal, 
     return imbalance;
 }
 
-// def imbalance(mat):
-//         s1, s2 = measure(mat, 1), measure(mat, 0)
-//         s_min = torch.minimum(s1.min(), s2.min()).clamp_min(1e-12)
-//         s_max = torch.maximum(s1.max(), s2.max())
-//         return s_max / s_min          # scalar
-float GeQuant::SinkNormal(shared_ptr<GTensor> hTensor, void* cpuData, int flag) {
+//  set the group size to 64, batch-size to 8
+float GeQuant::SinkNormal(shared_ptr<GTensor> hTensor, const void* srcData, floatGama* curGama, int flag) {
     double t0   = GST_sec();
     size_t nEle = hTensor->size(), dGrid = CEIL_DIV(nEle, CU_T4B_MIDDLE);
     int nRow = hTensor->shape[0], nCol = hTensor->shape[1], i = 0, loop = 0;
-    double imb = 0.0, imb0 = 0.0, clip_min = 0.001, clip_max = 1000, off = 0, len = hTensor->ginfo->sum_2, len1 = 0, a, gs_0 = DBL_MAX, gs_1 = -DBL_MAX;
+    double imb = 0.0, imb0 = 0.0, clip_min = 0.001, clip_max = 1000, off = 0, len = hTensor->disq.sum_2, len1 = 0, a, gs_0 = DBL_MAX, gs_1 = -DBL_MAX;
     imbalance     = FLT_MAX;  //
     bool isVerify = true;
     /**/
-    if (cpuData == nullptr) {
+    if (srcData == nullptr) {  //  GPU version
         floatGama *rowStdDev = hTensor->gama_T(), *colStdDev = rowStdDev + nRow;
         void* quant  = hTensor->BeforeQuant(this);
         floatX* mat0 = TO<floatX>(hTensor);
@@ -464,29 +675,21 @@ float GeQuant::SinkNormal(shared_ptr<GTensor> hTensor, void* cpuData, int flag) 
         }
         hTensor->AfterQuant(this, typNUMBER::F8E5M2, nullptr);
     } else {
-        floatX *mat0 = (floatX*)(cpuData), *mat1 = nullptr, b;
-        if (isVerify) {
-            mat1 = new floatX[nRow * nCol];
-            memcpy(mat1, mat0, sizeof(floatX) * nRow * nCol);
-            // for (int i = 0; i < nRow * nCol; i++) {
-            //     a = T2Float(mat1 + i);
-            //     len += a * a;
-            //     // assert(fabs(a)<1.0e2);
-            // }
-            // assert(len==hTensor->ginfo->sum_2);
-        }
+        const floatX* mat0 = (floatX*)(srcData);
+        floatX *mat1       = new floatX[nRow * nCol], b;
+        memcpy(mat1, mat0, sizeof(floatX) * nRow * nCol);
         // _INFO("SinkNormal A=[%dx%d]=%g \t@\"%s\"\n", nRow, nCol, len, hTensor->name);  // return 0.0;
         double *rowStdDev = new double[(nRow + nCol) * 2], *colStdDev = rowStdDev + nRow, *rowS = colStdDev + nCol, *colS = rowS + nRow;
         for (int r = 0; r < nRow; r++) rowS[r] = 1.0;
         for (int c = 0; c < nCol; c++) colS[c] = 1.0;
         for (loop = 0; loop < this->nMostLoop; loop++) {
             for (int r = 0; r < nRow; r++) {
-                rowStdDev[r] = G_StdDev(nCol, mat0 + r * nCol, 1);
+                rowStdDev[r] = G_StdDev(nCol, mat1 + r * nCol, 1);
             }
             for (int c = 0; c < nCol; c++) {
-                colStdDev[c] = G_StdDev(nRow, mat0 + c, nCol);
+                colStdDev[c] = G_StdDev(nRow, mat1 + c, nCol);
             }
-            imb = G_Scale_RC(mat0, nRow, nCol, rowStdDev, colStdDev, T_imbal);
+            imb = G_Scale_RC(mat1, nRow, nCol, rowStdDev, colStdDev, T_imbal);
             if (loop == 0)
                 imb0 = imb;
             if (imb < T_imbal) {
@@ -503,9 +706,9 @@ float GeQuant::SinkNormal(shared_ptr<GTensor> hTensor, void* cpuData, int flag) 
                 break;
             imbalance = imb;
         }
-        hTensor->ginfo->imbalance = imbalance;
-        // copy to gama
-        floatGama *gamaR = gama, *gamaC = gama + nRow;
+        hTensor->disq.imbalance = imbalance;
+        // copy to curGama
+        floatGama *gamaR = curGama, *gamaC = gamaR + nRow;
         for (int r = 0; r < nRow; r++) {
             gamaR[r] = rowS[r];
             gs_0 = std::min(gs_0, rowS[r]), gs_1 = std::max(gs_1, rowS[r]);
@@ -513,7 +716,7 @@ float GeQuant::SinkNormal(shared_ptr<GTensor> hTensor, void* cpuData, int flag) 
         for (int c = 0; c < nCol; c++) {
             gamaC[c] = colS[c];
         }
-        if (isVerify) {
+        /*if (isVerify) {
             G_Scale_RC(mat1, nRow, nCol, gamaR, gamaC, T_imbal);
             // G_Scale_RC(mat1, nRow, nCol, rowS, colS);
             for (int i = 0; i < nRow * nCol; i++) {
@@ -522,16 +725,44 @@ float GeQuant::SinkNormal(shared_ptr<GTensor> hTensor, void* cpuData, int flag) 
                 a = T2Float(mat1 + i), len1 += a * a;
             }
             off = sqrt(off / len);  // sqrt(off / (nRow * nCol));
-            delete[] mat1;
-        }
+        }*/
         delete[] rowStdDev;
-        isSinkNormal = loop > 0;
+        delete[] mat1;
     }  //  SinkNormal A=[1024x3072] loop=10 imbalance=1.0078 err=18.7696   @"model.layers.19.mlp.down_proj.weight"
-    if (off > 1.0) {
-        _WARN("SinkNormal A=[%dx%d] loop=%d imbalance=(%g->%g) err=%.4g(%g) T=%.3g \t@\"%s\"\n", nRow, nCol, loop, imb0, imbalance, off, len, GST_sec() - t0,
-              hTensor->name);
-    } else
-        _INFO("SinkNormal A=[%dx%d] loop=%d imbalance=(%g->%g) err=%.4g(%g) T=%.3g gs=[%g-%g] \t@\"%s\"\n", nRow, nCol, loop, imb0, imbalance, off, len, gs_0,
-              gs_1, GST_sec() - t0, hTensor->name);
+
+    _LOG(off > 1.0 ? DUMP_WARN : DUMP_INFO, "SinkNormal A=[%dx%d] loop=%d imbalance=(%g->%g) err=%.4g(%g) T=%.3g \t@\"%s\"\n", nRow, nCol, loop, imb0,
+         imbalance, off, len, GST_sec() - t0, hTensor->name);
+
+    return imbalance;
+}
+
+float GeQuant::Normal_ROW01(shared_ptr<GTensor> hTensor, void* srcData, floatGama* curGama, int flag) {
+    double t0   = GST_sec();
+    size_t nEle = hTensor->size();
+    int nRow = hTensor->shape[0], nCol = hTensor->shape[1], i = 0, loop = 0, nQuant = 0x1 << bits;
+    double imb = 0.0, imb0 = 0.0, clip_min = 0.001, clip_max = 1000, off = 0, len = hTensor->disq.sum_2, len1 = 0, a, gs_0 = DBL_MAX, gs_1 = -DBL_MAX;
+    floatX *mat0 = (floatX*)(srcData), *dat = nullptr;
+
+    floatGama *gamaR = curGama, *gamaC = gamaR + nRow;
+    for (int r = 0; r < nRow; r++) {
+        Distri_QUANT disR;
+        dat = mat0 + r * nCol;
+        for (int c = 0; c < nCol; c++) {
+            a = T2Float(dat + c);
+            disR.Next(a);
+        }
+        disR.Prepare(nQuant);
+        gamaR[r] = a = 1.0 / disR.scale;
+        gs_0 = std::min(gs_0, a), gs_1 = std::max(gs_1, a);
+        for (int c = 0; c < nCol; c++) {
+            a       = T2Float(dat + c);
+            float b = disR.Normal01(a);  //  (weight - zero) * scale;       //0.003433=>0.039
+            dat[c]  = Float2T<floatX>(&b);
+        }
+    }
+    isCheckErr = true;  // to get errQ
+    // _LOG(off > 1.0 ? DUMP_WARN : DUMP_INFO, "Normal_ROW01 A=[%dx%d] loop=%d imbalance=(%g->%g) err=%.4g(%g) T=%.3g \t@\"%s\"\n", nRow, nCol, loop, imb0,
+    //      imbalance, off, len, GST_sec() - t0, hTensor->name);
+
     return imbalance;
 }

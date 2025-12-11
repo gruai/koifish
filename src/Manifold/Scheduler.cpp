@@ -132,7 +132,7 @@ bool RLS_BP::InitGUOKE(int flag) {
         _INFO("[RLS] \tGuoke=%d(%d)\t\n", nT_guoke, nT);
     }
     if (hFish->isLocalInfer) {
-        OutCLS *cls = hFish->GetNeuron<OutCLS>("OutCLS", 0);
+        OutCLS* cls = hFish->GetNeuron<OutCLS>("OutCLS", 0);
         // cls->ManageMemory(DATA_PLACE::DEV_MEM);
         for (auto neuron : hFish->backbons) {
             neuron->ManageMemory(DATA_PLACE::DEV_MEM);
@@ -175,7 +175,7 @@ void GeNeuron::ManageMemory(DATA_PLACE target, int typ, int flag) {
         if (strcmp(t->name, "preLogits") == 0 /*&& target == DEV_MEM*/) {  //"model.blk.1.attn"&& target==FREE_DEV        "preLogits"   "model.output.cls"
             DEBUG_HERE;
         }
-        
+
         switch (target) {
             case FREE_DEV:
                 if (t->isRefer())
@@ -193,22 +193,22 @@ void GeNeuron::ManageMemory(DATA_PLACE target, int typ, int flag) {
                         dev_most_mem += t->mostMemory();
                     op = "Symbolic";
                 } else {
-                    if (!hFish->isTrain() &&  t->isParam() ) {  //when infer, all parameters are load from mmp
-                        if (t->hRef != nullptr){
-                            t->ShareMemory(t->hRef); 
+                    if (!hFish->isTrain() && t->isParam()) {  // when infer, all parameters are load from mmp
+                        if (t->hRef != nullptr) {
+                            t->ShareMemory(t->hRef);
                         }
-                        DEBUG_HERE;  
+                        DEBUG_HERE;
                         continue;
                     }
                     t->Alloc(hOPT->GetITER(), flag);
                     op = "Alloc";
                     if (BIT_TEST(t->flags, GTensor::F_RELOAD)) {
                         bool isFree = !hFish->config.fuyou.isFirst(layid);
-                        t->Serial_MMAP(true, false);  // no reset, should free all memory
+                        t->Serial_Quant_MMAP(true, false);  // no reset, should free all memory
                         if (isFree) {
                             t->Free();
                         }
-                    }                    
+                    }
                 }
         }
     }
@@ -374,7 +374,7 @@ bool Fuyou::UpdateFollower(std::shared_ptr<Fuyou> follower, int flag) {
     // if (follower->params.paramIsGuoke) {
     //     for (auto t : follower->tReloads) {
     //         if (t->data == nullptr) {
-    //             t->Serial_MMAP(false);
+    //             t->Serial_Quant_MMAP(false);
     //             nReload++;
     //         }
     //     }
@@ -559,7 +559,7 @@ bool RLS_BP::UpdateBackbone(int iter, int flag) {
         neuron->stat.Reset();
     }
     for (auto t : afu->tReloads) {
-        t->Serial_MMAP(false);
+        t->Serial_Quant_MMAP(false);
     }
 
     // assert(curTasks.size() == LIS * 2 + 3);

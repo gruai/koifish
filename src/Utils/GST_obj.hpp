@@ -81,19 +81,23 @@ struct N64w {
 };
 
 template <typename T>
-std::string G_STR(const T& x) {
+std::string G_STR(const T& x,int MostChar=-1) {
     std::stringstream ss;
     ss << x;
     return ss.str();
 }
 
 template <>
-inline std::string G_STR<vector<string>>(const vector<string>& words) {
+inline std::string G_STR<vector<string>>(const vector<string>& words,int MostChar) {
     std::stringstream ss;
     ss << "{";
-    for (auto x : words) ss << x << ",";
+    for (auto x : words) ss << x << ", ";
     ss << "}";
-    return ss.str();
+    std::string content = ss.str();
+    if (MostChar>0 && content.length() > MostChar) {
+        return content.substr(0, MostChar);
+    }
+    return content;
 }
 
 template <typename T>
@@ -138,6 +142,19 @@ void G_SomeXat_(vector<int>& pos, const vector<T>& someX, const vector<T>& allX,
         }
     }
 }
+
+// compare strings ignoring case
+bool inline G_Aa(const std::string& A, const std::string& a) {
+    if (A.size() != a.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) != 
+            std::tolower(static_cast<unsigned char>(A[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 
 bool inline G_Has_(const string& title, const vector<string>& values, int flag = 0x0) {
     for (auto v : values) {
@@ -449,3 +466,4 @@ class SafeExit : public std::exception {
    private:
     ExitReason reason;
 };
+#define K_EXIT(code)    {   throw SafeExit("", code, SafeExit::ExitReason::SYSTEM_FAILURE, __func__);   }

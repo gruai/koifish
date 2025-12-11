@@ -104,7 +104,8 @@ double WIKI::InductLogits(const CLI_params& config, int nSampInBatch, std::vecto
 
 LogitsInfo::~LogitsInfo() {
     if (isCPU) {
-        FREE_a(logits);
+        // hClsLogits would release this! since hClsLogits->host_data = logits; @GeneratOnPrompt::GeneratOnPrompt=>cpuLogits.Init
+        // FREE_a(logits);        
         FREE_a(index);
     }
 }
@@ -225,7 +226,7 @@ int Fish_bubble(CLI_params& config) {
     config.common.n_batch     = 1;
     config.model.preLogits_dB = 1;
     DEBUG.graph_dump          = 1;
-    DEBUG.T_cuda_ver          = 1;
+    DEBUG.verCuda             = 1;
     DEBUG.T_cpu               = 0;
 
     arrHWIKI wikis = WIKI::MakeInstance("wikis", config, 0x0);

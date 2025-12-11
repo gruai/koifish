@@ -62,6 +62,12 @@ enum COMPRESSIVE_SENSING {
     SAMPLE,  // random sub-sampling
 };
 
+enum NORMAL_MODE {
+    NO_NORMAL,
+    SINKHORN,
+    ROW_01,
+};
+
 /**
  *
  */
@@ -262,6 +268,8 @@ class MODEL_CARD {
     // dim(=head_dim*n_heads)
     int dim = -1, hidden_dim = -1, n_layers = -1, hidden_size = -1, intermediate_size = -1;
     int max_pos_embeddings = -1, num_attention_heads = -1, num_key_value_heads = -1;
+    std::vector<int> token_embeds;
+    std::vector<int> qkv_embeds;  // try multi-level embed of QKV
 
     //  ****
     bool isFFNWeightTying   = true;
@@ -313,11 +321,9 @@ enum EVICTION_MODE {
 enum QUANT_MODE {
     NO_QUANT,
     RTN,  //  Round-to-Nearest
-    RTN_4,
-    RTN_3,
-    RTN_2,
-
-    MIQ,  // Minimise impurity
+    RTNf,
+    MINI,  // Minimise impurity
+    F8Ex,
 
     KV_JL,     //  Johnson-Lindenstrauss (JL) transform
     KV_AQUA,   //  https://arxiv.org/pdf/2501.19392
@@ -333,27 +339,32 @@ enum QUANT_ALG {
     W_NOSCALE  //
 };
 struct QUANT_CARD {
-    int bits = 4;
+    int default_bits = 4;
+    int nPassLayer   = 1;  // fist layer is hard to quant
+    float T_errQ     = 0.3;
+    int T_group = 512, T_group_batch = 8;
     SHAPE spMost;
+    std::string sX = "";
 
+    bool isNormalFloat = true;  //  each bin under a normal distribution N(0,1) contains equal probability mass
+    bool isSymmetric   = false;
+
+    NORMAL_MODE norm = SINKHORN;
     enum DYNAMIC_MODE { NO_DYNAMIC };
     DYNAMIC_MODE dynamic = NO_DYNAMIC;
     // dynamic & adpative, only set type at runtime
     QUANT_MODE type = NO_QUANT;
-    QUANT_MODE TypeOf(std::string name, int flag = 0);
 
-    std::vector<std::string> filter_KVcache;
-    std::vector<std::string> filter_MIQ;
-    std::vector<std::string> filter_WeightF8Ex;
+    QUANT_CARD()    {}
+    virtual void Init(const std::string& name, const JSON& jQuant, int flag = 0);
 
-    
-    virtual bool isValid()  {
-        if(bits<0 || bits>8)
-            return false;
-        return true;
-    }
+    // std::vector<std::string> filter_KVcache;
+    // std::vector<std::string> filter_MIQ;
+    // std::vector<std::string> filter_WeightF8Ex;
 
-    std::size_t Hash(const QUANT_CARD&params, const std::type_info& ti, const std::string& desc) const;
+    virtual bool isValid() const;
+    void Dump(int typ);
+    std::size_t Hash(const QUANT_CARD& params, const std::type_info& ti, const std::string& desc) const;
 };
 
 struct ADAM_params_ {
@@ -471,6 +482,7 @@ struct DUMP_SWITCH {
     int tensor_ref             = 0;
     int train_time             = 0;
     int tensor_load            = 0;
+    int nn_structure           = 1;
     std::string train_csv_path = "";
 };
 
@@ -487,7 +499,9 @@ struct DEUG_SWITCH {
     int train_hyperparams     = 0;
     int train_datas           = 0;
     int back_graph_version    = 0;
-    int T_cuda_ver            = 0;
+    int verCuda               = 0;
+    int verInferQKV           = 1;
+    int verInferFFN           = 1;
     int T_classifier_ver      = 0;
     int T_cpu                 = 0;
     int T_GEMM                = -1;
@@ -568,9 +582,8 @@ struct CLI_params {
     LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;
 
     TRAIN_CARD common;
-
     MODEL_CARD model;
-    QUANT_CARD quant;
+
     std::vector<CheckPoint_Params> ckp_in, ckp_out;
     CheckPoint_Params state;
 
@@ -626,7 +639,8 @@ struct CLI_params {
     bool isShareLayerOut() const;
     std::string jsPath = "";
     JSON jConfig;
-    nlohmann::ordered_json jModel;
+    nlohmann::ordered_json jModel;        
+    JSON jQuant;
 
     MODEL_ARCH ModelArch();
     virtual void OnArch();
@@ -651,8 +665,6 @@ struct CLI_params {
     uint32_t n_swarm      = 1;
     // uint32_t n_outputs = 1;
     int n_embd_head_k = -1, n_embd_head_v = -1;  // nEmbed() = -1,
-    std::vector<int> token_embeds;
-    std::vector<int> qkv_embeds;  // try multi-level embed of QKV
 
     int n_layer_train = -1, nLayerX = -1, nFFX = -1;
     int Fuse_Normal = 0;
@@ -841,6 +853,7 @@ struct CLI_params {
 
     bool parse(int argc, char** argv);
     virtual bool InitJConfig(int flag = 0x0);
+    virtual bool ToJConfig(int flag = 0x0);
     virtual bool InitChekcpoints(int argc, char** argv, const std::string& ckp_queue, int flag = 0x0);
     virtual JSON ToJSON(int type, int flag = 0x0);
     std::string GetDataPath(const std::string type, int flag = 0x0);

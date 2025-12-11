@@ -142,7 +142,8 @@ string NLP_AutoRegressive::__repr__(string& suffix, string& prefix, int flag) {
     _T_repr_(loss, "  loss=", buf);
 
     sprintf(buf + strlen(buf), "\tLAY=%d\t%s ", TGraph::curLayer, suffix.c_str());
-    _INFO("%s", buf);
+    if (config.dumpSwitch.nn_structure)
+        _INFO("%s", buf);
     return buf;
 }
 
@@ -902,7 +903,7 @@ int Fish::ForwardOnRLS(int iter, int flag) {
         for (auto task : branch->Tasks()) {
             GeNeuron* neuron = (GeNeuron*)(task->hOBJ);
             if (neuron->name == "model.blk.10.attn" && curB > 0) {  //   model.inp_embd
-                int debug = 0x0;
+                DEBUG_HERE;
             }
             if (neuron->isShortcut)
                 continue;

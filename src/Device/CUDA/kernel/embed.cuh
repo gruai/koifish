@@ -51,6 +51,73 @@ __global__ static void encoder_forward_kernel3(floatX* out, const int* inp, cons
 //     return float(weight[idx]);
 // }
 
+template <typename T_out>
+__global__ static void CU_embed_forw_q4(floatGama* gamas, hBITARR quants, T_out* o, int token, int M, int N, int rc_normal, unsigned int seed) {
+    size_t offset = blockIdx.x * blockDim.x + threadIdx.x;
+    if (offset >= N / 2)  // guard
+        return;
+    assert(token >= 0 && token < M);
+    T_out* x0      = o + 2 * offset;
+    BIT_8 q        = quants[(token * N) / 2 + offset];
+    floatGama *lut = gamas + M + N + token * 16, *gamaCol = nullptr;
+    floatGama sR = 1.0, sC = 1.0;
+    if (rc_normal > 0) {
+        sR = gamas[token];
+    }
+
+    BIT_8 id0 = ((q) >> 4) & 0x0F, id1 = (q) & 0x0F;
+    floatGama g0 = lut[id0] * sR, g1 = lut[id1] * sR;
+    if (rc_normal > 0) {
+        // g0 *= gamaCol[2 * k];
+        // g1 *= gamaCol[2 * k + 1];
+    }
+    *x0       = g0;  // CU_Float2T<T>(g0, seed);
+    *(x0 + 1) = g1;  // CU_Float2T<T>(g1, seed);
+
+    // float a = CU_T2Float<T>(weight + token * n + i);
+    // o[i]    = CU_Float2T<T_out>(a, seed);
+}
+template <typename T_out>
+__global__ static void CU_embed_forw_nf4(floatGama* gamas, hBITARR quants, T_out* o, int token, int M, int N, int rc_normal, unsigned int seed) {
+    size_t offset = blockIdx.x * blockDim.x + threadIdx.x;
+    if (offset >= N / 2)  // guard
+        return;
+    /*floatGama nf4[16] = {-1.0f,
+                         -0.6961928009986877f,
+                         -0.5250730514526367f,
+                         -0.39491748809814453f,
+                         -0.28444138169288635f,
+                         -0.18477343022823334f,
+                         -0.09105003625154495f,
+                         0.0f,
+                         0.07958029955625534f,
+                         0.16093020141124725f,
+                         0.24611230194568634f,
+                         0.33791524171829224f,
+                         0.44070982933044434f,
+                         0.5626170039176941f,
+                         0.7229568362236023f,
+                         1.0f};*/
+    assert(token >= 0 && token < M);
+    T_out* x0      = o + 2 * offset;
+    BIT_8 q        = quants[(token * N) / 2 + offset];
+    floatGama *lut = gamas + M + N + token * 16, *gamaCol = nullptr;
+    floatGama sR = 1.0, sC = 1.0;// zero = gamas[M + N + token * 2], scale = gamas[M + N + token * 2 + 1];
+    ;
+    if (rc_normal > 0) {
+        sR = gamas[token];
+    }
+
+    BIT_8 id0 = ((q) >> 4) & 0x0F, id1 = (q) & 0x0F;
+    floatGama g0 = (lut[id0]) * sR, g1 = (lut[id1]) * sR;
+    if (rc_normal > 0) {
+        // g0 *= gamaCol[2 * k];
+        // g1 *= gamaCol[2 * k + 1];
+    }
+    *x0       = g0;  // CU_Float2T<T>(g0, seed);
+    *(x0 + 1) = g1;  // CU_Float2T<T>(g1, seed);
+}
+
 template <typename T_out, typename T>
 __global__ static void CU_embed_forw_1(T_out* o, T* weight, int token, int n, unsigned int seed) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;

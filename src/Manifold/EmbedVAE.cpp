@@ -18,7 +18,7 @@
 #include "gLLM.hpp"
 
 TokenEmbed::TokenEmbed(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
-    auto dims = hFish->config.token_embeds;
+    auto dims = hFish->config.model.token_embeds;
     nVocab    = hG_->nClass();
     latent    = hFish->config.nEmbed(-1);
     shape.clear();
@@ -104,6 +104,10 @@ bool TokenEmbed::Build(int flag) {
         out->SetRefer(GTensor::outL);
     }
 
+    // QUANT_CARD quant_params = hFish->config.quant;
+    quant_params.Init(name, hFish->config.jQuant);
+    quant_params.spMost = w->shape;
+    hQuant              = GeQuant::MakeInstance(this, name, quant_params, {w}, 0x0);  //  {Q.w,proj_cat.w}
     // hFish->InitGensor(ctx,name+".batch",out,false);
 
     return true;
@@ -208,7 +212,7 @@ VarCoder::VarCoder(Fish* hG_, std::vector<int>& dims, int level, bool isR, bool 
 MAEC::MAEC(Fish* hG_, const std::string& key_, int flag) {
     name = "MAEC_";  //+key;
     Init(hG_, 0x0);
-    auto dims = hFish->config.token_embeds;
+    auto dims = hFish->config.model.token_embeds;
     if (dims.size() == 1)
         return;
 
@@ -421,10 +425,14 @@ bool FFN::Build(int flag_0) {
         // up.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);
         // down.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);       //  down.Back(GTensor::bt4c, tGelu, GTensor::delta, up_out);
     }
-    QUANT_CARD quant_params = hFish->config.quant;
-    quant_params.spMost     = up.w->shape;
-    hQuant                  = GeQuant::MakeInstance(this, name + "_quant", quant_params, {up.w,down.w,gate.w}, 0x0);      //  {up.w, down.w, gate.w}
-    
+
+    quant_params.Init(name, hFish->config.jQuant);
+    if (layid > quant_params.nPassLayer) {
+        quant_params.spMost = up.w->shape;
+        // quant_params.default_bits = layid > 32 ? 3 : 4;
+        hQuant              = GeQuant::MakeInstance(this, name + "_quant", quant_params, {up.w, down.w, gate.w}, 0x0);  //  {up.w, down.w, gate.w}, down.w, gate.w
+    }
+
     return true;
 }
 

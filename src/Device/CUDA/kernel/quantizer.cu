@@ -227,11 +227,11 @@ __global__ void CU_Q42X_(floatGama* gamas, const hBITARR quants, T* mat0, int M,
     for (int k = 0; k < npt / 2; k++, x0 += 2) {
         BIT_8 id0 = ((q_row[k]) >> 4) & 0x0F, id1 = (q_row[k]) & 0x0F;
         floatGama g0 = lut[id0] * sR, g1 = lut[id1] * sR;
-        if (rc_normal > 0) {
+        if (rc_normal == 1) {  //  NORMAL_MODE::SINKHORN
             g0 *= gamaCol[2 * k];
             g1 *= gamaCol[2 * k + 1];
         }
-        *x0       = g0;  // CU_Float2T<T>(g0, seed);
+        *x0       = g0;  // CU_Float2T<T>(g0, seed);    0.00343
         *(x0 + 1) = g1;  // CU_Float2T<T>(g1, seed);
     }
 }
@@ -254,6 +254,49 @@ __global__ void CU_Q42X_RTN(floatGama* gamas, const hBITARR quants, T* mat0, int
     for (int k = 0; k < npt / 2; k++, x0 += 2) {
         BIT_8 id0 = ((q_row[k]) >> 4) & 0x0F, id1 = (q_row[k]) & 0x0F;
         floatGama g0 = (zero + step * (floatGama)id0) * sR, g1 = (zero + step * (floatGama)id1) * sR;
+        if (rc_normal == 1) {  //  NORMAL_MODE::SINKHORN
+            g0 *= gamaCol[2 * k];
+            g1 *= gamaCol[2 * k + 1];
+        }
+        *x0       = g0;  // CU_Float2T<T>(g0, seed);
+        *(x0 + 1) = g1;  // CU_Float2T<T>(g1, seed);
+    }
+}
+
+template <class T>
+__global__ void CU_Q42X_NF4(floatGama* gamas, const hBITARR quants, T* mat0, int M, int N, int rc_normal, int seed) {
+    int tid = threadIdx.x, idrow = blockIdx.x, bit = 0, npt = N / blockDim.x;
+    if (idrow >= M)
+        return;  // guard
+    /*floatGama nf4[16]  = {-1.0f,
+                          -0.6961928009986877f,
+                          -0.5250730514526367f,
+                          -0.39491748809814453f,
+                          -0.28444138169288635f,
+                          -0.18477343022823334f,
+                          -0.09105003625154495f,
+                          0.0f,
+                          0.07958029955625534f,
+                          0.16093020141124725f,
+                          0.24611230194568634f,
+                          0.33791524171829224f,
+                          0.44070982933044434f,
+                          0.5626170039176941f,
+                          0.7229568362236023f,
+                          1.0f};*/
+    size_t offset      = idrow * N + tid * npt;
+    T* x0              = mat0 + offset;
+    hBITARR q_row      = quants + offset / 2;
+    floatGama* gamaCol = gamas + M + tid * npt;
+    floatGama sR = 1.0, sC = 1.0, *lut = gamas + M + N + idrow * 16;  // zero = gamas[M + N + idrow * 2], scale = gamas[M + N + idrow * 2 + 1];
+    // zero += step/(floatGama)(2.0);
+    if (rc_normal > 0) {
+        sR = gamas[idrow];
+    }
+    for (int k = 0; k < npt / 2; k++, x0 += 2) {
+        BIT_8 id0 = ((q_row[k]) >> 4) & 0x0F, id1 = (q_row[k]) & 0x0F;
+        // floatGama g0 = (zero + nf4[id0] * scale) * sR, g1 = (zero + nf4[id1] * scale) * sR;
+        floatGama g0 = lut[id0] * sR, g1 = lut[id1] * sR;
         if (rc_normal > 0) {
             g0 *= gamaCol[2 * k];
             g1 *= gamaCol[2 * k + 1];
@@ -321,6 +364,111 @@ __global__ void CU_Q22X_(floatGama* gamas, const hBITARR quants, T* mat0, int M,
         }
         *x0 = g0, *(x0 + 1) = g1;
         *(x0 + 2) = g2, *(x0 + 3) = g3;
+    }
+}
+
+template <class T>
+__global__ void CU_Q32X_NF3(floatGama* gamas, const hBITARR quants, T* mat0, int M, int N, int rc_normal, int seed) {
+    int tid = threadIdx.x, idrow = blockIdx.x, bit = 0, npt = N / blockDim.x;
+    if (idrow >= M)
+        return;  // guard
+    assert(npt % 8 == 0);
+    // floatGama lut[8]   = {-1.0, -0.5350227355957031, -0.2469314038753510, 0.0, 0.1833375245332718, 0.3819939494132996, 0.6229856610298157, 1.0};
+    size_t offset      = idrow * N + tid * npt;
+    T* x0              = mat0 + offset;
+    hBITARR q_row      = quants + offset / 8 * 3;
+    floatGama* gamaCol = gamas + M + tid * npt;
+    floatGama sR = 1.0, sC = 1.0, *lut = gamas + M + N + idrow * 8;  // zero = gamas[M + N + idrow * 2], scale = gamas[M + N + idrow * 2 + 1];
+    // zero += step/(floatGama)(2.0);
+    if (rc_normal > 0) {
+        sR = gamas[idrow];
+    }
+    for (int k = 0; k < npt / 8; k++, x0 += 8, q_row += 3) {
+        // if(idrow==384 && tid==62){
+        //     DEBUG_HERE;
+        // }
+        uint32_t value = (static_cast<uint32_t>(q_row[0]) << 16) | (static_cast<uint32_t>(q_row[1]) << 8) | static_cast<uint32_t>(q_row[2]);
+        uint8_t ids[8] = {
+            (value >> 21) & 0x7, (value >> 18) & 0x7, (value >> 15) & 0x7, (value >> 12) & 0x7,
+            (value >> 9) & 0x7,  (value >> 6) & 0x7,  (value >> 3) & 0x7,  value & 0x7,
+        };
+        floatGama g0 = lut[ids[0]] * sR, g1 = lut[ids[1]] * sR, g2 = lut[ids[2]] * sR, g3 = lut[ids[3]] * sR, g4 = lut[ids[4]] * sR, g5 = lut[ids[5]] * sR,
+                  g6 = lut[ids[6]] * sR, g7 = lut[ids[7]] * sR;
+
+        // if (rc_normal > 0) {
+        //     g0 *= gamaCol[4 * k], g1 *= gamaCol[4 * k + 1];
+        //     g2 *= gamaCol[4 * k + 2], g3 *= gamaCol[4 * k + 3];
+        // }
+        *x0 = g0, *(x0 + 1) = g1, *(x0 + 2) = g2, *(x0 + 3) = g3;
+        *(x0 + 4) = g4, *(x0 + 5) = g5, *(x0 + 6) = g6, *(x0 + 7) = g7;
+    }
+}
+
+template <class T>
+__global__ void CU_Q32X_(floatGama* gamas, const hBITARR quants, T* mat0, int M, int N, int rc_normal, int seed) {
+    int tid = threadIdx.x, idrow = blockIdx.x, bit = 0, npt = N / blockDim.x;  // n quant per thread
+    if (idrow >= M)
+        return;  // guard
+    assert(npt % 8 == 0);
+    size_t offset  = idrow * N + tid * npt;
+    T* x0          = mat0 + offset;
+    hBITARR q_row  = quants + offset / 8 * 3;
+    floatGama *lut = gamas + M + N + idrow * 8, *gamaCol = gamas + M + tid * npt;
+    floatGama sR = 1.0, sC = 1.0;
+    // zero += step/(floatGama)(2.0);
+    if (rc_normal > 0) {
+        sR = gamas[idrow];
+    }
+    for (int k = 0; k < npt / 8; k++, x0 += 8, q_row += 3) {
+        uint32_t value             = (static_cast<uint32_t>(q_row[0]) << 16) | (static_cast<uint32_t>(q_row[1]) << 8) | static_cast<uint32_t>(q_row[2]);
+        std::array<uint8_t, 8> ids = {
+            (value >> 21) & 0x7, (value >> 18) & 0x7, (value >> 15) & 0x7, (value >> 12) & 0x7,
+            (value >> 9) & 0x7,  (value >> 6) & 0x7,  (value >> 3) & 0x7,  value & 0x7,
+        };
+
+        floatGama g0 = lut[ids[0]] * sR, g1 = lut[ids[1]] * sR, g2 = lut[ids[2]] * sR, g3 = lut[ids[3]] * sR, g4 = lut[ids[4]] * sR, g5 = lut[ids[5]] * sR,
+                  g6 = lut[ids[6]] * sR, g7 = lut[ids[7]] * sR;
+        // if (rc_normal > 0) {
+        //     g0 *= gamaCol[4 * k], g1 *= gamaCol[4 * k + 1];
+        //     g2 *= gamaCol[4 * k + 2], g3 *= gamaCol[4 * k + 3];
+        // }
+        *x0 = g0, *(x0 + 1) = g1, *(x0 + 2) = g2, *(x0 + 3) = g3;
+        *(x0 + 4) = g4, *(x0 + 5) = g5, *(x0 + 6) = g6, *(x0 + 7) = g7;
+    }
+}
+// each 8 quants=24 bit =3 byte
+template <class T>
+__global__ void CU_Q32X_RTN(floatGama* gamas, const hBITARR quants, T* mat0, int M, int N, int rc_normal, int seed) {
+    int tid = threadIdx.x, idrow = blockIdx.x, bit = 0, npt = N / blockDim.x;  // n quant per thread
+    if (idrow >= M)
+        return;  // guard
+    assert(npt % 8 == 0);
+    size_t offset      = idrow * N + tid * npt;
+    T* x0              = mat0 + offset;
+    hBITARR q_row      = quants + tid * npt / 8 * 3;
+    floatGama* gamaCol = gamas + M + tid * npt;
+    floatGama sR = 1.0, sC = 1.0, zero = gamas[M + N + idrow * 2], step = gamas[M + N + idrow * 2 + 1];
+    floatGama step8[8] = {floatGama(0),       step, step * floatGama(2), step * floatGama(3), step * floatGama(4), step * floatGama(5), step * floatGama(6),
+                          step * floatGama(7)};
+    if (rc_normal > 0) {
+        sR = gamas[idrow];
+    }
+    for (int k = 0; k < npt / 8; k++, x0 += 8, q_row += 3) {
+        uint32_t value             = (static_cast<uint32_t>(q_row[0]) << 16) | (static_cast<uint32_t>(q_row[1]) << 8) | static_cast<uint32_t>(q_row[2]);
+        std::array<uint8_t, 8> ids = {
+            (value >> 21) & 0x7, (value >> 18) & 0x7, (value >> 15) & 0x7, (value >> 12) & 0x7,
+            (value >> 9) & 0x7,  (value >> 6) & 0x7,  (value >> 3) & 0x7,  value & 0x7,
+        };
+
+        floatGama g0 = (zero + step8[ids[0]]) * sR, g1 = (zero + step8[ids[1]]) * sR, g2 = (zero + step8[ids[2]]) * sR, g3 = (zero + step8[ids[3]]) * sR,
+                  g4 = (zero + step8[ids[4]]) * sR, g5 = (zero + step8[ids[5]]) * sR, g6 = (zero + step8[ids[6]]) * sR, g7 = (zero + step8[ids[7]]) * sR;
+
+        // if (rc_normal > 0) {
+        //     g0 *= gamaCol[4 * k], g1 *= gamaCol[4 * k + 1];
+        //     g2 *= gamaCol[4 * k + 2], g3 *= gamaCol[4 * k + 3];
+        // }
+        *x0 = g0, *(x0 + 1) = g1, *(x0 + 2) = g2, *(x0 + 3) = g3;
+        *(x0 + 4) = g4, *(x0 + 5) = g5, *(x0 + 6) = g6, *(x0 + 7) = g7;
     }
 }
 
@@ -606,7 +754,11 @@ template class Q_Cluster<float>;
 template __global__ void CU_ternary_online<bf16>(bf16* mat, int M, int N, int seed = 0x0);
 template __global__ void CU_ternary2X_<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int seed = 0x0);
 template __global__ void CU_Q42X_<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
+template __global__ void CU_Q32X_<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
 template __global__ void CU_Q22X_<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
 template __global__ void CU_Q42X_RTN<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
+template __global__ void CU_Q42X_NF4<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
+template __global__ void CU_Q32X_NF3<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
+template __global__ void CU_Q32X_RTN<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
 template __global__ void CU_Q22X_RTN<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
 template __global__ void CU_X2ternary_<bf16>(floatGama* gama, bf16* mat0, char* terns, int M, int N, int bpe, bool isOverwrite = false);

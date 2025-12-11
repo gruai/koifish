@@ -2,11 +2,14 @@
  *  SPDX-FileCopyrightText: 2018-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
- *  \brief globl def & error code
+ *  \brief globl macro & error code
  *  \author Yingshi Chen
  */
 
 #pragma once
+ 
+// Some constants
+#define KOIFISH_MOST_LOG        5120
 
 //  ERR code of exit
 #define KOIFISH_INVALID_ARGS -10
@@ -15,6 +18,7 @@
 #define KOIFISH_OUTOF_CPUMEMORY -101
 
 #define KOIFISH_ZERO_PARAMETERS -200
+#define KOIFISH_NULL_FISH -210
 
 #define KOIFISH_LOAD_TOKENIZER -300
 
@@ -31,6 +35,7 @@
 #define KOIFISH_EXIT_SYNC_DEVICE -2100
 #define KOIFISH_EXIT_OUT_CLS -2200
 
+// Some macro
 #define CEIL_DIV(M, N) (((M) + (N) - 1) / (N))
 
 #define BIT_SET(val, flag) ((val) |= (flag))

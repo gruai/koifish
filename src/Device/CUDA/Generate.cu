@@ -465,7 +465,7 @@ __global__ void CU_sample(T* prelogitst, int* index, int dim, float coin, int fl
     return;
 }
 
-bool GeneratOnPrompt::VerifyLogits(int flag){
+bool GeneratOnPrompt::VerifyLogits(int flag) {
     // PrintTensor<floatLogits>("_logits", logits, true, tokenizer->nVocab(), 1, 1, 1, -1);
     return true;
 }
@@ -511,15 +511,19 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
     int nCore = hFish->curDevice()->nCore, dim = hQwen->dim;
 
     // tpEMBED* token_embedding_table = TO<tpEMBED>(embed->w);
-    switch (embed->w->type) {
-        case typNUMBER::F8E5M2:
-            CU_embed_forw_1<<<dim / 32, 32, 0, main_stream>>>(hQwen->x, TO<f8e5>(embed->w), token, dim, 0);
-            break;
-        default:
-            CU_embed_forw_1<<<dim / 32, 32, 0, main_stream>>>(hQwen->x, TO<bf16>(embed->w), token, dim, 0);
-            break;
+    if (1) {
+        embed->cuInfer(hQwen->inpL, 0x0);
+    } else {
+        switch (embed->w->type) {
+            case typNUMBER::F8E5M2:
+                CU_embed_forw_1<<<dim / 32, 32, 0, main_stream>>>(hQwen->x, TO<f8e5>(embed->w), token, dim, 0);
+                break;
+            default:
+                CU_embed_forw_1<<<dim / 32, 32, 0, main_stream>>>(hQwen->x, TO<bf16>(embed->w), token, dim, 0);
+                break;
+        }
+        embed->w->Print("wte", 0, 0), PrintTensor<AT>("token_embed", hQwen->x, true, dim, 1, 1, 1, 0);
     }
-    embed->w->Print("wte", 0, 0), PrintTensor<AT>("token_embed", hQwen->x, true, dim, 1, 1, 1, 0);
 
     OutCLS* cls              = hFish->GetNeuron<OutCLS>("OutCLS", 0);
     floatLogits* logits      = TO<floatLogits>(cls->preLogits);
@@ -533,14 +537,14 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
         bf16 *layer_key_cache = (bf16*)hQwen->hCache->Get(KVCache::KV_KEY, l, 0), *layer_value_cache = (bf16*)hQwen->hCache->Get(KVCache::KV_VAL, l, 0);
         bf16* k_cache_pos = layer_key_cache + (size_t)pos * hQwen->kv_dim;
         bf16* v_cache_pos = layer_value_cache + (size_t)pos * hQwen->kv_dim;
-        if (pos == 1) {
-            // g_dump_level = 0;
-            // int debug = 0x0;  // STOP_HERE_FOR_DEBUG
-        }
+        // if (pos == 1) {
+        //     g_dump_level = 0;
+        //     DEBUG_HERE;
+        // }
         hQwen->InitLayer(l);
         const CoopLayer<QWEN3_PIPE::tpWeight>* L = (const CoopLayer<QWEN3_PIPE::tpWeight>*)(hQwen->cLayers + l);  //	hQwen->cLayers+l
         SelfAttention* QKV                       = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
-        if (flags == 0) {
+        if (DEBUG.verInferQKV > 0) {  // flags == 0
             // QKV->OnDebug();
             QKV->cuInfer(hQwen->inpL, 0x0);
         } else {
@@ -598,11 +602,11 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
         }
         cudaCheck(cudaGetLastError());
         hQwen->inpL->Print("x_qkv", 0x0, 0);
-        // if (pos == 1) {            exit(-13);        }
+        // if (pos == 1) {            K_EXIT(-13);        }
         SUM::GPU_TIME(SUM::tQKV, now);  // += GST_us() - now;
         now      = GST_us();
         FFN* ffn = hFish->GetNeuron<FFN>("FFN", l);
-        if (1) {
+        if (DEBUG.verInferFFN > 0) {
             // ffn->OnDebug();
             ffn->cuInfer(hQwen->inpL, 0x0);
         } else {

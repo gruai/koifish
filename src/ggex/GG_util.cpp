@@ -276,6 +276,7 @@ void DEUG_SWITCH::Dump(int typ) {
 }
 void CLI_params::Dump(int flag) {
     if (flag == 0x100) {  // only dump jConfig
+        assert(!jConfig.empty());
         std::ofstream file("_koifish_tmp_config_.json");
         if (file.is_open()) {
             file << jConfig.dump(4);
@@ -284,20 +285,18 @@ void CLI_params::Dump(int flag) {
         return;
     }
 
-    _INFO("%s::CLI_params: \n", exec_name.c_str());
+    _INFO("%s::CLI_params: ", exec_name.c_str());
     // _INFO(" n_vocab: %u", n_vocab);
-    _INFO(" n_ctx=%u", n_ctx());
+    _INFO("{ n_ctx=%u", n_ctx());
     _INFO(" embd=%u", nEmbed());
     _INFO(" n_ff=%u", n_ff());
     _INFO(" n_head=%u", n_head());
     _INFO(" n_head_kv=%u", n_head_kv());
     _INFO(" n_layer=%d(%d)", nLayer(), n_layer_train);
-    // _INFO(" n_rot=%u\n", n_rot());
     _INFO(" f_norm_rms_eps=%g\n", model.norm_rms_eps);
     _INFO(" ROPE: type=%d freq_base=%g freq_scale=%g n_rot=%u\n", model.rope_type, model.rope_freq_base, model.rope_freq_scale, n_rot());
-    // _INFO(" rope_freq_scale=%g\n", model.rope_freq_scale);
     // _INFO(" lora_r=%d lora_alpha=%d ", lora_r,lora_alpha);
-    _INFO(" SepQKV: type=%d  \n", model.isSeparateQKV);
+    _INFO(" SepQKV: type=%d  }\n", model.isSeparateQKV);
     // _INFO(" NABLA = %s\n", nabla==0? "" : nabla==3 ? "Embed+AutoEncoder" : (nabla==2 ? "" : "qkv") );
     // _INFO(" SIGMA = %s\n", sigma.c_str());
 }
@@ -361,17 +360,52 @@ MODEL_CARD::MODEL_CARD() {
 #endif
 }
 
-QUANT_MODE QUANT_CARD::TypeOf(std::string name, int flag) {
-    // if (G_Has_(name, filter_KVcache))
-    //     return KV_JL;
-    if (G_Has_(name, filter_MIQ))
-        return MIQ;
-    return NO_QUANT;
+void QUANT_CARD::Dump(int typ) {
+    //_INFO("\t[Quant]_<%d> \n\tMIQ=%d{%s} \n\tF8Ex=%d{%s} \n", default_bits, G_STR(filter_MIQ), G_STR(filter_WeightF8Ex));
 }
 
+void QUANT_CARD::Init(const std::string& name, const JSON& jQuant, int flag) {
+    type      = NO_QUANT;
+    string s0 = "";
+    for (JSON::const_iterator it = jQuant.begin(); it != jQuant.end(); ++it) {
+        auto k = it.key();
+        if (!k.empty() && k[0] == '#')
+            continue;
+        if (k == "debug") {
+            continue;
+        }
+        if (G_Has_(name, {k})) {
+            const JSON& jQ = it.value();
+            default_bits   = jKV(jQ, {"bits"}, default_bits, false);
+            // quant.filter_MIQ        = jKV_arr(jConfig, {"quantizer", "MINI"}, quant.filter_MIQ, false);
+            // quant.filter_WeightF8Ex = jKV_arr(jConfig, {"quantizer", "F8Ex"}, quant.filter_WeightF8Ex, false);
+            if (default_bits != 4 && default_bits != 3 && default_bits != 8) {
+                default_bits = 4;
+                assert(0);
+            }
+            string norm_type = jKV(jQ, {"normal"}, s0);
+            norm             = G_Aa(norm_type, "SINKHORN") ? NORMAL_MODE::SINKHORN : NORMAL_MODE::NO_NORMAL;
+            //  params.type = method.mi == 0 ? (params.isNormalFloat ? QUANT_MODE::RTNf : QUANT_MODE::RTN) : QUANT_MODE::MINI;
+            type = default_bits == 8 ? F8Ex : MINI;
+        }
+    }
+}
+// QUANT_MODE QUANT_CARD::ModeOfNeuron(std::string neuron_name, int flag) {
+//     // if (G_Has_(name, filter_KVcache))
+//     //     return KV_JL;
+//     if (G_Has_(neuron_name, filter_MIQ))
+//         return MINI;
+//     return NO_QUANT;
+// }
+
+bool QUANT_CARD::isValid() const {
+    if (default_bits < 0 || default_bits > 8)
+        return false;
+    return true;
+}
 std::size_t QUANT_CARD::Hash(const QUANT_CARD& params, const std::type_info& ti, const std::string& desc) const {
     // Combine hashes of all elements in the tuple
-    auto h1    = std::hash<int>{}(params.bits);
+    auto h1    = std::hash<int>{}(params.default_bits);
     auto h2    = std::hash<QUANT_MODE>{}(type);
     string sTi = ti.name();
     auto h3    = std::hash<std::string>{}(sTi);
@@ -401,6 +435,7 @@ MODEL_ARCH CLI_params::ModelArch() {
            : info == "DEEPSEEK" ? MODEL_ARCH::NLP_DEEPSEEK
            : info == "QWEN2"    ? MODEL_ARCH::NLP_QWEN2
            : info == "QWEN3"    ? MODEL_ARCH::NLP_QWEN3
+           : info == "QWEN3_MOE"    ? MODEL_ARCH::NLP_QWEN3
            : info == "GPT2"     ? MODEL_ARCH::NLP_GPT2
            : info == "GPT2CHAR" ? MODEL_ARCH::NLP_GPT2_char
            : info == "LAMA"     ? MODEL_ARCH::NLP_LLAMA
@@ -419,6 +454,8 @@ bool CLI_params::JModel2Params(int flag) {
         if (jModel.empty()) {
             return false;
         }
+        jQuant = jKEY(jConfig, {"quantizer"});
+
         nLayerX = 1;  // at least 1 layer
         nLayerX = jKV(jConfig, {"model", "parameter", "Layer"}, nLayerX);
         assert(nLayerX < 160 && nLayerX > 0);
@@ -442,8 +479,8 @@ bool CLI_params::JModel2Params(int flag) {
                 embeds.push_back(n);
             }
             assert(embeds.size() > 0 && embeds[0] > 0);
-            token_embeds.push_back(embeds[0]);
-            qkv_embeds = embeds;
+            model.token_embeds.push_back(embeds[0]);
+            model.qkv_embeds = embeds;
             if (nF < 0)
                 nF = nEmbed() * 4;
 
@@ -604,11 +641,11 @@ uint32_t CLI_params::nThread() const {
     return nT1;
 }
 uint32_t CLI_params::nEmbed(int flag) const {
-    assert(token_embeds.size() > 0);
+    assert(model.token_embeds.size() > 0);
     if (flag == -1)
-        return token_embeds[0];
-    int no = token_embeds.size() - 1;
-    return token_embeds[no];
+        return model.token_embeds[0];
+    int no = model.token_embeds.size() - 1;
+    return model.token_embeds[no];
 }
 void CLI_params::OnMostToken(size_t nMost, int flag) {
     double a          = nMost * 1.0 / n_ctx();  // nTokenInBatch();
@@ -715,7 +752,7 @@ void CLI_params::OnArch() {
             model.isQKNormal    = true;
             model.sLayer        = "layers.";
             model.sEmbed = "embed_tokens", model.sInvEmbed = "lm_head";
-            model.Rope_version = 0;
+            model.Rope_version = 1;
             // model.isEmbedWeightTying = false;   //  0.6B has no tying, but 4B is tying       isEmbedWeightTying = jKV(jModelParam, {"tie_word_embeddings"},
             // isEmbedWeightTying};
             break;
@@ -959,6 +996,54 @@ bool CLI_params::InitChekcpoints(int argc, char** argv, const std::string& ckp_q
     return true;
 }
 
+bool CLI_params::ToJConfig(int flag) {
+    assert(jConfig.empty());
+    jConfig["version"]                                       = "0.1.0";
+    jConfig["model"]["card"]                                 = model.sCardPath;
+    jConfig["model"]["parameter"]["Layer"]                   = nLayer();
+    jConfig["model"]["parameter"]["transformer"]["Ctx"]      = n_ctx();
+    jConfig["model"]["parameter"]["transformer"]["Embed"]    = nEmbed();
+    jConfig["model"]["parameter"]["transformer"]["Ffn"]      = n_ff();
+    jConfig["model"]["parameter"]["transformer"]["Head"]     = n_head();
+    jConfig["model"]["parameter"]["transformer"]["KVHead"]   = n_head_kv();
+    jConfig["model"]["parameter"]["transformer"]["head_dim"] = head_dim();
+
+    jConfig["model"]["embed_tokens"]["Embedding"] = JSON::array();
+    jConfig["model"]["layer"]["self_attn"]["QKV"] = JSON::array();
+    jConfig["model"]["layer"]["mlp"]["FFN"]       = JSON::array();
+    jConfig["model"]["norm"]["Normal"]            = JSON::array();
+    jConfig["model"]["output"]["CLASIFY"]         = JSON::array();
+
+    jConfig["quantizer"]["self_attn"]["bits"] = 3;
+    jConfig["quantizer"]["mlp"]["bits"] = 4;
+    jConfig["quantizer"]["embed_tokens"]["bits"] = 4;
+
+    chat_sampler.seq_len          = 512;
+    jConfig["gpt"]["max_seq_len"] = chat_sampler.seq_len;
+    // jConfig["debug"]["prompts"] = "hello";
+
+    common.seed     = 42;
+    jConfig["seed"] = common.seed;
+
+    jModel = jKEY(jConfig, {"model"});
+    jQuant = jKEY(jConfig, {"quantizer"});
+
+    if (1) {  // some debug switch
+        DEBUG.prompts = {"hello",
+                         "What is the capital of Shanghai?",
+                         "Who wrote the play Romeo and Juliet?",
+                         "In which year did the Titanic sink?",
+                         "What is the chemical symbol for the element gold?",
+                         "What is the longest river in the world?",
+                         "Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?",
+                         "How many games did Arsenal FC go unbeaten during the 2003-2004 season of the English Premier League",
+                         "I get out on the top floor (third floor) at street level. How many stories is the building above the ground?",
+                         "天命玄鸟,降而生生. 玄鸟是什么鸟?"};
+    }
+
+    Dump(0x100);
+    return true;
+}
 /*
     Some trick
     1 Large batch size would decrease osillation
@@ -1003,9 +1088,9 @@ bool CLI_params::InitJConfig(int flag) {
         datatypes.arrTernary = jKV_arr(jConfig, {"model", "datatype", "ternary"}, datatypes.arrTernary, false);
         datatypes.arrTile    = jKV_arr(jConfig, {"model", "datatype", "tile"}, datatypes.arrTile, false);
 
-        quant.filter_MIQ = jKV_arr(jConfig, {"quantizer", "MIQ"}, quant.filter_MIQ, false);
-        chat_sampler.seq_len = jKV(jConfig, {"gpt", "max_seq_len"}, chat_sampler.seq_len); //128
-        if(chat_sampler.seq_len<=0)
+        chat_sampler.seq_len = jKV(jConfig, {"gpt", "max_seq_len"}, chat_sampler.seq_len);  // 128
+
+        if (chat_sampler.seq_len <= 0)
             chat_sampler.seq_len = 8192;
 
         JModel2Params(0x0);
@@ -1136,6 +1221,7 @@ bool CLI_params::parse(int argc, char** argv) {
         if (!model.InitHugFace(this, jConfig, model.sCardPath, 0x0))
             return false;
     }
+    // Dump(0x100);
 
     switch (phase) {
         case P_GENERATE:
@@ -1358,12 +1444,6 @@ void _T_repr_(hGensor t, const char* tab, char* buf, int typ) {
         return;
     bool isInput = t->flags & GTensor::F_INPUT;
     string A     = NameOf(t->type);  //==typNUMBER::F16 ? "d16":"d";
-    // if(t->grad!=nullptr){
-    //     if(t->type==typNUMBER::F16)
-    //         A = "P16";
-    //     else
-    //         A = "P";
-    // }
     if (isInput) {
         A = "(" + A + ")";
     }
@@ -1485,7 +1565,7 @@ double BPE(typNUMBER type) {
     // assert(bp == 1 || bp == 2 || bp == 4);
     return bp;
 }
-
+/*  depreated!
 bool isQuantized(typNUMBER type) {
     if (type == typNUMBER::F8E5M2 || type == typNUMBER::F8E4M3 || type == typNUMBER::F16 || type == typNUMBER::BF16 || type == typNUMBER::F32 ||
         type == typNUMBER::I32 || type == typNUMBER::I8)
@@ -1495,7 +1575,7 @@ bool isQuantized(typNUMBER type) {
     }
     assert(0);
     exit(KOIFISH_UNSUPPORTED_DATATYPE);
-}
+}*/
 
 const char* cNameOf(typNUMBER type) {
     static char buf[128];  // Not thread-safe if modified concurrently.

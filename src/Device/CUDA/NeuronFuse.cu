@@ -83,6 +83,40 @@ void TokenEmbed::WorkloadOnBucker(int* inputs_cpu, int flag) {
     cudaCheck(cudaMemcpyAsync(d_workload_indices, workload_indices, total_items * sizeof(int), cudaMemcpyHostToDevice, main_stream));
 }
 
+//
+hGTensor TokenEmbed::cuInfer(hGTensor hOut, int flag) {
+    int token = hBatch->CurToken(), pos = hBatch->tok_pos, dim = C, nRow = w->shape[0];
+    hQUANT hQuant = w->GetDynamicQuant();
+    assert(dim % 32 == 0);
+    switch (w->type) {
+        case typNUMBER::Q4:
+            if (hQuant->params.isNormalFloat) {
+                CU_embed_forw_nf4<<<dim / 32, 16, 0, main_stream>>>(w->gama_T(), hBITARR(w->data), ToX(hOut), token, nRow, dim, 0, 42);  // 151644
+            } else
+                CU_embed_forw_q4<<<dim / 32, 16, 0, main_stream>>>(w->gama_T(), hBITARR(w->data), ToX(hOut), token, nRow, dim, 0, 42);
+            break;
+        case typNUMBER::Q3:
+            assert(0);
+            // if(hQuant->params.isNormalFloat){
+            //     CU_embed_forw_nf3<<<dim / 32, 16, 0, main_stream>>>(w->gama_T(), hBITARR(w->data), ToX(hOut), token, nRow, dim, 0, 42); //151644
+            // }else
+            //     CU_embed_forw_q3<<<dim / 32, 16, 0, main_stream>>>(w->gama_T(), hBITARR(w->data), ToX(hOut), token, nRow, dim, 0, 42);
+            break;
+        case typNUMBER::F8E5M2:
+            CU_embed_forw_1<<<dim / 32, 32, 0, main_stream>>>(ToX(hOut), TO<f8e5>(w), token, dim, 42);
+            break;
+        case typNUMBER::BF16:
+            CU_embed_forw_1<<<dim / 32, 32, 0, main_stream>>>(ToX(hOut), TO<bf16>(w), token, dim, 42);
+            break;
+        default:
+            assert(0);
+            break;
+    }
+    // w->Print("wte", 0, -1);  // PrintTensor<AT>("token_embed", hOut, true, dim, 1, 1, 1, 0);
+    // hOut->Print("token_embed", 0, -1);
+    return hOut;
+}
+
 hGTensor TokenEmbed::OnEmbed(hGensor inpL, int seed) {
     try {
         int OC = w->ne[1], Vp = padded_nCls;
@@ -354,12 +388,32 @@ bool SLP::PrepareMemory(bool isBack, int flag) {
     return true;
 }
 
+int Q_nThreadOfBlock(int N, int bit, int nT0 = 1024) {
+    if (bit >= 8)
+        return nT0;
+    int nT = nT0;
+    if ((8 % bit == 0)) {   // bit=4,2,1
+        int npb = 8 / bit;  //  number of quants per byte(8bit)
+        while (!(N % nT == 0 && (N / nT) % npb == 0)) {
+            nT /= 2;
+        }
+    } else {  // bit=3, 3*8=24bit
+        while (!(N % nT == 0 && (N / nT) % 8 == 0)) {
+            nT /= 2;
+        }
+    }
+    assert(nT > 1);
+    return nT;
+}
+
 floatX* GTensor::GetDataX(int flag, const string& sX) {
     size_t dT4B = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
     size_t nEle = size();
     floatX* wX  = (floatX*)(data);
+    int nRow = ne[0], nCol = ne[1];
     if (hRef != nullptr) {
-        int debug = 0x0;
+        nRow = hRef->ne[0], nCol = hRef->ne[1];
+        DEBUG_HERE;
     }
 
     switch (type) {
@@ -370,23 +424,40 @@ floatX* GTensor::GetDataX(int flag, const string& sX) {
             // dT4B = CU_T4B_MIDDLE;
             wX = ToX(GTensor::tmpTernary);
             assert(GTensor::tmpTernary->size() >= nEle);
-            assert(ne[1]%dT4B==0 && (ne[1]/dT4B)%2==0);      //1 byre for 2 quant
-            if(hQuant->isRTN()){
-                CU_Q42X_RTN<floatX><<<ne[0], dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, ne[0], ne[1], rc_normal, 1 );
-            }else
-                CU_Q42X_<floatX><<<ne[0], dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, ne[0], ne[1], rc_normal, 1 );
-            // GTensor::tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, ne[0]*ne[1]);
+            dT4B = Q_nThreadOfBlock(nCol, 4);
+            if (hQuant->isRTN()) {
+                if (hQuant->params.isNormalFloat) {
+                    CU_Q42X_NF4<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
+                } else
+                    CU_Q42X_RTN<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
+            } else
+                CU_Q42X_<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
+            // GTensor::tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow*nCol);
+        } break;
+        case typNUMBER::Q3: {
+            wX = ToX(GTensor::tmpTernary);
+            assert(GTensor::tmpTernary->size() >= nEle);
+            dT4B = Q_nThreadOfBlock(nCol, 3);  // 1 byre for 4 quant
+            if (hQuant->isRTN()) {
+                if (hQuant->params.isNormalFloat) {
+                    CU_Q32X_NF3<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
+                } else
+                    CU_Q32X_RTN<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
+            } else
+                CU_Q32X_<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
+            // GTensor::tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow*nCol);
         } break;
         case typNUMBER::Q2: {
             wX = ToX(GTensor::tmpTernary);
             assert(GTensor::tmpTernary->size() >= nEle);
-            assert(ne[1]%dT4B==0 && (ne[1]/dT4B)%4==0);      //1 byre for 2 quant
-            if(hQuant->isRTN()){
-                CU_Q22X_RTN<floatX><<<ne[0], dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, ne[0], ne[1], rc_normal, 1 );
-            }else
-                CU_Q22X_<floatX><<<ne[0], dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, ne[0], ne[1], rc_normal, 1 );
-            // GTensor::tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, ne[0]*ne[1]);
+            dT4B = Q_nThreadOfBlock(nCol, 2);  // 1 byre for 4 quant
+            if (hQuant->isRTN()) {
+                CU_Q22X_RTN<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
+            } else
+                CU_Q22X_<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
+            // GTensor::tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow*nCol);
         } break;
+
         case typNUMBER::T_BINARY:
         case typNUMBER::T_BINARY_3:
             if (DEBUG.T_ternary == 1) {          // each weight(floatX) is {-1,0,1}, no need to extract
@@ -394,20 +465,20 @@ floatX* GTensor::GetDataX(int flag, const string& sX) {
                 return nullptr;
             } else {  // extract each weight {-1,0,1} to floatX
                 wX = ToX(GTensor::tmpTernary);
-                CU_ternary2X_<floatX><<<CEIL_DIV(ne[0], dT4B), dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, ne[0], ne[1], 1);
+                CU_ternary2X_<floatX><<<CEIL_DIV(nRow, dT4B), dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, 1);
                 SYNC_DEVICE();
                 if (flag == -1)
                     GTensor::tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1);
             }
 
-            // PrintTensor<floatX>("wX", wX, true, ne[0], ne[1], ne[2], ne[3], -1);
+            // PrintTensor<floatX>("wX", wX, true, nRow, nCol, ne[2], ne[3], -1);
             break;
         case typNUMBER::T_BINARY_TILE: {
-            dim3 dBlock(THREAD_TILE_M * THREAD_TILE_N), dGrid(CEIL_DIV(ne[0], THREAD_TILE_M), CEIL_DIV(ne[1], THREAD_TILE_N));
-            assert(ne[0] % THREAD_TILE_M == 0 && ne[1] % THREAD_TILE_N == 0);
+            dim3 dBlock(THREAD_TILE_M * THREAD_TILE_N), dGrid(CEIL_DIV(nRow, THREAD_TILE_M), CEIL_DIV(nCol, THREAD_TILE_N));
+            assert(nRow % THREAD_TILE_M == 0 && nCol % THREAD_TILE_N == 0);
             wX              = ToX(GTensor::tmpTernary);
             floatGama* gam_ = gama_T();  //
-            CU_Tile2X_<floatX><<<dGrid, dBlock, smemPB, main_stream>>>(wX, gam_, 0.0, ne[0], ne[1], seed);
+            CU_Tile2X_<floatX><<<dGrid, dBlock, smemPB, main_stream>>>(wX, gam_, 0.0, nRow, nCol, seed);
             // SYNC_DEVICE();
             if (flag == -1)
                 GTensor::tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1);

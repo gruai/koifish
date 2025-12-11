@@ -28,21 +28,21 @@ namespace safetensors {
 
 constexpr size_t kMaxDim = 8;  // must be equal to SAFETENSORS_C_MAX_DIM in `safetensors-c.h`
 
-enum dtype {
-    kBOOL,
-    kUINT8,
-    kINT8,
-    kINT16,
-    kUINT16,
-    kFLOAT16,
-    kBFLOAT16,
-    kINT32,
-    kUINT32,
-    kFLOAT32,
-    kFLOAT64,
-    kINT64,
-    kUINT64,
-};
+// enum dtype {
+//     kBOOL,
+//     kUINT8,
+//     kINT8,
+//     kINT16,
+//     kUINT16,
+//     kFLOAT16,
+//     kBFLOAT16,
+//     kINT32,
+//     kUINT32,
+//     kFLOAT32,
+//     kFLOAT64,
+//     kINT64,
+//     kUINT64,
+// };
 
 namespace minijson {
 
@@ -133,9 +133,9 @@ class ordered_dict {
 
 template <typename T>
 using ordered_dict = minijson::ordered_dict<T>;
-std::string get_dtype_str(const safetensors::dtype dtype);
+std::string get_dtype_str(const typNUMBER dtype);
 struct tensor_t {
-    safetensors::dtype dtype;
+    typNUMBER dtype;
     std::vector<size_t> shape;
     std::array<size_t, 2> data_offsets;
     void *hUserData = nullptr;
@@ -143,12 +143,13 @@ struct tensor_t {
 
     virtual JSON jDesc(int flag = 0x0) {
         JSON js;
-        string info = dtype == kFLOAT16    ? "F16"
-                      : dtype == kBFLOAT16 ? "BF16"
-                      : dtype == kINT32    ? "I32"
-                      : dtype == kFLOAT32  ? "F32"
-                      : dtype == kINT8     ? "I8"
-                                           : "";
+        string info = get_dtype_str(dtype);
+            // dtype == kFLOAT16    ? "F16"
+            //           : dtype == kBFLOAT16 ? "BF16"
+            //           : dtype == kINT32    ? "I32"
+            //           : dtype == kFLOAT32  ? "F32"
+            //           : dtype == kINT8     ? "I8"
+            //                                : "";
         assert(!info.empty());
         js["dtype"] = info;
         // int shape[4] = {1,1,1,1};
@@ -205,7 +206,7 @@ struct safetensors_t {
         jsConfig = js;
         tensor_t tensor;
         tensor.msgpack = JSON::to_msgpack(js);
-        tensor.dtype                 = dtype::kUINT8;
+        tensor.dtype                 = typNUMBER::U8;  //dtype::kUINT8;
         size_t sz = tensor.msgpack.size();   //storage.size();
         tensor.data_offsets[0] = dst_offset;
         tensor.data_offsets[1] = dst_offset + sz;
@@ -365,8 +366,8 @@ bool save_to_memory(const std::string &filename, std::vector<uint8_t> *data_out,
 size_t get_shape_size(const tensor_t &t);
 
 // Returns dtype size in bytes.
-size_t get_dtype_bytes(const safetensors::dtype dtype);
-std::string get_dtype_str(const safetensors::dtype dtype);
+size_t get_dtype_bytes(const typNUMBER dtype);
+std::string get_dtype_str(const typNUMBER dtype);
 
 // Validate data_offsets of all tensors in safetensors_t.
 bool validate_data_offsets(const safetensors_t &st, std::string &err);
@@ -3570,34 +3571,34 @@ bool parse_metadata(const ::minijson::value &v, ordered_dict<std::string> &dst, 
     return true;
 }
 
-bool parse_dtype(const ::minijson::value &v, safetensors::dtype &dtype, std::string *err) {
+bool parse_dtype(const ::minijson::value &v, typNUMBER &dtype, std::string *err) {
     if (auto so = v.as<std::string>()) {
         if ((*so) == "BOOL") {
-            dtype = safetensors::dtype::kBOOL;
+            dtype = typNUMBER::BOOL1;
         } else if ((*so) == "U8") {
-            dtype = safetensors::dtype::kUINT8;
+            dtype = typNUMBER::U8;
         } else if ((*so) == "I8") {
-            dtype = safetensors::dtype::kINT8;
+            dtype = typNUMBER::I8;
         } else if ((*so) == "U16") {
-            dtype = safetensors::dtype::kUINT16;
+            dtype = typNUMBER::U16;
         } else if ((*so) == "I16") {
-            dtype = safetensors::dtype::kINT16;
+            dtype = typNUMBER::I16;
         } else if ((*so) == "U32") {
-            dtype = safetensors::dtype::kUINT32;
+            dtype = typNUMBER::U32;
         } else if ((*so) == "I32") {
-            dtype = safetensors::dtype::kINT32;
+            dtype = typNUMBER::I32;
         } else if ((*so) == "U64") {
-            dtype = safetensors::dtype::kUINT64;
+            dtype = typNUMBER::U64;
         } else if ((*so) == "I64") {
-            dtype = safetensors::dtype::kINT64;
+            dtype = typNUMBER::I64;
         } else if ((*so) == "F16") {
-            dtype = safetensors::dtype::kFLOAT16;
+            dtype = typNUMBER::F16;
         } else if ((*so) == "BF16") {
-            dtype = safetensors::dtype::kBFLOAT16;
+            dtype = typNUMBER::BF16;
         } else if ((*so) == "F32") {
-            dtype = safetensors::dtype::kFLOAT32;
+            dtype = typNUMBER::F32;
         } else if ((*so) == "F64") {
-            dtype = safetensors::dtype::kFLOAT64;
+            dtype = typNUMBER::F64;
         } else {
             if (err) {
                 (*err) += "Unknown `dtype` string: " + *so + ".\n";
@@ -3697,7 +3698,7 @@ bool parse_tensor(const std::string &name, const ::minijson::value &v, tensor_t 
         bool shape_found{false};
         bool data_offsets_found{false};
 
-        dtype dtype;
+        typNUMBER dtype;
         std::vector<size_t> shape;
         std::array<size_t, 2> data_offsets{};
 
@@ -4457,48 +4458,48 @@ float fp16_to_float(uint16_t x) {
 
 uint16_t float_to_fp16(float x) { return detail::float_to_half_full_le(x); }
 
-size_t get_dtype_bytes(const safetensors::dtype dtype) {
+size_t get_dtype_bytes(const typNUMBER dtype) {
     size_t sz = 0;
 
     switch (dtype) {
-        case safetensors::dtype::kBOOL:
+        case typNUMBER::BOOL1:
             // Original Rust implementaion uses 1.
             sz = 1;
             break;
-        case safetensors::dtype::kUINT8:
+        case typNUMBER::U8:
             sz = 1;
             break;
-        case safetensors::dtype::kINT8:
+        case typNUMBER::I8:
             sz = 1;
             break;
-        case safetensors::dtype::kUINT16:
+        case typNUMBER::U16:
             sz = 2;
             break;
-        case safetensors::dtype::kINT16:
+        case typNUMBER::I16:
             sz = 2;
             break;
-        case safetensors::dtype::kINT32:
+        case typNUMBER::I32:
             sz = 4;
             break;
-        case safetensors::dtype::kUINT32:
+        case typNUMBER::U32:
             sz = 4;
             break;
-        case safetensors::dtype::kFLOAT16:
+        case typNUMBER::F16:
             sz = 2;
             break;
-        case safetensors::dtype::kBFLOAT16:
+        case typNUMBER::BF16:
             sz = 2;
             break;
-        case safetensors::dtype::kFLOAT32:
+        case typNUMBER::F32:
             sz = 4;
             break;
-        case safetensors::dtype::kFLOAT64:
+        case typNUMBER::F64:
             sz = 8;
             break;
-        case safetensors::dtype::kINT64:
+        case typNUMBER::I64:
             sz = 8;
             break;
-        case safetensors::dtype::kUINT64:
+        case typNUMBER::U64:
             sz = 8;
             break;
     }
@@ -4506,36 +4507,38 @@ size_t get_dtype_bytes(const safetensors::dtype dtype) {
     return sz;
 }
 
-std::string get_dtype_str(const safetensors::dtype dtype) {
-    switch (dtype) {
-        case safetensors::dtype::kBOOL:
+std::string get_dtype_str(const typNUMBER dtype) {
+    string name = K_FLOATS[(int)dtype].name;
+    return name;
+    /*switch (dtype) {
+        case typNUMBER::BOOL1:
             return "BOOL";
-        case safetensors::dtype::kUINT8:
+        case typNUMBER::U8:
             return "U8";
-        case safetensors::dtype::kINT8:
+        case typNUMBER::I8:
             return "I8";
-        case safetensors::dtype::kUINT16:
+        case typNUMBER::U16:
             return "U16";
-        case safetensors::dtype::kINT16:
+        case typNUMBER::I16:
             return "I16";
-        case safetensors::dtype::kINT32:
+        case typNUMBER::I32:
             return "I32";
-        case safetensors::dtype::kUINT32:
+        case typNUMBER::U32:
             return "U32";
-        case safetensors::dtype::kFLOAT16:
+        case typNUMBER::F16:
             return "F16";
-        case safetensors::dtype::kBFLOAT16:
+        case typNUMBER::BF16:
             return "BF16";
-        case safetensors::dtype::kFLOAT32:
+        case typNUMBER::F32:
             return "F32";
-        case safetensors::dtype::kFLOAT64:
+        case typNUMBER::F64:
             return "F64";
-        case safetensors::dtype::kINT64:
+        case typNUMBER::I64:
             return "I64";
-        case safetensors::dtype::kUINT64:
+        case typNUMBER::U64:
             return "U64";
     }
-    return "???";
+    return "???";*/
 }
 
 // Empty Tensor returns 0.
@@ -4780,45 +4783,45 @@ bool save_to_file(const safetensors_t &st, const std::string &filename, size_t &
     return true;
 }
 
-std::string to_string(safetensors::dtype dtype, const uint8_t *data) {
+std::string to_string(typNUMBER dtype, const uint8_t *data) {
     switch (dtype) {
-        case safetensors::dtype::kBOOL: {
+        case typNUMBER::BOOL1: {
             return std::to_string(data[0] ? 1 : 0);
         }
-        case safetensors::dtype::kUINT8: {
+        case typNUMBER::U8: {
             return std::to_string(data[0]);
         }
-        case safetensors::dtype::kINT8: {
+        case typNUMBER::I8: {
             return std::to_string(*reinterpret_cast<const int8_t *>(data));
         }
-        case safetensors::dtype::kUINT16: {
+        case typNUMBER::U16: {
             return std::to_string(*reinterpret_cast<const uint16_t *>(data));
         }
-        case safetensors::dtype::kINT16: {
+        case typNUMBER::I16: {
             return std::to_string(*reinterpret_cast<const int16_t *>(data));
         }
-        case safetensors::dtype::kUINT32: {
+        case typNUMBER::U32: {
             return std::to_string(*reinterpret_cast<const uint32_t *>(data));
         }
-        case safetensors::dtype::kINT32: {
+        case typNUMBER::I32: {
             return std::to_string(*reinterpret_cast<const int32_t *>(data));
         }
-        case safetensors::dtype::kUINT64: {
+        case typNUMBER::U64: {
             return std::to_string(*reinterpret_cast<const uint64_t *>(data));
         }
-        case safetensors::dtype::kINT64: {
+        case typNUMBER::I64: {
             return std::to_string(*reinterpret_cast<const int64_t *>(data));
         }
-        case safetensors::dtype::kFLOAT16: {
+        case typNUMBER::F16: {
             return std::to_string(safetensors::fp16_to_float(*reinterpret_cast<const uint16_t *>(data)));
         }
-        case safetensors::dtype::kBFLOAT16: {
+        case typNUMBER::BF16: {
             return std::to_string(safetensors::bfloat16_to_float(*reinterpret_cast<const int64_t *>(data)));
         }
-        case safetensors::dtype::kFLOAT32: {
+        case typNUMBER::F32: {
             return std::to_string(*reinterpret_cast<const float *>(data));
         }
-        case safetensors::dtype::kFLOAT64: {
+        case typNUMBER::F64: {
             return std::to_string(*reinterpret_cast<const double *>(data));
         }
     }

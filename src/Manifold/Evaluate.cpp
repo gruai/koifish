@@ -31,7 +31,7 @@ int Fish_ppl(CLI_params& config) {
     // config.SetNCTX(1);       ???
     // config.model.isEmbedWeightTying = false;    //QWEN32B
 
-    DEBUG.T_cuda_ver = 1;
+    DEBUG.verCuda    = 1;
     DEBUG.T_cpu      = 0;
     DEBUG.cmd_p1     = 0;
     DEBUG.graph_dump = 1;

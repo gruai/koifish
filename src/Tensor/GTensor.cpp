@@ -170,7 +170,7 @@ bool GTensor::ReShape(SHAPE shape_, typNUMBER tpD_, int flag) {
 
 void* GTensor::BeforeQuant(GeQuant* hQuant, int flag0) {
     assert(size() <= hQuant->nzMost);
-    bool bRet = ReShape(shape, hQuant->tpQuant(), flag0);
+    bool bRet = ReShape(shape, hQuant->bit2typ(), flag0);
     //      hTensor->Alloc_1(&data_fp8, true, nam_, szData);
     return nullptr;
 }
@@ -229,9 +229,6 @@ float GTensor::Get(int i, int flag) const {
 }
 
 hQUANT GTensor::GetDynamicQuant(int flag) const {
-    //  GetGensorInfo   std::map<hGensor, GENSOR_INFO> infos;
-    assert(ginfo != nullptr && ginfo->hNeron != nullptr);
-
     if (hQuant == nullptr)
         return nullptr;
     if (size() > hQuant->nzMost)
@@ -239,9 +236,12 @@ hQUANT GTensor::GetDynamicQuant(int flag) const {
     // if(!G_Has_(name,{"model.layers.1.mlp.down_proj.weight"})){
     //     return nullptr;
     // }
-    int lay = ginfo->hNeron->layid - 1;
-    // if (lay !=6)     //      lay <= 1 || lay>10
-    //     return nullptr;
+    if(flag==0x100){    //only for some test
+        assert(ginfo!=nullptr);
+        int lay = ginfo->hNeron->layid - 1;
+        if (lay == 0)  //      lay <= 1 || lay>10
+            return nullptr;
+    }
     return hQuant;
 }
 /*
@@ -358,7 +358,7 @@ bool GTensor::ShareMemory(hGTensor src, int flag) {
     assert(src != nullptr && src->data != nullptr);
     // assert(src->nByte()>=nByte());   // may fail
     data = src->data;
-    // if (flag == 0x100) {  //  from GTensor::Serial_MMAP
+    // if (flag == 0x100) {  //  from GTensor::Serial_Quant_MMAP
     //     return true;
     // }
 
@@ -408,7 +408,7 @@ void ToChebyshev(int N, float* rows, int flag = 0x0);
 */
 int GTensor::SerialJSON(const std::string& name_, const JSON& val, void* bytes_ptr, size_t bytes_size, int flag) {
     if (strcmp(name, "model.embed_tokens.weight") == 0) {  //  "tokenizer.tokens"    "model.embed_tokens.weight"
-        int debug = 0x0;
+        DEBUG_HERE;
     }
     if (strcmp(name, name_.c_str()) != 0) {
         strcpy(name, name_.c_str());
@@ -471,12 +471,12 @@ int GTensor::SerialJSON(const std::string& name_, const JSON& val, void* bytes_p
             }
             if (!hFish->isTrain()) {  // otherwize, mmap file is free & host_data is invalid
                 Alloc(-1, flag);
-                Serial_MMAP(false, false);
-                host_data = nullptr;
+                Serial_Quant_MMAP(false, false);
+                host_data = nullptr;  // mmap file would release
             }
-            if (G_Has_(name, hFish->config.quant.filter_WeightF8Ex)) {  // model.embed_tokens.weight    only for debug
-                ToF8Ex(0x0);
-            }
+            // if (G_Has_(name, hFish->config.quant.filter_WeightF8Ex)) {  // model.embed_tokens.weight    only for debug
+            //     ToF8Ex(0x0);
+            // }
         }
     }
     if (strlen(name) > 0 && flag > 0)
@@ -495,10 +495,10 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
         _INFO("Failed to print! %s of \"%s\" is nullptr!", x == 3 ? "gv" : x == 2 ? "gm" : x == 1 ? "grad" : "data", name);
         return;
     }
+    size_t szHost = nEle > 0 ? (nEle * BitPE(type)) / 8 : szData + szGama;
     if (isDevice) {
         SYNC_DEVICE();
-        size_t szHost = nEle > 0 ? (nEle * BitPE(type)) / 8 : szData;
-        hData         = new char[szHost];
+        hData = new char[szHost];
         D2H(src, hData, szHost);
         src = hData;
     }
@@ -522,7 +522,15 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
             break;
         case typNUMBER::Q4:
             PrintQ4("_Q4", (hBITARR)src, ne[0], ne[1], ne[2], ne[3], flag);
-            if(rc_normal>0){
+            if (disq.rc_normal > 0) {
+                PrintTensor<floatGama>("_rNormal", rNormal, true, ne[0], 1, 1, 1, flag);
+                PrintTensor<floatGama>("_cNormal", cNormal, true, ne[1], 1, 1, 1, flag);
+            }
+            PrintTensor<floatGama>("_gamaQ", gamaQ, true, ne[0], 2, 1, 1, flag);
+            break;
+        case typNUMBER::Q3:
+            // PrintQ4("_Q3", (hBITARR)src, ne[0], ne[1], ne[2], ne[3], flag);
+            if (disq.rc_normal > 0) {
                 PrintTensor<floatGama>("_rNormal", rNormal, true, ne[0], 1, 1, 1, flag);
                 PrintTensor<floatGama>("_cNormal", cNormal, true, ne[1], 1, 1, 1, flag);
             }
@@ -530,7 +538,7 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
             break;
         case typNUMBER::Q2:
             // PrintQ2("_Q2", (hBITARR)src, ne[0], ne[1], ne[2], ne[3], flag);
-            if(rc_normal>0){
+            if (disq.rc_normal > 0) {
                 PrintTensor<floatGama>("_rNormal", rNormal, true, ne[0], 1, 1, 1, flag);
                 PrintTensor<floatGama>("_cNormal", cNormal, true, ne[1], 1, 1, 1, flag);
             }
@@ -562,7 +570,7 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
 
 bool GTensor::DumpX(int tpDump, const string& title, int flag) const {
     if (strcmp(name, "model.layers.0.self_attn.wqkv.bias") == 0) {
-        int debug = 0x0;
+        DEBUG_HERE;
     }
     size_t nz = 0, nElems = size(), i = 0, n = 10;
     float *fdata = (float*)data, a1 = -FLT_MAX, a0 = FLT_MAX;
@@ -604,8 +612,11 @@ bool GTensor::DumpX(int tpDump, const string& title, int flag) const {
                 _WARN0(" NO ALLOC ");
                 _INFO(" \t[%" PRId64 " %" PRId64 " %" PRId64 " %" PRId64 " %s] \n", ne[0], ne[1], ne[2], ne[3], cNameOf(type));
             } else
-                _INFO("\t%s %-36s %-4s szAlloc=%6gM\t[%" PRId64 " %" PRId64 " %" PRId64 " %" PRId64 " %s] \n", title.c_str(), name, A, szUse / 1.0e6, ne[0],
+                _INFO("\t%s %-36s %-4s szAlloc=%6gM\t[%" PRId64 " %" PRId64 " %" PRId64 " %" PRId64 " %s] ", title.c_str(), name, A, szUse / 1.0e6, ne[0],
                       ne[1], ne[2], ne[3], cNameOf(type));
+            if (disq.err > 0)
+                _INFO("eQ=%.3g ", disq.err);
+            _INFO("\n");
             if (n > 0 && a1 != -FLT_MAX) {
                 _INFO("\nsum=%g data=[%f : %f] rZ=%.3g%%\n\t", sum, a0, a1, nz * 100.0 / nElems);
                 for (int i = 0; i < std::min((size_t)(ne[0] * ne[1]), n); i++) {
@@ -669,12 +680,30 @@ bool GTensor::isUpdateParam(int iter, int flag) const {
     return true;
 }*/
 
-// scaling coefficient of 1-bit weight, length of gama_T is always ne[0]
-floatGama* GTensor::gama_T(int type) {
+// return scaling/LUT of quant weight
+floatGama* GTensor::gama_T(GAMA_TYPE type, int row) {
     if (hRef != nullptr)
         return hRef->gama_T();
     assert(data != nullptr);
-    return reinterpret_cast<floatGama*>((char*)data + szData);
+    floatGama* gama_0 = reinterpret_cast<floatGama*>((hBITARR)data + szData);
+    int nRow = ne[0], nCol = ne[1];
+    switch(type){
+        case R_SCALE:
+            return gama_0;
+        case C_SCALE:
+            return gama_0 + nRow;
+        case ZERO:
+            return gama_0 + nRow + nCol;
+        case STEP:
+            return gama_0 + nRow + nCol + nRow;
+        case LUT:
+            return gama_0 + nRow + nCol;
+        default:
+            assert(0);
+            break;
+    }
+    
+    return gama_0;
 }
 
 bool huTensor::BeforeBackward(size_t& off, int flag) {
@@ -706,8 +735,8 @@ bool huTensor::BeforeBackward(size_t& off, int flag) {
  *      2.
  */
 bool huTensor::Alloc(int iter, int flagInit) {
-    if (G_Has_(name, {"preLogits"})) {  // model.layers.0.mlp.down_proj.weight
-        DEBUG_HERE;                     //
+    if (G_Has_(name, {"model.layers.0.self_attn.q_proj.out"})) {  // model.layers.0.mlp.down_proj.weight
+        DEBUG_HERE;                                               //
     }
     size_t sz0 = szGlobalMaloc;
     if (BIT_TEST(flags, F_NOALLOC))  // For example: operator fusing, memory reuse,rematerialization
@@ -813,13 +842,13 @@ bool huTensor::Alloc(int iter, int flagInit) {
 }
 bool huTensor::Free(bool isPassResident) {
     try {
-        if (strcmp(name, "model.blk.4.ffn") == 0) {
-            int debug = 0x0;
+        if (G_Has_(name, {"tmpDelta2", "tmpOutL"})) {
+            DEBUG_HERE;
         }
 
         if (isRefer()) {
             if (BIT_TEST(flags, GTensor::F_RELOAD)) {
-                int debug = 0x0;
+                DEBUG_HERE;
             } else
                 return true;
         }
@@ -867,16 +896,23 @@ bool Gensors2File(std::vector<hGensor> gensors, const std::string& path, int fla
     return true;
 }
 
-// inline hGensor To4D(struct ggml_context * ctx_build,hGensor cur,int64_t n1,int64_t n2,int64_t n3,int64_t n4){
-//     cur = ggml_reshape_4d(ctx_build, cur, n1, n2,n3,n4);
-//     return cur;
-// }
-// inline hGensor Permute(struct ggml_context * ctx_,hGensor cur,int64_t n1,int64_t n2,int64_t n3,int64_t n4,bool isCont=true)    {
-//     hGensor q = ggml_permute(ctx_, cur, n1,n2,n3,n4);
-//     gTN0(q,"%s.#",cur->name);
-//     if(isCont)    {
-//         q = ggml_cont(ctx_,q);
-//         gTN(q,"%s.#c",cur->name);
-//     }
-//     return q;
-// }
+bool GTensor::FreeBuffer(int flag) {
+    try {
+        bt4c = nullptr, delta = nullptr, tmpDelta = nullptr, outL = nullptr, scratch = nullptr, tmpFF1 = nullptr, tmpW = nullptr, tmpGW = nullptr,
+        residual   = nullptr;
+        tmpTernary = nullptr;
+        return true;
+    } catch (const std::exception& e) {
+        _WARN("%s", e.what());
+        fflush(stdout);
+        return -1000;
+    } catch (const char* info) {
+        _WARN("%s", info);
+        fflush(stdout);
+        return -1001;
+    } catch (...) {
+        _WARN("\r\n%s  Unknown exception !!!", __func__);
+        fflush(stdout);
+        return -2001;
+    }
+}

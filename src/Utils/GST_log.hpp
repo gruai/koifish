@@ -45,7 +45,7 @@ enum DUMP_LEVEL {
     DUMP_DEBUG = 1,
     DUMP_INFO  = 2,
     DUMP_WARN  = 3,
-    DUMP_WARN0  = 30,
+    DUMP_WARN0 = 30,
     DUMP_ERROR = 4,
     DUMP_CONT  = 5,  // continue previous log
 };
@@ -67,21 +67,21 @@ inline void GG_log_head(char* buff, const char* tag = "KOIFISH", int flag = 0x0)
 }
 void GG_log_internal_v(DUMP_LEVEL level, const char* format, va_list args);
 
-inline void GG_log_internal(DUMP_LEVEL level, const char* format, ...) {
+inline void _LOG(DUMP_LEVEL level, const char* format, ...) {
     va_list args;
     va_start(args, format);
     GG_log_internal_v(level, format, args);
     va_end(args);
 }
 
-#define _INFO(...) GG_log_internal(DUMP_INFO, __VA_ARGS__)
-#define _WARN(...) GG_log_internal(DUMP_WARN, __VA_ARGS__)
-#define _WARN0(...) GG_log_internal(DUMP_WARN0, __VA_ARGS__)
-#define _ERROR(...) GG_log_internal(DUMP_ERROR, __VA_ARGS__)
-#define _INFO_IF(...)                                \
-    {                                                \
-        if (DUMP())                                  \
-            GG_log_internal(DUMP_INFO, __VA_ARGS__); \
+#define _INFO(...) _LOG(DUMP_INFO, __VA_ARGS__)
+#define _WARN(...) _LOG(DUMP_WARN, __VA_ARGS__)
+#define _WARN0(...) _LOG(DUMP_WARN0, __VA_ARGS__)
+#define _ERROR(...) _LOG(DUMP_ERROR, __VA_ARGS__)
+#define _INFO_IF(...)                     \
+    {                                     \
+        if (DUMP())                       \
+            _LOG(DUMP_INFO, __VA_ARGS__); \
     }
 
 void _TIME_INFO(const std::string& info, double fmillis, int flag = 0x0);
@@ -103,7 +103,7 @@ void inline PrintT(const char* title, const T* src, int n1, int n2, int n3 = 1, 
         assert(!isnan(a) && !isinf(a));
         if (i < nEach || i >= nElem - nEach || fabs(i - nElem / 2) <= nEach)
             _INFO("%g ", a);
-        if (i == nEach || i == nElem - nEach -1)
+        if (i == nEach || i == nElem - nEach - 1)
             _INFO("...");
         sum += fabs(a);
         sum2 += a * a;

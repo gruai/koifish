@@ -1,6 +1,6 @@
 # Koifish
 
-Sparse & quantized LLM training in C++/cu.
+Sparse & quantized LLM training/inference in C++/cu.
 
 Koifish needs much less training resource than other frameworks. It needs only one day to train ~2B model on single 4090 as shown in the following table.
 
@@ -15,9 +15,10 @@ Note
 2. The evaluating time depends on the frequency of testing and the sampling ratio(We use only ~10% randomly sampled tokens to reduce total time). 
 
 ## Features
-- Hybrid 16/8/1 bit training
+- Hybrid 16/8/4/3/1 bit training
 - Rematerialisation and fusion of operators
 - [Evolutionary optimization of experts](https://arxiv.org/abs/2509.24436)
+- Inference of QWen3-32B on single 4090
 - Automatic detection of training instability
 - Json config file
 - Self-contained C++/cu project with minimal dependencies

@@ -79,6 +79,8 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vect
         }
     }
     // fish->Dump(0x0);
+    // fish.reset();       fish = nullptr; //only for debug
+    // K_EXIT(KOIFISH_EXIT_DEBUG);
     return fish;
 }
 
@@ -371,8 +373,8 @@ bool Fish::Build(int flag) {
     if (!BeforeBuild())
         return false;
     int iRet         = 0x0;
-    bool isInitParam = false, isJModel = !config.jModel.empty();
-    assert(isJModel);
+    bool isInitParam = false;
+    // , isJModel = !config.jModel.empty();    assert(isJModel);
     isSymbolicAnalysis = true;
 
     /*if(config.ModelArch()==MODEL_ARCH::NLP_GPT2 || config.ModelArch()==MODEL_ARCH::NLP_GPT2_char){
@@ -536,13 +538,76 @@ bool Fish::LoadCheckPoint(CheckPoint_Params& ckp, int flag) {
     _INFO("\r[LoadCheckPoint] OK @\"%s\"\n", fpCheck.c_str());
     return true;
 }
+
+void Fish::Statistic_Quant(int typ, int flag) {
+    int nT = gensors.size(), nQuant = quants.size(), nF16 = 0, nBF16 = 0, nSinkNormal = 0, nQT = 0;
+    float T_errQ = 1.0, sum = 0.0;
+    std::vector<string> arrQ4, arrQ3, arrQ2, arrF8;
+    std::vector<string> arrGBDT, arrRTN;
+    size_t nzP = 0, nzBit = 0;
+    for (auto t : optParams) {
+        nzP += t->size();
+        nzBit += BitPE(t->type) * t->size();
+        auto hQuant     = t->hQuant;
+        GENSOR_INFO* gi = t->ginfo;
+        if (hQuant != nullptr) {
+            auto qType = hQuant->params.type;
+            if (hQuant->params.norm==NORMAL_MODE::SINKHORN) {
+                nSinkNormal++;
+            }
+            if (qType == QUANT_MODE::MINI) {
+                arrGBDT.push_back(t->name);
+            } else {
+                arrRTN.push_back(t->name);
+            }
+            bool isWarn = t->disq.err > T_errQ;
+            sum += t->disq.err, nQT++;
+            if (isWarn)
+                _LOG(isWarn ? DUMP_WARN : DUMP_INFO, "\t[Quant]_<%s> %.5g\t@%s \n", t->disq.info.c_str(), t->disq.err, t->name);
+        }
+        switch (t->type) {
+            case typNUMBER::F8E5M2:
+            case typNUMBER::F8E4M3:
+                arrF8.push_back(t->name);
+                break;
+            case typNUMBER::F16:
+                nF16++;
+                break;
+            case typNUMBER::Q4:
+                arrQ4.push_back(t->name);
+                break;
+            case typNUMBER::Q3:
+                arrQ3.push_back(t->name);
+                break;
+            case typNUMBER::Q2:
+                arrQ2.push_back(t->name);
+                break;
+            case typNUMBER::BF16:
+                nBF16++;
+                break;
+            default:
+                assert(0);
+                break;
+        }
+    }
+    // config.quant.default_bits,
+    // string info = G_STR(fish->config.quant.filter_WeightF8Ex);
+    // _INFO("F8E5=%s\n", info.c_str());
+    // _INFO("[QUANT] nT=%d\n", SUM::nQuantTensor);
+
+    char tmp[1024];
+    sprintf(tmp, "%s%.4gbit%s@[errQ=%.4g nF8=%ld nQ4=%ld nQ3=%ld nQ2=%ld MINI=%ld] tQ=%6.5gsec", COLOR_YELLOW, nzBit * 1.0f / nzP, COLOR_RESET, sum / nQT,
+            arrF8.size(), arrQ4.size(), arrQ3.size(), arrQ2.size(), arrGBDT.size(), SUM::tQuant/1.0e3);
+    SUM::sQuantInfo = tmp;
+    string names    = G_STR(arrGBDT, 512);
+    _INFO("[Quant]_ %s%s \n", tmp, names.c_str());
+    _INFO("\n");
+}
+
 void Fish::Statistic(int typ, int flag) {
     string suffix = "", prefix = "\t";
-    struct ggml_cgraph *gf = nullptr, *gb = nullptr;
-#ifdef _TENSOR_G_
-#else
-    gf = hForwTG->raw(), gb = hBackTG == nullptr ? nullptr : hBackTG->raw();
-#endif
+    // struct ggml_cgraph *gf = nullptr, *gb = nullptr;
+
     if (config.is({"gpt", "c_graph"}, string("raw"))) {
         _INFO("raw graph\n");
     }
@@ -558,19 +623,18 @@ void Fish::Statistic(int typ, int flag) {
     } else {
         // if(preLogits!=nullptr)
         // hForwTG->__repr__(suffix,prefix);   //preLogits = gf->nodes[gf->n_nodes - 2];
-        if (gb != nullptr) {
+        if (hBackTG != nullptr) {
             // hBackTG->__repr__(suffix,prefix);   //// TGraph("Backward",gb,true)
         }
     }
-
-    int nT = gensors.size(), nQ = 0, nF16 = 0;
-    for (auto t : gensors.nag) {
-        auto type = t.second->type;
-        if (isQuantized(type))
-            nQ++;
-        if (type == typNUMBER::F16)
-            nF16++;
+    if (typ == 0x100) {  // for quantizer
+        Statistic_Quant(typ, flag);
+    } else {
     }
+    /*for (auto t : gensors.nag) {
+        auto type = t.second->type;
+
+    }*/
     //  _INFO("%s cgraph(%d,%d) nQ=%d nF16=%d",__func__,cgraph->n_leafs,cgraph->n_nodes,nQ,nF16);
 }
 
@@ -698,7 +762,7 @@ bool Fish::CopyGensors(hWIKI wiki, int flag) {
         if (src->type == dst->type) {
             memcpy(dst->data, src->data, nbyte);
         } else if (dst->type == typNUMBER::F32) {
-            assert(isQuantized(src->type));
+            assert(K_FLOATS[(int)(src->type)].isQuantized());  // isQuantized(src->type)
             Gensor2float_(src, (float*)(dst->data), flag);
         } else {
             assert(0);

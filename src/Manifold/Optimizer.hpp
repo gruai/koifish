@@ -11,7 +11,6 @@
 #include <float.h>
 #include <inttypes.h>
 #include <stdio.h>
-#include <threads.h>
 
 #include <atomic>
 #include <cassert>
@@ -20,6 +19,7 @@
 #include <memory>
 #include <regex>
 #include <stack>
+#include <thread>
 #include <typeinfo>
 #include <vector>
 using namespace std;
@@ -135,9 +135,9 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     std::vector<hSampLoader> val_loaders;
     size_t shuffle_samples_hash = 0x0;  // hack
 
-    Fish* _fish     = nullptr;  // ref only
-    hEDevices hEDS  = nullptr;  // ref only
-    
+    Fish* _fish    = nullptr;  // ref only
+    hEDevices hEDS = nullptr;  // ref only
+
     TRAIN_CARD TrainParams();
 
     Optimizer(NLP_AutoRegressive* g_, CLI_params& params_, int flag = 0x0);
@@ -156,7 +156,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     virtual void UpdateTrainLoss(int x, float loss, int flag = 0x0);  //
     virtual double UpdateTensorParam(hGensor hP, floatX* g, float gnorm);
     virtual bool isStopImproving() { return isStopImprove; }
-    virtual bool isAtLongtail(int flag=0x0);
+    virtual bool isAtLongtail(int flag = 0x0);
 
     virtual void Dump(int typ);
     virtual void AfterBuild(int flag = 0x0);
@@ -177,7 +177,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
         if (_tmp != nullptr)
             delete[] _tmp;
     }
-    virtual void CheckExitSearch(int t, int flag=0x0);
+    virtual void CheckExitSearch(int t, int flag = 0x0);
     RESULT Search(void* ctx, hGensor loss_, hGensor target_, CLI_params& config);
 
     friend class Fish;
@@ -208,13 +208,13 @@ class OPT_Adam : public Optimizer {
 };
 
 class OPT_Muon : public Optimizer {
-   protected:    
-    std::vector<hGensor> tMuons; 
+   protected:
+    std::vector<hGensor> tMuons;
     size_t nmParams = 0;
     void Prepare(size_t nx, int flag = 0x0) override;
     MUON_params_* muon = nullptr;  // may be modified
-   public:    
+   public:
     OPT_Muon(NLP_AutoRegressive* g_, CLI_params& params_, int flag = 0x0);
-    void BeforeTrain(hGensor tokens_input, int flag)    override;
+    void BeforeTrain(hGensor tokens_input, int flag) override;
     void Dump(int typ) override;
 };

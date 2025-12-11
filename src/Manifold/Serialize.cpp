@@ -73,7 +73,7 @@ bool SAFETENSOR_mmap(const std::string& path, safetensors::safetensors_t& st, in
                 safetensors::tensor_t tensor;
                 st.tensors.at(i, &tensor);
                 st.loadJS(tensor, databuffer, st.mmap_size);
-                if (true) {
+                if (true) {  // only for debug
                     JSON jsConfig = st.jsConfig["CLI_params"]["config"];
                     std::ofstream file("_koifish_tmp_config_.json");
                     if (file.is_open()) {
@@ -124,7 +124,7 @@ bool Fuyou::Serialize(bool isSave, int flag) {
         assert(t->host_data != nullptr);
         auto now = GST_us();
         assert(t->host_data != nullptr);
-        t->Serial_MMAP(isSave);
+        t->Serial_Quant_MMAP(isSave);
         SUM::tLoadParam += GST_us() - now;
     }
 
@@ -341,7 +341,7 @@ int Fish::SAFETENSOR2Gensors(const std::string& path, safetensors::safetensors_t
             continue;
         if (G_Has_(key, {"model.layers.19.mlp.down_proj.weight"})) {  // model.embed_tokens.weight
             DEBUG_HERE;
-        } 
+        }
         hGensor target = GetGensor(key);  //  "model.embed.weight"    model.layers.0.attn_norm.weight
         if (target == nullptr) {
             _ERROR("\t[SERIAL] Failed @%s!\n", key.c_str());
@@ -414,9 +414,9 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
                     sz *= 3;
                 assert(sz > 0);
                 safetensors::tensor_t tensor;
-                tensor.dtype           = t->type == typNUMBER::F32   ? safetensors::dtype::kFLOAT32
-                                         : t->type == typNUMBER::F16 ? safetensors::dtype::kFLOAT16
-                                                                     : safetensors::dtype::kBFLOAT16;
+                tensor.dtype           = t->type == typNUMBER::F32   ? typNUMBER::F32
+                                         : t->type == typNUMBER::F16 ? typNUMBER::F16
+                                                                     : typNUMBER::BF16;
                 tensor.hUserData       = t.get();
                 tensor.data_offsets[0] = dst_offset;
                 tensor.data_offsets[1] = dst_offset + sz;
@@ -528,6 +528,10 @@ bool Fish::HF_Serialize(bool isSave, int flag) {
     _INFO(">>>>>> HF_Serialize load@\"%s\" nSerialT=%d iter=%d\n", config.model.sCardPath.c_str(), nSerialT, flag);
     // if(!config.quant.filter_MIQ.empty())
     //     throw SafeExit("", KOIFISH_EXIT_DEBUG, SafeExit::ExitReason::SYSTEM_FAILURE, __func__);
+    for (auto t : optParams) {
+        assert(!BIT_TEST(t->flags, GTensor::F_MMAP));
+        assert(t->host_data == nullptr);
+    }
     return true;
 }
 
@@ -701,12 +705,18 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, const std
         intermediate_size    = jKV(jModelParam, {"intermediate_size"}, intermediate_size);
         max_pos_embeddings   = jKV(jModelParam, {"max_position_embeddings"}, max_pos_embeddings);
         // rotary_dim           = jKVs(jModelParam, {"rope_scaling"}, rotary_dim);
+        // 
 
         if (!isInitFromPath)
             assert(num_attention_heads == n_heads && num_key_value_heads == n_kv_heads);
         else {
             n_layers         = jKV(jModelParam, {"num_hidden_layers"}, n_layers);
             hConfig->nLayerX = n_layers;
+            token_embeds.push_back(hidden_size);
+            if(hConfig->common.n_ctx==-1)   {   //  max_position_embeddings(often the same as training context length)
+                hConfig->common.n_ctx = max_pos_embeddings;
+                hConfig->n_ctx_train = max_pos_embeddings;
+            }
             for (int i = 0; i < n_layers; i++) layerps.push_back(MODEL_CARD::LAY_PARAM(num_attention_heads, num_key_value_heads, hd, intermediate_size));
         }
 
@@ -731,6 +741,9 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, const std
             break;
         default:
             break;
+    }
+    if(isInitFromPath){
+        hConfig->ToJConfig();
     }
 
     return !empty();

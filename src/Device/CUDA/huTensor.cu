@@ -16,6 +16,7 @@
 #include "../../Tensor/GeQuant.hpp"
 #include "../../Utils/GST_log.hpp"
 #include "../../Utils/GST_rander.hpp"
+#include "../../Utils/GST_util.hpp"
 #include "../../g_float.hpp"
 #include "./kernel/operator.cuh"
 #include "./kernel/utils.cuh"
@@ -108,7 +109,8 @@ size_t huTensor::Alloc_1(void** dst, bool isZero, string desc, size_t sz0, int f
     return szAlloc;
 }
 size_t huTensor::Free_1(void** obj, const string& info) {
-    if (BIT_TEST(flags, F_ONLYREF))
+    //  BIT_SET(Q.out->flags, GTensor::F_NOALLOC), BIT_SET(K.out->flags, GTensor::F_NOALLOC), BIT_SET(V.out->flags, GTensor::F_NOALLOC);
+    if (BIT_TEST(flags, F_ONLYREF) || BIT_TEST(flags, F_NOALLOC))
         return 0x0;
 
     assert(*obj != nullptr);
@@ -119,8 +121,7 @@ size_t huTensor::Free_1(void** obj, const string& info) {
         cudaError_t error = cudaFree(*obj);
         if (error != cudaSuccess) {
             cudaError_t const last_err{cudaGetLastError()};
-            _INFO("[CUDA] free failed @\"%s\"! err=%s(%s).\n", name, cudaGetErrorString(error), cudaGetErrorString(last_err));
-            // exit(EXIT_FAILURE);
+            _WARN("[CUDA] free failed @\"%s\"! err=%s(%s).\n", name, cudaGetErrorString(error), cudaGetErrorString(last_err));
         }
     }
     SUM::FreeMem(*obj);
@@ -386,10 +387,10 @@ hBITARR SAFE_read_mmap(hBITARR dst, hBITARR mmp_data, size_t length, int flag = 
 //  如果CUDA支持统一内存（Unified Memory） 或GPUDirect RDMA，可以直接映射 GPU 内存到文件：
 static bool isGPUDirectMMap = true;
 /*
-1. Train: Fuyou would call Serial_MMAP many times. Each tensor should have F_RELOAD flag
+1. Train: Fuyou would call Serial_Quant_MMAP many times. Each tensor should have F_RELOAD flag
 2. Eval: Only call once at loadCheckpoint
 */
-bool GTensor::Serial_MMAP(bool isSave, bool isReset, int flag) {
+bool GTensor::Serial_Quant_MMAP(bool isSave, bool isReset, int flag) {
     if (isRefer() && !BIT_TEST(flags, F_RELOAD))
         return true;
 
@@ -418,6 +419,7 @@ bool GTensor::Serial_MMAP(bool isSave, bool isReset, int flag) {
             SUM::nzSaveParam += size();
         } else {
             hQUANT quant        = GetDynamicQuant();
+            int lay             = ginfo->hNeron->layid - 1;
             bool isAllocTmpData = quant != nullptr;
             if (isAllocTmpData) {
                 tmpData = new BIT_8[szData + szM + szV];  //  mmap read need proper synchronization!
@@ -433,8 +435,15 @@ bool GTensor::Serial_MMAP(bool isSave, bool isReset, int flag) {
             }
 
             if (quant != nullptr) {
-                G_NORM_STAT<bf16>(size(), (bf16*)tmpData, ginfo->sum_2, ginfo->sum_1, ginfo->nrm_1);
-                quant->LowBit(shared_from_this(), tmpData);
+                double t0 = GST_ms();
+                if (quant->params.type == QUANT_MODE::F8Ex) {  // if (G_Has_(name, hFish->config.quant.filter_WeightF8Ex))
+                    cudaCheck(cudaMemcpy(data, tmpData, szData, cudaMemcpyHostToDevice));
+                    ToF8Ex(0x0);
+                } else {
+                    G_NORM_STAT<bf16>(size(), (bf16*)tmpData, disq.sum_2, disq.sum_1, disq.nrm_1);
+                    quant->LowBit(shared_from_this(), tmpData);
+                }
+                SUM::tQuant += GST_ms() - t0;
             } else {
                 // H2D(data, tmpData, szData);
                 cudaCheck(cudaMemcpy(data, tmpData, szData, cudaMemcpyHostToDevice));
@@ -582,7 +591,7 @@ double GTensor::Length(int type, int flag) {
         assert(gx * gy < 1024);  // we want to later accumulate the block sums in a single block
         if (strcmp(name, "model.blk.11.ffn_up.weight") == 0) {
             // Print(name, 1, -1);
-            int debug = 0x0;
+            DEBUG_HERE;
         }
         // cudaCheck(cudaMemsetAsync(norm2, 0, grid_size * sizeof(float), main_stream));
         CU_X2_partial<<<grid_size, block_size, 0, main_stream>>>(devBlockSum2, src, nEle);
@@ -734,6 +743,7 @@ bool huTensor::Mutation(int flag) {
 }
 
 float huTensor::ToF8Ex(int tpX, int flag) {
+    double t0      = GST_ms();
     void *data_old = data, *data_fp8 = nullptr;
     /*typNUMBER oldType = type;
     Print("BF16", 0, 0);
@@ -759,6 +769,7 @@ float huTensor::ToF8Ex(int tpX, int flag) {
         assert(t->type == oldType);
         t->type = type;
     }*/
+    SUM::tF8Ex += GST_ms() - t0;
     return 1.0;
 }
 

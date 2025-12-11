@@ -173,6 +173,7 @@ void CU_mm_blas(floatX* d, const floatX* wX, const floatX* b, int m, int n, int 
     return;
 }
 
+// y = alpha*W*x + beta*y
 void CU_mv_(floatX* y, const floatX* W, const floatX* x, int m, int n, float alpha, float beta) { 
     assert(alpha == 1.0f); //&& beta == 0.0f
     CU_mm_blas(y, W, x, m, 1, n, beta); 

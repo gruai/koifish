@@ -24,16 +24,32 @@
 class GeQuant;
 class GeNeuron;
 class GTensor;
+class Fish;
 typedef shared_ptr<GeQuant> hQUANT;
 namespace Grusoft {
 class Distribution;
 class FeatVector;
 class FeatsOnFold;
-};
+};  // namespace Grusoft
 
 class GeQuant {
    protected:
-    QUANT_CARD params;
+    struct _q_sweep {
+        NORMAL_MODE normal = NORMAL_MODE::NO_NORMAL;
+        int bits           = 4;
+        int mi             = 0;  // min impurity on GBDT
+
+        _q_sweep() {}
+        _q_sweep(NORMAL_MODE n, int b, int mi_ = 0) : normal(n), bits(b), mi(mi_) {}
+        virtual string ToString(int format = 0x0) {
+            string info = std::to_string(bits) + (normal != 0 ? "_normal" : "") + (mi != 0 ? "_mini" : "");
+            return info;
+        }
+
+        size_t szQuant = 0x0;
+    };
+    _q_sweep best_;
+
     virtual void Flattern() {}
     //  1.  key embeddings - In initial layers, no significant outliers are observed. However, in the deeper layers, few channels (approximately four) exhibit
     //  visibly larger magnitudes (outliers),
@@ -42,23 +58,27 @@ class GeQuant {
     std::string name;
     Grusoft::GRander rander;
     uint32_t seed;
-    bool isCPU     = false;
-    int nMostLoop  = 16;  // 8
-    float impurity = 0;   
+    bool isCPU      = false;
+    int nMostLoop   = 16;  // 8
+    float impurity  = 0;
     float imbalance = 0, T_imbal = 1.1f;
     float err_0 = FLT_MAX, err_1 = 0;
     std::vector<double> split_thrshs;
+    bool isCheckErr = false;
+
     // Sinkhorn-Normalized Quantization for 2D matrix         minimize matrix imbalance - alternatingly divide rows and columns by their current standard
-    // deviations
-    bool isSinkNormal = false;
-    float SinkNormal(shared_ptr<GTensor> hTensor, void* cpuData, int flag=0x0);
-    hBITARR quant_data = nullptr;
+    float SinkNormal(shared_ptr<GTensor> hTensor, const void* cpuData, floatGama* curGama, int flag = 0x0);
+    float Normal_ROW01(shared_ptr<GTensor> hTensor, void* cpuData, floatGama* curGama, int flag = 0x0);
+    hBITARR quant_data = nullptr, best_quant = nullptr;
     // nzMost is the number of elements defined in params.spMost
-    size_t szQuant = 0x0, nzMost = 0x0;
-    floatGama* gama  = nullptr;
+    size_t szMostQuant = 0x0, nzMost = 0x0, nMostGama = 0;
+    floatGama *gama = nullptr, *best_gama = nullptr;
     typNUMBER tpGama = typNUMBER::BF16;  //  using floatGama = floatX;
+    virtual float Core(shared_ptr<GTensor> tensor, const void* cpuData, floatGama* curGama, int flag = 0x0) { throw "GeQuant::Core is ...."; }
+    virtual float _row_lut(int row, shared_ptr<GTensor> hTensor, const floatX* dat, float* tmpRow, int flag);
 
    public:
+    QUANT_CARD params;
     //   Some layer(first N layers) is more challenging to quantize and requires a higher number of bits
     int bits = -1;
     double maxq, maxshrink, mse, norm, grid;
@@ -76,13 +96,12 @@ class GeQuant {
         if (trits)
             maxq = -1;
     }
-    virtual bool isRTN()    {
-        return params.type == QUANT_MODE::RTN_4 || params.type == QUANT_MODE::RTN_2;
-    }
-    virtual typNUMBER tpQuant(int flag = 0x0);
-    virtual float RTN(shared_ptr<GTensor> tensor, void* tmpData, int flag = 0x0);
-    virtual float LowBit(shared_ptr<GTensor> tensor, void* tmpData, int flag = 0x0){ throw "GeQuant::LowBit is ...."; }
-    virtual float AfterLowBit(shared_ptr<GTensor> tensor, void* tmpData, int flag = 0x0);
+    virtual bool isRTN() { return params.type == QUANT_MODE::RTN || params.type == QUANT_MODE::RTNf; }
+    virtual typNUMBER bit2typ(int flag = 0x0);
+    virtual float RTN(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
+    virtual float RT_NormalF(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
+    virtual float LowBit(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
+    virtual float AfterLowBit(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
     //  virtual float HighBit(shared_ptr<GTensor> tensor, int flag = 0x0) { throw "GeQuant::HighBit is ...."; }
 
     virtual float Update(shared_ptr<GTensor> tensor, int flag = 0x0) { throw "GeQuant::Update is ...."; }
@@ -90,14 +109,14 @@ class GeQuant {
     virtual ~GeQuant();
 
     friend class GTensor;
+    friend class Fish;
 };
 using QUANT_FACTORY = std::map<size_t, hQUANT>;
 
 template <typename T>
 struct Quantizer : public GeQuant {
-    Quantizer(const std::string& nam_, void* hN, QUANT_CARD& params, int flag = 0x0) : GeQuant(nam_, hN, params, flag) {}
+    Quantizer(const std::string& nam_, void* hN, QUANT_CARD& param_, int flag = 0x0) : GeQuant(nam_, hN, param_, flag) {}
 
-    
     /* onlys support shape==2
     virtual void Init(hGMAT x, bool weight = false) {
         shape = x->Shape();
@@ -193,12 +212,14 @@ class Q_Impurity : public Quantizer<T> {
 
     float clip_min = 0.001, clip_max = 1000, eps = 1.0e-6;
     float *log_mu1 = nullptr, *log_mu2 = nullptr;
-    
+
     // virtual float MI_Tree(Grusoft::FeatsOnFold* hData_, const Grusoft::FeatVector*, int flag = 0x0);
-    virtual float LowBit_GBDT(shared_ptr<GTensor> tensor, void* tmpData, int flag = 0x0);
+    virtual float LowBit_GBDT(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
+    float Core(shared_ptr<GTensor> tensor, const void* cpuData, floatGama* curGama, int flag = 0x0) override;
+
    public:
     Q_Impurity(const std::string& nam_, void* hN, QUANT_CARD& params, int flag = 0x0);
-    float LowBit(shared_ptr<GTensor> tensor, void* tmpData, int flag = 0x0) override;
+    // float LowBit(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0) override;
     virtual ~Q_Impurity();
     //  float Update(shared_ptr<GTensor> tensor, int flag = 0x0) override;
 };

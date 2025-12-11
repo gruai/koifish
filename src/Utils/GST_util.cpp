@@ -50,7 +50,7 @@ void _TIME_INFO(const string& info, double fmillis, int flag) {
 }
 
 int SUM::nUpdateParam = 0;
-int SUM::nMostMemItem;
+int SUM::nMostMemItem = 6;
 int SUM::nMinTensorAlloc = 100 * 1024 * 1024;
 double SUM::tX = 0.0, SUM::tX1 = 0.0, SUM::tRemater = 0.0, SUM::tPreLogits = 0.0;
 size_t SUM::szUpload = 0;
@@ -60,8 +60,10 @@ int SUM::nInitParam = 0, SUM::nSaveParam = 0, SUM::nLoadParam = 0, SUM::nDogLeg 
 int SUM::nzLoadParam = 0, SUM::nzSaveParam = 0;
 std::vector<MEM_USAGE> SUM::mems;
 
-int SUM::nQuantTensor = 0;
+int SUM::nQuantTensor   = 0;
 size_t SUM::szQuantBits = 0;
+double SUM::tQuant = 0, SUM::tF8Ex = 0;
+string SUM::sQuantInfo = "";
 
 size_t MEM_USAGE::szA = 0, MEM_USAGE::szW = 0, MEM_USAGE::szG = 0, MEM_USAGE::szMoment = 0, MEM_USAGE::szTemp = 0, MEM_USAGE::szOther = 0;
 MEM_USAGE::MEM_USAGE(size_t sz_, string d_, void* hData_, int flag) : sz(sz_), desc(d_), hData(hData_) {
@@ -346,23 +348,23 @@ void GG_log_callback_default(DUMP_LEVEL level, const char* text, void* user_data
     fflush(stderr);
 }
 
-static char log_buffer[5000], coloredMsg[5120];
+static char log_buffer[KOIFISH_MOST_LOG], coloredMsg[KOIFISH_MOST_LOG + 100];
 void GG_log_internal_v(DUMP_LEVEL level, const char* format, va_list args) {
     va_list args_copy;
     va_copy(args_copy, args);
     GG_log_head(log_buffer);
-    //  If>5000 Output is ​​truncated but valid​​.
-    int len = vsnprintf(log_buffer, 5000, format, args);
+    //  If>MOST_LOG Output is ​​truncated but valid​​.
+    int len = vsnprintf(log_buffer, KOIFISH_MOST_LOG, format, args);
     va_end(args_copy);
 
     const char* color_0 = "";
     coloredMsg[0]       = '\0';
     switch (level) {
         case DUMP_ERROR:
-            snprintf(coloredMsg, sizeof(coloredMsg), "%s error:%s%s", COLOR_RED, log_buffer, COLOR_RESET);
+            snprintf(coloredMsg, sizeof(coloredMsg), "%s error: %s%s", COLOR_RED, log_buffer, COLOR_RESET);
             break;
         case DUMP_WARN:
-            snprintf(coloredMsg, sizeof(coloredMsg), "%s warning:%s%s", COLOR_YELLOW, log_buffer, COLOR_RESET);
+            snprintf(coloredMsg, sizeof(coloredMsg), "%s warn: %s%s", COLOR_YELLOW, log_buffer, COLOR_RESET);
             break;
         case DUMP_WARN0:
             snprintf(coloredMsg, sizeof(coloredMsg), "%s %s%s", COLOR_YELLOW, log_buffer, COLOR_RESET);
@@ -459,23 +461,24 @@ std::vector<std::string> FilesOfDir(const std::string& path, const std::vector<s
 }
 
 void PrintQ4(const char* title, const hBITARR src, int n1, int n2, int n3, int n4, int flag) {
-    size_t nElem = (size_t)(n1)*n2 * n3 * n4/2, i, nz = 0, nEach = 2;
+    size_t nElem = (size_t)(n1)*n2 * n3 * n4, i, nz = 0, nEach = 2;
     if (nElem == 0)
         return;
     assert(src != nullptr);
     // if(strlen(title)>0) _INFO("%s\n", title);
     float sum = 0.0, a1 = 16, a0 = 0;
-    BIT_8 hi,lo;
+    BIT_8 hi, lo;
     double len = 0.0, sum2 = 0.0;
-    for (i = 0; i < nElem; i++) {
-        hi = ((src[i]) >> 4) & 0x0F;
-        lo = (src[i]) & 0x0F;
+    for (i = 0; i < nElem; i += 2) {
+        BIT_8 byte = src[i / 2];
+        hi         = (byte >> 4) & 0x0F;
+        lo         = byte & 0x0F;
         if (i < nEach || i >= nElem - nEach || fabs(i - nElem / 2) <= nEach)
-            _INFO("%d %d ", hi,lo);
+            _INFO("%d %d ", hi, lo);
         if (i == nEach || i == nElem - nEach - 1)
             _INFO("...");
-        sum += fabs(hi+lo);
-        sum2 += hi*hi+lo*lo;
+        sum += fabs(hi + lo);
+        sum2 += hi * hi + lo * lo;
         // if (a == 0)
         //     nz++;
         // a1 = std::max(a1, a);

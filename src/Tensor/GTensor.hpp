@@ -9,7 +9,6 @@
 #include <float.h>
 #include <inttypes.h>
 #include <stdio.h>
-#include <threads.h>
 
 #include <atomic>
 #include <cassert>
@@ -19,11 +18,13 @@
 #include <map>
 #include <memory>
 #include <regex>
+#include <thread>
 #include <typeinfo>
 #include <vector>
 using namespace std;
 #include <stdio.h>
 #include <string.h>
+
 #include "../g_def_x.hpp"
 
 #define GG_V12
@@ -93,8 +94,56 @@ struct VirtualAllocator {
 template <typename T>
 struct GPUAllocator : public VirtualAllocator<T> {};
 
+/*
+    distri info related to quantization...
+    @/home/cys/rnd/lic/src/GBDT/data_fold/Distribution.hpp
+*/
+struct Distri_QUANT {
+    double mean = 0, sigma = 0, sum_1 = 0.0, sum_2 = 0.0, nrm_1 = 0.0;
+    double abs_max = 0;  //  norm_0
+    std::vector<float> codebook;    //at most 256 bins
+    enum ASYMMETRY {
+        NO,
+        ZERO_OFF,   //  Zero may not map exactly to any quantized value
+        PN_SCALE,   //  use both Positive,Negative scale
+    };
+    ASYMMETRY asymmetry = ASYMMETRY::NO;
+    // (zero,scale) or scaleP/N(Positive,Negative scale)
+    union {
+        float zero = 0.f;
+        float scaleN;
+    };
+    union {
+        float scale = 1.f;
+        float scaleP;
+    };
+    float vmin = FLT_MAX, vmax = -FLT_MAX, e_0 = FLT_MAX, e_1 = -FLT_MAX;
+    float maxP, minN;   //  max Positive & min Negative
+    float imbalance = 0.0;
+    int rc_normal   = 0;
+    double err      = 0.0;  // error of quantizer
+    string info     = "";   // more info of quantizer
+    
+    Distri_QUANT(ASYMMETRY a = ASYMMETRY::NO) : asymmetry(a)  {}
+    Distri_QUANT(float f1, float f2, int flag = 0x0) : scaleN(f1), scaleP(f2) {}
+
+    template <typename T>
+    void Next(T a0) {
+        float a = T2Float(&a0);
+        vmax = std::max(vmax, a), vmin = std::min(vmin, a);
+        abs_max = (double)std::max(fabs(vmax), fabs(vmin));
+        nrm_1 += fabs(a);
+        sum_1 += a;
+        sum_2 += a * a;
+    }
+    virtual void Prepare(int nQuant, int flag = 0x0);
+    virtual BIT_8 X2NormalF(int bits, const float weight, int flag = 0x0);
+    virtual float Normal01(const float weight, int flag = 0x0);
+};
+
 /**
  * 1.   Support dynamic online change shape & type!
+ * 2.   Support quantization
  * 2.   Support BIT representation
  * 3.   Row-major order (first index varies most slowly and last index varies most quickly)
  * 4.   May not contiguous in memory! All tensor operations have to take the stride into account and not assume that the tensor is contiguous in memory!
@@ -129,9 +178,9 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     REF_TYPE tpRef = REF_TYPE::NO;
     hGTensor hRef  = nullptr;
     void* raw_data = nullptr;
-    int rc_normal = 0;
-    // may different wit hQuant
-    shared_ptr<GeQuant> GetDynamicQuant(int flag = 0x0) const;
+
+    Distri_QUANT disq;  // distri info related to quantization
+
     // @GetDynamicQuant
     shared_ptr<GeQuant> hQuant = nullptr;
     virtual size_t Alloc_1(void** dst, bool isZero, string desc, size_t sz = 0x0, int flag = 0x0) { return 0x0; };
@@ -164,7 +213,17 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     void* host_data = nullptr;  // somtimes, we need data both in device&host
     void* data      = nullptr;
     // a serial of LORA for weight
-    floatGama* gama_T(int type=0x0);  // scaling coefficient of bit weight
+
+    //
+    enum GAMA_TYPE {
+        R_SCALE,
+        C_SCALE,
+        ZERO,  // zero of RTN
+        STEP,  // step of RTN
+        LUT,   // values of codebook
+    };
+    // return scaling/LUT of quant weight
+    floatGama* gama_T(GAMA_TYPE type = R_SCALE, int row = 0);
     // virtual bool isUpdateParam(int iter = -1, int flag = 0x0) const;  // in many case, params are not update, even data is not allocated!
     bool needUpdateParam = false;
     int tile_r1 = 0, tile_c1 = 0;  //  tile_r0 = 0,tile_c0 = 0,
@@ -187,7 +246,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
         F_NOALLOC   = 0x100,
         F_GPU       = 0x200,
         F_HOSTALLOC = 0x400,
-        F_MMAP      = 0x800,
+        F_MMAP      = 0x800,  // data is part of a memory-mapped file
         F_RESIDENT  = 0x1000,
         F_HOSTDATA  = 0x2000,  // always alloc host_data(may also alloc device data)
         F_RELOAD    = 0x4000,
@@ -272,7 +331,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     virtual void SetRefer(hGTensor hR, int flag = 0x0);
     virtual bool SetTernary(typNUMBER typ, int flag = 0x0);
     //  load mapping-memory would do Quant !
-    virtual bool Serial_MMAP(bool isSave, bool isX = true, int flag = 0x0);
+    virtual bool Serial_Quant_MMAP(bool isSave, bool isX = true, int flag = 0x0);
     virtual bool Serial_MMAP_x(void* dest, bool isSave, int flag = 0x0);
     virtual bool SerialGP(void* yD, void* yG, size_t szY, bool isToY, int flag = 0x0) {
         assert(0);
@@ -287,6 +346,9 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
         return nullptr;
     }
     virtual floatX* GetDataX(int flag = 0x0, const string& sX = "");
+
+    // may different wit hQuant
+    shared_ptr<GeQuant> GetDynamicQuant(int flag = 0x0) const;
 
     // Some optimization function
     virtual int Dogleg(int flag = 0x0);
@@ -487,7 +549,6 @@ class huTensor : public GTensor {
     // void Print(const string &title, int typ, int flag, size_t nEle = 0) const override;
 
     bool ToTernary(floatX* tmp, int flag = 0x0) override;
-    // float AfterQuant(GeQuant* hQuant, int flag = 0x0) override;
     float ToF8Ex(int type, int flag = 0x0) override;
     bool Mutation(int flag = 0x0) override;
     friend class HIERARCH_LoRA;
@@ -498,10 +559,8 @@ struct GENSOR_INFO {
     int level = -1, ID = -1, dad = -1, c_id = -1;
     bool isAdam                 = true;
     shared_ptr<GeNeuron> hNeron = nullptr;
-    float imbalance = 0.0;
-    double sum_1 = 0.0, sum_2 = 0.0, nrm_1 = 0.0;
+
     // first moment, second moment,past function values of Optimizer
-    // hGensor gm=nullptr,gv=nullptr,gpf=nullptr; //
     float *gm = nullptr, *gv = nullptr, *gpf = nullptr;
 
     GENSOR_INFO() { ; }

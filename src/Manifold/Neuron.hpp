@@ -12,7 +12,6 @@
 #include <float.h>
 #include <inttypes.h>
 #include <stdio.h>
-#include <threads.h>
 
 #include <atomic>
 #include <cassert>
@@ -22,6 +21,7 @@
 #include <regex>
 #include <set>
 #include <stack>
+#include <thread>
 #include <typeinfo>
 #include <vector>
 using namespace std;
@@ -94,6 +94,7 @@ class GeNeuron {
     };
 
     STATISTIC stat;
+    QUANT_CARD quant_params;
     int block_size = 256, grid_size = 0;  // for cuda kernel function
 
     int n_embd_head, n_head;
@@ -147,7 +148,7 @@ class GeNeuron {
     GeNeuron(const std::string& key_, JSON::const_iterator jit, Fish* hG_, int flag);
     virtual ~GeNeuron();
 
-    CLI_params& Config( )    const;
+    CLI_params& Config() const;
     //  Gensors with physical memory
     virtual std::vector<hGensor> PhysicalGensors(bool isNoRef = true, int flag = 0x0) { return {}; }
     // Pick gensors(child,partial,vitual,ref,lora,...)
@@ -665,6 +666,7 @@ struct TokenEmbed : public SparseNeuron {
     virtual hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag = 0x0) override;
     bool Build(int flag) override;
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
+    hGTensor cuInfer(hGTensor hIn, int flag);
     virtual hGTensor OnEmbed(hGensor inpL, int seed);
     virtual hGTensor SubW(hGTensor hSamp, bool isForw, hGTensor subw, int flag = 0x0);
 };

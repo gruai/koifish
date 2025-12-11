@@ -17,7 +17,6 @@
 #include <float.h>
 #include <inttypes.h>
 #include <stdio.h>
-#include <threads.h>
 
 #include <atomic>
 #include <cassert>
@@ -26,6 +25,7 @@
 #include <memory>
 #include <regex>
 #include <stack>
+#include <thread>
 #include <typeinfo>
 #include <vector>
 
@@ -178,6 +178,8 @@ class Fish : public std::enable_shared_from_this<Fish> {
 
     MODEL_ARCH arch = MODEL_ARCH::_X_;
     virtual std::string NN2NAME(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix = "", int flag = 0x0);
+
+    virtual void Statistic_Quant(int typ, int flag = 0x0);
 
     Grusoft::GRander rand_coin;
 

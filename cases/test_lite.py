@@ -42,14 +42,16 @@ def test_chat_qwen3_4B():
     # assert content=="Hello! How can I assist you today? 😊\n" or content=="Hello! It seems there was a small glitch. 😊 How can I assist you today?\n"
 
 def xtest_batch_qwen3_4B():  
-    with open("./cases/qwen3/qwen3_4B.json", 'r') as f:
+    nlayer = 36 #   28 36
+    path = "./cases/qwen3/qwen3_0.6B.json" if nlayer==28 else"./cases/qwen3/qwen3_4B.json"
+    with open(path, 'r') as f:
         jConfig_0 = json.load(f)    
     start = time.time()
-    for layer in range (36):
+    for layer in range (nlayer):
         jConfig = jConfig_0
         jPath = f"./tests/qwen3_4B_layer{layer}.json"
         with open(jPath, 'w') as f:
-            jConfig.setdefault("quantizer", {})["MIQ"] = [f"model.layers.{layer}.mlp"]
+            jConfig.setdefault("quantizer", {})["MINI"] = [f"model.layers.{layer}.mlp"]
             jConfig["debug"]["prompts"] = ["hello"]
             jConfig["gpt"]["max_seq_len"] = 128
             json.dump(jConfig, f, indent=4)  # Write JSON to file   
