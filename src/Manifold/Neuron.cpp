@@ -544,11 +544,11 @@ bool ROPE::Build(int flag) {
     n_rot        = config.n_rot();
     int n_embed  = config.nEmbed();
     head_dim     = config.head_dim();
-    int n_heads = config.n_head(), n_kv_heads = config.n_head_kv();
-    q_dim = head_dim * n_heads, kv_dim = head_dim * n_kv_heads;
+    n_head = config.n_head(), n_head_kv = config.n_head_kv();
+    q_dim = head_dim * n_head, kv_dim = head_dim * n_head_kv;
     assert(head_dim > 0 && q_dim > 0 && kv_dim > 0);
     r_dim = config.model.rotary_dim;
-    if (r_dim == 0 && config.model.empty()) {
+    if (r_dim == 0 && !config.model.isLoadCard()) {
         /* theta - 1. the base wavelength, which by default is 10000
                  2.  increasing the wavelength from 10,000 to 500,000, the effect is that of increasing the amount of tokens required to destroy semantic
            information, leading to improved long-range performance. For a wavelength that is large enough compared to the context, the very lowest frequencies
@@ -617,7 +617,7 @@ hGensor ROPE::Ming(RLS_BP* ctx_, hGensor inpL, int flag) {
 }
 
 bool ROPE::Empty() const {
-    if (devQ == nullptr || devK == nullptr)
+    if (n_head == 0)
         return true;
 
     return hSin == nullptr;

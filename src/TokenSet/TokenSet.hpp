@@ -84,6 +84,7 @@ class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
     int nMostShard  = -1;
     int shard_index = 0;
     int eval_every  = -1;
+    int bpToken = 4;    //bytes_per_token
     // float rStepOfEval = 0;
     float rSampling = 1.0;
     // bool isNextEpoch = false;
@@ -152,8 +153,8 @@ class GlobTokenset : public DataTokenSet {
 
     size_t OnShardFile(int id, bool load = false, int flag = 0x0);
     bool LoadNextShard(SampLoader* hLoader, int flag = 0x0) override;
-    size_t total_batch_size_bytes;    // total across all processes
-    size_t local_batch_offset_bytes;  // inner-sample offset for this process
+    size_t total_batch_size;    // total across all processes
+    size_t local_batch_offset;  // inner-sample offset for this process
     size_t longest_example_bytes;
     int header_bytes, B = -1, T = -1;  // header size in bytes
     size_t szFile, nShardSamples = 0, nShardToks = 0;

@@ -81,7 +81,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     };
 
    protected:
-    INIT_WEIGHT tpInitWeight = INIT_WEIGHT::RANDOM;
+    
     QUANT_FACTORY quants;
     std::string name;
 
@@ -305,7 +305,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     virtual int BuildComputeGraph(int order, void* ctx, int flag);
     virtual hGensor BuildLoss(void* ctx, hGensor cur, int flag = 0x0);
     virtual hGensor BuildTarget(void* ctx, hGensor cur, int flag = 0x0) { return nullptr; }
-    virtual hGensor GetGensor(const string& name, int flag = 0x0) { return gensors.Get(name, flag); }
+    virtual hGensor GetGensor(const string& name, int flag = 0x0) { return gensors.Get(arch,name, flag); }
     virtual GENSOR_INFO& GetGensorInfo(hGensor hP, int flag = 0x0) {
         assert(gensors.infos.find(hP) != gensors.infos.end());
         return gensors.infos[hP];

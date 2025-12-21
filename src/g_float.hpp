@@ -30,6 +30,13 @@ using hBITARR = uint8_t*;
 using BIT_8   = uint8_t;
 
 using SHAPE = std::vector<int>;
+inline size_t SHAPE2NZ(const SHAPE& shape){
+    size_t nz = 1;
+    for(auto n : shape){
+        nz *= n;
+    }
+    return nz;
+}
 
 //
 using floatI = float;
@@ -321,12 +328,12 @@ inline float T2Float<__nv_fp8_e5m2>(const __nv_fp8_e5m2* a0) {
 template <>
 inline float T2Float<nv_bfloat16>(const nv_bfloat16* a0) {
     /*  trick*/
-    uint16_t x   = *((uint16_t*)(a0));
-    uint32_t tmp = static_cast<uint32_t>(x) << 16;
-    float a;
-    memcpy(&a, &tmp, sizeof(a));
+    // uint16_t x   = *((uint16_t*)(a0));
+    // uint32_t tmp = static_cast<uint32_t>(x) << 16;
+    // float a;
+    // memcpy(&a, &tmp, sizeof(a));
 
-    // float a =  __bfloat162float(*a0);
+    float a =  __bfloat162float(*a0);
     return a;
 }
 template <typename T>
@@ -351,6 +358,7 @@ template <>
 inline bf16 Float2T<bf16>(const float* a0) {
     assert(!isnan(*a0) && !isinf(*a0));
     bf16 out = (nv_bfloat16)__float2bfloat16(*a0);
+    // bf16 out = (nv_bfloat16)__float2bfloat16_rn(*a0);
     return out;
 }
 template <>

@@ -141,7 +141,9 @@ struct KERNEL_PIPE : public MODEL_CARD {
     CoopLayer<void>* cLayers = nullptr;
     int layNo                = -1;
     hFISH hFish              = nullptr;
-    hGensor out_weight = nullptr, inpL = nullptr;
+    hGensor out_weight = nullptr;
+    //  inpL = GTensor::outL->Partial("inpL", 0, {dim, 1, 1})
+    hGensor inpL = nullptr;
     float* att = nullptr;  // buffer for scores/attention values (N_HEADS, seq_len)
     //T *att = nullptr;     nearly same as float*att !
     T *x = nullptr, *xb = nullptr, *xb2 = nullptr, *q = nullptr, *k = nullptr, *v = nullptr, *exp = nullptr;

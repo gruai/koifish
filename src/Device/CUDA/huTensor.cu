@@ -92,7 +92,7 @@ size_t huTensor::Alloc_1(void** dst, bool isZero, string desc, size_t sz0, int f
             hFish->Dump(KOIFISH_OUTOF_GPUMEMORY);
             _ERROR("[CUDA Alloc] Outof GPU Memory @%s!  Free=%gM < Need=%gM.\n ----------------------- more infomation -----------------------\n", name,
                    szFree / 1.0e6, szAlloc / 1.0e6);
-            exit(KOIFISH_OUTOF_GPUMEMORY);
+            K_EXIT(KOIFISH_OUTOF_GPUMEMORY);
         }
     }
     error = hostAlloc ? cudaHostAlloc(dst, szAlloc, cudaHostAllocMapped) : cudaMalloc(dst, szAlloc);  // 8420
@@ -139,8 +139,8 @@ bool huTensor::InitParam(int tpX) {
     int iter = hFish->GetCurIter();
     SUM::nInitParam++;  // may skip(bias is always init to 0)
     if (tpInit > 0 && tpInit != SERIALIZE) {
-        assert(type == typNUMBER::BF16);
-        if (strcmp(name, "model.out.weight_b") == 0) {  //  model.blk.34.ffn_down.weight
+        assert(type == typNUMBER::BF16 || type == typNUMBER::I32);
+        if (strcmp(name, "model.embed_tokens.weight") == 0) {  //  model.blk.34.ffn_down.weight
             DEBUG_HERE;                                 // Print(name, 1, -1);
         }
         // _INFO("[InitParam_@%d]\t%ld-%ld@%s\n",iter,size(),nInit,name);
@@ -167,8 +167,9 @@ bool huTensor::InitParam(int tpX) {
                     ToTernary(paramX);
                     cudaFree(paramX);
                     // Print(name,0,-1);
-                } else
+                } else{
                     CU_disti_normal<floatX>(nInit, (floatX*)data, 0.02f * residual_scale, param_seed);
+                }                    
 
                 break;
         }
@@ -185,8 +186,8 @@ bool huTensor::InitParam(int tpX) {
             }
         }
     }
-    if (DUMP())
-        Print(name, 0, -1);  // dump some value
+    // if (DUMP())
+    //     Print(name, 0, -1);  
     return true;
 }
 #ifdef __USE_GGML__
@@ -366,24 +367,6 @@ bool huTensor::SerialData(const string& info, void* host, bool isToHost, int fla
     }
 }
 
-// memcpy(tmpData, host_data, szData), msync(host_data, szData, MS_SYNC);
-hBITARR SAFE_read_mmap(hBITARR dst, hBITARR mmp_data, size_t length, int flag = 0x0) {
-    if (msync(mmp_data, length, MS_SYNC) == -1) {
-        // perror("msync failed");
-        //  Continue anyway - data might still be valid
-    }
-    // Memory barrier to ensure we read after sync
-    std::atomic_thread_fence(std::memory_order_acquire);
-    memcpy(dst, mmp_data, length);
-
-    // Verify the copy (optional but recommended)
-    if (memcmp(dst, mmp_data, length) != 0) {
-        std::cerr << "WARNING: Copy verification failed!" << std::endl;
-    }
-
-    return dst;
-}
-
 //  如果CUDA支持统一内存（Unified Memory） 或GPUDirect RDMA，可以直接映射 GPU 内存到文件：
 static bool isGPUDirectMMap = true;
 /*
@@ -434,7 +417,7 @@ bool GTensor::Serial_Quant_MMAP(bool isSave, bool isReset, int flag) {
                 SAFE_read_mmap(tmpData, (hBITARR)host_data, szData + szM + szV);
             }
 
-            if (quant != nullptr) {
+            if (quant != nullptr && quant->params.type != QUANT_MODE::PRE_QUANT) {
                 double t0 = GST_ms();
                 if (quant->params.type == QUANT_MODE::F8Ex) {  // if (G_Has_(name, hFish->config.quant.filter_WeightF8Ex))
                     cudaCheck(cudaMemcpy(data, tmpData, szData, cudaMemcpyHostToDevice));
@@ -585,7 +568,7 @@ double GTensor::Length(int type, int flag) {
     if (devBlockSum2 == nullptr) {
         cudaMalloc(&devBlockSum2, sizeof(float) * grid_size * 2);
     }
-    if (DEBUG.algCuX2 == 0) {   // too complex
+    if (DEBUG.verCuX2 == 0) {   // too complex
         assert(grid_size > 0);  // gives a better error than letting the call below fail
         const int gx = CEIL_DIV(grid_size, num_slices), gy = num_slices;
         assert(gx * gy < 1024);  // we want to later accumulate the block sums in a single block

@@ -153,7 +153,7 @@ def pangpi_one(title, sExe, sArgs, path="./tests/", most_iter=-1):
 def bubble_one(title,  sArgs, sExe ="./bin/bubble ", path="./tests/", most_iter=-1):    
     sOutput = title+".info"   
     cmd = sExe + sArgs + "> "+path+sOutput + " 2>&1"        # cmd = sExe+ path+title+".json 2>&1 | tee "+path+sOutput 
-    print(f"{title}\t{cmd} ...")    
+    print(f"[{title}]\t{cmd} ...")    
 
     if os.path.exists('chat.csv'):
         os.remove('chat.csv')

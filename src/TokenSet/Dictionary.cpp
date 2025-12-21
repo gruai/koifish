@@ -467,26 +467,34 @@ TOKENS WordPieceTokenizer::Encode(const wstring& input_text, bool split_specials
 
 GTokenizer::GTokenizer(Fish* dolphin, int flag) {
     config = dolphin->config;
-    if (dolphin->config.model.empty()) {
-    } else {
+    if (dolphin->config.model.isLoadCard()) {
         bool bRet = this->InitHF(dolphin, flag);
     }
 }
 GTokenizer_GPT2::GTokenizer_GPT2(Fish* dolphin, int flag) {
     config = dolphin->config;
-    assert(dolphin->config.model.empty());
+    assert(!dolphin->config.model.isLoadCard());
 }
 
 // todo - call gpt2 tokenizer in next version
 std::string GTokenizer_GPT2::T2STR(TOKEN_ID tok, int flag) { return std::to_string((int)(tok) % 10); }
 
+/*
+    Qwen uses a Byte Pair Encoding (BPE)​ tokenizer trained from scratch, and it has a unique characteristic:
+    1. Qwen uses <|endoftext|>as both EOS and padding token, and it doesn't have a separate BOS token​ in the traditional sense.
+        Any token can be the first token !
+        More flexible for continuation tasks
+        Matches real-world usage where text can start mid-document
+        Eliminates special handling for sequence starts
+*/
 GTokenizer_QWEN3::GTokenizer_QWEN3(Fish* dolphin, int flag) {
     config = dolphin->config;
-    assert(!dolphin->config.model.empty());
+    assert(dolphin->config.model.isLoadCard());
     bool bRet = InitHF(dolphin, flag);
     if (!bRet) {
         vocab.clear();
     }
+    isNeedBOS = false;
 }
 
 std::string GTokenizer_QWEN3::T2STR(TOKEN_ID tok, int flag) {
@@ -496,7 +504,7 @@ std::string GTokenizer_QWEN3::T2STR(TOKEN_ID tok, int flag) {
 
 GTokenizer_Heap::GTokenizer_Heap(Fish* dolphin, int flag) {
     config = dolphin->config;
-    assert(dolphin->config.model.empty());
+    assert(!dolphin->config.model.isLoadCard());
 }
 
 bool GTokenizer_Heap::InitFrom(Fish* dolphin, hGTensor gTokens, hGTensor scores, int flag) {
@@ -591,9 +599,9 @@ bool GTokenizer::InitFrom(Fish* dolphin, hGTensor gTokens, hGTensor scores, int 
 }
 bool GTokenizer::InitHF(Fish* dolphin, int flag) {
     // const JSON& jToken = dolphin->config.model.jTokenizer;
-    const JSON& jMParam = dolphin->config.model.jModelParam;
-    string sTokenJsonPath   = dolphin->config.model.sTokenJsonPath;
-    size_t szF          = F_SIZE(sTokenJsonPath);
+    const JSON& jMParam   = dolphin->config.model.jModelParam;
+    string sTokenJsonPath = dolphin->config.model.sTokenJsonPath;
+    size_t szF            = F_SIZE(sTokenJsonPath);
     if (szF == 0)
         return false;
     bos_id = jKV(jMParam, {"bos_token_id"}, bos_id);  // std::stoi(data.metadata.at("bos_token_id").get<std::string>());
@@ -640,31 +648,31 @@ void load_single_template(char *buffer, size_t buffer_size, const string &dir_pa
 }*/
 
 std::string LoadBytesFromFile(const std::string& path) {
-  std::ifstream fs(path, std::ios::in | std::ios::binary);
-  if (fs.fail()) {
-    std::cerr << "Cannot open " << path << std::endl;
-    exit(1);
-  }
-  std::string data;
-  fs.seekg(0, std::ios::end);
-  size_t size = static_cast<size_t>(fs.tellg());
-  fs.seekg(0, std::ios::beg);
-  data.resize(size);
-  fs.read(data.data(), size);
-  return data;
+    std::ifstream fs(path, std::ios::in | std::ios::binary);
+    if (fs.fail()) {
+        std::cerr << "Cannot open " << path << std::endl;
+        exit(1);
+    }
+    std::string data;
+    fs.seekg(0, std::ios::end);
+    size_t size = static_cast<size_t>(fs.tellg());
+    fs.seekg(0, std::ios::beg);
+    data.resize(size);
+    fs.read(data.data(), size);
+    return data;
 }
 
 bool GTokenizer_QWEN3::InitHF(Fish* dolphin, int flag) {
     try {
         char tmp_word[MAX_TOKEN_LENGTH];
         string sRoot          = dolphin->config.model.sCardPath;
-        string tokenizer_path = dolphin->config.model.sTokenBinPath;     // + "tokenizer.bin";
-        int vocab_size        = dolphin->config.model.vocab_size;  // 151936
+        string tokenizer_path = dolphin->config.model.sTokenBinPath;  // + "tokenizer.bin";
+        int vocab_size        = dolphin->config.model.vocab_size;     // 151936
         // vocab.resize(vocab_size); // = (char **)malloc(vocab_size * sizeof(char *));
         scores = (float*)malloc(vocab_size * sizeof(float));
 
         FILE* file = fopen(tokenizer_path.c_str(), "rb");
-        if (file==NULL) {
+        if (file == NULL) {
             // bos_id = dolphin->config.model.bos_token_id;
             // eos_id = dolphin->config.model.eos_token_id;
             // auto blob = LoadBytesFromFile("dist/tokenizer.json");
@@ -673,7 +681,6 @@ bool GTokenizer_QWEN3::InitHF(Fish* dolphin, int flag) {
 
             _ERROR("[QWEN3] Couldn't load tokenizer model %s\n", tokenizer_path.c_str());
             exit(KOIFISH_LOAD_TOKENIZER);
-
 
             //  max_token_length = max(len(t) for t in all_tokens)
         } else {

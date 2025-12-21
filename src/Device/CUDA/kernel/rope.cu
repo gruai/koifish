@@ -20,12 +20,13 @@
 #include <algorithm>
 #include <vector>
 
+#include "operator.cuh"
 #include "utils.cuh"
 
-#define INT4(value) (reinterpret_cast<int4 *>(&(value))[0])
-#define FLOAT4(value) (reinterpret_cast<float4 *>(&(value))[0])
-#define HALF2(value) (reinterpret_cast<half2 *>(&(value))[0])
-#define BFLOAT2(value) (reinterpret_cast<__nv_bfloat162 *>(&(value))[0])
+#define INT4(value) (reinterpret_cast<int4*>(&(value))[0])
+#define FLOAT4(value) (reinterpret_cast<float4*>(&(value))[0])
+#define HALF2(value) (reinterpret_cast<half2*>(&(value))[0])
+#define BFLOAT2(value) (reinterpret_cast<__nv_bfloat162*>(&(value))[0])
 #define CUDA_ROPE_BLOCK_SIZE 256
 #define _xita 10000.0f
 
@@ -34,17 +35,16 @@
     2. out may same as inp
 */
 
-
 template <typename Typ>
-__global__ void CU_rope_(Typ *inp, Typ *out, float *scale, int seq_len, int head_dim, float theta, int rotary_dim, int B, int T, int C, uint32_t seed,
+__global__ void CU_rope_(Typ* inp, Typ* out, float* scale, int seq_len, int head_dim, float theta, int rotary_dim, int B, int T, int C, uint32_t seed,
                          bool isBack = false) {  //, int N
     int b = blockIdx.x, t = blockIdx.y, j_head = blockIdx.z;
-    int c = threadIdx.x, nHead = seq_len / head_dim, h_id = b * T* nHead + t*nHead  + j_head;
+    int c = threadIdx.x, nHead = seq_len / head_dim, h_id = b * T * nHead + t * nHead + j_head;
     int half_hs = head_dim / 2;
     if (c >= half_hs) {
         return;
     }
-    // h_id = b * T * nHead + t + j_head * T;      // [batch, seq_len, heads, dim] -> [batch, heads, seq_len, dim]  
+    // h_id = b * T * nHead + t + j_head * T;      // [batch, seq_len, heads, dim] -> [batch, heads, seq_len, dim]
     // float freq = j_head >= rotary_dim ? 0.f : 1.0f / powf(theta, (float)j_head / (float)rotary_dim);
     // Why c?  the index of pair - similar to an optical splitter functionality where the light can be broken down to multiple signals
     int c_1 = c;  //  |g| would > 1
@@ -71,19 +71,19 @@ __global__ void CU_rope_(Typ *inp, Typ *out, float *scale, int seq_len, int head
         }
     }
 
-    if (isBack) {        
-        out1 = x1 * cos_v + x2 * sin_v, out2 = x1 * sin_v - x2 * cos_v; 
-       //  out1 = x2;          out2 = x1;   // testing: transpos has no influence
+    if (isBack) {
+        out1 = x1 * cos_v + x2 * sin_v, out2 = x1 * sin_v - x2 * cos_v;
+        //  out1 = x2;          out2 = x1;   // testing: transpos has no influence
     } else {
         out1 = x1 * cos_v - x2 * sin_v, out2 = x1 * sin_v + x2 * cos_v;
-       //  out1 = x2;          out2 = x1;
+        //  out1 = x2;          out2 = x1;
     }
     out[idx1] = CU_Float2T<Typ>(out1, seed + c);
     out[idx2] = CU_Float2T<Typ>(out2, seed + c);
     // out[idx] = x1;      out[idx + 1] = x2;
 }
 
-__global__ static void rope_f32x4_pack_kernel(float *x, float *out, int seq_len, int N) {
+__global__ static void rope_f32x4_pack_kernel(float* x, float* out, int seq_len, int N) {
     int idx       = blockIdx.x * blockDim.x + threadIdx.x;
     float4 x_v    = FLOAT4(x[idx * 4]);
     int token_pos = idx / N;
@@ -119,7 +119,7 @@ static __device__ float rope_yarn_ramp(const float low, const float high, const 
 // MIT licensed. Copyright (c) 2023 Jeffrey Quesnelle and Bowen Peng.
 template <bool forward>
 static __device__ void rope_yarn(const float theta_extrap, const float freq_scale, const rope_corr_dims corr_dims, const int64_t i0, const float ext_factor,
-                                 float mscale, float &cos_theta, float &sin_theta) {
+                                 float mscale, float& cos_theta, float& sin_theta) {
     // Get n-d rotational scaling corrected for extrapolation
     float theta_interp = freq_scale * theta_extrap;
     float theta        = theta_interp;
@@ -138,9 +138,9 @@ static __device__ void rope_yarn(const float theta_extrap, const float freq_scal
 }
 
 template <bool forward, bool has_ff, typename T>
-static __global__ void rope_norm(const T *x, T *dst, const int ne0, const int ne1, const int s1, const int s2, const int n_dims, const int32_t *pos,
+static __global__ void rope_norm(const T* x, T* dst, const int ne0, const int ne1, const int s1, const int s2, const int n_dims, const int32_t* pos,
                                  const float freq_scale, const float ext_factor, const float attn_factor, const rope_corr_dims corr_dims,
-                                 const float theta_scale, const float *freq_factors) {
+                                 const float theta_scale, const float* freq_factors) {
     const int i0 = 2 * (blockDim.y * blockIdx.y + threadIdx.y);
 
     if (i0 >= ne0) {
@@ -181,9 +181,9 @@ static __global__ void rope_norm(const T *x, T *dst, const int ne0, const int ne
 }
 
 template <bool forward, bool has_ff, typename T>
-static __global__ void rope_neox(const T *x, T *dst, const int ne0, const int ne1, const int s1, const int s2, const int n_dims, const int32_t *pos,
+static __global__ void rope_neox(const T* x, T* dst, const int ne0, const int ne1, const int s1, const int s2, const int n_dims, const int32_t* pos,
                                  const float freq_scale, const float ext_factor, const float attn_factor, const rope_corr_dims corr_dims,
-                                 const float theta_scale, const float *freq_factors) {
+                                 const float theta_scale, const float* freq_factors) {
     const int i0 = 2 * (blockDim.y * blockIdx.y + threadIdx.y);
 
     if (i0 >= ne0) {
@@ -224,9 +224,9 @@ static __global__ void rope_neox(const T *x, T *dst, const int ne0, const int ne
 }
 
 template <bool forward, bool has_ff, typename T>
-static __global__ void rope_multi(const T *x, T *dst, const int ne0, const int ne1, const int ne2, const int s1, const int s2, const int n_dims,
-                                  const int32_t *pos, const float freq_scale, const float ext_factor, const float attn_factor, const rope_corr_dims corr_dims,
-                                  const float theta_scale, const float *freq_factors, const mrope_dims sections) {
+static __global__ void rope_multi(const T* x, T* dst, const int ne0, const int ne1, const int ne2, const int s1, const int s2, const int n_dims,
+                                  const int32_t* pos, const float freq_scale, const float ext_factor, const float attn_factor, const rope_corr_dims corr_dims,
+                                  const float theta_scale, const float* freq_factors, const mrope_dims sections) {
     const int i0 = 2 * (blockDim.y * blockIdx.y + threadIdx.y);
 
     if (i0 >= ne0) {
@@ -280,9 +280,9 @@ static __global__ void rope_multi(const T *x, T *dst, const int ne0, const int n
 }
 
 template <bool forward, bool has_ff, typename T>
-static __global__ void rope_vision(const T *x, T *dst, const int ne0, const int ne1, const int ne2, const int s1, const int s2, const int n_dims,
-                                   const int32_t *pos, const float freq_scale, const float ext_factor, const float attn_factor, const rope_corr_dims corr_dims,
-                                   const float theta_scale, const float *freq_factors, const mrope_dims sections) {
+static __global__ void rope_vision(const T* x, T* dst, const int ne0, const int ne1, const int ne2, const int s1, const int s2, const int n_dims,
+                                   const int32_t* pos, const float freq_scale, const float ext_factor, const float attn_factor, const rope_corr_dims corr_dims,
+                                   const float theta_scale, const float* freq_factors, const mrope_dims sections) {
     const int i0 = 2 * (blockDim.y * blockIdx.y + threadIdx.y);
 
     if (i0 >= ne0) {
@@ -325,9 +325,9 @@ static __global__ void rope_vision(const T *x, T *dst, const int ne0, const int 
 }
 
 template <bool forward, typename T>
-static void rope_norm_cuda(const T *x, T *dst, const int ne0, const int ne1, const int s1, const int s2, const int n_dims, const int nr, const int32_t *pos,
+static void rope_norm_cuda(const T* x, T* dst, const int ne0, const int ne1, const int s1, const int s2, const int n_dims, const int nr, const int32_t* pos,
                            const float freq_scale, const float freq_base, const float ext_factor, const float attn_factor, const rope_corr_dims corr_dims,
-                           const float *freq_factors, cudaStream_t stream) {
+                           const float* freq_factors, cudaStream_t stream) {
     assert(ne0 % 2 == 0);
     const dim3 block_dims(1, CUDA_ROPE_BLOCK_SIZE, 1);
     const int n_blocks_x = (ne0 + 2 * CUDA_ROPE_BLOCK_SIZE - 1) / (2 * CUDA_ROPE_BLOCK_SIZE);
@@ -345,9 +345,9 @@ static void rope_norm_cuda(const T *x, T *dst, const int ne0, const int ne1, con
 }
 
 template <bool forward, typename T>
-static void rope_neox_cuda(const T *x, T *dst, const int ne0, const int ne1, const int s1, const int s2, const int n_dims, const int nr, const int32_t *pos,
+static void rope_neox_cuda(const T* x, T* dst, const int ne0, const int ne1, const int s1, const int s2, const int n_dims, const int nr, const int32_t* pos,
                            const float freq_scale, const float freq_base, const float ext_factor, const float attn_factor, const rope_corr_dims corr_dims,
-                           const float *freq_factors, cudaStream_t stream) {
+                           const float* freq_factors, cudaStream_t stream) {
     assert(ne0 % 2 == 0);
     const dim3 block_dims(1, CUDA_ROPE_BLOCK_SIZE, 1);
     const int n_blocks_x = (ne0 + 2 * CUDA_ROPE_BLOCK_SIZE - 1) / (2 * CUDA_ROPE_BLOCK_SIZE);
@@ -365,9 +365,9 @@ static void rope_neox_cuda(const T *x, T *dst, const int ne0, const int ne1, con
 }
 
 template <bool forward, typename T>
-static void rope_multi_cuda(const T *x, T *dst, const int ne0, const int ne1, const int ne2, const int s1, const int s2, const int n_dims, const int nr,
-                            const int32_t *pos, const float freq_scale, const float freq_base, const float ext_factor, const float attn_factor,
-                            const rope_corr_dims corr_dims, const float *freq_factors, const mrope_dims sections, cudaStream_t stream) {
+static void rope_multi_cuda(const T* x, T* dst, const int ne0, const int ne1, const int ne2, const int s1, const int s2, const int n_dims, const int nr,
+                            const int32_t* pos, const float freq_scale, const float freq_base, const float ext_factor, const float attn_factor,
+                            const rope_corr_dims corr_dims, const float* freq_factors, const mrope_dims sections, cudaStream_t stream) {
     assert(ne0 % 2 == 0);
     const dim3 block_dims(1, CUDA_ROPE_BLOCK_SIZE, 1);
     const int n_blocks_x = (ne0 + 2 * CUDA_ROPE_BLOCK_SIZE - 1) / (2 * CUDA_ROPE_BLOCK_SIZE);
@@ -385,9 +385,9 @@ static void rope_multi_cuda(const T *x, T *dst, const int ne0, const int ne1, co
 }
 
 template <bool forward, typename T>
-static void rope_vision_cuda(const T *x, T *dst, const int ne0, const int ne1, const int ne2, const int s1, const int s2, const int n_dims, const int nr,
-                             const int32_t *pos, const float freq_scale, const float freq_base, const float ext_factor, const float attn_factor,
-                             const rope_corr_dims corr_dims, const float *freq_factors, const mrope_dims sections, cudaStream_t stream) {
+static void rope_vision_cuda(const T* x, T* dst, const int ne0, const int ne1, const int ne2, const int s1, const int s2, const int n_dims, const int nr,
+                             const int32_t* pos, const float freq_scale, const float freq_base, const float ext_factor, const float attn_factor,
+                             const rope_corr_dims corr_dims, const float* freq_factors, const mrope_dims sections, cudaStream_t stream) {
     assert(ne0 % 2 == 0);
     const dim3 block_dims(1, CUDA_ROPE_BLOCK_SIZE, 1);
     const int n_blocks_x = (ne0 + 2 * CUDA_ROPE_BLOCK_SIZE - 1) / (2 * CUDA_ROPE_BLOCK_SIZE);
@@ -410,11 +410,11 @@ static void rope_vision_cuda(const T *x, T *dst, const int ne0, const int ne1, c
  * Similar to Kernel-1 but uses Shared Memory for `freqs_cos` and `freqs_sin`
  * It may help us address our limiting perf factor (Memory Bandwidth), since we will be utilizing SRAM (less latency, faster memory)
  */
-__global__ static void apply_rope_backward_kernel2(float *dq, float *dk, const float *freqs_cos, const float *freqs_sin, int B, int T, int num_kv_heads, int NH,
+__global__ static void apply_rope_backward_kernel2(float* dq, float* dk, const float* freqs_cos, const float* freqs_sin, int B, int T, int num_kv_heads, int NH,
                                                    int C_per_NH) {
     extern __shared__ float shared_mem[];  // Shared memory for freqs_cos and freqs_sin
-    float *shared_freqs_cos = shared_mem;
-    float *shared_freqs_sin = shared_mem + blockDim.x;
+    float* shared_freqs_cos = shared_mem;
+    float* shared_freqs_sin = shared_mem + blockDim.x;
 
     int b  = blockIdx.x;
     int t  = blockIdx.y;
@@ -468,7 +468,7 @@ __global__ static void apply_rope_backward_kernel2(float *dq, float *dk, const f
 // ----------------------------------------------------------------------------
 // kernel launcher
 
-void inline apply_rope_backward1(float *dq, float *dk, const float *freqs_cos, const float *freqs_sin, int B, int T, int num_kv_heads, int NH, int C_per_NH) {
+void inline apply_rope_backward1(float* dq, float* dk, const float* freqs_cos, const float* freqs_sin, int B, int T, int num_kv_heads, int NH, int C_per_NH) {
     dim3 blocks(B, T, NH);  // Parallelizing over B, T, NH
     int threads = C_per_NH / 2;
 
@@ -476,7 +476,7 @@ void inline apply_rope_backward1(float *dq, float *dk, const float *freqs_cos, c
     cudaDeviceSynchronize();
 }
 
-void inline apply_rope_backward2(float *dq, float *dk, const float *freqs_cos, const float *freqs_sin, int B, int T, int num_kv_heads, int NH, int C_per_NH) {
+void inline apply_rope_backward2(float* dq, float* dk, const float* freqs_cos, const float* freqs_sin, int B, int T, int num_kv_heads, int NH, int C_per_NH) {
     dim3 blocks(B, T, NH);  // Parallelizes over B, T, NH
     int threads         = C_per_NH / 2;
     int shared_mem_size = 2 * (C_per_NH / 2) * sizeof(float);  // Shared memory size for freqs_cos and freqs_sin
@@ -486,7 +486,7 @@ void inline apply_rope_backward2(float *dq, float *dk, const float *freqs_cos, c
 }
 
 // kernel version dispatch
-void inline apply_rope_backward(int kernel_num, float *dq, float *dk, const float *freqs_cos, const float *freqs_sin, int B, int T, int num_kv_heads, int NH,
+void inline apply_rope_backward(int kernel_num, float* dq, float* dk, const float* freqs_cos, const float* freqs_sin, int B, int T, int num_kv_heads, int NH,
                                 int C_per_NH) {
     switch (kernel_num) {
         case 1:
@@ -507,7 +507,7 @@ void inline apply_rope_backward(int kernel_num, float *dq, float *dk, const floa
  * - Each thread handles a real/imaginary pair
  * - Can be optimized more, since we can warp-divergence (because of the if condition), making some threads become idle
  */
-__global__ static void apply_rope_forward_kernel1(float *q, float *k, float *freqs_cos, float *freqs_sin, int B, int T, int num_kv_heads, int NH,
+__global__ static void apply_rope_forward_kernel1(float* q, float* k, float* freqs_cos, float* freqs_sin, int B, int T, int num_kv_heads, int NH,
                                                   int C_per_NH) {
     int b       = blockIdx.x;
     int t       = blockIdx.y;
@@ -557,7 +557,7 @@ __global__ static void apply_rope_forward_kernel1(float *q, float *k, float *fre
 // ----------------------------------------------------------------------------
 
 template <typename Typ>
-__global__ void apply_rope_backward_kernel1(Typ *dq, Typ *dk, const float *freqs_cos, const float *freqs_sin, int B, int T, int num_kv_heads, int NH,
+__global__ void apply_rope_backward_kernel1(Typ* dq, Typ* dk, const float* freqs_cos, const float* freqs_sin, int B, int T, int num_kv_heads, int NH,
                                             int C_per_NH) {
     int b = blockIdx.x, t = blockIdx.y, nh = blockIdx.z;
     int hs      = threadIdx.x;
@@ -598,7 +598,7 @@ __global__ void apply_rope_backward_kernel1(Typ *dq, Typ *dk, const float *freqs
  * Each thread handles a real/imaginary pair for `q`, and `k`(in their respective kernels)
  */
 template <typename Typ>
-__global__ void apply_rope_forward_q1(Typ *q, const float *freqs_cos, const float *freqs_sin, int B, int T, int num_kv_heads, int C_per_NH) {
+__global__ void apply_rope_forward_q1(Typ* q, const float* freqs_cos, const float* freqs_sin, int B, int T, int num_kv_heads, int C_per_NH) {
     int b = blockIdx.x, t = blockIdx.y, kv_head = blockIdx.z;
     int hs      = threadIdx.x;
     int half_hs = C_per_NH / 2;
@@ -618,7 +618,7 @@ __global__ void apply_rope_forward_q1(Typ *q, const float *freqs_cos, const floa
     }
 }
 template <typename Typ>
-__global__ static void apply_rope_forward_k1(Typ *k, const float *freqs_cos, const float *freqs_sin, int B, int T, int NH, int C_per_NH) {
+__global__ static void apply_rope_forward_k1(Typ* k, const float* freqs_cos, const float* freqs_sin, int B, int T, int NH, int C_per_NH) {
     int b = blockIdx.x, t = blockIdx.y, nh = blockIdx.z;
     int hs      = threadIdx.x;
     int half_hs = C_per_NH / 2;
@@ -644,10 +644,10 @@ __global__ static void apply_rope_forward_k1(Typ *k, const float *freqs_cos, con
  * Each thread loads one cos and one sin value, so the total size of shared memory is 2 * blockDim.x * sizeof(float).
  */
 
-__global__ static void apply_rope_forward_q2(float *q, const float *freqs_cos, const float *freqs_sin, int B, int T, int num_kv_heads, int C_per_NH) {
+__global__ static void apply_rope_forward_q2(float* q, const float* freqs_cos, const float* freqs_sin, int B, int T, int num_kv_heads, int C_per_NH) {
     extern __shared__ float shared_mem[];               // Shared memory for freqs_cos and freqs_sin
-    float *shared_freqs_cos = shared_mem;               // First part of shared memory for freqs_cos
-    float *shared_freqs_sin = shared_mem + blockDim.x;  // Second part for freqs_sin
+    float* shared_freqs_cos = shared_mem;               // First part of shared memory for freqs_cos
+    float* shared_freqs_sin = shared_mem + blockDim.x;  // Second part for freqs_sin
 
     int b       = blockIdx.x;
     int t       = blockIdx.y;
@@ -685,10 +685,10 @@ __global__ static void apply_rope_forward_q2(float *q, const float *freqs_cos, c
 #endif
 }
 
-__global__ static void apply_rope_forward_k2(float *k, const float *freqs_cos, const float *freqs_sin, int B, int T, int NH, int C_per_NH) {
+__global__ static void apply_rope_forward_k2(float* k, const float* freqs_cos, const float* freqs_sin, int B, int T, int NH, int C_per_NH) {
     extern __shared__ float shared_mem[];               // Shared memory for freqs_cos and freqs_sin
-    float *shared_freqs_cos = shared_mem;               // First part of shared memory for freqs_cos
-    float *shared_freqs_sin = shared_mem + blockDim.x;  // Second part for freqs_sin
+    float* shared_freqs_cos = shared_mem;               // First part of shared memory for freqs_cos
+    float* shared_freqs_sin = shared_mem + blockDim.x;  // Second part for freqs_sin
 
     int b  = blockIdx.x;
     int t  = blockIdx.y;
@@ -729,7 +729,7 @@ __global__ static void apply_rope_forward_k2(float *k, const float *freqs_cos, c
 // ----------------------------------------------------------------------------
 // kernel launcher
 
-void inline apply_rope_forward1(float *q, float *k, float *freqs_cos, float *freqs_sin, int B, int T, int num_kv_heads, int NH, int C_per_NH) {
+void inline apply_rope_forward1(float* q, float* k, float* freqs_cos, float* freqs_sin, int B, int T, int num_kv_heads, int NH, int C_per_NH) {
     dim3 blocks(B, T, NH);
     int threads = C_per_NH / 2;
 
@@ -737,7 +737,7 @@ void inline apply_rope_forward1(float *q, float *k, float *freqs_cos, float *fre
     cudaDeviceSynchronize();
 }
 
-void inline apply_rope_forward2(float *q, float *k, float *freqs_cos, float *freqs_sin, int B, int T, int num_kv_heads, int NH, int C_per_NH) {
+void inline apply_rope_forward2(float* q, float* k, float* freqs_cos, float* freqs_sin, int B, int T, int num_kv_heads, int NH, int C_per_NH) {
     // Separate kernel launches for `q` and `k` to avoid warp-divergence
 
     dim3 blocks_q(B, T, num_kv_heads);  // For q (shape: B, T, num_kv_heads, C/NH)
@@ -750,7 +750,7 @@ void inline apply_rope_forward2(float *q, float *k, float *freqs_cos, float *fre
     cudaDeviceSynchronize();
 }
 
-void inline apply_rope_forward3(float *q, float *k, float *freqs_cos, float *freqs_sin, int B, int T, int num_kv_heads, int NH, int C_per_NH) {
+void inline apply_rope_forward3(float* q, float* k, float* freqs_cos, float* freqs_sin, int B, int T, int num_kv_heads, int NH, int C_per_NH) {
     // Separate kernel launches for `q` and `k` with shared memory for `freqs_cos` and `freqs_sin`
 
     dim3 blocks_q(B, T, num_kv_heads);  // For q (shape: B, T, num_kv_heads, C/NH)
@@ -766,7 +766,7 @@ void inline apply_rope_forward3(float *q, float *k, float *freqs_cos, float *fre
 }
 
 // kernel version dispatch
-void inline apply_rope_forward(int kernel_num, float *q, float *k, float *freqs_cos, float *freqs_sin, int B, int T, int num_kv_heads, int NH, int C_per_NH) {
+void inline apply_rope_forward(int kernel_num, float* q, float* k, float* freqs_cos, float* freqs_sin, int B, int T, int num_kv_heads, int NH, int C_per_NH) {
     switch (kernel_num) {
         case 1:
             apply_rope_forward1(q, k, freqs_cos, freqs_sin, B, T, num_kv_heads, NH, C_per_NH);
@@ -796,10 +796,10 @@ void inline apply_rope_forward(int kernel_num, float *q, float *k, float *freqs_
     2) Each thread is responsible for one token.
 */
 template <typename Typ>
-__global__ void qwen2vl_mrope_kernel(Typ *q,               // [bs*sl, n_qh * hd]
-                                     Typ *k,               // [bs*sl, n_kh * hd]
-                                     const float *cos,     // shape: [3, bs*sl, hd]
-                                     const float *sin,     // shape: [3, bs*sl, hd]
+__global__ void qwen2vl_mrope_kernel(Typ* q,               // [bs*sl, n_qh * hd]
+                                     Typ* k,               // [bs*sl, n_kh * hd]
+                                     const float* cos,     // shape: [3, bs*sl, hd]
+                                     const float* sin,     // shape: [3, bs*sl, hd]
                                      int sl,               // sequence length
                                      int bs,               // batch size
                                      int n_qh,             // number of Q heads
@@ -820,18 +820,18 @@ __global__ void qwen2vl_mrope_kernel(Typ *q,               // [bs*sl, n_qh * hd]
 
     // Each token's Q and K are stored contiguously:
     // Q: [n_qh, hd] and K: [n_kh, hd].
-    Typ *q_token = q + token_id * n_qh * hd;
-    Typ *k_token = k + token_id * n_kh * hd;
+    Typ* q_token = q + token_id * n_qh * hd;
+    Typ* k_token = k + token_id * n_kh * hd;
 
     // cos and sin arrays are arranged in three contiguous blocks:
     // Section 0: t_cos/t_sin, Section 1: h_cos/h_sin, Section 2: w_cos/w_sin.
     const int token_offset = token_id * hd;
-    const float *t_cos     = cos + token_offset;
-    const float *h_cos     = cos + bs * sl * hd + token_offset;
-    const float *w_cos     = cos + 2 * bs * sl * hd + token_offset;
-    const float *t_sin     = sin + token_offset;
-    const float *h_sin     = sin + bs * sl * hd + token_offset;
-    const float *w_sin     = sin + 2 * bs * sl * hd + token_offset;
+    const float* t_cos     = cos + token_offset;
+    const float* h_cos     = cos + bs * sl * hd + token_offset;
+    const float* w_cos     = cos + 2 * bs * sl * hd + token_offset;
+    const float* t_sin     = sin + token_offset;
+    const float* h_sin     = sin + bs * sl * hd + token_offset;
+    const float* w_sin     = sin + 2 * bs * sl * hd + token_offset;
 
     // For the rotary computation we use only the first half of the head dimension.
     int half_hd = hd / 2;
@@ -839,7 +839,7 @@ __global__ void qwen2vl_mrope_kernel(Typ *q,               // [bs*sl, n_qh * hd]
 
     // Process each Q head for this token.
     for (int head = 0; head < n_qh; head++) {
-        float *q_head_ptr = q_token + head * hd;
+        float* q_head_ptr = q_token + head * hd;
         for (int d = 0; d < half_hd; d++) {
             float q1 = q_head_ptr[d];
             float q2 = q_head_ptr[d + half_hd];
@@ -870,7 +870,7 @@ __global__ void qwen2vl_mrope_kernel(Typ *q,               // [bs*sl, n_qh * hd]
 
     // Process each K head for this token.
     for (int head = 0; head < n_kh; head++) {
-        float *k_head_ptr = k_token + head * hd;
+        float* k_head_ptr = k_token + head * hd;
         for (int d = 0; d < half_hd; d++) {
             float k1 = k_head_ptr[d];
             float k2 = k_head_ptr[d + half_hd];
@@ -901,8 +901,8 @@ __global__ void qwen2vl_mrope_kernel(Typ *q,               // [bs*sl, n_qh * hd]
 }
 
 template <typename Typ>
-__global__ void CU_rope_prenormal_(Typ *inp, Typ *out, float *scale, int seq_len, int head_dim, float theta, int rotary_dim, int B, int T, int C, uint32_t seed,
-                             bool isBack = false) {  //, int N
+__global__ void CU_rope_prenormal_(Typ* inp, Typ* out, float* scale, int seq_len, int head_dim, float theta, int rotary_dim, int B, int T, int C, uint32_t seed,
+                                   bool isBack = false) {  //, int N
     int b = blockIdx.x, t = blockIdx.y, j_head = blockIdx.z;
     int c = threadIdx.x, nHead = seq_len / head_dim, h_id = (b * T + t) * nHead + j_head;
     int half_hs = head_dim / 2;
@@ -945,46 +945,50 @@ __global__ void CU_rope_prenormal_(Typ *inp, Typ *out, float *scale, int seq_len
     // out[idx] = x1;      out[idx + 1] = x2;
 }
 
-__global__ static void CU_rope_forward(bf16* q, bf16* k_cache_pos, int pos, int N_HEADS, int N_KV_HEADS, int HEAD_DIM, float ROPE_THETA) {
-    // `blockIdx.x` will correspond to the head index 'h'
-    int h = blockIdx.x;
-    // `threadIdx.x` will correspond to the inner loop index 'j'
-    int j = threadIdx.x;
+__global__ void CU_rope2_forward(bf16* q, bf16* k, int pos, int N_HEADS, int N_KV_HEADS, int HEAD_DIM, float ROPE_THETA) {
+    int h = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * (gridDim.x * gridDim.y), j = threadIdx.x;
 
     if (h < N_HEADS && j < HEAD_DIM / 2) {
         bf16* q_head = q + h * HEAD_DIM;
 
         float freq = 1.0f / powf(ROPE_THETA, (float)(j * 2) / (float)HEAD_DIM);
-        float val  = (float)pos * freq;
-        float fcr, fci;
+        if(pos<0){    //  (B, T, n_head)
+            pos = blockIdx.y;
+        }
+        float val  = (float)pos * freq, fcr, fci;
         sincosf(val, &fci, &fcr);
 
         float q_real = __bfloat162float(q_head[j]);
         float q_imag = __bfloat162float(q_head[j + HEAD_DIM / 2]);
+        // float q_rotated_real = q_real * fcr - q_imag * fci;
+        // float q_rotated_imag = q_real * fci + q_imag * fcr;
 
-        float q_rotated_real = q_real * fcr - q_imag * fci;
-        float q_rotated_imag = q_real * fci + q_imag * fcr;
-
-        q_head[j]                = __float2bfloat16_rn(q_rotated_real);
-        q_head[j + HEAD_DIM / 2] = __float2bfloat16_rn(q_rotated_imag);
+        q_head[j]                = __float2bfloat16_rn(q_real * fcr - q_imag * fci);
+        q_head[j + HEAD_DIM / 2] = __float2bfloat16_rn(q_real * fci + q_imag * fcr);
+        if (h < N_KV_HEADS) {
+            bf16* k_head = k + h * HEAD_DIM;
+            float k_real = __bfloat162float(k_head[j]), k_imag = __bfloat162float(k_head[j + HEAD_DIM / 2]);
+            k_head[j]                = __float2bfloat16_rn(k_real * fcr - k_imag * fci);
+            k_head[j + HEAD_DIM / 2] = __float2bfloat16_rn(k_real * fci + k_imag * fcr);
+        }
     }
 
-    if (h < N_KV_HEADS && j < HEAD_DIM / 2) {
-        bf16* k_head = k_cache_pos + h * HEAD_DIM;
+    // if (h < N_KV_HEADS && j < HEAD_DIM / 2) {
+    //     bf16* k_head = k + h * HEAD_DIM;
 
-        float freq = 1.0f / powf(ROPE_THETA, (float)(j * 2) / (float)HEAD_DIM);
-        float val  = (float)pos * freq;
-        float fcr, fci;
-        sincosf(val, &fci, &fcr);
+    //     float freq = 1.0f / powf(ROPE_THETA, (float)(j * 2) / (float)HEAD_DIM);
+    //     float val  = (float)pos * freq;
+    //     float fcr, fci;
+    //     sincosf(val, &fci, &fcr);
 
-        float k_real = __bfloat162float(k_head[j]);
-        float k_imag = __bfloat162float(k_head[j + HEAD_DIM / 2]);
+    //     float k_real = __bfloat162float(k_head[j]);
+    //     float k_imag = __bfloat162float(k_head[j + HEAD_DIM / 2]);
 
-        // perform rotation in fp32
-        float k_rotated_real = k_real * fcr - k_imag * fci;
-        float k_rotated_imag = k_real * fci + k_imag * fcr;
+    //     // perform rotation in fp32
+    //     float k_rotated_real = k_real * fcr - k_imag * fci;
+    //     float k_rotated_imag = k_real * fci + k_imag * fcr;
 
-        k_head[j]                = __float2bfloat16_rn(k_rotated_real);
-        k_head[j + HEAD_DIM / 2] = __float2bfloat16_rn(k_rotated_imag);
-    }
+    //     k_head[j]                = __float2bfloat16_rn(k_rotated_real);
+    //     k_head[j + HEAD_DIM / 2] = __float2bfloat16_rn(k_rotated_imag);
+    // }
 }

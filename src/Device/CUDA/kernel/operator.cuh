@@ -81,7 +81,7 @@ __global__ static void CU_RowStdDev(T* matrix, floatGama* rowStdDev, int rows, i
     float sum = 0.f, sum2 = 0.f;
     for (col = 0; col < cols; col++) {
         float a = CU_T2Float(matrix + row * cols + col);
-        sum += a,        sum2 += a * a;
+        sum += a, sum2 += a * a;
     }
     float variance = (sum2 / cols) - ((sum / cols) * (sum / cols));
     rowStdDev[row] = (floatGama)(sqrtf(variance));
@@ -94,7 +94,7 @@ __global__ static void CU_ColStdDev(T* matrix, floatGama* colStdDev, int rows, i
     float sum = 0.f, sum2 = 0.f;
     for (row = 0; row < rows; row++) {
         float a = CU_T2Float(matrix + row * cols + col);
-        sum += a,        sum2 += a * a;
+        sum += a, sum2 += a * a;
     }
     float variance = (sum2 / rows) - ((sum / rows) * (sum / rows));
     colStdDev[col] = (floatGama)(sqrtf(variance));
@@ -861,6 +861,9 @@ template <class T>
 __global__ void CU_Q22X_RTN(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int rc_normal = 0x0, int seed = 0x0);
 template <class T>
 __global__ void CU_X2ternary_(floatGama* gama, T* mat0, char* terns, int M, int N, int bpe, bool isOverwrite = false);
+
+// rope2 - add rope info to both q&k
+__global__ void CU_rope2_forward(bf16* q, bf16* k, int pos, int N_HEADS, int N_KV_HEADS, int HEAD_DIM, float ROPE_THETA);
 
 void CU_abc(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int transB = 0,
             float beta = 0.0, floatX* pre_gelu = NULL, bool backward = false);

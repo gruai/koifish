@@ -38,11 +38,11 @@ Tokenset_HellaSwag::Tokenset_HellaSwag(JSON::const_iterator jit, hTokenizer hDic
 }
 
 GlobTokenset::GlobTokenset(JSON::const_iterator jit, hTokenizer hDict, int flag) : DataTokenSet(hDict) {
-    header_bytes      = SHARD_HEADER_SIZE * sizeof(int);
+    header_bytes      = K_SHARD_HEADER_SIZE * sizeof(int);
     int num_processes = 1, process_rank = 0;
     B = hDict->config.n_batch(), T = hDict->config.n_ctx();
-    total_batch_size_bytes   = ((num_processes * (B * T)) * sizeof(uint16_t));
-    local_batch_offset_bytes = process_rank * B * T * sizeof(uint16_t);
+    total_batch_size   = num_processes * (B * T);
+    local_batch_offset = process_rank * B * T;
 
     auto k         = jit.key();
     auto v         = jit.value();
@@ -61,12 +61,12 @@ GlobTokenset::GlobTokenset(JSON::const_iterator jit, hTokenizer hDict, int flag)
     glob_t glob_result;
     int glob_status = glob(pattern.c_str(), 0, NULL, &glob_result);
     if (glob_status != 0) {
-        _INFO("%s Error: glob failed @\"%s\"\n", __func__, pattern.c_str());
-        exit(EXIT_FAILURE);
+        _ERROR("%s Error: glob failed @\"%s\"\n", __func__, pattern.c_str());
+        K_EXIT(EXIT_FAILURE);
     }
     if (glob_result.gl_pathc == 0) {
-        _INFO("%s No files found matching the pattern: %s\n", __func__, pattern.c_str());
-        exit(EXIT_FAILURE);
+        _ERROR("%s No files found matching the pattern: %s\n", __func__, pattern.c_str());
+        K_EXIT(EXIT_FAILURE);
     }
     int nFile = 0;
     /*if (isShuffle) {
@@ -123,22 +123,30 @@ bool GlobTokenset::LoadNextShard(SampLoader* hLoader, int flag) {
 // shard type != token type
 bool GlobTokenset::Shard2Sample(int flag) {
     try {
-        int szT = sizeof(uint16_t), nT = (szFile - header_bytes) / szT;
+        int nT = (szFile - header_bytes) / bpToken;
         assert(nT == nShardToks);
         // tokens.resize(nT);
-        fseekCheck(fpShard, (int)header_bytes, SEEK_SET);
-        uint16_t* tmp16 = new uint16_t[nT];
-        if (fread(tmp16, szT, nT, fpShard) != nT) {
+        fseekCheck(fpShard, (long)header_bytes, SEEK_SET);
+        hBITARR tmp = new BIT_8[nT * bpToken];  // TOKEN may 8/16/32 bit
+        if (fread(tmp, bpToken, nT, fpShard) != nT) {
             _INFO("Error: file size is not as expected\n");
             return 0x0;
-        } /*else{
-             nT = min(nT,1024);
-             for(int i=0;i<nT;i++){
-                 // assert(0<=tokens[i] && tokens[i]<nVocab);
-             }
-         }*/
-        tokens.assign(tmp16, tmp16 + nT);
-        delete[] tmp16;
+        }
+        switch (bpToken) {
+            case 2: {
+                uint16_t* tmp16 = (uint16_t*)tmp;
+                tokens.assign(tmp16, tmp16 + nT);
+            }
+            break;
+            case 4: {
+                int32_t* tmp32 = (int32_t*)tmp;
+                tokens.assign(tmp32, tmp32 + nT);
+            } break;
+            default:
+                assert(0);
+                break;
+        }
+        delete[] tmp;
         // InitSamps
         int n_ctx     = hDict->config.n_ctx(), len;
         size_t nToken = tokens.size(), nFirst = std::min((size_t)n_ctx, nToken), step = 1, n0 = shard_samps.size();
@@ -170,48 +178,48 @@ size_t GlobTokenset::OnShardFile(int id0, bool load, int flag) {
     if (id >= shard_paths.size()) {
         return -1;
     }
+    size_t expected_file_size = 0x0;
     // use the first glob match as the filename for now
     const char* filename = shard_paths[id].c_str();
     assert(fpShard == NULL);
     fpShard = fopenCheck(filename, "rb");
     // validate the header
-    int header[SHARD_HEADER_SIZE];
-    freadCheck(header, sizeof(int), SHARD_HEADER_SIZE, fpShard);
-    if (header[0] != 20240520 && header[0] != 20240522) {
-        printf(
-            "Bad magic in the data file\n---> HINT: Are you passing in a correct file?\n---> HINT: The data encoding may have changed, re-run data prepro "
-            "or refer again to README.\n");
-        exit(EXIT_FAILURE);
-    }
+    uint32_t header[K_SHARD_HEADER_SIZE];
+    freadCheck(header, sizeof(int), K_SHARD_HEADER_SIZE, fpShard);
     if (header[1] != 1) {
-        printf("Bad version in data file\n");
-        exit(EXIT_FAILURE);
+        _ERROR("Bad version<%d> of data file\n", header[1]);
+        K_EXIT(KOIFISH_LOAD_TOKENFILE_HEADER);
     }
     fseekCheck(fpShard, 0, SEEK_END);  // seek to end of file
     szFile     = ftell(fpShard);       // read the offset, i.e. file size
     nShardToks = 0;
+    bpToken    = -1;
     switch (header[0]) {  //
         case 20240522:    //  hellaswag dataset
             tpSample = HellaSwag;
+            bpToken  = 2;
             // int nMostCompletion =4,can_fit_examples = (int) (B / nMostCompletion);
             longest_example_bytes = header[3];
             nShardSamples         = header[2];
             nShardToks            = B * T;
             // label = (int*)mallocCheck(can_fit_examples * sizeof(int));
             break;
-        default:  //  20240520
+        case 20240520:  //
+        case 20250520:  // qwen2.5:
             nShardToks = header[2];
             assert(nShardToks > 0);
-            // fseekCheck(fpShard, 0, SEEK_SET); // seek back to the beginning
-            // we expect nTok0 in the file to be consistent with filesize, assert that is the case
-            int64_t expected_file_size = SHARD_HEADER_SIZE * sizeof(int) + nShardToks * sizeof(uint16_t);
+            bpToken            = header[0] == 20240520 ? 2 : header[3];
+            expected_file_size = K_SHARD_HEADER_SIZE * sizeof(int) + nShardToks * bpToken;
             if (szFile != expected_file_size) {
-                printf("Error: file size is not as expected\n");
-                exit(EXIT_FAILURE);
+                _ERROR("file size(%ld) is not as expected(%ld) @%s\n", expected_file_size, szFile, filename);
+                K_EXIT(EXIT_FAILURE);
             }
-            nShardSamples = (nShardToks * sizeof(uint16_t) - sizeof(uint16_t)) /
-                            total_batch_size_bytes;  // -1 uint16_t due to us taking B*T+1 tokens but moving by B*T tokens
-
+            // -1  due to us taking B*T+1 tokens but moving by B*T tokens
+            nShardSamples = (nShardToks - 1) / total_batch_size;
+            break;
+        default:
+            _ERROR("Bad magic<%d> in the data file @\"%s\"\n", header[0], filename);
+            K_EXIT(KOIFISH_LOAD_TOKENFILE_HEADER);
             break;
     }
     if (load) {
@@ -221,7 +229,7 @@ size_t GlobTokenset::OnShardFile(int id0, bool load, int flag) {
     if (tpSample == RANDOM_GENERATE) {
         /*
         if(load){
-            int szT=sizeof(uint16_t),nT = (file_size_bytes-header_bytes)/szT;
+            int nT = (file_size_bytes-header_bytes)/bpToken;
             assert(nT==nTok0);
             tokens.resize(nT);
             fseekCheck(fpShard, (int) header_bytes, SEEK_SET);
@@ -342,7 +350,7 @@ bool Tokenset_HellaSwag::Shard2Sample(int flag) {
         int num_batches = CEIL_DIV(examples_per_process, can_fit_examples), id;
         // now seek through the file to the start of that example
         // utilize <EXAMPLE_BYTES> for efficiency
-        size_t header_bytes = SHARD_HEADER_SIZE * sizeof(int), sz = header_bytes;
+        size_t header_bytes = K_SHARD_HEADER_SIZE * sizeof(int), sz = header_bytes;
         uint16_t example_header[3];  //<START_EXAMPLE>, <EXAMPLE_BYTES>, <EXAMPLE_INDEX>
         fseekCheck(fpShard, (int)header_bytes, SEEK_SET);
         for (id = start_example_index; id < end_example_index; id++) {
@@ -452,7 +460,7 @@ double SampLoader::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
     SUM::tEval_1 = (GST_ms() - tic) / 1.0e3;
     if (!hFish->isLocalInfer)
         UpdateStepInfos(iiLoss.average, nB);
-        
+
     switch (tpBatch) {
         case BATCHofEMBED:
             nMost = 1;

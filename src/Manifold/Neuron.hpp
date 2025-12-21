@@ -130,7 +130,7 @@ class GeNeuron {
 
     // w is the 道 of neuron.   道者,千变万化之动(wLORAs)
     hGensor w = nullptr;
-    ;
+
     arrLORA wLORAs;  // LORA of w
     LORA_ADAPT_W tpLORA = LORA_ADAPT_W::W0;
 
@@ -295,10 +295,12 @@ struct Ganglia : public SparseNeuron {
     hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag = 0x0) override { return cur; }
 };
 
+class SelfAttention;
 class ROPE : public SparseNeuron {
    protected:
-    void *devQ = nullptr, *devK = nullptr, *devDeltaQ = nullptr, *devDeltaK = nullptr;
-    int n_rot = 0, n_ctx_orig = 0, head_dim = 0, q_dim = 0, kv_dim = 0, r_dim = 0;
+    //  may different with qkv in hQKV
+    // void *devQ = nullptr, *devK = nullptr, *devDeltaQ = nullptr, *devDeltaK = nullptr;
+    int n_rot = 0, n_ctx_orig = 0, head_dim = 0, q_dim = 0, kv_dim = 0, n_head = 0, n_head_kv = 0, r_dim = 0;
     hGensor KQ_pos, hSin = nullptr, hCos = nullptr;
     float f_norm_rms_eps, freq_base, freq_scale, theta;
     MODEL_CARD::tpROPE alg;
@@ -310,7 +312,8 @@ class ROPE : public SparseNeuron {
     ROPE(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
     bool Build(int flag) override;
     hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag = 0x0) override;
-    int cuFlow(LayerNormal* normQ, LayerNormal* normK, uint32_t seed, bool isFX = true, int flag = 0x0);
+    int cuFlow(SelfAttention* hQKV, uint32_t seed, bool isFX = true, int flag = 0x0);
+    hGTensor cuInfer(SelfAttention* hQKV, uint32_t seed, int pos, int flag = 0x0);
     bool isValid() override { return true; }
     bool Empty() const override;
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
@@ -442,6 +445,9 @@ class SelfAttention : public SparseNeuron {
     //  tensor format={'SBhd', 'BShd', 'thd'}, default = 'BShd',   t=B*S
     void *devQ = nullptr, *devK = nullptr, *devV = nullptr, *devDeltaQ = nullptr, *devDeltaK = nullptr, *devDeltaV = nullptr;
     hGensor deltaQ = nullptr, deltaK = nullptr, deltaV = nullptr;  // wrap of devDeltaQ,devDeltaK,devDeltaV
+    // set dev_ptr of Q/K/V in different case
+    virtual bool _devQKV(int stage, int flag = 0x0);
+
     // markov transition matrix from KQ
     enum TRANSITION_MODE {
         T_SOFT_MAX = 0,
@@ -518,6 +524,8 @@ class SelfAttention : public SparseNeuron {
 
     hGTensor cuFlow(hGTensor inpL, int flag);
     hGTensor cuInfer(hGTensor inpL, int flag);
+
+    friend class ROPE;
 };
 
 /*

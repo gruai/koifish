@@ -33,11 +33,11 @@ def CheckResult(df,iter,golden,title="",rel_tol=1e-05):
     assert math.isclose(a,golden,rel_tol=rel_tol, abs_tol=0.0) 
 
 def test_chat_qwen3_0_6B():  
-    content = bubble_one("chat_qwen3_0.6b","./cases/qwen3/qwen3_0.6B.json")  
+    content = bubble_one("chat_qwen3_0.6b","--tokenizer ./assets/tokenizer_151936.bin --hf ./Models/Qwen3-0.6B/ --prompts \"hello\"")  #./cases/qwen3/qwen3_0.6B.json
     assert "Hello! How can I assist you today?" in content
 
 def test_chat_qwen3_4B():    
-    content = bubble_one("chat_qwen3_4B","./cases/qwen3/qwen3_4B.json")  
+    content = bubble_one("chat_qwen3_4B","--tokenizer ./assets/tokenizer_151936.bin --hf ./Models/Qwen3-4B/ --prompts \"Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?\"")  #  "./cases/qwen3/qwen3_4B.json"
     assert "Answer: 1" in content or "Answer:1" in content or "answer:1" in content  # "Answer: 1"   "✅ Final Answer:1 ✅"  "Answer: 1 ✅"  "✅Answer: 1"
     # assert content=="Hello! How can I assist you today? 😊\n" or content=="Hello! It seems there was a small glitch. 😊 How can I assist you today?\n"
 
@@ -115,7 +115,8 @@ if __name__ == '__main__':
     #test_gpt2_774M()
 
     # test_chat_qwen3_0_6B()  
-    xtest_batch_qwen3_4B()
+    test_chat_qwen3_4B()
+    # xtest_batch_qwen3_4B()
 
     # test_pp_gpt2()
     # test_gpt2_124M()

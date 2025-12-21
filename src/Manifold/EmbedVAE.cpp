@@ -105,7 +105,7 @@ bool TokenEmbed::Build(int flag) {
     }
 
     // QUANT_CARD quant_params = hFish->config.quant;
-    quant_params.Init(name, hFish->config.jQuant);
+    quant_params.Init4Neuron(name, hFish->config.jQuant);
     quant_params.spMost = w->shape;
     hQuant              = GeQuant::MakeInstance(this, name, quant_params, {w}, 0x0);  //  {Q.w,proj_cat.w}
     // hFish->InitGensor(ctx,name+".batch",out,false);
@@ -344,14 +344,14 @@ bool VarCoder::Build(int flag_0) {
 
     if (tpNorm > 0)
         norm.BuildX(_NAME(name, FFN_PRE_NORMAL), {nBottom}, hFish, flag_0 | F_DELTA);  // name + ".norm",
-    if (hFish->isModel({NLP_QWEN2})) {
-        up.BuildX(name + ".w1", {nBottom, nTop}, hFish, flagSLP);
-        gate.BuildX(name + ".w3", {nBottom, nTop}, hFish, flagSLP);
-        down.BuildX(name + ".w2", {nTop, nBottom}, hFish, flagSLP);
-    } else if (hFish->isModel({NLP_QWEN3})) {
-        up.BuildX(_NAME(name, FFN_UP), {nBottom, nTop}, hFish, flagSLP);      //  name + ".up_proj"
-        gate.BuildX(_NAME(name, FFN_GATE), {nBottom, nTop}, hFish, flagSLP);  //  name + ".gate_proj"
-        down.BuildX(_NAME(name, FFN_DOWN), {nTop, nBottom}, hFish, flagSLP);  //  name + ".down_proj"
+    if (hFish->isModel({NLP_QWEN2}) || hFish->isModel({NLP_QWEN3})) {
+        // qwen 2.5 same as qwen 3.0!
+        // up.BuildX(name + ".w1", {nBottom, nTop}, hFish, flagSLP);
+        // gate.BuildX(name + ".w3", {nBottom, nTop}, hFish, flagSLP);
+        // down.BuildX(name + ".w2", {nTop, nBottom}, hFish, flagSLP);
+        up.BuildX(_NAME(name, FFN_UP), {nBottom, nTop}, hFish, flagSLP);      
+        gate.BuildX(_NAME(name, FFN_GATE), {nBottom, nTop}, hFish, flagSLP);  
+        down.BuildX(_NAME(name, FFN_DOWN), {nTop, nBottom}, hFish, flagSLP);  
     } else {
         down.BuildX(name + "_down", {nTop, nBottom}, hFish, flagSLP);
         up.BuildX(name + "_up", {nBottom, nTop}, hFish, flagSLP);
@@ -426,10 +426,9 @@ bool FFN::Build(int flag_0) {
         // down.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);       //  down.Back(GTensor::bt4c, tGelu, GTensor::delta, up_out);
     }
 
-    quant_params.Init(name, hFish->config.jQuant);
+    quant_params.Init4Neuron(name, hFish->config.jQuant);
     if (layid > quant_params.nPassLayer) {
         quant_params.spMost = up.w->shape;
-        // quant_params.default_bits = layid > 32 ? 3 : 4;
         hQuant              = GeQuant::MakeInstance(this, name + "_quant", quant_params, {up.w, down.w, gate.w}, 0x0);  //  {up.w, down.w, gate.w}, down.w, gate.w
     }
 

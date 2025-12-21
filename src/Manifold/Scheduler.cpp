@@ -163,7 +163,7 @@ void GeNeuron::ManageMemory(DATA_PLACE target, int typ, int flag) {
     if (hFish->isRemater()) {
         stage = "Remater";
     }
-    INIT_WEIGHT tpInitWeight = hFish->tpInitWeight;
+    INIT_WEIGHT tpInitWeight = hFish-> config.model.tpInitWeight;
     assert(out != nullptr);
     vector arrT = PickGensors();
     // size_t dev_mem = 0x0,host_mem = 0x0;

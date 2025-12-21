@@ -24,21 +24,18 @@ int main(int argc, char **argv) {
     try {
 #ifdef _WIN32
         system("chcp 65001");  // Ensures that Unicode characters (Chinese, emojis, etc.) are displayed correctly in the console output.
-#endif
-        
-        string sEXE = EXE_name(), sExt = argc > 1 ? FILE_EXT(argv[1]) : "";
+#endif        
+
         CLI_params params;
         if (!params.parse(argc, argv)) {
             return -1;
         }
-        
-        params.OnArch();
 
         hFISH fish = nullptr;
         if (params.n_swarm > 1) {
             fish = Fish::MakeSwarm("Fish_", params, 0x0);
         } else {
-            params.common.n_gpu_layers = 40;
+            // params.common.n_gpu_layers = 40;
             vector<hWIKI> wikis        = WIKI::MakeInstance("", params, 0x0);
             if (wikis.size() == 0) {
                 // _INFO("====== NO WIKI !!! ======\n");       return;
@@ -53,15 +50,15 @@ int main(int argc, char **argv) {
         // CHECK_LAST_CUDA_ERROR();
         return 0x0;
     } catch (const std::exception &e) {
-        _INFO("%s", e.what());
+        _ERROR("%s", e.what());
         fflush(stdout);
         return -1000;
     } catch (const char *info) {
-        _INFO("%s", info);
+        _ERROR("%s", info);
         fflush(stdout);
         return -1001;
     } catch (...) {
-        _INFO("\r\n%s  Unknown exception !!!", __func__);
+        _ERROR("\r\n%s  Unknown exception !!!", __func__);
         fflush(stdout);
         return -2001;
     }

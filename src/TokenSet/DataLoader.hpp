@@ -23,8 +23,8 @@ using namespace std;
 #include <glob.h>
 #endif
 // ----------------------------------------------------------------------------
-// Distributed Data Loader
-#define SHARD_HEADER_SIZE 256
+// The head of preTokenFile by koifish is always 256 int(1024 byte)!
+#define K_SHARD_HEADER_SIZE 256
 
 class WIKI;
 class Fish;
@@ -110,7 +110,6 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
     hDataToken hTokens = nullptr;
     hTokenizer hDict   = nullptr;
 
-    bool isNeedBOS = true;
     bool sample_separation_eos, sample_separation_bos;
     bool isTarget_1 = false;
     bool isRecycle = true, isLast = false;

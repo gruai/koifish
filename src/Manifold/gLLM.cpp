@@ -490,16 +490,13 @@ bool Fish::InitDictTokenset(int flag) {
             hDict->eos_id = 100001;
             break;
         case MODEL_ARCH::NLP_QWEN2:
-            hDict = std::make_shared<GTokenizer>(this);
+            hDict = std::make_shared<GTokenizer_QWEN3>(this);
             hDict->vocab.resize(151936);
-            hDict->bos_id = 151643;
-            hDict->eos_id = 151645;
             break;
         case MODEL_ARCH::NLP_QWEN3:
             hDict = std::make_shared<GTokenizer_QWEN3>(this);
             hDict->vocab.resize(151936);
-            hDict->bos_id = 151643;
-            hDict->eos_id = 151645;
+            // hDict->bos_id = 151643, hDict->eos_id = 151645;
             break;
         default:
             // hDictVAE = std::make_shared<DictVAE>(this);
@@ -604,7 +601,7 @@ void Fish::UpdateTernary(int flag) {
         // t->DumpX(0x0);
     }
     double bpp = nzBit * 1.0 / nzP;  // bit per parameter
-    _INFO("\n%s bit_per_parameter=%.4g szGama=%d TILEQ=(%d,%d) pQuant=%s tensor=%d(%.3g%%) \n", bit_tensors.empty() ? "[NO_QUANT]" : "[BIT_QUANT]", bpp,
+    _INFO("\n%s bit_per_parameter=%.4g szGama=%d TILEQ=(%d,%d) pQuant=%s tensor=%d(%.3g%%) \n", bit_tensors.empty() ? "[NO_bitQUANT]" : "[BIT_QUANT]", bpp,
           sizeof(floatGama), THREAD_TILE_M, THREAD_TILE_N, "W_SCALE", nTernary, nzT * 100.0f / nParams);
     if (!bit_tensors.empty()) {
         _INFO("\t@{%s}\n", bit_tensors.c_str());
@@ -751,16 +748,16 @@ void NLP_AutoRegressive::Dump(int type, int flag) {
     if (config.lars_ratio > 0)
         _INFO("\t LARS(t_max=%g)\n", config.lars_ratio);
 
+    _INFO("====== Params Table ======\n");
+    for (auto t : optParams) {
+        t->DumpX(0x0);
+    }
     switch (type) {
         case KOIFISH_OUTOF_GPUMEMORY:
             SUM::MemoryInfo(type);
             break;
         default:
             break;
-    }
-    _INFO("====== Params Table ======\n");
-    for (auto t : optParams) {
-        t->DumpX(0x0);
     }
     fflush(stdout);
 }

@@ -21,7 +21,7 @@ std::string SUM::GPU_Info(int flag) {
 }
 
 size_t EDGE_DEVICES::AfterBuild(hTGraph hTG, void* ctx, int flag) {
-    INIT_WEIGHT tpInitWeight = hTG->hFish->tpInitWeight;
+    INIT_WEIGHT tpInitWeight = hTG->hFish->config.model.tpInitWeight;
     if (hRLS != nullptr) {
         std::vector<hGensor> tInMaps;
         for (auto gt : hRLS->tMaps) {

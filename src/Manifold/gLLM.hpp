@@ -304,8 +304,10 @@ class QWen : public NLP_AutoRegressive {
 
         NLP_AutoRegressive::InitModel(flag);
     }
+    std::string NN2NAME(const std::string& prefix, tpNEURON4NAME neron, const std::string &suffix="", int flag = 0x0) override;
 };
 
+// also support QWen2.5 model
 class QWen3 : public QWen {
    protected:
    public:
@@ -318,7 +320,7 @@ class QWen3 : public QWen {
 
         NLP_AutoRegressive::InitModel(flag);
     }
-    std::string NN2NAME(const std::string& prefix, tpNEURON4NAME neron, const std::string &suffix="", int flag = 0x0) override;
+    
 };
 
 struct TinyLama : public NLP_AutoRegressive {};

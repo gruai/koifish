@@ -8,23 +8,29 @@
  *  \author Yingshi Chen
  */
 
- /*
-    The Qwen3-0.6B 
-        1. GQA: QKV projections are all configured with a bias=False parameter, meaning they do not use a bias term. 
- */
+/*
+   The Qwen3-0.6B
+       1. GQA: QKV projections are all configured with a bias=False parameter, meaning they do not use a bias term.
+*/
 #include "../Manifold/gLLM.hpp"
-QWen::QWen(const std::string &nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
+QWen::QWen(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
     assert(arch == MODEL_ARCH::NLP_QWEN2 || arch == MODEL_ARCH::NLP_QWEN3);
     config.model.isSLPBias    = false;
     config.model.isNormalBias = false;
 }
-QWen3::QWen3(const std::string &nam_, struct CLI_params params, ROLE_TYPE role, int flag) : QWen(nam_, params, role, flag) {
-    assert(arch == MODEL_ARCH::NLP_QWEN3);
+QWen3::QWen3(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : QWen(nam_, params, role, flag) {
+    // also support QWen2.5 model
+    assert(arch == MODEL_ARCH::NLP_QWEN3 || arch == MODEL_ARCH::NLP_QWEN2);
     config.model.isSLPBias    = false;
+    config.model.isQKVBias    = false;
+    if(arch == MODEL_ARCH::NLP_QWEN2){
+        config.model.isQKVBias    = true;
+        config.model.isBqkv    = false;
+    }
     config.model.isNormalBias = false;
 }
 
-std::string Fish::NN2NAME(const std::string &prefix, tpNEURON4NAME neuron, const std::string &suffix, int flag) {
+std::string Fish::NN2NAME(const std::string& prefix, tpNEURON4NAME neuron, const std::string& suffix, int flag) {
     switch (neuron) {
         case ATTN_PRE_NORMAL:
             return arch == NLP_GPT2 ? prefix + "_norm" : prefix + ".norm";
@@ -56,7 +62,7 @@ std::string Fish::NN2NAME(const std::string &prefix, tpNEURON4NAME neuron, const
     return "";
 }
 
-std::string QWen3::NN2NAME(const std::string &prefix, tpNEURON4NAME neuron, const std::string &suffix, int flag) {
+std::string QWen::NN2NAME(const std::string& prefix, tpNEURON4NAME neuron, const std::string& suffix, int flag) {
     size_t pos   = 0x0;
     string tName = "";
     switch (neuron) {

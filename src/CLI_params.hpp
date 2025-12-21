@@ -176,7 +176,7 @@ struct Fuyou_params {
 };
 
 enum tpNEURON4NAME { ATTN_PRE_NORMAL, ATTN_Q_NORM, ATTN_K_NORM, ATTN_Q, ATTN_K, ATTN_V, ATTN_OUT, FFN_PRE_NORMAL, FFN_UP, FFN_DOWN, FFN_GATE, LN_RSTD };
-
+enum INIT_WEIGHT { W_SKIP = 0X0, FIX_1, RANDOM, GAUSSIAN_NORMAL, COPY_WIKI, COPY_SWARM_HEAD, SERIALIZE };
 /**
  * should have config.json,tokenizer.json & tokenizer_config.json
  * generation_config.json
@@ -184,21 +184,21 @@ enum tpNEURON4NAME { ATTN_PRE_NORMAL, ATTN_Q_NORM, ATTN_K_NORM, ATTN_Q, ATTN_K, 
  */
 class MODEL_CARD {
    protected:
+    /*
+        void* wq[MAX_LAYERS]; // (n_heads * head_dim, dim)
+        void* wk[MAX_LAYERS]; // (n_kv_heads * head_dim, dim)
+        void* wv[MAX_LAYERS]; // (n_kv_heads * head_dim, dim)
+        void* wo[MAX_LAYERS]; // (dim, n_heads * head_dim)
+        // weights for ffn
+        void* w1[MAX_LAYERS]; // (n_experts?, ff, dim)
+        void* w2[MAX_LAYERS]; // (n_experts?, dim, ff)
+        void* w3[MAX_LAYERS]; // (n_experts?, ff, dim)
+        // biases for qkv (qwen)
+        float* bqkv[MAX_LAYERS]; // ((n_heads + n_kv_heads * 2) * head_dim)
+        // moe gate weights (mixtral)
+        void* moegate[MAX_LAYERS]; // (n_experts, dim)
+    */
     struct LAY_PARAM {
-        /*
-            void* wq[MAX_LAYERS]; // (n_heads * head_dim, dim)
-            void* wk[MAX_LAYERS]; // (n_kv_heads * head_dim, dim)
-            void* wv[MAX_LAYERS]; // (n_kv_heads * head_dim, dim)
-            void* wo[MAX_LAYERS]; // (dim, n_heads * head_dim)
-            // weights for ffn
-            void* w1[MAX_LAYERS]; // (n_experts?, ff, dim)
-            void* w2[MAX_LAYERS]; // (n_experts?, dim, ff)
-            void* w3[MAX_LAYERS]; // (n_experts?, ff, dim)
-            // biases for qkv (qwen)
-            float* bqkv[MAX_LAYERS]; // ((n_heads + n_kv_heads * 2) * head_dim)
-            // moe gate weights (mixtral)
-            void* moegate[MAX_LAYERS]; // (n_experts, dim)
-         */
         uint32_t _head, _kv_head, _head_dim;
         uint32_t ff;
         LAY_PARAM(uint32_t h, uint32_t k, uint32_t hd, uint32_t f) : _head(h), _kv_head(k), _head_dim(hd), ff(f) { assert(h > 0 && k > 0 && f > 0 && hd > 0); }
@@ -231,8 +231,7 @@ class MODEL_CARD {
     std::vector<LAY_PARAM> layerps;
 
    public:
-    static std::string sWeight, sBias, sLayer, sEmbed, sInvEmbed;  // sNorm,, sAttnOut
-    // static std::string sWq, sWq_norm, sWk, sWk_norm, sWv, sWv_norm;
+    static std::string sWeight, sBias, sLayer, sEmbed, sInvEmbed, sQzeros, sQscale;
     bool enable_thinking = false;
     bool isSparse() { return sparse.method != 0; }
     struct Sparsing {
@@ -242,6 +241,7 @@ class MODEL_CARD {
     Sparsing sparse;
     // MODEL_ENSEMBLE ensemble = Fuyou_params::FUYOU_BEST;
     ACTIVATION_FUNC fActFFN = SWIG, fActSLP = SWIG;
+    INIT_WEIGHT tpInitWeight = INIT_WEIGHT::RANDOM;
 
     std::string sCardPath = "", sTokenJsonPath = "", sTokenBinPath = "";
     std::string sArch, torch_dtype, transformers_version, model_type;
@@ -262,6 +262,7 @@ class MODEL_CARD {
     int preLogits_dB     = 2;  // epsilon for convergence test
     bool isNormalBias    = true;
     bool isSLPBias       = true;
+    bool isQKVBias       = true;
     bool isPaddedCls     = false;
     bool isFFNShareParam = false;
 
@@ -304,7 +305,7 @@ class MODEL_CARD {
     // more param from HF's "model_card"
     virtual bool InitHugFace(CLI_params* hConfig, const JSON& jConfig, const std::string& sCardPath, int flag = 0x0);
     virtual bool InitChatTemplate(CLI_params* hConfig, int flag = 0x0);
-    bool empty() { return sCardPath.empty(); }
+    bool isLoadCard() { return !sCardPath.empty(); }
     void Dump(int typ);
 
     friend class CLI_params;
@@ -320,10 +321,13 @@ enum EVICTION_MODE {
  */
 enum QUANT_MODE {
     NO_QUANT,
+    PRE_QUANT,
     RTN,  //  Round-to-Nearest
     RTNf,
     MINI,  // Minimise impurity
     F8Ex,
+
+    AWQ,
 
     KV_JL,     //  Johnson-Lindenstrauss (JL) transform
     KV_AQUA,   //  https://arxiv.org/pdf/2501.19392
@@ -340,12 +344,13 @@ enum QUANT_ALG {
 };
 struct QUANT_CARD {
     int default_bits = 4;
-    int nPassLayer   = 1;  // fist layer is hard to quant
+    int nPassLayer   = 0;  // fist layer is hard to quant
     float T_errQ     = 0.3;
     int T_group = 512, T_group_batch = 8;
     SHAPE spMost;
     std::string sX = "";
 
+    bool isPreQuant    = false;
     bool isNormalFloat = true;  //  each bin under a normal distribution N(0,1) contains equal probability mass
     bool isSymmetric   = false;
 
@@ -355,13 +360,14 @@ struct QUANT_CARD {
     // dynamic & adpative, only set type at runtime
     QUANT_MODE type = NO_QUANT;
 
-    QUANT_CARD()    {}
-    virtual void Init(const std::string& name, const JSON& jQuant, int flag = 0);
+    QUANT_CARD() {}
+    virtual void InitFromVendor(const JSON& jVendor, int flag = 0x0);
+    virtual void Init4Neuron(const std::string& name, const JSON& jQuant, int flag = 0);
 
+    virtual bool isPass() const { return type == NO_QUANT; }
     // std::vector<std::string> filter_KVcache;
-    // std::vector<std::string> filter_MIQ;
-    // std::vector<std::string> filter_WeightF8Ex;
 
+    virtual JSON ToJSON(int flag = 0x0);
     virtual bool isValid() const;
     void Dump(int typ);
     std::size_t Hash(const QUANT_CARD& params, const std::type_info& ti, const std::string& desc) const;
@@ -491,17 +497,22 @@ struct DEUG_SWITCH {
     int SelfAttention_noraml = 1;
     bool NO_loss             = false;
     bool check_tensor_norm   = false;
-    int T_ternary            = 0;
-    int algCuX2              = 0;
 
-    int dict_latent_dim       = -1;
-    int graph_dump            = 0;  //  10 levels of dumps, 0-9. 0 is a full dump_,The lower the number the more dump_.
-    int train_hyperparams     = 0;
-    int train_datas           = 0;
-    int back_graph_version    = 0;
-    int verCuda               = 0;
-    int verInferQKV           = 1;
-    int verInferFFN           = 1;
+    int test_quant = 0;
+
+    int dict_latent_dim    = -1;
+    int graph_dump         = 0;  //  10 levels of dumps, 0-9. 0 is a full dump_,The lower the number the more dump_.
+    int train_hyperparams  = 0;
+    int train_datas        = 0;
+    int back_graph_version = 0;
+    int verCuda            = 0;
+    int verInferQKV        = 1;
+    int verInferFFN        = 1;
+    int verCuX2            = 0;
+    int verShuffleSamp     = 0;
+    int verSampJump        = 0;
+
+    int T_ternary             = 0;
     int T_classifier_ver      = 0;
     int T_cpu                 = 0;
     int T_GEMM                = -1;
@@ -639,8 +650,8 @@ struct CLI_params {
     bool isShareLayerOut() const;
     std::string jsPath = "";
     JSON jConfig;
-    nlohmann::ordered_json jModel;        
-    JSON jQuant;
+    nlohmann::ordered_json jModel;
+    JSON jQuant, jVendorQuant;
 
     MODEL_ARCH ModelArch();
     virtual void OnArch();

@@ -133,8 +133,12 @@ bool Fuyou::Serialize(bool isSave, int flag) {
 
 using namespace safetensors;
 
+/*
+    Called by SAFETENSOR_Serialize
+*/
 bool safetensors::save_to_ofs(const safetensors_t& st, std::ofstream& ofs, size_t& szAll, std::string* warn, std::string* err, int flag) {
     bool isInitMMap = BIT_TEST(flag, FSerial::INIT_MMAP);
+    bool isCopyMMap = BIT_TEST(flag, FSerial::COPY_MMAP);
     try {
         fflush(stdout);
         // _INFO(">>>>>> saveto_ofs ......\n");
@@ -264,12 +268,16 @@ bool safetensors::save_to_ofs(const safetensors_t& st, std::ofstream& ofs, size_
                     GTensor* t = (GTensor*)(tensor.hUserData);
                     sz         = tensor.data_offsets[1] - dst_offset;  // t->nByte() * 3;
                     assert(sz == t->nByte() || sz == t->nByte() * 3);
-                    char* tmp = new char[sz]();
+                    hBITARR tmp = new BIT_8[sz]();
                     if (t->GetDataX() == nullptr) {
                         if (isInitMMap) {
                             nInit++;
+                        } else if (isCopyMMap) {
+                            assert(t->host_data != nullptr);
+                            SAFE_read_mmap(tmp, (hBITARR)(t->host_data), t->nByte());
+                            t->tpInit = INIT_WEIGHT::SERIALIZE;
                         } else {
-                            _INFO("[ST_SERIALIZE] \"%s\" is empty!\n", t->name);
+                            _ERROR("[ST_SERIALIZE] \"%s\" is empty!\n", t->name);
                             return false;
                         }
                         // memset(databuffer_size + dst_offset, 0x0, sz);
@@ -312,6 +320,28 @@ void CheckPoint_Params::Init(int flag) {
     }
 }
 
+void HST2JSON(safetensors::safetensors_t* hst, int flag = 0x0) {
+    JSON jSafeTensors;
+    for (size_t i = 0; i < hst->tensors.size(); i++) {
+        std::string key = hst->tensors.keys()[i];
+        safetensors::tensor_t tensor;
+        hst->tensors.at(i, &tensor);
+        if (key == safetensors::safetensors_t::config_key_) {
+            continue;
+        }
+        JSON jdesc    = tensor.jDesc();
+        jdesc["name"] = key;
+        jSafeTensors.push_back(jdesc);
+    }
+    assert(!jSafeTensors.empty());
+    std::ofstream file("_safetensors_.json");
+    if (file.is_open()) {
+        file << jSafeTensors.dump(4);
+        file.close();
+    }
+    return;
+}
+
 int Fish::SAFETENSOR2Gensors(const std::string& path, safetensors::safetensors_t* hst, int flag) {
     int nSerialT = 0;
     hst->Clear();
@@ -325,7 +355,7 @@ int Fish::SAFETENSOR2Gensors(const std::string& path, safetensors::safetensors_t
         assert(0);
         // databuffer = safeTensors.storage.data();
     }
-
+    HST2JSON(hst, flag);
     // Print Tensor info & value.
     for (size_t i = 0; i < hst->tensors.size(); i++) {
         std::string key = hst->tensors.keys()[i];
@@ -339,9 +369,7 @@ int Fish::SAFETENSOR2Gensors(const std::string& path, safetensors::safetensors_t
 
         if (G_Has_(key, config.model.skip_st))
             continue;
-        if (G_Has_(key, {"model.layers.19.mlp.down_proj.weight"})) {  // model.embed_tokens.weight
-            DEBUG_HERE;
-        }
+
         hGensor target = GetGensor(key);  //  "model.embed.weight"    model.layers.0.attn_norm.weight
         if (target == nullptr) {
             _ERROR("\t[SERIAL] Failed @%s!\n", key.c_str());
@@ -351,6 +379,10 @@ int Fish::SAFETENSOR2Gensors(const std::string& path, safetensors::safetensors_t
         JSON jdesc = tensor.jDesc();
         if (target->SerialJSON(key, jdesc, (void*)databuffer, hst->mmap_size) != 0) {
             return false;
+        }
+        if (G_Has_(key, {"model.embed_tokens.weight"})) {  // model.embed_tokens.weight
+            DEBUG_HERE;
+            // target->Print("wte@ST", 4, -1);
         }
 
         if (DUMP() || config.dumpSwitch.tensor_load > 0) {
@@ -367,6 +399,10 @@ int Fish::SAFETENSOR2Gensors(const std::string& path, safetensors::safetensors_t
     return nSerialT;
 }
 
+/*
+    Save
+        call safetensors::save_to_file
+*/
 bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
     double t0   = GST_ms();
     string path = ckp.FullPath(isSave), jPath = path + ".json";
@@ -378,7 +414,6 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
     size_t data_offset_base = 0, nInit = 0, szOFS = 0;
     std::string warn, err;
     JSON jsConfig;
-    bool isInitMMap           = BIT_TEST(flag, FSerial::INIT_MMAP);
     vector<hGensor> curParams = optParams;
     safetensors::safetensors_t st, *hst = (safetensors::safetensors_t*)(ckp.hUserData);
     switch (ckp.type) {
@@ -407,16 +442,17 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
             hst->Clear();
             size_t dst_offset = 0;
             for (auto t : curParams) {
-                std::vector<floatX> weight;
-                // size_t dst_offset = safeTensors.storage.size();
+                if (G_Has_(t->name, {"model.embed_tokens.weight"})) {  // model.embed_tokens.weight
+                    DEBUG_HERE;
+                    // t->Print("wte@save", 4, -1);
+                }
+
                 size_t sz = t->nByte();  // expand
                 if (ckp.type == CheckPoint_Params::STATE)
                     sz *= 3;
                 assert(sz > 0);
                 safetensors::tensor_t tensor;
-                tensor.dtype           = t->type == typNUMBER::F32   ? typNUMBER::F32
-                                         : t->type == typNUMBER::F16 ? typNUMBER::F16
-                                                                     : typNUMBER::BF16;
+                tensor.dtype           = t->type == typNUMBER::F32 ? typNUMBER::F32 : t->type == typNUMBER::F16 ? typNUMBER::F16 : typNUMBER::BF16;
                 tensor.hUserData       = t.get();
                 tensor.data_offsets[0] = dst_offset;
                 tensor.data_offsets[1] = dst_offset + sz;
@@ -513,10 +549,18 @@ bool Fish::HF_Serialize(bool isSave, int flag) {
         return false;
 
     int nSerialT = 0;
+    std::vector<safetensors::safetensors_t*> st_mmfs;
     for (auto path : paths) {
-        safetensors::safetensors_t st, *hst = &st;
+        safetensors::safetensors_t* hst = new safetensors::safetensors_t();
+        st_mmfs.push_back(hst);
         nSerialT += SAFETENSOR2Gensors(path, hst, 0x0);
     }
+    if (isTrain()) {  // otherwise, st would release mmap memory!
+        SaveTrain(config.state, true, FSerial::COPY_MMAP);
+    }
+    for(auto hst : st_mmfs)// release all mmf resource 
+        delete hst;
+        
     if (!config.model.st_map.empty()) {  //  "model.safetensors.index.json"
         assert(nSerialT == config.model.st_map.size());
         for (auto kv : config.model.st_map) {
@@ -525,105 +569,24 @@ bool Fish::HF_Serialize(bool isSave, int flag) {
             kv.second = target->data;
         }
     }
-    _INFO(">>>>>> HF_Serialize load@\"%s\" nSerialT=%d iter=%d\n", config.model.sCardPath.c_str(), nSerialT, flag);
+    _LOG(nSerialT == 0 ? DUMP_ERROR : DUMP_INFO, ">>>>>> HF_Serialize load@\"%s\" nSerialT=%d iter=%d\n", config.model.sCardPath.c_str(), nSerialT, flag);
     // if(!config.quant.filter_MIQ.empty())
     //     throw SafeExit("", KOIFISH_EXIT_DEBUG, SafeExit::ExitReason::SYSTEM_FAILURE, __func__);
     for (auto t : optParams) {
         assert(!BIT_TEST(t->flags, GTensor::F_MMAP));
-        assert(t->host_data == nullptr);
+        if (!isTrain()) {
+            assert(t->host_data == nullptr);
+        }
+
+        // assert(t->szUse>0 && t->data!=nullptr);  //bias maybe null
     }
+    if (nSerialT == 0) {  //  !=optParams.size()
+        return false;     // bias maybe null
+    }
+
     return true;
 }
 
-/*  Deprecated
-bool MODEL_CARD::OnJsonCALM(CLI_params *hConfig, const std::string &path, const JSON &meta, int flag) {
-    sTokenPath = path;
-    dim        = jKVs(meta, {"dim"}, dim);  // atoi(meta["dim"]);
-    assert(dim == hConfig->nEmbed());
-    hidden_dim = jKVs(meta, {"hidden_dim"}, hidden_dim);  // atoi(meta["hidden_dim"]);
-    n_layers   = jKVs(meta, {"n_layers"}, n_layers);      // atoi(meta["n_layers"]);
-    assert(n_layers == hConfig->nLayer());
-    int n_heads = -1, n_kv_heads = -1, head_dim = 1;
-    n_heads    = jKVs(meta, {"n_heads"}, n_heads);        // atoi(meta["n_heads"]);
-    n_kv_heads = jKVs(meta, {"n_kv_heads"}, n_kv_heads);  // atoi(meta["n_kv_heads"]);
-    head_dim   = jKVs(meta, {"head_dim"}, head_dim);
-    assert(dim == head_dim * n_heads);
-    layerps.clear();
-    for (int i = 0; i < n_layers; i++) {
-        LAY_PARAM lay(n_heads, n_kv_heads, head_dim, hidden_dim);
-        layerps.push_back(lay);
-    }
-    string info = "";
-    info        = jKVs(meta, {"dtype"}, info);
-    tpWeight    = tpNumOf(info);
-    int wbit    = BitPE(tpWeight);
-    fDotW       = fnDot(tpWeight);
-
-    jModelParam  = meta;
-    vocab_size   = jKVs(meta, {"vocab_size"}, 0);
-    bos_token_id = jKVs(meta, {"bos_token_id"}, 0);
-    eos_token_id = jKVs(meta, {"eos_token_id"}, 0);
-    //
-    // const char* max_seq_len = meta["max_seq_len"];
-    // config.seq_len = max_seq_len && atoi(max_seq_len) < 4096 ? atoi(max_seq_len) : 4096;
-    seq_len = jKVs(meta, {"max_seq_len"}, 0);
-    seq_len = std::min(seq_len, 4096);  // for now limit seq_len to 4096 to avoid KV cache OOM for models like Mistral since window size isn't correctly
-                                        // specified if (context) { 	config.seq_len = context;
-                                        // }
-
-    rope_theta = jKVs(meta, {"rope_theta"}, rope_theta);
-    rotary_dim = jKVs(meta, {"rotary_dim"}, rotary_dim);
-    // if (meta["n_experts"]) {
-    // 	config.n_experts = atoi(meta["n_experts"]);
-    // 	config.n_experts_ac = atoi(meta["n_experts_active"]);
-    // }
-    n_experts    = jKVs(meta, {"n_experts"}, n_experts);
-    n_experts_ac = jKVs(meta, {"n_experts_active"}, n_experts_ac);
-    // const char* norm_eps = meta["norm_eps"];
-    norm_eps = jKVs(meta, {"norm_eps"}, norm_eps);
-
-    // const char* act_type = meta["act_type"];
-    act_type = jKVs(meta, {"act_type"}, act_type);  // act_type && strcmp(act_type, "gelu"] == 0;
-
-    // const char* norm_type = meta["norm_type"];
-    norm_type = jKVs(meta, {"norm_type"}, norm_type);  // act_type && strcmp(act_type, "gelu"] == 0;
-    // config.norm_ln = norm_type && strncmp(norm_type, "layernorm", 9) == 0;  // note: we currently don't support layernorm bias
-    // config.norm_par = norm_type && strcmp(norm_type, "layernorm_par"] == 0; // note: we currently don't support layernorm bias
-
-    // const char* qkv_clip = meta["qkv_clip"];
-    // config.qkv_clip = qkv_clip ? atof(qkv_clip) : FLT_MAX;
-    clip_qkv = jKVs(meta, {"qkv_clip"}, clip_qkv);
-
-    assert(hConfig->isValid());
-    return true;
-}*/
-
-/**
- * def build_prompts(model, output_dir):
-    template = Template(model.tokenizer.chat_template)
-
-    # Template 1: User
-    messages = [{"role": "user", "content": "%s"}]
-    rendered_prompt = template.render(messages=messages, add_generation_prompt=True, enable_thinking=False)
-    with open(os.path.join(output_dir, 'template_user.txt'), 'w', encoding='utf-8', newline='') as f:
-        f.write(rendered_prompt)
-
-    # Template 2: User with Thinking
-    rendered_prompt = template.render(messages=messages, add_generation_prompt=True, enable_thinking=True)
-    with open(os.path.join(output_dir, 'template_user_thinking.txt'), 'w', encoding='utf-8', newline='') as f:
-        f.write(rendered_prompt)
-
-    # Template 3: System + User
-    messages = [{"role": "system", "content": "%s"}, {"role": "user", "content": "%s"}]
-    rendered_prompt = template.render(messages=messages, add_generation_prompt=True, enable_thinking=False)
-    with open(os.path.join(output_dir, 'template_system.txt'), 'w', encoding='utf-8', newline='') as f:
-        f.write(rendered_prompt)
-
-    # Template 4: System + User with Thinking
-    rendered_prompt = template.render(messages=messages, add_generation_prompt=True, enable_thinking=True)
-    with open(os.path.join(output_dir, 'template_system_thinking.txt'), 'w', encoding='utf-8', newline='') as f:
-        f.write(rendered_prompt)
- */
 bool MODEL_CARD::InitChatTemplate(CLI_params* hConfig, int flag) {
     // string fPrompt = sCardPath + "template_user_thinking.txt", fSysPromt = sCardPath + "template_system_thinking.txt";
     // if (enable_thinking) {  // load the "thinking" versions of the templates
@@ -648,7 +611,7 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, const std
     bool isInitFromPath = !sCardPath_0.empty();
     int head_dim = -1, n_heads = -1, n_kv_heads = -1, n_FF = -1;
     if (!isInitFromPath) {
-        sTokenBinPath = "/home/cys/rnd/lic/assets/tokenizer_151936.bin";
+        sTokenBinPath = "./assets/tokenizer_151936.bin";
         n_layers      = hConfig->nLayer();
         for (int i = 0; i < n_layers; i++) {
             int nH = hConfig->n_head(i), nF = hConfig->n_ff(i);
@@ -665,7 +628,7 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, const std
         n_heads = hConfig->n_head(), n_kv_heads = hConfig->n_head_kv();
         // seq_len = hConfig->n_ctx_orig();
 
-        sCardPath = jKV(jConfig, {"model", "card"}, sCardPath);
+        sCardPath = jKV(jConfig, {"model", "hf-card"}, sCardPath);
     } else {
         sCardPath = sCardPath_0;
     }
@@ -673,7 +636,9 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, const std
         return false;
     }
     string jPath = sCardPath + "config.json";
-    LoadJsonFile(jPath, jModelParam);
+    if (!LoadJsonFile(jPath, jModelParam)) {
+        return false;
+    };
     sTokenJsonPath = sCardPath + "tokenizer.json";
     // LoadJsonFile(sTokenPath,jTokenizer);                             // }
 
@@ -688,6 +653,12 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, const std
         assert(model_type != "");
         num_attention_heads = jKV(jModelParam, {"num_attention_heads"}, n_heads);
         num_key_value_heads = jKV(jModelParam, {"num_key_value_heads"}, n_kv_heads);
+        if (jModelParam.find("quantization_config") != jModelParam.end()) {
+            hConfig->jVendorQuant = jModelParam["quantization_config"];
+            QUANT_CARD quant;
+            quant.InitFromVendor(jModelParam["quantization_config"]);
+            hConfig->jQuant = quant.ToJSON();
+        }
 
         int hd = jKV(jModelParam, {"head_dim"}, head_dim);
         if (hd != head_dim) {
@@ -705,7 +676,7 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, const std
         intermediate_size    = jKV(jModelParam, {"intermediate_size"}, intermediate_size);
         max_pos_embeddings   = jKV(jModelParam, {"max_position_embeddings"}, max_pos_embeddings);
         // rotary_dim           = jKVs(jModelParam, {"rope_scaling"}, rotary_dim);
-        // 
+        //
 
         if (!isInitFromPath)
             assert(num_attention_heads == n_heads && num_key_value_heads == n_kv_heads);
@@ -713,9 +684,9 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, const std
             n_layers         = jKV(jModelParam, {"num_hidden_layers"}, n_layers);
             hConfig->nLayerX = n_layers;
             token_embeds.push_back(hidden_size);
-            if(hConfig->common.n_ctx==-1)   {   //  max_position_embeddings(often the same as training context length)
+            if (hConfig->common.n_ctx == -1) {  //  max_position_embeddings(often the same as training context length)
                 hConfig->common.n_ctx = max_pos_embeddings;
-                hConfig->n_ctx_train = max_pos_embeddings;
+                hConfig->n_ctx_train  = max_pos_embeddings;
             }
             for (int i = 0; i < n_layers; i++) layerps.push_back(MODEL_CARD::LAY_PARAM(num_attention_heads, num_key_value_heads, hd, intermediate_size));
         }
@@ -739,14 +710,16 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, const std
                 hConfig->n_ctx_train = 262144;  //  Context Length: 262,144 natively
             }
             break;
+        case NLP_QWEN2:
+            break;
         default:
             break;
     }
-    if(isInitFromPath){
+    if (isInitFromPath) {
         hConfig->ToJConfig();
     }
 
-    return !empty();
+    return true;  // isInitFromPath;
 }
 
 /*Deprecated*/
@@ -809,4 +782,22 @@ std::string LoadSomeText(const string& fpath, const int nMost, int flag) {
     buf[sz]             = '\0';
     txt                 = buf;
     return txt;
+}
+
+// memcpy(tmpData, host_data, szData), msync(host_data, szData, MS_SYNC);
+hBITARR SAFE_read_mmap(hBITARR dst, hBITARR mmp_data, size_t length, int flag) {
+    if (msync(mmp_data, length, MS_SYNC) == -1) {
+        // perror("msync failed");
+        //  Continue anyway - data might still be valid
+    }
+    // Memory barrier to ensure we read after sync
+    std::atomic_thread_fence(std::memory_order_acquire);
+    memcpy(dst, mmp_data, length);
+
+    // Verify the copy (optional but recommended)
+    if (memcmp(dst, mmp_data, length) != 0) {
+        std::cerr << "WARNING: Copy verification failed!" << std::endl;
+    }
+
+    return dst;
 }

@@ -51,7 +51,7 @@ int gTN0(hGTensor cur, const char* format, ...);
 
 enum DATA_PLACE { VOID, SYMBOLIC, REFER, MEMORY, DEV_MEM, MMAP, DISK, CLOUD, FREE_DEV };
 
-enum INIT_WEIGHT { W_SKIP = 0X0, FIX_1, RANDOM, GAUSSIAN_NORMAL, COPY_WIKI, COPY_SWARM_HEAD, SERIALIZE };
+
 /**
  *  Edge of Operation(TASK) GRAPH
  */
@@ -183,6 +183,8 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
 
     // @GetDynamicQuant
     shared_ptr<GeQuant> hQuant = nullptr;
+    hGTensor qZero=nullptr, qScale=nullptr;  // quantization params, may have different meaning/name in different model
+
     virtual size_t Alloc_1(void** dst, bool isZero, string desc, size_t sz = 0x0, int flag = 0x0) { return 0x0; };
     virtual size_t Free_1(void** obj, const string& info = "") { return 0x0; };
 
@@ -592,7 +594,7 @@ struct GENSOR_TOPU {
 
     void Insert(const std::map<std::string, hGensor>& src) { nag.insert(src.begin(), src.end()); }
     size_t size() { return nag.size(); }
-    virtual hGensor Get(const string& name, int flag = 0x0);
+    virtual hGensor Get(MODEL_ARCH arch, const string& name, int flag = 0x0);
     virtual void Clear() {
         nag.clear();
         infos.clear();

@@ -49,8 +49,8 @@ void _TIME_INFO(const string& info, double fmillis, int flag) {
         _INFO("%02lld:%02lld:%02lld", (long long int)hours, (long long int)minutes, (long long int)seconds);
 }
 
-int SUM::nUpdateParam = 0;
-int SUM::nMostMemItem = 6;
+int SUM::nUpdateParam    = 0;
+int SUM::nMostMemItem    = 6;
 int SUM::nMinTensorAlloc = 100 * 1024 * 1024;
 double SUM::tX = 0.0, SUM::tX1 = 0.0, SUM::tRemater = 0.0, SUM::tPreLogits = 0.0;
 size_t SUM::szUpload = 0;
@@ -204,12 +204,13 @@ void SUM::MemoryInfo(int type, int flag) {
         mems.size(), szNow / 1.0e9, szFree / 1.0e9, MEM_USAGE::szA / 1.0e6, MEM_USAGE::szW / 1.0e6, MEM_USAGE::szG / 1.0e6, MEM_USAGE::szMoment / 1.0e6,
         MEM_USAGE::szTemp / 1.0e6, MEM_USAGE::szOther / 1.0e6);
     _INFO("\tcurBrach=%.5gM mUsed==%.5gM\n", (MEM_USAGE::szA + MEM_USAGE::szW + MEM_USAGE::szG + MEM_USAGE::szMoment) / 1.0e6, mUsed);
-    if (nMostMemItem > 0) {  // decsend by memory size
+    int nDump = type == KOIFISH_OUTOF_GPUMEMORY ? 32 : nMostMemItem;
+    if (nDump > 0) {  // decsend by memory size
         size_t szTotal = 0;
         for (auto mem : mems) {
             szTotal += mem.sz;
             _INFO("\t%ld\t%6gM  @%s \t%.3gG\n", i++, mem.sz / 1.0e6, mem.desc.c_str(), szTotal / 1.0e9);
-            if (i > nMostMemItem && type != KOIFISH_OUTOF_GPUMEMORY)
+            if (i > nDump)
                 break;
         }
         _INFO("\n");
@@ -299,9 +300,12 @@ bool VERIFY_DIR_EXIST(const std::string& path, bool isCreate) {
             }
         }
         isExist = std::filesystem::exists(dir_path);
+        if (!isExist) {
+            _WARN("%s is not exist!", path.c_str());
+        }
         return isExist;
     } catch (const std::filesystem::filesystem_error& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
+        _ERROR("\"%s\" is not exist! ERR=%s\n", path.c_str(),e.what());
         return isExist;
     }
 }

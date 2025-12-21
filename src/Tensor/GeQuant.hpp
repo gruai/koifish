@@ -14,10 +14,10 @@
 #include <algorithm>
 #include <vector>
 
-#include "../Utils/GST_rander.hpp"
-#include "../Utils/GST_util.hpp"
 #include "../CLI_params.hpp"
 #include "../Utils/GST_obj.hpp"
+#include "../Utils/GST_rander.hpp"
+#include "../Utils/GST_util.hpp"
 
 // #include "./GVMAT.h"
 
@@ -96,6 +96,8 @@ class GeQuant {
         if (trits)
             maxq = -1;
     }
+    virtual ~GeQuant();
+
     virtual bool isRTN() { return params.type == QUANT_MODE::RTN || params.type == QUANT_MODE::RTNf; }
     virtual typNUMBER bit2typ(int flag = 0x0);
     virtual float RTN(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
@@ -106,7 +108,7 @@ class GeQuant {
 
     virtual float Update(shared_ptr<GTensor> tensor, int flag = 0x0) { throw "GeQuant::Update is ...."; }
 
-    virtual ~GeQuant();
+    size_t szGama(int flag=0x0);
 
     friend class GTensor;
     friend class Fish;

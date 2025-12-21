@@ -173,6 +173,9 @@ protected:
 
     std::string name = "no_vocab";         //"no_vocab","llama","bert","gpt2"
 
+    //  Most open-source LLMs use BOS at sequence start
+    bool isNeedBOS = true;
+
 //原生LLaMA对中文的支持很弱，一个汉子往往被切分成多个token，因此需要对其进行中文词表扩展。思路通常是在中文语料库上训练一个中文tokenizer模型，然后将中文tokenizer与LLaMA原生tokenizer进行合并，最终得到一个扩展后的tokenizer模型。国内Chinese-LLaMA-Alpaca开源项目详细说明了词表扩展。
     std::vector<const char*> merges;
     bool isIignoreMerges = false;
@@ -275,6 +278,7 @@ public:
     std::string T2STR(TOKEN_ID tok,int flag=0x0 )   override;
 };
 
+// also support QWEN2
 class GTokenizer_QWEN3 : public GTokenizer   {
 protected:
 public:

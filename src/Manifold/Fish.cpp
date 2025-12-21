@@ -21,7 +21,7 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vect
             fish = std::make_shared<DeepSeek>(nam_ + "_DS", params, role_);
             break;
         case MODEL_ARCH::NLP_QWEN2:
-            fish = std::make_shared<QWen>(nam_ + "_QW2", params, role_);
+            fish = std::make_shared<QWen3>(nam_ + "_QW2", params, role_);
             break;
         case MODEL_ARCH::NLP_QWEN3:
             fish = std::make_shared<QWen3>(nam_ + "_QW3", params, role_);
@@ -88,11 +88,11 @@ Fish::Fish(const std::string& nam_, struct CLI_params params, ROLE_TYPE role_, i
     arch = params.ModelArch();
 
     string w    = config.KV({"model", "parameter", "debug_init_weight"});  // hack parameter only for debug
-    bool isLoad = !config.ckp_in.empty() || !config.model.empty();
+    bool isLoad = !config.ckp_in.empty() || config.model.isLoadCard();
     if (role == SWARM_FOLLOWER) {
-        tpInitWeight = INIT_WEIGHT::COPY_SWARM_HEAD;
+        config.model.tpInitWeight = INIT_WEIGHT::COPY_SWARM_HEAD;
     } else {
-        tpInitWeight = w == "copy_wiki" ? INIT_WEIGHT::COPY_WIKI : isLoad ? INIT_WEIGHT::SERIALIZE : INIT_WEIGHT::RANDOM;
+        config.model.tpInitWeight = w == "copy_wiki" ? INIT_WEIGHT::COPY_WIKI : isLoad ? INIT_WEIGHT::SERIALIZE : INIT_WEIGHT::RANDOM;
     }
     rand_coin.Init(42);
 
@@ -254,7 +254,7 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
         }
     }
     UpdateParams();  //  optParams
-    if (!config.model.empty()) {
+    if (config.model.isLoadCard()) {
         isLoadCheckpoint = HF_Serialize(false, 0x0);
         if (!isLoadCheckpoint)
             return false;
@@ -277,7 +277,10 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
     }
 
     if (isTrain()) {
-        SaveTrain(config.state, true);  //  Init checkpoint
+        if(isLoadCheckpoint){
+
+        }else
+            SaveTrain(config.state, true, FSerial::INIT_MMAP);  //  Init checkpoint
     } else {
         SetPhase(config.phase);
         assert(hBackTG == nullptr);
@@ -422,6 +425,11 @@ bool Fish::UpdateCheckPoint(CheckPoint_Params& ckp, bool isSave, int flag) {
 }
 /*
     1. SaveCheckpoint save more temporary tensors than SaveModel
+
+    Train from scratch:
+        1. When init, only save zero array to mmf   (INIT_MMAP)
+    Train/Finetune from hf-card(mmf):
+        1. When init, should save host_dat(point to the hf_card file) to mmf  (COPY_MMAP)
 */
 static const char* vendor = "gruai";  // llm_arch_from_string
 bool Fish::SaveTrain(CheckPoint_Params& ckp, bool isInit, int flag) {
@@ -443,7 +451,7 @@ bool Fish::SaveTrain(CheckPoint_Params& ckp, bool isInit, int flag) {
     assert(optParams.size() > 0);
 
     if (isInit) {
-        isOK = SAFETENSOR_Serialize(ckp, true, isInit ? FSerial::INIT_MMAP : 0x0);
+        isOK = SAFETENSOR_Serialize(ckp, true, flag);   //isInit ? FSerial::INIT_MMAP : 0x0
         assert(isOK);
         ckp.sModelPath = ckp.FullPath(true);
         _INFO("[SAFETENSOR] Init@\"%s\" nParams=%d save_every=%d\n", sOut.c_str(), optParams.size(), ckp.save_every);
@@ -458,7 +466,7 @@ bool Fish::SaveTrain(CheckPoint_Params& ckp, bool isInit, int flag) {
         // }
     } else {
         UpdateCheckPoint(ckp, true);
-        isOK = SAFETENSOR_Serialize(ckp, true, isInit ? FSerial::INIT_MMAP : 0x0);
+        isOK = SAFETENSOR_Serialize(ckp, true, flag);       //  isInit ? FSerial::INIT_MMAP : 0x0
     }
 
     return isOK;
@@ -467,7 +475,7 @@ bool Fish::SaveTrain(CheckPoint_Params& ckp, bool isInit, int flag) {
 bool Fish::SaveCheckPoint(int flag) {
     /*assert(tpInitWeight == INIT_WEIGHT::SERIALIZE);
     std::string fpCheck = config.checkpoint.in;
-    if (!config.model.empty()) {
+    if (!config.model.isLoadCard()) {
         isLoadCheckpoint = HF_Serialize(false, 0x0);
     } else {
         string type = FILE_EXT(fpCheck);
@@ -503,9 +511,9 @@ bool Fish::SaveCheckPoint(int flag) {
 }
 
 bool Fish::LoadCheckPoint(CheckPoint_Params& ckp, int flag) {
-    assert(tpInitWeight == INIT_WEIGHT::SERIALIZE);
+    assert(config.model.tpInitWeight == INIT_WEIGHT::SERIALIZE);
     std::string fpCheck = ckp.sModelPath;
-    if (!config.model.empty()) {
+    if (config.model.isLoadCard()) {
         isLoadCheckpoint = HF_Serialize(false, 0x0);
     } else {
         string type = FILE_EXT(fpCheck);
@@ -552,7 +560,7 @@ void Fish::Statistic_Quant(int typ, int flag) {
         GENSOR_INFO* gi = t->ginfo;
         if (hQuant != nullptr) {
             auto qType = hQuant->params.type;
-            if (hQuant->params.norm==NORMAL_MODE::SINKHORN) {
+            if (hQuant->params.norm == NORMAL_MODE::SINKHORN) {
                 nSinkNormal++;
             }
             if (qType == QUANT_MODE::MINI) {
@@ -597,7 +605,7 @@ void Fish::Statistic_Quant(int typ, int flag) {
 
     char tmp[1024];
     sprintf(tmp, "%s%.4gbit%s@[errQ=%.4g nF8=%ld nQ4=%ld nQ3=%ld nQ2=%ld MINI=%ld] tQ=%6.5gsec", COLOR_YELLOW, nzBit * 1.0f / nzP, COLOR_RESET, sum / nQT,
-            arrF8.size(), arrQ4.size(), arrQ3.size(), arrQ2.size(), arrGBDT.size(), SUM::tQuant/1.0e3);
+            arrF8.size(), arrQ4.size(), arrQ3.size(), arrQ2.size(), arrGBDT.size(), SUM::tQuant / 1.0e3);
     SUM::sQuantInfo = tmp;
     string names    = G_STR(arrGBDT, 512);
     _INFO("[Quant]_ %s%s \n", tmp, names.c_str());
@@ -878,26 +886,28 @@ bool Fish::AllocBuffer(int flag) {
         // TokenEmbed* embed = GetNeuron<TokenEmbed>("TokenEmbed",0);
         int B, T, C;
         GetBTC(B, T, C);
-        if (isLocalInfer)
-            hCache = std::make_shared<KVCache>(this);
+        if (isLocalInfer) {
+            if (config.phase == P_GENERATE) {  // P_EVAL no need cache!
+                hCache = std::make_shared<KVCache>(this);
+            }
+        }
 
         int nVocab = nClass();
         if (config.model.isPaddedCls) {
             nVocab = ceil(nVocab / 128.0) * 128;
         }
         int Vp = (int)(nVocab * 1.1), NH = config.n_head(), nFF = config.n_ff(), nEmbed = config.nEmbed(), q_dim = config.Q_dim(), kv_dim = config.KV_dim(),
-            nCTX    = config.n_ctx();
-        size_t nTmp = ((size_t)T) * std::max(nFF, std::max(NH, Vp)), nFFW = (size_t)(B)*T * nFF;
-        // config.model.preLogits_dB = 8; //(int)ceil(B*4.0f*C/nTmp);
-        int dB = config.model.preLogits_dB;
+            nCTX = config.n_ctx();
+        int dB   = config.model.preLogits_dB;
         if (isTrain())
             assert(B % dB == 0);
-        nTmp = std::max(nFFW / dB + 1, nTmp);
+        size_t nFFW = (size_t)(B)*T * nFF, nPrelogist = (size_t)(dB)*T * Vp;  // nTmp = (size_t)(T)*std::max(nFF, std::max(NH, Vp)),
+        size_t nTmp = std::max(nFFW, nPrelogist);                             // / dB + 1
         assert(nTmp < INT_MAX);
         typNUMBER tpA = config.model.tpActivation, tpG = config.model.tpGradient, tpW = config.model.tpWeight;
         // cuLiteTest(B,T,C);
         int mostC = C;  // config.nEmbed(-1);
-        SHAPE sp = {B, T, C}, sp4 = {B, T, max(nFF, q_dim + kv_dim * 2)}, sp0 = {dB, (int)nTmp}, spMost = {B, T, mostC};
+        SHAPE sp = {B, T, C}, sp4 = {B, T, max(nFF, q_dim + kv_dim * 2)}, sp0 = {(int)nTmp}, spMost = {B, T, mostC};
         GTensor::bt4c       = std::make_shared<huTensor>(this, "tmpBT4c", sp4, tpA, true);
         GTensor::tmpFF1     = std::make_shared<huTensor>(this, "tmpFF1", sp4, tpA, true);
         SHAPE spTernary     = {C, max(nVocab, 3 * C)};

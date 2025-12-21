@@ -240,14 +240,14 @@ void UpdateJConfig(JSON& jConfig, const std::string& jPath) {
     try {
         std::ifstream jfile(jPath);
         if (jfile.fail()) {
-            _INFO("\r\n%s  Failed to open %s", __func__, jPath.c_str());
+            _WARN("\r\n%s  Failed to open %s", __func__, jPath.c_str());
         }
         jfile >> jConfig;
         std::string s = jConfig.dump();
     } catch (JSON::parse_error& e) {
-        _INFO("\r\n%s  Failed to open %s!!! ERR=%s", __func__, jPath.c_str(), e.what());
+        _WARN("\r\n%s  Failed to open %s!!! ERR=%s", __func__, jPath.c_str(), e.what());
     } catch (...) {
-        _INFO("\r\n%s  Unknown exception @%s!!!", __func__, jPath.c_str());
+        _WARN("\r\n%s  Unknown exception @%s!!!", __func__, jPath.c_str());
     }
 }
 
@@ -306,41 +306,19 @@ bool LoadJsonFile(const string& jPath, JSON& jObj, int flag) {
         std::ifstream jfile(jPath);
         std::string info;
         if (jfile.fail()) {
-            _INFO("\r\n[%s] Failed to open \"%s\" !!!\n", __func__, jPath.c_str());
+            _WARN("[%s] Failed to open \"%s\" !!!\n", __func__, jPath.c_str());
             return false;
         }
         jfile >> jObj;
         return true;
     } catch (...) {
+        _ERROR("[%s] Failed to open \"%s\" !!!\n", __func__, jPath.c_str());
         return false;
     }
 }
-/*
-    "architectures": [
-        "MistralForCausalLM"
-    ],
-    "attention_dropout": 0.0,
-    "bos_token_id": 1,
-    "eos_token_id": 2,
-    "hidden_act": "silu",
-    "hidden_size": 4096,
-    "initializer_range": 0.02,
-    "intermediate_size": 14336,
-    "max_position_embeddings": 32768,
-    "model_type": "mistral",
-    "num_attention_heads": 32,
-    "num_hidden_layers": 32,
-    "num_key_value_heads": 8,
-    "rms_norm_eps": 1e-05,
-    "rope_theta": 1000000.0,
-    "sliding_window": null,
-    "tie_word_embeddings": false,
-    "torch_dtype": "bfloat16",
-    "transformers_version": "4.36.0",
-    "use_cache": true,
-    "vocab_size": 32000
-*/
+
 string MODEL_CARD::sWeight = ".weight", MODEL_CARD::sBias = ".bias";  //".w"
+string MODEL_CARD::sQzeros = ".qzeros", MODEL_CARD::sQscale = ".scales";
 
 string MODEL_CARD::sLayer = "blk.";  //".norm"
 // string MODEL_CARD::sAttnOut = ".wo";                                  //  "_output";    //  "_cat"
@@ -364,8 +342,12 @@ void QUANT_CARD::Dump(int typ) {
     //_INFO("\t[Quant]_<%d> \n\tMIQ=%d{%s} \n\tF8Ex=%d{%s} \n", default_bits, G_STR(filter_MIQ), G_STR(filter_WeightF8Ex));
 }
 
-void QUANT_CARD::Init(const std::string& name, const JSON& jQuant, int flag) {
-    type      = NO_QUANT;
+void QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, int flag) {
+    type = NO_QUANT;
+    if (jQuant.find("preQuant") != jQuant.end()) {
+        type = PRE_QUANT;
+        return;
+    }
     string s0 = "";
     for (JSON::const_iterator it = jQuant.begin(); it != jQuant.end(); ++it) {
         auto k = it.key();
@@ -390,19 +372,36 @@ void QUANT_CARD::Init(const std::string& name, const JSON& jQuant, int flag) {
         }
     }
 }
-// QUANT_MODE QUANT_CARD::ModeOfNeuron(std::string neuron_name, int flag) {
-//     // if (G_Has_(name, filter_KVcache))
-//     //     return KV_JL;
-//     if (G_Has_(neuron_name, filter_MIQ))
-//         return MINI;
-//     return NO_QUANT;
-// }
 
 bool QUANT_CARD::isValid() const {
     if (default_bits < 0 || default_bits > 8)
         return false;
     return true;
 }
+void QUANT_CARD::InitFromVendor(const JSON& jVendor, int flag) {
+    int bits = 0, group = 0;
+    // for QWEN3
+    bits  = jKV(jVendor, {"bits"}, bits);
+    group = jKV(jVendor, {"group_size"}, group);
+    if (bits > 0)
+        default_bits = bits;
+    if (group > 0)
+        T_group = group;
+    isPreQuant = true;
+}
+JSON QUANT_CARD::ToJSON(int flag) {
+    JSON jOut;
+    jOut["quantizer"]["self_attn"]["bits"]     = default_bits;
+    jOut["quantizer"]["self_attn"]["group"]    = T_group;
+    jOut["quantizer"]["mlp"]["bits"]           = default_bits;
+    jOut["quantizer"]["mlp"]["group"]          = T_group;
+    jOut["quantizer"]["embed_tokens"]["bits"]  = default_bits;
+    jOut["quantizer"]["embed_tokens"]["group"] = T_group;
+    if (isPreQuant)
+        jOut["preQuant"] = true;
+    return jOut;
+}
+
 std::size_t QUANT_CARD::Hash(const QUANT_CARD& params, const std::type_info& ti, const std::string& desc) const {
     // Combine hashes of all elements in the tuple
     auto h1    = std::hash<int>{}(params.default_bits);
@@ -418,7 +417,7 @@ std::size_t QUANT_CARD::Hash(const QUANT_CARD& params, const std::type_info& ti,
 MODEL_ARCH CLI_params::ModelArch() {
     MODEL_ARCH arch = MODEL_ARCH::_X_;
     string info     = "";
-    if (model.empty()) {
+    if (!model.isLoadCard()) {
         string s = jKV(jConfig, {"model", "arch"}, string(""), false);
         assert(!s.empty());
         info = s;
@@ -429,18 +428,18 @@ MODEL_ARCH CLI_params::ModelArch() {
         model_title = info;
 
     std::transform(info.begin(), info.end(), info.begin(), ::toupper);
-    arch = info == "MOE"        ? NLP_MOE
-           : info == "MAMBA"    ? MODEL_ARCH::NLP_MAMBA
-           : info == "GUPPY"    ? MODEL_ARCH::NLP_GUPPY
-           : info == "DEEPSEEK" ? MODEL_ARCH::NLP_DEEPSEEK
-           : info == "QWEN2"    ? MODEL_ARCH::NLP_QWEN2
-           : info == "QWEN3"    ? MODEL_ARCH::NLP_QWEN3
-           : info == "QWEN3_MOE"    ? MODEL_ARCH::NLP_QWEN3
-           : info == "GPT2"     ? MODEL_ARCH::NLP_GPT2
-           : info == "GPT2CHAR" ? MODEL_ARCH::NLP_GPT2_char
-           : info == "LAMA"     ? MODEL_ARCH::NLP_LLAMA
-           : info == "MISTRAL"  ? MODEL_ARCH::NLP_MISTRAL
-                                : MODEL_ARCH::NLP_LLAMA;
+    arch = info == "MOE"         ? NLP_MOE
+           : info == "MAMBA"     ? MODEL_ARCH::NLP_MAMBA
+           : info == "GUPPY"     ? MODEL_ARCH::NLP_GUPPY
+           : info == "DEEPSEEK"  ? MODEL_ARCH::NLP_DEEPSEEK
+           : info == "QWEN2"     ? MODEL_ARCH::NLP_QWEN2
+           : info == "QWEN3"     ? MODEL_ARCH::NLP_QWEN3
+           : info == "QWEN3_MOE" ? MODEL_ARCH::NLP_QWEN3
+           : info == "GPT2"      ? MODEL_ARCH::NLP_GPT2
+           : info == "GPT2CHAR"  ? MODEL_ARCH::NLP_GPT2_char
+           : info == "LAMA"      ? MODEL_ARCH::NLP_LLAMA
+           : info == "MISTRAL"   ? MODEL_ARCH::NLP_MISTRAL
+                                 : MODEL_ARCH::NLP_LLAMA;
 
     return arch;
 }
@@ -454,6 +453,8 @@ bool CLI_params::JModel2Params(int flag) {
         if (jModel.empty()) {
             return false;
         }
+        if (jModel.find("hf-card") != jModel.end())
+            model.sCardPath = jKEY(jModel, {"hf-card"});
         jQuant = jKEY(jConfig, {"quantizer"});
 
         nLayerX = 1;  // at least 1 layer
@@ -524,10 +525,10 @@ bool CLI_params::JModel2Params(int flag) {
 
         return true;
     } catch (JSON::parse_error& e) {
-        _INFO("\r\n%s  Failed to open %s!!! ERR=%s", __func__, key.c_str(), e.what());
+        _WARN("%s  Failed to open %s!!! ERR=%s", __func__, key.c_str(), e.what());
         return false;
     } catch (...) {
-        _INFO("\r\n%s  Unknown exception @%s!!!", __func__, key.c_str());
+        _WARN("%s  Unknown exception @%s!!!", __func__, key.c_str());
         return false;
     }
 }
@@ -535,6 +536,8 @@ bool CLI_params::JModel2Params(int flag) {
 bool CLI_params::isShareLayerOut() const {
     // if(common.Empty())  //no training,only infer or evaluate
     //     return true;
+    if (phase == LIFE_PHASE::P_GENERATE)
+        return true;
 
     if (scheduling.strategy == MEM_STRATEGY::PRE_ALLOC_GPU || scheduling.strategy == MEM_STRATEGY::PRE_ALLOC_HOST_MAP)
         return false;
@@ -738,20 +741,25 @@ void CLI_params::OnArch() {
 
         break;
         case NLP_QWEN2:
-            // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;  // 5.89 tps
-            // scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;      //  6.53 tps
+            // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
+            // scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;       
+            DEBUG.verShuffleSamp = -1,  DEBUG.verSampJump = -1;
             model.isSeparateQKV = true, model.isBqkv = true;
             model.sLayer             = "layers.";
             model.isEmbedWeightTying = true;  //  why false would cause nan
             break;
         case NLP_QWEN3:
-            scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;  // 5.89 tps
-            // scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;      //  6.53 tps
+            // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
+            // scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;
             model.isSeparateQKV = true;
             model.isBqkv        = true;  //  0.6B has no bias!
             model.isQKNormal    = true;
             model.sLayer        = "layers.";
             model.sEmbed = "embed_tokens", model.sInvEmbed = "lm_head";
+            if (!jVendorQuant.empty()) {
+                model.sWeight = ".qweight";
+            }
+
             model.Rope_version = 1;
             // model.isEmbedWeightTying = false;   //  0.6B has no tying, but 4B is tying       isEmbedWeightTying = jKV(jModelParam, {"tie_word_embeddings"},
             // isEmbedWeightTying};
@@ -997,52 +1005,70 @@ bool CLI_params::InitChekcpoints(int argc, char** argv, const std::string& ckp_q
 }
 
 bool CLI_params::ToJConfig(int flag) {
-    assert(jConfig.empty());
-    jConfig["version"]                                       = "0.1.0";
-    jConfig["model"]["card"]                                 = model.sCardPath;
-    jConfig["model"]["parameter"]["Layer"]                   = nLayer();
-    jConfig["model"]["parameter"]["transformer"]["Ctx"]      = n_ctx();
-    jConfig["model"]["parameter"]["transformer"]["Embed"]    = nEmbed();
-    jConfig["model"]["parameter"]["transformer"]["Ffn"]      = n_ff();
-    jConfig["model"]["parameter"]["transformer"]["Head"]     = n_head();
-    jConfig["model"]["parameter"]["transformer"]["KVHead"]   = n_head_kv();
-    jConfig["model"]["parameter"]["transformer"]["head_dim"] = head_dim();
+    try {
+        assert(jConfig.empty());
+        jConfig["version"]                                       = "0.1.0";
+        jConfig["model"]["hf-card"]                              = model.sCardPath;
+        jConfig["model"]["parameter"]["Layer"]                   = nLayer();
+        jConfig["model"]["parameter"]["transformer"]["Ctx"]      = n_ctx();
+        jConfig["model"]["parameter"]["transformer"]["Embed"]    = nEmbed();
+        jConfig["model"]["parameter"]["transformer"]["Ffn"]      = n_ff();
+        jConfig["model"]["parameter"]["transformer"]["Head"]     = n_head();
+        jConfig["model"]["parameter"]["transformer"]["KVHead"]   = n_head_kv();
+        jConfig["model"]["parameter"]["transformer"]["head_dim"] = head_dim();
 
-    jConfig["model"]["embed_tokens"]["Embedding"] = JSON::array();
-    jConfig["model"]["layer"]["self_attn"]["QKV"] = JSON::array();
-    jConfig["model"]["layer"]["mlp"]["FFN"]       = JSON::array();
-    jConfig["model"]["norm"]["Normal"]            = JSON::array();
-    jConfig["model"]["output"]["CLASIFY"]         = JSON::array();
+        jConfig["model"]["embed_tokens"]["Embedding"] = JSON::array();
+        jConfig["model"]["layer"]["self_attn"]["QKV"] = JSON::array();
+        jConfig["model"]["layer"]["mlp"]["FFN"]       = JSON::array();
+        jConfig["model"]["norm"]["Normal"]            = JSON::array();
+        jConfig["model"]["output"]["CLASIFY"]         = JSON::array();
 
-    jConfig["quantizer"]["self_attn"]["bits"] = 3;
-    jConfig["quantizer"]["mlp"]["bits"] = 4;
-    jConfig["quantizer"]["embed_tokens"]["bits"] = 4;
+        if (jQuant.empty()) {
+            if (DEBUG.test_quant) {
+                jConfig["quantizer"]["self_attn"]["bits"]    = 3;
+                jConfig["quantizer"]["mlp"]["bits"]          = 4;
+                jConfig["quantizer"]["embed_tokens"]["bits"] = 4;
+                jQuant                                       = jKEY(jConfig, {"quantizer"});
+            }
+        } else {                     // hf model has quantized, for example: Qwen3-32B-AWQ
+            jConfig.update(jQuant);  // jConfig["quantizer"] = jQuant;  //
+        }
+        if (!jVendorQuant.empty()) {
+            jConfig["vendor_quantizer"] = jVendorQuant;
+        }
 
-    chat_sampler.seq_len          = 512;
-    jConfig["gpt"]["max_seq_len"] = chat_sampler.seq_len;
-    // jConfig["debug"]["prompts"] = "hello";
+        chat_sampler.seq_len          = 512;
+        jConfig["gpt"]["max_seq_len"] = chat_sampler.seq_len;
+        // jConfig["debug"]["prompts"] = "hello";
 
-    common.seed     = 42;
-    jConfig["seed"] = common.seed;
+        common.seed     = 42;
+        jConfig["seed"] = common.seed;
 
-    jModel = jKEY(jConfig, {"model"});
-    jQuant = jKEY(jConfig, {"quantizer"});
+        jModel = jKEY(jConfig, {"model"});
 
-    if (1) {  // some debug switch
-        DEBUG.prompts = {"hello",
-                         "What is the capital of Shanghai?",
-                         "Who wrote the play Romeo and Juliet?",
-                         "In which year did the Titanic sink?",
-                         "What is the chemical symbol for the element gold?",
-                         "What is the longest river in the world?",
-                         "Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?",
-                         "How many games did Arsenal FC go unbeaten during the 2003-2004 season of the English Premier League",
-                         "I get out on the top floor (third floor) at street level. How many stories is the building above the ground?",
-                         "天命玄鸟,降而生生. 玄鸟是什么鸟?"};
+        if (DEBUG.test_quant) {  // some debug switch
+            DEBUG.prompts = {"hello",
+                             "What is the capital of Shanghai?",
+                             "Who wrote the play Romeo and Juliet?",
+                             "In which year did the Titanic sink?",
+                             "What is the chemical symbol for the element gold?",
+                             "What is the longest river in the world?",
+                             "Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?",
+                             "How many games did Arsenal FC go unbeaten during the 2003-2004 season of the English Premier League",
+                             "I get out on the top floor (third floor) at street level. How many stories is the building above the ground?",
+                             "天命玄鸟,降而生生. 玄鸟是什么鸟?"};
+        } else {
+        }
+
+        Dump(0x100);
+        return true;
+    } catch (JSON::parse_error& e) {
+        _INFO("\r\n%s  Failed!!! ERR=%s", __func__, e.what());
+        return false;
+    } catch (...) {
+        _INFO("\r\n%s  Unknown exception @%s!!!", __func__, jsPath.c_str());
+        return false;
     }
-
-    Dump(0x100);
-    return true;
 }
 /*
     Some trick
@@ -1094,8 +1120,12 @@ bool CLI_params::InitJConfig(int flag) {
             chat_sampler.seq_len = 8192;
 
         JModel2Params(0x0);
-
-        model.InitHugFace(this, jConfig, "");
+        if (!model.sCardPath.empty()) {
+            if (!model.InitHugFace(this, jConfig, ""))
+                return false;
+        } else {
+            
+        }
 
         n_swarm = jKV(jConfig, {"train", "swarm"}, 1);
 
@@ -1158,6 +1188,7 @@ bool CLI_params::InitJConfig(int flag) {
 bool CLI_params::parse(int argc, char** argv) {
     std::string arg_prefix = "--", key, value;
     exec_name              = EXE_name();
+    string sExt = argc > 1 ? FILE_EXT(argv[1]) : "";
     bool isJConfig         = false;
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -1200,6 +1231,12 @@ bool CLI_params::parse(int argc, char** argv) {
         } else if (arg == "--hf") {  // directory of hf model
             assert(i + 1 < argc);
             model.sCardPath = argv[++i];
+            if (!VERIFY_DIR_EXIST(model.sCardPath, false)) {
+                K_EXIT(KOIFISH_INVALID_ARGS_MODEL);
+            }
+        } else if (arg == "--prompts") {  // directory of hf model
+            assert(i + 1 < argc);
+            DEBUG.prompts = {argv[++i]};
         } else if (arg == "--tokenizer") {  // directory of hf model
             assert(i + 1 < argc);
             model.sTokenBinPath = argv[++i];
@@ -1234,7 +1271,7 @@ bool CLI_params::parse(int argc, char** argv) {
             InitChekcpoints(argc, argv, "checkpoint_out");
             break;
     }
-
+    OnArch();
     return true;
 }
 

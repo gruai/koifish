@@ -108,7 +108,7 @@ int Chat(hFISH fish, int enable_thinking) {
             generated_tokens  = 0;
             cur_answer        = "";
             user_turn         = 0, nRound++;
-            hBatch->Reset(prompt_tokens);
+            hBatch->Reset(prompt_tokens);   //No BOS at sequence start!
             // hLoader->InitOneSamp(rendered_prompt, nullptr, fish.get(), 0x110);
             _INFO("\n");
         }
@@ -207,7 +207,7 @@ int main(int argc, char* argv[]) {
         assert(argc >= 2);
         std::string arg_prefix = "--", exec_name = EXE_name(), jsPath = "", eval_metric = "";
         CLI_params config;
-        config.phase = LIFE_PHASE::P_GENERATE;
+        config.phase = LIFE_PHASE::P_GENERATE;      //DEBUG.test_quant = 1;
         if (!config.parse(argc, argv)) {
             return KOIFISH_INVALID_ARGS;
         }
@@ -226,7 +226,7 @@ int main(int argc, char* argv[]) {
         // SUM::nMinTensorAlloc = 1;
         // config.quant.filter_MIQ         = {"mlp"};                   //  mlp.down_proj.weight "mlp"  
         // config.quant.filter_KVcache = {"0.self_attn"};    //   "layers.27.mlp" model.blk.0.attn
-
+        
         DEBUG.verCuda = 1, DEBUG.T_cpu = 0, DEBUG.graph_dump = 0, DEBUG.Time_most = 60;
         // DEBUG.verInferQKV = 0, DEBUG.verInferFFN = 0;
         config.Dump(0x100);

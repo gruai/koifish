@@ -128,8 +128,9 @@ hGTensor TokenEmbed::OnEmbed(hGensor inpL, int seed) {
                 CU_embed_forw_1<<<C / 32, 32, 0, main_stream>>>(ToX(cur), ToX(curW), token, C, 0);
             } else {
                 inp = inpL;
-                inp->Print("token_input", 0, 0), curW->Print("curW", 0, 0);
+                inp->Print("token_input", 0, 0); 
                 if (w->type == typNUMBER::T_BINARY_3) {
+                    curW->Print("curW", 0, 0);
                     CU_embed_ternary_forw_<floatX>
                         <<<CEIL_DIV(B * T, block_size), block_size, 0, main_stream>>>(ToX(cur), TO<int>(inp), curW->gama_T(), TO<char>(curW), ToX0(b), B, T, C);
                 } else

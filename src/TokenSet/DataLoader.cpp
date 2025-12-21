@@ -148,12 +148,14 @@ void SampLoader::Samp2Batch(int k, hSAMP samp, TRAIN_CARD &params, int flag) {
     bool fill_with_next_samples = params.fill_with_next_samples, isDialect = hDict->isDialect;
     size_t starting = samp->pos + samp->jump, _nctx = params.n_ctx, _nToken = nTokens(), tok_pos = 0;  //    tokens_input->ne[0];
     size_t i_off = 0;                                                                                  // 1 for traing & 0 for chat(InitOneSamp)
-    if (isNeedBOS) {
+    if (hDict->isNeedBOS) {
         hBatch->Set(0, k, 0, 0, hDict->bos_id);  // ggml_set_i32_nd(G(tokens_input), 0, k, 0, 0, hDict->bos);
         samp_toks.push_back(hDict->bos_id);
         tok_pos = 1;
         i_off   = 1;
     }
+    if(DEBUG.verSampJump<0)
+        starting = samp->pos*params.n_ctx;
     if (nMostToken > 0)
         _nctx = std::min((int)_nctx, nMostToken);
     for (int64_t i = 0; i < _nctx; ++i, ++tok_pos) {
@@ -216,44 +218,7 @@ bool SampLoader::isEval(int t, int flag) {
 bool SampLoader::NextEpoch(int flag) {
     _INFO("-------- End of all shards of epoch_%d! -------- \n", hOPT->train_epochs + 1);
     hOPT->OnNextEpoch();
-    return true;
-    /*if (train_loader->next_sample >=train_loader->shuffle_sample_count)    {
-        ++train_epochs;
-        _INFO("%s: reshuffle samples. completed epochs: %llu\n", __func__, train_epochs);
-        // note: we may have used some samples from the current shuffling more than once
-        train_loader->shuffle_rng_state_current =train_loader->shuffle_rng_state_next;
-        // train->shuffle_rng_state_next = shuffle_samples(
-        //     train->shuffle_rng_state_current,data->shuffled_samples_offs,data->shuffled_samples_begin,
-        //     data->shuffled_samples_size,data->samples_begin,data->samples_size,data->samples_count);
-
-        train_loader->Shuffle();           //SAMP_0816
-        // train->shuffle_rng_state_next = shuffle_samples(
-        //     train->shuffle_rng_state_current,loader->shuffled_samples_offs.data(),
-        //     loader->shuffled_samples_begin.data(),loader->shuffled_samples_size.data(),
-        //     loader->samp_begin.data(),loader->samp_size.data(),loader->samp_size.size());
-
-        train_loader->next_sample = 0;
-    }*/
-    // return hTokens->isNextEpoch;
-    /*if(hTokens->shard_paths.size()>0)
-        return false;
-    if( next_sample <shuffle_sample_count )
-        return false;
-
-    _INFO("%s: reshuffle samples. completed epochs: %llu\n", __func__, train_epochs);
-    shuffle_rng_state_current =shuffle_rng_state_next;
-    // train->shuffle_rng_state_next = shuffle_samples(
-    //     train->shuffle_rng_state_current,data->shuffled_samples_offs,data->shuffled_samples_begin,
-    //     data->shuffled_samples_size,data->samples_begin,data->samples_size,data->samples_count);
-
-    Shuffle();           //SAMP_0816
-    // train->shuffle_rng_state_next = shuffle_samples(
-    //     train->shuffle_rng_state_current,loader->shuffled_samples_offs.data(),
-    //     loader->shuffled_samples_begin.data(),loader->shuffled_samples_size.data(),
-    //     loader->samp_begin.data(),loader->samp_size.data(),loader->samp_size.size());
-
-    next_sample = 0;*/
-    return true;
+    return true;    
 }
 
 hSAMP SampLoader::Next(bool isLoop) {
@@ -728,6 +693,8 @@ string SampLoader::sTokenSet(int flag) {
 void SampLoader::Shuffle(int flag) {
     if (empty())
         return;
+    if(DEBUG.verShuffleSamp<0)
+        return;
 
     size_t count = shard_samps.size(), i, j, nSampInBatch = dolphin->config.n_batch();
     assert(count > 0);
@@ -975,7 +942,7 @@ hSAMP SampLoader::InitOneSamp(const string &prompt, hGensor input, Fish *hFish, 
     //     Samp2Batch(0,samp,input,nullptr,dolphin->config.common);
     if (hFish != nullptr) {
         isRecycle = false;
-        isNeedBOS = false;
+        hDict->isNeedBOS = false;   // why?
         UpdateBatch(0, hFish);
         TokenEmbed *embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed");
         embed->hBatch     = hBatch;
@@ -1194,6 +1161,7 @@ BATCH_INPUT::BATCH_INPUT(SHAPE shape, int flag) {
     int tok = CurToken();       //???
 }
 
+// No BOS at sequence start!
 void BATCH_INPUT::Reset(const TOKENS &tokens, int flag) {
     tok_pos = tokens.size() > 0 ? 0 : -1;
     hostToken->Zero();

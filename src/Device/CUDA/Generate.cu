@@ -14,7 +14,6 @@
 #include "./kernel/gelu.cuh"
 #include "./kernel/layernorm.cuh"
 #include "./kernel/operator.cuh"
-#include "./kernel/rope.cuh"
 #include "./kernel/sort_rank.cuh"
 #include "./kernel/utils.cuh"
 
@@ -525,10 +524,9 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
         embed->w->Print("wte", 0, 0), PrintTensor<AT>("token_embed", hQwen->x, true, dim, 1, 1, 1, 0);
     }
 
-    OutCLS* cls              = hFish->GetNeuron<OutCLS>("OutCLS", 0);
-    floatLogits* logits      = TO<floatLogits>(cls->preLogits);
-    LayerNormal* lnf         = hFish->GetNeuron<LayerNormal>("LayerNormal", 0);
-    floatX* rms_final_weight = TO<floatX>(lnf->w);  // (dim,);
+    OutCLS* cls         = hFish->GetNeuron<OutCLS>("OutCLS", 0);
+    floatLogits* logits = TO<floatLogits>(cls->preLogits);
+    LayerNormal* lnf    = hFish->GetNeuron<LayerNormal>("LayerNormal", 0);
     // PrintTensor<float>("x_0",hQwen->x,true,dim,1);	uint32_t,__nv_fp8_e5m2,float
     // printf("\tpos=%d\n", pos);
     for (int l = 0; l < hQwen->n_layers; ++l) {
@@ -576,7 +574,7 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
             }
 
             // rope_gpu_naive(hQwen->q, k_cache_pos, pos, N_HEADS, N_KV_HEADS, HEAD_DIM, rope_theta);
-            CU_rope_forward<<<dim3(N_HEADS, 1, 1), dim3(HEAD_DIM / 2, 1, 1)>>>(hQwen->q, k_cache_pos, pos, N_HEADS, N_KV_HEADS, HEAD_DIM, rope_theta);
+            CU_rope2_forward<<<dim3(N_HEADS, 1, 1), dim3(HEAD_DIM / 2, 1, 1)>>>(hQwen->q, k_cache_pos, pos, N_HEADS, N_KV_HEADS, HEAD_DIM, rope_theta);
             PrintTensor<QWEN3_PIPE::tpActivation>("q.rope", hQwen->q, true, hQwen->q_dim, 1),
                 PrintTensor<QWEN3_PIPE::tpActivation>("k.rope", k_cache_pos, true, hQwen->kv_dim, 1);
 
@@ -637,6 +635,7 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
 
     // 11. final RMSNorm
     // in-place operation on hQwen->x
+    floatX* rms_final_weight = TO<floatX>(lnf->w);  // (dim,);
     CU_rms_v2(hQwen->x, hQwen->x, rms_final_weight, hQwen->dim);
     // 12. classifier Matmul
     if (1) {

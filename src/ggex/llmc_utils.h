@@ -54,7 +54,7 @@ extern inline void fread_check(void *ptr, size_t size, size_t nmemb, FILE *strea
         } else if (ferror(stream)) {
             fprintf(stderr, "Error: File read error at %s:%d\n", file, line);
         } else {
-            fprintf(stderr, "Error: Partial read at %s:%d. Expected %zu elements, read %zu\n", file, line, nmemb, result);
+            fprintf(stderr, "Error: read at %s:%d. Expected %zu elements, read %zu\n", file, line, nmemb, result);
         }
         fprintf(stderr, "Error details:\n");
         fprintf(stderr, "  File: %s\n", file);
@@ -127,7 +127,7 @@ extern inline void fwrite_check(void *ptr, size_t size, size_t nmemb, FILE *stre
         } else if (ferror(stream)) {
             fprintf(stderr, "Error: File write error at %s:%d\n", file, line);
         } else {
-            fprintf(stderr, "Error: Partial write at %s:%d. Expected %zu elements, wrote %zu\n", file, line, nmemb, result);
+            fprintf(stderr, "Error: write at %s:%d. Expected %zu elements, wrote %zu\n", file, line, nmemb, result);
         }
         fprintf(stderr, "Error details:\n");
         fprintf(stderr, "  File: %s\n", file);

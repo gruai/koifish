@@ -17,7 +17,7 @@ using namespace Grusoft;
 
 hQUANT GeQuant::MakeInstance(GeNeuron* hNeuron, const std::string& nam_, QUANT_CARD& params, std::vector<hGensor> tensors, int flag) {
     hQUANT hQuant = nullptr;
-    if (params.type == NO_QUANT)
+    if (params.isPass())
         return hQuant;
 
     QUANT_FACTORY& quants = hNeuron->GetFish()->quants;
@@ -26,6 +26,9 @@ hQUANT GeQuant::MakeInstance(GeNeuron* hNeuron, const std::string& nam_, QUANT_C
         hQuant = quants[key];
     } else {
         switch (params.type) {
+            case PRE_QUANT:
+                hQuant = std::make_shared<Q_Impurity<float>>(nam_ + "_prequant", hNeuron, params, 0x0);
+                break;
             case MINI:
                 hQuant = std::make_shared<Q_Impurity<float>>(nam_ + "_quant", hNeuron, params, 0x0);
                 break;
