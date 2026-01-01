@@ -9,113 +9,121 @@
 #include "../../Manifold/Neuron.hpp"
 #include "../../Manifold/Optimizer.hpp"
 #include "../../Manifold/gLLM.hpp"
+#include "./kernel/gelu.cuh"
 #include "./kernel/operator.cuh"
 
-extern int tpFuseCu;
 extern cudaStream_t main_stream;
 
-unsigned long long rng_state = 0;
-float* accumulated_mean_loss = nullptr;
-
-static int micro_step = 0;  //*workload_indices=nullptr;
-// static int4 *bucket_info=nullptr;
-float RAW_backward(Fish* fish, const int* iX, int grad_accum_steps, bool isOnlyEvaluate, int flag) {
-    assert(!isOnlyEvaluate);
-    NVTX_RANGE_FN();
-    bool last_step = micro_step == grad_accum_steps - 1;
-    auto config    = fish->config;
-    int B, T, C, L = config.nLayer(), NH = config.n_head();
-    fish->GetBTC(B, T, C);
-    OutCLS* cls = fish->GetNeuron<OutCLS>("OutCLS", 0);
-    hGensor cur = nullptr, delta = cls->delta;
-    TokenEmbed* embed = fish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
-    if (micro_step == 0) {  // on the first micro-step zero the gradients, as we're about to += accumulate into them;
-        cudaCheck(cudaMemsetAsync(TO<float>(cls->out), 0, B * T * sizeof(float), main_stream));
+int Relu::Forw(hGTensor out, hGTensor inp, int flag) {
+    size_t nz            = SHAPE2NZ(shape);
+    const int block_size = 128;
+    const int grid_size  = CEIL_DIV(nz, block_size);
+    hGTensor gate        = nullptr;
+    switch (fAct) {
+        case SWIG:            
+            assert(slp_gate != nullptr && slp_gate->tRhs!=nullptr);
+            gate = slp_gate->tRhs;
+            gate->Print("swig.gate", 0, dump_flag, C);
+            // inp->Print("swig.inp", 0, dump_flag, C);
+            if (version == 0) {  // CU_swiglu_v0(ToX(out), ToX(out), ToX(inp), nz, main_stream);
+                CU_swiglu_v0<<<grid_size, block_size, 0, main_stream>>>(ToX(out), ToX(gate), ToX(inp), nz);
+            } else {
+                assert(C % x128::size == 0);
+                assert((B * T * C) % (block_size * x128::size) == 0);
+                const int num_blocks = CEIL_DIV(B * T * C, (int)(block_size * x128::size));
+                assert(gate != nullptr);
+                // CU_swiglu_v1<<<grid_size, block_size, 0, main_stream>>>(ToX(out), ToX(gate), ToX(inp), C);
+                CU_swiglu_v0<<<grid_size, block_size, 0, main_stream>>>(ToX(out), ToX(gate), ToX(inp), nz);
+            }
+            out->Print("ffn.swig", 0, dump_flag, B * T * C);
+            break;
+        case GELU:
+            gelu_forward(ToX(out), ToX(inp), nz, main_stream);
+            break;
+        default:
+            assert(0);
+            break;
     }
-
-    // floatX *scratchX=(floatX *)GTensor::buff;
-    GTensor::delta->Zero();  // cudaCheck(cudaMemset(dresidual, 0, B * T * C * sizeof(floatX)));    //???
-    PrintTensor<floatX>("back of P", ToX(GTensor::bt4c), true, B, T, C);
-    NvtxRange classifier_and_loss_range("classifier_and_loss");
-    FFN* ffn         = fish->GetNeuron<FFN>("FFN", L - 1);
-    LayerNormal* lnf = fish->GetNeuron<LayerNormal>("LayerNormal", 0);
-    delta            = cls->cuFlow(nullptr, 0x0);  // some operation fused in forward pass
-    lnf->cuFlow(delta, 0x0);                       //
-
-    hGensor lastDelta = ffn->out;
-    for (int l = L - 1; l >= 0; l--) {
-        NvtxRange layer_range("Layer", l);
-        SelfAttention* QKV = fish->GetNeuron<SelfAttention>("SelfAttention", l);
-        ffn                = fish->GetNeuron<FFN>("FFN", l);  // preFFN = l==0 ? nullptr : fish->GetNeuron<FFN>("FFN",l-1);
-        // GeNeuron *last = l == 0 ? embed : (GeNeuron *)(fish->GetNeuron<FFN>("FFN",l-1));    //residual = l == 0 ? ToX(embed->out) : ToX(preFFN->out);
-        // ffn->delta = lastDelta;     ffn->tmpDelta = lastDelta;
-        // LayerNormal *hNorm = l+1 != L ? &(fish->GetNeuron<SelfAttention>("SelfAttention",l+1)->norm) : lnf;
-        ffn->cuFlow(nullptr, 0x0);
-        QKV->cuFlow(nullptr, 0x0);  // QKV->norm.out,last->out
-    }
-    embed->OnEmbed(nullptr, 0x0);  //,random_u32(&rng_state)
-
-    // Aggregate all gradients that are not part of the transformer blocks5
-    if (tpFuseCu == 0 && last_step) {
-        // reduce all the losses within the current GPU (across all microsteps)
-        global_sum_deterministic(accumulated_mean_loss, TO<float>(cls->out), B * T, main_stream);
-// reduce loss across GPUs to a single, final float across all microsteps and GPUs
-#if MULTI_GPU
-        ncclCheck(ncclAllReduce(accumulated_mean_loss, accumulated_mean_loss, sizeof(float), ncclFloat, ncclAvg, multi_gpu_config.nccl_comm, main_stream));
-#endif
-        cudaCheck(cudaMemcpyAsync(&cls->mean_loss, accumulated_mean_loss, sizeof(float), cudaMemcpyDeviceToHost, main_stream));
-        cls->mean_loss /= B * T * grad_accum_steps;
-    }
-    cudaCheck(cudaDeviceSynchronize());
-    if (last_step) {
-        // cls->mean_loss /= B*T*grad_accum_steps;
-        micro_step = 0;
-    } else {
-        cls->mean_loss = -1.f;  // no loss available yet
-        micro_step++;
-    }
-
-    return cls->mean_loss;
+    cudaCheck(cudaGetLastError());
+    return 0x0;
 }
-/*
-void RAW_forward(Fish *fish,int flag) {
-    NVTX_RANGE_FN();
-    auto config = fish->config;
-    int B,T,C,tpFuseNormal=config.Fuse_Normal;
-    fish->GetBTC(B,T,C);
-    const size_t L = config.nLayer(),NH = config.n_head();
-    hGensor cur=nullptr,residual=nullptr;
-    LayerNormal* lnf = fish->GetNeuron<LayerNormal>("LayerNormal",0);
-    TokenEmbed* embed = fish->GetNeuron<TokenEmbed>("TokenEmbed",0);
-    cur = embed->Ming(nullptr,fish->Input());
-    residual = cur; //embed->out;
-    SelfAttention *QKV0 = fish->GetNeuron<SelfAttention>("SelfAttention",0),*QKV=nullptr;
 
-    if(tpFuseNormal==1){
-        cur=QKV0->norm.cuFlow(cur);
-    }
+template <typename T>
+__global__ static void CU_swiglu_back_v0(T* delta_in_out, T* delta_gate, const T* gate, const T* inp, int N) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < N) {
+        float xiW   = CU_T2Float(gate + idx);
+        float xiV   = CU_T2Float(inp + idx);
+        float delta = delta_in_out[idx];
+        // if(idx==0)    // only for debug
+        // {    nout("nout<%d>: gate=%g ffn.up=%g delta=%g\n", idx, xiW,xiV,delta);    }
+        float sigW = 1.0f / (1.0f + expf(-xiW));
+        delta_gate[idx] = delta * xiV * sigW * (1 + xiW * (1.0f - sigW));
 
-    FFN *ffn=nullptr;
-    for (int l = 0; l < L; l++) {
-        NvtxRange layer_range("Layer", l);
-        QKV = fish->GetNeuron<SelfAttention>("SelfAttention",l);
-        ffn = fish->GetNeuron<FFN>("FFN",l);            //ffn->out = GTensor::delta;
-        LayerNormal *hNorm = l+1 != L ? &(fish->GetNeuron<SelfAttention>("SelfAttention",l+1)->norm) : lnf;
-        ffn->fuseNorm = tpFuseNormal==1?hNorm:nullptr;
-        QKV->fuseNorm =  tpFuseNormal==1?&(ffn->norm):nullptr;
-        cur = QKV->cuFlow(cur,residual,nullptr,nullptr,flag);
-        cur = ffn->cuFlow(cur,nullptr, 0x0);
-        residual = ffn->out;
+        delta_in_out[idx] = delta * xiW * sigW;  //  delta * swish_out[i];
     }
-    if(tpFuseNormal==0){
-        cur = lnf->cuFlow(ffn->out);
-    }
-    OutCLS* cls = fish->GetNeuron<OutCLS>("OutCLS",0);
-    if(tpFuseCu==1)
-        cls->cuFlow(cur,flag); //embed->w,
-    else
-        assert(0);//cls->preLogits = lnf->out*embed->w;
-    PrintTensor<floatX>("output",ToX(cls->preLogits),true,B,T,C);
-    // ffn->norm.out->PrintX<floatX>("inp1",0,-1);
+}
 
-}*/
+//  delta is both delta_in & delta_out
+int Relu::Back(hGTensor delta_in_out, hGTensor pre_gelu, int flag) {
+    size_t nz            = SHAPE2NZ(shape);
+    const int block_size = 128;
+    const int grid_size  = CEIL_DIV(nz, block_size);
+    hGTensor gate        = nullptr;
+    switch (fAct) {
+        case SWIG:
+            // dump_flag = hFish->isModel({NLP_QWEN2}) ? -1 : 0;
+            assert(slp_gate != nullptr);
+            gate = slp_gate->tRhs;
+            pre_gelu->Print("ffn.up", 0, dump_flag, B * T * C);
+            gate->Print("swig.gate", 0, dump_flag, C);      //-1.890625
+            // inp->Print("swig.inp", 0, dump_flag, C);
+            if (version == 0) {  // CU_swiglu_v0(ToX(out), ToX(out), ToX(inp), nz, main_stream);
+                CU_swiglu_v0<<<grid_size, block_size, 0, main_stream>>>(ToX(out), ToX(gate), ToX(inp), nz);
+            } else {
+                assert(C % x128::size == 0);
+                assert((B * T * C) % (block_size * x128::size) == 0);
+                const int num_blocks = CEIL_DIV(B * T * C, (int)(block_size * x128::size));
+                assert(gate != nullptr && slp_gate != nullptr);
+                CU_swiglu_back_v0<<<grid_size, block_size, 0, main_stream>>>(ToX(delta_in_out), ToX(slp_gate->delta), ToX(gate), ToX(pre_gelu), nz);
+            }
+            delta_in_out->Print("dUp", 0, dump_flag, C);
+            slp_gate->delta->Print("dGate", 0, dump_flag, C);
+            break;
+        case GELU:
+            //  gelu_backward_inplace fused @matmul_backward
+            gelu_backward_inplace(ToX(delta_in_out), ToX(pre_gelu), nz, main_stream);
+
+            break;
+        default:
+            assert(0);
+            break;
+    }
+    cudaCheck(cudaGetLastError());
+    return 0x0;
+}
+
+__global__ void CU_rms_forward_v0(bf16* __restrict__ out, float* __restrict__ rstd, const bf16* __restrict__ inp, const bf16* __restrict__ weight, int N, int C,
+                                  float eps = 1e-5f) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= N) {
+        return;
+    }
+    inp += idx * C;
+    out += idx * C;
+    float acc = 0.f;
+    for (int c = 0; c < C; c++) {
+        float a = (float)inp[c];
+        acc += a * a;
+    }
+    float s = rsqrtf(acc / C + eps);
+    assert(!isnan(s) && !isinf(s));
+    for (int c = 0; c < C; c++) {
+        float n = s * (float)inp[c];  // normalized output
+        if (idx == 0 && c == 0) {
+            DEBUG_HERE;
+        }
+        out[c] = (bf16)n * (bf16)weight[c];  // scale
+    }
+    rstd[idx] = s;
+}

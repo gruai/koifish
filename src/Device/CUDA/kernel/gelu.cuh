@@ -67,60 +67,24 @@ void inline gelu_backward_inplace(floatX* d_in_out, const floatX* inp, const int
     gelu_backward_inplace_kernel<<<grid_size, block_size, 0, stream>>>(d_in_out, inp);
     cudaCheck(cudaGetLastError());
 }
-/*
-__global__ void static swiglu_kernel(__nv_bfloat16* hb, const __nv_bfloat16* hb2, int size) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < size) {
-        float val_fp32 = __bfloat162float(hb[i]);
-        float hb2_fp32 = __bfloat162float(hb2[i]);
 
-        float silu_val    = val_fp32 * (1.0f / (1.0f + expf(-val_fp32)));
-        float result_fp32 = silu_val * hb2_fp32;
-        hb[i]             = __float2bfloat16_rn(result_fp32);
-    }
-}
-*/
-// maybe out==inp
-template<typename T>
-__global__ static void swiglu_forward_kernel(T* out, const T* inp, const T* gate, int N) {
-    /**
-     * SwiGLU(x) = Swish(x) * Gate(x)
-     * SwiGLU(x) = SiLU(x*W) * (x*V)
-     * SiLU is the Swish activation function.
-     * inp = x*W
-     * gate = x*V
-     */
+/**
+ * SwiGLU(x) = Swish(x') * Gate(x') = Swish(x*W) * (x*V)
+ *      swish(x) = x * sigmoid(x) which is equivalent to the Sigmoid Linear Unit or SiLU.
+ * inp = x*W,    gate = x*V
+ *
+ * activated_x = F.silu(self.gate_proj(x)) * self.up_proj(x)
+ */
+template <typename T>
+__global__ static void CU_swiglu_v0(T* out, const T* gate, const T* inp, int N) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < N) {
-        float xiW = CU_T2Float(inp+i);
-        float xiV = CU_T2Float(gate+i);
-        out[i]    = (xiW / (1.0f + expf(-xiW))) * xiV;
-    }
-}
-template<typename T>
-void inline swiglu_forward(T* out, const T* inp, const T* gate, int N, cudaStream_t stream=0x0) {
-    const int block_size = 128;
-    const int grid_size  = CEIL_DIV(N, block_size);
-    swiglu_forward_kernel<<<grid_size, block_size, 0, stream>>>(out, inp, gate, N);
-    cudaCheck(cudaGetLastError());
-}
-
-__global__ static void swiglu_backward_kernel(float* dinp, const float* inp, const float* gate, const float* dout, const float* W, const float* V, int N) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < N) {
-        float xW         = (float)inp[i];
-        float xV         = (float)gate[i];
-        float y          = xW / (1.0f + expf(-xW)) * xV;                // SwiGLU(x)
-        float sig_xW     = 1.0f / (1.0f + expf(-xW));                   // Sigmoid(xW)
-        float silu_prime = sig_xW + xW * sig_xW * (1.0f - sig_xW);      // SiLU'(xW)
-        float grad_xW    = (silu_prime * xV * W[i]) * dout[i];          // Gradient w.r.t. xW
-        float grad_xV    = (xW / (1.0f + expf(-xW))) * V[i] * dout[i];  // Gradient w.r.t. xV
-        dinp[i]          = grad_xW + grad_xV;                           // Sum of gradients
+        float xiW = CU_T2Float(gate + i);
+        float xiV = CU_T2Float(inp + i);
+        out[i]    = (T)((xiW * xiV) / (1.0f + expf(-xiW)));
     }
 }
 
-// ----------------------------------------------------------------------------
-// kernel launcher
 /**
  * y=SiLU(xW)*(xV)
  * z=xW
@@ -128,10 +92,65 @@ __global__ static void swiglu_backward_kernel(float* dinp, const float* inp, con
  *
  * Using Chain-Rule
  * ∂y/∂x = (σ(z) + z*σ(z)*(1−σ(z)))*g*W + SiLU(z)*V
- */
-void inline swiglu_backward(float* dinp, const float* inp, const float* gate, const float* dout, const float* W, const float* V, int N) {
+
+template <typename T>
+__global__ static void CU_swiglu_back_v0(T* dinp, const T* inp, const T* gate, const T* dout, int N) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < N) {
+        float xW         = CU_T2Float(gate + i);    //(float)inp[i];
+        float xV         = CU_T2Float(inp + i);     //(float)gate[i];
+        float y          = xW / (1.0f + expf(-xW)) * xV;                // SwiGLU(x)
+        float sig_xW     = 1.0f / (1.0f + expf(-xW));                   // Sigmoid(xW)
+        float silu_prime = sig_xW + xW * sig_xW * (1.0f - sig_xW);      // SiLU'(xW)
+        float grad_xW    = (silu_prime * xV) * dout[i];          // Gradient w.r.t. xW
+        float grad_xV    = (xW / (1.0f + expf(-xW))) * dout[i];  // Gradient w.r.t. xV
+        dinp[i]          = grad_xW + grad_xV;                           // Sum of gradients
+    }
+} */
+
+template <typename Typ>
+__global__ static void CU_swiglu_v1(Typ* out, const Typ* inp, const Typ* gate, int C) {
+    using x128 = PackedN<Typ, 16 / sizeof(Typ)>;
+
+    // thread coordinates
+    int idx         = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
+    floatX* out_ptr = out + idx;
+    int bt          = (idx / C);
+    int c           = idx % C;
+
+    const floatX* up_ptr   = inp + (bt * C * 2 + c);
+    const floatX* gate_ptr = gate + C;
+
+    float thread_max = 0.f;
+
+    x128 packed_out;
+    x128 up_inp   = x128::load_cs(up_ptr);
+    x128 gate_inp = x128::load_cs(gate_ptr);
+    for (int k = 0; k < up_inp.size; ++k) {
+        float x1      = (float)up_inp[k];
+        float x2      = (float)gate_inp[k];
+        packed_out[k] = (floatX)((x1 * x2) / (1.0f + expf(-x2)));
+    }
+    packed_out.store(out_ptr);
+
+    // handle_absmax_reduction(stat_info, &block_max, thread_max);
+}
+
+template <typename T>
+void inline swiglu_forward(T* out, const T* inp, const T* gate, int N, cudaStream_t stream = 0x0) {
     const int block_size = 128;
     const int grid_size  = CEIL_DIV(N, block_size);
-    swiglu_backward_kernel<<<grid_size, block_size>>>(dinp, inp, gate, dout, W, V, N);
+    // CU_swiglu_v1<<<grid_size, block_size, 0, stream>>>(out, inp, gate, N);
+    CU_swiglu_v0<<<grid_size, block_size, 0, stream>>>(out, inp, gate, N);
     cudaCheck(cudaGetLastError());
 }
+
+// ----------------------------------------------------------------------------
+// kernel launcher
+
+// void inline swiglu_backward(float* dinp, const float* inp, const float* gate, const float* dout, const float* W, const float* V, int N) {
+//     const int block_size = 128;
+//     const int grid_size  = CEIL_DIV(N, block_size);
+//     swiglu_backward_kernel<<<grid_size, block_size>>>(dinp, inp, gate, dout, W, V, N);
+//     cudaCheck(cudaGetLastError());
+// }

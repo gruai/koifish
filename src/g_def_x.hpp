@@ -7,9 +7,9 @@
  */
 
 #pragma once
- 
+
 // Some constants
-#define KOIFISH_MOST_LOG        5120
+#define KOIFISH_MOST_LOG 5120
 
 //  ERR code of exit
 #define KOIFISH_INVALID_ARGS -10
@@ -33,6 +33,8 @@
 #define KOIFISH_BLAS_UNALIGN -1200
 #define KOIFISH_DATASET_EMPTY -1300
 #define KOIFISH_DATALOADER_EMPTY -1310
+
+#define KOIFISH_CUDA_CHECK -1400
 
 #define KOIFISH_EXIT_DEBUG -2000
 #define KOIFISH_EXIT_SYNC_DEVICE -2100
@@ -62,6 +64,9 @@
 #define CHILD_1012_CACHE true
 
 #ifndef NDEBUG
+#define nout printf
+#define INSPECT_THIS INSPECT inspect(this);
+
 #define DEBUG_HERE                      \
     do {                                \
         volatile int __debug_break = 0; \
@@ -72,6 +77,9 @@
         std::cout << "DEBUG: " << msg << std::endl; \
     } while (0);
 #else  // Eliminated in release builds
+#define nout(...)
+#define INSPECT_THIS
+
 #define DEBUG_HERE ((void)0);
 #define DEBUG_MARKER(msg) ((void)0);
 #endif

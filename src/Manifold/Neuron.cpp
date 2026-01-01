@@ -299,7 +299,7 @@ bool OutCLS::Build(int flag) {
     // hFish->InitGensor(nullptr,"loss",out,false);
     hFish->loss = out;  //
     // proj.B = dB;
-    proj.BuildX(name, {shape[0], shape[1]}, hFish, flag);
+    proj.BuildX(name, {shape[0], shape[1]}, hFish, flag | F_DELTA);
     proj.b = nullptr, proj.B = dB;
     // proj.InitCompression(COMPRESSIVE_SENSING::LORA);     //Very large gradient ,so strange!
 
@@ -358,7 +358,7 @@ SLP::SLP(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag)
 }
 
 bool SLP::Build(int flag) {
-    delta  = GTensor::delta;
+    // delta  = GTensor::delta;
     isBias = hFish->config.model.isSLPBias || BIT_TEST(flag, F_BIAS);
 
     void* ctx        = hFish->GetGGCTX();
@@ -381,7 +381,7 @@ bool SLP::Build(int flag) {
     // if (isStrMatch(name,hFish->config.filter_tmp_grad)) {  //  ,"attn.wq","attn.wk","attn.wv","attn.wo"
     //     BIT_SET(w->flags, GTensor::F_TMP_GRAD);
     // }
-    string sw = name + MODEL_CARD::sWeight, sb = name + ".bias", so = name + ".out";
+    string sw = name + MODEL_CARD::sWeight, sb = name + ".bias";
     bool isTrain = hFish->isTrain();
     hFish->InitGensor(ctx, sw.c_str(), w, true);
 
@@ -391,9 +391,11 @@ bool SLP::Build(int flag) {
     if (b != nullptr)
         b->tpInit = INIT_WEIGHT::W_SKIP;
     SHAPE s3 = {B, T, nOut}, s4 = {B, T, nIn};
-    out = std::make_shared<huTensor>(hFish, so, s3, tpData, false);
+    out = std::make_shared<huTensor>(hFish, name + ".out", s3, tpData, false);
     if (BIT_TEST(flag, F_DELTA)) {
         delta = GTensor::delta;
+    } else {
+        delta = GTensor::gate_delta;
     }
     out->AddSrc({w, b});  //  wLORAs contain more!
     // hFish->InitGensor(ctx,so.c_str(),out,false);
@@ -542,46 +544,51 @@ ROPE::ROPE(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int fla
 bool ROPE::Build(int flag) {
     auto& config = hFish->config;
     n_rot        = config.n_rot();
+    max_pos      = config.model.max_pos_embeddings;
     int n_embed  = config.nEmbed();
     head_dim     = config.head_dim();
     n_head = config.n_head(), n_head_kv = config.n_head_kv();
     q_dim = head_dim * n_head, kv_dim = head_dim * n_head_kv;
     assert(head_dim > 0 && q_dim > 0 && kv_dim > 0);
     r_dim = config.model.rotary_dim;
+
     if (r_dim == 0 && !config.model.isLoadCard()) {
         /* theta - 1. the base wavelength, which by default is 10000
                  2.  increasing the wavelength from 10,000 to 500,000, the effect is that of increasing the amount of tokens required to destroy semantic
            information, leading to improved long-range performance. For a wavelength that is large enough compared to the context, the very lowest frequencies
            can act as a semantic channel, as the position will have very little impact on the dot product.*/
         r_dim = 128;
-        theta = 10000;
+        theta = 10000;  //
     } else {
         n_ctx_orig = config.n_ctx_orig();
         freq_base  = config.model.rope_freq_base;
         freq_scale = config.model.rope_freq_scale;
         theta      = config.model.rope_theta;
     }
-    int dim2    = head_dim / 2;
-    float *fcos = new float[T * dim2], *fsin = new float[T * dim2], a, b;
+    int dim2 = head_dim / 2;
+    float a, b, sum2 = 0.0;  //*fcos = new float[T * dim2], *fsin = new float[T * head_dim],
+    floatX* fsin = new floatX[max_pos * head_dim];
     for (int tid = 0; tid < dim2; tid++) {
-        // Compute the frequency for each tid
-        float theta = 10000, freq = 1.0f / powf(theta, (float)(tid) / dim2);  // float powf(float base, float exponent);
+        float freq = 1.0f / powf(theta, (float)(2 * tid) / head_dim);  // float powf(float base, float exponent);
         // Compute the cosine and sine for all values of 't'
-        for (int t = 0; t < T; t++) {
-            fcos[t * dim2 + tid] = a = cosf(t * freq);
-            fsin[t * dim2 + tid] = b = sinf(t * freq);
+        for (int t = 0; t < max_pos; t++) {
+            float angle = (float)t * freq;
+            a = cosf(angle), b = sinf(angle);
             assert(fabs(a * a + b * b - 1.0) < 1.0e-6);
+            fsin[t * head_dim + 2 * tid]     = Float2T<floatX>(&a);
+            fsin[t * head_dim + 2 * tid + 1] = Float2T<floatX>(&b);
+            sum2 += a * a + b * b;
         }
     }
-    // hSin = GT(hFish, typNUMBER::F32, {T * dim2}, 0x0, name + ".sin");
-    // hSin->Alloc();
-    // hSin->SerialGP(fsin, nullptr, sizeof(float) * T * dim2, false);
+    hSin = GT(hFish, tpWeight, {max_pos * head_dim}, 0x0, name + ".sincos");
+    hSin->Alloc();
+    hSin->SerialGP(fsin, nullptr, sizeof(floatX) * max_pos * head_dim, false);
     // hCos = GT(hFish, typNUMBER::F32, {T * dim2}, 0x0, name + ".cos");
     // hCos->Alloc();
     // hCos->SerialGP(fcos, nullptr, sizeof(float) * T * dim2, false);
-    // hSin->Print("sin", 0x0, -1);
+    hSin->Print("sincos", 0x0, -1);
     // hCos->Print("cos", 0x0, -1);
-    delete[] fcos, fsin;
+    delete[] fsin;
 
     // KQ_pos = hFish->KQ_pos;
     // shape = {n_embd_head, n_head, T, B};
@@ -623,7 +630,7 @@ bool ROPE::Empty() const {
     return hSin == nullptr;
 }
 string ROPE::__repr__(string& suffix, string& prefix, int flag) {
-    int v       = hFish->config.model.Rope_version;
+    int v       = hFish->config.model.rope_type;
     string info = "ROPE_" + std::to_string(v);
     return _repr_1(suffix, prefix, info);
 };
@@ -644,6 +651,7 @@ LayerNormal::LayerNormal(Fish* hG_, const std::string& key_, JSON::const_iterato
     } else {
         shape = {C};
     }
+
     // assert(jvals.size()>=1 && jvals[0]>0);
     // shape={(int)(jvals[0])};
 }
@@ -651,6 +659,7 @@ LayerNormal::LayerNormal(Fish* hG_, const std::string& key_, JSON::const_iterato
     https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html#torch.nn.LayerNorm
 */
 bool LayerNormal::Build(int flag0) {
+    rms_eps  = hFish->config.model.norm_rms_eps;
     delta    = GTensor::delta;
     int flag = flag0 | GTensor::F_RESIDENT;
     if (hFish->arch == MODEL_ARCH::NLP_GPT2 || hFish->arch == MODEL_ARCH::NLP_GUPPY)
@@ -804,7 +813,37 @@ hGensor GeNeuron::AfterMing(RLS_BP* hRLS, hGensor cur, int flag) {
     return cur;
 }
 
-void GeNeuron::OnDebug(const std::string& info, int typ, int flag) { dump_flag = -1; }
+void GeNeuron::OnDebug(const std::string& info, int typ, int flag) {
+    if (!hFish->isModel({NLP_QWEN2}))
+        return;
+    if (!hFish->isTrain())
+        return;
+    return;
+    if (dynamic_cast<FFN*>(this) != nullptr) {
+        if (layid == 1) {
+            dump_flag = -1;
+        }
+    }
+    if (dynamic_cast<SelfAttention*>(this) != nullptr) {
+        dump_flag = -1;
+    }
+    if (dynamic_cast<ROPE*>(this) != nullptr) {
+        dump_flag = -1;
+    }
+    if (dynamic_cast<OutCLS*>(this) != nullptr) {
+        {
+            dump_flag = -1;
+        }
+    }
+    if (dynamic_cast<TokenEmbed*>(this) != nullptr) {
+        {
+            dump_flag = -1;
+        }
+    }
+    // dump_flag = -1;
+}
+
+void GeNeuron::ExitDebug(const std::string& info, int typ, int flag) { dump_flag = g_dump_level; }
 
 // SelfAttention::_PickGensors
 std::vector<hGensor> GeNeuron::PickGensors(bool isLORA, int flag) {
@@ -865,6 +904,10 @@ hGensor GeNeuron::GetGensor(const std::string& key, int flag) {
         if (strstr(gensor->name, key.c_str()) != NULL) {
             return gensor;
         }
+    }
+    _WARN("Failed to find tensor=\"%s\" @ \"%s\"\n", key.c_str(), name.c_str());
+    for (auto gensor : gensors) {
+        gensor->DumpX(0x0);
     }
     assert(0);
     return nullptr;

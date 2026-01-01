@@ -79,11 +79,8 @@ SelfAttention::SelfAttention(Fish* hG_, const std::string& key_, JSON::const_ite
     }
     isSeparateQKV = hFish->config.model.isSeparateQKV;
     isBqkv        = hFish->config.model.isBqkv;
-    Rope_version  = hFish->config.model.Rope_version;
+    
     isQKNormal    = hFish->config.model.isQKNormal;
-    if (Rope_version > 0 && !isQKNormal) {  // try QKNormal to help rope stable
-        isQKNormal = true;
-    }
 
     // dump_flag = -1;
     tpNormal = DEBUG.SelfAttention_noraml;
@@ -93,7 +90,8 @@ SelfAttention::SelfAttention(Fish* hG_, const std::string& key_, JSON::const_ite
 }
 
 bool SelfAttention::Build(int flag_0) {
-    hCache = hFish->hCache;  // may nullptr
+    hCache  = hFish->hCache;  // may nullptr
+    qkv4dnn = hFish->config.model.qkv4dnn;
 
     // SHAPE sp = {shape[0], shape[1]};
     int flag = flag_0, nTokens = nBatchToken();
@@ -106,7 +104,7 @@ bool SelfAttention::Build(int flag_0) {
 
     SHAPE sp3 = {B, T, C}, spTrans = {B, n_head_kv, T};  //,T
     if (isSeparateQKV) {
-        int flagQKV = hFish->config.model.isQKVBias ? flag | F_BIAS : flag;
+        int flagQKV = hFish->config.model.isQKVBias ? flag | F_BIAS | F_DELTA : flag | F_DELTA;
         Q.BuildX(_NAME(name, ATTN_Q), spQ, hFish, flagQKV);
         K.BuildX(_NAME(name, ATTN_K), spKV, hFish, flagQKV);
         V.BuildX(_NAME(name, ATTN_V), spKV, hFish, flagQKV);
@@ -123,9 +121,9 @@ bool SelfAttention::Build(int flag_0) {
         attn = std::make_shared<huTensor>(hFish, name + ".attn", (SHAPE){B, T, C_qkv}, tpWeight, false);  // B * T * C
     }
 #ifdef ENABLE_CUDNN
-    transition = GT(hFish, typNUMBER::F32, {B, n_head_kv, T}, 0x0, name + ".trans");  // ENABLE_CUDNN need float array
+    transition = GT(hFish, typNUMBER::F32, {B, n_head, T}, 0x0, name + ".trans");  // (B, Hq, T)
 #else
-    transition = GT(hFish, tpWeight, {B, n_head_kv, T * T}, 0X0, name + ".trans");  //  too much memory!
+    transition = GT(hFish, tpWeight, {B, n_head, T * T}, 0X0, name + ".trans");  //  too much memory!
 #endif
 
     out = std::make_shared<huTensor>(hFish, name + ".out", sp3, tpWeight, false);
@@ -133,7 +131,7 @@ bool SelfAttention::Build(int flag_0) {
         out->SetRefer(GTensor::outL);
     }
 
-    proj_cat.BuildX(_NAME(name, ATTN_OUT), (SHAPE){spQ[1], spQ[0]}, hFish, flag);
+    proj_cat.BuildX(_NAME(name, ATTN_OUT), (SHAPE){spQ[1], spQ[0]}, hFish, flag | F_DELTA);
 
     BIT_SET(proj_cat.out->flags, GTensor::F_NOALLOC);  // memory trick as kGPT
     proj_cat.w->residual_scale = hFish->config.common.residual_scale;
@@ -150,7 +148,7 @@ bool SelfAttention::Build(int flag_0) {
     } else
         BIT_SET(Q.out->flags, GTensor::F_NOALLOC);
     //}
-    if (Rope_version > 0) {
+    if (!hFish->isModel({NLP_GPT2,NLP_GPT2_char})) {
         assert(isSeparateQKV);
         if (rope == nullptr) {
             rope = std::make_shared<ROPE>();
@@ -171,66 +169,63 @@ bool SelfAttention::Build(int flag_0) {
     return true;
 }
 
-/**
- *
- */
+//
+bool SelfAttention::UpdateQKVPack(int flag) {
+    devQ = Q.out->data, devK = K.out->data, devV = V.out->data;
+    if (qkv4dnn == qkvPack) {
+        return true;
+    }
+
+    hBITARR hQKV = TO<BIT_8>(GTensor::bt4c), hQ = (hBITARR)devQ, hK = (hBITARR)devK, hV = (hBITARR)devV;
+    size_t offset = 0x0, nT = B * T, ldQ = sizeof(floatX) * q_dim, ldKV = sizeof(floatX) * kv_dim;
+    assert(GTensor::bt4c->nByte()>=nT*(ldQ+ldKV*2));
+    switch (qkv4dnn) {
+        case QKV_PACK::QKVQKV:
+            for (int r = 0; r < nT; r++) {
+                D2D(hQKV + offset, hQ + ldQ * r, ldQ), offset += ldQ;
+                D2D(hQKV + offset, hK + ldKV * r, ldKV), offset += ldKV;
+                D2D(hQKV + offset, hV + ldKV * r, ldKV), offset += ldKV;
+            }
+            devQ = hQKV, devK = hQKV + ldQ, devV = hQKV + ldQ + ldKV;
+            break;
+        default:
+            break;
+    }
+
+    return true;
+}
 bool SelfAttention::_devQKV(int stage, int flag) {
+    tmpQKV = GTensor::tmpFF1;  // remater_qkv ? GTensor::tmpFF1 : Q.out;
     if (hFish->isAtPhase(LIFE_PHASE::P_GENERATE)) {
+        assert(hCache != nullptr);
         int pos           = stage;
         floatX *key_cache = (floatX*)hCache->Get(KVCache::KV_KEY, layid - 1, 0), *val_cache = (floatX*)hCache->Get(KVCache::KV_VAL, layid - 1, 0);
         K.out->data = key_cache + (size_t)pos * kv_dim, V.out->data = val_cache + (size_t)pos * kv_dim;
-        if (pos > 0)
-            return true;
+        Q.out->data = ToX(tmpQKV);
+        return true;
     }
 
+    assert(hCache == nullptr);
     bool isTrain = hFish->isTrain();
-    tmpQKV       = GTensor::tmpFF1;  // remater_qkv ? GTensor::tmpFF1 : Q.out;
-
-    devQ = ToX(tmpQKV);
-    assert(devQ != nullptr);                                                            // always true
-    devK = (char*)devQ + Q.out->nByte(), devV = (char*)devK + K.out->nByte();           // for cuDNN
-    assert((char*)(devV) + V.out->nByte() - (char*)(tmpQKV->data) <= tmpQKV->nByte());  // may fail!!!
-    Q.out->data = devQ;
-    if (isTrain) {
-        K.out->data = devK, V.out->data = devV;
-    } else {
-        if (hCache != nullptr) {
-            // K,V is cached for example: K.out->data = key_cache + (size_t)pos * kv_dim, V.out->data = val_cache + (size_t)pos * kv_dim;
-            floatX *key_cache = (floatX*)hCache->Get(KVCache::KV_KEY, layid - 1, 0), *val_cache = (floatX*)hCache->Get(KVCache::KV_VAL, layid - 1, 0);
-            K.out->data = key_cache, V.out->data = val_cache;
-        } else {
-            K.out->data = devK, V.out->data = devV;
-        }
-    }
+    // devQ = ToX(tmpQKV);
+    // assert(devQ != nullptr);
+    // devK = (char*)devQ + Q.out->nByte(), devV = (char*)devK + K.out->nByte();
+    // assert((char*)(devV) + V.out->nByte() - (char*)(tmpQKV->data) <= tmpQKV->nByte());  // may fail!!!
+    Q.out->data = ToX(tmpQKV);
+    K.out->data = ToX(Q.out) + Q.out->size();
+    V.out->data = ToX(K.out) + K.out->size();
+    qkvPack     = QQKKVV;
 
     // offset = Q.out->nByte();
     if (isTrain) {
-        deltaQ = GTensor::bt4c->Partial("partialDeltaQ", 0, {B, T, C});  //  devDeltaQ = deltaQ->data
-        deltaK = GTensor::bt4c->Partial("partialDeltaK", B * T * C, {B, T, C});
-        deltaV = GTensor::bt4c->Partial("partialDeltaV", B * T * C * 2, {B, T, C});
+        assert(q_dim == C && kv_dim <= C);
+        deltaQ = GTensor::bt4c->Partial("partialDeltaQ", 0, {B, T, q_dim});  //  devDeltaQ = deltaQ->data
+        deltaK = GTensor::bt4c->Partial("partialDeltaK", B * T * C, {B, T, kv_dim});
+        deltaV = GTensor::bt4c->Partial("partialDeltaV", B * T * C * 2, {B, T, kv_dim});
+        assert(hBITARR(deltaV->data) - (hBITARR)(GTensor::bt4c->data) <= B * T * C * 2 * sizeof(floatX));
         // devDeltaQ = ToX(GTensor::bt4c), devDeltaK = (char*)devDeltaQ + Q.out->nByte(), devDeltaV = (char*)devDeltaK + K.out->nByte();
         devDeltaQ = ToX(deltaQ), devDeltaK = ToX(deltaK), devDeltaV = ToX(deltaV);
     } else {
-    }
-
-    switch (Rope_version) {
-        case 0:
-            assert(rope == nullptr);
-            break;
-        case 1:
-            // rope->devQ = devQ, rope->devK = devK;
-            // rope->devDeltaQ = devDeltaQ, rope->devDeltaK = devDeltaK;
-            break;
-        case 2:
-        case 3:
-            // assert(0);
-            // rope->devQ      = ToX(norm.out);  //  inpQ = norm.cuFlow(inpL);
-            // rope->devK      = nullptr;
-            // rope->devDeltaQ = ToX(GTensor::tmpDelta), rope->devDeltaK = nullptr;
-            break;
-        default:
-            assert(0);
-            break;
     }
 
     return true;
@@ -391,7 +386,6 @@ BROWN_attn::BROWN_attn(Fish* hG_, const std::string& key_, JSON::const_iterator 
     n_rot           = config.n_rot();
     rope_freq_base  = config.model.rope_freq_base;
     rope_freq_scale = config.model.rope_freq_scale;
-    Rope_version    = 0;
 }
 bool BROWN_attn::Build(int flag) {
     // SelfAttention::Build(flag);

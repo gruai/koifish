@@ -334,88 +334,13 @@ hGensor Fish::BuildLoss(void* ctx, hGensor cur, int flag) {
 }
 
 hGensor NLP_AutoRegressive::BuildTarget(void* ctx, hGensor cur, int flag) {
+    assert(0);  // Deprecated
     hGensor _tNorm = UpdateGensor(hDictVAE->_norm.w->name);
     int n_vocab = tVocab(), n_batch = config.common.n_batch, n_ctx = config.common.n_ctx, n_embd = config.nEmbed();
     auto train_params              = config.common;
     train_params.use_checkpointing = false;  // CYS_0826
     const int N = train_params.n_ctx, n_past = 0;
-    const float rms_norm_eps = config.model.norm_rms_eps;
     hGensor t32 = nullptr, wA = nullptr, wB = nullptr;
-#ifdef _TENSOR_G_
-
-#else
-    hGensor t31 = ggml_rms_norm(ctx, cur, rms_norm_eps);
-    gTN(t31, "norm");
-    assert_shape_2d(t31, config.nEmbed(), N * train_params.n_batch);
-
-    if (hDictVAE->nLevel > 0) {
-        t31 = hDictVAE->DEC(ctx, t31);  // t31 = ggml_mul_mat(ctx, hDictVAE->decoder, t31 );
-        gTN(t31, "embed_decoder");
-        t32    = ggml_repeat(ctx, _tNorm, t31);
-        n_embd = t32->ne[0];
-    } else {
-        if (isTrain()) {
-            t32 = ggml_repeat(ctx, _tNorm, t31);  //_tNorm shoud same shape as t31 if has grad!
-            gTN(t32, "_tNorm.repeat");            // assert_shape_2d(t32, n_embd, N*n_batch);
-        } else
-            t32 = _tNorm;
-    }
-    hGensor t33 = ggml_mul(ctx, t31, t32);
-    gTN(t33, "result_norm");
-    assert_shape_2d(t33, n_embd, N * n_batch);
-    if (role == ROLE_TYPE::SWARM_FOLLOWER) {
-        out_node = t33;
-        return out_node;
-    } else {
-        if (role == ROLE_TYPE::SWARM_HEAD) {
-            t33 = mos.Build(config, ctx, t33);
-        }
-        hGensor t34 = hDictVAE->Embed2Output(ctx, t33);
-        // hGensor  t34   = ggml_mul_mat           (ctx, _tOutput, t33);                          gTN(t34, "t34");
-        assert_shape_2d(t34, n_vocab, N * n_batch);
-        hGensor t35 = n_batch == 1 ? t34 : ggml_reshape_3d(ctx, t34, n_vocab, N, n_batch);
-        gTN(t35, "t35");
-        // no,no,no! 1) Softmax layers can be difficult to train since the gradients can vanish or explode  2) CrossEntropyLoss assumes logits on the input.
-        //  t35 = ggml_soft_max_inplace(ctx,t35);
-        // preLogits = t35;
-        if (!isLocalInfer) {
-            if (mom.embed2w != nullptr) {
-                assert(teach == WIKI::_LOGITS_GATE);
-                t35 = build_gate(ctx, t33, t35, flag);
-            } else {
-                for (auto wiki : wikis) {
-                    if (wiki->t2t != nullptr) {
-                        hGensor tEX1 = ggml_mul_mat(ctx, wiki->t2t, wiki->exLogits);
-                        t35          = ggml_add(ctx, t35, tEX1);
-                    } else if (wiki->exLogits != nullptr) {
-                        hGensor tEX1 = ggml_soft_max(ctx, wiki->exLogits);
-                        t35          = ggml_add(ctx, t35, tEX1);
-                    }
-
-                    //  WIKI::_LOGITS_SCALE
-                    // t35 = ggml_relu(ctx,t35);       //converge very slow, so strange!
-                    // t35 = ggml_mul(ctx,t35,exLogits);
-                }
-            }
-        }
-        BuildLoss(ctx, t35);
-        if (train_params.use_checkpointing) {
-            checkpoints.push_back(t31);
-            checkpoints.push_back(t32);
-            checkpoints.push_back(t33);
-            checkpoints.push_back(t34);
-            checkpoints.push_back(t35);
-            checkpoints.push_back(out_node);
-        }
-        preLogits = t35;
-    }
-
-    // if(isTrain())
-    //     assert(out_node->grad!=nullptr);
-    if (hDictVAE->nLevel > 0) {
-        n_embd = config.nEmbed();
-    }
-#endif
     return out_node;
 }
 
@@ -748,6 +673,7 @@ void NLP_AutoRegressive::Dump(int type, int flag) {
     if (config.lars_ratio > 0)
         _INFO("\t LARS(t_max=%g)\n", config.lars_ratio);
 
+    std::sort(optParams.begin(), optParams.end(), [](const hGTensor& a, const hGTensor& b) { return strcmp(a->name,b->name)<0; });
     _INFO("====== Params Table ======\n");
     for (auto t : optParams) {
         t->DumpX(0x0);
@@ -788,13 +714,12 @@ int Fish::BackwardOnRLS(int iter, int flag) {
     OutCLS* cls       = GetNeuron<OutCLS>("OutCLS", 0);
     GTensor::buff     = hCLS->preLogits->data;  // reused in many place!
     GTensor::buff_len = hCLS->preLogits->size() * sizeof(floatX);
-
-    if (DEBUG.back_graph_version == 1) {
+    /*if (DEBUG.back_graph_version == 1) {
         int nAccum          = config.common.n_gradient_accumulation;
         bool isOnlyEvaluate = false;
         float loss          = RAW_backward(this, nullptr, nAccum, isOnlyEvaluate, flag);
         return 0x0;
-    }
+    }*/
 
     RLS_BP* hRLS = hEDS->GetScheduler<RLS_BP>();
     hGensor cur  = cls->delta;

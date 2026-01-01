@@ -128,14 +128,14 @@ hGTensor TokenEmbed::OnEmbed(hGensor inpL, int seed) {
                 CU_embed_forw_1<<<C / 32, 32, 0, main_stream>>>(ToX(cur), ToX(curW), token, C, 0);
             } else {
                 inp = inpL;
-                inp->Print("token_input", 0, 0); 
+                inp->Print("token_input", 0, 0);
                 if (w->type == typNUMBER::T_BINARY_3) {
                     curW->Print("curW", 0, 0);
                     CU_embed_ternary_forw_<floatX>
                         <<<CEIL_DIV(B * T, block_size), block_size, 0, main_stream>>>(ToX(cur), TO<int>(inp), curW->gama_T(), TO<char>(curW), ToX0(b), B, T, C);
                 } else
                     CU_embed_forw_<<<CEIL_DIV(B * T, block_size), block_size, 0, main_stream>>>(ToX(cur), TO<int>(inp), ToX(curW), ToX0(b), B, T, C);
-                w->Print("wte", 0, 0);  // ToX(w),true,Vp,C
+                // w->Print("wte", 0, 0);
                 if (b != nullptr)
                     PrintTensor<floatX>("wpe", ToX0(b), true, T, C);
             }
@@ -229,7 +229,8 @@ int HIERARCH_LoRA::Forw(floatX* rhs, floatX* lhs, int BT, int flag) {
     // b->Print(b->name, 1, dump_flag);
     return 0x0;
 }
-int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, int flag) {
+
+int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, Relu* hRelu, int flag) {
     try {
         floatX *rhs = ToX(rhs_0), *to_gelu = ToX0(toGelu);
         int OC = nOut, IC = nIn, nToken = nBatchToken();
@@ -253,7 +254,8 @@ int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, int flag) {
                 break;
         }
 
-        rhs = to_gelu ? to_gelu : rhs;
+        rhs  = to_gelu ? to_gelu : rhs;
+        tRhs = to_gelu ? toGelu : rhs_0;
         assert(rhs != nullptr);
         switch (compression) {
             case SAMPLE:
@@ -274,18 +276,11 @@ int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, int flag) {
                 CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, nToken, IC, main_stream, true);
                 break;
         }
-        if (to_gelu) {
-            switch (hFish->config.model.fActSLP) {
-                case SWIG:
-                    swiglu_forward(ToX(rhs_0), ToX(rhs_0), to_gelu, nToken * OC, main_stream);
-                    break;
-                default:
-                    gelu_forward(ToX(rhs_0), to_gelu, nToken * OC, main_stream);
-                    break;
-            }
-
-            //
-        }
+        // if (hRelu != nullptr) {
+        //     // w->Print("ffn.w", 0, dump_flag);
+        //     toGelu->Print("ffn.up", 0, dump_flag, OC);
+        //     hRelu->Forw(rhs_0, toGelu);
+        // }
         return 0x0;
     } catch (...) {
         assert(0);
@@ -360,7 +355,7 @@ int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, 
                 break;
         }
 
-        if (flag != 0x100)
+        if (flag != 0x100 && !isAccumuDelta)
             w->Dogleg(-1);
 
         return 0x0;
@@ -504,7 +499,7 @@ hGTensor FFN::cuInfer(hGTensor hIn, int flag) {
     bool isBias = up.b != nullptr;
     int nToken  = nBatchToken();
     inp         = OnInput(hIn);
-    inp->Print("ffn.in", 0, dump_flag, C);
+    // inp->Print("ffn.in", 0, dump_flag, C);
     GTensor::residual = inp;  // GTensor::residual->OverWrite(inp);          //
     if (fuseNorm == nullptr) {
         norm.cuFlow(inp);
@@ -512,16 +507,17 @@ hGTensor FFN::cuInfer(hGTensor hIn, int flag) {
     norm.out->Print("ffn.norm", 0, dump_flag, C);
     if (!gate.Empty()) {
         gate.Forw(tGelu, norm.out, nullptr);
-        gate.w->Print("ffn.gate.w", 0, dump_flag);
+        // gate.w->Print("ffn.gate.w", 0, dump_flag);
         tGelu->Print("ffn.gate", 0, dump_flag, nToken * latent);
     }
     // up.dump_flag = dump_flag;
     // up.w->Print("ffn.up.w", 0, dump_flag);
-    up.Forw(tGelu, norm.out, up_out);
+    up.Forw(tGelu, norm.out, up_out, &relu);
+    relu.Forw(tGelu, up_out);
     tGelu->Print("ffn.up+gelu", 0, dump_flag, latent);
     hGTensor down_out = GTensor::delta;  // remater_ffn ? GTensor::tmpFF1 : down.out;
     // PrintTensor<floatX>("ffn.norm",ToX(norm.out),true,B,T,C,1,-1);          PrintTensor<floatX>("ff1",ff1,true,B,T,latent,1,-1);
-    down.Forw(down_out, tGelu, nullptr, isSymmetric);
+    down.Forw(down_out, tGelu, nullptr, nullptr, isSymmetric);
     down_out->Print("ffn.down", 0, dump_flag, nToken * C);  // PrintTensor<floatX>("ffn",scratch,true,B,T,C);
     if (!hFish->isRemater()) {
         residual_forward(ToX(out), ToX(GTensor::residual), ToX(down_out), nToken * C, main_stream);
@@ -538,6 +534,39 @@ hGTensor FFN::cuInfer(hGTensor hIn, int flag) {
     return nullptr;
 }
 
+template <typename T>
+void CU_set(const char* title, T* dst, int n1, int n2, int n3 = 1, int n4 = 1, int flag = 0x0) {
+    size_t nElem = n1 * n2 * n3 * n4, i, nz = 0, nEach = 3;
+    if (nElem == 0)
+        return;
+    T *src = new T[nElem], *cur = src;
+    char info[1028] = "\0";
+    sprintf(info + strlen(info), ">>>> %s\t", title);
+    float a1 = -FLT_MAX, a0 = FLT_MAX, a;
+    double sum = 0.0, len = 0.0, sum2 = 0.0;
+    for (i = 0; i < nElem; i++, cur++) {
+        a    = (i % 2 + 1) * 1.0e-6f;
+        *cur = a;
+        if (i < nEach || i >= nElem - nEach || fabs(i - nElem / 2) <= nEach)
+            sprintf(info + strlen(info), "%g ", a);
+        if (i == nEach || i == nElem - nEach)
+            sprintf(info + strlen(info), "...");
+        sum += fabs(a);
+        sum2 += a * a;
+        if (a == 0)
+            nz++;
+        a1 = std::max(a1, a);
+        a0 = std::min(a0, a);
+    }
+    len = sqrt(sum2 / nElem);
+    sprintf(info + strlen(info), " |avg|=%g(%ld) avg_len=%g sum2=%g [%f,%f] >>>>\n", sum / nElem, nElem, len, sum2, a0, a1);
+    fputs(info, stderr);
+    fflush(stderr);
+
+    cudaCheck(cudaMemcpyAsync(dst, src, nElem * sizeof(T), cudaMemcpyHostToDevice));
+    delete[] src;
+}
+
 //  hIn = QKV->out
 hGTensor FFN::cuFlow(hGTensor hIn, int flag) {
     hGTensor tGelu = GTensor::scratch, up_out = remater_ffn ? GTensor::tmpFF1 : up.out;
@@ -545,23 +574,26 @@ hGTensor FFN::cuFlow(hGTensor hIn, int flag) {
 
     if (isForward()) {
         inp = OnInput(hIn);
-        inp->Print("ffn.in", 0, dump_flag, C);
+        // inp->Print("ffn.in", 0, dump_flag, B * T * C);
         GTensor::residual = inp;  // GTensor::residual->OverWrite(inp);          //
         if (fuseNorm == nullptr) {
+            norm.w->Print("ffn.norm.w", 0, dump_flag, C);
             norm.cuFlow(inp);
+            norm.out->Print("ffn.norm", 0, dump_flag, B * T * C);
         }
-        norm.out->Print("ffn.norm", 0, dump_flag, C);
         if (!gate.Empty()) {
-            gate.Forw(tGelu, norm.out, up_out);
+            gate.Forw(tGelu, norm.out, nullptr);
         }
-        // up.dump_flag = dump_flag;
-        up.w->Print("ffn.up.w", 0, dump_flag);
-        up.Forw(tGelu, norm.out, up_out);
-        tGelu->Print("ffn.up+gelu", 0, dump_flag, C);
+        // up.w->Print("ffn.up.w", 0, dump_flag);
+        up.Forw(up_out, norm.out);  // up.Forw(tGelu, norm.out, up_out, &relu);
+        up_out->Print("ffn.up", 0, dump_flag, latent);
+        relu.Forw(tGelu, up_out);
+
         hGTensor down_out = GTensor::delta;  // remater_ffn ? GTensor::tmpFF1 : down.out;
-        // PrintTensor<floatX>("ffn.norm",ToX(norm.out),true,B,T,C,1,-1);          PrintTensor<floatX>("ff1",ff1,true,B,T,latent,1,-1);
-        down.Forw(down_out, tGelu, nullptr, isSymmetric);
+
+        down.Forw(down_out, tGelu, nullptr, nullptr, isSymmetric);
         down_out->Print("ffn.down", 0, dump_flag, B * T * C);  // PrintTensor<floatX>("ffn",scratch,true,B,T,C);
+        // GTensor::tZ->Print(GTensor::tZ->name, 0, dump_flag);
         if (!hFish->isRemater()) {
             residual_forward(ToX(out), ToX(GTensor::residual), ToX(down_out), B * T * C, main_stream);
             if (fuseNorm != nullptr) {
@@ -569,28 +601,40 @@ hGTensor FFN::cuFlow(hGTensor hIn, int flag) {
                 // layernorm_forward(ToX(fuseNorm->out), TO<float>(fuseNorm->mean),TO<float>(fuseNorm->rstd), ToX(out),ToX(fuseNorm->w), ToX0(fuseNorm->b), B*T,
                 // 1, C, main_stream); return fuseNorm->out;
             }
-            out->Print("ffn.out", 0, dump_flag);
+            // out->Print("ffn.out", 0, dump_flag);
             return out;
         } else {
             // inp->Print("ffn.in",0,-1);
         }
     } else {
         SelfAttention* lastQKV = hFish->GetNeuron<SelfAttention>("SelfAttention", layid - 1);
-        dump_flag              = 0;
         assert(hIn == GTensor::delta);
-        norm.out->Print("ffn.norm", 0, dump_flag);
+        // norm.out->Print("ffn.norm", 0, dump_flag);
         if (remater_ffn) {
-            up.Forw(tGelu, norm.out, up_out);
-        } else {  // gelu just inplace operation on ff1, maybe could share memory!
-            gelu_forward(ToX(tGelu), ToX(up_out), up_out->size(), main_stream);
+            up.Forw(up_out, norm.out);  // up.Forw(tGelu, norm.out, up_out, &relu);
+            if (!gate.Empty()) {
+                gate.Forw(tGelu, norm.out, nullptr);
+            }
+            relu.Forw(tGelu, up_out);
         }
-        up_out->Print("ffn.up", 0, dump_flag);
-        tGelu->Print("ffn.up+gelu", 0, dump_flag, up_out->size());  // GTensor::delta->Print("ffn.down.delta",0,dump_flag);
-
+        INSPECT inspect(this);
+        GTensor::delta->Print("ffn.down.delta", 0, dump_flag);
         down.Back(GTensor::bt4c, tGelu, GTensor::delta, up_out);
-        GTensor::delta->Print("ffn.up.delta", 0, dump_flag);
+        // CU_set<nv_bfloat16>("dSwigLU", ToX(GTensor::bt4c), B, T, latent, 1, dump_flag);
+        GTensor::bt4c->Print("dSwigLU", 0, dump_flag, B * T * latent);
+        // up_out->Print("ffn.up", 0, dump_flag, B * T * latent);
+        assert(!relu.Empty());
+        if (!gate.Empty()) {    //ugly code, need refactor!
+            gate.Forw(tGelu, norm.out, nullptr);
+            // tGelu->Print("swig.gate", 0, -1, latent);
+        }
+        relu.Back(GTensor::bt4c, up_out);
         // hGensor tmpDelta = GTensor::FromBuffer();
         up.Back(GTensor::tmpDelta, norm.out, GTensor::bt4c, nullptr);
+        if (!gate.Empty()) {
+            gate.Back(GTensor::tmpDelta, norm.out, gate.delta, nullptr, true);
+        }
+        GTensor::tmpDelta->Print("norm.delta", 0, dump_flag);
         // // layernorm backward does += to the dresidual, so it correctly accumulates grad from the MLP block above
         // norm.cuFlow(residual,scratchF,tmpDelta);
         float* _mean = norm.mean == nullptr ? nullptr : TO<float>(norm.mean);
@@ -604,6 +648,7 @@ hGTensor FFN::cuFlow(hGTensor hIn, int flag) {
             lastQKV->Q.w->Print("Qw1", 1, dump_flag);  //  0x7ffe5bc00000
             dump_flag = 0;
         }
+        // CU_set<nv_bfloat16>("delta", ToX(GTensor::delta), B, T, C, 1, dump_flag);
         return GTensor::delta;
     }
     return nullptr;
@@ -645,15 +690,17 @@ hGTensor LayerNormal::cuFlow(hGTensor inpDelta, int flag) {  //,hGTensor deltaIn
         size_t smem = (2 + block_y) * C * sizeof(floatX);
 
         if (mean == nullptr) {  // RMS
-            CU_rms_forward<<<grid_size, dim3(WARP_SIZE, block_y), smem, main_stream>>>(ToX(out), _rstd, in, weight, N, C);
-
+            auto status = cudaFuncSetAttribute(CU_rms_forward<floatX, floatX>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+            cudaCheck(cudaGetLastError());
+            // CU_rms_forward<<<grid_size, dim3(WARP_SIZE, block_y), smem, main_stream>>>(ToX(out), _rstd, in, weight, N, C, rms_eps);
+            CU_rms_forward_v0<<<CEIL_DIV(N, block_size), block_size, 0x0, main_stream>>>(ToX(out), _rstd, in, weight, N, C, rms_eps);
         } else {
             // in order to use more than 48 KiB of smem, need to call cudaFuncSetAttribute
             // this may fail, in which case we fall back to the smem free implementation.
-            auto status = cudaFuncSetAttribute(layernorm_forward_kernel6, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+            auto status = cudaFuncSetAttribute(CU_lm_forward, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
             cudaCheck(cudaGetLastError());
             if (status == cudaSuccess) {
-                layernorm_forward_kernel6<<<grid_size, dim3(WARP_SIZE, block_y), smem, main_stream>>>(ToX(out), _mean, _rstd, in, weight, bias, N, C);
+                CU_lm_forward<<<grid_size, dim3(WARP_SIZE, block_y), smem, main_stream>>>(ToX(out), _mean, _rstd, in, weight, bias, N, C);
             } else {
                 // fall back to the version without shared memory
                 const int grid_size_fb = CEIL_DIV(N, (block_size / WARP_SIZE));
@@ -736,12 +783,12 @@ hGTensor OutCLS::cuInfer(hGTensor inp_, int flag) {
 }
 
 hGTensor OutCLS::cuFlow(hGTensor inp_, int flag) {
+    INSPECT inspect(this);
     int V = nCls, Vp = padded_nCls, gelu_fusion = 1, i;
     assert(proj.b == nullptr);
     mean_loss          = 0.0f;
     const int* targets = (int*)(target->data);
-
-    float* cuLoss = (float*)out->data;
+    float* cuLoss      = (float*)out->data;
     hGTensor cur = preLogits, w = proj.w;
     float alpha4g = 1.0, beta4g = 1.0, logprob = 0;  //  rLoss = 1.0f / (B * T)
     if (isForward()) {
@@ -754,8 +801,8 @@ hGTensor OutCLS::cuFlow(hGTensor inp_, int flag) {
         cudaCheck(cudaMemset(cuLoss, 0, B * T * sizeof(float)));
         assert(target->isSameShape(out));
         bool isBack = ToG0(w) != nullptr && delta != nullptr && !hFish->isAtPhase(LIFE_PHASE::P_EVAL_), write_dlogits = isBack;
-        // target->Print("oucls.target", 1, -1), isBack = false, write_dlogits = false;  //   Debug_PPL
-        w->Print("oucls.proj.w", 1, dump_flag);
+        target->Print("oucls.target", 0, dump_flag);
+        // w->Print("oucls.proj.w", 1, dump_flag);
         for (i = 0; i < B; i += dB) {
             size_t off = i * T * Vp, n1 = i * T, nZ = i * T * C;
             off = 0;  // reduce memory
@@ -763,7 +810,7 @@ hGTensor OutCLS::cuFlow(hGTensor inp_, int flag) {
             // [50304,768] x [768,8192] => [50304,8192]
             hGensor subZ = inp->Partial("partialZ", nZ, {dB, T, C}), subDelta = delta->Partial("partialDeltaZ", nZ, {dB, T, C});
             proj.Forw(cur, subZ);
-            // CU_mm_(ToX(cur) + off, w, z0 + nZ, NULL, Vp, dB * T, C, main_stream, true, false, false);
+            // cur->Print("preLogist",0, dump_flag);
             // SYNC_DEVICE();
             if (DEBUG.T_classifier_ver == 1) {
                 CU_classifier_<<<dB * T, 1024, 0, main_stream>>>(ToX(cur) + off, cuLoss + n1, nullptr, rLoss, targets + n1, dB, T, V, Vp, dev_metric,
@@ -771,10 +818,10 @@ hGTensor OutCLS::cuFlow(hGTensor inp_, int flag) {
             } else
                 fused_classifier_kernel5<<<dB * T, 1024, 0, main_stream>>>(ToX(cur) + off, cuLoss + n1, nullptr, rLoss, targets + n1, dB, T, V, Vp,
                                                                            write_dlogits);
-            if (isBack) {                                               //  back of delta & grad
+            if (isBack) {
+                PrintTensor<float>("loss", cuLoss + n1, true, dB, T, 1, 1, dump_flag);
+                // cur->Print("oucls.delta", 0, dump_flag);
                 proj.Back(subDelta, subZ, cur, nullptr, false, 0x100);  // hGTensor delta, hGTensor inp, hGTensor deltaIn
-                // CU_mm_(ToX(delta) + nZ, w, ToX(cur) + off, NULL, C, dB * T, Vp, main_stream, 0, 0, 0, gelu_fusion >= 2 ? to_gelu : NULL, true);
-                // CU_mm_blasLt(ToG(w), z0 + nZ, ToX(cur) + off, NULL, C, Vp, dB * T, main_stream, false, true, alpha4g, beta4g /* accumulate */, NULL, true);
             }
         }
         // fused_classifier(errLogits, cuLoss, rLoss, targets, B, T, V, Vp, write_dlogits, main_stream);        //target=[32,1024]

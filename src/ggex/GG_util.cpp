@@ -29,6 +29,7 @@
 #include "json.hpp"
 
 int g_dump_level = 1;
+int g_dump_each  = 3;
 
 #define ARG2STR(format, len)                  \
     {                                         \
@@ -692,7 +693,6 @@ void CLI_params::OnArch() {
             model.isFFNShareParam    = true;
             model.isEmbedWeightTying = true;
             DEBUG.check_tensor_norm  = true;
-            model.Rope_version       = 0;  // 2025.5.7 some bugs
             break;
         case MODEL_ARCH::NLP_GPT2:
         case MODEL_ARCH::NLP_GPT2_char: {
@@ -721,19 +721,15 @@ void CLI_params::OnArch() {
 
             // model.tpPreLogits = typNUMBER::BF16;
             //  need new GEMM! cuBLASLt requires bias in FP8 mode to be BF16... (sigh)
-            model.isNormalBias  = true;
-            model.isSLPBias     = true;  // nealy same
-            model.isPaddedCls   = true;  //  ceil(n/128.0)*128
-            model.isSeparateQKV = true;
-            /* Very strange
-                1. ver_1 would fail, why?
-                2. ver_2 also fail
-                2. ver_3 would stall after 700 steps
-            */
-            model.Rope_version       = 0;
+            model.isNormalBias       = true;
+            model.isSLPBias          = true;  // nealy same
+            model.isPaddedCls        = true;  //  ceil(n/128.0)*128
+            model.isSeparateQKV      = true;
+            model.qkv4dnn            = QKV_PACK::QQKKVV;
+            model.rope_type          = ROPE_NONE;
             model.isEmbedWeightTying = true;
             model.preLogits_dB       = 8;
-            model.fActSLP            = GELU;
+            model.fActSLP = GELU, model.fActFFN = GELU;
 
             int group = Get({"model_v0", "target_group"}, 1);
             assert(group == 1);
@@ -742,8 +738,8 @@ void CLI_params::OnArch() {
         break;
         case NLP_QWEN2:
             // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
-            // scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;       
-            DEBUG.verShuffleSamp = -1,  DEBUG.verSampJump = -1;
+            // scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;
+            DEBUG.verShuffleSamp = -1, DEBUG.verSampJump = -1;
             model.isSeparateQKV = true, model.isBqkv = true;
             model.sLayer             = "layers.";
             model.isEmbedWeightTying = true;  //  why false would cause nan
@@ -760,7 +756,6 @@ void CLI_params::OnArch() {
                 model.sWeight = ".qweight";
             }
 
-            model.Rope_version = 1;
             // model.isEmbedWeightTying = false;   //  0.6B has no tying, but 4B is tying       isEmbedWeightTying = jKV(jModelParam, {"tie_word_embeddings"},
             // isEmbedWeightTying};
             break;
@@ -1124,7 +1119,6 @@ bool CLI_params::InitJConfig(int flag) {
             if (!model.InitHugFace(this, jConfig, ""))
                 return false;
         } else {
-            
         }
 
         n_swarm = jKV(jConfig, {"train", "swarm"}, 1);
@@ -1188,7 +1182,7 @@ bool CLI_params::InitJConfig(int flag) {
 bool CLI_params::parse(int argc, char** argv) {
     std::string arg_prefix = "--", key, value;
     exec_name              = EXE_name();
-    string sExt = argc > 1 ? FILE_EXT(argv[1]) : "";
+    string sExt            = argc > 1 ? FILE_EXT(argv[1]) : "";
     bool isJConfig         = false;
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];

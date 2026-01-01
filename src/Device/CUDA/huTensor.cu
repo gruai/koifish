@@ -140,8 +140,8 @@ bool huTensor::InitParam(int tpX) {
     SUM::nInitParam++;  // may skip(bias is always init to 0)
     if (tpInit > 0 && tpInit != SERIALIZE) {
         assert(type == typNUMBER::BF16 || type == typNUMBER::I32);
-        if (strcmp(name, "model.embed_tokens.weight") == 0) {  //  model.blk.34.ffn_down.weight
-            DEBUG_HERE;                                 // Print(name, 1, -1);
+        if (strcmp(name, "model.layers.0.post_attention_layernorm.weight") == 0) {  //  model.blk.34.ffn_down.weight
+            DEBUG_HERE;                                                             // Print(name, 1, -1);
         }
         // _INFO("[InitParam_@%d]\t%ld-%ld@%s\n",iter,size(),nInit,name);
         if (BIT_TEST(flags, F_LORA_B)) {
@@ -167,9 +167,9 @@ bool huTensor::InitParam(int tpX) {
                     ToTernary(paramX);
                     cudaFree(paramX);
                     // Print(name,0,-1);
-                } else{
+                } else {
                     CU_disti_normal<floatX>(nInit, (floatX*)data, 0.02f * residual_scale, param_seed);
-                }                    
+                }
 
                 break;
         }
@@ -181,13 +181,19 @@ bool huTensor::InitParam(int tpX) {
         // Print(name,0,-1);
     } else {
         if (tpInit == SERIALIZE) {  //  ???
+
             if (host_data != nullptr) {
                 SerialGP(host_data, nullptr, szData, false);
+                G_NORM_STAT<bf16>(size(), (bf16*)host_data, disq.sum_2, disq.sum_1, disq.nrm_1);
+            }
+            if (strcmp(name, "model.layers.1.post_attention_layernorm.weight") == 0) {  //  model.blk.34.ffn_down.weight
+                GTensor::tZ = this;
+                DEBUG_HERE;
             }
         }
     }
     // if (DUMP())
-    //     Print(name, 0, -1);  
+    //     Print(name, 0, -1);
     return true;
 }
 #ifdef __USE_GGML__
@@ -322,6 +328,15 @@ bool cuClearGrad(std::vector<hGTensor> tensors, int flag) {
     return true;
 }
 
+bool D2D(void* hDst, const void* hSrc, size_t szData, int flag) {
+    try {
+        assert(hDst != nullptr && hSrc != nullptr);
+        cudaCheck(cudaMemcpy(hDst, hSrc, szData, cudaMemcpyDeviceToDevice));
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
 bool D2H(void* dev, void* host, size_t szData, int flag) {
     try {
         assert(host != nullptr && dev != nullptr);

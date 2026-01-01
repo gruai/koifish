@@ -12,10 +12,10 @@
 #include "../../Manifold/Fish.hpp"
 #include "../../Manifold/Neuron.hpp"
 #include "./cuda_common.h"
+#include "./kernel/gelu.cuh"
 #include "./kernel/layernorm.cuh"
 #include "./kernel/operator.cuh"
 
-// #include "./EDevice.hpp"
 #define NOMINMAX
 
 // #undef ENABLE_CUDNN
@@ -59,9 +59,9 @@ static void checkCudnnFE(const fe::error_object& e, const char* file, int line) 
 #define checkCudnnFE(err) checkCudnnFE(err, __FILE__, __LINE__)
 
 // Need a cache because graph->build_operation_graph() is slow but everything else seems fast
-using cache_type_fwd = std::map<std::tuple<int, int, int, int, int>, std::shared_ptr<fe::graph::Graph>>;
-using cache_type_bwd = std::map<std::tuple<int, int, int, int>, std::shared_ptr<fe::graph::Graph>>;
-static std::map<std::tuple<int, int, int, int, int>, std::shared_ptr<fe::graph::Graph>> cudnn_graph_fwd, cudnn_graph_bwd;
+
+using cache_cudnn_graph = std::map<QKV_KEY6, std::shared_ptr<fe::graph::Graph>>;
+static cache_cudnn_graph cudnn_graph_fwd, cudnn_graph_bwd;
 
 std::shared_ptr<fe::graph::Graph> cudnn_sdpa_forward_graph(int64_t const b, int64_t const h_q, int64_t const h_k, int64_t const h_v,
                                                            int64_t const s_q,  //  seq length of q & kv
@@ -214,65 +214,49 @@ std::shared_ptr<fe::graph::Graph> cudnn_sdpa_backward_graph(int64_t const b, int
     return graph;
 }
 
-auto cudnn_qkv_graph(int B, int NH, int T, int HS, float attn_scale, int ld, int is_inference_only, bool isSepQKV = false, bool isBack = false) {
-    auto key = std::make_tuple(B, NH, T, HS, is_inference_only);
-    if (isBack) {
-        auto it = cudnn_graph_bwd.find(key);
-        if (it != cudnn_graph_bwd.end()) {
-            return it->second;
-        }
-    } else {
-        auto it = cudnn_graph_fwd.find(key);
-        if (it != cudnn_graph_fwd.end()) {
-            return it->second;
-        }
+static bool is_inference_only = false;
+size_t cudnn_qkv_forw(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn, int flag) {
+    auto key = std::make_tuple(B, Hq, Hkv, T, HS, (int)is_inference_only);
+    assert(cudnn_graph_fwd.find(key) == cudnn_graph_fwd.end());
+    auto graph = std::make_shared<fe::graph::Graph>();
+#if defined(ENABLE_BF16) || defined(ENABLE_FP16)
+    graph->set_io_data_type(fe::DataType_t::BFLOAT16).set_intermediate_data_type(fe::DataType_t::FLOAT).set_compute_data_type(fe::DataType_t::FLOAT);
+#else
+    assert(0);
+#endif
+
+    // QKV is (B, T, 3, NH, HS) which cuDNN can handle directly without an external permute
+    int H                       = Hq + 2 * Hkv;
+    std::vector<int64_t> stride = {Hq * HS * T, HS, Hq * HS, 1}, strideKV = {Hkv * HS * T, HS, Hkv * HS, 1};
+    if (qkv4dnn == QKV_PACK::QKVQKV) {
+        stride = {H * HS * T, HS, H * HS, 1}, strideKV = stride;
     }
 
-    std::shared_ptr<fe::graph::Graph> graph = nullptr;
-    bool causal_mask = true, padding_mask = false, alibi_mask = false, has_attn_bias = false;
-    if (isSepQKV) {
-        int64_t h_q = NH, h_k = NH, h_v = NH;  // b = B;
-        int64_t s_q  = T;                      // q tensor  seq length
-        int64_t s_kv = T;                      // k and v tensor  seq length
-        int64_t d_qk = HS;                     // hidden dim
-        int64_t d_v  = HS;                     // hidden dim
-        graph        = cudnn_sdpa_forward_graph(B, h_q, h_k, h_v, s_q, s_kv, d_qk, d_v, attn_scale, is_inference_only, causal_mask, alibi_mask, padding_mask,
-                                                has_attn_bias);
-    } else {
-        graph = std::make_shared<fe::graph::Graph>();
-#if defined(ENABLE_BF16) || defined(ENABLE_FP16)
-        graph->set_io_data_type(CUDNN_16BIT).set_intermediate_data_type(fe::DataType_t::FLOAT).set_compute_data_type(fe::DataType_t::FLOAT);
-#else
-        assert(0);
-#endif
-        std::vector<int64_t> stride = {ld * T, HS, ld, 1};  //{3 * NH * HS * T,  HS, 3 * NH * HS, 1};
-        // QKV is (B, T, 3, NH, HS) which cuDNN can handle directly without an external permute
-        auto Q = graph->tensor(fe::graph::Tensor_attributes().set_name("Q").set_dim({B, NH, T, HS}).set_uid(Q_UID).set_stride(stride));
-        auto K = graph->tensor(fe::graph::Tensor_attributes().set_name("K").set_dim({B, NH, T, HS}).set_uid(K_UID).set_stride({stride}));
-        auto V = graph->tensor(fe::graph::Tensor_attributes().set_name("V").set_dim({B, NH, T, HS}).set_uid(V_UID).set_stride({stride}));
+    auto Q          = graph->tensor(fe::graph::Tensor_attributes().set_name("Q").set_dim({B, Hq, T, HS}).set_uid(Q_UID).set_stride(stride));
+    auto K          = graph->tensor(fe::graph::Tensor_attributes().set_name("K").set_dim({B, Hkv, T, HS}).set_uid(K_UID).set_stride(strideKV));
+    auto V          = graph->tensor(fe::graph::Tensor_attributes().set_name("V").set_dim({B, Hkv, T, HS}).set_uid(V_UID).set_stride(strideKV));
+    auto attn_scale = graph->tensor(fe::graph::Tensor_attributes()
+                                        .set_name("attn_scale")
+                                        .set_dim({1, 1, 1, 1})
+                                        .set_stride({1, 1, 1, 1})
+                                        .set_uid(Attn_scale_UID)
+                                        .set_is_pass_by_value(true)
+                                        .set_data_type(fe::DataType_t::FLOAT));
 
-        // auto attn_scale = graph->tensor(fe::graph::Tensor_attributes().set_name("attn_scale")
-        //                            .set_dim({1, 1, 1, 1})
-        //                            .set_stride({1, 1, 1, 1})
-        //                            .set_uid(Attn_scale_UID)
-        //                            .set_is_pass_by_value(true)
-        //                            .set_data_type(fe::DataType_t::FLOAT));
+    auto sdpa_options = fe::graph::SDPA_attributes().set_name("flash_attention");
+    sdpa_options.set_is_inference(is_inference_only);
+    sdpa_options.set_attn_scale(attn_scale);
+    sdpa_options.set_causal_mask(true);
 
-        auto sdpa_options = fe::graph::SDPA_attributes().set_name("flash_attention");
-        sdpa_options.set_is_inference(is_inference_only);
-        sdpa_options.set_attn_scale(attn_scale);
-        sdpa_options.set_causal_mask(true);
+    // Create the graph operation and get the output tensors back
+    auto [O, stats] = graph->sdpa(Q, K, V, sdpa_options);
 
-        // Create the graph operation and get the output tensors back
-        auto [O, stats] = graph->sdpa(Q, K, V, sdpa_options);
+    // Output is (B, T, Hq, HS) BF16/FP16 and stats for backward pass is (B, Hq, T) FP32
+    O->set_output(true).set_dim({B, Hq, T, HS}).set_stride({Hq * HS * T, HS, Hq * HS, 1}).set_uid(O_UID);
 
-        // Output is (B, T, NH, HS) BF16/FP16 and stats for backward pass is (B, NH, T) FP32
-        O->set_output(true).set_dim({B, NH, T, HS}).set_stride({NH * HS * T, HS, NH * HS, 1}).set_uid(O_UID);
-
-        assert(stats == nullptr || is_inference_only == false);
-        if (is_inference_only == false) {
-            stats->set_output(true).set_data_type(fe::DataType_t::FLOAT).set_dim({B, NH, T, 1}).set_stride({NH * T, T, 1, 1}).set_uid(STATS_UID);
-        }
+    assert(stats == nullptr || is_inference_only == false);
+    if (is_inference_only == false) {
+        stats->set_output(true).set_data_type(fe::DataType_t::FLOAT).set_dim({B, Hq, T, 1}).set_stride({Hq * T, T, 1, 1}).set_uid(STATS_UID);
     }
 
     checkCudnnFE(graph->validate());
@@ -282,84 +266,70 @@ auto cudnn_qkv_graph(int B, int NH, int T, int HS, float attn_scale, int ld, int
     auto plans = graph->create_execution_plans({fe::HeurMode_t::A});
     checkCudnnFE(graph->check_support(cudnn_handle));
     checkCudnnFE(graph->build_plans(cudnn_handle));
-    // Reallocate the workspace if the required size is greater than the current workspace
-    // In H100 this may be around 16B
-    if (graph->get_workspace_size() > cudnn_workspace_size) {
-        if (cudnn_workspace_size > 0) {
-            cudaCheck(cudaFree(cudnn_workspace));
-        }
-        cudnn_workspace_size = graph->get_workspace_size();
-        cudaCheck(cudaMalloc(&cudnn_workspace, cudnn_workspace_size));
-    }
-    if (isBack) {
-        cudnn_graph_bwd.insert({key, graph});
-    } else {
-        cudnn_graph_fwd.insert({key, graph});
-    }
-
-    return graph;
+    size_t need = graph->get_workspace_size();
+    assert(need == 0x0);
+    // if (need > cudnn_workspace_size) {
+    //     if (cudnn_workspace_size > 0) {
+    //         cudaCheck(cudaFree(cudnn_workspace));
+    //     }
+    //     cudnn_workspace_size = graph->get_workspace_size()*10;
+    //     cudaCheck(cudaMalloc(&cudnn_workspace, cudnn_workspace_size));
+    // }
+    cudnn_graph_fwd.insert({key, graph});
+    return 0x0;
 }
 
-auto cudnn_qkv_bwd(int B, int NH, int T, int HS, float attn_scale, int ld, bool isSepQKV = false) {
-    // static cache_type_bwd cudnn_graph_bwd;
-    auto key = std::make_tuple(B, NH, T, HS, 0x0);
-    auto it  = cudnn_graph_bwd.find(key);
-    if (it != cudnn_graph_bwd.end()) {
-        return it->second;
-    }
+size_t cudnn_qkv_back(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn) {
+    QKV_KEY6 key = std::make_tuple(B, Hq, Hkv, T, HS, 0x0);
+    assert(cudnn_graph_bwd.find(key) == cudnn_graph_bwd.end());
+    // auto it = cudnn_graph_bwd.find(key);
+    // if (it != cudnn_graph_bwd.end()) {
+    //     return it->second;
+    // }
 
-    std::shared_ptr<fe::graph::Graph> graph = nullptr;
-    bool causal_mask = true, padding_mask = false, alibi_mask = false, has_attn_bias = false;
-    if (isSepQKV) {
-        int64_t h_q = NH, h_k = NH, h_v = NH;  // b = B;
-        int64_t s_q  = T;                      // q tensor  seq length
-        int64_t s_kv = T;                      // k and v tensor  seq length
-        int64_t d_qk = HS;                     // hidden dim
-        int64_t d_v  = HS;                     // hidden dim
-        graph = cudnn_sdpa_backward_graph(B, h_q, h_k, h_v, s_q, s_kv, d_qk, d_v, attn_scale, false, causal_mask, alibi_mask, padding_mask, has_attn_bias);
-    } else {
-        graph = std::make_shared<fe::graph::Graph>();
-#if defined(ENABLE_BF16) || defined(ENABLE_FP16)
-        graph->set_io_data_type(CUDNN_16BIT).set_intermediate_data_type(fe::DataType_t::FLOAT).set_compute_data_type(fe::DataType_t::FLOAT);
-#else
+    auto graph = std::make_shared<fe::graph::Graph>();
+    graph->set_io_data_type(fe::DataType_t::BFLOAT16).set_intermediate_data_type(fe::DataType_t::FLOAT).set_compute_data_type(fe::DataType_t::FLOAT);
+
+    std::vector<int64_t> stride = {Hq * HS * T, HS, Hq * HS, 1}, strideKV = {Hkv * HS * T, HS, Hkv * HS, 1};
+    if (qkv4dnn == QKV_PACK::QKVQKV) {
         assert(0);
-#endif
-        std::vector<int64_t> stride = {ld * T, HS, ld, 1};  // (B, N, 3, NH, HS)
-        // must come from inp (which means we also need to convert THAT to FP16)
-        auto Q = graph->tensor(fe::graph::Tensor_attributes().set_name("Q").set_dim({B, NH, T, HS}).set_uid(Q_UID).set_stride(stride));
-        auto K = graph->tensor(fe::graph::Tensor_attributes().set_name("K").set_dim({B, NH, T, HS}).set_uid(K_UID).set_stride(stride));
-        auto V = graph->tensor(fe::graph::Tensor_attributes().set_name("V").set_dim({B, NH, T, HS}).set_uid(V_UID).set_stride(stride));
-        auto O = graph->tensor(fe::graph::Tensor_attributes().set_name("O").set_dim({B, NH, T, HS}).set_uid(O_UID).set_stride({NH * HS * T, HS, NH * HS, 1}));
-        auto dO =
-            graph->tensor(fe::graph::Tensor_attributes().set_name("dO").set_dim({B, NH, T, HS}).set_uid(dO_UID).set_stride({NH * HS * T, HS, NH * HS, 1}));
-
-        auto stats = graph->tensor(fe::graph::Tensor_attributes()
-                                       .set_name("stats")
-                                       .set_dim({B, NH, T, 1})
-                                       .set_uid(STATS_UID)
-                                       .set_stride({NH * T, T, 1, 1})
-                                       .set_data_type(fe::DataType_t::FLOAT));
-        // auto attn_scale = graph->tensor(fe::graph::Tensor_attributes().set_name("attn_scale")
-        //                         .set_dim({1, 1, 1, 1})
-        //                         .set_stride({1, 1, 1, 1})
-        //                         .set_is_pass_by_value(true)
-        //                         .set_uid(Attn_scale_UID)
-        //                         .set_data_type(fe::DataType_t::FLOAT));
-        auto sdpa_backward_options = fe::graph::SDPA_backward_attributes()
-                                         .set_name("flash_attention_backward")
-#if CUDNN_FRONTEND_MAJOR_VERSION > 1 || CUDNN_FRONTEND_MINOR_VERSION >= 5
-                                         .set_deterministic_algorithm(true)  // 1.5+ needs this for determinism
-#endif
-                                         .set_causal_mask(true)
-                                         .set_attn_scale(attn_scale);
-
-        // Create the graph operation and get the output tensors back
-        auto [dQ, dK, dV] = graph->sdpa_backward(Q, K, V, O, dO, stats, sdpa_backward_options);
-
-        dQ->set_output(true).set_dim({B, NH, T, HS}).set_stride(stride).set_uid(dQ_UID);
-        dK->set_output(true).set_dim({B, NH, T, HS}).set_stride(stride).set_uid(dK_UID);
-        dV->set_output(true).set_dim({B, NH, T, HS}).set_stride(stride).set_uid(dV_UID);
+        // stride ={H * HS * T,  HS, H * HS, 1}, strideKV = stride;
     }
+    auto Q = graph->tensor(fe::graph::Tensor_attributes().set_name("Q").set_dim({B, Hq, T, HS}).set_uid(Q_UID).set_stride(stride));
+    auto K = graph->tensor(fe::graph::Tensor_attributes().set_name("K").set_dim({B, Hkv, T, HS}).set_uid(K_UID).set_stride(strideKV));
+    auto V = graph->tensor(
+        fe::graph::Tensor_attributes().set_name("V").set_dim({B, Hkv, T, HS}).set_uid(V_UID).set_stride(strideKV));  //  {H * HS * T, HS, H * HS, 1}
+    auto O  = graph->tensor(fe::graph::Tensor_attributes().set_name("O").set_dim({B, Hq, T, HS}).set_uid(O_UID).set_stride({stride}));
+    auto dO = graph->tensor(fe::graph::Tensor_attributes().set_name("dO").set_dim({B, Hq, T, HS}).set_uid(dO_UID).set_stride({stride}));
+
+    auto stats                 = graph->tensor(fe::graph::Tensor_attributes()
+                                                   .set_name("stats")
+                                                   .set_dim({B, Hq, T, 1})
+                                                   .set_uid(STATS_UID)
+                                                   .set_stride({Hq * T, T, 1, 1})
+                                                   .set_data_type(fe::DataType_t::FLOAT));
+    auto attn_scale            = graph->tensor(fe::graph::Tensor_attributes()
+                                                   .set_name("attn_scale")
+                                                   .set_dim({1, 1, 1, 1})
+                                                   .set_stride({1, 1, 1, 1})
+                                                   .set_is_pass_by_value(true)
+                                                   .set_uid(Attn_scale_UID)
+                                                   .set_data_type(fe::DataType_t::FLOAT));
+    auto sdpa_backward_options = fe::graph::SDPA_backward_attributes()
+                                     .set_name("flash_attention_backward")
+#if CUDNN_FRONTEND_MAJOR_VERSION > 1 || CUDNN_FRONTEND_MINOR_VERSION >= 5
+                                     .set_deterministic_algorithm(true)  // 1.5+ needs this for determinism
+#endif
+                                     .set_causal_mask(true)
+                                     .set_attn_scale(attn_scale);
+
+    // Create the graph operation and get the output tensors back
+    auto [dQ, dK, dV] = graph->sdpa_backward(Q, K, V, O, dO, stats, sdpa_backward_options);
+
+    dQ->set_output(true).set_dim({B, Hq, T, HS}).set_stride({stride}).set_uid(dQ_UID);
+    dK->set_output(true).set_dim({B, Hkv, T, HS}).set_stride(strideKV).set_uid(dK_UID);
+    dV->set_output(true).set_dim({B, Hkv, T, HS}).set_stride(strideKV).set_uid(dV_UID);
+
     checkCudnnFE(graph->validate());
 
     // Build the operation graph and execution part (this is the VERY SLOW PART)
@@ -379,35 +349,37 @@ auto cudnn_qkv_bwd(int B, int NH, int T, int HS, float attn_scale, int ld, bool 
     }
 
     cudnn_graph_bwd.insert({key, graph});
-    return graph;
+    return cudnn_workspace_size;
 }
 
 //
 bool SelfAttention::FUSE_cudnn(floatX* dqkvr, floatX* dout, int flag) {
     assert(cudnn_handle != nullptr);
     NVTX_RANGE_FN();
-    int NH = n_head, HS = C / n_head, stride = 3 * NH * HS;
-    float attn_scale = 1.0 / sqrtf(HS * 1.0), *stats = TO<float>(transition);
-    void* devPtrO = attn->data;  // out;
+    int HS           = C / n_head;             //, stride = 3 * NH * HS;
+    float* stats     = TO<float>(transition);  //  (B, Hq, T)
+    float attn_scale = 1.0 / sqrtf(HS * 1.0f);
+    void* devPtrO    = attn->data;  // out;
     cuDNNCheck(cudnnSetStream(cudnn_handle, main_stream));
-    // if(var_packs.empty()){}
-    var_packs = {{Q_UID, devQ},       {K_UID, devK},       {V_UID, devV},       {O_UID, devPtrO},  {dO_UID, dout},
-                 {dQ_UID, devDeltaQ}, {dK_UID, devDeltaK}, {dV_UID, devDeltaV}, {STATS_UID, stats}};
 
-    if (isSeparateQKV) {
-        stride = NH * HS;
-    } else {
-    }
+    UpdateQKVPack();
+
+    var_packs = {
+        {Q_UID, devQ},       {K_UID, devK},       {V_UID, devV},       {O_UID, devPtrO},   {dO_UID, dout},
+        {dQ_UID, devDeltaQ}, {dK_UID, devDeltaK}, {dV_UID, devDeltaV}, {STATS_UID, stats}, {Attn_scale_UID, &attn_scale},
+    };
+
+    QKV_KEY6 key = std::make_tuple(B, n_head, n_head_kv, T, HS, 0x0);
     if (isForward()) {
-        bool is_inference_only = false;
-        auto graph             = cudnn_qkv_graph(B, NH, T, HS, attn_scale, stride, is_inference_only);
+        auto graph = cudnn_graph_fwd[key];  // cudnn_qkv_forw(B, n_head, n_head_kv, T, HS, is_inference_only);
         checkCudnnFE(graph->execute(cudnn_handle, var_packs, cudnn_workspace));
+        attn->Print("l_atty", 0x0, dump_flag);
     } else {  // Backward      dout=>(dQ,dK,dV)
         assert(devDeltaQ == dqkvr);
-        auto graph = cudnn_qkv_bwd(B, NH, T, HS, attn_scale, stride);
-        Q.w->Print("Q.w0", 0, dump_flag);  // float a = tNormOf(Q.w);
+        auto graph = cudnn_graph_bwd[key];  // cudnn_qkv_back(B, n_head, n_head_kv, T, HS, 0x0);
+        // Q.w->Print("Q.w0", 0, dump_flag);  // float a = tNormOf(Q.w);
         checkCudnnFE(graph->execute(cudnn_handle, var_packs, cudnn_workspace));
-        Q.w->Print("Q.w1", 0, dump_flag);  // a = tNormOf(Q.w);
+        // Q.w->Print("Q.w1", 0, dump_flag);  // a = tNormOf(Q.w);
     }
     cudaCheck(cudaGetLastError());
     return true;
@@ -512,8 +484,8 @@ bool InitCUDA(const CLI_params& hparams, EDGE_DEVICES* hDevice, int flag) {
     // _INFO("| peak bandwidth GB/s   | %-50.1f |\n", (double)deviceProp.memoryClockRate*(deviceProp.memoryBusWidth / 8) * 2 / 1e6);
     // _INFO("+-----------------------+----------------------------------------------------+\n");
     _INFO("\t君子不器 - \"%s\" \n", deviceProp.name);
-    _INFO("\tCUDA driver version: %d.%d, %s runtime version: %d.%d %s\n", driver_version / 1000, (driver_version % 100) / 10, COLOR_ORANGE, runtime_version / 1000,
-          (runtime_version % 100) / 10, COLOR_RESET);
+    _INFO("\tCUDA driver version: %d.%d, %s runtime version: %d.%d %s\n", driver_version / 1000, (driver_version % 100) / 10, COLOR_ORANGE,
+          runtime_version / 1000, (runtime_version % 100) / 10, COLOR_RESET);
     _INFO("\tCUDA capability major/minor version number: %d.%d. ECC=%d\n", deviceProp.major, deviceProp.minor, deviceProp.ECCEnabled);
     _INFO("\t\n");
     _INFO("\t%d multiprocessors, %d CUDA cores/MP, %d CUDA cores\n", deviceProp.multiProcessorCount, nCorePP, nCorePP * deviceProp.multiProcessorCount);
@@ -591,27 +563,32 @@ hGTensor ROPE::cuInfer(SelfAttention* hQKV, uint32_t seed, int pos, int flag) {
     dim3 blocks_q(B, T, n_head), blocks_k(B, T, n_head_kv), blocks(B, T);
     assert(n_head_kv <= n_head);  // so blocks_k is in blocks_q
     floatX *q = ToX(hQKV->Q.out), *k = ToX(hQKV->K.out);
-    CU_rope2_forward<<<blocks_q, dim3(head_dim / 2, 1, 1)>>>(q, k, pos, n_head, n_head_kv, head_dim, theta);
+    CU_rope2_v0<<<blocks_q, dim3(head_dim / 2, 1, 1)>>>(q, k, pos, n_head, n_head_kv, head_dim, theta);
     // Q.out->Print("Q.rope", 0x0, dump_flag, nToken * q_dim), K.out->Print("K.rope", 0x0, dump_flag, nToken * kv_dim);
     return nullptr;
 }
 int ROPE::cuFlow(SelfAttention* hQKV, uint32_t seed, bool isFX, int flag) {
+    if (hFish == nullptr)  // some models(GPT2) don't need rope
+        return 0x0;
+
     // fuse normal to rope, may reduce time
     // LayerNormal *normQ = nullptr, *normK = nullptr;
     // if (hQKV->isQKNormal && hQKV->Rope_version != 3) {
     //      normQ = &(hQKV->normQ), normK = &(hQKV->normK);
     //      float *scaleQ = normQ == nullptr ? nullptr : TO<float>(normQ->rstd), *scaleK = normK == nullptr ? nullptr : TO<float>(normK->rstd);
     // }
-
-    int version = 1, threads = head_dim / 2;
+    INSPECT_THIS;
+    int version = 1, block_size = 128;
     hFish->GetBTC(B, T, C);
     dim3 blocks_q(B, T, n_head), blocks_k(B, T, n_head_kv), blocks(B, T);
-    float *fcos = hCos == nullptr ? nullptr : TO<float>(hCos), *fsin = hSin == nullptr ? nullptr : TO<float>(hSin);
     size_t smemPB = 1024 * sizeof(float);
-    if (isForward()) {
-        floatX *q = ToX(hQKV->Q.out), *k = ToX(hQKV->K.out);
-        hQKV->Q.out->Print("Q.rope", 0x0, -1), hQKV->K.out->Print("K.rope", 0x0, -1);
-        CU_rope2_forward<<<blocks_q, dim3(head_dim / 2, 1, 1)>>>(q, k, -1, n_head, n_head_kv, head_dim, theta);
+    floatX *q = ToX(hQKV->Q.out), *k = ToX(hQKV->K.out), *freqs = ToX(hSin);
+    PrintTensor<floatX>("Q.out", q, true, 1, 1, q_dim, 1, dump_flag);
+    if (isForward() || BIT_TEST(flag, F_REMATER)) {
+        // int total_threads = (B * T * (q_dim + kv_dim) / 2) / x64::size;  // B * T * (Nq + 2*Nkv) * head_dim / 2) / x64::size;
+        // int num_blocks    = CEIL_DIV(total_threads, block_size);
+        // CU_rope_<<<num_blocks, block_size, 0, main_stream>>>(q, k, freqs, nullptr, B, T, n_head, n_head_kv, head_dim, false);
+        CU_rope2_v0<<<blocks_q, head_dim / 2>>>(q, k, -1, n_head, n_head_kv, head_dim, theta);
         // if (version == 0) {
         //     apply_rope_forward_q1<<<blocks_q, threads, 0, main_stream>>>(q, fcos, fsin, B, T, NH_kv, head_dim);
         //     if (k != nullptr)
@@ -621,24 +598,31 @@ int ROPE::cuFlow(SelfAttention* hQKV, uint32_t seed, bool isFX, int flag) {
         //     if (k != nullptr)
         //         CU_rope_<<<blocks_k, threads, smemPB, main_stream>>>(k, k, scaleK, kv_dim, head_dim, theta, n_rot, B, T, C, seed);
         // }
-        SYNC_DEVICE();
-    } /*else {
-        // floatX *delta_q = (floatX*)hQKV->devDeltaQ, *delta_k = (floatX*)hQKV->devDeltaK;
-        floatX *delta_q, *delta_k;
-        if (version == 0) {
-            apply_rope_backward_kernel1<<<blocks, threads, 0, main_stream>>>(delta_q, delta_k, fcos, fsin, B, T, NH_kv, NH, head_dim);
-        } else if (version == 1) {
-            PrintTensor<__nv_bfloat16>("q_0", (__nv_bfloat16*)delta_q, true, B, T, C, 1, 0);
-            PrintTensor<__nv_bfloat16>("k_0", (__nv_bfloat16*)delta_k, true, B, T, C, 1, 0);
-            CU_rope_<<<blocks_q, threads, smemPB, main_stream>>>(delta_q, delta_q, scaleQ, q_dim, head_dim, theta, n_rot, B, T, C, seed, true);
-            if (delta_k != nullptr)
-                CU_rope_<<<blocks_k, threads, smemPB, main_stream>>>(delta_k, delta_k, scaleK, kv_dim, head_dim, theta, n_rot, B, T, C, seed, true);
-            PrintTensor<__nv_bfloat16>("q_1", (__nv_bfloat16*)delta_q, true, B, T, C, 1, 0);
-            PrintTensor<__nv_bfloat16>("k_1", (__nv_bfloat16*)delta_k, true, B, T, C, 1, 0);
-        }
-        SYNC_DEVICE();
-    }*/
 
+        // SYNC_DEVICE();
+    } else {
+        q = ToX(hQKV->deltaQ), k = ToX(hQKV->deltaK);
+        CU_rope2_v0<<<blocks_q, head_dim / 2>>>(q, k, -1, n_head, n_head_kv, head_dim, theta, 1);
+        // floatX *delta_q = (floatX*)hQKV->devDeltaQ, *delta_k = (floatX*)hQKV->devDeltaK;
+        // floatX *delta_q, *delta_k;
+        // if (version == 0) {
+        //     apply_rope_backward_kernel1<<<blocks, threads, 0, main_stream>>>(delta_q, delta_k, fcos, fsin, B, T, NH_kv, NH, head_dim);
+        // } else if (version == 1) {
+        //     PrintTensor<__nv_bfloat16>("q_0", (__nv_bfloat16*)delta_q, true, B, T, C, 1, 0);
+        //     PrintTensor<__nv_bfloat16>("k_0", (__nv_bfloat16*)delta_k, true, B, T, C, 1, 0);
+        //     CU_rope_<<<blocks_q, threads, smemPB, main_stream>>>(delta_q, delta_q, scaleQ, q_dim, head_dim, theta, n_rot, B, T, C, seed, true);
+        //     if (delta_k != nullptr)
+        //         CU_rope_<<<blocks_k, threads, smemPB, main_stream>>>(delta_k, delta_k, scaleK, kv_dim, head_dim, theta, n_rot, B, T, C, seed, true);
+        //     PrintTensor<__nv_bfloat16>("q_1", (__nv_bfloat16*)delta_q, true, B, T, C, 1, 0);
+        //     PrintTensor<__nv_bfloat16>("k_1", (__nv_bfloat16*)delta_k, true, B, T, C, 1, 0);
+        // }
+        // SYNC_DEVICE();
+    }
+    // hQKV->Q.out->Print("Q.rope", 0x0, -1, C);  hQKV->K.out->Print("K.rope", 0x0, -1);
+    PrintTensor<floatX>("q_0.rope", (floatX*)q, true, 1, 1, q_dim, 1, dump_flag);
+    PrintTensor<floatX>("k_0.rope", (floatX*)k, true, 1, 1, kv_dim, 1, dump_flag);
+    PrintTensor<floatX>("q_1.rope", (floatX*)q + q_dim, true, 1, 1, q_dim, 1, dump_flag);
+    PrintTensor<floatX>("k_1.rope", (floatX*)k + kv_dim, true, 1, 1, kv_dim, 1, dump_flag);
     return 0x0;
 }
 
@@ -654,7 +638,7 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
 
     floatX* qkvr     = ToX(tmpQKV);  // Q.out/K.out/V.out
     LayerNormal *hnQ = nullptr, *hnK = nullptr;
-    if (isQKNormal && Rope_version != 3) {
+    if (isQKNormal) {
         hnQ = &normQ, hnK = &normK;
     }
     int nToken = nBatchToken(), seq_len = hFish->config.n_ctx();
@@ -684,8 +668,8 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
     }
     Q.out->Print("Q.norm", 0x0, dump_flag, nToken * q_dim), K.out->Print("K.norm", 0x0, dump_flag, nToken * kv_dim);
 
-    if (Rope_version == 1) {
-        // CU_rope2_forward<<<dim3(n_head, 1, 1), dim3(head_dim / 2, 1, 1)>>>(ToX(Q.out), ToX(K.out), pos, n_head, n_head_kv, head_dim, rope->theta);
+    if (rope != nullptr) {
+        // CU_rope2_v0<<<dim3(n_head, 1, 1), dim3(head_dim / 2, 1, 1)>>>(ToX(Q.out), ToX(K.out), pos, n_head, n_head_kv, head_dim, rope->theta);
         rope->cuInfer(this, rope_seed, pos);
     }
     if (DEBUG.T_kvcache_quant == 1) {
@@ -732,12 +716,10 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
     Backward:   QKV->cuFlow(last->out,QKV->norm.out,0x0);
 */
 hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
-    floatX* qkvr = ToX(tmpQKV);            // Q.out/K.out/V.out
-    float* l_att = TO<float>(transition);  //(float*)acts.att + l * B * NH * T; // cuDNN needs a smaller FP32 tensor
+    floatX* qkvr = ToX(tmpQKV);  // Q.out/K.out/V.out
     // bool isAlternate = true;                   // layer%2==1;layer>1;
-    // dump_flag = -1;
     LayerNormal *nQ = nullptr, *nK = nullptr;
-    if (isQKNormal && Rope_version != 3) {
+    if (isQKNormal) {
         nQ = &normQ, nK = &normQ;
     }
     if (isForward()) {                      //  data=ToX(QKV->norm.out)
@@ -747,51 +729,49 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
         if (fuseNorm == nullptr) {
             inpQ = norm.cuFlow(inpL);
             inpQ->Print("qkvn.in", 0x0, dump_flag);
-            // norm.w->Print("qkvn.w",0x0,dump_flag);          norm.b->Print("qkvn.b",0x0,dump_flag);
+            // norm.w->Print("qkvn.w",0x0,dump_flag);         if(norm.b!=nullptr)  norm.b->Print("qkvn.b",0x0,dump_flag);
             // norm.mean->Print("qkvn.mean",0x0,dump_flag);       norm.rstd->Print("qkvn.rstd",0x0,dump_flag);
         }
-        if (Rope_version >= 2) {
-            // rope->devQ = ToX(inpQ), rope->devK = nullptr;
-            rope->cuFlow(this, rope_seed);
-        }
         if (isSeparateQKV) {
-            Q.Forw(Q.out, inpQ), K.Forw(K.out, inpQ), V.Forw(V.out, inpQ);
+            Q.Forw(Q.out, inpQ);
+            K.Forw(K.out, inpQ);
+            V.Forw(V.out, inpQ);
         } else {
             Q.Forw(tmpQKV, inpQ);
             // Q.w->Print("Q.w",0x0,dump_flag);     Q.b->Print("Q.b",0x0,dump_flag);
         }
-        // tmpQKV->Print("QKV",0x0,dump_flag);
-        Q.out->Print("Q.out", 0x0, dump_flag), K.out->Print("K.out", 0x0, dump_flag), V.out->Print("V.out", 0x0, dump_flag);
-        if (Rope_version == 1) {
+        // Q.out->Print("Q.out", 0x0, dump_flag, C);  // K.out->Print("K.out", 0x0, dump_flag), V.out->Print("V.out", 0x0, dump_flag);
+        INSPECT_THIS;
+        if (rope != nullptr) {
             rope->cuFlow(this, rope_seed);
-            Q.out->Print("Q.rope", 0x0, dump_flag), K.out->Print("K.rope", 0x0, dump_flag);
         }
-
+        // GTensor::tZ->Print(GTensor::tZ->name, 0, dump_flag);
 #ifdef ENABLE_CUDNN
         FUSE_cudnn(nullptr, nullptr, flag);
-        //
 #else
         attention_forward(ToX(attn), qkvr, ToX(transition), ToX(QKV), B, T, C, NH, main_stream);  //  l_atty, l_qkvr, l_att, scratch
 #endif
-        attn->Print("l_atty", 0x0, dump_flag);
+        // GTensor::tZ->Print(GTensor::tZ->name, 0, dump_flag);
+
         proj_cat.Forw(GTensor::scratch, attn);  // fuMM(scratch, ToX(attn), pw, pb, B, T, C, C, main_stream);
         // GTensor::scratch->Print("proj_cat",0x0,dump_flag);
         // fused_residual_forward5(ouput, normed,mean,rstd, residual, scratch, ToX(fuseNorm->w), ToX0(fuseNorm->b), B*T, C, main_stream);
         if (!hFish->isRemater()) {
+            GTensor::scratch->Print("qkv.out", 0x0, dump_flag, B * T * C);
+            GTensor::residual->Print("residual", 0x0, dump_flag, B * T * C);
             residual_forward(ToX(out), ToX(GTensor::residual), ToX(GTensor::scratch), B * T * C, main_stream);
             if (fuseNorm != nullptr) {
                 float *mean = TO<float>(fuseNorm->mean), *rstd = TO<float>(fuseNorm->rstd);
                 layernorm_forward(ToX(fuseNorm->out), mean, rstd, ToX(out), ToX(fuseNorm->w), ToX0(fuseNorm->b), B * T, 1, C, main_stream);
             }
-            out->Print("out", 0x0, dump_flag);
+
         } else {
         }
+
         return out;
-    } else {            //  Backward
-        dump_flag = 0;  // hFish->GetOptimizer()->GetITER() >9 ? -1 : 0
-        // if(layer==3)
-        //     dump_flag = -1;
-        Q.w->Print("Qw", 1, dump_flag);
+    } else {  //  Backward
+        INSPECT_THIS;
+        // Q.w->Print("Qw", 1, dump_flag);
         float* scratchF = (float*)GTensor::buff;
         assert(inpL == GTensor::delta);
         delta->Print("delta", 0x0, dump_flag);
@@ -801,13 +781,12 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
         if (hFish->config.scheduling.strategy != MEM_STRATEGY::MEM_SWAP_GUOKE) {  //    remater_qkv
             hGTensor norm_out = norm.out;
             if (isSeparateQKV) {
-                // Q.out->data = devQ, K.out->data = devK, V.out->data = devV;
-                Q.Forw(Q.out, norm_out);
-                K.Forw(K.out, norm_out);
-                V.Forw(V.out, norm_out);
+                Q.Forw(Q.out, norm_out), K.Forw(K.out, norm_out), V.Forw(V.out, norm_out);
             } else {
-                Q.Forw(tmpQKV, norm_out);  // Q.Forw(GTensor::tmpFF1,norm_out)
+                Q.Forw(tmpQKV, norm_out);
             }
+            if (rope != nullptr)
+                rope->cuFlow(this, rope_seed, true, F_REMATER);
         }
         GTensor::tmpDelta->Print("delta_cat", 0x0, dump_flag);
 #ifdef ENABLE_CUDNN
@@ -815,118 +794,40 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
 #else
         assert(0);
 #endif
-        delta_qkv->Print("delta_qkv", 0x0, dump_flag);  // PrintTensor<floatX>("back of attn",ToX(delta_attn),true,B,T,C);
-        if (Rope_version == 1) {
+        // delta_qkv->Print("delta_qkv", 0x0, dump_flag, C);
+        deltaQ->Print("deltaQ", 0x0, dump_flag, q_dim), deltaK->Print("deltaK", 0x0, dump_flag, kv_dim), deltaV->Print("deltaV", 0x0, dump_flag, kv_dim);
+        if (rope != nullptr) {
             rope->cuFlow(this, rope_seed);
             // Q.out->Print("Q.rope",0x0,dump_flag);    K.out->Print("K.rope",0x0,dump_flag);
         }
         if (isSeparateQKV) {
-            // Q.Back(GTensor::tmpDelta,norm.out,Q.tmpDelta);            // K.Back(GTensor::tmpDelta,norm.out,K.tmpDelta);            //
-            // V.Back(GTensor::tmpDelta,norm.out,V.tmpDelta);
-            Q.w->Print("Qw", 1, dump_flag);
             // Q.w->Print("Qw", 0, dump_flag);  Q.b->Print("Qb", 0, dump_flag);   norm.out->Print("norm.out", 0, dump_flag);
-            // Q.Back(GTensor::tmpDelta, norm.out, deltaQ, nullptr);
-            matmul_backward(ToX(GTensor::tmpDelta), ToG(Q.w), ToG0(Q.b), (floatX*)devDeltaQ, ToX(norm.out), Q.w->GetDataX(), scratchF, B, T, C_qkv, C_qkv,
-                            main_stream, false, NULL, false);
-            GTensor::tmpDelta->Print("delta_0", 0, dump_flag);
-            Q.w->Print("Qw", 1, dump_flag);
+            Q.Back(GTensor::tmpDelta, norm.out, deltaQ, nullptr);
+            // matmul_backward(ToX(GTensor::tmpDelta), ToG(Q.w), ToG0(Q.b), (floatX*)devDeltaQ, ToX(norm.out), Q.w->GetDataX(), scratchF, B, T, Q.nOut, Q.nIn,
+            //                 main_stream, false, NULL, false);
+            // GTensor::tmpDelta->Print("delta_0", 0, dump_flag);
             // K.Back(GTensor::tmpDelta, norm.out, deltaK, nullptr, true);
-            matmul_backward(ToX(GTensor::tmpDelta), ToG(K.w), ToG0(K.b), (floatX*)devDeltaK, ToX(norm.out), K.w->GetDataX(), scratchF, B, T, C_qkv, C_qkv,
+            matmul_backward(ToX(GTensor::tmpDelta), ToG(K.w), ToG0(K.b), (floatX*)devDeltaK, ToX(norm.out), K.w->GetDataX(), scratchF, B, T, K.nIn, K.nOut,
                             main_stream, false, NULL, true);
-            GTensor::tmpDelta->Print("delta_1", 0, dump_flag);
-            K.w->Print("Kw", 1, dump_flag);
+            // GTensor::tmpDelta->Print("delta_1", 0, dump_flag);
+            // K.w->Print("Kw", 1, dump_flag);
             // V.Back(GTensor::tmpDelta, norm.out, deltaV, nullptr, true);
-            matmul_backward(ToX(GTensor::tmpDelta), ToG(V.w), ToG0(V.b), (floatX*)devDeltaV, ToX(norm.out), V.w->GetDataX(), scratchF, B, T, C_qkv, C_qkv,
+            matmul_backward(ToX(GTensor::tmpDelta), ToG(V.w), ToG0(V.b), (floatX*)devDeltaV, ToX(norm.out), V.w->GetDataX(), scratchF, B, T, V.nIn, V.nOut,
                             main_stream, false, NULL, true);
-            GTensor::tmpDelta->Print("delta_2", 0, dump_flag);
-            V.w->Print("Vw", 1, dump_flag);
+            // GTensor::tmpDelta->Print("delta_2", 0, dump_flag);
+            // V.w->Print("Vw", 1, dump_flag);
         } else {
             matmul_backward(ToX(GTensor::tmpDelta), ToG(Q.w), ToG0(Q.b), ToX(delta_qkv), ToX(norm.out), ToX(Q.w), scratchF, B, T, C_qkv, 3 * C_qkv,
                             main_stream);
             GTensor::tmpDelta->Print("delta_3", 0, dump_flag);
         }
-        if (Rope_version >= 2) {
-            assert(0);
-            // rope->devDeltaQ = ToX(GTensor::tmpDelta), rope->devDeltaK = nullptr;
-            // rope->cuFlow(nQ, nK, rope_seed);
-        }
+
         // layernorm backward does += to dresidual, so it correctly accumulates gradient for the Attention block above
+        GTensor::tmpDelta->Print("DLN1", 0, dump_flag);
         norm.cuFlow(GTensor::tmpDelta);  // would backpropagatioin to GTensor::delta
         GTensor::delta->Print("back of QKV", 0, dump_flag);
-        dump_flag = 0;
+
         return GTensor::delta;
     }
     return nullptr;
 }
-
-/*
-auto cudnn_qkv_graph_v1(int B,int NH,int T,int HS,int ld, int is_inference,bool isBack=false) {
-    int64_t h_q=NH,h_k=NH,h_v=NH,b=B;
-    int64_t s_q        = T;  // q tensor  seq length
-    int64_t s_kv       = T;  // k and v tensor  seq length
-    int64_t d_qk       = HS;   // hidden dim
-    int64_t d_v        = HS;   // hidden dim
-    float attn_scale   = 0.123f;
-    bool causal_mask   = true;
-    bool padding_mask  = (cudnnGetVersion() >= 8903),alibi_mask    = (cudnnGetVersion() >= 8904),has_attn_bias = (cudnnGetVersion() >= 8903);
-
-    auto graph = cudnn_sdpa_forward_graph(B,
-                                           h_q, h_k,h_v,
-                                           s_q,s_kv,
-                                           d_qk, d_v,
-                                           attn_scale,
-                                           is_inference,
-                                           causal_mask,
-                                           alibi_mask,
-                                           padding_mask,
-                                           has_attn_bias);
-
-    graph->build(cudnn_handle, {fe::HeurMode_t::A});
-    assert(graph.is_good());
-    //// Build variant pack
-    Surface<half> q_tensor(b * h_q * s_q * d_qk, false);
-    Surface<half> k_tensor(b * h_k * d_qk * s_kv, false);
-    Surface<half> v_tensor(b * h_v * d_v * s_kv, false);
-    Surface<half> o_tensor(b * s_q * h_q * d_qk, false);
-
-    std::unordered_map<fe::graph::Tensor_attributes::uid_t, void*> variant_pack = {
-        {Q_UID, q_tensor.devPtr}, {K_UID, k_tensor.devPtr}, {V_UID, v_tensor.devPtr}, {O_UID, o_tensor.devPtr}};
-
-    Surface<half> bias_tensor(b * 1 * s_q * s_kv, false);
-    if (has_attn_bias) {
-        variant_pack[BIAS_UID] = bias_tensor.devPtr;
-    }
-
-    Surface<int32_t> devActualSeqlenQ(b, false);
-    Surface<int32_t> devActualSeqlenKV(b, false);
-    if (padding_mask) {
-        std::vector<int32_t> hostActualSeqlenQ(b, 20);
-        std::vector<int32_t> hostActualSeqlenKV(b, 20);
-
-        cudaCheck(cudaMemcpy(devActualSeqlenQ.devPtr,
-                              hostActualSeqlenQ.data(),
-                              sizeof(hostActualSeqlenQ[0]) * b,
-                              cudaMemcpyHostToDevice));
-        cudaCheck(cudaMemcpy(devActualSeqlenKV.devPtr,
-                              hostActualSeqlenKV.data(),
-                              sizeof(hostActualSeqlenKV[0]) * b,
-                              cudaMemcpyHostToDevice));
-        cudaCheck(cudaDeviceSynchronize());
-
-        variant_pack[SEQ_LEN_Q_UID]  = devActualSeqlenQ.devPtr;
-        variant_pack[SEQ_LEN_KV_UID] = devActualSeqlenKV.devPtr;
-    }
-
-    Surface<float> statsTensor(b * h_q * s_q * 1, false);
-    if (is_inference == false) {
-        variant_pack[STATS_UID] = statsTensor.devPtr;
-    }
-
-    int64_t workspace_size = 0;
-    graph->get_workspace_size(workspace_size).is_good();
-    Surface<int8_t> workspace(workspace_size, false);
-
-    NEED_(graph->execute(cudnn_handle, variant_pack, workspace.devPtr).is_good());
-
-    cudaCheck(cudaDeviceSynchronize());
-}*/

@@ -175,8 +175,35 @@ struct Fuyou_params {
     void Dump(int typ) const;
 };
 
-enum tpNEURON4NAME { ATTN_PRE_NORMAL, ATTN_Q_NORM, ATTN_K_NORM, ATTN_Q, ATTN_K, ATTN_V, ATTN_OUT, FFN_PRE_NORMAL, FFN_UP, FFN_DOWN, FFN_GATE, LN_RSTD };
+enum tpNEURON4NAME {
+    ATTN_PRE_NORMAL,
+    ATTN_Q_NORM,
+    ATTN_K_NORM,
+    ATTN_Q,
+    ATTN_K,
+    ATTN_V,
+    ATTN_OUT,
+    FFN_PRE_NORMAL,
+    FFN_UP,
+    FFN_RELU,
+    FFN_DOWN,
+    FFN_GATE,
+    LN_RSTD
+};
+
+enum tpROPE {
+    ROPE_NONE = -1,
+    ROPE_NORM = 0,
+    ROPE_NEOX = 2,
+    ROPE_GLM  = 4,
+};
+
 enum INIT_WEIGHT { W_SKIP = 0X0, FIX_1, RANDOM, GAUSSIAN_NORMAL, COPY_WIKI, COPY_SWARM_HEAD, SERIALIZE };
+enum QKV_PACK {
+    QQKKVV,
+    QKVQKV,
+    Q_K_V,  // separate three tensor
+};
 /**
  * should have config.json,tokenizer.json & tokenizer_config.json
  * generation_config.json
@@ -259,7 +286,7 @@ class MODEL_CARD {
         // system_prompt_template.empty()
         return !prompt_template.empty();
     }
-    int preLogits_dB     = 2;  // epsilon for convergence test
+    int preLogits_dB     = 2;  //
     bool isNormalBias    = true;
     bool isSLPBias       = true;
     bool isQKVBias       = true;
@@ -277,8 +304,9 @@ class MODEL_CARD {
     bool isEmbedWeightTying = false;
     std::vector<std::string> skip_st;
 
-    bool isSeparateQKV = false;
     bool isQKNormal    = false;
+    bool isSeparateQKV = false;
+    QKV_PACK qkv4dnn   = QKV_PACK::QKVQKV;  // the  fromat of input var_PACK for cudnn GRAPH
     bool isBqkv        = false;
     float clip_qkv     = FLT_MAX;  // Clipping Q/K/V.  to prevent numerical instability
     size_t nTotalSize  = 0x0;
@@ -289,14 +317,8 @@ class MODEL_CARD {
     float norm_eps = 1e-5f, norm_rms_eps = 1e-5f;
     //  rope
     float rope_freq_base = 10000.0f, rope_freq_scale = 1.0f, rope_theta = 0;
-    int Rope_version = 0;  // 0-OFF    1,2
-    enum tpROPE {
-        RT_NONE = -1,
-        RT_NORM = 0,
-        RT_NEOX = 2,
-        RT_GLM  = 4,
-    };
-    tpROPE rope_type = RT_NORM;
+
+    tpROPE rope_type = ROPE_NORM;
     int rotary_dim   = 0;
     // int seq_len      = 0;
 
@@ -449,8 +471,7 @@ struct TRAIN_CARD {
     int opt_stochastic_rounding = 0;
     int opt_alloc_weight        = 0;
 
-    int remater_ffn = 0;
-    // int remater_qkv = 0;
+    int remater_ffn    = 0;
     std::string method = "muon";
     ADAM_params_ adam;
     MUON_params_ muon;

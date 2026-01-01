@@ -16,7 +16,7 @@
 // #include "../ggex/llmc_utils.h"
 #include "Dictionary.hpp"
 
-void mt19937_set_state(std::mt19937 &rng, const std::string &rng_state) {
+void mt19937_set_state(std::mt19937& rng, const std::string& rng_state) {
     std::stringstream s_rng_state;
     s_rng_state.imbue(std::locale::classic());
     s_rng_state.exceptions(std::stringstream::failbit);
@@ -24,7 +24,7 @@ void mt19937_set_state(std::mt19937 &rng, const std::string &rng_state) {
     s_rng_state >> rng;
 }
 
-std::string mt19937_get_state(const std::mt19937 &rng) {
+std::string mt19937_get_state(const std::mt19937& rng) {
     std::stringstream s_rng_state;
     s_rng_state.imbue(std::locale::classic());
     s_rng_state << rng;
@@ -45,11 +45,11 @@ double SampLoader::DecodeVerify(hSAMP samp, hGensor tokens, hGensor logits, int 
     if (logits != nullptr) {
         assert(logits->type == typNUMBER::F32);
         assert(logits->ne[1] == nC && logits->ne[2] == nB && _nvocab == logits->ne[0]);
-        p = (float *)(logits->data);
+        p = (float*)(logits->data);
     }
 
     assert(nC > 0 && nB > 0);
-    int *t0 = (int *)tokens->data, *t = t0, nMatch = 0, nMiss = 0, target;
+    int *t0 = (int*)tokens->data, *t = t0, nMatch = 0, nMiss = 0, target;
     for (b = 0; b < nB; b++) {
         string line;
         t++;
@@ -105,7 +105,7 @@ int SampLoader::nLeastCTX(int flag) {
             }
         }*/
 
-bool SampLoader::MaskAt(size_t pos, TOKEN_ID &mask) {
+bool SampLoader::MaskAt(size_t pos, TOKEN_ID& mask) {
     if (!hTokens->hasMask())
         return false;
     assert(pos >= 0 && pos < hTokens->masks.size());
@@ -122,7 +122,7 @@ bool SampLoader::isHostMask(size_t pos, int flag) {
     return m == 1;
 }
 
-int SampLoader::PickSomeTokens(Grusoft::GRander &rander, int nMostToken, std::vector<int> &tokens, int flag) {
+int SampLoader::PickSomeTokens(Grusoft::GRander& rander, int nMostToken, std::vector<int>& tokens, int flag) {
     size_t id = rander.RandU32(), nSamp = len(), starting;
     while (tokens.size() < nMostToken) {
         id              = rander.RandU32() % nSamp;
@@ -142,20 +142,20 @@ int SampLoader::PickSomeTokens(Grusoft::GRander &rander, int nMostToken, std::ve
 /*
     1. i_off 1 for traing & 0 for chat(InitOneSamp)
 */
-void SampLoader::Samp2Batch(int k, hSAMP samp, TRAIN_CARD &params, int flag) {
+void SampLoader::Samp2Batch(int k, hSAMP samp, TRAIN_CARD& params, int flag) {
     samp_toks.clear();
     auto dialect                = hDict->dialect;
     bool fill_with_next_samples = params.fill_with_next_samples, isDialect = hDict->isDialect;
     size_t starting = samp->pos + samp->jump, _nctx = params.n_ctx, _nToken = nTokens(), tok_pos = 0;  //    tokens_input->ne[0];
-    size_t i_off = 0;                                                                                  // 1 for traing & 0 for chat(InitOneSamp)
+    int i_target = -1, i_off = 0;                                                                      // 1 for traing & 0 for chat(InitOneSamp)
     if (hDict->isNeedBOS) {
         hBatch->Set(0, k, 0, 0, hDict->bos_id);  // ggml_set_i32_nd(G(tokens_input), 0, k, 0, 0, hDict->bos);
         samp_toks.push_back(hDict->bos_id);
         tok_pos = 1;
         i_off   = 1;
     }
-    if(DEBUG.verSampJump<0)
-        starting = samp->pos*params.n_ctx;
+    if (DEBUG.verSampJump < 0)
+        starting = samp->pos * params.n_ctx;
     if (nMostToken > 0)
         _nctx = std::min((int)_nctx, nMostToken);
     for (int64_t i = 0; i < _nctx; ++i, ++tok_pos) {
@@ -181,13 +181,14 @@ void SampLoader::Samp2Batch(int k, hSAMP samp, TRAIN_CARD &params, int flag) {
                 hBatch->SetMask((int)tok_pos, (int)k, 0, 0, mask);
         }
         ++starting;
+        i_target = i + i_off - 1;  // self-regression also moves back 1
         if (hostTargetProbs == nullptr) {
-        } else {
+        } else if (i_target >= 0) {
             if (isTarget_1) {
-                hostTargetProbs->Set((int)i, (int)k, 0, 0, token);
+                hostTargetProbs->Set(i_target, (int)k, 0, 0, token);
                 // hostTargetProbs->Set(0, (int)i, (int)k, 0, token);
             } else {
-                hostTargetProbs->Set(token, (int)i, (int)k, 0, +1.0f);
+                hostTargetProbs->Set(token, i_target, (int)k, 0, +1.0f);
             }
         }
         samp_toks.push_back(token);
@@ -197,6 +198,15 @@ void SampLoader::Samp2Batch(int k, hSAMP samp, TRAIN_CARD &params, int flag) {
             hBatch->Set((int)tok_pos, (int)k, 0, 0, token);
         } else {
             samp->last_target = token;
+        }
+    }
+    if (++i_target < _nctx) {   // one more for last pos of target
+        TOKEN_ID token = TokenAt(starting);
+        if (isTarget_1) {
+            hostTargetProbs->Set(i_target, (int)k, 0, 0, token);
+            // hostTargetProbs->Set(0, (int)i, (int)k, 0, token);
+        } else {
+            hostTargetProbs->Set(token, i_target, (int)k, 0, +1.0f);
         }
     }
 }
@@ -218,7 +228,7 @@ bool SampLoader::isEval(int t, int flag) {
 bool SampLoader::NextEpoch(int flag) {
     _INFO("-------- End of all shards of epoch_%d! -------- \n", hOPT->train_epochs + 1);
     hOPT->OnNextEpoch();
-    return true;    
+    return true;
 }
 
 hSAMP SampLoader::Next(bool isLoop) {
@@ -245,7 +255,7 @@ hSAMP SampLoader::Next(bool isLoop) {
 }
 
 // Important!  this would update input & target_probs of model!
-size_t SampLoader::UpdateBatch(int x, Fish *fish) {
+size_t SampLoader::UpdateBatch(int x, Fish* fish) {
     TRAIN_CARD _params = hOPT->TrainParams();
     assert(fish == hOPT->_fish);
     // struct llama_context * lctx=(struct llama_context *)(hOPT->app_ctx);
@@ -342,7 +352,7 @@ size_t SampLoader::UpdateBatch(int x, Fish *fish) {
 }
 
 template <>
-bool FSerial::Serial(std::string &val, bool isSave, int flag) {
+bool FSerial::Serial(std::string& val, bool isSave, int flag) {
     if (!isValid())
         return false;
     size_t nT = val.size(), i;
@@ -354,8 +364,8 @@ bool FSerial::Serial(std::string &val, bool isSave, int flag) {
         if (fwrite(val.c_str(), sizeof(char), nT, _stream) != nT)
             return false;
     } else {
-        char *buf    = new char[nT];
-        size_t nRead = fread((void *)(buf), sizeof(char), nT, _stream);
+        char* buf    = new char[nT];
+        size_t nRead = fread((void*)(buf), sizeof(char), nT, _stream);
         if (nRead != nT)
             return false;
         val = buf;
@@ -364,7 +374,7 @@ bool FSerial::Serial(std::string &val, bool isSave, int flag) {
     return true;
 }
 
-bool SAMP::Serialize(FSerial &S, bool isSave, int flag) {
+bool SAMP::Serialize(FSerial& S, bool isSave, int flag) {
     if (!S.isValid())
         return false;
 
@@ -374,7 +384,7 @@ bool SAMP::Serialize(FSerial &S, bool isSave, int flag) {
     return true;
 }
 
-std::vector<hDataToken> DataTokenSet::MakeInstance(struct CLI_params &params, hTokenizer hDict, bool isLocalInfer, int flag) {
+std::vector<hDataToken> DataTokenSet::MakeInstance(struct CLI_params& params, hTokenizer hDict, bool isLocalInfer, int flag) {
     DataTokens dts;
     if (isLocalInfer) {  // Deprecated
         /*auto hTokenset = std::make_shared<DataTokenSet>(hDict);
@@ -418,7 +428,7 @@ std::vector<hDataToken> DataTokenSet::MakeInstance(struct CLI_params &params, hT
     return dts;
 }
 
-bool SampLoader::Serialize(const std::string &path, bool isSave, int flag) {
+bool SampLoader::Serialize(const std::string& path, bool isSave, int flag) {
     try {
         FSerial S(path, isSave, flag);
         if (!S.isValid())
@@ -471,10 +481,10 @@ bool SampLoader::Serialize(const std::string &path, bool isSave, int flag) {
     }
 }
 
-SampLoader::SampLoader(Fish *g_, const string &n, bool isNewTS, int flag) {
+SampLoader::SampLoader(Fish* g_, const string& n, bool isNewTS, int flag) {
     name = n;
     assert(g_ != nullptr);
-    dolphin = dynamic_cast<NLP_AutoRegressive *>(g_);
+    dolphin = dynamic_cast<NLP_AutoRegressive*>(g_);
     if (dolphin == nullptr) {
         assert(0);
         return;
@@ -500,7 +510,7 @@ void SampLoader::Dump(int typ) {
           (int)(nBatch * hTokens->rSampling), nShard(), nBatch);
 }
 
-bool SampLoader::Prepare(Optimizer *hO, hDataToken hT, int flag) {
+bool SampLoader::Prepare(Optimizer* hO, hDataToken hT, int flag) {
     bool isNewTS = hT == nullptr;
     hDict        = dolphin->hDict;
     if (isNewTS) {
@@ -510,7 +520,7 @@ bool SampLoader::Prepare(Optimizer *hO, hDataToken hT, int flag) {
     assert(hTokens != nullptr && hDict != nullptr);
     hOPT = hO;  // maybe nullptr
     // assert(hOPT != nullptr);
-    if (dynamic_cast<Tokenset_HellaSwag *>(hT.get()) != nullptr) {
+    if (dynamic_cast<Tokenset_HellaSwag*>(hT.get()) != nullptr) {
         stepis.isAccuracy = true;
     }
     if (hTokens != nullptr && hTokens->nMostShard > 0) {
@@ -523,7 +533,7 @@ bool SampLoader::Prepare(Optimizer *hO, hDataToken hT, int flag) {
     }
 
     dolphin->GetBTC(B, T, C);
-    if(dolphin->isAtPhase(LIFE_PHASE::P_GENERATE)){
+    if (dolphin->isAtPhase(LIFE_PHASE::P_GENERATE)) {
         T = dolphin->config.chat_sampler.seq_len;
     }
     assert(T > 0 && B > 0);
@@ -552,7 +562,7 @@ bool SampLoader::Prepare(Optimizer *hO, hDataToken hT, int flag) {
 /*
 
 */
-void SampLoader::SetSamples(std::vector<size_t> &samp_0, std::vector<size_t> &samp_L, bool isTrain, CLI_params &hp_, int flag) {
+void SampLoader::SetSamples(std::vector<size_t>& samp_0, std::vector<size_t>& samp_L, bool isTrain, CLI_params& hp_, int flag) {
     // config = hp_;
     tpBatchSample = dolphin->config.tpBatchSample;
 
@@ -583,7 +593,7 @@ void SampLoader::SetSamples(std::vector<size_t> &samp_0, std::vector<size_t> &sa
     _INFO("%s@[%s]: tokens=%zu nSamp=%d nBatch=%d\n", __func__, isTrain ? "train" : "eval", nTokens(), shard_samps.size(), num_batches);
 }
 
-double SAMP::UpdateTag(hDataToken hDT, int *tag, int step, bool do_mask, int flag) {
+double SAMP::UpdateTag(hDataToken hDT, int* tag, int step, bool do_mask, int flag) {
     TOKEN_ID tok;
     int nFlip = 0;
     for (size_t t = pos; t < pos + len; t++) {
@@ -614,7 +624,7 @@ double SAMP::UpdateTag(hDataToken hDT, int *tag, int step, bool do_mask, int fla
     return nFlip * 1.0;
 }
 
-bool SampLoader::TopoOrder(std::vector<size_t> &ids, std::mt19937 &rng, int flag) {
+bool SampLoader::TopoOrder(std::vector<size_t>& ids, std::mt19937& rng, int flag) {
     bool isRepeated = true;
     size_t count = shard_samps.size(), i, j, k, jj, pick, seed, nPick = 16, nLeft;
     size_t nSampInBatch = dolphin->config.n_batch(), nVocab = hTokens->nVocab, ctx = dolphin->config.n_ctx(), tib = dolphin->config.nTokenInBatch();
@@ -693,7 +703,7 @@ string SampLoader::sTokenSet(int flag) {
 void SampLoader::Shuffle(int flag) {
     if (empty())
         return;
-    if(DEBUG.verShuffleSamp<0)
+    if (DEBUG.verShuffleSamp < 0)
         return;
 
     size_t count = shard_samps.size(), i, j, nSampInBatch = dolphin->config.n_batch();
@@ -779,7 +789,7 @@ static size_t utf8_len(char src) {
     uint8_t highbits      = static_cast<uint8_t>(src) >> 4;
     return lookup[highbits];
 }
-static size_t mark_utf8_units(const char *bytes, int *utf8_units, int *utf8_nunits, size_t count) {
+static size_t mark_utf8_units(const char* bytes, int* utf8_units, int* utf8_nunits, size_t count) {
     size_t offs       = 0;
     size_t count_utf8 = 0;
     while (offs < count) {
@@ -794,7 +804,7 @@ static size_t mark_utf8_units(const char *bytes, int *utf8_units, int *utf8_nuni
     return count_utf8;
 }
 
-int DictVAE::STR2T(const char *txt, int txt_len, std::vector<TOKEN_ID> &btch, int flag) {
+int DictVAE::STR2T(const char* txt, int txt_len, std::vector<TOKEN_ID>& btch, int flag) {
     int n_tokens = -1;
     if (wiki_tutor != nullptr) {
         n_tokens = wiki_tutor->STR2T(txt, btch, flag);
@@ -821,7 +831,7 @@ std::string DictVAE::T2STR(TOKEN_ID tok, int flag) {
     return word;
 }
 
-bool DataTokenSet::Load(struct CLI_params &config, void *hLLM, int flag) {
+bool DataTokenSet::Load(struct CLI_params& config, void* hLLM, int flag) {
     if (config.passLoadToken)
         return true;
     auto arch = config.ModelArch();
@@ -839,7 +849,7 @@ bool DataTokenSet::Load(struct CLI_params &config, void *hLLM, int flag) {
             return false;
         fpath = config.GetDataPath("");  // fp_train_data.c_str();
         tokens.clear();
-        FILE *fp = std::fopen(fpath.c_str(), "rb");
+        FILE* fp = std::fopen(fpath.c_str(), "rb");
         if (fp == NULL) {
             _INFO("%s: warning: empty or not existing training data file '%s'\n", __func__, fpath.c_str());
             return false;
@@ -854,7 +864,7 @@ bool DataTokenSet::Load(struct CLI_params &config, void *hLLM, int flag) {
             _INFO("\n%s reduce fsize from %ld=>%ld\n", __func__, fsize, INT_MAX - n_max_tokens_overhead * 2);
             fsize = INT_MAX - n_max_tokens_overhead * 2;
         }
-        char *buf       = new char[fsize];  // buf.resize(fsize);
+        char* buf       = new char[fsize];  // buf.resize(fsize);
         errno           = 0;
         std::size_t ret = std::fread(buf, fsize, 1, fp);
         if (ferror(fp)) {
@@ -909,10 +919,10 @@ bool DataTokenSet::Load(struct CLI_params &config, void *hLLM, int flag) {
     return true;
 }
 
-hSAMP SampLoader::InitOneSamp(const string &prompt, hGensor input, Fish *hFish, int flag) {
+hSAMP SampLoader::InitOneSamp(const string& prompt, hGensor input, Fish* hFish, int flag) {
     assert(!prompt.empty());
 
-    const char *buf = prompt.c_str();
+    const char* buf = prompt.c_str();
     // std::vector<TOKEN_ID> btch;
     // btch.resize(10*1024*1024);
     hTokens->tokens.clear();
@@ -941,17 +951,17 @@ hSAMP SampLoader::InitOneSamp(const string &prompt, hGensor input, Fish *hFish, 
     // if(input!=nullptr)
     //     Samp2Batch(0,samp,input,nullptr,dolphin->config.common);
     if (hFish != nullptr) {
-        isRecycle = false;
-        hDict->isNeedBOS = false;   // why?
+        isRecycle        = false;
+        hDict->isNeedBOS = false;  // why?
         UpdateBatch(0, hFish);
-        TokenEmbed *embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed");
+        TokenEmbed* embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed");
         embed->hBatch     = hBatch;
     }
 
     return samp;
 }
 
-bool DataTokenSet::InitSamps(unsigned context_length, std::vector<size_t> &samples_begin, std::vector<size_t> &samples_size, int flag) {
+bool DataTokenSet::InitSamps(unsigned context_length, std::vector<size_t>& samples_begin, std::vector<size_t>& samples_size, int flag) {
     samples_begin.clear();
     samples_size.clear();
     samples_begin.push_back(0);
@@ -997,8 +1007,8 @@ int DataTokenSet::UniqueTokens(size_t n_1, int flag) {
     return nUnique;
 }
 
-std::string shuffle_samples_X(const std::string &rng_state, size_t *shuffled_offs, size_t *shuffled_begins, size_t *shuffled_sizes, const size_t *begins,
-                              const size_t *sizes, size_t count) {
+std::string shuffle_samples_X(const std::string& rng_state, size_t* shuffled_offs, size_t* shuffled_begins, size_t* shuffled_sizes, const size_t* begins,
+                              const size_t* sizes, size_t count) {
     if (count == 0)
         return rng_state;
 
@@ -1039,7 +1049,7 @@ std::string shuffle_samples_X(const std::string &rng_state, size_t *shuffled_off
     return mt19937_get_state(rng);
 }
 
-void StepInfos::Init(Optimizer *hO, int flag) { hOpt = hO; }
+void StepInfos::Init(Optimizer* hO, int flag) { hOpt = hO; }
 
 float StepInfos::Best() const {
     if (isAccuracy) {
@@ -1079,7 +1089,7 @@ void StepInfos::Add(STEP step, int flag) {
 
     steps.push_back(step);
 }
-bool StepInfos::SaveToCSV(const string &x, int flag) {
+bool StepInfos::SaveToCSV(const string& x, int flag) {
     try {
         //  FSerial
         bool isDumpG = false;
@@ -1087,7 +1097,7 @@ bool StepInfos::SaveToCSV(const string &x, int flag) {
         isDumpG = true;
 #endif
         string fpath = sRoot + sTokenSet + x, sHeadG = "";  //
-        FILE *fp = fopen(fpath.c_str(), "wt");
+        FILE* fp = fopen(fpath.c_str(), "wt");
         if (fp == NULL) {
             _INFO("%s: warning: empty or not existing training data file '%s'\n", __func__, fpath.c_str());
             return false;
@@ -1132,9 +1142,9 @@ bool StepInfos::SaveToCSV(const string &x, int flag) {
     }
 }
 
-bool Distri_ARRAY::SaveToCSV(const string &fpath, int flag) {
+bool Distri_ARRAY::SaveToCSV(const string& fpath, int flag) {
     try {
-        FILE *fp = fopen(fpath.c_str(), "wt");
+        FILE* fp = fopen(fpath.c_str(), "wt");
         if (fp == NULL) {
             _INFO("%s: warning: empty or not existing training data file '%s'\n", __func__, fpath.c_str());
             return false;
@@ -1157,12 +1167,12 @@ BATCH_INPUT::BATCH_INPUT(SHAPE shape, int flag) {
     hostMask->Alloc();
 
     host = TO<int>(hostToken), mask = TO<int>(hostMask);
-    tok_pos     = 0;
-    int tok = CurToken();       //???
+    tok_pos = 0;
+    int tok = CurToken();  //???
 }
 
 // No BOS at sequence start!
-void BATCH_INPUT::Reset(const TOKENS &tokens, int flag) {
+void BATCH_INPUT::Reset(const TOKENS& tokens, int flag) {
     tok_pos = tokens.size() > 0 ? 0 : -1;
     hostToken->Zero();
     for (int i = 0; i < tokens.size(); i++) {

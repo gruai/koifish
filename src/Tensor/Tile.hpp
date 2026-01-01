@@ -7,7 +7,7 @@
  *  \brief Tile
  *  \author Yingshi Chen
  */
-#pragma Once
+#pragma once
 
 #include "./Packed.hpp"
 

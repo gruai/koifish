@@ -863,7 +863,9 @@ template <class T>
 __global__ void CU_X2ternary_(floatGama* gama, T* mat0, char* terns, int M, int N, int bpe, bool isOverwrite = false);
 
 // rope2 - add rope info to both q&k
-__global__ void CU_rope2_forward(bf16* q, bf16* k, int pos, int N_HEADS, int N_KV_HEADS, int HEAD_DIM, float ROPE_THETA);
+__global__ void CU_rope2_v0(bf16* q, bf16* k, int pos, int N_HEADS, int N_KV_HEADS, int HEAD_DIM, float ROPE_THETA, int type = 0);
+template <typename Typ>
+__global__ void CU_rope_(Typ* out, Typ* inp, const Typ* freqs, float* stat_info, int B, int T, int Nq, int Nkv, int head_dim, bool isBack = false);
 
 void CU_abc(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int transB = 0,
             float beta = 0.0, floatX* pre_gelu = NULL, bool backward = false);

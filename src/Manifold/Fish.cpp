@@ -277,9 +277,8 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
     }
 
     if (isTrain()) {
-        if(isLoadCheckpoint){
-
-        }else
+        if (isLoadCheckpoint) {
+        } else
             SaveTrain(config.state, true, FSerial::INIT_MMAP);  //  Init checkpoint
     } else {
         SetPhase(config.phase);
@@ -451,7 +450,7 @@ bool Fish::SaveTrain(CheckPoint_Params& ckp, bool isInit, int flag) {
     assert(optParams.size() > 0);
 
     if (isInit) {
-        isOK = SAFETENSOR_Serialize(ckp, true, flag);   //isInit ? FSerial::INIT_MMAP : 0x0
+        isOK = SAFETENSOR_Serialize(ckp, true, flag);  // isInit ? FSerial::INIT_MMAP : 0x0
         assert(isOK);
         ckp.sModelPath = ckp.FullPath(true);
         _INFO("[SAFETENSOR] Init@\"%s\" nParams=%d save_every=%d\n", sOut.c_str(), optParams.size(), ckp.save_every);
@@ -466,7 +465,7 @@ bool Fish::SaveTrain(CheckPoint_Params& ckp, bool isInit, int flag) {
         // }
     } else {
         UpdateCheckPoint(ckp, true);
-        isOK = SAFETENSOR_Serialize(ckp, true, flag);       //  isInit ? FSerial::INIT_MMAP : 0x0
+        isOK = SAFETENSOR_Serialize(ckp, true, flag);  //  isInit ? FSerial::INIT_MMAP : 0x0
     }
 
     return isOK;
@@ -881,6 +880,8 @@ bool Fish::AfterNextStep(int iter, int flag) {
     return true;
 }
 
+size_t cudnn_qkv_forw(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn, int flag = 0x0);
+size_t cudnn_qkv_back(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn);
 bool Fish::AllocBuffer(int flag) {
     try {
         // TokenEmbed* embed = GetNeuron<TokenEmbed>("TokenEmbed",0);
@@ -915,11 +916,15 @@ bool Fish::AllocBuffer(int flag) {
 
         GTensor::scratch = std::make_shared<huTensor>(this, "tmpScratch/output", sp0, tpA, true);  //  may reduce memory by sp0=sp0/VP
 
-        GTensor::delta     = std::make_shared<huTensor>(this, "tmpDelta", spMost, tpG, true);
-        GTensor::tmpDelta  = std::make_shared<huTensor>(this, "tmpDelta2", spMost, tpG, true);
-        GTensor::host_buff = new float[GTensor::scratch->size()];
-        if (config.ModelArch() == NLP_GUPPY) {
+        GTensor::delta      = std::make_shared<huTensor>(this, "tmpDelta", spMost, tpG, true);
+        
+        GTensor::tmpDelta   = std::make_shared<huTensor>(this, "tmpDelta2", spMost, tpG, true);
+        GTensor::host_buff  = new float[GTensor::scratch->size()];
+        if (isModel({NLP_GUPPY})) {
             GTensor::tmpW = std::make_shared<huTensor>(this, "tmpW", SHAPE({nEmbed, nFF}), tpW, true);
+        }
+        if (isModel({NLP_QWEN2, NLP_QWEN3})) {
+            GTensor::gate_delta = std::make_shared<huTensor>(this, "tmpDelta", SHAPE({B, T, nFF}), tpG, true);
         }
         switch (phase) {
             case P_GENERATE:
@@ -934,6 +939,11 @@ bool Fish::AllocBuffer(int flag) {
 
         // GTensor::tmpGW = std::make_shared<huTensor>(this, "tmpGW", SHAPE({nEmbed, nFF}), tpG, true);
         cudaCheck(cudaMalloc(&GTensor::stat_info, sizeof(float) * 5120));
+        if (phase != P_GENERATE) {
+            cudnn_qkv_forw(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn);
+            size_t alloc = cudnn_qkv_back(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn);
+            _INFO("\tcudnn_qkv_back = %.3gM\n", alloc / 1.0e6);
+        }
 
         return true;
     } catch (const std::exception& e) {

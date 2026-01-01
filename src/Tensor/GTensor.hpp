@@ -193,7 +193,8 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     static const int N_DIMS   = 4;
 
     static size_t szGlobalMaloc;
-    static hGTensor bt4c, delta, tmpDelta, scratch, tmpFF1, tmpW, tmpGW, residual, tmpTernary;
+    static GTensor *tZ;
+    static hGTensor bt4c, delta, gate_delta, tmpDelta, scratch, tmpFF1, tmpW, tmpGW, residual, tmpTernary;
     //  If config.isShareLayerOut(), all layers' output share this tensor!
     static hGTensor outL;
 
@@ -301,8 +302,6 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     // operations
     hGTensor operator*(const hGTensor& other) { return _Multiply(other); }
 
-    hGTensor Relu();
-    hGTensor Silu();
     double Length(int tp, int flag = 0x0);  //  return ||x||
 
     // operations
@@ -487,7 +486,7 @@ inline void tSET(hGensor T, float a) { T->Set(a); }
 inline void tFLAG(hGensor T, int64_t flag) { T->SetFlag(flag); }
 double tNormsOf(const std::vector<hGTensor>& tensors, int flag);
 // double tNormOf(const hGTensor tensor, int flag = 0x0);
-
+    
 inline floatX* ToX(hGensor t) {
     assert(t != nullptr);
     BIT_SET(t->flags, GTensor::F_TOX);

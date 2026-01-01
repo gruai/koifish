@@ -16,7 +16,7 @@ Note
 
 ## Features
 - Hybrid 16/8/4/3/1 bit training
-- Rematerialisation and fusion of operators
+- Training Qwen3-0.6B & Qwen2.5-0.5B on single 4090
 - [Evolutionary optimization of experts](https://arxiv.org/abs/2509.24436)
 - Inference of QWen3-32B on single 4090
 - Automatic detection of training instability

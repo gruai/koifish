@@ -5,7 +5,7 @@
  *  \brief Align;   Packed data
  *  \author Yingshi Chen
  */
-#pragma Once
+#pragma once
 
 #include "../g_float.hpp"
 
@@ -21,74 +21,235 @@ union ALIGN(sizeof(T) * N) ablock {
 	T v[N];
 };
 
+enum class TransferMode {
+    DEFAULT,
+    LDG,
+    LU,
+    CS,
+};
+
+template<TransferMode Mode>
+struct Transfer{
+
+};
+
+template<>
+struct Transfer<TransferMode::DEFAULT> {
+    template<class T>
+    __host__ __device__ static void call(T* dst, const T* src) {
+        *dst = *src;
+    }
+};
+
+template<>
+struct Transfer<TransferMode::LDG> {
+    template<class T>
+    __device__ static void call(T* dst, const T* src) {
+        *dst = __ldg(src);
+    }
+};
+
+template<>
+struct Transfer<TransferMode::LU> {
+    template<class T>
+    __device__ static void call(T* dst, const T* src) {
+        *dst = __ldlu(src);
+    }
+};
+
+template<>
+struct Transfer<TransferMode::CS> {
+    template<class T>
+    __device__ static void call(T* dst, const T* src) {
+        *dst = __ldcs(src);
+    }
+};
+
+
+/*!
+ * \brief Copies `NBytes` from `src` to `dst`, using `CopyType` to perform memory access.
+ * \details
+ * This means that pointers need to be aligned according to `CopyType`'s requirements,
+ * and copies are (most likely) be performed using vectorized access according to
+ * `CopyType`.
+ * The ranges `[src, src+NBytes)` and `[dst, dst + NBytes)` must be non-overlapping.
+ *
+ * This function is used to implement `memcpy_aligned`, and generally not intended to
+ * be used directly.
+ */
+template<class CopyType, int NBytes, TransferMode Mode, class TrueType>
+__host__ __device__ void memcpy_as(TrueType* __restrict__ dst, const TrueType* __restrict__ src) {
+    static_assert(NBytes % sizeof(TrueType) == 0, "Number of bytes must be a multiple of the true type size");
+    static_assert(NBytes % sizeof(CopyType) == 0, "Number of bytes must be a multiple of the copy type size");
+
+    // in order to do simple byte-level copying, the underlying type must be trivially copyable (i.e., compatible
+    // with memcpy)
+    static_assert(std::is_trivially_copyable_v<TrueType>, "TrueType must be trivially copyable");
+    const auto* read_address = reinterpret_cast<const CopyType*>(src);
+    auto* write_address = reinterpret_cast<CopyType*>(dst);
+    #pragma unroll
+    for (int i = 0; i < NBytes; i += sizeof(CopyType)) {
+        Transfer<Mode>::call(write_address, read_address);
+        ++read_address;
+        ++write_address;
+    }
+}
+
+/*!
+ * \brief Assume an array of objects of `size` bytes each, what is the alignment
+ * of an individual element of that array.
+ * \details Assume that the array itself starts at a 16-byte aligned address,
+ * what is the worst-case alignment of any object. E.g., for objects of 4 bytes,
+ * alignment is 4, for 6 bytes it is 2, etc.
+ */
+constexpr __host__ __device__ std::size_t alignment_from_size(std::size_t size) {
+    for (int i = 2; i <= 16; i *= 2) {
+        if ((size % i) != 0) {
+            return i / 2;
+        }
+    }
+    return 16;
+}
+template<std::size_t Count, TransferMode Mode, class T>
+__host__ __device__ void memcpy_aligned(T* dst, const T* src, std::integral_constant<std::size_t, Count> = {}) {
+    static_assert(std::is_trivially_copyable_v<T>, "T must be trivially copyable");
+
+    constexpr const int NBytes = sizeof(T) * Count;
+    // ideally, we'd just use a simple memcpy, like below, but that does
+    // not always generate vectorized loads
+    // std::memcpy(values, __builtin_assume_aligned(address, bytes), bytes);
+
+    if constexpr (NBytes % sizeof(int4) == 0) {
+        memcpy_as<int4, NBytes, Mode>(dst, src);
+    } else if constexpr (NBytes % sizeof(int2) == 0) {
+        memcpy_as<int2, NBytes, Mode>(dst, src);
+    } else if constexpr (NBytes % sizeof(int1) == 0) {
+        memcpy_as<int1, NBytes, Mode>(dst, src);
+    } else if constexpr (NBytes % sizeof(short1) == 0) {
+        memcpy_as<short1, NBytes, Mode>(dst, src);
+    } else {
+        memcpy_as<char1, NBytes, Mode>(dst, src);
+    }
+}
+
 /*
-    Packed128 data structure that forces the compiler to use 128-bit loads/stores
+    Packed data structure that forces the compiler to use 128-bit loads/stores
     in GPUs that support (the LDG.128 and STS.128 instructions)
     This is a bit similar to the use of float4 in the case of 32-bit floats, but supports arbitrary precision.
 */
-template<typename T>
-struct ALIGN(16) Packed128 {
-    static constexpr const size_t size = sizeof(int4) / sizeof(T);
-    T payload[size];
+template<class T, std::size_t ElemCount>
+class alignas(alignment_from_size(sizeof(T) * ElemCount)) PackedN {
+    static_assert(std::is_trivial_v<T>, "Only trivial types are supported");
+    T values[ElemCount];
+public:
+    static constexpr const std::size_t size = ElemCount;
+    static constexpr const std::size_t bytes = ElemCount * sizeof(T);
 
-    Packed128() = default;
-    __device__ explicit Packed128(int4 bits) {
-        static_assert(sizeof(bits) == sizeof(payload), "Size mismatch.");
-        memcpy(&payload, &bits, sizeof(bits));
+    PackedN() = default;
+
+    __device__ explicit PackedN(int4 bits) {
+        static_assert(sizeof(bits) == sizeof(values), "Size mismatch.");
+        memcpy(&values, &bits, sizeof(bits));
     }
 
-    __device__  static Packed128 constant(T value) {
-        Packed128 result;
-        for(int k = 0; k < size; ++k) {
-            result.payload[k] = value;
+    constexpr static __host__ __device__ PackedN constant(T value) {
+        PackedN result;
+        for (int k = 0; k < size; ++k) {
+            result.values[k] = value;
         }
         return result;
     }
-    __device__ static Packed128 zeros() {
-        return constant(0.f);
+
+    constexpr static __host__ __device__ PackedN zeros() {
+        return constant(static_cast<T>(0.f));
     }
-    __device__ static Packed128 ones() {
+
+    constexpr static __host__ __device__ PackedN ones() {
         return constant(1.f);
     }
 
-    __device__ T& operator[](int index) {
-        return payload[index];
+    template<class U>
+    constexpr static __host__ __device__ PackedN from(PackedN<U, ElemCount> other) {
+        PackedN<T, ElemCount> result;
+        for (int i = 0; i < ElemCount; ++i) {
+            result[i] = static_cast<T>(other[i]);
+        }
+        return result;
     }
-    __device__ const T& operator[](int index) const {
-        return payload[index];
+
+    constexpr __host__ __device__ T& operator[](int index) {
+        return values[index];
     }
+
+    constexpr __host__ __device__ const T& operator[](int index) const {
+        return values[index];
+    }
+
     __device__ int4 get_bits() const {
         int4 bits;
-        static_assert(sizeof(bits) == sizeof(payload), "Size mismatch.");
-        memcpy(&bits, &payload, sizeof(bits));
+        static_assert(sizeof(bits) == sizeof(values), "Size mismatch.");
+        memcpy(&bits, &values, sizeof(bits));
         return bits;
     }
+
+    static __host__ __device__ PackedN load(const T* address) {
+        PackedN result;
+        memcpy_aligned<size, TransferMode::DEFAULT>(result.values, address);
+        return result;
+    }
+
+    static __device__ PackedN load_ldg(const T* address) {
+        PackedN result;
+        memcpy_aligned<size, TransferMode::LDG>(result.values, address);
+        return result;
+    }
+
+    static __device__ PackedN load_lu(const T* address) {
+        PackedN result;
+        memcpy_aligned<size, TransferMode::LU>(result.values, address);
+        return result;
+    }
+
+    static __device__ PackedN load_cs(const T* address) {
+        PackedN result;
+        memcpy_aligned<size, TransferMode::CS>(result.values, address);
+        return result;
+    }
+
+    __host__ __device__ void store(T* dst) {
+        memcpy_aligned<size, TransferMode::DEFAULT>(dst, values);
+    }
 };
-typedef Packed128<float> f128;
-typedef Packed128<floatX> x128;
+typedef PackedN<float, 4> f128;
+typedef PackedN<floatX, 16/sizeof(floatX)> x128;
+typedef PackedN<float, 2> f64;
+typedef PackedN<floatX, 8/sizeof(floatX)> x64;
+
+template <typename T>
+using Packed128 = PackedN<T, 16/sizeof(T)>;
 
 #define FETCH_FLOAT4(pointer) (reinterpret_cast<float4 *>(&(pointer))[0])
-// load a Packed128 from an aligned memory address      reinterpret_cast is not SAFE!
+// load a PackedN from an aligned memory address      reinterpret_cast is not SAFE!
 template<class T>
 __device__ inline Packed128<T> load128(const T* address) {
     return Packed128<T>{*reinterpret_cast<const int4*>(address)};
 }
-// load a Packed128 from an aligned memory address with streaming cache hint
+// load a PackedN from an aligned memory address with streaming cache hint
 template<class T>
 __device__ inline Packed128<T> load128cs(const T* address) {
     return Packed128<T>{__ldcs(reinterpret_cast<const int4*>(address))};
 }
-// store a Packed128 to an aligned memory address
+// store a PackedN to an aligned memory address
 template<class T>
 __device__ inline void store128(T* target, Packed128<T> value) {
     *reinterpret_cast<int4*>(target) = value.get_bits();
 }
-// store a Packed128 to an aligned memory address with streaming cache hint
+// store a PackedN to an aligned memory address with streaming cache hint
 template<class T>
 __device__ void store128cs(T* target, Packed128<T> value) {
     __stcs(reinterpret_cast<int4*>(target), value.get_bits());
 }
-// store a Packed128 to an aligned memory address while caching in L2 but bypassing L1
+// store a PackedN to an aligned memory address while caching in L2 but bypassing L1
 template<class T>
 __device__ void store128cg(T* target, Packed128<T> value) {
     __stcg(reinterpret_cast<int4*>(target), value.get_bits());

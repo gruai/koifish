@@ -39,7 +39,7 @@
 /*
     10 levels of dumps, 0-9. 0 is a full dump,The lower the number the more dump.
 */
-extern int g_dump_level;
+extern int g_dump_level, g_dump_each;
 enum DUMP_LEVEL {
     DUMP_NONE  = 0,
     DUMP_DEBUG = 1,
@@ -91,11 +91,11 @@ void inline PrintT(const char* title, const T* src, int n1, int n2, int n3 = 1, 
     if (g_dump_level > 0 && flag >= 0)
         return;
     const T* cur = src;
-    size_t nElem = (size_t)(n1)*n2 * n3 * n4, i, nz = 0, nEach = 2;
+    size_t nElem = (size_t)(n1)*n2 * n3 * n4, i, nz = 0, nEach = g_dump_each;
     if (nElem == 0)
         return;
     assert(cur != nullptr);
-    // if(strlen(title)>0) _INFO("%s\n", title);
+    _INFO("%s\t", title);
     float a1 = -FLT_MAX, a0 = FLT_MAX, a;
     double sum = 0.0, len = 0.0, sum2 = 0.0;
     for (i = 0; i < nElem; i++) {
@@ -115,7 +115,7 @@ void inline PrintT(const char* title, const T* src, int n1, int n2, int n3 = 1, 
     assert(!isnan(sum2) && !isinf(sum2));
     len = sqrt(sum2 / nElem);
     //  printf output is only displayed if the kernel finishes successfully,  cudaDeviceSynchronize()
-    _INFO("\t\"%s\" |avg|=%g(%ld) avg_len=%g sum2=%g [%f,%f] nz=%.3g\n", title, sum / nElem, nElem, len, sum2, a0, a1, nz * 1.0 / nElem);
+    _INFO(" |avg|=%g(%ld) avg_len=%g sum2=%g [%f,%f] nz=%.3g\n", sum / nElem, nElem, len, sum2, a0, a1, nz * 1.0 / nElem);
     fflush(stdout);
 }
 

@@ -115,12 +115,12 @@ if __name__ == '__main__':
     #test_gpt2_774M()
 
     # test_chat_qwen3_0_6B()  
-    test_chat_qwen3_4B()
+    # test_chat_qwen3_4B()
     # xtest_batch_qwen3_4B()
 
     # test_pp_gpt2()
     # test_gpt2_124M()
-    # test_gpt2_124M_fuyou6()
+    test_gpt2_124M_fuyou6()
     # # 
     # test_gpt2_1558M()
     # koifish_one("124M", sExe, "./cases/gpt2/124M_shard50_F6_lr0.001/F6_lr0.001.json", most_iter=most_iter)

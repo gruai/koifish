@@ -67,61 +67,30 @@ __global__ static void layernorm_forward_kernel3(floatX* __restrict__ out, float
     }
 }
 
-// deprecated
-template <typename T, typename Tw>
-__device__ static float CU_rmsnorm(T* o, T* x, Tw* weight, int size, float eps, bool ln) {
-    int i         = threadIdx.x;
-    int blockSize = blockDim.x;
-
-    float mean = 0.0f;
-    if (ln) {
-        // calculate sum (per thread)
-        float sum = 0.0f;
-        for (int j = i; j < size; j += blockSize) {
-            sum += (float)(x[j]);
-        }
-        // mean = blockreduce_sum(sum) / size;         // sum across threads in block
-        mean = blockReduce_v0<warpReduceSum>(sum) / size;
-    }
-
-    // calculate sum of squares (per thread)
-    float ss = 0.0f;
-    for (int j = i * 2; j < size; j += blockSize * 2) {
-        float2 xx = {x[j], x[j + 1]};            //*(float2*)&x[j];
-        float2 ww = {weight[j], weight[j + 1]};  //*(float2*)&weight[j];
-        float v0  = xx.x - mean;
-        float v1  = xx.y - mean;
-        ss += v0 * v0;
-        ss += v1 * v1;
-        *(ablock<T, 2>*)&o[j] = {v0 * ww.x, v1 * ww.y};
-    }
-
-    // sum across threads in block
-    // ss = blockreduce_sum(ss);
-    ss = blockReduce_v0<warpReduceSum>(ss);
-
-    // caller is responsible for normalization
-    return rsqrtf(ss / size + eps);
-}
+__global__ void CU_rms_forward_v0(bf16* __restrict__ out, float* __restrict__ rstd, const bf16* __restrict__ inp, const bf16* __restrict__ weight, int N, int C,
+                                  float eps = 1e-5f);
 
 template <typename T, typename Tw>
-__global__ static void CU_rms_forward(T* __restrict__ out, float* __restrict__ rstd, const T* __restrict__ inp, const Tw* __restrict__ weight, int N, int C) {
+__global__ static void CU_rms_forward(T* __restrict__ out, float* __restrict__ rstd, const T* __restrict__ inp, const Tw* __restrict__ weight, int N, int C,
+                                      float eps = 1e-5f) {
+    using x128 = PackedN<T, 16 / sizeof(T)>;
     assert(blockDim.x == WARP_SIZE);
-
-    // load weights and biases into shared memory
+    // load weights into shared memory
     // do this before we allow any threads to exit!
     extern __shared__ char* params[];
+    __shared__ float block_abs_max;
     // load128/store128 sometimes generated multiple instructions when the types here were floatX*, so
     // let's keep everything as x128
     x128* s_weight = reinterpret_cast<x128*>(params);
-    // x128* s_bias = reinterpret_cast<x128*>(params) + (C / x128::size);
-    x128* s_in = reinterpret_cast<x128*>(params) + ((2 + threadIdx.y) * C / x128::size);
+    x128* s_in     = reinterpret_cast<x128*>(params) + ((1 + threadIdx.y) * C / x128::size);
 
     int sidx = (threadIdx.x + WARP_SIZE * threadIdx.y) * x128::size;
     for (int i = sidx; i < C; i += blockDim.y * WARP_SIZE * x128::size) {
-        s_weight[i / x128::size] = load128(weight + i);
-        // s_bias[i/x128::size] = load128(bias + i);
+        s_weight[i / x128::size] = x128::load(weight + i);
     }
+    // if (stat_info && threadIdx.x == 0) {
+    //     block_abs_max =0.f;
+    // }
     __syncthreads();
 
     int idx = blockIdx.x * blockDim.y + threadIdx.y;
@@ -133,62 +102,49 @@ __global__ static void CU_rms_forward(T* __restrict__ out, float* __restrict__ r
     inp += idx * C;
     out += idx * C;
 
-    const float eps = 1e-5f;
-    float sum       = 0.0f;
+    float acc = 0.f;
+
     for (int c = threadIdx.x * x128::size; c < C; c += WARP_SIZE * x128::size) {
-        const x128 in_data = load128cs(inp + c);
-        for (int k = 0; k < x128::size; ++k) {
-            sum += (float)in_data[k];
-        }
+        const x128 in_data   = x128::load_cs(inp + c);
         s_in[c / x128::size] = in_data;
-    }
-
-    sum     = warpReduceSum(sum);
-    float v = 0.f;
-
-    for (int c = threadIdx.x * x128::size; c < C; c += WARP_SIZE * x128::size) {
-        const x128 in_data = s_in[c / x128::size];
         for (int k = 0; k < x128::size; ++k) {
-            v += ((float)in_data[k]) * ((float)in_data[k]);
+            float data_k = (float)in_data[k];
+            acc += data_k * data_k;
         }
     }
 
-    v       = warpReduceSum(v) / C;
-    float s = rsqrtf(v + eps);
+    acc     = warpReduceSum(acc) / C;
+    float s = rsqrtf(acc + eps);
+    assert(!isnan(s) && !isinf(s));
+    float thread_abs_max = 0.f;
 
     for (int c = threadIdx.x * x128::size; c < C; c += WARP_SIZE * x128::size) {
         const x128 in_data = s_in[c / x128::size];
         const x128 w       = s_weight[c / x128::size];
-        // const x128 b = s_bias[c / x128::size];
         x128 out_data;
         for (int k = 0; k < x128::size; ++k) {
-            float n     = s * ((float)in_data[k]);  // normalized output
-            float o     = n * (float)w[k];          // scale it
-            out_data[k] = (floatX)o;
+            float n = s * (float)in_data[k];  // normalized output
+            // Note: would make sense to do this in fp32, but transformers uses bf16 here,
+            // so we try to match
+            out_data[k] = (T)n * (T)w[k];  // scale
+            // if (stat_info) {
+            //     thread_abs_max = fmaxf(thread_abs_max, fabsf(out_data[k]));
+            // }
         }
 
-        store128cs(out + c, out_data);
+        out_data.store(out + c);  // TODO cs
     }
-    // store the rstd, for the backward pass later
+
+    // handle_absmax_reduction(stat_info, &block_abs_max, thread_abs_max);
+
+    // store the rstd, no need to cache it
     if (threadIdx.x == 0 && rstd != nullptr) {
         __stcs(rstd + idx, s);
     }
 }
 
-// inline void CU_rms_v2(__nv_bfloat16* o, const __nv_bfloat16* x, const __nv_bfloat16* weight, int dim) {
-//     if (dim % 2 != 0) {
-//         fprintf(stderr, "FATAL: rmsnorm dim %d is not divisible by 2. Vectorized kernel cannot run.\n", dim);
-//         exit(EXIT_FAILURE);
-//     }
-//     // if dim > (THREADS_PER_BLOCK * some_threshold), a multi-block reduction might be needed,
-//     // but for typical dimensions up to 8192, a single block is sufficient and simpler.
-//     const int num_blocks = 1;
-
-//     kernel_rms_norm_v2<THREADS_PER_BLOCK><<<num_blocks, THREADS_PER_BLOCK>>>(o, x, weight, dim);
-// }
-
-__global__ static void layernorm_forward_kernel6(floatX* __restrict__ out, float* __restrict__ mean, float* __restrict__ rstd, const floatX* __restrict__ inp,
-                                                 const floatX* __restrict__ weight, const floatX* __restrict__ bias, int N, int C) {
+__global__ static void CU_lm_forward(floatX* __restrict__ out, float* __restrict__ mean, float* __restrict__ rstd, const floatX* __restrict__ inp,
+                                     const floatX* __restrict__ weight, const floatX* __restrict__ bias, int N, int C) {
     assert(blockDim.x == WARP_SIZE);
 
     // load weights and biases into shared memory
@@ -689,10 +645,10 @@ void inline layernorm_forward(floatX* out, float* mean, float* rstd, floatX* inp
         // cudaCheck(cudaGetLastError());        assert(status == cudaSuccess);
         CU_rms_forward<<<grid_size, dim3(WARP_SIZE, block_y), smem, stream>>>(out, rstd, inp, weight, N, C);
     } else {
-        auto status = cudaFuncSetAttribute(layernorm_forward_kernel6, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+        auto status = cudaFuncSetAttribute(CU_lm_forward, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
         cudaCheck(cudaGetLastError());
         if (status == cudaSuccess) {
-            layernorm_forward_kernel6<<<grid_size, dim3(WARP_SIZE, block_y), smem, stream>>>(out, mean, rstd, inp, weight, bias, N, C);
+            CU_lm_forward<<<grid_size, dim3(WARP_SIZE, block_y), smem, stream>>>(out, mean, rstd, inp, weight, bias, N, C);
         } else {
             // fall back to the version without shared memory
             const int grid_size_fb = CEIL_DIV(N, (block_size / WARP_SIZE));
@@ -705,10 +661,11 @@ void inline layernorm_forward(floatX* out, float* mean, float* rstd, floatX* inp
 void inline residual_forward(floatX* out, const floatX* inp1, const floatX* inp2, int N, cudaStream_t stream) {
     NVTX_RANGE_FN();
     const int block_size = N >= 2048 ? 256 : 128;
-    if (N % (block_size * x128::size) == 0) {  //  x128 version
+    /*if (N % (block_size * x128::size) == 0) {  //  x128 version
         const int grid_size = CEIL_DIV(N, block_size * x128::size);
         residual_forward_x128<<<grid_size, block_size, 0, stream>>>(out, inp1, inp2);
-    } else {
+    } else*/
+    {
         const int grid_size = CEIL_DIV(N, block_size);
         CU_residual_forward<<<grid_size, block_size, 0, stream>>>(out, inp1, inp2, N);
     }
@@ -735,7 +692,6 @@ void inline layernorm_backward(floatX* delta, floatX* dweight, floatX* dbias, fl
 
     cudaCheck(cudaGetLastError());
 }
-
 
 template <int THREADS_PER_BLOCK, int HEAD_DIM>
 __global__ void __launch_bounds__(THREADS_PER_BLOCK)
@@ -793,7 +749,7 @@ __global__ static void CU_rmsnorm_multihead(bf16* __restrict__ vecs, const bf16*
     const int vec_idx = blockIdx.x;
     if (vec_idx >= nHead)
         return;
-    float inv_head_dim = 1.0f/HEAD_DIM;
+    float inv_head_dim  = 1.0f / HEAD_DIM;
     const int t_idx     = threadIdx.x;
     const int vec_iters = HEAD_DIM / 2;
 
@@ -837,7 +793,6 @@ __global__ static void CU_rmsnorm_multihead(bf16* __restrict__ vecs, const bf16*
         row_out[idx] = __float22bfloat162_rn(v_in_fp32);
     }
 }
-
 
 template <int THREADS_PER_BLOCK>
 __global__ static void __launch_bounds__(THREADS_PER_BLOCK)

@@ -17,6 +17,14 @@ QWen::QWen(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, in
     assert(arch == MODEL_ARCH::NLP_QWEN2 || arch == MODEL_ARCH::NLP_QWEN3);
     config.model.isSLPBias    = false;
     config.model.isNormalBias = false;
+    config.model.norm_rms_eps = 1.0e-6;
+    if(isTrain()){
+        // g_dump_level = -1;
+        config.model.qkv4dnn = QKV_PACK::QQKKVV;
+    }else{
+
+    }
+        
 }
 QWen3::QWen3(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : QWen(nam_, params, role, flag) {
     // also support QWen2.5 model
@@ -52,6 +60,8 @@ std::string Fish::NN2NAME(const std::string& prefix, tpNEURON4NAME neuron, const
             return prefix + ".rstd";
         case FFN_UP:
             return prefix + "_up";
+        case FFN_RELU:
+            return prefix + "_relu";
         case FFN_DOWN:
             return prefix + "_down";
         case FFN_GATE:
@@ -98,6 +108,8 @@ std::string QWen::NN2NAME(const std::string& prefix, tpNEURON4NAME neuron, const
         case FFN_UP:
             tName = prefix + ".up_proj";
             break;  //  ".w1"
+        case FFN_RELU:
+            return prefix + "_relu";
         case FFN_DOWN:
             tName = prefix + ".down_proj";
             break;  //  ".w2"

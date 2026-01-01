@@ -31,7 +31,7 @@ TokenEmbed::TokenEmbed(Fish* hG_, const std::string& key_, JSON::const_iterator 
     }    */
     assert(latent > 0);
     isAddPos = type_info[type_info.length() - 1] == '+';
-    if (hG_->config.model.Rope_version > 0) {
+    if (hG_->config.model.rope_type !=  ROPE_NONE) {
         isAddPos = false;
     }
 }
@@ -174,10 +174,10 @@ hGensor VarCoder::DEC(hGensor x) {
     // x = decode*x;
     switch (tpNorm) {
         case 0:
-            x = x->Relu();
+            // x = x->Relu();
             break;
         case 1:
-            x = x->Silu();
+            // x = x->Silu();
             break;
         case 2:
             assert(0);  // x = x->Norm(1.0e-5);
@@ -344,14 +344,12 @@ bool VarCoder::Build(int flag_0) {
 
     if (tpNorm > 0)
         norm.BuildX(_NAME(name, FFN_PRE_NORMAL), {nBottom}, hFish, flag_0 | F_DELTA);  // name + ".norm",
-    if (hFish->isModel({NLP_QWEN2}) || hFish->isModel({NLP_QWEN3})) {
+    if (hFish->isModel({NLP_QWEN2, NLP_QWEN3})) {
         // qwen 2.5 same as qwen 3.0!
-        // up.BuildX(name + ".w1", {nBottom, nTop}, hFish, flagSLP);
-        // gate.BuildX(name + ".w3", {nBottom, nTop}, hFish, flagSLP);
-        // down.BuildX(name + ".w2", {nTop, nBottom}, hFish, flagSLP);
-        up.BuildX(_NAME(name, FFN_UP), {nBottom, nTop}, hFish, flagSLP);      
-        gate.BuildX(_NAME(name, FFN_GATE), {nBottom, nTop}, hFish, flagSLP);  
-        down.BuildX(_NAME(name, FFN_DOWN), {nTop, nBottom}, hFish, flagSLP);  
+        up.BuildX(_NAME(name, FFN_UP), {nBottom, nTop}, hFish, flagSLP);
+        gate.BuildX(_NAME(name, FFN_GATE), {nBottom, nTop}, hFish, flag_0);
+        // gate should alloc delta for its gpu memory!
+        down.BuildX(_NAME(name, FFN_DOWN), {nTop, nBottom}, hFish, flagSLP);
     } else {
         down.BuildX(name + "_down", {nTop, nBottom}, hFish, flagSLP);
         up.BuildX(name + "_up", {nBottom, nTop}, hFish, flagSLP);
@@ -375,6 +373,21 @@ bool VarCoder::Build(int flag_0) {
     return true;
 }
 
+void Relu::BuildX(const std::string& key_, const SHAPE& sp, Fish* hG_, int flag) {
+    hFish = hG_;
+    fAct  = hFish->config.model.fActFFN;
+    // fAct = RELU_;
+    shape = sp;
+    assert(shape.size() == 3);
+    B = shape[0], T = shape[1], C = shape[2];
+    size_t nz = SHAPE2NZ(shape);
+    if (nz >= std::numeric_limits<int>::max() && fAct == SWIG) {
+        _ERROR("Relu::swiglu input too large(%ld)", nz);
+    }
+    if (hFish->isTrain() && fAct == SWIG)
+        version = 1;
+};
+
 FFN* FFN::first = nullptr;
 bool FFN::Build(int flag_0) {
     delta        = GTensor::delta;
@@ -384,6 +397,8 @@ bool FFN::Build(int flag_0) {
     int flag     = flag_0;
     latent       = shape[1];
 
+    relu.BuildX(_NAME(name, FFN_RELU), {B, T, latent}, hFish, flag_0);
+    relu.slp_gate = &gate;
     // flag |= GeNeuron::F_BIAS;
     assert(C == shape[0]);
     sp3 = {B, T, latent};
@@ -429,7 +444,7 @@ bool FFN::Build(int flag_0) {
     quant_params.Init4Neuron(name, hFish->config.jQuant);
     if (layid > quant_params.nPassLayer) {
         quant_params.spMost = up.w->shape;
-        hQuant              = GeQuant::MakeInstance(this, name + "_quant", quant_params, {up.w, down.w, gate.w}, 0x0);  //  {up.w, down.w, gate.w}, down.w, gate.w
+        hQuant = GeQuant::MakeInstance(this, name + "_quant", quant_params, {up.w, down.w, gate.w}, 0x0);  //  {up.w, down.w, gate.w}, down.w, gate.w
     }
 
     return true;

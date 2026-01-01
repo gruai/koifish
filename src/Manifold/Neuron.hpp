@@ -121,7 +121,7 @@ class GeNeuron {
     virtual std::string _NAME(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix = "", int flag = 0x0);
 
    public:
-    enum BIT_FLAG { F_BIAS = 0x10000, F_DELTA = 0x20000, F_HOTPICK = 0x100000 };
+    enum BIT_FLAG { F_BIAS = 0x10000, F_DELTA = 0x20000, F_REMATER = 0x40000, F_HOTPICK = 0x100000 };
 
     DATA_PLACE place = DATA_PLACE::VOID;
 
@@ -135,7 +135,7 @@ class GeNeuron {
     LORA_ADAPT_W tpLORA = LORA_ADAPT_W::W0;
 
     hGensor b = nullptr, out = nullptr;
-
+    hGensor tRhs  = nullptr;  // rhs tensor of Forw, in many case, tRhs!=out
     hGensor inp   = nullptr;  //  may change! maybe nullptr!
     hGensor delta = nullptr;  //  backward-error tensor at each layer(may share memory!)
     bool isBias = true, isResidual = true, isSparse = false, isTransW = false;
@@ -198,6 +198,8 @@ class GeNeuron {
     virtual bool InitCompression(COMPRESSIVE_SENSING type, LORA_ADAPT_W tpLora, int flag = 0x0) { return false; }
 
     virtual void OnDebug(const std::string& info = "", int typ = 0x0, int flag = 0x0);
+    virtual void ExitDebug(const std::string& info = "", int typ = 0x0, int flag = 0x0);
+
     virtual void OnRemater(RLS_BP* schedule, int typ, int flag = 0x0);
 
     virtual string __repr__(string& suffix, string& prefix, int flag = 0x0);
@@ -213,6 +215,19 @@ class GeNeuron {
     friend class HIERARCH_LoRA;
     friend class Fuyou;
     friend class GTensor;
+};
+
+struct INSPECT {
+    GeNeuron* hN = nullptr;
+    INSPECT(GeNeuron* hN_, const std::string& info = "", int typ = 0x0, int flag = 0x0) : hN(hN_) {
+        if (hN != nullptr)
+            hN->OnDebug(info, typ, flag);
+    }
+
+    virtual ~INSPECT(){
+        if (hN != nullptr)
+            hN->ExitDebug();
+    }
 };
 
 class HotPicker;
@@ -255,6 +270,7 @@ class SparseNeuron : public GeNeuron {
     hGTensor hSamps = nullptr;
     int samp_type = 0, samp_0 = 0, samp_1 = 0;
     float rSampNorm = 1.0f;
+
     // subw = w[samples]
     TokenEmbed* subw = nullptr;
 
@@ -301,9 +317,10 @@ class ROPE : public SparseNeuron {
     //  may different with qkv in hQKV
     // void *devQ = nullptr, *devK = nullptr, *devDeltaQ = nullptr, *devDeltaK = nullptr;
     int n_rot = 0, n_ctx_orig = 0, head_dim = 0, q_dim = 0, kv_dim = 0, n_head = 0, n_head_kv = 0, r_dim = 0;
+    int max_pos = 0;
     hGensor KQ_pos, hSin = nullptr, hCos = nullptr;
-    float f_norm_rms_eps, freq_base, freq_scale, theta;
-    MODEL_CARD::tpROPE alg;
+    float freq_base, freq_scale, theta;
+    tpROPE alg = ROPE_NONE;
     bool isInterleave;  // Interleave the even and odd encodings
     Grusoft::GRander rRounding;
 
@@ -321,12 +338,20 @@ class ROPE : public SparseNeuron {
 };
 typedef shared_ptr<ROPE> hRope;
 
+struct SLP;
 struct Relu : public SparseNeuron {
+    SLP* slp_gate = nullptr;
+
     Relu() { ; }
     Relu(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
+    ACTIVATION_FUNC fAct = SWIG;
+    int version          = 0;
     virtual hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag = 0x0) override;
     bool Build(int flag) override;
+    void BuildX(const std::string& key_, const SHAPE& shape, Fish* hG_, int flag) override;
     bool isValid() override { return true; }
+    int Forw(hGTensor out, hGTensor inp, int flag = 0X0);
+    int Back(hGTensor delta, hGTensor inp, int flag = 0X0);
 };
 
 struct Drop : public SparseNeuron {
@@ -357,7 +382,7 @@ struct SLP : public SparseNeuron {
         1.  rhs = SLP(lhs)  or rhs = W*lhs+b
         2.  rhs = GELU(W*lhs+b);    to_gelu=W*lhs+b
     */
-    int Forw(hGTensor rhs, hGTensor lhs, hGTensor to_gelu = nullptr, int flag = 0x0);
+    int Forw(hGTensor rhs, hGTensor lhs, hGTensor to_gelu = nullptr, Relu* hRelu = nullptr, int flag = 0x0);
     // CPU version
     int Forw(float* rhs, float* lhs, int flag = 0x0);
 #ifndef ENABLE_FP32
@@ -382,6 +407,7 @@ struct SLP : public SparseNeuron {
 struct LayerNormal : public SparseNeuron {
     bool isAffineTrans = true;  // Learnable affine transform parameters
     bool isRMS         = true;  // Root Mean Square Layer Normalization
+    float rms_eps      = 1.0e-5;
     int nHead          = 0;
     //  always float
     hGensor mean = nullptr, rstd = nullptr;
@@ -438,6 +464,7 @@ class SelfAttention : public SparseNeuron {
     bool isLinear    = false;
     bool isPreNormal = false;  //  Pre /Post Normalization
     bool isQKNormal  = false;
+    QKV_PACK qkv4dnn, qkvPack = QKV_PACK::QQKKVV;
 
     bool isSeparateQKV = false;
     bool isBqkv        = false;  // to align with some model
@@ -456,6 +483,7 @@ class SelfAttention : public SparseNeuron {
         T_RELU_    = 3,
         T_LINEAR   = 4,
     };
+    bool UpdateQKVPack(int flag = 0x0);
 #ifdef ENABLE_CUDNN
     virtual bool FUSE_cudnn(floatX* dqkvr, floatX* dout, int flag = 0x0);
 #endif
@@ -481,7 +509,7 @@ class SelfAttention : public SparseNeuron {
     };
     bool remater_qkv                = false;
     bool isAttOnBC                  = false;  //  // Nearly same. If true,attenion on all tokens, memory would explode!
-    int Rope_version                = 0;
+
     std::shared_ptr<KVCache> hCache = nullptr;
 
     hGensor attn_k = nullptr, attn_q = nullptr, tmpQKV = nullptr;
@@ -489,7 +517,7 @@ class SelfAttention : public SparseNeuron {
     // hGensor W_rope(void *ctx ,hGensor cur,hGensor w,hGensor KQ_pos,SHAPE shape,const string&shortcut,int flag=0x0);
     hGensor MyAttention(RLS_BP* ctx_, hGensor inpL, int flag);
     hGensor vXattn(void* ctx, hGensor v, hGensor attn, int flag);
-    float f_norm_rms_eps, rope_freq_base, rope_freq_scale;
+    float rope_freq_base, rope_freq_scale;
     std::unordered_map<int64_t, void*> var_packs;
     uint32_t rope_seed = 666888;
 
@@ -504,7 +532,8 @@ class SelfAttention : public SparseNeuron {
     LayerNormal norm, *fuseNorm       = nullptr;
     LayerNormal normQ, normK;  //  Only w vector to save memory
 
-    hGensor attn = nullptr, transition = nullptr;
+    hGensor attn       = nullptr;
+    hGensor transition = nullptr;  //{STATS_UID, stats} of CUDNN
 
     SLP Q, K, V;
     static hRope rope;
@@ -527,7 +556,8 @@ class SelfAttention : public SparseNeuron {
 
     friend class ROPE;
 };
-
+// B, Hq, Hkv, T, head_dim, x
+using QKV_KEY6 = std::tuple<int, int, int, int, int, int>;
 /*
     Gated SelfAttention
 */
@@ -564,7 +594,6 @@ struct BROWN_attn : public SelfAttention {
    protected:
     bool Transfer_1 = false;
     int n_rot       = -1;
-    float f_norm_rms_eps, rope_freq_base, rope_freq_scale;
 
    public:
     BROWN_attn() {}

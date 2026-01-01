@@ -72,6 +72,8 @@ double G_NORM_STAT(size_t N, const T* arr, double& sum_2, double& sum_1, double&
         sum_1 += a;
         norm_1 += fabs(a);
     }
+    assert(!isnan(sum_2) && !isinf(sum_2));
+    assert(!isnan(norm_1) && !isinf(norm_1));
     return sum_2;
 }
 

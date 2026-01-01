@@ -16,12 +16,14 @@
 #include "../ggex/GG_util.hpp"
 #include "GeQuant.hpp"
 
-hGTensor GTensor::outL = nullptr, GTensor::delta = nullptr, GTensor::tmpDelta = nullptr;
+GTensor* GTensor::tZ = nullptr;
+hGTensor GTensor::outL = nullptr, GTensor::delta = nullptr, GTensor::gate_delta = nullptr, GTensor::tmpDelta = nullptr;
 float* GTensor::stat_info = nullptr;
 hGTensor GTensor::bt4c = nullptr, GTensor::scratch = nullptr, GTensor::tmpW = nullptr, GTensor::tmpGW = nullptr, GTensor::tmpFF1 = nullptr,
          GTensor::tmpTernary = nullptr, GTensor::residual = nullptr;
 void *GTensor::buff = nullptr, *GTensor::host_buff = nullptr;
 size_t GTensor::buff_len = 0;
+
 
 float GTensor::rLARS(float s0, float T_lars, int flag) {
     if (shape.size() <= 1)
@@ -367,15 +369,6 @@ bool GTensor::ShareMemory(hGTensor src, int flag) {
     return true;
 }
 
-hGTensor GTensor::Relu() {
-    // auto cur=ggml_relu(nullptr, (struct ggml_tensor *)gg);  return NEW_(cur);
-    return nullptr;
-}
-hGTensor GTensor::Silu() {
-    // auto cur=ggml_silu(nullptr, (struct ggml_tensor *)gg);  return NEW_(cur);
-    return nullptr;
-}
-
 hGTensor GTensor::CrossEntropy(const hGTensor b, int flag) {
     // auto cur = ggml_cross_entropy_loss(nullptr,(struct ggml_tensor *)gg, b->GG() );      // ggml_cross_entropy_loss_1(_ctx, cur, target_probs);
     // return GTensor::NEW_(cur);
@@ -495,6 +488,8 @@ int GTensor::SerialJSON(const std::string& name_, const JSON& val, void* bytes_p
                 Alloc(-1, flag);
                 Serial_Quant_MMAP(false, false);
                 host_data = nullptr;  // mmap file would release
+            }else{
+                G_NORM_STAT<bf16>(size(), (bf16*)host_data, disq.sum_2, disq.sum_1, disq.nrm_1);
             }
             // if (G_Has_(name, hFish->config.quant.filter_WeightF8Ex)) {  // model.embed_tokens.weight    only for debug
             //     ToF8Ex(0x0);
