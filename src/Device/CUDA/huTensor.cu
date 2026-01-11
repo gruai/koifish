@@ -21,7 +21,7 @@
 #include "./kernel/operator.cuh"
 #include "./kernel/utils.cuh"
 static Grusoft::GRander randParam;
-huTensor::huTensor(Fish* fish, const string& name_, SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag) : GTensor(fish, shape, tpD_, false, flag) {
+huTensor::huTensor(Fish* fish, const string& name_, const SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag) : GTensor(fish, shape, tpD_, false, flag) {
     size_t nEle       = size();
     MEM_STRATEGY stra = fish->config.scheduling.strategy;
     if (stra == MEM_STRATEGY::PRE_ALLOC_HOST_MAP) {
@@ -33,13 +33,16 @@ huTensor::huTensor(Fish* fish, const string& name_, SHAPE shape, typNUMBER tpD_,
         snprintf(name, sizeof(name), "%s", name_.c_str());
     else
         name[0] = '\0';
-    param_seed = randParam.RandU32();
+    if (BIT_TEST(flag, F_DEBUG)){
+        int need_determin = 0;
+    }else
+        param_seed = randParam.RandU32();
     if (isAlloc) {
         Alloc(0x0, flag);
     }
 }
 
-hGTensor huTensor::Partial(const string& name_, size_t nOff, SHAPE shape, int flag) {
+hGTensor huTensor::Partial(const string& name_, size_t nOff, const SHAPE shape, int flag) {
     hGTensor sub = GT(hFish, type, shape);
     if (!name_.empty())
         snprintf(sub->name, sizeof(name), "%s", name_.c_str());
@@ -109,7 +112,9 @@ size_t huTensor::Alloc_1(void** dst, bool isZero, string desc, size_t sz0, int f
     return szAlloc;
 }
 size_t huTensor::Free_1(void** obj, const string& info) {
-    //  BIT_SET(Q.out->flags, GTensor::F_NOALLOC), BIT_SET(K.out->flags, GTensor::F_NOALLOC), BIT_SET(V.out->flags, GTensor::F_NOALLOC);
+    if(G_Has_(name,{"tmpDelta2"})){
+        DEBUG_HERE;
+    }
     if (BIT_TEST(flags, F_ONLYREF) || BIT_TEST(flags, F_NOALLOC))
         return 0x0;
 
@@ -174,7 +179,7 @@ bool huTensor::InitParam(int tpX) {
                 break;
         }
         if (tmp != nullptr) {
-            H2D(data, tmp, nInit * BPE(type));  // cudaCheck(cudaMemcpy(data, tmp, nInit * nB, cudaMemcpyHostToDevice));
+            H2D(data, tmp, K_FLOATS[type].nByte(nInit));  // BPE(type)
             delete[] tmp;
         }
 
@@ -541,7 +546,7 @@ double tNormsOf(const std::vector<hGTensor>& tensors, int flag) {
     double norm       = 0.0f;
     int num_slices[2] = {1, 1}, max_num_block_sums = get_max_num_block_sums(num_slices, 2);
     size_t nz          = 0;
-    bool is_first_pass = true;  // i==0
+    // bool is_first_pass = true;  //
     for (auto tensor : tensors) {
         assert(0);  // Deprecated
         /*//ShardInfo shard ={0, tensor->size()};

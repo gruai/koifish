@@ -1,29 +1,29 @@
 /**
  *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
- *  SPDX-License-Identifier: MIT 
- *  
+ *  SPDX-License-Identifier: MIT
+ *
  *  concise dictionary on VAE
- * 
+ *
  *  \brief GTokenizer & Dictionary
  *  \author Yingshi Chen
  */
 
 #pragma once
-#include "../ggex/GG_util.hpp"   
-#include "../Manifold/Fish.hpp"   
-#include "../Manifold/VAE.hpp" 
+
+#include "../Manifold/Fish.hpp"
+#include "../Manifold/VAE.hpp"
 
 class Fish;
 struct TokenTrie;
 
 struct TokenTrie {
-  std::unordered_map<char, std::shared_ptr<TokenTrie>> children;
-  // If non-negative, then this represents the ID of the token formed by the path from the root to this node.
-  int token_id = -1;
+    std::unordered_map<char, std::shared_ptr<TokenTrie>> children;
+    // If non-negative, then this represents the ID of the token formed by the path from the root to this node.
+    int token_id = -1;
 };
 
 class TrieNode {
-public:
+   public:
     std::unordered_map<wchar_t, std::unique_ptr<TrieNode>> children;
     bool is_end;
     std::wstring delimiter;
@@ -32,7 +32,7 @@ public:
 };
 
 class Splitter {
-private:
+   private:
     std::unique_ptr<TrieNode> root;
 
     void insert(const std::wstring& str) {
@@ -43,11 +43,11 @@ private:
             }
             current = current->children[ch].get();
         }
-        current->is_end = true;
+        current->is_end    = true;
         current->delimiter = str;
     }
 
-public:
+   public:
     Splitter(const std::vector<std::wstring>& delimiters) {
         root = std::make_unique<TrieNode>();
         for (const auto& delimiter : delimiters) {
@@ -58,16 +58,16 @@ public:
     std::vector<std::wstring> split(const std::wstring& input) {
         std::vector<std::wstring> result;
         size_t start = 0;
-        
+
         while (start < input.length()) {
             // Try to find the next delimiter starting from current position
             size_t best_match_length = 0;
             std::wstring matched_delimiter;
-            
+
             // Check for possible delimiter match starting at current position
             TrieNode* current = root.get();
-            size_t pos = start;
-            
+            size_t pos        = start;
+
             while (pos < input.length() && current->children.count(input[pos])) {
                 current = current->children[input[pos]].get();
                 pos++;
@@ -87,7 +87,7 @@ public:
                 // No delimiter found at current position
                 size_t next_pos = start + 1;
                 bool found_next = false;
-                
+
                 // Find next possible delimiter start
                 while (next_pos < input.length()) {
                     if (root->children.count(input[next_pos])) {
@@ -96,13 +96,13 @@ public:
                     }
                     next_pos++;
                 }
-                
+
                 // Add the substring up to next possible delimiter or end
                 result.push_back(input.substr(start, (found_next ? next_pos - start : std::wstring::npos)));
                 start = next_pos;
             }
         }
-        
+
         return result;
     }
 };
@@ -110,7 +110,7 @@ public:
 /*
     BPE(Byte-Pair Encoding)
 
-    Smart implementation of https://github.com/andrewkchan/yalm/blob/main/src/tokenizer.h 
+    Smart implementation of https://github.com/andrewkchan/yalm/blob/main/src/tokenizer.h
 
     A tokenizer vocab consists of a concatenated tensor with the key "tokenizer.tokens" in the .yalm file.
     Shown as a list of strings:
@@ -121,7 +121,7 @@ public:
     "</s>",         // 2
     "<0x00>",       // 3--------------+
     "<0x01>",       // 4              |  Byte
-    "<0x02>",       // 5              |  Fallback 
+    "<0x02>",       // 5              |  Fallback
     ...                               |  Tokens
     "<0xFE>",       // 257            |
     "<0xFF>",       // 258------------+
@@ -145,106 +145,105 @@ public:
 */
 typedef std::vector<TOKEN_ID> TOKENS;
 class GTokenizer {
-protected:    
+   protected:
     CLI_params config;
     /* The separator token, which is used when building a sequence from multiple sequences, e.g. two sequences for
             sequence classification or for a text and a question for question answering. It is also used as the last
             token of a sequence built with special tokens.*/
-    string sep_token ="[SEP]";         
+    string sep_token = "[SEP]";
     // The token used for padding, for example when batching sequences of different lengths.
-    string pad_token ="[PAD]";
-    // The classifier token which is used when doing sequence classification (classification of the whole sequence instead of per-token classification). It is the first token of the sequence when built with special tokens.
-    string cls_token="[CLS]";
-    // The token used for masking values. This is the token used when training this model with masked language modeling. This is the token which the model will try to predict.   
+    string pad_token = "[PAD]";
+    // The classifier token which is used when doing sequence classification (classification of the whole sequence instead of per-token classification). It is
+    // the first token of the sequence when built with special tokens.
+    string cls_token = "[CLS]";
+    // The token used for masking values. This is the token used when training this model with masked language modeling. This is the token which the model will
+    // try to predict.
     string mask_token = "[MASK]";
-    string unk_token = "<unk>";      //  unknown word
+    string unk_token  = "<unk>";  //  unknown word
 
-    int byte_fallback = -1;    //BPE has byte fallback option to convert unk character to utf-8 bytes
+    int byte_fallback = -1;  // BPE has byte fallback option to convert unk character to utf-8 bytes
 
     // vector where the index is the token id and the value is the token string
     std::vector<std::string> vocab;
-    virtual int Lookup(const std::string&word,int flag=0x0);
+    virtual int Lookup(const std::string& word, int flag = 0x0);
     // trie mapping token strings to token ids
     TokenTrie vocab_trie;
-    JSON jTokenizer,jVocab;
-    size_t max_input_chars_per_word=0;
-    
+    JSON jTokenizer, jVocab;
+    size_t max_input_chars_per_word = 0;
+
     bool tokenizer_add_bos = false;
 
-    std::string name = "no_vocab";         //"no_vocab","llama","bert","gpt2"
+    std::string name = "no_vocab";  //"no_vocab","llama","bert","gpt2"
 
     //  Most open-source LLMs use BOS at sequence start
     bool isNeedBOS = true;
 
-//原生LLaMA对中文的支持很弱，一个汉子往往被切分成多个token，因此需要对其进行中文词表扩展。思路通常是在中文语料库上训练一个中文tokenizer模型，然后将中文tokenizer与LLaMA原生tokenizer进行合并，最终得到一个扩展后的tokenizer模型。国内Chinese-LLaMA-Alpaca开源项目详细说明了词表扩展。
+    // 原生LLaMA对中文的支持很弱，一个汉子往往被切分成多个token，因此需要对其进行中文词表扩展。思路通常是在中文语料库上训练一个中文tokenizer模型，然后将中文tokenizer与LLaMA原生tokenizer进行合并，最终得到一个扩展后的tokenizer模型。国内Chinese-LLaMA-Alpaca开源项目详细说明了词表扩展。
     std::vector<const char*> merges;
     bool isIignoreMerges = false;
     std::map<std::pair<std::string, std::string>, int> bpe_ranks;
-    float *scores=nullptr;
-    int *toktypes=nullptr;
-// Dialect support 
-    bool isDialect = false;  
+    float* scores = nullptr;
+    int* toktypes = nullptr;
+    // Dialect support
+    bool isDialect = false;
     std::map<TOKEN_ID, TOKEN_ID> mapT2T;
     std::vector<TOKEN_ID> dialect;
-// special_tokens support
+    // special_tokens support
     std::vector<std::string> special_tokens;
     // std::unordered_map<token, id> special_tokens_cache;
- 
+
     // start index of the byte fallback range (256 tokens). -1 if none.
     int byte_fallback_start = -1;
 
     // "tokenizer.json" in Huggingface's model card
-    bool LoadHFJson(const string& path,int flag=0x0);
-    virtual void InitTrier(int flag=0x0);
-    virtual bool InitHF(Fish *dolphin,int flag=0x0);
-    virtual bool InitFrom(Fish *dolphin,hGTensor tokens,hGTensor scores,int flag=0x0);
+    bool LoadHFJson(const string& path, int flag = 0x0);
+    virtual void InitTrier(int flag = 0x0);
+    virtual bool InitHF(Fish* dolphin, int flag = 0x0);
+    virtual bool InitFrom(Fish* dolphin, hGTensor tokens, hGTensor scores, int flag = 0x0);
     // convenience array containing the decodings for the fixed 256 byte fallbacks '{0x00}\0', '{0x01}\0', ..., '{0xFF}\0'.
     // TODO: use constexpr?
     std::string byte_pieces[256];
 
-    virtual std::vector<TOKEN_ID> Encode_TokenTrie(const std::string& text, bool encode_bos=false) const;
-public:
+    virtual std::vector<TOKEN_ID> Encode_TokenTrie(const std::string& text, bool encode_bos = false) const;
+
+   public:
     static const int MAX_TOKEN_LENGTH = 512;
-    static const int MAX_TEMPLATE = 1024;
-    int sep_id=-1,pad_id=-1,cls_id=-1,mask_id=-1;
+    static const int MAX_TEMPLATE     = 1024;
+    int sep_id = -1, pad_id = -1, cls_id = -1, mask_id = -1;
     // 1. in some model, no bos_token_id!(GPT-2/GPT-3,unsloth/Qwen3-4B-Base,...)
-    int bos_id = -1,eos_id = -1,eot_id = -1;
-    
+    int bos_id = -1, eos_id = -1, eot_id = -1;
 
-    enum BIT_FLAG {        
+    enum BIT_FLAG {
 
-        F_JVOCAB=0x10000,  
-    };  
-    GTokenizer()    {}
-    GTokenizer(Fish *lama_,int flag=0x0);
-    virtual ~GTokenizer()  {
-        FREE_a(scores);      FREE_a(toktypes);
+        F_JVOCAB = 0x10000,
+    };
+    GTokenizer() {}
+    GTokenizer(Fish* lama_, int flag = 0x0);
+    virtual ~GTokenizer() {
+        FREE_a(scores);
+        FREE_a(toktypes);
     }
-    virtual int nVocab(int flag=0x0)    const;
-    virtual bool isValid(int flag=0x0)  const;
-    virtual bool isInRange(const int* inp,size_t nz,int flag);
+    virtual int nVocab(int flag = 0x0) const;
+    virtual bool isValid(int flag = 0x0) const;
+    virtual bool isInRange(const int* inp, size_t nz, int flag);
 
-    virtual std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos=false, bool encode_eos=false) ;
-    virtual std::vector<TOKEN_ID> Encode(const std::wstring& text, bool encode_bos=false, bool encode_eos=false) ;
-    virtual std::string Decode(const TOKENS& ids, bool skip_special_tokens=false);
-    
-    virtual int STR2T(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0){
+    virtual std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos = false, bool encode_eos = false);
+    virtual std::vector<TOKEN_ID> Encode(const std::wstring& text, bool encode_bos = false, bool encode_eos = false);
+    virtual std::string Decode(const TOKENS& ids, bool skip_special_tokens = false);
+
+    virtual int STR2T(const char* txt, int txt_len, std::vector<TOKEN_ID>& btch, int flag = 0x0) {
         btch.clear();
-        string line(txt,txt_len);
+        string line(txt, txt_len);
         btch = Encode(line);
         return btch.size();
     }
-    virtual std::string T2STR(TOKEN_ID tok,int flag=0x0 ){
-        return Decode({tok});
-    }
-    virtual std::string T2STR(const std::vector<TOKEN_ID>&toks,int flag=0x0 ) {  
-        return Decode(toks);
-    } 
-    virtual std::string T2STR(const int *arrT,int nTok,int flag=0x0 ) {  
+    virtual std::string T2STR(TOKEN_ID tok, int flag = 0x0) { return Decode({tok}); }
+    virtual std::string T2STR(const std::vector<TOKEN_ID>& toks, int flag = 0x0) { return Decode(toks); }
+    virtual std::string T2STR(const int* arrT, int nTok, int flag = 0x0) {
         std::vector<TOKEN_ID> toks(nTok);
         std::copy(arrT, arrT + nTok, toks.begin());
         return Decode(toks);
-    } 
+    }
 
     std::string decode_one(int prev_token, int token) const;
     std::string encoding_to_debug_string(const std::vector<TOKEN_ID>& encoding) const;
@@ -264,44 +263,44 @@ public:
         return it->second;
     }    */
 
-friend class DataTokenSet;  friend class Tokenset_HellaSwag; friend class GlobTokenset;
-friend class SampLoader;
-friend class Fish;
-friend class NLP_AutoRegressive;
+    friend class DataTokenSet;
+    friend class Tokenset_HellaSwag;
+    friend class GlobTokenset;
+    friend class SampLoader;
+    friend class Fish;
+    friend class NLP_AutoRegressive;
 };
 typedef std::shared_ptr<GTokenizer> hTokenizer;
 
-class GTokenizer_GPT2 : public GTokenizer   {
-protected:
-public:
-    GTokenizer_GPT2(Fish *,int flag=0x0);
-    std::string T2STR(TOKEN_ID tok,int flag=0x0 )   override;
+class GTokenizer_GPT2 : public GTokenizer {
+   protected:
+   public:
+    GTokenizer_GPT2(Fish*, int flag = 0x0);
+    std::string T2STR(TOKEN_ID tok, int flag = 0x0) override;
 };
 
 // also support QWEN2
-class GTokenizer_QWEN3 : public GTokenizer   {
-protected:
-public:
-    GTokenizer_QWEN3(Fish *,int flag=0x0);
-    std::string T2STR(TOKEN_ID tok,int flag=0x0 )   override;
-    bool InitHF(Fish *dolphin,int flag=0x0) override;
-    std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos=false, bool encode_eos=false) override;
+class GTokenizer_QWEN3 : public GTokenizer {
+   protected:
+   public:
+    GTokenizer_QWEN3(Fish*, int flag = 0x0);
+    std::string T2STR(TOKEN_ID tok, int flag = 0x0) override;
+    bool InitHF(Fish* dolphin, int flag = 0x0) override;
+    std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos = false, bool encode_eos = false) override;
 };
 
-class GTokenizer_Heap : public GTokenizer   {
-protected:
+class GTokenizer_Heap : public GTokenizer {
+   protected:
     struct TokenIndex {
-        const char* str=nullptr;
-        int id = -1;
+        const char* str = nullptr;
+        int id          = -1;
     };
     struct TokenIndex* sorted_vocab = nullptr;
 
-    static int compare_tokens(const void* a, const void* b) {
-        return strcmp(((struct TokenIndex*)a)->str, ((struct TokenIndex*)b)->str);
-    }
+    static int compare_tokens(const void* a, const void* b) { return strcmp(((struct TokenIndex*)a)->str, ((struct TokenIndex*)b)->str); }
 
-    int sLookup(const char* str,int flag=0x0);
-    
+    int sLookup(const char* str, int flag = 0x0);
+
     struct Merge {
         int lpos, lid;
         int rpos, rid;
@@ -311,8 +310,8 @@ protected:
 
     void heap_swap(struct Merge* heap, int i, int j) {
         struct Merge tmp = heap[i];
-        heap[i] = heap[j];
-        heap[j] = tmp;
+        heap[i]          = heap[j];
+        heap[j]          = tmp;
     }
 
     void heap_insert(struct Merge* heap, int n_heap, struct Merge merge) {
@@ -351,24 +350,21 @@ protected:
         }
     }
     int merge_tokens_tryadd(struct Merge* heap, int n_heap, int lpos, int lid, int rpos, int rid);
-    int merge_tokens(std::vector<TOKEN_ID>&tokens,int flag=0x0);
-    bool InitFrom(Fish *dolphin,hGTensor tokens,hGTensor scores,int flag=0x0)   override;
-public:
-    GTokenizer_Heap(Fish *,int flag=0x0);
-    virtual ~GTokenizer_Heap()  {
-        FREE_a(sorted_vocab);
-    }
-    std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos=false, bool encode_eos=false)   override;
-}; 
+    int merge_tokens(std::vector<TOKEN_ID>& tokens, int flag = 0x0);
+    bool InitFrom(Fish* dolphin, hGTensor tokens, hGTensor scores, int flag = 0x0) override;
+
+   public:
+    GTokenizer_Heap(Fish*, int flag = 0x0);
+    virtual ~GTokenizer_Heap() { FREE_a(sorted_vocab); }
+    std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos = false, bool encode_eos = false) override;
+};
 /*
     subword tokenization algorithm
     from  https://github.com/Sorrow321/huggingface_tokenizer_cpp
 */
-class WordPieceTokenizer : public GTokenizer   {
-private:
-
-
-protected:
+class WordPieceTokenizer : public GTokenizer {
+   private:
+   protected:
     // std::string trim( std::string const& original )
     // {
     //     std::string::const_iterator right = std::find_if(original.rbegin(), original.rend(), IsNotSpace()).base();
@@ -377,7 +373,7 @@ protected:
     // }
     wstring wunk;
     vector<wstring> wspecial;
-    std::vector<std::wstring> split(const std::wstring& input)  const {
+    std::vector<std::wstring> split(const std::wstring& input) const {
         std::wstringstream stream(input);
         std::vector<std::wstring> words;
         std::wstring word;
@@ -387,130 +383,127 @@ protected:
         return words;
     }
     std::string decode_one(int prev_token, int token) const;
-public:
-    WordPieceTokenizer(Fish *lama_,int flag=0x0);
+
+   public:
+    WordPieceTokenizer(Fish* lama_, int flag = 0x0);
     WordPieceTokenizer(const string& config_path);
 
     int get_word_index(const wstring& word) const;
-    std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos=false, bool encode_eos=false)  override;
-    virtual vector<TOKEN_ID> Encode(const wstring& input_text, bool split_specials=false)  ;
-    // std::string Decode(const TOKENS& ids, bool skip_special_tokens=false)   override;   
+    std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos = false, bool encode_eos = false) override;
+    virtual vector<TOKEN_ID> Encode(const wstring& input_text, bool split_specials = false);
+    // std::string Decode(const TOKENS& ids, bool skip_special_tokens=false)   override;
 
     vector<wstring> wordpiece_tokenize(const wstring& input_text) const;
 
-    vector<size_t> convert_tokens_to_ids(const vector<wstring>& input_seq)  const  {
+    vector<size_t> convert_tokens_to_ids(const vector<wstring>& input_seq) const {
         vector<size_t> output_ids;
-        for(size_t i = 0; i < input_seq.size(); i++) {
+        for (size_t i = 0; i < input_seq.size(); i++) {
             output_ids.push_back(get_word_index(input_seq[i]));
         }
         return output_ids;
     }
-
 };
 
 // Deprecated!
-struct DictVAE : public VariationaAE    {    
+struct DictVAE : public VariationaAE {
     enum OUTPUT_OP {
-        ONLY_LOAD=0x0,          //lr=0.001 much more oscillation than 0.0001
-        RND_GRAD,               //lr=0.001
+        ONLY_LOAD = 0x0,  // lr=0.001 much more oscillation than 0.0001
+        RND_GRAD,         // lr=0.001
         LOAD_GRAD,
         LOAD_GRAD_norm,
     };
-    OUTPUT_OP opOut=RND_GRAD;     //LOAD_GRAD_norm;   ONLY_LOAD
+    OUTPUT_OP opOut = RND_GRAD;  // LOAD_GRAD_norm;   ONLY_LOAD
     LayerNormal _norm;
     SLP _output;
-    hGensor tok_embeddings=nullptr; //norm=nullptr,output=nullptr;
+    hGensor tok_embeddings = nullptr;  // norm=nullptr,output=nullptr;
     // bool tokenizer_add_bos = false;
-    bool init_ok = false;
-    bool isSVD = false;
-    hGensor out_u=nullptr,out_v=nullptr,out_d=nullptr;
-    int lo_rank = 128;
-    hWIKI wiki_tutor=nullptr;    
+    bool init_ok  = false;
+    bool isSVD    = false;
+    hGensor out_u = nullptr, out_v = nullptr, out_d = nullptr;
+    int lo_rank      = 128;
+    hWIKI wiki_tutor = nullptr;
 
-    virtual int STR2T(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0);
-    virtual std::string T2STR(TOKEN_ID tok,int flag=0x0 );  
-    virtual std::string T2STR(const std::vector<TOKEN_ID>&toks,int flag=0x0 ) {  
-        string line="";
-        for(auto t:toks){
-            if(t==hDict->eos_id)
+    virtual int STR2T(const char* txt, int txt_len, std::vector<TOKEN_ID>& btch, int flag = 0x0);
+    virtual std::string T2STR(TOKEN_ID tok, int flag = 0x0);
+    virtual std::string T2STR(const std::vector<TOKEN_ID>& toks, int flag = 0x0) {
+        string line = "";
+        for (auto t : toks) {
+            if (t == hDict->eos_id)
                 break;
-            line += T2STR(t,flag);
-        }            
+            line += T2STR(t, flag);
+        }
         return line;
-    } 
+    }
 
-    hTokenizer hDict = nullptr;
+    hTokenizer hDict      = nullptr;
     bool isLoadTokenEmbed = false;
-    Fish *dolphin = nullptr;
-    int nToken=0,lama_embed=0,latent_dim=256,nLevel=0;
+    Fish* dolphin         = nullptr;
+    int nToken = 0, lama_embed = 0, latent_dim = 256, nLevel = 0;
 
-    DictVAE(Fish *lama_,int flag=0x0);
-    virtual ~DictVAE()  {
+    DictVAE(Fish* lama_, int flag = 0x0);
+    virtual ~DictVAE() {
         // FREE_a(scores);      FREE_a(toktypes);
     }
     //  n_vocab,scores,toktypes,special_,tokens
     // virtual void LoadVocab_v0(const char*fn_model_base,int flag);
-    virtual void LoadVocab(const char*fn_model_base,int flag)   {   assert(0);  }
-    
-    // virtual bool LoadTokenizer(const char *filename,int flag=0x0)   {   assert(0);  }
-    
-    
-    virtual void InitVAE(int flag=0x0);
+    virtual void LoadVocab(const char* fn_model_base, int flag) { assert(0); }
 
-    virtual void Update(struct random_normal_distribution * rnd,int flag=0x0)   {
-        if(nLevel>0){
-            Update_1(rnd,flag);
-        }else{
-            Update_0(rnd,flag);
+    // virtual bool LoadTokenizer(const char *filename,int flag=0x0)   {   assert(0);  }
+
+    virtual void InitVAE(int flag = 0x0);
+
+    virtual void Update(struct random_normal_distribution* rnd, int flag = 0x0) {
+        if (nLevel > 0) {
+            Update_1(rnd, flag);
+        } else {
+            Update_0(rnd, flag);
         }
     }
-    virtual hGensor Embed2Output(void * ctx,hGensor t33,int flag=0x0);
-    virtual void Update_0(struct random_normal_distribution * rnd,int flag=0x0);
-    void Update_1(struct random_normal_distribution * rnd,int flag=0x0);  
+    virtual hGensor Embed2Output(void* ctx, hGensor t33, int flag = 0x0);
+    virtual void Update_0(struct random_normal_distribution* rnd, int flag = 0x0);
+    void Update_1(struct random_normal_distribution* rnd, int flag = 0x0);
     void CreateEmbeddings(int flag);
 
-    string __repr__( string& suffix,string& prefix,int flag=0x0)   override;
+    string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
 };
 typedef std::shared_ptr<DictVAE> hCDICT;
 
-
-class CDict_LLAMA : public DictVAE{
-public:
-    CDict_LLAMA(Fish *nlp_,int flag=0x0);
+class CDict_LLAMA : public DictVAE {
+   public:
+    CDict_LLAMA(Fish* nlp_, int flag = 0x0);
 };
 
 // Deprecated!
-class CDict_GPT2 : public DictVAE{
-protected:
+class CDict_GPT2 : public DictVAE {
+   protected:
     // uint32_t vocab_size;
-    char **token_table=nullptr;    
-    int eot_token; // <|endoftext|> token id
-    
+    char** token_table = nullptr;
+    int eot_token;  // <|endoftext|> token id
+
     // bool LoadTokenizer(const char *filename,int flag=0x0)   override;
-public:
-    CDict_GPT2(Fish *nlp_,int flag=0x0);
-    virtual ~CDict_GPT2()   {
-        if(token_table!=nullptr){
+   public:
+    CDict_GPT2(Fish* nlp_, int flag = 0x0);
+    virtual ~CDict_GPT2() {
+        if (token_table != nullptr) {
             for (uint32_t i = 0; i < hDict->nVocab(); i++) {
                 free(token_table[i]);
             }
-            free(token_table);            
+            free(token_table);
         }
-
     }
-    int InitMAEC(void *ctx,const std::vector<int>& dims_,int flag=0x0) override;
-    std::string T2STR(TOKEN_ID tok,int flag=0x0 ) override;   
-    int STR2T(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0)    override;
+    int InitMAEC(void* ctx, const std::vector<int>& dims_, int flag = 0x0) override;
+    std::string T2STR(TOKEN_ID tok, int flag = 0x0) override;
+    int STR2T(const char* txt, int txt_len, std::vector<TOKEN_ID>& btch, int flag = 0x0) override;
 };
 
 /*
     Just map characters to int, only for debug!
 */
-class CDict_CHAR : public DictVAE{
-public:
-    CDict_CHAR(Fish *nlp_,int flag=0x0);
-    void LoadVocab(const char*fn_model_base,int flag)   override;
-    int InitMAEC(void *ctx,const std::vector<int>& dims_,int flag=0x0) override;
-    int STR2T(const char*txt,int txt_len,std::vector<TOKEN_ID>& btch,int flag=0x0)    override;
-    std::string T2STR(TOKEN_ID tok,int flag=0x0 ) override;   
+class CDict_CHAR : public DictVAE {
+   public:
+    CDict_CHAR(Fish* nlp_, int flag = 0x0);
+    void LoadVocab(const char* fn_model_base, int flag) override;
+    int InitMAEC(void* ctx, const std::vector<int>& dims_, int flag = 0x0) override;
+    int STR2T(const char* txt, int txt_len, std::vector<TOKEN_ID>& btch, int flag = 0x0) override;
+    std::string T2STR(TOKEN_ID tok, int flag = 0x0) override;
 };

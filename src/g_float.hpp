@@ -12,6 +12,7 @@
 #include <cassert>
 #include <cfloat>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <typeinfo>
 #include <vector>
@@ -30,9 +31,9 @@ using hBITARR = uint8_t*;
 using BIT_8   = uint8_t;
 
 using SHAPE = std::vector<int>;
-inline size_t SHAPE2NZ(const SHAPE& shape){
+inline size_t SHAPE2NZ(const SHAPE& shape) {
     size_t nz = 1;
-    for(auto n : shape){
+    for (auto n : shape) {
         nz *= n;
     }
     return nz;
@@ -50,8 +51,11 @@ using f8e5 = uint8_t;
 struct FLOAT_META {
     int bis = 0;
     std::string name;
-    std::string alias;
-    bool isQuantized() { return bis < 8; }
+    std::vector<std::string> alias;
+    FLOAT_META() {}
+    FLOAT_META(int bis_, const std::string& name_, const std::vector<std::string>& alias_ = {}) : bis(bis_), name(name_), alias(alias_) {}
+    bool isQuantized() const { return bis < 8; }
+    size_t nByte(size_t nElem) const;
 };
 /*
     Type of numbers
@@ -86,32 +90,32 @@ enum class typNUMBER : uint8_t {
     T_BINARY_3,  //  binary {-1,  1} from three partition
     T_BINARY_TILE,
 
-    COUNT = 39,
+    T_OTHER = 39,
 };
 
-inline FLOAT_META K_FLOATS[] = {
-    {32, "F32"},           // F32
-    {16, "F16"},           // F16
-    {8, "U8"},             // U8
-    {8, "I8"},             // I8
-    {16, "U16"},           // U16
-    {16, "I16"},           // I16
-    {32, "U32"},           // U32
-    {32, "I32"},           // I32
-    {64, "U64"},           // U64
-    {64, "I64"},           // I64
-    {64, "F64"},           // F64
-    {16, "BF16"},          // BF16
-    {8, "F8E5M2"},         // F8E5M2
-    {8, "F8E4M3"},         // F8E4M3
-    {4, "Q4"},             // Q4
-    {3, "Q3"},             // Q3
-    {2, "Q2"},             // Q2
-    {1, "BOOL1"},          // BOOL1
-    {1, "T_SIGN"},         // T_SIGN
-    {1, "T_BINARY"},       // T_BINARY
-    {1, "T_BINARY_3"},     // T_BINARY_3
-    {0, "T_BINARY_TILE"},  // T_BINARY_TILE
+inline std::map<typNUMBER, FLOAT_META> K_FLOATS = {
+    {typNUMBER::F32, {32, "FLOAT", {"F32"}}},          // F32
+    {typNUMBER::F16, {16, "F16(E5)", {"F16"}}},        // F16
+    {typNUMBER::U8, {8, "U8"}},                        // U8
+    {typNUMBER::I8, {8, "I8"}},                        // I8
+    {typNUMBER::U16, {16, "U16"}},                     // U16
+    {typNUMBER::I16, {16, "I16"}},                     // I16
+    {typNUMBER::U32, {32, "U32"}},                     // U32
+    {typNUMBER::I32, {32, "I32"}},                     // I32
+    {typNUMBER::U64, {64, "U64"}},                     // U64
+    {typNUMBER::I64, {64, "I64"}},                     // I64
+    {typNUMBER::F64, {64, "F64"}},                     // F64
+    {typNUMBER::BF16, {16, "BF16(E8)", {"BF16"}}},     // BF16
+    {typNUMBER::F8E5M2, {8, "F8E5M2"}},                // F8E5M2
+    {typNUMBER::F8E4M3, {8, "F8E4M3"}},                // F8E4M3
+    {typNUMBER::Q4, {4, "Q<4>"}},                      // Q4
+    {typNUMBER::Q3, {3, "Q<3>"}},                      // Q3
+    {typNUMBER::Q2, {2, "Q<2>"}},                      // Q2
+    {typNUMBER::BOOL1, {1, "BOOL<1>"}},                // BOOL1
+    {typNUMBER::T_SIGN, {1, "TERNARY"}},               // T_SIGN
+    {typNUMBER::T_BINARY, {1, "BINARY"}},              // T_BINARY
+    {typNUMBER::T_BINARY_3, {1, "BINARY<3>"}},         // T_BINARY_3
+    {typNUMBER::T_BINARY_TILE, {0, "T_BINARY_TILE"}},  // T_BINARY_TILE*/
 };
 
 struct tpBIT2 {};
@@ -138,48 +142,7 @@ inline typNUMBER TYPE_() {
     return typNUMBER::F16;
 }
 
-struct TYPE_DESC {
-    const char* type_name;
-    int64_t blck_size;
-    int64_t blck_size_interleave;  // interleave elements in blocks
-    size_t type_size;
-    bool is_quantized;
-};
-
-inline typNUMBER tpNumOf(const std::string& dtype_str) {
-    std::string sType = dtype_str;
-    std::transform(sType.begin(), sType.end(), sType.begin(), ::toupper);
-    typNUMBER type = typNUMBER::F32;
-    if (sType == "F32") {
-        type = typNUMBER::F32;
-    } else if (sType == "F16") {
-        type = typNUMBER::F16;
-    } else if (sType == "BF16") {
-        type = typNUMBER::BF16;
-    } else if (sType == "F8_E5M2") {
-        type = typNUMBER::F8E5M2;
-    } else if (sType == "FP8") {
-        type = typNUMBER::F8E5M2;
-    } else if (sType == "F8_E4M3") {
-        type = typNUMBER::F8E4M3;
-    } else if (sType == "I32") {
-        type = typNUMBER::I32;
-    } else if (sType == "I16") {
-        type = typNUMBER::I16;
-    } else if (sType == "I8") {
-        type = typNUMBER::I8;
-    } else if (sType == "U8") {
-        type = typNUMBER::I8;
-    } else if (sType == "TERNARY") {
-        type = typNUMBER::T_SIGN;
-    } else if (sType == "BINARY") {
-        type = typNUMBER::T_BINARY;
-    } else {
-        std::string sErr = "Invalid typNumber@" + sType;
-        assert(0 && sErr.c_str());
-    }
-    return type;
-}
+typNUMBER tpNumOf(const std::string& dtype_str);
 
 #undef ENABLE_BF16
 #undef ENABLE_FP32
@@ -200,39 +163,43 @@ inline typNUMBER tpNumOf(const std::string& dtype_str) {
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
 #include <cuda_fp8.h>
+#include <driver_types.h>
+#include <library_types.h>
 
 #if defined(ENABLE_FP32)
 typedef float floatX;
-#define PARAMS_TYPE typNUMBER::F32
 #define tpCuBLAS CUDA_R_32F
 typedef float floatGrad;
 typedef float floatFFN;
 typedef float floatMV;
 #elif defined(ENABLE_FP8)
-typedef f8e5 floatX;
-#define PARAMS_TYPE typNUMBER::F8E5M2
+using floatX      = __nv_fp8_e5m2;
+using floatMV     = __nv_fp8_e5m2;
+using floatGrad   = __nv_fp8_e5m2;
+using floatFFN    = __nv_fp8_e5m2;
+using floatLogits = __nv_fp8_e5m2;
+
 #define tpCuBLAS CUDA_R_8F_E5M2
+
 #elif defined(ENABLE_FP8_1)
-typedef __nv__fp8__e4m3 floatX;
-#define PARAMS_TYPE typNUMBER::F8E4M3
+typedef __nv_fp8_e4m3 floatX;
 #define tpCuBLAS CUDA_R_8F_E4M3
 #elif defined(ENABLE_FP16)
 typedef half floatX;
-#define PARAMS_TYPE typNUMBER::F16
 #define tpCuBLAS CUDA_R_16F
 #define tpCuBLASCOMPUTE CUBLAS_COMPUTE_16F
 //  #define tpCuBLASCOMPUTE  CUBLAS_COMPUTE_32F_FAST_16F
 #elif defined(ENABLE_BF16)
-#define PARAMS_TYPE typNUMBER::BF16
 #define tpCuBLAS CUDA_R_16BF
 #define tpCuBLASCOMPUTE CUBLAS_COMPUTE_32F
-#endif
-
-using floatX      = __nv_bfloat16;
+using floatA      = __nv_bfloat16;      //Activation
+using floatX      = __nv_bfloat16;      //Weight
 using floatMV     = __nv_bfloat16;
 using floatGrad   = __nv_bfloat16;
 using floatFFN    = __nv_bfloat16;
 using floatLogits = __nv_bfloat16;
+
+#endif
 
 using bf16   = __nv_bfloat16;
 using bf16_2 = __nv_bfloat162;
@@ -249,12 +216,25 @@ inline typNUMBER TYPE_<half>() {
     return typNUMBER::F16;
 }
 
+template <typename Scalar>
+inline cudaDataType cuLibType;
+template <>
+inline constexpr cudaDataType cuLibType<float> = cudaDataType::CUDA_R_32F;
+template <>
+inline constexpr cudaDataType cuLibType<nv_bfloat16> = cudaDataType::CUDA_R_16BF;
+template <>
+inline constexpr cudaDataType cuLibType<std::int8_t> = cudaDataType::CUDA_R_8I;
+template <>
+inline constexpr cudaDataType cuLibType<__nv_fp8_e4m3> = cudaDataType::CUDA_R_8F_E4M3;
+template <>
+inline constexpr cudaDataType cuLibType<__nv_fp8_e5m2> = cudaDataType::CUDA_R_8F_E5M2;
+
 #else
 
 #endif
 
 // more datatypes on both floatX & float
-using floatGama = floatX;
+using floatGama = __nv_bfloat16;
 // using floatGama   = half;
 // using floatGama   = float;
 
@@ -333,7 +313,7 @@ inline float T2Float<nv_bfloat16>(const nv_bfloat16* a0) {
     // float a;
     // memcpy(&a, &tmp, sizeof(a));
 
-    float a =  __bfloat162float(*a0);
+    float a = __bfloat162float(*a0);
     return a;
 }
 template <typename T>
@@ -395,8 +375,6 @@ inline void Float2T(typNUMBER typ, void* arr, size_t offset, float a) {
     }
 }
 
-//  Deprecated!!!   byte per element of this type,  (maybe decimals rather than integers!)
-double BPE(typNUMBER type);
 //  bit per element of this type,   (maybe decimals rather than integers!)
 double BitPE(typNUMBER type);
 // size_t NPBlck(typNUMBER type);

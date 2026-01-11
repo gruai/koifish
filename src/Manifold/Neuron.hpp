@@ -73,7 +73,7 @@ struct HIERARCH_LoRA {
     virtual void UpdateAdapt(int flag = 0x0);
 
     virtual int Forw(floatX* rhs, floatX* lhs, int BT, int flag = 0x0);
-    virtual int Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, int flag = 0x0);
+    virtual int Back(hGTensor delta, hGTensor inp_, hGTensor deltaIn, int flag = 0x0);
 };
 typedef std::shared_ptr<HIERARCH_LoRA> H_LORA;
 typedef std::vector<H_LORA> arrLORA;
@@ -120,6 +120,9 @@ class GeNeuron {
     // std::vector<shared_ptr<GeNeuron>> brothers;
     virtual std::string _NAME(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix = "", int flag = 0x0);
 
+    hGensor dev_window = nullptr;    // a window to record the data in device
+    virtual void SetInp4Back(hGensor inp_,int flag=0x0);    //  the input tensor of forward would be reused in back-propragation
+    virtual bool VerifyInp4Back(hGensor inp_,int flag=0x0);    //  @SetInp4Back
    public:
     enum BIT_FLAG { F_BIAS = 0x10000, F_DELTA = 0x20000, F_REMATER = 0x40000, F_HOTPICK = 0x100000 };
 
@@ -146,6 +149,7 @@ class GeNeuron {
     std::string name = "N", type_info = "";
     GeNeuron() {}
     GeNeuron(const std::string& key_, JSON::const_iterator jit, Fish* hG_, int flag);
+    GeNeuron(const std::string& key_, Fish* hG_, int flag);
     virtual ~GeNeuron();
 
     CLI_params& Config() const;
@@ -224,7 +228,7 @@ struct INSPECT {
             hN->OnDebug(info, typ, flag);
     }
 
-    virtual ~INSPECT(){
+    virtual ~INSPECT() {
         if (hN != nullptr)
             hN->ExitDebug();
     }
@@ -285,6 +289,7 @@ class SparseNeuron : public GeNeuron {
    public:
     SparseNeuron() {}
     SparseNeuron(const std::string& key_, JSON::const_iterator jit, Fish* hG_, int flag);
+    SparseNeuron(const std::string& key_, Fish* hG_, int flag);
     virtual ~SparseNeuron() {}
 
     bool OnData(hGTensor X, hGTensor Y, int* hot, int flag = 0x0) override;
@@ -312,13 +317,16 @@ struct Ganglia : public SparseNeuron {
 };
 
 class SelfAttention;
+/**
+ * also fuse with layernormal of Q&K
+ */
 class ROPE : public SparseNeuron {
    protected:
-    //  may different with qkv in hQKV
-    // void *devQ = nullptr, *devK = nullptr, *devDeltaQ = nullptr, *devDeltaK = nullptr;
-    int n_rot = 0, n_ctx_orig = 0, head_dim = 0, q_dim = 0, kv_dim = 0, n_head = 0, n_head_kv = 0, r_dim = 0;
-    int max_pos = 0;
-    hGensor KQ_pos, hSin = nullptr, hCos = nullptr;
+    int n_ctx_orig = 0, head_dim = 0, q_dim = 0, kv_dim = 0, n_head = 0, n_head_kv = 0, r_dim = 0;
+    int max_pos     = 0;
+    int fuse_normal = 0;
+    static hGensor KQ_pos, hSin, hCos;
+    LayerNormal *hnQ = nullptr, *hnK = nullptr;
     float freq_base, freq_scale, theta;
     tpROPE alg = ROPE_NONE;
     bool isInterleave;  // Interleave the even and odd encodings
@@ -326,7 +334,8 @@ class ROPE : public SparseNeuron {
 
    public:
     ROPE() {}
-    ROPE(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
+    ROPE(SelfAttention* hQKV, const std::string& key_ = "", int flag = 0x0);
+    // ROPE(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
     bool Build(int flag) override;
     hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag = 0x0) override;
     int cuFlow(SelfAttention* hQKV, uint32_t seed, bool isFX = true, int flag = 0x0);
@@ -350,8 +359,8 @@ struct Relu : public SparseNeuron {
     bool Build(int flag) override;
     void BuildX(const std::string& key_, const SHAPE& shape, Fish* hG_, int flag) override;
     bool isValid() override { return true; }
-    int Forw(hGTensor out, hGTensor inp, int flag = 0X0);
-    int Back(hGTensor delta, hGTensor inp, int flag = 0X0);
+    int Forw(hGTensor out, hGTensor inp_, int flag = 0X0);
+    int Back(hGTensor delta, hGTensor inp_, int flag = 0X0);
 };
 
 struct Drop : public SparseNeuron {
@@ -378,7 +387,7 @@ struct SLP : public SparseNeuron {
     virtual int OnMultiscale(SLP* src, int flag = 0x0);
 
     // hGTensor operator<<(hGTensor a);
-    /*  Forward or remate in Back
+    /*  Forward(rhs,lhs) or remate in Back
         1.  rhs = SLP(lhs)  or rhs = W*lhs+b
         2.  rhs = GELU(W*lhs+b);    to_gelu=W*lhs+b
     */
@@ -392,23 +401,27 @@ struct SLP : public SparseNeuron {
     }
 #endif
     /*  Backward
-        inp & to_gelu is defined in forward: inp=GELU(to_gelu)
+        inp_ & to_gelu is defined in forward: inp_=GELU(to_gelu)
     */
-    int Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu = nullptr, bool isAccumuDelta = false, int flag = 0x0);
-    // int Back(hGTensor delta, hGTensor inp, void* deltaIn, hGTensor to_gelu = nullptr, int flag = 0x0);
+    int Back(hGTensor delta, hGTensor inp_, hGTensor deltaIn, hGTensor to_gelu = nullptr, bool isAccumuDelta = false, int flag = 0x0);
+
     virtual bool PrepareMemory(bool isBack = true, int flag = 0x0);
     int FUSE_cuda_block(hGTensor rhs, hGTensor lhs, hGTensor gelu = nullptr, bool isForw = true, int flag = 0x0);
 };
 
 /*
+    Also support per-head Normal
+
     Studies (e.g., Deepspeed) show that ​​keeping LayerNorm in FP32​​ improves training stability, even when other layers use BF16/FP16.
     BF16 can work for LayerNorm in ​​well-tuned models​​ (e.g., some Transformer variants), but FP32 is the "safe" default.
 */
 struct LayerNormal : public SparseNeuron {
     bool isAffineTrans = true;  // Learnable affine transform parameters
     bool isRMS         = true;  // Root Mean Square Layer Normalization
+    bool isOnline      = false;
     float rms_eps      = 1.0e-5;
     int nHead          = 0;
+    int nTH            = 0, ldTH;  // number of tokens or heads
     //  always float
     hGensor mean = nullptr, rstd = nullptr;
     float scale = 0.0;
@@ -507,8 +520,8 @@ class SelfAttention : public SparseNeuron {
         CLA,  //  Cross-Layer Attention   [William Brandon et al., 2025],
         MLA,  //  Multi-head Latent Attention by DeepSeek V2
     };
-    bool remater_qkv                = false;
-    bool isAttOnBC                  = false;  //  // Nearly same. If true,attenion on all tokens, memory would explode!
+    bool remater_qkv = false;
+    bool isAttOnBC   = false;  //  // Nearly same. If true,attenion on all tokens, memory would explode!
 
     std::shared_ptr<KVCache> hCache = nullptr;
 
@@ -536,7 +549,7 @@ class SelfAttention : public SparseNeuron {
     hGensor transition = nullptr;  //{STATS_UID, stats} of CUDNN
 
     SLP Q, K, V;
-    static hRope rope;
+    hRope rope = nullptr;
     MOE moe;
     SLP proj_cat;  //   concatenate the heads and combine them with a final weight matrix.
     // SLP qkv;
@@ -551,6 +564,7 @@ class SelfAttention : public SparseNeuron {
     bool isValid() override { return true; }
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
 
+    // flow on manifold, just like our life, from no begin to no end
     hGTensor cuFlow(hGTensor inpL, int flag);
     hGTensor cuInfer(hGTensor inpL, int flag);
 

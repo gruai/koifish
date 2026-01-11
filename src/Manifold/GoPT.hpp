@@ -24,8 +24,7 @@
 using namespace std;
 #include "../TokenSet/DataLoader.hpp"
 #include "../g_float.hpp"
-#include "../ggex/GG_util.hpp"
-#include "../ggex/WIKI.hpp"
+#include "WIKI.hpp"
 
 class Fish;
 
@@ -39,7 +38,7 @@ struct LogitsInfo {
     //  cls->preLogits->host_data = _logits
     floatLogits *logits = nullptr, *logits_sorted = nullptr;
     int *index = nullptr, *index_sorted = nullptr;
-    floatLogits maxLogit = 0.0;
+    floatLogits maxLogit = (floatLogits)0.f;
 
     virtual void Swap(int i, int j) { std::swap(logits[i], logits[j]), std::swap(index[i], index[j]); }
     virtual bool Init(int n_vocab, bool isCPU, hGensor hCls, int flag = 0x0);

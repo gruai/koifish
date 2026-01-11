@@ -20,6 +20,11 @@ class FSerial {
         INIT_MMAP = 0x100,
         COPY_MMAP = 0x200       //copy mmap file of HF model to checkpoint
     };
+    enum FILE_TYPE{
+        FILE_JSON,
+        FILE_FISH,
+        FILE_CHECKPOINT
+    };
 
     FSerial(const std::string& sPath, bool isSave, int flag) {
         try {
@@ -124,6 +129,6 @@ class FSerial {
 };
 
 // only load jConfig from safeternsor model
-bool SAFETENSOR_Load_jconfig(const std::string& path, JSON& jsConfig, int flag = 0x0);
+bool SAFETENSOR_Load_jconfig(const std::string& path, JSON& jsConfig, FSerial::FILE_TYPE tpFile, int flag = 0x0);
 std::string LoadSomeText(const string& fpath, const int nMost = 2048, int flag = 0x0);
 hBITARR SAFE_read_mmap(hBITARR dst, hBITARR mmp_data, size_t length, int flag = 0x0);

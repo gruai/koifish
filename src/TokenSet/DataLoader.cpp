@@ -36,6 +36,40 @@ std::string mt19937_seed_to_state(unsigned seed) {
     return mt19937_get_state(rng);
 }
 
+/*
+    for (int i = 0; i < count; ++i) {
+    loss -= input_data[i] * (target[i] - (input_data[i] >= 0)) -
+        log(1 + exp(input_data[i] - 2 * input_data[i] * (input_data[i] >= 0)));
+  }
+*/
+float LOSS_cross_entropy_1(int n, const float* preP, int target, int& cand, int flag=0x0) {
+    assert(target >= 0 && target < n);
+    float sum = 0, loss = 0, pMin, pMax, a;
+    int j, next_token   = -1;
+    cand = -1;
+    for (pMin = FLT_MAX, pMax = -FLT_MAX, j = 0; j < n; j++) {
+        a = preP[j];
+        if (a > pMax) {
+            pMax = a;
+            cand = j;
+        }
+        pMin = min(a, pMin);  // pMax = max(a,pMax);
+    }
+
+    /*for (sum = 0, j = 0; j < n; j++)        { //  standard SOFTMAX
+        preP[j] = exp(preP[j]-pMax);
+        sum += preP[j];
+    }
+    assert(sum > 0 && sum < FLT_MAX);
+    a = preP[target]/sum;   loss = -log(a); //  0.0430280194*/
+    for (sum = 0, a = preP[target], j = 0; j < n; j++) {  // faster & safer
+        sum += exp(preP[j] - a);
+    }
+    assert(sum > 0 && sum < FLT_MAX);
+    loss = log(sum);
+    return loss;
+}
+
 double SampLoader::DecodeVerify(hSAMP samp, hGensor tokens, hGensor logits, int flag) {
     int nC = tokens->ne[0], nB = tokens->ne[1], b, c, j, cand = -1, nz = 0;
     int _nvocab = hDict->nVocab();

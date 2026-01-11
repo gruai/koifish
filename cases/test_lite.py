@@ -3,26 +3,15 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 from pathlib import Path  
-import os
 import json
 import argparse 
-import os
-import shutil
 import json
 import time
-import subprocess
-import fnmatch
-import glob
-import atexit
-import sys
 import math #Use math.isclose(a, b, *, rel_tol=1e-09, abs_tol=0.0)
 from SweepHyParams import koifish_one,bubble_one,pangpi_one
 
 # source /home/cys/anaconda3/bin/activate base
 # clear && pytest -v -s ./cases/
-
-def add(a, b):
-    return a + b
 
 sExe = "./bin/koifish "
 most_iter = 10
@@ -35,6 +24,15 @@ def CheckResult(df,iter,golden,title="",rel_tol=1e-05):
 def test_chat_qwen3_0_6B():  
     content = bubble_one("chat_qwen3_0.6b","--tokenizer ./assets/tokenizer_151936.bin --hf ./Models/Qwen3-0.6B/ --prompts \"hello\"")  #./cases/qwen3/qwen3_0.6B.json
     assert "Hello! How can I assist you today?" in content
+
+def test_pp_gpt2():    
+    most_iter = 70
+    title = "pangpi_gpt2"
+    sExe = "./bin/pangpi "
+    dfLoss,exit_code = pangpi_one(title, sExe, "./hy-tmp/case/124M/GPT2_fuyou.fish --hellaswag ./cases/datasets/hellaswag_val.bin") 
+    # dfLoss = pd.read_csv("/home/cys/rnd/lic/Eval_loss.csv", sep=' ',index_col=False)
+    # print(dfLoss)
+    CheckResult(dfLoss,0,0.2476,title=title,rel_tol=1e-03)       #   0.24766387 0.01475318    
 
 def test_chat_qwen3_4B():    
     content = bubble_one("chat_qwen3_4B","--tokenizer ./assets/tokenizer_151936.bin --hf ./Models/Qwen3-4B/ --prompts \"Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?\"")  #  "./cases/qwen3/qwen3_4B.json"
@@ -59,15 +57,13 @@ def xtest_batch_qwen3_4B():
         content = bubble_one("chat_qwen3_4B",jPath)  
         # Hello! It seems like there might be a small mix-up. I'm Qwen, a large-scale language model developed by Alibaba Cloud. I'm here to help you with any questions or tasks you might have. How can I assist you today? 😊
 
-
-def test_pp_gpt2():    
+def test_qwen2_494M():    
     most_iter = 70
-    title = "bubble_gpt2"
-    sExe = "./bin/pangpi "
-    dfLoss = pangpi_one(title, sExe, "./hy-tmp/case/124M/GPT2_fuyou.fish --hellaswag ./cases/datasets/hellaswag_val.bin") 
-    # dfLoss = pd.read_csv("/home/cys/rnd/lic/Eval_loss.csv", sep=' ',index_col=False)
-    # print(dfLoss)
-    CheckResult(dfLoss,0,0.2476,title=title,rel_tol=1e-03)       #   0.24766387 0.01475318    
+    title = "QWen2.5_494M"
+    dfTrain = koifish_one(title, sExe, "./cases/qwen3/qwen25_0.5B.json", most_iter=most_iter, train_csv="./Train@[shake]_info_.csv")    
+    CheckResult(dfTrain,most_iter,3.226,title=title,rel_tol=0.001)
+
+
 
 def test_gpt2_1558M():    
     title = "1558M"
@@ -85,6 +81,8 @@ def test_gpt2_124M():
     title = "124M_no_fuyou"
     dfTrain = koifish_one(title, sExe, "./cases/gpt2/124M_shard50_F6_lr0.001/no_fuyou.json", most_iter=most_iter)    
     CheckResult(dfTrain,most_iter,7.467,title=title)
+
+
 
 def test_gpt2_774M():    
     title = "774M"
@@ -112,15 +110,17 @@ if __name__ == '__main__':
     args = parser.parse_args()    
     
     sExe = "./bin/koifish "
-    #test_gpt2_774M()
+    # test_gpt2_774M()
 
     # test_chat_qwen3_0_6B()  
-    # test_chat_qwen3_4B()
+    #test_chat_qwen3_4B()
     # xtest_batch_qwen3_4B()
 
-    # test_pp_gpt2()
+    test_pp_gpt2()
     # test_gpt2_124M()
-    test_gpt2_124M_fuyou6()
+    # test_gpt2_124M_fuyou6()
+    # test_gpt2_1558M()
+    # test_qwen2_494M()
     # # 
     # test_gpt2_1558M()
     # koifish_one("124M", sExe, "./cases/gpt2/124M_shard50_F6_lr0.001/F6_lr0.001.json", most_iter=most_iter)

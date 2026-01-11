@@ -18,22 +18,42 @@ QWen::QWen(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, in
     config.model.isSLPBias    = false;
     config.model.isNormalBias = false;
     config.model.norm_rms_eps = 1.0e-6;
-    if(isTrain()){
+    if (isTrain()) {
         // g_dump_level = -1;
         config.model.qkv4dnn = QKV_PACK::QQKKVV;
-    }else{
-
+    } else {
     }
-        
 }
 QWen3::QWen3(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : QWen(nam_, params, role, flag) {
     // also support QWen2.5 model
     assert(arch == MODEL_ARCH::NLP_QWEN3 || arch == MODEL_ARCH::NLP_QWEN2);
-    config.model.isSLPBias    = false;
-    config.model.isQKVBias    = false;
-    if(arch == MODEL_ARCH::NLP_QWEN2){
-        config.model.isQKVBias    = true;
-        config.model.isBqkv    = false;
+    config.model.isSLPBias = false;
+    config.model.isQKVBias = false;
+    if (arch == MODEL_ARCH::NLP_QWEN2) {
+        // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
+        // scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;
+        DEBUG.verShuffleSamp = -1, DEBUG.verSampJump = -1;
+        config.model.isSeparateQKV = true;
+        config.model.sLayer             = "layers.";
+        config.model.isEmbedWeightTying = true;  
+        config.model.isQKVBias          = true;
+        config.model.isBqkv             = false;
+    } else if (arch == MODEL_ARCH::NLP_QWEN3) {
+        // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
+        // scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;
+        config.model.isSeparateQKV = true; 
+        config.model.isQKNormal    = true;
+        config.model.sLayer        = "layers.";
+         
+        config.model.sEmbed = "embed_tokens", 
+        config.model.sInvEmbed = "lm_head";
+        if (!config.jVendorQuant.empty()) {
+            config.model.sWeight = ".qweight";
+        }
+        config.model.isEmbedWeightTying = true; //???
+        // model.isEmbedWeightTying = false;   //  0.6B has no tying, but 4B is tying       isEmbedWeightTying = jKV(jModelParam, {"tie_word_embeddings"},
+        // isEmbedWeightTying};
+        config.model.isBqkv = false;//  0.6B has no bias!
     }
     config.model.isNormalBias = false;
 }

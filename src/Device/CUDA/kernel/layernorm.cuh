@@ -78,7 +78,7 @@ __global__ static void CU_rms_forward(T* __restrict__ out, float* __restrict__ r
     // load weights into shared memory
     // do this before we allow any threads to exit!
     extern __shared__ char* params[];
-    __shared__ float block_abs_max;
+    // __shared__ float block_abs_max;
     // load128/store128 sometimes generated multiple instructions when the types here were floatX*, so
     // let's keep everything as x128
     x128* s_weight = reinterpret_cast<x128*>(params);
@@ -116,7 +116,7 @@ __global__ static void CU_rms_forward(T* __restrict__ out, float* __restrict__ r
     acc     = warpReduceSum(acc) / C;
     float s = rsqrtf(acc + eps);
     assert(!isnan(s) && !isinf(s));
-    float thread_abs_max = 0.f;
+    // float thread_abs_max = 0.f;
 
     for (int c = threadIdx.x * x128::size; c < C; c += WARP_SIZE * x128::size) {
         const x128 in_data = s_in[c / x128::size];
@@ -794,9 +794,9 @@ __global__ static void CU_rmsnorm_multihead(bf16* __restrict__ vecs, const bf16*
     }
 }
 
-template <int THREADS_PER_BLOCK>
+template <int THREADS_PER_BLOCK, typename Typ>
 __global__ static void __launch_bounds__(THREADS_PER_BLOCK)
-    rms_norm_kernel(__nv_bfloat16* __restrict__ Y, const __nv_bfloat16* __restrict__ X, const __nv_bfloat16* __restrict__ weight, size_t D, float inv_dim,
+    rms_norm_kernel(Typ* __restrict__ Y, const Typ* __restrict__ X, const Typ* __restrict__ weight, size_t D, float inv_dim,
                     float EPS = 1e-6f) {
     const int t_idx     = threadIdx.x;
     const int vec_iters = D / 2;
@@ -844,7 +844,8 @@ __global__ static void __launch_bounds__(THREADS_PER_BLOCK)
     }
 }
 
-void inline CU_rms_v2(__nv_bfloat16* o, const __nv_bfloat16* x, const __nv_bfloat16* weight, int dim) {
+template<typename Typ>
+void inline CU_rms_v2(Typ* o, const Typ* x, const Typ* weight, int dim) {
     if (dim % 2 != 0) {
         fprintf(stderr, "FATAL: rmsnorm dim %d is not divisible by 2. Vectorized kernel cannot run.\n", dim);
         exit(EXIT_FAILURE);
@@ -854,3 +855,196 @@ void inline CU_rms_v2(__nv_bfloat16* o, const __nv_bfloat16* x, const __nv_bfloa
     constexpr int THREADS_PER_BLOCK = CU_T4B_SMALL, num_blocks = 1;
     rms_norm_kernel<THREADS_PER_BLOCK><<<num_blocks, THREADS_PER_BLOCK>>>(o, x, weight, dim, 1.0f / dim);
 }
+
+template<typename Typ>
+__global__ void __launch_bounds__(512, 2)
+CU_rms_backward(Typ* dinp, Typ* dweight, hBITARR scratch,
+                          const Typ* dout, const Typ* inp, const Typ* weight,
+                          const float* rstd, float* stat_info, int nTH, int C) {
+    // size of scratch: sizeof(float) * C + 128
+    using x128 = PackedN<Typ, 16/sizeof(Typ)>;
+    int BLOCK_SIZE = blockDim.x;
+    int warpsInBlock = BLOCK_SIZE / WARP_SIZE; //number of warps in block
+    extern __shared__ float shared[];
+    __shared__ float block_abs_max;
+    float thread_abs_max = 0.f;
+
+    int warpId = threadIdx.x / WARP_SIZE; // warp index within a block
+    int baseIdx = blockIdx.x * warpsInBlock + warpId;
+    int warpThreadIdx = threadIdx.x % WARP_SIZE; // Thread index within the warp
+    int warpsInGrid = gridDim.x * warpsInBlock;
+    int C_per_iteration = WARP_SIZE * x128::size;
+    int iterations_C = CEIL_DIV(C, C_per_iteration); // + 2;
+
+    // the first half of shared memory is bias, second is weight
+    size_t rounded_C = CEIL_DIV(C, (int)(32 * x128::size)) * (32 * x128::size);
+    float* dweight_shared = shared + rounded_C;
+    // warp zero doesn't actually write to the _tmp_shared memory locations, so we don't need to reserve memory
+    // the obvious solution is to change the addressing below to use (threadId.x-32) as offset, but that causes
+    // register spills, so instead we mess with the base pointer here, which doesn't increase register usage.
+    float* dweight_tmp_shared = shared + 2 * rounded_C + f128::size * BLOCK_SIZE - 2 * WARP_SIZE * f128::size;
+
+    // init shared memory to zero
+    for(int i = threadIdx.x * f128::size; i < rounded_C; i += BLOCK_SIZE * f128::size) {
+        f128::zeros().store(dweight_shared + i);
+    }
+    if (stat_info && threadIdx.x == 0) {
+        block_abs_max = 0.f;
+    }
+    __syncthreads();
+
+    if(baseIdx >= nTH) {
+        // make sure we're not reading uninitialized memory below
+        f128::zeros().store(dweight_tmp_shared + threadIdx.x * f128::size);
+    }
+
+    for (int bt = baseIdx; bt < nTH; bt += warpsInGrid) {
+        const Typ* dout_bt = dout + bt * C;
+        const Typ* inp_bt = inp +bt * C;
+        Typ* dinp_bt = dinp + bt * C;
+
+        // first: two reduce operations
+        float dnorm_mean = 0.0f;
+        float dnorm_norm_mean = 0.0f;
+        for (int i = warpThreadIdx * x128::size; i < C; i += WARP_SIZE * x128::size) {
+            x128 dout128_i   = x128::load(dout_bt + i);
+            x128 inp128_i    = x128::load(inp_bt  + i);
+            x128 weight128_i = x128::load(weight  + i);
+            for (int k = 0; k < x128::size; k++) {
+                float dnorm_i = (float)weight128_i[k] * (float)dout128_i[k];
+                dnorm_mean += dnorm_i;
+                dnorm_norm_mean += dnorm_i * (float)inp128_i[k];
+            }
+        }
+
+        const float rstd_bt = rstd[bt];
+        dnorm_norm_mean = warpReduceSum(dnorm_norm_mean) / C * rstd_bt;
+
+        for (int c = 0; c < iterations_C; c++) {
+            int global_index = (warpThreadIdx * x128::size) + (c * C_per_iteration);
+
+            x128 dout128   = x128::zeros();
+            x128 inp128    = x128::zeros();
+            x128 dinp128   = x128::zeros();
+            x128 weight128 = x128::zeros();
+
+            if(global_index < C) {
+                dout128 = x128::load_cs(dout_bt + global_index);
+                inp128 = x128::load_cs(inp_bt + global_index);
+                dinp128 = x128::load(dinp_bt + global_index);
+                weight128 = x128::load(weight + global_index);
+            }
+
+            for(int o = 0; o < x128::size / f128::size; ++o) {
+                f128 dweight_f;
+                for(int i = 0; i < f128::size; ++i) {
+                    int x = o * f128::size + i;
+                    float dout_i = (float)dout128[x];
+                    float norm_bti = ((float)inp128[x]) * rstd_bt;
+                    dweight_f[i] = norm_bti * dout_i;
+
+                    float dval = 0.0f;
+                    dval += (float) weight128[x] * (float)dout128[x]; // term 1
+                    dval -= norm_bti * dnorm_norm_mean; // term 2
+                    dval *= rstd_bt; // final scale
+                    dinp128[x] = (Typ) ((float) dinp128[x] + dval);
+                }
+
+                if (warpId != 0) {
+                    // this seems to generate a 64-bit store, instead of 128-bit.
+                    // however, forcing 128-bit (e.g., using inline ptx), results in register
+                    // spilling and much worse performance, so we'll keep it like this for now
+                    // but ideally, we could reduce the register pressure a little.
+                    dweight_f.store(dweight_tmp_shared + threadIdx.x * f128::size);
+                }
+                __syncthreads();
+                if (warpId == 0) {
+                    for (int j = 1; j < warpsInBlock; j++) {
+                        f128 dweight_tmp = f128::load(dweight_tmp_shared + f128::size * (threadIdx.x + j * WARP_SIZE));
+                        for(int i = 0; i < f128::size; ++i) {
+                            dweight_f[i] += dweight_tmp[i];
+                        }
+                    }
+                }
+                __syncthreads();
+                if (warpId == 0) {
+                    f128 dw_old = f128::load(dweight_shared + global_index + f128::size * o);
+                    for(int i = 0; i < f128::size; ++i) {
+                        dweight_f[i] += dw_old[i];
+                    }
+                    dweight_f.store(dweight_shared + global_index + f128::size * o);
+                }
+            }
+            if(global_index < C) {
+                // cache in L2 as this is read by the next kernel, but bypass L1 to minimise thrashing
+                // TODO cache hint
+                dinp128.store(dinp_bt + global_index);
+
+                for(int i = 0; i < x128::size; ++i) {
+                    thread_abs_max = fmaxf(thread_abs_max, fabsf(dinp128[i]));
+                }
+            }
+        }
+    }
+    __syncthreads();
+    // handle_absmax_reduction(stat_info, &block_abs_max, thread_abs_max);
+
+    // Each block writes its partial sum to global memory
+    // The last block to finish becomes responsible for summing up all the partial sums
+    // This is done by atomically incrementing a flag (cleared to 0 before launching the kernel)
+    unsigned int* scratchFlag = reinterpret_cast<unsigned int*>(scratch);
+    // Increment scratch pointer by a full cacheline so that everything remains cacheline aligned
+    float* scratch_dweight = reinterpret_cast<float*>(scratch + 128);
+    for(int i = threadIdx.x * f128::size; i < C; i += BLOCK_SIZE * f128::size) {
+        // Write to global memory in the same "shared memory banking friendly" order
+        f128::load(dweight_shared + i).store(scratch_dweight + i + C*blockIdx.x);
+    }
+    __syncthreads();
+    // that portion of shared memory is no longer used, so we can repurpose it for the scratch flag.
+    unsigned int *tmp_flag = (unsigned int*)(shared + 2*rounded_C);
+    if (threadIdx.x == 0) {
+        *tmp_flag = atomicInc(scratchFlag, gridDim.x);
+    }
+    __syncthreads();
+    if (*tmp_flag == gridDim.x-1) {
+        // Reduction of the partial sums by the final block
+        // todo - there isn't enough parallelism even inside that single SM...
+        // ==> so could maybe split into another kernel with YET ANOTHER level of reduction?!
+        for(int i = threadIdx.x * f128::size; i < C; i += BLOCK_SIZE * f128::size) {
+            f128 dweight_accum = f128::zeros();
+
+            for (int read_block_idx = 0; read_block_idx < gridDim.x; read_block_idx++) {
+                int offset = i + C*read_block_idx;
+                f128 dweight128 = f128::load(scratch_dweight + offset);
+                for(int k = 0; k < f128::size; k++) {
+                    dweight_accum[k] += dweight128[k];
+                }
+            }
+            dweight_accum.store(dweight_shared + i);
+        }
+        __syncthreads();
+
+        // convert from float/FP32 to Typ/BF16 for the final write
+        // this is separate because it cannot use as many warps as the above (f128 vs x128)
+        // todo - if we split this code into another kernel, we could maybe do it at the same time?
+        for (int c = warpId; c < iterations_C; c += warpsInBlock) {
+            int global_index = (warpThreadIdx * x128::size) + (c * C_per_iteration);
+            if (global_index >= C) {
+                break;
+            }
+            x128 dweight128 = x128::load(dweight + global_index);
+            for(int o = 0; o < x128::size / f128::size; ++o) {
+                f128 s_dw = f128::load(dweight_shared + global_index + o * f128::size);
+                for(int i = 0; i < f128::size; ++i) {
+                    int x = o * f128::size + i;
+                    dweight128[x] = (Typ)(s_dw[i] + (float)dweight128[x]);
+                }
+            }
+            dweight128.store(dweight + global_index);
+        }
+    }
+}
+
+// template <typename Typ>
+// __global__ void CU_rms_backward_v0(Typ* dX0, Typ* dWeight0, hBITARR scratch, const Typ* dY0, const Typ* X0, const Typ* weight0, const float* rstd0, int nTH,
+//                                    int ldTH, unsigned int seed, int flag=0x0);

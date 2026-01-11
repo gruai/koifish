@@ -12,7 +12,6 @@
 
 #include "../Device/Pipe.hpp"
 #include "../TokenSet/Dictionary.hpp"
-#include "../ggex/GG_util.hpp"
 #include "gLLM.hpp"
 
 int tpFuseCu = 1;
@@ -578,7 +577,7 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGensor loss_, hGensor target_, C
         n_no_improvement = 0;
         just_initialized = false;
     }
-    if(_fish->arch==NLP_QWEN2 || _fish->arch==NLP_QWEN3){
+    if (_fish->arch == NLP_QWEN2 || _fish->arch == NLP_QWEN3) {
         // g_dump_level = -1;
     }
     int iter0 = 0, t;

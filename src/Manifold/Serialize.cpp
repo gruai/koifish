@@ -32,7 +32,7 @@ std::string safetensors::safetensors_t::config_key_ = "__json__config__";
      3.
 */
 bool SAFETENSOR_mmap(const std::string& path, safetensors::safetensors_t& st, int flag) {
-    _INFO("\n>>>>>> SAFETENSOR_mmap mmap@\"%s\" f=%d......", path.c_str(), flag);
+    _INFO("\n>>>>>> SAFETENSOR_mmap mmap@ %s \"%s\" %s f=%d......", COLOR_ORANGE, path.c_str(), COLOR_RESET, flag);
     try {
         std::string warn, err;
         int __prot = PROT_READ | PROT_WRITE;                                             // PROT_READ
@@ -75,7 +75,7 @@ bool SAFETENSOR_mmap(const std::string& path, safetensors::safetensors_t& st, in
                 st.loadJS(tensor, databuffer, st.mmap_size);
                 if (true) {  // only for debug
                     JSON jsConfig = st.jsConfig["CLI_params"]["config"];
-                    std::ofstream file("_koifish_tmp_config_.json");
+                    std::ofstream file("./hy-tmp/_koifish_tmp_config_.json");
                     if (file.is_open()) {
                         file << jsConfig.dump(4);
                         file.close();
@@ -85,7 +85,7 @@ bool SAFETENSOR_mmap(const std::string& path, safetensors::safetensors_t& st, in
             }
         }
         size_t szIFS = std::filesystem::file_size(path);
-        _INFO("\r>>>>>> SAFETENSOR_mmap mmap@\"%s\" f=%d nT=%d fsize=%.7gM\n", path.c_str(), flag, nT, szIFS / 1.0e6);
+        _INFO("\r>>>>>> SAFETENSOR_mmap mmap@ %s \"%s\" %s f=%d nT=%d fsize=%.7gM\n", COLOR_ORANGE, path.c_str(), COLOR_RESET, flag, nT, szIFS / 1.0e6);
         return true;
     } catch (JSON::parse_error& e) {
         _INFO("\r\n%s  Failed to open %s!!! ERR=%s", __func__, path.c_str(), e.what());
@@ -95,27 +95,43 @@ bool SAFETENSOR_mmap(const std::string& path, safetensors::safetensors_t& st, in
     }
 }
 
-bool SAFETENSOR_Load_jconfig(const std::string& path, JSON& jsConfig, int flag) {
-    safetensors::safetensors_t st;
-    bool bLoad = SAFETENSOR_mmap(path, st, flag);
-    if (!bLoad)
+bool SAFETENSOR_Load_jconfig(const std::string& path, JSON& jsConfig, FSerial::FILE_TYPE tpFile, int flag) {
+    try {
+        safetensors::safetensors_t st;
+        bool bLoad = SAFETENSOR_mmap(path, st, flag);
+        if (!bLoad)
+            return false;
+        if (st.jsConfig.empty()) {
+            _INFO(">>>>>> \"%s\" has no jConfig! \n", path.c_str());
+            return false;
+        }
+
+        // jsConfig = st.jsConfig;
+        // assert(!jsConfig.empty());
+        // std::ofstream o("_koifish_tmp_config_.json");
+        // o << std::setw(4) << jsConfig << std::endl;
+        jsConfig = st.jsConfig["CLI_params"]["config"];
+        if (jsConfig.empty()) {
+            assert(0);
+            return false;
+        }
+        switch (tpFile) {
+            case FSerial::FILE_FISH:
+            case FSerial::FILE_CHECKPOINT:
+
+                break;
+            default:
+                break;
+        }
+
+        return true;
+    } catch (JSON::parse_error& e) {
+        _ERROR("\r\n SAFETENSOR_Load_jconfig failed to open %s!!! ERR=%s", path.c_str(), e.what());
         return false;
-    if (st.jsConfig.empty()) {
-        _INFO(">>>>>> \"%s\" has no jConfig! \n", path.c_str());
+    } catch (...) {
+        _ERROR("\r\n SAFETENSOR_Load_jconfig Unknown exception @%s!!!", path.c_str());
         return false;
     }
-
-    // jsConfig = st.jsConfig;
-    // assert(!jsConfig.empty());
-    // std::ofstream o("_koifish_tmp_config_.json");
-    // o << std::setw(4) << jsConfig << std::endl;
-    jsConfig = st.jsConfig["CLI_params"]["config"];
-    if (jsConfig.empty()) {
-        assert(0);
-        return false;
-    }
-
-    return true;
 }
 
 bool Fuyou::Serialize(bool isSave, int flag) {
@@ -413,7 +429,7 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
 
     size_t data_offset_base = 0, nInit = 0, szOFS = 0;
     std::string warn, err;
-    JSON jsConfig;
+    
     vector<hGensor> curParams = optParams;
     safetensors::safetensors_t st, *hst = (safetensors::safetensors_t*)(ckp.hUserData);
     switch (ckp.type) {
@@ -425,7 +441,7 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
             hst       = &st;
             break;
         case CheckPoint_Params::FULL:
-            assert(0);
+            // assert(0);
             hst = &st;
             break;
         default:
@@ -435,12 +451,23 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
     try {
         if (isSave) {
             fflush(stdout);
+            JSON jsConfig;
             _INFO(">>>>>> ST_SERIALIZE save @\"%s\" nInit=%ld ......", path.c_str(), nInit);
             jsConfig["vendor"]              = "gruai";
             jsConfig["CLI_params"]          = config.ToJSON(0x100);
             jsConfig["tokenizer"]["tokens"] = "";
+            if (jsConfig["CLI_params"]["config"].contains("model") && jsConfig["CLI_params"]["config"]["model"].contains("hf-card")) {
+                jsConfig["CLI_params"]["config"]["model"]["#origin-hf-card"] = jsConfig["CLI_params"]["config"]["model"]["hf-card"];
+                jsConfig["CLI_params"]["config"]["model"].erase("hf-card");
+                jsConfig["CLI_params"]["config"]["model"]["arch"] = config.model.model_type; //"QWEN3";
+                jsConfig["CLI_params"]["config"]["model"]["parameter"]["max_pos_embeddings"] = config.model.max_pos_embeddings;   //:32768            
+            }
+
             hst->Clear();
             size_t dst_offset = 0;
+            if(curParams.size()==0){
+                _WARN("%s SAFETENSOR: Save_Params=0 @\"%s\"",path.c_str());
+            }
             for (auto t : curParams) {
                 if (G_Has_(t->name, {"model.embed_tokens.weight"})) {  // model.embed_tokens.weight
                     DEBUG_HERE;
@@ -558,9 +585,9 @@ bool Fish::HF_Serialize(bool isSave, int flag) {
     if (isTrain()) {  // otherwise, st would release mmap memory!
         SaveTrain(config.state, true, FSerial::COPY_MMAP);
     }
-    for(auto hst : st_mmfs)// release all mmf resource 
+    for (auto hst : st_mmfs)  // release all mmf resource
         delete hst;
-        
+
     if (!config.model.st_map.empty()) {  //  "model.safetensors.index.json"
         assert(nSerialT == config.model.st_map.size());
         for (auto kv : config.model.st_map) {

@@ -200,10 +200,10 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
 
     static bool FreeBuffer(int flag = 0x0);
     //  temporary shared memory 1) buff sz>=8*nCTX*nToken(from preLogits)
-    static void *buff, *host_buff;
+    static void *buff, *host_buff, *cudnn_workspace;
     // float stat_info[1024] in GPU
     static float* stat_info;
-    static size_t buff_len;
+    static size_t buff_len, cudnn_workspace_size;
     float residual_scale = 1.0, wnorm = 0, gnorm = 0;  // some tricks
     float rLARS(float s0, float T_lars, int flag);
     size_t offset = 0x0;
@@ -528,9 +528,9 @@ class huTensor : public GTensor {
     size_t Free_1(void** obj, const string& info = "") override;
 
    public:
-    huTensor(Fish* hFish, const string& name_, SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag = 0x0);
+    huTensor(Fish* hFish, const string& name_, const SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag = 0x0);
     virtual ~huTensor();
-    hGTensor Partial(const string&, size_t offset, SHAPE shape, int flag = 0x0) override;
+    hGTensor Partial(const string&, size_t offset, const SHAPE shape, int flag = 0x0) override;
 
     bool Alloc(int tpInit = 0, int flag = 0x0) override;
     size_t mostMemory(int typ = 0) const override;
@@ -603,3 +603,41 @@ struct GENSOR_TOPU {
         // sort(gimap.begin(), gimap.end(), comp);
     }
 };
+
+void assert_shape_1d(hGensor tensor, int64_t ne0);
+void assert_shape_2d(hGensor tensor, int64_t ne0, int64_t ne1);
+void assert_shape_3d(hGensor tensor, int64_t ne0, int64_t ne1, int64_t ne2);
+void assert_shape_4d(hGensor tensor, int64_t ne0, int64_t ne1, int64_t ne2, int64_t ne3);
+
+inline bool CHECK_SHAPE(const SHAPE& shape) {
+    bool isValid = shape.size() > 0;
+    for (auto s : shape) {
+        if (s < 0) {
+            isValid = false;
+            break;
+        }
+        if (s > 1024 * 1024) {
+            isValid = false;
+            break;
+        }
+    }
+    assert(isValid);
+    return isValid;
+}
+
+int CHECK_SAME_TENSORS(const string& desc, const std::vector<hGensor>& arrA, const std::vector<hGensor>& arrB, int flag = 0x0);
+
+void Gensor2float_(const hGensor w, float* A, int flag = 0x0);
+inline float* Gensor2float(struct ggml_context* ctx0, const hGensor w, int flag = 0x0) {
+    size_t ne00 = tELEM(w), nbyte = tBYTE(w);
+    void* data_0 = w->data;
+    float* A     = new float[ne00];
+    Gensor2float_(w, A, flag);
+    return A;
+}
+
+void _T_repr_(hGensor t, const char* tab, char* buf, int typ = 0x0);
+void _T_repr_(hGensor t, const char* tab, char* buf, const GENSOR_INFO& info);
+
+template <typename T>
+double P_softmax(int idx, T* logits, int size);

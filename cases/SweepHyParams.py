@@ -89,7 +89,7 @@ def MessageBox(msg):
     except tk.TclError as e:
         print(f"Tkinter failed: {e} (DISPLAY issue)")
 
-def koifish_one(title, sExe, jsFile0, path="./tests/", most_iter=-1):
+def koifish_one(title, sExe, jsFile0, path="./tests/", most_iter=-1,train_csv=None):
     with open(jsFile0, 'r') as f:
         jConfig = json.load(f)  
     if most_iter>0:
@@ -114,8 +114,10 @@ def koifish_one(title, sExe, jsFile0, path="./tests/", most_iter=-1):
     # get_gpu_stats()
     dfTrain = None
     szTrain, szEval = 0, 0
-    if os.path.exists('./Train@[edu_fineweb1B]_info_.csv'):
-        shutil.copy('./Train@[edu_fineweb1B]_info_.csv', path+"./Train.csv")
+    if train_csv is None:
+        train_csv = './Train@[edu_fineweb1B]_info_.csv' #default old path
+    if os.path.exists(train_csv):
+        shutil.copy(train_csv, path+"./Train.csv")
         szTrain = os.path.getsize(path+"./Train.csv")
         dfTrain = pd.read_csv(path+"./Train.csv", sep=' ',index_col=False)
     if os.path.exists('./Eval@[edu_fineweb1B]_info_.csv'):
@@ -136,6 +138,8 @@ def pangpi_one(title, sExe, sArgs, path="./tests/", most_iter=-1):
     start = time.time()    
     exit_code = os.system(cmd)
     elapsed = time.time() - start
+    if exit_code!=0:
+        sys.exit(exit_code)
     
     # get_gpu_stats()
     dfLoss = None
@@ -148,7 +152,7 @@ def pangpi_one(title, sExe, sArgs, path="./tests/", most_iter=-1):
     print(f"{title}...OK! code={exit_code}. nByte of fLoss={szLoss} Time={elapsed:.4f} seconds")
     assert dfLoss is not None
     
-    return dfLoss
+    return dfLoss, exit_code
 
 def bubble_one(title,  sArgs, sExe ="./bin/bubble ", path="./tests/", most_iter=-1):    
     sOutput = title+".info"   

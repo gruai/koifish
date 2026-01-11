@@ -70,7 +70,7 @@ int main(int argc, char* argv[]) {
         double sum = 0, ss = 0, tps = 0, t0 = GST_ms(), tAll = 0, eval, delta = 0;
         vector<TOKEN_ID>& tokens = hLoader->GetTokens();
         fish->SetPhase(LIFE_PHASE::P_EVAL_);
-        SUM::Reset("memory");
+        // SUM::Reset("memory");
         //  fish = nullptr;     return KOIFISH_EXIT_DEBUG;
         if (config.eval_metric == "hellaswag") {  //[eval]  Loss@"HellaSwag"=0.300 nBranch=2
             eval = hLoader->Evaluate(SAMPLEofSHARD, 0x0);

@@ -489,7 +489,11 @@ std::string GTokenizer_GPT2::T2STR(TOKEN_ID tok, int flag) { return std::to_stri
 */
 GTokenizer_QWEN3::GTokenizer_QWEN3(Fish* dolphin, int flag) {
     config = dolphin->config;
-    assert(dolphin->config.model.isLoadCard());
+    if(config.model.isLoadCard()){
+
+    }else{  //hard-code
+        config.model.sTokenBinPath = "./assets/tokenizer_151936.bin";
+    }
     bool bRet = InitHF(dolphin, flag);
     if (!bRet) {
         vocab.clear();
@@ -665,9 +669,9 @@ std::string LoadBytesFromFile(const std::string& path) {
 bool GTokenizer_QWEN3::InitHF(Fish* dolphin, int flag) {
     try {
         char tmp_word[MAX_TOKEN_LENGTH];
-        string sRoot          = dolphin->config.model.sCardPath;
-        string tokenizer_path = dolphin->config.model.sTokenBinPath;  // + "tokenizer.bin";
-        int vocab_size        = dolphin->config.model.vocab_size;     // 151936
+        string sRoot          = config.model.sCardPath;
+        string tokenizer_path = config.model.sTokenBinPath;  // + "tokenizer.bin";
+        int vocab_size        = config.model.vocab_size;     // 151936
         // vocab.resize(vocab_size); // = (char **)malloc(vocab_size * sizeof(char *));
         scores = (float*)malloc(vocab_size * sizeof(float));
 

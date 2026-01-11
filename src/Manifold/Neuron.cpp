@@ -14,46 +14,57 @@
 #include "gLLM.hpp"
 
 hNEURON GeNeuron::MakeInstance(Fish* hG_, void* ctx, const string& guid, JSON::const_iterator jit, int flag) {
-    hNEURON nn = nullptr;
-    // assert(j.is_object());
-    auto typ_0 = jit.key();
-    auto v     = jit.value();
+    try {
+        hNEURON nn = nullptr;
+        // assert(j.is_object());
+        auto typ_0 = jit.key();
+        auto v     = jit.value();
 
-    string typ = typ_0;
-    std::transform(typ.begin(), typ.end(), typ.begin(), ::toupper);
+        string typ = typ_0;
+        std::transform(typ.begin(), typ.end(), typ.begin(), ::toupper);
 
-    if (typ.rfind("EMBED", 0) == 0) {
-        nn = std::make_shared<TokenEmbed>(hG_, guid, jit, flag);
-    } else if (typ.rfind("LINEAR", 0) == 0) {
-        nn = std::make_shared<SLP>(hG_, guid, jit, flag);
-    } else if (typ.rfind("GAU", 0) == 0) {
-        nn = std::make_shared<GatedAttention>(hG_, guid, jit, flag);
-    } /*else if(typ.rfind("QKV_ROPE", 0) == 0){
-         nn = std::make_shared<QKV_rope>(hG_, guid, jit, flag);
-     }*/
-    else if (typ.rfind("BROWN", 0) == 0) {
-        nn = std::make_shared<BROWN_attn>(hG_, guid, jit, flag);
-    } else if (typ.rfind("QKV", 0) == 0) {
-        nn = std::make_shared<SelfAttention>(hG_, guid, jit, flag);
-    } else if (typ.rfind("DROPOUT", 0) == 0) {
-        nn = std::make_shared<Drop>(hG_, guid, jit, flag);
-    } else if (typ.rfind("SILU", 0) == 0) {
-        nn = std::make_shared<Relu>(hG_, guid, jit, flag);
-    } else if (typ.rfind("FFN", 0) == 0) {
-        nn = std::make_shared<FFN>(hG_, guid, jit, flag);
-    } else if (typ.rfind("NORMAL", 0) == 0) {
-        nn = std::make_shared<LayerNormal>(hG_, guid, jit, flag);
-    } else if (typ.rfind("CLASIFY", 0) == 0) {
-        nn = std::make_shared<OutCLS>(hG_, guid, jit, flag);
-    } else {
-        _ERROR("%s failed@[%s]", __func__, typ.c_str());
-        assert(0);
+        if (typ.rfind("EMBED", 0) == 0) {
+            nn = std::make_shared<TokenEmbed>(hG_, guid, jit, flag);
+        } else if (typ.rfind("LINEAR", 0) == 0) {
+            nn = std::make_shared<SLP>(hG_, guid, jit, flag);
+        } else if (typ.rfind("GAU", 0) == 0) {
+            nn = std::make_shared<GatedAttention>(hG_, guid, jit, flag);
+        } /*else if(typ.rfind("QKV_ROPE", 0) == 0){
+             nn = std::make_shared<QKV_rope>(hG_, guid, jit, flag);
+         }*/
+        else if (typ.rfind("BROWN", 0) == 0) {
+            nn = std::make_shared<BROWN_attn>(hG_, guid, jit, flag);
+        } else if (typ.rfind("QKV", 0) == 0) {
+            nn = std::make_shared<SelfAttention>(hG_, guid, jit, flag);
+        } else if (typ.rfind("DROPOUT", 0) == 0) {
+            nn = std::make_shared<Drop>(hG_, guid, jit, flag);
+        } else if (typ.rfind("SILU", 0) == 0) {
+            nn = std::make_shared<Relu>(hG_, guid, jit, flag);
+        } else if (typ.rfind("FFN", 0) == 0) {
+            nn = std::make_shared<FFN>(hG_, guid, jit, flag);
+        } else if (typ.rfind("NORMAL", 0) == 0) {
+            nn = std::make_shared<LayerNormal>(hG_, guid, jit, flag);
+        } else if (typ.rfind("CLASIFY", 0) == 0) {
+            nn = std::make_shared<OutCLS>(hG_, guid, jit, flag);
+        } else {
+            _ERROR("%s failed@[%s]", __func__, typ.c_str());
+            assert(0);
+        }
+
+        // nn->Init(nullptr,0x0);
+        nn->Build(flag);
+        assert(nn->isValid());
+        return nn;
+    } catch (const std::exception& e) {
+        _ERROR("GeNeuron::MakeInstance failed@\"%s\"", e.what());
+        return nullptr;
+    } catch (const char* info) {
+        _ERROR("GeNeuron::MakeInstance failed@\"%s\"", info);
+        return nullptr;
+    } catch (...) {
+        _ERROR("\r\nGeNeuron::MakeInstance failed @Unknown exception !!!");
+        return nullptr;
     }
-
-    // nn->Init(nullptr,0x0);
-    nn->Build(flag);
-    assert(nn->isValid());
-    return nn;
 }
 
 GeNeuron::GeNeuron(const std::string& key_, JSON::const_iterator jit, Fish* hG_, int flag) : name(key_), hFish(hG_), ID(0) {
@@ -61,30 +72,43 @@ GeNeuron::GeNeuron(const std::string& key_, JSON::const_iterator jit, Fish* hG_,
         Init(hG_, 0x0);
         layid = TGraph::curLayer;
         assert(layid >= 0);
-        if ((*jit).contains(std::string{"#id"})) {
-            ID = (*jit)["id"];
-        }
-        type_info = jit.key();
-        if (jit->is_array()) {
-            for (const auto& item : *jit) {
-                if (item.is_string()) {
-                    string sVal = item.template get<string>();
-                    std::transform(sVal.begin(), sVal.end(), sVal.begin(), ::toupper);
-                    if (sVal == "SPARSE") {
-                        isSparse = true;
-                    }
-                    if (sVal == "SVD") {
-                        compression = SVD;
-                        assert(0);  // need BLAS support
-                    }
-                } else if (item.is_number()) {
-                    double val = item.template get<double>();
-                    jvals.push_back(val);
-                }
-            }
-            // assert(jvals.size()>=2);
+        if (jit->is_null()) {  //  from no-json constructor
         } else {
+            if ((*jit).contains(std::string{"#id"})) {
+                ID = (*jit)["id"];
+            }
+            type_info = jit.key();
+            if (jit->is_array()) {
+                for (const auto& item : *jit) {
+                    if (item.is_string()) {
+                        string sVal = item.template get<string>();
+                        std::transform(sVal.begin(), sVal.end(), sVal.begin(), ::toupper);
+                        if (sVal == "SPARSE") {
+                            isSparse = true;
+                        }
+                        if (sVal == "SVD") {
+                            compression = SVD;
+                            assert(0);  // need BLAS support
+                        }
+                    } else if (item.is_number()) {
+                        double val = item.template get<double>();
+                        jvals.push_back(val);
+                    }
+                }
+                // assert(jvals.size()>=2);
+            } else {
+            }
         }
+    } catch (...) {
+        assert(0);
+    }
+}
+
+GeNeuron::GeNeuron(const std::string& key_, Fish* hG_, int flag) : name(key_), hFish(hG_), ID(0) {
+    try {
+        Init(hG_, 0x0);
+        layid = TGraph::curLayer;
+        assert(layid >= 0);
     } catch (...) {
         assert(0);
     }
@@ -114,6 +138,10 @@ void GeNeuron::Init(Fish* hG_, int flag) {
     tpGradient   = hFish->config.model.tpGradient;
 
     dump_flag = 0;
+#ifndef NDEBUG
+    if (hG_->isTrain())
+        dev_window = std::make_shared<huTensor>(hG_, "dev_window", SHAPE{CU_DEV_WINDOW}, typNUMBER::U8, true, GTensor::F_DEBUG);
+#endif
 }
 void GeNeuron::SetRefer(const GeNeuron* src, bool isBias, int flag) {
     assert(src != nullptr);
@@ -530,23 +558,34 @@ int SLP::Forw(float* rhs, float* lhs, int flag) {
 /*
     From https://www.reddit.com/r/LocalLLaMA/comments/1npbxpw/reproducing_gpt2_124m_from_scratch_results_notes/ &
    https://github.com/garg-aayush/building-from-scratch/blob/main/gpt-2/ A better gpt2-rope	2.987392	0.320155	Replaced learned embeddings with RoPE
-*/
+
 ROPE::ROPE(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     assert(jvals.size() >= 1 && jvals[0] > 0);
     alg = hG_->config.model.rope_type;
     // shape={(int)(jvals[0])};
     Build(flag);
     rRounding.Init(907);
+}*/
+
+ROPE::ROPE(SelfAttention* hQKV, const std::string& key_, int flag) : SparseNeuron(key_, hQKV->hFish, flag) {
+    alg = hFish->config.model.rope_type;
+    // Build(flag);
+    BuildX(name + ".ROPE", hQKV->spQ, hFish, flag);
+    rRounding.Init(907);
+    if (hFish->config.model.isQKNormal) {
+        hnQ = &(hQKV->normQ), hnK = &(hQKV->normK);
+    }
 }
 /*
     https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html#torch.nn.LayerNorm
 */
 bool ROPE::Build(int flag) {
     auto& config = hFish->config;
-    n_rot        = config.n_rot();
-    max_pos      = config.model.max_pos_embeddings;
-    int n_embed  = config.nEmbed();
-    head_dim     = config.head_dim();
+
+    max_pos = config.model.max_pos_embeddings;
+    assert(max_pos > 0 && max_pos < 1000000);
+    int n_embed = config.nEmbed();
+    head_dim    = config.head_dim();
     n_head = config.n_head(), n_head_kv = config.n_head_kv();
     q_dim = head_dim * n_head, kv_dim = head_dim * n_head_kv;
     assert(head_dim > 0 && q_dim > 0 && kv_dim > 0);
@@ -566,32 +605,35 @@ bool ROPE::Build(int flag) {
         theta      = config.model.rope_theta;
     }
     int dim2 = head_dim / 2;
-    float a, b, sum2 = 0.0;  //*fcos = new float[T * dim2], *fsin = new float[T * head_dim],
-    floatX* fsin = new floatX[max_pos * head_dim];
-    for (int tid = 0; tid < dim2; tid++) {
-        float freq = 1.0f / powf(theta, (float)(2 * tid) / head_dim);  // float powf(float base, float exponent);
-        // Compute the cosine and sine for all values of 't'
-        for (int t = 0; t < max_pos; t++) {
-            float angle = (float)t * freq;
-            a = cosf(angle), b = sinf(angle);
-            assert(fabs(a * a + b * b - 1.0) < 1.0e-6);
-            fsin[t * head_dim + 2 * tid]     = Float2T<floatX>(&a);
-            fsin[t * head_dim + 2 * tid + 1] = Float2T<floatX>(&b);
-            sum2 += a * a + b * b;
+
+    if (hSin == nullptr) {
+        float a, b, sum2 = 0.0;  //*fcos = new float[T * dim2], *fsin = new float[T * head_dim],
+        floatX* fsin = new floatX[max_pos * head_dim];
+        for (int tid = 0; tid < dim2; tid++) {
+            float freq = 1.0f / powf(theta, (float)(2 * tid) / head_dim);  // float powf(float base, float exponent);
+            // Compute the cosine and sine for all values of 't'
+            for (int t = 0; t < max_pos; t++) {
+                float angle = (float)t * freq;
+                a = cosf(angle), b = sinf(angle);
+                assert(fabs(a * a + b * b - 1.0) < 1.0e-6);
+                fsin[t * head_dim + 2 * tid]     = Float2T<floatX>(&a);
+                fsin[t * head_dim + 2 * tid + 1] = Float2T<floatX>(&b);
+                sum2 += a * a + b * b;
+            }
         }
+        hSin = GT(hFish, tpWeight, {max_pos * head_dim}, 0x0, name + ".sincos");
+        hSin->Alloc();
+        hSin->SerialGP(fsin, nullptr, sizeof(floatX) * max_pos * head_dim, false);
+        // hCos = GT(hFish, typNUMBER::F32, {T * dim2}, 0x0, name + ".cos");
+        // hCos->Alloc();
+        // hCos->SerialGP(fcos, nullptr, sizeof(float) * T * dim2, false);
+        hSin->Print("sincos", 0x0, -1);
+        // hCos->Print("cos", 0x0, -1);
+        delete[] fsin;
     }
-    hSin = GT(hFish, tpWeight, {max_pos * head_dim}, 0x0, name + ".sincos");
-    hSin->Alloc();
-    hSin->SerialGP(fsin, nullptr, sizeof(floatX) * max_pos * head_dim, false);
-    // hCos = GT(hFish, typNUMBER::F32, {T * dim2}, 0x0, name + ".cos");
-    // hCos->Alloc();
-    // hCos->SerialGP(fcos, nullptr, sizeof(float) * T * dim2, false);
-    hSin->Print("sincos", 0x0, -1);
-    // hCos->Print("cos", 0x0, -1);
-    delete[] fsin;
 
     // KQ_pos = hFish->KQ_pos;
-    // shape = {n_embd_head, n_head, T, B};
+
     return true;
 }
 
@@ -697,7 +739,13 @@ bool LayerNormal::Build(int flag0) {
     } else {
         mean = GT(hFish, typNUMBER::F32, {B, T}, flag, name + ".mean");
     }
+    nTH  = B * T;
+    ldTH = C;
     if (nHead > 0) {
+        isOnline = true;
+        assert(ldTH % nHead == 0);
+        ldTH = hFish->config.head_dim();
+        nTH *= nHead;
         rstd = GT(hFish, typNUMBER::F32, {B, T, nHead}, flag, _NAME(name, LN_RSTD));  //  name + ".rstd"
     } else
         rstd = GT(hFish, typNUMBER::F32, {B, T}, flag, _NAME(name, LN_RSTD));  // name + ".rstd"
@@ -818,6 +866,7 @@ void GeNeuron::OnDebug(const std::string& info, int typ, int flag) {
         return;
     if (!hFish->isTrain())
         return;
+    // dump_flag = -1;
     return;
     if (dynamic_cast<FFN*>(this) != nullptr) {
         if (layid == 1) {
@@ -831,9 +880,7 @@ void GeNeuron::OnDebug(const std::string& info, int typ, int flag) {
         dump_flag = -1;
     }
     if (dynamic_cast<OutCLS*>(this) != nullptr) {
-        {
-            dump_flag = -1;
-        }
+        dump_flag = -1;
     }
     if (dynamic_cast<TokenEmbed*>(this) != nullptr) {
         {

@@ -116,7 +116,7 @@ int Sample_CDF_T(int n, floatLogits* logits, float minp, float temperature, uint
     // find max logit; we will use this to derive minp cutoff (in log space), since minp is scale-invariant (wrt softmax)
     float max_logit = -FLT_MAX;
     for (int i = 0; i < n; i++) {
-        float a   = logits[i];
+        float a   = T2Float(logits+i);
         max_logit = a > max_logit ? a : max_logit;
     }
 
@@ -128,13 +128,13 @@ int Sample_CDF_T(int n, floatLogits* logits, float minp, float temperature, uint
     int fallback          = 0;
     float cumulative_prob = 0.0f;
     for (int i = 0; i < n; i++) {
-        float a = logits[i];
+        float a = T2Float(logits+i);    //logits[i];
         if (a >= logit_cutoff) {
-            probs[i] = expf((a - max_logit) / temperature);
+            probs[i] = (floatLogits)expf((a - max_logit) / temperature);
             cumulative_prob += (float)(probs[i]);
             fallback = i;  // for fallback due to rounding errors
         } else {
-            probs[i] = 0.0f;
+            probs[i] = (floatLogits)0.0f;
         }
     }
 

@@ -87,6 +87,22 @@ enum FFN_TYPE {
     GATE_CYS,
 };
 
+enum GD_METHOD {
+    ADAMw = 0x0,
+    SGD,
+    SGD_v,
+    SGD_blk_v,
+    SGD_HYBRID,
+    LION,
+    ADAM_MINI,  //  https://arxiv.org/pdf/2406.16793
+    ADAM_S,     //  https://arxiv.org/pdf/2505.16363
+    ADAM_GALORE,
+    // ADAM_spike,
+    MUON,
+    // ADAMw_cuda,
+};
+static std::string GD_NAME[] = {"ADAMw", "SGD", "SGD_v", "SGD_blk_v", "SGD_HYBRID", "LION", "ADAM_MINI", "ADAM_S", "ADAM_GALORE", "MUON"};
+
 enum MODEL_ARCH {
     _X_,
     NLP_GPT2,
@@ -828,14 +844,8 @@ struct CLI_params {
 
     uint32_t Q_dim(int il = 0) const { return head_dim(il) * n_head(il); }
     uint32_t KV_dim(int il = 0) const { return head_dim(il) * n_head_kv(il); }
-    // uint32_t n_rot = 64;
-    uint32_t n_rot(int il = 0) const {  //  n_rot to be exactly nEmbed() / n_head
-        return nEmbed() / n_head(il);
-    }
-    // uint32_t n_embd_gqa(int il = 0) const {
-    //     assert(il >= 0 && il < model.layerps.size());
-    //     return model.layerps[il].n_embd_gqa(nEmbed());
-    // }
+    
+
     uint32_t n_gqa(int il = 0) const {
         assert(il >= 0 && il < model.layerps.size());
         return model.layerps[il].n_gqa();

@@ -70,6 +70,9 @@ extern cudaDeviceProp deviceProp;
 #define CU_T4B_SMALL 256U
 #define CU_T4B_MIDDLE 512U
 #define CU_T4B_BIG 1024U
+
+#define CU_DEV_WINDOW 512U
+
 // try to make sure that 2 blocks fit on A100/H100 to maximise latency tolerance
 // this needs to be defines rather than queried to be used for __launch_bounds__
 #if __CUDA_ARCH__ == 800 || __CUDA_ARCH__ >= 900

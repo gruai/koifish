@@ -51,15 +51,12 @@ int main(int argc, char **argv) {
         return 0x0;
     } catch (const std::exception &e) {
         _ERROR("%s", e.what());
-        fflush(stdout);
         return -1000;
     } catch (const char *info) {
         _ERROR("%s", info);
-        fflush(stdout);
         return -1001;
     } catch (...) {
         _ERROR("\r\n%s  Unknown exception !!!", __func__);
-        fflush(stdout);
         return -2001;
     }
 }

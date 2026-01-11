@@ -1,5 +1,5 @@
 
-// #include "../ggex/GG_util.hpp"       //ugly  "__builtin_ia32_ldtilecfg" is undefined
+//        //ugly  "__builtin_ia32_ldtilecfg" is undefined
 #include "../../Manifold/Fish.hpp"
 #include "../../Manifold/Neuron.hpp"
 #include "../../Manifold/Optimizer.hpp"
@@ -187,37 +187,6 @@ hGTensor TokenEmbed::SubW(hGTensor hSamp, bool isForw, hGTensor wOut, int flag) 
         assert(0);
         return nullptr;
     }
-}
-
-/*
-    d = gensor*b+bias
-    wrapper of CU_abc_ & cublasGemmEx & more ...
-*/
-void CU_mm_(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream, int transA, int transB, float beta,
-            floatX* pre_gelu, bool backward) {
-    const float alpha     = 1.0f;  //, beta = accumulate ? 1.0f : 0.0f;
-    cublasOperation_t opA = (transA) ? CUBLAS_OP_T : CUBLAS_OP_N, opB = (transB) ? CUBLAS_OP_T : CUBLAS_OP_N;
-    if (bias != nullptr || pre_gelu != nullptr) {  //  bias != nullptr || pre_gelu != nullptr
-        floatX* wX = gensor->GetDataX();
-        CU_mm_blasLt(d, wX, b, bias, m, n, k, main_stream, transA, transB, 1.0, beta, pre_gelu, backward);
-        return;
-    }
-    bool isBlas = true;
-    int lda = transA ? k : m, ldb = transB ? n : k;
-    if (!transB && DEBUG.T_GEMM >= 0) {  //  !transA && !transB && DEBUG.T_GEMM >= 0
-        // Back of delta: [768,50304] x [50304,8192] => [768,8192]
-        CU_abc(d, gensor, b, bias, m, n, k, stream, transA, transB, beta, pre_gelu, backward);
-        isBlas = false;
-    }
-    if (isBlas) {
-        floatX* wX = gensor->GetDataX();
-        // [50304,768] x [768,8192] => [50304,8192]         or(transA) [768,50304]' x [768,8192] => [50304,8192]
-        //  CU_mm_blas
-        cublasGemmEx(cublas_handle, opA, opB, m, n, k, &alpha, wX, CUDA_R_16BF, lda, b, CUDA_R_16BF, ldb, &beta, d, CUDA_R_16BF, m, CUDA_R_32F,
-                     CUBLAS_GEMM_DEFAULT);  //  CUBLAS_GEMM_DEFAULT_TENSOR_OP[DEPRECATED]
-    }
-
-    return;
 }
 
 //  W'=b(:,rank)*a(rank,:)  => rhs = b*(a*lhs)
@@ -624,7 +593,7 @@ hGTensor FFN::cuFlow(hGTensor hIn, int flag) {
         GTensor::bt4c->Print("dSwigLU", 0, dump_flag, B * T * latent);
         // up_out->Print("ffn.up", 0, dump_flag, B * T * latent);
         assert(!relu.Empty());
-        if (!gate.Empty()) {    //ugly code, need refactor!
+        if (!gate.Empty()) {  // ugly code, need refactor!
             gate.Forw(tGelu, norm.out, nullptr);
             // tGelu->Print("swig.gate", 0, -1, latent);
         }
@@ -673,51 +642,6 @@ hGTensor huTensor::Normal(hGTensor hOut, hGTensor _mean, hGTensor _rstd, hGTenso
     }
 
     return hOut;
-}
-
-hGTensor LayerNormal::cuFlow(hGTensor inpDelta, int flag) {  //,hGTensor deltaIn
-    NVTX_RANGE_FN();
-    const int block_size = 256, N = B * T;
-    floatX *weight = ToX(w), *bias = ToX0(b), *in = ToX(inpDelta);
-    if (hFish->isAtPhase(LIFE_PHASE::P_GENERATE)) {
-        CU_rms_v2(ToX(out), ToX(inpDelta), weight, C);
-        return out;
-    }
-    float *_mean = mean == nullptr ? nullptr : TO<float>(mean), *_rstd = TO<float>(rstd);
-    if (isForward()) {
-        inp               = inpDelta;
-        const int block_y = block_size / WARP_SIZE, grid_size = CEIL_DIV(N, block_y);
-        size_t smem = (2 + block_y) * C * sizeof(floatX);
-
-        if (mean == nullptr) {  // RMS
-            auto status = cudaFuncSetAttribute(CU_rms_forward<floatX, floatX>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
-            cudaCheck(cudaGetLastError());
-            // CU_rms_forward<<<grid_size, dim3(WARP_SIZE, block_y), smem, main_stream>>>(ToX(out), _rstd, in, weight, N, C, rms_eps);
-            CU_rms_forward_v0<<<CEIL_DIV(N, block_size), block_size, 0x0, main_stream>>>(ToX(out), _rstd, in, weight, N, C, rms_eps);
-        } else {
-            // in order to use more than 48 KiB of smem, need to call cudaFuncSetAttribute
-            // this may fail, in which case we fall back to the smem free implementation.
-            auto status = cudaFuncSetAttribute(CU_lm_forward, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
-            cudaCheck(cudaGetLastError());
-            if (status == cudaSuccess) {
-                CU_lm_forward<<<grid_size, dim3(WARP_SIZE, block_y), smem, main_stream>>>(ToX(out), _mean, _rstd, in, weight, bias, N, C);
-            } else {
-                // fall back to the version without shared memory
-                const int grid_size_fb = CEIL_DIV(N, (block_size / WARP_SIZE));
-                layernorm_forward_kernel3<<<grid_size_fb, block_size, 0, main_stream>>>(ToX(out), _mean, _rstd, in, weight, bias, N, C);
-            }
-        }
-        cudaCheck(cudaGetLastError());
-        return out;
-    } else {
-        hGTensor deltaIn = inpDelta;
-        assert(deltaIn != nullptr);
-        float* scratch = (float*)GTensor::buff;
-        deltaIn->Print("LN.delta.in", 0, 0);
-        layernorm_backward(ToX(delta), ToG(w), ToG0(b), scratch, ToX(deltaIn), ToX(inp), ToX(w), _mean, _rstd, B, T, C, main_stream);
-        delta->Print("back of normal", 0, 0);
-        return delta;
-    }
 }
 
 hGTensor OutSimilarity::cuFlow(hGTensor inp, int flag) { return nullptr; }
@@ -849,4 +773,120 @@ hGTensor OutCLS::cuFlow(hGTensor inp_, int flag) {
     }
     cudaCheck(cudaGetLastError());
     return preLogits;
+}
+
+int Relu::Forw(hGTensor out, hGTensor inp, int flag) {
+    size_t nz            = SHAPE2NZ(shape);
+    const int block_size = 128;
+    const int grid_size  = CEIL_DIV(nz, block_size);
+    hGTensor gate        = nullptr;
+    switch (fAct) {
+        case SWIG:
+            assert(slp_gate != nullptr && slp_gate->tRhs != nullptr);
+            gate = slp_gate->tRhs;
+            gate->Print("swig.gate", 0, dump_flag, C);
+            // inp->Print("swig.inp", 0, dump_flag, C);
+            if (version == 0) {  // CU_swiglu_v0(ToX(out), ToX(out), ToX(inp), nz, main_stream);
+                CU_swiglu_v0<<<grid_size, block_size, 0, main_stream>>>(ToX(out), ToX(gate), ToX(inp), nz);
+            } else {
+                assert(C % x128::size == 0);
+                assert((B * T * C) % (block_size * x128::size) == 0);
+                const int num_blocks = CEIL_DIV(B * T * C, (int)(block_size * x128::size));
+                assert(gate != nullptr);
+                // CU_swiglu_v1<<<grid_size, block_size, 0, main_stream>>>(ToX(out), ToX(gate), ToX(inp), C);
+                CU_swiglu_v0<<<grid_size, block_size, 0, main_stream>>>(ToX(out), ToX(gate), ToX(inp), nz);
+            }
+            out->Print("ffn.swig", 0, dump_flag, B * T * C);
+            break;
+        case GELU:
+            gelu_forward(ToX(out), ToX(inp), nz, main_stream);
+            break;
+        default:
+            assert(0);
+            break;
+    }
+    cudaCheck(cudaGetLastError());
+    return 0x0;
+}
+
+template <typename T>
+__global__ static void CU_swiglu_back_v0(T* delta_in_out, T* delta_gate, const T* gate, const T* inp, int N) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < N) {
+        float xiW   = CU_T2Float(gate + idx);
+        float xiV   = CU_T2Float(inp + idx);
+        float delta = delta_in_out[idx];
+        // if(idx==0)    // only for debug
+        // {    nout("nout<%d>: gate=%g ffn.up=%g delta=%g\n", idx, xiW,xiV,delta);    }
+        float sigW      = 1.0f / (1.0f + expf(-xiW));
+        delta_gate[idx] = delta * xiV * sigW * (1 + xiW * (1.0f - sigW));
+
+        delta_in_out[idx] = delta * xiW * sigW;  //  delta * swish_out[i];
+    }
+}
+
+//  delta is both delta_in & delta_out
+int Relu::Back(hGTensor delta_in_out, hGTensor pre_gelu, int flag) {
+    size_t nz            = SHAPE2NZ(shape);
+    const int block_size = 128;
+    const int grid_size  = CEIL_DIV(nz, block_size);
+    hGTensor gate        = nullptr;
+    switch (fAct) {
+        case SWIG:
+            // dump_flag = hFish->isModel({NLP_QWEN2}) ? -1 : 0;
+            assert(slp_gate != nullptr);
+            gate = slp_gate->tRhs;
+            pre_gelu->Print("ffn.up", 0, dump_flag, B * T * C);
+            gate->Print("swig.gate", 0, dump_flag, C);  //-1.890625
+            // inp->Print("swig.inp", 0, dump_flag, C);
+            if (version == 0) {  // CU_swiglu_v0(ToX(out), ToX(out), ToX(inp), nz, main_stream);
+                CU_swiglu_v0<<<grid_size, block_size, 0, main_stream>>>(ToX(out), ToX(gate), ToX(inp), nz);
+            } else {
+                assert(C % x128::size == 0);
+                assert((B * T * C) % (block_size * x128::size) == 0);
+                const int num_blocks = CEIL_DIV(B * T * C, (int)(block_size * x128::size));
+                assert(gate != nullptr && slp_gate != nullptr);
+                CU_swiglu_back_v0<<<grid_size, block_size, 0, main_stream>>>(ToX(delta_in_out), ToX(slp_gate->delta), ToX(gate), ToX(pre_gelu), nz);
+            }
+            delta_in_out->Print("dUp", 0, dump_flag, C);
+            slp_gate->delta->Print("dGate", 0, dump_flag, C);
+            break;
+        case GELU:
+            //  gelu_backward_inplace fused @matmul_backward
+            gelu_backward_inplace(ToX(delta_in_out), ToX(pre_gelu), nz, main_stream);
+
+            break;
+        default:
+            assert(0);
+            break;
+    }
+    cudaCheck(cudaGetLastError());
+    return 0x0;
+}
+
+void GeNeuron::SetInp4Back(hGensor inp_, int flag) {
+    inp = inp_;
+    if (dev_window != nullptr) {
+        size_t szCopy = std::min(inp->nByte(), (size_t)CU_DEV_WINDOW);
+        D2D(dev_window->data, inp->data, CU_DEV_WINDOW);
+    }
+}
+
+template <typename T>
+__global__ void CU_memcmp(const T* a, const T* b, size_t n, int flag = 0x0) {
+    int idx = threadIdx.x + blockIdx.x * blockDim.x;
+
+    if (idx < n && a[idx] != b[idx]) {
+        assert(0);
+        // atomicAdd(nMiss, 1);
+    }
+}
+bool GeNeuron::VerifyInp4Back(hGensor inp_, int flag) {
+    if (dev_window != nullptr) {
+        int nMiss = 0;
+        CU_memcmp<BIT_8><<<1, CU_DEV_WINDOW>>>((hBITARR)(dev_window->data), (hBITARR)(inp->data), CU_DEV_WINDOW);
+        // assert(nMiss == 0);
+    }
+
+    return true;
 }

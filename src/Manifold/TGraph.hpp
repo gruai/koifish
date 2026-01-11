@@ -22,8 +22,8 @@
 #include <typeinfo>
 #include <vector>
 using namespace std;
-#include "../ggex/GG_util.hpp"
-// #include "../lenda/util/GST_util.hpp"
+
+#include "../Tensor/GTensor.hpp"
 
 class Fish;
 class TGraph;

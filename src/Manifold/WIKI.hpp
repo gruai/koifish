@@ -2,7 +2,7 @@
  *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
- *  \brief Generate some nonsense on Prompt
+ *  \brief head file of WIKI
  *  \author Yingshi Chen
  */
 #pragma once

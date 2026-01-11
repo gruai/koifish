@@ -466,6 +466,7 @@ bool Fish::SaveTrain(CheckPoint_Params& ckp, bool isInit, int flag) {
     } else {
         UpdateCheckPoint(ckp, true);
         isOK = SAFETENSOR_Serialize(ckp, true, flag);  //  isInit ? FSerial::INIT_MMAP : 0x0
+        assert(isOK);
     }
 
     return isOK;
@@ -769,7 +770,7 @@ bool Fish::CopyGensors(hWIKI wiki, int flag) {
         if (src->type == dst->type) {
             memcpy(dst->data, src->data, nbyte);
         } else if (dst->type == typNUMBER::F32) {
-            assert(K_FLOATS[(int)(src->type)].isQuantized());  // isQuantized(src->type)
+            assert(K_FLOATS[src->type].isQuantized());  // isQuantized(src->type)
             Gensor2float_(src, (float*)(dst->data), flag);
         } else {
             assert(0);
@@ -850,9 +851,11 @@ hBATCH Fish::GetCurBatch(bool isUpate, int flag) {
 }
 
 void Fish::GetBTC(int& B, int& T, int& C, int flag) const {
-    B = config.n_batch();
-    C = config.nEmbed();
-    T = config.n_ctx();
+    B         = config.n_batch();
+    C         = config.nEmbed();
+    T         = config.n_ctx();
+    int q_dim = config.Q_dim(), kv_dim = config.KV_dim();
+    assert(q_dim >= kv_dim);  // C!=q_dim
     switch (phase) {
         case LIFE_PHASE::P_GENERATE:
             assert(B == 1);
@@ -885,8 +888,9 @@ size_t cudnn_qkv_back(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn);
 bool Fish::AllocBuffer(int flag) {
     try {
         // TokenEmbed* embed = GetNeuron<TokenEmbed>("TokenEmbed",0);
-        int B, T, C;
-        GetBTC(B, T, C);
+        int B, T, C0;
+        GetBTC(B, T, C0);
+        int q_dim = config.Q_dim(), kv_dim = config.KV_dim(), nCTX = config.n_ctx(), mostC = std::max(C0, q_dim);  // config.nEmbed(-1);
         if (isLocalInfer) {
             if (config.phase == P_GENERATE) {  // P_EVAL no need cache!
                 hCache = std::make_shared<KVCache>(this);
@@ -897,9 +901,8 @@ bool Fish::AllocBuffer(int flag) {
         if (config.model.isPaddedCls) {
             nVocab = ceil(nVocab / 128.0) * 128;
         }
-        int Vp = (int)(nVocab * 1.1), NH = config.n_head(), nFF = config.n_ff(), nEmbed = config.nEmbed(), q_dim = config.Q_dim(), kv_dim = config.KV_dim(),
-            nCTX = config.n_ctx();
-        int dB   = config.model.preLogits_dB;
+        int Vp = (int)(nVocab * 1.1), NH = config.n_head(), nFF = config.n_ff(), nEmbed = config.nEmbed();
+        int dB = config.model.preLogits_dB;
         if (isTrain())
             assert(B % dB == 0);
         size_t nFFW = (size_t)(B)*T * nFF, nPrelogist = (size_t)(dB)*T * Vp;  // nTmp = (size_t)(T)*std::max(nFF, std::max(NH, Vp)),
@@ -907,24 +910,24 @@ bool Fish::AllocBuffer(int flag) {
         assert(nTmp < INT_MAX);
         typNUMBER tpA = config.model.tpActivation, tpG = config.model.tpGradient, tpW = config.model.tpWeight;
         // cuLiteTest(B,T,C);
-        int mostC = C;  // config.nEmbed(-1);
-        SHAPE sp = {B, T, C}, sp4 = {B, T, max(nFF, q_dim + kv_dim * 2)}, sp0 = {(int)nTmp}, spMost = {B, T, mostC};
+
+        SHAPE sp4 = {B, T, max(nFF, q_dim + kv_dim * 2)}, sp0 = {(int)nTmp}, spMost = {B, T, mostC};
         GTensor::bt4c       = std::make_shared<huTensor>(this, "tmpBT4c", sp4, tpA, true);
         GTensor::tmpFF1     = std::make_shared<huTensor>(this, "tmpFF1", sp4, tpA, true);
-        SHAPE spTernary     = {C, max(nVocab, 3 * C)};
+        SHAPE spTernary     = {mostC, max(nVocab, 3 * mostC)};
         GTensor::tmpTernary = std::make_shared<huTensor>(this, "tmpTernary", spTernary, tpW, true);  // Only weight would in ternay bit
 
         GTensor::scratch = std::make_shared<huTensor>(this, "tmpScratch/output", sp0, tpA, true);  //  may reduce memory by sp0=sp0/VP
 
-        GTensor::delta      = std::make_shared<huTensor>(this, "tmpDelta", spMost, tpG, true);
-        
-        GTensor::tmpDelta   = std::make_shared<huTensor>(this, "tmpDelta2", spMost, tpG, true);
-        GTensor::host_buff  = new float[GTensor::scratch->size()];
+        GTensor::delta = std::make_shared<huTensor>(this, "tmpDelta", spMost, tpG, true);
+
+        GTensor::tmpDelta  = std::make_shared<huTensor>(this, "tmpDelta2", spMost, tpG, true);
+        GTensor::host_buff = new float[GTensor::scratch->size()];
         if (isModel({NLP_GUPPY})) {
             GTensor::tmpW = std::make_shared<huTensor>(this, "tmpW", SHAPE({nEmbed, nFF}), tpW, true);
         }
         if (isModel({NLP_QWEN2, NLP_QWEN3})) {
-            GTensor::gate_delta = std::make_shared<huTensor>(this, "tmpDelta", SHAPE({B, T, nFF}), tpG, true);
+            GTensor::gate_delta = std::make_shared<huTensor>(this, "tmpGateDelta", SHAPE({B, T, nFF}), tpG, true);
         }
         switch (phase) {
             case P_GENERATE:
@@ -942,7 +945,7 @@ bool Fish::AllocBuffer(int flag) {
         if (phase != P_GENERATE) {
             cudnn_qkv_forw(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn);
             size_t alloc = cudnn_qkv_back(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn);
-            _INFO("\tcudnn_qkv_back = %.3gM\n", alloc / 1.0e6);
+            _INFO("\tcudnn_qkv_back = %.5gM\n", alloc / 1.0e6);
         }
 
         return true;

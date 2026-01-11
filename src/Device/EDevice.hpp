@@ -6,11 +6,9 @@
  *  \author Yingshi Chen
  */
 #pragma once
-#include "../ggex/GG_util.hpp"
-#ifdef __USE_GGML__
-#include "ggml-backend.h"
-#include "ggml-cpu.h"
-#endif
+#include "../CLI_params.hpp"
+#include "../Tensor/GTensor.hpp"
+#include "../Utils/GST_obj.hpp"
 
 class RLS_BP;
 class TGraph;
@@ -26,11 +24,11 @@ class EDGE_DEVICES {
         bool vmm;                // virtual memory support
         size_t vmm_granularity;  // granularity of virtual memory
         size_t total_vram = 0;
-        int warp_size;          // Number of threads in a dispatch
+        int warp_size;  // Number of threads in a dispatch
 
-        int maxThreadsPerBlock; //   Maximum number of threads per block 4090:(1536)
-        int maxThreadsDim[3];   //   Maximum size of each dimension of a block, 4090:    (1024, 1024, 64)
-        int maxGridSize[3];     //  4090: (2147483647, 65535, 65535)
+        int maxThreadsPerBlock;  //   Maximum number of threads per block 4090:(1536)
+        int maxThreadsDim[3];    //   Maximum size of each dimension of a block, 4090:    (1024, 1024, 64)
+        int maxGridSize[3];      //  4090: (2147483647, 65535, 65535)
 
         static int MAX_COUNT;  //  16
         static std::vector<GPU_> cudaGetDevice(int flag = 0x0);

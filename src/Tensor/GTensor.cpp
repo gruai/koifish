@@ -13,17 +13,15 @@
 #include <unistd.h>
 
 #include "../Manifold/Fish.hpp"
-#include "../ggex/GG_util.hpp"
 #include "GeQuant.hpp"
 
-GTensor* GTensor::tZ = nullptr;
+GTensor* GTensor::tZ   = nullptr;
 hGTensor GTensor::outL = nullptr, GTensor::delta = nullptr, GTensor::gate_delta = nullptr, GTensor::tmpDelta = nullptr;
 float* GTensor::stat_info = nullptr;
 hGTensor GTensor::bt4c = nullptr, GTensor::scratch = nullptr, GTensor::tmpW = nullptr, GTensor::tmpGW = nullptr, GTensor::tmpFF1 = nullptr,
          GTensor::tmpTernary = nullptr, GTensor::residual = nullptr;
-void *GTensor::buff = nullptr, *GTensor::host_buff = nullptr;
-size_t GTensor::buff_len = 0;
-
+void *GTensor::buff = nullptr, *GTensor::host_buff = nullptr, *GTensor::cudnn_workspace = nullptr;
+size_t GTensor::buff_len = 0, GTensor::cudnn_workspace_size = 0;
 
 float GTensor::rLARS(float s0, float T_lars, int flag) {
     if (shape.size() <= 1)
@@ -384,24 +382,24 @@ hGensor GENSOR_TOPU::Get(MODEL_ARCH arch, const string& name, int flag) {
         }
         return nullptr;
     } else {
-        string key = name;
+        string key  = name;
         bool isMiss = nag.find(name) == nag.end();
-        /*if (isMiss) {   @NN2NAME         
-            size_t pos = 0;            
-            if (arch == MODEL_ARCH::NLP_QWEN2) {    //some hack for mismatch of name 
+        /*if (isMiss) {   @NN2NAME
+            size_t pos = 0;
+            if (arch == MODEL_ARCH::NLP_QWEN2) {    //some hack for mismatch of name
                 std::map<std::string, std::string> S2S={
                     {"input_layernorm","self_attn.norm"}
                 };
                 for(auto ss : S2S){
                     if( (pos = key.find(ss.first)) != std::string::npos) {
                         key.replace(pos, ss.first.length(), ss.second);
-                        isMiss = nag.find(key) == nag.end(); 
+                        isMiss = nag.find(key) == nag.end();
                         break;
-                    }                                       
+                    }
                 }
             }
         }*/
-        if(isMiss){
+        if (isMiss) {
             _ERROR("Failed to get tensor=%s nGensor=%d\n", name.c_str(), nag.size());
             return nullptr;
         }
@@ -488,7 +486,7 @@ int GTensor::SerialJSON(const std::string& name_, const JSON& val, void* bytes_p
                 Alloc(-1, flag);
                 Serial_Quant_MMAP(false, false);
                 host_data = nullptr;  // mmap file would release
-            }else{
+            } else {
                 G_NORM_STAT<bf16>(size(), (bf16*)host_data, disq.sum_2, disq.sum_1, disq.nrm_1);
             }
             // if (G_Has_(name, hFish->config.quant.filter_WeightF8Ex)) {  // model.embed_tokens.weight    only for debug
@@ -508,9 +506,10 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
     bool isDevice = !isAtHost();
     void *src = x == 3 ? gv : x == 2 ? gm : x == 1 ? grad : data, *hData = nullptr;
     string suffix = x == 3 ? "GV_" : x == 2 ? "GM_" : x == 1 ? "GRAD_" : "";
-    if(x==4){
-        assert(host_data!=nullptr);
-        src = host_data;        isDevice = false;
+    if (x == 4) {
+        assert(host_data != nullptr);
+        src      = host_data;
+        isDevice = false;
     }
     if (src == nullptr) {
         _INFO("Failed to print! %s of \"%s\" is nullptr!", x == 3 ? "gv" : x == 2 ? "gm" : x == 1 ? "grad" : "data", name);
@@ -860,8 +859,8 @@ bool huTensor::Alloc(int iter, int flagInit) {
             int isDebug = 0;
         }
         if (szGlobalMaloc - sz0 >= SUM::nMinTensorAlloc || type == typNUMBER::T_SIGN) {  // 100 * 1.0e6
-            _INFO("\t %s=%gM@%s type=%s shape=[%ld,%ld,%ld,%ld]%s sum=%gG\n", sA.c_str(), (szGlobalMaloc - sz0) * 1.0f / 1.0e6, name, cNameOf(type), ne[0],
-                  ne[1], ne[2], ne[3], grad != nullptr ? "x2" : "", szGlobalMaloc * 1.0 / 1.0e9);
+            _INFO("\t %s=%gM@%s type=%s shape=[%ld,%ld,%ld,%ld]%s alloc_sum=%gG\n", sA.c_str(), (szGlobalMaloc - sz0) * 1.0f / 1.0e6, name, cNameOf(type),
+                  ne[0], ne[1], ne[2], ne[3], grad != nullptr ? "x2" : "", szGlobalMaloc * 1.0 / 1.0e9);
         }
     }
     mem_status = 1;

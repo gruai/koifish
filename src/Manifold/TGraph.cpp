@@ -11,7 +11,6 @@
 #include <sched.h>
 
 #include "../Tensor/GeQuant.hpp"
-#include "../ggex/GG_util.hpp"
 #include "../lenda/kernel/SVD.hpp"
 #include "Fish.hpp"
 #include "llama_cys.h"
@@ -19,7 +18,8 @@
 #include "ggml-impl.h"
 #endif
 
-hRope SelfAttention::rope = nullptr;
+// hRope SelfAttention::rope = nullptr;
+hGensor ROPE::KQ_pos = nullptr, ROPE::hSin = nullptr, ROPE::hCos = nullptr;
 
 hGensor Fish::AddTensor(const std::string& key_, typNUMBER tp, const SHAPE& shape, int flag) {
     auto ctx          = GetGGCTX();
@@ -62,7 +62,8 @@ SelfAttention::SelfAttention(Fish* hG_, const std::string& key_, JSON::const_ite
     n_head_kv = config.n_head_kv(ID);
     n_head    = config.n_head(ID);
     head_dim  = config.head_dim(ID);
-    q_dim = config.Q_dim(), kv_dim = config.KV_dim();
+    q_dim = config.Q_dim(layid - 1), kv_dim = config.KV_dim(layid - 1);
+    assert(kv_dim <= q_dim);  // config.nEmbed();
     // assert(n_embd_head * n_head == C);
     C_qkv = C;
     /**/
@@ -79,14 +80,14 @@ SelfAttention::SelfAttention(Fish* hG_, const std::string& key_, JSON::const_ite
     }
     isSeparateQKV = hFish->config.model.isSeparateQKV;
     isBqkv        = hFish->config.model.isBqkv;
-    
-    isQKNormal    = hFish->config.model.isQKNormal;
+
+    isQKNormal = hFish->config.model.isQKNormal;
 
     // dump_flag = -1;
     tpNormal = DEBUG.SelfAttention_noraml;
     //  nIn = shape[0], nOut = shape[1];
-    spQ  = {C_qkv, (int)(hG_->config.Q_dim(layid - 1))};
-    spKV = {C_qkv, (int)(hG_->config.KV_dim(layid - 1))};
+    spQ  = {C_qkv, q_dim};
+    spKV = {C_qkv, kv_dim};
 }
 
 bool SelfAttention::Build(int flag_0) {
@@ -98,8 +99,8 @@ bool SelfAttention::Build(int flag_0) {
     norm.BuildX(_NAME(name, ATTN_PRE_NORMAL), {C_qkv}, hFish, flag);
     if (isQKNormal) {
         normQ.nHead = n_head, normK.nHead = n_head_kv;
-        normQ.BuildX(_NAME(name, ATTN_Q_NORM), {head_dim}, hFish, flag);  //  {C_qkv} is wrong?
-        normK.BuildX(_NAME(name, ATTN_K_NORM), {head_dim}, hFish, flag);  //  {C_qkv}
+        normQ.BuildX(_NAME(name, ATTN_Q_NORM), {head_dim}, hFish, flag);
+        normK.BuildX(_NAME(name, ATTN_K_NORM), {head_dim}, hFish, flag);
     }
 
     SHAPE sp3 = {B, T, C}, spTrans = {B, n_head_kv, T};  //,T
@@ -118,7 +119,7 @@ bool SelfAttention::Build(int flag_0) {
     if (hFish->isAtPhase(LIFE_PHASE::P_GENERATE)) {
         attn = std::make_shared<huTensor>(hFish, name + ".attn", (SHAPE){n_head, hFish->config.chat_sampler.seq_len}, tpWeight, false);
     } else {
-        attn = std::make_shared<huTensor>(hFish, name + ".attn", (SHAPE){B, T, C_qkv}, tpWeight, false);  // B * T * C
+        attn = std::make_shared<huTensor>(hFish, name + ".attn", (SHAPE){B, T, q_dim}, tpWeight, false);  // B * T * C
     }
 #ifdef ENABLE_CUDNN
     transition = GT(hFish, typNUMBER::F32, {B, n_head, T}, 0x0, name + ".trans");  // (B, Hq, T)
@@ -148,12 +149,10 @@ bool SelfAttention::Build(int flag_0) {
     } else
         BIT_SET(Q.out->flags, GTensor::F_NOALLOC);
     //}
-    if (!hFish->isModel({NLP_GPT2,NLP_GPT2_char})) {
+    if (!hFish->isModel({NLP_GPT2, NLP_GPT2_char})) {
         assert(isSeparateQKV);
-        if (rope == nullptr) {
-            rope = std::make_shared<ROPE>();
-            rope->BuildX(name + ".ROPE", spQ, hFish, flag);
-        }
+        rope = std::make_shared<ROPE>(this);
+        // rope->BuildX(name + ".ROPE", spQ, hFish, flag);
     }
     _devQKV(0x0);
 
@@ -178,7 +177,7 @@ bool SelfAttention::UpdateQKVPack(int flag) {
 
     hBITARR hQKV = TO<BIT_8>(GTensor::bt4c), hQ = (hBITARR)devQ, hK = (hBITARR)devK, hV = (hBITARR)devV;
     size_t offset = 0x0, nT = B * T, ldQ = sizeof(floatX) * q_dim, ldKV = sizeof(floatX) * kv_dim;
-    assert(GTensor::bt4c->nByte()>=nT*(ldQ+ldKV*2));
+    assert(GTensor::bt4c->nByte() >= nT * (ldQ + ldKV * 2));
     switch (qkv4dnn) {
         case QKV_PACK::QKVQKV:
             for (int r = 0; r < nT; r++) {
@@ -218,7 +217,7 @@ bool SelfAttention::_devQKV(int stage, int flag) {
 
     // offset = Q.out->nByte();
     if (isTrain) {
-        assert(q_dim == C && kv_dim <= C);
+        assert(kv_dim <= q_dim);
         deltaQ = GTensor::bt4c->Partial("partialDeltaQ", 0, {B, T, q_dim});  //  devDeltaQ = deltaQ->data
         deltaK = GTensor::bt4c->Partial("partialDeltaK", B * T * C, {B, T, kv_dim});
         deltaV = GTensor::bt4c->Partial("partialDeltaV", B * T * C * 2, {B, T, kv_dim});
@@ -383,7 +382,7 @@ hGensor SelfAttention::MyAttention(RLS_BP* ctx_, hGensor cur, int flag) {
 
 BROWN_attn::BROWN_attn(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SelfAttention(hG_, key_, jit, flag) {
     auto& config    = hG_->config;
-    n_rot           = config.n_rot();
+    n_rot           = config.head_dim();
     rope_freq_base  = config.model.rope_freq_base;
     rope_freq_scale = config.model.rope_freq_scale;
 }
@@ -403,7 +402,7 @@ hGensor BROWN_attn::Ming(RLS_BP* ctx_, hGensor teb, int flag) {
         return cur;
 
     cur                  = norm.Ming(ctx_, cur, 0x0);
-    const float kq_scale = 1.0f / sqrtf(float(C) / n_head);
+    const float kq_scale = 1.0f / sqrtf(head_dim);
     int N = T, n_past = 0;
     ;
     hGensor v = cur, v3 = nullptr, v4 = nullptr, wv = nullptr, kqv_out = nullptr, prob;

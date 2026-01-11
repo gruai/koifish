@@ -3573,38 +3573,12 @@ bool parse_metadata(const ::minijson::value &v, ordered_dict<std::string> &dst, 
 
 bool parse_dtype(const ::minijson::value &v, typNUMBER &dtype, std::string *err) {
     if (auto so = v.as<std::string>()) {
-        if ((*so) == "BOOL") {
-            dtype = typNUMBER::BOOL1;
-        } else if ((*so) == "U8") {
-            dtype = typNUMBER::U8;
-        } else if ((*so) == "I8") {
-            dtype = typNUMBER::I8;
-        } else if ((*so) == "U16") {
-            dtype = typNUMBER::U16;
-        } else if ((*so) == "I16") {
-            dtype = typNUMBER::I16;
-        } else if ((*so) == "U32") {
-            dtype = typNUMBER::U32;
-        } else if ((*so) == "I32") {
-            dtype = typNUMBER::I32;
-        } else if ((*so) == "U64") {
-            dtype = typNUMBER::U64;
-        } else if ((*so) == "I64") {
-            dtype = typNUMBER::I64;
-        } else if ((*so) == "F16") {
-            dtype = typNUMBER::F16;
-        } else if ((*so) == "BF16") {
-            dtype = typNUMBER::BF16;
-        } else if ((*so) == "F32") {
-            dtype = typNUMBER::F32;
-        } else if ((*so) == "F64") {
-            dtype = typNUMBER::F64;
-        } else {
-            if (err) {
-                (*err) += "Unknown `dtype` string: " + *so + ".\n";
-            }
-            return false;
+        std::string name = *so;
+        dtype = tpNumOf(name); 
+        if (dtype==typNUMBER::T_OTHER) {
+            (*err) += "Unknown `dtype` string: " + *so + ".\n";
         }
+        return dtype!=typNUMBER::T_OTHER;
     } else {
         if (err) {
             (*err) += "`dtype` item should be string type but got " + v.type_name() + ".\n";
@@ -4508,37 +4482,8 @@ size_t get_dtype_bytes(const typNUMBER dtype) {
 }
 
 std::string get_dtype_str(const typNUMBER dtype) {
-    string name = K_FLOATS[(int)dtype].name;
-    return name;
-    /*switch (dtype) {
-        case typNUMBER::BOOL1:
-            return "BOOL";
-        case typNUMBER::U8:
-            return "U8";
-        case typNUMBER::I8:
-            return "I8";
-        case typNUMBER::U16:
-            return "U16";
-        case typNUMBER::I16:
-            return "I16";
-        case typNUMBER::I32:
-            return "I32";
-        case typNUMBER::U32:
-            return "U32";
-        case typNUMBER::F16:
-            return "F16";
-        case typNUMBER::BF16:
-            return "BF16";
-        case typNUMBER::F32:
-            return "F32";
-        case typNUMBER::F64:
-            return "F64";
-        case typNUMBER::I64:
-            return "I64";
-        case typNUMBER::U64:
-            return "U64";
-    }
-    return "???";*/
+    string name = K_FLOATS[dtype].name;
+    return name;    
 }
 
 // Empty Tensor returns 0.

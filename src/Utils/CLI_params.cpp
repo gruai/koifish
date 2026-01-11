@@ -2,35 +2,26 @@
  *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
- *  Some auxiliary functions
- *  Unfortunately, llama.cpp removed training functions. I would continue to work hard to support and strengthen training.
+ *  Some functions for CLI_params
  *
  *  \brief
  *  \author Yingshi Chen
  */
-#ifdef __USE_GGML__
-#include "ggml-alloc.h"
-#include "ggml-backend.h"
-#include "ggml-impl.h"
-#include "ggml-quants.h"
-#else
-#undef MIN
-#undef MAX
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
-#endif
+
+#include "../CLI_params.hpp"
+
 #include <cstring>
 #include <iostream>
 
-#include "../CLI_params.hpp"
 #include "../Manifold/Serialize.hpp"
-#include "../ggex/GG_util.hpp"
+#include "../Tensor/GTensor.hpp"
+#include "../Utils/GST_obj.hpp"
 #include "../lenda/kernel/SVD.hpp"
 #include "json.hpp"
 
 int g_dump_level = 1;
 int g_dump_each  = 3;
-
+static char buffer[GTensor::MAX_NAME];
 #define ARG2STR(format, len)                  \
     {                                         \
         va_list args;                         \
@@ -55,64 +46,6 @@ int gTN0(hGTensor cur, const char* format, ...) {
     snprintf(cur->name, sizeof(cur->name), "%s", buffer);
     return 0x0;
 }
-#ifdef __USE_GGML__
-int gTN(struct ggml_tensor* cur, const char* format, ...) {
-    int iRet = 0;
-    if (strlen(cur->name) == 0) {
-        ARG2STR(format, GTensor::MAX_NAME);
-        // va_list args;
-        // va_start( args, format );
-        // vsnprintf( buffer,GTensor::MAX_NAME,format,args );
-        // va_end(args);
-        // assert(strlen(buffer)<=GTensor::MAX_NAME);
-        ggml_format_name(cur, "%s", buffer);
-
-        iRet += 1;
-    }
-    /*
-        in ggml_compute_backward, some grad has no name!
-
-        ggml_format_name(tensor->grad, "%s (grad)", tensor->name);
-    */
-#ifdef GG_V12
-    CHILD_1218_GRAD  //  set name @BuildBackward
-#else
-    if (cur->grad && strlen(cur->grad->name) == 0) {
-        assert(strlen(cur->name) < GTensor::MAX_NAME);
-        if (strcmp(cur->name, "inp_embd_rows") == 0) {
-            int debug = 0;
-        }
-        ggml_format_name(cur->grad, "%s\"", cur->name);
-        iRet += 2;
-    }
-#endif
-        return iRet;
-}
-
-int gTN0(struct ggml_tensor* cur, const char* format, ...) {
-    int iRet = 0;
-    ARG2STR(format, GTensor::MAX_NAME);
-    // va_list args;
-    // va_start( args, format );
-    // vsnprintf( buffer,GTensor::MAX_NAME,format,args );
-    // va_end(args);
-    // assert(strlen(buffer)<=GTensor::MAX_NAME);
-    ggml_format_name(cur, "%s", buffer);
-    iRet += 1;
-
-    /*
-        in ggml_compute_backward, some grad has no name!
-
-        ggml_format_name(tensor->grad, "%s (grad)", tensor->name);
-    */
-    /*if(cur->grad && strlen(cur->grad->name)==0){
-        assert(strlen(cur->name)<GTensor::MAX_NAME);
-        ggml_format_name(cur->grad,"%s\"",cur->name);
-        iRet+=2;
-    }*/
-    return iRet;
-}
-#endif
 
 int clamp(const int v, const int min, const int max) { return ((v < min) ? (min) : (v > max) ? (max) : v); }
 
@@ -122,86 +55,6 @@ void assert_shape_1d(hGTensor tensor, int64_t ne0) {}
 void assert_shape_2d(hGTensor tensor, int64_t ne0, int64_t ne1) {}
 void assert_shape_3d(hGTensor tensor, int64_t ne0, int64_t ne1, int64_t ne2) {}
 void assert_shape_4d(hGTensor tensor, int64_t ne0, int64_t ne1, int64_t ne2, int64_t ne3) {}
-#ifdef __USE_GGML__
-void assert_shape_1d(struct ggml_tensor* tensor, int64_t ne0) {
-    assert(tensor->ne[0] == ne0);
-    assert(tensor->ne[1] == 1);
-    assert(tensor->ne[2] == 1);
-    assert(tensor->ne[3] == 1);
-}
-
-void assert_shape_2d(struct ggml_tensor* tensor, int64_t ne0, int64_t ne1) {
-    assert(tensor->ne[0] == ne0);
-    assert(tensor->ne[1] == ne1);
-    assert(tensor->ne[2] == 1);
-    assert(tensor->ne[3] == 1);
-}
-
-void assert_shape_3d(struct ggml_tensor* tensor, int64_t ne0, int64_t ne1, int64_t ne2) {
-    assert(tensor->ne[0] == ne0);
-    assert(tensor->ne[1] == ne1);
-    assert(tensor->ne[2] == ne2);
-    assert(tensor->ne[3] == 1);
-}
-
-void assert_shape_4d(struct ggml_tensor* tensor, int64_t ne0, int64_t ne1, int64_t ne2, int64_t ne3) {
-    assert(tensor->ne[0] == ne0);
-    assert(tensor->ne[1] == ne1);
-    assert(tensor->ne[2] == ne2);
-    assert(tensor->ne[3] == ne3);
-}
-#endif
-
-#ifdef __USE_GGML__
-struct ggml_tensor* tRAND(struct ggml_tensor* tensor, struct random_normal_distribution* rnd) {
-    float scale = 1.0f;  // xavier
-    switch (ggml_n_dims(tensor)) {
-        case 1:
-            scale /= sqrtf((float)tensor->ne[0]);
-            for (int i0 = 0; i0 < tensor->ne[0]; i0++) {
-                float* dst = (float*)((char*)tensor->data + i0 * tensor->nb[0]);
-                *dst       = scale * frand_normal(rnd);
-            }
-            break;
-        case 2:
-            scale /= sqrtf((float)tensor->ne[0] + tensor->ne[1]);
-            for (int i1 = 0; i1 < tensor->ne[1]; i1++) {
-                for (int i0 = 0; i0 < tensor->ne[0]; i0++) {
-                    float* dst = (float*)((char*)tensor->data + i0 * tensor->nb[0] + i1 * tensor->nb[1]);
-                    *dst       = scale * frand_normal(rnd);
-                }
-            }
-            break;
-        case 3:
-            scale /= sqrtf((float)tensor->ne[0] + tensor->ne[1]);
-            for (int i2 = 0; i2 < tensor->ne[2]; i2++) {
-                for (int i1 = 0; i1 < tensor->ne[1]; i1++) {
-                    for (int i0 = 0; i0 < tensor->ne[0]; i0++) {
-                        float* dst = (float*)((char*)tensor->data + i0 * tensor->nb[0] + i1 * tensor->nb[1] + i2 * tensor->nb[2]);
-                        *dst       = scale * frand_normal(rnd);
-                    }
-                }
-            }
-            break;
-        case 4:
-            scale /= sqrtf((float)tensor->ne[0] + tensor->ne[1]);
-            for (int i3 = 0; i3 < tensor->ne[3]; i3++) {
-                for (int i2 = 0; i2 < tensor->ne[2]; i2++) {
-                    for (int i1 = 0; i1 < tensor->ne[1]; i1++) {
-                        for (int i0 = 0; i0 < tensor->ne[0]; i0++) {
-                            float* dst = (float*)((char*)tensor->data + i0 * tensor->nb[0] + i1 * tensor->nb[1] + i2 * tensor->nb[2] + i3 * tensor->nb[3]);
-                            *dst       = scale * frand_normal(rnd);
-                        }
-                    }
-                }
-            }
-            break;
-        default:
-            assert(0 && "Unsupported tensor->n_dims");
-    };
-    return tensor;
-}
-#endif
 
 hGTensor tRAND(hGTensor tensor, struct random_normal_distribution* rnd) { return nullptr; }
 
@@ -295,7 +148,7 @@ void CLI_params::Dump(int flag) {
     _INFO(" n_head_kv=%u", n_head_kv());
     _INFO(" n_layer=%d(%d)", nLayer(), n_layer_train);
     _INFO(" f_norm_rms_eps=%g\n", model.norm_rms_eps);
-    _INFO(" ROPE: type=%d freq_base=%g freq_scale=%g n_rot=%u\n", model.rope_type, model.rope_freq_base, model.rope_freq_scale, n_rot());
+    _INFO(" ROPE: type=%d freq_base=%g freq_scale=%g n_rot=%u\n", model.rope_type, model.rope_freq_base, model.rope_freq_scale, head_dim());
     // _INFO(" lora_r=%d lora_alpha=%d ", lora_r,lora_alpha);
     _INFO(" SepQKV: type=%d  }\n", model.isSeparateQKV);
     // _INFO(" NABLA = %s\n", nabla==0? "" : nabla==3 ? "Embed+AutoEncoder" : (nabla==2 ? "" : "qkv") );
@@ -307,7 +160,7 @@ bool LoadJsonFile(const string& jPath, JSON& jObj, int flag) {
         std::ifstream jfile(jPath);
         std::string info;
         if (jfile.fail()) {
-            _WARN("[%s] Failed to open \"%s\" !!!\n", __func__, jPath.c_str());
+            _WARN("[%s] Failed to open json@\"%s\" !!!\n", __func__, jPath.c_str());
             return false;
         }
         jfile >> jObj;
@@ -434,6 +287,7 @@ MODEL_ARCH CLI_params::ModelArch() {
            : info == "GUPPY"     ? MODEL_ARCH::NLP_GUPPY
            : info == "DEEPSEEK"  ? MODEL_ARCH::NLP_DEEPSEEK
            : info == "QWEN2"     ? MODEL_ARCH::NLP_QWEN2
+           : info == "QWEN2.5"   ? MODEL_ARCH::NLP_QWEN2
            : info == "QWEN3"     ? MODEL_ARCH::NLP_QWEN3
            : info == "QWEN3_MOE" ? MODEL_ARCH::NLP_QWEN3
            : info == "GPT2"      ? MODEL_ARCH::NLP_GPT2
@@ -461,15 +315,17 @@ bool CLI_params::JModel2Params(int flag) {
         nLayerX = 1;  // at least 1 layer
         nLayerX = jKV(jConfig, {"model", "parameter", "Layer"}, nLayerX);
         assert(nLayerX < 160 && nLayerX > 0);
+        model.max_pos_embeddings = jKV(jConfig, {"model", "parameter", "max_pos_embeddings"}, model.max_pos_embeddings);
         // nearly same ???
         // if(nLayerX>0)
         //     common.residual_scale = 1.0f / sqrtf(2.0f * nLayerX);
         assert(model.layerps.size() == 0);
         auto jTrans = jKEY(jConfig, {"model", "parameter", "transformer"});
         if (!jTrans.empty()) {
-            int nH = jKV(jTrans, {"Head"}, -1), nF = jKV(jTrans, {"Ffn"}, -1), nE = -1, nC = jKV(jTrans, {"Ctx"}, -1);
+            int nH = jKV(jTrans, {"Head"}, -1), nF = jKV(jTrans, {"Ffn"}, -1), nE = -1, nC = jKV(jTrans, {"Ctx"}, -1), nHd = -1;
             assert(nH > 0);
-            int nKV   = jKV(jTrans, {"KVHead"}, nH);
+            int nKV = jKV(jTrans, {"KVHead"}, nH);
+
             auto item = jKEY(jTrans, {"Embed"});
             std::vector<int> embeds;
             if (item.is_string()) {
@@ -486,9 +342,14 @@ bool CLI_params::JModel2Params(int flag) {
             if (nF < 0)
                 nF = nEmbed() * 4;
 
+            nHd = jKV(jTrans, {"head_dim"}, nHd);
+            if (nHd == -1) {  //
+                nHd = nEmbed() / nH;
+            }
+            assert(nHd > 0);
+
             if (nH > 0 && nF > 0) {
-                int hd = nEmbed() / nH;
-                for (int i = 0; i < nLayerX; i++) model.layerps.push_back(MODEL_CARD::LAY_PARAM(nH, nKV, hd, nF));
+                for (int i = 0; i < nLayerX; i++) model.layerps.push_back(MODEL_CARD::LAY_PARAM(nH, nKV, nHd, nF));
             } else {
                 assert(0);
             }
@@ -709,15 +570,15 @@ void CLI_params::OnArch() {
 
             DEBUG.T_classifier_ver = 1;
             n_embd_head_v = 64, n_embd_head_k = 64, n_ctx_train = 1024;
-            // _embd = 128; dict_latent_dim = 128;        n_embd_head_v=n_embd_head_k=2; //only for debug
-            if (model.layerps.size() == 0 && !isJModel) {  //  deprecated
-                int n_ff0 = jKV(jConfig, {"model_v0", "ffn", "length"}, 3072, false), nLay = nLayer();
-                int hd = nEmbed() / n_head();
-                for (int i = 0; i < nLayer(); i++) {
-                    MODEL_CARD::LAY_PARAM lay(nH, nH, hd, n_ff0);
-                    model.layerps.push_back(lay);
-                }
-            }
+
+            // if (model.layerps.size() == 0 && !isJModel) {  //  deprecated
+            //     int n_ff0 = jKV(jConfig, {"model_v0", "ffn", "length"}, 3072, false), nLay = nLayer();
+            //     int hd = nEmbed() / n_head();
+            //     for (int i = 0; i < nLayer(); i++) {
+            //         MODEL_CARD::LAY_PARAM lay(nH, nH, hd, n_ff0);
+            //         model.layerps.push_back(lay);
+            //     }
+            // }
 
             // model.tpPreLogits = typNUMBER::BF16;
             //  need new GEMM! cuBLASLt requires bias in FP8 mode to be BF16... (sigh)
@@ -737,27 +598,10 @@ void CLI_params::OnArch() {
 
         break;
         case NLP_QWEN2:
-            // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
-            // scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;
-            DEBUG.verShuffleSamp = -1, DEBUG.verSampJump = -1;
-            model.isSeparateQKV = true, model.isBqkv = true;
-            model.sLayer             = "layers.";
-            model.isEmbedWeightTying = true;  //  why false would cause nan
+
             break;
         case NLP_QWEN3:
-            // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
-            // scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;
-            model.isSeparateQKV = true;
-            model.isBqkv        = true;  //  0.6B has no bias!
-            model.isQKNormal    = true;
-            model.sLayer        = "layers.";
-            model.sEmbed = "embed_tokens", model.sInvEmbed = "lm_head";
-            if (!jVendorQuant.empty()) {
-                model.sWeight = ".qweight";
-            }
 
-            // model.isEmbedWeightTying = false;   //  0.6B has no tying, but 4B is tying       isEmbedWeightTying = jKV(jModelParam, {"tie_word_embeddings"},
-            // isEmbedWeightTying};
             break;
         case NLP_DEEPSEEK:
             model.sLayer = "layers.";
@@ -832,8 +676,27 @@ std::string CLI_params::GetDataPath(const string type, int flag) {
     return fp;
 }
 
+void _JSON_remove_keys_(JSON& node, const std::string& prefix) {
+    if (node.is_object()) {
+        for (auto it = node.begin(); it != node.end();) {
+            if (it.key().compare(0, prefix.size(), prefix) == 0) {
+                string key = it.key();
+                it         = node.erase(it);
+            } else {
+                _JSON_remove_keys_(it.value(), prefix);
+                ++it;
+            }
+        }
+    } else if (node.is_array()) {
+        for (auto& element : node) {
+            _JSON_remove_keys_(element, prefix);
+        }
+    }
+}
+
 JSON CLI_params::ToJSON(int type, int flag) {
     JSON json, jOut = jConfig;
+    _JSON_remove_keys_(jOut, "#");
     switch (type) {
         case 0x100:  //@Fish::SAFETENSOR_Serialize
             jOut["checkpoint_in"] = jConfig["checkpoint_out"];
@@ -912,12 +775,6 @@ CheckPoint_Params::CheckPoint_Params(const JSON& jData, const std::string& key, 
         if (sDir.empty()) {
             sDir = "./hy-tmp/checkpoint/Koifish_";
             _INFO("[Save] path is empty! Koifish would save file to a tmp path@\"%s\"!\n", sDir.c_str());
-            // _INFO("[Save] path is empty! To save model, please set the key of \"checkpoint-out\" in json config file(\"%s\").\n", config.jsPath.c_str());
-            // if (VERIFY_DIR_EXIST(path, true))
-            //     _INFO("[Save] path=\"%s\", save_every=%d\n", path.c_str(), train_params.save_every);
-            // else {
-            //     _INFO("[Save] Invalid path@\"%s\"!\n", path.c_str());
-            // }
         }
         VERIFY_DIR_EXIST(sDir, true);
     }
@@ -975,11 +832,13 @@ bool CLI_params::InitChekcpoints(int argc, char** argv, const std::string& ckp_q
             }
             if (ckp_queue == "checkpoint_out")
                 ckp_out.push_back(CheckPoint_Params(jdata, k, true));
-            else {  //  "checkpoint_in"
+            else {  //  "checkpoint_in" contains many tensor infos
                 ckp_in.push_back(CheckPoint_Params(jdata, k, false));
             }
         }
+
         if (phase == P_EVAL_) {
+            assert(!ckp_in.empty());
             assert(argc > 2);
             auto& fish_in      = ckp_in[ckp_in.size() - 1];
             fish_in.sModelPath = argv[1];
@@ -990,10 +849,10 @@ bool CLI_params::InitChekcpoints(int argc, char** argv, const std::string& ckp_q
             // checkpoints.push_back(state);
         }
     } catch (JSON::parse_error& e) {
-        _INFO("\r\n%s  Failed to open %s!!! ERR=%s", __func__, ckp_queue.c_str(), e.what());
+        _ERROR("\r\n%s  Failed to open %s!!! ERR=%s", __func__, ckp_queue.c_str(), e.what());
         return false;
     } catch (...) {
-        _INFO("\r\n%s  Unknown exception @%s!!!", __func__, ckp_queue.c_str());
+        _ERROR("\r\n%s  Unknown exception @%s!!!", __func__, ckp_queue.c_str());
         return false;
     }
     return true;
@@ -1171,10 +1030,10 @@ bool CLI_params::InitJConfig(int flag) {
         // train = jKV(jConfig,{"train"},train );
         return true;
     } catch (JSON::parse_error& e) {
-        _INFO("\r\n%s  Failed to open %s!!! ERR=%s", __func__, jsPath.c_str(), e.what());
+        _ERROR("\r\n%s  Failed to open %s!!! ERR=%s", __func__, jsPath.c_str(), e.what());
         return false;
     } catch (...) {
-        _INFO("\r\n%s  Unknown exception @%s!!!", __func__, jsPath.c_str());
+        _ERROR("\r\n%s  Unknown exception @%s!!!", __func__, jsPath.c_str());
         return false;
     }
 }
@@ -1200,9 +1059,9 @@ bool CLI_params::parse(int argc, char** argv) {
                 }
                 jfile >> jConfig;
             } else if (sExt == "fish") {
-                SAFETENSOR_Load_jconfig(arg, jConfig);
+                SAFETENSOR_Load_jconfig(arg, jConfig, FSerial::FILE_FISH);
             } else if (sExt == "ck") {
-                SAFETENSOR_Load_jconfig(arg, jConfig);
+                SAFETENSOR_Load_jconfig(arg, jConfig, FSerial::FILE_CHECKPOINT);
             }
             if (jConfig.empty())
                 return false;
@@ -1354,7 +1213,7 @@ float SOFT_MAX(const int n, float* y, const float* x) {
     int i;
     // ggml_vec_max_f32(n, &x1, x);
     for (i = 0; i < n; ++i) {
-        x1 = MAX(x1, x[i]);
+        x1 = std::max(x1, x[i]);
     }
     float sum = 0.0;
 #ifdef GGML_SOFT_MAX_ACCELERATE
@@ -1392,7 +1251,7 @@ float SOFT_MAX_minus(const int n, float* y, const float* x) {
     float x1 = -INFINITY, a;
     int i;
     for (i = 0; i < n; ++i) {
-        x1 = MAX(x1, x[i]);
+        x1 = std::max(x1, x[i]);
     }
     float sum = 0.0;
     for (i = 0; i < n; ++i) {
@@ -1416,39 +1275,7 @@ float SOFT_MAX_minus(const int n, float* y, const float* x) {
     return x1;
 }
 
-/*
-    for (int i = 0; i < count; ++i) {
-    loss -= input_data[i] * (target[i] - (input_data[i] >= 0)) -
-        log(1 + exp(input_data[i] - 2 * input_data[i] * (input_data[i] >= 0)));
-  }
-*/
-float LOSS_cross_entropy_1(int n, const float* preP, int target, int& cand, int flag) {
-    assert(target >= 0 && target < n);
-    float sum = 0, loss = 0, pMin, pMax, a;
-    int j, next_token   = -1;
-    cand = -1;
-    for (pMin = FLT_MAX, pMax = -FLT_MAX, j = 0; j < n; j++) {
-        a = preP[j];
-        if (a > pMax) {
-            pMax = a;
-            cand = j;
-        }
-        pMin = min(a, pMin);  // pMax = max(a,pMax);
-    }
 
-    /*for (sum = 0, j = 0; j < n; j++)        { //  standard SOFTMAX
-        preP[j] = exp(preP[j]-pMax);
-        sum += preP[j];
-    }
-    assert(sum > 0 && sum < FLT_MAX);
-    a = preP[target]/sum;   loss = -log(a); //  0.0430280194*/
-    for (sum = 0, a = preP[target], j = 0; j < n; j++) {  // faster & safer
-        sum += exp(preP[j] - a);
-    }
-    assert(sum > 0 && sum < FLT_MAX);
-    loss = log(sum);
-    return loss;
-}
 
 struct ggml_tensor* ggml_cross_entropy_loss_1(struct ggml_context* ctx, struct ggml_tensor* a, struct ggml_tensor* b) {
 #ifndef GG_V12
@@ -1596,50 +1423,14 @@ double BPE(typNUMBER type) {
     // assert(bp == 1 || bp == 2 || bp == 4);
     return bp;
 }
-/*  depreated!
-bool isQuantized(typNUMBER type) {
-    if (type == typNUMBER::F8E5M2 || type == typNUMBER::F8E4M3 || type == typNUMBER::F16 || type == typNUMBER::BF16 || type == typNUMBER::F32 ||
-        type == typNUMBER::I32 || type == typNUMBER::I8)
-        return false;
-    if (type == typNUMBER::T_SIGN || type == typNUMBER::T_BINARY || type == typNUMBER::T_BINARY_3 || type == typNUMBER::T_BINARY_TILE) {
-        return true;
-    }
-    assert(0);
-    exit(KOIFISH_UNSUPPORTED_DATATYPE);
-}*/
 
 const char* cNameOf(typNUMBER type) {
     static char buf[128];  // Not thread-safe if modified concurrently.
-    if (type == typNUMBER::F8E5M2)
-        return "F8E5M2";
-    if (type == typNUMBER::F8E4M3)
-        return "F8E4M3";
-    if (type == typNUMBER::F16)
-        return "F16(E5)";
-    if (type == typNUMBER::BF16)
-        return "BF16(E8)";
-    if (type == typNUMBER::F32)
-        return "float";
-    if (type == typNUMBER::I32)
-        return "I32";
-    if (type == typNUMBER::I8)
-        return "I8";
-    if (type == typNUMBER::T_BINARY)
-        return "BINARY";
-    if (type == typNUMBER::T_BINARY_3)
-        return "BINARY(3)";
-    if (type == typNUMBER::T_SIGN)
-        return "TERNARY";
-    if (type == typNUMBER::Q4)
-        return "Q<4>";
-    if (type == typNUMBER::Q3)
-        return "Q<3>";
-    if (type == typNUMBER::Q2)
-        return "Q<2>";
     if (type == typNUMBER::T_BINARY_TILE) {
         sprintf(buf, "TILE(%dx%d)", THREAD_TILE_M, THREAD_TILE_N);
         return buf;  //"TILE(One float for each tile)";
-    }
+    } else
+        return K_FLOATS[type].name.c_str();
 
     assert(0 && "cNameOf of UNSUPPORTED_DATATYPE");
     exit(KOIFISH_UNSUPPORTED_DATATYPE);
@@ -1673,95 +1464,7 @@ size_t GTensor::size(int typ) const {
 
 void* GTensor::DataPad(void* src0, int flag) { return nullptr; }
 
-#ifdef __USE_GGML__
-hGensor tSCAL(struct ggml_context* ctx, struct ggml_tensor* a, float s, int flag) {
-    // hGensor b = ggml_scale_inplace( ctx,a,s);    // inplace operations are currently not supported!!!
-    hGensor b = ggml_scale(ctx, a, s);
-    gTN(b, "%s_s", a->name);
-    return b;
-}
-
-hGensor Permute(struct ggml_context* ctx_, struct ggml_tensor* cur, int64_t n1, int64_t n2, int64_t n3, int64_t n4, bool isCont) {
-    hGensor q = ggml_permute(ctx_, cur, n1, n2, n3, n4);
-    gTN0(q, "%s.#", cur->name);
-    if (isCont) {
-        q = ggml_cont(ctx_, q);
-        gTN(q, "%s.#c", cur->name);
-    }
-    return q;
-}
-
-hGensor TENSO(void* ctx0, int typ, SHAPE shape, int flag, const string& name) {
-    /*va_list args;   //  In C/C++, you can not determine the number of arguments that were passed to a "variadic" function!!!
-    va_start( args, typ );
-    SHAPE shape;
-    int val=-1;
-    while (val = va_arg(args, int))  {
-        shape.push_back(val);
-    }
-    va_end(args);*/
-    struct ggml_context* ctx = (struct ggml_context*)(ctx0);
-    assert(ctx0 != nullptr);
-    enum ggml_type type    = (enum ggml_type)typ;
-    struct ggml_tensor* gg = nullptr;
-    switch (shape.size()) {
-        case 1:
-            gg = ggml_new_tensor_1d(ctx, type, shape[0]);
-            break;
-        case 2:
-            gg = ggml_new_tensor_2d(ctx, type, shape[0], shape[1]);
-            break;
-        case 3:
-            gg = ggml_new_tensor_3d(ctx, type, shape[0], shape[1], shape[2]);
-            break;
-        case 4:
-            ggml_new_tensor_4d(ctx, type, shape[0], shape[1], shape[2], shape[3]);
-            break;
-        default:
-            assert(0);
-            break;
-    }
-    return gg;
-}
-
-void Gensor2float_(const hGensor w, float* A, int flag) {
-    size_t ne00 = tELEM(w), nbyte = tBYTE(w);
-    void* data_0       = w->data;
-    enum ggml_type tp0 = (enum ggml_type)w->type;
-    void* src0_row     = (void*)((char*)w->data);
-    assert(ggml_is_quantized(tp0));
-    switch (w->type) {
-        // case typNUMBER::F16:
-        //     ggml_fp16_to_fp32_row((ggml_fp16_t*)w->data,A,nIn*nOut);
-        //     break;
-        case typNUMBER::F32:
-            break;
-        case typNUMBER::Q2_K:
-            dequantize_row_q2_K((const block_q2_K*)src0_row, A, ne00);  //-0.00318908691
-            break;
-        case typNUMBER::Q3_K:
-            dequantize_row_q3_K((const block_q3_K*)src0_row, A, ne00);
-            break;
-        case typNUMBER::Q4_K:
-            dequantize_row_q4_K((const block_q4_K*)src0_row, A, ne00);
-            break;
-        case typNUMBER::Q6_K:
-            dequantize_row_q6_K((const block_q6_K*)src0_row, A, ne00);
-            break;
-        case typNUMBER::Q8_0:
-            dequantize_row_q8_0((const block_q8_0*)src0_row, A, ne00);
-            break;
-        default:
-            assert(0);
-            // ggml_tensor_dequant(ctx0,w,typNUMBER::F32);       //memory leak@"float * wdata = malloc(sizeof(float)*ne00)" !!!
-            // memcpy(A,w->data,sizeof(float)*ne00);
-            // w->data = data_0;       w->type = tp0;
-            break;
-    }
-}
-#else
 void Gensor2float_(const hGensor w, float* A, int flag) { assert(0); }
-#endif
 
 void ADAM_params_::Dump(int typ) {
     _INFO("\tADAM lr=%g,beta=[%g,%g] decay=%g(dim>=%d) clip=%g(alg=%d)\n", alpha, beta1, beta2, decay, decay_min_ndim, gclip, clip_alg);
@@ -1786,9 +1489,7 @@ ggml_cgraph* GG_dup_graph(ggml_context* ctx, ggml_cgraph* src) {
 }
 
 #include "../Manifold/Fish.hpp"
-#ifdef __USE_GGML__
-#include "gguf.h"
-#endif
+
 /*
     1.  gguf_get_tensor_offset
 */

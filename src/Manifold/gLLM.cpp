@@ -24,7 +24,7 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_, int flag) {
         train_params.seed = time(NULL);
     }
     wikis = wikis_;
-
+    hEDS  = EDGE_DEVICES::GetInstance(config);
     if (hDict == nullptr) {
         if (!InitDictTokenset())  //  hDictVAE
             return false;
@@ -39,8 +39,8 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_, int flag) {
         teach = wikis[0]->teach;
     }
 
-    hDistler   = nullptr;  // config.sigma=="" ? nullptr : std::make_shared<Distillation>(this,config,0x0);     //ADD SIGMA
-    hEDS       = EDGE_DEVICES::GetInstance(config);
+    hDistler = nullptr;  // config.sigma=="" ? nullptr : std::make_shared<Distillation>(this,config,0x0);     //ADD SIGMA
+
     hOPT->hEDS = hEDS;
 
     InitModel(flag);
@@ -663,8 +663,8 @@ void NLP_AutoRegressive::Dump(int type, int flag) {
     } else
         _INFO("====== nParams = %ld(%.6gM nT=%ld) ======\n", nParams, nParams / 1.0e6, optParams.size());
     _INFO("\t nParams=%zu model_size = %zu bytes (%.1f MB)\n", nParams, szModel, szModel / (1024.0f * 1024.0f));
-    _INFO("\t n_vocab=%d t_vocab=%d,n_batch=%d,n_ctx=%d,n_embd=%d,n_head=%d,n_rot=%d,n_ff=%d\n", n_vocab, tVocab(), n_batch, n_ctx, n_embd, config.n_head(),
-          config.n_rot(), config.n_ff());
+    _INFO("\t n_vocab=%d t_vocab=%d,n_batch=%d,n_ctx=%d,n_embd=%d,n_head=%d,head_dim=%d,n_ff=%d\n", n_vocab, tVocab(), n_batch, n_ctx, n_embd, config.n_head(),
+          config.head_dim(), config.n_ff());
     _INFO("\t loader=%s\n", config.tpBatchSample.c_str());
     if (hOPT != nullptr) {
     } else {
@@ -673,7 +673,7 @@ void NLP_AutoRegressive::Dump(int type, int flag) {
     if (config.lars_ratio > 0)
         _INFO("\t LARS(t_max=%g)\n", config.lars_ratio);
 
-    std::sort(optParams.begin(), optParams.end(), [](const hGTensor& a, const hGTensor& b) { return strcmp(a->name,b->name)<0; });
+    std::sort(optParams.begin(), optParams.end(), [](const hGTensor& a, const hGTensor& b) { return strcmp(a->name, b->name) < 0; });
     _INFO("====== Params Table ======\n");
     for (auto t : optParams) {
         t->DumpX(0x0);

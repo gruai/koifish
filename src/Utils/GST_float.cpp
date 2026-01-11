@@ -14,38 +14,102 @@
 #include <immintrin.h>
 #endif
 // #include "f16cintrin.h"
-#include "../g_def_x.hpp"
 #include "../CLI_params.hpp"
+#include "../g_def_x.hpp"
 #include "../g_float.hpp"
 #include "../g_float_cpu.hpp"
 
+typNUMBER tpNumOf(const std::string& dtype_str) {
+    std::string sType = dtype_str;
+    std::transform(sType.begin(), sType.end(), sType.begin(), ::toupper);
+    typNUMBER type = typNUMBER::T_OTHER;
+    for (auto k_float : K_FLOATS) {
+        if (sType == k_float.second.name) {
+            type = k_float.first;
+            return type;
+        }
+        for (auto alias : k_float.second.alias) {
+            if (sType == alias){
+                type = k_float.first;
+                return type;
+            }
+        }
+    }
+    /*if ((*so) == "BOOL") {
+            dtype = typNUMBER::BOOL1;
+        } else if ((*so) == "U8") {
+            dtype = typNUMBER::U8;
+        } else if ((*so) == "I8") {
+            dtype = typNUMBER::I8;
+        } else if ((*so) == "U16") {
+            dtype = typNUMBER::U16;
+        } else if ((*so) == "I16") {
+            dtype = typNUMBER::I16;
+        } else if ((*so) == "U32") {
+            dtype = typNUMBER::U32;
+        } else if ((*so) == "I32") {
+            dtype = typNUMBER::I32;
+        } else if ((*so) == "U64") {
+            dtype = typNUMBER::U64;
+        } else if ((*so) == "I64") {
+            dtype = typNUMBER::I64;
+        } else if ((*so) == "F16") {
+            dtype = typNUMBER::F16;
+        } else if ((*so) == "BF16") {
+            dtype = typNUMBER::BF16;
+        } else if ((*so) == "F32") {
+            dtype = typNUMBER::F32;
+        } else if ((*so) == "F64") {
+            dtype = typNUMBER::F64;
+        } else {*/
+
+    /*
+    if (sType == "F32") {
+        type = typNUMBER::F32;
+    } else if (sType == "F16") {
+        type = typNUMBER::F16;
+    } else if (sType == "BF16") {
+        type = typNUMBER::BF16;
+    } else if (sType == "F8_E5M2") {
+        type = typNUMBER::F8E5M2;
+    } else if (sType == "FP8") {
+        type = typNUMBER::F8E5M2;
+    } else if (sType == "F8_E4M3") {
+        type = typNUMBER::F8E4M3;
+    } else if (sType == "I32") {
+        type = typNUMBER::I32;
+    } else if (sType == "I16") {
+        type = typNUMBER::I16;
+    } else if (sType == "I8") {
+        type = typNUMBER::I8;
+    } else if (sType == "U8") {
+        type = typNUMBER::I8;
+    } else if (sType == "TERNARY") {
+        type = typNUMBER::T_SIGN;
+    } else if (sType == "BINARY") {
+        type = typNUMBER::T_BINARY;
+    } else*/
+    if (type == typNUMBER::T_OTHER) {
+        std::string sErr = "Invalid typNumber@" + sType;
+        assert(0 && sErr.c_str());
+    }
+    return type;
+}
+
+size_t FLOAT_META::nByte(size_t nElem) const {
+    assert(nElem * bis % 8 == 0);
+    return nElem * bis / 8;
+}
+
 //
 double BitPE(typNUMBER type) {
-    if (type == typNUMBER::F8E5M2 || type == typNUMBER::F8E4M3 || type == typNUMBER::I8)
-        return 8.0;
-    if (type == typNUMBER::F16)
-        return 16.0;
-    if (type == typNUMBER::BF16)
-        return 16.0;
-    if (type == typNUMBER::F32 || type == typNUMBER::I32)
-        return 32.0;
-    if (type == typNUMBER::T_SIGN)
-        return 2.0;
-    if (type == typNUMBER::Q4)
-        return 4.0;
-    if (type == typNUMBER::Q3)
-        return 3.0;
-    if (type == typNUMBER::Q2)
-        return 2.0;
-    if (type == typNUMBER::T_BINARY || type == typNUMBER::T_BINARY_3) {
-        if (DEBUG.T_ternary == 1)  // hack to BF16 to debug some error
-            return 16.0;
-        return 1.0;
-    }
+    // int no = (int)type;
+    // assert(no<sizeof(K_FLOATS)/sizeof(FLOAT_META));
     if (type == typNUMBER::T_BINARY_TILE) {
-        return 0;  // 0.125;
+        return 0.125;
     }
-    exit(KOIFISH_UNSUPPORTED_DATATYPE);
+    double bit = K_FLOATS[type].bis;
+    return bit;
 }
 
 #if defined(__AVX2__) && defined(__F16C__)

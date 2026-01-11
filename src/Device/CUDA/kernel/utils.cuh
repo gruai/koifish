@@ -134,6 +134,11 @@ __device__ inline float CU_T2Float(const T* a0) {
     float a = float(*a0);
     return a;
 }
+template <>
+__device__ inline float CU_T2Float<__nv_bfloat16>(const __nv_bfloat16* x) {
+    return __bfloat162float(*x);
+}
+
 //	Frome smart code of CALM
 template <>
 __device__ inline float CU_T2Float<__nv_fp8_e5m2>(const __nv_fp8_e5m2* x) {

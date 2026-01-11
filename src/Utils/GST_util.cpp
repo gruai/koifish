@@ -103,6 +103,7 @@ void SUM::Reset(string typ, int flag) {
     }
     if (typ == "memory") {
         SUM::szUpload = 0;
+        _WARN("All MEM_USAGE(%ld) infos are cleard!", mems.size());
         mems.clear();
     }
 }
@@ -131,18 +132,6 @@ void SUM::TimeInfo(int type, int flag) {
         _TIME_INFO(" X=", tX1);
     _INFO(")");
 }
-
-/*
-void Fish::STAT::Dump(int typ, int flag) {
-    if (NOT_DUMP(0))
-        return;
-    size_t sz         = 0x0;
-    const char* title = "OPT";  //__func__
-    switch (typ) {
-        default:
-            _INFO("\tTIME: qkv=%.3g(s),ffn=%.3g(s)\n", tQKV / 1.0e6, tFFN / 1.0e6);
-    }
-}*/
 
 std::string SUM::CPU_Info(int flag) {
     struct rusage usage;
@@ -204,7 +193,7 @@ void SUM::MemoryInfo(int type, int flag) {
         mems.size(), szNow / 1.0e9, szFree / 1.0e9, MEM_USAGE::szA / 1.0e6, MEM_USAGE::szW / 1.0e6, MEM_USAGE::szG / 1.0e6, MEM_USAGE::szMoment / 1.0e6,
         MEM_USAGE::szTemp / 1.0e6, MEM_USAGE::szOther / 1.0e6);
     _INFO("\tcurBrach=%.5gM mUsed==%.5gM\n", (MEM_USAGE::szA + MEM_USAGE::szW + MEM_USAGE::szG + MEM_USAGE::szMoment) / 1.0e6, mUsed);
-    int nDump = type == KOIFISH_OUTOF_GPUMEMORY ? 32 : nMostMemItem;
+    int nDump = type == KOIFISH_MISS_MEMBLOCK ? mems.size() : type == KOIFISH_OUTOF_GPUMEMORY ? 32 : nMostMemItem;
     if (nDump > 0) {  // decsend by memory size
         size_t szTotal = 0;
         for (auto mem : mems) {
@@ -305,7 +294,7 @@ bool VERIFY_DIR_EXIST(const std::string& path, bool isCreate) {
         }
         return isExist;
     } catch (const std::filesystem::filesystem_error& e) {
-        _ERROR("\"%s\" is not exist! ERR=%s\n", path.c_str(),e.what());
+        _ERROR("\"%s\" is not exist! ERR=%s\n", path.c_str(), e.what());
         return isExist;
     }
 }
@@ -313,7 +302,7 @@ bool VERIFY_DIR_EXIST(const std::string& path, bool isCreate) {
 /**
  *  v0.1    20250918
  */
-const char* GRUAI_KOIFISH_APP_NAME = "Koifish-v0.1";
+const char* GRUAI_KOIFISH_APP_NAME = "Koifish-v0.2";
 void GRUAI_KOIFISH_VERSION(char* str, int flag = 0x0) {
     char sName[80] = "\0";
     int i, nLen = (int)strlen(GRUAI_KOIFISH_APP_NAME), nFrame = 68, off;
@@ -366,12 +355,15 @@ void GG_log_internal_v(DUMP_LEVEL level, const char* format, va_list args) {
     switch (level) {
         case DUMP_ERROR:
             snprintf(coloredMsg, sizeof(coloredMsg), "%s error: %s%s", COLOR_RED, log_buffer, COLOR_RESET);
+            fflush(stdout);
             break;
         case DUMP_WARN:
-            snprintf(coloredMsg, sizeof(coloredMsg), "%s warn: %s%s", COLOR_YELLOW, log_buffer, COLOR_RESET);
+            snprintf(coloredMsg, sizeof(coloredMsg), "%s warn: %s%s", COLOR_MAGENTA, log_buffer, COLOR_RESET);
+            fflush(stdout);
             break;
         case DUMP_WARN0:
-            snprintf(coloredMsg, sizeof(coloredMsg), "%s %s%s", COLOR_YELLOW, log_buffer, COLOR_RESET);
+            snprintf(coloredMsg, sizeof(coloredMsg), "%s %s%s", COLOR_MAGENTA, log_buffer, COLOR_RESET);
+            fflush(stdout);
             break;
         default:
             snprintf(coloredMsg, sizeof(coloredMsg), "%s", log_buffer);

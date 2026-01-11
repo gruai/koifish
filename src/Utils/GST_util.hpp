@@ -472,8 +472,10 @@ inline bool isStrMatch(const string& target, const vector<string>& words) {
 
 void read_stdin(const char* guide, char* buffer, size_t bufsize);
 
+size_t F_SIZE(const std::string& fpath, FILE* fp0 = NULL, int flag = 0x0);
 std::string FILE2STR(const std::string fPath, int flag = 0x0);
 bool STR2FILE(const std::string fPath, const std::string& text, std::ofstream::openmode mode, int flag = 0x0);
+
 /*
     CUBLAS: Base addresses of A, B, C matrices should be aligned to 256-byte boundaries for optimal performance.
 */

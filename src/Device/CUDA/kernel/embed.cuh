@@ -59,7 +59,7 @@ __global__ static void CU_embed_forw_q4(floatGama* gamas, hBITARR quants, T_out*
     assert(token >= 0 && token < M);
     T_out* x0      = o + 2 * offset;
     BIT_8 q        = quants[(token * N) / 2 + offset];
-    floatGama *lut = gamas + M + N + token * 16, *gamaCol = nullptr;
+    floatGama *lut = gamas + M + N + token * 16; //*gamaCol = nullptr;
     floatGama sR = 1.0, sC = 1.0;
     if (rc_normal > 0) {
         sR = gamas[token];
@@ -101,7 +101,7 @@ __global__ static void CU_embed_forw_nf4(floatGama* gamas, hBITARR quants, T_out
     assert(token >= 0 && token < M);
     T_out* x0      = o + 2 * offset;
     BIT_8 q        = quants[(token * N) / 2 + offset];
-    floatGama *lut = gamas + M + N + token * 16, *gamaCol = nullptr;
+    floatGama *lut = gamas + M + N + token * 16;    // *gamaCol = nullptr;
     floatGama sR = 1.0, sC = 1.0;// zero = gamas[M + N + token * 2], scale = gamas[M + N + token * 2 + 1];
     ;
     if (rc_normal > 0) {

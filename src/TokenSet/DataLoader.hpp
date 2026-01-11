@@ -10,9 +10,10 @@
 
 #ifndef DATALOADER_H
 #define DATALOADER_H
-#include "../ggex/GG_util.hpp"
+
 struct DictVAE;
 #include "../CLI_params.hpp"
+#include "../Tensor/GTensor.hpp"
 #include "../Utils/GST_obj.hpp"
 #include "../Utils/GST_rander.hpp"
 #include "TokenSet.hpp"

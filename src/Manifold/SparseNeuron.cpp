@@ -138,6 +138,16 @@ SparseNeuron::SparseNeuron(const std::string& key_, JSON::const_iterator jit, Fi
     }
 }
 
+SparseNeuron::SparseNeuron(const std::string& key_, Fish* hG_, int flag) : GeNeuron(key_, hG_, flag) {
+    if (BIT_TEST(flag, F_HOTPICK)) {
+        isSparse = true;
+    }
+    if (isSparse) {
+        method  = hG_->config.model.sparse.method;
+        hPicker = std::make_shared<HotPicker>(this);
+    }
+}
+
 void SparseNeuron::SetEmbed(TokenEmbed* embd_, int type, int flag) {
     assert(embd_ != nullptr);
     subw      = embd_;

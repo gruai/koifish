@@ -17,7 +17,6 @@
 // #include "../ggex/common-ggml.h"
 #include "../TokenSet/Dictionary.hpp"
 #include "../Utils/Cache.hpp"
-#include "../ggex/GG_util.hpp"
 #include "Fish.hpp"
 #include "VAE.hpp"
 #ifdef __USE_GGML__
@@ -304,7 +303,7 @@ class QWen : public NLP_AutoRegressive {
 
         NLP_AutoRegressive::InitModel(flag);
     }
-    std::string NN2NAME(const std::string& prefix, tpNEURON4NAME neron, const std::string &suffix="", int flag = 0x0) override;
+    std::string NN2NAME(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix = "", int flag = 0x0) override;
 };
 
 // also support QWen2.5 model
@@ -320,7 +319,6 @@ class QWen3 : public QWen {
 
         NLP_AutoRegressive::InitModel(flag);
     }
-    
 };
 
 struct TinyLama : public NLP_AutoRegressive {};
