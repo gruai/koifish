@@ -19,10 +19,10 @@ QWen::QWen(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, in
     config.model.isNormalBias = false;
     config.model.norm_rms_eps = 1.0e-6;
     if (isTrain()) {
-        // g_dump_level = -1;
         config.model.qkv4dnn = QKV_PACK::QQKKVV;
     } else {
     }
+    DEBUG.cmd_p1 = 0;
 }
 QWen3::QWen3(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : QWen(nam_, params, role, flag) {
     // also support QWen2.5 model

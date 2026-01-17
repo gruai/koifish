@@ -442,7 +442,7 @@ inline int convert_SM_to_cores(int major, int minor) {
 }
 
 bool InitCUDA(const CLI_params& hparams, EDGE_DEVICES* hDevice, int flag) {
-    int local_device_idx = 0, override_enable_tf32 = 1;
+    int local_device_idx = 0;   //override_enable_tf32 = 1;
     cudaError_t err = cudaSetDevice(0);
     if (err != cudaSuccess) {
         printf("[InitCUDA] failed at cudaSetDevice! ERR=%s\n", cudaGetErrorString(err));
@@ -519,16 +519,21 @@ bool InitCUDA(const CLI_params& hparams, EDGE_DEVICES* hDevice, int flag) {
 
 /*
       cudaStreamSynchronize(stream)/cudaEventSynchronize(event) maybe better
+
+      1. cudaEventSynchronize
+        cudaEventSynchronizeis a CUDA function that blocks the host (CPU) until a CUDA event is completed. It's crucial for proper timing, synchronization, and debugging in CUDA applications.
+      2. cudaEventRecord
+        cudaEventRecordis a CUDA function that records a CUDA event at a specific point in a CUDA stream. It's used for timing, synchronization, and establishing dependencies between operations.
 */
 bool SYNC_DEVICE(const std::string& sX, int flag) {
 #ifdef __USE_CUDA__
     if (main_stream != nullptr) {
         cudaError_t error = cudaDeviceSynchronize();
         if (error != cudaSuccess) {
-            _INFO("SYNC_DEVICE err=\"%s\" (%s code=%d)\t%s\n", cudaGetErrorString(error), cudaGetErrorName(error), error, sX.c_str());
+            _INFO("_SYNC_DEVICE_ err=\"%s\" (%s code=%d)\t%s\n", cudaGetErrorString(error), cudaGetErrorName(error), error, sX.c_str());
             if (flag == 1)
                 return false;
-            assert(0 && "SYNC_DEVICE");
+            assert(0 && "_SYNC_DEVICE_");
             exit(KOIFISH_EXIT_SYNC_DEVICE);
         }
         return true;
@@ -633,10 +638,12 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
     Forward:    cur = cuFlow(cur,residual,flag);
     Backward:   QKV->cuFlow(last->out,QKV->norm.out,0x0);
 */
-hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
+hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {    // NVTX_RANGE_FN();
+    
     floatX* qkvr = ToX(tmpQKV);  // Q.out/K.out/V.out
     // bool isAlternate = true;                   // layer%2==1;layer>1;
     if (isForward()) {                      //  data=ToX(QKV->norm.out)
+        NvtxRange range(name.c_str(),0);
         inp               = OnInput(inpL);  //         inp->Print("inp",0x0,dump_flag);
         GTensor::residual = inp;            // GTensor::residual->OverWrite(inp);
         hGTensor inpQ     = inpL;
@@ -681,9 +688,10 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
 
         } else {
         }
-
+        SYNC_DEVICE();
         return out;
     } else {  //  Backward
+        NvtxRange range(name.c_str(),1);
         INSPECT_THIS;
         // Q.w->Print("Qw", 1, dump_flag);
         float* scratchF = (float*)GTensor::buff;
@@ -743,7 +751,7 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
         GTensor::tmpDelta->Print("DLN1", 0, dump_flag);
         norm.cuFlow(GTensor::tmpDelta);  // would backpropagatioin to GTensor::delta
         GTensor::delta->Print("back of QKV", 0, dump_flag);
-
+        SYNC_DEVICE();
         return GTensor::delta;
     }
     return nullptr;

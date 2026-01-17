@@ -2,7 +2,9 @@
 /**
  *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
- *
+ * 
+ *  Neurons flow on manifold, just like our life, from no begin to no end(上善若水,生生不息)
+ * 
  *  \brief Collection of neurons
  *  \author Yingshi Chen
  */
@@ -563,8 +565,7 @@ class SelfAttention : public SparseNeuron {
     hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag = 0x0) override;
     bool isValid() override { return true; }
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
-
-    // flow on manifold, just like our life, from no begin to no end
+    
     hGTensor cuFlow(hGTensor inpL, int flag);
     hGTensor cuInfer(hGTensor inpL, int flag);
 

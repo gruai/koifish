@@ -54,7 +54,7 @@ int SUM::nMostMemItem    = 6;
 int SUM::nMinTensorAlloc = 100 * 1024 * 1024;
 double SUM::tX = 0.0, SUM::tX1 = 0.0, SUM::tRemater = 0.0, SUM::tPreLogits = 0.0;
 size_t SUM::szUpload = 0;
-double SUM::tQKV = 0.0, SUM::tFFN = 0.0, SUM::tUpload = 0.0, SUM::tData = 0.0;
+double SUM::tQKV_forw = 0.0, SUM::tQKV_back = 0.0, SUM::tFFN = 0.0, SUM::tUpload = 0.0, SUM::tData = 0.0;
 double SUM::tLoadData = 0.0, SUM::tLoadParam = 0.0, SUM::tEval_1 = 0.0, SUM::tEval_0 = 0.0;
 int SUM::nInitParam = 0, SUM::nSaveParam = 0, SUM::nLoadParam = 0, SUM::nDogLeg = 0;
 int SUM::nzLoadParam = 0, SUM::nzSaveParam = 0;
@@ -98,7 +98,7 @@ MEM_USAGE::MEM_USAGE(size_t sz_, string d_, void* hData_, int flag) : sz(sz_), d
 void SUM::Reset(string typ, int flag) {
     if (typ == "time") {
         tX = 0.0, tX1 = 0.0, tRemater = 0.0;
-        tQKV = 0.0;
+        tQKV_forw = 0.0,    tQKV_back = 0.0;
         tFFN = 0.0;
     }
     if (typ == "memory") {
@@ -126,7 +126,7 @@ void SUM::TimeInfo(int type, int flag) {
         return;
     // _TIME_INFO(" R=",SUM::tRemater);
     _TIME_INFO("(data=", tData);
-    _TIME_INFO(" QKV=", tQKV);
+    _TIME_INFO(" QKV:=", tQKV_forw);  _TIME_INFO(",", tQKV_back);
     _TIME_INFO(" FFN=", tFFN);
     if (tX1 > 0)
         _TIME_INFO(" X=", tX1);

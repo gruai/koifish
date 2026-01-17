@@ -1361,7 +1361,6 @@ void VariationaAE::save_gguf(struct gguf_context* fctx, int flag) {
 CDict_LLAMA::CDict_LLAMA(Fish* nlp_, int flag) : DictVAE(nlp_, flag) {}
 
 int Fish_token(CLI_params& config) {
-    g_dump_level              = 0;
     config.wiki_actor         = "copy";
     config.common.n_batch     = 1;
     config.model.preLogits_dB = 1;

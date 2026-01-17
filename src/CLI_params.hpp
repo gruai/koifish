@@ -437,7 +437,7 @@ struct MUON_params_ {
     bool isTransDown = true;
     bool isAdamW(void* hUserData, int flag = 0x0);
     float lr_scale = 50.f;  // 100.f 50.f?
-    //  torch:  self←self+λ⋅(b−self)          lerp(a, b, λ):  a+λ*(b-a)
+    
     float mui      = 0.95;
     float eps      = 1e-7f;  // epsilon for numerical stability
     float eps_loss = 1e-5f;  // epsilon for convergence test

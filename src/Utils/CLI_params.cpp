@@ -557,7 +557,6 @@ void CLI_params::OnArch() {
             break;
         case MODEL_ARCH::NLP_GPT2:
         case MODEL_ARCH::NLP_GPT2_char: {
-            // DEBUG.cmd_p1 = 1;
             tpLORA = LORA_ADAPT_W::W0;  // refW_AB      W_AB
             if (tpLORA != LORA_ADAPT_W::W0) {
                 fuyou.paramIsGuoke = true;  //
@@ -891,7 +890,7 @@ bool CLI_params::ToJConfig(int flag) {
             jConfig["vendor_quantizer"] = jVendorQuant;
         }
 
-        chat_sampler.seq_len          = 512;
+        chat_sampler.seq_len          = 1024;   //512;
         jConfig["gpt"]["max_seq_len"] = chat_sampler.seq_len;
         // jConfig["debug"]["prompts"] = "hello";
 

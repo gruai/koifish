@@ -9,18 +9,18 @@
 #pragma once
 
 #include <assert.h>
-// #include <float.h>
 #include <cooperative_groups.h>
 #include <stdint.h>
 
 #include "../Tensor/Packed.hpp"
 #include "../cuda_common.h"
 
-// fused multiply-add: FMA(a, b, c) = a*b + c, where the full product enters into the addition unmodified (neither rounded nor truncated), and there is a single
-// rounding at the end. One FMA instruction thus comprises two floating-point operations.It's the basic floating-point building block of the GPU. Reference:
-// https://developer.nvidia.com/blog/lerp-faster-cuda
-// __device__ inline float lerp(float start, float end, float weight) {
-//     return fma(weight, end, fma(-weight, start, start));
+//  torch:  self←self+λ⋅(b−self)          lerp(a, b, λ):  a+λ*(b-a)
+// a + t * (b - a);
+// __device__ __host__ inline float lerp(float a, float b, float t) {
+//     return fmaf(t, b, fmaf(-t, a, a));
+//     // Or the simpler version:
+//     // return a + t * (b - a);
 // }
 
 // only for kernels by cudaLaunchCooperativeKernel
@@ -155,7 +155,7 @@ __device__ inline float CU_T2Float<__nv_fp8_e5m2>(const __nv_fp8_e5m2* x) {
 }
 template <>
 __device__ inline float CU_T2Float<f8e5>(const f8e5* x) {
-    return CU_T2Float<__nv_fp8_e5m2>((const __nv_fp8_e5m2*) x);
+    return CU_T2Float<__nv_fp8_e5m2>((const __nv_fp8_e5m2*)x);
 }
 
 // ----------------------------------------------------------------------------
@@ -195,7 +195,7 @@ __global__ void copy_and_cast_kernel(Td* dst, const Ts* src, size_t n, ptrdiff_t
 // Warp/Block communication primitives
 
 // warp-level reduction for finding the maximum value
-__device__ inline float warpReduceMax(float val) {
+__device__ inline float warpReduceMax(float val, unsigned int active_mask = 0xffffffff) {
     for (int offset = 16; offset > 0; offset /= 2) {
         val = fmaxf(val, __shfl_xor_sync(0xFFFFFFFF, val, offset));
     }
@@ -209,20 +209,18 @@ __device__ inline void bitonicSwap(float& val, int j, int k) {
         val = other;
 }
 
-using reduction_func_t = float (*)(float);
+using reduction_func_t = float (*)(float, unsigned int active_mask);
 /*  requires all 32 threads in the warp to be active, but should work for any block size
     uses non-dynamic shared memory so every call increases shared memory requirements by 128 bytes
     the fact it's unique shared memory allows us to avoid an extra __syncthreads() call at the end
     but if called inside a loop, the shared memory will be implicitly reused, so set final_sync to 1
 */
-
-// warp-level reduction for summing values
 template <const int kWarpSize = WARP_SIZE>
-__device__ __forceinline__ float warpReduceSum(float val) {
+__device__ __forceinline__ float warpReduceSum(float val, unsigned int active_mask = 0xffffffff) {
     assert(kWarpSize <= WARP_SIZE);
 #pragma unroll
     for (int offset = kWarpSize >> 1; offset >= 1; offset >>= 1) {  //  performs a butterfly reduction pattern
-        val += __shfl_xor_sync(0xffffffff, val, offset);            // 1-2 cycle
+        val += __shfl_xor_sync(active_mask, val, offset);           // 1-2 cycle
     }
     return val;
 }
@@ -258,18 +256,33 @@ template <reduction_func_t warp_reduction>
 */
 __device__ inline float blockReduce_v0(float val, bool final_sync = false, float out_of_bounds = 0.0f) {
     __shared__ float shared_val[WARP_SIZE];
+    unsigned int active_mask = 0xffffffff;
+    if (blockDim.x <= WARP_SIZE) {  // Create mask with N lowest bits set
+        active_mask    = (1u << blockDim.x) - 1;
+        float warp_val = warp_reduction(val, active_mask);
+        return warp_val;
+    }
+
+    if (threadIdx.x < WARP_SIZE) {
+        shared_val[threadIdx.x] = 0.0f;
+    }
+    __syncthreads();
+
     assert(blockDim.x > 0);
     const int lane_id   = threadIdx.x % WARP_SIZE;
     const int warp_id   = threadIdx.x / WARP_SIZE;
     const int num_warps = blockDim.x / WARP_SIZE;
-
-    float warp_val = warp_reduction(val);
+    const int nThreads  = std::min(blockDim.x, (warp_id + 1) * WARP_SIZE) - warp_id * WARP_SIZE;
+    if (nThreads < WARP_SIZE) {  // last wrap may has fewer threads than WARP_SIZE
+        active_mask = (1u << nThreads) - 1;
+    }
+    float warp_val = warp_reduction(val, active_mask);
     if (lane_id == 0) {
         shared_val[warp_id] = warp_val;
     }
-    __syncthreads();  //  make sure the data is in shared memory.
+    __syncthreads();  //  make sure all data in shared memory.
     warp_val        = (lane_id < num_warps) ? shared_val[lane_id] : out_of_bounds;
-    float block_val = warp_reduction(warp_val);
+    float block_val = warp_reduction(warp_val, 0xffffffff);
 
     if (final_sync) {
         __syncthreads();  // only needed in loops when effectively reusing shared memory etc.
@@ -430,6 +443,32 @@ inline int get_max_num_block_sums(int* num_slices_all, int numel) {
     return max_num_block_sums;
 }
 
+/*
+    Performs a deterministic x2
+        atomicAdd in CUDA is not deterministic because it involves race conditions when multiple threads attempt to modify the same memory location
+   simultaneously.
+*/
+template <class T, class Tout>
+__global__ static void CU_x2_atomic(Tout* out, const T* x0, size_t N) {
+    using x128 = PackedN<T, 16 / sizeof(T)>;
+    assert(N % x128::size == 0);
+    int idx = blockIdx.x * blockDim.x + threadIdx.x, tid = threadIdx.x, off = idx * x128::size;
+    if (off >= N) {  // guard
+        return;
+    }
+    assert(blockDim.x <= 1024);
+
+    // float a         = x0[idx];
+    // float sum       = a * a;
+    float sum = 0.f;
+    x128::X2(sum, x0 + off);
+    float block_sum = blockReduce_v0<warpReduceSum>(sum, true);
+    if (tid == 0) {
+        // printf("%g + %g\n",*out,block_sum);
+        atomicAdd(out, (Tout)block_sum);
+    }
+}
+
 template <class T>
 __global__ static void CU_X2_partial(float* out, const T* data, size_t count) {
     size_t index      = blockIdx.x * blockDim.x + threadIdx.x;
@@ -480,20 +519,11 @@ struct SoftmaxParams {
 
 /*
  each block for one row of inp, i.e. inp[idx, :] of shape (V,)
-*/
+
 __device__ inline SoftmaxParams CU_prepare_softmax(const floatX* logits, int V) {
     float thread_maxval = -INFINITY, thread_sumval = 0.0f;  //, sum = 0.0f;
     // floatX max_val = logits[0];
     int tid = threadIdx.x;
-    /*if (threadIdx.x == 0) {  //  cpu version=P_softmax
-        for (int i = 0; i < V; i++) {
-            max_val = fmaxf(logits[i], max_val);
-        }
-        for (int i = 0; i < V; i++) {
-            sum += expf(logits[i] - max_val);
-        }
-        float a = 1.0 / sum;        //  0.07178,    715.412964
-    }*/
     for (int i = tid; i < V; i += blockDim.x) {
         float v       = (float)logits[i];
         thread_maxval = fmaxf(thread_maxval, v);
@@ -505,4 +535,4 @@ __device__ inline SoftmaxParams CU_prepare_softmax(const floatX* logits, int V) 
     }
     float block_sumval = blockReduce_v0<warpReduceSum>(thread_sumval);
     return SoftmaxParams{1.f / block_sumval, block_maxval};
-}
+}*/

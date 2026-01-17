@@ -59,33 +59,33 @@ __global__ void matmul_backward_bias_kernel9(OutFloat* dbias, const floatX* delt
     int warp_c  = (int)threadIdx.y;
     int block_d = (int)threadIdx.z;
 
-    const int OC_per_warp = bdy * x128::size;  // 64 at BF16
+    const int OC_per_warp = bdy * X128::size;  // 64 at BF16
 
-    int local_oc  = warp_c * x128::size;
+    int local_oc  = warp_c * X128::size;
     int global_oc = blockIdx.x * OC_per_warp + local_oc;
 
     int local_bt     = warp_d + bdx * block_d;
     int bt_per_block = bdx * blockDim.z;
 
-    float accumulators[x128::size];
-    for (int k = 0; k < x128::size; k++) {
+    float accumulators[X128::size];
+    for (int k = 0; k < X128::size; k++) {
         accumulators[k] = 0.0f;
     }
 
     if (global_oc < OC) {
         // sum up over all bt within registers
         for (int idx = blockIdx.y * bt_per_block + local_bt; idx < B * T; idx += gridDim.y * bt_per_block) {
-            x128 packed_dout = load128(deltaIn + global_oc + idx * OC);
-            for (int k = 0; k < x128::size; k++) {
+            X128 packed_dout = load128(deltaIn + global_oc + idx * OC);
+            for (int k = 0; k < X128::size; k++) {
                 accumulators[k] += (float)packed_dout[k];
             }
         }
     }
 
-    __shared__ float sub_results[x128::size][WARP_SIZE][bdy];
+    __shared__ float sub_results[X128::size][WARP_SIZE][bdy];
 
     // reduce within-warp results
-    for (int k = 0; k < x128::size; k++) {
+    for (int k = 0; k < X128::size; k++) {
         float v = accumulators[k];
         v += __shfl_down_sync(0xffffffff, v, 1, 4);
         v += __shfl_down_sync(0xffffffff, v, 2, 4);
@@ -96,7 +96,7 @@ __global__ void matmul_backward_bias_kernel9(OutFloat* dbias, const floatX* delt
     __syncthreads();
 
     // block-wide reductions
-    for (int k = block_d; k < x128::size; k += blockDim.z) {
+    for (int k = block_d; k < X128::size; k += blockDim.z) {
         float a = 0.f;
         for (int r = warp_d; r < blockDim.z; r += bdx) {
             float v = sub_results[k][r][warp_c];
@@ -116,7 +116,7 @@ __global__ void matmul_backward_bias_kernel9(OutFloat* dbias, const floatX* delt
 
 __global__ void static reduce_add_sum_kernel(floatX* dst, const float* src, size_t n, size_t m) {
     const size_t idx = (blockIdx.x * blockDim.x + threadIdx.x) * f128::size;
-    assert(n % x128::size == 0);
+    assert(n % X128::size == 0);
     if (idx < n) {
         f128 acc;
         for (int k = 0; k < f128::size; ++k) {
@@ -292,6 +292,7 @@ void CU_abc(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int
 template <class FloatC, class FloatA, class FloatB, class FloatBias>
 void CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* bias, int m, int n, int k, const float* scale_a, const float* scale_b,
                   cudaStream_t stream = 0, int transA = 1, int transB = 0, bool accumulate = false, bool backward = false) {
+    NVTX_RANGE_FN();
     bool has_bias              = (bias != nullptr);
     hBITARR workspace          = (hBITARR)GTensor::cudnn_workspace;
     std::size_t workspace_size = GTensor::cudnn_workspace_size;
@@ -397,6 +398,7 @@ void CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* 
 */
 void CU_mm_(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream, int transA, int transB, float beta,
             floatX* pre_gelu, bool backward) {
+    NVTX_RANGE_FN();
     const float alpha     = 1.0f;  //, beta = accumulate ? 1.0f : 0.0f;
     cublasOperation_t opA = (transA) ? CUBLAS_OP_T : CUBLAS_OP_N, opB = (transB) ? CUBLAS_OP_T : CUBLAS_OP_N;
     if (bias != nullptr) {  //  bias != nullptr || pre_gelu != nullptr
@@ -443,7 +445,7 @@ void matmul_backward(floatX* delta, floatX* dweight, floatX* dbias, floatX* delt
         const int block_size = deviceProp.maxThreadsPerMultiProcessor == 1536 ? 768 : 1024;
 
         dim3 block_dim        = {4, 8, (unsigned)block_size / WARP_SIZE};
-        const int OC_per_warp = block_dim.y * x128::size;  // 64 at BF16
+        const int OC_per_warp = block_dim.y * X128::size;  // 64 at BF16
 
         const int grid_size_x = CEIL_DIV(OC, OC_per_warp);  // e.g. 12 horizontal blocks for 768 OCs at BF16
         const int grid_size_y = max(1, deviceProp.maxThreadsPerMultiProcessor * deviceProp.multiProcessorCount / (block_size * grid_size_x));  // full GPU!

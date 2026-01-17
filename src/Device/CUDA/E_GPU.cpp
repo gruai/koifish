@@ -17,8 +17,8 @@ bool CudaDriverManager::shutdown_initiated = false;
 void SUM::GPU_TIME(double& a, const double b, int flag) {
     return;
 #ifndef NDEBUG
-    //cudaCheck(cudaStreamSynchronize(main_stream));
-     SYNC_DEVICE();      // Ensure all GPU work is complete, slow, only for debug version
+    // cudaCheck(cudaStreamSynchronize(main_stream));
+    SYNC_DEVICE();  // Ensure all GPU work is complete, slow, only for debug version
 #endif
     a += GST_us() - b;
 }
@@ -123,10 +123,10 @@ std::vector<EDGE_DEVICES::GPU_> EDGE_DEVICES::GPU_::cudaGetDevice(int flag) {
     return devices;
 }
 
-bool InitCUDA(const CLI_params &hparams, EDGE_DEVICES *hDevice, int flag);
+bool InitCUDA(const CLI_params& hparams, EDGE_DEVICES* hDevice, int flag);
 
 //  Destroy @EDGE_DEVICES::ClearGPU
-bool EDGE_DEVICES::InitGPU(const CLI_params &hparams, int flag) {
+bool EDGE_DEVICES::InitGPU(const CLI_params& hparams, int flag) {
     string sTp = hparams.KV({"train", "device"}, "");
     gpus       = EDGE_DEVICES::GPU_::cudaGetDevice(flag);
     mostRAM    = 0;

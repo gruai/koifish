@@ -1,6 +1,12 @@
-/*
-Common utilities for CUDA code.
-*/
+
+/**
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT
+ *
+ *  \brief Common utilities for CUDA code
+ *  \author Yingshi Chen
+ */
+
 #pragma once
 
 #include <cublasLt.h>
@@ -25,16 +31,14 @@ Common utilities for CUDA code.
 #include "../../Utils/GST_log.hpp"
 #include "../../Utils/GST_util.hpp"
 #include "../../g_float.hpp"
+#include "cuda_def.hpp"
 
-// ----------------------------------------------------------------------------
-// cuBLAS globals for workspace, handle, settings
-
-// Hardcoding workspace to 32MiB but only Hopper needs 32 (for others 4 is OK)
 extern const size_t cublaslt_workspace_size;
 extern void* cublaslt_workspace;
 extern cublasComputeType_t cublas_compute;
 extern cublasLtHandle_t cublaslt_handle;
 extern cublasHandle_t cublas_handle;
+
 // ----------------------------------------------------------------------------
 // Error checking
 
@@ -56,33 +60,6 @@ void inline cublasCheck(cublasStatus_t status, const char* file, int line) {
 // defined as extern here because the individual kernels wish to use it
 // but it is actually created and instantiated in the main program file
 extern cudaDeviceProp deviceProp;
-// #define THREAD_TILE_M 16U
-// #define THREAD_TILE_N 16U
-#define THREAD_TILE_M 8U
-#define THREAD_TILE_N 8U
-// #define THREAD_TILE_M 4U
-// #define THREAD_TILE_N 4U
-// WarpSize is not a compile time constant, Defining here like this possibly allows the compiler to optimize better
-#define WARP_SIZE 32U
-
-// Thread number of each block  - If each thread requires big private memory, then using less threads per block helps but its not infinite so should be
-// soft-limited to a minimum like 32 or 64 depending on algorithm. But maximum is hard-limited to 1024 threads per block.
-#define CU_T4B_SMALL 256U
-#define CU_T4B_MIDDLE 512U
-#define CU_T4B_BIG 1024U
-
-#define CU_DEV_WINDOW 512U
-
-// try to make sure that 2 blocks fit on A100/H100 to maximise latency tolerance
-// this needs to be defines rather than queried to be used for __launch_bounds__
-#if __CUDA_ARCH__ == 800 || __CUDA_ARCH__ >= 900
-#define MAX_1024_THREADS_BLOCKS 2
-#else
-#define MAX_1024_THREADS_BLOCKS 1
-#endif
-
-// convenience macro for calculating grid/block dimensions for kernels
-// #define CEIL_DIV(M, N) (((M) + (N)-1) / (N))
 
 // short-cuts for compile-time boolean values that can be used as function arguments
 constexpr std::bool_constant<true> True;
@@ -131,36 +108,12 @@ inline void cudaFreeCheck(T** ptr, const char* file, int line) {
 #define cudaFreeCheck(ptr) (cudaFreeCheck(ptr, __FILE__, __LINE__))
 
 // ----------------------------------------------------------------------------
-// CUDA Precision settings and defines
-
-// ----------------------------------------------------------------------------
-// Load and store with streaming cache hints
-// Older nvcc does not provide __ldcs and __stcs for bfloat16, despite these
-// actually just being unsigned shorts. We need to be careful here to only define
-// our own versions if none already exist, otherwise the compiler will complain.
-// If not, you easily get "no viable overload" (for sm52) and "function already exists" (sm_80)
-
-#if defined(ENABLE_BF16) && (__CUDACC_VER_MAJOR__ < 12) && !((__CUDA_ARCH__ >= 800) || !defined(__CUDA_ARCH__))
-__device__ floatX __ldcs(const floatX* address) {
-    unsigned short bf = __ldcs(reinterpret_cast<const unsigned short*>(address));
-    return __nv_bfloat16_raw{bf};
-}
-
-__device__ void __stcs(floatX* address, floatX value) { __stcs(reinterpret_cast<unsigned short*>(address), ((__nv_bfloat16_raw)value).x); }
-#elif defined(ENABLE_FP8)
-__device__ inline floatX __ldcs(const floatX* address) {
-    assert(0);
-    return (floatX)(0.0);
-}
-__device__ inline void __stcs(floatX* address, floatX value) { assert(0); }
-#endif
-
-// ----------------------------------------------------------------------------
 // Profiler utils
 
 class NvtxRange {
    public:
     NvtxRange(const char* s) { nvtxRangePush(s); }
+    NvtxRange(const std::string& s) { nvtxRangePush(s.c_str()); }
     NvtxRange(const std::string& base_str, int number) {
         std::string range_string = base_str + " " + std::to_string(number);
         nvtxRangePush(range_string.c_str());
@@ -252,11 +205,6 @@ inline void file_to_device(void* dest, FILE* src, size_t num_bytes, size_t buffe
     cudaCheck(cudaStreamSynchronize(stream));
     cudaCheck(cudaFreeHost(buffer_space));
 }
-
-// tied to enum PrecisionMode, in a future refactor make them the same
-#define MFUH_PRECISION_FP32 0
-#define MFUH_PRECISION_FP16 1
-#define MFUH_PRECISION_BF16 2
 
 typedef struct {
     float TF_32;     // tensor-core performance 32 bit
@@ -722,7 +670,10 @@ struct Surface {
     }
 };
 
-void inline D20(void* dev, size_t szData, int flag = 0x0) { cudaCheck(cudaMemset(dev, 0, szData)); }
+void inline D20(void* dev, size_t szData, int flag = 0x0) {
+    cudaCheck(cudaMemset(dev, 0, szData));
+    // cudaDeviceSynchronize();
+}
 
 bool D2H(void* dev, void* host, size_t szData, int flag = 0x0);
 bool D2D(void* hDst, const void* hSrc, size_t szData, int flag = 0x0);

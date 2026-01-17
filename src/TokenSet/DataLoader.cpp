@@ -42,7 +42,7 @@ std::string mt19937_seed_to_state(unsigned seed) {
         log(1 + exp(input_data[i] - 2 * input_data[i] * (input_data[i] >= 0)));
   }
 */
-float LOSS_cross_entropy_1(int n, const float* preP, int target, int& cand, int flag=0x0) {
+float LOSS_cross_entropy_1(int n, const float* preP, int target, int& cand, int flag = 0x0) {
     assert(target >= 0 && target < n);
     float sum = 0, loss = 0, pMin, pMax, a;
     int j, next_token   = -1;
@@ -234,7 +234,7 @@ void SampLoader::Samp2Batch(int k, hSAMP samp, TRAIN_CARD& params, int flag) {
             samp->last_target = token;
         }
     }
-    if (++i_target < _nctx) {   // one more for last pos of target
+    if (++i_target < _nctx) {  // one more for last pos of target
         TOKEN_ID token = TokenAt(starting);
         if (isTarget_1) {
             hostTargetProbs->Set(i_target, (int)k, 0, 0, token);
@@ -737,8 +737,10 @@ string SampLoader::sTokenSet(int flag) {
 void SampLoader::Shuffle(int flag) {
     if (empty())
         return;
-    if (DEBUG.verShuffleSamp < 0)
+    if (DEBUG.verShuffleSamp < 0) {
+        shuffle_sample_count = shard_samps.size();
         return;
+    }
 
     size_t count = shard_samps.size(), i, j, nSampInBatch = dolphin->config.n_batch();
     assert(count > 0);

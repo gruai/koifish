@@ -17,10 +17,10 @@ __global__ void static silu_backward_inplace_kernel(floatX* d_in_out, const floa
  * Gaussian Error Linear Unit.  GELU(x)=xG(x), where G(x) is the standard Gaussian cumulative distribution function.
  */
 __global__ void static gelu_forward_kernel2(floatX* out, const floatX* inp) {
-    int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
+    int idx = (blockIdx.x * blockDim.x + threadIdx.x) * X128::size;
 
-    x128 packed_out;
-    x128 packed_inp = load128cs(inp + idx);  // load and do not keep in cache
+    X128 packed_out;
+    X128 packed_inp = load128cs(inp + idx);  // load and do not keep in cache
     for (int k = 0; k < packed_inp.size; ++k) {
         float xi      = (float)packed_inp[k];
         float cube    = 0.044715f * xi * xi * xi;
@@ -32,11 +32,11 @@ __global__ void static gelu_forward_kernel2(floatX* out, const floatX* inp) {
 }
 
 __global__ void static gelu_backward_inplace_kernel(floatX* d_in_out, const floatX* inp) {
-    int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
+    int idx = (blockIdx.x * blockDim.x + threadIdx.x) * X128::size;
 
-    x128 packed_dinp;
-    x128 packed_inp  = load128cs(inp + idx);
-    x128 packed_dout = load128(d_in_out + idx);
+    X128 packed_dinp;
+    X128 packed_inp  = load128cs(inp + idx);
+    X128 packed_dout = load128(d_in_out + idx);
     for (int k = 0; k < packed_inp.size; ++k) {
         float x          = (float)packed_inp[k];
         float cube       = 0.044715f * x * x * x;
@@ -53,8 +53,8 @@ __global__ void static gelu_backward_inplace_kernel(floatX* d_in_out, const floa
 void inline gelu_forward(floatX* out, const floatX* inp, int N, cudaStream_t stream) {
     NVTX_RANGE_FN();
     const int block_size = CU_T4B_MIDDLE;
-    assert(N % (block_size * x128::size) == 0);
-    const int grid_size = CEIL_DIV(N, block_size * x128::size);
+    assert(N % (block_size * X128::size) == 0);
+    const int grid_size = CEIL_DIV(N, block_size * X128::size);
     gelu_forward_kernel2<<<grid_size, block_size, 0, stream>>>(out, inp);
     cudaCheck(cudaGetLastError());
 }
@@ -62,8 +62,8 @@ void inline gelu_forward(floatX* out, const floatX* inp, int N, cudaStream_t str
 void inline gelu_backward_inplace(floatX* d_in_out, const floatX* inp, const int N, cudaStream_t stream) {
     NVTX_RANGE_FN();
     const int block_size = 128;
-    assert(N % (block_size * x128::size) == 0);
-    const int grid_size = CEIL_DIV(N, block_size * x128::size);
+    assert(N % (block_size * X128::size) == 0);
+    const int grid_size = CEIL_DIV(N, block_size * X128::size);
     gelu_backward_inplace_kernel<<<grid_size, block_size, 0, stream>>>(d_in_out, inp);
     cudaCheck(cudaGetLastError());
 }

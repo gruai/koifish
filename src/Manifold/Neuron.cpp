@@ -627,7 +627,7 @@ bool ROPE::Build(int flag) {
         // hCos = GT(hFish, typNUMBER::F32, {T * dim2}, 0x0, name + ".cos");
         // hCos->Alloc();
         // hCos->SerialGP(fcos, nullptr, sizeof(float) * T * dim2, false);
-        hSin->Print("sincos", 0x0, -1);
+        hSin->Print("sincos", 0x0, 0x0);
         // hCos->Print("cos", 0x0, -1);
         delete[] fsin;
     }
@@ -829,6 +829,7 @@ hGensor GeNeuron::AfterMing(RLS_BP* hRLS, hGensor cur, int flag) {
     if (hRLS->isRemater) {
         return cur;
     }
+    // NvtxRange range(name+"Ming");
     assert(hRLS != nullptr);
     auto hOPT = hFish->hOPT;
     if (hFish->isSymbolic()) {
@@ -866,7 +867,8 @@ void GeNeuron::OnDebug(const std::string& info, int typ, int flag) {
         return;
     if (!hFish->isTrain())
         return;
-    // dump_flag = -1;
+    // if(!isForward())
+    // { dump_flag = -1;   return; }
     return;
     if (dynamic_cast<FFN*>(this) != nullptr) {
         if (layid == 1) {

@@ -201,7 +201,7 @@ float GeQuant::AfterLowBit(shared_ptr<GTensor> hTensor, const void* srcData, int
                 }
                 if (pos + j == 393712) {  // i=384 j=496    -0.2578=>0.2578
                     DEBUG_HERE;
-                    Distri_QUANT disR(f1, f2);
+                    Distri_PIPE disR(f1, f2);
                     int qid = disR.X2NormalF(bits, a);
                 }
                 e_1 = std::max(e_1, e), e_0 = std::min(e_0, e);
@@ -233,8 +233,8 @@ float GeQuant::AfterLowBit(shared_ptr<GTensor> hTensor, const void* srcData, int
         t->hQuant = hTensor->hQuant;
     }
 
-    e = hTensor->disq.nrm_1 / nRow / nCol;
-    float T_errQ = bits==3 ? params.T_errQ+0.1 : params.T_errQ;
+    e            = hTensor->disq.nrm_1 / nRow / nCol;
+    float T_errQ = bits == 3 ? params.T_errQ + 0.1 : params.T_errQ;
     if (impurity >= T_errQ) {
         _WARN("[]_Q<%d>_fnorm=%d impurity=%.3g |a|=%.3g @%s\n", bits, params.norm, impurity, e, hTensor->name);
     }
@@ -297,7 +297,7 @@ float GeQuant::RTN(shared_ptr<GTensor> hTensor, const void* srcData, int flag) {
     // }
     return err;
 }
-float Distri_QUANT::Normal01(const float weight, int flag) {
+float Distri_PIPE::Normal01(const float weight, int flag) {
     float normalized = (weight - zero) * scale;  // map weights to [-1, 1] range
     normalized       = std::clamp(normalized, -1.0f, 1.0f);
     return normalized;
@@ -308,7 +308,7 @@ static NF3_LUT LUT_nf3;
 /*
     1.  weight matrices (often symmetric) & activations (often non-negative & highly asymmetric)
 */
-void Distri_QUANT::Prepare(int nQuant, int flag) {
+void Distri_PIPE::Prepare(int nQuant, int flag) {
     abs_max  = std::max(std::abs(vmin), std::abs(vmax));
     int QMAX = nQuant - 1, QMIN = 0;
     maxP = std::max(0.f, vmax), minN = std::min(0.f, vmin);
@@ -328,9 +328,9 @@ void Distri_QUANT::Prepare(int nQuant, int flag) {
             scaleP = maxP > 0 ? maxP : 1.0f;
             scaleN = -minN > 0 ? -minN : 1.0f;
             for (int i = 0; i < nQuant; i++) {
-                if(table[i]<0){
+                if (table[i] < 0) {
                     a = table[i] * scaleN;
-                }else{
+                } else {
                     a = table[i] * scaleP;
                 }
                 codebook.push_back(a);
@@ -347,7 +347,7 @@ void Distri_QUANT::Prepare(int nQuant, int flag) {
     }
 }
 
-BIT_8 Distri_QUANT::X2NormalF(int bits, const float weight, int flag) {
+BIT_8 Distri_PIPE::X2NormalF(int bits, const float weight, int flag) {
     int nBin       = codebook.size();
     float min_dist = std::numeric_limits<float>::max();
     BIT_8 best_idx = 0;
@@ -362,7 +362,7 @@ BIT_8 Distri_QUANT::X2NormalF(int bits, const float weight, int flag) {
     e_1 = std::max(e_1, e), e_0 = std::min(e_0, e);
     err += e * e;
     return best_idx;
-} 
+}
 
 // thread-safe single row quant on LUT
 float GeQuant::_row_lut(int row, shared_ptr<GTensor> hTensor, const floatX* dat, float* tmpRow, int flag) {
@@ -370,7 +370,7 @@ float GeQuant::_row_lut(int row, shared_ptr<GTensor> hTensor, const floatX* dat,
     floatGama *gamaRow = gama, *gamaCol = gamaRow + nRow;
     float sR = 1.0, sC = 1.0, a, a0 = 0;
     // if (row != 151644)            continue;
-    Distri_QUANT disR;//(Distri_QUANT::PN_SCALE);
+    Distri_PIPE disR;  //(Distri_PIPE::PN_SCALE);
     bool isColNorm = params.norm == NORMAL_MODE::SINKHORN;
     if (params.norm != NORMAL_MODE::NO_NORMAL)
         sR = gamaRow[row];
@@ -385,9 +385,8 @@ float GeQuant::_row_lut(int row, shared_ptr<GTensor> hTensor, const floatX* dat,
     floatGama* gama_ = gama + nRow + nCol + nQuant * row;
     disR.Prepare(nQuant);
     // gama_[0] = disR.zero, gama_[1] = 1.0 / disR.scale;    // to be consistent with gamaR
-    assert(disR.codebook.size()==nQuant);
-    for(int i = 0; i<disR.codebook.size(); i++ )
-        gama_[i] = Float2T<floatGama>(disR.codebook.data()+i);
+    assert(disR.codebook.size() == nQuant);
+    for (int i = 0; i < disR.codebook.size(); i++) gama_[i] = Float2T<floatGama>(disR.codebook.data() + i);
     hBITARR quanti = quant_data + nCol * row * bits / 8;  // quanti[77641728]=0x00
     for (int i = 0; i < nCol; i++) {
         a       = tmpRow[i];
@@ -748,7 +747,7 @@ float GeQuant::Normal_ROW01(shared_ptr<GTensor> hTensor, void* srcData, floatGam
 
     floatGama *gamaR = curGama, *gamaC = gamaR + nRow;
     for (int r = 0; r < nRow; r++) {
-        Distri_QUANT disR;
+        Distri_PIPE disR;
         dat = mat0 + r * nCol;
         for (int c = 0; c < nCol; c++) {
             a = T2Float(dat + c);

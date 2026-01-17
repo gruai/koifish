@@ -25,18 +25,9 @@ def test_chat_qwen3_0_6B():
     content = bubble_one("chat_qwen3_0.6b","--tokenizer ./assets/tokenizer_151936.bin --hf ./Models/Qwen3-0.6B/ --prompts \"hello\"")  #./cases/qwen3/qwen3_0.6B.json
     assert "Hello! How can I assist you today?" in content
 
-def test_pp_gpt2():    
-    most_iter = 70
-    title = "pangpi_gpt2"
-    sExe = "./bin/pangpi "
-    dfLoss,exit_code = pangpi_one(title, sExe, "./hy-tmp/case/124M/GPT2_fuyou.fish --hellaswag ./cases/datasets/hellaswag_val.bin") 
-    # dfLoss = pd.read_csv("/home/cys/rnd/lic/Eval_loss.csv", sep=' ',index_col=False)
-    # print(dfLoss)
-    CheckResult(dfLoss,0,0.2476,title=title,rel_tol=1e-03)       #   0.24766387 0.01475318    
-
 def test_chat_qwen3_4B():    
     content = bubble_one("chat_qwen3_4B","--tokenizer ./assets/tokenizer_151936.bin --hf ./Models/Qwen3-4B/ --prompts \"Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?\"")  #  "./cases/qwen3/qwen3_4B.json"
-    assert "Answer: 1" in content or "Answer:1" in content or "answer:1" in content  # "Answer: 1"   "✅ Final Answer:1 ✅"  "Answer: 1 ✅"  "✅Answer: 1"
+    assert "Answer: \\boxed{1}" in content  or "Answer: 1" in content or "Answer:1" in content or "answer:1" in content  # "Answer: 1"   "✅ Final Answer:1 ✅"  "Answer: 1 ✅"  "✅Answer: 1"
     # assert content=="Hello! How can I assist you today? 😊\n" or content=="Hello! It seems there was a small glitch. 😊 How can I assist you today?\n"
 
 def xtest_batch_qwen3_4B():  
@@ -90,6 +81,14 @@ def test_gpt2_774M():
     CheckResult(dfTrain,most_iter,9.409,title=title)    #   61     loss=7.318967
     # assert math.isclose(a,9.504,rel_tol=1e-05, abs_tol=0.0)     
 
+def test_pp_gpt2():    
+    most_iter = 70
+    title = "pangpi_gpt2"
+    sExe = "./bin/pangpi "
+    dfLoss,exit_code = pangpi_one(title, sExe, "./hy-tmp/case/124M/GPT2_fuyou.fish --hellaswag ./cases/datasets/hellaswag_val.bin") 
+    # dfLoss = pd.read_csv("/home/cys/rnd/lic/Eval_loss.csv", sep=' ',index_col=False)
+    # print(dfLoss)
+    CheckResult(dfLoss,0,0.2476,title=title,rel_tol=1e-03)       #   0.24766387 0.01475318    
 
 
     
@@ -113,11 +112,11 @@ if __name__ == '__main__':
     # test_gpt2_774M()
 
     # test_chat_qwen3_0_6B()  
-    #test_chat_qwen3_4B()
+    test_chat_qwen3_4B()
     # xtest_batch_qwen3_4B()
 
-    test_pp_gpt2()
-    # test_gpt2_124M()
+    # test_pp_gpt2()
+    #test_gpt2_124M()
     # test_gpt2_124M_fuyou6()
     # test_gpt2_1558M()
     # test_qwen2_494M()

@@ -622,7 +622,7 @@ __global__ void calc_score_kernel(T* query_states, const uint8_t* key_quant, con
     __shared__ float shared_query[EMB_DIM];
     size_t tIdx = wIdx * WARP_SIZE + threadLane;
     for (size_t tile_idx{tIdx}; tile_idx < emb_dim; tile_idx += (WARP_SIZE * WARPS_PER_BLOCK)) {
-        shared_query[tile_idx] = convert_to_float<T>(query[tile_idx]);
+        shared_query[tile_idx] = CU_T2Float<T>(query[tile_idx]);
     }
     // load outlier indices into shared buffer
     __shared__ uint8_t shared_outlier_ind[WARP_SIZE];
@@ -652,7 +652,7 @@ __global__ void calc_score_kernel(T* query_states, const uint8_t* key_quant, con
                     int otlr_idx = shared_outlier_ind[i];
                     shared_q_outliers_sketch[q_idx / 8][q_idx % 8] +=
                         shared_query[otlr_idx] *
-                        convert_to_float<Tproj>(rand_prj[(otlr_idx * sketch_dim) + chnl_tile + q_idx]);  // convert_to_float(const_query[bh][otlr_idx])
+                        CU_T2Float<Tproj>(rand_prj[(otlr_idx * sketch_dim) + chnl_tile + q_idx]);  // CU_T2Float(const_query[bh][otlr_idx])
                 }
             }
         }
@@ -695,8 +695,8 @@ __global__ void calc_score_kernel(T* query_states, const uint8_t* key_quant, con
     if (wIdx == 0) {
         float scl       = sqrtf(M_PI_2) / static_cast<float>(sketch_dim);
         float scl_otlr  = sqrtf(M_PI_2) / static_cast<float>(outlier_sketch_dim);
-        float norm_otlr = convert_to_float<T>(outlier_norm[threadLane]);
-        float norm_k    = sqrtf(pow(convert_to_float<T>(k_norm[threadLane]), 2) - pow(norm_otlr, 2));
+        float norm_otlr = CU_T2Float<T>(outlier_norm[threadLane]);
+        float norm_k    = sqrtf(pow(CU_T2Float<T>(k_norm[threadLane]), 2) - pow(norm_otlr, 2));
         float score     = scl * norm_k * shared_innprod[threadLane] + scl_otlr * norm_otlr * shared_outlier_innprod[threadLane];
         scores[(bh * n_size * group_size) + (n * group_size) + gIdx + threadLane] = score;
     }

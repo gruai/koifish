@@ -19,6 +19,8 @@
 #include <vector>
 
 #include "../../../Tensor/Packed.hpp"
+#include "../../../Manifold/Fish.hpp"
+#include "../../../Manifold/Neuron.hpp"
 #include "operator.cuh"
 #include "utils.cuh"
 
@@ -623,3 +625,197 @@ __global__ void CU_rope2_v0(bf16* q, bf16* k, int pos, int N_HEADS, int N_KV_HEA
 
 // template __global__ void CU_rope_<bf16>(bf16* out, bf16* inp, const bf16* freqs, float* stat_info, int B, int T, int Nq, int Nkv, int head_dim,
 //                                         bool isBack = false);
+
+/*
+    In Qwen2.5/Qwen3 models, the RMS normalization formula for multi-head tensors in attention mechanisms is typically applied per head.
+*/
+template <typename Typ>
+__global__ void CU_rope_rmsnormal_forw(Typ* qk, const Typ* weight, int pos, int qk_head, int head_dim, float theta, float EPS = 1e-6f, int flag = 0x0) {
+    int h = blockIdx.z, j = threadIdx.x;
+    assert(gridDim.z == qk_head);
+    int nzHead = blockIdx.x * (gridDim.y * qk_head) + blockIdx.y * qk_head + h;
+    if (h < qk_head && j < head_dim / 2) {
+        Typ* q_head = qk + nzHead * head_dim;
+        float rstd = 0.0f, x2 = 0.0f;
+        int j1 = j, j2 = j + head_dim / 2;
+        float q_real = CU_T2Float(q_head + j1);
+        float q_imag = CU_T2Float(q_head + j2);
+        if (weight != nullptr) {
+            x2   = q_real * q_real + q_imag * q_imag;
+            rstd = blockReduce_v0<warpReduceSum>(x2);
+            rstd = rsqrtf(rstd / head_dim + EPS);
+        }
+
+        if (weight != nullptr) {
+            float w1 = CU_T2Float(weight + j1), w2 = CU_T2Float(weight + j2);
+            q_real *= rstd * w1;
+            q_imag *= rstd * w2;
+            // if (h == 0 && j == 0) {
+            //     printf("rstd=%g (%g,%g)=>%g (%g,%g)=>%g\n", rstd, a1, w1, q_real, a2, w2, q_imag);
+            // }
+        } else {
+            // if (h == 0 && j == 0) {
+            //     printf("%g %g\n", q_real, q_imag);
+            // }
+        }
+
+        float inv_freq = 1.0f / powf(theta, (float)(j * 2) / (float)head_dim);
+        if (pos < 0) {  //  (B, T, n_head)
+            pos = blockIdx.y;
+        }
+        float angle = (float)pos * inv_freq, cos, sin;
+        sincosf(angle, &sin, &cos);
+        q_head[j1] = __float2bfloat16_rn(q_real * cos - q_imag * sin);
+        q_head[j2] = __float2bfloat16_rn(q_real * sin + q_imag * cos);
+        // if (nzHead == N_HEADS && j == 0) {
+        //     nout("\t(%g,%g)=%g %g %g %g@<%d %d %d>\n", CU_T2Float(q_head+j1),CU_T2Float(q_head+j2),q_real, q_imag, sin,
+        //     cos,blockIdx.x,blockIdx.y,blockIdx.z);
+        // }
+    }
+}
+
+/*
+    Fuse of normal&rope for backpropagation of each head
+    1) RMS normal:  Y = x/(RMS(x)+ϵ)⊙w for each head in the forward pass
+    2) ROPE:        (y_r,y_i) => (y_r',y_i')
+
+    1. dX0 may same as dY0
+*/
+hGTensor ROPE::cuInfer(SelfAttention* hQKV, uint32_t seed, int pos, int flag) {
+    hFish->GetBTC(B, T, C);
+    size_t nToken = B * T;
+    assert(nToken == 1);
+    floatX *q = ToX(hQKV->Q.out), *k = ToX(hQKV->K.out);
+    floatX *qW = hnQ == nullptr ? nullptr : ToX(hnQ->w), *kW = hnK == nullptr ? nullptr : ToX(hnK->w);
+
+    dim3 blocks_q(B, T, n_head), blocks_k(B, T, n_head_kv), blocks(B, T);
+    float rstd_eps = 1.0e-6;
+    if (fuse_normal == 0 && hnQ != nullptr) {
+        // hnQ->w->Print("qnw", 0x0, dump_flag), hnK->w->Print("knw", 0x0, dump_flag);
+        hnQ->cuFlow(hQKV->Q.out);
+        hnK->cuFlow(hQKV->K.out);
+        qW = nullptr, kW = nullptr;
+    }
+    hQKV->Q.out->Print("Q.norm", 0x0, dump_flag, nToken * q_dim);
+    hQKV->K.out->Print("K.norm", 0x0, dump_flag, nToken * kv_dim);
+
+    assert(n_head_kv <= n_head);  // so blocks_k is in blocks_q
+    if (fuse_normal == 1) {
+        CU_rope_rmsnormal_forw<floatX><<<blocks_q, dim3(head_dim / 2, 1, 1)>>>(q, qW, pos, n_head, head_dim, theta);
+        CU_rope_rmsnormal_forw<floatX><<<blocks_k, dim3(head_dim / 2, 1, 1)>>>(k, kW, pos, n_head_kv, head_dim, theta);
+    } else
+        CU_rope2_v0<<<blocks_q, dim3(head_dim / 2, 1, 1)>>>(q, k, pos, n_head, n_head_kv, head_dim, theta);
+    // Q.out->Print("Q.rope", 0x0, dump_flag, nToken * q_dim), K.out->Print("K.rope", 0x0, dump_flag, nToken * kv_dim);
+    return nullptr;
+}
+
+/*
+    Fuse of rope & normal for backpropagation of each head
+    1. in the forward pass
+        1) RMS normal:  Y = x/(RMS(x)+ϵ)⊙w for each head
+        2) ROPE:        (y_r,y_i) => (y_r',y_i')
+
+    2. dX0 may same as dY0
+*/
+template <typename Typ>
+__global__ void CU_rope_rmsnormal_back(Typ* dX0, Typ* dWeight0, const Typ* dY0, const Typ* qk, const Typ* weight0, int pos, int nToken, int qk_head,
+                                       int head_dim, float theta, unsigned int seed, int flag = 0x0) {
+    int h = blockIdx.z, j = threadIdx.x;
+    assert(gridDim.z == qk_head);
+    int head_id  = blockIdx.x * (gridDim.y * qk_head) + blockIdx.y * qk_head + h;
+    int nAllHead = gridDim.x * gridDim.y * gridDim.z;
+    assert(nToken = gridDim.x * gridDim.y);
+    if (h < qk_head && j < head_dim / 2) {
+        const Typ *dY = dY0 + head_id * head_dim, *x = qk + head_id * head_dim;
+        Typ *dX = dX0 + head_id * head_dim, *dW = dWeight0, sw = (Typ)(1.0f / nToken);
+        float rstd = 0.0f, x2 = 0.0f, EPS = 1.0e-6;
+        int j1 = j, j2 = j + head_dim / 2;
+        float dy_real = CU_T2Float(dY + j1), x_real = CU_T2Float(x + j1);
+        float dy_imag = CU_T2Float(dY + j2), x_imag = CU_T2Float(x + j2);
+        float inv_freq = 1.0f / powf(theta, (float)(j * 2) / (float)head_dim);
+        if (pos < 0) {  //  (B, T, n_head)
+            pos = blockIdx.y;
+        }
+        float angle = (float)pos * inv_freq, cos, sin;
+        sincosf(angle, &sin, &cos);
+        sin    = -sin;  // for back
+        dX[j1] = __float2bfloat16_rn(dy_real * cos - dy_imag * sin);
+        dX[j2] = __float2bfloat16_rn(dy_real * sin + dy_imag * cos);
+
+        if (weight0 != nullptr) {
+            x2   = x_real * x_real + x_imag * x_imag;
+            rstd = blockReduce_v0<warpReduceSum>(x2);
+            rstd = rsqrtf(rstd / head_dim + EPS);
+
+            const Typ* w = weight0;
+            Typ xr = CU_Float2T<Typ>(x_real * rstd, seed), xi = CU_Float2T<Typ>(x_imag * rstd, seed);
+            // Typ dy1 = dX[j1] * xr * sw, dy2 = dX[j2] * xi * sw;
+            // atomicAdd(dW + j1, dy1);  //  dW[j1] += (dY[j1] * xr * sw);
+            // atomicAdd(dW + j2, dy2);  //  dW[j2] += (dY[j2] * xi * sw);
+
+            x2              = dX[j1] * w[j1] * xr + dX[j2] * w[j2] * xi;
+            float delta_sum = blockReduce_v0<warpReduceSum>(x2);
+            dy_real         = rstd * ((float)(dX[j1] * w[j1]) - (float)(xr) / head_dim * delta_sum);
+            dy_imag         = rstd * ((float)(dX[j2] * w[j2]) - (float)(xi) / head_dim * delta_sum);
+            // dX[j1] = dy_real,       dX[j2] = dy_imag;
+        }
+    }
+}
+
+// fuse normal to rope, may reduce time
+int ROPE::cuFlow(SelfAttention* hQKV, uint32_t seed, bool isFX, int flag) {
+    if (hFish == nullptr)  // some models(GPT2) don't need rope
+        return 0x0;
+
+    INSPECT_THIS;
+    hFish->GetBTC(B, T, C);
+    dim3 blocks_q(B, T, n_head), blocks_k(B, T, n_head_kv), blocks(B, T);
+    // size_t smemPB = 1024 * sizeof(float);
+    floatX *q = ToX(hQKV->Q.out), *k = ToX(hQKV->K.out), *freqs = ToX(hSin);
+    floatX *qW = hnQ == nullptr ? nullptr : ToX(hnQ->w), *kW = hnK == nullptr ? nullptr : ToX(hnK->w);
+    PrintTensor<floatX>("Q.out", q, true, 1, 1, q_dim, 1, dump_flag);
+    if (isForward() || BIT_TEST(flag, F_REMATER)) {
+        if (fuse_normal == 0) {
+            if (hnQ != nullptr) {
+                hnQ->cuFlow(hQKV->Q.out, flag);
+                hnK->cuFlow(hQKV->K.out, flag);
+                hQKV->Q.out->Print("Q.norm", 0x0, dump_flag, B * T * q_dim);
+                hQKV->K.out->Print("K.norm", 0x0, dump_flag, B * T * kv_dim);
+            }
+            CU_rope2_v0<<<blocks_q, dim3(head_dim / 2, 1, 1)>>>(q, k, -1, n_head, n_head_kv, head_dim, theta);
+        } else {
+            CU_rope_rmsnormal_forw<floatX><<<blocks_q, dim3(head_dim / 2, 1, 1)>>>(q, qW, -1, n_head, head_dim, theta);
+            CU_rope_rmsnormal_forw<floatX><<<blocks_k, dim3(head_dim / 2, 1, 1)>>>(k, kW, -1, n_head_kv, head_dim, theta);
+        }
+    } else {
+        floatX *dQ = ToX(hQKV->deltaQ), *dK = ToX(hQKV->deltaK), *dQY = dQ, *dKY = dK;  // from back of QKV self-attention
+        if (fuse_normal == 1) {                                                         // some strange bug
+            floatX *dQw = hnQ == nullptr ? nullptr : ToG(hnQ->w), *dKw = hnK == nullptr ? nullptr : ToG(hnK->w);
+            if (qW != nullptr) {
+                assert(dQw != nullptr && dKw != nullptr);
+                if (layid == 28) {
+                    // hnQ->w->Print("normQ.w", 0x0, -1), hnQ->w->Print("normQ.w", 1, -1);
+                }
+            }
+            CU_rope_rmsnormal_back<floatX><<<blocks_q, dim3(head_dim / 2, 1, 1)>>>(dQ, dQw, dQY, q, qW, -1, B * T, n_head, head_dim, theta, 42);
+            if (layid == 28 && qW != nullptr) {
+                hnQ->w->Print("normQ.w", 1, -1);
+            }
+            CU_rope_rmsnormal_back<floatX><<<blocks_k, dim3(head_dim / 2, 1, 1)>>>(dK, dKw, dKY, k, kW, -1, B * T, n_head_kv, head_dim, theta, 42);
+        } else {
+            CU_rope2_v0<<<blocks_q, head_dim / 2>>>(dQ, dK, -1, n_head, n_head_kv, head_dim, theta, 1);
+            if (hnQ != nullptr) {
+                hnK->cuFlow(hQKV->deltaK);
+                hnQ->cuFlow(hQKV->deltaQ);
+            }
+        }
+        //
+        // SYNC_DEVICE();
+    }
+    // hQKV->Q.out->Print("Q.rope", 0x0, -1, C);  hQKV->K.out->Print("K.rope", 0x0, -1);
+    PrintTensor<floatX>("q_0.rope", (floatX*)q, true, 1, 1, q_dim, 1, dump_flag);
+    PrintTensor<floatX>("k_0.rope", (floatX*)k, true, 1, 1, kv_dim, 1, dump_flag);
+    PrintTensor<floatX>("q_1.rope", (floatX*)q + q_dim, true, 1, 1, q_dim, 1, dump_flag);
+    PrintTensor<floatX>("k_1.rope", (floatX*)k + kv_dim, true, 1, 1, kv_dim, 1, dump_flag);
+    return 0x0;
+}

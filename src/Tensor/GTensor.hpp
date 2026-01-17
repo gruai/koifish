@@ -51,7 +51,6 @@ int gTN0(hGTensor cur, const char* format, ...);
 
 enum DATA_PLACE { VOID, SYMBOLIC, REFER, MEMORY, DEV_MEM, MMAP, DISK, CLOUD, FREE_DEV };
 
-
 /**
  *  Edge of Operation(TASK) GRAPH
  */
@@ -95,17 +94,21 @@ template <typename T>
 struct GPUAllocator : public VirtualAllocator<T> {};
 
 /*
-    distri info related to quantization...
-    @/home/cys/rnd/lic/src/GBDT/data_fold/Distribution.hpp
+    distri info of a tensor, transfer data between device & host
+    1. related to quantization,    @/home/cys/rnd/lic/src/GBDT/data_fold/Distribution.hpp
+    2. sigma = rstd
 */
-struct Distri_QUANT {
-    double mean = 0, sigma = 0, sum_1 = 0.0, sum_2 = 0.0, nrm_1 = 0.0;
+struct Distri_PIPE {
+    int B_ = 0, T_ = 0, C_ = 0;  // For activation, it's number of batch,token(int each batch), channel(of each token)
+    double mean = 0, sum_1 = 0.0, sum_2 = 0.0, nrm_1 = 0.0;
     double abs_max = 0;  //  norm_0
-    std::vector<float> codebook;    //at most 256 bins
+    float sigma_   = 0;
+
+    std::vector<float> codebook;  // at most 256 bins
     enum ASYMMETRY {
         NO,
-        ZERO_OFF,   //  Zero may not map exactly to any quantized value
-        PN_SCALE,   //  use both Positive,Negative scale
+        ZERO_OFF,  //  Zero may not map exactly to any quantized value
+        PN_SCALE,  //  use both Positive,Negative scale
     };
     ASYMMETRY asymmetry = ASYMMETRY::NO;
     // (zero,scale) or scaleP/N(Positive,Negative scale)
@@ -118,14 +121,14 @@ struct Distri_QUANT {
         float scaleP;
     };
     float vmin = FLT_MAX, vmax = -FLT_MAX, e_0 = FLT_MAX, e_1 = -FLT_MAX;
-    float maxP, minN;   //  max Positive & min Negative
+    float maxP, minN;  //  max Positive & min Negative
     float imbalance = 0.0;
     int rc_normal   = 0;
     double err      = 0.0;  // error of quantizer
     string info     = "";   // more info of quantizer
-    
-    Distri_QUANT(ASYMMETRY a = ASYMMETRY::NO) : asymmetry(a)  {}
-    Distri_QUANT(float f1, float f2, int flag = 0x0) : scaleN(f1), scaleP(f2) {}
+
+    Distri_PIPE(ASYMMETRY a = ASYMMETRY::NO) : asymmetry(a) {}
+    Distri_PIPE(float f1, float f2, int flag = 0x0) : scaleN(f1), scaleP(f2) {}
 
     template <typename T>
     void Next(T a0) {
@@ -179,11 +182,11 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     hGTensor hRef  = nullptr;
     void* raw_data = nullptr;
 
-    Distri_QUANT disq;  // distri info related to quantization
+    Distri_PIPE disq;  // distri info related to quantization
 
     // @GetDynamicQuant
     shared_ptr<GeQuant> hQuant = nullptr;
-    hGTensor qZero=nullptr, qScale=nullptr;  // quantization params, may have different meaning/name in different model
+    hGTensor qZero = nullptr, qScale = nullptr;  // quantization params, may have different meaning/name in different model
 
     virtual size_t Alloc_1(void** dst, bool isZero, string desc, size_t sz = 0x0, int flag = 0x0) { return 0x0; };
     virtual size_t Free_1(void** obj, const string& info = "") { return 0x0; };
@@ -193,7 +196,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     static const int N_DIMS   = 4;
 
     static size_t szGlobalMaloc;
-    static GTensor *tZ;
+    static GTensor* tZ;
     static hGTensor bt4c, delta, gate_delta, tmpDelta, scratch, tmpFF1, tmpW, tmpGW, residual, tmpTernary;
     //  If config.isShareLayerOut(), all layers' output share this tensor!
     static hGTensor outL;
@@ -486,7 +489,7 @@ inline void tSET(hGensor T, float a) { T->Set(a); }
 inline void tFLAG(hGensor T, int64_t flag) { T->SetFlag(flag); }
 double tNormsOf(const std::vector<hGTensor>& tensors, int flag);
 // double tNormOf(const hGTensor tensor, int flag = 0x0);
-    
+
 inline floatX* ToX(hGensor t) {
     assert(t != nullptr);
     BIT_SET(t->flags, GTensor::F_TOX);

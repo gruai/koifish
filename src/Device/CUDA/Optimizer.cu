@@ -7,11 +7,11 @@
  *  \brief cuda kernel of Optimizer
  *  \author Yingshi Chen
  */
-#include "./kernel/operator.cuh"
 #include "../../Manifold/Fish.hpp"
 #include "../../Manifold/Neuron.hpp"
 #include "../../Manifold/Optimizer.hpp"
 #include "../Pipe.hpp"
+#include "./kernel/operator.cuh"
 #include "./kernel/utils.cuh"
 extern unsigned long long rng_state;
 
@@ -167,7 +167,7 @@ __device__ inline float _adamw_idx(float old_param, const PIPE_Adamw<Tp, Tmv>& p
 }
 
 template <typename Tp, typename Tmv>
-__global__ void CU_adamw_p(PIPE_Adamw<Tp, Tmv> pipe) {
+__global__ void CU_adamw_p_v0(PIPE_Adamw<Tp, Tmv> pipe) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= pipe.num_parameters) {
         return;
@@ -183,6 +183,38 @@ __global__ void CU_adamw_p(PIPE_Adamw<Tp, Tmv> pipe) {
     float block_sum  = blockReduce_v0<warpReduceSum>(x2, true);
     if (threadIdx.x == 0)  //  idx == 0
         atomicAdd((float*)pipe.arrNorm, block_sum);
+}
+
+template <typename Typ, typename Tmv>
+__global__ void CU_adamw_p(PIPE_Adamw<Typ, Tmv> pipe) {
+    using typ128 = PackedN<Typ, 16 / sizeof(Typ)>;
+    int idx      = blockIdx.x * blockDim.x + threadIdx.x;
+    idx *= typ128::size;
+    if (idx >= pipe.num_parameters) {  // guard
+        return;
+    }
+    typ128 grad128(pipe.grads0 + idx), m128(pipe.gm + idx), v128(pipe.gv + idx), param128(pipe.params + idx);
+    grad128.Scale(pipe.grad_scale);
+    // float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx), m = pipe.gm[idx], v = pipe.gv[idx];
+    for (int i = 0; i < typ128::size; ++i) {
+        float grad = grad128[i], m = m128[i], v = v128[i];
+        m       = lerp(grad, m, pipe.beta1);
+        m128[i] = m;  // pipe.gm[idx] = m;
+        v       = lerp(grad * grad, v, pipe.beta2);
+        v128[i] = v;  // pipe.gv[idx] = v;
+        // float x = _adamw_idx((float)pipe.params[idx], pipe, m, v, idx), x2 = x * x;
+        m /= pipe.beta1_correction, v /= pipe.beta2_correction;  // m_hat    v_hat
+        float step      = m / (sqrtf(v) + pipe.eps);
+        float old_param = param128[i];  //(float)pipe.params[idx];
+        float param     = old_param - pipe.learning_rate * pipe.weight_decay * old_param - pipe.learning_rate * step;
+        //  stochastic_rounding(param, &params[idx], seed);
+        param128[i] = CU_Float2T<Typ>(param, pipe.seed);
+    }
+    m128.store(pipe.gm + idx), v128.store(pipe.gv + idx), param128.store(pipe.params + idx);
+    grad128.Set(), grad128.store(pipe.grads0 + idx);  // pipe.grads0[idx] = (Tp)(0.0);
+    // float block_sum  = blockReduce_v0<warpReduceSum>(x2, true);
+    // if (threadIdx.x == 0)  //  idx == 0
+    //     atomicAdd((float*)pipe.arrNorm, block_sum);
 }
 
 /*
@@ -263,7 +295,7 @@ __global__ static void CU_adamw_Tile_v0(PIPE_Adamw<Tp, Tmv> pipe) {
 //  all element in tile has one mv
 template <typename Tp, typename Tmv>
 __global__ static void CU_adamw_Tile(PIPE_Adamw<Tp, Tmv> pipe) {
-    const int TM = THREAD_TILE_M, TN = THREAD_TILE_N;   //, thread_num = blockDim.x;
+    const int TM = THREAD_TILE_M, TN = THREAD_TILE_N;  //, thread_num = blockDim.x;
     int tid = threadIdx.x, idrow, idcol, M = pipe.ne[0], N = pipe.ne[1], trans = 1;
     // const int nWrapT = std::min(WARP_SIZE,THREAD_TILE_M*THREAD_TILE_N);
     idrow = blockIdx.x * TM + tid / TM;
@@ -316,13 +348,13 @@ __global__ static void CU_adamw_Tile_RC(PIPE_Adamw<Tp, Tmv> pipe) {
     }
     float old_param = pipe.gama_T[gpos_0], m = pipe.gm[gpos_0], v = pipe.gv[gpos_0];
     float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx_0);
-    float sum  = CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(grad);  // blockReduce_v0<warpReduceSum>(grad, true);
+    float sum  = CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(grad);
     grad       = sum / TM / TN;
     m = lerp(grad, m, pipe.beta1), v = lerp(grad * grad, v, pipe.beta2);
-    float sum_m = CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(m);  // blockReduce_v0<warpReduceSum>(m, true);
-    float sum_v = CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(v);  // blockReduce_v0<warpReduceSum>(v, true);
+    float sum_m = CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(m);
+    float sum_v = CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(v);
     float a     = _adamw_idx(old_param, pipe, m, v, idx_0);
-    sum         = CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(a);  // blockReduce_v0<warpReduceSum>(a, true);
+    sum         = CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(a);
     if (tid == 0) {
         assert(!(isnan(sum) || isinf(sum)));
         assert(!(isnan(sum_v) || isinf(sum_v)));
@@ -431,7 +463,7 @@ from https://github.com/KellerJordan/Muon/blob/master/muon.py
 template <typename Tp, typename Tmv>
 void PIPE_Muon<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
     if (this->name == "model.blk.11.ffn_down.weight") {
-        //int debug = 0;   only for debug
+        // int debug = 0;   only for debug
     }
     int64_t m = this->ne[0], n = this->ne[1];
     bool isAdamw_ = muon.isAdamW(this->tensor);
@@ -507,8 +539,8 @@ template struct PIPE_Adamw<floatX, floatMV>;  // Force compilation
 
 template <typename Tp, typename Tmv>
 void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
+    using typ128 = PackedN<Tp, 16 / sizeof(Tp)>;
     // cudaError_t err       = cudaSuccess;
-    // int64_t ne[4]    = {ne[0], ne[1], ne[2], ne[3]};
     int dT4B         = 512;  //  1024?
     int dGRID        = CEIL_DIV(num_parameters, dT4B);
     size_t smemPB    = 1024 * sizeof(float);
@@ -534,7 +566,7 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
                     } break;
                     default:
                         if (DEBUG.T_ternary == 1) {
-                            CU_adamw_p<<<dGRID, dT4B, 0, stream>>>(*this);
+                            CU_adamw_p_v0<<<dGRID, dT4B, 0, stream>>>(*this);
                             CU_ternary_online<<<CEIL_DIV(ne[0], dT4B), dT4B, smemPB, stream>>>(params, ne[0], ne[1]);
                             // PrintTensor<floatX>(tensor->name, (floatX*)params, true, ne[0], ne[1], ne[2], ne[3], -1);
                         } else {
@@ -544,13 +576,11 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
                         break;
                 }
             } else {  //  ADAMw
-                //  void* kernelArgs[]    = {(void*)&pipe};
-                // err = cudaLaunchCooperativeKernel((void*)CU_adamw_<Tp,Tmv>, dGRID, dT4B, kernelArgs, smemPB, main_stream);
-                // cudaCheck(err);      "too many blocks in cooperative launch"
-                CU_adamw_p<<<dGRID, dT4B, 0, stream>>>(*this);
+                CU_adamw_p_v0<<<dGRID, dT4B, 0, stream>>>(*this);
+                // assert(dT4B%typ128::size==0);       dT4B /= typ128::size;       
+                // CU_adamw_p<<<dGRID, dT4B, 0, stream>>>(*this);
             }
-            D2e(arrNorm, tensor->wnorm, 0x0);
-            assert(isValidF(&(tensor->wnorm)));
+            D2e(arrNorm, tensor->wnorm, 0x0),            assert(isValidF(&(tensor->wnorm)));
             tensor->wnorm = sqrt(tensor->wnorm);
             // tensor->Mutation();        //  need more test
         }

@@ -224,11 +224,11 @@ __global__ void ABC_v5(Ta* A, Tb* B, Tc* C, int M, int N, int K, int flag = 0x0)
         SYNC_AtBC_m8n8k16(a_frag, b_frag, tmp);
         __syncthreads();
     }
-    x128 packed_out;  // little faster
+    X128 packed_out;  // little faster
 #pragma unroll
     for (int l = 0; l < TN; l++) {
 #pragma unroll
-        for (int j = 0; j < x128::size; j++) {
+        for (int j = 0; j < X128::size; j++) {
             packed_out[j] = tmp[j][l];
         }
         store128(C + CR2POS(ty, tx + l, M, N), packed_out);
@@ -255,8 +255,8 @@ __global__ void ABC_v6(Ta* A, floatX* B, floatX* C, int M, int N, int K, int fla
     assert(sizeof(Ta) * TM % 16 == 0 && sizeof(Ta) * TN % 16 == 0);  //  ALIGN(16) + 128-bit loads/stores
     int tx = (threadIdx.x % block_row_thread) * TN;
     int ty = (threadIdx.x / block_row_thread) * TM;
-    __shared__ x128 As[BM * BK / ld128];
-    __shared__ x128 Bs[BK * BN / ld128];
+    __shared__ X128 As[BM * BK / ld128];
+    __shared__ X128 Bs[BK * BN / ld128];
     //  n element of Global memory to share memory
     int nG2A = (BM * BK / thread_num), nG2B = (BK * BN / thread_num), curA = threadIdx.x * nG2A, curB = threadIdx.x * nG2B;
     assert(nG2A % ld128 == 0 && nG2B % ld128 == 0);
@@ -300,11 +300,11 @@ __global__ void ABC_v6(Ta* A, floatX* B, floatX* C, int M, int N, int K, int fla
         }
         __syncthreads();
     }
-    x128 packed_out;
+    X128 packed_out;
 #pragma unroll
     for (int l = 0; l < TN; l++) {
 #pragma unroll
-        for (int j = 0; j < x128::size; j++) {
+        for (int j = 0; j < X128::size; j++) {
             packed_out[j] = tmp[j][l];
         }
         store128(C + CR2POS(ty, tx + l, M, N), packed_out);
@@ -377,7 +377,7 @@ void CU_abc(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int
         case 6: {
             const int BM = 128, BN = 128, BK = 16, TM = 8, TN = 8, nT = BM * BN / TM / TN;  // 256
             dim3 dBlock(nT), dGrid(CEIL_DIV(n, BM), CEIL_DIV(m, BN));
-            assert(sizeof(floatX) * BK % 16 == 0 && TN == x128::size);  // x128
+            assert(sizeof(floatX) * BK % 16 == 0 && TN == X128::size);  // X128
             ABC_v6<BM, BN, BK, TM, TN, floatX><<<dGrid, dBlock, smem_max_size, stream>>>((floatX*)a, (floatX*)b, d, m, n, k);
             break;
         }

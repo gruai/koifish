@@ -115,7 +115,7 @@ int Chat(hFISH fish, int enable_thinking) {
 
         if (hBatch->tok_pos == num_prompt_tokens - 1) {
             start_time = GST_ms();
-            SUM::tX1 = 0.0, SUM::tQKV = 0.0, SUM::tFFN = 0.0, SUM::tPreLogits = 0.0;
+            SUM::tX1 = 0.0, SUM::tQKV_forw = 0.0, SUM::tFFN = 0.0, SUM::tPreLogits = 0.0;
         }
         if (hBatch->tok_pos == 1) {  // nRound == 2
             DEBUG_HERE;
@@ -142,7 +142,7 @@ int Chat(hFISH fish, int enable_thinking) {
                     _WARN("%scontext window full!%s\t", COLOR_YELLOW, COLOR_RESET);
                 }
                 _INFO("\n%s[%.2f tk/s, %d tokens in %.2fs(qkv=%.3fs ffn=%.3fs PreLogits=%.3fs X=%.3fs)]%s\n===================================\n", COLOR_GREEN,
-                      tps, generated_tokens - 1, elapsed_s, SUM::tQKV / 1.0e6, SUM::tFFN / 1.0e6, SUM::tPreLogits / 1.0e6, SUM::tX1 / 1.0e6, COLOR_RESET);
+                      tps, generated_tokens - 1, elapsed_s, SUM::tQKV_forw / 1.0e6, SUM::tFFN / 1.0e6, SUM::tPreLogits / 1.0e6, SUM::tX1 / 1.0e6, COLOR_RESET);
 
                 user_turn = 1;
                 cur_answer += "\t\t" + SUM::sQuantInfo;

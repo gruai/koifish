@@ -12,6 +12,7 @@
 #define NOMINMAX
 
 cublasComputeType_t cublas_compute   = CUBLAS_COMPUTE_32F;
+// Hardcoding workspace to 32MiB but only Hopper needs 32 (for others 4 is OK)
 const size_t cublaslt_workspace_size = 32 * 1024 * 1024;
 cublasLtHandle_t cublaslt_handle;
 cublasHandle_t cublas_handle;
@@ -26,7 +27,7 @@ hGTensor huTensor::_Multiply(const hGTensor& b) {
 }
 
 bool TokenEmbed::UpdateBucket(int type, int flag) {
-    num_c_groups = CEIL_DIV(C, (WARP_SIZE * x128::size));
+    num_c_groups = CEIL_DIV(C, (WARP_SIZE * X128::size));
     if (bucket_info != NULL)
         return false;
 
@@ -200,6 +201,7 @@ int HIERARCH_LoRA::Forw(floatX* rhs, floatX* lhs, int BT, int flag) {
 }
 
 int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, Relu* hRelu, int flag) {
+    NVTX_RANGE_FN();
     try {
         floatX *rhs = ToX(rhs_0), *to_gelu = ToX0(toGelu);
         int OC = nOut, IC = nIn, nToken = nBatchToken();
@@ -353,7 +355,7 @@ bool SLP::PrepareMemory(bool isBack, int flag) {
     return true;
 }
 
-int Q_nThreadOfBlock(int N, int bit, int nT0 = 1024) {
+int Q_nThreadOfBlock(int N, int bit, int nT0 = CU_T4B_BIG) {
     if (bit >= 8)
         return nT0;
     int nT = nT0;
@@ -789,9 +791,9 @@ int Relu::Forw(hGTensor out, hGTensor inp, int flag) {
             if (version == 0) {  // CU_swiglu_v0(ToX(out), ToX(out), ToX(inp), nz, main_stream);
                 CU_swiglu_v0<<<grid_size, block_size, 0, main_stream>>>(ToX(out), ToX(gate), ToX(inp), nz);
             } else {
-                assert(C % x128::size == 0);
-                assert((B * T * C) % (block_size * x128::size) == 0);
-                const int num_blocks = CEIL_DIV(B * T * C, (int)(block_size * x128::size));
+                assert(C % X128::size == 0);
+                assert((B * T * C) % (block_size * X128::size) == 0);
+                const int num_blocks = CEIL_DIV(B * T * C, (int)(block_size * X128::size));
                 assert(gate != nullptr);
                 // CU_swiglu_v1<<<grid_size, block_size, 0, main_stream>>>(ToX(out), ToX(gate), ToX(inp), C);
                 CU_swiglu_v0<<<grid_size, block_size, 0, main_stream>>>(ToX(out), ToX(gate), ToX(inp), nz);
@@ -842,9 +844,9 @@ int Relu::Back(hGTensor delta_in_out, hGTensor pre_gelu, int flag) {
             if (version == 0) {  // CU_swiglu_v0(ToX(out), ToX(out), ToX(inp), nz, main_stream);
                 CU_swiglu_v0<<<grid_size, block_size, 0, main_stream>>>(ToX(out), ToX(gate), ToX(inp), nz);
             } else {
-                assert(C % x128::size == 0);
-                assert((B * T * C) % (block_size * x128::size) == 0);
-                const int num_blocks = CEIL_DIV(B * T * C, (int)(block_size * x128::size));
+                assert(C % X128::size == 0);
+                assert((B * T * C) % (block_size * X128::size) == 0);
+                const int num_blocks = CEIL_DIV(B * T * C, (int)(block_size * X128::size));
                 assert(gate != nullptr && slp_gate != nullptr);
                 CU_swiglu_back_v0<<<grid_size, block_size, 0, main_stream>>>(ToX(delta_in_out), ToX(slp_gate->delta), ToX(gate), ToX(pre_gelu), nz);
             }

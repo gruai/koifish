@@ -33,9 +33,9 @@ huTensor::huTensor(Fish* fish, const string& name_, const SHAPE shape, typNUMBER
         snprintf(name, sizeof(name), "%s", name_.c_str());
     else
         name[0] = '\0';
-    if (BIT_TEST(flag, F_DEBUG)){
+    if (BIT_TEST(flag, F_DEBUG)) {
         int need_determin = 0;
-    }else
+    } else
         param_seed = randParam.RandU32();
     if (isAlloc) {
         Alloc(0x0, flag);
@@ -112,7 +112,7 @@ size_t huTensor::Alloc_1(void** dst, bool isZero, string desc, size_t sz0, int f
     return szAlloc;
 }
 size_t huTensor::Free_1(void** obj, const string& info) {
-    if(G_Has_(name,{"tmpDelta2"})){
+    if (G_Has_(name, {"tmpDelta2"})) {
         DEBUG_HERE;
     }
     if (BIT_TEST(flags, F_ONLYREF) || BIT_TEST(flags, F_NOALLOC))
@@ -545,7 +545,7 @@ double tNormsOf(const std::vector<hGTensor>& tensors, int flag) {
     grad_norm_squared = (float*)(GTensor::bt4c->data);
     double norm       = 0.0f;
     int num_slices[2] = {1, 1}, max_num_block_sums = get_max_num_block_sums(num_slices, 2);
-    size_t nz          = 0;
+    size_t nz = 0;
     // bool is_first_pass = true;  //
     for (auto tensor : tensors) {
         assert(0);  // Deprecated
@@ -571,6 +571,26 @@ double tNormsOf(const std::vector<hGTensor>& tensors, int flag) {
     return norm;
 }
 
+/* Deprecated
+template <class T>
+__global__ static void CU_x2_(float* out, const T* x0, size_t N) {
+    size_t index      = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t ldT        = blockDim.x * gridDim.x;
+    float accumulator = 0.f, a, block_sum = 0;
+    for (size_t i = index; i < N; i += ldT) {
+        a = (float)x0[i];
+        accumulator += a * a;
+    }
+    out[blockIdx.x] = blockReduce_v0<warpReduceSum>(accumulator);
+    if (blockIdx.x == 0 && threadIdx.x == 0) {
+        float sum = 0.0;
+        for (size_t i = 0; i < blockDim.x; i++) {
+            sum += out[i];
+        }
+        *out = sum;
+    }
+}*/
+
 static float* devBlockSum2 = nullptr;
 double GTensor::Length(int type, int flag) {
     bool is_first_pass = true;
@@ -585,10 +605,10 @@ double GTensor::Length(int type, int flag) {
     constexpr int block_size = 512, num_slices = 1;
     auto now             = GST_us();
     const int dMaxThread = deviceProp.maxThreadsPerMultiProcessor * deviceProp.multiProcessorCount, grid_size = dMaxThread / block_size;
-    if (devBlockSum2 == nullptr) {
+    /*if (devBlockSum2 == nullptr) {
         cudaMalloc(&devBlockSum2, sizeof(float) * grid_size * 2);
     }
-    if (DEBUG.verCuX2 == 0) {   // too complex
+    if (DEBUG.verCuX2 != 0) {   // too complex
         assert(grid_size > 0);  // gives a better error than letting the call below fail
         const int gx = CEIL_DIV(grid_size, num_slices), gy = num_slices;
         assert(gx * gy < 1024);  // we want to later accumulate the block sums in a single block
@@ -601,15 +621,22 @@ double GTensor::Length(int type, int flag) {
         cudaCheck(cudaGetLastError());
         global_sum_deterministic(devBlockSum2, devBlockSum2, grid_size, main_stream);
         cudaCheck(cudaMemcpy(&a, devBlockSum2, sizeof(float), cudaMemcpyDeviceToHost));
-    } else {
-        size_t smemPB = 1024 * sizeof(float);
-        int dT4B = 512, dGRID = dMaxThread / dT4B;
-        dGRID = 512;
-        assert(dGRID < 1024);  //  blockReduce_v0<warpReduceSum>
-        cudaCheck(cudaMemset(devBlockSum2, 0, sizeof(float) * dGRID));
-        CU_x2_<floatX><<<dGRID, dT4B, smemPB, main_stream>>>(devBlockSum2, src, nEle);  //  0.00190092938
-        cudaCheck(cudaMemcpy(&a, devBlockSum2, sizeof(float), cudaMemcpyDeviceToHost));
-        cudaStreamSynchronize(main_stream);
+
+        D20(devBlockSum2, sizeof(double));
+        CU_x2_atomic<<<CEIL_DIV(nEle, 512), 512, 0, main_stream>>>((double*)devBlockSum2, src, nEle);
+        double len = 0.0;
+        D2e(devBlockSum2, len);
+        // Print(name,type,-1);
+        assert(fabs((float)len-a)<1.0e-6*a);
+    } else*/
+    {
+        using x128 = PackedN<floatX, 16 / sizeof(floatX)>;
+        assert(nEle % x128::size == 0);
+        double len = 0.0, *devSum2 = (double*)GTensor::stat_info;
+        D20(devSum2, sizeof(double));
+        CU_x2_atomic<<<CEIL_DIV(nEle / x128::size, block_size), block_size, 0, main_stream>>>(devSum2, src, nEle);
+        D2e(devSum2, len);
+        a = len;
     }
     // SUM::tX1 += GST_us()-now;
     if (type == 1) {

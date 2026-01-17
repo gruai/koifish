@@ -221,7 +221,6 @@ int GGUF_list(CLI_params& config) {
 int run_caml(const char* prompt, int flag);
 
 int Fish_bubble(CLI_params& config) {
-    g_dump_level              = 0;
     config.wiki_actor         = "copy";
     config.common.n_batch     = 1;
     config.model.preLogits_dB = 1;
@@ -907,8 +906,6 @@ bool GeneratOnPrompt::Inference(hSAMP samp, int& n_past, int flag) {
 }
 
 int GeneratOnPrompt::Generate(int nJob, int flag) {
-    g_dump_level = 1;
-
     GST_TIC(tic);
     hSAMP samp = (dialogs == nullptr || dialogs->empty()) ? nullptr : dialogs->SampAt(0);
     output_tokens.clear();

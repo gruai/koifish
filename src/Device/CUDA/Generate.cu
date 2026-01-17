@@ -285,7 +285,6 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
         bf16* k_cache_pos = layer_key_cache + (size_t)pos * hQwen->kv_dim;
         bf16* v_cache_pos = layer_value_cache + (size_t)pos * hQwen->kv_dim;
         // if (pos == 1) {
-        //     g_dump_level = 0;
         //     DEBUG_HERE;
         // }
         hQwen->InitLayer(l);
@@ -350,7 +349,7 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
         cudaCheck(cudaGetLastError());
         hQwen->inpL->Print("x_qkv", 0x0, 0);
         // if (pos == 1) {            K_EXIT(-13);        }
-        SUM::GPU_TIME(SUM::tQKV, now);  // += GST_us() - now;
+        SUM::GPU_TIME(SUM::tQKV_forw, now);  // += GST_us() - now;
         now      = GST_us();
         FFN* ffn = hFish->GetNeuron<FFN>("FFN", l);
         if (DEBUG.verInferFFN > 0) {

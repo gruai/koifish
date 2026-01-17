@@ -577,13 +577,14 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGensor loss_, hGensor target_, C
         n_no_improvement = 0;
         just_initialized = false;
     }
-    if (_fish->arch == NLP_QWEN2 || _fish->arch == NLP_QWEN3) {
-        // g_dump_level = -1;
-    }
+
     int iter0 = 0, t;
     for (t = 0; t < train_params.nMostIter; ++t) {
+        NvtxRange range("step", t);
         CheckExitSearch(t);
-
+        if (_fish->arch == NLP_QWEN2 || _fish->arch == NLP_QWEN3) {
+            // g_dump_level = t > 0 ? 0 : 1;
+        }
         _fish->BeforeNextStep(t, 0x0);
         if (t == train_params.nMostIter - 1) {
             if (train_loader != nullptr) {
@@ -1001,6 +1002,7 @@ bool Optimizer::PrepareData(CLI_params& config, int flag) {
     string root = _fish->tsTrain->serial_root, spTrain = root + ".train", spEval = root + ".eval";
     if (root.empty()) {
         train_loader->Shuffle();
+        assert(train_loader->shuffle_sample_count > 0);
         return true;
     }
     hSampLoader val_loader = val_loaders.empty() ? nullptr : val_loaders[0];

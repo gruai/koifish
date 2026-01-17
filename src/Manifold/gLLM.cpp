@@ -824,6 +824,7 @@ int Fish::ForwardOnRLS(int iter, int flag) {
         // GetNeuron<SelfAttention>("QKV", 0)->ManageMemory(DATA_PLACE::DEV_MEM);  //only for debug
         for (auto task : branch->Tasks()) {
             GeNeuron* neuron = (GeNeuron*)(task->hOBJ);
+            // NvtxRange range(neuron->name.c_str(),0);
             if (neuron->name == "model.blk.10.attn" && curB > 0) {  //   model.inp_embd
                 DEBUG_HERE;
             }

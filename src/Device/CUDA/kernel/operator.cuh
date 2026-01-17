@@ -30,48 +30,9 @@ __device__ __inline__ T warpReduceMax(T* val, int thread_group_width = 32) {
     return (T)(0.0f);
 }
 
-/*
-    It's not deterministic, why?
-        atomicAdd in CUDA is not deterministic because it involves race conditions when multiple threads attempt to modify the same memory location
-   simultaneously. only support CU_x2_<<<grid_size, block_size, 0, main_stream>>>
-*/
-template <class T, int NUM_THREADS = 256>
-__global__ static void CU_x2_atomic(float* out, const T* x0, size_t N) {
-    int tid = threadIdx.x, idx = blockIdx.x * NUM_THREADS + tid;
-    if (idx >= N) {
-        return;
-    }  // guard
 
-    constexpr int NUM_WARPS = (NUM_THREADS + WARP_SIZE - 1) / WARP_SIZE;
-    assert(NUM_WARPS <= WARP_SIZE);
-    // __shared__ float reduce_smem[NUM_WARPS];	// keep the data in register is enough for warp operaion.
-    float a         = (idx < N) ? (float)(x0[idx]) : 0.0;
-    float sum       = a * a;
-    float block_sum = CU_BlockSum<NUM_THREADS>(sum, true);  // blockReduce_v0<warpReduceSum>(sum, true);
-    if (tid == 0)
-        atomicAdd(out, block_sum);
-    // __syncthreads();
-}
 
-// Performs a deterministic x2
-template <class T>
-__global__ static void CU_x2_(float* out, const T* x0, size_t N) {
-    size_t index      = blockIdx.x * blockDim.x + threadIdx.x;
-    size_t ldT        = blockDim.x * gridDim.x;
-    float accumulator = 0.f, a, block_sum = 0;
-    for (size_t i = index; i < N; i += ldT) {
-        a = (float)x0[i];
-        accumulator += a * a;
-    }
-    out[blockIdx.x] = blockReduce_v0<warpReduceSum>(accumulator);
-    if (blockIdx.x == 0 && threadIdx.x == 0) {
-        float sum = 0.0;
-        for (size_t i = 0; i < blockDim.x; i++) {
-            sum += out[i];
-        }
-        *out = sum;
-    }
-}
+
 // Kernel to compute row standard deviations of a matrix
 template <typename T>
 __global__ static void CU_RowStdDev(T* matrix, floatGama* rowStdDev, int rows, int cols) {
