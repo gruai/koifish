@@ -18,7 +18,7 @@ E.g., the layernorms are connected to the residuals so we += in layernorm backwa
 
 // ----------------------------------------------------------------------------
 // CUDA kernels
-
+/*
 __global__ static void layernorm_forward_kernel3(floatX* __restrict__ out, float* __restrict__ mean, float* __restrict__ rstd, const floatX* __restrict__ inp,
                                                  const floatX* __restrict__ weight, const floatX* __restrict__ bias, int N, int C) {
     int lane_id   = threadIdx.x % WARP_SIZE;
@@ -65,15 +65,12 @@ __global__ static void layernorm_forward_kernel3(floatX* __restrict__ out, float
         float n = s * ((float)__ldcs(x + c) - m);
         __stcs(o + c, (floatX)(n * (float)weight[c] + (float)bias[c]));
     }
-}
+}*/
 
-// __global__ void CU_rms_forward_v1(bf16* __restrict__ out, float* __restrict__ rstd, const bf16* __restrict__ inp, const bf16* __restrict__ weight, int N, int
-// C,
-//                                   float eps = 1e-5f);
 /**
  *  lite version: each thread for one row/head, No need sync!
  *  1. out maybe same as inp
- */
+
 __global__ static void CU_rms_forward_v0(bf16* __restrict__ out, float* __restrict__ rstd, const bf16* __restrict__ inp, const bf16* __restrict__ weight,
                                          int nTH, int ldTH, float eps) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -123,7 +120,7 @@ __global__ void CU_rms_forward_v1(Typ* __restrict__ out, float* __restrict__ rst
 
     if (rstd != nullptr)
         rstd[idx] = s0;
-}
+} */
 
 /**
  * Each block for one row/head, Need sync!
@@ -168,8 +165,12 @@ __global__ void CU_rms_forward_v2(Typ* __restrict__ out, float* __restrict__ rst
     }
 }
 
+/**
+ * Each wrap for one row/head, Need sync!
+ * 1. out maybe same as inp
+ */
 template <typename T, typename Tw>
-__global__ static void CU_rms_forward(T* __restrict__ out, float* __restrict__ rstd, const T* __restrict__ inp, const Tw* __restrict__ weight, int N, int C,
+__global__ static void CU_rms_forward_v3(T* __restrict__ out, float* __restrict__ rstd, const T* __restrict__ inp, const Tw* __restrict__ weight, int N, int C,
                                       float eps = 1e-5f) {
     using X128 = PackedN<T, 16 / sizeof(T)>;
     assert(blockDim.x == WARP_SIZE);
@@ -706,6 +707,7 @@ __global__ static void __launch_bounds__(512, 2)  // todo - any warnings on Turi
     }
 }
 
+/*  Deprecated! 
 void inline layernorm_forward(floatX* out, float* mean, float* rstd, floatX* inp, const floatX* weight, const floatX* bias, int B, int T, int C,
                               cudaStream_t stream) {
     NVTX_RANGE_FN();
@@ -719,22 +721,21 @@ void inline layernorm_forward(floatX* out, float* mean, float* rstd, floatX* inp
     // this may fail, in which case we fall back to the smem free implementation.
     cudaCheck(cudaGetLastError());
     if (mean == nullptr) {  // RMS
-        // auto status = cudaFuncSetAttribute(CU_rms_forward, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+        // auto status = cudaFuncSetAttribute(CU_rms_forward_v3, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
         // cudaCheck(cudaGetLastError());        assert(status == cudaSuccess);
-        CU_rms_forward<<<grid_size, dim3(WARP_SIZE, block_y), smem, stream>>>(out, rstd, inp, weight, N, C);
+        CU_rms_forward_v3<<<grid_size, dim3(WARP_SIZE, block_y), smem, stream>>>(out, rstd, inp, weight, N, C);
     } else {
         auto status = cudaFuncSetAttribute(CU_lm_forward, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
         cudaCheck(cudaGetLastError());
-        if (status == cudaSuccess) {
-            CU_lm_forward<<<grid_size, dim3(WARP_SIZE, block_y), smem, stream>>>(out, mean, rstd, inp, weight, bias, N, C);
-        } else {
-            // fall back to the version without shared memory
-            const int grid_size_fb = CEIL_DIV(N, (block_size / WARP_SIZE));
-            layernorm_forward_kernel3<<<grid_size_fb, block_size, 0, stream>>>(out, mean, rstd, inp, weight, bias, N, C);
-        }
+        assert(status == cudaSuccess);
+        CU_lm_forward<<<grid_size, dim3(WARP_SIZE, block_y), smem, stream>>>(out, mean, rstd, inp, weight, bias, N, C);
+        // } else {
+        //     const int grid_size_fb = CEIL_DIV(N, (block_size / WARP_SIZE));
+        //     layernorm_forward_kernel3<<<grid_size_fb, block_size, 0, stream>>>(out, mean, rstd, inp, weight, bias, N, C);
+        // }
     }
     cudaCheck(cudaGetLastError());
-}
+}*/
 
 void inline residual_forward(floatX* out, const floatX* inp1, const floatX* inp2, int N, cudaStream_t stream) {
     NVTX_RANGE_FN();
@@ -769,57 +770,6 @@ void inline layernorm_backward(floatX* delta, floatX* dweight, floatX* dbias, fl
     }
 
     cudaCheck(cudaGetLastError());
-}
-
-template <int THREADS_PER_BLOCK, int HEAD_DIM>
-__global__ void __launch_bounds__(THREADS_PER_BLOCK)
-    fused_multi_rmsnorm_kernel(bf16* __restrict__ vecs, const bf16* __restrict__ weight, int num_vecs, float inv_head_dim, float EPS = 1e-6f) {
-    // each block processes one vector/head
-    const int vec_idx = blockIdx.x;
-    if (vec_idx >= num_vecs)
-        return;
-
-    const int t_idx     = threadIdx.x;
-    const int vec_iters = HEAD_DIM / 2;
-
-    bf16* vec_start = vecs + vec_idx * HEAD_DIM;
-
-    const __nv_bfloat162* row_in    = reinterpret_cast<const __nv_bfloat162*>(vec_start);
-    const __nv_bfloat162* weight_in = reinterpret_cast<const __nv_bfloat162*>(weight);
-    __nv_bfloat162* row_out         = reinterpret_cast<__nv_bfloat162*>(vec_start);
-
-    // 1. calculate sum of squares
-    float lsum = 0.0f;
-    for (int idx = t_idx; idx < vec_iters; idx += THREADS_PER_BLOCK) {
-        __nv_bfloat162 v_bf16 = __ldg(&row_in[idx]);
-        float2 v_fp32         = __bfloat1622float2(v_bf16);
-        lsum += v_fp32.x * v_fp32.x + v_fp32.y * v_fp32.y;
-    }
-
-    // 2. reduce sum within the block
-    using BlockReduce = cub::BlockReduce<float, THREADS_PER_BLOCK>;
-    __shared__ typename BlockReduce::TempStorage tmp;
-    float block_sum = BlockReduce(tmp).Sum(lsum);
-
-    // 3. calculate the normalization factor
-    __shared__ float mul_val;
-    if (t_idx == 0) {
-        mul_val = rsqrtf(block_sum * inv_head_dim + EPS);
-    }
-    __syncthreads();
-
-    // 4. applying the normalization
-    for (int idx = t_idx; idx < vec_iters; idx += THREADS_PER_BLOCK) {
-        __nv_bfloat162 v_in_bf16     = __ldg(&row_in[idx]);
-        __nv_bfloat162 v_weight_bf16 = __ldg(&weight_in[idx]);
-        float2 v_in_fp32             = __bfloat1622float2(v_in_bf16);
-        float2 v_weight_fp32         = __bfloat1622float2(v_weight_bf16);
-
-        v_in_fp32.x = (v_in_fp32.x * mul_val) * v_weight_fp32.x;
-        v_in_fp32.y = (v_in_fp32.y * mul_val) * v_weight_fp32.y;
-
-        row_out[idx] = __float22bfloat162_rn(v_in_fp32);
-    }
 }
 
 __global__ static void CU_rmsnorm_multihead(bf16* __restrict__ vecs, const bf16* __restrict__ weight, int nHead, int HEAD_DIM, float EPS = 1e-6f) {
@@ -920,9 +870,9 @@ __global__ static void __launch_bounds__(THREADS_PER_BLOCK)
         row_out[idx] = __float22bfloat162_rn(v_in_fp32);
     }
 }
-
+// dim=ldTH & nTH==1
 template <typename Typ>
-void inline CU_rms_v2(Typ* o, const Typ* x, const Typ* weight, int dim) {
+void inline CU_rms_infer(Typ* o, const Typ* x, const Typ* weight, int dim) {
     if (dim % 2 != 0) {
         fprintf(stderr, "FATAL: rmsnorm dim %d is not divisible by 2. Vectorized kernel cannot run.\n", dim);
         exit(EXIT_FAILURE);

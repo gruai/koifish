@@ -179,15 +179,12 @@ string MODEL_CARD::sLayer = "blk.";  //".norm"
 string MODEL_CARD::sEmbed = "embed", MODEL_CARD::sInvEmbed = "embed_inv";
 
 MODEL_CARD::MODEL_CARD() {
-#if defined(ENABLE_FP16)
+#if defined(USE_FP16_BASELINE)
     tpWeight = typNUMBER::F16, tpActivation = typNUMBER::F16, tpGradient = typNUMBER::F16;
-#elif defined(ENABLE_BF16)
+#elif defined(USE_BF16_BASELINE)
     tpWeight = typNUMBER::BF16, tpActivation = typNUMBER::BF16, tpGradient = typNUMBER::BF16;
-#elif defined(ENABLE_FP8)
+#elif defined(USE_FP8_BASELINE)
     tpWeight = typNUMBER::F8E5M2, tpActivation = typNUMBER::BF16, tpGradient = typNUMBER::BF16;
-#elif defined(ENABLE_FP32)
-    tpWeight = typNUMBER::F32, tpActivation = typNUMBER::F32, tpGradient = typNUMBER::F32;
-#else
     assert(0);
 #endif
 }
@@ -310,6 +307,12 @@ bool CLI_params::JModel2Params(int flag) {
         }
         if (jModel.find("hf-card") != jModel.end())
             model.sCardPath = jKEY(jModel, {"hf-card"});
+        if (jModel.find("token_bin_path") != jModel.end())  //  only for custom
+            model.sTokenBinPath = jKEY(jModel, {"token_bin_path"});
+        else{
+            // model.sTokenBinPath = "./Datasets/climb-1b/tokenizer.dat";
+        }            
+
         jQuant = jKEY(jConfig, {"quantizer"});
 
         nLayerX = 1;  // at least 1 layer
@@ -366,7 +369,6 @@ bool CLI_params::JModel2Params(int flag) {
             // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;  // DEBUG.T_GEMM = -1;
             // common.method = "adamw";
             // common.muon.isTransDown = false;
-            DEBUG.T_generate_qkv = 1;
         } else {
             // common.method = "muon";
             // scheduling.strategy = MEM_STRATEGY::MEM_SWAP;
@@ -594,14 +596,7 @@ void CLI_params::OnArch() {
             int group = Get({"model_v0", "target_group"}, 1);
             assert(group == 1);
         }
-
         break;
-        case NLP_QWEN2:
-
-            break;
-        case NLP_QWEN3:
-
-            break;
         case NLP_DEEPSEEK:
             model.sLayer = "layers.";
             break;
@@ -890,7 +885,7 @@ bool CLI_params::ToJConfig(int flag) {
             jConfig["vendor_quantizer"] = jVendorQuant;
         }
 
-        chat_sampler.seq_len          = 1024;   //512;
+        chat_sampler.seq_len          = 1024;  // 512;
         jConfig["gpt"]["max_seq_len"] = chat_sampler.seq_len;
         // jConfig["debug"]["prompts"] = "hello";
 
@@ -1089,7 +1084,7 @@ bool CLI_params::parse(int argc, char** argv) {
         } else if (arg == "--prompts") {  // directory of hf model
             assert(i + 1 < argc);
             DEBUG.prompts = {argv[++i]};
-        } else if (arg == "--tokenizer") {  // directory of hf model
+        } else if (arg == "--tokenizer") {  // directory of tokenizer
             assert(i + 1 < argc);
             model.sTokenBinPath = argv[++i];
         } else if (arg == "--step") {
@@ -1194,12 +1189,12 @@ template <typename T>
 double P_softmax(int idx, T* logits, int size) {
     float max_val = -FLT_MAX;
     for (int i = 0; i < size; i++) {
-        float a = logits[i];
+        float a = T2Float(logits + i);
         max_val = a > max_val ? a : max_val;
     }
     float partition = 0.0f;
     for (int i = 0; i < size; i++) {
-        float a = logits[i];
+        float a = T2Float(logits + i);  //logits[i];
         partition += expf(a - max_val);
     }
     //
@@ -1273,8 +1268,6 @@ float SOFT_MAX_minus(const int n, float* y, const float* x) {
 #endif
     return x1;
 }
-
-
 
 struct ggml_tensor* ggml_cross_entropy_loss_1(struct ggml_context* ctx, struct ggml_tensor* a, struct ggml_tensor* b) {
 #ifndef GG_V12

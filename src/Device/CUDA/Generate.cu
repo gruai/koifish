@@ -144,67 +144,10 @@ __global__ void convert_bf16_to_fp32_kernel(__nv_bfloat16* bf16_in, float* fp32_
     }
 }
 
-bool LogitsInfo::Init(int n_vocab, bool isCPU_, hGensor hClsLogits, int flag) {
-    isCPU = isCPU_;
-    dim   = n_vocab;
-
-    // assert(cls->preLogits->host_data == nullptr);
-    index = new int[n_vocab];
-    for (int i = 0; i < n_vocab; i++) {
-        index[i] = i;
-    }
-    if (isCPU) {
-        logits = new floatLogits[n_vocab];
-
-        hClsLogits->host_data = logits;
-    } else {
-        logits = TO<floatLogits>(hClsLogits);
-
-        int* host_index = index;
-        cudaCheck(cudaMalloc(&index, n_vocab * sizeof(int)));
-        H2D(index, host_index, n_vocab * sizeof(int));
-        delete[] host_index;
-
-        cudaCheck(cudaMalloc(&index_sorted, n_vocab * sizeof(int)));
-        cudaCheck(cudaMalloc(&logits_sorted, n_vocab * sizeof(floatLogits)));
-    }
-    return true;
-}
-
 __global__ void CU_init_i(int* vec, int n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
         vec[i] = i;
-    }
-}
-
-void LogitsInfo::SortPair(int nPick, int flag) {
-    if (nPick <= 0)
-        nPick = dim;
-    if (isCPU) {
-        // qsort(probindex, n_cands, sizeof(ProbIndex), compare_prob_desc);
-        assert(nPick <= dim);
-        for (int i = 0; i < nPick; i++) {
-            for (int j = 1; j < nPick; j++) {
-                if (logits[i] < logits[j]) {
-                    Swap(i, j);
-                }
-            }
-        }
-    } else {
-        // CU_RadixSorter sorter(_logits,n_vocab);
-        if (d_temp == nullptr) {
-            cub::DeviceRadixSort::SortPairs(d_temp, szTemp, logits, logits_sorted, index, index_sorted, nPick);
-            cudaCheck(cudaMalloc(&d_temp, szTemp));  //
-        }
-        CU_init_i<<<CEIL_DIV(nPick, CU_T4B_SMALL), CU_T4B_SMALL>>>(index, nPick);
-        // cub::DeviceRadixSort::SortKeys(d_temp, szTemp, logits, logits, nPick);
-        //  In-place operations are not supported. There must be no overlap between any of the provided ranges!!!
-        // cudaMemcpy(index_out, index, sizeof(int) * nPick, cudaMemcpyDeviceToDevice);
-        // cudaMemcpy(logits_out, logits, sizeof(floatLogits) * nPick, cudaMemcpyDeviceToDevice);
-        cub::DeviceRadixSort::SortPairs(d_temp, szTemp, logits, logits_sorted, index, index_sorted, nPick);
-        PrintTensor<floatLogits>("sort_logits", logits_sorted, true, nPick, 1, 1, 1, 0);
-        PrintTensor<int>("sort_index", index_sorted, true, nPick, 1, 1, 1, 0);
     }
 }
 
@@ -281,21 +224,21 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
     for (int l = 0; l < hQwen->n_layers; ++l) {
         double now = GST_us();
         // bf16 *layer_key_cache = hQwen->key_cache + (size_t)l * seq_len * KV_DIM, *layer_value_cache = hQwen->val_cache + (size_t)l * seq_len * KV_DIM;
-        bf16 *layer_key_cache = (bf16*)hQwen->hCache->Get(KVCache::KV_KEY, l, 0), *layer_value_cache = (bf16*)hQwen->hCache->Get(KVCache::KV_VAL, l, 0);
-        bf16* k_cache_pos = layer_key_cache + (size_t)pos * hQwen->kv_dim;
-        bf16* v_cache_pos = layer_value_cache + (size_t)pos * hQwen->kv_dim;
+        AT *layer_key_cache = (AT*)hQwen->hCache->Get(KVCache::KV_KEY, l, 0), *layer_value_cache = (AT*)hQwen->hCache->Get(KVCache::KV_VAL, l, 0);
+        AT* k_cache_pos = layer_key_cache + (size_t)pos * hQwen->kv_dim;
+        AT* v_cache_pos = layer_value_cache + (size_t)pos * hQwen->kv_dim;
         // if (pos == 1) {
         //     DEBUG_HERE;
         // }
         hQwen->InitLayer(l);
         const CoopLayer<QWEN3_PIPE::tpWeight>* L = (const CoopLayer<QWEN3_PIPE::tpWeight>*)(hQwen->cLayers + l);  //	hQwen->cLayers+l
         SelfAttention* QKV                       = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
-        if (DEBUG.verInferQKV > 0) {  // flags == 0
-            // QKV->OnDebug();
+        if (DEBUG.verInferQKV > 0) {  
+            INSPECT inspect(QKV);
             QKV->cuInfer(hQwen->inpL, 0x0);
         } else {
             // PrintTensor<QWEN3_PIPE::tpWeight>("rms_att_weight", L->rms_att_weight, true, dim, 1);
-            CU_rms_v2(hQwen->xb, hQwen->x, L->rms_att_weight, hQwen->dim);
+            CU_rms_infer(hQwen->xb, hQwen->x, L->rms_att_weight, hQwen->dim);
             // PrintTensor<QWEN3_PIPE::tpActivation>("rms_0", hQwen->x, true, dim, 1);
             PrintTensor<QWEN3_PIPE::tpActivation>("rms_xb", hQwen->xb, true, dim, 1);
 
@@ -309,20 +252,20 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
 
             // qk_norm_fused_gpu(hQwen->q, k_cache_pos, L->wq_norm, L->wk_norm);
             constexpr int QK_NORM_THREADS_PER_BLOCK = 64;
-            if (1) {
+            if (0) {
+                // CU_rms_infer(ToX(out), ToX(inpDelta), weight, C);
+            } else {
+#if defined(USE_FP8_BASELINE)
+#else
                 CU_rmsnorm_multihead<<<N_HEADS, QK_NORM_THREADS_PER_BLOCK>>>(hQwen->q, L->wq_norm, N_HEADS, HEAD_DIM);
                 PrintTensor<QWEN3_PIPE::tpActivation>("q.norm", hQwen->q, true, hQwen->q_dim, 1);
                 CU_rmsnorm_multihead<<<N_KV_HEADS, QK_NORM_THREADS_PER_BLOCK>>>(k_cache_pos, L->wk_norm, N_KV_HEADS, HEAD_DIM);
                 PrintTensor<QWEN3_PIPE::tpActivation>("k.norm", k_cache_pos, true, hQwen->kv_dim, 1);
-            } else {
-                fused_multi_rmsnorm_kernel<QK_NORM_THREADS_PER_BLOCK, HEAD_DIM>
-                    <<<N_HEADS, QK_NORM_THREADS_PER_BLOCK>>>(hQwen->q, L->wq_norm, N_HEADS, 1.0f / HEAD_DIM);
-                fused_multi_rmsnorm_kernel<QK_NORM_THREADS_PER_BLOCK, HEAD_DIM>
-                    <<<N_KV_HEADS, QK_NORM_THREADS_PER_BLOCK>>>(k_cache_pos, L->wk_norm, N_KV_HEADS, 1.0f / HEAD_DIM);
+#endif
             }
 
             // rope_gpu_naive(hQwen->q, k_cache_pos, pos, N_HEADS, N_KV_HEADS, HEAD_DIM, rope_theta);
-            CU_rope2_v0<<<dim3(N_HEADS, 1, 1), dim3(HEAD_DIM / 2, 1, 1)>>>(hQwen->q, k_cache_pos, pos, N_HEADS, N_KV_HEADS, HEAD_DIM, rope_theta);
+            CU_rope2_v0<<<dim3(1, 1, N_HEADS), dim3(HEAD_DIM / 2, 1, 1)>>>(hQwen->q, k_cache_pos, pos, N_HEADS, N_KV_HEADS, HEAD_DIM, rope_theta, 42);
             PrintTensor<QWEN3_PIPE::tpActivation>("q.rope", hQwen->q, true, hQwen->q_dim, 1),
                 PrintTensor<QWEN3_PIPE::tpActivation>("k.rope", k_cache_pos, true, hQwen->kv_dim, 1);
 
@@ -353,10 +296,10 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
         now      = GST_us();
         FFN* ffn = hFish->GetNeuron<FFN>("FFN", l);
         if (DEBUG.verInferFFN > 0) {
-            // ffn->OnDebug();
+            INSPECT inspect(ffn);
             ffn->cuInfer(hQwen->inpL, 0x0);
         } else {
-            CU_rms_v2(hQwen->xb, hQwen->x, L->rms_ffn_weight, hQwen->dim);
+            CU_rms_infer(hQwen->xb, hQwen->x, L->rms_ffn_weight, hQwen->dim);
             // 9. FFN projections (Gate and Up)
             // output of w1 matmul is hQwen->hb. output of w3 matmul is hQwen->hb2.
             CU_mv_(hQwen->hb, L->w3, hQwen->xb, hQwen->hidden_dim,
@@ -384,12 +327,13 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
     // 11. final RMSNorm
     // in-place operation on hQwen->x
     floatX* rms_final_weight = TO<floatX>(lnf->w);  // (dim,);
-    CU_rms_v2(hQwen->x, hQwen->x, rms_final_weight, hQwen->dim);
+    CU_rms_infer(hQwen->x, hQwen->x, rms_final_weight, hQwen->dim);     // last layer normal
     // 12. classifier Matmul
     if (1) {
+        INSPECT inspect(cls);
         cls->cuInfer(hQwen->inpL, 0x0);
     } else {
-        CU_rms_v2(hQwen->x, hQwen->x, rms_final_weight, hQwen->dim);
+        CU_rms_infer(hQwen->x, hQwen->x, rms_final_weight, hQwen->dim);
         hGensor out_weight = hQwen->out_weight;
         CU_mv_(hQwen->xlogit, ToX(out_weight), hQwen->x, hQwen->vocab_size, hQwen->dim);
         // int grid_size = (hQwen->vocab_size + CU_T4B_SMALL - 1) / CU_T4B_SMALL;

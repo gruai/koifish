@@ -144,14 +144,15 @@ inline typNUMBER TYPE_() {
 
 typNUMBER tpNumOf(const std::string& dtype_str);
 
-#undef ENABLE_BF16
-#undef ENABLE_FP32
-#undef ENABLE_FP16
-#undef ENABLE_FP8
-// #define ENABLE_FP32
-// #define ENABLE_FP16
-#define ENABLE_BF16
-// #define ENABLE_FP8
+/*
+    Define the baseline precision of floats, and other precisions are also used by Koifish.
+*/
+#undef USE_BF16_BASELINE
+#undef USE_FP16_BASELINE
+#undef USE_FP8_BASELINE
+
+#define USE_BF16_BASELINE
+// #define USE_FP8_BASELINE
 
 /*
     FP16/BF16/FP8/FP4 from different vendors
@@ -160,19 +161,12 @@ typNUMBER tpNumOf(const std::string& dtype_str);
 #define _USE_CUDA_FLOAT_
 // #undef _USE_CUDA_FLOAT_
 #if defined(_USE_CUDA_FLOAT_)
-#include <cuda_bf16.h>
-#include <cuda_fp16.h>
-#include <cuda_fp8.h>
+
 #include <driver_types.h>
 #include <library_types.h>
 
-#if defined(ENABLE_FP32)
-typedef float floatX;
-#define tpCuBLAS CUDA_R_32F
-typedef float floatGrad;
-typedef float floatFFN;
-typedef float floatMV;
-#elif defined(ENABLE_FP8)
+#if defined(USE_FP8_BASELINE)
+#include <cuda_fp8.h>
 using floatX      = __nv_fp8_e5m2;
 using floatMV     = __nv_fp8_e5m2;
 using floatGrad   = __nv_fp8_e5m2;
@@ -181,19 +175,23 @@ using floatLogits = __nv_fp8_e5m2;
 
 #define tpCuBLAS CUDA_R_8F_E5M2
 
-#elif defined(ENABLE_FP8_1)
+#elif defined(USE_FP8_e4m3_BASELINE)
+#include <cuda_fp8.h>
 typedef __nv_fp8_e4m3 floatX;
 #define tpCuBLAS CUDA_R_8F_E4M3
-#elif defined(ENABLE_FP16)
+#elif defined(USE_FP16_BASELINE)
+#include <cuda_fp16.h>
 typedef half floatX;
 #define tpCuBLAS CUDA_R_16F
 #define tpCuBLASCOMPUTE CUBLAS_COMPUTE_16F
 //  #define tpCuBLASCOMPUTE  CUBLAS_COMPUTE_32F_FAST_16F
-#elif defined(ENABLE_BF16)
+#elif defined(USE_BF16_BASELINE)
+#include <cuda_bf16.h>
+#include <cuda_fp8.h>
 #define tpCuBLAS CUDA_R_16BF
 #define tpCuBLASCOMPUTE CUBLAS_COMPUTE_32F
-using floatA      = __nv_bfloat16;      //Activation
-using floatX      = __nv_bfloat16;      //Weight
+using floatA      = __nv_bfloat16;  // Activation
+using floatX      = __nv_bfloat16;  // Weight
 using floatMV     = __nv_bfloat16;
 using floatGrad   = __nv_bfloat16;
 using floatFFN    = __nv_bfloat16;
@@ -224,10 +222,12 @@ template <>
 inline constexpr cudaDataType cuLibType<nv_bfloat16> = cudaDataType::CUDA_R_16BF;
 template <>
 inline constexpr cudaDataType cuLibType<std::int8_t> = cudaDataType::CUDA_R_8I;
+#if defined(USE_FP8_BASELINE)
 template <>
 inline constexpr cudaDataType cuLibType<__nv_fp8_e4m3> = cudaDataType::CUDA_R_8F_E4M3;
 template <>
 inline constexpr cudaDataType cuLibType<__nv_fp8_e5m2> = cudaDataType::CUDA_R_8F_E5M2;
+#endif
 
 #else
 
@@ -322,10 +322,17 @@ inline void T2Float_arr(const size_t N, const T* in, float* out) {
         out[i] = T2Float(in + i);
     }
 }
+// return dat0[pos] - dat1[pos]
 template <typename T>
 inline float T2Float_delta(const T* dat0, const T* dat1, const size_t pos, int flag = 0x0) {
     T delta = dat0[pos] - dat1[pos];
     return T2Float(&delta);
+}
+template <>
+inline float T2Float_delta(const __nv_fp8_e5m2* dat0, const __nv_fp8_e5m2* dat1, const size_t pos, int flag) {
+    float a = T2Float(dat0 + pos), b = T2Float(dat1 + pos);
+    // __nv_fp8_e5m2 delta = __hsub(a, b);  //  Use CUDA's built-in subtraction function
+    return a - b;
 }
 
 template <typename T>
@@ -476,8 +483,3 @@ struct NF3_LUT {
 
 void BIT_SET_k(hBITARR array, size_t offset, BIT_8 elem, int bits);
 BIT_8 BIT_GET_k(hBITARR array, size_t offset, int bits);
-
-#if defined(_USE_CUDA_FLOAT_)
-#else
-
-#endif

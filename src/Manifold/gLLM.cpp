@@ -712,8 +712,6 @@ float RAW_backward(Fish* fish, const int* hostInToken, int accum_steps, bool, in
 int Fish::BackwardOnRLS(int iter, int flag) {
     GTensor::delta->Zero();
     OutCLS* cls       = GetNeuron<OutCLS>("OutCLS", 0);
-    GTensor::buff     = hCLS->preLogits->data;  // reused in many place!
-    GTensor::buff_len = hCLS->preLogits->size() * sizeof(floatX);
     /*if (DEBUG.back_graph_version == 1) {
         int nAccum          = config.common.n_gradient_accumulation;
         bool isOnlyEvaluate = false;
@@ -824,6 +822,7 @@ int Fish::ForwardOnRLS(int iter, int flag) {
         // GetNeuron<SelfAttention>("QKV", 0)->ManageMemory(DATA_PLACE::DEV_MEM);  //only for debug
         for (auto task : branch->Tasks()) {
             GeNeuron* neuron = (GeNeuron*)(task->hOBJ);
+            INSPECT inspect(neuron);
             // NvtxRange range(neuron->name.c_str(),0);
             if (neuron->name == "model.blk.10.attn" && curB > 0) {  //   model.inp_embd
                 DEBUG_HERE;

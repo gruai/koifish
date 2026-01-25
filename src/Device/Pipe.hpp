@@ -290,5 +290,6 @@ struct KERNEL_PIPE : public MODEL_CARD {
     }
 };
 
-typedef KERNEL_PIPE<bf16, bf16, bf16> QWEN3_PIPE;  // all types are bf16
+// typedef KERNEL_PIPE<bf16, bf16, bf16> QWEN3_PIPE;  
+typedef KERNEL_PIPE<floatX, floatX, floatX> QWEN3_PIPE;  
 typedef KERNEL_PIPE<float, bf16, __nv_fp8_e5m2> QWEN_CALM_PIPE;

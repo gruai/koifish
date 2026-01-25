@@ -437,7 +437,7 @@ struct MUON_params_ {
     bool isTransDown = true;
     bool isAdamW(void* hUserData, int flag = 0x0);
     float lr_scale = 50.f;  // 100.f 50.f?
-    
+    //  torch:  self←self+λ⋅(b−self)          lerp(a, b, λ):  a+λ*(b-a)
     float mui      = 0.95;
     float eps      = 1e-7f;  // epsilon for numerical stability
     float eps_loss = 1e-5f;  // epsilon for convergence test
@@ -548,13 +548,14 @@ struct DEUG_SWITCH {
     int verCuX2            = 0;
     int verShuffleSamp     = 0;
     int verSampJump        = 0;
+    int verGenerate        = 0;
 
-    int T_ternary             = 0;
-    int T_classifier_ver      = 0;
-    int T_cpu                 = 0;
-    int T_GEMM                = -1;
-    int T_fuyou               = 1;
-    int T_generate_qkv        = 0;
+    int T_ternary        = 0;
+    int T_classifier_ver = 0;
+    int T_cpu            = 0;
+    int T_GEMM           = -1;
+    int T_fuyou          = 1;
+
     int T_cuQK                = 0;
     int T_generate_most_layer = 10000000;
     int T_kvcache_quant       = 0;
@@ -844,7 +845,6 @@ struct CLI_params {
 
     uint32_t Q_dim(int il = 0) const { return head_dim(il) * n_head(il); }
     uint32_t KV_dim(int il = 0) const { return head_dim(il) * n_head_kv(il); }
-    
 
     uint32_t n_gqa(int il = 0) const {
         assert(il >= 0 && il < model.layerps.size());

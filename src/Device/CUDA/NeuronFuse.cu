@@ -11,7 +11,7 @@
 #include "./kernel/operator.cuh"
 #define NOMINMAX
 
-cublasComputeType_t cublas_compute   = CUBLAS_COMPUTE_32F;
+cublasComputeType_t cublas_compute = CUBLAS_COMPUTE_32F;
 // Hardcoding workspace to 32MiB but only Hopper needs 32 (for others 4 is OK)
 const size_t cublaslt_workspace_size = 32 * 1024 * 1024;
 cublasLtHandle_t cublaslt_handle;
@@ -453,7 +453,7 @@ floatX* GTensor::GetDataX(int flag, const string& sX) {
         case typNUMBER::F8E5M2: {
             wX = ToX(GTensor::tmpTernary);
             assert(GTensor::tmpTernary->size() >= nEle);
-            CU_F82Float<bf16><<<CEIL_DIV(nEle, CU_T4B_MIDDLE), CU_T4B_MIDDLE>>>((f8e5*)data, wX, nEle, 0, 0);
+            CU_F82Float<floatX><<<CEIL_DIV(nEle, CU_T4B_MIDDLE), CU_T4B_MIDDLE>>>((f8e5*)data, wX, nEle, 0, 0);
             break;
         }
         default:
@@ -625,13 +625,9 @@ hGTensor FFN::cuFlow(hGTensor hIn, int flag) {
     return nullptr;
 }
 
-/*
-    layernorm_forward(floatX* out, float* mean, float* rstd, floatX* inp, const floatX* weight, const floatX* bias,         int B, int T, int C, cudaStream_t
-   stream) layernorm_backwar(floatX* dinp, floatX* dweight, floatX* dbias, float* scratch,const floatX* dout, const floatX* inp, const floatX* weight, const
-   float* mean, const float* rstd,          int B, int T, int C, cudaStream_t stream)
-*/
 hGTensor huTensor::Normal(hGTensor hOut, hGTensor _mean, hGTensor _rstd, hGTensor w, hGTensor b, bool isForward, int flag) {
-    assert(!hOut->isEmpty());
+    assert(0);  //  need refactor
+    /*assert(!hOut->isEmpty());
     int B = hOut->ne[0], T = hOut->ne[1], C = w->ne[0];
     // assert(b!=nullptr);
     floatX *weight = (floatX*)(w->data), *bias = ToX0(b);  // b==nullptr?nullptr:(floatX*)(b->data);
@@ -641,7 +637,7 @@ hGTensor huTensor::Normal(hGTensor hOut, hGTensor _mean, hGTensor _rstd, hGTenso
     else {
         layernorm_backward(nullptr, (floatX*)(w->grad), ToG0(b), nullptr, nullptr, nullptr, weight, (float*)_mean->data, (float*)_rstd->data, B, T, C,
                            main_stream);
-    }
+    }*/
 
     return hOut;
 }
@@ -694,11 +690,12 @@ __global__ static void CU_classifier_(floatX* logits_BT, float* losses, floatX* 
 hGTensor OutCLS::cuInfer(hGTensor inp_, int flag) {
     double now = GST_us();
     assert(norm.Empty());
-    LayerNormal* lnf = hFish->GetNeuron<LayerNormal>("LayerNormal", 0);
-    lnf->cuFlow(inp_);  // CU_rms_v2(hQwen->x, hQwen->x, rms_final_weight, hQwen->dim);
+    inp_->Print("cls.inp_", 0, dump_flag);
 
     proj.Forw(preLogits, inp_);
     SUM::GPU_TIME(SUM::tPreLogits, now);
+    preLogits->Print("logits", 0, dump_flag, nCls);
+
     if (hFish->config.chat_sampler.isSampleCPU)
         preLogits->SerialData("", nullptr, true);
     else {
@@ -835,7 +832,6 @@ int Relu::Back(hGTensor delta_in_out, hGTensor pre_gelu, int flag) {
     hGTensor gate        = nullptr;
     switch (fAct) {
         case SWIG:
-            // dump_flag = hFish->isModel({NLP_QWEN2}) ? -1 : 0;
             assert(slp_gate != nullptr);
             gate = slp_gate->tRhs;
             pre_gelu->Print("ffn.up", 0, dump_flag, B * T * C);

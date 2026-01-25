@@ -603,10 +603,10 @@ void Fish::Statistic_Quant(int typ, int flag) {
     // _INFO("F8E5=%s\n", info.c_str());
     // _INFO("[QUANT] nT=%d\n", SUM::nQuantTensor);
 
-//COLOR_YELLOW,COLOR_RESET, 
+    // COLOR_YELLOW,COLOR_RESET,
     char tmp[1024];
-    sprintf(tmp, "%.4gbit@[errQ=%.4g nF8=%ld nQ4=%ld nQ3=%ld nQ2=%ld MINI=%ld] tQ=%6.5gsec",  nzBit * 1.0f / nzP, sum / nQT,
-            arrF8.size(), arrQ4.size(), arrQ3.size(), arrQ2.size(), arrGBDT.size(), SUM::tQuant / 1.0e3);
+    sprintf(tmp, "%.4gbit@[errQ=%.4g nF8=%ld nQ4=%ld nQ3=%ld nQ2=%ld MINI=%ld] tQ=%6.5gsec", nzBit * 1.0f / nzP, sum / nQT, arrF8.size(), arrQ4.size(),
+            arrQ3.size(), arrQ2.size(), arrGBDT.size(), SUM::tQuant / 1.0e3);
     SUM::sQuantInfo = tmp;
     string names    = G_STR(arrGBDT, 512);
     _INFO("[Quant]_ %s%s \n", tmp, names.c_str());
@@ -943,12 +943,14 @@ bool Fish::AllocBuffer(int flag) {
 
         // GTensor::tmpGW = std::make_shared<huTensor>(this, "tmpGW", SHAPE({nEmbed, nFF}), tpG, true);
         const int dMaxThread = deviceProp.maxThreadsPerMultiProcessor * deviceProp.multiProcessorCount;
-        cudaCheck(cudaMalloc(&GTensor::stat_info, sizeof(float) * std::max(5120,dMaxThread)));
+        cudaCheck(cudaMalloc(&GTensor::stat_info, sizeof(float) * std::max(5120, dMaxThread)));
         if (phase != P_GENERATE) {
             cudnn_qkv_forw(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn);
             size_t alloc = cudnn_qkv_back(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn);
             _INFO("\tcudnn_qkv_back = %.5gM\n", alloc / 1.0e6);
         }
+
+        //  GTensor::buff = hCLS->preLogits->data;
 
         return true;
     } catch (const std::exception& e) {

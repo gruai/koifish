@@ -16,17 +16,19 @@ extern cudaStream_t main_stream;
 
 template <typename Typ>
 __global__ void CU_rms_backward_v1(Typ* dX0, Typ* dweight, float* dW_scratch, const Typ* dY0, const Typ* X0, const Typ* weight, const float* rstd,
-                                   TASKA_SM_WRAP<Typ> smp, int nTH, int ldTH, unsigned int seed, int flag) {
-    using typ128   = PackedN<Typ, 16 / sizeof(Typ)>;
+                                   TASKA_SWMD<Typ> smp, int nTH, int ldTH, unsigned int seed, int flag) {
+    using typ128 = PackedN<Typ, 16 / sizeof(Typ)>;
+    using f256   = PackedN<float, typ128::size>;
+    assert(f256::size == typ128::size);
+
     int BLOCK_SIZE = blockDim.x;
     assert(BLOCK_SIZE == smp.block3);
     assert(smp.ldC0 == ldTH && smp.ldC >= ldTH);
     extern __shared__ float shared[];
     int warpId        = threadIdx.x / WARP_SIZE;  // warp index within a block
     int warpThreadIdx = threadIdx.x % WARP_SIZE;  // Thread index within the warp
-    int baseIdx       = blockIdx.x * smp.warpsInBlock + warpId;
+    int taskId        = blockIdx.x * smp.warpsInBlock + warpId;
 
-    // the first half of shared memory is bias(from layer_normal), second is weight
     float* dweight_shared = shared + smp.ldC;
     // warp 0 doesn't actually write to the _tmp_shared memory locations, so we don't need to reserve memory
     // the obvious solution is to change the addressing below to use (threadId.x-32) as offset, but that causes
@@ -38,12 +40,12 @@ __global__ void CU_rms_backward_v1(Typ* dX0, Typ* dweight, float* dW_scratch, co
     }
     __syncthreads();
 
-    if (baseIdx >= nTH) {
+    if (taskId >= nTH) {
         // make sure we're not reading uninitialized memory below
         f128::zeros().store(dweight_tmp_shared + threadIdx.x * f128::size);
     }
-
-    for (int bt = baseIdx; bt < nTH; bt += smp.warpsInGrid) {
+    assert(smp.warpsInGrid == nTH);
+    for (int bt = taskId; bt < nTH; bt += smp.warpsInGrid) {
         const Typ *dout_bt = dY0 + bt * ldTH, *inp_bt = X0 + bt * ldTH;
         Typ* dinp_bt          = dX0 + bt * ldTH;
         float dnorm_norm_mean = 0.0f;  // dnorm_mean = 0.0f,
@@ -57,16 +59,15 @@ __global__ void CU_rms_backward_v1(Typ* dX0, Typ* dweight, float* dW_scratch, co
         const float rstd_bt = rstd[bt];
         dnorm_norm_mean     = warpReduceSum(dnorm_norm_mean, smp.wrap_mask) / ldTH * rstd_bt;
 
-        // for (int c = 0; c < smp.C_n; c++) {
-        //     int global_index = (warpThreadIdx * typ128::size) + (c * smp.wrap_stride);
         // have to use ldC(>=ldTH), to ensure __syncthreads!
-        for (int global_index = wrap_i0; global_index < smp.ldC; global_index += smp.wrap_stride) {
-            typ128 dY128, xi, wi;  // = typ128::zeros();
-            if (global_index < ldTH) {
-                dY128        = typ128::load_cs(dout_bt + global_index);
-                xi           = typ128::load_cs(inp_bt + global_index);
-                typ128 dX128 = typ128::load(dinp_bt + global_index);
-                wi           = typ128::load(weight + global_index);
+        for (int i8 = wrap_i0; i8 < smp.ldC; i8 += smp.wrap_stride) {
+            typ128 dY128 = typ128::zeros(), xi = typ128::zeros(), wi = typ128::zeros();
+            f256 dweight_f = f256::zeros();
+            if (i8 < ldTH) {
+                dY128        = typ128::load_cs(dout_bt + i8);
+                xi           = typ128::load_cs(inp_bt + i8);
+                typ128 dX128 = typ128::load(dinp_bt + i8);
+                wi           = typ128::load(weight + i8);
 
                 for (int i = 0; i < typ128::size; ++i) {
                     float dval     = 0.0f;
@@ -74,51 +75,42 @@ __global__ void CU_rms_backward_v1(Typ* dX0, Typ* dweight, float* dW_scratch, co
                     dval += (float)wi[i] * (float)dY128[i];  // term 1
                     dval -= norm_bti * dnorm_norm_mean;      // term 2
                     dval *= rstd_bt;                         // final scale
-                    dX128[i] = (Typ)((float)dX128[i] + dval);
+                    dX128[i] = flag == 0x200 ? (Typ)dval : (Typ)((float)dX128[i] + dval);
                 }
                 // TODO cache hint
-                dX128.store(dinp_bt + global_index);
-            }
-            for (int o = 0, x = 0; o < typ128::size / f128::size; ++o) {
-                f128 dweight_f;
-                for (int i = 0; i < f128::size; ++i, ++x) {
-                    dweight_f[i] = ((float)xi[x]) * rstd_bt * (float)dY128[x];
+                dX128.store(dinp_bt + i8);
+
+                for (int i = 0; i < f256::size; ++i) {
+                    dweight_f[i] = ((float)xi[i]) * rstd_bt * (float)dY128[i];
                 }
                 if (warpId != 0) {
-                    dweight_f.store(dweight_tmp_shared + threadIdx.x * f128::size);
+                    dweight_f.store(dweight_tmp_shared + threadIdx.x * f256::size);
                 }
-                __syncthreads();
-                if (warpId == 0) {                                //&& global_index < ldTH
-                    for (int j = 1; j < smp.warpsInBlock; j++) {  // ugly code!
-                        dweight_f.Add(dweight_tmp_shared + f128::size * (threadIdx.x + j * WARP_SIZE));
-                        // f128 dweight_tmp = f128::load(dweight_tmp_shared + f128::size * (threadIdx.x + j * WARP_SIZE));
-                        // for (int i = 0; i < f128::size; ++i) {
-                        //     dweight_f[i] += dweight_tmp[i];
-                        // }
-                    }
-                    //
-                }
-                __syncthreads();
-                if (warpId == 0) {
-                    dweight_f.AddTo(dweight_shared + global_index + f128::size * o);
-                    // f128 dw_old = f128::load(dweight_shared + global_index + f128::size * o);
-                    // for (int i = 0; i < f128::size; ++i) {
-                    //     dweight_f[i] += dw_old[i];
-                    // }
-                    // dweight_f.store(dweight_shared + global_index + f128::size * o);
-                }
+                // if (bt == 0 && i8 == 0) {  //  only for debug
+                //     printf("*** dnorm_norm_mean=%g rstd=%g dX=%g %g %g %g\n", dnorm_norm_mean, rstd_bt, (float)dX128[0], (float)dX128[1], (float)dX128[2],
+                //            (float)dX128[3]);
+                // }
             }
-        }
-    }
+            __syncthreads();
+            if (warpId == 0 && i8 < ldTH) {                   //&& i8 < ldTH
+                for (int j = 1; j < smp.warpsInBlock; j++) {  // ugly code!
+                    dweight_f.Add(dweight_tmp_shared + f256::size * (threadIdx.x + j * WARP_SIZE));
+                }
+                // dweight_f.store(dW_scratch + i8 + f128::size * o + ldTH * blockIdx.x);
+                dweight_f.store(dweight_shared + i8);
+            }
+            __syncthreads();  //    ???
+        }  //  loop of x128
+    }  //  taskId
     __syncthreads();
 
     // Each block writes its partial sum to global memory
     // unsigned int* scratchFlag = reinterpret_cast<unsigned int*>(dW_scratch);
     // A cache line​ in CUDA devices (GPUs) is typically 128 bytes​ & cudaMalloc– Already Aligned (Usually)
-    float* scratch_dweight = reinterpret_cast<float*>(dW_scratch);
-    for (int i = threadIdx.x * f128::size; i < ldTH; i += BLOCK_SIZE * f128::size) {
-        // Write to global memory in the same "shared memory banking friendly" order
-        f128::load(dweight_shared + i).store(scratch_dweight + i + ldTH * blockIdx.x);
+    // float* scratch_dweight = reinterpret_cast<float*>(dW_scratch);
+    for (int i = threadIdx.x * f128::size; i < ldTH;
+         i += BLOCK_SIZE * f128::size) {  // Write to global memory in the same "shared memory banking friendly" order
+        f128::load(dweight_shared + i).store(dW_scratch + i + ldTH * blockIdx.x);
     }
     // __syncthreads();
     // // that portion of shared memory is no longer used, so we can repurpose it for the scratch_ flag.
@@ -135,24 +127,22 @@ __global__ void CU_rms_dw_v0(Typ* dW, const float* dW0, int nTH, int ldTH, int f
     if (idx >= ldTH) {
         return;
     }
-    // dW[idx] = (Typ)0.0;
     float sum = 0.f;
-    if (flag == 1) {  // flag==1 dW0 is float array!
-        const float* cur = reinterpret_cast<const float*>(dW0) + idx;
-        for (int i = 0; i < nTH; i++, cur += ldTH) {
-            sum += *cur;
-        }
-    } else {            // flag==1 dW0 is Typ array!
-        const Typ* cur = reinterpret_cast<const Typ*>(dW0) + idx;
-        for (int i = 0; i < nTH; i++, cur += ldTH) {
-            sum += CU_T2Float(cur);
-        }
+    // if (flag == 1) {  // flag==1 dW0 is float array!
+    // } else {  // flag==1 dW0 is Typ array!
+    //     const Typ* cur = reinterpret_cast<const Typ*>(dW0) + idx;
+    //     for (int i = 0; i < nTH; i++, cur += ldTH) {
+    //         sum += CU_T2Float(cur);
+    //     }
+    // }
+    const float* cur = reinterpret_cast<const float*>(dW0) + idx;
+    for (int i = 0; i < nTH; i++, cur += ldTH) {
+        sum = sum + *cur;
     }
-
-    dW[idx] = (Typ)sum;
+    dW[idx] = (Typ)(float)sum;
 }
 template <typename Typ>
-__global__ void CU_rms_dw_v1(Typ* dW, const float* dW_scratch, TASKA_SM_WRAP<Typ> smp, int ldTH, int flag = 0x0) {
+__global__ void CU_rms_dw_v1(Typ* dW, const float* dW_scratch, TASKA_SWMD<Typ> smp, int ldTH, int flag = 0x0) {
     using typ128 = PackedN<Typ, 16 / sizeof(Typ)>;
     extern __shared__ float shared[];
 
@@ -179,14 +169,14 @@ __global__ void CU_rms_dw_v1(Typ* dW, const float* dW_scratch, TASKA_SM_WRAP<Typ
     /*__syncthreads();
     int warpId        = threadIdx.x / WARP_SIZE;  // warp index within a block
     int warpThreadIdx = threadIdx.x % WARP_SIZE;  // Thread index within the warp
-    for (int c = warpId; c < smp.C_n; c += smp.warpsInBlock) {
-        int global_index = (warpThreadIdx * typ128::size) + (c * smp.wrap_stride);
-        if (global_index >= ldTH) {
+    for (int c = warpId; c < smp.C_nStride; c += smp.warpsInBlock) {
+        int i8 = (warpThreadIdx * typ128::size) + (c * smp.wrap_stride);
+        if (i8 >= ldTH) {
             break;
         }
-        typ128 dW128 = typ128::load(dW + global_index);
-        dW128.AddFloat(dweight_shared + global_index);
-        dW128.store(dW + global_index);
+        typ128 dW128 = typ128::load(dW + i8);
+        dW128.AddFloat(dweight_shared + i8);
+        dW128.store(dW + i8);
     } */
 }
 
@@ -234,7 +224,7 @@ __global__ void rowSumFast(const float* __restrict__ matrix,
  *  2. dX0 maybe same as dY0
  */
 template <typename Typ>
-__global__ void CU_rms_backward_v0(Typ* dX0, Typ* dWeight0, Typ* dW_scratch, const Typ* dY0, const Typ* X0, const Typ* weight0, const float* rstd0, int nTH,
+__global__ void CU_rms_backward_v0(Typ* dX0, Typ* dWeight0, float* dW_scratch, const Typ* dY0, const Typ* X0, const Typ* weight0, const float* rstd0, int nTH,
                                    int ldTH, unsigned int seed, int flag) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= nTH) {
@@ -244,18 +234,19 @@ __global__ void CU_rms_backward_v0(Typ* dX0, Typ* dWeight0, Typ* dW_scratch, con
     float delta_avg = 0, rstd = rstd0[idx], acc = 0.f;
     for (int i = 0; i < ldTH; i++) {
         Typ xi = x[i] * CU_Float2T<Typ>(rstd, seed);
-        Typ dw = dY[i] * xi;  // It is a total gradient, not an average gradient    ???
-        // Typ dw = dY[i] * xi / (Typ)nTH;
-        dW_scratch[idx * ldTH + i] = dw;
-        // atomicAdd(dWeight0 + i, dw);
-        delta_avg += (float)(dY[i] * w[i] * xi);
+        // Typ dw = dY[i] * xi;  // It is a total gradient, not an average gradient
+        dW_scratch[idx * ldTH + i] = (float)x[i] * rstd * (float)dY[i];
+        // delta_avg += (float)(dY[i] * w[i] * xi);
+        delta_avg += (float)w[i] * (float)dY[i] * (float)x[i];
     }
-    delta_avg /= ldTH;
-    Typ* dX = dX0 + idx * ldTH;
+    delta_avg = delta_avg / ldTH * rstd;
+    Typ* dX   = dX0 + idx * ldTH;
     for (int i = 0; i < ldTH; i++) {
         dX[i] = rstd * ((float)(dY[i] * w[i]) - (float)(x[i]) * rstd * delta_avg);
     }
-    // dX[j1] = dy_real,       dX[j2] = dy_imag;
+    // if (idx == 0) {  //  only for debug
+    //     printf("delta_avg=%g, rstd=%g dX=%g,%g,%g,%g\n", delta_avg, rstd, (float)dX[0], (float)dX[1], (float)dX[2], (float)dX[3]);
+    // }
 }
 
 hGTensor LayerNormal::cuFlow(hGTensor inpDelta, int flag) {  //,hGTensor deltaIn
@@ -264,7 +255,8 @@ hGTensor LayerNormal::cuFlow(hGTensor inpDelta, int flag) {  //,hGTensor deltaIn
     int nThread    = X128::nThreadOfBlock(ldTH, 0);
     floatX *weight = ToX(w), *bias = ToX0(b), *in = ToX(inpDelta);
     if (hFish->isAtPhase(LIFE_PHASE::P_GENERATE) && nHead == 0) {  //
-        CU_rms_v2(ToX(out), ToX(inpDelta), weight, C);
+        CU_rms_infer(ToX(out), ToX(inpDelta), weight, C);
+        // CU_rms_infer(ToX(inpDelta), ToX(inpDelta), weight, C);
         return out;
     }
     float *_mean = mean == nullptr ? nullptr : TO<float>(mean), *_rstd = TO<float>(rstd);
@@ -276,10 +268,9 @@ hGTensor LayerNormal::cuFlow(hGTensor inpDelta, int flag) {  //,hGTensor deltaIn
         }
         if (mean == nullptr) {                                    // RMS
             size_t smem = (1 + block_y) * ldTH * sizeof(floatX);  // 16128
-            auto status = cudaFuncSetAttribute(CU_rms_forward<floatX, floatX>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
-            cudaCheck(cudaGetLastError());
-            // CU_rms_forward<<<grid_size, dim3(WARP_SIZE, block_y), smem, main_stream>>>(ToX(out), _rstd, in, weight, nTH, ldTH, rms_eps);
-            // CU_rms_forward_v1<<<CEIL_DIV(nTH, block_size), block_size, 0x0, main_stream>>>(devOut, _rstd, in, weight, nTH, ldTH, rms_eps);
+            // auto status = cudaFuncSetAttribute(CU_rms_forward_v3<floatX, floatX>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+            // cudaCheck(cudaGetLastError());
+            // CU_rms_forward_v3<<<grid_size, dim3(WARP_SIZE, block_y), smem, main_stream>>>(ToX(out), _rstd, in, weight, nTH, ldTH, rms_eps);
             // inpDelta->Print(inpDelta->name, 0, -1, ldTH);
             CU_rms_forward_v2<<<nTH, nThread, 0x0, main_stream>>>(devOut, _rstd, in, weight, nTH, ldTH, rms_eps);
             // out->Print(out->name, 0, -1), rstd->Print(rstd->name, 0, -1);
@@ -287,13 +278,12 @@ hGTensor LayerNormal::cuFlow(hGTensor inpDelta, int flag) {  //,hGTensor deltaIn
             size_t smem = (2 + block_y) * C * sizeof(floatX);
             auto status = cudaFuncSetAttribute(CU_lm_forward, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
             cudaCheck(cudaGetLastError());
-            if (status == cudaSuccess) {
-                CU_lm_forward<<<grid_size, dim3(WARP_SIZE, block_y), smem, main_stream>>>(ToX(out), _mean, _rstd, in, weight, bias, nTH, ldTH);
-            } else {
-                // fall back to the version without shared memory
-                const int grid_size_fb = CEIL_DIV(nTH, (block_size / WARP_SIZE));
-                layernorm_forward_kernel3<<<grid_size_fb, block_size, 0, main_stream>>>(ToX(out), _mean, _rstd, in, weight, bias, nTH, ldTH);
-            }
+            assert(status == cudaSuccess);
+            CU_lm_forward<<<grid_size, dim3(WARP_SIZE, block_y), smem, main_stream>>>(ToX(out), _mean, _rstd, in, weight, bias, nTH, ldTH);
+            //     // fall back to the version without shared memory
+            //     const int grid_size_fb = CEIL_DIV(nTH, (block_size / WARP_SIZE));
+            //     layernorm_forward_kernel3<<<grid_size_fb, block_size, 0, main_stream>>>(ToX(out), _mean, _rstd, in, weight, bias, nTH, ldTH);
+            // }
         }
         cudaCheck(cudaGetLastError());
         return out;
@@ -301,37 +291,39 @@ hGTensor LayerNormal::cuFlow(hGTensor inpDelta, int flag) {  //,hGTensor deltaIn
         hGTensor deltaIn = inpDelta;
         assert(deltaIn != nullptr);
         float* dW_scratch = (float*)GTensor::buff;
-        deltaIn->Print("LN.delta.in", 0, 0);
+        assert(nTH * ldTH * sizeof(float) <= GTensor::buff_len);
+        // deltaIn->Print("LN.delta.in", 0, 0);
         VerifyInp4Back(inp);
         if (mean == nullptr) {
-            TASKA_SM_WRAP<floatX> smp(ldTH, deviceProp.multiProcessorCount);         // RMS
-            cudaCheck(cudaMemsetAsync(dW_scratch, 0, 1 * sizeof(float), main_stream));  //  scratchFlag,   *tmp_flag = atomicInc(scratchFlag, gridDim.x);
-            if (isOnline) {    /*some bug in CU_rms_backward_v1 & CU_rms_back_llmc, very hard to debug!    */                                                 // for debug
+            TASKA_SWMD<floatX> smp(nTH, ldTH, deviceProp.multiProcessorCount, 0x100);  // RMS
+
+            if (isOnline) { /*some bug in CU_rms_backward_v1_ & CU_rms_back_llmc, very hard to debugg!    */
                 hGTensor deltaY = isOnline ? deltaIn : delta;
-                if (1) {
-                    CU_rms_backward_v0<<<CEIL_DIV(nTH, block_size), block_size, 0x0, main_stream>>>(ToX(deltaY), ToG(w), (floatX*)dW_scratch, ToX(deltaIn),
-                                                                                                    ToX(inp), ToX(w), _rstd, nTH, ldTH, 42, 0x0);
+                // deltaIn->Print(deltaIn->name, 0, -1, nTH * ldTH);
+                if (ver_rms_qknormal_ == 0) {
+                    CU_rms_backward_v0<<<CEIL_DIV(nTH, block_size), block_size, 0x0, main_stream>>>(ToX(deltaY), ToG(w), dW_scratch, ToX(deltaIn), ToX(inp),
+                                                                                                    ToX(w), _rstd, nTH, ldTH, 42, 0x0);
                     CU_rms_dw_v0<<<1, ldTH, 0x0, main_stream>>>(ToG(w), dW_scratch, nTH, ldTH);
                 } else {
-                    TASKA(CU_rms_backward_v1)(ToX(deltaY), ToG(w), dW_scratch, ToX(deltaIn), ToX(inp), ToX(w), _rstd, smp, nTH, ldTH, 42, 0x0);
-                    // CU_rms_dw_v1<<<1, ldTH / f128::size, smp.smem, main_stream>>>(ToG(w), dW_scratch, smp, ldTH);
-                    CU_rms_dw_v0<<<1, ldTH, 0x0, main_stream>>>(ToG(w), dW_scratch, smp.grid3, ldTH, 1);
+                    SWMD(CU_rms_backward_v1)(ToX(deltaY), ToG(w), dW_scratch, ToX(deltaIn), ToX(inp), ToX(w), _rstd, smp, nTH, ldTH, 4, 0x200);
+                    CU_rms_dw_v1<<<1, ldTH / f128::size, smp.smem, main_stream>>>(ToG(w), dW_scratch, smp, ldTH);
+                    // CU_rms_dw_v0<<<1, ldTH, 0x0, main_stream>>>(ToG(w), dW_scratch, smp.grid3, ldTH, 1);
                 }
-                // delta->Print(delta->name, 0, -1), w->Print(w->name, 1, -1);
+                // deltaY->Print(delta->name, 0, -1, nTH * ldTH), w->Print(w->name, 1, -1);
                 assert(GTensor::buff_len >= nTH * ldTH);
             } else {
                 auto status = cudaFuncSetAttribute(CU_rms_back_llmc<floatX>, cudaFuncAttributeMaxDynamicSharedMemorySize, smp.smem);
                 cudaCheck(cudaGetLastError());
                 //  dinp, dweight, dW_scratch, dY0, inp, weight,
-                if (DEBUG.cmd_p1) {
-                    CU_rms_back_llmc<<<smp.grid3, smp.block3, smp.smem, main_stream>>>(ToX(delta), ToG(w), (hBITARR)(dW_scratch), ToX(deltaIn), ToX(inp), ToX(w),
-                                                                                       _rstd, nullptr, nTH, ldTH);
+                if (0) {  // DEBUG.cmd_p1
+                    CU_rms_back_llmc<<<smp.grid3, smp.block3, smp.smem, main_stream>>>(ToX(delta), ToG(w), (hBITARR)(dW_scratch), ToX(deltaIn), ToX(inp),
+                                                                                       ToX(w), _rstd, nullptr, nTH, ldTH);
                 } else {
-                    TASKA(CU_rms_backward_v1)(ToX(delta), ToG(w), dW_scratch, ToX(deltaIn), ToX(inp), ToX(w), _rstd, smp, nTH, ldTH, 42, 0x0);
+                    SWMD(CU_rms_backward_v1)(ToX(delta), ToG(w), dW_scratch, ToX(deltaIn), ToX(inp), ToX(w), _rstd, smp, nTH, ldTH, 42, 0x0);
                     CU_rms_dw_v1<<<1, ldTH / f128::size, smp.smem, main_stream>>>(ToG(w), dW_scratch, smp, ldTH);
                     // CU_rms_dw_v0<<<1, ldTH, 0x0, main_stream>>>(ToG(w), dW_scratch, smp.grid3, ldTH, 1);
                 }
-                delta->Print(delta->name, 0, -1), w->Print(w->name, 1, -1);
+                // delta->Print(delta->name, 0, -1), w->Print(w->name, 1, -1);
             }
         } else
             layernorm_backward(ToX(delta), ToG(w), ToG0(b), dW_scratch, ToX(deltaIn), ToX(inp), ToX(w), _mean, _rstd, B, T, C, main_stream);

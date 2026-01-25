@@ -98,14 +98,14 @@ def plt_result(result,baseline=None,ylabel="loss" ):
     plt.legend()
     # plt.title(result.title)
 
-def plt_df(df,title,path ):
+def plt_df(df,title,path,dashes=None):
     df = df.sort_index(axis = 1)
     print(df)
     nResult = len(df.columns)
     plt.figure(figsize=(20, 12))  # Width=10 inches, Height=6 inches
     plt.grid(True)
     # palette='Dark2'      # palette='Set2')  # Other options: 'Paired', 'Dark2', 'tab10'
-    sns.lineplot(data=df,linewidth=2) #   The smallest usable linewidth is 0.1
+    sns.lineplot(data=df,linewidth=2,dashes=dashes) #   The smallest usable linewidth is 0.1
     # sns.scatterplot(data=df)
     plt.xlabel("Iter", fontsize=18, fontweight="bold")#fontsize=14, color="blue", 
     plt.ylabel("Loss", fontsize=18, fontweight="bold")  #, fontsize=14, color="red"
@@ -122,26 +122,36 @@ def plt_df(df,title,path ):
 def SWEEP_plt(all_results,path,yCol='loss'):
     nResult = len(all_results)
     assert nResult>0
-    df = pd.DataFrame()
+    all_df = pd.DataFrame()
+    line_styles = {}
     no = 0
     # df['iter'] = all_results[0].dfTrain['iter'] 
     for result in all_results:
-        dfSrc = result.dfEval   #result.dfTrain
-        if yCol=="lr" or yCol=="gNorm":
-            dfSrc = result.dfTrain
-        assert dfSrc is not None
-        rows,cols = dfSrc.shape
-        minY,maxY = dfSrc[yCol].min(),dfSrc[yCol].max()  
-        new_df = pd.DataFrame()
-        # indices = np.linspace(0, rows-1, 200, dtype=int)  # 20 evenly spaced points
-        new_df[str(minY)+"@"+result.title] = dfSrc[yCol]        #.iloc[:,2]         
-        
-        # print(f"new_df shape={new_df.shape} head = {new_df.head()}")    
-        df = pd.concat([df, new_df], axis=1)        
-        no = no+1
+        dfs = [result.dfTrain, result.dfEval]
+        # dfSrc = result.dfTrain   #result.dfTrain dfEval
+        # if yCol=="lr" or yCol=="gNorm":
+        #     dfSrc = result.dfTrain
+        for df in dfs:
+            assert df is not None
+            rows,cols = df.shape
+            minY,maxY = df[yCol].min(),df[yCol].max()  
+            new_df = pd.DataFrame()
+            # indices = np.linspace(0, rows-1, 200, dtype=int)  # 20 evenly spaced points
+            if df is result.dfTrain:
+                title = str(minY)+"@Train_"+result.title
+                new_df[title] = df[yCol].iloc[::200]    
+                line_styles[title] = ''   #'dense_line'
+            else:           
+                title = str(minY)+"@Eval_"+result.title     
+                new_df[title] = df[yCol]        #.iloc[:,2]  
+                line_styles[title] = (1, 2)      # Dotted: 1 point on, 2 off；  (4, 2, 1, 2),  # Dash-dot   (4, 2)       #'sparse_line'
+            
+            print(f"new_df shape={new_df.shape} head = {new_df.head()}")    
+            all_df = pd.concat([all_df, new_df], axis=1)        
+            no = no+1
     # Melt DataFrame for seaborn
     # df_melted = df.melt(id_vars='x', var_name='curve', value_name='y')
-    plt_df(df,title = f"\"{yCol}\" {nResult} sweeps @'{path}'",path=path)
+    plt_df(all_df,title = f"\"{yCol}\" {nResult} sweeps @'{path}'",path=path,dashes=line_styles)
 
 # 
 def GetAllPlotPath(root_dir,append_dir):
@@ -179,11 +189,12 @@ def SWEEP_stat(root_dir,plot_path,append_dir=None,isNeedLog=False):
                         fLog = fr.read() 
             if file_path.suffix==".csv":
                 if fnmatch.fnmatch(f,"*Train*"):
-                    dfTrain = pd.read_csv(f, sep=' ',index_col=False)
+                    dfTrain = pd.read_csv(f, sep=' ',index_col='iter')
                 else:
-                    dfEval = pd.read_csv(f, sep=' ',index_col=False)        
+                    dfEval = pd.read_csv(f, sep=' ', index_col='iter')     
+                    # print(f"df_eval shape={dfEval.shape} df_eval head = {dfEval.head()}")    
                     # print(dfEval)    
-        if dfEval is None:  #dfTrain is None or
+        if dfEval is None:  #dfTrain is None or 
             continue   
         if isNeedLog and fLog is None:
             continue

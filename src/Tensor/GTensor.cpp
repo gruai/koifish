@@ -19,7 +19,7 @@ GTensor* GTensor::tZ   = nullptr;
 hGTensor GTensor::outL = nullptr, GTensor::delta = nullptr, GTensor::gate_delta = nullptr, GTensor::tmpDelta = nullptr;
 float* GTensor::stat_info = nullptr;
 hGTensor GTensor::bt4c = nullptr, GTensor::scratch = nullptr, GTensor::tmpW = nullptr, GTensor::tmpGW = nullptr, GTensor::tmpFF1 = nullptr,
-         GTensor::tmpTernary = nullptr, GTensor::residual = nullptr;
+         GTensor::tmpTernary = nullptr, GTensor::tmpQout = nullptr, GTensor::tmpKout = nullptr, GTensor::residual = nullptr;
 void *GTensor::buff = nullptr, *GTensor::host_buff = nullptr, *GTensor::cudnn_workspace = nullptr;
 size_t GTensor::buff_len = 0, GTensor::cudnn_workspace_size = 0;
 
@@ -386,7 +386,7 @@ hGensor GENSOR_TOPU::Get(MODEL_ARCH arch, const string& name, int flag) {
         bool isMiss = nag.find(name) == nag.end();
         /*if (isMiss) {   @NN2NAME
             size_t pos = 0;
-            if (arch == MODEL_ARCH::NLP_QWEN2) {    //some hack for mismatch of name
+            if (arch == MODEL_ARCH::NLP_QWEN2_) {    //some hack for mismatch of name
                 std::map<std::string, std::string> S2S={
                     {"input_layernorm","self_attn.norm"}
                 };
@@ -755,7 +755,7 @@ bool huTensor::BeforeBackward(size_t& off, int flag) {
  *      2.
  */
 bool huTensor::Alloc(int iter, int flagInit) {
-    if (G_Has_(name, {"self_attn.k_proj"})) {  // model.layers.0.mlp.down_proj.weight
+    if (G_Has_(name, {"preLogits"})) {  // model.layers.0.mlp.down_proj.weight
         DEBUG_HERE;                            //
     }
     size_t sz0 = szGlobalMaloc;

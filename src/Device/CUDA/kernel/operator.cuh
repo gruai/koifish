@@ -30,9 +30,6 @@ __device__ __inline__ T warpReduceMax(T* val, int thread_group_width = 32) {
     return (T)(0.0f);
 }
 
-
-
-
 // Kernel to compute row standard deviations of a matrix
 template <typename T>
 __global__ static void CU_RowStdDev(T* matrix, floatGama* rowStdDev, int rows, int cols) {
@@ -435,7 +432,9 @@ __global__ static void CU_mix_(float alpha, T* x, float beta, const T* y, size_t
     if (index >= count)
         return;
 
-    x[index] = (T)alpha * x[index] + (T)beta * y[index];
+    // x[index] = (T)alpha * x[index] + (T)beta * y[index];
+    x[index] = (T)(alpha * (float)x[index] + beta * (float)y[index]);
+    // x[index] = __hmul((T)alpha, x[index]) + __hmul((T)beta, y[index]);
 }
 
 //  kernel of particle-swarm-optimization
@@ -452,7 +451,8 @@ __global__ static void CU_PSO_2D(curandState* state, float alpha, T* x, float so
             r = 1;
         // results[no]    = (typ)rand_val;
         // x[no] = (T)alpha * x[no] + (T)(social*r) * (gBest[no]-x[no]);
-        x[no] += (T)(social * r) * (gBest[no] - x[no]);
+
+        x[no] = (T)((float)x[no] + (social * r) * ((float)gBest[no] - (float)x[no]));
     }
 }
 
@@ -469,7 +469,8 @@ __global__ static void CU_mutation_(curandState* state, float T_mutation, float 
         //     continue;
         if (pick < T_mutation * max_position) {
             float a = curand_normal(&state[tid]) * T_scale;  //  Gaussian (Normal) Mutation
-            x[no] += a;
+            // x[no] = __hadd(x[no], (T)a);
+            x[no] = (T)((float)(x[no]) + a);
         }
     }
 }
@@ -570,7 +571,7 @@ __global__ static void CU_X2Tile_(T* A, floatGama* gama, float T_x, int M, int N
         return;  // guard
     fnPOS pA = trans == 0 ? fnCR2POS : fnRC2POS;
     int pos = pA(idrow, idcol, M, N), gpos = blockIdx.x * gridDim.y + blockIdx.y;  // 13825
-    float a = A[pos];
+    float a = CU_T2Float(A + pos);
     float sum =
         CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(a, true);  // nWrapT<=WARP_SIZE ? warpReduceSum<nWrapT>(a) : blockReduce_v0<warpReduceSum<nWrapT>>(a, true);
     if (tid == 0) {
@@ -580,7 +581,7 @@ __global__ static void CU_X2Tile_(T* A, floatGama* gama, float T_x, int M, int N
         gama[gpos] = sum / TM / TN;
     }
     if (isOverwrite) {
-        A[pos] = gama[gpos];
+        A[pos] = CU_16BF2T<T>(gama + gpos);
     }
 }
 template <typename T>
@@ -593,7 +594,7 @@ __global__ static void CU_Tile2X_(T* A, floatGama* gama, float T_x, int M, int N
         return;  // guard
     fnPOS pA = trans == 0 ? fnCR2POS : fnRC2POS;
     int pos = pA(idrow, idcol, M, N), gpos = blockIdx.x * gridDim.y + blockIdx.y;
-    A[pos] = gama[gpos];
+    A[pos] = CU_16BF2T<T>(gama + gpos);  // gama[gpos];
     //  same
     // float fgama = gama[gpos];
     // A[pos] = CU_Float2T<T>(fgama,seed+pos);
@@ -608,7 +609,7 @@ __global__ static void CU_OFF(float* out, T* A, T* B, size_t N, int flag) {
 
     constexpr int NUM_WARPS = (NUM_THREADS + WARP_SIZE - 1) / WARP_SIZE;
     assert(NUM_WARPS <= WARP_SIZE);
-    float a         = (idx < N) ? (float)(A[idx] - B[idx]) : 0.0;
+    float a         = (idx < N) ? (float)A[idx] - (float)B[idx] : 0.0;
     float sum       = a * a;
     float block_sum = CU_BlockSum<CU_T4B_SMALL>(sum, true);  // blockReduce_v0<warpReduceSum>(sum, true);
     if (tid == 0)
@@ -824,10 +825,48 @@ template <class T>
 __global__ void CU_X2ternary_(floatGama* gama, T* mat0, char* terns, int M, int N, int bpe, bool isOverwrite = false);
 
 // rope2 - add rope info to both q&k
-__global__ void CU_rope2_v0(bf16* q, bf16* k, int pos, int N_HEADS, int N_KV_HEADS, int HEAD_DIM, float ROPE_THETA, int type = 0);
+//  blockIdx(B, T, n_head)
+template <typename Typ>
+__global__ void CU_rope2_v0(Typ* q, Typ* k, int pos, int N_HEADS, int N_KV_HEADS, int head_dim, float theta, int seed, int type = 0x0) {
+    int h = blockIdx.z, j = threadIdx.x;
+    assert(gridDim.z == N_HEADS);
+    int nzHead = blockIdx.x * (gridDim.y * N_HEADS) + blockIdx.y * N_HEADS + h;
+    if (h < N_HEADS && j < head_dim / 2) {
+        Typ* q_head = q + nzHead * head_dim;
+        //               1.0f / powf(theta, (float)(2 * tid) / head_dim);
+        float inv_freq = 1.0f / powf(theta, (float)(j * 2) / (float)head_dim);
+        if (pos < 0) {  //  (B, T, n_head)
+            pos = blockIdx.y;
+        }
+
+        float angle = (float)pos * inv_freq, cos, sin;
+        sincosf(angle, &sin, &cos);
+        int j1 = j, j2 = j + head_dim / 2;
+        // j1 = 2 * j, j2 = 2 * j + 1;
+        if (type == 1) {
+            sin = -sin;
+        }
+        float q_real = CU_T2Float(q_head + j1);
+        float q_imag = CU_T2Float(q_head + j2);
+
+        q_head[j1] = CU_Float2T<Typ>(q_real * cos - q_imag * sin, seed);  //__float2bfloat16_rn
+        q_head[j2] = CU_Float2T<Typ>(q_real * sin + q_imag * cos, seed);  //__float2bfloat16_rn
+        // if (nzHead == N_HEADS && j == 0) {
+        //     nout("\t(%g,%g)=%g %g %g %g@<%d %d %d>\n", CU_T2Float(q_head+j1),CU_T2Float(q_head+j2),q_real, q_imag, sin,
+        //     cos,blockIdx.x,blockIdx.y,blockIdx.z);
+        // }
+        if (h < N_KV_HEADS) {
+            nzHead       = blockIdx.x * (gridDim.y * N_KV_HEADS) + blockIdx.y * N_KV_HEADS + h;
+            Typ* k_head  = k + nzHead * head_dim;
+            float k_real = CU_T2Float(k_head + j1), k_imag = CU_T2Float(k_head + j2);
+            k_head[j1] = CU_Float2T<Typ>(k_real * cos - k_imag * sin, seed);  //__float2bfloat16_rn
+            k_head[j2] = CU_Float2T<Typ>(k_real * sin + k_imag * cos, seed);  //__float2bfloat16_rn
+        }
+    }
+}
+
 template <typename Typ>
 __global__ void CU_rope_(Typ* out, Typ* inp, const Typ* freqs, float* stat_info, int B, int T, int Nq, int Nkv, int head_dim, bool isBack = false);
-
 
 void CU_mm_(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int transB = 0,
             float beta = 0.0, floatX* pre_gelu = NULL, bool backward = false);

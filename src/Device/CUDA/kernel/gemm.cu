@@ -434,7 +434,7 @@ void CU_mm_(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int
 void matmul_backward(floatX* delta, floatX* dweight, floatX* dbias, floatX* deltaIn, floatX* inp, floatX* weight, float* dbias_buffer, int B, int T, int C,
                      int OC, cudaStream_t stream, bool isTransW = false, floatX* pre_gelu = NULL, bool isAccumuDelta = false) {
     NVTX_RANGE_FN();
-    bool transAW    = false;    
+    bool transAW = false;
     // if(isTransW)
     //     transAW = true;
     // backward to bias, if given, does a +=
@@ -596,7 +596,7 @@ __global__ void static tABC_0(const Ta* __restrict__ A, const Tw* __restrict__ B
         return;
     }
     Ta tmp = (Ta)(0.0);
-#if defined(ENABLE_FP8)
+#if defined(USE_FP8_BASELINE)
 #else
 #pragma unroll
     for (size_t i = 0; i < k; ++i) {

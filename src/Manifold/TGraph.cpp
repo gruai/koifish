@@ -216,14 +216,15 @@ bool SelfAttention::_devQKV(int stage, int flag) {
     qkvPack     = QQKKVV;
 
     // offset = Q.out->nByte();
+    size_t offset = 0;
     if (isTrain) {
         assert(kv_dim <= q_dim);
-        deltaQ = GTensor::bt4c->Partial("partialDeltaQ", 0, {B, T, q_dim});  //  devDeltaQ = deltaQ->data
-        deltaK = GTensor::bt4c->Partial("partialDeltaK", B * T * C, {B, T, kv_dim});
-        deltaV = GTensor::bt4c->Partial("partialDeltaV", B * T * C * 2, {B, T, kv_dim});
-        assert(hBITARR(deltaV->data) - (hBITARR)(GTensor::bt4c->data) <= B * T * C * 2 * sizeof(floatX));
+        deltaQ = GTensor::bt4c->Partial("partialDeltaQ", 0, {B, T, q_dim}), offset += deltaQ->size();
+        deltaK = GTensor::bt4c->Partial("partialDeltaK", B * T * q_dim, {B, T, kv_dim}), offset += deltaK->size();
+        deltaV = GTensor::bt4c->Partial("partialDeltaV", B * T * (q_dim + kv_dim), {B, T, kv_dim}), offset += deltaV->size();
+        assert(B * T * (q_dim + kv_dim * 2) * sizeof(floatX) <= GTensor::bt4c->nByte());
         // devDeltaQ = ToX(GTensor::bt4c), devDeltaK = (char*)devDeltaQ + Q.out->nByte(), devDeltaV = (char*)devDeltaK + K.out->nByte();
-        devDeltaQ = ToX(deltaQ), devDeltaK = ToX(deltaK), devDeltaV = ToX(deltaV);
+        devDeltaQ = ToX(deltaQ), devDeltaK = ToX(deltaK), devDeltaV = ToX(deltaV);        
     } else {
     }
 
@@ -1642,7 +1643,7 @@ hNEURON Fish::J2Neuron(void* ctx_, string& dad, int level, const JConfig& jconfi
         if (k == "arch") {
             continue;
         }
-        if (k == "hf-card") {
+        if (k == "hf-card" ||k == "token_bin_path" ) {
             continue;
         }
         auto v = it.value();

@@ -317,6 +317,8 @@ __global__ void ABC_v6(Ta* A, floatX* B, floatX* C, int M, int N, int K, int fla
 */
 void CU_abc(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream, int transA, int transB, float beta,
             floatX* pre_gelu, bool backward) {
+#if defined(USE_FP8_BASELINE)
+#else
     NVTX_RANGE_FN();
     // check alignment (some modes work unaligned but it always best to be aligned for performance)
     if (((uintptr_t)b % 16) != 0 || ((uintptr_t)d % 16) != 0 || ((uintptr_t)bias % 16) != 0) {
@@ -327,23 +329,7 @@ void CU_abc(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int
     // std::max((BLOCK_ROWS + BLOCK_COLS) * AB_SMEM_STRIDE * sizeof(floatX), BLOCK_ROWS * C_SMEM_STRIDE * sizeof(floatX));
     // smem_max_size = TM * TM * 2 * sizeof(float);
     assert(deviceProp.sharedMemPerMultiprocessor >= smem_max_size);
-
-    /*switch (gensor->type) {
-        case typNUMBER::T_BINARY:
-        case typNUMBER::T_BINARY_3: {
-            const int BM = 128, BN = 128, BK = 16, TM = 8, TN = 8, nT = BM * BN / TM / TN;  // 256
-            dim3 dBlock(nT), dGrid(CEIL_DIV(n, BM), CEIL_DIV(m, BN));
-            assert(dBlock.x > BN && dBlock.x >= BK);
-            assert(gensor->ne[0] == k);  // length of gama_T is always ne[0]
-            ABC_bit_v0<floatX, floatX, BM, BN, BK, TM, TN>
-                <<<dGrid, dBlock, smem_max_size, stream>>>((char *)gensor->data,gensor->gama_T, (floatX *)b, d, bias, m, n, k, transA, transB);
-            return;
-        } break;
-        default:
-
-            break;
-    }*/
-
+    
     // assert(batch_count==0);
     bool has_bias = (bias != nullptr), has_gelu = (pre_gelu != nullptr);
     const float alpha = 1.0f;  //, beta = accumulate ? 1.0f : 0.0f;
@@ -385,7 +371,7 @@ void CU_abc(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int
             assert(0);
             break;
     }
-
+#endif
     return;
 }
 

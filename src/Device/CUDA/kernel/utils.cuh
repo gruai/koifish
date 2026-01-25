@@ -11,14 +11,19 @@
 #include <assert.h>
 #include <cooperative_groups.h>
 #include <stdint.h>
-
 #include "../Tensor/Packed.hpp"
 #include "../cuda_common.h"
 
-//  torch:  self←self+λ⋅(b−self)          lerp(a, b, λ):  a+λ*(b-a)
+/**
+ * Fused Multiply-Add (FMA)​
+ *  
+ * __fmaf_rn(Round to Nearest Even) is a fundamental building block for high-performance, high-accuracy numerical computation on NVIDIA GPUs. 
+ * It combines the performance benefit of a single instruction with the precision benefit of a fused operation and IEEE-compliant rounding. It is essential for writing robust and efficient CUDA kernels in fields like scientific computing, deep learning, and computer graphics.
+ */  
 // a + t * (b - a);
 // __device__ __host__ inline float lerp(float a, float b, float t) {
 //     return fmaf(t, b, fmaf(-t, a, a));
+//     // __fmaf_rn is CUDA-specific & faser
 //     // Or the simpler version:
 //     // return a + t * (b - a);
 // }
@@ -170,7 +175,7 @@ __device__ inline float cast_value<float, float>(float val) {
     return val;
 }
 
-#if defined(ENABLE_FP16)
+#if defined(USE_FP16_BASELINE)
 template <>
 __device__ inline float cast_value<float, half>(half val) {
     return __half2float(val);
@@ -357,6 +362,13 @@ __device__ __forceinline__ T CU_Float2T(const float& a0, unsigned int seed) {
 }
 
 template <>
+__device__ __forceinline__ __nv_fp8_e5m2 CU_Float2T<__nv_fp8_e5m2>(const float& a0, unsigned int seed) {
+    __nv_fp8_e5m2 a = __nv_fp8_e5m2(a0);
+    return a;
+}
+
+
+template <>
 __device__ __forceinline__ __nv_bfloat16 CU_Float2T<__nv_bfloat16>(const float& a0, unsigned int seed) {
     // todo - is this stochastic rounding *too good*? can we cut any corners?
     // makes sure each thread gets a different random number
@@ -370,7 +382,7 @@ __device__ __forceinline__ __nv_bfloat16 CU_Float2T<__nv_bfloat16>(const float& 
 }
 
 template <typename T>
-__device__ __forceinline__ T CU_16BF2T(const bf16* a0, unsigned int seed) {
+__device__ __forceinline__ T CU_16BF2T(const bf16* a0, unsigned int seed=42) {
     T a = (T)(*a0);
     return a;
 }

@@ -22,25 +22,19 @@
 #ifdef ENABLE_CUDNN
 #include "cudnn_frontend.h"
 namespace fe = cudnn_frontend;
-#if defined(ENABLE_FP32)
-// static_assert(false, "cuDNN is not supported in FP32 mode.")
-// use fp16 (note: this may require gradient scaler, currently not implemented!)
-#elif defined(ENABLE_FP16)
+#if defined(USE_FP16_BASELINE)
 #define CUDNN_16BIT fe::DataType_t::HALF
 #else  // Default to bfloat16
 #define CUDNN_16BIT fe::DataType_t::BFLOAT16
 #endif
 #else
 // defines: attention_forward, attention_backward
-#include "./llm_c/attention.cuh"
 #endif
 
 static cudaEvent_t cuStart, cuEnd;
 
 #ifdef ENABLE_CUDNN
 static cudnnHandle_t cudnn_handle;
-// static size_t cudnn_workspace_size = 0;  // dynamically allocated as needed (up to 256MiB!)
-// static void* cudnn_workspace       = NULL;
 
 static void cuDNNCheck(cudnnStatus_t error, const char* file, int line) {
     if (error != CUDNN_STATUS_SUCCESS) {
@@ -72,7 +66,7 @@ std::shared_ptr<fe::graph::Graph> cudnn_sdpa_forward_graph(int64_t const b, int6
                                                            bool has_attn_bias = false) {
     // Create a graph and set common global properties.
     auto graph = std::make_shared<fe::graph::Graph>();
-#if defined(ENABLE_BF16) || defined(ENABLE_FP16)
+#if defined(USE_BF16_BASELINE) || defined(USE_FP16_BASELINE)
     graph->set_io_data_type(CUDNN_16BIT).set_intermediate_data_type(fe::DataType_t::FLOAT).set_compute_data_type(fe::DataType_t::FLOAT);
 #else
     assert(0);
@@ -219,7 +213,7 @@ size_t cudnn_qkv_forw(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn, i
     auto key = std::make_tuple(B, Hq, Hkv, T, HS, (int)is_inference_only);
     assert(cudnn_graph_fwd.find(key) == cudnn_graph_fwd.end());
     auto graph = std::make_shared<fe::graph::Graph>();
-#if defined(ENABLE_BF16) || defined(ENABLE_FP16)
+#if defined(USE_BF16_BASELINE) || defined(USE_FP16_BASELINE)
     graph->set_io_data_type(fe::DataType_t::BFLOAT16).set_intermediate_data_type(fe::DataType_t::FLOAT).set_compute_data_type(fe::DataType_t::FLOAT);
 #else
     assert(0);
@@ -442,8 +436,8 @@ inline int convert_SM_to_cores(int major, int minor) {
 }
 
 bool InitCUDA(const CLI_params& hparams, EDGE_DEVICES* hDevice, int flag) {
-    int local_device_idx = 0;   //override_enable_tf32 = 1;
-    cudaError_t err = cudaSetDevice(0);
+    int local_device_idx = 0;  // override_enable_tf32 = 1;
+    cudaError_t err      = cudaSetDevice(0);
     if (err != cudaSuccess) {
         printf("[InitCUDA] failed at cudaSetDevice! ERR=%s\n", cudaGetErrorString(err));
         exit(EXIT_FAILURE);
@@ -521,9 +515,11 @@ bool InitCUDA(const CLI_params& hparams, EDGE_DEVICES* hDevice, int flag) {
       cudaStreamSynchronize(stream)/cudaEventSynchronize(event) maybe better
 
       1. cudaEventSynchronize
-        cudaEventSynchronizeis a CUDA function that blocks the host (CPU) until a CUDA event is completed. It's crucial for proper timing, synchronization, and debugging in CUDA applications.
+        cudaEventSynchronizeis a CUDA function that blocks the host (CPU) until a CUDA event is completed. It's crucial for proper timing, synchronization, and
+   debugging in CUDA applications.
       2. cudaEventRecord
-        cudaEventRecordis a CUDA function that records a CUDA event at a specific point in a CUDA stream. It's used for timing, synchronization, and establishing dependencies between operations.
+        cudaEventRecordis a CUDA function that records a CUDA event at a specific point in a CUDA stream. It's used for timing, synchronization, and
+   establishing dependencies between operations.
 */
 bool SYNC_DEVICE(const std::string& sX, int flag) {
 #ifdef __USE_CUDA__
@@ -622,9 +618,10 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
         if (!hFish->isRemater()) {
             GTensor::residual->Print("residual", 0x0, dump_flag, nToken * C);
             residual_forward(ToX(out), ToX(GTensor::residual), ToX(GTensor::scratch), nToken * C, main_stream);
-            if (fuseNorm != nullptr) {
-                float *mean = TO<float>(fuseNorm->mean), *rstd = TO<float>(fuseNorm->rstd);
-                layernorm_forward(ToX(fuseNorm->out), mean, rstd, ToX(out), ToX(fuseNorm->w), ToX0(fuseNorm->b), nToken, 1, C, main_stream);
+            assert (fuseNorm == nullptr && "Try fuse normal later..."); 
+            {
+                // float *mean = TO<float>(fuseNorm->mean), *rstd = TO<float>(fuseNorm->rstd);
+                // layernorm_forward(ToX(fuseNorm->out), mean, rstd, ToX(out), ToX(fuseNorm->w), ToX0(fuseNorm->b), nToken, 1, C, main_stream);
             }
 
         } else {
@@ -638,12 +635,12 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
     Forward:    cur = cuFlow(cur,residual,flag);
     Backward:   QKV->cuFlow(last->out,QKV->norm.out,0x0);
 */
-hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {    // NVTX_RANGE_FN();
-    
+hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
+    // NVTX_RANGE_FN();
     floatX* qkvr = ToX(tmpQKV);  // Q.out/K.out/V.out
     // bool isAlternate = true;                   // layer%2==1;layer>1;
-    if (isForward()) {                      //  data=ToX(QKV->norm.out)
-        NvtxRange range(name.c_str(),0);
+    if (isForward()) {  //  data=ToX(QKV->norm.out)
+        NvtxRange range(name.c_str(), 0);
         inp               = OnInput(inpL);  //         inp->Print("inp",0x0,dump_flag);
         GTensor::residual = inp;            // GTensor::residual->OverWrite(inp);
         hGTensor inpQ     = inpL;
@@ -681,20 +678,19 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {    // NVTX_RANGE_FN();
             GTensor::scratch->Print("qkv.out", 0x0, dump_flag, B * T * C);
             GTensor::residual->Print("residual", 0x0, dump_flag, B * T * C);
             residual_forward(ToX(out), ToX(GTensor::residual), ToX(GTensor::scratch), B * T * C, main_stream);
-            if (fuseNorm != nullptr) {
-                float *mean = TO<float>(fuseNorm->mean), *rstd = TO<float>(fuseNorm->rstd);
-                layernorm_forward(ToX(fuseNorm->out), mean, rstd, ToX(out), ToX(fuseNorm->w), ToX0(fuseNorm->b), B * T, 1, C, main_stream);
-            }
-
+            assert (fuseNorm == nullptr && "Try fuse normal later...");
+            // if (fuseNorm != nullptr) {
+            //     float *mean = TO<float>(fuseNorm->mean), *rstd = TO<float>(fuseNorm->rstd);
+            //     layernorm_forward(ToX(fuseNorm->out), mean, rstd, ToX(out), ToX(fuseNorm->w), ToX0(fuseNorm->b), B * T, 1, C, main_stream);
+            // }
         } else {
         }
         SYNC_DEVICE();
         return out;
     } else {  //  Backward
-        NvtxRange range(name.c_str(),1);
+        NvtxRange range(name.c_str(), 1);
         INSPECT_THIS;
         // Q.w->Print("Qw", 1, dump_flag);
-        float* scratchF = (float*)GTensor::buff;
         assert(inpL == GTensor::delta);
         delta->Print("delta", 0x0, dump_flag);
         proj_cat.Back(GTensor::tmpDelta, attn, GTensor::delta, nullptr);
@@ -704,6 +700,10 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {    // NVTX_RANGE_FN();
             hGTensor norm_out = norm.out;
             if (isSeparateQKV) {
                 Q.Forw(Q.out, norm_out), K.Forw(K.out, norm_out), V.Forw(V.out, norm_out);
+                if (GTensor::tmpQout != nullptr) {
+                    GTensor::tmpQout->OverWrite(Q.out);
+                    GTensor::tmpKout->OverWrite(K.out);
+                }
             } else {
                 Q.Forw(tmpQKV, norm_out);
             }
@@ -719,12 +719,15 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {    // NVTX_RANGE_FN();
         // delta_qkv->Print("delta_qkv", 0x0, dump_flag, C);
         deltaQ->Print("deltaQ", 0x0, dump_flag, q_dim), deltaK->Print("deltaK", 0x0, dump_flag, kv_dim), deltaV->Print("deltaV", 0x0, dump_flag, kv_dim);
         if (rope != nullptr) {
-            if (rope->hnQ != nullptr) {
+            if (GTensor::tmpQout != nullptr) {  //
+                Q.out->OverWrite(GTensor::tmpQout), K.out->OverWrite(GTensor::tmpKout);
+            } else if (rope->hnQ != nullptr) {
                 Q.Forw(Q.out, norm.out), K.Forw(K.out, norm.out);
             }
             rope->cuFlow(this, rope_seed);
             // Q.out->Print("Q.rope",0x0,dump_flag);    K.out->Print("K.rope",0x0,dump_flag);
         }
+        float* scratchF = (float*)GTensor::buff;
         if (isSeparateQKV) {
             // Q.w->Print("Qw", 0, dump_flag);  Q.b->Print("Qb", 0, dump_flag);   norm.out->Print("norm.out", 0, dump_flag);
             Q.Back(GTensor::tmpDelta, norm.out, deltaQ, nullptr);

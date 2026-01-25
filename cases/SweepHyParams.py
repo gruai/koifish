@@ -97,6 +97,9 @@ def koifish_one(title, sExe, jsFile0, path="./tests/", most_iter=-1,train_csv=No
             jConfig["debug"] = {}
         jConfig["debug"]["most_iter"] = most_iter
         # jConfig["train"]["dump-every"] = 1
+    if train_csv is not None:
+        if os.path.exists(train_csv):
+            os.remove(train_csv)
     
     jsFile = path+title+".json"
     sOutput = title+".info"

@@ -197,7 +197,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
 
     static size_t szGlobalMaloc;
     static GTensor* tZ;
-    static hGTensor bt4c, delta, gate_delta, tmpDelta, scratch, tmpFF1, tmpW, tmpGW, residual, tmpTernary;
+    static hGTensor bt4c, delta, gate_delta, tmpDelta, scratch, tmpFF1, tmpW, tmpGW, tmpQout, tmpKout, residual, tmpTernary;
     //  If config.isShareLayerOut(), all layers' output share this tensor!
     static hGTensor outL;
 
@@ -277,11 +277,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     static size_t MostOverhead() { return sizeof(GTensor) * 2; }
     GTensor() {}
     GTensor(Fish* hFish, SHAPE shape_, typNUMBER tpD_, bool isAlloc = true, int flag = 0x0);
-    // GTensor(struct ggml_tensor *gg_, int flag = 0x0) : gg(gg_) { assert(0); }
-    // virtual bool CopyGG(struct ggml_tensor *gg_, int flag = 0x0) {
-    //     assert(0);
-    //     return false;
-    // }
+
     virtual hGTensor Partial(const string& name, size_t offset, SHAPE shape, int flag = 0x0) {
         assert(0);
         return nullptr;
@@ -539,7 +535,7 @@ class huTensor : public GTensor {
     size_t mostMemory(int typ = 0) const override;
     bool InitParam(int tpInit) override;
     bool BeforeBackward(size_t& szBuf, int flag = 0x0) override;
-    // bool CopyGG(struct ggml_tensor *gg_, int flag = 0x0) override;
+
     bool Free(bool isPassResident = false) override;
     void Zero() override;
     void ZeroGrad() override;

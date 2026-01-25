@@ -52,8 +52,7 @@ int Prefill(hFISH fish, int enable_thinking) { return 0x0; }
 int OnEOS(hFISH fish, int flag = 0x0) {
     hChater gopt = fish->GetGenerator();
     _INFO("[MEMORY] %s\t%s\n", SUM::GPU_Info(0x0).c_str(), SUM::CPU_Info(0x0).c_str());
-    _INFO("\t quant=%s\tDEBUG_switch={%d %d} QKV=%d FFN=%d\n", SUM::sQuantInfo.c_str(), DEBUG.T_generate_qkv, DEBUG.T_cuQK, DEBUG.verInferQKV,
-          DEBUG.verInferFFN);
+    _INFO("\t quant=%s\t DEBUG_switch={generate=%d %d} QKV=%d FFN=%d\n", SUM::sQuantInfo.c_str(), DEBUG.verGenerate, DEBUG.T_cuQK, DEBUG.verInferQKV, DEBUG.verInferFFN);
     _INFO("\n");  // next turn
     return 0x0;
 }
@@ -96,7 +95,8 @@ int Chat(hFISH fish, int enable_thinking) {
     QWEN3_PIPE qwen_pipe(fish, 0x0);
 
     // DEBUG.T_generate_most_layer = 1;
-    DEBUG.T_generate_qkv = 0, DEBUG.T_cuQK = 0;
+    DEBUG.verGenerate     = DEBUG.cmd_p1;  // use this flag to comparse accu/time of different version
+    DEBUG.T_cuQK          = 0;
     DEBUG.T_kvcache_quant = 0;
     g_dump_level          = 1;
 
@@ -108,7 +108,7 @@ int Chat(hFISH fish, int enable_thinking) {
             generated_tokens  = 0;
             cur_answer        = "";
             user_turn         = 0, nRound++;
-            hBatch->Reset(prompt_tokens);   //No BOS at sequence start!
+            hBatch->Reset(prompt_tokens);  // No BOS at sequence start!
             // hLoader->InitOneSamp(rendered_prompt, nullptr, fish.get(), 0x110);
             _INFO("\n");
         }
@@ -121,7 +121,7 @@ int Chat(hFISH fish, int enable_thinking) {
             DEBUG_HERE;
             // exit(KOIFISH_EXIT_DEBUG);
         }
-        if (DEBUG.T_generate_qkv) {  //  much slower with some bug
+        if (DEBUG.verGenerate) {  //  much slower with some bug
             float eval = fish->Evaluate(DL_BATCH_UPATE::BATCHofEMBED);
         } else {  // qwen_pipe.UpdatePos(token);
             logits = T_generate_(fish, &qwen_pipe, fish->config.model.tpActivation, 1);
@@ -130,6 +130,7 @@ int Chat(hFISH fish, int enable_thinking) {
             _INFO("\n%s(Invalid logits!)%s\n", COLOR_RED, COLOR_RESET);
         }
         hBatch->tok_pos++;
+        // K_EXIT(KOIFISH_EXIT_DEBUG);
 
         // _INFO(" %d[%d->%d]", pos, token, next), fflush(stdout);
         if (hBatch->tok_pos >= num_prompt_tokens) {
@@ -207,7 +208,7 @@ int main(int argc, char* argv[]) {
         assert(argc >= 2);
         std::string arg_prefix = "--", exec_name = EXE_name(), jsPath = "", eval_metric = "";
         CLI_params config;
-        config.phase = LIFE_PHASE::P_GENERATE;      //DEBUG.test_quant = 1;
+        config.phase = LIFE_PHASE::P_GENERATE;  // DEBUG.test_quant = 1;
         if (!config.parse(argc, argv)) {
             return KOIFISH_INVALID_ARGS;
         }
@@ -224,11 +225,11 @@ int main(int argc, char* argv[]) {
         config.dumpSwitch.tensor_load  = 0;
         config.dumpSwitch.nn_structure = 0;
         // SUM::nMinTensorAlloc = 1;
-        // config.quant.filter_MIQ         = {"mlp"};                   //  mlp.down_proj.weight "mlp"  
+        // config.quant.filter_MIQ         = {"mlp"};                   //  mlp.down_proj.weight "mlp"
         // config.quant.filter_KVcache = {"0.self_attn"};    //   "layers.27.mlp" model.blk.0.attn
-        
+
         DEBUG.verCuda = 1, DEBUG.T_cpu = 0, DEBUG.graph_dump = 0, DEBUG.Time_most = 60;
-        // DEBUG.verInferQKV = 0, DEBUG.verInferFFN = 0;
+        DEBUG.verInferQKV = 0, DEBUG.verInferFFN = 0;
         config.Dump(0x100);
         hFISH fish = Fish::MakeInstance("PPL_", config, {}, Fish::ROLE_TYPE::COMMON, 0x110);
         SUM::MemoryInfo(0x0, 0x0);

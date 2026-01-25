@@ -584,45 +584,6 @@ __global__ void CU_rope_prenormal_(Typ* inp, Typ* out, float* scale, int seq_len
     // out[idx] = x1;      out[idx + 1] = x2;
 }
 
-//  blockIdx(B, T, n_head)
-__global__ void CU_rope2_v0(bf16* q, bf16* k, int pos, int N_HEADS, int N_KV_HEADS, int head_dim, float theta, int type) {
-    int h = blockIdx.z, j = threadIdx.x;
-    assert(gridDim.z == N_HEADS);
-    int nzHead = blockIdx.x * (gridDim.y * N_HEADS) + blockIdx.y * N_HEADS + h;
-    if (h < N_HEADS && j < head_dim / 2) {
-        bf16* q_head = q + nzHead * head_dim;
-        //               1.0f / powf(theta, (float)(2 * tid) / head_dim);
-        float inv_freq = 1.0f / powf(theta, (float)(j * 2) / (float)head_dim);
-        if (pos < 0) {  //  (B, T, n_head)
-            pos = blockIdx.y;
-        }
-
-        float angle = (float)pos * inv_freq, cos, sin;
-        sincosf(angle, &sin, &cos);
-        int j1 = j, j2 = j + head_dim / 2;
-        // j1 = 2 * j, j2 = 2 * j + 1;
-        if (type == 1) {
-            sin = -sin;
-        }
-        float q_real = __bfloat162float(q_head[j1]);
-        float q_imag = __bfloat162float(q_head[j2]);
-
-        q_head[j1] = __float2bfloat16_rn(q_real * cos - q_imag * sin);
-        q_head[j2] = __float2bfloat16_rn(q_real * sin + q_imag * cos);
-        // if (nzHead == N_HEADS && j == 0) {
-        //     nout("\t(%g,%g)=%g %g %g %g@<%d %d %d>\n", CU_T2Float(q_head+j1),CU_T2Float(q_head+j2),q_real, q_imag, sin,
-        //     cos,blockIdx.x,blockIdx.y,blockIdx.z);
-        // }
-        if (h < N_KV_HEADS) {
-            nzHead       = blockIdx.x * (gridDim.y * N_KV_HEADS) + blockIdx.y * N_KV_HEADS + h;
-            bf16* k_head = k + nzHead * head_dim;
-            float k_real = __bfloat162float(k_head[j1]), k_imag = __bfloat162float(k_head[j2]);
-            k_head[j1] = __float2bfloat16_rn(k_real * cos - k_imag * sin);
-            k_head[j2] = __float2bfloat16_rn(k_real * sin + k_imag * cos);
-        }
-    }
-}
-
 // template __global__ void CU_rope_<bf16>(bf16* out, bf16* inp, const bf16* freqs, float* stat_info, int B, int T, int Nq, int Nkv, int head_dim,
 //                                         bool isBack = false);
 
@@ -665,8 +626,8 @@ __global__ void CU_rope_rmsnormal_forw(Typ* qk, const Typ* weight, int pos, int 
         }
         float angle = (float)pos * inv_freq, cos, sin;
         sincosf(angle, &sin, &cos);
-        q_head[j1] = __float2bfloat16_rn(q_real * cos - q_imag * sin);
-        q_head[j2] = __float2bfloat16_rn(q_real * sin + q_imag * cos);
+        q_head[j1] = CU_Float2T<Typ>(q_real * cos - q_imag * sin, 42);  
+        q_head[j2] = CU_Float2T<Typ>(q_real * sin + q_imag * cos, 42);  
         // if (nzHead == N_HEADS && j == 0) {
         //     nout("\t(%g,%g)=%g %g %g %g@<%d %d %d>\n", CU_T2Float(q_head+j1),CU_T2Float(q_head+j2),q_real, q_imag, sin,
         //     cos,blockIdx.x,blockIdx.y,blockIdx.z);
@@ -704,7 +665,7 @@ hGTensor ROPE::cuInfer(SelfAttention* hQKV, uint32_t seed, int pos, int flag) {
         CU_rope_rmsnormal_forw<floatX><<<blocks_q, dim3(head_dim / 2, 1, 1)>>>(q, qW, pos, n_head, head_dim, theta);
         CU_rope_rmsnormal_forw<floatX><<<blocks_k, dim3(head_dim / 2, 1, 1)>>>(k, kW, pos, n_head_kv, head_dim, theta);
     } else
-        CU_rope2_v0<<<blocks_q, dim3(head_dim / 2, 1, 1)>>>(q, k, pos, n_head, n_head_kv, head_dim, theta);
+        CU_rope2_v0<floatX><<<blocks_q, dim3(head_dim / 2, 1, 1)>>>(q, k, pos, n_head, n_head_kv, head_dim, theta, 42);
     // Q.out->Print("Q.rope", 0x0, dump_flag, nToken * q_dim), K.out->Print("K.rope", 0x0, dump_flag, nToken * kv_dim);
     return nullptr;
 }
@@ -720,6 +681,8 @@ hGTensor ROPE::cuInfer(SelfAttention* hQKV, uint32_t seed, int pos, int flag) {
 template <typename Typ>
 __global__ void CU_rope_rmsnormal_back(Typ* dX0, Typ* dWeight0, const Typ* dY0, const Typ* qk, const Typ* weight0, int pos, int nToken, int qk_head,
                                        int head_dim, float theta, unsigned int seed, int flag = 0x0) {
+#if defined(USE_FP8_BASELINE)
+#else
     int h = blockIdx.z, j = threadIdx.x;
     assert(gridDim.z == qk_head);
     int head_id  = blockIdx.x * (gridDim.y * qk_head) + blockIdx.y * qk_head + h;
@@ -739,8 +702,8 @@ __global__ void CU_rope_rmsnormal_back(Typ* dX0, Typ* dWeight0, const Typ* dY0, 
         float angle = (float)pos * inv_freq, cos, sin;
         sincosf(angle, &sin, &cos);
         sin    = -sin;  // for back
-        dX[j1] = __float2bfloat16_rn(dy_real * cos - dy_imag * sin);
-        dX[j2] = __float2bfloat16_rn(dy_real * sin + dy_imag * cos);
+        dX[j1] = CU_Float2T<Typ>(dy_real * cos - dy_imag * sin, seed);
+        dX[j2] = CU_Float2T<Typ>(dy_real * sin + dy_imag * cos, seed);
 
         if (weight0 != nullptr) {
             x2   = x_real * x_real + x_imag * x_imag;
@@ -760,6 +723,7 @@ __global__ void CU_rope_rmsnormal_back(Typ* dX0, Typ* dWeight0, const Typ* dY0, 
             // dX[j1] = dy_real,       dX[j2] = dy_imag;
         }
     }
+#endif
 }
 
 // fuse normal to rope, may reduce time
@@ -782,12 +746,14 @@ int ROPE::cuFlow(SelfAttention* hQKV, uint32_t seed, bool isFX, int flag) {
                 hQKV->Q.out->Print("Q.norm", 0x0, dump_flag, B * T * q_dim);
                 hQKV->K.out->Print("K.norm", 0x0, dump_flag, B * T * kv_dim);
             }
-            CU_rope2_v0<<<blocks_q, dim3(head_dim / 2, 1, 1)>>>(q, k, -1, n_head, n_head_kv, head_dim, theta);
+            CU_rope2_v0<<<blocks_q, dim3(head_dim / 2, 1, 1)>>>(q, k, -1, n_head, n_head_kv, head_dim, theta, 42);
         } else {
             CU_rope_rmsnormal_forw<floatX><<<blocks_q, dim3(head_dim / 2, 1, 1)>>>(q, qW, -1, n_head, head_dim, theta);
             CU_rope_rmsnormal_forw<floatX><<<blocks_k, dim3(head_dim / 2, 1, 1)>>>(k, kW, -1, n_head_kv, head_dim, theta);
         }
     } else {
+        // hQKV->deltaQ->Print("dQ.rope.0", 0, dump_flag);
+        // hQKV->deltaK->Print("dK.rope.0", 0, dump_flag);
         floatX *dQ = ToX(hQKV->deltaQ), *dK = ToX(hQKV->deltaK), *dQY = dQ, *dKY = dK;  // from back of QKV self-attention
         if (fuse_normal == 1) {                                                         // some strange bug
             floatX *dQw = hnQ == nullptr ? nullptr : ToG(hnQ->w), *dKw = hnK == nullptr ? nullptr : ToG(hnK->w);
@@ -803,12 +769,14 @@ int ROPE::cuFlow(SelfAttention* hQKV, uint32_t seed, bool isFX, int flag) {
             }
             CU_rope_rmsnormal_back<floatX><<<blocks_k, dim3(head_dim / 2, 1, 1)>>>(dK, dKw, dKY, k, kW, -1, B * T, n_head_kv, head_dim, theta, 42);
         } else {
-            CU_rope2_v0<<<blocks_q, head_dim / 2>>>(dQ, dK, -1, n_head, n_head_kv, head_dim, theta, 1);
+            CU_rope2_v0<<<blocks_q, head_dim / 2>>>(dQ, dK, -1, n_head, n_head_kv, head_dim, theta, 42, 1);
+            // hQKV->deltaQ->Print("dQ.rope.1", 0, dump_flag), hQKV->deltaK->Print("dK.rope.1", 0, dump_flag);
             if (hnQ != nullptr) {
                 hnK->cuFlow(hQKV->deltaK);
                 hnQ->cuFlow(hQKV->deltaQ);
             }
         }
+
         //
         // SYNC_DEVICE();
     }

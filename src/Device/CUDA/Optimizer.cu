@@ -173,7 +173,7 @@ __global__ void CU_adamw_p_v0(PIPE_Adamw<Tp, Tmv> pipe) {
         return;
     }  // guard
 
-    float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx), m = pipe.gm[idx], v = pipe.gv[idx];
+    float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx), m = (float)pipe.gm[idx], v = (float)pipe.gv[idx];
     m = lerp(grad, m, pipe.beta1), pipe.gm[idx] = m;
     v = lerp(grad * grad, v, pipe.beta2), pipe.gv[idx] = v;
     // m /= pipe.beta1_correction;  // m_hat
@@ -223,6 +223,8 @@ __global__ void CU_adamw_p(PIPE_Adamw<Typ, Tmv> pipe) {
 */
 template <typename Tp, typename Tmv>
 __global__ void CU_adamw_ternary(PIPE_Adamw<Tp, Tmv> pipe) {
+#if defined(USE_FP8_BASELINE)
+#else
     int M = pipe.ne[0], N = pipe.ne[1], tid = threadIdx.x;
     int idrow = blockIdx.x * blockDim.x + tid, offset = idrow * N;
     if (idrow >= M)
@@ -248,10 +250,13 @@ __global__ void CU_adamw_ternary(PIPE_Adamw<Tp, Tmv> pipe) {
     }
     CU_X2ternary_row(pipe.gama_T + idrow, params_x, terns, N);
     // __syncthreads();
+#endif
 }
 
 template <typename Tp, typename Tmv>
 __global__ void CU_adamw_s(PIPE_Adamw<Tp, Tmv> pipe) {
+#if defined(USE_FP8_BASELINE)
+#else
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= pipe.num_parameters) {
         return;
@@ -267,10 +272,13 @@ __global__ void CU_adamw_s(PIPE_Adamw<Tp, Tmv> pipe) {
     float block_sum  = blockReduce_v0<warpReduceSum>(x2, true);
     if (threadIdx.x == 0)
         atomicAdd((float*)pipe.arrNorm, block_sum);
+#endif
 }
 
 template <typename Tp, typename Tmv>
 __global__ static void CU_adamw_Tile_v0(PIPE_Adamw<Tp, Tmv> pipe) {
+#if defined(USE_FP8_BASELINE)
+#else
     const int TM = THREAD_TILE_M, TN = THREAD_TILE_N, thread_num = blockDim.x;
     int tid = threadIdx.x, idrow, idcol, M = pipe.ne[0], N = pipe.ne[1], trans = 1;
     idrow = blockIdx.x * TM + tid / TM;
@@ -289,12 +297,15 @@ __global__ static void CU_adamw_Tile_v0(PIPE_Adamw<Tp, Tmv> pipe) {
     if (tid == 0) {
         pipe.gama_T[gpos] = sum / TM / TN;
     }
+#endif
 }
 
 #define RC2TILE(r, c) (((r) / THREAD_TILE_M) * gridDim.y + ((c) / THREAD_TILE_N))
 //  all element in tile has one mv
 template <typename Tp, typename Tmv>
 __global__ static void CU_adamw_Tile(PIPE_Adamw<Tp, Tmv> pipe) {
+#if defined(USE_FP8_BASELINE)
+#else
     const int TM = THREAD_TILE_M, TN = THREAD_TILE_N;  //, thread_num = blockDim.x;
     int tid = threadIdx.x, idrow, idcol, M = pipe.ne[0], N = pipe.ne[1], trans = 1;
     // const int nWrapT = std::min(WARP_SIZE,THREAD_TILE_M*THREAD_TILE_N);
@@ -318,11 +329,14 @@ __global__ static void CU_adamw_Tile(PIPE_Adamw<Tp, Tmv> pipe) {
         pipe.gama_T[gpos] = a;  // CU_Float2T<Tp>(a, pipe.seed);   //
         atomicAdd((float*)pipe.arrNorm, a * a * TM * TN);
     }
+#endif
 }
 
 //  all element in tile has one mv
 template <typename Tp, typename Tmv>
 __global__ static void CU_adamw_Tile_RC(PIPE_Adamw<Tp, Tmv> pipe) {
+#if defined(USE_FP8_BASELINE)
+#else
     const int TM = THREAD_TILE_M, TN = THREAD_TILE_N, thread_num = blockDim.x;
     int tid = threadIdx.x, idrow, idcol, idrow_0, idcol_0, M = pipe.ne[0], N = pipe.ne[1], trans = 1;
 
@@ -363,10 +377,13 @@ __global__ static void CU_adamw_Tile_RC(PIPE_Adamw<Tp, Tmv> pipe) {
         pipe.gv[gpos]     = sum_v / TM / TN;
         pipe.gm[gpos]     = sum_m / TM / TN;
     }
+#endif
 }
 //  each element in tile has different mv
 template <typename Tp, typename Tmv>
 __global__ static void CU_adamw_Tile_each_mv(PIPE_Adamw<Tp, Tmv> pipe) {
+#if defined(USE_FP8_BASELINE)
+#else
     const int TM = THREAD_TILE_M, TN = THREAD_TILE_N, thread_num = blockDim.x;
     int tid = threadIdx.x, idrow, idcol, M = pipe.ne[0], N = pipe.ne[1], trans = 1;
     idrow = blockIdx.x * TM + tid / TM;
@@ -389,6 +406,7 @@ __global__ static void CU_adamw_Tile_each_mv(PIPE_Adamw<Tp, Tmv> pipe) {
         pipe.gv[gpos]     = sum_v / TM / TN;
         pipe.gm[gpos]     = sum_m / TM / TN;
     }
+#endif
 }
 
 // bool Fuyou::Exploitation(hGensor cur, int flag) {

@@ -491,8 +491,7 @@ GTokenizer_QWEN3::GTokenizer_QWEN3(Fish* dolphin, int flag) {
     config = dolphin->config;
     if(config.model.isLoadCard()){
 
-    }else{  //hard-code
-        config.model.sTokenBinPath = "./assets/tokenizer_151936.bin";
+    }else{  
     }
     bool bRet = InitHF(dolphin, flag);
     if (!bRet) {
@@ -670,10 +669,13 @@ bool GTokenizer_QWEN3::InitHF(Fish* dolphin, int flag) {
     try {
         char tmp_word[MAX_TOKEN_LENGTH];
         string sRoot          = config.model.sCardPath;
-        string tokenizer_path = config.model.sTokenBinPath;  // + "tokenizer.bin";
-        int vocab_size        = config.model.vocab_size;     // 151936
-        // vocab.resize(vocab_size); // = (char **)malloc(vocab_size * sizeof(char *));
-        scores = (float*)malloc(vocab_size * sizeof(float));
+        string tokenizer_path = config.model.sTokenBinPath;  
+        int vocab_size        = config.model.vocab_size;     
+        if(!VERIFY_DIR_EXIST(tokenizer_path)){
+            _WARN("[QWEN3] tokenizer_path@ (\"%s\") is invalid! This would not affect the training, but the lack of tokenizer would make decode impossible.\n", tokenizer_path.c_str());
+            // exit(KOIFISH_LOAD_TOKENIZER);
+            return false;
+        }
 
         FILE* file = fopen(tokenizer_path.c_str(), "rb");
         if (file == NULL) {
@@ -683,11 +685,12 @@ bool GTokenizer_QWEN3::InitHF(Fish* dolphin, int flag) {
             // auto tok = Tokenizer::FromBlobJSON(blob);
             // TestTokenizer(std::move(tok), false, true);
 
-            _ERROR("[QWEN3] Couldn't load tokenizer model %s\n", tokenizer_path.c_str());
+            _ERROR("[QWEN3] Couldn't load tokenizer model @\"%s\"\n", tokenizer_path.c_str());
             exit(KOIFISH_LOAD_TOKENIZER);
 
             //  max_token_length = max(len(t) for t in all_tokens)
         } else {
+            scores = (float*)malloc(vocab_size * sizeof(float));
             int len, nz = 0, max_token_length;
             fread(&max_token_length, sizeof(int), 1, file);  //  512?
             assert(max_token_length <= MAX_TOKEN_LENGTH);

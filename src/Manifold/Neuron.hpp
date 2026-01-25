@@ -2,9 +2,9 @@
 /**
  *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
- * 
+ *
  *  Neurons flow on manifold, just like our life, from no begin to no end(上善若水,生生不息)
- * 
+ *
  *  \brief Collection of neurons
  *  \author Yingshi Chen
  */
@@ -122,9 +122,9 @@ class GeNeuron {
     // std::vector<shared_ptr<GeNeuron>> brothers;
     virtual std::string _NAME(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix = "", int flag = 0x0);
 
-    hGensor dev_window = nullptr;    // a window to record the data in device
-    virtual void SetInp4Back(hGensor inp_,int flag=0x0);    //  the input tensor of forward would be reused in back-propragation
-    virtual bool VerifyInp4Back(hGensor inp_,int flag=0x0);    //  @SetInp4Back
+    hGensor dev_window = nullptr;                               // a window to record the data in device
+    virtual void SetInp4Back(hGensor inp_, int flag = 0x0);     //  the input tensor of forward would be reused in back-propragation
+    virtual bool VerifyInp4Back(hGensor inp_, int flag = 0x0);  //  @SetInp4Back
    public:
     enum BIT_FLAG { F_BIAS = 0x10000, F_DELTA = 0x20000, F_REMATER = 0x40000, F_HOTPICK = 0x100000 };
 
@@ -396,12 +396,7 @@ struct SLP : public SparseNeuron {
     int Forw(hGTensor rhs, hGTensor lhs, hGTensor to_gelu = nullptr, Relu* hRelu = nullptr, int flag = 0x0);
     // CPU version
     int Forw(float* rhs, float* lhs, int flag = 0x0);
-#ifndef ENABLE_FP32
-    int Forw(floatX* rhs, floatX* lhs, int flag = 0x0) {
-        assert(0);
-        return 0x0;
-    }
-#endif
+
     /*  Backward
         inp_ & to_gelu is defined in forward: inp_=GELU(to_gelu)
     */
@@ -418,12 +413,13 @@ struct SLP : public SparseNeuron {
     BF16 can work for LayerNorm in ​​well-tuned models​​ (e.g., some Transformer variants), but FP32 is the "safe" default.
 */
 struct LayerNormal : public SparseNeuron {
-    bool isAffineTrans = true;  // Learnable affine transform parameters
-    bool isRMS         = true;  // Root Mean Square Layer Normalization
-    bool isOnline      = false;
-    float rms_eps      = 1.0e-5;
-    int nHead          = 0;
-    int nTH            = 0, ldTH;  // number of tokens or heads
+    bool isAffineTrans    = true;  // Learnable affine transform parameters
+    bool isRMS            = true;  // Root Mean Square Layer Normalization
+    bool isOnline         = false;
+    float rms_eps         = 1.0e-5;
+    int nHead             = 0;
+    int nTH               = 0, ldTH;  // number of tokens or heads
+    int ver_rms_qknormal_ = 1;
     //  always float
     hGensor mean = nullptr, rstd = nullptr;
     float scale = 0.0;
@@ -565,7 +561,7 @@ class SelfAttention : public SparseNeuron {
     hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag = 0x0) override;
     bool isValid() override { return true; }
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
-    
+
     hGTensor cuFlow(hGTensor inpL, int flag);
     hGTensor cuInfer(hGTensor inpL, int flag);
 
@@ -748,6 +744,7 @@ struct OutCLS : public SparseNeuron {
             delete[] hostLoss;
     }
     bool Build(int flag) override;
+    bool BuildPrelogist(int flag);
     hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag) override;
     bool isValid() override { return true; }
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;

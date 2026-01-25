@@ -652,6 +652,13 @@ double G_Scale_RC(T* mat, int nRow, int nCol, Tscal* row_scal, Tscal* col_scal, 
     return imbalance;
 }
 
+// no need quant of __nv_fp8_e5m2 !
+template <>
+double G_Scale_RC(__nv_fp8_e5m2* mat, int nRow, int nCol, double* row_scal, double* col_scal, double T_imb, int flag) {
+    assert(0 && "no need quant of __nv_fp8_e5m2 !");
+    return 0.0;
+}
+
 //  set the group size to 64, batch-size to 8
 float GeQuant::SinkNormal(shared_ptr<GTensor> hTensor, const void* srcData, floatGama* curGama, int flag) {
     double t0   = GST_sec();

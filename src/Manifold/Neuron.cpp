@@ -296,13 +296,45 @@ floatLogits* OutCLS::fLogits(int flag) {
     //(float *)(preLogits->data)+i*nVocab;
 }
 
+// allocate preLogits & set it as buff
+bool OutCLS::BuildPrelogist(int flag) {
+    typNUMBER tpL = typeid(floatLogits) == typeid(float) ? typNUMBER::F32 : typNUMBER::BF16, tpA = hFish->config.model.tpActivation;
+    SHAPE sp3 = {dB, T, padded_nCls};
+    if (hFish->config.isOnlyGPT) {
+        preLogits = GT(hFish, tpL, {padded_nCls}, 0x0, "preLogits");  // std::make_shared<huTensor>(hFish,"preLogits",sp3,tpActivation,false);
+        // preLogits->flags |= GTensor::F_HOSTDATA;
+        preLogits->Alloc(0x0, flag);
+    } else {
+        // size_t nz = std::max(GTensor::scratch->size(),(size_t)dB*T*padded_nCls);        assert(nz<INT_MAX);
+        // sp3 = {(int)nz};
+        preLogits = std::make_shared<huTensor>(hFish, "preLogits", sp3, tpL, true);
+    }
+    preLogits->host_data = new float[padded_nCls];  //always allocate this!
+
+    GTensor::buff = preLogits->data;  // reused in many place!
+    assert(GTensor::buff != nullptr);
+    GTensor::buff_len = preLogits->nByte();
+
+    if (hFish->config.model.isQKNormal) {
+        size_t offset = 0x0;
+        int q_dim = hFish->config.Q_dim(), kv_dim = hFish->config.KV_dim();
+        GTensor::tmpQout       = GT(hFish, tpA, {B, T, q_dim});
+        GTensor::tmpQout->data = (hBITARR)GTensor::buff + offset, offset += GTensor::tmpQout->nByte();
+        GTensor::tmpKout       = GT(hFish, tpA, {B, T, kv_dim});
+        GTensor::tmpKout->data = (hBITARR)GTensor::buff + offset, offset += GTensor::tmpKout->nByte();
+        assert(offset <= GTensor::buff_len);
+    }
+    return true;
+}
+
 bool OutCLS::Build(int flag) {
     SHAPE sp = {shape[0]};
     latent   = hFish->config.nEmbed(-1);
     hEmbed   = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
     assert(hEmbed != nullptr);
 
-    SHAPE sp2 = {B, T}, sp3 = {dB, T, padded_nCls}, sp4 = {B, T, latent};
+    SHAPE sp2 = {B, T}, sp4 = {B, T, latent};
+    BuildPrelogist(0x0);
     nzLoss   = B * T;
     hostLoss = new float[nzLoss];
     // isTarget_1 always true @SampLoader::Samp2Batch
@@ -312,15 +344,6 @@ bool OutCLS::Build(int flag) {
     hFish->target_probs = target;
     out                 = std::make_shared<huTensor>(hFish, "loss", sp2, typNUMBER::F32, false);
     BIT_SET(out->flags, GTensor::F_LOSS);
-    typNUMBER tpL = typeid(floatLogits) == typeid(float) ? typNUMBER::F32 : typNUMBER::BF16;  // hFish->config.model.tpPreLogits;
-    if (hFish->config.isOnlyGPT) {
-        preLogits = GT(hFish, tpL, {padded_nCls}, 0x0, "preLogits");  // std::make_shared<huTensor>(hFish,"preLogits",sp3,tpActivation,false);
-        // preLogits->flags |= GTensor::F_HOSTDATA;
-    } else {
-        // size_t nz = std::max(GTensor::scratch->size(),(size_t)dB*T*padded_nCls);        assert(nz<INT_MAX);
-        // sp3 = {(int)nz};
-        preLogits = std::make_shared<huTensor>(hFish, "preLogits", sp3, tpL, false);
-    }
 
     delta = GTensor::bt4c;  // !=GTensor::delta
 
@@ -869,24 +892,23 @@ void GeNeuron::OnDebug(const std::string& info, int typ, int flag) {
         return;
     // if(!isForward())
     // { dump_flag = -1;   return; }
-    return;
     if (dynamic_cast<FFN*>(this) != nullptr) {
         if (layid == 1) {
-            dump_flag = -1;
+            // dump_flag = -1;
         }
     }
     if (dynamic_cast<SelfAttention*>(this) != nullptr) {
-        dump_flag = -1;
+        // dump_flag = -1;
     }
     if (dynamic_cast<ROPE*>(this) != nullptr) {
-        dump_flag = -1;
+        // dump_flag = -1;
     }
     if (dynamic_cast<OutCLS*>(this) != nullptr) {
-        dump_flag = -1;
+        // dump_flag = -1;
     }
     if (dynamic_cast<TokenEmbed*>(this) != nullptr) {
         {
-            dump_flag = -1;
+            // dump_flag = -1;
         }
     }
     // dump_flag = -1;

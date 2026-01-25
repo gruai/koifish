@@ -582,8 +582,8 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGensor loss_, hGensor target_, C
     for (t = 0; t < train_params.nMostIter; ++t) {
         NvtxRange range("step", t);
         CheckExitSearch(t);
-        if (_fish->arch == NLP_QWEN2 || _fish->arch == NLP_QWEN3) {
-            // g_dump_level = t > 0 ? 0 : 1;
+        if (_fish->isModel({NLP_QWEN2, NLP_QWEN3})) {
+            // g_dump_level = -1;
         }
         _fish->BeforeNextStep(t, 0x0);
         if (t == train_params.nMostIter - 1) {

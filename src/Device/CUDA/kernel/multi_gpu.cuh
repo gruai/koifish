@@ -6,10 +6,10 @@ Utilities for ZeRO sharding
 #define LLMC_ZERO_CUH
 
 #include <cuda_runtime_api.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <stdio.h>
 #include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 #ifdef MULTI_GPU
 #include <nccl.h>
@@ -25,15 +25,15 @@ Utilities for ZeRO sharding
 // Multi-GPU related
 #ifdef MULTI_GPU
 
-#if defined(ENABLE_FP32)
+#if defined(USE_FP32_BASELINE)
 const ncclDataType_t ncclFloatX = ncclFloat;
-#elif defined(ENABLE_FP16)
+#elif defined(USE_FP16_BASELINE)
 const ncclDataType_t ncclFloatX = ncclHalf;
-#else // Default to bfloat16
+#else  // Default to bfloat16
 const ncclDataType_t ncclFloatX = ncclBfloat16;
 #endif
 
-void nccl_check(ncclResult_t status, const char *file, int line) {
+void nccl_check(ncclResult_t status, const char* file, int line) {
     if (status != ncclSuccess) {
         printf("[NCCL ERROR] at file %s:%d:\n%s\n", file, line, ncclGetErrorString(status));
         exit(EXIT_FAILURE);
@@ -42,7 +42,7 @@ void nccl_check(ncclResult_t status, const char *file, int line) {
 #define ncclCheck(err) (nccl_check(err, __FILE__, __LINE__))
 
 #ifdef USE_MPI
-void mpi_check(int status, const char *file, int line) {
+void mpi_check(int status, const char* file, int line) {
     if (status != MPI_SUCCESS) {
         char mpi_error[4096];
         int mpi_error_len = 0;
@@ -54,7 +54,7 @@ void mpi_check(int status, const char *file, int line) {
 #define mpiCheck(err) (mpi_check(err, __FILE__, __LINE__))
 #endif
 
-#endif // MULTI_GPU
+#endif  // MULTI_GPU
 
 // ----------------------------------------------------------------------------
 // Parameters specific to training on multiple GPUs.
@@ -71,9 +71,9 @@ typedef struct {
     int zero_stage;
     size_t shard_num_parameters;
 #ifdef MULTI_GPU
-    ncclComm_t nccl_comm;       // NCCL communication primitive, used for collective multi-GPU work.
-    cudaStream_t nccl_stream;   // CUDA Stream to perform NCCL operations.
-    cudaEvent_t compute_nccl_sync; // Event used to synchronize NCCL with the compute
+    ncclComm_t nccl_comm;           // NCCL communication primitive, used for collective multi-GPU work.
+    cudaStream_t nccl_stream;       // CUDA Stream to perform NCCL operations.
+    cudaEvent_t compute_nccl_sync;  // Event used to synchronize NCCL with the compute
     float* unified_buffer;
 #endif
 } MultiGpuConfig;
@@ -85,9 +85,9 @@ inline MultiGpuConfig multi_gpu_config;
 #ifdef MULTI_GPU
 
 #ifdef _WIN32
-void send_nccl_id_to_clients_windows(ncclUniqueId *nccl_id, SOCKET client_sockets[], int num_clients) {
+void send_nccl_id_to_clients_windows(ncclUniqueId* nccl_id, SOCKET client_sockets[], int num_clients) {
     for (int i = 0; i < num_clients; ++i) {
-        if (send(client_sockets[i], (const char *)nccl_id, sizeof(*nccl_id), 0) == SOCKET_ERROR) {
+        if (send(client_sockets[i], (const char*)nccl_id, sizeof(*nccl_id), 0) == SOCKET_ERROR) {
             printf("Failed to send nccl_id");
             WSACleanup();
             exit(EXIT_FAILURE);
@@ -96,7 +96,7 @@ void send_nccl_id_to_clients_windows(ncclUniqueId *nccl_id, SOCKET client_socket
     }
 }
 #else
-void send_nccl_id_to_clients(ncclUniqueId *nccl_id, int client_sockets[], int num_clients) {
+void send_nccl_id_to_clients(ncclUniqueId* nccl_id, int client_sockets[], int num_clients) {
     for (int i = 0; i < num_clients; ++i) {
         if (send(client_sockets[i], nccl_id, sizeof(*nccl_id), 0) == -1) {
             printf("Failed to send nccl_id");
@@ -137,12 +137,12 @@ ncclUniqueId get_nccl_id_via_tcp_windows(MultiGpuConfig* result, const char* ser
         }
 
         // Step 2) set the server address and port
-        address.sin_family = AF_INET;  // IPv4
+        address.sin_family      = AF_INET;  // IPv4
         address.sin_addr.s_addr = inet_addr(server_ip);
-        address.sin_port = htons(SERVER_PORT);
+        address.sin_port        = htons(SERVER_PORT);
 
         // Step 3) bind the socket to the address and port
-        if (bind(server_socket, (struct sockaddr *)&address, sizeof(address)) == SOCKET_ERROR) {
+        if (bind(server_socket, (struct sockaddr*)&address, sizeof(address)) == SOCKET_ERROR) {
             printf("Bind failed");
             closesocketCheck(server_socket);
             WSACleanup();
@@ -160,7 +160,7 @@ ncclUniqueId get_nccl_id_via_tcp_windows(MultiGpuConfig* result, const char* ser
         // Step 5) accept connections from clients
         printf("Waiting for clients to connect...\n");
         while (num_clients < MAX_CLIENTS) {
-            if ((new_socket = accept(server_socket, (struct sockaddr *)&address, &addrlen)) == INVALID_SOCKET) {
+            if ((new_socket = accept(server_socket, (struct sockaddr*)&address, &addrlen)) == INVALID_SOCKET) {
                 printf("Accept failed");
                 closesocketCheck(server_socket);
                 WSACleanup();
@@ -177,7 +177,7 @@ ncclUniqueId get_nccl_id_via_tcp_windows(MultiGpuConfig* result, const char* ser
         closesocketCheck(server_socket);
     } else {
         int num_connection_attempts = 5;
-        int time_to_sleep = 2;
+        int time_to_sleep           = 2;
         SOCKET client_socket;
         struct sockaddr_in serv_addr;
 
@@ -190,7 +190,7 @@ ncclUniqueId get_nccl_id_via_tcp_windows(MultiGpuConfig* result, const char* ser
 
         // Step 2) set the server address and port
         serv_addr.sin_family = AF_INET;
-        serv_addr.sin_port = htons(SERVER_PORT);
+        serv_addr.sin_port   = htons(SERVER_PORT);
         if (inet_pton(AF_INET, server_ip, &serv_addr.sin_addr) <= 0) {
             printf("Invalid address or address not supported");
             closesocketCheck(client_socket);
@@ -199,7 +199,7 @@ ncclUniqueId get_nccl_id_via_tcp_windows(MultiGpuConfig* result, const char* ser
         }
 
         // Step 3) Try to connect to the server - retry up to `num_connection_attempts` times if the connection fails
-        while (connect(client_socket, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) == SOCKET_ERROR) {
+        while (connect(client_socket, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) == SOCKET_ERROR) {
             printf("%d Connection failed, retrying in %d seconds\n", result->process_rank, time_to_sleep);
             if (--num_connection_attempts == 0) {
                 printf("Failed to connect to the server\n");
@@ -211,7 +211,7 @@ ncclUniqueId get_nccl_id_via_tcp_windows(MultiGpuConfig* result, const char* ser
         }
 
         // Step 4) receive the NCCL ID from the server
-        if (recv(client_socket, (char *)&nccl_id, sizeof(nccl_id), 0) <= 0) {
+        if (recv(client_socket, (char*)&nccl_id, sizeof(nccl_id), 0) <= 0) {
             printf("Failed to receive nccl_id");
             closesocketCheck(client_socket);
             WSACleanup();
@@ -239,7 +239,7 @@ ncclUniqueId get_nccl_id_via_tcp(MultiGpuConfig* result, const char* server_ip) 
         int server_socket, new_socket;
         struct sockaddr_in address;
         int addrlen = sizeof(address);
-        int opt = 1;
+        int opt     = 1;
 
         // Step 1) create a server TCP socket
         if ((server_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -257,12 +257,12 @@ ncclUniqueId get_nccl_id_via_tcp(MultiGpuConfig* result, const char* server_ip) 
         }
 
         // Step 3) set the server address and port
-        address.sin_family = AF_INET;  // IPv4
-        address.sin_addr.s_addr = inet_addr(server_ip); // alternatively use INADDR_ANY to bind to all interfaces, currently we only allow ethernet
-        address.sin_port = htons(SERVER_PORT);
+        address.sin_family      = AF_INET;               // IPv4
+        address.sin_addr.s_addr = inet_addr(server_ip);  // alternatively use INADDR_ANY to bind to all interfaces, currently we only allow ethernet
+        address.sin_port        = htons(SERVER_PORT);
 
         // Step 4) bind the socket to the address and port
-        if (bind(server_socket, (struct sockaddr *)&address, sizeof(address)) < 0) {
+        if (bind(server_socket, (struct sockaddr*)&address, sizeof(address)) < 0) {
             printf("Bind failed");
             exit(EXIT_FAILURE);
         }
@@ -276,7 +276,7 @@ ncclUniqueId get_nccl_id_via_tcp(MultiGpuConfig* result, const char* server_ip) 
         // Step 6) accept connections from clients
         printf("Waiting for clients to connect...\n");
         while (num_clients < MAX_CLIENTS) {
-            if ((new_socket = accept(server_socket, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
+            if ((new_socket = accept(server_socket, (struct sockaddr*)&address, (socklen_t*)&addrlen)) < 0) {
                 printf("Accept failed");
                 exit(EXIT_FAILURE);
             }
@@ -291,7 +291,7 @@ ncclUniqueId get_nccl_id_via_tcp(MultiGpuConfig* result, const char* server_ip) 
         scloseCheck(server_socket);
     } else {
         int num_connection_attempts = 5;
-        int time_to_sleep = 2;
+        int time_to_sleep           = 2;
         int client_socket;
         struct sockaddr_in serv_addr;
 
@@ -303,14 +303,14 @@ ncclUniqueId get_nccl_id_via_tcp(MultiGpuConfig* result, const char* server_ip) 
 
         // Step 2) set the server address and port
         serv_addr.sin_family = AF_INET;
-        serv_addr.sin_port = htons(SERVER_PORT);
+        serv_addr.sin_port   = htons(SERVER_PORT);
         if (inet_pton(AF_INET, server_ip, &serv_addr.sin_addr) <= 0) {
             printf("Invalid address or address not supported");
             exit(EXIT_FAILURE);
         }
 
         // Step 3) Try to connect to the server - retry up to `num_connection_attempts` times if the connection fails
-        while (connect(client_socket, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+        while (connect(client_socket, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
             printf("%d Connection failed, retrying in %d seconds\n", result->process_rank, time_to_sleep);
             if (--num_connection_attempts == 0) {
                 printf("Failed to connect to the server\n");
@@ -356,7 +356,8 @@ ncclUniqueId get_nccl_id_via_fs(MultiGpuConfig* result, char* fs_path) {
         do {
             sleep(1);  // 1 second
             idFile = fopen(filename, "rb");
-            if (idFile != NULL) break;
+            if (idFile != NULL)
+                break;
         } while (idFile == NULL);
         freadCheck(&nccl_id, sizeof(nccl_id), 1, idFile);
         fcloseCheck(idFile);
@@ -374,17 +375,19 @@ int multi_gpu_get_local_device_idx(int process_rank, int num_processes) {
     hostname[1023] = '\0';
     // All processes on the same machine will share the same hostname.
     gethostname(hostname, 1023);
-    for (int i=0; i < 1024; i++) {
+    for (int i = 0; i < 1024; i++) {
         if (hostname[i] == '.') {
             hostname[i] = '\0';
             break;
         }
     }
     uint64_t hostname_hash = 5381u;
-    for (int c = 0; hostname[c] != '\0'; c++){ hostname_hash = ((hostname_hash << 5u) + hostname_hash) ^ hostname[c]; }
+    for (int c = 0; hostname[c] != '\0'; c++) {
+        hostname_hash = ((hostname_hash << 5u) + hostname_hash) ^ hostname[c];
+    }
 
     // Distribute all hostname hashes to all processes.
-    uint64_t* all_hostsname_hashes = (uint64_t*)malloc(num_processes * sizeof(uint64_t));
+    uint64_t* all_hostsname_hashes     = (uint64_t*)malloc(num_processes * sizeof(uint64_t));
     all_hostsname_hashes[process_rank] = hostname_hash;
     mpiCheck(MPI_Allgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, all_hostsname_hashes, sizeof(uint64_t), MPI_BYTE, MPI_COMM_WORLD));
 
@@ -392,12 +395,12 @@ int multi_gpu_get_local_device_idx(int process_rank, int num_processes) {
     int local_device_idx = 0;
     for (int current_process = 0; current_process < num_processes; ++current_process) {
         if (current_process == process_rank) {
-        // Found my gpu, local_device_idx now has my target GPU index.
-        break;
+            // Found my gpu, local_device_idx now has my target GPU index.
+            break;
         }
         if (all_hostsname_hashes[current_process] == all_hostsname_hashes[process_rank]) {
-        // This process ID runs on the same machine, but it's not me, skip this GPU
-        local_device_idx++;
+            // This process ID runs on the same machine, but it's not me, skip this GPU
+            local_device_idx++;
         }
     }
 
@@ -415,7 +418,7 @@ MultiGpuConfig multi_gpu_config_init(int num_processes, int process_rank, int gp
     // Get nccl_id using MPI, TCP, or FS (file system synchronization) methods
     // On newer slurm versions (slurm-wlm package) PMIx is disabled so we can not use MPI for NCCL init in multi node setup
     if (strcmp(init_method, "mpi") == 0) {
-        #ifdef USE_MPI
+#ifdef USE_MPI
         mpiCheck(MPI_Init(NULL, NULL));
         mpiCheck(MPI_Comm_rank(MPI_COMM_WORLD, &result.process_rank));
         mpiCheck(MPI_Comm_size(MPI_COMM_WORLD, &result.num_processes));
@@ -424,20 +427,20 @@ MultiGpuConfig multi_gpu_config_init(int num_processes, int process_rank, int gp
             ncclCheck(ncclGetUniqueId(&nccl_id));
         }
         mpiCheck(MPI_Bcast(&nccl_id, sizeof(nccl_id), MPI_BYTE, 0, MPI_COMM_WORLD));
-        #else
+#else
         printf("MPI support is disabled. Please enable MPI support to use MPI-based NCCL-init method.\n");
         exit(EXIT_FAILURE);
-        #endif
+#endif
     } else {
-        result.process_rank = process_rank;
-        result.num_processes = num_processes;
+        result.process_rank     = process_rank;
+        result.num_processes    = num_processes;
         result.local_device_idx = process_rank % gpus_per_node;
         if (strcmp(init_method, "tcp") == 0) {
-            #ifdef _WIN32
+#ifdef _WIN32
             nccl_id = get_nccl_id_via_tcp_windows(&result, server_ip);
-            #else
+#else
             nccl_id = get_nccl_id_via_tcp(&result, server_ip);
-            #endif
+#endif
         } else if (strcmp(init_method, "fs") == 0) {
             nccl_id = get_nccl_id_via_fs(&result, fs_path);
         } else {
@@ -458,8 +461,8 @@ MultiGpuConfig multi_gpu_config_init(int num_processes, int process_rank, int gp
     printf("Multi-GPU support is disabled. Using a single GPU.\n");
     cudaCheck(cudaSetDevice(0));
     MultiGpuConfig result;
-    result.process_rank = 0;
-    result.num_processes = 1;
+    result.process_rank     = 0;
+    result.num_processes    = 1;
     result.local_device_idx = 0;
     return result;
 #endif
@@ -471,9 +474,9 @@ void multi_gpu_config_free(MultiGpuConfig* config) {
     cudaCheck(cudaStreamDestroy(config->nccl_stream));
     cudaCheck(cudaEventDestroy(config->compute_nccl_sync));
     cudaCheck(cudaFree(config->unified_buffer));
-    #ifdef USE_MPI
+#ifdef USE_MPI
     mpiCheck(MPI_Finalize());
-    #endif
+#endif
 #endif
 }
 
@@ -495,12 +498,12 @@ typedef struct {
 // Get info about sharding for a tensor of elements many numbers
 ShardInfo multi_gpu_get_shard_offset(size_t elements, const MultiGpuConfig* config, int shard_at_stage) {
     const int nproc = config->num_processes;
-    if(config->zero_stage >= shard_at_stage) {
+    if (config->zero_stage >= shard_at_stage) {
         if (elements % nproc != 0) {
             fprintf(stderr, "Number of elements %zu must be a multiple of the number of processes %d\n", elements, nproc);
             exit(EXIT_FAILURE);
         }
-        return {(ptrdiff_t) (config->process_rank * (elements / nproc)), elements / nproc};
+        return {(ptrdiff_t)(config->process_rank * (elements / nproc)), elements / nproc};
     } else {
         return {0, elements};
     }
@@ -510,12 +513,10 @@ ShardInfo multi_gpu_get_shard_offset(size_t elements, const MultiGpuConfig* conf
 // This can work either as an all-reduce (i.e., no ZeRo), or a reduce-scatter (ZeRO 1).
 // The awkward `(&pointers)[N]` syntax ensures we are capturing the parameters as sized arrays, so that it becomes impossible
 // to call this function if pointers and pointers_sizes do not match.
-template<int N>
-void multi_gpu_async_reduce_gradient(
-        floatX* const (&pointers)[N], const size_t (&pointers_sizes)[N],
-        MultiGpuConfig* config, cudaStream_t compute_stream) {
+template <int N>
+void multi_gpu_async_reduce_gradient(floatX* const (&pointers)[N], const size_t (&pointers_sizes)[N], MultiGpuConfig* config, cudaStream_t compute_stream) {
     if (config->num_processes == 1) {
-        return; // no multi-GPU, just exit.
+        return;  // no multi-GPU, just exit.
     }
 
 #ifdef MULTI_GPU
@@ -527,25 +528,15 @@ void multi_gpu_async_reduce_gradient(
     // can enqueue new work to the GPU right away.
     cudaCheck(cudaEventRecord(config->compute_nccl_sync, compute_stream));
     cudaCheck(cudaStreamWaitEvent(config->nccl_stream, config->compute_nccl_sync));
-    ncclCheck(ncclGroupStart()); // NCCL group: aggregate all pointers in a single NCCL GPU kernel.
+    ncclCheck(ncclGroupStart());  // NCCL group: aggregate all pointers in a single NCCL GPU kernel.
     for (int i = 0; i < N; ++i) {
-        if(config->zero_stage == 0) {
-            ncclCheck(ncclAllReduce(
-                    pointers[i], pointers[i],
-                    pointers_sizes[i],
-                    ncclFloatX, ncclAvg,
-                    config->nccl_comm, config->nccl_stream
-            ));
-        } else if(config->zero_stage == 1) {
+        if (config->zero_stage == 0) {
+            ncclCheck(ncclAllReduce(pointers[i], pointers[i], pointers_sizes[i], ncclFloatX, ncclAvg, config->nccl_comm, config->nccl_stream));
+        } else if (config->zero_stage == 1) {
             assert(pointers_sizes[i] % config->num_processes == 0);
-            size_t shard_size = pointers_sizes[i] / config->num_processes;
+            size_t shard_size      = pointers_sizes[i] / config->num_processes;
             ptrdiff_t shard_offset = (ptrdiff_t)shard_size * config->process_rank;
-            ncclCheck(ncclReduceScatter(
-                    pointers[i], pointers[i] + shard_offset,
-                    shard_size,
-                    ncclFloatX, ncclAvg,
-                    config->nccl_comm, config->nccl_stream
-            ));
+            ncclCheck(ncclReduceScatter(pointers[i], pointers[i] + shard_offset, shard_size, ncclFloatX, ncclAvg, config->nccl_comm, config->nccl_stream));
         }
     }
     ncclCheck(ncclGroupEnd());
@@ -553,26 +544,26 @@ void multi_gpu_async_reduce_gradient(
 }
 
 // convenience macro that only prints if the rank of process is zero
-#define printf0(...) if (::multi_gpu_config.process_rank == 0) { printf(__VA_ARGS__); }
+#define printf0(...)                            \
+    if (::multi_gpu_config.process_rank == 0) { \
+        printf(__VA_ARGS__);                    \
+    }
 
 void set_zero_configs(MultiGpuConfig* config, int zero_stage, size_t total_parameters) {
-    config->zero_stage = 0;
+    config->zero_stage           = 0;
     config->shard_num_parameters = total_parameters;
     // Check the Zero Stage and define sharding parameters
     if (zero_stage == 0) {
         printf0("| Zero Optimization is disabled                                              |\n");
-    }
-    else if (zero_stage == 1) {
+    } else if (zero_stage == 1) {
         if (total_parameters % config->num_processes != 0) {
             printf0("| Zero Optimization is disabled, Can't equally partition parameters          |\n");
             config->zero_stage = 0;
-        }
-        else {
-            config->zero_stage = 1;
+        } else {
+            config->zero_stage           = 1;
             config->shard_num_parameters = total_parameters / config->num_processes;
         }
-    }
-    else{
+    } else {
         printf0("| Disabling Zero Optimization, Zero Stage2 and Stage3 are not yet supported  |\n");
         config->zero_stage = 0;
     }
@@ -581,10 +572,11 @@ void set_zero_configs(MultiGpuConfig* config, int zero_stage, size_t total_param
 // Compute sum of a single CPU value across all GPU processes. No-op when multi-GPU is disabled.
 float multi_gpu_cpu_float_sum(float value, MultiGpuConfig* config) {
 #ifdef MULTI_GPU
-    if (config->num_processes == 1) return value;
+    if (config->num_processes == 1)
+        return value;
 
     float* unified_buffer = config->unified_buffer;
-    *unified_buffer = value;
+    *unified_buffer       = value;
     ncclCheck(ncclAllReduce(unified_buffer, unified_buffer, sizeof(float), ncclFloat, ncclSum, config->nccl_comm, config->nccl_stream));
     cudaCheck(cudaDeviceSynchronize());
     return *unified_buffer;
@@ -594,4 +586,3 @@ float multi_gpu_cpu_float_sum(float value, MultiGpuConfig* config) {
 }
 
 #endif
-

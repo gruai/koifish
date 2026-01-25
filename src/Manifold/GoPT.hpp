@@ -29,6 +29,7 @@ using namespace std;
 class Fish;
 
 // multiple arr design for GPU version
+template <typename Typ>
 struct LogitsInfo {
     void* d_temp  = nullptr;
     size_t szTemp = 0;
@@ -36,15 +37,116 @@ struct LogitsInfo {
     int dim    = -1;
     bool isCPU = true;
     //  cls->preLogits->host_data = _logits
-    floatLogits *logits = nullptr, *logits_sorted = nullptr;
+    Typ *logits = nullptr, *logits_sorted = nullptr;
     int *index = nullptr, *index_sorted = nullptr;
-    floatLogits maxLogit = (floatLogits)0.f;
+    float maxLogit     = 0.f;
+    hGensor hClsLogits = nullptr;
 
     virtual void Swap(int i, int j) { std::swap(logits[i], logits[j]), std::swap(index[i], index[j]); }
-    virtual bool Init(int n_vocab, bool isCPU, hGensor hCls, int flag = 0x0);
-    virtual void quick_select(int n, int k);
-    virtual void SortPair(int nPick, int flag = 0x0);
-    virtual ~LogitsInfo();
+    virtual bool Init(int n_vocab, bool isCPU_, hGensor hClsLogits_, int flag = 0x0) {
+        isCPU      = isCPU_;
+        dim        = n_vocab;
+        hClsLogits = hClsLogits_;
+        // assert(cls->preLogits->host_data == nullptr);
+        index = new int[n_vocab];
+        for (int i = 0; i < n_vocab; i++) {
+            index[i] = i;
+        }
+        if (isCPU) {
+            logits = new Typ[n_vocab];
+            // hClsLogits->host_data = logits;
+        } else {
+            logits          = TO<Typ>(hClsLogits);
+            int* host_index = index;
+            cudaCheck(cudaMalloc(&index, n_vocab * sizeof(int)));
+            H2D(index, host_index, n_vocab * sizeof(int));
+            delete[] host_index;
+
+            cudaCheck(cudaMalloc(&index_sorted, n_vocab * sizeof(int)));
+            cudaCheck(cudaMalloc(&logits_sorted, n_vocab * sizeof(Typ)));
+        }
+        return true;
+    }
+    virtual void UpdateLogits(int flag = 0x0) {
+        void* src = hClsLogits->host_data;
+        assert(src != nullptr);
+        switch (hClsLogits->type) {
+            case typNUMBER::BF16:
+                for (int i = 0; i < dim; i++) {
+                    float a = T2Float<bf16>((bf16*)src + i);
+                    logits[i] = Float2T<Typ>(&a);
+                    index[i]  = i;
+                }
+                break;
+            default:
+                assert(0);
+                break;
+        }
+    }
+    virtual void quick_select(int n, int k) {
+        int l = 0, r = n - 1;
+        while (l < r) {
+            // ProbIndex pivot = arr[k];
+            float pivot = (float)logits[k];
+            int i = l, j = r;
+            do {
+                while ((float)logits[i] > pivot) i++;
+                while ((float)logits[j] < pivot) j--;
+                if (i <= j) {
+                    std::swap(logits[i], logits[j]), std::swap(index[i], index[j]);
+                    i++;
+                    j--;
+                }
+            } while (i <= j);
+
+            if (j < k)
+                l = i;
+            if (i > k)
+                r = j;
+        }
+        maxLogit = (float)logits[0];
+        for (int i = 1; i < k; i++) {
+            if ((float)logits[i] > maxLogit) {
+                maxLogit = (float)logits[i];
+            }
+        }
+    }
+    virtual void SortPair(int nPick, int flag = 0x0) {
+        if (nPick <= 0)
+            nPick = dim;
+        if (isCPU) {
+            // qsort(probindex, n_cands, sizeof(ProbIndex), compare_prob_desc);
+            assert(nPick <= dim);
+            for (int i = 0; i < nPick; i++) {
+                for (int j = 1; j < nPick; j++) {
+                    if ((float)logits[i] < (float)logits[j]) {
+                        Swap(i, j);
+                    }
+                }
+            }
+        } else {
+            assert(0);
+            /*if (d_temp == nullptr) {
+                cub::DeviceRadixSort::SortPairs(d_temp, szTemp, logits, logits_sorted, index, index_sorted, nPick);
+                cudaCheck(cudaMalloc(&d_temp, szTemp));  //
+            }
+            CU_init_i<<<CEIL_DIV(nPick, CU_T4B_SMALL), CU_T4B_SMALL>>>(index, nPick);
+            // cub::DeviceRadixSort::SortKeys(d_temp, szTemp, logits, logits, nPick);
+            //  In-place operations are not supported. There must be no overlap between any of the provided ranges!!!
+            // cudaMemcpy(index_out, index, sizeof(int) * nPick, cudaMemcpyDeviceToDevice);
+            // cudaMemcpy(logits_out, logits, sizeof(Typ) * nPick, cudaMemcpyDeviceToDevice);
+            cub::DeviceRadixSort::SortPairs(d_temp, szTemp, logits, logits_sorted, index, index_sorted, nPick);
+            PrintTensor<Typ>("sort_logits", logits_sorted, true, nPick, 1, 1, 1, 0);
+            PrintTensor<int>("sort_index", index_sorted, true, nPick, 1, 1, 1, 0);*/
+        }
+    }
+    virtual ~LogitsInfo() {
+        if (isCPU) {
+            // hClsLogits would release this! since hClsLogits->host_data = logits; @GeneratOnPrompt::GeneratOnPrompt=>cpuLogits.Init
+            // FREE_a(logits);
+            FREE_a(index);
+        }
+    }
 };
 
 /*
@@ -58,7 +160,8 @@ class GeneratOnPrompt {
     CLI_params config;
     CHAT_SAMPLER samp_params;
 
-    LogitsInfo cpuLogits, gpuLogits;
+    LogitsInfo<float> cpuLogits;
+    LogitsInfo<floatLogits> gpuLogits;
     // ProbIndex* probindex = nullptr;
 
     //  std::vector<float> x_logits;

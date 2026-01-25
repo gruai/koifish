@@ -53,13 +53,15 @@ __global__ static void encoder_forward_kernel3(floatX* out, const int* inp, cons
 
 template <typename T_out>
 __global__ static void CU_embed_forw_q4(floatGama* gamas, hBITARR quants, T_out* o, int token, int M, int N, int rc_normal, unsigned int seed) {
+#if defined(USE_FP8_BASELINE)
+#else
     size_t offset = blockIdx.x * blockDim.x + threadIdx.x;
     if (offset >= N / 2)  // guard
         return;
     assert(token >= 0 && token < M);
     T_out* x0      = o + 2 * offset;
     BIT_8 q        = quants[(token * N) / 2 + offset];
-    floatGama *lut = gamas + M + N + token * 16; //*gamaCol = nullptr;
+    floatGama* lut = gamas + M + N + token * 16;  //*gamaCol = nullptr;
     floatGama sR = 1.0, sC = 1.0;
     if (rc_normal > 0) {
         sR = gamas[token];
@@ -73,9 +75,7 @@ __global__ static void CU_embed_forw_q4(floatGama* gamas, hBITARR quants, T_out*
     }
     *x0       = g0;  // CU_Float2T<T>(g0, seed);
     *(x0 + 1) = g1;  // CU_Float2T<T>(g1, seed);
-
-    // float a = CU_T2Float<T>(weight + token * n + i);
-    // o[i]    = CU_Float2T<T_out>(a, seed);
+#endif
 }
 template <typename T_out>
 __global__ static void CU_embed_forw_nf4(floatGama* gamas, hBITARR quants, T_out* o, int token, int M, int N, int rc_normal, unsigned int seed) {
@@ -101,8 +101,8 @@ __global__ static void CU_embed_forw_nf4(floatGama* gamas, hBITARR quants, T_out
     assert(token >= 0 && token < M);
     T_out* x0      = o + 2 * offset;
     BIT_8 q        = quants[(token * N) / 2 + offset];
-    floatGama *lut = gamas + M + N + token * 16;    // *gamaCol = nullptr;
-    floatGama sR = 1.0, sC = 1.0;// zero = gamas[M + N + token * 2], scale = gamas[M + N + token * 2 + 1];
+    floatGama* lut = gamas + M + N + token * 16;  // *gamaCol = nullptr;
+    floatGama sR = 1.0, sC = 1.0;                 // zero = gamas[M + N + token * 2], scale = gamas[M + N + token * 2 + 1];
     ;
     if (rc_normal > 0) {
         sR = gamas[token];
@@ -145,7 +145,7 @@ __global__ static void CU_embed_forw_v0(floatX* out, const int* tokens, const fl
         *out_btc = *wte_ix;
     } else {
         const floatX* wpe_tc = wpe + t * C + c;
-#if defined(ENABLE_FP8)
+#if defined(USE_FP8_BASELINE)
 #else
         *out_btc = *wte_ix + *wpe_tc;
 #endif
@@ -167,7 +167,7 @@ __global__ static void CU_embed_forw_(floatX* out, const int* tokens, const floa
         if (wpe == nullptr) {
             *out_btc = *wte_ix;
         } else {
-#if defined(ENABLE_FP8)
+#if defined(USE_FP8_BASELINE)
 #else
             *out_btc = *wte_ix + wpe_tc[c];
 #endif
@@ -196,7 +196,7 @@ __global__ void CU_embed_ternary_forw_(Typ* out, const int* tokens, floatGama* g
             if (wpe == nullptr) {
                 *out_btc = a;
             } else {
-#if defined(ENABLE_FP8)
+#if defined(USE_FP8_BASELINE)
 #else
                 *out_btc = a + wpe_tc[c];
 #endif
@@ -241,7 +241,7 @@ __global__ static void CU_embed_back_(floatX* dwte, const int* tokens, const flo
         // pos_1 = t*C+c, pos_2 = c*ldW+t;
         pos_1 = c * T + t, pos_2 = c * ldW + t;
     }
-#if defined(ENABLE_FP8)
+#if defined(USE_FP8_BASELINE)
 #else
     dwte[pos_2] += dout[pos_1];
 #endif

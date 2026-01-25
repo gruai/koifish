@@ -7,9 +7,8 @@
         "#MINI":"off"
     },
 
-    "model":{           
-        "arch":"QWEN2",
-        "token_bin_path":"./assets/tokenizer_151936.bin",
+    "model":{   
+        "hf-card":"./Models/Qwen2.5-0.5B/",
         "parameter":{
             "Layer": 24,  
             "transformer":  {
@@ -45,11 +44,12 @@
     
     "train": {
         "save-every":500,
-        "dump-every":10,
+        "dump-every":1,
+        
+        "gpt-every":-10,
         "epoch":1,
-        "batch":48,
-        "learning-rate":0.0006,  
-        "#learning-rate":1.0e-5,  
+        "batch":2,
+        "learning-rate":1.0e-5,  
 
         "optimizatioin":{
             "#method":"adamw sgdv hsgd sgd",
@@ -61,9 +61,11 @@
     },  
     "datasets":{
         "train":{
-            "glob":"./Datasets/climb-1b/*train*.bin","most":50,"name":"climb"        },
+            "glob":"./Datasets/tiny-shakespeare/*train*.bin","most":50,"name":"shake"
+        },
         
-        "eval_1": {"glob":"./Datasets/climb-1b/*val*.bin","name":"climb","most":10,"eval-every":200 ,"samp":0.1       }  
+        "#eval_1": {"glob":"./Datasets/tiny-shakespeare/*val*.bin","name":"shake","most":10,"eval-every":200 ,"samp":0.1       },
+        "#eval_2":{"glob":"./Datasets/hellaswag_val.bin", "type":"hellaswag","eval-every":500 ,"samp":0.04    }
     },
     "debug": {
         "prompts":[
@@ -85,17 +87,6 @@
         "train_time" : 0,
         "# tensor_ref" : 1,
         "most_mem_item" : 6
-    },
-    "checkpoint_out":{
-        "QWen2.5_0.5B":{
-            "path": "./hy-tmp/checkpoint/",            
-            "#type":"best full state",
-            "type":"full",       
-            "save-every":500,
-            "snapshot":{
-                "curFuyou": -1
-            }
-        }
     },
     
     "seed":42

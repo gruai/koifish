@@ -272,8 +272,10 @@ int GST_util::LoadDoubleMAT(const char* sPath, const char* sVar, int* nRow, int*
 }*/
 
 bool VERIFY_DIR_EXIST(const std::string& path, bool isCreate) {
-    if (path.empty())
+    if (path.empty()){
         return false;
+    }
+        
 
     bool isExist = false;
     try {

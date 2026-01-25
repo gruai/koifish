@@ -102,21 +102,13 @@ double WIKI::InductLogits(const CLI_params& config, int nSampInBatch, std::vecto
     return nrm;
 }
 
-LogitsInfo::~LogitsInfo() {
-    if (isCPU) {
-        // hClsLogits would release this! since hClsLogits->host_data = logits; @GeneratOnPrompt::GeneratOnPrompt=>cpuLogits.Init
-        // FREE_a(logits);        
-        FREE_a(index);
-    }
-}
-
 static Grusoft::GRander rand_gopt(42 * 666);
 int Sample_CDF_T(int n, floatLogits* logits, float minp, float temperature, uint64_t* rng_seed, int flag = 0x0) {
     float coin = rand_gopt.NextFloat_01();  // random_f32(rng_seed);
     // find max logit; we will use this to derive minp cutoff (in log space), since minp is scale-invariant (wrt softmax)
     float max_logit = -FLT_MAX;
     for (int i = 0; i < n; i++) {
-        float a   = T2Float(logits+i);
+        float a   = T2Float(logits + i);
         max_logit = a > max_logit ? a : max_logit;
     }
 
@@ -128,7 +120,7 @@ int Sample_CDF_T(int n, floatLogits* logits, float minp, float temperature, uint
     int fallback          = 0;
     float cumulative_prob = 0.0f;
     for (int i = 0; i < n; i++) {
-        float a = T2Float(logits+i);    //logits[i];
+        float a = T2Float(logits + i);  // logits[i];
         if (a >= logit_cutoff) {
             probs[i] = (floatLogits)expf((a - max_logit) / temperature);
             cumulative_prob += (float)(probs[i]);
@@ -150,7 +142,7 @@ int Sample_CDF_T(int n, floatLogits* logits, float minp, float temperature, uint
     return fallback;  // in case of rounding errors
 }
 
-int Sample_CDF(int n, floatLogits* preP, uint64_t* rng_seed, int flag = 0x0) {
+int Sample_CDF(int n, float* preP, uint64_t* rng_seed, int flag = 0x0) {
     float sum = 0, cdf = 0, pMin, pMax, a;
     int j, next_token  = -1;
     for (pMin = FLT_MAX, pMax = -FLT_MAX, j = 0; j < n; j++) {
@@ -624,7 +616,7 @@ int NLP_AutoRegressive::GenSentence(int flag) {
 TOKEN_ID GOPT_Metropolis::Sample(int idx, bool is_resampling) {
     int j, nVocab = fish_1 == nullptr ? wiki0->n_vocab : fish_1->nClass();  //, j;
     hSAMP samp              = (dialogs == nullptr || dialogs->empty()) ? nullptr : dialogs->SampAt(0);
-    floatLogits* _logits    = cpuLogits.logits;
+    float* _logits          = (float*)cpuLogits.logits;
     hWIKI wiki              = wikis.size() > 0 ? wikis[0] : nullptr;
     WIKI::INDUCT_MODE teach = wiki == nullptr ? WIKI::_OFF : wiki->teach;
     assert(idx == -1);
@@ -707,9 +699,9 @@ static inline unsigned int random_u32(uint64_t* state) {
 }
 static inline float random_f32(uint64_t* state) { return (random_u32(state) >> 8) / 16777216.0f; }
 
-static inline int sample_argmax(int n_vocab, floatLogits* logits) {
+static inline int sample_argmax(int n_vocab, float* logits) {
     int max_i         = 0;
-    floatLogits max_p = logits[0];
+    float max_p = logits[0];
     for (int i = 1; i < n_vocab; i++) {
         if (logits[i] > max_p) {
             max_i = i;
@@ -719,37 +711,6 @@ static inline int sample_argmax(int n_vocab, floatLogits* logits) {
     return max_i;
 }
 
-void LogitsInfo::quick_select(int n, int k) {
-    int l = 0, r = n - 1;
-    while (l < r) {
-        // ProbIndex pivot = arr[k];
-        floatLogits pivot = logits[k];
-        int i = l, j = r;
-        do {
-            while (logits[i] > pivot) i++;
-            while (logits[j] < pivot) j--;
-            if (i <= j) {
-                std::swap(logits[i], logits[j]), std::swap(index[i], index[j]);
-                /*ProbIndex temp = arr[i];
-                arr[i]         = arr[j];
-                arr[j]         = temp;*/
-                i++;
-                j--;
-            }
-        } while (i <= j);
-
-        if (j < k)
-            l = i;
-        if (i > k)
-            r = j;
-    }
-    maxLogit = logits[0];
-    for (int i = 1; i < k; i++) {
-        if (logits[i] > maxLogit) {
-            maxLogit = logits[i];
-        }
-    }
-}
 /*static int compare_prob_desc(const void* a, const void* b) {
     ProbIndex* pa = (ProbIndex*)a;
     ProbIndex* pb = (ProbIndex*)b;
@@ -770,10 +731,11 @@ TOKEN_ID GeneratOnPrompt::Sample_cpu(int idx, bool isSorted) {
     // nCanTopK = (samp_params.top_k < n_vocab) ? samp_params.top_k : n_vocab;
     if (isSorted) {
     } else {
-        for (int i = 0; i < n_vocab; i++) {
-            // cpuLogits.logits[i]  = _logits[i],
-            cpuLogits.index[i] = i;
-        }
+        cpuLogits.UpdateLogits();
+        // for (int i = 0; i < n_vocab; i++) {
+        //     cpuLogits.logits[i]  = CU_T2FLoat<>(_logits[i]);
+        //     cpuLogits.index[i] = i;
+        // }
         cpuLogits.quick_select(n_vocab, nCanTopK);
         // floatLogits max_logit = cpuLogits.logits[0];  // Ch probindex[0].prob;
     }

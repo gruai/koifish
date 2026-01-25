@@ -519,12 +519,13 @@ bool huTensor::SerialGP(void* yD, void* yG, size_t szY, bool isToY, int flag) {
     }
 }
 
+//  __host__​cudaError_t cudaMemcpy ( void* dst, const void* src, size_t count, cudaMemcpyKind kind )
 bool huTensor::OverWrite(hGTensor hGT, bool isSrc, int flag) {
     size_t nEle = size();
     assert(hGT->type == type);
     // assert(isSameShape(hGT) && szData > 0);
     assert(szData == hGT->szData);
-    if (isSrc) {
+    if (isSrc) {    //  hGT is src
         huTensor* src = dynamic_cast<huTensor*>(hGT.get());
         if (src == nullptr)  //  hGT => this
             cudaCheck(cudaMemcpy(data, hGT->data, szData, cudaMemcpyHostToDevice));
