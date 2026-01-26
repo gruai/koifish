@@ -384,10 +384,11 @@ inline void Float2T(typNUMBER typ, void* arr, size_t offset, float a) {
 
 //  bit per element of this type,   (maybe decimals rather than integers!)
 double BitPE(typNUMBER type);
-// size_t NPBlck(typNUMBER type);
+//  byte per element of this type,  (maybe decimals rather than integers!)
+double BPE(typNUMBER type);
+
 const char* cNameOf(typNUMBER type);
 std::string NameOf(typNUMBER type);
-// bool isQuantized(typNUMBER type);
 
 struct BF16_LUT {
     float table[65536];

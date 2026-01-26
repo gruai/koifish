@@ -244,51 +244,6 @@ hQUANT GTensor::GetDynamicQuant(int flag) const {
     }
     return hQuant;
 }
-/*
-   Only for gguf-serialize
-*/
-struct ggml_tensor* GTensor::GG() {
-#ifdef __USE_GGML__
-    ggml_tensor* hgg = (ggml_tensor*)gg;
-    if (hgg == nullptr) {
-        hgg = new ggml_tensor();
-
-        *hgg = (struct ggml_tensor){
-            // @ggml_new_tensor_impl
-            /*.type         =*/type,
-            /*.backend      =*/GGML_BACKEND_TYPE_CPU,
-            /*.buffer       =*/NULL,
-            /*.ne           =*/{ne[0], ne[1], ne[2], ne[3]},
-            /*.nb           =*/{nb[0], nb[1], nb[2], nb[3]},
-            /*.op           =*/GGML_OP_NONE,
-            /*.op_params    =*/{0},
-            /*.flags        =*/flags,
-            /*.grad         =*/NULL,
-            /*.src          =*/{NULL},
-            /*.view_src     =*/view_src,
-            /*.view_offs    =*/view_offs,
-            /*.data         =*/data,
-            /*.name         =*/{0},
-            /*.extra        =*/NULL,
-            ///*.padding      =*/ { 0 },
-        };
-
-        hgg->data = new char[szData];
-        memcpy(hgg->name, name, sizeof(char) * GGML_MAX_NAME);
-    }
-    size_t sz = ggml_nbytes(hgg);  // 154389504
-    assert(sz == szData);
-#ifdef _TENSOR_G_
-    bool toHost = SerialGP(hgg->data, nullptr, true, 0x0);
-    assert(toHost);
-#endif
-    assert(isParam());
-    gg = hgg;
-    return hgg;
-#else
-    return nullptr;
-#endif
-}
 
 GTensor::~GTensor() {
     if (!BIT_TEST(flags, F_GPU)) {
@@ -384,9 +339,9 @@ hGensor GENSOR_TOPU::Get(MODEL_ARCH arch, const string& name, int flag) {
     } else {
         string key  = name;
         bool isMiss = nag.find(name) == nag.end();
-        /*if (isMiss) {   @NN2NAME
+        if (isMiss) {  //@NN2NAME
             size_t pos = 0;
-            if (arch == MODEL_ARCH::NLP_QWEN2_) {    //some hack for mismatch of name
+            /*if (arch == MODEL_ARCH::NLP_QWEN2) {    //some hack for mismatch of name
                 std::map<std::string, std::string> S2S={
                     {"input_layernorm","self_attn.norm"}
                 };
@@ -397,9 +352,12 @@ hGensor GENSOR_TOPU::Get(MODEL_ARCH arch, const string& name, int flag) {
                         break;
                     }
                 }
-            }
-        }*/
+            }*/
+        }
         if (isMiss) {
+            for (auto ng : nag) {
+                _INFO("\t%s\n", ng.first.c_str());
+            }
             _ERROR("Failed to get tensor=%s nGensor=%d\n", name.c_str(), nag.size());
             return nullptr;
         }
@@ -602,7 +560,7 @@ bool GTensor::DumpX(int tpDump, const string& title, int flag) const {
         n = 0;
     switch (tpDump) {
         case 100:
-            _INFO(" - %3d: [ %5" PRId64 ", %5" PRId64 "] %8s %16s\n", i, ne[0], ne[1], "", name);  //  ggml_op_name(op),
+            _INFO(" - %3d: [ %5" PRId64 ", %5" PRId64 "] %8s %16s\n", i, ne[0], ne[1], "", name);  //
             break;
         default:
             if (type != typNUMBER::F32 && n > 0) {
@@ -756,7 +714,7 @@ bool huTensor::BeforeBackward(size_t& off, int flag) {
  */
 bool huTensor::Alloc(int iter, int flagInit) {
     if (G_Has_(name, {"preLogits"})) {  // model.layers.0.mlp.down_proj.weight
-        DEBUG_HERE;                            //
+        DEBUG_HERE;                     //
     }
     size_t sz0 = szGlobalMaloc;
     if (BIT_TEST(flags, F_NOALLOC))  // For example: operator fusing, memory reuse,rematerialization

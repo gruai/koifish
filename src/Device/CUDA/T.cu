@@ -305,7 +305,7 @@ hGTensor LayerNormal::cuFlow(hGTensor inpDelta, int flag) {  //,hGTensor deltaIn
                                                                                                     ToX(w), _rstd, nTH, ldTH, 42, 0x0);
                     CU_rms_dw_v0<<<1, ldTH, 0x0, main_stream>>>(ToG(w), dW_scratch, nTH, ldTH);
                 } else {
-                    SWMD(CU_rms_backward_v1)(ToX(deltaY), ToG(w), dW_scratch, ToX(deltaIn), ToX(inp), ToX(w), _rstd, smp, nTH, ldTH, 4, 0x200);
+                    SW1H(CU_rms_backward_v1)(ToX(deltaY), ToG(w), dW_scratch, ToX(deltaIn), ToX(inp), ToX(w), _rstd, smp, nTH, ldTH, 4, 0x200);
                     CU_rms_dw_v1<<<1, ldTH / f128::size, smp.smem, main_stream>>>(ToG(w), dW_scratch, smp, ldTH);
                     // CU_rms_dw_v0<<<1, ldTH, 0x0, main_stream>>>(ToG(w), dW_scratch, smp.grid3, ldTH, 1);
                 }
@@ -319,7 +319,7 @@ hGTensor LayerNormal::cuFlow(hGTensor inpDelta, int flag) {  //,hGTensor deltaIn
                     CU_rms_back_llmc<<<smp.grid3, smp.block3, smp.smem, main_stream>>>(ToX(delta), ToG(w), (hBITARR)(dW_scratch), ToX(deltaIn), ToX(inp),
                                                                                        ToX(w), _rstd, nullptr, nTH, ldTH);
                 } else {
-                    SWMD(CU_rms_backward_v1)(ToX(delta), ToG(w), dW_scratch, ToX(deltaIn), ToX(inp), ToX(w), _rstd, smp, nTH, ldTH, 42, 0x0);
+                    SW1T(CU_rms_backward_v1)(ToX(delta), ToG(w), dW_scratch, ToX(deltaIn), ToX(inp), ToX(w), _rstd, smp, nTH, ldTH, 42, 0x0);
                     CU_rms_dw_v1<<<1, ldTH / f128::size, smp.smem, main_stream>>>(ToG(w), dW_scratch, smp, ldTH);
                     // CU_rms_dw_v0<<<1, ldTH, 0x0, main_stream>>>(ToG(w), dW_scratch, smp.grid3, ldTH, 1);
                 }

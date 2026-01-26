@@ -14,22 +14,24 @@
             },
             "max_pos_embeddings": 32768
         },
-        "embed_tokens": {
-            "Embedding": []
-        },
-        "layer": {
-            "self_attn": {
-                "QKV": []
+        "backbone": {
+            "embed_tokens": {
+                "Embedding": []
             },
-            "mlp": {
-                "FFN": []
+            "layer": {
+                "self_attn": {
+                    "QKV": []
+                },
+                "mlp": {
+                    "FFN": []
+                }
+            },
+            "norm": {
+                "Normal": []
+            },
+            "output": {
+                "CLASIFY": []
             }
-        },
-        "norm": {
-            "Normal": []
-        },
-        "output": {
-            "CLASIFY": []
         }
     },
     "sparsing": {

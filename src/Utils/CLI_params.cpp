@@ -303,6 +303,12 @@ bool CLI_params::JModel2Params(int flag) {
     try {
         jModel = jKEY(jConfig, {"model"});
         if (jModel.empty()) {
+            _ERROR("%s  No \"model\" in jConfig!!!", __func__);
+            return false;
+        }
+        jBackBone = jKEY(jModel, {"backbone"});
+        if (jBackBone.empty()) {
+            _ERROR("%s  No \"backbone\" in jConfig!!!", __func__);
             return false;
         }
         if (jModel.find("hf-card") != jModel.end())
@@ -703,6 +709,52 @@ JSON CLI_params::ToJSON(int type, int flag) {
     }
     json["config"] = jOut;
     return json;
+/*
+std::ofstream file(file_name);
+    if(!file.is_open()) {
+        throw std::runtime_error(fmt::format("could not open file for writing {}", file_name));
+    }
+
+    std::vector<std::string> archs;
+    if(config.Architecture == LLamaConfig::QWEN2) {
+        archs = {"Qwen2ForCausalLM"};
+    } else if (config.Architecture == LLamaConfig::LLAMA) {
+        archs = {"LlamaForCausalLM"};
+    }
+
+    nlohmann::json config_json;
+    config_json["architectures"] = std::move(archs);
+    config_json["bos_token_id"] = config.BosTokenId;
+    config_json["eos_token_id"] = config.EosTokenId;
+    config_json["hidden_size"] = config.HiddenSize;
+    config_json["intermediate_size"] = config.IntermediateSize;
+    config_json["vocab_size"] = config.VocabSize;
+    config_json["num_attention_heads"] = config.NumQueryHeads;
+    config_json["num_key_value_heads"] = config.NumKeyValHeads;
+    config_json["num_hidden_layers"] = config.NumLayers;
+    config_json["max_position_embeddings"] = config.MaxPositionEmbeddings;
+    config_json["rope_theta"] = config.RopeTheta;
+    config_json["rms_norm_eps"] = config.RmsNormEps;
+    config_json["tie_word_embeddings"] = config.TiedWordEmbeddings;
+    config_json["torch_dtype"] = dtype_to_torch_str(config.DType);
+
+    config_json["attention_dropout"] = 0.f;
+    config_json["initializer_range"] = 0.02f;
+    config_json["hidden_act"] = "silu";
+    config_json["use_cache"] = true;
+    if(config.Architecture == LLamaConfig::QWEN2) {
+        config_json["model_type"] = "qwen2";
+        config_json["max_window_layers"] = config.NumLayers;
+        config_json["sliding_window"] = config.MaxPositionEmbeddings;
+        config_json["use_sliding_window"] = false;
+        config_json["use_mrope"] = false;
+    } else if (config.Architecture == LLamaConfig::LLAMA) {
+        config_json["model_type"] = "llama";
+        config_json["attention_bias"] = false;
+        config_json["mlp_bias"] = false;
+    }
+
+    file << config_json.dump(4);*/
 }
 
 bool TRAIN_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
@@ -864,12 +916,14 @@ bool CLI_params::ToJConfig(int flag) {
         jConfig["model"]["parameter"]["transformer"]["Head"]     = n_head();
         jConfig["model"]["parameter"]["transformer"]["KVHead"]   = n_head_kv();
         jConfig["model"]["parameter"]["transformer"]["head_dim"] = head_dim();
-
-        jConfig["model"]["embed_tokens"]["Embedding"] = JSON::array();
-        jConfig["model"]["layer"]["self_attn"]["QKV"] = JSON::array();
-        jConfig["model"]["layer"]["mlp"]["FFN"]       = JSON::array();
-        jConfig["model"]["norm"]["Normal"]            = JSON::array();
-        jConfig["model"]["output"]["CLASIFY"]         = JSON::array();
+        
+        assert(jBackBone.empty() && "jBackBone is not empty!");
+        jBackBone["embed_tokens"]["Embedding"] = JSON::array();
+        jBackBone["layer"]["self_attn"]["QKV"] = JSON::array();
+        jBackBone["layer"]["mlp"]["FFN"]       = JSON::array();
+        jBackBone["norm"]["Normal"]            = JSON::array();
+        jBackBone["output"]["CLASIFY"]         = JSON::array();
+        jConfig["model"]["backbone"] = jBackBone;
 
         if (jQuant.empty()) {
             if (DEBUG.test_quant) {
@@ -967,7 +1021,8 @@ bool CLI_params::InitJConfig(int flag) {
         if (chat_sampler.seq_len <= 0)
             chat_sampler.seq_len = 8192;
 
-        JModel2Params(0x0);
+        if(!JModel2Params(0x0))
+            return false;
         if (!model.sCardPath.empty()) {
             if (!model.InitHugFace(this, jConfig, ""))
                 return false;

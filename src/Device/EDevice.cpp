@@ -146,7 +146,7 @@ int EDGE_DEVICES::SetBackend(hGensor cur0, int flag) {
     int il = 0, no = 0, pick = -1;
     // if (strcmp(cur->name, "norm") != 0) // norm may be automatically assigned to the backend of the previous layer, increasing data transfer between backends
     //     return -1;
-    auto cur = G(cur0);
+    // auto cur = G(cur0);
     return pick;
 }
 

@@ -584,6 +584,7 @@ struct CheckPoint_Params {
         STATE,  //  Has all parameters & its moments
         BEST,   //  Only has parameters of best fuyou
         FULL,   //  Has parameters of all fuyou
+        HF,     //   HugFace transformers compatible,
     };
 
     int curEpoch = -1, curIter = -1, curFuyou = -1;
@@ -620,11 +621,13 @@ static std::map<CheckPoint_Params::TYPE, std::string> CKP_ext = {
     {CheckPoint_Params::STATE, "ckp"},
     {CheckPoint_Params::BEST, "fish"},
     {CheckPoint_Params::FULL, "fish"},
+    {CheckPoint_Params::HF, "safetensors"},
 };
 static std::map<CheckPoint_Params::TYPE, std::string> CKP_desc = {
     {CheckPoint_Params::STATE, "state"},
     {CheckPoint_Params::BEST, "best"},
     {CheckPoint_Params::FULL, "full"},
+    {CheckPoint_Params::HF, "hf-transformers"},
 };
 
 struct CLI_params {
@@ -688,7 +691,7 @@ struct CLI_params {
     bool isShareLayerOut() const;
     std::string jsPath = "";
     JSON jConfig;
-    nlohmann::ordered_json jModel;
+    nlohmann::ordered_json jModel,jBackBone;
     JSON jQuant, jVendorQuant;
 
     MODEL_ARCH ModelArch();

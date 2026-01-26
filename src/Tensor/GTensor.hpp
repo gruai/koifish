@@ -153,7 +153,7 @@ struct Distri_PIPE {
  */
 class GTensor : public std::enable_shared_from_this<GTensor> {
    private:
-    void* gg = nullptr;
+    void* raw = nullptr;
 
    protected:
     Fish* hFish = nullptr;
@@ -304,7 +304,6 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     double Length(int tp, int flag = 0x0);  //  return ||x||
 
     // operations
-    // virtual bool OverWrite(struct ggml_tensor *gg_, bool isSrc = true, int flag = 0x0);
     virtual bool ShareMemory(hGTensor, int flag = 0x0);
     virtual bool OverWrite(hGTensor, bool isSrc = true, int flag = 0x0);
 
@@ -354,9 +353,10 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     virtual int Dogleg(int flag = 0x0);
 
     char name[MAX_NAME] = "\0";
-    void* extra;  // extra things e.g. for ggml-cuda.cu
-    //  return ggml_tensor
-    struct ggml_tensor* GG();
+    size_t hash = 0x0;    //  std::hash<std::string>
+    void* extra = nullptr;  // extra things 
+
+    // struct ggml_tensor* GG();
     struct ggml_context* CTX() { return nullptr; }
     virtual size_t size(int typ = 0) const;
     virtual size_t mostMemory(int typ = 0) const { return nByte(); }
@@ -460,21 +460,17 @@ T* TO(const std::vector<hGTensor>& gensors, const std::string& key, int flag = 0
 }
 
 inline hGTensor operator+(const hGTensor& a, const hGTensor& b) {
-    // auto cur = ggml_add(a->CTX(), a->GG(), b->GG() );
-    // return GTensor::NEW_(cur);
     return nullptr;
 }
 inline hGTensor operator+=(const hGTensor& a, const hGTensor& b) {
-    // auto cur = ggml_add(a->CTX(), a->GG(), b->GG() );
-    // return GTensor::NEW_(cur);
     return nullptr;
 }
 
 typedef hGTensor hGensor;  // some trick
-inline struct ggml_tensor* G(hGensor T) {
-    assert(T != nullptr);
-    return T->GG();
-}
+// inline struct ggml_tensor* G(hGensor T) {
+//     assert(T != nullptr);
+//     return T->GG();
+// }
 
 inline void ZERO_(hGensor T) { T->Zero(); }
 inline size_t tELEM(hGensor T) { return T == nullptr ? 0 : T->size(); }

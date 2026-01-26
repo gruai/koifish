@@ -24,19 +24,19 @@
 #endif
 #include "../Tensor/safetensors.hh"
 
-std::string safetensors::safetensors_t::config_key_ = "__json__config__";
+std::string K_SafeTensors::config_key_ = "__json__config__";
 /*
      support multiple mmap @ different files
      1. AfterBuild->HF_Serialize
      2. AfterBuild->SaveTrain->SAFETENSOR_Serialize
      3.
 */
-bool SAFETENSOR_mmap(const std::string& path, safetensors::safetensors_t& st, int flag) {
+bool SAFETENSOR_mmap(const std::string& path, K_SafeTensors& st, int flag) {
     _INFO("\n>>>>>> SAFETENSOR_mmap mmap@ %s \"%s\" %s f=%d......", COLOR_ORANGE, path.c_str(), COLOR_RESET, flag);
     try {
         std::string warn, err;
         int __prot = PROT_READ | PROT_WRITE;                                             // PROT_READ
-        bool ret   = safetensors::mmap_from_file(path.c_str(), &st, warn, err, __prot);  //   safetensors::load_from_file();
+        bool ret   = mmap_from_file(path.c_str(), &st, warn, err, __prot);  //   load_from_file();
         int nT     = (int)(st.tensors.size());
         // assert(nT > 1);
         if (warn.size()) {
@@ -46,7 +46,7 @@ bool SAFETENSOR_mmap(const std::string& path, safetensors::safetensors_t& st, in
             _ERROR("\n>>>>>> ERR: SAFETENSOR_mmap@\"%s\" \"%s\"\n", path.c_str(), err.c_str());
             return false;
         }
-        if (!safetensors::validate_data_offsets(st, err)) {
+        if (!st.validate_data_offsets(err)) {
             _ERROR(">>>>>> Invalid data_offsets: \"%s\"\n", err.c_str());
             // std::cerr << err << "\n";
             return false;
@@ -69,8 +69,8 @@ bool SAFETENSOR_mmap(const std::string& path, safetensors::safetensors_t& st, in
         // Print Tensor info & value.
         for (size_t i = 0; i < nT; i++) {
             std::string key = st.tensors.keys()[i];
-            if (key == safetensors::safetensors_t::config_key_) {
-                safetensors::tensor_t tensor;
+            if (key == K_SafeTensors::config_key_) {
+                tensor_t tensor;
                 st.tensors.at(i, &tensor);
                 st.loadJS(tensor, databuffer, st.mmap_size);
                 if (true) {  // only for debug
@@ -97,7 +97,7 @@ bool SAFETENSOR_mmap(const std::string& path, safetensors::safetensors_t& st, in
 
 bool SAFETENSOR_Load_jconfig(const std::string& path, JSON& jsConfig, FSerial::FILE_TYPE tpFile, int flag) {
     try {
-        safetensors::safetensors_t st;
+        K_SafeTensors st;
         bool bLoad = SAFETENSOR_mmap(path, st, flag);
         if (!bLoad)
             return false;
@@ -147,12 +147,10 @@ bool Fuyou::Serialize(bool isSave, int flag) {
     return true;
 }
 
-using namespace safetensors;
-
 /*
     Called by SAFETENSOR_Serialize
 */
-bool safetensors::save_to_ofs(const safetensors_t& st, std::ofstream& ofs, size_t& szAll, std::string* warn, std::string* err, int flag) {
+bool K_SafeTensors::save_to_ofs(std::ofstream& ofs, size_t& szAll, std::string* warn, std::string* err, int flag) {
     bool isInitMMap = BIT_TEST(flag, FSerial::INIT_MMAP);
     bool isCopyMMap = BIT_TEST(flag, FSerial::COPY_MMAP);
     try {
@@ -175,13 +173,13 @@ bool safetensors::save_to_ofs(const safetensors_t& st, std::ofstream& ofs, size_
         // }
 
         ss << "{";
-        if (st.metadata.size()) {
+        if (metadata.size()) {
             ss << "\"__metadata__\": {";
             size_t nmeta = 0;
-            for (size_t i = 0; i < st.metadata.size(); i++) {
-                std::string key = st.metadata.keys()[i];
+            for (size_t i = 0; i < metadata.size(); i++) {
+                std::string key = metadata.keys()[i];
                 std::string value;
-                st.metadata.at(i, &value);
+                metadata.at(i, &value);
 
                 if (nmeta > 0) {
                     ss << ", ";
@@ -191,19 +189,19 @@ bool safetensors::save_to_ofs(const safetensors_t& st, std::ofstream& ofs, size_
             }
             ss << "}";
 
-            if (st.tensors.size()) {
+            if (tensors.size()) {
                 ss << ", ";
             }
         }
 
         size_t ntensors = 0, nInit = 0;
-        for (size_t i = 0; i < st.tensors.size(); i++) {
-            std::string key = st.tensors.keys()[i];
-            safetensors::tensor_t tensor;
-            st.tensors.at(i, &tensor);
-            // _INFO("\r\t %d/%d\t\"%s\"", i, st.tensors.size(), key.c_str());
+        for (size_t i = 0; i < tensors.size(); i++) {
+            std::string key = tensors.keys()[i];
+            tensor_t tensor;
+            tensors.at(i, &tensor);
+            // _INFO("\r\t %d/%d\t\"%s\"", i, tensors.size(), key.c_str());
             fflush(stdout);
-            if (tensor.shape.size() > safetensors::kMaxDim) {
+            if (tensor.shape.size() > kMaxDim) {
                 if (err) {
                     (*err) += key + ".shape is too large.\n";
                     (*err) += _err;
@@ -215,7 +213,7 @@ bool safetensors::save_to_ofs(const safetensors_t& st, std::ofstream& ofs, size_
                 ss << ", ";
             }
             ss << "\"" << key << "\": {";
-            ss << "\"dtype\": \"" << safetensors::get_dtype_str(tensor.dtype) << "\", ";
+            ss << "\"dtype\": \"" << get_dtype_str(tensor.dtype) << "\", ";
             ss << "\"shape\": [";
             for (size_t i = 0; i < tensor.shape.size(); i++) {
                 if (i > 0) {
@@ -234,13 +232,13 @@ bool safetensors::save_to_ofs(const safetensors_t& st, std::ofstream& ofs, size_
         uint64_t header_size   = header_str.size();  // do not include '\n'
         const void* databuffer_addr{nullptr};
         size_t databuffer_size{0};
-        if (st.mmaped) {
-            databuffer_size = st.databuffer_size;
-            databuffer_addr = st.databuffer_addr;
+        if (mmaped) {
+            databuffer_size = databuffer_size;
+            databuffer_addr = databuffer_addr;
         } else {
             databuffer_size = szAll, databuffer_addr = nullptr;
-            // databuffer_size = st.storage.size();
-            // databuffer_addr = reinterpret_cast<const void *>(st.storage.data());
+            // databuffer_size = storage.size();
+            // databuffer_addr = reinterpret_cast<const void *>(storage.data());
         }
 
         // make databuffer addr start from the multiple of 8.
@@ -275,12 +273,12 @@ bool safetensors::save_to_ofs(const safetensors_t& st, std::ofstream& ofs, size_
             ofs.write(reinterpret_cast<const char*>(databuffer_addr), databuffer_size);
         else {
             size_t dst_offset = 0, sz;
-            for (size_t i = 0; i < st.tensors.size(); i++) {
-                std::string key = st.tensors.keys()[i];
-                safetensors::tensor_t tensor;
-                st.tensors.at(i, &tensor);
+            for (size_t i = 0; i < tensors.size(); i++) {
+                std::string key = tensors.keys()[i];
+                tensor_t tensor;
+                tensors.at(i, &tensor);
                 assert(dst_offset == tensor.data_offsets[0]);
-                if (key != safetensors::safetensors_t::config_key_) {
+                if (key != K_SafeTensors::config_key_) {
                     GTensor* t = (GTensor*)(tensor.hUserData);
                     sz         = tensor.data_offsets[1] - dst_offset;  // t->nByte() * 3;
                     assert(sz == t->nByte() || sz == t->nByte() * 3);
@@ -323,8 +321,116 @@ bool safetensors::save_to_ofs(const safetensors_t& st, std::ofstream& ofs, size_
         return false;
     }
 }
+//  [bug]
+bool K_SafeTensors::save_to_memory(std::vector<uint8_t>& buffer, std::string* warn, std::string* err) {
+    // directly serialize JSON string.
+    std::stringstream ss;
 
-static safetensors::safetensors_t all_states;
+    // NOTE: The last offset **must** be the end of the file,
+    // so write __metadata__ first(if metadata part exists)
+
+    std::string _err;
+    if (!validate_data_offsets(_err)) {
+        if (err) {
+            (*err) += "Invalid safensors is provided.\n" + _err;
+        }
+        return false;
+    }
+
+    ss << "{";
+    if (metadata.size()) {
+        ss << "\"__metadata__\": {";
+        size_t nmeta = 0;
+        for (size_t i = 0; i < metadata.size(); i++) {
+            std::string key = metadata.keys()[i];
+            std::string value;
+            metadata.at(i, &value);
+
+            if (nmeta > 0) {
+                ss << ", ";
+            }
+            ss << "\"" + key + "\": \"" << value << "\"";
+            nmeta++;
+        }
+        ss << "}";
+
+        if (tensors.size()) {
+            ss << ", ";
+        }
+    }
+
+    size_t ntensors = 0;
+    {
+        for (size_t i = 0; i < tensors.size(); i++) {
+            std::string key = tensors.keys()[i];
+            tensor_t tensor;
+            tensors.at(i, &tensor);
+
+            if (tensor.shape.size() > kMaxDim) {
+                if (err) {
+                    (*err) += key + ".shape is too large.\n";
+                    (*err) += _err;
+                }
+                return false;
+            }
+
+            if (ntensors > 0) {
+                ss << ", ";
+            }
+            ss << "\"" << key << "\": {";
+            ss << "\"dtype\": \"" << get_dtype_str(tensor.dtype) << "\", ";
+            ss << "\"shape\": [";
+            for (size_t i = 0; i < tensor.shape.size(); i++) {
+                if (i > 0) {
+                    ss << ", ";
+                }
+                ss << tensor.shape[i];
+            }
+            ss << "]";
+            ss << ", \"data_offsets\": [" << tensor.data_offsets[0] << ", " << tensor.data_offsets[1] << "]";
+            ss << "}";
+            ntensors++;
+        }
+    }
+    ss << "}";
+
+    std::string header_str = ss.str();
+
+    uint64_t header_size = header_str.size();  // do not include '\n'
+
+    const void* databuffer_addr{nullptr};
+    size_t databuffer_size{0};
+    if (mmaped) {
+        databuffer_size = databuffer_size;
+        databuffer_addr = databuffer_addr;
+    } else {
+        assert(0);
+        // databuffer_size = storage.size();
+        // databuffer_addr = reinterpret_cast<const void *>(storage.data());
+    }
+
+    // make databuffer addr start from the multiple of 8.
+    size_t pad_bytes = 0;
+    if ((header_size % 8) != 0) {
+        pad_bytes = 8 - (header_size % 8);
+    }
+    // printf("header_size = %d\n", int(header_size));
+    // printf("pad_bytes = %d\n", int(pad_bytes));
+    size_t padded_header_size = header_size + pad_bytes;  // 20856
+    buffer.resize(8 + padded_header_size + databuffer_size);
+    size_t szDst = buffer.size();  //  248972672,  248951808
+    // write padded header_size
+    memcpy(buffer.data(), &padded_header_size, sizeof(size_t));
+    // write header
+    memcpy(buffer.data() + 8, header_str.data(), header_size);
+    // Use whitespace for trailing padding.
+    memset(buffer.data() + 8 + header_size, 0x20, pad_bytes);
+    memcpy(buffer.data() + 8 + padded_header_size, databuffer_addr, databuffer_size);
+
+    return true;
+}
+
+static K_SafeTensors all_states;
 void CheckPoint_Params::Init(int flag) {
     switch (type) {
         case STATE:
@@ -336,13 +442,13 @@ void CheckPoint_Params::Init(int flag) {
     }
 }
 
-void HST2JSON(safetensors::safetensors_t* hst, int flag = 0x0) {
+void HST2JSON(K_SafeTensors* hst, int flag = 0x0) {
     JSON jSafeTensors;
     for (size_t i = 0; i < hst->tensors.size(); i++) {
         std::string key = hst->tensors.keys()[i];
-        safetensors::tensor_t tensor;
+        tensor_t tensor;
         hst->tensors.at(i, &tensor);
-        if (key == safetensors::safetensors_t::config_key_) {
+        if (key == K_SafeTensors::config_key_) {
             continue;
         }
         JSON jdesc    = tensor.jDesc();
@@ -358,7 +464,7 @@ void HST2JSON(safetensors::safetensors_t* hst, int flag = 0x0) {
     return;
 }
 
-int Fish::SAFETENSOR2Gensors(const std::string& path, safetensors::safetensors_t* hst, int flag) {
+int Fish::SAFETENSOR2Gensors(const std::string& path, K_SafeTensors* hst, int flag) {
     int nSerialT = 0;
     hst->Clear();
     bool bLoad = SAFETENSOR_mmap(path, *hst, flag);  //*hst
@@ -375,9 +481,9 @@ int Fish::SAFETENSOR2Gensors(const std::string& path, safetensors::safetensors_t
     // Print Tensor info & value.
     for (size_t i = 0; i < hst->tensors.size(); i++) {
         std::string key = hst->tensors.keys()[i];
-        safetensors::tensor_t tensor;
+        tensor_t tensor;
         hst->tensors.at(i, &tensor);
-        if (key == safetensors::safetensors_t::config_key_) {
+        if (key == K_SafeTensors::config_key_) {
             continue;
         }
         // if (isOnlyVocab)
@@ -417,7 +523,7 @@ int Fish::SAFETENSOR2Gensors(const std::string& path, safetensors::safetensors_t
 
 /*
     Save
-        call safetensors::save_to_file
+        call save_to_file
 */
 bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
     double t0   = GST_ms();
@@ -429,9 +535,9 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
 
     size_t data_offset_base = 0, nInit = 0, szOFS = 0;
     std::string warn, err;
-    
+
     vector<hGensor> curParams = optParams;
-    safetensors::safetensors_t st, *hst = (safetensors::safetensors_t*)(ckp.hUserData);
+    K_SafeTensors st, *hst = (K_SafeTensors*)(ckp.hUserData);
     switch (ckp.type) {
         case CheckPoint_Params::STATE:
             assert(hst != nullptr);  // hst=&all_states, so mmp would keep open
@@ -444,13 +550,17 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
             // assert(0);
             hst = &st;
             break;
+        case CheckPoint_Params::HF:
+            // assert(0);
+            hst = &st;
+            break;
         default:
             assert(0);
     }
 
+    fflush(stdout);
     try {
         if (isSave) {
-            fflush(stdout);
             JSON jsConfig;
             _INFO(">>>>>> ST_SERIALIZE save @\"%s\" nInit=%ld ......", path.c_str(), nInit);
             jsConfig["vendor"]              = "gruai";
@@ -459,14 +569,14 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
             if (jsConfig["CLI_params"]["config"].contains("model") && jsConfig["CLI_params"]["config"]["model"].contains("hf-card")) {
                 jsConfig["CLI_params"]["config"]["model"]["#origin-hf-card"] = jsConfig["CLI_params"]["config"]["model"]["hf-card"];
                 jsConfig["CLI_params"]["config"]["model"].erase("hf-card");
-                jsConfig["CLI_params"]["config"]["model"]["arch"] = config.model.model_type; //"QWEN3";
-                jsConfig["CLI_params"]["config"]["model"]["parameter"]["max_pos_embeddings"] = config.model.max_pos_embeddings;   //:32768            
+                jsConfig["CLI_params"]["config"]["model"]["arch"]                            = config.model.model_type;          //"QWEN3";
+                jsConfig["CLI_params"]["config"]["model"]["parameter"]["max_pos_embeddings"] = config.model.max_pos_embeddings;  //: 32768
             }
 
             hst->Clear();
             size_t dst_offset = 0;
-            if(curParams.size()==0){
-                _WARN("%s SAFETENSOR: Save_Params=0 @\"%s\"",path.c_str());
+            if (curParams.size() == 0) {
+                _WARN("%s SAFETENSOR: Save_Params=0 @\"%s\"", path.c_str());
             }
             for (auto t : curParams) {
                 if (G_Has_(t->name, {"model.embed_tokens.weight"})) {  // model.embed_tokens.weight
@@ -478,7 +588,7 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
                 if (ckp.type == CheckPoint_Params::STATE)
                     sz *= 3;
                 assert(sz > 0);
-                safetensors::tensor_t tensor;
+                tensor_t tensor;
                 tensor.dtype           = t->type == typNUMBER::F32 ? typNUMBER::F32 : t->type == typNUMBER::F16 ? typNUMBER::F16 : typNUMBER::BF16;
                 tensor.hUserData       = t.get();
                 tensor.data_offsets[0] = dst_offset;
@@ -493,7 +603,7 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
             hst->insertJS(jsConfig, dst_offset);
             // __metadata__
             hst->metadata.insert("vendor", "gruai");
-            bool ret = safetensors::save_to_file(*hst, path, dst_offset, &warn, &err, flag);
+            bool ret = hst->save_to_file(path, dst_offset, &warn, &err, flag);
             if (warn.size()) {
                 std::cout << "WARN: " << warn << "\n";
             }
@@ -576,9 +686,9 @@ bool Fish::HF_Serialize(bool isSave, int flag) {
         return false;
 
     int nSerialT = 0;
-    std::vector<safetensors::safetensors_t*> st_mmfs;
+    std::vector<K_SafeTensors*> st_mmfs;
     for (auto path : paths) {
-        safetensors::safetensors_t* hst = new safetensors::safetensors_t();
+        K_SafeTensors* hst = new K_SafeTensors();
         st_mmfs.push_back(hst);
         nSerialT += SAFETENSOR2Gensors(path, hst, 0x0);
     }

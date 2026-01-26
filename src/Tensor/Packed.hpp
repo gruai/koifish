@@ -478,7 +478,13 @@ struct TASKA_SWMD {
     //     std::forward<Func>(func)(std::forward<Args>(args)...);
     // }
 };
+
+//  Single Wrap, Multiple Data
 #define SWMD(CU_kernel) CU_kernel<<<smp.grid3, smp.block3, smp.smem, main_stream>>>
+//  Single Wrap, 1 head
+#define SW1H(CU_kernel) CU_kernel<<<smp.grid3, smp.block3, smp.smem, main_stream>>>
+//  Single Wrap, 1 token
+#define SW1T(CU_kernel) CU_kernel<<<smp.grid3, smp.block3, smp.smem, main_stream>>>
 
 /**
  * `"Few blocks, many elements per thread", kernel1, ...);

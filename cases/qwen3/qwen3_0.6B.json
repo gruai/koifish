@@ -16,16 +16,18 @@
                 "Head": 16,     "KVHead": 8,        "head_dim": 128          
             },
             "max_pos_embeddings":32768
-        },                  
-        "embed_tokens": {"Embedding":[]},    
-        "layer":  {      
-            "self_attn":{"QKV":[]},               
-            "mlp":{"FFN":[ ]},       
-            "# gattn":{"GAU":[]}
-                                  
-        },
-        "norm":{"Normal":[]},
-        "output": {"CLASIFY":[]}
+        },        
+        "backbone": {          
+            "embed_tokens": {"Embedding":[]},    
+            "layer":  {      
+                "self_attn":{"QKV":[]},               
+                "mlp":{"FFN":[ ]},       
+                "# gattn":{"GAU":[]}
+                                    
+            },
+            "norm":{"Normal":[]},
+            "output": {"CLASIFY":[]}
+        }
     },
     
     "sparsing":{

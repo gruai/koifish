@@ -16,7 +16,7 @@ Note
 
 ## Features
 - Hybrid 16/8/4/3/1 bit training
-- Training Qwen3-0.6B & Qwen2.5-0.5B on single 4090
+- [Training Qwen3-0.6B on single 4090](cases/tutorial/tutorial_qwen3.md)
 - [Evolutionary optimization of experts](https://arxiv.org/abs/2509.24436)
 - Inference of QWen3-32B on single 4090
 - Automatic detection of training instability
@@ -24,8 +24,8 @@ Note
 - Self-contained C++/cu project with minimal dependencies
 
 ## Minimum dependencies
-- cudnn(may removed in future version)
-- 16GB+ VRAM CUDA Device
+- cudnn(would removed in future version)
+- GPUs that support FP8 computation (Compute Capability 8.9 or higher) with more than 16GB+ VRAM
 - CUDA Toolkit (12.5+)
 
 ## Download & Build
@@ -41,7 +41,7 @@ make clean && make -j$(nproc)
 ```
 
 ## Tutorial
-
+1.    [Training of QWen3_0.6B on single 4090](cases/tutorial/tutorial_qwen3.md)
 1.    [Training of GPT2_1558M_ on single 4090](cases/tutorial/tutorial_gpt2_1558M.md)
 1.    [Training of GPT2(774M/124M) on single 3090](cases/tutorial/tutorial_gpt2.md)
 

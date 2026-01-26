@@ -42,25 +42,27 @@
                 "Ffn": 6400
             }
         },
-        "inp_embd": {
-            "Embedding+": []
-        },
-        "layer": {
-            "attn": {
-                "QKV": []
+        "backbone":{
+            "inp_embd": {
+                "Embedding+": []
             },
-            "ffn": {
-                "FFN": []
+            "layer": {
+                "attn": {
+                    "QKV": []
+                },
+                "ffn": {
+                    "FFN": []
+                },
+                "# gattn": {
+                    "GAU": []
+                }
             },
-            "# gattn": {
-                "GAU": []
+            "output_norm": {
+                "Normal": []
+            },
+            "out": {
+                "CLASIFY": []
             }
-        },
-        "output_norm": {
-            "Normal": []
-        },
-        "out": {
-            "CLASIFY": []
         }
     },
     "datasets": {

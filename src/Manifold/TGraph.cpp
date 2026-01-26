@@ -1627,7 +1627,7 @@ hNEURON Fish::J2Neuron(void* ctx_, string& dad, int level, const JConfig& jconfi
         k = it.key();
         if (!k.empty() && k[0] == '#')
             continue;
-        if (k == "parameter") {
+        /*if (k == "parameter") {
             // BuildMacros();
             continue;
         }
@@ -1645,7 +1645,7 @@ hNEURON Fish::J2Neuron(void* ctx_, string& dad, int level, const JConfig& jconfi
         }
         if (k == "hf-card" ||k == "token_bin_path" ) {
             continue;
-        }
+        }*/
         auto v = it.value();
         if (it->is_array()) {
         } else if (it->is_structured()) {
@@ -1688,8 +1688,9 @@ hNEURON Fish::J2Neuron(void* ctx_, string& dad, int level, const JConfig& jconfi
 
 */
 int Fish::jToGraph(void* ctx_, bool isBuild, int flag) {
-    JConfig js(config.jModel);
-    string sRoot = "model";  // jModel <= jKEY(jConfig,{"model"});
+    JConfig js(config.jBackBone);    
+    // JConfig js(config.jModel);   
+    string sRoot = "model";         //  prefix = dad.empty() ? nam_ : dad + "." + nam_;
 
     AllocBuffer();
     int L = config.nLayer();

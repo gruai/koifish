@@ -48,9 +48,7 @@ typedef shared_ptr<Optimizer> hOptimizer;
 typedef shared_ptr<Fish> hFISH;
 typedef vector<hFISH> tpSWARM;
 class NLP_AutoRegressive;
-namespace safetensors {
-class safetensors_t;
-}
+class K_SafeTensors;
 
 struct MixOfModels {
     bool isRes = true, isSiLU = false;
@@ -104,8 +102,6 @@ class Fish : public std::enable_shared_from_this<Fish> {
     std::vector<hGensor> checkpoints;
     bool measure_only = false;
     void* ctx_build   = nullptr;  // user context of build graph
-
-    // safetensors::safetensors_t safeTensors;
 
     std::vector<hNEURON> neurons, backbons;
 
@@ -171,7 +167,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     virtual bool HF_Serialize(bool isSave, int flag = 0x0);
     virtual bool YALM_Serialize(const std::string& path, bool isSave, int flag = 0x0);
 
-    int SAFETENSOR2Gensors(const std::string& path, safetensors::safetensors_t* hst, int flag);
+    int SAFETENSOR2Gensors(const std::string& path, K_SafeTensors* hst, int flag);
     virtual bool SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag = 0x0);
 
     MODEL_ARCH arch = MODEL_ARCH::_X_;

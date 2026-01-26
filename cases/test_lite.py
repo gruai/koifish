@@ -33,7 +33,6 @@ def test_chat_qwen3_4B_1():
     content = bubble_one("chat_qwen3_4B","p1 --tokenizer ./assets/tokenizer_151936.bin --hf ./Models/Qwen3-4B/ --prompts \"Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?\"")  #  "./cases/qwen3/qwen3_4B.json"
     assert "Answer: \\boxed{1}" in content  or "Answer: 1" in content or "Answer:1" in content or "answer:1" in content  # "Answer: 1"   "✅ Final Answer:1 ✅"  "Answer: 1 ✅"  "✅Answer: 1"
 
-
 def xtest_batch_qwen3_4B():  
     nlayer = 36 #   28 36
     path = "./cases/qwen3/qwen3_0.6B.json" if nlayer==28 else"./cases/qwen3/qwen3_4B.json"
@@ -57,8 +56,6 @@ def test_qwen2_494M():
     title = "QWen2.5_494M"
     dfTrain = koifish_one(title, sExe, "./cases/qwen3/qwen25_1.json", most_iter=most_iter, train_csv="./Train@[shake]_info_.csv")    
     CheckResult(dfTrain,most_iter,2.873,title=title,rel_tol=0.001)      #   3.224941
-
-
 
 def test_gpt2_1558M():    
     title = "1558M"

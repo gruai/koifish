@@ -41,8 +41,8 @@ QWen3::QWen3(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, 
         config.model.isQKVBias          = true;
         config.model.isBqkv             = false;
     } else if (arch == MODEL_ARCH::NLP_QWEN3) {
-        // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
-        // scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;
+        // config.scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
+        // config.scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;
         config.model.isQKNormal    = true;
         config.model.sLayer        = "layers.";
         config.model.sEmbed = "embed_tokens", config.model.sInvEmbed = "lm_head";

@@ -1,7 +1,14 @@
-// SPDX-License-Identifier: MIT
-// Copyright 2023 - Present, Syoyo Fujita.
-// Inspired from:
-// https://gist.github.com/Narsil/5d6bf307995158ad2c4994f323967284
+/**
+ *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT
+ *
+ *   hf-transformers compatible SafeTensors
+ *
+ *  Inspired from: https://gist.github.com/Narsil/5d6bf307995158ad2c4994f323967284
+ *  \brief
+ *  \author Yingshi Chen
+ */
+
 #pragma once
 
 #include <array>
@@ -18,31 +25,13 @@
 #endif
 
 #ifdef SAFETENSORS_CPP_IMPLEMENTATION
-AAssetManager *asset_manager = nullptr;
+AAssetManager* asset_manager = nullptr;
 #else
-extern AAssetManager *asset_manager;
+extern AAssetManager* asset_manager;
 #endif
 #endif
-
-namespace safetensors {
 
 constexpr size_t kMaxDim = 8;  // must be equal to SAFETENSORS_C_MAX_DIM in `safetensors-c.h`
-
-// enum dtype {
-//     kBOOL,
-//     kUINT8,
-//     kINT8,
-//     kINT16,
-//     kUINT16,
-//     kFLOAT16,
-//     kBFLOAT16,
-//     kINT32,
-//     kUINT32,
-//     kFLOAT32,
-//     kFLOAT64,
-//     kINT64,
-//     kUINT64,
-// };
 
 namespace minijson {
 
@@ -54,7 +43,7 @@ namespace minijson {
 template <typename T>
 class ordered_dict {
    public:
-    bool at(const size_t idx, T *dst) const {
+    bool at(const size_t idx, T* dst) const {
         if (idx >= _keys.size()) {
             return false;
         }
@@ -69,9 +58,9 @@ class ordered_dict {
         return true;
     }
 
-    bool count(const std::string &key) const { return _m.count(key); }
+    bool count(const std::string& key) const { return _m.count(key); }
 
-    void insert(const std::string &key, const T &value) {
+    void insert(const std::string& key, const T& value) {
         if (_m.count(key)) {
             // overwrite existing value
         } else {
@@ -81,7 +70,7 @@ class ordered_dict {
         _m[key] = value;
     }
 
-    void insert(const std::string &key, T &&value) {
+    void insert(const std::string& key, T&& value) {
         if (_m.count(key)) {
             // overwrite existing value
         } else {
@@ -91,7 +80,7 @@ class ordered_dict {
         _m[key] = std::move(value);
     }
 
-    bool at(const std::string &key, T *dst) const {
+    bool at(const std::string& key, T* dst) const {
         if (!_m.count(key)) {
             // This should not happen though.
             return false;
@@ -102,11 +91,11 @@ class ordered_dict {
         return true;
     }
 
-    const std::vector<std::string> &keys() const { return _keys; }
+    const std::vector<std::string>& keys() const { return _keys; }
 
     size_t size() const { return _m.size(); }
 
-    bool erase(const std::string &key) {
+    bool erase(const std::string& key) {
         // simple linear search
         for (size_t i = 0; i < _keys.size(); i++) {
             if (_keys[i] == key) {
@@ -138,18 +127,18 @@ struct tensor_t {
     typNUMBER dtype;
     std::vector<size_t> shape;
     std::array<size_t, 2> data_offsets;
-    void *hUserData = nullptr;
+    void* hUserData = nullptr;
     std::vector<uint8_t> msgpack;
 
     virtual JSON jDesc(int flag = 0x0) {
         JSON js;
         string info = get_dtype_str(dtype);
-            // dtype == kFLOAT16    ? "F16"
-            //           : dtype == kBFLOAT16 ? "BF16"
-            //           : dtype == kINT32    ? "I32"
-            //           : dtype == kFLOAT32  ? "F32"
-            //           : dtype == kINT8     ? "I8"
-            //                                : "";
+        // dtype == kFLOAT16    ? "F16"
+        //           : dtype == kBFLOAT16 ? "BF16"
+        //           : dtype == kINT32    ? "I32"
+        //           : dtype == kFLOAT32  ? "F32"
+        //           : dtype == kINT8     ? "I8"
+        //                                : "";
         assert(!info.empty());
         js["dtype"] = info;
         // int shape[4] = {1,1,1,1};
@@ -159,8 +148,8 @@ struct tensor_t {
         return js;
     }
 
-    virtual void Dump(const std::string &key, const uint8_t *databuffer, int flag = 0x0) {
-        std::cout << key << ": " << safetensors::get_dtype_str(dtype) << " ";
+    virtual void Dump(const std::string& key, const uint8_t* databuffer, int flag = 0x0) {
+        std::cout << key << ": " << get_dtype_str(dtype) << " ";
         std::cout << "[";
         for (size_t i = 0; i < shape.size(); i++) {
             if (i > 0) {
@@ -174,14 +163,22 @@ struct tensor_t {
     }
 };
 
-struct safetensors_t {
+// Returns shape[0] * shape[1] * ...
+// Empty Tensor(any shape[i] is 0) returns 0.
+// Zero-rank tensor([]) return 1.
+size_t get_shape_size(const tensor_t& t);
+
+/**
+ *
+ */
+struct K_SafeTensors {
     // we need ordered dict(preserves the order of key insertion)
     // as done in Python's OrderedDict, since JSON data may not be sorted by its key string.
     ordered_dict<tensor_t> tensors;
     ordered_dict<std::string> metadata;
     JSON jsConfig;
     // std::vector<uint8_t> storage;  // would explode!     empty when mmap'ed
-    size_t header_size{0};         // JSON size
+    size_t header_size{0};  // JSON size
     static string config_key_;
     bool mmaped{false};
     virtual void Clear(int flag = 0x0) {
@@ -194,20 +191,20 @@ struct safetensors_t {
     //
     // Following members are set when mmaped.
     //
-    const uint8_t *mmap_addr{nullptr};
+    const uint8_t* mmap_addr{nullptr};
     size_t mmap_size{0};
-    const uint8_t *databuffer_addr{nullptr};  // [mmap_addr + header_size + 8]
+    const uint8_t* databuffer_addr{nullptr};  // [mmap_addr + header_size + 8]
     size_t databuffer_size{0};                // mmap_size - header_size - 8
     // opaque pointer to safetensors_file and safetensors_mmap
-    void *st_file{nullptr};
-    void *st_mmap{nullptr};
+    void* st_file{nullptr};
+    void* st_mmap{nullptr};
 
-    void insertJS(const JSON &js,size_t dst_offset, int flag = 0x0) {
+    void insertJS(const JSON& js, size_t dst_offset, int flag = 0x0) {
         jsConfig = js;
         tensor_t tensor;
-        tensor.msgpack = JSON::to_msgpack(js);
-        tensor.dtype                 = typNUMBER::U8;  //dtype::kUINT8;
-        size_t sz = tensor.msgpack.size();   //storage.size();
+        tensor.msgpack         = JSON::to_msgpack(js);
+        tensor.dtype           = typNUMBER::U8;          // dtype::kUINT8;
+        size_t sz              = tensor.msgpack.size();  // storage.size();
         tensor.data_offsets[0] = dst_offset;
         tensor.data_offsets[1] = dst_offset + sz;
         tensor.shape           = {sz};
@@ -216,7 +213,7 @@ struct safetensors_t {
         // storage.resize(dst_offset + sz);
         // memcpy(storage.data() + dst_offset, msgpack.data(), sz);  //  6441  [132...160]
     }
-    int loadJS(tensor_t &tensor, const uint8_t *bytes_ptr, size_t bytes_size, int flag = 0x0) {
+    int loadJS(tensor_t& tensor, const uint8_t* bytes_ptr, size_t bytes_size, int flag = 0x0) {
         /*JSON jdesc = tensor.jDesc();
         if (jdesc.at("data_offsets").size() != 2) {
             return -3;
@@ -239,12 +236,12 @@ struct safetensors_t {
 
     bool initJS(int flag = 0x0) {
         try {
-            const uint8_t *databuffer = nullptr;
+            const uint8_t* databuffer = nullptr;
             if (mmaped) {
                 databuffer = databuffer_addr;  // st->mmap_addr + 8 + st->header_size;
             } else {
-                assert(0);      //only mmap is support LLM
-                //databuffer = storage.data();
+                assert(0);  // only mmap is support LLM
+                // databuffer = storage.data();
             }
             tensor_t tensor;
             if (!tensors.at(config_key_, &tensor))
@@ -256,7 +253,7 @@ struct safetensors_t {
             size_t sz                    = msgpack.size();
             jsConfig                     = JSON::from_msgpack(msgpack);
             return true;
-        } catch (JSON::parse_error &e) {
+        } catch (JSON::parse_error& e) {
             _INFO("\r\n%s  Failed to initJS from safetensor[]!!! ERR=%s", __func__, e.what());
             return false;
         } catch (...) {
@@ -264,12 +261,129 @@ struct safetensors_t {
         }
     }
 
-    ~safetensors_t();
+    ~K_SafeTensors();
+
+    // Validate data_offsets of all tensors in K_SafeTensors.
+    bool validate_data_offsets(std::string& err) {
+        bool valid{true};
+
+        std::stringstream ss;
+
+        size_t databuffersize;
+        if (mmaped) {
+            databuffersize = databuffer_size;
+        } else {
+            assert(0);
+            // databuffersize = storage.size();
+        }
+
+        size_t ntensors{0};
+        // Iterate with key insertion order.
+        for (size_t i = 0; i < tensors.size(); i++) {
+            std::string key = tensors.keys()[i];
+
+            tensor_t tensor;
+            if (!tensors.at(i, &tensor)) {
+                ss << "Internal error: Failed to get tensor at [" << i << "]\n";
+                valid = false;
+                continue;
+            }
+
+            if (tensor.data_offsets[0] > tensor.data_offsets[1]) {
+                ss << key << ".data_offsets.BEGIN " << tensor.data_offsets[0] << " must be less than or equal to data_offsets.END " << tensor.data_offsets[1]
+                   << "\n";
+                valid = false;
+            }
+
+            size_t tensor_size = BPE(tensor.dtype) * get_shape_size(tensor);  // get_dtype_bytes(tensor.dtype)
+
+            if (tensor_size == 0) {
+                // OK
+                continue;
+            }
+
+            // data_offsets are absolute offset from the databuffer(file)
+            if (tensor.data_offsets[0] > databuffersize) {
+                ss << "Tensor `" << key << "`.data_offset.BEGIN " << tensor.data_offsets[0] << " exceeds databuffer size " << databuffersize << ".\n";
+                valid = false;
+            }
+
+            if (tensor.data_offsets[1] > databuffersize) {
+                ss << "Tensor `" << key << "`.data_offset.END " << tensor.data_offsets[1] << " exceeds databuffer size " << databuffersize << ".\n";
+                valid = false;
+            }
+
+            size_t data_size = tensor.data_offsets[1] - tensor.data_offsets[0];
+
+            if (tensor_size != data_size && tensor_size * 3 != data_size) {  // [data,gm,gv]
+                ss << "Data size mismatch. The size in Tensor `" << key << "` is " << tensor_size << ", but the size from data_offsets is " << data_size
+                   << "\n";
+                valid = false;
+            }
+
+            ntensors++;
+            if (ntensors == tensors.size()) {
+                // Last element's data_offsets[1] must be equal to databuffer size.
+                if (tensor.data_offsets[1] != databuffersize) {
+                    ss << "The last tensor's data_offset.END(" << tensor.data_offsets[1] << ") must be equal to databufer size " << databuffersize << ".\n";
+                    valid = false;
+                }
+            }
+        }
+
+        if (!valid) {
+            err = ss.str();
+        }
+
+        return valid;
+    }
+
+    bool save_to_ofs(std::ofstream& ofs, size_t& szAll, std::string* warn, std::string* err, int flag);
+    bool save_to_memory(std::vector<uint8_t>& buffer, std::string* warn, std::string* err);
+
+    // Save safetensors to file,    return true upon success. `err` will be filled when false.
+    bool save_to_file(const std::string& filename, size_t& sz, std::string* warn, std::string* err, int flag) {
+        bool isRemoveOld = false;
+        if (std::remove(filename.c_str()) == 0) {
+            isRemoveOld = true;
+        } else {
+        }
+        std::ofstream ofs(filename, std::ios::binary);
+        if (!ofs) {
+            if (err) {
+                (*err) += "Failed to open `" + filename +
+                          "` to write. File is either existing directory or "
+                          "write-protected, or disk is full?\n";
+            }
+            return false;
+        }
+        if (1) {
+            if (!save_to_ofs(ofs, sz, warn, err, flag)) {
+                return false;
+            }
+        } else {  //  avoid huge array out of memory
+            std::vector<uint8_t> buf;
+            if (!save_to_memory(buf, warn, err)) {
+                return false;
+            }
+            ofs.write(reinterpret_cast<const char*>(buf.data()), buf.size());
+            sz = buf.size();
+        }
+
+        if (!ofs) {
+            if (err) {
+                (*err) += "Failed to write safetensor data to `" + filename + "`. Maybe no disk space available?(Required bytes : " + std::to_string(sz) + "\n";
+            }
+            return false;
+        }
+
+        return true;
+    }
 };
 
 //
 // Load safetensors from file.
-// databuffer is copied to `safetensors_t::storage`.
+// databuffer is copied to `K_storage`.
 //
 // @param[in] filename Filepath. Assume UTF-8 filepath.
 // @param[out] st safetensors data.
@@ -279,11 +393,11 @@ struct safetensors_t {
 // message)
 //
 // @return true upon success. `err` will be filled when false.
-bool load_from_file(const std::string &filename, safetensors_t *st, std::string *warn, std::string *err);
+bool load_from_file(const std::string& filename, K_SafeTensors* st, std::string* warn, std::string* err);
 
 //
 // Load safetensors data from memory.
-// databuffer is copied to `safetensors_t::storage`.
+// databuffer is copied to `K_storage`.
 //
 // @param[in] addr Memory address of safetensors data.
 // @param[in] nbytes The size in bytes.
@@ -296,11 +410,11 @@ bool load_from_file(const std::string &filename, safetensors_t *st, std::string 
 //
 // @return true upon success. `err` will be filled when false.
 //
-bool load_from_memory(const uint8_t *addr, const size_t nbytes, const std::string &filename, safetensors_t *st, std::string *warn, std::string *err);
+bool load_from_memory(const uint8_t* addr, const size_t nbytes, const std::string& filename, K_SafeTensors* st, std::string* warn, std::string* err);
 
 //
 // Load safetensors with memory mapping(i.e. zero-copy).
-// databuffer is not copied to `safetensors_t` object, thus the app must hold
+// databuffer is not copied to `K_SafeTensors` object, thus the app must hold
 // file during `safetensor_t` object is live.
 //
 // @param[in] filename Filepath. Assume UTF-8 filepath.
@@ -311,11 +425,11 @@ bool load_from_memory(const uint8_t *addr, const size_t nbytes, const std::strin
 // message)
 //
 // @return true upon success. `err` will be filled when false.
-bool mmap_from_file(const std::string &filename, safetensors_t *st, std::string *warn, std::string *err);
+bool mmap_from_file(const std::string& filename, K_SafeTensors* st, std::string* warn, std::string* err);
 
 //
 // Load safetensors from mmaped region.
-// databuffer is not copied to `safetensors_t` object, thus the app must not
+// databuffer is not copied to `K_SafeTensors` object, thus the app must not
 // free/unmap `addr` during `safetensor_t` object is live.
 //
 // @param[in] addr mmaped memory address of safetensors data.
@@ -328,57 +442,18 @@ bool mmap_from_file(const std::string &filename, safetensors_t *st, std::string 
 // message)
 //
 // @return true upon success. `err` will be filled when false.
-bool mmap_from_memory(const uint8_t *arr, const size_t nbytes, const std::string &filename, safetensors_t *st, std::string *warn, std::string *err);
+bool mmap_from_memory(const uint8_t* arr, const size_t nbytes, const std::string& filename, K_SafeTensors* st, std::string* warn, std::string* err);
 
-//
-// Save safetensors to file.
-//
-// @param[in] st safetensors data.
-// @param[in] filename Filepath. Assume UTF-8 filepath.
-// @param[out] warn Warning message buffer(can be nullptr if you don't need
-// warning message)
-// @param[out] err Error message buffer(can be nullptr if you don't need error
-// message)
-//
-// @return true upon success. `err` will be filled when false.
-bool save_to_file(const safetensors_t &st, const std::string &filename, size_t &sz, std::string *warn, std::string *err, int flag);
-
-//
-// Save safetensors to memory.
-//
-// @param[in] st safetensors data.
-// @param[out] data_out Serialized safetensor data.
-// @param[out] warn Warning message buffer(can be nullptr if you don't need
-// warning message)
-// @param[out] err Error message buffer(can be nullptr if you don't need error
-// message)
-//
-// @return true upon success. `err` will be filled when false.
-bool save_to_memory(const std::string &filename, std::vector<uint8_t> *data_out, std::string *warn, std::string *err);
-
-//
-// Utility functions
-//
-
-// Returns shape[0] * shape[1] * ...
-// Empty Tensor(any shape[i] is 0) returns 0.
-// Zero-rank tensor([]) return 1.
-size_t get_shape_size(const tensor_t &t);
-
-// Returns dtype size in bytes.
-size_t get_dtype_bytes(const typNUMBER dtype);
-std::string get_dtype_str(const typNUMBER dtype);
-
-// Validate data_offsets of all tensors in safetensors_t.
-bool validate_data_offsets(const safetensors_t &st, std::string &err);
+std::string get_dtype_str(const typNUMBER dtype) {
+    string name = K_FLOATS[dtype].name;
+    return name;
+}
 
 uint16_t float_to_bfloat16(float x);
 float bfloat16_to_float(uint16_t x);
 
 uint16_t float_to_fp16(float x);
 float fp16_to_float(uint16_t x);
-
-}  // namespace safetensors
 
 #if defined(SAFETENSORS_CPP_IMPLEMENTATION)
 
@@ -435,10 +510,10 @@ float fp16_to_float(uint16_t x);
 
 namespace minijson { namespace simdjson { namespace internal {
 
-double from_chars(const char *first) noexcept;
-double from_chars(const char *first, const char *end) noexcept;
+double from_chars(const char* first) noexcept;
+double from_chars(const char* first, const char* end) noexcept;
 
-char *to_chars(char *first, const char *last, double value);
+char* to_chars(char* first, const char* last, double value);
 
 }}}  // namespace minijson::simdjson::internal
 
@@ -448,8 +523,8 @@ namespace minijson {
 
 namespace detail {
 
-double from_chars(const char *p);
-const char *my_strchr(const char *p, int ch);
+double from_chars(const char* p);
+const char* my_strchr(const char* p, int ch);
 
 }  // namespace detail
 
@@ -464,7 +539,7 @@ namespace detail {
 //
 struct string_parser {
     // input string must be UTF-8
-    void set_input(const std::string &s) { _input = s; }
+    void set_input(const std::string& s) { _input = s; }
 
     bool scan_string();
 
@@ -547,7 +622,7 @@ class value;
 typedef bool boolean;
 typedef double number;
 typedef std::string string;
-typedef safetensors::ordered_dict<value> object;
+typedef ordered_dict<value> object;
 typedef std::vector<value> array;
 typedef struct {
 } null_t;
@@ -594,9 +669,9 @@ class value {
         null_t n;
         boolean b;
         number d;
-        std::string *s;
-        array *a;
-        object *o;
+        std::string* s;
+        array* a;
+        object* o;
     } u;
 
     void _free_u() {
@@ -619,11 +694,11 @@ class value {
     value(null_t n) : t(null_type), u() { u.n = n; }
     value(boolean b) : t(boolean_type), u() { u.b = b; }
     value(number d) : t(boolean_type), u() { u.d = d; }
-    value(const char *s) : t(string_type), u() { u.s = new std::string(s); }
-    value(const std::string &s) : t(string_type), u() { u.s = new std::string(s); }
-    value(const array &a) : t(array_type), u() { u.a = new array(a); }
-    value(const object &o) : t(object_type), u() { u.o = new object(o); }
-    value(const value &v) : t(v.t), u() {
+    value(const char* s) : t(string_type), u() { u.s = new std::string(s); }
+    value(const std::string& s) : t(string_type), u() { u.s = new std::string(s); }
+    value(const array& a) : t(array_type), u() { u.a = new array(a); }
+    value(const object& o) : t(object_type), u() { u.o = new object(o); }
+    value(const value& v) : t(v.t), u() {
         if (t == array_type) {
             u.a  = new array();
             *u.a = *v.u.a;
@@ -656,103 +731,103 @@ class value {
     }
 
     template <typename T>
-    const T *as() const {
+    const T* as() const {
         if ((t == array_type) && (TypeTraits<T>::type_id() == TypeTraits<array>::type_id())) {
-            return reinterpret_cast<const T *>(u.a);
+            return reinterpret_cast<const T*>(u.a);
         }
 
         if ((t == object_type) && (TypeTraits<T>::type_id() == TypeTraits<object>::type_id())) {
-            return reinterpret_cast<const T *>(u.o);
+            return reinterpret_cast<const T*>(u.o);
         }
 
         if ((t == string_type) && (TypeTraits<T>::type_id() == TypeTraits<std::string>::type_id())) {
-            return reinterpret_cast<const T *>(u.s);
+            return reinterpret_cast<const T*>(u.s);
         }
 
         if ((t == null_type) && (TypeTraits<T>::type_id() == TypeTraits<null_t>::type_id())) {
-            return reinterpret_cast<const T *>(&u.n);
+            return reinterpret_cast<const T*>(&u.n);
         }
 
         if ((t == boolean_type) && (TypeTraits<T>::type_id() == TypeTraits<boolean>::type_id())) {
-            return reinterpret_cast<const T *>(&u.b);
+            return reinterpret_cast<const T*>(&u.b);
         }
 
         if ((t == number_type) && (TypeTraits<T>::type_id() == TypeTraits<number>::type_id())) {
-            return reinterpret_cast<const T *>(&u.d);
+            return reinterpret_cast<const T*>(&u.d);
         }
 
         return nullptr;
     }
 
     template <typename T>
-    T *as() {
+    T* as() {
         if ((t == array_type) && (TypeTraits<T>::type_id() == TypeTraits<array>::type_id())) {
-            return reinterpret_cast<T *>(u.a);
+            return reinterpret_cast<T*>(u.a);
         }
 
         if ((t == object_type) && (TypeTraits<T>::type_id() == TypeTraits<object>::type_id())) {
-            return reinterpret_cast<T *>(u.o);
+            return reinterpret_cast<T*>(u.o);
         }
 
         if ((t == string_type) && (TypeTraits<T>::type_id() == TypeTraits<string>::type_id())) {
-            return reinterpret_cast<T *>(u.s);
+            return reinterpret_cast<T*>(u.s);
         }
 
         if ((t == null_type) && (TypeTraits<T>::type_id() == TypeTraits<null_t>::type_id())) {
-            return reinterpret_cast<T *>(&u.n);
+            return reinterpret_cast<T*>(&u.n);
         }
 
         if ((t == boolean_type) && (TypeTraits<T>::type_id() == TypeTraits<boolean>::type_id())) {
-            return reinterpret_cast<T *>(&u.b);
+            return reinterpret_cast<T*>(&u.b);
         }
 
         if ((t == number_type) && (TypeTraits<T>::type_id() == TypeTraits<number>::type_id())) {
-            return reinterpret_cast<T *>(&u.d);
+            return reinterpret_cast<T*>(&u.d);
         }
 
         return nullptr;
     }
 
-    null_t &operator=(null_t &n) {
+    null_t& operator=(null_t& n) {
         t   = null_type;
         u.n = n;
         return u.n;
     }
-    boolean &operator=(boolean b) {
+    boolean& operator=(boolean b) {
         t   = boolean_type;
         u.b = b;
         return u.b;
     }
-    number &operator=(number d) {
+    number& operator=(number d) {
         t   = number_type;
         u.d = d;
         return u.d;
     }
-    const std::string &operator=(const char *s) {
+    const std::string& operator=(const char* s) {
         _free_u();
         t   = string_type;
         u.s = new std::string(s);
         return *u.s;
     }
-    const std::string &operator=(const std::string &s) {
+    const std::string& operator=(const std::string& s) {
         _free_u();
         t   = string_type;
         u.s = new std::string(s);
         return *u.s;
     }
-    const object &operator=(const object &o) {
+    const object& operator=(const object& o) {
         _free_u();
         t   = object_type;
         u.o = new object(o);
         return *u.o;
     }
-    const array &operator=(const array &a) {
+    const array& operator=(const array& a) {
         _free_u();
         t   = array_type;
         u.a = new array(a);
         return *u.a;
     }
-    const value &operator=(const value &v) {
+    const value& operator=(const value& v) {
         _free_u();
         t = v.t;
         if (t == array_type) {
@@ -794,7 +869,7 @@ class value {
         return "[[invalid]]";
     }
 
-    std::string str(const char *p) const {
+    std::string str(const char* p) const {
         std::stringstream ss;
         ss << '"';
         while (*p) {
@@ -827,7 +902,7 @@ class value {
             ss << double(u.d);
         } else if (t == string_type) {
             ss << str(u.s->c_str());
-        } else if (const array *pa = as<array>()) {
+        } else if (const array* pa = as<array>()) {
             array::const_iterator i;
             ss << "[";
             // array a = get<array>();
@@ -866,7 +941,7 @@ class value {
     }
 
 template <typename Iter>
-inline error parse_object(Iter &i, value &v) {
+inline error parse_object(Iter& i, value& v) {
     object o;
     i++;
     MINIJSON_SKIP(i)
@@ -925,7 +1000,7 @@ inline error parse_object(Iter &i, value &v) {
 }
 
 template <typename Iter>
-inline error parse_array(Iter &i, value &v) {
+inline error parse_array(Iter& i, value& v) {
     array a;
     i++;
     MINIJSON_SKIP(i)
@@ -964,7 +1039,7 @@ inline error parse_array(Iter &i, value &v) {
 }
 
 template <typename Iter>
-inline error parse_null(Iter &i, value &v) {
+inline error parse_null(Iter& i, value& v) {
     Iter p = i;
     if (*i == 'n' && *(i + 1) == 'u' && *(i + 2) == 'l' && *(i + 3) == 'l') {
         i += 4;
@@ -978,7 +1053,7 @@ inline error parse_null(Iter &i, value &v) {
 }
 
 template <typename Iter>
-inline error parse_boolean(Iter &i, value &v) {
+inline error parse_boolean(Iter& i, value& v) {
     Iter p = i;
     if (*i == 't' && *(i + 1) == 'r' && *(i + 2) == 'u' && *(i + 3) == 'e') {
         i += 4;
@@ -995,7 +1070,7 @@ inline error parse_boolean(Iter &i, value &v) {
 }
 
 template <typename Iter>
-inline error parse_number(Iter &i, value &v) {
+inline error parse_number(Iter& i, value& v) {
     Iter p = i;
 
     if (*i == '-') {
@@ -1036,7 +1111,7 @@ inline error parse_number(Iter &i, value &v) {
 }
 
 template <typename Iter>
-inline error parse_string(Iter &i, value &v) {
+inline error parse_string(Iter& i, value& v) {
     if (*i != '"')
         return invalid_token_error;
 
@@ -1115,7 +1190,7 @@ inline error parse_string(Iter &i, value &v) {
 }
 
 template <typename Iter>
-inline error parse_any(Iter &i, value &v) {
+inline error parse_any(Iter& i, value& v) {
     MINIJSON_SKIP(i)
     if (*i == '\x7b')
         return parse_object(i, v);
@@ -1133,14 +1208,14 @@ inline error parse_any(Iter &i, value &v) {
 }
 
 template <typename Iter>
-inline error parse(Iter &i, value &v) {
+inline error parse(Iter& i, value& v) {
     return parse_any(i, v);
 }
 
 #undef MINIJSON_SKIP
 
-inline const char *errstr(error e) {
-    const char *s = "unknown error";
+inline const char* errstr(error e) {
+    const char* s = "unknown error";
     switch (e) {
         case no_error: {
             s = "no error";
@@ -1909,7 +1984,7 @@ namespace detail {
 
 namespace detail {
 
-double from_chars(const char *p) {
+double from_chars(const char* p) {
 #if defined(MINIJSON_USE_STRTOD)
     return strtod(p, nullptr);
 #else
@@ -1917,7 +1992,7 @@ double from_chars(const char *p) {
 #endif
 }
 
-const char *my_strchr(const char *p, int ch) {
+const char* my_strchr(const char* p, int ch) {
     char c;
 
     constexpr uint64_t kMaxCount = 1024ull * 1024ull;  // up to 1M chars
@@ -2013,7 +2088,7 @@ constexpr int binary_format<double>::sign_index() {
 inline bool is_integer(char c) noexcept { return (c >= '0' && c <= '9'); }
 
 // This should always succeed since it follows a call to parse_number.
-static decimal parse_decimal(const char *&p) noexcept {
+static decimal parse_decimal(const char*& p) noexcept {
     decimal answer;
     answer.num_digits    = 0;
     answer.decimal_point = 0;
@@ -2035,7 +2110,7 @@ static decimal parse_decimal(const char *&p) noexcept {
     }
     if (*p == '.') {
         ++p;
-        const char *first_after_period = p;
+        const char* first_after_period = p;
         // if we have not yet encountered a zero, we have to skip it as well
         if (answer.num_digits == 0) {
             // skip zeros
@@ -2053,7 +2128,7 @@ static decimal parse_decimal(const char *&p) noexcept {
         answer.decimal_point = int32_t(first_after_period - p);
     }
     if (answer.num_digits > 0) {
-        const char *preverse   = p - 1;
+        const char* preverse   = p - 1;
         int32_t trailing_zeros = 0;
         while ((*preverse == '0') || (*preverse == '.')) {
             if (*preverse == '0') {
@@ -2092,7 +2167,7 @@ static decimal parse_decimal(const char *&p) noexcept {
 
 // This should always succeed since it follows a call to parse_number.
 // Will not read at or beyond the "end" pointer.
-static decimal parse_decimal(const char *&p, const char *end) noexcept {
+static decimal parse_decimal(const char*& p, const char* end) noexcept {
     decimal answer;
     answer.num_digits    = 0;
     answer.decimal_point = 0;
@@ -2120,7 +2195,7 @@ static decimal parse_decimal(const char *&p, const char *end) noexcept {
         if (p == end) {
             return answer;
         }  // should never happen
-        const char *first_after_period = p;
+        const char* first_after_period = p;
         // if we have not yet encountered a zero, we have to skip it as well
         if (answer.num_digits == 0) {
             // skip zeros
@@ -2138,7 +2213,7 @@ static decimal parse_decimal(const char *&p, const char *end) noexcept {
         answer.decimal_point = int32_t(first_after_period - p);
     }
     if (answer.num_digits > 0) {
-        const char *preverse   = p - 1;
+        const char* preverse   = p - 1;
         int32_t trailing_zeros = 0;
         while ((*preverse == '0') || (*preverse == '.')) {
             if (*preverse == '0') {
@@ -2181,13 +2256,13 @@ static decimal parse_decimal(const char *&p, const char *end) noexcept {
 namespace {
 
 // remove all final zeroes
-inline void trim(decimal &h) {
+inline void trim(decimal& h) {
     while ((h.num_digits > 0) && (h.digits[h.num_digits - 1] == 0)) {
         h.num_digits--;
     }
 }
 
-uint32_t number_of_digits_decimal_left_shift(decimal &h, uint32_t shift) {
+uint32_t number_of_digits_decimal_left_shift(decimal& h, uint32_t shift) {
     shift &= 63;
     const static uint16_t number_of_digits_decimal_left_shift_table[65] = {
         0x0000, 0x0800, 0x0801, 0x0803, 0x1006, 0x1009, 0x100D, 0x1812, 0x1817, 0x181D, 0x2024, 0x202B, 0x2033, 0x203C, 0x2846, 0x2850, 0x285B,
@@ -2228,7 +2303,7 @@ uint32_t number_of_digits_decimal_left_shift(decimal &h, uint32_t shift) {
         1, 7, 3, 4, 7, 2, 3, 4, 7, 5, 9, 7, 6, 8, 0, 7, 0, 9, 4, 4, 1, 1, 9, 2, 4, 4, 8, 1, 3, 9, 1, 9, 0, 6, 7, 3, 8, 2, 8, 1, 2, 5, 8, 6, 7, 3, 6, 1, 7, 3, 7,
         9, 8, 8, 4, 0, 3, 5, 4, 7, 2, 0, 5, 9, 6, 2, 2, 4, 0, 6, 9, 5, 9, 5, 3, 3, 6, 9, 1, 4, 0, 6, 2, 5,
     };
-    const uint8_t *pow5 = &number_of_digits_decimal_left_shift_table_powers_of_5[pow5_a];
+    const uint8_t* pow5 = &number_of_digits_decimal_left_shift_table_powers_of_5[pow5_a];
     uint32_t i          = 0;
     uint32_t n          = pow5_b - pow5_a;
     for (; i < n; i++) {
@@ -2247,7 +2322,7 @@ uint32_t number_of_digits_decimal_left_shift(decimal &h, uint32_t shift) {
 
 }  // end of anonymous namespace
 
-static uint64_t round(decimal &h) {
+static uint64_t round(decimal& h) {
     if ((h.num_digits == 0) || (h.decimal_point < 0)) {
         return 0;
     } else if (h.decimal_point > 18) {
@@ -2274,7 +2349,7 @@ static uint64_t round(decimal &h) {
 }
 
 // computes h * 2^-shift
-static void decimal_left_shift(decimal &h, uint32_t shift) {
+static void decimal_left_shift(decimal& h, uint32_t shift) {
     if (h.num_digits == 0) {
         return;
     }
@@ -2316,7 +2391,7 @@ static void decimal_left_shift(decimal &h, uint32_t shift) {
 }
 
 // computes h * 2^shift
-static void decimal_right_shift(decimal &h, uint32_t shift) {
+static void decimal_right_shift(decimal& h, uint32_t shift) {
     uint32_t read_index  = 0;
     uint32_t write_index = 0;
 
@@ -2363,7 +2438,7 @@ static void decimal_right_shift(decimal &h, uint32_t shift) {
 }
 
 template <typename binary>
-adjusted_mantissa compute_float(decimal &d) {
+adjusted_mantissa compute_float(decimal& d) {
     adjusted_mantissa answer;
     if (d.num_digits == 0) {
         // should be zero
@@ -2475,18 +2550,18 @@ adjusted_mantissa compute_float(decimal &d) {
 }
 
 template <typename binary>
-adjusted_mantissa parse_long_mantissa(const char *first) {
+adjusted_mantissa parse_long_mantissa(const char* first) {
     decimal d = parse_decimal(first);
     return compute_float<binary>(d);
 }
 
 template <typename binary>
-adjusted_mantissa parse_long_mantissa(const char *first, const char *end) {
+adjusted_mantissa parse_long_mantissa(const char* first, const char* end) {
     decimal d = parse_decimal(first, end);
     return compute_float<binary>(d);
 }
 
-double from_chars(const char *first) noexcept {
+double from_chars(const char* first) noexcept {
     bool negative = first[0] == '-';
     if (negative) {
         first++;
@@ -2500,7 +2575,7 @@ double from_chars(const char *first) noexcept {
     return value;
 }
 
-double from_chars(const char *first, const char *end) noexcept {
+double from_chars(const char* first, const char* end) noexcept {
     bool negative = first[0] == '-';
     if (negative) {
         first++;
@@ -2557,13 +2632,13 @@ struct diyfp  // f * 2^e
     @brief returns x - y
     @pre x.e == y.e and x.f >= y.f
     */
-    static diyfp sub(const diyfp &x, const diyfp &y) noexcept { return {x.f - y.f, x.e}; }
+    static diyfp sub(const diyfp& x, const diyfp& y) noexcept { return {x.f - y.f, x.e}; }
 
     /*!
     @brief returns x * y
     @note The result is rounded. (Only the upper q bits are returned.)
     */
-    static diyfp mul(const diyfp &x, const diyfp &y) noexcept {
+    static diyfp mul(const diyfp& x, const diyfp& y) noexcept {
         static_assert(kPrecision == 64, "internal error");
 
         // Computes:
@@ -2641,7 +2716,7 @@ struct diyfp  // f * 2^e
     @brief normalize x such that the result has the exponent E
     @pre e >= x.e and the upper e - x.e bits of x.f must be zero.
     */
-    static diyfp normalize_to(const diyfp &x, const int target_exponent) noexcept {
+    static diyfp normalize_to(const diyfp& x, const int target_exponent) noexcept {
         const int delta = x.e - target_exponent;
 
         return {x.f << delta, target_exponent};
@@ -2887,7 +2962,7 @@ inline cached_power get_cached_power_for_binary_exponent(int e) {
 For n != 0, returns k, such that pow10 := 10^(k-1) <= n < 10^k.
 For n == 0, returns 1 and sets pow10 := 1.
 */
-inline int find_largest_pow10(const std::uint32_t n, std::uint32_t &pow10) {
+inline int find_largest_pow10(const std::uint32_t n, std::uint32_t& pow10) {
     // LCOV_EXCL_START
     if (n >= 1000000000) {
         pow10 = 1000000000;
@@ -2924,7 +2999,7 @@ inline int find_largest_pow10(const std::uint32_t n, std::uint32_t &pow10) {
     }
 }
 
-inline void grisu2_round(char *buf, int len, std::uint64_t dist, std::uint64_t delta, std::uint64_t rest, std::uint64_t ten_k) {
+inline void grisu2_round(char* buf, int len, std::uint64_t dist, std::uint64_t delta, std::uint64_t rest, std::uint64_t ten_k) {
     //               <--------------------------- delta ---->
     //                                  <---- dist --------->
     // --------------[------------------+-------------------]--------------
@@ -2954,7 +3029,7 @@ inline void grisu2_round(char *buf, int len, std::uint64_t dist, std::uint64_t d
 Generates V = buffer * 10^decimal_exponent, such that M- <= V <= M+.
 M- and M+ must be normalized and share the same exponent -60 <= e <= -32.
 */
-inline void grisu2_digit_gen(char *buffer, int &length, int &decimal_exponent, diyfp M_minus, diyfp w, diyfp M_plus) {
+inline void grisu2_digit_gen(char* buffer, int& length, int& decimal_exponent, diyfp M_minus, diyfp w, diyfp M_plus) {
     static_assert(kAlpha >= -60, "internal error");
     static_assert(kGamma <= -32, "internal error");
 
@@ -3181,7 +3256,7 @@ v = buf * 10^decimal_exponent
 len is the length of the buffer (number of decimal digits)
 The buffer must be large enough, i.e. >= max_digits10.
 */
-inline void grisu2(char *buf, int &len, int &decimal_exponent, diyfp m_minus, diyfp v, diyfp m_plus) {
+inline void grisu2(char* buf, int& len, int& decimal_exponent, diyfp m_minus, diyfp v, diyfp m_plus) {
     //  --------(-----------------------+-----------------------)--------    (A)
     //          m-                      v                       m+
     //
@@ -3236,7 +3311,7 @@ len is the length of the buffer (number of decimal digits)
 The buffer must be large enough, i.e. >= max_digits10.
 */
 template <typename FloatType>
-void grisu2(char *buf, int &len, int &decimal_exponent, FloatType value) {
+void grisu2(char* buf, int& len, int& decimal_exponent, FloatType value) {
     static_assert(diyfp::kPrecision >= std::numeric_limits<FloatType>::digits + 3, "internal error: not enough precision");
 
     // If the neighbors (and boundaries) of 'value' are always computed for
@@ -3272,7 +3347,7 @@ void grisu2(char *buf, int &len, int &decimal_exponent, FloatType value) {
 @return a pointer to the element following the exponent.
 @pre -1000 < e < 1000
 */
-inline char *append_exponent(char *buf, int e) {
+inline char* append_exponent(char* buf, int e) {
     if (e < 0) {
         e      = -e;
         *buf++ = '-';
@@ -3308,7 +3383,7 @@ notation. Otherwise it will be printed in exponential notation.
 @pre min_exp < 0
 @pre max_exp > 0
 */
-inline char *format_buffer(char *buf, int len, int decimal_exponent, int min_exp, int max_exp) {
+inline char* format_buffer(char* buf, int len, int decimal_exponent, int min_exp, int max_exp) {
     const int k = len;
     const int n = len + decimal_exponent;
 
@@ -3373,11 +3448,11 @@ format. Returns an iterator pointing past-the-end of the decimal representation.
 @note The buffer must be large enough.
 @note The result is NOT null-terminated.
 */
-char *to_chars(char *first, const char *last, double value) {
+char* to_chars(char* first, const char* last, double value) {
     static_cast<void>(last);  // maybe unused - fix warning
 
     // bool negative = std::signbit(value);
-    bool negative = (*reinterpret_cast<uint64_t *>(&value)) & (1 << 31ull);
+    bool negative = (*reinterpret_cast<uint64_t*>(&value)) & (1 << 31ull);
     if (negative) {
         value    = -value;
         *first++ = '-';
@@ -3420,22 +3495,20 @@ char *to_chars(char *first, const char *last, double value) {
 
 #endif  // MINIJSON_IMPLEMENTATION
 
-namespace safetensors {
-
 // Max header(JSON) size. 100 MB as done in original safetensors implementation.
 constexpr size_t kMaxJSONSize = 1024ull * 1024ull * 100ull;
 
 namespace detail {
 
 #ifdef _WIN32
-std::wstring UTF8ToWchar(const std::string &str) {
+std::wstring UTF8ToWchar(const std::string& str) {
     int wstr_size = MultiByteToWideChar(CP_UTF8, 0, str.data(), int(str.size()), nullptr, 0);
     std::wstring wstr(size_t(wstr_size), 0);
     MultiByteToWideChar(CP_UTF8, 0, str.data(), int(str.size()), &wstr[0], int(wstr.size()));
     return wstr;
 }
 
-std::string WcharToUTF8(const std::wstring &wstr) {
+std::string WcharToUTF8(const std::wstring& wstr) {
     int str_size = WideCharToMultiByte(CP_UTF8, 0, wstr.data(), int(wstr.size()), nullptr, 0, nullptr, nullptr);
     std::string str(size_t(str_size), 0);
     WideCharToMultiByte(CP_UTF8, 0, wstr.data(), int(wstr.size()), &str[0], int(str.size()), nullptr, nullptr);
@@ -3443,10 +3516,10 @@ std::string WcharToUTF8(const std::wstring &wstr) {
 }
 #endif
 
-bool ReadWholeFile(std::vector<unsigned char> *out, std::string *err, const std::string &filepath, void *) {
+bool ReadWholeFile(std::vector<unsigned char>* out, std::string* err, const std::string& filepath, void*) {
 #ifdef SAFETENSORS_CPP_ANDROID_LOAD_FROM_ASSETS
     if (asset_manager) {
-        AAsset *asset = AAssetManager_open(asset_manager, filepath.c_str(), AASSET_MODE_STREAMING);
+        AAsset* asset = AAssetManager_open(asset_manager, filepath.c_str(), AASSET_MODE_STREAMING);
         if (!asset) {
             if (err) {
                 (*err) += "File open error : " + filepath + "\n";
@@ -3461,7 +3534,7 @@ bool ReadWholeFile(std::vector<unsigned char> *out, std::string *err, const std:
             return false;
         }
         out->resize(size);
-        AAsset_read(asset, reinterpret_cast<char *>(&out->at(0)), size);
+        AAsset_read(asset, reinterpret_cast<char*>(&out->at(0)), size);
         AAsset_close(asset);
         return true;
     } else {
@@ -3527,13 +3600,13 @@ bool ReadWholeFile(std::vector<unsigned char> *out, std::string *err, const std:
     }
 
     out->resize(sz);
-    f.read(reinterpret_cast<char *>(&out->at(0)), static_cast<std::streamsize>(sz));
+    f.read(reinterpret_cast<char*>(&out->at(0)), static_cast<std::streamsize>(sz));
 
     return true;
 #endif
 }
 
-bool parse_metadata(const ::minijson::value &v, ordered_dict<std::string> &dst, std::string *err) {
+bool parse_metadata(const ::minijson::value& v, ordered_dict<std::string>& dst, std::string* err) {
     if (auto po = v.as<::minijson::object>()) {
         for (size_t i = 0; i < po->size(); i++) {
             ::minijson::value ov;
@@ -3571,14 +3644,14 @@ bool parse_metadata(const ::minijson::value &v, ordered_dict<std::string> &dst, 
     return true;
 }
 
-bool parse_dtype(const ::minijson::value &v, typNUMBER &dtype, std::string *err) {
+bool parse_dtype(const ::minijson::value& v, typNUMBER& dtype, std::string* err) {
     if (auto so = v.as<std::string>()) {
         std::string name = *so;
-        dtype = tpNumOf(name); 
-        if (dtype==typNUMBER::T_OTHER) {
+        dtype            = tpNumOf(name);
+        if (dtype == typNUMBER::T_OTHER) {
             (*err) += "Unknown `dtype` string: " + *so + ".\n";
         }
-        return dtype!=typNUMBER::T_OTHER;
+        return dtype != typNUMBER::T_OTHER;
     } else {
         if (err) {
             (*err) += "`dtype` item should be string type but got " + v.type_name() + ".\n";
@@ -3589,7 +3662,7 @@ bool parse_dtype(const ::minijson::value &v, typNUMBER &dtype, std::string *err)
     return true;
 }
 
-bool parse_shape(const ::minijson::value &v, std::vector<size_t> &dst, std::string *err) {
+bool parse_shape(const ::minijson::value& v, std::vector<size_t>& dst, std::string* err) {
     // NOTE:
     // - Empty tensors (tensors with 1 dimension being 0) are allowed
     // - [] is allowed(0-Rank tensor = merely a scalar)
@@ -3624,7 +3697,7 @@ bool parse_shape(const ::minijson::value &v, std::vector<size_t> &dst, std::stri
     return true;
 }
 
-bool parse_data_offsets(const ::minijson::value &v, std::array<size_t, 2> &dst, std::string *err) {
+bool parse_data_offsets(const ::minijson::value& v, std::array<size_t, 2>& dst, std::string* err) {
     if (auto pa = v.as<::minijson::array>()) {
         ::minijson::array::const_iterator i;
         size_t cnt = 0;
@@ -3666,7 +3739,7 @@ bool parse_data_offsets(const ::minijson::value &v, std::array<size_t, 2> &dst, 
     return true;
 }
 
-bool parse_tensor(const std::string &name, const ::minijson::value &v, tensor_t &tensor, std::string *err) {
+bool parse_tensor(const std::string& name, const ::minijson::value& v, tensor_t& tensor, std::string* err) {
     if (auto po = v.as<::minijson::object>()) {
         bool dtype_found{false};
         bool shape_found{false};
@@ -3801,12 +3874,12 @@ static std::string safetensors_format_win_err(DWORD err) {
 
 struct safetensors_file {
     // use FILE * so we don't have to re-open the file to mmap
-    FILE *fp{nullptr};
+    FILE* fp{nullptr};
     size_t size{0};
     mutable bool _valid{false};
     std::string _err;
 
-    safetensors_file(const char *fname, const char *mode) {
+    safetensors_file(const char* fname, const char* mode) {
         fp = std::fopen(fname, mode);
         if (fp == nullptr) {
             _err   = "failed to open safetensors @" + std::string(fname) + ":\t" + std::string(strerror(errno)) + "!\n";
@@ -3852,13 +3925,13 @@ struct safetensors_file {
         }
     }
 
-    bool &is_valid() const { return _valid; }
+    bool& is_valid() const { return _valid; }
 
-    const std::string &get_error() const { return _err; }
+    const std::string& get_error() const { return _err; }
 };
 
 struct safetensors_mmap {
-    uint8_t *addr{nullptr};
+    uint8_t* addr{nullptr};
     size_t size{0};
 
     bool _valid{false};
@@ -3867,17 +3940,17 @@ struct safetensors_mmap {
 
     const bool is_valid() const { return _valid; }
 
-    const std::string &get_error() const { return _err; }
+    const std::string& get_error() const { return _err; }
 
-    const std::string &get_warning() const { return _warn; }
+    const std::string& get_warning() const { return _warn; }
 
-    safetensors_mmap(const safetensors_mmap &) = delete;
+    safetensors_mmap(const safetensors_mmap&) = delete;
 
 #ifdef _POSIX_MAPPED_FILES
     static constexpr bool SUPPORTED = true;
 
     //  support multiple mmap @ different files
-    safetensors_mmap(struct safetensors_file *file, int __prot, size_t prefetch = (size_t)-1 /* -1 = max value */, bool numa = false) {
+    safetensors_mmap(struct safetensors_file* file, int __prot, size_t prefetch = (size_t)-1 /* -1 = max value */, bool numa = false) {
         size      = file->size;
         int fd    = fileno(file->fp);
         int flags = MAP_SHARED;
@@ -3891,7 +3964,7 @@ struct safetensors_mmap {
         }
 #endif
         // addr = reinterpret_cast<uint8_t *>(mmap(NULL, file->size, PROT_READ, flags, fd, 0));
-        addr = reinterpret_cast<uint8_t *>(mmap(NULL, file->size, __prot, flags, fd, 0));
+        addr = reinterpret_cast<uint8_t*>(mmap(NULL, file->size, __prot, flags, fd, 0));
         if (addr == MAP_FAILED) {
             _valid = false;
             _err   = "mmap failed: " + std::string(strerror(errno)) + "\n";
@@ -3929,7 +4002,7 @@ struct safetensors_mmap {
 #elif defined(_WIN32)
     static constexpr bool SUPPORTED = true;
 
-    safetensors_mmap(struct safetensors_file *file, bool prefetch = true, bool numa = false) {
+    safetensors_mmap(struct safetensors_file* file, bool prefetch = true, bool numa = false) {
         (void)numa;
 
         size = file->size;
@@ -3948,7 +4021,7 @@ struct safetensors_mmap {
             return;
         }
 
-        addr  = reinterpret_cast<uint8_t *>(MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0));
+        addr  = reinterpret_cast<uint8_t*>(MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0));
         error = GetLastError();
         CloseHandle(hMapping);
 
@@ -3986,7 +4059,7 @@ struct safetensors_mmap {
 #else
     static constexpr bool SUPPORTED = false;
 
-    safetensors_mmap(struct safetensors_file *file, bool prefetch = true, bool numa = false) {
+    safetensors_mmap(struct safetensors_file* file, bool prefetch = true, bool numa = false) {
         (void)file;
         (void)prefetch;
         (void)numa;
@@ -4174,7 +4247,7 @@ uint16_t float_to_half_full_le(float _f) {
     return o.u;
 }
 
-bool parse_safetensors_header(const uint8_t *addr, const size_t nbytes, const std::string &filename, safetensors_t *st, std::string *warn, std::string *err) {
+bool parse_safetensors_header(const uint8_t* addr, const size_t nbytes, const std::string& filename, K_SafeTensors* st, std::string* warn, std::string* err) {
     if (nbytes < 16) {
         if (err) {
             (*err) += "Size is too short.\n";
@@ -4183,7 +4256,7 @@ bool parse_safetensors_header(const uint8_t *addr, const size_t nbytes, const st
     }
 
     uint64_t header_size{0};
-    memcpy(reinterpret_cast<unsigned char *>(&header_size), addr, sizeof(uint64_t));
+    memcpy(reinterpret_cast<unsigned char*>(&header_size), addr, sizeof(uint64_t));
 
     if (header_size < 4) {
         if (err) {
@@ -4207,8 +4280,8 @@ bool parse_safetensors_header(const uint8_t *addr, const size_t nbytes, const st
     }
 
     // assume JSON data is small enough.
-    std::string json_str(reinterpret_cast<const char *>(&addr[8]), header_size);
-    const char *p = json_str.c_str();
+    std::string json_str(reinterpret_cast<const char*>(&addr[8]), header_size);
+    const char* p = json_str.c_str();
 
     ::minijson::value v;
     ::minijson::error e = ::minijson::parse(p, v);
@@ -4294,15 +4367,15 @@ bool parse_safetensors_header(const uint8_t *addr, const size_t nbytes, const st
 
 }  // namespace detail
 
-safetensors_t::~safetensors_t() {
+K_SafeTensors::~K_SafeTensors() {
     if (st_mmap) {
-        detail::safetensors_mmap *p = reinterpret_cast<detail::safetensors_mmap *>(st_mmap);
+        detail::safetensors_mmap* p = reinterpret_cast<detail::safetensors_mmap*>(st_mmap);
         delete p;
         st_mmap = nullptr;
     }
 
     if (st_file) {
-        detail::safetensors_file *p = reinterpret_cast<detail::safetensors_file *>(st_file);
+        detail::safetensors_file* p = reinterpret_cast<detail::safetensors_file*>(st_file);
         delete p;
         st_file = nullptr;
     }
@@ -4314,16 +4387,16 @@ safetensors_t::~safetensors_t() {
 // - tensor data(filesize - header_size)
 //
 
-bool load_from_file(const std::string &filename, safetensors_t *st, std::string *warn, std::string *err) {
+bool load_from_file(const std::string& filename, K_SafeTensors* st, std::string* warn, std::string* err) {
     std::vector<unsigned char> data;
     if (!detail::ReadWholeFile(&data, err, filename, nullptr)) {
         return false;
     }
 
-    return load_from_memory(reinterpret_cast<const uint8_t *>(data.data()), data.size(), filename, st, warn, err);
+    return load_from_memory(reinterpret_cast<const uint8_t*>(data.data()), data.size(), filename, st, warn, err);
 }
 
-bool load_from_memory(const uint8_t *addr, const size_t nbytes, const std::string &filename, safetensors_t *st, std::string *warn, std::string *err) {
+bool load_from_memory(const uint8_t* addr, const size_t nbytes, const std::string& filename, K_SafeTensors* st, std::string* warn, std::string* err) {
     if (nbytes < 16) {
         if (err) {
             (*err) += "Size is too short.\n";
@@ -4349,11 +4422,11 @@ bool load_from_memory(const uint8_t *addr, const size_t nbytes, const std::strin
     return true;
 }
 
-bool mmap_from_file(const std::string &filename, safetensors_t *st, std::string &warn, std::string &err, int __prot) {
+bool mmap_from_file(const std::string& filename, K_SafeTensors* st, std::string& warn, std::string& err, int __prot) {
     if (!st) {
         return false;
     }
-    detail::safetensors_file *pf = new detail::safetensors_file(filename.c_str(), "r+b");
+    detail::safetensors_file* pf = new detail::safetensors_file(filename.c_str(), "r+b");
     // detail::safetensors_file *pf = new detail::safetensors_file(filename.c_str(), "rb");
     if (!pf->is_valid()) {
         err += pf->get_error();
@@ -4361,7 +4434,7 @@ bool mmap_from_file(const std::string &filename, safetensors_t *st, std::string 
         return false;
     }
     // TODO: prefetch, numa
-    detail::safetensors_mmap *pm = new detail::safetensors_mmap(pf, __prot);
+    detail::safetensors_mmap* pm = new detail::safetensors_mmap(pf, __prot);
     if (!pm->is_valid()) {
         err += pm->get_error();
         delete pm;
@@ -4390,7 +4463,7 @@ bool mmap_from_file(const std::string &filename, safetensors_t *st, std::string 
     return true;
 }
 
-bool mmap_from_memory(const uint8_t *addr, const size_t nbytes, const std::string &filename, safetensors_t *st, std::string *warn, std::string *err) {
+bool mmap_from_memory(const uint8_t* addr, const size_t nbytes, const std::string& filename, K_SafeTensors* st, std::string* warn, std::string* err) {
     if (!addr) {
         return false;
     }
@@ -4431,7 +4504,7 @@ float fp16_to_float(uint16_t x) {
 }
 
 uint16_t float_to_fp16(float x) { return detail::float_to_half_full_le(x); }
-
+/*
 size_t get_dtype_bytes(const typNUMBER dtype) {
     size_t sz = 0;
 
@@ -4479,16 +4552,11 @@ size_t get_dtype_bytes(const typNUMBER dtype) {
     }
 
     return sz;
-}
-
-std::string get_dtype_str(const typNUMBER dtype) {
-    string name = K_FLOATS[dtype].name;
-    return name;    
-}
+}*/
 
 // Empty Tensor returns 0.
 // Zero-rank Tensor reuturns 1(scalar)
-size_t get_shape_size(const tensor_t &t) {
+size_t get_shape_size(const tensor_t& t) {
     if (t.shape.empty()) {
         return 1;
     }
@@ -4506,229 +4574,7 @@ size_t get_shape_size(const tensor_t &t) {
     return sz;
 }
 
-bool validate_data_offsets(const safetensors_t &st, std::string &err) {
-    bool valid{true};
-
-    std::stringstream ss;
-
-    size_t databuffersize;
-    if (st.mmaped) {
-        databuffersize = st.databuffer_size;
-    } else {
-        assert(0);
-        // databuffersize = st.storage.size();
-    }
-
-    size_t ntensors{0};
-    // Iterate with key insertion order.
-    for (size_t i = 0; i < st.tensors.size(); i++) {
-        std::string key = st.tensors.keys()[i];
-
-        tensor_t tensor;
-        if (!st.tensors.at(i, &tensor)) {
-            ss << "Internal error: Failed to get tensor at [" << i << "]\n";
-            valid = false;
-            continue;
-        }
-
-        if (tensor.data_offsets[0] > tensor.data_offsets[1]) {
-            ss << key << ".data_offsets.BEGIN " << tensor.data_offsets[0] << " must be less than or equal to data_offsets.END " << tensor.data_offsets[1]
-               << "\n";
-            valid = false;
-        }
-
-        size_t tensor_size = get_dtype_bytes(tensor.dtype) * get_shape_size(tensor);
-
-        if (tensor_size == 0) {
-            // OK
-            continue;
-        }
-
-        // data_offsets are absolute offset from the databuffer(file)
-        if (tensor.data_offsets[0] > databuffersize) {
-            ss << "Tensor `" << key << "`.data_offset.BEGIN " << tensor.data_offsets[0] << " exceeds databuffer size " << databuffersize << ".\n";
-            valid = false;
-        }
-
-        if (tensor.data_offsets[1] > databuffersize) {
-            ss << "Tensor `" << key << "`.data_offset.END " << tensor.data_offsets[1] << " exceeds databuffer size " << databuffersize << ".\n";
-            valid = false;
-        }
-
-        size_t data_size = tensor.data_offsets[1] - tensor.data_offsets[0];
-
-        if (tensor_size != data_size && tensor_size * 3 != data_size) {  // [data,gm,gv]
-            ss << "Data size mismatch. The size in Tensor `" << key << "` is " << tensor_size << ", but the size from data_offsets is " << data_size << "\n";
-            valid = false;
-        }
-
-        ntensors++;
-        if (ntensors == st.tensors.size()) {
-            // Last element's data_offsets[1] must be equal to databuffer size.
-            if (tensor.data_offsets[1] != databuffersize) {
-                ss << "The last tensor's data_offset.END(" << tensor.data_offsets[1] << ") must be equal to databufer size " << databuffersize << ".\n";
-                valid = false;
-            }
-        }
-    }
-
-    if (!valid) {
-        err = ss.str();
-    }
-
-    return valid;
-}
-
-//  [bug]
-bool save_to_memory(const safetensors_t &st, std::vector<uint8_t> &buffer, std::string *warn, std::string *err) {
-    // directly serialize JSON string.
-    std::stringstream ss;
-
-    // NOTE: The last offset **must** be the end of the file,
-    // so write __metadata__ first(if metadata part exists)
-
-    std::string _err;
-    if (!validate_data_offsets(st, _err)) {
-        if (err) {
-            (*err) += "Invalid safensors is provided.\n";
-            (*err) += _err;
-        }
-        return false;
-    }
-
-    ss << "{";
-    if (st.metadata.size()) {
-        ss << "\"__metadata__\": {";
-        size_t nmeta = 0;
-        for (size_t i = 0; i < st.metadata.size(); i++) {
-            std::string key = st.metadata.keys()[i];
-            std::string value;
-            st.metadata.at(i, &value);
-
-            if (nmeta > 0) {
-                ss << ", ";
-            }
-            ss << "\"" + key + "\": \"" << value << "\"";
-            nmeta++;
-        }
-        ss << "}";
-
-        if (st.tensors.size()) {
-            ss << ", ";
-        }
-    }
-
-    size_t ntensors = 0;
-    {
-        for (size_t i = 0; i < st.tensors.size(); i++) {
-            std::string key = st.tensors.keys()[i];
-            safetensors::tensor_t tensor;
-            st.tensors.at(i, &tensor);
-
-            if (tensor.shape.size() > safetensors::kMaxDim) {
-                if (err) {
-                    (*err) += key + ".shape is too large.\n";
-                    (*err) += _err;
-                }
-                return false;
-            }
-
-            if (ntensors > 0) {
-                ss << ", ";
-            }
-            ss << "\"" << key << "\": {";
-            ss << "\"dtype\": \"" << safetensors::get_dtype_str(tensor.dtype) << "\", ";
-            ss << "\"shape\": [";
-            for (size_t i = 0; i < tensor.shape.size(); i++) {
-                if (i > 0) {
-                    ss << ", ";
-                }
-                ss << tensor.shape[i];
-            }
-            ss << "]";
-            ss << ", \"data_offsets\": [" << tensor.data_offsets[0] << ", " << tensor.data_offsets[1] << "]";
-            ss << "}";
-            ntensors++;
-        }
-    }
-    ss << "}";
-
-    std::string header_str = ss.str();
-
-    uint64_t header_size = header_str.size();  // do not include '\n'
-
-    const void *databuffer_addr{nullptr};
-    size_t databuffer_size{0};
-    if (st.mmaped) {
-        databuffer_size = st.databuffer_size;
-        databuffer_addr = st.databuffer_addr;
-    } else {
-        assert(0);
-        // databuffer_size = st.storage.size();
-        // databuffer_addr = reinterpret_cast<const void *>(st.storage.data());
-    }
-
-    // make databuffer addr start from the multiple of 8.
-    size_t pad_bytes = 0;
-    if ((header_size % 8) != 0) {
-        pad_bytes = 8 - (header_size % 8);
-    }
-    // printf("header_size = %d\n", int(header_size));
-    // printf("pad_bytes = %d\n", int(pad_bytes));
-    size_t padded_header_size = header_size + pad_bytes;  // 20856
-    buffer.resize(8 + padded_header_size + databuffer_size);
-    size_t szDst = buffer.size();  //  248972672,  248951808
-    // write padded header_size
-    memcpy(buffer.data(), &padded_header_size, sizeof(size_t));
-    // write header
-    memcpy(buffer.data() + 8, header_str.data(), header_size);
-    // Use whitespace for trailing padding.
-    memset(buffer.data() + 8 + header_size, 0x20, pad_bytes);
-    memcpy(buffer.data() + 8 + padded_header_size, databuffer_addr, databuffer_size);
-
-    return true;
-}
-bool save_to_ofs(const safetensors_t &st, std::ofstream &ofs, size_t &szAll, std::string *warn, std::string *err,int flag);
-
-bool save_to_file(const safetensors_t &st, const std::string &filename, size_t &sz, std::string *warn, std::string *err,int flag) {
-    bool isRemoveOld = false;
-    if (std::remove(filename.c_str()) == 0) {
-        isRemoveOld = true;
-    } else {
-    }
-    std::ofstream ofs(filename, std::ios::binary);
-    if (!ofs) {
-        if (err) {
-            (*err) += "Failed to open `" + filename +
-                      "` to write. File is either existing directory or "
-                      "write-protected, or disk is full?\n";
-        }
-        return false;
-    }
-    if (1) {
-        if (!save_to_ofs(st, ofs, sz, warn, err,flag)) {
-            return false;
-        }
-    } else {  //  avoid huge array out of memory
-        std::vector<uint8_t> buf;
-        if (!save_to_memory(st, buf, warn, err)) {
-            return false;
-        }
-        ofs.write(reinterpret_cast<const char *>(buf.data()), buf.size());
-        sz = buf.size();
-    }
-
-    if (!ofs) {
-        if (err) {
-            (*err) += "Failed to write safetensor data to `" + filename + "`. Maybe no disk space available?(Required bytes : " + std::to_string(sz) + "\n";
-        }
-        return false;
-    }
-
-    return true;
-}
-
-std::string to_string(typNUMBER dtype, const uint8_t *data) {
+std::string to_string(typNUMBER dtype, const uint8_t* data) {
     switch (dtype) {
         case typNUMBER::BOOL1: {
             return std::to_string(data[0] ? 1 : 0);
@@ -4737,37 +4583,37 @@ std::string to_string(typNUMBER dtype, const uint8_t *data) {
             return std::to_string(data[0]);
         }
         case typNUMBER::I8: {
-            return std::to_string(*reinterpret_cast<const int8_t *>(data));
+            return std::to_string(*reinterpret_cast<const int8_t*>(data));
         }
         case typNUMBER::U16: {
-            return std::to_string(*reinterpret_cast<const uint16_t *>(data));
+            return std::to_string(*reinterpret_cast<const uint16_t*>(data));
         }
         case typNUMBER::I16: {
-            return std::to_string(*reinterpret_cast<const int16_t *>(data));
+            return std::to_string(*reinterpret_cast<const int16_t*>(data));
         }
         case typNUMBER::U32: {
-            return std::to_string(*reinterpret_cast<const uint32_t *>(data));
+            return std::to_string(*reinterpret_cast<const uint32_t*>(data));
         }
         case typNUMBER::I32: {
-            return std::to_string(*reinterpret_cast<const int32_t *>(data));
+            return std::to_string(*reinterpret_cast<const int32_t*>(data));
         }
         case typNUMBER::U64: {
-            return std::to_string(*reinterpret_cast<const uint64_t *>(data));
+            return std::to_string(*reinterpret_cast<const uint64_t*>(data));
         }
         case typNUMBER::I64: {
-            return std::to_string(*reinterpret_cast<const int64_t *>(data));
+            return std::to_string(*reinterpret_cast<const int64_t*>(data));
         }
         case typNUMBER::F16: {
-            return std::to_string(safetensors::fp16_to_float(*reinterpret_cast<const uint16_t *>(data)));
+            return std::to_string(fp16_to_float(*reinterpret_cast<const uint16_t*>(data)));
         }
         case typNUMBER::BF16: {
-            return std::to_string(safetensors::bfloat16_to_float(*reinterpret_cast<const int64_t *>(data)));
+            return std::to_string(bfloat16_to_float(*reinterpret_cast<const int64_t*>(data)));
         }
         case typNUMBER::F32: {
-            return std::to_string(*reinterpret_cast<const float *>(data));
+            return std::to_string(*reinterpret_cast<const float*>(data));
         }
         case typNUMBER::F64: {
-            return std::to_string(*reinterpret_cast<const double *>(data));
+            return std::to_string(*reinterpret_cast<const double*>(data));
         }
     }
 
@@ -4778,10 +4624,10 @@ std::string to_string(typNUMBER dtype, const uint8_t *data) {
 // print tensor in linearized 1D array
 // In safetensors, data is not strided(tightly packed)
 //
-std::string to_string_snipped(const safetensors::tensor_t &t, const uint8_t *databuffer, size_t N = 8) {
+std::string to_string_snipped(const tensor_t& t, const uint8_t* databuffer, size_t N = 8) {
     std::stringstream ss;
-    size_t nitems    = safetensors::get_shape_size(t);
-    size_t itembytes = safetensors::get_dtype_bytes(t.dtype);
+    size_t nitems    = get_shape_size(t);
+    size_t itembytes = BPE(t.dtype);  // get_dtype_bytes(t.dtype);
 
     if ((N == 0) || ((N * 2) >= nitems)) {
         ss << "[";
@@ -4818,6 +4664,5 @@ std::string to_string_snipped(const safetensors::tensor_t &t, const uint8_t *dat
 
     return ss.str();
 }
-}  // namespace safetensors
 
 #endif
