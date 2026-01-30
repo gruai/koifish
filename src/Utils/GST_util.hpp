@@ -2,7 +2,7 @@
  *  SPDX-FileCopyrightText: 2019-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
- *  \brief GRUS SPARSE TEMPLATE	- Utility
+ *  \brief GRUSOFT TEMPLATE	- Utility
  *  \author Yingshi Chen
  */
 
@@ -153,6 +153,7 @@ std::string FILE_EXT(const std::string& path);
 bool VERIFY_DIR_EXIST(const std::string& path, bool isCreate = false);
 std::vector<std::string> FilesOfDir(const std::string& path, const std::vector<std::string>& keys = {}, int flag = 0x0);
 
+/*
 struct MEM_USAGE {
     static size_t szA, szW, szG, szMoment, szTemp, szOther;
     enum TYPE { ACTIVATION, WEIGHT, MOMENT, GRAD, TEMP, OTHER };
@@ -162,11 +163,12 @@ struct MEM_USAGE {
     size_t sz;
     string desc;
     MEM_USAGE(size_t sz_, string d_, void* hData = nullptr, int flag = 0x0);
-};
+};*/
+
 struct SUM {
     static int nMostMemItem, nMinTensorAlloc;
     static int nUpdateParam;
-    static std::vector<MEM_USAGE> mems;
+    // static std::vector<MEM_USAGE> mems;
     static int nQuantTensor;
     static size_t szQuantBits;
     static int nInitParam, nSaveParam, nzSaveParam, nLoadParam, nzLoadParam, nDogLeg;
@@ -177,8 +179,7 @@ struct SUM {
 
     static void Reset(string typ, int flag = 0x0);
     static void TimeInfo(int typ, int flag = 0x0);
-    static void MemoryInfo(int type, int flag = 0x0);
-    static bool FreeMem(void* hData, int flag = 0x0);
+    // static void MemoryInfo(int type, int flag = 0x0);
     static std::string CPU_Info(int flag = 0x0);
     static std::string GPU_Info(int flag = 0x0);
     static void GPU_TIME(double& a, const double b, int flag = 0x0);

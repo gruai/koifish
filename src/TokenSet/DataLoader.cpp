@@ -1120,8 +1120,8 @@ void StepInfos::Add(STEP step, int flag) {
         step.nrmG.push_back(tensor->gnorm);
         step.nrmW.push_back(tensor->wnorm);
     }
-    step.gMax = ten1->gnorm / ten1->size(), step.gMaxName = ten1->name;
-    step.wMax = ten2->wnorm / ten2->size(), step.wMaxName = ten2->name;
+    step.gMax = ten1->gnorm / ten1->size(), step.gMaxName = ten1->Alias();
+    step.wMax = ten2->wnorm / ten2->size(), step.wMaxName = ten2->Alias();
 
     steps.push_back(step);
 }

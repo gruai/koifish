@@ -197,11 +197,8 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
 
     static size_t szGlobalMaloc;
     static GTensor* tZ;
-    static hGTensor bt4c, delta, gate_delta, tmpDelta, scratch, tmpFF1, tmpW, tmpGW, tmpQout, tmpKout, residual, tmpTernary;
-    //  If config.isShareLayerOut(), all layers' output share this tensor!
-    static hGTensor outL;
 
-    static bool FreeBuffer(int flag = 0x0);
+    // static bool FreeBuffer(int flag = 0x0);
     //  temporary shared memory 1) buff sz>=8*nCTX*nToken(from preLogits)
     static void *buff, *host_buff, *cudnn_workspace;
     // float stat_info[1024] in GPU
@@ -353,6 +350,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     virtual int Dogleg(int flag = 0x0);
 
     char name[MAX_NAME] = "\0";
+    std::string Alias(int flag=0x0);
     size_t hash = 0x0;    //  std::hash<std::string>
     void* extra = nullptr;  // extra things 
 

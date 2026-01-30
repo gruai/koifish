@@ -31,7 +31,7 @@ TokenEmbed::TokenEmbed(Fish* hG_, const std::string& key_, JSON::const_iterator 
     }    */
     assert(latent > 0);
     isAddPos = type_info[type_info.length() - 1] == '+';
-    if (hG_->config.model.rope_type !=  ROPE_NONE) {
+    if (hG_->config.model.rope_type != ROPE_NONE) {
         isAddPos = false;
     }
 }
@@ -101,7 +101,7 @@ bool TokenEmbed::Build(int flag) {
     SHAPE s3 = {B, T, latent};
     out      = std::make_shared<huTensor>(hFish, name + ".batch", s3, w->type, false);
     if (hFish->config.isShareLayerOut()) {
-        out->SetRefer(GTensor::outL);
+        out->SetRefer(gBUFF->outL);
     }
 
     // QUANT_CARD quant_params = hFish->config.quant;
@@ -235,8 +235,8 @@ MAEC::MAEC(Fish* hG_, const std::string& key_, int flag) {
         first->down.out->AddSrc({normE.w,normE.b,normE.out,normE.rstd,normE.mean});
         normD.BuildX(name+"norm_D",{nIn},hFish,flag);
         last->up.out->AddSrc({normD.w,normD.b,normD.out,normD.rstd,normD.mean});
-        normE.delta = GTensor::delta;
-        normD.delta = GTensor::delta;
+        normE.delta = gBUFF->delta;
+        normD.delta = gBUFF->delta;
     }*/
 
     return;
@@ -346,13 +346,13 @@ bool VarCoder::Build(int flag_0) {
         norm.BuildX(_NAME(name, FFN_PRE_NORMAL), {nBottom}, hFish, flag_0 | F_DELTA);  // name + ".norm",
     if (hFish->isModel({NLP_QWEN2, NLP_QWEN3})) {
         // qwen 2.5 same as qwen 3.0!
-        up.BuildX(_NAME(name, FFN_UP), {nBottom, nTop}, hFish, flagSLP);
-        gate.BuildX(_NAME(name, FFN_GATE), {nBottom, nTop}, hFish, flag_0);
+        up.BuildX(_NAME(name, FFN_UP), {nTop, nBottom}, hFish, flagSLP);
+        gate.BuildX(_NAME(name, FFN_GATE), {nTop, nBottom}, hFish, flag_0);
         // gate should alloc delta for its gpu memory!
-        down.BuildX(_NAME(name, FFN_DOWN), {nTop, nBottom}, hFish, flagSLP);
+        down.BuildX(_NAME(name, FFN_DOWN), {nBottom, nTop}, hFish, flagSLP);
     } else {
-        down.BuildX(name + "_down", {nTop, nBottom}, hFish, flagSLP);
-        up.BuildX(name + "_up", {nBottom, nTop}, hFish, flagSLP);
+        down.BuildX(name + "_down", {nBottom, nTop}, hFish, flagSLP);
+        up.BuildX(name + "_up", {nTop, nBottom}, hFish, flagSLP);
         if (isSymmetric) {
             down.w        = nullptr;
             down.w        = up.w;
@@ -390,7 +390,7 @@ void Relu::BuildX(const std::string& key_, const SHAPE& sp, Fish* hG_, int flag)
 
 FFN* FFN::first = nullptr;
 bool FFN::Build(int flag_0) {
-    delta        = GTensor::delta;
+    delta        = gBUFF->delta;
     SHAPE sp     = {shape[0]}, sp3, sp2;
     void* ctx_   = hFish->GetGGCTX(1);
     bool isTrain = hFish->isTrain();
@@ -418,8 +418,8 @@ bool FFN::Build(int flag_0) {
         }
     }
 
-    if (GTensor::tmpFF1 != nullptr) {
-        assert(GTensor::tmpFF1->size() >= up.out->size());
+    if (gBUFF->tmpFF1 != nullptr) {
+        assert(gBUFF->tmpFF1->size() >= up.out->size());
         // gelu_fusion = 1;     //  0 = none, 1 = forward, 2 = forward+backward (-1 => per-GPU default)
         if (remater_ffn) {
             BIT_SET(up.out->flags, GTensor::F_NOALLOC);
@@ -431,14 +431,14 @@ bool FFN::Build(int flag_0) {
         }
         out = std::make_shared<huTensor>(hFish, name + "_out", sp2, tpWeight, false);
         if (hFish->config.isShareLayerOut()) {  //  ???
-            out->SetRefer(GTensor::outL);
+            out->SetRefer(gBUFF->outL);
         }
     }
 
     up.w->residual_scale = hFish->config.common.residual_scale;
     if (layid > 6) {  //  Gradient would explode!
         // up.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);
-        // down.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);       //  down.Back(GTensor::bt4c, tGelu, GTensor::delta, up_out);
+        // down.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);       //  down.Back(gBUFF->bt4c, tGelu, gBUFF->delta, up_out);
     }
 
     quant_params.Init4Neuron(name, hFish->config.jQuant);

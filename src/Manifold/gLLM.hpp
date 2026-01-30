@@ -75,7 +75,7 @@ class NLP_AutoRegressive : public Fish {
 
     bool isLoadTokenEmbed = false;
 
-    hCDICT hDictVAE = nullptr;
+    // hCDICT hDictVAE = nullptr;
 
     bool isAttOnBC = false;
 
@@ -185,7 +185,7 @@ struct LLAMA_VAE : public NLP_AutoRegressive {
         _INFO("LLAMA_VAE%s: init model\n", __func__);
 
         gensors.Clear();
-        hDictVAE->InitVAE();
+        // hDictVAE->InitVAE();
         updateTMap = true;
 
         NLP_AutoRegressive::InitModel(flag);

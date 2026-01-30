@@ -52,7 +52,8 @@ int Prefill(hFISH fish, int enable_thinking) { return 0x0; }
 int OnEOS(hFISH fish, int flag = 0x0) {
     hChater gopt = fish->GetGenerator();
     _INFO("[MEMORY] %s\t%s\n", SUM::GPU_Info(0x0).c_str(), SUM::CPU_Info(0x0).c_str());
-    _INFO("\t quant=%s\t DEBUG_switch={generate=%d %d} QKV=%d FFN=%d\n", SUM::sQuantInfo.c_str(), DEBUG.verGenerate, DEBUG.T_cuQK, DEBUG.verInferQKV, DEBUG.verInferFFN);
+    _INFO("\t quant=%s\t DEBUG_switch={generate=%d %d} QKV=%d FFN=%d\n", SUM::sQuantInfo.c_str(), DEBUG.verGenerate, DEBUG.T_cuQK, DEBUG.verInferQKV,
+          DEBUG.verInferFFN);
     _INFO("\n");  // next turn
     return 0x0;
 }
@@ -119,7 +120,7 @@ int Chat(hFISH fish, int enable_thinking) {
         }
         if (hBatch->tok_pos == 1) {  // nRound == 2
             DEBUG_HERE;
-            // exit(KOIFISH_EXIT_DEBUG);
+            // K_EXIT(KOIFISH_EXIT_DEBUG);
         }
         if (DEBUG.verGenerate) {  //  much slower with some bug
             float eval = fish->Evaluate(DL_BATCH_UPATE::BATCHofEMBED);
@@ -232,7 +233,7 @@ int main(int argc, char* argv[]) {
         DEBUG.verInferQKV = 0, DEBUG.verInferFFN = 0;
         config.Dump(0x100);
         hFISH fish = Fish::MakeInstance("PPL_", config, {}, Fish::ROLE_TYPE::COMMON, 0x110);
-        SUM::MemoryInfo(0x0, 0x0);
+        // GlobalMemoryInfo(0x0, 0x0);
         if (fish == nullptr)
             return KOIFISH_NULL_FISH;
 
@@ -259,30 +260,3 @@ int main(int argc, char* argv[]) {
     }
 }
 
-#if (defined _WINDOWS) || (defined WIN32)
-BOOL APIENTRY DllMain(HANDLE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
-    char str_version[1000];
-    switch (ul_reason_for_call) {
-        case DLL_PROCESS_ATTACH:
-            GRUAI_KOIFISH_VERSION(str_version);
-            _INFO("%s", str_version);
-            break;
-        case DLL_THREAD_ATTACH:
-            break;
-        default:
-            break;
-    }
-
-    return TRUE;
-}
-#else
-// https://stackoverflow.com/questions/22763945/dll-main-on-windows-vs-attribute-constructor-entry-points-on-linux
-__attribute__((constructor)) void dllLoad() {
-    char str_version[1000];
-    GRUAI_KOIFISH_VERSION(str_version, 0x0);
-    _INFO("%s", str_version);
-    _INFO("\n");
-}
-
-__attribute__((destructor)) void dllUnload() {}
-#endif

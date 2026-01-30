@@ -7,6 +7,7 @@
  */
 
 #include "../EDevice.hpp"
+#include "../Utils/GST_MemBuffer.hpp"
 
 // Static member definitions
 std::atomic<int> CudaDriverManager::allocation_count{0};
@@ -141,6 +142,32 @@ bool EDGE_DEVICES::InitGPU(const CLI_params& hparams, int flag) {
     return true;
 }
 
+bool EDGE_DEVICES::ClearGPU(int flag) { 
+     return true; 
+}
+
+void DestroyCUDNN();
+
+// Global cleanup function
+static bool g_cuda_cleaned = false;
+void CUDA_cleanup() {
+    if (g_cuda_cleaned)
+        return;
+    // CHECK_LAST_CUDA_ERROR();
+
+    if (cublas_handle != nullptr)
+        cublasCheck(cublasDestroy(cublas_handle));
+    
+    if (cublaslt_handle != nullptr)
+        cublasCheck(cublasLtDestroy(cublaslt_handle));
+#ifdef ENABLE_CUDNN
+    DestroyCUDNN();
+#endif
+    if (main_stream != nullptr)
+        cudaCheck(cudaStreamDestroy(main_stream));
+    cudaCheck(cudaDeviceReset());
+    g_cuda_cleaned = true;
+}
 /*
 void ggml_numa_init(enum ggml_numa_strategy numa_flag) {
     if (g_state.numa.n_nodes > 0) {

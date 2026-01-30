@@ -315,9 +315,9 @@ bool CLI_params::JModel2Params(int flag) {
             model.sCardPath = jKEY(jModel, {"hf-card"});
         if (jModel.find("token_bin_path") != jModel.end())  //  only for custom
             model.sTokenBinPath = jKEY(jModel, {"token_bin_path"});
-        else{
+        else {
             // model.sTokenBinPath = "./Datasets/climb-1b/tokenizer.dat";
-        }            
+        }
 
         jQuant = jKEY(jConfig, {"quantizer"});
 
@@ -601,8 +601,7 @@ void CLI_params::OnArch() {
 
             int group = Get({"model_v0", "target_group"}, 1);
             assert(group == 1);
-        }
-        break;
+        } break;
         case NLP_DEEPSEEK:
             model.sLayer = "layers.";
             break;
@@ -709,52 +708,52 @@ JSON CLI_params::ToJSON(int type, int flag) {
     }
     json["config"] = jOut;
     return json;
-/*
-std::ofstream file(file_name);
-    if(!file.is_open()) {
-        throw std::runtime_error(fmt::format("could not open file for writing {}", file_name));
-    }
+    /*
+    std::ofstream file(file_name);
+        if(!file.is_open()) {
+            throw std::runtime_error(fmt::format("could not open file for writing {}", file_name));
+        }
 
-    std::vector<std::string> archs;
-    if(config.Architecture == LLamaConfig::QWEN2) {
-        archs = {"Qwen2ForCausalLM"};
-    } else if (config.Architecture == LLamaConfig::LLAMA) {
-        archs = {"LlamaForCausalLM"};
-    }
+        std::vector<std::string> archs;
+        if(config.Architecture == LLamaConfig::QWEN2) {
+            archs = {"Qwen2ForCausalLM"};
+        } else if (config.Architecture == LLamaConfig::LLAMA) {
+            archs = {"LlamaForCausalLM"};
+        }
 
-    nlohmann::json config_json;
-    config_json["architectures"] = std::move(archs);
-    config_json["bos_token_id"] = config.BosTokenId;
-    config_json["eos_token_id"] = config.EosTokenId;
-    config_json["hidden_size"] = config.HiddenSize;
-    config_json["intermediate_size"] = config.IntermediateSize;
-    config_json["vocab_size"] = config.VocabSize;
-    config_json["num_attention_heads"] = config.NumQueryHeads;
-    config_json["num_key_value_heads"] = config.NumKeyValHeads;
-    config_json["num_hidden_layers"] = config.NumLayers;
-    config_json["max_position_embeddings"] = config.MaxPositionEmbeddings;
-    config_json["rope_theta"] = config.RopeTheta;
-    config_json["rms_norm_eps"] = config.RmsNormEps;
-    config_json["tie_word_embeddings"] = config.TiedWordEmbeddings;
-    config_json["torch_dtype"] = dtype_to_torch_str(config.DType);
+        nlohmann::json config_json;
+        config_json["architectures"] = std::move(archs);
+        config_json["bos_token_id"] = config.BosTokenId;
+        config_json["eos_token_id"] = config.EosTokenId;
+        config_json["hidden_size"] = config.HiddenSize;
+        config_json["intermediate_size"] = config.IntermediateSize;
+        config_json["vocab_size"] = config.VocabSize;
+        config_json["num_attention_heads"] = config.NumQueryHeads;
+        config_json["num_key_value_heads"] = config.NumKeyValHeads;
+        config_json["num_hidden_layers"] = config.NumLayers;
+        config_json["max_position_embeddings"] = config.MaxPositionEmbeddings;
+        config_json["rope_theta"] = config.RopeTheta;
+        config_json["rms_norm_eps"] = config.RmsNormEps;
+        config_json["tie_word_embeddings"] = config.TiedWordEmbeddings;
+        config_json["torch_dtype"] = dtype_to_torch_str(config.DType);
 
-    config_json["attention_dropout"] = 0.f;
-    config_json["initializer_range"] = 0.02f;
-    config_json["hidden_act"] = "silu";
-    config_json["use_cache"] = true;
-    if(config.Architecture == LLamaConfig::QWEN2) {
-        config_json["model_type"] = "qwen2";
-        config_json["max_window_layers"] = config.NumLayers;
-        config_json["sliding_window"] = config.MaxPositionEmbeddings;
-        config_json["use_sliding_window"] = false;
-        config_json["use_mrope"] = false;
-    } else if (config.Architecture == LLamaConfig::LLAMA) {
-        config_json["model_type"] = "llama";
-        config_json["attention_bias"] = false;
-        config_json["mlp_bias"] = false;
-    }
+        config_json["attention_dropout"] = 0.f;
+        config_json["initializer_range"] = 0.02f;
+        config_json["hidden_act"] = "silu";
+        config_json["use_cache"] = true;
+        if(config.Architecture == LLamaConfig::QWEN2) {
+            config_json["model_type"] = "qwen2";
+            config_json["max_window_layers"] = config.NumLayers;
+            config_json["sliding_window"] = config.MaxPositionEmbeddings;
+            config_json["use_sliding_window"] = false;
+            config_json["use_mrope"] = false;
+        } else if (config.Architecture == LLamaConfig::LLAMA) {
+            config_json["model_type"] = "llama";
+            config_json["attention_bias"] = false;
+            config_json["mlp_bias"] = false;
+        }
 
-    file << config_json.dump(4);*/
+        file << config_json.dump(4);*/
 }
 
 bool TRAIN_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
@@ -793,9 +792,10 @@ bool TRAIN_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
 CheckPoint_Params::CheckPoint_Params(const JSON& jData, const std::string& key, bool isSave, int flag) : jKey(key) {
     if (key.empty()) {  //  default checkpoints to store all info of current state
         //"state", "./hy-tmp/checkpoint/", -1, false
-        jKey = "._koifish_state_";
-        sDir = "./hy-tmp/checkpoint/";
-        type = CheckPoint_Params::STATE;
+        jKey   = "._koifish_state_";
+        sDir   = "./hy-tmp/checkpoint/";
+        type   = CheckPoint_Params::STATE;
+        format = CheckPoint_Params::KOIFISH;
         // isIn = false;
     } else {
         if (!jData.contains(key)) {
@@ -805,7 +805,6 @@ CheckPoint_Params::CheckPoint_Params(const JSON& jData, const std::string& key, 
         assert(!jdata.empty());
         // const std::string &tp, const std::string &p, int x, bool in
         bool isFind = false;
-        // type        = CheckPoint_Params::BEST;
         std::string stp = jdata["type"];
         for (auto kv : CKP_desc) {
             if (stp == kv.second) {
@@ -815,6 +814,9 @@ CheckPoint_Params::CheckPoint_Params(const JSON& jData, const std::string& key, 
         }
         sDir       = jKV(jdata, {"path"}, sDir);
         save_every = jKV(jdata, {"save-every"}, save_every);
+        if (isSave) {
+            format = CheckPoint_Params::HF;
+        }
         // isIn       = key == "in";  // hack
     }
     if (isSave) {  //  Verify ouput dir
@@ -828,15 +830,27 @@ CheckPoint_Params::CheckPoint_Params(const JSON& jData, const std::string& key, 
 
 std::string CheckPoint_Params::FullPath(bool isSave, int flag) {
     string sOut = "", sExt = CKP_ext[type];
-    if (isSave) {
-        if (!sX.empty()) {
-            sOut = sDir + sX;  //+ std::to_string(iter)
-        } else
-            sOut = sDir + jKey;
-        sOut += "." + sExt;
-    } else {
-        sOut = sModelPath;
+    switch (format) {
+        case HF:
+            if (isSave) {
+                sOut = sDir + "model.safetensors";
+            } else {
+                sOut = sModelPath;
+            }
+            break;
+        default:
+            if (isSave) {
+                if (!sX.empty()) {
+                    sOut = sDir + sX;  //+ std::to_string(iter)
+                } else
+                    sOut = sDir + jKey;
+                sOut += "." + sExt;
+            } else {
+                sOut = sModelPath;
+            }
+            break;
     }
+
     assert(!sOut.empty());
     return sOut;
 }
@@ -916,14 +930,14 @@ bool CLI_params::ToJConfig(int flag) {
         jConfig["model"]["parameter"]["transformer"]["Head"]     = n_head();
         jConfig["model"]["parameter"]["transformer"]["KVHead"]   = n_head_kv();
         jConfig["model"]["parameter"]["transformer"]["head_dim"] = head_dim();
-        
+
         assert(jBackBone.empty() && "jBackBone is not empty!");
         jBackBone["embed_tokens"]["Embedding"] = JSON::array();
         jBackBone["layer"]["self_attn"]["QKV"] = JSON::array();
         jBackBone["layer"]["mlp"]["FFN"]       = JSON::array();
         jBackBone["norm"]["Normal"]            = JSON::array();
         jBackBone["output"]["CLASIFY"]         = JSON::array();
-        jConfig["model"]["backbone"] = jBackBone;
+        jConfig["model"]["backbone"]           = jBackBone;
 
         if (jQuant.empty()) {
             if (DEBUG.test_quant) {
@@ -1021,7 +1035,7 @@ bool CLI_params::InitJConfig(int flag) {
         if (chat_sampler.seq_len <= 0)
             chat_sampler.seq_len = 8192;
 
-        if(!JModel2Params(0x0))
+        if (!JModel2Params(0x0))
             return false;
         if (!model.sCardPath.empty()) {
             if (!model.InitHugFace(this, jConfig, ""))
@@ -1171,6 +1185,7 @@ bool CLI_params::parse(int argc, char** argv) {
         default:
             InitChekcpoints(argc, argv, "checkpoint_in");
             InitChekcpoints(argc, argv, "checkpoint_out");
+            InitAllStates(0x0);
             break;
     }
     OnArch();
@@ -1249,7 +1264,7 @@ double P_softmax(int idx, T* logits, int size) {
     }
     float partition = 0.0f;
     for (int i = 0; i < size; i++) {
-        float a = T2Float(logits + i);  //logits[i];
+        float a = T2Float(logits + i);  // logits[i];
         partition += expf(a - max_val);
     }
     //
@@ -1684,4 +1699,128 @@ BIT_8 BIT_GET_k(hBITARR array, size_t offset, int bits) {
 void BIT_SET_4(hBITARR array, size_t offset, BIT_8 elem) {
     assert(0);
     return;
+}
+
+bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, const std::string& sCardPath_0, int flag) {
+    bool isInitFromPath = !sCardPath_0.empty();
+    int head_dim = -1, n_heads = -1, n_kv_heads = -1, n_FF = -1;
+    if (!isInitFromPath) {
+        sTokenBinPath = "./assets/tokenizer_151936.bin";
+        n_layers      = hConfig->nLayer();
+        for (int i = 0; i < n_layers; i++) {
+            int nH = hConfig->n_head(i), nF = hConfig->n_ff(i);
+            assert(nH > 0 && nF > 0);
+        }
+
+        string sTyp = jKVs(jConfig, {"model", "datatype", "weight"}, string(""));
+        if (!sTyp.empty())
+            tpWeight = tpNumOf(sTyp);
+        // sTyp = jKVs(jConfig, {"model", "datatype", "embed"}, string(""));
+        // if (!sTyp.empty())
+        //     tpEmbed = tpNumOf(sTyp);
+        head_dim = hConfig->head_dim();
+        n_heads = hConfig->n_head(), n_kv_heads = hConfig->n_head_kv();
+        // seq_len = hConfig->n_ctx_orig();
+
+        sCardPath = jKV(jConfig, {"model", "hf-card"}, sCardPath);
+    } else {
+        sCardPath = sCardPath_0;
+    }
+    if (sCardPath.empty()) {
+        return false;
+    }
+    string jPath = sCardPath + "config.json";
+    if (!LoadJsonFile(jPath, jModelParam)) {
+        return false;
+    };
+    sTokenJsonPath = sCardPath + "tokenizer.json";
+    // LoadJsonFile(sTokenPath,jTokenizer);                             // }
+
+    if (jModelParam.empty()) {
+        sCardPath = "";
+    } else {
+        isEmbedWeightTying = jKV(jModelParam, {"tie_word_embeddings"}, isEmbedWeightTying);
+        if (isEmbedWeightTying) {
+            skip_st.push_back("lm_head.weight");  //  so strange: Qwen/Qwen3-0.6B has this & unsloth/Qwen3-0.6B-Base remove this
+        }
+        model_type = jKV(jModelParam, {"model_type"}, model_type);
+        assert(model_type != "");
+        num_attention_heads = jKV(jModelParam, {"num_attention_heads"}, n_heads);
+        num_key_value_heads = jKV(jModelParam, {"num_key_value_heads"}, n_kv_heads);
+        if (jModelParam.find("quantization_config") != jModelParam.end()) {
+            hConfig->jVendorQuant = jModelParam["quantization_config"];
+            QUANT_CARD quant;
+            quant.InitFromVendor(jModelParam["quantization_config"]);
+            hConfig->jQuant = quant.ToJSON();
+        }
+        vocab_size           = jKV(jModelParam, {"vocab_size"}, vocab_size);
+        torch_dtype          = jKV(jModelParam, {"torch_dtype"}, torch_dtype);
+        transformers_version = jKV(jModelParam, {"transformers_version"}, transformers_version);
+        bos_token_id         = jKV(jModelParam, {"bos_token_id"}, bos_token_id);
+        eos_token_id         = jKV(jModelParam, {"eos_token_id"}, eos_token_id);
+        rope_theta           = jKV(jModelParam, {"rope_theta"}, rope_theta);
+        hidden_size          = jKV(jModelParam, {"hidden_size"}, hidden_size);
+        intermediate_size    = jKV(jModelParam, {"intermediate_size"}, intermediate_size);
+        max_pos_embeddings   = jKV(jModelParam, {"max_position_embeddings"}, max_pos_embeddings);
+        // rotary_dim           = jKVs(jModelParam, {"rope_scaling"}, rotary_dim);
+        //
+        int hd = -1;
+        if (!jModelParam.contains("head_dim")) {  // some config.json of hf model don't have "head_dim"
+            assert(hidden_size%num_attention_heads==0);
+            hd = hidden_size/num_attention_heads;
+            assert(hd > 0 && hd < 10240 && "Invalid head_dim @ computed InitHugFace");
+        } else {
+            hd = jKV(jModelParam, {"head_dim"}, head_dim);
+            assert(hd > 0 && hd < 10240 && "Invalid head_dim @InitHugFace");
+            if (hd != head_dim) {
+                for (auto& lay : layerps) {
+                    lay._head_dim = hd;
+                }
+            }
+        }        
+
+        if (!isInitFromPath)
+            assert(num_attention_heads == n_heads && num_key_value_heads == n_kv_heads);
+        else {
+            n_layers         = jKV(jModelParam, {"num_hidden_layers"}, n_layers);
+            hConfig->nLayerX = n_layers;
+            token_embeds.push_back(hidden_size);
+            if (hConfig->common.n_ctx == -1) {  //  max_position_embeddings(often the same as training context length)
+                hConfig->common.n_ctx = max_pos_embeddings;
+                hConfig->n_ctx_train  = max_pos_embeddings;
+            }
+            for (int i = 0; i < n_layers; i++) {
+                layerps.push_back(MODEL_CARD::LAY_PARAM(num_attention_heads, num_key_value_heads, hd, intermediate_size));
+            }
+        }
+
+        InitChatTemplate(hConfig);
+    }
+
+    LoadJsonFile(sCardPath + "model.safetensors.index.json", jSafetensorsIndex);
+    if (!jSafetensorsIndex.empty()) {
+        nTotalSize = jKV(jSafetensorsIndex, {"metadata", "total_size"}, nTotalSize);
+
+        auto jMap = jSafetensorsIndex["weight_map"];
+        for (JSON::iterator it = jMap.begin(); it != jMap.end(); ++it) {
+            std::string key = it.key();
+            st_map.insert(std::make_pair(key, nullptr));
+        }
+    }
+    switch (hConfig->ModelArch()) {
+        case NLP_QWEN3:
+            if (nTotalSize == 8045591552) {     //  https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
+                hConfig->n_ctx_train = 262144;  //  Context Length: 262,144 natively
+            }
+            break;
+        case NLP_QWEN2:
+            break;
+        default:
+            break;
+    }
+    if (isInitFromPath) {
+        hConfig->ToJConfig();
+    }
+
+    return true;  // isInitFromPath;
 }

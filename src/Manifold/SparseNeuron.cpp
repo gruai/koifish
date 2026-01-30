@@ -220,7 +220,7 @@ HIERARCH_LoRA::HIERARCH_LoRA(SparseNeuron* neuron, hGensor w_, int r_, int flag)
     hFish->InitGensor(nullptr, "", a, true);
     hFish->InitGensor(nullptr, "", b, true);
 
-    // tmp          = GTensor::bt4c;
+    // tmp          = gBUFF->bt4c;
     // assert(m * rank <= tmp->size() && n * rank <= tmp->size());
     huTensor* ta   = dynamic_cast<huTensor*>(a.get());
     size_t szAlloc = ta->Alloc_1(&Ax, false, "", sizeof(floatX) * B * T * rank);

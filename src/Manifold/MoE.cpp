@@ -19,7 +19,7 @@ LLM_MOE::LLM_MOE(const std::string &nam_, struct CLI_params params, ROLE_TYPE ro
 
 size_t LLM_MOE::MostMemSize(int flag) {
     int n_layer = config.nLayer();
-    int nHead   = hDictVAE != nullptr ? hDictVAE->nLevel * 3 + 2 + 6 : 6;
+    int nHead   = 6;    //hDictVAE != nullptr ? hDictVAE->nLevel * 3 + 2 + 6 : 6;
     size_t sz0 = GTensor::MostOverhead(), sz = sz0 * 2 * (nHead + n_layer * 18);
     return sz;
 }

@@ -2,7 +2,7 @@
  *  SPDX-FileCopyrightText: 2018-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
- *  \brief GRUS SPARSE TEMPLATE	- some obj & functions on STL
+ *  \brief GRUSOFT TEMPLATE	- some obj & functions on STL
  *  \author Yingshi Chen
  */
 
@@ -81,20 +81,20 @@ struct N64w {
 };
 
 template <typename T>
-std::string G_STR(const T& x,int MostChar=-1) {
+std::string G_STR(const T& x, int MostChar = -1) {
     std::stringstream ss;
     ss << x;
     return ss.str();
 }
 
 template <>
-inline std::string G_STR<vector<string>>(const vector<string>& words,int MostChar) {
+inline std::string G_STR<vector<string>>(const vector<string>& words, int MostChar) {
     std::stringstream ss;
     ss << "{";
     for (auto x : words) ss << x << ", ";
     ss << "}";
     std::string content = ss.str();
-    if (MostChar>0 && content.length() > MostChar) {
+    if (MostChar > 0 && content.length() > MostChar) {
         return content.substr(0, MostChar);
     }
     return content;
@@ -145,16 +145,15 @@ void G_SomeXat_(vector<int>& pos, const vector<T>& someX, const vector<T>& allX,
 
 // compare strings ignoring case
 bool inline G_Aa(const std::string& A, const std::string& a) {
-    if (A.size() != a.size()) return false;
+    if (A.size() != a.size())
+        return false;
     for (size_t i = 0; i < a.size(); ++i) {
-        if (std::tolower(static_cast<unsigned char>(a[i])) != 
-            std::tolower(static_cast<unsigned char>(A[i]))) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(A[i]))) {
             return false;
         }
     }
     return true;
 }
-
 
 bool inline G_Has_(const string& title, const vector<string>& values, int flag = 0x0) {
     for (auto v : values) {
@@ -435,6 +434,91 @@ auto TO_VECTOR(const Iterable& iterable) {
     return std::vector<ValueType>(iterable.begin(), iterable.end());
 }
 
+//  A dict keep the insertion order
+template <typename T>
+class GST_Dict {
+   public:
+    bool at(const size_t idx, T* dst) const {
+        if (idx >= _keys.size()) {
+            return false;
+        }
+
+        if (!_m.count(_keys[idx])) {
+            // This should not happen though.
+            return false;
+        }
+
+        (*dst) = _m.at(_keys[idx]);
+
+        return true;
+    }
+
+    bool count(const std::string& key) const {
+        assert(_m.size() == _keys.size() && "GST_Dict::size mismatch!");
+        return _m.count(key);
+    }
+
+    void insert(const std::string& key, const T& value) {
+        if (_m.count(key)) {
+            assert(0 && "GST_Dict::duplicate key");
+            // overwrite existing value
+        } else {
+            _keys.push_back(key);
+        }
+
+        _m[key] = value;
+        assert(_m.size() == _keys.size() && "GST_Dict::insert size mismatch!");
+    }
+
+    void insert(const std::string& key, T&& value) {
+        if (_m.count(key)) {
+            // overwrite existing value
+        } else {
+            _keys.push_back(key);
+        }
+
+        _m[key] = std::move(value);
+    }
+
+    bool at(const std::string& key, T* dst) const {
+        if (!_m.count(key)) {
+            // This should not happen though.
+            return false;
+        }
+
+        (*dst) = _m.at(key);
+
+        return true;
+    }
+
+    const std::vector<std::string>& keys() const { return _keys; }
+
+    size_t size() const { return _m.size(); }
+
+    bool erase(const std::string& key) {
+        // simple linear search
+        for (size_t i = 0; i < _keys.size(); i++) {
+            if (_keys[i] == key) {
+                _keys.erase(_keys.begin() + i);
+                _m.erase(key);
+                return true;
+            }
+        }
+        assert(0 && "GST_Dict erase none=");
+        return false;
+    }
+
+    virtual void Clear() {
+        _keys.clear();
+        _m.clear();
+    }
+
+   private:
+    std::vector<std::string> _keys;
+    //  std::mapby default maintains elements in sorted order based on the key, not the insertion order.
+    std::map<std::string, T> _m;
+};
+
 class SafeExit : public std::exception {
    private:
     std::string message;
@@ -458,12 +542,12 @@ class SafeExit : public std::exception {
     std::string getFormattedInfo() const {
         std::ostringstream oss;
         auto time_t = std::chrono::system_clock::to_time_t(timestamp);
-        oss << "Exit Exception: " << message << "\n\tCode=" << exit_code << "\tReason=" << static_cast<int>(reason) 
-            << "\n\t" << std::ctime(&time_t) << "\tLocation@" << location << std::endl;
+        oss << "Exit Exception: " << message << "\n\tCode=" << exit_code << "\tReason=" << static_cast<int>(reason) << "\n\t" << std::ctime(&time_t)
+            << "\tLocation@" << location << std::endl;
         return oss.str();
     }
 
    private:
     ExitReason reason;
 };
-#define K_EXIT(code)    {   throw SafeExit("", code, SafeExit::ExitReason::SYSTEM_FAILURE, __func__);   }
+#define K_EXIT(code) throw SafeExit("", code, SafeExit::ExitReason::SYSTEM_FAILURE, __func__);

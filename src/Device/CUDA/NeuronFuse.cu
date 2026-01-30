@@ -14,10 +14,10 @@
 cublasComputeType_t cublas_compute = CUBLAS_COMPUTE_32F;
 // Hardcoding workspace to 32MiB but only Hopper needs 32 (for others 4 is OK)
 const size_t cublaslt_workspace_size = 32 * 1024 * 1024;
-cublasLtHandle_t cublaslt_handle;
-cublasHandle_t cublas_handle;
-void* cublaslt_workspace = NULL;
-cudaStream_t main_stream = nullptr;
+cublasLtHandle_t cublaslt_handle     = nullptr;
+cublasHandle_t cublas_handle         = nullptr;
+void* cublaslt_workspace             = nullptr;
+cudaStream_t main_stream             = nullptr;
 cudaDeviceProp deviceProp;
 
 hGTensor huTensor::_Multiply(const hGTensor& b) {
@@ -149,7 +149,7 @@ hGTensor TokenEmbed::OnEmbed(hGensor inpL, int seed) {
             UpdateBucket(0x0);
             WorkloadOnBucker(hBatch->host, 0x0);
             floatX* scratchX = (floatX*)GTensor::buff;
-            hGTensor delta = GTensor::delta, cur = delta;
+            hGTensor delta = gBUFF->delta, cur = delta;
             if (maec != nullptr) {
                 cur = maec->ENC(cur);
             }
@@ -215,9 +215,9 @@ int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, Relu* hRelu, int f
         switch (compression) {
             case SAMPLE:
                 assert(subw != nullptr);
-                subw->SubW(hSamps, true, GTensor::tmpW, samp_type);
-                // wX = ToX(GTensor::tmpW);
-                // GTensor::tmpW->Print("subW",0,-1);
+                subw->SubW(hSamps, true, gBUFF->tmpW, samp_type);
+                // wX = ToX(gBUFF->tmpW);
+                // gBUFF->tmpW->Print("subW",0,-1);
                 break;
             case LORA:
                 break;
@@ -296,10 +296,10 @@ int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, 
         // deltaIn->Print("delta_in", 0, flag);
         switch (compression) {
             case SAMPLE:  // remater to get wX
-                subw->SubW(hSamps, true, GTensor::tmpW, samp_type);
-                wX = ToX(GTensor::tmpW);  // assert(nSample==OC || nSample==IC);
-                gW = ToX(GTensor::tmpGW);
-                cudaCheck(cudaMemsetAsync(gW, 0, GTensor::tmpGW->nByte(), main_stream));
+                subw->SubW(hSamps, true, gBUFF->tmpW, samp_type);
+                wX = ToX(gBUFF->tmpW);  // assert(nSample==OC || nSample==IC);
+                gW = ToX(gBUFF->tmpGW);
+                cudaCheck(cudaMemsetAsync(gW, 0, gBUFF->tmpGW->nByte(), main_stream));
                 break;
             default:
                 break;
@@ -309,7 +309,7 @@ int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, 
             case SAMPLE:
                 matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu),
                                 isAccumuDelta);
-                subw->SubW(hSamps, false, GTensor::tmpGW, samp_type);
+                subw->SubW(hSamps, false, gBUFF->tmpGW, samp_type);
                 break;
             case LORA:
                 if (tpLORA != LORA_ADAPT_W::AB && tpLORA != LORA_ADAPT_W::refW_AB)
@@ -389,8 +389,8 @@ floatX* GTensor::GetDataX(int flag, const string& sX) {
             break;
         case typNUMBER::Q4: {
             // dT4B = CU_T4B_MIDDLE;
-            wX = ToX(GTensor::tmpTernary);
-            assert(GTensor::tmpTernary->size() >= nEle);
+            wX = ToX(gBUFF->tmpTernary);
+            assert(gBUFF->tmpTernary->size() >= nEle);
             dT4B = Q_nThreadOfBlock(nCol, 4);
             if (hQuant->isRTN()) {
                 if (hQuant->params.isNormalFloat) {
@@ -399,11 +399,11 @@ floatX* GTensor::GetDataX(int flag, const string& sX) {
                     CU_Q42X_RTN<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
             } else
                 CU_Q42X_<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
-            // GTensor::tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow*nCol);
+            // gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow*nCol);
         } break;
         case typNUMBER::Q3: {
-            wX = ToX(GTensor::tmpTernary);
-            assert(GTensor::tmpTernary->size() >= nEle);
+            wX = ToX(gBUFF->tmpTernary);
+            assert(gBUFF->tmpTernary->size() >= nEle);
             dT4B = Q_nThreadOfBlock(nCol, 3);  // 1 byre for 4 quant
             if (hQuant->isRTN()) {
                 if (hQuant->params.isNormalFloat) {
@@ -412,17 +412,17 @@ floatX* GTensor::GetDataX(int flag, const string& sX) {
                     CU_Q32X_RTN<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
             } else
                 CU_Q32X_<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
-            // GTensor::tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow*nCol);
+            // gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow*nCol);
         } break;
         case typNUMBER::Q2: {
-            wX = ToX(GTensor::tmpTernary);
-            assert(GTensor::tmpTernary->size() >= nEle);
+            wX = ToX(gBUFF->tmpTernary);
+            assert(gBUFF->tmpTernary->size() >= nEle);
             dT4B = Q_nThreadOfBlock(nCol, 2);  // 1 byre for 4 quant
             if (hQuant->isRTN()) {
                 CU_Q22X_RTN<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
             } else
                 CU_Q22X_<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
-            // GTensor::tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow*nCol);
+            // gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow*nCol);
         } break;
 
         case typNUMBER::T_BINARY:
@@ -431,11 +431,11 @@ floatX* GTensor::GetDataX(int flag, const string& sX) {
             } else if (DEBUG.T_ternary == -1) {  // each weight {-1,0,1}
                 return nullptr;
             } else {  // extract each weight {-1,0,1} to floatX
-                wX = ToX(GTensor::tmpTernary);
+                wX = ToX(gBUFF->tmpTernary);
                 CU_ternary2X_<floatX><<<CEIL_DIV(nRow, dT4B), dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, 1);
                 SYNC_DEVICE();
                 if (flag == -1)
-                    GTensor::tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1);
+                    gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1);
             }
 
             // PrintTensor<floatX>("wX", wX, true, nRow, nCol, ne[2], ne[3], -1);
@@ -443,16 +443,16 @@ floatX* GTensor::GetDataX(int flag, const string& sX) {
         case typNUMBER::T_BINARY_TILE: {
             dim3 dBlock(THREAD_TILE_M * THREAD_TILE_N), dGrid(CEIL_DIV(nRow, THREAD_TILE_M), CEIL_DIV(nCol, THREAD_TILE_N));
             assert(nRow % THREAD_TILE_M == 0 && nCol % THREAD_TILE_N == 0);
-            wX              = ToX(GTensor::tmpTernary);
+            wX              = ToX(gBUFF->tmpTernary);
             floatGama* gam_ = gama_T();  //
             CU_Tile2X_<floatX><<<dGrid, dBlock, smemPB, main_stream>>>(wX, gam_, 0.0, nRow, nCol, seed);
             // SYNC_DEVICE();
             if (flag == -1)
-                GTensor::tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1);
+                gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1);
         } break;
         case typNUMBER::F8E5M2: {
-            wX = ToX(GTensor::tmpTernary);
-            assert(GTensor::tmpTernary->size() >= nEle);
+            wX = ToX(gBUFF->tmpTernary);
+            assert(gBUFF->tmpTernary->size() >= nEle);
             CU_F82Float<floatX><<<CEIL_DIV(nEle, CU_T4B_MIDDLE), CU_T4B_MIDDLE>>>((f8e5*)data, wX, nEle, 0, 0);
             break;
         }
@@ -466,12 +466,12 @@ floatX* GTensor::GetDataX(int flag, const string& sX) {
 int SLP::FUSE_cuda_block(hGTensor rhs, hGTensor lhs, hGTensor gelu, bool isForw, int flag) { return 0x0; }
 
 hGTensor FFN::cuInfer(hGTensor hIn, int flag) {
-    hGTensor tGelu = GTensor::scratch, up_out = remater_ffn ? GTensor::tmpFF1 : up.out;
+    hGTensor tGelu = gBUFF->scratch, up_out = remater_ffn ? gBUFF->tmpFF1 : up.out;
     bool isBias = up.b != nullptr;
     int nToken  = nBatchToken();
     inp         = OnInput(hIn);
     // inp->Print("ffn.in", 0, dump_flag, C);
-    GTensor::residual = inp;  // GTensor::residual->OverWrite(inp);          //
+    gBUFF->residual = inp;  // gBUFF->residual->OverWrite(inp);          //
     if (fuseNorm == nullptr) {
         norm.cuFlow(inp);
     }
@@ -486,12 +486,12 @@ hGTensor FFN::cuInfer(hGTensor hIn, int flag) {
     up.Forw(tGelu, norm.out, up_out, &relu);
     relu.Forw(tGelu, up_out);
     tGelu->Print("ffn.up+gelu", 0, dump_flag, latent);
-    hGTensor down_out = GTensor::delta;  // remater_ffn ? GTensor::tmpFF1 : down.out;
+    hGTensor down_out = gBUFF->delta;  
     // PrintTensor<floatX>("ffn.norm",ToX(norm.out),true,B,T,C,1,-1);          PrintTensor<floatX>("ff1",ff1,true,B,T,latent,1,-1);
     down.Forw(down_out, tGelu, nullptr, nullptr, isSymmetric);
     down_out->Print("ffn.down", 0, dump_flag, nToken * C);  // PrintTensor<floatX>("ffn",scratch,true,B,T,C);
     if (!hFish->isRemater()) {
-        residual_forward(ToX(out), ToX(GTensor::residual), ToX(down_out), nToken * C, main_stream);
+        residual_forward(ToX(out), ToX(gBUFF->residual), ToX(down_out), nToken * C, main_stream);
         if (fuseNorm != nullptr) {
             return fuseNorm->cuFlow(out);
             // layernorm_forward(ToX(fuseNorm->out), TO<float>(fuseNorm->mean),TO<float>(fuseNorm->rstd), ToX(out),ToX(fuseNorm->w), ToX0(fuseNorm->b), B*T,
@@ -540,13 +540,13 @@ void CU_set(const char* title, T* dst, int n1, int n2, int n3 = 1, int n4 = 1, i
 
 //  hIn = QKV->out
 hGTensor FFN::cuFlow(hGTensor hIn, int flag) {
-    hGTensor tGelu = GTensor::scratch, up_out = remater_ffn ? GTensor::tmpFF1 : up.out;
+    hGTensor tGelu = gBUFF->scratch, up_out = remater_ffn ? gBUFF->tmpFF1 : up.out;
     bool isBias = up.b != nullptr;
 
     if (isForward()) {
         inp = OnInput(hIn);
         // inp->Print("ffn.in", 0, dump_flag, B * T * C);
-        GTensor::residual = inp;  // GTensor::residual->OverWrite(inp);          //
+        gBUFF->residual = inp;  // gBUFF->residual->OverWrite(inp);          //
         if (fuseNorm == nullptr) {
             norm.w->Print("ffn.norm.w", 0, dump_flag, C);
             norm.cuFlow(inp);
@@ -560,13 +560,13 @@ hGTensor FFN::cuFlow(hGTensor hIn, int flag) {
         up_out->Print("ffn.up", 0, dump_flag, latent);
         relu.Forw(tGelu, up_out);
 
-        hGTensor down_out = GTensor::delta;  // remater_ffn ? GTensor::tmpFF1 : down.out;
+        hGTensor down_out = gBUFF->delta;  
 
         down.Forw(down_out, tGelu, nullptr, nullptr, isSymmetric);
         down_out->Print("ffn.down", 0, dump_flag, B * T * C);  // PrintTensor<floatX>("ffn",scratch,true,B,T,C);
         // GTensor::tZ->Print(GTensor::tZ->name, 0, dump_flag);
         if (!hFish->isRemater()) {
-            residual_forward(ToX(out), ToX(GTensor::residual), ToX(down_out), B * T * C, main_stream);
+            residual_forward(ToX(out), ToX(gBUFF->residual), ToX(down_out), B * T * C, main_stream);
             if (fuseNorm != nullptr) {
                 return fuseNorm->cuFlow(out);
                 // layernorm_forward(ToX(fuseNorm->out), TO<float>(fuseNorm->mean),TO<float>(fuseNorm->rstd), ToX(out),ToX(fuseNorm->w), ToX0(fuseNorm->b), B*T,
@@ -579,7 +579,7 @@ hGTensor FFN::cuFlow(hGTensor hIn, int flag) {
         }
     } else {
         SelfAttention* lastQKV = hFish->GetNeuron<SelfAttention>("SelfAttention", layid - 1);
-        assert(hIn == GTensor::delta);
+        assert(hIn == gBUFF->delta);
         // norm.out->Print("ffn.norm", 0, dump_flag);
         if (remater_ffn) {
             up.Forw(up_out, norm.out);  // up.Forw(tGelu, norm.out, up_out, &relu);
@@ -589,38 +589,38 @@ hGTensor FFN::cuFlow(hGTensor hIn, int flag) {
             relu.Forw(tGelu, up_out);
         }
         INSPECT inspect(this);
-        GTensor::delta->Print("ffn.down.delta", 0, dump_flag);
-        down.Back(GTensor::bt4c, tGelu, GTensor::delta, up_out);
-        // CU_set<nv_bfloat16>("dSwigLU", ToX(GTensor::bt4c), B, T, latent, 1, dump_flag);
-        GTensor::bt4c->Print("dSwigLU", 0, dump_flag, B * T * latent);
+        gBUFF->delta->Print("ffn.down.delta", 0, dump_flag);
+        down.Back(gBUFF->bt4c, tGelu, gBUFF->delta, up_out);
+        // CU_set<nv_bfloat16>("dSwigLU", ToX(gBUFF->bt4c), B, T, latent, 1, dump_flag);
+        gBUFF->bt4c->Print("dSwigLU", 0, dump_flag, B * T * latent);
         // up_out->Print("ffn.up", 0, dump_flag, B * T * latent);
         assert(!relu.Empty());
         if (!gate.Empty()) {  // ugly code, need refactor!
             gate.Forw(tGelu, norm.out, nullptr);
             // tGelu->Print("swig.gate", 0, -1, latent);
         }
-        relu.Back(GTensor::bt4c, up_out);
+        relu.Back(gBUFF->bt4c, up_out);
         // hGensor tmpDelta = GTensor::FromBuffer();
-        up.Back(GTensor::tmpDelta, norm.out, GTensor::bt4c, nullptr);
+        up.Back(gBUFF->tmpDelta, norm.out, gBUFF->bt4c, nullptr);
         if (!gate.Empty()) {
-            gate.Back(GTensor::tmpDelta, norm.out, gate.delta, nullptr, true);
+            gate.Back(gBUFF->tmpDelta, norm.out, gate.delta, nullptr, true);
         }
-        GTensor::tmpDelta->Print("norm.delta", 0, dump_flag);
+        gBUFF->tmpDelta->Print("norm.delta", 0, dump_flag);
         // // layernorm backward does += to the dresidual, so it correctly accumulates grad from the MLP block above
         // norm.cuFlow(residual,scratchF,tmpDelta);
         float* _mean = norm.mean == nullptr ? nullptr : TO<float>(norm.mean);
-        layernorm_backward(ToX(GTensor::delta), ToG(norm.w), ToG0(norm.b), (float*)GTensor::buff, ToX(GTensor::tmpDelta), ToX(inp), ToX(norm.w), _mean,
+        layernorm_backward(ToX(gBUFF->delta), ToG(norm.w), ToG0(norm.b), (float*)GTensor::buff, ToX(gBUFF->tmpDelta), ToX(inp), ToX(norm.w), _mean,
                            TO<float>(norm.rstd), B, T, C, main_stream);
         if (dump_flag == -1) {  //    only for debug
-            GTensor::tmpDelta->Print("deltaIn", 0, dump_flag);
+            gBUFF->tmpDelta->Print("deltaIn", 0, dump_flag);
             inp->Print("ffn.norm.inp", 0, dump_flag);
             norm.w->Print("ffn.norm.w", 1, dump_flag);
-            GTensor::delta->Print("back of ffn0", 0, dump_flag);
+            gBUFF->delta->Print("back of ffn0", 0, dump_flag);
             lastQKV->Q.w->Print("Qw1", 1, dump_flag);  //  0x7ffe5bc00000
             dump_flag = 0;
         }
-        // CU_set<nv_bfloat16>("delta", ToX(GTensor::delta), B, T, C, 1, dump_flag);
-        return GTensor::delta;
+        // CU_set<nv_bfloat16>("delta", ToX(gBUFF->delta), B, T, C, 1, dump_flag);
+        return gBUFF->delta;
     }
     return nullptr;
 }

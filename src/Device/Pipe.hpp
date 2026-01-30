@@ -83,7 +83,7 @@ struct PIPE_Adamw : public PIPE_Optimizer {
             assert(tensor->isWMAT());  // only for 2D weight
             learning_rate *= 3;  //  1-bit models often exhibit greater training stability compared to their full-precision counterparts, allowing for more
                                  //  aggressive initial learning steps.
-            paramX = ToX(GTensor::tmpTernary);
+            paramX = ToX(gBUFF->tmpTernary);
             gama_T = tensor->gama_T();
         }
         tpQuant = tensor->tpQuant;
@@ -141,11 +141,11 @@ struct KERNEL_PIPE : public MODEL_CARD {
     CoopLayer<void>* cLayers = nullptr;
     int layNo                = -1;
     hFISH hFish              = nullptr;
-    hGensor out_weight = nullptr;
-    //  inpL = GTensor::outL->Partial("inpL", 0, {dim, 1, 1})
+    hGensor out_weight       = nullptr;
+    //  inpL = gBUFF->outL->Partial("inpL", 0, {dim, 1, 1})
     hGensor inpL = nullptr;
-    float* att = nullptr;  // buffer for scores/attention values (N_HEADS, seq_len)
-    //T *att = nullptr;     nearly same as float*att !
+    float* att   = nullptr;  // buffer for scores/attention values (N_HEADS, seq_len)
+    // T *att = nullptr;     nearly same as float*att !
     T *x = nullptr, *xb = nullptr, *xb2 = nullptr, *q = nullptr, *k = nullptr, *v = nullptr, *exp = nullptr;
     T *hb = nullptr, *hb2 = nullptr, *he = nullptr;
     T* xlogit = nullptr;
@@ -182,10 +182,10 @@ struct KERNEL_PIPE : public MODEL_CARD {
         size_t nzTmp  = 0;
         typNUMBER tpD = typNUMBER::BF16;  // TYPE_<T>();
         if (tX == nullptr) {
-            //  GTensor::outL->ReShape({dim * 16 + vocab_size}, tpD);
-            tX = GTensor::outL;
-        }        
-        x    = TO<T>(tX);
+            //  gBUFF->outL->ReShape({dim * 16 + vocab_size}, tpD);
+            tX = gBUFF->outL;
+        }
+        x = TO<T>(tX);
 
         inpL = tX->Partial("inpL", 0, {dim, 1, 1});  //  ->Partial("partialZ", nZ, {dB, T, C}), subDelta = delta->Partial("partialDeltaZ", nZ, {dB, T, C});
         if (DEBUG.T_cpu) {
@@ -200,10 +200,10 @@ struct KERNEL_PIPE : public MODEL_CARD {
         } else {
             xb = x + dim, xb2 = xb + dim;
             hb = xb2 + dim, hb2 = hb + hb_dim;
-            q      = hb2 + hb_dim;
-            att    = (float*)(q + q_dim);  //  hard-code
+            q   = hb2 + hb_dim;
+            att = (float*)(q + q_dim);  //  hard-code
             // xlogit = (T*)(att + dim);
-            nzTmp  = (char*)(att + n_heads * seq_len) - (char*)x;
+            nzTmp = (char*)(att + n_heads * seq_len) - (char*)x;
         }
         assert(tX->nByte() >= nzTmp);
         tX->Zero();
@@ -238,10 +238,10 @@ struct KERNEL_PIPE : public MODEL_CARD {
 
     virtual ~KERNEL_PIPE() { delete[] cLayers; }
 
-    static hGTensor tX;  // GTensor::outL;
+    static hGTensor tX;  // gBUFF->outL;
     uint64_t bw;
     uint64_t* perfstats = nullptr;  //	"CUDA_INJECTION64_PATH"
-    hKVCache hCache = nullptr;
+    hKVCache hCache     = nullptr;
     // KVT* key_cache = nullptr;
     // KVT* val_cache = nullptr;
     //  dim=config.nEmbed();
@@ -262,8 +262,8 @@ struct KERNEL_PIPE : public MODEL_CARD {
         cLayers[l].rms_att_weight = TO<float>(QKV->norm.w);  // weights->rms_att_weight[l];
         cLayers[l].wq = ToX(QKV->Q.w), cLayers[l].wk = ToX(QKV->K.w), cLayers[l].wv = ToX(QKV->V.w);
         cLayers[l].wq_norm = ToX(QKV->normQ.w), cLayers[l].wk_norm = ToX(QKV->normK.w);
-        cLayers[l].wo   = ToX(QKV->proj_cat.w);  
-        cLayers[l].bqkv = ToX0(QKV->bqkv);       
+        cLayers[l].wo   = ToX(QKV->proj_cat.w);
+        cLayers[l].bqkv = ToX0(QKV->bqkv);
         FFN* ffn        = hFish->GetNeuron<FFN>("FFN", l);
         // ffn->BeforeMing(hRLS, nullptr);
         cLayers[l].rms_ffn_weight = TO<float>(ffn->norm.w);  // weights->rms_ffn_weight[l];
@@ -290,6 +290,6 @@ struct KERNEL_PIPE : public MODEL_CARD {
     }
 };
 
-// typedef KERNEL_PIPE<bf16, bf16, bf16> QWEN3_PIPE;  
-typedef KERNEL_PIPE<floatX, floatX, floatX> QWEN3_PIPE;  
+// typedef KERNEL_PIPE<bf16, bf16, bf16> QWEN3_PIPE;
+typedef KERNEL_PIPE<floatX, floatX, floatX> QWEN3_PIPE;
 typedef KERNEL_PIPE<float, bf16, __nv_fp8_e5m2> QWEN_CALM_PIPE;

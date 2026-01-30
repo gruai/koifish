@@ -523,7 +523,7 @@ class SelfAttention : public SparseNeuron {
 
     std::shared_ptr<KVCache> hCache = nullptr;
 
-    hGensor attn_k = nullptr, attn_q = nullptr, tmpQKV = nullptr;
+    hGensor attn_k = nullptr, attn_q = nullptr; // tmpQKV = nullptr;
     // int n_rot=-1;
     // hGensor W_rope(void *ctx ,hGensor cur,hGensor w,hGensor KQ_pos,SHAPE shape,const string&shortcut,int flag=0x0);
     hGensor MyAttention(RLS_BP* ctx_, hGensor inpL, int flag);
@@ -553,6 +553,9 @@ class SelfAttention : public SparseNeuron {
     // SLP qkv;
     SelfAttention() {}
     SelfAttention(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
+    virtual ~SelfAttention() {
+        attn_k = nullptr, attn_q = nullptr;
+    }
     bool Build(int flag) override;
 
     std::vector<GeNeuron*> SubNeurons(int flag = 0x0) override;

@@ -480,15 +480,17 @@ from https://github.com/KellerJordan/Muon/blob/master/muon.py
 */
 template <typename Tp, typename Tmv>
 void PIPE_Muon<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
-    if (this->name == "model.blk.11.ffn_down.weight") {
-        // int debug = 0;   only for debug
-    }
-    int64_t m = this->ne[0], n = this->ne[1];
+    if (this->name == "model.layers.6.self_attn.q_proj.weight") {  //"model.layers.6.self_attn.q_proj.weight"
+        DEBUG_HERE;
+    }    
     bool isAdamw_ = muon.isAdamW(this->tensor);
     if (isAdamw_) {
         PIPE_Adamw<Tp, Tmv>::CU_core(stream, flag);
         return;
     }
+
+    // int64_t m = this->ne[0], n = this->ne[1];
+    int64_t m = this->ne[1], n = this->ne[0];
     float alpha = 1.0f, zero = 0.f, one = 1.0f;
     double xNrm = 0;  // to reduce Non-Determinism in CUDA Sums!
     int dT4B = 512, dGRID = CEIL_DIV(this->num_parameters, dT4B), dump_flag = 0;
@@ -595,10 +597,10 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
                 }
             } else {  //  ADAMw
                 CU_adamw_p_v0<<<dGRID, dT4B, 0, stream>>>(*this);
-                // assert(dT4B%typ128::size==0);       dT4B /= typ128::size;       
+                // assert(dT4B%typ128::size==0);       dT4B /= typ128::size;
                 // CU_adamw_p<<<dGRID, dT4B, 0, stream>>>(*this);
             }
-            D2e(arrNorm, tensor->wnorm, 0x0),            assert(isValidF(&(tensor->wnorm)));
+            D2e(arrNorm, tensor->wnorm, 0x0), assert(isValidF(&(tensor->wnorm)));
             tensor->wnorm = sqrt(tensor->wnorm);
             // tensor->Mutation();        //  need more test
         }

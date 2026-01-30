@@ -542,7 +542,7 @@ void Optimizer::CheckExitSearch(int t, int flag) {
     if (isExit) {
         trainInfos().SaveToCSV("_info_.csv");
         // release more resource here
-        exit(KOIFISH_EXIT_DEBUG);
+        K_EXIT(KOIFISH_EXIT_DEBUG);
     }
 }
 /*
@@ -597,7 +597,7 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGensor loss_, hGensor target_, C
         _fish->SetPhase(LIFE_PHASE::P_TRAIN);
         if (!BatchGrad(iter, a, 0x0))
             return CANCEL;
-        // if(t==1)    exit(KOIFISH_EXIT_DEBUG);
+        // if(t==1)    K_EXIT(KOIFISH_EXIT_DEBUG);
 
         SignStochastic(nParams, config);
         if (_fish->config.scheduling.isUpdateParamV0()) {
@@ -692,7 +692,7 @@ bool Optimizer::Evaluate(int type, int flag) {
             val_loss = vl->Evaluate(SAMPLEofSHARD, 0x0);
         }
     }
-    // exit(KOIFISH_EXIT_DEBUG);
+    // K_EXIT(KOIFISH_EXIT_DEBUG);
 
     // if (config.common.gpt_every > 0 && t % config.common.gpt_every == 0) {
     //     _fish->GenSentence(1);
@@ -899,8 +899,8 @@ bool MUON_params_::isAdamW(void* hUserData, int flag) {
     //     return false;        //only for debug
     // }else
     //     return true;
-    if (m <= n)  // m <= n
-        return false;
+    // if (m >= n)  // m <= n
+    return false;
     return true;
 }
 
@@ -1105,8 +1105,7 @@ OPT_Adam::OPT_Adam(NLP_AutoRegressive* g_, CLI_params& params_, int flag) : Opti
 void Optimizer::Dump(int typ) {
     if (NOT_DUMP(1))
         return;
-
-    SUM::MemoryInfo(0x0);
+    _fish->memBuffer->Dump(0x0);
 
     auto train_params = TrainParams();
     _INFO("======== nEopch=%d most_iter=%d\n", train_params.n_epochs, train_params.nMostIter);  //,train_params.nEpochIter

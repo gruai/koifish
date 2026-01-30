@@ -20,9 +20,10 @@ void PIPE_Muon<Tp, Tmv>::Update(GTensor* tensor_, float wd, float _grad_scale, u
         assert(this->learning_rate == this->hOPT->LearningRate());
     } else {
         this->learning_rate *= muon.lr_scale;  // automatic learning rate transfer
-        int64_t m = this->ne[0], n = this->ne[1];
+        // int64_t m = this->ne[0], n = this->ne[1];
+        int64_t m = this->ne[1], n = this->ne[0];
         isTrans = m > n && muon.isTransDown; 
-        // isTrans = false;
+        isTrans = false;
         switch(muon.tpDecay){
         case 0:
             this->weight_decay = 0;

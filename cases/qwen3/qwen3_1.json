@@ -1,0 +1,99 @@
+{        
+    "version":"0.1.0",     
+    "# quantizer":{
+        "self_attn": {"bits":3},
+        "mlp":  {"bits":4},
+        "embed_tokens": {"bits":4},
+        "#MINI":"off"
+    },    
+    "model":{   
+        "#hf-card":"/home/cys/rnd/lic/Models/Qwen3-0.6B/",
+        "fuyou":{
+            "branch":7, "switch":100,
+            "#method":["pso","mix","ga","pso_ga"],
+            "method":"pso_ga",
+            "crossover":0.6, "mutation":0.001, "social":2
+        },
+        "arch":"QWEN3",
+        "parameter":{
+            "Layer": 28,  
+            "transformer":  {
+                "Ctx":1024,     "Embed":  1024,     "Ffn":3072,
+                "Head": 16,     "KVHead": 8,        "head_dim": 128          
+            },
+            "max_pos_embeddings": 32768
+        },
+        "backbone": {
+            "embed_tokens": {
+                "Embedding": []
+            },
+            "layer": {
+                "self_attn": {
+                    "QKV": []
+                },
+                "mlp": {
+                    "FFN": []
+                },
+                "# gattn": {
+                    "GAU": []
+                }
+            },
+            "norm": {
+                "Normal": []
+            },
+            "output": {
+                "CLASIFY": []
+            }
+        }
+    },
+    
+    "train": {
+        "dump-every":10,
+        
+        "gpt-every":-10,
+        "epoch":1,
+        "batch":8,
+        "learning-rate":0.0006, 
+
+        "optimizatioin":{
+            "#method":"adamw sgdv hsgd sgd muon",
+            "method":"muon",
+            "sign":0,
+            "grad_accumulation":1,
+            "lars_ratio":0,      "ZMUV_ratio":0.00    
+        }              
+    },  
+    "datasets":{
+        "train": {
+            "glob": "./Datasets/climb-1b/*train*.bin",
+            "most": 50,
+            "name": "climb"
+        }
+    },
+    "debug": {
+        "prompts": [
+            "hello",
+            "What is the capital of Shanghai?",
+            "Who wrote the play Romeo and Juliet?",
+            "In which year did the Titanic sink?",
+            "What is the chemical symbol for the element gold?",
+            "What is the longest river in the world?",
+            "Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?",
+            "How many games did Arsenal FC go unbeaten during the 2003-2004 season of the English Premier League",
+            "I get out on the top floor (third floor) at street level. How many stories is the building above the ground?",
+            "天命玄鸟,降而生生. 玄鸟是什么鸟?"
+        ],
+        "#prompts": [
+            "hello"
+        ],
+        "most_iter": 181,
+        "eval_samp": 0.04,
+        "#long_tail": 10
+    },
+    "dump": {
+        "train_time": 0,
+        "# tensor_ref": 1,
+        "most_mem_item": 6
+    },    
+    "seed": 42
+}

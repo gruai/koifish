@@ -87,7 +87,7 @@ float* T_generate_Cooperative(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned
 
     // PrintTensor<float>("x_0",args.x,true,dim,1);	uint32_t,__nv_fp8_e5m2,float
 
-    hGensor cur = GTensor::outL, residual = nullptr;
+    hGensor cur = gBUFF->outL, residual = nullptr;
     for (int l = 0; l < args.n_layers; ++l) {
         args.InitLayer(l);
         SelfAttention* QKV                = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
@@ -233,7 +233,7 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
         hQwen->InitLayer(l);
         const CoopLayer<QWEN3_PIPE::tpWeight>* L = (const CoopLayer<QWEN3_PIPE::tpWeight>*)(hQwen->cLayers + l);  //	hQwen->cLayers+l
         SelfAttention* QKV                       = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
-        if (DEBUG.verInferQKV > 0) {  
+        if (DEBUG.verInferQKV > 0) {
             INSPECT inspect(QKV);
             QKV->cuInfer(hQwen->inpL, 0x0);
         } else {
@@ -318,7 +318,7 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
         PrintTensor<AT>("x_ffn", hQwen->x, true, dim, 1, 1, 1, 0);
         // hQwen->AfterLayer(l);
         if (l > DEBUG.T_generate_most_layer)
-            exit(KOIFISH_EXIT_DEBUG);
+            K_EXIT(KOIFISH_EXIT_DEBUG);
     }
     if (isOnlyUpdateKV) {
         return NULL;
@@ -326,8 +326,8 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
 
     // 11. final RMSNorm
     // in-place operation on hQwen->x
-    floatX* rms_final_weight = TO<floatX>(lnf->w);  // (dim,);
-    CU_rms_infer(hQwen->x, hQwen->x, rms_final_weight, hQwen->dim);     // last layer normal
+    floatX* rms_final_weight = TO<floatX>(lnf->w);                   // (dim,);
+    CU_rms_infer(hQwen->x, hQwen->x, rms_final_weight, hQwen->dim);  // last layer normal
     // 12. classifier Matmul
     if (1) {
         INSPECT inspect(cls);

@@ -11,6 +11,7 @@
 #include "../CLI_params.hpp"
 #include "../Utils/GST_obj.hpp"
 
+// Abstract class of file serialization
 class FSerial {
     FILE* _stream = NULL;
     bool _valid   = false;

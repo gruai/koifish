@@ -831,7 +831,7 @@ std::string GeneratOnPrompt::T2STR(TOKEN_ID tok, int flag) {
     NLP_AutoRegressive* dolphin = dynamic_cast<NLP_AutoRegressive*>(fish_1);
     std::string token_str;
     if (dolphin != nullptr)
-        token_str = dolphin->hDictVAE->T2STR(tok);
+        token_str = dolphin->hDict->T2STR(tok);
     else {
         token_str = wikis[0]->T2STR(tok);
     }

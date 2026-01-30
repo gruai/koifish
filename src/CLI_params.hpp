@@ -181,6 +181,9 @@ struct Fuyou_params {
     int nBranch = -1;
     int nWarmup(int flag = 0x0);
     // int tpParamResident = 0;  //  0-      1-
+    bool isON() {
+        return nBranch>0;
+    }
     bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
     bool InitSection(int nLayer, int nLS, int nSwitch = 100, int flag = 0x0);
     bool isFirst(int layer, int flag = 0x0);
@@ -584,7 +587,11 @@ struct CheckPoint_Params {
         STATE,  //  Has all parameters & its moments
         BEST,   //  Only has parameters of best fuyou
         FULL,   //  Has parameters of all fuyou
-        HF,     //   HugFace transformers compatible,
+
+    };
+    enum FORMAT {
+        HF,  //   HugFace transformers compatible,
+        KOIFISH,
     };
 
     int curEpoch = -1, curIter = -1, curFuyou = -1;
@@ -595,8 +602,9 @@ struct CheckPoint_Params {
     std::map<std::string, double> variabls;
 
     TYPE type       = BEST;
+    FORMAT format   = KOIFISH;
     int iter        = -1;
-    void* hUserData = nullptr;
+    void* hAllST = nullptr;
     CheckPoint_Params() {}
     CheckPoint_Params(const JSON& jConfig, const std::string& key, bool isSave, int flag = 0x0);
     // CheckPoint_Params(const std::string& tp, const std::string& p, int x, bool in = false);
@@ -621,13 +629,11 @@ static std::map<CheckPoint_Params::TYPE, std::string> CKP_ext = {
     {CheckPoint_Params::STATE, "ckp"},
     {CheckPoint_Params::BEST, "fish"},
     {CheckPoint_Params::FULL, "fish"},
-    {CheckPoint_Params::HF, "safetensors"},
 };
 static std::map<CheckPoint_Params::TYPE, std::string> CKP_desc = {
     {CheckPoint_Params::STATE, "state"},
     {CheckPoint_Params::BEST, "best"},
     {CheckPoint_Params::FULL, "full"},
-    {CheckPoint_Params::HF, "hf-transformers"},
 };
 
 struct CLI_params {
@@ -638,6 +644,7 @@ struct CLI_params {
 
     std::vector<CheckPoint_Params> ckp_in, ckp_out;
     CheckPoint_Params state;
+    void InitAllStates(int flag);
 
     DUMP_SWITCH dumpSwitch;
 
@@ -691,7 +698,7 @@ struct CLI_params {
     bool isShareLayerOut() const;
     std::string jsPath = "";
     JSON jConfig;
-    nlohmann::ordered_json jModel,jBackBone;
+    nlohmann::ordered_json jModel, jBackBone;
     JSON jQuant, jVendorQuant;
 
     MODEL_ARCH ModelArch();

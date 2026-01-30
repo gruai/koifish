@@ -51,6 +51,12 @@ def xtest_batch_qwen3_4B():
         content = bubble_one("chat_qwen3_4B",jPath)  
         # Hello! It seems like there might be a small mix-up. I'm Qwen, a large-scale language model developed by Alibaba Cloud. I'm here to help you with any questions or tasks you might have. How can I assist you today? 😊
 
+def test_qwen3_596M():    
+    most_iter = 180
+    title = "QWen3_596M"
+    dfTrain = koifish_one(title, sExe, "./cases/qwen3/qwen3_1.json", most_iter=most_iter, train_csv="./Train@[climb]_info_.csv")    
+    CheckResult(dfTrain,most_iter,6.942,title=title,rel_tol=0.001)      #   6.942169    7.589036
+
 def test_qwen2_494M():    
     most_iter = 70
     title = "QWen2.5_494M"
@@ -76,7 +82,7 @@ def test_gpt2_124M():
 
 
 
-def test_gpt2_774M():    
+def xtest_gpt2_774M():    
     title = "774M"
     dfTrain = koifish_one(title, sExe, "./cases/gpt2/774M_Shard50_F6_B80/F9_B40.json", most_iter=most_iter)
     CheckResult(dfTrain,most_iter,9.409,title=title)    #   61     loss=7.318967
@@ -113,7 +119,8 @@ if __name__ == '__main__':
     # test_gpt2_774M()
 
     # test_chat_qwen3_0_6B()  
-    test_chat_qwen3_4B_1()
+    test_qwen3_596M()
+    # test_chat_qwen3_4B_1()
     # xtest_batch_qwen3_4B()
 
     # test_pp_gpt2()

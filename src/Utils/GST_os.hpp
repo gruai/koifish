@@ -2,7 +2,7 @@
  *  SPDX-FileCopyrightText: 2019-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
- *  \brief GRUS SPARSE TEMPLATE	- OS/System Utility
+ *  \brief GRUSOFT TEMPLATE	- OS/System Utility
  *  \author Yingshi Chen
  */
 
@@ -26,7 +26,7 @@
 #pragma comment(lib, "Ws2_32.lib")  // Link Ws2_32.lib for socket functions
 #include <winsock2.h>
 #endif
-extern inline void create_dir_if_not_exists(const char *dir) {
+extern inline void create_dir_if_not_exists(const char* dir) {
     if (dir == NULL) {
         return;
     }
@@ -47,20 +47,20 @@ extern inline const std::string DATE(int fmt = 0x0) {
     char buf[80];
     tstruct = *localtime(&now);
     // Visit http://en.cppreference.com/w/cpp/chrono/c/strftime for more information about date/time format
-    switch(fmt){
-    case 100:
-        strftime(buf, sizeof(buf), "%Y-%m-%d", &tstruct);
-        break;
-    default:
-        strftime(buf, sizeof(buf), "\"%Y-%m-%d.%X\"", &tstruct);
-        break;
+    switch (fmt) {
+        case 100:
+            strftime(buf, sizeof(buf), "%Y-%m-%d", &tstruct);
+            break;
+        default:
+            strftime(buf, sizeof(buf), "\"%Y-%m-%d.%X\"", &tstruct);
+            break;
     }
-    
+
     std::string sDate = buf;
     // sDate             = "" + sDate + "";
     return sDate;
 }
 
-void GRUAI_KOIFISH_VERSION(char *str,int flag);
+void GRUAI_KOIFISH_VERSION(char* str, int flag);
 
 #define cDATE DATE().c_str()

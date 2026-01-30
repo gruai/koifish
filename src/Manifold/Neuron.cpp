@@ -139,8 +139,8 @@ void GeNeuron::Init(Fish* hG_, int flag) {
 
     dump_flag = 0;
 #ifndef NDEBUG
-    if (hG_->isTrain())
-        dev_window = std::make_shared<huTensor>(hG_, "dev_window", SHAPE{CU_DEV_WINDOW}, typNUMBER::U8, true, GTensor::F_DEBUG);
+    // if (hG_->isTrain())
+    //     dev_window = std::make_shared<huTensor>(hG_, name+"_window", SHAPE{CU_DEV_WINDOW}, typNUMBER::U8, true, GTensor::F_DEBUG);
 #endif
 }
 void GeNeuron::SetRefer(const GeNeuron* src, bool isBias, int flag) {
@@ -305,11 +305,11 @@ bool OutCLS::BuildPrelogist(int flag) {
         // preLogits->flags |= GTensor::F_HOSTDATA;
         preLogits->Alloc(0x0, flag);
     } else {
-        // size_t nz = std::max(GTensor::scratch->size(),(size_t)dB*T*padded_nCls);        assert(nz<INT_MAX);
+        // size_t nz = std::max(gBUFF->scratch->size(),(size_t)dB*T*padded_nCls);        assert(nz<INT_MAX);
         // sp3 = {(int)nz};
         preLogits = std::make_shared<huTensor>(hFish, "preLogits", sp3, tpL, true);
     }
-    preLogits->host_data = new float[padded_nCls];  //always allocate this!
+    preLogits->host_data = new float[padded_nCls];  // always allocate this!
 
     GTensor::buff = preLogits->data;  // reused in many place!
     assert(GTensor::buff != nullptr);
@@ -318,10 +318,10 @@ bool OutCLS::BuildPrelogist(int flag) {
     if (hFish->config.model.isQKNormal) {
         size_t offset = 0x0;
         int q_dim = hFish->config.Q_dim(), kv_dim = hFish->config.KV_dim();
-        GTensor::tmpQout       = GT(hFish, tpA, {B, T, q_dim});
-        GTensor::tmpQout->data = (hBITARR)GTensor::buff + offset, offset += GTensor::tmpQout->nByte();
-        GTensor::tmpKout       = GT(hFish, tpA, {B, T, kv_dim});
-        GTensor::tmpKout->data = (hBITARR)GTensor::buff + offset, offset += GTensor::tmpKout->nByte();
+        gBUFF->tmpQout       = GT(hFish, tpA, {B, T, q_dim});
+        gBUFF->tmpQout->data = (hBITARR)GTensor::buff + offset, offset += gBUFF->tmpQout->nByte();
+        gBUFF->tmpKout       = GT(hFish, tpA, {B, T, kv_dim});
+        gBUFF->tmpKout->data = (hBITARR)GTensor::buff + offset, offset += gBUFF->tmpKout->nByte();
         assert(offset <= GTensor::buff_len);
     }
     return true;
@@ -345,12 +345,12 @@ bool OutCLS::Build(int flag) {
     out                 = std::make_shared<huTensor>(hFish, "loss", sp2, typNUMBER::F32, false);
     BIT_SET(out->flags, GTensor::F_LOSS);
 
-    delta = GTensor::bt4c;  // !=GTensor::delta
+    delta = gBUFF->bt4c;  // !=gBUFF->delta
 
     // hFish->InitGensor(nullptr,"loss",out,false);
     hFish->loss = out;  //
     // proj.B = dB;
-    proj.BuildX(name, {shape[0], shape[1]}, hFish, flag | F_DELTA);
+    proj.BuildX(name, {shape[1], shape[0]}, hFish, flag | F_DELTA);
     proj.b = nullptr, proj.B = dB;
     // proj.InitCompression(COMPRESSIVE_SENSING::LORA);     //Very large gradient ,so strange!
 
@@ -409,16 +409,20 @@ SLP::SLP(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag)
 }
 
 bool SLP::Build(int flag) {
-    // delta  = GTensor::delta;
+    // delta  = gBUFF->delta;
     isBias = hFish->config.model.isSLPBias || BIT_TEST(flag, F_BIAS);
 
     void* ctx        = hFish->GetGGCTX();
     typNUMBER tpData = tpWeight;
     int bFlag        = 0x0;
-    nIn = shape[0], nOut = shape[1];
+    // nIn = shape[0], nOut = shape[1];
+    //  Storing weight matrices in a transposed form (e.g., as W^Tinstead of W)!
+    //      is primarily driven by computational efficiency​ and optimizing memory access patterns​ for modern hardware. It is a common optimization in
+    //      frameworks like PyTorch and TensorFlow, not a quirk of LLMs specifically.
+    nIn = shape[1], nOut = shape[0];
     if (shape.size() == 2) {
         assert(shape[0] > 0 && shape[1] > 0);
-        w = GT(hFish, tpData, {nIn, nOut});
+        w = GT(hFish, tpData, {nOut, nIn});
         if (isBias)
             b = GT(hFish, tpData, {nOut});
     } else if (shape.size() == 4) {
@@ -441,12 +445,12 @@ bool SLP::Build(int flag) {
 
     if (b != nullptr)
         b->tpInit = INIT_WEIGHT::W_SKIP;
-    SHAPE s3 = {B, T, nOut}, s4 = {B, T, nIn};
-    out = std::make_shared<huTensor>(hFish, name + ".out", s3, tpData, false);
+    SHAPE s3 = {B, T, nOut};
+    out      = std::make_shared<huTensor>(hFish, name + ".out", s3, tpData, false);
     if (BIT_TEST(flag, F_DELTA)) {
-        delta = GTensor::delta;
+        delta = gBUFF->delta;
     } else {
-        delta = GTensor::gate_delta;
+        delta = gBUFF->gate_delta;
     }
     out->AddSrc({w, b});  //  wLORAs contain more!
     // hFish->InitGensor(ctx,so.c_str(),out,false);
@@ -644,13 +648,13 @@ bool ROPE::Build(int flag) {
                 sum2 += a * a + b * b;
             }
         }
-        hSin = GT(hFish, tpWeight, {max_pos * head_dim}, 0x0, name + ".sincos");
+        /*hSin = GT(hFish, tpWeight, {max_pos * head_dim}, 0x0, name + ".sincos");
         hSin->Alloc();
         hSin->SerialGP(fsin, nullptr, sizeof(floatX) * max_pos * head_dim, false);
         // hCos = GT(hFish, typNUMBER::F32, {T * dim2}, 0x0, name + ".cos");
         // hCos->Alloc();
         // hCos->SerialGP(fcos, nullptr, sizeof(float) * T * dim2, false);
-        hSin->Print("sincos", 0x0, 0x0);
+        hSin->Print("sincos", 0x0, 0x0);*/
         // hCos->Print("cos", 0x0, -1);
         delete[] fsin;
     }
@@ -709,7 +713,7 @@ LayerSoftmax::LayerSoftmax(Fish* hG_, const std::string& key_, JSON::const_itera
 }
 
 LayerNormal::LayerNormal(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
-    // delta = GTensor::delta;
+    // delta = gBUFF->delta;
     // isRMS = true;
     if (jvals.size() == 1) {
         shape = {(int)(jvals[0])};
@@ -725,7 +729,7 @@ LayerNormal::LayerNormal(Fish* hG_, const std::string& key_, JSON::const_iterato
 */
 bool LayerNormal::Build(int flag0) {
     rms_eps  = hFish->config.model.norm_rms_eps;
-    delta    = GTensor::delta;
+    delta    = gBUFF->delta;
     int flag = flag0 | GTensor::F_RESIDENT;
     if (hFish->arch == MODEL_ARCH::NLP_GPT2 || hFish->arch == MODEL_ARCH::NLP_GUPPY)
         isRMS = false;
@@ -825,7 +829,7 @@ hGensor GeNeuron::BeforeMing(RLS_BP* hRLS, hGensor cur, int flag) {
     DATA_PLACE old_place = place;
     if (hFish->isSymbolic()) {
         if (hFish->isRemater())
-            cudaHostAlloc(&host_inp, GTensor::outL->nByte(), 0);
+            cudaHostAlloc(&host_inp, gBUFF->outL->nByte(), 0);
     } else {
         // SYNC_DEVICE();
         double now = GST_ms();

@@ -404,10 +404,10 @@ bool InitCUDNN() {
     return true;
 }
 
-void destroy_cudnn() {
-    if (GTensor::cudnn_workspace != NULL) {
-        cudaCheck(cudaFree(GTensor::cudnn_workspace));
-    }
+void DestroyCUDNN() {
+    // if (GTensor::cudnn_workspace != NULL) {
+    //     cudaCheck(cudaFree(GTensor::cudnn_workspace));
+    // }
     cuDNNCheck(cudnnDestroy(cudnn_handle));
 }
 #endif
@@ -544,18 +544,6 @@ void SYNC_STREAM(int flag) {
 #endif
 }
 
-bool EDGE_DEVICES::ClearGPU(int flag) {
-    cudaCheck(cudaStreamDestroy(main_stream));
-    cublasCheck(cublasDestroy(cublas_handle));
-
-    cudaCheck(cudaFree(cublaslt_workspace));
-    cublasCheck(cublasLtDestroy(cublaslt_handle));
-#ifdef ENABLE_CUDNN
-    destroy_cudnn();
-#endif
-    return true;
-}
-
 hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
     assert(hCache != nullptr && isSeparateQKV);
     hBATCH hBatch = hFish->GetCurBatch(true);
@@ -565,13 +553,13 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
     // // hCache:   (layer, seq_len, kv_dim)
     floatX *key_cache = (floatX*)hCache->Get(KVCache::KV_KEY, layid - 1, 0), *val_cache = (floatX*)hCache->Get(KVCache::KV_VAL, layid - 1, 0);
     // K.out->data = key_cache + (size_t)pos * kv_dim, V.out->data = val_cache + (size_t)pos * kv_dim;
-
+    hGensor tmpQKV = gBUFF->tmpFF1;  
     floatX* qkvr = ToX(tmpQKV);  // Q.out/K.out/V.out
     int nToken = nBatchToken(), seq_len = hFish->config.n_ctx();
     inp = OnInput(inpL);  //  may remater by hIn->SerialData
     inp->Print("inp", 0x0, dump_flag);
-    GTensor::residual = inp;
-    hGTensor inpQ     = inpL;
+    gBUFF->residual = inp;
+    hGTensor inpQ   = inpL;
     if (fuseNorm == nullptr) {
         inpQ = norm.cuFlow(inpL);
         inpQ->Print("qkv.in", 0x0, dump_flag, nToken * C);
@@ -612,13 +600,13 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
     if (0)  // ShareLayerOut: inpL/out is same data
         CU_mv_(ToX(inpL), ToX(proj_cat.w), ToX(Q.out), C, q_dim, 1.0f, 1.0f);
     else {  //       From cuFlow
-        proj_cat.Forw(GTensor::scratch, Q.out);
-        GTensor::scratch->Print("proj_cat", 0x0, dump_flag, nToken * C);
+        proj_cat.Forw(gBUFF->scratch, Q.out);
+        gBUFF->scratch->Print("proj_cat", 0x0, dump_flag, nToken * C);
         // fused_residual_forward5(ouput, normed,mean,rstd, residual, scratch, ToX(fuseNorm->w), ToX0(fuseNorm->b), B*T, C, main_stream);
         if (!hFish->isRemater()) {
-            GTensor::residual->Print("residual", 0x0, dump_flag, nToken * C);
-            residual_forward(ToX(out), ToX(GTensor::residual), ToX(GTensor::scratch), nToken * C, main_stream);
-            assert (fuseNorm == nullptr && "Try fuse normal later..."); 
+            gBUFF->residual->Print("residual", 0x0, dump_flag, nToken * C);
+            residual_forward(ToX(out), ToX(gBUFF->residual), ToX(gBUFF->scratch), nToken * C, main_stream);
+            assert(fuseNorm == nullptr && "Try fuse normal later...");
             {
                 // float *mean = TO<float>(fuseNorm->mean), *rstd = TO<float>(fuseNorm->rstd);
                 // layernorm_forward(ToX(fuseNorm->out), mean, rstd, ToX(out), ToX(fuseNorm->w), ToX0(fuseNorm->b), nToken, 1, C, main_stream);
@@ -637,13 +625,14 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
 */
 hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
     // NVTX_RANGE_FN();
+    hGensor tmpQKV = gBUFF->tmpFF1;  
     floatX* qkvr = ToX(tmpQKV);  // Q.out/K.out/V.out
     // bool isAlternate = true;                   // layer%2==1;layer>1;
     if (isForward()) {  //  data=ToX(QKV->norm.out)
         NvtxRange range(name.c_str(), 0);
-        inp               = OnInput(inpL);  //         inp->Print("inp",0x0,dump_flag);
-        GTensor::residual = inp;            // GTensor::residual->OverWrite(inp);
-        hGTensor inpQ     = inpL;
+        inp             = OnInput(inpL);  //         inp->Print("inp",0x0,dump_flag);
+        gBUFF->residual = inp;            // gBUFF->residual->OverWrite(inp);
+        hGTensor inpQ   = inpL;
         if (fuseNorm == nullptr) {
             inpQ = norm.cuFlow(inpL);
             inpQ->Print("qkvn.in", 0x0, dump_flag);
@@ -671,14 +660,14 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
 #endif
         // GTensor::tZ->Print(GTensor::tZ->name, 0, dump_flag);
 
-        proj_cat.Forw(GTensor::scratch, attn);  // fuMM(scratch, ToX(attn), pw, pb, B, T, C, C, main_stream);
-        // GTensor::scratch->Print("proj_cat",0x0,dump_flag);
+        proj_cat.Forw(gBUFF->scratch, attn);  // fuMM(scratch, ToX(attn), pw, pb, B, T, C, C, main_stream);
+        // gBUFF->scratch->Print("proj_cat",0x0,dump_flag);
         // fused_residual_forward5(ouput, normed,mean,rstd, residual, scratch, ToX(fuseNorm->w), ToX0(fuseNorm->b), B*T, C, main_stream);
         if (!hFish->isRemater()) {
-            GTensor::scratch->Print("qkv.out", 0x0, dump_flag, B * T * C);
-            GTensor::residual->Print("residual", 0x0, dump_flag, B * T * C);
-            residual_forward(ToX(out), ToX(GTensor::residual), ToX(GTensor::scratch), B * T * C, main_stream);
-            assert (fuseNorm == nullptr && "Try fuse normal later...");
+            gBUFF->scratch->Print("qkv.out", 0x0, dump_flag, B * T * C);
+            gBUFF->residual->Print("residual", 0x0, dump_flag, B * T * C);
+            residual_forward(ToX(out), ToX(gBUFF->residual), ToX(gBUFF->scratch), B * T * C, main_stream);
+            assert(fuseNorm == nullptr && "Try fuse normal later...");
             // if (fuseNorm != nullptr) {
             //     float *mean = TO<float>(fuseNorm->mean), *rstd = TO<float>(fuseNorm->rstd);
             //     layernorm_forward(ToX(fuseNorm->out), mean, rstd, ToX(out), ToX(fuseNorm->w), ToX0(fuseNorm->b), B * T, 1, C, main_stream);
@@ -691,18 +680,18 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
         NvtxRange range(name.c_str(), 1);
         INSPECT_THIS;
         // Q.w->Print("Qw", 1, dump_flag);
-        assert(inpL == GTensor::delta);
+        assert(inpL == gBUFF->delta);
         delta->Print("delta", 0x0, dump_flag);
-        proj_cat.Back(GTensor::tmpDelta, attn, GTensor::delta, nullptr);
+        proj_cat.Back(gBUFF->tmpDelta, attn, gBUFF->delta, nullptr);
 
-        hGensor delta_qkv = GTensor::bt4c;
+        hGensor delta_qkv = gBUFF->bt4c;
         if (hFish->config.scheduling.strategy != MEM_STRATEGY::MEM_SWAP_GUOKE) {  //    remater_qkv
             hGTensor norm_out = norm.out;
             if (isSeparateQKV) {
                 Q.Forw(Q.out, norm_out), K.Forw(K.out, norm_out), V.Forw(V.out, norm_out);
-                if (GTensor::tmpQout != nullptr) {
-                    GTensor::tmpQout->OverWrite(Q.out);
-                    GTensor::tmpKout->OverWrite(K.out);
+                if (gBUFF->tmpQout != nullptr) {
+                    gBUFF->tmpQout->OverWrite(Q.out);
+                    gBUFF->tmpKout->OverWrite(K.out);
                 }
             } else {
                 Q.Forw(tmpQKV, norm_out);
@@ -710,17 +699,17 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
             if (rope != nullptr)
                 rope->cuFlow(this, rope_seed, true, F_REMATER);
         }
-        GTensor::tmpDelta->Print("delta_cat", 0x0, dump_flag);
+        gBUFF->tmpDelta->Print("delta_cat", 0x0, dump_flag);
 #ifdef ENABLE_CUDNN
-        FUSE_cudnn(ToX(delta_qkv), ToX(GTensor::tmpDelta), flag);
+        FUSE_cudnn(ToX(delta_qkv), ToX(gBUFF->tmpDelta), flag);
 #else
         assert(0);
 #endif
         // delta_qkv->Print("delta_qkv", 0x0, dump_flag, C);
         deltaQ->Print("deltaQ", 0x0, dump_flag, q_dim), deltaK->Print("deltaK", 0x0, dump_flag, kv_dim), deltaV->Print("deltaV", 0x0, dump_flag, kv_dim);
         if (rope != nullptr) {
-            if (GTensor::tmpQout != nullptr) {  //
-                Q.out->OverWrite(GTensor::tmpQout), K.out->OverWrite(GTensor::tmpKout);
+            if (gBUFF->tmpQout != nullptr) {  //
+                Q.out->OverWrite(gBUFF->tmpQout), K.out->OverWrite(gBUFF->tmpKout);
             } else if (rope->hnQ != nullptr) {
                 Q.Forw(Q.out, norm.out), K.Forw(K.out, norm.out);
             }
@@ -730,32 +719,31 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
         float* scratchF = (float*)GTensor::buff;
         if (isSeparateQKV) {
             // Q.w->Print("Qw", 0, dump_flag);  Q.b->Print("Qb", 0, dump_flag);   norm.out->Print("norm.out", 0, dump_flag);
-            Q.Back(GTensor::tmpDelta, norm.out, deltaQ, nullptr);
-            // matmul_backward(ToX(GTensor::tmpDelta), ToG(Q.w), ToG0(Q.b), (floatX*)devDeltaQ, ToX(norm.out), Q.w->GetDataX(), scratchF, B, T, Q.nOut, Q.nIn,
+            Q.Back(gBUFF->tmpDelta, norm.out, deltaQ, nullptr);
+            // matmul_backward(ToX(gBUFF->tmpDelta), ToG(Q.w), ToG0(Q.b), (floatX*)devDeltaQ, ToX(norm.out), Q.w->GetDataX(), scratchF, B, T, Q.nOut, Q.nIn,
             //                 main_stream, false, NULL, false);
-            // GTensor::tmpDelta->Print("delta_0", 0, dump_flag);
-            // K.Back(GTensor::tmpDelta, norm.out, deltaK, nullptr, true);
-            matmul_backward(ToX(GTensor::tmpDelta), ToG(K.w), ToG0(K.b), (floatX*)devDeltaK, ToX(norm.out), K.w->GetDataX(), scratchF, B, T, K.nIn, K.nOut,
+            // gBUFF->tmpDelta->Print("delta_0", 0, dump_flag);
+            // K.Back(gBUFF->tmpDelta, norm.out, deltaK, nullptr, true);
+            matmul_backward(ToX(gBUFF->tmpDelta), ToG(K.w), ToG0(K.b), (floatX*)devDeltaK, ToX(norm.out), K.w->GetDataX(), scratchF, B, T, K.nIn, K.nOut,
                             main_stream, false, NULL, true);
-            // GTensor::tmpDelta->Print("delta_1", 0, dump_flag);
+            // gBUFF->tmpDelta->Print("delta_1", 0, dump_flag);
             // K.w->Print("Kw", 1, dump_flag);
-            // V.Back(GTensor::tmpDelta, norm.out, deltaV, nullptr, true);
-            matmul_backward(ToX(GTensor::tmpDelta), ToG(V.w), ToG0(V.b), (floatX*)devDeltaV, ToX(norm.out), V.w->GetDataX(), scratchF, B, T, V.nIn, V.nOut,
+            // V.Back(gBUFF->tmpDelta, norm.out, deltaV, nullptr, true);
+            matmul_backward(ToX(gBUFF->tmpDelta), ToG(V.w), ToG0(V.b), (floatX*)devDeltaV, ToX(norm.out), V.w->GetDataX(), scratchF, B, T, V.nIn, V.nOut,
                             main_stream, false, NULL, true);
-            // GTensor::tmpDelta->Print("delta_2", 0, dump_flag);
+            // gBUFF->tmpDelta->Print("delta_2", 0, dump_flag);
             // V.w->Print("Vw", 1, dump_flag);
         } else {
-            matmul_backward(ToX(GTensor::tmpDelta), ToG(Q.w), ToG0(Q.b), ToX(delta_qkv), ToX(norm.out), ToX(Q.w), scratchF, B, T, C_qkv, 3 * C_qkv,
-                            main_stream);
-            GTensor::tmpDelta->Print("delta_3", 0, dump_flag);
+            matmul_backward(ToX(gBUFF->tmpDelta), ToG(Q.w), ToG0(Q.b), ToX(delta_qkv), ToX(norm.out), ToX(Q.w), scratchF, B, T, C_qkv, 3 * C_qkv, main_stream);
+            gBUFF->tmpDelta->Print("delta_3", 0, dump_flag);
         }
 
         // layernorm backward does += to dresidual, so it correctly accumulates gradient for the Attention block above
-        GTensor::tmpDelta->Print("DLN1", 0, dump_flag);
-        norm.cuFlow(GTensor::tmpDelta);  // would backpropagatioin to GTensor::delta
-        GTensor::delta->Print("back of QKV", 0, dump_flag);
+        gBUFF->tmpDelta->Print("DLN1", 0, dump_flag);
+        norm.cuFlow(gBUFF->tmpDelta);  // would backpropagatioin to gBUFF->delta
+        gBUFF->delta->Print("back of QKV", 0, dump_flag);
         SYNC_DEVICE();
-        return GTensor::delta;
+        return gBUFF->delta;
     }
     return nullptr;
 }

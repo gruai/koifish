@@ -11,13 +11,13 @@
 #include "../Manifold/gLLM.hpp"
 #include "../Tensor/GTensor.hpp"
 
-KVCache::KVCache(Fish *hF, int max_batch_size, int max_slen, int flag) : _fish(hF) {
+KVCache::KVCache(Fish* hF, int max_batch_size, int max_slen, int flag) : _fish(hF) {
     // init_lamakv();
     auto modep  = _fish->config.model;
     max_seq_len = std::max(max_slen, (int)_fish->config.n_ctx());
-    kv_dim  = hF->config.KV_dim( );
-    assert(kv_dim>0);
-    //  GTensor::scratch = std::make_shared<huTensor>("scratch_output",sp0,GTensor::tpFloatX,false);
+    kv_dim      = hF->config.KV_dim();
+    assert(kv_dim > 0);
+    //  gBUFF->scratch = std::make_shared<huTensor>("scratch_output",sp0,GTensor::tpFloatX,false);
     SHAPE sp = {(int)(hF->config.nLayer()), max_seq_len, kv_dim};
     key      = std::make_shared<huTensor>(hF, "KCache", sp, tpCache, true);
     value    = std::make_shared<huTensor>(hF, "VCache", sp, tpCache, true);
@@ -25,7 +25,7 @@ KVCache::KVCache(Fish *hF, int max_batch_size, int max_slen, int flag) : _fish(h
     // raw_key = key->data;        raw_val = value->data;
 }
 
-void *KVCache::Get(KVCache::CTYPE typ, int flag) {
+void* KVCache::Get(KVCache::CTYPE typ, int flag) {
     switch (typ) {
         case KV_KEY:
             assert(key != nullptr);
@@ -39,17 +39,17 @@ void *KVCache::Get(KVCache::CTYPE typ, int flag) {
     return nullptr;
 }
 
-char *KVCache::Get(KVCache::CTYPE typ,int lay, int pos, int flag) {
+char* KVCache::Get(KVCache::CTYPE typ, int lay, int pos, int flag) {
     size_t nEle = (size_t)(lay * max_seq_len + pos) * kv_dim;
     assert(key != nullptr);
-    assert(nEle+kv_dim<=key->size());
-    
+    assert(nEle + kv_dim <= key->size());
+
     switch (typ) {
         case KV_KEY:
-            return (char *)key->data + key->Offset(nEle);
+            return (char*)key->data + key->Offset(nEle);
         case KV_VAL:
             assert(value != nullptr);
-            return (char *)value->data + value->Offset(nEle);
+            return (char*)value->data + value->Offset(nEle);
         default:
             assert(0);
     }
@@ -58,7 +58,7 @@ char *KVCache::Get(KVCache::CTYPE typ,int lay, int pos, int flag) {
 
 int KVCache::n_kv() { return kv_n; }
 
-hGensor KVCache::SerialV(void *ctx, hGensor Vcur, int il, bool isSave) {
+hGensor KVCache::SerialV(void* ctx, hGensor Vcur, int il, bool isSave) {
     hGensor v = nullptr;
     /*llama_kv_cache *kv = (llama_kv_cache *)lamakv;
     if(kv==nullptr)
@@ -83,7 +83,7 @@ hGensor KVCache::SerialV(void *ctx, hGensor Vcur, int il, bool isSave) {
     return v;
 }
 
-hGensor KVCache::SerialK(void *ctx, hGensor Kcur, int il, bool isSave) {
+hGensor KVCache::SerialK(void* ctx, hGensor Kcur, int il, bool isSave) {
     hGensor k = nullptr;
     /*llama_kv_cache *kv = (llama_kv_cache *)lamakv;
     if(kv==nullptr)
@@ -110,7 +110,7 @@ hGensor KVCache::SerialK(void *ctx, hGensor Kcur, int il, bool isSave) {
 
 void KVCache::init_lamakv(int n_batch) {
 #ifdef __USE_GGML__
-    struct LAMA *lama = la_->lama();
+    struct LAMA* lama = la_->lama();
     if (lama == nullptr) {
     } else {
         /*llama_kv_cache *kv = lama->_cache;
@@ -120,7 +120,7 @@ void KVCache::init_lamakv(int n_batch) {
         kv_n = std::min(kv->size, std::max(pad, GGML_PAD(cell_max, pad)));      */
     }
 
-    const auto &config = lam_->config;
+    const auto& config = lam_->config;
 
     const uint32_t n_ctx   = config.n_ctx();
     const uint32_t n_embd  = config.nEmbed();

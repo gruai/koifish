@@ -58,54 +58,24 @@ double SUM::tQKV_forw = 0.0, SUM::tQKV_back = 0.0, SUM::tFFN = 0.0, SUM::tUpload
 double SUM::tLoadData = 0.0, SUM::tLoadParam = 0.0, SUM::tEval_1 = 0.0, SUM::tEval_0 = 0.0;
 int SUM::nInitParam = 0, SUM::nSaveParam = 0, SUM::nLoadParam = 0, SUM::nDogLeg = 0;
 int SUM::nzLoadParam = 0, SUM::nzSaveParam = 0;
-std::vector<MEM_USAGE> SUM::mems;
+// std::vector<MEM_USAGE> SUM::mems;
 
 int SUM::nQuantTensor   = 0;
 size_t SUM::szQuantBits = 0;
 double SUM::tQuant = 0, SUM::tF8Ex = 0;
 string SUM::sQuantInfo = "";
 
-size_t MEM_USAGE::szA = 0, MEM_USAGE::szW = 0, MEM_USAGE::szG = 0, MEM_USAGE::szMoment = 0, MEM_USAGE::szTemp = 0, MEM_USAGE::szOther = 0;
-MEM_USAGE::MEM_USAGE(size_t sz_, string d_, void* hData_, int flag) : sz(sz_), desc(d_), hData(hData_) {
-    char last = desc[desc.length() - 1];
-    switch (last) {
-        case 'a':
-            if (desc.substr(0, 3) == "tmp") {
-                type = TYPE::TEMP, szTemp += sz;
-            } else {
-                type = TYPE::ACTIVATION, szA += sz;
-            }
-
-            break;
-        case 'w':
-            type = TYPE::WEIGHT, szW += sz;
-            break;
-        case 'g':
-            type = TYPE::GRAD, szG += sz;
-            break;
-        case 'm':
-            type = TYPE::MOMENT, szMoment += sz;
-            break;
-        case 't':
-            type = TYPE::TEMP, szTemp += sz;
-            break;
-        default:
-            type = TYPE::OTHER, szOther += sz;
-            ;
-            break;
-    }
-}
 void SUM::Reset(string typ, int flag) {
     if (typ == "time") {
         tX = 0.0, tX1 = 0.0, tRemater = 0.0;
         tQKV_forw = 0.0,    tQKV_back = 0.0;
         tFFN = 0.0;
     }
-    if (typ == "memory") {
-        SUM::szUpload = 0;
-        _WARN("All MEM_USAGE(%ld) infos are cleard!", mems.size());
-        mems.clear();
-    }
+    // if (typ == "memory") {
+    //     SUM::szUpload = 0;
+    //     _WARN("All MEM_USAGE(%ld) infos are cleard!", mems.size());
+    //     mems.clear();
+    // }
 }
 
 /*  CUDA version
@@ -154,57 +124,6 @@ std::string SUM::CPU_Info(int flag) {
     return buf;
 }
 
-bool SUM::FreeMem(void* hObj, int flag) {
-    int id = 0;
-    for (auto mem : mems) {
-        if (mem.hData == hObj) {
-            mems.erase(mems.begin() + id);
-            return true;
-        }
-        id++;
-    }
-    assert(0 && "SUM::FreeMem failed");
-    return false;
-}
-/**
- * 1. cudaMemGetInfo reports:
-        Memory allocated by your program (via cudaMalloc, cudaMemcpy, etc.).
-        Additional memory reserved by the CUDA runtime (e.g., for kernels, libraries like cuBLAS).
-        Example: If your app allocates 500MB, cudaMemGetInfo might report 600MB due to overhead.
-    2. nvidia-smi reports:
-        Actual physical memory in use by all processes (including other CUDA apps, graphics compositors, etc.).
-        Excludes reserved but unused memory (e.g., fragmentation, CUDA context pools)
-
-*/
-void SUM::MemoryInfo(int type, int flag) {
-    size_t sz0, sz1;
-    cudaError_t err = cudaMemGetInfo(&sz0, &sz1);
-    std::sort(mems.begin(), mems.end(),  // ugly because we don't have a typedef for the std::pair
-              [](const MEM_USAGE& a, const MEM_USAGE& b) { return a.sz > b.sz; });
-    size_t szNow = 0, i = 0, szFree = 0;
-    double mUsed = (sz1 - sz0) / 1.0e6;
-    for (auto mem : mems) {
-        szNow += mem.sz;
-    }
-    szFree = MEM_USAGE::szA + MEM_USAGE::szW + MEM_USAGE::szG + MEM_USAGE::szMoment + MEM_USAGE::szTemp + MEM_USAGE::szOther - szNow;
-    _INFO(
-        "[MEMORY] Current usage statistics:  %ld mem-blocks sum=%.3gG(%.3gG) \n\tactivation=%.5gM weight=%.5gM grad=%.5gM moments=%.5gM temp=%.5gM "
-        "other=%.5gM\n",
-        mems.size(), szNow / 1.0e9, szFree / 1.0e9, MEM_USAGE::szA / 1.0e6, MEM_USAGE::szW / 1.0e6, MEM_USAGE::szG / 1.0e6, MEM_USAGE::szMoment / 1.0e6,
-        MEM_USAGE::szTemp / 1.0e6, MEM_USAGE::szOther / 1.0e6);
-    _INFO("\tcurBrach=%.5gM mUsed==%.5gM\n", (MEM_USAGE::szA + MEM_USAGE::szW + MEM_USAGE::szG + MEM_USAGE::szMoment) / 1.0e6, mUsed);
-    int nDump = type == KOIFISH_MISS_MEMBLOCK ? mems.size() : type == KOIFISH_OUTOF_GPUMEMORY ? 32 : nMostMemItem;
-    if (nDump > 0) {  // decsend by memory size
-        size_t szTotal = 0;
-        for (auto mem : mems) {
-            szTotal += mem.sz;
-            _INFO("\t%ld\t%6gM  @%s \t%.3gG\n", i++, mem.sz / 1.0e6, mem.desc.c_str(), szTotal / 1.0e9);
-            if (i > nDump)
-                break;
-        }
-        _INFO("\n");
-    }
-}
 
 #ifdef _GST_MATLAB_
 #pragma message("\t\tMATLAB:	R2012b \r\n")
@@ -356,7 +275,7 @@ void GG_log_internal_v(DUMP_LEVEL level, const char* format, va_list args) {
     coloredMsg[0]       = '\0';
     switch (level) {
         case DUMP_ERROR:
-            snprintf(coloredMsg, sizeof(coloredMsg), "%s error: %s%s", COLOR_RED, log_buffer, COLOR_RESET);
+            snprintf(coloredMsg, sizeof(coloredMsg), "\r\n%s error: %s%s", COLOR_RED, log_buffer, COLOR_RESET);
             fflush(stdout);
             break;
         case DUMP_WARN:

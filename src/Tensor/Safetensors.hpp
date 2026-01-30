@@ -17,7 +17,7 @@
 #include <string>
 #include <vector>
 
-#include "json.hpp"
+#include "../CLI_params.hpp"
 
 #ifdef __ANDROID__
 #ifdef SAFETENSORS_CPP_ANDROID_LOAD_FROM_ASSETS
@@ -31,114 +31,26 @@ extern AAssetManager* asset_manager;
 #endif
 #endif
 
+class GTensor;
+class Fish;
+
 constexpr size_t kMaxDim = 8;  // must be equal to SAFETENSORS_C_MAX_DIM in `safetensors-c.h`
 
-namespace minijson {
-
-// Simple C++ implementation of Python's OrderedDict like dictonary
-// (preserves key insertion order)
-// Modified for JSON:
-// - No duplicated key allowed
-
-template <typename T>
-class ordered_dict {
-   public:
-    bool at(const size_t idx, T* dst) const {
-        if (idx >= _keys.size()) {
-            return false;
-        }
-
-        if (!_m.count(_keys[idx])) {
-            // This should not happen though.
-            return false;
-        }
-
-        (*dst) = _m.at(_keys[idx]);
-
-        return true;
-    }
-
-    bool count(const std::string& key) const { return _m.count(key); }
-
-    void insert(const std::string& key, const T& value) {
-        if (_m.count(key)) {
-            // overwrite existing value
-        } else {
-            _keys.push_back(key);
-        }
-
-        _m[key] = value;
-    }
-
-    void insert(const std::string& key, T&& value) {
-        if (_m.count(key)) {
-            // overwrite existing value
-        } else {
-            _keys.push_back(key);
-        }
-
-        _m[key] = std::move(value);
-    }
-
-    bool at(const std::string& key, T* dst) const {
-        if (!_m.count(key)) {
-            // This should not happen though.
-            return false;
-        }
-
-        (*dst) = _m.at(key);
-
-        return true;
-    }
-
-    const std::vector<std::string>& keys() const { return _keys; }
-
-    size_t size() const { return _m.size(); }
-
-    bool erase(const std::string& key) {
-        // simple linear search
-        for (size_t i = 0; i < _keys.size(); i++) {
-            if (_keys[i] == key) {
-                _keys.erase(_keys.begin() + i);
-                _m.erase(key);
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    virtual void Clear() {
-        _keys.clear();
-        _m.clear();
-    }
-
-   private:
-    std::vector<std::string> _keys;
-    std::map<std::string, T> _m;
-};
-
-}  // namespace minijson
-
-template <typename T>
-using ordered_dict = minijson::ordered_dict<T>;
-std::string get_dtype_str(const typNUMBER dtype);
-struct tensor_t {
+// Deprecated! would replace by GTensor
+struct tensor_st {
     typNUMBER dtype;
     std::vector<size_t> shape;
     std::array<size_t, 2> data_offsets;
     void* hUserData = nullptr;
     std::vector<uint8_t> msgpack;
+    tensor_st() {}
+    tensor_st(JSON& jDesc, int flag = 0x0);
+
+    std::string get_hf_str(const typNUMBER dtype);
 
     virtual JSON jDesc(int flag = 0x0) {
         JSON js;
-        string info = get_dtype_str(dtype);
-        // dtype == kFLOAT16    ? "F16"
-        //           : dtype == kBFLOAT16 ? "BF16"
-        //           : dtype == kINT32    ? "I32"
-        //           : dtype == kFLOAT32  ? "F32"
-        //           : dtype == kINT8     ? "I8"
-        //                                : "";
+        string info = get_hf_str(dtype);
         assert(!info.empty());
         js["dtype"] = info;
         // int shape[4] = {1,1,1,1};
@@ -149,7 +61,7 @@ struct tensor_t {
     }
 
     virtual void Dump(const std::string& key, const uint8_t* databuffer, int flag = 0x0) {
-        std::cout << key << ": " << get_dtype_str(dtype) << " ";
+        std::cout << key << ": " << get_hf_str(dtype) << " ";
         std::cout << "[";
         for (size_t i = 0; i < shape.size(); i++) {
             if (i > 0) {
@@ -166,28 +78,33 @@ struct tensor_t {
 // Returns shape[0] * shape[1] * ...
 // Empty Tensor(any shape[i] is 0) returns 0.
 // Zero-rank tensor([]) return 1.
-size_t get_shape_size(const tensor_t& t);
+size_t get_shape_size(const tensor_st& t);
 
 /**
  *
  */
 struct K_SafeTensors {
-    // we need ordered dict(preserves the order of key insertion)
-    // as done in Python's OrderedDict, since JSON data may not be sorted by its key string.
-    ordered_dict<tensor_t> tensors;
-    ordered_dict<std::string> metadata;
+    CheckPoint_Params ckp;
+    std::string header_str;
+    // GST_Dict(preserves the order of key insertion) is much simple than JSON
+    GST_Dict<tensor_st> tensors;
+    JSON metadata, jHeader;
     JSON jsConfig;
+
     // std::vector<uint8_t> storage;  // would explode!     empty when mmap'ed
     size_t header_size{0};  // JSON size
     static string config_key_;
     bool mmaped{false};
     virtual void Clear(int flag = 0x0) {
         tensors.Clear();
-        metadata.Clear();
+        metadata.clear();
         jsConfig.clear();
         // storage.clear();
         header_size = 0x0;
     }
+    virtual void UpdateMetaData(int flag = 0x0);
+
+    K_SafeTensors(Fish* fish, CheckPoint_Params ckp_, int flag = 0x0);
     //
     // Following members are set when mmaped.
     //
@@ -199,9 +116,11 @@ struct K_SafeTensors {
     void* st_file{nullptr};
     void* st_mmap{nullptr};
 
+    size_t Register(shared_ptr<GTensor> t, size_t offset, int flag = 0x0);
+    bool InitHeader(int flag = 0x0);
     void insertJS(const JSON& js, size_t dst_offset, int flag = 0x0) {
         jsConfig = js;
-        tensor_t tensor;
+        tensor_st tensor;
         tensor.msgpack         = JSON::to_msgpack(js);
         tensor.dtype           = typNUMBER::U8;          // dtype::kUINT8;
         size_t sz              = tensor.msgpack.size();  // storage.size();
@@ -213,7 +132,7 @@ struct K_SafeTensors {
         // storage.resize(dst_offset + sz);
         // memcpy(storage.data() + dst_offset, msgpack.data(), sz);  //  6441  [132...160]
     }
-    int loadJS(tensor_t& tensor, const uint8_t* bytes_ptr, size_t bytes_size, int flag = 0x0) {
+    int loadJS(tensor_st& tensor, const uint8_t* bytes_ptr, size_t bytes_size, int flag = 0x0) {
         /*JSON jdesc = tensor.jDesc();
         if (jdesc.at("data_offsets").size() != 2) {
             return -3;
@@ -243,7 +162,7 @@ struct K_SafeTensors {
                 assert(0);  // only mmap is support LLM
                 // databuffer = storage.data();
             }
-            tensor_t tensor;
+            tensor_st tensor;
             if (!tensors.at(config_key_, &tensor))
                 return false;
 
@@ -268,7 +187,6 @@ struct K_SafeTensors {
         bool valid{true};
 
         std::stringstream ss;
-
         size_t databuffersize;
         if (mmaped) {
             databuffersize = databuffer_size;
@@ -282,23 +200,19 @@ struct K_SafeTensors {
         for (size_t i = 0; i < tensors.size(); i++) {
             std::string key = tensors.keys()[i];
 
-            tensor_t tensor;
+            tensor_st tensor;
             if (!tensors.at(i, &tensor)) {
                 ss << "Internal error: Failed to get tensor at [" << i << "]\n";
                 valid = false;
                 continue;
             }
-
             if (tensor.data_offsets[0] > tensor.data_offsets[1]) {
                 ss << key << ".data_offsets.BEGIN " << tensor.data_offsets[0] << " must be less than or equal to data_offsets.END " << tensor.data_offsets[1]
                    << "\n";
                 valid = false;
             }
-
             size_t tensor_size = BPE(tensor.dtype) * get_shape_size(tensor);  // get_dtype_bytes(tensor.dtype)
-
-            if (tensor_size == 0) {
-                // OK
+            if (tensor_size == 0) {                                           // OK
                 continue;
             }
 
@@ -338,11 +252,11 @@ struct K_SafeTensors {
         return valid;
     }
 
-    bool save_to_ofs(std::ofstream& ofs, size_t& szAll, std::string* warn, std::string* err, int flag);
-    bool save_to_memory(std::vector<uint8_t>& buffer, std::string* warn, std::string* err);
+    bool _to_ofs(std::ofstream& ofs, size_t& szAll, std::string* warn, std::string* err, int flag);
+    bool _to_memory(std::vector<uint8_t>& buffer, std::string* warn, std::string* err);
 
     // Save safetensors to file,    return true upon success. `err` will be filled when false.
-    bool save_to_file(const std::string& filename, size_t& sz, std::string* warn, std::string* err, int flag) {
+    bool Save(const std::string& filename, size_t& sz, std::string* warn, std::string* err, int flag) {
         bool isRemoveOld = false;
         if (std::remove(filename.c_str()) == 0) {
             isRemoveOld = true;
@@ -358,12 +272,12 @@ struct K_SafeTensors {
             return false;
         }
         if (1) {
-            if (!save_to_ofs(ofs, sz, warn, err, flag)) {
+            if (!_to_ofs(ofs, sz, warn, err, flag)) {
                 return false;
             }
         } else {  //  avoid huge array out of memory
             std::vector<uint8_t> buf;
-            if (!save_to_memory(buf, warn, err)) {
+            if (!_to_memory(buf, warn, err)) {
                 return false;
             }
             ofs.write(reinterpret_cast<const char*>(buf.data()), buf.size());
@@ -379,6 +293,8 @@ struct K_SafeTensors {
 
         return true;
     }
+
+    bool MMAP(const std::string& path, bool isSave = false, int flag = 0x0);
 };
 
 //
@@ -443,17 +359,6 @@ bool mmap_from_file(const std::string& filename, K_SafeTensors* st, std::string*
 //
 // @return true upon success. `err` will be filled when false.
 bool mmap_from_memory(const uint8_t* arr, const size_t nbytes, const std::string& filename, K_SafeTensors* st, std::string* warn, std::string* err);
-
-std::string get_dtype_str(const typNUMBER dtype) {
-    string name = K_FLOATS[dtype].name;
-    return name;
-}
-
-uint16_t float_to_bfloat16(float x);
-float bfloat16_to_float(uint16_t x);
-
-uint16_t float_to_fp16(float x);
-float fp16_to_float(uint16_t x);
 
 #if defined(SAFETENSORS_CPP_IMPLEMENTATION)
 
@@ -622,7 +527,7 @@ class value;
 typedef bool boolean;
 typedef double number;
 typedef std::string string;
-typedef ordered_dict<value> object;
+typedef GST_Dict<value> object;
 typedef std::vector<value> array;
 typedef struct {
 } null_t;
@@ -3606,7 +3511,7 @@ bool ReadWholeFile(std::vector<unsigned char>* out, std::string* err, const std:
 #endif
 }
 
-bool parse_metadata(const ::minijson::value& v, ordered_dict<std::string>& dst, std::string* err) {
+bool parse_metadata(const ::minijson::value& v, GST_Dict<std::string>& dst, std::string* err) {
     if (auto po = v.as<::minijson::object>()) {
         for (size_t i = 0; i < po->size(); i++) {
             ::minijson::value ov;
@@ -3739,7 +3644,7 @@ bool parse_data_offsets(const ::minijson::value& v, std::array<size_t, 2>& dst, 
     return true;
 }
 
-bool parse_tensor(const std::string& name, const ::minijson::value& v, tensor_t& tensor, std::string* err) {
+bool parse_tensor(const std::string& name, const ::minijson::value& v, tensor_st& tensor, std::string* err) {
     if (auto po = v.as<::minijson::object>()) {
         bool dtype_found{false};
         bool shape_found{false};
@@ -4072,299 +3977,6 @@ struct safetensors_mmap {
 #endif
 };
 
-// Based on MIOPen bfloat16
-// https://github.com/ROCmSoftwarePlatform/MIOpen/blob/master/src/kernels/bfloat16_dev.hpp
-
-/*******************************************************************************
- *
- * MIT License
- *
- * Copyright (c) 2019 Advanced Micro Devices, Inc.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- *all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- *
- *******************************************************************************/
-
-typedef union cvt_bf16_fp32 {
-    uint32_t u32;
-    uint16_t ushortvec[2];
-
-    float f32;
-} cvt_bf16_fp32_t;
-
-float bfloat16_to_float(uint16_t src_val) {
-    cvt_bf16_fp32_t target_val;
-
-    target_val.ushortvec[0] = 0;
-    target_val.ushortvec[1] = src_val;
-
-    return target_val.f32;
-}
-
-uint16_t float_to_bfloat16(float src_val) {
-    cvt_bf16_fp32_t target_val;
-    target_val.f32 = src_val;
-    // BF16 round and NaN preservation code matches
-    // https://github.com/ROCmSoftwarePlatform/rocBLAS/blob/develop/library/include/rocblas_bfloat16.h
-    if ((~target_val.u32 & 0x7f800000) == 0)  // Inf or NaN
-    {
-        // When all of the exponent bits are 1, the value is Inf or NaN.
-        // Inf is indicated by a zero mantissa. NaN is indicated by any nonzero
-        // mantissa bit. Quiet NaN is indicated by the most significant mantissa
-        // bit being 1. Signaling NaN is indicated by the most significant
-        // mantissa bit being 0 but some other bit(s) being 1. If any of the
-        // lower 16 bits of the mantissa are 1, we set the least significant bit
-        // of the bfloat16 mantissa, in order to preserve signaling NaN in case
-        // the bloat16's mantissa bits are all 0.
-        if ((target_val.u32 & 0xffff) != 0) {
-            target_val.u32 |= 0x10000;  // Preserve signaling NaN
-        }
-    } else {
-#if 1  // MIOPEN_USE_RNE_BFLOAT16
-       // When the exponent bits are not all 1s, then the value is zero, normal,
-       // or subnormal. We round the bfloat16 mantissa up by adding 0x7FFF, plus
-       // 1 if the least significant bit of the bfloat16 mantissa is 1 (odd).
-       // This causes the bfloat16's mantissa to be incremented by 1 if the 16
-       // least significant bits of the float mantissa are greater than 0x8000,
-       // or if they are equal to 0x8000 and the least significant bit of the
-       // bfloat16 mantissa is 1 (odd). This causes it to be rounded to even when
-       // the lower 16 bits are exactly 0x8000. If the bfloat16 mantissa already
-       // has the value 0x7f, then incrementing it causes it to become 0x00 and
-       // the exponent is incremented by one, which is the next higher FP value
-       // to the unrounded bfloat16 value. When the bfloat16 value is subnormal
-       // with an exponent of 0x00 and a mantissa of 0x7F, it may be rounded up
-       // to a normal value with an exponent of 0x01 and a mantissa of 0x00.
-       // When the bfloat16 value has an exponent of 0xFE and a mantissa of 0x7F,
-       // incrementing it causes it to become an exponent of 0xFF and a mantissa
-       // of 0x00, which is Inf, the next higher value to the unrounded value.
-        target_val.u32 += (0x7fff + (target_val.ushortvec[1] & 1));
-#endif  // MIOPEN_USE_RNE_BFLOAT16
-    }
-
-    return target_val.ushortvec[1];
-}
-
-// half <-> float conversion based on: https://gist.github.com/rygorous/2156668
-// (CC0 license)
-//
-
-// Little endian
-union FP32le {
-    unsigned int u;
-    float f;
-    struct {
-        unsigned int Mantissa : 23;
-        unsigned int Exponent : 8;
-        unsigned int Sign : 1;
-    } s;
-};
-
-// Little endian
-union float16le {
-    unsigned short u;
-    struct {
-        unsigned int Mantissa : 10;
-        unsigned int Exponent : 5;
-        unsigned int Sign : 1;
-    } s;
-};
-
-float half_to_float_le(float16le h) {
-    static const FP32le magic             = {113 << 23};
-    static const unsigned int shifted_exp = 0x7c00 << 13;  // exponent mask after shift
-    FP32le o;
-
-    o.u               = (h.u & 0x7fffU) << 13U;  // exponent/mantissa bits
-    unsigned int exp_ = shifted_exp & o.u;       // just the exponent
-    o.u += (127 - 15) << 23;                     // exponent adjust
-
-    // handle exponent special cases
-    if (exp_ == shifted_exp)      // Inf/NaN?
-        o.u += (128 - 16) << 23;  // extra exp adjust
-    else if (exp_ == 0)           // Zero/Denormal?
-    {
-        o.u += 1 << 23;  // extra exp adjust
-        o.f -= magic.f;  // renormalize
-    }
-
-    o.u |= (h.u & 0x8000U) << 16U;  // sign bit
-    return o.f;
-}
-
-uint16_t float_to_half_full_le(float _f) {
-    FP32le f;
-    f.f         = _f;
-    float16le o = {0};
-
-    // Based on ISPC reference code (with minor modifications)
-    if (f.s.Exponent == 0)  // Signed zero/denormal (which will underflow)
-        o.s.Exponent = 0;
-    else if (f.s.Exponent == 255)  // Inf or NaN (all exponent bits set)
-    {
-        o.s.Exponent = 31;
-        o.s.Mantissa = f.s.Mantissa ? 0x200 : 0;  // NaN->qNaN and Inf->Inf
-    } else                                        // Normalized number
-    {
-        // Exponent unbias the single, then bias the halfp
-        int newexp = f.s.Exponent - 127 + 15;
-        if (newexp >= 31)  // Overflow, return signed infinity
-            o.s.Exponent = 31;
-        else if (newexp <= 0)  // Underflow
-        {
-            if ((14 - newexp) <= 24)  // Mantissa might be non-zero
-            {
-                unsigned int mant = f.s.Mantissa | 0x800000;  // Hidden 1 bit
-                o.s.Mantissa      = mant >> (14 - newexp);
-                if ((mant >> (13 - newexp)) & 1)  // Check for rounding
-                    o.u++;                        // Round, might overflow into exp bit, but this is OK
-            }
-        } else {
-            o.s.Exponent = static_cast<unsigned int>(newexp);
-            o.s.Mantissa = f.s.Mantissa >> 13;
-            if (f.s.Mantissa & 0x1000)  // Check for rounding
-                o.u++;                  // Round, might overflow to inf, this is OK
-        }
-    }
-
-    o.s.Sign = f.s.Sign;
-
-    return o.u;
-}
-
-bool parse_safetensors_header(const uint8_t* addr, const size_t nbytes, const std::string& filename, K_SafeTensors* st, std::string* warn, std::string* err) {
-    if (nbytes < 16) {
-        if (err) {
-            (*err) += "Size is too short.\n";
-        }
-        return false;
-    }
-
-    uint64_t header_size{0};
-    memcpy(reinterpret_cast<unsigned char*>(&header_size), addr, sizeof(uint64_t));
-
-    if (header_size < 4) {
-        if (err) {
-            (*err) += "Header size is too short.\n";
-        }
-        return false;
-    }
-
-    if ((8 + header_size) > nbytes) {
-        if (err) {
-            (*err) += "Header size " + std::to_string(header_size) + " + 8 exceeds input size " + std::to_string(nbytes) + " .\n";
-        }
-        return false;
-    }
-
-    if (header_size > kMaxJSONSize) {
-        if (err) {
-            (*err) += "Header JSON size exceeds the limit(" + std::to_string(kMaxJSONSize) + ").\n";
-        }
-        return false;
-    }
-
-    // assume JSON data is small enough.
-    std::string json_str(reinterpret_cast<const char*>(&addr[8]), header_size);
-    const char* p = json_str.c_str();
-
-    ::minijson::value v;
-    ::minijson::error e = ::minijson::parse(p, v);
-
-    if (e != ::minijson::no_error) {
-        if (err) {
-            std::string json_err(::minijson::errstr(e));
-            (*err) += "JSON parse error: " + json_err + "\n";
-        }
-
-        return false;
-    }
-
-    ordered_dict<tensor_t> tensors;
-    ordered_dict<std::string> metadata;
-    size_t szLast = 0x0;
-    // root element must be dict.
-    if (auto po = v.as<::minijson::object>()) {
-        for (size_t i = 0; i < po->size(); i++) {
-            std::string key = po->keys()[i];
-
-            if (key == "__metadata__") {
-                ::minijson::value value;
-                if (!po->at(i, &value)) {
-                    if (err) {
-                        (*err) += "Internal error. Invalid object in __metadata__.\n";
-                    }
-                    return false;
-                }
-
-                if (!detail::parse_metadata(value, metadata, err)) {
-                    return false;
-                }
-            } else {
-                // tensor
-
-                if (tensors.count(key)) {
-                    if (err) {
-                        (*err) += "Duplicate key `" + key + "` found.\n";
-                    }
-                    return false;
-                }
-
-                ::minijson::value value;
-                if (!po->at(i, &value)) {
-                    if (err) {
-                        (*err) += "Internal error. Invalid object in `" + key + "`.\n";
-                    }
-                    return false;
-                }
-
-                tensor_t tensor;
-                if (!detail::parse_tensor(key, value, tensor, err)) {
-                    return false;
-                }
-
-                tensors.insert(key, std::move(tensor));
-            }
-        }
-    } else {
-        if (err) {
-            (*err) += "JSON root elements must be object(dict)\n";
-        }
-    }
-
-    st->tensors     = std::move(tensors);
-    st->metadata    = std::move(metadata);
-    st->header_size = header_size;
-
-#if 0
-  size_t databuffer_size = nbytes - header_size - 8;
-
-  st->storage.resize(nbytes);
-  memcpy(st->storage.data(), addr + 8 + header_size, nbytes);
-
-  st->mmaped = false;
-  st->mmap_addr = addr + 8 + header_size;
-  st->mmap_size = 0;
-#endif
-
-    return true;
-}
-
 }  // namespace detail
 
 K_SafeTensors::~K_SafeTensors() {
@@ -4379,47 +3991,6 @@ K_SafeTensors::~K_SafeTensors() {
         delete p;
         st_file = nullptr;
     }
-}
-
-//
-// - 8byte: header_size
-// - json data(header_size bytes)
-// - tensor data(filesize - header_size)
-//
-
-bool load_from_file(const std::string& filename, K_SafeTensors* st, std::string* warn, std::string* err) {
-    std::vector<unsigned char> data;
-    if (!detail::ReadWholeFile(&data, err, filename, nullptr)) {
-        return false;
-    }
-
-    return load_from_memory(reinterpret_cast<const uint8_t*>(data.data()), data.size(), filename, st, warn, err);
-}
-
-bool load_from_memory(const uint8_t* addr, const size_t nbytes, const std::string& filename, K_SafeTensors* st, std::string* warn, std::string* err) {
-    if (nbytes < 16) {
-        if (err) {
-            (*err) += "Size is too short.\n";
-        }
-        return false;
-    }
-
-    if (!detail::parse_safetensors_header(addr, nbytes, filename, st, warn, err)) {
-        return false;
-    }
-
-    size_t databuffer_size = nbytes - st->header_size - 8;
-
-    // st->storage.resize(databuffer_size);
-    // memcpy(st->storage.data(), addr + 8 + st->header_size, databuffer_size);
-
-    st->mmaped          = false;
-    st->mmap_addr       = nullptr;
-    st->mmap_size       = 0;
-    st->databuffer_addr = nullptr;
-    st->databuffer_size = 0;
-
-    return true;
 }
 
 bool mmap_from_file(const std::string& filename, K_SafeTensors* st, std::string& warn, std::string& err, int __prot) {
@@ -4441,24 +4012,37 @@ bool mmap_from_file(const std::string& filename, K_SafeTensors* st, std::string&
         return false;
     }
 
-    bool ret = mmap_from_memory(pm->addr, pm->size, filename, st, &warn, &err);
-
-    if (!ret) {
-        delete pm, delete pf;
-        return false;
+    // bool ret = mmap_from_memory(pm->addr, pm->size, filename, st, &warn, &err);
+    uint64_t json_size     = *(uint64_t*)pm->addr;
+    st->header_size        = json_size;
+    const char* json_bytes = reinterpret_cast<const char*>(pm->addr) + sizeof(uint64_t);
+    std::string json_str(json_bytes, json_size);
+    // _INFO(">>>>>> header of%s= \n\t%s", filename.c_str(), json_str.c_str());
+    st->jHeader = JSON::parse(json_str);
+    for (auto& [key, value] : st->jHeader.items()) {
+        //_INFO();
+        if (key == "__metadata__")
+            st->metadata = value;
+        else {
+            st->tensors.insert(key, tensor_st(value));
+        }
     }
 
-    st->mmap_addr = pm->addr;
-    st->mmap_size = pm->size;
+    // st->tensors     = std::move(tensors);
 
-    st->databuffer_addr = st->mmap_addr + 8 + st->header_size;
-    st->databuffer_size = st->mmap_size - (8 + st->header_size);
-
+    // size_t databuffer_size = pm->size - st->header_size - sizeof(uint64_t);
+    st->mmaped    = true;
+    st->mmap_addr = pm->addr, st->mmap_size = pm->size;
+    st->databuffer_addr = st->mmap_addr + sizeof(uint64_t) + st->header_size;
+    st->databuffer_size = st->mmap_size - (sizeof(uint64_t) + st->header_size);
+    // st->mmap_addr       = pm->addr;
+    // st->mmap_size       = pm->size;
+    // st->databuffer_addr = st->mmap_addr + 8 + st->header_size;
+    // st->databuffer_size = st->mmap_size - (8 + st->header_size);
     // retain pointer
     st->st_file = pf;
     st->st_mmap = pm;
-
-    st->mmaped = true;
+    // st->mmaped = true;
     st->initJS();
     return true;
 }
@@ -4475,88 +4059,30 @@ bool mmap_from_memory(const uint8_t* addr, const size_t nbytes, const std::strin
     if (!st) {
         return false;
     }
+    uint64_t json_size     = *(uint64_t*)addr;
+    const char* json_bytes = reinterpret_cast<const char*>(addr) + sizeof(uint64_t);
+    // void* bytes_ptr   = (char*)data + sizeof(uint64_t) + json_size;
+    // size_t bytes_size = size - sizeof(uint64_t) - json_size;
+    std::string json_str(json_bytes, json_size);
 
-    if (!detail::parse_safetensors_header(addr, nbytes, filename, st, warn, err)) {
-        return false;
-    }
+    st->metadata = JSON::parse(json_str);
+    // if (!detail::parse_safetensors_header(addr, nbytes, filename, st, warn, err)) {
+    //     return false;
+    // }
 
     size_t databuffer_size = nbytes - st->header_size - 8;
-
-    st->mmaped = true;
-
-    st->mmap_addr = addr;
-    st->mmap_size = nbytes;
-
-    st->databuffer_addr = st->mmap_addr + 8 + st->header_size;
-    st->databuffer_size = st->mmap_size - (8 + st->header_size);
+    st->mmaped             = true;
+    st->mmap_addr          = addr;
+    st->mmap_size          = nbytes;
+    st->databuffer_addr    = st->mmap_addr + 8 + st->header_size;
+    st->databuffer_size    = st->mmap_size - (8 + st->header_size);
 
     return true;
 }
 
-float bfloat16_to_float(uint16_t x) { return detail::bfloat16_to_float(x); }
-
-uint16_t float_to_bfloat16(float x) { return detail::float_to_bfloat16(x); }
-
-float fp16_to_float(uint16_t x) {
-    detail::float16le src;
-    src.u = x;
-    return detail::half_to_float_le(src);
-}
-
-uint16_t float_to_fp16(float x) { return detail::float_to_half_full_le(x); }
-/*
-size_t get_dtype_bytes(const typNUMBER dtype) {
-    size_t sz = 0;
-
-    switch (dtype) {
-        case typNUMBER::BOOL1:
-            // Original Rust implementaion uses 1.
-            sz = 1;
-            break;
-        case typNUMBER::U8:
-            sz = 1;
-            break;
-        case typNUMBER::I8:
-            sz = 1;
-            break;
-        case typNUMBER::U16:
-            sz = 2;
-            break;
-        case typNUMBER::I16:
-            sz = 2;
-            break;
-        case typNUMBER::I32:
-            sz = 4;
-            break;
-        case typNUMBER::U32:
-            sz = 4;
-            break;
-        case typNUMBER::F16:
-            sz = 2;
-            break;
-        case typNUMBER::BF16:
-            sz = 2;
-            break;
-        case typNUMBER::F32:
-            sz = 4;
-            break;
-        case typNUMBER::F64:
-            sz = 8;
-            break;
-        case typNUMBER::I64:
-            sz = 8;
-            break;
-        case typNUMBER::U64:
-            sz = 8;
-            break;
-    }
-
-    return sz;
-}*/
-
 // Empty Tensor returns 0.
 // Zero-rank Tensor reuturns 1(scalar)
-size_t get_shape_size(const tensor_t& t) {
+size_t get_shape_size(const tensor_st& t) {
     if (t.shape.empty()) {
         return 1;
     }
@@ -4572,97 +4098,6 @@ size_t get_shape_size(const tensor_t& t) {
     }
 
     return sz;
-}
-
-std::string to_string(typNUMBER dtype, const uint8_t* data) {
-    switch (dtype) {
-        case typNUMBER::BOOL1: {
-            return std::to_string(data[0] ? 1 : 0);
-        }
-        case typNUMBER::U8: {
-            return std::to_string(data[0]);
-        }
-        case typNUMBER::I8: {
-            return std::to_string(*reinterpret_cast<const int8_t*>(data));
-        }
-        case typNUMBER::U16: {
-            return std::to_string(*reinterpret_cast<const uint16_t*>(data));
-        }
-        case typNUMBER::I16: {
-            return std::to_string(*reinterpret_cast<const int16_t*>(data));
-        }
-        case typNUMBER::U32: {
-            return std::to_string(*reinterpret_cast<const uint32_t*>(data));
-        }
-        case typNUMBER::I32: {
-            return std::to_string(*reinterpret_cast<const int32_t*>(data));
-        }
-        case typNUMBER::U64: {
-            return std::to_string(*reinterpret_cast<const uint64_t*>(data));
-        }
-        case typNUMBER::I64: {
-            return std::to_string(*reinterpret_cast<const int64_t*>(data));
-        }
-        case typNUMBER::F16: {
-            return std::to_string(fp16_to_float(*reinterpret_cast<const uint16_t*>(data)));
-        }
-        case typNUMBER::BF16: {
-            return std::to_string(bfloat16_to_float(*reinterpret_cast<const int64_t*>(data)));
-        }
-        case typNUMBER::F32: {
-            return std::to_string(*reinterpret_cast<const float*>(data));
-        }
-        case typNUMBER::F64: {
-            return std::to_string(*reinterpret_cast<const double*>(data));
-        }
-    }
-
-    return std::string("???");
-}
-
-//
-// print tensor in linearized 1D array
-// In safetensors, data is not strided(tightly packed)
-//
-std::string to_string_snipped(const tensor_t& t, const uint8_t* databuffer, size_t N = 8) {
-    std::stringstream ss;
-    size_t nitems    = get_shape_size(t);
-    size_t itembytes = BPE(t.dtype);  // get_dtype_bytes(t.dtype);
-
-    if ((N == 0) || ((N * 2) >= nitems)) {
-        ss << "[";
-        for (size_t i = 0; i < nitems; i++) {
-            if (i > 0) {
-                ss << ", ";
-            }
-            ss << to_string(t.dtype, databuffer + t.data_offsets[0] + i * itembytes);
-        }
-        ss << "]";
-    } else {
-        ss << "[";
-        size_t head_end   = (std::min)(N, nitems);
-        size_t tail_start = (std::max)(nitems - N, head_end);
-
-        for (size_t i = 0; i < head_end; i++) {
-            if (i > 0) {
-                ss << ", ";
-            }
-            ss << to_string(t.dtype, databuffer + t.data_offsets[0] + i * itembytes);
-        }
-
-        ss << ", ..., ";
-
-        for (size_t i = tail_start; i < nitems; i++) {
-            if (i > tail_start) {
-                ss << ", ";
-            }
-            ss << to_string(t.dtype, databuffer + t.data_offsets[0] + i * itembytes);
-        }
-
-        ss << "]";
-    }
-
-    return ss.str();
 }
 
 #endif

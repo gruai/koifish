@@ -2,7 +2,7 @@
  *  SPDX-FileCopyrightText: 2019-2025 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
- *  \brief GRUS SPARSE TEMPLATE	- Random Generator
+ *  \brief GRUSOFT TEMPLATE	- Random Generator
  *  \author Yingshi Chen
  */
 

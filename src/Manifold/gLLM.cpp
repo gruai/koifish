@@ -26,7 +26,7 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_, int flag) {
     wikis = wikis_;
     hEDS  = EDGE_DEVICES::GetInstance(config);
     if (hDict == nullptr) {
-        if (!InitDictTokenset())  //  hDictVAE
+        if (!InitDictTokenset())  //
             return false;
     }
     if (config.common.method == "muon")
@@ -103,7 +103,7 @@ string NLP_AutoRegressive::__repr__(string& suffix, string& prefix, int flag) {
     _T_repr_(KQ_pos, "\n\tKQ_pos: ", buf);
     _T_repr_(pos_embd, "\tpos_embd: ", buf);
     _T_repr_(KQ_mask, "\tKQ_mask: ", buf);
-    sprintf(buf + strlen(buf), "%s", hDictVAE->__repr__(s, p, 0x0).c_str());
+    // sprintf(buf + strlen(buf), "%s", hDictVAE->__repr__(s, p, 0x0).c_str());
     bool isJModel = !config.jModel.empty();
     if (isJModel) {
         for (auto nn : neurons) {
@@ -335,12 +335,12 @@ hGensor Fish::BuildLoss(void* ctx, hGensor cur, int flag) {
 
 hGensor NLP_AutoRegressive::BuildTarget(void* ctx, hGensor cur, int flag) {
     assert(0);  // Deprecated
-    hGensor _tNorm = UpdateGensor(hDictVAE->_norm.w->name);
+    /*hGensor _tNorm = UpdateGensor(hDictVAE->_norm.w->name);
     int n_vocab = tVocab(), n_batch = config.common.n_batch, n_ctx = config.common.n_ctx, n_embd = config.nEmbed();
     auto train_params              = config.common;
     train_params.use_checkpointing = false;  // CYS_0826
     const int N = train_params.n_ctx, n_past = 0;
-    hGensor t32 = nullptr, wA = nullptr, wB = nullptr;
+    hGensor t32 = nullptr, wA = nullptr, wB = nullptr;*/
     return out_node;
 }
 
@@ -363,9 +363,9 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag) {
     if (!Fish::InitDictTokenset(flag))
         return false;
 
-    hDictVAE        = std::make_shared<DictVAE>(this);
-    hDictVAE->hDict = hDict;
-    assert(hDictVAE != nullptr && hDictVAE->isValid());
+    // hDictVAE        = std::make_shared<DictVAE>(this);
+    // hDictVAE->hDict = hDict;
+    // assert(hDictVAE != nullptr && hDictVAE->isValid());
     return true;
 }
 bool Fish::InitDictTokenset(int flag) {
@@ -651,7 +651,7 @@ void NLP_AutoRegressive::Dump(int type, int flag) {
     if (NOT_DUMP(5))
         return;
     fflush(stdout);
-    int n_vocab = hDictVAE->hDict->nVocab(), n_batch = config.common.n_batch, n_ctx = config.common.n_ctx, n_embd = config.nEmbed();
+    int n_vocab = hDict->nVocab(), n_batch = config.common.n_batch, n_ctx = config.common.n_ctx, n_embd = config.nEmbed();
     string suffix = "\n========\n", prefix;
     __repr__(suffix, prefix);
     config.Dump();  //        print_params(&config)
@@ -680,7 +680,7 @@ void NLP_AutoRegressive::Dump(int type, int flag) {
     }
     switch (type) {
         case KOIFISH_OUTOF_GPUMEMORY:
-            SUM::MemoryInfo(type);
+            memBuffer->Dump(type);
             break;
         default:
             break;
@@ -710,8 +710,8 @@ bool Fuyou::Backward(hGensor cur, int flag) {
 
 float RAW_backward(Fish* fish, const int* hostInToken, int accum_steps, bool, int flag);
 int Fish::BackwardOnRLS(int iter, int flag) {
-    GTensor::delta->Zero();
-    OutCLS* cls       = GetNeuron<OutCLS>("OutCLS", 0);
+    gBUFF->delta->Zero();
+    OutCLS* cls = GetNeuron<OutCLS>("OutCLS", 0);
     /*if (DEBUG.back_graph_version == 1) {
         int nAccum          = config.common.n_gradient_accumulation;
         bool isOnlyEvaluate = false;
@@ -813,7 +813,7 @@ int Fish::ForwardOnRLS(int iter, int flag) {
         hGensor cur = Input(), residual = nullptr;
         switch (phase) {
             case P_GENERATE:
-                cur = GTensor::outL;
+                cur = gBUFF->outL;
                 break;
             default:
                 break;
@@ -869,7 +869,7 @@ int NLP_AutoRegressive::ForwardOnNeuron_v0(int flag) {
     for (int l = 0; l < L; l++) {
         NvtxRange layer_range("Layer", l);
         QKV                = GetNeuron<SelfAttention>("SelfAttention", l);
-        ffn                = GetNeuron<FFN>("FFN", l);  // ffn->out = GTensor::delta;
+        ffn                = GetNeuron<FFN>("FFN", l);  // ffn->out = gBUFF->delta;
         LayerNormal* hNorm = l + 1 != L ? &(GetNeuron<SelfAttention>("SelfAttention", l + 1)->norm) : lnf;
         ffn->fuseNorm      = tpFuseNormal == 1 ? hNorm : nullptr;
         QKV->fuseNorm      = tpFuseNormal == 1 ? &(ffn->norm) : nullptr;

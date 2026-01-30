@@ -735,7 +735,7 @@ int ROPE::cuFlow(SelfAttention* hQKV, uint32_t seed, bool isFX, int flag) {
     hFish->GetBTC(B, T, C);
     dim3 blocks_q(B, T, n_head), blocks_k(B, T, n_head_kv), blocks(B, T);
     // size_t smemPB = 1024 * sizeof(float);
-    floatX *q = ToX(hQKV->Q.out), *k = ToX(hQKV->K.out), *freqs = ToX(hSin);
+    floatX *q = ToX(hQKV->Q.out), *k = ToX(hQKV->K.out);// *freqs = ToX(hSin);
     floatX *qW = hnQ == nullptr ? nullptr : ToX(hnQ->w), *kW = hnK == nullptr ? nullptr : ToX(hnK->w);
     PrintTensor<floatX>("Q.out", q, true, 1, 1, q_dim, 1, dump_flag);
     if (isForward() || BIT_TEST(flag, F_REMATER)) {

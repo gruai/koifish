@@ -49,7 +49,7 @@ size_t SLP::nElem() {
 SelfAttention::SelfAttention(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     assert(hFish != nullptr);
 
-    delta = GTensor::delta;
+    delta = gBUFF->delta;
 
     auto& config     = hG_->config;
     f_max_alibi_bias = config.f_max_alibi_bias;
@@ -85,9 +85,8 @@ SelfAttention::SelfAttention(Fish* hG_, const std::string& key_, JSON::const_ite
 
     // dump_flag = -1;
     tpNormal = DEBUG.SelfAttention_noraml;
-    //  nIn = shape[0], nOut = shape[1];
-    spQ  = {C_qkv, q_dim};
-    spKV = {C_qkv, kv_dim};
+    spQ      = {q_dim, C_qkv};
+    spKV     = {kv_dim, C_qkv};
 }
 
 bool SelfAttention::Build(int flag_0) {
@@ -129,7 +128,7 @@ bool SelfAttention::Build(int flag_0) {
 
     out = std::make_shared<huTensor>(hFish, name + ".out", sp3, tpWeight, false);
     if (hFish->config.isShareLayerOut()) {
-        out->SetRefer(GTensor::outL);
+        out->SetRefer(gBUFF->outL);
     }
 
     proj_cat.BuildX(_NAME(name, ATTN_OUT), (SHAPE){spQ[1], spQ[0]}, hFish, flag | F_DELTA);
@@ -151,7 +150,7 @@ bool SelfAttention::Build(int flag_0) {
     //}
     if (!hFish->isModel({NLP_GPT2, NLP_GPT2_char})) {
         assert(isSeparateQKV);
-        rope = std::make_shared<ROPE>(this);
+        rope = std::make_shared<ROPE>(this, name + ".ROPE");
         // rope->BuildX(name + ".ROPE", spQ, hFish, flag);
     }
     _devQKV(0x0);
@@ -175,9 +174,9 @@ bool SelfAttention::UpdateQKVPack(int flag) {
         return true;
     }
 
-    hBITARR hQKV = TO<BIT_8>(GTensor::bt4c), hQ = (hBITARR)devQ, hK = (hBITARR)devK, hV = (hBITARR)devV;
+    hBITARR hQKV = TO<BIT_8>(gBUFF->bt4c), hQ = (hBITARR)devQ, hK = (hBITARR)devK, hV = (hBITARR)devV;
     size_t offset = 0x0, nT = B * T, ldQ = sizeof(floatX) * q_dim, ldKV = sizeof(floatX) * kv_dim;
-    assert(GTensor::bt4c->nByte() >= nT * (ldQ + ldKV * 2));
+    assert(gBUFF->bt4c->nByte() >= nT * (ldQ + ldKV * 2));
     switch (qkv4dnn) {
         case QKV_PACK::QKVQKV:
             for (int r = 0; r < nT; r++) {
@@ -194,7 +193,7 @@ bool SelfAttention::UpdateQKVPack(int flag) {
     return true;
 }
 bool SelfAttention::_devQKV(int stage, int flag) {
-    tmpQKV = GTensor::tmpFF1;  // remater_qkv ? GTensor::tmpFF1 : Q.out;
+    hGensor tmpQKV = gBUFF->tmpFF1;  
     if (hFish->isAtPhase(LIFE_PHASE::P_GENERATE)) {
         assert(hCache != nullptr);
         int pos           = stage;
@@ -219,12 +218,12 @@ bool SelfAttention::_devQKV(int stage, int flag) {
     size_t offset = 0;
     if (isTrain) {
         assert(kv_dim <= q_dim);
-        deltaQ = GTensor::bt4c->Partial("partialDeltaQ", 0, {B, T, q_dim}), offset += deltaQ->size();
-        deltaK = GTensor::bt4c->Partial("partialDeltaK", B * T * q_dim, {B, T, kv_dim}), offset += deltaK->size();
-        deltaV = GTensor::bt4c->Partial("partialDeltaV", B * T * (q_dim + kv_dim), {B, T, kv_dim}), offset += deltaV->size();
-        assert(B * T * (q_dim + kv_dim * 2) * sizeof(floatX) <= GTensor::bt4c->nByte());
-        // devDeltaQ = ToX(GTensor::bt4c), devDeltaK = (char*)devDeltaQ + Q.out->nByte(), devDeltaV = (char*)devDeltaK + K.out->nByte();
-        devDeltaQ = ToX(deltaQ), devDeltaK = ToX(deltaK), devDeltaV = ToX(deltaV);        
+        deltaQ = gBUFF->bt4c->Partial("partialDeltaQ", 0, {B, T, q_dim}), offset += deltaQ->size();
+        deltaK = gBUFF->bt4c->Partial("partialDeltaK", B * T * q_dim, {B, T, kv_dim}), offset += deltaK->size();
+        deltaV = gBUFF->bt4c->Partial("partialDeltaV", B * T * (q_dim + kv_dim), {B, T, kv_dim}), offset += deltaV->size();
+        assert(B * T * (q_dim + kv_dim * 2) * sizeof(floatX) <= gBUFF->bt4c->nByte());
+        // devDeltaQ = ToX(gBUFF->bt4c), devDeltaK = (char*)devDeltaQ + Q.out->nByte(), devDeltaV = (char*)devDeltaK + K.out->nByte();
+        devDeltaQ = ToX(deltaQ), devDeltaK = ToX(deltaK), devDeltaV = ToX(deltaV);
     } else {
     }
 
@@ -1688,9 +1687,9 @@ hNEURON Fish::J2Neuron(void* ctx_, string& dad, int level, const JConfig& jconfi
 
 */
 int Fish::jToGraph(void* ctx_, bool isBuild, int flag) {
-    JConfig js(config.jBackBone);    
-    // JConfig js(config.jModel);   
-    string sRoot = "model";         //  prefix = dad.empty() ? nam_ : dad + "." + nam_;
+    JConfig js(config.jBackBone);
+    // JConfig js(config.jModel);
+    string sRoot = "model";  //  prefix = dad.empty() ? nam_ : dad + "." + nam_;
 
     AllocBuffer();
     int L = config.nLayer();

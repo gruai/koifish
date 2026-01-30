@@ -35,6 +35,7 @@
 #include "../Utils/Cache.hpp"
 #include "../Utils/GST_rander.hpp"
 #include "../Utils/GST_util.hpp"
+#include "../Utils/GST_MemBuffer.hpp"
 #include "GoPT.hpp"
 #include "Neuron.hpp"
 #include "SLP.hpp"
@@ -95,7 +96,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     hGENERATOR gopt = nullptr;
 
     //  Ref: 1. isAtPhase 2.SetPhase
-    LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;
+    LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;    
 
     hTGraph hForwTG = nullptr, hBackTG = nullptr;
     int graph_order = -1, graph_update = -1;
@@ -165,7 +166,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     virtual bool GGUF_Serialize(const std::string& path, bool isSave, int flag = 0x0);
     // Load model wight from hugging face model
     virtual bool HF_Serialize(bool isSave, int flag = 0x0);
-    virtual bool YALM_Serialize(const std::string& path, bool isSave, int flag = 0x0);
+    // virtual bool YALM_Serialize(const std::string& path, bool isSave, int flag = 0x0);
 
     int SAFETENSOR2Gensors(const std::string& path, K_SafeTensors* hst, int flag);
     virtual bool SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag = 0x0);
@@ -179,6 +180,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
 
    public:
     hGensor xn = nullptr, xxn = nullptr;  // only for debug
+    hTensorBuffer memBuffer = nullptr;
 
     struct CLI_params config;
     static tpSWARM swarm;
@@ -453,6 +455,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     friend class TGraph;
     friend class EDGE_DEVICES;
     friend class RLS_BP;
+    friend class GST_TensorBuffer;
 };
 
 /*

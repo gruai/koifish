@@ -101,14 +101,18 @@ size_t huTensor::Alloc_1(void** dst, bool isZero, string desc, size_t sz0, int f
     error = hostAlloc ? cudaHostAlloc(dst, szAlloc, cudaHostAllocMapped) : cudaMalloc(dst, szAlloc);  // 8420
     // strange behavior of callo
     // data = calloc(szAlloc,1);  sAlloc = "Alloc_c/cu";   //8386
+    // if((uintptr_t)(*dst)==0x7ffe6c000000){
+    //     DEBUG_HERE;
+    // }
     if (error != cudaSuccess) {
-        _INFO("[CUDA Alloc] failed @%s, ERR=%s!\n", name, cudaGetErrorString(error));
+        _ERROR("[CUDA Alloc] failed @%s, ERR=%s!\n", name, cudaGetErrorString(error));
         exit(EXIT_FAILURE);
     }
     if (isZero)
         cudaCheck(cudaMemset(*dst, 0, szAlloc));
     szGlobalMaloc += szAlloc;
-    SUM::mems.push_back(MEM_USAGE(szAlloc, desc, *dst));
+    // SUM::mems.push_back(MEM_USAGE(szAlloc, desc, *dst));
+    hFish->memBuffer->Register(szAlloc, desc, *dst);
     return szAlloc;
 }
 size_t huTensor::Free_1(void** obj, const string& info) {
@@ -129,14 +133,13 @@ size_t huTensor::Free_1(void** obj, const string& info) {
             _WARN("[CUDA] free failed @\"%s\"! err=%s(%s).\n", name, cudaGetErrorString(error), cudaGetErrorString(last_err));
         }
     }
-    SUM::FreeMem(*obj);
+    hFish->memBuffer->Free(*obj);
     *obj = nullptr;
     szGlobalMaloc -= szData;
 
     return szGlobalMaloc;
 }
 
-static mt19937_state rngOfParams;
 bool huTensor::InitParam(int tpX) {
     size_t nElem0 = size(), i;
     size_t nInit  = size(1);
@@ -166,7 +169,7 @@ bool huTensor::InitParam(int tpX) {
                     // int ldT = 8 / BitPE(type);
                     // assert(ldT == 8 || ldT == 64);
                     size_t dT4B = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
-                    floatX* paramX = ToX(GTensor::tmpTernary);
+                    floatX* paramX = ToX(gBUFF->tmpTernary);
                     cudaMalloc(&paramX, nInit * sizeof(floatX));
                     CU_disti_normal<floatX>(nInit, (floatX*)paramX, 0.02f * residual_scale, param_seed);
                     ToTernary(paramX);
@@ -402,7 +405,7 @@ bool GTensor::Serial_Quant_MMAP(bool isSave, bool isReset, int flag) {
         bool bRet       = true;
         int dumpFlag    = 0;
         hBITARR tmpData = (hBITARR)host_data;  // new char[szData];
-        assert(tmpData != nullptr);
+        assert(tmpData != nullptr && "host_data@Serial_Quant_MMAP is nullptr!");
         floatX* x = (floatX*)(tmpData);
 
         if (isSave) {
@@ -525,7 +528,7 @@ bool huTensor::OverWrite(hGTensor hGT, bool isSrc, int flag) {
     assert(hGT->type == type);
     // assert(isSameShape(hGT) && szData > 0);
     assert(szData == hGT->szData);
-    if (isSrc) {    //  hGT is src
+    if (isSrc) {  //  hGT is src
         huTensor* src = dynamic_cast<huTensor*>(hGT.get());
         if (src == nullptr)  //  hGT => this
             cudaCheck(cudaMemcpy(data, hGT->data, szData, cudaMemcpyHostToDevice));
@@ -543,7 +546,7 @@ hGTensor huTensor::CrossEntropy(const hGTensor b, int flag) { return b; }
 
 double tNormsOf(const std::vector<hGTensor>& tensors, int flag) {
     float *grad_norm_squared, a, a_pre = 0.0;
-    grad_norm_squared = (float*)(GTensor::bt4c->data);
+    grad_norm_squared = (float*)(gBUFF->bt4c->data);
     double norm       = 0.0f;
     int num_slices[2] = {1, 1}, max_num_block_sums = get_max_num_block_sums(num_slices, 2);
     size_t nz = 0;
@@ -592,7 +595,7 @@ __global__ static void CU_x2_(float* out, const T* x0, size_t N) {
     }
 }*/
 
-static float* devBlockSum2 = nullptr;
+// static float* devBlockSum2 = nullptr;
 double GTensor::Length(int type, int flag) {
     bool is_first_pass = true;
     size_t nEle        = size();
@@ -821,10 +824,10 @@ bool huTensor::ToTernary(floatX* paramX, int flag) {
         CU_X2ternary_<floatX><<<CEIL_DIV(ne[0], dT4B), dT4B, smemPB, main_stream>>>(gama_T(), paramX, (char*)data, ne[0], ne[1], 1, true);
     // tNormOf();
     PrintTensor<floatX>("BitOfX0", paramX, true, ne[0], ne[1], 1, 1, 0);
-    // GTensor::tmpTernary->Print("BitOfX0", 0, -1, count);
+    // gBUFF->tmpTernary->Print("BitOfX0", 0, -1, count);
     // D2H(gama_T(), info, sizeof(info));   // floatGama->float
 
-    // GTensor::tmpTernary->Print("X2T", 0, -1, count);
+    // gBUFF->tmpTernary->Print("X2T", 0, -1, count);
     if (1) {  //  only for debug
         if (type == typNUMBER::T_BINARY_TILE) {
             // GetDataX();
@@ -835,10 +838,10 @@ bool huTensor::ToTernary(floatX* paramX, int flag) {
             _CheckX2Tile_(hx, hgama, ne[0], ne[1], 0x0);
             delete[] hx;
         } else {
-            assert(GTensor::tmpFF1->size() >= count);
-            CU_ternary2X_<floatX><<<CEIL_DIV(ne[0], dT4B), dT4B, smemPB, main_stream>>>(gama_T(), (hBITARR)data, ToX(GTensor::tmpFF1), ne[0], ne[1]);
-            double off = OFF_(paramX, ToX(GTensor::tmpFF1), count);
-            GTensor::tmpFF1->Print("BitOfX", 0, 0, count);
+            assert(gBUFF->tmpFF1->size() >= count);
+            CU_ternary2X_<floatX><<<CEIL_DIV(ne[0], dT4B), dT4B, smemPB, main_stream>>>(gama_T(), (hBITARR)data, ToX(gBUFF->tmpFF1), ne[0], ne[1]);
+            double off = OFF_(paramX, ToX(gBUFF->tmpFF1), count);
+            gBUFF->tmpFF1->Print("BitOfX", 0, 0, count);
             // assert(off <= 1.0e-5);
         }
     }
@@ -851,4 +854,95 @@ bool huTensor::ToTernary(floatX* paramX, int flag) {
         cudaCheck(cudaMemcpy(data, paramX, sizeof(floatX) * count, cudaMemcpyDeviceToDevice));
     }
     return true;
+}
+
+GST_TensorBuffer::GST_TensorBuffer(Fish* hFis_, int flag) : hFish(hFis_) {
+    try {
+        assert(hFish != nullptr);
+
+    } catch (const std::exception& e) {  // If a constructor throws an exception, the object's lifetime is considered to have never begun.​ Its destructor
+                                         // will not​ be called.
+        _INFO("%s", e.what());
+        fflush(stdout);
+        return;
+    } catch (const char* info) {
+        _INFO("%s", info);
+        fflush(stdout);
+        return;
+    } catch (...) {
+        _INFO("\r\n%s  Unknown exception !!!", __func__);
+        fflush(stdout);
+        return;
+    }
+}
+
+bool GST_TensorBuffer::Prepare(int flag) {
+    try {
+        int B, T, C0;
+        hFish->GetBTC(B, T, C0);
+        auto& config = hFish->config;
+        int q_dim = config.Q_dim(), kv_dim = config.KV_dim(), nCTX = config.n_ctx(), mostC = std::max(C0, q_dim);  // config.nEmbed(-1);
+        int nVocab = hFish->nClass();
+        if (config.model.isPaddedCls) {
+            nVocab = ceil(nVocab / 128.0) * 128;
+        }
+        int Vp = (int)(nVocab * 1.1), NH = config.n_head(), nFF = config.n_ff(), nEmbed = config.nEmbed();
+        int dB = config.model.preLogits_dB;
+        if (hFish->isTrain())
+            assert(B % dB == 0);
+        size_t nFFW = (size_t)(B)*T * nFF, nPrelogist = (size_t)(dB)*T * Vp;  // nTmp = (size_t)(T)*std::max(nFF, std::max(NH, Vp)),
+        size_t nTmp = std::max(nFFW, nPrelogist);                             // / dB + 1
+        assert(nTmp < INT_MAX);
+        typNUMBER tpA = config.model.tpActivation, tpG = config.model.tpGradient, tpW = config.model.tpWeight;
+        // cuLiteTest(B,T,C);
+
+        SHAPE sp4 = {B, T, max(nFF, q_dim + kv_dim * 2)}, sp0 = {(int)nTmp}, spMost = {B, T, mostC};
+        bt4c       = std::make_shared<huTensor>(hFish, "tmpBT4c", sp4, tpA, true);
+        tmpFF1     = std::make_shared<huTensor>(hFish, "tmpFF1", sp4, tpA, true);
+        SHAPE spTernary   = {mostC, max(nVocab, 3 * mostC)};
+        tmpTernary = std::make_shared<huTensor>(hFish, "tmpTernary", spTernary, tpW, true);  // Only weight would in ternay bit
+
+        scratch = std::make_shared<huTensor>(hFish, "tmpScratch/output", sp0, tpA, true);  //  may reduce memory by sp0=sp0/VP
+
+        delta = std::make_shared<huTensor>(hFish, "tmpDelta", spMost, tpG, true);
+
+        tmpDelta    = std::make_shared<huTensor>(hFish, "tmpDelta2", spMost, tpG, true);
+        GTensor::host_buff = new float[scratch->size()];
+        if (hFish->isModel({NLP_GUPPY})) {
+            tmpW = std::make_shared<huTensor>(hFish, "tmpW", SHAPE({nEmbed, nFF}), tpW, true);
+        }
+        if (hFish->isModel({NLP_QWEN2, NLP_QWEN3})) {
+            gate_delta = std::make_shared<huTensor>(hFish, "tmpGateDelta", SHAPE({B, T, nFF}), tpG, true);
+        }
+        switch (hFish->phase) {
+            case P_GENERATE:
+                //  @KERNEL_PIPE
+                outL = std::make_shared<huTensor>(hFish, "tmpOutL", SHAPE({nEmbed * 3 + q_dim + nFF * 2 + NH * nCTX * 2}), tpA, true);
+                // outL = std::make_shared<huTensor>(hFish, "tmpOutL", spMost, tpA, true);
+                break;
+            default:
+                outL = std::make_shared<huTensor>(hFish, "tmpOutL", spMost, tpA, true);
+                break;
+        }
+
+        // tmpGW = std::make_shared<huTensor>(hFish, "tmpGW", SHAPE({nEmbed, nFF}), tpG, true);
+        const int dMaxThread = deviceProp.maxThreadsPerMultiProcessor * deviceProp.multiProcessorCount;
+        cudaCheck(cudaMalloc(&GTensor::stat_info, sizeof(float) * std::max(5120, dMaxThread)));        
+
+        //  GTensor::buff = hCLS->preLogits->data;
+
+        return true;
+    } catch (const std::exception& e) {
+        _INFO("%s", e.what());
+        fflush(stdout);
+        return false;
+    } catch (const char* info) {
+        _INFO("%s", info);
+        fflush(stdout);
+        return false;
+    } catch (...) {
+        _INFO("\r\n%s  Unknown exception !!!", __func__);
+        fflush(stdout);
+        return false;
+    }
 }

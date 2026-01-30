@@ -320,8 +320,18 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
 }
 
 void Fish::Clear() {
+    backbons.clear();
+    for (auto n : neurons){
+        n.reset( ); //  release its ownership of the resource it currently holds, which can lead to the resource being deleted.
+    }
+    neurons.clear();
+
+    // gBUFF = nullptr;
+    // memBuffer->Clear();
+    
+    hEDS = nullptr;
     // AllocBuffer @Fish::jToGraph
-    GTensor::FreeBuffer();
+    // GTensor::FreeBuffer();
 }
 
 void Fish::ClearGraph(int flag) {
@@ -359,15 +369,16 @@ bool Fish::UpdateNCTX(int _nctx, int flag) {
 }
 
 bool Fish::BeforeBuild(int flag) {
-#ifdef __USE_GGML__
-    assert(ctx_build == nullptr);
-    ctx_size  = MostMemSize(0x0);
-    ctx_build = InitCTX(ctx_size);
-#endif
     if (role == SWARM_HEAD) {
         assert(swarm.size() > 0);
     } else {
     }
+
+    memBuffer = std::make_shared<GST_TensorBuffer>(this);
+    if(!memBuffer->Prepare())
+        return false;
+
+    gBUFF = memBuffer;
     return true;
 }
 
@@ -455,6 +466,9 @@ bool Fish::SaveTrain(CheckPoint_Params& ckp, bool isInit, int flag) {
         ckp.sModelPath = ckp.FullPath(true);
         _INFO("[SAFETENSOR] Init@\"%s\" nParams=%d save_every=%d\n", sOut.c_str(), optParams.size(), ckp.save_every);
         isOK = SAFETENSOR_Serialize(ckp, false);  // to set host_data of each tensor
+        if (!isOK) {
+            K_EXIT(KOIFISH_SAFETENSOR_LOAD);
+        }
         // if (sX == "warmup") {   // more profiling
         //     for (int i = 0; i < 1; i++) {
         //         isOK = SAFETENSOR_Serialize(sOut, false);
@@ -888,69 +902,19 @@ size_t cudnn_qkv_forw(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn, i
 size_t cudnn_qkv_back(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn);
 bool Fish::AllocBuffer(int flag) {
     try {
-        // TokenEmbed* embed = GetNeuron<TokenEmbed>("TokenEmbed",0);
-        int B, T, C0;
+        int B, T, C0, NH = config.n_head();
         GetBTC(B, T, C0);
-        int q_dim = config.Q_dim(), kv_dim = config.KV_dim(), nCTX = config.n_ctx(), mostC = std::max(C0, q_dim);  // config.nEmbed(-1);
+
         if (isLocalInfer) {
             if (config.phase == P_GENERATE) {  // P_EVAL no need cache!
                 hCache = std::make_shared<KVCache>(this);
             }
         }
-
-        int nVocab = nClass();
-        if (config.model.isPaddedCls) {
-            nVocab = ceil(nVocab / 128.0) * 128;
-        }
-        int Vp = (int)(nVocab * 1.1), NH = config.n_head(), nFF = config.n_ff(), nEmbed = config.nEmbed();
-        int dB = config.model.preLogits_dB;
-        if (isTrain())
-            assert(B % dB == 0);
-        size_t nFFW = (size_t)(B)*T * nFF, nPrelogist = (size_t)(dB)*T * Vp;  // nTmp = (size_t)(T)*std::max(nFF, std::max(NH, Vp)),
-        size_t nTmp = std::max(nFFW, nPrelogist);                             // / dB + 1
-        assert(nTmp < INT_MAX);
-        typNUMBER tpA = config.model.tpActivation, tpG = config.model.tpGradient, tpW = config.model.tpWeight;
-        // cuLiteTest(B,T,C);
-
-        SHAPE sp4 = {B, T, max(nFF, q_dim + kv_dim * 2)}, sp0 = {(int)nTmp}, spMost = {B, T, mostC};
-        GTensor::bt4c       = std::make_shared<huTensor>(this, "tmpBT4c", sp4, tpA, true);
-        GTensor::tmpFF1     = std::make_shared<huTensor>(this, "tmpFF1", sp4, tpA, true);
-        SHAPE spTernary     = {mostC, max(nVocab, 3 * mostC)};
-        GTensor::tmpTernary = std::make_shared<huTensor>(this, "tmpTernary", spTernary, tpW, true);  // Only weight would in ternay bit
-
-        GTensor::scratch = std::make_shared<huTensor>(this, "tmpScratch/output", sp0, tpA, true);  //  may reduce memory by sp0=sp0/VP
-
-        GTensor::delta = std::make_shared<huTensor>(this, "tmpDelta", spMost, tpG, true);
-
-        GTensor::tmpDelta  = std::make_shared<huTensor>(this, "tmpDelta2", spMost, tpG, true);
-        GTensor::host_buff = new float[GTensor::scratch->size()];
-        if (isModel({NLP_GUPPY})) {
-            GTensor::tmpW = std::make_shared<huTensor>(this, "tmpW", SHAPE({nEmbed, nFF}), tpW, true);
-        }
-        if (isModel({NLP_QWEN2, NLP_QWEN3})) {
-            GTensor::gate_delta = std::make_shared<huTensor>(this, "tmpGateDelta", SHAPE({B, T, nFF}), tpG, true);
-        }
-        switch (phase) {
-            case P_GENERATE:
-                //  @KERNEL_PIPE
-                GTensor::outL = std::make_shared<huTensor>(this, "tmpOutL", SHAPE({nEmbed * 3 + q_dim + nFF * 2 + NH * nCTX * 2}), tpA, true);
-                // GTensor::outL = std::make_shared<huTensor>(this, "tmpOutL", spMost, tpA, true);
-                break;
-            default:
-                GTensor::outL = std::make_shared<huTensor>(this, "tmpOutL", spMost, tpA, true);
-                break;
-        }
-
-        // GTensor::tmpGW = std::make_shared<huTensor>(this, "tmpGW", SHAPE({nEmbed, nFF}), tpG, true);
-        const int dMaxThread = deviceProp.maxThreadsPerMultiProcessor * deviceProp.multiProcessorCount;
-        cudaCheck(cudaMalloc(&GTensor::stat_info, sizeof(float) * std::max(5120, dMaxThread)));
         if (phase != P_GENERATE) {
             cudnn_qkv_forw(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn);
             size_t alloc = cudnn_qkv_back(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn);
             _INFO("\tcudnn_qkv_back = %.5gM\n", alloc / 1.0e6);
         }
-
-        //  GTensor::buff = hCLS->preLogits->data;
 
         return true;
     } catch (const std::exception& e) {

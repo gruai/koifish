@@ -15,11 +15,8 @@
 #include "../Manifold/Fish.hpp"
 #include "GeQuant.hpp"
 
-GTensor* GTensor::tZ   = nullptr;
-hGTensor GTensor::outL = nullptr, GTensor::delta = nullptr, GTensor::gate_delta = nullptr, GTensor::tmpDelta = nullptr;
+GTensor* GTensor::tZ = nullptr;
 float* GTensor::stat_info = nullptr;
-hGTensor GTensor::bt4c = nullptr, GTensor::scratch = nullptr, GTensor::tmpW = nullptr, GTensor::tmpGW = nullptr, GTensor::tmpFF1 = nullptr,
-         GTensor::tmpTernary = nullptr, GTensor::tmpQout = nullptr, GTensor::tmpKout = nullptr, GTensor::residual = nullptr;
 void *GTensor::buff = nullptr, *GTensor::host_buff = nullptr, *GTensor::cudnn_workspace = nullptr;
 size_t GTensor::buff_len = 0, GTensor::cudnn_workspace_size = 0;
 
@@ -254,7 +251,12 @@ GTensor::~GTensor() {
     }
     if (BIT_TEST(flags, F_MMAP)) {
     } else {
-        FREE_a(host_data);
+        if(BIT_TEST(flags,F_GPU)){
+            /* No need to free host_data, since 
+            1. host_data is just ref of MMF "host = src" @GTensor::SerialJSON
+            */
+        }else
+            FREE_a(host_data);
     }
 }
 
@@ -395,6 +397,7 @@ int GTensor::SerialJSON(const std::string& name_, const JSON& val, void* bytes_p
         spJ.push_back(n);  // shape[i] =
         numel *= spJ[i];
     }
+    assert(shape == spJ);
     // ReShape(spJ, tpMMP);
     if (SHAPE2NZ(shape) != SHAPE2NZ(spJ)) {  // quant
         // assert(hQuant!=nullptr);
@@ -445,7 +448,7 @@ int GTensor::SerialJSON(const std::string& name_, const JSON& val, void* bytes_p
                 Serial_Quant_MMAP(false, false);
                 host_data = nullptr;  // mmap file would release
             } else {
-                G_NORM_STAT<bf16>(size(), (bf16*)host_data, disq.sum_2, disq.sum_1, disq.nrm_1);
+                G_NORM_STAT<bf16>(size(), (bf16*)src, disq.sum_2, disq.sum_1, disq.nrm_1);
             }
             // if (G_Has_(name, hFish->config.quant.filter_WeightF8Ex)) {  // model.embed_tokens.weight    only for debug
             //     ToF8Ex(0x0);
@@ -544,6 +547,11 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
     }
     if (hData != nullptr)
         delete[] (char*)hData;
+}
+
+std::string GTensor::Alias(int flag) {
+    string alias = name;
+    return alias;
 }
 
 bool GTensor::DumpX(int tpDump, const string& title, int flag) const {
@@ -713,8 +721,9 @@ bool huTensor::BeforeBackward(size_t& off, int flag) {
  *      2.
  */
 bool huTensor::Alloc(int iter, int flagInit) {
-    if (G_Has_(name, {"preLogits"})) {  // model.layers.0.mlp.down_proj.weight
-        DEBUG_HERE;                     //
+    assert(strlen(name) > 0);
+    if (G_Has_(name, {"model.out.cls"})) {  // model.layers.0.mlp.down_proj.weight
+        DEBUG_HERE;                                             //
     }
     size_t sz0 = szGlobalMaloc;
     if (BIT_TEST(flags, F_NOALLOC))  // For example: operator fusing, memory reuse,rematerialization
@@ -880,23 +889,38 @@ bool Gensors2File(std::vector<hGensor> gensors, const std::string& path, int fla
     return true;
 }
 
-bool GTensor::FreeBuffer(int flag) {
-    try {
-        bt4c = nullptr, delta = nullptr, tmpDelta = nullptr, outL = nullptr, scratch = nullptr, tmpFF1 = nullptr, tmpW = nullptr, tmpGW = nullptr,
-        residual   = nullptr;
-        tmpTernary = nullptr;
-        return true;
-    } catch (const std::exception& e) {
-        _WARN("%s", e.what());
-        fflush(stdout);
-        return -1000;
-    } catch (const char* info) {
-        _WARN("%s", info);
-        fflush(stdout);
-        return -1001;
-    } catch (...) {
-        _WARN("\r\n%s  Unknown exception !!!", __func__);
-        fflush(stdout);
-        return -2001;
+/*
+1. RAII (Resource Acquisition Is Initialization)
+2. Throw exceptions from constructors​ if resource acquisition fails
+
+class SafeCUDAMemory {
+private:
+    void* ptr;
+
+public:
+    SafeCUDAMemory(size_t size) : ptr(nullptr) {
+        cudaError_t err = cudaMalloc(&ptr, size);
+        if (err != cudaSuccess) {
+            throw std::runtime_error("CUDA malloc failed");
+        }
     }
-}
+
+    ~SafeCUDAMemory() {
+        if (ptr != nullptr) {
+            // Note: Don't throw from destructor!
+            cudaFree(ptr);
+        }
+    }
+
+    // Prevent copying
+    SafeCUDAMemory(const SafeCUDAMemory&) = delete;
+    SafeCUDAMemory& operator=(const SafeCUDAMemory&) = delete;
+
+    // Allow moving
+    SafeCUDAMemory(SafeCUDAMemory&& other) noexcept : ptr(other.ptr) {
+        other.ptr = nullptr;
+    }
+
+    void* get() const { return ptr; }
+};
+*/
