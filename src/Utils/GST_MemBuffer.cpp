@@ -137,7 +137,7 @@ bool GST_TensorBuffer::Free(void* hObj, int flag) {
             return true;
         }
     }
-    _WARN("[Free] failed to find record of %p! records=%ld.\n", hObj, records.size());
+    //_WARN("[Free] failed to find record of %p! records=%ld.\n", hObj, records.size());
     // assert(0 && "GST_TensorBuffer::FreeMem failed");
     return false;
 }

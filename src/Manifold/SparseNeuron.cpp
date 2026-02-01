@@ -213,7 +213,7 @@ HIERARCH_LoRA::HIERARCH_LoRA(SparseNeuron* neuron, hGensor w_, int r_, int flag)
     assert(w_->isWMAT() && rank > 0);
     int m = w_->ne[0], n = w_->ne[1], c0;
     B = neuron->B, T = neuron->T;
-    assert(rank * 10 < neuron->C);  // low rank
+    assert(rank * 10 < hFish->config.nEmbed());  // neuron->C   low rank
     string title = w_->name;
     a            = GT(hFish, w_->type, {m, rank}, flag | GTensor::F_LORA_A, title + "_a");
     b            = GT(hFish, w_->type, {rank, n}, flag | GTensor::F_LORA_B, title + "_b");

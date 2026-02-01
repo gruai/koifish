@@ -54,6 +54,7 @@ QWen3::QWen3(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, 
         // isEmbedWeightTying};
         config.model.isBqkv = false;  //  0.6B has no bias!
     }
+    config.fuyou.filter_reload = {"mlp", "self_attn"};  //  {"mlp", "self_attn"};
     config.model.isNormalBias = false;
 }
 

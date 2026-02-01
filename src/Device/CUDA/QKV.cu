@@ -555,14 +555,14 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
     // K.out->data = key_cache + (size_t)pos * kv_dim, V.out->data = val_cache + (size_t)pos * kv_dim;
     hGensor tmpQKV = gBUFF->tmpFF1;  
     floatX* qkvr = ToX(tmpQKV);  // Q.out/K.out/V.out
-    int nToken = nBatchToken(), seq_len = hFish->config.n_ctx();
+    int nToken = nBatchToken(), seq_len = hFish->config.n_ctx(), nEmbed = hFish->config.nEmbed();
     inp = OnInput(inpL);  //  may remater by hIn->SerialData
     inp->Print("inp", 0x0, dump_flag);
     gBUFF->residual = inp;
     hGTensor inpQ   = inpL;
     if (fuseNorm == nullptr) {
         inpQ = norm.cuFlow(inpL);
-        inpQ->Print("qkv.in", 0x0, dump_flag, nToken * C);
+        inpQ->Print("qkv.in", 0x0, dump_flag, nToken * nEmbed);
         // norm.w->Print("qkvn.w",0x0,dump_flag);          norm.b->Print("qkvn.b",0x0,dump_flag);
         // norm.mean->Print("qkvn.mean",0x0,dump_flag);       norm.rstd->Print("qkvn.rstd",0x0,dump_flag);
     }
@@ -598,14 +598,14 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
         attn->Print("l_atty", 0x0, dump_flag);
     }
     if (0)  // ShareLayerOut: inpL/out is same data
-        CU_mv_(ToX(inpL), ToX(proj_cat.w), ToX(Q.out), C, q_dim, 1.0f, 1.0f);
+        ;//CU_mv_(ToX(inpL), ToX(proj_cat.w), ToX(Q.out), C, q_dim, 1.0f, 1.0f);
     else {  //       From cuFlow
         proj_cat.Forw(gBUFF->scratch, Q.out);
-        gBUFF->scratch->Print("proj_cat", 0x0, dump_flag, nToken * C);
+        gBUFF->scratch->Print("proj_cat", 0x0, dump_flag, nToken * nEmbed);
         // fused_residual_forward5(ouput, normed,mean,rstd, residual, scratch, ToX(fuseNorm->w), ToX0(fuseNorm->b), B*T, C, main_stream);
         if (!hFish->isRemater()) {
-            gBUFF->residual->Print("residual", 0x0, dump_flag, nToken * C);
-            residual_forward(ToX(out), ToX(gBUFF->residual), ToX(gBUFF->scratch), nToken * C, main_stream);
+            gBUFF->residual->Print("residual", 0x0, dump_flag, nToken * nEmbed);
+            residual_forward(ToX(out), ToX(gBUFF->residual), ToX(gBUFF->scratch), nToken * nEmbed, main_stream);
             assert(fuseNorm == nullptr && "Try fuse normal later...");
             {
                 // float *mean = TO<float>(fuseNorm->mean), *rstd = TO<float>(fuseNorm->rstd);
@@ -627,6 +627,7 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
     // NVTX_RANGE_FN();
     hGensor tmpQKV = gBUFF->tmpFF1;  
     floatX* qkvr = ToX(tmpQKV);  // Q.out/K.out/V.out
+    int nEmbed = hFish->config.nEmbed();
     // bool isAlternate = true;                   // layer%2==1;layer>1;
     if (isForward()) {  //  data=ToX(QKV->norm.out)
         NvtxRange range(name.c_str(), 0);
@@ -664,9 +665,9 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
         // gBUFF->scratch->Print("proj_cat",0x0,dump_flag);
         // fused_residual_forward5(ouput, normed,mean,rstd, residual, scratch, ToX(fuseNorm->w), ToX0(fuseNorm->b), B*T, C, main_stream);
         if (!hFish->isRemater()) {
-            gBUFF->scratch->Print("qkv.out", 0x0, dump_flag, B * T * C);
-            gBUFF->residual->Print("residual", 0x0, dump_flag, B * T * C);
-            residual_forward(ToX(out), ToX(gBUFF->residual), ToX(gBUFF->scratch), B * T * C, main_stream);
+            gBUFF->scratch->Print("proj_out", 0x0, dump_flag, B * T * nEmbed);
+            gBUFF->residual->Print("residual", 0x0, dump_flag, B * T * nEmbed);
+            residual_forward(ToX(out), ToX(gBUFF->residual), ToX(gBUFF->scratch), B * T * nEmbed, main_stream);
             assert(fuseNorm == nullptr && "Try fuse normal later...");
             // if (fuseNorm != nullptr) {
             //     float *mean = TO<float>(fuseNorm->mean), *rstd = TO<float>(fuseNorm->rstd);

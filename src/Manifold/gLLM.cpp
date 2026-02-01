@@ -34,7 +34,7 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_, int flag) {
     else
         hOPT = std::make_shared<OPT_Adam>(this, config, flag);
     if (wikis.size() == 0) {
-        _INFO("====== NO WIKI !!! ======\n");  // return false;
+        _INFO("[WIKI] OFF\n");  // return false;
     } else {
         teach = wikis[0]->teach;
     }
@@ -854,7 +854,7 @@ int Fish::ForwardOnRLS(int iter, int flag) {
 }
 int NLP_AutoRegressive::ForwardOnNeuron_v0(int flag) {
     int B, T, C, tpFuseNormal = config.Fuse_Normal, L = config.nLayer();
-    GetBTC(B, T, C);
+
     hGensor cur         = nullptr;
     LayerNormal* lnf    = GetNeuron<LayerNormal>("LayerNormal", 0);
     TokenEmbed* embed   = GetNeuron<TokenEmbed>("TokenEmbed", 0);

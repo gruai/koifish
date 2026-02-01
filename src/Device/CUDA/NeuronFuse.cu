@@ -27,7 +27,8 @@ hGTensor huTensor::_Multiply(const hGTensor& b) {
 }
 
 bool TokenEmbed::UpdateBucket(int type, int flag) {
-    num_c_groups = CEIL_DIV(C, (WARP_SIZE * X128::size));
+    num_c_groups = CEIL_DIV(latent, (WARP_SIZE * X128::size));
+    assert(num_c_groups>0);
     if (bucket_info != NULL)
         return false;
 
@@ -86,7 +87,7 @@ void TokenEmbed::WorkloadOnBucker(int* inputs_cpu, int flag) {
 
 //
 hGTensor TokenEmbed::cuInfer(hGTensor hOut, int flag) {
-    int token = hBatch->CurToken(), pos = hBatch->tok_pos, dim = C, nRow = w->shape[0];
+    int token = hBatch->CurToken(), pos = hBatch->tok_pos, dim = latent, nRow = w->shape[0];
     hQUANT hQuant = w->GetDynamicQuant();
     assert(dim % 32 == 0);
     switch (w->type) {
@@ -113,14 +114,14 @@ hGTensor TokenEmbed::cuInfer(hGTensor hOut, int flag) {
             assert(0);
             break;
     }
-    // w->Print("wte", 0, -1);  // PrintTensor<AT>("token_embed", hOut, true, dim, 1, 1, 1, 0);
+    // w->Print("wte", 0, -1);
     // hOut->Print("token_embed", 0, -1);
     return hOut;
 }
 
 hGTensor TokenEmbed::OnEmbed(hGensor inpL, int seed) {
     try {
-        int OC = w->ne[1], Vp = padded_nCls;
+        int OC = w->ne[1], Vp = padded_nCls, C = hFish->config.nEmbed();
         int nToken   = nBatchToken();
         hGTensor cur = out, curW = w;
         if (isForward()) {
@@ -172,15 +173,15 @@ hGTensor TokenEmbed::SubW(hGTensor hSamp, bool isForw, hGTensor wOut, int flag) 
     try {
         int nSamp = hSamp->size(), *samps = TO<int>(hSamp), nLayer = hFish->config.nLayer();
         int OC = w->ne[1], Vp = padded_nCls, T = nSamp, B = 1;  //  , seed = 42
-        grid_size    = CEIL_DIV(B * T * C, block_size);
+        grid_size    = CEIL_DIV(B * T * latent, block_size);
         hGTensor cur = wOut, wSrc = flag == 0 ? w : wInv;
 
         if (isForw) {
             // encoder_forward(ToX(cur), samps, ToX(wSrc), nullptr, 1, T, C, main_stream);
-            CU_embed_forw_tc<<<grid_size, block_size, 0, main_stream>>>(ToX(cur), samps, ToX(wSrc), T, C, Vp, flag == 1);
+            CU_embed_forw_tc<<<grid_size, block_size, 0, main_stream>>>(ToX(cur), samps, ToX(wSrc), T, latent, Vp, flag == 1);
             cur->Print("subW", 0, 0);
         } else {
-            CU_embed_back_<<<grid_size, block_size, 0, main_stream>>>(ToG(wSrc), samps, ToX(cur), T, C, Vp, flag == 1);
+            CU_embed_back_<<<grid_size, block_size, 0, main_stream>>>(ToG(wSrc), samps, ToX(cur), T, latent, Vp, flag == 1);
             // encoder_backward(ToG(wSrc), nullptr, scratchX, workload_indices, bucket_info, ToX(cur), samps, hBatch->host, 1, T, C, seed, main_stream);
         }
         return cur;
@@ -468,7 +469,7 @@ int SLP::FUSE_cuda_block(hGTensor rhs, hGTensor lhs, hGTensor gelu, bool isForw,
 hGTensor FFN::cuInfer(hGTensor hIn, int flag) {
     hGTensor tGelu = gBUFF->scratch, up_out = remater_ffn ? gBUFF->tmpFF1 : up.out;
     bool isBias = up.b != nullptr;
-    int nToken  = nBatchToken();
+    int nToken  = nBatchToken(), nEmbed = hFish->config.nEmbed(), C= nEmbed;
     inp         = OnInput(hIn);
     // inp->Print("ffn.in", 0, dump_flag, C);
     gBUFF->residual = inp;  // gBUFF->residual->OverWrite(inp);          //
@@ -486,7 +487,7 @@ hGTensor FFN::cuInfer(hGTensor hIn, int flag) {
     up.Forw(tGelu, norm.out, up_out, &relu);
     relu.Forw(tGelu, up_out);
     tGelu->Print("ffn.up+gelu", 0, dump_flag, latent);
-    hGTensor down_out = gBUFF->delta;  
+    hGTensor down_out = gBUFF->delta;
     // PrintTensor<floatX>("ffn.norm",ToX(norm.out),true,B,T,C,1,-1);          PrintTensor<floatX>("ff1",ff1,true,B,T,latent,1,-1);
     down.Forw(down_out, tGelu, nullptr, nullptr, isSymmetric);
     down_out->Print("ffn.down", 0, dump_flag, nToken * C);  // PrintTensor<floatX>("ffn",scratch,true,B,T,C);
@@ -542,7 +543,7 @@ void CU_set(const char* title, T* dst, int n1, int n2, int n3 = 1, int n4 = 1, i
 hGTensor FFN::cuFlow(hGTensor hIn, int flag) {
     hGTensor tGelu = gBUFF->scratch, up_out = remater_ffn ? gBUFF->tmpFF1 : up.out;
     bool isBias = up.b != nullptr;
-
+    int C = hFish->config.nEmbed();
     if (isForward()) {
         inp = OnInput(hIn);
         // inp->Print("ffn.in", 0, dump_flag, B * T * C);
@@ -560,7 +561,7 @@ hGTensor FFN::cuFlow(hGTensor hIn, int flag) {
         up_out->Print("ffn.up", 0, dump_flag, latent);
         relu.Forw(tGelu, up_out);
 
-        hGTensor down_out = gBUFF->delta;  
+        hGTensor down_out = gBUFF->delta;
 
         down.Forw(down_out, tGelu, nullptr, nullptr, isSymmetric);
         down_out->Print("ffn.down", 0, dump_flag, B * T * C);  // PrintTensor<floatX>("ffn",scratch,true,B,T,C);
@@ -707,7 +708,7 @@ hGTensor OutCLS::cuInfer(hGTensor inp_, int flag) {
 
 hGTensor OutCLS::cuFlow(hGTensor inp_, int flag) {
     INSPECT inspect(this);
-    int V = nCls, Vp = padded_nCls, gelu_fusion = 1, i;
+    int V = nCls, Vp = padded_nCls, gelu_fusion = 1, i, C = hFish->config.nEmbed();
     assert(proj.b == nullptr);
     mean_loss          = 0.0f;
     const int* targets = (int*)(target->data);
@@ -777,7 +778,7 @@ hGTensor OutCLS::cuFlow(hGTensor inp_, int flag) {
 int Relu::Forw(hGTensor out, hGTensor inp, int flag) {
     size_t nz            = SHAPE2NZ(shape);
     const int block_size = 128;
-    const int grid_size  = CEIL_DIV(nz, block_size);
+    const int grid_size  = CEIL_DIV(nz, block_size), C = hFish->config.nEmbed();
     hGTensor gate        = nullptr;
     switch (fAct) {
         case SWIG:
@@ -827,7 +828,7 @@ __global__ static void CU_swiglu_back_v0(T* delta_in_out, T* delta_gate, const T
 //  delta is both delta_in & delta_out
 int Relu::Back(hGTensor delta_in_out, hGTensor pre_gelu, int flag) {
     size_t nz            = SHAPE2NZ(shape);
-    const int block_size = 128;
+    const int block_size = 128, C = hFish->config.nEmbed();
     const int grid_size  = CEIL_DIV(nz, block_size);
     hGTensor gate        = nullptr;
     switch (fAct) {

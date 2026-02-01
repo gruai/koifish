@@ -304,8 +304,8 @@ VarCoder::VarCoder(Fish* hG_, const std::string& key_, JSON::const_iterator jit,
     if (jvals.size() >= 2) {
         shape = {(int)(jvals[0]), (int)(jvals[1])};
     } else {
-        int n_ff = hFish->config.n_ff();
-        shape    = {C, n_ff};
+        int n_ff = hFish->config.n_ff(), nEmbd = hFish->config.nEmbed();
+        shape = {nEmbd, n_ff};
     }
     assert(shape[0] > 0 && shape[1] > 0);
     nBottom = shape[0], nTop = shape[1];
@@ -379,7 +379,7 @@ void Relu::BuildX(const std::string& key_, const SHAPE& sp, Fish* hG_, int flag)
     // fAct = RELU_;
     shape = sp;
     assert(shape.size() == 3);
-    B = shape[0], T = shape[1], C = shape[2];
+    B = shape[0], T = shape[1];
     size_t nz = SHAPE2NZ(shape);
     if (nz >= std::numeric_limits<int>::max() && fAct == SWIG) {
         _ERROR("Relu::swiglu input too large(%ld)", nz);
@@ -400,9 +400,8 @@ bool FFN::Build(int flag_0) {
     relu.BuildX(_NAME(name, FFN_RELU), {B, T, latent}, hFish, flag_0);
     relu.slp_gate = &gate;
     // flag |= GeNeuron::F_BIAS;
-    assert(C == shape[0]);
     sp3 = {B, T, latent};
-    sp2 = {B, T, C};
+    sp2 = {B, T, (int)hFish->config.nEmbed()};
     // dump_flag = -1;
     // relu.out = std::make_shared<huTensor>(name+"_relu",sp3,tpWeight,false);
     // gate.BuildX(name + "_gate", {shape[0], shape[1]}, hFish, flag);

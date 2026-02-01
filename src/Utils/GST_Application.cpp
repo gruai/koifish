@@ -7,6 +7,7 @@
  */
 
 #include "GST_Application.hpp"
+#include "GST_MemBuffer.hpp"
 
 void CUDA_cleanup();
 
@@ -23,6 +24,12 @@ GST_Application::GST_Application(int argc, char* argv[]) {
         throw std::runtime_error("Invild arguments");
     }
 }
+
+GST_Application ::~GST_Application() {
+    gBUFF = nullptr;
+    Cleanup();    
+}
+
 bool GST_Application::g_running              = false;
 GST_Application* GST_Application::g_instance = nullptr;
 

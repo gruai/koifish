@@ -878,15 +878,16 @@ GST_TensorBuffer::GST_TensorBuffer(Fish* hFis_, int flag) : hFish(hFis_) {
 
 bool GST_TensorBuffer::Prepare(int flag) {
     try {
-        int B, T, C0;
-        hFish->GetBTC(B, T, C0);
         auto& config = hFish->config;
-        int q_dim = config.Q_dim(), kv_dim = config.KV_dim(), nCTX = config.n_ctx(), mostC = std::max(C0, q_dim);  // config.nEmbed(-1);
+        int B, T, nEmbed = config.nEmbed(), nCTX = config.n_ctx();
+        hFish->GetBT(B, T);
+        int q_dim = config.Q_dim(), kv_dim = config.KV_dim(), mostC = std::max(nEmbed, q_dim);  // config.nEmbed(-1);
+        assert(q_dim >= kv_dim);
         int nVocab = hFish->nClass();
         if (config.model.isPaddedCls) {
             nVocab = ceil(nVocab / 128.0) * 128;
         }
-        int Vp = (int)(nVocab * 1.1), NH = config.n_head(), nFF = config.n_ff(), nEmbed = config.nEmbed();
+        int Vp = (int)(nVocab * 1.1), NH = config.n_head(), nFF = config.n_ff();
         int dB = config.model.preLogits_dB;
         if (hFish->isTrain())
             assert(B % dB == 0);
@@ -897,16 +898,16 @@ bool GST_TensorBuffer::Prepare(int flag) {
         // cuLiteTest(B,T,C);
 
         SHAPE sp4 = {B, T, max(nFF, q_dim + kv_dim * 2)}, sp0 = {(int)nTmp}, spMost = {B, T, mostC};
-        bt4c       = std::make_shared<huTensor>(hFish, "tmpBT4c", sp4, tpA, true);
-        tmpFF1     = std::make_shared<huTensor>(hFish, "tmpFF1", sp4, tpA, true);
-        SHAPE spTernary   = {mostC, max(nVocab, 3 * mostC)};
-        tmpTernary = std::make_shared<huTensor>(hFish, "tmpTernary", spTernary, tpW, true);  // Only weight would in ternay bit
+        bt4c            = std::make_shared<huTensor>(hFish, "tmpBT4c", sp4, tpA, true);
+        tmpFF1          = std::make_shared<huTensor>(hFish, "tmpFF1", sp4, tpA, true);
+        SHAPE spTernary = {mostC, max(nVocab, 3 * mostC)};
+        tmpTernary      = std::make_shared<huTensor>(hFish, "tmpTernary", spTernary, tpW, true);  // Only weight would in ternay bit
 
         scratch = std::make_shared<huTensor>(hFish, "tmpScratch/output", sp0, tpA, true);  //  may reduce memory by sp0=sp0/VP
 
         delta = std::make_shared<huTensor>(hFish, "tmpDelta", spMost, tpG, true);
 
-        tmpDelta    = std::make_shared<huTensor>(hFish, "tmpDelta2", spMost, tpG, true);
+        tmpDelta           = std::make_shared<huTensor>(hFish, "tmpDelta2", spMost, tpG, true);
         GTensor::host_buff = new float[scratch->size()];
         if (hFish->isModel({NLP_GUPPY})) {
             tmpW = std::make_shared<huTensor>(hFish, "tmpW", SHAPE({nEmbed, nFF}), tpW, true);
@@ -927,7 +928,7 @@ bool GST_TensorBuffer::Prepare(int flag) {
 
         // tmpGW = std::make_shared<huTensor>(hFish, "tmpGW", SHAPE({nEmbed, nFF}), tpG, true);
         const int dMaxThread = deviceProp.maxThreadsPerMultiProcessor * deviceProp.multiProcessorCount;
-        cudaCheck(cudaMalloc(&GTensor::stat_info, sizeof(float) * std::max(5120, dMaxThread)));        
+        cudaCheck(cudaMalloc(&GTensor::stat_info, sizeof(float) * std::max(5120, dMaxThread)));
 
         //  GTensor::buff = hCLS->preLogits->data;
 

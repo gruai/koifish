@@ -99,7 +99,7 @@ class GeNeuron {
     QUANT_CARD quant_params;
     int block_size = 256, grid_size = 0;  // for cuda kernel function
 
-    int n_embd_head, n_head;
+    // int n_embd_head, n_head;
     int gelu_fusion = 0, dump_flag = 0;
     Fish* hFish = nullptr;
     SHAPE shape;
@@ -131,7 +131,7 @@ class GeNeuron {
     DATA_PLACE place = DATA_PLACE::VOID;
 
     static shared_ptr<GeNeuron> MakeInstance(Fish* hG_, void* ctx_build, const string& guid, JSON::const_iterator jit, int flag = 0x0);
-    int B, T, C;  // from n_batch,n_ctx,n_embd
+    int B, T;  // from n_batch,n_ctx
 
     // w is the 道 of neuron.   道者,千变万化之动(wLORAs)
     hGensor w = nullptr;
@@ -441,7 +441,7 @@ struct LayerSoftmax : public SparseNeuron {
 
 struct MOE : public SparseNeuron {
     bool isSiLU = false;
-
+    int head_dim = -1, n_head = -1;
     MOE() {}
     MOE(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
     bool Build(int flag) override;
@@ -536,7 +536,7 @@ class SelfAttention : public SparseNeuron {
     bool use_cache = false;
     bool isLast    = false;
     float f_max_alibi_bias;
-    int n_head, head_dim, n_head_kv, n_embd_gqa, q_dim = -1, kv_dim = -1;
+    int n_head, head_dim, n_head_kv, n_embd_gqa, n_embd, q_dim = -1, kv_dim = -1;
     int C_qkv      = -1;       //  C_qkv maybe much less than C
     hGensor bqkv   = nullptr;  //  biases for qkv (qwen)
     hGensor KQ_pos = nullptr, KQ_mask = nullptr;

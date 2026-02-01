@@ -323,7 +323,7 @@ bool CLI_params::JModel2Params(int flag) {
 
         nLayerX = 1;  // at least 1 layer
         nLayerX = jKV(jConfig, {"model", "parameter", "Layer"}, nLayerX);
-        assert(nLayerX < 160 && nLayerX > 0);
+        assert(nLayerX < 2048 && nLayerX > 0);
         model.max_pos_embeddings = jKV(jConfig, {"model", "parameter", "max_pos_embeddings"}, model.max_pos_embeddings);
         // nearly same ???
         // if(nLayerX>0)

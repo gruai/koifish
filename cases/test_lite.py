@@ -119,12 +119,12 @@ if __name__ == '__main__':
     # test_gpt2_774M()
 
     # test_chat_qwen3_0_6B()  
-    test_qwen3_596M()
+    #test_qwen3_596M()
     # test_chat_qwen3_4B_1()
     # xtest_batch_qwen3_4B()
 
     # test_pp_gpt2()
-    #test_gpt2_124M()
+    test_gpt2_124M()
     # test_gpt2_124M_fuyou6()
     # test_gpt2_1558M()
     # test_qwen2_494M()

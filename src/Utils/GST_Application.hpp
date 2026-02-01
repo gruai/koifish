@@ -22,15 +22,14 @@
 struct AppResult {
     std::error_code error_code;
     std::string error_message;
-    
-    AppResult() {}    
-   
-    AppResult(const std::error_code& code, const std::string& message = "") 
-        : error_code(code), error_message(message) {}
-    
+
+    AppResult() {}
+
+    AppResult(const std::error_code& code, const std::string& message = "") : error_code(code), error_message(message) {}
+
     bool success() const { return !error_code; }
     bool failed() const { return static_cast<bool>(error_code); }
-    
+
     explicit operator bool() const { return success(); }
 };
 
@@ -46,7 +45,7 @@ class GST_Application {
    public:
     GST_Application(int argc, char* argv[]);
 
-    virtual ~GST_Application() { Cleanup(); }
+    virtual ~GST_Application();
 
     // Similar to OnInitInstance
     virtual bool Initialize() {
@@ -69,7 +68,7 @@ class GST_Application {
 
     // Similar to OnExitInstance
     virtual void Cleanup() {
-        _INFO("[APP] %s Cleanup...\n",name.c_str());
+        _INFO("[APP] %s Cleanup...\n", name.c_str());
         g_running = false;
 
         // Cleanup Linux-specific resources
@@ -94,7 +93,7 @@ class GST_Application {
             Swim();
             return KOIFISH_OK;
         } catch (const SafeExit& e) {
-            _ERROR("%s", e.what());
+            _ERROR("%s %s", e.what(),e.getFormattedInfo().c_str());
             return e.getExitCode();
         } catch (const std::exception& e) {
             _ERROR("%s", e.what());

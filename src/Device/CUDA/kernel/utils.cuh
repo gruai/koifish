@@ -21,12 +21,12 @@
  * It combines the performance benefit of a single instruction with the precision benefit of a fused operation and IEEE-compliant rounding. It is essential for writing robust and efficient CUDA kernels in fields like scientific computing, deep learning, and computer graphics.
  */  
 // a + t * (b - a);
-// __device__ __host__ inline float lerp(float a, float b, float t) {
-//     return fmaf(t, b, fmaf(-t, a, a));
-//     // __fmaf_rn is CUDA-specific & faser
-//     // Or the simpler version:
-//     // return a + t * (b - a);
-// }
+__device__ __host__ inline float sAtB(float a, float b, float t) {
+    return fmaf(t, b, fmaf(-t, a, a));
+    // __fmaf_rn is CUDA-specific & faser
+    // Or the simpler version:
+    // return a + t * (b - a);
+}
 
 // only for kernels by cudaLaunchCooperativeKernel
 __device__ static void SYNC_GRID() {

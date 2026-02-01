@@ -542,7 +542,7 @@ class SafeExit : public std::exception {
     std::string getFormattedInfo() const {
         std::ostringstream oss;
         auto time_t = std::chrono::system_clock::to_time_t(timestamp);
-        oss << "Exit Exception: " << message << "\n\tCode=" << exit_code << "\tReason=" << static_cast<int>(reason) << "\n\t" << std::ctime(&time_t)
+        oss << "SafeExit: " << message << "\n\tCode=" << exit_code << "\tReason=" << static_cast<int>(reason) << "\n\t" << std::ctime(&time_t)
             << "\tLocation@" << location << std::endl;
         return oss.str();
     }

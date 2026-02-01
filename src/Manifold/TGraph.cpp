@@ -58,14 +58,15 @@ SelfAttention::SelfAttention(Fish* hG_, const std::string& key_, JSON::const_ite
     ID = 0;
     // remater_qkv = hFish->config.common.remater_qkv;
 
+    n_embd = config.nEmbed();
     n_ff      = hFish->config.n_ff(ID);
     n_head_kv = config.n_head_kv(ID);
     n_head    = config.n_head(ID);
     head_dim  = config.head_dim(ID);
-    q_dim = config.Q_dim(layid - 1), kv_dim = config.KV_dim(layid - 1);
+    q_dim = config.Q_dim(layid - 1), kv_dim = config.KV_dim(layid - 1);    
     assert(kv_dim <= q_dim);  // config.nEmbed();
     // assert(n_embd_head * n_head == C);
-    C_qkv = C;
+    C_qkv = q_dim;  //C;
     /**/
     if (jvals.size() >= 3) {
         shape = {(int)(jvals[0]), (int)(jvals[1]), (int)(jvals[2])};
@@ -76,7 +77,7 @@ SelfAttention::SelfAttention(Fish* hG_, const std::string& key_, JSON::const_ite
         }
         //  hidden_dim shoud be less than 256 and hidden_dim should be multiple of 8
         assert(C_qkv % n_head == 0 && (C_qkv / n_head) % 8 == 0);
-        shape = {C, C_qkv, n_head};
+        shape = {q_dim, C_qkv, n_head};
     }
     isSeparateQKV = hFish->config.model.isSeparateQKV;
     isBqkv        = hFish->config.model.isBqkv;
@@ -85,8 +86,8 @@ SelfAttention::SelfAttention(Fish* hG_, const std::string& key_, JSON::const_ite
 
     // dump_flag = -1;
     tpNormal = DEBUG.SelfAttention_noraml;
-    spQ      = {q_dim, C_qkv};
-    spKV     = {kv_dim, C_qkv};
+    spQ      = {q_dim, n_embd};
+    spKV     = {kv_dim, n_embd};
 }
 
 bool SelfAttention::Build(int flag_0) {
@@ -95,14 +96,13 @@ bool SelfAttention::Build(int flag_0) {
 
     // SHAPE sp = {shape[0], shape[1]};
     int flag = flag_0, nTokens = nBatchToken();
-    norm.BuildX(_NAME(name, ATTN_PRE_NORMAL), {C_qkv}, hFish, flag);
+    norm.BuildX(_NAME(name, ATTN_PRE_NORMAL), {n_embd}, hFish, flag);
     if (isQKNormal) {
         normQ.nHead = n_head, normK.nHead = n_head_kv;
         normQ.BuildX(_NAME(name, ATTN_Q_NORM), {head_dim}, hFish, flag);
         normK.BuildX(_NAME(name, ATTN_K_NORM), {head_dim}, hFish, flag);
     }
-
-    SHAPE sp3 = {B, T, C}, spTrans = {B, n_head_kv, T};  //,T
+    
     if (isSeparateQKV) {
         int flagQKV = hFish->config.model.isQKVBias ? flag | F_BIAS | F_DELTA : flag | F_DELTA;
         Q.BuildX(_NAME(name, ATTN_Q), spQ, hFish, flagQKV);
@@ -125,8 +125,8 @@ bool SelfAttention::Build(int flag_0) {
 #else
     transition = GT(hFish, tpWeight, {B, n_head, T * T}, 0X0, name + ".trans");  //  too much memory!
 #endif
-
-    out = std::make_shared<huTensor>(hFish, name + ".out", sp3, tpWeight, false);
+    SHAPE spOut = {B, T, (int)hFish->config.nEmbed()};  //,T
+    out = std::make_shared<huTensor>(hFish, name + ".out", spOut, tpWeight, false);
     if (hFish->config.isShareLayerOut()) {
         out->SetRefer(gBUFF->outL);
     }
@@ -234,7 +234,7 @@ string SelfAttention::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]  = "\0";
     const char* tab = prefix.c_str();
     string a, sRope = rope == nullptr ? "" : rope->__repr__(a, a, flag);
-    sprintf(buf + strlen(buf), "{%s QKV%s%s E%d H%d x=%d trans=%d %s}", tab, moe.Empty() ? "" : "+moe", sRope.c_str(), C, n_head, tpNormal, tpTrans,
+    sprintf(buf + strlen(buf), "{%s QKV%s%s E%d H%d x=%d trans=%d %s}", tab, moe.Empty() ? "" : "+moe", sRope.c_str(), n_embd, n_head, tpNormal, tpTrans,
             bqkv == nullptr ? "" : "bqkv");
     if (flag > 0)
         _INFO("%s", buf);
@@ -290,7 +290,7 @@ hGensor SelfAttention::Ming(RLS_BP* hRLS, hGensor inpL, int flag) {
 }
 
 hGensor SelfAttention::MyAttention(RLS_BP* ctx_, hGensor cur, int flag) {
-    float kq_scale = 1.0f / sqrtf(float(n_embd_head)), s;
+    float kq_scale = 1.0f / sqrtf(float(head_dim)), s;
 
     hGensor q, k, kq = nullptr;  //  assert(KQ_mask!=nullptr);
     hGensor Qcur = Q.Ming(ctx_, cur, 0x0);
@@ -396,7 +396,7 @@ bool BROWN_attn::Build(int flag) {
     return true;
 }
 hGensor BROWN_attn::Ming(RLS_BP* ctx_, hGensor teb, int flag) {
-    assert_shape_2d(teb, C, T * B);
+    assert_shape_2d(teb, n_embd, T * B);
     hGensor cur = BeforeMing(ctx_, teb, flag);
     if (cur == nullptr)
         return cur;
@@ -473,7 +473,7 @@ string BROWN_attn::__repr__(string& suffix, string& prefix, int flag) {
 
 GatedAttention::GatedAttention(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SelfAttention(hG_, key_, jit, flag) {
     auto& config = hG_->config;
-    shape        = {C, n_ff};
+    shape        = {n_embd, n_ff};
     tpTrans      = T_RELU2;
     // tpTrans = LINEAR;
     if (jvals.size() > 0)
@@ -485,10 +485,10 @@ bool GatedAttention::Build(int flag) {
     upV.BuildX(name + ".upV", {shape[0], shape[1]}, hFish, flag);
     down.BuildX(name + ".down", {shape[1], shape[0]}, hFish, flag);
     if (attn_mode > 0) {
-        SHAPE sp = {C, C};
-        Q.BuildX(name + ".Q", sp, hFish, flag);
-        K.BuildX(name + ".K", sp, hFish, flag);
-        rope->BuildX(name + ".rope", sp, hFish, flag);
+        assert(0);
+        // Q.BuildX(name + ".Q", sp, hFish, flag);
+        // K.BuildX(name + ".K", sp, hFish, flag);
+        // rope->BuildX(name + ".rope", sp, hFish, flag);
     }
 
     return true;
@@ -558,7 +558,7 @@ string cuAttention::__repr__(string& suffix, string& prefix, int flag) {
 };
 
 hGensor SelfAttention::vXattn(void* ctx_, hGensor v, hGensor attn, int flag) {
-    float kq_scale = 1.0f / sqrtf(float(n_embd_head)), s;
+    float kq_scale = 1.0f / sqrtf(float(head_dim)), s;
     if (attn == nullptr) {
         if (isLinear) {
             assert(attn_k != nullptr && attn_q != nullptr);
@@ -1224,106 +1224,6 @@ bool TGraph::isValid() {
 
     return true;
 }
-/*
-    struct ggml_hash_set {
-        size_t size;
-        uint32_t * used;
-        hGensor * keys;
-    };
-    */
-#ifndef GG_V12
-extern "C" void ggml_compute_backward(void* ctx, hGensor tensor, struct ggml_hash_set* zero_table);
-struct ggml_cgraph* TGraph::BuildBackward(void* ctx_, hTGraph hFore, bool accumulate, int flag) {
-    struct ggml_cgraph* gb = cgraph;
-    assert(isBackward && hFore != nullptr);
-    auto gf = hFore->raw();
-    nForwN = gf->n_nodes, nForwL = gf->n_leafs;
-    int n_grad = 0, n_param = 0, n_p0 = 0;
-    size_t sz   = gf->size;
-    bool isKeep = false;
-    assert(gb != nullptr);
-    hGensor xn = hFish->xn, xxn = hFish->xxn;
-#ifdef _TENSOR_G_
-#else
-    struct ggml_tensor *root_f = gf->nodes[nForwN - 1], *root_b = nullptr;
-    ggml_graph_cpy(gf, gb);  // copy all leafs/nodes/grads & visited_hash_set
-    gset = hFore->gset;
-    // ggml_build_backward_expand(ctx_, gf, gb, true);    return gb;
-
-    if (isKeep) {
-        for (int i = 0; i < gf->n_nodes; i++) {
-            struct ggml_tensor* node = gf->nodes[i];
-            assert(0);
-            CHILD_1218_GRAD
-            if (node->grad) {
-                node->grad   = ggml_dup_tensor(ctx_, node);
-                gf->grads[i] = node->grad;
-                n_grad++;
-            }
-        }
-    }
-
-    // remember original gradients which start with zero values
-    struct ggml_hash_set zero_table = ggml_hash_set_new(gf->size);
-    for (int i = 0; i < gf->n_nodes; i++) {
-        if (gf->grads[i]) {
-            ggml_hash_insert(&zero_table, gf->grads[i]);
-        }
-    }
-    //  1 ggml_set_param would set FLAG & init grad(zero)  2 dst would create grad if its src has grad
-    n_grad = 0, n_param = 0, n_p0 = 0;
-    for (int i = gf->n_nodes - 1; i >= 0; i--) {
-        struct ggml_tensor* node = gf->nodes[i];
-        if (node == xn) {  // only for debug
-            int xxx = 0;
-        }
-        auto grad = GradOf(gf, node);
-        if (grad) {                        // set src's grad
-            if (node->grad->grad != NULL)  //
-                node->grad->grad = NULL;
-
-            if (strlen(grad->name) == 0) {
-                gTN(node, "");
-            }
-            if (i == 6) {  //  inp_pe_rms
-                int xxx = 0;
-            }
-            ggml_compute_backward(ctx_, node, &zero_table);
-            // if(xn->grad!=xxn){
-            //     int xxx=0;
-            // }
-            n_grad++;
-        }
-        if (node->flags & GTensor::F_PARAM) {
-            n_p0++;
-        }
-    }
-    assert(isValid());
-
-    root_b = gb->nodes[gb->n_nodes - 1];
-    for (int i = 0; i < gf->n_nodes; i++) {
-        hGensor node = gf->nodes[i];
-        auto grad    = GradOf(gf, node);
-        if (node->flags & GTensor::F_PARAM) {
-            // _INFO("%s: found root node %p\n", __func__, (void *) node);
-            // ggml_build_forward_expand(gb, node->grad);
-            assert(!(grad->flags & GTensor::F_PARAM));
-            gTN(node, "");
-            PushBack(grad);
-            sinks.push_back(grad);
-            n_param++;
-        }
-    }
-    int n_bleafs = gb->n_leafs, n_bnodes = gb->n_nodes;
-    ggml_hash_set_free(&zero_table);
-#endif
-    TopoOrder();
-
-    __repr__();
-
-    return gb;
-}
-#else  //
 // extern "C" void ggml_compute_backward(void * ctx, struct ggml_cgraph * cgraph, int i, bool * grads_needed);
 struct ggml_cgraph* TGraph::BuildBackward(void* ctx_0, hTGraph hFore, bool accumulate, int flag) {
 #ifdef __USE_GGML__
@@ -1451,7 +1351,6 @@ struct ggml_cgraph* TGraph::BuildBackward(void* ctx_0, hTGraph hFore, bool accum
     return nullptr;
 #endif
 }
-#endif
 
 void TGraph::Traverse(int flag) {
 #ifdef __USE_GGML__

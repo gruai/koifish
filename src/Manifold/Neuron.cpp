@@ -129,9 +129,9 @@ void GeNeuron::Init(Fish* hG_, int flag) {
     hFish        = hG_;
     auto& config = hG_->config;
     // n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_embd=config.nEmbed();
-    hG_->GetBTC(B, T, C);
-    n_embd_head = config.head_dim();
-    n_head      = config.n_head();
+    hG_->GetBT(B, T);
+    // n_embd_head = config.head_dim();
+    // n_head      = config.n_head();
     // assert(n_embd_head * n_head == C);
     tpWeight     = hFish->config.model.tpWeight;
     tpActivation = hFish->config.model.tpActivation;
@@ -196,6 +196,7 @@ MOE::MOE(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag)
     shape = {(int)(jvals[0]), (int)(jvals[1])};
     assert(shape[0] > 0 && shape[1] > 0);
     isSiLU = true;
+    
     //[ctx, E/H, H, n_batch
     // up.Init(hG_,flag);       down.Init(hG_,flag);       relu.Init(hG_,flag);
 }
@@ -205,7 +206,7 @@ bool MOE::Build(int flag) {
     int nIn      = shape[0];
     void* ctx    = hFish->GetGGCTX();
     //  [ctx, E/H, H, n_batch); ]
-    w = GT(hFish, typNUMBER::F32, {n_embd_head, 1, n_head, B});
+    w = GT(hFish, typNUMBER::F32, {head_dim, 1, n_head, B});
     hFish->InitGensor(ctx, sw.c_str(), w, isTrain);
 
     return true;
@@ -718,7 +719,7 @@ LayerNormal::LayerNormal(Fish* hG_, const std::string& key_, JSON::const_iterato
     if (jvals.size() == 1) {
         shape = {(int)(jvals[0])};
     } else {
-        shape = {C};
+        shape = {(int)hG_->config.nEmbed()};
     }
 
     // assert(jvals.size()>=1 && jvals[0]>0);
@@ -767,7 +768,7 @@ bool LayerNormal::Build(int flag0) {
         mean = GT(hFish, typNUMBER::F32, {B, T}, flag, name + ".mean");
     }
     nTH  = B * T;
-    ldTH = C;
+    ldTH = hFish->config.nEmbed();   //C;
     if (nHead > 0) {
         isOnline = true;
         assert(ldTH % nHead == 0);

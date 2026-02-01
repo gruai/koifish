@@ -566,7 +566,7 @@ bool SampLoader::Prepare(Optimizer* hO, hDataToken hT, int flag) {
         eval_every       = hTokens->eval_every;
     }
 
-    dolphin->GetBTC(B, T, C);
+    dolphin->GetBT(B, T);
     if (dolphin->isAtPhase(LIFE_PHASE::P_GENERATE)) {
         T = dolphin->config.chat_sampler.seq_len;
     }

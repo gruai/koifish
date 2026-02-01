@@ -321,14 +321,14 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
 
 void Fish::Clear() {
     backbons.clear();
-    for (auto n : neurons){
-        n.reset( ); //  release its ownership of the resource it currently holds, which can lead to the resource being deleted.
+    for (auto n : neurons) {
+        n.reset();  //  release its ownership of the resource it currently holds, which can lead to the resource being deleted.
     }
     neurons.clear();
 
     // gBUFF = nullptr;
     // memBuffer->Clear();
-    
+
     hEDS = nullptr;
     // AllocBuffer @Fish::jToGraph
     // GTensor::FreeBuffer();
@@ -375,7 +375,7 @@ bool Fish::BeforeBuild(int flag) {
     }
 
     memBuffer = std::make_shared<GST_TensorBuffer>(this);
-    if(!memBuffer->Prepare())
+    if (!memBuffer->Prepare())
         return false;
 
     gBUFF = memBuffer;
@@ -390,10 +390,6 @@ bool Fish::Build(int flag) {
     // , isJModel = !config.jModel.empty();    assert(isJModel);
     isSymbolicAnalysis = true;
 
-    /*if(config.ModelArch()==MODEL_ARCH::NLP_GPT2 || config.ModelArch()==MODEL_ARCH::NLP_GPT2_char){
-        isInitParam = true;
-        iRet = BuildGraphFromRaw(0x0);
-    }else*/
     {
         InitInput(ctx_build, true, flag);
         //  isInitParam = true;     // would init param online, not here
@@ -865,9 +861,9 @@ hBATCH Fish::GetCurBatch(bool isUpate, int flag) {
     return hBatch;
 }
 
-void Fish::GetBTC(int& B, int& T, int& C, int flag) const {
+void Fish::GetBT(int& B, int& T, int flag) const {
     B         = config.n_batch();
-    C         = config.nEmbed();
+    // C         = config.nEmbed();
     T         = config.n_ctx();
     int q_dim = config.Q_dim(), kv_dim = config.KV_dim();
     assert(q_dim >= kv_dim);  // C!=q_dim
@@ -882,7 +878,6 @@ void Fish::GetBTC(int& B, int& T, int& C, int flag) const {
 
     assert(B > 0);
     assert(T > 0);
-    assert(C > 0);
 };
 
 bool Fish::AfterNextStep(int iter, int flag) {
@@ -902,9 +897,7 @@ size_t cudnn_qkv_forw(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn, i
 size_t cudnn_qkv_back(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn);
 bool Fish::AllocBuffer(int flag) {
     try {
-        int B, T, C0, NH = config.n_head();
-        GetBTC(B, T, C0);
-
+        int B = config.n_batch(), T = config.n_ctx(), NH = config.n_head();
         if (isLocalInfer) {
             if (config.phase == P_GENERATE) {  // P_EVAL no need cache!
                 hCache = std::make_shared<KVCache>(this);

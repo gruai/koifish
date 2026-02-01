@@ -270,7 +270,8 @@ class Fish : public std::enable_shared_from_this<Fish> {
 
     virtual bool Init(const vector<hWIKI>& wikis, int flag = 0x0) { throw "Fish::Init is ..."; }
     // shortcut parameter of LLM models
-    virtual void GetBTC(int& B, int& T, int& C, int flag = 0x0) const;
+    virtual void GetBT(int& B, int& T, int flag = 0x0) const;
+
     virtual hEDevices curDevice(int flag = 0x0) {
         assert(hEDS != nullptr);
         return hEDS;

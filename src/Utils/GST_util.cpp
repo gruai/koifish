@@ -53,7 +53,7 @@ int SUM::nUpdateParam    = 0;
 int SUM::nMostMemItem    = 6;
 int SUM::nMinTensorAlloc = 100 * 1024 * 1024;
 double SUM::tX = 0.0, SUM::tX1 = 0.0, SUM::tRemater = 0.0, SUM::tPreLogits = 0.0;
-size_t SUM::szUpload = 0;
+size_t SUM::szUpload  = 0;
 double SUM::tQKV_forw = 0.0, SUM::tQKV_back = 0.0, SUM::tFFN = 0.0, SUM::tUpload = 0.0, SUM::tData = 0.0;
 double SUM::tLoadData = 0.0, SUM::tLoadParam = 0.0, SUM::tEval_1 = 0.0, SUM::tEval_0 = 0.0;
 int SUM::nInitParam = 0, SUM::nSaveParam = 0, SUM::nLoadParam = 0, SUM::nDogLeg = 0;
@@ -68,7 +68,7 @@ string SUM::sQuantInfo = "";
 void SUM::Reset(string typ, int flag) {
     if (typ == "time") {
         tX = 0.0, tX1 = 0.0, tRemater = 0.0;
-        tQKV_forw = 0.0,    tQKV_back = 0.0;
+        tQKV_forw = 0.0, tQKV_back = 0.0;
         tFFN = 0.0;
     }
     // if (typ == "memory") {
@@ -96,7 +96,8 @@ void SUM::TimeInfo(int type, int flag) {
         return;
     // _TIME_INFO(" R=",SUM::tRemater);
     _TIME_INFO("(data=", tData);
-    _TIME_INFO(" QKV:=", tQKV_forw);  _TIME_INFO(",", tQKV_back);
+    _TIME_INFO(" QKV:=", tQKV_forw);
+    _TIME_INFO(",", tQKV_back);
     _TIME_INFO(" FFN=", tFFN);
     if (tX1 > 0)
         _TIME_INFO(" X=", tX1);
@@ -123,7 +124,6 @@ std::string SUM::CPU_Info(int flag) {
     sprintf(buf, "mCPU=%.6gM(free=%.6gM)", mCPU, freeMemoryKB / 1000.0);
     return buf;
 }
-
 
 #ifdef _GST_MATLAB_
 #pragma message("\t\tMATLAB:	R2012b \r\n")
@@ -191,10 +191,9 @@ int GST_util::LoadDoubleMAT(const char* sPath, const char* sVar, int* nRow, int*
 }*/
 
 bool VERIFY_DIR_EXIST(const std::string& path, bool isCreate) {
-    if (path.empty()){
+    if (path.empty()) {
         return false;
     }
-        
 
     bool isExist = false;
     try {
@@ -262,8 +261,17 @@ void GG_log_callback_default(DUMP_LEVEL level, const char* text, void* user_data
     fflush(stderr);
 }
 
+inline void GG_log_head(char* buff, const char* tag = "KOIFISH", int flag = 0x0) {
+    const char* file = (strrchr(__FILE__, '/') ? (strrchr(__FILE__, '/') + 1) : __FILE__);
+    // sprintf(buff, "[%s %s %d:%ld %s:%d %s] ", tag, curr_time(), get_pid(), get_tid(),
+    //             file, __LINE__,__FUNCTION__ );
+}
+
 static char log_buffer[KOIFISH_MOST_LOG], coloredMsg[KOIFISH_MOST_LOG + 100];
-void GG_log_internal_v(DUMP_LEVEL level, const char* format, va_list args) {
+void _LOG(DUMP_LEVEL level, const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    // void GG_log_internal_v(DUMP_LEVEL level, const char* format, va_list args) {
     va_list args_copy;
     va_copy(args_copy, args);
     GG_log_head(log_buffer);
@@ -276,6 +284,10 @@ void GG_log_internal_v(DUMP_LEVEL level, const char* format, va_list args) {
     switch (level) {
         case DUMP_ERROR:
             snprintf(coloredMsg, sizeof(coloredMsg), "\r\n%s error: %s%s", COLOR_RED, log_buffer, COLOR_RESET);
+            fflush(stdout);
+            break;
+        case DUMP_EXCEPTION:
+            snprintf(coloredMsg, sizeof(coloredMsg), "\r\n%s %s%s", COLOR_RED, log_buffer, COLOR_RESET);
             fflush(stdout);
             break;
         case DUMP_WARN:
@@ -297,6 +309,7 @@ void GG_log_internal_v(DUMP_LEVEL level, const char* format, va_list args) {
     fputs(coloredMsg, stderr);
     // fputs(log_buffer, stderr);
     fflush(stderr);
+    va_end(args);
 }
 
 void read_stdin(const char* guide, char* buffer, size_t bufsize) {

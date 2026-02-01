@@ -255,7 +255,7 @@ hGTensor LayerNormal::cuFlow(hGTensor inpDelta, int flag) {  //,hGTensor deltaIn
     int nThread    = X128::nThreadOfBlock(ldTH, 0);
     floatX *weight = ToX(w), *bias = ToX0(b), *in = ToX(inpDelta);
     if (hFish->isAtPhase(LIFE_PHASE::P_GENERATE) && nHead == 0) {  //
-        CU_rms_infer(ToX(out), ToX(inpDelta), weight, C);
+        CU_rms_infer(ToX(out), ToX(inpDelta), weight, ldTH);
         // CU_rms_infer(ToX(inpDelta), ToX(inpDelta), weight, C);
         return out;
     }
@@ -275,7 +275,7 @@ hGTensor LayerNormal::cuFlow(hGTensor inpDelta, int flag) {  //,hGTensor deltaIn
             CU_rms_forward_v2<<<nTH, nThread, 0x0, main_stream>>>(devOut, _rstd, in, weight, nTH, ldTH, rms_eps);
             // out->Print(out->name, 0, -1), rstd->Print(rstd->name, 0, -1);
         } else {
-            size_t smem = (2 + block_y) * C * sizeof(floatX);
+            size_t smem = (2 + block_y) * ldTH * sizeof(floatX);
             auto status = cudaFuncSetAttribute(CU_lm_forward, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
             cudaCheck(cudaGetLastError());
             assert(status == cudaSuccess);
@@ -326,7 +326,7 @@ hGTensor LayerNormal::cuFlow(hGTensor inpDelta, int flag) {  //,hGTensor deltaIn
                 // delta->Print(delta->name, 0, -1), w->Print(w->name, 1, -1);
             }
         } else
-            layernorm_backward(ToX(delta), ToG(w), ToG0(b), dW_scratch, ToX(deltaIn), ToX(inp), ToX(w), _mean, _rstd, B, T, C, main_stream);
+            layernorm_backward(ToX(delta), ToG(w), ToG0(b), dW_scratch, ToX(deltaIn), ToX(inp), ToX(w), _mean, _rstd, B, T, ldTH, main_stream);
         delta->Print("back of normal", 0, 0);
         return delta;
     }

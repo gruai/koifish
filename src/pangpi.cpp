@@ -20,6 +20,36 @@
 #include "GoPT.hpp"
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
+#include "./Utils/GST_Application.hpp"
+
+class PangpiApp : public GST_Application {
+   protected:
+    hFISH fish = nullptr;
+
+   public:
+    PangpiApp(int argc, char* argv[]) : GST_Application(argc, argv) { name = "Koifish"; }
+    virtual ~PangpiApp() {
+        fish  = nullptr;
+        gBUFF = nullptr;
+    }
+
+    void Swim() override {
+        if (params.n_swarm > 1) {
+            fish = Fish::MakeSwarm("Fish_", params, 0x0);
+        } else {
+            vector<hWIKI> wikis = WIKI::MakeInstance("", params, 0x0);
+            if (wikis.size() == 0) {
+                // _INFO("====== NO WIKI !!! ======\n");       return;
+            } else if (params.wiki_actor == "copy") {
+                wikis[0]->CopyParams(params);
+            }
+            fish = Fish::MakeInstance("Fish_", params, wikis, Fish::ROLE_TYPE::COMMON, 0x0);
+        }
+
+        if (fish && fish->isTrain())
+            fish->Train();
+    }
+};
 
 int main(int argc, char* argv[]) {
     try {
@@ -114,3 +144,4 @@ int main(int argc, char* argv[]) {
         return -2001;
     }
 }
+

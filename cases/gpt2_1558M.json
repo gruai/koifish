@@ -23,30 +23,32 @@
             "#tile": [
                 
             ]
-        },
+        },        
         "parameter": {
             "Layer": 48,  
             "transformer":{                "Ctx":1024,  "Embed":    1600,    "Head": 25,   "Ffn":6400            }
         },
-        "inp_embd": {
-            "Embedding+": []
-        },
-        "Layer": {
-            "attn": {
-                "QKV": []
+        "backbone": {
+            "inp_embd": {
+                "Embedding+": []
             },
-            "ffn": {
-                "FFN": []
+            "Layer": {
+                "attn": {
+                    "QKV": []
+                },
+                "ffn": {
+                    "FFN": []
+                },
+                "# gattn": {
+                    "GAU": []
+                }
             },
-            "# gattn": {
-                "GAU": []
+            "output_norm": {
+                "Normal": []
+            },
+            "out": {
+                "CLASIFY": []
             }
-        },
-        "output_norm": {
-            "Normal": []
-        },
-        "out": {
-            "CLASIFY": []
         }
     },
     "datasets": {
@@ -71,7 +73,7 @@
         "dump-every": 10,
         "gpt-every": -10,
         "epoch": 1,
-        "batch": 80,
+        "batch": 64,
         "learning-rate": 0.0006,
         "decay": 0.1,
         "optimizatioin": {

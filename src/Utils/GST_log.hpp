@@ -47,7 +47,8 @@ enum DUMP_LEVEL {
     DUMP_WARN  = 3,
     DUMP_WARN0 = 30,
     DUMP_ERROR = 4,
-    DUMP_CONT  = 5,  // continue previous log
+    DUMP_EXCEPTION = 5,
+    DUMP_CONT  = 6,  // continue previous log
 };
 inline bool NOT_DUMP(int t = 0) {
     if (g_dump_level <= t)
@@ -56,28 +57,13 @@ inline bool NOT_DUMP(int t = 0) {
 }
 inline bool DUMP(int t = 0) { return !NOT_DUMP(t); }
 
-#define MAX_LOG_BUFFER
-
-void GG_log_callback_default(DUMP_LEVEL level, const char* text, void* user_data);
-
-inline void GG_log_head(char* buff, const char* tag = "KOIFISH", int flag = 0x0) {
-    const char* file = (strrchr(__FILE__, '/') ? (strrchr(__FILE__, '/') + 1) : __FILE__);
-    // sprintf(buff, "[%s %s %d:%ld %s:%d %s] ", tag, curr_time(), get_pid(), get_tid(),
-    //             file, __LINE__,__FUNCTION__ );
-}
-void GG_log_internal_v(DUMP_LEVEL level, const char* format, va_list args);
-
-inline void _LOG(DUMP_LEVEL level, const char* format, ...) {
-    va_list args;
-    va_start(args, format);
-    GG_log_internal_v(level, format, args);
-    va_end(args);
-}
+void _LOG(DUMP_LEVEL level, const char* format, ...);
 
 #define _INFO(...) _LOG(DUMP_INFO, __VA_ARGS__)
 #define _WARN(...) _LOG(DUMP_WARN, __VA_ARGS__)
 #define _WARN0(...) _LOG(DUMP_WARN0, __VA_ARGS__)
 #define _ERROR(...) _LOG(DUMP_ERROR, __VA_ARGS__)
+#define _EXCEPTION(...) _LOG(DUMP_ERROR, __VA_ARGS__)
 #define _INFO_IF(...)                     \
     {                                     \
         if (DUMP())                       \

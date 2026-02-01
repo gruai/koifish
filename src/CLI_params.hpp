@@ -181,9 +181,7 @@ struct Fuyou_params {
     int nBranch = -1;
     int nWarmup(int flag = 0x0);
     // int tpParamResident = 0;  //  0-      1-
-    bool isON() {
-        return nBranch>0;
-    }
+    bool isON() { return nBranch > 0; }
     bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
     bool InitSection(int nLayer, int nLS, int nSwitch = 100, int flag = 0x0);
     bool isFirst(int layer, int flag = 0x0);
@@ -440,7 +438,7 @@ struct MUON_params_ {
     bool isTransDown = true;
     bool isAdamW(void* hUserData, int flag = 0x0);
     float lr_scale = 50.f;  // 100.f 50.f?
-    //  torch:  self←self+λ⋅(b−self)          lerp(a, b, λ):  a+λ*(b-a)
+    //  torch:  self←self+λ⋅(b−self)          sAtB(a, b, λ):  a+λ*(b-a)
     float mui      = 0.95;
     float eps      = 1e-7f;  // epsilon for numerical stability
     float eps_loss = 1e-5f;  // epsilon for convergence test
@@ -601,10 +599,10 @@ struct CheckPoint_Params {
     // More variables of current state
     std::map<std::string, double> variabls;
 
-    TYPE type       = BEST;
-    FORMAT format   = KOIFISH;
-    int iter        = -1;
-    void* hAllST = nullptr;
+    TYPE type     = BEST;
+    FORMAT format = KOIFISH;
+    int iter      = -1;
+    void* hAllST  = nullptr;
     CheckPoint_Params() {}
     CheckPoint_Params(const JSON& jConfig, const std::string& key, bool isSave, int flag = 0x0);
     // CheckPoint_Params(const std::string& tp, const std::string& p, int x, bool in = false);
@@ -668,6 +666,10 @@ struct CLI_params {
     }
 
     uint32_t nThread() const;
+    /**
+     * 1. latent of TokenEmbed
+     * 2.
+     */
     uint32_t nEmbed(int flag = 0x0) const;
     uint32_t nLayer() const {
         if (nLayerX > 0)

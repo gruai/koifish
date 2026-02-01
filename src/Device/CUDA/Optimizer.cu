@@ -57,7 +57,7 @@ __global__ void CU_sgdv(Tp* params, Tp* grads0, Tmv* gv, size_t num_parameters, 
 
     float grad = grad_scale * (float)grads0[idx];
     float v    = gv[idx];
-    v          = lerp(grad * grad, v, beta2);  // beta2*v+(1-beta2)*grad*grad;
+    v          = sAtB(grad * grad, v, beta2);  // beta2*v+(1-beta2)*grad*grad;
     gv[idx]    = v;
     v /= beta2_correction;  // v_hat
     float old_param = (float)params[idx];
@@ -80,10 +80,10 @@ __global__ void CU_lion_(Tp* params, Tp* grads0, Tmv* gm, size_t num_parameters,
         mask = (update * grad > 0).to(grad.dtype)
         mask = mask * (mask.numel() / (mask.sum() + 1))
     */
-    c = lerp(grad, m, beta1);  // beta1*m+(1-beta1)*grad;
+    c = sAtB(grad, m, beta1);  // beta1*m+(1-beta1)*grad;
     // c                 = c > 0 ? 1 : c == 0 ? 0 : -1;
     c               = c > eps ? 1 : c < -eps ? -1 : 0;  // ternary
-    gm[idx]         = lerp(grad, m, beta2);             // beta2*m+(1-beta2)*grad;
+    gm[idx]         = sAtB(grad, m, beta2);             // beta2*m+(1-beta2)*grad;
     float old_param = CU_T2Float(params + idx);
     params[idx]     = CU_Float2T<Tp>(old_param - learning_rate * (c + weight_decay * old_param), seed);
     grads0[idx]     = (Tp)(0.0);
@@ -98,8 +98,8 @@ __global__ void CU_adamw_(Tp* params, float* tmp, Tp* grads0, Tmv* gm, Tmv* gv, 
     }  // guard
 
     float grad = grad_scale * CU_T2Float(grads0 + idx), m = gm[idx], v = gv[idx];
-    m = lerp(grad, m, beta1), gm[idx] = m;
-    v = lerp(grad * grad, v, beta2), gv[idx] = v;
+    m = sAtB(grad, m, beta1), gm[idx] = m;
+    v = sAtB(grad * grad, v, beta2), gv[idx] = v;
     m /= beta1_correction;  // m_hat
     v /= beta2_correction;  // v_hat
     float old_param = (tmp != NULL) ? tmp[idx] : (float)params[idx];
@@ -125,9 +125,9 @@ __global__ void CU_muon_mG(PIPE_Muon<Tp, Tmv> pipe) {
     }  // guard
     float grad   = CU_T2Float(pipe.grads0 + idx);  //  pipe.grad_scale * CU_T2Float(pipe.grads0 + idx);
     float m      = pipe.mG[idx], x2;
-    m            = lerp(m, grad, 1 - pipe.mui);  //  momentum.lerp_(grad, 1 - beta)
+    m            = sAtB(m, grad, 1 - pipe.mui);  //  momentum.lerp_(grad, 1 - beta)
     pipe.mG[idx] = m;
-    m            = lerp(grad, m, pipe.mui);  // update = grad.lerp_(momentum, beta) if nesterov
+    m            = sAtB(grad, m, pipe.mui);  // update = grad.lerp_(momentum, beta) if nesterov
     pipe.X[idx] = m, x2 = m * m;
     float block_sum = blockReduce_v0<warpReduceSum>(x2, true);
     if (threadIdx.x == 0)  //  Floating-point determinism is hard: True determinism requires fixed summation order and error compensation.
@@ -174,8 +174,8 @@ __global__ void CU_adamw_p_v0(PIPE_Adamw<Tp, Tmv> pipe) {
     }  // guard
 
     float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx), m = (float)pipe.gm[idx], v = (float)pipe.gv[idx];
-    m = lerp(grad, m, pipe.beta1), pipe.gm[idx] = m;
-    v = lerp(grad * grad, v, pipe.beta2), pipe.gv[idx] = v;
+    m = sAtB(grad, m, pipe.beta1), pipe.gm[idx] = m;
+    v = sAtB(grad * grad, v, pipe.beta2), pipe.gv[idx] = v;
     // m /= pipe.beta1_correction;  // m_hat
     // v /= pipe.beta2_correction;  // v_hat
     float x = _adamw_idx((float)pipe.params[idx], pipe, m, v, idx), x2 = x * x;
@@ -198,9 +198,9 @@ __global__ void CU_adamw_p(PIPE_Adamw<Typ, Tmv> pipe) {
     // float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx), m = pipe.gm[idx], v = pipe.gv[idx];
     for (int i = 0; i < typ128::size; ++i) {
         float grad = grad128[i], m = m128[i], v = v128[i];
-        m       = lerp(grad, m, pipe.beta1);
+        m       = sAtB(grad, m, pipe.beta1);
         m128[i] = m;  // pipe.gm[idx] = m;
-        v       = lerp(grad * grad, v, pipe.beta2);
+        v       = sAtB(grad * grad, v, pipe.beta2);
         v128[i] = v;  // pipe.gv[idx] = v;
         // float x = _adamw_idx((float)pipe.params[idx], pipe, m, v, idx), x2 = x * x;
         m /= pipe.beta1_correction, v /= pipe.beta2_correction;  // m_hat    v_hat
@@ -242,8 +242,8 @@ __global__ void CU_adamw_ternary(PIPE_Adamw<Tp, Tmv> pipe) {
             // CU_Float2T<Tp>(bit ? ta : tb, pipe.seed);      //
             int idx    = offset + kk;
             float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx), m = pipe.gm[idx], v = pipe.gv[idx];
-            m = lerp(grad, m, pipe.beta1), pipe.gm[idx] = m;
-            v = lerp(grad * grad, v, pipe.beta2), pipe.gv[idx] = v;
+            m = sAtB(grad, m, pipe.beta1), pipe.gm[idx] = m;
+            v = sAtB(grad * grad, v, pipe.beta2), pipe.gv[idx] = v;
             // m /= pipe.beta1_correction, v /= pipe.beta2_correction;
             params_x[k + kk] = _adamw_idx(old_param, pipe, m, v, idx);
         }
@@ -263,8 +263,8 @@ __global__ void CU_adamw_s(PIPE_Adamw<Tp, Tmv> pipe) {
     }  // guard
 
     float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx), m = pipe.gm[idx], v;
-    v = lerp(grad * grad, m * m, pipe.beta2);
-    m = lerp(grad, m, pipe.beta1), pipe.gm[idx] = m;
+    v = sAtB(grad * grad, m * m, pipe.beta2);
+    m = sAtB(grad, m, pipe.beta1), pipe.gm[idx] = m;
     // m /= pipe.beta1_correction;  // m_hat
     // v /= pipe.beta2_correction;  // v_hat
     float x = _adamw_idx((float)pipe.params[idx], pipe, m, v, idx), x2 = x * x;
@@ -289,8 +289,8 @@ __global__ static void CU_adamw_Tile_v0(PIPE_Adamw<Tp, Tmv> pipe) {
     int pos = pA(idrow, idcol, M, N), idx = pos, gpos = blockIdx.x * gridDim.y + blockIdx.y;
     float old_param = pipe.gama_T[gpos];
     float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx), m = pipe.gm[idx], v = pipe.gv[idx];
-    m = lerp(grad, m, pipe.beta1), pipe.gm[idx] = m;
-    v = lerp(grad * grad, v, pipe.beta2), pipe.gv[idx] = v;
+    m = sAtB(grad, m, pipe.beta1), pipe.gm[idx] = m;
+    v = sAtB(grad * grad, v, pipe.beta2), pipe.gv[idx] = v;
     // m /= pipe.beta1_correction, v /= pipe.beta2_correction;
     float a   = _adamw_idx(old_param, pipe, m, v, idx);
     float sum = blockReduce_v0<warpReduceSum>(a, true);
@@ -320,8 +320,8 @@ __global__ static void CU_adamw_Tile(PIPE_Adamw<Tp, Tmv> pipe) {
     float sum =
         CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(grad);  // nWrapT<=WARP_SIZE ? warpReduceSum<nWrapT>(grad) : blockReduce_v0<warpReduceSum>(grad, true);
     grad = sum / TM / TN;
-    m = lerp(grad, m, pipe.beta1), pipe.gm[gpos] = m;
-    v = lerp(grad * grad, v, pipe.beta2), pipe.gv[gpos] = v;
+    m = sAtB(grad, m, pipe.beta1), pipe.gm[gpos] = m;
+    v = sAtB(grad * grad, v, pipe.beta2), pipe.gv[gpos] = v;
     float a = _adamw_idx(old_param, pipe, m, v, idx);
     sum     = CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(a);  // nWrapT<=WARP_SIZE ? warpReduceSum<nWrapT>(a) :blockReduce_v0<warpReduceSum>(a, true);
     if (tid == 0) {
@@ -364,7 +364,7 @@ __global__ static void CU_adamw_Tile_RC(PIPE_Adamw<Tp, Tmv> pipe) {
     float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx_0);
     float sum  = CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(grad);
     grad       = sum / TM / TN;
-    m = lerp(grad, m, pipe.beta1), v = lerp(grad * grad, v, pipe.beta2);
+    m = sAtB(grad, m, pipe.beta1), v = sAtB(grad * grad, v, pipe.beta2);
     float sum_m = CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(m);
     float sum_v = CU_BlockSum<THREAD_TILE_M * THREAD_TILE_N>(v);
     float a     = _adamw_idx(old_param, pipe, m, v, idx_0);
@@ -394,7 +394,7 @@ __global__ static void CU_adamw_Tile_each_mv(PIPE_Adamw<Tp, Tmv> pipe) {
     int pos = pA(idrow, idcol, M, N), idx = pos, gpos = blockIdx.x * gridDim.y + blockIdx.y;
     float old_param = pipe.gama_T[gpos], m = pipe.gm[gpos], v = pipe.gv[gpos];
     float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx);
-    m = lerp(grad, m, pipe.beta1), v = lerp(grad * grad, v, pipe.beta2);
+    m = sAtB(grad, m, pipe.beta1), v = sAtB(grad * grad, v, pipe.beta2);
 
     float sum   = blockReduce_v0<warpReduceSum>(grad, true);
     float sum_m = blockReduce_v0<warpReduceSum>(m, true);
@@ -482,7 +482,7 @@ template <typename Tp, typename Tmv>
 void PIPE_Muon<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
     if (this->name == "model.layers.6.self_attn.q_proj.weight") {  //"model.layers.6.self_attn.q_proj.weight"
         DEBUG_HERE;
-    }    
+    }
     bool isAdamw_ = muon.isAdamW(this->tensor);
     if (isAdamw_) {
         PIPE_Adamw<Tp, Tmv>::CU_core(stream, flag);
@@ -596,6 +596,7 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
                         break;
                 }
             } else {  //  ADAMw
+                assert(dGRID*dT4B<INT_MAX);
                 CU_adamw_p_v0<<<dGRID, dT4B, 0, stream>>>(*this);
                 // assert(dT4B%typ128::size==0);       dT4B /= typ128::size;
                 // CU_adamw_p<<<dGRID, dT4B, 0, stream>>>(*this);
