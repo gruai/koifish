@@ -15,6 +15,8 @@
 
 #include "./Manifold/gLLM.hpp"
 #include "./Utils/GST_Application.hpp"
+#include "./Utils/GST_log.hpp"
+#include "./g_def_x.hpp"
 
 class KoifishApp : public GST_Application {
    protected:
@@ -22,16 +24,33 @@ class KoifishApp : public GST_Application {
 
    public:
     KoifishApp(int argc, char* argv[]) : GST_Application(argc, argv) { name = "Koifish"; }
-    virtual ~KoifishApp() {
-        
-    }
+    virtual ~KoifishApp() {}
 
-    void Swim() override {
-        vector<hWIKI> wikis;    //reserved for hybrid llm training
+    int Swim() override {
+        vector<hWIKI> wikis;  // reserved for hybrid llm training
         fish = Fish::MakeInstance("Fish_", params, wikis, Fish::ROLE_TYPE::COMMON, 0x0);
+        if (fish == nullptr) {
+            _ERROR("[APP] %s is nullptr!!!", name.c_str());
+            return KOIFISH_NULL_FISH;
+        }
+        switch (fish->phase) {
+            case LIFE_PHASE::P_TRAIN:
+                fish->Train();
+                break;
+            case LIFE_PHASE::P_EVAL_:
+                _INFO("[eval] ");
+                break;
+            case LIFE_PHASE::P_PREFILL:
+                _INFO("[prefill] " );
+                break;
+            case LIFE_PHASE::P_GENERATE:
+                _INFO("[generate] ");
+                break;
+            default:
+                break;
+        }
 
-        if (fish && fish->isTrain())
-            fish->Train();
+        return KOIFISH_OK;
     }
 };
 

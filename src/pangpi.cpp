@@ -33,7 +33,7 @@ class PangpiApp : public GST_Application {
         gBUFF = nullptr;
     }
 
-    void Swim() override {
+    int Swim() override {
         if (params.n_swarm > 1) {
             fish = Fish::MakeSwarm("Fish_", params, 0x0);
         } else {
@@ -48,6 +48,7 @@ class PangpiApp : public GST_Application {
 
         if (fish && fish->isTrain())
             fish->Train();
+        return KOIFISH_OK;
     }
 };
 

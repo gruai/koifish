@@ -217,6 +217,18 @@ size_t GlobTokenset::OnShardFile(int id0, bool load, int flag) {
             // -1  due to us taking B*T+1 tokens but moving by B*T tokens
             nShardSamples = (nShardToks - 1) / total_batch_size;
             break;
+        case 20251218:  // qwen3:
+            nShardToks = header[2];
+            assert(nShardToks > 0);
+            bpToken            = /*header[0] == 20251218 ? 2 :*/ header[3];
+            expected_file_size = K_SHARD_HEADER_SIZE * sizeof(int) + nShardToks * bpToken;
+            if (szFile != expected_file_size) {
+                _ERROR("file size(%ld) is not as expected(%ld) @%s\n", expected_file_size, szFile, filename);
+                K_EXIT(EXIT_FAILURE);
+            }
+            // -1  due to us taking B*T+1 tokens but moving by B*T tokens
+            nShardSamples = (nShardToks - 1) / total_batch_size;
+            break;
         default:
             _ERROR("Bad magic<%d> in the data file @\"%s\"\n", header[0], filename);
             K_EXIT(KOIFISH_LOAD_TOKENFILE_HEADER);

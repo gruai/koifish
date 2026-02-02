@@ -76,13 +76,14 @@ class GST_Application {
         CleanupLogging();
     }
 
-    virtual void Swim() {
+    virtual int Swim() {
         // Main loop
         while (g_running) {
             // Process events, handle signals, etc.
             ProcessEvents();
             usleep(100000);  // 100ms sleep
         }
+        return KOIFISH_OK;
     }
 
     virtual int Run() {

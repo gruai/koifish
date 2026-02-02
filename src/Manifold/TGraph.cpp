@@ -1525,25 +1525,6 @@ hNEURON Fish::J2Neuron(void* ctx_, string& dad, int level, const JConfig& jconfi
         k = it.key();
         if (!k.empty() && k[0] == '#')
             continue;
-        /*if (k == "parameter") {
-            // BuildMacros();
-            continue;
-        }
-        if (k == "datatype") {
-            continue;
-        }
-        if (k == "multiscale") {
-            continue;
-        }
-        if (k == "fuyou") {
-            continue;
-        }
-        if (k == "arch") {
-            continue;
-        }
-        if (k == "hf-card" ||k == "token_bin_path" ) {
-            continue;
-        }*/
         auto v = it.value();
         if (it->is_array()) {
         } else if (it->is_structured()) {
@@ -1603,13 +1584,12 @@ int Fish::jToGraph(void* ctx_, bool isBuild, int flag) {
     // RLScheduling
     RLS_BP* hRLS = hEDS->GetScheduler<RLS_BP>();
 
-    FFN* last_ffn = GetNeuron<FFN>("FFN", L - 1);
-
-    for (int l = L - 1; l >= 0; l--) {
-        SelfAttention* QKV = GetNeuron<SelfAttention>("SelfAttention", l);
-        FFN* ffn           = GetNeuron<FFN>("FFN", l);
-        ffn->delta         = nullptr;
-    }
+    // FFN* last_ffn = GetNeuron<FFN>("FFN", L - 1);
+    // for (int l = L - 1; l >= 0; l--) {
+    //     SelfAttention* QKV = GetNeuron<SelfAttention>("SelfAttention", l);
+    //     FFN* ffn           = GetNeuron<FFN>("FFN", l);
+    //     ffn->delta         = nullptr;
+    // }
 
     hCLS = GetNeuron<OutCLS>("OutCLS", 0);
     assert(hCLS != nullptr);

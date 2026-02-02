@@ -28,7 +28,7 @@ hGTensor huTensor::_Multiply(const hGTensor& b) {
 
 bool TokenEmbed::UpdateBucket(int type, int flag) {
     num_c_groups = CEIL_DIV(latent, (WARP_SIZE * X128::size));
-    assert(num_c_groups>0);
+    assert(num_c_groups > 0);
     if (bucket_info != NULL)
         return false;
 
@@ -469,8 +469,8 @@ int SLP::FUSE_cuda_block(hGTensor rhs, hGTensor lhs, hGTensor gelu, bool isForw,
 hGTensor FFN::cuInfer(hGTensor hIn, int flag) {
     hGTensor tGelu = gBUFF->scratch, up_out = remater_ffn ? gBUFF->tmpFF1 : up.out;
     bool isBias = up.b != nullptr;
-    int nToken  = nBatchToken(), nEmbed = hFish->config.nEmbed(), C= nEmbed;
-    inp         = OnInput(hIn);
+    int nToken = nBatchToken(), nEmbed = hFish->config.nEmbed(), C = nEmbed;
+    inp = OnInput(hIn);
     // inp->Print("ffn.in", 0, dump_flag, C);
     gBUFF->residual = inp;  // gBUFF->residual->OverWrite(inp);          //
     if (fuseNorm == nullptr) {
@@ -543,7 +543,7 @@ void CU_set(const char* title, T* dst, int n1, int n2, int n3 = 1, int n4 = 1, i
 hGTensor FFN::cuFlow(hGTensor hIn, int flag) {
     hGTensor tGelu = gBUFF->scratch, up_out = remater_ffn ? gBUFF->tmpFF1 : up.out;
     bool isBias = up.b != nullptr;
-    int C = hFish->config.nEmbed();
+    int C       = hFish->config.nEmbed();
     if (isForward()) {
         inp = OnInput(hIn);
         // inp->Print("ffn.in", 0, dump_flag, B * T * C);
@@ -778,8 +778,9 @@ hGTensor OutCLS::cuFlow(hGTensor inp_, int flag) {
 int Relu::Forw(hGTensor out, hGTensor inp, int flag) {
     size_t nz            = SHAPE2NZ(shape);
     const int block_size = 128;
-    const int grid_size  = CEIL_DIV(nz, block_size), C = hFish->config.nEmbed();
-    hGTensor gate        = nullptr;
+    const int grid_size = CEIL_DIV(nz, block_size), C = hFish->config.n_ff();
+    assert(B * T * C == nz);
+    hGTensor gate = nullptr;
     switch (fAct) {
         case SWIG:
             assert(slp_gate != nullptr && slp_gate->tRhs != nullptr);
@@ -790,13 +791,13 @@ int Relu::Forw(hGTensor out, hGTensor inp, int flag) {
                 CU_swiglu_v0<<<grid_size, block_size, 0, main_stream>>>(ToX(out), ToX(gate), ToX(inp), nz);
             } else {
                 assert(C % X128::size == 0);
-                assert((B * T * C) % (block_size * X128::size) == 0);
-                const int num_blocks = CEIL_DIV(B * T * C, (int)(block_size * X128::size));
+                assert((nz) % (block_size * X128::size) == 0);
+                const int num_blocks = CEIL_DIV(nz, (int)(block_size * X128::size));
                 assert(gate != nullptr);
                 // CU_swiglu_v1<<<grid_size, block_size, 0, main_stream>>>(ToX(out), ToX(gate), ToX(inp), C);
                 CU_swiglu_v0<<<grid_size, block_size, 0, main_stream>>>(ToX(out), ToX(gate), ToX(inp), nz);
             }
-            out->Print("ffn.swig", 0, dump_flag, B * T * C);
+            out->Print("ffn.swig", 0, dump_flag, nz);
             break;
         case GELU:
             gelu_forward(ToX(out), ToX(inp), nz, main_stream);
@@ -828,22 +829,23 @@ __global__ static void CU_swiglu_back_v0(T* delta_in_out, T* delta_gate, const T
 //  delta is both delta_in & delta_out
 int Relu::Back(hGTensor delta_in_out, hGTensor pre_gelu, int flag) {
     size_t nz            = SHAPE2NZ(shape);
-    const int block_size = 128, C = hFish->config.nEmbed();
-    const int grid_size  = CEIL_DIV(nz, block_size);
-    hGTensor gate        = nullptr;
+    const int block_size = 128, C = hFish->config.n_ff();
+    assert(B * T * C == nz);
+    const int grid_size = CEIL_DIV(nz, block_size);
+    hGTensor gate       = nullptr;
     switch (fAct) {
         case SWIG:
             assert(slp_gate != nullptr);
             gate = slp_gate->tRhs;
-            pre_gelu->Print("ffn.up", 0, dump_flag, B * T * C);
+            pre_gelu->Print("ffn.up", 0, dump_flag, nz);
             gate->Print("swig.gate", 0, dump_flag, C);  //-1.890625
             // inp->Print("swig.inp", 0, dump_flag, C);
             if (version == 0) {  // CU_swiglu_v0(ToX(out), ToX(out), ToX(inp), nz, main_stream);
                 CU_swiglu_v0<<<grid_size, block_size, 0, main_stream>>>(ToX(out), ToX(gate), ToX(inp), nz);
             } else {
                 assert(C % X128::size == 0);
-                assert((B * T * C) % (block_size * X128::size) == 0);
-                const int num_blocks = CEIL_DIV(B * T * C, (int)(block_size * X128::size));
+                assert(nz % (block_size * X128::size) == 0);
+                const int num_blocks = CEIL_DIV(nz, (int)(block_size * X128::size));
                 assert(gate != nullptr && slp_gate != nullptr);
                 CU_swiglu_back_v0<<<grid_size, block_size, 0, main_stream>>>(ToX(delta_in_out), ToX(slp_gate->delta), ToX(gate), ToX(pre_gelu), nz);
             }

@@ -315,7 +315,7 @@ hGTensor LayerNormal::cuFlow(hGTensor inpDelta, int flag) {  //,hGTensor deltaIn
                 auto status = cudaFuncSetAttribute(CU_rms_back_llmc<floatX>, cudaFuncAttributeMaxDynamicSharedMemorySize, smp.smem);
                 cudaCheck(cudaGetLastError());
                 //  dinp, dweight, dW_scratch, dY0, inp, weight,
-                if (0) {  // DEBUG.cmd_p1
+                if (1) {  // DEBUG.cmd_p1
                     CU_rms_back_llmc<<<smp.grid3, smp.block3, smp.smem, main_stream>>>(ToX(delta), ToG(w), (hBITARR)(dW_scratch), ToX(deltaIn), ToX(inp),
                                                                                        ToX(w), _rstd, nullptr, nTH, ldTH);
                 } else {

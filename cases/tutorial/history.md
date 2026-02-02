@@ -1,4 +1,5 @@
 ## History
+* 02/02/2026: Training Qwen3-4B on single 4090
 * 01/01/2026: Training Qwen3-0.6B & Qwen2.5-0.5B on single 4090
 * 12/10/2025: Support inference of QWen3-32B on single 4090
 * 11/30/2025: Support inference of QWen3-8B on single 4090

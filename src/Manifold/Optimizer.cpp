@@ -899,7 +899,7 @@ bool MUON_params_::isAdamW(void* hUserData, int flag) {
     //     return false;        //only for debug
     // }else
     //     return true;
-    // if (m >= n)  // m <= n
+    if (m >= n)  // m <= n
         return false;
     return true;
 }
