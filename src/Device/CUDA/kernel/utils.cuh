@@ -11,22 +11,25 @@
 #include <assert.h>
 #include <cooperative_groups.h>
 #include <stdint.h>
-#include "../Tensor/Packed.hpp"
+
 #include "../cuda_common.h"
 
 /**
  * Fused Multiply-Add (FMA)​
- *  
- * __fmaf_rn(Round to Nearest Even) is a fundamental building block for high-performance, high-accuracy numerical computation on NVIDIA GPUs. 
- * It combines the performance benefit of a single instruction with the precision benefit of a fused operation and IEEE-compliant rounding. It is essential for writing robust and efficient CUDA kernels in fields like scientific computing, deep learning, and computer graphics.
- */  
+ *
+ * __fmaf_rn(Round to Nearest Even) is a fundamental building block for high-performance, high-accuracy numerical computation on NVIDIA GPUs.
+ * It combines the performance benefit of a single instruction with the precision benefit of a fused operation and IEEE-compliant rounding. It is essential for
+ * writing robust and efficient CUDA kernels in fields like scientific computing, deep learning, and computer graphics.
+ */
 // a + t * (b - a);
-__device__ __host__ inline float sAtB(float a, float b, float t) {
+template <typename T>
+__device__ __host__ inline float sAtB(T a, T b, T t) {
     return fmaf(t, b, fmaf(-t, a, a));
     // __fmaf_rn is CUDA-specific & faser
     // Or the simpler version:
     // return a + t * (b - a);
 }
+
 
 // only for kernels by cudaLaunchCooperativeKernel
 __device__ static void SYNC_GRID() {
@@ -367,7 +370,6 @@ __device__ __forceinline__ __nv_fp8_e5m2 CU_Float2T<__nv_fp8_e5m2>(const float& 
     return a;
 }
 
-
 template <>
 __device__ __forceinline__ __nv_bfloat16 CU_Float2T<__nv_bfloat16>(const float& a0, unsigned int seed) {
     // todo - is this stochastic rounding *too good*? can we cut any corners?
@@ -382,7 +384,7 @@ __device__ __forceinline__ __nv_bfloat16 CU_Float2T<__nv_bfloat16>(const float& 
 }
 
 template <typename T>
-__device__ __forceinline__ T CU_16BF2T(const bf16* a0, unsigned int seed=42) {
+__device__ __forceinline__ T CU_16BF2T(const bf16* a0, unsigned int seed = 42) {
     T a = (T)(*a0);
     return a;
 }
@@ -453,32 +455,6 @@ inline int get_max_num_block_sums(int* num_slices_all, int numel) {
     }
 
     return max_num_block_sums;
-}
-
-/*
-    Performs a deterministic x2
-        atomicAdd in CUDA is not deterministic because it involves race conditions when multiple threads attempt to modify the same memory location
-   simultaneously.
-*/
-template <class T, class Tout>
-__global__ static void CU_x2_atomic(Tout* out, const T* x0, size_t N) {
-    using x128 = PackedN<T, 16 / sizeof(T)>;
-    assert(N % x128::size == 0);
-    int idx = blockIdx.x * blockDim.x + threadIdx.x, tid = threadIdx.x, off = idx * x128::size;
-    if (off >= N) {  // guard
-        return;
-    }
-    assert(blockDim.x <= 1024);
-
-    // float a         = x0[idx];
-    // float sum       = a * a;
-    float sum = 0.f;
-    x128::X2(sum, x0 + off);
-    float block_sum = blockReduce_v0<warpReduceSum>(sum, true);
-    if (tid == 0) {
-        // printf("%g + %g\n",*out,block_sum);
-        atomicAdd(out, (Tout)block_sum);
-    }
 }
 
 template <class T>

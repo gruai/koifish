@@ -492,7 +492,9 @@ hGTensor FFN::cuInfer(hGTensor hIn, int flag) {
     down.Forw(down_out, tGelu, nullptr, nullptr, isSymmetric);
     down_out->Print("ffn.down", 0, dump_flag, nToken * C);  // PrintTensor<floatX>("ffn",scratch,true,B,T,C);
     if (!hFish->isRemater()) {
-        residual_forward(ToX(out), ToX(gBUFF->residual), ToX(down_out), nToken * C, main_stream);
+        TASKA_1p1<floatX> task_11(nToken * C, main_stream);
+        T1p1(CU_add3<floatX>, task_11, ToX(out), ToX(gBUFF->residual), ToX(down_out), 0x0);
+        // residual_forward(ToX(out), ToX(gBUFF->residual), ToX(down_out), nToken * C, main_stream);
         if (fuseNorm != nullptr) {
             return fuseNorm->cuFlow(out);
             // layernorm_forward(ToX(fuseNorm->out), TO<float>(fuseNorm->mean),TO<float>(fuseNorm->rstd), ToX(out),ToX(fuseNorm->w), ToX0(fuseNorm->b), B*T,
@@ -567,7 +569,9 @@ hGTensor FFN::cuFlow(hGTensor hIn, int flag) {
         down_out->Print("ffn.down", 0, dump_flag, B * T * C);  // PrintTensor<floatX>("ffn",scratch,true,B,T,C);
         // GTensor::tZ->Print(GTensor::tZ->name, 0, dump_flag);
         if (!hFish->isRemater()) {
-            residual_forward(ToX(out), ToX(gBUFF->residual), ToX(down_out), B * T * C, main_stream);
+            TASKA_1p1<floatX> task_11(B * T * C, main_stream);
+            T1p1(CU_add3<floatX>, task_11, ToX(out), ToX(gBUFF->residual), ToX(down_out), 0x0);
+            // residual_forward(ToX(out), ToX(gBUFF->residual), ToX(down_out), B * T * C, main_stream);
             if (fuseNorm != nullptr) {
                 return fuseNorm->cuFlow(out);
                 // layernorm_forward(ToX(fuseNorm->out), TO<float>(fuseNorm->mean),TO<float>(fuseNorm->rstd), ToX(out),ToX(fuseNorm->w), ToX0(fuseNorm->b), B*T,
@@ -884,7 +888,7 @@ __global__ void CU_memcmp(const T* a, const T* b, size_t n, int flag = 0x0) {
 }
 bool GeNeuron::VerifyInp4Back(hGensor inp_, int flag) {
     if (dev_window != nullptr) {
-        int nMiss = 0;
+        // int nMiss = 0;
         CU_memcmp<BIT_8><<<1, CU_DEV_WINDOW>>>((hBITARR)(dev_window->data), (hBITARR)(inp->data), CU_DEV_WINDOW);
         // assert(nMiss == 0);
     }

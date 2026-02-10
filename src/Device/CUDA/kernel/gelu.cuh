@@ -2,10 +2,10 @@
 (Approximate) GeLU non-linearity layer
 */
 #include <assert.h>
-// llmc internal imports
-#include "../cuda_common.h"
-#include "utils.cuh"
 
+#include "../cuda_common.h"
+#include "packedN.cuh"
+#include "utils.cuh"
 // ----------------------------------------------------------------------------
 // CUDA kernels
 

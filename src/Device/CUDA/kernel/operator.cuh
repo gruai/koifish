@@ -16,8 +16,8 @@
 #include "../Device/EDevice.hpp"
 #include "../Tensor/GTensor.hpp"
 #include "../cuda_common.h"
+#include "./packedN.cuh"
 #include "./utils.cuh"
-
 template <typename T, int NUM>
 __device__ __inline__ T warpReduceMax(T* val, int thread_group_width = 32) {
 #pragma unroll
@@ -864,6 +864,22 @@ __global__ void CU_rope2_v0(Typ* q, Typ* k, int pos, int N_HEADS, int N_KV_HEADS
         }
     }
 }
+
+/*
+void residual_forward(floatX* out, const floatX* inp1, const floatX* inp2, int N, cudaStream_t stream) {
+    NVTX_RANGE_FN();
+    TASKA_1p1<floatX> taska(N, stream);
+
+    if (taska.isValid()) {  //  X128 version
+        //T1p1(CU_add3)(out, inp1, inp2, taska);
+        T1p1(CU_add3<floatX>, taska, out, inp1, inp2, 0x0);
+    } else    {
+        const int block_size = N >= 2048 ? 256 : 128, grid_size = CEIL_DIV(N, block_size);
+        CU_residual_forward<<<grid_size, block_size, 0, stream>>>(out, inp1, inp2, N);
+    }
+    cudaCheck(cudaGetLastError());
+}
+ */
 
 template <typename Typ>
 __global__ void CU_rope_(Typ* out, Typ* inp, const Typ* freqs, float* stat_info, int B, int T, int Nq, int Nkv, int head_dim, bool isBack = false);

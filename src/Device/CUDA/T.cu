@@ -180,44 +180,6 @@ __global__ void CU_rms_dw_v1(Typ* dW, const float* dW_scratch, TASKA_SWMD<Typ> s
     } */
 }
 
-/*
-template<int BLOCK_SIZE_X, int BLOCK_SIZE_Y>
-__global__ void rowSumFast(const float* __restrict__ matrix,
-                          float* __restrict__ rowSums,
-                          int rows, int cols) {
-
-    __shared__ float block_sum[BLOCK_SIZE_X][BLOCK_SIZE_Y];
-
-    int col = blockIdx.x * BLOCK_SIZE_X + threadIdx.x;
-    int row = blockIdx.y * BLOCK_SIZE_Y + threadIdx.y;
-
-    if (row >= rows) return;
-
-    float thread_sum = 0.0f;
-
-    // Each thread processes a single element
-    if (col < cols) {
-        thread_sum = matrix[row * cols + col];
-    }
-
-    block_sum[threadIdx.x][threadIdx.y] = thread_sum;
-    __syncthreads();
-
-    // Reduce within warp (warp-level reduction)
-    for (int stride = BLOCK_SIZE_X / 2; stride > 0; stride >>= 1) {
-        if (threadIdx.x < stride) {
-            block_sum[threadIdx.x][threadIdx.y] +=
-                block_sum[threadIdx.x + stride][threadIdx.y];
-        }
-        __syncthreads();
-    }
-
-    // Write result
-    if (threadIdx.x == 0 && row < rows) {
-        atomicAdd(&rowSums[row], block_sum[0][threadIdx.y]);
-    }
-}*/
-
 /**
  *  lite version: each thread for one row/head, No need sync!
  *  1. Y = x/(RMS(x)+ϵ)⊙w for each token/head in the forward pass

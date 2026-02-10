@@ -12,10 +12,10 @@ E.g., the layernorms are connected to the residuals so we += in layernorm backwa
 #include <assert.h>
 
 #include <cub/cub.cuh>
-// llmc internal imports
+
 #include "../cuda_common.h"
 #include "utils.cuh"
-
+#include "packedN.cuh"
 // ----------------------------------------------------------------------------
 // CUDA kernels
 /*
@@ -171,7 +171,7 @@ __global__ void CU_rms_forward_v2(Typ* __restrict__ out, float* __restrict__ rst
  */
 template <typename T, typename Tw>
 __global__ static void CU_rms_forward_v3(T* __restrict__ out, float* __restrict__ rstd, const T* __restrict__ inp, const Tw* __restrict__ weight, int N, int C,
-                                      float eps = 1e-5f) {
+                                         float eps = 1e-5f) {
     using X128 = PackedN<T, 16 / sizeof(T)>;
     assert(blockDim.x == WARP_SIZE);
     // load weights into shared memory
@@ -305,18 +305,6 @@ __global__ static void CU_residual_forward(T* out, const T* inp1, const T* inp2,
         return;
 
     out[idx] = inp1[idx] + inp2[idx];
-}
-
-__global__ static void residual_forward_x128(floatX* out, const floatX* inp1, const floatX* inp2) {
-    int idx = (blockIdx.x * blockDim.x + threadIdx.x) * X128::size;
-
-    X128 packed_out;
-    X128 packed_inp1 = load128cs(inp1 + idx);
-    X128 packed_inp2 = load128cs(inp2 + idx);
-    for (int k = 0; k < packed_inp1.size; k++) {
-        packed_out[k] = (floatX)((float)packed_inp1[k] + (float)packed_inp2[k]);
-    }
-    store128(out + idx, packed_out);
 }
 
 __global__ static void __launch_bounds__(512, 2)  // todo - any warnings on Turing with only 1024 threads?
@@ -707,7 +695,7 @@ __global__ static void __launch_bounds__(512, 2)  // todo - any warnings on Turi
     }
 }
 
-/*  Deprecated! 
+/*  Deprecated!
 void inline layernorm_forward(floatX* out, float* mean, float* rstd, floatX* inp, const floatX* weight, const floatX* bias, int B, int T, int C,
                               cudaStream_t stream) {
     NVTX_RANGE_FN();
@@ -736,20 +724,6 @@ void inline layernorm_forward(floatX* out, float* mean, float* rstd, floatX* inp
     }
     cudaCheck(cudaGetLastError());
 }*/
-
-void inline residual_forward(floatX* out, const floatX* inp1, const floatX* inp2, int N, cudaStream_t stream) {
-    NVTX_RANGE_FN();
-    const int block_size = N >= 2048 ? 256 : 128;
-    /*if (N % (block_size * X128::size) == 0) {  //  X128 version
-        const int grid_size = CEIL_DIV(N, block_size * X128::size);
-        residual_forward_x128<<<grid_size, block_size, 0, stream>>>(out, inp1, inp2);
-    } else*/
-    {
-        const int grid_size = CEIL_DIV(N, block_size);
-        CU_residual_forward<<<grid_size, block_size, 0, stream>>>(out, inp1, inp2, N);
-    }
-    cudaCheck(cudaGetLastError());
-}
 
 void inline layernorm_backward(floatX* delta, floatX* dweight, floatX* dbias, float* scratch, const floatX* deltaIn, const floatX* inp, const floatX* weight,
                                const float* mean, const float* rstd, int B, int T, int C, cudaStream_t stream) {

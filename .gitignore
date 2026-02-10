@@ -59,8 +59,9 @@ src/LLAMA/common/build-info.cpp
 !./cases/gpt2/*.csv
 *.sh
 *.ck
-checkpoint
+checkpoints
 datasets
 
 koifish
 _safetensors_.json
+K_0.6B

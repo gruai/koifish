@@ -63,11 +63,8 @@
     },  
     "datasets":{
         "train":{
-            "glob":"./Datasets/tiny-shakespeare/*train*.bin","most":50,"name":"shake"
-        },
-        
-        "#eval_1": {"glob":"./Datasets/tiny-shakespeare/*val*.bin","name":"shake","most":10,"eval-every":200 ,"samp":0.1       },
-        "#eval_2":{"glob":"./Datasets/hellaswag_val.bin", "type":"hellaswag","eval-every":500 ,"samp":0.04    }
+            "glob":"./Datasets/climb-1b/*train*.bin","most":50,"name":"shake"
+        }
     },
     "debug": {
         "prompts":[

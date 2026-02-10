@@ -605,7 +605,9 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
         // fused_residual_forward5(ouput, normed,mean,rstd, residual, scratch, ToX(fuseNorm->w), ToX0(fuseNorm->b), B*T, C, main_stream);
         if (!hFish->isRemater()) {
             gBUFF->residual->Print("residual", 0x0, dump_flag, nToken * nEmbed);
-            residual_forward(ToX(out), ToX(gBUFF->residual), ToX(gBUFF->scratch), nToken * nEmbed, main_stream);
+            TASKA_1p1<floatX> task_11(nToken * nEmbed, main_stream);
+            T1p1(CU_add3<floatX>, task_11, ToX(out), ToX(gBUFF->residual), ToX(gBUFF->scratch), 0x0);
+            // residual_forward(ToX(out), ToX(gBUFF->residual), ToX(gBUFF->scratch), nToken * nEmbed, main_stream);
             assert(fuseNorm == nullptr && "Try fuse normal later...");
             {
                 // float *mean = TO<float>(fuseNorm->mean), *rstd = TO<float>(fuseNorm->rstd);
@@ -667,7 +669,9 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
         if (!hFish->isRemater()) {
             gBUFF->scratch->Print("proj_out", 0x0, dump_flag, B * T * nEmbed);
             gBUFF->residual->Print("residual", 0x0, dump_flag, B * T * nEmbed);
-            residual_forward(ToX(out), ToX(gBUFF->residual), ToX(gBUFF->scratch), B * T * nEmbed, main_stream);
+            TASKA_1p1<floatX> task_11(B * T * nEmbed, main_stream);
+            T1p1(CU_add3<floatX>, task_11, ToX(out), ToX(gBUFF->residual), ToX(gBUFF->scratch), 0x0);
+            // residual_forward(ToX(out), ToX(gBUFF->residual), ToX(gBUFF->scratch), B * T * nEmbed, main_stream);
             assert(fuseNorm == nullptr && "Try fuse normal later...");
             // if (fuseNorm != nullptr) {
             //     float *mean = TO<float>(fuseNorm->mean), *rstd = TO<float>(fuseNorm->rstd);

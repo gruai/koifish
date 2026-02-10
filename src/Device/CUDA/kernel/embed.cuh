@@ -10,10 +10,10 @@ In the backward pass, the gradients flow to both, handled by different kernels
 #include <unordered_map>
 #include <utility>  // std::pair
 #include <vector>
-// llmc internal imports
+
 #include "../cuda_common.h"
 #include "utils.cuh"
-
+#include "packedN.cuh"
 // ----------------------------------------------------------------------------
 // CUDA kernels
 // out = wte[inp]

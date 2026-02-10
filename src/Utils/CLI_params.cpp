@@ -793,7 +793,7 @@ CheckPoint_Params::CheckPoint_Params(const JSON& jData, const std::string& key, 
     if (key.empty()) {  //  default checkpoints to store all info of current state
         //"state", "./hy-tmp/checkpoint/", -1, false
         jKey   = "._koifish_state_";
-        sDir   = "./hy-tmp/checkpoint/";
+        sDir   = "./checkpoints/";
         type   = CheckPoint_Params::STATE;
         format = CheckPoint_Params::KOIFISH;
         // isIn = false;
@@ -821,7 +821,7 @@ CheckPoint_Params::CheckPoint_Params(const JSON& jData, const std::string& key, 
     }
     if (isSave) {  //  Verify ouput dir
         if (sDir.empty()) {
-            sDir = "./hy-tmp/checkpoint/Koifish_";
+            sDir = "./checkpoints/Koifish_";
             _INFO("[Save] path is empty! Koifish would save file to a tmp path@\"%s\"!\n", sDir.c_str());
         }
         VERIFY_DIR_EXIST(sDir, true);

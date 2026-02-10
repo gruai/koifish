@@ -18,9 +18,9 @@
 #include <algorithm>
 #include <vector>
 
-#include "../../../Tensor/Packed.hpp"
 #include "../../../Manifold/Fish.hpp"
 #include "../../../Manifold/Neuron.hpp"
+// #include "packedN.cuh"
 #include "operator.cuh"
 #include "utils.cuh"
 
@@ -626,8 +626,8 @@ __global__ void CU_rope_rmsnormal_forw(Typ* qk, const Typ* weight, int pos, int 
         }
         float angle = (float)pos * inv_freq, cos, sin;
         sincosf(angle, &sin, &cos);
-        q_head[j1] = CU_Float2T<Typ>(q_real * cos - q_imag * sin, 42);  
-        q_head[j2] = CU_Float2T<Typ>(q_real * sin + q_imag * cos, 42);  
+        q_head[j1] = CU_Float2T<Typ>(q_real * cos - q_imag * sin, 42);
+        q_head[j2] = CU_Float2T<Typ>(q_real * sin + q_imag * cos, 42);
         // if (nzHead == N_HEADS && j == 0) {
         //     nout("\t(%g,%g)=%g %g %g %g@<%d %d %d>\n", CU_T2Float(q_head+j1),CU_T2Float(q_head+j2),q_real, q_imag, sin,
         //     cos,blockIdx.x,blockIdx.y,blockIdx.z);
@@ -735,7 +735,7 @@ int ROPE::cuFlow(SelfAttention* hQKV, uint32_t seed, bool isFX, int flag) {
     hFish->GetBT(B, T);
     dim3 blocks_q(B, T, n_head), blocks_k(B, T, n_head_kv), blocks(B, T);
     // size_t smemPB = 1024 * sizeof(float);
-    floatX *q = ToX(hQKV->Q.out), *k = ToX(hQKV->K.out);// *freqs = ToX(hSin);
+    floatX *q = ToX(hQKV->Q.out), *k = ToX(hQKV->K.out);  // *freqs = ToX(hSin);
     floatX *qW = hnQ == nullptr ? nullptr : ToX(hnQ->w), *kW = hnK == nullptr ? nullptr : ToX(hnK->w);
     PrintTensor<floatX>("Q.out", q, true, 1, 1, q_dim, 1, dump_flag);
     if (isForward() || BIT_TEST(flag, F_REMATER)) {

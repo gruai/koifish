@@ -274,9 +274,11 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
             int qk_threads_per_block = std::min(1024, pos + 1);
             if (DEBUG.T_cuQK == 0)
                 attention_qk_kernel<<<N_HEADS, qk_threads_per_block>>>(hQwen->att, hQwen->q, layer_key_cache, pos, seq_len, N_HEADS, N_KV_HEADS, HEAD_DIM);
-            else
-                attention_qk_kernel_v2<<<dim3(N_HEADS, pos + 1, 1), HEAD_DIM>>>(hQwen->att, hQwen->q, layer_key_cache, pos, seq_len, N_HEADS, N_KV_HEADS,
-                                                                                HEAD_DIM);
+            else {
+                assert(0 && "attention_qk_kernel_v2 is not ready yet");
+                // attention_qk_kernel_v2<<<dim3(N_HEADS, pos + 1, 1), HEAD_DIM>>>(hQwen->att, hQwen->q, layer_key_cache, pos, seq_len, N_HEADS, N_KV_HEADS,
+                //                                                                 HEAD_DIM);
+            }
             // 6.2: softmax
             CU_softmax_multihead<<<N_HEADS, 1>>>(hQwen->att, pos, seq_len);
             PrintTensor<float>("attn", hQwen->att, true, pos + 1, 1);

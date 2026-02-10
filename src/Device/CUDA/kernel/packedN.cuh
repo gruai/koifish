@@ -14,6 +14,7 @@
 #include "../Device/CUDA/cuda_def.hpp"
 #include "../g_def_x.hpp"
 #include "../g_float.hpp"
+#include "utils.cuh"
 
 #if defined(__CUDACC__)
 #define ALIGN(n) __align__(n)
@@ -221,7 +222,12 @@ class alignas(alignment_from_size(sizeof(T) * ElemCount)) PackedN {
     static constexpr const std::size_t size  = ElemCount;
     static constexpr const std::size_t bytes = ElemCount * sizeof(T);
 
-    __host__ __device__ explicit PackedN() {}
+    __host__ __device__ explicit PackedN() {
+        //  typ128::zeros() =  constant(static_cast<T>(0.f));
+        for (int k = 0; k < size; ++k) {
+            values[k] = (T)0.f;
+        }
+    }
 
     __host__ __device__ explicit PackedN(int4 bits) {
         static_assert(sizeof(bits) == sizeof(values), "Size mismatch.");
@@ -233,6 +239,14 @@ class alignas(alignment_from_size(sizeof(T) * ElemCount)) PackedN {
         // memcpy(&values, &bits, sizeof(bits));
     }
 
+    //  stochastic rounding
+    __host__ __device__ void Randf(int seed, int flag = 0x0) {
+        for (int k = 0; k < size; ++k) {
+            values[k] = CU_Float2T<T>(values[k], seed);
+        }
+    }
+
+    // Accumulated x2 to sum, sum is not initialized!, the caller should initialize sum to 0 before the first call!
     __host__ __device__ float X2(float& sum) const {
         // float sum = 0.0f;
         for (int k = 0; k < size; ++k) {
@@ -280,13 +294,49 @@ class alignas(alignment_from_size(sizeof(T) * ElemCount)) PackedN {
         }
     }
 
+    // Linear exploration a + s * (b - a);  internal is float computation for better precision, and the result is cast back to T.
+    __host__ __device__ void Lerp(const T* src1, const T* src2, float s) {
+        const auto a_1 = load(src1);
+        const auto a_2 = load(src2);
+        for (int k = 0; k < size; k++) {
+            //  fmaf(t, b, fmaf(-t, a, a));
+            float a = CU_T2Float(a_1.values + k), b = CU_T2Float(a_2.values + k);
+            values[k] = a + s * (b - a);
+        }
+    }
+    __host__ __device__ void Lerp(const T* src1, float s) {
+        const auto a_1 = load(src1);
+        for (int k = 0; k < size; k++) {
+            //  fmaf(t, b, fmaf(-t, a, a));
+            float a = CU_T2Float(a_1.values + k), b = CU_T2Float(values + k);
+            values[k] = a + s * (b - a);
+        }
+    }
+
     __host__ __device__ void Add(const T* src) {
         const auto a4 = load(src);
         for (int k = 0; k < size; k++) {
             values[k] += a4.values[k];
         }
     }
+    __host__ __device__ void Add2(const T* src1, const T* src2) {
+        const auto a_1 = load(src1);
+        const auto a_2 = load(src2);
+        for (int k = 0; k < size; k++) {
+            values[k] += a_1.values[k] + a_2.values[k];
+        }
+    }
 
+    // stochastic rounding
+    __host__ __device__ void Add2(float s1, const T* src1, float s2, const T* src2, int seed = 0) {
+        const auto a_1 = load(src1);
+        const auto a_2 = load(src2);
+        for (int k = 0; k < size; k++) {
+            float a = CU_T2Float(a_1.values + k), b = CU_T2Float(a_2.values + k);
+            float sum = s1 * a + s2 * b;
+            values[k] = CU_Float2T<T>(sum, seed);
+        }
+    }
     __host__ __device__ void AddTo(T* dst) {
         PackedN a4 = load(dst);
         for (int k = 0; k < size; k++) {
@@ -323,6 +373,7 @@ class alignas(alignment_from_size(sizeof(T) * ElemCount)) PackedN {
     }
 
     constexpr static __host__ __device__ PackedN zeros() { return constant(static_cast<T>(0.f)); }
+    constexpr static __host__ __device__ void zeros(T* dst) { zeros().store(dst); }
 
     constexpr static __host__ __device__ PackedN ones() { return constant(1.f); }
 
@@ -417,6 +468,51 @@ __device__ void store128cg(T* target, Packed128<T> value) {
 }
 
 /**
+ * Task allocation - One thread, one data
+ *
+ * no sync between wrap, block ...
+ */
+template <typename Typ>
+struct TASKA_1p1 {
+    using typ128 = PackedN<Typ, 16 / sizeof(Typ)>;
+    cudaStream_t stream;
+    size_t smem = 0x0;
+    int nTask = 0, N = 0;
+    int block3 = 0, tpb = 512;  //  tpb is the number of threads in one block
+    int grid3 = 0, nBlock = 0;  // grid3=(nBlock, 1, 1), nBlock is the total number of blocks
+
+    TASKA_1p1(int N_, cudaStream_t stream_, int flag = 0x0) : nTask(1), N(N_), stream(stream_) {
+        if (N % typ128::size != 0)
+            return;
+        block3 = tpb;
+        nBlock = CEIL_DIV(N, tpb * typ128::size);
+        grid3  = nBlock;
+    }
+    bool isValid() const {
+        if (nBlock <= 0)
+            return false;
+        assert(stream != nullptr);
+        assert(nBlock * tpb * typ128::size >= N);
+        return true;
+    }
+};
+//  One thread per data
+// #define T1p1(CU_kernel) CU_kernel<<<taska.grid3, taska.block3, taska.smem, main_stream>>>
+// template< template<typename> class CU_kernel, typename Typ>
+// void T1p1(CU_kernel kernel, const TASKA_1p1<Typ>& taska, int flag) {
+//     if (taska.isValid()) {
+//         kernel<Typ><<<taska.grid3, taska.block3, taska.smem, taska.stream>>>(taska);
+//     }
+// }
+template <typename KernelType, typename Typ, typename... Args>
+void T1p1(KernelType kernel, const TASKA_1p1<Typ>& taska, Args&&... args) {
+    assert(taska.isValid());
+    kernel<<<taska.grid3, taska.block3, taska.smem, taska.stream>>>(taska, std::forward<Args>(args)...);
+    // cudaDeviceSynchronize();
+    // cudaCheck(cudaGetLastError());
+}
+
+/**
  * Task allocation - Single Wrap, Multiple Data
  *
  *  There are total nTask & Each task has C elements
@@ -485,24 +581,6 @@ struct TASKA_SWMD {
 #define SW1H(CU_kernel) CU_kernel<<<smp.grid3, smp.block3, smp.smem, main_stream>>>
 //  Single Wrap, 1 token
 #define SW1T(CU_kernel) CU_kernel<<<smp.grid3, smp.block3, smp.smem, main_stream>>>
-
-/**
- * `"Few blocks, many elements per thread", kernel1, ...);
-`*  "Many blocks, 1 element per thread"
- */
-template <typename Typ>
-struct TASKA_1p1 {
-    using typ128 = PackedN<Typ, 16 / sizeof(Typ)>;
-
-    int block = 512;
-    int grid3 = 0, nBlock = 0;  // grid3=(nBlock, 1, 1), nBlock is the total number of blocks
-    int ldC0 = 0x0, ldC = 0x0;
-    int wrap_stride  = 0x0;  // number of elements by one wrap
-    int C_nStride    = 0;    // C_nStride*wrap_stride = C
-    int warpsInBlock = 0;    // number of warps in one block
-    int warpsInGrid  = 0;    // number of warps in grid. = nBlock * warpsInBlock;
-    size_t smem      = 0x0;
-};
 
 /**
  * @brief Provides information about Pack2 of elements for a given type.
@@ -647,3 +725,41 @@ struct Pack2<fp8e5m2_4> {
     using packed_type   = fp8e5m2_4;
 };
 #endif
+
+template <typename Typ>
+__global__ void CU_add3(TASKA_1p1<Typ> taska, Typ* out_, const Typ* inp1, const Typ* inp2, int flag = 0x0) {
+    using typ128 = PackedN<Typ, 16 / sizeof(Typ)>;
+    int idx      = (blockIdx.x * blockDim.x + threadIdx.x) * typ128::size;
+    if (idx >= taska.N)
+        return;
+    typ128 out;
+    out.Add2(inp1 + idx, inp2 + idx);
+    out.store(out_ + idx);
+}
+
+
+/*
+    Performs a deterministic x2
+        atomicAdd in CUDA is not deterministic because it involves race conditions when multiple threads attempt to modify the same memory location
+   simultaneously.
+*/
+template <class T, class Tout>
+__global__ static void CU_x2_atomic(Tout* out, const T* x0, size_t N) {
+    using x128 = PackedN<T, 16 / sizeof(T)>;
+    assert(N % x128::size == 0);
+    int idx = blockIdx.x * blockDim.x + threadIdx.x, tid = threadIdx.x, off = idx * x128::size;
+    if (off >= N) {  // guard
+        return;
+    }
+    assert(blockDim.x <= 1024);
+
+    // float a         = x0[idx];
+    // float sum       = a * a;
+    float sum = 0.f;
+    x128::X2(sum, x0 + off);
+    float block_sum = blockReduce_v0<warpReduceSum>(sum, true);
+    if (tid == 0) {
+        // printf("%g + %g\n",*out,block_sum);
+        atomicAdd(out, (Tout)block_sum);
+    }
+}

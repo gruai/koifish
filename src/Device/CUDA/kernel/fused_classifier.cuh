@@ -4,7 +4,7 @@ Fused Classifier:
 - Never materializes the full normalized logits, only at the target label
 - (fusion) Also kicks off the backward pass, because everything is already loaded
 */
-// llmc internal imports
+
 #include "../cuda_common.h"
 #include "utils.cuh"
 
@@ -123,7 +123,8 @@ __global__ void __launch_bounds__(1024, MAX_1024_THREADS_BLOCKS)
         float dlogit    = (prob - indicator) * dloss;
         if (WriteDLogits) {
             logits[idx * P + i] = (floatX)dlogit;
-            // __stcs(logits + idx * P + i, (floatX)dlogit);    //the __stcs intrinsic expects specific data types, and FP8 support in CUDA is version-dependent and requires specific handling.
+            // __stcs(logits + idx * P + i, (floatX)dlogit);    //the __stcs intrinsic expects specific data types, and FP8 support in CUDA is version-dependent
+            // and requires specific handling.
         }
         if (WriteProbs) {
             probs[idx * P + i] = (floatX)prob;
