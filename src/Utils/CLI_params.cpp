@@ -184,8 +184,9 @@ MODEL_CARD::MODEL_CARD() {
 #elif defined(USE_BF16_BASELINE)
     tpWeight = typNUMBER::BF16, tpActivation = typNUMBER::BF16, tpGradient = typNUMBER::BF16;
 #elif defined(USE_FP8_BASELINE)
-    tpWeight = typNUMBER::F8E5M2, tpActivation = typNUMBER::BF16, tpGradient = typNUMBER::BF16;
-    assert(0);
+    // tpWeight = typNUMBER::F8E5M2, tpActivation = typNUMBER::BF16, tpGradient = typNUMBER::BF16;
+    tpWeight = TYPE_<floatX>(), tpActivation = typNUMBER::F8E5M2;
+    tpGradient = TYPE_<floatGrad>();
 #endif
 }
 
@@ -193,63 +194,43 @@ void QUANT_CARD::Dump(int typ) {
     //_INFO("\t[Quant]_<%d> \n\tMIQ=%d{%s} \n\tF8Ex=%d{%s} \n", default_bits, G_STR(filter_MIQ), G_STR(filter_WeightF8Ex));
 }
 
-void QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, int flag) {
-    type = NO_QUANT;
-    if (jQuant.find("preQuant") != jQuant.end()) {
-        type = PRE_QUANT;
-        return;
-    }
-    string s0 = "";
-    for (JSON::const_iterator it = jQuant.begin(); it != jQuant.end(); ++it) {
-        auto k = it.key();
-        if (!k.empty() && k[0] == '#')
-            continue;
-        if (k == "debug") {
-            continue;
-        }
-        if (G_Has_(name, {k})) {
-            const JSON& jQ = it.value();
-            default_bits   = jKV(jQ, {"bits"}, default_bits, false);
-            // quant.filter_MIQ        = jKV_arr(jConfig, {"quantizer", "MINI"}, quant.filter_MIQ, false);
-            // quant.filter_WeightF8Ex = jKV_arr(jConfig, {"quantizer", "F8Ex"}, quant.filter_WeightF8Ex, false);
-            if (default_bits != 4 && default_bits != 3 && default_bits != 8) {
-                default_bits = 4;
-                assert(0);
-            }
-            string norm_type = jKV(jQ, {"normal"}, s0);
-            norm             = G_Aa(norm_type, "SINKHORN") ? NORMAL_MODE::SINKHORN : NORMAL_MODE::NO_NORMAL;
-            //  params.type = method.mi == 0 ? (params.isNormalFloat ? QUANT_MODE::RTNf : QUANT_MODE::RTN) : QUANT_MODE::MINI;
-            type = default_bits == 8 ? F8Ex : MINI;
-        }
-    }
-}
-
 bool QUANT_CARD::isValid() const {
     if (default_bits < 0 || default_bits > 8)
         return false;
     return true;
 }
-void QUANT_CARD::InitFromVendor(const JSON& jVendor, int flag) {
-    int bits = 0, group = 0;
-    // for QWEN3
-    bits  = jKV(jVendor, {"bits"}, bits);
-    group = jKV(jVendor, {"group_size"}, group);
-    if (bits > 0)
-        default_bits = bits;
-    if (group > 0)
-        T_group = group;
-    isPreQuant = true;
-}
-JSON QUANT_CARD::ToJSON(int flag) {
-    JSON jOut;
-    jOut["quantizer"]["self_attn"]["bits"]     = default_bits;
-    jOut["quantizer"]["self_attn"]["group"]    = T_group;
-    jOut["quantizer"]["mlp"]["bits"]           = default_bits;
-    jOut["quantizer"]["mlp"]["group"]          = T_group;
-    jOut["quantizer"]["embed_tokens"]["bits"]  = default_bits;
-    jOut["quantizer"]["embed_tokens"]["group"] = T_group;
-    if (isPreQuant)
-        jOut["preQuant"] = true;
+
+/*
+    Koifish needs quant params for each neuron. like:
+    "quantizer":{
+        "self_attn": {"bits":3},
+        "mlp":  {"bits":4},
+        "embed_tokens": {"bits":4},
+        "#MINI":"off"
+    },
+*/
+JSON QUANT_CARD::Vendor2JSONx(const JSON& jX, int flag) {
+    JSON jOut, jN = jX;
+    assert(!jN.empty());
+    if (jN.empty()) {
+        // jN["bits"]         = default_bits;
+        // jN["group_size"]   = T_group;
+        // jN["quant_method"] = "awq";
+        // jN["zero_point"]   = isZeroPoint;
+        // "modules_to_not_convert": null,
+        // "version": "gemm",
+        // "zero_point": true
+    }
+    jOut["self_attn"] = jN;
+    jOut["mlp"]       = jN;
+    // jOut["quantizer"]["self_attn"]["bits"]     = default_bits;
+    // jOut["quantizer"]["self_attn"]["group"]    = T_group;
+    // jOut["quantizer"]["mlp"]["bits"]           = default_bits;
+    // jOut["quantizer"]["mlp"]["group"]          = T_group;
+    // jOut["quantizer"]["embed_tokens"]["bits"]  = default_bits;
+    // jOut["quantizer"]["embed_tokens"]["group"] = T_group;
+
+    jOut["VendorQuant"] = true;
     return jOut;
 }
 
@@ -325,6 +306,12 @@ bool CLI_params::JModel2Params(int flag) {
         nLayerX = jKV(jConfig, {"model", "parameter", "Layer"}, nLayerX);
         assert(nLayerX < 2048 && nLayerX > 0);
         model.max_pos_embeddings = jKV(jConfig, {"model", "parameter", "max_pos_embeddings"}, model.max_pos_embeddings);
+        model.isEmbedWeightTying = jKV(jConfig, {"model", "parameter", "tie_word_embeddings"}, model.isEmbedWeightTying);
+        int nBit                 = -1;
+        nBit                     = jKV(jConfig, {"model", "parameter", "weight", "bits"}, nBit);
+        if (nBit > 0) {
+            model.tpWeight = Bits2Type(nBit);
+        }
         // nearly same ???
         // if(nLayerX>0)
         //     common.residual_scale = 1.0f / sqrtf(2.0f * nLayerX);
@@ -804,7 +791,7 @@ CheckPoint_Params::CheckPoint_Params(const JSON& jData, const std::string& key, 
         JSON jdata = jData[key];
         assert(!jdata.empty());
         // const std::string &tp, const std::string &p, int x, bool in
-        bool isFind = false;
+        bool isFind     = false;
         std::string stp = jdata["type"];
         for (auto kv : CKP_desc) {
             if (stp == kv.second) {
@@ -1749,9 +1736,10 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, const std
         num_key_value_heads = jKV(jModelParam, {"num_key_value_heads"}, n_kv_heads);
         if (jModelParam.find("quantization_config") != jModelParam.end()) {
             hConfig->jVendorQuant = jModelParam["quantization_config"];
-            QUANT_CARD quant;
-            quant.InitFromVendor(jModelParam["quantization_config"]);
-            hConfig->jQuant = quant.ToJSON();
+            // MODEL_CARD::sWeight = ".qweight";
+            // QUANT_CARD quant;
+            // quant.InitFromVendor(jModelParam["quantization_config"]);
+            hConfig->jQuant = QUANT_CARD::Vendor2JSONx(hConfig->jVendorQuant);
         }
         vocab_size           = jKV(jModelParam, {"vocab_size"}, vocab_size);
         torch_dtype          = jKV(jModelParam, {"torch_dtype"}, torch_dtype);
@@ -1766,8 +1754,8 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, const std
         //
         int hd = -1;
         if (!jModelParam.contains("head_dim")) {  // some config.json of hf model don't have "head_dim"
-            assert(hidden_size%num_attention_heads==0);
-            hd = hidden_size/num_attention_heads;
+            assert(hidden_size % num_attention_heads == 0);
+            hd = hidden_size / num_attention_heads;
             assert(hd > 0 && hd < 10240 && "Invalid head_dim @ computed InitHugFace");
         } else {
             hd = jKV(jModelParam, {"head_dim"}, head_dim);
@@ -1777,7 +1765,7 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, const std
                     lay._head_dim = hd;
                 }
             }
-        }        
+        }
 
         if (!isInitFromPath)
             assert(num_attention_heads == n_heads && num_key_value_heads == n_kv_heads);

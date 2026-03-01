@@ -142,7 +142,7 @@ struct KERNEL_PIPE : public MODEL_CARD {
     int layNo                = -1;
     hFISH hFish              = nullptr;
     hGensor out_weight       = nullptr;
-    //  inpL = gBUFF->outL->Partial("inpL", 0, {dim, 1, 1})
+
     hGensor inpL = nullptr;
     float* att   = nullptr;  // buffer for scores/attention values (N_HEADS, seq_len)
     // T *att = nullptr;     nearly same as float*att !
@@ -187,7 +187,7 @@ struct KERNEL_PIPE : public MODEL_CARD {
         }
         x = TO<T>(tX);
 
-        inpL = tX->Partial("inpL", 0, {dim, 1, 1});  //  ->Partial("partialZ", nZ, {dB, T, C}), subDelta = delta->Partial("partialDeltaZ", nZ, {dB, T, C});
+        inpL = tX->Partial("inpL", 0, {dim, 1, 1});
         if (DEBUG.T_cpu) {
             xb = x + dim, xb2 = xb + dim;
             hb = xb2 + dim, hb2 = hb + hidden_dim;
@@ -259,16 +259,17 @@ struct KERNEL_PIPE : public MODEL_CARD {
         layNo              = l;
         SelfAttention* QKV = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
         // QKV->BeforeMing(hRLS, nullptr);
-        cLayers[l].rms_att_weight = TO<float>(QKV->norm.w);  // weights->rms_att_weight[l];
+        cLayers[l].rms_att_weight = ToX(QKV->norm.w);  //TO<float>(QKV->norm.w);  
         cLayers[l].wq = ToX(QKV->Q.w), cLayers[l].wk = ToX(QKV->K.w), cLayers[l].wv = ToX(QKV->V.w);
         cLayers[l].wq_norm = ToX(QKV->normQ.w), cLayers[l].wk_norm = ToX(QKV->normK.w);
         cLayers[l].wo   = ToX(QKV->proj_cat.w);
         cLayers[l].bqkv = ToX0(QKV->bqkv);
         FFN* ffn        = hFish->GetNeuron<FFN>("FFN", l);
         // ffn->BeforeMing(hRLS, nullptr);
-        cLayers[l].rms_ffn_weight = TO<float>(ffn->norm.w);  // weights->rms_ffn_weight[l];
+        cLayers[l].rms_ffn_weight = ToX(ffn->norm.w);   //TO<float>(ffn->norm.w);  
         cLayers[l].moegate        = nullptr;                 // weights->moegate[l];
-        hGensor w1 = ffn->GetGensor("", FFN_UP, ".weight"), w2 = ffn->GetGensor("", FFN_DOWN, ".weight"), w3 = ffn->GetGensor("", FFN_GATE, ".weight");
+        // hGensor w1 = ffn->GetGensor("", FFN_UP, suffix ), w2 = ffn->GetGensor("", FFN_DOWN, suffix), w3 = ffn->GetGensor("", FFN_GATE, suffix);
+        hGensor w1 = ffn->up.w, w2 = ffn->down.w, w3 = ffn->gate.w;
         cLayers[l].w1 = w1->data, cLayers[l].gama_1 = w1->gama_T();
         cLayers[l].w2 = w2->data, cLayers[l].gama_2 = w2->gama_T();
         cLayers[l].w3 = w3->data, cLayers[l].gama_3 = w3->gama_T();

@@ -27,15 +27,15 @@ QWen::QWen(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, in
 QWen3::QWen3(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : QWen(nam_, params, role, flag) {
     // also support QWen2.5 model
     assert(arch == MODEL_ARCH::NLP_QWEN3 || arch == MODEL_ARCH::NLP_QWEN2);
-    config.model.isSLPBias = false;
-    config.model.isQKVBias = false;
-    config.model.isSeparateQKV      = true;
+    config.model.isSLPBias     = false;
+    config.model.isQKVBias     = false;
+    config.model.isSeparateQKV = true;
     if (arch == MODEL_ARCH::NLP_QWEN2) {
         // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
         // scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;
 
         //  DEBUG.verShuffleSamp = -1, DEBUG.verSampJump = -1;      //only for debug
-        
+
         config.model.sLayer             = "layers.";
         config.model.isEmbedWeightTying = true;
         config.model.isQKVBias          = true;
@@ -43,19 +43,18 @@ QWen3::QWen3(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, 
     } else if (arch == MODEL_ARCH::NLP_QWEN3) {
         // config.scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
         // config.scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;
-        config.model.isQKNormal    = true;
-        config.model.sLayer        = "layers.";
+        config.model.isQKNormal = true;
+        config.model.sLayer     = "layers.";
         config.model.sEmbed = "embed_tokens", config.model.sInvEmbed = "lm_head";
-        if (!config.jVendorQuant.empty()) {
-            config.model.sWeight = ".qweight";
-        }
-        config.model.isEmbedWeightTying = true;  //???
-        // model.isEmbedWeightTying = false;   //  0.6B has no tying, but 4B is tying       isEmbedWeightTying = jKV(jModelParam, {"tie_word_embeddings"},
-        // isEmbedWeightTying};
+        
+        // ??? 0.6B/8B has no tying, but 4B is tying   
+        // config.model.isEmbedWeightTying = true;  //
+               
+
         config.model.isBqkv = false;  //  0.6B has no bias!
     }
     config.fuyou.filter_reload = {"mlp", "self_attn"};  //  {"mlp", "self_attn"};
-    config.model.isNormalBias = false;
+    config.model.isNormalBias  = false;
 }
 
 std::string Fish::NN2NAME(const std::string& prefix, tpNEURON4NAME neuron, const std::string& suffix, int flag) {

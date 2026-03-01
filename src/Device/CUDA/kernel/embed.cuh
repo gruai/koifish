@@ -114,8 +114,8 @@ __global__ static void CU_embed_forw_nf4(floatGama* gamas, hBITARR quants, T_out
         // g0 *= gamaCol[2 * k];
         // g1 *= gamaCol[2 * k + 1];
     }
-    *x0       = g0;  // CU_Float2T<T>(g0, seed);
-    *(x0 + 1) = g1;  // CU_Float2T<T>(g1, seed);
+    *x0       = CU_16BF2T<T_out>(&g0, seed);    //g0
+    *(x0 + 1) = CU_16BF2T<T_out>(&g1, seed);    //g1
 }
 
 template <typename T_out, typename T>

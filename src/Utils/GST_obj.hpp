@@ -155,6 +155,16 @@ bool inline G_Aa(const std::string& A, const std::string& a) {
     return true;
 }
 
+string inline G_prefix_(const string& title, const string& sep, int flag=0x0)    {
+    string prefix = "";
+    size_t lastDotPos = title.find_last_of('.');   
+    if (lastDotPos != std::string::npos) {
+        prefix = title.substr(0, lastDotPos);
+    } else {
+        
+    }
+    return prefix;
+}
 bool inline G_Has_(const string& title, const vector<string>& values, int flag = 0x0) {
     for (auto v : values) {
         if (title.find(v) != std::string::npos)
@@ -551,3 +561,4 @@ class SafeExit : public std::exception {
     ExitReason reason;
 };
 #define K_EXIT(code) throw SafeExit("", code, SafeExit::ExitReason::SYSTEM_FAILURE, __func__);
+#define K_EXIT_NOW(code) exit(code);

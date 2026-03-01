@@ -42,17 +42,22 @@ huTensor::huTensor(Fish* fish, const string& name_, const SHAPE shape, typNUMBER
     }
 }
 
-hGTensor huTensor::Partial(const string& name_, size_t nOff, const SHAPE shape, int flag) {
-    hGTensor sub = GT(hFish, type, shape);
+hGTensor huTensor::Partial(const string& name_, size_t szOff, const SHAPE shape, typNUMBER tyP, int flag) {
+    if (tyP == typNUMBER::T_OTHER)
+        tyP = type;
+    hGTensor sub = GT(hFish, tyP, shape);
     if (!name_.empty())
         snprintf(sub->name, sizeof(name), "%s", name_.c_str());
     else
         sub->name[0] = '\0';
-    assert(nOff + sub->size() <= size());
-    assert(BitPE(type) == 8 || BitPE(type) == 16);
-    int nB     = (int)(BitPE(type) / 8);
-    sub->data  = (char*)data + nOff * nB;
-    sub->grad  = grad + nOff;
+    assert(szOff + sub->nByte() <= nByte());
+    // assert(BitPE(type) == 8 || BitPE(type) == 16);
+    // int nB    = (int)(BitPE(type) / 8);
+    sub->data = (char*)data + szOff;  // nOff * nB;
+    if (grad == nullptr) {
+        sub->grad = nullptr;
+    } else
+        sub->grad = grad + szOff;
     sub->flags = flags;
     BIT_SET(sub->flags, F_ONLYREF);
     return sub;
@@ -140,6 +145,30 @@ size_t huTensor::Free_1(void** obj, const string& info) {
     return szGlobalMaloc;
 }
 
+// v0 - each thread for 1 group
+__global__ void CU_NORM_STAT(int bits, int ldGroup, size_t N, hBITARR qdata, hBITARR qzero, hBITARR qscale, Distri_PIPE& disq, int flag = 0x0) {
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx * ldGroup >= N) {
+        return;
+    }
+    assert(128 % bits == 0);
+    // int n = 128 / bits;
+    double a2 = 0, a1 = 0.0, norm_1 = 0.0;
+    float a, zero, scale;
+    for (size_t i = 0; i < N; i++) {
+        //  a = (qweight_int4 - qzeros) * scales
+        for (int j = 0; j < f128::size; j++) {
+            a1 += a;
+            a2 += a * a;
+            norm_1 += fabs(a);
+        }
+
+        // disq.sum_2 += a2;
+    }
+
+    return;
+}
+
 bool huTensor::InitParam(int tpX) {
     size_t nElem0 = size(), i;
     size_t nInit  = size(1);
@@ -189,10 +218,22 @@ bool huTensor::InitParam(int tpX) {
         // Print(name,0,-1);
     } else {
         if (tpInit == SERIALIZE) {  //  ???
-
             if (host_data != nullptr) {
                 SerialGP(host_data, nullptr, szData, false);
-                G_NORM_STAT<bf16>(size(), (bf16*)host_data, disq.sum_2, disq.sum_1, disq.nrm_1);
+                if (hQuant == nullptr)
+                    G_NORM_STAT<bf16>(size(), (bf16*)host_data, disq.sum_2, disq.sum_1, disq.nrm_1);
+                else {
+                    /*if (qZero != nullptr) { //it's data==nullptr at this point
+                        qZero->SerialGP(qZero->host_data, nullptr, qZero->nByte(), false);
+                        qZero->Print(qZero->name, 0x0, -1);
+                    }
+                    if (qScale != nullptr) {
+                        qScale->SerialGP(qScale->host_data, nullptr, qScale->nByte(), false);
+                        qScale->Print(qScale->name, 0x0, -1);
+                    }
+                    */
+                    // CU_NORM_STAT(hQuant->params.default_bits, hQuant->params.T_group, size(), (hBITARR)data, (hBITARR)data, (hBITARR)data, disq);
+                }
             }
             if (strcmp(name, "model.layers.1.post_attention_layernorm.weight") == 0) {  //  model.blk.34.ffn_down.weight
                 GTensor::tZ = this;
@@ -348,7 +389,11 @@ bool D2D(void* hDst, const void* hSrc, size_t szData, int flag) {
 bool D2H(void* dev, void* host, size_t szData, int flag) {
     try {
         assert(host != nullptr && dev != nullptr);
-        cudaCheck(cudaMemcpy(host, dev, szData, cudaMemcpyDeviceToHost));
+        cudaError_t error = cudaMemcpy(host, dev, szData, cudaMemcpyDeviceToHost);
+        if (error != cudaSuccess) {
+            _WARN("[CUDA ERROR] \"%s\" (%s code=%d). @D2H sz=%ld\n", cudaGetErrorString(error), cudaGetErrorName(error), error, szData);
+            return false;
+        }
         return true;
     } catch (...) {
         return false;
@@ -357,7 +402,11 @@ bool D2H(void* dev, void* host, size_t szData, int flag) {
 bool H2D(void* dev, void* host, size_t szData, int flag) {
     try {
         assert(host != nullptr && dev != nullptr);
-        cudaCheck(cudaMemcpy(dev, host, szData, cudaMemcpyHostToDevice));
+        cudaError_t error = cudaMemcpy(dev, host, szData, cudaMemcpyHostToDevice);
+        if (error != cudaSuccess) {
+            _WARN("[CUDA ERROR] \"%s\" (%s code=%d). @D2H sz=%ld\n", cudaGetErrorString(error), cudaGetErrorName(error), error, szData);
+            return false;
+        }
         // cudaCheck(cudaMemcpyAsync(data, host,szData, cudaMemcpyHostToDevice));
         return true;
     } catch (...) {
@@ -401,7 +450,9 @@ bool GTensor::Serial_Quant_MMAP(bool isSave, bool isReset, int flag) {
         return true;
 
     try {
-        assert(isParam() && isGPUDirectMMap);
+        assert(isGPUDirectMMap);
+        if(hQuant==nullptr) // for *.zeros/.scales
+            assert(isParam());
         bool bRet       = true;
         int dumpFlag    = 0;
         hBITARR tmpData = (hBITARR)host_data;  // new char[szData];
@@ -440,7 +491,7 @@ bool GTensor::Serial_Quant_MMAP(bool isSave, bool isReset, int flag) {
                 SAFE_read_mmap(tmpData, (hBITARR)host_data, szData + szM + szV);
             }
 
-            if (quant != nullptr && quant->params.type != QUANT_MODE::PRE_QUANT) {
+            if (quant != nullptr && !quant->params.isVendorQuant) { /*quant->params.type != QUANT_MODE::PRE_QUANT*/
                 double t0 = GST_ms();
                 if (quant->params.type == QUANT_MODE::F8Ex) {  // if (G_Has_(name, hFish->config.quant.filter_WeightF8Ex))
                     cudaCheck(cudaMemcpy(data, tmpData, szData, cudaMemcpyHostToDevice));
@@ -901,7 +952,7 @@ bool GST_TensorBuffer::Prepare(int flag) {
         bt4c            = std::make_shared<huTensor>(hFish, "tmpBT4c", sp4, tpA, true);
         tmpFF1          = std::make_shared<huTensor>(hFish, "tmpFF1", sp4, tpA, true);
         SHAPE spTernary = {mostC, max(nVocab, 3 * mostC)};
-        tmpTernary      = std::make_shared<huTensor>(hFish, "tmpTernary", spTernary, tpW, true);  // Only weight would in ternay bit
+        tmpTernary      = std::make_shared<huTensor>(hFish, "tmpTernary", spTernary, typNUMBER::BF16, true);  // Only weight would in ternay bit
 
         scratch = std::make_shared<huTensor>(hFish, "tmpScratch/output", sp0, tpA, true);  //  may reduce memory by sp0=sp0/VP
 

@@ -46,11 +46,16 @@ struct tensor_st {
     tensor_st() {}
     tensor_st(JSON& jDesc, int flag = 0x0);
 
-    std::string get_hf_str(const typNUMBER dtype);
+    std::string hf_dtype(const typNUMBER dtype);
 
     virtual JSON jDesc(int flag = 0x0) {
         JSON js;
-        string info = get_hf_str(dtype);
+        if (dtype == typNUMBER::Q4) {
+            dtype = typNUMBER::I32;
+            assert(shape[0] % 8 == 0);
+            shape[0] /= 8;
+        }
+        string info = hf_dtype(dtype);
         assert(!info.empty());
         js["dtype"] = info;
         // int shape[4] = {1,1,1,1};
@@ -61,7 +66,7 @@ struct tensor_st {
     }
 
     virtual void Dump(const std::string& key, const uint8_t* databuffer, int flag = 0x0) {
-        std::cout << key << ": " << get_hf_str(dtype) << " ";
+        std::cout << key << ": " << hf_dtype(dtype) << " ";
         std::cout << "[";
         for (size_t i = 0; i < shape.size(); i++) {
             if (i > 0) {
@@ -211,8 +216,8 @@ struct K_SafeTensors {
                    << "\n";
                 valid = false;
             }
-            size_t tensor_size = BPE(tensor.dtype) * get_shape_size(tensor);  // get_dtype_bytes(tensor.dtype)
-            if (tensor_size == 0) {                                           // OK
+            size_t tensor_size = BPE(tensor.dtype) * get_shape_size(tensor);
+            if (tensor_size == 0) {  //  ???
                 continue;
             }
 
@@ -229,7 +234,7 @@ struct K_SafeTensors {
 
             size_t data_size = tensor.data_offsets[1] - tensor.data_offsets[0];
 
-            if (tensor_size != data_size && tensor_size * 3 != data_size) {  // [data,gm,gv]
+            if (tensor_size < data_size && data_size % tensor_size != 0) {  // [data,gm,gv]
                 ss << "Data size mismatch. The size in Tensor `" << key << "` is " << tensor_size << ", but the size from data_offsets is " << data_size
                    << "\n";
                 valid = false;
@@ -271,18 +276,19 @@ struct K_SafeTensors {
             }
             return false;
         }
-        if (1) {
-            if (!_to_ofs(ofs, sz, warn, err, flag)) {
-                return false;
-            }
-        } else {  //  avoid huge array out of memory
+        // if (1) {
+        //   InitHeader, write to mmp, ...
+        if (!_to_ofs(ofs, sz, warn, err, flag)) {
+            return false;
+        }
+        /*} else {  //  avoid huge array out of memory
             std::vector<uint8_t> buf;
             if (!_to_memory(buf, warn, err)) {
                 return false;
             }
             ofs.write(reinterpret_cast<const char*>(buf.data()), buf.size());
             sz = buf.size();
-        }
+        }*/
 
         if (!ofs) {
             if (err) {

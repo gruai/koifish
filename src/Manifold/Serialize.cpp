@@ -46,7 +46,11 @@ tensor_st::tensor_st(JSON& jDesc, int flag) {
         return;
     }
 }
-std::string tensor_st::get_hf_str(const typNUMBER dtype) {
+
+/**
+ * 1. "dtype" field in Hugging Face .safetensors files does not natively support Q4 (4-bit integer quantization). But Koifish's _state_ file support this file
+ */
+std::string tensor_st::hf_dtype(const typNUMBER dtype) {
     string name = K_FLOATS[dtype].name;
     switch (dtype) {
         case typNUMBER::F32:
@@ -66,7 +70,7 @@ std::string tensor_st::get_hf_str(const typNUMBER dtype) {
         case typNUMBER::U8:
             return "U8";
         default:
-            throw std::logic_error("Invalid dtype");
+            assert(0 && "Hugging Face .safetensors files does not natively support this dtype");
     }
     return name;
 }
@@ -241,9 +245,12 @@ bool K_SafeTensors::_to_ofs(std::ofstream& ofs, size_t& szAll, std::string* warn
                 tensors.at(i, &tensor);
                 assert(dst_offset == tensor.data_offsets[0]);
                 if (key != K_SafeTensors::config_key_) {
-                    GTensor* t = (GTensor*)(tensor.hUserData);
+                    GTensor* t = (GTensor*)(tensor.hUserData);                    
                     sz         = tensor.data_offsets[1] - dst_offset;  // t->nByte() * 3;
-                    assert(sz == t->nByte() || sz == t->nByte() * 3);
+                    if (sz != t->nByte_CKP(ckp)) {
+                        size_t sz1 = t->nByte_CKP(ckp);
+                        assert(0);
+                    }
                     hBITARR tmp = new BIT_8[sz]();
                     if (t->GetDataX() == nullptr) {
                         if (isInitMMap) {
@@ -399,7 +406,7 @@ int Fish::SAFETENSOR2Gensors(const std::string& path, K_SafeTensors* hst, int fl
         if (G_Has_(key, config.model.skip_st))
             continue;
 
-        hGensor target = GetGensor(key);  //  "model.embed.weight"    model.layers.0.attn_norm.weight
+        hGensor target = GetGensor(key);  //  "model.embed.weight"    "model.embed_tokens.weight"
         if (target == nullptr) {
             _ERROR("\t[SERIAL] Failed @%s!\n", key.c_str());
             continue;
@@ -439,13 +446,13 @@ void K_SafeTensors::UpdateMetaData(int flag) {
 }
 
 size_t K_SafeTensors::Register(hGensor t, size_t offset, int flag) {
-    size_t sz = t->nByte();  // expand
-    if (ckp.type == CheckPoint_Params::STATE)
-        sz *= 3;
+    size_t sz = t->nByte_CKP(ckp);  // may expand
+    // if (ckp.type == CheckPoint_Params::STATE)
+    //     sz = t->nByte_CKP();
     assert(sz > 0);
 
     tensor_st tensor;
-    tensor.dtype           = t->type == typNUMBER::F32 ? typNUMBER::F32 : t->type == typNUMBER::F16 ? typNUMBER::F16 : typNUMBER::BF16;
+    tensor.dtype           = t->type;  // == typNUMBER::F32 ? typNUMBER::F32 : t->type == typNUMBER::F16 ? typNUMBER::F16 : typNUMBER::BF16;
     tensor.hUserData       = t.get();
     tensor.data_offsets[0] = offset;
     tensor.data_offsets[1] = offset + sz;
@@ -513,7 +520,7 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
                 _WARN("\r\n%s SAFETENSOR: Save_Params=0!!! @\"%s\"", path.c_str());
             }
             for (auto t : curParams) {
-                if (G_Has_(t->name, {"model.embed_tokens.weight"})) {  // model.embed_tokens.weight
+                if (G_Has_(t->name, {"model.layers.0.mlp.down_proj.qweight"})) {  // model.embed_tokens.weight
                     DEBUG_HERE;
                     // t->Print("wte@save", 4, -1);
                 }
@@ -579,26 +586,7 @@ bool K_SafeTensors::InitHeader(int flag) {
             std::string key = tensors.keys()[i];
             tensor_st tensor;
             tensors.at(i, &tensor);
-
             jHeader[key] = tensor.jDesc();
-            /*// _INFO("\r\t %d/%d\t\"%s\"", i, tensors.size(), key.c_str());            fflush(stdout);
-            assert (tensor.shape.size() <= kMaxDim);
-            if (ntensors > 0) {
-                ss << ", ";
-            }
-            ss << "\"" << key << "\": {";
-            ss << "\"dtype\": \"" << get_hf_str(tensor.dtype) << "\", ";
-            ss << "\"shape\": [";
-            for (size_t i = 0; i < tensor.shape.size(); i++) {
-                if (i > 0) {
-                    ss << ", ";
-                }
-                ss << tensor.shape[i];
-            }
-            ss << "]";
-            ss << ", \"data_offsets\": [" << tensor.data_offsets[0] << ", " << tensor.data_offsets[1] << "]";
-            ss << "}";*/
-
             ntensors++;
         }
         // ss << "}";
@@ -615,52 +603,10 @@ bool K_SafeTensors::InitHeader(int flag) {
         return false;
     }
 }
-/*  Deprecated
-void* MMAP_json(JSON& header, void** objs, size_t* objs_nz, const std::string& path, bool isSave, int flag) {
-    int fd = open(path.c_str(), O_RDONLY);
-    if (fd == -1) {
-        return nullptr;
-    }
-    struct stat st;
-    if (fstat(fd, &st) != 0) {
-        close(fd);
-        return nullptr;
-    }
-    size_t size = st.st_size;
-    void* data  = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
-    if (data == MAP_FAILED) {
-        close(fd);
-        return nullptr;
-    }
-#ifdef __linux__
-    // increases readahead buffer size, resulting in faster cold loads
-    posix_fadvise(fd, 0, size, POSIX_FADV_SEQUENTIAL);
-#endif
-    close(fd);  // fd can be closed after mmap returns without invalidating the mapping
 
-    // Parse the metadata_ JSON and the tensors
-    if (size < sizeof(uint64_t)) {
-        munmap(data, size);
-        return nullptr;
-    }
-
-    uint64_t json_size = *(uint64_t*)data;
-    if (json_size == 0 || json_size > size - sizeof(uint64_t)) {
-        munmap(data, size);
-        return nullptr;
-    }
-
-    char* json_ptr    = (char*)data + sizeof(uint64_t);
-    void* bytes_ptr   = (char*)data + sizeof(uint64_t) + json_size;
-    size_t bytes_size = size - sizeof(uint64_t) - json_size;
-
-    std::string json_str(json_ptr, json_size);
-    header   = JSON::parse(json_str);
-    *objs    = bytes_ptr;
-    *objs_nz = bytes_size;
-    return data;
-}*/
-
+/**
+ * [todo] GDS/NVMe direct I/O > MMAP(like https://github.com/xaskasdf/ntransformer)
+ */
 bool Fish::HF_Serialize(bool isSave, int flag) {
     std::vector<std::string> paths = FilesOfDir(config.model.sCardPath, {"safetensors"}, 0x0);
     if (paths.empty())
@@ -680,12 +626,12 @@ bool Fish::HF_Serialize(bool isSave, int flag) {
         delete hst;
 
     if (!config.model.st_map.empty()) {  //  "model.safetensors.index.json"
-        assert(nSerialT == config.model.st_map.size());
         for (auto kv : config.model.st_map) {
             hGensor target = GetGensor(kv.first);
             assert(target->data != nullptr);
             kv.second = target->data;
         }
+        assert(nSerialT == config.model.st_map.size());
     }
     _LOG(nSerialT == 0 ? DUMP_ERROR : DUMP_INFO, ">>>>>> HF_Serialize load@\"%s\" nSerialT=%d iter=%d\n", config.model.sCardPath.c_str(), nSerialT, flag);
     // if(!config.quant.filter_MIQ.empty())

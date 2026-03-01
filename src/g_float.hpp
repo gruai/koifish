@@ -29,6 +29,8 @@ const TOKEN_ID TOKEN_MAX = TOKEN_ID(-1);
 // 8-bit bytes
 using hBITARR = uint8_t*;
 using BIT_8   = uint8_t;
+using Q4_8    = int32_t;
+using Q2_16   = int32_t;
 
 using SHAPE = std::vector<int>;
 inline size_t SHAPE2NZ(const SHAPE& shape) {
@@ -49,6 +51,13 @@ using floatI = float;
 using f8e5 = uint8_t;
 
 struct FLOAT_META {
+
+    // Endian format: *nearly all modern CPUs (x86/x86-64, ARM64) use little-endian byte order as their native memory layout
+    enum BIT_FLAG : int32_t {
+        ENDIAN_BIG    = 0x100,
+        ENDIAN_LITTLE = 0x200,  //  the lower 4 bits [3:0] of a byte/32-bit integer are treated as the "first" 4-bit value in the packed sequence
+    };
+
     int bis = 0;
     std::string name;
     std::vector<std::string> alias;
@@ -57,6 +66,7 @@ struct FLOAT_META {
     bool isQuantized() const { return bis < 8; }
     size_t nByte(size_t nElem) const;
 };
+
 /*
     Type of numbers
 */
@@ -142,6 +152,21 @@ inline typNUMBER TYPE_() {
     return typNUMBER::F16;
 }
 
+typNUMBER inline Bits2Type(int bits, int flag = 0x0) {
+    switch (bits) {
+        case 4:
+            return typNUMBER::Q4;
+        case 3:
+            return typNUMBER::Q3;
+        case 2:
+            return typNUMBER::Q2;
+        default:
+            assert(0);
+            break;
+    }
+    return typNUMBER::BF16;
+}
+
 typNUMBER tpNumOf(const std::string& dtype_str);
 
 /*
@@ -170,10 +195,14 @@ typNUMBER tpNumOf(const std::string& dtype_str);
 using floatX      = __nv_fp8_e5m2;
 using floatMV     = __nv_fp8_e5m2;
 using floatGrad   = __nv_fp8_e5m2;
-using floatFFN    = __nv_fp8_e5m2;
 using floatLogits = __nv_fp8_e5m2;
 
 #define tpCuBLAS CUDA_R_8F_E5M2
+
+template <>
+inline typNUMBER TYPE_<__nv_fp8_e5m2>() {
+    return typNUMBER::F8E5M2;
+}
 
 #elif defined(USE_FP8_e4m3_BASELINE)
 #include <cuda_fp8.h>
@@ -194,7 +223,6 @@ using floatA      = __nv_bfloat16;  // Activation
 using floatX      = __nv_bfloat16;  // Weight
 using floatMV     = __nv_bfloat16;
 using floatGrad   = __nv_bfloat16;
-using floatFFN    = __nv_bfloat16;
 using floatLogits = __nv_bfloat16;
 
 #endif

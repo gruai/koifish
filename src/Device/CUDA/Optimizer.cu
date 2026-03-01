@@ -89,6 +89,49 @@ __global__ void CU_lion_(Tp* params, Tp* grads0, Tmv* gm, size_t num_parameters,
     grads0[idx]     = (Tp)(0.0);
 }
 
+template <typename Typ, typename Tmv>
+__global__ void CU_muon_mG(TASKA_1p1<Typ> taska, PIPE_Muon<Typ, Tmv> pipe) {
+    using typ128 = PackedN<Tmv, 16 / sizeof(Tmv)>;
+    int idx      = (blockIdx.x * blockDim.x + threadIdx.x) * typ128::size;
+    if (idx >= pipe.num_parameters) {
+        return;
+    }  // guard
+    float x2 = 0.0;
+    typ128 m;
+    m.Lerp(taska.config, pipe.mG + idx, pipe.grads0 + idx, 1 - pipe.mui);
+    m.store(pipe.mG + idx);
+    m.Lerp(taska.config, pipe.grads0 + idx, pipe.mui);
+    m.store(pipe.X + idx);
+    m.X2(x2);
+    float block_sum = blockReduce_v0<warpReduceSum>(x2, true);
+    if (threadIdx.x == 0)  //  Floating-point determinism is hard: True determinism requires fixed summation order and error compensation.
+        atomicAdd(pipe.arrNorm, (double)block_sum);
+}
+
+template <typename Tp, typename Tmv>
+__global__ void CU_muon_update(TASKA_1p1<Tp> taska, PIPE_Muon<Tp, Tmv> pipe) {
+    using typ128 = PackedN<Tmv, 16 / sizeof(Tmv)>;
+    int idx      = (blockIdx.x * blockDim.x + threadIdx.x) * typ128::size;
+    if (idx >= pipe.num_parameters) {
+        return;
+    }  // guard
+    float x2 = 0.0;
+    typ128 m;
+    m.Add2(taska.config, 1 - pipe.learning_rate * pipe.weight_decay, pipe.params + idx, -pipe.learning_rate, pipe.X + idx);
+    m.store(pipe.params + idx);
+    m.X2(x2);
+    typ128::zeros(pipe.grads0 + idx);
+    // float old_param = (float)pipe.params[idx], step = (float)pipe.X[idx];
+    // float param = old_param - pipe.learning_rate * pipe.weight_decay * old_param - pipe.learning_rate * step, x2 = param * param;
+    // pipe.params[idx] = CU_Float2T<Tp>(param, pipe.seed);
+    //  pipe.grads0[idx] = (Tp)(0.0);
+    float block_sum = blockReduce_v0<warpReduceSum>(x2, true);
+    if (threadIdx.x == 0)
+        atomicAdd(pipe.arrNorm, (double)block_sum);
+}
+
+
+#ifdef USE_BF16_BASELINE
 template <typename Tp, typename Tmv>
 __global__ void CU_adamw_(Tp* params, float* tmp, Tp* grads0, Tmv* gm, Tmv* gv, size_t num_parameters, float learning_rate, uint64_t flags, float beta1,
                           float beta2, float beta1_correction, float beta2_correction, float eps, float weight_decay, float grad_scale, unsigned int seed) {
@@ -118,80 +161,6 @@ __global__ void CU_adamw_(Tp* params, float* tmp, Tp* grads0, Tmv* gm, Tmv* gv, 
 }
 
 template <typename Tp, typename Tmv>
-__global__ void CU_muon_mG_v0(TASKA_1p1<Tp> taska, PIPE_Muon<Tp, Tmv> pipe) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= pipe.num_parameters) {
-        return;
-    }  // guard
-    float grad      = CU_T2Float(pipe.grads0 + idx);  //  pipe.grad_scale * CU_T2Float(pipe.grads0 + idx);
-    float m         = CU_T2Float(pipe.mG + idx), x2;
-    m               = sAtB(m, grad, 1 - pipe.mui);  //  momentum.lerp_(grad, 1 - beta)
-    pipe.mG[idx]    = m;                            // CU_Float2T<Tmv>(m, pipe.seed);
-    m               = sAtB(grad, m, pipe.mui);      // update = grad.lerp_(momentum, beta) if nesterov
-    pipe.X[idx]     = m;                            // CU_Float2T<Tmv>(m, pipe.seed);
-    x2              = m * m;
-    float block_sum = blockReduce_v0<warpReduceSum>(x2, true);
-    if (threadIdx.x == 0)  //  Floating-point determinism is hard: True determinism requires fixed summation order and error compensation.
-        atomicAdd(pipe.arrNorm, (double)block_sum);
-}
-template <typename Typ, typename Tmv>
-__global__ void CU_muon_mG(TASKA_1p1<Typ> taska, PIPE_Muon<Typ, Tmv> pipe) {
-    using typ128 = PackedN<Tmv, 16 / sizeof(Tmv)>;
-    int idx      = (blockIdx.x * blockDim.x + threadIdx.x) * typ128::size;
-    if (idx >= pipe.num_parameters) {
-        return;
-    }  // guard
-    float x2 = 0.0;
-    typ128 m;
-    m.Lerp(pipe.mG + idx, pipe.grads0 + idx, 1 - pipe.mui);
-    m.store(pipe.mG + idx);
-    m.Lerp(pipe.grads0 + idx, pipe.mui);
-    m.store(pipe.X + idx);
-    m.X2(x2);
-    float block_sum = blockReduce_v0<warpReduceSum>(x2, true);
-    if (threadIdx.x == 0)  //  Floating-point determinism is hard: True determinism requires fixed summation order and error compensation.
-        atomicAdd(pipe.arrNorm, (double)block_sum);
-}
-
-template <typename Tp, typename Tmv>
-__global__ void CU_muon_update(TASKA_1p1<Tp> taska, PIPE_Muon<Tp, Tmv> pipe) {
-    using typ128 = PackedN<Tmv, 16 / sizeof(Tmv)>;
-    int idx      = (blockIdx.x * blockDim.x + threadIdx.x) * typ128::size;
-    if (idx >= pipe.num_parameters) {
-        return;
-    }  // guard
-    float x2 = 0.0;
-    typ128 m;
-    m.Add2(1 - pipe.learning_rate * pipe.weight_decay, pipe.params + idx, -pipe.learning_rate, pipe.X + idx, pipe.seed);
-    m.store(pipe.params + idx);
-    m.X2(x2);
-    typ128::zeros(pipe.grads0 + idx);
-    // float old_param = (float)pipe.params[idx], step = (float)pipe.X[idx];
-    // float param = old_param - pipe.learning_rate * pipe.weight_decay * old_param - pipe.learning_rate * step, x2 = param * param;
-    // pipe.params[idx] = CU_Float2T<Tp>(param, pipe.seed);
-    //  pipe.grads0[idx] = (Tp)(0.0);
-    float block_sum = blockReduce_v0<warpReduceSum>(x2, true);
-    if (threadIdx.x == 0)
-        atomicAdd(pipe.arrNorm, (double)block_sum);
-}
-
-template <typename Tp, typename Tmv>
-__global__ void CU_muon_update_v0(PIPE_Muon<Tp, Tmv> pipe) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= pipe.num_parameters) {
-        return;
-    }  // guard
-    float old_param = (float)pipe.params[idx], step = (float)pipe.X[idx];
-    float param = old_param - pipe.learning_rate * pipe.weight_decay * old_param - pipe.learning_rate * step, x2 = param * param;
-    // float param = old_param - pipe.learning_rate * step, x2 = param * param;
-    pipe.params[idx] = CU_Float2T<Tp>(param, pipe.seed);
-    pipe.grads0[idx] = (Tp)(0.0);
-    float block_sum  = blockReduce_v0<warpReduceSum>(x2, true);
-    if (threadIdx.x == 0)
-        atomicAdd(pipe.arrNorm, (double)block_sum);
-}
-
-template <typename Tp, typename Tmv>
 __device__ inline float _adamw_idx(float old_param, const PIPE_Adamw<Tp, Tmv>& pipe, float& m, float& v, int idx) {
     m /= pipe.beta1_correction, v /= pipe.beta2_correction;  // m_hat    v_hat
     // float old_param = (float)pipe.params[idx];
@@ -205,59 +174,6 @@ __device__ inline float _adamw_idx(float old_param, const PIPE_Adamw<Tp, Tmv>& p
     // params[idx] = (Tp)(param);
     pipe.grads0[idx] = (Tp)(0.0);
     return param;
-}
-
-template <typename Tp, typename Tmv>
-__global__ void CU_adamw_p_v0(PIPE_Adamw<Tp, Tmv> pipe) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= pipe.num_parameters) {
-        return;
-    }  // guard
-
-    float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx), m = (float)pipe.gm[idx], v = (float)pipe.gv[idx];
-    m            = sAtB(grad, m, pipe.beta1);
-    pipe.gm[idx] = CU_Float2T<Tmv>(m, 42);
-    v            = sAtB(grad * grad, v, pipe.beta2);
-    pipe.gv[idx] = CU_Float2T<Tmv>(v, 42);
-    // m /= pipe.beta1_correction;  // m_hat
-    // v /= pipe.beta2_correction;  // v_hat
-    float x = _adamw_idx((float)pipe.params[idx], pipe, m, v, idx), x2 = x * x;
-    pipe.params[idx] = x;  // CU_Float2T<Tp>(x, pipe.seed);
-    float block_sum  = blockReduce_v0<warpReduceSum>(x2, true);
-    if (threadIdx.x == 0)  //  idx == 0
-        atomicAdd((float*)pipe.arrNorm, block_sum);
-}
-
-template <typename Typ, typename Tmv>
-__global__ void CU_adamw_p(PIPE_Adamw<Typ, Tmv> pipe) {
-    using typ128 = PackedN<Typ, 16 / sizeof(Typ)>;
-    int idx      = blockIdx.x * blockDim.x + threadIdx.x;
-    idx *= typ128::size;
-    if (idx >= pipe.num_parameters) {  // guard
-        return;
-    }
-    typ128 grad128(pipe.grads0 + idx), m128(pipe.gm + idx), v128(pipe.gv + idx), param128(pipe.params + idx);
-    grad128.Scale(pipe.grad_scale);
-    // float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx), m = pipe.gm[idx], v = pipe.gv[idx];
-    for (int i = 0; i < typ128::size; ++i) {
-        float grad = grad128[i], m = m128[i], v = v128[i];
-        m       = sAtB(grad, m, pipe.beta1);
-        m128[i] = m;  // pipe.gm[idx] = m;
-        v       = sAtB(grad * grad, v, pipe.beta2);
-        v128[i] = v;  // pipe.gv[idx] = v;
-        // float x = _adamw_idx((float)pipe.params[idx], pipe, m, v, idx), x2 = x * x;
-        m /= pipe.beta1_correction, v /= pipe.beta2_correction;  // m_hat    v_hat
-        float step      = m / (sqrtf(v) + pipe.eps);
-        float old_param = param128[i];  //(float)pipe.params[idx];
-        float param     = old_param - pipe.learning_rate * pipe.weight_decay * old_param - pipe.learning_rate * step;
-        //  stochastic_rounding(param, &params[idx], seed);
-        param128[i] = CU_Float2T<Typ>(param, pipe.seed);
-    }
-    m128.store(pipe.gm + idx), v128.store(pipe.gv + idx), param128.store(pipe.params + idx);
-    grad128.Set(), grad128.store(pipe.grads0 + idx);  // pipe.grads0[idx] = (Tp)(0.0);
-    // float block_sum  = blockReduce_v0<warpReduceSum>(x2, true);
-    // if (threadIdx.x == 0)  //  idx == 0
-    //     atomicAdd((float*)pipe.arrNorm, block_sum);
 }
 
 /*
@@ -452,15 +368,60 @@ __global__ static void CU_adamw_Tile_each_mv(PIPE_Adamw<Tp, Tmv> pipe) {
 #endif
 }
 
-// bool Fuyou::Exploitation(hGensor cur, int flag) {
-//     int nP = cur->size(), dT4B = 512 ,nF = cur->fuyous.size();  //
-//     int dGRID = CEIL_DIV(nP, dT4B);
-//     for (auto t : cur->fuyous) {
-//         //  position[i] = alpha*A->position[i] + beta*B->position[i];
-//         CU_mix_<<<dGRID, dT4B, 0, main_stream>>>(alpha, ToX(cur), beta, ToX(t),nP);
-//     }
-//     return true;
-// }
+template <typename Tp, typename Tmv>
+__global__ void CU_adamw_p_v0(PIPE_Adamw<Tp, Tmv> pipe) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= pipe.num_parameters) {
+        return;
+    }  // guard
+
+    float grad = pipe.grad_scale * CU_T2Float(pipe.grads0 + idx), m = (float)pipe.gm[idx], v = (float)pipe.gv[idx];
+    m            = sAtB(grad, m, pipe.beta1);
+    pipe.gm[idx] = CU_Float2T<Tmv>(m, 42);
+    v            = sAtB(grad * grad, v, pipe.beta2);
+    pipe.gv[idx] = CU_Float2T<Tmv>(v, 42);
+    // m /= pipe.beta1_correction;  // m_hat
+    // v /= pipe.beta2_correction;  // v_hat
+    float x = _adamw_idx((float)pipe.params[idx], pipe, m, v, idx), x2 = x * x;
+    pipe.params[idx] = x;  // CU_Float2T<Tp>(x, pipe.seed);
+    float block_sum  = blockReduce_v0<warpReduceSum>(x2, true);
+    if (threadIdx.x == 0)  //  idx == 0
+        atomicAdd((float*)pipe.arrNorm, block_sum);
+}
+#endif
+
+template <typename Typ, typename Tmv>
+__global__ void CU_adamw_p(TASKA_1p1<Typ> taska, PIPE_Adamw<Typ, Tmv> pipe) {
+    using typ128 = PackedN<Typ, 16 / sizeof(Typ)>;
+    using f256   = PackedN<float, typ128::size>;
+    int idx      = (blockIdx.x * blockDim.x + threadIdx.x) * typ128::size;
+    if (idx >= pipe.num_parameters) {  // guard
+        return;
+    }
+    f256 grad256 = typ128::load2F(taska.config, pipe.grads0 + idx), m256 = typ128::load2F(taska.config, pipe.gm + idx),
+         v256 = typ128::load2F(taska.config, pipe.gv + idx), param256 = typ128::load2F(taska.config, pipe.params + idx);
+    grad256.Scale(pipe.grad_scale);
+    for (int i = 0; i < typ128::size; ++i) {
+        float grad = grad256[i], m = m256[i], v = v256[i];
+        m       = sAtB(grad, m, pipe.beta1);
+        m256[i] = m;  // pipe.gm[idx] = m;
+        v       = sAtB(grad * grad, v, pipe.beta2);
+        v256[i] = v;  // pipe.gv[idx] = v;
+        // float x = _adamw_idx((float)pipe.params[idx], pipe, m, v, idx), x2 = x * x;
+        m /= pipe.beta1_correction, v /= pipe.beta2_correction;  // m_hat    v_hat
+        float step      = m / (sqrtf(v) + pipe.eps);
+        float old_param = param256[i];  //(float)pipe.params[idx];
+        param256[i]     = old_param - pipe.learning_rate * pipe.weight_decay * old_param - pipe.learning_rate * step;
+        //  stochastic_rounding(param, &params[idx], seed);
+        // param128[i] = CU_Float2T<Typ>(param, pipe.seed);
+    }
+    typ128 grad128(taska.config, grad256), m128(taska.config, m256), v128(taska.config, v256), param128(taska.config, param256);
+    m128.store(pipe.gm + idx), v128.store(pipe.gv + idx), param128.store(pipe.params + idx);
+    grad128.Set(), grad128.store(pipe.grads0 + idx);  // pipe.grads0[idx] = (Tp)(0.0);
+    // float block_sum  = blockReduce_v0<warpReduceSum>(x2, true);
+    // if (threadIdx.x == 0)  //  idx == 0
+    //     atomicAdd((float*)pipe.arrNorm, block_sum);
+}
 
 bool Fuyou::Exploitation(hGensor tHead, hGensor tNext, int flag) {
     if (!tHead->isWMAT() || params.algorithm == Fuyou_params::NO_EVOL)
@@ -540,6 +501,7 @@ void PIPE_Muon<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
     D20(this->arrNorm, sizeof(double));
     // PrintTensor<floatX>("grads0", (floatX*)(grads0), true, m,n,1,1,-1);
     TASKA_1p1<floatX> task_11(this->num_parameters, main_stream);
+    task_11.config.seed = this->seed;
     CU_muon_mG<<<task_11.grid3, task_11.block3, task_11.smem, task_11.stream>>>(task_11, *this);
     // CU_muon_mG_v0<<<dGRID, dT4B, 0, stream>>>(task_11, *this);
     // PrintTensor<floatX>("mG", (floatX*)(mG), true, m, n, 1, 1, -1);
@@ -612,17 +574,22 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
     beta1_correction = 1.0f - powf(beta1, iter);
     beta2_correction = 1.0f - powf(beta2, iter);
 
+    TASKA_1p1<floatX> task_11(this->num_parameters, main_stream);
     D20(arrNorm, sizeof(float) * 1);
     if (gm == nullptr) {  // SGD,SGD_V
         assert(0);
     } else {  //   ADAM_S LION(locked!!!)
         if (gv == nullptr) {
-            CU_adamw_s<<<dGRID, dT4B, 0, stream>>>(*this);
+            assert(0 && "LION optimizer is not stable enough, need more work!");
+            // CU_adamw_s<<<dGRID, dT4B, 0, stream>>>(*this);
             //  eps = grad_norm / num_parameters;    for lion
             // CU_lion_<<<num_blocks, block_size, 0, stream>>>(params, grads0, gm, num_parameters, learning_rate, beta1, beta2, eps, weight_decay,grad_scale,
             // seed);
         } else {
             if (isBitParam) {
+#ifdef USE_FP8_BASELINE
+                assert(0 && "FP8 don't support BitParam!");
+#else
                 // PrintTensor<Tp>("grad", (Tp*)grads0, true, num_parameters, 1,1,1,-1);
                 switch (tensor->type) {
                     case typNUMBER::T_BINARY_TILE: {
@@ -640,11 +607,14 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
                         }
                         break;
                 }
+#endif
             } else {  //  ADAMw
                 assert(dGRID * dT4B < INT_MAX);
-                CU_adamw_p_v0<<<dGRID, dT4B, 0, stream>>>(*this);
-                // assert(dT4B%typ128::size==0);       dT4B /= typ128::size;
-                // CU_adamw_p<<<dGRID, dT4B, 0, stream>>>(*this);
+                // CU_adamw_p_v0<<<dGRID, dT4B, 0, stream>>>(*this);
+                // assert(dT4B % typ128::size == 0);
+                // dT4B /= typ128::size;
+                task_11.config.seed = this->seed;
+                CU_adamw_p<<<task_11.grid3, task_11.block3, task_11.smem, task_11.stream>>>(task_11, *this);
             }
             D2e(arrNorm, tensor->wnorm, 0x0), assert(isValidF(&(tensor->wnorm)));
             tensor->wnorm = sqrt(tensor->wnorm);

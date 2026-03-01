@@ -248,6 +248,9 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
             if (G_Has_(t->name, config.datatypes.arrTile)) {  // {"ffn_down.weight", "ffn_up.weight"}
                 t->SetTernary(typNUMBER::T_BINARY_TILE);
             }
+            if(t->hQuant!=nullptr && t->hQuant->params.type==RTN_ZS){
+                t->hQuant->AfterLowBit(t, nullptr);
+            }
         }
         if (BIT_TEST(t->flags, GTensor::F_INPUT)) {
             nInput++;
@@ -457,9 +460,11 @@ bool Fish::SaveTrain(CheckPoint_Params& ckp, bool isInit, int flag) {
     assert(optParams.size() > 0);
 
     if (isInit) {
+        // this->Dump(0x0);
         isOK = SAFETENSOR_Serialize(ckp, true, flag);  // isInit ? FSerial::INIT_MMAP : 0x0
         assert(isOK);
         ckp.sModelPath = ckp.FullPath(true);
+        // this->Dump(0x0);
         _INFO("[SAFETENSOR] Init@\"%s\" nParams=%d save_every=%d\n", sOut.c_str(), optParams.size(), ckp.save_every);
         isOK = SAFETENSOR_Serialize(ckp, false);  // to set host_data of each tensor
         if (!isOK) {
@@ -895,8 +900,12 @@ bool Fish::AfterNextStep(int iter, int flag) {
 
 size_t cudnn_qkv_forw(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn, int flag = 0x0);
 size_t cudnn_qkv_back(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn);
+int test_FA2();
 bool Fish::AllocBuffer(int flag) {
     try {
+#ifdef __USE_TVM__
+        test_FA2();
+#endif
         int B = config.n_batch(), T = config.n_ctx(), NH = config.n_head();
         if (isLocalInfer) {
             if (config.phase == P_GENERATE) {  // P_EVAL no need cache!
@@ -904,9 +913,11 @@ bool Fish::AllocBuffer(int flag) {
             }
         }
         if (phase != P_GENERATE) {
+#ifdef ENABLE_CUDNN
             cudnn_qkv_forw(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn);
             size_t alloc = cudnn_qkv_back(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn);
             _INFO("\tcudnn_qkv_back = %.5gM\n", alloc / 1.0e6);
+#endif
         }
 
         return true;

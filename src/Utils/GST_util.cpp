@@ -390,31 +390,32 @@ std::vector<std::string> FilesOfDir(const std::string& path, const std::vector<s
     return files;
 }
 
-void PrintQ4(const char* title, const hBITARR src, int n1, int n2, int n3, int n4, int flag) {
-    size_t nElem = (size_t)(n1)*n2 * n3 * n4, i, nz = 0, nEach = 2;
+void PrintQ4(const char* title, const int32_t* src, int n1, int n2, int n3, int n4, int flag) {
+    bool isLittleEndian = BIT_TEST(flag, FLOAT_META::ENDIAN_LITTLE);
+    assert(isLittleEndian);
+    size_t nElem = (size_t)(n1)*n2 * n3 * n4 / 8, i, nz = 0, nEach = 2;
     if (nElem == 0)
         return;
     assert(src != nullptr);
     // if(strlen(title)>0) _INFO("%s\n", title);
     float sum = 0.0, a1 = 16, a0 = 0;
-    BIT_8 hi, lo;
     double len = 0.0, sum2 = 0.0;
-    for (i = 0; i < nElem; i += 2) {
-        BIT_8 byte = src[i / 2];
-        hi         = (byte >> 4) & 0x0F;
-        lo         = byte & 0x0F;
-        if (i < nEach || i >= nElem - nEach || fabs(i - nElem / 2) <= nEach)
-            _INFO("%d %d ", hi, lo);
+    for (i = 0; i < nElem; i++) {
+        for (int sft = 0; sft < 32; sft += 4) {
+            BIT_8 byte = (src[i] >> sft) & 0x0F;
+            int32_t a  = byte;  //static_cast<int32_t>((byte << 28) >> 28);
+            if (i < nEach || i >= nElem - nEach || fabs(i - nElem / 2) <= nEach)
+                _INFO("%d ", a);
+
+            sum += fabs(a);
+            sum2 += a * a;
+        }
         if (i == nEach || i == nElem - nEach - 1)
             _INFO("...");
-        sum += fabs(hi + lo);
-        sum2 += hi * hi + lo * lo;
-        // if (a == 0)
-        //     nz++;
-        // a1 = std::max(a1, a);
-        // a0 = std::min(a0, a);
     }
     assert(!isnan(sum2) && !isinf(sum2));
+
+    nElem *= 8;
     len = sqrt(sum2 / nElem);
     //  printf output is only displayed if the kernel finishes successfully,  cudaDeviceSynchronize()
     _INFO("\t\"%s\" |avg|=%g(%ld) avg_len=%g sum2=%g [%f,%f] nz=%.3g\n", title, sum / nElem, nElem, len, sum2, a0, a1, nz * 1.0 / nElem);

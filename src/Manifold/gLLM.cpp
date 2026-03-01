@@ -824,8 +824,9 @@ int Fish::ForwardOnRLS(int iter, int flag) {
             GeNeuron* neuron = (GeNeuron*)(task->hOBJ);
             INSPECT inspect(neuron);
             // NvtxRange range(neuron->name.c_str(),0);
-            if (neuron->name == "model.blk.10.attn" && curB > 0) {  //   model.inp_embd
-                DEBUG_HERE;
+            if (neuron->name == "model.layers.0.mlp" ) {  //   model.inp_embd && curB > 0
+                // DEBUG_HERE;
+                // K_EXIT_NOW(KOIFISH_EXIT_DEBUG);
             }
             if (neuron->isShortcut)
                 continue;

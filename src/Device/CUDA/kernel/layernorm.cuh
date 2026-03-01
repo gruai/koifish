@@ -133,6 +133,7 @@ __global__ void CU_rms_forward_v2(Typ* __restrict__ out, float* __restrict__ rst
     if (idx >= nTH) {
         return;
     }
+    PackedN_config config;
     using X128 = PackedN<Typ, 16 / sizeof(Typ)>;
     inp += idx * ldTH, out += idx * ldTH;
     int nEach = ldTH / nThread;
@@ -155,7 +156,7 @@ __global__ void CU_rms_forward_v2(Typ* __restrict__ out, float* __restrict__ rst
     for (int c = tid * nEach; c < (tid + 1) * nEach; c += X128::size) {
         X128 a4 = X128::load_cs(inp + c);
         X128 w4 = X128::load_cs(weight + c);
-        a4.Hadamard(s, w4);
+        a4.Hadamard(config, s, w4);
         // out[c] = inp[c] * (bf16)s * weight[c];  // != inp[c]*weight[c]*(bf16)s
         a4.store(out + c);
     }
@@ -837,8 +838,8 @@ __global__ static void __launch_bounds__(THREADS_PER_BLOCK)
         float2 v_in_fp32             = __bfloat1622float2(v_in_bf16);
         float2 v_weight_fp32         = __bfloat1622float2(v_weight_bf16);
 
-        v_in_fp32.x = (v_in_fp32.x * mul_val) * v_weight_fp32.x;
-        v_in_fp32.y = (v_in_fp32.y * mul_val) * v_weight_fp32.y;
+        v_in_fp32.x = (v_in_fp32.x * mul_val) * v_weight_fp32.x;    //0.000478744507*84.36*0.25
+        v_in_fp32.y = (v_in_fp32.y * mul_val) * v_weight_fp32.y;    //-0.11181640599999999*84.36*0.435546875
 
         // convert back to BF16 for storing
         row_out[idx] = __float22bfloat162_rn(v_in_fp32);
@@ -848,8 +849,8 @@ __global__ static void __launch_bounds__(THREADS_PER_BLOCK)
 template <typename Typ>
 void inline CU_rms_infer(Typ* o, const Typ* x, const Typ* weight, int dim) {
     if (dim % 2 != 0) {
-        fprintf(stderr, "FATAL: rmsnorm dim %d is not divisible by 2. Vectorized kernel cannot run.\n", dim);
-        exit(EXIT_FAILURE);
+        _ERROR("FATAL: rmsnorm dim %d is not divisible by 2. Vectorized kernel cannot run.\n", dim);
+        K_EXIT(KOIFISH_RMS_PARAMS);
     }
     // if dim > (THREADS_PER_BLOCK * some_threshold), a multi-block reduction might be needed,
     // but for typical dimensions up to 8192, a single block is sufficient and simpler.
@@ -861,6 +862,9 @@ void inline CU_rms_infer(Typ* o, const Typ* x, const Typ* weight, int dim) {
 template <typename Typ>
 __global__ void __launch_bounds__(512, 2) CU_rms_back_llmc(Typ* dinp, Typ* dweight, hBITARR scratch, const Typ* dout, const Typ* inp, const Typ* weight,
                                                            const float* rstd, float* stat_info, int nTH, int C) {
+#ifdef USE_FP8_BASELINE
+    assert(0 && "Not implemented yet");
+#else
     // size of scratch: sizeof(float) * C + 128
     using X128       = PackedN<Typ, 16 / sizeof(Typ)>;
     int BLOCK_SIZE   = blockDim.x;
@@ -1043,6 +1047,7 @@ __global__ void __launch_bounds__(512, 2) CU_rms_back_llmc(Typ* dinp, Typ* dweig
             dweight128.store(dweight + global_index);
         }
     }
+#endif
 }
 
 // template <typename Typ>

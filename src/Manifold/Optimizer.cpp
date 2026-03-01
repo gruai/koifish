@@ -14,6 +14,7 @@
 #include "../TokenSet/Dictionary.hpp"
 #include "gLLM.hpp"
 
+int PackedN_bug = 0;
 int tpFuseCu = 1;
 TRAIN_CARD Optimizer::TrainParams() { return _fish->config.common; }
 

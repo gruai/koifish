@@ -107,7 +107,7 @@ bool TokenEmbed::Build(int flag) {
     // QUANT_CARD quant_params = hFish->config.quant;
     quant_params.Init4Neuron(name, hFish->config.jQuant);
     quant_params.spMost = w->shape;
-    hQuant              = GeQuant::MakeInstance(this, name, quant_params, {w}, 0x0);  //  {Q.w,proj_cat.w}
+    hQuant              = GeQuant::MakeInstance(this, name, quant_params, {this}, 0x0);  //  {Q.w,proj_cat.w}
     // hFish->InitGensor(ctx,name+".batch",out,false);
 
     return true;
@@ -221,7 +221,6 @@ MAEC::MAEC(Fish* hG_, const std::string& key_, int flag) {
     int reserve_x = 0;
     int nMap = dims.size() - 1, tpNorm = -1;
     assert(nMap > 0);
-    bool isSymmetric = hFish->config.model.isEmbedWeightTying;
 
     isBias = false;
     codes.clear();
@@ -313,7 +312,7 @@ VarCoder::VarCoder(Fish* hG_, const std::string& key_, JSON::const_iterator jit,
 
 FFN::FFN(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : VarCoder(hG_, key_, jit, flag) {
     remater_ffn = hFish->config.common.remater_ffn;  // false;
-    tpWeight = TYPE_<floatFFN>(), tpActivation = tpWeight, tpGradient = tpWeight;
+    // tpWeight = TYPE_<floatFFN>(), tpActivation = tpWeight, tpGradient = tpWeight;
     up.SetDType(tpWeight, tpActivation, tpGradient);
     down.SetDType(tpWeight, tpActivation, tpGradient);
     gate.SetDType(tpWeight, tpActivation, tpGradient);
@@ -443,7 +442,7 @@ bool FFN::Build(int flag_0) {
     quant_params.Init4Neuron(name, hFish->config.jQuant);
     if (layid > quant_params.nPassLayer) {
         quant_params.spMost = up.w->shape;
-        hQuant = GeQuant::MakeInstance(this, name + "_quant", quant_params, {up.w, down.w, gate.w}, 0x0);  //  {up.w, down.w, gate.w}, down.w, gate.w
+        hQuant = GeQuant::MakeInstance(this, name + "_quant", quant_params, {&up, &down, &gate}, 0x0);  //  {up.w, down.w, gate.w}, down.w, gate.w
     }
 
     return true;

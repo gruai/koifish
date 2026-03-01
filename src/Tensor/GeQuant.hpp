@@ -32,7 +32,7 @@ class FeatVector;
 class FeatsOnFold;
 };  // namespace Grusoft
 
-class GeQuant {
+class GeQuant : public std::enable_shared_from_this<GeQuant>  {
    protected:
     struct _q_sweep {
         NORMAL_MODE normal = NORMAL_MODE::NO_NORMAL;
@@ -49,6 +49,7 @@ class GeQuant {
         size_t szQuant = 0x0;
     };
     _q_sweep best_;
+    int group_size = 0;
 
     virtual void Flattern() {}
     //  1.  key embeddings - In initial layers, no significant outliers are observed. However, in the deeper layers, few channels (approximately four) exhibit
@@ -85,7 +86,7 @@ class GeQuant {
     float *scale = nullptr, *zero = nullptr;
     bool trits, perchannel = false, sym = false;
 
-    static hQUANT MakeInstance(GeNeuron* hNeuron, const std::string& nam_, QUANT_CARD& params, std::vector<shared_ptr<GTensor>> tensors, int flag);
+    static hQUANT MakeInstance(GeNeuron* hNeuron, const std::string& nam_, QUANT_CARD& params, std::vector<GeNeuron*> neurons, int flag);
 
     GeQuant() {}
     GeQuant(const std::string& nam_, void* hN, QUANT_CARD& params, int flag = 0x0);
@@ -98,7 +99,8 @@ class GeQuant {
     }
     virtual ~GeQuant();
 
-    virtual bool isRTN() { return params.type == QUANT_MODE::RTN || params.type == QUANT_MODE::RTNf; }
+    virtual int ExTensor(shared_ptr<GTensor> hBase, std::vector<shared_ptr<GTensor>>&aux, int flag = 0x0);
+    virtual bool isRTN() { return params.type == QUANT_MODE::RTN || params.type == QUANT_MODE::RTNf || params.type == QUANT_MODE::RTN_ZS; }
     virtual typNUMBER bit2typ(int flag = 0x0);
     virtual float RTN(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
     virtual float RT_NormalF(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
@@ -108,7 +110,7 @@ class GeQuant {
 
     virtual float Update(shared_ptr<GTensor> tensor, int flag = 0x0) { throw "GeQuant::Update is ...."; }
 
-    size_t szGama(int flag=0x0);
+    size_t szGama(int flag = 0x0);
 
     friend class GTensor;
     friend class Fish;
@@ -227,6 +229,21 @@ class Q_Impurity : public Quantizer<T> {
 };
 
 /**
+ *   AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration
+ * 
+ *  1. To eliminate runtime transposes, use transposition of qweight (quantized weight) relative to the original weight!
+ */
+template <typename T>
+class Q_AWQ : public Quantizer<T> {
+   protected:   
+
+   public:
+    Q_AWQ(const std::string& nam_, void* hN, QUANT_CARD& params, int flag = 0x0);
+    float AfterLowBit(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0) override;
+    virtual ~Q_AWQ() {  }
+};
+
+/**
  *   Signbit quantization on a Johnson-Lindenstrauss (JL) transform
  */
 template <typename T, typename Tproj>
@@ -234,7 +251,7 @@ class Q_JL : public GeQuant {
    protected:
     bool isOrthogonal;
     //  n_size * group_size = seq_len
-    int n_size, group_size;
+    int n_size;
     int seq_len, batch_size, head_size, emb_dim;
     shared_ptr<GTensor> hProj = nullptr, key_quant = nullptr, key_outlier_quant = nullptr, outlier_norms = nullptr;
     Tproj* JL = nullptr;  //   a random projection that would preserves the inner products
@@ -251,3 +268,4 @@ class Q_JL : public GeQuant {
     float Update(shared_ptr<GTensor> tensor, int flag = 0x0) override;
     virtual ~Q_JL() { FREE_a(JL); }
 };
+

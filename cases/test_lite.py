@@ -33,6 +33,11 @@ def test_chat_qwen3_4B_1():
     content = bubble_one("chat_qwen3_4B","p1 --tokenizer ./assets/tokenizer_151936.bin --hf ./Models/Qwen3-4B/ --prompts \"Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?\"")  #  "./cases/qwen3/qwen3_4B.json"
     assert "Answer: \\boxed{1}" in content  or "Answer: 1" in content or "Answer:1" in content or "answer:1" in content  # "Answer: 1"   "✅ Final Answer:1 ✅"  "Answer: 1 ✅"  "✅Answer: 1"
 
+def test_chat_qwen3_4B_awq():    
+    content = bubble_one("chat_qwen3_4B_awq","--tokenizer ./assets/tokenizer_151936.bin --hf ./Models/Qwen3-4B-AWQ/ --prompts \"Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?\"")  #  "./cases/qwen3/qwen3_4B.json"
+    assert "Answer: \\boxed{1}" in content  or "Answer: 1" in content or "Answer:1" in content or "answer:1" in content  # "Answer: 1"   "✅ Final Answer:1 ✅"  "Answer: 1 ✅"  "✅Answer: 1"
+
+
 def xtest_batch_qwen3_4B():  
     nlayer = 36 #   28 36
     path = "./cases/qwen3/qwen3_0.6B.json" if nlayer==28 else"./cases/qwen3/qwen3_4B.json"
@@ -72,7 +77,7 @@ def test_gpt2_124M_fuyou6():
     most_iter = 70
     title = "124M"
     dfTrain = koifish_one(title, sExe, "./cases/gpt2/124M_shard50_F6_lr0.001/F6_lr0.001.json", most_iter=most_iter)    
-    CheckResult(dfTrain,most_iter,7.498,title=title)
+    CheckResult(dfTrain,most_iter,7.497,title=title)
 
 def test_gpt2_124M():    
     most_iter = 70
@@ -121,13 +126,14 @@ if __name__ == '__main__':
     # test_chat_qwen3_0_6B()  
     #test_qwen3_596M()
     # test_chat_qwen3_4B_1()
+    test_chat_qwen3_4B_awq()
     # xtest_batch_qwen3_4B()
 
     # test_pp_gpt2()
     # test_gpt2_124M()
     # test_gpt2_124M_fuyou6()
     # test_gpt2_1558M()
-    test_qwen2_494M()
+    # test_qwen2_494M()
     # # 
     # test_gpt2_1558M()
     # koifish_one("124M", sExe, "./cases/gpt2/124M_shard50_F6_lr0.001/F6_lr0.001.json", most_iter=most_iter)

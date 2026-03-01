@@ -682,7 +682,11 @@ bool H2D(void* dev, void* host, size_t szData, int flag = 0x0);
 // copy value of one elemetn from device
 template <typename T>
 bool D2e(void* dev, T& host, int flag = 0x0) {
-    return D2H(dev, &host, sizeof(T), flag);
+    if(!D2H(dev, &host, sizeof(T), flag))
+        return false;
+    float a = T2Float(&host);
+    assert(!(isnan(a) || isinf(a)));
+    return true;
 }
 
 typedef int (*fnPOS)(int r, int c, int M, int N);

@@ -185,7 +185,11 @@ template <>
 hGTensor QWEN3_PIPE::tX = nullptr;
 
 template <typename AT>
-floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe, unsigned flags) {  // int token, int pos,
+floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe, unsigned flags) {  
+#ifdef USE_FP8_BASELINE
+    assert(0 && "FP8 baseline does not support generation yet");
+    return nullptr;
+#else
     constexpr int HEAD_DIM = 128;
     int szBuffer           = hFish->config.chat_sampler.szBuffer;
     int seq_len            = hFish->config.chat_sampler.seq_len;
@@ -213,7 +217,8 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
                 CU_embed_forw_1<<<dim / 32, 32, 0, main_stream>>>(hQwen->x, TO<bf16>(embed->w), token, dim, 0);
                 break;
         }
-        embed->w->Print("wte", 0, 0), PrintTensor<AT>("token_embed", hQwen->x, true, dim, 1, 1, 1, 0);
+        embed->w->Print("wte", 0, 0);
+        // PrintTensor<AT>("token_embed", hQwen->x, true, dim, 1, 1, 1, 0);
     }
 
     OutCLS* cls         = hFish->GetNeuron<OutCLS>("OutCLS", 0);
@@ -344,8 +349,8 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
         cls->preLogits->SerialData("", nullptr, true);
     }
     // cls->preLogits->Print("logits",0,-1,hQwen->vocab_size);
-
     return logits;
+#endif
 }
 
 floatLogits* T_generate_(hFISH hFish, MODEL_CARD* hPipe, typNUMBER tpActivity, int flags) {  // int token, int pos,

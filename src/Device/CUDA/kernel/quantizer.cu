@@ -231,8 +231,8 @@ __global__ void CU_Q42X_(floatGama* gamas, const hBITARR quants, T* mat0, int M,
             g0 *= gamaCol[2 * k];
             g1 *= gamaCol[2 * k + 1];
         }
-        *x0       = g0;  // CU_Float2T<T>(g0, seed);    0.00343
-        *(x0 + 1) = g1;  // CU_Float2T<T>(g1, seed);
+        *x0       = CU_16BF2T<T>(&g0, seed);    //0.00343
+        *(x0 + 1) = CU_16BF2T<T>(&g1, seed);
     }
 }
 
@@ -258,8 +258,12 @@ __global__ void CU_Q42X_RTN(floatGama* gamas, const hBITARR quants, T* mat0, int
             g0 *= gamaCol[2 * k];
             g1 *= gamaCol[2 * k + 1];
         }
+    #ifdef USE_FP8_BASELINE
+        assert(0 && "Not implemented for FP8 baseline yet");
+    #else
         *x0       = g0;  // CU_Float2T<T>(g0, seed);
         *(x0 + 1) = g1;  // CU_Float2T<T>(g1, seed);
+    #endif
     }
 }
 
@@ -301,8 +305,8 @@ __global__ void CU_Q42X_NF4(floatGama* gamas, const hBITARR quants, T* mat0, int
             g0 *= gamaCol[2 * k];
             g1 *= gamaCol[2 * k + 1];
         }
-        *x0       = g0;  // CU_Float2T<T>(g0, seed);
-        *(x0 + 1) = g1;  // CU_Float2T<T>(g1, seed);
+        *x0       = CU_16BF2T<T>(&g0, seed);
+        *(x0 + 1) = CU_16BF2T<T>(&g1, seed);
     }
 }
 
@@ -333,8 +337,12 @@ __global__ void CU_Q22X_RTN(floatGama* gamas, const hBITARR quants, T* mat0, int
             g0 *= gamaCol[4 * k], g1 *= gamaCol[4 * k + 1];
             g2 *= gamaCol[4 * k + 2], g3 *= gamaCol[4 * k + 3];
         }
+    #ifdef USE_FP8_BASELINE
+        assert(0 && "Not implemented for FP8 baseline yet");
+    #else
         *x0 = g0, *(x0 + 1) = g1;
         *(x0 + 2) = g2, *(x0 + 3) = g3;
+    #endif
     }
 }
 template <class T>
@@ -362,8 +370,12 @@ __global__ void CU_Q22X_(floatGama* gamas, const hBITARR quants, T* mat0, int M,
             g0 *= gamaCol[4 * k], g1 *= gamaCol[4 * k + 1];
             g2 *= gamaCol[4 * k + 2], g3 *= gamaCol[4 * k + 3];
         }
+    #ifdef USE_FP8_BASELINE
+        assert(0 && "Not implemented for FP8 baseline yet");
+    #else
         *x0 = g0, *(x0 + 1) = g1;
         *(x0 + 2) = g2, *(x0 + 3) = g3;
+    #endif
     }
 }
 
@@ -399,8 +411,12 @@ __global__ void CU_Q32X_NF3(floatGama* gamas, const hBITARR quants, T* mat0, int
         //     g0 *= gamaCol[4 * k], g1 *= gamaCol[4 * k + 1];
         //     g2 *= gamaCol[4 * k + 2], g3 *= gamaCol[4 * k + 3];
         // }
+    #ifdef USE_FP8_BASELINE
+        assert(0 && "Not implemented for FP8 baseline yet");
+    #else
         *x0 = g0, *(x0 + 1) = g1, *(x0 + 2) = g2, *(x0 + 3) = g3;
         *(x0 + 4) = g4, *(x0 + 5) = g5, *(x0 + 6) = g6, *(x0 + 7) = g7;
+    #endif
     }
 }
 
@@ -432,8 +448,12 @@ __global__ void CU_Q32X_(floatGama* gamas, const hBITARR quants, T* mat0, int M,
         //     g0 *= gamaCol[4 * k], g1 *= gamaCol[4 * k + 1];
         //     g2 *= gamaCol[4 * k + 2], g3 *= gamaCol[4 * k + 3];
         // }
+    #ifdef USE_FP8_BASELINE
+        assert(0 && "Not implemented for FP8 baseline yet");
+    #else
         *x0 = g0, *(x0 + 1) = g1, *(x0 + 2) = g2, *(x0 + 3) = g3;
         *(x0 + 4) = g4, *(x0 + 5) = g5, *(x0 + 6) = g6, *(x0 + 7) = g7;
+    #endif
     }
 }
 // each 8 quants=24 bit =3 byte
@@ -467,8 +487,12 @@ __global__ void CU_Q32X_RTN(floatGama* gamas, const hBITARR quants, T* mat0, int
         //     g0 *= gamaCol[4 * k], g1 *= gamaCol[4 * k + 1];
         //     g2 *= gamaCol[4 * k + 2], g3 *= gamaCol[4 * k + 3];
         // }
+    #ifdef USE_FP8_BASELINE
+        assert(0 && "Not implemented for FP8 baseline yet");
+    #else
         *x0 = g0, *(x0 + 1) = g1, *(x0 + 2) = g2, *(x0 + 3) = g3;
         *(x0 + 4) = g4, *(x0 + 5) = g5, *(x0 + 6) = g6, *(x0 + 7) = g7;
+    #endif
     }
 }
 
@@ -762,3 +786,18 @@ template __global__ void CU_Q32X_NF3<bf16>(floatGama* gama, const hBITARR terns,
 template __global__ void CU_Q32X_RTN<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
 template __global__ void CU_Q22X_RTN<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
 template __global__ void CU_X2ternary_<bf16>(floatGama* gama, bf16* mat0, char* terns, int M, int N, int bpe, bool isOverwrite = false);
+
+#ifdef USE_FP8_BASELINE
+template __global__ void CU_Q42X_RTN<__nv_fp8_e5m2>(floatGama* gama, const hBITARR terns, __nv_fp8_e5m2* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
+template __global__ void CU_Q42X_NF4<__nv_fp8_e5m2>(floatGama* gama, const hBITARR terns, __nv_fp8_e5m2* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
+template __global__ void CU_Q32X_NF3<__nv_fp8_e5m2>(floatGama* gama, const hBITARR terns, __nv_fp8_e5m2* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
+template __global__ void CU_Q32X_RTN<__nv_fp8_e5m2>(floatGama* gama, const hBITARR terns, __nv_fp8_e5m2* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
+template __global__ void CU_Q22X_RTN<__nv_fp8_e5m2>(floatGama* gama, const hBITARR terns, __nv_fp8_e5m2* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
+
+template __global__ void CU_ternary2X_<__nv_fp8_e5m2>(floatGama* gama, const hBITARR terns, __nv_fp8_e5m2* mat0, int M, int N, int seed = 0x0);
+template __global__ void CU_X2ternary_<__nv_fp8_e5m2>(floatGama* gama, __nv_fp8_e5m2* mat0, char* terns, int M, int N, int bpe, bool isOverwrite = false);
+template __global__ void CU_Q42X_<__nv_fp8_e5m2>(floatGama* gama, const hBITARR terns, __nv_fp8_e5m2* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
+template __global__ void CU_Q32X_<__nv_fp8_e5m2>(floatGama* gama, const hBITARR terns, __nv_fp8_e5m2* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
+template __global__ void CU_Q22X_<__nv_fp8_e5m2>(floatGama* gama, const hBITARR terns, __nv_fp8_e5m2* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
+
+#endif

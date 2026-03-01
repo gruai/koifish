@@ -159,8 +159,8 @@ bool SelfAttention::Build(int flag_0) {
     quant_params.Init4Neuron(name, hFish->config.jQuant);
     if (layid > quant_params.nPassLayer) {
         quant_params.spMost       = Q.w->shape;
-        quant_params.default_bits = layid > 0 ? 3 : 4;
-        hQuant                    = GeQuant::MakeInstance(this, name, quant_params, {Q.w, K.w, V.w, proj_cat.w}, 0x0);  //  {Q.w,proj_cat.w}
+        // quant_params.default_bits = layid > 0 ? 3 : 4;
+        hQuant                    = GeQuant::MakeInstance(this, name, quant_params, {&Q, &K, &V, &proj_cat}, 0x0);  //  {Q.w,proj_cat.w}
     }
     // tpTrans = RELU2;
     // moe.BuildX(name+".moe",sp,hFish,flag);        //  why this would slow converge???
@@ -218,9 +218,9 @@ bool SelfAttention::_devQKV(int stage, int flag) {
     size_t offset = 0;
     if (isTrain) {
         assert(kv_dim <= q_dim);
-        deltaQ = gBUFF->bt4c->Partial("partialDeltaQ", 0, {B, T, q_dim}), offset += deltaQ->size();
-        deltaK = gBUFF->bt4c->Partial("partialDeltaK", B * T * q_dim, {B, T, kv_dim}), offset += deltaK->size();
-        deltaV = gBUFF->bt4c->Partial("partialDeltaV", B * T * (q_dim + kv_dim), {B, T, kv_dim}), offset += deltaV->size();
+        deltaQ = gBUFF->bt4c->Partial("partialDeltaQ", 0, {B, T, q_dim}), offset += deltaQ->nByte();
+        deltaK = gBUFF->bt4c->Partial("partialDeltaK", offset, {B, T, kv_dim}), offset += deltaK->nByte();
+        deltaV = gBUFF->bt4c->Partial("partialDeltaV", offset, {B, T, kv_dim}), offset += deltaV->nByte();
         assert(B * T * (q_dim + kv_dim * 2) * sizeof(floatX) <= gBUFF->bt4c->nByte());
         // devDeltaQ = ToX(gBUFF->bt4c), devDeltaK = (char*)devDeltaQ + Q.out->nByte(), devDeltaV = (char*)devDeltaK + K.out->nByte();
         devDeltaQ = ToX(deltaQ), devDeltaK = ToX(deltaK), devDeltaV = ToX(deltaV);
@@ -241,7 +241,7 @@ string SelfAttention::__repr__(string& suffix, string& prefix, int flag) {
     return buf;
 };
 
-std::vector<GeNeuron*> SelfAttention::SubNeurons(int flag) {
+std::vector<GeNeuron*> SelfAttention::SubNeurons(int flag)  {
     std::vector<GeNeuron*> neurons = {&Q, &K, &V, &proj_cat, &norm};
     if (isQKNormal) {
         neurons.push_back(&normQ), neurons.push_back(&normK);

@@ -137,10 +137,11 @@ hGTensor TokenEmbed::OnEmbed(hGensor inpL, int seed) {
                         <<<CEIL_DIV(B * T, block_size), block_size, 0, main_stream>>>(ToX(cur), TO<int>(inp), curW->gama_T(), TO<char>(curW), ToX0(b), B, T, C);
                 } else
                     CU_embed_forw_<<<CEIL_DIV(B * T, block_size), block_size, 0, main_stream>>>(ToX(cur), TO<int>(inp), ToX(curW), ToX0(b), B, T, C);
-                // w->Print("wte", 0, 0);
+
                 if (b != nullptr)
                     PrintTensor<floatX>("wpe", ToX0(b), true, T, C);
             }
+            w->Print("wte", 0, 0);
             // PrintTensor<int>("inputs",tokens,true,B,T);
             cur->Print("token_embed", 0, 0, nToken * C);
             if (maec != nullptr) {
@@ -201,6 +202,7 @@ int HIERARCH_LoRA::Forw(floatX* rhs, floatX* lhs, int BT, int flag) {
     return 0x0;
 }
 
+//  PyTorch’s nn.Linear defines weight as [out_features, in_features], and the forward pass is: y = x @ W.T + bias
 int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, Relu* hRelu, int flag) {
     NVTX_RANGE_FN();
     try {
@@ -228,14 +230,17 @@ int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, Relu* hRelu, int f
 
         rhs  = to_gelu ? to_gelu : rhs;
         tRhs = to_gelu ? toGelu : rhs_0;
+        // w->Print(w->name, 0, -1);
+        // lhs_->Print(lhs_->name, 0, -1);
         assert(rhs != nullptr);
+        int transA = 1;
         switch (compression) {
             case SAMPLE:
-                CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, nToken, IC, main_stream, true);
+                CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, nToken, IC, main_stream, transA);
                 break;
             case LORA:  //  rhs += a*b*lhs_
                 if (tpLORA != LORA_ADAPT_W::AB)
-                    CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, nToken, IC, main_stream, true);
+                    CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, nToken, IC, main_stream, transA);
                 // rhs_0->Print(rhs_0->name, 0, -1);   //w->Print(w->name, 0, -1),
                 if (tpLORA != LORA_ADAPT_W::W0) {
                     for (auto lora : wLORAs) {
@@ -245,7 +250,7 @@ int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, Relu* hRelu, int f
                 // rhs_0->Print(rhs_0->name,0,-1);
                 break;
             default:
-                CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, nToken, IC, main_stream, true);
+                CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, nToken, IC, main_stream, transA);  // default: transA = 1, transB = 0,
                 break;
         }
         // if (hRelu != nullptr) {
@@ -374,7 +379,79 @@ int Q_nThreadOfBlock(int N, int bit, int nT0 = CU_T4B_BIG) {
     return nT;
 }
 
-floatX* GTensor::GetDataX(int flag, const string& sX) {
+// return k_th of Q4_8, last 4 bits [3:0] of x are treated as the "first" 4-bit value
+__device__ inline int32_t CU_I2Q4_little(const Q4_8 x, int k) {
+    int sft    = k * 4;
+    BIT_8 byte = (x >> sft) & 0x0F;
+    int32_t id = static_cast<int32_t>((byte << 28) >> 28);
+    return id;
+}
+
+template <class T>
+__global__ void CU_Q42X_zs_v0(const Q4_8* zeros, const half* scales, const Q4_8* quants, T* mat0, int M, int N, int seed = 42) {
+    int tid = threadIdx.x, idrow = blockIdx.x, bit = 0, npt = N / blockDim.x;  // n-data per thread
+    if (idrow >= M)
+        return;  // guard
+
+    size_t offset = idrow * N + tid * npt;
+    float scale   = __half2float(scales[idrow]);
+    int32_t zero  = CU_I2Q4_little(zeros[idrow / 8], idrow % 8);
+    for (int k = 0; k < npt; k++) {
+        T* x0 = mat0 + (offset + k) * 8;
+        for (int i = 0; i < 8; i++, x0++) {
+            // BIT_8 byte  = (q_row[i] >> sft) & 0x0F;
+            // int32_t id0 = static_cast<int32_t>((byte << 28) >> 28);
+            int32_t id0 = CU_I2Q4_little(quants[offset + k], i);
+            float g0    = (id0 - zero) * scale;
+            *x0         = (T)g0;  // CU_Float2T<T>(g0, seed);
+        }
+    }
+}
+
+__device__ inline void CU_I2Q4_unpack(const Q4_8 x, int32_t* unpack, int flag = 0x0) {
+    int AWQ_REVERSE_ORDER[] = {0, 4, 1, 5, 2, 6, 3, 7};
+    for (int k = 0; k < 8; k++) {
+        int sft    = AWQ_REVERSE_ORDER[k] * 4;
+        BIT_8 byte = (x >> sft) & 0x0F;
+        unpack[k]  = byte;
+    }
+}
+
+/**
+ *  quants/mat0     [1024, 2048]
+ *  zeros/scales    [8,2048]
+ */
+template <class T>
+__global__ void CU_Q42X_awq(const Q4_8* zeros, const half* scales, const Q4_8* quants, T* mat0, int M, int N, int seed = 42) {
+    int tid = threadIdx.x, idrow = blockIdx.x, bit = 0, npt = N / blockDim.x;  // n-data per thread
+    if (idrow >= M)
+        return;            // guard
+    assert(npt % 8 == 0);  // for Q4_8
+    size_t offset        = idrow * N + tid * npt;
+    T* x0                = mat0 + offset;
+    const Q4_8* q_row    = quants + offset / 8;
+    const half* scale8   = scales + idrow / 128 * N + tid * npt;  // 0.007359  0.009537  0.006248  0.007618  0.007339  0.006413  0.007534  0.006657
+    const Q4_8* zero_row = zeros + (idrow / 128 * N + tid * npt) / 8;
+    // float scale   = __half2float(scales[idrow]);
+    // int32_t zero  = CU_I2Q4_little(zeros[idrow / 8], idrow % 8);
+    int32_t q8[8], z8[8];  //[7,7,3,11,4,12,10,15.0]   [7.0   8.0   7.0   8.0   6.0   8.0   8.0   8.0]
+    for (int k = 0; k < npt / 8; k++, scale8 += 8) {
+        CU_I2Q4_unpack(q_row[k], q8);
+        CU_I2Q4_unpack(zero_row[k], z8);
+        // if (idrow == M - 1 && tid * npt + k * 8 == N - 8) {
+        //     DEBUG_HERE;
+        // }
+        for (int i = 0; i < 8; i++, x0++) {
+            float g0 = (q8[i] - z8[i]) * (float)(scale8[i]);
+            *x0      = (T)g0;  // CU_Float2T<T>(g0, seed);
+        }
+    }
+}
+
+floatX* GTensor::GetDataX(int flag, const string& sX) const {
+    if (data == nullptr)
+        return nullptr;
+
     size_t dT4B = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
     size_t nEle = size();
     floatX* wX  = (floatX*)(data);
@@ -394,13 +471,25 @@ floatX* GTensor::GetDataX(int flag, const string& sX) {
             assert(gBUFF->tmpTernary->size() >= nEle);
             dT4B = Q_nThreadOfBlock(nCol, 4);
             if (hQuant->isRTN()) {
-                if (hQuant->params.isNormalFloat) {
+                if (hQuant->params.type == RTNf) {
                     CU_Q42X_NF4<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
-                } else
+                } else if (hQuant->params.type == RTN)
                     CU_Q42X_RTN<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
+                else {  // RTN_ZS
+                    int ldGroup = hQuant->params.T_group, nGroup = size() / ldGroup, nIn = shape[0], nOut = shape[1];
+                    assert(nGroup == qScale->size() && nGroup == qZero->size());
+                    dT4B = Q_nThreadOfBlock(nOut / 8, 4);
+                    // Print(name, 0, -1);
+                    // qZero->Print("qzero", 0, -1);
+                    // qScale->Print("scale", 0, -1);
+                    // CU_Q42X_zs_v0<floatX><<<nGroup, dT4B, 0, main_stream>>>(TO<Q4_8>(qZero), TO<half>(qScale), (Q4_8*)(data), wX, nGroup, ldGroup / 8);
+                    CU_Q42X_awq<floatX><<<nIn, dT4B, 0, main_stream>>>(TO<Q4_8>(qZero), TO<half>(qScale), (Q4_8*)(data), wX, nIn, nOut);
+                }
+            } else if (hQuant->params.type == KV_PolarQuant) {
+                assert(0);
             } else
                 CU_Q42X_<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
-            // gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow*nCol);
+            // gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow * nCol);
         } break;
         case typNUMBER::Q3: {
             wX = ToX(gBUFF->tmpTernary);
@@ -736,7 +825,8 @@ hGTensor OutCLS::cuFlow(hGTensor inp_, int flag) {
             off = 0;  // reduce memory
             // PrintTensor<floatX>("OutCLS.proj.w", w->GetDataX(), true, w->ne[0], w->ne[1], w->ne[2], w->ne[3], -1);
             // [50304,768] x [768,8192] => [50304,8192]
-            hGensor subZ = inp->Partial("partialZ", nZ, {dB, T, C}), subDelta = delta->Partial("partialDeltaZ", nZ, {dB, T, C});
+            hGensor subZ     = inp->Partial("partialZ", nZ * sizeof(floatX), {dB, T, C}),
+                    subDelta = delta->Partial("partialDeltaZ", nZ * sizeof(floatX), {dB, T, C});
             proj.Forw(cur, subZ);
             // cur->Print("preLogist",0, dump_flag);
             // SYNC_DEVICE();
@@ -815,18 +905,32 @@ int Relu::Forw(hGTensor out, hGTensor inp, int flag) {
 }
 
 template <typename T>
+__global__ static void CU_swiglu_back(T* delta_in_out, T* delta_gate, const T* gate, const T* inp, int N) {
+    using typ128 = PackedN<T, 16 / sizeof(T)>;
+    using f256   = PackedN<float, typ128::size>;
+    int idx      = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= N) {
+        return;
+    }  // guard
+    f256 xiW, xiV, delta, sigW;
+    for (int k = 0; k < f256::size; k++) {
+        // a = delta * xiV * sigW * (1 + xiW * (1.0f - sigW);
+    }
+}
+
+template <typename T>
 __global__ static void CU_swiglu_back_v0(T* delta_in_out, T* delta_gate, const T* gate, const T* inp, int N) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < N) {
         float xiW   = CU_T2Float(gate + idx);
         float xiV   = CU_T2Float(inp + idx);
-        float delta = delta_in_out[idx];
+        float delta = CU_T2Float(delta_in_out + idx);
         // if(idx==0)    // only for debug
         // {    nout("nout<%d>: gate=%g ffn.up=%g delta=%g\n", idx, xiW,xiV,delta);    }
         float sigW      = 1.0f / (1.0f + expf(-xiW));
-        delta_gate[idx] = delta * xiV * sigW * (1 + xiW * (1.0f - sigW));
+        delta_gate[idx] = CU_Float2T<T>(delta * xiV * sigW * (1 + xiW * (1.0f - sigW)), 42);
 
-        delta_in_out[idx] = delta * xiW * sigW;  //  delta * swish_out[i];
+        delta_in_out[idx] = CU_Float2T<T>(delta * xiW * sigW, 42);  //  delta * swish_out[i];
     }
 }
 
@@ -837,6 +941,7 @@ int Relu::Back(hGTensor delta_in_out, hGTensor pre_gelu, int flag) {
     assert(B * T * C == nz);
     const int grid_size = CEIL_DIV(nz, block_size);
     hGTensor gate       = nullptr;
+    TASKA_1p1<floatX> task_11(nz, main_stream);
     switch (fAct) {
         case SWIG:
             assert(slp_gate != nullptr);

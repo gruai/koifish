@@ -318,6 +318,17 @@ class MODEL_CARD {
 
     //  ****
     bool isFFNWeightTying   = true;
+    
+    /*
+    1. If true, reduces the memory,  often results in better and faster outcomes ???
+    2. According to findings from OLMo the weight tying is beneficial for smaller models like 1B but for larger ones starting from 7B it starts to hurt the
+    performance - instability in loss curves. I don't know why it is not discussed in their paper, but one of the researchers is talking about it in TWIML AI
+    podcast around 16:50: https://youtu.be/mwS9zPCv_dY?t=1010
+    3. output softmax wants embeddings to be very large so their inner products will produce very different values.
+        input embeddings want a much smaller range so they can have stable dynamics throughout training.
+        All the "old" code bases had this scalar (usually sqrt(d)) but the llama arch dropped this when they started untying
+    4. Use Weight Tying Only When the Distributional Hypothesis Holds   ???
+    */
     bool isEmbedWeightTying = false;
     std::vector<std::string> skip_st;
 
@@ -360,13 +371,14 @@ enum EVICTION_MODE {
  */
 enum QUANT_MODE {
     NO_QUANT,
-    PRE_QUANT,
-    RTN,  //  Round-to-Nearest
-    RTNf,
-    MINI,  // Minimise impurity
+    
+    RTN,    //  Round-to-Nearest
+    RTN_ZS, //  Same as RTN, some vendors use explicit zero/scale tensors
+    RTNf,   // nf4, nf3
+    MINI,   // Minimise impurity
     F8Ex,
 
-    AWQ,
+    // AWQ,     // awq is the quant method(find 1% salient/outlier weights by activataion), and the qdata format is still RTN
 
     KV_JL,     //  Johnson-Lindenstrauss (JL) transform
     KV_AQUA,   //  https://arxiv.org/pdf/2501.19392
@@ -382,6 +394,7 @@ enum QUANT_ALG {
     W_NOSCALE  //
 };
 struct QUANT_CARD {
+    int TransA = 1;
     int default_bits = 4;
     int nPassLayer   = 0;  // fist layer is hard to quant
     float T_errQ     = 0.3;
@@ -389,10 +402,12 @@ struct QUANT_CARD {
     SHAPE spMost;
     std::string sX = "";
 
-    bool isPreQuant    = false;
+    bool isVendorQuant = false;
     bool isNormalFloat = true;  //  each bin under a normal distribution N(0,1) contains equal probability mass
     bool isSymmetric   = false;
-
+    bool isZeroPoint   = false;
+    typNUMBER tpZero, tpScale, tpQWeight;
+    
     NORMAL_MODE norm = SINKHORN;
     enum DYNAMIC_MODE { NO_DYNAMIC };
     DYNAMIC_MODE dynamic = NO_DYNAMIC;
@@ -400,13 +415,14 @@ struct QUANT_CARD {
     QUANT_MODE type = NO_QUANT;
 
     QUANT_CARD() {}
-    virtual void InitFromVendor(const JSON& jVendor, int flag = 0x0);
+    // virtual void InitFromVendor(const JSON& jVendor, int flag = 0x0);
     virtual void Init4Neuron(const std::string& name, const JSON& jQuant, int flag = 0);
 
     virtual bool isPass() const { return type == NO_QUANT; }
     // std::vector<std::string> filter_KVcache;
 
-    virtual JSON ToJSON(int flag = 0x0);
+    // Koifish needs quant params for each neuron. 
+    static JSON Vendor2JSONx(const JSON& jX, int flag = 0x0);
     virtual bool isValid() const;
     void Dump(int typ);
     std::size_t Hash(const QUANT_CARD& params, const std::type_info& ti, const std::string& desc) const;

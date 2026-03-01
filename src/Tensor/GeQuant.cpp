@@ -15,7 +15,7 @@
 #include "GTensor.hpp"
 using namespace Grusoft;
 
-hQUANT GeQuant::MakeInstance(GeNeuron* hNeuron, const std::string& nam_, QUANT_CARD& params, std::vector<hGensor> tensors, int flag) {
+hQUANT GeQuant::MakeInstance(GeNeuron* hNeuron, const std::string& nam_, QUANT_CARD& params, std::vector<GeNeuron*> neurons, int flag) {
     hQUANT hQuant = nullptr;
     if (params.isPass())
         return hQuant;
@@ -26,8 +26,11 @@ hQUANT GeQuant::MakeInstance(GeNeuron* hNeuron, const std::string& nam_, QUANT_C
         hQuant = quants[key];
     } else {
         switch (params.type) {
-            case PRE_QUANT:
-                hQuant = std::make_shared<Q_Impurity<float>>(nam_ + "_prequant", hNeuron, params, 0x0);
+            // case AWQ:
+            //     hQuant = std::make_shared<Q_AWQ<float>>(nam_ + "_awq", hNeuron, params, 0x0);
+            //     break;
+            case RTN_ZS:
+                hQuant = std::make_shared<Q_AWQ<float>>(nam_ + "_rtnzs", hNeuron, params, 0x0);
                 break;
             case MINI:
                 hQuant = std::make_shared<Q_Impurity<float>>(nam_ + "_quant", hNeuron, params, 0x0);
@@ -44,10 +47,13 @@ hQUANT GeQuant::MakeInstance(GeNeuron* hNeuron, const std::string& nam_, QUANT_C
     }
     // hFish->quants[] = hQuant;
     if (hQuant != nullptr) {
-        for (auto t : tensors) {
+        for (auto n : neurons) {
+            std::vector<hGTensor> aux;
+            hGensor t = n->w;
             assert(t->hQuant == nullptr);
             t->hQuant = hQuant;
-            // assert(hTensor->isWMAT());
+            hQuant->ExTensor(t, aux);
+            n->out->AddSrc(aux);
         }
     }
     return hQuant;
@@ -78,7 +84,7 @@ GeQuant::GeQuant(const std::string& nam_, void* hBase, QUANT_CARD& param_, int f
 }
 
 typNUMBER GeQuant::bit2typ(int flag) {
-    switch (bits) {
+    /*switch (bits) {
         case 4:
             return typNUMBER::Q4;
         case 3:
@@ -89,12 +95,54 @@ typNUMBER GeQuant::bit2typ(int flag) {
             assert(0);
             break;
     }
-    return typNUMBER::Q4;
+    return typNUMBER::Q4;*/
+    return Bits2Type(bits, flag);
 }
 
 GeQuant::~GeQuant() {
     FREE_a(quant_data);
     FREE_a(gama);
+}
+
+int GeQuant::ExTensor(hGTensor hBase, std::vector<hGTensor>& aux, int flag) {
+    assert(hBase->isWMAT());
+    // assert(hBase->data != nullptr);
+
+    SHAPE sp;
+    int group       = params.T_group;
+    size_t offset   = hBase->nByte();
+    string basename = G_prefix_(hBase->name, "."), a = basename + ".qweight";
+    if (G_Has_(basename, {"model.layers.5.mlp.up_proj"})) {
+        DEBUG_HERE;
+    }
+    strcpy(hBase->name, a.c_str());
+    // hBase->type = params.tpQWeight;
+    string sS = basename + MODEL_CARD::sQscale, sZ = basename + MODEL_CARD::sQzeros;
+    switch (params.type) {
+        case RTN_ZS:
+            std::swap(hBase->shape[0], hBase->shape[1]);  // qweight is transposition of original weight
+            hBase->ne[0] = hBase->shape[0], hBase->ne[1] = hBase->shape[1];
+            sp            = {hBase->shape[0] / group, hBase->shape[1]};     // 20x4096 = 32x2560
+            hBase->qScale = GT(hBase->hFish, params.tpScale, sp, 0x0, sS);  // hBase->Partial(sS, offset, sp, params.tpScale);
+            aux.push_back(hBase->qScale);
+            // hBase->hFish->InitGensor(nullptr, sS.c_str(), hBase->qScale, false);
+            offset += hBase->qScale->nByte();
+            if (params.isZeroPoint) {
+                sp           = {hBase->shape[0] / group, hBase->shape[1]};    // 80x512 = 32x2560/2
+                hBase->qZero = GT(hBase->hFish, params.tpZero, sp, 0x0, sZ);  // hBase->Partial(sZ, offset, sp, params.tpZero);
+                aux.push_back(hBase->qZero);
+                // hBase->hFish->InitGensor(nullptr, sZ.c_str(), hBase->qZero, false);
+            }
+
+            break;
+        default:
+            break;
+    }
+    for (auto t : aux) {
+        t->hQuant = shared_from_this();
+    }
+
+    return 0x0;
 }
 
 /*
@@ -615,6 +663,19 @@ Q_Impurity<T>::~Q_Impurity() {
 template class Q_Impurity<bf16>;
 template class Q_Impurity<float>;
 
+template <typename T>
+Q_AWQ<T>::Q_AWQ(const std::string& nam_, void* hN, QUANT_CARD& param_, int flag) : Quantizer<T>(nam_, hN, param_, flag) {
+    assert(this->bits > 0 && this->bits <= 8);
+    this->params.TransA = 0;
+}
+template <typename T>
+float Q_AWQ<T>::AfterLowBit(shared_ptr<GTensor> tensor, const void* cpuData, int flag) {
+    //  AWQ_REVERSE_ORDER = [0, 4, 1, 5, 2, 6, 3, 7]
+    return 0.0;
+}
+template class Q_AWQ<bf16>;
+template class Q_AWQ<float>;
+
 // template <>
 // DORT_wrap* Q_Impurity<bf16>::dort = nullptr;
 // template <>
@@ -774,4 +835,58 @@ float GeQuant::Normal_ROW01(shared_ptr<GTensor> hTensor, void* srcData, floatGam
     //      imbalance, off, len, GST_sec() - t0, hTensor->name);
 
     return imbalance;
+}
+
+/*
+"quantization_config": {
+    "bits": 4,
+    "group_size": 128,
+    "modules_to_not_convert": null,
+    "quant_method": "awq",
+    "version": "gemm",
+    "zero_point": true
+  },*/
+void QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, int flag) {
+    type = NO_QUANT;
+    if (jQuant.find("VendorQuant") != jQuant.end()) {
+        isVendorQuant = true;
+        nPassLayer    = -1;  // no pass layer in QWen3
+    }
+    string s0 = "";
+    for (JSON::const_iterator it = jQuant.begin(); it != jQuant.end(); ++it) {
+        auto k = it.key();
+        if (!k.empty() && k[0] == '#')
+            continue;
+        if (k == "debug") {
+            continue;
+        }
+        if (G_Has_(name, {k})) {
+            const JSON& jQ = it.value();
+            string info;
+            info         = jKV(jQ, {"quant_method"}, info, false);
+            default_bits = jKV(jQ, {"bits"}, default_bits, false);
+            T_group      = jKV(jQ, {"group_size"}, T_group, false);
+            assert(T_group > 0 && T_group < 10240);
+            isZeroPoint = jKV(jQ, {"zero_point"}, isZeroPoint, false);
+            // quant.filter_MIQ        = jKV_arr(jConfig, {"quantizer", "MINI"}, quant.filter_MIQ, false);
+            // quant.filter_WeightF8Ex = jKV_arr(jConfig, {"quantizer", "F8Ex"}, quant.filter_WeightF8Ex, false);
+            if (default_bits != 4 && default_bits != 3 && default_bits != 8) {
+                default_bits = 4;
+                assert(0);
+            }
+            tpScale = typNUMBER::BF16;
+            if (isZeroPoint)
+                tpZero = default_bits == 4 ? typNUMBER::Q4 : default_bits == 3 ? typNUMBER::Q3 : typNUMBER::Q2;
+            tpQWeight        = default_bits == 4 ? typNUMBER::Q4 : default_bits == 3 ? typNUMBER::Q3 : typNUMBER::Q2;
+            string norm_type = jKV(jQ, {"normal"}, s0);
+            norm             = G_Aa(norm_type, "SINKHORN") ? NORMAL_MODE::SINKHORN : NORMAL_MODE::NO_NORMAL;
+
+            if (info == "awq") {
+                type =
+                    RTN_ZS;  // awq is the quant method(find 1% salient/outlier weights by activataion), and the qdata format is still RTN(round to nereast int)
+            } else {
+                type = default_bits == 8 ? F8Ex : MINI;
+            }
+        }
+    }
 }

@@ -29,40 +29,12 @@ typNUMBER tpNumOf(const std::string& dtype_str) {
             return type;
         }
         for (auto alias : k_float.second.alias) {
-            if (sType == alias){
+            if (sType == alias) {
                 type = k_float.first;
                 return type;
             }
         }
     }
-    /*if ((*so) == "BOOL") {
-            dtype = typNUMBER::BOOL1;
-        } else if ((*so) == "U8") {
-            dtype = typNUMBER::U8;
-        } else if ((*so) == "I8") {
-            dtype = typNUMBER::I8;
-        } else if ((*so) == "U16") {
-            dtype = typNUMBER::U16;
-        } else if ((*so) == "I16") {
-            dtype = typNUMBER::I16;
-        } else if ((*so) == "U32") {
-            dtype = typNUMBER::U32;
-        } else if ((*so) == "I32") {
-            dtype = typNUMBER::I32;
-        } else if ((*so) == "U64") {
-            dtype = typNUMBER::U64;
-        } else if ((*so) == "I64") {
-            dtype = typNUMBER::I64;
-        } else if ((*so) == "F16") {
-            dtype = typNUMBER::F16;
-        } else if ((*so) == "BF16") {
-            dtype = typNUMBER::BF16;
-        } else if ((*so) == "F32") {
-            dtype = typNUMBER::F32;
-        } else if ((*so) == "F64") {
-            dtype = typNUMBER::F64;
-        } else {*/
-
     /*
     if (sType == "F32") {
         type = typNUMBER::F32;

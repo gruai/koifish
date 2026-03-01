@@ -207,8 +207,12 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     float residual_scale = 1.0, wnorm = 0, gnorm = 0;  // some tricks
     float rLARS(float s0, float T_lars, int flag);
     size_t offset = 0x0;
+    /** 1. PyTorch’s nn.Linear defines weight as [out_features, in_features], and the forward pass is: y = x @ W.T + bias
+     *  */  
     SHAPE shape;
     SHAPE x_shape;  //  1.padded for high performance or menory alignment(x_shape<=shape)
+    // same as shape, would remove in future version
+    int64_t ne[N_DIMS];
     // shape=>x_shape
     vector<hGOP> src;
     virtual void AddSrc(const vector<hGTensor>& ts, int flag = 0x0);
@@ -226,7 +230,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
         LUT,   // values of codebook
     };
     // return scaling/LUT of quant weight
-    floatGama* gama_T(GAMA_TYPE type = R_SCALE, int row = 0);
+    floatGama* gama_T(GAMA_TYPE type = R_SCALE, int row = 0)    const;
     // virtual bool isUpdateParam(int iter = -1, int flag = 0x0) const;  // in many case, params are not update, even data is not allocated!
     bool needUpdateParam = false;
     int tile_r1 = 0, tile_c1 = 0;  //  tile_r0 = 0,tile_c0 = 0,
@@ -275,7 +279,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     GTensor() {}
     GTensor(Fish* hFish, SHAPE shape_, typNUMBER tpD_, bool isAlloc = true, int flag = 0x0);
 
-    virtual hGTensor Partial(const string& name, size_t offset, SHAPE shape, int flag = 0x0) {
+    virtual hGTensor Partial(const string& name, size_t offset, SHAPE shape, typNUMBER tyP = typNUMBER::T_OTHER, int flag = 0x0) {
         assert(0);
         return nullptr;
     }
@@ -316,8 +320,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     virtual float ToF8Ex(int type, int flag = 0x0) { throw "ToF8Ex is ...."; }
     virtual bool Mutation(int flag = 0x0) { throw "Mutation is ...."; }
 
-    // row-major order. ne contains the number of elements in each dimension & nb is the number of bytes ("nb", a.k.a. stride).
-    int64_t ne[N_DIMS];
+
     int32_t flags = 0x0, last_stp = -1;
 
     bool isParam() const { return BIT_TEST(flags, F_PARAM); }
@@ -341,7 +344,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     T* GetHostData(int flag = 0x0, const string& sX = "") {
         return nullptr;
     }
-    virtual floatX* GetDataX(int flag = 0x0, const string& sX = "");
+    virtual floatX* GetDataX(int flag = 0x0, const string& sX = "") const;
 
     // may different wit hQuant
     shared_ptr<GeQuant> GetDynamicQuant(int flag = 0x0) const;
@@ -350,9 +353,9 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     virtual int Dogleg(int flag = 0x0);
 
     char name[MAX_NAME] = "\0";
-    std::string Alias(int flag=0x0);
-    size_t hash = 0x0;    //  std::hash<std::string>
-    void* extra = nullptr;  // extra things 
+    std::string Alias(int flag = 0x0);
+    size_t hash = 0x0;      //  std::hash<std::string>
+    void* extra = nullptr;  // extra things
 
     // struct ggml_tensor* GG();
     struct ggml_context* CTX() { return nullptr; }
@@ -367,6 +370,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
         return 1;
     }
     virtual size_t nByte() const { return szData; }
+    virtual size_t nByte_CKP(const CheckPoint_Params&, int flag=0x0) const;
     //   A weight matrix is a linear operator on RMS-normed vector spaces.
     virtual bool isWMAT(int flag = 0x0) const;
     //  The offset of (i0,i1,i2,i3) in byte
@@ -457,12 +461,8 @@ T* TO(const std::vector<hGTensor>& gensors, const std::string& key, int flag = 0
     return nullptr;
 }
 
-inline hGTensor operator+(const hGTensor& a, const hGTensor& b) {
-    return nullptr;
-}
-inline hGTensor operator+=(const hGTensor& a, const hGTensor& b) {
-    return nullptr;
-}
+inline hGTensor operator+(const hGTensor& a, const hGTensor& b) { return nullptr; }
+inline hGTensor operator+=(const hGTensor& a, const hGTensor& b) { return nullptr; }
 
 typedef hGTensor hGensor;  // some trick
 // inline struct ggml_tensor* G(hGensor T) {
@@ -523,7 +523,7 @@ class huTensor : public GTensor {
    public:
     huTensor(Fish* hFish, const string& name_, const SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag = 0x0);
     virtual ~huTensor();
-    hGTensor Partial(const string&, size_t offset, const SHAPE shape, int flag = 0x0) override;
+    hGTensor Partial(const string&, size_t offset, const SHAPE shape, typNUMBER tyP = typNUMBER::T_OTHER, int flag = 0x0) override;
 
     bool Alloc(int tpInit = 0, int flag = 0x0) override;
     size_t mostMemory(int typ = 0) const override;

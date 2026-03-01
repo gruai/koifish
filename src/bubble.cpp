@@ -11,13 +11,11 @@
 #include <iostream>
 #include <string>
 
-#include "./CLI_params.hpp"
+#include "./Manifold/gLLM.hpp"
+#include "./Utils/GST_Application.hpp"
+#include "./Utils/GST_log.hpp"
+#include "./g_def_x.hpp"
 #include "./Device/Pipe.hpp"
-#include "./Manifold/Fish.hpp"
-#include "./Utils/GST_os.hpp"
-#include "GoPT.hpp"
-#include "Optimizer.hpp"
-#include "gLLM.hpp"
 
 std::string UserPrompt(hFISH fish, int pos, int nRound, int flag = 0x0) {
     char* cli_user_prompt = nullptr;
@@ -92,11 +90,11 @@ int Chat(hFISH fish, int enable_thinking) {
     floatLogits* logits = nullptr;
     hChater gopt        = fish->GetGenerator();
     hBATCH hBatch       = fish->GetCurBatch(true);
-    assert(hBatch->size() == seq_len);
-    QWEN3_PIPE qwen_pipe(fish, 0x0);
+    assert(hBatch->size() == seq_len);    
 
     // DEBUG.T_generate_most_layer = 1;
-    DEBUG.verGenerate     = DEBUG.cmd_p1;  // use this flag to comparse accu/time of different version
+    DEBUG.verGenerate = DEBUG.cmd_p1;  // use this flag to comparse accu/time of different version
+    // DEBUG.verGenerate     = 1;
     DEBUG.T_cuQK          = 0;
     DEBUG.T_kvcache_quant = 0;
     g_dump_level          = 1;
@@ -122,10 +120,11 @@ int Chat(hFISH fish, int enable_thinking) {
             DEBUG_HERE;
             // K_EXIT(KOIFISH_EXIT_DEBUG);
         }
-        if (DEBUG.verGenerate) {  //  much slower with some bug
-            float eval = fish->Evaluate(DL_BATCH_UPATE::BATCHofEMBED);
-        } else {  // qwen_pipe.UpdatePos(token);
+        if (DEBUG.verGenerate) {  //
+            QWEN3_PIPE qwen_pipe(fish, 0x0);
             logits = T_generate_(fish, &qwen_pipe, fish->config.model.tpActivation, 1);
+        } else {
+            float eval = fish->Evaluate(DL_BATCH_UPATE::BATCHofEMBED);
         }
         if (!gopt->VerifyLogits()) {
             _INFO("\n%s(Invalid logits!)%s\n", COLOR_RED, COLOR_RESET);
@@ -204,8 +203,50 @@ int Chat(hFISH fish, int enable_thinking) {
     return 0x0;
 }
 
+class BubbleApp : public GST_Application {
+   protected:
+    hFISH fish = nullptr;
+
+   public:
+    BubbleApp(int argc, char* argv[]) : GST_Application(argc, argv) {
+        name = "Bubble";
+        params.phase = LIFE_PHASE::P_GENERATE;  // DEBUG.test_quant = 1;
+        params.OnArch();
+
+        params.isOnlyGPT                = true;
+        params.chat_sampler.mode        = params.model.enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
+        params.chat_sampler.isSampleCPU = true;
+        params.model.preLogits_dB       = 1;
+        params.model.sparse.method      = -1;
+        // params.quant.T_errQ             = 0.3;
+        // params.quant.isNormalFloat = true, params.quant.isSymmetric = false;       //use_double_quant
+        // params.quant.default_bits       = 2;
+        params.dumpSwitch.tensor_load  = 0;
+        params.dumpSwitch.nn_structure = 0;
+        DEBUG.verCuda = 1, DEBUG.T_cpu = 0, DEBUG.graph_dump = 0, DEBUG.Time_most = 60;
+        DEBUG.verInferQKV = 0, DEBUG.verInferFFN = 0;
+        params.Dump(0x100);
+    }
+    virtual ~BubbleApp() {}
+
+    int Swim() override {
+        vector<hWIKI> wikis;  // reserved for hybrid llm training
+        fish = Fish::MakeInstance("Bubble_", params, wikis, Fish::ROLE_TYPE::COMMON, 0x110);
+        if (fish == nullptr) {
+            _ERROR("[APP] %s is nullptr!!!", name.c_str());
+            return KOIFISH_NULL_FISH;
+        }
+        Chat(fish, params.model.enable_thinking);
+        return KOIFISH_OK;
+    }
+};
+
 int main(int argc, char* argv[]) {
-    try {
+    BubbleApp app(argc, argv);
+    int iRet = app.Run();
+    return iRet;
+
+    /*try {
         assert(argc >= 2);
         std::string arg_prefix = "--", exec_name = EXE_name(), jsPath = "", eval_metric = "";
         CLI_params config;
@@ -257,6 +298,5 @@ int main(int argc, char* argv[]) {
         _INFO("\r\n%s  Unknown exception !!!", __func__);
         fflush(stdout);
         return -2001;
-    }
+    }*/
 }
-

@@ -16,6 +16,89 @@
 #include "../g_float.hpp"
 #include "utils.cuh"
 
+template <typename T>
+__device__ inline float CU_T2Float(const T* a0) {
+    float a = float(*a0);
+    return a;
+}
+template <>
+__device__ inline float CU_T2Float<__nv_bfloat16>(const __nv_bfloat16* x) {
+    return __bfloat162float(*x);
+}
+
+//	Frome smart code of CALM
+template <>
+__device__ inline float CU_T2Float<__nv_fp8_e5m2>(const __nv_fp8_e5m2* x) {
+    // For Hopper (SM 90+) and later architectures:
+    //   asm("cvt.f32.f8.e5m2 %0, %1;" : "=f"(f) : "h"(x));
+    // For (SM 80/86 ...)  without native FP8 support:
+    union {
+        unsigned short u;
+        half f;  //   IEEE 754-2008 binary16 (1 sign bit, 5 exponent bits, 10 mantissa bits).
+    } u;
+    u.u     = (*(unsigned char*)(x)) << 8;
+    float a = u.f;
+    return a;
+}
+template <>
+__device__ inline float CU_T2Float<f8e5>(const f8e5* x) {
+    return CU_T2Float<__nv_fp8_e5m2>((const __nv_fp8_e5m2*)x);
+}
+
+template <typename T>
+__device__ __forceinline__ T CU_Float2T(const float& a0, unsigned int seed) {
+    T a = a0;
+    return a;
+}
+
+template <>
+__device__ __forceinline__ __nv_fp8_e5m2 CU_Float2T<__nv_fp8_e5m2>(const float& a0, unsigned int seed) {
+    __nv_fp8_e5m2 a = __nv_fp8_e5m2(a0);
+    return a;
+}
+
+template <>
+__device__ __forceinline__ __nv_bfloat16 CU_Float2T<__nv_bfloat16>(const float& a0, unsigned int seed) {
+    // todo - is this stochastic rounding *too good*? can we cut any corners?
+    // makes sure each thread gets a different random number
+    unsigned int random       = Get2dNoiseUint(threadIdx.x, blockIdx.x * blockDim.x + blockIdx.y, seed);
+    unsigned int threshold    = random & 0xFFFF;
+    unsigned int float_bits   = __float_as_uint(a0);
+    unsigned int rounded_bits = float_bits & 0x0000FFFF;
+    float_bits                = (rounded_bits > threshold) ? (float_bits | 0xFFFF) : (float_bits & ~0xFFFF);
+    __nv_bfloat16 out         = __float2bfloat16_rn(__uint_as_float(float_bits));
+    return out;
+}
+
+template <typename T>
+__device__ __forceinline__ T CU_16BF2T(const bf16* a0, unsigned int seed = 42) {
+    T a = (T)(*a0);
+    return a;
+}
+
+template <>
+__device__ __forceinline__ f8e5 CU_16BF2T<f8e5>(const bf16* a0, unsigned int seed) {
+    /*    unsigned int random       = Get2dNoiseUint(threadIdx.x, blockIdx.x * blockDim.x + blockIdx.y, seed);
+        unsigned int threshold    = random & 0xFFFF;
+        unsigned int float_bits   = __float_as_uint(a0);
+        unsigned int rounded_bits = float_bits & 0x0000FFFF;
+        float_bits                = (rounded_bits > threshold) ? (float_bits | 0xFFFF) : (float_bits & ~0xFFFF);
+        __nv_bfloat16 out         = __float2bfloat16_rn(__uint_as_float(float_bits));*/
+    __half val = __half(*a0);  //__gcc_fp16 & half are bit-identical according to the IEEE 754 binary16 Specification
+    f8e5* out  = (f8e5*)(&val);
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+
+#else
+    out = out + sizeof(f8e5);
+#endif
+    return *out;
+}
+template <>
+__device__ __forceinline__ __nv_fp8_e5m2 CU_16BF2T<__nv_fp8_e5m2>(const bf16* a0, unsigned int seed) {
+    assert(0 && "Not implemented yet");
+    return __nv_fp8_e5m2(0.0f);
+}
+
 #if defined(__CUDACC__)
 #define ALIGN(n) __align__(n)
 #else
@@ -206,6 +289,13 @@ constexpr __host__ __device__ std::size_t alignment_from_size(std::size_t size) 
     }
     return 16;
 }
+
+extern int PackedN_bug;
+struct PackedN_config {
+    unsigned int seed = 42;
+    // int use_f2t       = 0;
+};
+
 /*
     Packed data structure that forces the compiler to use 128-bit loads/stores
     in GPUs that support (the LDG.128 and STS.128 instructions)
@@ -214,7 +304,10 @@ constexpr __host__ __device__ std::size_t alignment_from_size(std::size_t size) 
 template <class T, std::size_t ElemCount>
 class alignas(alignment_from_size(sizeof(T) * ElemCount)) PackedN {
     static_assert(std::is_trivial_v<T>, "Only trivial types are supported");
+
     T values[ElemCount] = {};
+    using f256          = PackedN<float, ElemCount>;
+    // using F2T = CU_Float2T<T>(*)(float, unsigned int);
     //  [lesson]  Default member initializers (like = nullptr) inside a class definition are not allowed in CUDA device code — especially when the class is used
     //  in __device__or __global__functions. T* data_src;          = nullptr;
 
@@ -235,16 +328,18 @@ class alignas(alignment_from_size(sizeof(T) * ElemCount)) PackedN {
     }
 
     __host__ __device__ explicit PackedN(const T* src, int flag = 0x0) {
-        memcpy_aligned<size, TransferMode::DEFAULT>(values, src);
+        memcpy_aligned<size, TransferMode::DEFAULT>(values, src);        
         // memcpy(&values, &bits, sizeof(bits));
     }
 
-    //  stochastic rounding
-    __host__ __device__ void Randf(int seed, int flag = 0x0) {
+    __host__ __device__ explicit PackedN(const PackedN_config& config, const f256& src, int flag = 0x0) {
         for (int k = 0; k < size; ++k) {
-            values[k] = CU_Float2T<T>(values[k], seed);
+            values[k] = CU_Float2T<T>(src[k], config.seed);  // a;
         }
     }
+
+    //  stochastic rounding
+    __host__ __device__ void Randf(int seed, int flag = 0x0) { assert(0 && "Not implemented yet"); }
 
     // Accumulated x2 to sum, sum is not initialized!, the caller should initialize sum to 0 before the first call!
     __host__ __device__ float X2(float& sum) const {
@@ -282,34 +377,38 @@ class alignas(alignment_from_size(sizeof(T) * ElemCount)) PackedN {
         }
     }
 
-    __host__ __device__ void Scale(const T& s) {
+    __host__ __device__ void Scale(const float& s) {
         for (int k = 0; k < size; ++k) {
-            values[k] *= s;
+            float a   = CU_T2Float(values + k);
+            values[k] = CU_Float2T<T>(a * s, 42);  //  values[k] * s;
         }
     }
 
-    __host__ __device__ void Hadamard(const T& s, const PackedN& w4) {
+    __host__ __device__ void Hadamard(const PackedN_config& config, const T& s0, const PackedN& w4) {
+        float s = CU_T2Float(&s0);
         for (int k = 0; k < size; ++k) {
-            values[k] = values[k] * s * w4.values[k];
+            float a = CU_T2Float(values + k), b = CU_T2Float(w4.values + k);
+            float res = a * s * b;
+            values[k] = CU_Float2T<T>(res, config.seed);  //  values[k] * s * w4.values[k];
         }
     }
 
     // Linear exploration a + s * (b - a);  internal is float computation for better precision, and the result is cast back to T.
-    __host__ __device__ void Lerp(const T* src1, const T* src2, float s) {
+    __host__ __device__ void Lerp(const PackedN_config& config, const T* src1, const T* src2, float s) {
         const auto a_1 = load(src1);
         const auto a_2 = load(src2);
         for (int k = 0; k < size; k++) {
             //  fmaf(t, b, fmaf(-t, a, a));
             float a = CU_T2Float(a_1.values + k), b = CU_T2Float(a_2.values + k);
-            values[k] = a + s * (b - a);
+            values[k] = CU_Float2T<T>(a + s * (b - a), config.seed);
         }
     }
-    __host__ __device__ void Lerp(const T* src1, float s) {
+    __host__ __device__ void Lerp(const PackedN_config& config, const T* src1, float s) {
         const auto a_1 = load(src1);
         for (int k = 0; k < size; k++) {
             //  fmaf(t, b, fmaf(-t, a, a));
             float a = CU_T2Float(a_1.values + k), b = CU_T2Float(values + k);
-            values[k] = a + s * (b - a);
+            values[k] = CU_Float2T<T>(a + s * (b - a), config.seed);
         }
     }
 
@@ -319,22 +418,24 @@ class alignas(alignment_from_size(sizeof(T) * ElemCount)) PackedN {
             values[k] += a4.values[k];
         }
     }
-    __host__ __device__ void Add2(const T* src1, const T* src2) {
+    __host__ __device__ void Add2(const PackedN_config& config, const T* src1, const T* src2) {
         const auto a_1 = load(src1);
         const auto a_2 = load(src2);
         for (int k = 0; k < size; k++) {
-            values[k] += a_1.values[k] + a_2.values[k];
+            float a = CU_T2Float(a_1.values + k), b = CU_T2Float(a_2.values + k), c = CU_T2Float(values + k);
+            values[k] = CU_Float2T<T>(a + b + c, config.seed);  // a_1.values[k] + a_2.values[k];
         }
     }
 
     // stochastic rounding
-    __host__ __device__ void Add2(float s1, const T* src1, float s2, const T* src2, int seed = 0) {
+    __host__ __device__ void Add2(const PackedN_config& config, float s1, const T* src1, float s2, const T* src2) {
         const auto a_1 = load(src1);
         const auto a_2 = load(src2);
         for (int k = 0; k < size; k++) {
             float a = CU_T2Float(a_1.values + k), b = CU_T2Float(a_2.values + k);
             float sum = s1 * a + s2 * b;
-            values[k] = CU_Float2T<T>(sum, seed);
+            values[k] = CU_Float2T<T>(sum, config.seed);
+            //  CU_Float2T<T>(sum, seed);
         }
     }
     __host__ __device__ void AddTo(T* dst) {
@@ -395,6 +496,16 @@ class alignas(alignment_from_size(sizeof(T) * ElemCount)) PackedN {
         static_assert(sizeof(bits) == sizeof(values), "Size mismatch.");
         memcpy(&bits, &values, sizeof(bits));
         return bits;
+    }
+
+    static __host__ __device__ f256 load2F(const PackedN_config& config, const T* address) {
+        PackedN result = load(address);
+        f256 f;
+        for (int i = 0; i < size; ++i) {
+            float a = CU_T2Float(result.values + i);
+            f[i]    = a;    //CU_Float2T<T>(a, config.seed);
+        }
+        return f;
     }
 
     static __host__ __device__ PackedN load(const T* address) {
@@ -480,6 +591,7 @@ struct TASKA_1p1 {
     int nTask = 0, N = 0;
     int block3 = 0, tpb = 512;  //  tpb is the number of threads in one block
     int grid3 = 0, nBlock = 0;  // grid3=(nBlock, 1, 1), nBlock is the total number of blocks
+    PackedN_config config;
 
     TASKA_1p1(int N_, cudaStream_t stream_, int flag = 0x0) : nTask(1), N(N_), stream(stream_) {
         if (N % typ128::size != 0)
@@ -733,10 +845,9 @@ __global__ void CU_add3(TASKA_1p1<Typ> taska, Typ* out_, const Typ* inp1, const 
     if (idx >= taska.N)
         return;
     typ128 out;
-    out.Add2(inp1 + idx, inp2 + idx);
+    out.Add2(taska.config, inp1 + idx, inp2 + idx);
     out.store(out_ + idx);
 }
-
 
 /*
     Performs a deterministic x2
@@ -763,3 +874,7 @@ __global__ static void CU_x2_atomic(Tout* out, const T* x0, size_t N) {
         atomicAdd(out, (Tout)block_sum);
     }
 }
+
+template <typename T, std::size_t ElemCount=128>
+class PackedGroup : public PackedN<T, ElemCount> {
+};

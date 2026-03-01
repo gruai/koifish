@@ -156,9 +156,16 @@ class GeNeuron {
 
     CLI_params& Config() const;
     //  Gensors with physical memory
-    virtual std::vector<hGensor> PhysicalGensors(bool isNoRef = true, int flag = 0x0) { return {}; }
+    // virtual std::vector<hGensor> PhysicalGensors(bool isNoRef = true, int flag = 0x0) { return {}; }
+    enum PICK_GENSOR_MODE {
+        PICK_PHYSICAL=0x100,    //Gensors with physical memory
+        PICK_LORA=0x200,
+        PICK_Q=0x400,   //w->qZero/qScale
+
+        PICK_SUBNN = 0x1000,    //SubNeurons
+    };
     // Pick gensors(child,partial,vitual,ref,lora,...)
-    virtual std::vector<hGensor> PickGensors(bool isLORA = true, int flag = 0x0);
+    virtual std::vector<hGensor> PickGensors(int flag = PICK_LORA | PICK_SUBNN) const; //bool isLORA = true, 
     virtual int nBatchToken(int flag = 0x0);
     virtual Fish* GetFish() const {
         assert(hFish != nullptr);
@@ -212,7 +219,7 @@ class GeNeuron {
     virtual bool isGang() { return false; }
 
     virtual void SetRefer(const GeNeuron* src, bool isBias = false, int flag = 0x0);
-    virtual std::vector<GeNeuron*> SubNeurons(int flag = 0x0) { return {}; }
+    virtual std::vector<GeNeuron*> SubNeurons(int flag = 0x0)   { return {}; }
     virtual bool OnData(hGTensor X, hGTensor Y, int* hot, int flag = 0x0) { return false; }
     virtual bool Sparsing(int flag = 0x0) { return false; }
     friend class Fish;
@@ -404,6 +411,7 @@ struct SLP : public SparseNeuron {
 
     virtual bool PrepareMemory(bool isBack = true, int flag = 0x0);
     int FUSE_cuda_block(hGTensor rhs, hGTensor lhs, hGTensor gelu = nullptr, bool isForw = true, int flag = 0x0);
+
 };
 
 /*
@@ -645,6 +653,8 @@ class VarCoder : public SparseNeuron {
     friend class TokenEmbed;
     friend class MAEC;
     friend class OutCLS;
+    template <typename T, typename KVT, typename Tw>
+    friend struct KERNEL_PIPE;
 };
 typedef shared_ptr<VarCoder> hVarCoder;
 

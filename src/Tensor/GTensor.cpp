@@ -15,7 +15,7 @@
 #include "../Manifold/Fish.hpp"
 #include "GeQuant.hpp"
 
-GTensor* GTensor::tZ = nullptr;
+GTensor* GTensor::tZ      = nullptr;
 float* GTensor::stat_info = nullptr;
 void *GTensor::buff = nullptr, *GTensor::host_buff = nullptr, *GTensor::cudnn_workspace = nullptr;
 size_t GTensor::buff_len = 0, GTensor::cudnn_workspace_size = 0;
@@ -59,6 +59,25 @@ bool GTensor::isWMAT(int flag) const {
         return false;
     assert(ne[0] > 1 && ne[1] > 1 && ne[2] == 1 && ne[3] == 1);
     return true;
+}
+
+//  "./checkpoints/._koifish_state_.ckp" @K_SafeTensors::Register ckp.type == CheckPoint_Params::STATE
+size_t GTensor::nByte_CKP(const CheckPoint_Params& ckp, int flag) const {
+    size_t sz = nByte();
+    assert(sz > 0);
+
+    string opt = hFish->config.common.method;
+    if (hFish->isTrain() && ckp.type == CheckPoint_Params::STATE) {
+        if (opt == "muon") {
+            if (hFish->config.common.muon.isAdamW((void*)this))
+                sz *= 3;
+            else
+                sz *= 2;  // only gm
+        } else
+            sz *= 3;  // gm+gv
+    }
+
+    return sz;
 }
 
 bool GTensor::isSameShape(SHAPE sp, int flag) const {
@@ -251,11 +270,11 @@ GTensor::~GTensor() {
     }
     if (BIT_TEST(flags, F_MMAP)) {
     } else {
-        if(BIT_TEST(flags,F_GPU)){
-            /* No need to free host_data, since 
+        if (BIT_TEST(flags, F_GPU)) {
+            /* No need to free host_data, since
             1. host_data is just ref of MMF "host = src" @GTensor::SerialJSON
             */
-        }else
+        } else
             FREE_a(host_data);
     }
 }
@@ -265,9 +284,7 @@ bool GTensor::isAtHost() const {
     bool isHost = BIT_TEST(flags, F_HOSTALLOC) || BIT_TEST(flags, F_MMAP);
     return isHost;
 }
-// void GTensor::AddSrc(const hGOP t,int type,int flag)           {
-//    assert(t!=nullptr); src.push_back(t);
-// }
+
 void GTensor::AddSrc(const vector<hGTensor>& ts, int flag) {
     for (auto t : ts) {
         if (t == nullptr)
@@ -360,34 +377,22 @@ hGensor GENSOR_TOPU::Get(MODEL_ARCH arch, const string& name, int flag) {
             for (auto ng : nag) {
                 _INFO("\t%s\n", ng.first.c_str());
             }
-            _ERROR("Failed to get tensor=%s nGensor=%d\n", name.c_str(), nag.size());
+            _ERROR("Failed to get tensor=%s nGensor=%d", name.c_str(), nag.size());
             return nullptr;
         }
         return nag[key];
     }  //  model.layers.0.input_layernorm.weight
 }
 void ToChebyshev(int N, float* rows, int flag = 0x0);
-/*
-    parse_tensor
-    device_to_file   using double buffering running on the given stream.
-*/
-int GTensor::SerialJSON(const std::string& name_, const JSON& val, void* bytes_ptr, size_t bytes_size, int flag) {
-    if (G_Has_(name, {"model.embed_tokens.weight"})) {  //  "tokenizer.tokens"    "model.embed_tokens.weight"
-        DEBUG_HERE;
+
+SHAPE JSON2SHAPE(const JSON& jval) {
+    SHAPE spJ;
+    if (jval.at("shape").size() > 4) {
+        _ERROR("JSON2SHAPE: shape exceeds 4 dimensions");
     }
-    if (strcmp(name, name_.c_str()) != 0) {
-        strcpy(name, name_.c_str());
-    }
-    std::string dtype_str = val.value("dtype", "");
-    typNUMBER tpMMP       = tpNumOf(dtype_str);
-    if (tpMMP == typNUMBER::I32 && hQuant != nullptr) {
-        tpMMP = hQuant->bit2typ();
-    }
-    SHAPE spJ;  // JSON2SHAPE()
-    size_t numel = 1;
-    if (val.at("shape").size() > 4) {
-        std::cerr << "shape exceeds 4 dimensions" << std::endl;
-    }
+    spJ          = jKV_arr(jval, {"shape"}, spJ);
+    size_t numel = SHAPE2NZ(spJ);
+    /*
     for (size_t i = 0; i < val.at("shape").size() && i < 4; i++) {
         if (val.at("shape")[i].get<int>() != val.at("shape")[i]) {
             std::cerr << "bad shape" << std::endl;
@@ -396,28 +401,50 @@ int GTensor::SerialJSON(const std::string& name_, const JSON& val, void* bytes_p
         int n = val.at("shape")[i].get<int>();
         spJ.push_back(n);  // shape[i] =
         numel *= spJ[i];
+    }*/
+    return spJ;
+}
+
+/*
+    parse_tensor
+    device_to_file   using double buffering running on the given stream.
+*/
+int GTensor::SerialJSON(const std::string& name_, const JSON& jval, void* bytes_ptr, size_t bytes_size, int flag) {
+    if (G_Has_(name,
+               {"model.layers.0.input_layernorm.weight"})) {  //  "tokenizer.tokens" model.layers.0.mlp.down_proj.qweight   "model.embed_tokens.weight" t->name,
+        DEBUG_HERE;
     }
-    assert(shape == spJ);
-    // ReShape(spJ, tpMMP);
-    if (SHAPE2NZ(shape) != SHAPE2NZ(spJ)) {  // quant
-        // assert(hQuant!=nullptr);
+    if (strcmp(name, name_.c_str()) != 0) {
+        strcpy(name, name_.c_str());
     }
+    SHAPE spJ             = JSON2SHAPE(jval);
+    std::string dtype_str = jval.value("dtype", "");
+    typNUMBER tpMMP       = tpNumOf(dtype_str);
+    if (tpMMP == typNUMBER::I32 && hQuant != nullptr) {
+        tpMMP        = hQuant->bit2typ();
+        size_t nByte = K_FLOATS[tpMMP].nByte(SHAPE2NZ(shape));
+        assert(nByte == SHAPE2NZ(spJ) * 4 && name);
+    } else {
+        if (hQuant != nullptr) {  // *.scales F16
+            DEBUG_HERE;
+        } else
+            assert(shape == spJ && name);
+    }
+
     ReShape(shape, tpMMP);
 
-    if (val.at("data_offsets").size() != 2) {
+    if (jval.at("data_offsets").size() != 2) {
         return -3;
     }
-    size_t offset_start = static_cast<size_t>(val.at("data_offsets")[0]);  // 1544148992
-    size_t offset_end   = static_cast<size_t>(val.at("data_offsets")[1]);  // 1545276932
+    size_t offset_start = static_cast<size_t>(jval.at("data_offsets")[0]);  // 1544148992
+    size_t offset_end   = static_cast<size_t>(jval.at("data_offsets")[1]);  // 1545276932
     if (offset_start < 0 || offset_end <= offset_start || offset_end > bytes_size) {
-        std::cerr << "bad offsets" << std::endl;
+        _ERROR("bad offsets");
         return -1;
     }
     size_t szSrc = offset_end - offset_start;
-    // validate the shape matches the size
-    if (szData != szSrc && szData * 3 != szSrc) {
+    if (szData > szSrc || szSrc % szData != 0) {
         _WARN("GTensor::SerialJSON failed! size mismach[%ld!=%ld] @%s", szData * 3, szSrc, name);
-        // std::cerr << "bad size" << std::endl;
         return -1;
     }
 
@@ -448,7 +475,8 @@ int GTensor::SerialJSON(const std::string& name_, const JSON& val, void* bytes_p
                 Serial_Quant_MMAP(false, false);
                 host_data = nullptr;  // mmap file would release
             } else {
-                G_NORM_STAT<bf16>(size(), (bf16*)src, disq.sum_2, disq.sum_1, disq.nrm_1);
+                if (type == typNUMBER::BF16)
+                    G_NORM_STAT<bf16>(size(), (bf16*)src, disq.sum_2, disq.sum_1, disq.nrm_1);
             }
             // if (G_Has_(name, hFish->config.quant.filter_WeightF8Ex)) {  // model.embed_tokens.weight    only for debug
             //     ToF8Ex(0x0);
@@ -457,7 +485,46 @@ int GTensor::SerialJSON(const std::string& name_, const JSON& val, void* bytes_p
     }
     if (strlen(name) > 0 && flag > 0)
         DumpX(0);
+    if (G_Has_(name, {"model.layers.0.input_layernorm.weight"})) {
+        // Print(name,0,-1);
+    }
     return 0;
+}
+
+// return scaling/LUT of quant weight
+floatGama* GTensor::gama_T(GAMA_TYPE type, int row) const {
+    if (hRef != nullptr)
+        return hRef->gama_T();
+    assert(data != nullptr);
+    if (hQuant != nullptr) {
+        // if (qScale != nullptr) {
+        //     assert(hQuant->params.type == RTN_ZS);
+        //     return nullptr;
+        // }
+        if (szGama == 0) {
+            assert(hQuant->params.type == RTN_ZS);
+            return nullptr;
+        }
+    }
+    floatGama* gama_0 = reinterpret_cast<floatGama*>((hBITARR)data + szData);
+    int nRow = ne[0], nCol = ne[1];
+    switch (type) {
+        case R_SCALE:
+            return gama_0;
+        case C_SCALE:
+            return gama_0 + nRow;
+        case ZERO:
+            return gama_0 + nRow + nCol;
+        case STEP:
+            return gama_0 + nRow + nCol + nRow;
+        case LUT:
+            return gama_0 + nRow + nCol;
+        default:
+            assert(0);
+            break;
+    }
+
+    return gama_0;
 }
 
 void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
@@ -493,22 +560,27 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
         sp[2] = 1;
         sp[3] = 1;
     }
-    floatGama *rNormal = (floatGama*)((char*)data + szData), *cNormal = rNormal + shape[0];
-    floatGama* gamaQ = cNormal + shape[1];
+
+    // floatGama *rNormal = (floatGama*)((char*)data + szData), *cNormal = rNormal + shape[0];
+    // floatGama* gamaQ   = cNormal + shape[1];
+    floatGama *rNormal = gama_T(R_SCALE), *cNormal = gama_T(C_SCALE), *gamaQ = gama_T(LUT);
     switch (type) {
         case typNUMBER::T_BINARY:
         case typNUMBER::T_BINARY_3:
         case typNUMBER::T_BINARY_TILE:
             assert(0);
             break;
-        case typNUMBER::Q4:
-            PrintQ4("_Q4", (hBITARR)src, ne[0], ne[1], ne[2], ne[3], flag);
+        case typNUMBER::Q4: {
+            // floatX* wX = GetDataX();
+            // PrintTensor<floatX>(title.c_str(), wX, true, sp[0], sp[1], sp[2], sp[3], flag);
+            PrintQ4(szGama == 0 ? name : "_Q4", (int32_t*)src, ne[0], ne[1], ne[2], ne[3], flag | FLOAT_META::ENDIAN_LITTLE);
             if (disq.rc_normal > 0) {
-                PrintTensor<floatGama>("_rNormal", rNormal, true, ne[0], 1, 1, 1, flag);
-                PrintTensor<floatGama>("_cNormal", cNormal, true, ne[1], 1, 1, 1, flag);
+                PrintTensor<floatGama>("\t_rNormal", rNormal, true, ne[0], 1, 1, 1, flag);
+                PrintTensor<floatGama>("\t_cNormal", cNormal, true, ne[1], 1, 1, 1, flag);
             }
-            PrintTensor<floatGama>("_gamaQ", gamaQ, true, ne[0], 2, 1, 1, flag);
-            break;
+            if (gamaQ != nullptr)
+                PrintTensor<floatGama>("\t_gamaQ", gamaQ, true, ne[0], 2, 1, 1, flag);
+        } break;
         case typNUMBER::Q3:
             // PrintQ4("_Q3", (hBITARR)src, ne[0], ne[1], ne[2], ne[3], flag);
             if (disq.rc_normal > 0) {
@@ -596,7 +668,7 @@ bool GTensor::DumpX(int tpDump, const string& title, int flag) const {
             if (szUse == 0x0) {
                 _INFO("\t%s %-36s %-4s", title.c_str(), name, A);
                 _WARN0(" NO ALLOC ");
-                _INFO(" \t[%" PRId64 " %" PRId64 " %" PRId64 " %" PRId64 " %s] \n", ne[0], ne[1], ne[2], ne[3], cNameOf(type));
+                _INFO(" \t[%" PRId64 " %" PRId64 " %" PRId64 " %" PRId64 " %s] ", ne[0], ne[1], ne[2], ne[3], cNameOf(type));
             } else
                 _INFO("\t%s %-36s %-4s szAlloc=%6gM\t[%" PRId64 " %" PRId64 " %" PRId64 " %" PRId64 " %s] ", title.c_str(), name, A, szUse / 1.0e6, ne[0],
                       ne[1], ne[2], ne[3], cNameOf(type));
@@ -666,32 +738,6 @@ bool GTensor::isUpdateParam(int iter, int flag) const {
     return true;
 }*/
 
-// return scaling/LUT of quant weight
-floatGama* GTensor::gama_T(GAMA_TYPE type, int row) {
-    if (hRef != nullptr)
-        return hRef->gama_T();
-    assert(data != nullptr);
-    floatGama* gama_0 = reinterpret_cast<floatGama*>((hBITARR)data + szData);
-    int nRow = ne[0], nCol = ne[1];
-    switch (type) {
-        case R_SCALE:
-            return gama_0;
-        case C_SCALE:
-            return gama_0 + nRow;
-        case ZERO:
-            return gama_0 + nRow + nCol;
-        case STEP:
-            return gama_0 + nRow + nCol + nRow;
-        case LUT:
-            return gama_0 + nRow + nCol;
-        default:
-            assert(0);
-            break;
-    }
-
-    return gama_0;
-}
-
 bool huTensor::BeforeBackward(size_t& off, int flag) {
     off = 0x0;
     if (hRef != nullptr)
@@ -722,8 +768,8 @@ bool huTensor::BeforeBackward(size_t& off, int flag) {
  */
 bool huTensor::Alloc(int iter, int flagInit) {
     assert(strlen(name) > 0);
-    if (G_Has_(name, {"model.out.cls"})) {  // model.layers.0.mlp.down_proj.weight
-        DEBUG_HERE;                                             //
+    if (G_Has_(name, {"model.layers.0.self_attn.q_proj.qweight"})) {  // model.layers.0.mlp.down_proj.weight qzeros scales
+        DEBUG_HERE;                                                   //
     }
     size_t sz0 = szGlobalMaloc;
     if (BIT_TEST(flags, F_NOALLOC))  // For example: operator fusing, memory reuse,rematerialization
@@ -760,19 +806,19 @@ bool huTensor::Alloc(int iter, int flagInit) {
             szV = szM;
         } else if (type == typNUMBER::Q4 || type == typNUMBER::Q3 || type == typNUMBER::Q2) {
             int bits = BitPE(type), nQuant = 1 << bits;
-            szGama = sizeof(floatGama) * (shape[0] * nQuant + shape[0] + shape[1]);  // 36/1024=0.035
-            szM = 0, szV = 0;                                                        // only used at infer stage
+            if (qScale == nullptr)
+                szGama = sizeof(floatGama) * (shape[0] * nQuant + shape[0] + shape[1]);  // 36/1024=0.035
+            if (!isTrain) {
+                szM = 0, szV = 0;
+            }  // only used at infer stage
         } else if (BIT_TEST(flags, F_TERNARY)) {
             szGama = sizeof(floatGama) * ne[0];
             // Alloc_1((void **)(&gama_T), false, sizeof(float) * ne[0]);
         }
         string suffix = isParam() ? ".w" : ".a";  //  weight or activation
         Alloc_1(&data, true, desc + suffix, szData + szGama);
-        if (hQuant != nullptr) {
-            // SHAPE spQ, spS;
-            // qScale = this->Partial(".qzeros", szData, spQ);
-            // qZero  = this->Partial(".qzeros", szData + qScale->nByte(), spS);
-        }
+        // if(hQuant!=nullptr)
+        //     hQuant->ExTensor(this);
 
         raw_data = data;
     }
@@ -798,13 +844,11 @@ bool huTensor::Alloc(int iter, int flagInit) {
                 if (hFish->config.common.muon.isAdamW(this)) {
                     Alloc_1(&gm, true, desc + ".m", szM + szV), gv = (char*)gm + szM;
                 } else {
+                    assert(szM > 0 && "The size of gm should > 0");
                     Alloc_1(&gm, true, desc + ".m", szM), szV = 0;
                 }
                 // Alloc_1(&gm, true, desc+".m", szMV);
             } else if (method == "adams") {  // why converge so slow for 1445M?
-                                             /*if(isStrMatch(name, {"embd","output","norm"})){
-                                                 Alloc_1(&gm, true, desc+".m", szMV * 2), gv = (char *)gm + szMV;
-                                             }else*/
                 Alloc_1(&gm, true, desc + ".m", szM), szV = 0;
             } else {
                 Alloc_1(&gv, true, desc + ".m", szM), szV = 0;
@@ -814,6 +858,7 @@ bool huTensor::Alloc(int iter, int flagInit) {
             szV = 0, szGrad = 0, szM = 0;
         }
     } else {
+        szM = 0, szV = 0;
     }
     szUse = szGlobalMaloc - sz0;
     // assert(szGlobalMaloc - sz0 <= mostMemory());

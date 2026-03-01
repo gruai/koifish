@@ -18,7 +18,6 @@
 
 #define NOMINMAX
 
-// #undef ENABLE_CUDNN
 #ifdef ENABLE_CUDNN
 #include "cudnn_frontend.h"
 namespace fe = cudnn_frontend;
@@ -216,7 +215,7 @@ size_t cudnn_qkv_forw(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn, i
 #if defined(USE_BF16_BASELINE) || defined(USE_FP16_BASELINE)
     graph->set_io_data_type(fe::DataType_t::BFLOAT16).set_intermediate_data_type(fe::DataType_t::FLOAT).set_compute_data_type(fe::DataType_t::FLOAT);
 #else
-    assert(0);
+    graph->set_io_data_type(fe::DataType_t::FP8_E5M2).set_intermediate_data_type(fe::DataType_t::FLOAT).set_compute_data_type(fe::DataType_t::FLOAT);
 #endif
 
     // QKV is (B, T, 3, NH, HS) which cuDNN can handle directly without an external permute
@@ -545,6 +544,10 @@ void SYNC_STREAM(int flag) {
 }
 
 hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
+#ifdef USE_FP8_BASELINE
+    assert(0 && "FP8 baseline is not implemented yet");
+    return nullptr;
+#else
     assert(hCache != nullptr && isSeparateQKV);
     hBATCH hBatch = hFish->GetCurBatch(true);
     int pos       = hBatch->tok_pos;
@@ -553,8 +556,8 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
     // // hCache:   (layer, seq_len, kv_dim)
     floatX *key_cache = (floatX*)hCache->Get(KVCache::KV_KEY, layid - 1, 0), *val_cache = (floatX*)hCache->Get(KVCache::KV_VAL, layid - 1, 0);
     // K.out->data = key_cache + (size_t)pos * kv_dim, V.out->data = val_cache + (size_t)pos * kv_dim;
-    hGensor tmpQKV = gBUFF->tmpFF1;  
-    floatX* qkvr = ToX(tmpQKV);  // Q.out/K.out/V.out
+    hGensor tmpQKV = gBUFF->tmpFF1;
+    floatX* qkvr   = ToX(tmpQKV);  // Q.out/K.out/V.out
     int nToken = nBatchToken(), seq_len = hFish->config.n_ctx(), nEmbed = hFish->config.nEmbed();
     inp = OnInput(inpL);  //  may remater by hIn->SerialData
     inp->Print("inp", 0x0, dump_flag);
@@ -567,7 +570,9 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
         // norm.mean->Print("qkvn.mean",0x0,dump_flag);       norm.rstd->Print("qkvn.rstd",0x0,dump_flag);
     }
     if (isSeparateQKV) {
-        Q.Forw(Q.out, inpQ), K.Forw(K.out, inpQ), V.Forw(V.out, inpQ);
+        Q.Forw(Q.out, inpQ);
+        K.Forw(K.out, inpQ);
+        V.Forw(V.out, inpQ);
     } else {
         Q.Forw(tmpQKV, inpQ);
         // Q.w->Print("Q.w",0x0,dump_flag);     Q.b->Print("Q.b",0x0,dump_flag);
@@ -594,11 +599,11 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
         attention_v_kernel<<<n_head, head_dim>>>(ToX(Q.out), ToX(attn), val_cache, pos, seq_len, n_head, n_head_kv, head_dim);
         Q.out->Print("att_out", 0x0, dump_flag, nToken * q_dim);
     } else {
-        FUSE_cudnn(nullptr, nullptr, flag);
+        // FUSE_cudnn(nullptr, nullptr, flag);
         attn->Print("l_atty", 0x0, dump_flag);
     }
     if (0)  // ShareLayerOut: inpL/out is same data
-        ;//CU_mv_(ToX(inpL), ToX(proj_cat.w), ToX(Q.out), C, q_dim, 1.0f, 1.0f);
+        ;   // CU_mv_(ToX(inpL), ToX(proj_cat.w), ToX(Q.out), C, q_dim, 1.0f, 1.0f);
     else {  //       From cuFlow
         proj_cat.Forw(gBUFF->scratch, Q.out);
         gBUFF->scratch->Print("proj_cat", 0x0, dump_flag, nToken * nEmbed);
@@ -619,6 +624,7 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
     }
     out->Print("qkv.out", 0x0, 0);
     return out;
+#endif
 };
 
 /*
@@ -627,9 +633,9 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
 */
 hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
     // NVTX_RANGE_FN();
-    hGensor tmpQKV = gBUFF->tmpFF1;  
-    floatX* qkvr = ToX(tmpQKV);  // Q.out/K.out/V.out
-    int nEmbed = hFish->config.nEmbed();
+    hGensor tmpQKV = gBUFF->tmpFF1;
+    floatX* qkvr   = ToX(tmpQKV);  // Q.out/K.out/V.out
+    int nEmbed     = hFish->config.nEmbed();
     // bool isAlternate = true;                   // layer%2==1;layer>1;
     if (isForward()) {  //  data=ToX(QKV->norm.out)
         NvtxRange range(name.c_str(), 0);
@@ -659,7 +665,7 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
 #ifdef ENABLE_CUDNN
         FUSE_cudnn(nullptr, nullptr, flag);
 #else
-        attention_forward(ToX(attn), qkvr, ToX(transition), ToX(QKV), B, T, C, NH, main_stream);  //  l_atty, l_qkvr, l_att, scratch
+        ;  // attention_forward(ToX(attn), qkvr, ToX(transition), ToX(QKV), B, T, C, NH, main_stream);  //  l_atty, l_qkvr, l_att, scratch
 #endif
         // GTensor::tZ->Print(GTensor::tZ->name, 0, dump_flag);
 

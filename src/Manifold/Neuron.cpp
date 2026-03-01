@@ -196,7 +196,7 @@ MOE::MOE(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag)
     shape = {(int)(jvals[0]), (int)(jvals[1])};
     assert(shape[0] > 0 && shape[1] > 0);
     isSiLU = true;
-    
+
     //[ctx, E/H, H, n_batch
     // up.Init(hG_,flag);       down.Init(hG_,flag);       relu.Init(hG_,flag);
 }
@@ -257,18 +257,6 @@ OutCLS::OutCLS(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int
     padded_nCls = (hFish->config.model.isPaddedCls) ? ceil(nCls / 128.0) * 128 : nCls;
     // reduce memory & some float error
     dB = hFish->config.model.preLogits_dB;
-
-    /*
-    1. If true, reduces the memory,  often results in better and faster outcomes ???
-    2. According to findings from OLMo the weight tying is beneficial for smaller models like 1B but for larger ones starting from 7B it starts to hurt the
-    performance - instability in loss curves. I don't know why it is not discussed in their paper, but one of the researchers is talking about it in TWIML AI
-    podcast around 16:50: https://youtu.be/mwS9zPCv_dY?t=1010
-    3. output softmax wants embeddings to be very large so their inner products will produce very different values.
-        input embeddings want a much smaller range so they can have stable dynamics throughout training.
-        All the "old" code bases had this scalar (usually sqrt(d)) but the llama arch dropped this when they started untying
-    4. Use Weight Tying Only When the Distributional Hypothesis Holds   ???
-    */
-    // hFish->config.model.isEmbedWeightTying = false;
 
     shape = {nEmbd, padded_nCls};
     rLoss = 1.0f / (B * T);  //* grad_accum_steps
@@ -440,6 +428,9 @@ bool SLP::Build(int flag) {
     string sw = name + MODEL_CARD::sWeight, sb = name + ".bias";
     bool isTrain = hFish->isTrain();
     hFish->InitGensor(ctx, sw.c_str(), w, true);
+    if (G_Has_(w->name, {"model.layers.0.mlp.down_proj.qweight"})) {
+        DEBUG_HERE;
+    }
 
     if (isBias)
         hFish->InitGensor(ctx, sb.c_str(), b, true);
@@ -768,7 +759,7 @@ bool LayerNormal::Build(int flag0) {
         mean = GT(hFish, typNUMBER::F32, {B, T}, flag, name + ".mean");
     }
     nTH  = B * T;
-    ldTH = hFish->config.nEmbed();   //C;
+    ldTH = hFish->config.nEmbed();  // C;
     if (nHead > 0) {
         isOnline = true;
         assert(ldTH % nHead == 0);
@@ -922,7 +913,8 @@ void GeNeuron::OnDebug(const std::string& info, int typ, int flag) {
 void GeNeuron::ExitDebug(const std::string& info, int typ, int flag) { dump_flag = g_dump_level; }
 
 // SelfAttention::_PickGensors
-std::vector<hGensor> GeNeuron::PickGensors(bool isLORA, int flag) {
+std::vector<hGensor> GeNeuron::PickGensors(int flag) const {    
+    bool isLORA = BIT_TEST(flag, PICK_LORA);
     assert(out != nullptr);
     vector tmp = {out};
     for (auto op : out->src) {
@@ -937,19 +929,23 @@ std::vector<hGensor> GeNeuron::PickGensors(bool isLORA, int flag) {
             int debug = 0;
         }
     }
-    for (auto nn : SubNeurons()) {  //  @SetGuoke
-        if (nn->name == "model.blk.0.attn_norm") {
-            int debug = 0;
-        }
-        GPLUS(tmp, nn->PickGensors(isLORA));
-        //  @   hGTensor operator>>(hGTensor t, const SLP &slp)
-        /*if (isLORA) {
-            for (auto lora : nn->wLORAs) {
-                arrT.push_back(lora->a);
-                arrT.push_back(lora->b);
+    if (BIT_TEST(flag, PICK_SUBNN)) {
+        auto& nonConstThis = const_cast<GeNeuron&>(*this);  // dangerous cast
+        for (auto nn : nonConstThis.SubNeurons()) {         //  @SetGuoke
+            if (nn->name == "model.blk.0.attn_norm") {
+                int debug = 0;
             }
-        }*/
+            GPLUS(tmp, nn->PickGensors(flag));
+            //  @   hGTensor operator>>(hGTensor t, const SLP &slp)
+            /*if (isLORA) {
+                for (auto lora : nn->wLORAs) {
+                    arrT.push_back(lora->a);
+                    arrT.push_back(lora->b);
+                }
+            }*/
+        }
     }
+
     std::vector<hGensor> arrT;
     std::map<hGensor, std::string> mapT;
     for (auto t : tmp) {
@@ -1009,11 +1005,11 @@ bool GeNeuron::UpdateShortcut(bool isShort, int flag) {
 // 天地本逆旅, 你我皆过客(Guoke)
 int GeNeuron::SetGuoke(GeNeuron* hGuoke_, bool isX, int flag) {
     size_t szG = 0;
-    std::vector<hGensor> gSrc, arrP = PickGensors(false);
+    std::vector<hGensor> gSrc, arrP = PickGensors(PICK_SUBNN);
     if (hGuoke_ != nullptr) {
         gSrc = hGuoke_->PickGensors();
         if (gSrc.size() != arrP.size()) {
-            arrP = PickGensors(false);  // only for debug
+            arrP = PickGensors(PICK_SUBNN);  // only for debug
             assert(0);
         }
     }
@@ -1137,11 +1133,11 @@ hGTensor operator>>(hGTensor t, const SLP& slp) {
     assert(t != nullptr);
     if (slp.Empty())
         return t;
-    assert(slp.out != nullptr);
-    slp.out->AddSrc({t, slp.w, slp.b});
-    for (auto lora : slp.wLORAs) {
-        slp.out->AddSrc({lora->a, lora->b});
-    }
+    assert(slp.out != nullptr);    
+    slp.out->AddSrc({t});   // no need to add(w,b)! which has called in SLP::Build
+    // for (auto lora : slp.wLORAs) {
+    //     slp.out->AddSrc({lora->a, lora->b});
+    // }
     return slp.out;
 }
 hGTensor operator>>(hGTensor t, const Relu& relu) {

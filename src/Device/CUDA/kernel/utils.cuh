@@ -137,35 +137,6 @@ __device__ inline half fp8_e5m2_ff(uint8_t v) {
     return h;
 }
 
-template <typename T>
-__device__ inline float CU_T2Float(const T* a0) {
-    float a = float(*a0);
-    return a;
-}
-template <>
-__device__ inline float CU_T2Float<__nv_bfloat16>(const __nv_bfloat16* x) {
-    return __bfloat162float(*x);
-}
-
-//	Frome smart code of CALM
-template <>
-__device__ inline float CU_T2Float<__nv_fp8_e5m2>(const __nv_fp8_e5m2* x) {
-    // For Hopper (SM 90+) and later architectures:
-    //   asm("cvt.f32.f8.e5m2 %0, %1;" : "=f"(f) : "h"(x));
-    // For (SM 80/86 ...)  without native FP8 support:
-    union {
-        unsigned short u;
-        half f;  //   IEEE 754-2008 binary16 (1 sign bit, 5 exponent bits, 10 mantissa bits).
-    } u;
-    u.u     = (*(unsigned char*)(x)) << 8;
-    float a = u.f;
-    return a;
-}
-template <>
-__device__ inline float CU_T2Float<f8e5>(const f8e5* x) {
-    return CU_T2Float<__nv_fp8_e5m2>((const __nv_fp8_e5m2*)x);
-}
-
 // ----------------------------------------------------------------------------
 // Copy, cast functions
 
@@ -358,54 +329,7 @@ __device__ __host__ constexpr unsigned int Get2dNoiseUint(int indexX, int indexY
 // stochastic rounding built on top of Squirel Noise above (with seed updated per step via xorshift)
 static bool isRounding = false;  // only for debug
 
-template <typename T>
-__device__ __forceinline__ T CU_Float2T(const float& a0, unsigned int seed) {
-    T a = a0;
-    return a;
-}
 
-template <>
-__device__ __forceinline__ __nv_fp8_e5m2 CU_Float2T<__nv_fp8_e5m2>(const float& a0, unsigned int seed) {
-    __nv_fp8_e5m2 a = __nv_fp8_e5m2(a0);
-    return a;
-}
-
-template <>
-__device__ __forceinline__ __nv_bfloat16 CU_Float2T<__nv_bfloat16>(const float& a0, unsigned int seed) {
-    // todo - is this stochastic rounding *too good*? can we cut any corners?
-    // makes sure each thread gets a different random number
-    unsigned int random       = Get2dNoiseUint(threadIdx.x, blockIdx.x * blockDim.x + blockIdx.y, seed);
-    unsigned int threshold    = random & 0xFFFF;
-    unsigned int float_bits   = __float_as_uint(a0);
-    unsigned int rounded_bits = float_bits & 0x0000FFFF;
-    float_bits                = (rounded_bits > threshold) ? (float_bits | 0xFFFF) : (float_bits & ~0xFFFF);
-    __nv_bfloat16 out         = __float2bfloat16_rn(__uint_as_float(float_bits));
-    return out;
-}
-
-template <typename T>
-__device__ __forceinline__ T CU_16BF2T(const bf16* a0, unsigned int seed = 42) {
-    T a = (T)(*a0);
-    return a;
-}
-
-template <>
-__device__ __forceinline__ f8e5 CU_16BF2T<f8e5>(const bf16* a0, unsigned int seed) {
-    /*    unsigned int random       = Get2dNoiseUint(threadIdx.x, blockIdx.x * blockDim.x + blockIdx.y, seed);
-        unsigned int threshold    = random & 0xFFFF;
-        unsigned int float_bits   = __float_as_uint(a0);
-        unsigned int rounded_bits = float_bits & 0x0000FFFF;
-        float_bits                = (rounded_bits > threshold) ? (float_bits | 0xFFFF) : (float_bits & ~0xFFFF);
-        __nv_bfloat16 out         = __float2bfloat16_rn(__uint_as_float(float_bits));*/
-    __half val = __half(*a0);  //__gcc_fp16 & half are bit-identical according to the IEEE 754 binary16 Specification
-    f8e5* out  = (f8e5*)(&val);
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-
-#else
-    out = out + sizeof(f8e5);
-#endif
-    return *out;
-}
 
 /*
     1) PCIe/Communication Bottlenecks:
@@ -505,22 +429,4 @@ struct SoftmaxParams {
     float Offset;
 };
 
-/*
- each block for one row of inp, i.e. inp[idx, :] of shape (V,)
 
-__device__ inline SoftmaxParams CU_prepare_softmax(const floatX* logits, int V) {
-    float thread_maxval = -INFINITY, thread_sumval = 0.0f;  //, sum = 0.0f;
-    // floatX max_val = logits[0];
-    int tid = threadIdx.x;
-    for (int i = tid; i < V; i += blockDim.x) {
-        float v       = (float)logits[i];
-        thread_maxval = fmaxf(thread_maxval, v);
-    }
-    float block_maxval = blockReduce_v0<warpReduceMax>(thread_maxval, false, -INFINITY);
-    for (int i = tid; i < V; i += blockDim.x) {
-        float v = (float)logits[i];
-        thread_sumval += expf(v - block_maxval);
-    }
-    float block_sumval = blockReduce_v0<warpReduceSum>(thread_sumval);
-    return SoftmaxParams{1.f / block_sumval, block_maxval};
-}*/

@@ -105,4 +105,4 @@ void inline PrintT(const char* title, const T* src, int n1, int n2, int n3 = 1, 
     fflush(stdout);
 }
 
-void PrintQ4(const char* title, const hBITARR src, int n1, int n2, int n3 = 1, int n4 = 1, int flag = 0x0);
+void PrintQ4(const char* title, const int32_t * src, int n1, int n2, int n3 = 1, int n4 = 1, int flag = FLOAT_META::ENDIAN_LITTLE);

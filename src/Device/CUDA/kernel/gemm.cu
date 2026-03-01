@@ -19,6 +19,7 @@
 #include <type_traits>
 
 #include "../../../Tensor/GTensor.hpp"
+#include "../../../Tensor/GeQuant.hpp"
 #include "../cuda_common.h"
 #include "gelu.cuh"
 #include "utils.cuh"
@@ -399,7 +400,11 @@ void CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* 
 void CU_mm_(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream, int transA, int transB, float beta,
             floatX* pre_gelu, bool backward) {
     NVTX_RANGE_FN();
-    const float alpha     = 1.0f;  //, beta = accumulate ? 1.0f : 0.0f;
+    const float alpha = 1.0f;  //, beta = accumulate ? 1.0f : 0.0f;
+    hQUANT hQuant     = gensor->GetDynamicQuant();
+    if (hQuant != nullptr) {
+        transA = hQuant->params.TransA;
+    }
     cublasOperation_t opA = (transA) ? CUBLAS_OP_T : CUBLAS_OP_N, opB = (transB) ? CUBLAS_OP_T : CUBLAS_OP_N;
     if (bias != nullptr) {  //  bias != nullptr || pre_gelu != nullptr
         floatX* wX = gensor->GetDataX();
@@ -415,6 +420,7 @@ void CU_mm_(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int
     }
     if (isBlas) {
         floatX* wX = gensor->GetDataX();
+
         // [50304,768] x [768,8192] => [50304,8192]         or(transA) [768,50304]' x [768,8192] => [50304,8192]
         //  CU_mm_blas
         cublasGemmEx(cublas_handle, opA, opB, m, n, k, &alpha, wX, CUDA_R_16BF, lda, b, CUDA_R_16BF, ldb, &beta, d, CUDA_R_16BF, m, CUDA_R_32F,

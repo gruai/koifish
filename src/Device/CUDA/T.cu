@@ -120,6 +120,7 @@ __global__ void CU_rms_backward_v1(Typ* dX0, Typ* dweight, float* dW_scratch, co
     // }
     // __syncthreads();
 }
+
 // lite version: CU_rms_dw_v1_ is much faster!
 template <typename Typ>
 __global__ void CU_rms_dw_v0(Typ* dW, const float* dW0, int nTH, int ldTH, int flag = 0x0) {
@@ -188,6 +189,9 @@ __global__ void CU_rms_dw_v1(Typ* dW, const float* dW_scratch, TASKA_SWMD<Typ> s
 template <typename Typ>
 __global__ void CU_rms_backward_v0(Typ* dX0, Typ* dWeight0, float* dW_scratch, const Typ* dY0, const Typ* X0, const Typ* weight0, const float* rstd0, int nTH,
                                    int ldTH, unsigned int seed, int flag) {
+#ifdef USE_FP8_BASELINE
+    assert(0 && "Not implemented yet");
+#else
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= nTH) {
         return;
@@ -209,12 +213,14 @@ __global__ void CU_rms_backward_v0(Typ* dX0, Typ* dWeight0, float* dW_scratch, c
     // if (idx == 0) {  //  only for debug
     //     printf("delta_avg=%g, rstd=%g dX=%g,%g,%g,%g\n", delta_avg, rstd, (float)dX[0], (float)dX[1], (float)dX[2], (float)dX[3]);
     // }
+#endif
 }
 
 hGTensor LayerNormal::cuFlow(hGTensor inpDelta, int flag) {  //,hGTensor deltaIn
     NVTX_RANGE_FN();
     const int block_size = 256, block_y = block_size / WARP_SIZE, grid_size = CEIL_DIV(nTH, block_y);
-    int nThread    = X128::nThreadOfBlock(ldTH, 0);
+    int nThread = X128::nThreadOfBlock(ldTH, 0);
+    // w->Print(w->name, 0, 0);
     floatX *weight = ToX(w), *bias = ToX0(b), *in = ToX(inpDelta);
     if (hFish->isAtPhase(LIFE_PHASE::P_GENERATE) && nHead == 0) {  //
         CU_rms_infer(ToX(out), ToX(inpDelta), weight, ldTH);

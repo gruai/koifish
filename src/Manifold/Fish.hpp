@@ -458,6 +458,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     friend class RLS_BP;
     friend class GST_TensorBuffer;
     friend class KoifishApp;
+    friend class BubbleApp;
 };
 
 /*

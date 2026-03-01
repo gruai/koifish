@@ -13,9 +13,10 @@ The following table lists some tricks and its working status.
 | LORA    |    🧪   | ★ ★ ☆ ☆ ☆     |DropLORA|
 | Mixture of models    |    🌿   | ★ ★ ☆ ☆ ☆     ||
 | Sparse model    |    🌱   |  ★ ★ ★ ☆ ☆     ||
-| Muon    |    🌿   |     ||
+| Muon    |    🧪   | ★ ★ ★ ★ ☆    ||
 | Evolutionary Optimization |    🧪   |  ★ ★ ★ ★ ☆    ||
 | Adaptive quantization |    🧪   |  ★ ★ ☆ ☆ ☆    ||
+| AWQ |    🌿   |  ★ ★ ☆ ☆ ☆    ||
 
 Note 1.  The meaning of symbols for maturity 
 1. 🌱 Prototype      
