@@ -248,7 +248,7 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
             if (G_Has_(t->name, config.datatypes.arrTile)) {  // {"ffn_down.weight", "ffn_up.weight"}
                 t->SetTernary(typNUMBER::T_BINARY_TILE);
             }
-            if(t->hQuant!=nullptr && t->hQuant->params.type==RTN_ZS){
+            if (t->hQuant != nullptr && t->hQuant->params.type == AWQ) {
                 t->hQuant->AfterLowBit(t, nullptr);
             }
         }
@@ -867,7 +867,7 @@ hBATCH Fish::GetCurBatch(bool isUpate, int flag) {
 }
 
 void Fish::GetBT(int& B, int& T, int flag) const {
-    B         = config.n_batch();
+    B = config.n_batch();
     // C         = config.nEmbed();
     T         = config.n_ctx();
     int q_dim = config.Q_dim(), kv_dim = config.KV_dim();

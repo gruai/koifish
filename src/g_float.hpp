@@ -26,11 +26,11 @@ using TOKEN_ID = uint32_t;
 // using TOKEN_ID = uint16_t;
 const TOKEN_ID TOKEN_MAX = TOKEN_ID(-1);
 
-// 8-bit bytes
+// Always use unsigned types for bit manipulation! 
 using hBITARR = uint8_t*;
 using BIT_8   = uint8_t;
-using Q4_8    = int32_t;
-using Q2_16   = int32_t;
+using Q4_8    = uint32_t;
+using Q2_16   = uint32_t;
 
 using SHAPE = std::vector<int>;
 inline size_t SHAPE2NZ(const SHAPE& shape) {
@@ -509,6 +509,43 @@ struct NF3_LUT {
     float nf4_scale[8] = {-1.0f, -0.6961928009986877f * 0.7f, -0.5250730514526367f * 0.7f, -0.18477343022823334f * 0.7f,
                           0.0f,  0.18477343022823334f * 0.7f, 0.5250730514526367f * 0.7f,  1.0f};
 };
+
+#define UNPACK_32to4_LE(val, arr) \
+    do { \
+        uint32_t v = (val); \
+        (arr)[0] = ((v >> 0) & 0xF0) >> 4;  /* Byte0 hi4 bit */ \
+        (arr)[1] = ((v >> 0) & 0x0F);       /* Byte0 low4 bit */ \
+        (arr)[2] = ((v >> 8) & 0xF0) >> 4;  /* Byte1 hi4 bit */ \
+        (arr)[3] = ((v >> 8) & 0x0F);       /* Byte1 low4 bit */ \
+        (arr)[4] = ((v >> 16) & 0xF0) >> 4; /* Byte2 hi4 bit */ \
+        (arr)[5] = ((v >> 16) & 0x0F);      /* Byte2 low4 bit */ \
+        (arr)[6] = ((v >> 24) & 0xF0) >> 4; /* Byte3 hi4 bit */ \
+        (arr)[7] = ((v >> 24) & 0x0F);      /* Byte3 low4 bit */ \
+    } while(0)
+#define UNPACK_32to4_BE(val, arr) \
+    do { \
+        uint32_t v = (val); \
+        (arr)[0] = ((v >> 24) & 0xF0) >> 4;  /* Byte0 hi4 bit (MSB) */ \
+        (arr)[1] = ((v >> 24) & 0x0F);       /* Byte0 low4 bit */ \
+        (arr)[2] = ((v >> 16) & 0xF0) >> 4;  /* Byte1 hi4 bit */ \
+        (arr)[3] = ((v >> 16) & 0x0F);       /* Byte1 low4 bit */ \
+        (arr)[4] = ((v >> 8) & 0xF0) >> 4;   /* Byte2 hi4 bit */ \
+        (arr)[5] = ((v >> 8) & 0x0F);        /* Byte2 low4 bit */ \
+        (arr)[6] = (v & 0xF0) >> 4;          /* Byte3 hi4 bit */ \
+        (arr)[7] = v & 0x0F;                 /* Byte3 low4 bit (LSB) */ \
+    } while(0)
+
+#define PACK_4to32_LE(arr) \
+    ((((uint32_t)((arr)[0] & 0x0F) << 4 | ((arr)[1] & 0x0F))) | \
+     (((uint32_t)((arr)[2] & 0x0F) << 4 | ((arr)[3] & 0x0F)) << 8) | \
+     (((uint32_t)((arr)[4] & 0x0F) << 4 | ((arr)[5] & 0x0F)) << 16) | \
+     (((uint32_t)((arr)[6] & 0x0F) << 4 | ((arr)[7] & 0x0F)) << 24))
+
+#define PACK_4to32_BE(arr) \
+    ((((uint32_t)((arr)[0] & 0x0F) << 4 | ((arr)[1] & 0x0F)) << 24) | \
+     (((uint32_t)((arr)[2] & 0x0F) << 4 | ((arr)[3] & 0x0F)) << 16) | \
+     (((uint32_t)((arr)[4] & 0x0F) << 4 | ((arr)[5] & 0x0F)) << 8)  | \
+      ((uint32_t)((arr)[6] & 0x0F) << 4 | ((arr)[7] & 0x0F)))
 
 void BIT_SET_k(hBITARR array, size_t offset, BIT_8 elem, int bits);
 BIT_8 BIT_GET_k(hBITARR array, size_t offset, int bits);

@@ -45,8 +45,8 @@ extern cublasHandle_t cublas_handle;
 // cuBLAS error checking
 void inline cublasCheck(cublasStatus_t status, const char* file, int line) {
     if (status != CUBLAS_STATUS_SUCCESS) {
-        printf("[cuBLAS ERROR]: %d %s %d\n", status, file, line);
-        exit(EXIT_FAILURE);
+        _ERROR("[cuBLAS ERROR]: %d %s %d\n", status, file, line);
+        exit(KOIFISH_BLAS_ERROR);
     }
 }
 #define cublasCheck(status)                        \
@@ -675,9 +675,9 @@ void inline D20(void* dev, size_t szData, int flag = 0x0) {
     // cudaDeviceSynchronize();
 }
 
-bool D2H(void* dev, void* host, size_t szData, int flag = 0x0);
+bool D2H(const void* dev, void* host, size_t szData, int flag = 0x0);
 bool D2D(void* hDst, const void* hSrc, size_t szData, int flag = 0x0);
-bool H2D(void* dev, void* host, size_t szData, int flag = 0x0);
+bool H2D(void* dev, const void* host, size_t szData, int flag = 0x0);
 
 // copy value of one elemetn from device
 template <typename T>

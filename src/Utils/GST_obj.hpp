@@ -155,20 +155,27 @@ bool inline G_Aa(const std::string& A, const std::string& a) {
     return true;
 }
 
-string inline G_prefix_(const string& title, const string& sep, int flag=0x0)    {
-    string prefix = "";
-    size_t lastDotPos = title.find_last_of('.');   
+string inline G_prefix_(const string& title, const string& sep, int flag = 0x0) {
+    string prefix     = "";
+    size_t lastDotPos = title.find_last_of('.');
     if (lastDotPos != std::string::npos) {
         prefix = title.substr(0, lastDotPos);
     } else {
-        
     }
     return prefix;
 }
-bool inline G_Has_(const string& title, const vector<string>& values, int flag = 0x0) {
+bool inline G_Has_(const string& title, const vector<string>& values, bool case_sensitive = true, int flag = 0x0) {
     for (auto v : values) {
-        if (title.find(v) != std::string::npos)
-            return true;
+        if (case_sensitive) {
+            if (title.find(v) != std::string::npos)
+                return true;
+        } else {
+            string tCI = title, vCI = v;
+            std::transform(tCI.begin(), tCI.end(), tCI.begin(), [](unsigned char c) { return std::tolower(c); });
+            std::transform(vCI.begin(), vCI.end(), vCI.begin(), [](unsigned char c) { return std::tolower(c); });
+            if (tCI.find(vCI) != std::string::npos)
+                return true;
+        }
     }
     return false;
 }
@@ -552,8 +559,8 @@ class SafeExit : public std::exception {
     std::string getFormattedInfo() const {
         std::ostringstream oss;
         auto time_t = std::chrono::system_clock::to_time_t(timestamp);
-        oss << "SafeExit: " << message << "\n\tCode=" << exit_code << "\tReason=" << static_cast<int>(reason) << "\n\t" << std::ctime(&time_t)
-            << "\tLocation@" << location << std::endl;
+        oss << "SafeExit: " << message << "\n\tCode=" << exit_code << "\tReason=" << static_cast<int>(reason) << "\n\t" << std::ctime(&time_t) << "\tLocation@"
+            << location << std::endl;
         return oss.str();
     }
 

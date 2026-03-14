@@ -189,6 +189,7 @@ struct SUM {
 
 // Discrete distribution of array   @/home/cys/rnd/lic/src/GBDT/data_fold/Distribution.hpp
 struct Distri_ARRAY {
+    static string CSV_LOG_DIR;
     std::vector<float> distri;
     double mean = 0, sigma = 0, sum = 0, ss = 0, average = 0;
     float a0 = FLT_MAX, a1 = -FLT_MAX;
@@ -226,31 +227,6 @@ struct Distri_ARRAY {
 #pragma comment(lib, "Ws2_32.lib")  // Link Ws2_32.lib for socket functions
 #include <winsock2.h>
 #endif
-
-// ----------------------------------------------------------------------------
-// fread convenience utils, with nice handling of error checking using macros
-// simple replace fopen, fread, fclose, fseek
-// with fopenCheck, freadCheck, fcloseCheck, fseekCheck
-
-extern inline FILE* fopen_check(const char* path, const char* mode, const char* file, int line) {
-    FILE* fp = fopen(path, mode);
-    if (fp == NULL) {
-        fprintf(stderr, "Error: Failed to open file '%s' at %s:%d\n", path, file, line);
-        fprintf(stderr, "Error details:\n");
-        fprintf(stderr, "  File: %s\n", file);
-        fprintf(stderr, "  Line: %d\n", line);
-        fprintf(stderr, "  Path: %s\n", path);
-        fprintf(stderr, "  Mode: %s\n", mode);
-        fprintf(stderr,
-                "---> HINT 1: dataset files/code have moved to dev/data recently (May 20, 2024). You may have to mv them from the legacy data/ dir to "
-                "dev/data/(dataset), or re-run the data preprocessing script. Refer back to the main README\n");
-        fprintf(stderr, "---> HINT 2: possibly try to re-run `python train_gpt2.py`\n");
-        exit(EXIT_FAILURE);
-    }
-    return fp;
-}
-
-#define fopenCheck(path, mode) fopen_check(path, mode, __FILE__, __LINE__)
 
 extern inline void fread_check(void* ptr, size_t size, size_t nmemb, FILE* stream, const char* file, int line) {
     size_t result = fread(ptr, size, nmemb, stream);

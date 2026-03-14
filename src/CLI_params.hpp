@@ -34,6 +34,9 @@ enum LIFE_PHASE {
     P_SFT,  //  supervised fine-tuning
     P_DPO,  //  direct preference optimization
 
+    //  1. Quantization-Aware Training
+    P_QUANTIZE,
+
     // evaluate
     P_EVAL_,
     // Inference     fish->isLocalInfer = true
@@ -215,7 +218,7 @@ enum tpROPE {
     ROPE_GLM  = 4,
 };
 
-enum INIT_WEIGHT { W_SKIP = 0X0, FIX_1, RANDOM, GAUSSIAN_NORMAL, COPY_WIKI, COPY_SWARM_HEAD, SERIALIZE };
+enum INIT_WEIGHT { W_SKIP = 0X0, W_ZERO, FIX_1, RANDOM, GAUSSIAN_NORMAL, COPY_WIKI, COPY_SWARM_HEAD, SERIALIZE };
 enum QKV_PACK {
     QQKKVV,
     QKVQKV,
@@ -317,8 +320,8 @@ class MODEL_CARD {
     std::vector<int> qkv_embeds;  // try multi-level embed of QKV
 
     //  ****
-    bool isFFNWeightTying   = true;
-    
+    bool isFFNWeightTying = true;
+
     /*
     1. If true, reduces the memory,  often results in better and faster outcomes ???
     2. According to findings from OLMo the weight tying is beneficial for smaller models like 1B but for larger ones starting from 7B it starts to hurt the
@@ -371,14 +374,12 @@ enum EVICTION_MODE {
  */
 enum QUANT_MODE {
     NO_QUANT,
-    
-    RTN,    //  Round-to-Nearest
-    RTN_ZS, //  Same as RTN, some vendors use explicit zero/scale tensors
-    RTNf,   // nf4, nf3
-    MINI,   // Minimise impurity
-    F8Ex,
 
-    // AWQ,     // awq is the quant method(find 1% salient/outlier weights by activataion), and the qdata format is still RTN
+    RTN,   // Round-to-Nearest
+    AWQ,   // the storage format is same as RTN
+    RTNf,  // nf4, nf3
+    MINI,  // Minimise impurity
+    F8Ex,
 
     KV_JL,     //  Johnson-Lindenstrauss (JL) transform
     KV_AQUA,   //  https://arxiv.org/pdf/2501.19392
@@ -386,28 +387,26 @@ enum QUANT_MODE {
     KV_PolarQuant
 };
 
-// Deprecated
-enum QUANT_ALG {
-    // Ternary
-    // Value of weights
-    W_SCALE = 0X100,
-    W_NOSCALE  //
-};
 struct QUANT_CARD {
-    int TransA = 1;
+    enum TRAIN_TARGET { X_WEIGHT, X_GAMA, X_HYBRID };
+    TRAIN_TARGET xTarget = X_WEIGHT;
+    size_t szM = 0x0, szV = 0x0, szGrad = 0x0;
+
+    int TransA       = 1;
     int default_bits = 4;
     int nPassLayer   = 0;  // fist layer is hard to quant
     float T_errQ     = 0.3;
-    int T_group = 512, T_group_batch = 8;
+    int T_group = 128, T_group_batch = 8;
     SHAPE spMost;
     std::string sX = "";
 
     bool isVendorQuant = false;
-    bool isNormalFloat = true;  //  each bin under a normal distribution N(0,1) contains equal probability mass
+    bool hasZS         = false;  // some vendors use explicit zero/scale tensors
+    bool isNormalFloat = true;   //  each bin under a normal distribution N(0,1) contains equal probability mass
     bool isSymmetric   = false;
     bool isZeroPoint   = false;
     typNUMBER tpZero, tpScale, tpQWeight;
-    
+
     NORMAL_MODE norm = SINKHORN;
     enum DYNAMIC_MODE { NO_DYNAMIC };
     DYNAMIC_MODE dynamic = NO_DYNAMIC;
@@ -416,12 +415,13 @@ struct QUANT_CARD {
 
     QUANT_CARD() {}
     // virtual void InitFromVendor(const JSON& jVendor, int flag = 0x0);
-    virtual void Init4Neuron(const std::string& name, const JSON& jQuant, int flag = 0);
+    virtual void Init4Neuron(const std::string& name, const JSON& jQuant, void* hUserData = nullptr, int flag = 0);
 
-    virtual bool isPass() const { return type == NO_QUANT; }
+    virtual bool isPass(const std::string& name, int flag = 0x0) const;
+    std::vector<std::string> filter_MIQ;  // for debug
     // std::vector<std::string> filter_KVcache;
 
-    // Koifish needs quant params for each neuron. 
+    // Koifish needs quant params for each neuron.
     static JSON Vendor2JSONx(const JSON& jX, int flag = 0x0);
     virtual bool isValid() const;
     void Dump(int typ);

@@ -62,11 +62,11 @@ GlobTokenset::GlobTokenset(JSON::const_iterator jit, hTokenizer hDict, int flag)
     int glob_status = glob(pattern.c_str(), 0, NULL, &glob_result);
     if (glob_status != 0) {
         _ERROR("%s Error: glob failed @\"%s\"\n", __func__, pattern.c_str());
-        K_EXIT(EXIT_FAILURE);
+        K_EXIT(KOIFISH_LOAD_TOKENSET_GLOB);
     }
     if (glob_result.gl_pathc == 0) {
         _ERROR("%s No files found matching the pattern: %s\n", __func__, pattern.c_str());
-        K_EXIT(EXIT_FAILURE);
+        K_EXIT(KOIFISH_LOAD_TOKENSET_GLOB);
     }
     int nFile = 0;
     /*if (isShuffle) {
@@ -97,7 +97,7 @@ GlobTokenset::GlobTokenset(JSON::const_iterator jit, hTokenizer hDict, int flag)
 }
 
 size_t DataTokenSet::nBatch(int flag) {
-    size_t nSample  = shard_samps.size();
+    size_t nSample  = shard_samps.size();  //  shard_samps init @Shard2Sample
     size_t nBatches = nSample / hDict->config.n_batch();
     nBatches        = nSample == 0 ? 0 : max(nBatches, (size_t)1);
     return nBatches;
@@ -129,15 +129,14 @@ bool GlobTokenset::Shard2Sample(int flag) {
         fseekCheck(fpShard, (long)header_bytes, SEEK_SET);
         hBITARR tmp = new BIT_8[nT * bpToken];  // TOKEN may 8/16/32 bit
         if (fread(tmp, bpToken, nT, fpShard) != nT) {
-            _INFO("Error: file size is not as expected\n");
+            _ERROR("file size is not as expected\n");
             return 0x0;
         }
         switch (bpToken) {
             case 2: {
                 uint16_t* tmp16 = (uint16_t*)tmp;
                 tokens.assign(tmp16, tmp16 + nT);
-            }
-            break;
+            } break;
             case 4: {
                 int32_t* tmp32 = (int32_t*)tmp;
                 tokens.assign(tmp32, tmp32 + nT);
@@ -152,9 +151,9 @@ bool GlobTokenset::Shard2Sample(int flag) {
         size_t nToken = tokens.size(), nFirst = std::min((size_t)n_ctx, nToken), step = 1, n0 = shard_samps.size();
         // samples_size.push_back(nFirst);
         size_t end = (nToken >= n_ctx) ? (nToken - n_ctx) : 0;
-        if (end > 10 * 1024 * 1024) {
-            step = n_ctx;
-        }
+        // if (end > 10 * 1024 * 1024) {
+        step = n_ctx;
+        // }
         float rSample = hDict->config.common.rSubSample;
         if (rSample > 0 && rSample < 1)
             step /= rSample;
@@ -163,7 +162,7 @@ bool GlobTokenset::Shard2Sample(int flag) {
             shard_samps.push_back(new SAMP(sample_begin, len));
         }
         n0 = shard_samps.size();
-        // _INFO("\t%s %s: nSamp=%ld=>%ld nBach=%d\n", __func__,name.c_str(),n0,shard_samps.size(),nBatch());
+        _INFO("\n[shard \"%s\"]: %ld(tokens)=>%ld(samps) nBach=%d step=[%ld:%ld:%ld]\n", name.c_str(), nToken, shard_samps.size(), nBatch(), 0, end, step);
         return true;
     } catch (...) {
         return false;
@@ -179,10 +178,15 @@ size_t GlobTokenset::OnShardFile(int id0, bool load, int flag) {
         return -1;
     }
     size_t expected_file_size = 0x0;
-    // use the first glob match as the filename for now
+    if (!VERIFY_DIR_EXIST(shard_paths[id])) {
+        K_EXIT(KOIFISH_LOAD_SHARD_NULL);
+    }
     const char* filename = shard_paths[id].c_str();
     assert(fpShard == NULL);
-    fpShard = fopenCheck(filename, "rb");
+    fpShard = fopen(filename, "rb");
+    if (fpShard == NULL) {
+        K_EXIT(KOIFISH_LOAD_SHARD_NULL);
+    }
     // validate the header
     uint32_t header[K_SHARD_HEADER_SIZE];
     freadCheck(header, sizeof(int), K_SHARD_HEADER_SIZE, fpShard);
@@ -236,7 +240,8 @@ size_t GlobTokenset::OnShardFile(int id0, bool load, int flag) {
     }
     if (load) {
         Shard2Sample(0x0);
-        _INFO("[shard-%d]@\"%s\": tokens=%.3g(M) nShardSamples=%ld(%ld) \n", id + 1, filename, nShardToks / 1.0e6, nShardSamples, shard_samps.size());
+        _INFO("[shard \"%s\"_%d]@\"%s\": tokens=%.3g(M) nShardSamples=%ld(%ld) \n", name.c_str(), id + 1, filename, nShardToks / 1.0e6, nShardSamples,
+              shard_samps.size());
     }
     if (tpSample == RANDOM_GENERATE) {
         /*
@@ -430,6 +435,7 @@ bool Tokenset_HellaSwag::Shard2Sample(int flag) {
     A lite version of Optimizer::Evaluate
  */
 double SampLoader::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
+    assert(hOPT != nullptr);
     Fish* hFish  = dolphin;
     RLS_BP* hRLS = hFish->GetScheduler<RLS_BP>();
     double tic = GST_ms(), tps, tRemain = 0.0, tpi = 0, relax = 0.9, dt, tCur, tLast;

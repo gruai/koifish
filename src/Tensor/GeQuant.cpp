@@ -17,7 +17,7 @@ using namespace Grusoft;
 
 hQUANT GeQuant::MakeInstance(GeNeuron* hNeuron, const std::string& nam_, QUANT_CARD& params, std::vector<GeNeuron*> neurons, int flag) {
     hQUANT hQuant = nullptr;
-    if (params.isPass())
+    if (params.isPass(hNeuron->name))
         return hQuant;
 
     QUANT_FACTORY& quants = hNeuron->GetFish()->quants;
@@ -26,14 +26,11 @@ hQUANT GeQuant::MakeInstance(GeNeuron* hNeuron, const std::string& nam_, QUANT_C
         hQuant = quants[key];
     } else {
         switch (params.type) {
-            // case AWQ:
-            //     hQuant = std::make_shared<Q_AWQ<float>>(nam_ + "_awq", hNeuron, params, 0x0);
-            //     break;
-            case RTN_ZS:
+            case AWQ:
                 hQuant = std::make_shared<Q_AWQ<float>>(nam_ + "_rtnzs", hNeuron, params, 0x0);
                 break;
             case MINI:
-                hQuant = std::make_shared<Q_Impurity<float>>(nam_ + "_quant", hNeuron, params, 0x0);
+                hQuant = std::make_shared<Q_Impurity<float>>(nam_ + "_mi", hNeuron, params, 0x0);
                 break;
             case KV_JL: {
                 SelfAttention* qkv = dynamic_cast<SelfAttention*>(hNeuron);
@@ -77,27 +74,26 @@ GeQuant::GeQuant(const std::string& nam_, void* hBase, QUANT_CARD& param_, int f
         quant_data  = new BIT_8[szMostQuant * 2];
         best_quant  = quant_data + szMostQuant;
     }
-    int nRow = params.spMost[0], nCol = params.spMost[1], nQuant = 0x1 << bits;
+
+    size_t nElem = params.spMost[0] * params.spMost[1];
+    int nCol = params.T_group, nRow = nElem / nCol, nQuant = 0x1 << bits;
     nMostGama = std::max(nRow, nCol) * nQuant + nRow + nCol;
     gama      = new floatGama[nMostGama * 2];
     best_gama = this->gama + nMostGama;
+    if (sym) {
+        qMin = -(1 << (bits - 1));
+        qMax = (1 << (bits - 1)) - 1;
+    } else {
+        qMin = 0;
+        qMax = (1 << bits) - 1;
+    }
 }
 
-typNUMBER GeQuant::bit2typ(int flag) {
-    /*switch (bits) {
-        case 4:
-            return typNUMBER::Q4;
-        case 3:
-            return typNUMBER::Q3;
-        case 2:
-            return typNUMBER::Q2;
-        default:
-            assert(0);
-            break;
-    }
-    return typNUMBER::Q4;*/
-    return Bits2Type(bits, flag);
-}
+typNUMBER GeQuant::bit2typ(int flag) { return Bits2Type(bits, flag); }
+
+// bool GeQuant::isTrainGama(int flag){
+//     return true;
+// }
 
 GeQuant::~GeQuant() {
     FREE_a(quant_data);
@@ -106,6 +102,9 @@ GeQuant::~GeQuant() {
 
 int GeQuant::ExTensor(hGTensor hBase, std::vector<hGTensor>& aux, int flag) {
     assert(hBase->isWMAT());
+    if (!params.hasZS) {
+        return 0x0;
+    }
     // assert(hBase->data != nullptr);
 
     SHAPE sp;
@@ -119,7 +118,7 @@ int GeQuant::ExTensor(hGTensor hBase, std::vector<hGTensor>& aux, int flag) {
     // hBase->type = params.tpQWeight;
     string sS = basename + MODEL_CARD::sQscale, sZ = basename + MODEL_CARD::sQzeros;
     switch (params.type) {
-        case RTN_ZS:
+        case AWQ:
             std::swap(hBase->shape[0], hBase->shape[1]);  // qweight is transposition of original weight
             hBase->ne[0] = hBase->shape[0], hBase->ne[1] = hBase->shape[1];
             sp            = {hBase->shape[0] / group, hBase->shape[1]};     // 20x4096 = 32x2560
@@ -183,6 +182,7 @@ Q_JL<T, Tproj>::Q_JL(const std::string& nam_, SHAPE shape_, int nLier, GeNeuron*
  */
 template <typename T, typename Tproj>
 int Q_JL<T, Tproj>::InitProject(int flag) {
+    int group_size = params.T_group;
     //  torch.randn(self.dim, generator=rng, dtype=torch.float32, device=self.device)
     SHAPE shape = this->params.spMost;
     hProj       = GT(hNeuron->GetFish(), typNUMBER::BF16, shape, 0x0, name + ".JL");  //  hN->hFish
@@ -287,59 +287,97 @@ float GeQuant::AfterLowBit(shared_ptr<GTensor> hTensor, const void* srcData, int
         _WARN("[]_Q<%d>_fnorm=%d impurity=%.3g |a|=%.3g @%s\n", bits, params.norm, impurity, e, hTensor->name);
     }
     hTensor->Print(hTensor->name, 0, 0);
+    bool isBackGama = hTensor->hFish->isTrain() && params.xTarget == QUANT_CARD::X_GAMA;
+    if (isBackGama) {
+        hTensor->InitGamaParam(this);        
+    } else {
+        hTensor->gama_param = nullptr;
+    }
 
     return err;
 }
 
-float GeQuant::RTN(shared_ptr<GTensor> hTensor, const void* srcData, int flag) {
+SHAPE GeQuant::GroupShapeOfT(const GTensor* hTensor, int flag) const {
+    size_t nElem = hTensor->size();
+    int nGroup = 0, lGroup = params.T_group;  // number of group, lenth of each group
+    assert(nElem % lGroup == 0);
+    nGroup = nElem / lGroup;
+    return SHAPE({nGroup, lGroup});
+}
+
+void GeQuant::PrintGama(const GTensor* hTensor, int flag) const {
+    SHAPE spGroup = GroupShapeOfT(hTensor);
+    int nRow = spGroup[0], nCol = spGroup[1];
+    floatGama *gamaZero = hTensor->gama_T(GTensor::ZERO), *gamaStep = hTensor->gama_T(GTensor::STEP);
+
+    // if (disq.rc_normal > 0) {
+    //     PrintTensor<floatGama>("\t_rNormal", rNormal, true, ne[0], 1, 1, 1, flag);
+    //     PrintTensor<floatGama>("\t_cNormal", cNormal, true, ne[1], 1, 1, 1, flag);
+    // }
+    if (gamaZero != nullptr)
+        PrintTensor<floatGama>("\t_gamaZero", gamaZero, true, nRow, 1, 1, 1, -1);
+    if (gamaStep != nullptr)
+        PrintTensor<floatGama>("\t_gamaStep", gamaStep, true, nRow, 1, 1, 1, -1);
+}
+
+//  @_CU_Q42X_
+float GeQuant::RTN_x(shared_ptr<GTensor> hTensor, const void* srcData, int flag) {
     if (params.isNormalFloat)
         return RT_NormalF(hTensor, srcData, flag);
-
     double t0 = GST_ms(), err = 0, e = 0, e_0, e_1;
-
-    int nRow = hTensor->shape[0], nCol = hTensor->shape[1], nQuant = 0x1 << this->bits, i, pos, row;
-    const floatX *mat0 = (floatX*)(srcData), *dat = nullptr;
-    floatX b;
-    floatGama *gamaRow = gama, *gamaCol = gamaRow + nRow;
-    float sR = 1.0, sC = 1.0, *tmpRow = new float[nCol];
-    for (row = 0; row < nRow; row++) {
-        float vmax = -FLT_MAX, vmin = FLT_MAX, a, a0 = 0;
-        assert(0);  // RT_NormalF is much better than RTN!
-        /*if (isSinkNormal)
-            sR = gamaRow[row];
-        dat = mat0 + row * nCol;
-        for (i = 0; i < nCol; i++) {
+    SHAPE spGroup = GroupShapeOfT(hTensor.get());
+    int nRow = spGroup[0], nCol = spGroup[1], i, pos, row;
+    if (isGPU) {
+        floatX* wX = ToX(gBUFF->tmpTernary);
+        // T1pG(CU_X2Q4_<floatX>, task_q, (Q4_8*)(data), wX, 0x0);
+    } else {
+        bool isSinkNormal  = false;
+        const floatX *mat0 = (floatX*)(srcData), *dat = nullptr;
+        floatX b;
+        floatGama *gamaRow = hTensor->gama_T(GTensor::R_SCALE, gama), *gamaCol = hTensor->gama_T(GTensor::C_SCALE, gama);
+        floatGama *gamaZero = hTensor->gama_T(GTensor::ZERO, gama), *gamaStep = hTensor->gama_T(GTensor::STEP, gama);
+        float sR = 1.0, sC = 1.0, *tmpRow = new float[nCol];
+        bool isRCNormal = sR != 1.0 && sC != 1.0;
+        for (row = 0; row < nRow; row++) {
+            float vmax = -FLT_MAX, vmin = FLT_MAX, a, a0 = 0;
             if (isSinkNormal)
-                sC = T2Float(gamaCol + i);
-            a         = T2Float(dat + i) / sR / sC;
-            tmpRow[i] = a;
-            vmax = std::max(vmax, a), vmin = std::min(vmin, a);
-        }
+                sR = gamaRow[row];
+            dat = mat0 + row * nCol;
+            for (i = 0; i < nCol; i++) {
+                if (isSinkNormal)
+                    sC = T2Float(gamaCol + i);
+                a         = T2Float(dat + i) / sR / sC;
+                tmpRow[i] = a;
+                vmax = std::max(vmax, a), vmin = std::min(vmin, a);
+            }
 
-        floatGama* gama_ = this->gama + nRow + nCol + 2 * row;
-        float step = (vmax - vmin) / (nQuant - 1), zero = vmin;
-        gama_[0] = zero, gama_[1] = step;
-        hBITARR quanti = quant_data + nCol * row * this->bits / 8;
-        for (e_0 = DBL_MAX, e_1 = -DBL_MAX, i = 0; i < nCol; i++) {
-            pos = i;
-            // a0  = T2Float(dat + i);
-            a = tmpRow[i];
-            // value = std::clamp(value, min_val, max_val);
-            int qid = std::round((a - zero) / step);
-            assert(qid >= 0 && qid < nQuant);
-            BIT_SET_k(quanti, pos, qid, this->bits);
-            assert(BIT_GET_k(quanti, pos, this->bits) == qid);
-            e   = a - (zero + step * qid);  //+ step*0.5
-            e_1 = std::max(e_1, e), e_0 = std::min(e_0, e);
-            err += e * e;
-            // if (i == 369 && row == 0) {
-            //     DEBUG_HERE;
-            // }
-        }*/
+            // floatGama* gama_ = gamaOf(gama, GTensor::OFF, nRow, nCol, 2 * row);  // this->gama + nRow + nCol + 2 * row;
+            float step = (vmax - vmin) / (qMax - qMin), zero = -vmin / step;
+            gamaZero[row] = zero, gamaStep[row] = step;     //7.2129     0.0068
+            hBITARR quanti = quant_data + nCol * row * this->bits / 8;
+            for (e_0 = DBL_MAX, e_1 = -DBL_MAX, i = 0; i < nCol; i++) {
+                pos = i;
+                // a0  = T2Float(dat + i);
+                a = tmpRow[i];
+                // value = std::clamp(value, min_val, max_val);
+                int qid = std::round(a / step + zero);  //  5,10,9,11,12,7,9,7
+                assert(qid >= qMin && qid <= qMax);
+                BIT_SET_k(quanti, pos, qid, this->bits);
+                assert(BIT_GET_k(quanti, pos, this->bits) == qid);
+                e   = a - step * (qid - zero);  //+ step*0.5
+                e_1 = std::max(e_1, e), e_0 = std::min(e_0, e);
+                err += e * e;
+                // if (i == 369 && row == 0) {
+                //     DEBUG_HERE;
+                // }
+            }
+        }
+        delete[] tmpRow;
     }
-    delete[] tmpRow;
-    err = sqrt(err / nRow / nCol);  // 0.00369
-    e   = hTensor->disq.nrm_1 / nRow / nCol;
+    hTensor->szGama = sizeof(floatGama) * (hTensor->ne[0] + hTensor->ne[1] + 2 * nRow);
+    err             = sqrt(err / hTensor->size());  // 0.00369
+    e               = hTensor->disq.nrm_1 / hTensor->size();
+    assert(isValidF(err));
     // if (err >= e) {
     //     _WARN("[RTN]_Q<%d>_%s %g>%g\n", this->bits, isSinkNormal ? "normal" : "", err, e);
     // }
@@ -462,6 +500,7 @@ float GeQuant::RT_NormalF(shared_ptr<GTensor> hTensor, const void* srcData, int 
         int thread_id = omp_get_thread_num();
         err_rows[row] = _row_lut(row, hTensor, mat0 + row * nCol, tmpRows + nCol * thread_id, flag);
     }
+    hTensor->szGama = sizeof(floatGama) * (nRow + nCol + nQuant * nRow);
     delete[] tmpRows;
     for (int row = 0; row < nRow; row++) err += err_rows[row];
     err     = sqrt(err / nRow / nCol);  // 0.00282
@@ -529,12 +568,12 @@ float Q_Impurity<T>::LowBit_GBDT(shared_ptr<GTensor> hTensor, const void* srcDat
         delete dort;
 
         //_INFO("<QUANT_%d> @\"%s\" t=%.3gms\t \n", this->bits, hTensor->name, GST_ms() - t0);
-        GeQuant::LowBit(hTensor, srcData, flag);  //
+        GeQuant::LowBit_worker(hTensor, srcData, flag);  //
     } catch (char* sInfo) {
-        _ERROR("\n!!!!!! EXCEPTION@Q_Impurity::LowBit \n!!!!!!\"%s\"\n\n", sInfo);
+        _ERROR("\nEXCEPTION@Q_Impurity::LowBit_ \n!!!!!!\"%s\"\n\n", sInfo);
         throw sInfo;
     } catch (...) {
-        _ERROR("\n!!!!!! EXCEPTION@Q_Impurity::LowBit %s!!!!!!\n\n", "...");
+        _ERROR("\nEXCEPTION@Q_Impurity::LowBit_ %s!!!!!!\n\n", "...");
     }
     fflush(stdout);
 
@@ -545,25 +584,34 @@ float Q_Impurity<T>::LowBit_GBDT(shared_ptr<GTensor> hTensor, const void* srcDat
 /*
     1. errQ = err/average   (average = disq.nrm_1 / nRow / nCol);
 */
-float GeQuant::LowBit(shared_ptr<GTensor> hTensor, const void* srcData, int flag) {
+float GeQuant::LowBit_worker(shared_ptr<GTensor> hTensor, const void* srcData, int flag) {
+    if(hTensor->disq.nrm_1==0){
+        G_NORM_STAT<bf16>(hTensor->size(), (bf16*)srcData, hTensor->disq.sum_2, hTensor->disq.sum_1, hTensor->disq.nrm_1);
+    }
     int nRow = hTensor->shape[0], nCol = hTensor->shape[1], nTry = 0;  // 4-bit is enough
     int nBit0 = params.default_bits;
+    double t0 = GST_ms();
     // std::vector<GeQuant::_q_sweep> methods = {{NORMAL_MODE::ROW_01, 4, 1}};  //{0,2} ,{0,8},{true, 2}, {false, 3, 1}, {false, 4}
     std::vector<GeQuant::_q_sweep> methods = {{NORMAL_MODE::NO_NORMAL, nBit0, 0}};
     float errQ = FLT_MAX, err, average = hTensor->disq.nrm_1 / nRow / nCol;
-
+    assert(average>0);
     for (auto method : methods) {
-        bits        = method.bits;
-        params.norm = method.normal;
-        params.type = method.mi == 0 ? (params.isNormalFloat ? QUANT_MODE::RTNf : QUANT_MODE::RTN) : QUANT_MODE::MINI;
+        bits = method.bits;
+        if (params.type == AWQ) {
+            params.norm = NORMAL_MODE::NO_NORMAL;
+        } else {
+            params.norm = method.normal;
+            params.type = method.mi == 0 ? (params.isNormalFloat ? QUANT_MODE::RTNf : QUANT_MODE::RTN) : QUANT_MODE::MINI;
+        }
         assert(bits <= params.default_bits);
         method.szQuant = hTensor->size() * bits / 8;
         err            = Core(hTensor, srcData, gama, flag);  // 0.021420
         err /= average;
+        assert(isValidF(err));
         if (err < errQ) {
             errQ  = err;
             best_ = method;
-            memcpy(best_gama, gama, sizeof(floatGama) * nMostGama);
+            memcpy(best_gama, gama, hTensor->szGama);
             memcpy(best_quant, quant_data, method.szQuant);
             if (errQ < params.T_errQ)
                 break;
@@ -571,15 +619,36 @@ float GeQuant::LowBit(shared_ptr<GTensor> hTensor, const void* srcData, int flag
         nTry++;
     }
     int nQuant = 1 << best_.bits, nGama = nRow * nQuant + nRow + nCol;
-    assert(nGama <= nMostGama);
+    // assert(nGama <= nMostGama);
+    assert(hTensor->szGama <= nMostGama * sizeof(floatGama) && hTensor->szGama > 0);
     bits = best_.bits;
     hTensor->BeforeQuant(this);
-    assert(hTensor->size() <= nzMost);  // K.w->size()<Q.w->size()
+    assert(hTensor->size() <= nzMost);                   // K.w->size()<Q.w->size()
+    H2D(hTensor->gama_T(), best_gama, hTensor->szGama);  // sizeof(floatGama) * nGama
     H2D(hTensor->data, best_quant, best_.szQuant);
-    H2D(hTensor->gama_T(), best_gama, sizeof(floatGama) * nGama);
+    if (1) {  // check err
+        // PrintT("src", (floatX*)srcData, nRow, nCol, 1, 1, -1);
+        // hTensor->Print(hTensor->name, 0, -1);
+        floatX *wX = hTensor->GetDataX(), *unpack = new floatX[nRow * nCol]();
+        D2H(wX, unpack, hTensor->size() * sizeof(floatX));
+        // PrintT("unpack", unpack, nRow, nCol, 1, 1, -1);
+        Distri_PIPE dOff, dSrc;
+        for (size_t i = 0; i < nRow * nCol; i++) {  //  OFF_
+            dOff.Next(T2Float_delta((floatX*)srcData, unpack, i));
+            dSrc.Next(T2Float((floatX*)srcData + i));
+        }
+        double err = sqrt(dOff.sum_2) / sqrt(dSrc.sum_2);
+        if (err > 100 || isnan(err) || isinf(err)) {
+            K_EXIT_NOW(KOIFISH_QUANT_ERR);
+        }
+        _INFO("%s ERR_cu=%.3g%%[%.4g,%.4g]", "", 100.0 * err, dOff.vmin, dOff.vmax);
+        double a = dOff.err;
+        delete[] unpack;
+    }
+
     // FREE_a(gama);
 
-    //_INFO("<QUANT_%d> @\"%s\" t=%.3gms\t \n", bits, hTensor->name, GST_ms() - t0);
+    _INFO("<QUANT_%d> @\"%s\" t=%.3gms\t \n", bits, hTensor->name, GST_ms() - t0);
     impurity = errQ;                               // may update if isCheckErr=true
     GeQuant::AfterLowBit(hTensor, srcData, flag);  // may update impurity
     return impurity;
@@ -646,7 +715,7 @@ float Q_Impurity<T>::Core(shared_ptr<GTensor> hTensor, const void* srcData, floa
         delete hFold;
         delete dort;
     } else {
-        this->impurity = Quantizer<T>::RTN(hTensor, srcData, flag);
+        this->impurity = Quantizer<T>::RTN_x(hTensor, srcData, flag);
     }
     if (mat1 != srcData)
         delete[] mat1;
@@ -664,13 +733,27 @@ template class Q_Impurity<bf16>;
 template class Q_Impurity<float>;
 
 template <typename T>
-Q_AWQ<T>::Q_AWQ(const std::string& nam_, void* hN, QUANT_CARD& param_, int flag) : Quantizer<T>(nam_, hN, param_, flag) {
+Q_AWQ<T>::Q_AWQ(const std::string& nam_, void* hN, QUANT_CARD& param_, int flag) : Q_Impurity<T>(nam_, hN, param_, flag) {
     assert(this->bits > 0 && this->bits <= 8);
     this->params.TransA = 0;
 }
 template <typename T>
 float Q_AWQ<T>::AfterLowBit(shared_ptr<GTensor> tensor, const void* cpuData, int flag) {
     //  AWQ_REVERSE_ORDER = [0, 4, 1, 5, 2, 6, 3, 7]
+    return 0.0;
+}
+
+/**
+ * Compute loss and select best scales
+
+        L(s) = || Q(W * s) (s^-1 * X) - W * X ||
+        Q: weight quantization function | pseudo_quantize_tensor(W * s)
+        X: inputs from calib dataset    | X
+        W: original weights in FP16     | layer
+        s: per channel scaling factor   | s^-1 * X
+ */
+template <typename T>
+float Q_AWQ<T>::AfterActivation(GeNeuron* hNN, int flag) {
     return 0.0;
 }
 template class Q_AWQ<bf16>;
@@ -846,13 +929,35 @@ float GeQuant::Normal_ROW01(shared_ptr<GTensor> hTensor, void* srcData, floatGam
     "version": "gemm",
     "zero_point": true
   },*/
-void QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, int flag) {
-    type = NO_QUANT;
+void QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, void* hUserData, int flag) {
+    // GeNeuron* hNN = (GeNeuron*)hUserData;
+    type      = NO_QUANT;
+    string s0 = "";
     if (jQuant.find("VendorQuant") != jQuant.end()) {
         isVendorQuant = true;
         nPassLayer    = -1;  // no pass layer in QWen3
     }
-    string s0 = "";
+    if (jQuant.find("ExplicitZS") != jQuant.end()) {
+        hasZS = true;
+    }
+    if (jQuant.find("calib") != jQuant.end()) {
+        int isCalib = 1;
+    }
+    if (jQuant.find("group_size") != jQuant.end()) {
+        T_group = jKV(jQuant, {"group_size"}, T_group, false);  // default group_size
+    }
+    if (jQuant.find("MIQ") != jQuant.end()) {
+        filter_MIQ = jKV_arr(jQuant, {"MIQ"}, filter_MIQ, false);
+    }
+    if (jQuant.find("train_target") != jQuant.end()) {
+        s0 = jKV(jQuant, {"train_target"}, s0, false);
+        if (s0 == "gama") {
+            xTarget = X_GAMA;
+        }
+    }
+    // xTarget = DEBUG.cmd_p1 ? X_WEIGHT : X_GAMA;
+    
+    s0 = "";
     for (JSON::const_iterator it = jQuant.begin(); it != jQuant.end(); ++it) {
         auto k = it.key();
         if (!k.empty() && k[0] == '#')
@@ -866,9 +971,9 @@ void QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, int fl
             info         = jKV(jQ, {"quant_method"}, info, false);
             default_bits = jKV(jQ, {"bits"}, default_bits, false);
             T_group      = jKV(jQ, {"group_size"}, T_group, false);
-            assert(T_group > 0 && T_group < 10240);
+            assert(T_group > 0 && T_group < 102400);
             isZeroPoint = jKV(jQ, {"zero_point"}, isZeroPoint, false);
-            // quant.filter_MIQ        = jKV_arr(jConfig, {"quantizer", "MINI"}, quant.filter_MIQ, false);
+
             // quant.filter_WeightF8Ex = jKV_arr(jConfig, {"quantizer", "F8Ex"}, quant.filter_WeightF8Ex, false);
             if (default_bits != 4 && default_bits != 3 && default_bits != 8) {
                 default_bits = 4;
@@ -881,12 +986,61 @@ void QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, int fl
             string norm_type = jKV(jQ, {"normal"}, s0);
             norm             = G_Aa(norm_type, "SINKHORN") ? NORMAL_MODE::SINKHORN : NORMAL_MODE::NO_NORMAL;
 
-            if (info == "awq") {
-                type =
-                    RTN_ZS;  // awq is the quant method(find 1% salient/outlier weights by activataion), and the qdata format is still RTN(round to nereast int)
+            if (G_Has_(info, {"AWQ"}, false)) {
+                type          = AWQ;  // awq is the quant method, and the qdata format is still RTN(round to nereast int)
+                isNormalFloat = false;
+            } else if (G_Has_(info, {"RTN"}, false)) {
+                type          = MINI;
+                isNormalFloat = false;
             } else {
                 type = default_bits == 8 ? F8Ex : MINI;
             }
         }
     }
 }
+bool QUANT_CARD::isPass(const std::string& name, int flag) const {
+    if (filter_MIQ.empty()) {
+        return type == NO_QUANT;
+    }
+    if (G_Has_(name, filter_MIQ)) {  // model.layers.26.self_attn.q_proj.weight
+        return false;
+    }
+    return true;
+}
+template <typename Typ>
+TASKA_quant<Typ>::TASKA_quant(const GTensor* hTensor, hQUANT hQuant, cudaStream_t stream_, Q_BLOCK_AT_ blockAt, int flag) : stream(stream_) {
+    assert(hTensor != nullptr && hTensor->isWMAT());
+    assert(hQuant != nullptr);
+    nEle = hTensor->size();
+    nIn = hTensor->shape[0], nOut = hTensor->shape[1];
+    SHAPE spGroup = hQuant->GroupShapeOfT(hTensor);
+    // if (N % typ128::size != 0)
+    //     return;
+    assert(32 % hQuant->bits == 0);
+    np32bit = 32 / hQuant->bits;
+    switch (blockAt) {
+        case BLOCK_at_GROUP:
+            tpb    = 128;  // Q_nThreadOfBlock(nOut / np32bit, hQuant->bits);
+            nBlock = CEIL_DIV(spGroup[0], tpb);
+            break;
+        case BLOCK_at_ROW:
+            spGroup[1] /= np32bit;
+            tpb    = Q_nThreadOfBlock(nOut / np32bit, hQuant->bits);
+            nBlock = nIn;
+            break;
+        default:
+            assert(0);
+            break;
+    }
+    nG = spGroup[0], lG = spGroup[1];  // for cuda kernel
+    block3 = tpb;
+    grid3  = nBlock;
+
+    // floatGama *gamaRow = gamaOf(gama, GTensor::R_SCALE, nRow, nCol), *gamaCol = gamaOf(gama, GTensor::C_SCALE, nRow, nCol);
+    floatGama* gama_0 = hTensor->gama_T(GTensor::GAMA);
+    gamaRow = hTensor->gama_T(GTensor::R_SCALE), gamaCol = hTensor->gama_T(GTensor::C_SCALE);
+    zero = hTensor->gama_T(GTensor::ZERO), step = hTensor->gama_T(GTensor::STEP);
+    qMin = hQuant->qMin, qMax = hQuant->qMax;
+}
+
+template struct TASKA_quant<floatX>;

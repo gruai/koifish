@@ -434,31 +434,27 @@ bool Fish::InitDictTokenset(int flag) {
     }
     assert(hDict->nVocab() > 0);
 
-    {
-        tokenset = DataTokenSet::MakeInstance(config, hDict, isLocalInfer, 0x0);
-        if (tokenset.empty()) {
-            _ERROR("\n======== %s Failed to load tokenset!========\n", __func__);
-            return false;
-        };
-    }
+    auto [tsTrain_, tsEval_, tsCalib_] = DataTokenSet::MakeInstance(config, hDict, isLocalInfer, 0x0);
+    tsTrain = tsTrain_, tsEval = tsEval_, tsCalib = tsCalib_;
+    /*if (tokenset.empty()) {
+        _ERROR("\n======== %s Failed to load tokenset!========\n", __func__);
+        return false;
+    };
+
     tsTrain = tokenset[0];
     for (int i = 1; i < tokenset.size(); i++) {
         tsEval.push_back(tokenset[i]);
-    }
-
-    // hDictVAE->mapT2T = tsTrain->mapT2T;        hDictVAE->dialect = tsTrain->dialect;
-    // for(auto wiki : wikis){
-    //     wiki->mapT2T = hDictVAE->mapT2T;       wiki->dialect = hDictVAE->dialect;
-    // }
+    }*/
 
     if (isTrain()) {
+        assert(tsTrain != nullptr && "Train tokensets is nullptr!");
         if (tsTrain != nullptr && tsTrain->nMostTok > 0)
             config.OnMostToken(tsTrain->nMostTok);
-    } else {  //  config.isOnlyGPT
+    } /*else {
         tsTrain = nullptr;
         tsEval  = tokenset;
         return true;  // may have no train !!!
-    }
+    }*/
 
     return true;
 }
@@ -534,11 +530,18 @@ void Fish::UpdateTernary(int flag) {
 }
 
 void NLP_AutoRegressive::Train(int flag) {
-    // DEBUG.train_datas = 1;
-    // DEBUG.train_hyperparams = 1;
-    // DEBUG.back_graph_version = 1;        Verified at 05132025
-
     hOPT->BeforeTrain(tokens_input, 0x0);
+    
+    if (tsCalib != nullptr) {
+        SetPhase(LIFE_PHASE::P_EVAL_);
+        hSampLoader loader  = std::make_shared<SampLoader>(this, "Calib", false);
+        loader->type = SampLoader::TYPE::DT_EVAL;
+        loader->Prepare(hOPT.get(), tsCalib);
+        GetNeuron<OutCLS>("OutCLS", 0)->hLoader = loader;
+        double val_loss = loader->Evaluate(SAMPLEofSHARD, 0x0);
+    }
+
+    
     // RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
     // hRLS->Prepare(-1);
     UpdateTernary(flag);
@@ -676,7 +679,10 @@ void NLP_AutoRegressive::Dump(int type, int flag) {
     std::sort(optParams.begin(), optParams.end(), [](const hGTensor& a, const hGTensor& b) { return strcmp(a->name, b->name) < 0; });
     _INFO("====== Params Table ======\n");
     for (auto t : optParams) {
-        t->DumpX(0x0);
+        if(t->gama_param!=nullptr)
+            t->gama_param->DumpX(0x0);
+        else
+            t->DumpX(0x0);
     }
     switch (type) {
         case KOIFISH_OUTOF_GPUMEMORY:
@@ -824,7 +830,7 @@ int Fish::ForwardOnRLS(int iter, int flag) {
             GeNeuron* neuron = (GeNeuron*)(task->hOBJ);
             INSPECT inspect(neuron);
             // NvtxRange range(neuron->name.c_str(),0);
-            if (neuron->name == "model.layers.0.mlp" ) {  //   model.inp_embd && curB > 0
+            if (neuron->name == "model.layers.0.mlp") {  //   model.inp_embd && curB > 0
                 // DEBUG_HERE;
                 // K_EXIT_NOW(KOIFISH_EXIT_DEBUG);
             }

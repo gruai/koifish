@@ -84,7 +84,7 @@ __device__ __forceinline__ f8e5 CU_16BF2T<f8e5>(const bf16* a0, unsigned int see
         unsigned int rounded_bits = float_bits & 0x0000FFFF;
         float_bits                = (rounded_bits > threshold) ? (float_bits | 0xFFFF) : (float_bits & ~0xFFFF);
         __nv_bfloat16 out         = __float2bfloat16_rn(__uint_as_float(float_bits));*/
-    __half val = __half(*a0);  //__gcc_fp16 & half are bit-identical according to the IEEE 754 binary16 Specification
+    __half val = __half(static_cast<float>(*a0));  //__gcc_fp16 & half are bit-identical according to the IEEE 754 binary16 Specification
     f8e5* out  = (f8e5*)(&val);
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
 
@@ -97,6 +97,30 @@ template <>
 __device__ __forceinline__ __nv_fp8_e5m2 CU_16BF2T<__nv_fp8_e5m2>(const bf16* a0, unsigned int seed) {
     assert(0 && "Not implemented yet");
     return __nv_fp8_e5m2(0.0f);
+}
+
+template <typename T>
+__device__ inline bool CU_isValidF(const T* a0) {
+    float a = CU_T2Float(a0);
+    return !(isnan(a) || isinf(a));
+}
+
+__device__ inline void CU_I2Q4_unpack(const Q4_8 x, int32_t* unpack, int flag = 0x0) {
+    int AWQ_REVERSE_ORDER[] = {0, 4, 1, 5, 2, 6, 3, 7};
+    for (int k = 0; k < 8; k++) {
+        int sft    = AWQ_REVERSE_ORDER[k] * 4;
+        BIT_8 byte = (x >> sft) & 0x0F;
+        unpack[k]  = byte;
+    }
+}
+
+__device__ inline void CU_Q42I_pack(const int32_t q8[8], Q4_8* pack, int flag = 0x0) {
+    int32_t result = 0;
+#pragma unroll
+    for (int i = 0; i < 8; i++) {
+        result |= ((q8[i] & 0x0F) << (i * 4));
+    }
+    *pack = result;
 }
 
 #if defined(__CUDACC__)
@@ -328,7 +352,7 @@ class alignas(alignment_from_size(sizeof(T) * ElemCount)) PackedN {
     }
 
     __host__ __device__ explicit PackedN(const T* src, int flag = 0x0) {
-        memcpy_aligned<size, TransferMode::DEFAULT>(values, src);        
+        memcpy_aligned<size, TransferMode::DEFAULT>(values, src);
         // memcpy(&values, &bits, sizeof(bits));
     }
 
@@ -503,7 +527,7 @@ class alignas(alignment_from_size(sizeof(T) * ElemCount)) PackedN {
         f256 f;
         for (int i = 0; i < size; ++i) {
             float a = CU_T2Float(result.values + i);
-            f[i]    = a;    //CU_Float2T<T>(a, config.seed);
+            f[i]    = a;  // CU_Float2T<T>(a, config.seed);
         }
         return f;
     }
@@ -594,8 +618,12 @@ struct TASKA_1p1 {
     PackedN_config config;
 
     TASKA_1p1(int N_, cudaStream_t stream_, int flag = 0x0) : nTask(1), N(N_), stream(stream_) {
-        if (N % typ128::size != 0)
+        if (N % typ128::size != 0){
+            _ERROR("TASKA_1p1: N(%d) % %d != 0", N,typ128::size);
+            assert(0 && "N % typ128::size != 0");
             return;
+        }
+            
         block3 = tpb;
         nBlock = CEIL_DIV(N, tpb * typ128::size);
         grid3  = nBlock;
@@ -608,6 +636,7 @@ struct TASKA_1p1 {
         return true;
     }
 };
+
 //  One thread per data
 // #define T1p1(CU_kernel) CU_kernel<<<taska.grid3, taska.block3, taska.smem, main_stream>>>
 // template< template<typename> class CU_kernel, typename Typ>
@@ -694,6 +723,8 @@ struct TASKA_SWMD {
 //  Single Wrap, 1 token
 #define SW1T(CU_kernel) CU_kernel<<<smp.grid3, smp.block3, smp.smem, main_stream>>>
 
+//  Single Thread, Multiple Data
+#define STMD(CU_kernel) CU_kernel<<<smp.grid3, smp.block3, smp.smem, main_stream>>>
 /**
  * @brief Provides information about Pack2 of elements for a given type.
  *
@@ -875,6 +906,5 @@ __global__ static void CU_x2_atomic(Tout* out, const T* x0, size_t N) {
     }
 }
 
-template <typename T, std::size_t ElemCount=128>
-class PackedGroup : public PackedN<T, ElemCount> {
-};
+template <typename T, std::size_t ElemCount = 128>
+class PackedGroup : public PackedN<T, ElemCount> {};

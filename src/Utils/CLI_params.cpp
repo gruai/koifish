@@ -160,13 +160,13 @@ bool LoadJsonFile(const string& jPath, JSON& jObj, int flag) {
         std::ifstream jfile(jPath);
         std::string info;
         if (jfile.fail()) {
-            _WARN("[%s] Failed to open json@\"%s\" !!!\n", __func__, jPath.c_str());
+            _WARN("[JSON] Failed to open json@\"%s\" !!!\n", jPath.c_str());
             return false;
         }
         jfile >> jObj;
         return true;
     } catch (...) {
-        _ERROR("[%s] Failed to open \"%s\" !!!\n", __func__, jPath.c_str());
+        _ERROR("[JSON] Failed to open \"%s\" !!!\n", jPath.c_str());
         return false;
     }
 }
@@ -223,14 +223,9 @@ JSON QUANT_CARD::Vendor2JSONx(const JSON& jX, int flag) {
     }
     jOut["self_attn"] = jN;
     jOut["mlp"]       = jN;
-    // jOut["quantizer"]["self_attn"]["bits"]     = default_bits;
-    // jOut["quantizer"]["self_attn"]["group"]    = T_group;
-    // jOut["quantizer"]["mlp"]["bits"]           = default_bits;
-    // jOut["quantizer"]["mlp"]["group"]          = T_group;
-    // jOut["quantizer"]["embed_tokens"]["bits"]  = default_bits;
-    // jOut["quantizer"]["embed_tokens"]["group"] = T_group;
-
     jOut["VendorQuant"] = true;
+    if(jX["quant_method"] == "awq") // 'awq' format use explicit zero/scale tensors
+        jOut["ExplicitZS"] = true;
     return jOut;
 }
 
@@ -357,16 +352,7 @@ bool CLI_params::JModel2Params(int flag) {
                 assert(0);
             }
         }
-        // Mem 8484=>4772=>4838
-        if (DEBUG.cmd_p1 == 1) {
-            // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;  // DEBUG.T_GEMM = -1;
-            // common.method = "adamw";
-            // common.muon.isTransDown = false;
-        } else {
-            // common.method = "muon";
-            // scheduling.strategy = MEM_STRATEGY::MEM_SWAP;
-            // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
-        }
+
         fuyou.Init(this, jConfig);
         // fuyou.InitSection(nLayer(), jKV(jConfig, {"model","fuyou", "branch"}, fuyou.nLayerInBranch));
 
@@ -1736,9 +1722,6 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, const std
         num_key_value_heads = jKV(jModelParam, {"num_key_value_heads"}, n_kv_heads);
         if (jModelParam.find("quantization_config") != jModelParam.end()) {
             hConfig->jVendorQuant = jModelParam["quantization_config"];
-            // MODEL_CARD::sWeight = ".qweight";
-            // QUANT_CARD quant;
-            // quant.InitFromVendor(jModelParam["quantization_config"]);
             hConfig->jQuant = QUANT_CARD::Vendor2JSONx(hConfig->jVendorQuant);
         }
         vocab_size           = jKV(jModelParam, {"vocab_size"}, vocab_size);

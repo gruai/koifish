@@ -17,9 +17,11 @@
 
 struct PIPE_Optimizer {
     Optimizer* hOPT = nullptr;
-    GTensor* tensor = nullptr;
+    hGTensor tensor = nullptr;
+    hQUANT hQuant   = nullptr;  // quant of tensor
     string name;
     float* tmp        = nullptr;
+    float* probe_info = nullptr;
     floatGama* gama_T = nullptr;
     // use double to reduce Non-Determinism in CUDA Sums!
     double* arrNorm       = nullptr;
@@ -36,10 +38,11 @@ struct PIPE_Optimizer {
     float T_spike             = 50;
     bool isBitParam           = false;
     bool isStochasticRounding = true;
-    QUANT_ALG tpQuant;
+    // QUANT_ALG tpQuant;
 
-    virtual void Update(GTensor* tensor_, float wd, float _grad_scale, unsigned int _seed, int flag = 0x0) {}
+    virtual void Update(hGTensor tensor_, float wd, float _grad_scale, unsigned int _seed, int flag = 0x0) {}
     virtual void CU_core(cudaStream_t stream, int flag = 0x0) {}
+    virtual bool CheckLastError(const std::string&sX, int flag = 0x0);
 };
 typedef std::shared_ptr<PIPE_Optimizer> hPipeOpt;
 
@@ -59,10 +62,19 @@ struct PIPE_Adamw : public PIPE_Optimizer {
         // lr_0 = learning_rate;
     }
 
-    void Update(GTensor* tensor_, float wd, float _grad_scale, unsigned int _seed, int flag = 0x0) override {
+    void Update(hGTensor tensor_, float wd, float _grad_scale, unsigned int _seed, int flag = 0x0) override {
         tensor = tensor_;
         assert(tensor != nullptr);
+        hQuant = tensor->GetDynamicQuant();
+
+        probe_info = GTensor::stat_info;
+        D20(probe_info, sizeof(float) * 8);  // max size is 5120
+
         num_parameters = tensor->size();
+        if (tensor->gama_param != nullptr) {
+            num_parameters = tensor->gama_param->size();
+        }
+
         w_stride = num_parameters, g_stride = num_parameters, s_stride = num_parameters;
         name       = tensor->name;
         flags      = tensor->flags;
@@ -86,7 +98,10 @@ struct PIPE_Adamw : public PIPE_Optimizer {
             paramX = ToX(gBUFF->tmpTernary);
             gama_T = tensor->gama_T();
         }
-        tpQuant = tensor->tpQuant;
+        if (hQuant != nullptr) {
+            params = ToX(gBUFF->tmpTernary);
+            // tensor->GetDataX();  // no need de dequant again!
+        }
     }
 
     void CU_core(cudaStream_t stream, int flag = 0x0) override;
@@ -108,7 +123,7 @@ struct PIPE_Muon : public PIPE_Adamw<Tp, Tmv> {
         this->mui      = muon.mui;
     }
 
-    void Update(GTensor* tensor_, float wd, float _grad_scale, unsigned int _seed, int flag = 0x0) override;
+    void Update(hGTensor tensor_, float wd, float _grad_scale, unsigned int _seed, int flag = 0x0) override;
 
     void CU_core(cudaStream_t stream, int flag = 0x0) override;
 };
@@ -259,15 +274,15 @@ struct KERNEL_PIPE : public MODEL_CARD {
         layNo              = l;
         SelfAttention* QKV = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
         // QKV->BeforeMing(hRLS, nullptr);
-        cLayers[l].rms_att_weight = ToX(QKV->norm.w);  //TO<float>(QKV->norm.w);  
+        cLayers[l].rms_att_weight = ToX(QKV->norm.w);  // TO<float>(QKV->norm.w);
         cLayers[l].wq = ToX(QKV->Q.w), cLayers[l].wk = ToX(QKV->K.w), cLayers[l].wv = ToX(QKV->V.w);
         cLayers[l].wq_norm = ToX(QKV->normQ.w), cLayers[l].wk_norm = ToX(QKV->normK.w);
         cLayers[l].wo   = ToX(QKV->proj_cat.w);
         cLayers[l].bqkv = ToX0(QKV->bqkv);
         FFN* ffn        = hFish->GetNeuron<FFN>("FFN", l);
         // ffn->BeforeMing(hRLS, nullptr);
-        cLayers[l].rms_ffn_weight = ToX(ffn->norm.w);   //TO<float>(ffn->norm.w);  
-        cLayers[l].moegate        = nullptr;                 // weights->moegate[l];
+        cLayers[l].rms_ffn_weight = ToX(ffn->norm.w);  // TO<float>(ffn->norm.w);
+        cLayers[l].moegate        = nullptr;           // weights->moegate[l];
         // hGensor w1 = ffn->GetGensor("", FFN_UP, suffix ), w2 = ffn->GetGensor("", FFN_DOWN, suffix), w3 = ffn->GetGensor("", FFN_GATE, suffix);
         hGensor w1 = ffn->up.w, w2 = ffn->down.w, w3 = ffn->gate.w;
         cLayers[l].w1 = w1->data, cLayers[l].gama_1 = w1->gama_T();

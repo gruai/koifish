@@ -14,10 +14,279 @@
 
 #include "../../../Tensor/GTensor.hpp"
 #include "../../../Tensor/GeQuant.hpp"
+#include "../../../Utils/GST_MemBuffer.hpp"
 #include "../cuda_common.h"
 #include "../g_float.hpp"
 #include "operator.cuh"
 #include "utils.cuh"
+
+//  One thread per Group(defined in TASKA_quant)
+template <typename KernelType, typename Typ, typename... Args>
+void T1pG(KernelType kernel, const TASKA_quant<Typ>& taska, Args&&... args) {
+    assert(taska.isValid());
+    kernel<<<taska.grid3, taska.block3, taska.smem, taska.stream>>>(taska, std::forward<Args>(args)...);
+}
+
+template <class Typ>
+__global__ void CU_X2Q4_(const TASKA_quant<Typ> taska, Q4_8* quants, const Typ* mat0, int flag) {
+    int tid = threadIdx.x, idrow = blockIdx.x * blockDim.x + tid, M = taska.nG, N = taska.lG;
+    if (idrow >= M)
+        return;  // guard
+
+    size_t offset   = idrow * N;
+    const Typ *curX = mat0 + offset, *x0 = curX;
+    Typ wMax = curX[0], wMin = curX[1];
+    floatGama sR = 1.0, sC = 1.0, a, scale, zero;
+    if (taska.rc_normal > 0) {
+        sR = taska.gamaRow[idrow];
+    }
+    for (int k = 0; k < N; k++, x0++) {
+        wMax = max(wMax, *x0);
+        wMin = min(wMin, *x0);
+    }
+    scale = (wMax - wMin) / (Typ)(taska.nBin - 1);
+    zero  = -wMin / scale;
+    int32_t q8[8];
+    x0 = curX;
+    for (int k = 0; k < N / 8; k++, x0 += 8) {
+        for (int i = 0; i < 8; i++, x0++) {
+            // if (taska.rc_normal == 1) {  //  NORMAL_MODE::SINKHORN
+            //     scale *= gamaCol[i];
+            // }
+            q8[i] = int32_t((*x0 * scale) + zero);
+            q8[i] = q8[i] < taska.qMin ? taska.qMin : (q8[i] > taska.qMax ? taska.qMax : q8[i]);
+        }
+        quants[k] = PACK_4to32_LE(q8);  // CU_Q42I_pack(q8, quants + k);
+    }
+}
+
+template <class Typ>
+__global__ void CU_Q42X_(const TASKA_quant<Typ> taska, const Q4_8* quants, Typ* mat0, int seed) {
+    int tid = threadIdx.x, idrow = blockIdx.x * blockDim.x + tid, M = taska.nG, N = taska.lG;
+    if (idrow >= M)
+        return;  // guard
+
+    size_t offset = idrow * N;
+    Typ* x0       = mat0 + offset;
+    floatGama sR = 1.0, sC = 1.0, zero = taska.zero[idrow], step = taska.step[idrow];
+    if (taska.rc_normal > 0) {
+        sR = taska.gamaRow[idrow];
+    }
+    
+    const Q4_8* q32 = quants + offset / 8;
+    int q8[8];
+    for (int k = 0; k < N / 8; k++, x0 += 8) {
+        UNPACK_32to4_LE(q32[k], q8);
+        for (int i = 0; i < 8; i++) {
+            floatGama g0 = step * ((floatGama)(q8[i]) - zero) * sR;
+            if( !CU_isValidF(&g0) ){
+                DEBUG_HERE;
+            }
+            x0[i]        = g0;  // CU_Float2T<Typ>(g0, seed);
+        }
+        // if (idrow == 0) {
+        //     DEBUG_HERE;
+        // }
+    }
+}
+
+/**
+ *  quants/mat0     [1024, 2048]
+ *  zeros/scales    [8,2048]
+ */
+template <class Typ>
+__global__ void CU_Q42X_awq(const TASKA_quant<Typ> taska, const Q4_8* zeros, const half* scales, const Q4_8* quants, Typ* mat0, int flag) {
+    int tid = threadIdx.x, idrow = blockIdx.x, bit = 0, M = taska.nIn, N = taska.nOut, npt = N / blockDim.x;  // n-data per thread
+    if (idrow >= M)
+        return;  // guard
+    if (npt % 8 != 0) {
+        assert(0);
+    }  // for Q4_8
+    size_t offset        = idrow * N + tid * npt;
+    Typ* x0              = mat0 + offset;
+    const Q4_8* q_row    = quants + offset / 8;
+    const half* scale8   = scales + idrow / 128 * N + tid * npt;  // 0.007359  0.009537  0.006248  0.007618  0.007339  0.006413  0.007534  0.006657
+    const Q4_8* zero_row = zeros + (idrow / 128 * N + tid * npt) / 8;
+    int32_t q8[8], z8[8];  //[7,7,3,11,4,12,10,15.0]   [7.0   8.0   7.0   8.0   6.0   8.0   8.0   8.0]
+    for (int k = 0; k < npt / 8; k++, scale8 += 8) {
+        CU_I2Q4_unpack(q_row[k], q8);
+        CU_I2Q4_unpack(zero_row[k], z8);
+        // if (idrow == M - 1 && tid * npt + k * 8 == N - 8) {
+        //     DEBUG_HERE;
+        // }
+        for (int i = 0; i < 8; i++, x0++) {
+            float g0 = (q8[i] - z8[i]) * (float)(scale8[i]);
+            *x0      = (Typ)g0;  // CU_Float2T<T>(g0, seed);
+        }
+    }
+}
+
+// Deprecated
+template <class T>
+__global__ void CU_Q42X_RTN(floatGama* gamas, const hBITARR quants, T* mat0, int M, int N, int rc_normal, int seed) {
+    int tid = threadIdx.x, idrow = blockIdx.x, bit = 0, npt = N / blockDim.x;
+    if (idrow >= M)
+        return;  // guard
+
+    size_t offset      = idrow * N + tid * npt;
+    T* x0              = mat0 + offset;
+    hBITARR q_row      = quants + offset / 2;
+    floatGama* gamaCol = gamas + M + tid * npt;
+    floatGama sR = 1.0, sC = 1.0, zero = gamas[M + N + idrow * 2], step = gamas[M + N + idrow * 2 + 1];
+    // zero += step/(floatGama)(2.0);
+    if (rc_normal > 0) {
+        sR = gamas[idrow];
+    }
+    for (int k = 0; k < npt / 2; k++, x0 += 2) {
+        BIT_8 id0 = ((q_row[k]) >> 4) & 0x0F, id1 = (q_row[k]) & 0x0F;
+        floatGama g0 = (zero + step * (floatGama)id0) * sR, g1 = (zero + step * (floatGama)id1) * sR;
+        if (rc_normal == 1) {  //  NORMAL_MODE::SINKHORN
+            g0 *= gamaCol[2 * k];
+            g1 *= gamaCol[2 * k + 1];
+        }
+#ifdef USE_FP8_BASELINE
+        assert(0 && "Not implemented for FP8 baseline yet");
+#else
+        *x0       = g0;  // CU_Float2T<T>(g0, seed);
+        *(x0 + 1) = g1;  // CU_Float2T<T>(g1, seed);
+#endif
+    }
+}
+
+floatX* GTensor::GetDataX(int flag, const string& sX) const {
+    if (data == nullptr)
+        return nullptr;
+
+    size_t dT4B = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
+    size_t nEle = size();
+    floatX* wX  = (floatX*)(data);
+    int nRow = ne[0], nCol = ne[1];
+    if (hRef != nullptr) {
+        nRow = hRef->ne[0], nCol = hRef->ne[1];
+        DEBUG_HERE;
+    }
+
+    switch (type) {
+        case typNUMBER::T_SIGN:
+            assert(0);
+            break;
+        case typNUMBER::Q4: {
+            wX = ToX(gBUFF->tmpTernary);
+            assert(gBUFF->tmpTernary->size() >= nEle);
+            dT4B = Q_nThreadOfBlock(nCol, 4);
+            if (hQuant->isRTN()) {
+                if (hQuant->params.type == RTNf) {
+                    CU_Q42X_NF4<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
+                } else if (hQuant->params.type == RTN) {
+                    // CU_Q42X_RTN<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, spGroup[0], spGroup[1], disq.rc_normal, 42);
+                    TASKA_quant<floatX> task_q(this, hQuant, main_stream, BLOCK_at_GROUP);
+                    T1pG(CU_Q42X_<floatX>, task_q, (Q4_8*)(data), wX, 0x0);
+                } else {  // AWQ
+                    TASKA_quant<floatX> task_q(this, hQuant, main_stream, BLOCK_at_ROW);
+                    // Print(name, 0, -1);
+                    // qZero->Print("qzero", 0, -1);
+                    // qScale->Print("scale", 0, -1);
+                    // CU_Q42X_zs_v0<floatX><<<nGroup, dT4B, 0, main_stream>>>(TO<Q4_8>(qZero), TO<half>(qScale), (Q4_8*)(data), wX, nGroup, ldGroup / 8);
+                    T1pG(CU_Q42X_awq<floatX>, task_q, TO<Q4_8>(qZero), TO<half>(qScale), (Q4_8*)(data), wX, 0x0);
+                    // CU_Q42X_awq_v0<floatX><<<task_q.grid3, task_q.block3, 0, main_stream>>>(TO<Q4_8>(qZero), TO<half>(qScale), (Q4_8*)(data), wX, task_q.nIn,
+                    // task_q.nOut);
+                }
+            } else if (hQuant->params.type == KV_PolarQuant) {
+                assert(0);
+            } else  // looking uo table
+                CU_Q42X_lut<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
+            // gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow * nCol);
+        } break;
+        case typNUMBER::Q3: {
+            wX = ToX(gBUFF->tmpTernary);
+            assert(gBUFF->tmpTernary->size() >= nEle);
+            dT4B = Q_nThreadOfBlock(nCol, 3);  // 1 byre for 4 quant
+            if (hQuant->isRTN()) {
+                if (hQuant->params.isNormalFloat) {
+                    CU_Q32X_NF3<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
+                } else
+                    CU_Q32X_RTN<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
+            } else
+                CU_Q32X_<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
+            // gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow*nCol);
+        } break;
+        case typNUMBER::Q2: {
+            wX = ToX(gBUFF->tmpTernary);
+            assert(gBUFF->tmpTernary->size() >= nEle);
+            dT4B = Q_nThreadOfBlock(nCol, 2);  // 1 byre for 4 quant
+            if (hQuant->isRTN()) {
+                CU_Q22X_RTN<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
+            } else
+                CU_Q22X_<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
+            // gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow*nCol);
+        } break;
+
+        case typNUMBER::T_BINARY:
+        case typNUMBER::T_BINARY_3:
+            if (DEBUG.T_ternary == 1) {          // each weight(floatX) is {-1,0,1}, no need to extract
+            } else if (DEBUG.T_ternary == -1) {  // each weight {-1,0,1}
+                return nullptr;
+            } else {  // extract each weight {-1,0,1} to floatX
+                wX = ToX(gBUFF->tmpTernary);
+                CU_ternary2X_<floatX><<<CEIL_DIV(nRow, dT4B), dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, 1);
+                SYNC_DEVICE();
+                if (flag == -1)
+                    gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1);
+            }
+
+            // PrintTensor<floatX>("wX", wX, true, nRow, nCol, ne[2], ne[3], -1);
+            break;
+        case typNUMBER::T_BINARY_TILE: {
+            dim3 dBlock(THREAD_TILE_M * THREAD_TILE_N), dGrid(CEIL_DIV(nRow, THREAD_TILE_M), CEIL_DIV(nCol, THREAD_TILE_N));
+            assert(nRow % THREAD_TILE_M == 0 && nCol % THREAD_TILE_N == 0);
+            wX              = ToX(gBUFF->tmpTernary);
+            floatGama* gam_ = gama_T();  //
+            CU_Tile2X_<floatX><<<dGrid, dBlock, smemPB, main_stream>>>(wX, gam_, 0.0, nRow, nCol, seed);
+            // SYNC_DEVICE();
+            if (flag == -1)
+                gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1);
+        } break;
+        case typNUMBER::F8E5M2: {
+            wX = ToX(gBUFF->tmpTernary);
+            assert(gBUFF->tmpTernary->size() >= nEle);
+            CU_F82Float<floatX><<<CEIL_DIV(nEle, CU_T4B_MIDDLE), CU_T4B_MIDDLE>>>((f8e5*)data, wX, nEle, 0, 0);
+            break;
+        }
+        default:
+            break;
+    }
+
+    return wX;
+}
+
+int GTensor::SetDataX(floatX* params, int flag) {
+    double err_0 = 0, err_1 = 0;
+    switch (type) {
+        case typNUMBER::Q4: {
+            TASKA_quant<floatX> task_q(this, hQuant, main_stream);
+            floatX* wX = ToX(gBUFF->tmpTernary);
+            assert(wX == params);
+            assert(gBUFF->tmpTernary->size() >= task_q.nEle);
+            if (hQuant->isRTN()) {
+                assert(hQuant->params.type == RTN);
+                // CU_Q42X_RTN<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, spGroup[0], spGroup[1], disq.rc_normal, 42);
+                T1pG(CU_X2Q4_<floatX>, task_q, (Q4_8*)(data), wX, 0x0);
+                if (0) {  // check residual
+                    T1pG(CU_Q42X_<floatX>, task_q, (Q4_8*)(data), ToX(gBUFF->bt4c), 0x0);
+                    err_0 = CU_OFF_<floatX>(wX, ToX(gBUFF->bt4c), size());
+                }
+                // gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow * nCol);
+            } else if (hQuant->params.type == KV_PolarQuant) {
+                assert(0);
+            } else {  //
+            }
+        } break;
+        default:
+            assert(0);
+            break;
+    }
+    return 0x0;
+}
 
 // CUDA kernel for assigning points to clusters
 template <typename T>
@@ -82,12 +351,12 @@ __global__ static void CU_ternary_2thrshold(floatGama* gama, T* mat, int M, int 
             }
         }
 
-        if (update == QUANT_ALG::W_SCALE) {
-            // gama[j] = average;
-            ta = n_1 == 0 ? t0 : (sum_1 / n_1), tb = n_2 == 0 ? t0 : (-sum_2 / n_2);
-        } else {
-            gama[j] = 1.0f;
-        }
+        // if (update == QUANT_ALG::W_SCALE) {
+        // gama[j] = average;
+        ta = n_1 == 0 ? t0 : (sum_1 / n_1), tb = n_2 == 0 ? t0 : (-sum_2 / n_2);
+        // } else {
+        //     gama[j] = 1.0f;
+        // }
         T xa = (T)ta, xb = (T)tb;
         for (int k = 0; k < N; k++) {
             a = CU_T2Float(x0 + k);
@@ -211,7 +480,7 @@ __global__ void CU_ternary2X_(floatGama* gama, const hBITARR terns, T* mat0, int
 
 // rc_normal - row-scaling
 template <class T>
-__global__ void CU_Q42X_(floatGama* gamas, const hBITARR quants, T* mat0, int M, int N, int rc_normal, int seed) {
+__global__ void CU_Q42X_lut(floatGama* gamas, const hBITARR quants, T* mat0, int M, int N, int rc_normal, int seed) {
     int tid = threadIdx.x, idrow = blockIdx.x, bit = 0, npt = N / blockDim.x;
     if (idrow >= M)
         return;  // guard
@@ -231,39 +500,8 @@ __global__ void CU_Q42X_(floatGama* gamas, const hBITARR quants, T* mat0, int M,
             g0 *= gamaCol[2 * k];
             g1 *= gamaCol[2 * k + 1];
         }
-        *x0       = CU_16BF2T<T>(&g0, seed);    //0.00343
+        *x0       = CU_16BF2T<T>(&g0, seed);  // 0.00343
         *(x0 + 1) = CU_16BF2T<T>(&g1, seed);
-    }
-}
-
-template <class T>
-__global__ void CU_Q42X_RTN(floatGama* gamas, const hBITARR quants, T* mat0, int M, int N, int rc_normal, int seed) {
-    int tid = threadIdx.x, idrow = blockIdx.x, bit = 0, npt = N / blockDim.x;
-    if (idrow >= M)
-        return;  // guard
-
-    size_t offset      = idrow * N + tid * npt;
-    T* x0              = mat0 + offset;
-    hBITARR q_row      = quants + offset / 2;
-    floatGama* gamaCol = gamas + M + tid * npt;
-    floatGama sR = 1.0, sC = 1.0, zero = gamas[M + N + idrow * 2], step = gamas[M + N + idrow * 2 + 1];
-    // zero += step/(floatGama)(2.0);
-    if (rc_normal > 0) {
-        sR = gamas[idrow];
-    }
-    for (int k = 0; k < npt / 2; k++, x0 += 2) {
-        BIT_8 id0 = ((q_row[k]) >> 4) & 0x0F, id1 = (q_row[k]) & 0x0F;
-        floatGama g0 = (zero + step * (floatGama)id0) * sR, g1 = (zero + step * (floatGama)id1) * sR;
-        if (rc_normal == 1) {  //  NORMAL_MODE::SINKHORN
-            g0 *= gamaCol[2 * k];
-            g1 *= gamaCol[2 * k + 1];
-        }
-    #ifdef USE_FP8_BASELINE
-        assert(0 && "Not implemented for FP8 baseline yet");
-    #else
-        *x0       = g0;  // CU_Float2T<T>(g0, seed);
-        *(x0 + 1) = g1;  // CU_Float2T<T>(g1, seed);
-    #endif
     }
 }
 
@@ -337,12 +575,12 @@ __global__ void CU_Q22X_RTN(floatGama* gamas, const hBITARR quants, T* mat0, int
             g0 *= gamaCol[4 * k], g1 *= gamaCol[4 * k + 1];
             g2 *= gamaCol[4 * k + 2], g3 *= gamaCol[4 * k + 3];
         }
-    #ifdef USE_FP8_BASELINE
+#ifdef USE_FP8_BASELINE
         assert(0 && "Not implemented for FP8 baseline yet");
-    #else
+#else
         *x0 = g0, *(x0 + 1) = g1;
         *(x0 + 2) = g2, *(x0 + 3) = g3;
-    #endif
+#endif
     }
 }
 template <class T>
@@ -370,12 +608,12 @@ __global__ void CU_Q22X_(floatGama* gamas, const hBITARR quants, T* mat0, int M,
             g0 *= gamaCol[4 * k], g1 *= gamaCol[4 * k + 1];
             g2 *= gamaCol[4 * k + 2], g3 *= gamaCol[4 * k + 3];
         }
-    #ifdef USE_FP8_BASELINE
+#ifdef USE_FP8_BASELINE
         assert(0 && "Not implemented for FP8 baseline yet");
-    #else
+#else
         *x0 = g0, *(x0 + 1) = g1;
         *(x0 + 2) = g2, *(x0 + 3) = g3;
-    #endif
+#endif
     }
 }
 
@@ -411,12 +649,12 @@ __global__ void CU_Q32X_NF3(floatGama* gamas, const hBITARR quants, T* mat0, int
         //     g0 *= gamaCol[4 * k], g1 *= gamaCol[4 * k + 1];
         //     g2 *= gamaCol[4 * k + 2], g3 *= gamaCol[4 * k + 3];
         // }
-    #ifdef USE_FP8_BASELINE
+#ifdef USE_FP8_BASELINE
         assert(0 && "Not implemented for FP8 baseline yet");
-    #else
+#else
         *x0 = g0, *(x0 + 1) = g1, *(x0 + 2) = g2, *(x0 + 3) = g3;
         *(x0 + 4) = g4, *(x0 + 5) = g5, *(x0 + 6) = g6, *(x0 + 7) = g7;
-    #endif
+#endif
     }
 }
 
@@ -448,12 +686,12 @@ __global__ void CU_Q32X_(floatGama* gamas, const hBITARR quants, T* mat0, int M,
         //     g0 *= gamaCol[4 * k], g1 *= gamaCol[4 * k + 1];
         //     g2 *= gamaCol[4 * k + 2], g3 *= gamaCol[4 * k + 3];
         // }
-    #ifdef USE_FP8_BASELINE
+#ifdef USE_FP8_BASELINE
         assert(0 && "Not implemented for FP8 baseline yet");
-    #else
+#else
         *x0 = g0, *(x0 + 1) = g1, *(x0 + 2) = g2, *(x0 + 3) = g3;
         *(x0 + 4) = g4, *(x0 + 5) = g5, *(x0 + 6) = g6, *(x0 + 7) = g7;
-    #endif
+#endif
     }
 }
 // each 8 quants=24 bit =3 byte
@@ -487,12 +725,12 @@ __global__ void CU_Q32X_RTN(floatGama* gamas, const hBITARR quants, T* mat0, int
         //     g0 *= gamaCol[4 * k], g1 *= gamaCol[4 * k + 1];
         //     g2 *= gamaCol[4 * k + 2], g3 *= gamaCol[4 * k + 3];
         // }
-    #ifdef USE_FP8_BASELINE
+#ifdef USE_FP8_BASELINE
         assert(0 && "Not implemented for FP8 baseline yet");
-    #else
+#else
         *x0 = g0, *(x0 + 1) = g1, *(x0 + 2) = g2, *(x0 + 3) = g3;
         *(x0 + 4) = g4, *(x0 + 5) = g5, *(x0 + 6) = g6, *(x0 + 7) = g7;
-    #endif
+#endif
     }
 }
 
@@ -727,7 +965,7 @@ __global__ void calc_score_kernel(T* query_states, const uint8_t* key_quant, con
 }
 
 template <typename T, typename Tproj>
-float Q_JL<T, Tproj>::Update(shared_ptr<GTensor> hTensor, int flag) {
+float Q_JL<T, Tproj>::Core(shared_ptr<GTensor> hTensor, const void* cpuData, floatGama* curGama, int flag) {
     T* norms       = TO<T>(outlier_norms);
     uint8_t *quant = TO<uint8_t>(key_quant), *outlier_quant = TO<uint8_t>(key_outlier_quant);
     const uint8_t* outlier_indices;
@@ -777,7 +1015,7 @@ template class Q_Cluster<float>;
 
 template __global__ void CU_ternary_online<bf16>(bf16* mat, int M, int N, int seed = 0x0);
 template __global__ void CU_ternary2X_<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int seed = 0x0);
-template __global__ void CU_Q42X_<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
+template __global__ void CU_Q42X_lut<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
 template __global__ void CU_Q32X_<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
 template __global__ void CU_Q22X_<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
 template __global__ void CU_Q42X_RTN<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
@@ -796,7 +1034,7 @@ template __global__ void CU_Q22X_RTN<__nv_fp8_e5m2>(floatGama* gama, const hBITA
 
 template __global__ void CU_ternary2X_<__nv_fp8_e5m2>(floatGama* gama, const hBITARR terns, __nv_fp8_e5m2* mat0, int M, int N, int seed = 0x0);
 template __global__ void CU_X2ternary_<__nv_fp8_e5m2>(floatGama* gama, __nv_fp8_e5m2* mat0, char* terns, int M, int N, int bpe, bool isOverwrite = false);
-template __global__ void CU_Q42X_<__nv_fp8_e5m2>(floatGama* gama, const hBITARR terns, __nv_fp8_e5m2* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
+template __global__ void CU_Q42X_lut<__nv_fp8_e5m2>(floatGama* gama, const hBITARR terns, __nv_fp8_e5m2* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
 template __global__ void CU_Q32X_<__nv_fp8_e5m2>(floatGama* gama, const hBITARR terns, __nv_fp8_e5m2* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
 template __global__ void CU_Q22X_<__nv_fp8_e5m2>(floatGama* gama, const hBITARR terns, __nv_fp8_e5m2* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
 

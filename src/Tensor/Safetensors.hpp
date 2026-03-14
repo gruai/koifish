@@ -207,7 +207,7 @@ struct K_SafeTensors {
 
             tensor_st tensor;
             if (!tensors.at(i, &tensor)) {
-                ss << "Internal error: Failed to get tensor at [" << i << "]\n";
+                ss << "Internal error: Failed to get stensor at [" << i << "]\n";
                 valid = false;
                 continue;
             }

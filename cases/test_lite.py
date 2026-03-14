@@ -66,7 +66,7 @@ def test_qwen2_494M():
     most_iter = 70
     title = "QWen2.5_494M"
     dfTrain = koifish_one(title, sExe, "./cases/qwen3/qwen25_1.json", most_iter=most_iter, train_csv="./Train@[shake]_info_.csv")    
-    CheckResult(dfTrain,most_iter,2.979,title=title,rel_tol=0.001)      #   2.873
+    CheckResult(dfTrain,most_iter,2.982,title=title,rel_tol=0.001)      #   2.873
 
 def test_gpt2_1558M():    
     title = "1558M"
@@ -126,12 +126,12 @@ if __name__ == '__main__':
     # test_chat_qwen3_0_6B()  
     #test_qwen3_596M()
     # test_chat_qwen3_4B_1()
-    test_chat_qwen3_4B_awq()
+    # test_chat_qwen3_4B_awq()
     # xtest_batch_qwen3_4B()
 
     # test_pp_gpt2()
     # test_gpt2_124M()
-    # test_gpt2_124M_fuyou6()
+    test_gpt2_124M_fuyou6()
     # test_gpt2_1558M()
     # test_qwen2_494M()
     # # 

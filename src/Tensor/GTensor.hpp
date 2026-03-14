@@ -99,6 +99,7 @@ struct GPUAllocator : public VirtualAllocator<T> {};
     2. sigma = rstd
 */
 struct Distri_PIPE {
+    float vmin = FLT_MAX, vmax = -FLT_MAX;
     int B_ = 0, T_ = 0, C_ = 0;  // For activation, it's number of batch,token(int each batch), channel(of each token)
     double mean = 0, sum_1 = 0.0, sum_2 = 0.0, nrm_1 = 0.0;
     double abs_max = 0;  //  norm_0
@@ -120,7 +121,7 @@ struct Distri_PIPE {
         float scale = 1.f;
         float scaleP;
     };
-    float vmin = FLT_MAX, vmax = -FLT_MAX, e_0 = FLT_MAX, e_1 = -FLT_MAX;
+    float e_0 = FLT_MAX, e_1 = -FLT_MAX;
     float maxP, minN;  //  max Positive & min Negative
     float imbalance = 0.0;
     int rc_normal   = 0;
@@ -143,6 +144,9 @@ struct Distri_PIPE {
     virtual BIT_8 X2NormalF(int bits, const float weight, int flag = 0x0);
     virtual float Normal01(const float weight, int flag = 0x0);
 };
+
+//Off between two tensors
+struct Distri_OFF : public Distri_PIPE {};
 
 /**
  * 1.   Support dynamic online change shape & type!
@@ -208,7 +212,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     float rLARS(float s0, float T_lars, int flag);
     size_t offset = 0x0;
     /** 1. PyTorch’s nn.Linear defines weight as [out_features, in_features], and the forward pass is: y = x @ W.T + bias
-     *  */  
+     *  */
     SHAPE shape;
     SHAPE x_shape;  //  1.padded for high performance or menory alignment(x_shape<=shape)
     // same as shape, would remove in future version
@@ -223,19 +227,24 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
 
     //
     enum GAMA_TYPE {
+        GAMA,
         R_SCALE,
         C_SCALE,
-        ZERO,  // zero of RTN
-        STEP,  // step of RTN
-        LUT,   // values of codebook
+        ZERO,    // zero of RTN
+        STEP,    // step of RTN
+        LUT,     // values of codebook
+        // BACKUP,  // backup of data+gama
+
+        // OFF,
     };
     // return scaling/LUT of quant weight
-    floatGama* gama_T(GAMA_TYPE type = R_SCALE, int row = 0)    const;
+    floatGama* gama_T(GAMA_TYPE type = R_SCALE, floatGama* gama_0=nullptr) const;
+    hGTensor gama_param = nullptr;
     // virtual bool isUpdateParam(int iter = -1, int flag = 0x0) const;  // in many case, params are not update, even data is not allocated!
     bool needUpdateParam = false;
     int tile_r1 = 0, tile_c1 = 0;  //  tile_r0 = 0,tile_c0 = 0,
+    
     floatGrad* grad   = nullptr;   //
-    hGTensor grad_ref = nullptr;
     void *gm = nullptr, *gv = nullptr;  // first moment, second moment of grad
 
     float info[8];  // Some info of some operations
@@ -273,7 +282,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
         F_OP_NO_REALLOC = 0x10000,
     };
 
-    QUANT_ALG tpQuant = W_SCALE;
+    // QUANT_ALG tpQuant = W_SCALE;
 
     static size_t MostOverhead() { return sizeof(GTensor) * 2; }
     GTensor() {}
@@ -290,6 +299,16 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
         assert(0);
         return false;
     }
+
+    enum SERIAL_TYPE { TRIVAL, SAVE_, LOAD_ONLY_W };
+    virtual int LoadParam(const std::string& name, const JSON& val, void* bytes_ptr, size_t bytes_size, int flag = 0x0);
+    //  load mapping-memory would do Quant !
+    virtual bool Serial_Quant_MMAP(bool isSave, bool isReset = true, SERIAL_TYPE type = TRIVAL, int flag = 0x0);
+    // for fuyou's Exploitation
+    virtual bool Serial_MMAP_x(void* dest, bool isSave, int flag = 0x0);
+
+    virtual bool InitGamaParam(GeQuant *hQuant, int flag=0x0);
+
     // Init to zero in default
     virtual bool BeforeBackward(size_t& szBuf, int flag = 0x0) {
         assert(0);
@@ -320,7 +339,6 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     virtual float ToF8Ex(int type, int flag = 0x0) { throw "ToF8Ex is ...."; }
     virtual bool Mutation(int flag = 0x0) { throw "Mutation is ...."; }
 
-
     int32_t flags = 0x0, last_stp = -1;
 
     bool isParam() const { return BIT_TEST(flags, F_PARAM); }
@@ -329,9 +347,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     hGTensor GetRefer() { return hRef; }
     virtual void SetRefer(hGTensor hR, int flag = 0x0);
     virtual bool SetTernary(typNUMBER typ, int flag = 0x0);
-    //  load mapping-memory would do Quant !
-    virtual bool Serial_Quant_MMAP(bool isSave, bool isX = true, int flag = 0x0);
-    virtual bool Serial_MMAP_x(void* dest, bool isSave, int flag = 0x0);
+
     virtual bool SerialGP(void* yD, void* yG, size_t szY, bool isToY, int flag = 0x0) {
         assert(0);
         return false;
@@ -345,6 +361,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
         return nullptr;
     }
     virtual floatX* GetDataX(int flag = 0x0, const string& sX = "") const;
+    virtual int SetDataX(floatX* params, int flag = 0x0);
 
     // may different wit hQuant
     shared_ptr<GeQuant> GetDynamicQuant(int flag = 0x0) const;
@@ -370,7 +387,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
         return 1;
     }
     virtual size_t nByte() const { return szData; }
-    virtual size_t nByte_CKP(const CheckPoint_Params&, int flag=0x0) const;
+    virtual size_t nByte_CKP(const CheckPoint_Params&, int flag = 0x0) const;
     //   A weight matrix is a linear operator on RMS-normed vector spaces.
     virtual bool isWMAT(int flag = 0x0) const;
     //  The offset of (i0,i1,i2,i3) in byte
@@ -423,7 +440,6 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
         return Get(0);
     }
 
-    virtual int SerialJSON(const std::string& name, const JSON& val, void* bytes_ptr, size_t bytes_size, int flag = 0x0);
     friend class GeNeuron;
     friend class GeQuant;
     friend class huTensor;
@@ -541,7 +557,7 @@ class huTensor : public GTensor {
 
     hGTensor Normal(hGTensor hOut, hGTensor _mean, hGTensor _rstd, hGTensor w, hGTensor b, bool isForward = true, int flag = 0x0) override;
     // void Print(const string &title, int typ, int flag, size_t nEle = 0) const override;
-
+    // Dreprecated, replate it by Quantizer_1bit
     bool ToTernary(floatX* tmp, int flag = 0x0) override;
     float ToF8Ex(int type, int flag = 0x0) override;
     bool Mutation(int flag = 0x0) override;
@@ -631,6 +647,8 @@ inline float* Gensor2float(struct ggml_context* ctx0, const hGensor w, int flag 
 
 void _T_repr_(hGensor t, const char* tab, char* buf, int typ = 0x0);
 void _T_repr_(hGensor t, const char* tab, char* buf, const GENSOR_INFO& info);
+
+// floatGama* gamaOf(floatGama* gama_0, GTensor::GAMA_TYPE type, int nRow, int nCol, int flag = 0x0);
 
 template <typename T>
 double P_softmax(int idx, T* logits, int size);

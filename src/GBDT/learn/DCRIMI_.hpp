@@ -5,6 +5,7 @@
 #include <time.h>
 #include <omp.h>
 #include <numeric> 
+#include <algorithm>
 #include "../util/samp_set.hpp"
 
 struct DataSample;
@@ -24,7 +25,7 @@ namespace Grusoft{
 
 		void *hBase = nullptr;
 		double rFAR = 0, rFRR = 0, rEER = 0, D_, sep = 0, eer_sep = 0;
-		double f_ar_8[8], f_rr_8[8], hd_8[8];	//¶ÔÓ¦1.0e-7~1.0µÄ8¸ö¿Ì¶È
+		double f_ar_8[8], f_rr_8[8], hd_8[8];	//ï¿½ï¿½Ó¦1.0e-7~1.0ï¿½ï¿½8ï¿½ï¿½ï¿½Ì¶ï¿½
 		double CRR = 0, time = 0;
 		double nz_a = 0, nz_r = 0, mean_a = 0, mean_r = 0, devia_a = 0, devia_r = 0, max_a = 0, min_a = 0, max_r = 0, min_r = 0;
 		double rTop_1 = 0, rTop_5 = 0;
@@ -81,7 +82,7 @@ namespace Grusoft{
 		template<typename Tx>
 		double AUC_Jonson(size_t dim, const Tx *y0, const Tx *y1, int flag = 0x0) {
 			clock_t t1 = clock();
-			/*	²âÊÔÓÃÀý£¬auc=0.27472527472527464
+			/*	ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½auc=0.27472527472527464
 			dim = 20;
 			Tx y1[] = { 7.96542987e-01, 1.83434790e-01, 7.79691000e-01, 5.96850158e-01, 4.45832753e-01, 9.99749158e-02, 4.59248892e-01, 3.33708611e-01, 1.42866818e-01, 6.50888473e-01, 5.64115790e-02, 7.21998772e-01, 9.38552709e-01, 7.78765841e-04, 9.92211559e-01, 6.17481510e-01, 6.11653160e-01, 7.06630522e-03, 2.30624250e-02, 5.24774660e-01 };
 			Tx y0[] = { 0., 0., 0., 0., 1., 1., 0., 1., 1., 0., 0., 0., 0., 0., 1., 0., 0., 1., 1., 0. };
@@ -104,7 +105,7 @@ namespace Grusoft{
 				std::iota(idx.begin(), idx.end(), 0);
 				std::sort(idx.begin(), idx.end(), [&y1](tpSAMP_ID i1, tpSAMP_ID i2) {return y1[i1] > y1[i2]; });
 				//ParallelSort(idx.begin(), idx.end(), [&y1](tpSAMP_ID i1, tpSAMP_ID i2) {return y1[i1] > y1[i2]; }, IteratorValType(idx.begin()));
-				for (i = 0; i < dim; i++) {		//Ê×ÏÈ¶Ôscore´Ó´óµ½Ð¡ÅÅÐò£¬È»ºóÁî×î´óscore¶ÔÓ¦µÄsample µÄrankÎªn
+				for (i = 0; i < dim; i++) {		//ï¿½ï¿½ï¿½È¶ï¿½scoreï¿½Ó´ï¿½Ð¡ï¿½ï¿½ï¿½ï¿½È»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½scoreï¿½ï¿½Ó¦ï¿½ï¿½sample ï¿½ï¿½rankÎªn
 					dot += y0[idx[i]]*(i+1);
 				}
 				auc = 1 + ((N_pos + 1.) / (2 * N_neg)) - (1. / (N_pos * N_neg)) * dot;
@@ -117,7 +118,7 @@ namespace Grusoft{
 		
 		/*
 		template<typename Tx>
-		double AUC_cys_1(size_t dim, const Tx *label, const Tx *y1, int flag = 0x0) {	//Ê§°ÜµÄ³¢ÊÔ£¬ÔÎ
+		double AUC_cys_1(size_t dim, const Tx *label, const Tx *y1, int flag = 0x0) {	//Ê§ï¿½ÜµÄ³ï¿½ï¿½Ô£ï¿½ï¿½ï¿½
 			clock_t t1 = clock();
 			//double auc_0 = AUC_Jonson(dim, label, y1, flag);
 			size_t i, N_pos = 0, N_neg = 0,nz_1=0,nz_0=0,nz=0;
@@ -164,7 +165,7 @@ namespace Grusoft{
 			std::sort(idx,idx+nz, [&y1](tpSAMP_ID i1, tpSAMP_ID i2) {return y1[i1] > y1[i2]; });
 			//ParallelSort(idx.begin(), idx.end(), [&y1](tpSAMP_ID i1, tpSAMP_ID i2) {return y1[i1] > y1[i2]; }, IteratorValType(idx.begin()));
 			//tX += ((clock() - (t1))*1.0f / CLOCKS_PER_SEC);
-			for (i = 0; i < nz; i++) {		//Ê×ÏÈ¶Ôscore´Ó´óµ½Ð¡ÅÅÐò£¬È»ºóÁî×î´óscore¶ÔÓ¦µÄsample µÄrankÎªn
+			for (i = 0; i < nz; i++) {		//ï¿½ï¿½ï¿½È¶ï¿½scoreï¿½Ó´ï¿½Ð¡ï¿½ï¿½ï¿½ï¿½È»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½scoreï¿½ï¿½Ó¦ï¿½ï¿½sample ï¿½ï¿½rankÎªn
 				if (label[idx[i]] == 0)
 					continue;
 				dot += (dim-nz_1)-i;
@@ -178,7 +179,7 @@ namespace Grusoft{
 
 
 		template<typename Tx>
-		double AUC_cys(size_t dim, const Tx *label, const Tx *y1, int flag = 0x0) {	//Ê§°ÜµÄ³¢ÊÔ£¬ÔÎ
+		double AUC_cys(size_t dim, const Tx *label, const Tx *y1, int flag = 0x0) {	//Ê§ï¿½ÜµÄ³ï¿½ï¿½Ô£ï¿½ï¿½ï¿½
 			clock_t t1 = clock();
 			size_t i, nStep=1024,pos,*ptr=new size_t[nStep*2+2](),*count=ptr+ nStep+1, nz_1=0;
 			double dot = 0, auc = 0;		

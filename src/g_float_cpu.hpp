@@ -89,8 +89,8 @@ typedef short __gcc_fp16;
 
 // typedef uint16_t __gcc_fp16;
 // how define f8 like __nv_fp8_e5m2	?
-
-inline bool isValidF(float* x) { return !(isnan(*x) || isinf(*x)); }
+inline bool isValidF(float x)   { return !(isnan(x) || isinf(x)); }
+inline bool isValidF(float* x)  { return !(isnan(*x) || isinf(*x)); }
 inline bool isValidF(size_t n, float* x0, int flag = 0x0) {
     float* x = x0;
     for (size_t i = 0; i < n; i++, x++) {

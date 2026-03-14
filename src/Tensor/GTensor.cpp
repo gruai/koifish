@@ -178,7 +178,13 @@ bool GTensor::ReShape(SHAPE shape_, typNUMBER tpD_, int flag) {
     bool isRelloc = !BIT_TEST(flag, F_OP_NO_REALLOC);
     if (data != nullptr && isRelloc) {
         Free();
+        INIT_WEIGHT tpOldInit = tpInit;
+        tpInit                = W_SKIP;  // just pass the InitParam in the Alloc function
+        // if (isParam()) {
+        //     SUM::nInitParam--;
+        // }
         Alloc();
+        tpInit = tpOldInit;
     }
     // _INFO();
     return true;
@@ -197,7 +203,7 @@ bool GTensor::AfterQuant(GeQuant* hQuant, typNUMBER type_quant, void* data_quant
     void* data_old    = data;
     bool bRet         = ReShape(shape, type_quant, F_OP_NO_REALLOC);
     assert(bRet);
-    if (hQuant != nullptr && hQuant->isCPU) {
+    if (hQuant != nullptr && !hQuant->isGPU) {
         H2D(data, data_quant, szData);
     } else {
         Free_1(&data_old);
@@ -228,7 +234,7 @@ bool GTensor::SetTernary(typNUMBER tpT_, int flag) {
     if (type == tpT_)
         return true;
     BIT_SET(flags, GTensor::F_TERNARY);
-    tpQuant = W_SCALE;
+    // tpQuant = W_SCALE;
     if (DEBUG.T_ternary == 1) {  //  only for debug
         type = tpT_;
         return true;
@@ -272,7 +278,7 @@ GTensor::~GTensor() {
     } else {
         if (BIT_TEST(flags, F_GPU)) {
             /* No need to free host_data, since
-            1. host_data is just ref of MMF "host = src" @GTensor::SerialJSON
+            1. host_data is just ref of MMF "host = src" @GTensor::LoadParam_
             */
         } else
             FREE_a(host_data);
@@ -404,16 +410,51 @@ SHAPE JSON2SHAPE(const JSON& jval) {
     }*/
     return spJ;
 }
+void* JSON2SRC(const JSON& jval, const void* bytes_ptr, const size_t bytes_size, size_t& szSrc, GTensor* tensor) {
+    if (jval.at("data_offsets").size() != 2) {
+        return nullptr;
+    }
+    size_t offset_start = static_cast<size_t>(jval.at("data_offsets")[0]);  // 1544148992
+    size_t offset_end   = static_cast<size_t>(jval.at("data_offsets")[1]);  // 1545276932
+    if (offset_start < 0 || offset_end <= offset_start || offset_end > bytes_size) {
+        _ERROR("bad offsets");
+        return nullptr;
+    }
+    size_t szData = tensor->nByte();
+    szSrc         = offset_end - offset_start;
+    if (szData > szSrc || szSrc % szData != 0) {
+        _WARN("GTensor::LoadParam_ failed! size mismach[%ld!=%ld] @%s", szData * 3, szSrc, tensor->name);
+        return nullptr;
+    }
+
+    void* src = (char*)bytes_ptr + offset_start;
+    return src;
+}
 
 /*
-    parse_tensor
-    device_to_file   using double buffering running on the given stream.
+    ---- stage one
+    1. Load param from HF "model.safetensors"
+        a .weight
+        b AWQ model (.qweight, .zeros, .scales)
+    2. Load param from Koifish state file
+        a load bf16 weight
+        b load quantized weight (dequant it or not)
+
+    ---- stage two
+    1. quant weight (q4->q2 is also quant)
 */
-int GTensor::SerialJSON(const std::string& name_, const JSON& jval, void* bytes_ptr, size_t bytes_size, int flag) {
-    if (G_Has_(name,
-               {"model.layers.0.input_layernorm.weight"})) {  //  "tokenizer.tokens" model.layers.0.mlp.down_proj.qweight   "model.embed_tokens.weight" t->name,
+int GTensor::LoadParam(const std::string& name_, const JSON& jval, void* bytes_ptr, size_t bytes_size, int flag) {
+    //  "tokenizer.tokens" model.layers.0.mlp.down_proj.qweight   "model.embed_tokens.weight" t->name,
+    if (G_Has_(name, {"model.layers.0.input_layernorm.weight"})) {
         DEBUG_HERE;
     }
+    if (jval.empty()) {  // load from host_data of mmp
+        assert(host_data != nullptr && data != nullptr);
+        Serial_Quant_MMAP(false, false, LOAD_ONLY_W);
+        //  G_NORM_STAT<bf16>(size(), (bf16*)host_data, disq.sum_2, disq.sum_1, disq.nrm_1);
+        return 0x0;
+    }
+    // from HF "model.safetensors"
     if (strcmp(name, name_.c_str()) != 0) {
         strcpy(name, name_.c_str());
     }
@@ -433,55 +474,30 @@ int GTensor::SerialJSON(const std::string& name_, const JSON& jval, void* bytes_
 
     ReShape(shape, tpMMP);
 
-    if (jval.at("data_offsets").size() != 2) {
-        return -3;
-    }
-    size_t offset_start = static_cast<size_t>(jval.at("data_offsets")[0]);  // 1544148992
-    size_t offset_end   = static_cast<size_t>(jval.at("data_offsets")[1]);  // 1545276932
-    if (offset_start < 0 || offset_end <= offset_start || offset_end > bytes_size) {
-        _ERROR("bad offsets");
-        return -1;
-    }
-    size_t szSrc = offset_end - offset_start;
-    if (szData > szSrc || szSrc % szData != 0) {
-        _WARN("GTensor::SerialJSON failed! size mismach[%ld!=%ld] @%s", szData * 3, szSrc, name);
-        return -1;
-    }
-
-    void* src = (char*)bytes_ptr + offset_start;
-
-    // if(G_Has_(name,{"layers.27.mlp.weight"})){   //only for debug    815288320
-    //    float *rows = new float[ne[0]];
-    //    T2Float_arr(ne[0],(f8e5*)src,rows);
-    //    ToChebyshev(ne[0],rows);
-    //    delete[] rows;
-    //    // PrintTensor<f8e5>(name,(f8e5*)src,ne[0],ne[1]);
-    // }
+    size_t szSrc = 0x0;
+    void* src    = JSON2SRC(jval, bytes_ptr, bytes_size, szSrc, this);
     if (BIT_TEST(flag, F_NOALLOC)) {  //  "tokenizer.tokens","tokenizer.scores"
         data = src;                   // ((char*)(src))[szSrc-1]    (char*)bytes_ptr + offset_end-1
         BIT_SET(flags, F_MMAP);
+        /*if (DEBUG.T_cpu == 1) {       // reserve for future CPU version
+            data = src;
+            BIT_SET(flags, F_MMAP);
+        }*/
     } else {
-        if (data != nullptr) {
-            SerialGP(src, nullptr, szSrc, false);
+        assert(data == nullptr);
+        host_data = src;
+        if (!hFish->isTrain()) {  // otherwize, mmap file is free & host_data is invalid
+            tpInit = W_SKIP;
+            Alloc(-1, flag);
+            Serial_Quant_MMAP(false, false);
+            host_data = nullptr;  // mmap file would release
         } else {
-            host_data = src;
-            if (DEBUG.T_cpu == 1) {
-                data = src;
-                BIT_SET(flags, F_MMAP);
-            }
-            if (!hFish->isTrain()) {  // otherwize, mmap file is free & host_data is invalid
-                tpInit = W_SKIP;
-                Alloc(-1, flag);
-                Serial_Quant_MMAP(false, false);
-                host_data = nullptr;  // mmap file would release
-            } else {
-                if (type == typNUMBER::BF16)
-                    G_NORM_STAT<bf16>(size(), (bf16*)src, disq.sum_2, disq.sum_1, disq.nrm_1);
-            }
-            // if (G_Has_(name, hFish->config.quant.filter_WeightF8Ex)) {  // model.embed_tokens.weight    only for debug
-            //     ToF8Ex(0x0);
-            // }
+            if (type == typNUMBER::BF16)  // get original disq of tensor stored in mmp
+                G_NORM_STAT<bf16>(size(), (bf16*)src, disq.sum_2, disq.sum_1, disq.nrm_1);
         }
+        // if (G_Has_(name, hFish->config.quant.filter_WeightF8Ex)) {  // model.embed_tokens.weight    only for debug
+        //     ToF8Ex(0x0);
+        // }
     }
     if (strlen(name) > 0 && flag > 0)
         DumpX(0);
@@ -490,40 +506,82 @@ int GTensor::SerialJSON(const std::string& name_, const JSON& jval, void* bytes_
     }
     return 0;
 }
-
-// return scaling/LUT of quant weight
-floatGama* GTensor::gama_T(GAMA_TYPE type, int row) const {
-    if (hRef != nullptr)
-        return hRef->gama_T();
-    assert(data != nullptr);
-    if (hQuant != nullptr) {
-        // if (qScale != nullptr) {
-        //     assert(hQuant->params.type == RTN_ZS);
-        //     return nullptr;
-        // }
-        if (szGama == 0) {
-            assert(hQuant->params.type == RTN_ZS);
-            return nullptr;
-        }
-    }
-    floatGama* gama_0 = reinterpret_cast<floatGama*>((hBITARR)data + szData);
-    int nRow = ne[0], nCol = ne[1];
+/*
+floatGama* gamaOf(floatGama* gama_0, GTensor::GAMA_TYPE type, int nRow, int nCol, int flag) {
     switch (type) {
-        case R_SCALE:
+        case GTensor::R_SCALE:
             return gama_0;
-        case C_SCALE:
+        case GTensor::C_SCALE:
             return gama_0 + nRow;
-        case ZERO:
+        case GTensor::ZERO:
             return gama_0 + nRow + nCol;
-        case STEP:
+        case GTensor::STEP:
             return gama_0 + nRow + nCol + nRow;
-        case LUT:
+        case GTensor::LUT:
             return gama_0 + nRow + nCol;
+        case GTensor::OFF: {
+            int off = flag;
+            return gama_0 + nRow + nCol + off;
+        }
+        case GTensor::BACKUP: {
+            int off = flag;
+            return gama_0 + nRow + nCol + off;
+        }
         default:
             assert(0);
             break;
     }
+    return nullptr;
+}*/
 
+/*
+    return scaling/LUT of quant weight
+        1. RC_SCALE is the scaling of each row/column(is not same as nGroup/lGroup!)
+        2. gama_0 may be some temp memory
+*/
+floatGama* GTensor::gama_T(GAMA_TYPE type, floatGama* gama_0) const {
+    if (hRef != nullptr)
+        return hRef->gama_T();
+    assert(data != nullptr);
+    int nRow = ne[0], nCol = ne[1], nGroup = 0, lGroup = 0;
+    if (hQuant != nullptr) {
+        SHAPE spGroup = hQuant->GroupShapeOfT(this);
+        nGroup = spGroup[0], lGroup = spGroup[1];
+        // if (szGama == 0) {
+        //     assert(hQuant->params.type == AWQ);
+        //     return nullptr;
+        // }
+    }
+    if (gama_0 == nullptr)
+        gama_0 = reinterpret_cast<floatGama*>((hBITARR)data + szData);
+    if (type == GAMA)
+        return gama_0;
+
+    floatGama* gama_1 = gama_0 + nRow + nCol;
+    switch (type) {
+        case GTensor::R_SCALE:
+            return gama_0;
+        case GTensor::C_SCALE:
+            return gama_0 + nRow;
+        case GTensor::ZERO:
+            return gama_1;
+        case GTensor::STEP:
+            return gama_1 + nGroup;
+        case GTensor::LUT:
+            return gama_1;
+        // case GTensor::OFF: {
+        //     int off = flag;
+        //     return gama_0 + nRow + nCol + off;
+        // }
+        // case GTensor::BACKUP: {
+        //     int off = flag;
+        //     return gama_0 + nRow + nCol + off;
+        // }
+        default:
+            assert(0);
+            break;
+    }
+    // floatGama* gama_ = gamaOf(gama_0, type, ne[0], ne[1]);
     return gama_0;
 }
 
@@ -533,6 +591,7 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
     assert(nEle >= 0);
     bool isDevice = !isAtHost();
     void *src = x == 3 ? gv : x == 2 ? gm : x == 1 ? grad : data, *hData = nullptr;
+    typNUMBER tpSrc = x==0 ? type : typNUMBER::BF16;
     string suffix = x == 3 ? "GV_" : x == 2 ? "GM_" : x == 1 ? "GRAD_" : "";
     if (x == 4) {
         assert(host_data != nullptr);
@@ -543,7 +602,7 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
         _INFO("Failed to print! %s of \"%s\" is nullptr!", x == 3 ? "gv" : x == 2 ? "gm" : x == 1 ? "grad" : "data", name);
         return;
     }
-    size_t szHost = nEle > 0 ? (nEle * BitPE(type)) / 8 : szData + szGama;
+    size_t szHost = nEle > 0 ? (nEle * BitPE(tpSrc)) / 8 : szData + szGama;
     if (isDevice) {
         SYNC_DEVICE();
         hData = new char[szHost];
@@ -563,8 +622,8 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
 
     // floatGama *rNormal = (floatGama*)((char*)data + szData), *cNormal = rNormal + shape[0];
     // floatGama* gamaQ   = cNormal + shape[1];
-    floatGama *rNormal = gama_T(R_SCALE), *cNormal = gama_T(C_SCALE), *gamaQ = gama_T(LUT);
-    switch (type) {
+    floatGama *rNormal = gama_T(R_SCALE), *cNormal = gama_T(C_SCALE);
+    switch (tpSrc) {
         case typNUMBER::T_BINARY:
         case typNUMBER::T_BINARY_3:
         case typNUMBER::T_BINARY_TILE:
@@ -573,21 +632,16 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
         case typNUMBER::Q4: {
             // floatX* wX = GetDataX();
             // PrintTensor<floatX>(title.c_str(), wX, true, sp[0], sp[1], sp[2], sp[3], flag);
-            PrintQ4(szGama == 0 ? name : "_Q4", (int32_t*)src, ne[0], ne[1], ne[2], ne[3], flag | FLOAT_META::ENDIAN_LITTLE);
-            if (disq.rc_normal > 0) {
-                PrintTensor<floatGama>("\t_rNormal", rNormal, true, ne[0], 1, 1, 1, flag);
-                PrintTensor<floatGama>("\t_cNormal", cNormal, true, ne[1], 1, 1, 1, flag);
-            }
-            if (gamaQ != nullptr)
-                PrintTensor<floatGama>("\t_gamaQ", gamaQ, true, ne[0], 2, 1, 1, flag);
+            PrintQ4(szGama == 0 ? name : "_Q4", (Q4_8*)src, ne[0], ne[1], ne[2], ne[3], flag | FLOAT_META::ENDIAN_LITTLE);
+            hQuant->PrintGama(this);
         } break;
         case typNUMBER::Q3:
-            // PrintQ4("_Q3", (hBITARR)src, ne[0], ne[1], ne[2], ne[3], flag);
+            // PrintQ3("_Q3", (hBITARR)src, ne[0], ne[1], ne[2], ne[3], flag);
             if (disq.rc_normal > 0) {
                 PrintTensor<floatGama>("_rNormal", rNormal, true, ne[0], 1, 1, 1, flag);
                 PrintTensor<floatGama>("_cNormal", cNormal, true, ne[1], 1, 1, 1, flag);
             }
-            PrintTensor<floatGama>("_gamaQ", gamaQ, true, ne[0], 2, 1, 1, flag);
+            // PrintTensor<floatGama>("_gamaQ", gamaQ, true, ne[0], 2, 1, 1, flag);
             break;
         case typNUMBER::Q2:
             // PrintQ2("_Q2", (hBITARR)src, ne[0], ne[1], ne[2], ne[3], flag);
@@ -595,7 +649,7 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
                 PrintTensor<floatGama>("_rNormal", rNormal, true, ne[0], 1, 1, 1, flag);
                 PrintTensor<floatGama>("_cNormal", cNormal, true, ne[1], 1, 1, 1, flag);
             }
-            PrintTensor<floatGama>("_gamaQ", gamaQ, true, ne[0], 2, 1, 1, flag);
+            // PrintTensor<floatGama>("_gamaQ", gamaQ, true, ne[0], 2, 1, 1, flag);
             break;
         case typNUMBER::F8E5M2:
             //    PrintTensor<__nv_fp8_e5m2>(title.c_str(),(__nv_fp8_e5m2 *)data, isDevice,ne[0],ne[1],ne[2],ne[3],flag);
@@ -622,7 +676,15 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
 }
 
 std::string GTensor::Alias(int flag) {
-    string alias = name;
+    string alias, alias_0 = name;
+    std::vector<size_t> dots;
+    for (size_t i = 0; i < alias_0.size(); ++i) {
+        if (alias_0[i] == '.') {
+            dots.push_back(i);
+        }
+    }
+    int start = dots.size() >= 3 ? dots[1] + 1 : 0, end = dots.size() > 1 ? dots[dots.size() - 1] : alias_0.size();
+    alias = alias_0.substr(start, end - start);
     return alias;
 }
 
@@ -763,13 +825,13 @@ bool huTensor::BeforeBackward(size_t& off, int flag) {
  *      1. AfterBuild->Prepare->InitGUOKE->ManegeMemory-> Alloc each of Neuron::PickGensors
  *
  * Evaluate/Chat
- *      1. AfterBuild->HF_Serialize->SerialJSON
+ *      1. AfterBuild->HF_Serialize->LoadParam_
  *      2.
  */
 bool huTensor::Alloc(int iter, int flagInit) {
     assert(strlen(name) > 0);
-    if (G_Has_(name, {"model.layers.0.self_attn.q_proj.qweight"})) {  // model.layers.0.mlp.down_proj.weight qzeros scales
-        DEBUG_HERE;                                                   //
+    if (G_Has_(name, {"model.layers.0.mlp.up_proj.weight"})) {  // model.layers.0.mlp.down_proj.weight qzeros scales
+        DEBUG_HERE;                                             //
     }
     size_t sz0 = szGlobalMaloc;
     if (BIT_TEST(flags, F_NOALLOC))  // For example: operator fusing, memory reuse,rematerialization
@@ -795,7 +857,7 @@ bool huTensor::Alloc(int iter, int flagInit) {
     }
     bool allocData = data == nullptr;
     szM = sizeof(floatMV) * size(), szV = sizeof(floatMV) * size();
-    szGrad = sizeof(floatGrad) * size(), szGama = 0x0;
+    szGrad      = sizeof(floatGrad) * size();
     string desc = name;
     if (allocData) {
         if (type == typNUMBER::T_BINARY_TILE) {
@@ -805,9 +867,14 @@ bool huTensor::Alloc(int iter, int flagInit) {
             szM /= THREAD_TILE_M * THREAD_TILE_N;
             szV = szM;
         } else if (type == typNUMBER::Q4 || type == typNUMBER::Q3 || type == typNUMBER::Q2) {
-            int bits = BitPE(type), nQuant = 1 << bits;
-            if (qScale == nullptr)
-                szGama = sizeof(floatGama) * (shape[0] * nQuant + shape[0] + shape[1]);  // 36/1024=0.035
+            // szGama is set @GeQuant::RTN_x, ...
+            if (hQuant->params.szM > 0 || hQuant->params.szV > 0) {
+                szM = hQuant->params.szM;
+                szV = hQuant->params.szV;
+            }
+            if (hQuant->params.szGrad > 0) {
+                szGrad = hQuant->params.szGrad;
+            }
             if (!isTrain) {
                 szM = 0, szV = 0;
             }  // only used at infer stage
@@ -815,8 +882,8 @@ bool huTensor::Alloc(int iter, int flagInit) {
             szGama = sizeof(floatGama) * ne[0];
             // Alloc_1((void **)(&gama_T), false, sizeof(float) * ne[0]);
         }
-        string suffix = isParam() ? ".w" : ".a";  //  weight or activation
-        Alloc_1(&data, true, desc + suffix, szData + szGama);
+        string suffix = isParam() ? ".w" : ".a";               //  weight or activation
+        Alloc_1(&data, true, desc + suffix, szData + szGama);  //  1048576+98560
         // if(hQuant!=nullptr)
         //     hQuant->ExTensor(this);
 
@@ -829,32 +896,34 @@ bool huTensor::Alloc(int iter, int flagInit) {
             BIT_SET(flags, GTensor::F_RESIDENT);  //  guoke ???
         }
 
-        if (grad == nullptr && isTrain) {
-            if (BIT_TEST(flags, F_TMP_GRAD)) {  // grad_ref != nullptrgrad = ToX(grad_ref);
-                grad = nullptr;
-            } else {
-                Alloc_1((void**)(&grad), true, desc + ".g", szGrad);  // sgd_kernel would zero grad!
-            }
-            string method = hFish->config.Get({"train", "optimizatioin", "method"}, string("adamw"), false);
-            if (method == "adamw") {
-                Alloc_1(&gm, true, desc + ".m", szM + szV), gv = (char*)gm + szM;
-            } else if (method == "lion") {
-                Alloc_1(&gm, true, desc + ".m", szM), szV = 0;
-            } else if (method == "muon") {
-                if (hFish->config.common.muon.isAdamW(this)) {
-                    Alloc_1(&gm, true, desc + ".m", szM + szV), gv = (char*)gm + szM;
+        if (isTrain) {
+            if (grad == nullptr) {
+                if (BIT_TEST(flags, F_TMP_GRAD)) {  //
+                    grad = nullptr;
                 } else {
-                    assert(szM > 0 && "The size of gm should > 0");
-                    Alloc_1(&gm, true, desc + ".m", szM), szV = 0;
+                    Alloc_1((void**)(&grad), true, desc + ".g", szGrad);  // sgd_kernel would zero grad!
                 }
-                // Alloc_1(&gm, true, desc+".m", szMV);
-            } else if (method == "adams") {  // why converge so slow for 1445M?
-                Alloc_1(&gm, true, desc + ".m", szM), szV = 0;
-            } else {
-                Alloc_1(&gv, true, desc + ".m", szM), szV = 0;
+                string method = hFish->config.Get({"train", "optimizatioin", "method"}, string("adamw"), false);
+                if (method == "adamw") {
+                    Alloc_1(&gm, true, desc + ".m", szM + szV), gv = (char*)gm + szM;
+                } else if (method == "lion") {
+                    Alloc_1(&gm, true, desc + ".m", szM), szV = 0;
+                } else if (method == "muon") {
+                    if (hFish->config.common.muon.isAdamW(this)) {
+                        Alloc_1(&gm, true, desc + ".m", szM + szV), gv = (char*)gm + szM;
+                    } else {
+                        assert(szM > 0 && "The size of gm should > 0");
+                        Alloc_1(&gm, true, desc + ".m", szM), szV = 0;
+                    }
+                    // Alloc_1(&gm, true, desc+".m", szMV);
+                } else if (method == "adams") {  // why converge so slow for 1445M?
+                    Alloc_1(&gm, true, desc + ".m", szM), szV = 0;
+                } else {
+                    Alloc_1(&gv, true, desc + ".m", szM), szV = 0;
+                }
+                assert(gm != nullptr && "gm is nullptr@huTensor::Alloc");
             }
-            assert(gm != nullptr && "gm is nullptr@huTensor::Alloc");
-        } else {
+        } else {  // infer or generate stage
             szV = 0, szGrad = 0, szM = 0;
         }
     } else {
@@ -882,6 +951,9 @@ bool huTensor::Free(bool isPassResident) {
     try {
         if (G_Has_(name, {"tmpDelta2", "tmpOutL"})) {
             DEBUG_HERE;
+        }
+        if (isParam()) {
+            // GeNeuron::ManageMemory would call free many times
         }
 
         if (isRefer()) {
@@ -931,6 +1003,70 @@ bool Gensors2File(std::vector<hGensor> gensors, const std::string& path, int fla
 
     // If you want to restore it back to the console, you typically need ​​low-level file descriptor redirection (dup2)​​, which is ​​POSIX-specific
     // (Linux/macOS)​​. Not available in pure standard C++.
+    return true;
+}
+
+hGTensor huTensor::Partial(const string& name_, size_t szOff, const SHAPE shape, typNUMBER tyP, int flag) {
+    if (tyP == typNUMBER::T_OTHER)
+        tyP = type;
+    hGTensor sub = GT(hFish, tyP, shape);
+    if (!name_.empty())
+        snprintf(sub->name, sizeof(name), "%s", name_.c_str());
+    else
+        sub->name[0] = '\0';
+    size_t sz1 = sub->nByte(), sz2 = sizeof(floatGama) * (ne[0] + ne[1]), szAll = nByte() + szGama;
+    if (szOff + sz1 > szAll) {
+        _ERROR("Out of size! szOff=%ld sub=%ld most=%ld. x=%ld", szOff, sz1, szAll, szOff + sz1 - szAll);
+        K_EXIT(KOIFISH_TENSOR_PARTIAL);
+    }
+    // assert(BitPE(type) == 8 || BitPE(type) == 16);
+    // int nB    = (int)(BitPE(type) / 8);
+    sub->data = (hBITARR)data + szOff;  // nOff * nB;
+    if (grad == nullptr) {
+        sub->grad = nullptr;
+    } else
+        sub->grad = grad + szOff;
+    sub->flags = flags;
+    BIT_SET(sub->flags, F_ONLYREF);
+    return sub;
+}
+
+bool GTensor::InitGamaParam(GeQuant* hQuant, int flag) {
+    // if(!G_Has_(name,{"model.layer.self_attn.o_proj"})){
+    //     return false;
+    // }    
+
+    gama_param = nullptr;
+    assert(hQuant != nullptr);
+    assert(isParam());
+    SHAPE sp = hQuant->GroupShapeOfT(this);
+    int nG = sp[0], lG = sp[1];
+
+    floatGama *zero = gama_T(GTensor::ZERO), *step = gama_T(GTensor::STEP);
+    std::ptrdiff_t off = hBITARR(zero) - hBITARR(data);
+    string name_1      = string(name) + "_gama";
+    gama_param         = Partial(name_1, static_cast<size_t>(off), {sp[0], 2}, typNUMBER::BF16, flag);
+    gama_param->grad = grad;
+    gama_param->gm   = gm;
+    gama_param->gv   = gv;
+
+    assert(needUpdateParam);
+    gama_param->needUpdateParam = true;
+    needUpdateParam             = false;
+
+    size_t nEle = gama_param->size();    
+    assert(nEle == nG * 2 && nEle <= size());
+    hQuant->params.szM    = sizeof(floatX) * nEle;
+    hQuant->params.szV    = sizeof(floatX) * nEle;
+    hQuant->params.szGrad = sizeof(floatX) * nEle;
+    gama_param->szM       = hQuant->params.szM;
+    gama_param->szV       = hQuant->params.szV;
+    gama_param->szGrad    = hQuant->params.szGrad;
+
+    if(G_Has_(name,{"model.layer.self_attn.o_proj"})){
+        Print(name, 3, -1, nEle);
+        gama_param->Print(gama_param->name, 3, -1, nEle);
+    }
     return true;
 }
 

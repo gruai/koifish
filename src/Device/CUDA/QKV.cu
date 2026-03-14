@@ -692,7 +692,8 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
         INSPECT_THIS;
         // Q.w->Print("Qw", 1, dump_flag);
         assert(inpL == gBUFF->delta);
-        delta->Print("delta", 0x0, dump_flag);
+        delta->Print("deltaQKV", 0x0, dump_flag);
+        proj_cat.w->Print("proj_cat.w", 0x0, dump_flag);
         proj_cat.Back(gBUFF->tmpDelta, attn, gBUFF->delta, nullptr);
 
         hGensor delta_qkv = gBUFF->bt4c;
@@ -727,25 +728,26 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
             rope->cuFlow(this, rope_seed);
             // Q.out->Print("Q.rope",0x0,dump_flag);    K.out->Print("K.rope",0x0,dump_flag);
         }
-        float* scratchF = (float*)GTensor::buff;
+        // float* scratchF = (float*)GTensor::buff;
         if (isSeparateQKV) {
             // Q.w->Print("Qw", 0, dump_flag);  Q.b->Print("Qb", 0, dump_flag);   norm.out->Print("norm.out", 0, dump_flag);
             Q.Back(gBUFF->tmpDelta, norm.out, deltaQ, nullptr);
             // matmul_backward(ToX(gBUFF->tmpDelta), ToG(Q.w), ToG0(Q.b), (floatX*)devDeltaQ, ToX(norm.out), Q.w->GetDataX(), scratchF, B, T, Q.nOut, Q.nIn,
             //                 main_stream, false, NULL, false);
             // gBUFF->tmpDelta->Print("delta_0", 0, dump_flag);
-            // K.Back(gBUFF->tmpDelta, norm.out, deltaK, nullptr, true);
-            matmul_backward(ToX(gBUFF->tmpDelta), ToG(K.w), ToG0(K.b), (floatX*)devDeltaK, ToX(norm.out), K.w->GetDataX(), scratchF, B, T, K.nIn, K.nOut,
-                            main_stream, false, NULL, true);
+            K.Back(gBUFF->tmpDelta, norm.out, deltaK, nullptr, true);
+            // matmul_backward(ToX(gBUFF->tmpDelta), ToG(K.w), ToG0(K.b), (floatX*)devDeltaK, ToX(norm.out), K.w->GetDataX(), scratchF, B, T, K.nIn, K.nOut,
+            // main_stream, false, NULL, true);
             // gBUFF->tmpDelta->Print("delta_1", 0, dump_flag);
             // K.w->Print("Kw", 1, dump_flag);
-            // V.Back(gBUFF->tmpDelta, norm.out, deltaV, nullptr, true);
-            matmul_backward(ToX(gBUFF->tmpDelta), ToG(V.w), ToG0(V.b), (floatX*)devDeltaV, ToX(norm.out), V.w->GetDataX(), scratchF, B, T, V.nIn, V.nOut,
-                            main_stream, false, NULL, true);
+            V.Back(gBUFF->tmpDelta, norm.out, deltaV, nullptr, true);
+            // matmul_backward(ToX(gBUFF->tmpDelta), ToG(V.w), ToG0(V.b), (floatX*)devDeltaV, ToX(norm.out), V.w->GetDataX(), scratchF, B, T, V.nIn, V.nOut,
+            //                 main_stream, false, NULL, true);
             // gBUFF->tmpDelta->Print("delta_2", 0, dump_flag);
             // V.w->Print("Vw", 1, dump_flag);
         } else {
-            matmul_backward(ToX(gBUFF->tmpDelta), ToG(Q.w), ToG0(Q.b), ToX(delta_qkv), ToX(norm.out), ToX(Q.w), scratchF, B, T, C_qkv, 3 * C_qkv, main_stream);
+            Q.Back(gBUFF->tmpDelta, norm.out, deltaQ, nullptr);
+            // matmul_backward(ToX(gBUFF->tmpDelta), ToG(Q.w), ToG0(Q.b), ToX(delta_qkv), ToX(norm.out), ToX(Q.w), scratchF, B, T, C_qkv, 3 * C_qkv, main_stream);
             gBUFF->tmpDelta->Print("delta_3", 0, dump_flag);
         }
 

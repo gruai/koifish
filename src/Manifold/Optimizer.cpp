@@ -15,7 +15,7 @@
 #include "gLLM.hpp"
 
 int PackedN_bug = 0;
-int tpFuseCu = 1;
+int tpFuseCu    = 1;
 TRAIN_CARD Optimizer::TrainParams() { return _fish->config.common; }
 
 Optimizer::Optimizer(NLP_AutoRegressive* g_, CLI_params& config, int flag) : _fish(g_) {
@@ -302,6 +302,10 @@ int GTensor::Dogleg(int flag) {
         flag = -2;
     }
     assert(needUpdateParam);
+    if (szM > 0)
+        assert(szM >= sizeof(floatX) * size());
+    if (szV > 0)
+        assert(szV >= sizeof(floatX) * size());
 
     hOptimizer hOPT = hFish->GetOptimizer();
     int iter        = hOPT->GetITER();
@@ -309,13 +313,12 @@ int GTensor::Dogleg(int flag) {
         return 0x0;
 
     ADAM_params_ adam   = hOPT->TrainParams().adam;
-    float learning_rate = hOPT->LearningRate(), beta1 = adam.beta1, beta2 = adam.beta2, eps = adam.eps, wd = adam.decay;
-    size_t nEle = size();
+    float wd = adam.decay;//learning_rate = hOPT->LearningRate(), beta1 = adam.beta1, beta2 = adam.beta2, eps = adam.eps, 
     //  Weight decay is typically disabled for 1D parameters (like biases and LayerNorm weights) and enabled for all other parameters.
     if (shape.size() < adam.decay_min_ndim)
         wd = 0;
 
-    Length(1);
+    Length(1);  // length of grad
     // if(flag==-1)    return 0x0;
     if (gnorm > adam.gclip) {
         // _INFO("\tdelta|%s|=%g scale=%g\n",name,grad_norm,adam.gclip/grad_norm);
@@ -330,7 +333,7 @@ int GTensor::Dogleg(int flag) {
     // hPipeOpt hPipe  = std::make_shared<PIPE_Adamw<floatX, floatMV>>(hOPT.get(), nEle, nEle, nEle, nEle, flags, learning_rate, beta1, beta2, iter, eps, wd);
     // // PIPE_Adamw<floatX, floatMV> pipe(nEle, nEle, nEle, nEle, flags, learning_rate, beta1, beta2, iter, eps, wd, grad_scale, gnorm, seed);
     // hPipe->Update(this, wd, grad_scale, seed);
-    hPipe0->Update(this, wd, grad_scale, seed);
+    hPipe0->Update(shared_from_this(), wd, grad_scale, seed);
     hPipe0->CU_core(main_stream);
     // Optimizer_update(pipe, main_stream);
     if (1) {  // fuyou

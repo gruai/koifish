@@ -228,6 +228,7 @@ class GeNeuron {
     friend class HIERARCH_LoRA;
     friend class Fuyou;
     friend class GTensor;
+    friend class GeQuant;
 };
 
 struct INSPECT {
@@ -408,6 +409,7 @@ struct SLP : public SparseNeuron {
         inp_ & to_gelu is defined in forward: inp_=GELU(to_gelu)
     */
     int Back(hGTensor delta, hGTensor inp_, hGTensor deltaIn, hGTensor to_gelu = nullptr, bool isAccumuDelta = false, int flag = 0x0);
+    int BackOnCompression(hGTensor delta, hGTensor inp_, hGTensor deltaIn, hGTensor to_gelu = nullptr, bool isAccumuDelta = false, int flag = 0x0);
 
     virtual bool PrepareMemory(bool isBack = true, int flag = 0x0);
     int FUSE_cuda_block(hGTensor rhs, hGTensor lhs, hGTensor gelu = nullptr, bool isForw = true, int flag = 0x0);
@@ -427,7 +429,7 @@ struct LayerNormal : public SparseNeuron {
     float rms_eps         = 1.0e-5;
     int nHead             = 0;
     int nTH               = 0, ldTH;  // number of tokens or heads
-    int ver_rms_qknormal_ = 1;
+    int ver_rms_qknormal_ = 0;
     //  always float
     hGensor mean = nullptr, rstd = nullptr;
     float scale = 0.0;

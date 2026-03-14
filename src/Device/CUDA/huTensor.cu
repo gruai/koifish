@@ -42,27 +42,6 @@ huTensor::huTensor(Fish* fish, const string& name_, const SHAPE shape, typNUMBER
     }
 }
 
-hGTensor huTensor::Partial(const string& name_, size_t szOff, const SHAPE shape, typNUMBER tyP, int flag) {
-    if (tyP == typNUMBER::T_OTHER)
-        tyP = type;
-    hGTensor sub = GT(hFish, tyP, shape);
-    if (!name_.empty())
-        snprintf(sub->name, sizeof(name), "%s", name_.c_str());
-    else
-        sub->name[0] = '\0';
-    assert(szOff + sub->nByte() <= nByte());
-    // assert(BitPE(type) == 8 || BitPE(type) == 16);
-    // int nB    = (int)(BitPE(type) / 8);
-    sub->data = (char*)data + szOff;  // nOff * nB;
-    if (grad == nullptr) {
-        sub->grad = nullptr;
-    } else
-        sub->grad = grad + szOff;
-    sub->flags = flags;
-    BIT_SET(sub->flags, F_ONLYREF);
-    return sub;
-}
-
 size_t GTensor::szGlobalMaloc = 0;
 size_t huTensor::mostMemory(int typ) const {
     if (BIT_TEST(flags, F_NOALLOC))
@@ -169,82 +148,87 @@ __global__ void CU_NORM_STAT(int bits, int ldGroup, size_t N, hBITARR qdata, hBI
     return;
 }
 
+/**
+ *  @LoadParam_
+ *
+ */
 bool huTensor::InitParam(int tpX) {
     size_t nElem0 = size(), i;
     size_t nInit  = size(1);
     // bool isTmp          = true;
     int iter = hFish->GetCurIter();
     SUM::nInitParam++;  // may skip(bias is always init to 0)
-    if (tpInit > 0 && tpInit != SERIALIZE) {
-        assert(type == typNUMBER::BF16 || type == typNUMBER::I32);
-        if (strcmp(name, "model.layers.0.post_attention_layernorm.weight") == 0) {  //  model.blk.34.ffn_down.weight
-            DEBUG_HERE;                                                             // Print(name, 1, -1);
-        }
-        // _INFO("[InitParam_@%d]\t%ld-%ld@%s\n",iter,size(),nInit,name);
-        if (BIT_TEST(flags, F_LORA_B)) {
-            return true;
-        }
-        floatX* tmp = nullptr;  // new floatX[nInit];
-        switch (tpInit) {
-            case FIX_1:
-                tmp = new floatX[nInit];
-                for (i = 0; i < nInit; i++) tmp[i] = (floatX)(1.0);
-                break;
-            case GAUSSIAN_NORMAL:
-                CU_disti_normal<floatX>(nInit, (floatX*)data, 1.0f, param_seed);
-                break;
-            default:
-                if (BIT_TEST(flags, F_TERNARY)) {
-                    // int ldT = 8 / BitPE(type);
-                    // assert(ldT == 8 || ldT == 64);
-                    size_t dT4B = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
-                    floatX* paramX = ToX(gBUFF->tmpTernary);
-                    cudaMalloc(&paramX, nInit * sizeof(floatX));
-                    CU_disti_normal<floatX>(nInit, (floatX*)paramX, 0.02f * residual_scale, param_seed);
-                    ToTernary(paramX);
-                    cudaFree(paramX);
-                    // Print(name,0,-1);
-                } else {
-                    CU_disti_normal<floatX>(nInit, (floatX*)data, 0.02f * residual_scale, param_seed);
-                }
-
-                break;
-        }
-        if (tmp != nullptr) {
-            H2D(data, tmp, K_FLOATS[type].nByte(nInit));  // BPE(type)
-            delete[] tmp;
-        }
-
-        // Print(name,0,-1);
-    } else {
-        if (tpInit == SERIALIZE) {  //  ???
+    switch (tpInit) {
+        case SERIALIZE: {  //  ???
             if (host_data != nullptr) {
-                SerialGP(host_data, nullptr, szData, false);
+                LoadParam(name, {}, nullptr, 0x0, 0x0);
+                /*SerialGP(host_data, nullptr, szData, false);
                 if (hQuant == nullptr)
                     G_NORM_STAT<bf16>(size(), (bf16*)host_data, disq.sum_2, disq.sum_1, disq.nrm_1);
                 else {
-                    /*if (qZero != nullptr) { //it's data==nullptr at this point
-                        qZero->SerialGP(qZero->host_data, nullptr, qZero->nByte(), false);
-                        qZero->Print(qZero->name, 0x0, -1);
-                    }
-                    if (qScale != nullptr) {
-                        qScale->SerialGP(qScale->host_data, nullptr, qScale->nByte(), false);
-                        qScale->Print(qScale->name, 0x0, -1);
-                    }
-                    */
-                    // CU_NORM_STAT(hQuant->params.default_bits, hQuant->params.T_group, size(), (hBITARR)data, (hBITARR)data, (hBITARR)data, disq);
-                }
+                }*/
             }
-            if (strcmp(name, "model.layers.1.post_attention_layernorm.weight") == 0) {  //  model.blk.34.ffn_down.weight
-                GTensor::tZ = this;
-                DEBUG_HERE;
+            break;
+        }
+        case W_ZERO:
+            break;
+        case W_SKIP:
+            SUM::nInitParam--;
+            break;
+        default: {  // if (tpInit > 0 && tpInit != SERIALIZE)
+            assert(type == typNUMBER::BF16 || type == typNUMBER::I32);
+            if (strcmp(name, "model.layers.0.post_attention_layernorm.weight") == 0) {  //  model.blk.34.ffn_down.weight
+                DEBUG_HERE;                                                             // Print(name, 1, -1);
             }
+            // _INFO("[InitParam_@%d]\t%ld-%ld@%s\n",iter,size(),nInit,name);
+            if (BIT_TEST(flags, F_LORA_B)) {
+                return true;
+            }
+            floatX* tmp = nullptr;  
+            switch (tpInit) {
+                case FIX_1:
+                    tmp = new floatX[nInit];
+                    for (i = 0; i < nInit; i++) tmp[i] = (floatX)(1.0);
+                    break;
+                case GAUSSIAN_NORMAL:
+                    CU_disti_normal<floatX>(nInit, (floatX*)data, 1.0f, param_seed);
+                    break;
+                default:
+                    if (BIT_TEST(flags, F_TERNARY)) {
+                        // int ldT = 8 / BitPE(type);
+                        // assert(ldT == 8 || ldT == 64);
+                        size_t dT4B = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
+                        floatX* paramX = ToX(gBUFF->tmpTernary);
+                        cudaMalloc(&paramX, nInit * sizeof(floatX));
+                        CU_disti_normal<floatX>(nInit, (floatX*)paramX, 0.02f * residual_scale, param_seed);
+                        ToTernary(paramX);
+                        cudaFree(paramX);
+                        // Print(name,0,-1);
+                    } else if (hQuant != nullptr) {
+                        tmp = new floatX[nInit];
+                        CU_disti_normal<floatX>(nInit, tmp, 0.02f * residual_scale, param_seed, true);
+                        hQuant->LowBit_worker(shared_from_this(), tmp);
+                        FREE_a(tmp);
+                        // Print(name, 0x0, -1);
+                    } else {
+                        CU_disti_normal<floatX>(nInit, (floatX*)data, 0.02f * residual_scale, param_seed);
+                    }
+
+                    break;
+            }
+            if (tmp != nullptr) {
+                H2D(data, tmp, K_FLOATS[type].nByte(nInit));  // BPE(type)
+                delete[] tmp;
+            }
+            break;
+            // Print(name,0,-1);
         }
     }
     // if (DUMP())
     //     Print(name, 0, -1);
     return true;
 }
+
 #ifdef __USE_GGML__
 /*
    Only for gguf-serialize
@@ -386,7 +370,7 @@ bool D2D(void* hDst, const void* hSrc, size_t szData, int flag) {
         return false;
     }
 }
-bool D2H(void* dev, void* host, size_t szData, int flag) {
+bool D2H(const void* dev, void* host, size_t szData, int flag) {
     try {
         assert(host != nullptr && dev != nullptr);
         cudaError_t error = cudaMemcpy(host, dev, szData, cudaMemcpyDeviceToHost);
@@ -399,12 +383,12 @@ bool D2H(void* dev, void* host, size_t szData, int flag) {
         return false;
     }
 }
-bool H2D(void* dev, void* host, size_t szData, int flag) {
+bool H2D(void* dev, const void* host, size_t szData, int flag) {
     try {
         assert(host != nullptr && dev != nullptr);
         cudaError_t error = cudaMemcpy(dev, host, szData, cudaMemcpyHostToDevice);
         if (error != cudaSuccess) {
-            _WARN("[CUDA ERROR] \"%s\" (%s code=%d). @D2H sz=%ld\n", cudaGetErrorString(error), cudaGetErrorName(error), error, szData);
+            _WARN("[CUDA ERROR] \"%s\" (%s code=%d). @H2D sz=%ld\n", cudaGetErrorString(error), cudaGetErrorName(error), error, szData);
             return false;
         }
         // cudaCheck(cudaMemcpyAsync(data, host,szData, cudaMemcpyHostToDevice));
@@ -439,24 +423,37 @@ bool huTensor::SerialData(const string& info, void* host, bool isToHost, int fla
     }
 }
 
-//  如果CUDA支持统一内存（Unified Memory） 或GPUDirect RDMA，可以直接映射 GPU 内存到文件：
+/**
+ * 1. 如果CUDA支持统一内存（Unified Memory） 或GPUDirect RDMA，可以直接映射 GPU 内存到文件：
+ * 2. GDS/NVMe direct I/O > MMAP(like https://github.com/xaskasdf/ntransformer)
+ * */
+
 static bool isGPUDirectMMap = true;
 /*
-1. Train: Fuyou would call Serial_Quant_MMAP many times. Each tensor should have F_RELOAD flag
+1. Train: Fuyou would call self many times. Each tensor should have F_RELOAD flag
 2. Eval: Only call once at loadCheckpoint
+
+[fflow]
+    1. LoadParam_->self
+    2. Fuyou::Serialize->self
+    3. RLS_BP::UpdateBackbone->self
+    4. GeNeuron::ManageMemory->self
+
+[todo]
+    device_to_file   using double buffering running on the given stream.
 */
-bool GTensor::Serial_Quant_MMAP(bool isSave, bool isReset, int flag) {
+bool GTensor::Serial_Quant_MMAP(bool isSave, bool isReset, SERIAL_TYPE type, int flag) {
     if (isRefer() && !BIT_TEST(flags, F_RELOAD))
         return true;
 
     try {
         assert(isGPUDirectMMap);
-        if(hQuant==nullptr) // for *.zeros/.scales
+        if (hQuant == nullptr)  // for *.zeros/.scales
             assert(isParam());
         bool bRet       = true;
         int dumpFlag    = 0;
         hBITARR tmpData = (hBITARR)host_data;  // new char[szData];
-        assert(tmpData != nullptr && "host_data@Serial_Quant_MMAP is nullptr!");
+        assert(tmpData != nullptr && "host_data@Serial_Quant_MMAP_ is nullptr!");
         floatX* x = (floatX*)(tmpData);
 
         if (isSave) {
@@ -474,21 +471,22 @@ bool GTensor::Serial_Quant_MMAP(bool isSave, bool isReset, int flag) {
             }
             SUM::nSaveParam++;
             SUM::nzSaveParam += size();
-        } else {
+        } else {  //  load
             hQUANT quant        = GetDynamicQuant();
             int lay             = ginfo->hNeron->layid - 1;
             bool isAllocTmpData = quant != nullptr;
             if (isAllocTmpData) {
                 tmpData = new BIT_8[szData + szM + szV];  //  mmap read need proper synchronization!
             }
-            tpInit = INIT_WEIGHT::W_SKIP;  // don't do anything @huTensor::Alloc -> InitParam
-            if (hRef != nullptr) {         // huTensor::Alloc
+
+            // tpInit = INIT_WEIGHT::W_SKIP;  // don't do anything @huTensor::Alloc -> InitParam
+            if (hRef != nullptr) {  // huTensor::Alloc
                 ShareMemory(hRef, 0x100);
             }
             assert(data != nullptr);
             SUM::szUpload += szData;
             if (tmpData != host_data) {
-                SAFE_read_mmap(tmpData, (hBITARR)host_data, szData + szM + szV);
+                SAFE_read_mmap(tmpData, (hBITARR)host_data, szData + szM + szV);  // szData
             }
 
             if (quant != nullptr && !quant->params.isVendorQuant) { /*quant->params.type != QUANT_MODE::PRE_QUANT*/
@@ -498,23 +496,25 @@ bool GTensor::Serial_Quant_MMAP(bool isSave, bool isReset, int flag) {
                     ToF8Ex(0x0);
                 } else {
                     G_NORM_STAT<bf16>(size(), (bf16*)tmpData, disq.sum_2, disq.sum_1, disq.nrm_1);
-                    quant->LowBit(shared_from_this(), tmpData);
+                    quant->LowBit_worker(shared_from_this(), tmpData);
                 }
                 SUM::tQuant += GST_ms() - t0;
             } else {
-                // H2D(data, tmpData, szData);
-                cudaCheck(cudaMemcpy(data, tmpData, szData, cudaMemcpyHostToDevice));
+                H2D(data, tmpData, szData);
+                // cudaCheck(cudaMemcpy(data, tmpData, szData, cudaMemcpyHostToDevice));
             }
 
             Print("mmap_load", 0, dumpFlag);
-            if (szM + szV > 0) {
-                cudaCheck(cudaMemcpy(gm, tmpData + szData, szM + szV, cudaMemcpyHostToDevice));
+            if (szM + szV > 0 && type != LOAD_ONLY_W) {
+                H2D(gm, tmpData + szData, szM + szV);
+                // cudaCheck(cudaMemcpy(gm, tmpData + szData, szM + szV, cudaMemcpyHostToDevice));
                 Print("mmap_load", 3, dumpFlag), Print("mmap_load", 2, dumpFlag);
             }
+
             SUM::nLoadParam++, SUM::nzLoadParam += size();
         }
-        if (tmpData != host_data)
-            delete[] tmpData;
+        // if (tmpData != host_data)
+        //     delete[] tmpData;
         return bRet;
     } catch (...) {
         return false;
@@ -660,39 +660,15 @@ double GTensor::Length(int type, int flag) {
     constexpr int block_size = 512, num_slices = 1;
     auto now             = GST_us();
     const int dMaxThread = deviceProp.maxThreadsPerMultiProcessor * deviceProp.multiProcessorCount, grid_size = dMaxThread / block_size;
-    /*if (devBlockSum2 == nullptr) {
-        cudaMalloc(&devBlockSum2, sizeof(float) * grid_size * 2);
-    }
-    if (DEBUG.verCuX2 != 0) {   // too complex
-        assert(grid_size > 0);  // gives a better error than letting the call below fail
-        const int gx = CEIL_DIV(grid_size, num_slices), gy = num_slices;
-        assert(gx * gy < 1024);  // we want to later accumulate the block sums in a single block
-        if (strcmp(name, "model.blk.11.ffn_up.weight") == 0) {
-            // Print(name, 1, -1);
-            DEBUG_HERE;
-        }
-        // cudaCheck(cudaMemsetAsync(norm2, 0, grid_size * sizeof(float), main_stream));
-        CU_X2_partial<<<grid_size, block_size, 0, main_stream>>>(devBlockSum2, src, nEle);
-        cudaCheck(cudaGetLastError());
-        global_sum_deterministic(devBlockSum2, devBlockSum2, grid_size, main_stream);
-        cudaCheck(cudaMemcpy(&a, devBlockSum2, sizeof(float), cudaMemcpyDeviceToHost));
 
-        D20(devBlockSum2, sizeof(double));
-        CU_x2_atomic<<<CEIL_DIV(nEle, 512), 512, 0, main_stream>>>((double*)devBlockSum2, src, nEle);
-        double len = 0.0;
-        D2e(devBlockSum2, len);
-        // Print(name,type,-1);
-        assert(fabs((float)len-a)<1.0e-6*a);
-    } else*/
-    {
-        using x128 = PackedN<floatX, 16 / sizeof(floatX)>;
-        assert(nEle % x128::size == 0);
-        double len = 0.0, *devSum2 = (double*)GTensor::stat_info;
-        D20(devSum2, sizeof(double));
-        CU_x2_atomic<<<CEIL_DIV(nEle / x128::size, block_size), block_size, 0, main_stream>>>(devSum2, src, nEle);
-        D2e(devSum2, len);
-        a = len;
-    }
+    using x128 = PackedN<floatX, 16 / sizeof(floatX)>;
+    assert(nEle % x128::size == 0);
+    double len = 0.0, *devSum2 = (double*)GTensor::stat_info;
+    D20(devSum2, sizeof(double));
+    CU_x2_atomic<<<CEIL_DIV(nEle / x128::size, block_size), block_size, 0, main_stream>>>(devSum2, src, nEle);
+    D2e(devSum2, len);
+    a = len;
+
     // SUM::tX1 += GST_us()-now;
     if (type == 1) {
         gnorm = sqrt(a);
@@ -891,15 +867,15 @@ bool huTensor::ToTernary(floatX* paramX, int flag) {
         } else {
             assert(gBUFF->tmpFF1->size() >= count);
             CU_ternary2X_<floatX><<<CEIL_DIV(ne[0], dT4B), dT4B, smemPB, main_stream>>>(gama_T(), (hBITARR)data, ToX(gBUFF->tmpFF1), ne[0], ne[1]);
-            double off = OFF_(paramX, ToX(gBUFF->tmpFF1), count);
+            double off = CU_OFF_(paramX, ToX(gBUFF->tmpFF1), count);
             gBUFF->tmpFF1->Print("BitOfX", 0, 0, count);
             // assert(off <= 1.0e-5);
         }
     }
 
-    if (tpQuant == QUANT_ALG::W_NOSCALE) {
-        assert(info[0] == 1.0);
-    }
+    // if (tpQuant == QUANT_ALG::W_NOSCALE) {
+    //     assert(info[0] == 1.0);
+    // }
     // Print(name,0,-1);
     if (DEBUG.T_ternary == 1) {
         cudaCheck(cudaMemcpy(data, paramX, sizeof(floatX) * count, cudaMemcpyDeviceToDevice));
@@ -979,7 +955,7 @@ bool GST_TensorBuffer::Prepare(int flag) {
 
         // tmpGW = std::make_shared<huTensor>(hFish, "tmpGW", SHAPE({nEmbed, nFF}), tpG, true);
         const int dMaxThread = deviceProp.maxThreadsPerMultiProcessor * deviceProp.multiProcessorCount;
-        cudaCheck(cudaMalloc(&GTensor::stat_info, sizeof(float) * std::max(5120, dMaxThread)));
+        cudaCheck(cudaMalloc(&GTensor::stat_info, sizeof(float) * std::max(KOIFISH_MAX_PROBE_LEN, dMaxThread)));
 
         //  GTensor::buff = hCLS->preLogits->data;
 

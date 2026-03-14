@@ -253,6 +253,9 @@ int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, Relu* hRelu, int f
                 CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, nToken, IC, main_stream, transA);  // default: transA = 1, transB = 0,
                 break;
         }
+        if (w->hQuant != nullptr) {
+            w->hQuant->AfterActivation(this);
+        }
         // if (hRelu != nullptr) {
         //     // w->Print("ffn.w", 0, dump_flag);
         //     toGelu->Print("ffn.up", 0, dump_flag, OC);
@@ -269,7 +272,7 @@ int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, Relu* hRelu, int f
 int HIERARCH_LoRA::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, int flag) {
     if (!isBack)
         return 0x0;
-
+    assert(0);  // need refactor to remove matmul_backward_
     int ldA = a->ne[0], ldB = b->ne[1], dump_flag = 0;
     delta->Print("delta_0", 0, dump_flag);
     float* dbias_buffer = (float*)GTensor::buff;
@@ -278,28 +281,31 @@ int HIERARCH_LoRA::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, int flag
     a->Print(a->name, 0, dump_flag), b->Print(b->name, 0, dump_flag);
     // assert(inp->isSameShape({B, T, ldA}) && deltaIn->isSameShape({B, T, ldB}));
     //  Forward: rhs = b*Ax
-    matmul_backward((floatX*)Adelta, ToG(b), nullptr, ToX(deltaIn), (floatX*)Ax, ToX(b), dbias_buffer, B, T, rank, ldB, main_stream, isTransW);
+    // matmul_backward((floatX*)Adelta, ToG(b), nullptr, ToX(deltaIn), (floatX*)Ax, ToX(b), dbias_buffer, B, T, rank, ldB, main_stream, isTransW);
     b->Print(b->name, 1, dump_flag);
     inp->Print("inp", 0, dump_flag), PrintTensor<floatX>("A_delta", (floatX*)Adelta, true, B, T, rank, 1, dump_flag);
     //  Forward: Ax = a*Inp     [64,8192] x [8192,768]=>[64,768]
-    matmul_backward(ToX(delta), ToG(a), nullptr, (floatX*)Adelta, ToX(inp), ToX(a), dbias_buffer, B, T, ldA, rank, main_stream, isTransW, nullptr,
-                    isAccumuDelta);
+    // matmul_backward(ToX(delta), ToG(a), nullptr, (floatX*)Adelta, ToX(inp), ToX(a), dbias_buffer, B, T, ldA, rank, main_stream, isTransW,
+    // nullptr,isAccumuDelta);
     a->Print(a->name, 0, dump_flag), a->Print(a->name, 1, dump_flag);
     delta->Print("delta_1", 0, dump_flag);
     return 0x0;
 }
 
-int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, bool isAccumuDelta, int flag) {
-    try {
+// Deprecated
+int SLP::BackOnCompression(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, bool isAccumuDelta, int flag) {
+    return 0x0;
+    /*try {
         size_t szBuf = 0x0;
         w->BeforeBackward(szBuf, true);
         floatX *wX = w->GetDataX(), *gW = ToG(w);
         float* dbias_buffer = (float*)((char*)GTensor::buff + szBuf);
+        if(w->hQuant!=nullptr){
+            DEBUG_HERE;
+        }
 
         int OC = nOut, IC = nIn;
         assert(delta != nullptr);
-        // assert(inp->isSameShape({B, T, IC}) && deltaIn->isSameShape({B, T, OC}));
-        // deltaIn->Print("delta_in", 0, flag);
         switch (compression) {
             case SAMPLE:  // remater to get wX
                 subw->SubW(hSamps, true, gBUFF->tmpW, samp_type);
@@ -313,13 +319,13 @@ int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, 
 
         switch (compression) {
             case SAMPLE:
-                matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu),
+                // matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu),
                                 isAccumuDelta);
                 subw->SubW(hSamps, false, gBUFF->tmpGW, samp_type);
                 break;
             case LORA:
                 if (tpLORA != LORA_ADAPT_W::AB && tpLORA != LORA_ADAPT_W::refW_AB)
-                    matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu),
+                    // matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu),
                                     isAccumuDelta);
                 if (tpLORA != LORA_ADAPT_W::W0)
                     for (auto lora : wLORAs) {
@@ -327,13 +333,103 @@ int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, 
                     }
                 break;
             default:
-                matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu),
+                // matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu),
                                 isAccumuDelta);
                 break;
         }
 
         if (flag != 0x100 && !isAccumuDelta)
             w->Dogleg(-1);
+
+        return 0x0;
+    } catch (...) {
+        assert(0);
+        return -1;
+    }*/
+}
+
+template <class Typ>
+__global__ void CU_GamaBack(const TASKA_quant<Typ> taska, const Typ* inp, const Typ* deltaIn, const Typ* weight, Typ* gW, int flag) {
+    int tid = threadIdx.x, idrow = blockIdx.x * blockDim.x + tid, M = taska.nG, N = taska.lG;
+    if (idrow >= M)
+        return;  // guard
+
+    size_t offset           = idrow * N;
+    const Typ* x0           = inp + offset;
+    const Typ* w0           = weight + offset;
+    const floatGama* delta0 = deltaIn + offset;
+    float sumX = 0.0, sumWX = 0.0, step = taska.step[idrow];
+    for (int k = 0; k < N; k++, x0++, w0++, delta0++) {
+        sumX += CU_T2Float(delta0) * CU_T2Float(x0);
+        sumWX += CU_T2Float(delta0) * CU_T2Float(w0) * CU_T2Float(x0);
+    }
+    gW[idrow]     = sumWX / step;  //  gradinet of scale
+    gW[idrow + M] = -sumX * step;  //  gradinet of zero
+}
+
+/*
+    backward to bias/weight
+    backward to input(delta of this layer)
+    backward to gelu
+
+    deltaIn is delta of next layer
+*/
+int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, bool isAccumuDelta, int flag) {
+    try {
+        if (compression != SKIP)
+            BackOnCompression(delta, inp, deltaIn, to_gelu, isAccumuDelta, flag);
+
+        size_t szBuf = 0x0;
+        w->BeforeBackward(szBuf, true);
+        floatX *wX = w->GetDataX(), *gW = ToG(w);
+        float* dbias_buffer = (float*)((char*)GTensor::buff + szBuf);
+        assert(delta != nullptr);
+
+        // matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, nIn, nOut, main_stream, isTransW,
+        // ToX0(to_gelu),isAccumuDelta);
+        bool transAW  = false;
+        floatX* dbias = ToG0(b);  // backward to bias, if given, does a +=
+        if (dbias != NULL) {
+            // Each warp is responsible for 8 * "x128::size" = 64 OCs at BF16 (nOut must be a multiple of 64!)Block size is 1024 | 768 threads (32|24 warps) and
+            // we reduce those values into 1 at the end
+            const int block_size  = deviceProp.maxThreadsPerMultiProcessor == 1536 ? 768 : 1024;
+            dim3 block_dim        = {4, 8, (unsigned)block_size / WARP_SIZE};
+            const int OC_per_warp = block_dim.y * X128::size;     // 64 at BF16
+            const int grid_size_x = CEIL_DIV(nOut, OC_per_warp);  // e.g. 12 horizontal blocks for 768 OCs at BF16
+            const int grid_size_y = max(1, deviceProp.maxThreadsPerMultiProcessor * deviceProp.multiProcessorCount / (block_size * grid_size_x));  // full GPU!
+            // If we have enough nOut that we don't need cross-block reductions, we can skip the bias_buffer accumulation and write results directly to the
+            // output.
+            if (grid_size_y == 1) {
+                matmul_backward_bias_kernel9<<<dim3(grid_size_x, grid_size_y), block_dim, 0, main_stream>>>(dbias, ToX(deltaIn), B, T, nOut, False);
+                cudaCheck(cudaGetLastError());
+            } else {  // kernel 9 overwrites temp buffer, so no need to memset
+                matmul_backward_bias_kernel9<<<dim3(grid_size_x, grid_size_y), block_dim, 0, main_stream>>>(dbias_buffer, ToX(deltaIn), B, T, nOut, True);
+                cudaCheck(cudaGetLastError());
+                reduce_add_sum_kernel<<<CEIL_DIV(nOut, 256 * f128::size), 256, 0, main_stream>>>(dbias, dbias_buffer, nOut, grid_size_y);
+                cudaCheck(cudaGetLastError());
+            }
+            dbias = NULL;  // prevent dbias calculation from also being fused in CU_mm_blas_ below (if we enabled fusion)
+        }
+
+        CU_mm_blasLt(ToX(delta), wX, ToX(deltaIn), dbias, nIn, B * T, nOut, nullptr, nullptr, main_stream, (int)transAW, 0, isAccumuDelta ? 1.0f : 0.0f, true);
+
+        bool isDogleg = flag != 0x100 && !isAccumuDelta;
+        if (w->gama_param != nullptr) {
+            TASKA_quant<floatX> tasq(w.get(), w->hQuant, main_stream);
+            /*T1pG*/ CU_GamaBack<floatX><<<tasq.grid3, tasq.block3, tasq.smem, tasq.stream>>>(tasq, ToX(inp), ToX(deltaIn), wX, gW, 0x0);
+            if (isDogleg) {
+                w->gama_param->Print(w->gama_param->name, 0, dump_flag);
+                // w->gama_param->Print(w->gama_param->name, 1, dump_flag);
+                // w->gama_param->Print(w->gama_param->name, 2, dump_flag);
+                w->gama_param->Print(w->gama_param->name, 3, dump_flag);
+                w->gama_param->Dogleg(-1);
+            }
+        } else {
+            // backward to wX, uses += in the backward pass (accumulate the gradient) by setting alpha=one
+            CU_mm_blasLt(gW, ToX(inp), ToX(deltaIn), dbias, nIn, nOut, B * T, nullptr, nullptr, main_stream, transAW, true, 1 /* accumulate */, true);
+            if (isDogleg)
+                w->Dogleg(-1);
+        }
 
         return 0x0;
     } catch (...) {
@@ -359,24 +455,6 @@ bool SLP::PrepareMemory(bool isBack, int flag) {
     }*/
 
     return true;
-}
-
-int Q_nThreadOfBlock(int N, int bit, int nT0 = CU_T4B_BIG) {
-    if (bit >= 8)
-        return nT0;
-    int nT = nT0;
-    if ((8 % bit == 0)) {   // bit=4,2,1
-        int npb = 8 / bit;  //  number of quants per byte(8bit)
-        while (!(N % nT == 0 && (N / nT) % npb == 0)) {
-            nT /= 2;
-        }
-    } else {  // bit=3, 3*8=24bit
-        while (!(N % nT == 0 && (N / nT) % 8 == 0)) {
-            nT /= 2;
-        }
-    }
-    assert(nT > 1);
-    return nT;
 }
 
 // return k_th of Q4_8, last 4 bits [3:0] of x are treated as the "first" 4-bit value
@@ -406,151 +484,6 @@ __global__ void CU_Q42X_zs_v0(const Q4_8* zeros, const half* scales, const Q4_8*
             *x0         = (T)g0;  // CU_Float2T<T>(g0, seed);
         }
     }
-}
-
-__device__ inline void CU_I2Q4_unpack(const Q4_8 x, int32_t* unpack, int flag = 0x0) {
-    int AWQ_REVERSE_ORDER[] = {0, 4, 1, 5, 2, 6, 3, 7};
-    for (int k = 0; k < 8; k++) {
-        int sft    = AWQ_REVERSE_ORDER[k] * 4;
-        BIT_8 byte = (x >> sft) & 0x0F;
-        unpack[k]  = byte;
-    }
-}
-
-/**
- *  quants/mat0     [1024, 2048]
- *  zeros/scales    [8,2048]
- */
-template <class T>
-__global__ void CU_Q42X_awq(const Q4_8* zeros, const half* scales, const Q4_8* quants, T* mat0, int M, int N, int seed = 42) {
-    int tid = threadIdx.x, idrow = blockIdx.x, bit = 0, npt = N / blockDim.x;  // n-data per thread
-    if (idrow >= M)
-        return;            // guard
-    assert(npt % 8 == 0);  // for Q4_8
-    size_t offset        = idrow * N + tid * npt;
-    T* x0                = mat0 + offset;
-    const Q4_8* q_row    = quants + offset / 8;
-    const half* scale8   = scales + idrow / 128 * N + tid * npt;  // 0.007359  0.009537  0.006248  0.007618  0.007339  0.006413  0.007534  0.006657
-    const Q4_8* zero_row = zeros + (idrow / 128 * N + tid * npt) / 8;
-    // float scale   = __half2float(scales[idrow]);
-    // int32_t zero  = CU_I2Q4_little(zeros[idrow / 8], idrow % 8);
-    int32_t q8[8], z8[8];  //[7,7,3,11,4,12,10,15.0]   [7.0   8.0   7.0   8.0   6.0   8.0   8.0   8.0]
-    for (int k = 0; k < npt / 8; k++, scale8 += 8) {
-        CU_I2Q4_unpack(q_row[k], q8);
-        CU_I2Q4_unpack(zero_row[k], z8);
-        // if (idrow == M - 1 && tid * npt + k * 8 == N - 8) {
-        //     DEBUG_HERE;
-        // }
-        for (int i = 0; i < 8; i++, x0++) {
-            float g0 = (q8[i] - z8[i]) * (float)(scale8[i]);
-            *x0      = (T)g0;  // CU_Float2T<T>(g0, seed);
-        }
-    }
-}
-
-floatX* GTensor::GetDataX(int flag, const string& sX) const {
-    if (data == nullptr)
-        return nullptr;
-
-    size_t dT4B = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
-    size_t nEle = size();
-    floatX* wX  = (floatX*)(data);
-    int nRow = ne[0], nCol = ne[1];
-    if (hRef != nullptr) {
-        nRow = hRef->ne[0], nCol = hRef->ne[1];
-        DEBUG_HERE;
-    }
-
-    switch (type) {
-        case typNUMBER::T_SIGN:
-            assert(0);
-            break;
-        case typNUMBER::Q4: {
-            // dT4B = CU_T4B_MIDDLE;
-            wX = ToX(gBUFF->tmpTernary);
-            assert(gBUFF->tmpTernary->size() >= nEle);
-            dT4B = Q_nThreadOfBlock(nCol, 4);
-            if (hQuant->isRTN()) {
-                if (hQuant->params.type == RTNf) {
-                    CU_Q42X_NF4<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
-                } else if (hQuant->params.type == RTN)
-                    CU_Q42X_RTN<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
-                else {  // RTN_ZS
-                    int ldGroup = hQuant->params.T_group, nGroup = size() / ldGroup, nIn = shape[0], nOut = shape[1];
-                    assert(nGroup == qScale->size() && nGroup == qZero->size());
-                    dT4B = Q_nThreadOfBlock(nOut / 8, 4);
-                    // Print(name, 0, -1);
-                    // qZero->Print("qzero", 0, -1);
-                    // qScale->Print("scale", 0, -1);
-                    // CU_Q42X_zs_v0<floatX><<<nGroup, dT4B, 0, main_stream>>>(TO<Q4_8>(qZero), TO<half>(qScale), (Q4_8*)(data), wX, nGroup, ldGroup / 8);
-                    CU_Q42X_awq<floatX><<<nIn, dT4B, 0, main_stream>>>(TO<Q4_8>(qZero), TO<half>(qScale), (Q4_8*)(data), wX, nIn, nOut);
-                }
-            } else if (hQuant->params.type == KV_PolarQuant) {
-                assert(0);
-            } else
-                CU_Q42X_<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
-            // gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow * nCol);
-        } break;
-        case typNUMBER::Q3: {
-            wX = ToX(gBUFF->tmpTernary);
-            assert(gBUFF->tmpTernary->size() >= nEle);
-            dT4B = Q_nThreadOfBlock(nCol, 3);  // 1 byre for 4 quant
-            if (hQuant->isRTN()) {
-                if (hQuant->params.isNormalFloat) {
-                    CU_Q32X_NF3<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
-                } else
-                    CU_Q32X_RTN<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
-            } else
-                CU_Q32X_<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
-            // gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow*nCol);
-        } break;
-        case typNUMBER::Q2: {
-            wX = ToX(gBUFF->tmpTernary);
-            assert(gBUFF->tmpTernary->size() >= nEle);
-            dT4B = Q_nThreadOfBlock(nCol, 2);  // 1 byre for 4 quant
-            if (hQuant->isRTN()) {
-                CU_Q22X_RTN<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
-            } else
-                CU_Q22X_<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
-            // gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow*nCol);
-        } break;
-
-        case typNUMBER::T_BINARY:
-        case typNUMBER::T_BINARY_3:
-            if (DEBUG.T_ternary == 1) {          // each weight(floatX) is {-1,0,1}, no need to extract
-            } else if (DEBUG.T_ternary == -1) {  // each weight {-1,0,1}
-                return nullptr;
-            } else {  // extract each weight {-1,0,1} to floatX
-                wX = ToX(gBUFF->tmpTernary);
-                CU_ternary2X_<floatX><<<CEIL_DIV(nRow, dT4B), dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, 1);
-                SYNC_DEVICE();
-                if (flag == -1)
-                    gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1);
-            }
-
-            // PrintTensor<floatX>("wX", wX, true, nRow, nCol, ne[2], ne[3], -1);
-            break;
-        case typNUMBER::T_BINARY_TILE: {
-            dim3 dBlock(THREAD_TILE_M * THREAD_TILE_N), dGrid(CEIL_DIV(nRow, THREAD_TILE_M), CEIL_DIV(nCol, THREAD_TILE_N));
-            assert(nRow % THREAD_TILE_M == 0 && nCol % THREAD_TILE_N == 0);
-            wX              = ToX(gBUFF->tmpTernary);
-            floatGama* gam_ = gama_T();  //
-            CU_Tile2X_<floatX><<<dGrid, dBlock, smemPB, main_stream>>>(wX, gam_, 0.0, nRow, nCol, seed);
-            // SYNC_DEVICE();
-            if (flag == -1)
-                gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1);
-        } break;
-        case typNUMBER::F8E5M2: {
-            wX = ToX(gBUFF->tmpTernary);
-            assert(gBUFF->tmpTernary->size() >= nEle);
-            CU_F82Float<floatX><<<CEIL_DIV(nEle, CU_T4B_MIDDLE), CU_T4B_MIDDLE>>>((f8e5*)data, wX, nEle, 0, 0);
-            break;
-        }
-        default:
-            break;
-    }
-
-    return wX;
 }
 
 int SLP::FUSE_cuda_block(hGTensor rhs, hGTensor lhs, hGTensor gelu, bool isForw, int flag) { return 0x0; }
@@ -710,7 +643,7 @@ hGTensor FFN::cuFlow(hGTensor hIn, int flag) {
             inp->Print("ffn.norm.inp", 0, dump_flag);
             norm.w->Print("ffn.norm.w", 1, dump_flag);
             gBUFF->delta->Print("back of ffn0", 0, dump_flag);
-            lastQKV->Q.w->Print("Qw1", 1, dump_flag);  //  0x7ffe5bc00000
+            // lastQKV->Q.w->Print("Qw1", 1, dump_flag);  //  0x7ffe5bc00000
             dump_flag = 0;
         }
         // CU_set<nv_bfloat16>("delta", ToX(gBUFF->delta), B, T, C, 1, dump_flag);
@@ -962,7 +895,7 @@ int Relu::Back(hGTensor delta_in_out, hGTensor pre_gelu, int flag) {
             slp_gate->delta->Print("dGate", 0, dump_flag, C);
             break;
         case GELU:
-            //  gelu_backward_inplace fused @matmul_backward
+            //  gelu_backward_inplace fused @matmul_backward_
             gelu_backward_inplace(ToX(delta_in_out), ToX(pre_gelu), nz, main_stream);
 
             break;
@@ -1000,3 +933,31 @@ bool GeNeuron::VerifyInp4Back(hGensor inp_, int flag) {
 
     return true;
 }
+
+/* Deprecated
+template <class T>
+__global__ void CU_Q42X_awq_v0(const Q4_8* zeros, const half* scales, const Q4_8* quants, T* mat0, int M, int N, int seed = 42) {
+    int tid = threadIdx.x, idrow = blockIdx.x, bit = 0, npt = N / blockDim.x;  // n-data per thread
+    if (idrow >= M)
+        return;            // guard
+    assert(npt % 8 == 0);  // for Q4_8
+    size_t offset        = idrow * N + tid * npt;
+    T* x0                = mat0 + offset;
+    const Q4_8* q_row    = quants + offset / 8;
+    const half* scale8   = scales + idrow / 128 * N + tid * npt;  // 0.007359  0.009537  0.006248  0.007618  0.007339  0.006413  0.007534  0.006657
+    const Q4_8* zero_row = zeros + (idrow / 128 * N + tid * npt) / 8;
+    // float scale   = __half2float(scales[idrow]);
+    // int32_t zero  = CU_I2Q4_little(zeros[idrow / 8], idrow % 8);
+    int32_t q8[8], z8[8];  //[7,7,3,11,4,12,10,15.0]   [7.0   8.0   7.0   8.0   6.0   8.0   8.0   8.0]
+    for (int k = 0; k < npt / 8; k++, scale8 += 8) {
+        CU_I2Q4_unpack(q_row[k], q8);
+        CU_I2Q4_unpack(zero_row[k], z8);
+        // if (idrow == M - 1 && tid * npt + k * 8 == N - 8) {
+        //     DEBUG_HERE;
+        // }
+        for (int i = 0; i < 8; i++, x0++) {
+            float g0 = (q8[i] - z8[i]) * (float)(scale8[i]);
+            *x0      = (T)g0;  // CU_Float2T<T>(g0, seed);
+        }
+    }
+}*/

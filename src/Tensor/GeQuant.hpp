@@ -12,6 +12,7 @@
 #include <stddef.h>
 
 #include <algorithm>
+#include <functional>
 #include <vector>
 
 #include "../CLI_params.hpp"
@@ -22,17 +23,18 @@
 // #include "./GVMAT.h"
 
 class GeQuant;
+typedef shared_ptr<GeQuant> hQUANT;
 class GeNeuron;
 class GTensor;
 class Fish;
-typedef shared_ptr<GeQuant> hQUANT;
+
 namespace Grusoft {
 class Distribution;
 class FeatVector;
 class FeatsOnFold;
 };  // namespace Grusoft
 
-class GeQuant : public std::enable_shared_from_this<GeQuant>  {
+class GeQuant : public std::enable_shared_from_this<GeQuant> {
    protected:
     struct _q_sweep {
         NORMAL_MODE normal = NORMAL_MODE::NO_NORMAL;
@@ -46,10 +48,9 @@ class GeQuant : public std::enable_shared_from_this<GeQuant>  {
             return info;
         }
 
-        size_t szQuant = 0x0;
+        size_t szQuant = 0x0, szMostGama = 0x0;
     };
     _q_sweep best_;
-    int group_size = 0;
 
     virtual void Flattern() {}
     //  1.  key embeddings - In initial layers, no significant outliers are observed. However, in the deeper layers, few channels (approximately four) exhibit
@@ -59,7 +60,7 @@ class GeQuant : public std::enable_shared_from_this<GeQuant>  {
     std::string name;
     Grusoft::GRander rander;
     uint32_t seed;
-    bool isCPU      = false;
+    bool isGPU      = false;
     int nMostLoop   = 16;  // 8
     float impurity  = 0;
     float imbalance = 0, T_imbal = 1.1f;
@@ -81,8 +82,8 @@ class GeQuant : public std::enable_shared_from_this<GeQuant>  {
    public:
     QUANT_CARD params;
     //   Some layer(first N layers) is more challenging to quantize and requires a higher number of bits
-    int bits = -1;
-    double maxq, maxshrink, mse, norm, grid;
+    int qMin, qMax, bits = -1;
+    double maxshrink, mse, norm, grid;
     float *scale = nullptr, *zero = nullptr;
     bool trits, perchannel = false, sym = false;
 
@@ -93,29 +94,82 @@ class GeQuant : public std::enable_shared_from_this<GeQuant>  {
     GeQuant(int bits_, bool perchannel_ = false, bool sym_ = true, bool mse_ = false, double norm_ = 2.4, int grid_ = 100, double maxshrink_ = .8,
             bool trits_ = false)
         : bits(bits_), trits(trits_), perchannel(perchannel_), sym(sym_) {
-        maxq = pow(2.0, bits) - 1;
-        if (trits)
-            maxq = -1;
+        // qMax = pow(2.0, bits) - 1;
+        // if (trits)
+        //     qMax = -1;
     }
     virtual ~GeQuant();
 
-    virtual int ExTensor(shared_ptr<GTensor> hBase, std::vector<shared_ptr<GTensor>>&aux, int flag = 0x0);
-    virtual bool isRTN() { return params.type == QUANT_MODE::RTN || params.type == QUANT_MODE::RTNf || params.type == QUANT_MODE::RTN_ZS; }
+    virtual int ExTensor(shared_ptr<GTensor> hBase, std::vector<shared_ptr<GTensor>>& aux, int flag = 0x0);
+    virtual bool isRTN() { return params.type == QUANT_MODE::RTN || params.type == QUANT_MODE::RTNf || params.type == QUANT_MODE::AWQ; }
+    // virtual bool isTrainGama(int flag=0x0);
     virtual typNUMBER bit2typ(int flag = 0x0);
-    virtual float RTN(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
+
+    // return number of group, lenth of each group for hTensor
+    SHAPE GroupShapeOfT(const GTensor* hTensor, int flag = 0x0) const;
+
+    // x=8,4,2,1....
+    virtual float RTN_x(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
+    // NormalF_4, NormalF_3
     virtual float RT_NormalF(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
-    virtual float LowBit(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
+    // Do quant (would reshape tensor if needed)
+    virtual float LowBit_worker(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
     virtual float AfterLowBit(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
-    //  virtual float HighBit(shared_ptr<GTensor> tensor, int flag = 0x0) { throw "GeQuant::HighBit is ...."; }
+    virtual float AfterActivation(GeNeuron* hNN, int flag = 0x0) { return 0.0; }
+    // Dequant
+    virtual float HighBit(shared_ptr<GTensor> tensor, int flag = 0x0) { throw "GeQuant::HighBit is ...."; }
 
-    virtual float Update(shared_ptr<GTensor> tensor, int flag = 0x0) { throw "GeQuant::Update is ...."; }
-
-    size_t szGama(int flag = 0x0);
-
+    virtual void PrintGama(const GTensor* hTensor, int flag = 0x0) const;
     friend class GTensor;
     friend class Fish;
 };
 using QUANT_FACTORY = std::map<size_t, hQUANT>;
+
+int inline Q_nThreadOfBlock(int N, int bit, int nT0 = 1024) {  // CU_T4B_BIG
+    if (bit >= 8)
+        return nT0;
+    int nT = nT0;
+    if ((8 % bit == 0)) {   // bit=4,2,1
+        int npb = 8 / bit;  //  number of quants per byte(8bit)
+        while (!(N % nT == 0 && (N / nT) % npb == 0)) {
+            nT /= 2;
+        }
+    } else {  // bit=3, 3*8=24bit
+        while (!(N % nT == 0 && (N / nT) % 8 == 0)) {
+            nT /= 2;
+        }
+    }
+    assert(nT > 1);
+    return nT;
+}
+
+enum Q_BLOCK_AT_ {
+    BLOCK_at_GROUP,
+    BLOCK_at_ROW,
+};
+
+template <typename Typ>
+struct TASKA_quant {
+    // using typ128 = PackedN<Typ, 16 / sizeof(Typ)>;
+    cudaStream_t stream;
+    size_t smem = 0x0;
+    int nTask = 0, nEle = 0, nIn = 0, nOut = 0;
+    int block3 = 0, tpb = 512;  //  tpb is the number of threads in one block
+    int grid3 = 0, nBlock = 0;  // grid3=(nBlock, 1, 1), nBlock is the total number of blocks
+    int rc_normal = 0, seed = 42, nG = -1, lG = -1;
+    int np32bit        = 1;  // number of elements per 32_bit
+    floatGama *gamaCol = nullptr, *gamaRow = nullptr, *zero = nullptr, *step = nullptr;
+    int nBin = 0, qMin = 0, qMax = 0;
+
+    TASKA_quant(const GTensor* hTensor, hQUANT hQuant, cudaStream_t stream_, Q_BLOCK_AT_ blockAt = BLOCK_at_GROUP, int flag = 0x0);
+    bool isValid() const {
+        if (nBlock <= 0)
+            return false;
+        assert(stream != nullptr);
+        // assert(nBlock * tpb >= nEle / np32bit);
+        return true;
+    }
+};
 
 template <typename T>
 struct Quantizer : public GeQuant {
@@ -131,21 +185,21 @@ struct Quantizer : public GeQuant {
         scale = new T[ld];
         zero  = new T[ld];
 
-        if (maxq < 0) {
+        if (qMax < 0) {
             for (i = 0; i < ld; i++) {
                 scale[i] = xmin[i];
                 zero[i]  = xmax[i];
             }
         } else {
             for (i = 0; i < ld; i++) {
-                scale[i] = (xmax[i] - xmin[i]) / maxq;
+                scale[i] = (xmax[i] - xmin[i]) / qMax;
                 // On CPU tensors rounds half-to-even and on GPU tensor rounds away-from-zero !
                 zero[i] = round(-xmin[i] / scale[i]);  // torch.round(-xmin / self.scale)
             }
-            double T_zero = (maxq + 1) / 2;
+            double T_zero = (qMax + 1) / 2;
             if (sym) {
                 for (i = 0; i < ld; i++) {
-                    zero[i] = T_zero;  // torch.full_like(self.scale, (self.maxq + 1) / 2)
+                    zero[i] = T_zero;  // torch.full_like(self.scale, (self.qMax + 1) / 2)
                 }
             }
         }
@@ -165,7 +219,7 @@ struct Quantizer : public GeQuant {
 
     virtual float Update(int len, T* col, T* q, int type, T d, T* err, int ld, int flag = 0x0) {
         float loss = 0;
-        if (maxq < 0) {
+        if (qMax < 0) {
             // return (x > scale / 2).float() * scale + (x < zero / 2).float() * zero
             return loss;
         }
@@ -178,8 +232,8 @@ struct Quantizer : public GeQuant {
             a = round(float(*col) / scale[i] + zero[i]);  // 10., 13., 10.,
             if (a < 0)
                 a = 0;
-            if (a > maxq)
-                a = maxq;
+            if (a > qMax)
+                a = qMax;
             *q = scale[i] * (a - zero[i]);  // 0.0618,  0.1926,  0.0604, -0.0526,  0.0000,  0.1382, -0.1075, -0.0445,
             w -= float(*q);
             *err = w / (float)d;                  // err1 = (w - q) / d
@@ -204,7 +258,6 @@ class Q_Cluster : public Quantizer<T> {
     // Q_Cluster(const std::string& nam_, void* hN, int flag = 0x0) : Quantizer<T>(nam_, hN, flag) {
     //     nCluster = 8;  // 2 >> bits;
     // }
-    // float Update(shared_ptr<GTensor> tensor, int flag = 0x0) override;
 };
 
 struct DORT_wrap;
@@ -223,24 +276,33 @@ class Q_Impurity : public Quantizer<T> {
 
    public:
     Q_Impurity(const std::string& nam_, void* hN, QUANT_CARD& params, int flag = 0x0);
-    // float LowBit(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0) override;
     virtual ~Q_Impurity();
-    //  float Update(shared_ptr<GTensor> tensor, int flag = 0x0) override;
 };
 
 /**
  *   AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration
- * 
+ *
  *  1. To eliminate runtime transposes, use transposition of qweight (quantized weight) relative to the original weight!
  */
 template <typename T>
-class Q_AWQ : public Quantizer<T> {
-   protected:   
-
+class Q_AWQ : public Q_Impurity<T> {
+   protected:
    public:
     Q_AWQ(const std::string& nam_, void* hN, QUANT_CARD& params, int flag = 0x0);
     float AfterLowBit(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0) override;
-    virtual ~Q_AWQ() {  }
+    float AfterActivation(GeNeuron* hNN, int flag = 0x0) override;
+    virtual ~Q_AWQ() {}
+};
+
+template <typename T>
+class Q_Chebyshev : public Quantizer<T> {
+   protected:
+    // void ToChebyshev(int N, float* rows, int flag = 0x0);
+   public:
+    Q_Chebyshev(const std::string& nam_, void* hN, QUANT_CARD& params, int flag = 0x0);
+    // float AfterLowBit(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0) override;
+    // float AfterActivation(GeNeuron *hNN, int flag = 0x0)    override;
+    virtual ~Q_Chebyshev() {}
 };
 
 /**
@@ -257,15 +319,10 @@ class Q_JL : public GeQuant {
     Tproj* JL = nullptr;  //   a random projection that would preserves the inner products
 
     virtual int InitProject(int flag);
-    virtual float Update(int flag) {
-        float loss = 0;
-        return loss;
-    }
     virtual float Score(int flag) { return 0.0; }
 
    public:
     // Q_JL(const std::string& nam_, SHAPE shape, int nOutlier, GeNeuron* hN, int flag);
-    float Update(shared_ptr<GTensor> tensor, int flag = 0x0) override;
+    float Core(shared_ptr<GTensor> tensor, const void* cpuData, floatGama* curGama, int flag = 0x0) override;
     virtual ~Q_JL() { FREE_a(JL); }
 };
-

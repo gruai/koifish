@@ -390,7 +390,12 @@ std::vector<std::string> FilesOfDir(const std::string& path, const std::vector<s
     return files;
 }
 
-void PrintQ4(const char* title, const int32_t* src, int n1, int n2, int n3, int n4, int flag) {
+
+
+/**
+ * LittleEndian!!! [5, 10, 9, 11, 12, 7, 9, 7]=>内存顺序（从左到右,低到高）：0x5A, 0x9B, 0xC7, 0x97 => uint32=0x97C79B5A(以小端解释32位整数)
+ */
+void PrintQ4(const char* title, const Q4_8* src, int n1, int n2, int n3, int n4, int flag) {
     bool isLittleEndian = BIT_TEST(flag, FLOAT_META::ENDIAN_LITTLE);
     assert(isLittleEndian);
     size_t nElem = (size_t)(n1)*n2 * n3 * n4 / 8, i, nz = 0, nEach = 2;
@@ -400,10 +405,11 @@ void PrintQ4(const char* title, const int32_t* src, int n1, int n2, int n3, int 
     // if(strlen(title)>0) _INFO("%s\n", title);
     float sum = 0.0, a1 = 16, a0 = 0;
     double len = 0.0, sum2 = 0.0;
+    int q8[8];
     for (i = 0; i < nElem; i++) {
-        for (int sft = 0; sft < 32; sft += 4) {
-            BIT_8 byte = (src[i] >> sft) & 0x0F;
-            int32_t a  = byte;  //static_cast<int32_t>((byte << 28) >> 28);
+        UNPACK_32to4_LE(src[i], q8);
+        for (int j=0;j<8;j++) {
+            int a    = q8[j];
             if (i < nEach || i >= nElem - nEach || fabs(i - nElem / 2) <= nEach)
                 _INFO("%d ", a);
 

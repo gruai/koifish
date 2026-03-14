@@ -49,7 +49,9 @@ class GST_Application {
 
     // Similar to OnInitInstance
     virtual bool Initialize() {
-        _INFO("[APP] %s Initialization.\tProcess ID=%d\n", name.c_str(), getpid());
+        char path[PATH_MAX]="\0";
+        ssize_t len = readlink("/proc/self/exe", path, sizeof(path)-1); //getpid()
+        _INFO("[APP] %s Initialization.\tProcess=%s\n", name.c_str(), path );
 
         // Linux-specific initializations
         if (!InitializeLogging()) {

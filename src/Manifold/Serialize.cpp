@@ -83,7 +83,7 @@ std::string tensor_st::hf_dtype(const typNUMBER dtype) {
 */
 bool K_SafeTensors::MMAP(const std::string& path, bool isSave, int flag) {
     assert(!isSave);  // only support load now
-    _INFO("\n>>>>>> SAFETENSOR_mmap mmap@ %s \"%s\" %s f=%d......", COLOR_ORANGE, path.c_str(), COLOR_RESET, flag);
+    _INFO(">>>>>> SAFETENSOR_mmap mmap@ %s \"%s\" %s f=%d......", COLOR_ORANGE, path.c_str(), COLOR_RESET, flag);
     try {
         std::string warn, err;
         int __prot = PROT_READ | PROT_WRITE;                                 // PROT_READ
@@ -252,7 +252,8 @@ bool K_SafeTensors::_to_ofs(std::ofstream& ofs, size_t& szAll, std::string* warn
                         assert(0);
                     }
                     hBITARR tmp = new BIT_8[sz]();
-                    if (t->GetDataX() == nullptr) {
+                    // t->Serial_Quant_MMAP(true,false,SAVE_TO_TMPDATA, tmp);
+                    if (t->GetDataX() == nullptr) {  // copy data@"model.safetensors" to sate file
                         if (isInitMMap) {
                             nInit++;
                         } else if (isCopyMMap) {
@@ -267,6 +268,9 @@ bool K_SafeTensors::_to_ofs(std::ofstream& ofs, size_t& szAll, std::string* warn
                     } else {
                         assert(t->data != nullptr && t->gm != nullptr);
                         t->SerialData("", tmp, true);
+                        if (t->GetDynamicQuant() != nullptr) {
+                            DEBUG_HERE;
+                        }
                     }
                     ofs.write(reinterpret_cast<const char*>(tmp), sz);
                     delete[] tmp;
@@ -413,7 +417,7 @@ int Fish::SAFETENSOR2Gensors(const std::string& path, K_SafeTensors* hst, int fl
         }
         auto ginfo = GetGensorInfo(target);
         JSON jdesc = tensor.jDesc();
-        if (target->SerialJSON(key, jdesc, (void*)databuffer, hst->mmap_size) != 0) {
+        if (target->LoadParam(key, jdesc, (void*)databuffer, hst->mmap_size) != 0) {
             return false;
         }
         if (G_Has_(key, {"model.embed_tokens.weight"})) {  // model.embed_tokens.weight
@@ -502,7 +506,7 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
     try {
         if (isSave) {
             JSON jsConfig;
-            _INFO(">>>>>> ST_SERIALIZE save @\"%s\" nInit=%ld ......", path.c_str(), nInit);
+            _INFO("<<<<<< ST_SERIALIZE save @\"%s\" nInit=%ld ......", path.c_str(), nInit);
             jsConfig["vendor"]              = "gruai";
             jsConfig["CLI_params"]          = config.ToJSON(0x100);
             jsConfig["tokenizer"]["tokens"] = "";
@@ -549,7 +553,7 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
                 std::ofstream o(jPath);
                 o << std::setw(4) << jsConfig << std::endl;
             }
-            _INFO("\r>>>>>> ST_SERIALIZE save @\"%s\"(\"%s\") nInit=%ld sz=%.6gM flag=%d T=%.4gs\n", path.c_str(), jPath.empty() ? "" : "+json", nInit,
+            _INFO("\r<<<<<< ST_SERIALIZE save @\"%s\"(\"%s\") nInit=%ld sz=%.6gM flag=%d T=%.4gs\n", path.c_str(), jPath.empty() ? "" : "+json", nInit,
                   szOFS / 1.0e6, flag, (GST_ms() - t0) / 1000.0);
             return true;
         } else {
@@ -619,6 +623,8 @@ bool Fish::HF_Serialize(bool isSave, int flag) {
         st_mmfs.push_back(hst);
         nSerialT += SAFETENSOR2Gensors(path, hst, 0x0);
     }
+    _LOG(nSerialT == 0 ? DUMP_ERROR : DUMP_INFO, ">>>>>> HF_Serialize load@\"%s\" OK. nSerialT=%d iter=%d\n\n", config.model.sCardPath.c_str(), nSerialT, flag);
+
     if (isTrain()) {  // otherwise, st would release mmap memory!
         SaveTrain(config.state, true, FSerial::COPY_MMAP);
     }
@@ -633,7 +639,7 @@ bool Fish::HF_Serialize(bool isSave, int flag) {
         }
         assert(nSerialT == config.model.st_map.size());
     }
-    _LOG(nSerialT == 0 ? DUMP_ERROR : DUMP_INFO, ">>>>>> HF_Serialize load@\"%s\" nSerialT=%d iter=%d\n", config.model.sCardPath.c_str(), nSerialT, flag);
+
     // if(!config.quant.filter_MIQ.empty())
     //     throw SafeExit("", KOIFISH_EXIT_DEBUG, SafeExit::ExitReason::SYSTEM_FAILURE, __func__);
     for (auto t : optParams) {

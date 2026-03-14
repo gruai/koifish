@@ -146,6 +146,7 @@ bool RLS_BP::InitGUOKE(int flag) {
 }
 
 /*
+[fflow]
     1.  RLS_BP::Init call this once(SYMBOLIC)
     2.  RLS_BP::Prepare call this many times(DEV_MEM)
     3.  GeNeuron::BeforeMing/AfterMing call this many times!

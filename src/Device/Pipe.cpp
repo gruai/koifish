@@ -13,9 +13,9 @@ template struct PIPE_Muon<floatX, floatMV>;   // Force compilation
 template struct PIPE_Adamw<floatX, floatMV>;  // Force compilation
 
 template <typename Tp, typename Tmv>
-void PIPE_Muon<Tp, Tmv>::Update(GTensor* tensor_, float wd, float _grad_scale, unsigned int _seed, int flag) {
+void PIPE_Muon<Tp, Tmv>::Update(hGTensor tensor_, float wd, float _grad_scale, unsigned int _seed, int flag) {
     PIPE_Adamw<Tp, Tmv>::Update(tensor_, wd, _grad_scale, _seed, flag);
-    bool isAdamw = muon.isAdamW(this->tensor);
+    bool isAdamw = muon.isAdamW(this->tensor.get());
     if (isAdamw) {
         assert(this->learning_rate == this->hOPT->LearningRate());
     } else {

@@ -436,7 +436,7 @@ bool SLP::Build(int flag) {
         hFish->InitGensor(ctx, sb.c_str(), b, true);
 
     if (b != nullptr)
-        b->tpInit = INIT_WEIGHT::W_SKIP;
+        b->tpInit = INIT_WEIGHT::W_ZERO;
     SHAPE s3 = {B, T, nOut};
     out      = std::make_shared<huTensor>(hFish, name + ".out", s3, tpData, false);
     if (BIT_TEST(flag, F_DELTA)) {
@@ -750,7 +750,7 @@ bool LayerNormal::Build(int flag0) {
 
     w->tpInit = INIT_WEIGHT::FIX_1;  // always 1   ???
     if (b != nullptr)
-        b->tpInit = W_SKIP;
+        b->tpInit = W_ZERO;
     // assert(nIn==C || nIn==hFish->config.nEmbed(-1));
     SHAPE sp = {B, T}, sp3 = {B, T, nIn};
     out = GT(hFish, tpActivation, {B, T, nIn}, flag, name + ".out");
@@ -774,8 +774,8 @@ bool LayerNormal::Build(int flag0) {
 string LayerNormal::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]  = "\0";
     const char* tab = prefix.c_str();
-    sprintf(buf + strlen(buf), "%s %s(%s%s%s) out=%s", tab, isRMS ? "RMS" : "LayerNormal", b == nullptr ? "" : "+b", mean == nullptr ? "" : "+mean",
-            rstd == nullptr ? "" : "+rstd", out == nullptr ? "NULL" : out->name);
+    sprintf(buf + strlen(buf), "%s %s(%s%s%s) qknormal=%d out=%s", tab, isRMS ? "RMS" : "LayerNormal", b == nullptr ? "" : "+b", mean == nullptr ? "" : "+mean",
+            rstd == nullptr ? "" : "+rstd", ver_rms_qknormal_, out == nullptr ? "NULL" : out->name);
     if (flag > 0)
         _INFO("%s", buf);
     return buf;
@@ -863,8 +863,10 @@ hGensor GeNeuron::AfterMing(RLS_BP* hRLS, hGensor cur, int flag) {
                 //     int bug = 0x0;
                 // }
                 for (auto t : PickGensors()) {
-                    if (!t->needUpdateParam)  // t->isRefer() || !t->isParam()
-                    {
+                    if (!t->needUpdateParam) {  // t->isRefer() || !t->isParam()
+                        if (t->isParam()) {
+                            DEBUG_HERE;
+                        }
                         continue;
                     }
                     hOPT->UpdateTensorParam(t, nullptr, 0.0);
@@ -913,7 +915,7 @@ void GeNeuron::OnDebug(const std::string& info, int typ, int flag) {
 void GeNeuron::ExitDebug(const std::string& info, int typ, int flag) { dump_flag = g_dump_level; }
 
 // SelfAttention::_PickGensors
-std::vector<hGensor> GeNeuron::PickGensors(int flag) const {    
+std::vector<hGensor> GeNeuron::PickGensors(int flag) const {
     bool isLORA = BIT_TEST(flag, PICK_LORA);
     assert(out != nullptr);
     vector tmp = {out};
@@ -1133,8 +1135,8 @@ hGTensor operator>>(hGTensor t, const SLP& slp) {
     assert(t != nullptr);
     if (slp.Empty())
         return t;
-    assert(slp.out != nullptr);    
-    slp.out->AddSrc({t});   // no need to add(w,b)! which has called in SLP::Build
+    assert(slp.out != nullptr);
+    slp.out->AddSrc({t});  // no need to add(w,b)! which has called in SLP::Build
     // for (auto lora : slp.wLORAs) {
     //     slp.out->AddSrc({lora->a, lora->b});
     // }

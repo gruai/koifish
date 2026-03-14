@@ -130,7 +130,6 @@ __global__ void CU_muon_update(TASKA_1p1<Tp> taska, PIPE_Muon<Tp, Tmv> pipe) {
         atomicAdd(pipe.arrNorm, (double)block_sum);
 }
 
-
 #ifdef USE_BF16_BASELINE
 template <typename Tp, typename Tmv>
 __global__ void CU_adamw_(Tp* params, float* tmp, Tp* grads0, Tmv* gm, Tmv* gv, size_t num_parameters, float learning_rate, uint64_t flags, float beta1,
@@ -410,8 +409,13 @@ __global__ void CU_adamw_p(TASKA_1p1<Typ> taska, PIPE_Adamw<Typ, Tmv> pipe) {
         // float x = _adamw_idx((float)pipe.params[idx], pipe, m, v, idx), x2 = x * x;
         m /= pipe.beta1_correction, v /= pipe.beta2_correction;  // m_hat    v_hat
         float step      = m / (sqrtf(v) + pipe.eps);
-        float old_param = param256[i];  //(float)pipe.params[idx];
-        param256[i]     = old_param - pipe.learning_rate * pipe.weight_decay * old_param - pipe.learning_rate * step;
+        float old_param = param256[i];                          //(float)pipe.params[idx];
+        if (!CU_isValidF(&old_param) || !CU_isValidF(&step)) {  // CUDA kernels don't have a direct equivalent to exit()or abort().
+            pipe.probe_info[0] = KOIFISH_ADAMW_MV, pipe.probe_info[1] = old_param, pipe.probe_info[2] = step, pipe.probe_info[3] = v;
+            pipe.probe_info[4] = m;            // atomicExch(pipe.probe_info, 1);
+            return;
+        }
+        param256[i] = old_param - pipe.learning_rate * pipe.weight_decay * old_param - pipe.learning_rate * step;
         //  stochastic_rounding(param, &params[idx], seed);
         // param128[i] = CU_Float2T<Typ>(param, pipe.seed);
     }
@@ -487,7 +491,7 @@ void PIPE_Muon<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
     if (this->name == "model.layers.6.self_attn.q_proj.weight") {  //"model.layers.6.self_attn.q_proj.weight"
         DEBUG_HERE;
     }
-    bool isAdamw_ = muon.isAdamW(this->tensor);
+    bool isAdamw_ = muon.isAdamW(this->tensor.get());
     if (isAdamw_) {
         PIPE_Adamw<Tp, Tmv>::CU_core(stream, flag);
         return;
@@ -567,9 +571,13 @@ template struct PIPE_Adamw<floatX, floatMV>;  // Force compilation
 template <typename Tp, typename Tmv>
 void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
     using typ128 = PackedN<Tp, 16 / sizeof(Tp)>;
-    // cudaError_t err       = cudaSuccess;
-    int dT4B         = 512;  //  1024?
-    int dGRID        = CEIL_DIV(num_parameters, dT4B);
+    if(G_Has_(tensor->name,{"model.layer.self_attn.o_proj.weight_gama","weight_gama"})){
+        DEBUG_HERE;
+    }
+
+    int dT4B  = 512;  //  1024?
+    int dGRID = CEIL_DIV(num_parameters, dT4B);
+    assert(dGRID * dT4B < INT_MAX);
     size_t smemPB    = 1024 * sizeof(float);
     beta1_correction = 1.0f - powf(beta1, iter);
     beta2_correction = 1.0f - powf(beta2, iter);
@@ -609,12 +617,13 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
                 }
 #endif
             } else {  //  ADAMw
-                assert(dGRID * dT4B < INT_MAX);
-                // CU_adamw_p_v0<<<dGRID, dT4B, 0, stream>>>(*this);
-                // assert(dT4B % typ128::size == 0);
-                // dT4B /= typ128::size;
                 task_11.config.seed = this->seed;
                 CU_adamw_p<<<task_11.grid3, task_11.block3, task_11.smem, task_11.stream>>>(task_11, *this);
+                CheckLastError("Adamw_p");
+                if (hQuant != nullptr) {
+                    if (tensor->gama_param == nullptr)
+                        tensor->SetDataX(params);
+                }
             }
             D2e(arrNorm, tensor->wnorm, 0x0), assert(isValidF(&(tensor->wnorm)));
             tensor->wnorm = sqrt(tensor->wnorm);
@@ -622,6 +631,18 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
         }
     }
     cudaCheck(cudaGetLastError());
+}
+
+bool PIPE_Optimizer::CheckLastError(const std::string& sX, int flag) {
+    float info[8];
+    D2H(probe_info, info, sizeof(float) * 8);
+    if (info[0] != 0) {
+        _ERROR("<%s> failed@\"%s\"! info=[%g,%g,%g,%g,%g,%g,%g,%g]\n", sX.c_str(), tensor->name, info[0], info[1], info[2], info[3], info[4], info[5], info[6],
+               info[7]);
+        K_EXIT_NOW(KOIFISH_OPT_ERROR);
+        return false;
+    }
+    return true;
 }
 
 void Optimizer::ClearOnCUDA(int flag) {}
@@ -690,7 +711,7 @@ int UpdateTensorParam_cuda(hGTensor tensor, Optimizer* hOPT, float& grad_norm, i
         grad_scale = tensor->rLARS(grad_scale, config.lars_ratio, 0x0);
     }
     PIPE_Adamw<floatX, floatMV> pipe(hOPT, tensor->flags, learning_rate, beta1, beta2, eps, wd);
-    pipe.Update(tensor.get(), wd, grad_scale, seed);
+    pipe.Update(tensor, wd, grad_scale, seed);
     pipe.CU_core(main_stream);
     // Optimizer_update(pipe, main_stream);
 

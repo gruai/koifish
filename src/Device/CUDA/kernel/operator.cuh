@@ -85,108 +85,6 @@ __device__ inline float matmul(float* x, T* w, int i, int n) {
     return val;
 }
 
-// warp-parallel mat*vec; each warp collaboratively computes mat*vec for a single row
-// specialized for half weights and ensures that we maximize transaction sizes by reading 4 bytes per thread
-__device__ inline float matmul_warppar(float* x, half* w, int i, int n) {
-    int lane  = threadIdx.x % warpSize;
-    float val = 0.0f;
-    for (int j = lane * 2; j < n; j += warpSize * 2) {
-        float2 ww = __half22float2(*(half2*)&w[i * n + j]);
-        float2 xx = *(float2*)&x[j];
-        val += ww.x * xx.x;
-        val += ww.y * xx.y;
-    }
-    return warpreduce_sum(val);
-}
-
-// todo
-__device__ inline float matmul_warppar(__nv_bfloat16* x, half* w, int i, int n) {
-    assert(0);
-    return 0.0;
-}
-__device__ inline float matmul_warppar(__nv_bfloat16* x, __nv_fp8_e5m2* w, int i, int n) {
-    assert(0);
-    return 0.0;
-}
-
-// warp-parallel mat*vec; each warp collaboratively computes mat*vec for a single row
-// specialized for fp8 weights and ensures that we maximize transaction sizes by reading 4 bytes per thread
-__device__ inline float matmul_warppar(float* x, __nv_fp8_e5m2* w, int i, int n) {
-    int lane  = threadIdx.x % warpSize;
-    float val = 0.0f;
-    // use 64-bit loads instead of 32-bit loads to increase memory throughput on H100/A100
-    // without this we are seeing lower throughput given the limited number of parallel warps in coop kernel
-    // this is performance-neutral on 4090 but results in issues with x[] load coalescing (that are benign)
-    if (0) {
-        for (int j = lane * 8; j < n; j += warpSize * 8) {
-            ablock<__nv_fp8x4_e5m2, 2> wwp = *(ablock<__nv_fp8x4_e5m2, 2>*)&w[i * n + j];
-#pragma unroll
-            for (int k = 0; k < 2; ++k) {
-                float4 ww = fp8x4_e5m2_ff(wwp.v[k]);
-                float4 xx = *(float4*)&x[j + k * 4];
-                val += ww.x * xx.x;
-                val += ww.y * xx.y;
-                val += ww.z * xx.z;
-                val += ww.w * xx.w;
-            }
-        }
-        return warpreduce_sum(val);
-    } else {
-        for (int j = lane * 4; j < n; j += warpSize * 4) {
-            // ablock<__nv_fp8x4_e5m2, 1> wwp = *(ablock<__nv_fp8x4_e5m2, 1>*)&w[i * n + j];
-            float4 ww = fp8x4_e5m2_ff((__nv_fp8x4_e5m2*)(w + i * n + j));
-            float4 xx = {x[j], x[j + 1], x[j + 2], x[j + 3]};  //*(float4*)&x[j];
-            val += ww.x * xx.x;
-            val += ww.y * xx.y;
-            val += ww.z * xx.z;
-            val += ww.w * xx.w;
-            // val += x[j] * ww.x + x[j+1] * ww.y + x[j+2] * ww.z + x[j+3] * ww.w;
-        }
-    }
-    // for(int offset = 16; offset > 0; offset >>= 1) {
-    //     val += __shfl_down_sync(0xffffffff, sum, offset);
-    // }
-    return warpreduce_sum(val);
-}
-
-// warp-parallel mat*vec; each warp collaboratively computes mat*vec for a single row
-// specialized for gf4 weights and ensures that we maximize transaction sizes by reading 4 bytes per thread
-__device__ inline float matmul_warppar(float* x, uint32_t* w, int i, int n) {
-    int lane = threadIdx.x % warpSize;
-    if (n % (warpSize * 16) == 0) {
-        float val = 0.0f;
-        for (int j = lane * 8; j < n; j += warpSize * 16) {
-            uint32_t wg0 = w[i * n / 8 + j / 8];
-            uint32_t wg1 = w[i * n / 8 + j / 8 + warpSize];
-
-            ablock<float, 8> xx0 = *(ablock<float, 8>*)&x[j];
-#pragma unroll
-            for (int k = 0; k < 8; ++k) {
-                val += float(cu_gf4_ff(wg0, k)) * xx0.v[k];
-            }
-
-            ablock<float, 8> xx1 = *(ablock<float, 8>*)&x[j + warpSize * 8];
-#pragma unroll
-            for (int k = 0; k < 8; ++k) {
-                val += float(cu_gf4_ff(wg1, k)) * xx1.v[k];
-            }
-        }
-        return warpreduce_sum(val);
-    } else {
-        float val = 0.0f;
-        for (int j = lane * 8; j < n; j += warpSize * 8) {
-            uint32_t wg = w[i * n / 8 + j / 8];
-
-            ablock<float, 8> xx = *(ablock<float, 8>*)&x[j];
-#pragma unroll
-            for (int k = 0; k < 8; ++k) {
-                val += float(cu_gf4_ff(wg, k)) * xx.v[k];
-            }
-        }
-        return warpreduce_sum(val);
-    }
-}
-
 template <typename KVT>
 __global__ static void kernel_rotate_sink(uint64_t, int kvd, KVT* key_cache, int head_dim, int kv_sink, float theta_log2, int seq_len, int rotary_dim) {
     int i = (blockIdx.x * blockDim.x + threadIdx.x) * 2;
@@ -497,7 +395,7 @@ __global__ static void CU_crossover_(curandState* state, float T_cross, T* x, co
 */
 template <typename typ>
 void CU_disti_normal(int N, typ* out, float devia, uint32_t seed = 42, bool isToHost = false) {
-    typ* d_results;
+    typ* d_results = nullptr;
     curandState* d_states;
     if (isToHost) {
         cudaCheck(cudaMalloc(&d_results, N * sizeof(typ)));
@@ -644,19 +542,16 @@ __global__ static void CU_F82Float(const f8e5* src, T* dst, size_t N, int seed, 
 }
 
 template <class T>
-double OFF_(T* A, T* B, size_t N, bool isCU = true, int flag = 0x0) {
+double CU_OFF_(T* A, T* B, size_t N, int flag = 0x0) {
     double res = DBL_MAX;
-    if (isCU) {
-        float *d_a, a = 0;
-        cudaMalloc(&d_a, sizeof(float)), cudaCheck(cudaMemset(d_a, 0, sizeof(float)));
-        size_t dBLOCK = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
-        CU_OFF<T><<<CEIL_DIV(N, dBLOCK), dBLOCK, smemPB, main_stream>>>(d_a, A, B, N, flag);
-        D2H(d_a, &a, sizeof(float), flag);
-        res = sqrt(a);
-        cudaFree(d_a);
-    } else {  //  cpu version
-        assert(0);
-    }
+    float *d_a, a = 0;
+    cudaMalloc(&d_a, sizeof(float)), cudaCheck(cudaMemset(d_a, 0, sizeof(float)));
+    size_t dBLOCK = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
+    CU_OFF<T><<<CEIL_DIV(N, dBLOCK), dBLOCK, smemPB, main_stream>>>(d_a, A, B, N, flag);
+    D2H(d_a, &a, sizeof(float), flag);
+    res = sqrt(a);
+    cudaFree(d_a);
+
     return res;
 }
 
@@ -806,7 +701,7 @@ __global__ void CU_ternary_online(T* mat, int M, int N, int seed = 0x0);
 template <class T>
 __global__ void CU_ternary2X_(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int seed = 0x0);
 template <class T>
-__global__ void CU_Q42X_(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int rc_normal = 0x0, int seed = 0x0);
+__global__ void CU_Q42X_lut(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int rc_normal = 0x0, int seed = 0x0);
 template <class T>
 __global__ void CU_Q32X_(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int rc_normal = 0x0, int seed = 0x0);
 template <class T>
@@ -864,22 +759,203 @@ __global__ void CU_rope2_v0(Typ* q, Typ* k, int pos, int N_HEADS, int N_KV_HEADS
         }
     }
 }
+/*  Somte ticks
+    1.  Tensor cores are used to accelerate GEMMs. But it doesn’t mean there’s enough resources to execute other operation with CUDA cores. There are other
+   resources that are shared among the on-chip resources, when kernels are called.
+*/
+template <typename OutFloat, bool UseAuxBuffer>
+__global__ void matmul_backward_bias_kernel9(OutFloat* dbias, const floatX* deltaIn, int B, int T, int OC, std::bool_constant<UseAuxBuffer>) {
+    constexpr const int bdx = 4;
+    constexpr const int bdy = WARP_SIZE / bdx;
+    assert(blockDim.x == bdx);
+    assert(blockDim.y == bdy);
 
-/*
-void residual_forward(floatX* out, const floatX* inp1, const floatX* inp2, int N, cudaStream_t stream) {
-    NVTX_RANGE_FN();
-    TASKA_1p1<floatX> taska(N, stream);
+    int warp_d  = (int)threadIdx.x;
+    int warp_c  = (int)threadIdx.y;
+    int block_d = (int)threadIdx.z;
 
-    if (taska.isValid()) {  //  X128 version
-        //T1p1(CU_add3)(out, inp1, inp2, taska);
-        T1p1(CU_add3<floatX>, taska, out, inp1, inp2, 0x0);
-    } else    {
-        const int block_size = N >= 2048 ? 256 : 128, grid_size = CEIL_DIV(N, block_size);
-        CU_residual_forward<<<grid_size, block_size, 0, stream>>>(out, inp1, inp2, N);
+    const int OC_per_warp = bdy * X128::size;  // 64 at BF16
+
+    int local_oc  = warp_c * X128::size;
+    int global_oc = blockIdx.x * OC_per_warp + local_oc;
+
+    int local_bt     = warp_d + bdx * block_d;
+    int bt_per_block = bdx * blockDim.z;
+
+    float accumulators[X128::size];
+    for (int k = 0; k < X128::size; k++) {
+        accumulators[k] = 0.0f;
     }
+
+    if (global_oc < OC) {
+        // sum up over all bt within registers
+        for (int idx = blockIdx.y * bt_per_block + local_bt; idx < B * T; idx += gridDim.y * bt_per_block) {
+            X128 packed_dout = load128(deltaIn + global_oc + idx * OC);
+            for (int k = 0; k < X128::size; k++) {
+                accumulators[k] += (float)packed_dout[k];
+            }
+        }
+    }
+
+    __shared__ float sub_results[X128::size][WARP_SIZE][bdy];
+
+    // reduce within-warp results
+    for (int k = 0; k < X128::size; k++) {
+        float v = accumulators[k];
+        v += __shfl_down_sync(0xffffffff, v, 1, 4);
+        v += __shfl_down_sync(0xffffffff, v, 2, 4);
+        if (warp_d == 0) {
+            sub_results[k][block_d][warp_c] = v;
+        }
+    }
+    __syncthreads();
+
+    // block-wide reductions
+    for (int k = block_d; k < X128::size; k += blockDim.z) {
+        float a = 0.f;
+        for (int r = warp_d; r < blockDim.z; r += bdx) {
+            float v = sub_results[k][r][warp_c];
+            v += __shfl_down_sync(0xffffffff, v, 1, 4);
+            v += __shfl_down_sync(0xffffffff, v, 2, 4);
+            a += v;
+        }
+        if (warp_d == 0 && global_oc < OC) {
+            if constexpr (!UseAuxBuffer) {
+                dbias[global_oc + k] = (OutFloat)(a + (float)dbias[global_oc + k]);
+            } else {
+                dbias[global_oc + k + blockIdx.y * OC] = (OutFloat)(a);
+            }
+        }
+    }
+}
+
+__global__ void static reduce_add_sum_kernel(floatX* dst, const float* src, size_t n, size_t m) {
+    const size_t idx = (blockIdx.x * blockDim.x + threadIdx.x) * f128::size;
+    assert(n % X128::size == 0);
+    if (idx < n) {
+        f128 acc;
+        for (int k = 0; k < f128::size; ++k) {
+            acc[k] = 0.f;
+        }
+
+        for (int l = 0; l < m; ++l) {
+            f128 s = load128(src + idx + n * l);
+            for (int k = 0; k < f128::size; ++k) {
+                acc[k] += s[k];
+            }
+        }
+        for (int k = 0; k < f128::size; ++k) {
+            dst[idx + k] = (floatX)((float)dst[idx + k] + acc[k]);
+        }
+    }
+}
+
+// void CU_mm_blasLt_v0(floatX* d, const floatX* a, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int
+// transB = 0,
+//                   float alpha = 1.0, float beta = 0.0, bool backward = false)
+template <class FloatC, class FloatA, class FloatB, class FloatBias>
+void CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* bias, int m, int n, int k, const float* scale_a, const float* scale_b,
+                  cudaStream_t stream = 0, int transA = 1, int transB = 0, bool accumulate = false, bool backward = false) {
+    NVTX_RANGE_FN();
+    bool has_bias              = (bias != nullptr);
+    hBITARR workspace          = (hBITARR)GTensor::cudnn_workspace;
+    std::size_t workspace_size = GTensor::cudnn_workspace_size;
+    assert(workspace_size >= 32 * 1024 * 1024);
+    // check alignment (some modes work unaligned, but it is always best to be aligned for performance)
+    if (((uintptr_t)a % 16) != 0 || ((uintptr_t)b % 16) != 0 || ((uintptr_t)d % 16) != 0 || ((uintptr_t)bias % 16) != 0) {
+        _ERROR("All CU_mm_blas_ pointers must be aligned!\n");
+        exit(KOIFISH_BLAS_UNALIGN);
+    }
+
+    // create the operation descriptor
+    cublasLtMatmulDesc_t operationDesc;
+    cublasCheck(cublasLtMatmulDescCreate(&operationDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
+
+    int returnedResults = 0;
+    cublasLtMatmulPreference_t preference;
+    cublasLtMatmulHeuristicResult_t heuristic;
+    cublasOperation_t opNoTranspose = CUBLAS_OP_N;
+    cublasOperation_t opTranspose   = CUBLAS_OP_T;
+    cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSA, (transA) ? &opTranspose : &opNoTranspose, sizeof(opTranspose)));
+    cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSB, (transB) ? &opTranspose : &opNoTranspose, sizeof(opNoTranspose)));
+
+    // define matrix layouts
+    cublasLtMatrixLayout_t ALayout;
+    cublasLtMatrixLayout_t BLayout;
+    cublasLtMatrixLayout_t DLayout;
+    cublasLtMatrixLayout_t CLayout;
+    if (transA) {
+        cublasCheck(cublasLtMatrixLayoutCreate(&ALayout, cuLibType<FloatA>, k, m, k));
+    } else {
+        cublasCheck(cublasLtMatrixLayoutCreate(&ALayout, cuLibType<FloatA>, m, k, m));
+    }
+    if (transB) {
+        cublasCheck(cublasLtMatrixLayoutCreate(&BLayout, cuLibType<FloatB>, n, k, n));
+    } else {
+        cublasCheck(cublasLtMatrixLayoutCreate(&BLayout, cuLibType<FloatB>, k, n, k));
+    }
+    // cuBLASLt requires C in FP8 mode to be BF16 or FP32... (sigh)
+    cublasCheck(cublasLtMatrixLayoutCreate(&CLayout, cuLibType<FloatC>, m, n, m));
+    cublasCheck(cublasLtMatrixLayoutCreate(&DLayout, cuLibType<FloatC>, m, n, m));
+
+    // create a preference handle with specified max workspace
+    cublasCheck(cublasLtMatmulPreferenceCreate(&preference));
+    cublasCheck(cublasLtMatmulPreferenceSetAttribute(preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &workspace_size, sizeof(workspace_size)));
+
+    // setup epilogue and associated pointers for bias & gelu
+    cublasLtEpilogue_t epilogue = CUBLASLT_EPILOGUE_DEFAULT;
+    if (has_bias) {
+        epilogue = CUBLASLT_EPILOGUE_BIAS;
+    }
+    cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_EPILOGUE, &epilogue, sizeof(epilogue)));
+
+    if (has_bias) {
+        // cuBLASLt requires bias in FP8 mode to be BF16... (sigh)
+        cublasDataType_t bias_data_type = cuLibType<FloatBias>;  // force BF16 bias for FP8 mode
+        cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_BIAS_DATA_TYPE, &bias_data_type, sizeof(bias_data_type)));
+        cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &bias, sizeof(bias)));
+    }
+
+    if (scale_a) {
+        if (sizeof(FloatA) != 1) {
+            throw std::runtime_error("Scaling A is only supported for FP8");
+        }
+        cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, &scale_a, sizeof(&scale_a)));
+    }
+    if (scale_b) {
+        if (sizeof(FloatB) != 1) {
+            throw std::runtime_error("Scaling B is only supported for FP8");
+        }
+        cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &scale_b, sizeof(&scale_b)));
+    }
+
+    // find a suitable algorithm (cached internally so shouldn't take much CPU time in practice)
+    cublasLtMatmulAlgoGetHeuristic(cublaslt_handle, operationDesc, ALayout, BLayout, CLayout, DLayout, preference, 1, &heuristic, &returnedResults);
+    if (returnedResults == 0) {
+        _ERROR("No cuBLASLt algorithm@%d: m: %d, n: %d, k: %d, bias: %d\n", tpCuBLAS, n, m, k, has_bias);
+        exit(EXIT_FAILURE);
+    }
+
+    // set whether to accumulate (i.e. D += C) or not - note this isn't considered in algorithm selection (?!)
+    float one    = 1.f;
+    float zero   = 0.f;
+    float* alpha = &one;
+    float* beta  = accumulate ? &one : &zero;
+
+    // call the matmul
+    cublasCheck(cublasLtMatmul(cublaslt_handle, operationDesc, alpha, a, ALayout, b, BLayout, beta, d, CLayout, d, DLayout, &heuristic.algo, workspace,
+                               workspace_size, stream));
+    cudaCheck(cudaGetLastError());
+
+    // cleanups
+    cublasCheck(cublasLtMatmulPreferenceDestroy(preference));
+    cublasCheck(cublasLtMatmulDescDestroy(operationDesc));
+    cublasCheck(cublasLtMatrixLayoutDestroy(ALayout));
+    cublasCheck(cublasLtMatrixLayoutDestroy(BLayout));
+    cublasCheck(cublasLtMatrixLayoutDestroy(CLayout));
+    cublasCheck(cublasLtMatrixLayoutDestroy(DLayout));
     cudaCheck(cudaGetLastError());
 }
- */
 
 template <typename Typ>
 __global__ void CU_rope_(Typ* out, Typ* inp, const Typ* freqs, float* stat_info, int B, int T, int Nq, int Nkv, int head_dim, bool isBack = false);
@@ -888,5 +964,5 @@ void CU_mm_(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int
             float beta = 0.0, floatX* pre_gelu = NULL, bool backward = false);
 //  y=W*x
 void CU_mv_(floatX* y, const floatX* W, const floatX* x, int m, int n, float alpha = 1.0f, float beta = 0.0f);
-void matmul_backward(floatX* delta, floatX* dweight, floatX* dbias, floatX* deltaIn, floatX* inp, floatX* weight, float* dbias_buffer, int B, int T, int C,
-                     int OC, cudaStream_t stream, bool isTransW = false, floatX* pre_gelu = NULL, bool isAccumuDelta = false);
+// void matmul_backward(floatX* delta, floatX* dweight, floatX* dbias, floatX* deltaIn, floatX* inp, floatX* weight, float* dbias_buffer, int B, int T, int C,
+//                      int OC, cudaStream_t stream, bool isTransW = false, floatX* pre_gelu = NULL, bool isAccumuDelta = false);

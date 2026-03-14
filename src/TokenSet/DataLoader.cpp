@@ -418,31 +418,28 @@ bool SAMP::Serialize(FSerial& S, bool isSave, int flag) {
     return true;
 }
 
-std::vector<hDataToken> DataTokenSet::MakeInstance(struct CLI_params& params, hTokenizer hDict, bool isLocalInfer, int flag) {
+//std::vector<hDataToken> 
+std::tuple<hDataToken, std::vector<hDataToken>, hDataToken> DataTokenSet::MakeInstance(struct CLI_params& params, hTokenizer hDict, bool isLocalInfer, int flag) {
     DataTokens dts;
-    if (isLocalInfer) {  // Deprecated
-        /*auto hTokenset = std::make_shared<DataTokenSet>(hDict);
-        // hTokenset->serial_root = "/home/cys/rnd/lic/datasets/story19M___[gpt2char]_"; //only for debug"
-        hTokenset->serial_root = "./datasets/story19M___[gpt2.Q8_0]_";
-        // hTokenset->serial_root = "./datasets/story19M___[bitnet-m7-70m.Q8_0]_";
-        dts.push_back(hTokenset);
-        return dts;*/
-    }
-
+    hDataToken tsTrain = nullptr, tsCalib = nullptr;
+    std::vector<hDataToken> tsEval;
     JSON jdata  = jKEY(params.jConfig, {"datasets"});
     string type = "";
     if (jdata.empty()) {  // no dataset in chat-mode
+        assert(isLocalInfer);
         hDataToken hTokenset = std::make_shared<PromptTokenset>("", hDict);
-        dts.push_back(hTokenset);
+        tsEval.push_back(hTokenset);
+        return std::make_tuple(tsTrain, tsEval, tsCalib);
     } else {
     }
     for (JSON::const_iterator it = jdata.begin(); it != jdata.end(); ++it) {
-        auto k = it.key();
-        if (!k.empty() && k[0] == '#')
+        auto key = it.key();
+        if (!key.empty() && key[0] == '#')
             continue;
-        if (k == "debug") {
+        if (key == "debug") {
             continue;
         }
+        
         auto v               = it.value();
         hDataToken hTokenset = nullptr;
         type                 = jKV(v, {"type"}, type);
@@ -456,10 +453,26 @@ std::vector<hDataToken> DataTokenSet::MakeInstance(struct CLI_params& params, hT
             else
                 assert(0);
         }
+        if(key=="train"){
+            tsTrain = hTokenset;
+        }else if(key=="calib"){
+            tsCalib = hTokenset;
+        }else{  //key=="eval"
+            tsEval.push_back(hTokenset);
+        }
         dts.push_back(hTokenset);
     }
-
-    return dts;
+ 
+    if (dts.empty()) {
+        _ERROR("\n======== %s Failed to load tokenset!========\n", __func__);
+    }/*else{
+        tsTrain = dts[0];
+        for (int i = 1; i < dts.size(); i++) {
+            tsEval.push_back(dts[i]);
+        }        
+    }*/
+    
+    return std::make_tuple(tsTrain, tsEval, tsCalib);
 }
 
 bool SampLoader::Serialize(const std::string& path, bool isSave, int flag) {
@@ -553,6 +566,7 @@ bool SampLoader::Prepare(Optimizer* hO, hDataToken hT, int flag) {
         hTokens = hT;  // dolphin->hTokenset;
     assert(hTokens != nullptr && hDict != nullptr);
     hOPT = hO;  // maybe nullptr
+    stepis.Init(hOPT);
     // assert(hOPT != nullptr);
     if (dynamic_cast<Tokenset_HellaSwag*>(hT.get()) != nullptr) {
         stepis.isAccuracy = true;
@@ -1085,7 +1099,10 @@ std::string shuffle_samples_X(const std::string& rng_state, size_t* shuffled_off
     return mt19937_get_state(rng);
 }
 
-void StepInfos::Init(Optimizer* hO, int flag) { hOpt = hO; }
+void StepInfos::Init(Optimizer* hO, int flag) { 
+    assert(hO!=nullptr);
+    hOpt = hO; 
+}
 
 float StepInfos::Best() const {
     if (isAccuracy) {
@@ -1178,11 +1195,14 @@ bool StepInfos::SaveToCSV(const string& x, int flag) {
     }
 }
 
-bool Distri_ARRAY::SaveToCSV(const string& fpath, int flag) {
+string Distri_ARRAY::CSV_LOG_DIR = "./log/CSV/";
+bool Distri_ARRAY::SaveToCSV(const string& fpath_0, int flag) {
     try {
+        VERIFY_DIR_EXIST(CSV_LOG_DIR, true);
+        string fpath = CSV_LOG_DIR + fpath_0;
         FILE* fp = fopen(fpath.c_str(), "wt");
         if (fp == NULL) {
-            _INFO("%s: warning: empty or not existing training data file '%s'\n", __func__, fpath.c_str());
+            _WARN("%s: empty or not existing CSV file '%s'\n", __func__, fpath.c_str());
             return false;
         }
         fprintf(fp, "loss sigma\n");

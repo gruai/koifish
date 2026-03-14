@@ -138,8 +138,9 @@ class Fish : public std::enable_shared_from_this<Fish> {
     // Fish can talk, at least it would bubble...
     hTokenizer hDict = nullptr;
     virtual bool InitDictTokenset(int flag = 0x0);
-    DataTokens tokenset;
+    // DataTokens tokenset;
     hDataToken tsTrain = nullptr;  //  always only 1 train set!
+    hDataToken tsCalib = nullptr;  //  May have 1 calib set!
     DataTokens tsEval;             //  support multiple eval set!
 
     hOptimizer hOPT;
