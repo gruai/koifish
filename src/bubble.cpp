@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *  Some user cases
  *     bubble ./scripts/qwen3.json
@@ -11,11 +11,11 @@
 #include <iostream>
 #include <string>
 
+#include "./Device/Pipe.hpp"
 #include "./Manifold/gLLM.hpp"
 #include "./Utils/GST_Application.hpp"
 #include "./Utils/GST_log.hpp"
 #include "./g_def_x.hpp"
-#include "./Device/Pipe.hpp"
 
 std::string UserPrompt(hFISH fish, int pos, int nRound, int flag = 0x0) {
     char* cli_user_prompt = nullptr;
@@ -85,12 +85,11 @@ int Chat(hFISH fish, int enable_thinking) {
     int num_prompt_tokens = 0, user_turn = 1, next, token, generated_tokens = 0, nRound = 0;  // pos = 0,
     TOKENS prompt_tokens;
     hTokenizer tokenizer = fish->GetTokenizer();
-    double start_time    = 0;
+    double start_time = 0, eval = 0;
     string cur_answer, rendered_prompt;
-    floatLogits* logits = nullptr;
-    hChater gopt        = fish->GetGenerator();
-    hBATCH hBatch       = fish->GetCurBatch(true);
-    assert(hBatch->size() == seq_len);    
+    hChater gopt  = fish->GetGenerator();
+    hBATCH hBatch = fish->GetCurBatch(true);
+    assert(hBatch->size() == seq_len);
 
     // DEBUG.T_generate_most_layer = 1;
     DEBUG.verGenerate = DEBUG.cmd_p1;  // use this flag to comparse accu/time of different version
@@ -104,100 +103,103 @@ int Chat(hFISH fish, int enable_thinking) {
             rendered_prompt   = UserPrompt(fish, hBatch->tok_pos, nRound);
             prompt_tokens     = tokenizer->Encode(rendered_prompt);
             num_prompt_tokens = prompt_tokens.size();
-            generated_tokens  = 0;
-            cur_answer        = "";
-            user_turn         = 0, nRound++;
+            if (num_prompt_tokens == 0) {
+                _ERROR("[BUBBLE] failed to encode prompt=\"%s\"", rendered_prompt.c_str());
+                K_EXIT(KOIFISH_INVALID_PROMPT);
+            }
+            generated_tokens = 0;
+            cur_answer       = "";
+            user_turn        = 0, nRound++;
             hBatch->Reset(prompt_tokens);  // No BOS at sequence start!
             // hLoader->InitOneSamp(rendered_prompt, nullptr, fish.get(), 0x110);
             _INFO("\n");
+            for (int i = 0; i < num_prompt_tokens - 1; i++) {  // prefill
+                eval = fish->Evaluate(DL_BATCH_UPATE::BATCHofEMBED);
+                hBatch->tok_pos++;
+                if (hBatch->tok_pos == 1) {  // nRound == 2
+                    DEBUG_HERE;
+                    // K_EXIT(KOIFISH_EXIT_DEBUG);
+                }
+            }
         }
 
-        if (hBatch->tok_pos == num_prompt_tokens - 1) {
-            start_time = GST_ms();
-            SUM::tX1 = 0.0, SUM::tQKV_forw = 0.0, SUM::tFFN = 0.0, SUM::tPreLogits = 0.0;
-        }
-        if (hBatch->tok_pos == 1) {  // nRound == 2
-            DEBUG_HERE;
-            // K_EXIT(KOIFISH_EXIT_DEBUG);
-        }
-        if (DEBUG.verGenerate) {  //
+        start_time = GST_ms();
+        SUM::tX1 = 0.0, SUM::tQKV_forw = 0.0, SUM::tFFN = 0.0, SUM::tPreLogits = 0.0;
+        if (DEBUG.verGenerate) {  //    Deprecated
             QWEN3_PIPE qwen_pipe(fish, 0x0);
-            logits = T_generate_(fish, &qwen_pipe, fish->config.model.tpActivation, 1);
+            T_generate_(fish, &qwen_pipe, fish->config.model.tpActivation, 1);
         } else {
-            float eval = fish->Evaluate(DL_BATCH_UPATE::BATCHofEMBED);
+            eval = fish->Evaluate(DL_BATCH_UPATE::BATCHofEMBED);
         }
-        if (!gopt->VerifyLogits()) {
-            _INFO("\n%s(Invalid logits!)%s\n", COLOR_RED, COLOR_RESET);
-        }
+        gopt->VerifyLogits();
         hBatch->tok_pos++;
         // K_EXIT(KOIFISH_EXIT_DEBUG);
 
         // _INFO(" %d[%d->%d]", pos, token, next), fflush(stdout);
-        if (hBatch->tok_pos >= num_prompt_tokens) {
-            token = gopt->Sample(-1);
-            generated_tokens++;
-            if (token == tokenizer->eos_id || hBatch->tok_pos >= seq_len) {  //  stop generation if get EOS token
-                double elapsed_s = (double)(GST_ms() - start_time) / 1000.0;
-                double tps       = (generated_tokens > 0 && elapsed_s > 0) ? (generated_tokens - 1) / elapsed_s : 0.0;
-                if (hBatch->tok_pos >= seq_len) {
-                    _WARN("%scontext window full!%s\t", COLOR_YELLOW, COLOR_RESET);
-                }
-                _INFO("\n%s[%.2f tk/s, %d tokens in %.2fs(qkv=%.3fs ffn=%.3fs PreLogits=%.3fs X=%.3fs)]%s\n===================================\n", COLOR_GREEN,
-                      tps, generated_tokens - 1, elapsed_s, SUM::tQKV_forw / 1.0e6, SUM::tFFN / 1.0e6, SUM::tPreLogits / 1.0e6, SUM::tX1 / 1.0e6, COLOR_RESET);
 
-                user_turn = 1;
-                cur_answer += "\t\t" + SUM::sQuantInfo;
-                STR2FILE("chat.csv", cur_answer, nRound == 1 ? std::ofstream::out : std::ofstream::app);
-                OnEOS(fish);
-                if (nRound == DEBUG.prompts.size()) {  // only for debug
-                    return 0x0;
-                }
-                continue;
+        token = gopt->Sample(-1);  // 1654
+        generated_tokens++;
+        if (token == tokenizer->eos_id || hBatch->tok_pos >= seq_len) {  //  stop generation if get EOS token
+            double elapsed_s = (double)(GST_ms() - start_time) / 1000.0;
+            double tps       = (generated_tokens > 0 && elapsed_s > 0) ? (generated_tokens - 1) / elapsed_s : 0.0;
+            if (hBatch->tok_pos >= seq_len) {
+                _WARN("%scontext window full!%s\t", COLOR_YELLOW, COLOR_RESET);
             }
-            hBatch->Set(hBatch->tok_pos, 0, 0, 0, token);
+            _INFO("\n%s[%.2f tk/s, %d tokens in %.2fs(qkv=%.3fs ffn=%.3fs PreLogits=%.3fs X=%.3fs)]%s\n===================================\n", COLOR_GREEN, tps,
+                  generated_tokens - 1, elapsed_s, SUM::tQKV_forw / 1.0e6, SUM::tFFN / 1.0e6, SUM::tPreLogits / 1.0e6, SUM::tX1 / 1.0e6, COLOR_RESET);
 
-            static int in_thinking_section = 0;
-            static int in_bold_section     = 0;
-            if (hBatch->tok_pos == num_prompt_tokens) {  // first token of the response
-                in_thinking_section = enable_thinking;   // reset thinking state
-                in_bold_section     = 0;                 // reset bold state
-                if (in_thinking_section) {
+            user_turn = 1;
+            cur_answer += "\t\t" + SUM::sQuantInfo;
+            STR2FILE("chat.csv", cur_answer, nRound == 1 ? std::ofstream::out : std::ofstream::app);
+            OnEOS(fish);
+            if (nRound == DEBUG.prompts.size()) {  // only for debug
+                return 0x0;
+            }
+            continue;
+        }
+        hBatch->Set(hBatch->tok_pos, 0, 0, 0, token);
+
+        static int in_thinking_section = 0;
+        static int in_bold_section     = 0;
+        if (hBatch->tok_pos == num_prompt_tokens) {  // first token of the response
+            in_thinking_section = enable_thinking;   // reset thinking state
+            in_bold_section     = 0;                 // reset bold state
+            if (in_thinking_section) {
+                _INFO(COLOR_YELLOW);
+            }
+        }
+
+        const char* piece = tokenizer->T2STR(token).c_str();  // decode(tokenizer, token);
+        if (strcmp(piece, "</think>") == 0) {
+            in_thinking_section = 0;
+            if (!in_bold_section) {
+                _INFO(COLOR_RESET);
+            }
+        } else {
+            const char *current_pos = piece, *marker;
+            while ((marker = strstr(current_pos, "**")) != NULL) {
+                // print the text before the marker
+                fwrite(current_pos, 1, marker - current_pos, stdout);
+
+                // flip the bold state and change color accordingly
+                in_bold_section = !in_bold_section;
+                if (in_bold_section) {
+                    _INFO(COLOR_BOLD_RED);
+                } else if (in_thinking_section) {
                     _INFO(COLOR_YELLOW);
-                }
-            }
-
-            const char* piece = tokenizer->T2STR(token).c_str();  // decode(tokenizer, token);
-            if (strcmp(piece, "</think>") == 0) {
-                in_thinking_section = 0;
-                if (!in_bold_section) {
+                } else {
                     _INFO(COLOR_RESET);
                 }
-            } else {
-                const char *current_pos = piece, *marker;
-                while ((marker = strstr(current_pos, "**")) != NULL) {
-                    // print the text before the marker
-                    fwrite(current_pos, 1, marker - current_pos, stdout);
-
-                    // flip the bold state and change color accordingly
-                    in_bold_section = !in_bold_section;
-                    if (in_bold_section) {
-                        _INFO(COLOR_BOLD_RED);
-                    } else if (in_thinking_section) {
-                        _INFO(COLOR_YELLOW);
-                    } else {
-                        _INFO(COLOR_RESET);
-                    }
-                    current_pos = marker + 2;  // Move past the "**"
-                }
-                // print any remaining text after the last marker
-                if (token != tokenizer->eos_id) {
-                    _INFO("%s", current_pos);
-                    cur_answer += current_pos;
-                }
+                current_pos = marker + 2;  // Move past the "**"
             }
-
-            fflush(stdout);
+            // print any remaining text after the last marker
+            if (token != tokenizer->eos_id) {
+                _INFO("%s", current_pos);
+                cur_answer += current_pos;
+            }
         }
+
+        fflush(stdout);
     }
     // free(prompt_tokens);
     return 0x0;
@@ -209,7 +211,7 @@ class BubbleApp : public GST_Application {
 
    public:
     BubbleApp(int argc, char* argv[]) : GST_Application(argc, argv) {
-        name = "Bubble";
+        name         = "Bubble";
         params.phase = LIFE_PHASE::P_GENERATE;  // DEBUG.test_quant = 1;
         params.OnArch();
 
@@ -218,6 +220,7 @@ class BubbleApp : public GST_Application {
         params.chat_sampler.isSampleCPU = true;
         params.model.preLogits_dB       = 1;
         params.model.sparse.method      = -1;
+        //
         // params.quant.T_errQ             = 0.3;
         // params.quant.isNormalFloat = true, params.quant.isSymmetric = false;       //use_double_quant
         // params.quant.default_bits       = 2;

@@ -56,6 +56,7 @@ class GeQuant : public std::enable_shared_from_this<GeQuant> {
     //  1.  key embeddings - In initial layers, no significant outliers are observed. However, in the deeper layers, few channels (approximately four) exhibit
     //  visibly larger magnitudes (outliers),
     int nOutlier      = 128;
+    int nPer128 = 4;            // number of elems per 128 bit
     GeNeuron* hNeuron = nullptr;
     std::string name;
     Grusoft::GRander rander;
@@ -82,10 +83,10 @@ class GeQuant : public std::enable_shared_from_this<GeQuant> {
    public:
     QUANT_CARD params;
     //   Some layer(first N layers) is more challenging to quantize and requires a higher number of bits
-    int qMin, qMax, bits = -1;
+    int qMin, qMax, qBias = 0, bits = -1;
     double maxshrink, mse, norm, grid;
     float *scale = nullptr, *zero = nullptr;
-    bool trits, perchannel = false, sym = false;
+    bool trits, perchannel = false;
 
     static hQUANT MakeInstance(GeNeuron* hNeuron, const std::string& nam_, QUANT_CARD& params, std::vector<GeNeuron*> neurons, int flag);
 
@@ -93,7 +94,8 @@ class GeQuant : public std::enable_shared_from_this<GeQuant> {
     GeQuant(const std::string& nam_, void* hN, QUANT_CARD& params, int flag = 0x0);
     GeQuant(int bits_, bool perchannel_ = false, bool sym_ = true, bool mse_ = false, double norm_ = 2.4, int grid_ = 100, double maxshrink_ = .8,
             bool trits_ = false)
-        : bits(bits_), trits(trits_), perchannel(perchannel_), sym(sym_) {
+        : bits(bits_), trits(trits_), perchannel(perchannel_) {
+        params.isSymmetric = sym_;
         // qMax = pow(2.0, bits) - 1;
         // if (trits)
         //     qMax = -1;
@@ -110,6 +112,7 @@ class GeQuant : public std::enable_shared_from_this<GeQuant> {
 
     // x=8,4,2,1....
     virtual float RTN_x(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
+    virtual float RTN_1(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
     // NormalF_4, NormalF_3
     virtual float RT_NormalF(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
     // Do quant (would reshape tensor if needed)
@@ -124,6 +127,8 @@ class GeQuant : public std::enable_shared_from_this<GeQuant> {
     friend class Fish;
 };
 using QUANT_FACTORY = std::map<size_t, hQUANT>;
+
+extern hQUANT hQuant_A8, hQuant_A4;
 
 int inline Q_nThreadOfBlock(int N, int bit, int nT0 = 1024) {  // CU_T4B_BIG
     if (bit >= 8)
@@ -146,10 +151,14 @@ int inline Q_nThreadOfBlock(int N, int bit, int nT0 = 1024) {  // CU_T4B_BIG
 enum Q_BLOCK_AT_ {
     BLOCK_at_GROUP,
     BLOCK_at_ROW,
+    BLOCK_at_TOKEN
 };
 
 template <typename Typ>
 struct TASKA_quant {
+    bool isOnline = false;
+    bool isOverwrite = false;
+    bool isSym = false;
     // using typ128 = PackedN<Typ, 16 / sizeof(Typ)>;
     cudaStream_t stream;
     size_t smem = 0x0;
@@ -159,9 +168,12 @@ struct TASKA_quant {
     int rc_normal = 0, seed = 42, nG = -1, lG = -1;
     int np32bit        = 1;  // number of elements per 32_bit
     floatGama *gamaCol = nullptr, *gamaRow = nullptr, *zero = nullptr, *step = nullptr;
-    int nBin = 0, qMin = 0, qMax = 0;
+    int nBin = 0, qMin = 0, qMax = 0, qBias = 0;
+    bool isAccumErr = false;
+    double* prober;
 
     TASKA_quant(const GTensor* hTensor, hQUANT hQuant, cudaStream_t stream_, Q_BLOCK_AT_ blockAt = BLOCK_at_GROUP, int flag = 0x0);
+    TASKA_quant(const GTensor* hTensor, int q0, int q1, bool isSym_, cudaStream_t stream_, Q_BLOCK_AT_ blockAt = BLOCK_at_ROW, int flag = 0x0);
     bool isValid() const {
         if (nBlock <= 0)
             return false;

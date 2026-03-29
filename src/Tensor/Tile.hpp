@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Some codes from KT/llama.c
@@ -48,7 +48,7 @@ struct DEFAULT_ALIGN cuTILE : public TILE<_T, _rows, _cols> {
     static_assert(Pack2<dtype>::num() == 1);  // must be a 1-packed type (e.g. float, bf16, etc)
 
     static constexpr int swizzle_bytes = (sizeof(dtype) == 1   ? (  // Add FP8 case
-                                                                   underlying_width % 4 == 0   ? 128
+                                                                     underlying_width % 4 == 0   ? 128
                                                                      : underlying_width % 2 == 0 ? 64
                                                                                                  : 32)
                                           : sizeof(dtype) == 2 ? (underlying_width % 4 == 0   ? 128

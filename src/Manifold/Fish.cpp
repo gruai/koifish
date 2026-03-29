@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Random swimming fish that generated from AI
@@ -25,6 +25,9 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vect
             break;
         case MODEL_ARCH::NLP_QWEN3:
             fish = std::make_shared<QWen3>(nam_ + "_QW3", params, role_);
+            break;
+        case MODEL_ARCH::NLP_BITNET:
+            fish = std::make_shared<Bitnet>(nam_ + "_bitnet", params, role_);
             break;
         case MODEL_ARCH::NLP_MISTRAL:
             fish = std::make_shared<Mistral>(nam_ + "_mistral", params, role_);
@@ -809,6 +812,17 @@ bool Fish::BeforeNextStep(int iter, int flag) {
         // t->tile_r0 = t->tile_r1,        t->tile_c0 = t->tile_c1;
         t->tile_r1 = rand_coin.RandU32() % THREAD_TILE_M - THREAD_TILE_M / 2;
         t->tile_c1 = rand_coin.RandU32() % THREAD_TILE_N - THREAD_TILE_N / 2;
+
+        t->color = 0;
+        if (t->gama_param != nullptr) {
+            t->gama_param->color = 0;
+        }
+        // if (G_Has_(t->name, {"mlp.down_proj"})) {  // iter % 10 == 0;BIT_TEST(tensor->flags, GTensor::F_GAMA)
+        //     if (t->gama_param != nullptr) {
+        //         t->gama_param->color = 1;
+        //     }
+        //     t->color = 1;
+        // }
     }
 
     int tpPass  = -1;

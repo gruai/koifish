@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Perceptrons
@@ -312,13 +312,14 @@ VarCoder::VarCoder(Fish* hG_, const std::string& key_, JSON::const_iterator jit,
 
 FFN::FFN(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : VarCoder(hG_, key_, jit, flag) {
     remater_ffn = hFish->config.common.remater_ffn;  // false;
-    // tpWeight = TYPE_<floatFFN>(), tpActivation = tpWeight, tpGradient = tpWeight;
+
     up.SetDType(tpWeight, tpActivation, tpGradient);
     down.SetDType(tpWeight, tpActivation, tpGradient);
     gate.SetDType(tpWeight, tpActivation, tpGradient);
     if (hG_->config.model.isFFNWeightTying) {
         // isSymmetric = true;      Need more time to study its effect
     }
+    isNormalDown = hFish->isModel({NLP_BITNET});
     if (hFish->config.ModelArch() == NLP_GUPPY) {  //->config.model.isFFNShareParam;
         int nSample = nTop;
         int nVocab  = hFish->nClass();
@@ -343,7 +344,10 @@ bool VarCoder::Build(int flag_0) {
 
     if (tpNorm > 0)
         norm.BuildX(_NAME(name, FFN_PRE_NORMAL), {nBottom}, hFish, flag_0 | F_DELTA);  // name + ".norm",
-    if (hFish->isModel({NLP_QWEN2, NLP_QWEN3})) {
+    if (isNormalDown) {
+        normDown.BuildX(_NAME(name, FFN_NORMAL_DOWN), {nTop}, hFish, flag_0 | F_DELTA);
+    }
+    if (hFish->isModel({NLP_QWEN2, NLP_QWEN3, NLP_BITNET})) {
         // qwen 2.5 same as qwen 3.0!
         up.BuildX(_NAME(name, FFN_UP), {nTop, nBottom}, hFish, flagSLP);
         gate.BuildX(_NAME(name, FFN_GATE), {nTop, nBottom}, hFish, flag_0);
@@ -442,7 +446,7 @@ bool FFN::Build(int flag_0) {
     quant_params.Init4Neuron(name, hFish->config.jQuant);
     if (layid > quant_params.nPassLayer) {
         quant_params.spMost = up.w->shape;
-        hQuant = GeQuant::MakeInstance(this, name + "_quant", quant_params, {&up, &down, &gate}, 0x0);  //  {up.w, down.w, gate.w}, down.w, gate.w
+        hQuant              = GeQuant::MakeInstance(this, name + "_quant", quant_params, SubNeurons(flag_0), 0x0);  //  {up.w, down.w, gate.w}, down.w, gate.w
     }
 
     return true;
@@ -450,8 +454,13 @@ bool FFN::Build(int flag_0) {
 
 std::vector<GeNeuron*> FFN::SubNeurons(int flag) {
     std::vector<GeNeuron*> neurons = {&up, &down, &norm};  // gate
+    if (!normDown.Empty())
+        neurons.push_back(&normDown);
     if (!gate.Empty()) {
         neurons.push_back(&gate);
+    }
+    for (auto n : neurons) {
+        assert(n->isValid() && "Invalid neuron of FNN");
     }
     return neurons;
 }
@@ -462,8 +471,11 @@ hGensor FFN::Ming(RLS_BP* ctx_, hGensor inpL, int flag) {
     hGensor cur      = inpL;
     hGensor lastResi = inpL;
     if (hFish->isSymbolic()) {
-        // out = inpL >> up >> relu >> down >> norm;
-        inpL >> up >> down >> gate >> norm >> this;
+        auto hX = inpL >> up >> down >> gate >> norm;
+        if (isNormalDown)
+            hX = hX >> normDown;
+        hX = hX >> this;
+        // inpL >> up >> down >> gate >> norm >> this;
         cur = out;
     } else if (hFish->isAtPhase(LIFE_PHASE::P_GENERATE)) {
         cur = cuInfer(cur, flag);

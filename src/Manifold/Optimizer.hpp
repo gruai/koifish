@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -45,6 +45,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     // std::vector<hFuyou> fuyous;
     size_t nParams = 0, nMostParam = 0;
     float* _tmp           = nullptr;
+    float* prober_host    = nullptr;
     bool just_initialized = false, isAdaptiveSched = false, isGlobalGrad = true;
     bool isConverge = false, isDumpOnce = false;
 
@@ -172,9 +173,8 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     // virtual void InitOpt(TRAIN_CARD& params_,int flag=0x0);
 
     virtual ~Optimizer() {
-        // ggml_free(_ctx);
-        if (_tmp != nullptr)
-            delete[] _tmp;
+        FREE_a(prober_host);
+        FREE_a(_tmp);
     }
     virtual void CheckExitSearch(int t, int flag = 0x0);
     RESULT Search(void* ctx, hGensor loss_, hGensor target_, CLI_params& config);
@@ -186,6 +186,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     friend class SAMP;
     friend class TGraph;
     friend class StepInfos;
+    friend class PIPE_Optimizer;
 };
 typedef shared_ptr<Optimizer> hOptimizer;
 

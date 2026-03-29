@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Mixture of Expert
@@ -10,7 +10,7 @@
 
 #include "gLLM.hpp"
 
-LLM_MOE::LLM_MOE(const std::string &nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
+LLM_MOE::LLM_MOE(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
     assert(arch == MODEL_ARCH::NLP_MOE);
 
     tpFFN = FFN_TYPE::GATE_CYS;
@@ -19,12 +19,12 @@ LLM_MOE::LLM_MOE(const std::string &nam_, struct CLI_params params, ROLE_TYPE ro
 
 size_t LLM_MOE::MostMemSize(int flag) {
     int n_layer = config.nLayer();
-    int nHead   = 6;    //hDictVAE != nullptr ? hDictVAE->nLevel * 3 + 2 + 6 : 6;
+    int nHead   = 6;  // hDictVAE != nullptr ? hDictVAE->nLevel * 3 + 2 + 6 : 6;
     size_t sz0 = GTensor::MostOverhead(), sz = sz0 * 2 * (nHead + n_layer * 18);
     return sz;
 }
 
-hGensor MixOfModels::Forward(void *ctx, hGensor cur, hGensor w) {
+hGensor MixOfModels::Forward(void* ctx, hGensor cur, hGensor w) {
 #ifdef _TENSOR_G_
     return nullptr;
 #else
@@ -36,7 +36,7 @@ hGensor MixOfModels::Forward(void *ctx, hGensor cur, hGensor w) {
 #endif
 }
 
-void MixOfSwarm::Init(tpSWARM &swarm, void *ctx, int n_embd, int flag) {
+void MixOfSwarm::Init(tpSWARM& swarm, void* ctx, int n_embd, int flag) {
     hGensor a = nullptr, b = nullptr;
     for (auto fish : swarm) {
         b = fish->Output();
@@ -51,7 +51,7 @@ void MixOfSwarm::Init(tpSWARM &swarm, void *ctx, int n_embd, int flag) {
     gat_ = GT(nullptr, typNUMBER::F32, {n_embd, (int)(swarm.size() + 1)});
 }
 
-hGensor MixOfSwarm::Build(CLI_params &config, void *ctx, hGensor cur, int flag) {
+hGensor MixOfSwarm::Build(CLI_params& config, void* ctx, hGensor cur, int flag) {
     hGensor ouput = nullptr;
 #ifdef _TENSOR_G_
 #else
@@ -90,7 +90,7 @@ hGensor MixOfSwarm::Build(CLI_params &config, void *ctx, hGensor cur, int flag) 
     return ouput;
 }
 
-hGensor NLP_AutoRegressive::build_gate(void *ctx, hGensor cur, hGensor curlogits, int flag) {
+hGensor NLP_AutoRegressive::build_gate(void* ctx, hGensor cur, hGensor curlogits, int flag) {
     hGensor ouput = nullptr;
 #ifdef _TENSOR_G_
 #else
@@ -121,7 +121,7 @@ hGensor NLP_AutoRegressive::build_gate(void *ctx, hGensor cur, hGensor curlogits
     for (auto wiki : wikis) {
         i++;
         hGensor tB     = wiki->exLogits;
-        float *logistB = (float *)(tB->data);
+        float* logistB = (float*)(tB->data);
         if (wiki->t2t != nullptr) {
             tB = ggml_mul_mat(ctx, wiki->t2t, tB);
             gTN(tB, "gate_tB_%d", i);

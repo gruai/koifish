@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -418,8 +418,9 @@ bool SAMP::Serialize(FSerial& S, bool isSave, int flag) {
     return true;
 }
 
-//std::vector<hDataToken> 
-std::tuple<hDataToken, std::vector<hDataToken>, hDataToken> DataTokenSet::MakeInstance(struct CLI_params& params, hTokenizer hDict, bool isLocalInfer, int flag) {
+// std::vector<hDataToken>
+std::tuple<hDataToken, std::vector<hDataToken>, hDataToken> DataTokenSet::MakeInstance(struct CLI_params& params, hTokenizer hDict, bool isLocalInfer,
+                                                                                       int flag) {
     DataTokens dts;
     hDataToken tsTrain = nullptr, tsCalib = nullptr;
     std::vector<hDataToken> tsEval;
@@ -439,7 +440,7 @@ std::tuple<hDataToken, std::vector<hDataToken>, hDataToken> DataTokenSet::MakeIn
         if (key == "debug") {
             continue;
         }
-        
+
         auto v               = it.value();
         hDataToken hTokenset = nullptr;
         type                 = jKV(v, {"type"}, type);
@@ -453,25 +454,25 @@ std::tuple<hDataToken, std::vector<hDataToken>, hDataToken> DataTokenSet::MakeIn
             else
                 assert(0);
         }
-        if(key=="train"){
+        if (key == "train") {
             tsTrain = hTokenset;
-        }else if(key=="calib"){
+        } else if (key == "calib") {
             tsCalib = hTokenset;
-        }else{  //key=="eval"
+        } else {  // key=="eval"
             tsEval.push_back(hTokenset);
         }
         dts.push_back(hTokenset);
     }
- 
+
     if (dts.empty()) {
         _ERROR("\n======== %s Failed to load tokenset!========\n", __func__);
-    }/*else{
-        tsTrain = dts[0];
-        for (int i = 1; i < dts.size(); i++) {
-            tsEval.push_back(dts[i]);
-        }        
-    }*/
-    
+    } /*else{
+         tsTrain = dts[0];
+         for (int i = 1; i < dts.size(); i++) {
+             tsEval.push_back(dts[i]);
+         }
+     }*/
+
     return std::make_tuple(tsTrain, tsEval, tsCalib);
 }
 
@@ -1099,9 +1100,9 @@ std::string shuffle_samples_X(const std::string& rng_state, size_t* shuffled_off
     return mt19937_get_state(rng);
 }
 
-void StepInfos::Init(Optimizer* hO, int flag) { 
-    assert(hO!=nullptr);
-    hOpt = hO; 
+void StepInfos::Init(Optimizer* hO, int flag) {
+    assert(hO != nullptr);
+    hOpt = hO;
 }
 
 float StepInfos::Best() const {
@@ -1200,7 +1201,7 @@ bool Distri_ARRAY::SaveToCSV(const string& fpath_0, int flag) {
     try {
         VERIFY_DIR_EXIST(CSV_LOG_DIR, true);
         string fpath = CSV_LOG_DIR + fpath_0;
-        FILE* fp = fopen(fpath.c_str(), "wt");
+        FILE* fp     = fopen(fpath.c_str(), "wt");
         if (fp == NULL) {
             _WARN("%s: empty or not existing CSV file '%s'\n", __func__, fpath.c_str());
             return false;
@@ -1234,4 +1235,5 @@ void BATCH_INPUT::Reset(const TOKENS& tokens, int flag) {
     for (int i = 0; i < tokens.size(); i++) {
         Set(i, 0, 0, 0, tokens[i]);
     }
+    nPrefill = tokens.size();
 }

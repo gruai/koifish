@@ -1,6 +1,6 @@
 
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Functions of huTensor
@@ -125,7 +125,7 @@ size_t huTensor::Free_1(void** obj, const string& info) {
 }
 
 // v0 - each thread for 1 group
-__global__ void CU_NORM_STAT(int bits, int ldGroup, size_t N, hBITARR qdata, hBITARR qzero, hBITARR qscale, Distri_PIPE& disq, int flag = 0x0) {
+__global__ void CU_GROUP_STAT(int bits, int ldGroup, size_t N, hBITARR qdata, hBITARR qzero, hBITARR qscale, Distri_PIPE& disq, int flag = 0x0) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx * ldGroup >= N) {
         return;
@@ -153,10 +153,9 @@ __global__ void CU_NORM_STAT(int bits, int ldGroup, size_t N, hBITARR qdata, hBI
  *
  */
 bool huTensor::InitParam(int tpX) {
-    size_t nElem0 = size(), i;
-    size_t nInit  = size(1);
-    // bool isTmp          = true;
-    int iter = hFish->GetCurIter();
+    size_t nElem0 = size(), i, nInit = size(1);
+    bool isHost = DEBUG.isInitParamHost;
+    int iter    = hFish->GetCurIter();
     SUM::nInitParam++;  // may skip(bias is always init to 0)
     switch (tpInit) {
         case SERIALIZE: {  //  ???
@@ -184,7 +183,10 @@ bool huTensor::InitParam(int tpX) {
             if (BIT_TEST(flags, F_LORA_B)) {
                 return true;
             }
-            floatX* tmp = nullptr;  
+            floatX *tmp = nullptr, *paramDev = nullptr;
+            if (!isHost) {
+                cudaCheck(cudaMalloc(&paramDev, sizeof(floatX) * nInit));
+            }
             switch (tpInit) {
                 case FIX_1:
                     tmp = new floatX[nInit];
@@ -195,19 +197,14 @@ bool huTensor::InitParam(int tpX) {
                     break;
                 default:
                     if (BIT_TEST(flags, F_TERNARY)) {
-                        // int ldT = 8 / BitPE(type);
-                        // assert(ldT == 8 || ldT == 64);
-                        size_t dT4B = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
-                        floatX* paramX = ToX(gBUFF->tmpTernary);
-                        cudaMalloc(&paramX, nInit * sizeof(floatX));
-                        CU_disti_normal<floatX>(nInit, (floatX*)paramX, 0.02f * residual_scale, param_seed);
-                        ToTernary(paramX);
-                        cudaFree(paramX);
+                        CU_disti_normal<floatX>(nInit, (floatX*)paramDev, 0.02f * residual_scale, param_seed);
+                        ToTernary(paramDev);
                         // Print(name,0,-1);
                     } else if (hQuant != nullptr) {
                         tmp = new floatX[nInit];
-                        CU_disti_normal<floatX>(nInit, tmp, 0.02f * residual_scale, param_seed, true);
-                        hQuant->LowBit_worker(shared_from_this(), tmp);
+                        //  Gaussian-distributed weights need non-uniform quantization (like NF4/AWQ) or mixed-precision (like GPTQ) to preserve accuracy.
+                        CU_disti_normal<floatX>(nInit, isHost ? tmp : paramDev, 0.02f * residual_scale, param_seed, isHost);
+                        hQuant->LowBit_worker(shared_from_this(), isHost ? tmp : paramDev, isHost ? 0x0 : 0x100);
                         FREE_a(tmp);
                         // Print(name, 0x0, -1);
                     } else {
@@ -219,6 +216,9 @@ bool huTensor::InitParam(int tpX) {
             if (tmp != nullptr) {
                 H2D(data, tmp, K_FLOATS[type].nByte(nInit));  // BPE(type)
                 delete[] tmp;
+            }
+            if (paramDev != nullptr) {
+                cudaCheck(cudaFree(paramDev));
             }
             break;
             // Print(name,0,-1);
@@ -866,8 +866,8 @@ bool huTensor::ToTernary(floatX* paramX, int flag) {
             delete[] hx;
         } else {
             assert(gBUFF->tmpFF1->size() >= count);
-            CU_ternary2X_<floatX><<<CEIL_DIV(ne[0], dT4B), dT4B, smemPB, main_stream>>>(gama_T(), (hBITARR)data, ToX(gBUFF->tmpFF1), ne[0], ne[1]);
-            double off = CU_OFF_(paramX, ToX(gBUFF->tmpFF1), count);
+            CU_ternary2X_v0<floatX><<<CEIL_DIV(ne[0], dT4B), dT4B, smemPB, main_stream>>>(gama_T(), (hBITARR)data, ToX(gBUFF->tmpFF1), ne[0], ne[1]);
+            double off = CU_OFF_avg(paramX, ToX(gBUFF->tmpFF1), count);
             gBUFF->tmpFF1->Print("BitOfX", 0, 0, count);
             // assert(off <= 1.0e-5);
         }
@@ -972,5 +972,29 @@ bool GST_TensorBuffer::Prepare(int flag) {
         _INFO("\r\n%s  Unknown exception !!!", __func__);
         fflush(stdout);
         return false;
+    }
+}
+
+template void Distri_PIPE::OnArray<floatX>(size_t N, floatX* arr, bool, int);
+// template void Distri_PIPE::OnArray<float>(size_t N, float* arr, bool, int);
+template <typename T>
+void Distri_PIPE::OnArray(size_t N, T* arr, bool isHost, int flag) {
+    if (isHost) {
+        G_NORM_STAT<bf16>(N, arr, sum_2, sum_1, nrm_1);
+    } else {
+        float prober[8];
+        CU_NORM_STAT<bf16><<<1, 1, 0, main_stream>>>(N, arr, GTensor::stat_info);  // v0
+        D2H(GTensor::stat_info, prober, sizeof(float) * 8);
+        sum_2 = prober[1], sum_1 = prober[2], nrm_1 = prober[3];
+        if (1) {  // Verify error
+            double hmean = 0, hsum_1 = 0.0, hsum_2 = 0.0, hnrm_1 = 0.0;
+            T* tmp = new T[N];
+            D2H(arr, tmp, sizeof(T) * N);
+            G_NORM_STAT<bf16>(N, tmp, hsum_2, hsum_1, hnrm_1);
+            assert(fabs(hsum_1 - sum_1) <= 1.0e-6 * hsum_1);
+            assert(fabs(hsum_2 - sum_2) <= 1.0e-6 * hsum_2);
+            assert(fabs(hnrm_1 - nrm_1) <= 1.0e-6 * hnrm_1);
+            delete[] tmp;
+        }
     }
 }

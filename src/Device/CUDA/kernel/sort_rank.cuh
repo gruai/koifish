@@ -1,13 +1,13 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *
- *  \brief bitonic inplace sorting and ranking algorithms.  from 
+ *  \brief bitonic inplace sorting and ranking algorithms.  from
  * 		1. https://github.com/nickjillings/bitonic-sort/blob/master/BitonicSortCUDA.cu
  * 		2. https://github.com/teddykoker/torchsort/blob/main/torchsort/isotonic_cuda.cu
  * 		3. https://linebender.org/wiki/gpu/sorting/
- * 
+ *
  *  \author Yingshi Chen
  */
 #include <assert.h>
@@ -17,39 +17,39 @@
 #include <float.h>
 #include <stdint.h>
 
-template<typename T>
+template <typename T>
 __device__ void _bitonicStep1_(T* smem, int tid, int tpp, int d) {
     int m     = tid / (d >> 1);
     int tib   = tid - m * (d >> 1);
     int addr1 = d * m + tib;
     int addr2 = (m + 1) * d - tib - 1;
 
-    T A     = smem[addr1];
-    T B     = smem[addr2];
+    T A         = smem[addr1];
+    T B         = smem[addr2];
     smem[addr1] = max(A, B);
     smem[addr2] = min(A, B);
 }
 
-template<typename T>
+template <typename T>
 __device__ void _bitonicStep2_(T* smem, int tid, int tpp, int d) {
     int m     = tid / (d >> 1);
     int tib   = tid - m * (d >> 1);
     int addr1 = d * m + tib;
     int addr2 = addr1 + (d >> 1);
 
-    T A     = smem[addr1];
-    T B     = smem[addr2];
+    T A         = smem[addr1];
+    T B         = smem[addr2];
     smem[addr1] = max(A, B);
     smem[addr2] = min(A, B);
 }
 
-template<typename T>
+template <typename T>
 __global__ void bitonicSortKernel128_fp32(T* mem) {
     // Operating on 64 samples
     int bid = blockIdx.x;                                              // Block UID
     int tpp = threadIdx.x;                                             // Thread position in block
     int tid = blockIdx.x * blockDim.x + threadIdx.x;                   // Thread global UID
-    __shared__ T smem[256];                                        // Two blocks worth of shared memory
+    __shared__ T smem[256];                                            // Two blocks worth of shared memory
     smem[tpp]              = mem[blockDim.x * (2 * bid) + tpp];        // Coalesced memory load
     smem[tpp + blockDim.x] = mem[blockDim.x * ((2 * bid) + 1) + tpp];  // Coalesced memory load
     int blocks             = 8;
@@ -69,7 +69,7 @@ __global__ void bitonicSortKernel128_fp32(T* mem) {
     mem[blockDim.x * ((2 * bid) + 1) + tpp] = smem[tpp + blockDim.x];
 }
 
-template<typename T>
+template <typename T>
 __global__ void bitonicSortKernelXBlock1_fp32(T* mem, int blockNum) {
     int bid = blockIdx.x;                             // Block UID
     int tpp = threadIdx.x;                            // Thread position in block
@@ -77,7 +77,7 @@ __global__ void bitonicSortKernelXBlock1_fp32(T* mem, int blockNum) {
     int d   = 1 << blockNum;
     _bitonicStep1_(mem, tid, tpp, d);
 }
-template<typename T>
+template <typename T>
 __global__ void bitonicSortKernelXBlock2_fp32(T* mem, int blockNum, int d) {
     int bid = blockIdx.x;                             // Block UID
     int tpp = threadIdx.x;                            // Thread position in block
@@ -85,8 +85,7 @@ __global__ void bitonicSortKernelXBlock2_fp32(T* mem, int blockNum, int d) {
     _bitonicStep2_(mem, tid, tpp, d);
 }
 
-
-template<typename T>
+template <typename T>
 cudaError_t CU_BitonicSort(T* dev_mem, int N) {
     cudaError_t cudaStatus;
     // Launch a kernel on the GPU with one thread for each element.
@@ -160,8 +159,8 @@ __device__ void _bitonic_rank_Step2_fp32(float* smem, unsigned int* sindex, int 
 
 __global__ void bitonicSortRankKernel128_fp32(float* mem, unsigned int* index) {
     // Operating on 64 samples
-    int bid = blockIdx.x;                                                // Block UID
-    int tpp = threadIdx.x;                                               // Thread position in block
+    int bid = blockIdx.x;   // Block UID
+    int tpp = threadIdx.x;  // Thread position in block
     // int tid = blockIdx.x * blockDim.x + threadIdx.x;                     // Thread global UID
     __shared__ float smem[256];                                          // Two blocks worth of shared memory
     __shared__ unsigned int sindex[256];                                 // Place the index as local
@@ -327,34 +326,35 @@ Error:
     return cudaStatus;
 }
 
-    /*
-		int threads = 256, blocks = (n_vocab + threads - 1) / threads;
-		for (int k = 2; k <= n_vocab*2; k <<= 1) {     // why fail?
-        for (int j = k >> 1; j > 0; j >>= 1) {
-            bitonicSortKernel<floatLogits><<<blocks, threads>>>((floatLogits*)_logits, j, k,n_vocab);
-            cudaDeviceSynchronize();
-        }
-    }   */
+/*
+    int threads = 256, blocks = (n_vocab + threads - 1) / threads;
+    for (int k = 2; k <= n_vocab*2; k <<= 1) {     // why fail?
+    for (int j = k >> 1; j > 0; j >>= 1) {
+        bitonicSortKernel<floatLogits><<<blocks, threads>>>((floatLogits*)_logits, j, k,n_vocab);
+        cudaDeviceSynchronize();
+    }
+}   */
 
 //  Best when array size is power of 2
 template <typename T>
-__global__ void bitonicSortKernel(T *arr, int j, int k, int n) {
-    int i = threadIdx.x + blockIdx.x * blockDim.x;    
-    if (i >= n) return;    
+__global__ void bitonicSortKernel(T* arr, int j, int k, int n) {
+    int i = threadIdx.x + blockIdx.x * blockDim.x;
+    if (i >= n)
+        return;
     int ij = i ^ j;
-    
+
     // Only compare if ij is within bounds and ij > i to avoid duplicate swaps
     if (ij < n && ij > i) {
-        bool shouldSwap = false;        
-        if ((i & k) == 0) {            // Ascending order
+        bool shouldSwap = false;
+        if ((i & k) == 0) {  // Ascending order
             shouldSwap = (arr[i] > arr[ij]);
-        } else {            // Descending order  
+        } else {  // Descending order
             shouldSwap = (arr[i] < arr[ij]);
         }
-        
+
         if (shouldSwap) {
-            T temp = arr[i];
-            arr[i] = arr[ij];
+            T temp  = arr[i];
+            arr[i]  = arr[ij];
             arr[ij] = temp;
         }
     }

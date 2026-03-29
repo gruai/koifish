@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Generate some nonsense on Prompt
@@ -73,7 +73,7 @@ struct LogitsInfo {
         switch (hClsLogits->type) {
             case typNUMBER::BF16:
                 for (int i = 0; i < dim; i++) {
-                    float a = T2Float<bf16>((bf16*)src + i);
+                    float a   = T2Float<bf16>((bf16*)src + i);
                     logits[i] = Float2T<Typ>(&a);
                     index[i]  = i;
                 }

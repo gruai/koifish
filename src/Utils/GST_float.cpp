@@ -34,33 +34,7 @@ typNUMBER tpNumOf(const std::string& dtype_str) {
                 return type;
             }
         }
-    }
-    /*
-    if (sType == "F32") {
-        type = typNUMBER::F32;
-    } else if (sType == "F16") {
-        type = typNUMBER::F16;
-    } else if (sType == "BF16") {
-        type = typNUMBER::BF16;
-    } else if (sType == "F8_E5M2") {
-        type = typNUMBER::F8E5M2;
-    } else if (sType == "FP8") {
-        type = typNUMBER::F8E5M2;
-    } else if (sType == "F8_E4M3") {
-        type = typNUMBER::F8E4M3;
-    } else if (sType == "I32") {
-        type = typNUMBER::I32;
-    } else if (sType == "I16") {
-        type = typNUMBER::I16;
-    } else if (sType == "I8") {
-        type = typNUMBER::I8;
-    } else if (sType == "U8") {
-        type = typNUMBER::I8;
-    } else if (sType == "TERNARY") {
-        type = typNUMBER::T_SIGN;
-    } else if (sType == "BINARY") {
-        type = typNUMBER::T_BINARY;
-    } else*/
+    }    
     if (type == typNUMBER::T_OTHER) {
         std::string sErr = "Invalid typNumber@" + sType;
         assert(0 && sErr.c_str());

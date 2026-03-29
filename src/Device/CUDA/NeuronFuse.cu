@@ -141,7 +141,7 @@ hGTensor TokenEmbed::OnEmbed(hGensor inpL, int seed) {
                 if (b != nullptr)
                     PrintTensor<floatX>("wpe", ToX0(b), true, T, C);
             }
-            w->Print("wte", 0, 0);
+            // w->Print("wte", 0, 0);
             // PrintTensor<int>("inputs",tokens,true,B,T);
             cur->Print("token_embed", 0, 0, nToken * C);
             if (maec != nullptr) {
@@ -230,7 +230,7 @@ int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, Relu* hRelu, int f
 
         rhs  = to_gelu ? to_gelu : rhs;
         tRhs = to_gelu ? toGelu : rhs_0;
-        // w->Print(w->name, 0, -1);
+        w->Print(w->name, 0, dump_flag);
         // lhs_->Print(lhs_->name, 0, -1);
         assert(rhs != nullptr);
         int transA = 1;
@@ -348,25 +348,7 @@ int SLP::BackOnCompression(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTen
     }*/
 }
 
-template <class Typ>
-__global__ void CU_GamaBack(const TASKA_quant<Typ> taska, const Typ* inp, const Typ* deltaIn, const Typ* weight, Typ* gW, int flag) {
-    int tid = threadIdx.x, idrow = blockIdx.x * blockDim.x + tid, M = taska.nG, N = taska.lG;
-    if (idrow >= M)
-        return;  // guard
-
-    size_t offset           = idrow * N;
-    const Typ* x0           = inp + offset;
-    const Typ* w0           = weight + offset;
-    const floatGama* delta0 = deltaIn + offset;
-    float sumX = 0.0, sumWX = 0.0, step = taska.step[idrow];
-    for (int k = 0; k < N; k++, x0++, w0++, delta0++) {
-        sumX += CU_T2Float(delta0) * CU_T2Float(x0);
-        sumWX += CU_T2Float(delta0) * CU_T2Float(w0) * CU_T2Float(x0);
-    }
-    gW[idrow]     = sumWX / step;  //  gradinet of scale
-    gW[idrow + M] = -sumX * step;  //  gradinet of zero
-}
-
+void GamaBack_v0(const TASKA_quant<floatX>& tasq, hGTensor inp, hGTensor deltaIn, floatX *wX, floatX* gW, size_t nToken, int flag);
 /*
     backward to bias/weight
     backward to input(delta of this layer)
@@ -379,7 +361,7 @@ int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, 
         if (compression != SKIP)
             BackOnCompression(delta, inp, deltaIn, to_gelu, isAccumuDelta, flag);
 
-        size_t szBuf = 0x0;
+        size_t szBuf = 0x0, nToken = B * T;
         w->BeforeBackward(szBuf, true);
         floatX *wX = w->GetDataX(), *gW = ToG(w);
         float* dbias_buffer = (float*)((char*)GTensor::buff + szBuf);
@@ -416,7 +398,9 @@ int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, 
         bool isDogleg = flag != 0x100 && !isAccumuDelta;
         if (w->gama_param != nullptr) {
             TASKA_quant<floatX> tasq(w.get(), w->hQuant, main_stream);
-            /*T1pG*/ CU_GamaBack<floatX><<<tasq.grid3, tasq.block3, tasq.smem, tasq.stream>>>(tasq, ToX(inp), ToX(deltaIn), wX, gW, 0x0);
+            GamaBack_v0(tasq, inp, deltaIn, wX, gW, B, 0x0);
+            // 
+            // CU_GamaBack<floatX><<<tasq.grid3, tasq.block3, tasq.smem, tasq.stream>>>(tasq, ToX(inp), ToX(deltaIn), wX, gW, (int)B, 0x0);  // 3072->1024
             if (isDogleg) {
                 w->gama_param->Print(w->gama_param->name, 0, dump_flag);
                 // w->gama_param->Print(w->gama_param->name, 1, dump_flag);

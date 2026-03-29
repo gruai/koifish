@@ -1,6 +1,6 @@
 
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Neurons flow on manifold, just like our life, from no begin to no end(上善若水,生生不息)
@@ -98,7 +98,6 @@ class GeNeuron {
     STATISTIC stat;
     QUANT_CARD quant_params;
     int block_size = 256, grid_size = 0;  // for cuda kernel function
-
     // int n_embd_head, n_head;
     int gelu_fusion = 0, dump_flag = 0;
     Fish* hFish = nullptr;
@@ -158,14 +157,14 @@ class GeNeuron {
     //  Gensors with physical memory
     // virtual std::vector<hGensor> PhysicalGensors(bool isNoRef = true, int flag = 0x0) { return {}; }
     enum PICK_GENSOR_MODE {
-        PICK_PHYSICAL=0x100,    //Gensors with physical memory
-        PICK_LORA=0x200,
-        PICK_Q=0x400,   //w->qZero/qScale
+        PICK_PHYSICAL = 0x100,  // Gensors with physical memory
+        PICK_LORA     = 0x200,
+        PICK_Q        = 0x400,  // w->qZero/qScale
 
-        PICK_SUBNN = 0x1000,    //SubNeurons
+        PICK_SUBNN = 0x1000,  // SubNeurons
     };
     // Pick gensors(child,partial,vitual,ref,lora,...)
-    virtual std::vector<hGensor> PickGensors(int flag = PICK_LORA | PICK_SUBNN) const; //bool isLORA = true, 
+    virtual std::vector<hGensor> PickGensors(int flag = PICK_LORA | PICK_SUBNN) const;  // bool isLORA = true,
     virtual int nBatchToken(int flag = 0x0);
     virtual Fish* GetFish() const {
         assert(hFish != nullptr);
@@ -219,7 +218,7 @@ class GeNeuron {
     virtual bool isGang() { return false; }
 
     virtual void SetRefer(const GeNeuron* src, bool isBias = false, int flag = 0x0);
-    virtual std::vector<GeNeuron*> SubNeurons(int flag = 0x0)   { return {}; }
+    virtual std::vector<GeNeuron*> SubNeurons(int flag = 0x0) { return {}; }
     virtual bool OnData(hGTensor X, hGTensor Y, int* hot, int flag = 0x0) { return false; }
     virtual bool Sparsing(int flag = 0x0) { return false; }
     friend class Fish;
@@ -403,7 +402,7 @@ struct SLP : public SparseNeuron {
     */
     int Forw(hGTensor rhs, hGTensor lhs, hGTensor to_gelu = nullptr, Relu* hRelu = nullptr, int flag = 0x0);
     // CPU version
-    int Forw(float* rhs, float* lhs, int flag = 0x0);
+    int Forw_cpu(float* rhs, float* lhs, int flag = 0x0);
 
     /*  Backward
         inp_ & to_gelu is defined in forward: inp_=GELU(to_gelu)
@@ -413,7 +412,6 @@ struct SLP : public SparseNeuron {
 
     virtual bool PrepareMemory(bool isBack = true, int flag = 0x0);
     int FUSE_cuda_block(hGTensor rhs, hGTensor lhs, hGTensor gelu = nullptr, bool isForw = true, int flag = 0x0);
-
 };
 
 /*
@@ -450,7 +448,7 @@ struct LayerSoftmax : public SparseNeuron {
 };
 
 struct MOE : public SparseNeuron {
-    bool isSiLU = false;
+    bool isSiLU  = false;
     int head_dim = -1, n_head = -1;
     MOE() {}
     MOE(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
@@ -482,9 +480,10 @@ enum UIDs {
 class SelfAttention : public SparseNeuron {
    protected:
     int tpNormal = 1, n_ff = 0;
-    bool isLinear    = false;
-    bool isPreNormal = false;  //  Pre /Post Normalization
-    bool isQKNormal  = false;
+    bool isLinear      = false;
+    bool isPreNormal   = false;  // Pre /Post Normalization
+    bool isQKNormal    = false;
+    bool isNormalOutpu = false;  // Like 'attn_sub_norm' of Bitnet
     QKV_PACK qkv4dnn, qkvPack = QKV_PACK::QQKKVV;
 
     bool isSeparateQKV = false;
@@ -533,7 +532,7 @@ class SelfAttention : public SparseNeuron {
 
     std::shared_ptr<KVCache> hCache = nullptr;
 
-    hGensor attn_k = nullptr, attn_q = nullptr; // tmpQKV = nullptr;
+    hGensor attn_k = nullptr, attn_q = nullptr;  // tmpQKV = nullptr;
     // int n_rot=-1;
     // hGensor W_rope(void *ctx ,hGensor cur,hGensor w,hGensor KQ_pos,SHAPE shape,const string&shortcut,int flag=0x0);
     hGensor MyAttention(RLS_BP* ctx_, hGensor inpL, int flag);
@@ -552,6 +551,7 @@ class SelfAttention : public SparseNeuron {
     hGensor KQ_pos = nullptr, KQ_mask = nullptr;
     LayerNormal norm, *fuseNorm       = nullptr;
     LayerNormal normQ, normK;  //  Only w vector to save memory
+    LayerNormal normOut;
 
     hGensor attn       = nullptr;
     hGensor transition = nullptr;  //{STATS_UID, stats} of CUDNN
@@ -563,9 +563,7 @@ class SelfAttention : public SparseNeuron {
     // SLP qkv;
     SelfAttention() {}
     SelfAttention(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
-    virtual ~SelfAttention() {
-        attn_k = nullptr, attn_q = nullptr;
-    }
+    virtual ~SelfAttention() { attn_k = nullptr, attn_q = nullptr; }
     bool Build(int flag) override;
 
     std::vector<GeNeuron*> SubNeurons(int flag = 0x0) override;
@@ -633,10 +631,11 @@ struct BROWN_attn : public SelfAttention {
 class VarCoder : public SparseNeuron {
    protected:
     int nTop = -1, nBottom = -1;
-    bool isResi      = false;
-    bool isSymmetric = false;
-    hGensor resi     = nullptr;
-    int tpNorm       = -2;
+    bool isResi       = false;
+    bool isSymmetric  = false;
+    bool isNormalDown = false;  // Like 'ffn_sub_norm' of Bitnet
+    hGensor resi      = nullptr;
+    int tpNorm        = -2;
     SLP up, down, gate;
     Relu relu;
 
@@ -644,6 +643,7 @@ class VarCoder : public SparseNeuron {
 
    public:
     LayerNormal norm;
+    LayerNormal normDown;  // Like 'ffn_sub_norm' of Bitnet
     // hGensor encode=nullptr,decode=nullptr,norm=nullptr;
     VarCoder() {}
     VarCoder(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);

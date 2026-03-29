@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Some codes are from llm.c
@@ -569,6 +569,8 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
         // norm.w->Print("qkvn.w",0x0,dump_flag);          norm.b->Print("qkvn.b",0x0,dump_flag);
         // norm.mean->Print("qkvn.mean",0x0,dump_flag);       norm.rstd->Print("qkvn.rstd",0x0,dump_flag);
     }
+
+    inpQ->Quant4A(DEBUG.tpActi);
     if (isSeparateQKV) {
         Q.Forw(Q.out, inpQ);
         K.Forw(K.out, inpQ);
@@ -747,7 +749,8 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
             // V.w->Print("Vw", 1, dump_flag);
         } else {
             Q.Back(gBUFF->tmpDelta, norm.out, deltaQ, nullptr);
-            // matmul_backward(ToX(gBUFF->tmpDelta), ToG(Q.w), ToG0(Q.b), ToX(delta_qkv), ToX(norm.out), ToX(Q.w), scratchF, B, T, C_qkv, 3 * C_qkv, main_stream);
+            // matmul_backward(ToX(gBUFF->tmpDelta), ToG(Q.w), ToG0(Q.b), ToX(delta_qkv), ToX(norm.out), ToX(Q.w), scratchF, B, T, C_qkv, 3 * C_qkv,
+            // main_stream);
             gBUFF->tmpDelta->Print("delta_3", 0, dump_flag);
         }
 

@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Quantizer is much more subtle & complex than most people think. It refects the essence of our world, just like quantum mechanics
@@ -17,6 +17,7 @@
 #include "../../../Utils/GST_MemBuffer.hpp"
 #include "../cuda_common.h"
 #include "../g_float.hpp"
+#include "../PackedQ.hpp"
 #include "operator.cuh"
 #include "utils.cuh"
 
@@ -27,66 +28,97 @@ void T1pG(KernelType kernel, const TASKA_quant<Typ>& taska, Args&&... args) {
     kernel<<<taska.grid3, taska.block3, taska.smem, taska.stream>>>(taska, std::forward<Args>(args)...);
 }
 
-template <class Typ>
-__global__ void CU_X2Q4_(const TASKA_quant<Typ> taska, Q4_8* quants, const Typ* mat0, int flag) {
-    int tid = threadIdx.x, idrow = blockIdx.x * blockDim.x + tid, M = taska.nG, N = taska.lG;
-    if (idrow >= M)
-        return;  // guard
+/*
+ weight is the dequant value
+    $W^q = \text{clamp}\left( \left\lfloor \frac{W}{s} \right\rceil + z, \, q_{\min}, \, q_{\max} \right)$ and $z = \left\lfloor -\frac{W_{\min}}{s}
+ \right\rceil$
 
-    size_t offset   = idrow * N;
-    const Typ *curX = mat0 + offset, *x0 = curX;
-    Typ wMax = curX[0], wMin = curX[1];
-    floatGama sR = 1.0, sC = 1.0, a, scale, zero;
-    if (taska.rc_normal > 0) {
-        sR = taska.gamaRow[idrow];
-    }
-    for (int k = 0; k < N; k++, x0++) {
-        wMax = max(wMax, *x0);
-        wMin = min(wMin, *x0);
-    }
-    scale = (wMax - wMin) / (Typ)(taska.nBin - 1);
-    zero  = -wMin / scale;
-    int32_t q8[8];
-    x0 = curX;
-    for (int k = 0; k < N / 8; k++, x0 += 8) {
-        for (int i = 0; i < 8; i++, x0++) {
-            // if (taska.rc_normal == 1) {  //  NORMAL_MODE::SINKHORN
-            //     scale *= gamaCol[i];
-            // }
-            q8[i] = int32_t((*x0 * scale) + zero);
-            q8[i] = q8[i] < taska.qMin ? taska.qMin : (q8[i] > taska.qMax ? taska.qMax : q8[i]);
+
+*/
+template <class Typ>
+__global__ void CU_GamaBack_1(const TASKA_quant<Typ> tasq, const Typ* inp, const Typ* deltaIn, const Typ* weight, Typ* gW, int nSample, int flag) {
+    int tid = threadIdx.x, idG = blockIdx.x * blockDim.x + tid;  // M = tasq.nG, N = tasq.lG;
+    if (idG >= tasq.nG)
+        return;  // guard
+    // inp[3072]    deltaIn[1024]
+    size_t offset = idG * tasq.lG;
+    int nRow = offset / tasq.nIn, nCol = offset % tasq.nIn;
+    float sumX = 0.0, sumWX = 0.0, step = tasq.step[idG];
+    for (int i = 0; i < nSample; i++) {
+        const Typ* x0     = inp + nCol + i * tasq.nIn;
+        const Typ* delta0 = deltaIn + nRow + i * tasq.nOut;
+        const Typ* w0     = weight + offset;
+        for (int k = 0; k < tasq.lG; k++, x0++, w0++) {
+            sumX += CU_T2Float(delta0) * CU_T2Float(x0);
+            sumWX += CU_T2Float(delta0) * CU_T2Float(w0) * CU_T2Float(x0);
         }
-        quants[k] = PACK_4to32_LE(q8);  // CU_Q42I_pack(q8, quants + k);
     }
+    gW[idG]           = -sumX * step / nSample;  //  gradinet of zero
+    gW[idG + tasq.nG] = sumWX / step / nSample;  //  gradinet of scale
+}
+/*
+    weight is the quant value
+    qid = std::round((a + zero) / step )    $W^q = \text{clamp}\left( \left\lfloor \frac{W + z}{s} \right\rceil , \, q_{\min}, \, q_{\max} \right)$ where
+   $z=-W_{min}$
+*/
+template <class Typ>
+__global__ void CU_GamaBack_2(const TASKA_quant<Typ> tasq, const Typ* inp, const Typ* deltaIn, const Typ* weight, Typ* gW, int nSample, int flag) {
+    int tid = threadIdx.x, idG = blockIdx.x * blockDim.x + tid;  // M = tasq.nG, N = tasq.lG;
+    if (idG >= tasq.nG)
+        return;  // guard
+    // inp[3072]    deltaIn[1024]
+    size_t offset = idG * tasq.lG;
+    int nRow = offset / tasq.nIn, nCol = offset % tasq.nIn;
+    float sumX = 0.0, sumWX = 0.0, step = tasq.step[idG], zero = tasq.zero[idG];
+    for (int i = 0; i < nSample; i++) {
+        const Typ* x0     = inp + nCol + i * tasq.nIn;
+        const Typ* delta0 = deltaIn + nRow + i * tasq.nOut;
+        const Typ* w0     = weight + offset;
+        for (int k = 0; k < tasq.lG; k++, x0++, w0++) {
+            sumX += CU_T2Float(delta0) * CU_T2Float(x0);
+            sumWX += CU_T2Float(delta0) * (CU_T2Float(w0) + zero) / step * CU_T2Float(x0);
+        }
+    }
+    gW[idG]           = -sumX / nSample;  //  gradinet of zero
+    gW[idG + tasq.nG] = sumWX / nSample;  //  gradinet of scale
+}
+
+void GamaBack_v0(const TASKA_quant<floatX>& tasq, hGTensor inp, hGTensor deltaIn, floatX* wX, floatX* gW, size_t nToken, int flag) {
+    /*T1pG*/
+    if (flag == 1)
+        CU_GamaBack_1<floatX><<<tasq.grid3, tasq.block3, tasq.smem, tasq.stream>>>(tasq, ToX(inp), ToX(deltaIn), wX, gW, (int)nToken, 0x0);  // 3072->1024
+    else
+        CU_GamaBack_2<floatX><<<tasq.grid3, tasq.block3, tasq.smem, tasq.stream>>>(tasq, ToX(inp), ToX(deltaIn), wX, gW, (int)nToken, 0x0);  // 3072->1024
 }
 
 template <class Typ>
-__global__ void CU_Q42X_(const TASKA_quant<Typ> taska, const Q4_8* quants, Typ* mat0, int seed) {
-    int tid = threadIdx.x, idrow = blockIdx.x * blockDim.x + tid, M = taska.nG, N = taska.lG;
+__global__ void CU_ternary2X_(const TASKA_quant<Typ> taska, const hBITARR quants, Typ* mat0, int seed) {
+    int tid = threadIdx.x, idrow = blockIdx.x * blockDim.x + tid, M = taska.nG, N = taska.lG, bit = 0;
     if (idrow >= M)
         return;  // guard
 
     size_t offset = idrow * N;
     Typ* x0       = mat0 + offset;
-    floatGama sR = 1.0, sC = 1.0, zero = taska.zero[idrow], step = taska.step[idrow];
+    floatGama sR = 1.0, sC = 1.0, t0 = (Typ)(0);
     if (taska.rc_normal > 0) {
         sR = taska.gamaRow[idrow];
     }
-    
-    const Q4_8* q32 = quants + offset / 8;
-    int q8[8];
-    for (int k = 0; k < N / 8; k++, x0 += 8) {
-        UNPACK_32to4_LE(q32[k], q8);
-        for (int i = 0; i < 8; i++) {
-            floatGama g0 = step * ((floatGama)(q8[i]) - zero) * sR;
-            if( !CU_isValidF(&g0) ){
-                DEBUG_HERE;
-            }
-            x0[i]        = g0;  // CU_Float2T<Typ>(g0, seed);
+    floatGama ta = taska.zero[idrow] * sR, tb = taska.step[idrow] * sR;
+    // T ta = CU_Float2T<T>(average, seed), tb = CU_Float2T<T>(-average, seed);
+    hBITARR tern = (hBITARR)(quants + (idrow * N) / 8);
+    for (int k = 0; k < N; k += 8, tern++) {
+        unsigned char tbyte = *tern;
+        // #pragma unroll
+        for (int bpos = 0; bpos < 8; bpos++, x0++) {
+            // int idx = idrow * N + k + bpos;
+            // if (idx == 0) {
+            //     int debug = 0;
+            // }
+            bit = BYTE_bit(tbyte, bpos);  //(tbyte >> (7-bpos)) & 0x1;
+            // *x0 = bit ? ta : t0;          // binary quant after Implicit RELU
+            *x0 = bit ? ta : tb;
+            // *x0 = bit ? (bpos%2==1 ? ta : tb) : t0;      // would explode
         }
-        // if (idrow == 0) {
-        //     DEBUG_HERE;
-        // }
     }
 }
 
@@ -96,7 +128,7 @@ __global__ void CU_Q42X_(const TASKA_quant<Typ> taska, const Q4_8* quants, Typ* 
  */
 template <class Typ>
 __global__ void CU_Q42X_awq(const TASKA_quant<Typ> taska, const Q4_8* zeros, const half* scales, const Q4_8* quants, Typ* mat0, int flag) {
-    int tid = threadIdx.x, idrow = blockIdx.x, bit = 0, M = taska.nIn, N = taska.nOut, npt = N / blockDim.x;  // n-data per thread
+    int tid = threadIdx.x, idrow = blockIdx.x, bit = 0, M = taska.nOut, N = taska.nIn, npt = N / blockDim.x;  // n-data per thread
     if (idrow >= M)
         return;  // guard
     if (npt % 8 != 0) {
@@ -153,6 +185,9 @@ __global__ void CU_Q42X_RTN(floatGama* gamas, const hBITARR quants, T* mat0, int
     }
 }
 
+template <class Typ, int nQuant>
+__global__ void CU_Q42X_(const TASKA_quant<Typ> taska, const BIT_128* quants, Typ* mat0, int seed);
+
 floatX* GTensor::GetDataX(int flag, const string& sX) const {
     if (data == nullptr)
         return nullptr;
@@ -180,7 +215,7 @@ floatX* GTensor::GetDataX(int flag, const string& sX) const {
                 } else if (hQuant->params.type == RTN) {
                     // CU_Q42X_RTN<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, spGroup[0], spGroup[1], disq.rc_normal, 42);
                     TASKA_quant<floatX> task_q(this, hQuant, main_stream, BLOCK_at_GROUP);
-                    T1pG(CU_Q42X_<floatX>, task_q, (Q4_8*)(data), wX, 0x0);
+                    T1pG(CU_Q42X_<floatX, 32>, task_q, (BIT_128*)(data), wX, 0x0);
                 } else {  // AWQ
                     TASKA_quant<floatX> task_q(this, hQuant, main_stream, BLOCK_at_ROW);
                     // Print(name, 0, -1);
@@ -228,7 +263,9 @@ floatX* GTensor::GetDataX(int flag, const string& sX) const {
                 return nullptr;
             } else {  // extract each weight {-1,0,1} to floatX
                 wX = ToX(gBUFF->tmpTernary);
-                CU_ternary2X_<floatX><<<CEIL_DIV(nRow, dT4B), dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, 1);
+                TASKA_quant<floatX> task_q(this, hQuant, main_stream, BLOCK_at_GROUP);
+                T1pG(CU_ternary2X_<floatX>, task_q, (hBITARR)(data), wX, 0x0);
+                // CU_ternary2X_v0<floatX><<<CEIL_DIV(nRow, dT4B), dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, 1);
                 SYNC_DEVICE();
                 if (flag == -1)
                     gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1);
@@ -257,35 +294,6 @@ floatX* GTensor::GetDataX(int flag, const string& sX) const {
     }
 
     return wX;
-}
-
-int GTensor::SetDataX(floatX* params, int flag) {
-    double err_0 = 0, err_1 = 0;
-    switch (type) {
-        case typNUMBER::Q4: {
-            TASKA_quant<floatX> task_q(this, hQuant, main_stream);
-            floatX* wX = ToX(gBUFF->tmpTernary);
-            assert(wX == params);
-            assert(gBUFF->tmpTernary->size() >= task_q.nEle);
-            if (hQuant->isRTN()) {
-                assert(hQuant->params.type == RTN);
-                // CU_Q42X_RTN<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, spGroup[0], spGroup[1], disq.rc_normal, 42);
-                T1pG(CU_X2Q4_<floatX>, task_q, (Q4_8*)(data), wX, 0x0);
-                if (0) {  // check residual
-                    T1pG(CU_Q42X_<floatX>, task_q, (Q4_8*)(data), ToX(gBUFF->bt4c), 0x0);
-                    err_0 = CU_OFF_<floatX>(wX, ToX(gBUFF->bt4c), size());
-                }
-                // gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow * nCol);
-            } else if (hQuant->params.type == KV_PolarQuant) {
-                assert(0);
-            } else {  //
-            }
-        } break;
-        default:
-            assert(0);
-            break;
-    }
-    return 0x0;
 }
 
 // CUDA kernel for assigning points to clusters
@@ -446,7 +454,7 @@ __global__ void CU_X2ternary_(floatGama* gama, T* mat0, char* terns, int M, int 
 
 // row-scaling  1 thrshold
 template <class T>
-__global__ void CU_ternary2X_(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int seed) {
+__global__ void CU_ternary2X_v0(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int seed) {
     int tid = threadIdx.x, idrow = blockIdx.x * blockDim.x + tid, bit = 0;
     if (idrow >= M)
         return;  // guard
@@ -500,8 +508,8 @@ __global__ void CU_Q42X_lut(floatGama* gamas, const hBITARR quants, T* mat0, int
             g0 *= gamaCol[2 * k];
             g1 *= gamaCol[2 * k + 1];
         }
-        *x0       = CU_16BF2T<T>(&g0, seed);  // 0.00343
-        *(x0 + 1) = CU_16BF2T<T>(&g1, seed);
+        *x0       = CU_GAMA2T<T>(g0, seed);  // 0.00343
+        *(x0 + 1) = CU_GAMA2T<T>(g1, seed);
     }
 }
 
@@ -543,8 +551,8 @@ __global__ void CU_Q42X_NF4(floatGama* gamas, const hBITARR quants, T* mat0, int
             g0 *= gamaCol[2 * k];
             g1 *= gamaCol[2 * k + 1];
         }
-        *x0       = CU_16BF2T<T>(&g0, seed);
-        *(x0 + 1) = CU_16BF2T<T>(&g1, seed);
+        *x0       = CU_GAMA2T<T>(g0, seed);
+        *(x0 + 1) = CU_GAMA2T<T>(g1, seed);
     }
 }
 
@@ -1014,7 +1022,7 @@ template class Q_Cluster<bf16>;
 template class Q_Cluster<float>;
 
 template __global__ void CU_ternary_online<bf16>(bf16* mat, int M, int N, int seed = 0x0);
-template __global__ void CU_ternary2X_<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int seed = 0x0);
+template __global__ void CU_ternary2X_v0<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int seed = 0x0);
 template __global__ void CU_Q42X_lut<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
 template __global__ void CU_Q32X_<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
 template __global__ void CU_Q22X_<bf16>(floatGama* gama, const hBITARR terns, bf16* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
@@ -1032,7 +1040,7 @@ template __global__ void CU_Q32X_NF3<__nv_fp8_e5m2>(floatGama* gama, const hBITA
 template __global__ void CU_Q32X_RTN<__nv_fp8_e5m2>(floatGama* gama, const hBITARR terns, __nv_fp8_e5m2* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
 template __global__ void CU_Q22X_RTN<__nv_fp8_e5m2>(floatGama* gama, const hBITARR terns, __nv_fp8_e5m2* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
 
-template __global__ void CU_ternary2X_<__nv_fp8_e5m2>(floatGama* gama, const hBITARR terns, __nv_fp8_e5m2* mat0, int M, int N, int seed = 0x0);
+template __global__ void CU_ternary2X_v0<__nv_fp8_e5m2>(floatGama* gama, const hBITARR terns, __nv_fp8_e5m2* mat0, int M, int N, int seed = 0x0);
 template __global__ void CU_X2ternary_<__nv_fp8_e5m2>(floatGama* gama, __nv_fp8_e5m2* mat0, char* terns, int M, int N, int bpe, bool isOverwrite = false);
 template __global__ void CU_Q42X_lut<__nv_fp8_e5m2>(floatGama* gama, const hBITARR terns, __nv_fp8_e5m2* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);
 template __global__ void CU_Q32X_<__nv_fp8_e5m2>(floatGama* gama, const hBITARR terns, __nv_fp8_e5m2* mat0, int M, int N, int rc_normal = 0, int seed = 0x0);

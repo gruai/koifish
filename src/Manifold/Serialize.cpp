@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Thanks the work of safetensors(https://github.com/syoyo/safetensors-cpp)
@@ -245,7 +245,7 @@ bool K_SafeTensors::_to_ofs(std::ofstream& ofs, size_t& szAll, std::string* warn
                 tensors.at(i, &tensor);
                 assert(dst_offset == tensor.data_offsets[0]);
                 if (key != K_SafeTensors::config_key_) {
-                    GTensor* t = (GTensor*)(tensor.hUserData);                    
+                    GTensor* t = (GTensor*)(tensor.hUserData);
                     sz         = tensor.data_offsets[1] - dst_offset;  // t->nByte() * 3;
                     if (sz != t->nByte_CKP(ckp)) {
                         size_t sz1 = t->nByte_CKP(ckp);
@@ -413,7 +413,7 @@ int Fish::SAFETENSOR2Gensors(const std::string& path, K_SafeTensors* hst, int fl
         hGensor target = GetGensor(key);  //  "model.embed.weight"    "model.embed_tokens.weight"
         if (target == nullptr) {
             _ERROR("\t[SERIAL] Failed @%s!\n", key.c_str());
-            continue;
+            return -1;
         }
         auto ginfo = GetGensorInfo(target);
         JSON jdesc = tensor.jDesc();
@@ -451,6 +451,9 @@ void K_SafeTensors::UpdateMetaData(int flag) {
 
 size_t K_SafeTensors::Register(hGensor t, size_t offset, int flag) {
     size_t sz = t->nByte_CKP(ckp);  // may expand
+    if (G_Has_(t->name, {"model.layers.1.self_attn.q_proj"})) {
+        DEBUG_HERE;
+    }
     // if (ckp.type == CheckPoint_Params::STATE)
     //     sz = t->nByte_CKP();
     assert(sz > 0);
@@ -463,6 +466,7 @@ size_t K_SafeTensors::Register(hGensor t, size_t offset, int flag) {
     tensor.shape.insert(tensor.shape.end(), t->shape.begin(), t->shape.end());
 
     tensors.insert(t->name, tensor);
+    // _INFO("\tRegister %ld@%s\n", sz, t->name);
     return offset + sz;
 }
 
@@ -548,8 +552,8 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
                 }
                 return false;
             }
-            szOFS = std::filesystem::file_size(path);
-            if (!jPath.empty()) {  //  save json file with more info
+            szOFS = std::filesystem::file_size(path);  //  1499827103
+            if (!jPath.empty()) {                      //  save json file with more info
                 std::ofstream o(jPath);
                 o << std::setw(4) << jsConfig << std::endl;
             }
@@ -616,12 +620,15 @@ bool Fish::HF_Serialize(bool isSave, int flag) {
     if (paths.empty())
         return false;
 
-    int nSerialT = 0;
+    int nSerialT = 0, curSerialT;
     std::vector<K_SafeTensors*> st_mmfs;
     for (auto path : paths) {
         K_SafeTensors* hst = new K_SafeTensors(this, {});
         st_mmfs.push_back(hst);
-        nSerialT += SAFETENSOR2Gensors(path, hst, 0x0);
+        curSerialT = SAFETENSOR2Gensors(path, hst, 0x0);
+        if (curSerialT <= 0)
+            return false;
+        nSerialT += curSerialT;
     }
     _LOG(nSerialT == 0 ? DUMP_ERROR : DUMP_INFO, ">>>>>> HF_Serialize load@\"%s\" OK. nSerialT=%d iter=%d\n\n", config.model.sCardPath.c_str(), nSerialT, flag);
 

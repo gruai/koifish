@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -58,15 +58,15 @@ SelfAttention::SelfAttention(Fish* hG_, const std::string& key_, JSON::const_ite
     ID = 0;
     // remater_qkv = hFish->config.common.remater_qkv;
 
-    n_embd = config.nEmbed();
+    n_embd    = config.nEmbed();
     n_ff      = hFish->config.n_ff(ID);
     n_head_kv = config.n_head_kv(ID);
     n_head    = config.n_head(ID);
     head_dim  = config.head_dim(ID);
-    q_dim = config.Q_dim(layid - 1), kv_dim = config.KV_dim(layid - 1);    
+    q_dim = config.Q_dim(layid - 1), kv_dim = config.KV_dim(layid - 1);
     assert(kv_dim <= q_dim);  // config.nEmbed();
     // assert(n_embd_head * n_head == C);
-    C_qkv = q_dim;  //C;
+    C_qkv = q_dim;  // C;
     /**/
     if (jvals.size() >= 3) {
         shape = {(int)(jvals[0]), (int)(jvals[1]), (int)(jvals[2])};
@@ -82,7 +82,8 @@ SelfAttention::SelfAttention(Fish* hG_, const std::string& key_, JSON::const_ite
     isSeparateQKV = hFish->config.model.isSeparateQKV;
     isBqkv        = hFish->config.model.isBqkv;
 
-    isQKNormal = hFish->config.model.isQKNormal;
+    isQKNormal    = hFish->config.model.isQKNormal;
+    isNormalOutpu = hFish->isModel({NLP_BITNET});
 
     // dump_flag = -1;
     tpNormal = DEBUG.SelfAttention_noraml;
@@ -102,7 +103,10 @@ bool SelfAttention::Build(int flag_0) {
         normQ.BuildX(_NAME(name, ATTN_Q_NORM), {head_dim}, hFish, flag);
         normK.BuildX(_NAME(name, ATTN_K_NORM), {head_dim}, hFish, flag);
     }
-    
+    if (isNormalOutpu) {
+        normOut.BuildX(_NAME(name, ATTN_NORMAL_OUTPUT), {n_embd}, hFish, flag);
+    }
+
     if (isSeparateQKV) {
         int flagQKV = hFish->config.model.isQKVBias ? flag | F_BIAS | F_DELTA : flag | F_DELTA;
         Q.BuildX(_NAME(name, ATTN_Q), spQ, hFish, flagQKV);
@@ -126,7 +130,7 @@ bool SelfAttention::Build(int flag_0) {
     transition = GT(hFish, tpWeight, {B, n_head, T * T}, 0X0, name + ".trans");  //  too much memory!
 #endif
     SHAPE spOut = {B, T, (int)hFish->config.nEmbed()};  //,T
-    out = std::make_shared<huTensor>(hFish, name + ".out", spOut, tpWeight, false);
+    out         = std::make_shared<huTensor>(hFish, name + ".out", spOut, tpWeight, false);
     if (hFish->config.isShareLayerOut()) {
         out->SetRefer(gBUFF->outL);
     }
@@ -156,12 +160,15 @@ bool SelfAttention::Build(int flag_0) {
     _devQKV(0x0);
 
     // QUANT_CARD quant_params = hFish->config.quant;
-    quant_params.Init4Neuron(name, hFish->config.jQuant);
-    if (layid > quant_params.nPassLayer) {
-        quant_params.spMost       = Q.w->shape;
-        // quant_params.default_bits = layid > 0 ? 3 : 4;
-        hQuant                    = GeQuant::MakeInstance(this, name, quant_params, {&Q, &K, &V, &proj_cat}, 0x0);  //  {Q.w,proj_cat.w}
+    if (!hFish->config.jQuant.empty()) {
+        quant_params.Init4Neuron(name, hFish->config.jQuant);
+        if (layid > quant_params.nPassLayer) {
+            quant_params.spMost = Q.w->shape;
+            // quant_params.default_bits = layid > 0 ? 3 : 4;
+            hQuant = GeQuant::MakeInstance(this, name, quant_params, {&Q, &K, &V, &proj_cat}, 0x0);  //  {Q.w,proj_cat.w}
+        }
     }
+
     // tpTrans = RELU2;
     // moe.BuildX(name+".moe",sp,hFish,flag);        //  why this would slow converge???
     return true;
@@ -193,7 +200,7 @@ bool SelfAttention::UpdateQKVPack(int flag) {
     return true;
 }
 bool SelfAttention::_devQKV(int stage, int flag) {
-    hGensor tmpQKV = gBUFF->tmpFF1;  
+    hGensor tmpQKV = gBUFF->tmpFF1;
     if (hFish->isAtPhase(LIFE_PHASE::P_GENERATE)) {
         assert(hCache != nullptr);
         int pos           = stage;
@@ -241,7 +248,7 @@ string SelfAttention::__repr__(string& suffix, string& prefix, int flag) {
     return buf;
 };
 
-std::vector<GeNeuron*> SelfAttention::SubNeurons(int flag)  {
+std::vector<GeNeuron*> SelfAttention::SubNeurons(int flag) {
     std::vector<GeNeuron*> neurons = {&Q, &K, &V, &proj_cat, &norm};
     if (isQKNormal) {
         neurons.push_back(&normQ), neurons.push_back(&normK);
@@ -249,6 +256,9 @@ std::vector<GeNeuron*> SelfAttention::SubNeurons(int flag)  {
         for(auto t : gensors){  //only for debug
             t->DumpX(0x0);
         }*/
+    }
+    if (isNormalOutpu) {
+        neurons.push_back(&normOut);
     }
     return neurons;
 }
@@ -271,11 +281,17 @@ hGensor SelfAttention::Ming(RLS_BP* hRLS, hGensor inpL, int flag) {
             inpL >> Q;
             attn->AddSrc({Q.out, transition});
         }
-        if (isQKNormal) {
-            // attn->AddSrc({normQ.rstd, normK.rstd});
-            attn >> proj_cat >> norm >> normQ >> normK >> this;
-        } else
-            attn >> proj_cat >> norm >> this;
+        auto hX = attn >> proj_cat >> norm;
+        if (isQKNormal)
+            hX = hX >> normQ >> normK;
+        if (isNormalOutpu)
+            hX = hX >> normOut;
+        hX = hX >> this;
+        // if (isQKNormal) {
+        //     // attn->AddSrc({normQ.rstd, normK.rstd});
+        //     attn >> proj_cat >> norm >> normQ >> normK >> this;
+        // } else
+        //     attn >> proj_cat >> norm >> this;
         out->AddSrc({transition, bqkv, attn});  // duplicate!
         cur = out;
         // gTN0(cur,"%s_+",name.c_str());

@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Some trial/testing cuda kernels
@@ -9,10 +9,243 @@
 #include "../../Manifold/Neuron.hpp"
 #include "../../Manifold/Optimizer.hpp"
 #include "../../Manifold/gLLM.hpp"
+#include "../../PackedQ.hpp"
 #include "./kernel/layernorm.cuh"
 #include "./kernel/operator.cuh"
 
 extern cudaStream_t main_stream;
+//  One thread per Group(defined in TASKA_quant)
+template <typename KernelType, typename Typ, typename... Args>
+void T1pG(KernelType kernel, const TASKA_quant<Typ>& taska, Args&&... args) {
+    assert(taska.isValid());
+    kernel<<<taska.grid3, taska.block3, taska.smem, taska.stream>>>(taska, std::forward<Args>(args)...);
+}
+
+template <class Typ>
+__global__ void CU_X2A8_(const TASKA_quant<Typ> taska, BIT_32* quants, Typ* mat0, int flag) {
+    int tid = threadIdx.x, idrow = blockIdx.x * blockDim.x + tid, M = taska.nG, N = taska.lG;
+    if (idrow >= M)
+        return;  // guard
+
+    size_t offset = idrow * N;
+    Typ *curX = mat0 + offset, *x0 = curX;
+    Typ wMax = curX[0], wMin = curX[0];
+    float sR = 1.0f, sC = 1.0f, a, step, zero;
+    if (taska.rc_normal > 0) {
+        sR = taska.gamaRow[idrow];
+    }
+    for (int k = 0; k < N; k++, x0++) {
+        wMax = max(wMax, *x0);
+        wMin = min(wMin, *x0);
+    }
+    if (taska.isSym) {
+        step = float(wMax) / taska.qMax;
+        zero = 0.f;
+    } else {
+        step = float(wMax - wMin) / (taska.qMax - taska.qMin);
+        zero = -(float)wMin;
+    }
+    assert(step > 0);
+    taska.zero[idrow] = zero;
+    taska.step[idrow] = step;
+    int32_t qq[8];
+    x0        = curX;
+    float err = 0.0, e;
+    for (int k = 0; k < N / 8; k++) {
+        for (int i = 0; i < 8; i++, x0++) {
+            // if (taska.rc_normal == 1) {  //  NORMAL_MODE::SINKHORN
+            //     step *= gamaCol[i];
+            // }
+            a     = CU_T2Float(x0);
+            qq[i] = std::round((a + zero) / step);
+            qq[i] = qq[i] < taska.qMin ? taska.qMin : (qq[i] > taska.qMax ? taska.qMax : qq[i]);
+            if (idrow == 0) {
+                DEBUG_HERE;
+            }
+            e = a - (step * qq[i] - zero);
+            err += e * e;
+        }
+        if (taska.isOverwrite) {
+            x0 -= 8;
+            for (int i = 0; i < 8; i++, x0++) {
+                a   = step * qq[i] - zero;
+                *x0 = CU_Float2T<Typ>(a);
+            }
+        } else
+            quants[k] = PACK_4to32_LE(qq);  // CU_Q42I_pack(qq, quants + k);
+    }
+    if (taska.isAccumErr) {
+        atomicAdd(taska.prober + 1, (double)err);
+    }
+}
+/*
+    Quantized Activation
+    activations are typically quantized per-tensor or per-token, not on group!
+    1. Per-group would significantly increases compute overhead
+    2. Activations are more dynamic with Extreme outliers! Per-token scaling handles outliers naturally, Per-group might have group imbalances
+*/
+bool huTensor::Quant4A(typNUMBER tpQ, int flag) {
+    assert(!isParam());
+    // hQUANT hQ = nullptr;
+    switch (tpQ) {
+        case typNUMBER::I8: {
+            TASKA_quant<floatX> tasq(this, -127, 127, true, main_stream, BLOCK_at_TOKEN);
+            // T1pG(CU_X2A8_<floatX>, task_q, (BIT_32*)(data), (floatX*)data, 0x0);
+            CU_X2A8_<floatX><<<tasq.grid3, tasq.block3, tasq.smem, tasq.stream>>>(tasq, (BIT_32*)(data), (floatX*)data, 0x0);
+            Print("X2A8_", 0x0, -1);
+        } break;
+        default:
+            break;
+    }
+
+    return true;
+}
+
+template <class Typ, int nQuant>
+__global__ void CU_X2Q4_(const TASKA_quant<Typ> taska, BIT_128* quants, const Typ* mat0, int flag) {
+    int tid = threadIdx.x, idrow = blockIdx.x * blockDim.x + tid, M = taska.nG, N = taska.lG;
+    if (idrow >= M)
+        return;  // guard
+
+    size_t offset   = idrow * N;
+    const Typ *curX = mat0 + offset, *x0 = curX;
+    BIT_128* q128 = quants + offset / nQuant;
+    Typ wMax = curX[0], wMin = curX[0];
+    float sR = 1.0f, sC = 1.0f, a, step, zero;
+    if (taska.rc_normal > 0) {
+        sR = taska.gamaRow[idrow];
+    }
+    for (int k = 0; k < N; k++, x0++) {
+        wMax = max(wMax, *x0);
+        wMin = min(wMin, *x0);
+    }
+    if (taska.isSym) {
+        step = (float)std::max(__habs(wMax), __habs(wMin)) / taska.qMax;
+        zero = 0;
+    } else {
+        step = float(wMax - wMin) / (taska.qMax - taska.qMin);
+        assert(step > 0);
+        zero = -(float)wMin;
+    }
+    taska.zero[idrow] = zero;
+    taska.step[idrow] = step;
+    int32_t qq[nQuant];
+    x0        = curX;
+    float err = 0.0, e;
+    for (int k = 0; k < N / nQuant; k++) {
+        for (int i = 0; i < nQuant; i++, x0++) {
+            // if (taska.rc_normal == 1) {  //  NORMAL_MODE::SINKHORN
+            //     step *= gamaCol[i];
+            // }
+            a     = CU_T2Float(x0);
+            qq[i] = std::round((a + zero) / step);
+            qq[i] = qq[i] < taska.qMin ? taska.qMin : (qq[i] > taska.qMax ? taska.qMax : qq[i]);
+            if (idrow == 0) {
+                DEBUG_HERE;
+            }
+            e = a - (step * qq[i] - zero);
+            err += e * e;
+            qq[i] += taska.qBias;
+        }
+
+        if (nQuant == 32) {
+            PACK_4to128_(qq, q128 + k);
+        } else if (nQuant == 64) {
+            PACK_2to128_(qq, q128 + k);
+        } else {
+            assert(0);
+        }
+    }
+    if (taska.isAccumErr) {
+        atomicAdd(taska.prober + 1, (double)err);
+    }
+}
+
+template <class Typ, int nQuant>
+__global__ void CU_Q42X_(const TASKA_quant<Typ> taska, const BIT_128* quants, Typ* mat0, int seed) {
+    int tid = threadIdx.x, idrow = blockIdx.x * blockDim.x + tid, M = taska.nG, N = taska.lG;
+    if (idrow >= M)
+        return;  // guard
+
+    size_t offset       = idrow * N;
+    Typ* x0             = mat0 + offset;
+    const BIT_128* q128 = quants + offset / nQuant;
+    floatGama sR = 1.0, sC = 1.0, zero = taska.zero[idrow], step = taska.step[idrow];
+    if (taska.rc_normal > 0) {
+        sR = taska.gamaRow[idrow];
+    }
+
+    int32_t qq[nQuant];
+    for (int k = 0; k < N / nQuant; k++, x0 += nQuant) {
+        if (nQuant == 32) {
+            UNPACK_128to4_UNSIGNED_(q128 + k, qq);
+        } else if (nQuant == 64) {
+            UNPACK_128to2_UNSIGNED_(q128 + k, qq);
+        } else {
+            assert(0);
+        }
+        if (idrow == 0) {
+            DEBUG_HERE;
+        }
+        for (int i = 0; i < nQuant; i++) {
+            floatGama g0 = (step * (floatGama)(qq[i] - taska.qBias) - zero) * sR;
+            if (!CU_isValidF(&g0)) {
+                DEBUG_HERE;
+            }
+            x0[i] = g0;  // CU_Float2T<Typ>(g0, seed);
+        }
+        // if (idrow == 0) {
+        //     DEBUG_HERE;
+        // }
+    }
+}
+
+double GTensor::SetDataX(floatX* param_0, bool checkErr, int flag) {
+    double err = DBL_MAX;
+    size_t N   = size();
+    assert(data != nullptr);
+
+    switch (type) {
+        case typNUMBER::Q2:
+        case typNUMBER::T_SIGN:
+        case typNUMBER::Q4: {
+            TASKA_quant<floatX> task_q(this, hQuant, main_stream);
+            floatX* wX = param_0;  // ToX(gBUFF->tmpTernary);
+            if (wX == param_0)
+                assert(gBUFF->tmpTernary->size() >= task_q.nEle);
+            if (hQuant->isRTN()) {
+                assert(hQuant->params.type == RTN);
+                Print("BeforeQuant", 0, -1);
+                PrintTensor<floatX>("wX", wX, true, N, 1, 1, 1, -1);
+                if (type == typNUMBER::Q2 || type == typNUMBER::T_SIGN)
+                    T1pG(CU_X2Q4_<floatX, 64>, task_q, (BIT_128*)(data), wX, 0x0);
+                else
+                    T1pG(CU_X2Q4_<floatX, 32>, task_q, (BIT_128*)(data), wX, 0x0);
+                Print("AfterQuant", 0, -1);
+                if (checkErr) {  // check residual
+                    if (type == typNUMBER::Q2 || type == typNUMBER::T_SIGN)
+                        T1pG(CU_Q42X_<floatX, 64>, task_q, (BIT_128*)(data), ToX(gBUFF->bt4c), 0x0);
+                    else
+                        T1pG(CU_Q42X_<floatX, 32>, task_q, (BIT_128*)(data), ToX(gBUFF->bt4c), 0x0);
+                    // gBUFF->bt4c->Print("deQuant", 0, -1, N);
+                    err = CU_OFF_avg<floatX>(wX, ToX(gBUFF->bt4c), size());
+                }
+                // gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow * nCol);
+            } else if (hQuant->params.type == KV_PolarQuant) {
+                assert(0);
+            } else {  //
+            }
+            if (task_q.isAccumErr)
+                D2e(task_q.prober, err);
+        } break;
+
+        default:
+            _ERROR("SetDataX failed@_<%s>_\"%s\"\n", cNameOf(type), name);
+            assert(0);
+            break;
+    }
+    return err;
+}
 
 template <typename Typ>
 __global__ void CU_rms_backward_v1(Typ* dX0, Typ* dweight, float* dW_scratch, const Typ* dY0, const Typ* X0, const Typ* weight, const float* rstd,

@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  General AutoRegressive Language model
@@ -423,13 +423,12 @@ bool Fish::InitDictTokenset(int flag) {
             hDict->vocab.resize(151936);
             // hDict->bos_id = 151643, hDict->eos_id = 151645;
             break;
+        case MODEL_ARCH::NLP_BITNET:
+            hDict = std::make_shared<GTokenizer_SentencePiece>(this);
+            hDict->vocab.resize(128256);
+            break;
         default:
-            // hDictVAE = std::make_shared<DictVAE>(this);
-            if (wikis.size() > 0) {
-                // hDictVAE->n_vocab = wikis[0]->n_vocab;
-                // hDictVAE->bos = wikis[0]->bos;             hDictVAE->eos = wikis[0]->eos;
-            }
-            // hTokenset = std::make_shared<DataTokenSet>(hDictVAE.get());
+            assert(0 && "DictTokenset don't support current arch!");
             break;
     }
     assert(hDict->nVocab() > 0);
@@ -531,17 +530,16 @@ void Fish::UpdateTernary(int flag) {
 
 void NLP_AutoRegressive::Train(int flag) {
     hOPT->BeforeTrain(tokens_input, 0x0);
-    
+
     if (tsCalib != nullptr) {
         SetPhase(LIFE_PHASE::P_EVAL_);
-        hSampLoader loader  = std::make_shared<SampLoader>(this, "Calib", false);
-        loader->type = SampLoader::TYPE::DT_EVAL;
+        hSampLoader loader = std::make_shared<SampLoader>(this, "Calib", false);
+        loader->type       = SampLoader::TYPE::DT_EVAL;
         loader->Prepare(hOPT.get(), tsCalib);
         GetNeuron<OutCLS>("OutCLS", 0)->hLoader = loader;
-        double val_loss = loader->Evaluate(SAMPLEofSHARD, 0x0);
+        double val_loss                         = loader->Evaluate(SAMPLEofSHARD, 0x0);
     }
 
-    
     // RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
     // hRLS->Prepare(-1);
     UpdateTernary(flag);
@@ -679,9 +677,10 @@ void NLP_AutoRegressive::Dump(int type, int flag) {
     std::sort(optParams.begin(), optParams.end(), [](const hGTensor& a, const hGTensor& b) { return strcmp(a->name, b->name) < 0; });
     _INFO("====== Params Table ======\n");
     for (auto t : optParams) {
-        if(t->gama_param!=nullptr)
+        if (t->gama_param != nullptr) {
+            // string sX = "Q<"+std::to_string(t->hQuant->params.default_bits)+">";
             t->gama_param->DumpX(0x0);
-        else
+        } else
             t->DumpX(0x0);
     }
     switch (type) {

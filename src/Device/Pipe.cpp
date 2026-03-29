@@ -1,12 +1,13 @@
 
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief PIPE - transfer data between device & host
  *  \author Yingshi Chen
  */
 #include "Pipe.hpp"
+
 #include "../Utils/GST_util.hpp"
 
 template struct PIPE_Muon<floatX, floatMV>;   // Force compilation
@@ -22,21 +23,21 @@ void PIPE_Muon<Tp, Tmv>::Update(hGTensor tensor_, float wd, float _grad_scale, u
         this->learning_rate *= muon.lr_scale;  // automatic learning rate transfer
         // int64_t m = this->ne[0], n = this->ne[1];
         int64_t m = this->ne[1], n = this->ne[0];
-        isTrans = m > n && muon.isTransDown; 
+        isTrans = m > n && muon.isTransDown;
         isTrans = false;
-        switch(muon.tpDecay){
-        case 0:
-            this->weight_decay = 0;
-            break;
-        case 1:
-            this->weight_decay /= muon.lr_scale;
-            break;
-        default:
-            break;
+        switch (muon.tpDecay) {
+            case 0:
+                this->weight_decay = 0;
+                break;
+            case 1:
+                this->weight_decay /= muon.lr_scale;
+                break;
+            default:
+                break;
         }
-       
-        dimA    = isTrans ? n : m;
-        mG      = (Tmv*)this->tensor->gm;
+
+        dimA = isTrans ? n : m;
+        mG   = (Tmv*)this->tensor->gm;
         assert(GTensor::buff != nullptr);
         size_t offset = 0;
         A             = (Tmv*)((char*)(GTensor::buff) + offset), offset += sizeof(Tmv) * dimA * dimA;

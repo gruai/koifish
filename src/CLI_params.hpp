@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -111,6 +111,7 @@ enum MODEL_ARCH {
     NLP_GPT2,
     NLP_GPT2_char,
     NLP_LLAMA,
+    NLP_BITNET,
     NLP_MISTRAL,
     NLP_MAMBA,
 
@@ -197,6 +198,7 @@ struct Fuyou_params {
 
 enum tpNEURON4NAME {
     ATTN_PRE_NORMAL,
+    ATTN_NORMAL_OUTPUT,  // Like 'attn_sub_norm' of Bitnet
     ATTN_Q_NORM,
     ATTN_K_NORM,
     ATTN_Q,
@@ -204,6 +206,7 @@ enum tpNEURON4NAME {
     ATTN_V,
     ATTN_OUT,
     FFN_PRE_NORMAL,
+    FFN_NORMAL_DOWN,  // Like 'ffn_sub_norm' of Bitnet
     FFN_UP,
     FFN_RELU,
     FFN_DOWN,
@@ -390,7 +393,7 @@ enum QUANT_MODE {
 struct QUANT_CARD {
     enum TRAIN_TARGET { X_WEIGHT, X_GAMA, X_HYBRID };
     TRAIN_TARGET xTarget = X_WEIGHT;
-    size_t szM = 0x0, szV = 0x0, szGrad = 0x0;
+    // size_t szM = 0x0, szV = 0x0, szGrad = 0x0;
 
     int TransA       = 1;
     int default_bits = 4;
@@ -405,6 +408,8 @@ struct QUANT_CARD {
     bool isNormalFloat = true;   //  each bin under a normal distribution N(0,1) contains equal probability mass
     bool isSymmetric   = false;
     bool isZeroPoint   = false;
+    bool isTernary     = false;  //{-1,0,1}
+
     typNUMBER tpZero, tpScale, tpQWeight;
 
     NORMAL_MODE norm = SINKHORN;
@@ -551,6 +556,7 @@ struct DEUG_SWITCH {
     int SelfAttention_noraml = 1;
     bool NO_loss             = false;
     bool check_tensor_norm   = false;
+    bool isInitParamHost     = true;
 
     int test_quant = 0;
 
@@ -583,7 +589,9 @@ struct DEUG_SWITCH {
     std::string x_str;
     std::vector<std::string> prompts;
 
-    float Time_most = 60;
+    float Time_most  = 60;
+    typNUMBER tpActi = typNUMBER::BF16;
+
     void Dump(int typ);
 };
 extern DEUG_SWITCH DEBUG;

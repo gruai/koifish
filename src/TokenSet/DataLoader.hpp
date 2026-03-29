@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Generate samples for train/Eval
@@ -69,8 +69,7 @@ struct BATCH_INPUT {
     shared_ptr<GTensor> hostToken = nullptr, hostMask = nullptr;
     //  host = TO<int>(hostToken), mask = TO<int>(hostMask);
     int *host = nullptr, *mask = nullptr;
-    //  NLP_AutoRegressive::tokens_input->OverWrite(hBatch->hostToken);
-    // void* dev = nullptr;
+    size_t nPrefill = 0;
 
     //  always point to last token when P_GENERATE
     int tok_pos = -1;

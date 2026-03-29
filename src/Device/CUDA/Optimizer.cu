@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Some idea is from https://github.com/karpathy/llm.c/blob/master/train_gpt2.cu
@@ -411,11 +411,18 @@ __global__ void CU_adamw_p(TASKA_1p1<Typ> taska, PIPE_Adamw<Typ, Tmv> pipe) {
         float step      = m / (sqrtf(v) + pipe.eps);
         float old_param = param256[i];                          //(float)pipe.params[idx];
         if (!CU_isValidF(&old_param) || !CU_isValidF(&step)) {  // CUDA kernels don't have a direct equivalent to exit()or abort().
-            pipe.probe_info[0] = KOIFISH_ADAMW_MV, pipe.probe_info[1] = old_param, pipe.probe_info[2] = step, pipe.probe_info[3] = v;
-            pipe.probe_info[4] = m;            // atomicExch(pipe.probe_info, 1);
+            pipe.prober[0] = KOIFISH_ADAMW_MV, pipe.prober[1] = old_param, pipe.prober[2] = step, pipe.prober[3] = v;
+            pipe.prober[4] = m;  // atomicExch(pipe.prober, 1);
             return;
         }
+        if (idx == 0 && pipe.color > 0) {
+            pipe.prober[3 * i + 1] = old_param;
+            pipe.prober[3 * i + 2] = -pipe.learning_rate * pipe.weight_decay * old_param - pipe.learning_rate * step;
+        }
         param256[i] = old_param - pipe.learning_rate * pipe.weight_decay * old_param - pipe.learning_rate * step;
+        if (idx == 0 && pipe.color > 0) {
+            pipe.prober[3 * i + 3] = param256[i];
+        }
         //  stochastic_rounding(param, &params[idx], seed);
         // param128[i] = CU_Float2T<Typ>(param, pipe.seed);
     }
@@ -571,7 +578,7 @@ template struct PIPE_Adamw<floatX, floatMV>;  // Force compilation
 template <typename Tp, typename Tmv>
 void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
     using typ128 = PackedN<Tp, 16 / sizeof(Tp)>;
-    if(G_Has_(tensor->name,{"model.layer.self_attn.o_proj.weight_gama","weight_gama"})){
+    if (G_Has_(tensor->name, {"model.layer.self_attn.o_proj.weight_gama", "weight_gama"})) {
         DEBUG_HERE;
     }
 
@@ -617,12 +624,36 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
                 }
 #endif
             } else {  //  ADAMw
+                if (tensor->color) {
+                    hGTensor hOrgParam = tensor->GetRefer();
+                    // assert(hOrgParam != nullptr && hOrgParam->gama_param == tensor);
+                    // hOrgParam->Print("0", 0, -1);
+                    tensor->Print("gama_0", 0, -1);
+                }
                 task_11.config.seed = this->seed;
                 CU_adamw_p<<<task_11.grid3, task_11.block3, task_11.smem, task_11.stream>>>(task_11, *this);
-                CheckLastError("Adamw_p");
+                CheckLastError("AdamW");
+                if (tensor->color) {
+                    tensor->Print("gama_1", 0, -1);
+                    DEBUG_HERE;
+                }
+
                 if (hQuant != nullptr) {
-                    if (tensor->gama_param == nullptr)
+                    if (BIT_TEST(tensor->flags, GTensor::F_GAMA)) {  // gama update
+                        // if (iter%10==5) {                         // useless
+                        //     hGTensor hOrgParam = tensor->GetRefer();
+                        //     // hOrgParam->Print("0", 0, -1);
+                        //     floatX* wNewX = hOrgParam->GetDataX();
+                        //     hOrgParam->SetDataX(wNewX);  //  params = (Tp*)(tensor->data), grads0 = (Tp*)(tensor->grad);
+                        //     // hOrgParam->Print("1", 0, -1);
+                        // }
+                    } else {
+                        assert(tensor->gama_param == nullptr);
                         tensor->SetDataX(params);
+                        // if (isGama2Origin) {
+                        //     tensor->Print("gama_1", 0, -1);
+                        // }
+                    }
                 }
             }
             D2e(arrNorm, tensor->wnorm, 0x0), assert(isValidF(&(tensor->wnorm)));
@@ -633,14 +664,23 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
     cudaCheck(cudaGetLastError());
 }
 
+static float hosti[KOIFISH_MAX_PROBE_LEN] = {};  // 3.33751814e-06        -3.33292087e-06
 bool PIPE_Optimizer::CheckLastError(const std::string& sX, int flag) {
-    float info[8];
-    D2H(probe_info, info, sizeof(float) * 8);
-    if (info[0] != 0) {
-        _ERROR("<%s> failed@\"%s\"! info=[%g,%g,%g,%g,%g,%g,%g,%g]\n", sX.c_str(), tensor->name, info[0], info[1], info[2], info[3], info[4], info[5], info[6],
-               info[7]);
+    D2H(prober, hosti, sizeof(hosti));
+    int iRet = hosti[0];
+    float* a = hosti + 1;
+    if (iRet != 0) {
+        _ERROR("<%s> failed@\"%s\"! info=[%g,%g,%g,%g,%g,%g,%g,%g]\n", sX.c_str(), tensor->name, a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]);
         K_EXIT_NOW(KOIFISH_OPT_ERROR);
         return false;
+    } else {
+        if (tensor->color == 0) {  //! G_Has_(tensor->name, {sX.c_str()})
+            return true;
+        }
+        for (int i = 0; i < 8; i++) {
+            _INFO("%g\t%g\t%g\n", a[3 * i], a[3 * i + 1], a[3 * i + 2]);
+        }
+        // _INFO("[%g,%g,%g,%g,%g,%g,%g,%g]@\"%s\"\n", a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], tensor->name);
     }
     return true;
 }

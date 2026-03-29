@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief  Numbers:    Floating/Integer/Quants
@@ -26,11 +26,13 @@ using TOKEN_ID = uint32_t;
 // using TOKEN_ID = uint16_t;
 const TOKEN_ID TOKEN_MAX = TOKEN_ID(-1);
 
-// Always use unsigned types for bit manipulation! 
+// Always use unsigned types for bit manipulation!
 using hBITARR = uint8_t*;
 using BIT_8   = uint8_t;
+using BIT_32  = uint32_t;
 using Q4_8    = uint32_t;
 using Q2_16   = uint32_t;
+using Q1_32   = uint32_t;
 
 using SHAPE = std::vector<int>;
 inline size_t SHAPE2NZ(const SHAPE& shape) {
@@ -51,7 +53,6 @@ using floatI = float;
 using f8e5 = uint8_t;
 
 struct FLOAT_META {
-
     // Endian format: *nearly all modern CPUs (x86/x86-64, ARM64) use little-endian byte order as their native memory layout
     enum BIT_FLAG : int32_t {
         ENDIAN_BIG    = 0x100,
@@ -93,9 +94,9 @@ enum class typNUMBER : uint8_t {
     Q4,
     Q3,
     Q2,
-    BOOL1,
+    T_SIGN,  //  ternary {-1, 0, 1}
 
-    T_SIGN,      //  ternary {-1, 0, 1}
+    BOOL1,
     T_BINARY,    //  binary {-1,  1}
     T_BINARY_3,  //  binary {-1,  1} from three partition
     T_BINARY_TILE,
@@ -104,25 +105,26 @@ enum class typNUMBER : uint8_t {
 };
 
 inline std::map<typNUMBER, FLOAT_META> K_FLOATS = {
-    {typNUMBER::F32, {32, "FLOAT", {"F32"}}},          // F32
-    {typNUMBER::F16, {16, "F16(E5)", {"F16"}}},        // F16
-    {typNUMBER::U8, {8, "U8"}},                        // U8
-    {typNUMBER::I8, {8, "I8"}},                        // I8
-    {typNUMBER::U16, {16, "U16"}},                     // U16
-    {typNUMBER::I16, {16, "I16"}},                     // I16
-    {typNUMBER::U32, {32, "U32"}},                     // U32
-    {typNUMBER::I32, {32, "I32"}},                     // I32
-    {typNUMBER::U64, {64, "U64"}},                     // U64
-    {typNUMBER::I64, {64, "I64"}},                     // I64
-    {typNUMBER::F64, {64, "F64"}},                     // F64
-    {typNUMBER::BF16, {16, "BF16(E8)", {"BF16"}}},     // BF16
-    {typNUMBER::F8E5M2, {8, "F8E5M2"}},                // F8E5M2
-    {typNUMBER::F8E4M3, {8, "F8E4M3"}},                // F8E4M3
-    {typNUMBER::Q4, {4, "Q<4>"}},                      // Q4
-    {typNUMBER::Q3, {3, "Q<3>"}},                      // Q3
-    {typNUMBER::Q2, {2, "Q<2>"}},                      // Q2
+    {typNUMBER::F32, {32, "FLOAT", {"F32"}}},       // F32
+    {typNUMBER::F16, {16, "F16(E5)", {"F16"}}},     // F16
+    {typNUMBER::U8, {8, "U8"}},                     // U8
+    {typNUMBER::I8, {8, "I8"}},                     // I8
+    {typNUMBER::U16, {16, "U16"}},                  // U16
+    {typNUMBER::I16, {16, "I16"}},                  // I16
+    {typNUMBER::U32, {32, "U32"}},                  // U32
+    {typNUMBER::I32, {32, "I32"}},                  // I32
+    {typNUMBER::U64, {64, "U64"}},                  // U64
+    {typNUMBER::I64, {64, "I64"}},                  // I64
+    {typNUMBER::F64, {64, "F64"}},                  // F64
+    {typNUMBER::BF16, {16, "BF16(E8)", {"BF16"}}},  // BF16
+    {typNUMBER::F8E5M2, {8, "F8E5M2"}},             // F8E5M2
+    {typNUMBER::F8E4M3, {8, "F8E4M3"}},             // F8E4M3
+    {typNUMBER::Q4, {4, "Q<4>"}},                   // Q4
+    {typNUMBER::Q3, {3, "Q<3>"}},                   // Q3
+    {typNUMBER::Q2, {2, "Q<2>"}},                   // Q2
+    {typNUMBER::T_SIGN, {2, "TERNARY"}},            // T_SIGN
+
     {typNUMBER::BOOL1, {1, "BOOL<1>"}},                // BOOL1
-    {typNUMBER::T_SIGN, {1, "TERNARY"}},               // T_SIGN
     {typNUMBER::T_BINARY, {1, "BINARY"}},              // T_BINARY
     {typNUMBER::T_BINARY_3, {1, "BINARY<3>"}},         // T_BINARY_3
     {typNUMBER::T_BINARY_TILE, {0, "T_BINARY_TILE"}},  // T_BINARY_TILE*/
@@ -160,6 +162,8 @@ typNUMBER inline Bits2Type(int bits, int flag = 0x0) {
             return typNUMBER::Q3;
         case 2:
             return typNUMBER::Q2;
+        case 1:
+            return typNUMBER::T_BINARY;
         default:
             assert(0);
             break;
@@ -263,8 +267,10 @@ inline constexpr cudaDataType cuLibType<__nv_fp8_e5m2> = cudaDataType::CUDA_R_8F
 
 // more datatypes on both floatX & float
 using floatGama = __nv_bfloat16;
+#define CU_GAMA2T CU_16BF2T
 // using floatGama   = half;
 // using floatGama   = float;
+// #define CU_GAMA2T CU_Float2T
 
 #include "g_float_cpu.hpp"
 
@@ -510,42 +516,3 @@ struct NF3_LUT {
                           0.0f,  0.18477343022823334f * 0.7f, 0.5250730514526367f * 0.7f,  1.0f};
 };
 
-#define UNPACK_32to4_LE(val, arr) \
-    do { \
-        uint32_t v = (val); \
-        (arr)[0] = ((v >> 0) & 0xF0) >> 4;  /* Byte0 hi4 bit */ \
-        (arr)[1] = ((v >> 0) & 0x0F);       /* Byte0 low4 bit */ \
-        (arr)[2] = ((v >> 8) & 0xF0) >> 4;  /* Byte1 hi4 bit */ \
-        (arr)[3] = ((v >> 8) & 0x0F);       /* Byte1 low4 bit */ \
-        (arr)[4] = ((v >> 16) & 0xF0) >> 4; /* Byte2 hi4 bit */ \
-        (arr)[5] = ((v >> 16) & 0x0F);      /* Byte2 low4 bit */ \
-        (arr)[6] = ((v >> 24) & 0xF0) >> 4; /* Byte3 hi4 bit */ \
-        (arr)[7] = ((v >> 24) & 0x0F);      /* Byte3 low4 bit */ \
-    } while(0)
-#define UNPACK_32to4_BE(val, arr) \
-    do { \
-        uint32_t v = (val); \
-        (arr)[0] = ((v >> 24) & 0xF0) >> 4;  /* Byte0 hi4 bit (MSB) */ \
-        (arr)[1] = ((v >> 24) & 0x0F);       /* Byte0 low4 bit */ \
-        (arr)[2] = ((v >> 16) & 0xF0) >> 4;  /* Byte1 hi4 bit */ \
-        (arr)[3] = ((v >> 16) & 0x0F);       /* Byte1 low4 bit */ \
-        (arr)[4] = ((v >> 8) & 0xF0) >> 4;   /* Byte2 hi4 bit */ \
-        (arr)[5] = ((v >> 8) & 0x0F);        /* Byte2 low4 bit */ \
-        (arr)[6] = (v & 0xF0) >> 4;          /* Byte3 hi4 bit */ \
-        (arr)[7] = v & 0x0F;                 /* Byte3 low4 bit (LSB) */ \
-    } while(0)
-
-#define PACK_4to32_LE(arr) \
-    ((((uint32_t)((arr)[0] & 0x0F) << 4 | ((arr)[1] & 0x0F))) | \
-     (((uint32_t)((arr)[2] & 0x0F) << 4 | ((arr)[3] & 0x0F)) << 8) | \
-     (((uint32_t)((arr)[4] & 0x0F) << 4 | ((arr)[5] & 0x0F)) << 16) | \
-     (((uint32_t)((arr)[6] & 0x0F) << 4 | ((arr)[7] & 0x0F)) << 24))
-
-#define PACK_4to32_BE(arr) \
-    ((((uint32_t)((arr)[0] & 0x0F) << 4 | ((arr)[1] & 0x0F)) << 24) | \
-     (((uint32_t)((arr)[2] & 0x0F) << 4 | ((arr)[3] & 0x0F)) << 16) | \
-     (((uint32_t)((arr)[4] & 0x0F) << 4 | ((arr)[5] & 0x0F)) << 8)  | \
-      ((uint32_t)((arr)[6] & 0x0F) << 4 | ((arr)[7] & 0x0F)))
-
-void BIT_SET_k(hBITARR array, size_t offset, BIT_8 elem, int bits);
-BIT_8 BIT_GET_k(hBITARR array, size_t offset, int bits);

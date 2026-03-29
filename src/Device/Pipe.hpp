@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  PIPE:   transfer data between device & host
@@ -20,8 +20,9 @@ struct PIPE_Optimizer {
     hGTensor tensor = nullptr;
     hQUANT hQuant   = nullptr;  // quant of tensor
     string name;
-    float* tmp        = nullptr;
-    float* probe_info = nullptr;
+    float* tmp    = nullptr;
+    float* prober = nullptr;  //, *prober_host = nullptr;
+
     floatGama* gama_T = nullptr;
     // use double to reduce Non-Determinism in CUDA Sums!
     double* arrNorm       = nullptr;
@@ -31,7 +32,7 @@ struct PIPE_Optimizer {
     float learning_rate;
     int iter, tile_r1, tile_c1;
     int64_t ne[4] = {0};
-    int ldT       = 64;
+    int ldT = 64, color = 0;
     float weight_decay, grad_scale, grad_norm;
     unsigned int seed;
     uint64_t flags;
@@ -42,7 +43,13 @@ struct PIPE_Optimizer {
 
     virtual void Update(hGTensor tensor_, float wd, float _grad_scale, unsigned int _seed, int flag = 0x0) {}
     virtual void CU_core(cudaStream_t stream, int flag = 0x0) {}
-    virtual bool CheckLastError(const std::string&sX, int flag = 0x0);
+    virtual bool CheckLastError(const std::string& sX, int flag = 0x0);
+    PIPE_Optimizer(Optimizer* hOPT_, int _flags) {
+        hOPT  = hOPT_;
+        flags = _flags;
+        // prober_host = hOPT->prober_host;
+    }
+    virtual ~PIPE_Optimizer() {}
 };
 typedef std::shared_ptr<PIPE_Optimizer> hPipeOpt;
 
@@ -54,21 +61,24 @@ struct PIPE_Adamw : public PIPE_Optimizer {
     Tmv* gv = nullptr;
     float beta1, beta2, beta1_correction, beta2_correction, eps;
 
-    PIPE_Adamw(Optimizer* hOPT_, int _flags, float _learning_rate, float _beta1, float _beta2, float _eps, float _weight_decay) {
-        hOPT = hOPT_;
-        // num_parameters = _num_parameters, w_stride = _w_stride, g_stride = _g_stride, s_stride = _s_stride;
-        flags = _flags, learning_rate = _learning_rate, beta1 = _beta1, beta2 = _beta2, eps = _eps, weight_decay = _weight_decay;
+    PIPE_Adamw(Optimizer* hOPT_, int _flags, float _learning_rate, float _beta1, float _beta2, float _eps, float _weight_decay)
+        : PIPE_Optimizer(hOPT_, _flags) {
+        learning_rate = _learning_rate, beta1 = _beta1, beta2 = _beta2, eps = _eps, weight_decay = _weight_decay;
+
         //  grad_scale = _grad_scale, grad_norm = _grad_norm, seed = _seed;
         // lr_0 = learning_rate;
     }
+    virtual ~PIPE_Adamw() { gm = nullptr; }
 
     void Update(hGTensor tensor_, float wd, float _grad_scale, unsigned int _seed, int flag = 0x0) override {
         tensor = tensor_;
         assert(tensor != nullptr);
         hQuant = tensor->GetDynamicQuant();
 
-        probe_info = GTensor::stat_info;
-        D20(probe_info, sizeof(float) * 8);  // max size is 5120
+        prober = GTensor::stat_info;
+        color  = tensor->color;
+
+        D20(prober, sizeof(float) * 8);  // max size is 5120
 
         num_parameters = tensor->size();
         if (tensor->gama_param != nullptr) {
@@ -99,7 +109,11 @@ struct PIPE_Adamw : public PIPE_Optimizer {
             gama_T = tensor->gama_T();
         }
         if (hQuant != nullptr) {
-            params = ToX(gBUFF->tmpTernary);
+            if (BIT_TEST(tensor->flags, GTensor::F_GAMA)) {
+                assert(tensor->type == typNUMBER::BF16 || tensor->type == typNUMBER::F32);
+                DEBUG_HERE;
+            } else
+                params = ToX(gBUFF->tmpTernary);
             // tensor->GetDataX();  // no need de dequant again!
         }
     }

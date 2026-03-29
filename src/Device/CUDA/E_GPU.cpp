@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief CUDA&CUDNN
@@ -142,9 +142,7 @@ bool EDGE_DEVICES::InitGPU(const CLI_params& hparams, int flag) {
     return true;
 }
 
-bool EDGE_DEVICES::ClearGPU(int flag) { 
-     return true; 
-}
+bool EDGE_DEVICES::ClearGPU(int flag) { return true; }
 
 void DestroyCUDNN();
 
@@ -157,7 +155,7 @@ void CUDA_cleanup() {
 
     if (cublas_handle != nullptr)
         cublasCheck(cublasDestroy(cublas_handle));
-    
+
     if (cublaslt_handle != nullptr)
         cublasCheck(cublasLtDestroy(cublaslt_handle));
 #ifdef ENABLE_CUDNN

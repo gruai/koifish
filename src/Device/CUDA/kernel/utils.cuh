@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Some simple utilities cuda kernels
@@ -29,7 +29,6 @@ __device__ __host__ inline float sAtB(T a, T b, T t) {
     // Or the simpler version:
     // return a + t * (b - a);
 }
-
 
 // only for kernels by cudaLaunchCooperativeKernel
 __device__ static void SYNC_GRID() {
@@ -329,8 +328,6 @@ __device__ __host__ constexpr unsigned int Get2dNoiseUint(int indexX, int indexY
 // stochastic rounding built on top of Squirel Noise above (with seed updated per step via xorshift)
 static bool isRounding = false;  // only for debug
 
-
-
 /*
     1) PCIe/Communication Bottlenecks:
         For data transfer between CPU and GPU, PCIe bandwidth (typically 16-64 GB/s) is far lower than GPU memory bandwidth (e.g., 1 TB/s for high-end GPUs),
@@ -429,4 +426,21 @@ struct SoftmaxParams {
     float Offset;
 };
 
+template <typename Typ>
+__global__ void CU_NORM_STAT(size_t N, Typ* arr, float* disq, int flag = 0x0) {
+    // size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    // if (idx >= N) {
+    //     return;
+    // }
 
+    double a2 = 0, a1 = 0.0, norm_1 = 0.0;
+    float a;  // zero, scale;
+    for (size_t i = 0; i < N; i++) {
+        a = CU_T2Float(arr + i);
+        a1 += a;
+        a2 += a * a;
+        norm_1 += fabs(a);
+    }
+    disq[1] = a2, disq[2] = a1, disq[3] = norm_1;
+    return;
+}

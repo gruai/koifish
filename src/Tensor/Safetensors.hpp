@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *   hf-transformers compatible SafeTensors
@@ -54,6 +54,14 @@ struct tensor_st {
             dtype = typNUMBER::I32;
             assert(shape[0] % 8 == 0);
             shape[0] /= 8;
+        } else if (dtype == typNUMBER::T_BINARY) {
+            dtype = typNUMBER::I32;
+            assert(shape[0] % 32 == 0);
+            shape[0] /= 32;
+        } else if (dtype == typNUMBER::T_SIGN || dtype == typNUMBER::Q2) {
+            dtype = typNUMBER::I32;
+            assert(shape[0] % 16 == 0);
+            shape[0] /= 16;
         }
         string info = hf_dtype(dtype);
         assert(!info.empty());

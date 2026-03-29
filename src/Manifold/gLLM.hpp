@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  General LLM model
@@ -289,6 +289,21 @@ class Mistral : public NLP_AutoRegressive {
 
         NLP_AutoRegressive::InitModel(flag);
     }
+};
+
+class Bitnet : public NLP_AutoRegressive {
+   protected:
+   public:
+    Bitnet(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag = 0x0);
+
+    virtual ~Bitnet() {}
+
+    void InitModel(int flag = 0x0) override {
+        _INFO("Bitnet::%s: init model\n", __func__);
+
+        NLP_AutoRegressive::InitModel(flag);
+    }
+    std::string NN2NAME(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix = "", int flag = 0x0) override;
 };
 
 class QWen : public NLP_AutoRegressive {

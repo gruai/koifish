@@ -173,7 +173,7 @@ struct SUM {
     static size_t szQuantBits;
     static int nInitParam, nSaveParam, nzSaveParam, nLoadParam, nzLoadParam, nDogLeg;
     static double tX, tX1, tData, tRemater, tQKV_forw, tQKV_back, tFFN, tPreLogits, tUpload, tLoadData, tLoadParam, tEval_0, tEval_1;
-    static double tQuant, tF8Ex;
+    static double tQuant, tF8Ex, tLowBit;
     static size_t szUpload;
     static string sQuantInfo;
 

@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -140,12 +140,15 @@ struct Distri_PIPE {
         sum_1 += a;
         sum_2 += a * a;
     }
+
+    template <typename T>
+    void OnArray(size_t N, T* arr, bool isHost = false, int flag = 0x0);
     virtual void Prepare(int nQuant, int flag = 0x0);
     virtual BIT_8 X2NormalF(int bits, const float weight, int flag = 0x0);
     virtual float Normal01(const float weight, int flag = 0x0);
 };
 
-//Off between two tensors
+// Off between two tensors
 struct Distri_OFF : public Distri_PIPE {};
 
 /**
@@ -211,7 +214,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     float residual_scale = 1.0, wnorm = 0, gnorm = 0;  // some tricks
     float rLARS(float s0, float T_lars, int flag);
     size_t offset = 0x0;
-    /** 1. PyTorch’s nn.Linear defines weight as [out_features, in_features], and the forward pass is: y = x @ W.T + bias
+    /** 1. PyTorch’s nn.Linear defines weight as [out_features, in_features], and the forward pass is: y = X @ W.T + bias
      *  */
     SHAPE shape;
     SHAPE x_shape;  //  1.padded for high performance or menory alignment(x_shape<=shape)
@@ -230,21 +233,23 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
         GAMA,
         R_SCALE,
         C_SCALE,
-        ZERO,    // zero of RTN
-        STEP,    // step of RTN
-        LUT,     // values of codebook
+        // zero of RTN, 1. No need in Symmetric Quantization! 2. all practical LLM deployment systems use integer
+        ZERO,
+        STEP,  // step of RTN
+        LUT,   // values of codebook
         // BACKUP,  // backup of data+gama
 
         // OFF,
     };
     // return scaling/LUT of quant weight
-    floatGama* gama_T(GAMA_TYPE type = R_SCALE, floatGama* gama_0=nullptr) const;
+    floatGama* gama_T(GAMA_TYPE type = R_SCALE, floatGama* gama_0 = nullptr) const;
+    bool isBackGama     = false;
     hGTensor gama_param = nullptr;
     // virtual bool isUpdateParam(int iter = -1, int flag = 0x0) const;  // in many case, params are not update, even data is not allocated!
     bool needUpdateParam = false;
-    int tile_r1 = 0, tile_c1 = 0;  //  tile_r0 = 0,tile_c0 = 0,
-    
-    floatGrad* grad   = nullptr;   //
+    int tile_r1 = 0, tile_c1 = 0;       //  tile_r0 = 0,tile_c0 = 0,
+    int color       = 0;                // special color-mark for special task
+    floatGrad* grad = nullptr;          //
     void *gm = nullptr, *gv = nullptr;  // first moment, second moment of grad
 
     float info[8];  // Some info of some operations
@@ -271,9 +276,10 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
         F_ONLYREF   = 0x40000,  // Partial/Sub tensor
         F_TMP_GRAD  = 0x80000,
 
-        F_TERNARY = 0x100000,
+        F_TERNARY = 0x100000,  // Deprecated
         F_LORA_A  = 0x200000,
         F_LORA_B  = 0x400000,
+        F_GAMA    = 0x800000,
 
         F_DEBUG = 0x10000000
     };
@@ -307,7 +313,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     // for fuyou's Exploitation
     virtual bool Serial_MMAP_x(void* dest, bool isSave, int flag = 0x0);
 
-    virtual bool InitGamaParam(GeQuant *hQuant, int flag=0x0);
+    virtual bool InitGamaParam(int flag = 0x0);
 
     // Init to zero in default
     virtual bool BeforeBackward(size_t& szBuf, int flag = 0x0) {
@@ -321,12 +327,13 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     // operations
     hGTensor operator*(const hGTensor& other) { return _Multiply(other); }
 
-    double Length(int tp, int flag = 0x0);  //  return ||x||
+    double Length(int tp, int flag = 0x0);  //  return ||X||
 
     // operations
     virtual bool ShareMemory(hGTensor, int flag = 0x0);
     virtual bool OverWrite(hGTensor, bool isSrc = true, int flag = 0x0);
-
+    // Quantized Activation
+    virtual bool Quant4A(typNUMBER tpQ, int flag = 0x0) { return true; }
     virtual hGTensor Normal(hGTensor hOut, hGTensor _mean, hGTensor _rstd, hGTensor w, hGTensor b, bool isForward = true, int flag = 0x0) {
         assert(0);
         return nullptr;
@@ -361,10 +368,12 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
         return nullptr;
     }
     virtual floatX* GetDataX(int flag = 0x0, const string& sX = "") const;
-    virtual int SetDataX(floatX* params, int flag = 0x0);
+    virtual double SetDataX(floatX* params, bool checkErr = false, int flag = 0x0);
 
     // may different wit hQuant
     shared_ptr<GeQuant> GetDynamicQuant(int flag = 0x0) const;
+    // Embed length may vary on different algorithm
+    int GetDynamicEmbed(int flag = 0x0) const;
 
     // Some optimization function
     virtual int Dogleg(int flag = 0x0);
@@ -556,7 +565,8 @@ class huTensor : public GTensor {
     hGTensor CrossEntropy(const hGTensor b, int flag = 0x0) override;
 
     hGTensor Normal(hGTensor hOut, hGTensor _mean, hGTensor _rstd, hGTensor w, hGTensor b, bool isForward = true, int flag = 0x0) override;
-    // void Print(const string &title, int typ, int flag, size_t nEle = 0) const override;
+
+    bool Quant4A(typNUMBER tpQ, int flag = 0x0) override;
     // Dreprecated, replate it by Quantizer_1bit
     bool ToTernary(floatX* tmp, int flag = 0x0) override;
     float ToF8Ex(int type, int flag = 0x0) override;

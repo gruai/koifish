@@ -1324,8 +1324,9 @@ class FeatVec_T : public FeatVector {
             pos = idx[cur];
             assert(!IS_NAN_INF(val[pos]));
             assert(qid < nQuant);  //  qid = 0x6;      // only for debug
-            BIT_SET_k(quanti, pos, qid, bits);
-            assert(BIT_GET_k(quanti, pos, bits) == qid);
+            assert(0);  // would replace by hQuant_RTN
+            // BIT_SET_k(quanti, pos, qid, bits);
+            // assert(BIT_GET_k(quanti, pos, bits) == qid);
             sum += val[pos], nz++;
             cur++;
 
@@ -1408,8 +1409,9 @@ class FeatVec_T : public FeatVector {
             pos = idx[cur];
             assert(!IS_NAN_INF(val[pos]));
             assert(qid < nQuant);  //  qid = 0x6;      // only for debug
-            BIT_SET_k(quanti, pos, qid, bits);
-            assert(BIT_GET_k(quanti, pos, bits) == qid);
+            assert(0);  //would replace by hQuant_RTN
+            // BIT_SET_k(quanti, pos, qid, bits);
+            // assert(BIT_GET_k(quanti, pos, bits) == qid);
             sum += val[pos], nz++;
             cur++;
 

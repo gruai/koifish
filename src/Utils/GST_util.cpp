@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Utility functions
@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <filesystem>  // C++17
 
+#include "../PackedQ.hpp"
 #include "../g_float.hpp"
 #include "GST_log.hpp"
 #include "GST_obj.hpp"
@@ -62,7 +63,7 @@ int SUM::nzLoadParam = 0, SUM::nzSaveParam = 0;
 
 int SUM::nQuantTensor   = 0;
 size_t SUM::szQuantBits = 0;
-double SUM::tQuant = 0, SUM::tF8Ex = 0;
+double SUM::tQuant = 0, SUM::tF8Ex = 0, SUM::tLowBit = 0;
 string SUM::sQuantInfo = "";
 
 void SUM::Reset(string typ, int flag) {
@@ -233,7 +234,7 @@ void GRUAI_KOIFISH_VERSION(char* str, int flag = 0x0) {
 
     sprintf(str, "%s*%*s%s%*s*\n%s", "********************************************************************\n", pad, "", sName,
             (int)(nFrame - strlen(sName) - pad - 2), "",
-            "*  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen                  *\n"
+            "*  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen                  *\n"
             "*  SPDX-License-Identifier: MIT                                    *\n"
             "*  MAIL: gsp.cys@gmail.com                                         *\n"
             "********************************************************************\n");
@@ -392,25 +393,31 @@ std::vector<std::string> FilesOfDir(const std::string& path, const std::vector<s
 
 
 
-/**
- * LittleEndian!!! [5, 10, 9, 11, 12, 7, 9, 7]=>内存顺序（从左到右,低到高）：0x5A, 0x9B, 0xC7, 0x97 => uint32=0x97C79B5A(以小端解释32位整数)
- */
-void PrintQ4(const char* title, const Q4_8* src, int n1, int n2, int n3, int n4, int flag) {
+// #define UNPACK_32to2_(val, arr)                                 \
+//     int qq[16];                                                   \
+//     for (int j = 0; j < 16; j++) {                                \
+//         qq[j] = (int)(BIT_GET_k((const hBITARR)(src + i), j, 2)); \
+//     }
+
+void PrintQ2(const char* title, const BIT_32* src, int n1, int n2, int n3, int n4, int flag) {
     bool isLittleEndian = BIT_TEST(flag, FLOAT_META::ENDIAN_LITTLE);
     assert(isLittleEndian);
-    size_t nElem = (size_t)(n1)*n2 * n3 * n4 / 8, i, nz = 0, nEach = 2;
+    size_t nElem = (size_t)(n1)*n2 * n3 * n4 / 16, i, nz = 0, nEach = 2;
     if (nElem == 0)
         return;
     assert(src != nullptr);
     // if(strlen(title)>0) _INFO("%s\n", title);
     float sum = 0.0, a1 = 16, a0 = 0;
     double len = 0.0, sum2 = 0.0;
-    int q8[8];
+    int qq[16];
     for (i = 0; i < nElem; i++) {
-        UNPACK_32to4_LE(src[i], q8);
-        for (int j=0;j<8;j++) {
-            int a    = q8[j];
-            if (i < nEach || i >= nElem - nEach || fabs(i - nElem / 2) <= nEach)
+        bool isDump = (i < nEach || i >= nElem - nEach || fabs(i - nElem / 2) <= nEach);
+        if (isDump)
+            _INFO("%#X=", src[i]);
+        // UNPACK_32to2_(src[i], qq);
+        for (int j = 0; j < 16; j++) {
+            int a = qq[j];  //(int)(BIT_GET_k((const hBITARR)(src + i), j, 2));
+            if (j < 8 && isDump)
                 _INFO("%d ", a);
 
             sum += fabs(a);
@@ -421,7 +428,7 @@ void PrintQ4(const char* title, const Q4_8* src, int n1, int n2, int n3, int n4,
     }
     assert(!isnan(sum2) && !isinf(sum2));
 
-    nElem *= 8;
+    nElem *= 16;
     len = sqrt(sum2 / nElem);
     //  printf output is only displayed if the kernel finishes successfully,  cudaDeviceSynchronize()
     _INFO("\t\"%s\" |avg|=%g(%ld) avg_len=%g sum2=%g [%f,%f] nz=%.3g\n", title, sum / nElem, nElem, len, sum2, a0, a1, nz * 1.0 / nElem);

@@ -9,7 +9,6 @@
 
 //  typedef uint8_t BIT_8;  //  @g_float.hpp
 typedef uint64_t BIT_64;
-typedef uint32_t BIT_32;
 typedef int32_t INT_32;
 typedef uint64_t UINT_64;
 typedef int64_t G_INT_64;

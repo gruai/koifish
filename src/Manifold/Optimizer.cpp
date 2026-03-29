@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  1. Spike analysis
@@ -57,6 +57,8 @@ Optimizer::Optimizer(NLP_AutoRegressive* g_, CLI_params& config, int flag) : _fi
 
     } else {
     }
+
+    prober_host = new float[KOIFISH_MAX_PROBE_LEN];
 }
 
 bool Fish::SetPhase(LIFE_PHASE phase_, int flag) {
@@ -85,7 +87,6 @@ hGensor Optimizer::hLoss() {
     assert(_fish != nullptr);
     if (_fish->loss != nullptr) {
         // auto a = _fish->loss->Item();
-        // assert(ggml_is_scalar(G(_fish->loss)));
     }
 
     return _fish->loss;
@@ -140,6 +141,7 @@ bool Optimizer::OnLogits(int flag) {
 
 bool cuClearGrad(std::vector<hGTensor> tensors, int flag);
 bool Optimizer::BatchGrad(int iter, float& fx, int flag) {
+    // hPipe->iter = iter;
     RLS_BP* hRLS = hEDS->GetScheduler<RLS_BP>();
     fx           = 0;
     auto loss    = hLoss();
@@ -297,7 +299,7 @@ float Optimizer::gClip(int ne, floatX* g, hGensor hP, int flag) {
 }
 
 int GTensor::Dogleg(int flag) {
-    if (isStrMatch(name, {"blk.2.attn.wq"})) {  // model.blk.11.attn.wo.weight_a
+    if (isStrMatch(name, {"blk.2.attn.wq"})) {  // 0x555559499348 "model.layers.4.mlp.up_proj.weight_gama<4>"
         DEBUG_HERE;
         flag = -2;
     }
@@ -312,8 +314,8 @@ int GTensor::Dogleg(int flag) {
     if (iter == last_iter)  // may try dogleg more than once in one optimization step
         return 0x0;
 
-    ADAM_params_ adam   = hOPT->TrainParams().adam;
-    float wd = adam.decay;//learning_rate = hOPT->LearningRate(), beta1 = adam.beta1, beta2 = adam.beta2, eps = adam.eps, 
+    ADAM_params_ adam = hOPT->TrainParams().adam;
+    float wd          = adam.decay;  // learning_rate = hOPT->LearningRate(), beta1 = adam.beta1, beta2 = adam.beta2, eps = adam.eps,
     //  Weight decay is typically disabled for 1D parameters (like biases and LayerNorm weights) and enabled for all other parameters.
     if (shape.size() < adam.decay_min_ndim)
         wd = 0;

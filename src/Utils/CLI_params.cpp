@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Some functions for CLI_params
@@ -19,8 +19,9 @@
 #include "../lenda/kernel/SVD.hpp"
 #include "json.hpp"
 
-int g_dump_level = 1;
-int g_dump_each  = 3;
+int g_dump_level   = 1;
+int g_dump_each    = 3;
+int g_dump_sigfigs = 5;
 static char buffer[GTensor::MAX_NAME];
 #define ARG2STR(format, len)                  \
     {                                         \
@@ -173,9 +174,7 @@ bool LoadJsonFile(const string& jPath, JSON& jObj, int flag) {
 
 string MODEL_CARD::sWeight = ".weight", MODEL_CARD::sBias = ".bias";  //".w"
 string MODEL_CARD::sQzeros = ".qzeros", MODEL_CARD::sQscale = ".scales";
-
-string MODEL_CARD::sLayer = "blk.";  //".norm"
-// string MODEL_CARD::sAttnOut = ".wo";                                  //  "_output";    //  "_cat"
+string MODEL_CARD::sLayer = "blk.";
 string MODEL_CARD::sEmbed = "embed", MODEL_CARD::sInvEmbed = "embed_inv";
 
 MODEL_CARD::MODEL_CARD() {
@@ -221,10 +220,10 @@ JSON QUANT_CARD::Vendor2JSONx(const JSON& jX, int flag) {
         // "version": "gemm",
         // "zero_point": true
     }
-    jOut["self_attn"] = jN;
-    jOut["mlp"]       = jN;
+    jOut["self_attn"]   = jN;
+    jOut["mlp"]         = jN;
     jOut["VendorQuant"] = true;
-    if(jX["quant_method"] == "awq") // 'awq' format use explicit zero/scale tensors
+    if (jX["quant_method"] == "awq")  // 'awq' format use explicit zero/scale tensors
         jOut["ExplicitZS"] = true;
     return jOut;
 }
@@ -266,6 +265,7 @@ MODEL_ARCH CLI_params::ModelArch() {
            : info == "GPT2"      ? MODEL_ARCH::NLP_GPT2
            : info == "GPT2CHAR"  ? MODEL_ARCH::NLP_GPT2_char
            : info == "LAMA"      ? MODEL_ARCH::NLP_LLAMA
+           : info == "BITNET"    ? MODEL_ARCH::NLP_BITNET
            : info == "MISTRAL"   ? MODEL_ARCH::NLP_MISTRAL
                                  : MODEL_ARCH::NLP_LLAMA;
 
@@ -306,6 +306,11 @@ bool CLI_params::JModel2Params(int flag) {
         nBit                     = jKV(jConfig, {"model", "parameter", "weight", "bits"}, nBit);
         if (nBit > 0) {
             model.tpWeight = Bits2Type(nBit);
+        }
+        nBit = -1;
+        nBit = jKV(jConfig, {"model", "parameter", "activation", "bits"}, nBit);
+        if (nBit > 0) {
+            model.tpActivation = Bits2Type(nBit);
         }
         // nearly same ???
         // if(nLayerX>0)
@@ -576,10 +581,10 @@ void CLI_params::OnArch() {
             assert(group == 1);
         } break;
         case NLP_DEEPSEEK:
-            model.sLayer = "layers.";
+            assert(0);
             break;
         case NLP_MISTRAL:
-            model.sLayer = "layers.";
+            assert(0);
             break;
 
         default:
@@ -730,13 +735,23 @@ JSON CLI_params::ToJSON(int type, int flag) {
 }
 
 bool TRAIN_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
-    method = jKV(jConfig, {"train", "optimizatioin", "method"}, method);
+    if (jConfig.find("train") == jConfig.end()) {
+        _WARN("Can't find the \"train\" parameters in json config file!\n");
+        return false;
+    }
+    auto jTrain = jConfig["train"];
+    method      = jKV(jConfig, {"train", "optimizatioin", "method"}, method);
 
     n_batch   = jKV(jConfig, {"train", "batch"}, n_batch);
     n_epochs  = jKV(jConfig, {"train", "epoch"}, n_epochs);
     nMostIter = jKV(jConfig, {"train", "adam-iter"}, nMostIter);
     // why large "learning-rate" would fail, so strange!
-    adam.alpha              = jKV(jConfig, {"train", "learning-rate"}, adam.alpha);
+    if (jTrain.find("learning-rate") == jTrain.end()) {
+        _WARN("Can't find the \"learning-rate\" value in json config file! Use default value=%g\n", adam.alpha);
+    } else {
+        adam.alpha = jKV(jConfig, {"train", "learning-rate"}, adam.alpha);
+    }
+
     adam.decay              = jKV(jConfig, {"train", "decay"}, adam.decay);
     n_gradient_accumulation = jKV(jConfig, {"train", "optimizatioin", "grad_accumulation"}, n_gradient_accumulation);
 
@@ -1054,8 +1069,9 @@ bool CLI_params::InitJConfig(int flag) {
         DEBUG.x1         = jKV(jConfig, {"debug", "x"}, DEBUG.x1);
         DEBUG.x_str      = jKV(jConfig, {"debug", "x_str"}, DEBUG.x_str);
         DEBUG.N_mostiter = jKV(jConfig, {"debug", "most_iter"}, DEBUG.N_mostiter);
-        DEBUG.fLongTail  = jKV(jConfig, {"debug", "long_tail"}, DEBUG.fLongTail);
-        DEBUG.prompts    = jKV_arr(jConfig, {"debug", "prompts"}, DEBUG.prompts);
+        // DEBUG.isInitParamHost = DEBUG.x1 == 0;
+        DEBUG.fLongTail = jKV(jConfig, {"debug", "long_tail"}, DEBUG.fLongTail);
+        DEBUG.prompts   = jKV_arr(jConfig, {"debug", "prompts"}, DEBUG.prompts);
 
         SUM::nMostMemItem    = jKV(jConfig, {"dump", "most_mem_item"}, SUM::nMostMemItem);
         SUM::nMinTensorAlloc = jKV(jConfig, {"dump", "min_tensor_alloc"}, SUM::nMinTensorAlloc);
@@ -1144,6 +1160,7 @@ bool CLI_params::parse(int argc, char** argv) {
         if (!InitJConfig())
             return false;
     } else {
+        std::string s = jConfig.dump();
         if (!model.InitHugFace(this, jConfig, model.sCardPath, 0x0))
             return false;
     }
@@ -1645,33 +1662,48 @@ bool Fish::GGUF_Serialize(const std::string& path, bool isSave, int flag) {
 }
 
 // array: a bit stream from left to right
-void BIT_SET_k(hBITARR array, size_t offset, BIT_8 elem, int bits) {
+void BIT_SET_k(hBITARR array, size_t offset, int elem_, int bits) {
+    int elem = elem_;
+    if (bits == 2) {  // 2 bits biased (offset) encoding
+        elem = static_cast<uint8_t>(elem_ + 1);
+    }
     size_t boff = offset * bits;
     for (int i = 0; i < bits; i++, boff++) {
         size_t id = boff / 8, shift = 7 - boff % 8, flag = 1 << shift;
-        BIT_8 bit = (elem >> (bits - 1 - i)) & 0x1;
+        int bit = (elem >> (bits - 1 - i)) & 0x1;
         if (bit)
             BIT_SET(array[id], flag);
         else
             BIT_RESET(array[id], flag);
     }
 }
-BIT_8 BIT_GET_k(hBITARR array, size_t offset, int bits) {
-    BIT_8 elem  = 0x0;
+int BIT_GET_k(const hBITARR array, size_t offset, int bits) {
+    int elem    = 0x0;
     size_t boff = offset * bits;
     for (int i = 0; i < bits; i++, boff++) {
         size_t id = boff / 8, shift = 7 - boff % 8, flag = 1 << (bits - 1 - i);
-        BIT_8 bit = (array[id] >> shift) & 0x1;
+        int bit = (array[id] >> shift) & 0x1;
         if (bit)
             BIT_SET(elem, flag);
         // else
         //     BIT_RESET(elem, flag);
     }
+    if (bits == 2) {  // 2 bits biased (offset) encoding
+        elem = static_cast<int8_t>(elem - 1);
+    }
     return elem;
 }
-void BIT_SET_4(hBITARR array, size_t offset, BIT_8 elem) {
-    assert(0);
-    return;
+
+//  2 bits - Use biased (offset) encoding (Most Common Fix) Store values as unsigned, but interpret them as signed using an offset! 2 bits cannot losslessly
+//  store {−1, 0, +1, +2} as signed integers.
+void BIT_SET_2(hBITARR array, size_t offset, int elem, int bits) {
+    int bias = static_cast<uint8_t>(elem + 1);
+    BIT_SET_2(array, offset, bias, bits);
+}
+int BIT_GET_2(const hBITARR array, size_t offset, int bits) {
+    int elem = BIT_GET_k(array, offset, bits);
+    int bias = static_cast<int8_t>(elem - 1);
+    return bias;
 }
 
 bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, const std::string& sCardPath_0, int flag) {
@@ -1702,7 +1734,7 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, const std
     if (sCardPath.empty()) {
         return false;
     }
-    string jPath = sCardPath + "config.json";
+    string jPath = sCardPath + "config.json", s;
     if (!LoadJsonFile(jPath, jModelParam)) {
         return false;
     };
@@ -1722,7 +1754,9 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, const std
         num_key_value_heads = jKV(jModelParam, {"num_key_value_heads"}, n_kv_heads);
         if (jModelParam.find("quantization_config") != jModelParam.end()) {
             hConfig->jVendorQuant = jModelParam["quantization_config"];
-            hConfig->jQuant = QUANT_CARD::Vendor2JSONx(hConfig->jVendorQuant);
+            s                     = hConfig->jVendorQuant.dump();
+            hConfig->jQuant       = QUANT_CARD::Vendor2JSONx(hConfig->jVendorQuant);
+            s                     = hConfig->jQuant.dump();
         }
         vocab_size           = jKV(jModelParam, {"vocab_size"}, vocab_size);
         torch_dtype          = jKV(jModelParam, {"torch_dtype"}, torch_dtype);

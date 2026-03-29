@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Generate some nonsense on Prompt
@@ -700,7 +700,7 @@ static inline unsigned int random_u32(uint64_t* state) {
 static inline float random_f32(uint64_t* state) { return (random_u32(state) >> 8) / 16777216.0f; }
 
 static inline int sample_argmax(int n_vocab, float* logits) {
-    int max_i         = 0;
+    int max_i   = 0;
     float max_p = logits[0];
     for (int i = 1; i < n_vocab; i++) {
         if (logits[i] > max_p) {

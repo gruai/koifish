@@ -1,6 +1,6 @@
 
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "../Manifold/Fish.hpp"
+#include "../PackedQ.hpp"
 #include "GeQuant.hpp"
 
 GTensor* GTensor::tZ      = nullptr;
@@ -250,6 +251,10 @@ float GTensor::Get(int i, int flag) const {
     return 0.f;
 }
 
+int GTensor::GetDynamicEmbed(int flag) const {
+    int n0 = hFish->config.nEmbed();
+    return n0;
+}
 hQUANT GTensor::GetDynamicQuant(int flag) const {
     if (hQuant == nullptr)
         return nullptr;
@@ -381,7 +386,7 @@ hGensor GENSOR_TOPU::Get(MODEL_ARCH arch, const string& name, int flag) {
         }
         if (isMiss) {
             for (auto ng : nag) {
-                _INFO("\t%s\n", ng.first.c_str());
+                _INFO("\t%s,", ng.first.c_str());
             }
             _ERROR("Failed to get tensor=%s nGensor=%d", name.c_str(), nag.size());
             return nullptr;
@@ -445,7 +450,7 @@ void* JSON2SRC(const JSON& jval, const void* bytes_ptr, const size_t bytes_size,
 */
 int GTensor::LoadParam(const std::string& name_, const JSON& jval, void* bytes_ptr, size_t bytes_size, int flag) {
     //  "tokenizer.tokens" model.layers.0.mlp.down_proj.qweight   "model.embed_tokens.weight" t->name,
-    if (G_Has_(name, {"model.layers.0.input_layernorm.weight"})) {
+    if (G_Has_(name, {"model.layers.11.mlp_down.weight"})) {  //  model.layers.0.mlp.down_proj.weight
         DEBUG_HERE;
     }
     if (jval.empty()) {  // load from host_data of mmp
@@ -585,14 +590,58 @@ floatGama* GTensor::gama_T(GAMA_TYPE type, floatGama* gama_0) const {
     return gama_0;
 }
 
+/**
+ * LittleEndian!!! [5, 10, 9, 11, 12, 7, 9, 7]=>内存顺序（从左到右,低到高）：0x5A, 0x9B, 0xC7, 0x97 => uint32=0x97C79B5A(以小端解释32位整数)
+ */
+void PrintQ_128(const char* title, const BIT_128* src, int nPer128, int qBias, size_t n0, int flag) {
+    bool isLittleEndian = BIT_TEST(flag, FLOAT_META::ENDIAN_LITTLE);
+    assert(isLittleEndian);
+    int qq[128];
+    size_t nElem = (size_t)(n0) / nPer128, i, nz = 0, nEach = 2;
+    if (nElem == 0)
+        return;
+    assert(src != nullptr);
+    // if(strlen(title)>0) _INFO("%s\n", title);
+    float sum = 0.0, a1 = 16, a0 = 0;
+    double len = 0.0, sum2 = 0.0;
+
+    for (i = 0; i < nElem; i++) {
+        bool isDump = (i < nEach || i >= nElem - nEach || fabs(i - nElem / 2) <= nEach);
+        if (isDump)
+            _INFO("%#X=", src[i]);
+        if (nPer128 == 32)
+            UNPACK_128to4_UNSIGNED_(src + i, qq);
+        if (nPer128 == 64)
+            UNPACK_128to2_UNSIGNED_(src + i, qq);
+
+        for (int j = 0; j < nPer128; j++) {
+            int a = qq[j] - qBias;
+            if (j < 8 && isDump)
+                _INFO("%d ", a);
+
+            sum += fabs(a);
+            sum2 += a * a;
+        }
+        if (i == nEach || i == nElem - nEach - 1)
+            _INFO("...");
+    }
+    assert(!isnan(sum2) && !isinf(sum2));
+
+    nElem *= 8;
+    len = sqrt(sum2 / nElem);
+    //  printf output is only displayed if the kernel finishes successfully,  cudaDeviceSynchronize()
+    _INFO("\t\"%s\" |avg|=%g(%ld) avg_len=%g sum2=%g [%f,%f] nz=%.3g\n", title, sum / nElem, nElem, len, sum2, a0, a1, nz * 1.0 / nElem);
+    fflush(stdout);
+}
+
 void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
     if (g_dump_level > 0 && flag >= 0)
         return;
     assert(nEle >= 0);
     bool isDevice = !isAtHost();
     void *src = x == 3 ? gv : x == 2 ? gm : x == 1 ? grad : data, *hData = nullptr;
-    typNUMBER tpSrc = x==0 ? type : typNUMBER::BF16;
-    string suffix = x == 3 ? "GV_" : x == 2 ? "GM_" : x == 1 ? "GRAD_" : "";
+    typNUMBER tpSrc = x == 0 ? type : typNUMBER::BF16;
+    string suffix   = x == 3 ? "GV_" : x == 2 ? "GM_" : x == 1 ? "GRAD_" : "";
     if (x == 4) {
         assert(host_data != nullptr);
         src      = host_data;
@@ -619,12 +668,13 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
         sp[2] = 1;
         sp[3] = 1;
     }
+    if (nEle == 0)
+        nEle = size();
 
-    // floatGama *rNormal = (floatGama*)((char*)data + szData), *cNormal = rNormal + shape[0];
-    // floatGama* gamaQ   = cNormal + shape[1];
     floatGama *rNormal = gama_T(R_SCALE), *cNormal = gama_T(C_SCALE);
     switch (tpSrc) {
         case typNUMBER::T_BINARY:
+            break;
         case typNUMBER::T_BINARY_3:
         case typNUMBER::T_BINARY_TILE:
             assert(0);
@@ -632,7 +682,14 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
         case typNUMBER::Q4: {
             // floatX* wX = GetDataX();
             // PrintTensor<floatX>(title.c_str(), wX, true, sp[0], sp[1], sp[2], sp[3], flag);
-            PrintQ4(szGama == 0 ? name : "_Q4", (Q4_8*)src, ne[0], ne[1], ne[2], ne[3], flag | FLOAT_META::ENDIAN_LITTLE);
+            PrintQ_128(szGama == 0 ? name : "_Q4", (BIT_128*)src, 32, 0, nEle, flag | FLOAT_META::ENDIAN_LITTLE);
+            hQuant->PrintGama(this);
+        } break;
+        case typNUMBER::T_SIGN: {
+            // floatX* wX = GetDataX();
+            // PrintTensor<floatX>(title.c_str(), wX, true, sp[0], sp[1], sp[2], sp[3], flag);
+            title += "_Q2";
+            PrintQ_128(title.c_str(), (BIT_128*)src, 64, 1, nEle, flag | FLOAT_META::ENDIAN_LITTLE);
             hQuant->PrintGama(this);
         } break;
         case typNUMBER::Q3:
@@ -820,6 +877,48 @@ bool huTensor::BeforeBackward(size_t& off, int flag) {
     return true;
 }
 
+bool GTensor::InitGamaParam(int flag) {
+    // Print(name, 0, -1);
+
+    gama_param = nullptr;
+    assert(hQuant != nullptr);
+    assert(isParam());
+    SHAPE sp = hQuant->GroupShapeOfT(this);
+    int nG = sp[0], lG = sp[1], nQuant = hQuant->params.default_bits;
+
+    floatGama *zero = gama_T(GTensor::ZERO), *step = gama_T(GTensor::STEP);
+    std::ptrdiff_t off = hBITARR(zero) - hBITARR(data);
+    string name_1      = string(name) + "_gama<" + std::to_string(nQuant) + ">";
+    typNUMBER tpGama   = TYPE_<floatGama>();
+    gama_param         = Partial(name_1, static_cast<size_t>(off), {sp[0], 2}, tpGama, flag);
+    gama_param->grad   = grad;
+    gama_param->gm     = gm;
+    gama_param->gv     = gv;
+
+    assert(needUpdateParam);
+    gama_param->needUpdateParam = true;
+    needUpdateParam             = false;
+
+    size_t nEle = gama_param->size();
+    assert(nEle == nG * 2 && nEle <= size());
+    assert(sizeof(floatX) * nEle <= szM && "Failed to share gm,gv & grad");  // share gm,gv & grad
+    gama_param->szM    = sizeof(floatX) * nEle;
+    gama_param->szV    = sizeof(floatX) * nEle;
+    gama_param->szGrad = sizeof(floatX) * nEle;
+
+    assert(gama_param->hQuant == nullptr);
+    gama_param->hQuant = hQuant;
+    BIT_SET(gama_param->flags, F_GAMA);
+
+    assert(gama_param->hRef == nullptr);
+    gama_param->hRef = shared_from_this();
+    // if(G_Has_(name,{"model.layer.self_attn.o_proj"})){
+
+    // gama_param->Print(gama_param->name, 3, -1, nEle);
+    // }
+    return true;
+}
+
 /**
  * Train
  *      1. AfterBuild->Prepare->InitGUOKE->ManegeMemory-> Alloc each of Neuron::PickGensors
@@ -856,8 +955,13 @@ bool huTensor::Alloc(int iter, int flagInit) {
         host_data = new char[szData];
     }
     bool allocData = data == nullptr;
-    szM = sizeof(floatMV) * size(), szV = sizeof(floatMV) * size();
-    szGrad      = sizeof(floatGrad) * size();
+    if (isBackGama) {
+        assert(szM > 0 && szV > 0 && szGrad > 0);
+    } else {
+        szM = sizeof(floatMV) * size(), szV = sizeof(floatMV) * size();
+        szGrad = sizeof(floatGrad) * size();
+    }
+
     string desc = name;
     if (allocData) {
         if (type == typNUMBER::T_BINARY_TILE) {
@@ -868,16 +972,9 @@ bool huTensor::Alloc(int iter, int flagInit) {
             szV = szM;
         } else if (type == typNUMBER::Q4 || type == typNUMBER::Q3 || type == typNUMBER::Q2) {
             // szGama is set @GeQuant::RTN_x, ...
-            if (hQuant->params.szM > 0 || hQuant->params.szV > 0) {
-                szM = hQuant->params.szM;
-                szV = hQuant->params.szV;
-            }
-            if (hQuant->params.szGrad > 0) {
-                szGrad = hQuant->params.szGrad;
-            }
-            if (!isTrain) {
+            if (!isTrain) {  // only used at infer stage
                 szM = 0, szV = 0;
-            }  // only used at infer stage
+            }
         } else if (BIT_TEST(flags, F_TERNARY)) {
             szGama = sizeof(floatGama) * ne[0];
             // Alloc_1((void **)(&gama_T), false, sizeof(float) * ne[0]);
@@ -1029,45 +1126,6 @@ hGTensor huTensor::Partial(const string& name_, size_t szOff, const SHAPE shape,
     sub->flags = flags;
     BIT_SET(sub->flags, F_ONLYREF);
     return sub;
-}
-
-bool GTensor::InitGamaParam(GeQuant* hQuant, int flag) {
-    // if(!G_Has_(name,{"model.layer.self_attn.o_proj"})){
-    //     return false;
-    // }    
-
-    gama_param = nullptr;
-    assert(hQuant != nullptr);
-    assert(isParam());
-    SHAPE sp = hQuant->GroupShapeOfT(this);
-    int nG = sp[0], lG = sp[1];
-
-    floatGama *zero = gama_T(GTensor::ZERO), *step = gama_T(GTensor::STEP);
-    std::ptrdiff_t off = hBITARR(zero) - hBITARR(data);
-    string name_1      = string(name) + "_gama";
-    gama_param         = Partial(name_1, static_cast<size_t>(off), {sp[0], 2}, typNUMBER::BF16, flag);
-    gama_param->grad = grad;
-    gama_param->gm   = gm;
-    gama_param->gv   = gv;
-
-    assert(needUpdateParam);
-    gama_param->needUpdateParam = true;
-    needUpdateParam             = false;
-
-    size_t nEle = gama_param->size();    
-    assert(nEle == nG * 2 && nEle <= size());
-    hQuant->params.szM    = sizeof(floatX) * nEle;
-    hQuant->params.szV    = sizeof(floatX) * nEle;
-    hQuant->params.szGrad = sizeof(floatX) * nEle;
-    gama_param->szM       = hQuant->params.szM;
-    gama_param->szV       = hQuant->params.szV;
-    gama_param->szGrad    = hQuant->params.szGrad;
-
-    if(G_Has_(name,{"model.layer.self_attn.o_proj"})){
-        Print(name, 3, -1, nEle);
-        gama_param->Print(gama_param->name, 3, -1, nEle);
-    }
-    return true;
 }
 
 /*

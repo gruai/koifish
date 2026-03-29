@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Serialization
@@ -19,13 +19,9 @@ class FSerial {
    public:
     enum STATUS {
         INIT_MMAP = 0x100,
-        COPY_MMAP = 0x200       //copy mmap file of HF model to checkpoint
+        COPY_MMAP = 0x200  // copy mmap file of HF model to checkpoint
     };
-    enum FILE_TYPE{
-        FILE_JSON,
-        FILE_FISH,
-        FILE_CHECKPOINT
-    };
+    enum FILE_TYPE { FILE_JSON, FILE_FISH, FILE_CHECKPOINT };
 
     FSerial(const std::string& sPath, bool isSave, int flag) {
         try {

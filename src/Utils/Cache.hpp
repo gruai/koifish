@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief KV cache
@@ -33,12 +33,11 @@ class KVCache {
 
    public:
     enum CTYPE { KV_KEY = 1, KV_VAL };
-    enum EVICTION_MODE  {
-        KEYDIFF,    //  https://arxiv.org/pdf/2407.01527
-        LOCRET      //  https://arxiv.org/pdf/2410.01805
-        
+    enum EVICTION_MODE {
+        KEYDIFF,  //  https://arxiv.org/pdf/2407.01527
+        LOCRET    //  https://arxiv.org/pdf/2410.01805
+
     };
-    
 
     KVCache(Fish*, int max_batch_size = 0, int max_seq_len = 0, int flag = 0x0);
 

@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  concise dictionary on VAE
@@ -279,7 +279,18 @@ class GTokenizer_GPT2 : public GTokenizer {
     std::string T2STR(TOKEN_ID tok, int flag = 0x0) override;
 };
 
-// also support QWEN2
+/**
+
+ *  */
+class GTokenizer_SentencePiece : public GTokenizer {
+   protected:
+   public:
+    GTokenizer_SentencePiece(Fish*, int flag = 0x0);
+    std::string T2STR(TOKEN_ID tok, int flag = 0x0) override;
+    // bool InitHF(Fish* dolphin, int flag = 0x0) override;
+    std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos = false, bool encode_eos = false) override;
+};
+
 class GTokenizer_QWEN3 : public GTokenizer {
    protected:
    public:
@@ -362,7 +373,7 @@ class GTokenizer_Heap : public GTokenizer {
     subword tokenization algorithm
     from  https://github.com/Sorrow321/huggingface_tokenizer_cpp
 */
-class WordPieceTokenizer : public GTokenizer {
+class GTokenizer_WordPiece : public GTokenizer {
    private:
    protected:
     // std::string trim( std::string const& original )
@@ -385,8 +396,8 @@ class WordPieceTokenizer : public GTokenizer {
     std::string decode_one(int prev_token, int token) const;
 
    public:
-    WordPieceTokenizer(Fish* lama_, int flag = 0x0);
-    WordPieceTokenizer(const string& config_path);
+    GTokenizer_WordPiece(Fish* lama_, int flag = 0x0);
+    GTokenizer_WordPiece(const string& config_path);
 
     int get_word_index(const wstring& word) const;
     std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos = false, bool encode_eos = false) override;

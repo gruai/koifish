@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -376,14 +376,14 @@ TOKENS GTokenizer::Encode(const std::string& text, bool encode_bos, bool encode_
     return Encode_TokenTrie(text, encode_bos);
 }
 
-TOKENS WordPieceTokenizer::Encode(const std::string& text, bool encode_bos, bool encode_eos) {
+TOKENS GTokenizer_WordPiece::Encode(const std::string& text, bool encode_bos, bool encode_eos) {
     // wstring wText(text.begin(),text.end());
     std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
     std::wstring wText = converter.from_bytes(text);
     return Encode(wText, encode_bos);
 }
 
-vector<wstring> WordPieceTokenizer::wordpiece_tokenize(const wstring& input_text) const {
+vector<wstring> GTokenizer_WordPiece::wordpiece_tokenize(const wstring& input_text) const {
     vector<wstring> tokens = split(input_text);
     vector<wstring> output_tokens;
     for (size_t i = 0; i < tokens.size(); i++) {
@@ -430,7 +430,7 @@ vector<wstring> WordPieceTokenizer::wordpiece_tokenize(const wstring& input_text
     return output_tokens;
 }
 
-TOKENS WordPieceTokenizer::Encode(const wstring& input_text, bool split_specials) {
+TOKENS GTokenizer_WordPiece::Encode(const wstring& input_text, bool split_specials) {
     wstring padded_text    = pad_chinese_chars(input_text);
     vector<wstring> tokens = split(padded_text);
 
@@ -489,9 +489,8 @@ std::string GTokenizer_GPT2::T2STR(TOKEN_ID tok, int flag) { return std::to_stri
 */
 GTokenizer_QWEN3::GTokenizer_QWEN3(Fish* dolphin, int flag) {
     config = dolphin->config;
-    if(config.model.isLoadCard()){
-
-    }else{  
+    if (config.model.isLoadCard()) {
+    } else {
     }
     bool bRet = InitHF(dolphin, flag);
     if (!bRet) {
@@ -501,6 +500,28 @@ GTokenizer_QWEN3::GTokenizer_QWEN3(Fish* dolphin, int flag) {
 }
 
 std::string GTokenizer_QWEN3::T2STR(TOKEN_ID tok, int flag) {
+    assert(tok < vocab.size());
+    return vocab[tok];
+}
+
+GTokenizer_SentencePiece::GTokenizer_SentencePiece(Fish* dolphin, int flag) {
+    config = dolphin->config;
+    if (config.model.isLoadCard()) {
+    } else {
+    }
+    bool bRet = true;  // InitHF(dolphin, flag);
+    if (!bRet) {
+        vocab.clear();
+    }
+    isNeedBOS = true;
+}
+
+TOKENS GTokenizer_SentencePiece::Encode(const std::string& sText, bool encode_bos, bool encode_eos) {
+    TOKENS tokens = {128000, 1502, 25, 220, 15339, 128009, 72803, 25, 220};
+    return tokens;
+}
+
+std::string GTokenizer_SentencePiece::T2STR(TOKEN_ID tok, int flag) {
     assert(tok < vocab.size());
     return vocab[tok];
 }
@@ -669,10 +690,11 @@ bool GTokenizer_QWEN3::InitHF(Fish* dolphin, int flag) {
     try {
         char tmp_word[MAX_TOKEN_LENGTH];
         string sRoot          = config.model.sCardPath;
-        string tokenizer_path = config.model.sTokenBinPath;  
-        int vocab_size        = config.model.vocab_size;     
-        if(!VERIFY_DIR_EXIST(tokenizer_path)){
-            _WARN("[QWEN3] tokenizer_path@ (\"%s\") is invalid! This would not affect the training, but the lack of tokenizer would make decode impossible.\n", tokenizer_path.c_str());
+        string tokenizer_path = config.model.sTokenBinPath;
+        int vocab_size        = config.model.vocab_size;
+        if (!VERIFY_DIR_EXIST(tokenizer_path)) {
+            _WARN("[QWEN3] tokenizer_path@ (\"%s\") is invalid! This would not affect the training, but the lack of tokenizer would make decode impossible.\n",
+                  tokenizer_path.c_str());
             // exit(KOIFISH_LOAD_TOKENIZER);
             return false;
         }
@@ -895,7 +917,7 @@ void GTokenizer::InitTrier(int flag) {
     }
 }
 
-WordPieceTokenizer::WordPieceTokenizer(Fish* dolphin, int flag) : GTokenizer(dolphin, flag | F_JVOCAB) { wunk = utf8_to_wstring(unk_token); }
+GTokenizer_WordPiece::GTokenizer_WordPiece(Fish* dolphin, int flag) : GTokenizer(dolphin, flag | F_JVOCAB) { wunk = utf8_to_wstring(unk_token); }
 
 bool GTokenizer::LoadHFJson(const string& sTokenJsonPath, int flag) {
     try {
@@ -929,13 +951,13 @@ bool GTokenizer::LoadHFJson(const string& sTokenJsonPath, int flag) {
         return false;
     }
 }
-WordPieceTokenizer::WordPieceTokenizer(const string& config_path) {
+GTokenizer_WordPiece::GTokenizer_WordPiece(const string& config_path) {
     LoadHFJson(config_path, 0x0);
     assert(!jVocab.empty());
 }
 
 // -1 is Valid!
-int WordPieceTokenizer::get_word_index(const wstring& word) const {
+int GTokenizer_WordPiece::get_word_index(const wstring& word) const {
     string w_word = wstring_to_utf8(word);
 
     if (jVocab.find(w_word) != jVocab.end()) {
@@ -945,7 +967,7 @@ int WordPieceTokenizer::get_word_index(const wstring& word) const {
         return -1;
     }
 }
-std::string WordPieceTokenizer::decode_one(int prev_token, int token) const {
+std::string GTokenizer_WordPiece::decode_one(int prev_token, int token) const {
     const std::string& piece = vocab[token];
     // if following BOS token, sentencepiece decoder strips any leading whitespace
     if (prev_token == bos_id && piece[0] == ' ') {
@@ -1373,8 +1395,8 @@ int Fish_token(CLI_params& config) {
     hFISH fish = Fish::MakeInstance("Token_", config, wikis, Fish::ROLE_TYPE::COMMON, 0x110);
 
     hTokenizer hTok = std::make_shared<GTokenizer>(fish.get());  //
-    // WordPieceTokenizer has some bug, need more time!
-    // hTokenizer hTok = std::make_shared<WordPieceTokenizer>(fish.get());    //  [11233,1237,0,278,9100,3254]
+    // GTokenizer_WordPiece has some bug, need more time!
+    // hTokenizer hTok = std::make_shared<GTokenizer_WordPiece>(fish.get());    //  [11233,1237,0,278,9100,3254]
     /*
         {12518,262,7523,318,1016,866,11}    llama.cpp
         {12514,1168,5793,2087,270,5143,2900}    GPT2

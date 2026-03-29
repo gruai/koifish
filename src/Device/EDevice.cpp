@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Edge devices & resource limited scheduling
@@ -30,7 +30,7 @@ size_t EDGE_DEVICES::AfterBuild(hTGraph hTG, void* ctx, int flag) {
         // assert(hRLS->tMaps.size()>=hTG->gset.size());
         for (auto tensor : hTG->gset) {
             if (hRLS->tMaps.find(tensor) == hRLS->tMaps.end()) {
-                //  CHECK_SAME_TENSORS???
+                _ERROR("INVALID tMaps - Failed to find \"%s\"", tensor->name);  //  CHECK_SAME_TENSORS???
                 Gensors2File(TO_VECTOR(hTG->gset), "~/gset_1.info");
                 Gensors2File(tInMaps, "~/gset_2.info");
                 exit(KOIFISH_INVALID_GSET);

@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *
@@ -41,7 +41,7 @@ class KoifishApp : public GST_Application {
                 _INFO("[eval] ");
                 break;
             case LIFE_PHASE::P_PREFILL:
-                _INFO("[prefill] " );
+                _INFO("[prefill] ");
                 break;
             case LIFE_PHASE::P_GENERATE:
                 _INFO("[generate] ");

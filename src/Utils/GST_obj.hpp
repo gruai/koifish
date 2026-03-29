@@ -568,4 +568,8 @@ class SafeExit : public std::exception {
     ExitReason reason;
 };
 #define K_EXIT(code) throw SafeExit("", code, SafeExit::ExitReason::SYSTEM_FAILURE, __func__);
-#define K_EXIT_NOW(code) exit(code);
+#define K_EXIT_NOW(code)                                                                 \
+    {                                                                                    \
+        fprintf(stderr, "\r\n%s EXIT_NOW with err=%d %s", COLOR_RED, code, COLOR_RESET); \
+        exit(code);                                                                      \
+    }

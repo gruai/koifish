@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Align;   Packed data
@@ -14,6 +14,7 @@
 #include "../Device/CUDA/cuda_def.hpp"
 #include "../g_def_x.hpp"
 #include "../g_float.hpp"
+//[todo] // #include "../PackedQ.hpp"
 #include "utils.cuh"
 
 template <typename T>
@@ -46,7 +47,7 @@ __device__ inline float CU_T2Float<f8e5>(const f8e5* x) {
 }
 
 template <typename T>
-__device__ __forceinline__ T CU_Float2T(const float& a0, unsigned int seed) {
+__device__ __forceinline__ T CU_Float2T(const float& a0, unsigned int seed = 42) {
     T a = a0;
     return a;
 }
@@ -71,20 +72,20 @@ __device__ __forceinline__ __nv_bfloat16 CU_Float2T<__nv_bfloat16>(const float& 
 }
 
 template <typename T>
-__device__ __forceinline__ T CU_16BF2T(const bf16* a0, unsigned int seed = 42) {
-    T a = (T)(*a0);
+__device__ __forceinline__ T CU_16BF2T(const bf16& a0, unsigned int seed = 42) {
+    T a = (T)(a0);
     return a;
 }
 
 template <>
-__device__ __forceinline__ f8e5 CU_16BF2T<f8e5>(const bf16* a0, unsigned int seed) {
+__device__ __forceinline__ f8e5 CU_16BF2T<f8e5>(const bf16& a0, unsigned int seed) {
     /*    unsigned int random       = Get2dNoiseUint(threadIdx.x, blockIdx.x * blockDim.x + blockIdx.y, seed);
         unsigned int threshold    = random & 0xFFFF;
         unsigned int float_bits   = __float_as_uint(a0);
         unsigned int rounded_bits = float_bits & 0x0000FFFF;
         float_bits                = (rounded_bits > threshold) ? (float_bits | 0xFFFF) : (float_bits & ~0xFFFF);
         __nv_bfloat16 out         = __float2bfloat16_rn(__uint_as_float(float_bits));*/
-    __half val = __half(static_cast<float>(*a0));  //__gcc_fp16 & half are bit-identical according to the IEEE 754 binary16 Specification
+    __half val = __half(static_cast<float>(a0));  //__gcc_fp16 & half are bit-identical according to the IEEE 754 binary16 Specification
     f8e5* out  = (f8e5*)(&val);
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
 
@@ -94,7 +95,7 @@ __device__ __forceinline__ f8e5 CU_16BF2T<f8e5>(const bf16* a0, unsigned int see
     return *out;
 }
 template <>
-__device__ __forceinline__ __nv_fp8_e5m2 CU_16BF2T<__nv_fp8_e5m2>(const bf16* a0, unsigned int seed) {
+__device__ __forceinline__ __nv_fp8_e5m2 CU_16BF2T<__nv_fp8_e5m2>(const bf16& a0, unsigned int seed) {
     assert(0 && "Not implemented yet");
     return __nv_fp8_e5m2(0.0f);
 }
@@ -571,34 +572,34 @@ typedef PackedN<float, 4> f128;
 typedef PackedN<floatX, 16 / sizeof(floatX)> X128;
 typedef PackedN<float, 2> f64;
 typedef PackedN<floatX, 8 / sizeof(floatX)> x64;
-
+/**/
 template <typename T>
-using Packed128 = PackedN<T, 16 / sizeof(T)>;
+using Packed128_T = PackedN<T, 16 / sizeof(T)>;
 
 #define FETCH_FLOAT4(pointer) (reinterpret_cast<float4*>(&(pointer))[0])
 // load_ a PackedN from an aligned memory address      reinterpret_cast is not SAFE!
 template <class T>
-__device__ inline Packed128<T> load128(const T* address) {
-    return Packed128<T>{*reinterpret_cast<const int4*>(address)};
+__device__ inline Packed128_T<T> load128(const T* address) {
+    return Packed128_T<T>{*reinterpret_cast<const int4*>(address)};
 }
 // load_ a PackedN from an aligned memory address with streaming cache hint
 template <class T>
-__device__ inline Packed128<T> load128cs(const T* address) {
-    return Packed128<T>{__ldcs(reinterpret_cast<const int4*>(address))};
+__device__ inline Packed128_T<T> load128cs(const T* address) {
+    return Packed128_T<T>{__ldcs(reinterpret_cast<const int4*>(address))};
 }
 // store_ a PackedN to an aligned memory address
 template <class T>
-__device__ inline void store128(T* target, Packed128<T> value) {
+__device__ inline void store128(T* target, Packed128_T<T> value) {
     *reinterpret_cast<int4*>(target) = value.get_bits();
 }
 // store_ a PackedN to an aligned memory address with streaming cache hint
 template <class T>
-__device__ void store128cs(T* target, Packed128<T> value) {
+__device__ void store128cs(T* target, Packed128_T<T> value) {
     __stcs(reinterpret_cast<int4*>(target), value.get_bits());
 }
 // store_ a PackedN to an aligned memory address while caching in L2 but bypassing L1
 template <class T>
-__device__ void store128cg(T* target, Packed128<T> value) {
+__device__ void store128cg(T* target, Packed128_T<T> value) {
     __stcg(reinterpret_cast<int4*>(target), value.get_bits());
 }
 
@@ -618,12 +619,12 @@ struct TASKA_1p1 {
     PackedN_config config;
 
     TASKA_1p1(int N_, cudaStream_t stream_, int flag = 0x0) : nTask(1), N(N_), stream(stream_) {
-        if (N % typ128::size != 0){
-            _ERROR("TASKA_1p1: N(%d) % %d != 0", N,typ128::size);
+        if (N % typ128::size != 0) {
+            _ERROR("TASKA_1p1: N(%d) % %d != 0", N, typ128::size);
             assert(0 && "N % typ128::size != 0");
             return;
         }
-            
+
         block3 = tpb;
         nBlock = CEIL_DIV(N, tpb * typ128::size);
         grid3  = nBlock;

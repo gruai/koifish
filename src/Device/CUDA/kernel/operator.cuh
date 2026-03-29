@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *
@@ -479,7 +479,7 @@ __global__ static void CU_X2Tile_(T* A, floatGama* gama, float T_x, int M, int N
         gama[gpos] = sum / TM / TN;
     }
     if (isOverwrite) {
-        A[pos] = CU_16BF2T<T>(gama + gpos);
+        A[pos] = CU_GAMA2T<T>(gama[gpos]);
     }
 }
 template <typename T>
@@ -492,12 +492,13 @@ __global__ static void CU_Tile2X_(T* A, floatGama* gama, float T_x, int M, int N
         return;  // guard
     fnPOS pA = trans == 0 ? fnCR2POS : fnRC2POS;
     int pos = pA(idrow, idcol, M, N), gpos = blockIdx.x * gridDim.y + blockIdx.y;
-    A[pos] = CU_16BF2T<T>(gama + gpos);  // gama[gpos];
+    A[pos] = CU_GAMA2T<T>(gama[gpos]);  // gama[gpos];
     //  same
     // float fgama = gama[gpos];
     // A[pos] = CU_Float2T<T>(fgama,seed+pos);
 }
 
+// return sum of x2
 template <class T, int NUM_THREADS = CU_T4B_SMALL>
 __global__ static void CU_OFF(float* out, T* A, T* B, size_t N, int flag) {
     int tid = threadIdx.x, idx = blockIdx.x * NUM_THREADS + tid;
@@ -528,7 +529,7 @@ __global__ void CU_Float2F8<bf16>(const bf16* src, f8e5* dst, size_t N, int seed
     if (tid >= N) {
         return;  // guard
     }
-    dst[tid] = CU_16BF2T<f8e5>(src + tid, seed);
+    dst[tid] = CU_16BF2T<f8e5>(src[tid], seed);
 }
 
 template <typename T>
@@ -542,14 +543,14 @@ __global__ static void CU_F82Float(const f8e5* src, T* dst, size_t N, int seed, 
 }
 
 template <class T>
-double CU_OFF_(T* A, T* B, size_t N, int flag = 0x0) {
+double CU_OFF_avg(T* A, T* B, size_t N, int flag = 0x0) {
     double res = DBL_MAX;
     float *d_a, a = 0;
     cudaMalloc(&d_a, sizeof(float)), cudaCheck(cudaMemset(d_a, 0, sizeof(float)));
     size_t dBLOCK = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
     CU_OFF<T><<<CEIL_DIV(N, dBLOCK), dBLOCK, smemPB, main_stream>>>(d_a, A, B, N, flag);
     D2H(d_a, &a, sizeof(float), flag);
-    res = sqrt(a);
+    res = sqrt(a / N);
     cudaFree(d_a);
 
     return res;
@@ -699,7 +700,7 @@ __device__ inline void CU_X2ternary_row(floatGama* gama, T* row, char* terns, in
 template <class T>
 __global__ void CU_ternary_online(T* mat, int M, int N, int seed = 0x0);
 template <class T>
-__global__ void CU_ternary2X_(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int seed = 0x0);
+__global__ void CU_ternary2X_v0(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int seed = 0x0);
 template <class T>
 __global__ void CU_Q42X_lut(floatGama* gama, const hBITARR terns, T* mat0, int M, int N, int rc_normal = 0x0, int seed = 0x0);
 template <class T>

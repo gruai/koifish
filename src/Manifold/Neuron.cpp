@@ -1,6 +1,6 @@
 
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Neurons & Perceptrons
@@ -128,14 +128,13 @@ CLI_params& GeNeuron::Config() const {
 void GeNeuron::Init(Fish* hG_, int flag) {
     hFish        = hG_;
     auto& config = hG_->config;
-    // n_batch=config.n_batch(),n_ctx=config.n_ctx(),n_embd=config.nEmbed();
+
     hG_->GetBT(B, T);
-    // n_embd_head = config.head_dim();
-    // n_head      = config.n_head();
-    // assert(n_embd_head * n_head == C);
+    // W1A8, W4A4, W8A8
     tpWeight     = hFish->config.model.tpWeight;
     tpActivation = hFish->config.model.tpActivation;
-    tpGradient   = hFish->config.model.tpGradient;
+
+    tpGradient = hFish->config.model.tpGradient;
 
     dump_flag = 0;
 #ifndef NDEBUG
@@ -541,7 +540,7 @@ hGensor SLP::Ming(RLS_BP* hRLS, hGensor cur, int flag) {
     return cur;
 }
 
-int SLP::Forw(float* rhs, float* lhs, int flag) {
+int SLP::Forw_cpu(float* rhs, float* lhs, int flag) {
     float* bias = b == nullptr ? nullptr : TO<float>(b);
     if (compression == GBDT) {
         // assert(nHot>0);
@@ -1107,6 +1106,8 @@ void GeNeuron::BuildX(const std::string& key_, const SHAPE& shp_, Fish* hG_, int
 }
 
 bool GeNeuron::isValid() {
+    if (name.empty())
+        return false;
     if (w == nullptr)
         return false;
     return true;

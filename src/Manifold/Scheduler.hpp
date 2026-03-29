@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Scheduling
@@ -68,7 +68,7 @@ struct LearnSKDU {
     }
     void Append(float a) { history.vals.push_back(a); }
 
-    LearnSKDU(TRAIN_CARD &train_params);
+    LearnSKDU(TRAIN_CARD& train_params);
     virtual void Dump(int typ);
     virtual std::vector<float> get_sigmas(uint32_t n) = 0;
 
@@ -117,7 +117,7 @@ struct LearnSKDU {
 typedef std::shared_ptr<LearnSKDU> hLearnSKDU;
 
 struct DiscreteSchedule : LearnSKDU {
-    DiscreteSchedule(TRAIN_CARD &train_params) : LearnSKDU(train_params) {}
+    DiscreteSchedule(TRAIN_CARD& train_params) : LearnSKDU(train_params) {}
     std::vector<float> get_sigmas(uint32_t n) {
         std::vector<float> result;
 
@@ -170,11 +170,11 @@ enum TASK_STATUS {
 };
 struct TaskNode {
     string name;
-    void *hOBJ         = nullptr;
+    void* hOBJ         = nullptr;
     double cost        = 0;
     TASK_STATUS status = FLIP;
 
-    TaskNode(const std::string &n, void *h, double v, int flag = 0x0) : name(n), hOBJ(h), cost(v) {}
+    TaskNode(const std::string& n, void* h, double v, int flag = 0x0) : name(n), hOBJ(h), cost(v) {}
     bool isOn() { return status == RESIDENT; }
     int begin = -1, end = -1;
 };
@@ -184,7 +184,7 @@ struct TaskNode {
 
     1. Each expert is just a fuyou
         Ref:EOE: Evolutionary Optimization of Experts for Training Language Models https://arxiv.org/abs/2509.24436
-    
+
 */
 class Fuyou {
    protected:
@@ -194,27 +194,27 @@ class Fuyou {
     uint32_t seed = 42;
     string name;
     float loss = FLT_MAX, loss_0 = FLT_MAX;
-    vector<TaskNode *> tasks;
-    RLS_BP *hRLS = nullptr;
-    Fish *hFish  = nullptr;
+    vector<TaskNode*> tasks;
+    RLS_BP* hRLS = nullptr;
+    Fish* hFish  = nullptr;
 
     vector<hGensor> ckpParams;  // Save/Load from checkpoint
     vector<hGensor> fParams;    // from Fish::optParams
     vector<hGensor> tReloads;   //  subset of fParams
    public:
     // Fuyou() {}
-    Fuyou(const string &name, RLS_BP *hRL, Fish *hFish, vector<TaskNode *> arrT, int l0, int l1, int flag = 0x0);
+    Fuyou(const string& name, RLS_BP* hRL, Fish* hFish, vector<TaskNode*> arrT, int l0, int l1, int flag = 0x0);
     virtual bool Serialize(bool isSave, int flag = 0x0);
 
-    vector<TaskNode *> Tasks(int flag = 0x0) { return tasks; }
+    vector<TaskNode*> Tasks(int flag = 0x0) { return tasks; }
     virtual bool empty() { return tasks.size() == 0; }
     virtual void Clear() { tasks.clear(); }
-    virtual void Add(TaskNode *node, int flag = 0x0) { tasks.push_back(node); }
-    virtual TaskNode *Last() {
+    virtual void Add(TaskNode* node, int flag = 0x0) { tasks.push_back(node); }
+    virtual TaskNode* Last() {
         assert(!empty());
         return tasks[tasks.size() - 1];
     }
-    virtual TaskNode *First() {
+    virtual TaskNode* First() {
         assert(!empty());
         return tasks[0];
     }
@@ -239,8 +239,8 @@ typedef std::shared_ptr<Fuyou> hFuyou;
 class RLSchedule {
    public:
    protected:
-    EDGE_DEVICES *hDevices = nullptr;
-    Fish *hFish            = nullptr;
+    EDGE_DEVICES* hDevices = nullptr;
+    Fish* hFish            = nullptr;
     int step               = 0x0;
     bool isPrefill         = true;
     bool isRemater         = false;
@@ -259,7 +259,7 @@ class RLSchedule {
     string resident_list = "";
 
    public:
-    RLSchedule(EDGE_DEVICES *hED, const CLI_params &config, int flag) : hDevices(hED) { rand_branch.Init(654321); }
+    RLSchedule(EDGE_DEVICES* hED, const CLI_params& config, int flag) : hDevices(hED) { rand_branch.Init(654321); }
     virtual ~RLSchedule() {}
     virtual void BeforeStart(int flag = 0x0);
     virtual bool Planning(int flag = 0x0);
@@ -275,7 +275,7 @@ class RLSchedule {
     //     phase = phase_;
     //     return true;
     // }
-    virtual TASK_STATUS GetStatus(int step, void *hObj, int flag) { return FLIP; }
+    virtual TASK_STATUS GetStatus(int step, void* hObj, int flag) { return FLIP; }
     virtual void Dump(int typ) const {}
 
     virtual bool isSwitchFuyou(int iter, int flag = 0x0);
@@ -290,7 +290,7 @@ class RLSchedule {
         return nB;
     }
 
-    vector<TaskNode *> curTasks(int flag = 0x0) {
+    vector<TaskNode*> curTasks(int flag = 0x0) {
         assert(afu != nullptr);
         return afu->Tasks();
     }
@@ -311,17 +311,17 @@ class RLS_BP : public RLSchedule {
     virtual bool isUpdateBatch(int iter, int flag = 0x0);
 
    public:
-    RLS_BP(EDGE_DEVICES *hED, const CLI_params &config, int flag);
+    RLS_BP(EDGE_DEVICES* hED, const CLI_params& config, int flag);
     virtual ~RLS_BP() {}
-    virtual void Init(Fish *hF, std::vector<shared_ptr<GeNeuron>> backbons, int flag = 0x0);
+    virtual void Init(Fish* hF, std::vector<shared_ptr<GeNeuron>> backbons, int flag = 0x0);
     virtual bool InitGUOKE(int flag = 0x0);
     virtual bool InitBranch(int flag = 0x0);
     virtual bool Prepare(int iter, int flag = 0x0);
 
     virtual TASK_STATUS GetTensorStatus(int step, hGTensor tenosr, int flag = 0x0);
     virtual TASK_STATUS SetTensorStatus(int step, hGTensor tenosr, TASK_STATUS sta, int flag = 0x0);
-    TASK_STATUS GetStatus(int step, void *hObj, int flag) override;
-    bool isResident(GeNeuron *neuron, int flag = 0x0);
+    TASK_STATUS GetStatus(int step, void* hObj, int flag) override;
+    bool isResident(GeNeuron* neuron, int flag = 0x0);
 
     bool Planning(int flag = 0x0) override;
     bool Verify(int flag = 0x0) override;

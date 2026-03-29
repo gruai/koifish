@@ -1,6 +1,6 @@
 
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Common utilities for CUDA code
@@ -682,7 +682,7 @@ bool H2D(void* dev, const void* host, size_t szData, int flag = 0x0);
 // copy value of one elemetn from device
 template <typename T>
 bool D2e(void* dev, T& host, int flag = 0x0) {
-    if(!D2H(dev, &host, sizeof(T), flag))
+    if (!D2H(dev, &host, sizeof(T), flag))
         return false;
     float a = T2Float(&host);
     assert(!(isnan(a) || isinf(a)));

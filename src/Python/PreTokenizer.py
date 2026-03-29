@@ -2,22 +2,13 @@
 from __future__ import annotations
 
 import argparse
-import concurrent.futures
-import enum
 import faulthandler
-import functools
-import itertools
 import json
 import math
 import traceback
 import os
-import pickle
-import re
 import signal
 import struct
-import sys
-import time
-import zipfile
 from abc import ABCMeta, abstractmethod
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -305,8 +296,9 @@ def process_single_file(model, ds_iter, key, file_name: str, vocab_size: int, ma
         return has_more_data, f.toks
 
 
-def ProcessDataset(file_name: str, ds, key, split_name: str, max_tokens: int = None, *, model, is_tiny: bool = False, first_is_eval: int = -1, masking: bool = False, seq_len: int = None):
-    num_processes = max(1, min(mp.cpu_count() // 2, 16))
+def ProcessDataset(file_name: str, ds, key, split_name: str, max_tokens: int = None, *, model, num_processes: int = -1, is_tiny: bool = False, first_is_eval: int = -1, masking: bool = False, seq_len: int = None):
+    if num_processes <= 0:
+        num_processes = max(1, min(mp.cpu_count() // 2, 16))
     tokenizer = model.tokenizer
     ds_iter = iter(ds)
     file_index = 0
@@ -350,6 +342,40 @@ def _extract_gsm8k_example(example):
 def _extract_limo_example(example):
     return example["question"], example["solution"]
 
+def ProcessPileBackup(dataset, model, out_file):
+    dataset = dataset.shuffle(seed=42)
+    samples = []
+    n_run = 0
+    n_samples=128
+    max_seq_len=512
+    text_column="text"
+    for data in dataset:
+        if isinstance(data, list):
+            line_encoded = data
+        else:
+            line = data[text_column]
+            line = line.strip()
+            line_encoded = model.tokenizer.encode(line)
+        if len(line_encoded) > max_seq_len:
+            continue
+        sample = line_encoded
+        if len(sample) == 0:
+            continue
+        samples.append(sample)
+        n_run += 1
+        if n_run == n_samples:
+            break
+    # now concatenate all samples and split according to max sequence length
+    cat_samples = np.concatenate(samples)
+    with TokenizedFile(model, out_file, model.tokenizer.vocab_size, masking=False) as f:
+        # for tokens in tokenized_examples:
+        f.add_document(cat_samples)
+    print(f"ProcessPileBackup_ to {out_file}\n")
+    # n_split = cat_samples.shape[1] // max_seq_len
+    # assert len(cat_samples) % max_seq_len == 0
+    # cat_samples = cat_samples.reshape(n_split, max_seq_len)
+    # return cat_samples
+    
 def TokenizeDataset(dataset: str, model, out_dir: Path = "preTokenData", seq_len: int = None, localdir: Path = None):
     out_dir = str(out_dir)
     localdir = str(localdir)
@@ -364,6 +390,10 @@ def TokenizeDataset(dataset: str, model, out_dir: Path = "preTokenData", seq_len
         key = "Text"
         test_split = "test"
         is_tiny = True
+    elif dataset == "pile-val-backup":  # mit-han-lab/pile-val-backup only 10k txt slice with ~30k tokens! (original pie>million!)
+        d = datasets.load_dataset("/home/cys/rnd/lic/Datasets/pile-val-backup", split="validation")        
+        ProcessPileBackup(d, model, out_dir+"/eval.bin")
+        return
     elif dataset == "hellaswag":
         d = datasets.load_dataset("/home/cys/rnd/lic/Datasets/hellaswag")
         dst = "hellaswag"

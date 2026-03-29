@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Some idea is from https://github.com/karpathy/llm.c/blob/master/train_gpt2.cu
@@ -158,6 +158,7 @@ __global__ void CU_sample(T* prelogitst, int* index, int dim, float coin, int fl
 
 bool GeneratOnPrompt::VerifyLogits(int flag) {
     // PrintTensor<floatLogits>("_logits", logits, true, tokenizer->nVocab(), 1, 1, 1, -1);
+    // _INFO("\n%s(Invalid logits!)%s\n", COLOR_RED, COLOR_RESET);
     return true;
 }
 
@@ -185,7 +186,7 @@ template <>
 hGTensor QWEN3_PIPE::tX = nullptr;
 
 template <typename AT>
-floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe, unsigned flags) {  
+floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe, unsigned flags) {
 #ifdef USE_FP8_BASELINE
     assert(0 && "FP8 baseline does not support generation yet");
     return nullptr;

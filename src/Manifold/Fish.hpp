@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Some key characteristics & design goals
@@ -33,9 +33,9 @@
 #include "../Fuzi/Distillation.hpp"
 #include "../Tensor/GeQuant.hpp"
 #include "../Utils/Cache.hpp"
+#include "../Utils/GST_MemBuffer.hpp"
 #include "../Utils/GST_rander.hpp"
 #include "../Utils/GST_util.hpp"
-#include "../Utils/GST_MemBuffer.hpp"
 #include "GoPT.hpp"
 #include "Neuron.hpp"
 #include "SLP.hpp"
@@ -96,7 +96,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     hGENERATOR gopt = nullptr;
 
     //  Ref: 1. isAtPhase 2.SetPhase
-    LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;    
+    LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;
 
     hTGraph hForwTG = nullptr, hBackTG = nullptr;
     int graph_order = -1, graph_update = -1;

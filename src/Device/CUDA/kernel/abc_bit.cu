@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Bit version of C=AxB+D(A or B is bit tensor)
@@ -329,7 +329,7 @@ void CU_abc(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int
     // std::max((BLOCK_ROWS + BLOCK_COLS) * AB_SMEM_STRIDE * sizeof(floatX), BLOCK_ROWS * C_SMEM_STRIDE * sizeof(floatX));
     // smem_max_size = TM * TM * 2 * sizeof(float);
     assert(deviceProp.sharedMemPerMultiprocessor >= smem_max_size);
-    
+
     // assert(batch_count==0);
     bool has_bias = (bias != nullptr), has_gelu = (pre_gelu != nullptr);
     const float alpha = 1.0f;  //, beta = accumulate ? 1.0f : 0.0f;
@@ -423,8 +423,8 @@ __global__ void __launch_bounds__(128) ladder_int8xint2_kernel(int8_t* __restric
     for (int k_0 = 0; k_0 < K / (K_per_loop * K_block_size); ++k_0) {
         *(int4*)(A_local + 0) = *(int4*)(A + ((k_0 * K_per_loop * K_block_size) + (((int)threadIdx.x) * K_per_loop)));
         B_reshape_local[0]    = *(int*)(B + (((int)bx) * N_block_size * K / 4) + (k_0 * K_block_size * K_per_loop * wmma_N / 4) +
-                                     ((((int)threadIdx.x) >> 1) * wmma_K * wmma_N / 4) + ((((int)threadIdx.y) >> 3) * (wmma_K * wmma_N / 2) / 4) +
-                                     ((((int)threadIdx.x) & 1) * (wmma_K * wmma_N / 4) / 4) + ((((int)threadIdx.y) & 7) * (wmma_K / 2) / 4));
+                                        ((((int)threadIdx.x) >> 1) * wmma_K * wmma_N / 4) + ((((int)threadIdx.y) >> 3) * (wmma_K * wmma_N / 2) / 4) +
+                                        ((((int)threadIdx.x) & 1) * (wmma_K * wmma_N / 4) / 4) + ((((int)threadIdx.y) & 7) * (wmma_K / 2) / 4));
         decode_i2s_to_i8s(B_reshape_local, B_decode_local, 16);
 #pragma unroll
         for (int k_2_0 = 0; k_2_0 < 4; ++k_2_0) {

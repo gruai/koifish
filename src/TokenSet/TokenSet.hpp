@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Tokenset manager. Key component of speed & accuracy
@@ -84,7 +84,7 @@ class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
     int nMostShard  = -1;
     int shard_index = 0;
     int eval_every  = -1;
-    int bpToken = 4;    //bytes_per_token
+    int bpToken     = 4;  // bytes_per_token
     // float rStepOfEval = 0;
     float rSampling = 1.0;
     // bool isNextEpoch = false;

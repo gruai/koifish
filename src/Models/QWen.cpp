@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Acknowledgement: https://github.com/andrewkchan/deepseek.cpp
@@ -46,10 +46,9 @@ QWen3::QWen3(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, 
         config.model.isQKNormal = true;
         config.model.sLayer     = "layers.";
         config.model.sEmbed = "embed_tokens", config.model.sInvEmbed = "lm_head";
-        
-        // ??? 0.6B/8B has no tying, but 4B is tying   
+
+        // ??? 0.6B/8B has no tying, but 4B is tying
         // config.model.isEmbedWeightTying = true;  //
-               
 
         config.model.isBqkv = false;  //  0.6B has no bias!
     }
@@ -108,6 +107,76 @@ std::string QWen::NN2NAME(const std::string& prefix, tpNEURON4NAME neuron, const
             break;
         case ATTN_K_NORM:
             tName = prefix + ".k_norm";
+            break;
+        case ATTN_Q:
+            tName = prefix + ".q_proj";
+            break;
+        case ATTN_K:
+            tName = prefix + ".k_proj";
+            break;
+        case ATTN_V:
+            tName = prefix + ".v_proj";
+            break;
+        case ATTN_OUT:
+            tName = prefix + ".o_proj";
+            break;
+        case LN_RSTD:
+            tName = prefix + ".rstd";
+            break;
+        case FFN_UP:
+            tName = prefix + ".up_proj";
+            break;  //  ".w1"
+        case FFN_RELU:
+            return prefix + "_relu";
+        case FFN_DOWN:
+            tName = prefix + ".down_proj";
+            break;  //  ".w2"
+        case FFN_GATE:
+            tName = prefix + ".gate_proj";
+            break;  //  ".w3"
+        default:
+            assert(0);
+    }
+    if (!suffix.empty())
+        tName += suffix;
+    return tName;
+}
+
+Bitnet::Bitnet(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
+    // assert(arch == MODEL_ARCH::NLP_BITNET);
+    config.model.isSLPBias     = false;
+    config.model.isNormalBias  = false;
+    config.model.isSeparateQKV = true;
+    config.model.norm_rms_eps  = 1.0e-5;
+    DEBUG.tpActi               = typNUMBER::I8;
+    // config.model.tpActivation  = typNUMBER::I8;
+    if (isTrain()) {
+        config.model.qkv4dnn = QKV_PACK::QQKKVV;
+    } else {
+    }
+    config.model.isQKNormal = false;
+    config.model.sLayer     = "layers.";
+    //  Uses ReLU²​ (squared ReLU) in the Feed-Forward Network (FFN) instead of SwiGLU or GELU
+    //  Employs SubLN​ (Sub-Layer Normalization), which applies LayerNorm before the linear projection in both attention and FFN blocks.
+    // DEBUG.cmd_p1 = 1;
+}
+std::string Bitnet::NN2NAME(const std::string& prefix, tpNEURON4NAME neuron, const std::string& suffix, int flag) {
+    size_t pos   = 0x0;
+    string tName = "";
+    switch (neuron) {
+        case ATTN_PRE_NORMAL:
+            pos   = prefix.rfind(".");
+            tName = prefix.substr(0, pos) + ".input_layernorm";  //   model.layers.0.self_attn => model.layers.0.input_layernorm
+            break;
+        case FFN_PRE_NORMAL:
+            pos   = prefix.rfind(".");
+            tName = prefix.substr(0, pos) + ".post_attention_layernorm";
+            break;
+        case ATTN_NORMAL_OUTPUT:
+            tName = prefix + ".attn_sub_norm";
+            break;
+        case FFN_NORMAL_DOWN:
+            tName = prefix + ".ffn_sub_norm";
             break;
         case ATTN_Q:
             tName = prefix + ".q_proj";

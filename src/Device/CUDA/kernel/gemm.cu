@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *
@@ -22,8 +22,8 @@
 #include "../../../Tensor/GeQuant.hpp"
 #include "../cuda_common.h"
 #include "gelu.cuh"
-#include "utils.cuh"
 #include "operator.cuh"
+#include "utils.cuh"
 #define MMA_M 16
 #define MMA_N 8
 #define MMA_K 16
@@ -44,8 +44,6 @@
     asm volatile("mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {%0, %1}, {%2, %3, %4, %5}, {%6, %7}, {%8, %9};\n" \
                  : "=r"(RD0), "=r"(RD1)                                                                                  \
                  : "r"(RA0), "r"(RA1), "r"(RA2), "r"(RA3), "r"(RB0), "r"(RB1), "r"(RC0), "r"(RC1))
-
-
 
 /*
     d(m,n) = a'*b
@@ -197,7 +195,6 @@ void CU_mm_blasLt_v0(floatX* d, const floatX* a, const floatX* b, const floatX* 
 
 void CU_abc(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int transB = 0,
             float beta = 0.0, floatX* pre_gelu = NULL, bool backward = false);
-
 
 /*
     d = gensor*b+bias
