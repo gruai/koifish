@@ -231,7 +231,6 @@ class GPT2 : public NLP_AutoRegressive {
         NLP_AutoRegressive::InitModel(flag);
     }
 
-    // struct ggml_cgraph *BuildRawGraph( void *,bool isBuild,int flag=0x0)   override;
     void InitGensors(int flag = 0x0) override { ; }
 
     // hGensor BuildTarget(void * ctx,hGensor cur,int flag=0x0) override;

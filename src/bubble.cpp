@@ -228,6 +228,8 @@ class BubbleApp : public GST_Application {
         params.dumpSwitch.nn_structure = 0;
         DEBUG.verCuda = 1, DEBUG.T_cpu = 0, DEBUG.graph_dump = 0, DEBUG.Time_most = 60;
         DEBUG.verInferQKV = 0, DEBUG.verInferFFN = 0;
+        
+        // config.quant.filter_KVcache = {"0.self_attn"};    //   "layers.27.mlp" model.blk.0.attn
         params.Dump(0x100);
     }
     virtual ~BubbleApp() {}
@@ -248,58 +250,4 @@ int main(int argc, char* argv[]) {
     BubbleApp app(argc, argv);
     int iRet = app.Run();
     return iRet;
-
-    /*try {
-        assert(argc >= 2);
-        std::string arg_prefix = "--", exec_name = EXE_name(), jsPath = "", eval_metric = "";
-        CLI_params config;
-        config.phase = LIFE_PHASE::P_GENERATE;  // DEBUG.test_quant = 1;
-        if (!config.parse(argc, argv)) {
-            return KOIFISH_INVALID_ARGS;
-        }
-        config.OnArch();
-
-        config.isOnlyGPT                = true;
-        config.chat_sampler.mode        = config.model.enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
-        config.chat_sampler.isSampleCPU = true;
-        config.model.preLogits_dB       = 1;
-        config.model.sparse.method      = -1;
-        // config.quant.T_errQ             = 0.3;
-        // config.quant.isNormalFloat = true, config.quant.isSymmetric = false;       //use_double_quant
-        // config.quant.default_bits       = 2;
-        config.dumpSwitch.tensor_load  = 0;
-        config.dumpSwitch.nn_structure = 0;
-        // SUM::nMinTensorAlloc = 1;
-        // config.quant.filter_MIQ         = {"mlp"};                   //  mlp.down_proj.weight "mlp"
-        // config.quant.filter_KVcache = {"0.self_attn"};    //   "layers.27.mlp" model.blk.0.attn
-
-        DEBUG.verCuda = 1, DEBUG.T_cpu = 0, DEBUG.graph_dump = 0, DEBUG.Time_most = 60;
-        DEBUG.verInferQKV = 0, DEBUG.verInferFFN = 0;
-        config.Dump(0x100);
-        hFISH fish = Fish::MakeInstance("PPL_", config, {}, Fish::ROLE_TYPE::COMMON, 0x110);
-        // GlobalMemoryInfo(0x0, 0x0);
-        if (fish == nullptr)
-            return KOIFISH_NULL_FISH;
-
-        Chat(fish, config.model.enable_thinking);
-        return 0x0;
-    } catch (const SafeExit& ex) {
-        std::string info = ex.getFormattedInfo();
-        _WARN("KOIFISH exit: %s %s", ex.what(), info.c_str());
-        // std::cerr << info << std::endl;
-        // cleanup();
-        return ex.getExitCode();
-    } catch (const std::exception& e) {
-        _INFO("%s", e.what());
-        fflush(stdout);
-        return -1000;
-    } catch (const char* info) {
-        _INFO("%s", info);
-        fflush(stdout);
-        return -1001;
-    } catch (...) {
-        _INFO("\r\n%s  Unknown exception !!!", __func__);
-        fflush(stdout);
-        return -2001;
-    }*/
 }

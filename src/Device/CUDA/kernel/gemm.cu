@@ -21,7 +21,7 @@
 #include "../../../Tensor/GTensor.hpp"
 #include "../../../Tensor/GeQuant.hpp"
 #include "../cuda_common.h"
-#include "gelu.cuh"
+// #include "gelu.cuh"
 #include "operator.cuh"
 #include "utils.cuh"
 #define MMA_M 16
@@ -223,7 +223,6 @@ void CU_mm_(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int
     }
     if (isBlas) {
         floatX* wX = gensor->GetDataX();
-
         // [50304,768] x [768,8192] => [50304,8192]         or(transA) [768,50304]' x [768,8192] => [50304,8192]
         //  CU_mm_blas
         cublasGemmEx(cublas_handle, opA, opB, m, n, k, &alpha, wX, CUDA_R_16BF, lda, b, CUDA_R_16BF, ldb, &beta, d, CUDA_R_16BF, m, CUDA_R_32F,
@@ -280,7 +279,7 @@ void matmul_backward(floatX* delta, floatX* dweight, floatX* dbias, floatX* delt
 
     // backward GELU (if it wasn't fused into the matmul above)
     // if (gelu_fusion < 2 && pre_gelu) {
-    //     gelu_backward_inplace(delta, pre_gelu, B * T * C, stream);
+    //     Activation_backward_inplace(delta, pre_gelu, B * T * C, stream);
     // }
 
     // backward to weight, uses += in the backward pass (accumulate the gradient) by setting alpha=one

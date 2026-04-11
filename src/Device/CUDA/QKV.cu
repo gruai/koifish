@@ -12,7 +12,7 @@
 #include "../../Manifold/Fish.hpp"
 #include "../../Manifold/Neuron.hpp"
 #include "./cuda_common.h"
-#include "./kernel/gelu.cuh"
+// #include "./kernel/gelu.cuh"
 #include "./kernel/layernorm.cuh"
 #include "./kernel/operator.cuh"
 
@@ -573,6 +573,7 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
     inpQ->Quant4A(DEBUG.tpActi);
     if (isSeparateQKV) {
         Q.Forw(Q.out, inpQ);
+        // Q.out->Print("Q.out", 0x0, dump_flag, nToken * q_dim);
         K.Forw(K.out, inpQ);
         V.Forw(V.out, inpQ);
     } else {

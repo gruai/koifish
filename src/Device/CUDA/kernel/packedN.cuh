@@ -618,7 +618,7 @@ struct TASKA_1p1 {
     int grid3 = 0, nBlock = 0;  // grid3=(nBlock, 1, 1), nBlock is the total number of blocks
     PackedN_config config;
 
-    TASKA_1p1(int N_, cudaStream_t stream_, int flag = 0x0) : nTask(1), N(N_), stream(stream_) {
+    TASKA_1p1(int N_, cudaStream_t stream_, bool is128 = true, int flag = 0x0) : nTask(1), N(N_), stream(stream_) {
         if (N % typ128::size != 0) {
             _ERROR("TASKA_1p1: N(%d) % %d != 0", N, typ128::size);
             assert(0 && "N % typ128::size != 0");
@@ -626,7 +626,11 @@ struct TASKA_1p1 {
         }
 
         block3 = tpb;
-        nBlock = CEIL_DIV(N, tpb * typ128::size);
+        // assert(N % (block3 * X128::size) == 0);
+        if(is128)
+            nBlock = CEIL_DIV(N, tpb * typ128::size);
+        else
+            nBlock = CEIL_DIV(N, tpb);
         grid3  = nBlock;
     }
     bool isValid() const {

@@ -21,8 +21,10 @@ def CheckResult(df,iter,golden,title="",rel_tol=1e-05):
     print(f"{title} loss={a} golden={golden}\n")
     assert math.isclose(a,golden,rel_tol=rel_tol, abs_tol=0.0) 
 
-def test_chat_qwen3_0_6B():  
-    content = bubble_one("chat_qwen3_0.6b","--tokenizer ./assets/tokenizer_151936.bin --hf ./Models/Qwen3-0.6B/ --prompts \"hello\"")  #./cases/qwen3/qwen3_0.6B.json
+
+
+def test_chat_qwen3_596M():  
+    content = bubble_one("chat_qwen3_596M","--tokenizer ./assets/tokenizer_151936.bin --hf ./Models/Qwen3-0.6B/ --prompts \"hello\"")  #./cases/qwen3/qwen3_0.6B.json
     assert "Hello! How can I assist you today?" in content
 
 def test_chat_qwen3_4B():    
@@ -37,6 +39,11 @@ def test_chat_qwen3_4B_awq():
     content = bubble_one("chat_qwen3_4B_awq","--tokenizer ./assets/tokenizer_151936.bin --hf ./Models/Qwen3-4B-AWQ/ --prompts \"Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?\"")  #  "./cases/qwen3/qwen3_4B.json"
     assert "Answer: \\boxed{1}" in content  or "Answer: 1" in content or "Answer:1" in content or "answer:1" in content  # "Answer: 1"   "✅ Final Answer:1 ✅"  "Answer: 1 ✅"  "✅Answer: 1"
 
+def test_ising_596M():    
+    most_iter = 100
+    title = "ising_596M"
+    dfTrain = koifish_one(title, sExe, "./cases/qwen3/qwen3_ising.json", most_iter=most_iter, train_csv="./Train@[climb]_info_.csv")    
+    CheckResult(dfTrain,most_iter,7.779,title=title,rel_tol=0.001)      #   6.942169    7.589036
 
 def xtest_batch_qwen3_4B():  
     nlayer = 36 #   28 36
@@ -131,13 +138,14 @@ if __name__ == '__main__':
 
     # test_chat_qwen3_0_6B()  
     #test_qwen3_596M()
+    test_ising_596M()
     # test_chat_qwen3_4B_1()
-    # test_chat_qwen3_4B_awq()
+    #test_chat_qwen3_4B_awq()
     # xtest_batch_qwen3_4B()
 
     # test_pp_gpt2()
     # test_gpt2_124M()
-    test_qwen3_596M_q4()
+    # test_qwen3_596M_q4()
     # test_gpt2_124M_fuyou6()
     # test_gpt2_1558M()
     # test_qwen2_494M()

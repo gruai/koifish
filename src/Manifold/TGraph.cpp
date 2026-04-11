@@ -161,15 +161,14 @@ bool SelfAttention::Build(int flag_0) {
 
     // QUANT_CARD quant_params = hFish->config.quant;
     if (!hFish->config.jQuant.empty()) {
-        quant_params.Init4Neuron(name, hFish->config.jQuant);
-        if (layid > quant_params.nPassLayer) {
+        if (quant_params.Init4Neuron(name, hFish->config.jQuant, this)) {
             quant_params.spMost = Q.w->shape;
             // quant_params.default_bits = layid > 0 ? 3 : 4;
             hQuant = GeQuant::MakeInstance(this, name, quant_params, {&Q, &K, &V, &proj_cat}, 0x0);  //  {Q.w,proj_cat.w}
         }
     }
 
-    // tpTrans = RELU2;
+    // tpTrans = GLU2;
     // moe.BuildX(name+".moe",sp,hFish,flag);        //  why this would slow converge???
     return true;
 }
@@ -352,7 +351,7 @@ hGensor SelfAttention::MyAttention(RLS_BP* ctx_, hGensor cur, int flag) {
             kq = ggml_scale(ctx_, kq, kq_scale);
             gTN(kq, "%s.kqs", name.c_str());
             break;
-        case RELU2:  // same name of grad!
+        case GLU2:  // same name of grad!
             kq = ggml_silu(ctx_, kq);
             gTN(kq, "%s.r2_0", name.c_str());
             kq = ggml_mul(ctx_, kq, kq);
@@ -1584,7 +1583,15 @@ hNEURON Fish::J2Neuron(void* ctx_, string& dad, int level, const JConfig& jconfi
 */
 int Fish::jToGraph(void* ctx_, bool isBuild, int flag) {
     JConfig js(config.jBackBone);
-    // JConfig js(config.jModel);
+    assert(js.Valid());
+    std::ofstream file("./log/_koifish_jToGraph_.json");
+    if (0) {  // only for debug
+        if (file.is_open()) {
+            file << js.js.dump(4);
+            file.close();
+        }
+    }
+
     string sRoot = "model";  //  prefix = dad.empty() ? nam_ : dad + "." + nam_;
 
     AllocBuffer();

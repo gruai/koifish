@@ -15,9 +15,11 @@
 #include "../../../Tensor/GTensor.hpp"
 #include "../../../Tensor/GeQuant.hpp"
 #include "../../../Utils/GST_MemBuffer.hpp"
+#include "../../../Manifold/Optimizer.hpp"
+#include "../../../Manifold/Fish.hpp"
+#include "../PackedQ.hpp"
 #include "../cuda_common.h"
 #include "../g_float.hpp"
-#include "../PackedQ.hpp"
 #include "operator.cuh"
 #include "utils.cuh"
 
@@ -186,12 +188,13 @@ __global__ void CU_Q42X_RTN(floatGama* gamas, const hBITARR quants, T* mat0, int
 }
 
 template <class Typ, int nQuant>
-__global__ void CU_Q42X_(const TASKA_quant<Typ> taska, const BIT_128* quants, Typ* mat0, int seed);
+__global__ void CU_Q128toX_(const TASKA_quant<Typ> taska, const BIT_128* quants, Typ* mat0, int seed);
 
 floatX* GTensor::GetDataX(int flag, const string& sX) const {
     if (data == nullptr)
         return nullptr;
-
+    hOptimizer hOPT = hFish->GetOptimizer();
+    hLearnSKDU hAR_ = hOPT->hAR_quant;
     size_t dT4B = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
     size_t nEle = size();
     floatX* wX  = (floatX*)(data);
@@ -202,9 +205,6 @@ floatX* GTensor::GetDataX(int flag, const string& sX) const {
     }
 
     switch (type) {
-        case typNUMBER::T_SIGN:
-            assert(0);
-            break;
         case typNUMBER::Q4: {
             wX = ToX(gBUFF->tmpTernary);
             assert(gBUFF->tmpTernary->size() >= nEle);
@@ -214,14 +214,16 @@ floatX* GTensor::GetDataX(int flag, const string& sX) const {
                     CU_Q42X_NF4<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
                 } else if (hQuant->params.type == RTN) {
                     // CU_Q42X_RTN<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, spGroup[0], spGroup[1], disq.rc_normal, 42);
-                    TASKA_quant<floatX> task_q(this, hQuant, main_stream, BLOCK_at_GROUP);
-                    T1pG(CU_Q42X_<floatX, 32>, task_q, (BIT_128*)(data), wX, 0x0);
+                    TASKA_quant<floatX> task_q(this, hQuant, main_stream);  //, BLOCK_at_GROUP
+                    T1pG(CU_Q128toX_<floatX, 32>, task_q, (BIT_128*)(data), wX, 0x0);
                 } else {  // AWQ
-                    TASKA_quant<floatX> task_q(this, hQuant, main_stream, BLOCK_at_ROW);
+                    hQuant->params.blockAt = BLOCK_at_ROW;
+                    TASKA_quant<floatX> task_q(this, hQuant, main_stream);
                     // Print(name, 0, -1);
                     // qZero->Print("qzero", 0, -1);
                     // qScale->Print("scale", 0, -1);
                     // CU_Q42X_zs_v0<floatX><<<nGroup, dT4B, 0, main_stream>>>(TO<Q4_8>(qZero), TO<half>(qScale), (Q4_8*)(data), wX, nGroup, ldGroup / 8);
+
                     T1pG(CU_Q42X_awq<floatX>, task_q, TO<Q4_8>(qZero), TO<half>(qScale), (Q4_8*)(data), wX, 0x0);
                     // CU_Q42X_awq_v0<floatX><<<task_q.grid3, task_q.block3, 0, main_stream>>>(TO<Q4_8>(qZero), TO<half>(qScale), (Q4_8*)(data), wX, task_q.nIn,
                     // task_q.nOut);
@@ -244,6 +246,15 @@ floatX* GTensor::GetDataX(int flag, const string& sX) const {
             } else
                 CU_Q32X_<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
             // gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow*nCol);
+        } break;
+        case typNUMBER::T_SIGN: {
+            wX = ToX(gBUFF->tmpTernary);      
+            if(hOPT->hAR_quant!=nullptr)
+                hQuant->params.distill.lenda = hOPT->DistillRate(0x0);      
+            TASKA_quant<floatX> task_q(this, hQuant, main_stream);            
+            // Print(name, 0x0, -1);
+            T1pG(CU_Q128toX_<floatX, 64>, task_q, (BIT_128*)(data), wX, 0x0);
+            // PrintTensor<floatX>("deQuant", wX, true, nRow, nCol, ne[2], ne[3], -1);
         } break;
         case typNUMBER::Q2: {
             wX = ToX(gBUFF->tmpTernary);

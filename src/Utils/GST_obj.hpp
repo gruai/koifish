@@ -164,6 +164,15 @@ string inline G_prefix_(const string& title, const string& sep, int flag = 0x0) 
     }
     return prefix;
 }
+
+bool inline G_Has_(const int& id, const vector<int>& filter, bool isPick = true, int flag = 0x0) {
+    for (auto v : filter) {
+        if(v==id)
+            return true;
+    }
+    return false;
+}
+
 bool inline G_Has_(const string& title, const vector<string>& values, bool case_sensitive = true, int flag = 0x0) {
     for (auto v : values) {
         if (case_sensitive) {

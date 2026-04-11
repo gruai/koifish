@@ -142,7 +142,7 @@ bool K_SafeTensors::MMAP(const std::string& path, bool isSave, int flag) {
     }
 }
 
-bool SAFETENSOR_Load_jconfig(const std::string& path, JSON& jsConfig, FSerial::FILE_TYPE tpFile, int flag) {
+bool SAFETENSOR_Load_jconfig(const std::string& path, JSON& jsConfig, FILE_FORMAT_TYPE tpFile, int flag) {
     try {
         K_SafeTensors st(nullptr, {});
         bool bLoad = st.MMAP(path, false, flag);
@@ -163,8 +163,8 @@ bool SAFETENSOR_Load_jconfig(const std::string& path, JSON& jsConfig, FSerial::F
             return false;
         }
         switch (tpFile) {
-            case FSerial::FILE_FISH:
-            case FSerial::FILE_CHECKPOINT:
+            case FILE_FISH:
+            case FILE_CHECKPOINT:
 
                 break;
             default:
@@ -528,7 +528,7 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
                 _WARN("\r\n%s SAFETENSOR: Save_Params=0!!! @\"%s\"", path.c_str());
             }
             for (auto t : curParams) {
-                if (G_Has_(t->name, {"model.layers.0.mlp.down_proj.qweight"})) {  // model.embed_tokens.weight
+                if (G_Has_(t->name, {"model.layers.0.self_attn.q_proj.qweight"})) {  // model.embed_tokens.weight  model.layers.0.self_attn.q_proj
                     DEBUG_HERE;
                     // t->Print("wte@save", 4, -1);
                 }
@@ -537,7 +537,7 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
                 jsConfig["tensors"][t->name] = dst_offset;  // tensor->Dump(100,"");
                 dst_offset                   = hst->Register(t, dst_offset);
             }
-            if (ckp.format == CheckPoint_Params::KOIFISH) {
+            if (ckp.format == CKP_KOIFISH) {
                 hst->insertJS(jsConfig, dst_offset);
             }
             // HST2JSON(hst, flag);        //  "_safetensors_.json"

@@ -102,7 +102,7 @@ bool huTensor::Quant4A(typNUMBER tpQ, int flag) {
 }
 
 template <class Typ, int nQuant>
-__global__ void CU_X2Q4_(const TASKA_quant<Typ> taska, BIT_128* quants, const Typ* mat0, int flag) {
+__global__ void CU_XtoQ128_(const TASKA_quant<Typ> taska, BIT_128* quants, const Typ* mat0, int flag) {
     int tid = threadIdx.x, idrow = blockIdx.x * blockDim.x + tid, M = taska.nG, N = taska.lG;
     if (idrow >= M)
         return;  // guard
@@ -111,21 +111,29 @@ __global__ void CU_X2Q4_(const TASKA_quant<Typ> taska, BIT_128* quants, const Ty
     const Typ *curX = mat0 + offset, *x0 = curX;
     BIT_128* q128 = quants + offset / nQuant;
     Typ wMax = curX[0], wMin = curX[0];
-    float sR = 1.0f, sC = 1.0f, a, step, zero;
+    float sR = 1.0f, sC = 1.0f, a, step, zero, vMean = 0.f, sum = 0.f;
     if (taska.rc_normal > 0) {
         sR = taska.gamaRow[idrow];
     }
     for (int k = 0; k < N; k++, x0++) {
+        a = float(*x0);
+        vMean += abs(a);
+        sum += a;
         wMax = max(wMax, *x0);
         wMin = min(wMin, *x0);
     }
-    if (taska.isSym) {
-        step = (float)std::max(__habs(wMax), __habs(wMin)) / taska.qMax;
+    if (taska.ising != QUANT_ISING_::I_OFF) {
+        step = std::max(1e-5f, vMean / N);
         zero = 0;
     } else {
-        step = float(wMax - wMin) / (taska.qMax - taska.qMin);
-        assert(step > 0);
-        zero = -(float)wMin;
+        if (taska.isSym) {
+            step = (float)std::max(__habs(wMax), __habs(wMin)) / taska.qMax;
+            zero = 0;
+        } else {
+            step = float(wMax - wMin) / (taska.qMax - taska.qMin);
+            assert(step > 0);
+            zero = -(float)wMin;
+        }
     }
     taska.zero[idrow] = zero;
     taska.step[idrow] = step;
@@ -155,6 +163,9 @@ __global__ void CU_X2Q4_(const TASKA_quant<Typ> taska, BIT_128* quants, const Ty
         } else {
             assert(0);
         }
+        // if (taska.lenda != 0.0) {
+        //     taska.average[idrow] = sum / N;
+        // }
     }
     if (taska.isAccumErr) {
         atomicAdd(taska.prober + 1, (double)err);
@@ -162,7 +173,7 @@ __global__ void CU_X2Q4_(const TASKA_quant<Typ> taska, BIT_128* quants, const Ty
 }
 
 template <class Typ, int nQuant>
-__global__ void CU_Q42X_(const TASKA_quant<Typ> taska, const BIT_128* quants, Typ* mat0, int seed) {
+__global__ void CU_Q128toX_(const TASKA_quant<Typ> taska, const BIT_128* quants, Typ* mat0, int seed) {
     int tid = threadIdx.x, idrow = blockIdx.x * blockDim.x + tid, M = taska.nG, N = taska.lG;
     if (idrow >= M)
         return;  // guard
@@ -171,6 +182,7 @@ __global__ void CU_Q42X_(const TASKA_quant<Typ> taska, const BIT_128* quants, Ty
     Typ* x0             = mat0 + offset;
     const BIT_128* q128 = quants + offset / nQuant;
     floatGama sR = 1.0, sC = 1.0, zero = taska.zero[idrow], step = taska.step[idrow];
+    // float avg = (float)(taska.average[idrow]);
     if (taska.rc_normal > 0) {
         sR = taska.gamaRow[idrow];
     }
@@ -192,7 +204,16 @@ __global__ void CU_Q42X_(const TASKA_quant<Typ> taska, const BIT_128* quants, Ty
             if (!CU_isValidF(&g0)) {
                 DEBUG_HERE;
             }
+
+            // if (idrow == 0) {
+            //     DEBUG_HERE;
+            // }
             x0[i] = g0;  // CU_Float2T<Typ>(g0, seed);
+            if (taska.distill.lenda > 0.0) {
+                floatX w = taska.distill.lendaW[offset + k * nQuant + i], s = (floatX)(taska.distill.lenda);
+                // x0[i] += w * s;
+                x0[i] = g0 * ((floatX)1.0 - s) + w * s;
+            }
         }
         // if (idrow == 0) {
         //     DEBUG_HERE;
@@ -204,33 +225,39 @@ double GTensor::SetDataX(floatX* param_0, bool checkErr, int flag) {
     double err = DBL_MAX;
     size_t N   = size();
     assert(data != nullptr);
-
+    bool isDump = false;
     switch (type) {
         case typNUMBER::Q2:
         case typNUMBER::T_SIGN:
         case typNUMBER::Q4: {
             TASKA_quant<floatX> task_q(this, hQuant, main_stream);
-            floatX* wX = param_0;  // ToX(gBUFF->tmpTernary);
-            if (wX == param_0)
-                assert(gBUFF->tmpTernary->size() >= task_q.nEle);
+            floatX *wX = param_0;  
+            assert(param_0==shadoW);
             if (hQuant->isRTN()) {
                 assert(hQuant->params.type == RTN);
-                Print("BeforeQuant", 0, -1);
-                PrintTensor<floatX>("wX", wX, true, N, 1, 1, 1, -1);
-                if (type == typNUMBER::Q2 || type == typNUMBER::T_SIGN)
-                    T1pG(CU_X2Q4_<floatX, 64>, task_q, (BIT_128*)(data), wX, 0x0);
-                else
-                    T1pG(CU_X2Q4_<floatX, 32>, task_q, (BIT_128*)(data), wX, 0x0);
-                Print("AfterQuant", 0, -1);
-                if (checkErr) {  // check residual
-                    if (type == typNUMBER::Q2 || type == typNUMBER::T_SIGN)
-                        T1pG(CU_Q42X_<floatX, 64>, task_q, (BIT_128*)(data), ToX(gBUFF->bt4c), 0x0);
-                    else
-                        T1pG(CU_Q42X_<floatX, 32>, task_q, (BIT_128*)(data), ToX(gBUFF->bt4c), 0x0);
-                    // gBUFF->bt4c->Print("deQuant", 0, -1, N);
-                    err = CU_OFF_avg<floatX>(wX, ToX(gBUFF->bt4c), size());
+                if (isDump) {
+                    Print("BeforeQuant", 0, -1);
+                    PrintTensor<floatX>("wX", wX, true, N, 1, 1, 1, -1);
                 }
-                // gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow * nCol);
+                if (type == typNUMBER::Q2 || type == typNUMBER::T_SIGN)
+                    T1pG(CU_XtoQ128_<floatX, 64>, task_q, (BIT_128*)(data), wX, 0x0);
+                else
+                    T1pG(CU_XtoQ128_<floatX, 32>, task_q, (BIT_128*)(data), wX, 0x0);
+                if (isDump)
+                    Print("AfterQuant", 0, -1);
+                if (checkErr) {  // check residual
+                    floatX *deQuant = nullptr;
+                    cudaCheck(cudaMalloc(&deQuant, sizeof(floatX) * N));
+                    if (type == typNUMBER::Q2 || type == typNUMBER::T_SIGN)
+                        T1pG(CU_Q128toX_<floatX, 64>, task_q, (BIT_128*)(data), deQuant, 0x0);
+                    else
+                        T1pG(CU_Q128toX_<floatX, 32>, task_q, (BIT_128*)(data), deQuant, 0x0);
+                    if (isDump)
+                        PrintTensor<floatX>("deQuant", deQuant, true, N, 1, 1, 1, -1);
+                    err = CU_OFF_avg<floatX>(wX, deQuant, size());
+                    cudaCheck(cudaFree(deQuant));
+                }
+                //  gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow * nCol);
             } else if (hQuant->params.type == KV_PolarQuant) {
                 assert(0);
             } else {  //

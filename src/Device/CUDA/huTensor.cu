@@ -196,11 +196,12 @@ bool huTensor::InitParam(int tpX) {
                     CU_disti_normal<floatX>(nInit, (floatX*)data, 1.0f, param_seed);
                     break;
                 default:
-                    if (BIT_TEST(flags, F_TERNARY)) {
+                    /*if (BIT_TEST(flags, F_TERNARY)) {
                         CU_disti_normal<floatX>(nInit, (floatX*)paramDev, 0.02f * residual_scale, param_seed);
                         ToTernary(paramDev);
                         // Print(name,0,-1);
-                    } else if (hQuant != nullptr) {
+                    } else*/
+                    if (hQuant != nullptr) {
                         tmp = new floatX[nInit];
                         //  Gaussian-distributed weights need non-uniform quantization (like NF4/AWQ) or mixed-precision (like GPTQ) to preserve accuracy.
                         CU_disti_normal<floatX>(nInit, isHost ? tmp : paramDev, 0.02f * residual_scale, param_seed, isHost);
@@ -404,18 +405,24 @@ bool huTensor::SerialData(const string& info, void* host, bool isToHost, int fla
             assert(host_data != nullptr);
             host = host_data;
         }
+        cudaError_t err = cudaSuccess;
         if (isToHost) {
             // cudaCheck(cudaMemcpyAsync(host,data, szData, cudaMemcpyDeviceToHost));
-            cudaCheck(cudaMemcpy(host, data, szData, cudaMemcpyDeviceToHost));
+            err = cudaMemcpy(host, data, szData, cudaMemcpyDeviceToHost);
         } else {
             // cudaCheck(cudaMemcpyAsync(data, host,szData, cudaMemcpyHostToDevice));
-            cudaCheck(cudaMemcpy(data, host, szData, cudaMemcpyHostToDevice));
+            err = cudaMemcpy(data, host, szData, cudaMemcpyHostToDevice);
+        }
+        if (err != cudaSuccess) {
+            _ERROR("[Serial] failed @\"%s\"! err=\"%s\" (%s code=%d)\n", name, cudaGetErrorString(err), cudaGetErrorName(err), err);
+            exit(KOIFISH_SAFETENSOR_SERIAL);
         }
         if (flag < 0) {
             char buf[1024];
             sprintf(buf, "%s:%s@%s", info.c_str(), isToHost ? "SAVE" : "LOAD", name);
             Print(buf, 0, -1);
         }
+        
 
         return true;
     } catch (...) {
@@ -833,7 +840,7 @@ float huTensor::ToF8Ex(int tpX, int flag) {
     SUM::tF8Ex += GST_ms() - t0;
     return 1.0;
 }
-
+/*
 bool huTensor::ToTernary(floatX* paramX, int flag) {
     if (!BIT_TEST(flags, GTensor::F_TERNARY))
         return false;
@@ -881,7 +888,7 @@ bool huTensor::ToTernary(floatX* paramX, int flag) {
         cudaCheck(cudaMemcpy(data, paramX, sizeof(floatX) * count, cudaMemcpyDeviceToDevice));
     }
     return true;
-}
+}*/
 
 GST_TensorBuffer::GST_TensorBuffer(Fish* hFis_, int flag) : hFish(hFis_) {
     try {

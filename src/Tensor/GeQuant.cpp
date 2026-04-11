@@ -12,6 +12,7 @@
 #include "../GBDT/python/pyMORT_DLL.h"
 #include "../Manifold/Fish.hpp"
 #include "../Manifold/Neuron.hpp"
+#include "../Manifold/Optimizer.hpp"
 #include "../PackedQ.hpp"
 #include "GTensor.hpp"
 using namespace Grusoft;
@@ -87,14 +88,15 @@ GeQuant::GeQuant(const std::string& nam_, void* hBase, QUANT_CARD& param_, int f
     nMostGama = std::max(nRow, nCol) * nQuant + nRow + nCol;
     gama      = new floatGama[nMostGama * 2];
     best_gama = this->gama + nMostGama;
-    if (params.isTernary) {
+    if (params.ising != QUANT_ISING_::I_OFF) {
         assert(bits == 2);
         qMax  = 1;
         qMin  = -1;
         qBias = 1;
     } else if (params.isSymmetric) {
-        qMin = -(1 << (bits - 1));
-        qMax = (1 << (bits - 1)) - 1;
+        qMin  = -(1 << (bits - 1));
+        qMax  = (1 << (bits - 1)) - 1;
+        qBias = -qMin;  // PACK_UNPACK_MACRO only support unsinged int(>=0)
     } else {
         qMin = 0;
         qMax = (1 << bits) - 1;
@@ -103,8 +105,12 @@ GeQuant::GeQuant(const std::string& nam_, void* hBase, QUANT_CARD& param_, int f
 
 typNUMBER GeQuant::bit2typ(int flag) {
     typNUMBER tpQ = Bits2Type(bits, flag);
-    if (params.isTernary) {
-        tpQ = typNUMBER::T_SIGN;
+    switch (params.ising) {
+        case I_TERNARY:
+            tpQ = typNUMBER::T_SIGN;
+            break;
+        default:
+            break;
     }
     return tpQ;
 }
@@ -115,9 +121,16 @@ GeQuant::~GeQuant() {
 }
 
 int GeQuant::ExTensor(hGTensor hBase, std::vector<hGTensor>& aux, int flag) {
+    if (!params.filter_MIQ.empty()) {
+        if (!G_Has_(hBase->name, params.filter_MIQ)) {  // model.layers.26.self_attn.q_proj.weight
+            return 0x0;
+        }
+    }
+
     if (G_Has_(hBase->name, {"model.layers.5.post_attention_layernorm"})) {
         DEBUG_HERE;
     }
+
     if (!hBase->isWMAT())  //  norm.weight
         return 0x0;
 
@@ -340,16 +353,45 @@ float GeQuant::AfterLowBit(shared_ptr<GTensor> hTensor, const void* srcData, int
 
 SHAPE GeQuant::GroupShapeOfT(const GTensor* hTensor, int flag) const {
     size_t nElem = hTensor->size();
-    int nGroup = 0, lGroup = params.T_group;  // number of group, lenth of each group
-    assert(nElem % lGroup == 0);
-    nGroup = nElem / lGroup;
-    return SHAPE({nGroup, lGroup});
+    assert(nElem <= INT_MAX);
+    SHAPE sp;
+    switch (params.blockAt) {
+        case BLOCK_at_MATRIX:
+            sp = SHAPE({1, (int)nElem});
+            break;
+        case BLOCK_at_GROUP: {
+            int nGroup = 0, lGroup = params.T_group;  // number of group, lenth of each group
+            assert(nElem % lGroup == 0);
+            nGroup = nElem / lGroup;
+            sp     = SHAPE({nGroup, lGroup});
+        } break;
+        case BLOCK_at_ROW: {
+            int nGroup = 0, lGroup = params.T_group;  // number of group, lenth of each group
+            assert(nElem % lGroup == 0);
+            nGroup = nElem / lGroup;
+            sp     = SHAPE({nGroup, lGroup});
+        } break;
+        default:
+            assert(0);
+            break;
+    }
+    // int nGroup = 0, lGroup = params.T_group;  // number of group, lenth of each group
+    // assert(nElem % lGroup == 0);
+    // nGroup = nElem / lGroup;
+    // return SHAPE({nGroup, lGroup});
+    return sp;
 }
 
 void GeQuant::PrintGama(const GTensor* hTensor, int flag) const {
     SHAPE spGroup = GroupShapeOfT(hTensor);
     int nRow = spGroup[0], nCol = spGroup[1];
     floatGama *gamaZero = hTensor->gama_T(GTensor::ZERO), *gamaStep = hTensor->gama_T(GTensor::STEP);
+    if (hTensor->qZero != nullptr) {        // to support "qzeros" & "scales" in AWQ
+        // hTensor->qZero->Print("\t_gamaZero", 0, -1);
+        assert(hTensor->qScale != nullptr);
+        hTensor->qScale->Print("\t_gamaStep",0,-1);
+        return;
+    }
 
     // if (disq.rc_normal > 0) {
     //     PrintTensor<floatGama>("\t_rNormal", rNormal, true, ne[0], 1, 1, 1, flag);
@@ -363,6 +405,8 @@ void GeQuant::PrintGama(const GTensor* hTensor, int flag) const {
 
 //  @_CU_Q42X_
 float GeQuant::RTN_x(shared_ptr<GTensor> hTensor, const void* srcData, int flag) {
+    // if (G_Has_(hTensor->name, {"self_attn.q_proj"}))
+    //     DEBUG_HERE;
     double t0 = GST_ms(), err = 0, err_2 = 0;
     if (params.isNormalFloat)
         return RT_NormalF(hTensor, srcData, flag);
@@ -380,9 +424,10 @@ float GeQuant::RTN_x(shared_ptr<GTensor> hTensor, const void* srcData, int flag)
         floatGama *gamaRow = hTensor->gama_T(GTensor::R_SCALE, gama), *gamaCol = hTensor->gama_T(GTensor::C_SCALE, gama);
         floatGama *gamaZero = hTensor->gama_T(GTensor::ZERO, gama), *gamaStep = hTensor->gama_T(GTensor::STEP, gama);
         // bool isRCNormal = sR != 1.0 && sC != 1.0;
-        // #pragma omp parallel for schedule(static) reduction(+ : err, err_2)
+#pragma omp parallel for schedule(static) reduction(+ : err, err_2)
         for (int row = 0; row < nRow; row++) {
-            float vmax = -FLT_MAX, vmin = FLT_MAX, a, a0 = 0, sR = 1.0, sC = 1.0, *tmpRow = new float[nCol], e_0, e_1, e;
+            float vmax = -FLT_MAX, vmin = FLT_MAX, vMean, a, a0 = 0, sR = 1.0, sC = 1.0, *tmpRow = new float[nCol], e_0, e_1, e;
+            double vSum = 0.0;
             int i, pos;
             if (isSinkNormal)
                 sR = gamaRow[row];
@@ -393,13 +438,19 @@ float GeQuant::RTN_x(shared_ptr<GTensor> hTensor, const void* srcData, int flag)
                 a         = T2Float(dat + i) / sR / sC;
                 tmpRow[i] = a;
                 vmax = std::max(vmax, a), vmin = std::min(vmin, a);
+                vSum += fabs(a);
             }
-
+            vMean      = vSum / nCol;
             float step = (vmax - vmin) / (qMax - qMin), zero = -vmin;  // -vmin / step
-            if (params.isSymmetric) {
-                step = std::max(fabs(vmax), fabs(vmin)) / qMax, zero = 0;
+            if (params.ising != QUANT_ISING_::I_OFF) {
+                step = std::max(1e-5f, vMean);
+                zero = 0;
             } else {
-                assert(qMin == 0);
+                if (params.isSymmetric) {
+                    step = std::max(fabs(vmax), fabs(vmin)) / qMax, zero = 0;
+                } else {
+                    assert(qMin == 0);
+                }
             }
             gamaZero[row] = zero, gamaStep[row] = step;  // 7.2129     0.0068
             hBITARR quanti = quant_data + nCol * row * this->bits / 8;
@@ -409,11 +460,15 @@ float GeQuant::RTN_x(shared_ptr<GTensor> hTensor, const void* srcData, int flag)
                     a = tmpRow[pos + i * nPer128];
                     // value = std::clamp(value, min_val, max_val);
                     int qid = std::round((a + zero) / step);  //  6,8,5,9,  12,8,6,2,   5,7,11,9        -0.0255126953
+                    if (params.ising != QUANT_ISING_::I_OFF) {
+                        qid = std::max(qid, qMin);
+                        qid = std::min(qid, qMax);
+                    }
                     assert(qid >= qMin && qid <= qMax);
                     // BIT_SET_k(quanti, pos, qid, this->bits);
                     // int qid_get = (int)(BIT_GET_k(quanti, pos, this->bits));
                     // assert(qid_get == qid);
-                    qq[pos] = qid + qBias;      //  0,0,1,0,0,0,0,0,
+                    qq[pos] = qid + qBias;              //  0,0,1,0,0,0,0,0,
                     e       = a - (step * qid - zero);  //
                     e_1 = std::max(e_1, e), e_0 = std::min(e_0, e);
                     err += fabs(e), err_2 += e * e;
@@ -451,7 +506,7 @@ float GeQuant::RTN_x(shared_ptr<GTensor> hTensor, const void* srcData, int flag)
 }
 
 // @CU_X2ternary_row
-float GeQuant::RTN_1(shared_ptr<GTensor> hTensor, const void* srcData, int flag) {
+float GeQuant::ISing(shared_ptr<GTensor> hTensor, const void* srcData, int flag) {
     if (params.isNormalFloat)
         return RT_NormalF(hTensor, srcData, flag);
     double t0 = GST_ms(), err = 0, e = 0, e_0, e_1;
@@ -725,6 +780,8 @@ float GeQuant::LowBit_worker(shared_ptr<GTensor> hTensor, const void* srcData, i
     if (hTensor->disq.nrm_1 == 0) {
         hTensor->disq.OnArray(hTensor->size(), (bf16*)srcData, !isGPU, flag);
     }
+    hTensor->InitShadoW(srcData, isGPU, params.distill);
+
     hTensor->isBackGama = hTensor->hFish->isTrain() && params.xTarget == QUANT_CARD::X_GAMA;
     // PrintTensor<floatX>("srcData", (floatX*)srcData, false, hTensor->size(), 1, 1, 1, -1);
     int nRow = hTensor->shape[0], nCol = hTensor->shape[1], nTry = 0;  // 4-bit is enough
@@ -732,7 +789,7 @@ float GeQuant::LowBit_worker(shared_ptr<GTensor> hTensor, const void* srcData, i
 
     // std::vector<GeQuant::_q_sweep> methods = {{NORMAL_MODE::ROW_01, 4, 1}};  //{0,2} ,{0,8},{true, 2}, {false, 3, 1}, {false, 4}
     std::vector<GeQuant::_q_sweep> methods = {{NORMAL_MODE::NO_NORMAL, nBit0, 0}};
-    float errQ = FLT_MAX, err, average = hTensor->disq.nrm_1 / nRow / nCol, errDeQuant = -1;
+    float errQ = FLT_MAX, err, average = hTensor->disq.nrm_1 / nRow / nCol, errGPU = -1;
     assert(average > 0);
     for (auto method : methods) {
         bits = method.bits;
@@ -767,15 +824,19 @@ float GeQuant::LowBit_worker(shared_ptr<GTensor> hTensor, const void* srcData, i
     // Practical quantization error of RTN 4-bit Quantization of Gaussian-Distributed LLM Weights: 6.3% to 15.8%.
     impurity = errQ;
 #ifndef NDEBUG
-    if (1) {  // only for debug
-        H2D(ToX(gBUFF->tmpTernary), srcData, sizeof(floatX) * hTensor->size());
-        err        = hTensor->SetDataX(ToX(gBUFF->tmpTernary), true);  //
-        errDeQuant = fabs(err / average - errQ);
-        assert(errDeQuant < 0.01);
+    if (params.blockAt != BLOCK_at_MATRIX) {  // only for debug
+        H2D(hTensor->shadoW, srcData, sizeof(floatX) * hTensor->size());
+        err    = hTensor->SetDataX((floatX*)(hTensor->shadoW), true);  //
+        errGPU = fabs(err / average - errQ);
+        if (params.distill.lenda > 0) {
+        } else
+            assert(errGPU < 0.001);
+    } else {
+        hTensor->Print(hTensor->name, 0, -1);
     }
 #endif
-    _INFO("<QUANT_%d>\t%.3g%%(L1=%.8g)@\"%s\"(%ld) \terrDeQuant=%.5g \tt=%.3gms\t \n", bits, impurity * 100.0, hTensor->disq.nrm_1, hTensor->name,
-          hTensor->size(), errDeQuant, GST_ms() - t0);
+    _INFO("<QUANT_%d>\t%.3g%%(L1=%.8g)@\"%s\"(%ld) \t errGPU/cpu=%.5g \tt=%.3gms\t \n", bits, impurity * 100.0, hTensor->disq.nrm_1, hTensor->name,
+          hTensor->size(), errGPU, GST_ms() - t0);
     // may update if isCheckErr=true
     GeQuant::AfterLowBit(hTensor, srcData, flag);  // may update impurity
     SUM::tLowBit += GST_ms() - t0;
@@ -845,7 +906,7 @@ float Q_Impurity<T>::Core(shared_ptr<GTensor> hTensor, const void* srcData, floa
         delete dort;
     } else {
         if (this->bits == 1)
-            this->impurity = Quantizer<T>::RTN_1(hTensor, srcData, flag);
+            this->impurity = Quantizer<T>::ISing(hTensor, srcData, flag);
         else
             this->impurity = Quantizer<T>::RTN_x(hTensor, srcData, flag);
     }
@@ -1061,13 +1122,14 @@ float GeQuant::Normal_ROW01(shared_ptr<GTensor> hTensor, void* srcData, floatGam
     "version": "gemm",
     "zero_point": true
   },*/
-void QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, void* hUserData, int flag) {
-    // GeNeuron* hNN = (GeNeuron*)hUserData;
-    type      = NO_QUANT;
-    string s0 = "";
+bool QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, void* hUserData, int flag) {
+    GeNeuron* hNN = (GeNeuron*)hUserData;
+    type          = NO_QUANT;
+    string s0     = "";
     if (jQuant.find("VendorQuant") != jQuant.end()) {
         isVendorQuant = true;
-        nPassLayer    = -1;  // no pass layer in QWen3
+
+        // nPassLayer    = -1;  // no pass layer in QWen3
     }
     if (jQuant.find("ExplicitZS") != jQuant.end()) {
         hasZS = true;
@@ -1081,6 +1143,7 @@ void QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, void* 
     if (jQuant.find("MIQ") != jQuant.end()) {
         filter_MIQ = jKV_arr(jQuant, {"MIQ"}, filter_MIQ, false);
     }
+    // filter_MIQ = {"layers.0.self_attn"};
     if (jQuant.find("train_target") != jQuant.end()) {
         s0 = jKV(jQuant, {"train_target"}, s0, false);
         if (s0 == "gama") {
@@ -1090,6 +1153,7 @@ void QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, void* 
     // xTarget = DEBUG.cmd_p1 ? X_WEIGHT : X_GAMA;
 
     s0 = "";
+
     for (JSON::const_iterator it = jQuant.begin(); it != jQuant.end(); ++it) {
         auto k = it.key();
         if (!k.empty() && k[0] == '#')
@@ -1100,58 +1164,66 @@ void QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, void* 
         if (G_Has_(name, {k})) {
             const JSON& jQ = it.value();
             string info;
-            info = jKV(jQ, {"quant_method"}, info, false);
+            info         = jKV(jQ, {"quant_method"}, info, false);
+            default_bits = jKV(jQ, {"bits"}, default_bits, false);
             if (info == "bitnet") {
                 isVendorQuant = false;  //  The model in https://huggingface.co/microsoft/bitnet-b1.58-2B-4T-bf16 stored in dequant format, so strange!
                 default_bits  = 2;      //  1.58bit
-                isTernary     = true;
+                tpQWeight     = typNUMBER::T_SIGN;  // typNUMBER::T_SIGN;
+                ising         = I_TERNARY;
                 isSymmetric   = true;
-            } else
-                default_bits = jKV(jQ, {"bits"}, default_bits, false);
+                T_errQ        = 1.5;
+                blockAt       = BLOCK_at_MATRIX;
+            } else if (info == "ising") {
+                tpQWeight   = typNUMBER::T_SIGN;  // typNUMBER::T_SIGN;
+                ising       = I_TERNARY;
+                isSymmetric = true;
+                T_errQ      = 1.5;
+                distill     = hNN->hFish->config.distill;
+            } else {
+                if (default_bits != 4 && default_bits != 1 && default_bits != 2 && default_bits != 8) {
+                    default_bits = 4;
+                    assert(0);
+                }
+                tpQWeight = default_bits == 4 ? typNUMBER::Q4 : default_bits == 3 ? typNUMBER::Q3 : typNUMBER::Q2;
+            }
             T_group = jKV(jQ, {"group_size"}, T_group, false);
             assert(T_group > 0 && T_group < 102400);
             isZeroPoint = jKV(jQ, {"zero_point"}, isZeroPoint, false);
 
             // quant.filter_WeightF8Ex = jKV_arr(jConfig, {"quantizer", "F8Ex"}, quant.filter_WeightF8Ex, false);
-            if (default_bits != 4 && default_bits != 1 && default_bits != 2 && default_bits != 8) {
-                default_bits = 4;
-                assert(0);
-            }
+
             tpScale = typNUMBER::BF16;
             if (isZeroPoint)
                 tpZero = default_bits == 4 ? typNUMBER::Q4 : default_bits == 3 ? typNUMBER::Q3 : typNUMBER::Q2;  //???
-            tpQWeight = default_bits == 4 ? typNUMBER::Q4 : default_bits == 3 ? typNUMBER::Q3 : typNUMBER::Q2;
-            if (info == "bitnet") {
-                tpQWeight = typNUMBER::T_SIGN;
-            }
 
             string norm_type = jKV(jQ, {"normal"}, s0);
             norm             = G_Aa(norm_type, "SINKHORN") ? NORMAL_MODE::SINKHORN : NORMAL_MODE::NO_NORMAL;
 
             if (G_Has_(info, {"AWQ"}, false)) {
-                type          = AWQ;  // awq is the quant method, and the qdata format is still RTN(round to nereast int)
-                isNormalFloat = false;
+                type = AWQ;  // awq is the quant method, and the qdata format is still RTN(round to nereast int)
             } else if (G_Has_(info, {"RTN", "bitnet"}, false)) {
-                type          = MINI;
-                isNormalFloat = false;
+                type = MINI;
             } else {
                 type = default_bits == 8 ? F8Ex : MINI;
             }
         }
     }
+    return true;
 }
 bool QUANT_CARD::isPass(const std::string& name, int flag) const {
-    if (filter_MIQ.empty()) {
+    return type == NO_QUANT;
+    /*if (filter_MIQ.empty()) {
         return type == NO_QUANT;
     }
     if (G_Has_(name, filter_MIQ)) {  // model.layers.26.self_attn.q_proj.weight
         return false;
-    }
+    }*/
     return true;
 }
 template <typename Typ>
-TASKA_quant<Typ>::TASKA_quant(const GTensor* hTensor, hQUANT hQuant, cudaStream_t stream_, Q_BLOCK_AT_ blockAt, int flag) : stream(stream_) {
-    assert(hTensor != nullptr && hTensor->isWMAT());
+TASKA_quant<Typ>::TASKA_quant(const GTensor* hTensor, hQUANT hQuant, cudaStream_t stream_, int flag) : stream(stream_) {
+    assert(hTensor != nullptr /*&& hTensor->isWMAT()*/);
     assert(hQuant != nullptr);
     nEle = hTensor->size();
     nOut = hTensor->shape[0], nIn = hTensor->shape[1];
@@ -1160,15 +1232,22 @@ TASKA_quant<Typ>::TASKA_quant(const GTensor* hTensor, hQUANT hQuant, cudaStream_
     //     return;
     assert(32 % hQuant->bits == 0);
     np32bit = 32 / hQuant->bits;
-    switch (blockAt) {
+    switch (hQuant->params.blockAt) {
         case BLOCK_at_GROUP:
             tpb    = 128;  // Q_nThreadOfBlock(nOut / np32bit, hQuant->bits);
             nBlock = CEIL_DIV(spGroup[0], tpb);
+            if (G_Has_(hTensor->name, {"model.layers.0.self_attn.o_proj.qweight"}))
+                assert(nIn / tpb % 8 == 0);  //  needed@CU_Q42X_awq
             break;
         case BLOCK_at_ROW:
             spGroup[1] /= np32bit;
             // tpb    = Q_nThreadOfBlock(nOut / np32bit, hQuant->bits),            nBlock = nIn;
             tpb = Q_nThreadOfBlock(nIn / np32bit, hQuant->bits), nBlock = nOut;  // only valid for AWQ(trans)
+            break;
+        case BLOCK_at_MATRIX:
+            spGroup[0] = 1;
+            spGroup[1] = nIn * nOut;
+            tpb = 1, nBlock = 1;  // only valid for AWQ(trans)
             break;
         default:
             assert(0);
@@ -1183,13 +1262,23 @@ TASKA_quant<Typ>::TASKA_quant(const GTensor* hTensor, hQUANT hQuant, cudaStream_
     floatGama* gama_0 = hTensor->gama_T(GTensor::GAMA);
     gamaRow = hTensor->gama_T(GTensor::R_SCALE), gamaCol = hTensor->gama_T(GTensor::C_SCALE);
     zero = hTensor->gama_T(GTensor::ZERO), step = hTensor->gama_T(GTensor::STEP);
+    distill.OnNextStep(0x0);
+    if (hQuant->params.distill.isKeepShadoW()) {
+        // average = hTensor->gama_T(GTensor::AVERAGE);
+        distill.lendaW = (floatX*)hTensor->shadoW;
+        distill.lenda  = hQuant->params.distill.lenda;
+        assert(distill.lenda >= 0);
+        // PrintTensor(hTensor->name, lendaW, true, nEle, 1, 1, 1, -1);
+    }
+
+    ising = hQuant->params.ising;
     isSym = hQuant->params.isSymmetric;
     qBias = hQuant->qBias;
-    qMin = hQuant->qMin, qMax = hQuant->qMax;   
+    qMin = hQuant->qMin, qMax = hQuant->qMax;
 }
 
 template <typename Typ>
-TASKA_quant<Typ>::TASKA_quant(const GTensor* hTensor, int q0, int q1, bool isSym_, cudaStream_t stream_, Q_BLOCK_AT_ blockAt, int flag) : stream(stream_) {
+TASKA_quant<Typ>::TASKA_quant(const GTensor* hTensor, int q0, int q1, bool isSym_, cudaStream_t stream_, int flag) : stream(stream_) {
     assert(hTensor != nullptr);
     nEle     = hTensor->size();
     int bits = K_FLOATS[hTensor->type].bis;
@@ -1197,6 +1286,7 @@ TASKA_quant<Typ>::TASKA_quant(const GTensor* hTensor, int q0, int q1, bool isSym
     np32bit = 32 / bits;
     if (q0 == -1 && q1 == 1)
         qBias = 1;
+    QUANT_BLOCK_AT_ blockAt = BLOCK_at_TOKEN;
     switch (blockAt) {
         case BLOCK_at_TOKEN:
             lG = hTensor->GetDynamicEmbed();
@@ -1210,7 +1300,6 @@ TASKA_quant<Typ>::TASKA_quant(const GTensor* hTensor, int q0, int q1, bool isSym
             assert(0);
             break;
     }
-    // assert(blockAt == BLOCK_at_ROW);
 
     block3 = tpb;
     grid3  = nBlock;

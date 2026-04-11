@@ -150,6 +150,7 @@ double Err_Auto(int lenT, double* in, double* out, int& nOK, int flag);
 
 std::string EXE_name(int flag = 0x0);
 std::string FILE_EXT(const std::string& path);
+bool CHECK_FILE_EXIST(const std::string& fkey, const std::string& directory);
 bool VERIFY_DIR_EXIST(const std::string& path, bool isCreate = false);
 std::vector<std::string> FilesOfDir(const std::string& path, const std::vector<std::string>& keys = {}, int flag = 0x0);
 

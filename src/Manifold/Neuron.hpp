@@ -228,6 +228,7 @@ class GeNeuron {
     friend class Fuyou;
     friend class GTensor;
     friend class GeQuant;
+    friend class QUANT_CARD;
 };
 
 struct INSPECT {
@@ -370,6 +371,7 @@ struct Relu : public SparseNeuron {
     bool isValid() override { return true; }
     int Forw(hGTensor out, hGTensor inp_, int flag = 0X0);
     int Back(hGTensor delta, hGTensor inp_, int flag = 0X0);
+    string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
 };
 
 struct Drop : public SparseNeuron {

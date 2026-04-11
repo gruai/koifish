@@ -38,6 +38,8 @@ class GST_Application {
     static bool g_running;
     static GST_Application* g_instance;
 
+    std::chrono::system_clock::time_point start_time, end_time;
+
    protected:
     string name = "GST_Application";
     CLI_params params;
@@ -49,9 +51,9 @@ class GST_Application {
 
     // Similar to OnInitInstance
     virtual bool Initialize() {
-        char path[PATH_MAX]="\0";
-        ssize_t len = readlink("/proc/self/exe", path, sizeof(path)-1); //getpid()
-        _INFO("[APP] %s Initialization.\tProcess=%s\n", name.c_str(), path );
+        char path[PATH_MAX] = "\0";
+        ssize_t len         = readlink("/proc/self/exe", path, sizeof(path) - 1);  // getpid()
+        _INFO("[APP] %s Initialization.\tProcess=%s\n", name.c_str(), path);
 
         // Linux-specific initializations
         if (!InitializeLogging()) {
@@ -96,7 +98,7 @@ class GST_Application {
             Swim();
             return KOIFISH_OK;
         } catch (const SafeExit& e) {
-            _ERROR("%s %s", e.what(),e.getFormattedInfo().c_str());
+            _ERROR("%s %s", e.what(), e.getFormattedInfo().c_str());
             return e.getExitCode();
         } catch (const std::exception& e) {
             _ERROR("%s", e.what());

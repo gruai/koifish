@@ -104,10 +104,11 @@ bool TokenEmbed::Build(int flag) {
         out->SetRefer(gBUFF->outL);
     }
 
-    // QUANT_CARD quant_params = hFish->config.quant;
+
     quant_params.Init4Neuron(name, hFish->config.jQuant);
     quant_params.spMost = w->shape;
     hQuant              = GeQuant::MakeInstance(this, name, quant_params, {this}, 0x0);  //  {Q.w,proj_cat.w}
+    w->hQuant = hQuant; //hack for isWMAT() check
     // hFish->InitGensor(ctx,name+".batch",out,false);
 
     return true;
@@ -379,7 +380,7 @@ bool VarCoder::Build(int flag_0) {
 void Relu::BuildX(const std::string& key_, const SHAPE& sp, Fish* hG_, int flag) {
     hFish = hG_;
     fAct  = hFish->config.model.fActFFN;
-    // fAct = RELU_;
+
     shape = sp;
     assert(shape.size() == 3);
     B = shape[0], T = shape[1];
@@ -443,8 +444,7 @@ bool FFN::Build(int flag_0) {
         // down.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);       //  down.Back(gBUFF->bt4c, tGelu, gBUFF->delta, up_out);
     }
 
-    quant_params.Init4Neuron(name, hFish->config.jQuant);
-    if (layid > quant_params.nPassLayer) {
+    if (quant_params.Init4Neuron(name, hFish->config.jQuant, this)) {
         quant_params.spMost = up.w->shape;
         hQuant              = GeQuant::MakeInstance(this, name + "_quant", quant_params, SubNeurons(flag_0), 0x0);  //  {up.w, down.w, gate.w}, down.w, gate.w
     }
@@ -489,8 +489,8 @@ hGensor FFN::Ming(RLS_BP* ctx_, hGensor inpL, int flag) {
 string FFN::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]  = "\0";
     const char* tab = prefix.c_str();
-    string sS       = "";
-    int n           = 0;
+    string sS = "", sActi = relu.__repr__(suffix, prefix, flag);
+    int n = 0;
     switch (compression) {
         case SAMPLE:
             n  = hSamps->size();
@@ -501,8 +501,17 @@ string FFN::__repr__(string& suffix, string& prefix, int flag) {
             break;
     }
 
-    sprintf(buf + strlen(buf), "%s %s {hidden=%d} %s %s", tab, name.c_str(), shape[1], isSymmetric ? "SYM" : "", sS.c_str());
+    sprintf(buf + strlen(buf), "%s FFN {hidden=%d} %s %s %s", tab, /*name.c_str(),*/ shape[1], sActi.c_str(), isSymmetric ? "SYM" : "", sS.c_str());
     if (flag > 0)
         _INFO("%s", buf);
     return buf;
 };
+
+string Relu::__repr__(string& suffix, string& prefix, int flag) {
+    char buf[5012] = "\0";
+    string sS      = ACTIVATION_META[fAct][0];
+    sprintf(buf + strlen(buf), "Activation=%s", sS.c_str());
+    if (flag > 0)
+        _INFO("%s", buf);
+    return buf;
+}

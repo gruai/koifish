@@ -230,7 +230,7 @@ void GTensor::SetRefer(hGTensor hR, int flag) {
     if (hFish->config.dumpSwitch.tensor_ref > 0)
         _INFO("\t%s =====> %s\n", name, hR->name);
 }
-
+/*  Deprecated
 bool GTensor::SetTernary(typNUMBER tpT_, int flag) {
     if (type == tpT_)
         return true;
@@ -244,7 +244,7 @@ bool GTensor::SetTernary(typNUMBER tpT_, int flag) {
         t->type = tpT_;
     }
     return ReShape(shape, tpT_);
-}
+}*/
 
 float GTensor::Get(int i, int flag) const {
     assert(0);
@@ -450,7 +450,7 @@ void* JSON2SRC(const JSON& jval, const void* bytes_ptr, const size_t bytes_size,
 */
 int GTensor::LoadParam(const std::string& name_, const JSON& jval, void* bytes_ptr, size_t bytes_size, int flag) {
     //  "tokenizer.tokens" model.layers.0.mlp.down_proj.qweight   "model.embed_tokens.weight" t->name,
-    if (G_Has_(name, {"model.layers.11.mlp_down.weight"})) {  //  model.layers.0.mlp.down_proj.weight
+    if (G_Has_(name, {"model.layers.0.self_attn.q_proj.qweight"})) {  //  model.layers.0.self_attn.q_proj.qweight
         DEBUG_HERE;
     }
     if (jval.empty()) {  // load from host_data of mmp
@@ -566,6 +566,8 @@ floatGama* GTensor::gama_T(GAMA_TYPE type, floatGama* gama_0) const {
     switch (type) {
         case GTensor::R_SCALE:
             return gama_0;
+        case GTensor::AVERAGE:
+            return gama_0;
         case GTensor::C_SCALE:
             return gama_0 + nRow;
         case GTensor::ZERO:
@@ -627,7 +629,7 @@ void PrintQ_128(const char* title, const BIT_128* src, int nPer128, int qBias, s
     }
     assert(!isnan(sum2) && !isinf(sum2));
 
-    nElem *= 8;
+    nElem *= nPer128;
     len = sqrt(sum2 / nElem);
     //  printf output is only displayed if the kernel finishes successfully,  cudaDeviceSynchronize()
     _INFO("\t\"%s\" |avg|=%g(%ld) avg_len=%g sum2=%g [%f,%f] nz=%.3g\n", title, sum / nElem, nElem, len, sum2, a0, a1, nz * 1.0 / nElem);
@@ -846,7 +848,28 @@ bool GTensor::Alloc(int tpInit, int flag) {
         // if(hFish!=nullptr && hFish->isTrain())
         grad = new floatGrad[size()];
     }
-    mem_status = 1;
+    mem_status = 1; 
+    return true;   
+}
+
+bool GTensor::Activate(int tpInit, int flag){
+    assert(0 && "Not implemented...");
+    return false;
+}
+
+// only called@GeQuant::LowBit_worker
+bool GTensor::InitShadoW(const void* srcData, bool isGPU, DISTILLATION_CARD& distill, int flag) {
+    if (distill.isKeepShadoW()) {
+        assert(shadoW == nullptr);
+        string desc = name;
+        Alloc_1(&shadoW, true, desc + ".w0", szData);
+        if (isGPU) {
+            assert(0);
+        } else
+            H2D(shadoW, srcData, szData);
+    }else{
+        shadoW = ToX(gBUFF->tmpTernary);
+    }
     return true;
 }
 
@@ -927,9 +950,13 @@ bool GTensor::InitGamaParam(int flag) {
  *      1. AfterBuild->HF_Serialize->LoadParam_
  *      2.
  */
+bool huTensor::Activate(int iter, int flagInit) {    
+    return Alloc(iter, flagInit);
+}
+
 bool huTensor::Alloc(int iter, int flagInit) {
     assert(strlen(name) > 0);
-    if (G_Has_(name, {"model.layers.0.mlp.up_proj.weight"})) {  // model.layers.0.mlp.down_proj.weight qzeros scales
+    if (G_Has_(name, {"model.layers.0.self_attn.q_proj.qweight"})) {  // model.layers.0.mlp.down_proj.weight qzeros scales
         DEBUG_HERE;                                             //
     }
     size_t sz0 = szGlobalMaloc;
@@ -975,10 +1002,10 @@ bool huTensor::Alloc(int iter, int flagInit) {
             if (!isTrain) {  // only used at infer stage
                 szM = 0, szV = 0;
             }
-        } else if (BIT_TEST(flags, F_TERNARY)) {
+        } /*else if (BIT_TEST(flags, F_TERNARY)) {
             szGama = sizeof(floatGama) * ne[0];
             // Alloc_1((void **)(&gama_T), false, sizeof(float) * ne[0]);
-        }
+        }*/
         string suffix = isParam() ? ".w" : ".a";               //  weight or activation
         Alloc_1(&data, true, desc + suffix, szData + szGama);  //  1048576+98560
         // if(hQuant!=nullptr)
@@ -1037,6 +1064,9 @@ bool huTensor::Alloc(int iter, int flagInit) {
             int isDebug = 0;
         }
         if (szGlobalMaloc - sz0 >= SUM::nMinTensorAlloc || type == typNUMBER::T_SIGN) {  // 100 * 1.0e6
+            if (G_Has_(name, {"self_attn.q_proj.weight"})) {                             // model.layers.0.mlp.down_proj.weight qzeros scales
+                DEBUG_HERE;                                                              //
+            }
             _INFO("\t %s=%gM@%s type=%s shape=[%ld,%ld,%ld,%ld]%s alloc_sum=%gG\n", sA.c_str(), (szGlobalMaloc - sz0) * 1.0f / 1.0e6, name, cNameOf(type),
                   ne[0], ne[1], ne[2], ne[3], grad != nullptr ? "x2" : "", szGlobalMaloc * 1.0 / 1.0e9);
         }

@@ -343,30 +343,7 @@ int GPT2::cRawGraph(void* ctx_build, bool isBuild, int flag) {
     return 0x0;
 }
 #endif
-#ifdef __USE_GGML__
-struct ggml_cgraph* GPT2::BuildRawGraph(void* ctx_build, bool isBuild, int flag) {
-    int n_batch = config.n_batch(), n_ctx = config.n_ctx(), n_ctx_train = config.n_ctx_train, n_embd = config.nEmbed();
-    bool isJModel = !config.jModel.empty();
-    hForwTG       = std::make_shared<TGraph>(this, isJModel ? "gptJ" : "gpt_raw", ctx_build, true);
-    auto gf       = nullptr;  // GetForwRaw();
-    // ctx = ctx_build;
-    InitInput(ctx_build, false);
 
-    if (isJModel)
-        jToGraph(ctx_build, isBuild, flag);
-    // else
-    //     cRawGraph(ctx_build,isBuild,flag);
-    assert(preLogits != nullptr);
-    BuildLoss(ctx_build, preLogits);
-
-#ifndef _TENSOR_G_
-    if (rnd == nullptr)
-        rnd = init_random_normal_distribution(config.common.seed, 0.0f, 1.0f, -1.0f, +1.0f);
-    size_t sz2 = hEDS->Alloc(hForwTG, ctx_build);
-#endif
-    return gf;
-}
-#endif
 
 string GPT2::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]  = "\0";

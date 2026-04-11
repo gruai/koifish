@@ -11,7 +11,7 @@
 #include "../../Manifold/Fish.hpp"
 #include "../../Manifold/Neuron.hpp"
 #include "./kernel/embed.cuh"
-#include "./kernel/gelu.cuh"
+// #include "./kernel/gelu.cuh"
 #include "./kernel/layernorm.cuh"
 #include "./kernel/operator.cuh"
 #include "./kernel/sort_rank.cuh"
@@ -180,6 +180,17 @@ TOKEN_ID GeneratOnPrompt::Sample(int idx, bool is_resampling) {
     D2H(gpuLogits.index_sorted + off, cpuLogits.index, sizeof(int) * nCanTopK);
     D2H(gpuLogits.logits_sorted + off, cpuLogits.logits, sizeof(floatLogits) * nCanTopK);
     return Sample_cpu(idx, true);
+}
+
+template <typename T>
+__global__ void CU_swiglu_v0(T* out, const T* gate, const T* inp, int N);
+template <typename T>
+void inline swiglu_forward(T* out, const T* inp, const T* gate, int N, cudaStream_t stream=0x0) {
+    const int block_size = 128;
+    const int grid_size  = CEIL_DIV(N, block_size);
+    // CU_swiglu_v1<<<grid_size, block_size, 0, stream>>>(out, inp, gate, N);
+    CU_swiglu_v0<<<grid_size, block_size, 0, stream>>>(out, inp, gate, N);
+    cudaCheck(cudaGetLastError());
 }
 
 template <>

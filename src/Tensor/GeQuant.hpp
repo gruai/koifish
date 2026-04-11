@@ -27,6 +27,7 @@ typedef shared_ptr<GeQuant> hQUANT;
 class GeNeuron;
 class GTensor;
 class Fish;
+class Optimizer;
 
 namespace Grusoft {
 class Distribution;
@@ -56,14 +57,15 @@ class GeQuant : public std::enable_shared_from_this<GeQuant> {
     //  1.  key embeddings - In initial layers, no significant outliers are observed. However, in the deeper layers, few channels (approximately four) exhibit
     //  visibly larger magnitudes (outliers),
     int nOutlier      = 128;
-    int nPer128 = 4;            // number of elems per 128 bit
+    int nPer128       = 4;  // number of elems per 128 bit
     GeNeuron* hNeuron = nullptr;
     std::string name;
     Grusoft::GRander rander;
     uint32_t seed;
-    bool isGPU      = false;
-    int nMostLoop   = 16;  // 8
-    float impurity  = 0;
+    bool isGPU         = false;
+
+    int nMostLoop      = 16;  // 8
+    float impurity     = 0;
     float imbalance = 0, T_imbal = 1.1f;
     float err_0 = FLT_MAX, err_1 = 0;
     std::vector<double> split_thrshs;
@@ -86,7 +88,7 @@ class GeQuant : public std::enable_shared_from_this<GeQuant> {
     int qMin, qMax, qBias = 0, bits = -1;
     double maxshrink, mse, norm, grid;
     float *scale = nullptr, *zero = nullptr;
-    bool trits, perchannel = false;
+    bool trits, perchannel        = false;
 
     static hQUANT MakeInstance(GeNeuron* hNeuron, const std::string& nam_, QUANT_CARD& params, std::vector<GeNeuron*> neurons, int flag);
 
@@ -112,7 +114,7 @@ class GeQuant : public std::enable_shared_from_this<GeQuant> {
 
     // x=8,4,2,1....
     virtual float RTN_x(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
-    virtual float RTN_1(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
+    virtual float ISing(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
     // NormalF_4, NormalF_3
     virtual float RT_NormalF(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
     // Do quant (would reshape tensor if needed)
@@ -148,17 +150,11 @@ int inline Q_nThreadOfBlock(int N, int bit, int nT0 = 1024) {  // CU_T4B_BIG
     return nT;
 }
 
-enum Q_BLOCK_AT_ {
-    BLOCK_at_GROUP,
-    BLOCK_at_ROW,
-    BLOCK_at_TOKEN
-};
-
 template <typename Typ>
 struct TASKA_quant {
-    bool isOnline = false;
+    bool isOnline    = false;
     bool isOverwrite = false;
-    bool isSym = false;
+    bool isSym       = false;
     // using typ128 = PackedN<Typ, 16 / sizeof(Typ)>;
     cudaStream_t stream;
     size_t smem = 0x0;
@@ -167,13 +163,16 @@ struct TASKA_quant {
     int grid3 = 0, nBlock = 0;  // grid3=(nBlock, 1, 1), nBlock is the total number of blocks
     int rc_normal = 0, seed = 42, nG = -1, lG = -1;
     int np32bit        = 1;  // number of elements per 32_bit
-    floatGama *gamaCol = nullptr, *gamaRow = nullptr, *zero = nullptr, *step = nullptr;
+    floatGama *gamaCol = nullptr, *gamaRow = nullptr, *zero = nullptr, *step = nullptr; // *average = nullptr;
+    DISTILLATION_CARD distill;
+    
     int nBin = 0, qMin = 0, qMax = 0, qBias = 0;
     bool isAccumErr = false;
     double* prober;
+    QUANT_ISING_ ising = QUANT_ISING_::I_OFF;
 
-    TASKA_quant(const GTensor* hTensor, hQUANT hQuant, cudaStream_t stream_, Q_BLOCK_AT_ blockAt = BLOCK_at_GROUP, int flag = 0x0);
-    TASKA_quant(const GTensor* hTensor, int q0, int q1, bool isSym_, cudaStream_t stream_, Q_BLOCK_AT_ blockAt = BLOCK_at_ROW, int flag = 0x0);
+    TASKA_quant(const GTensor* hTensor, hQUANT hQuant, cudaStream_t stream_, int flag = 0x0);
+    TASKA_quant(const GTensor* hTensor, int q0, int q1, bool isSym_, cudaStream_t stream_, int flag = 0x0);
     bool isValid() const {
         if (nBlock <= 0)
             return false;

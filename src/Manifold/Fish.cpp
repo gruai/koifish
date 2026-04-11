@@ -245,12 +245,12 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
             // optParams.push_back(t);
             // nx += tELEM(t);
             n0++;                                                //
-            if (G_Has_(t->name, config.datatypes.arrTernary)) {  // {"ffn_down.weight", "ffn_up.weight"}
-                t->SetTernary(typNUMBER::T_BINARY_3);
-            }
-            if (G_Has_(t->name, config.datatypes.arrTile)) {  // {"ffn_down.weight", "ffn_up.weight"}
-                t->SetTernary(typNUMBER::T_BINARY_TILE);
-            }
+            // if (G_Has_(t->name, config.datatypes.arrTernary)) {  // {"ffn_down.weight", "ffn_up.weight"}
+            //     t->SetTernary(typNUMBER::T_BINARY_3);
+            // }
+            // if (G_Has_(t->name, config.datatypes.arrTile)) {  // {"ffn_down.weight", "ffn_up.weight"}
+            //     t->SetTernary(typNUMBER::T_BINARY_TILE);
+            // }
             if (t->hQuant != nullptr && t->hQuant->params.type == AWQ) {
                 t->hQuant->AfterLowBit(t, nullptr);
             }
@@ -395,16 +395,14 @@ bool Fish::Build(int flag) {
     bool isInitParam = false;
     // , isJModel = !config.jModel.empty();    assert(isJModel);
     isSymbolicAnalysis = true;
-
-    {
-        InitInput(ctx_build, true, flag);
-        //  isInitParam = true;     // would init param online, not here
-        hForwTG = std::make_shared<TGraph>(this, "J_model", ctx_build, true);
-        jToGraph(ctx_build, false, flag);
-        assert(hCLS != nullptr);
-        BuildLoss(ctx_build, hCLS->preLogits);
-        iRet = BuildComputeGraph(0, ctx_build, 0x0);
-    }
+    
+    InitInput(ctx_build, true, flag);
+    //  isInitParam = true;     // would init param online, not here
+    hForwTG = std::make_shared<TGraph>(this, "J_model", ctx_build, true);
+    jToGraph(ctx_build, false, flag);
+    assert(hCLS != nullptr);
+    BuildLoss(ctx_build, hCLS->preLogits);
+    iRet = BuildComputeGraph(0, ctx_build, 0x0);    
 
     assert(iRet == 0x0);
     Statistic(0x0);
@@ -567,7 +565,7 @@ bool Fish::LoadCheckPoint(CheckPoint_Params& ckp, int flag) {
 
 void Fish::Statistic_Quant(int typ, int flag) {
     int nT = gensors.size(), nQuant = quants.size(), nF16 = 0, nBF16 = 0, nSinkNormal = 0, nQT = 0;
-    float T_errQ = 1.0, sum = 0.0;
+    float sum = 0.0;
     std::vector<string> arrQ4, arrQ3, arrQ2, arrF8;
     std::vector<string> arrGBDT, arrRTN;
     size_t nzP = 0, nzBit = 0;
@@ -586,7 +584,7 @@ void Fish::Statistic_Quant(int typ, int flag) {
             } else {
                 arrRTN.push_back(t->name);
             }
-            bool isWarn = t->disq.err > T_errQ;
+            bool isWarn = t->disq.err > hQuant->params.T_errQ;
             sum += t->disq.err, nQT++;
             if (isWarn)
                 _LOG(isWarn ? DUMP_WARN : DUMP_INFO, "\t[Quant]_<%s> %.5g\t@%s \n", t->disq.info.c_str(), t->disq.err, t->name);
@@ -606,6 +604,7 @@ void Fish::Statistic_Quant(int typ, int flag) {
                 arrQ3.push_back(t->name);
                 break;
             case typNUMBER::Q2:
+            case typNUMBER::T_SIGN:
                 arrQ2.push_back(t->name);
                 break;
             case typNUMBER::BF16:

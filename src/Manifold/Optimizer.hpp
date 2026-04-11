@@ -89,9 +89,10 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     }
 
     // Learning rate hLR
-    hLearnSKDU hLR     = nullptr;
-    bool isStopImprove = false;
-    bool isPreGStep    = false;
+    hLearnSKDU hLR       = nullptr;
+    hLearnSKDU hAR_quant = nullptr;     //Anealing rate need by some quants
+    bool isStopImprove   = false;
+    bool isPreGStep      = false;
 
     virtual void Clear() {}
     // update sched & dump some info
@@ -149,10 +150,15 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     // virtual float Prefill(hSampLoader loader,int iter,int flag=0x0);
     virtual int GetITER(int flag = 0x0) const;
     virtual float LearningRate(int flag = 0x0) {
-        float lr = hLR->LearningRate(iter);
+        // if(flag==0x100)  //hack
+        //     return last_lr;
+
+        float lr = hLR->LearningRate(iter);   //  should be iter-1 because iter = iter0 + t + 1;
         last_lr  = lr;
         return lr;  // hLR->LearningRate(iter);
     }
+    // return the distillation-ratio of teacher
+    virtual float DistillRate(int type, int flag = 0x0);
     virtual void UpdateTrainLoss(int x, float loss, int flag = 0x0);  //
     virtual double UpdateTensorParam(hGensor hP, floatX* g, float gnorm);
     virtual bool isStopImproving() { return isStopImprove; }
@@ -187,6 +193,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     friend class TGraph;
     friend class StepInfos;
     friend class PIPE_Optimizer;
+    friend class GTensor;
 };
 typedef shared_ptr<Optimizer> hOptimizer;
 

@@ -582,8 +582,8 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
         DEBUG_HERE;
     }
 
-    int dT4B  = 512;  //  1024?
-    int dGRID = CEIL_DIV(num_parameters, dT4B);
+    int dT4B = 512, dGRID = CEIL_DIV(num_parameters, dT4B);
+    float s = 0.0;
     assert(dGRID * dT4B < INT_MAX);
     size_t smemPB    = 1024 * sizeof(float);
     beta1_correction = 1.0f - powf(beta1, iter);
@@ -631,6 +631,9 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
                     tensor->Print("gama_0", 0, -1);
                 }
                 task_11.config.seed = this->seed;
+                if ((s = hOPT->DistillRate(0x0)) > 0) {
+                    this->learning_rate *= 1.0 - s;  // hQuant->params.distill.lenda = hOPT->DistillRate();
+                }
                 CU_adamw_p<<<task_11.grid3, task_11.block3, task_11.smem, task_11.stream>>>(task_11, *this);
                 CheckLastError("AdamW");
                 if (tensor->color) {
@@ -649,7 +652,8 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
                         // }
                     } else {
                         assert(tensor->gama_param == nullptr);
-                        tensor->SetDataX(params);
+                        tensor->SetDataX(params);  // qaunt version needs STE(Straight-Through Estimator - update dequant high-precision weights with gradient,
+                                                   // then quant it for the next forward pass)
                         // if (isGama2Origin) {
                         //     tensor->Print("gama_1", 0, -1);
                         // }

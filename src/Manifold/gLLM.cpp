@@ -502,6 +502,7 @@ bool NLP_AutoRegressive::CreateExlogists(hWIKI wiki, uint32_t n_ctx, uint32_t n_
     return false;
 }
 
+/*  Deprecated
 //  NLP_AutoRegressive::Train would call this function
 void Fish::UpdateTernary(int flag) {
     RLS_BP* hRLS = hEDS->GetScheduler<RLS_BP>();
@@ -526,7 +527,7 @@ void Fish::UpdateTernary(int flag) {
     if (!bit_tensors.empty()) {
         _INFO("\t@{%s}\n", bit_tensors.c_str());
     }
-}
+}*/
 
 void NLP_AutoRegressive::Train(int flag) {
     hOPT->BeforeTrain(tokens_input, 0x0);
@@ -542,7 +543,7 @@ void NLP_AutoRegressive::Train(int flag) {
 
     // RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
     // hRLS->Prepare(-1);
-    UpdateTernary(flag);
+    // UpdateTernary(flag);
     int64_t now = GST_ms();
     double ms   = 0;
     // print_build_info();

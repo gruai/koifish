@@ -172,24 +172,31 @@ int GST_util::LoadDoubleMAT(const char* sPath, const char* sVar, int* nRow, int*
 }
 #endif
 
-//	std::filesystem::exists.
-/*extern inline FILE *fexist_check(const char *path, const char *mode, const char *file, int line) {
-    FILE *fp = fopen(path, mode);
-    if (fp == NULL) {
-        fprintf(stderr, "Error: Failed to open file '%s' at %s:%d\n", path, file, line);
-        fprintf(stderr, "Error details:\n");
-        fprintf(stderr, "  File: %s\n", file);
-        fprintf(stderr, "  Line: %d\n", line);
-        fprintf(stderr, "  Path: %s\n", path);
-        fprintf(stderr, "  Mode: %s\n", mode);
-        fprintf(stderr,
-                "---> HINT 1: dataset files/code have moved to dev/data recently (May 20, 2024). You may have to mv them from the legacy data/ dir to "
-                "dev/data/(dataset), or re-run the data preprocessing script. Refer back to the main README\n");
-        fprintf(stderr, "---> HINT 2: possibly try to re-run `python train_gpt2.py`\n");
-        exit(EXIT_FAILURE);
+namespace fs = std::filesystem;
+
+bool CHECK_FILE_EXIST(const std::string& fkey, const std::string& directory) {
+    try {
+        fs::path dir_path(directory);
+        if (!fs::exists(dir_path) || !fs::is_directory(dir_path)) {
+            std::cerr << "Error: Directory '" << directory << "' doesn't exist or is not a directory\n";
+            return false;
+        }
+
+        // Iterate through directory entries
+        for (const auto& entry : fs::directory_iterator(dir_path)) {
+            if (fs::is_regular_file(entry.status())) {
+                std::string filename = entry.path().filename().string();
+                if (filename.rfind(fkey, 0) == 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    } catch (const fs::filesystem_error& e) {
+        std::cerr << "Filesystem error: " << e.what() << std::endl;
+        return false;
     }
-    return fp;
-}*/
+}
 
 bool VERIFY_DIR_EXIST(const std::string& path, bool isCreate) {
     if (path.empty()) {
@@ -198,23 +205,23 @@ bool VERIFY_DIR_EXIST(const std::string& path, bool isCreate) {
 
     bool isExist = false;
     try {
-        std::filesystem::path filePath = path;
+        fs::path filePath = path;
         std::string dir_path           = filePath.parent_path();
-        isExist                        = std::filesystem::exists(dir_path);
+        isExist                        = fs::exists(dir_path);
         if (!isExist && isCreate) {
-            bool created = std::filesystem::create_directories(dir_path);
+            bool created = fs::create_directories(dir_path);
             if (created) {
                 std::cout << "Directory created: " << dir_path << std::endl;
             } else {
                 std::cout << "Directory already exists or failed: " << dir_path << std::endl;
             }
         }
-        isExist = std::filesystem::exists(dir_path);
+        isExist = fs::exists(dir_path);
         if (!isExist) {
             _WARN("%s is not exist!", path.c_str());
         }
         return isExist;
-    } catch (const std::filesystem::filesystem_error& e) {
+    } catch (const fs::filesystem_error& e) {
         _ERROR("\"%s\" is not exist! ERR=%s\n", path.c_str(), e.what());
         return isExist;
     }
@@ -353,7 +360,7 @@ bool STR2FILE(const std::string fPath, const std::string& info, std::ofstream::o
 }
 
 std::string FILE_EXT(const std::string& path) {
-    std::filesystem::path filePath = path;
+    fs::path filePath = path;
     std::string sExt               = filePath.extension().string();
     if (sExt.size() > 1)
         sExt = sExt.substr(1);  // substr(1) to remove the dot
@@ -390,8 +397,6 @@ std::vector<std::string> FilesOfDir(const std::string& path, const std::vector<s
 
     return files;
 }
-
-
 
 // #define UNPACK_32to2_(val, arr)                                 \
 //     int qq[16];                                                   \

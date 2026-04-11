@@ -69,21 +69,17 @@ constexpr std::bool_constant<true> False;
 // Error checking
 
 // CUDA error checking
-inline void cudaCheck(cudaError_t error, const char* file, int line) {
+inline void _cudaCheck(cudaError_t error, const char* file, int line) {
     if (error != cudaSuccess) {
         _ERROR("[CUDA ERROR] at file %s:%d:\n\"%s\" (%s code=%d)\n", file, line, cudaGetErrorString(error), cudaGetErrorName(error), error);
         exit(KOIFISH_CUDA_CHECK);
     }
 };
-#define cudaCheck(err) (cudaCheck(err, __FILE__, __LINE__))
+#define cudaCheck(err) (_cudaCheck(err, __FILE__, __LINE__))
 
-inline void cudaCheckLast(const char* const file, const int line) {
+inline void cudaCheckLast(const char* file, const int line) {
     cudaError_t const err{cudaGetLastError()};
-    if (err != cudaSuccess) {
-        std::cerr << "CUDA Runtime Error at: " << file << ":" << line << std::endl;
-        std::cerr << cudaGetErrorString(err) << std::endl;
-        // std::exit(EXIT_FAILURE);
-    }
+    _cudaCheck(err, file, line);
 }
 #define CHECK_LAST_CUDA_ERROR() cudaCheckLast(__FILE__, __LINE__)
 

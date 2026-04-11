@@ -183,7 +183,12 @@ Ganglia::Ganglia(Fish* hG_, const string& key_, std::vector<hNEURON>& ns_, int f
 }
 
 Relu::Relu(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {}
-bool Relu::Build(int flag) { return true; };
+
+bool Relu::Build(int flag) { 
+
+    return true;
+};
+
 hGensor Relu::Ming(RLS_BP* ctx_, hGensor cur, int flag) { return cur; }
 
 Drop::Drop(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {}
@@ -773,7 +778,7 @@ bool LayerNormal::Build(int flag0) {
 string LayerNormal::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]  = "\0";
     const char* tab = prefix.c_str();
-    sprintf(buf + strlen(buf), "%s %s(%s%s%s) qknormal=%d out=%s", tab, isRMS ? "RMS" : "LayerNormal", b == nullptr ? "" : "+b", mean == nullptr ? "" : "+mean",
+    sprintf(buf + strlen(buf), "%s %s(%s%s%s) qknormal_ver=%d out=%s", tab, isRMS ? "RMS" : "LayerNormal", b == nullptr ? "" : "+b", mean == nullptr ? "" : "+mean",
             rstd == nullptr ? "" : "+rstd", ver_rms_qknormal_, out == nullptr ? "NULL" : out->name);
     if (flag > 0)
         _INFO("%s", buf);

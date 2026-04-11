@@ -23,23 +23,26 @@ class EDGE_DEVICES;
  * becomes available.
  */
 struct LearnSKDU {
+    string name = "LR";
     typedef enum {
         STATIC,
         TRI_LINE,
         COSINE,
         COSINE_EPOCH,
         WSD,  //  Warmup-Stable-Decay (WSD), might be less stable with spike loss curve
+        FIX,
     } POLICY;
     POLICY policy = COSINE;
 
     TRAIN_CARD _params;
     const static int TIMESTEPS = 1000;
-    int warmup = 1, mostIter = 1;
+    int warmup = 1, mostIter = 1, last_froze = 0;
+    float lr_base = 0.0, lr_previous = 0.0, lr_final = 0.0;
     float alphas_cumprod[TIMESTEPS];
     float sigmas[TIMESTEPS];
     float log_sigmas[TIMESTEPS];
 
-    float LearningRate(int64_t step, int flag = 0x0);
+    virtual float LearningRate(int64_t step, int flag = 0x0);
     float cosine_decay(int64_t step, int64_t decay_steps, float minimum) {
         if (step > decay_steps) {
             step = decay_steps;
@@ -69,6 +72,7 @@ struct LearnSKDU {
     void Append(float a) { history.vals.push_back(a); }
 
     LearnSKDU(TRAIN_CARD& train_params);
+    LearnSKDU(DISTILLATION_CARD& distll, TRAIN_CARD& train_params, int flag = 0x0);
     virtual void Dump(int typ);
     virtual std::vector<float> get_sigmas(uint32_t n) = 0;
 
@@ -118,6 +122,7 @@ typedef std::shared_ptr<LearnSKDU> hLearnSKDU;
 
 struct DiscreteSchedule : LearnSKDU {
     DiscreteSchedule(TRAIN_CARD& train_params) : LearnSKDU(train_params) {}
+    DiscreteSchedule(DISTILLATION_CARD& distll, TRAIN_CARD& train_params, int flag = 0x0) : LearnSKDU(distll, train_params, flag) {}
     std::vector<float> get_sigmas(uint32_t n) {
         std::vector<float> result;
 

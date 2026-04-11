@@ -74,7 +74,10 @@ enum NORMAL_MODE {
 /**
  *
  */
-enum ACTIVATION_FUNC { SIGMOID, RELU2, RELU_, LINEAR, GELU, GLU, SWIG };
+enum ACTIVATION_FUNC { SIGMOID, GLU2, RELU_, LINEAR, GELU, GLU, SWIG };
+inline std::map<ACTIVATION_FUNC, std::vector<std::string>> ACTIVATION_META = {
+    {SIGMOID, {"SIGMOID"}}, {GLU2, {"GLU2"}}, {RELU_, {"RELU"}}, {LINEAR, {"LINEAR"}}, {GELU, {"GELU"}}, {GLU, {"GLU"}}, {SWIG, {"SWIG"}},
+};
 
 /**
  *
@@ -139,6 +142,19 @@ static std::map<MEM_STRATEGY, std::string> MEM_STRATEGY_desc = {
     {MEM_SWAP, "SWAP"},
     {MEM_SWAP_GUOKE, "SWAP_GUOKE"},
 };
+
+enum FILE_FORMAT_TYPE {
+    FILE_UNKNOW,
+    FILE_JSON,
+    FILE_FISH,
+    FILE_CHECKPOINT,  // *.ck
+
+    CKP_HF,      // HugFace transformers compatible,
+    CKP_KOIFISH  // Koifish checkpoint is a very-lite format with only safetensors(config json & other metadata is also stored in tensors)
+};
+
+FILE_FORMAT_TYPE FormatOfFile(const std::string& path, int flag = 0x0);
+
 // parameters of scheduling
 struct SKDU_params {
     MEM_STRATEGY strategy = PRE_ALLOC_GPU;
@@ -289,6 +305,9 @@ class MODEL_CARD {
         std::string model_path;
     };
     Sparsing sparse;
+
+    FILE_FORMAT_TYPE ckp_format = CKP_KOIFISH;
+
     // MODEL_ENSEMBLE ensemble = Fuyou_params::FUYOU_BEST;
     ACTIVATION_FUNC fActFFN = SWIG, fActSLP = SWIG;
     INIT_WEIGHT tpInitWeight = INIT_WEIGHT::RANDOM;
@@ -337,7 +356,6 @@ class MODEL_CARD {
     */
     bool isEmbedWeightTying = false;
     std::vector<std::string> skip_st;
-
     bool isQKNormal    = false;
     bool isSeparateQKV = false;
     QKV_PACK qkv4dnn   = QKV_PACK::QKVQKV;  // the  fromat of input var_PACK for cudnn GRAPH
@@ -359,7 +377,7 @@ class MODEL_CARD {
     MODEL_CARD();
     // virtual bool OnJsonCALM(CLI_params* hConfig, const std::string& path, const JSON& meta, int flag = 0X0);
     // more param from HF's "model_card"
-    virtual bool InitHugFace(CLI_params* hConfig, const JSON& jConfig, const std::string& sCardPath, int flag = 0x0);
+    virtual bool InitHugFace(CLI_params* hConfig, const JSON& jConfig, bool needAlign, int flag = 0x0);
     virtual bool InitChatTemplate(CLI_params* hConfig, int flag = 0x0);
     bool isLoadCard() { return !sCardPath.empty(); }
     void Dump(int typ);
@@ -370,6 +388,24 @@ class MODEL_CARD {
 enum EVICTION_MODE {
     NO_EVICTION,
     H2O,  //  Heavy Hitter Oracle
+};
+
+enum ANNEAL_SCHEDULE { ANNEAL_OFF, ANNEAL_DECAY_COSINE, ANNEAL_DECAY_LINEAR, ANNEAL_DECAY_FIX };
+
+struct DISTILLATION_CARD {
+    float lenda = -1.f;
+
+    void OnNextStep(int step, int flag = 0x0) {
+        lenda  = -1.f;
+        lendaW = nullptr;
+    }
+    bool isDistll() { return anneal != ANNEAL_OFF; }
+    ANNEAL_SCHEDULE anneal = ANNEAL_OFF;  // ANNEAL_DECAY_FIX;
+
+    floatX* lendaW = nullptr;
+    bool isKeepShadoW(int flag = 0x0) { return anneal != ANNEAL_OFF; }
+    bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
+    void Dump(int typ);
 };
 
 /**
@@ -390,25 +426,43 @@ enum QUANT_MODE {
     KV_PolarQuant
 };
 
+enum QUANT_BLOCK_AT_ {
+    BLOCK_at_GROUP,
+    BLOCK_at_ROW,
+    BLOCK_at_TOKEN,
+    BLOCK_at_MATRIX,  // Weight matrix only use one scaling
+};
+
+//  {-1,1}/{0,1} or Blume-Capel Model-{-1,0,1}
+enum QUANT_ISING_ {
+    I_OFF,  // no use Ising model
+    I_01,
+    I_11,
+    I_TERNARY,  //  {-1,0,1} also Blume-Capel Model
+};
+
 struct QUANT_CARD {
+    DISTILLATION_CARD distill;
+
     enum TRAIN_TARGET { X_WEIGHT, X_GAMA, X_HYBRID };
     TRAIN_TARGET xTarget = X_WEIGHT;
     // size_t szM = 0x0, szV = 0x0, szGrad = 0x0;
-
-    int TransA       = 1;
-    int default_bits = 4;
-    int nPassLayer   = 0;  // fist layer is hard to quant
-    float T_errQ     = 0.3;
+    QUANT_BLOCK_AT_ blockAt = BLOCK_at_GROUP;
+    int TransA              = 1;
+    int default_bits        = 4;
+    std::vector<int> filter_Layer;  // For example, fist layer is hard to quant
+    float T_errQ = 0.3;
     int T_group = 128, T_group_batch = 8;
     SHAPE spMost;
     std::string sX = "";
 
     bool isVendorQuant = false;
     bool hasZS         = false;  // some vendors use explicit zero/scale tensors
-    bool isNormalFloat = true;   //  each bin under a normal distribution N(0,1) contains equal probability mass
+    bool isNormalFloat = false;  //  each bin under a normal distribution N(0,1) contains equal probability mass
     bool isSymmetric   = false;
     bool isZeroPoint   = false;
-    bool isTernary     = false;  //{-1,0,1}
+
+    QUANT_ISING_ ising = I_OFF;  //
 
     typNUMBER tpZero, tpScale, tpQWeight;
 
@@ -420,7 +474,7 @@ struct QUANT_CARD {
 
     QUANT_CARD() {}
     // virtual void InitFromVendor(const JSON& jVendor, int flag = 0x0);
-    virtual void Init4Neuron(const std::string& name, const JSON& jQuant, void* hUserData = nullptr, int flag = 0);
+    virtual bool Init4Neuron(const std::string& name, const JSON& jQuant, void* hUserData = nullptr, int flag = 0);
 
     virtual bool isPass(const std::string& name, int flag = 0x0) const;
     std::vector<std::string> filter_MIQ;  // for debug
@@ -611,10 +665,6 @@ struct CheckPoint_Params {
         FULL,   //  Has parameters of all fuyou
 
     };
-    enum FORMAT {
-        HF,  //   HugFace transformers compatible,
-        KOIFISH,
-    };
 
     int curEpoch = -1, curIter = -1, curFuyou = -1;
     std::vector<std::string> fuyou_filter_reload;
@@ -623,10 +673,10 @@ struct CheckPoint_Params {
     // More variables of current state
     std::map<std::string, double> variabls;
 
-    TYPE type     = BEST;
-    FORMAT format = KOIFISH;
-    int iter      = -1;
-    void* hAllST  = nullptr;
+    TYPE type               = BEST;
+    FILE_FORMAT_TYPE format = CKP_KOIFISH;
+    int iter                = -1;
+    void* hAllST            = nullptr;
     CheckPoint_Params() {}
     CheckPoint_Params(const JSON& jConfig, const std::string& key, bool isSave, int flag = 0x0);
     // CheckPoint_Params(const std::string& tp, const std::string& p, int x, bool in = false);
@@ -663,6 +713,7 @@ struct CLI_params {
 
     TRAIN_CARD common;
     MODEL_CARD model;
+    DISTILLATION_CARD distill;
 
     std::vector<CheckPoint_Params> ckp_in, ckp_out;
     CheckPoint_Params state;
@@ -930,6 +981,8 @@ struct CLI_params {
     void Dump(int flag = 0x0);
 
     bool parse(int argc, char** argv);
+    bool LoadJConfig(const std::string& path, int flag = 0x0);
+
     virtual bool InitJConfig(int flag = 0x0);
     virtual bool ToJConfig(int flag = 0x0);
     virtual bool InitChekcpoints(int argc, char** argv, const std::string& ckp_queue, int flag = 0x0);

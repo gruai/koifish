@@ -17,6 +17,9 @@
 LearnSKDU::LearnSKDU(TRAIN_CARD& train_params) : _params(train_params) {
     if (_params.lr_restart == 1)
         policy = COSINE_EPOCH;
+    lr_base                        = _params.LearningRate();
+    float final_learning_rate_frac = 0.01;
+    lr_final                       = lr_base * final_learning_rate_frac;
     warmup = _params.warmup, mostIter = _params.nMostIter;
     if (policy == COSINE_EPOCH) {
         mostIter = _params.nEpochIter;
@@ -27,39 +30,71 @@ LearnSKDU::LearnSKDU(TRAIN_CARD& train_params) : _params(train_params) {
     }
 }
 
-void LearnSKDU::Dump(int typ) { _INFO("\tLR policy=%s warmup=%d@%d\n", policy == COSINE ? "Cosine" : "Cosine_EPOCH", warmup, mostIter); }
+LearnSKDU::LearnSKDU(DISTILLATION_CARD& distll, TRAIN_CARD& train_params, int flag) : _params(train_params) {
+    name = "Distill";
+    if (distll.anneal == ANNEAL_DECAY_FIX) {
+        policy = FIX;
+    } else if (_params.lr_restart == 1)
+        policy = COSINE_EPOCH;
+    warmup = 0, mostIter = _params.nMostIter;
+    lr_final   = 0.0;
+    last_froze = mostIter * 0.02;  // 2-3%
+    lr_base    = 1.0;
+    // nEpochIter = _params.nEpochIter;
+    // if (policy == COSINE_EPOCH) {
+    //     mostIter = _params.nEpochIter;
+    // }
+    if (mostIter < warmup) {
+        warmup = max(1, mostIter / 10);
+        assert(warmup > 0);
+    }
+}
+
+void LearnSKDU::Dump(int typ) {
+    _INFO("\t %s policy=%s warmup=%d@%d final=%g@%d\n", name.c_str(), policy == COSINE ? "Cosine" : "Cosine_EPOCH", warmup, mostIter, lr_final, last_froze);
+}
 
 float LearnSKDU::LearningRate(int64_t step, int flag) {
-    float lr0                      = _params.LearningRate(), lr;
-    float final_learning_rate_frac = 0.01, min_lr = lr0 * final_learning_rate_frac;
+    assert(step>=0);
+    float lr0 = lr_base, lr;
+    // assert(lr_base == _params.LearningRate());
+
     if (policy == COSINE_EPOCH) {  //  9799        60999
-        step = step % _params.nEpochIter;
+        step = step % mostIter;
     }
+
+    // step = step % mostIter;
+    // assert(step<mostIter);
     switch (policy) {
+        case FIX:  // mainly for debug some case
+            lr = lr_base;
+            break;
         case WSD: {
             int iter_decay = mostIter * 0.9;
             if (step < warmup) {
                 lr = lr0 * ((float)(step + 1)) / warmup;
             } else if (step > iter_decay) {
-                lr = min_lr + (lr0 - min_lr) * (1.0 - (step - iter_decay) / (mostIter - iter_decay));
+                lr = lr_final + (lr0 - lr_final) * (1.0 - (step - iter_decay) / (mostIter - iter_decay));
             } else {
                 lr = lr0;
             }
         } break;
         default:
-            if (step < warmup) {
+            if (step < warmup) {    //  0,1,2, ..., warmup-1
                 lr = lr0 * ((float)(step + 1)) / warmup;
+            } else if (step >= mostIter - last_froze) {
+                lr = lr_final;
             } else {
-                float decay_ratio = ((float)(step - warmup)) / (mostIter - warmup);
+                float decay_ratio = ((float)(step - warmup)) / (mostIter - warmup - last_froze);
                 assert(0.0f <= decay_ratio && decay_ratio <= 1.0f);
                 float coeff = 0.5f * (1.0f + cosf(M_PI * decay_ratio));  // coeff starts at 1 and goes to 0
                 assert(0.0f <= coeff && coeff <= 1.0f);
-                float min_lr = lr0 * final_learning_rate_frac;
-                lr           = min_lr + coeff * (lr0 - min_lr);
+                // float min_lr = lr0 * final_learning_rate_frac;
+                lr = lr_final + coeff * (lr0 - lr_final);
             }
             break;
     }
-
+    lr_previous = lr;
     return lr;
 }
 
@@ -200,7 +235,7 @@ void GeNeuron::ManageMemory(DATA_PLACE target, int typ, int flag) {
                         DEBUG_HERE;
                         continue;
                     }
-                    t->Alloc(hOPT->GetITER(), flag);
+                    t->Activate(hOPT->GetITER(), flag);
                     op = "Alloc";
                     if (BIT_TEST(t->flags, GTensor::F_RELOAD)) {
                         bool isFree = !hFish->config.fuyou.isFirst(layid);

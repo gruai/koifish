@@ -226,7 +226,9 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
 
     void* host_data = nullptr;  // somtimes, we need data both in device&host
     void* data      = nullptr;
-    // a serial of LORA for weight
+
+    virtual bool InitShadoW(const void* srcData, bool isGPU, DISTILLATION_CARD& distill, int flag = 0x0);
+    void* shadoW = nullptr;     //  Shadow Weights
 
     //
     enum GAMA_TYPE {
@@ -237,7 +239,8 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
         ZERO,
         STEP,  // step of RTN
         LUT,   // values of codebook
-        // BACKUP,  // backup of data+gama
+
+        AVERAGE
 
         // OFF,
     };
@@ -276,7 +279,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
         F_ONLYREF   = 0x40000,  // Partial/Sub tensor
         F_TMP_GRAD  = 0x80000,
 
-        F_TERNARY = 0x100000,  // Deprecated
+        // F_TERNARY = 0x100000,  // Deprecated
         F_LORA_A  = 0x200000,
         F_LORA_B  = 0x400000,
         F_GAMA    = 0x800000,
@@ -300,6 +303,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     }
     virtual ~GTensor();
 
+    virtual bool Activate(int tpInit = 0, int flag = 0x0);
     virtual bool Alloc(int tpInit = 0, int flag = 0x0);
     virtual bool InitParam(int tpInit) {
         assert(0);
@@ -340,7 +344,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     }  //  Loss
     virtual hGTensor CrossEntropy(const hGTensor b, int flag = 0x0);
     //  ternary {-1, 0, 1}
-    virtual bool ToTernary(floatX*, int flag = 0x0) { throw "ToTernary is ...."; }
+    // virtual bool ToTernary(floatX*, int flag = 0x0) { throw "ToTernary is ...."; }
     virtual void* BeforeQuant(GeQuant* hQuant, int flag = 0x0);
     virtual bool AfterQuant(GeQuant* hQuant, typNUMBER type_quant, void* data_quant, int flag = 0x0);
     virtual float ToF8Ex(int type, int flag = 0x0) { throw "ToF8Ex is ...."; }
@@ -353,7 +357,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     bool isRefer(int tp = 0x0) const { return hRef != nullptr; }
     hGTensor GetRefer() { return hRef; }
     virtual void SetRefer(hGTensor hR, int flag = 0x0);
-    virtual bool SetTernary(typNUMBER typ, int flag = 0x0);
+    // virtual bool SetTernary(typNUMBER typ, int flag = 0x0);
 
     virtual bool SerialGP(void* yD, void* yG, size_t szY, bool isToY, int flag = 0x0) {
         assert(0);
@@ -455,6 +459,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     friend class OPT_Adam;
     friend class Fuyou;
     friend class SLP;
+    friend class TokenEmbed;
     friend class Fish;
     friend class GENSOR_TOPU;
 };
@@ -551,6 +556,7 @@ class huTensor : public GTensor {
     hGTensor Partial(const string&, size_t offset, const SHAPE shape, typNUMBER tyP = typNUMBER::T_OTHER, int flag = 0x0) override;
 
     bool Alloc(int tpInit = 0, int flag = 0x0) override;
+    bool Activate(int tpInit = 0, int flag = 0x0) override;
     size_t mostMemory(int typ = 0) const override;
     bool InitParam(int tpInit) override;
     bool BeforeBackward(size_t& szBuf, int flag = 0x0) override;
@@ -568,7 +574,7 @@ class huTensor : public GTensor {
 
     bool Quant4A(typNUMBER tpQ, int flag = 0x0) override;
     // Dreprecated, replate it by Quantizer_1bit
-    bool ToTernary(floatX* tmp, int flag = 0x0) override;
+    // bool ToTernary(floatX* tmp, int flag = 0x0) override;
     float ToF8Ex(int type, int flag = 0x0) override;
     bool Mutation(int flag = 0x0) override;
     friend class HIERARCH_LoRA;

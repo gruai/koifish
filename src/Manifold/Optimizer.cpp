@@ -53,6 +53,11 @@ Optimizer::Optimizer(NLP_AutoRegressive* g_, CLI_params& config, int flag) : _fi
 
     if (_fish->isTrain()) {
         hLR = std::make_shared<DiscreteSchedule>(_fish->config.common);
+        if (_fish->config.distill.isDistll()) {
+            hAR_quant = std::make_shared<DiscreteSchedule>(_fish->config.distill, _fish->config.common);
+            // hAR_quant->LearningRate(15258-1);   //do some testing
+            // hAR_quant->LearningRate(0);
+        }
         // train_loader->Init(g_,"Train");
 
     } else {
@@ -152,6 +157,9 @@ bool Optimizer::BatchGrad(int iter, float& fx, int flag) {
     if (grad != nullptr) {
         ZERO_(grad);
         g = (float*)grad->data;
+    }
+    if (hAR_quant != nullptr) {
+        hAR_quant->LearningRate(iter-1);
     }
     bool bench = false;
 
@@ -341,6 +349,8 @@ int GTensor::Dogleg(int flag) {
     if (1) {  // fuyou
         // for(auto t : fuyous)
     }
+    if (hQuant != nullptr) {
+    }
 
     if (flag == -2) {
         // Print(name, 1, -1);
@@ -366,9 +376,9 @@ double OPT_Adam::UpdateTensorParam(hGensor hP, floatX* gX, float clip) {
     // return Optimizer::UpdateTensorParam(hP, gX, clip);
 
     // assert(gimap.find(hP)!=gimap.end());
-    float alpha = adam->alpha, beta1 = adam->beta1, beta2 = adam->beta2, eps = adam->eps, grad_norm = g_step;
     auto& im = _fish->GetGensorInfo(hP);  // gimap[hP];
-    float *m = im.gm, *v = im.gv;
+    float *m = im.gm, *v = im.gv, grad_norm = g_step;
+    ;
     bool isToHost    = false;  // out of GPU memory!
     const int64_t ne = tELEM(hP);
     floatX *paramX   = (floatX*)(hP->data), *paramX0, *gX0;
@@ -421,6 +431,7 @@ double OPT_Adam::UpdateTensorParam(hGensor hP, floatX* gX, float clip) {
         hP->SerialGP(paramX0, gX0, hP->szData, false);
     }
 #else
+    float alpha = adam->alpha, beta1 = adam->beta1, beta2 = adam->beta2, eps = adam->eps;
     GD_METHOD tpCurGD = tpGD;
     if (tpGD == SGD_HYBRID) {
         tpCurGD = im.isAdam ? ADAMw : SGD;
@@ -819,10 +830,22 @@ float Optimizer::UpdateLossCurve(int flag) {
         float tokens_per_second = tokens_processed / millis_per_iter * 1000.0f;
         ema_tps                 = iter == 1 ? tokens_per_second : 0.95f * ema_tps + 0.05f * tokens_per_second;
         _INFO(" | %.1fK token/s | %s", ema_tps / 1000.0, _fish->DebugInfo().c_str());
-        _INFO(" x=%d\n", SUM::nUpdateParam);
+        if (_fish->config.distill.isDistll())
+            _INFO(" x=%.8g\n", DistillRate(0x0));
+        else
+            _INFO(" x=%d\n", SUM::nUpdateParam);
     }
     float improvement = loss_before - loss_after;
     return improvement;
+}
+
+float Optimizer::DistillRate(int type, int flag) {
+    if (hAR_quant == nullptr)
+        return -1.0;
+
+    float lr = hAR_quant->lr_previous;
+    assert(lr >= 0.0 && lr <= 1.0);
+    return lr;
 }
 
 // Maybe more operation in the future
@@ -1152,9 +1175,11 @@ void Optimizer::Dump(int typ) {
     for (auto vl : val_loaders) {
         vl->Dump(typ);
     }
-
+    _INFO("======== \n");
     if (hLR != nullptr)
         hLR->Dump(typ);
+    if (hAR_quant != nullptr)
+        hAR_quant->Dump(typ);
     int nG0 = 0;
     for (auto t : opt_ps) {
         if (BIT_TEST(t->flags, GTensor::F_TMP_GRAD)) {
@@ -1162,6 +1187,9 @@ void Optimizer::Dump(int typ) {
         }
     }
     _INFO("\tnParams = %ld(%.6gM, nT=%ld nG0=%d)\n", nParams, nParams / 1.0e6, opt_ps.size(), nG0);
+
+    _fish->config.distill.Dump(0x0);
+
     fflush(stdout);
 }
 

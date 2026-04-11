@@ -76,6 +76,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
         int ID = -1;
         JSON js;
         JConfig(const JSON& j, int id = -1) : js(j), ID(id) {}
+        virtual bool Valid() { return !js.empty(); }
     };
 
    protected:
@@ -298,7 +299,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     virtual bool UpdateNCTX(int _nctx, int flag = 0x0);
     // Koifish is so flex than it would has different parameters at different phase!
     virtual bool UpdateParams(int flag = 0x0);
-    virtual void UpdateTernary(int flag = 0x0);
+    // virtual void UpdateTernary(int flag = 0x0);
 
     virtual int BuildComputeGraph(int order, void* ctx, int flag);
     virtual hGensor BuildLoss(void* ctx, hGensor cur, int flag = 0x0);

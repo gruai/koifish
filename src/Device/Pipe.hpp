@@ -100,20 +100,20 @@ struct PIPE_Adamw : public PIPE_Optimizer {
         // tile_r0 = tensor->tile_r0,tile_c0= tensor->tile_c0;
         tile_r1 = tensor->tile_r1, tile_c1 = tensor->tile_c1;
         memcpy(ne, tensor->ne, sizeof(ne));
-        isBitParam = BIT_TEST(tensor->flags, GTensor::F_TERNARY);
+        /*isBitParam = BIT_TEST(tensor->flags, GTensor::F_TERNARY);
         if (isBitParam) {
             assert(tensor->isWMAT());  // only for 2D weight
             learning_rate *= 3;  //  1-bit models often exhibit greater training stability compared to their full-precision counterparts, allowing for more
                                  //  aggressive initial learning steps.
             paramX = ToX(gBUFF->tmpTernary);
             gama_T = tensor->gama_T();
-        }
+        }*/
         if (hQuant != nullptr) {
             if (BIT_TEST(tensor->flags, GTensor::F_GAMA)) {
                 assert(tensor->type == typNUMBER::BF16 || tensor->type == typNUMBER::F32);
                 DEBUG_HERE;
             } else
-                params = ToX(gBUFF->tmpTernary);
+                params = (floatX*)tensor_->shadoW;   //ToX(gBUFF->tmpTernary_);
             // tensor->GetDataX();  // no need de dequant again!
         }
     }
