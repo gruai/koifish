@@ -159,7 +159,7 @@ bool Optimizer::BatchGrad(int iter, float& fx, int flag) {
         g = (float*)grad->data;
     }
     if (hAR_quant != nullptr) {
-        hAR_quant->LearningRate(iter-1);
+        hAR_quant->LearningRate(iter - 1);
     }
     bool bench = false;
 
@@ -384,7 +384,7 @@ double OPT_Adam::UpdateTensorParam(hGensor hP, floatX* gX, float clip) {
     floatX *paramX   = (floatX*)(hP->data), *paramX0, *gX0;
     float mh, vh, g0, x, x0, x00;
 #ifdef __USE_CUDA__
-    if (isToHost) {
+    /*if (isToHost) {
         assert(_tmp != nullptr);
         paramX  = (floatX*)_tmp;
         gX      = paramX + hP->szData;
@@ -396,7 +396,7 @@ double OPT_Adam::UpdateTensorParam(hGensor hP, floatX* gX, float clip) {
         } else {
             clip = gClip(ne, gX, hP);
         }
-    }
+    }*/
 #else
     if (gX == nullptr) {
         gX   = fGrad(hP);
@@ -425,11 +425,11 @@ double OPT_Adam::UpdateTensorParam(hGensor hP, floatX* gX, float clip) {
 
     if (!isPreGStep)
         g_step += grad_norm * grad_norm;
-    if (isToHost) {
+    /*if (isToHost) {
         x  = T2Float(paramX0);
         g0 = x - x00;
         hP->SerialGP(paramX0, gX0, hP->szData, false);
-    }
+    }*/
 #else
     float alpha = adam->alpha, beta1 = adam->beta1, beta2 = adam->beta2, eps = adam->eps;
     GD_METHOD tpCurGD = tpGD;
@@ -583,9 +583,17 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGensor loss_, hGensor target_, C
     _INFO("\tDECENT=%d(%s) SIGN=%d tpFuseCu=%d filter=%d\n\n", tpGD, GD_NAME[tpGD].c_str(), tpSign, tpFuseCu, _fish->config.filter_tmp_grad.size());
     DEBUG.Dump(0);
 
+    if (_fish->isModel({NLP_QWEN2, NLP_QWEN3})) {
+        // g_dump_level = -1;
+    }
     float a = 0, grad_norm = 0;
     if (_fish->isLoadCheckpoint) {
         Evaluate(1);
+    }
+    if (DEBUG.quant_UserMode) {
+        if (!_fish->config.ckp_out.empty())
+            _fish->SaveTrain(_fish->config.ckp_out[0]);  // only for debug
+        K_EXIT(KOIFISH_EXIT_DEBUG);
     }
     if (isWarmup && !BatchGrad(0, a, 0x0))  //  warmup
         return CANCEL;
@@ -599,9 +607,7 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGensor loss_, hGensor target_, C
     for (t = 0; t < train_params.nMostIter; ++t) {
         NvtxRange range("step", t);
         CheckExitSearch(t);
-        if (_fish->isModel({NLP_QWEN2, NLP_QWEN3})) {
-            // g_dump_level = -1;
-        }
+
         _fish->BeforeNextStep(t, 0x0);
         if (t == train_params.nMostIter - 1) {
             if (train_loader != nullptr) {
@@ -633,8 +639,10 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGensor loss_, hGensor target_, C
         UpdateLossCurve(0x0);
         // throw "DEBUG exit@";        //only for debug
         for (auto ck : _fish->config.ckp_out) {
-            if (ck.needSave(t))
+            if (ck.needSave(t)) {
                 _fish->SaveTrain(ck);
+                // g_dump_level = -1;
+            }
         }
         if (t % 100 == 0)
             trainInfos().SaveToCSV("_info_.csv");
@@ -698,8 +706,15 @@ bool Optimizer::Evaluate(int type, int flag) {
     float val_loss = 0;
     if (type == 1) {
         assert(_fish->isLoadCheckpoint);
-        _INFO("[checkpoint] Evaluate the checkpoint of \"%s\"\n", "");  //_fish->config.fish_in.sDir.c_str()
+        // _INFO("[checkpoint] Evaluate the checkpoint of \"%s\"\n", "");  //_fish->config.fish_in.sDir.c_str()
     }
+    int gpt_every = _fish->config.common.gpt_every;
+    if (gpt_every > 0 && iter % gpt_every == 0) {
+        _fish->SetPhase(LIFE_PHASE::P_GENERATE);
+        _fish->config.chat_sampler.seq_len = 64;
+        _fish->Chat(0, P_TRAIN, 1);
+    }
+    // g_dump_level = -1;
     for (auto vl : val_loaders) {
         if (type == 1 || vl->isEval(iter + 1)) {
             _fish->SetPhase(LIFE_PHASE::P_EVAL_);
@@ -710,10 +725,7 @@ bool Optimizer::Evaluate(int type, int flag) {
         }
     }
     // K_EXIT(KOIFISH_EXIT_DEBUG);
-
-    // if (config.common.gpt_every > 0 && t % config.common.gpt_every == 0) {
-    //     _fish->GenSentence(1);
-    // }
+    
     return true;
 }
 
@@ -1092,6 +1104,9 @@ void OPT_Muon::Prepare(size_t nx_, int flag) { Optimizer::Prepare(nx_, flag); }
 /*
     https://github.com/KellerJordan/muon
     https://x.com/Kimi_Moonshot/status/1897929976948965870
+
+    1. boost Muon's LR by roughly 10x​ to get comparable convergence speeds of AdamW if every other thing is same.
+    2. "Moonlight" automatically applies the 0.2 * sqrt(d)scaling internally
 */
 OPT_Muon::OPT_Muon(NLP_AutoRegressive* g_, CLI_params& params_, int flag) : Optimizer(g_, params_, flag) {
     ADAM_params_* adam        = &(_fish->config.common.adam);

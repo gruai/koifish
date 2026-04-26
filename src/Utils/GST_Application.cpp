@@ -11,6 +11,7 @@
 #include "GST_MemBuffer.hpp"
 
 void CUDA_cleanup();
+std::string g_sAppName, g_sAppPath;
 
 std::string Time2String(const std::chrono::system_clock::time_point&now, int flag=0x0) {
     auto time = std::chrono::system_clock::to_time_t(now);
@@ -22,6 +23,14 @@ std::string Time2String(const std::chrono::system_clock::time_point&now, int fla
 #else
     localtime_r(&time, &tm_buffer);
 #endif
+    char buf[1024];
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (len != -1) {
+        buf[len] = '\0';
+        std::cout << "App name: " << basename(buf) << std::endl;
+    }
+    g_sAppPath = buf;
+    g_sAppName = basename(buf);
 
     std::stringstream ss;
     ss << std::put_time(&tm_buffer, "%Y-%m-%d %H:%M:%S");

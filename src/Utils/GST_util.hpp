@@ -70,6 +70,15 @@ typedef std::chrono::high_resolution_clock Clock;
 // #define GST_TOC(tick)	( (std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now( )-(tick)).count( ))/1000.0)
 #define GST_TOC(tick) ((std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - (tick)).count()) / 1000000.0)
 
+inline std::string GST_timeStr(const std::string& format = "%Y-%m-%d %H:%M:%S") {
+    std::time_t t = std::time(nullptr);
+    std::tm tm    = *std::localtime(&t);
+
+    char buffer[64];
+    std::strftime(buffer, sizeof(buffer), format.c_str(), &tm);
+    return buffer;
+}
+
 inline void GST_time_init(void) {}
 
 inline double GST_sec(void) {

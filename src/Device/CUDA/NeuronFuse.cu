@@ -483,6 +483,7 @@ __global__ void CU_Q42X_zs_v0(const Q4_8* zeros, const half* scales, const Q4_8*
 int SLP::FUSE_cuda_block(hGTensor rhs, hGTensor lhs, hGTensor gelu, bool isForw, int flag) { return 0x0; }
 
 hGTensor FFN::cuInfer(hGTensor hIn, int flag) {
+    SelfAttention* lastQKV = hFish->GetNeuron<SelfAttention>("SelfAttention", layid - 1);
     hGTensor tGelu = gBUFF->scratch, up_out = remater_ffn ? gBUFF->tmpFF1 : up.out;
     bool isBias = up.b != nullptr;
     int nToken = nBatchToken(), nEmbed = hFish->config.nEmbed(), C = nEmbed;
@@ -505,7 +506,7 @@ hGTensor FFN::cuInfer(hGTensor hIn, int flag) {
     tGelu->Print("ffn.up+gelu", 0, dump_flag, latent);
     hGTensor down_out = gBUFF->delta;
     // PrintTensor<floatX>("ffn.norm",ToX(norm.out),true,B,T,C,1,-1);          PrintTensor<floatX>("ff1",ff1,true,B,T,latent,1,-1);
-    down.Forw(down_out, tGelu, nullptr, nullptr, isSymmetric);
+    down.Forw(down_out, tGelu, nullptr, nullptr, isMirror);
     down_out->Print("ffn.down", 0, dump_flag, nToken * C);  // PrintTensor<floatX>("ffn",scratch,true,B,T,C);
     if (!hFish->isRemater()) {
         TASKA_1p1<floatX> task_11(nToken * C, main_stream);
@@ -581,7 +582,7 @@ hGTensor FFN::cuFlow(hGTensor hIn, int flag) {
 
         hGTensor down_out = gBUFF->delta;
 
-        down.Forw(down_out, tGelu, nullptr, nullptr, isSymmetric);
+        down.Forw(down_out, tGelu, nullptr, nullptr, isMirror);
         down_out->Print("ffn.down", 0, dump_flag, B * T * C);  // PrintTensor<floatX>("ffn",scratch,true,B,T,C);
         // GTensor::tZ->Print(GTensor::tZ->name, 0, dump_flag);
         if (!hFish->isRemater()) {
@@ -711,14 +712,15 @@ __global__ static void CU_classifier_(floatX* logits_BT, float* losses, floatX* 
 hGTensor OutCLS::cuInfer(hGTensor inp_, int flag) {
     double now = GST_us();
     assert(norm.Empty());
-    inp_->Print("cls.inp_", 0, dump_flag);
+    int nToken = nBatchToken(), nEmbed = hFish->config.nEmbed();;
+    inp_->Print("cls.inp_", 0, dump_flag, nToken*nEmbed);
 
     proj.Forw(preLogits, inp_);
     SUM::GPU_TIME(SUM::tPreLogits, now);
     preLogits->Print("logits", 0, dump_flag, nCls);
-
+    size_t szMost = sizeof(floatX) * nCls * nToken;
     if (hFish->config.chat_sampler.isSampleCPU)
-        preLogits->SerialData("", nullptr, true);
+        preLogits->SerialGamaData("", nullptr, true, szMost);
     else {
         ;  // preLogits->Print("preLogits",0, -1);
     }

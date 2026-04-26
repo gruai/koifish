@@ -197,6 +197,19 @@ using BIT_128 = Packed128;
         } while (0);                                                      \
     }
 
+#define PACK_1to128_(arr, dst)                                    \
+    do {                                                          \
+        uint64_t high = 0, low = 0;                               \
+        for (int i = 0; i < 64; i++) {                            \
+            high |= ((uint64_t)((arr)[i] & 0x1) << (63 - i));     \
+        }                                                         \
+        for (int i = 0; i < 64; i++) {                            \
+            low |= ((uint64_t)((arr)[i + 64] & 0x1) << (63 - i)); \
+        }                                                         \
+        (dst)->high = high;                                       \
+        (dst)->low  = low;                                        \
+    } while (0)
+
 #define UNPACK_128to2_UNSIGNED_(src, arr)              \
     {                                                  \
         do {                                           \
@@ -210,6 +223,20 @@ using BIT_128 = Packed128;
             }                                          \
         } while (0);                                   \
     }
+#define UNPACK_128to1_UNSIGNED_(src, arr)                    \
+    do {                                                     \
+        uint64_t high = (src)->high;                         \
+        uint64_t low  = (src)->low;                          \
+        int shift;                                           \
+        for (int i = 0; i < 64; i++) {                       \
+            shift    = 63 - i;                               \
+            (arr)[i] = (uint8_t)((high >> shift) & 0x1);     \
+        }                                                    \
+        for (int i = 0; i < 64; i++) {                       \
+            shift         = 63 - i;                          \
+            (arr)[i + 64] = (uint8_t)((low >> shift) & 0x1); \
+        }                                                    \
+    } while (0)
 
 void BIT_SET_k(hBITARR array, size_t offset, int elem, int bits);
 int BIT_GET_k(const hBITARR array, size_t offset, int bits);

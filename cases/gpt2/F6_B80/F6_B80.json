@@ -114,7 +114,7 @@
         "#out": {
             "path": "./hy-tmp/checkpoint/GPT2_fuyou_",
             "#type": "best full state",
-            "type": "best",
+            "state": "best",
             "save-every": 500
         }
     },

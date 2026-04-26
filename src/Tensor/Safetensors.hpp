@@ -18,32 +18,39 @@
 #include <vector>
 
 #include "../CLI_params.hpp"
+#include "./GTensor.hpp"
 
-#ifdef __ANDROID__
-#ifdef SAFETENSORS_CPP_ANDROID_LOAD_FROM_ASSETS
-#include <android/asset_manager.h>
-#endif
-
-#ifdef SAFETENSORS_CPP_IMPLEMENTATION
-AAssetManager* asset_manager = nullptr;
-#else
-extern AAssetManager* asset_manager;
-#endif
-#endif
-
-class GTensor;
-class Fish;
+struct K_SafeTensors;
 
 constexpr size_t kMaxDim = 8;  // must be equal to SAFETENSORS_C_MAX_DIM in `safetensors-c.h`
+/**
+ *  The HF's safetensors format cannot add custom fields directly to Tensor Entries. But Koifish would add many detial info(for example, quant method & bit).
+    So Koifish format is not compliant with HF's safetensors format!
 
-// Deprecated! would replace by GTensor
-struct tensor_st {
+ *  1. HF's safetensors format
+ *  a) Tensor Entry Structure
+        Each key (e.g., "layer1.weight") maps to an object with these mandatory​ fields:
+            dtype​("F16", "BF16", "I32"),shape​,data_offsets([start, end])
+        Important:​ data_offsets are relative to the start of the data buffer (the section after the header), not the start of the file.
+    b). __metadata__Section
+        This is an optional key containing a dictionary of string-to-string​ pairs. There is no enforced schema, but common conventions include:
+            format: Framework origin (e.g., "pt"for PyTorch).
+            description: Human-readable model info.
+            Custom keys: Any other metadata (e.g., "author", "version").
+            Restriction:​ All values under __metadata__must be strings.
+
+    2 The following tensor_st is Deprecated! would replace by GTensor
+*/
+using tensor_st = GTensor;
+/*struct tensor_st {
     typNUMBER dtype;
     std::vector<size_t> shape;
     std::array<size_t, 2> data_offsets;
     void* hUserData = nullptr;
     std::vector<uint8_t> msgpack;
+    Fish* hFish = nullptr;
     tensor_st() {}
+    tensor_st(Fish* _fish, int flag = 0x0) : hFish(_fish) {}
     tensor_st(JSON& jDesc, int flag = 0x0);
 
     std::string hf_dtype(const typNUMBER dtype);
@@ -86,24 +93,19 @@ struct tensor_st {
         std::cout << "  offsets=[" << std::to_string(data_offsets[0]) << ", " << std::to_string(data_offsets[1]) << "]\n";
         // std::cout << "  " << to_string_snipped(*this, databuffer) << "\n";
     }
-};
+};*/
 
-// Returns shape[0] * shape[1] * ...
-// Empty Tensor(any shape[i] is 0) returns 0.
-// Zero-rank tensor([]) return 1.
-size_t get_shape_size(const tensor_st& t);
 
-/**
- *
- */
-struct K_SafeTensors {
+class K_SafeTensors {
+public:
     CheckPoint_Params ckp;
-    std::string header_str;
+    std::string header_str, sFolderPath;
     // GST_Dict(preserves the order of key insertion) is much simple than JSON
-    GST_Dict<tensor_st> tensors;
+    GST_Dict<hGTensor> tensors;
     JSON metadata, jHeader;
     JSON jsConfig;
-
+    
+    Fish* hFish                 = nullptr;
     // std::vector<uint8_t> storage;  // would explode!     empty when mmap'ed
     size_t header_size{0};  // JSON size
     static string config_key_;
@@ -117,7 +119,7 @@ struct K_SafeTensors {
     }
     virtual void UpdateMetaData(int flag = 0x0);
 
-    K_SafeTensors(Fish* fish, CheckPoint_Params ckp_, int flag = 0x0);
+    K_SafeTensors(Fish* fish, CheckPoint_Params ckp_, const std::string&path, int flag = 0x0);
     //
     // Following members are set when mmaped.
     //
@@ -133,27 +135,29 @@ struct K_SafeTensors {
     bool InitHeader(int flag = 0x0);
     void insertJS(const JSON& js, size_t dst_offset, int flag = 0x0) {
         jsConfig = js;
-        tensor_st tensor;
-        tensor.msgpack         = JSON::to_msgpack(js);
-        tensor.dtype           = typNUMBER::U8;          // dtype::kUINT8;
-        size_t sz              = tensor.msgpack.size();  // storage.size();
-        tensor.data_offsets[0] = dst_offset;
-        tensor.data_offsets[1] = dst_offset + sz;
-        tensor.shape           = {sz};
+        hGTensor tensor = std::make_shared<GTensor>();
+        strcpy(tensor->name,config_key_.c_str());
+        tensor->hFish = hFish;
+        tensor->msgpack         = JSON::to_msgpack(js);
+        tensor->type           = typNUMBER::U8;          // dtype::kUINT8;
+        size_t sz              = tensor->msgpack.size();  // storage.size();
+        tensor->data_offsets[0] = dst_offset;
+        tensor->data_offsets[1] = dst_offset + sz;
+        tensor->shape           = {(int)sz};
         tensors.insert(config_key_, tensor);
 
         // storage.resize(dst_offset + sz);
         // memcpy(storage.data() + dst_offset, msgpack.data(), sz);  //  6441  [132...160]
     }
-    int loadJS(tensor_st& tensor, const uint8_t* bytes_ptr, size_t bytes_size, int flag = 0x0) {
+    int loadJS(hGTensor tensor, const uint8_t* bytes_ptr, size_t bytes_size, int flag = 0x0) {
         /*JSON jdesc = tensor.jDesc();
         if (jdesc.at("data_offsets").size() != 2) {
             return -3;
         }
         size_t offset_start = static_cast<size_t>(jdesc.at("data_offsets")[0]);  // 1544148992
         size_t offset_end   = static_cast<size_t>(jdesc.at("data_offsets")[1]);  // 1545276932*/
-        size_t offset_start = tensor.data_offsets[0];
-        size_t offset_end   = tensor.data_offsets[1];
+        size_t offset_start = tensor->data_offsets[0];
+        size_t offset_end   = tensor->data_offsets[1];
         if (offset_start < 0 || offset_end <= offset_start || offset_end > bytes_size) {
             std::cerr << "bad offsets" << std::endl;
             return -1;
@@ -175,11 +179,11 @@ struct K_SafeTensors {
                 assert(0);  // only mmap is support LLM
                 // databuffer = storage.data();
             }
-            tensor_st tensor;
-            if (!tensors.at(config_key_, &tensor))
+            hGTensor tensor=nullptr;
+            if (!tensors.at(config_key_, tensor))  // may has no "__koifish__config__"
                 return false;
 
-            size_t start = tensor.data_offsets[0], end = tensor.data_offsets[1];
+            size_t start = tensor->data_offsets[0], end = tensor->data_offsets[1];
             // assert(end<nbytes);
             std::vector<uint8_t> msgpack = {databuffer + start, databuffer + end};
             size_t sz                    = msgpack.size();
@@ -213,34 +217,35 @@ struct K_SafeTensors {
         for (size_t i = 0; i < tensors.size(); i++) {
             std::string key = tensors.keys()[i];
 
-            tensor_st tensor;
-            if (!tensors.at(i, &tensor)) {
-                ss << "Internal error: Failed to get stensor at [" << i << "]\n";
-                valid = false;
-                continue;
-            }
-            if (tensor.data_offsets[0] > tensor.data_offsets[1]) {
-                ss << key << ".data_offsets.BEGIN " << tensor.data_offsets[0] << " must be less than or equal to data_offsets.END " << tensor.data_offsets[1]
+            hGTensor tensor=tensors.at(i);
+            // if (!tensors.at(i, &tensor)) {
+            //     ss << "Internal error: Failed to get stensor at [" << i << "]\n";
+            //     valid = false;
+            //     continue;
+            // }
+            if (tensor->data_offsets[0] > tensor->data_offsets[1]) {
+                ss << key << ".data_offsets.BEGIN " << tensor->data_offsets[0] << " must be less than or equal to data_offsets.END " << tensor->data_offsets[1]
                    << "\n";
                 valid = false;
             }
-            size_t tensor_size = BPE(tensor.dtype) * get_shape_size(tensor);
+            // size_t tensor_size = tensor->nByte();   
+            size_t tensor_size = tensor->nByte_CKP(ckp);  
             if (tensor_size == 0) {  //  ???
                 continue;
             }
 
             // data_offsets are absolute offset from the databuffer(file)
-            if (tensor.data_offsets[0] > databuffersize) {
-                ss << "Tensor `" << key << "`.data_offset.BEGIN " << tensor.data_offsets[0] << " exceeds databuffer size " << databuffersize << ".\n";
+            if (tensor->data_offsets[0] > databuffersize) {
+                ss << "Tensor `" << key << "`.data_offset.BEGIN " << tensor->data_offsets[0] << " exceeds databuffer size " << databuffersize << ".\n";
                 valid = false;
             }
 
-            if (tensor.data_offsets[1] > databuffersize) {
-                ss << "Tensor `" << key << "`.data_offset.END " << tensor.data_offsets[1] << " exceeds databuffer size " << databuffersize << ".\n";
+            if (tensor->data_offsets[1] > databuffersize) {
+                ss << "Tensor `" << key << "`.data_offset.END " << tensor->data_offsets[1] << " exceeds databuffer size " << databuffersize << ".\n";
                 valid = false;
             }
 
-            size_t data_size = tensor.data_offsets[1] - tensor.data_offsets[0];
+            size_t data_size = tensor->data_offsets[1] - tensor->data_offsets[0];
 
             if (tensor_size < data_size && data_size % tensor_size != 0) {  // [data,gm,gv]
                 ss << "Data size mismatch. The size in Tensor `" << key << "` is " << tensor_size << ", but the size from data_offsets is " << data_size
@@ -251,8 +256,8 @@ struct K_SafeTensors {
             ntensors++;
             if (ntensors == tensors.size()) {
                 // Last element's data_offsets[1] must be equal to databuffer size.
-                if (tensor.data_offsets[1] != databuffersize) {
-                    ss << "The last tensor's data_offset.END(" << tensor.data_offsets[1] << ") must be equal to databufer size " << databuffersize << ".\n";
+                if (tensor->data_offsets[1] != databuffersize) {
+                    ss << "The last tensor's data_offset.END(" << tensor->data_offsets[1] << ") must be equal to databufer size " << databuffersize << ".\n";
                     valid = false;
                 }
             }
@@ -809,7 +814,7 @@ class value {
         return ss.str();
     }
 
-    std::string str() const {
+    /*std::string str() const {
         std::stringstream ss;
         if (t == unknown_type) {
             ss << "undefined";
@@ -851,7 +856,7 @@ class value {
             ss << "}";
         }
         return ss.str();
-    }
+    }*/
 };
 
 #define MINIJSON_SKIP(i)                             \
@@ -3524,7 +3529,7 @@ bool ReadWholeFile(std::vector<unsigned char>* out, std::string* err, const std:
     return true;
 #endif
 }
-
+/*
 bool parse_metadata(const ::minijson::value& v, GST_Dict<std::string>& dst, std::string* err) {
     if (auto po = v.as<::minijson::object>()) {
         for (size_t i = 0; i < po->size(); i++) {
@@ -3561,7 +3566,7 @@ bool parse_metadata(const ::minijson::value& v, GST_Dict<std::string>& dst, std:
     }
 
     return true;
-}
+}*/
 
 bool parse_dtype(const ::minijson::value& v, typNUMBER& dtype, std::string* err) {
     if (auto so = v.as<std::string>()) {
@@ -3657,7 +3662,7 @@ bool parse_data_offsets(const ::minijson::value& v, std::array<size_t, 2>& dst, 
 
     return true;
 }
-
+/*
 bool parse_tensor(const std::string& name, const ::minijson::value& v, tensor_st& tensor, std::string* err) {
     if (auto po = v.as<::minijson::object>()) {
         bool dtype_found{false};
@@ -3665,7 +3670,7 @@ bool parse_tensor(const std::string& name, const ::minijson::value& v, tensor_st
         bool data_offsets_found{false};
 
         typNUMBER dtype;
-        std::vector<size_t> shape;
+        std::vector<int> shape;
         std::array<size_t, 2> data_offsets{};
 
         for (size_t i = 0; i < po->size(); i++) {
@@ -3762,7 +3767,7 @@ bool parse_tensor(const std::string& name, const ::minijson::value& v, tensor_st
             }
         }
 
-        tensor.dtype        = dtype;
+        tensor.type        = dtype;
         tensor.shape        = shape;
         tensor.data_offsets = data_offsets;
 
@@ -3774,7 +3779,7 @@ bool parse_tensor(const std::string& name, const ::minijson::value& v, tensor_st
     }
 
     return true;
-}
+}*/
 
 // From llama.cpp
 #if defined(_WIN32)
@@ -4038,7 +4043,8 @@ bool mmap_from_file(const std::string& filename, K_SafeTensors* st, std::string&
         if (key == "__metadata__")
             st->metadata = value;
         else {
-            st->tensors.insert(key, tensor_st(value));
+            hGTensor tensor = std::make_shared<GTensor>(st->hFish, key, value);
+            st->tensors.insert(key, tensor);
         }
     }
 
@@ -4094,6 +4100,7 @@ bool mmap_from_memory(const uint8_t* addr, const size_t nbytes, const std::strin
     return true;
 }
 
+/*
 // Empty Tensor returns 0.
 // Zero-rank Tensor reuturns 1(scalar)
 size_t get_shape_size(const tensor_st& t) {
@@ -4112,6 +4119,6 @@ size_t get_shape_size(const tensor_st& t) {
     }
 
     return sz;
-}
-
+}*/
+std::string HF_dtype2str(const typNUMBER dtype);
 #endif

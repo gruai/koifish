@@ -35,8 +35,9 @@ huTensor::huTensor(Fish* fish, const string& name_, const SHAPE shape, typNUMBER
         name[0] = '\0';
     if (BIT_TEST(flag, F_DEBUG)) {
         int need_determin = 0;
-    } else
+    } else {  // [todo]  if (BIT_TEST(flag, F_PARAM))
         param_seed = randParam.RandU32();
+    }
     if (isAlloc) {
         Alloc(0x0, flag);
     }
@@ -158,14 +159,10 @@ bool huTensor::InitParam(int tpX) {
     int iter    = hFish->GetCurIter();
     SUM::nInitParam++;  // may skip(bias is always init to 0)
     switch (tpInit) {
-        case SERIALIZE: {  //  ???
+        case SERIALIZE: {
             if (host_data != nullptr) {
-                LoadParam(name, {}, nullptr, 0x0, 0x0);
-                /*SerialGP(host_data, nullptr, szData, false);
-                if (hQuant == nullptr)
-                    G_NORM_STAT<bf16>(size(), (bf16*)host_data, disq.sum_2, disq.sum_1, disq.nrm_1);
-                else {
-                }*/
+                LoadParam(nullptr, name, nullptr, nullptr, 0x0, 0x0);
+                // just call Serial_Quant_MMAP(false, false, LOAD_ONLY_W);
             }
             break;
         }
@@ -399,22 +396,36 @@ bool H2D(void* dev, const void* host, size_t szData, int flag) {
     }
 }
 
-bool huTensor::SerialData(const string& info, void* host, bool isToHost, int flag) {
+/**
+ * 1. Gama is also part of data! "Alloc_1(&data, true, desc + suffix, szData + szGama"@huTensor::Alloc
+ * 2. szGama should be same as GTensor::jDesc
+ */
+bool GTensor::SerialGamaData(const string& info, void* host, bool isToHost, size_t szMost, int flag) {
     try {
+        if (G_Has_(name, {"model.layers.0.mlp.down_proj.weight"})) {
+            // Print(name, 0x0, -1);
+            DEBUG_HERE;
+        }
+        bool isGama = true;
+        size_t szX  = isGama ? szData + szGama : szData;
+        // assert(szX <= szMost);
+        if (szX > szMost) {
+            szX = szMost;
+        }
         if (host == nullptr) {
             assert(host_data != nullptr);
             host = host_data;
         }
         cudaError_t err = cudaSuccess;
         if (isToHost) {
-            // cudaCheck(cudaMemcpyAsync(host,data, szData, cudaMemcpyDeviceToHost));
-            err = cudaMemcpy(host, data, szData, cudaMemcpyDeviceToHost);
+            // cudaCheck(cudaMemcpyAsync(host,data, szX, cudaMemcpyDeviceToHost));
+            err = cudaMemcpy(host, data, szX, cudaMemcpyDeviceToHost);  // 303872
         } else {
-            // cudaCheck(cudaMemcpyAsync(data, host,szData, cudaMemcpyHostToDevice));
-            err = cudaMemcpy(data, host, szData, cudaMemcpyHostToDevice);
+            // cudaCheck(cudaMemcpyAsync(data, host,szX, cudaMemcpyHostToDevice));
+            err = cudaMemcpy(data, host, szX, cudaMemcpyHostToDevice);
         }
         if (err != cudaSuccess) {
-            _ERROR("[Serial] failed @\"%s\"! err=\"%s\" (%s code=%d)\n", name, cudaGetErrorString(err), cudaGetErrorName(err), err);
+            _ERROR("[Serial] failed to SerialGamaData_@\"%s\"! err=\"%s\" (%s code=%d)\n", name, cudaGetErrorString(err), cudaGetErrorName(err), err);
             exit(KOIFISH_SAFETENSOR_SERIAL);
         }
         if (flag < 0) {
@@ -422,7 +433,6 @@ bool huTensor::SerialData(const string& info, void* host, bool isToHost, int fla
             sprintf(buf, "%s:%s@%s", info.c_str(), isToHost ? "SAVE" : "LOAD", name);
             Print(buf, 0, -1);
         }
-        
 
         return true;
     } catch (...) {
@@ -449,7 +459,7 @@ static bool isGPUDirectMMap = true;
 [todo]
     device_to_file   using double buffering running on the given stream.
 */
-bool GTensor::Serial_Quant_MMAP(bool isSave, bool isReset, SERIAL_TYPE type, int flag) {
+bool GTensor::Serial_Quant_MMAP(bool isSave, bool isReset, SERIAL_TYPE serial_type, int flag) {
     if (isRefer() && !BIT_TEST(flags, F_RELOAD))
         return true;
 
@@ -479,40 +489,57 @@ bool GTensor::Serial_Quant_MMAP(bool isSave, bool isReset, SERIAL_TYPE type, int
             SUM::nSaveParam++;
             SUM::nzSaveParam += size();
         } else {  //  load
-            hQUANT quant        = GetDynamicQuant();
-            int lay             = ginfo->hNeron->layid - 1;
-            bool isAllocTmpData = quant != nullptr;
-            if (isAllocTmpData) {
-                tmpData = new BIT_8[szData + szM + szV];  //  mmap read need proper synchronization!
-            }
-
-            // tpInit = INIT_WEIGHT::W_SKIP;  // don't do anything @huTensor::Alloc -> InitParam
-            if (hRef != nullptr) {  // huTensor::Alloc
-                ShareMemory(hRef, 0x100);
-            }
-            assert(data != nullptr);
-            SUM::szUpload += szData;
-            if (tmpData != host_data) {
-                SAFE_read_mmap(tmpData, (hBITARR)host_data, szData + szM + szV);  // szData
-            }
-
-            if (quant != nullptr && !quant->params.isVendorQuant) { /*quant->params.type != QUANT_MODE::PRE_QUANT*/
-                double t0 = GST_ms();
-                if (quant->params.type == QUANT_MODE::F8Ex) {  // if (G_Has_(name, hFish->config.quant.filter_WeightF8Ex))
-                    cudaCheck(cudaMemcpy(data, tmpData, szData, cudaMemcpyHostToDevice));
-                    ToF8Ex(0x0);
-                } else {
-                    G_NORM_STAT<bf16>(size(), (bf16*)tmpData, disq.sum_2, disq.sum_1, disq.nrm_1);
-                    quant->LowBit_worker(shared_from_this(), tmpData);
-                }
-                SUM::tQuant += GST_ms() - t0;
+            hQUANT quant = GetDynamicQuant();
+            int lay      = ginfo->hNeron->layid - 1;
+            if (quant != nullptr && (quant->params.isDequant4Generate || type == quant->bit2typ())) {
+                SerialGamaData("", tmpData, false, szData + szGama + szM + szV);
+                if (G_Has_(name, {"model.layers.0.self_attn.v_proj.weight"}))
+                    Print(name, 0, -1);
+                assert(!quant->params.distill.isKeepShadoW());  //  [todo] need refactor of InitShadoW
+                InitShadoW(nullptr, true, quant->params.distill);
             } else {
-                H2D(data, tmpData, szData);
-                // cudaCheck(cudaMemcpy(data, tmpData, szData, cudaMemcpyHostToDevice));
+                bool isAllocTmpData = quant != nullptr;
+                if (isAllocTmpData) {
+                    tmpData = new BIT_8[szData + szGama + szM + szV];  //  mmap read need proper synchronization!
+                }
+
+                // tpInit = INIT_WEIGHT::W_SKIP;  // don't do anything @huTensor::Alloc -> InitParam
+                if (hRef != nullptr) {  // huTensor::Alloc
+                    ShareMemory(hRef, 0x100);
+                }
+                assert(data != nullptr);
+                SUM::szUpload += szData;
+                if (tmpData != host_data) {
+                    if (serial_type == LOAD_ONLY_W)
+                        SAFE_read_mmap(tmpData, (hBITARR)host_data, szData + szGama);
+                    else
+                        SAFE_read_mmap(tmpData, (hBITARR)host_data, szData + szGama + szM + szV);  // szData
+                }
+
+                if (quant != nullptr && !quant->params.isVendorQuant) { /*quant->params.type != QUANT_MODE::PRE_QUANT*/
+                    double t0 = GST_ms();
+                    if (quant->params.isDequant4Generate) {
+                    } else if (quant->params.type == QUANT_MODE::F8Ex) {  // if (G_Has_(name, hFish->config.quant.filter_WeightF8Ex))
+                        cudaCheck(cudaMemcpy(data, tmpData, szData, cudaMemcpyHostToDevice));
+                        ToF8Ex(0x0);
+                    } else {
+                        G_NORM_STAT<bf16>(size(), (bf16*)tmpData, disq.sum_2, disq.sum_1, disq.nrm_1);
+                        quant->LowBit_worker(shared_from_this(), tmpData);
+                    }
+                    SUM::tQuant += GST_ms() - t0;
+                } else {
+                    H2D(data, tmpData, szData);
+                    if (G_Has_(name, {"model.layers.0.self_attn.v_proj.weight"}))
+                        Print(name, 0, -1);
+                    // cudaCheck(cudaMemcpy(data, tmpData, szData, cudaMemcpyHostToDevice));
+                }
+                if (isAllocTmpData) {
+                    delete[] tmpData;
+                }
             }
 
             Print("mmap_load", 0, dumpFlag);
-            if (szM + szV > 0 && type != LOAD_ONLY_W) {
+            if (szM + szV > 0 && serial_type != LOAD_ONLY_W) {
                 H2D(gm, tmpData + szData, szM + szV);
                 // cudaCheck(cudaMemcpy(gm, tmpData + szData, szM + szV, cudaMemcpyHostToDevice));
                 Print("mmap_load", 3, dumpFlag), Print("mmap_load", 2, dumpFlag);
@@ -552,7 +579,7 @@ bool GTensor::Serial_MMAP_x(void* xdata, bool isSave, int flag) {
     }
 }
 
-//  this <=> Y
+/**   this <=> Y
 bool huTensor::SerialGP(void* yD, void* yG, size_t szY, bool isToY, int flag) {
     try {
         if (isToY) {
@@ -578,7 +605,7 @@ bool huTensor::SerialGP(void* yD, void* yG, size_t szY, bool isToY, int flag) {
     } catch (...) {
         return false;
     }
-}
+}*/
 
 //  __host__​cudaError_t cudaMemcpy ( void* dst, const void* src, size_t count, cudaMemcpyKind kind )
 bool huTensor::OverWrite(hGTensor hGT, bool isSrc, int flag) {
@@ -673,7 +700,7 @@ double GTensor::Length(int type, int flag) {
     double len = 0.0, *devSum2 = (double*)GTensor::stat_info;
     D20(devSum2, sizeof(double));
     CU_x2_atomic<<<CEIL_DIV(nEle / x128::size, block_size), block_size, 0, main_stream>>>(devSum2, src, nEle);
-    D2e(devSum2, len);
+    D2e(devSum2, len, "GTensor::Length");
     a = len;
 
     // SUM::tX1 += GST_us()-now;

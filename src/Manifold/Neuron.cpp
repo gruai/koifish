@@ -156,8 +156,8 @@ void GeNeuron::SetRefer(const GeNeuron* src, bool isBias, int flag) {
 int GeNeuron::nBatchToken(int flag) {
     int nT = B * T;
     if (hFish->isAtPhase(LIFE_PHASE::P_GENERATE)) {
-        assert(B == 1);
-        nT = 1;
+        // assert(B == 1);
+        nT = 1; // Generate only support 1 tokens one time!
     }
     assert(nT > 0);
     return nT;
@@ -762,13 +762,13 @@ bool LayerNormal::Build(int flag0) {
     } else {
         mean = GT(hFish, typNUMBER::F32, {B, T}, flag, name + ".mean");
     }
-    nTH  = B * T;
+    
     ldTH = hFish->config.nEmbed();  // C;
     if (nHead > 0) {
         isOnline = true;
         assert(ldTH % nHead == 0);
         ldTH = hFish->config.head_dim();
-        nTH *= nHead;
+        // nTH *= nHead;
         rstd = GT(hFish, typNUMBER::F32, {B, T, nHead}, flag, _NAME(name, LN_RSTD));  //  name + ".rstd"
     } else
         rstd = GT(hFish, typNUMBER::F32, {B, T}, flag, _NAME(name, LN_RSTD));  // name + ".rstd"

@@ -287,13 +287,17 @@ bool CLI_params::JModel2Params(int flag) {
             _ERROR("%s  No \"backbone\" in jConfig!!!", __func__);
             return false;
         }
-        if (jModel.find("hf-card") != jModel.end())
+        if (jModel.find("hf-card") != jModel.end()) {
             model.sCardPath = jKEY(jModel, {"hf-card"});
+            model.sSTPath   = model.sCardPath;
+        }
+
         if (jModel.find("token_bin_path") != jModel.end())  //  only for custom
             model.sTokenBinPath = jKEY(jModel, {"token_bin_path"});
         else {
             // model.sTokenBinPath = "./Datasets/climb-1b/tokenizer.dat";
         }
+        model.vocab_size = jKV(jModel, {"vocab_size"}, model.vocab_size);
 
         jQuant = jKEY(jConfig, {"quantizer"});
 
@@ -439,7 +443,7 @@ bool SKDU_params::canSave(int iter, int flag) const {
 bool DISTILLATION_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
     string s;
     s = jKV(jConfig, {"distillation", "anneal-method"}, s);
-    if (s.empty())
+    if (s.empty() || s[0] == '#')
         return false;
     lenda = 1.0;
     if (G_Has_(s, {"COSINE"}, false)) {
@@ -452,6 +456,8 @@ bool DISTILLATION_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag)
 
     return true;
 }
+
+bool DISTILLATION_CARD::isKeepShadoW(int flag) { return anneal != ANNEAL_OFF; }
 
 bool Fuyou_params::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
     filter_reload  = {"ffn", "attn.wq", "attn.wk", "attn.wv", "attn.wo"};
@@ -704,7 +710,7 @@ JSON CLI_params::ToJSON(int type, int flag) {
     JSON json, jOut = jConfig;
     _JSON_remove_keys_(jOut, "#");
     switch (type) {
-        case 0x100:  //@Fish::SAFETENSOR_Serialize
+        case 0x100:  //@Fish::SAFETENSOR_Serialize_
             jOut["checkpoint_in"] = jConfig["checkpoint_out"];
             jOut.erase("checkpoint_out");
 
@@ -809,10 +815,10 @@ bool TRAIN_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
 CheckPoint_Params::CheckPoint_Params(const JSON& jData, const std::string& key, bool isSave, int flag) : jKey(key) {
     if (key.empty()) {  //  default checkpoints to store all info of current state
         //"state", "./hy-tmp/checkpoint/", -1, false
-        jKey   = "._koifish_state_";
-        sDir   = "./checkpoints/";
-        type   = CheckPoint_Params::STATE;
-        format = CKP_KOIFISH;
+        jKey       = "._koifish_state_";
+        sDir       = "./checkpoints/";
+        state_type = CheckPoint_Params::STATE;
+        format     = CKP_KOIFISH;
         // isIn = false;
     } else {
         if (!jData.contains(key)) {
@@ -821,18 +827,27 @@ CheckPoint_Params::CheckPoint_Params(const JSON& jData, const std::string& key, 
         JSON jdata = jData[key];
         assert(!jdata.empty());
         // const std::string &tp, const std::string &p, int x, bool in
-        bool isFind     = false;
-        std::string stp = jdata["type"];
-        for (auto kv : CKP_desc) {
-            if (stp == kv.second) {
-                type   = kv.first;
-                isFind = true;
+        bool isFind = false;
+        std::string stp, s;
+        if (jdata.find("state") != jdata.end()) {
+            stp = jdata["state"];
+            for (auto kv : CKP_desc) {
+                if (stp == kv.second) {
+                    state_type = kv.first;
+                    isFind     = true;
+                }
             }
+        } else {
+            state_type = BEST;
+            // assert(0 && "checkpoint_out:state=best");
         }
-        sDir       = jKV(jdata, {"path"}, sDir);
-        save_every = jKV(jdata, {"save-every"}, save_every);
+        sDir       = jKV(jdata, {"path"}, sDir, false);
+        sModelPath = sDir;
         if (isSave) {
-            format = FILE_FORMAT_TYPE::CKP_HF;
+            save_every = jKV(jdata, {"save-every"}, save_every, false);
+            string s   = jKV(jdata, {"format"}, s);
+            format     = s == "koifish" ? FILE_FORMAT_TYPE::CKP_KOIFISH : FILE_FORMAT_TYPE::CKP_HF;
+            // format = FILE_FORMAT_TYPE::CKP_KOIFISH;
         }
         // isIn       = key == "in";  // hack
     }
@@ -845,8 +860,11 @@ CheckPoint_Params::CheckPoint_Params(const JSON& jData, const std::string& key, 
     }
 }
 
+/**
+ * So complex!
+ */
 std::string CheckPoint_Params::FullPath(bool isSave, int flag) {
-    string sOut = "", sExt = CKP_ext[type];
+    string sOut = "", sExt = CKP_ext[state_type];
     switch (format) {
         case CKP_HF:
             if (isSave) {
@@ -854,6 +872,21 @@ std::string CheckPoint_Params::FullPath(bool isSave, int flag) {
             } else {
                 sOut = sModelPath;
             }
+            break;
+        case CKP_KOIFISH:
+            // if (isSave) {
+            if (state_type == STATE) {
+                if (!sX.empty()) {
+                    sOut = sDir + sX;  //+ std::to_string(iter)
+                } else
+                    sOut = sDir + jKey;
+                sOut += "." + sExt;
+            } else {  //  "fish.kun"
+                sOut = sDir + KOIFISH_CKP_DEFAULT_NAME;
+            }
+            // } else {
+            //     sOut = sModelPath + KOIFISH_CKP_DEFAULT_NAME;
+            // }
             break;
         default:
             if (isSave) {
@@ -926,10 +959,10 @@ bool CLI_params::InitChekcpoints(int argc, char** argv, const std::string& ckp_q
             // checkpoints.push_back(state);
         }
     } catch (JSON::parse_error& e) {
-        _ERROR("\r\n%s  Failed to open %s!!! ERR=%s", __func__, ckp_queue.c_str(), e.what());
+        _ERROR("\r\n_InitChekcpoints  Failed to open %s!!! ERR=%s", ckp_queue.c_str(), e.what());
         return false;
     } catch (...) {
-        _ERROR("\r\n%s  Unknown exception @%s!!!", __func__, ckp_queue.c_str());
+        _ERROR("\r\n_InitChekcpoints  Unknown exception @%s!!!", ckp_queue.c_str());
         return false;
     }
     return true;
@@ -970,7 +1003,7 @@ bool CLI_params::ToJConfig(int flag) {
             jConfig["vendor_quantizer"] = jVendorQuant;
         }
 
-        chat_sampler.seq_len          = 1024;  // 512;
+        // chat_sampler.seq_len          = 1024;  // 512;
         jConfig["gpt"]["max_seq_len"] = chat_sampler.seq_len;
         // jConfig["debug"]["prompts"] = "hello";
 
@@ -1050,7 +1083,7 @@ bool CLI_params::InitJConfig(int flag) {
         chat_sampler.seq_len = jKV(jConfig, {"gpt", "max_seq_len"}, chat_sampler.seq_len);  // 128
 
         if (chat_sampler.seq_len <= 0)
-            chat_sampler.seq_len = 8192;
+            chat_sampler.seq_len = KOIFISH_LITE_CHAT_SEQLEN;
 
         if (!JModel2Params(0x0))
             return false;
@@ -1095,12 +1128,14 @@ bool CLI_params::InitJConfig(int flag) {
         // tune   = jKV(jConfig, {"lora", "tune"}, tune);    //"lora_tune"
         // lora_r = jKV(jConfig, {"lora", "rank"}, lora_r);  //{"lora-r"}
 
-        DEBUG.x1         = jKV(jConfig, {"debug", "x"}, DEBUG.x1);
-        DEBUG.x_str      = jKV(jConfig, {"debug", "x_str"}, DEBUG.x_str);
-        DEBUG.N_mostiter = jKV(jConfig, {"debug", "most_iter"}, DEBUG.N_mostiter);
-        // DEBUG.isInitParamHost = DEBUG.x1 == 0;
-        DEBUG.fLongTail = jKV(jConfig, {"debug", "long_tail"}, DEBUG.fLongTail);
-        DEBUG.prompts   = jKV_arr(jConfig, {"debug", "prompts"}, DEBUG.prompts);
+        DEBUG.x1                = jKV(jConfig, {"debug", "x"}, DEBUG.x1);
+        DEBUG.x_str             = jKV(jConfig, {"debug", "x_str"}, DEBUG.x_str);
+        DEBUG.N_mostiter        = jKV(jConfig, {"debug", "most_iter"}, DEBUG.N_mostiter);
+        DEBUG.save_GlobalSate   = jKV(jConfig, {"debug", "save_globalsate"}, DEBUG.save_GlobalSate);  //-1;
+        DEBUG.dump_TensorDetail = jKV(jConfig, {"debug", "dump_tensordetail"}, DEBUG.dump_TensorDetail);
+        DEBUG.isInitParamHost   = DEBUG.x1 == 0;
+        DEBUG.fLongTail         = jKV(jConfig, {"debug", "long_tail"}, DEBUG.fLongTail);
+        DEBUG.prompts           = jKV_arr(jConfig, {"debug", "prompts"}, DEBUG.prompts);
 
         SUM::nMostMemItem    = jKV(jConfig, {"dump", "most_mem_item"}, SUM::nMostMemItem);
         SUM::nMinTensorAlloc = jKV(jConfig, {"dump", "min_tensor_alloc"}, SUM::nMinTensorAlloc);
@@ -1108,6 +1143,7 @@ bool CLI_params::InitJConfig(int flag) {
         dumpSwitch.train_time     = jKV(jConfig, {"dump", "train_time"}, dumpSwitch.train_time);
         dumpSwitch.tensor_ref     = jKV(jConfig, {"dump", "tensor_ref"}, dumpSwitch.tensor_ref);
         dumpSwitch.train_csv_path = jKV(jConfig, {"dump", "train_csv_path"}, dumpSwitch.train_csv_path);
+        dumpSwitch.tensor_load    = jKV(jConfig, {"dump", "tensor_load"}, dumpSwitch.tensor_load);
         // train = jKV(jConfig,{"train"},train );
         return true;
     } catch (JSON::parse_error& e) {
@@ -1121,11 +1157,11 @@ bool CLI_params::InitJConfig(int flag) {
 
 namespace fs = std::filesystem;
 FILE_FORMAT_TYPE FormatOfFile(const std::string& path, int flag) {
-    bool isDir = !fs::is_regular_file(path);
+    bool isDir              = !fs::is_regular_file(path);
     FILE_FORMAT_TYPE format = FILE_UNKNOW;
     if (isDir) {
         FILE_FORMAT_TYPE ckp_format = FILE_UNKNOW;
-        if (CHECK_FILE_EXIST("fish.safetensors", path)) {
+        if (CHECK_FILE_EXIST(KOIFISH_CKP_DEFAULT_NAME, path)) {
             ckp_format = CKP_KOIFISH;
         } else if (CHECK_FILE_EXIST("model.safetensors", path)) {
             ckp_format = CKP_HF;
@@ -1142,17 +1178,24 @@ FILE_FORMAT_TYPE FormatOfFile(const std::string& path, int flag) {
         string sExt = path.length() > 5 ? FILE_EXT(path) : "";
         if (sExt == "json") {
             format = FILE_JSON;
-        } else if (sExt == "fish") {
-            format = FILE_FISH;
+        } else if (sExt == "kun") {  // 其名为鲲
+            format = FILE_FISH;      // CKP_KOIFISH   ???
         } else if (sExt == "ck") {
             format = FILE_CHECKPOINT;
-        }        
+        } else if (sExt == "safetensors") {
+            format = CKP_HF;
+        }
     }
-    return format;    
+    return format;
 }
 
 bool CLI_params::LoadJConfig(const std::string& path, int flag) {
-    string sExt             = path.length() > 5 ? FILE_EXT(path) : "";
+    if (!VERIFY_DIR_EXIST(path, false)) {
+        // K_EXIT(KOIFISH_INVALID_ARGS_MODEL);
+        return false;
+    }
+    fs::path filePath       = path;
+    string sExt             = path.length() > 5 ? FILE_EXT(path) : "", s;
     FILE_FORMAT_TYPE format = FormatOfFile(path);
     bool isLoad             = false;
     switch (format) {
@@ -1167,7 +1210,8 @@ bool CLI_params::LoadJConfig(const std::string& path, int flag) {
             isLoad = true;
         } break;
         case CKP_KOIFISH:
-            SAFETENSOR_Load_jconfig(path, jConfig, FILE_FISH);
+            filePath = filePath / KOIFISH_CKP_DEFAULT_NAME;
+            SAFETENSOR_Load_jconfig(filePath.string(), jConfig, FILE_FISH);
             isLoad = true;
             break;
         case FILE_CHECKPOINT:
@@ -1175,10 +1219,15 @@ bool CLI_params::LoadJConfig(const std::string& path, int flag) {
             isLoad = true;
             break;
         default:
+            assert(0);
             break;
     }
-    if (isLoad && jConfig.empty())
+    s = jConfig.dump();
+    if (isLoad && jConfig.empty()) {
+        _ERROR("Empty json config@\"%s\"", path.c_str());  // KOIFISH_EMPTY_JSON_CONFIG
         return false;
+    } else {
+    }
     /*if (!sExt.empty()) {
         jsPath = path;
         if (sExt == "json") {
@@ -1201,42 +1250,25 @@ bool CLI_params::LoadJConfig(const std::string& path, int flag) {
 }
 
 bool CLI_params::parse(int argc, char** argv) {
-    std::string arg_prefix = "--", key, value;
-    exec_name              = EXE_name();
-    string sExt            = argc > 1 ? FILE_EXT(argv[1]) : "";
-    // bool isJConfig         = false;
+    std::string arg_prefix      = "--", key, value;
+    exec_name                   = EXE_name();
+    string sExt                 = argc > 1 ? FILE_EXT(argv[1]) : "";
+    FILE_FORMAT_TYPE ckp_format = FILE_JSON;  // bool isHF              = false;
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
-        if (fs::exists(arg)) {
-            LoadJConfig(arg);
-        }
-
-        /*string sExt = arg.length() > 5 ? FILE_EXT(arg) : "";
-        if (!sExt.empty()) {
-            jsPath = arg;
-            if (sExt == "json") {
-                std::ifstream jfile(jsPath);
-                if (jfile.fail()) {
-                    _INFO("\r\n[%s] Failed to open \"%s\" !!!\n", __func__, jsPath.c_str());
-                    return false;
-                }
-                jfile >> jConfig;
-            } else if (sExt == "fish") {
-                SAFETENSOR_Load_jconfig(arg, jConfig, FILE_FISH);
-            } else if (sExt == "ck") {
-                SAFETENSOR_Load_jconfig(arg, jConfig, FILE_CHECKPOINT);
-            }
-            if (jConfig.empty())
+        if (fs::exists(arg)) {  //*.json
+            if (!LoadJConfig(arg)) {
                 return false;
-            isJConfig = true;
-        }*/
-        else if (arg == "--version") {
+            }
+        } else if (arg == "--version") {
         } else if (arg == "p0") {
         } else if (arg == "p1") {
             DEBUG.cmd_p1 = 1;
             _INFO("******************* DEBUG.cmd_p1=%d ******************************\n", DEBUG.cmd_p1);
         } else if (arg == "p2") {
             DEBUG.cmd_p2 = 1;
+        } else if (arg == "--quant") {
+            sscanf(argv[++i], "%d", &DEBUG.quant_UserMode);
         } else if (arg == "--hellaswag") {
             eval_metric = "hellaswag";
             assert(i + 1 < argc);
@@ -1247,14 +1279,31 @@ bool CLI_params::parse(int argc, char** argv) {
             jConfig["datasets_new"]["eval"] = jEval;
         } else if (arg == "--hf") {  // directory of hf model
             assert(i + 1 < argc);
-            model.sCardPath = argv[++i];
+            model.sCardPath = model.sSTPath = argv[++i];
             if (!VERIFY_DIR_EXIST(model.sCardPath, false)) {
                 K_EXIT(KOIFISH_INVALID_ARGS_MODEL);
             }
-            model.ckp_format = FormatOfFile(model.sCardPath);
+            ckp_format = CKP_HF;
+        } else if (arg == "--fish") {  // directory of hf model
+            assert(i + 1 < argc);
+            model.sSTPath = argv[++i];
+            ckp_format    = CKP_KOIFISH;
         } else if (arg == "--prompts") {  // directory of hf model
             assert(i + 1 < argc);
-            DEBUG.prompts = {argv[++i]};
+            string sPrompt = argv[++i];
+            if (sPrompt.empty()) {
+                DEBUG.prompts = {"hello",
+                                 "What is the capital of Shanghai?",
+                                 "Who wrote the play Romeo and Juliet?",
+                                 "In which year did the Titanic sink?",
+                                 "What is the chemical symbol for the element gold?",
+                                 "What is the longest river in the world?",
+                                 "Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?",
+                                 "How many games did Arsenal FC go unbeaten during the 2003-2004 season of the English Premier League",
+                                 "I get out on the top floor (third floor) at street level. How many stories is the building above the ground?",
+                                 "天命玄鸟,降而生生. 玄鸟是什么鸟?"};
+            } else
+                DEBUG.prompts = {sPrompt};
         } else if (arg == "--tokenizer") {  // directory of tokenizer
             assert(i + 1 < argc);
             model.sTokenBinPath = argv[++i];
@@ -1268,15 +1317,37 @@ bool CLI_params::parse(int argc, char** argv) {
             exit(1);
         }
     }
-    DEBUG.T_GEMM = -1;  //  so many version of gemm
-    if (!jConfig.empty()) {
-        if (!InitJConfig())
-            return false;
-    } else {
-        std::string s = jConfig.dump();
-        if (!model.InitHugFace(this, jConfig, false, 0x0))
-            return false;
+    DEBUG.T_GEMM  = -1;  //  so many version of gemm
+    std::string s = jConfig.dump();
+    switch (ckp_format) {
+        case CKP_KOIFISH:
+            if (!LoadJConfig(model.sSTPath)) {
+                return false;
+            }
+            if (jConfig.contains("datasets")) {
+                jConfig.erase("datasets");
+            }
+            if (jConfig.contains("checkpoint_in")) {  // this would cause many confliction!
+                jConfig.erase("checkpoint_in");
+            }
+            model.sTokenBinPath = "./assets/tokenizer_151936.bin";
+
+            model.vocab_size = 151936;
+            if (!InitJConfig())
+                return false;
+            break;
+        case CKP_HF: {
+            if (!model.InitHugFace(this, jConfig, false, 0x0))
+                return false;
+            break;
+        }
+        default:
+            assert(!jConfig.empty());
+            if (!InitJConfig())
+                return false;
+            break;
     }
+    model.InitChatTemplate(this);
     // Dump(0x100);
 
     switch (phase) {
@@ -1293,6 +1364,24 @@ bool CLI_params::parse(int argc, char** argv) {
     }
     OnArch();
     return true;
+}
+
+void CLI_params::OnPhase(LIFE_PHASE _phase, int flag) {
+    phase                   = _phase;
+    FILE_FORMAT_TYPE format = model.ckp_format;
+    switch (phase) {
+        case P_GENERATE:
+            common.n_batch = 1;
+            distill.anneal = ANNEAL_SCHEDULE::ANNEAL_OFF;
+            distill.lenda  = -1.0;
+            break;
+        case P_EVAL_:
+
+            break;
+        default:
+
+            break;
+    }
 }
 
 int Gensor_loab(struct ggml_context* ctx0, hGensor w, int nHeavy, hGensor ga, hGensor gb, int flag) {
@@ -1666,6 +1755,7 @@ ggml_cgraph* GG_dup_graph(ggml_context* ctx, ggml_cgraph* src) {
 #include "../Manifold/Fish.hpp"
 
 /*
+    Deprecated - Since koifish support 1-bit parameters, why need GGUF?
     1.  gguf_get_tensor_offset
 */
 bool Fish::GGUF_Serialize(const std::string& path, bool isSave, int flag) {
@@ -1854,7 +1944,7 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, bool need
     ckp_format = FormatOfFile(sCardPath);
     switch (ckp_format) {
         case CKP_KOIFISH:
-            // ST2JSON(hst, jConfig, flag);     //load config from fish.safetensors
+            assert(0);
             break;
         case FILE_FORMAT_TYPE::CKP_HF: {
             string jPath = sCardPath + "config.json";
@@ -1868,7 +1958,7 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, bool need
                 auto jMap = jSafetensorsIndex["weight_map"];
                 for (JSON::iterator it = jMap.begin(); it != jMap.end(); ++it) {
                     std::string key = it.key();
-                    st_map.insert(std::make_pair(key, nullptr));
+                    st_index_map.insert(std::make_pair(key, nullptr));
                 }
             }
         } break;
@@ -1913,10 +2003,10 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, bool need
         if (!jModelParam.contains("head_dim")) {  // some config.json of hf model don't have "head_dim"
             assert(hidden_size % num_attention_heads == 0);
             hd = hidden_size / num_attention_heads;
-            assert(hd > 0 && hd < 10240 && "Invalid head_dim @ computed InitHugFace");
+            assert(hd > 0 && hd < 10240 && "Invalid head_dim @ computed InitHugFace_");
         } else {
             hd = jKV(jModelParam, {"head_dim"}, head_dim);
-            assert(hd > 0 && hd < 10240 && "Invalid head_dim @InitHugFace");
+            assert(hd > 0 && hd < 10240 && "Invalid head_dim @InitHugFace_");
             if (hd != head_dim) {
                 for (auto& lay : layerps) {
                     lay._head_dim = hd;
@@ -1939,7 +2029,7 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, bool need
             }
         }
 
-        InitChatTemplate(hConfig);
+        // InitChatTemplate(hConfig);
     }
 
     switch (hConfig->ModelArch()) {

@@ -132,7 +132,7 @@ float* T_generate_Cooperative(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned
     cudaCheck(cudaGetLastError());  // check for kernel launch errors; they might fail with OOM due to lazy kernel compilation
 
     // cls->preLogits->Print("logits",0,-1,dim);
-    cls->preLogits->SerialData("", nullptr, true);
+    cls->preLogits->SerialGamaData("", nullptr, true);
     return logits;
 }*/
 
@@ -185,7 +185,7 @@ TOKEN_ID GeneratOnPrompt::Sample(int idx, bool is_resampling) {
 template <typename T>
 __global__ void CU_swiglu_v0(T* out, const T* gate, const T* inp, int N);
 template <typename T>
-void inline swiglu_forward(T* out, const T* inp, const T* gate, int N, cudaStream_t stream=0x0) {
+void inline swiglu_forward(T* out, const T* inp, const T* gate, int N, cudaStream_t stream = 0x0) {
     const int block_size = 128;
     const int grid_size  = CEIL_DIV(N, block_size);
     // CU_swiglu_v1<<<grid_size, block_size, 0, stream>>>(out, inp, gate, N);
@@ -358,7 +358,7 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
         // int grid_size = (hQwen->vocab_size + CU_T4B_SMALL - 1) / CU_T4B_SMALL;
         // only for using floatLogits = float;
         // convert_bf16_to_fp32_kernel<<<grid_size, CU_T4B_SMALL>>>(hQwen->xlogit, logits, hQwen->vocab_size);
-        cls->preLogits->SerialData("", nullptr, true);
+        cls->preLogits->SerialGamaData("", nullptr, true, -1);
     }
     // cls->preLogits->Print("logits",0,-1,hQwen->vocab_size);
     return logits;

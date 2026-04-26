@@ -397,8 +397,10 @@ __global__ void CU_adamw_p(TASKA_1p1<Typ> taska, PIPE_Adamw<Typ, Tmv> pipe) {
     if (idx >= pipe.num_parameters) {  // guard
         return;
     }
-    f256 grad256 = typ128::load2F(taska.config, pipe.grads0 + idx), m256 = typ128::load2F(taska.config, pipe.gm + idx),
-         v256 = typ128::load2F(taska.config, pipe.gv + idx), param256 = typ128::load2F(taska.config, pipe.params + idx);
+    f256 grad256  = typ128::load2F(taska.config, pipe.grads0 + idx);
+    f256 m256     = typ128::load2F(taska.config, pipe.gm + idx);
+    f256 v256     = typ128::load2F(taska.config, pipe.gv + idx);
+    f256 param256 = typ128::load2F(taska.config, pipe.params + idx);
     grad256.Scale(pipe.grad_scale);
     for (int i = 0; i < typ128::size; ++i) {
         float grad = grad256[i], m = m256[i], v = v256[i];
@@ -516,7 +518,7 @@ void PIPE_Muon<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
     CU_muon_mG<<<task_11.grid3, task_11.block3, task_11.smem, task_11.stream>>>(task_11, *this);
     // CU_muon_mG_v0<<<dGRID, dT4B, 0, stream>>>(task_11, *this);
     // PrintTensor<floatX>("mG", (floatX*)(mG), true, m, n, 1, 1, -1);
-    D2e(this->arrNorm, xNrm);
+    D2e(this->arrNorm, xNrm, this->name + "CU_muon_mG");
     alpha = 1.0 / (sqrt(xNrm) + eps_muon);  //  Ensure spectral norm is at most 1
     assert(sizeof(Tmv) == sizeof(floatX));
     cudaDataType bf16     = CUDA_R_16BF;
@@ -568,7 +570,7 @@ void PIPE_Muon<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
         cublasAxpyEx(cublas_handle, m * n, &beta, CUDA_R_32F, X, bf16, 1, X, bf16, 1, CUDA_R_32F);
     CU_muon_update<<<task_11.grid3, task_11.block3, task_11.smem, task_11.stream>>>(task_11, *this);
     // CU_muon_update_v0<<<dGRID, dT4B, 0, stream>>>(*this);
-    D2e(this->arrNorm, xNrm, 0x0), assert(!(isnan(xNrm) || isinf(xNrm)));
+    D2e(this->arrNorm, xNrm, this->name + "@CU_muon_update", 0x0);  // assert(!(isnan(xNrm) || isinf(xNrm)));
     this->tensor->wnorm = sqrt(xNrm);
     cudaCheck(cudaGetLastError());
 }
@@ -578,7 +580,7 @@ template struct PIPE_Adamw<floatX, floatMV>;  // Force compilation
 template <typename Tp, typename Tmv>
 void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
     using typ128 = PackedN<Tp, 16 / sizeof(Tp)>;
-    if (G_Has_(tensor->name, {"model.layer.self_attn.o_proj.weight_gama", "weight_gama"})) {
+    if (G_Has_(tensor->name, {"model.layer.mlp.down_proj.weight", "weight_gama"})) {
         DEBUG_HERE;
     }
 
@@ -660,7 +662,7 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
                     }
                 }
             }
-            D2e(arrNorm, tensor->wnorm, 0x0), assert(isValidF(&(tensor->wnorm)));
+            D2e(arrNorm, tensor->wnorm, name + "CU_adamw_p", 0x0), assert(isValidF(&(tensor->wnorm)));
             tensor->wnorm = sqrt(tensor->wnorm);
             // tensor->Mutation();        //  need more test
         }

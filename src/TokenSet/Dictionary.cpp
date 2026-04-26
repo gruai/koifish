@@ -691,14 +691,15 @@ bool GTokenizer_QWEN3::InitHF(Fish* dolphin, int flag) {
         char tmp_word[MAX_TOKEN_LENGTH];
         string sRoot          = config.model.sCardPath;
         string tokenizer_path = config.model.sTokenBinPath;
-        int vocab_size        = config.model.vocab_size;
+        int vocab_size        = config.model.vocab_size;        
         if (!VERIFY_DIR_EXIST(tokenizer_path)) {
             _WARN("[QWEN3] tokenizer_path@ (\"%s\") is invalid! This would not affect the training, but the lack of tokenizer would make decode impossible.\n",
                   tokenizer_path.c_str());
             // exit(KOIFISH_LOAD_TOKENIZER);
             return false;
         }
-
+        
+        assert(vocab_size > 0);
         FILE* file = fopen(tokenizer_path.c_str(), "rb");
         if (file == NULL) {
             // bos_id = dolphin->config.model.bos_token_id;
@@ -765,15 +766,9 @@ TOKENS GTokenizer_QWEN3::Encode(const std::string& sText, bool encode_bos, bool 
     // process the raw (UTF-8) byte sequence of the input string
     for (const char* c = text; *c != 0; c++) {
         int id, found_special_token = 0;
-
-        // set the buffer to the current byte
         str_buffer[0] = *c;
         str_buffer[1] = 0;
-
-        // special tokens begin with < and end with >. If we find a substring beginning with <
-        // and ending with > and there's a token in the vocab for it, use that instead of parsing into
-        // shorter tokens
-        if (*c == '<') {
+        if (*c == '<') {  // special tokens begin with < and end with >
             int end_of_token_pos = -1;
             found_special_token  = 0;
             for (int k = 0; *c != 0 && k < 64; k++) {
@@ -786,8 +781,7 @@ TOKENS GTokenizer_QWEN3::Encode(const std::string& sText, bool encode_bos, bool 
             if (end_of_token_pos != -1) {
                 strncpy(special_token, c, end_of_token_pos + 1);
                 special_token[end_of_token_pos + 1] = 0;
-
-                id = Lookup(special_token);
+                id                                  = Lookup(special_token);
                 if (id != -1) {
                     c += end_of_token_pos;
                     found_special_token = 1;
@@ -1095,9 +1089,9 @@ DictVAE::DictVAE(Fish* dolphin, int flag) : VariationaAE(), dolphin(dolphin) {
 
     _norm.Init(dolphin);
     _output.Init(dolphin);
-    reserve_x   = true;
-    isSymmetric = false;
-    lama_embed  = config.nEmbed();
+    reserve_x  = true;
+    isMirror   = false;
+    lama_embed = config.nEmbed();
 
     latent_dim = config.nEmbed();
     if (dolphin->config.nabla > 3)
@@ -1109,7 +1103,7 @@ DictVAE::DictVAE(Fish* dolphin, int flag) : VariationaAE(), dolphin(dolphin) {
         // dims = {config.nEmbed(),1024,256,64};       //little difference with {config.nEmbed(),1024,256,128}
         nLevel     = dims.size() - 1;
         latent_dim = dims[nLevel];
-        _INFO("%s symmetric=%d resi=%d tpNorm=%d opOut=%d nLevel=%d dims= ", __func__, (int)(isSymmetric), (int)(reserve_x), tpNorm, opOut, nLevel);
+        _INFO("%s symmetric=%d resi=%d tpNorm=%d opOut=%d nLevel=%d dims= ", __func__, (int)(isMirror), (int)(reserve_x), tpNorm, opOut, nLevel);
     } else { /**/
         if (dolphin->config.wiki_actor != "copy") {
             if (DEBUG.dict_latent_dim > 0)
@@ -1148,7 +1142,7 @@ void DictVAE::CreateEmbeddings(int flag) {
     } else {
         const int last_dim = dims[dims.size() - 1];
         if (isLoadTokenEmbed) {
-            const int n1 = isSymmetric ? n_embd : last_dim;
+            const int n1 = isMirror ? n_embd : last_dim;
             if (opOut == RND_GRAD) {
                 _norm.w   = GT(this, typNUMBER::F32, {n1});
                 _output.w = GT(this, typNUMBER::F32, {n1, n_out});

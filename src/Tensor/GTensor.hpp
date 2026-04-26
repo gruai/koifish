@@ -31,6 +31,7 @@ using namespace std;
 
 class GTensor;
 class huTensor;
+class K_SafeTensors;
 class Fish;
 class SparseNeuron;
 class EDGE_DEVICES;
@@ -102,6 +103,7 @@ struct Distri_PIPE {
     float vmin = FLT_MAX, vmax = -FLT_MAX;
     int B_ = 0, T_ = 0, C_ = 0;  // For activation, it's number of batch,token(int each batch), channel(of each token)
     double mean = 0, sum_1 = 0.0, sum_2 = 0.0, nrm_1 = 0.0;
+    double zero_2 = DBL_MAX, gama_2= 0.;
     double abs_max = 0;  //  norm_0
     float sigma_   = 0;
 
@@ -157,6 +159,7 @@ struct Distri_OFF : public Distri_PIPE {};
  * 2.   Support BIT representation
  * 3.   Row-major order (first index varies most slowly and last index varies most quickly)
  * 4.   May not contiguous in memory! All tensor operations have to take the stride into account and not assume that the tensor is contiguous in memory!
+ * 5.   Json_Serialization
  */
 class GTensor : public std::enable_shared_from_this<GTensor> {
    private:
@@ -170,6 +173,9 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     std::vector<GTensor*> refered;
     std::vector<hGTensor> fuyous;
     std::shared_ptr<EDGE_DEVICES> hDevice = nullptr;
+    std::array<size_t, 2> data_offsets;  //
+    std::vector<uint8_t> msgpack;
+
     size_t szData = 0, szGama = 0, szUse = 0, szGrad = 0, szM = 0, szV = 0;
     int last_iter = -1;
     //  support dynamic change shape&type!  return false if not change anything
@@ -228,7 +234,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     void* data      = nullptr;
 
     virtual bool InitShadoW(const void* srcData, bool isGPU, DISTILLATION_CARD& distill, int flag = 0x0);
-    void* shadoW = nullptr;     //  Shadow Weights
+    void* shadoW = nullptr;  //  Shadow Weights
 
     //
     enum GAMA_TYPE {
@@ -280,9 +286,9 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
         F_TMP_GRAD  = 0x80000,
 
         // F_TERNARY = 0x100000,  // Deprecated
-        F_LORA_A  = 0x200000,
-        F_LORA_B  = 0x400000,
-        F_GAMA    = 0x800000,
+        F_LORA_A = 0x200000,
+        F_LORA_B = 0x400000,
+        F_GAMA   = 0x800000,
 
         F_DEBUG = 0x10000000
     };
@@ -296,6 +302,8 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     static size_t MostOverhead() { return sizeof(GTensor) * 2; }
     GTensor() {}
     GTensor(Fish* hFish, SHAPE shape_, typNUMBER tpD_, bool isAlloc = true, int flag = 0x0);
+    GTensor(Fish* hFish, const string& name, JSON& jDesc, int flag = 0x0);  // init from checkpoints(safetensors)
+    virtual JSON jDesc(K_SafeTensors* st, int flag = 0x0);
 
     virtual hGTensor Partial(const string& name, size_t offset, SHAPE shape, typNUMBER tyP = typNUMBER::T_OTHER, int flag = 0x0) {
         assert(0);
@@ -311,7 +319,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     }
 
     enum SERIAL_TYPE { TRIVAL, SAVE_, LOAD_ONLY_W };
-    virtual int LoadParam(const std::string& name, const JSON& val, void* bytes_ptr, size_t bytes_size, int flag = 0x0);
+    virtual int LoadParam(K_SafeTensors* hst, const std::string& name, hGTensor kunsor, void* bytes_ptr, size_t bytes_size, int flag = 0x0);
     //  load mapping-memory would do Quant !
     virtual bool Serial_Quant_MMAP(bool isSave, bool isReset = true, SERIAL_TYPE type = TRIVAL, int flag = 0x0);
     // for fuyou's Exploitation
@@ -359,14 +367,11 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     virtual void SetRefer(hGTensor hR, int flag = 0x0);
     // virtual bool SetTernary(typNUMBER typ, int flag = 0x0);
 
-    virtual bool SerialGP(void* yD, void* yG, size_t szY, bool isToY, int flag = 0x0) {
-        assert(0);
-        return false;
-    }
-    virtual bool SerialData(const string& info, void* host, bool isToHost, int flag = 0x0) {
-        assert(0);
-        return false;
-    }
+    // virtual bool SerialGP(void* yD, void* yG, size_t szY, bool isToY, int flag = 0x0) {
+    //     assert(0);
+    //     return false;
+    // }
+    virtual bool SerialGamaData(const string& info, void* host, bool isToHost, size_t szMost, int flag = 0x0);
     template <typename T>
     T* GetHostData(int flag = 0x0, const string& sX = "") {
         return nullptr;
@@ -462,6 +467,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     friend class TokenEmbed;
     friend class Fish;
     friend class GENSOR_TOPU;
+    friend class K_SafeTensors;
 };
 
 template <typename T>
@@ -551,6 +557,7 @@ class huTensor : public GTensor {
     size_t Free_1(void** obj, const string& info = "") override;
 
    public:
+   //   In most case, would call randParam to gen param_seed
     huTensor(Fish* hFish, const string& name_, const SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag = 0x0);
     virtual ~huTensor();
     hGTensor Partial(const string&, size_t offset, const SHAPE shape, typNUMBER tyP = typNUMBER::T_OTHER, int flag = 0x0) override;
@@ -565,8 +572,8 @@ class huTensor : public GTensor {
     void Zero() override;
     void ZeroGrad() override;
     void Set(float a, int flag = 0x0) override { assert(0); }
-    bool SerialGP(void* yD, void* yG, size_t szY, bool isToY, int flag = 0x0) override;
-    bool SerialData(const string& info, void* host, bool isToHost, int flag = 0x0) override;
+
+    // bool SerialGamaData(const string& info, void* host, bool isToHost, size_t szMost, int flag = 0x0) override;
     bool OverWrite(hGTensor, bool isSrc = true, int flag = 0x0) override;
     hGTensor CrossEntropy(const hGTensor b, int flag = 0x0) override;
 
@@ -663,8 +670,6 @@ inline float* Gensor2float(struct ggml_context* ctx0, const hGensor w, int flag 
 
 void _T_repr_(hGensor t, const char* tab, char* buf, int typ = 0x0);
 void _T_repr_(hGensor t, const char* tab, char* buf, const GENSOR_INFO& info);
-
-// floatGama* gamaOf(floatGama* gama_0, GTensor::GAMA_TYPE type, int nRow, int nCol, int flag = 0x0);
 
 template <typename T>
 double P_softmax(int idx, T* logits, int size);

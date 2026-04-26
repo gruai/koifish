@@ -544,6 +544,9 @@ void SYNC_STREAM(int flag) {
 }
 
 hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
+    if (G_Has_(name, {"layers.17.self_attn"})) {
+        DEBUG_HERE; //74200000
+    }
 #ifdef USE_FP8_BASELINE
     assert(0 && "FP8 baseline is not implemented yet");
     return nullptr;
@@ -551,16 +554,16 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
     assert(hCache != nullptr && isSeparateQKV);
     hBATCH hBatch = hFish->GetCurBatch(true);
     int pos       = hBatch->tok_pos;
-    if (pos > 0)
+    if (pos >= 0)
         _devQKV(pos);  // update k,v
     // // hCache:   (layer, seq_len, kv_dim)
     floatX *key_cache = (floatX*)hCache->Get(KVCache::KV_KEY, layid - 1, 0), *val_cache = (floatX*)hCache->Get(KVCache::KV_VAL, layid - 1, 0);
-    // K.out->data = key_cache + (size_t)pos * kv_dim, V.out->data = val_cache + (size_t)pos * kv_dim;
+
     hGensor tmpQKV = gBUFF->tmpFF1;
     floatX* qkvr   = ToX(tmpQKV);  // Q.out/K.out/V.out
     int nToken = nBatchToken(), seq_len = hFish->config.n_ctx(), nEmbed = hFish->config.nEmbed();
-    inp = OnInput(inpL);  //  may remater by hIn->SerialData
-    inp->Print("inp", 0x0, dump_flag);
+    inp = OnInput(inpL);  //  may remater by hIn->SerialData_
+    inp->Print("inp", 0x0, dump_flag, nToken * nEmbed);
     gBUFF->residual = inp;
     hGTensor inpQ   = inpL;
     if (fuseNorm == nullptr) {
@@ -625,7 +628,7 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
         } else {
         }
     }
-    out->Print("qkv.out", 0x0, 0);
+    out->Print("qkv.out", 0x0, 0, nToken * nEmbed);
     return out;
 #endif
 };
@@ -640,6 +643,7 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
     floatX* qkvr   = ToX(tmpQKV);  // Q.out/K.out/V.out
     int nEmbed     = hFish->config.nEmbed();
     // bool isAlternate = true;                   // layer%2==1;layer>1;
+    _devQKV(0);
     if (isForward()) {  //  data=ToX(QKV->norm.out)
         NvtxRange range(name.c_str(), 0);
         inp             = OnInput(inpL);  //         inp->Print("inp",0x0,dump_flag);

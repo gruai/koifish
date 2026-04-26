@@ -55,7 +55,7 @@ void LearnSKDU::Dump(int typ) {
 }
 
 float LearnSKDU::LearningRate(int64_t step, int flag) {
-    assert(step>=0);
+    assert(step >= 0);
     float lr0 = lr_base, lr;
     // assert(lr_base == _params.LearningRate());
 
@@ -80,7 +80,7 @@ float LearnSKDU::LearningRate(int64_t step, int flag) {
             }
         } break;
         default:
-            if (step < warmup) {    //  0,1,2, ..., warmup-1
+            if (step < warmup) {  //  0,1,2, ..., warmup-1
                 lr = lr0 * ((float)(step + 1)) / warmup;
             } else if (step >= mostIter - last_froze) {
                 lr = lr_final;
@@ -103,7 +103,7 @@ hGensor GeNeuron::OnInput(hGensor hIn, int flag) {
     bool isTemp = hFish->isTemporaryMemory(this);
     if (hFish->isRemater()) {
         assert(isTemp);
-        hIn->SerialData(name, host_inp, false, dump_flag);
+        hIn->SerialGamaData(name, host_inp, false, dump_flag);
     }
     if (hFish->ChatMode() != CHAT_MODE::YABA) {  //  ???
         return hIn;
@@ -112,7 +112,7 @@ hGensor GeNeuron::OnInput(hGensor hIn, int flag) {
     if (!hFish->hOPT->isBackward) {  // Forward
         if (isTemp) {
             double now = GST_ms();
-            hIn->SerialData(name, host_inp, true, dump_flag);
+            hIn->SerialGamaData(name, host_inp, true, dump_flag);
             SUM::tUpload += GST_ms() - now;
         }
     } else {

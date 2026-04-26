@@ -435,25 +435,12 @@ bool Fish::InitDictTokenset(int flag) {
 
     auto [tsTrain_, tsEval_, tsCalib_] = DataTokenSet::MakeInstance(config, hDict, isLocalInfer, 0x0);
     tsTrain = tsTrain_, tsEval = tsEval_, tsCalib = tsCalib_;
-    /*if (tokenset.empty()) {
-        _ERROR("\n======== %s Failed to load tokenset!========\n", __func__);
-        return false;
-    };
-
-    tsTrain = tokenset[0];
-    for (int i = 1; i < tokenset.size(); i++) {
-        tsEval.push_back(tokenset[i]);
-    }*/
 
     if (isTrain()) {
         assert(tsTrain != nullptr && "Train tokensets is nullptr!");
         if (tsTrain != nullptr && tsTrain->nMostTok > 0)
             config.OnMostToken(tsTrain->nMostTok);
-    } /*else {
-        tsTrain = nullptr;
-        tsEval  = tokenset;
-        return true;  // may have no train !!!
-    }*/
+    } 
 
     return true;
 }

@@ -164,10 +164,6 @@ void SparseNeuron::UpdateSamps(int seed, int flag) {
     assert(hSamps != nullptr);
     float* weight = nullptr;  // TODO: Weighted sampling
     int nVocab = hFish->nClass(), nSample = hSamps->size();
-    // int *samps=new int[nSample];
-    // samp_1 = nVocab;
-    // hSamps->SerialGP(samps,nullptr,sizeof(int)*nSample,false);  //29156,    22663,      34659
-    // delete[] samps;
     std::vector<int> samps;
     Grusoft::GRander rander(seed);
     if (1) {  // nearly same
@@ -178,7 +174,7 @@ void SparseNeuron::UpdateSamps(int seed, int flag) {
         samps = rander.kSampleInN(nSample, nVocab);
     }
     assert(samps.size() == nSample);
-    hSamps->SerialGP(samps.data(), nullptr, sizeof(int) * nSample, false);
+    assert(0);  //    hSamps->SerialGP(samps.data(), nullptr, sizeof(int) * nSample, false);
 }
 
 /*

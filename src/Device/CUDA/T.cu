@@ -122,7 +122,7 @@ __global__ void CU_XtoQ128_(const TASKA_quant<Typ> taska, BIT_128* quants, const
         wMax = max(wMax, *x0);
         wMin = min(wMin, *x0);
     }
-    if (taska.ising != QUANT_ISING_::I_OFF) {
+    if (taska.yyang != QUANT_YYANG_::I_OFF) {
         step = std::max(1e-5f, vMean / N);
         zero = 0;
     } else {
@@ -160,6 +160,75 @@ __global__ void CU_XtoQ128_(const TASKA_quant<Typ> taska, BIT_128* quants, const
             PACK_4to128_(qq, q128 + k);
         } else if (nQuant == 64) {
             PACK_2to128_(qq, q128 + k);
+        } else if (nQuant == 128) {
+            PACK_1to128_(qq, q128 + k);
+        } else {
+            assert(0);
+        }
+        // if (taska.lenda != 0.0) {
+        //     taska.average[idrow] = sum / N;
+        // }
+    }
+    if (taska.isAccumErr) {
+        atomicAdd(taska.prober + 1, (double)err);
+    }
+}
+
+template <class Typ>
+__global__ void CU_XtoYYang_(const TASKA_quant<Typ> taska, BIT_128* quants, const Typ* mat0, int flag) {
+    int tid = threadIdx.x, idrow = blockIdx.x * blockDim.x + tid, M = taska.nG, N = taska.lG;
+    if (idrow >= M)
+        return;  // guard
+    const int nQuant = 128;
+    assert(taska.yyang != QUANT_YYANG_::I_OFF);
+    size_t offset   = idrow * N;
+    const Typ *curX = mat0 + offset, *x0 = curX;
+    BIT_128* q128 = quants + offset / nQuant;
+    Typ wMax = curX[0], wMin = curX[0];
+    float sR = 1.0f, sC = 1.0f, a, step, zero, vMean = 0.f, sum = 0.f;
+    if (taska.rc_normal > 0) {
+        sR = taska.gamaRow[idrow];
+    }
+    for (int k = 0; k < N; k++, x0++) {
+        a = float(*x0);
+        // vMean += abs(a);
+        vMean += a < 0.0 ? 0.0 : a * a;
+        sum += a;
+        wMax = max(wMax, *x0);
+        wMin = min(wMin, *x0);
+    }
+
+    // step = std::max(1e-5f, vMean / N);
+    step = std::max(1e-5f, sqrt(vMean / N));
+    zero = 0;
+
+    taska.zero[idrow] = zero;
+    taska.step[idrow] = step;
+    int32_t qq[nQuant];
+    x0        = curX;
+    float err = 0.0, e;
+    for (int k = 0; k < N / nQuant; k++) {
+        for (int i = 0; i < nQuant; i++, x0++) {
+            // if (taska.rc_normal == 1) {  //  NORMAL_MODE::SINKHORN
+            //     step *= gamaCol[i];
+            // }
+            a     = CU_T2Float(x0);
+            qq[i] = std::round((a + zero) / step);
+            qq[i] = qq[i] < taska.qMin ? taska.qMin : (qq[i] > taska.qMax ? taska.qMax : qq[i]);
+            if (idrow == 0) {
+                DEBUG_HERE;
+            }
+            e = a - (step * qq[i] - zero);
+            err += e * e;
+            qq[i] += taska.qBias;
+        }
+
+        if (nQuant == 32) {
+            PACK_4to128_(qq, q128 + k);
+        } else if (nQuant == 64) {
+            PACK_2to128_(qq, q128 + k);
+        } else if (nQuant == 128) {
+            PACK_1to128_(qq, q128 + k);
         } else {
             assert(0);
         }
@@ -193,6 +262,8 @@ __global__ void CU_Q128toX_(const TASKA_quant<Typ> taska, const BIT_128* quants,
             UNPACK_128to4_UNSIGNED_(q128 + k, qq);
         } else if (nQuant == 64) {
             UNPACK_128to2_UNSIGNED_(q128 + k, qq);
+        } else if (nQuant == 128) {
+            UNPACK_128to1_UNSIGNED_(q128 + k, qq);
         } else {
             assert(0);
         }
@@ -201,6 +272,7 @@ __global__ void CU_Q128toX_(const TASKA_quant<Typ> taska, const BIT_128* quants,
         }
         for (int i = 0; i < nQuant; i++) {
             floatGama g0 = (step * (floatGama)(qq[i] - taska.qBias) - zero) * sR;
+            // floatGama g0 =  qq[i] ? step : -step;
             if (!CU_isValidF(&g0)) {
                 DEBUG_HERE;
             }
@@ -228,11 +300,13 @@ double GTensor::SetDataX(floatX* param_0, bool checkErr, int flag) {
     bool isDump = false;
     switch (type) {
         case typNUMBER::Q2:
+        case typNUMBER::T_BINARY:
+        case typNUMBER::BOOL1:
         case typNUMBER::T_SIGN:
         case typNUMBER::Q4: {
             TASKA_quant<floatX> task_q(this, hQuant, main_stream);
-            floatX *wX = param_0;  
-            assert(param_0==shadoW);
+            floatX* wX = param_0;
+            assert(param_0 == shadoW);
             if (hQuant->isRTN()) {
                 assert(hQuant->params.type == RTN);
                 if (isDump) {
@@ -241,19 +315,24 @@ double GTensor::SetDataX(floatX* param_0, bool checkErr, int flag) {
                 }
                 if (type == typNUMBER::Q2 || type == typNUMBER::T_SIGN)
                     T1pG(CU_XtoQ128_<floatX, 64>, task_q, (BIT_128*)(data), wX, 0x0);
+                else if (type == typNUMBER::T_BINARY || type == typNUMBER::BOOL1)
+                    T1pG(CU_XtoYYang_<floatX>, task_q, (BIT_128*)(data), wX, 0x0);
                 else
                     T1pG(CU_XtoQ128_<floatX, 32>, task_q, (BIT_128*)(data), wX, 0x0);
                 if (isDump)
                     Print("AfterQuant", 0, -1);
                 if (checkErr) {  // check residual
-                    floatX *deQuant = nullptr;
+                    floatX* deQuant = nullptr;
                     cudaCheck(cudaMalloc(&deQuant, sizeof(floatX) * N));
                     if (type == typNUMBER::Q2 || type == typNUMBER::T_SIGN)
                         T1pG(CU_Q128toX_<floatX, 64>, task_q, (BIT_128*)(data), deQuant, 0x0);
+                    else if (type == typNUMBER::BOOL1 || type == typNUMBER::T_BINARY)
+                        T1pG(CU_Q128toX_<floatX, 128>, task_q, (BIT_128*)(data), deQuant, 0x0);
                     else
                         T1pG(CU_Q128toX_<floatX, 32>, task_q, (BIT_128*)(data), deQuant, 0x0);
-                    if (isDump)
+                    if (isDump) {
                         PrintTensor<floatX>("deQuant", deQuant, true, N, 1, 1, 1, -1);
+                    }
                     err = CU_OFF_avg<floatX>(wX, deQuant, size());
                     cudaCheck(cudaFree(deQuant));
                 }
@@ -263,7 +342,7 @@ double GTensor::SetDataX(floatX* param_0, bool checkErr, int flag) {
             } else {  //
             }
             if (task_q.isAccumErr)
-                D2e(task_q.prober, err);
+                D2e(task_q.prober, err, "SetDataX");
         } break;
 
         default:
@@ -478,6 +557,7 @@ __global__ void CU_rms_backward_v0(Typ* dX0, Typ* dWeight0, float* dW_scratch, c
 
 hGTensor LayerNormal::cuFlow(hGTensor inpDelta, int flag) {  //,hGTensor deltaIn
     NVTX_RANGE_FN();
+    int nToken = nBatchToken(), nTH  = nHead > 0 ? nToken * nHead : nToken;
     const int block_size = 256, block_y = block_size / WARP_SIZE, grid_size = CEIL_DIV(nTH, block_y);
     int nThread = X128::nThreadOfBlock(ldTH, 0);
     // w->Print(w->name, 0, 0);

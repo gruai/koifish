@@ -12,7 +12,6 @@ import json
 import time
 import subprocess
 import fnmatch
-import seaborn as sns
 import glob
 import atexit
 import sys

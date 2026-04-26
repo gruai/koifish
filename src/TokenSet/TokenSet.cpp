@@ -476,8 +476,17 @@ double SampLoader::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
     UpdateII();  //    iiLoss.Stat();
     // _INFO("\n\t");
     SUM::tEval_1 = (GST_ms() - tic) / 1.0e3;
-    if (!hFish->isLocalInfer)
-        UpdateStepInfos(iiLoss.average, nB);
+    switch (hFish->phase) {
+        case P_GENERATE:
+            break;
+        case P_EVAL_:
+            break;
+        case P_TRAIN:
+            UpdateStepInfos(iiLoss.average, nB);
+            break;
+    }
+    // if (!hFish->isLocalInfer)
+    //     UpdateStepInfos(iiLoss.average, nB);
 
     switch (tpBatch) {
         case BATCHofEMBED:

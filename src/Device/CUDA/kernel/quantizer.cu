@@ -247,13 +247,17 @@ floatX* GTensor::GetDataX(int flag, const string& sX) const {
                 CU_Q32X_<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, disq.rc_normal, 42);
             // gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow*nCol);
         } break;
+        case typNUMBER::BOOL1:
+        case typNUMBER::T_BINARY:
         case typNUMBER::T_SIGN: {
             wX = ToX(gBUFF->tmpTernary);      
             if(hOPT->hAR_quant!=nullptr)
                 hQuant->params.distill.lenda = hOPT->DistillRate(0x0);      
             TASKA_quant<floatX> task_q(this, hQuant, main_stream);            
-            // Print(name, 0x0, -1);
-            T1pG(CU_Q128toX_<floatX, 64>, task_q, (BIT_128*)(data), wX, 0x0);
+            if(type==typNUMBER::T_SIGN)
+                T1pG(CU_Q128toX_<floatX, 64>, task_q, (BIT_128*)(data), wX, 0x0);
+            else
+                T1pG(CU_Q128toX_<floatX, 128>, task_q, (BIT_128*)(data), wX, 0x0);
             // PrintTensor<floatX>("deQuant", wX, true, nRow, nCol, ne[2], ne[3], -1);
         } break;
         case typNUMBER::Q2: {
@@ -267,7 +271,7 @@ floatX* GTensor::GetDataX(int flag, const string& sX) const {
             // gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow*nCol);
         } break;
 
-        case typNUMBER::T_BINARY:
+        /*case typNUMBER::T_BINARY: Deprecate!
         case typNUMBER::T_BINARY_3:
             if (DEBUG.T_ternary == 1) {          // each weight(floatX) is {-1,0,1}, no need to extract
             } else if (DEBUG.T_ternary == -1) {  // each weight {-1,0,1}
@@ -283,7 +287,7 @@ floatX* GTensor::GetDataX(int flag, const string& sX) const {
             }
 
             // PrintTensor<floatX>("wX", wX, true, nRow, nCol, ne[2], ne[3], -1);
-            break;
+            break;*/
         case typNUMBER::T_BINARY_TILE: {
             dim3 dBlock(THREAD_TILE_M * THREAD_TILE_N), dGrid(CEIL_DIV(nRow, THREAD_TILE_M), CEIL_DIV(nCol, THREAD_TILE_N));
             assert(nRow % THREAD_TILE_M == 0 && nCol % THREAD_TILE_N == 0);

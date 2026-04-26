@@ -131,7 +131,7 @@ shared_ptr<GTensor> GST_TensorBuffer::RegisterTensor(Fish* hFish, const string& 
 bool GST_TensorBuffer::Free(void* hObj, int flag) {
     for (size_t id = 0; id < records.size(); id++) {
         Allocation alloc;
-        records.at(id, &alloc);
+        records.at(id, alloc);
         if (alloc.hData == hObj) {
             records.erase(alloc.desc);
             return true;

@@ -62,10 +62,10 @@ class GeQuant : public std::enable_shared_from_this<GeQuant> {
     std::string name;
     Grusoft::GRander rander;
     uint32_t seed;
-    bool isGPU         = false;
+    bool isGPU = false;
 
-    int nMostLoop      = 16;  // 8
-    float impurity     = 0;
+    int nMostLoop   = 16;  // 8
+    float impurity  = 0;
     float imbalance = 0, T_imbal = 1.1f;
     float err_0 = FLT_MAX, err_1 = 0;
     std::vector<double> split_thrshs;
@@ -94,14 +94,7 @@ class GeQuant : public std::enable_shared_from_this<GeQuant> {
 
     GeQuant() {}
     GeQuant(const std::string& nam_, void* hN, QUANT_CARD& params, int flag = 0x0);
-    GeQuant(int bits_, bool perchannel_ = false, bool sym_ = true, bool mse_ = false, double norm_ = 2.4, int grid_ = 100, double maxshrink_ = .8,
-            bool trits_ = false)
-        : bits(bits_), trits(trits_), perchannel(perchannel_) {
-        params.isSymmetric = sym_;
-        // qMax = pow(2.0, bits) - 1;
-        // if (trits)
-        //     qMax = -1;
-    }
+
     virtual ~GeQuant();
 
     virtual int ExTensor(shared_ptr<GTensor> hBase, std::vector<shared_ptr<GTensor>>& aux, int flag = 0x0);
@@ -114,7 +107,7 @@ class GeQuant : public std::enable_shared_from_this<GeQuant> {
 
     // x=8,4,2,1....
     virtual float RTN_x(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
-    virtual float ISing(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
+    virtual float YinYang(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
     // NormalF_4, NormalF_3
     virtual float RT_NormalF(shared_ptr<GTensor> tensor, const void* cpuData, int flag = 0x0);
     // Do quant (would reshape tensor if needed)
@@ -162,14 +155,14 @@ struct TASKA_quant {
     int block3 = 0, tpb = 512;  //  tpb is the number of threads in one block
     int grid3 = 0, nBlock = 0;  // grid3=(nBlock, 1, 1), nBlock is the total number of blocks
     int rc_normal = 0, seed = 42, nG = -1, lG = -1;
-    int np32bit        = 1;  // number of elements per 32_bit
-    floatGama *gamaCol = nullptr, *gamaRow = nullptr, *zero = nullptr, *step = nullptr; // *average = nullptr;
+    int np32bit        = 1;                                                              // number of elements per 32_bit
+    floatGama *gamaCol = nullptr, *gamaRow = nullptr, *zero = nullptr, *step = nullptr;  // *average = nullptr;
     DISTILLATION_CARD distill;
-    
+
     int nBin = 0, qMin = 0, qMax = 0, qBias = 0;
     bool isAccumErr = false;
     double* prober;
-    QUANT_ISING_ ising = QUANT_ISING_::I_OFF;
+    QUANT_YYANG_ yyang = QUANT_YYANG_::I_OFF;
 
     TASKA_quant(const GTensor* hTensor, hQUANT hQuant, cudaStream_t stream_, int flag = 0x0);
     TASKA_quant(const GTensor* hTensor, int q0, int q1, bool isSym_, cudaStream_t stream_, int flag = 0x0);

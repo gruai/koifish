@@ -105,7 +105,7 @@ bool TokenEmbed::Build(int flag) {
     }
 
 
-    quant_params.Init4Neuron(name, hFish->config.jQuant);
+    quant_params.Init4Neuron(name, hFish->config.jQuant, this);
     quant_params.spMost = w->shape;
     hQuant              = GeQuant::MakeInstance(this, name, quant_params, {this}, 0x0);  //  {Q.w,proj_cat.w}
     w->hQuant = hQuant; //hack for isWMAT() check
@@ -318,7 +318,7 @@ FFN::FFN(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag)
     down.SetDType(tpWeight, tpActivation, tpGradient);
     gate.SetDType(tpWeight, tpActivation, tpGradient);
     if (hG_->config.model.isFFNWeightTying) {
-        // isSymmetric = true;      Need more time to study its effect
+        // isMirror = true;      Need more time to study its effect
     }
     isNormalDown = hFish->isModel({NLP_BITNET});
     if (hFish->config.ModelArch() == NLP_GUPPY) {  //->config.model.isFFNShareParam;
@@ -357,7 +357,7 @@ bool VarCoder::Build(int flag_0) {
     } else {
         down.BuildX(name + "_down", {nBottom, nTop}, hFish, flagSLP);
         up.BuildX(name + "_up", {nTop, nBottom}, hFish, flagSLP);
-        if (isSymmetric) {
+        if (isMirror) {
             down.w        = nullptr;
             down.w        = up.w;
             down.isTransW = true;
@@ -501,7 +501,7 @@ string FFN::__repr__(string& suffix, string& prefix, int flag) {
             break;
     }
 
-    sprintf(buf + strlen(buf), "%s FFN {hidden=%d} %s %s %s", tab, /*name.c_str(),*/ shape[1], sActi.c_str(), isSymmetric ? "SYM" : "", sS.c_str());
+    sprintf(buf + strlen(buf), "%s FFN {hidden=%d} %s %s %s", tab, /*name.c_str(),*/ shape[1], sActi.c_str(), isMirror ? "SYM" : "", sS.c_str());
     if (flag > 0)
         _INFO("%s", buf);
     return buf;

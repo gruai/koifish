@@ -654,11 +654,11 @@ hGTensor ROPE::cuInfer(SelfAttention* hQKV, uint32_t seed, int pos, int flag) {
     if (fuse_normal == 0 && hnQ != nullptr) {
         // hnQ->w->Print("qnw", 0x0, dump_flag), hnK->w->Print("knw", 0x0, dump_flag);
         hnQ->cuFlow(hQKV->Q.out);
+        hQKV->Q.out->Print("Q.norm", 0x0, dump_flag, nToken * q_dim);
         hnK->cuFlow(hQKV->K.out);
+        hQKV->K.out->Print("K.norm", 0x0, dump_flag, nToken * kv_dim);
         qW = nullptr, kW = nullptr;
     }
-    hQKV->Q.out->Print("Q.norm", 0x0, dump_flag, nToken * q_dim);
-    hQKV->K.out->Print("K.norm", 0x0, dump_flag, nToken * kv_dim);
 
     assert(n_head_kv <= n_head);  // so blocks_k is in blocks_q
     if (fuse_normal == 1) {
@@ -666,7 +666,8 @@ hGTensor ROPE::cuInfer(SelfAttention* hQKV, uint32_t seed, int pos, int flag) {
         CU_rope_rmsnormal_forw<floatX><<<blocks_k, dim3(head_dim / 2, 1, 1)>>>(k, kW, pos, n_head_kv, head_dim, theta);
     } else
         CU_rope2_v0<floatX><<<blocks_q, dim3(head_dim / 2, 1, 1)>>>(q, k, pos, n_head, n_head_kv, head_dim, theta, 42);
-    // Q.out->Print("Q.rope", 0x0, dump_flag, nToken * q_dim), K.out->Print("K.rope", 0x0, dump_flag, nToken * kv_dim);
+    hQKV->Q.out->Print("Q.rope", 0x0, dump_flag, nToken * q_dim);
+    hQKV->K.out->Print("K.rope", 0x0, dump_flag, nToken * kv_dim);
     return nullptr;
 }
 

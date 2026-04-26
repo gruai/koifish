@@ -116,6 +116,7 @@ struct PIPE_Adamw : public PIPE_Optimizer {
                 params = (floatX*)tensor_->shadoW;   //ToX(gBUFF->tmpTernary_);
             // tensor->GetDataX();  // no need de dequant again!
         }
+        assert(params!=nullptr);
     }
 
     void CU_core(cudaStream_t stream, int flag = 0x0) override;
@@ -238,8 +239,6 @@ struct KERNEL_PIPE : public MODEL_CARD {
         tX->Zero();
 
         hCache = hFish->curCache();
-        // key_cache       = (KVT*)hCache->Get(KVCache::KV_KEY);
-        // val_cache       = (KVT*)hCache->Get(KVCache::KV_VAL);
 
         norm_eps   = config.model.norm_eps;
         theta_log2 = log2(config.model.rope_theta);

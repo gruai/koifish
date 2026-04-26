@@ -101,17 +101,6 @@
         "train_time": 0,
         "# tensor_ref": 1,
         "most_mem_item": 6
-    },
-    "checkpoint_out": {
-        "koifish_0.6B": {
-            "path": "/home/cys/rnd/lic/Models/koifish-0.6B/",
-            "#type": "best full state",
-            "type": "best",
-            "save-every": 500,
-            "snapshot": {
-                "curFuyou": -1
-            }
-        }
-    },
+    },    
     "seed": 42
 }

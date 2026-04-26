@@ -102,7 +102,7 @@ __global__ void CU_glu2_forw_(TASKA_1p1<Typ> taska, Typ* out, const Typ* gate, c
     if (idx) {
         float xiW = CU_T2Float(gate + idx);
         float xiV = CU_T2Float(inp + idx);
-        float g2   = xiW < 0.0 ? 0.0 : xiW * xiW;
+        float g2  = xiW < 0.0 ? 0.0 : xiW * xiW;
         out[idx]  = (Typ)(g2 * xiV);
     }
 }
@@ -159,10 +159,10 @@ __global__ static void CU_swiglu_v1(Typ* out, const Typ* inp, const Typ* gate, i
 }
 
 int Relu::Forw(hGTensor out, hGTensor inp, int flag) {
-    size_t nz            = SHAPE2NZ(shape);
-    const int block_size = 128;
-    const int grid_size = CEIL_DIV(nz, block_size), C = hFish->config.n_ff();
-    assert(B * T * C == nz);
+    int nToken = nBatchToken(), C = hFish->config.n_ff();
+    size_t nz  = nToken * C;  // SHAPE2NZ(shape);
+    const int block_size = 128,grid_size = CEIL_DIV(nz, block_size);
+    // assert(B * T * C == nz);
     hGTensor gate = nullptr;
     if (slp_gate != nullptr && slp_gate->tRhs != nullptr) {
         gate = slp_gate->tRhs;  // assert(gate != nullptr);

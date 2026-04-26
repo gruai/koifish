@@ -75,10 +75,12 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vect
     } else {
         if (fish->role == SWARM_FOLLOWER) {
         } else {
-            if (!wikis.empty()) {  // generate some sentence
-                if (params.common.gpt_every > 0 && !fish->isLocalInfer)
-                    fish->gopt = GeneratOnPrompt::MakeInstance(params, wikis, fish.get(), flag);
+            // if (!wikis.empty()) {  // generate some sentence
+            if (params.common.gpt_every > 0 && !fish->isLocalInfer) {
+                params.chat_sampler.mode        = params.model.enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
+                fish->gopt                      = GeneratOnPrompt::MakeInstance(params, wikis, fish.get(), flag);
             }
+            // }
         }
     }
     // fish->Dump(0x0);
@@ -244,7 +246,7 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
                 continue;
             // optParams.push_back(t);
             // nx += tELEM(t);
-            n0++;                                                //
+            n0++;  //
             // if (G_Has_(t->name, config.datatypes.arrTernary)) {  // {"ffn_down.weight", "ffn_up.weight"}
             //     t->SetTernary(typNUMBER::T_BINARY_3);
             // }
@@ -260,15 +262,12 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
         }
     }
     UpdateParams();  //  optParams
-    if (config.model.isLoadCard()) {
-        isLoadCheckpoint = HF_Serialize(false, 0x0);
-        if (!isLoadCheckpoint)
-            return false;
-    } else if (!config.ckp_in.empty()) {  // would update paramIsGuoke
-        if (!LoadCheckPoint(config.ckp_in[0], flag))
+
+    if (!config.model.sSTPath.empty() || !config.ckp_in.empty()) {  // HF/*.safetebsors
+        if (!LoadFolderOfST(-1, flag))
             return false;
     }
-
+    //! LoadCheckPoint_(config.ckp_in.data(), flag)
     if (config.fuyou.paramIsGuoke) {  // F_RELOAD_
         // config.fuyou.filter_reload = {DEBUG.x_str};  //only for debug   "ffn_up.weight" blk.2.ffn_up.weight
         for (auto t : optParams) {
@@ -283,9 +282,10 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
     }
 
     if (isTrain()) {
-        if (isLoadCheckpoint) {
-        } else
+        if (isLoadCheckpoint) {  //  @LoadFolderOfST have called SaveTrain
+        } else {
             SaveTrain(config.state, true, FSerial::INIT_MMAP);  //  Init checkpoint
+        }
     } else {
         SetPhase(config.phase);
         assert(hBackTG == nullptr);
@@ -295,11 +295,15 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
     for (auto t : hOPT->opt_ps) {
         hRLS->GetTensorStatus(-1, t, 0x0);
     }
-
-    /*if (tpInitWeight == SERIALIZE) {
-        if (!LoadCheckPoint(config.fish_in, flag))
-            return false;
-    }*/
+    if (!config.model.st_index_map.empty()) {  //  "model.safetensors.index.json"     "model.embed_tokens.weight"
+        for (auto kv : config.model.st_index_map) {
+            hGensor target = GetGensor(kv.first);
+            if (target->data == nullptr) {
+                _WARN("Please check \"model.safetensors.index.json\", null data of tensor=%s!", target->name);
+            }
+            kv.second = target->data;
+        }
+    }
 
     if (!config.only_write_model && hOPT != nullptr) {
         hOPT->Prepare(nParams);
@@ -395,14 +399,14 @@ bool Fish::Build(int flag) {
     bool isInitParam = false;
     // , isJModel = !config.jModel.empty();    assert(isJModel);
     isSymbolicAnalysis = true;
-    
+
     InitInput(ctx_build, true, flag);
     //  isInitParam = true;     // would init param online, not here
     hForwTG = std::make_shared<TGraph>(this, "J_model", ctx_build, true);
     jToGraph(ctx_build, false, flag);
     assert(hCLS != nullptr);
     BuildLoss(ctx_build, hCLS->preLogits);
-    iRet = BuildComputeGraph(0, ctx_build, 0x0);    
+    iRet = BuildComputeGraph(0, ctx_build, 0x0);
 
     assert(iRet == 0x0);
     Statistic(0x0);
@@ -461,6 +465,10 @@ bool Fish::SaveTrain(CheckPoint_Params& ckp, bool isInit, int flag) {
     assert(optParams.size() > 0);
 
     if (isInit) {
+        if (DEBUG.save_GlobalSate <= 0) {
+            _WARN("[SAFETENSOR]  Skip save to %s(MMAP file). All tensors in GPU!\n", sOut.c_str());
+            return true;
+        }
         // this->Dump(0x0);
         isOK = SAFETENSOR_Serialize(ckp, true, flag);  // isInit ? FSerial::INIT_MMAP : 0x0
         assert(isOK);
@@ -489,84 +497,14 @@ bool Fish::SaveTrain(CheckPoint_Params& ckp, bool isInit, int flag) {
 }
 
 bool Fish::SaveCheckPoint(int flag) {
-    /*assert(tpInitWeight == INIT_WEIGHT::SERIALIZE);
-    std::string fpCheck = config.checkpoint.in;
-    if (!config.model.isLoadCard()) {
-        isLoadCheckpoint = HF_Serialize(false, 0x0);
-    } else {
-        string type = FILE_EXT(fpCheck);
-        bool isCopy = config.is({"wiki", "actor"}, "copy") && wikis.size() > 0;
-        if (fpCheck.empty()) {
-            // if(wiki_tutor!=nullptr)
-            //     return true;
-            return true;
-        }
-
-        _INFO("[CHECKPOINT]: load \"%s\", type=\"%s\" ......", fpCheck.c_str(), type.c_str());
-        if (type == "fish" || type == "fuyou") {
-            isLoadCheckpoint = SAFETENSOR_Serialize(config.checkpoint.in, false, 0x0);
-        } else if (type == "calm") {
-            isLoadCheckpoint = CALM_Serialize(config.checkpoint.in, false, 0x0);
-            // isLoadCheckpoint = YALM_Serialize(config.checkpoint.in,false,0x0);
-        } else {
-            // just try, may fail!
-            isLoadCheckpoint = SAFETENSOR_Serialize(config.checkpoint.in, false, 0x0);
-            //  Deprecated - Since koifish support 1-bit parameters, why need GGUF?
-            // isLoadCheckpoint = GGUF_Serialize(config.checkpoint.in,false,0x0);
-        }
-    }
-
-    if (!isLoadCheckpoint) {
-        _INFO("\r[SaveCheckPoint] failed!  please check file @\"%s\"!\n", fpCheck.c_str());
-        return false;
-    }
-
-    assert(vendor == "gruai");
-    _INFO("\r[SaveCheckPoint] OK @\"%s\"\n", fpCheck.c_str());*/
-    return true;
-}
-
-bool Fish::LoadCheckPoint(CheckPoint_Params& ckp, int flag) {
-    assert(config.model.tpInitWeight == INIT_WEIGHT::SERIALIZE);
-    std::string fpCheck = ckp.sModelPath;
-    if (config.model.isLoadCard()) {
-        isLoadCheckpoint = HF_Serialize(false, 0x0);
-    } else {
-        string type = FILE_EXT(fpCheck);
-        bool isCopy = config.is({"wiki", "actor"}, "copy") && wikis.size() > 0;
-        if (fpCheck.empty()) {
-            // if(wiki_tutor!=nullptr)
-            //     return true;
-            return true;
-        }
-
-        _INFO("[CHECKPOINT]: load \"%s\", type=\"%s\" ......", fpCheck.c_str(), type.c_str());
-        if (type == "fish" || type == "fuyou") {
-            isLoadCheckpoint = SAFETENSOR_Serialize(ckp, false, 0x0);
-        } else {
-            // just try, may fail!
-            isLoadCheckpoint = SAFETENSOR_Serialize(ckp, false, 0x0);
-            //  Deprecated - Since koifish support 1-bit parameters, why need GGUF?
-            // isLoadCheckpoint = GGUF_Serialize(config.checkpoint.in,false,0x0);
-        }
-    }
-
-    if (!isLoadCheckpoint) {
-        _INFO("\r[LoadCheckPoint] failed!  please check file @\"%s\"!\n", fpCheck.c_str());
-        return false;
-    }
-    UpdateCheckPoint(ckp, false);
-    config.fuyou.filter_reload = {};  // ckp.fuyou_filter_reload;        // Don't reload
-
-    assert(vendor == "gruai");
-    _INFO("\r[LoadCheckPoint] OK @\"%s\"\n", fpCheck.c_str());
+    // assert(0);
     return true;
 }
 
 void Fish::Statistic_Quant(int typ, int flag) {
     int nT = gensors.size(), nQuant = quants.size(), nF16 = 0, nBF16 = 0, nSinkNormal = 0, nQT = 0;
     float sum = 0.0;
-    std::vector<string> arrQ4, arrQ3, arrQ2, arrF8;
+    std::vector<string> arrQ4, arrQ3, arrQ2, arrF8, arrQ1;
     std::vector<string> arrGBDT, arrRTN;
     size_t nzP = 0, nzBit = 0;
     for (auto t : optParams) {
@@ -579,7 +517,7 @@ void Fish::Statistic_Quant(int typ, int flag) {
             if (hQuant->params.norm == NORMAL_MODE::SINKHORN) {
                 nSinkNormal++;
             }
-            if (qType == QUANT_MODE::MINI) {
+            if (qType == QUANT_MODE::MINI_GBDT) {
                 arrGBDT.push_back(t->name);
             } else {
                 arrRTN.push_back(t->name);
@@ -606,6 +544,10 @@ void Fish::Statistic_Quant(int typ, int flag) {
             case typNUMBER::Q2:
             case typNUMBER::T_SIGN:
                 arrQ2.push_back(t->name);
+                break;
+            case typNUMBER::BOOL1:
+            case typNUMBER::T_BINARY:
+                arrQ1.push_back(t->name);
                 break;
             case typNUMBER::BF16:
                 nBF16++;
@@ -880,14 +822,15 @@ hBATCH Fish::GetCurBatch(bool isUpate, int flag) {
 }
 
 void Fish::GetBT(int& B, int& T, int flag) const {
-    B = config.n_batch();
-    // C         = config.nEmbed();
+    B         = config.n_batch();
     T         = config.n_ctx();
     int q_dim = config.Q_dim(), kv_dim = config.KV_dim();
     assert(q_dim >= kv_dim);  // C!=q_dim
     switch (phase) {
         case LIFE_PHASE::P_GENERATE:
-            assert(B == 1);
+            if (B != 1) {  // in the case of gpt_every>0,
+            }
+            B = 1;
             T = 1;
             break;
         default:
@@ -922,9 +865,10 @@ bool Fish::AllocBuffer(int flag) {
         int B = config.n_batch(), T = config.n_ctx(), NH = config.n_head();
         if (isLocalInfer) {
             if (config.phase == P_GENERATE) {  // P_EVAL no need cache!
-                hCache = std::make_shared<KVCache>(this);
+                // hCache = std::make_shared<KVCache>(this);
             }
         }
+        hCache = std::make_shared<KVCache>(this);   //why this would affect train loss?
         if (phase != P_GENERATE) {
 #ifdef ENABLE_CUDNN
             cudnn_qkv_forw(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn);

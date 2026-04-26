@@ -464,7 +464,7 @@ auto TO_VECTOR(const Iterable& iterable) {
 template <typename T>
 class GST_Dict {
    public:
-    bool at(const size_t idx, T* dst) const {
+    bool at(const size_t idx, T& dst) const {
         if (idx >= _keys.size()) {
             return false;
         }
@@ -474,9 +474,22 @@ class GST_Dict {
             return false;
         }
 
-        (*dst) = _m.at(_keys[idx]);
+        dst = _m.at(_keys[idx]);
 
         return true;
+    }
+
+    T at(const size_t idx) const {
+        if (idx >= _keys.size()) {
+            assert(0 && "GST_Dict::idx out of range!");
+        }
+
+        if (!_m.count(_keys[idx])) {
+            // This should not happen though.
+            assert(0 && "GST_Dict::key out of range!");
+        }
+        T dst = _m.at(_keys[idx]);
+        return dst;
     }
 
     bool count(const std::string& key) const {
@@ -506,15 +519,23 @@ class GST_Dict {
         _m[key] = std::move(value);
     }
 
-    bool at(const std::string& key, T* dst) const {
+    bool at(const std::string& key, T& dst) const {
         if (!_m.count(key)) {
             // This should not happen though.
             return false;
         }
 
-        (*dst) = _m.at(key);
+        dst = _m.at(key);
 
         return true;
+    }
+    T at(const std::string& key) const {
+        if (!_m.count(key)) {            // This should not happen though.
+            assert(0 && "GST_Dict::key out of range!");
+        }
+
+        T dst = _m.at(key);
+        return dst;
     }
 
     const std::vector<std::string>& keys() const { return _keys; }
@@ -556,7 +577,9 @@ class SafeExit : public std::exception {
     enum class ExitReason { NORMAL, DEBUG, ERROR, USER_REQUEST, SYSTEM_FAILURE, VALIDATION_ERROR };
 
     SafeExit(const std::string& msg, int code = 1, ExitReason reason = ExitReason::ERROR, const std::string& loc = "")
-        : message(msg), exit_code(code), timestamp(std::chrono::system_clock::now()), location(loc), reason(reason) {}
+        : message(msg), exit_code(code), timestamp(std::chrono::system_clock::now()), location(loc), reason(reason) {
+            message = msg;
+        }
 
     const char* what() const noexcept override { return message.c_str(); }
 

@@ -166,12 +166,12 @@ class Fish : public std::enable_shared_from_this<Fish> {
     std::vector<std::string> to_quant, to_skip;
 
     virtual bool GGUF_Serialize(const std::string& path, bool isSave, int flag = 0x0);
-    // Load model wight from hugging face model
-    virtual bool HF_Serialize(bool isSave, int flag = 0x0);
-    // virtual bool YALM_Serialize(const std::string& path, bool isSave, int flag = 0x0);
+    // Deprecated
+    // virtual bool SafeTensors_Serialize(bool isSave, int flag = 0x0);    
 
     int SAFETENSOR2Gensors(const std::string& path, K_SafeTensors* hst, int flag);
-    virtual bool SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag = 0x0);
+    // Load/Save model wight <=> SafeTensors files(.kun, HF*.safetensors, ...). Support multifiles in one folder!
+    
 
     MODEL_ARCH arch = MODEL_ARCH::_X_;
     virtual std::string NN2NAME(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix = "", int flag = 0x0);
@@ -402,7 +402,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     virtual bool BeforeNextStep(int iter, int flag = 0x0);
     virtual bool AfterNextStep(int iter, int flag = 0x0);
 
-    virtual int GenSentence(int flag = 0x0) { return -1; }
+    virtual int Chat(int enable_thinking, LIFE_PHASE outer_phase, int flag = 0x0);
     virtual float Evaluate(DL_BATCH_UPATE tpBatch, int flag = 0x0);
     virtual int ForwardOnRLS(int iter, int flag);
     virtual int BackwardOnRLS(int iter, int flag);
@@ -432,7 +432,8 @@ class Fish : public std::enable_shared_from_this<Fish> {
     // static Fish* Copy(const Fish* src,int flag=0x0);
     virtual bool SaveTrain(CheckPoint_Params& ckp, bool isInit = false, int flag = 0x0);
     virtual bool UpdateCheckPoint(CheckPoint_Params& ckp, bool isSave, int flag = 0x0);
-    virtual bool LoadCheckPoint(CheckPoint_Params& ckp, int flag = 0x0);
+    virtual bool SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag = 0x0);
+    virtual bool LoadFolderOfST(int stType, int flag = 0x0);
     virtual bool SaveCheckPoint(int flag = 0x0);
 
     friend class GeNeuron;

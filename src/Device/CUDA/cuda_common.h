@@ -677,11 +677,16 @@ bool H2D(void* dev, const void* host, size_t szData, int flag = 0x0);
 
 // copy value of one elemetn from device
 template <typename T>
-bool D2e(void* dev, T& host, int flag = 0x0) {
+bool D2e(void* dev, T& host, const std::string& desc, int flag = 0x0) {
     if (!D2H(dev, &host, sizeof(T), flag))
         return false;
     float a = T2Float(&host);
-    assert(!(isnan(a) || isinf(a)));
+    if (isnan(a) || isinf(a)) {
+        _ERROR("[D2e] faild@\"%s\" a=%g\n", desc.c_str(), a);
+        assert(0);
+        return false;
+        // K_EXIT_NOW(KOIFISH_INVALID_D2E);
+    }
     return true;
 }
 

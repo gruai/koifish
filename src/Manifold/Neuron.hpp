@@ -165,6 +165,7 @@ class GeNeuron {
     };
     // Pick gensors(child,partial,vitual,ref,lora,...)
     virtual std::vector<hGensor> PickGensors(int flag = PICK_LORA | PICK_SUBNN) const;  // bool isLORA = true,
+    // Important: token in each batch is changing at different phase!(training,eval,generate...)
     virtual int nBatchToken(int flag = 0x0);
     virtual Fish* GetFish() const {
         assert(hFish != nullptr);
@@ -428,7 +429,7 @@ struct LayerNormal : public SparseNeuron {
     bool isOnline         = false;
     float rms_eps         = 1.0e-5;
     int nHead             = 0;
-    int nTH               = 0, ldTH;  // number of tokens or heads
+    int ldTH;  // nTH:  number of tokens or heads
     int ver_rms_qknormal_ = 0;
     //  always float
     hGensor mean = nullptr, rstd = nullptr;
@@ -634,7 +635,7 @@ class VarCoder : public SparseNeuron {
    protected:
     int nTop = -1, nBottom = -1;
     bool isResi       = false;
-    bool isSymmetric  = false;
+    bool isMirror     = false;
     bool isNormalDown = false;  // Like 'ffn_sub_norm' of Bitnet
     hGensor resi      = nullptr;
     int tpNorm        = -2;

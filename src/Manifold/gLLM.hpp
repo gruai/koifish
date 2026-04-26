@@ -98,7 +98,7 @@ class NLP_AutoRegressive : public Fish {
         return nullptr;
     }
 
-    int GenSentence(int flag = 0x0) override;
+    virtual int GenSentence(int flag = 0x0);    //Deprecated!
     std::string T2STR(const std::vector<TOKEN_ID>& tok, int nMost = INT_MAX, int flag = 0x0);
     std::string T2STR(TOKEN_ID tok, int flag = 0x0) {
         assert(0);

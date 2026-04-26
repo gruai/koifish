@@ -62,25 +62,6 @@ bool GTensor::isWMAT(int flag) const {
     return true;
 }
 
-//  "./checkpoints/._koifish_state_.ckp" @K_SafeTensors::Register ckp.type == CheckPoint_Params::STATE
-size_t GTensor::nByte_CKP(const CheckPoint_Params& ckp, int flag) const {
-    size_t sz = nByte();
-    assert(sz > 0);
-
-    string opt = hFish->config.common.method;
-    if (hFish->isTrain() && ckp.type == CheckPoint_Params::STATE) {
-        if (opt == "muon") {
-            if (hFish->config.common.muon.isAdamW((void*)this))
-                sz *= 3;
-            else
-                sz *= 2;  // only gm
-        } else
-            sz *= 3;  // gm+gv
-    }
-
-    return sz;
-}
-
 bool GTensor::isSameShape(SHAPE sp, int flag) const {
     assert(sp.size() <= 4);
     size_t nz_0 = 1, i = 0;
@@ -181,9 +162,6 @@ bool GTensor::ReShape(SHAPE shape_, typNUMBER tpD_, int flag) {
         Free();
         INIT_WEIGHT tpOldInit = tpInit;
         tpInit                = W_SKIP;  // just pass the InitParam in the Alloc function
-        // if (isParam()) {
-        //     SUM::nInitParam--;
-        // }
         Alloc();
         tpInit = tpOldInit;
     }
@@ -396,121 +374,6 @@ hGensor GENSOR_TOPU::Get(MODEL_ARCH arch, const string& name, int flag) {
 }
 void ToChebyshev(int N, float* rows, int flag = 0x0);
 
-SHAPE JSON2SHAPE(const JSON& jval) {
-    SHAPE spJ;
-    if (jval.at("shape").size() > 4) {
-        _ERROR("JSON2SHAPE: shape exceeds 4 dimensions");
-    }
-    spJ          = jKV_arr(jval, {"shape"}, spJ);
-    size_t numel = SHAPE2NZ(spJ);
-    /*
-    for (size_t i = 0; i < val.at("shape").size() && i < 4; i++) {
-        if (val.at("shape")[i].get<int>() != val.at("shape")[i]) {
-            std::cerr << "bad shape" << std::endl;
-            return -2;
-        }
-        int n = val.at("shape")[i].get<int>();
-        spJ.push_back(n);  // shape[i] =
-        numel *= spJ[i];
-    }*/
-    return spJ;
-}
-void* JSON2SRC(const JSON& jval, const void* bytes_ptr, const size_t bytes_size, size_t& szSrc, GTensor* tensor) {
-    if (jval.at("data_offsets").size() != 2) {
-        return nullptr;
-    }
-    size_t offset_start = static_cast<size_t>(jval.at("data_offsets")[0]);  // 1544148992
-    size_t offset_end   = static_cast<size_t>(jval.at("data_offsets")[1]);  // 1545276932
-    if (offset_start < 0 || offset_end <= offset_start || offset_end > bytes_size) {
-        _ERROR("bad offsets");
-        return nullptr;
-    }
-    size_t szData = tensor->nByte();
-    szSrc         = offset_end - offset_start;
-    if (szData > szSrc || szSrc % szData != 0) {
-        _WARN("GTensor::LoadParam_ failed! size mismach[%ld!=%ld] @%s", szData * 3, szSrc, tensor->name);
-        return nullptr;
-    }
-
-    void* src = (char*)bytes_ptr + offset_start;
-    return src;
-}
-
-/*
-    ---- stage one
-    1. Load param from HF "model.safetensors"
-        a .weight
-        b AWQ model (.qweight, .zeros, .scales)
-    2. Load param from Koifish state file
-        a load bf16 weight
-        b load quantized weight (dequant it or not)
-
-    ---- stage two
-    1. quant weight (q4->q2 is also quant)
-*/
-int GTensor::LoadParam(const std::string& name_, const JSON& jval, void* bytes_ptr, size_t bytes_size, int flag) {
-    //  "tokenizer.tokens" model.layers.0.mlp.down_proj.qweight   "model.embed_tokens.weight" t->name,
-    if (G_Has_(name, {"model.layers.0.self_attn.q_proj.qweight"})) {  //  model.layers.0.self_attn.q_proj.qweight
-        DEBUG_HERE;
-    }
-    if (jval.empty()) {  // load from host_data of mmp
-        assert(host_data != nullptr && data != nullptr);
-        Serial_Quant_MMAP(false, false, LOAD_ONLY_W);
-        //  G_NORM_STAT<bf16>(size(), (bf16*)host_data, disq.sum_2, disq.sum_1, disq.nrm_1);
-        return 0x0;
-    }
-    // from HF "model.safetensors"
-    if (strcmp(name, name_.c_str()) != 0) {
-        strcpy(name, name_.c_str());
-    }
-    SHAPE spJ             = JSON2SHAPE(jval);
-    std::string dtype_str = jval.value("dtype", "");
-    typNUMBER tpMMP       = tpNumOf(dtype_str);
-    if (tpMMP == typNUMBER::I32 && hQuant != nullptr) {
-        tpMMP        = hQuant->bit2typ();
-        size_t nByte = K_FLOATS[tpMMP].nByte(SHAPE2NZ(shape));
-        assert(nByte == SHAPE2NZ(spJ) * 4 && name);
-    } else {
-        if (hQuant != nullptr) {  // *.scales F16
-            DEBUG_HERE;
-        } else
-            assert(shape == spJ && name);
-    }
-
-    ReShape(shape, tpMMP);
-
-    size_t szSrc = 0x0;
-    void* src    = JSON2SRC(jval, bytes_ptr, bytes_size, szSrc, this);
-    if (BIT_TEST(flag, F_NOALLOC)) {  //  "tokenizer.tokens","tokenizer.scores"
-        data = src;                   // ((char*)(src))[szSrc-1]    (char*)bytes_ptr + offset_end-1
-        BIT_SET(flags, F_MMAP);
-        /*if (DEBUG.T_cpu == 1) {       // reserve for future CPU version
-            data = src;
-            BIT_SET(flags, F_MMAP);
-        }*/
-    } else {
-        assert(data == nullptr);
-        host_data = src;
-        if (!hFish->isTrain()) {  // otherwize, mmap file is free & host_data is invalid
-            tpInit = W_SKIP;
-            Alloc(-1, flag);
-            Serial_Quant_MMAP(false, false);
-            host_data = nullptr;  // mmap file would release
-        } else {
-            if (type == typNUMBER::BF16)  // get original disq of tensor stored in mmp
-                G_NORM_STAT<bf16>(size(), (bf16*)src, disq.sum_2, disq.sum_1, disq.nrm_1);
-        }
-        // if (G_Has_(name, hFish->config.quant.filter_WeightF8Ex)) {  // model.embed_tokens.weight    only for debug
-        //     ToF8Ex(0x0);
-        // }
-    }
-    if (strlen(name) > 0 && flag > 0)
-        DumpX(0);
-    if (G_Has_(name, {"model.layers.0.input_layernorm.weight"})) {
-        // Print(name,0,-1);
-    }
-    return 0;
-}
 /*
 floatGama* gamaOf(floatGama* gama_0, GTensor::GAMA_TYPE type, int nRow, int nCol, int flag) {
     switch (type) {
@@ -544,10 +407,11 @@ floatGama* gamaOf(floatGama* gama_0, GTensor::GAMA_TYPE type, int nRow, int nCol
         1. RC_SCALE is the scaling of each row/column(is not same as nGroup/lGroup!)
         2. gama_0 may be some temp memory
 */
-floatGama* GTensor::gama_T(GAMA_TYPE type, floatGama* gama_0) const {
+floatGama* GTensor::gama_T(GAMA_TYPE gama_type, floatGama* gama_0) const {
     if (hRef != nullptr)
         return hRef->gama_T();
-    assert(data != nullptr);
+
+    bool isUserGama = gama_0 != nullptr;
     int nRow = ne[0], nCol = ne[1], nGroup = 0, lGroup = 0;
     if (hQuant != nullptr) {
         SHAPE spGroup = hQuant->GroupShapeOfT(this);
@@ -557,13 +421,20 @@ floatGama* GTensor::gama_T(GAMA_TYPE type, floatGama* gama_0) const {
         //     return nullptr;
         // }
     }
-    if (gama_0 == nullptr)
+    if (!isUserGama) {  // gama_0 == nullptr
+        assert(data != nullptr);
+        if (szGama == 0)
+            return nullptr;
         gama_0 = reinterpret_cast<floatGama*>((hBITARR)data + szData);
-    if (type == GAMA)
+    }
+    if (gama_type == GAMA)
         return gama_0;
 
     floatGama* gama_1 = gama_0 + nRow + nCol;
-    switch (type) {
+    if (!isUserGama) {
+        assert(gama_1 - gama_0 <= szGama);
+    }
+    switch (gama_type) {
         case GTensor::R_SCALE:
             return gama_0;
         case GTensor::AVERAGE:
@@ -615,6 +486,10 @@ void PrintQ_128(const char* title, const BIT_128* src, int nPer128, int qBias, s
             UNPACK_128to4_UNSIGNED_(src + i, qq);
         if (nPer128 == 64)
             UNPACK_128to2_UNSIGNED_(src + i, qq);
+        if (nPer128 == 128)
+            UNPACK_128to1_UNSIGNED_(src + i, qq);
+
+        //    assert(0 && "Invalid nPer128 of PrintQ_128");
 
         for (int j = 0; j < nPer128; j++) {
             int a = qq[j] - qBias;
@@ -647,6 +522,7 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
     if (x == 4) {
         assert(host_data != nullptr);
         src      = host_data;
+        tpSrc    = type;
         isDevice = false;
     }
     if (src == nullptr) {
@@ -654,8 +530,14 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
         return;
     }
     size_t szHost = nEle > 0 ? (nEle * BitPE(tpSrc)) / 8 : szData + szGama;
-    if (isDevice) {
-        SYNC_DEVICE();
+    if (isDevice) {  // so many crash when print
+        // SYNC_DEVICE();
+        cudaError_t error = cudaDeviceSynchronize();
+        if (error != cudaSuccess) {
+            _INFO("_SYNC_DEVICE_ err=\"%s\" (%s code=%d)\t%s\n", cudaGetErrorString(error), cudaGetErrorName(error), error, "");
+            assert(0 && "_SYNC_DEVICE_@ GTensor::Print");
+            exit(KOIFISH_EXIT_PRINT);
+        }
         hData = new char[szHost];
         D2H(src, hData, szHost);
         src = hData;
@@ -673,10 +555,11 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
     if (nEle == 0)
         nEle = size();
 
-    floatGama *rNormal = gama_T(R_SCALE), *cNormal = gama_T(C_SCALE);
+    floatGama *rNormal = nullptr, *cNormal = nullptr;
+    if (disq.rc_normal > 0) {
+        rNormal = gama_T(R_SCALE), cNormal = gama_T(C_SCALE);
+    }
     switch (tpSrc) {
-        case typNUMBER::T_BINARY:
-            break;
         case typNUMBER::T_BINARY_3:
         case typNUMBER::T_BINARY_TILE:
             assert(0);
@@ -687,12 +570,14 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
             PrintQ_128(szGama == 0 ? name : "_Q4", (BIT_128*)src, 32, 0, nEle, flag | FLOAT_META::ENDIAN_LITTLE);
             hQuant->PrintGama(this);
         } break;
+        case typNUMBER::BOOL1:
+        case typNUMBER::T_BINARY:
         case typNUMBER::T_SIGN: {
-            // floatX* wX = GetDataX();
-            // PrintTensor<floatX>(title.c_str(), wX, true, sp[0], sp[1], sp[2], sp[3], flag);
-            title += "_Q2";
-            PrintQ_128(title.c_str(), (BIT_128*)src, 64, 1, nEle, flag | FLOAT_META::ENDIAN_LITTLE);
+            title += tpSrc == typNUMBER::T_SIGN ? "_Q2" : "_Q1";
+            PrintQ_128(title.c_str(), (BIT_128*)src, tpSrc == typNUMBER::T_SIGN ? 64 : 128, 1, nEle, flag | FLOAT_META::ENDIAN_LITTLE);
             hQuant->PrintGama(this);
+            // floatX* wX = GetDataX();
+            // PrintTensor<floatX>(name, wX, true, sp[0], sp[1], sp[2], sp[3], flag);
         } break;
         case typNUMBER::Q3:
             // PrintQ3("_Q3", (hBITARR)src, ne[0], ne[1], ne[2], ne[3], flag);
@@ -747,6 +632,7 @@ std::string GTensor::Alias(int flag) {
     return alias;
 }
 
+// CPU version is Dreprecated!
 bool GTensor::DumpX(int tpDump, const string& title, int flag) const {
     if (strcmp(name, "model.layers.0.self_attn.wqkv.bias") == 0) {
         DEBUG_HERE;
@@ -764,20 +650,8 @@ bool GTensor::DumpX(int tpDump, const string& title, int flag) const {
             _INFO(" - %3d: [ %5" PRId64 ", %5" PRId64 "] %8s %16s\n", i, ne[0], ne[1], "", name);  //
             break;
         default:
-            if (type != typNUMBER::F32 && n > 0) {
-                fdata = new float[nElems];
-                if (type == typNUMBER::F16) {
-                    /*ggml_fp16_t *src_ = (ggml_fp16_t *)(data);
-                    for (int i = 0; i < nElems; i++) {
-                        fdata[i] = src_[i];
-                    }*/
-                } else {  // need dequant
-                    fdata = nullptr;
-                    n     = 0;
-                }
-            }
             double sum = 0.0;
-            if (fdata != nullptr && !BIT_TEST(flags, F_GPU)) {
+            /*if (fdata != nullptr && !BIT_TEST(flags, F_GPU)) {    //  CPU version is Dreprecated!
                 for (i = 0; i < nElems; i++) {
                     sum += fdata[i];
                     if (fdata[i] == 0)
@@ -785,18 +659,20 @@ bool GTensor::DumpX(int tpDump, const string& title, int flag) const {
                     a1 = std::max(a1, fdata[i]);
                     a0 = std::min(a0, fdata[i]);
                 }
-            }
+            }*/
             if (szUse == 0x0) {
                 _INFO("\t%s %-36s %-4s", title.c_str(), name, A);
                 _WARN0(" NO ALLOC ");
                 _INFO(" \t[%" PRId64 " %" PRId64 " %" PRId64 " %" PRId64 " %s] ", ne[0], ne[1], ne[2], ne[3], cNameOf(type));
             } else
-                _INFO("\t%s %-36s %-4s szAlloc=%6gM\t[%" PRId64 " %" PRId64 " %" PRId64 " %" PRId64 " %s] ", title.c_str(), name, A, szUse / 1.0e6, ne[0],
-                      ne[1], ne[2], ne[3], cNameOf(type));
+                _INFO("\t%s %-36s %-4s szAlloc=%6gM(gama=%.3g,M=%.3g,V=%.3g)\t[%" PRId64 " %" PRId64 " %" PRId64 " %" PRId64 " %s] ", title.c_str(), name, A,
+                      szUse / 1.0e6, szGama / 1.0e6, szM / 1.0e6, szV / 1.0e6, ne[0], ne[1], ne[2], ne[3], cNameOf(type));
             if (disq.err > 0)
                 _INFO("eQ=%.3g ", disq.err);
             _INFO("\n");
-            if (n > 0 && a1 != -FLT_MAX) {
+            if (DEBUG.dump_TensorDetail)
+                Print(name, 0, -1);
+            /*if (n > 0 && a1 != -FLT_MAX) {
                 _INFO("\nsum=%g data=[%f : %f] rZ=%.3g%%\n\t", sum, a0, a1, nz * 100.0 / nElems);
                 for (int i = 0; i < std::min((size_t)(ne[0] * ne[1]), n); i++) {
                     _INFO("%.5f ", fdata[i]);
@@ -812,7 +688,7 @@ bool GTensor::DumpX(int tpDump, const string& title, int flag) const {
                     }
                 }
                 printf("}\n");
-            }
+            }*/
 
             if (fdata != data && fdata != nullptr) {
                 delete[] fdata;
@@ -848,11 +724,11 @@ bool GTensor::Alloc(int tpInit, int flag) {
         // if(hFish!=nullptr && hFish->isTrain())
         grad = new floatGrad[size()];
     }
-    mem_status = 1; 
-    return true;   
+    mem_status = 1;
+    return true;
 }
 
-bool GTensor::Activate(int tpInit, int flag){
+bool GTensor::Activate(int tpInit, int flag) {
     assert(0 && "Not implemented...");
     return false;
 }
@@ -867,7 +743,7 @@ bool GTensor::InitShadoW(const void* srcData, bool isGPU, DISTILLATION_CARD& dis
             assert(0);
         } else
             H2D(shadoW, srcData, szData);
-    }else{
+    } else {
         shadoW = ToX(gBUFF->tmpTernary);
     }
     return true;
@@ -925,8 +801,10 @@ bool GTensor::InitGamaParam(int flag) {
     size_t nEle = gama_param->size();
     assert(nEle == nG * 2 && nEle <= size());
     assert(sizeof(floatX) * nEle <= szM && "Failed to share gm,gv & grad");  // share gm,gv & grad
-    gama_param->szM    = sizeof(floatX) * nEle;
-    gama_param->szV    = sizeof(floatX) * nEle;
+    gama_param->szM = sizeof(floatX) * nEle;
+    assert(gama_param->szM <= szM);
+    gama_param->szV = sizeof(floatX) * nEle;
+    assert(gama_param->szV <= szV);
     gama_param->szGrad = sizeof(floatX) * nEle;
 
     assert(gama_param->hQuant == nullptr);
@@ -947,17 +825,15 @@ bool GTensor::InitGamaParam(int flag) {
  *      1. AfterBuild->Prepare->InitGUOKE->ManegeMemory-> Alloc each of Neuron::PickGensors
  *
  * Evaluate/Chat
- *      1. AfterBuild->HF_Serialize->LoadParam_
+ *      1. AfterBuild->SafeTensors_Serialize->LoadParam_
  *      2.
  */
-bool huTensor::Activate(int iter, int flagInit) {    
-    return Alloc(iter, flagInit);
-}
+bool huTensor::Activate(int iter, int flagInit) { return Alloc(iter, flagInit); }
 
 bool huTensor::Alloc(int iter, int flagInit) {
     assert(strlen(name) > 0);
-    if (G_Has_(name, {"model.layers.0.self_attn.q_proj.qweight"})) {  // model.layers.0.mlp.down_proj.weight qzeros scales
-        DEBUG_HERE;                                             //
+    if (G_Has_(name, {"model.layers.27.mlp.down_proj.weight"})) {  // model.layers.0.mlp.down_proj.weight qzeros scales model.layers.5.self_attn.v_proj.weight
+        DEBUG_HERE;                                                //
     }
     size_t sz0 = szGlobalMaloc;
     if (BIT_TEST(flags, F_NOALLOC))  // For example: operator fusing, memory reuse,rematerialization
@@ -985,7 +861,6 @@ bool huTensor::Alloc(int iter, int flagInit) {
     if (isBackGama) {
         assert(szM > 0 && szV > 0 && szGrad > 0);
     } else {
-        szM = sizeof(floatMV) * size(), szV = sizeof(floatMV) * size();
         szGrad = sizeof(floatGrad) * size();
     }
 
@@ -1022,6 +897,14 @@ bool huTensor::Alloc(int iter, int flagInit) {
 
         if (isTrain) {
             if (grad == nullptr) {
+                if (isBackGama) {
+                    SHAPE sp  = hQuant->GroupShapeOfT(this);  //  @InitGamaParam_
+                    int nGama = sp[0] * 2;
+                    assert(nGama > 0 && nGama < size());
+                    szM = sizeof(floatMV) * nGama, szV = sizeof(floatMV) * nGama;
+                } else {
+                    szM = sizeof(floatMV) * size(), szV = sizeof(floatMV) * size();
+                }
                 if (BIT_TEST(flags, F_TMP_GRAD)) {  //
                     grad = nullptr;
                 } else {

@@ -49,6 +49,20 @@ class GST_Application {
 
     virtual ~GST_Application();
 
+    /**
+     * keep running if return >0, otherwise exit right now!
+     *
+     *
+     *
+     * */
+    virtual int iRunning() {
+        //[todo]
+        if (g_running)
+            return 1;
+        // _INFO("[APP] status=%d\n", (int)g_running);
+        return -1;
+    }
+
     // Similar to OnInitInstance
     virtual bool Initialize() {
         char path[PATH_MAX] = "\0";
@@ -70,6 +84,13 @@ class GST_Application {
         return true;
     }
 
+    static GST_Application* GetInstance() {
+        if (!g_instance) {
+            throw SafeExit("GST_Application instance not initialized");
+        }
+        return g_instance;
+    }
+
     // Similar to OnExitInstance
     virtual void Cleanup() {
         _INFO("[APP] %s Cleanup...\n", name.c_str());
@@ -80,9 +101,9 @@ class GST_Application {
         CleanupLogging();
     }
 
+    // Main loop
     virtual int Swim() {
-        // Main loop
-        while (g_running) {
+        while (iRunning()) {
             // Process events, handle signals, etc.
             ProcessEvents();
             usleep(100000);  // 100ms sleep
@@ -120,13 +141,18 @@ class GST_Application {
     }
 
     static void SignalHandler(int signal) {
-        std::cout << "\nReceived signal: " << signal << std::endl;
+        // std::cout << "\nReceived signal: " << signal << std::endl;
         switch (signal) {
             case SIGINT:
+                _WARN("\n[APP] Ternimated by user(Ctrl+C)! signal=%d running=%d\n", signal, (int)g_running);
+                g_running = false;
+                break;
             case SIGTERM:
+                _WARN("\n[APP] Ternimated by user! signal=%d running=%d\n", signal, (int)g_running);
                 g_running = false;
                 break;
             case SIGHUP:
+                _INFO("[APP] Received signal=%d running=%d\n", signal, (int)g_running);
                 if (g_instance) {
                     g_instance->ReloadConfiguration();
                 }
@@ -151,7 +177,7 @@ class GST_Application {
     void CleanupDaemon() { std::cout << "Cleaning up daemon..." << std::endl; }
 
     void ProcessEvents() {
-        // Process application events
+        // Demo just output ....
         static int counter = 0;
         if (counter++ % 10 == 0) {
             std::cout << "." << std::flush;
@@ -160,3 +186,4 @@ class GST_Application {
 
     void ReloadConfiguration() { std::cout << "Reloading configuration..." << std::endl; }
 };
+extern std::string g_sAppName, g_sAppPath;

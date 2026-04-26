@@ -4,8 +4,8 @@
         "#MIQ":["self_attn"],
         "#train_target":"gama",
         "group_size": 128,
-        "self_attn": {"quant_method":"ising","bits":2},
-        "mlp":  {"quant_method":"ising","bits":2},
+        "self_attn": {"quant_method":"yyang","bits":2},
+        "mlp":  {"quant_method":"yyang","bits":2},
         "# embed_tokens": {"bits":4},
         "#MINI":"off"
     },    
@@ -107,8 +107,9 @@
     "checkpoint_out": {
         "koifish_0.6B": {
             "path": "/home/cys/rnd/lic/Models/koifish-0.6B/",
-            "#type": "best full state",
-            "type": "best",
+            "#state": "best full state",
+            "state": "best",
+            "format": "koifish",
             "save-every": 500,
             "snapshot": {
                 "curFuyou": -1

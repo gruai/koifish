@@ -209,7 +209,7 @@ bool SelfAttention::_devQKV(int stage, int flag) {
         return true;
     }
 
-    assert(hCache == nullptr);
+    // assert(hCache == nullptr);
     bool isTrain = hFish->isTrain();
     // devQ = ToX(tmpQKV);
     // assert(devQ != nullptr);

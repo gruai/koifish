@@ -11,7 +11,7 @@
 class VariationaAE : public Fish {
    protected:
     int nRefine = 1, tpNorm = 2;
-    bool isSymmetric = true;
+    bool isMirror = true;
     bool reserve_x   = false;
     vector<hGensor> resi_x;
     vector<float> hier_norm;
@@ -76,7 +76,7 @@ class VariationaAE : public Fish {
         assert(nMap > 0);
         MAEC.clear();
         for (int i = 0; i < nMap; i++) {
-            hVarCoder hCoder = std::make_shared<VarCoder>(this, dims, i, reserve_x, isSymmetric, tpNorm);
+            hVarCoder hCoder = std::make_shared<VarCoder>(this, dims, i, reserve_x, isMirror, tpNorm);
             MAEC.push_back(hCoder);
         }
 

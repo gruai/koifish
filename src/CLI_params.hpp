@@ -312,7 +312,7 @@ class MODEL_CARD {
     ACTIVATION_FUNC fActFFN = SWIG, fActSLP = SWIG;
     INIT_WEIGHT tpInitWeight = INIT_WEIGHT::RANDOM;
 
-    std::string sCardPath = "", sTokenJsonPath = "", sTokenBinPath = "";
+    std::string sCardPath = "", sSTPath = "", sTokenJsonPath = "", sTokenBinPath = "";
     std::string sArch, torch_dtype, transformers_version, model_type;
     std::string act_type, norm_type;
     typNUMBER tpWeight = typNUMBER::BF16, tpGradient = typNUMBER::BF16, tpActivation = typNUMBER::BF16;
@@ -362,7 +362,7 @@ class MODEL_CARD {
     bool isBqkv        = false;
     float clip_qkv     = FLT_MAX;  // Clipping Q/K/V.  to prevent numerical instability
     size_t nTotalSize  = 0x0;
-    std::map<std::string, void*> st_map;  // map of st in jSafetensorsIndex
+    std::map<std::string, void*> st_index_map;  // map of st in jSafetensorsIndex
     //  Experts
     int n_experts = 0, n_experts_ac = 0;
     //  eps
@@ -403,7 +403,7 @@ struct DISTILLATION_CARD {
     ANNEAL_SCHEDULE anneal = ANNEAL_OFF;  // ANNEAL_DECAY_FIX;
 
     floatX* lendaW = nullptr;
-    bool isKeepShadoW(int flag = 0x0) { return anneal != ANNEAL_OFF; }
+    bool isKeepShadoW(int flag = 0x0);
     bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
     void Dump(int typ);
 };
@@ -417,7 +417,7 @@ enum QUANT_MODE {
     RTN,   // Round-to-Nearest
     AWQ,   // the storage format is same as RTN
     RTNf,  // nf4, nf3
-    MINI,  // Minimise impurity
+    MINI_GBDT,  // Minimise impurity by GBDT method
     F8Ex,
 
     KV_JL,     //  Johnson-Lindenstrauss (JL) transform
@@ -433,12 +433,12 @@ enum QUANT_BLOCK_AT_ {
     BLOCK_at_MATRIX,  // Weight matrix only use one scaling
 };
 
-//  {-1,1}/{0,1} or Blume-Capel Model-{-1,0,1}
-enum QUANT_ISING_ {
-    I_OFF,  // no use Ising model
+//  阴阳二爻 {-1,1}/{0,1} or 三爻-{-1,0,1}
+enum QUANT_YYANG_ {
+    I_OFF,  // no use 阴阳二爻
     I_01,
     I_11,
-    I_TERNARY,  //  {-1,0,1} also Blume-Capel Model
+    I_TERNARY,  // 三爻 {-1,0,1} also Blume-Capel Model
 };
 
 struct QUANT_CARD {
@@ -456,15 +456,16 @@ struct QUANT_CARD {
     SHAPE spMost;
     std::string sX = "";
 
-    bool isVendorQuant = false;
-    bool hasZS         = false;  // some vendors use explicit zero/scale tensors
-    bool isNormalFloat = false;  //  each bin under a normal distribution N(0,1) contains equal probability mass
-    bool isSymmetric   = false;
-    bool isZeroPoint   = false;
+    bool isVendorQuant      = false;
+    bool hasZS              = false;  // some vendors use explicit zero/scale tensors
+    bool isNormalFloat      = false;  // each bin under a normal distribution N(0,1) contains equal probability mass
+    bool isSymmetric        = false;
+    bool isZeroPoint        = false;
+    bool isDequant4Generate = false;  // Generate only need dequant
 
-    QUANT_ISING_ ising = I_OFF;  //
+    QUANT_YYANG_ yyang = I_OFF;  // 阴阳二爻
 
-    typNUMBER tpZero, tpScale, tpQWeight;
+    typNUMBER tpZero, tpScale;  //, tpQWeight;
 
     NORMAL_MODE norm = SINKHORN;
     enum DYNAMIC_MODE { NO_DYNAMIC };
@@ -525,7 +526,7 @@ struct MUON_params_ {
 
 struct TRAIN_CARD {
     int dump_every = 1;
-    int gpt_every  = -1;  // eval_every=-1,
+    int gpt_every  = -1;  
 
     int seed     = -1;
     int n_epochs = -1;
@@ -583,7 +584,7 @@ struct CHAT_SAMPLER {
     float top_p       = 0.95f;
     int top_k         = 20;
     bool ignore_eos   = false;  // ignore EOS token when generating text
-    bool isSampleCPU  = false;
+    bool isSampleCPU  = true;
 
     int repeat_last_n        = 64;
     float repeat_penalty     = 1.00f;
@@ -593,7 +594,7 @@ struct CHAT_SAMPLER {
     std::string prompt     = "";
     std::string token_test = "";
     // Define the length of batch input,   different with n_ctx_train, n_ctrx_origin !!!
-    int seq_len  = 8192;
+    int seq_len  = 1024;
     int szBuffer = 32768;
 };
 
@@ -605,14 +606,18 @@ struct DUMP_SWITCH {
     std::string train_csv_path = "";
 };
 
+// operation_ObjDetail
 struct DEUG_SWITCH {
     float fLongTail          = -1;
     int SelfAttention_noraml = 1;
     bool NO_loss             = false;
     bool check_tensor_norm   = false;
     bool isInitParamHost     = true;
+    int save_GlobalSate      = 1;
 
-    int test_quant = 0;
+    int test_quant         = 0;
+    int dump_TensorDetail = 0;
+    int quant_UserMode = 0; //  1 only quant,
 
     int dict_latent_dim    = -1;
     int graph_dump         = 0;  //  10 levels of dumps, 0-9. 0 is a full dump_,The lower the number the more dump_.
@@ -659,7 +664,7 @@ enum LORA_ADAPT_W { W0, AB, W_AB, refW_AB, refW_AB_ffn };
 struct CheckPoint_Params {
     std::string jKey = "";  //  unique id of checkpoint
 
-    enum TYPE {
+    enum STATE_TYPE {
         STATE,  //  Has all parameters & its moments
         BEST,   //  Only has parameters of best fuyou
         FULL,   //  Has parameters of all fuyou
@@ -673,7 +678,7 @@ struct CheckPoint_Params {
     // More variables of current state
     std::map<std::string, double> variabls;
 
-    TYPE type               = BEST;
+    STATE_TYPE state_type   = BEST;
     FILE_FORMAT_TYPE format = CKP_KOIFISH;
     int iter                = -1;
     void* hAllST            = nullptr;
@@ -683,6 +688,7 @@ struct CheckPoint_Params {
     // bool isIn = false;
     // std::string in, out;
     // std::string model_out, model_base;
+    // std::filesystem::path sDir, sModelPath;
     std::string sDir, sModelPath, sX;
     int save_every = -1;
     std::string FullPath(bool isSave, int flag = 0x0);
@@ -697,12 +703,12 @@ struct CheckPoint_Params {
     virtual void Init(int flag = 0x0);
     virtual bool SerialSnap(JSON& jSnapshot, bool isSave, int flag = 0x0);
 };
-static std::map<CheckPoint_Params::TYPE, std::string> CKP_ext = {
+static std::map<CheckPoint_Params::STATE_TYPE, std::string> CKP_ext = {
     {CheckPoint_Params::STATE, "ckp"},
-    {CheckPoint_Params::BEST, "fish"},
-    {CheckPoint_Params::FULL, "fish"},
+    {CheckPoint_Params::BEST, "kun"},
+    {CheckPoint_Params::FULL, "kun"},
 };
-static std::map<CheckPoint_Params::TYPE, std::string> CKP_desc = {
+static std::map<CheckPoint_Params::STATE_TYPE, std::string> CKP_desc = {
     {CheckPoint_Params::STATE, "state"},
     {CheckPoint_Params::BEST, "best"},
     {CheckPoint_Params::FULL, "full"},
@@ -779,7 +785,8 @@ struct CLI_params {
     JSON jQuant, jVendorQuant;
 
     MODEL_ARCH ModelArch();
-    virtual void OnArch();
+    virtual void OnArch();                                   // Deprecated
+    virtual void OnPhase(LIFE_PHASE phase, int flag = 0x0);  // Deprecated
     virtual bool isValid(int flag = 0x0);
     virtual bool JModel2Params(int flag);
     virtual void OnMostToken(size_t nMost, int flag = 0x0);
@@ -981,6 +988,7 @@ struct CLI_params {
     void Dump(int flag = 0x0);
 
     bool parse(int argc, char** argv);
+    // 1) Only load json config file. Init model would be later!  2) may also call InitHugFace_
     bool LoadJConfig(const std::string& path, int flag = 0x0);
 
     virtual bool InitJConfig(int flag = 0x0);

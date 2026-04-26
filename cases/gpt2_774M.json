@@ -109,7 +109,7 @@
         "GPT2_fuyou": {
             "path": "./hy-tmp/checkpoint/",
             "#type": "best full state",
-            "type": "best",
+            "state": "best",
             "save-every": 500,
             "snapshot": {
                 "curFuyou": -1
