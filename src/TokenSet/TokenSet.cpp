@@ -450,6 +450,7 @@ double SampLoader::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
     // double a, a0 = DBL_MAX, a1 = -DBL_MAX, mean_loss = 0, ss = 0, sigma, sum = 0;
     hGensor target_probs = hFish->Target();
     OutCLS* cls          = hFish->GetNeuron<OutCLS>("OutCLS", 0);
+    cls->hLoader         = shared_from_this();
     TokenEmbed* embed    = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
     // hSAMP samp = nullptr;
     next_sample = 0;  // fix this to keep same acc on each experiment
@@ -463,7 +464,7 @@ double SampLoader::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
         embed->hBatch = GetCurBatch();
         hFish->ForwardOnRLS(iter, 0x0);
         // float a = hTokens->LossOnResult(shared_from_this(), cls);  // loader->hTokens->LossOnResult(loader, cls);
-        nEvalTokens += embed->hBatch->size(), nB++;
+        nEvalTokens += embed->hBatch->nFillTokens(), nB++;
         tCur = GST_ms(), dt = tCur - tLast, tLast = tCur;
         tpi = tpi * (1.0 - relax) + dt * relax, tRemain = (nMost - i) * tpi;  //  ms
         if (i % 10 == 0 && tRemain > 60 * 1000) {
@@ -472,8 +473,12 @@ double SampLoader::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
         }
         if ((tCur - tic) / 1.0e3 > DEBUG.Time_most)
             break;
+        // if (DEBUG.eval_Generate > 0) {
+        //     hChater gopt = hFish->GetGenerator();
+        //     gopt->SampleOnBatch(embed->hBatch);  // 1479
+        // }
     }
-    UpdateII();  //    iiLoss.Stat();
+    // UpdateII();  //    iiLoss.Stat();
     // _INFO("\n\t");
     SUM::tEval_1 = (GST_ms() - tic) / 1.0e3;
     switch (hFish->phase) {
@@ -501,6 +506,33 @@ double SampLoader::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
     }
 
     return iiLoss.average;
+}
+
+// for each batch @OutCLS::cuFlow
+float SampLoader::UpdateII(float* hostLoss, int B, int T, int flag) {
+    Fish* hFish   = dolphin;
+    float alpha4g = 1.0f, mean_loss = 0.0f, logprob = 0.f;
+    OutCLS* cls       = hFish->GetNeuron<OutCLS>("OutCLS", 0);
+    TokenEmbed* embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
+    int i;
+    for (logprob = 0, i = 0; i < B * T; i++) {
+        assert(!std::isnan(hostLoss[i]));
+        mean_loss += hostLoss[i];
+        logprob += -hostLoss[i];
+    }
+    mean_loss /= B * T;
+    float ppl = exp(-logprob / (B * T));  //  just exp(mean_loss)
+
+    iiLoss.Add(mean_loss);
+    iiPPL.Add(ppl);
+    iiLoss.Stat();
+    iiPPL.Stat();
+
+    if (DEBUG.eval_Generate > 0) {
+        hChater gopt = hFish->GetGenerator();
+        gopt->SampleOnBatch(embed->hBatch, hostLoss, B, T, this);  // 1479
+    }
+    return mean_loss;
 }
 
 void SampLoader::UpdateStepInfos(float mean_loss, int nB, int flag) {

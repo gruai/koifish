@@ -291,15 +291,6 @@ class GTokenizer_SentencePiece : public GTokenizer {
     std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos = false, bool encode_eos = false) override;
 };
 
-class GTokenizer_QWEN3 : public GTokenizer {
-   protected:
-   public:
-    GTokenizer_QWEN3(Fish*, int flag = 0x0);
-    std::string T2STR(TOKEN_ID tok, int flag = 0x0) override;
-    bool InitHF(Fish* dolphin, int flag = 0x0) override;
-    std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos = false, bool encode_eos = false) override;
-};
-
 class GTokenizer_Heap : public GTokenizer {
    protected:
     struct TokenIndex {
@@ -311,7 +302,7 @@ class GTokenizer_Heap : public GTokenizer {
     static int compare_tokens(const void* a, const void* b) { return strcmp(((struct TokenIndex*)a)->str, ((struct TokenIndex*)b)->str); }
 
     int sLookup(const char* str, int flag = 0x0);
-
+    int Lookup(const std::string& word, int flag = 0x0) override;
     struct Merge {
         int lpos, lid;
         int rpos, rid;
@@ -363,12 +354,23 @@ class GTokenizer_Heap : public GTokenizer {
     int merge_tokens_tryadd(struct Merge* heap, int n_heap, int lpos, int lid, int rpos, int rid);
     int merge_tokens(std::vector<TOKEN_ID>& tokens, int flag = 0x0);
     bool InitFrom(Fish* dolphin, hGTensor tokens, hGTensor scores, int flag = 0x0) override;
+    virtual bool Prepare(int flag = 0x0);
 
    public:
     GTokenizer_Heap(Fish*, int flag = 0x0);
     virtual ~GTokenizer_Heap() { FREE_a(sorted_vocab); }
     std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos = false, bool encode_eos = false) override;
 };
+
+class GTokenizer_QWEN3 : public GTokenizer_Heap {
+   protected:
+   public:
+    GTokenizer_QWEN3(Fish*, int flag = 0x0);
+    std::string T2STR(TOKEN_ID tok, int flag = 0x0) override;
+    bool InitHF(Fish* dolphin, int flag = 0x0) override;
+    std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos = false, bool encode_eos = false) override;
+};
+
 /*
     subword tokenization algorithm
     from  https://github.com/Sorrow321/huggingface_tokenizer_cpp

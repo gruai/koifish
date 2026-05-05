@@ -31,13 +31,15 @@ using namespace std;
 
 class Fish;
 struct PIPE_Optimizer;
+typedef int32_t OPT_STATUS;
 class Optimizer : public std::enable_shared_from_this<Optimizer> {
     Optimizer(const Optimizer&);
     Optimizer& operator=(const Optimizer&);
 
    protected:
     std::string title = "Optimizer";
-    // std::map<hGensor, GENSOR_INFO> gimap;
+
+    OPT_STATUS status = KOIFISH_OK;
 
     void* _ctx = nullptr;
     std::vector<hGensor> opt_ps;  //  =_fish->optParams;
@@ -160,7 +162,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     // return the distillation-ratio of teacher
     virtual float DistillRate(int type, int flag = 0x0);
     virtual void UpdateTrainLoss(int x, float loss, int flag = 0x0);  //
-    virtual double UpdateTensorParam(hGensor hP, floatX* g, float gnorm);
+    virtual OPT_STATUS UpdateTensorParam(hGensor hP, floatX* g, float gnorm);
     virtual bool isStopImproving() { return isStopImprove; }
     virtual bool isAtLongtail(int flag = 0x0);
 
@@ -205,7 +207,7 @@ class OPT_Adam : public Optimizer {
 
     void Prepare(size_t nx, int flag = 0x0) override;
 
-    double UpdateTensorParam(hGensor hP, floatX* g, float gnorm) override;
+    OPT_STATUS UpdateTensorParam(hGensor hP, floatX* g, float gnorm) override;
     // Deprecated
     void UpdateParams_V0(int nx, CLI_params& config, int flag);
 

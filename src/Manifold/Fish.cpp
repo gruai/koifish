@@ -13,6 +13,7 @@
 hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vector<hWIKI> wikis, ROLE_TYPE role_, int flag) {
     assert(wikis.size() >= 0);
     hFISH fish = nullptr;
+    assert(params.isValid("", "MakeInstance"));
     switch (params.ModelArch()) {
         case MODEL_ARCH::NLP_MAMBA:
             fish = std::make_shared<LLM_MAMBA>(nam_ + "_mamba", params, role_);
@@ -76,9 +77,9 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vect
         if (fish->role == SWARM_FOLLOWER) {
         } else {
             // if (!wikis.empty()) {  // generate some sentence
-            if (params.common.gpt_every > 0 && !fish->isLocalInfer) {
-                params.chat_sampler.mode        = params.model.enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
-                fish->gopt                      = GeneratOnPrompt::MakeInstance(params, wikis, fish.get(), flag);
+            if (!fish->isLocalInfer) {
+                params.chat_sampler.mode = params.model.enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
+                fish->gopt               = GeneratOnPrompt::MakeInstance(params, wikis, fish.get(), flag);
             }
             // }
         }
@@ -859,7 +860,7 @@ size_t cudnn_qkv_back(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn);
 int test_FA2();
 bool Fish::AllocBuffer(int flag) {
     try {
-#ifdef __USE_TVM__
+#ifdef __USE_TVM__5
         test_FA2();
 #endif
         int B = config.n_batch(), T = config.n_ctx(), NH = config.n_head();
@@ -868,12 +869,14 @@ bool Fish::AllocBuffer(int flag) {
                 // hCache = std::make_shared<KVCache>(this);
             }
         }
-        hCache = std::make_shared<KVCache>(this);   //why this would affect train loss?
+        hCache = std::make_shared<KVCache>(this);  // why this would affect train loss?
         if (phase != P_GENERATE) {
 #ifdef ENABLE_CUDNN
             cudnn_qkv_forw(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn);
-            size_t alloc = cudnn_qkv_back(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn);
-            _INFO("\tcudnn_qkv_back = %.5gM\n", alloc / 1.0e6);
+            if (phase != P_EVAL_) {
+                size_t alloc = cudnn_qkv_back(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn);
+                _INFO("\tcudnn_qkv_back = %.5gM\n", alloc / 1.0e6);
+            }
 #endif
         }
 

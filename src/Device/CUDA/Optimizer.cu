@@ -662,7 +662,10 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
                     }
                 }
             }
-            D2e(arrNorm, tensor->wnorm, name + "CU_adamw_p", 0x0), assert(isValidF(&(tensor->wnorm)));
+            if (!D2e(arrNorm, tensor->wnorm, name + "CU_adamw_p", 0x0)) {
+                status = KOIFISH_ADAMW_D2E_ARRNORM;
+            }
+
             tensor->wnorm = sqrt(tensor->wnorm);
             // tensor->Mutation();        //  need more test
         }

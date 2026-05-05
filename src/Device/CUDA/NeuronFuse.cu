@@ -712,13 +712,16 @@ __global__ static void CU_classifier_(floatX* logits_BT, float* losses, floatX* 
 hGTensor OutCLS::cuInfer(hGTensor inp_, int flag) {
     double now = GST_us();
     assert(norm.Empty());
-    int nToken = nBatchToken(), nEmbed = hFish->config.nEmbed();;
-    inp_->Print("cls.inp_", 0, dump_flag, nToken*nEmbed);
-
-    proj.Forw(preLogits, inp_);
-    SUM::GPU_TIME(SUM::tPreLogits, now);
-    preLogits->Print("logits", 0, dump_flag, nCls);
+    int nToken = nBatchToken(), nEmbed = hFish->config.nEmbed();
     size_t szMost = sizeof(floatX) * nCls * nToken;
+    if (0) {  // only for debug
+        cuFlow(inp_, flag);
+    } else {
+        inp_->Print("cls.inp_", 0, dump_flag, nToken * nEmbed);
+        proj.Forw(preLogits, inp_);
+        SUM::GPU_TIME(SUM::tPreLogits, now);
+        preLogits->Print("logits", 0, dump_flag, nCls);
+    }
     if (hFish->config.chat_sampler.isSampleCPU)
         preLogits->SerialGamaData("", nullptr, true, szMost);
     else {
@@ -735,7 +738,7 @@ hGTensor OutCLS::cuFlow(hGTensor inp_, int flag) {
     mean_loss          = 0.0f;
     const int* targets = (int*)(target->data);
     float* cuLoss      = (float*)out->data;
-    hGTensor cur = preLogits, w = proj.w;
+    hGTensor curLogits = preLogits, w = proj.w;
     float alpha4g = 1.0, beta4g = 1.0, logprob = 0;  //  rLoss = 1.0f / (B * T)
     if (isForward()) {
         inp = inp_;
@@ -743,7 +746,7 @@ hGTensor OutCLS::cuFlow(hGTensor inp_, int flag) {
             inp = maec->DEC(inp, true);
             C   = inp->ne[2];
         }
-        floatX *z0 = ToX(inp), *to_gelu = nullptr;  //* errLogits = ToX(preLogits),
+        floatX *z0 = ToX(inp), *to_gelu = nullptr;  
         cudaCheck(cudaMemset(cuLoss, 0, B * T * sizeof(float)));
         assert(target->isSameShape(out));
         bool isBack = ToG0(w) != nullptr && delta != nullptr && !hFish->isAtPhase(LIFE_PHASE::P_EVAL_), write_dlogits = isBack;
@@ -754,21 +757,21 @@ hGTensor OutCLS::cuFlow(hGTensor inp_, int flag) {
             off = 0;  // reduce memory
             // PrintTensor<floatX>("OutCLS.proj.w", w->GetDataX(), true, w->ne[0], w->ne[1], w->ne[2], w->ne[3], -1);
             // [50304,768] x [768,8192] => [50304,8192]
-            hGensor subZ     = inp->Partial("partialZ", nZ * sizeof(floatX), {dB, T, C}),
-                    subDelta = delta->Partial("partialDeltaZ", nZ * sizeof(floatX), {dB, T, C});
-            proj.Forw(cur, subZ);
-            // cur->Print("preLogist",0, dump_flag);
+            hGensor subZ = inp->Partial("partialZ", nZ * sizeof(floatX), {dB, T, C});
+            proj.Forw(curLogits, subZ);
+            // curLogits->Print("preLogist",0, dump_flag);
             // SYNC_DEVICE();
             if (DEBUG.T_classifier_ver == 1) {
-                CU_classifier_<<<dB * T, 1024, 0, main_stream>>>(ToX(cur) + off, cuLoss + n1, nullptr, rLoss, targets + n1, dB, T, V, Vp, dev_metric,
+                CU_classifier_<<<dB * T, 1024, 0, main_stream>>>(ToX(curLogits) + off, cuLoss + n1, nullptr, rLoss, targets + n1, dB, T, V, Vp, dev_metric,
                                                                  write_dlogits);
             } else
-                fused_classifier_kernel5<<<dB * T, 1024, 0, main_stream>>>(ToX(cur) + off, cuLoss + n1, nullptr, rLoss, targets + n1, dB, T, V, Vp,
+                fused_classifier_kernel5<<<dB * T, 1024, 0, main_stream>>>(ToX(curLogits) + off, cuLoss + n1, nullptr, rLoss, targets + n1, dB, T, V, Vp,
                                                                            write_dlogits);
             if (isBack) {
+                hGensor subDelta = delta->Partial("partialDeltaZ", nZ * sizeof(floatX), {dB, T, C});
                 PrintTensor<float>("loss", cuLoss + n1, true, dB, T, 1, 1, dump_flag);
-                // cur->Print("oucls.delta", 0, dump_flag);
-                proj.Back(subDelta, subZ, cur, nullptr, false, 0x100);  // hGTensor delta, hGTensor inp, hGTensor deltaIn
+                // curLogits->Print("oucls.delta", 0, dump_flag);
+                proj.Back(subDelta, subZ, curLogits, nullptr, false, 0x100);  // hGTensor delta, hGTensor inp, hGTensor deltaIn
             }
         }
         // fused_classifier(errLogits, cuLoss, rLoss, targets, B, T, V, Vp, write_dlogits, main_stream);        //target=[32,1024]
@@ -777,7 +780,8 @@ hGTensor OutCLS::cuFlow(hGTensor inp_, int flag) {
             assert(0);
             exit(KOIFISH_EXIT_OUT_CLS);
         }
-        for (logprob = 0, i = 0; i < B * T; i++) {
+        mean_loss = hLoader->UpdateII(hostLoss, B,T,0x0);
+        /*for (logprob = 0, i = 0; i < B * T; i++) {
             assert(!std::isnan(hostLoss[i]));
             mean_loss += hostLoss[i];
             logprob += -hostLoss[i];
@@ -785,12 +789,12 @@ hGTensor OutCLS::cuFlow(hGTensor inp_, int flag) {
         mean_loss /= B * T;
         float ppl = exp(-logprob / (B * T));  //  just exp(mean_loss)
         hLoader->iiLoss.Add(mean_loss);
-        hLoader->iiPPL.Add(ppl);
+        hLoader->iiPPL.Add(ppl);*/
     } else {
         // matmul_backward(errOut, gw, NULL, errLogits, z0, w, NULL, B, T, C, Vp, main_stream);
         if (maec != nullptr) {
-            cur = maec->DEC(delta, false);
-            return cur;
+            curLogits = maec->DEC(delta, false);
+            return curLogits;
         } else
             return delta;
     }

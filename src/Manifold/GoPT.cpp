@@ -11,9 +11,9 @@
 #include <iostream>
 #include <string>
 
-#include "../Utils/GST_rander.hpp"
-#include "../Utils/GST_Application.hpp"
 #include "../Device/Pipe.hpp"
+#include "../Utils/GST_Application.hpp"
+#include "../Utils/GST_rander.hpp"
 #include "Fish.hpp"
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
@@ -213,25 +213,6 @@ int GGUF_list(CLI_params& config) {
 }
 
 int run_caml(const char* prompt, int flag);
-
-int Fish_bubble(CLI_params& config) {
-    config.wiki_actor         = "copy";
-    config.common.n_batch     = 1;
-    config.model.preLogits_dB = 1;
-    DEBUG.graph_dump          = 1;
-    DEBUG.verCuda             = 1;
-    DEBUG.T_cpu               = 0;
-
-    arrHWIKI wikis = WIKI::MakeInstance("wikis", config, 0x0);
-#if !defined(NDEBUG)
-    // config.common.n_ctx = 17;     config.common.n_batch = 1;      config.nLayerX=1;      //Only for debug
-    // config.set();
-#endif
-    config.isOnlyGPT = true;
-    hFISH fish       = Fish::MakeInstance("BUBBLE_", config, wikis, Fish::ROLE_TYPE::COMMON, 0x110);
-    fish->Chat(0, P_GENERATE);  // GenSentence();
-    return 666;
-}
 
 int fish_1(CLI_params& config) {
     auto param_1 = config, param_2 = config;
@@ -539,66 +520,6 @@ void GeneratOnPrompt::DisplayEmbd(bool input_echo, int n_consumed, int flag) {
         // console::set_display(console::reset);
         display = true;
     }
-}
-
-/* Deprecated! */
-int NLP_AutoRegressive::GenSentence(int flag) {
-    assert(0);
-    if (hOPT == nullptr)
-        return -1;
-    GST_TIC(tic);
-    if (gopt != nullptr) {
-        hWIKI wiki = wikis[0];
-        assert(wiki != nullptr);
-        wiki->Reset();
-        return gopt->Generate(0x0);
-    }
-    uint64_t rng_seed  = 42;
-    std::string prompt = config.prompt;
-    // prompt = LoadSomeText("config.fp_train_data",0x0);
-    int genT = 64, nVocab = config.model.vocab_size, _nctx = config.n_ctx(), i, j;
-    assert(genT <= _nctx);
-    double sum = 0, cdf = 0, tps = 0, t0 = GST_ms();
-    hSampLoader hLoader = hOPT->val_loaders[0];
-    if (hLoader->num_batches <= 0) {
-        hLoader->InitOneSamp(prompt, nullptr, this, 0x110);
-        // hLoader->isRecycle = false;            hLoader->isNeedBOS = false;
-        // hLoader->UpdateBatch(0,this);
-    }
-    // TokenEmbed* embed = GetNeuron<TokenEmbed>("TokenEmbed");
-    // embed->hBatch = hLoader->hBatch;
-    int nPrompToken = hLoader->nMostToken;
-    // vector<TOKEN_ID>& piffle = hLoader->GetTokens( ),answer;
-    // int nPrompToken = piffle.size();
-    // nPrompToken = 1;			//	only for debug
-    TOKEN_ID t = -1;
-    _INFO("%s: <--- \n\t", __func__);
-    floatLogits* logits = hCLS->fLogits();  //(float *)(preLogits->data)+i*nVocab;
-    for (i = 0; i < nPrompToken + genT; i++) {
-        if (i < nPrompToken - 1)
-            SetPhase(LIFE_PHASE::P_PREFILL);
-        else
-            SetPhase(LIFE_PHASE::P_GENERATE);
-        // // LocalFeeling(piffle,preP);
-        float fLos = hOPT->EvaluateSamps(hLoader, -666);
-        if (i < nPrompToken - 1)
-            continue;
-
-        // t = Sample_CDF(nVocab,logits,&rng_seed);
-        t = Sample_CDF_T(nVocab, logits, 0.1, 1, &rng_seed);
-        hLoader->hBatch->Set(i + 1, 0, 0, 0, t);
-        // piffle[i] = t;      answer.push_back(t);
-        string a = hDict->T2STR(hLoader->hBatch->host, i + 2), b = hLoader->sentence, s = hDict->T2STR(t);
-        // _INFO("\r\t%s\t(%.*s)",a.c_str(),64,b.c_str());
-        _INFO("%s", s.c_str());
-        fflush(stdout);
-        if (t == hDict->bos_id || t == hDict->eos_id || t == hDict->eot_id) {
-            break;
-        }
-    }
-    tps = genT / (GST_ms() - t0) * 1000.0;
-    _INFO("\n[Generate]---> tps=%g tAll=%gs\n", tps, GST_TOC(tic));
-    return 0x0;
 }
 
 /*
@@ -1002,40 +923,6 @@ int GeneratOnPrompt::Tokenize(int flag) {
     return 0x0;
 }
 
-// DEBUG.prompts include some testing questions for debug
-std::string UserPrompt(hFISH fish, int pos, int nRound, int flag = 0x0) {
-    const char* cli_user_prompt = nullptr;
-    if(fish->isTrain()){
-        // cli_user_prompt = "Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?";   //hello
-        DEBUG.prompts = {"hello"};
-    }
-        
-    char* system_prompt   = nullptr;
-    int szBuffer          = fish->config.chat_sampler.szBuffer;
-    char user_prompt[szBuffer], rendered_prompt[szBuffer];
-    if (cli_user_prompt != NULL) {
-        if (pos > 0)
-            return "";
-        strcpy(user_prompt, cli_user_prompt);
-    } else {
-        if (nRound < DEBUG.prompts.size())
-            strcpy(user_prompt, DEBUG.prompts[nRound].c_str());  //
-        else
-            read_stdin("\n>> ", user_prompt, sizeof(user_prompt));
-        if (!user_prompt[0])
-            return "";  // exit on empty prompt
-    }
-
-    // render the prompt with the correct template
-    if (pos == 0 && system_prompt) {
-        sprintf(rendered_prompt, fish->config.model.system_prompt_template.c_str(), system_prompt, user_prompt);
-    } else {
-        sprintf(rendered_prompt, fish->config.model.prompt_template.c_str(), user_prompt);
-    }
-    assert(strlen(rendered_prompt) > 0);
-    return rendered_prompt;
-}
-
 //  Keeping the prefill process uncompressed is crucial for performance maintenance
 int Prefill(hFISH fish, int enable_thinking) { return 0x0; }
 
@@ -1081,8 +968,8 @@ int Fish::Chat(int enable_thinking, LIFE_PHASE outer_phase, int flag) {
     string cur_answer, rendered_prompt;
     hChater gopt  = GetGenerator();
     hBATCH hBatch = GetCurBatch(true);
-    assert(hBatch->hostToken->ne[0] >= seq_len);    //batch = hBatch->hostToken->ne[1] may >1
-    GST_Application *hApp = GST_Application::GetInstance();
+    assert(hBatch->hostToken->ne[0] >= seq_len);  // batch = hBatch->hostToken->ne[1] may >1
+    GST_Application* hApp = GST_Application::GetInstance();
     // DEBUG.T_generate_most_layer = 1;
     DEBUG.verGenerate = DEBUG.cmd_p1;  // use this flag to comparse accu/time of different version
     // DEBUG.verGenerate     = 1;
@@ -1092,18 +979,10 @@ int Fish::Chat(int enable_thinking, LIFE_PHASE outer_phase, int flag) {
 
     while (hApp->iRunning() > 0) {
         if (user_turn) {
-            rendered_prompt   = UserPrompt(shared_from_this(), hBatch->tok_pos, nRound);
-            // rendered_prompt = "hello";  //only for debug
-            prompt_tokens     = tokenizer->Encode(rendered_prompt);
-            num_prompt_tokens = prompt_tokens.size();
-            if (num_prompt_tokens == 0) {
-                _ERROR("[BUBBLE] failed to encode prompt=\"%s\"", rendered_prompt.c_str());
-                K_EXIT(KOIFISH_INVALID_PROMPT);
-            }
-            generated_tokens = 0;
-            cur_answer       = "";
-            user_turn        = 0, nRound++;
-            hBatch->Reset(prompt_tokens);  // No BOS at sequence start!
+            num_prompt_tokens = hBatch->FillPrompt(this, DEBUG.prompts, {}, nRound);
+            generated_tokens  = 0;
+            cur_answer        = "";
+            user_turn         = 0, nRound++;
             // hLoader->InitOneSamp(rendered_prompt, nullptr, fish.get(), 0x110);
             _INFO("\n");
             for (int i = 0; i < num_prompt_tokens - 1; i++) {  // prefill
@@ -1134,13 +1013,13 @@ int Fish::Chat(int enable_thinking, LIFE_PHASE outer_phase, int flag) {
 
         // _INFO(" %d[%d->%d]", pos, token, next), fflush(stdout);
 
-        token = gopt->Sample(-1);  // 1479
+        token = gopt->Sample(-1);  // 3347
         generated_tokens++;
         if (token == tokenizer->eos_id || hBatch->tok_pos >= seq_len) {  //  stop generation if get EOS token
             double elapsed_s = (double)(GST_ms() - start_time) / 1000.0;
             double tps       = (generated_tokens > 0 && elapsed_s > 0) ? (generated_tokens - 1) / elapsed_s : 0.0;
             if (hBatch->tok_pos >= seq_len) {
-                if(outer_phase==P_TRAIN)
+                if (outer_phase == P_TRAIN)
                     return 0x0;
                 _WARN("%scontext window full!%s\t", COLOR_YELLOW, COLOR_RESET);
             }
@@ -1201,5 +1080,73 @@ int Fish::Chat(int enable_thinking, LIFE_PHASE outer_phase, int flag) {
         fflush(stdout);
     }
     // free(prompt_tokens);
+    return 0x0;
+}
+
+// Although each batch has B samples, but preLogits contains only dB samples(enough tokens since T is large)
+int GeneratOnPrompt::SampleOnBatch(hBATCH hBatch, float* fLoss, int B, int T, SampLoader* hLoader, int flag) {
+    try {
+        Fish* dolphin = fish_1;
+        assert(dolphin != nullptr);
+        int nVocab  = dolphin->nClass();  // fish_1 == nullptr ? wiki0->n_vocab : fish_1->nClass();
+        OutCLS* cls = ((Fish*)fish_0)->GetNeuron<OutCLS>("OutCLS", 0);
+        assert(cls != nullptr);
+        int nSampDB = cls->preLogits->ne[0];
+        assert(T == hBatch->hostToken->ne[0] && T == cls->preLogits->ne[1]);
+        assert(hBatch->hostToken->type == typNUMBER::I32);
+        int* curToken        = (int*)(hBatch->hostToken->data) + (B - nSampDB) * T;
+        float* curLoss       = fLoss + (B - nSampDB) * T;
+        int generated_tokens = 0, token, target, predict, nMostLine = std::min(T, 32), nMostToken = nSampDB * T, i_sec, j;
+
+        string fpath = "./log/SampleBatch_.csv", line_0, sP, sT;  //
+        FILE* fp     = fopen(fpath.c_str(), "wt");
+        if (fp == NULL) {
+            _INFO("%s: warning: empty or not existing training data file '%s'\n", __func__, fpath.c_str());
+            return false;
+        }
+        //    iiLoss.Add(mean_loss);    iiPPL.Add(ppl);
+        fprintf(fp, "iter=generate-predict sample loss=%g ppl=%g\n", hLoader->iiLoss.Last(), hLoader->iiPPL.Last());
+        hBITARR _dev = (hBITARR)(cls->preLogits->data), _host = (hBITARR)(cls->preLogits->host_data);
+        std::vector<TOKEN_ID> toks_0, toks_1;
+        std::vector<int> tic0 = hBatch->arrTic0, tic1 = hBatch->arrTic1;
+        if (tic0.empty()) {
+            j = nMostLine;
+            while (j <= nMostToken) {
+                tic1.push_back(j), tic0.push_back(j - nMostLine);
+                j += nMostLine;
+            }
+        }
+
+        for (int i_sec = 0; i_sec < tic1.size(); i_sec++) {
+            // for (i = 0; i < nMostToken; i += nMostLine) {  //  preLogits contains only dB samples!!!
+            toks_0.clear();
+            for (j = tic0[i_sec]; j < tic1[i_sec]; j++) {
+                token = curToken[j];
+                toks_0.push_back(token);
+                // toks_1.push_back(token);
+            }
+            D2H(_dev + sizeof(floatX) * nVocab * (j - 1), _host, sizeof(floatX) * nVocab);
+            target  = j == nMostToken ? -1 : curToken[j];
+            predict = Sample(-1);  // from cls->preLogits->host_data
+            if (target == predict) {
+                // assert(curLoss[j - 1] < 0.3);
+            }
+
+            line_0 = dolphin->hDict->T2STR(toks_0, 0x0);
+            sP     = dolphin->hDict->T2STR(predict, 0x0);
+            sT     = j == nMostToken ? "" : dolphin->hDict->T2STR(target, 0x0);
+            fprintf(fp, "\n------ %d=\"%s\"(%d)-\"%s\"(%d) loss=%g\n\t\"%s\" => %s", i_sec, sP.c_str(), predict, sT.c_str(), target, curLoss[j - 1],
+                    line_0.c_str(), sP.c_str());
+            // fprintf(fp, "\n");
+            // generated_tokens++;
+        }
+
+        fclose(fp);
+        _INFO(">>>>>> Save SampleBatch_.csv @\"%s\"\n", fpath.c_str());
+        return true;
+    } catch (...) {
+        return false;
+    }
+
     return 0x0;
 }

@@ -605,3 +605,24 @@ class SafeExit : public std::exception {
         fprintf(stderr, "\r\n%s EXIT_NOW with err=%d %s", COLOR_RED, code, COLOR_RESET); \
         exit(code);                                                                      \
     }
+
+const std::vector<std::string> SOME_prompts = {"hello",
+                               "What is the capital of Shanghai?",
+                               "Who wrote the play Romeo and Juliet?",
+                               "In which year did the Titanic sink?",
+                               "What is the chemical symbol for the element gold?",
+                               "What is the longest river in the world?",
+                               "Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?",
+                               "How many games did Arsenal FC go unbeaten during the 2003-2004 season of the English Premier League",
+                               "I get out on the top floor (third floor) at street level. How many stories is the building above the ground?",
+                               "天命玄鸟,降而生生. 玄鸟是什么鸟?"};
+const std::vector<std::string> SOME_answers = {"Hello! How can I assist you today?",
+                               "The capital of Shanghai is Shanghai.",
+                               "The play *Romeo and Juliet* was written by William Shakespeare. It was first performed in 1595 at the Globe Theatre in London. The story is a tragic love story set in a feud between families, and it remains one of Shakespeare's most famous and widely performed plays.",
+                               "The Titanic sank on 19 October 1912.",
+                               "The chemical symbol for the element gold is Au.",
+                               "The longest river in the world is the Nile River. It flows through several countries in North Africa and is one of the most significant rivers in the world. The Nile is approximately 6,650 miles long.",
+                               "Sally has 1 sister.",
+                               "Arsenal FC went unbeaten in 23 games during the 2003–04 English Premier League season. This was a remarkable achievement, and it's still remembered as one of the greatest successes in the club's history.",
+                               "So, the number of stories above the ground is: 3.",
+                               "“天命玄鸟，降而生生”出自《诗经·天问》，其中“玄鸟”是一种传说中的鸟。根据古代文献记载，玄鸟被认为是具有超自然力量的神鸟，象征着生命的延续和宇宙的运转。在《易经》和《周易》中，“玄鸟”常被用来象征“天”与“道”，代表着万物的起源与自然的和谐。因此，玄鸟在传统文化中具有重要的象征意义。"};

@@ -16,6 +16,9 @@
 #include "../Manifold/Optimizer.hpp"
 
 struct PIPE_Optimizer {
+    typedef int32_t _STATUS;
+    _STATUS status = KOIFISH_OK;
+
     Optimizer* hOPT = nullptr;
     hGTensor tensor = nullptr;
     hQUANT hQuant   = nullptr;  // quant of tensor
@@ -113,10 +116,10 @@ struct PIPE_Adamw : public PIPE_Optimizer {
                 assert(tensor->type == typNUMBER::BF16 || tensor->type == typNUMBER::F32);
                 DEBUG_HERE;
             } else
-                params = (floatX*)tensor_->shadoW;   //ToX(gBUFF->tmpTernary_);
+                params = (floatX*)tensor_->shadoW;  // ToX(gBUFF->tmpTernary_);
             // tensor->GetDataX();  // no need de dequant again!
         }
-        assert(params!=nullptr);
+        assert(params != nullptr);
     }
 
     void CU_core(cudaStream_t stream, int flag = 0x0) override;

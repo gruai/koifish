@@ -873,7 +873,9 @@ hGensor GeNeuron::AfterMing(RLS_BP* hRLS, hGensor cur, int flag) {
                         }
                         continue;
                     }
-                    hOPT->UpdateTensorParam(t, nullptr, 0.0);
+                    if(hOPT->UpdateTensorParam(t, nullptr, 0.0)!=KOIFISH_OK)
+                        return nullptr;
+
                     hRLS->SetTensorStatus(hOPT->GetITER(), t, TASK_STATUS::UPDATE_PARAM);
                 }
             }

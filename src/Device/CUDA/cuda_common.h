@@ -683,7 +683,6 @@ bool D2e(void* dev, T& host, const std::string& desc, int flag = 0x0) {
     float a = T2Float(&host);
     if (isnan(a) || isinf(a)) {
         _ERROR("[D2e] faild@\"%s\" a=%g\n", desc.c_str(), a);
-        assert(0);
         return false;
         // K_EXIT_NOW(KOIFISH_INVALID_D2E);
     }

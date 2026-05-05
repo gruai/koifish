@@ -693,6 +693,8 @@ bool Fuyou::Backward(hGensor cur, int flag) {
         auto t0            = GST_ms();
         cur                = neuron->Ming(hRLS, cur);
         neuron->stat.tBack = GST_ms() - t0;
+        if(cur==nullptr)
+            return false;
         if (isMix) {
             int debug = 0;
         }
@@ -715,7 +717,8 @@ int Fish::BackwardOnRLS(int iter, int flag) {
     RLS_BP* hRLS = hEDS->GetScheduler<RLS_BP>();
     hGensor cur  = cls->delta;
     hFuyou afu   = hRLS->afu;
-    afu->Backward(cur);
+    if(!afu->Backward(cur))
+        return hOPT->status;
 
     //  Head to follower
     if (iter >= config.fuyou.nWarmup() && hRLS->fuyouSwarm.size() > 1) {  //  memory

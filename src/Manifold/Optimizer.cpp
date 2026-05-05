@@ -180,6 +180,11 @@ bool Optimizer::BatchGrad(int iter, float& fx, int flag) {
         }
 
         GraphCompute(train_loader, _fish->hBackTG);
+        if(status!=KOIFISH_OK){// Save to kun & exit
+            _ERROR("Optimizer::GraphCompute failed! code=%d. Would dump interal state ...", status);
+            _fish->SaveTrain(_fish->config.state, false);  //  
+            return false;           
+        }
 
         if (accum_step == 0) {
             // sched = UpdateSchedule(flag);
@@ -342,10 +347,19 @@ int GTensor::Dogleg(int flag) {
     hPipeOpt hPipe0 = hOPT->hPipe;
     // hPipeOpt hPipe  = std::make_shared<PIPE_Adamw<floatX, floatMV>>(hOPT.get(), nEle, nEle, nEle, nEle, flags, learning_rate, beta1, beta2, iter, eps, wd);
     // // PIPE_Adamw<floatX, floatMV> pipe(nEle, nEle, nEle, nEle, flags, learning_rate, beta1, beta2, iter, eps, wd, grad_scale, gnorm, seed);
-    // hPipe->Update(this, wd, grad_scale, seed);
+    if (isStrMatch(name, {"model.layers.27.self_attn.q_proj.weight"})) {  // to debug Some strange bug of bit2_distillation
+        // Print("old",0,-1);
+    }
     hPipe0->Update(shared_from_this(), wd, grad_scale, seed);
     hPipe0->CU_core(main_stream);
+    if (hPipe0->status != KOIFISH_OK) {
+        hOPT->status = hPipe0->status;
+        return hOPT->status;
+    }
     // Optimizer_update(pipe, main_stream);
+    if (isStrMatch(name, {"model.layers.27.self_attn.q_proj.weight"})) {  //
+        // Print("new",0,-1);
+    }
     if (1) {  // fuyou
         // for(auto t : fuyous)
     }
@@ -360,19 +374,19 @@ int GTensor::Dogleg(int flag) {
     return 0;
 }
 
-double Optimizer::UpdateTensorParam(hGensor hP, floatX* g, float gnorm) {
+OPT_STATUS Optimizer::UpdateTensorParam(hGensor hP, floatX* g, float gnorm) {
     float grad_norm = g_step;
     hP->Dogleg(0x0);
     grad_norm = hP->gnorm;
     if (!isPreGStep)
         g_step += grad_norm * grad_norm;
 
-    return 0.0;
+    return KOIFISH_OK;
 }
 
 int UpdateTensorParam_cuda(hGTensor tensor, Optimizer* hOPT, float& grad_norm, int flag);
 //  Always call Optimizer::UpdateTensorParam          Deprecated
-double OPT_Adam::UpdateTensorParam(hGensor hP, floatX* gX, float clip) {
+OPT_STATUS OPT_Adam::UpdateTensorParam(hGensor hP, floatX* gX, float clip) {
     // return Optimizer::UpdateTensorParam(hP, gX, clip);
 
     // assert(gimap.find(hP)!=gimap.end());
@@ -419,7 +433,8 @@ double OPT_Adam::UpdateTensorParam(hGensor hP, floatX* gX, float clip) {
     }
 #endif
 #ifdef __USE_CUDA__
-    hP->Dogleg(0x0);
+    if( hP->Dogleg(0x0)!=KOIFISH_OK)
+        return status;
     grad_norm = hP->gnorm;
     // UpdateTensorParam_cuda(hP, this, grad_norm, 0x0);
 
@@ -486,7 +501,7 @@ double OPT_Adam::UpdateTensorParam(hGensor hP, floatX* gX, float clip) {
     }
 #endif
 
-    return 0.0;
+    return KOIFISH_OK;
 }
 
 void Optimizer::UpdateTrainLoss(int x, float loss, int flag) {
@@ -559,6 +574,7 @@ void Optimizer::CheckExitSearch(int t, int flag) {
     if (isExit) {
         trainInfos().SaveToCSV("_info_.csv");
         // release more resource here
+        _WARN("[APP] Koifish exit Optimizer::Search when iter=%d > N_mostiter=%d", t, DEBUG.N_mostiter);
         K_EXIT(KOIFISH_EXIT_DEBUG);
     }
 }
@@ -618,8 +634,11 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGensor loss_, hGensor target_, C
         iter = iter0 + t + 1;
         SUM::Reset("time");
         _fish->SetPhase(LIFE_PHASE::P_TRAIN);
-        if (!BatchGrad(iter, a, 0x0))
+        if (!BatchGrad(iter, a, 0x0)) {
+            // SaveTrain(config.state, true, FSerial::COPY_MMAP);
             return CANCEL;
+        }
+
         // if(t==1)    K_EXIT(KOIFISH_EXIT_DEBUG);
 
         SignStochastic(nParams, config);
@@ -690,7 +709,8 @@ double Optimizer::GraphCompute(hSampLoader hLoader, hTGraph hTG, int flag) {
         } else {
             isBackward = true;
             g_step     = 0;
-            _fish->BackwardOnRLS(iter, 0x0);
+            if( _fish->BackwardOnRLS(iter, 0x0)!=KOIFISH_OK)
+                return 0.0;
             UpdateTrainLoss(-1, mean_loss);
             isBackward = false;
         }
@@ -702,7 +722,7 @@ double Optimizer::GraphCompute(hSampLoader hLoader, hTGraph hTG, int flag) {
 bool Optimizer::Evaluate(int type, int flag) {
     OutCLS* cls = _fish->GetNeuron<OutCLS>("OutCLS", 0);
 
-    int iter       = GetITER();
+    int iter = GetITER(), token = -1;
     float val_loss = 0;
     if (type == 1) {
         assert(_fish->isLoadCheckpoint);
@@ -722,10 +742,14 @@ bool Optimizer::Evaluate(int type, int flag) {
             // for(int i=0;i<10;i++)
             // val_loss = EvaluateSamps(vl, iter), a = val_loss;       //  0.272727281
             val_loss = vl->Evaluate(SAMPLEofSHARD, 0x0);
+            // if (DEBUG.eval_Generate) {
+            //     hChater gopt = _fish->GetGenerator();
+            //     token        = gopt->Sample(-1);  // 1479
+            // }
         }
     }
     // K_EXIT(KOIFISH_EXIT_DEBUG);
-    
+
     return true;
 }
 

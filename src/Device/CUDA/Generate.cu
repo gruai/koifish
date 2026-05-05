@@ -358,7 +358,7 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
         // int grid_size = (hQwen->vocab_size + CU_T4B_SMALL - 1) / CU_T4B_SMALL;
         // only for using floatLogits = float;
         // convert_bf16_to_fp32_kernel<<<grid_size, CU_T4B_SMALL>>>(hQwen->xlogit, logits, hQwen->vocab_size);
-        cls->preLogits->SerialGamaData("", nullptr, true, -1);
+        cls->preLogits->SerialGamaData("", nullptr, true, (size_t)(-1));
     }
     // cls->preLogits->Print("logits",0,-1,hQwen->vocab_size);
     return logits;

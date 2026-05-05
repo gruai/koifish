@@ -111,7 +111,7 @@ double SampLoader::DecodeVerify(hSAMP samp, hGensor tokens, hGensor logits, int 
 }
 
 int SampLoader::StepOfEvaluate(int flag) {  //  smaple to reduce eval time
-    int nSamp        = num_batches * hTokens->rSampling;
+    int nSamp        = max((int)(num_batches * hTokens->rSampling), 1);
     int step         = (int)(num_batches / nSamp);
     float realSample = (ceil)(num_batches * 1.0 / step) / (num_batches);
     return max(step, 1);
@@ -296,6 +296,11 @@ size_t SampLoader::UpdateBatch(int x, Fish* fish) {
     cur_samps.clear();
     hBatch->hostToken->Zero();
     hostTargetProbs->Zero();
+    hTokenizer tokenizer = fish->GetTokenizer();
+    if (DEBUG.quant_UserMode) {
+        hBatch->FillPrompt(fish, SOME_prompts, SOME_answers,  -1);
+        return 1;
+    }
     int64_t nAllSamples_ = nShard();
     // const TOKEN_ID    * train_data=tokens.data();
     size_t k, n_train_data = nTokens();  // tokens.size();
@@ -336,7 +341,7 @@ size_t SampLoader::UpdateBatch(int x, Fish* fish) {
         cur_samps.push_back(samp);
         Samp2Batch(k, samp, _params);
         if (isLog && k < 6 && tpBatchSample != "stacking") {
-            sentence = dolphin->T2STR(samp_toks, 16, 0x0);                       // llama_token_to_piece(lctx, samp_toks[0]);
+            sentence = dolphin->T2STR(samp_toks, 64, 0x0);                       // llama_token_to_piece(lctx, samp_toks[0]);
             _INFO(" (%ld,%d)@\"%s\"", samp->pos, samp->jump, sentence.c_str());  // sample_size
         } else if (type == SampLoader::TYPE::DT_EVAL) {
             if (k == 0) {
@@ -356,7 +361,7 @@ size_t SampLoader::UpdateBatch(int x, Fish* fish) {
         hOPT->isDumpOnce = true;
     }
 
-    assert(hDict->isInRange(hBatch->host, hBatch->size(), 0));  //(int*)(hostBatch->data)
+    assert(hDict->isInRange(hBatch->host, hBatch->nFillTokens(), 0));  //(int*)(hostBatch->data)
     // int *raw_t = (int*)(tokens_input->data);
 
     tokens_input->OverWrite(hBatch->hostToken);  // H2D
@@ -1235,5 +1240,84 @@ void BATCH_INPUT::Reset(const TOKENS& tokens, int flag) {
     for (int i = 0; i < tokens.size(); i++) {
         Set(i, 0, 0, 0, tokens[i]);
     }
+    nFill    = tokens.size();
     nPrefill = tokens.size();
+}
+
+// DEBUG.prompts include some testing questions for debug
+std::string UserPrompt(Fish* fish, int pos, int nRound, int flag = 0x0) {
+    const char* cli_user_prompt = nullptr;
+    if (fish->isTrain()) {
+        // cli_user_prompt = "Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?";   //hello
+        DEBUG.prompts = {"hello"};
+    }
+
+    char* system_prompt = nullptr;
+    int szBuffer        = fish->config.chat_sampler.szBuffer;
+    char user_prompt[szBuffer], rendered_prompt[szBuffer];
+    if (cli_user_prompt != NULL) {
+        if (pos > 0)
+            return "";
+        strcpy(user_prompt, cli_user_prompt);
+    } else {
+        if (nRound < DEBUG.prompts.size())
+            strcpy(user_prompt, DEBUG.prompts[nRound].c_str());  //
+        else
+            read_stdin("\n>> ", user_prompt, sizeof(user_prompt));
+        if (!user_prompt[0])
+            return "";  // exit on empty prompt
+    }
+
+    // render the prompt with the correct template
+    if (pos == 0 && system_prompt) {
+        sprintf(rendered_prompt, fish->config.model.system_prompt_template.c_str(), system_prompt, user_prompt);
+    } else {
+        sprintf(rendered_prompt, fish->config.model.prompt_template.c_str(), user_prompt);
+    }
+    assert(strlen(rendered_prompt) > 0);
+    return rendered_prompt;
+}
+
+//  @hSAMP SampLoader::InitOneSamp_
+int BATCH_INPUT::FillPrompt(Fish* hFish, const std::vector<std::string>& arrPrompt, const std::vector<std::string>& answers, int nRound, int flag) {
+    hTokenizer tokenizer = hFish->GetTokenizer();
+    bool mergeAnswer     = !answers.empty();
+    std::string p0, answer;
+    // assert(nRound < arrPrompt.size());
+    int szBuffer = hFish->config.chat_sampler.szBuffer;
+    arrTic0.clear(),       arrTic1.clear();
+    TOKENS all_tokens;
+    for (int i = 0; i < arrPrompt.size(); i++) {
+        if (nRound >= 0 && i != nRound)
+            continue;
+
+        p0 = arrPrompt[i];
+        assert(!p0.empty());
+        char rendered_prompt[szBuffer] = "\0";
+        sprintf(rendered_prompt, hFish->config.model.prompt_template.c_str(), p0.c_str());
+        // sprintf(rendered_prompt, "%s", p0.c_str());
+        _INFO("\n[PROMPT] %d=\"%s\"", i ,rendered_prompt );
+        if (mergeAnswer) {
+            TOKENS prompt_tokens = tokenizer->Encode(rendered_prompt);
+            int tic          = prompt_tokens.size() + all_tokens.size();
+            arrTic0.push_back(all_tokens.size());     arrTic1.push_back(tic);
+            answer = answers[i];
+            strcat(rendered_prompt, answer.c_str());
+            assert(strlen(rendered_prompt)<=szBuffer);
+        }
+
+        // if (!DEBUG.eval_OneSample.empty())
+        //     rendered_prompt = DEBUG.eval_OneSample;  //"the unit into a different outlet.\n3. The inlet water pressure may be too ";//only for debug
+        TOKENS cur_tokens = tokenizer->Encode(rendered_prompt);
+        if (cur_tokens.empty()) {
+            _ERROR("[INPUT] failed to encode prompt=\"%s\"", rendered_prompt);
+            K_EXIT(KOIFISH_INVALID_PROMPT);
+        }
+        all_tokens.insert(all_tokens.end(),cur_tokens.begin(),cur_tokens.end());
+    }
+    int nTokens = all_tokens.size();
+    Reset(all_tokens);  // No BOS at sequence start!
+    nPrefill = nFill = nTokens;
+
+    return nTokens;
 }

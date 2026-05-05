@@ -495,7 +495,8 @@ bool GTensor::Serial_Quant_MMAP(bool isSave, bool isReset, SERIAL_TYPE serial_ty
                 SerialGamaData("", tmpData, false, szData + szGama + szM + szV);
                 if (G_Has_(name, {"model.layers.0.self_attn.v_proj.weight"}))
                     Print(name, 0, -1);
-                assert(!quant->params.distill.isKeepShadoW());  //  [todo] need refactor of InitShadoW
+                assert(!quant->params.distill.isKeepShadoW());  //  If loaded paramter is also 2-bit, no need to keep is as shadow!
+                //[todo] need refactor of InitShadoW
                 InitShadoW(nullptr, true, quant->params.distill);
             } else {
                 bool isAllocTmpData = quant != nullptr;

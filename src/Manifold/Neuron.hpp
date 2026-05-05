@@ -747,7 +747,9 @@ struct OutCLS : public SparseNeuron {
     SLP proj;
     TokenEmbed* hEmbed = nullptr;
     // host version of target is SampLoader::hostTargetProbs
-    hGTensor target = nullptr, preLogits = nullptr;
+    hGTensor target = nullptr;
+    // Partial logits only contain dB samples at train stage!!! to reduce memory
+    hGTensor preLogits = nullptr;
     //  Deprecated!     device=>host    floatX=>float
     floatLogits* fLogits(int flag = 0x0);
     float metric[METRIC_MOST], *dev_metric = nullptr;

@@ -131,7 +131,7 @@ public:
     void* st_file{nullptr};
     void* st_mmap{nullptr};
 
-    size_t Register(shared_ptr<GTensor> t, size_t offset, int flag = 0x0);
+    size_t Register(shared_ptr<GTensor> t, size_t offset, FILE_FORMAT_TYPE format, int flag = 0x0);
     bool InitHeader(int flag = 0x0);
     void insertJS(const JSON& js, size_t dst_offset, int flag = 0x0) {
         jsConfig = js;

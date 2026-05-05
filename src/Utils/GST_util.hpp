@@ -217,6 +217,11 @@ struct Distri_ARRAY {
         a0 = std::min(a0, a), a1 = std::max(a1, a);
     }
 
+    virtual float Last(){
+        assert(!distri.empty());
+        return distri[distri.size()-1];
+    }
+
     virtual void Stat() {
         size_t n = distri.size();
         if (n == 0)

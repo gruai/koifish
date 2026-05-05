@@ -272,7 +272,24 @@ MODEL_ARCH CLI_params::ModelArch() {
     return arch;
 }
 
-bool CLI_params::isValid(int flag) { return true; }
+bool CLI_params::isValid(const std::string& path, const std::string& desc, int flag) {
+    int nLayer = this->nLayer();
+    if (nLayer < 0) {
+        _ERROR("[jConfig]_\"%s\" nLayer=%d<0! @\"%s\"", desc.c_str(), nLayer, path.c_str());
+        return false;
+    }
+    if (model.layerps.empty()) {
+        _ERROR("[jConfig]_\"%s\" layerps is empty! @\"%s\"", desc.c_str(), path.c_str());
+        return false;
+    }
+    int B = n_batch(), T = n_ctx();
+    int q_dim = Q_dim(), kv_dim = KV_dim();
+    if (q_dim < kv_dim) {  // C!=q_dim
+        _ERROR("[jConfig]_\"%s\" q_dim=%d <  kv_dim=%d! @\"%s\"", desc.c_str(), q_dim, kv_dim, path.c_str());
+        return false;
+    }
+    return true;
+}
 
 bool CLI_params::JModel2Params(int flag) {
     string key = "";
@@ -791,12 +808,7 @@ bool TRAIN_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
     n_gradient_accumulation = jKV(jConfig, {"train", "optimizatioin", "grad_accumulation"}, n_gradient_accumulation);
 
     dump_every = jKV(jConfig, {"train", "dump-every"}, dump_every);
-    // eval_every = jKV(jConfig,{"train","eval-every"},eval_every );
-    gpt_every = jKV(jConfig, {"train", "gpt-every"}, gpt_every);
-    // eval_every = eval_every<=0 ? 100000000 : eval_every;
-    // if( eval_every>0 ){
-    //     _INFO("\r\n%s  eval@every %d steps.",__func__,eval_every );
-    // }
+    gpt_every  = jKV(jConfig, {"train", "gpt-every"}, gpt_every);
     rSubSample = jKV(jConfig, {"train", "sample"}, rSubSample);
     if (rSubSample < 0)
         rSubSample = 1;
@@ -1013,16 +1025,7 @@ bool CLI_params::ToJConfig(int flag) {
         jModel = jKEY(jConfig, {"model"});
 
         if (DEBUG.test_quant) {  // some debug switch
-            DEBUG.prompts = {"hello",
-                             "What is the capital of Shanghai?",
-                             "Who wrote the play Romeo and Juliet?",
-                             "In which year did the Titanic sink?",
-                             "What is the chemical symbol for the element gold?",
-                             "What is the longest river in the world?",
-                             "Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?",
-                             "How many games did Arsenal FC go unbeaten during the 2003-2004 season of the English Premier League",
-                             "I get out on the top floor (third floor) at street level. How many stories is the building above the ground?",
-                             "天命玄鸟,降而生生. 玄鸟是什么鸟?"};
+            DEBUG.prompts = std::vector<std::string>(std::begin(SOME_prompts), std::end(SOME_prompts));
         } else {
         }
 
@@ -1131,6 +1134,7 @@ bool CLI_params::InitJConfig(int flag) {
         DEBUG.x1                = jKV(jConfig, {"debug", "x"}, DEBUG.x1);
         DEBUG.x_str             = jKV(jConfig, {"debug", "x_str"}, DEBUG.x_str);
         DEBUG.N_mostiter        = jKV(jConfig, {"debug", "most_iter"}, DEBUG.N_mostiter);
+        DEBUG.eval_Generate    = jKV(jConfig, {"debug", "eval_generate"}, DEBUG.eval_Generate);     //
         DEBUG.save_GlobalSate   = jKV(jConfig, {"debug", "save_globalsate"}, DEBUG.save_GlobalSate);  //-1;
         DEBUG.dump_TensorDetail = jKV(jConfig, {"debug", "dump_tensordetail"}, DEBUG.dump_TensorDetail);
         DEBUG.isInitParamHost   = DEBUG.x1 == 0;
@@ -1145,6 +1149,7 @@ bool CLI_params::InitJConfig(int flag) {
         dumpSwitch.train_csv_path = jKV(jConfig, {"dump", "train_csv_path"}, dumpSwitch.train_csv_path);
         dumpSwitch.tensor_load    = jKV(jConfig, {"dump", "tensor_load"}, dumpSwitch.tensor_load);
         // train = jKV(jConfig,{"train"},train );
+
         return true;
     } catch (JSON::parse_error& e) {
         _ERROR("\r\n%s  Failed to open %s!!! ERR=%s", __func__, jsPath.c_str(), e.what());
@@ -1252,11 +1257,12 @@ bool CLI_params::LoadJConfig(const std::string& path, int flag) {
 bool CLI_params::parse(int argc, char** argv) {
     std::string arg_prefix      = "--", key, value;
     exec_name                   = EXE_name();
-    string sExt                 = argc > 1 ? FILE_EXT(argv[1]) : "";
+    string sExt                 = argc > 1 ? FILE_EXT(argv[1]) : "", jPath;
     FILE_FORMAT_TYPE ckp_format = FILE_JSON;  // bool isHF              = false;
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (fs::exists(arg)) {  //*.json
+            jPath = arg;
             if (!LoadJConfig(arg)) {
                 return false;
             }
@@ -1344,6 +1350,8 @@ bool CLI_params::parse(int argc, char** argv) {
         default:
             assert(!jConfig.empty());
             if (!InitJConfig())
+                return false;
+            if (!isValid(jPath, "CLI_params::parse"))
                 return false;
             break;
     }

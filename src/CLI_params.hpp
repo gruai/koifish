@@ -414,9 +414,9 @@ struct DISTILLATION_CARD {
 enum QUANT_MODE {
     NO_QUANT,
 
-    RTN,   // Round-to-Nearest
-    AWQ,   // the storage format is same as RTN
-    RTNf,  // nf4, nf3
+    RTN,        // Round-to-Nearest
+    AWQ,        // the storage format is same as RTN
+    RTNf,       // nf4, nf3
     MINI_GBDT,  // Minimise impurity by GBDT method
     F8Ex,
 
@@ -526,7 +526,7 @@ struct MUON_params_ {
 
 struct TRAIN_CARD {
     int dump_every = 1;
-    int gpt_every  = -1;  
+    int gpt_every  = -1;
 
     int seed     = -1;
     int n_epochs = -1;
@@ -608,16 +608,18 @@ struct DUMP_SWITCH {
 
 // operation_ObjDetail
 struct DEUG_SWITCH {
-    float fLongTail          = -1;
-    int SelfAttention_noraml = 1;
-    bool NO_loss             = false;
-    bool check_tensor_norm   = false;
-    bool isInitParamHost     = true;
-    int save_GlobalSate      = 1;
+    float fLongTail            = -1;
+    int SelfAttention_noraml   = 1;
+    bool NO_loss               = false;
+    bool check_tensor_norm     = false;
+    bool isInitParamHost       = true;
+    int save_GlobalSate        = 1;
+    std::string eval_OneSample = "";
+    int eval_Generate          = -1;
 
-    int test_quant         = 0;
+    int test_quant        = 0;
     int dump_TensorDetail = 0;
-    int quant_UserMode = 0; //  1 only quant,
+    int quant_UserMode    = 0;  //  1 only quant,
 
     int dict_latent_dim    = -1;
     int graph_dump         = 0;  //  10 levels of dumps, 0-9. 0 is a full dump_,The lower the number the more dump_.
@@ -787,7 +789,7 @@ struct CLI_params {
     MODEL_ARCH ModelArch();
     virtual void OnArch();                                   // Deprecated
     virtual void OnPhase(LIFE_PHASE phase, int flag = 0x0);  // Deprecated
-    virtual bool isValid(int flag = 0x0);
+    virtual bool isValid(const std::string& path, const std::string& desc = "", int flag = 0x0);
     virtual bool JModel2Params(int flag);
     virtual void OnMostToken(size_t nMost, int flag = 0x0);
     std::string exec_name = "", test = "", compute_graph = "";

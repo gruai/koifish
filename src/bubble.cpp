@@ -11,7 +11,6 @@
 #include <iostream>
 #include <string>
 
-
 #include "./Manifold/gLLM.hpp"
 #include "./Utils/GST_Application.hpp"
 #include "./Utils/GST_log.hpp"
@@ -24,16 +23,20 @@ class BubbleApp : public GST_Application {
    public:
     BubbleApp(int argc, char* argv[]) : GST_Application(argc, argv) {
         name = "Bubble";
-        // params.phase = LIFE_PHASE::P_GENERATE;  
         // DEBUG.test_quant = 1;
         params.OnArch();
-        params.OnPhase(LIFE_PHASE::P_GENERATE);
+        params.OnPhase(LIFE_PHASE::P_GENERATE);        
+        params.isOnlyGPT = true;
+        if (0) {    // 20260428 hack
+            params.OnPhase(LIFE_PHASE::P_EVAL_);  // only for debug
+            params.common.n_ctx = 512;  
+            params.isOnlyGPT    = false;
+        }
 
-        params.isOnlyGPT                = true;
-        params.chat_sampler.mode        = params.model.enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
+        params.chat_sampler.mode = params.model.enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
         // params.chat_sampler.isSampleCPU = true;
-        params.model.preLogits_dB       = 1;
-        params.model.sparse.method      = -1;
+        params.model.preLogits_dB  = 1;
+        params.model.sparse.method = -1;
         // params.chat_sampler.seq_len     = 32;
         //
         // params.quant.T_errQ             = 0.3;

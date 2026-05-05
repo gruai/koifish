@@ -596,12 +596,9 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
     }
     if (1) {
         int qk_threads_per_block = std::min(1024, pos + 1);
-
         attention_qk_kernel<<<n_head, qk_threads_per_block>>>(ToX(attn), ToX(Q.out), key_cache, pos, seq_len, n_head, n_head_kv, head_dim);
-        // // 6.2: softmax
         CU_softmax_multihead<<<n_head, 1>>>(ToX(attn), pos, seq_len);
         attn->Print("attn", 0x0, dump_flag, pos + 1);
-        // // 6.3: aggregate V values
         attention_v_kernel<<<n_head, head_dim>>>(ToX(Q.out), ToX(attn), val_cache, pos, seq_len, n_head, n_head_kv, head_dim);
         Q.out->Print("att_out", 0x0, dump_flag, nToken * q_dim);
     } else {

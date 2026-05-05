@@ -205,9 +205,9 @@ bool VERIFY_DIR_EXIST(const std::string& path, bool isCreate) {
 
     bool isExist = false;
     try {
-        fs::path filePath = path;
-        std::string dir_path           = filePath.parent_path();
-        isExist                        = fs::exists(dir_path);
+        fs::path filePath    = path;
+        std::string dir_path = filePath.parent_path();
+        isExist              = fs::exists(dir_path);
         if (!isExist && isCreate) {
             bool created = fs::create_directories(dir_path);
             if (created) {
@@ -361,7 +361,7 @@ bool STR2FILE(const std::string fPath, const std::string& info, std::ofstream::o
 
 std::string FILE_EXT(const std::string& path) {
     fs::path filePath = path;
-    std::string sExt               = filePath.extension().string();
+    std::string sExt  = filePath.extension().string();
     if (sExt.size() > 1)
         sExt = sExt.substr(1);  // substr(1) to remove the dot
     return sExt;
@@ -371,7 +371,7 @@ std::vector<std::string> FilesOfDir(const std::string& path, const std::vector<s
     std::vector<std::string> files;
     DIR* dir = opendir(path.c_str());
     if (dir == nullptr) {
-        std::cout << "failed to open directory" << std::endl;
+        _ERROR("Failed to open directory=\"%s\"", path.c_str());
         return files;
     }
     struct dirent* entry;

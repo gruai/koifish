@@ -68,13 +68,16 @@ JSON GTensor::jDesc(K_SafeTensors* st, int flag) {
             assert(shape[0] % 8 == 0);
             jsShape[0] /= 8;
         } else if (type == typNUMBER::T_BINARY) {
-            jsType = typNUMBER::I32;
+            assert(0 && "Many tools(lm_eval...) failed to load these packed-I32 format quant model!");
+            /*jsType = typNUMBER::I32;
             assert(shape[0] % 32 == 0);
-            jsShape[0] /= 32;
+            jsShape[0] /= 32;*/
         } else if (type == typNUMBER::T_SIGN || type == typNUMBER::Q2) {
-            jsType = typNUMBER::I32;
+            jsType = typNUMBER::BF16;
+            // Even its easy to save in packed-I32 format, many tools(lm_eval...) failed to load these quant model!
+            /*jsType = typNUMBER::I32;
             assert(shape[0] % 16 == 0);
-            jsShape[0] /= 16;
+            jsShape[0] /= 16;*/
         }
         info = HF_dtype2str(jsType);
     }
@@ -216,7 +219,7 @@ int GTensor::LoadParam(K_SafeTensors* hst, const std::string& name_, hGTensor ku
     }
     return 0;
 }
-//  "./checkpoints/._koifish_state_.ckp" @K_SafeTensors::Register ckp.type == CheckPoint_Params::STATE
+//  "./checkpoints/._koifish_state_.ckp" @K_SafeTensors::Register_ ckp.type == CheckPoint_Params::STATE
 size_t GTensor::nByte_CKP(const CheckPoint_Params& ckp, int flag) const {
     size_t sz = nByte();
     if (sz == 0) {
@@ -422,7 +425,7 @@ bool K_SafeTensors::_to_ofs(std::ofstream& ofs, size_t& szAll, std::string* warn
             // databuffer_addr = reinterpret_cast<const void *>(storage.data());
         }
 
-        size_t pad_bytes = 0;
+        size_t pad_bytes = 0, nExpDataX = 0;
         if (0) {  // make databuffer addr start from the multiple of 8.
             if ((header_size % 8) != 0) {
                 pad_bytes = 8 - (header_size % 8);
@@ -446,6 +449,7 @@ bool K_SafeTensors::_to_ofs(std::ofstream& ofs, size_t& szAll, std::string* warn
         else {
             size_t dst_offset = 0, szTmp, szRead;
             for (size_t i = 0; i < tensors.size(); i++) {
+                int nExp        = 0;
                 std::string key = tensors.keys()[i];
                 hGTensor t      = tensors.at(i);
                 assert(dst_offset == t->data_offsets[0]);
@@ -454,7 +458,11 @@ bool K_SafeTensors::_to_ofs(std::ofstream& ofs, size_t& szAll, std::string* warn
                     szTmp = t->data_offsets[1] - dst_offset;  // t->nByte() * 3;
                     if (szTmp != t->nByte_CKP(ckp)) {
                         size_t sz1 = t->nByte_CKP(ckp);
-                        assert(0);
+                        if (ckp.format == FILE_FORMAT_TYPE::CKP_HF && K_FLOATS[t->type].bis <= 4) {
+                            nExp = szTmp / sz1;
+                            nExpDataX++;
+                        } else
+                            assert(0);
                     }
                     hBITARR tmp = new BIT_8[szTmp]();
                     if (G_Has_(t->name, {"model.layers.27.mlp.down_proj.weight"})) {  // model.embed_tokens.weight  model.layers.0.self_attn.q_proj
@@ -462,7 +470,7 @@ bool K_SafeTensors::_to_ofs(std::ofstream& ofs, size_t& szAll, std::string* warn
                         // t->Print("wte@save", 4, -1);
                     }
                     // t->Serial_Quant_MMAP(true,false,SAVE_TO_TMPDATA, tmp);
-                    if (t->GetDataX() == nullptr) {  // copy data@"model.safetensors" to sate file
+                    if (t->GetDataX() == nullptr) {  // copy data@"model.safetensors" to state file
                         if (isInitMMap) {
                             nInit++;
                         } else if (isCopyMMap) {
@@ -479,7 +487,11 @@ bool K_SafeTensors::_to_ofs(std::ofstream& ofs, size_t& szAll, std::string* warn
                     } else {
                         assert(t->data != nullptr && t->gm != nullptr);
                         // t->Print(t->name, 0, -1);    //only for debug
-                        t->SerialGamaData("", tmp, true, szTmp);
+                        if (nExp > 0) { //nExp = szTmp / sz1
+                            D2H(gBUFF->tmpTernary->data, tmp, szTmp);
+                        } else {
+                            t->SerialGamaData("", tmp, true, szTmp);
+                        }
                         if (t->GetDynamicQuant() != nullptr) {
                             DEBUG_HERE;
                         }
@@ -590,7 +602,7 @@ void HST2JSON(const std::string& path, K_SafeTensors* hst, int flag = 0x0) {
     jX["path"] = hst->sFolderPath;
     jX["APP"]  = g_sAppPath;
 
-    jX["Time"] = GST_timeStr( );
+    jX["Time"] = GST_timeStr();
     jSafeTensors.push_back(jX);
 
     assert(!jSafeTensors.empty());
@@ -664,11 +676,10 @@ int Fish::SAFETENSOR2Gensors(const std::string& path, K_SafeTensors* hst, int fl
 
 K_SafeTensors::K_SafeTensors(Fish* fish, CheckPoint_Params ckp_, const std::string& path, int flag) : ckp(ckp_), sFolderPath(path) {
     hFish = fish;
-    if (fish != nullptr){
+    if (fish != nullptr) {
         // ckp_format = fish->config.model.ckp_format;
         // ckp_format = FormatOfFile(path);
-    }else{
-
+    } else {
     }
     UpdateMetaData(flag);
 }
@@ -680,7 +691,7 @@ void K_SafeTensors::UpdateMetaData(int flag) {
     metadata["writer"] = "koifish";
 }
 
-size_t K_SafeTensors::Register(hGensor t, size_t offset, int flag) {
+size_t K_SafeTensors::Register(hGensor t, size_t offset, FILE_FORMAT_TYPE format, int flag) {
     size_t sz = t->nByte_CKP(ckp);  // may expand
     assert(t->hFish != nullptr);
     assert(strlen(t->name) > 0);
@@ -688,6 +699,15 @@ size_t K_SafeTensors::Register(hGensor t, size_t offset, int flag) {
         DEBUG_HERE;
     }
     assert(sz > 0);
+    if (format == CKP_HF) {  //  "Many tools(lm_eval...) failed to load these packed-I32 format quant model!"
+        if (t->type == typNUMBER::Q4) {
+            sz *= 4;
+        } else if (t->type == typNUMBER::T_BINARY) {
+            sz *= 16;
+        } else if (t->type == typNUMBER::T_SIGN || t->type == typNUMBER::Q2) {
+            sz *= 8;
+        }
+    }
     t->data_offsets[0] = offset;
     t->data_offsets[1] = offset + sz;
     tensors.insert(t->name, t);
@@ -761,7 +781,7 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
                 if (t->isRefer())  //  "model.out.weight"
                     continue;
                 jsConfig["tensors"][t->name] = dst_offset;  // tensor->Dump(100,"");
-                dst_offset                   = hst->Register(t, dst_offset);
+                dst_offset                   = hst->Register(t, dst_offset, hst->ckp.format);
             }
             if (ckp.format == CKP_KOIFISH) {
                 hst->insertJS(jsConfig, dst_offset);
@@ -854,8 +874,11 @@ bool Fish::LoadFolderOfST(int stType, int flag) {
     }
 
     std::vector<std::string> paths = FilesOfDir(sFolder, {"safetensors", "kun"}, 0x0);
-    if (paths.empty())
+    if (paths.empty()){
+        _WARN("\r[LoadFolderOfST] failed!  please check {\"safetensors\", \"kun\"} files @\"%s\"!\n", sFolder.c_str());
         return false;
+    }
+        
 
     isLoadCheckpoint = true;  //  HF/Safetensors is also checkpoint
     int nSerialT     = 0, curSerialT;
@@ -907,7 +930,7 @@ bool Fish::LoadFolderOfST(int stType, int flag) {
 
     // std::string fpCheck = sSTPath;  //ckp != nullptr ? ckp->sModelPath : "";
     if (!isLoadCheckpoint) {
-        _INFO("\r[LoadFolderOfST] failed!  please check file @\"%s\"!\n", sFolder.c_str());
+        _WARN("\r[LoadFolderOfST] failed!  please check {\"safetensors\", \"kun\"}  files @\"%s\"!\n", sFolder.c_str());
         return false;
     }
     // if (ckp != nullptr)
@@ -919,61 +942,20 @@ bool Fish::LoadFolderOfST(int stType, int flag) {
     return true;
 }
 
+
 /**
- *
+The exact behavior can vary based on model version, configuration, and prompt design
+1. enable_thinking
+    If ask "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n": The model generates a response starting with <think>(internal thinking) because that's how it was trained for reasoning tasks
+    If ask "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n": The model sees that the "thinking" part (<think>followed by \n\n</think>\n\n) is already provided​ in the prompt
+The model interprets this as: the assistant has already done its thinking, and now it's at the point of producing the final answer
+Since the thinking is complete (marked by </think>), the model just continues with the actual response.
 
-bool Fish::SafeTensors_Serialize(bool isSave, int flag) {
-    std::vector<std::string> paths = FilesOfDir(config.model.sSTPath, {"safetensors", "kun"}, 0x0);
-    if (paths.empty())
-        return false;
-
-    int nSerialT = 0, curSerialT;
-    std::vector<K_SafeTensors*> st_mmfs;
-    for (auto path : paths) {
-        K_SafeTensors* hst = new K_SafeTensors(this, {});
-        st_mmfs.push_back(hst);
-        curSerialT = SAFETENSOR2Gensors(path, hst, 0x0);
-        if (curSerialT <= 0)
-            return false;
-        nSerialT += curSerialT;
-    }
-    _LOG(nSerialT == 0 ? DUMP_ERROR : DUMP_INFO, ">>>>>> SafeTensors_Serialize load@\"%s\" OK. nSerialT=%d iter=%d\n\n", config.model.sCardPath.c_str(),
-         nSerialT, flag);
-
-    if (isTrain()) {  // otherwise, st would release mmap memory!
-        SaveTrain(config.state, true, FSerial::COPY_MMAP);
-    }
-    for (auto hst : st_mmfs)  // release all mmf resource
-        delete hst;
-
-    if (!config.model.st_index_map.empty()) {  //  "model.safetensors.index.json"     "model.embed_tokens.weight"
-                                               for (auto kv : config.model.st_index_map) {
-                                                  hGensor target = GetGensor(kv.first);
-                                                  if(target->data == nullptr){
-                                                      assert(0);
-                                                  }
-                                                  kv.second = target->data;
-                                              }
-        assert(nSerialT == config.model.st_index_map.size());
-    }
-
-    // if(!config.quant.filter_MIQ.empty())
-    //     throw SafeExit("", KOIFISH_EXIT_DEBUG, SafeExit::ExitReason::SYSTEM_FAILURE, __func__);
-    for (auto t : optParams) {
-        assert(!BIT_TEST(t->flags, GTensor::F_MMAP));
-        if (!isTrain()) {
-            assert(t->host_data == nullptr);
-        }
-
-        // assert(t->szUse>0 && t->data!=nullptr);  //bias maybe null
-    }
-    if (nSerialT == 0) {  //  !=optParams.size()
-        return false;     // bias maybe null
-    }
-
-    return true;
-} */
-
+2. For raw prompt(like "hello") alone without <|im_start|> / <|im_end|> / `` template markers
+Qwen3’s tokenizer + generation pipeline doesn’t detect a valid chat turn boundary
+The model falls into:auto-completing random internal reasoning tokens spitting out garbled thought fragments, repeated words, nonsense rambling
+it’s trying to "continue raw text" instead of "respond to user chat"
+ */
 bool MODEL_CARD::InitChatTemplate(CLI_params* hConfig, int flag) {
     // string fPrompt = sCardPath + "template_user_thinking.txt", fSysPromt = sCardPath + "template_system_thinking.txt";
     // if (enable_thinking) {  // load the "thinking" versions of the templates
