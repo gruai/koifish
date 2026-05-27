@@ -17,7 +17,7 @@ KVCache::KVCache(Fish* hF, int max_batch_size, int max_slen, int flag) : _fish(h
     max_seq_len = std::max(max_slen, (int)_fish->config.n_ctx());
     kv_dim      = hF->config.KV_dim();
     assert(kv_dim > 0);
-    //  gBUFF->scratch = std::make_shared<huTensor>("scratch_output",sp0,GTensor::tpFloatX,false);
+    
     SHAPE sp = {(int)(hF->config.nLayer()), max_seq_len, kv_dim};
     key      = std::make_shared<huTensor>(hF, "KCache", sp, tpCache, true, GTensor::F_DEBUG);
     value    = std::make_shared<huTensor>(hF, "VCache", sp, tpCache, true, GTensor::F_DEBUG);

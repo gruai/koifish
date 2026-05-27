@@ -158,7 +158,7 @@ void CUDA_cleanup() {
 
     if (cublaslt_handle != nullptr)
         cublasCheck(cublasLtDestroy(cublaslt_handle));
-#ifdef ENABLE_CUDNN
+#ifdef __USE_CUDNN__
     DestroyCUDNN();
 #endif
     if (main_stream != nullptr)

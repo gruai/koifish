@@ -18,7 +18,7 @@
 
 #define NOMINMAX
 
-#ifdef ENABLE_CUDNN
+#ifdef __USE_CUDNN__
 #include "cudnn_frontend.h"
 namespace fe = cudnn_frontend;
 #if defined(USE_FP16_BASELINE)
@@ -26,13 +26,15 @@ namespace fe = cudnn_frontend;
 #else  // Default to bfloat16
 #define CUDNN_16BIT fe::DataType_t::BFLOAT16
 #endif
+#elif defined __USE_TILELANG__
+#include "../tile_kernel/tl_kernels.hpp"
 #else
 // defines: attention_forward, attention_backward
 #endif
 
 static cudaEvent_t cuStart, cuEnd;
 
-#ifdef ENABLE_CUDNN
+#ifdef __USE_CUDNN__
 static cudnnHandle_t cudnn_handle;
 
 static void cuDNNCheck(cudnnStatus_t error, const char* file, int line) {
@@ -261,12 +263,12 @@ size_t cudnn_qkv_forw(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn, i
     checkCudnnFE(graph->build_plans(cudnn_handle));
     size_t need = graph->get_workspace_size();
     assert(need == 0x0);
-    // if (need > cudnn_workspace_size) {
-    //     if (cudnn_workspace_size > 0) {
+    // if (need > workspace_size) {
+    //     if (workspace_size > 0) {
     //         cudaCheck(cudaFree(cudnn_workspace));
     //     }
-    //     cudnn_workspace_size = graph->get_workspace_size()*10;
-    //     cudaCheck(cudaMalloc(&cudnn_workspace, cudnn_workspace_size));
+    //     workspace_size = graph->get_workspace_size()*10;
+    //     cudaCheck(cudaMalloc(&cudnn_workspace, workspace_size));
     // }
     cudnn_graph_fwd.insert({key, graph});
     return 0x0;
@@ -333,51 +335,16 @@ size_t cudnn_qkv_back(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn) {
 
     // Reallocate the workspace if the required size is greater than the current workspace
     // By default, cuDNN uses up to 256MiB of workspace, so we don't want to just allocate the maximum
-    if (graph->get_workspace_size() > GTensor::cudnn_workspace_size) {
-        if (GTensor::cudnn_workspace_size > 0) {
-            cudaCheck(cudaFree(GTensor::cudnn_workspace));
+    if (graph->get_workspace_size() > GTensor::workspace_size) {
+        if (GTensor::workspace_size > 0) {
+            cudaCheck(cudaFree(GTensor::qkv_workspace));
         }
-        GTensor::cudnn_workspace_size = graph->get_workspace_size();  // 1008599040  2.1G for GPT2_LARGE
-        cudaCheck(cudaMalloc(&GTensor::cudnn_workspace, GTensor::cudnn_workspace_size));
+        GTensor::workspace_size = graph->get_workspace_size();  // 1008599040  2.1G for GPT2_LARGE
+        // cudaCheck(cudaMalloc(&GTensor::qkv_workspace, GTensor::workspace_size));
     }
 
     cudnn_graph_bwd.insert({key, graph});
-    return GTensor::cudnn_workspace_size;
-}
-
-//
-bool SelfAttention::FUSE_cudnn(floatX* dqkvr, floatX* dout, int flag) {
-    assert(cudnn_handle != nullptr);
-    NVTX_RANGE_FN();
-    int HS           = head_dim;
-    float* stats     = TO<float>(transition);  //  (B, Hq, T)
-    float attn_scale = 1.0 / sqrtf(HS * 1.0f);
-    // void* devPtrO    = attn->data;  // out;
-    cuDNNCheck(cudnnSetStream(cudnn_handle, main_stream));
-
-    UpdateQKVPack();
-    //   devQ = Q.out->data, devK = K.out->data, devV = V.out->data;
-    var_packs = {
-        {Q_UID, devQ},       {K_UID, devK},       {V_UID, devV},       {O_UID, attn->data}, {dO_UID, dout},
-        {dQ_UID, devDeltaQ}, {dK_UID, devDeltaK}, {dV_UID, devDeltaV}, {STATS_UID, stats},  {Attn_scale_UID, &attn_scale},
-    };
-
-    QKV_KEY6 key = std::make_tuple(B, n_head, n_head_kv, T, HS, 0x0);
-    if (isForward()) {
-        assert(cudnn_graph_fwd.find(key) != cudnn_graph_fwd.end());
-        auto graph = cudnn_graph_fwd[key];  // cudnn_qkv_forw(B, n_head, n_head_kv, T, HS, is_inference_only);
-        checkCudnnFE(graph->execute(cudnn_handle, var_packs, GTensor::cudnn_workspace));
-        attn->Print("[qk]v", 0x0, dump_flag);
-    } else {  // Backward      dout=>(dQ,dK,dV)
-        assert(devDeltaQ == dqkvr);
-        assert(cudnn_graph_bwd.find(key) != cudnn_graph_bwd.end());
-        auto graph = cudnn_graph_bwd[key];  // cudnn_qkv_back(B, n_head, n_head_kv, T, HS, 0x0);
-        // Q.w->Print("Q.w0", 0, dump_flag);  // float a = tNormOf(Q.w);
-        checkCudnnFE(graph->execute(cudnn_handle, var_packs, GTensor::cudnn_workspace));
-        // Q.w->Print("Q.w1", 0, dump_flag);  // a = tNormOf(Q.w);
-    }
-    cudaCheck(cudaGetLastError());
-    return true;
+    return GTensor::workspace_size;
 }
 
 struct CudnnHandleDeleter {
@@ -404,12 +371,138 @@ bool InitCUDNN() {
 }
 
 void DestroyCUDNN() {
-    // if (GTensor::cudnn_workspace != NULL) {
-    //     cudaCheck(cudaFree(GTensor::cudnn_workspace));
+    // if (GTensor::qkv_workspace != NULL) {
+    //     cudaCheck(cudaFree(GTensor::qkv_workspace));
     // }
     cuDNNCheck(cudnnDestroy(cudnn_handle));
 }
 #endif
+/*
+void CUBIN_1()  {
+    CUmodule module;
+    cuModuleLoad(&module, "/home/cys/rnd/lic/src/Device/tile_kernel/flash_bwd.cubin");
+    // Get kernel function
+    CUfunction kernel;
+    CUresult err = cuModuleGetFunction(&kernel, module, "flash_bwd_kernel");
+    assert(err==CUDA_SUCCESS);
+
+    // Prepare data
+    constexpr int N = 1024;
+    size_t bytes = N * sizeof(float);
+
+    float h_A[N], h_B[N], h_C[N];
+    for (int i = 0; i < N; ++i) {
+        h_A[i] = 1.0f;
+        h_B[i] = 2.0f;
+    }
+
+    // CUdeviceptr d_A, d_B, d_C;
+    // cuMemAlloc(&d_A, bytes);
+    // cuMemAlloc(&d_B, bytes);
+    // cuMemAlloc(&d_C, bytes);
+
+    // cuMemcpyHtoD(d_A, h_A, bytes);
+    // cuMemcpyHtoD(d_B, h_B, bytes);
+
+    // Launch config
+    int threadsPerBlock = 256;
+    int blocks = (N + threadsPerBlock - 1) / threadsPerBlock;
+
+    // void* args[] = { &d_A, &d_B, &d_C, &N };
+
+    // CHECK_CUDA(
+    //     cuLaunchKernel(
+    //         kernel,
+    //         blocks, 1, 1,          // grid
+    //         threadsPerBlock, 1, 1, // block
+    //         0, nullptr, args, nullptr
+    //     )
+    // );
+    //  heads, tl.ceildiv(seq_len, block_M), batch, threads=threads:
+        //  const float* Delta, const *K, const *Q, const *V, float* dK, const *dO, float* dQ, float* dV, const float* lse
+        // cudaFuncSetAttribute(    flash_bwd_T64_16_S49152_bfloat16,    cudaFuncAttributeMaxDynamicSharedMemorySize,    0   );
+        // flash_bwd_T64_16_S49152_bfloat16<<<dim3(n_head, T / 64, B), dim3(128, 1, 1), 49152, main_stream>>>(
+        //     deltaOdO, (floatX*)devK, (floatX*)devQ, (floatX*)devV, dK_group, dout, deltaQ32, dV_group, devLse
+        // //     deltaOdO, (floatX*)devK, (floatX*)devQ, (floatX*)devV, dK_group, dout, dV_group, devLse
+        //     // (floatX*)devK, (floatX*)devQ, (floatX*)devV, dK_group, dout, dV_group, devLse
+        // );
+
+    // cuCtxSynchronize();
+}*/
+//
+bool SelfAttention::FUSE_qkv(floatX* dqkvr, floatX* dout, int flag) {
+    NVTX_RANGE_FN();
+    float* devLse     = TO<float>(lse);  //  (B, Hq, T)
+    float attn_scale = 1.0 / sqrtf(head_dim * 1.0f);
+    int group        = n_head / n_head_kv;
+    
+    UpdateQKVPack();
+#ifdef __USE_CUDNN__
+    assert(cudnn_handle != nullptr);
+    cuDNNCheck(cudnnSetStream(cudnn_handle, main_stream));
+    //   devQ = Q.out->data, devK = K.out->data, devV = V.out->data;
+    var_packs = {
+        {Q_UID, devQ},       {K_UID, devK},       {V_UID, devV},       {O_UID, attn->data}, {dO_UID, dout},
+        {dQ_UID, devDeltaQ}, {dK_UID, devDeltaK}, {dV_UID, devDeltaV}, {STATS_UID, devLse},  {Attn_scale_UID, &attn_scale},
+    };
+#elif defined __USE_TILELANG__
+    dump_flag        = -1;
+#endif
+    QKV_KEY6 key = std::make_tuple(B, n_head, n_head_kv, T, head_dim, 0x0);
+    if (isForward()) {
+#ifdef __USE_CUDNN__
+        assert(cudnn_graph_fwd.find(key) != cudnn_graph_fwd.end());
+        auto graph = cudnn_graph_fwd[key];  // cudnn_qkv_forw(B, n_head, n_head_kv, T, HS, is_inference_only);
+        checkCudnnFE(graph->execute(cudnn_handle, var_packs, GTensor::qkv_workspace));
+#elif defined __USE_TILELANG__
+        //  K,  Output,  Q,  V, float* lse
+        flash_fwd_T64_32_S36864_bfloat16<<<dim3(T / 64, n_head, B), dim3(128, 1, 1), 36864, main_stream>>>((floatX*)devK, ToX(attn), (floatX*)devQ,
+                                                                                                           (floatX*)devV, devLse);
+#else
+        assert(0);
+#endif
+        attn->Print("[qk]v", 0x0, dump_flag);
+    } else {  // Backward      dout=>(dQ,dK,dV)
+#ifdef __USE_CUDNN__
+        assert(devDeltaQ == dqkvr);
+        assert(cudnn_graph_bwd.find(key) != cudnn_graph_bwd.end());
+        auto graph = cudnn_graph_bwd[key];  // cudnn_qkv_back(B, n_head, n_head_kv, T, HS, 0x0);
+        // Q.w->Print("Q.w0", 0, dump_flag);  // float a = tNormOf(Q.w);
+        checkCudnnFE(graph->execute(cudnn_handle, var_packs, GTensor::qkv_workspace));
+#elif defined __USE_TILELANG__
+        assert(devDeltaQ == dqkvr);
+        float *deltaOdO = (float*)GTensor::qkv_workspace, *deltaQ32 = deltaOdO + B * n_head * T;
+        float *dK_group = (float*)(deltaQ32 + B * n_head * head_dim * T), *dV_group = dK_group + B * n_head_kv * head_dim * T * group;
+        //  float* Delta, __nv_bfloat16* O, __nv_bfloat16* dO
+        flash_bwd_preprocess_T32_32_S0_bfloat16<<<dim3(n_head, T / 32, B), dim3(128, 1, 1), 0, main_stream>>>(deltaOdO, ToX(attn), dout);
+        PrintTensor<float>("deltaOdO", deltaOdO, true, B, n_head, T, 1, -1);
+        PrintTensor<float>("deltaQ32", deltaQ32, true, B, n_head, T, head_dim, -1);
+        // CUBIN_1();
+        flash_bwd_T64_16_S49152_bfloat16<<<dim3(n_head, T / 64, B), dim3(128, 1, 1), 49152, main_stream>>>(
+             deltaOdO, (floatX*)devK, (floatX*)devQ, (floatX*)devV, dK_group, dout, deltaQ32, dV_group, devLse
+        //    deltaOdO, (floatX*)devK, (floatX*)devQ, (floatX*)devV, dK_group, dout, dV_group, devLse
+        //     // (floatX*)devK, (floatX*)devQ, (floatX*)devV, dK_group, dout, dV_group, devLse
+        );
+        cudaStreamSynchronize(main_stream);
+        CHECK_LAST_CUDA_ERROR();
+        cudaDeviceSynchronize();
+        PrintTensor<float>("deltaQ32", deltaQ32, true, B, n_head, T, head_dim, -1);
+        PrintTensor<float>("dK_group", dK_group, true, B, n_head_kv, T, head_dim, -1);
+        PrintTensor<float>("dV_group", dV_group, true, B, n_head_kv, T, head_dim, -1);
+        
+        //    float* dQ, dQ_out
+        flash_bwd_postprocess_T64_64_S0_bfloat16<<<dim3(T / 64, n_head, B), dim3(128, 1, 1), 0, main_stream>>>(deltaQ32, dqkvr);
+        
+#else
+        assert(0);
+#endif
+        // Q.w->Print("Q.w1", 0, dump_flag);  // a = tNormOf(Q.w);
+        // dqkvr->Print("delta_qkv", 0x0, dump_flag, C);
+        deltaQ->Print("deltaQ", 0x0, dump_flag, q_dim), deltaK->Print("deltaK", 0x0, dump_flag, kv_dim), deltaV->Print("deltaV", 0x0, dump_flag, kv_dim);
+    }
+    cudaCheck(cudaGetLastError());
+    return true;
+}
 
 inline int convert_SM_to_cores(int major, int minor) {
     // Defines for GPU Architecture types (using the SM version to determine the # of cores per SM
@@ -450,7 +543,7 @@ bool InitCUDA(const CLI_params& hparams, EDGE_DEVICES* hDevice, int flag) {
 
     // set up the cuda streams. atm everything is on the single main stream
     cudaCheck(cudaStreamCreate(&main_stream));
-    nvtxNameCudaStreamA(main_stream, "main stream");
+    // nvtxNameCudaStreamA(main_stream, "main stream");
 
     // set up cuBLAS and cuBLASLt
     cublasCheck(cublasLtCreate(&cublaslt_handle));
@@ -460,7 +553,7 @@ bool InitCUDA(const CLI_params& hparams, EDGE_DEVICES* hDevice, int flag) {
     // TF32 precision is equivalent to torch.set_float32_matmul_precision('high')
     // bool enable_tf32 = PARAMS_TYPE == typNUMBER::F32 && deviceProp.major >= 8 && override_enable_tf32;
     // cublas_compute   = enable_tf32 ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F;
-#ifdef ENABLE_CUDNN
+#ifdef __USE_CUDNN__
     InitCUDNN();
 #endif
     int driver_version = 0, runtime_version = 0;
@@ -468,11 +561,6 @@ bool InitCUDA(const CLI_params& hparams, EDGE_DEVICES* hDevice, int flag) {
     cudaRuntimeGetVersion(&runtime_version);
     int nCorePP = convert_SM_to_cores(deviceProp.major, deviceProp.minor);
     _INFO("+-----------------------+----------------------------------------------------+\n");
-    // _INFO("| device                | %-50s |\n", deviceProp.name);
-    // _INFO("| peak flops(BF16) T    | %-40.1f %10d cores |\n", get_flops_promised(deviceProp.name, precision_mode),deviceProp.multiProcessorCount);
-    // _INFO("| precision of weights  | %-50s |\n", precision_str);
-    // _INFO("| peak bandwidth GB/s   | %-50.1f |\n", (double)deviceProp.memoryClockRate*(deviceProp.memoryBusWidth / 8) * 2 / 1e6);
-    // _INFO("+-----------------------+----------------------------------------------------+\n");
     _INFO("\t君子不器 - \"%s\" \n", deviceProp.name);
     _INFO("\tCUDA driver version: %d.%d, %s runtime version: %d.%d %s\n", driver_version / 1000, (driver_version % 100) / 10, COLOR_ORANGE,
           runtime_version / 1000, (runtime_version % 100) / 10, COLOR_RESET);
@@ -499,6 +587,7 @@ bool InitCUDA(const CLI_params& hparams, EDGE_DEVICES* hDevice, int flag) {
           deviceProp.maxThreadsDim[2]);
     _INFO("\tMax dimension size of a grid size (x,y,z): (%d, %d, %d)\n", deviceProp.maxGridSize[0], deviceProp.maxGridSize[1], deviceProp.maxGridSize[2]);
     _INFO("+-----------------------+----------------------------------------------------+\n");
+
     fflush(stdout);
     // Streaming Multiprocessors (SMs) of NVIDIA GPUs are roughly analogous to the cores of CPUs. That is, SMs both execute computations and store state
     // available for computation in registers, with associated caches. Compared to CPU cores, GPU SMs are simple, weak processors.
@@ -545,7 +634,7 @@ void SYNC_STREAM(int flag) {
 
 hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
     if (G_Has_(name, {"layers.17.self_attn"})) {
-        DEBUG_HERE; //74200000
+        DEBUG_HERE;  // 74200000
     }
 #ifdef USE_FP8_BASELINE
     assert(0 && "FP8 baseline is not implemented yet");
@@ -602,7 +691,7 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
         attention_v_kernel<<<n_head, head_dim>>>(ToX(Q.out), ToX(attn), val_cache, pos, seq_len, n_head, n_head_kv, head_dim);
         Q.out->Print("att_out", 0x0, dump_flag, nToken * q_dim);
     } else {
-        // FUSE_cudnn(nullptr, nullptr, flag);
+        // FUSE_qkv(nullptr, nullptr, flag);
         attn->Print("l_atty", 0x0, dump_flag);
     }
     if (0)  // ShareLayerOut: inpL/out is same data
@@ -642,7 +731,7 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
     // bool isAlternate = true;                   // layer%2==1;layer>1;
     _devQKV(0);
     if (isForward()) {  //  data=ToX(QKV->norm.out)
-        NvtxRange range(name.c_str(), 0);
+        // NvtxRange range(name.c_str(), 0);
         inp             = OnInput(inpL);  //         inp->Print("inp",0x0,dump_flag);
         gBUFF->residual = inp;            // gBUFF->residual->OverWrite(inp);
         hGTensor inpQ   = inpL;
@@ -666,15 +755,9 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
             rope->cuFlow(this, rope_seed);
         }
         // GTensor::tZ->Print(GTensor::tZ->name, 0, dump_flag);
-#ifdef ENABLE_CUDNN
-        FUSE_cudnn(nullptr, nullptr, flag);
-#else
-        ;  // attention_forward(ToX(attn), qkvr, ToX(transition), ToX(QKV), B, T, C, NH, main_stream);  //  l_atty, l_qkvr, l_att, scratch
-#endif
-        // GTensor::tZ->Print(GTensor::tZ->name, 0, dump_flag);
-
+        proj_cat.w->Print(proj_cat.w->name, 0, dump_flag);
+        FUSE_qkv(nullptr, nullptr, flag);
         proj_cat.Forw(gBUFF->scratch, attn);  // fuMM(scratch, ToX(attn), pw, pb, B, T, C, C, main_stream);
-        // gBUFF->scratch->Print("proj_cat",0x0,dump_flag);
         // fused_residual_forward5(ouput, normed,mean,rstd, residual, scratch, ToX(fuseNorm->w), ToX0(fuseNorm->b), B*T, C, main_stream);
         if (!hFish->isRemater()) {
             gBUFF->scratch->Print("proj_out", 0x0, dump_flag, B * T * nEmbed);
@@ -692,7 +775,7 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
         SYNC_DEVICE();
         return out;
     } else {  //  Backward
-        NvtxRange range(name.c_str(), 1);
+        // NvtxRange range(name.c_str(), 1);
         INSPECT_THIS;
         // Q.w->Print("Qw", 1, dump_flag);
         assert(inpL == gBUFF->delta);
@@ -716,13 +799,7 @@ hGTensor SelfAttention::cuFlow(hGTensor inpL, int flag) {
                 rope->cuFlow(this, rope_seed, true, F_REMATER);
         }
         gBUFF->tmpDelta->Print("delta_cat", 0x0, dump_flag);
-#ifdef ENABLE_CUDNN
-        FUSE_cudnn(ToX(delta_qkv), ToX(gBUFF->tmpDelta), flag);
-#else
-        assert(0);
-#endif
-        // delta_qkv->Print("delta_qkv", 0x0, dump_flag, C);
-        deltaQ->Print("deltaQ", 0x0, dump_flag, q_dim), deltaK->Print("deltaK", 0x0, dump_flag, kv_dim), deltaV->Print("deltaV", 0x0, dump_flag, kv_dim);
+        FUSE_qkv(ToX(delta_qkv), ToX(gBUFF->tmpDelta), flag);
         if (rope != nullptr) {
             if (gBUFF->tmpQout != nullptr) {  //
                 Q.out->OverWrite(gBUFF->tmpQout), K.out->OverWrite(gBUFF->tmpKout);

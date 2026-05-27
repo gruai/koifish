@@ -120,7 +120,7 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
 
     bool sample_separation_eos, sample_separation_bos;
     bool isTarget_1 = false;
-    bool isRecycle = true, isLast = false;
+    bool isRecycle = true, isLastShard = false;
     bool isFixEvalSample = false;  // Need fix this to do some experiments
     mt19937_state shuffle_rng_state_current;
     mt19937_state shuffle_rng_state_next;
@@ -189,7 +189,7 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
     virtual int PickSomeTokens(Grusoft::GRander& rander, int nSample, std::vector<int>& samps, int flag = 0x0);
     virtual bool Prepare(Optimizer* hO, hDataToken hT, int flag = 0x0);
     virtual void UpdateStepInfos(float mean_loss, int nB, int flag = 0x0);
-    virtual size_t UpdateBatch(int next_id, Fish* fish);
+    virtual size_t CollateBatch(int next_id, Fish* fish);
     virtual double Evaluate(DL_BATCH_UPATE tpBatch, int flag = 0x0);
 
 #ifdef _DATA_LOADER_LITE_
@@ -215,6 +215,6 @@ typedef shared_ptr<SampLoader> hSampLoader;
 // class DataLoader_3D : public SampLoader  {
 // protected:
 // public:
-//     int64_t UpdateBatch(int next_id,Fish* fish)    override;
+//     int64_t CollateBatch(int next_id,Fish* fish)    override;
 // };
 #endif  // DATALOADER_H

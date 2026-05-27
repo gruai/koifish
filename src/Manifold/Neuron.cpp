@@ -298,8 +298,6 @@ bool OutCLS::BuildPrelogist(int flag) {
         // preLogits->flags |= GTensor::F_HOSTDATA;
         preLogits->Alloc(0x0, flag);
     } else {
-        // size_t nz = std::max(gBUFF->scratch->size(),(size_t)dB*T*padded_nCls);        assert(nz<INT_MAX);
-        // sp3 = {(int)nz};
         preLogits = std::make_shared<huTensor>(hFish, "preLogits", sp3, tpL, true);
     }
     preLogits->host_data = new float[padded_nCls];  // always allocate this!

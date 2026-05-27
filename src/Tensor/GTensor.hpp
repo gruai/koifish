@@ -103,7 +103,7 @@ struct Distri_PIPE {
     float vmin = FLT_MAX, vmax = -FLT_MAX;
     int B_ = 0, T_ = 0, C_ = 0;  // For activation, it's number of batch,token(int each batch), channel(of each token)
     double mean = 0, sum_1 = 0.0, sum_2 = 0.0, nrm_1 = 0.0;
-    double zero_2 = DBL_MAX, gama_2= 0.;
+    double zero_2 = DBL_MAX, gama_2 = 0.;
     double abs_max = 0;  //  norm_0
     float sigma_   = 0;
 
@@ -213,10 +213,10 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
 
     // static bool FreeBuffer(int flag = 0x0);
     //  temporary shared memory 1) buff sz>=8*nCTX*nToken(from preLogits)
-    static void *buff, *host_buff, *cudnn_workspace;
+    static void *buff, *host_buff, *qkv_workspace;
     // float stat_info[1024] in GPU
     static float* stat_info;
-    static size_t buff_len, cudnn_workspace_size;
+    static size_t buff_len, workspace_size;
     float residual_scale = 1.0, wnorm = 0, gnorm = 0;  // some tricks
     float rLARS(float s0, float T_lars, int flag);
     size_t offset = 0x0;
@@ -557,7 +557,7 @@ class huTensor : public GTensor {
     size_t Free_1(void** obj, const string& info = "") override;
 
    public:
-   //   In most case, would call randParam to gen param_seed
+    //   In most case, would call randParam to gen param_seed
     huTensor(Fish* hFish, const string& name_, const SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag = 0x0);
     virtual ~huTensor();
     hGTensor Partial(const string&, size_t offset, const SHAPE shape, typNUMBER tyP = typNUMBER::T_OTHER, int flag = 0x0) override;

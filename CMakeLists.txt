@@ -1,5 +1,13 @@
 cmake_minimum_required (VERSION 3.14)
+unset(ENV{CFLAGS})
+unset(ENV{CXXFLAGS})
+unset(ENV{CPPFLAGS})
+unset(ENV{LDFLAGS})
+
 project(koifish VERSION 0.2.0)
+
+message(STATUS "CONDA_ENV      = $ENV{CONDA_DEFAULT_ENV}")
+message(STATUS "Python_which = $ENV{CONDA_PREFIX}/bin/python")
 
 if (NOT CMAKE_BUILD_TYPE OR CMAKE_BUILD_TYPE STREQUAL "")
     set(CMAKE_BUILD_TYPE "Release" CACHE STRING "" FORCE)
@@ -14,11 +22,13 @@ option(K_USECUDA                    "KOIFISH: CUDA"                 ON)
 option(K_DEBUGCUDA                  "KOIFISH: DEBUG_CUDA[slow!]"                 OFF)
 option(K_USE_CUDNN                  "KOIFISH: use CUDNN libs"         ON)
 option(K_USE_CCACHE                 "KOIFISH: use ccache if available"       ON)
-option(K_USE_GGML                   "KOIFISH: use GGML libs"        OFF)
+# option(K_USE_GGML                   "KOIFISH: use GGML libs"        OFF)
 OPTION(K_USE_OPENMP                 "KOIFISH: Enable OpenMP"                 ON)
 OPTION(K_USE_OPENBLAS               "KOIFISH: Enable OpenBLAS"               OFF)
 OPTION(K_USE_GBDT                   "KOIFISH: Enable Gradient boosting trees"               ON)
 OPTION(K_USE_EIGEN                  "KOIFISH: Enable Eigen lib"               OFF)
+OPTION(K_USE_TVM                    "KOIFISH: Enable TVM lib"               OFF)
+OPTION(K_USE_TILELANG               "KOIFISH: Enable TileLang"               ON)
 OPTION(K_TESTING                    "KOIFISH: Do some testing"               OFF)
 # OPTION(K_USE_CUFILE "Enable cuFile support for optimized file I/O" OFF)
 # OPTION(K_USE_NVML "Enable nvml support for detailed GPU stats reporting" OFF)
@@ -44,6 +54,60 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 #     -Wcast-qual
 # )
 add_compile_definitions(_TENSOR_G_)
+
+find_package(Threads REQUIRED)
+
+if(K_USE_TVM AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.gitmodules" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
+  find_package(Git QUIET)
+  if(Git_FOUND)
+    message(STATUS "git submodule update --init --recursive ...")
+    execute_process(
+      COMMAND ${GIT_EXECUTABLE} submodule update --init --recursive
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      RESULT_VARIABLE K_GIT_SUBMODULE_RESULT
+    )
+    if(NOT K_GIT_SUBMODULE_RESULT EQUAL 0)
+      message(
+        FATAL_ERROR
+          "Failed to initialize git submodules. Please run "
+          "`git submodule update --init --recursive` and re-run CMake."
+      )
+    endif()
+  else()
+    message(
+      FATAL_ERROR
+        "Git is required to initialize TileLang submodules. Please install git or fetch the submodules manually."
+    )
+  endif()
+endif()
+# find_package(TVM REQUIRED)
+
+if(K_USE_TVM)
+    set(K_USE_CUDNN OFF)
+    set(TVM_LIB tvm) 
+    include(cmake/load_tvm.cmake)
+    add_subdirectory(${TVM_SOURCE} ${TVM_LIB} EXCLUDE_FROM_ALL)
+    # Resolve compile warnings in tvm
+    add_compile_definitions(DMLC_USE_LOGGING_LIBRARY=<tvm/runtime/logging.h>)
+    message(STATUS "TVM_SOURCE=${TVM_SOURCE} TVM_INCLUDES=${TVM_INCLUDES} TVM_LIBRARIES=${TVM_LIBRARIES}")
+    if(EXISTS ${TVM_SOURCE}/cmake/config.cmake)
+        include(${TVM_SOURCE}/cmake/config.cmake)    
+    else()
+        message(FATAL_ERROR "Failed to load TVM. Please ensure TVM is provided as a submodule or installed on the system.")
+    endif()
+    set(MORE_INC ${MORE_INC} ${TVM_INCLUDES})
+    add_compile_definitions(__USE_TVM__)
+else()
+    set(K_USE_CUDNN ON)
+endif()
+
+if(K_USE_TILELANG)
+    set(TL_INC  ${CMAKE_SOURCE_DIR}/src/Device/tile_kernel/ /opt/cutlass/include) 
+    add_compile_definitions(__USE_TILELANG__)
+    set(K_USE_CUDNN OFF)
+else()
+    set(K_USE_CUDNN ON)
+endif()
 
 if(K_USE_OPENMP)
     find_package(OpenMP REQUIRED)
@@ -71,14 +135,10 @@ if (K_USE_CCACHE)
 endif()
 
 set(DELTA_cc ${DELTA_cc} -mf16c -mavx2 -mfma)
-# if (K_WANDB)
-#     add_subdirectory(src/pybind11)
-#     set(DELTA_LIB pybind11::embed)
-#     set(DELTA_cc ${DELTA_cc} -D_USE_WANDB_)
-# endif()
+
 if(K_USE_OPENBLAS)
     add_compile_definitions(_USE_OPENBLAS_)
-    set(MORE_INC /home/cys/Downloads/OpenBLAS-0.3.27/build/generated/ /home/cys/Downloads/OpenBLAS-0.3.27/build/ )
+    set(MORE_INC ${MORE_INC} /home/cys/Downloads/OpenBLAS-0.3.27/build/generated/ /home/cys/Downloads/OpenBLAS-0.3.27/build/ )
     set(OPENBLAS_LIB  /home/cys/Downloads/OpenBLAS-0.3.27/libopenblas_haswellp-r0.3.27.so  )  
     set(blas_sources ${CMAKE_CURRENT_SOURCE_DIR}/src/Utils/BLAS_t.cpp )
     # add_subdirectory(src/lenda/util)
@@ -108,18 +168,20 @@ if(K_USECUDA)
     if (CUDAToolkit_FOUND)
         # set(cdir _cuda)
         # set(CMAKE_CUDA_ARCHITECTURES "80;86;87;89")  BF16  Ref:    https://arnon.dk/matching-sm-architectures-arch-and-gencode-for-various-nvidia-cards/
-        set(CMAKE_CUDA_ARCHITECTURES "80;89") 
+        # SM_89+ for FP8 support
+        set(CMAKE_CUDA_ARCHITECTURES "89") 
         # compile for native GPU if no GPU has been specified
         if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
             set(CMAKE_CUDA_ARCHITECTURES native)
         endif()
         add_compile_definitions(__USE_CUDA__)
-        message(STATUS "CUDA ARCH=${CMAKE_CUDA_ARCHITECTURES} DIR=${CUDA_TOOLKIT_ROOT_DIR}")
+        message(STATUS "CUDA ARCH=${CMAKE_CUDA_ARCHITECTURES} DIR=${CUDA_TOOLKIT_ROOT_DIR} INCLUDE=${CUDAToolkit_INCLUDE_DIRS}")
         enable_language(CUDA)
         
-        set(CUDA_FLAGS -use_fast_math  -DENABLE_BF16 --expt-relaxed-constexpr -std=c++20 )
+        set(CUDA_FLAGS -use_fast_math  -DENABLE_BF16 --expt-relaxed-constexpr  )
         # -mavx512f -mavx512vl  for identifier "__builtin_ia32_ldtilecfg" is undefined
         #  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills
+        # -std=c++20
         if (NOT CUDA_CCFULLVER MATCHES clang)
             set(CUDA_CCID "GNU")
             execute_process(
@@ -156,34 +218,34 @@ endif()
 if(K_USE_CUDNN)    
     set(CUDA_LIB  ${CUDA_LIB} cudnn )   
     set(CUDA_INC  ${CMAKE_SOURCE_DIR}/cudnn-frontend/include ${CMAKE_SOURCE_DIR}/src/Device/CUDA/TK/include  ) 
-    # set(CUDA_FLAGS ${CUDA_FLAGS} -DENABLE_CUDNN )
-    add_compile_definitions(ENABLE_CUDNN)  
+    add_compile_definitions(__USE_CUDNN__)  
+    message(STATUS "CUDNN INC=${CUDA_INC}")
 endif()
 
-if(K_USE_GGML)
-    IF(CMAKE_BUILD_TYPE MATCHES "Debug")
-    set(GG_LIB_PATH ${CMAKE_SOURCE_DIR}/bin/)
-    # set(GG_LIB_PATH ${CMAKE_SOURCE_DIR}/bin/DEBUG${cdir}/)
-    ELSE()
-    set(GG_LIB_PATH ${CMAKE_SOURCE_DIR}/bin/)
-    # set(GG_LIB_PATH ${CMAKE_SOURCE_DIR}/bin/RELEASE${cdir}/)
-    ENDIF()     
-    find_library(GGML_LIB NAMES libggml.so HINTS ${GG_LIB_PATH})
-    IF(NOT GGML_LIB)
-        message(FATAL_ERROR "GGML_LIB library not found @${GG_LIB_PATH}")
-    endif()
-    add_compile_definitions(__USE_GGML__)
-    set(GG_LIB  ${GG_LIB_PATH}/libcommon.a ${GG_LIB_PATH}/libllama.so ${GG_LIB_PATH}/libggml.so ${GG_LIB_PATH}/libggml-cpu.so ${GG_LIB_PATH}/libggml-base.so)   
-    set(GG_INC ${CMAKE_SOURCE_DIR}/llama.cpp/ggml/include ${CMAKE_SOURCE_DIR}/llama.cpp/ggml/src ${CMAKE_SOURCE_DIR}/llama.cpp/include )
-    message(STATUS "KOIFISH GG_LIB=${GG_LIB} GG_INC=${GG_INC}")
-endif()
+# if(K_USE_GGML)
+#     IF(CMAKE_BUILD_TYPE MATCHES "Debug")
+#     set(GG_LIB_PATH ${CMAKE_SOURCE_DIR}/bin/)
+#     # set(GG_LIB_PATH ${CMAKE_SOURCE_DIR}/bin/DEBUG${cdir}/)
+#     ELSE()
+#     set(GG_LIB_PATH ${CMAKE_SOURCE_DIR}/bin/)
+#     # set(GG_LIB_PATH ${CMAKE_SOURCE_DIR}/bin/RELEASE${cdir}/)
+#     ENDIF()     
+#     find_library(GGML_LIB NAMES libggml.so HINTS ${GG_LIB_PATH})
+#     IF(NOT GGML_LIB)
+#         message(FATAL_ERROR "GGML_LIB library not found @${GG_LIB_PATH}")
+#     endif()
+#     add_compile_definitions(__USE_GGML__)
+#     set(GG_LIB  ${GG_LIB_PATH}/libcommon.a ${GG_LIB_PATH}/libllama.so ${GG_LIB_PATH}/libggml.so ${GG_LIB_PATH}/libggml-cpu.so ${GG_LIB_PATH}/libggml-base.so)   
+#     set(GG_INC ${CMAKE_SOURCE_DIR}/llama.cpp/ggml/include ${CMAKE_SOURCE_DIR}/llama.cpp/ggml/src ${CMAKE_SOURCE_DIR}/llama.cpp/include )
+#     message(STATUS "KOIFISH GG_LIB=${GG_LIB} GG_INC=${GG_INC}")
+# endif()
 
 if(K_USE_GBDT)
-    add_compile_definitions(_USE_GBDT_)
+    add_compile_definitions(__USE_GBDT__)
     add_subdirectory(src/GBDT)
 endif()
 
-message(STATUS "KOIFISH cc=${DELTA_cc} lib=${DELTA_LIB} PWD=${CMAKE_SOURCE_DIR}")
+message(STATUS "KOIFISH cc=${DELTA_cc} PWD=${CMAKE_SOURCE_DIR}")
 
 add_subdirectory(src/Tensor)
 add_subdirectory(src/Manifold)
@@ -197,17 +259,33 @@ set(sources   ${TGraph_sources} ${util_sources} ${tensor_sources} ${kernel_sourc
     ${token_sources} ${mort_sources} ${blas_sources} ${TEST_SRCS} )
 add_executable(koifish ${CMAKE_CURRENT_SOURCE_DIR}/src/koifish.cpp ${sources} )
 add_executable(bubble ${CMAKE_CURRENT_SOURCE_DIR}/src/bubble.cpp ${sources} )
-add_executable(pangpi ${CMAKE_CURRENT_SOURCE_DIR}/src/pangpi.cpp ${sources} )
-message(STATUS "KOIFISH sources=${sources}")
+# add_executable(pangpi ${CMAKE_CURRENT_SOURCE_DIR}/src/pangpi.cpp ${sources} )
+message(STATUS "KOIFISH sources=${sources} device_sources=${device_sources}")
 
+add_library(prog_deps INTERFACE)
+target_link_libraries(prog_deps
+  INTERFACE
+    ${GG_LIB}    ${OPENBLAS_LIB}    ${TVM_LIB}    ${GFLAGS_LIBRARIES}
+    CUDA::cudart
+    CUDA::cuda_driver
+    CUDA::cublas CUDA::cublasLt cudnn    
+    Threads::Threads
+)
+target_include_directories(prog_deps
+  INTERFACE
+    ${CMAKE_SOURCE_DIR}/src/Manifold/ ${CMAKE_SOURCE_DIR}/src/TokenSet/ ${CMAKE_SOURCE_DIR}/src/Utils/ ${CMAKE_SOURCE_DIR}/src/Device/CUDA 
+    ${GG_INC} ${CUDA_INC} ${TL_INC} ${MORE_INC}
+)
+get_target_property(KOIFISH_LINK_LIBRARIES prog_deps INTERFACE_LINK_LIBRARIES)
+message(STATUS "KOIFISH_LINK_LIBRARIES = ${KOIFISH_LINK_LIBRARIES}")
 
-foreach(prog koifish bubble pangpi)    
+foreach(prog koifish bubble)    
     install(TARGETS ${prog} RUNTIME)
-    target_include_directories(${prog} PRIVATE ${CMAKE_SOURCE_DIR}/src/Manifold/ ${CMAKE_SOURCE_DIR}/src/TokenSet/ ${CMAKE_SOURCE_DIR}/src/Utils/ ${CMAKE_SOURCE_DIR}/src/Device/CUD
-A 
-        ${GG_INC} ${CUDA_INC} ${MORE_INC} )
-
-    target_link_libraries(${prog} PRIVATE ${GG_LIB} ${CMAKE_THREAD_LIBS_INIT} ${OPENBLAS_LIB} ${DELTA_LIB} ${CUDA_LIB} ${GFLAGS_LIBRARIES} pthread )
+    target_compile_definitions(${prog} PRIVATE  KOIFISH_CONDA_ENV="$ENV{CONDA_DEFAULT_ENV}")
+    # target_include_directories(${prog} PRIVATE ${CMAKE_SOURCE_DIR}/src/Manifold/ ${CMAKE_SOURCE_DIR}/src/TokenSet/ ${CMAKE_SOURCE_DIR}/src/Utils/ ${CMAKE_SOURCE_DIR}/src/Device/CUDA 
+    #     ${GG_INC} ${CUDA_INC} ${TL_INC} ${MORE_INC} )
+        
+    target_link_libraries(${prog} PRIVATE prog_deps )
     target_compile_features(${prog} PRIVATE cxx_std_17)
     target_compile_options(${prog} PRIVATE ${cxx_flags} ${DELTA_cc})
     # target_link_libraries(${prog} PRIVATE pybind11::embed)
@@ -219,11 +297,10 @@ if (K_TESTING)
     find_package(gflags REQUIRED)
     add_executable(k_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_main.cpp ${sources} ${FP6_sources} )
     foreach(prog k_test )    
-        target_include_directories(${prog} PRIVATE ${CMAKE_SOURCE_DIR}/src/Manifold/ ${CMAKE_SOURCE_DIR}/src/TokenSet/ ${CMAKE_SOURCE_DIR}/src/Utils/ ${CMAKE_SOURCE_DIR}/src/Device
-/CUDA 
+        target_include_directories(${prog} PRIVATE ${CMAKE_SOURCE_DIR}/src/Manifold/ ${CMAKE_SOURCE_DIR}/src/TokenSet/ ${CMAKE_SOURCE_DIR}/src/Utils/ ${CMAKE_SOURCE_DIR}/src/Device/CUDA 
             ${GG_INC} ${CUDA_INC} ${MORE_INC} )
 
-        target_link_libraries(${prog} PRIVATE ${GG_LIB} ${CMAKE_THREAD_LIBS_INIT} ${OPENBLAS_LIB} ${DELTA_LIB} ${CUDA_LIB} ${GFLAGS_LIBRARIES} pthread )
+        target_link_libraries(${prog} PRIVATE prog_deps )
         target_compile_features(${prog} PRIVATE cxx_std_17)
         target_compile_options(${prog} PRIVATE ${cxx_flags} ${DELTA_cc})
         # target_link_libraries(${prog} PRIVATE pybind11::embed)

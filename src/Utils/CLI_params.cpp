@@ -474,6 +474,16 @@ bool DISTILLATION_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag)
     return true;
 }
 
+bool SFT_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
+    string s;
+    JSON jSFT = jKEY(jConfig, {"sft"});
+    s = jKV(jConfig, {"distillation", "anneal-method"}, s);
+    if (jSFT.find("hf-card") != jSFT.end()) {
+        sBaseModelPath = jKEY(jSFT, {"hf-card"});
+    }
+    return !sBaseModelPath.empty();
+}
+
 bool DISTILLATION_CARD::isKeepShadoW(int flag) { return anneal != ANNEAL_OFF; }
 
 bool Fuyou_params::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
@@ -857,7 +867,7 @@ CheckPoint_Params::CheckPoint_Params(const JSON& jData, const std::string& key, 
         sModelPath = sDir;
         if (isSave) {
             save_every = jKV(jdata, {"save-every"}, save_every, false);
-            string s   = jKV(jdata, {"format"}, s);
+            s   = jKV(jdata, {"format"}, s);
             format     = s == "koifish" ? FILE_FORMAT_TYPE::CKP_KOIFISH : FILE_FORMAT_TYPE::CKP_HF;
             // format = FILE_FORMAT_TYPE::CKP_KOIFISH;
         }
@@ -1051,8 +1061,12 @@ bool CLI_params::InitJConfig(int flag) {
 
         std::string s = jConfig.dump(), s0;
         common.Init(this, jConfig);
-
-        distill.Init(this, jConfig);
+                
+        if(sft.Init(this, jConfig)){
+            phase = LIFE_PHASE::P_SFT;
+        }else{
+            distill.Init(this, jConfig);
+        }        
 
         lars_ratio = jKV(jConfig, {"train", "optimizatioin", "lars_ratio"}, lars_ratio);
         ZMUV_ratio = jKV(jConfig, {"train", "optimizatioin", "ZMUV_ratio"}, ZMUV_ratio);
@@ -1752,6 +1766,11 @@ void DISTILLATION_CARD::Dump(int typ) {
           : anneal == ANNEAL_DECAY_LINEAR ? "linear"
                                           : "off",
           lenda);
+    _INFO("\n");
+}
+
+void SFT_CARD::Dump(int typ) {
+    _INFO("[SFT]: ");
     _INFO("\n");
 }
 

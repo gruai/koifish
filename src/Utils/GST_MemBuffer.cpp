@@ -152,8 +152,6 @@ bool GST_TensorBuffer::Clear(int flag) {
         //     cudaCheck(cudaFree(cublaslt_workspace));
         // if (GTensor::stat_info != nullptr)
         //     cudaCheck(cudaFree(GTensor::stat_info));
-        // if (GTensor::cudnn_workspace != nullptr)
-        //     cudaCheck(cudaFree(GTensor::cudnn_workspace));
 
         bt4c = nullptr, delta = nullptr, tmpDelta = nullptr, outL = nullptr, scratch = nullptr, tmpFF1 = nullptr, tmpW = nullptr, tmpGW = nullptr,
         residual   = nullptr;

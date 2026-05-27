@@ -6,7 +6,7 @@
  *  \author Yingshi Chen
  */
 #include "../g_float.hpp"
-#ifdef _USE_GBDT_
+#ifdef __USE_GBDT__
 #include "../GBDT/data_fold/DataFold.hpp"
 #include "../GBDT/tree/GBRT.hpp"
 #endif
@@ -16,7 +16,7 @@ class HotPicker : public CS_Picker {
    protected:
     string name;
     std::vector<hGTensor> arrX, arrY;
-#ifdef _USE_GBDT_
+#ifdef __USE_GBDT__
     LiteBOM_Config config;
     hTabularData hTrainData         = nullptr;
     shared_ptr<Grusoft::GBRT> hGBRT = nullptr;

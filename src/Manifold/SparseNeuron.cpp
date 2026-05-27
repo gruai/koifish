@@ -10,7 +10,7 @@
 #include "Fish.hpp"
 #include "HotPicker.hpp"
 #include "Optimizer.hpp"
-#ifdef _USE_GBDT_
+#ifdef __USE_GBDT__
 #include "../GBDT/data_fold/Histogram.hpp"
 using namespace Grusoft;
 #endif
@@ -56,7 +56,7 @@ int CS_Picker::Update(int level, float* hb, int flag) {
     }
     if (nz < nHot)
         return -1;
-#ifdef _USE_GBDT_
+#ifdef __USE_GBDT__
     vector<tpSAMP_ID> idx;
     sort_indexes(nz, tmp, idx);
     for (i = 0; i < nHot; i++) {
@@ -110,7 +110,7 @@ int HotPicker::Predict(int nPoint, floatI* data, int* hot, int flag) { return 0x
 bool HotPicker::SerialModel(const std::string& sPath, bool isSave, int flag) { return false; }
 
 int HotPicker::Train(int flag) {
-#ifdef _USE_GBDT_
+#ifdef __USE_GBDT__
     string title    = name + "_GBDT";
     ExploreDA* edaX = new ExploreDA(config, title, flag);
     hTrainData      = std::make_shared<FeatsOnFold>(config, edaX, title, flag);  //  from X,Y

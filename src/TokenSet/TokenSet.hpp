@@ -116,6 +116,7 @@ class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
     std::vector<TOKEN_ID> tokens, masks;
     DataTokenSet(hTokenizer hDictVAE);
     virtual ~DataTokenSet() {}
+    virtual bool Init(int flag = 0x0) { return true; }
     bool hasMask() { return masks.size() > 0; }
 
     TOKEN_ID At(size_t pos);
@@ -147,11 +148,12 @@ class PromptTokenset : public DataTokenSet {
 };
 class GlobTokenset : public DataTokenSet {
    protected:
+    string glob_pattern;
     FILE* fpShard  = nullptr;
     bool isShuffle = false;
-    virtual bool Shard2Sample(int flag = 0x0);
-
-    size_t OnShardFile(int id, bool load = false, int flag = 0x0);
+    virtual bool Shard2Sample(int id, int flag = 0x0);
+    virtual bool GetShardInfo(int id, int flag = 0x0) { return false; }
+    virtual size_t OnShardFile(int id, bool load = false, int flag = 0x0);
     bool LoadNextShard(SampLoader* hLoader, int flag = 0x0) override;
     size_t total_batch_size;    // total across all processes
     size_t local_batch_offset;  // inner-sample offset for this process
@@ -161,12 +163,13 @@ class GlobTokenset : public DataTokenSet {
 
    public:
     GlobTokenset(JSON::const_iterator jit, hTokenizer hDictVAE, int flag = 0x0);
+    bool Init(int flag = 0x0) override;
 };
 
 class Tokenset_HellaSwag : public GlobTokenset {
    protected:
     int nMostCompletion = 4;
-    bool Shard2Sample(int flag = 0x0) override;
+    bool Shard2Sample(int id, int flag = 0x0) override;
 
    public:
     struct QUESTION {
@@ -185,6 +188,26 @@ class Tokenset_HellaSwag : public GlobTokenset {
         for (auto q : questions) delete q;
         questions.clear();
     }
+    double LossOnResult(hSampLoader hLoader, OutCLS* cls, int flag = 0x0) override;
+};
+
+class Tokenset_JSONL : public GlobTokenset {
+   protected:
+    struct Chat_Line {
+        std::string role;
+        std::string content;
+        Chat_Line(const std::string& r, const std::string& c, int flag = 0x0) : role(r), content(c) {}
+    };
+    //  ChatML​ is a tokenization-friendly text formatthat encodes chat messages into a single string
+    std::string toChatML(JSON& jMsg, int flag = 0x0);
+
+    std::vector<string> messages;
+    bool Shard2Sample(int id, int flag = 0x0) override;
+    bool GetShardInfo(int id, int flag = 0x0) override;
+
+   public:
+    Tokenset_JSONL(JSON::const_iterator jit, hTokenizer hDictVAE, int flag = 0x0);
+    virtual ~Tokenset_JSONL() {}
     double LossOnResult(hSampLoader hLoader, OutCLS* cls, int flag = 0x0) override;
 };
 

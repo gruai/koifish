@@ -127,6 +127,9 @@ def koifish_one(title, sExe, jsFile0, path="./tests/", most_iter=-1,train_csv=No
         szEval = os.path.getsize(path+"./Eval.csv")
     print(f"{title}...OK! code={exit_code}. nByte of fTrain={szTrain}; nByte of fEval={szEval} Time={elapsed:.4f} seconds")
     assert dfTrain is not None
+    if "loss" not in dfTrain.columns or most_iter >= len(dfTrain):
+        print(f"koifish_one failed to get result!dfTrain={dfTrain}\n")
+        assert(0)
     assert "loss" in dfTrain.columns
     
     return dfTrain

@@ -124,11 +124,8 @@ bool SelfAttention::Build(int flag_0) {
     } else {
         attn = std::make_shared<huTensor>(hFish, name + ".attn", (SHAPE){B, T, q_dim}, tpWeight, false);  // B * T * C
     }
-#ifdef ENABLE_CUDNN
-    transition = GT(hFish, typNUMBER::F32, {B, n_head, T}, 0x0, name + ".trans");  // (B, Hq, T)
-#else
-    transition = GT(hFish, tpWeight, {B, n_head, T * T}, 0X0, name + ".trans");  //  too much memory!
-#endif
+    lse = GT(hFish, typNUMBER::F32, {B, n_head, T}, 0x0, name + ".flash_lse");  // (B, Hq, T) lse var of flash attention
+
     SHAPE spOut = {B, T, (int)hFish->config.nEmbed()};  //,T
     out         = std::make_shared<huTensor>(hFish, name + ".out", spOut, tpWeight, false);
     if (hFish->config.isShareLayerOut()) {
@@ -275,10 +272,10 @@ hGensor SelfAttention::Ming(RLS_BP* hRLS, hGensor inpL, int flag) {
     hGensor cur = inpL, lastResi = inpL;
     if (hFish->isSymbolic()) {
         if (isSeparateQKV)
-            attn->AddSrc({inpL, Q.w, Q.b, Q.out, K.w, K.b, K.out, V.w, V.b, V.out, transition, bqkv});
+            attn->AddSrc({inpL, Q.w, Q.b, Q.out, K.w, K.b, K.out, V.w, V.b, V.out, lse, bqkv});
         else {
             inpL >> Q;
-            attn->AddSrc({Q.out, transition});
+            attn->AddSrc({Q.out, lse});
         }
         auto hX = attn >> proj_cat >> norm;
         if (isQKNormal)
@@ -291,7 +288,7 @@ hGensor SelfAttention::Ming(RLS_BP* hRLS, hGensor inpL, int flag) {
         //     attn >> proj_cat >> norm >> normQ >> normK >> this;
         // } else
         //     attn >> proj_cat >> norm >> this;
-        out->AddSrc({transition, bqkv, attn});  // duplicate!
+        out->AddSrc({lse, bqkv, attn});  // duplicate!
         cur = out;
         // gTN0(cur,"%s_+",name.c_str());
     } else if (hFish->isAtPhase(LIFE_PHASE::P_GENERATE)) {

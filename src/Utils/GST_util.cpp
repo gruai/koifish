@@ -230,12 +230,12 @@ bool VERIFY_DIR_EXIST(const std::string& path, bool isCreate) {
 /**
  *  v0.1    20250918
  */
-const char* GRUAI_KOIFISH_APP_NAME = "Koifish-v0.2";
+const char* GRUAI_KOIFISH_APP_NAME = "Koifish-v0.3";
 void GRUAI_KOIFISH_VERSION(char* str, int flag = 0x0) {
     char sName[80] = "\0";
     int i, nLen = (int)strlen(GRUAI_KOIFISH_APP_NAME), nFrame = 68, off;
     std::string sDat = DATE(100);
-    sprintf(sName, " %s %s %s (%s by gcc %s)", COLOR_ORANGE, GRUAI_KOIFISH_APP_NAME, COLOR_RESET, sDat.c_str(), __VERSION__);
+    sprintf(sName, " %s %s %s (%s by gcc %s ENV=\"%s\")", COLOR_ORANGE, GRUAI_KOIFISH_APP_NAME, COLOR_RESET, sDat.c_str(), __VERSION__, KOIFISH_CONDA_ENV);
     int pad = (nFrame - strlen(sName)) / 2 - 1;
     assert(pad >= 0);
 

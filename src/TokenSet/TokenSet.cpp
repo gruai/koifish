@@ -44,11 +44,11 @@ GlobTokenset::GlobTokenset(JSON::const_iterator jit, hTokenizer hDict, int flag)
     total_batch_size   = num_processes * (B * T);
     local_batch_offset = process_rank * B * T;
 
-    auto k         = jit.key();
-    auto v         = jit.value();
-    string pattern = v["glob"];
-    name           = jKV(v, {"name"}, name);
-    eval_every     = jKV(v, {"eval-every"}, eval_every);
+    auto k       = jit.key();
+    auto v       = jit.value();
+    glob_pattern = v["glob"];
+    name         = jKV(v, {"name"}, name);
+    eval_every   = jKV(v, {"eval-every"}, eval_every);
     // rSampling    = 0.01;
     rSampling = jKV(v, {"samp"}, rSampling);
     if (v.find("most") == v.end())
@@ -57,28 +57,21 @@ GlobTokenset::GlobTokenset(JSON::const_iterator jit, hTokenizer hDict, int flag)
         nMostShard = jKV(v, {"most"}, nMostShard);
     if (nMostShard == 0)  // in some case, create a blank dataset
         return;
+}
 
+bool GlobTokenset::Init(int flag) {
     glob_t glob_result;
-    int glob_status = glob(pattern.c_str(), 0, NULL, &glob_result);
+    int glob_status = glob(glob_pattern.c_str(), 0, NULL, &glob_result);
     if (glob_status != 0) {
-        _ERROR("%s Error: glob failed @\"%s\"\n", __func__, pattern.c_str());
+        _ERROR("%s Error: glob failed @\"%s\"\n", __func__, glob_pattern.c_str());
         K_EXIT(KOIFISH_LOAD_TOKENSET_GLOB);
     }
     if (glob_result.gl_pathc == 0) {
-        _ERROR("%s No files found matching the pattern: %s\n", __func__, pattern.c_str());
+        _ERROR("%s No files found matching the pattern: %s\n", __func__, glob_pattern.c_str());
         K_EXIT(KOIFISH_LOAD_TOKENSET_GLOB);
     }
     int nFile = 0;
-    /*if (isShuffle) {
-        manual_seed(&shuffle_rng, 42 + process_rank);
-        shard_indices = (int*)mallocCheck(glob_result.gl_pathc * sizeof(int));
-        init_identity_permutation(shard_indices, (int) glob_result.gl_pathc);
-        intra_shard_indices = NULL;  // dynamically allocated allowing different shard sizes
-    }*/
-
-    // inspect and validate all shards so we don't get any runtime errors later
-    // if too slow / too many shards, may wish to revisit later
-    nMostTok = 0;
+    nMostTok  = 0;
     for (int id = 0; id < glob_result.gl_pathc; id++) {
         string sPath = glob_result.gl_pathv[id];
         shard_paths.push_back(sPath);
@@ -93,7 +86,8 @@ GlobTokenset::GlobTokenset(JSON::const_iterator jit, hTokenizer hDict, int flag)
     if (nMostTok == 0) {
         assert(0 && "GlobTokenset::Failed to load tokens");
     } else
-        _INFO("[%s] %s find %.8gG tokens @\"%s\"(%d files)\n", __func__, name.c_str(), pattern.c_str(), nG, nFile);
+        _INFO("[%s] %s find %.8gG tokens @\"%s\"(%d files)\n", __func__, name.c_str(), glob_pattern.c_str(), nG, nFile);
+    return true;
 }
 
 size_t DataTokenSet::nBatch(int flag) {
@@ -111,7 +105,7 @@ bool GlobTokenset::LoadNextShard(SampLoader* hLoader, int flag) {
         shard_index = 0;
     }
 
-    if (!hLoader->isLast) {
+    if (!hLoader->isLastShard) {
         size_t iRet = OnShardFile(shard_index++, true);
         if (iRet == size_t(-1))
             return false;
@@ -121,7 +115,7 @@ bool GlobTokenset::LoadNextShard(SampLoader* hLoader, int flag) {
 }
 
 // shard type != token type
-bool GlobTokenset::Shard2Sample(int flag) {
+bool GlobTokenset::Shard2Sample(int id, int flag) {
     try {
         int nT = (szFile - header_bytes) / bpToken;
         assert(nT == nShardToks);
@@ -162,7 +156,11 @@ bool GlobTokenset::Shard2Sample(int flag) {
             shard_samps.push_back(new SAMP(sample_begin, len));
         }
         n0 = shard_samps.size();
-        _INFO("\n[shard \"%s\"]: %ld(tokens)=>%ld(samps) nBach=%d step=[%ld:%ld:%ld]\n", name.c_str(), nToken, shard_samps.size(), nBatch(), 0, end, step);
+        if (n0 == 0) {
+            assert(0);
+        } else {
+            _INFO("\n[shard \"%s\"]: %ld(tokens)=>%ld(samps) nBach=%d step=[%ld:%ld:%ld]\n", name.c_str(), nToken, shard_samps.size(), nBatch(), 0, end, step);
+        }
         return true;
     } catch (...) {
         return false;
@@ -182,66 +180,73 @@ size_t GlobTokenset::OnShardFile(int id0, bool load, int flag) {
         K_EXIT(KOIFISH_LOAD_SHARD_NULL);
     }
     const char* filename = shard_paths[id].c_str();
-    assert(fpShard == NULL);
-    fpShard = fopen(filename, "rb");
-    if (fpShard == NULL) {
-        K_EXIT(KOIFISH_LOAD_SHARD_NULL);
-    }
-    // validate the header
-    uint32_t header[K_SHARD_HEADER_SIZE];
-    freadCheck(header, sizeof(int), K_SHARD_HEADER_SIZE, fpShard);
-    if (header[1] != 1) {
-        _ERROR("Bad version<%d> of data file\n", header[1]);
-        K_EXIT(KOIFISH_LOAD_TOKENFILE_HEADER);
-    }
-    fseekCheck(fpShard, 0, SEEK_END);  // seek to end of file
-    szFile     = ftell(fpShard);       // read the offset, i.e. file size
-    nShardToks = 0;
-    bpToken    = -1;
-    switch (header[0]) {  //
-        case 20240522:    //  hellaswag dataset
-            tpSample = HellaSwag;
-            bpToken  = 2;
-            // int nMostCompletion =4,can_fit_examples = (int) (B / nMostCompletion);
-            longest_example_bytes = header[3];
-            nShardSamples         = header[2];
-            nShardToks            = B * T;
-            // label = (int*)mallocCheck(can_fit_examples * sizeof(int));
-            break;
-        case 20240520:  //
-        case 20250520:  // qwen2.5:
-            nShardToks = header[2];
-            assert(nShardToks > 0);
-            bpToken            = header[0] == 20240520 ? 2 : header[3];
-            expected_file_size = K_SHARD_HEADER_SIZE * sizeof(int) + nShardToks * bpToken;
-            if (szFile != expected_file_size) {
-                _ERROR("file size(%ld) is not as expected(%ld) @%s\n", expected_file_size, szFile, filename);
-                K_EXIT(EXIT_FAILURE);
-            }
-            // -1  due to us taking B*T+1 tokens but moving by B*T tokens
-            nShardSamples = (nShardToks - 1) / total_batch_size;
-            break;
-        case 20251218:  // qwen3:
-            nShardToks = header[2];
-            assert(nShardToks > 0);
-            bpToken            = /*header[0] == 20251218 ? 2 :*/ header[3];
-            expected_file_size = K_SHARD_HEADER_SIZE * sizeof(int) + nShardToks * bpToken;
-            if (szFile != expected_file_size) {
-                _ERROR("file size(%ld) is not as expected(%ld) @%s\n", expected_file_size, szFile, filename);
-                K_EXIT(EXIT_FAILURE);
-            }
-            // -1  due to us taking B*T+1 tokens but moving by B*T tokens
-            nShardSamples = (nShardToks - 1) / total_batch_size;
-            break;
-        default:
-            _ERROR("Bad magic<%d> in the data file @\"%s\"\n", header[0], filename);
+    if (GetShardInfo(id, flag)) {
+    } else {  //  get meta(nShardToks) from head
+        assert(fpShard == NULL);
+        fpShard = fopen(filename, "rb");
+        if (fpShard == NULL) {
+            K_EXIT(KOIFISH_LOAD_SHARD_NULL);
+        }
+        // validate the header
+        uint32_t header[K_SHARD_HEADER_SIZE];
+        freadCheck(header, sizeof(int), K_SHARD_HEADER_SIZE, fpShard);
+        if (header[1] != 1) {
+            _ERROR("Bad version<%d> of data file\n", header[1]);
             K_EXIT(KOIFISH_LOAD_TOKENFILE_HEADER);
-            break;
+        }
+        fseekCheck(fpShard, 0, SEEK_END);  // seek to end of file
+        szFile     = ftell(fpShard);       // read the offset, i.e. file size
+        nShardToks = 0;
+        bpToken    = -1;
+        switch (header[0]) {  //
+            case 20240522:    //  hellaswag dataset
+                tpSample = HellaSwag;
+                bpToken  = 2;
+                // int nMostCompletion =4,can_fit_examples = (int) (B / nMostCompletion);
+                longest_example_bytes = header[3];
+                nShardSamples         = header[2];
+                nShardToks            = B * T;
+                // label = (int*)mallocCheck(can_fit_examples * sizeof(int));
+                break;
+            case 20240520:  //
+            case 20250520:  // qwen2.5:
+                nShardToks = header[2];
+                assert(nShardToks > 0);
+                bpToken            = header[0] == 20240520 ? 2 : header[3];
+                expected_file_size = K_SHARD_HEADER_SIZE * sizeof(int) + nShardToks * bpToken;
+                if (szFile != expected_file_size) {
+                    _ERROR("file size(%ld) is not as expected(%ld) @%s\n", expected_file_size, szFile, filename);
+                    K_EXIT(EXIT_FAILURE);
+                }
+                // -1  due to us taking B*T+1 tokens but moving by B*T tokens
+                nShardSamples = (nShardToks - 1) / total_batch_size;
+                break;
+            case 20251218:  // qwen3:
+                nShardToks = header[2];
+                assert(nShardToks > 0);
+                bpToken            = /*header[0] == 20251218 ? 2 :*/ header[3];
+                expected_file_size = K_SHARD_HEADER_SIZE * sizeof(int) + nShardToks * bpToken;
+                if (szFile != expected_file_size) {
+                    _ERROR("file size(%ld) is not as expected(%ld) @%s\n", expected_file_size, szFile, filename);
+                    K_EXIT(EXIT_FAILURE);
+                }
+                // -1  due to us taking B*T+1 tokens but moving by B*T tokens
+                nShardSamples = (nShardToks - 1) / total_batch_size;
+                break;
+            default:
+                _ERROR("Bad magic<%d> in the data file @\"%s\"\n", header[0], filename);
+                K_EXIT(KOIFISH_LOAD_TOKENFILE_HEADER);
+                break;
+        }
     }
     if (load) {
-        Shard2Sample(0x0);
-        _INFO("[shard \"%s\"_%d]@\"%s\": tokens=%.3g(M) nShardSamples=%ld(%ld) \n", name.c_str(), id + 1, filename, nShardToks / 1.0e6, nShardSamples,
-              shard_samps.size());
+        if (Shard2Sample(0x0)) {
+            _INFO("[shard \"%s\"_%d]@\"%s\": tokens=%.3g(M) nShardSamples=%ld(%ld) \n", name.c_str(), id + 1, filename, nShardToks / 1.0e6, nShardSamples,
+                  shard_samps.size());
+        } else {
+            _WARN("[shard \"%s\"_%d]@\"%s\": tokens=%.3g(M) nShardSamples=%ld(%ld) \n", name.c_str(), id + 1, filename, nShardToks / 1.0e6, nShardSamples,
+                  shard_samps.size());
+        }
     }
     if (tpSample == RANDOM_GENERATE) {
         /*
@@ -354,7 +359,7 @@ double DataTokenSet::LossOnResult(hSampLoader hLoader, OutCLS* cls, int flag) {
     return mean_loss;
 }
 
-bool Tokenset_HellaSwag::Shard2Sample(int flag) {
+bool Tokenset_HellaSwag::Shard2Sample(int id, int flag) {
     try {
         size_t B = hDict->config.n_batch(), T = hDict->config.n_ctx();
         int batch_dim_offset, nComplete       = 0;
@@ -459,7 +464,7 @@ double SampLoader::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
     ClearII();
     for (int i = 0; i < nMost; i++) {
         if (tpBatch == SAMPLEofSHARD)
-            UpdateBatch(min(i * step, num_batches), hFish);
+            CollateBatch(min(i * step, num_batches), hFish);
         // samp = cur_samps[0];
         embed->hBatch = GetCurBatch();
         hFish->ForwardOnRLS(iter, 0x0);
@@ -610,4 +615,107 @@ double Tokenset_HellaSwag::LossOnResult(hSampLoader hLoader, OutCLS* cls, int fl
     assert(nQ == nB / nMostCompletion);
     mean_loss = nOK * 1.0 / nQ;
     return mean_loss;
+}
+
+Tokenset_JSONL::Tokenset_JSONL(JSON::const_iterator jit, hTokenizer hDict, int flag) : GlobTokenset(jit, hDict, flag) {
+    name = "Chat_JSONL";
+    // rStepOfEval = 0.0;  //  no sample on evaluate
+    auto k = jit.key();
+    auto v = jit.value();
+
+    assert(rSampling == 1);
+    assert(!glob_pattern.empty());
+}
+
+double Tokenset_JSONL::LossOnResult(hSampLoader hLoader, OutCLS* cls, int flag) { return 0.0; }
+
+bool Tokenset_JSONL::Shard2Sample(int id, int flag) {
+    try {
+        // InitSamps
+        int n_ctx     = hDict->config.n_ctx(), len;
+        size_t nToken = tokens.size(), nFirst = std::min((size_t)n_ctx, nToken), step = 1, n0 = shard_samps.size();
+        // samples_size.push_back(nFirst);
+        size_t end = (nToken >= n_ctx) ? (nToken - n_ctx) : 0;
+        // if (end > 10 * 1024 * 1024) {
+        step = n_ctx;
+        // }
+        float rSample = hDict->config.common.rSubSample;
+        if (rSample > 0 && rSample < 1)
+            step /= rSample;
+        for (size_t sample_begin = 0; sample_begin < end; sample_begin += step) {
+            len = std::min(n_ctx, (int)(end - sample_begin));
+            shard_samps.push_back(new SAMP(sample_begin, len));
+        }
+        n0 = shard_samps.size();
+        if (n0 == 0) {
+            assert(0);
+        } else {
+            _INFO("\n[shard \"%s\"]: %ld(tokens)=>%ld(samps) nBach=%d step=[%ld:%ld:%ld]\n", name.c_str(), nToken, shard_samps.size(), nBatch(), 0, end, step);
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+//  ChatML​ is a tokenization-friendly text formatthat encodes chat messages into a single string
+std::string Tokenset_JSONL::toChatML(JSON& jMsg, int flag) {
+    assert(jMsg.find("messages") != jMsg.end());
+    /*{"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": "What is the capital of France?"},
+    {"role": "assistant", "content": "The capital of France is Paris."}*/
+    //' <|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\nWhat is the capital of France?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\nThe capital of France is Paris.<|im_end|>\n'
+    //    <|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\nWhat is the capital of France?<|im_end|>\n<|im_start|>assistant\n\n\nThe capital of France is Paris.<|im_end|>\n"
+    std::vector<Chat_Line> lines;
+    for (auto& msg : jMsg["messages"]) {
+        std::string role    = msg["role"];
+        std::string content = msg["content"];
+        lines.push_back(Chat_Line(role, content));
+    }
+    std::string result;
+    for (const auto& line : lines) {
+        result += "<|im_start|>" + line.role + "\n";
+        if (line.role == "assistant") {
+            result += "\n\n";
+        }
+        result += line.content + "<|im_end|>\n";
+    }
+    
+    return result;
+}
+
+bool Tokenset_JSONL::GetShardInfo(int id, int flag) {
+    std::string sPath;
+    try {
+        sPath = shard_paths[id];
+        if (!VERIFY_DIR_EXIST(sPath)) {
+            K_EXIT(KOIFISH_LOAD_SHARD_NULL);
+        }
+        JSON jData;
+        std::ifstream file(sPath);
+        file >> jData;
+        size_t nMsg    = jData.size();
+        int max_length = hDict->config.n_ctx();
+        for (auto& item : jData) {
+            // _INFO("%s", item.dump().c_str());
+            assert(item.find("messages") != item.end());
+            string msg  = toChatML(item);
+            TOKENS curT = hDict->Encode(msg);
+            assert(curT.size() <= max_length);
+            for (int i = curT.size(); i < max_length; i++) {
+            }
+            messages.push_back(msg);
+        }
+        nShardSamples = messages.size();
+        nShardToks    = tokens.size();
+
+        // messages=>tokens
+
+    } catch (JSON::parse_error& e) {
+        _ERROR("\r\n>>>>>> Tokenset_JSONL::OnShardFile @ %s!!! ERR=%s", sPath.c_str(), e.what());
+        return false;
+    } catch (...) {
+        return false;
+    }
+    return nShardSamples > 0;
 }

@@ -1022,8 +1022,9 @@ double G_Scale_RC(T* mat, int nRow, int nCol, Tscal* row_scal, Tscal* col_scal, 
         sr        = T2Float(row_scal + r);
         Tscal* sc = col_scal;
         for (int c = 0; c < nCol; c++, sc++) {
-            row[c] /= sr;
-            row[c] /= T2Float(sc);
+            assert(0);  // todo type cast
+            // row[c] /= sr;
+            // row[c] /= T2Float(sc);
         }
     }
     return imbalance;

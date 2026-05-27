@@ -31,7 +31,7 @@ struct CLI_params;
 enum LIFE_PHASE {
     // Pre-training
     P_TRAIN,
-    P_SFT,  //  supervised fine-tuning
+    P_SFT,  //  supervised fine-tuning - teach a base pretrained LLM​ (which just predicts next tokens) into a helpful assistant​ that follows instructions.
     P_DPO,  //  direct preference optimization
 
     //  1. Quantization-Aware Training
@@ -408,6 +408,13 @@ struct DISTILLATION_CARD {
     void Dump(int typ);
 };
 
+struct SFT_CARD {
+    bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
+    void Dump(int typ);
+
+    std::string sBaseModelPath;
+};
+
 /**
  * Quantizer is much complex & hard than most people think. It refects the essence of our world, just like quantum mechanics
  */
@@ -722,6 +729,7 @@ struct CLI_params {
     TRAIN_CARD common;
     MODEL_CARD model;
     DISTILLATION_CARD distill;
+    SFT_CARD sft;
 
     std::vector<CheckPoint_Params> ckp_in, ckp_out;
     CheckPoint_Params state;

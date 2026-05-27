@@ -1,3 +1,7 @@
+'''
+    1.  tokenizer.convert_tokens_to_ids("<|endoftext|>")  # → 151643
+        tokenizer.convert_ids_to_tokens(151643)          # → "<|endoftext|>"
+'''
 #!/usr/bin/env python3
 from __future__ import annotations
 
@@ -14,8 +18,10 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Callable, Iterable, Literal, TypeVar
+from some_utils import list_depth
 import multiprocessing as mp
 import numpy as np
+from functools import partial
 try:
     import datasets
     from transformers import AutoConfig, AutoTokenizer
@@ -308,7 +314,7 @@ def ProcessDataset(file_name: str, ds, key, split_name: str, max_tokens: int = N
         max_size = max_tokens
 
     Path(f"{file_name}").mkdir(parents=True, exist_ok=True)
-    print(f"ProcessDataset mp={num_processes} @{file_name} ...")
+    print(f"ProcessDataset_ mp={num_processes} @{file_name} ...")
     with mp.Pool(processes=num_processes, initializer=init_worker, initargs=(model,)) as pool:
         while True:
             if first_is_eval > 0:
@@ -375,7 +381,73 @@ def ProcessPileBackup(dataset, model, out_file):
     # assert len(cat_samples) % max_seq_len == 0
     # cat_samples = cat_samples.reshape(n_split, max_seq_len)
     # return cat_samples
+
+'''
+1 Chat-style JSONL or OpenAI chat format: {
+    "messages": [
+      {"role": "system", "content": "You are a helpful assistant."},
+      {"role": "user", "content": "How do I bake a chocolate cake?"},
+      {"role": "assistant", "content": "First, preheat the oven to 350°F. Then mix flour, sugar, cocoa powder, eggs, butter, and baking powder..."}
+    ]
+  },
+2 padding="max_length" padding=True;        Padding tokens contribute to the loss unless you explicitly exclude them!!!
+'''
+def collate_Chat_JSONL(batch, tokenizer, padding=True):
+    if isinstance(batch, list):
+        texts = [
+            tokenizer.apply_chat_template(ex["messages"], tokenize=False, add_generation_prompt=False)
+            for ex in batch
+        ]
+    else:
+        texts = tokenizer.apply_chat_template(batch["messages"], tokenize=False, add_generation_prompt=False)
+
+    # attention_mask[i] = 1 if input_ids[i] != pad_token_id else 0
+    tokens = tokenizer(texts,        padding=padding,       truncation=True,       max_length=128,     return_tensors="pt",)
+
+    if(list_depth(tokens["input_ids"])==2):  # In some case, it's batch even for 1 samp
+        labels = tokens["input_ids"][0].copy() # Ignore padding tokens in loss      
+    else:  
+        labels = tokens["input_ids"].detach().clone()   #.copy()
+    labels = tokens["input_ids"].clone()
+    labels[labels == tokenizer.pad_token_id] = -100     #   nn.CrossEntropyLoss ignores targets == -100
+    # labels = [ -100 if token == pad_id else token for token in labels ]        #   nn.CrossEntropyLoss ignores targets == -100     
+    tokens["labels"] = labels
+    # print(enc)
+    return tokens
+
+'''
+    1. padding token=151643 => labels=-100
+    2.  attention_mask[i] = 1 if input_ids[i] != pad_token_id else 0
+'''
+def ChatJSONL2SFT(dataset, tokenizer, out_file):        
+    # dataset = dataset.shuffle(seed=42)
+    pad_id = tokenizer.pad_token_id
+    print(f"tokenizer pad={pad_id} eos={tokenizer.eos_token_id}")
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token   
     
+    print(dataset)
+    dataset = dataset.map(partial(collate_Chat_JSONL, tokenizer=tokenizer), batched=True, remove_columns=dataset.column_names)
+    dataset.set_format(type="torch")    #   Change all elements of dataset to PyTorch tensors, not Python lists or NumPy arrays
+    # all_sample = [] #   only for debug
+    # for sample in dataset:
+    #     token_sample = collate_Chat_JSONL(sample, tokenizer)
+    #     all_sample.append(token_sample)
+    # dataset = datasets.Dataset.from_list(all_sample)
+    first_row = dataset[0]
+    print(f"dataset first_row = {first_row}")
+    return dataset
+    # for key in ['input_ids', 'attention_mask', 'labels']:
+    #     value = first_row[key]
+    #     print(f"\n{key} (type: {type(value)}):")
+    #     print(f"  Shape/Length: {len(value)}")
+    #     print(f"  First 10 values: {value[:10]}")
+    #     print(f"  Last 10 values: {value[-10:] if len(value) > 10 else value}")      
+    #     if key in ['input_ids', 'labels'] and hasattr(dataset, '_tokenizer'):
+    #         decoded = dataset._tokenizer.decode(value)
+    #         print(f"  Decoded text: {decoded}")
+
+
 def TokenizeDataset(dataset: str, model, out_dir: Path = "preTokenData", seq_len: int = None, localdir: Path = None):
     out_dir = str(out_dir)
     localdir = str(localdir)
@@ -394,6 +466,19 @@ def TokenizeDataset(dataset: str, model, out_dir: Path = "preTokenData", seq_len
         d = datasets.load_dataset("/home/cys/rnd/lic/Datasets/pile-val-backup", split="validation")        
         ProcessPileBackup(d, model, out_dir+"/eval.bin")
         return
+    elif dataset == "json_file":  # mit-han-lab/pile-val-backup only 10k txt slice with ~30k tokens! (original pie>million!)
+        test_split = 0
+        key = "messages"
+        is_tiny = True
+        # dataset = datasets.load_dataset("json", data_files=localdir, split="train")   # From hf's strange design, we woulg get a single datasets with all json items
+        dataset = datasets.load_dataset("json", data_files=localdir)   
+        # all_sample = []
+        # for sample in dataset:
+        #     token_sample = model.tokenizer.apply_chat_template(sample["messages"], tokenize=False, add_generation_prompt=False)
+        #     all_sample.append(token_sample)
+        # d = datasets.Dataset.from_list(all_sample)
+        d = dataset
+        print(d["train"])
     elif dataset == "hellaswag":
         d = datasets.load_dataset("/home/cys/rnd/lic/Datasets/hellaswag")
         dst = "hellaswag"

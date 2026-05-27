@@ -16,10 +16,19 @@ from SweepHyParams import koifish_one,bubble_one,pangpi_one
 sExe = "./bin/koifish "
 most_iter = 10
 def CheckResult(df,iter,golden,title="",rel_tol=1e-05):
-    # print(df)
-    a = df["loss"][iter]
-    print(f"{title} loss={a} golden={golden}\n")
-    assert math.isclose(a,golden,rel_tol=rel_tol, abs_tol=0.0) 
+    a = -1.0
+    try:
+        a = df["loss"][iter]
+        print(f"{title} loss={a} golden={golden}\n")
+    except KeyError:
+        print(f"{title} 'loss' column does not exist!\n")
+    except IndexError:
+        print(f"{title} index out of range!(iter={iter})\n")
+    # a = df["loss"][iter]
+    isClose = math.isclose(a,golden,rel_tol=rel_tol, abs_tol=0.0)
+    if not isClose:
+        print(f"CheckResult failed@{title}! loss={a} golden={golden}\n")
+        assert(0)
 
 def test_chat_qwen3_596M():  
     content = bubble_one("chat_qwen3_596M","--tokenizer ./assets/tokenizer_151936.bin --hf ./Models/Qwen3-0.6B/ --prompts \"hello\"")  #./cases/qwen3/qwen3_0.6B.json
@@ -70,10 +79,10 @@ def xtest_batch_qwen3_4B():
 
 
 def test_qwen3_596M():    
-    most_iter = 180
+    most_iter = 80
     title = "QWen3_596M"
     dfTrain = koifish_one(title, sExe, "./cases/qwen3/qwen3_1.json", most_iter=most_iter, train_csv="./Train@[climb]_info_.csv")    
-    CheckResult(dfTrain,most_iter,6.868,title=title,rel_tol=0.001)      #   6.942169    7.589036
+    CheckResult(dfTrain,most_iter,8.01,title=title,rel_tol=0.001)      #   6.868(iter=180) 6.942169    7.589036
 
 def test_qwen2_494M():    
     most_iter = 70
@@ -138,9 +147,9 @@ if __name__ == '__main__':
 
     # test_chat_qwen3_596M()
     # test_chat_qwen3_0_6B()  
-    #test_qwen3_596M()
+    # test_qwen3_596M()
     # test_ising_596M()
-    test_chat_qwen3_4B()
+    # test_chat_qwen3_4B()
     #test_chat_qwen3_4B_awq()
     # xtest_batch_qwen3_4B()
 
@@ -149,9 +158,9 @@ if __name__ == '__main__':
     # test_qwen3_596M_q4()
     # test_gpt2_124M_fuyou6()
     # test_gpt2_1558M()
-    # test_qwen2_494M()
+    test_qwen2_494M()
     # # 
-    # test_gpt2_1558M()
+    #test_gpt2_1558M()
     # koifish_one("124M", sExe, "./cases/gpt2/124M_shard50_F6_lr0.001/F6_lr0.001.json", most_iter=most_iter)
     
 

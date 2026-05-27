@@ -248,23 +248,9 @@ class GTokenizer {
     std::string decode_one(int prev_token, int token) const;
     std::string encoding_to_debug_string(const std::vector<TOKEN_ID>& encoding) const;
 
-    /*
-    int find_bpe_rank(const std::string & token_left, const std::string & token_right) const {
-        assert(token_left.find(' ') == std::string::npos);
-        assert(token_left.find('\n') == std::string::npos);
-        assert(token_right.find(' ') == std::string::npos);
-        assert(token_right.find('\n') == std::string::npos);
-
-        auto it = bpe_ranks.find(std::make_pair(token_left, token_right));
-        if (it == bpe_ranks.end()) {
-            return -1;
-        }
-
-        return it->second;
-    }    */
-
     friend class DataTokenSet;
     friend class Tokenset_HellaSwag;
+    friend class Tokenset_JSONL;
     friend class GlobTokenset;
     friend class SampLoader;
     friend class Fish;

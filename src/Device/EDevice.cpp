@@ -11,7 +11,16 @@
 #include "../Manifold/Fish.hpp"
 #include "../Manifold/Neuron.hpp"
 #include "../Manifold/TGraph.hpp"
+#ifdef __USE_TILELANG__
+#include "./tile_kernel/tl_kernels.hpp"
+#endif
 
+void KOIFISH_Device_Info(int flag) {
+#ifdef __USE_TILELANG__
+    _INFO("[TILELANG] - \"%s\" \n", KOIFISH_TL_INFO);
+    // _INFO("------------------------------------------------------------------------------\n");
+#endif
+}
 std::string SUM::GPU_Info(int flag) {
     size_t szFree, szTotal;
     char buf[1024];

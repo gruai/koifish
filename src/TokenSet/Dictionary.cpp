@@ -202,9 +202,7 @@ int GTokenizer_Heap::sLookup(const char* str, int flag) {
     struct TokenIndex* res = (struct TokenIndex*)bsearch(&tok, sorted_vocab, vocab_size, sizeof(struct TokenIndex), compare_tokens);
     return res != NULL ? res->id : -1;
 }
-int GTokenizer_Heap::Lookup(const std::string& word, int flag) {
-    return sLookup(word.c_str(), flag);
-}
+int GTokenizer_Heap::Lookup(const std::string& word, int flag) { return sLookup(word.c_str(), flag); }
 
 int GTokenizer_Heap::merge_tokens_tryadd(struct Merge* heap, int n_heap, int lpos, int lid, int rpos, int rid) {
     char str_buffer[MAX_TOKEN_LENGTH * 2 + 1];
@@ -793,6 +791,7 @@ std::vector<TOKEN_ID> GTokenizer_Heap::Encode(const std::string& text, bool enco
 
 //      void Encode(char *text, int *tokens, int *n_tokens,int flag);
 TOKENS GTokenizer_QWEN3::Encode(const std::string& sText, bool encode_bos, bool encode_eos) {
+    assert(isValid());
     // TOKENS tokens_heap = GTokenizer_Heap::Encode(sText, encode_bos, encode_eos);
     // return tokens_heap;  //result is different, so strange!
 

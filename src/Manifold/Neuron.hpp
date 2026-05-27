@@ -98,7 +98,6 @@ class GeNeuron {
     STATISTIC stat;
     QUANT_CARD quant_params;
     int block_size = 256, grid_size = 0;  // for cuda kernel function
-    // int n_embd_head, n_head;
     int gelu_fusion = 0, dump_flag = 0;
     Fish* hFish = nullptr;
     SHAPE shape;
@@ -385,7 +384,8 @@ struct Drop : public SparseNeuron {
 // single layer perceptron
 struct SLP : public SparseNeuron {
     float* dbias_buffer = nullptr;  // SLP::Back
-    floatX* gW          = nullptr;
+    float alpha_forw = 1.0f, alpha_back = 1.0f;
+    floatX* gW = nullptr;
     SLP() {}
     SLP(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
     // The channel/neuron number of input&output
@@ -424,11 +424,11 @@ struct SLP : public SparseNeuron {
     BF16 can work for LayerNorm in ​​well-tuned models​​ (e.g., some Transformer variants), but FP32 is the "safe" default.
 */
 struct LayerNormal : public SparseNeuron {
-    bool isAffineTrans    = true;  // Learnable affine transform parameters
-    bool isRMS            = true;  // Root Mean Square Layer Normalization
-    bool isOnline         = false;
-    float rms_eps         = 1.0e-5;
-    int nHead             = 0;
+    bool isAffineTrans = true;  // Learnable affine transform parameters
+    bool isRMS         = true;  // Root Mean Square Layer Normalization
+    bool isOnline      = false;
+    float rms_eps      = 1.0e-5;
+    int nHead          = 0;
     int ldTH;  // nTH:  number of tokens or heads
     int ver_rms_qknormal_ = 0;
     //  always float
@@ -507,9 +507,9 @@ class SelfAttention : public SparseNeuron {
         T_LINEAR   = 4,
     };
     bool UpdateQKVPack(int flag = 0x0);
-#ifdef ENABLE_CUDNN
-    virtual bool FUSE_cudnn(floatX* dqkvr, floatX* dout, int flag = 0x0);
-#endif
+
+    virtual bool FUSE_qkv(floatX* dqkvr, floatX* dout, int flag = 0x0);
+
     // 1 linear(No softmax!) 2 sim(q,k)>=0
     TRANSITION_MODE tpTrans = T_SOFT_MAX;
     enum LINEAR_MODE {
@@ -557,7 +557,7 @@ class SelfAttention : public SparseNeuron {
     LayerNormal normOut;
 
     hGensor attn       = nullptr;
-    hGensor transition = nullptr;  //{STATS_UID, stats} of CUDNN
+    hGensor lse = nullptr;  //  (B, Hq, T) lse of flash attention   {STATS_UID, stats} of CUDNN
 
     SLP Q, K, V;
     hRope rope = nullptr;
@@ -748,7 +748,11 @@ struct OutCLS : public SparseNeuron {
     TokenEmbed* hEmbed = nullptr;
     // host version of target is SampLoader::hostTargetProbs
     hGTensor target = nullptr;
-    // Partial logits only contain dB samples at train stage!!! to reduce memory
+    /*
+        1. Partial logits only contain dB samples at train stage!!! to reduce memory
+        2. In the LLM head, logits represent the importance of each possible next token.
+            In self‑attention, logits represent the importance of each token already seen for understanding the current token.”
+    */
     hGTensor preLogits = nullptr;
     //  Deprecated!     device=>host    floatX=>float
     floatLogits* fLogits(int flag = 0x0);

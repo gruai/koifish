@@ -18,8 +18,8 @@
 
 GTensor* GTensor::tZ      = nullptr;
 float* GTensor::stat_info = nullptr;
-void *GTensor::buff = nullptr, *GTensor::host_buff = nullptr, *GTensor::cudnn_workspace = nullptr;
-size_t GTensor::buff_len = 0, GTensor::cudnn_workspace_size = 0;
+void *GTensor::buff = nullptr, *GTensor::host_buff = nullptr, *GTensor::qkv_workspace = nullptr;
+size_t GTensor::buff_len = 0, GTensor::workspace_size = 0;
 
 float GTensor::rLARS(float s0, float T_lars, int flag) {
     if (shape.size() <= 1)

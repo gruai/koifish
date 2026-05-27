@@ -14,8 +14,6 @@
 #include <cuda_profiler_api.h>
 #include <cuda_runtime.h>
 #include <math.h>
-#include <nvtx3/nvToolsExt.h>
-#include <nvtx3/nvToolsExtCudaRt.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -104,19 +102,25 @@ inline void cudaFreeCheck(T** ptr, const char* file, int line) {
 #define cudaFreeCheck(ptr) (cudaFreeCheck(ptr, __FILE__, __LINE__))
 
 // ----------------------------------------------------------------------------
-// Profiler utils
-
-class NvtxRange {
-   public:
-    NvtxRange(const char* s) { nvtxRangePush(s); }
-    NvtxRange(const std::string& s) { nvtxRangePush(s.c_str()); }
-    NvtxRange(const std::string& base_str, int number) {
-        std::string range_string = base_str + " " + std::to_string(number);
-        nvtxRangePush(range_string.c_str());
-    }
-    ~NvtxRange() { nvtxRangePop(); }
-};
-#define NVTX_RANGE_FN() NvtxRange nvtx_range(__FUNCTION__)
+#if defined(USE_NVTX)
+// #include <nvtx3/nvToolsExt.h>
+// #include <nvtx3/nvToolsExtCudaRt.h>
+    class NvtxRange {
+    public:
+        NvtxRange(const char* s) { nvtxRangePush(s); }
+        NvtxRange(const std::string& s) { nvtxRangePush(s.c_str()); }
+        NvtxRange(const std::string& base_str, int number) {
+            std::string range_string = base_str + " " + std::to_string(number);
+            nvtxRangePush(range_string.c_str());
+        }
+        ~NvtxRange() { nvtxRangePop(); }
+    };
+    #define NVTX_RANGE_FN() NvtxRange nvtx_range(__FUNCTION__)
+#elif defined(USE_TRACY)
+#  include "tracy/Tracy.hpp"
+#else
+#  define NVTX_RANGE_FN() do {} while (0)
+#endif
 
 // ----------------------------------------------------------------------------
 // Utilities to Read & Write between CUDA memory <-> files

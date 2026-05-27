@@ -864,7 +864,7 @@ int NLP_AutoRegressive::ForwardOnNeuron_v0(int flag) {
 
     FFN* ffn = nullptr;
     for (int l = 0; l < L; l++) {
-        NvtxRange layer_range("Layer", l);
+        // NvtxRange layer_range("Layer", l);
         QKV                = GetNeuron<SelfAttention>("SelfAttention", l);
         ffn                = GetNeuron<FFN>("FFN", l);  // ffn->out = gBUFF->delta;
         LayerNormal* hNorm = l + 1 != L ? &(GetNeuron<SelfAttention>("SelfAttention", l + 1)->norm) : lnf;

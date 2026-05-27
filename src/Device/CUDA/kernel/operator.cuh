@@ -851,118 +851,15 @@ __global__ void static reduce_add_sum_kernel(floatX* dst, const float* src, size
     }
 }
 
-// void CU_mm_blasLt_v0(floatX* d, const floatX* a, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int
-// transB = 0,
-//                   float alpha = 1.0, float beta = 0.0, bool backward = false)
 template <class FloatC, class FloatA, class FloatB, class FloatBias>
 void CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* bias, int m, int n, int k, const float* scale_a, const float* scale_b,
-                  cudaStream_t stream = 0, int transA = 1, int transB = 0, bool accumulate = false, bool backward = false) {
-    NVTX_RANGE_FN();
-    bool has_bias              = (bias != nullptr);
-    hBITARR workspace          = (hBITARR)GTensor::cudnn_workspace;
-    std::size_t workspace_size = GTensor::cudnn_workspace_size;
-    assert(workspace_size >= 32 * 1024 * 1024);
-    // check alignment (some modes work unaligned, but it is always best to be aligned for performance)
-    if (((uintptr_t)a % 16) != 0 || ((uintptr_t)b % 16) != 0 || ((uintptr_t)d % 16) != 0 || ((uintptr_t)bias % 16) != 0) {
-        _ERROR("All CU_mm_blas_ pointers must be aligned!\n");
-        exit(KOIFISH_BLAS_UNALIGN);
-    }
-
-    // create the operation descriptor
-    cublasLtMatmulDesc_t operationDesc;
-    cublasCheck(cublasLtMatmulDescCreate(&operationDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
-
-    int returnedResults = 0;
-    cublasLtMatmulPreference_t preference;
-    cublasLtMatmulHeuristicResult_t heuristic;
-    cublasOperation_t opNoTranspose = CUBLAS_OP_N;
-    cublasOperation_t opTranspose   = CUBLAS_OP_T;
-    cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSA, (transA) ? &opTranspose : &opNoTranspose, sizeof(opTranspose)));
-    cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSB, (transB) ? &opTranspose : &opNoTranspose, sizeof(opNoTranspose)));
-
-    // define matrix layouts
-    cublasLtMatrixLayout_t ALayout;
-    cublasLtMatrixLayout_t BLayout;
-    cublasLtMatrixLayout_t DLayout;
-    cublasLtMatrixLayout_t CLayout;
-    if (transA) {
-        cublasCheck(cublasLtMatrixLayoutCreate(&ALayout, cuLibType<FloatA>, k, m, k));
-    } else {
-        cublasCheck(cublasLtMatrixLayoutCreate(&ALayout, cuLibType<FloatA>, m, k, m));
-    }
-    if (transB) {
-        cublasCheck(cublasLtMatrixLayoutCreate(&BLayout, cuLibType<FloatB>, n, k, n));
-    } else {
-        cublasCheck(cublasLtMatrixLayoutCreate(&BLayout, cuLibType<FloatB>, k, n, k));
-    }
-    // cuBLASLt requires C in FP8 mode to be BF16 or FP32... (sigh)
-    cublasCheck(cublasLtMatrixLayoutCreate(&CLayout, cuLibType<FloatC>, m, n, m));
-    cublasCheck(cublasLtMatrixLayoutCreate(&DLayout, cuLibType<FloatC>, m, n, m));
-
-    // create a preference handle with specified max workspace
-    cublasCheck(cublasLtMatmulPreferenceCreate(&preference));
-    cublasCheck(cublasLtMatmulPreferenceSetAttribute(preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &workspace_size, sizeof(workspace_size)));
-
-    // setup epilogue and associated pointers for bias & gelu
-    cublasLtEpilogue_t epilogue = CUBLASLT_EPILOGUE_DEFAULT;
-    if (has_bias) {
-        epilogue = CUBLASLT_EPILOGUE_BIAS;
-    }
-    cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_EPILOGUE, &epilogue, sizeof(epilogue)));
-
-    if (has_bias) {
-        // cuBLASLt requires bias in FP8 mode to be BF16... (sigh)
-        cublasDataType_t bias_data_type = cuLibType<FloatBias>;  // force BF16 bias for FP8 mode
-        cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_BIAS_DATA_TYPE, &bias_data_type, sizeof(bias_data_type)));
-        cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &bias, sizeof(bias)));
-    }
-
-    if (scale_a) {
-        if (sizeof(FloatA) != 1) {
-            throw std::runtime_error("Scaling A is only supported for FP8");
-        }
-        cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, &scale_a, sizeof(&scale_a)));
-    }
-    if (scale_b) {
-        if (sizeof(FloatB) != 1) {
-            throw std::runtime_error("Scaling B is only supported for FP8");
-        }
-        cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &scale_b, sizeof(&scale_b)));
-    }
-
-    // find a suitable algorithm (cached internally so shouldn't take much CPU time in practice)
-    cublasLtMatmulAlgoGetHeuristic(cublaslt_handle, operationDesc, ALayout, BLayout, CLayout, DLayout, preference, 1, &heuristic, &returnedResults);
-    if (returnedResults == 0) {
-        _ERROR("No cuBLASLt algorithm@%d: m: %d, n: %d, k: %d, bias: %d\n", tpCuBLAS, n, m, k, has_bias);
-        exit(EXIT_FAILURE);
-    }
-
-    // set whether to accumulate (i.e. D += C) or not - note this isn't considered in algorithm selection (?!)
-    float one    = 1.f;
-    float zero   = 0.f;
-    float* alpha = &one;
-    float* beta  = accumulate ? &one : &zero;
-
-    // call the matmul
-    cublasCheck(cublasLtMatmul(cublaslt_handle, operationDesc, alpha, a, ALayout, b, BLayout, beta, d, CLayout, d, DLayout, &heuristic.algo, workspace,
-                               workspace_size, stream));
-    cudaCheck(cudaGetLastError());
-
-    // cleanups
-    cublasCheck(cublasLtMatmulPreferenceDestroy(preference));
-    cublasCheck(cublasLtMatmulDescDestroy(operationDesc));
-    cublasCheck(cublasLtMatrixLayoutDestroy(ALayout));
-    cublasCheck(cublasLtMatrixLayoutDestroy(BLayout));
-    cublasCheck(cublasLtMatrixLayoutDestroy(CLayout));
-    cublasCheck(cublasLtMatrixLayoutDestroy(DLayout));
-    cudaCheck(cudaGetLastError());
-}
+                  cudaStream_t stream = 0, int transA = 1, int transB = 0, bool accumulate = false);
 
 template <typename Typ>
 __global__ void CU_rope_(Typ* out, Typ* inp, const Typ* freqs, float* stat_info, int B, int T, int Nq, int Nkv, int head_dim, bool isBack = false);
 
 void CU_mm_(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream = 0, int transA = 1, int transB = 0,
-            float beta = 0.0, floatX* pre_gelu = NULL, bool backward = false);
+            float beta = 0.0, floatX* pre_gelu = NULL);
 //  y=W*x
 void CU_mv_(floatX* y, const floatX* W, const floatX* x, int m, int n, float alpha = 1.0f, float beta = 0.0f);
 // void matmul_backward(floatX* delta, floatX* dweight, floatX* dbias, floatX* deltaIn, floatX* inp, floatX* weight, float* dbias_buffer, int B, int T, int C,

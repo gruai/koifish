@@ -33,6 +33,8 @@ struct AppResult {
     explicit operator bool() const { return success(); }
 };
 
+void KOIFISH_Device_Info(int flag);
+
 class GST_Application {
    private:
     static bool g_running;
@@ -67,7 +69,9 @@ class GST_Application {
     virtual bool Initialize() {
         char path[PATH_MAX] = "\0";
         ssize_t len         = readlink("/proc/self/exe", path, sizeof(path) - 1);  // getpid()
+        _INFO("------------------------------------------------------------------------------\n");
         _INFO("[APP] %s Initialization.\tProcess=%s\n", name.c_str(), path);
+        KOIFISH_Device_Info(0x0);
 
         // Linux-specific initializations
         if (!InitializeLogging()) {
@@ -79,7 +83,7 @@ class GST_Application {
             std::cerr << "Daemon initialization failed" << std::endl;
             return false;
         }
-
+        _INFO("------------------------------------------------------------------------------\n");
         g_running = true;
         return true;
     }

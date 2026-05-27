@@ -166,7 +166,7 @@ bool Optimizer::BatchGrad(int iter, float& fx, int flag) {
     for (int accum_step = 0; accum_step < 1; ++accum_step) {
         auto now = GST_ms();
         if (hRLS->isUpdateBatch(GetITER())) {
-            int64_t nSamp = train_loader->UpdateBatch(-1, _fish);
+            int64_t nSamp = train_loader->CollateBatch(-1, _fish);
             SUM::tData    = GST_ms() - now;
             if (nSamp == 0) {
                 _WARN("<%s> Failed to get next batch!!!\n", __func__);
@@ -180,10 +180,10 @@ bool Optimizer::BatchGrad(int iter, float& fx, int flag) {
         }
 
         GraphCompute(train_loader, _fish->hBackTG);
-        if(status!=KOIFISH_OK){// Save to kun & exit
+        if (status != KOIFISH_OK) {  // Save to kun & exit
             _ERROR("Optimizer::GraphCompute failed! code=%d. Would dump interal state ...", status);
-            _fish->SaveTrain(_fish->config.state, false);  //  
-            return false;           
+            _fish->SaveTrain(_fish->config.state, false);  //
+            return false;
         }
 
         if (accum_step == 0) {
@@ -433,7 +433,7 @@ OPT_STATUS OPT_Adam::UpdateTensorParam(hGensor hP, floatX* gX, float clip) {
     }
 #endif
 #ifdef __USE_CUDA__
-    if( hP->Dogleg(0x0)!=KOIFISH_OK)
+    if (hP->Dogleg(0x0) != KOIFISH_OK)
         return status;
     grad_norm = hP->gnorm;
     // UpdateTensorParam_cuda(hP, this, grad_norm, 0x0);
@@ -621,13 +621,13 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGensor loss_, hGensor target_, C
 
     int iter0 = 0, t;
     for (t = 0; t < train_params.nMostIter; ++t) {
-        NvtxRange range("step", t);
+        // NvtxRange range("step", t);
         CheckExitSearch(t);
 
         _fish->BeforeNextStep(t, 0x0);
         if (t == train_params.nMostIter - 1) {
             if (train_loader != nullptr) {
-                train_loader->isLast = true;
+                train_loader->isLastShard = true;
                 isDumpOnce           = true;
             }
         }
@@ -709,7 +709,7 @@ double Optimizer::GraphCompute(hSampLoader hLoader, hTGraph hTG, int flag) {
         } else {
             isBackward = true;
             g_step     = 0;
-            if( _fish->BackwardOnRLS(iter, 0x0)!=KOIFISH_OK)
+            if (_fish->BackwardOnRLS(iter, 0x0) != KOIFISH_OK)
                 return 0.0;
             UpdateTrainLoss(-1, mean_loss);
             isBackward = false;
@@ -783,7 +783,7 @@ float Optimizer::EvaluateSamps(hSampLoader loader, int iter, int flag) {
     for (i = 0; i < loader->num_batches; i += step) {
         if (tokens_input != nullptr &&
             (_fish->phase != LIFE_PHASE::P_PREFILL && _fish->phase != LIFE_PHASE::P_GENERATE)) {  // in some debug mode, tokens_input maybe null
-            TIMING_ms(loader->UpdateBatch(i, _fish), SUM::tLoadData);
+            TIMING_ms(loader->CollateBatch(i, _fish), SUM::tLoadData);
             samp = loader->cur_samps[i];
         }
         if (wLog != nullptr) {

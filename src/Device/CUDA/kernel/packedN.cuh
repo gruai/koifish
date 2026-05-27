@@ -734,21 +734,10 @@ struct TASKA_SWMD {
  * @brief Provides information about Pack2 of elements for a given type.
  *
  * @tparam T The type for which to provide Pack2 information.
- */
+
 template <typename T>
 struct Pack2 {
-    /**
-     * @brief The number of elements packed together.
-     *
-     * @return constexpr int representing number of elements within the type.
-     */
     static __device__ inline constexpr int num() { return 1; }
-    /**
-     * @brief Packs a single T element twice (replicated) into its packed type.
-     *
-     * @param i[in] The element to pack.
-     * @return The packed type.
-     */
     static __device__ inline constexpr T pack(const bf16& i);
 };
 template <>
@@ -845,7 +834,7 @@ struct Pack2<float4> {
 template <>
 struct Pack2<int4> {
     static __device__ inline constexpr int num() { return 4; }
-};
+}; */
 
 #ifdef CUDA_HOPPER
 template <>

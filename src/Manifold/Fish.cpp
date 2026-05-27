@@ -863,7 +863,8 @@ bool Fish::AllocBuffer(int flag) {
 #ifdef __USE_TVM__5
         test_FA2();
 #endif
-        int B = config.n_batch(), T = config.n_ctx(), NH = config.n_head();
+        int B = config.n_batch(), T = config.n_ctx(), NH = config.n_head(), head_dim = config.head_dim();
+        int group = NH / config.n_head_kv();
         if (isLocalInfer) {
             if (config.phase == P_GENERATE) {  // P_EVAL no need cache!
                 // hCache = std::make_shared<KVCache>(this);
@@ -871,13 +872,18 @@ bool Fish::AllocBuffer(int flag) {
         }
         hCache = std::make_shared<KVCache>(this);  // why this would affect train loss?
         if (phase != P_GENERATE) {
-#ifdef ENABLE_CUDNN
+#ifdef __USE_CUDNN__
             cudnn_qkv_forw(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn);
             if (phase != P_EVAL_) {
                 size_t alloc = cudnn_qkv_back(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn);
                 _INFO("\tcudnn_qkv_back = %.5gM\n", alloc / 1.0e6);
             }
 #endif
+            size_t mostQKV          = B * T * NH * head_dim + B * NH * T +             // dQ[[batch, seq_len, heads, dim_qk]] + Delta[batch, heads, seq_len]
+                                      B * T * config.n_head_kv() * head_dim * group * 4;   // [groups, batch, seq_len, head_kv, dim_v]
+            GTensor::workspace_size = std::max(GTensor::workspace_size, mostQKV * 4);           // 134742016
+            assert(GTensor::workspace_size >= 32 * 1024 * 1024);
+            cudaCheck(cudaMalloc(&GTensor::qkv_workspace, GTensor::workspace_size));
         }
 
         return true;

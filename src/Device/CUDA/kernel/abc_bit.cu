@@ -313,6 +313,7 @@ __global__ void ABC_v6(Ta* A, floatX* B, floatX* C, int M, int N, int K, int fla
     }
 }
 /*
+    Quant version, would replace by tilelang!
     c(m,n) = op(a)*op(b) + bias
 */
 void CU_abc(floatX* d, hGTensor gensor, const floatX* b, const floatX* bias, int m, int n, int k, cudaStream_t stream, int transA, int transB, float beta,

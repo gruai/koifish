@@ -288,8 +288,13 @@ hSAMP SampLoader::Next(bool isLoop) {
     return shard_samps[idx_];
 }
 
-// Important!  this would update input & target_probs of model!
-size_t SampLoader::UpdateBatch(int x, Fish* fish) {
+/**
+    Important!  this would update input & target_probs of model!
+        Stacks tensors
+        Converts scalars(targets) to tensors
+        Pads lists of equal-length tensors
+*/
+size_t SampLoader::CollateBatch(int x, Fish* fish) {
     TRAIN_CARD _params = hOPT->TrainParams();
     assert(fish == hOPT->_fish);
     // struct llama_context * lctx=(struct llama_context *)(hOPT->app_ctx);
@@ -298,7 +303,7 @@ size_t SampLoader::UpdateBatch(int x, Fish* fish) {
     hostTargetProbs->Zero();
     hTokenizer tokenizer = fish->GetTokenizer();
     if (DEBUG.quant_UserMode) {
-        hBatch->FillPrompt(fish, SOME_prompts, SOME_answers,  -1);
+        hBatch->FillPrompt(fish, SOME_prompts, SOME_answers, -1);
         return 1;
     }
     int64_t nAllSamples_ = nShard();
@@ -451,6 +456,8 @@ std::tuple<hDataToken, std::vector<hDataToken>, hDataToken> DataTokenSet::MakeIn
         type                 = jKV(v, {"type"}, type);
         if (type == "hellaswag")
             hTokenset = std::make_shared<Tokenset_HellaSwag>(it, hDict);
+        else if (type == "Chat_JSONL")
+            hTokenset = std::make_shared<Tokenset_JSONL>(it, hDict);
         else {
             if (v.find("prompt") != v.end())
                 hTokenset = std::make_shared<PromptTokenset>(it, hDict);
@@ -459,6 +466,7 @@ std::tuple<hDataToken, std::vector<hDataToken>, hDataToken> DataTokenSet::MakeIn
             else
                 assert(0);
         }
+        hTokenset->Init(flag);
         if (key == "train") {
             tsTrain = hTokenset;
         } else if (key == "calib") {
@@ -1009,7 +1017,7 @@ hSAMP SampLoader::InitOneSamp(const string& prompt, hGensor input, Fish* hFish, 
     if (hFish != nullptr) {
         isRecycle        = false;
         hDict->isNeedBOS = false;  // why?
-        UpdateBatch(0, hFish);
+        CollateBatch(0, hFish);
         TokenEmbed* embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed");
         embed->hBatch     = hBatch;
     }
@@ -1285,7 +1293,7 @@ int BATCH_INPUT::FillPrompt(Fish* hFish, const std::vector<std::string>& arrProm
     std::string p0, answer;
     // assert(nRound < arrPrompt.size());
     int szBuffer = hFish->config.chat_sampler.szBuffer;
-    arrTic0.clear(),       arrTic1.clear();
+    arrTic0.clear(), arrTic1.clear();
     TOKENS all_tokens;
     for (int i = 0; i < arrPrompt.size(); i++) {
         if (nRound >= 0 && i != nRound)
@@ -1296,14 +1304,15 @@ int BATCH_INPUT::FillPrompt(Fish* hFish, const std::vector<std::string>& arrProm
         char rendered_prompt[szBuffer] = "\0";
         sprintf(rendered_prompt, hFish->config.model.prompt_template.c_str(), p0.c_str());
         // sprintf(rendered_prompt, "%s", p0.c_str());
-        _INFO("\n[PROMPT] %d=\"%s\"", i ,rendered_prompt );
+        _INFO("\n[PROMPT] %d=\"%s\"", i, rendered_prompt);
         if (mergeAnswer) {
             TOKENS prompt_tokens = tokenizer->Encode(rendered_prompt);
-            int tic          = prompt_tokens.size() + all_tokens.size();
-            arrTic0.push_back(all_tokens.size());     arrTic1.push_back(tic);
+            int tic              = prompt_tokens.size() + all_tokens.size();
+            arrTic0.push_back(all_tokens.size());
+            arrTic1.push_back(tic);
             answer = answers[i];
             strcat(rendered_prompt, answer.c_str());
-            assert(strlen(rendered_prompt)<=szBuffer);
+            assert(strlen(rendered_prompt) <= szBuffer);
         }
 
         // if (!DEBUG.eval_OneSample.empty())
@@ -1313,7 +1322,7 @@ int BATCH_INPUT::FillPrompt(Fish* hFish, const std::vector<std::string>& arrProm
             _ERROR("[INPUT] failed to encode prompt=\"%s\"", rendered_prompt);
             K_EXIT(KOIFISH_INVALID_PROMPT);
         }
-        all_tokens.insert(all_tokens.end(),cur_tokens.begin(),cur_tokens.end());
+        all_tokens.insert(all_tokens.end(), cur_tokens.begin(), cur_tokens.end());
     }
     int nTokens = all_tokens.size();
     Reset(all_tokens);  // No BOS at sequence start!

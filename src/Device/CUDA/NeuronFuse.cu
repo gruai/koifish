@@ -17,6 +17,7 @@
 // #include "./kernel/gelu.cuh"
 #include "./kernel/layernorm.cuh"
 #include "./kernel/operator.cuh"
+#include "../tile_kernel/tl_kernels.hpp"
 #define NOMINMAX
 
 cublasComputeType_t cublas_compute = CUBLAS_COMPUTE_32F;
@@ -403,7 +404,7 @@ int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, 
             dbias = NULL;  // prevent dbias calculation from also being fused in CU_mm_blas_ below (if we enabled fusion)
         }
 
-        CU_mm_blasLt(ToX(delta), wX, ToX(deltaIn), dbias, nIn, B * T, nOut, nullptr, nullptr, main_stream, (int)transAW, 0, isAccumuDelta ? 1.0f : 0.0f, true);
+        CU_mm_blasLt(ToX(delta), wX, ToX(deltaIn), dbias, nIn, B * T, nOut, nullptr, nullptr, main_stream, (int)transAW, 0, isAccumuDelta ? 1.0f : 0.0f);
 
         bool isDogleg = flag != 0x100 && !isAccumuDelta;
         if (w->gama_param != nullptr) {
@@ -420,7 +421,7 @@ int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, 
             }
         } else {
             // backward to wX, uses += in the backward pass (accumulate the gradient) by setting alpha=one
-            CU_mm_blasLt(gW, ToX(inp), ToX(deltaIn), dbias, nIn, nOut, B * T, nullptr, nullptr, main_stream, transAW, true, 1 /* accumulate */, true);
+            CU_mm_blasLt(gW, ToX(inp), ToX(deltaIn), dbias, nIn, nOut, B * T, nullptr, nullptr, main_stream, transAW, true, 1 /* accumulate */);
             if (isDogleg)
                 w->Dogleg(-1);
         }
@@ -731,6 +732,8 @@ hGTensor OutCLS::cuInfer(hGTensor inp_, int flag) {
     return preLogits;
 }
 
+//  extern "C" __global__ void header_cls(__nv_bfloat16* __restrict__ grad_pre_logits, const int* __restrict__ labels, float* __restrict__ losses, const __nv_bfloat16* __restrict__ pre_logits);
+
 hGTensor OutCLS::cuFlow(hGTensor inp_, int flag) {
     INSPECT inspect(this);
     int V = nCls, Vp = padded_nCls, gelu_fusion = 1, i, C = hFish->config.nEmbed();
@@ -759,21 +762,28 @@ hGTensor OutCLS::cuFlow(hGTensor inp_, int flag) {
             // [50304,768] x [768,8192] => [50304,8192]
             hGensor subZ = inp->Partial("partialZ", nZ * sizeof(floatX), {dB, T, C});
             proj.Forw(curLogits, subZ);
+#if defined __USE_TILELANG__
+#else            
+#endif            
+            // header_cls<<<dim3(dB*T),dim3(128,1,1), 49152, main_stream>>>(ToX(curLogits) + off, targets + n1, cuLoss + n1, ToX(curLogits) + off);
+
             // curLogits->Print("preLogist",0, dump_flag);
             // SYNC_DEVICE();
-            if (DEBUG.T_classifier_ver == 1) {
-                CU_classifier_<<<dB * T, 1024, 0, main_stream>>>(ToX(curLogits) + off, cuLoss + n1, nullptr, rLoss, targets + n1, dB, T, V, Vp, dev_metric,
-                                                                 write_dlogits);
-            } else
-                fused_classifier_kernel5<<<dB * T, 1024, 0, main_stream>>>(ToX(curLogits) + off, cuLoss + n1, nullptr, rLoss, targets + n1, dB, T, V, Vp,
+
+            fused_classifier_kernel5<<<dB * T, 1024, 0, main_stream>>>(ToX(curLogits) + off, cuLoss + n1, nullptr, rLoss, targets + n1, dB, T, V, Vp,
                                                                            write_dlogits);
+            
             if (isBack) {
                 hGensor subDelta = delta->Partial("partialDeltaZ", nZ * sizeof(floatX), {dB, T, C});
                 PrintTensor<float>("loss", cuLoss + n1, true, dB, T, 1, 1, dump_flag);
-                // curLogits->Print("oucls.delta", 0, dump_flag);
+                // tl_scale__T128_128_S32768_bfloat16<<<dim3(CEIL_DIV(Vp,128), CEIL_DIV(dB*T,128), 1),dim3(128,1,1), 32768, main_stream>>>(ToX(curLogits) + off, dB*T, Vp, rLoss);
+                curLogits->Print("oucls.delta", 0, dump_flag);
                 proj.Back(subDelta, subZ, curLogits, nullptr, false, 0x100);  // hGTensor delta, hGTensor inp, hGTensor deltaIn
             }
         }
+        // PrintTensor<float>("loss", cuLoss, true, B, T, 1, 1, -1);
+        // tl_scale<<<dim3(T/64, 1, 1),dim3(128,1,1), 16384, main_stream>>>(cuLoss, B, T, rLoss);
+        // PrintTensor<float>("loss", cuLoss, true, B, T, 1, 1, -1);
         // fused_classifier(errLogits, cuLoss, rLoss, targets, B, T, V, Vp, write_dlogits, main_stream);        //target=[32,1024]
         cudaMemcpy(hostLoss, cuLoss, B * T * sizeof(float), cudaMemcpyDeviceToHost);
         if (!SYNC_DEVICE("OutCLS", 1)) {
