@@ -317,7 +317,7 @@ class RLS_BP : public RLSchedule {
 
    public:
     RLS_BP(EDGE_DEVICES* hED, const CLI_params& config, int flag);
-    virtual ~RLS_BP() {}
+    virtual ~RLS_BP() { tMaps.clear(); }
     virtual void Init(Fish* hF, std::vector<shared_ptr<GeNeuron>> backbons, int flag = 0x0);
     virtual bool InitGUOKE(int flag = 0x0);
     virtual bool InitBranch(int flag = 0x0);

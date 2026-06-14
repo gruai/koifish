@@ -166,7 +166,7 @@ bool RLS_BP::InitGUOKE(int flag) {
         _INFO("[RLS] \tGuoke=%d(%d)\t\n", nT_guoke, nT);
     }
     if (hFish->isLocalInfer) {
-        OutCLS* cls = hFish->GetNeuron<OutCLS>("OutCLS", 0);
+        Head4Token* cls = hFish->GetNeuron<Head4Token>("Head4Token", 0);
         // cls->ManageMemory(DATA_PLACE::DEV_MEM);
         for (auto neuron : hFish->backbons) {
             neuron->ManageMemory(DATA_PLACE::DEV_MEM);
@@ -187,7 +187,7 @@ bool RLS_BP::InitGUOKE(int flag) {
     3.  GeNeuron::BeforeMing/AfterMing call this many times!
 */
 void GeNeuron::ManageMemory(DATA_PLACE target, int typ, int flag) {
-    if (name == "model.blk.2.attn.wq.weight" && target != SYMBOLIC) {  //"model.blk.1.attn"&& target==FREE_DEV        "preLogits"   "model.output.cls"
+    if (name == "model.blk.2.attn.wq.weight" && target != SYMBOLIC) {  //"model.blk.1.attn"&& target==FREE_DEV           "model.output.cls"
         int debug = 0;
     }
     if (target == place && tReloads.empty())
@@ -207,7 +207,7 @@ void GeNeuron::ManageMemory(DATA_PLACE target, int typ, int flag) {
     for (auto t : arrT) {
         if (t == nullptr)
             continue;
-        if (strcmp(t->name, "preLogits") == 0 /*&& target == DEV_MEM*/) {  //"model.blk.1.attn"&& target==FREE_DEV        "preLogits"   "model.output.cls"
+        if (strcmp(t->name, "preLogits") == 0 /*&& target == DEV_MEM*/) {  //"model.blk.1.attn"&& target==FREE_DEV         "model.output.cls"
             DEBUG_HERE;
         }
 
@@ -321,7 +321,7 @@ bool RLS_BP::isResident(GeNeuron* neuron, int flag) {
         return true;
     if (dynamic_cast<TokenEmbed*>(neuron))
         return true;
-    if (dynamic_cast<OutCLS*>(neuron))
+    if (dynamic_cast<Head4Token*>(neuron))
         return true;
     if (dynamic_cast<LayerNormal*>(neuron))
         return true;
@@ -702,11 +702,11 @@ bool RLS_BP::Prepare(int iter, int flag) {
     step = 0;
     if (iter < 0)
         _INFO("[RLS] resident={%s}\n", resident_list.c_str());
-    if (DUMP(1) && iter <= 2 && hFish->phase != LIFE_PHASE::P_EVAL_) {
+    /*if (DUMP(1) && iter <= 2 && hFish->phase != LIFE_PHASE::P_EVAL_) {
         size_t szFree, szTotal;
         cudaError_t err = cudaMemGetInfo(&szFree, &szTotal);
         _INFO("[MEMORY] mGPU=%.6gM(free=%.6gM) %s\n", (szTotal - szFree) / 1.0e6, szFree / 1.0e6, SUM::CPU_Info().c_str());
-    }
+    }*/
     fflush(stdout);
     assert(SUM::nInitParam == hFish->optParams.size());
 

@@ -199,6 +199,7 @@ class GTokenizer {
     bool LoadHFJson(const string& path, int flag = 0x0);
     virtual void InitTrier(int flag = 0x0);
     virtual bool InitHF(Fish* dolphin, int flag = 0x0);
+    virtual bool LoadBin(Fish* dolphin, int flag = 0x0) { return false; }
     virtual bool InitFrom(Fish* dolphin, hGTensor tokens, hGTensor scores, int flag = 0x0);
     // convenience array containing the decodings for the fixed 256 byte fallbacks '{0x00}\0', '{0x01}\0', ..., '{0xFF}\0'.
     // TODO: use constexpr?
@@ -209,9 +210,16 @@ class GTokenizer {
    public:
     static const int MAX_TOKEN_LENGTH = 512;
     static const int MAX_TEMPLATE     = 1024;
-    int sep_id = -1, pad_id = -1, cls_id = -1, mask_id = -1;
+    int sep_id = -1, pad_id = -1, cls_id = -1, mask_id = -1, assist_id = -1;
     // 1. in some model, no bos_token_id!(GPT-2/GPT-3,unsloth/Qwen3-4B-Base,...)
-    int bos_id = -1, eos_id = -1, eot_id = -1;
+    int bos_id = -1;
+    //  In many LLMs (including GPT‑2, Qwen, and others):eos_id == pad_id == <|endoftext|>, this requires correct attention masks!
+    int eos_id      = -1;
+    int id_im_start = -1, id_im_end = -1;
+    int id_think_open = -1, id_think_close = -1;  //"<think>")"</think>"
+    int eot_id     = -1;                          //  End of Tool / End of Text block
+    int unk_id     = -1;                          //<unk>
+    int id_newline = -1, id_newline2 = -1;        //\n\n    Qwen3(198,271)
 
     enum BIT_FLAG {
 
@@ -224,12 +232,13 @@ class GTokenizer {
         FREE_a(toktypes);
     }
     virtual int nVocab(int flag = 0x0) const;
-    virtual bool isValid(int flag = 0x0) const;
+    virtual bool isValid(bool allowEmpty = false, int flag = 0x0) const;
     virtual bool isInRange(const int* inp, size_t nz, int flag);
+    virtual bool isSpecialTok(const int tok, int flag = 0x0) const;
 
     virtual std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos = false, bool encode_eos = false);
     virtual std::vector<TOKEN_ID> Encode(const std::wstring& text, bool encode_bos = false, bool encode_eos = false);
-    virtual std::string Decode(const TOKENS& ids, bool skip_special_tokens = false);
+    virtual std::string Decode(const TOKENS& ids, bool skip_pad = true, bool skip_special_tokens = false);
 
     virtual int STR2T(const char* txt, int txt_len, std::vector<TOKEN_ID>& btch, int flag = 0x0) {
         btch.clear();
@@ -273,7 +282,7 @@ class GTokenizer_SentencePiece : public GTokenizer {
    public:
     GTokenizer_SentencePiece(Fish*, int flag = 0x0);
     std::string T2STR(TOKEN_ID tok, int flag = 0x0) override;
-    // bool InitHF(Fish* dolphin, int flag = 0x0) override;
+
     std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos = false, bool encode_eos = false) override;
 };
 
@@ -339,7 +348,7 @@ class GTokenizer_Heap : public GTokenizer {
     }
     int merge_tokens_tryadd(struct Merge* heap, int n_heap, int lpos, int lid, int rpos, int rid);
     int merge_tokens(std::vector<TOKEN_ID>& tokens, int flag = 0x0);
-    bool InitFrom(Fish* dolphin, hGTensor tokens, hGTensor scores, int flag = 0x0) override;
+
     virtual bool Prepare(int flag = 0x0);
 
    public:
@@ -348,12 +357,15 @@ class GTokenizer_Heap : public GTokenizer {
     std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos = false, bool encode_eos = false) override;
 };
 
+/**
+ *
+ */
 class GTokenizer_QWEN3 : public GTokenizer_Heap {
    protected:
    public:
     GTokenizer_QWEN3(Fish*, int flag = 0x0);
     std::string T2STR(TOKEN_ID tok, int flag = 0x0) override;
-    bool InitHF(Fish* dolphin, int flag = 0x0) override;
+    bool LoadBin(Fish* dolphin, int flag = 0x0) override;
     std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos = false, bool encode_eos = false) override;
 };
 
@@ -390,7 +402,6 @@ class GTokenizer_WordPiece : public GTokenizer {
     int get_word_index(const wstring& word) const;
     std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos = false, bool encode_eos = false) override;
     virtual vector<TOKEN_ID> Encode(const wstring& input_text, bool split_specials = false);
-    // std::string Decode(const TOKENS& ids, bool skip_special_tokens=false)   override;
 
     vector<wstring> wordpiece_tokenize(const wstring& input_text) const;
 
@@ -506,3 +517,5 @@ class CDict_CHAR : public DictVAE {
     int STR2T(const char* txt, int txt_len, std::vector<TOKEN_ID>& btch, int flag = 0x0) override;
     std::string T2STR(TOKEN_ID tok, int flag = 0x0) override;
 };
+
+void DumpTokens(hTokenizer hDict, const TOKENS& tokens, int nPad, int flag = 0x0);

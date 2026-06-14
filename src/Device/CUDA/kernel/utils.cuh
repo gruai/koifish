@@ -444,3 +444,13 @@ __global__ void CU_NORM_STAT(size_t N, Typ* arr, float* disq, int flag = 0x0) {
     disq[1] = a2, disq[2] = a1, disq[3] = norm_1;
     return;
 }
+
+/**
+ *     CU_print_kernel<<<1, 1>>>(devData, offset, flag);    cudaDeviceSynchronize();
+ */
+template <typename T>
+__global__ static void CU_print_kernel(const T* devData, size_t offset, int flag = 0x0) {
+    float a = CU_T2Float(devData + offset);
+    printf("%f", a);
+}
+

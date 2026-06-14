@@ -145,7 +145,15 @@ EDGE_DEVICES::EDGE_DEVICES(const CLI_params& config, int flag) {
     return;
 }
 
-EDGE_DEVICES::~EDGE_DEVICES() { ClearGPU(0x0); }
+EDGE_DEVICES::~EDGE_DEVICES() {
+    FreeScheduler();
+    ClearGPU(0x0);
+}
+
+bool EDGE_DEVICES::FreeScheduler() {
+    hRLS = nullptr;
+    return true;
+}
 
 /*
     llm_build_cb cb = [&](hGensor  cur, const char * name, int il)

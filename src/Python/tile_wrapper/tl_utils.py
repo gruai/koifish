@@ -357,7 +357,7 @@ def Kernel2Codes(desc_kernel, kernel_metas, all_codes, block_M, block_N, dtype,s
         title = f"_T{block_M}_{block_N}_S{sm_usage}_{dtype}"
         more = '_'.join(str(arg) for arg in args)
         kernel = func(block_M, block_N, dtype, *args)
-        print(kernel)   #assert isinstance(kernel, PrimFunc)
+        # print(kernel)   #assert isinstance(kernel, PrimFunc)
         # mod = kernel.get_module()
         # for k in mod.kernels:
         #     print(k.name, k.shared_memory)
@@ -393,7 +393,7 @@ def Utils_wraper(jConfig, path, header):
     batch = jConfig["train"]["batch"]
     ctx,embed = params["Ctx"],params["Embed"]   
     dtype = tl.bfloat16
-    block_M,block_N,sm_usage = tl_pick_tiling_shape(block_M=128, block_N = 128, dtype=dtype, scaleM=128, scaleN=0)    
+    block_M,block_N,sm_usage = tl_pick_tiling_shape(block_M=128, block_N = 128, dtype=dtype, func=lambda m, n: m*n )    
     Kernel2Codes([("delta_prelogits",inplace_scale_,0)], kernels, codes, block_M, block_N, dtype,sm_usage, 2*ctx, vocab )
 
     with open(path, "w") as f:

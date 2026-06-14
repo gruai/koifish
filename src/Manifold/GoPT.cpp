@@ -37,7 +37,7 @@ std::vector<hWIKI> WIKI::MakeInstance(const std::string nam_, struct CLI_params&
 }
 #endif
 
-double WIKI::InductLogits(const CLI_params& config, int nSampInBatch, std::vector<TOKEN_ID>& tok_ids, struct ggml_tensor* target_probs, int flag) {
+double WIKI::InductLogits(const CLI_params& config, int nSampInBatch, std::vector<TOKEN_ID>& tok_ids, struct ggml_tensor* target_label, int flag) {
     if (!isInduct())
         return -1.0;
 
@@ -45,7 +45,7 @@ double WIKI::InductLogits(const CLI_params& config, int nSampInBatch, std::vecto
     Decode(tok_ids, 0, 0x0, true);
     const float *all_logits = GetLogits(n_vocab, tok_ids.size(), 0), *logit;
     size_t k, j, i;                                                // exLogits->ne[0];
-    int n_ctx = config.n_ctx(), n_dialect = mapT2T.size(), token;  // target_probs->ne[1],
+    int n_ctx = config.n_ctx(), n_dialect = mapT2T.size(), token;  // target_label->ne[1],
     double a1, a2, nrm = 0;
     float *p = teach == WIKI::_TARGET ? new float[n_vocab] : nullptr, *target = nullptr;
     if (flag < 0) {  // CHILD_0909_WIKIS
@@ -77,7 +77,7 @@ double WIKI::InductLogits(const CLI_params& config, int nSampInBatch, std::vecto
                 assert(exLogits == nullptr);
                 for (j = 0; j < n_ctx; j++) {
                     logit  = from + j * n_vocab;
-                    target = (float*)target_probs->data + (k * n_ctx + j) * n_vocab;
+                    target = (float*)target_label->data + (k * n_ctx + j) * n_vocab;
                     //  SOFT_MAX_minus(n_vocab,target,logit);
                     // SOFT_MAX(n_vocab,p,logit);
                     for (a1 = 0, a2 = 0, i = 0; i < n_vocab; i++) {
@@ -397,9 +397,9 @@ GeneratOnPrompt::GeneratOnPrompt(CLI_params& cp_, arrHWIKI& wiki_, const Fish* h
         fish_1                    = (Fish*)fish_0;
         // fish_1 = Fish::MakeInstance("4GPT_",gang_param,wikis,Fish::ROLE_TYPE::SWARM_FOLLOWER,0x110);        //  isLocalInfer = flag==0x110;
         // fish_1->Dump(0x0);
-        int n_vocab = fish_1->nClass();
-        nCanTopK    = (samp_params.top_k < n_vocab) ? samp_params.top_k : n_vocab;
-        OutCLS* cls = ((Fish*)fish_0)->GetNeuron<OutCLS>("OutCLS", 0);
+        int n_vocab     = fish_1->nClass();
+        nCanTopK        = (samp_params.top_k < n_vocab) ? samp_params.top_k : n_vocab;
+        Head4Token* cls = ((Fish*)fish_0)->GetNeuron<Head4Token>("Head4Token", 0);
 
         cpuLogits.Init(n_vocab, true, cls->preLogits, 0x0);
         if (!samp_params.isSampleCPU) {
@@ -1088,8 +1088,8 @@ int GeneratOnPrompt::SampleOnBatch(hBATCH hBatch, float* fLoss, int B, int T, Sa
     try {
         Fish* dolphin = fish_1;
         assert(dolphin != nullptr);
-        int nVocab  = dolphin->nClass();  // fish_1 == nullptr ? wiki0->n_vocab : fish_1->nClass();
-        OutCLS* cls = ((Fish*)fish_0)->GetNeuron<OutCLS>("OutCLS", 0);
+        int nVocab      = dolphin->nClass();  // fish_1 == nullptr ? wiki0->n_vocab : fish_1->nClass();
+        Head4Token* cls = ((Fish*)fish_0)->GetNeuron<Head4Token>("Head4Token", 0);
         assert(cls != nullptr);
         int nSampDB = cls->preLogits->ne[0];
         assert(T == hBatch->hostToken->ne[0] && T == cls->preLogits->ne[1]);

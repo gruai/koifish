@@ -128,10 +128,10 @@ class Fish : public std::enable_shared_from_this<Fish> {
     size_t nParams = 0, szModel = 0;
 
     hGensor in_node = nullptr, out_node = nullptr;  // maybe GPU tensor
-    hGensor loss = nullptr, target_mask = nullptr, target_probs = nullptr, KQ_pos = nullptr, pos_embd = nullptr;
+    hGensor loss = nullptr, target_mask = nullptr, target_label = nullptr, KQ_pos = nullptr, pos_embd = nullptr;
     hGensor KQ_mask    = nullptr;  //  mask for 1 head, it will be broadcasted to all heads
     TokenEmbed* hEmbed = nullptr;
-    OutCLS* hCLS       = nullptr;  //  GetNeuron<OutCLS>("OutCLS",0);
+    Head4Token* hCLS   = nullptr;  //  GetNeuron<Head4Token>("Head4Token",0);
 
     // hGensor gate=nullptr;      //create@InitModel update@
     MixOfModels mom;
@@ -167,11 +167,10 @@ class Fish : public std::enable_shared_from_this<Fish> {
 
     virtual bool GGUF_Serialize(const std::string& path, bool isSave, int flag = 0x0);
     // Deprecated
-    // virtual bool SafeTensors_Serialize(bool isSave, int flag = 0x0);    
+    // virtual bool SafeTensors_Serialize(bool isSave, int flag = 0x0);
 
     int SAFETENSOR2Gensors(const std::string& path, K_SafeTensors* hst, int flag);
     // Load/Save model wight <=> SafeTensors files(.kun, HF*.safetensors, ...). Support multifiles in one folder!
-    
 
     MODEL_ARCH arch = MODEL_ARCH::_X_;
     virtual std::string NN2NAME(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix = "", int flag = 0x0);
@@ -256,6 +255,10 @@ class Fish : public std::enable_shared_from_this<Fish> {
         T* hS = hEDS->GetScheduler<T>();
         return hS;
     }
+    virtual hEDevices curDevice(int flag = 0x0) {
+        assert(hEDS != nullptr);
+        return hEDS;
+    }
 
     virtual std::string Name() { return name.c_str(); }
     virtual size_t MostMemSize(int typ = 0x0);
@@ -274,10 +277,6 @@ class Fish : public std::enable_shared_from_this<Fish> {
     // shortcut parameter of LLM models
     virtual void GetBT(int& B, int& T, int flag = 0x0) const;
 
-    virtual hEDevices curDevice(int flag = 0x0) {
-        assert(hEDS != nullptr);
-        return hEDS;
-    }
     virtual hKVCache curCache(int flag = 0x0) { return hCache; }
     virtual void* GetGGCTX(int typ = 0x0) {
         /*switch(typ){
@@ -323,8 +322,8 @@ class Fish : public std::enable_shared_from_this<Fish> {
     virtual void Statistic(int typ, int flag = 0x0);
     // virtual void CreateWiki(int flag=0x0)   {}
 
-    // return target_probs = OutCLS->target
-    virtual hGensor Target() { return target_probs; }
+    // return target_label = Head4Token->target
+    virtual hGensor Target() { return target_label; }
     virtual hGensor Output() {
         assert(out_node != nullptr);
         return out_node;
@@ -444,7 +443,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     friend class SelfAttention;
     friend class FFN;
     friend class ROPE;
-    friend class OutCLS;
+    friend class Head4Token;
     friend class TokenEmbed;
     friend class SAM_encoder;
     friend class NLP_AutoRegressive;

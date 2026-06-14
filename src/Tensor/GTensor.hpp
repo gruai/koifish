@@ -389,7 +389,8 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
 
     char name[MAX_NAME] = "\0";
     std::string Alias(int flag = 0x0);
-    size_t hash = 0x0;      //  std::hash<std::string>
+    uint64_t hash64 = 0x0;
+    // size_t hash = 0x0;      //  std::hash<std::string>
     void* extra = nullptr;  // extra things
 
     // struct ggml_tensor* GG();

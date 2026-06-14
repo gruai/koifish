@@ -79,7 +79,7 @@ float* T_generate_Cooperative(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned
     // 	kernel_rotate_sink<<<dim3(kv_sink * kv_dim / 64, p->n_layers), 32, 0, stream>>>(
     // 	    PROF_TOKEN(kv_sink * kv_dim * sizeof(KVT)), kv_dim, (KVT*)args.key_cache, p->head_dim, kv_sink, log2(p->rope_theta), p->seq_len, p->rotary_dim);
     // }
-    OutCLS* cls             = hFish->GetNeuron<OutCLS>("OutCLS", 0);
+    Head4Token* cls             = hFish->GetNeuron<Head4Token>("Head4Token", 0);
     LayerNormal* lnf        = hFish->GetNeuron<LayerNormal>("LayerNormal", 0);
     float* logits           = TO<float>(cls->preLogits);
     float* rms_final_weight = TO<float>(lnf->w);  // (dim,);
@@ -101,7 +101,7 @@ float* T_generate_Cooperative(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned
         PrintTensor<AT>("att", args.att, true, dim, 1);  // why it's inf ???
         PrintTensor<AT>("x_qkv", args.x, true, dim, 1);
         cudaCheck(err);
-        SYNC_DEVICE();
+        SYNC_STREAM();
         // exit(-13);
         double now = GST_ms();
         FFN* ffn   = hFish->GetNeuron<FFN>("FFN", l);
@@ -115,7 +115,7 @@ float* T_generate_Cooperative(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned
             // T_forward_ffn<__nv_fp8_e5m2, __half, AT><<<dGRID, dBLOCK, smemPB, main_stream>>>(&args);	//why its slower than cudaLaunchCooperativeKernel
             cudaCheck(err);
         }
-        SYNC_DEVICE();
+        SYNC_STREAM();
         // SUM::tX1 += GST_ms() - now;
         PrintTensor<AT>("x_ffn", args.x, true, dim, 1);
         // args.AfterLayer(l);
@@ -128,7 +128,7 @@ float* T_generate_Cooperative(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned
     // template <typename T, typename AT> (uint64_t, float* xout, AT* x, T* w, float* rms_weight, int n, int d, float norm_eps, bool norm_ln)
     kernel_output<__nv_fp8_e5m2, AT><<<dGRID, dBLOCK, smemPB, main_stream>>>(pTok, logits, args.x, TO<__nv_fp8_e5m2>(out_weight), rms_final_weight, dim,
                                                                              vocab_size, args.norm_eps, args.norm_ln);
-    SYNC_DEVICE();
+    SYNC_STREAM();
     cudaCheck(cudaGetLastError());  // check for kernel launch errors; they might fail with OOM due to lazy kernel compilation
 
     // cls->preLogits->Print("logits",0,-1,dim);
@@ -233,7 +233,7 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
         // PrintTensor<AT>("token_embed", hQwen->x, true, dim, 1, 1, 1, 0);
     }
 
-    OutCLS* cls         = hFish->GetNeuron<OutCLS>("OutCLS", 0);
+    Head4Token* cls     = hFish->GetNeuron<Head4Token>("Head4Token", 0);
     floatLogits* logits = TO<floatLogits>(cls->preLogits);
     LayerNormal* lnf    = hFish->GetNeuron<LayerNormal>("LayerNormal", 0);
     // PrintTensor<float>("x_0",hQwen->x,true,dim,1);	uint32_t,__nv_fp8_e5m2,float

@@ -19,7 +19,7 @@ void SUM::GPU_TIME(double& a, const double b, int flag) {
     return;
 #ifndef NDEBUG
     // cudaCheck(cudaStreamSynchronize(main_stream));
-    SYNC_DEVICE();  // Ensure all GPU work is complete, slow, only for debug version
+    SYNC_STREAM();  // Ensure all GPU work is complete, slow, only for debug version
 #endif
     a += GST_us() - b;
 }
@@ -139,6 +139,7 @@ bool EDGE_DEVICES::InitGPU(const CLI_params& hparams, int flag) {
     if (!InitCUDA(hparams, this, flag))
         return false;
 #endif
+    // K_EXIT(KOIFISH_EXIT_DEBUG);  // Only for testing gurad
     return true;
 }
 
@@ -161,8 +162,14 @@ void CUDA_cleanup() {
 #ifdef __USE_CUDNN__
     DestroyCUDNN();
 #endif
-    if (main_stream != nullptr)
-        cudaCheck(cudaStreamDestroy(main_stream));
+    if (main_stream != nullptr) {
+        cudaError_t error = cudaStreamDestroy(main_stream);
+        if (error != cudaSuccess) {
+            _ERROR("[CUDA ERROR] @CUDA_cleanup_ error=\"%s\" (%s code=%d)\n", cudaGetErrorString(error), cudaGetErrorName(error), error);
+            exit(KOIFISH_CUDA_CHECK);
+        }
+    }
+
     cudaCheck(cudaDeviceReset());
     g_cuda_cleaned = true;
 }

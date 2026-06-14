@@ -76,7 +76,10 @@ class EDGE_DEVICES {
         assert(hS != nullptr);
         return hS;
     }
+
+    virtual bool FreeScheduler();
 };
 typedef shared_ptr<EDGE_DEVICES> hEDevices;
 
-bool SYNC_DEVICE(const std::string& sX = "", int flag = 0x0);
+bool SYNC_DEVICE_heavy(const std::string& sX = "", int flag = 0x0);
+bool SYNC_STREAM(const std::string& sX = "", int flag = 0x0);

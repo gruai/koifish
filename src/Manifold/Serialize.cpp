@@ -18,6 +18,7 @@
 #include "../TokenSet/Dictionary.hpp"
 #include "../Utils/GST_Application.hpp"
 #include "../Utils/GST_os.hpp"
+#include "../Utils/rapidhash.h"
 #include "Fish.hpp"
 
 #if !defined(SAFETENSORS_CPP_NO_IMPLEMENTATION)
@@ -141,7 +142,7 @@ SHAPE JSON2SHAPE(const JSON& jval) {
 */
 int GTensor::LoadParam(K_SafeTensors* hst, const std::string& name_, hGTensor kunsor, void* bytes_ptr, size_t bytes_size, int flag) {
     //  "tokenizer.tokens" model.layers.0.mlp.down_proj.qweight   "model.embed_tokens.weight" t->name,
-    if (G_Has_(name, {"model.embed_tokens.weight"})) {  //  model.layers.0.self_attn.q_proj.qweight
+    if (G_Has_(name, {"model.layers.0.mlp.down_proj.weight"})) {  //  model.layers.0.self_attn.q_proj.qweight
         DEBUG_HERE;
     }
     if (kunsor == nullptr) {  // load from host_data of mmp
@@ -487,7 +488,7 @@ bool K_SafeTensors::_to_ofs(std::ofstream& ofs, size_t& szAll, std::string* warn
                     } else {
                         assert(t->data != nullptr && t->gm != nullptr);
                         // t->Print(t->name, 0, -1);    //only for debug
-                        if (nExp > 0) { //nExp = szTmp / sz1
+                        if (nExp > 0) {  // nExp = szTmp / sz1
                             D2H(gBUFF->tmpTernary->data, tmp, szTmp);
                         } else {
                             t->SerialGamaData("", tmp, true, szTmp);
@@ -803,8 +804,8 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
                 std::ofstream o(jPath);
                 o << std::setw(4) << jsConfig << std::endl;
             }
-            _INFO("\r<<<<<< ST_SERIALIZE save @\"%s\"(\"%s\") nInit=%ld sz=%.6gM flag=%d T=%.4gs\n", path.c_str(), jPath.empty() ? "" : "+json", nInit,
-                  szOFS / 1.0e6, flag, (GST_ms() - t0) / 1000.0);
+            _INFO("\r<<<<<< ST_SERIALIZE save @\"%s\"(\"%s\") nInit=%ld sz=%.6gM flag=%d T=%s\n", path.c_str(), jPath.empty() ? "" : "+json", nInit,
+                  szOFS / 1.0e6, flag, GST_timeStr().c_str() );//(GST_ms() - t0) / 1000.0
             return true;
         } else {
             int nSerialT = SAFETENSOR2Gensors(path, hst, 0x0);
@@ -865,8 +866,8 @@ bool Fish::LoadFolderOfST(int stType, int flag) {
     bool isFromCKP = !config.ckp_in.empty();  // Load checkpoint
     CheckPoint_Params ckp;                    //  may be {}
     if (!isFromCKP) {                         // otherwise, load HF/Safetensors
-        assert(!config.model.sSTPath.empty());
-        sFolder = config.model.sSTPath;
+        assert(!config.model.pathCheckPoint.empty());
+        sFolder = config.model.pathCheckPoint;
     } else {
         ckp     = config.ckp_in[0];
         sFolder = ckp.sModelPath;  // FullPath(false);
@@ -874,11 +875,10 @@ bool Fish::LoadFolderOfST(int stType, int flag) {
     }
 
     std::vector<std::string> paths = FilesOfDir(sFolder, {"safetensors", "kun"}, 0x0);
-    if (paths.empty()){
+    if (paths.empty()) {
         _WARN("\r[LoadFolderOfST] failed!  please check {\"safetensors\", \"kun\"} files @\"%s\"!\n", sFolder.c_str());
         return false;
     }
-        
 
     isLoadCheckpoint = true;  //  HF/Safetensors is also checkpoint
     int nSerialT     = 0, curSerialT;
@@ -928,7 +928,7 @@ bool Fish::LoadFolderOfST(int stType, int flag) {
         }
     }
 
-    // std::string fpCheck = sSTPath;  //ckp != nullptr ? ckp->sModelPath : "";
+    // std::string fpCheck = pathCheckPoint;  //ckp != nullptr ? ckp->sModelPath : "";
     if (!isLoadCheckpoint) {
         _WARN("\r[LoadFolderOfST] failed!  please check {\"safetensors\", \"kun\"}  files @\"%s\"!\n", sFolder.c_str());
         return false;
@@ -939,41 +939,6 @@ bool Fish::LoadFolderOfST(int stType, int flag) {
 
     // assert(vendor == "gruai");
     _INFO("\r[LoadFolderOfST] OK @\"%s\"\n", sFolder.c_str());
-    return true;
-}
-
-
-/**
-The exact behavior can vary based on model version, configuration, and prompt design
-1. enable_thinking
-    If ask "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n": The model generates a response starting with <think>(internal thinking) because that's how it was trained for reasoning tasks
-    If ask "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n": The model sees that the "thinking" part (<think>followed by \n\n</think>\n\n) is already provided​ in the prompt
-The model interprets this as: the assistant has already done its thinking, and now it's at the point of producing the final answer
-Since the thinking is complete (marked by </think>), the model just continues with the actual response.
-
-2. For raw prompt(like "hello") alone without <|im_start|> / <|im_end|> / `` template markers
-Qwen3’s tokenizer + generation pipeline doesn’t detect a valid chat turn boundary
-The model falls into:auto-completing random internal reasoning tokens spitting out garbled thought fragments, repeated words, nonsense rambling
-it’s trying to "continue raw text" instead of "respond to user chat"
- */
-bool MODEL_CARD::InitChatTemplate(CLI_params* hConfig, int flag) {
-    // string fPrompt = sCardPath + "template_user_thinking.txt", fSysPromt = sCardPath + "template_system_thinking.txt";
-    // if (enable_thinking) {  // load the "thinking" versions of the templates
-
-    // } else {  // load the standard versions of the templates
-    //     fPrompt = sCardPath + "template_user.txt", fSysPromt = sCardPath + "template_system.txt";
-    // }
-    // prompt_template        = FILE2STR(fPrompt);
-    // system_prompt_template = FILE2STR(fSysPromt);
-
-    if (enable_thinking) {  //
-        prompt_template        = "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n";
-        system_prompt_template = "<|im_start|>system\n%s<|im_end|>\n<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n";
-    } else {  //
-        prompt_template        = "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
-        system_prompt_template = "<|im_start|>system\n%s<|im_end|>\n<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
-    }
-
     return true;
 }
 

@@ -224,9 +224,59 @@ bool GTensor::SetTernary(typNUMBER tpT_, int flag) {
     return ReShape(shape, tpT_);
 }*/
 
-float GTensor::Get(int i, int flag) const {
-    assert(0);
-    return 0.f;
+float GTensor::Get(int pos, int flag) const {
+    float fRet  = 0.0;
+    hBITARR src = (hBITARR)data;
+    if (BIT_TEST(flags, F_GPU)) {
+        assert(0 && "Copy tensor from device to host & only get one element is too slow!");
+        cudaError_t error = cudaDeviceSynchronize();
+        if (error != cudaSuccess) {
+            _INFO("_SYNC_DEVICE_ err=\"%s\" (%s code=%d)\t%s\n", cudaGetErrorString(error), cudaGetErrorName(error), error, "");
+            assert(0 && "_SYNC_DEVICE_@ GTensor::Print");
+            exit(KOIFISH_EXIT_PRINT);
+        }
+        hBITARR hData = new BIT_8[nByte()];
+        D2H(src, hData, nByte());
+        src = hData;
+    }
+    switch (type) {
+        case typNUMBER::T_BINARY_3:
+        case typNUMBER::T_BINARY_TILE:
+            assert(0);
+            break;
+        case typNUMBER::Q4: {
+        } break;
+        case typNUMBER::BOOL1:
+        case typNUMBER::T_BINARY:
+        case typNUMBER::T_SIGN: {
+        } break;
+        case typNUMBER::Q3:
+
+            break;
+        case typNUMBER::Q2:
+
+            break;
+        case typNUMBER::F8E5M2:
+
+            break;
+        case typNUMBER::F16:
+
+            break;
+        case typNUMBER::BF16:
+
+            break;
+        case typNUMBER::F32:
+
+            break;
+        case typNUMBER::I32: {
+            int32_t* host_dat = (int32_t*)src;
+            fRet              = (float)host_dat[pos];
+        } break;
+        default:
+            assert(0);
+            break;
+    }
+    return fRet;
 }
 
 int GTensor::GetDynamicEmbed(int flag) const {
@@ -331,7 +381,7 @@ bool GTensor::ShareMemory(hGTensor src, int flag) {
 }
 
 hGTensor GTensor::CrossEntropy(const hGTensor b, int flag) {
-    // auto cur = ggml_cross_entropy_loss(nullptr,(struct ggml_tensor *)gg, b->GG() );      // ggml_cross_entropy_loss_1(_ctx, cur, target_probs);
+    // auto cur = ggml_cross_entropy_loss(nullptr,(struct ggml_tensor *)gg, b->GG() );      // ggml_cross_entropy_loss_1(_ctx, cur, target_label);
     // return GTensor::NEW_(cur);
     return nullptr;
 }
@@ -531,7 +581,7 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
     }
     size_t szHost = nEle > 0 ? (nEle * BitPE(tpSrc)) / 8 : szData + szGama;
     if (isDevice) {  // so many crash when print
-        // SYNC_DEVICE();
+        // SYNC_STREAM();
         cudaError_t error = cudaDeviceSynchronize();
         if (error != cudaSuccess) {
             _INFO("_SYNC_DEVICE_ err=\"%s\" (%s code=%d)\t%s\n", cudaGetErrorString(error), cudaGetErrorName(error), error, "");
@@ -665,8 +715,8 @@ bool GTensor::DumpX(int tpDump, const string& title, int flag) const {
                 _WARN0(" NO ALLOC ");
                 _INFO(" \t[%" PRId64 " %" PRId64 " %" PRId64 " %" PRId64 " %s] ", ne[0], ne[1], ne[2], ne[3], cNameOf(type));
             } else
-                _INFO("\t%s %-36s %-4s szAlloc=%6gM(gama=%.3g,M=%.3g,V=%.3g)\t[%" PRId64 " %" PRId64 " %" PRId64 " %" PRId64 " %s] ", title.c_str(), name, A,
-                      szUse / 1.0e6, szGama / 1.0e6, szM / 1.0e6, szV / 1.0e6, ne[0], ne[1], ne[2], ne[3], cNameOf(type));
+                _INFO("  %s %-40.40s %-4s 0x%016llX %6gM(gama=%.3g,M=%.3g,V=%.3g)\t[%" PRId64 " %" PRId64 " %" PRId64 " %" PRId64 " %s] ", title.c_str(), name, A,
+                      hash64, szUse / 1.0e6, szGama / 1.0e6, szM / 1.0e6, szV / 1.0e6, ne[0], ne[1], ne[2], ne[3], cNameOf(type));
             if (disq.err > 0)
                 _INFO("eQ=%.3g ", disq.err);
             _INFO("\n");

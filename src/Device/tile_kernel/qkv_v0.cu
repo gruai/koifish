@@ -1,7 +1,15 @@
+#if defined(_MSC_VER) && !defined(__clang__) && _MSC_VER < 1940
+#define _tl_orig_alignas alignas
+#define alignas(N) _tl_orig_alignas((N) <= 64 ? (N) : 64)
+#include <cuda.h>
+#undef alignas
+#define alignas _tl_orig_alignas
+#endif
 #include <tl_templates/cuda/instruction/mma.h>
 #include <tl_templates/cuda/gemm.h>
 #include <tl_templates/cuda/copy.h>
 #include <tl_templates/cuda/reduce.h>
+#include <tl_templates/cuda/scan.h>
 #include <tl_templates/cuda/ldsm.h>
 #include <tl_templates/cuda/threadblock_swizzle.h>
 #ifdef ENABLE_BF16
@@ -10,6 +18,15 @@
 
 extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfloat16(const float* __restrict__ Delta, const bfloat16_t* __restrict__ K, const bfloat16_t* __restrict__ Q, const bfloat16_t* __restrict__ V, float* __restrict__ dK, const bfloat16_t* __restrict__ dO, float* __restrict__ dQ, float* __restrict__ dV, const float* __restrict__ lse) {
   extern __shared__ __align__(1024) uchar buf_dyn_shmem[];
+  void* K_shared = ((void*)((char*)buf_dyn_shmem + 0));
+  void* dk_shared = ((void*)((char*)buf_dyn_shmem + 0));
+  void* dv_shared = ((void*)((char*)buf_dyn_shmem + 0));
+  void* V_shared = ((void*)((char*)buf_dyn_shmem + 16384));
+  void* lse_shared = ((void*)((char*)buf_dyn_shmem + 32768));
+  void* do_1 = ((void*)((char*)buf_dyn_shmem + 32896));
+  void* delta = ((void*)((char*)buf_dyn_shmem + 41088));
+  void* q = ((void*)((char*)buf_dyn_shmem + 41216));
+  void* dsT_shared = ((void*)((char*)buf_dyn_shmem + 49408));
   float dv[64];
   float dk[64];
   float qkT[8];
@@ -21,11 +38,11 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
   float delta_local_cast_2[2];
   #pragma unroll
   for (int i = 0; i < 8; ++i) {
-    *(uint4*)(((bfloat16_t*)buf_dyn_shmem) + ((((((((((int)threadIdx.x) & 15) >> 3) * 4096) + (i * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8))) = *(uint4*)(K + ((((((((int)blockIdx.z) * 1048576) + (((int)blockIdx.y) * 65536)) + (i * 8192)) + ((((int)threadIdx.x) >> 4) * 1024)) + ((((int)blockIdx.x) >> 1) * 128)) + ((((int)threadIdx.x) & 15) * 8)));
+    *(uint4*)(((bfloat16_t*)K_shared) + ((((((((((int)threadIdx.x) & 15) >> 3) * 4096) + (i * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8))) = *(uint4*)(K + ((((((((int)blockIdx.z) * 1048576) + (((int)blockIdx.y) * 65536)) + (i * 8192)) + ((((int)threadIdx.x) >> 4) * 1024)) + ((((int)blockIdx.x) >> 1) * 128)) + ((((int)threadIdx.x) & 15) * 8)));
   }
   #pragma unroll
   for (int i_1 = 0; i_1 < 8; ++i_1) {
-    *(uint4*)(((bfloat16_t*)buf_dyn_shmem) + (((((((((((int)threadIdx.x) & 15) >> 3) * 4096) + (i_1 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 8192)) = *(uint4*)(V + ((((((((int)blockIdx.z) * 1048576) + (((int)blockIdx.y) * 65536)) + (i_1 * 8192)) + ((((int)threadIdx.x) >> 4) * 1024)) + ((((int)blockIdx.x) >> 1) * 128)) + ((((int)threadIdx.x) & 15) * 8)));
+    *(uint4*)(((bfloat16_t*)V_shared) + ((((((((((int)threadIdx.x) & 15) >> 3) * 4096) + (i_1 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8))) = *(uint4*)(V + ((((((((int)blockIdx.z) * 1048576) + (((int)blockIdx.y) * 65536)) + (i_1 * 8192)) + ((((int)threadIdx.x) >> 4) * 1024)) + ((((int)blockIdx.x) >> 1) * 128)) + ((((int)threadIdx.x) & 15) * 8)));
   }
   #pragma unroll
   for (int i_2 = 0; i_2 < 16; ++i_2) {
@@ -42,25 +59,25 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
   tl::cp_async_wait<0>();
   __syncthreads();
   if (((int)threadIdx.x) < 16) {
-    tl::cp_async_gs<4>((&(((float*)buf_dyn_shmem)[(((int)threadIdx.x) + 8192)])), (&(lse[((((((int)blockIdx.z) * 16384) + (((int)blockIdx.x) * 1024)) + (((int)blockIdx.y) * 64)) + ((int)threadIdx.x))])));
+    tl::cp_async_gs<4>((&(((float*)lse_shared)[((int)threadIdx.x)])), (&(lse[((((((int)blockIdx.z) * 16384) + (((int)blockIdx.x) * 1024)) + (((int)blockIdx.y) * 64)) + ((int)threadIdx.x))])));
   }
   tl::cp_async_commit();
   tl::cp_async_wait<0>();
   __syncthreads();
   #pragma unroll
   for (int i_4 = 0; i_4 < 2; ++i_4) {
-    tl::cp_async_gs<16>((&(((bfloat16_t*)buf_dyn_shmem)[(((((((((((int)threadIdx.x) & 15) >> 3) * 1024) + (i_4 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 16448)])), (&(dO[((((((((int)blockIdx.z) * 2097152) + (((int)blockIdx.y) * 131072)) + (i_4 * 16384)) + ((((int)threadIdx.x) >> 4) * 2048)) + (((int)blockIdx.x) * 128)) + ((((int)threadIdx.x) & 15) * 8))])));
+    tl::cp_async_gs<16>((&(((bfloat16_t*)do_1)[((((((((((int)threadIdx.x) & 15) >> 3) * 1024) + (i_4 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8))])), (&(dO[((((((((int)blockIdx.z) * 2097152) + (((int)blockIdx.y) * 131072)) + (i_4 * 16384)) + ((((int)threadIdx.x) >> 4) * 2048)) + (((int)blockIdx.x) * 128)) + ((((int)threadIdx.x) & 15) * 8))])));
   }
   tl::cp_async_commit();
   tl::cp_async_wait<0>();
   __syncthreads();
   if (((int)threadIdx.x) < 16) {
-    tl::cp_async_gs<4>((&(((float*)buf_dyn_shmem)[(((int)threadIdx.x) + 10272)])), (&(Delta[((((((int)blockIdx.z) * 16384) + (((int)blockIdx.x) * 1024)) + (((int)blockIdx.y) * 64)) + ((int)threadIdx.x))])));
+    tl::cp_async_gs<4>((&(((float*)delta)[((int)threadIdx.x)])), (&(Delta[((((((int)blockIdx.z) * 16384) + (((int)blockIdx.x) * 1024)) + (((int)blockIdx.y) * 64)) + ((int)threadIdx.x))])));
   }
   tl::cp_async_commit();
   #pragma unroll
   for (int i_5 = 0; i_5 < 2; ++i_5) {
-    tl::cp_async_gs<16>((&(((bfloat16_t*)buf_dyn_shmem)[(((((((((((int)threadIdx.x) & 15) >> 3) * 1024) + (i_5 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 20608)])), (&(Q[((((((((int)blockIdx.z) * 2097152) + (((int)blockIdx.y) * 131072)) + (i_5 * 16384)) + ((((int)threadIdx.x) >> 4) * 2048)) + (((int)blockIdx.x) * 128)) + ((((int)threadIdx.x) & 15) * 8))])));
+    tl::cp_async_gs<16>((&(((bfloat16_t*)q)[((((((((((int)threadIdx.x) & 15) >> 3) * 1024) + (i_5 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8))])), (&(Q[((((((((int)blockIdx.z) * 2097152) + (((int)blockIdx.y) * 131072)) + (i_5 * 16384)) + ((((int)threadIdx.x) >> 4) * 2048)) + (((int)blockIdx.x) * 128)) + ((((int)threadIdx.x) & 15) * 8))])));
   }
   tl::cp_async_commit();
   tl::cp_async_wait<0>();
@@ -68,25 +85,25 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
   tl::cp_async_wait<0>();
   __syncthreads();
   if (((int)threadIdx.x) < 16) {
-    tl::cp_async_gs<4>((&(((float*)buf_dyn_shmem)[(((int)threadIdx.x) + 8208)])), (&(lse[(((((((int)blockIdx.z) * 16384) + (((int)blockIdx.x) * 1024)) + (((int)blockIdx.y) * 64)) + ((int)threadIdx.x)) + 16)])));
+    tl::cp_async_gs<4>((&(((float*)lse_shared)[(((int)threadIdx.x) + 16)])), (&(lse[(((((((int)blockIdx.z) * 16384) + (((int)blockIdx.x) * 1024)) + (((int)blockIdx.y) * 64)) + ((int)threadIdx.x)) + 16)])));
   }
   tl::cp_async_commit();
   tl::cp_async_wait<0>();
   __syncthreads();
   #pragma unroll
   for (int i_6 = 0; i_6 < 2; ++i_6) {
-    tl::cp_async_gs<16>((&(((bfloat16_t*)buf_dyn_shmem)[(((((((((((int)threadIdx.x) & 15) >> 3) * 1024) + (i_6 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 18496)])), (&(dO[(((((((((int)blockIdx.z) * 2097152) + (((int)blockIdx.y) * 131072)) + (i_6 * 16384)) + ((((int)threadIdx.x) >> 4) * 2048)) + (((int)blockIdx.x) * 128)) + ((((int)threadIdx.x) & 15) * 8)) + 32768)])));
+    tl::cp_async_gs<16>((&(((bfloat16_t*)do_1)[(((((((((((int)threadIdx.x) & 15) >> 3) * 1024) + (i_6 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 2048)])), (&(dO[(((((((((int)blockIdx.z) * 2097152) + (((int)blockIdx.y) * 131072)) + (i_6 * 16384)) + ((((int)threadIdx.x) >> 4) * 2048)) + (((int)blockIdx.x) * 128)) + ((((int)threadIdx.x) & 15) * 8)) + 32768)])));
   }
   tl::cp_async_commit();
   tl::cp_async_wait<0>();
   __syncthreads();
   if (((int)threadIdx.x) < 16) {
-    tl::cp_async_gs<4>((&(((float*)buf_dyn_shmem)[(((int)threadIdx.x) + 10288)])), (&(Delta[(((((((int)blockIdx.z) * 16384) + (((int)blockIdx.x) * 1024)) + (((int)blockIdx.y) * 64)) + ((int)threadIdx.x)) + 16)])));
+    tl::cp_async_gs<4>((&(((float*)delta)[(((int)threadIdx.x) + 16)])), (&(Delta[(((((((int)blockIdx.z) * 16384) + (((int)blockIdx.x) * 1024)) + (((int)blockIdx.y) * 64)) + ((int)threadIdx.x)) + 16)])));
   }
   tl::cp_async_commit();
   #pragma unroll
   for (int i_7 = 0; i_7 < 2; ++i_7) {
-    tl::cp_async_gs<16>((&(((bfloat16_t*)buf_dyn_shmem)[(((((((((((int)threadIdx.x) & 15) >> 3) * 1024) + (i_7 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 22656)])), (&(Q[(((((((((int)blockIdx.z) * 2097152) + (((int)blockIdx.y) * 131072)) + (i_7 * 16384)) + ((((int)threadIdx.x) >> 4) * 2048)) + (((int)blockIdx.x) * 128)) + ((((int)threadIdx.x) & 15) * 8)) + 32768)])));
+    tl::cp_async_gs<16>((&(((bfloat16_t*)q)[(((((((((((int)threadIdx.x) & 15) >> 3) * 1024) + (i_7 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 2048)])), (&(Q[(((((((((int)blockIdx.z) * 2097152) + (((int)blockIdx.y) * 131072)) + (i_7 * 16384)) + ((((int)threadIdx.x) >> 4) * 2048)) + (((int)blockIdx.x) * 128)) + ((((int)threadIdx.x) & 15) * 8)) + 32768)])));
   }
   tl::cp_async_commit();
   for (int k = (((int)blockIdx.y) * 4); k < 62; ++k) {
@@ -101,8 +118,8 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
       bfloat16_t A_local[8];
       bfloat16_t B_local[8];
       for (int ki = 0; ki < 8; ++ki) {
-        tl::ptx_ldmatrix_x4((&(((bfloat16_t*)buf_dyn_shmem)[(((((ki >> 2) * 4096) + ((((int)threadIdx.x) >> 5) * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(A_local[0])));
-        tl::ptx_ldmatrix_x4((&(((bfloat16_t*)buf_dyn_shmem)[(((((((((k & 1) * 2048) + ((ki >> 2) * 1024)) + (((((int)threadIdx.x) & 31) >> 4) * 512)) + ((((int)threadIdx.x) & 7) * 64)) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 20608)])), (&(B_local[0])));
+        tl::ptx_ldmatrix_x4((&(((bfloat16_t*)K_shared)[(((((ki >> 2) * 4096) + ((((int)threadIdx.x) >> 5) * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(A_local[0])));
+        tl::ptx_ldmatrix_x4((&(((bfloat16_t*)q)[((((((((k & 1) * 2048) + ((ki >> 2) * 1024)) + (((((int)threadIdx.x) & 31) >> 4) * 512)) + ((((int)threadIdx.x) & 7) * 64)) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + (((int)threadIdx.x) & 1)) & 1) * 8))])), (&(B_local[0])));
         tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(qkT + 0), reinterpret_cast<const unsigned*>(A_local + 0), reinterpret_cast<const unsigned*>(B_local + 0));
         tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(qkT + 4), reinterpret_cast<const unsigned*>(A_local + 0), reinterpret_cast<const unsigned*>(B_local + 4));
       }
@@ -119,7 +136,7 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
           float2 v__1 = make_float2(broadcast_var_3, broadcast_var_3);
           __3.x = (v_.x*v__1.x);
           __3.y = (v_.y*v__1.y);
-        float2 v__2 = *(float2*)(((float*)buf_dyn_shmem) + (((((k & 1) * 16) + ((i_9 >> 1) * 8)) + ((((int)threadIdx.x) & 3) * 2)) + 8192));
+        float2 v__2 = *(float2*)(((float*)lse_shared) + ((((k & 1) * 16) + ((i_9 >> 1) * 8)) + ((((int)threadIdx.x) & 3) * 2)));
         __2.x = (__3.x-v__2.x);
         __2.y = (__3.y-v__2.y);
       __1.x = exp2f(__2.x);
@@ -128,7 +145,7 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
     }
     __syncthreads();
     if (((int)threadIdx.x) < 16) {
-      tl::cp_async_gs<4>((&(((float*)buf_dyn_shmem)[((((k & 1) * 16) + ((int)threadIdx.x)) + 8192)])), (&(lse[(((((((int)blockIdx.z) * 16384) + (((int)blockIdx.x) * 1024)) + (k * 16)) + ((int)threadIdx.x)) + 32)])));
+      tl::cp_async_gs<4>((&(((float*)lse_shared)[(((k & 1) * 16) + ((int)threadIdx.x))])), (&(lse[(((((((int)blockIdx.z) * 16384) + (((int)blockIdx.x) * 1024)) + (k * 16)) + ((int)threadIdx.x)) + 32)])));
     }
     tl::cp_async_commit();
     #pragma unroll
@@ -152,8 +169,8 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
       bfloat16_t A_local_1[8];
       bfloat16_t B_local_1[8];
       for (int ki_1 = 0; ki_1 < 8; ++ki_1) {
-        tl::ptx_ldmatrix_x4((&(((bfloat16_t*)buf_dyn_shmem)[((((((ki_1 >> 2) * 4096) + ((((int)threadIdx.x) >> 5) * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_1 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_1 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511)) + 8192)])), (&(A_local_1[0])));
-        tl::ptx_ldmatrix_x4((&(((bfloat16_t*)buf_dyn_shmem)[(((((((((k & 1) * 2048) + ((ki_1 >> 2) * 1024)) + (((((int)threadIdx.x) & 31) >> 4) * 512)) + ((((int)threadIdx.x) & 7) * 64)) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_1 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_1 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 16448)])), (&(B_local_1[0])));
+        tl::ptx_ldmatrix_x4((&(((bfloat16_t*)V_shared)[(((((ki_1 >> 2) * 4096) + ((((int)threadIdx.x) >> 5) * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_1 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_1 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(A_local_1[0])));
+        tl::ptx_ldmatrix_x4((&(((bfloat16_t*)do_1)[((((((((k & 1) * 2048) + ((ki_1 >> 2) * 1024)) + (((((int)threadIdx.x) & 31) >> 4) * 512)) + ((((int)threadIdx.x) & 7) * 64)) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_1 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_1 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + (((int)threadIdx.x) & 1)) & 1) * 8))])), (&(B_local_1[0])));
         tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(dsT + 0), reinterpret_cast<const unsigned*>(A_local_1 + 0), reinterpret_cast<const unsigned*>(B_local_1 + 0));
         tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(dsT + 4), reinterpret_cast<const unsigned*>(A_local_1 + 0), reinterpret_cast<const unsigned*>(B_local_1 + 4));
       }
@@ -169,7 +186,7 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
     {
       bfloat16_t B_local_2[64];
       for (int i_13 = 0; i_13 < 8; ++i_13) {
-        tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)buf_dyn_shmem)[((((((k & 1) * 2048) + ((i_13 >> 2) * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((i_13 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (i_13 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511)) + 16448)])), (&(B_local_2[(i_13 * 8)])));
+        tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)do_1)[(((((k & 1) * 2048) + ((i_13 >> 2) * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((i_13 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (i_13 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(B_local_2[(i_13 * 8)])));
       }
       for (int j = 0; j < 8; ++j) {
         tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(dv + (j * 8)), reinterpret_cast<const unsigned*>(qkT_cast + 0), reinterpret_cast<const unsigned*>(B_local_2 + (j * 8)));
@@ -179,14 +196,14 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
     __syncthreads();
     #pragma unroll
     for (int i_14 = 0; i_14 < 2; ++i_14) {
-      tl::cp_async_gs<16>((&(((bfloat16_t*)buf_dyn_shmem)[(((((((((k & 1) * 2048) + (((((int)threadIdx.x) & 15) >> 3) * 1024)) + (i_14 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 16448)])), (&(dO[(((((((((int)blockIdx.z) * 2097152) + (k * 32768)) + (i_14 * 16384)) + ((((int)threadIdx.x) >> 4) * 2048)) + (((int)blockIdx.x) * 128)) + ((((int)threadIdx.x) & 15) * 8)) + 65536)])));
+      tl::cp_async_gs<16>((&(((bfloat16_t*)do_1)[((((((((k & 1) * 2048) + (((((int)threadIdx.x) & 15) >> 3) * 1024)) + (i_14 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8))])), (&(dO[(((((((((int)blockIdx.z) * 2097152) + (k * 32768)) + (i_14 * 16384)) + ((((int)threadIdx.x) >> 4) * 2048)) + (((int)blockIdx.x) * 128)) + ((((int)threadIdx.x) & 15) * 8)) + 65536)])));
     }
     tl::cp_async_commit();
     tl::cp_async_wait<1>();
     __syncthreads();
     #pragma unroll
     for (int i_15 = 0; i_15 < 4; ++i_15) {
-      *(float2*)(delta_local_cast_1 + 0) = *(float2*)(((float*)buf_dyn_shmem) + (((((k & 1) * 16) + ((i_15 >> 1) * 8)) + ((((int)threadIdx.x) & 3) * 2)) + 10272));
+      *(float2*)(delta_local_cast_1 + 0) = *(float2*)(((float*)delta) + ((((k & 1) * 16) + ((i_15 >> 1) * 8)) + ((((int)threadIdx.x) & 3) * 2)));
       float broadcast_var_5 = 0x1.6a09e667f3bcdp-4f/*8.838835e-02*/;
       uint1 __5;
       float2 __6;
@@ -207,13 +224,13 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
     }
     __syncthreads();
     if (((int)threadIdx.x) < 16) {
-      tl::cp_async_gs<4>((&(((float*)buf_dyn_shmem)[((((k & 1) * 16) + ((int)threadIdx.x)) + 10272)])), (&(Delta[(((((((int)blockIdx.z) * 16384) + (((int)blockIdx.x) * 1024)) + (k * 16)) + ((int)threadIdx.x)) + 32)])));
+      tl::cp_async_gs<4>((&(((float*)delta)[(((k & 1) * 16) + ((int)threadIdx.x))])), (&(Delta[(((((((int)blockIdx.z) * 16384) + (((int)blockIdx.x) * 1024)) + (k * 16)) + ((int)threadIdx.x)) + 32)])));
     }
     tl::cp_async_commit();
     {
       bfloat16_t B_local_3[64];
       for (int i_16 = 0; i_16 < 8; ++i_16) {
-        tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)buf_dyn_shmem)[((((((k & 1) * 2048) + ((i_16 >> 2) * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((i_16 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (i_16 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511)) + 20608)])), (&(B_local_3[(i_16 * 8)])));
+        tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)q)[(((((k & 1) * 2048) + ((i_16 >> 2) * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((i_16 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (i_16 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(B_local_3[(i_16 * 8)])));
       }
       for (int j_1 = 0; j_1 < 8; ++j_1) {
         tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(dk + (j_1 * 8)), reinterpret_cast<const unsigned*>(dsT_cast + 0), reinterpret_cast<const unsigned*>(B_local_3 + (j_1 * 8)));
@@ -223,13 +240,13 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
     __syncthreads();
     #pragma unroll
     for (int i_17 = 0; i_17 < 2; ++i_17) {
-      tl::cp_async_gs<16>((&(((bfloat16_t*)buf_dyn_shmem)[(((((((((k & 1) * 2048) + (((((int)threadIdx.x) & 15) >> 3) * 1024)) + (i_17 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 20608)])), (&(Q[(((((((((int)blockIdx.z) * 2097152) + (k * 32768)) + (i_17 * 16384)) + ((((int)threadIdx.x) >> 4) * 2048)) + (((int)blockIdx.x) * 128)) + ((((int)threadIdx.x) & 15) * 8)) + 65536)])));
+      tl::cp_async_gs<16>((&(((bfloat16_t*)q)[((((((((k & 1) * 2048) + (((((int)threadIdx.x) & 15) >> 3) * 1024)) + (i_17 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8))])), (&(Q[(((((((((int)blockIdx.z) * 2097152) + (k * 32768)) + (i_17 * 16384)) + ((((int)threadIdx.x) >> 4) * 2048)) + (((int)blockIdx.x) * 128)) + ((((int)threadIdx.x) & 15) * 8)) + 65536)])));
     }
     tl::cp_async_commit();
     __syncthreads();
     #pragma unroll
     for (int i_18 = 0; i_18 < 4; ++i_18) {
-      *(uint1*)(((bfloat16_t*)buf_dyn_shmem) + (((((((((int)threadIdx.x) >> 5) * 384) + ((i_18 & 1) * 192)) + (((((int)threadIdx.x) & 31) >> 2) * 24)) + ((i_18 >> 1) * 8)) + ((((int)threadIdx.x) & 3) * 2)) + 24704)) = *(uint1*)(dsT_cast + (i_18 * 2));
+      *(uint1*)(((bfloat16_t*)dsT_shared) + ((((((((int)threadIdx.x) >> 5) * 256) + ((i_18 & 1) * 128)) + (((((int)threadIdx.x) & 31) >> 2) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (i_18 >> 1)) & 1) * 8)) + ((((int)threadIdx.x) & 3) * 2))) = *(uint1*)(dsT_cast + (i_18 * 2));
     }
     #pragma unroll
     for (int i_19 = 0; i_19 < 4; ++i_19) {
@@ -241,9 +258,9 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
       bfloat16_t B_local_4[16];
       __syncthreads();
       for (int ki_2 = 0; ki_2 < 4; ++ki_2) {
-        tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)buf_dyn_shmem)[(((((ki_2 * 384) + (((((int)threadIdx.x) & 31) >> 4) * 192)) + ((((int)threadIdx.x) & 7) * 24)) + (((((int)threadIdx.x) & 15) >> 3) * 8)) + 24704)])), (&(A_local_2[0])));
+        tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)dsT_shared)[((((ki_2 * 256) + (((((int)threadIdx.x) & 31) >> 4) * 128)) + ((((int)threadIdx.x) & 7) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 8))])), (&(A_local_2[0])));
         for (int i_20 = 0; i_20 < 2; ++i_20) {
-          tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)buf_dyn_shmem)[(((((((int)threadIdx.x) >> 6) * 4096) + (ki_2 * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + i_20) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(B_local_4[(i_20 * 8)])));
+          tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)K_shared)[(((((((int)threadIdx.x) >> 6) * 4096) + (ki_2 * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + i_20) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(B_local_4[(i_20 * 8)])));
         }
         for (int j_2 = 0; j_2 < 2; ++j_2) {
           tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(dq + (j_2 * 8)), reinterpret_cast<const unsigned*>(A_local_2 + 0), reinterpret_cast<const unsigned*>(B_local_4 + (j_2 * 8)));
@@ -269,8 +286,8 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
     bfloat16_t A_local_3[8];
     bfloat16_t B_local_5[8];
     for (int ki_3 = 0; ki_3 < 8; ++ki_3) {
-      tl::ptx_ldmatrix_x4((&(((bfloat16_t*)buf_dyn_shmem)[(((((ki_3 >> 2) * 4096) + ((((int)threadIdx.x) >> 5) * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_3 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_3 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(A_local_3[0])));
-      tl::ptx_ldmatrix_x4((&(((bfloat16_t*)buf_dyn_shmem)[((((((((ki_3 >> 2) * 1024) + (((((int)threadIdx.x) & 31) >> 4) * 512)) + ((((int)threadIdx.x) & 7) * 64)) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_3 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_3 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 20608)])), (&(B_local_5[0])));
+      tl::ptx_ldmatrix_x4((&(((bfloat16_t*)K_shared)[(((((ki_3 >> 2) * 4096) + ((((int)threadIdx.x) >> 5) * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_3 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_3 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(A_local_3[0])));
+      tl::ptx_ldmatrix_x4((&(((bfloat16_t*)q)[(((((((ki_3 >> 2) * 1024) + (((((int)threadIdx.x) & 31) >> 4) * 512)) + ((((int)threadIdx.x) & 7) * 64)) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_3 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_3 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + (((int)threadIdx.x) & 1)) & 1) * 8))])), (&(B_local_5[0])));
       tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(qkT + 0), reinterpret_cast<const unsigned*>(A_local_3 + 0), reinterpret_cast<const unsigned*>(B_local_5 + 0));
       tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(qkT + 4), reinterpret_cast<const unsigned*>(A_local_3 + 0), reinterpret_cast<const unsigned*>(B_local_5 + 4));
     }
@@ -289,7 +306,7 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
         float2 v__9 = make_float2(broadcast_var_8, broadcast_var_8);
         __11.x = (v__8.x*v__9.x);
         __11.y = (v__8.y*v__9.y);
-      float2 v__10 = *(float2*)(((float*)buf_dyn_shmem) + ((((i_23 >> 1) * 8) + ((((int)threadIdx.x) & 3) * 2)) + 8192));
+      float2 v__10 = *(float2*)(((float*)lse_shared) + (((i_23 >> 1) * 8) + ((((int)threadIdx.x) & 3) * 2)));
       __10.x = (__11.x-v__10.x);
       __10.y = (__11.y-v__10.y);
     __9.x = exp2f(__10.x);
@@ -319,8 +336,8 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
     bfloat16_t A_local_4[8];
     bfloat16_t B_local_6[8];
     for (int ki_4 = 0; ki_4 < 8; ++ki_4) {
-      tl::ptx_ldmatrix_x4((&(((bfloat16_t*)buf_dyn_shmem)[((((((ki_4 >> 2) * 4096) + ((((int)threadIdx.x) >> 5) * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_4 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_4 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511)) + 8192)])), (&(A_local_4[0])));
-      tl::ptx_ldmatrix_x4((&(((bfloat16_t*)buf_dyn_shmem)[((((((((ki_4 >> 2) * 1024) + (((((int)threadIdx.x) & 31) >> 4) * 512)) + ((((int)threadIdx.x) & 7) * 64)) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_4 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_4 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 16448)])), (&(B_local_6[0])));
+      tl::ptx_ldmatrix_x4((&(((bfloat16_t*)V_shared)[(((((ki_4 >> 2) * 4096) + ((((int)threadIdx.x) >> 5) * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_4 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_4 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(A_local_4[0])));
+      tl::ptx_ldmatrix_x4((&(((bfloat16_t*)do_1)[(((((((ki_4 >> 2) * 1024) + (((((int)threadIdx.x) & 31) >> 4) * 512)) + ((((int)threadIdx.x) & 7) * 64)) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_4 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_4 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + (((int)threadIdx.x) & 1)) & 1) * 8))])), (&(B_local_6[0])));
       tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(dsT + 0), reinterpret_cast<const unsigned*>(A_local_4 + 0), reinterpret_cast<const unsigned*>(B_local_6 + 0));
       tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(dsT + 4), reinterpret_cast<const unsigned*>(A_local_4 + 0), reinterpret_cast<const unsigned*>(B_local_6 + 4));
     }
@@ -336,7 +353,7 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
   {
     bfloat16_t B_local_7[64];
     for (int i_27 = 0; i_27 < 8; ++i_27) {
-      tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)buf_dyn_shmem)[(((((i_27 >> 2) * 1024) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((i_27 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (i_27 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511)) + 16448)])), (&(B_local_7[(i_27 * 8)])));
+      tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)do_1)[((((i_27 >> 2) * 1024) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((i_27 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (i_27 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(B_local_7[(i_27 * 8)])));
     }
     for (int j_3 = 0; j_3 < 8; ++j_3) {
       tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(dv + (j_3 * 8)), reinterpret_cast<const unsigned*>(qkT_cast + 0), reinterpret_cast<const unsigned*>(B_local_7 + (j_3 * 8)));
@@ -349,7 +366,7 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
   __syncthreads();
   #pragma unroll
   for (int i_28 = 0; i_28 < 4; ++i_28) {
-    *(float2*)(delta_local_cast_2 + 0) = *(float2*)(((float*)buf_dyn_shmem) + ((((i_28 >> 1) * 8) + ((((int)threadIdx.x) & 3) * 2)) + 10272));
+    *(float2*)(delta_local_cast_2 + 0) = *(float2*)(((float*)delta) + (((i_28 >> 1) * 8) + ((((int)threadIdx.x) & 3) * 2)));
     float broadcast_var_10 = 0x1.6a09e667f3bcdp-4f/*8.838835e-02*/;
     uint1 __13;
     float2 __14;
@@ -371,7 +388,7 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
   {
     bfloat16_t B_local_8[64];
     for (int i_29 = 0; i_29 < 8; ++i_29) {
-      tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)buf_dyn_shmem)[(((((i_29 >> 2) * 1024) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((i_29 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (i_29 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511)) + 20608)])), (&(B_local_8[(i_29 * 8)])));
+      tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)q)[((((i_29 >> 2) * 1024) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((i_29 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (i_29 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(B_local_8[(i_29 * 8)])));
     }
     for (int j_4 = 0; j_4 < 8; ++j_4) {
       tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(dk + (j_4 * 8)), reinterpret_cast<const unsigned*>(dsT_cast + 0), reinterpret_cast<const unsigned*>(B_local_8 + (j_4 * 8)));
@@ -381,7 +398,7 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
   __syncthreads();
   #pragma unroll
   for (int i_30 = 0; i_30 < 4; ++i_30) {
-    *(uint1*)(((bfloat16_t*)buf_dyn_shmem) + (((((((((int)threadIdx.x) >> 5) * 384) + ((i_30 & 1) * 192)) + (((((int)threadIdx.x) & 31) >> 2) * 24)) + ((i_30 >> 1) * 8)) + ((((int)threadIdx.x) & 3) * 2)) + 24704)) = *(uint1*)(dsT_cast + (i_30 * 2));
+    *(uint1*)(((bfloat16_t*)dsT_shared) + ((((((((int)threadIdx.x) >> 5) * 256) + ((i_30 & 1) * 128)) + (((((int)threadIdx.x) & 31) >> 2) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (i_30 >> 1)) & 1) * 8)) + ((((int)threadIdx.x) & 3) * 2))) = *(uint1*)(dsT_cast + (i_30 * 2));
   }
   #pragma unroll
   for (int i_31 = 0; i_31 < 4; ++i_31) {
@@ -393,9 +410,9 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
     bfloat16_t B_local_9[16];
     __syncthreads();
     for (int ki_5 = 0; ki_5 < 4; ++ki_5) {
-      tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)buf_dyn_shmem)[(((((ki_5 * 384) + (((((int)threadIdx.x) & 31) >> 4) * 192)) + ((((int)threadIdx.x) & 7) * 24)) + (((((int)threadIdx.x) & 15) >> 3) * 8)) + 24704)])), (&(A_local_5[0])));
+      tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)dsT_shared)[((((ki_5 * 256) + (((((int)threadIdx.x) & 31) >> 4) * 128)) + ((((int)threadIdx.x) & 7) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 8))])), (&(A_local_5[0])));
       for (int i_32 = 0; i_32 < 2; ++i_32) {
-        tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)buf_dyn_shmem)[(((((((int)threadIdx.x) >> 6) * 4096) + (ki_5 * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + i_32) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(B_local_9[(i_32 * 8)])));
+        tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)K_shared)[(((((((int)threadIdx.x) >> 6) * 4096) + (ki_5 * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + i_32) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(B_local_9[(i_32 * 8)])));
       }
       for (int j_5 = 0; j_5 < 2; ++j_5) {
         tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(dq + (j_5 * 8)), reinterpret_cast<const unsigned*>(A_local_5 + 0), reinterpret_cast<const unsigned*>(B_local_9 + (j_5 * 8)));
@@ -420,8 +437,8 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
     bfloat16_t A_local_6[8];
     bfloat16_t B_local_10[8];
     for (int ki_6 = 0; ki_6 < 8; ++ki_6) {
-      tl::ptx_ldmatrix_x4((&(((bfloat16_t*)buf_dyn_shmem)[(((((ki_6 >> 2) * 4096) + ((((int)threadIdx.x) >> 5) * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_6 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_6 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(A_local_6[0])));
-      tl::ptx_ldmatrix_x4((&(((bfloat16_t*)buf_dyn_shmem)[((((((((ki_6 >> 2) * 1024) + (((((int)threadIdx.x) & 31) >> 4) * 512)) + ((((int)threadIdx.x) & 7) * 64)) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_6 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_6 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 22656)])), (&(B_local_10[0])));
+      tl::ptx_ldmatrix_x4((&(((bfloat16_t*)K_shared)[(((((ki_6 >> 2) * 4096) + ((((int)threadIdx.x) >> 5) * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_6 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_6 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(A_local_6[0])));
+      tl::ptx_ldmatrix_x4((&(((bfloat16_t*)q)[((((((((ki_6 >> 2) * 1024) + (((((int)threadIdx.x) & 31) >> 4) * 512)) + ((((int)threadIdx.x) & 7) * 64)) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_6 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_6 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 2048)])), (&(B_local_10[0])));
       tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(qkT + 0), reinterpret_cast<const unsigned*>(A_local_6 + 0), reinterpret_cast<const unsigned*>(B_local_10 + 0));
       tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(qkT + 4), reinterpret_cast<const unsigned*>(A_local_6 + 0), reinterpret_cast<const unsigned*>(B_local_10 + 4));
     }
@@ -440,7 +457,7 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
         float2 v__17 = make_float2(broadcast_var_13, broadcast_var_13);
         __19.x = (v__16.x*v__17.x);
         __19.y = (v__16.y*v__17.y);
-      float2 v__18 = *(float2*)(((float*)buf_dyn_shmem) + ((((i_35 >> 1) * 8) + ((((int)threadIdx.x) & 3) * 2)) + 8208));
+      float2 v__18 = *(float2*)(((float*)lse_shared) + ((((i_35 >> 1) * 8) + ((((int)threadIdx.x) & 3) * 2)) + 16));
       __18.x = (__19.x-v__18.x);
       __18.y = (__19.y-v__18.y);
     __17.x = exp2f(__18.x);
@@ -470,8 +487,8 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
     bfloat16_t A_local_7[8];
     bfloat16_t B_local_11[8];
     for (int ki_7 = 0; ki_7 < 8; ++ki_7) {
-      tl::ptx_ldmatrix_x4((&(((bfloat16_t*)buf_dyn_shmem)[((((((ki_7 >> 2) * 4096) + ((((int)threadIdx.x) >> 5) * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_7 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_7 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511)) + 8192)])), (&(A_local_7[0])));
-      tl::ptx_ldmatrix_x4((&(((bfloat16_t*)buf_dyn_shmem)[((((((((ki_7 >> 2) * 1024) + (((((int)threadIdx.x) & 31) >> 4) * 512)) + ((((int)threadIdx.x) & 7) * 64)) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_7 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_7 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 18496)])), (&(B_local_11[0])));
+      tl::ptx_ldmatrix_x4((&(((bfloat16_t*)V_shared)[(((((ki_7 >> 2) * 4096) + ((((int)threadIdx.x) >> 5) * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_7 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_7 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(A_local_7[0])));
+      tl::ptx_ldmatrix_x4((&(((bfloat16_t*)do_1)[((((((((ki_7 >> 2) * 1024) + (((((int)threadIdx.x) & 31) >> 4) * 512)) + ((((int)threadIdx.x) & 7) * 64)) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_7 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_7 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 2048)])), (&(B_local_11[0])));
       tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(dsT + 0), reinterpret_cast<const unsigned*>(A_local_7 + 0), reinterpret_cast<const unsigned*>(B_local_11 + 0));
       tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(dsT + 4), reinterpret_cast<const unsigned*>(A_local_7 + 0), reinterpret_cast<const unsigned*>(B_local_11 + 4));
     }
@@ -487,7 +504,7 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
   {
     bfloat16_t B_local_12[64];
     for (int i_39 = 0; i_39 < 8; ++i_39) {
-      tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)buf_dyn_shmem)[(((((i_39 >> 2) * 1024) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((i_39 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (i_39 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511)) + 18496)])), (&(B_local_12[(i_39 * 8)])));
+      tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)do_1)[(((((i_39 >> 2) * 1024) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((i_39 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (i_39 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511)) + 2048)])), (&(B_local_12[(i_39 * 8)])));
     }
     for (int j_6 = 0; j_6 < 8; ++j_6) {
       tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(dv + (j_6 * 8)), reinterpret_cast<const unsigned*>(qkT_cast + 0), reinterpret_cast<const unsigned*>(B_local_12 + (j_6 * 8)));
@@ -500,7 +517,7 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
   __syncthreads();
   #pragma unroll
   for (int i_40 = 0; i_40 < 4; ++i_40) {
-    *(float2*)(delta_local_cast_2 + 0) = *(float2*)(((float*)buf_dyn_shmem) + ((((i_40 >> 1) * 8) + ((((int)threadIdx.x) & 3) * 2)) + 10288));
+    *(float2*)(delta_local_cast_2 + 0) = *(float2*)(((float*)delta) + ((((i_40 >> 1) * 8) + ((((int)threadIdx.x) & 3) * 2)) + 16));
     float broadcast_var_15 = 0x1.6a09e667f3bcdp-4f/*8.838835e-02*/;
     uint1 __21;
     float2 __22;
@@ -522,7 +539,7 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
   {
     bfloat16_t B_local_13[64];
     for (int i_41 = 0; i_41 < 8; ++i_41) {
-      tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)buf_dyn_shmem)[(((((i_41 >> 2) * 1024) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((i_41 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (i_41 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511)) + 22656)])), (&(B_local_13[(i_41 * 8)])));
+      tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)q)[(((((i_41 >> 2) * 1024) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((i_41 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (i_41 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511)) + 2048)])), (&(B_local_13[(i_41 * 8)])));
     }
     for (int j_7 = 0; j_7 < 8; ++j_7) {
       tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(dk + (j_7 * 8)), reinterpret_cast<const unsigned*>(dsT_cast + 0), reinterpret_cast<const unsigned*>(B_local_13 + (j_7 * 8)));
@@ -532,7 +549,7 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
   __syncthreads();
   #pragma unroll
   for (int i_42 = 0; i_42 < 4; ++i_42) {
-    *(uint1*)(((bfloat16_t*)buf_dyn_shmem) + (((((((((int)threadIdx.x) >> 5) * 384) + ((i_42 & 1) * 192)) + (((((int)threadIdx.x) & 31) >> 2) * 24)) + ((i_42 >> 1) * 8)) + ((((int)threadIdx.x) & 3) * 2)) + 24704)) = *(uint1*)(dsT_cast + (i_42 * 2));
+    *(uint1*)(((bfloat16_t*)dsT_shared) + ((((((((int)threadIdx.x) >> 5) * 256) + ((i_42 & 1) * 128)) + (((((int)threadIdx.x) & 31) >> 2) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (i_42 >> 1)) & 1) * 8)) + ((((int)threadIdx.x) & 3) * 2))) = *(uint1*)(dsT_cast + (i_42 * 2));
   }
   #pragma unroll
   for (int i_43 = 0; i_43 < 4; ++i_43) {
@@ -544,9 +561,9 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
     bfloat16_t B_local_14[16];
     __syncthreads();
     for (int ki_8 = 0; ki_8 < 4; ++ki_8) {
-      tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)buf_dyn_shmem)[(((((ki_8 * 384) + (((((int)threadIdx.x) & 31) >> 4) * 192)) + ((((int)threadIdx.x) & 7) * 24)) + (((((int)threadIdx.x) & 15) >> 3) * 8)) + 24704)])), (&(A_local_8[0])));
+      tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)dsT_shared)[((((ki_8 * 256) + (((((int)threadIdx.x) & 31) >> 4) * 128)) + ((((int)threadIdx.x) & 7) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 8))])), (&(A_local_8[0])));
       for (int i_44 = 0; i_44 < 2; ++i_44) {
-        tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)buf_dyn_shmem)[(((((((int)threadIdx.x) >> 6) * 4096) + (ki_8 * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + i_44) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(B_local_14[(i_44 * 8)])));
+        tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)K_shared)[(((((((int)threadIdx.x) >> 6) * 4096) + (ki_8 * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + i_44) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(B_local_14[(i_44 * 8)])));
       }
       for (int j_8 = 0; j_8 < 2; ++j_8) {
         tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(dq + (j_8 * 8)), reinterpret_cast<const unsigned*>(A_local_8 + 0), reinterpret_cast<const unsigned*>(B_local_14 + (j_8 * 8)));
@@ -561,29 +578,39 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_T64_16_S49152_bfl
   __syncthreads();
   #pragma unroll
   for (int i_46 = 0; i_46 < 32; ++i_46) {
-    *(float2*)(((float*)buf_dyn_shmem) + ((((((((int)threadIdx.x) >> 5) * 2048) + ((i_46 & 1) * 1024)) + (((((int)threadIdx.x) & 31) >> 2) * 128)) + ((i_46 >> 1) * 8)) + ((((int)threadIdx.x) & 3) * 2))) = *(float2*)(dv + (i_46 * 2));
+    *(float2*)(((float*)dv_shared) + ((((((((int)threadIdx.x) >> 5) * 2048) + ((i_46 & 1) * 1024)) + (((((int)threadIdx.x) & 31) >> 2) * 128)) + ((i_46 >> 1) * 8)) + ((((int)threadIdx.x) & 3) * 2))) = *(float2*)(dv + (i_46 * 2));
   }
   __syncthreads();
   #pragma unroll
   for (int i_47 = 0; i_47 < 64; ++i_47) {
-    AtomicAdd((&(dV[(((((((int)blockIdx.z) * 1048576) + (((int)blockIdx.y) * 65536)) + (i_47 * 1024)) + ((((int)blockIdx.x) >> 1) * 128)) + ((int)threadIdx.x))])), ((float*)buf_dyn_shmem)[((i_47 * 128) + ((int)threadIdx.x))], 0);
+    AtomicAdd((&(dV[(((((((int)blockIdx.z) * 1048576) + (((int)blockIdx.y) * 65536)) + (i_47 * 1024)) + ((((int)blockIdx.x) >> 1) * 128)) + ((int)threadIdx.x))])), ((float*)dv_shared)[((i_47 * 128) + ((int)threadIdx.x))], 0);
   }
   __syncthreads();
   #pragma unroll
   for (int i_48 = 0; i_48 < 32; ++i_48) {
-    *(float2*)(((float*)buf_dyn_shmem) + ((((((((int)threadIdx.x) >> 5) * 2048) + ((i_48 & 1) * 1024)) + (((((int)threadIdx.x) & 31) >> 2) * 128)) + ((i_48 >> 1) * 8)) + ((((int)threadIdx.x) & 3) * 2))) = *(float2*)(dk + (i_48 * 2));
+    *(float2*)(((float*)dk_shared) + ((((((((int)threadIdx.x) >> 5) * 2048) + ((i_48 & 1) * 1024)) + (((((int)threadIdx.x) & 31) >> 2) * 128)) + ((i_48 >> 1) * 8)) + ((((int)threadIdx.x) & 3) * 2))) = *(float2*)(dk + (i_48 * 2));
   }
   __syncthreads();
   #pragma unroll
   for (int i_49 = 0; i_49 < 64; ++i_49) {
-    AtomicAdd((&(dK[(((((((int)blockIdx.z) * 1048576) + (((int)blockIdx.y) * 65536)) + (i_49 * 1024)) + ((((int)blockIdx.x) >> 1) * 128)) + ((int)threadIdx.x))])), ((float*)buf_dyn_shmem)[((i_49 * 128) + ((int)threadIdx.x))], 0);
+    AtomicAdd((&(dK[(((((((int)blockIdx.z) * 1048576) + (((int)blockIdx.y) * 65536)) + (i_49 * 1024)) + ((((int)blockIdx.x) >> 1) * 128)) + ((int)threadIdx.x))])), ((float*)dk_shared)[((i_49 * 128) + ((int)threadIdx.x))], 0);
   }
 }
+#if defined(_MSC_VER) && !defined(__clang__) && _MSC_VER < 1940
+#define _tl_orig_alignas alignas
+#define alignas(N) _tl_orig_alignas((N) <= 64 ? (N) : 64)
+#undef alignas
+#define alignas _tl_orig_alignas
+#endif
 #ifdef ENABLE_BF16
 #endif
 
 extern "C" __global__ void __launch_bounds__(128, 1) flash_fwd_T64_32_S36864_bfloat16(const bfloat16_t* __restrict__ K, bfloat16_t* __restrict__ Output, const bfloat16_t* __restrict__ Q, const bfloat16_t* __restrict__ V, float* __restrict__ lse) {
   extern __shared__ __align__(1024) uchar buf_dyn_shmem[];
+  void* Q_shared = ((void*)((char*)buf_dyn_shmem + 0));
+  void* K_shared = ((void*)((char*)buf_dyn_shmem + 16384));
+  void* V_shared = ((void*)((char*)buf_dyn_shmem + 24576));
+  void* acc_s_cast = ((void*)((char*)buf_dyn_shmem + 32768));
   float acc_o[64];
   float logsum[2];
   float scores_max[2];
@@ -598,7 +625,7 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_fwd_T64_32_S36864_bfl
   bfloat16_t Output_local_cast_2[2];
   #pragma unroll
   for (int i = 0; i < 8; ++i) {
-    *(uint4*)(((bfloat16_t*)buf_dyn_shmem) + ((((((((((int)threadIdx.x) & 15) >> 3) * 4096) + (i * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8))) = *(uint4*)(Q + ((((((((int)blockIdx.z) * 2097152) + (((int)blockIdx.x) * 131072)) + (i * 16384)) + ((((int)threadIdx.x) >> 4) * 2048)) + (((int)blockIdx.y) * 128)) + ((((int)threadIdx.x) & 15) * 8)));
+    *(uint4*)(((bfloat16_t*)Q_shared) + ((((((((((int)threadIdx.x) & 15) >> 3) * 4096) + (i * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8))) = *(uint4*)(Q + ((((((((int)blockIdx.z) * 2097152) + (((int)blockIdx.x) * 131072)) + (i * 16384)) + ((((int)threadIdx.x) >> 4) * 2048)) + (((int)blockIdx.y) * 128)) + ((((int)threadIdx.x) & 15) * 8)));
   }
   #pragma unroll
   for (int i_1 = 0; i_1 < 16; ++i_1) {
@@ -612,12 +639,12 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_fwd_T64_32_S36864_bfl
   __syncthreads();
   #pragma unroll
   for (int i_2 = 0; i_2 < 4; ++i_2) {
-    tl::cp_async_gs<16>((&(((bfloat16_t*)buf_dyn_shmem)[(((((((((((int)threadIdx.x) & 15) >> 3) * 2048) + (i_2 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 8192)])), (&(K[(((((((int)blockIdx.z) * 1048576) + (i_2 * 8192)) + ((((int)threadIdx.x) >> 4) * 1024)) + ((((int)blockIdx.y) >> 1) * 128)) + ((((int)threadIdx.x) & 15) * 8))])));
+    tl::cp_async_gs<16>((&(((bfloat16_t*)K_shared)[((((((((((int)threadIdx.x) & 15) >> 3) * 2048) + (i_2 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8))])), (&(K[(((((((int)blockIdx.z) * 1048576) + (i_2 * 8192)) + ((((int)threadIdx.x) >> 4) * 1024)) + ((((int)blockIdx.y) >> 1) * 128)) + ((((int)threadIdx.x) & 15) * 8))])));
   }
   tl::cp_async_commit();
   #pragma unroll
   for (int i_3 = 0; i_3 < 4; ++i_3) {
-    tl::cp_async_gs<16>((&(((bfloat16_t*)buf_dyn_shmem)[(((((((((((int)threadIdx.x) & 15) >> 3) * 2048) + (i_3 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 12288)])), (&(V[(((((((int)blockIdx.z) * 1048576) + (i_3 * 8192)) + ((((int)threadIdx.x) >> 4) * 1024)) + ((((int)blockIdx.y) >> 1) * 128)) + ((((int)threadIdx.x) & 15) * 8))])));
+    tl::cp_async_gs<16>((&(((bfloat16_t*)V_shared)[((((((((((int)threadIdx.x) & 15) >> 3) * 2048) + (i_3 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8))])), (&(V[(((((((int)blockIdx.z) * 1048576) + (i_3 * 8192)) + ((((int)threadIdx.x) >> 4) * 1024)) + ((((int)blockIdx.y) >> 1) * 128)) + ((((int)threadIdx.x) & 15) * 8))])));
   }
   tl::cp_async_commit();
   for (int k = 0; k < ((((int)blockIdx.x) * 2) + 1); ++k) {
@@ -637,9 +664,9 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_fwd_T64_32_S36864_bfl
       bfloat16_t A_local[8];
       bfloat16_t B_local[16];
       for (int ki = 0; ki < 8; ++ki) {
-        tl::ptx_ldmatrix_x4((&(((bfloat16_t*)buf_dyn_shmem)[(((((ki >> 2) * 4096) + ((((int)threadIdx.x) >> 5) * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(A_local[0])));
+        tl::ptx_ldmatrix_x4((&(((bfloat16_t*)Q_shared)[(((((ki >> 2) * 4096) + ((((int)threadIdx.x) >> 5) * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(A_local[0])));
         for (int i_5 = 0; i_5 < 2; ++i_5) {
-          tl::ptx_ldmatrix_x4((&(((bfloat16_t*)buf_dyn_shmem)[(((((((((ki >> 2) * 2048) + (i_5 * 1024)) + (((((int)threadIdx.x) & 31) >> 4) * 512)) + ((((int)threadIdx.x) & 7) * 64)) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 8192)])), (&(B_local[(i_5 * 8)])));
+          tl::ptx_ldmatrix_x4((&(((bfloat16_t*)K_shared)[((((((((ki >> 2) * 2048) + (i_5 * 1024)) + (((((int)threadIdx.x) & 31) >> 4) * 512)) + ((((int)threadIdx.x) & 7) * 64)) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + (((int)threadIdx.x) & 1)) & 1) * 8))])), (&(B_local[(i_5 * 8)])));
         }
         for (int j = 0; j < 2; ++j) {
           tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(acc_s + (j * 8)), reinterpret_cast<const unsigned*>(A_local + 0), reinterpret_cast<const unsigned*>(B_local + (j * 8)));
@@ -650,7 +677,7 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_fwd_T64_32_S36864_bfl
     __syncthreads();
     #pragma unroll
     for (int i_6 = 0; i_6 < 4; ++i_6) {
-      tl::cp_async_gs<16>((&(((bfloat16_t*)buf_dyn_shmem)[(((((((((((int)threadIdx.x) & 15) >> 3) * 2048) + (i_6 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 8192)])), (&(K[(((((((((int)blockIdx.z) * 1048576) + (k * 32768)) + (i_6 * 8192)) + ((((int)threadIdx.x) >> 4) * 1024)) + ((((int)blockIdx.y) >> 1) * 128)) + ((((int)threadIdx.x) & 15) * 8)) + 32768)])));
+      tl::cp_async_gs<16>((&(((bfloat16_t*)K_shared)[((((((((((int)threadIdx.x) & 15) >> 3) * 2048) + (i_6 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8))])), (&(K[(((((((((int)blockIdx.z) * 1048576) + (k * 32768)) + (i_6 * 8192)) + ((((int)threadIdx.x) >> 4) * 1024)) + ((((int)blockIdx.y) >> 1) * 128)) + ((((int)threadIdx.x) & 15) * 8)) + 32768)])));
     }
     tl::cp_async_commit();
     *(float2*)(scores_max_prev + 0) = *(float2*)(scores_max + 0);
@@ -687,7 +714,7 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_fwd_T64_32_S36864_bfl
       float2 v_ = *(float2*)(acc_s + (i_12 * 2));
       (reinterpret_cast<__nv_bfloat162*>(&__1))[0] = __float22bfloat162_rn(((float2*)(&v_))[0]);
       *(uint1*)(acc_s_cast_local_cast + 0) = __1;
-      *(uint1*)(((bfloat16_t*)buf_dyn_shmem) + ((((((((((int)threadIdx.x) >> 5) * 512) + ((i_12 & 1) * 256)) + (((((int)threadIdx.x) & 31) >> 2) * 32)) + (((((((int)threadIdx.x) & 31) >> 4) + (i_12 >> 2)) & 1) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + ((i_12 & 3) >> 1)) & 1) * 8)) + ((((int)threadIdx.x) & 3) * 2)) + 16384)) = *(uint1*)(acc_s_cast_local_cast + 0);
+      *(uint1*)(((bfloat16_t*)acc_s_cast) + (((((((((int)threadIdx.x) >> 5) * 512) + ((i_12 & 1) * 256)) + (((((int)threadIdx.x) & 31) >> 2) * 32)) + (((((((int)threadIdx.x) & 31) >> 4) + (i_12 >> 2)) & 1) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + ((i_12 & 3) >> 1)) & 1) * 8)) + ((((int)threadIdx.x) & 3) * 2))) = *(uint1*)(acc_s_cast_local_cast + 0);
     }
     tl::cp_async_wait<0>();
     __syncthreads();
@@ -695,9 +722,9 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_fwd_T64_32_S36864_bfl
       bfloat16_t A_local_1[8];
       bfloat16_t B_local_1[64];
       for (int ki_1 = 0; ki_1 < 2; ++ki_1) {
-        tl::ptx_ldmatrix_x4((&(((bfloat16_t*)buf_dyn_shmem)[((((((((int)threadIdx.x) >> 5) * 512) + ((((int)threadIdx.x) & 15) * 32)) + (((((((int)threadIdx.x) & 7) >> 2) + ki_1) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 8)) + 16384)])), (&(A_local_1[0])));
+        tl::ptx_ldmatrix_x4((&(((bfloat16_t*)acc_s_cast)[(((((((int)threadIdx.x) >> 5) * 512) + ((((int)threadIdx.x) & 15) * 32)) + (((((((int)threadIdx.x) & 7) >> 2) + ki_1) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 8))])), (&(A_local_1[0])));
         for (int i_13 = 0; i_13 < 8; ++i_13) {
-          tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)buf_dyn_shmem)[((((((i_13 >> 2) * 2048) + (ki_1 * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((i_13 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (i_13 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511)) + 12288)])), (&(B_local_1[(i_13 * 8)])));
+          tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)V_shared)[(((((i_13 >> 2) * 2048) + (ki_1 * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((i_13 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (i_13 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(B_local_1[(i_13 * 8)])));
         }
         for (int j_1 = 0; j_1 < 8; ++j_1) {
           tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(acc_o + (j_1 * 8)), reinterpret_cast<const unsigned*>(A_local_1 + 0), reinterpret_cast<const unsigned*>(B_local_1 + (j_1 * 8)));
@@ -708,7 +735,7 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_fwd_T64_32_S36864_bfl
     __syncthreads();
     #pragma unroll
     for (int i_14 = 0; i_14 < 4; ++i_14) {
-      tl::cp_async_gs<16>((&(((bfloat16_t*)buf_dyn_shmem)[(((((((((((int)threadIdx.x) & 15) >> 3) * 2048) + (i_14 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 12288)])), (&(V[(((((((((int)blockIdx.z) * 1048576) + (k * 32768)) + (i_14 * 8192)) + ((((int)threadIdx.x) >> 4) * 1024)) + ((((int)blockIdx.y) >> 1) * 128)) + ((((int)threadIdx.x) & 15) * 8)) + 32768)])));
+      tl::cp_async_gs<16>((&(((bfloat16_t*)V_shared)[((((((((((int)threadIdx.x) & 15) >> 3) * 2048) + (i_14 * 512)) + ((((int)threadIdx.x) >> 4) * 64)) + ((((((int)threadIdx.x) >> 6) + ((((int)threadIdx.x) & 7) >> 2)) & 1) * 32)) + (((((((int)threadIdx.x) & 63) >> 5) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8))])), (&(V[(((((((((int)blockIdx.z) * 1048576) + (k * 32768)) + (i_14 * 8192)) + ((((int)threadIdx.x) >> 4) * 1024)) + ((((int)blockIdx.y) >> 1) * 128)) + ((((int)threadIdx.x) & 15) * 8)) + 32768)])));
     }
     tl::cp_async_commit();
     #pragma unroll
@@ -741,9 +768,9 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_fwd_T64_32_S36864_bfl
     bfloat16_t A_local_2[8];
     bfloat16_t B_local_2[16];
     for (int ki_2 = 0; ki_2 < 8; ++ki_2) {
-      tl::ptx_ldmatrix_x4((&(((bfloat16_t*)buf_dyn_shmem)[(((((ki_2 >> 2) * 4096) + ((((int)threadIdx.x) >> 5) * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_2 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_2 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(A_local_2[0])));
+      tl::ptx_ldmatrix_x4((&(((bfloat16_t*)Q_shared)[(((((ki_2 >> 2) * 4096) + ((((int)threadIdx.x) >> 5) * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_2 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_2 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(A_local_2[0])));
       for (int i_18 = 0; i_18 < 2; ++i_18) {
-        tl::ptx_ldmatrix_x4((&(((bfloat16_t*)buf_dyn_shmem)[(((((((((ki_2 >> 2) * 2048) + (i_18 * 1024)) + (((((int)threadIdx.x) & 31) >> 4) * 512)) + ((((int)threadIdx.x) & 7) * 64)) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_2 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_2 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + (((int)threadIdx.x) & 1)) & 1) * 8)) + 8192)])), (&(B_local_2[(i_18 * 8)])));
+        tl::ptx_ldmatrix_x4((&(((bfloat16_t*)K_shared)[((((((((ki_2 >> 2) * 2048) + (i_18 * 1024)) + (((((int)threadIdx.x) & 31) >> 4) * 512)) + ((((int)threadIdx.x) & 7) * 64)) + (((((((int)threadIdx.x) & 7) >> 2) + ((ki_2 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (ki_2 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + (((int)threadIdx.x) & 1)) & 1) * 8))])), (&(B_local_2[(i_18 * 8)])));
       }
       for (int j_2 = 0; j_2 < 2; ++j_2) {
         tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(acc_s + (j_2 * 8)), reinterpret_cast<const unsigned*>(A_local_2 + 0), reinterpret_cast<const unsigned*>(B_local_2 + (j_2 * 8)));
@@ -785,16 +812,16 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_fwd_T64_32_S36864_bfl
     float2 v__1 = *(float2*)(acc_s + (i_24 * 2));
     (reinterpret_cast<__nv_bfloat162*>(&__2))[0] = __float22bfloat162_rn(((float2*)(&v__1))[0]);
     *(uint1*)(acc_s_cast_local_cast_1 + 0) = __2;
-    *(uint1*)(((bfloat16_t*)buf_dyn_shmem) + ((((((((((int)threadIdx.x) >> 5) * 512) + ((i_24 & 1) * 256)) + (((((int)threadIdx.x) & 31) >> 2) * 32)) + (((((((int)threadIdx.x) & 31) >> 4) + (i_24 >> 2)) & 1) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + ((i_24 & 3) >> 1)) & 1) * 8)) + ((((int)threadIdx.x) & 3) * 2)) + 16384)) = *(uint1*)(acc_s_cast_local_cast_1 + 0);
+    *(uint1*)(((bfloat16_t*)acc_s_cast) + (((((((((int)threadIdx.x) >> 5) * 512) + ((i_24 & 1) * 256)) + (((((int)threadIdx.x) & 31) >> 2) * 32)) + (((((((int)threadIdx.x) & 31) >> 4) + (i_24 >> 2)) & 1) * 16)) + (((((((int)threadIdx.x) & 15) >> 3) + ((i_24 & 3) >> 1)) & 1) * 8)) + ((((int)threadIdx.x) & 3) * 2))) = *(uint1*)(acc_s_cast_local_cast_1 + 0);
   }
   {
     bfloat16_t A_local_3[8];
     bfloat16_t B_local_3[64];
     __syncthreads();
     for (int ki_3 = 0; ki_3 < 2; ++ki_3) {
-      tl::ptx_ldmatrix_x4((&(((bfloat16_t*)buf_dyn_shmem)[((((((((int)threadIdx.x) >> 5) * 512) + ((((int)threadIdx.x) & 15) * 32)) + (((((((int)threadIdx.x) & 7) >> 2) + ki_3) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 8)) + 16384)])), (&(A_local_3[0])));
+      tl::ptx_ldmatrix_x4((&(((bfloat16_t*)acc_s_cast)[(((((((int)threadIdx.x) >> 5) * 512) + ((((int)threadIdx.x) & 15) * 32)) + (((((((int)threadIdx.x) & 7) >> 2) + ki_3) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + ((((int)threadIdx.x) & 3) >> 1)) & 1) * 8))])), (&(A_local_3[0])));
       for (int i_25 = 0; i_25 < 8; ++i_25) {
-        tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)buf_dyn_shmem)[((((((i_25 >> 2) * 2048) + (ki_3 * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((i_25 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (i_25 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511)) + 12288)])), (&(B_local_3[(i_25 * 8)])));
+        tl::ptx_ldmatrix_x4_trans((&(((bfloat16_t*)V_shared)[(((((i_25 >> 2) * 2048) + (ki_3 * 1024)) + (((((int)threadIdx.x) & 15) >> 3) * 512)) + ((((((((int)threadIdx.x) & 15) * 64) + (((((((int)threadIdx.x) & 7) >> 2) + ((i_25 & 3) >> 1)) & 1) * 32)) + (((((((int)threadIdx.x) & 3) >> 1) + (i_25 & 1)) & 1) * 16)) + (((((((int)threadIdx.x) & 31) >> 4) + (((int)threadIdx.x) & 1)) & 1) * 8)) & 511))])), (&(B_local_3[(i_25 * 8)])));
       }
       for (int j_3 = 0; j_3 < 8; ++j_3) {
         tl::mma_sync<tl::DataType::kBFloat16, tl::DataType::kBFloat16, tl::DataType::kFloat32, 16, 8, 16, false, true>(reinterpret_cast<float*>(acc_o + (j_3 * 8)), reinterpret_cast<const unsigned*>(A_local_3 + 0), reinterpret_cast<const unsigned*>(B_local_3 + (j_3 * 8)));
@@ -838,6 +865,12 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_fwd_T64_32_S36864_bfl
     }
   }
 }
+#if defined(_MSC_VER) && !defined(__clang__) && _MSC_VER < 1940
+#define _tl_orig_alignas alignas
+#define alignas(N) _tl_orig_alignas((N) <= 64 ? (N) : 64)
+#undef alignas
+#define alignas _tl_orig_alignas
+#endif
 #ifdef ENABLE_BF16
 #endif
 
@@ -883,6 +916,12 @@ extern "C" __global__ void __launch_bounds__(128, 1) flash_bwd_preprocess_T32_32
     Delta[((((((int)blockIdx.z) * 16384) + (((int)blockIdx.x) * 1024)) + (((int)blockIdx.y) * 32)) + (((int)threadIdx.x) >> 2))] = delta[0];
   }
 }
+#if defined(_MSC_VER) && !defined(__clang__) && _MSC_VER < 1940
+#define _tl_orig_alignas alignas
+#define alignas(N) _tl_orig_alignas((N) <= 64 ? (N) : 64)
+#undef alignas
+#define alignas _tl_orig_alignas
+#endif
 #ifdef ENABLE_BF16
 #endif
 

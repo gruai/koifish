@@ -62,7 +62,7 @@ struct WIKI {
     virtual const float* GetLogits(int n_vocab, int n_ctx, int idx = -1) { return nullptr; }
     virtual bool isInduct() { return teach != _OFF && exLogits != nullptr; }
 
-    virtual double InductLogits(const CLI_params& config, int nSampInBatch, std::vector<TOKEN_ID>& tok_ids, struct ggml_tensor* target_probs, int flag);
+    virtual double InductLogits(const CLI_params& config, int nSampInBatch, std::vector<TOKEN_ID>& tok_ids, struct ggml_tensor* target_label, int flag);
     virtual bool isValid() const { return false; }
     // bool takeRest = false;          //only for debug
 

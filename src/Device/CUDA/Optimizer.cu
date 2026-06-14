@@ -570,6 +570,13 @@ void PIPE_Muon<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
         cublasAxpyEx(cublas_handle, m * n, &beta, CUDA_R_32F, X, bf16, 1, X, bf16, 1, CUDA_R_32F);
     CU_muon_update<<<task_11.grid3, task_11.block3, task_11.smem, task_11.stream>>>(task_11, *this);
     // CU_muon_update_v0<<<dGRID, dT4B, 0, stream>>>(*this);
+    if (this->hQuant != nullptr) {
+        if (BIT_TEST(this->tensor->flags, GTensor::F_GAMA)) {  // gama update
+        } else {
+            assert(this->tensor->gama_param == nullptr);
+            this->tensor->SetDataX(this->params);  
+        }
+    }
     D2e(this->arrNorm, xNrm, this->name + "@CU_muon_update", 0x0);  // assert(!(isnan(xNrm) || isinf(xNrm)));
     this->tensor->wnorm = sqrt(xNrm);
     cudaCheck(cudaGetLastError());

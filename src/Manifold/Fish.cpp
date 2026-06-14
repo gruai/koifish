@@ -264,7 +264,7 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
     }
     UpdateParams();  //  optParams
 
-    if (!config.model.sSTPath.empty() || !config.ckp_in.empty()) {  // HF/*.safetebsors
+    if (!config.model.pathCheckPoint.empty() || !config.ckp_in.empty()) {  // HF/*.safetensors
         if (!LoadFolderOfST(-1, flag))
             return false;
     }
@@ -339,7 +339,7 @@ void Fish::Clear() {
 
     // gBUFF = nullptr;
     // memBuffer->Clear();
-
+    hEDS->FreeScheduler();
     hEDS = nullptr;
     // AllocBuffer @Fish::jToGraph
     // GTensor::FreeBuffer();
@@ -351,7 +351,7 @@ void Fish::ClearGraph(int flag) {
     neurons.clear();
     gensors.Clear();
     in_node = nullptr, out_node = nullptr;
-    loss = nullptr, target_probs = nullptr, KQ_pos = nullptr, KQ_mask = nullptr, pos_embd = nullptr;
+    loss = nullptr, target_label = nullptr, KQ_pos = nullptr, KQ_mask = nullptr, pos_embd = nullptr;
 
     xn = nullptr, xxn = nullptr;
     optParams.clear();
@@ -855,12 +855,12 @@ bool Fish::AfterNextStep(int iter, int flag) {
     return true;
 }
 
-size_t cudnn_qkv_forw(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn, int flag = 0x0);
-size_t cudnn_qkv_back(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn);
+size_t cudnn_qkv_forw(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn, bool has_attn_bias = false, bool padding_mask = false, int flag = 0x0);
+size_t cudnn_qkv_back(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn, bool has_attn_bias = false, bool padding_mask = false);
 int test_FA2();
 bool Fish::AllocBuffer(int flag) {
     try {
-#ifdef __USE_TVM__5
+#ifdef __USE_TVM__
         test_FA2();
 #endif
         int B = config.n_batch(), T = config.n_ctx(), NH = config.n_head(), head_dim = config.head_dim();
@@ -870,18 +870,20 @@ bool Fish::AllocBuffer(int flag) {
                 // hCache = std::make_shared<KVCache>(this);
             }
         }
-        hCache = std::make_shared<KVCache>(this);  // why this would affect train loss?
+        hCache             = std::make_shared<KVCache>(this);  // why this would affect train loss?
+        bool has_attn_bias = false, padding_mask = phase == P_SFT;
         if (phase != P_GENERATE) {
 #ifdef __USE_CUDNN__
-            cudnn_qkv_forw(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn);
+            cudnn_qkv_forw(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn, has_attn_bias, padding_mask);
             if (phase != P_EVAL_) {
-                size_t alloc = cudnn_qkv_back(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn);
+                size_t alloc = cudnn_qkv_back(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn, has_attn_bias, padding_mask);
                 _INFO("\tcudnn_qkv_back = %.5gM\n", alloc / 1.0e6);
             }
 #endif
-            size_t mostQKV          = B * T * NH * head_dim + B * NH * T +             // dQ[[batch, seq_len, heads, dim_qk]] + Delta[batch, heads, seq_len]
-                                      B * T * config.n_head_kv() * head_dim * group * 4;   // [groups, batch, seq_len, head_kv, dim_v]
-            GTensor::workspace_size = std::max(GTensor::workspace_size, mostQKV * 4);           // 134742016
+            size_t mostQKV          = B * T * NH * head_dim + B * NH * T +                // dQ[[batch, seq_len, heads, dim_qk]] + Delta[batch, heads, seq_len]
+                                      B * T * config.n_head_kv() * head_dim * group * 4;  // [groups, batch, seq_len, head_kv, dim_v]
+            GTensor::workspace_size = std::max(GTensor::workspace_size, mostQKV * 4);     // 134742016
+            GTensor::workspace_size = std::max(GTensor::workspace_size, (size_t)32 * 1024 * 1024);
             assert(GTensor::workspace_size >= 32 * 1024 * 1024);
             cudaCheck(cudaMalloc(&GTensor::qkv_workspace, GTensor::workspace_size));
         }

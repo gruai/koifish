@@ -3,7 +3,7 @@ import argparse
 from tile_wrapper.tl_gemm import Matmul_wraper
 from tile_wrapper.tl_qkv import QKV_wraper
 from tile_wrapper.tl_header import HeaderCLS_wraper
-from tile_wrapper.tl_utils import Verify_ENV
+from tile_wrapper.tl_utils import Verify_ENV, Utils_wraper
 import tilelang
 
 """
@@ -34,11 +34,11 @@ def main():
 
 
     metas = [
-        {"config":f'{root}/scripts/qwen3.json', "path":f"{root}/src/Device/tile_kernel/qkv_v0.cu", "func": QKV_wraper},
+        # {"config":f'{root}/scripts/qwen3.json', "path":f"{root}/src/Device/tile_kernel/qkv_v0.cu", "func": QKV_wraper},
         # {"config":f'{root}/scripts/qwen3.json', "path":f"{root}/src/Device/tile_kernel/utils.cu", "func": Utils_wraper},
         # {"config":f'{root}/scripts/qwen3.json', "path":f"{root}/src/Device/tile_kernel/gemm_v0.cu", "func": Matmul_wraper},
         
-        # {"config":f'{root}/scripts/qwen3.json', "path":f"{root}/src/Device/tile_kernel/header_cls.cu", "func": HeaderCLS_wraper}
+        {"config":f'{root}/scripts/qwen3.json', "path":f"{root}/src/Device/tile_kernel/header_cls.cu", "func": HeaderCLS_wraper}
     ]
     
     #print(tilelang.__version__)

@@ -53,7 +53,7 @@ void _TIME_INFO(const string& info, double fmillis, int flag) {
 int SUM::nUpdateParam    = 0;
 int SUM::nMostMemItem    = 6;
 int SUM::nMinTensorAlloc = 100 * 1024 * 1024;
-double SUM::tX = 0.0, SUM::tX1 = 0.0, SUM::tRemater = 0.0, SUM::tPreLogits = 0.0;
+double SUM::tX = 0.0, SUM::tX1 = 0.0, SUM::tRemater = 0.0, SUM::tPreLogits = 0.0, SUM::tHeader = 0.0, SUM::tLoss = 0.0;
 size_t SUM::szUpload  = 0;
 double SUM::tQKV_forw = 0.0, SUM::tQKV_back = 0.0, SUM::tFFN = 0.0, SUM::tUpload = 0.0, SUM::tData = 0.0;
 double SUM::tLoadData = 0.0, SUM::tLoadParam = 0.0, SUM::tEval_1 = 0.0, SUM::tEval_0 = 0.0;

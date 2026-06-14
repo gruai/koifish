@@ -289,7 +289,7 @@ struct TL_GEMM {
         GenKernesTable([("up",matmul,0),("trans(up)",matmul_transposed_b,1)], kernels, codes, M, N, K) 
         M=batch*ctx; N=embed; K=ffn   #   
         GenKernesTable([("down",matmul,0),("trans(down)",matmul_transposed_b,1)], kernels, codes, M, N, K) 
-    # OutCLS
+    # Head4Token
         M=2*ctx; N=151936; K= embed  #   
         GenKernesTable([("CLS",matmul,0),("trans(CLS)",matmul_transposed_b,1)], kernels, codes, M, N, K) 
 

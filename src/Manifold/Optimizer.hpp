@@ -37,7 +37,8 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     Optimizer& operator=(const Optimizer&);
 
    protected:
-    std::string title = "Optimizer";
+    std::string title       = "Optimizer";
+    std::string sTrainStage = "PreTrain";
 
     OPT_STATUS status = KOIFISH_OK;
 
@@ -75,9 +76,9 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     double zmuv_0 = 0.0, zmuv_1 = 0.0, g_step = 0.0, g_ll = 0, g2_sum = 0;
 
     hGensor hLoss();
-    //  return _fish->target_probs = OutCLS->target
+    //  return _fish->target_label = Head4Token->target
     hGensor hTargetProbs();
-    hGensor hPreLogits();
+    // hGensor hPreLogits();
     hGensor GradOf(hGensor node, int flag = 0);
     float* fGrad(hGensor node, int flag = 0) {
         auto grad = GradOf(node);
@@ -92,7 +93,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
 
     // Learning rate hLR
     hLearnSKDU hLR       = nullptr;
-    hLearnSKDU hAR_quant = nullptr;     //Anealing rate need by some quants
+    hLearnSKDU hAR_quant = nullptr;  // Anealing rate need by some quants
     bool isStopImprove   = false;
     bool isPreGStep      = false;
 
@@ -107,7 +108,6 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     virtual void UpdateParams(int nx, CLI_params& config, int flag);
     // compute grad on batchs
     virtual bool BatchGrad(int iter, float& fx, int flag = 0x0);
-    bool OnLogits(int flag = 0x0);
 
    public:
     GD_METHOD tpGD = ADAMw;
@@ -139,8 +139,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     size_t shuffle_samples_hash = 0x0;  // hack
 
     Fish* _fish    = nullptr;  // ref only
-    hEDevices hEDS = nullptr;  // ref only
-
+    
     TRAIN_CARD TrainParams();
 
     Optimizer(NLP_AutoRegressive* g_, CLI_params& params_, int flag = 0x0);
@@ -155,7 +154,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
         // if(flag==0x100)  //hack
         //     return last_lr;
 
-        float lr = hLR->LearningRate(iter);   //  should be iter-1 because iter = iter0 + t + 1;
+        float lr = hLR->LearningRate(iter);  //  should be iter-1 because iter = iter0 + t + 1;
         last_lr  = lr;
         return lr;  // hLR->LearningRate(iter);
     }

@@ -17,6 +17,7 @@
 #include "../../Utils/GST_log.hpp"
 #include "../../Utils/GST_rander.hpp"
 #include "../../Utils/GST_util.hpp"
+#include "../Utils/rapidhash.h"
 #include "../../g_float.hpp"
 #include "./kernel/operator.cuh"
 #include "./kernel/utils.cuh"
@@ -423,11 +424,12 @@ bool GTensor::SerialGamaData(const string& info, void* host, bool isToHost, size
         } else {
             // cudaCheck(cudaMemcpyAsync(data, host,szX, cudaMemcpyHostToDevice));
             err = cudaMemcpy(data, host, szX, cudaMemcpyHostToDevice);
+            hash64 = rapidhash(host, szX);
         }
         if (err != cudaSuccess) {
             _ERROR("[Serial] failed to SerialGamaData_@\"%s\"! err=\"%s\" (%s code=%d)\n", name, cudaGetErrorString(err), cudaGetErrorName(err), err);
             exit(KOIFISH_SAFETENSOR_SERIAL);
-        }
+        }        
         if (flag < 0) {
             char buf[1024];
             sprintf(buf, "%s:%s@%s", info.c_str(), isToHost ? "SAVE" : "LOAD", name);
@@ -516,6 +518,7 @@ bool GTensor::Serial_Quant_MMAP(bool isSave, bool isReset, SERIAL_TYPE serial_ty
                     else
                         SAFE_read_mmap(tmpData, (hBITARR)host_data, szData + szGama + szM + szV);  // szData
                 }
+                hash64 = rapidhash(tmpData, szData);
 
                 if (quant != nullptr && !quant->params.isVendorQuant) { /*quant->params.type != QUANT_MODE::PRE_QUANT*/
                     double t0 = GST_ms();
@@ -938,6 +941,7 @@ GST_TensorBuffer::GST_TensorBuffer(Fish* hFis_, int flag) : hFish(hFis_) {
     }
 }
 
+//  [8,128,1024,1]
 bool GST_TensorBuffer::Prepare(int flag) {
     try {
         auto& config = hFish->config;
@@ -959,7 +963,9 @@ bool GST_TensorBuffer::Prepare(int flag) {
         typNUMBER tpA = config.model.tpActivation, tpG = config.model.tpGradient, tpW = config.model.tpWeight;
         // cuLiteTest(B,T,C);
 
-        SHAPE sp4 = {B, T, max(nFF, q_dim + kv_dim * 2)}, sp0 = {(int)nTmp}, spMost = {B, T, mostC};
+        SHAPE sp4 = {B, T, max(nFF, q_dim + kv_dim * 2)}, sp0 = {(int)nTmp}, spMost = {B, T, mostC}, spB = {B, 1, 1};
+        Qlen            = std::make_shared<huTensor>(hFish, "Qlen", spB, typNUMBER::I32, true, GTensor::F_DEBUG);
+        KVlen           = std::make_shared<huTensor>(hFish, "KVlen", spB, typNUMBER::I32, true, GTensor::F_DEBUG);
         bt4c            = std::make_shared<huTensor>(hFish, "tmpBT4c", sp4, tpA, true);
         tmpFF1          = std::make_shared<huTensor>(hFish, "tmpFF1", sp4, tpA, true);
         SHAPE spTernary = {mostC, max(nVocab, 3 * mostC)};

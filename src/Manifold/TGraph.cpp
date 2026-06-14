@@ -92,8 +92,9 @@ SelfAttention::SelfAttention(Fish* hG_, const std::string& key_, JSON::const_ite
 }
 
 bool SelfAttention::Build(int flag_0) {
-    hCache  = hFish->hCache;  // may nullptr
-    qkv4dnn = hFish->config.model.qkv4dnn;
+    hCache   = hFish->hCache;  // may nullptr
+    qkv4dnn  = hFish->config.model.qkv4dnn;
+    isVarLen = hFish->isAtPhase(P_SFT);
 
     // SHAPE sp = {shape[0], shape[1]};
     int flag = flag_0, nTokens = nBatchToken();
@@ -173,6 +174,11 @@ bool SelfAttention::Build(int flag_0) {
 //
 bool SelfAttention::UpdateQKVPack(int flag) {
     devQ = Q.out->data, devK = K.out->data, devV = V.out->data;
+    if (isVarLen) {
+        devQlen  = ToX(gBUFF->Qlen);
+        devKVlen = ToX(gBUFF->KVlen);
+    }
+
     if (qkv4dnn == qkvPack) {
         return true;
     }
@@ -1611,7 +1617,7 @@ int Fish::jToGraph(void* ctx_, bool isBuild, int flag) {
     //     ffn->delta         = nullptr;
     // }
 
-    hCLS = GetNeuron<OutCLS>("OutCLS", 0);
+    hCLS = GetNeuron<Head4Token>("Head4Token", 0);
     assert(hCLS != nullptr);
     if (config.model.token_embeds.size() > 1) {
         auto nn = std::make_shared<MAEC>(this, "MAEC", flag);

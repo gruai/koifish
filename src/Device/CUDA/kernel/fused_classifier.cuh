@@ -42,7 +42,7 @@ __device__ inline SoftmaxParams prepare_softmax_blockwide3(const floatX* inp, in
 
     // main loop for the bulk of the iterations (no bounds checking required!)
     for (; i >= 0; i -= blockDim.x) {
-        X128 packed_x = load128(x + i * X128::size);  // load and keep in cache until fused_classifier loop
+        X128 packed_x = load128(x + i * X128::size);  // load and keep in cache until fused_classifier_ loop
         for (int k = 0; k < X128::size; ++k) {
             float v          = (float)packed_x[k];
             float old_maxval = thread_maxval;
@@ -65,14 +65,17 @@ __device__ inline SoftmaxParams prepare_softmax_blockwide3(const floatX* inp, in
 // uses template to decide whether to write logits and probs
 // split both loops in "multiple-of-X128-size" and "bounds-checked remainder" parts
 // template <bool WriteDLogits = true, bool WriteProbs = false>
-__global__ void __launch_bounds__(1024, MAX_1024_THREADS_BLOCKS)
-    fused_classifier_kernel5(floatX* logits, float* losses, floatX* probs, const float dloss, const int* targets, int B, int T, int V, int P,
-                             bool WriteDLogits = true) {
+__global__ void __launch_bounds__(1024, MAX_1024_THREADS_BLOCKS) fused_classifier(floatX* logits, float* losses, floatX* probs, const float dloss,
+                                                                                  const int* targets, int B, int T, int V, int P, int *mask, bool WriteDLogits = true) {
     // note: idx is small enough that it easily fits into 32 bit;
     // by making it a long here, we ensure that any offsets calculated with it (e.g., idx * P)
     // are done is 64 bit
-    int64_t idx              = gridDim.x - (blockIdx.x + 1);  // reverse order for cache hits on matmul data
-    int ix                   = targets[idx];
+    int64_t idx = gridDim.x - (blockIdx.x + 1);  // reverse order for cache hits on matmul data
+    int ix      = targets[idx];
+
+    if (mask!=nullptr && BIT_TEST(mask[idx], MASK_FLAG::F_IGNORE_LOSS)) {  // SKIP if IGNORE_LOSS
+        return;
+    }
     bool WriteProbs          = probs != nullptr;
     const floatX* logits_vec = logits + idx * P;
     // softmax (reading B * T * V, same logits read again below, hopefully still in cache)
@@ -130,19 +133,4 @@ __global__ void __launch_bounds__(1024, MAX_1024_THREADS_BLOCKS)
             probs[idx * P + i] = (floatX)prob;
         }
     }
-}
-
-// ----------------------------------------------------------------------------
-// kernel launchers
-
-// replaces logits with logit gradients
-template <typename Type, bool WriteDLogits>
-void fused_classifier_v0(Type* logits, float* losses, const float dloss, const int* targets, int B, int T, int V, int P,
-                         std::bool_constant<WriteDLogits> write_dlogits, cudaStream_t stream) {
-    NVTX_RANGE_FN();
-    const int block_size = 1024;
-    const int N = B * T, grid_size = N;  //  each block for one token
-    floatX* probs = NULL;
-    fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, probs, dloss, targets, B, T, V, P, write_dlogits);
-    cudaCheck(cudaGetLastError());
 }

@@ -17,6 +17,7 @@ import atexit
 import sys
 import tkinter as tk
 from tkinter import messagebox
+import re
 
 PID_FILE = "/tmp/__SweepParams__.pid"
 
@@ -58,8 +59,6 @@ def smooth_moving_average(signal, window_size):
     smoothed_signal = np.convolve(s, w, mode='valid')
     return smoothed_signal
 
-
-
 def get_gpu_stats():
     try:
         # Get full GPU info
@@ -88,7 +87,52 @@ def MessageBox(msg):
     except tk.TclError as e:
         print(f"Tkinter failed: {e} (DISPLAY issue)")
 
-def koifish_one(title, sExe, jsFile0, path="./tests/", most_iter=-1,train_csv=None):
+def log2df(logfile):
+    pattern = (
+        r"\[(?P<epoch>[^[\]]+)\]"
+        r"_(?P<step>\d+)\s+"
+        r"loss=(?P<loss>[\d.eE+-]+)\s+"
+        r"\|g\|=(?P<grad_norm>[\d.eE+-]+)\s+"
+        r"lr=(?P<lr>[\d.eE+-]+)\s+\|\s+"
+        r"(?P<progress>[\d.]+%)@(?P<stage>\S+)\s+"
+        r"T=(?P<step_time>[\d.]+ms)\s+"
+        r"eta=(?P<eta>[\d\w :]+)\s+\|\s+"
+        r"(?P<tokens_per_sec>[\d.KMGT]+ token/s)\s+\|\s+"
+        r"x=(?P<x>\d+)"
+    )
+    records = []
+    try:
+        with open(logfile, "r") as f:
+            for line in f:  
+                rec = re.match(pattern, line)
+                if rec:
+                    records.append(rec.groupdict())
+    except FileNotFoundError:
+        print(f"❌ Log file not found: {logfile}")
+        return None
+    except PermissionError:
+        print(f"❌ No permission to read: {logfile}")
+        return None
+    except OSError as e:
+        print(f"❌ OS error while reading log: {e}")
+        return None
+    
+    df = pd.DataFrame(records)
+    numeric_cols = ["step", "loss", "grad_norm", "lr", "x"]
+    df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric)
+    # log file always start 1
+    empty_row = pd.Series(np.nan, index=df.columns)
+    df = pd.concat(
+        [pd.DataFrame([empty_row]), df],        ignore_index=True
+    )   
+    # from datasets import Dataset
+    # dataset = Dataset.from_list(records)
+    # dataset = dataset.cast_column("loss", "float32")
+    # dataset = dataset.cast_column("step", "int32")
+    return df
+
+def koifish_one(title, sExe, jsFile0, path="./tests/", most_iter=-1,train_csv=None,isFromLogFile=False):
+    dfTrain = None
     with open(jsFile0, 'r') as f:
         jConfig = json.load(f)  
     if most_iter>0:
@@ -110,27 +154,35 @@ def koifish_one(title, sExe, jsFile0, path="./tests/", most_iter=-1,train_csv=No
     cmd = sExe + jsFile + "> "+path+sOutput + " 2>&1"        # cmd = sExe+ path+title+".json 2>&1 | tee "+path+sOutput 
     print(f"{title}\t{cmd} ...")
     start = time.time()    
-    exit_code = os.system(cmd)
+    # exit_code = os.system(cmd)
+    result = subprocess.run(["./bin/koifish", jsFile],stdout=open(path+sOutput, "w"),stderr=subprocess.STDOUT)
+    exit_code = result.returncode
     elapsed = time.time() - start
-    
+    # if exit_code != 0 :  due to GPU exit error!
+        # if os.path.isfile(path+sOutput):
+        #     subprocess.Popen(    ["gedit", path+sOutput],    start_new_session=True)        
+        # print(f"❌ err={exit_code} failed @\"{cmd}\"!")
     # get_gpu_stats()
-    dfTrain = None
-    szTrain, szEval = 0, 0
-    if train_csv is None:
-        train_csv = './Train@[edu_fineweb1B]_info_.csv' #default old path
-    if os.path.exists(train_csv):
-        shutil.copy(train_csv, path+"./Train.csv")
-        szTrain = os.path.getsize(path+"./Train.csv")
-        dfTrain = pd.read_csv(path+"./Train.csv", sep=' ',index_col=False)
-    if os.path.exists('./Eval@[edu_fineweb1B]_info_.csv'):
-        shutil.copy('./Eval@[edu_fineweb1B]_info_.csv', path+"./Eval.csv")
-        szEval = os.path.getsize(path+"./Eval.csv")
-    print(f"{title}...OK! code={exit_code}. nByte of fTrain={szTrain}; nByte of fEval={szEval} Time={elapsed:.4f} seconds")
-    assert dfTrain is not None
-    if "loss" not in dfTrain.columns or most_iter >= len(dfTrain):
-        print(f"koifish_one failed to get result!dfTrain={dfTrain}\n")
-        assert(0)
-    assert "loss" in dfTrain.columns
+    if isFromLogFile:
+        dfTrain = log2df(path+sOutput)
+    else:       
+        szTrain, szEval = 0, 0
+        if train_csv is None:
+            train_csv = './Train@[edu_fineweb1B]_info_.csv' #default old path
+        if os.path.exists(train_csv):
+            shutil.copy(train_csv, path+"./Train.csv")
+            szTrain = os.path.getsize(path+"./Train.csv")
+            dfTrain = pd.read_csv(path+"./Train.csv", sep=' ',index_col=False)
+            
+        # if os.path.exists('./Eval@[edu_fineweb1B]_info_.csv'):
+        #     shutil.copy('./Eval@[edu_fineweb1B]_info_.csv', path+"./Eval.csv")
+        #     szEval = os.path.getsize(path+"./Eval.csv")
+            print(f"{title}...OK! code={exit_code}. nByte of fTrain={szTrain}; nByte of fEval={szEval} Time={elapsed:.4f} seconds")
+    if dfTrain is None or "loss" not in dfTrain.columns or most_iter >= len(dfTrain):
+        if os.path.isfile(path+sOutput):
+                subprocess.Popen(    ["gedit", path+sOutput],    start_new_session=True)  
+        print(f"❌ exit_code={exit_code} koifish_one failed to get result! train_csv={train_csv}\ndfTrain={dfTrain}\n")
+        return None
     
     return dfTrain
 

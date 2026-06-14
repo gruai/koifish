@@ -37,6 +37,9 @@ class KoifishApp : public GST_Application {
             case LIFE_PHASE::P_TRAIN:
                 fish->Train();
                 break;
+            case LIFE_PHASE::P_SFT:
+                fish->Train();
+                break;
             case LIFE_PHASE::P_EVAL_:
                 _INFO("[eval] ");
                 break;
@@ -49,7 +52,7 @@ class KoifishApp : public GST_Application {
             default:
                 break;
         }
-
+        fish.reset();
         return KOIFISH_OK;
     }
 };

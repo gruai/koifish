@@ -22,6 +22,7 @@ from some_utils import list_depth
 import multiprocessing as mp
 import numpy as np
 from functools import partial
+import torch
 try:
     import datasets
     from transformers import AutoConfig, AutoTokenizer
@@ -382,6 +383,146 @@ def ProcessPileBackup(dataset, model, out_file):
     # cat_samples = cat_samples.reshape(n_split, max_seq_len)
     # return cat_samples
 
+def ProcessDatabricksDolly(dataset, model, in_file, out_file, SYSTEM_PROMPT = "You are a helpful assistant.", enable_thinking=False, MAX_TOKENS = -1024):
+    isEncode = True
+    processed_data = []
+    tokens = []
+    with open(in_file, "r", encoding="utf-8") as fin:
+        for line in fin:
+            try:
+                obj = json.loads(line.strip())
+            except json.JSONDecodeError:
+                continue
+
+            instruction = obj.get("instruction", "")
+            context = obj.get("context", "")
+            response = obj.get("response", "")
+            user_content = instruction
+            if context:
+                user_content += f"\n\n{context}"
+            if enable_thinking:
+                chatml = (f"<|im_start|>system\n{SYSTEM_PROMPT}<|im_end|>\n<|im_start|>user\n{user_content}<|im_end|>\n<|im_start|>assistant\n{response}<|im_end|>")
+            else:
+                #"          <|im_start|>system\n%s<|im_end|>\n<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
+                chatml = (f"<|im_start|>system\n{SYSTEM_PROMPT}<|im_end|>\n<|im_start|>user\n{user_content}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n{response}<|im_end|>")
+
+            processed_data.append({"text": chatml})
+            if isEncode:
+                line = chatml.strip()
+                line_encoded = model.tokenizer.encode(line)
+                if len(line_encoded) > MAX_TOKENS or len(line_encoded)==0:
+                    continue
+                tokens.append(line_encoded)
+    
+    with open(out_file+".jsonl", "w", encoding="utf-8") as fout:
+        json.dump(processed_data, fout, ensure_ascii=False, indent=2)
+    print(f"ProcessDolly: JSON output written to {out_file}")
+    if isEncode:
+        cat_tokens = np.concatenate(tokens)
+        with TokenizedFile(model, out_file + ".bin", model.tokenizer.vocab_size, masking=False) as f:
+            # for tokens in tokenized_examples:
+            f.add_document(cat_tokens)
+        print(f"ProcessDolly: to {out_file}\n")
+            
+
+def create_assistant_labels(tokenizer, input_ids, im_start, im_end):
+    """
+    仅对 assistant 块中  之后的真实回答计算损失
+    system/user 块、所有分隔符、 标签全部设为 -100
+    """
+    # 初始化 labels 为 -100（全部不计算损失）
+    labels = torch.full_like(input_ids, -100)
+    
+    # 获取特殊标记的 token id
+    start_id = tokenizer.convert_tokens_to_ids(im_start)
+    end_id = tokenizer.convert_tokens_to_ids(im_end)
+    
+    # 获取 assistant 关键词 token id
+    assistant_id = tokenizer.convert_tokens_to_ids("assistant")
+    think_start_id = tokenizer.convert_tokens_to_ids("")
+    think_end_id = tokenizer.convert_tokens_to_ids("")
+
+    # 遍历每一条样本
+    for b_idx in range(input_ids.shape[0]):
+        seq = input_ids[b_idx]
+        seq_len = len(seq)
+        
+        # 寻找 <|im_start|>assistant 位置
+        in_assistant = False
+        found_think_end = False
+        
+        for i in range(seq_len - 1):
+            # 匹配 <|im_start|>assistant
+            if seq[i] == start_id and seq[i+1] == assistant_id:
+                in_assistant = True  # 进入 assistant 块
+            
+            # 匹配 ：之后才是真正需要学习的回答内容
+            if in_assistant and seq[i] == think_end_id:
+                found_think_end = True
+            
+            # 匹配 <|im_end|>：退出 assistant 块
+            if in_assistant and seq[i] == end_id:
+                in_assistant = False
+                found_think_end = False
+            
+            # 只有 assistant 块中  之后的 token 才需要计算损失
+            if in_assistant and found_think_end:
+                # 过滤掉末尾空行，只保留有效回答
+                if seq[i] not in [tokenizer.pad_token_id, tokenizer.eos_token_id]:
+                    labels[b_idx, i] = seq[i]
+
+    return labels
+# '<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\nFine<|im_end|>\n'
+def build_sft_loss_labels(tokenizer, input_ids_tensor, start_tok, end_tok):
+    """
+    Rule:
+    All system/user blocks, <|im_start|>, <|im_end|>, ... are context (-100 no loss).
+    Only plain assistant answer AFTER  uses original token id for loss calculation.
+    HF Trainer ignores -100 in cross-entropy loss by default.
+    """
+    # labels = tokens["input_ids"].clone()
+    # labels[labels == tokenizer.pad_token_id] = -100     #   nn.CrossEntropyLoss ignores targets == -100
+    batch_size, seq_len = input_ids_tensor.shape
+    # Initialize all positions to -100 (no loss)
+    labels = torch.full_like(input_ids_tensor, fill_value=-100)
+
+    # Fetch special token IDs
+    id_im_start = tokenizer.convert_tokens_to_ids(start_tok)
+    id_im_end = tokenizer.convert_tokens_to_ids(end_tok)
+    id_assistant = tokenizer.convert_tokens_to_ids("assistant")
+    id_think_open = tokenizer.convert_tokens_to_ids("<think>")
+    id_think_close = tokenizer.convert_tokens_to_ids("</think>")
+    true_answer = ""
+    for batch_idx in range(batch_size):
+        seq = input_ids_tensor[batch_idx]
+        in_assistant_block = False
+        think_closed_flag = False
+        pos = -1
+        while pos+1 < seq_len:
+            pos += 1
+            current = seq[pos].item()            
+            # Detect start of assistant turn: <|im_start|> followed by "assistant"
+            if pos+1 < seq_len and current==id_im_start and seq[pos+1]==id_assistant:
+                in_assistant_block = True
+            if not in_assistant_block: continue
+
+            if current == id_think_close:
+                think_closed_flag = True
+                a1,a2 = tokenizer.decode(seq[pos+1]),tokenizer.decode(seq[pos+2])
+                if a1 == "\n\n":    pos = pos+1
+                if a1 == "\n" and a2 == "\n":    pos = pos+2                
+            elif current == id_im_end:
+                in_assistant_block = False
+                think_closed_flag = False
+            else:                # Only enable loss for tokens after  inside assistant block
+                if think_closed_flag:                    # Skip padding tokens
+                    a = tokenizer.decode(current)
+                    if current != tokenizer.pad_token_id :                        
+                        labels[batch_idx, pos] = current
+                        true_answer += a
+
+    return labels,true_answer
+
 '''
 1 Chat-style JSONL or OpenAI chat format: {
     "messages": [
@@ -400,17 +541,18 @@ def collate_Chat_JSONL(batch, tokenizer, padding=True):
         ]
     else:
         texts = tokenizer.apply_chat_template(batch["messages"], tokenize=False, add_generation_prompt=False)
-
+    # print(texts)
     # attention_mask[i] = 1 if input_ids[i] != pad_token_id else 0
     tokens = tokenizer(texts,        padding=padding,       truncation=True,       max_length=128,     return_tensors="pt",)
-
+    # print(tokens)
     if(list_depth(tokens["input_ids"])==2):  # In some case, it's batch even for 1 samp
         labels = tokens["input_ids"][0].copy() # Ignore padding tokens in loss      
     else:  
         labels = tokens["input_ids"].detach().clone()   #.copy()
-    labels = tokens["input_ids"].clone()
-    labels[labels == tokenizer.pad_token_id] = -100     #   nn.CrossEntropyLoss ignores targets == -100
-    # labels = [ -100 if token == pad_id else token for token in labels ]        #   nn.CrossEntropyLoss ignores targets == -100     
+    IM_START, IM_END = "<|im_start|>", "<|im_end|>"
+    labels,true_answer = build_sft_loss_labels(tokenizer, tokens["input_ids"], IM_START, IM_END)
+    print(f"answer={true_answer}")
+    # print(labels)
     tokens["labels"] = labels
     # print(enc)
     return tokens
@@ -465,6 +607,10 @@ def TokenizeDataset(dataset: str, model, out_dir: Path = "preTokenData", seq_len
     elif dataset == "pile-val-backup":  # mit-han-lab/pile-val-backup only 10k txt slice with ~30k tokens! (original pie>million!)
         d = datasets.load_dataset("/home/cys/rnd/lic/Datasets/pile-val-backup", split="validation")        
         ProcessPileBackup(d, model, out_dir+"/eval.bin")
+        return
+    elif dataset == "databricks-dolly":  # mit-han-lab/pile-val-backup only 10k txt slice with ~30k tokens! (original pie>million!)
+        # d = datasets.load_dataset("/home/cys/rnd/lic/Datasets/pile-val-backup", split="validation")        
+        ProcessDatabricksDolly(None, model, localdir, out_dir+"/bricks_chatml", MAX_TOKENS = 1024)
         return
     elif dataset == "json_file":  # mit-han-lab/pile-val-backup only 10k txt slice with ~30k tokens! (original pie>million!)
         test_split = 0

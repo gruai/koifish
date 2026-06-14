@@ -243,6 +243,7 @@ enum QKV_PACK {
     QKVQKV,
     Q_K_V,  // separate three tensor
 };
+
 /**
  * should have config.json,tokenizer.json & tokenizer_config.json
  * generation_config.json
@@ -312,7 +313,9 @@ class MODEL_CARD {
     ACTIVATION_FUNC fActFFN = SWIG, fActSLP = SWIG;
     INIT_WEIGHT tpInitWeight = INIT_WEIGHT::RANDOM;
 
-    std::string sCardPath = "", sSTPath = "", sTokenJsonPath = "", sTokenBinPath = "";
+    std::string pathCheckPoint = "";    // support {"safetensors", "kun"} files in this path
+    
+    std::string sCardPath = "", sTokenJsonPath = "", sTokenBinPath = "";
     std::string sArch, torch_dtype, transformers_version, model_type;
     std::string act_type, norm_type;
     typNUMBER tpWeight = typNUMBER::BF16, tpGradient = typNUMBER::BF16, tpActivation = typNUMBER::BF16;
@@ -322,12 +325,7 @@ class MODEL_CARD {
     int vocab_size = -1;
     // 1. in some model, no bos_token_id!(GPT-2/GPT-3,unsloth/Qwen3-4B-Base,...)
     int bos_token_id, eos_token_id;
-    // Instruct model always has there templates! Base Model may has no template
-    std::string prompt_template, system_prompt_template;
-    bool isInstructModel() {
-        // system_prompt_template.empty()
-        return !prompt_template.empty();
-    }
+
     int preLogits_dB     = 2;  //
     bool isNormalBias    = true;
     bool isSLPBias       = true;
@@ -378,7 +376,7 @@ class MODEL_CARD {
     // virtual bool OnJsonCALM(CLI_params* hConfig, const std::string& path, const JSON& meta, int flag = 0X0);
     // more param from HF's "model_card"
     virtual bool InitHugFace(CLI_params* hConfig, const JSON& jConfig, bool needAlign, int flag = 0x0);
-    virtual bool InitChatTemplate(CLI_params* hConfig, int flag = 0x0);
+
     bool isLoadCard() { return !sCardPath.empty(); }
     void Dump(int typ);
 
@@ -409,10 +407,17 @@ struct DISTILLATION_CARD {
 };
 
 struct SFT_CARD {
+    enum {
+        BitFit_light,
+        Norm_tuning,
+        Scale_tuning,
+    };
     bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
     void Dump(int typ);
 
+    bool UpdateCKP(MODEL_CARD& model, int flag = 0x0);
     std::string sBaseModelPath;
+    std::string sCheckpointPath;
 };
 
 /**
@@ -582,6 +587,12 @@ struct TRAIN_CARD {
     bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
 };
 
+struct ChatML_Line {
+    std::string role;
+    std::string content;
+    ChatML_Line(const std::string& r, const std::string& c, int flag = 0x0) : role(r), content(c) {}
+};
+
 struct CHAT_SAMPLER {
     enum METHOD { TEMPERATURE, Top_K, Top_P, Min_P, BEAM };
     METHOD method  = METHOD::TEMPERATURE;
@@ -601,10 +612,22 @@ struct CHAT_SAMPLER {
     std::string prompt     = "";
     std::string token_test = "";
     // Define the length of batch input,   different with n_ctx_train, n_ctrx_origin !!!
-    int seq_len  = 1024;
-    int szBuffer = 32768;
+    int seq_len          = 1024;
+    int szBuffer         = 32768;
+    bool enable_thinking = true;
+
+    std::string prompt_template, system_prompt_template;
+    virtual bool InitPrefillTemplate(CLI_params* hConfig, int flag = 0x0);
+
+    bool isInstructModel() {  // Instruct model always has there templates! Base Model may has no template
+        // system_prompt_template.empty()
+        return !prompt_template.empty();
+    }
+
+    std::string toChatML(const std::vector<ChatML_Line>& line, int flag = 0x0);
 };
 
+// users could use this switch to dump more info
 struct DUMP_SWITCH {
     int tensor_ref             = 0;
     int train_time             = 0;
@@ -613,7 +636,7 @@ struct DUMP_SWITCH {
     std::string train_csv_path = "";
 };
 
-// operation_ObjDetail
+// Only for developers
 struct DEUG_SWITCH {
     float fLongTail            = -1;
     int SelfAttention_noraml   = 1;
@@ -626,6 +649,7 @@ struct DEUG_SWITCH {
 
     int test_quant        = 0;
     int dump_TensorDetail = 0;
+    int dump_LossDetail   = 0;
     int quant_UserMode    = 0;  //  1 only quant,
 
     int dict_latent_dim    = -1;
@@ -636,10 +660,11 @@ struct DEUG_SWITCH {
     int verCuda            = 0;
     int verInferQKV        = 1;
     int verInferFFN        = 1;
-    int verCuX2            = 0;
-    int verShuffleSamp     = 0;
-    int verSampJump        = 0;
-    int verGenerate        = 0;
+
+    int verCuX2        = 0;
+    int verShuffleSamp = 0;
+    int verSampJump    = 0;
+    int verGenerate    = 0;
 
     int T_ternary        = 0;
     int T_classifier_ver = 0;
@@ -663,6 +688,19 @@ struct DEUG_SWITCH {
     void Dump(int typ);
 };
 extern DEUG_SWITCH DEBUG;
+
+enum KERNEL_LIB_TYPE { CPU, CUDA, TL_CUDA, TL_AMD };
+static std::map<KERNEL_LIB_TYPE, std::string> KERNEL_LIB_name = {
+    {KERNEL_LIB_TYPE::CPU, "CPU"},
+    {KERNEL_LIB_TYPE::CUDA, "CUDA"},
+    {KERNEL_LIB_TYPE::TL_CUDA, "tilelang__CUDA"},
+    {KERNEL_LIB_TYPE::TL_AMD, "tilelang__AMD"},
+};
+struct KERNEL_CARD {
+    KERNEL_LIB_TYPE verHeadLoss = KERNEL_LIB_TYPE::CUDA;
+    bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
+    void Dump(int typ);
+};
 
 enum LORA_ADAPT_W { W0, AB, W_AB, refW_AB, refW_AB_ffn };
 
@@ -730,6 +768,7 @@ struct CLI_params {
     MODEL_CARD model;
     DISTILLATION_CARD distill;
     SFT_CARD sft;
+    KERNEL_CARD kernels;
 
     std::vector<CheckPoint_Params> ckp_in, ckp_out;
     CheckPoint_Params state;

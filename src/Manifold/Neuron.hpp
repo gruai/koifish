@@ -487,6 +487,7 @@ class SelfAttention : public SparseNeuron {
     bool isPreNormal   = false;  // Pre /Post Normalization
     bool isQKNormal    = false;
     bool isNormalOutpu = false;  // Like 'attn_sub_norm' of Bitnet
+    bool isVarLen      = false;  // QKV has different len(padding,...)
     QKV_PACK qkv4dnn, qkvPack = QKV_PACK::QQKKVV;
 
     bool isSeparateQKV = false;
@@ -494,6 +495,7 @@ class SelfAttention : public SparseNeuron {
     SHAPE spQ, spKV;
     //  tensor format={'SBhd', 'BShd', 'thd'}, default = 'BShd',   t=B*S
     void *devQ = nullptr, *devK = nullptr, *devV = nullptr, *devDeltaQ = nullptr, *devDeltaK = nullptr, *devDeltaV = nullptr;
+    void *devQlen = nullptr, *devKVlen = nullptr;
     hGensor deltaQ = nullptr, deltaK = nullptr, deltaV = nullptr;  // wrap of devDeltaQ,devDeltaK,devDeltaV
     // set dev_ptr of Q/K/V in different case
     virtual bool _devQKV(int stage, int flag = 0x0);
@@ -556,8 +558,8 @@ class SelfAttention : public SparseNeuron {
     LayerNormal normQ, normK;  //  Only w vector to save memory
     LayerNormal normOut;
 
-    hGensor attn       = nullptr;
-    hGensor lse = nullptr;  //  (B, Hq, T) lse of flash attention   {STATS_UID, stats} of CUDNN
+    hGensor attn = nullptr;
+    hGensor lse  = nullptr;  //  (B, Hq, T) lse of flash attention   {STATS_UID, stats} of CUDNN
 
     SLP Q, K, V;
     hRope rope = nullptr;
@@ -657,7 +659,7 @@ class VarCoder : public SparseNeuron {
 
     friend class TokenEmbed;
     friend class MAEC;
-    friend class OutCLS;
+    friend class Head4Token;
     template <typename T, typename KVT, typename Tw>
     friend struct KERNEL_PIPE;
 };
@@ -741,12 +743,15 @@ struct FFN_MOE : public FFN {
     MOE Moe;
 };
 
-struct OutCLS : public SparseNeuron {
+struct Head4Token : public SparseNeuron {
+    hBATCH hBatch               = nullptr;
+    TOKEN_ID ignore_token       = uint32_t(-1);
+    KERNEL_LIB_TYPE verHeadLoss = KERNEL_LIB_TYPE::CUDA;
     hMAEC maec;
     LayerNormal norm;
     SLP proj;
     TokenEmbed* hEmbed = nullptr;
-    // host version of target is SampLoader::hostTargetProbs
+    // host version of target is SampLoader::hostLabel
     hGTensor target = nullptr;
     /*
         1. Partial logits only contain dB samples at train stage!!! to reduce memory
@@ -760,10 +765,10 @@ struct OutCLS : public SparseNeuron {
     hSampLoader hLoader = nullptr;
     int nCls = 0, dB = 1, nzLoss = 0, latent = 0;
     int padded_nCls;  // padded to e.g. %128==0,
-    float mean_loss = 0, rLoss = 1.0, *hostLoss = nullptr;
-    OutCLS() {}
-    OutCLS(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
-    virtual ~OutCLS() {
+    float rLoss = 1.0, *hostLoss = nullptr;
+    Head4Token() {}
+    Head4Token(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
+    virtual ~Head4Token() {
         if (hostLoss != nullptr)
             delete[] hostLoss;
     }
@@ -777,12 +782,12 @@ struct OutCLS : public SparseNeuron {
     virtual hGTensor cuInfer(hGTensor inpL, int flag);
 };
 
-struct OutSimilarity : public OutCLS {
+struct OutSimilarity : public Head4Token {
     OutSimilarity(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
     hGTensor cuFlow(hGTensor inpL, int flag) override;
 };
 
-struct OutEntropy : public OutCLS {
+struct OutEntropy : public Head4Token {
     OutEntropy(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
     // hGTensor cuFlow(hGTensor inpL,int flag)  override;
 };

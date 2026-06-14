@@ -88,15 +88,19 @@ void inline PrintT(const char* title, const T* src, int n1, int n2, int n3 = 1, 
     _INFO("%s<%s>\t", title, K_FLOATS[tpData].name.c_str());
     float a1 = -FLT_MAX, a0 = FLT_MAX, a;
     double sum = 0.0, len = 0.0, sum2 = 0.0;
+    if (g_dump_each > 0) {
+    }
     for (i = 0; i < nElem; i++) {
         a = T2Float<T>(cur, i);
         assert(!isnan(a) && !isinf(a));
-        if (i < nEach || i >= nElem - nEach || fabs(i - nElem / 2) <= nEach) {
-            _INFO(format, a);  //  "%.15g "
-        }
+        if (g_dump_each > 0) {
+            if (i < nEach || i >= nElem - nEach || fabs(i - nElem / 2) <= nEach) {
+                _INFO(format, a);  //  "%.15g "
+            }
 
-        if (i == nEach || i == nElem - nEach - 1)
-            _INFO("...");
+            if (i == nEach || i == nElem - nEach - 1)
+                _INFO("...");
+        }
         sum += fabs(a);
         sum2 += a * a;
         if (a == 0)
@@ -104,9 +108,10 @@ void inline PrintT(const char* title, const T* src, int n1, int n2, int n3 = 1, 
         a1 = std::max(a1, a);
         a0 = std::min(a0, a);
     }
+
     assert(!isnan(sum2) && !isinf(sum2));
     len = sqrt(sum2 / nElem);
     //  printf output is only displayed if the kernel finishes successfully,  cudaDeviceSynchronize()
-    _INFO(" |avg|=%g(%ld) avg_len=%g sum2=%g [%f,%f] nz=%.3g\n", sum / nElem, nElem, len, sum2, a0, a1, nz * 1.0 / nElem);
+    _INFO(" |avg|=%g(%ld) [%.3e,%.3e] avg_len=%g sum2=%g nz=%.3g\n", sum / nElem, nElem, a0, a1, len, sum2, nz * 1.0 / nElem);
     fflush(stdout);
 }

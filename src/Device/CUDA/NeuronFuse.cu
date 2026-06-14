@@ -15,9 +15,9 @@
 #include "./kernel/embed.cuh"
 #include "./kernel/fused_classifier.cuh"
 // #include "./kernel/gelu.cuh"
+#include "../tile_kernel/tl_kernels.hpp"
 #include "./kernel/layernorm.cuh"
 #include "./kernel/operator.cuh"
-#include "../tile_kernel/tl_kernels.hpp"
 #define NOMINMAX
 
 cublasComputeType_t cublas_compute = CUBLAS_COMPUTE_32F;
@@ -46,7 +46,7 @@ bool TokenEmbed::UpdateBucket(int type, int flag) {
     bucket_info      = new int4[B * T * num_c_groups];
     return true;
 }
-void TokenEmbed::WorkloadOnBucker(int* inputs_cpu, int flag) {
+void TokenEmbed::WorkloadOnBucker(int* tokens, int flag) {
     // if(num_buckets>0)
     //     return;
 
@@ -54,10 +54,12 @@ void TokenEmbed::WorkloadOnBucker(int* inputs_cpu, int flag) {
     int total_items = 0;
     std::unordered_map<uint64_t, std::vector<uint64_t>> buckets;
     for (uint64_t bt = 0; bt < B * T; bt++) {
+        uint64_t token = static_cast<uint64_t>(tokens[bt]);
+        assert(token < padded_nCls);  // 或 vocab_size
         for (uint64_t c_group = 0; c_group < num_c_groups; c_group++) {
-            // todo - passing c_group/inputs_cpu[bt] in data to avoid a second hash lookup is a bit hacky
-            uint64_t data = bt + (c_group << 32ULL) + ((uint64_t)inputs_cpu[bt] << 42ULL);
-            buckets[c_group + num_c_groups * inputs_cpu[bt]].push_back(data);
+            // todo - passing c_group/tokens[bt] in data to avoid a second hash lookup is a bit hacky
+            uint64_t data = bt + (c_group << 32ULL) + (token << 42ULL);
+            buckets[c_group + num_c_groups * token].push_back(data);
             total_items++;
         }
     }
@@ -90,8 +92,8 @@ void TokenEmbed::WorkloadOnBucker(int* inputs_cpu, int flag) {
     // todo - could use CUDA events (even without streams) to avoid CPU/GPU synchronisation completely
     int4* d_bucket_info     = (int4*)scratch;
     int* d_workload_indices = (int*)(scratch + B * T * num_c_groups * sizeof(int4));
-    cudaCheck(cudaMemcpyAsync(d_bucket_info, bucket_info, num_buckets * sizeof(int4), cudaMemcpyHostToDevice, main_stream));
-    cudaCheck(cudaMemcpyAsync(d_workload_indices, workload_indices, total_items * sizeof(int), cudaMemcpyHostToDevice, main_stream));
+    cudaCheck(cudaMemcpy(d_bucket_info, bucket_info, num_buckets * sizeof(int4), cudaMemcpyHostToDevice));
+    cudaCheck(cudaMemcpy(d_workload_indices, workload_indices, total_items * sizeof(int), cudaMemcpyHostToDevice));
 }
 
 //
@@ -555,7 +557,7 @@ void CU_set(const char* title, T* dst, int n1, int n2, int n3 = 1, int n4 = 1, i
     fputs(info, stderr);
     fflush(stderr);
 
-    cudaCheck(cudaMemcpyAsync(dst, src, nElem * sizeof(T), cudaMemcpyHostToDevice));
+    cudaCheck(cudaMemcpy(dst, src, nElem * sizeof(T), cudaMemcpyHostToDevice));
     delete[] src;
 }
 
@@ -612,7 +614,7 @@ hGTensor FFN::cuFlow(hGTensor hIn, int flag) {
             relu.Forw(tGelu, up_out);
         }
         INSPECT inspect(this);
-        gBUFF->delta->Print("ffn.down.delta", 0, dump_flag);
+        gBUFF->delta->Print("δ_FFN_down", 0, 0, B * T * C);
         down.Back(gBUFF->bt4c, tGelu, gBUFF->delta, up_out);
         // CU_set<nv_bfloat16>("dSwigLU", ToX(gBUFF->bt4c), B, T, latent, 1, dump_flag);
         gBUFF->bt4c->Print("dSwigLU", 0, dump_flag, B * T * latent);
@@ -710,7 +712,7 @@ __global__ static void CU_classifier_(floatX* logits_BT, float* losses, floatX* 
     __syncthreads();
 }
 
-hGTensor OutCLS::cuInfer(hGTensor inp_, int flag) {
+hGTensor Head4Token::cuInfer(hGTensor inp_, int flag) {
     double now = GST_us();
     assert(norm.Empty());
     int nToken = nBatchToken(), nEmbed = hFish->config.nEmbed();
@@ -732,24 +734,30 @@ hGTensor OutCLS::cuInfer(hGTensor inp_, int flag) {
     return preLogits;
 }
 
-//  extern "C" __global__ void header_cls(__nv_bfloat16* __restrict__ grad_pre_logits, const int* __restrict__ labels, float* __restrict__ losses, const __nv_bfloat16* __restrict__ pre_logits);
+//  extern "C" __global__ void header_cls(__nv_bfloat16* __restrict__ grad_pre_logits, const int* __restrict__ labels, float* __restrict__ losses, const
+//  __nv_bfloat16* __restrict__ pre_logits);
 
-hGTensor OutCLS::cuFlow(hGTensor inp_, int flag) {
+hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
     INSPECT inspect(this);
-    int V = nCls, Vp = padded_nCls, gelu_fusion = 1, i, C = hFish->config.nEmbed();
+    int V = nCls, Vp = padded_nCls, gelu_fusion = 1, i, C = hFish->config.nEmbed(), nPlot = 0;
     assert(proj.b == nullptr);
-    mean_loss          = 0.0f;
+    // mean_loss          = 0.0f;
     const int* targets = (int*)(target->data);
     float* cuLoss      = (float*)out->data;
+    int* devMask       = hBatch->devMask == nullptr ? nullptr : TO<int>(hBatch->devMask);
     hGTensor curLogits = preLogits, w = proj.w;
-    float alpha4g = 1.0, beta4g = 1.0, logprob = 0;  //  rLoss = 1.0f / (B * T)
+    float alpha4g = 1.0, beta4g = 1.0, logprob = 0;
+
     if (isForward()) {
+        double t0 = GST_us();
+        rLoss     = 1.0 / hBatch->nValidTokens;
+        // g_dump_level = -1;  // only for debug
         inp = inp_;
         if (maec != nullptr) {
             inp = maec->DEC(inp, true);
             C   = inp->ne[2];
         }
-        floatX *z0 = ToX(inp), *to_gelu = nullptr;  
+        floatX *z0 = ToX(inp), *to_gelu = nullptr;
         cudaCheck(cudaMemset(cuLoss, 0, B * T * sizeof(float)));
         assert(target->isSameShape(out));
         bool isBack = ToG0(w) != nullptr && delta != nullptr && !hFish->isAtPhase(LIFE_PHASE::P_EVAL_), write_dlogits = isBack;
@@ -758,48 +766,58 @@ hGTensor OutCLS::cuFlow(hGTensor inp_, int flag) {
         for (i = 0; i < B; i += dB) {
             size_t off = i * T * Vp, n1 = i * T, nZ = i * T * C;
             off = 0;  // reduce memory
-            // PrintTensor<floatX>("OutCLS.proj.w", w->GetDataX(), true, w->ne[0], w->ne[1], w->ne[2], w->ne[3], -1);
+            // PrintTensor<floatX>("Head4Token.proj.w", w->GetDataX(), true, w->ne[0], w->ne[1], w->ne[2], w->ne[3], -1);
             // [50304,768] x [768,8192] => [50304,8192]
             hGensor subZ = inp->Partial("partialZ", nZ * sizeof(floatX), {dB, T, C});
             proj.Forw(curLogits, subZ);
+            double t_i0 = GST_us();
+            switch (verHeadLoss) {
+                case KERNEL_LIB_TYPE::TL_CUDA: {
 #if defined __USE_TILELANG__
-#else            
-#endif            
-            // header_cls<<<dim3(dB*T),dim3(128,1,1), 49152, main_stream>>>(ToX(curLogits) + off, targets + n1, cuLoss + n1, ToX(curLogits) + off);
-
-            // curLogits->Print("preLogist",0, dump_flag);
-            // SYNC_DEVICE();
-
-            fused_classifier_kernel5<<<dB * T, 1024, 0, main_stream>>>(ToX(curLogits) + off, cuLoss + n1, nullptr, rLoss, targets + n1, dB, T, V, Vp,
-                                                                           write_dlogits);
-            
+                    //   grad_pre_logits, const int* labels, float* losses, const  pre_logits, int N
+                    header_cls_T64_64_S49152_bfloat16<<<dim3(dB * T), dim3(128, 1, 1), 49152, main_stream>>>(
+                        ToX(curLogits) + off, targets + n1, cuLoss + n1, ToX(curLogits) + off, dB * T, hBatch->nValidTokens);
+                    // header_cls_T64_64_S49152_bfloat16<<<dim3(dB * T), dim3(128, 1, 1), 49152, main_stream>>>(targets + n1, ToX(curLogits) + off, dB * T);
+#else
+                    assert(0 && "TL_CUDA kernel of LOSS is missed!");
+#endif
+                } break;
+                default:  // KERNEL_LIB_TYPE::CUDA
+                    fused_classifier<<<dB * T, 1024, 0, main_stream>>>(ToX(curLogits) + off, cuLoss + n1, nullptr, rLoss, targets + n1, dB, T, V, Vp, devMask,
+                                                                       write_dlogits);
+            }
+            SYNC_STREAM();
+            SUM::tLoss += (GST_us() - t_i0) / 1000000.0;  //  0.014
             if (isBack) {
                 hGensor subDelta = delta->Partial("partialDeltaZ", nZ * sizeof(floatX), {dB, T, C});
-                PrintTensor<float>("loss", cuLoss + n1, true, dB, T, 1, 1, dump_flag);
-                // tl_scale__T128_128_S32768_bfloat16<<<dim3(CEIL_DIV(Vp,128), CEIL_DIV(dB*T,128), 1),dim3(128,1,1), 32768, main_stream>>>(ToX(curLogits) + off, dB*T, Vp, rLoss);
-                curLogits->Print("oucls.delta", 0, dump_flag);
+                if (0 && verHeadLoss == KERNEL_LIB_TYPE::TL_CUDA && i == 0) {  //
+                    dump_flag = -1;     
+                    // PrintTensor<float>("loss", cuLoss + n1, true, dB, T, 1, 1, dump_flag);
+                    // curLogits->Print("δ_logits", 0, dump_flag);
+                    _INFO({"per-token = "});
+                    for (int j = 0; j < T; j++) {                       // debug
+                        int label = (int)(D2f<int>(targets + n1 + j));  // hBatch->host[n1 + j + 1];
+                        if (label < 0)
+                            continue;  // maybe negative for mask
+                        // if (nPlot++ >= 16)
+                        //     break;
+                        _INFO("(%d,%.2f,%.2f) ", label, D2f(cuLoss + n1 + j), D2f(ToX(curLogits) + off + j * V + label));
+                    }
+                    _INFO({"\n"});
+                }
                 proj.Back(subDelta, subZ, curLogits, nullptr, false, 0x100);  // hGTensor delta, hGTensor inp, hGTensor deltaIn
             }
         }
-        // PrintTensor<float>("loss", cuLoss, true, B, T, 1, 1, -1);
-        // tl_scale<<<dim3(T/64, 1, 1),dim3(128,1,1), 16384, main_stream>>>(cuLoss, B, T, rLoss);
-        // PrintTensor<float>("loss", cuLoss, true, B, T, 1, 1, -1);
-        // fused_classifier(errLogits, cuLoss, rLoss, targets, B, T, V, Vp, write_dlogits, main_stream);        //target=[32,1024]
+        delta->Print("δ_head", 0, dump_flag, B*T*C);
+        // g_dump_each = 0;
+        
         cudaMemcpy(hostLoss, cuLoss, B * T * sizeof(float), cudaMemcpyDeviceToHost);
-        if (!SYNC_DEVICE("OutCLS", 1)) {
+        if (!SYNC_STREAM("Head4Token", 1)) {
             assert(0);
             exit(KOIFISH_EXIT_OUT_CLS);
         }
-        mean_loss = hLoader->UpdateII(hostLoss, B,T,0x0);
-        /*for (logprob = 0, i = 0; i < B * T; i++) {
-            assert(!std::isnan(hostLoss[i]));
-            mean_loss += hostLoss[i];
-            logprob += -hostLoss[i];
-        }
-        mean_loss /= B * T;
-        float ppl = exp(-logprob / (B * T));  //  just exp(mean_loss)
-        hLoader->iiLoss.Add(mean_loss);
-        hLoader->iiPPL.Add(ppl);*/
+        // mean_loss = hLoader->UpdateII(hostLoss, B, T, 0x0);
+        SUM::tHeader += (GST_us() - t0) / 1000000.0;
     } else {
         // matmul_backward(errOut, gw, NULL, errLogits, z0, w, NULL, B, T, C, Vp, main_stream);
         if (maec != nullptr) {

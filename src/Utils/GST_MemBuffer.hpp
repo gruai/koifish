@@ -41,17 +41,12 @@ class GST_TensorBuffer {
     std::vector<GTensor*> zTensors;
 
    public:
+   //   huTensor bt4c,delta, ...
     shared_ptr<GTensor> bt4c = nullptr, delta = nullptr, gate_delta = nullptr, tmpDelta = nullptr, scratch = nullptr, tmpFF1 = nullptr, tmpW = nullptr,
-                        tmpGW = nullptr, tmpQout = nullptr, tmpKout = nullptr, residual = nullptr, tmpTernary = nullptr, outL = nullptr;
+                        tmpGW = nullptr, tmpQout = nullptr, tmpKout = nullptr, residual = nullptr, tmpTernary = nullptr, outL = nullptr,
+                        Qlen = nullptr, KVlen = nullptr;
 
     GST_TensorBuffer(Fish* hFish, int flag = 0x0);
-    // GST_TensorBuffer(size_t size) : total_size_(size), current_offset_(0) {
-    //     cudaError_t err = cudaMalloc(&buffer_, total_size_);
-    //     if (err != cudaSuccess) {
-    //         throw std::runtime_error("Failed to allocate GPU buffer: " + std::string(cudaGetErrorString(err)));
-    //     }
-    // }
-
     virtual ~GST_TensorBuffer();
 
     // Prevent copying

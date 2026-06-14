@@ -97,8 +97,7 @@ hGensor Optimizer::hLoss() {
     return _fish->loss;
 }
 
-hGensor Optimizer::hTargetProbs() { return _fish->target_probs; }
-hGensor Optimizer::hPreLogits() { return _fish->hCLS->preLogits; }
+hGensor Optimizer::hTargetProbs() { return _fish->target_label; }
 
 hGensor Optimizer::GradOf(hGensor node, int flag) {
     // assert(0);
@@ -110,21 +109,6 @@ hGensor Optimizer::GradOf(hGensor node, int flag) {
  * https://www.lomont.org/papers/2008/Lomont_PRNG_2008.pdf
  */
 /*
-// ggml_compute_forward_cross_entropy_loss_f32
-    float max = -INFINITY;
-    ggml_vec_max_f32(nc, &max, s0);
-    ggml_float sum = ggml_vec_soft_max_f32(nc, st, s0, max);        assert(sum > 0.0);
-    sum = (1.0 - eps) / sum;        //eps = 1e-9;
-    // avoid log(0) by rescaling from [0..1] to [eps..1]
-    ggml_vec_scale_f32(nc, st, sum);
-    ggml_vec_add1_f32(nc, st, st, eps);
-    ggml_vec_log_f32(nc, st, st);
-    ggml_vec_mul_f32(nc, st, st, s1);
-
-    float st_sum = 0;
-    ggml_vec_sum_f32(nc, &st_sum, st);
-    sums[ith] += st_sum;
-*/
 bool Optimizer::OnLogits(int flag) {
     auto pTarget = hTargetProbs();
     size_t nz = tELEM(pTarget), nToken = pTarget->ne[0], n_ctx = pTarget->ne[1];
@@ -133,7 +117,7 @@ bool Optimizer::OnLogits(int flag) {
     assert(pLogits != nullptr);
     assert(pLogits->type == typNUMBER::F32);
 
-    float *p = (float*)(pLogits->data), sum = 0;  // target_probs->data
+    float *p = (float*)(pLogits->data), sum = 0;  // target_label->data
 
     for (int k = 0; k < n_ctx; k++) {
         sum = 0;
@@ -142,17 +126,17 @@ bool Optimizer::OnLogits(int flag) {
     }
 
     return true;
-}
+}*/
 
 bool cuClearGrad(std::vector<hGTensor> tensors, int flag);
 bool Optimizer::BatchGrad(int iter, float& fx, int flag) {
     // hPipe->iter = iter;
-    RLS_BP* hRLS = hEDS->GetScheduler<RLS_BP>();
+    RLS_BP* hRLS = _fish->curDevice()->GetScheduler<RLS_BP>();
     fx           = 0;
     auto loss    = hLoss();
     float *fLoss = (float*)(loss->data), *g = nullptr, accum_norm = 1.0f / (float)nGradAccum;
-    OutCLS* cls  = _fish->GetNeuron<OutCLS>("OutCLS", 0);
-    cls->hLoader = train_loader;
+    Head4Token* cls = _fish->GetNeuron<Head4Token>("Head4Token", 0);
+    cls->hLoader    = train_loader;
     train_loader->ClearII();
     if (grad != nullptr) {
         ZERO_(grad);
@@ -518,7 +502,7 @@ void Optimizer::UpdateTrainLoss(int x, float loss, int flag) {
         fx_best.push_back(loss);  //   only 1 element  ???
         loss_before = loss;
     }
-    RLS_BP* hRLS = _fish->hEDS->GetScheduler<RLS_BP>();
+    RLS_BP* hRLS = _fish->curDevice()->GetScheduler<RLS_BP>();
     if (hRLS->afu != nullptr)
         hRLS->afu->loss = loss;
     loss_after = loss;
@@ -575,25 +559,23 @@ void Optimizer::CheckExitSearch(int t, int flag) {
         trainInfos().SaveToCSV("_info_.csv");
         // release more resource here
         _WARN("[APP] Koifish exit Optimizer::Search when iter=%d > N_mostiter=%d", t, DEBUG.N_mostiter);
-        K_EXIT(KOIFISH_EXIT_DEBUG);
+        K_EXIT_NOW(KOIFISH_EXIT_DEBUG);
     }
 }
 /*
     10/04/2025  行走于天地之间，所见大美，皆为人心
  */
 Optimizer::RESULT Optimizer::Search(void* ctx, hGensor loss_, hGensor target_, CLI_params& config) {
-    hEDS = _fish->hEDS;
-    assert(hEDS != nullptr);
     auto train_params = TrainParams();
     // auto fish_in      = _fish->config.ckp_in[0];_fish->isLoadCheckpoint ? fish_in.sDir.c_str() : ""
 
     last_time                = GST_ms();
     Optimizer::RESULT result = DID_NOT_CONVERGE;
-    RLS_BP* hRLS             = _fish->hEDS->GetScheduler<RLS_BP>();
+    RLS_BP* hRLS             = _fish->curDevice()->GetScheduler<RLS_BP>();
     bool cancel = false, isWarmup = false;
     string suf, pref;
     Dump(0x0);
-    _INFO("\t%s@<%s> %s device=[%s] \n", __func__, _fish->hBackTG->name.c_str(), "", hEDS->__repr__(suf, pref, 0).c_str());
+    _INFO("\t%s@<%s> %s device=[%s] \n", __func__, _fish->hBackTG->name.c_str(), "", _fish->curDevice()->__repr__(suf, pref, 0).c_str());
     _INFO("\t Accumulation=%d AdaptiveSched=%d GRAP=%p rZMUV=%g rLARS=%g \n", nGradAccum, (int)isAdaptiveSched, grad, config.ZMUV_ratio, config.lars_ratio);
     // tpGD=SGD_HYBRID;    //ADAMw    ADAM_S  SGD_v    SGD_HYBRID        SGD_blk_v
     _INFO("\tDECENT=%d(%s) SIGN=%d tpFuseCu=%d filter=%d\n\n", tpGD, GD_NAME[tpGD].c_str(), tpSign, tpFuseCu, _fish->config.filter_tmp_grad.size());
@@ -628,7 +610,7 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGensor loss_, hGensor target_, C
         if (t == train_params.nMostIter - 1) {
             if (train_loader != nullptr) {
                 train_loader->isLastShard = true;
-                isDumpOnce           = true;
+                isDumpOnce                = true;
             }
         }
         iter = iter0 + t + 1;
@@ -679,7 +661,7 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGensor loss_, hGensor target_, C
         result = DID_NOT_CONVERGE;
     }
     double b = t / 1.0e6 * config.nTokenInBatch();
-    _INFO("[train]: End of all epochs. nEpoch=%d nIter=%d(%d) nToken=%.5g(M)\n", train_epochs + 1, t, iter0, b);
+    _INFO("[%s]: End of all epochs. nEpoch=%d nIter=%d(%d) nToken=%.5g(M)\n", sTrainStage.c_str(), train_epochs + 1, t, iter0, b);
     return result;
 }
 
@@ -694,10 +676,8 @@ double Optimizer::GraphCompute(hSampLoader hLoader, hTGraph hTG, int flag) {
     int nThread = TrainParams().n_threads, no = 0, nAccum = TrainParams().n_gradient_accumulation;
     bool isOnlyEvaluate = !hTG->isBackward;
 
-    OutCLS* cls       = _fish->GetNeuron<OutCLS>("OutCLS", 0);
+    Head4Token* cls   = _fish->GetNeuron<Head4Token>("Head4Token", 0);
     TokenEmbed* embed = _fish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
-    if (_fish->phase != LIFE_PHASE::P_GENERATE && _fish->phase != LIFE_PHASE::P_PREFILL)
-        embed->hBatch = hLoader->hBatch;
 
     isBackward = false;
     _fish->ForwardOnRLS(iter, 0x0);
@@ -715,12 +695,12 @@ double Optimizer::GraphCompute(hSampLoader hLoader, hTGraph hTG, int flag) {
             isBackward = false;
         }
     }
-    // SUM::tX1 += GST_ms()-now;
+
     return 0.0;
 }
 
 bool Optimizer::Evaluate(int type, int flag) {
-    OutCLS* cls = _fish->GetNeuron<OutCLS>("OutCLS", 0);
+    Head4Token* cls = _fish->GetNeuron<Head4Token>("Head4Token", 0);
 
     int iter = GetITER(), token = -1;
     float val_loss = 0;
@@ -769,9 +749,9 @@ float Optimizer::EvaluateSamps(hSampLoader loader, int iter, int flag) {
     assert(0);  // Deprecated due to code refactor
 
     GST_TIC(tic);
-    OutCLS* cls  = _fish->GetNeuron<OutCLS>("OutCLS", 0);
-    cls->hLoader = loader;
-    auto loss    = hLoss();
+    Head4Token* cls = _fish->GetNeuron<Head4Token>("Head4Token", 0);
+    cls->hLoader    = loader;
+    auto loss       = hLoss();
     double l2, delta_max = 0, delta_ = 0, a, mean_loss = 0, ee = 0;
     auto tokens_input = _fish->Input();
     int i, nB = 0, step = loader->StepOfEvaluate();
@@ -868,8 +848,10 @@ float Optimizer::UpdateLossCurve(int flag) {
         _INFO(" | %.1fK token/s | %s", ema_tps / 1000.0, _fish->DebugInfo().c_str());
         if (_fish->config.distill.isDistll())
             _INFO(" x=%.8g\n", DistillRate(0x0));
-        else
-            _INFO(" x=%d\n", SUM::nUpdateParam);
+        else {
+            _INFO(" x=%.4gs(%.4gs)\n", (SUM::tLoss) / iter, (SUM::tHeader) / iter);
+            // _INFO(" x=%d\n", SUM::nUpdateParam);
+        }
     }
     float improvement = loss_before - loss_after;
     return improvement;
@@ -914,7 +896,6 @@ bool Optimizer::OnNextShard(int flag) {
 bool Optimizer::OnNextEpoch(int flag) {
     train_epochs++;
     if (hLR->policy == LearnSKDU::COSINE_EPOCH) {
-        // _INFO("-------- End of all shards of epoch_%d! -------- \n");
     }
     return true;
 }
@@ -950,6 +931,27 @@ void Optimizer::BeforeTrain(hGensor tokens_, int flag) {
     InitOnCUDA(1);
     assert(nMostParam >= nParams);
     assert(_fish->config.common.nMostIter > 0);
+
+    Head4Token* cls   = _fish->GetNeuron<Head4Token>("Head4Token", 0);
+    TokenEmbed* embed = _fish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
+
+    switch (_fish->phase) {
+        case LIFE_PHASE::P_TRAIN:
+            sTrainStage = "PreTrain";
+            break;
+        case LIFE_PHASE::P_SFT:
+            sTrainStage = "SFT";
+            if (adam.alpha < 1.0e-5 || adam.alpha > 3.0e-5) {
+                _WARN(
+                    "The learning rate(%g) does not alight with common industry practices(%g - %g). Maybe %g is better for full-parameter fine-tuning (SFT) of "
+                    "pretrained LLMs",
+                    adam.alpha, 1e-5, 3e-5, 2e-5);
+            }
+            break;
+        default:
+            assert(0);
+            break;
+    }
 }
 
 bool MUON_params_::isAdamW(void* hUserData, int flag) {
@@ -1176,9 +1178,9 @@ void Optimizer::Dump(int typ) {
     _fish->memBuffer->Dump(0x0);
 
     auto train_params = TrainParams();
-    _INFO("======== nEopch=%d most_iter=%d\n", train_params.n_epochs, train_params.nMostIter);  //,train_params.nEpochIter
+    _INFO("======== %s nEopch=%d most_iter=%d\n", sTrainStage.c_str(), train_params.n_epochs, train_params.nMostIter);  //,train_params.nEpochIter
     fflush(stdout);
-    RLS_BP* hRLS = _fish->hEDS->GetScheduler<RLS_BP>();
+    RLS_BP* hRLS = _fish->curDevice()->GetScheduler<RLS_BP>();
     hRLS->Dump(typ);
     _INFO("\tType weight=%s activation=%s", cNameOf(_fish->config.model.tpWeight), cNameOf(_fish->config.model.tpActivation));
     fflush(stdout);
@@ -1228,6 +1230,7 @@ void Optimizer::Dump(int typ) {
     _INFO("\tnParams = %ld(%.6gM, nT=%ld nG0=%d)\n", nParams, nParams / 1.0e6, opt_ps.size(), nG0);
 
     _fish->config.distill.Dump(0x0);
+    _fish->config.kernels.Dump(0x0);
 
     fflush(stdout);
 }

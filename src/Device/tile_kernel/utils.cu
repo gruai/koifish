@@ -1,6 +1,14 @@
+#if defined(_MSC_VER) && !defined(__clang__) && _MSC_VER < 1940
+#define _tl_orig_alignas alignas
+#define alignas(N) _tl_orig_alignas((N) <= 64 ? (N) : 64)
+#include <cuda.h>
+#undef alignas
+#define alignas _tl_orig_alignas
+#endif
 #include <tl_templates/cuda/gemm.h>
 #include <tl_templates/cuda/copy.h>
 #include <tl_templates/cuda/reduce.h>
+#include <tl_templates/cuda/scan.h>
 #include <tl_templates/cuda/ldsm.h>
 #include <tl_templates/cuda/threadblock_swizzle.h>
 #ifdef ENABLE_BF16

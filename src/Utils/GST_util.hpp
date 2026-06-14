@@ -182,7 +182,7 @@ struct SUM {
     static int nQuantTensor;
     static size_t szQuantBits;
     static int nInitParam, nSaveParam, nzSaveParam, nLoadParam, nzLoadParam, nDogLeg;
-    static double tX, tX1, tData, tRemater, tQKV_forw, tQKV_back, tFFN, tPreLogits, tUpload, tLoadData, tLoadParam, tEval_0, tEval_1;
+    static double tX, tX1, tData, tRemater, tQKV_forw, tQKV_back, tFFN, tPreLogits, tHeader, tLoss, tUpload, tLoadData, tLoadParam, tEval_0, tEval_1;
     static double tQuant, tF8Ex, tLowBit;
     static size_t szUpload;
     static string sQuantInfo;
@@ -195,7 +195,7 @@ struct SUM {
     static void GPU_TIME(double& a, const double b, int flag = 0x0);
 };
 
-// #define GPU_TIME_a(a,b)   {SYNC_DEVICE(); (a) += GST_us() - (b);}
+// #define GPU_TIME_a(a,b)   {SYNC_STREAM(); (a) += GST_us() - (b);}
 
 // Discrete distribution of array   @/home/cys/rnd/lic/src/GBDT/data_fold/Distribution.hpp
 struct Distri_ARRAY {
@@ -217,9 +217,9 @@ struct Distri_ARRAY {
         a0 = std::min(a0, a), a1 = std::max(a1, a);
     }
 
-    virtual float Last(){
+    virtual float Last() {
         assert(!distri.empty());
-        return distri[distri.size()-1];
+        return distri[distri.size() - 1];
     }
 
     virtual void Stat() {

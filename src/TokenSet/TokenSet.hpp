@@ -30,7 +30,7 @@ class GTokenizer;
 typedef std::shared_ptr<GTokenizer> hTokenizer;
 class Fish;
 class DataTokenSet;
-class OutCLS;
+class Head4Token;
 typedef std::shared_ptr<DataTokenSet> hDataToken;
 class SampLoader;
 typedef shared_ptr<SampLoader> hSampLoader;
@@ -38,6 +38,7 @@ struct SAMP {
     size_t pos = 0, len = 0;   //  range is [pos,pos+len)
     size_t off_cycle     = 0;  // more random
     int jump             = 0;
+    int pad_len          = 0;  // the length of last pad section
     TOKEN_ID last_target = (TOKEN_ID)(-1);
     std::string desc;
     char* mask   = nullptr;
@@ -45,7 +46,7 @@ struct SAMP {
     // int label=-1;
 
     SAMP() {}
-    SAMP(size_t p, size_t l) : pos(p), len(l) {}
+    SAMP(size_t p, size_t l, int nPad = 0) : pos(p), len(l), pad_len(nPad) { assert(pad_len < len); }
     virtual ~SAMP() {}
 
     bool Serialize(FSerial& S, bool isSave, int flag);
@@ -91,7 +92,7 @@ class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
     string name;
     string serial_root;
     // hTokenizer hDictVAE = nullptr;
-    Fish* hFish      = nullptr;
+    // Fish* hFish      = nullptr;
     hTokenizer hDict = nullptr;
     std::map<TOKEN_ID, TOKEN_ID> mapT2T;
     std::vector<TOKEN_ID> dialect;
@@ -128,7 +129,7 @@ class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
     int UniqueTokens(size_t n_1, int flag = 0x0);
     bool InitSamps(unsigned context_length, std::vector<size_t>& samples_begin, std::vector<size_t>& samples_size, int flag = 0x0);
 
-    virtual double LossOnResult(hSampLoader hLoader, OutCLS* cls, int flag = 0x0);
+    virtual double LossOnResult(hSampLoader hLoader, Head4Token* cls, int flag = 0x0);
     // virtual double Evaluate(Fish *fish, hSampLoader loader0, int flag = 0x0);
 
     friend class NLP_AutoRegressive;
@@ -151,6 +152,7 @@ class GlobTokenset : public DataTokenSet {
     string glob_pattern;
     FILE* fpShard  = nullptr;
     bool isShuffle = false;
+    virtual bool fp2Tokens(int flag=0x0);
     virtual bool Shard2Sample(int id, int flag = 0x0);
     virtual bool GetShardInfo(int id, int flag = 0x0) { return false; }
     virtual size_t OnShardFile(int id, bool load = false, int flag = 0x0);
@@ -188,27 +190,27 @@ class Tokenset_HellaSwag : public GlobTokenset {
         for (auto q : questions) delete q;
         questions.clear();
     }
-    double LossOnResult(hSampLoader hLoader, OutCLS* cls, int flag = 0x0) override;
+    double LossOnResult(hSampLoader hLoader, Head4Token* cls, int flag = 0x0) override;
 };
 
 class Tokenset_JSONL : public GlobTokenset {
    protected:
-    struct Chat_Line {
-        std::string role;
-        std::string content;
-        Chat_Line(const std::string& r, const std::string& c, int flag = 0x0) : role(r), content(c) {}
-    };
     //  ChatML​ is a tokenization-friendly text formatthat encodes chat messages into a single string
     std::string toChatML(JSON& jMsg, int flag = 0x0);
-
+    string format;
+    bool isJsonTxt = false;
+    bool enable_thinking = false;
     std::vector<string> messages;
+    virtual bool GetShardInfo_txt(int id, int flag = 0x0);
+    
     bool Shard2Sample(int id, int flag = 0x0) override;
     bool GetShardInfo(int id, int flag = 0x0) override;
+    // void DumpSamp(const std::string& msg, const std::vector<TOKEN_ID>& tokens, int flag = 0x0);
 
    public:
-    Tokenset_JSONL(JSON::const_iterator jit, hTokenizer hDictVAE, int flag = 0x0);
+    Tokenset_JSONL(JSON::const_iterator jit, hTokenizer hDictVAE, const string& format, int flag = 0x0);
     virtual ~Tokenset_JSONL() {}
-    double LossOnResult(hSampLoader hLoader, OutCLS* cls, int flag = 0x0) override;
+    
 };
 
 class DTS_GPT2 : public DataTokenSet {

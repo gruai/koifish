@@ -168,11 +168,34 @@ vector<wstring> run_split_on_punctuation(const wstring& text, bool split_special
 }
 wstring pad_chinese_chars(const wstring& text) { return L""; }
 #endif
-std::string GTokenizer::Decode(const TOKENS& ids, bool skip_special_tokens) {
+
+bool GTokenizer::isSpecialTok(const int tok, int flag) const {
+    if (tok == pad_id)
+        return true;
+    if (tok == sep_id)
+        return true;
+    if (tok == cls_id)
+        return true;
+    if (tok == mask_id)
+        return true;
+    if (tok == bos_id)
+        return true;
+    if (tok == eos_id)
+        return true;
+    if (tok == eot_id)
+        return true;
+    return false;
+}
+std::string GTokenizer::Decode(const TOKENS& ids, bool skip_pad, bool skip_special_tokens) {
     string line;
     int nV = nVocab(), i = 0;
     for (auto id : ids) {
         assert(id < nV);
+        if (skip_pad && id == pad_id)
+            continue;
+        if (skip_special_tokens && isSpecialTok(id))
+            continue;
+
         string tok = decode_one(0, id);
         line += tok;
         i++;
@@ -180,10 +203,53 @@ std::string GTokenizer::Decode(const TOKENS& ids, bool skip_special_tokens) {
     return line;
 }
 
-bool GTokenizer::isValid(int flag) const {
-    if (nVocab() <= 0)
+bool GTokenizer::isValid(bool allowEmpty, int flag) const {
+    if (nVocab() <= 0) {
+        _WARN("[DICT] Invalid \"%s\" with null vocab!", name.c_str());
         return false;
+    }
 
+    if (vocab[0].empty()) {  // sometimes, hDict->vocab.resize(151936) only has an empty vocab table
+        _WARN("[DICT] \"%s\" is an empty vocab table(len=%d)!", name.c_str(), nVocab());
+        if (!allowEmpty)
+            return false;
+    }
+
+    if (vocab[0].empty()) {
+    } else {
+        if (eot_id < 0) {
+            _WARN("[DICT] \"%s\" invalid eot_id=%d!\n", name.c_str(), eot_id);
+            return false;
+        }
+        if (id_im_start < 0) {
+            _WARN("[DICT] \"%s\" invalid id_im_start=%d!\n", name.c_str(), id_im_start);
+            return false;
+        }
+        if (id_im_end < 0) {
+            _WARN("[DICT] \"%s\" invalid id_im_end=%d!\n", name.c_str(), id_im_end);
+            return false;
+        }
+        if (id_think_open < 0) {
+            _WARN("[DICT] \"%s\" invalid id_think_open=%d!\n", name.c_str(), id_think_open);
+            return false;
+        }
+        if (id_think_close < 0) {
+            _WARN("[DICT] \"%s\" invalid id_think_close=%d!\n", name.c_str(), id_think_close);
+            return false;
+        }
+        if (pad_id < 0) {  //
+            _WARN("[DICT] \"%s\" invalid pad_id=%d!\n", name.c_str(), pad_id);
+            return false;
+        }
+        if (eos_id < 0) {  //
+            _WARN("[DICT] \"%s\" invalid eos_id=%d!\n", name.c_str(), eos_id);
+            return false;
+        }
+        if (assist_id < 0) {  //    <|im_start|>assistant\n<think>\n\n</think>\n\nFine<|im_end|>
+            _WARN("[DICT] \"%s\" invalid assist_id=%d!\n", name.c_str(), assist_id);
+            return false;
+        }
+    }
     return true;
 }
 TOKENS GTokenizer::Encode(const std::wstring& wtext, bool encode_bos, bool encode_eos) {
@@ -415,6 +481,14 @@ GTokenizer::GTokenizer(Fish* dolphin, int flag) {
 GTokenizer_GPT2::GTokenizer_GPT2(Fish* dolphin, int flag) {
     config = dolphin->config;
     assert(!dolphin->config.model.isLoadCard());
+    // some init value to pass check in isValid
+    id_im_start = 3, id_im_end = 4;
+    id_think_open = 5, id_think_close = 6;  //"<think>")"</think>"
+    eot_id     = 7;                         //  End of Tool / End of Text block
+    unk_id     = 8;                         //<unk>
+    id_newline = 9, id_newline2 = 10;
+    pad_id    = 11;
+    assist_id = 12;
 }
 
 // todo - call gpt2 tokenizer in next version
@@ -427,16 +501,66 @@ std::string GTokenizer_GPT2::T2STR(TOKEN_ID tok, int flag) { return std::to_stri
         More flexible for continuation tasks
         Matches real-world usage where text can start mid-document
         Eliminates special handling for sequence starts
+    2.    "additional_special_tokens": [
+                "<|im_start|>",
+                "<|im_end|>",
+                "<|object_ref_start|>",
+                "<|object_ref_end|>",
+                "<|box_start|>",
+                "<|box_end|>",
+                "<|quad_start|>",
+                "<|quad_end|>",
+                "<|vision_start|>",
+                "<|vision_end|>",
+                "<|vision_pad|>",
+                "<|image_pad|>",
+                "<|video_pad|>"
+            ],
 */
 GTokenizer_QWEN3::GTokenizer_QWEN3(Fish* dolphin, int flag) : GTokenizer_Heap(dolphin, flag) {
     config = dolphin->config;
     if (config.model.isLoadCard()) {
     } else {
     }
-    bool bRet = InitHF(dolphin, flag);
+    bool bRet = LoadBin(dolphin, flag);  // bin(@config.model.sTokenBinPath) is much faster than json file
+    if (!bRet)
+        bRet = InitHF(dolphin, flag);
     if (!bRet) {
         vocab.clear();
+        size_t nVocab = 151936;
+        vocab.resize(nVocab);
+        _WARN("[QWEN3] tokenizer resize to %d(an empty vocab table).\n", nVocab);
+    } else {
+        if (id_im_start < 0) {
+            id_im_start = sLookup("<|im_start|>");
+        }
+        if (id_im_end < 0) {
+            id_im_end = sLookup("<|im_end|>");
+        }
+        if (id_think_open < 0) {
+            id_think_open = sLookup("<think>");
+        }
+        if (id_think_close < 0) {
+            id_think_close = sLookup("</think>");
+        }
+        //  In Qwen (and many GPT-family models), <pad>and <eot>(end-of-text) are mapped to the same token — <|endoftext|>!!! because during pretraining there
+        //  is no separate "padding" concept in the LM objective.
+        if (pad_id < 0) {  //
+            pad_id = sLookup("<|endoftext|>");
+        }
+        if (eos_id < 0) {  //
+            eos_id = sLookup("<|endoftext|>");
+        }
+        if (assist_id < 0) {  //    <|im_start|>assistant\n<think>\n\n</think>\n\nFine<|im_end|>
+            assist_id = sLookup("assistant");
+        }
+        id_newline  = sLookup("\n");    // 198
+        id_newline2 = sLookup("\n\n");  // 271
+        if (eot_id < 0) {               //  <|end|>is NOT a special token in Qwen / Qwen2 / Qwen3.
+            eot_id = eos_id;
+        }
     }
+
     isNeedBOS = false;
 }
 
@@ -450,7 +574,7 @@ GTokenizer_SentencePiece::GTokenizer_SentencePiece(Fish* dolphin, int flag) {
     if (config.model.isLoadCard()) {
     } else {
     }
-    bool bRet = true;  // InitHF(dolphin, flag);
+    bool bRet = true;
     if (!bRet) {
         vocab.clear();
     }
@@ -470,57 +594,6 @@ std::string GTokenizer_SentencePiece::T2STR(TOKEN_ID tok, int flag) {
 GTokenizer_Heap::GTokenizer_Heap(Fish* dolphin, int flag) {
     config = dolphin->config;
     // assert(!dolphin->config.model.isLoadCard());
-}
-
-// Deprecated!
-bool GTokenizer_Heap::InitFrom(Fish* dolphin, hGTensor gTokens, hGTensor scores, int flag) {
-    config         = dolphin->config;
-    bos_id         = config.model.bos_token_id;
-    eos_id         = config.model.eos_token_id;
-    int vocab_size = config.model.vocab_size;
-    assert(vocab_size < TOKEN_MAX);
-
-    char* tokens = (char*)(gTokens->data);
-    size_t szT = gTokens->nByte(), off = 0;
-    // sorted_vocab = (struct TokenIndex*)malloc(vocab_size * sizeof(struct TokenIndex));
-    // vocab_scores = scores;
-    assert(tokens[szT - 1] == '\0' && vocab_size > 0);
-    vocab.resize(vocab_size);
-    sorted_vocab = new TokenIndex[vocab_size];
-    for (int i = 0; i < vocab_size; ++i) {
-        vocab[i]            = tokens + off;
-        sorted_vocab[i].str = tokens + off;
-        sorted_vocab[i].id  = i;
-        int token_length    = strlen(tokens + off);
-        // assert(token_length>0);  //failed at 154616!
-        assert(token_length <= MAX_TOKEN_LENGTH && off + token_length + 1 <= szT);
-        off += token_length + 1;
-    }
-    assert(off == szT);
-
-    qsort(sorted_vocab, vocab_size, sizeof(struct TokenIndex), compare_tokens);
-
-    byte_fallback = sLookup("<0x00>");
-
-    if (byte_fallback >= 0) {
-        for (int i = 0; i < 256; i++) {
-            byte_pieces[i][0] = (char)i;
-            byte_pieces[i][1] = '\0';
-        }
-    }
-    jVocab.clear();
-    if (eot_id < 0) {
-        eot_id = sLookup("<|eot_id|>");
-    }
-    if (eot_id < 0) {
-        eot_id = sLookup("<|end|>");
-    }
-    if (eot_id < 0) {
-        eot_id = sLookup("<|im_end|>");
-    }
-    _INFO("\n[Tokenizer_HEAP] Init from \"%s\", n_vocab=%d eot_id=%d\n", config.model.sTokenJsonPath.c_str(), vocab_size, eot_id);
-
-    return true;
 }
 
 bool GTokenizer_Heap::Prepare(int flag) {
@@ -545,16 +618,8 @@ bool GTokenizer_Heap::Prepare(int flag) {
         }
     }
     jVocab.clear();
-    if (eot_id < 0) {
-        eot_id = sLookup("<|eot_id|>");
-    }
-    if (eot_id < 0) {
-        eot_id = sLookup("<|end|>");
-    }
-    if (eot_id < 0) {
-        eot_id = sLookup("<|im_end|>");
-    }
-    _INFO("\n[Tokenizer_HEAP] Init from \"%s\", n_vocab=%d eot_id=%d\n", config.model.sTokenJsonPath.c_str(), vocab_size, eot_id);
+    pad_id = sLookup("<|endoftext|>");  //  151643
+    _INFO("\n[Tokenizer_HEAP] Init from \"%s\", n_vocab=%d pad_id=%d\n", config.model.sTokenJsonPath.c_str(), vocab_size, pad_id);
 
     return true;
 }
@@ -603,7 +668,7 @@ bool GTokenizer::InitHF(Fish* dolphin, int flag) {
     // const JSON& jToken = dolphin->config.model.jTokenizer;
     const JSON& jMParam   = dolphin->config.model.jModelParam;
     string sTokenJsonPath = dolphin->config.model.sTokenJsonPath;
-    size_t szF            = F_SIZE(sTokenJsonPath);
+    size_t szF            = sTokenJsonPath.empty() ? 0 : F_SIZE(sTokenJsonPath);
     if (szF == 0)
         return false;
     bos_id = jKV(jMParam, {"bos_token_id"}, bos_id);  // std::stoi(data.metadata.at("bos_token_id").get<std::string>());
@@ -664,14 +729,14 @@ std::string LoadBytesFromFile(const std::string& path) {
     return data;
 }
 
-bool GTokenizer_QWEN3::InitHF(Fish* dolphin, int flag) {
+bool GTokenizer_QWEN3::LoadBin(Fish* dolphin, int flag) {
     try {
         char tmp_word[MAX_TOKEN_LENGTH];
         string sRoot          = config.model.sCardPath;
         string tokenizer_path = config.model.sTokenBinPath;
         int vocab_size        = config.model.vocab_size;
         if (!VERIFY_DIR_EXIST(tokenizer_path)) {
-            _WARN("[QWEN3] tokenizer_path@ (\"%s\") is invalid! This would not affect the training, but the lack of tokenizer would make decode impossible.\n",
+            _WARN("[DICT] tokenizer_path@ (\"%s\") is invalid! This would not affect the training, but the lack of tokenizer would make decode impossible.\n",
                   tokenizer_path.c_str());
             // exit(KOIFISH_LOAD_TOKENIZER);
             return false;
@@ -680,13 +745,7 @@ bool GTokenizer_QWEN3::InitHF(Fish* dolphin, int flag) {
         assert(vocab_size > 0);
         FILE* file = fopen(tokenizer_path.c_str(), "rb");
         if (file == NULL) {
-            // bos_id = dolphin->config.model.bos_token_id;
-            // eos_id = dolphin->config.model.eos_token_id;
-            // auto blob = LoadBytesFromFile("dist/tokenizer.json");
-            // auto tok = Tokenizer::FromBlobJSON(blob);
-            // TestTokenizer(std::move(tok), false, true);
-
-            _ERROR("[QWEN3] Couldn't load tokenizer model @\"%s\"\n", tokenizer_path.c_str());
+            _ERROR("[DICT] Couldn't load tokenizer model @\"%s\"\n", tokenizer_path.c_str());
             exit(KOIFISH_LOAD_TOKENIZER);
 
             //  max_token_length = max(len(t) for t in all_tokens)

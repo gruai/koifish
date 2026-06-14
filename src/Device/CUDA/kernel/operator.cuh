@@ -409,7 +409,7 @@ void CU_disti_normal(int N, typ* out, float devia, uint32_t seed = 42, bool isTo
     CU_initrand<<<CEIL_DIV(nRander, 256), 256>>>(d_states, seed, nRander);
     // CU_disti_normal_generate<typ><<<(N + 255) / 256, 256>>>(d_states, d_results, N, devia);
     CU_disti_normal_N<typ><<<CEIL_DIV(nRander, 256), 256>>>(d_states, d_results, N, ldB, devia);
-    SYNC_DEVICE("disti_normal");  //    cudaCheck(cudaDeviceSynchronize());
+    SYNC_STREAM("disti_normal");  //    cudaCheck(cudaDeviceSynchronize());
     // Copy back results if needed
     // __nv_bfloat16 *h_results = new __nv_bfloat16[N];
     if (isToHost) {

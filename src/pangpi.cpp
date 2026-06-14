@@ -96,8 +96,8 @@ int main(int argc, char* argv[]) {
         SUM::tX = 0;
         _INFO("\n====== %s: %s FLOAT=%s @%s\n[BUBBLE]\t", __func__, DEBUG.T_cpu == 0 ? "CUDA" : "CPU", cNameOf(config.model.tpActivation), cDATE);
 
-        OutCLS* hCLS  = fish->GetNeuron<OutCLS>("OutCLS", 0);
-        hCLS->hLoader = hLoader;
+        Head4Token* hCLS = fish->GetNeuron<Head4Token>("Head4Token", 0);
+        hCLS->hLoader    = hLoader;
         double sum = 0, ss = 0, tps = 0, t0 = GST_ms(), tAll = 0, eval, delta = 0;
         vector<TOKEN_ID>& tokens = hLoader->GetTokens();
         fish->SetPhase(LIFE_PHASE::P_EVAL_);

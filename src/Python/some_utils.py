@@ -6,7 +6,9 @@ import sys
 import os
 import psutil
 import glob
-
+import shutil
+import subprocess
+import ctypes
 
 def split__sections(dim_0,nClass):
     split_dim = range(dim_0)
@@ -72,34 +74,57 @@ def seed_everything(seed=0):
 '''
 
 def cpuStats():
-    print(sys.version)
-    print(psutil.cpu_percent())
-    print(psutil.virtual_memory())  # physical memory usage
+    print(f"sys.version={sys.version}")
+    print(f"cpu_percent={psutil.cpu_percent()}")
+    print(f"virtual_memory={psutil.virtual_memory()}")  # physical memory usage
     pid = os.getpid()
     py = psutil.Process(pid)
     memoryUse = py.memory_info()[0] / 2. ** 30  # memory use in GB...I think
     print('memory use in python(GB):', memoryUse)
 
 def pytorch_env( device=0 ):
+    print(f"\n======== Torch_{torch.__version__} its' cuda={torch.version.cuda} device_capability={torch.cuda.get_device_capability()} ========")
+    t_major, t_minor = map(int, torch.version.cuda.split("."))
+    nvcc = shutil.which("nvcc")
+    if nvcc:
+        out = subprocess.check_output([nvcc, "--version"]).decode()
+        for line in out.splitlines():
+            if "release" in line:
+                v = line.split("release")[-1].strip().split(",")[0]
+                n_major, n_minor = map(int, v.split("."))
+        print(f"======== nvcc_{n_major}.{n_minor} ========")
+    if n_major*1000 + n_minor != t_major*1000 + t_minor:
+        print(f"\n======== CUDA version mismatch between tilelang({t_major}.{t_minor}) & nvcc({n_major}.{n_minor})! Dangerous!!! ========\n") 
+
+    cuda = ctypes.CDLL("libcudart.so")
+    MAX_SMEM_PER_BLOCK = 97      # cudaDevAttrMaxSharedMemoryPerBlockOptin
+    device = torch.cuda.current_device()
+    value = ctypes.c_int()
+    ret = cuda.cudaDeviceGetAttribute(
+        ctypes.byref(value),
+        MAX_SMEM_PER_BLOCK,
+        device
+    )
+    assert ret == 0
+    print(f"Max shared memory per block (opt-in): {value.value} bytes")
+
     #torch.cuda.set_device(0)
     #device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print('__Python VERSION:', sys.version)
-    print('__pyTorch VERSION:', torch.__version__)
-    print('__CUDA VERSION')
-    # from subprocess import call
-    # call(["nvcc", "--version"]) does not work
-    # ! nvcc --version
+    # print('__pyTorch VERSION:', torch.__version__)
+    # print('__CUDA VERSION')
+
     print('__CUDNN VERSION:', torch.backends.cudnn.version())
     print('__Number CUDA Devices:', torch.cuda.device_count())
-    print('__Devices')
+    print('__Devices:')
     # call(["nvidia-smi", "--format=csv", "--query-gpu=index,name,driver_version,memory.total,memory.used,memory.free"])
-    print('Active CUDA Device: GPU', torch.cuda.current_device())
+    print('\tActive CUDA Device: GPU', torch.cuda.current_device())
     nDevive = torch.cuda.device_count()
-    print ('Available devices ',nDevive )
+    print ('\tAvailable devices ',nDevive )
     for i in range(nDevive):
         name = torch.cuda.get_device_name()
         print( f"****** {i}-{name} \tcapabilit={torch.cuda.get_device_capability(i)} :\n\t{torch.cuda.get_device_properties(i)}") 
-    print ('Current cuda device ', torch.cuda.current_device())
+    print ('\tCurrent cuda device ', torch.cuda.current_device())
     use_cuda = torch.cuda.is_available()
     print("USE CUDA=" + str(use_cuda))
 

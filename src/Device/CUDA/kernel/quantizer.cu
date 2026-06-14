@@ -12,11 +12,11 @@
 
 #include <cmath>
 
+#include "../../../Manifold/Fish.hpp"
+#include "../../../Manifold/Optimizer.hpp"
 #include "../../../Tensor/GTensor.hpp"
 #include "../../../Tensor/GeQuant.hpp"
 #include "../../../Utils/GST_MemBuffer.hpp"
-#include "../../../Manifold/Optimizer.hpp"
-#include "../../../Manifold/Fish.hpp"
 #include "../PackedQ.hpp"
 #include "../cuda_common.h"
 #include "../g_float.hpp"
@@ -250,11 +250,11 @@ floatX* GTensor::GetDataX(int flag, const string& sX) const {
         case typNUMBER::BOOL1:
         case typNUMBER::T_BINARY:
         case typNUMBER::T_SIGN: {
-            wX = ToX(gBUFF->tmpTernary);      
-            if(hOPT->hAR_quant!=nullptr)
-                hQuant->params.distill.lenda = hOPT->DistillRate(0x0);      
-            TASKA_quant<floatX> task_q(this, hQuant, main_stream);            
-            if(type==typNUMBER::T_SIGN)
+            wX = ToX(gBUFF->tmpTernary);
+            if (hOPT->hAR_quant != nullptr)
+                hQuant->params.distill.lenda = hOPT->DistillRate(0x0);
+            TASKA_quant<floatX> task_q(this, hQuant, main_stream);
+            if (type == typNUMBER::T_SIGN)
                 T1pG(CU_Q128toX_<floatX, 64>, task_q, (BIT_128*)(data), wX, 0x0);
             else
                 T1pG(CU_Q128toX_<floatX, 128>, task_q, (BIT_128*)(data), wX, 0x0);
@@ -281,7 +281,7 @@ floatX* GTensor::GetDataX(int flag, const string& sX) const {
                 TASKA_quant<floatX> task_q(this, hQuant, main_stream, BLOCK_at_GROUP);
                 T1pG(CU_ternary2X_<floatX>, task_q, (hBITARR)(data), wX, 0x0);
                 // CU_ternary2X_v0<floatX><<<CEIL_DIV(nRow, dT4B), dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, nRow, nCol, 1);
-                SYNC_DEVICE();
+                SYNC_STREAM();
                 if (flag == -1)
                     gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1);
             }
@@ -294,7 +294,7 @@ floatX* GTensor::GetDataX(int flag, const string& sX) const {
             wX              = ToX(gBUFF->tmpTernary);
             floatGama* gam_ = gama_T();  //
             CU_Tile2X_<floatX><<<dGrid, dBlock, smemPB, main_stream>>>(wX, gam_, 0.0, nRow, nCol, seed);
-            // SYNC_DEVICE();
+            // SYNC_STREAM();
             if (flag == -1)
                 gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1);
         } break;

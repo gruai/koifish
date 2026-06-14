@@ -105,21 +105,23 @@ inline void cudaFreeCheck(T** ptr, const char* file, int line) {
 #if defined(USE_NVTX)
 // #include <nvtx3/nvToolsExt.h>
 // #include <nvtx3/nvToolsExtCudaRt.h>
-    class NvtxRange {
-    public:
-        NvtxRange(const char* s) { nvtxRangePush(s); }
-        NvtxRange(const std::string& s) { nvtxRangePush(s.c_str()); }
-        NvtxRange(const std::string& base_str, int number) {
-            std::string range_string = base_str + " " + std::to_string(number);
-            nvtxRangePush(range_string.c_str());
-        }
-        ~NvtxRange() { nvtxRangePop(); }
-    };
-    #define NVTX_RANGE_FN() NvtxRange nvtx_range(__FUNCTION__)
+class NvtxRange {
+   public:
+    NvtxRange(const char* s) { nvtxRangePush(s); }
+    NvtxRange(const std::string& s) { nvtxRangePush(s.c_str()); }
+    NvtxRange(const std::string& base_str, int number) {
+        std::string range_string = base_str + " " + std::to_string(number);
+        nvtxRangePush(range_string.c_str());
+    }
+    ~NvtxRange() { nvtxRangePop(); }
+};
+#define NVTX_RANGE_FN() NvtxRange nvtx_range(__FUNCTION__)
 #elif defined(USE_TRACY)
-#  include "tracy/Tracy.hpp"
+#include "tracy/Tracy.hpp"
 #else
-#  define NVTX_RANGE_FN() do {} while (0)
+#define NVTX_RANGE_FN() \
+    do {                \
+    } while (0)
 #endif
 
 // ----------------------------------------------------------------------------
@@ -348,7 +350,7 @@ void inline PrintTensor(const char* title, const T* src, bool isDevice, int n1, 
         return;
     assert(src != nullptr);
     if (isDevice) {
-        // SYNC_DEVICE();
+        // SYNC_STREAM();
         host_dat = (T*)malloc(sizeof(T) * nElem);
         cudaCheck(cudaMemcpy(host_dat, src, nElem * sizeof(T), cudaMemcpyDeviceToHost));
     }
@@ -681,7 +683,7 @@ bool H2D(void* dev, const void* host, size_t szData, int flag = 0x0);
 
 // copy value of one elemetn from device
 template <typename T>
-bool D2e(void* dev, T& host, const std::string& desc, int flag = 0x0) {
+bool D2e(const void* dev, T& host, const std::string& desc, int flag = 0x0) {
     if (!D2H(dev, &host, sizeof(T), flag))
         return false;
     float a = T2Float(&host);
@@ -691,6 +693,15 @@ bool D2e(void* dev, T& host, const std::string& desc, int flag = 0x0) {
         // K_EXIT_NOW(KOIFISH_INVALID_D2E);
     }
     return true;
+}
+
+template <typename T>
+float D2f(const T* dev, const std::string& desc = "", int flag = 0x0) {
+    T hostVal;
+    bool bRet = D2e((const void*)dev, hostVal, desc.empty() ? "D2f" : desc);
+    assert(bRet);
+    float a = T2Float(&hostVal);
+    return a;
 }
 
 typedef int (*fnPOS)(int r, int c, int M, int N);

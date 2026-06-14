@@ -45,7 +45,7 @@ hNEURON GeNeuron::MakeInstance(Fish* hG_, void* ctx, const string& guid, JSON::c
         } else if (typ.rfind("NORMAL", 0) == 0) {
             nn = std::make_shared<LayerNormal>(hG_, guid, jit, flag);
         } else if (typ.rfind("CLASIFY", 0) == 0) {
-            nn = std::make_shared<OutCLS>(hG_, guid, jit, flag);
+            nn = std::make_shared<Head4Token>(hG_, guid, jit, flag);
         } else {
             _ERROR("%s failed@[%s]", __func__, typ.c_str());
             assert(0);
@@ -157,7 +157,7 @@ int GeNeuron::nBatchToken(int flag) {
     int nT = B * T;
     if (hFish->isAtPhase(LIFE_PHASE::P_GENERATE)) {
         // assert(B == 1);
-        nT = 1; // Generate only support 1 tokens one time!
+        nT = 1;  // Generate only support 1 tokens one time!
     }
     assert(nT > 0);
     return nT;
@@ -184,10 +184,7 @@ Ganglia::Ganglia(Fish* hG_, const string& key_, std::vector<hNEURON>& ns_, int f
 
 Relu::Relu(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {}
 
-bool Relu::Build(int flag) { 
-
-    return true;
-};
+bool Relu::Build(int flag) { return true; };
 
 hGensor Relu::Ming(RLS_BP* ctx_, hGensor cur, int flag) { return cur; }
 
@@ -243,10 +240,10 @@ hGensor MOE::Forward2(void* ctx_, hGensor inpL, hGensor wBase, int flag) {
 }
 string MOE::__repr__(string& suffix, string& prefix, int flag) { return _repr_1(suffix, prefix, "MOE"); };
 
-OutSimilarity::OutSimilarity(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : OutCLS(hG_, key_, jit, flag) { dB = 0; }
+OutSimilarity::OutSimilarity(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : Head4Token(hG_, key_, jit, flag) { dB = 0; }
 
 //  The Unreasonable Effectiveness of Entropy Minimization in LLM Reasoning
-OutEntropy::OutEntropy(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : OutCLS(hG_, key_, jit, flag) { dB = 0; }
+OutEntropy::OutEntropy(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : Head4Token(hG_, key_, jit, flag) { dB = 0; }
 
 /*
     Alias of lm_head - final layer of a language model that:
@@ -254,13 +251,17 @@ OutEntropy::OutEntropy(Fish* hG_, const std::string& key_, JSON::const_iterator 
         3. Projects them to the vocabulary space
         3. Produces probability distributions over tokens
 */
-OutCLS::OutCLS(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
+Head4Token::Head4Token(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     int nEmbd = hFish->config.nEmbed();
     // _target = hFish->Target();   //null now
-    nCls        = hFish->nClass();
+    nCls         = hFish->nClass();
+    ignore_token = hFish->hDict->pad_id;
+
     padded_nCls = (hFish->config.model.isPaddedCls) ? ceil(nCls / 128.0) * 128 : nCls;
     // reduce memory & some float error
     dB = hFish->config.model.preLogits_dB;
+
+    verHeadLoss = hFish->config.kernels.verHeadLoss;
 
     shape = {nEmbd, padded_nCls};
     rLoss = 1.0f / (B * T);  //* grad_accum_steps
@@ -268,7 +269,7 @@ OutCLS::OutCLS(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int
 }
 
 //  Deprecated!
-floatLogits* OutCLS::fLogits(int flag) {
+floatLogits* Head4Token::fLogits(int flag) {
     assert(0);
     assert(preLogits != nullptr);
     size_t n = preLogits->size(), i;
@@ -290,11 +291,11 @@ floatLogits* OutCLS::fLogits(int flag) {
 }
 
 // allocate preLogits & set it as buff
-bool OutCLS::BuildPrelogist(int flag) {
+bool Head4Token::BuildPrelogist(int flag) {
     typNUMBER tpL = typeid(floatLogits) == typeid(float) ? typNUMBER::F32 : typNUMBER::BF16, tpA = hFish->config.model.tpActivation;
     SHAPE sp3 = {dB, T, padded_nCls};
     if (hFish->config.isOnlyGPT) {
-        preLogits = GT(hFish, tpL, {padded_nCls}, 0x0, "preLogits");  // std::make_shared<huTensor>(hFish,"preLogits",sp3,tpActivation,false);
+        preLogits = GT(hFish, tpL, {padded_nCls}, 0x0, "preLogits");
         // preLogits->flags |= GTensor::F_HOSTDATA;
         preLogits->Alloc(0x0, flag);
     } else {
@@ -318,7 +319,7 @@ bool OutCLS::BuildPrelogist(int flag) {
     return true;
 }
 
-bool OutCLS::Build(int flag) {
+bool Head4Token::Build(int flag) {
     SHAPE sp = {shape[0]};
     latent   = hFish->config.nEmbed(-1);
     hEmbed   = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
@@ -332,7 +333,7 @@ bool OutCLS::Build(int flag) {
     target = std::make_shared<huTensor>(hFish, "target", sp2, typNUMBER::I32, false);
     target->Alloc();
     // hFish->InitGensor(nullptr,"target",target,false);
-    hFish->target_probs = target;
+    hFish->target_label = target;
     out                 = std::make_shared<huTensor>(hFish, "loss", sp2, typNUMBER::F32, false);
     BIT_SET(out->flags, GTensor::F_LOSS);
 
@@ -362,7 +363,7 @@ bool OutCLS::Build(int flag) {
     name += ".cls";
     return true;
 }
-hGensor OutCLS::Ming(RLS_BP* ctx_, hGensor inpL, int flag) {
+hGensor Head4Token::Ming(RLS_BP* ctx_, hGensor inpL, int flag) {
     GeNeuron::BeforeMing(ctx_, nullptr, flag);
 
     int n_batch = hFish->config.n_batch(), n_ctx = hFish->config.n_ctx();
@@ -382,10 +383,10 @@ hGensor OutCLS::Ming(RLS_BP* ctx_, hGensor inpL, int flag) {
     cur = AfterMing(ctx_, cur, flag);
     return cur;
 }
-string OutCLS::__repr__(string& suffix, string& prefix, int flag) {
+string Head4Token::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]  = "\0";
     const char* tab = prefix.c_str();
-    sprintf(buf + strlen(buf), "%s OutCLS{dB=%d x=%d} %s", tab, dB, padded_nCls, hFish->config.model.isEmbedWeightTying ? "Tyring" : "");
+    sprintf(buf + strlen(buf), "%s Head4Token{dB=%d x=%d} %s", tab, dB, padded_nCls, hFish->config.model.isEmbedWeightTying ? "Tyring" : "");
     if (flag > 0)
         _INFO("%s", buf);
     return buf;
@@ -760,7 +761,7 @@ bool LayerNormal::Build(int flag0) {
     } else {
         mean = GT(hFish, typNUMBER::F32, {B, T}, flag, name + ".mean");
     }
-    
+
     ldTH = hFish->config.nEmbed();  // C;
     if (nHead > 0) {
         isOnline = true;
@@ -776,8 +777,8 @@ bool LayerNormal::Build(int flag0) {
 string LayerNormal::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]  = "\0";
     const char* tab = prefix.c_str();
-    sprintf(buf + strlen(buf), "%s %s(%s%s%s) qknormal_ver=%d out=%s", tab, isRMS ? "RMS" : "LayerNormal", b == nullptr ? "" : "+b", mean == nullptr ? "" : "+mean",
-            rstd == nullptr ? "" : "+rstd", ver_rms_qknormal_, out == nullptr ? "NULL" : out->name);
+    sprintf(buf + strlen(buf), "%s %s(%s%s%s) qknormal_ver=%d out=%s", tab, isRMS ? "RMS" : "LayerNormal", b == nullptr ? "" : "+b",
+            mean == nullptr ? "" : "+mean", rstd == nullptr ? "" : "+rstd", ver_rms_qknormal_, out == nullptr ? "NULL" : out->name);
     if (flag > 0)
         _INFO("%s", buf);
     return buf;
@@ -825,7 +826,7 @@ hGensor GeNeuron::BeforeMing(RLS_BP* hRLS, hGensor cur, int flag) {
         if (hFish->isRemater())
             cudaHostAlloc(&host_inp, gBUFF->outL->nByte(), 0);
     } else {
-        // SYNC_DEVICE();
+        // SYNC_STREAM();
         double now = GST_ms();
         ManageMemory(DATA_PLACE::DEV_MEM);
         if (isForward()) {
@@ -836,7 +837,7 @@ hGensor GeNeuron::BeforeMing(RLS_BP* hRLS, hGensor cur, int flag) {
                 hRLS->isRemater = false;
             }
         }
-        // SYNC_DEVICE();
+        // SYNC_STREAM();
         SUM::tRemater += GST_ms() - now;
     }
 
@@ -871,7 +872,7 @@ hGensor GeNeuron::AfterMing(RLS_BP* hRLS, hGensor cur, int flag) {
                         }
                         continue;
                     }
-                    if(hOPT->UpdateTensorParam(t, nullptr, 0.0)!=KOIFISH_OK)
+                    if (hOPT->UpdateTensorParam(t, nullptr, 0.0) != KOIFISH_OK)
                         return nullptr;
 
                     hRLS->SetTensorStatus(hOPT->GetITER(), t, TASK_STATUS::UPDATE_PARAM);
@@ -880,7 +881,7 @@ hGensor GeNeuron::AfterMing(RLS_BP* hRLS, hGensor cur, int flag) {
         }
 
         if (!hRLS->isResident(this)) {
-            SYNC_DEVICE();  //  Otherwise, The timing of cudaFree would get much higher
+            SYNC_STREAM();  //  Otherwise, The timing of cudaFree would get much higher
             ManageMemory(DATA_PLACE::FREE_DEV);
         }
     }
@@ -905,7 +906,7 @@ void GeNeuron::OnDebug(const std::string& info, int typ, int flag) {
     if (dynamic_cast<ROPE*>(this) != nullptr) {
         // dump_flag = -1;
     }
-    if (dynamic_cast<OutCLS*>(this) != nullptr) {
+    if (dynamic_cast<Head4Token*>(this) != nullptr) {
         // dump_flag = -1;
     }
     if (dynamic_cast<TokenEmbed*>(this) != nullptr) {

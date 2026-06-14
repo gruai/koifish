@@ -65,13 +65,21 @@ struct StepInfos {
     void Add(STEP step, int flag = 0x0);
 };
 
+enum MASK_FLAG {
+    F_PAD         = 0x100,
+    F_CAUSAL      = 0x200,
+    F_IGNORE_LOSS = 0x400,  //  -100 of torch's cross_entropy
+};
 struct BATCH_INPUT {
-    shared_ptr<GTensor> hostToken = nullptr, hostMask = nullptr;
-    //  host = TO<int>(hostToken), mask = TO<int>(hostMask);
-    int *host = nullptr, *mask = nullptr;
+    shared_ptr<GTensor> hostToken = nullptr, hostMask = nullptr, devMask = nullptr, hostLen = nullptr;
+
+    int *host = nullptr, *mask32 = nullptr;  //  mask32 = TO<int>(hostMask);
+    int nValidTokens = 0;
+    int nMostSample = 0, ldT = 0;  //  B,T
     size_t nPrefill = 0, nFill = 0;
     std::vector<int> arrTic0, arrTic1;
-
+    Fish* hFish      = nullptr;
+    hTokenizer hDict = nullptr;
     //  always point to last token when P_GENERATE
     int tok_pos = -1;
     int CurToken() {
@@ -80,10 +88,14 @@ struct BATCH_INPUT {
         return host[tok_pos];
     }
 
-    BATCH_INPUT(SHAPE sp, int flag = 0x0);
+    BATCH_INPUT(Fish* hFish, SHAPE sp, int flag = 0x0);
     // virtual void Update(hGTensor batch,int flag=0x0);
     virtual int FillPrompt(Fish* hFish, const std::vector<std::string>& Prompt, const std::vector<std::string>& answers, int nRound, int flag = 0x0);
     virtual void Reset(const std::vector<TOKEN_ID>& tokens, int flag = 0x0);
+    virtual void SetLen(int i0, int len) {
+        if (hostLen != nullptr)
+            hostLen->Set(i0, 0, 0, 0, len);
+    }
     virtual void Set(int i0, int i1, int i2, int i3, int tok) { hostToken->Set(i0, i1, i2, i3, tok); }
     virtual void SetMask(int i0, int i1, int i2, int i3, int tok) { hostMask->Set(i0, i1, i2, i3, tok); }
     virtual size_t nFillTokens() {
@@ -94,6 +106,10 @@ struct BATCH_INPUT {
             return hostToken->size();
         }
     }
+
+    virtual bool UpdateMask(int iter, int* labels, int flag = 0x0);
+
+    virtual void DumpX(TOKEN_ID* tokens, float* hostLoss, int flag = 0x0);
 };
 typedef shared_ptr<BATCH_INPUT> hBATCH;
 
@@ -122,6 +138,7 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
     bool isTarget_1 = false;
     bool isRecycle = true, isLastShard = false;
     bool isFixEvalSample = false;  // Need fix this to do some experiments
+    bool isMask          = false;
     mt19937_state shuffle_rng_state_current;
     mt19937_state shuffle_rng_state_next;
     size_t shuffle_sample_count = 0, next_sample = 0, shuffle_samples_hash = 0x0;
@@ -138,7 +155,7 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
     size_t nEvalTokens = 0;
     int StepOfEvaluate(int flag = 0x0);  //  smaple to reduce eval time
 
-    shared_ptr<GTensor> hostTargetProbs = nullptr;  // hostBatch=nullptr,hostBatchMask=nullptr,
+    shared_ptr<GTensor> hostLabel = nullptr;  //
 
     int64_t len() { return shard_samps.size(); }
     bool empty() { return len() == 0; }
@@ -152,7 +169,8 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
         iiLoss.Clear();
         iiPPL.Clear();
     }
-    virtual float UpdateII(float* hostLoss, int B, int T, int flag);
+    // virtual float UpdateII(float* hostLoss, int B, int T, int flag);
+    virtual float UpdateII(float mean_loss, int flag);
     hBATCH GetCurBatch(int flag = 0x0) const {
         assert(hBatch != nullptr);
         return hBatch;
@@ -164,8 +182,10 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
     virtual string sTokenSet(int flag = 0x0);
     vector<TOKEN_ID>& GetTokens() { return hTokens->tokens; }
 
-    TOKEN_ID TokenAt(size_t pos) { return hTokens->At(pos); }
+    virtual bool SetLabel(TOKEN_ID label, int i_target, int k, int flag = 0x0);
+    TOKEN_ID TokenAt(size_t pos, hSAMP samp, int flag = 0x0);
     bool MaskAt(size_t pos, TOKEN_ID& mask);
+    // Deprecated!!!
     bool isHostMask(size_t pos, int flag = 0x0);
     std::vector<std::string> curDeTexts;
 
@@ -204,7 +224,7 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
     friend class Optimizer;
     friend class Fish;
     friend class GeneratOnPrompt;
-    friend class OutCLS;
+    friend class Head4Token;
     friend class DataTokenSet;
     friend class GlobTokenset;
 };

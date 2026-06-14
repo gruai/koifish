@@ -79,10 +79,6 @@ class GST_Application {
             return false;
         }
 
-        if (!InitializeDaemon()) {
-            std::cerr << "Daemon initialization failed" << std::endl;
-            return false;
-        }
         _INFO("------------------------------------------------------------------------------\n");
         g_running = true;
         return true;
@@ -96,14 +92,7 @@ class GST_Application {
     }
 
     // Similar to OnExitInstance
-    virtual void Cleanup() {
-        _INFO("[APP] %s Cleanup...\n", name.c_str());
-        g_running = false;
-
-        // Cleanup Linux-specific resources
-        CleanupDaemon();
-        CleanupLogging();
-    }
+    virtual void Cleanup();
 
     // Main loop
     virtual int Swim() {
@@ -115,27 +104,7 @@ class GST_Application {
         return KOIFISH_OK;
     }
 
-    virtual int Run() {
-        try {
-            if (!Initialize()) {
-                throw std::runtime_error("Initialization failed");
-            }
-            Swim();
-            return KOIFISH_OK;
-        } catch (const SafeExit& e) {
-            _ERROR("%s %s", e.what(), e.getFormattedInfo().c_str());
-            return e.getExitCode();
-        } catch (const std::exception& e) {
-            _ERROR("%s", e.what());
-            return KOIFISH_INTERNAL_EXCEPTION;
-        } catch (const char* info) {
-            _ERROR("%s", info);
-            return KOIFISH_INTERNAL_EXCEPTION;
-        } catch (...) {
-            _ERROR("%s  Unknown exception !!!", __func__);
-            return KOIFISH_INTERNAL_ERR;
-        }
-    }
+    virtual int Run();
 
    private:
     void SetupSignalHandlers() {
@@ -170,15 +139,7 @@ class GST_Application {
         return true;
     }
 
-    bool InitializeDaemon() {
-        std::cout << "Initializing daemon components..." << std::endl;
-        // Daemon-specific initialization
-        return true;
-    }
-
-    void CleanupLogging() { std::cout << "Cleaning up logging..." << std::endl; }
-
-    void CleanupDaemon() { std::cout << "Cleaning up daemon..." << std::endl; }
+    void CleanupLogging() { std::cout << "Cleaning up logging...OK" << std::endl; }
 
     void ProcessEvents() {
         // Demo just output ....

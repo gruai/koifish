@@ -99,10 +99,6 @@ class NLP_AutoRegressive : public Fish {
     }
 
     std::string T2STR(const std::vector<TOKEN_ID>& tok, int nMost = INT_MAX, int flag = 0x0);
-    std::string T2STR(TOKEN_ID tok, int flag = 0x0) {
-        assert(0);
-        return "";
-    }
 
     std::string Name() override;
     hGensor tokens_input = nullptr;
@@ -133,7 +129,7 @@ class NLP_AutoRegressive : public Fish {
     virtual void InitGensors(int flag = 0x0);
     virtual hGensor build_gate(void* ctx, hGensor cur, hGensor cur_logits, int flag);
 
-    // for tokens_input & target_probs
+    // for tokens_input & target_label
     bool InitInput(void* ctx, bool isMask, int flag = 0x0) override;
     bool InitDictTokenset(int flag = 0x0) override;
     hGensor Input() override { return tokens_input; }
@@ -154,10 +150,6 @@ class NLP_AutoRegressive : public Fish {
     //         std::make_shared<BROWN_Motion> (this,wq,wv,config,layer,0x0);
     //     return hMotion;
     // }
-    // build KQ_pos & KQ_mask
-    void build_inp_KQ_(void* ctx, bool isMask, bool causal = true);
-    // Deprecated!!!
-    // virtual hGensor build_layer_(int N, void* ctx_build, hGensor cur, std::shared_ptr<QKV_LAY> layer, hGensor KQ_pos, int flag = 0x0) { return nullptr; };
 
     int ForwardOnNeuron_v0(int flag);
     // int ForwardOnRLS(int iter,int flag) override;
