@@ -137,13 +137,7 @@ bool SelfAttention::Build(int flag_0) {
 
     BIT_SET(proj_cat.out->flags, GTensor::F_NOALLOC);  // memory trick as kGPT
     proj_cat.w->residual_scale = hFish->config.common.residual_scale;
-    if (layid > 6) {
-        // Q.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);
-        // K.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);
-        // Lora of V+proj would slow convergence
-        // V.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);
-        // proj_cat.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);
-    }
+    
     // if (remater_qkv) {
     if (isSeparateQKV) {
         BIT_SET(Q.out->flags, GTensor::F_NOALLOC), BIT_SET(K.out->flags, GTensor::F_NOALLOC), BIT_SET(V.out->flags, GTensor::F_NOALLOC);
@@ -277,9 +271,13 @@ hGensor SelfAttention::Ming(RLS_BP* hRLS, hGensor inpL, int flag) {
 
     hGensor cur = inpL, lastResi = inpL;
     if (hFish->isSymbolic()) {
-        if (isSeparateQKV)
-            attn->AddSrc({inpL, Q.w, Q.b, Q.out, K.w, K.b, K.out, V.w, V.b, V.out, lse, bqkv});
-        else {
+        if (isSeparateQKV){
+            // attn->AddSrc({inpL, Q.w, Q.b, Q.out, K.w, K.b, K.out, V.w, V.b, V.out, lse, bqkv});
+            attn->AddSrc({inpL,lse, bqkv});
+            attn->AddSrc(Q.PickGensors());
+            attn->AddSrc(K.PickGensors());
+            attn->AddSrc(V.PickGensors());
+        }   else {
             inpL >> Q;
             attn->AddSrc({Q.out, lse});
         }
@@ -1065,7 +1063,7 @@ void TGraph::PushBack(hGensor node, int flag) {
     gset.insert(node);
     for (auto child_ : node->src) {
         auto child = child_->_t;
-        assert(strlen(child->name) >= 0);
+        assert(strlen(child->name) > 0);
         // gTN(node->src[k], "%s_%d",node->name,k);
         // if(DUMP()) _INFO("\t%s@@@%s\n",child->name,node->name);
         PushBack(child);

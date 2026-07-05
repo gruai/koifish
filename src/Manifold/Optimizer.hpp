@@ -46,7 +46,8 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     std::vector<hGensor> opt_ps;  //  =_fish->optParams;
 
     // std::vector<hFuyou> fuyous;
-    size_t nParams = 0, nMostParam = 0;
+    size_t nOptParams = 0;    //init from Fish::nParams, but maybe vary in differenent case
+    size_t nMostParam = 0;
     float* _tmp           = nullptr;
     float* prober_host    = nullptr;
     bool just_initialized = false, isAdaptiveSched = false, isGlobalGrad = true;

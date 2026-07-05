@@ -90,8 +90,11 @@ void CU_mv_(floatX* y, const floatX* W, const floatX* x, int m, int n, float alp
     Wrapper around cublasLtMatmul(https://docs.nvidia.com/cuda/cublas/#cublasltmatmul)
 */
 template <class FloatC, class FloatA, class FloatB, class FloatBias>
-void CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* bias, int m, int n, int k, const float* scale_a, const float* scale_b,
-                  cudaStream_t stream, int transA, int transB, bool accumulate) {
+void CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* bias, TASKA_AxB& taskm, int flag) {
+    assert(taskm.isValid());
+    assert(d!=nullptr && a!=nullptr && b!=nullptr);
+    int m = taskm.m, n = taskm.n, k = taskm.k;
+    cudaStream_t stream = (cudaStream_t)taskm.device;
     NVTX_RANGE_FN();
     bool isDone = false;
     // #ifdef __USE_TILELANG__
@@ -127,20 +130,22 @@ void CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* 
     cublasLtMatmulHeuristicResult_t heuristic;
     cublasOperation_t opNoTranspose = CUBLAS_OP_N;
     cublasOperation_t opTranspose   = CUBLAS_OP_T;
-    cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSA, (transA) ? &opTranspose : &opNoTranspose, sizeof(opTranspose)));
-    cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSB, (transB) ? &opTranspose : &opNoTranspose, sizeof(opNoTranspose)));
+    cublasCheck(
+        cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSA, (taskm.transA) ? &opTranspose : &opNoTranspose, sizeof(opTranspose)));
+    cublasCheck(
+        cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSB, (taskm.transB) ? &opTranspose : &opNoTranspose, sizeof(opNoTranspose)));
 
     // define matrix layouts
     cublasLtMatrixLayout_t ALayout;
     cublasLtMatrixLayout_t BLayout;
     cublasLtMatrixLayout_t DLayout;
     cublasLtMatrixLayout_t CLayout;
-    if (transA) {
+    if (taskm.transA) {
         cublasCheck(cublasLtMatrixLayoutCreate(&ALayout, cuLibType<FloatA>, k, m, k));
     } else {
         cublasCheck(cublasLtMatrixLayoutCreate(&ALayout, cuLibType<FloatA>, m, k, m));
     }
-    if (transB) {
+    if (taskm.transB) {
         cublasCheck(cublasLtMatrixLayoutCreate(&BLayout, cuLibType<FloatB>, n, k, n));
     } else {
         cublasCheck(cublasLtMatrixLayoutCreate(&BLayout, cuLibType<FloatB>, k, n, k));
@@ -167,17 +172,17 @@ void CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* 
         cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &bias, sizeof(bias)));
     }
 
-    if (scale_a) {
+    if (taskm.scale_a) {
         if (sizeof(FloatA) != 1) {
             throw std::runtime_error("Scaling A is only supported for FP8");
         }
-        cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, &scale_a, sizeof(&scale_a)));
+        cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, &(taskm.scale_a), sizeof(&(taskm.scale_a))));
     }
-    if (scale_b) {
+    if (taskm.scale_b) {
         if (sizeof(FloatB) != 1) {
             throw std::runtime_error("Scaling B is only supported for FP8");
         }
-        cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &scale_b, sizeof(&scale_b)));
+        cublasCheck(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &(taskm.scale_b), sizeof(&(taskm.scale_b))));
     }
 
     // find a suitable algorithm (cached internally so shouldn't take much CPU time in practice)
@@ -188,10 +193,9 @@ void CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* 
     }
 
     // set whether to accumulate (i.e. D += C) or not - note this isn't considered in algorithm selection (?!)
-    float one    = 1.f;
-    float zero   = 0.f;
-    float* alpha = &one;
-    float* beta  = accumulate ? &one : &zero;
+    float one    = 1.f, zero   = 0.f;
+    float* alpha = &(taskm.alpha);  //one;
+    float* beta  = &(taskm.beta);   //taskm.isAccumuDelta ? &one : &zero;
 
     // call the matmul
     cublasCheck(cublasLtMatmul(cublaslt_handle, operationDesc, alpha, a, ALayout, b, BLayout, beta, d, CLayout, d, DLayout, &heuristic.algo, workspace,
@@ -224,7 +228,8 @@ void CU_mm_(floatX* d, hGTensor wGensor, const floatX* b, const floatX* bias, in
     cublasOperation_t opA = (transA) ? CUBLAS_OP_T : CUBLAS_OP_N, opB = (transB) ? CUBLAS_OP_T : CUBLAS_OP_N;
     if (bias != nullptr) {  //  bias != nullptr || pre_gelu != nullptr
         floatX* wX = wGensor->GetDataX();
-        CU_mm_blasLt(d, wX, b, bias, m, n, k, nullptr, nullptr, main_stream, transA, transB, beta);
+        TASKA_AxB taskm(main_stream, m, n, k, transA, transB, beta);
+        CU_mm_blasLt(d, wX, b, bias, taskm /*m, n, k, nullptr, nullptr, main_stream, transA, transB, beta*/);
         return;
     }
     bool isBlas = true;
@@ -252,3 +257,114 @@ void CU_mm_(floatX* d, hGTensor wGensor, const floatX* b, const floatX* bias, in
 
     return;
 }
+
+template <typename Typ>
+struct TASKA_gemm_back {
+    floatX *delta = nullptr, *dweight = nullptr, *deltaIn = nullptr, *inp = nullptr, *weight = nullptr;
+    floatX* bias = nullptr;
+    int B, T, C, OC;
+    int block3 = 0, tpb = 512;  //  tpb is the number of threads in one block
+    int grid3 = 0, nBlock = 0;  // grid3=(nBlock, 1, 1), nBlock is the total number of blocks
+    cudaStream_t stream;
+    // TASKA_AxB taskW, taskDelta;
+    bool isFixWeight = false;
+    TASKA_gemm_back(const GTensor* hTensor, cudaStream_t stream_, int flag = 0x0) {
+        // const int grid_size_x = CEIL_DIV(OC, OC_per_warp);  // e.g. 12 horizontal blocks for 768 OCs at BF16
+        // const int grid_size_y = max(1, deviceProp.maxThreadsPerMultiProcessor * deviceProp.multiProcessorCount / (block_size * grid_size_x));  // full GPU!
+    }
+
+    bool cuda() const {
+        NVTX_RANGE_FN();
+        bool transAW = false;
+        // if(isTransW)
+        //     transAW = true;
+        // backward to bias, if given, does a +=
+        assert(bias == nullptr && "Only support null bias!");
+        if (bias != nullptr) {
+            /*// Each warp is responsible for 8 * "x128::size" = 64 OCs at BF16 (OC must be a multiple of 64!)
+            // Block size is 1024 | 768 threads (32|24 warps) and we reduce those values into 1 at the end
+
+            const int block_size = deviceProp.maxThreadsPerMultiProcessor == 1536 ? 768 : 1024;
+
+            dim3 block_dim        = {4, 8, (unsigned)block_size / WARP_SIZE};
+            const int OC_per_warp = block_dim.y * X128::size;  // 64 at BF16
+
+            const int grid_size_x = CEIL_DIV(OC, OC_per_warp);  // e.g. 12 horizontal blocks for 768 OCs at BF16
+            const int grid_size_y = max(1, deviceProp.maxThreadsPerMultiProcessor * deviceProp.multiProcessorCount / (block_size * grid_size_x));  // full GPU!
+
+            // If we have enough OC that we don't need cross-block reductions, we can skip the bias_buffer accumulation
+            // and write results directly to the output.
+            if (grid_size_y == 1) {
+                matmul_backward_bias_kernel9<<<dim3(grid_size_x, grid_size_y), block_dim, 0, stream>>>(bias, deltaIn, B, T, OC, False);
+                cudaCheck(cudaGetLastError());
+            } else {
+                // kernel 9 overwrites temp buffer, so no need to memset
+                matmul_backward_bias_kernel9<<<dim3(grid_size_x, grid_size_y), block_dim, 0, stream>>>(dbias_buffer, deltaIn, B, T, OC, True);
+                cudaCheck(cudaGetLastError());
+                reduce_add_sum_kernel<<<CEIL_DIV(OC, 256 * f128::size), 256, 0, stream>>>(bias, dbias_buffer, OC, grid_size_y);
+                cudaCheck(cudaGetLastError());
+            }
+            bias = NULL;  // prevent bias calculation from also being fused in CU_mm_blas_ below (if we enabled fusion)*/
+        }
+
+        /*CU_mm_blasLt(delta, weight, deltaIn, bias, C, B * T, OC, nullptr, nullptr, stream, (int)transAW, 0, isAccumuDelta);
+
+        // backward GELU (if it wasn't fused into the matmul above)
+        // if (gelu_fusion < 2 && pre_gelu) {
+        //     Activation_backward_inplace(delta, pre_gelu, B * T * C, stream);
+        // }
+
+        // backward to weight, uses += in the backward pass (accumulate the gradient) by setting alpha=one
+        CU_mm_blasLt(dweight, inp, deltaIn, bias, C, OC, B * T, nullptr, nullptr, stream, transAW, 1, isAccumuDelta);*/
+        return true;
+    }
+};
+
+
+/*
+void matmul_backward(floatX* delta, floatX* dweight, floatX* bias, floatX* deltaIn, floatX* inp, floatX* weight, float* dbias_buffer, int B, int T, int C,
+                     int OC, cudaStream_t stream, bool isTransW = false, floatX* pre_gelu = NULL, bool isAccumuDelta = false) {
+    NVTX_RANGE_FN();
+    bool transAW = false;
+    // if(isTransW)
+    //     transAW = true;
+    // backward to bias, if given, does a +=
+    if (bias != NULL) {
+        // Each warp is responsible for 8 * "x128::size" = 64 OCs at BF16 (OC must be a multiple of 64!)
+        // Block size is 1024 | 768 threads (32|24 warps) and we reduce those values into 1 at the end
+
+        const int block_size = deviceProp.maxThreadsPerMultiProcessor == 1536 ? 768 : 1024;
+
+        dim3 block_dim        = {4, 8, (unsigned)block_size / WARP_SIZE};
+        const int OC_per_warp = block_dim.y * X128::size;  // 64 at BF16
+
+        const int grid_size_x = CEIL_DIV(OC, OC_per_warp);  // e.g. 12 horizontal blocks for 768 OCs at BF16
+        const int grid_size_y = max(1, deviceProp.maxThreadsPerMultiProcessor * deviceProp.multiProcessorCount / (block_size * grid_size_x));  // full GPU!
+
+        // If we have enough OC that we don't need cross-block reductions, we can skip the bias_buffer accumulation
+        // and write results directly to the output.
+        if (grid_size_y == 1) {
+            matmul_backward_bias_kernel9<<<dim3(grid_size_x, grid_size_y), block_dim, 0, stream>>>(bias, deltaIn, B, T, OC, False);
+            cudaCheck(cudaGetLastError());
+        } else {
+            // kernel 9 overwrites temp buffer, so no need to memset
+            matmul_backward_bias_kernel9<<<dim3(grid_size_x, grid_size_y), block_dim, 0, stream>>>(dbias_buffer, deltaIn, B, T, OC, True);
+            cudaCheck(cudaGetLastError());
+            reduce_add_sum_kernel<<<CEIL_DIV(OC, 256 * f128::size), 256, 0, stream>>>(bias, dbias_buffer, OC, grid_size_y);
+            cudaCheck(cudaGetLastError());
+        }
+        bias = NULL;  // prevent bias calculation from also being fused in CU_mm_blas_ below (if we enabled fusion)
+    }
+    
+
+    CU_mm_blasLt(delta, weight, deltaIn, bias, C, B * T, OC, nullptr, nullptr, stream, (int)transAW, 0, isAccumuDelta ? 1.0f : 0.0f, true);
+
+    // backward GELU (if it wasn't fused into the matmul above)
+    // if (gelu_fusion < 2 && pre_gelu) {
+    //     Activation_backward_inplace(delta, pre_gelu, B * T * C, stream);
+    // }
+
+    // backward to weight, uses += in the backward pass (accumulate the gradient) by setting alpha=one
+    CU_mm_blasLt(dweight, inp, deltaIn, bias, C, OC, B * T, nullptr, nullptr, stream, transAW, true, 1 , true);
+
+}*/

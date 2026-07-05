@@ -497,7 +497,7 @@ RAPIDHASH_INLINE_CONSTEXPR uint64_t rapidhash_withSeed(const void *key, size_t l
  *
  *  Returns a 64-bit hash.
  */
-RAPIDHASH_INLINE_CONSTEXPR uint64_t rapidhash(const void *key, size_t len) RAPIDHASH_NOEXCEPT {
+RAPIDHASH_INLINE_CONSTEXPR uint64_t rapidhash_64(const void *key, size_t len) RAPIDHASH_NOEXCEPT {
   return rapidhash_withSeed(key, len, 0);
 }
 

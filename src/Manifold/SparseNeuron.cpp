@@ -203,68 +203,82 @@ bool SparseNeuron::InitSVD(int flag) {
     return true;
 }
 
-string HIERARCH_LoRA::sNeurons = "";
-HIERARCH_LoRA::HIERARCH_LoRA(SparseNeuron* neuron, hGensor w_, int r_, int flag) : wBase(w_), rank(r_), spNeuron(neuron) {
+string HIERARCH_LorAB::sNeurons = "";
+
+//  Forward: rhs = b*(a*inp)
+HIERARCH_LorAB::HIERARCH_LorAB(SparseNeuron* neuron, hGensor w_, const std::string& title_, int r_, int flag)
+    : wBase(w_), rank(r_), title(title_), spNeuron(neuron) {
     hFish = neuron->hFish;
+    config = hFish->config.loAB;
+
+    nInA = w_->ne[1], nOutB = w_->ne[0];
+    if (rank == -1)  // only for debug
+        rank = nInA;
+    else {
+        assert(rank * 10 < hFish->config.nEmbed());  // neuron->C   low rank
+    }
     assert(w_->isWMAT() && rank > 0);
-    int m = w_->ne[0], n = w_->ne[1], c0;
+    //  nIn = shape[1], nOut = shape[0] @SLP::Build
+
     B = neuron->B, T = neuron->T;
-    assert(rank * 10 < hFish->config.nEmbed());  // neuron->C   low rank
-    string title = w_->name;
-    a            = GT(hFish, w_->type, {m, rank}, flag | GTensor::F_LORA_A, title + "_a");
-    b            = GT(hFish, w_->type, {rank, n}, flag | GTensor::F_LORA_B, title + "_b");
+
+    // string title = w_->name;
+    //  spQ      = {q_dim, n_embd};
+    a = GT(hFish, w_->type, {rank, nInA}, flag | GTensor::F_LORA_A, title + "_a");
+    b = GT(hFish, w_->type, {nOutB, rank}, flag | GTensor::F_LORA_B, title + "_b");
     hFish->InitGensor(nullptr, "", a, true);
     hFish->InitGensor(nullptr, "", b, true);
 
     // tmp          = gBUFF->bt4c;
     // assert(m * rank <= tmp->size() && n * rank <= tmp->size());
     huTensor* ta   = dynamic_cast<huTensor*>(a.get());
-    size_t szAlloc = ta->Alloc_1(&Ax, false, "", sizeof(floatX) * B * T * rank);
-    szAlloc += ta->Alloc_1(&Adelta, false, "", sizeof(floatX) * B * T * rank);
+    size_t szAlloc = ta->Alloc_1(&Ax, false, title + "_ax", sizeof(floatX) * B * T * rank);
+    szAlloc += ta->Alloc_1(&Adelta, false, title + "_delta", sizeof(floatX) * B * T * rank);
 
     UpdateAdapt(flag);
-    // _INFO("[H_LORA]");
+    // _INFO("[H_LoAB]");
 }
-HIERARCH_LoRA::~HIERARCH_LoRA() {
+HIERARCH_LorAB::~HIERARCH_LorAB() {
     huTensor* ta = dynamic_cast<huTensor*>(a.get());
     ta->Free_1(&Ax, "");
     ta->Free_1(&Adelta, "");
 }
 
-void HIERARCH_LoRA::UpdateAdapt(int flag) {
-    switch (spNeuron->tpLORA) {
-        case W0:  //  x = W*x
+void HIERARCH_LorAB::UpdateAdapt(int flag) {
+    /*switch (spNeuron->tpLORW) {
+        case LoAB_CARD::W0:  //  x = W*x
             break;
-        case AB:  //  x = (BA)*x = B*(Ax)
-            beta_F        = 0.0f;
+        case LoAB_CARD::AB:  //  x = (BA)*x = B*(Ax)
+            // beta_F        = 0.0f;
             isAccumuDelta = false;
             break;
-        case W_AB:  //  x = (W+AB)*x
-            beta_F        = 1.0f;
+        case LoAB_CARD::W_AB:  //  x = (W+AB)*x
+            // beta_F        = 1.0f;
             isAccumuDelta = true;
             break;
-        case refW_AB:  //  Foreward:    x = (W+AB)*x    Backward: delta'=>(AB)delta
-            beta_F        = 1.0f;
+        case LoAB_CARD::SHADOW_AB:  //  Foreward:    x = (W+AB)*x    Backward: delta'=>(AB)delta
+            // beta_F        = 1.0f;
             isAccumuDelta = false;
             break;
         default:
             assert(0);
             break;
-    }
+    }*/
 }
 /*
     Since low rank, no need to quantize/ramater/guoke...
 */
-bool SparseNeuron::InitLoRA(LORA_ADAPT_W tpLora, int flag) {
-    assert(w->isWMAT());
-    tpLORA = tpLora;
-    if (tpLORA == LORA_ADAPT_W::W0)
+bool SparseNeuron::InitLoRA(LoAB_CARD::typW tpLora, const std::string& wname, int flag) {
+    assert(w->isWMAT());  // ne[0] > 1 && ne[1] > 1 && ne[2] == 1 && ne[3] == 1
+    tpLORW = tpLora;
+    if (tpLORW == LoAB_CARD::typW::NO_LORW || tpLORW == LoAB_CARD::typW::W0)
         return false;
-    HIERARCH_LoRA::sNeurons = HIERARCH_LoRA::sNeurons + "" + name + ",";
-    int rank                = 32;
-    H_LORA lora             = std::make_shared<HIERARCH_LoRA>(this, w, rank);
-    wLORAs.push_back(lora);
-    _INFO("[H_LORA] rank=%d adapt=%d @\"%s\"\n", rank, tpLORA, w->name);
+    HIERARCH_LorAB::sNeurons = HIERARCH_LorAB::sNeurons + "" + name + ",";
+    int rank                 = 32;  // 32 -1
+    H_LoAB lora              = std::make_shared<HIERARCH_LorAB>(this, w, wname, rank);
+    wLoABs.push_back(lora);
+
+    _INFO("[H_LoAB] rank=%d adapt=%d x=%d @\"%s\"\n", rank, tpLORW, 0, w->name);
     return true;
 }
 

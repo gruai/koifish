@@ -19,23 +19,11 @@
 #include "gLLM.hpp"
 
 namespace fs = std::filesystem;
-
-#define LOG  //
-
-#ifdef __USE_GGML__
-#else
-std::vector<hWIKI> WIKI::MakeInstance(const std::string nam_, struct CLI_params& params, int flag) {
-    std::vector<hWIKI> wikis;
-    if (params.tpWiki != "off") {  // wiki is so heavy(ugly) that only load one instance here!
-        for (auto path : params.fn_model_base) {
-            assert(0);
-            // hWIKI wiki = std::make_shared<LAMA>(params,path);
-            // wikis.push_back(wiki);
-        }
-    }
-    return wikis;
-}
-#endif
+/**
+ * 1. endless repetition occurs
+ * If the model learns that a certain phrase or token(may assign very high probability to recently used words) has high probability in the current context, it may keep selecting it again and again.
+ * model does not explicitly “remember” that it already said something; it only conditions on recent context.
+ */
 
 double WIKI::InductLogits(const CLI_params& config, int nSampInBatch, std::vector<TOKEN_ID>& tok_ids, struct ggml_tensor* target_label, int flag) {
     if (!isInduct())
@@ -358,7 +346,7 @@ void GeneratOnPrompt::InitInput(int flag) {
 
 // Deprecated
 GeneratOnPrompt::GeneratOnPrompt(struct gpt_params& par_, int flag) {
-    /*LOG("%s logits_all=%d\n", __func__,params.logits_all );
+    /*_INFO("%s logits_all=%d\n", __func__,params.logits_all );
     llama_numa_init(params.numa);
     // prompt = GetPrompt();
 
@@ -453,17 +441,17 @@ bool GeneratOnPrompt::Init(const std::string& prompt_, int flag) {
     ctx = lama->_ctx;
     assert(ctx != nullptr);
     if (model == NULL)    {
-        LOG("%s: error: unable to load model\n", __func__);
+        _INFO("%s: error: unable to load model\n", __func__);
         return false;
     }
 
     n_ctx_train = llama_n_ctx_train(model);
     n_ctx = llama_n_ctx(ctx);*/
-    LOG("n_ctx: %d(%d)\n", n_ctx, n_ctx_train);
+    _INFO("n_ctx: %d(%d)\n", n_ctx, n_ctx_train);
     if (n_ctx > n_ctx_train) {
-        LOG("%s: warning: model was trained on only %d context tokens (%d specified)\n", __func__, n_ctx_train, n_ctx);
+        _INFO("%s: warning: model was trained on only %d context tokens (%d specified)\n", __func__, n_ctx_train, n_ctx);
     }
-    LOG("\n");
+    _INFO("\n");
 
     // prompt = prompt_;
     if (GetPrompt() != "") {
@@ -478,9 +466,9 @@ bool GeneratOnPrompt::Init(const std::string& prompt_, int flag) {
     //                                                                                     // assert(n_ctx_train % ga_w == 0     && "n_ctx_train must be a
     //                                                                                     multiple of grp_attn_w");    // NOLINT
     //     // assert(n_ctx >= n_ctx_train * ga_n && "n_ctx must be at least n_ctx_train * grp_attn_n"); // NOLINT
-    //     LOG("self-extend: n_ctx_train = %d, grp_attn_n = %d, grp_attn_w = %d\n", n_ctx_train, ga_n, ga_w);
+    //     _INFO("self-extend: n_ctx_train = %d, grp_attn_n = %d, grp_attn_w = %d\n", n_ctx_train, ga_n, ga_w);
     // }
-    // LOG("\n\n");
+    // _INFO("\n\n");
 
     return true;
 }
@@ -736,7 +724,7 @@ void GeneratOnPrompt::OnAntiPrompt(int flag) {
 
         if (is_antiprompt)
         {
-            LOG("found antiprompt: %s\n", last_output.c_str());
+            _INFO("found antiprompt: %s\n", last_output.c_str());
         }
     }*/
 }
@@ -754,7 +742,7 @@ std::string GeneratOnPrompt::T2STR(TOKEN_ID tok, int flag) {
 
 bool GeneratOnPrompt::Inference(hSAMP samp, int& n_past, int flag) {
     int n_eval = (int)tokens.size();
-    // LOG("eval: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, tokens).c_str());
+    // _INFO("eval: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, tokens).c_str());
     bool bRet = false;
     if (fish_1 != nullptr) {
         fish_1->UpdateNCTX(dialogs->nLeastCTX());
@@ -773,14 +761,22 @@ bool GeneratOnPrompt::Inference(hSAMP samp, int& n_past, int flag) {
     }
 
     if (!bRet) {
-        LOG("%s_%d : failed @%s\n", __func__, samp->len, dialogs->sentence.c_str());
+        _INFO("%s_%d : failed @%s\n", __func__, samp->len, dialogs->sentence.c_str());
         return 1;
     }
     n_past += n_eval;
-    // LOG("n_past = %d n_remain=%d\n", n_past,n_remain);
+    // _INFO("n_past = %d n_remain=%d\n", n_past,n_remain);
     return bRet;
 }
 
+/**
+ * 道行之而成,物谓之而然
+ * 恶乎然？然于然。恶乎不然？不然于不然。
+ * 物固有所然，物固有所可。无物不然，无物不可。
+ * 故为是举莛与楹，厉与西施，恢诡谲怪，道通为一。其分也，成也；其成也，毁也。凡物无成与毁，复通为一。
+ * 唯达者知通为一，为是不用而寓诸庸。庸也者，用也；用也者，通也；通也者，得也；适得而几矣。因是已。
+ * 已而不知其然，谓之道。
+ */
 int GeneratOnPrompt::Generate(int nJob, int flag) {
     GST_TIC(tic);
     hSAMP samp = (dialogs == nullptr || dialogs->empty()) ? nullptr : dialogs->SampAt(0);
@@ -792,14 +788,14 @@ int GeneratOnPrompt::Generate(int nJob, int flag) {
         info = wiki0->teach == WIKI::_OFF ? "only fish" : "WIKI";
         // ctx_sampling = nullptr;
     }
-    LOG("<--- GeneratOnPrompt %s job=%d logits_all=%d fish=%s teach=%d\n", info.c_str(), nJob, 0, fish_1 == nullptr ? "" : fish_1->Name().c_str(),
+    _INFO("<--- GeneratOnPrompt %s job=%d logits_all=%d fish=%s teach=%d\n", info.c_str(), nJob, 0, fish_1 == nullptr ? "" : fish_1->Name().c_str(),
         wiki0 == nullptr ? -1 : wiki0->teach);
     rng_state = config.common.seed;
-    // LOG("%s logits_all=%d\n", __func__, );
+    // _INFO("%s logits_all=%d\n", __func__, );
     // bool need_to_save_session = !path_session.empty() && n_matching_session_tokens < embd_inp.size();
     int n_past = 0, n_remain = n_predict, n_session_consumed = 0, ga_i = 0, max_embd_size = n_ctx - 4;
     tokens.clear();  // embd_guidance.clear();
-    LOG("embd_inp.size(): %d \n", (int)embd_inp.size());
+    _INFO("embd_inp.size(): %d \n", (int)embd_inp.size());
     tokens = embd_inp;
     _INFO("%s", config.prompt.c_str());
 
@@ -813,7 +809,7 @@ int GeneratOnPrompt::Generate(int nJob, int flag) {
             return 1;
         /*// for (int i = 0; i < (int)tokens.size(); i += params.n_batch)        {
             int n_eval = (int)tokens.size();
-            // LOG("eval: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, tokens).c_str());
+            // _INFO("eval: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, tokens).c_str());
             bool bDecode = false;
             if(flag==0x100)     {   //  "only fish"
                 vector<float> preP;
@@ -825,13 +821,13 @@ int GeneratOnPrompt::Generate(int nJob, int flag) {
                 // bDecode = llama_decode(ctx, llama_batch_get_one(&tokens[0], n_eval, n_past, 0)) >= 0;
             }
             if (!bDecode)            {
-                LOG("%s : failed to eval\n", __func__);
+                _INFO("%s : failed to eval\n", __func__);
                 return 1;
             }
             n_past += n_eval;
-            LOG("n_past = %d n_remain=%d\n", n_past,n_remain);*/
+            _INFO("n_past = %d n_remain=%d\n", n_past,n_remain);*/
         // if (params.n_print > 0 && n_past % params.n_print == 0)                { // Display total tokens alongside total time
-        //     LOG("\n\033[31mTokens consumed so far = %d / %d \033[0m\n", n_past, n_ctx);
+        //     _INFO("\n\033[31mTokens consumed so far = %d / %d \033[0m\n", n_past, n_ctx);
         // }
         // }
 
@@ -866,7 +862,7 @@ int GeneratOnPrompt::Generate(int nJob, int flag) {
         // }
         // end of text token
         if (tok == eos /*!tokens.empty() && tokens.back() == eos*/) {
-            LOG(" [end of text]\n");
+            _INFO(" [end of text]\n");
             break;
         }
     }
@@ -884,13 +880,13 @@ int GeneratOnPrompt::Tokenize(int flag) {
     if (!GetPrompt().empty()) {
         InitInput();
     } else {
-        LOG("use session tokens\n");
+        _INFO("use session tokens\n");
         embd_inp = session_tokens;
     }
     assert(!embd_inp.empty());
     n_keep = (int)embd_inp.size();
-    // LOG("prompt: \"%s\"\n", log_tostr(GetPrompt()));
-    // LOG("tokens: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, embd_inp).c_str());
+    // _INFO("prompt: \"%s\"\n", log_tostr(GetPrompt()));
+    // _INFO("tokens: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, embd_inp).c_str());
 
     // Should not run without any tokens
 
@@ -900,7 +896,7 @@ int GeneratOnPrompt::Tokenize(int flag) {
     int original_prompt_len = 0;
 
     if ((int)embd_inp.size() > n_ctx - 4) {
-        LOG("%s: error: prompt is too long (%d tokens, max %d)\n", __func__, (int)embd_inp.size(), n_ctx - 4);
+        _INFO("%s: error: prompt is too long (%d tokens, max %d)\n", __func__, (int)embd_inp.size(), n_ctx - 4);
         return 1;
     }
 
@@ -1150,3 +1146,18 @@ int GeneratOnPrompt::SampleOnBatch(hBATCH hBatch, float* fLoss, int B, int T, Sa
 
     return 0x0;
 }
+
+#ifdef __USE_GGML__
+#else
+std::vector<hWIKI> WIKI::MakeInstance(const std::string nam_, struct CLI_params& params, int flag) {
+    std::vector<hWIKI> wikis;
+    if (params.tpWiki != "off") {  // wiki is so heavy(ugly) that only load one instance here!
+        for (auto path : params.fn_model_base) {
+            assert(0);
+            // hWIKI wiki = std::make_shared<LAMA>(params,path);
+            // wikis.push_back(wiki);
+        }
+    }
+    return wikis;
+}
+#endif

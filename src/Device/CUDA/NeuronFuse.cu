@@ -38,15 +38,89 @@ hGTensor huTensor::_Multiply(const hGTensor& b) {
 bool TokenEmbed::UpdateBucket(int type, int flag) {
     num_c_groups = CEIL_DIV(latent, (WARP_SIZE * X128::size));
     assert(num_c_groups > 0);
-    if (bucket_info != NULL)
+    if (bucket_info != nullptr)
         return false;
 
     assert((size_t)(B * T) * num_c_groups < (1ULL << 31ULL));  // todo - maybe an issue for llama3-400B(?)
     workload_indices = new int[B * T * num_c_groups];
     bucket_info      = new int4[B * T * num_c_groups];
+    // nzGroup          = new int[padded_nCls * num_c_groups]();
     return true;
 }
+
 void TokenEmbed::WorkloadOnBucker(int* tokens, int flag) {
+    int total_items = 0;
+    std::unordered_map<int, int> freq;
+    for (uint64_t bt = 0; bt < B * T; bt++) {
+        uint64_t token = static_cast<uint64_t>(tokens[bt]);
+        assert(token < padded_nCls);  // vocab_size
+        freq[token]++;
+    }
+    int nUniqueToken = freq.size(), prev;
+    std::vector<std::pair<int, int>> freqPairs;
+    for (const auto& pair : freq) {
+        freqPairs.push_back({pair.second, pair.first});
+    }
+    // (nz, token) in descending order
+    std::sort(freqPairs.begin(), freqPairs.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::unordered_map<int, int> rankMap;
+    for (size_t i = 0; i < freqPairs.size(); ++i) {
+        int cur      = freqPairs[i].second;
+        rankMap[cur] = i;
+        if (i > 0) {
+            assert(freq[prev] >= freq[cur]);
+        }
+        prev = cur;
+    }
+
+    std::vector<std::vector<uint64_t>> sortedBuckets;
+    sortedBuckets.resize(nUniqueToken * num_c_groups);
+    for (uint64_t bt = 0; bt < B * T; bt++) {
+        uint64_t token = static_cast<uint64_t>(tokens[bt]);
+        assert(token < padded_nCls);  // vocab_size
+        for (uint64_t c_group = 0; c_group < num_c_groups; c_group++) {
+            // todo - passing c_group/tokens[bt] in data to avoid a second hash lookup is a bit hacky
+            uint64_t data = bt + (c_group << 32ULL) + (token << 42ULL);
+            uint64_t key  = rankMap[token];  // c_group + num_c_groups * token;
+            assert(key >= 0 && key < nUniqueToken);
+            // assert(key < (uint64_t)padded_nCls * num_c_groups);
+            sortedBuckets[c_group + num_c_groups * key].push_back(data);
+            total_items++;
+        }
+    }
+
+    // std::vector<std::pair<uint64_t, std::vector<uint64_t>>> sortedBuckets(buckets.begin(), buckets.end());
+    // std::sort(sortedBuckets.begin(), sortedBuckets.end(),  // ugly because we don't have a typedef for the std::pair
+    //           [](const std::pair<uint64_t, std::vector<uint64_t>>& a, const std::pair<uint64_t, std::vector<uint64_t>>& b) {
+    //               return a.second.size() > b.second.size();
+    //           });
+
+    num_buckets        = sortedBuckets.size();
+    int bucket_index   = 0;
+    int workload_index = 0;
+    for (const auto& bucket : sortedBuckets) {
+        bucket_info[bucket_index].x = workload_index;                                // bucket start
+        bucket_info[bucket_index].y = bucket.size();                                 // bucket size
+        bucket_info[bucket_index].z = (bucket[0] >> 42ULL) & ((1ULL << 20ULL) - 1);  // bucket ix
+        bucket_info[bucket_index].w = (bucket[0] >> 32ULL) & ((1ULL << 10ULL) - 1);  // bucket c
+
+        for (uint64_t idx : bucket) {
+            workload_indices[workload_index++] = (int)(idx & ((1ULL << 31ULL) - 1ULL));
+        }
+        bucket_index++;
+    }
+
+    floatX* scratch = (floatX*)GTensor::buff;
+    // Step 3: Copy data from host to device (async until the last one to avoid synchronising CPU/GPU twice)
+    // todo - could use CUDA events (even without streams) to avoid CPU/GPU synchronisation completely
+    int4* d_bucket_info     = (int4*)scratch;
+    int* d_workload_indices = (int*)(scratch + B * T * num_c_groups * sizeof(int4));
+    cudaCheck(cudaMemcpy(d_bucket_info, bucket_info, num_buckets * sizeof(int4), cudaMemcpyHostToDevice));
+    cudaCheck(cudaMemcpy(d_workload_indices, workload_indices, total_items * sizeof(int), cudaMemcpyHostToDevice));
+}
+
+// Deprecated - buckets would crash!
+void TokenEmbed::WorkloadOnBucker_v0(int* tokens, int flag) {
     // if(num_buckets>0)
     //     return;
 
@@ -55,11 +129,13 @@ void TokenEmbed::WorkloadOnBucker(int* tokens, int flag) {
     std::unordered_map<uint64_t, std::vector<uint64_t>> buckets;
     for (uint64_t bt = 0; bt < B * T; bt++) {
         uint64_t token = static_cast<uint64_t>(tokens[bt]);
-        assert(token < padded_nCls);  // 或 vocab_size
+        assert(token < padded_nCls);  // vocab_size
         for (uint64_t c_group = 0; c_group < num_c_groups; c_group++) {
             // todo - passing c_group/tokens[bt] in data to avoid a second hash lookup is a bit hacky
             uint64_t data = bt + (c_group << 32ULL) + (token << 42ULL);
-            buckets[c_group + num_c_groups * token].push_back(data);
+            uint64_t key  = c_group + num_c_groups * token;
+            // assert(key < (uint64_t)padded_nCls * num_c_groups);
+            buckets[key].push_back(data);
             total_items++;
         }
     }
@@ -161,15 +237,15 @@ hGTensor TokenEmbed::OnEmbed(hGensor inpL, int seed) {
                 maec->ENC(cur);
             }
         } else {
-            UpdateBucket(0x0);
-            WorkloadOnBucker(hBatch->host, 0x0);
+            // UpdateBucket(0x0);
+            WorkloadOnBucker(hBatch->host_toks, 0x0);
             floatX* scratchX = (floatX*)GTensor::buff;
             hGTensor delta = gBUFF->delta, cur = delta;
             if (maec != nullptr) {
                 cur = maec->ENC(cur);
             }
             // encoder_backward_1(ToG(w), ToG0(b), ToX(cur), tokens, B, T, C, seed, main_stream);
-            encoder_backward(ToG(w), ToG0(b), scratchX, workload_indices, bucket_info, ToX(cur), TO<int>(inp), hBatch->host, B, T, C, seed, main_stream);
+            encoder_backward(ToG(w), ToG0(b), scratchX, workload_indices, bucket_info, ToX(cur), TO<int>(inp), hBatch->host_toks, B, T, C, seed, main_stream);
             // lnW.cuFlow();   lnf->cuFlow(ToG(w),(float*)scratchX,delta);
             // PrintTensor<floatX>("grad of wte",grads.wte,true,Vp,C);         PrintTensor<float>("losses",acts.losses,true,B,T);
             // PrintTensor<floatX>("grad of wpe",grads.wpe,true,T,C);
@@ -205,12 +281,15 @@ hGTensor TokenEmbed::SubW(hGTensor hSamp, bool isForw, hGTensor wOut, int flag) 
     }
 }
 
-//  W'=b(:,rank)*a(rank,:)  => rhs = b*(a*lhs)
-int HIERARCH_LoRA::Forw(floatX* rhs, floatX* lhs, int BT, int flag) {
-    int ldA = a->ne[0], ldB = b->ne[1], dump_flag = -1;
+//  W'=b(:,rank)*a(rank,:)  => rhs += beta*b*(a*lhs)
+int HIERARCH_LorAB::Forw(floatX* rhs, floatX* lhs, int BT, int flag) {
+    int dump_flag = -1;
     // b->Print(b->name, 1, dump_flag);
-    CU_mm_((floatX*)Ax, a, lhs, nullptr, rank, BT, ldA, main_stream, 1, 0, 0.0f);
-    CU_mm_(rhs, b, (floatX*)Ax, nullptr, ldB, BT, rank, main_stream, 1, 0, beta_F);
+    if (config.sAB > 0) {
+        CU_mm_((floatX*)Ax, a, lhs, nullptr, rank, BT, nInA, main_stream, 1, 0, 0.0f);
+        CU_mm_(rhs, b, (floatX*)Ax, nullptr, nOutB, BT, rank, main_stream, 1, 0, 0.0f);
+    }
+
     // b->Print(b->name, 1, dump_flag);
     return 0x0;
 }
@@ -251,12 +330,13 @@ int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, Relu* hRelu, int f
             case SAMPLE:
                 CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, nToken, IC, main_stream, transA);
                 break;
-            case LORA:  //  rhs += a*b*lhs_
-                if (tpLORA != LORA_ADAPT_W::AB)
-                    CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, nToken, IC, main_stream, transA);
+            case LORA:                      //  rhs += a*b*lhs_
+                if (!hFish->config.loAB.isPassW()) {  // tpLORW != LoAB_CARD::typW::AB && hFish->config.loAB.sW > 0
+                    CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, nToken, IC, main_stream, transA, 0);
+                }
                 // rhs_0->Print(rhs_0->name, 0, -1);   //w->Print(w->name, 0, -1),
-                if (tpLORA != LORA_ADAPT_W::W0) {
-                    for (auto lora : wLORAs) {
+                if (!hFish->config.loAB.isPassAB()) {   //tpLORW != LoAB_CARD::typW::W0
+                    for (auto lora : wLoABs) {
                         lora->Forw(rhs, ToX(lhs_), nToken, flag);
                     }
                 }
@@ -282,42 +362,55 @@ int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, Relu* hRelu, int f
 }
 
 //  Forward: rhs = b*(a*inp)
-int HIERARCH_LoRA::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, int flag) {
+int HIERARCH_LorAB::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, int flag) {
     if (!isBack)
         return 0x0;
-    assert(0);  // need refactor to remove matmul_backward_
-    int ldA = a->ne[0], ldB = b->ne[1], dump_flag = 0;
+    if (config.sAB <= 0)
+        return 0x0;
+
+    bool isTransW = False;
+    int dump_flag = 0, transAW = 0;  //(int)isTransW;
     delta->Print("delta_0", 0, dump_flag);
-    float* dbias_buffer = (float*)GTensor::buff;
-    bool isTransW       = False;
+    float* dbias_buffer = (float*)GTensor::buff, beta = 0.0;
+    if(!config.isPassW()){
+        beta = 1.0; //  AccumuDelta
+    }
+    floatX* bias        = nullptr;
     //  delta->Print(delta->name, 0, dump_flag);
     a->Print(a->name, 0, dump_flag), b->Print(b->name, 0, dump_flag);
-    // assert(inp->isSameShape({B, T, ldA}) && deltaIn->isSameShape({B, T, ldB}));
+    // assert(inp->isSameShape({B, T, nInA}) && deltaIn->isSameShape({B, T, nOutB}));
     //  Forward: rhs = b*Ax
-    // matmul_backward((floatX*)Adelta, ToG(b), nullptr, ToX(deltaIn), (floatX*)Ax, ToX(b), dbias_buffer, B, T, rank, ldB, main_stream, isTransW);
+    // matmul_backward((floatX*)Adelta, ToG(b), nullptr, ToX(deltaIn), (floatX*)Ax, ToX(b), dbias_buffer, B, T, rank, nOutB, main_stream, isTransW);
+    TASKA_AxB(main_stream, rank, B * T, nOutB, transAW, 0, beta).blasLt((floatX*)Adelta, ToX(b), deltaIn);  // Adelta=b*deltaIn
+    TASKA_AxB taskaw(main_stream, rank, nOutB, B * T, transAW, 1, 1.0f);
+    CU_mm_blasLt(ToG(b), (floatX*)Ax, ToX(deltaIn), bias, taskaw);  // weight.b=Ax*deltaIn
+    b->Dogleg(-1);
     b->Print(b->name, 1, dump_flag);
+
     inp->Print("inp", 0, dump_flag), PrintTensor<floatX>("A_delta", (floatX*)Adelta, true, B, T, rank, 1, dump_flag);
     //  Forward: Ax = a*Inp     [64,8192] x [8192,768]=>[64,768]
-    // matmul_backward(ToX(delta), ToG(a), nullptr, (floatX*)Adelta, ToX(inp), ToX(a), dbias_buffer, B, T, ldA, rank, main_stream, isTransW,
+    // matmul_backward(ToX(delta), ToG(a), nullptr, (floatX*)Adelta, ToX(inp), ToX(a), dbias_buffer, B, T, nInA, rank, main_stream, isTransW,
     // nullptr,isAccumuDelta);
+    TASKA_AxB taskb(main_stream, nInA, B * T, rank, transAW, 0, beta);
+    CU_mm_blasLt(ToX(delta), ToX(a), (floatX*)Adelta, bias, taskb);
+    TASKA_AxB taskbw(main_stream, nInA, rank, B * T, transAW, 1, 1.0f);
+    CU_mm_blasLt(ToG(a), ToX(inp), (floatX*)Adelta, bias, taskbw);
+    a->Dogleg(-1);
     a->Print(a->name, 0, dump_flag), a->Print(a->name, 1, dump_flag);
     delta->Print("delta_1", 0, dump_flag);
     return 0x0;
 }
-
-// Deprecated
 int SLP::BackOnCompression(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, bool isAccumuDelta, int flag) {
-    return 0x0;
-    /*try {
+    try {
         size_t szBuf = 0x0;
         w->BeforeBackward(szBuf, true);
         floatX *wX = w->GetDataX(), *gW = ToG(w);
         float* dbias_buffer = (float*)((char*)GTensor::buff + szBuf);
-        if(w->hQuant!=nullptr){
+        if (w->hQuant != nullptr) {
             DEBUG_HERE;
         }
-
-        int OC = nOut, IC = nIn;
+        // bool isUpdateW0 = true;
+        int OC = nOut, IC = nIn, transAW = 0;
         assert(delta != nullptr);
         switch (compression) {
             case SAMPLE:  // remater to get wX
@@ -333,32 +426,38 @@ int SLP::BackOnCompression(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTen
         switch (compression) {
             case SAMPLE:
                 // matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu),
-                                isAccumuDelta);
-                subw->SubW(hSamps, false, gBUFF->tmpGW, samp_type);
+                //                 isAccumuDelta);
+                // subw->SubW(hSamps, false, gBUFF->tmpGW, samp_type);
                 break;
             case LORA:
-                if (tpLORA != LORA_ADAPT_W::AB && tpLORA != LORA_ADAPT_W::refW_AB)
+                if (!hFish->config.loAB.isPassW()) {    //tpLORW != LoAB_CARD::typW::AB && tpLORW != LoAB_CARD::typW::SHADOW_AB && hFish->config.loAB.sW > 0
+                    TASKA_AxB(main_stream, nIn, B * T, nOut, transAW, 0, isAccumuDelta ? 1.0f : 0.0f).blasLt(ToX(delta), wX, deltaIn);
+                    TASKA_AxB(main_stream, nIn, nOut, B * T, transAW, 1, 1.0f).blasLt(gW, ToX(inp), deltaIn);
                     // matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu),
-                                    isAccumuDelta);
-                if (tpLORA != LORA_ADAPT_W::W0)
-                    for (auto lora : wLORAs) {
+                    //                 isAccumuDelta);
+                }
+                if (!hFish->config.loAB.isPassAB()) {                    
+                    for (auto lora : wLoABs) {
                         lora->Back(delta, inp, deltaIn, flag);
                     }
+                }
+
                 break;
             default:
+                assert(0);
                 // matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu),
-                                isAccumuDelta);
+                //                 isAccumuDelta);
                 break;
         }
 
-        if (flag != 0x100 && !isAccumuDelta)
+        if (!hFish->config.loAB.isPassW() && flag != 0x100 && !isAccumuDelta)
             w->Dogleg(-1);
 
         return 0x0;
     } catch (...) {
         assert(0);
         return -1;
-    }*/
+    }
 }
 
 void GamaBack_v0(const TASKA_quant<floatX>& tasq, hGTensor inp, hGTensor deltaIn, floatX* wX, floatX* gW, size_t nToken, int flag);
@@ -371,8 +470,9 @@ void GamaBack_v0(const TASKA_quant<floatX>& tasq, hGTensor inp, hGTensor deltaIn
 */
 int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, bool isAccumuDelta, int flag) {
     try {
-        if (compression != SKIP)
-            BackOnCompression(delta, inp, deltaIn, to_gelu, isAccumuDelta, flag);
+        if (compression != SKIP) {
+            return BackOnCompression(delta, inp, deltaIn, to_gelu, isAccumuDelta, flag);
+        }
 
         size_t szBuf = 0x0, nToken = B * T;
         w->BeforeBackward(szBuf, true);
@@ -382,7 +482,7 @@ int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, 
 
         // matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, nIn, nOut, main_stream, isTransW,
         // ToX0(to_gelu),isAccumuDelta);
-        bool transAW  = false;
+        int transAW   = 0;
         floatX* dbias = ToG0(b);  // backward to bias, if given, does a +=
         if (dbias != NULL) {
             // Each warp is responsible for 8 * "x128::size" = 64 OCs at BF16 (nOut must be a multiple of 64!)Block size is 1024 | 768 threads (32|24 warps) and
@@ -405,27 +505,30 @@ int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, 
             }
             dbias = NULL;  // prevent dbias calculation from also being fused in CU_mm_blas_ below (if we enabled fusion)
         }
-
-        CU_mm_blasLt(ToX(delta), wX, ToX(deltaIn), dbias, nIn, B * T, nOut, nullptr, nullptr, main_stream, (int)transAW, 0, isAccumuDelta ? 1.0f : 0.0f);
+        TASKA_AxB(main_stream, nIn, B * T, nOut, transAW, 0, isAccumuDelta ? 1.0f : 0.0f).blasLt(ToX(delta), wX, deltaIn);
+        // CU_mm_blasLt(ToX(delta), wX, ToX(deltaIn), dbias, taskm);
 
         bool isDogleg = flag != 0x100 && !isAccumuDelta;
-        if (w->gama_param != nullptr) {
-            TASKA_quant<floatX> tasq(w.get(), w->hQuant, main_stream);
-            GamaBack_v0(tasq, inp, deltaIn, wX, gW, B, 0x0);
-            //
-            // CU_GamaBack<floatX><<<tasq.grid3, tasq.block3, tasq.smem, tasq.stream>>>(tasq, ToX(inp), ToX(deltaIn), wX, gW, (int)B, 0x0);  // 3072->1024
-            if (isDogleg) {
-                w->gama_param->Print(w->gama_param->name, 0, dump_flag);
-                // w->gama_param->Print(w->gama_param->name, 1, dump_flag);
-                // w->gama_param->Print(w->gama_param->name, 2, dump_flag);
-                w->gama_param->Print(w->gama_param->name, 3, dump_flag);
-                w->gama_param->Dogleg(-1);
-            }
+        if (isFixWeight) {
         } else {
-            // backward to wX, uses += in the backward pass (accumulate the gradient) by setting alpha=one
-            CU_mm_blasLt(gW, ToX(inp), ToX(deltaIn), dbias, nIn, nOut, B * T, nullptr, nullptr, main_stream, transAW, true, 1 /* accumulate */);
-            if (isDogleg)
-                w->Dogleg(-1);
+            if (w->gama_param != nullptr) {
+                TASKA_quant<floatX> tasq(w.get(), w->hQuant, main_stream);
+                GamaBack_v0(tasq, inp, deltaIn, wX, gW, B, 0x0);
+                //
+                // CU_GamaBack<floatX><<<tasq.grid3, tasq.block3, tasq.smem, tasq.stream>>>(tasq, ToX(inp), ToX(deltaIn), wX, gW, (int)B, 0x0);  // 3072->1024
+                if (isDogleg) {
+                    w->gama_param->Print(w->gama_param->name, 0, dump_flag);
+                    // w->gama_param->Print(w->gama_param->name, 1, dump_flag);
+                    // w->gama_param->Print(w->gama_param->name, 2, dump_flag);
+                    w->gama_param->Print(w->gama_param->name, 3, dump_flag);
+                    w->gama_param->Dogleg(-1);
+                }
+            } else {
+                // backward to wX, uses += in the backward pass (accumulate the gradient) by setting alpha=one
+                TASKA_AxB(main_stream, nIn, nOut, B * T, transAW, 1, 1.0f).blasLt(gW, ToX(inp), deltaIn);
+                if (isDogleg)
+                    w->Dogleg(-1);
+            }
         }
 
         return 0x0;
@@ -791,7 +894,7 @@ hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
             if (isBack) {
                 hGensor subDelta = delta->Partial("partialDeltaZ", nZ * sizeof(floatX), {dB, T, C});
                 if (0 && verHeadLoss == KERNEL_LIB_TYPE::TL_CUDA && i == 0) {  //
-                    dump_flag = -1;     
+                    dump_flag = -1;
                     // PrintTensor<float>("loss", cuLoss + n1, true, dB, T, 1, 1, dump_flag);
                     // curLogits->Print("δ_logits", 0, dump_flag);
                     _INFO({"per-token = "});
@@ -808,9 +911,9 @@ hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
                 proj.Back(subDelta, subZ, curLogits, nullptr, false, 0x100);  // hGTensor delta, hGTensor inp, hGTensor deltaIn
             }
         }
-        delta->Print("δ_head", 0, dump_flag, B*T*C);
+        delta->Print("δ_head", 0, dump_flag, B * T * C);
         // g_dump_each = 0;
-        
+
         cudaMemcpy(hostLoss, cuLoss, B * T * sizeof(float), cudaMemcpyDeviceToHost);
         if (!SYNC_STREAM("Head4Token", 1)) {
             assert(0);

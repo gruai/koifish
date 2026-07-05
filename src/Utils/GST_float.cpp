@@ -286,6 +286,7 @@ float dotprod_fp32(void* w, int n, int row, float* x) {
     return val;
 }
 
+typedef float (*dotprod_t)(void* w, int n, int i, float* x);
 /*
    W (nOut,nIn) @ x (nIn) -> xout (nOut)    by dotprod_t
 */

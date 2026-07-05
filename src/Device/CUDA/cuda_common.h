@@ -673,10 +673,14 @@ struct Surface {
 };
 
 void inline D20(void* dev, size_t szData, int flag = 0x0) {
-    cudaCheck(cudaMemset(dev, 0, szData));
-    // cudaDeviceSynchronize();
+    cudaError_t error = cudaMemset(dev, 0, szData);
+    if (error != cudaSuccess) {
+        _ERROR("[CUDA ERROR] at D20 \"%s\" (%s code=%d)\n", cudaGetErrorString(error), cudaGetErrorName(error), error);
+        exit(KOIFISH_CUDA_CHECK);
+    }
 }
 
+uint64_t D2H_hash64(const void* dev, size_t szData, int flag = 0x0);
 bool D2H(const void* dev, void* host, size_t szData, int flag = 0x0);
 bool D2D(void* hDst, const void* hSrc, size_t szData, int flag = 0x0);
 bool H2D(void* dev, const void* host, size_t szData, int flag = 0x0);

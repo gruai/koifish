@@ -12,6 +12,25 @@
 // #include "lapacke.h"
 using namespace std;
 
+inline f8e5 float_to_fp8e5m2(float x) {
+    __gcc_fp16 val = float_to_half(x);
+    f8e5 out;
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    memcpy(&out, (char*)&val, sizeof(f8e5));  // TODO: round instead of truncate?
+#else
+    memcpy(&out, (char*)&val + sizeof(f8e5), sizeof(f8e5));  // TODO: round instead of truncate?
+#endif
+    return out;
+}
+
+inline void float_to_fp8e5m2(size_t n, float* x, f8e5* out, int flag = 0x0) {
+    float* src = x;
+    f8e5* dst  = out;
+    for (size_t i = 0; i < n; i++, src++, dst++) {
+        *dst = float_to_fp8e5m2(*src);
+    }
+}
+
 int PerSVD(char* filename, int m, int n, int k, int l, int p, float* Mf, float* mU, int ldU, float* sigma, float* mVt, int ldV, int flag = 0x0);
 /**
  * SVD: M = U*SIGMA*V'

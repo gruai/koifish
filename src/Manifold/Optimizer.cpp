@@ -226,8 +226,11 @@ void OPT_Adam::UpdateParams_V0(int nx, CLI_params& config, int flag) {
     g2_sum = 0;
     if (!isAdaptiveSched)  // params.adam->sched;
         sched = 1.0;
-    if (isPreGStep)
-        g_step = tNormsOf(opt_ps, 0x0);
+    if (isPreGStep) {
+        assert(0);  // Deprecated
+        // g_step = tNormsOf(opt_ps, 0x0);
+    }
+
     if (DEBUG.train_hyperparams == 1) {
         adam->decay = 0;
         sched       = 1.0;
@@ -235,7 +238,7 @@ void OPT_Adam::UpdateParams_V0(int nx, CLI_params& config, int flag) {
 
     if (grad != nullptr) {
         g    = (floatX*)grad->data;  // gradients
-        clip = gClip(nParams, g, nullptr);
+        clip = gClip(nOptParams, g, nullptr);
     }
     auto now = GST_ms();
     beta1h   = sched / (1.0f - powf(adam->beta1, iter));
@@ -256,7 +259,7 @@ void OPT_Adam::UpdateParams_V0(int nx, CLI_params& config, int flag) {
             i += tELEM(t);
         }
     }
-    assert(i == nParams);
+    assert(i == nOptParams);
 
     tUpdate = GST_ms() - now;
 }
@@ -296,7 +299,7 @@ float Optimizer::gClip(int ne, floatX* g, hGensor hP, int flag) {
 }
 
 int GTensor::Dogleg(int flag) {
-    if (isStrMatch(name, {"blk.2.attn.wq"})) {  // 0x555559499348 "model.layers.4.mlp.up_proj.weight_gama<4>"
+    if (G_Has_(name, {"model.layers.9.self_attn.q_proj.weight"})) {  // 0x555559499348 "model.layers.4.mlp.up_proj.weight_gama<4>"
         DEBUG_HERE;
         flag = -2;
     }
@@ -623,9 +626,9 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGensor loss_, hGensor target_, C
 
         // if(t==1)    K_EXIT(KOIFISH_EXIT_DEBUG);
 
-        SignStochastic(nParams, config);
+        SignStochastic(nOptParams, config);
         if (_fish->config.scheduling.isUpdateParamV0()) {
-            UpdateParams(nParams, config, 0x0);
+            UpdateParams(nOptParams, config, 0x0);
         } else {
             for (auto t : opt_ps) {
                 if (t->isRefer())
@@ -852,6 +855,7 @@ float Optimizer::UpdateLossCurve(int flag) {
             _INFO(" x=%.4gs(%.4gs)\n", (SUM::tLoss) / iter, (SUM::tHeader) / iter);
             // _INFO(" x=%d\n", SUM::nUpdateParam);
         }
+        _fish->Statistic_Quant(1, 0x0);
     }
     float improvement = loss_before - loss_after;
     return improvement;
@@ -909,7 +913,7 @@ void Optimizer::BeforeTrain(hGensor tokens_, int flag) {
     first_iter = iter;
 
     auto& adam        = _fish->config.common.adam;  // TrainParams().
-    adam.n_parameters = nParams;
+    adam.n_parameters = nOptParams;
 
     opt_ps        = _fish->optParams;
     nMostParam    = 0;
@@ -929,7 +933,7 @@ void Optimizer::BeforeTrain(hGensor tokens_, int flag) {
     }
     // adam.decay = 0.1;      //very high for GPT2 Model
     InitOnCUDA(1);
-    assert(nMostParam >= nParams);
+    assert(nMostParam >= nOptParams);
     assert(_fish->config.common.nMostIter > 0);
 
     Head4Token* cls   = _fish->GetNeuron<Head4Token>("Head4Token", 0);
@@ -940,6 +944,7 @@ void Optimizer::BeforeTrain(hGensor tokens_, int flag) {
             sTrainStage = "PreTrain";
             break;
         case LIFE_PHASE::P_SFT:
+            _fish->config.sft.Dump(0x0);
             sTrainStage = "SFT";
             if (adam.alpha < 1.0e-5 || adam.alpha > 3.0e-5) {
                 _WARN(
@@ -951,6 +956,10 @@ void Optimizer::BeforeTrain(hGensor tokens_, int flag) {
         default:
             assert(0);
             break;
+    }
+    if (DEBUG.watch_Tensors > 0) {
+        TENSOR_WATCH watch(_fish, "embed_tokens");
+        WatchWeights(watch, opt_ps, {"embed_tokens"}, 0x0);  //"k_proj.weight"        up_proj.weight
     }
 }
 
@@ -1038,27 +1047,27 @@ size_t TGraph::Prepare4Train(void* ctx_, GD_METHOD tpGD, int flag) {
 void Optimizer::Prepare(size_t nx_, int flag) {
     // assert(nx_>=0);
     iter                        = 0;
-    nParams                     = nx_;
+    nOptParams                  = nx_;
     just_initialized            = true;
     double s                    = 0;
     size_t nz                   = 0;
     NLP_AutoRegressive* dolphin = dynamic_cast<NLP_AutoRegressive*>(_fish);
-    if (nParams > 0) {
+    if (nOptParams > 0) {
         if (_fish->isTrain()) {
             if (isGlobalGrad) {
-                assert(nParams < INT_MAX);
-                grad = GT(_fish, typNUMBER::F32, {(int)(nParams)});
+                assert(nOptParams < INT_MAX);
+                grad = GT(_fish, typNUMBER::F32, {(int)(nOptParams)}, 0x0, "grad of Optimizer");
             }
 
             nz = _fish->hBackTG->Prepare4Train(_ctx, tpGD);
-            s  = nz * 1.0 / nParams;
+            s  = nz * 1.0 / nOptParams;
             // gimap = _fish->hBackTG->gimap;
         }
         // train_loader->Init(dolphin,"Train",false);     //train_loader->Prepare(this);
     }
 
     if (_fish->isTrain())
-        _tmp = new float[nParams]();
+        _tmp = new float[nOptParams]();
     // val_loader->Init(dolphin,"Eval",false);            //val_loader->Prepare(this);
 }
 
@@ -1206,8 +1215,8 @@ void Optimizer::Dump(int typ) {
     //         _INFO("[Save] Invalid path@\"%s\"!\n", path.c_str());
     //     }
     // }
-    if (!HIERARCH_LoRA::sNeurons.empty()) {  // HIERARCH_LoRA::tpLORA == LORA_ADAPT_W::AB ? "AB" : "W_AB",
-        _INFO("[H_LORA] neurons={%s}\n", HIERARCH_LoRA::sNeurons.c_str());
+    if (!HIERARCH_LorAB::sNeurons.empty()) {  
+        _INFO("[H_LoAB] neurons={%s}\n", HIERARCH_LorAB::sNeurons.c_str());
     }
 
     // if(NOT_DUMP())  return;
@@ -1227,9 +1236,11 @@ void Optimizer::Dump(int typ) {
             nG0++;
         }
     }
-    _INFO("\tnParams = %ld(%.6gM, nT=%ld nG0=%d)\n", nParams, nParams / 1.0e6, opt_ps.size(), nG0);
+    size_t nFixed = _fish->nFixParams;
+    _INFO("$$$$$$$$ nParams = %ld(%.6gM, nT=%ld nG0=%d) nFixParams = %ld(%.6g)M\n", nOptParams, nOptParams / 1.0e6, opt_ps.size(), nG0, nFixed, nFixed / 1.0e6);
 
     _fish->config.distill.Dump(0x0);
+
     _fish->config.kernels.Dump(0x0);
 
     fflush(stdout);
@@ -1248,7 +1259,7 @@ void OPT_Muon::Dump(int typ) {
     Optimizer::Dump(typ);
     auto muon = TrainParams().muon;
 
-    _INFO("[OPT_Muon]\tnT=%ld muon_params=%ld(%.3g)\n", tMuons.size(), nmParams, nmParams * 1.0 / nParams);
+    _INFO("[OPT_Muon]\tnT=%ld muon_params=%ld(%.3g)\n", tMuons.size(), nmParams, nmParams * 1.0 / nOptParams);
     muon.Dump(0x0);
     fflush(stdout);
 }

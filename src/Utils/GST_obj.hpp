@@ -62,13 +62,21 @@ typedef __int64 INT_63;
         }                                                                     \
     } while (0)
 
-/*
+
 class GObject{
 public:
     string name;
     virtual string ToString(int format=0x0){	return name;	}
 };
-*/
+
+template<typename T>
+T FIX_TO(T X0,T dx){
+	int n = (int)std::round(X0/dx);
+	T X1 = n*dx;
+	assert(fabs(X1-X0)<=dx/2);
+	return X1;
+}
+
 // Prefer a struct when you can. It may involve some overhead, but is definitely easier for maintenance.
 /*
     64-bit ID + double weight

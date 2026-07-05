@@ -209,16 +209,24 @@ size_t Fish::MostMemSize(int typ) {
 bool Fish::UpdateParams(int flag) {
     size_t nx = 0, nR = 0, nReload = 0;
     assert(optParams.size() == 0);
+    nFixParams = 0;
     for (auto it : gensors.infos) {
-        auto t = it.first;
-        if (BIT_TEST(t->flags, GTensor::GTensor::F_PARAM)) {
+        auto t                = it.first;
+        const GENSOR_INFO& gi = it.second;
+        if (BIT_TEST(t->flags, GTensor::F_PARAM)) {
             if (t->isRefer()) {
                 nR++;
                 continue;
             }
-            optParams.push_back(t);
-            t->needUpdateParam = true;
             nx += tELEM(t);  //
+            if (BIT_TEST(t->flags, GTensor::F_FIXW)) {
+                t->needUpdateParam = false;
+                nFixParams += tELEM(t);
+            } else {
+                t->needUpdateParam = true;
+            }
+            optParams.push_back(t);
+            // t->needUpdateParam = true;
         }
     }
     nParams = nx;
@@ -228,7 +236,7 @@ bool Fish::UpdateParams(int flag) {
         _ERROR("%s nx(%ld)!=nParams(%ld)\t", __func__, nx, nParams);
     }
     if (nParams == 0)
-        exit(KOIFISH_ZERO_PARAMETERS);
+        K_EXIT_NOW(KOIFISH_ZERO_PARAMETERS);
 
     return true;
 }
@@ -492,6 +500,9 @@ bool Fish::SaveTrain(CheckPoint_Params& ckp, bool isInit, int flag) {
         UpdateCheckPoint(ckp, true);
         isOK = SAFETENSOR_Serialize(ckp, true, flag);  //  isInit ? FSerial::INIT_MMAP : 0x0
         assert(isOK);
+        // if(iter==1){   //only for debug
+        //     isOK = SAFETENSOR_Serialize(ckp, false);
+        // }
     }
 
     return isOK;
@@ -504,10 +515,14 @@ bool Fish::SaveCheckPoint(int flag) {
 
 void Fish::Statistic_Quant(int typ, int flag) {
     int nT = gensors.size(), nQuant = quants.size(), nF16 = 0, nBF16 = 0, nSinkNormal = 0, nQT = 0;
+    if (nQuant == 0)
+        return;
+
     float sum = 0.0;
     std::vector<string> arrQ4, arrQ3, arrQ2, arrF8, arrQ1;
     std::vector<string> arrGBDT, arrRTN;
     size_t nzP = 0, nzBit = 0;
+    float errQ = 0, err_0 = FLT_MAX, err_1 = 0;
     for (auto t : optParams) {
         nzP += t->size();
         nzBit += BitPE(t->type) * t->size();
@@ -527,6 +542,8 @@ void Fish::Statistic_Quant(int typ, int flag) {
             sum += t->disq.err, nQT++;
             if (isWarn)
                 _LOG(isWarn ? DUMP_WARN : DUMP_INFO, "\t[Quant]_<%s> %.5g\t@%s \n", t->disq.info.c_str(), t->disq.err, t->name);
+            errQ += t->lossQ;
+            err_0 = std::min(err_0, t->lossQ), err_1 = std::max(err_1, t->lossQ);
         }
         switch (t->type) {
             case typNUMBER::F8E5M2:
@@ -558,6 +575,7 @@ void Fish::Statistic_Quant(int typ, int flag) {
                 break;
         }
     }
+    assert(nQT>0);
     // config.quant.default_bits,
     // string info = G_STR(fish->config.quant.filter_WeightF8Ex);
     // _INFO("F8E5=%s\n", info.c_str());
@@ -569,8 +587,8 @@ void Fish::Statistic_Quant(int typ, int flag) {
             arrQ3.size(), arrQ2.size(), arrGBDT.size(), SUM::tQuant / 1.0e3);
     SUM::sQuantInfo = tmp;
     string names    = G_STR(arrGBDT, 512);
-    _INFO("[Quant]_ %s%s \n", tmp, names.c_str());
-    _INFO("\n");
+    _INFO("[Quant]_ err=%g[%g-%g]%s%s \n", errQ / nQT, err_0, err_1, tmp, names.c_str());
+    _INFO("");
 }
 
 void Fish::Statistic(int typ, int flag) {

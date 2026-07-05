@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "../Tensor/GTensor.hpp"
+#include "../Manifold/Fish.hpp"
 #include "GST_log.hpp"
 #include "GST_obj.hpp"
 
@@ -63,7 +64,7 @@ void GST_TensorBuffer::Dump(int type, int flag) const {
         "[MEMORY] Current usage statistics:  %ld mem-blocks sum=%.3gG(%.3gG) \n\tactivation=%.5gM weight=%.5gM grad=%.5gM moments=%.5gM temp=%.5gM "
         "other=%.5gM\n",
         mems.size(), szNow / 1.0e9, szFree / 1.0e9, szA / 1.0e6, szW / 1.0e6, szG / 1.0e6, szMoment / 1.0e6, szTemp / 1.0e6, szOther / 1.0e6);
-    _INFO("\tcurBrach=%.5gM mUsed==%.5gM\n", (szA + szW + szG + szMoment) / 1.0e6, mUsed);
+    _INFO("\tcurBrach=%.5gM mUsed==%.5gM shadow=%s\n", (szA + szW + szG + szMoment) / 1.0e6, mUsed, hFish->config.distill.isKeepShadoW() ? "ON":"off");
     int nDump = type == KOIFISH_MISS_MEMBLOCK ? mems.size() : type == KOIFISH_OUTOF_GPUMEMORY ? 32 : nMostMemItem;
     if (nDump > 0) {  // decsend by memory size
         size_t szTotal = 0;

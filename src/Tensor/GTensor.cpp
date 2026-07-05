@@ -56,7 +56,9 @@ hGTensor GT(Fish* hFish, typNUMBER type, SHAPE shape, int flag, const string& na
     2. No Embedding layer that takes one-hot inputs.
 */
 bool GTensor::isWMAT(int flag) const {
-    if (!BIT_TEST(flags, F_WMATRIX) || !BIT_TEST(flags, F_PARAM))
+    if (!BIT_TEST(flags, F_PARAM) && !BIT_TEST(flags, F_FIXW))
+        return false;
+    if (!BIT_TEST(flags, F_WMATRIX))
         return false;
     assert(ne[0] > 1 && ne[1] > 1 && ne[2] == 1 && ne[3] == 1);
     return true;
@@ -205,6 +207,7 @@ void GTensor::SetRefer(hGTensor hR, int flag) {
     hRef = hR;
     hR->refered.push_back(this);
     type = hRef->type;
+    // hash64 = hRef->hash64;
     if (hFish->config.dumpSwitch.tensor_ref > 0)
         _INFO("\t%s =====> %s\n", name, hR->name);
 }
@@ -283,6 +286,13 @@ int GTensor::GetDynamicEmbed(int flag) const {
     int n0 = hFish->config.nEmbed();
     return n0;
 }
+
+shared_ptr<GeNeuron> GTensor::GetNeuron(int flag) const {
+    assert(ginfo != nullptr && "null ginfo so failed to get parent neuron");
+    assert(ginfo->hNeron != nullptr && "ginfo has only null neuron");
+    return ginfo->hNeron;
+}
+
 hQUANT GTensor::GetDynamicQuant(int flag) const {
     if (hQuant == nullptr)
         return nullptr;
@@ -561,23 +571,70 @@ void PrintQ_128(const char* title, const BIT_128* src, int nPer128, int qBias, s
     fflush(stdout);
 }
 
-void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
-    if (g_dump_level > 0 && flag >= 0)
-        return;
+bool GTensor::DownSample(const string& title, size_t& nSamps, float* samps, int samp_step, int flag, size_t nX) {
+    bool isAlloc = false;
+    nSamps       = 0;
+    int64_t sp[N_DIMS];
+    size_t i = 0, nEle = size(), nz = 0;
+    floatX* src = nullptr;
+    if (1) {
+        const floatX* wX = GetDataX(flag, "DownSample");
+        src              = new floatX[nEle];
+        D2H(wX, src, nEle * sizeof(floatX));
+        isAlloc = true;
+    } else {
+        int x = 0;                                                // 0-data, 4-host_data
+        src   = (floatX*)GetRawData(x, flag, sp, nEle, isAlloc);  // don't support Qunat
+    }
+    assert(src != nullptr && nEle > 0);
+
+    float a0 = FLT_MAX, a1 = -FLT_MAX;
+    typNUMBER tpSrc = typNUMBER::BF16;  //(x == 0 || x == 4) ? type : typNUMBER::BF16;
+    double sum = 0.0, len = 0.0, sum2 = 0.0;
+    for (i = 0; i < nEle; i++) {
+        float a = N2Float(tpSrc, src, i);
+        assert(!isnan(a) && !isinf(a));
+        a1 = std::max(a1, a), a0 = std::min(a0, a);
+    }
+    float s = a1 == a0 ? 0 : 255 / (a1 - a0);
+    for (int r = 0; r < ne[0]; r += samp_step) {
+        for (int c = 0; c < ne[1]; c += samp_step) {
+            float a         = N2Float(tpSrc, src, r * ne[1] + c);
+            samps[nSamps++] = a;
+        }
+    }
+    float* p = samps;
+    for (i = 0; i < nSamps; i++, p++) {
+        float a = *p;
+        sum += a;
+        sum2 += a * a;
+        if (a == 0)
+            nz++;
+        *p = a;
+    }
+    len = sqrt(sum2 / nEle);
+    _INFO(" |avg|=%g(%ld) [%.3e,%.3e] avg_len=%g sum2=%g nz=%.3g\n", sum / nEle, nEle, a0, a1, len, sum2, nz * 1.0 / nEle);
+    if (isAlloc)
+        delete[] src;
+    return true;
+}
+
+hBITARR GTensor::GetRawData(int x, int flag, int64_t sp[N_DIMS], size_t& nEle, bool isAlloc) const {
     assert(nEle >= 0);
-    bool isDevice = !isAtHost();
-    void *src = x == 3 ? gv : x == 2 ? gm : x == 1 ? grad : data, *hData = nullptr;
-    typNUMBER tpSrc = x == 0 ? type : typNUMBER::BF16;
-    string suffix   = x == 3 ? "GV_" : x == 2 ? "GM_" : x == 1 ? "GRAD_" : "";
+    bool isDevice   = !isAtHost();
+    void* src       = x == 3 ? gv : x == 2 ? gm : x == 1 ? grad : data;
+    hBITARR hData   = nullptr;
+    typNUMBER tpSrc = (x == 0 || x == 4) ? type : typNUMBER::BF16;
     if (x == 4) {
         assert(host_data != nullptr);
-        src      = host_data;
-        tpSrc    = type;
+        hData = (hBITARR)host_data;
+        src   = host_data;
+        // tpSrc    = type;
         isDevice = false;
     }
     if (src == nullptr) {
-        _INFO("Failed to print! %s of \"%s\" is nullptr!", x == 3 ? "gv" : x == 2 ? "gm" : x == 1 ? "grad" : "data", name);
-        return;
+        _INFO("Failed to GetRawData! %s of \"%s\" is nullptr!", x == 3 ? "gv" : x == 2 ? "gm" : x == 1 ? "grad" : "data", name);
+        return nullptr;
     }
     size_t szHost = nEle > 0 ? (nEle * BitPE(tpSrc)) / 8 : szData + szGama;
     if (isDevice) {  // so many crash when print
@@ -588,15 +645,13 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
             assert(0 && "_SYNC_DEVICE_@ GTensor::Print");
             exit(KOIFISH_EXIT_PRINT);
         }
-        hData = new char[szHost];
+        hData = new BIT_8[szHost];
         D2H(src, hData, szHost);
-        src = hData;
+        isAlloc = true;
+        // src = hData;
     }
-
-    string title = suffix + title0;
-    // if (x == 1)
-    //     title = "GRAD_" + title;
-    int64_t sp[N_DIMS] = {ne[0], ne[1], ne[2], ne[3]};
+    // sp[N_DIMS] = {ne[0], ne[1], ne[2], ne[3]};
+    sp[0] = ne[0], sp[1] = ne[1], sp[2] = ne[2], sp[3] = ne[3];
     if (nEle > 0 && nEle != ne[0] * ne[1] * ne[2] * ne[3]) {
         sp[0] = nEle, sp[1] = 1;
         sp[2] = 1;
@@ -604,11 +659,25 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
     }
     if (nEle == 0)
         nEle = size();
+    return hData;
+}
+void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
+    if (g_dump_level > 0 && flag >= 0)
+        return;
+    bool isAlloc = false;
+    int64_t sp[N_DIMS];
+    hBITARR src = GetRawData(x, flag, sp, nEle, isAlloc);
+    assert(src != nullptr);
+    string suffix = x == 3 ? "GV_" : x == 2 ? "GM_" : x == 1 ? "GRAD_" : "";
+    string title  = suffix + title0;
+    // if (x == 1)
+    //     title = "GRAD_" + title;
 
     floatGama *rNormal = nullptr, *cNormal = nullptr;
     if (disq.rc_normal > 0) {
         rNormal = gama_T(R_SCALE), cNormal = gama_T(C_SCALE);
     }
+    typNUMBER tpSrc = (x == 0 || x == 4) ? type : typNUMBER::BF16;
     switch (tpSrc) {
         case typNUMBER::T_BINARY_3:
         case typNUMBER::T_BINARY_TILE:
@@ -665,8 +734,8 @@ void GTensor::Print(const string& title0, int x, int flag, size_t nEle) const {
             assert(0);
             break;
     }
-    if (hData != nullptr)
-        delete[] (char*)hData;
+    if (isAlloc)
+        delete[] src;
 }
 
 std::string GTensor::Alias(int flag) {
@@ -693,8 +762,12 @@ bool GTensor::DumpX(int tpDump, const string& title, int flag) const {
     if (flags & GTensor::F_PARAM) {
         A = "P";
     }
+    if (flags & GTensor::F_FIXW) {
+        A = "^P";
+    }
     if (BIT_TEST(flags, F_GPU))
         n = 0;
+    // assert(hash64!=0x0); In fuyou mode, some fuyou's tensor are not inited
     switch (tpDump) {
         case 100:
             _INFO(" - %3d: [ %5" PRId64 ", %5" PRId64 "] %8s %16s\n", i, ne[0], ne[1], "", name);  //
@@ -715,8 +788,8 @@ bool GTensor::DumpX(int tpDump, const string& title, int flag) const {
                 _WARN0(" NO ALLOC ");
                 _INFO(" \t[%" PRId64 " %" PRId64 " %" PRId64 " %" PRId64 " %s] ", ne[0], ne[1], ne[2], ne[3], cNameOf(type));
             } else
-                _INFO("  %s %-40.40s %-4s 0x%016llX %6gM(gama=%.3g,M=%.3g,V=%.3g)\t[%" PRId64 " %" PRId64 " %" PRId64 " %" PRId64 " %s] ", title.c_str(), name, A,
-                      hash64, szUse / 1.0e6, szGama / 1.0e6, szM / 1.0e6, szV / 1.0e6, ne[0], ne[1], ne[2], ne[3], cNameOf(type));
+                _INFO("  %s %-40.40s %-4s 0x%016llX %6gM(gama=%.3g,M=%.3g,V=%.3g)\t[%" PRId64 " %" PRId64 " %" PRId64 " %" PRId64 " %s] ", title.c_str(), name,
+                      A, hash64, szUse / 1.0e6, szGama / 1.0e6, szM / 1.0e6, szV / 1.0e6, ne[0], ne[1], ne[2], ne[3], cNameOf(type));
             if (disq.err > 0)
                 _INFO("eQ=%.3g ", disq.err);
             _INFO("\n");
@@ -783,9 +856,14 @@ bool GTensor::Activate(int tpInit, int flag) {
     return false;
 }
 
+bool GTensor::isZeroShadoW(int flag){
+    return true;
+}
+
 // only called@GeQuant::LowBit_worker
 bool GTensor::InitShadoW(const void* srcData, bool isGPU, DISTILLATION_CARD& distill, int flag) {
-    if (distill.isKeepShadoW()) {
+    // if (distill.isKeepShadoW()) {    //always has shadow(fakeQuant), has no relation with distillation
+    if (hFish->isTrain() && DEBUG.verFakeQuant >= 0) {
         assert(shadoW == nullptr);
         string desc = name;
         Alloc_1(&shadoW, true, desc + ".w0", szData);
@@ -793,8 +871,10 @@ bool GTensor::InitShadoW(const void* srcData, bool isGPU, DISTILLATION_CARD& dis
             assert(0);
         } else
             H2D(shadoW, srcData, szData);
+        tpShadow = S_BASE_WEIGHT;
     } else {
-        shadoW = ToX(gBUFF->tmpTernary);
+        shadoW   = ToX(gBUFF->tmpTernary);
+        tpShadow = S_TMP_TERNARY;
     }
     return true;
 }
@@ -846,7 +926,7 @@ bool GTensor::InitGamaParam(int flag) {
 
     assert(needUpdateParam);
     gama_param->needUpdateParam = true;
-    needUpdateParam             = false;
+    needUpdateParam             = false;  // gama mode
 
     size_t nEle = gama_param->size();
     assert(nEle == nG * 2 && nEle <= size());
@@ -878,12 +958,20 @@ bool GTensor::InitGamaParam(int flag) {
  *      1. AfterBuild->SafeTensors_Serialize->LoadParam_
  *      2.
  */
-bool huTensor::Activate(int iter, int flagInit) { return Alloc(iter, flagInit); }
+bool huTensor::Activate(int iter, int flagInit) {
+    /*if (!wLoABs.empty()) {
+        if(isZeroShaow()){
+            hash64    = 0;
+        }        
+        
+    }*/
+    return Alloc(iter, flagInit);
+}
 
 bool huTensor::Alloc(int iter, int flagInit) {
     assert(strlen(name) > 0);
-    if (G_Has_(name, {"model.layers.27.mlp.down_proj.weight"})) {  // model.layers.0.mlp.down_proj.weight qzeros scales model.layers.5.self_attn.v_proj.weight
-        DEBUG_HERE;                                                //
+    if (G_Has_(name, {"self_attn.q_proj_a"})) {  // model.layers.0.mlp.down_proj.weight qzeros scales model.layers.5.self_attn.v_proj.weight
+        DEBUG_HERE;                              //
     }
     size_t sz0 = szGlobalMaloc;
     if (BIT_TEST(flags, F_NOALLOC))  // For example: operator fusing, memory reuse,rematerialization
@@ -1089,6 +1177,12 @@ hGTensor huTensor::Partial(const string& name_, size_t szOff, const SHAPE shape,
     sub->flags = flags;
     BIT_SET(sub->flags, F_ONLYREF);
     return sub;
+}
+
+TENSOR_WATCH::TENSOR_WATCH(Fish* _fish, const string& sX, int flag) {
+    title = _fish->config.title_short + sX;
+
+    B = _fish->config.n_batch(), T = _fish->config.n_ctx(), C = _fish->config.nEmbed();
 }
 
 /*

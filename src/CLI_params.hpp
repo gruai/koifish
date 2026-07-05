@@ -313,14 +313,14 @@ class MODEL_CARD {
     ACTIVATION_FUNC fActFFN = SWIG, fActSLP = SWIG;
     INIT_WEIGHT tpInitWeight = INIT_WEIGHT::RANDOM;
 
-    std::string pathCheckPoint = "";    // support {"safetensors", "kun"} files in this path
-    
+    std::string pathCheckPoint = "";  // support {"safetensors", "kun"} files in this path
+
     std::string sCardPath = "", sTokenJsonPath = "", sTokenBinPath = "";
     std::string sArch, torch_dtype, transformers_version, model_type;
     std::string act_type, norm_type;
     typNUMBER tpWeight = typNUMBER::BF16, tpGradient = typNUMBER::BF16, tpActivation = typNUMBER::BF16;
     // typNUMBER tpPreLogits = typNUMBER::F32;tpEmbed = typNUMBER::BF16,
-    dotprod_t fDotW;
+    // dotprod_t fDotW;
     JSON jModelParam, jSafetensorsIndex;  //
     int vocab_size = -1;
     // 1. in some model, no bos_token_id!(GPT-2/GPT-3,unsloth/Qwen3-4B-Base,...)
@@ -406,13 +406,43 @@ struct DISTILLATION_CARD {
     void Dump(int typ);
 };
 
-struct SFT_CARD {
-    enum {
-        BitFit_light,
-        Norm_tuning,
-        Scale_tuning,
-    };
+struct LoAB_CARD {
+    enum typW { NO_LORW, W0, AB, W_AB, SHADOW_AB, SHADOW_AB_ffn };
+    typW type    = NO_LORW;
+    int32_t rank = 0;
+    std::vector<std::string> filterW;
+    float sW = 0.f, sAB = 0.f;
+    bool isBZero = true;  //  interesting
+
+    // Reset W(may load params of do gaussian init) to zero
+    static bool isZeroW(typW typ, int flag = 0x0);
+    // W = W0(may + 0*AB)
+    bool isPassW(int flag = 0x0) const;
+    // W = AB (may + 0*W0)
+    bool isPassAB(int flag = 0x0) const;
     bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
+    void Dump(int typ);
+};
+
+struct SFT_CARD {
+    enum TUNING_METHOD {
+        FULL_PARAM,
+        //  selective tuning
+        OnlyBias,  // BitFit: https://arxiv.org/pdf/2106.10199
+        OnlyScale,
+        OnlyAttention,  //  only update Query and Value weight projections
+        MASK,           //  FishMask    DiffPruning
+        Top_Layer,      //  Head Tuning
+
+        //  Prompt Tuning / Prefix Tuning
+        Prompt_Prefix,
+        //  Reparameterization-based Methods
+        LORA,
+    };
+    TUNING_METHOD method = FULL_PARAM;
+
+    bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
+    bool isFixWeight(int flag = 0x0);
     void Dump(int typ);
 
     bool UpdateCKP(MODEL_CARD& model, int flag = 0x0);
@@ -490,7 +520,7 @@ struct QUANT_CARD {
     virtual bool Init4Neuron(const std::string& name, const JSON& jQuant, void* hUserData = nullptr, int flag = 0);
 
     virtual bool isPass(const std::string& name, int flag = 0x0) const;
-    std::vector<std::string> filter_MIQ;  // for debug
+    std::vector<std::string> filterQ;  // if filterQ not empty, only matched tenson would be quantized
     // std::vector<std::string> filter_KVcache;
 
     // Koifish needs quant params for each neuron.
@@ -587,10 +617,22 @@ struct TRAIN_CARD {
     bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
 };
 
-struct ChatML_Line {
+typedef std::vector<std::tuple<int, int>> TOKENS_SECTION;
+// one sample(conversation) in ChatML format(support multi_turn)
+struct ChatML_samp {
+    TOKEN_ID eoc;  // end of conversation
+    bool multi_turn = false;
+    /** <|im_start|>systemis notstrictly required​ in ChatML / Qwen-style SFT!
+     * Most models (Qwen, LLaMA, Mistral) are robust to unseen prefixes if they're short and appear early.The model generalizes:
+            “Oh, there's some text before user — treat it as context.”
+    */
+    bool hasSystemPrompt = true;
     std::string role;
     std::string content;
-    ChatML_Line(const std::string& r, const std::string& c, int flag = 0x0) : role(r), content(c) {}
+    TOKENS_SECTION answers;
+    size_t start = (size_t)-1, end = (size_t)-1;
+    ChatML_samp(size_t _start, bool isMulti, TOKEN_ID _eoc) : start(_start), multi_turn(isMulti), eoc(_eoc) {}
+    ChatML_samp(const std::string& r, const std::string& c, int flag = 0x0) : role(r), content(c) {}
 };
 
 struct CHAT_SAMPLER {
@@ -624,7 +666,7 @@ struct CHAT_SAMPLER {
         return !prompt_template.empty();
     }
 
-    std::string toChatML(const std::vector<ChatML_Line>& line, int flag = 0x0);
+    std::string toChatML(const std::vector<ChatML_samp>& line, int flag = 0x0);
 };
 
 // users could use this switch to dump more info
@@ -642,14 +684,16 @@ struct DEUG_SWITCH {
     int SelfAttention_noraml   = 1;
     bool NO_loss               = false;
     bool check_tensor_norm     = false;
+    int check_tensor_quant     = 0;
     bool isInitParamHost       = true;
     int save_GlobalSate        = 1;
     std::string eval_OneSample = "";
     int eval_Generate          = -1;
 
     int test_quant        = 0;
-    int dump_TensorDetail = 0;
     int dump_LossDetail   = 0;
+    int dump_TensorDetail = 0;
+    int watch_Tensors     = 0;
     int quant_UserMode    = 0;  //  1 only quant,
 
     int dict_latent_dim    = -1;
@@ -665,6 +709,7 @@ struct DEUG_SWITCH {
     int verShuffleSamp = 0;
     int verSampJump    = 0;
     int verGenerate    = 0;
+    int verFakeQuant   = 0;
 
     int T_ternary        = 0;
     int T_classifier_ver = 0;
@@ -701,8 +746,6 @@ struct KERNEL_CARD {
     bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
     void Dump(int typ);
 };
-
-enum LORA_ADAPT_W { W0, AB, W_AB, refW_AB, refW_AB_ffn };
 
 /*
     1. Genenal checkpoint(Koifsh support load/save multiple checkpoints/model files)
@@ -762,7 +805,8 @@ static std::map<CheckPoint_Params::STATE_TYPE, std::string> CKP_desc = {
 };
 
 struct CLI_params {
-    LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;
+    std::string title_short = "";
+    LIFE_PHASE phase        = LIFE_PHASE::P_TRAIN;
 
     TRAIN_CARD common;
     MODEL_CARD model;
@@ -784,7 +828,7 @@ struct CLI_params {
 
     SKDU_params scheduling;
     Fuyou_params fuyou;
-    LORA_ADAPT_W tpLORA = LORA_ADAPT_W::W0;
+    LoAB_CARD loAB;
 
     std::string eval_metric                  = "";
     std::vector<std::string> filter_tmp_grad = {"ffn", "attn.wq", "attn.wk", "attn.wv", "attn.wo"};
@@ -929,30 +973,12 @@ struct CLI_params {
 
     // bool only_infer = false;
 
-    /*enum TUNE_ALG {
-        OFF = 0,
-        LORA,
-        LORA_SVD,
-        LORA_AB,
-        LORA_Q,
-        // VARIATIONAL,
-    };
-    enum TUNE_ALG tune = OFF;
-    std::string sTune(int flag = 0x0) {
-        std::string tune_desc[] = {
-            "", "_AB", "_SVD", "_SVD_AB", "_VARIATIONAL",
-        };
-        return tune_desc[tune];
-    }*/
-
     // parameters of datasets
     float rSplit = 0.1;
 
     std::string tpBatchSample;
     std::string tpWiki = "";
     float lars_ratio = 0.0f, ZMUV_ratio = 0.0;
-
-    int32_t lora_r = 0, lora_alpha = 0;
 
     uint32_t FOMULA_n_ff(int n_mult) {
         const uint32_t n_ff = ((2 * (4 * nEmbed()) / 3 + n_mult - 1) / n_mult) * n_mult;

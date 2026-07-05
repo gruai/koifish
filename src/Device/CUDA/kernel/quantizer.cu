@@ -190,14 +190,70 @@ __global__ void CU_Q42X_RTN(floatGama* gamas, const hBITARR quants, T* mat0, int
 template <class Typ, int nQuant>
 __global__ void CU_Q128toX_(const TASKA_quant<Typ> taska, const BIT_128* quants, Typ* mat0, int seed);
 
-floatX* GTensor::GetDataX(int flag, const string& sX) const {
+//  wFQ contains quant values but still stored in float format(not int/bit format!)
+template <class Typ, int nQuant>
+__global__ void CU_FQUANT_128_(const TASKA_quant<Typ> taska, const Typ* baseW, Typ* wFQ, int seed) {
+    int tid = threadIdx.x, idrow = blockIdx.x * blockDim.x + tid, M = taska.nG, N = taska.lG;
+    if (idrow >= M)
+        return;  // guard
+
+    size_t offset = idrow * N;
+    Typ* x0       = wFQ + offset;
+    // const BIT_128* q128 = quants + offset / nQuant;
+    floatGama sR = 1.0, sC = 1.0, zero = taska.zero[idrow], step = taska.step[idrow];
+    // float avg = (float)(taska.average[idrow]);
+    if (taska.rc_normal > 0) {
+        sR = taska.gamaRow[idrow];
+    }
+
+    int32_t qq[nQuant];
+    for (int k = 0; k < N / nQuant; k++, x0 += nQuant) {
+        // if (nQuant == 32) {
+        //     UNPACK_128to4_UNSIGNED_(q128 + k, qq);
+        // } else if (nQuant == 64) {
+        //     UNPACK_128to2_UNSIGNED_(q128 + k, qq);
+        // } else if (nQuant == 128) {
+        //     UNPACK_128to1_UNSIGNED_(q128 + k, qq);
+        // } else {
+        //     assert(0);
+        // }
+        if (idrow == 0) {
+            DEBUG_HERE;
+        }
+        for (int i = 0; i < nQuant; i++) {
+            Typ w = baseW[offset + k * nQuant + i], s = (Typ)(taska.distill.lenda);
+            float toq = (float)((w + zero) / step);
+            qq[i]     = std::round(toq) + taska.qBias;
+            if (qq[i] < taska.qMin) {
+                qq[i] = taska.qMin;
+            }
+            if (qq[i] > taska.qMax) {
+                qq[i] = taska.qMax;
+            }
+            floatGama g0 = (step * (floatGama)(qq[i] - taska.qBias) - zero) * sR;
+            if (!CU_isValidF(&g0)) {  // extra mask
+                DEBUG_HERE;
+            }
+            // x0[i] = w;
+            // if (w != g0) {
+            //     x0[i] = g0;
+            // }
+            x0[i] = g0;  // CU_Float2T<Typ>(g0, seed);
+            // if (taska.distill.lenda > 0.0) {
+            //     x0[i] = g0 * ((floatX)1.0 - s) + w * s;
+            // }
+        }
+    }
+}
+
+floatX* GTensor::GetDataX(int flag, const string& sX) {
     if (data == nullptr)
         return nullptr;
     hOptimizer hOPT = hFish->GetOptimizer();
     hLearnSKDU hAR_ = hOPT->hAR_quant;
     size_t dT4B = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
     size_t nEle = size();
-    floatX* wX  = (floatX*)(data);
+    floatX* wX  = ToX(gBUFF->tmpTernary);  //(floatX*)(data);
     int nRow = ne[0], nCol = ne[1];
     if (hRef != nullptr) {
         nRow = hRef->ne[0], nCol = hRef->ne[1];
@@ -206,8 +262,10 @@ floatX* GTensor::GetDataX(int flag, const string& sX) const {
 
     switch (type) {
         case typNUMBER::Q4: {
-            wX = ToX(gBUFF->tmpTernary);
+            // wX = ToX(gBUFF->tmpTernary);
             assert(gBUFF->tmpTernary->size() >= nEle);
+            if (hOPT->hAR_quant != nullptr)
+                hQuant->params.distill.lenda = hOPT->DistillRate(0x0);
             dT4B = Q_nThreadOfBlock(nCol, 4);
             if (hQuant->isRTN()) {
                 if (hQuant->params.type == RTNf) {
@@ -215,7 +273,12 @@ floatX* GTensor::GetDataX(int flag, const string& sX) const {
                 } else if (hQuant->params.type == RTN) {
                     // CU_Q42X_RTN<floatX><<<nRow, dT4B, 0, main_stream>>>(gama_T(), hBITARR(data), wX, spGroup[0], spGroup[1], disq.rc_normal, 42);
                     TASKA_quant<floatX> task_q(this, hQuant, main_stream);  //, BLOCK_at_GROUP
-                    T1pG(CU_Q128toX_<floatX, 32>, task_q, (BIT_128*)(data), wX, 0x0);
+                    if (DEBUG.verFakeQuant >= 0) {
+                        T1pG(CU_FQUANT_128_<floatX, 32>, task_q, (floatX*)shadoW, wX, 0x0);
+                        // PrintTensor<floatX>("shadoW", (floatX*)shadoW, true, nRow, nCol, ne[2], ne[3], -1);
+                    } else {  // only reserve for older version
+                        T1pG(CU_Q128toX_<floatX, 32>, task_q, (BIT_128*)(data), wX, 0x0);
+                    }
                 } else {  // AWQ
                     hQuant->params.blockAt = BLOCK_at_ROW;
                     TASKA_quant<floatX> task_q(this, hQuant, main_stream);
@@ -235,7 +298,7 @@ floatX* GTensor::GetDataX(int flag, const string& sX) const {
             // gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow * nCol);
         } break;
         case typNUMBER::Q3: {
-            wX = ToX(gBUFF->tmpTernary);
+            // wX = ToX(gBUFF->tmpTernary);
             assert(gBUFF->tmpTernary->size() >= nEle);
             dT4B = Q_nThreadOfBlock(nCol, 3);  // 1 byre for 4 quant
             if (hQuant->isRTN()) {
@@ -250,18 +313,25 @@ floatX* GTensor::GetDataX(int flag, const string& sX) const {
         case typNUMBER::BOOL1:
         case typNUMBER::T_BINARY:
         case typNUMBER::T_SIGN: {
-            wX = ToX(gBUFF->tmpTernary);
+            // wX = ToX(gBUFF->tmpTernary);
             if (hOPT->hAR_quant != nullptr)
                 hQuant->params.distill.lenda = hOPT->DistillRate(0x0);
             TASKA_quant<floatX> task_q(this, hQuant, main_stream);
-            if (type == typNUMBER::T_SIGN)
-                T1pG(CU_Q128toX_<floatX, 64>, task_q, (BIT_128*)(data), wX, 0x0);
-            else
+            if (type == typNUMBER::T_SIGN) {
+                if (DEBUG.verFakeQuant >= 0) {
+                    T1pG(CU_FQUANT_128_<floatX, 64>, task_q, (floatX*)shadoW, wX, 0x0);
+                    // PrintTensor<floatX>("shadoW", (floatX*)shadoW, true, nRow, nCol, ne[2], ne[3], -1);
+                } else {  // only reserve for older version
+                    T1pG(CU_Q128toX_<floatX, 64>, task_q, (BIT_128*)(data), wX, 0x0);
+                }
+            } else {
                 T1pG(CU_Q128toX_<floatX, 128>, task_q, (BIT_128*)(data), wX, 0x0);
+            }
+
             // PrintTensor<floatX>("deQuant", wX, true, nRow, nCol, ne[2], ne[3], -1);
         } break;
         case typNUMBER::Q2: {
-            wX = ToX(gBUFF->tmpTernary);
+            // wX = ToX(gBUFF->tmpTernary);
             assert(gBUFF->tmpTernary->size() >= nEle);
             dT4B = Q_nThreadOfBlock(nCol, 2);  // 1 byre for 4 quant
             if (hQuant->isRTN()) {
@@ -291,7 +361,7 @@ floatX* GTensor::GetDataX(int flag, const string& sX) const {
         case typNUMBER::T_BINARY_TILE: {
             dim3 dBlock(THREAD_TILE_M * THREAD_TILE_N), dGrid(CEIL_DIV(nRow, THREAD_TILE_M), CEIL_DIV(nCol, THREAD_TILE_N));
             assert(nRow % THREAD_TILE_M == 0 && nCol % THREAD_TILE_N == 0);
-            wX              = ToX(gBUFF->tmpTernary);
+            // wX              = ToX(gBUFF->tmpTernary);
             floatGama* gam_ = gama_T();  //
             CU_Tile2X_<floatX><<<dGrid, dBlock, smemPB, main_stream>>>(wX, gam_, 0.0, nRow, nCol, seed);
             // SYNC_STREAM();
@@ -299,15 +369,25 @@ floatX* GTensor::GetDataX(int flag, const string& sX) const {
                 gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1);
         } break;
         case typNUMBER::F8E5M2: {
-            wX = ToX(gBUFF->tmpTernary);
+            // wX = ToX(gBUFF->tmpTernary);
             assert(gBUFF->tmpTernary->size() >= nEle);
             CU_F82Float<floatX><<<CEIL_DIV(nEle, CU_T4B_MIDDLE), CU_T4B_MIDDLE>>>((f8e5*)data, wX, nEle, 0, 0);
             break;
         }
         default:
+            wX = (floatX*)(data);
             break;
     }
-
+#ifndef NDEBUG
+    if (DEBUG.check_tensor_quant == 666 && hQuant != nullptr) {  // check quant-error
+        // PrintTensor<floatX>("deQuant", wX, true, nRow, nCol, ne[2], ne[3], -1);
+        float err = CU_OFF_avg<floatX>((floatX*)shadoW, wX, size(), true);
+        // assert(err < 0.3);
+        lossQ = err;
+        // _INFO("%s=%.5g\t\n", name, err);
+    }
+#endif
+    assert(wX != nullptr);
     return wX;
 }
 

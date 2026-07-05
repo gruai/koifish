@@ -119,7 +119,7 @@ def llm_header(
                 tl.sync_threads()
             
                 p_label = grad_pre_logits[n, label] * nValidToken
-                # p_label[label_tile] = tl.max(p_label[label_tile], 1e-20)  
+                p_label = tl.max(p_label, 1e-20)  
                 losses[n] = -tl.log(p_label) 
                 grad_pre_logits[n, label] = (p_label - 1.0) / nValidToken
             else:

@@ -43,7 +43,10 @@ struct GENSOR_TOPU;
 
 bool Gensors2File(std::vector<hGTensor> gset, const std::string& path, int flag = 0x0);
 
+#if defined(_USE_CUDA_FLOAT_)
 #include "../Device/CUDA/cuda_common.h"
+#else
+#endif
 
 // set name of a tensor if its name is "\0" & its grad
 int gTN(hGTensor, const char* format, ...);
@@ -197,12 +200,15 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
 
     Distri_PIPE disq;  // distri info related to quantization
 
-    // @GetDynamicQuant
+    // @GetDynamicQuant @GeQuant::ExTensor
     shared_ptr<GeQuant> hQuant = nullptr;
     hGTensor qZero = nullptr, qScale = nullptr;  // quantization params, may have different meaning/name in different model
+    
+    // arrLORA wLoABs; // = GeNeuron_::wLoABs
 
     virtual size_t Alloc_1(void** dst, bool isZero, string desc, size_t sz = 0x0, int flag = 0x0) { return 0x0; };
     virtual size_t Free_1(void** obj, const string& info = "") { return 0x0; };
+    virtual hBITARR GetRawData(int x, int flag, int64_t sp[4], size_t& nEle, bool isAlloc = false) const;
 
    public:
     static const int MAX_NAME = 64;
@@ -234,8 +240,16 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     void* data      = nullptr;
 
     virtual bool InitShadoW(const void* srcData, bool isGPU, DISTILLATION_CARD& distill, int flag = 0x0);
-    void* shadoW = nullptr;  //  Shadow Weights
+    virtual bool isZeroShadoW(int flag);
 
+    enum SHADOW_TYPE {
+        S_NONE,
+        S_BASE_WEIGHT,
+        S_TMP_TERNARY  // Deprecated
+    };
+    SHADOW_TYPE tpShadow = S_NONE;
+    void* shadoW         = nullptr;  //  Shadow Weights(in some case,it point to shadoW = ToX(gBUFF->tmpTernary to save memory)
+    
     //
     enum GAMA_TYPE {
         GAMA,
@@ -255,14 +269,14 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     bool isBackGama     = false;
     hGTensor gama_param = nullptr;
     // virtual bool isUpdateParam(int iter = -1, int flag = 0x0) const;  // in many case, params are not update, even data is not allocated!
-    bool needUpdateParam = false;
+    bool needUpdateParam = false;       //  false when 1.isFixWeight 2.Gama mode
     int tile_r1 = 0, tile_c1 = 0;       //  tile_r0 = 0,tile_c0 = 0,
     int color       = 0;                // special color-mark for special task
     floatGrad* grad = nullptr;          //
     void *gm = nullptr, *gv = nullptr;  // first moment, second moment of grad
 
     float info[8];  // Some info of some operations
-
+    float lossQ = 0.0;
     virtual void* DataPad(void* src0, int flag = 0x0);
 
     typNUMBER type;
@@ -280,6 +294,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
         F_RESIDENT  = 0x1000,
         F_HOSTDATA  = 0x2000,  // always alloc host_data(may also alloc device data)
         F_RELOAD    = 0x4000,
+        F_FIXW      = 0x8000,  // Althouth it's param, its weight is fix at current time
         F_TOX       = 0x10000,
         F_PADDED    = 0x20000,
         F_ONLYREF   = 0x40000,  // Partial/Sub tensor
@@ -333,6 +348,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
         return false;
     }
     virtual bool Free(bool isPassResident = false) { return true; }
+    virtual bool DownSample(const string& title, size_t& nSamps, float* samps, int typ, int flag, size_t nEle = 0);
     //   x==3 ? gv : x==2 ? gm : x == 1 ? grad : data
     virtual void Print(const string& title, int typ, int flag, size_t nEle = 0) const;
     virtual bool DumpX(int type, const string& title = "", int flag = 0x0) const;
@@ -365,18 +381,15 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     bool isRefer(int tp = 0x0) const { return hRef != nullptr; }
     hGTensor GetRefer() { return hRef; }
     virtual void SetRefer(hGTensor hR, int flag = 0x0);
-    // virtual bool SetTernary(typNUMBER typ, int flag = 0x0);
 
-    // virtual bool SerialGP(void* yD, void* yG, size_t szY, bool isToY, int flag = 0x0) {
-    //     assert(0);
-    //     return false;
-    // }
+    shared_ptr<GeNeuron> GetNeuron(int flag=0x0)    const;
+
     virtual bool SerialGamaData(const string& info, void* host, bool isToHost, size_t szMost, int flag = 0x0);
     template <typename T>
     T* GetHostData(int flag = 0x0, const string& sX = "") {
         return nullptr;
     }
-    virtual floatX* GetDataX(int flag = 0x0, const string& sX = "") const;
+    virtual floatX* GetDataX(int flag = 0x0, const string& sX = "");
     virtual double SetDataX(floatX* params, bool checkErr = false, int flag = 0x0);
 
     // may different wit hQuant
@@ -393,8 +406,6 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     // size_t hash = 0x0;      //  std::hash<std::string>
     void* extra = nullptr;  // extra things
 
-    // struct ggml_tensor* GG();
-    struct ggml_context* CTX() { return nullptr; }
     virtual size_t size(int typ = 0) const;
     virtual size_t mostMemory(int typ = 0) const { return nByte(); }
     virtual int dims() const {
@@ -514,8 +525,6 @@ inline int tDIM(hGensor T) { return T == nullptr ? 0 : T->dims(); }
 inline float tGET(hGensor T, int i) { return T->Get(i); }
 inline void tSET(hGensor T, float a) { T->Set(a); }
 inline void tFLAG(hGensor T, int64_t flag) { T->SetFlag(flag); }
-double tNormsOf(const std::vector<hGTensor>& tensors, int flag);
-// double tNormOf(const hGTensor tensor, int flag = 0x0);
 
 inline floatX* ToX(hGensor t) {
     assert(t != nullptr);
@@ -585,7 +594,7 @@ class huTensor : public GTensor {
     // bool ToTernary(floatX* tmp, int flag = 0x0) override;
     float ToF8Ex(int type, int flag = 0x0) override;
     bool Mutation(int flag = 0x0) override;
-    friend class HIERARCH_LoRA;
+    friend class HIERARCH_LorAB;
 };
 
 struct GENSOR_INFO {
@@ -674,3 +683,60 @@ void _T_repr_(hGensor t, const char* tab, char* buf, const GENSOR_INFO& info);
 
 template <typename T>
 double P_softmax(int idx, T* logits, int size);
+
+struct TASKA_AxB;
+
+template <class FloatC, class FloatA, class FloatB, class FloatBias>
+void CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* bias, TASKA_AxB& taskm, int flag = 0x0);
+
+/*
+    Task allocation - maps logical tensor multiply to cuda(or tilelang) operators(like gemm)
+    d(m,n) = alpha*a'*b + beta*d + bias
+*/
+struct TASKA_AxB {
+    int m = 0, n = 0, k = 0;
+    int transA = 1, transB = 0;
+
+    float *scale_a = nullptr, *scale_b = nullptr;
+    float alpha = 1.0, beta = 0.0;
+    void* device = nullptr;
+    TASKA_AxB() {}
+    TASKA_AxB(void* _device, int _m, int _n, int _k, int _transA, int _transB, float _beta = 0.0, float _alpha = 1.0, int flag = 0x0)
+        : device(_device), m(_m), n(_n), k(_k), transA(_transA), transB(_transB), alpha(_alpha), beta(_beta) {
+        assert(device != nullptr);
+    }
+    bool isAccumuDelta() { return beta > 0.0; }
+    bool isValid() {
+        assert(m > 0 && n > 0 && k > 0);
+        assert(device != nullptr);
+        return true;
+    }
+
+    template <class FloatC, class FloatA, class FloatB>
+    void blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatC* bias = nullptr, int flag = 0x0) {
+        CU_mm_blasLt(d, a, b, bias, *this, flag);
+    }
+
+    template <class FloatC, class FloatA>
+    void blasLt(FloatC* d, const FloatA* a, const hGTensor tB, const FloatC* bias = nullptr, int flag = 0x0) {
+        const FloatA* b = TO<FloatA>(tB);
+        CU_mm_blasLt(d, a, b, bias, *this, flag);
+    }
+};
+
+// template <class FloatC, class FloatA, class FloatB, class FloatBias>
+// void CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* bias, int m, int n, int k, const float* scale_a, const float* scale_b,
+//                   cudaStream_t stream = 0, int transA = 1, int transB = 0, bool accumulate = false);
+
+struct TENSOR_WATCH {
+    TENSOR_WATCH(Fish* _fish, const string& sX = "", int flag = 0x0);
+    string title;
+    int B = 0, T = 0, C = 0;
+};
+#ifdef __USE_WATCHING__
+int WatchWeights(TENSOR_WATCH& watch, const vector<hGTensor>&, const vector<string>& filter, int flag);
+int WatchTensors(TENSOR_WATCH& watch, K_SafeTensors* hKST, int flag);
+#else
+inline int WatchWeights(TENSOR_WATCH& watch, const vector<hGTensor>& hKST, const vector<string>& filter, int flag) { return 0x0; }
+inline int WatchTensors(TENSOR_WATCH& watch, K_SafeTensors* hKST, int flag) { return 0x0; }
+#endif

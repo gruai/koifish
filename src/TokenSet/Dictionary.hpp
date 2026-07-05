@@ -519,3 +519,4 @@ class CDict_CHAR : public DictVAE {
 };
 
 void DumpTokens(hTokenizer hDict, const TOKENS& tokens, int nPad, int flag = 0x0);
+bool Tokens2Samp_Chatml(hTokenizer hDict, const TOKENS& tokens, size_t& pos, ChatML_samp& meta, bool multi_turn, int flag = 0x0);

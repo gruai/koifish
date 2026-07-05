@@ -52,6 +52,7 @@ class GeQuant : public std::enable_shared_from_this<GeQuant> {
         size_t szQuant = 0x0, szMostGama = 0x0;
     };
     _q_sweep best_;
+    std::vector<shared_ptr<GTensor>> qTensors;
 
     virtual void Flattern() {}
     //  1.  key embeddings - In initial layers, no significant outliers are observed. However, in the deeper layers, few channels (approximately four) exhibit

@@ -166,6 +166,8 @@ class GeneratOnPrompt {
 
     //  std::vector<float> x_logits;
     float delta_max = 0, delta_a = 0;
+    // 0.1 – 0.5Mild reduction in repetition; >1.5 Risk of language mixing and degraded quality
+    float presence_penalty = 0.0;
     bool display = true;
 
     MODEL_ARCH _arch = MODEL_ARCH::_X_;

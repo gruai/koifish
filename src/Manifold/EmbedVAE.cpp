@@ -34,6 +34,7 @@ TokenEmbed::TokenEmbed(Fish* hG_, const std::string& key_, JSON::const_iterator 
     if (hG_->config.model.rope_type != ROPE_NONE) {
         isAddPos = false;
     }
+    UpdateBucket(0x0);
 }
 TokenEmbed::~TokenEmbed() {
     FREE_a(workload_indices);
@@ -104,11 +105,10 @@ bool TokenEmbed::Build(int flag) {
         out->SetRefer(gBUFF->outL);
     }
 
-
     quant_params.Init4Neuron(name, hFish->config.jQuant, this);
     quant_params.spMost = w->shape;
     hQuant              = GeQuant::MakeInstance(this, name, quant_params, {this}, 0x0);  //  {Q.w,proj_cat.w}
-    w->hQuant = hQuant; //hack for isWMAT() check
+    w->hQuant           = hQuant;                                                        // hack for isWMAT() check
     // hFish->InitGensor(ctx,name+".batch",out,false);
 
     return true;
@@ -440,8 +440,8 @@ bool FFN::Build(int flag_0) {
 
     up.w->residual_scale = hFish->config.common.residual_scale;
     if (layid > 6) {  //  Gradient would explode!
-        // up.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);
-        // down.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORA);       //  down.Back(gBUFF->bt4c, tGelu, gBUFF->delta, up_out);
+        // up.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORW);
+        // down.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORW);       //  down.Back(gBUFF->bt4c, tGelu, gBUFF->delta, up_out);
     }
 
     if (quant_params.Init4Neuron(name, hFish->config.jQuant, this)) {

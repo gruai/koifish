@@ -43,6 +43,7 @@ struct SAMP {
     std::string desc;
     char* mask   = nullptr;
     void* target = nullptr;
+    TOKENS_SECTION answers;  // for chatml-samp
     // int label=-1;
 
     SAMP() {}
@@ -50,7 +51,7 @@ struct SAMP {
     virtual ~SAMP() {}
 
     bool Serialize(FSerial& S, bool isSave, int flag);
-    // void Refresh(SampLoader *loader,void *ctx,std::vector<int32_t>& samp_toks,int typ);
+    virtual void Dump(hTokenizer hDict, const std::vector<TOKEN_ID>& tokens, int type, const std::string& desc = "", int flag = 0x0);
     virtual double UpdateTag(hDataToken hDT, int* tag, int step, bool flip, int flag = 0x0);
 
     static size_t HASH(const char* fn, const std::vector<SAMP*>& samps) {
@@ -113,10 +114,10 @@ class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
     // int UniqueTokens(const std::vector<TOKEN_ID>& tokens,size_t n_1,int flag=0x0);
    public:
     static std::tuple<hDataToken, std::vector<hDataToken>, hDataToken> MakeInstance(struct CLI_params& params, hTokenizer, bool isLocalInfer, int flag);
-
+    // Deprecated, only for Tokenset_HellaSwag::Shard2Sample
     std::vector<TOKEN_ID> tokens, masks;
     DataTokenSet(hTokenizer hDictVAE);
-    virtual ~DataTokenSet() {}
+    virtual ~DataTokenSet();
     virtual bool Init(int flag = 0x0) { return true; }
     bool hasMask() { return masks.size() > 0; }
 
@@ -152,7 +153,7 @@ class GlobTokenset : public DataTokenSet {
     string glob_pattern;
     FILE* fpShard  = nullptr;
     bool isShuffle = false;
-    virtual bool fp2Tokens(int flag=0x0);
+    virtual bool fp2Tokens(int flag = 0x0);
     virtual bool Shard2Sample(int id, int flag = 0x0);
     virtual bool GetShardInfo(int id, int flag = 0x0) { return false; }
     virtual size_t OnShardFile(int id, bool load = false, int flag = 0x0);
@@ -198,11 +199,12 @@ class Tokenset_JSONL : public GlobTokenset {
     //  ChatML​ is a tokenization-friendly text formatthat encodes chat messages into a single string
     std::string toChatML(JSON& jMsg, int flag = 0x0);
     string format;
-    bool isJsonTxt = false;
+    bool isJsonTxt       = false;
     bool enable_thinking = false;
+    bool multi_turn      = false;
     std::vector<string> messages;
     virtual bool GetShardInfo_txt(int id, int flag = 0x0);
-    
+
     bool Shard2Sample(int id, int flag = 0x0) override;
     bool GetShardInfo(int id, int flag = 0x0) override;
     // void DumpSamp(const std::string& msg, const std::vector<TOKEN_ID>& tokens, int flag = 0x0);
@@ -210,7 +212,6 @@ class Tokenset_JSONL : public GlobTokenset {
    public:
     Tokenset_JSONL(JSON::const_iterator jit, hTokenizer hDictVAE, const string& format, int flag = 0x0);
     virtual ~Tokenset_JSONL() {}
-    
 };
 
 class DTS_GPT2 : public DataTokenSet {

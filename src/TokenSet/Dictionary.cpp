@@ -245,7 +245,7 @@ bool GTokenizer::isValid(bool allowEmpty, int flag) const {
             _WARN("[DICT] \"%s\" invalid eos_id=%d!\n", name.c_str(), eos_id);
             return false;
         }
-        if (assist_id < 0) {  //    <|im_start|>assistant\n<think>\n\n</think>\n\nFine<|im_end|>
+        if (assist_id < 0) {  
             _WARN("[DICT] \"%s\" invalid assist_id=%d!\n", name.c_str(), assist_id);
             return false;
         }
@@ -551,7 +551,7 @@ GTokenizer_QWEN3::GTokenizer_QWEN3(Fish* dolphin, int flag) : GTokenizer_Heap(do
         if (eos_id < 0) {  //
             eos_id = sLookup("<|endoftext|>");
         }
-        if (assist_id < 0) {  //    <|im_start|>assistant\n<think>\n\n</think>\n\nFine<|im_end|>
+        if (assist_id < 0) {  //    <|im_start|>assistant
             assist_id = sLookup("assistant");
         }
         id_newline  = sLookup("\n");    // 198
@@ -769,7 +769,8 @@ bool GTokenizer_QWEN3::LoadBin(Fish* dolphin, int flag) {
                     fread(tmp_word, 1, len, file);
                     tmp_word[len] = '\0';
                 }
-                vocab.push_back(tmp_word);
+                std::string word = tmp_word;
+                vocab.push_back(word);
             }
             fclose(file);
         }

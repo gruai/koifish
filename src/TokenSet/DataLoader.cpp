@@ -204,7 +204,8 @@ void SampLoader::Samp2Batch(int k, hSAMP samp, TRAIN_CARD& params, int flag) {
     auto dialect                = hDict->dialect;
     bool fill_with_next_samples = params.fill_with_next_samples, isDialect = hDict->isDialect;
     size_t starting = samp->pos + samp->jump, _nctx = params.n_ctx, _nToken = nTokens(), tok_pos = 0;  //    tokens_input->ne[0];
-    int i_target = -1, i_off = 0, nPad = 0;                                                            // 1 for traing & 0 for chat(InitOneSamp)
+
+    int i_target = -1, i_off = 0, nPad = 0;  // 1 for traing & 0 for chat(InitOneSamp)
     if (hDict->isNeedBOS) {
         hBatch->Set(0, k, 0, 0, hDict->bos_id);  // ggml_set_i32_nd(G(tokens_input), 0, k, 0, 0, hDict->bos);
         samp_toks.push_back(hDict->bos_id);
@@ -221,7 +222,8 @@ void SampLoader::Samp2Batch(int k, hSAMP samp, TRAIN_CARD& params, int flag) {
 
     for (int64_t i = 0; i < _nctx; ++i, ++tok_pos) {
         TOKEN_ID token = hDict->eos_id, mask;
-
+        if (samp->pos == 4781 && i == 16)
+            DEBUG_HERE;
         // eos ???
         if (starting >= _nToken) {
             if (isRecycle)
@@ -324,6 +326,12 @@ hSAMP SampLoader::Next(bool isLoop) {
     return shard_samps[idx_];
 }
 
+bool BATCH_INPUT::BeforeCollate(int flag){
+    hostToken->Zero();
+    section_metas.clear();
+    nValidTokens = hostToken->size();
+    return true;
+}
 /**
     Important!  this would update input & target_label of model!
         Stacks tensors
@@ -333,9 +341,8 @@ hSAMP SampLoader::Next(bool isLoop) {
 size_t SampLoader::CollateBatch(int x, Fish* fish) {
     TRAIN_CARD _params = hOPT->TrainParams();
     assert(fish == hOPT->_fish);
-    // struct llama_context * lctx=(struct llama_context *)(hOPT->app_ctx);
     cur_samps.clear();
-    hBatch->hostToken->Zero();
+    hBatch->BeforeCollate();    //hostToken->Zero();
     hostLabel->Zero();
     hTokenizer tokenizer = fish->GetTokenizer();
     if (DEBUG.quant_UserMode) {
@@ -357,7 +364,7 @@ size_t SampLoader::CollateBatch(int x, Fish* fish) {
     bool isLog = false;
     if (isLog)
         _INFO("BATCH_%ld ", next_sample);
-    hSAMP samp           = nullptr;
+    hSAMP samp = nullptr;
     hGensor tokens_input = fish->Input(), target_label = hOPT->hTargetProbs();
     assert(tokens_input != nullptr);
     GST_TIC(tic);
@@ -374,7 +381,7 @@ size_t SampLoader::CollateBatch(int x, Fish* fish) {
             _WARN("<%s> Failed to get next sample!!!\n", __func__);
             return 0x0;
         }
-
+        hBatch->section_metas.push_back(samp->answers);
         // LLAMA_LOG_INFO("%s: sample_idx=%zu sample=%zu\n", __func__, sample_idx, sample);
         if (GST_TOC(tic) > 20) {  // for long-time data-update
             _INFO("\r[%s] k=%d(%d) T=%.3g ...", __func__, k, nSampInBatch, GST_TOC(tic));
@@ -382,6 +389,7 @@ size_t SampLoader::CollateBatch(int x, Fish* fish) {
         }
         cur_samps.push_back(samp);
         Samp2Batch(k, samp, _params);
+        
         if (isLog && k < 12 && tpBatchSample != "stacking") {
             sentence = dolphin->T2STR(samp_toks, 640, 0x0);                           // llama_token_to_piece(lctx, samp_toks[0]);
             _INFO("\n    (%ld,%d)@\"%s\"", samp->pos, samp->jump, sentence.c_str());  // sample_size
@@ -403,9 +411,9 @@ size_t SampLoader::CollateBatch(int x, Fish* fish) {
         hOPT->isDumpOnce = true;
     }
 
-    assert(hDict->isInRange(hBatch->host, hBatch->nFillTokens(), 0));  //(int*)(hostBatch->data)
+    assert(hDict->isInRange(hBatch->host_toks, hBatch->nFillTokens(), 0));  //(int*)(hostBatch->data)
     if (hBatch->hostLen != nullptr) {
-        hBatch->UpdateMask(hOPT->GetITER(), TO<int>(hostLabel));
+        hBatch->UpdateMask(cur_samps, hOPT->GetITER(), (TOKEN_ID*)hBatch->host_toks, TO<int>(hostLabel));
     }
 
     tokens_input->OverWrite(hBatch->hostToken);  // H2D
@@ -1371,7 +1379,7 @@ BATCH_INPUT::BATCH_INPUT(Fish* hFish_, SHAPE shape, int flag) : hFish(hFish_) {
     }
     hDict = hFish->GetTokenizer();
 
-    host = TO<int>(hostToken), mask32 = TO<int>(hostMask);
+    host_toks = TO<int>(hostToken), mask32 = TO<int>(hostMask);
     tok_pos = 0;
     int tok = CurToken();  //???
 }
@@ -1401,9 +1409,9 @@ void BATCH_INPUT::DumpX(TOKEN_ID* labels, float* hostLoss, int flag) {
         for (c = 0; c < ldT; c++, mask++, pos++) {
             if (BIT_TEST(*mask, MASK_FLAG::F_IGNORE_LOSS))
                 continue;
-            assert(host[pos + 1] == labels[pos]);
-            // _INFO("(%d,%g),", labels[pos], hostLoss[pos]);
-            _INFO("%d,", labels[pos]);
+            assert(host_toks[pos + 1] == labels[pos]);
+             _INFO("(%d,%g),", labels[pos], hostLoss[pos]);
+            //_INFO("%d,", labels[pos]);
             avg_loss += hostLoss[pos], nLoss++;
         }
     }
@@ -1415,7 +1423,7 @@ void BATCH_INPUT::DumpX(TOKEN_ID* labels, float* hostLoss, int flag) {
  * All system block, user block, <|im_start|>, <|im_end|>, `` tags are prompt tokens (context).
     The model only reads them; no loss is computed here.
  */
-bool BATCH_INPUT::UpdateMask(int iter, int* labels, int flag) {
+bool BATCH_INPUT::UpdateMask(const std::vector<hSAMP>& samps, int iter, TOKEN_ID* tokens, int* labels, int flag) {
     bool isSft = hFish->isAtPhase(P_SFT);
     // if(!isSft)
     //     return false;
@@ -1425,15 +1433,16 @@ bool BATCH_INPUT::UpdateMask(int iter, int* labels, int flag) {
     gBUFF->KVlen->OverWrite(hostLen);
     // if (iter == 2)
     //     DEBUG_HERE;
-
+    bool multi_turn = false;
     string answer = "", a, all_answer = "";
-    int r, c, nMostToken = hostToken->size(), *mask = nullptr, *line = nullptr, nIgnore = 0, nPad = 0, posFine = -1;
+    int r, c, nMostToken = hostToken->size(), *mask = nullptr, *samp_label = nullptr, nIgnore = 0, nPad = 0, posFine = -1;
+    TOKEN_ID* samp_token = nullptr;
     for (r = 0; r < nMostSample; r++) {
         int nTokenLen = hostLen->Get(r), posA = -1, posThink = -1;
         posFine = -1;
         mask    = mask32 + r * ldT;
-        // line = host + r * ldT;
-        line = labels + r * ldT;
+        samp_label = labels + r * ldT;
+        samp_token = tokens + r * ldT;
         // if (iter == 2 && r==0) {
         //     DumpTokens(hDict, TOKENS(line, line + ldT), -1);
         // }
@@ -1442,46 +1451,35 @@ bool BATCH_INPUT::UpdateMask(int iter, int* labels, int flag) {
         bool isAnswer = false;
         answer        = "";
         for (c = 0; c < ldT; c++) {
-            BIT_RESET(mask[c], MASK_FLAG::F_PAD);
-            BIT_SET(mask[c], MASK_FLAG::F_IGNORE_LOSS);
-        }
-        for (c = 0; c < ldT; c++) {
-            //   <|im_start|>assistant\n<think>\n\n</think>\n\nFine<|im_end|>
-            if (c + 1 < ldT && line[c] == hDict->id_im_start && line[c + 1] == hDict->assist_id) {
-                posA = c + 1;
-                if (line[posA + 1] == hDict->id_think_open || line[posA + 2] == hDict->id_think_open) {  //  \n<think>
-                    int cur = posA + 1;
-                    while (line[++cur] != hDict->id_think_close && cur < ldT);
-                    if (cur + 2 < ldT) {
-                        cur++;
-                        posFine  = line[cur] == hDict->id_newline2 ? cur + 1 : cur + 2;
-                        isAnswer = true;
-                    }
-                } else {
-                    assert(0);
-                    posFine  = c + 2;
-                    isAnswer = true;
-                }
-                assert(isAnswer);
-                c = posFine;
-            }
-            if (line[c] == hDict->id_im_end) {
-                isAnswer = false;
-            }
-
-            if (isAnswer) {
-                answer += hDict->Decode({(TOKEN_ID)line[c]});
-                BIT_RESET(mask[c], MASK_FLAG::F_IGNORE_LOSS);
-                nValidTokens++;
-            } else {
-                BIT_SET(mask[c], MASK_FLAG::F_IGNORE_LOSS);
-            }
             if (c >= nTokenLen) {
                 BIT_SET(mask[c], MASK_FLAG::F_PAD);
+            } else
+                BIT_RESET(mask[c], MASK_FLAG::F_PAD);
+            BIT_SET(mask[c], MASK_FLAG::F_IGNORE_LOSS);
+        }
+
+        // size_t pos = 0;
+        // ChatML_samp chatml(pos, multi_turn, multi_turn ? hDict->pad_id : hDict->id_im_end);
+        // Tokens2Samp_Chatml(hDict, TOKENS(samp_token, samp_token + ldT), pos, chatml, multi_turn, flag);
+        // const TOKENS_SECTION& section = chatml.answers;  // section_metas[r];
+        // if (section != section_metas[r]) {                                                       //
+        //     samps[r]->Dump(hDict, TOKENS(samp_token, samp_token + ldT), 0x100, "Failed @samp");  //("Failed @samp(%s)", samp->desc.c_str());
+        //     assert(0);
+        // }    
+        const TOKENS_SECTION& section = section_metas[r];
+        assert(section.size() > 0);
+        for (auto [a, b] : section) {  // 139,165
+            for (c = a; c < b; c++) {  // it's labels, not original tokens
+                assert(samp_token[c] == samp_label[c - 1]);
+                answer += hDict->Decode({(TOKEN_ID)samp_token[c]});
+                BIT_RESET(mask[c - 1], MASK_FLAG::F_IGNORE_LOSS);
+                nValidTokens++;
             }
         }
+
         all_answer += answer + "\n";
     }
+    // _INFO("all_answer=%s",all_answer.c_str());
     if (devMask == nullptr)
         devMask = std::make_shared<huTensor>(hFish, "MaskOfBatch", hostMask->shape, typNUMBER::I32, true, GTensor::F_DEBUG);
     devMask->OverWrite(hostMask);
@@ -1504,6 +1502,6 @@ bool BATCH_INPUT::UpdateMask(int iter, int* labels, int flag) {
     }
     // assert(all_answer == answer + "\n");
     assert(nValidTokens > 0);
-    _INFO("[SFT] sft nValidToken=%d(%d) nIgNore=%d nPad=%d answer=%s", nValidTokens, posFine, nIgnore, nPad, all_answer.c_str());
+    // _INFO("[SFT_BATCH] nValidToken=%d(%d) nIgNore=%d nPad=%d answer=%s", nValidTokens, posFine, nIgnore, nPad, all_answer.c_str());
     return true;
 }

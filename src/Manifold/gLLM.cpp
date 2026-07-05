@@ -578,7 +578,7 @@ void NLP_AutoRegressive::Dump(int type, int flag) {
     hFuyou afu = GetFuyou(-1);
     if (afu != nullptr) {
         int nAfuParam = afu->nParams;
-        _INFO("====== nParams = %ld(%.6gM nT=%ld) allParams = %ld(%.6gM nT=%ld) ======\n", nAfuParam, nAfuParam / 1.0e6, afu->ckpParams.size(), nParams,
+        _INFO("====== nAfuParam = %ld(%.6gM nT=%ld) allParams = %ld(%.6gM nT=%ld) ======\n", nAfuParam, nAfuParam / 1.0e6, afu->ckpParams.size(), nParams,
               nParams / 1.0e6, optParams.size());
     } else
         _INFO("====== nParams = %ld(%.6gM nT=%ld) ======\n", nParams, nParams / 1.0e6, optParams.size());
@@ -619,8 +619,7 @@ bool Fuyou::Backward(hGensor cur, int flag) {
         GeNeuron* neuron = (GeNeuron*)((*it)->hOBJ);
         if (neuron->isShortcut)
             continue;
-        if (neuron->isPassBack)
-            continue;
+
         auto t0            = GST_ms();
         cur                = neuron->Ming(hRLS, cur);
         neuron->stat.tBack = GST_ms() - t0;

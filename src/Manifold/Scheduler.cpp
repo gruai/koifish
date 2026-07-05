@@ -180,6 +180,15 @@ bool RLS_BP::InitGUOKE(int flag) {
     return true;
 }
 
+bool GeNeuron::PrepareShadow(int flag) {
+    bool isZeroW = !wLoABs.empty() && LoAB_CARD::isZeroW(tpLORW);
+    if (isZeroW) {
+        D20(w->data, w->nByte());
+        w->hash64 = 0;
+    }
+    return isZeroW;
+}
+
 /*
 [fflow]
     1.  RLS_BP::Init call this once(SYMBOLIC)
@@ -246,6 +255,10 @@ void GeNeuron::ManageMemory(DATA_PLACE target, int typ, int flag) {
                     }
                 }
         }
+    }
+    if (target == DEV_MEM) {
+        for(auto nn : SubNeurons())
+            nn->PrepareShadow();
     }
 
     place = target;
@@ -530,9 +543,6 @@ bool RLS_BP::InitBranch(int flag) {
             else if (LIB_0 <= n->layid - 1 && n->layid - 1 < LIB_1) {  // QKV,FFN
                 isPass = false;
                 isGrad = n->layid - 1 >= fy.LIB_1 - LIS;  // backbons.push_back(n);
-                // n->isPassBack = n->layer - 1 < fy.LIB_1 - LIS;
-                // if (n->isPassBack)
-                //     nPass++;  // backbons.push_back(n);
             }
 
             if (isPass) {

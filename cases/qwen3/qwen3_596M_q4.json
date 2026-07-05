@@ -95,7 +95,8 @@
             "hello"
         ],
         "eval_samp": 0.04,
-        "#long_tail": 10
+        "#long_tail": 10,
+        "fake_quant": -1
     },
     "dump": {
         "train_time": 0,

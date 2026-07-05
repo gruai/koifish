@@ -313,7 +313,7 @@ bool CLI_params::isValid(const std::string& path, const std::string& desc, int f
 
 bool SFT_CARD::UpdateCKP(MODEL_CARD& model, int flag) {
     if (!sBaseModelPath.empty()) {
-        model.sCardPath = sBaseModelPath;
+        model.sCardPath      = sBaseModelPath;
         model.pathCheckPoint = sBaseModelPath;
         return true;
     }
@@ -492,8 +492,65 @@ bool SKDU_params::canSave(int iter, int flag) const {
     return true;
 }
 
+bool LoAB_CARD::isZeroW(LoAB_CARD::typW typ, int flag) {
+    if (typ == LoAB_CARD::AB)
+        return true;
+    return false;
+}
+bool LoAB_CARD::isPassW(int flag) const {
+    if (type == LoAB_CARD::typW::AB)
+        return true;
+
+    return sW <= 0;
+}
+bool LoAB_CARD::isPassAB(int flag) const {
+    if (type == LoAB_CARD::typW::W0)
+        return true;
+    return sAB <= 0;
+}
+void LoAB_CARD::Dump(int typ) {}
+bool LoAB_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
+    string s;
+    s = jKV(jConfig, {"lorw", "type"}, s);
+    std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+    if (!s.empty() && s[0] != '#') {
+        //  W0, AB, W_AB, SHADOW_AB
+        type = s == "AB"          ? LoAB_CARD::typW::AB
+               : s == "W_AB"      ? LoAB_CARD::typW::W_AB
+               : s == "SHADOW_AB" ? LoAB_CARD::typW::SHADOW_AB
+               : s == "W0"        ? LoAB_CARD::typW::W0
+                                  : LoAB_CARD::typW::NO_LORW;
+    }
+    switch (type) {
+        case AB:
+            sW = 0.f, sAB = 1.f;
+            break;
+        case W_AB:
+            sW  = jKV(jConfig, {"lorw", "alphaW"}, sW);
+            sAB = jKV(jConfig, {"lorw", "alphaAB"}, sAB);
+            break;
+        default:
+            break;
+    }
+
+    filterW = jKV_arr(jConfig, {"lorw", "filter"}, filterW);
+
+    return true;
+}
+
 bool DISTILLATION_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
     string s;
+    /*s = jKV(jConfig, {"distillation", "lorw", "type"}, s);
+    if (!s.empty() && s[0] != '#') {
+        //  W0, AB, W_AB, SHADOW_AB
+        hConfig->tpLORW = s == "AB"          ? LoAB_CARD::typW::AB
+                          : s == "W_AB"      ? LoAB_CARD::typW::W_AB
+                          : s == "shadow_AB" ? LoAB_CARD::typW::SHADOW_AB
+                          : s == "W0"        ? LoAB_CARD::typW::W0
+                                             : LoAB_CARD::typW::NO_LORW;
+    }*/
+
+    s = "";
     s = jKV(jConfig, {"distillation", "anneal-method"}, s);
     if (s.empty() || s[0] == '#')
         return false;
@@ -509,19 +566,48 @@ bool DISTILLATION_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag)
     return true;
 }
 
-bool SFT_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
-    string s;
-    JSON jSFT = jKEY(jConfig, {"sft"});
-    bool isOK = false;
-    
-    if (jSFT.find("path") != jSFT.end()) {
-        sCheckpointPath = jKEY(jSFT, {"path"});
-        isOK = true;
-    } else if (jSFT.find("hf-card") != jSFT.end()) {
-        sBaseModelPath = jKEY(jSFT, {"hf-card"});
-        isOK = true;
+bool SFT_CARD::isFixWeight(int flag) {
+    // G_Has_
+    if (method == TUNING_METHOD::OnlyScale) {
+        return true;
     }
-    return isOK;    //!sBaseModelPath.empty();
+    return false;
+}
+
+/**
+ * 1. full-parameter maybe "Catastrophic Forgetting"
+ * 2. For deep domain adaptation (e.g., teaching an LLM legal jargon or advanced coding), LoRA and QLoRA are much better. LN Tuning lacks the capacity to store
+ * complex new facts and structural data because its parametric changes are physically limited.
+ */
+bool SFT_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
+    try {
+        string s;
+        JSON jSFT = jKEY(jConfig, {"sft"});
+        if (jSFT.empty())
+            return false;
+
+        bool isOK = false;
+
+        if (jSFT.find("path") != jSFT.end()) {
+            sCheckpointPath = jKEY(jSFT, {"path"});
+            isOK            = true;
+        } else if (jSFT.find("hf-card") != jSFT.end()) {
+            sBaseModelPath = jKEY(jSFT, {"hf-card"});
+            isOK           = true;
+        }
+
+        s = jKEY(jConfig, {"sft", "method"});
+        if (G_Aa(s, "OnlyScale")) {
+            method = TUNING_METHOD::OnlyScale;
+        }
+        return isOK;  //! sBaseModelPath.empty();
+    } catch (JSON::parse_error& e) {
+        _ERROR("\r\n_SFT_CARD  Failed !!! ERR=%s", e.what());
+        return false;
+    } catch (...) {
+        _ERROR("\r\n_SFT_CARD  Unknown exception !!!");
+        return false;
+    }
 }
 
 bool DISTILLATION_CARD::isKeepShadoW(int flag) { return anneal != ANNEAL_OFF; }
@@ -621,7 +707,7 @@ void Fuyou_params::Dump(int typ) const {
           paramIsGuoke ? "\"Only cur fuyou's params in GPU-memor!\"" : "\"All params in GPU-memory\"");
 }
 
-// LORA_ADAPT_W HIERARCH_LoRA::tpLORA = HIERARCH_LoRA::W_AB;      //  W0, AB, W_AB
+// LoAB_CARD::typW HIERARCH_LorAB::tpLORW = HIERARCH_LorAB::W_AB;      //  W0, AB, W_AB
 void CLI_params::OnArch() {
     _INFO("[ARCH] sizeof(token)=%ld,sizeof(floatX)=%ld sizeof(Grad)=%d(%d)\n", sizeof(TOKEN_ID), sizeof(floatX), sizeof(floatGrad), sizeof(floatMV));
     int nH        = -1;
@@ -646,8 +732,8 @@ void CLI_params::OnArch() {
             break;
         case MODEL_ARCH::NLP_GPT2:
         case MODEL_ARCH::NLP_GPT2_char: {
-            tpLORA = LORA_ADAPT_W::W0;  // refW_AB      W_AB
-            if (tpLORA != LORA_ADAPT_W::W0) {
+            auto tpLORW = LoAB_CARD::typW::W0;  // refW_AB      W_AB
+            if (tpLORW != LoAB_CARD::typW::W0) {
                 fuyou.paramIsGuoke = true;  //
             }
 
@@ -1110,6 +1196,7 @@ bool CLI_params::InitJConfig(int flag) {
         } else {
             distill.Init(this, jConfig);
         }
+        loAB.Init(this, jConfig);
 
         lars_ratio = jKV(jConfig, {"train", "optimizatioin", "lars_ratio"}, lars_ratio);
         ZMUV_ratio = jKV(jConfig, {"train", "optimizatioin", "ZMUV_ratio"}, ZMUV_ratio);
@@ -1182,22 +1269,28 @@ bool CLI_params::InitJConfig(int flag) {
 
         test = jKV(jConfig, {"test"}, test);
 
+        title_short = jKV(jConfig, {"title"}, title_short);
+
         /*
             on some ealy testing on finetune/distillation, it seems that less layers would get nealy same accuracy
         */
         // tune   = jKV(jConfig, {"lora", "tune"}, tune);    //"lora_tune"
         // lora_r = jKV(jConfig, {"lora", "rank"}, lora_r);  //{"lora-r"}
 
-        DEBUG.x1                = jKV(jConfig, {"debug", "x"}, DEBUG.x1);
-        DEBUG.x_str             = jKV(jConfig, {"debug", "x_str"}, DEBUG.x_str);
-        DEBUG.N_mostiter        = jKV(jConfig, {"debug", "most_iter"}, DEBUG.N_mostiter);
-        DEBUG.eval_Generate     = jKV(jConfig, {"debug", "eval_generate"}, DEBUG.eval_Generate);      //
-        DEBUG.save_GlobalSate   = jKV(jConfig, {"debug", "save_globalsate"}, DEBUG.save_GlobalSate);  //-1;
-        DEBUG.dump_TensorDetail = jKV(jConfig, {"debug", "dump_tensordetail"}, DEBUG.dump_TensorDetail);
-        DEBUG.dump_LossDetail   = jKV(jConfig, {"debug", "dump_lossdetail"}, DEBUG.dump_LossDetail);
-        DEBUG.verShuffleSamp    = jKV(jConfig, {"debug", "shuffle_samp"}, DEBUG.verShuffleSamp);
-        DEBUG.isInitParamHost   = DEBUG.x1 == 0;
-        DEBUG.fLongTail         = jKV(jConfig, {"debug", "long_tail"}, DEBUG.fLongTail);
+        DEBUG.x1                 = jKV(jConfig, {"debug", "x"}, DEBUG.x1);
+        DEBUG.x_str              = jKV(jConfig, {"debug", "x_str"}, DEBUG.x_str);
+        DEBUG.N_mostiter         = jKV(jConfig, {"debug", "most_iter"}, DEBUG.N_mostiter);
+        DEBUG.eval_Generate      = jKV(jConfig, {"debug", "eval_generate"}, DEBUG.eval_Generate);      //
+        DEBUG.save_GlobalSate    = jKV(jConfig, {"debug", "save_globalsate"}, DEBUG.save_GlobalSate);  //-1;
+        DEBUG.dump_TensorDetail  = jKV(jConfig, {"debug", "dump_tensordetail"}, DEBUG.dump_TensorDetail);
+        DEBUG.dump_LossDetail    = jKV(jConfig, {"debug", "dump_lossdetail"}, DEBUG.dump_LossDetail);
+        DEBUG.watch_Tensors      = jKV(jConfig, {"debug", "watch_tensors"}, DEBUG.watch_Tensors);
+        DEBUG.verShuffleSamp     = jKV(jConfig, {"debug", "shuffle_samp"}, DEBUG.verShuffleSamp);
+        DEBUG.check_tensor_quant = jKV(jConfig, {"debug", "check_tensor_quant"}, DEBUG.check_tensor_quant);
+        DEBUG.verFakeQuant       = jKV(jConfig, {"debug", "fake_quant"}, DEBUG.verFakeQuant);
+        DEBUG.isInitParamHost    = DEBUG.x1 == 0;
+        DEBUG.fLongTail          = jKV(jConfig, {"debug", "long_tail"}, DEBUG.fLongTail);
+
         // DEBUG.verOutCLS         = jKV(jConfig, {"debug", "Head4Token"}, DEBUG.verOutCLS);
 
         DEBUG.prompts = jKV_arr(jConfig, {"debug", "prompts"}, DEBUG.prompts);
@@ -1261,6 +1354,10 @@ bool CLI_params::LoadJConfig(const std::string& path, int flag) {
     try {
         if (!VERIFY_DIR_EXIST(path, false)) {
             // K_EXIT(KOIFISH_INVALID_ARGS_MODEL);
+            return false;
+        }
+        if (fs::is_empty(path)) {
+            _ERROR("Empty dir@\"%s\"", path.c_str());  // KOIFISH_EMPTY_JSON_CONFIG
             return false;
         }
         fs::path filePath       = path;
@@ -1406,6 +1503,9 @@ bool CLI_params::parse(int argc, char** argv) {
             }
             if (jConfig.contains("checkpoint_in")) {  // this would cause many confliction!
                 jConfig.erase("checkpoint_in");
+            }
+            if (jConfig.contains("sft")) {  // this would cause many confliction!
+                jConfig.erase("sft");
             }
             model.sTokenBinPath = "./assets/tokenizer_151936.bin";
 
@@ -1743,11 +1843,6 @@ hGensor GradOf(struct ggml_cgraph* cgraph, hGensor node, int flag) {
 #endif
 }
 
-dotprod_t fnDot(typNUMBER tp) {
-    int wbit = BitPE(tp);
-    return wbit == 4 ? dotprod_gf4 : wbit == 8 ? dotprod_fp8 : wbit == 16 ? dotprod_fp16 : dotprod_fp32;
-}
-
 /*
     byte per element of this type(maybe decimals rather than integers!)
 */
@@ -1850,7 +1945,7 @@ bool CHAT_SAMPLER::InitPrefillTemplate(CLI_params* hConfig, int flag) {
     return true;
 }
 
-std::string CHAT_SAMPLER::toChatML(const std::vector<ChatML_Line>& lines, int flag) {
+std::string CHAT_SAMPLER::toChatML(const std::vector<ChatML_samp>& lines, int flag) {
     /*char *rendered_prompt =new char[szBuffer]();    //szBuffer
     if (flag==0x0) {
         sprintf(rendered_prompt, system_prompt_template.c_str(), line.role.c_str(), line.content.c_str());
@@ -1885,7 +1980,7 @@ void DISTILLATION_CARD::Dump(int typ) {
 }
 
 void SFT_CARD::Dump(int typ) {
-    _INFO("[SFT]: ");
+    _INFO("[SFT]: method=%s", method == OnlyScale ? "OnlyScale" : method == Top_Layer ? "OnlyHead" : method == LORA ? "LORA" : "FULL_PARAM");
     _INFO("\n");
 }
 

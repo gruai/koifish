@@ -126,6 +126,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
 
     int size       = 0;
     size_t nParams = 0, szModel = 0;
+    size_t nFixParams = 0;  // 1. isFixWeight 2. GamaMode
 
     hGensor in_node = nullptr, out_node = nullptr;  // maybe GPU tensor
     hGensor loss = nullptr, target_mask = nullptr, target_label = nullptr, KQ_pos = nullptr, pos_embd = nullptr;
@@ -195,16 +196,14 @@ class Fish : public std::enable_shared_from_this<Fish> {
 
     Fish() {}
     Fish(const std::string& nam_, struct CLI_params params, ROLE_TYPE role_ = COMMON, int flag = 0x0);
-    Fish(const std::string& nam_, void* ctx_, int flag = 0x0) : name(nam_) /*,ctx(ctx_)*/ {
-        assert(0);  // Deprecated
-        _INFO("=== %s ===\n", __func__);
-    }
+
     virtual ~Fish() { Clear(); }
     std::shared_ptr<Fish> SharedThis() { return shared_from_this(); }
 
     virtual bool isModel(std::vector<MODEL_ARCH> arcs, int flag = 0x0);
     virtual bool isRemater(int flag = 0x0) const;
     virtual bool isTemporaryMemory(GeNeuron* neuron, int flag = 0x0) const;
+    // return !isLocalInfer
     bool isTrain() const { return !isLocalInfer; }
     bool isSymbolic() const { return isSymbolicAnalysis; }
     bool isAtPhase(LIFE_PHASE ph) const;

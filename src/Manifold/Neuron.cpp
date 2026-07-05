@@ -396,18 +396,23 @@ SLP::SLP(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag)
     assert(jvals.size() >= 2);
     shape = {(int)(jvals[0]), (int)(jvals[1])};
     assert(shape[0] > 0 && shape[1] > 0);
-    // compression = hFish->params.compression;
-    // Build(key_, shape_, flag);
 }
 
 bool SLP::Build(int flag) {
     // delta  = gBUFF->delta;
     isBias = hFish->config.model.isSLPBias || BIT_TEST(flag, F_BIAS);
+    switch (hFish->phase) {
+        case P_SFT:
+            isFixWeight = hFish->config.sft.isFixWeight();
+            break;
+        default:
+            break;
+    }
 
     void* ctx        = hFish->GetGGCTX();
     typNUMBER tpData = tpWeight;
     int bFlag        = 0x0;
-    // nIn = shape[0], nOut = shape[1];
+
     //  Storing weight matrices in a transposed form (e.g., as W^Tinstead of W)!
     //      is primarily driven by computational efficiency​ and optimizing memory access patterns​ for modern hardware. It is a common optimization in
     //      frameworks like PyTorch and TensorFlow, not a quirk of LLMs specifically.
@@ -417,14 +422,17 @@ bool SLP::Build(int flag) {
         w = GT(hFish, tpData, {nOut, nIn});
         if (isBias)
             b = GT(hFish, tpData, {nOut});
-    } else if (shape.size() == 4) {
+    } /*else if (shape.size() == 4) {
         w = GT(hFish, tpData, shape);
         if (isBias)
             b = GT(hFish, tpData, {1, 1, shape[3]});
-    } else {
+    }*/
+    else {
         assert(0);
     }
     BIT_SET(w->flags, GTensor::F_WMATRIX);
+    if (isFixWeight)
+        BIT_SET(w->flags, GTensor::F_FIXW);
     // if (isStrMatch(name,hFish->config.filter_tmp_grad)) {  //  ,"attn.wq","attn.wk","attn.wv","attn.wo"
     //     BIT_SET(w->flags, GTensor::F_TMP_GRAD);
     // }
@@ -435,11 +443,22 @@ bool SLP::Build(int flag) {
         DEBUG_HERE;
     }
 
-    if (isBias)
+    if (isBias) {
         hFish->InitGensor(ctx, sb.c_str(), b, true);
-
+        if (isFixWeight)
+            BIT_SET(b->flags, GTensor::F_FIXW);
+    }
     if (b != nullptr)
         b->tpInit = INIT_WEIGHT::W_ZERO;
+
+    const auto& loAB = hFish->config.loAB;
+    if (loAB.type != LoAB_CARD::typW::NO_LORW && G_Has_(name, loAB.filterW)) { /*layid > 6 && */
+        if (loAB.isPassW())                                                   //  loAB.type == LoAB_CARD::AB || loAB.type == LoAB_CARD::SHADOW_AB
+            BIT_SET(w->flags, GTensor::F_FIXW);                                // Need w's shadow as teacher
+        InitCompression(name);
+    } else {
+    }
+
     SHAPE s3 = {B, T, nOut};
     out      = std::make_shared<huTensor>(hFish, name + ".out", s3, tpData, false);
     if (BIT_TEST(flag, F_DELTA)) {
@@ -447,20 +466,21 @@ bool SLP::Build(int flag) {
     } else {
         delta = gBUFF->gate_delta;
     }
-    out->AddSrc({w, b});  //  wLORAs contain more!
+    out->AddSrc({w, b});  //  wLoABs contain more!
     // hFish->InitGensor(ctx,so.c_str(),out,false);
     return true;
 }
 
-bool SparseNeuron::InitCompression(COMPRESSIVE_SENSING type, LORA_ADAPT_W tpLora, int flag) {
+bool SparseNeuron::InitCompression(const std::string& wname, int flag) {
     bool bRet   = false;
-    compression = type;
+    compression = COMPRESSIVE_SENSING::LORA;
+    auto tpLora = hFish->config.loAB.type;
     switch (compression) {
         case SVD:
             assert(shape.size() == 2);
             break;
         case LORA:
-            bRet = InitLoRA(tpLora, flag);
+            bRet = InitLoRA(tpLora, wname, flag);
             break;
         default:
             break;
@@ -544,6 +564,22 @@ hGensor SLP::Ming(RLS_BP* hRLS, hGensor cur, int flag) {
     return cur;
 }
 
+// Forw_cpu is depreacted!
+typedef float (*dotprod_t)(void* w, int n, int i, float* x);
+float dotprod_fp32(void* w, int n, int i, float* x);
+float dotprod_fp16(void* w, int n, int i, float* x);
+float dotprod_fp8(void* w, int n, int i, float* x);
+float dotprod_gf4(void* w, int n, int i, float* x);
+dotprod_t fnDot(typNUMBER tp);
+
+dotprod_t fnDot(typNUMBER tp) {
+    int wbit = BitPE(tp);
+    return wbit == 4 ? dotprod_gf4 : wbit == 8 ? dotprod_fp8 : wbit == 16 ? dotprod_fp16 : dotprod_fp32;
+}
+// W (nOut,nIn) @ x (nIn) -> xout (nOut)
+void D_matvec(float* xout, float* x, void* w, float* b, int nIn, int nOut, dotprod_t dotprod);
+void D_matmul_sparse(float* xout, float* x, void* w, float* b, int n, int d, int* hot, dotprod_t dotprod);
+void D_matmul_sparse_2(float* xout, float* x, void* w, float* b, int n, int d, int nHot, int* hot, float* dTemp, dotprod_t dotprod);
 int SLP::Forw_cpu(float* rhs, float* lhs, int flag) {
     float* bias = b == nullptr ? nullptr : TO<float>(b);
     if (compression == GBDT) {
@@ -572,8 +608,11 @@ int SLP::Forw_cpu(float* rhs, float* lhs, int flag) {
         D_matvec(rhs, UX, hSVD->V(), bias, nHeavy, nOut, fDot);
         assert(isValidF(nOut, rhs));
         delete[] UX;
-    } else
-        D_matvec(rhs, lhs, w->data, bias, nIn, nOut, hFish->config.model.fDotW);
+    } else {
+        assert(0);  //  Deprecated
+        // D_matvec(rhs, lhs, w->data, bias, nIn, nOut, hFish->config.model.fDotW);
+    }
+
     return 0x0;
 }
 
@@ -599,7 +638,7 @@ ROPE::ROPE(SelfAttention* hQKV, const std::string& key_, int flag) : SparseNeuro
     }
 }
 /*
-    https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html#torch.nn.LayerNorm
+
 */
 bool ROPE::Build(int flag) {
     auto& config = hFish->config;
@@ -872,6 +911,7 @@ hGensor GeNeuron::AfterMing(RLS_BP* hRLS, hGensor cur, int flag) {
                         }
                         continue;
                     }
+                    assert(!isFixWeight);
                     if (hOPT->UpdateTensorParam(t, nullptr, 0.0) != KOIFISH_OK)
                         return nullptr;
 
@@ -936,6 +976,13 @@ std::vector<hGensor> GeNeuron::PickGensors(int flag) const {
             int debug = 0;
         }
     }
+    //  @   hGTensor operator>>(hGTensor t, const SLP &slp)
+    if (isLORA) {
+        for (auto lora : wLoABs) {
+            tmp.push_back(lora->a);
+            tmp.push_back(lora->b);
+        }
+    }
     if (BIT_TEST(flag, PICK_SUBNN)) {
         auto& nonConstThis = const_cast<GeNeuron&>(*this);  // dangerous cast
         for (auto nn : nonConstThis.SubNeurons()) {         //  @SetGuoke
@@ -943,17 +990,11 @@ std::vector<hGensor> GeNeuron::PickGensors(int flag) const {
                 int debug = 0;
             }
             GPLUS(tmp, nn->PickGensors(flag));
-            //  @   hGTensor operator>>(hGTensor t, const SLP &slp)
-            /*if (isLORA) {
-                for (auto lora : nn->wLORAs) {
-                    arrT.push_back(lora->a);
-                    arrT.push_back(lora->b);
-                }
-            }*/
         }
     }
 
     std::vector<hGensor> arrT;
+    std::vector<string> arrNames;
     std::map<hGensor, std::string> mapT;
     for (auto t : tmp) {
         if (strcmp(t->name, "model.blk.0.attn.wo.weight") == 0) {
@@ -966,6 +1007,7 @@ std::vector<hGensor> GeNeuron::PickGensors(int flag) const {
         }
         mapT[t] = t->name;
         arrT.push_back(t);
+        arrNames.push_back(t->name);
     }
 
     return arrT;
@@ -1000,7 +1042,7 @@ bool GeNeuron::UpdateShortcut(bool isShort, int flag) {
             // ckpParams.push_back(t);
             t->needUpdateParam = true;
             if (isShort) {
-                t->needUpdateParam = false;
+                t->needUpdateParam = false;  // shortcut
             }
             if (t->needUpdateParam)
                 SUM::nUpdateParam++;
@@ -1084,7 +1126,7 @@ int FFN::SetGuoke(GeNeuron* hGuoke_, bool isRefParam, int flag) {
     return nG;
 }
 int SLP::OnMultiscale(SLP* src, int flag) {
-    if (tpLORA == LORA_ADAPT_W::refW_AB) {
+    if (tpLORW == LoAB_CARD::typW::SHADOW_AB) {
         w->SetRefer(src->w);
         if (b != nullptr) {
             b->SetRefer(src->b);
@@ -1144,9 +1186,6 @@ hGTensor operator>>(hGTensor t, const SLP& slp) {
         return t;
     assert(slp.out != nullptr);
     slp.out->AddSrc({t});  // no need to add(w,b)! which has called in SLP::Build
-    // for (auto lora : slp.wLORAs) {
-    //     slp.out->AddSrc({lora->a, lora->b});
-    // }
     return slp.out;
 }
 hGTensor operator>>(hGTensor t, const Relu& relu) {

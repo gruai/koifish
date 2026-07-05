@@ -14,6 +14,7 @@
 #include "../Manifold/Neuron.hpp"
 #include "../Manifold/Optimizer.hpp"
 #include "../PackedQ.hpp"
+#include "../Utils/rapidhash.h"
 #include "GTensor.hpp"
 using namespace Grusoft;
 
@@ -61,6 +62,19 @@ hQUANT GeQuant::MakeInstance(GeNeuron* hNeuron, const std::string& nam_, QUANT_C
 
             hQuant->ExTensor(t, aux);
             n->out->AddSrc(aux);
+        }
+        if (hQuant->qTensors.empty()) {
+            _WARN("Empty quant@%s, reset to null\n", hQuant->name.c_str());
+            for (auto it = quants.begin(); it != quants.end();) {
+                if (it->second == hQuant) {
+                    it = quants.erase(it);
+                    break;
+                } else {
+                    ++it;
+                }
+            }
+            hQuant.reset();
+            hQuant = nullptr;
         }
     }
     return hQuant;
@@ -128,8 +142,8 @@ GeQuant::~GeQuant() {
 }
 
 int GeQuant::ExTensor(hGTensor hBase, std::vector<hGTensor>& aux, int flag) {
-    if (!params.filter_MIQ.empty()) {
-        if (!G_Has_(hBase->name, params.filter_MIQ)) {  // model.layers.26.self_attn.q_proj.weight
+    if (!params.filterQ.empty()) {                   // if filterQ not empty, only matched tenson would be quantized
+        if (!G_Has_(hBase->name, params.filterQ)) {  // model.layers.26.self_attn.q_proj.weight
             return 0x0;
         }
     }
@@ -142,6 +156,7 @@ int GeQuant::ExTensor(hGTensor hBase, std::vector<hGTensor>& aux, int flag) {
         return 0x0;
 
     hBase->hQuant = shared_from_this();
+    qTensors.push_back(hBase);
     if (!params.hasZS) {
         return 0x0;
     }
@@ -819,7 +834,7 @@ float GeQuant::LowBit_worker(shared_ptr<GTensor> hTensor, const void* srcData, i
         hTensor->disq.OnArray(hTensor->size(), (bf16*)srcData, !isGPU, flag);
     }
     hTensor->InitShadoW(srcData, isGPU, params.distill);
-
+    assert(hTensor->tpShadow == GTensor::S_BASE_WEIGHT || DEBUG.verFakeQuant < 0);  // don't support S_TMP_TERNARY after 2026/06
     hTensor->isBackGama = hTensor->hFish->isTrain() && params.xTarget == QUANT_CARD::X_GAMA;
     // PrintTensor<floatX>("srcData", (floatX*)srcData, false, hTensor->size(), 1, 1, 1, -1);
     int nRow = hTensor->shape[0], nCol = hTensor->shape[1], nTry = 0;  // 4-bit is enough
@@ -860,13 +875,18 @@ float GeQuant::LowBit_worker(shared_ptr<GTensor> hTensor, const void* srcData, i
     hTensor->BeforeQuant(this);
     assert(hTensor->size() <= nzMost);                   // K.w->size()<Q.w->size()
     H2D(hTensor->gama_T(), best_gama, hTensor->szGama);  //
-    H2D(hTensor->data, best_quant, best_.szQuant);
+
+    if (1) {
+        H2D(hTensor->data, best_quant, best_.szQuant);
+    }
+    hTensor->hash64 = rapidhash_64(best_quant, best_.szQuant);
     // Practical quantization error of RTN 4-bit Quantization of Gaussian-Distributed LLM Weights: 6.3% to 15.8%.
     impurity = errQ;
 #ifndef NDEBUG
     if (params.blockAt != BLOCK_at_MATRIX) {  // only for debug
-        H2D(hTensor->shadoW, srcData, sizeof(floatX) * hTensor->size());
-        err    = hTensor->SetDataX((floatX*)(hTensor->shadoW), true);  //
+        floatX* tmpQ = ToX(gBUFF->tmpTernary);
+        H2D(tmpQ, srcData, sizeof(floatX) * hTensor->size());
+        err    = hTensor->SetDataX(tmpQ, true);  //
         errGPU = fabs(err / average - errQ);
         if (params.distill.lenda > 0) {
         } else
@@ -1187,16 +1207,14 @@ bool QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, void* 
     if (jQuant.find("group_size") != jQuant.end()) {
         T_group = jKV(jQuant, {"group_size"}, T_group, false);  // default group_size
     }
-    if (jQuant.find("MIQ") != jQuant.end()) {
-        filter_MIQ = jKV_arr(jQuant, {"MIQ"}, filter_MIQ, false);
-    }
-    // filter_MIQ = {"layers.0.self_attn"};
+
     if (jQuant.find("train_target") != jQuant.end()) {
         s0 = jKV(jQuant, {"train_target"}, s0, false);
         if (s0 == "gama") {
             xTarget = X_GAMA;
         }
     }
+
     // xTarget = DEBUG.cmd_p1 ? X_WEIGHT : X_GAMA;
 
     s0 = "";
@@ -1210,9 +1228,13 @@ bool QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, void* 
         }
         if (G_Has_(name, {k})) {
             const JSON& jQ = it.value();
+            if (jQ.find("filterQ") != jQ.end()) {
+                filterQ = jKV_arr(jQ, {"filterQ"}, filterQ, false);
+            }
             string info;
             info         = jKV(jQ, {"quant_method"}, info, false);
             default_bits = jKV(jQ, {"bits"}, default_bits, false);
+            distill      = hNN->hFish->config.distill;
             if (info == "bitnet") {
                 isVendorQuant = false;  //  The model in https://huggingface.co/microsoft/bitnet-b1.58-2B-4T-bf16 stored in dequant format, so strange!
                 default_bits  = 2;      //  1.58bit
@@ -1223,9 +1245,8 @@ bool QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, void* 
                 blockAt     = BLOCK_at_MATRIX;
             } else if (info == "yyang") {
                 // isSymmetric = true;
-                yyang   = default_bits == 1 ? I_01 : I_TERNARY;
-                T_errQ  = 1.0;
-                distill = hNN->hFish->config.distill;
+                yyang  = default_bits == 1 ? I_01 : I_TERNARY;
+                T_errQ = 1.0;
             } else {
                 if (default_bits != 4 && default_bits != 1 && default_bits != 2 && default_bits != 8) {
                     default_bits = 4;
@@ -1261,10 +1282,10 @@ bool QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, void* 
 }
 bool QUANT_CARD::isPass(const std::string& name, int flag) const {
     return type == NO_QUANT;
-    /*if (filter_MIQ.empty()) {
+    /*if (filterQ.empty()) {
         return type == NO_QUANT;
     }
-    if (G_Has_(name, filter_MIQ)) {  // model.layers.26.self_attn.q_proj.weight
+    if (G_Has_(name, filterQ)) {  // model.layers.26.self_attn.q_proj.weight
         return false;
     }*/
     return true;

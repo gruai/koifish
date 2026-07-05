@@ -115,9 +115,9 @@ struct PIPE_Adamw : public PIPE_Optimizer {
             if (BIT_TEST(tensor->flags, GTensor::F_GAMA)) {
                 assert(tensor->type == typNUMBER::BF16 || tensor->type == typNUMBER::F32);
                 DEBUG_HERE;
-            } else
-                params = (floatX*)tensor_->shadoW;  // ToX(gBUFF->tmpTernary_);
-            // tensor->GetDataX();  // no need de dequant again!
+            } else{
+                params = (floatX*)tensor_->shadoW;  
+            }
         }
         assert(params != nullptr);
     }

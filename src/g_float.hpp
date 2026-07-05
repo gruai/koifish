@@ -35,6 +35,7 @@ using Q2_16   = uint32_t;
 using Q1_32   = uint32_t;
 
 using SHAPE = std::vector<int>;
+
 inline size_t SHAPE2NZ(const SHAPE& shape) {
     size_t nz = 1;
     for (auto n : shape) {
@@ -68,41 +69,60 @@ struct FLOAT_META {
     size_t nByte(size_t nElem) const;
 };
 
+/* ============================================================
+// A macro to dispatch datatypes & formats
+// Y(number, tpStorag, tpCompute, size, b1, b2) => (NUMBER, STORAGE_TYPE, COMPUTE_TYPE, BIT, IS_FLOAT, IS_SIGNED)
+1. Notes
+    F16,    1 sign, 5 exponent, 10 mantissa(significand) bits; 15361 numbers in [0.0, 1.0], endpoints included.  On average, log10(2**11) ~ 3.311 decimal
+digits. BF16,    1 sign, 8 exponent, and the significand is being stored in 7 bits. F8E5M2,    1 sign, 5 exponent, 1 implicit and 2 explicit mantissa bits
+    F8E4M3,    1 sign, 4 exponent, 1 implicit and 3 explicit mantissa bits
+    T_SEQ      {−3, −1, 1, 3}
+    T_SIGN,    ternary {-1, 0, 1}
+    T_BINARY,      binary {-1,  1}
+    T_BINARY_3,    binary {-1,  1} from three partition
+============================================================    */
+#define NUMBER_DISPATCH(X)                        \
+    X(F32, float, float, 32, true, true)          \
+    X(F64, double, double, 64, true, true)        \
+    X(F16, uint16_t, uint16_t, 16, true, true)    \
+    X(BF16, bf16, bf16, 16, true, true)           \
+    X(F8E5M2, f8e5, f8e5, 8, true, true)          \
+    X(F8E4M3, f8e5, f8e5, 8, true, true)          \
+    X(U8, uint8_t, uint8_t, 8, false, false)      \
+    X(I8, int8_t, int8_t, 8, false, true)         \
+    X(U16, uint16_t, uint16_t, 16, false, false)  \
+    X(I16, int16_t, int16_t, 16, false, true)     \
+    X(U32, uint32_t, uint32_t, 32, false, false)  \
+    X(I32, int32_t, int32_t, 32, false, true)     \
+    X(U64, uint64_t, uint64_t, 64, false, false)  \
+    X(I64, int64_t, int64_t, 64, false, true)     \
+    X(Q4, uint8_t, uint8_t, 4, false, false)      \
+    X(Q3, uint8_t, uint8_t, 3, false, false)      \
+    X(Q2, uint8_t, uint8_t, 2, false, false)      \
+    X(T_SIGN, uint8_t, uint8_t, 2, false, true)   \
+    X(T_SEQ, uint8_t, uint8_t, 2, false, true)    \
+    X(BOOL1, bool, bool, 1, false, false)         \
+    X(T_BINARY, int8_t, int8_t, 1, false, true)   \
+    X(T_BINARY_3, int8_t, int8_t, 1, false, true) \
+    X(T_BINARY_TILE, int8_t, int8_t, 1, false, true)
+
 /*
     Type of numbers
 */
 enum class typNUMBER : uint8_t {
-    F32 = 0,
-    F16,  //  1 sign, 5 exponent, 10 mantissa(significand) bits; 15361 numbers in [0.0, 1.0], endpoints included.  On average, log10(2**11) ~ 3.311 decimal
-          //  digits.
-    U8,
-    I8,
-    U16,
-    I16,
-    U32,
-    I32,
-    U64,
-    I64,
-    F64,
-    BF16,  //  1 sign, 8 exponent, and the significand is being stored in 7 bits.
-
-    // TQ1_0   = 34,    TQ2_0   = 35,
-
-    F8E5M2,  //  1 sign, 5 exponent, 1 implicit and 2 explicit mantissa bits
-    F8E4M3,  //  1 sign, 4 exponent, 1 implicit and 3 explicit mantissa bits
-
-    Q4,
-    Q3,
-    Q2,
-    T_SIGN,  //  ternary {-1, 0, 1}
-
-    BOOL1,
-    T_BINARY,    //  binary {-1,  1}
-    T_BINARY_3,  //  binary {-1,  1} from three partition
-    T_BINARY_TILE,
-
-    T_OTHER = 39,
+#define Y(number, tpStorag, tpCompute, size, b1, b2) number,
+    NUMBER_DISPATCH(Y)
+#undef Y
+        T_OTHER
 };
+
+/*Size trait
+template<typNUMBER>
+struct C_Size : std::integral_constant<size_t, 0> {};
+#define Y(number, tpStorag, tpCompute, size, b1, b2) \
+    template<> struct C_Size<typNUMBER::number> : std::integral_constant<size_t, size> {};
+NUMBER_DISPATCH(Y)
+#undef Y*/
 
 inline std::map<typNUMBER, FLOAT_META> K_FLOATS = {
     {typNUMBER::F32, {32, "FLOAT", {"F32"}}},       // F32
@@ -237,6 +257,13 @@ using bf16_2 = __nv_bfloat162;
 using half   = __half;
 using half_2 = __half2;
 
+// more datatypes on both floatX & float
+using floatGama = __nv_bfloat16;
+#define CU_GAMA2T CU_16BF2T
+// using floatGama   = half;
+// using floatGama   = float;
+// #define CU_GAMA2T CU_Float2T
+
 template <>
 inline typNUMBER TYPE_<__nv_bfloat16>() {
     return typNUMBER::BF16;
@@ -262,15 +289,14 @@ inline constexpr cudaDataType cuLibType<__nv_fp8_e5m2> = cudaDataType::CUDA_R_8F
 #endif
 
 #else
-
+#include <cstdint>
+// using half      = uint16_t;  // C++11/14/17/20: only correct memory layout, Not a real floating‑point type!
+using half      = _Float16;  // C++11/14/17/20: only correct memory layout, Not a real floating‑point type!
+using floatX    = _Float16;  // Weight
+using floatGama = _Float16;
+using floatGrad = _Float16;
+using bf16      = uint16_t;
 #endif
-
-// more datatypes on both floatX & float
-using floatGama = __nv_bfloat16;
-#define CU_GAMA2T CU_16BF2T
-// using floatGama   = half;
-// using floatGama   = float;
-// #define CU_GAMA2T CU_Float2T
 
 #include "g_float_cpu.hpp"
 
@@ -279,7 +305,10 @@ inline float T2Float(const T* a0) {
     float a;
 
     if (typeid(T) == typeid(half)) {
+#if defined(_USE_CUDA_FLOAT_)
         a = __half2float(*(half*)a0);
+#else
+#endif
     } else if (typeid(T) == typeid(float)) {
         a = *a0;
     } else if (typeid(T) == typeid(double)) {
@@ -297,6 +326,20 @@ template <typename T>
 inline float T2Float(const T* a0, size_t offset) {
     return T2Float(a0 + offset);
 }
+
+#define Y(number, tpStorag, tpCompute, size, b1, b2) \
+    case typNUMBER::number:                          \
+        return T2Float<tpCompute>((const tpCompute*)src, offset);
+
+inline float N2Float(typNUMBER tp, const void* src, size_t offset) {
+    switch (tp) {
+        NUMBER_DISPATCH(Y)
+        default:
+            assert(0 && "N2Float failed @NUMBER_DISPATCH");
+            return 0.0f;
+    }
+}
+#undef Y
 
 template <>
 inline float T2Float<tpBIT2>(const tpBIT2* a0, size_t offset) {
@@ -334,6 +377,28 @@ inline float T2Float<f8e5>(const f8e5* a0) {
     assert(!isnan(a) && !isinf(a));
     return a;
 }
+
+template <typename T>
+inline void T2Float_arr(const size_t N, const T* in, float* out) {
+    for (size_t i = 0; i < N; i++) {
+        out[i] = T2Float(in + i);
+    }
+}
+// return dat0[pos] - dat1[pos]
+template <typename T>
+inline float T2Float_delta(const T* dat0, const T* dat1, const size_t pos, int flag = 0x0) {
+    T delta = dat0[pos] - dat1[pos];
+    return T2Float(&delta);
+}
+
+template <typename T>
+inline T Float2T(const float* a0) {
+    assert(!isnan(*a0) && !isinf(*a0));
+    T a = T(*a0);
+    return a;
+}
+
+#if defined(_USE_CUDA_FLOAT_)
 template <>
 inline float T2Float<__nv_fp8_e5m2>(const __nv_fp8_e5m2* a0) {
     float a = T2Float<f8e5>((const f8e5*)a0);
@@ -350,30 +415,12 @@ inline float T2Float<nv_bfloat16>(const nv_bfloat16* a0) {
     float a = __bfloat162float(*a0);
     return a;
 }
-template <typename T>
-inline void T2Float_arr(const size_t N, const T* in, float* out) {
-    for (size_t i = 0; i < N; i++) {
-        out[i] = T2Float(in + i);
-    }
-}
-// return dat0[pos] - dat1[pos]
-template <typename T>
-inline float T2Float_delta(const T* dat0, const T* dat1, const size_t pos, int flag = 0x0) {
-    T delta = dat0[pos] - dat1[pos];
-    return T2Float(&delta);
-}
+
 template <>
 inline float T2Float_delta(const __nv_fp8_e5m2* dat0, const __nv_fp8_e5m2* dat1, const size_t pos, int flag) {
     float a = T2Float(dat0 + pos), b = T2Float(dat1 + pos);
     // __nv_fp8_e5m2 delta = __hsub(a, b);  //  Use CUDA's built-in subtraction function
     return a - b;
-}
-
-template <typename T>
-inline T Float2T(const float* a0) {
-    assert(!isnan(*a0) && !isinf(*a0));
-    T a = T(*a0);
-    return a;
 }
 template <>
 inline bf16 Float2T<bf16>(const float* a0) {
@@ -399,12 +446,17 @@ inline __nv_fp8_e5m2 Float2T<__nv_fp8_e5m2>(const float* a0) {
     f8e5 a = Float2T<f8e5>(a0);
     return (__nv_fp8_e5m2)(a);
 }
+#endif
 
 inline void Float2T(typNUMBER typ, void* arr, size_t offset, float a) {
     switch (typ) {
         case typNUMBER::BF16: {
+#if defined(_USE_CUDA_FLOAT_)
             bf16 out               = Float2T<bf16>(&a);
             ((bf16*)(arr))[offset] = out;
+#else
+            assert(0 && "BF16 is not implemented!");
+#endif
             break;
         }
         case typNUMBER::F32:
@@ -515,4 +567,3 @@ struct NF3_LUT {
     float nf4_scale[8] = {-1.0f, -0.6961928009986877f * 0.7f, -0.5250730514526367f * 0.7f, -0.18477343022823334f * 0.7f,
                           0.0f,  0.18477343022823334f * 0.7f, 0.5250730514526367f * 0.7f,  1.0f};
 };
-

@@ -14,6 +14,9 @@
 #include <cfloat>
 #include <cstdint>
 
+using dXYZ = double[3];
+using iXYZ = int[3];
+
 /*
 //  Welford's Algorithm to get variance with single pas. numerical stable!
 double G_Variance(const std::vector<double>& data) {
@@ -134,33 +137,6 @@ inline float fp8_to_float(unsigned char v) {
     return a;
 }*/
 
-inline f8e5 float_to_fp8e5m2(float x) {
-    __gcc_fp16 val = float_to_half(x);
-    f8e5 out;
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-    memcpy(&out, (char*)&val, sizeof(f8e5));  // TODO: round instead of truncate?
-#else
-    memcpy(&out, (char*)&val + sizeof(f8e5), sizeof(f8e5));  // TODO: round instead of truncate?
-#endif
-    return out;
-}
 
-inline void float_to_fp8e5m2(size_t n, float* x, f8e5* out, int flag = 0x0) {
-    float* src = x;
-    f8e5* dst  = out;
-    for (size_t i = 0; i < n; i++, src++, dst++) {
-        *dst = float_to_fp8e5m2(*src);
-    }
-}
 
-typedef float (*dotprod_t)(void* w, int n, int i, float* x);
-float dotprod_fp32(void* w, int n, int i, float* x);
-float dotprod_fp16(void* w, int n, int i, float* x);
-float dotprod_fp8(void* w, int n, int i, float* x);
-float dotprod_gf4(void* w, int n, int i, float* x);
-dotprod_t fnDot(typNUMBER tp);
 
-// W (nOut,nIn) @ x (nIn) -> xout (nOut)
-void D_matvec(float* xout, float* x, void* w, float* b, int nIn, int nOut, dotprod_t dotprod);
-void D_matmul_sparse(float* xout, float* x, void* w, float* b, int n, int d, int* hot, dotprod_t dotprod);
-void D_matmul_sparse_2(float* xout, float* x, void* w, float* b, int n, int d, int nHot, int* hot, float* dTemp, dotprod_t dotprod);

@@ -59,10 +59,11 @@ extern "C" __global__ void __launch_bounds__(128, 1) header_cls_T64_64_S49152_bf
       condval_1 = bfloat16_t(0x0p+0f/*0.000000e+00*/);
     }
     bfloat16_t p_label = (condval_1 * ((bfloat16_t)nValidToken));
-    losses[((int64_t)((int)blockIdx.x))] = ((float)(hlog(p_label) * bfloat16_t(-0x1p+0f/*-1.000000e+00*/)));
+    float p_label_1 = max(((float)p_label), 0x1.79ca10c924223p-67f/*1.000000e-20*/);
+    losses[((int64_t)((int)blockIdx.x))] = (logf(max(((float)p_label), 0x1.79ca10c924223p-67f/*1.000000e-20*/)) * -0x1p+0f/*-1.000000e+00*/);
     if (0 <= label) {
       if (label < 151936) {
-        grad_pre_logits[((((int64_t)((int)blockIdx.x)) * (int64_t)151936) + ((int64_t)label))] = ((bfloat16_t)((((float)p_label) - 0x1p+0f/*1.000000e+00*/) / ((float)nValidToken)));
+        grad_pre_logits[((((int64_t)((int)blockIdx.x)) * (int64_t)151936) + ((int64_t)label))] = ((bfloat16_t)((max(((float)p_label), 0x1.79ca10c924223p-67f/*1.000000e-20*/) - 0x1p+0f/*1.000000e+00*/) / ((float)nValidToken)));
       }
     }
   } else {

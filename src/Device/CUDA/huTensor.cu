@@ -17,8 +17,8 @@
 #include "../../Utils/GST_log.hpp"
 #include "../../Utils/GST_rander.hpp"
 #include "../../Utils/GST_util.hpp"
-#include "../Utils/rapidhash.h"
 #include "../../g_float.hpp"
+#include "../Utils/rapidhash.h"
 #include "./kernel/operator.cuh"
 #include "./kernel/utils.cuh"
 static Grusoft::GRander randParam;
@@ -208,6 +208,7 @@ bool huTensor::InitParam(int tpX) {
                         // Print(name, 0x0, -1);
                     } else {
                         CU_disti_normal<floatX>(nInit, (floatX*)data, 0.02f * residual_scale, param_seed);
+                        hash64 = D2H_hash64(data, nInit * sizeof(floatX));
                     }
 
                     break;
@@ -397,6 +398,15 @@ bool H2D(void* dev, const void* host, size_t szData, int flag) {
     }
 }
 
+uint64_t D2H_hash64(const void* dev, size_t szData, int flag) {
+    uint64_t hash64 = 0x0;
+    void *host = std::malloc(szData);    
+    D2H(dev, host, szData, flag);
+    hash64 = rapidhash_64(host, szData);
+    std::free(host);
+    return hash64;
+}
+
 /**
  * 1. Gama is also part of data! "Alloc_1(&data, true, desc + suffix, szData + szGama"@huTensor::Alloc
  * 2. szGama should be same as GTensor::jDesc
@@ -421,15 +431,21 @@ bool GTensor::SerialGamaData(const string& info, void* host, bool isToHost, size
         if (isToHost) {
             // cudaCheck(cudaMemcpyAsync(host,data, szX, cudaMemcpyDeviceToHost));
             err = cudaMemcpy(host, data, szX, cudaMemcpyDeviceToHost);  // 303872
+            // if (G_Has_(name, {"model.layers.0.mlp.down_proj.weight"})) {
+            //     uint64_t hash63 = rapidhash_64(host, szX);
+            //     _INFO("\n\t<hash@output>%-40.40s\t0x%016llX\n", name, hash63);
+            //     this->Print("hash@output", 0, -1);
+            // }
+
         } else {
             // cudaCheck(cudaMemcpyAsync(data, host,szX, cudaMemcpyHostToDevice));
-            err = cudaMemcpy(data, host, szX, cudaMemcpyHostToDevice);
-            hash64 = rapidhash(host, szX);
+            err    = cudaMemcpy(data, host, szX, cudaMemcpyHostToDevice);
+            hash64 = rapidhash_64(host, szX);
         }
         if (err != cudaSuccess) {
             _ERROR("[Serial] failed to SerialGamaData_@\"%s\"! err=\"%s\" (%s code=%d)\n", name, cudaGetErrorString(err), cudaGetErrorName(err), err);
             exit(KOIFISH_SAFETENSOR_SERIAL);
-        }        
+        }
         if (flag < 0) {
             char buf[1024];
             sprintf(buf, "%s:%s@%s", info.c_str(), isToHost ? "SAVE" : "LOAD", name);
@@ -496,7 +512,7 @@ bool GTensor::Serial_Quant_MMAP(bool isSave, bool isReset, SERIAL_TYPE serial_ty
             if (quant != nullptr && (quant->params.isDequant4Generate || type == quant->bit2typ())) {
                 SerialGamaData("", tmpData, false, szData + szGama + szM + szV);
                 if (G_Has_(name, {"model.layers.0.self_attn.v_proj.weight"}))
-                    Print(name, 0, -1);
+                    Print(name, 0, 0);
                 assert(!quant->params.distill.isKeepShadoW());  //  If loaded paramter is also 2-bit, no need to keep is as shadow!
                 //[todo] need refactor of InitShadoW
                 InitShadoW(nullptr, true, quant->params.distill);
@@ -518,8 +534,6 @@ bool GTensor::Serial_Quant_MMAP(bool isSave, bool isReset, SERIAL_TYPE serial_ty
                     else
                         SAFE_read_mmap(tmpData, (hBITARR)host_data, szData + szGama + szM + szV);  // szData
                 }
-                hash64 = rapidhash(tmpData, szData);
-
                 if (quant != nullptr && !quant->params.isVendorQuant) { /*quant->params.type != QUANT_MODE::PRE_QUANT*/
                     double t0 = GST_ms();
                     if (quant->params.isDequant4Generate) {
@@ -532,13 +546,20 @@ bool GTensor::Serial_Quant_MMAP(bool isSave, bool isReset, SERIAL_TYPE serial_ty
                     }
                     SUM::tQuant += GST_ms() - t0;
                 } else {
+                    // assert(hash64 == 0x0);
+                    hash64 = rapidhash_64(tmpData, szData);
+                    assert(hash64 != 0x0);
                     H2D(data, tmpData, szData);
                     if (G_Has_(name, {"model.layers.0.self_attn.v_proj.weight"}))
-                        Print(name, 0, -1);
+                        Print(name, 0, 0);
                     // cudaCheck(cudaMemcpy(data, tmpData, szData, cudaMemcpyHostToDevice));
                 }
                 if (isAllocTmpData) {
                     delete[] tmpData;
+                }
+                if (G_Has_(name, {"model.layers.0.mlp.down_proj.weight"})) {
+                    _INFO("\n\t<hash@input>%-40.40s\t0x%016llX\n", name, hash64);
+                    this->Print("hash@input", 0, 0);
                 }
             }
 
@@ -632,57 +653,6 @@ bool huTensor::OverWrite(hGTensor hGT, bool isSrc, int flag) {
 }
 
 hGTensor huTensor::CrossEntropy(const hGTensor b, int flag) { return b; }
-
-double tNormsOf(const std::vector<hGTensor>& tensors, int flag) {
-    float *grad_norm_squared, a, a_pre = 0.0;
-    grad_norm_squared = (float*)(gBUFF->bt4c->data);
-    double norm       = 0.0f;
-    int num_slices[2] = {1, 1}, max_num_block_sums = get_max_num_block_sums(num_slices, 2);
-    size_t nz = 0;
-    // bool is_first_pass = true;  //
-    for (auto tensor : tensors) {
-        assert(0);  // Deprecated
-        /*//ShardInfo shard ={0, tensor->size()};
-        size_t nEle = tensor->size();       nz+=nEle;
-        assert(tensor->grad!=nullptr);
-        floatX* val = (floatX*)(tensor->grad);
-        global_norm_squared(grad_norm_squared, val, nEle, 0, 1,max_num_block_sums, is_first_pass, main_stream);
-        if(DEBUG.check_tensor_norm){
-            cudaCheck(cudaMemcpy(&a, grad_norm_squared, sizeof(float), cudaMemcpyDeviceToHost));
-            assert(a>=a_pre);
-            tensor->gnorm = sqrt(a-a_pre);           a_pre = a;
-        }
-        is_first_pass = false;*/
-        // PrintTensor<floatX>("tNormsOf",val,true,nEle,1);
-        // break;
-    }
-    global_sum_deterministic(grad_norm_squared, grad_norm_squared, max_num_block_sums, main_stream);
-    cudaCheck(cudaMemcpy(&a, grad_norm_squared, sizeof(float), cudaMemcpyDeviceToHost));
-
-    norm = sqrt(a);
-    a    = sqrt(a / nz);
-    return norm;
-}
-
-/* Deprecated
-template <class T>
-__global__ static void CU_x2_(float* out, const T* x0, size_t N) {
-    size_t index      = blockIdx.x * blockDim.x + threadIdx.x;
-    size_t ldT        = blockDim.x * gridDim.x;
-    float accumulator = 0.f, a, block_sum = 0;
-    for (size_t i = index; i < N; i += ldT) {
-        a = (float)x0[i];
-        accumulator += a * a;
-    }
-    out[blockIdx.x] = blockReduce_v0<warpReduceSum>(accumulator);
-    if (blockIdx.x == 0 && threadIdx.x == 0) {
-        float sum = 0.0;
-        for (size_t i = 0; i < blockDim.x; i++) {
-            sum += out[i];
-        }
-        *out = sum;
-    }
-}*/
 
 // static float* devBlockSum2 = nullptr;
 double GTensor::Length(int type, int flag) {

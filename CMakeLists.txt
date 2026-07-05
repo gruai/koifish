@@ -27,9 +27,10 @@ OPTION(K_USE_OPENMP                 "KOIFISH: Enable OpenMP"                 ON)
 OPTION(K_USE_OPENBLAS               "KOIFISH: Enable OpenBLAS"               OFF)
 OPTION(K_USE_GBDT                   "KOIFISH: Enable Gradient boosting trees"               ON)
 OPTION(K_USE_EIGEN                  "KOIFISH: Enable Eigen lib"               OFF)
-OPTION(K_USE_TVM                    "KOIFISH: Enable TVM lib"               OFF)
+# OPTION(K_USE_TVM                    "KOIFISH: Enable TVM lib"               OFF)
 OPTION(K_USE_TILELANG               "KOIFISH: Enable TileLang"               ON)
 OPTION(K_TESTING                    "KOIFISH: Do some testing"               OFF)
+OPTION(K_WATCHING                   "KOIFISH: Do some watching"              OFF)
 # OPTION(K_USE_CUFILE "Enable cuFile support for optimized file I/O" OFF)
 # OPTION(K_USE_NVML "Enable nvml support for detailed GPU stats reporting" OFF)
 # OPTION(K_USE_MPI "Enable MPI backend for multi-GPU support" OFF)
@@ -56,50 +57,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_compile_definitions(_TENSOR_G_)
 
 find_package(Threads REQUIRED)
-
-if(K_USE_TVM AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.gitmodules" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
-  find_package(Git QUIET)
-  if(Git_FOUND)
-    message(STATUS "git submodule update --init --recursive ...")
-    execute_process(
-      COMMAND ${GIT_EXECUTABLE} submodule update --init --recursive
-      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-      RESULT_VARIABLE K_GIT_SUBMODULE_RESULT
-    )
-    if(NOT K_GIT_SUBMODULE_RESULT EQUAL 0)
-      message(
-        FATAL_ERROR
-          "Failed to initialize git submodules. Please run "
-          "`git submodule update --init --recursive` and re-run CMake."
-      )
-    endif()
-  else()
-    message(
-      FATAL_ERROR
-        "Git is required to initialize TileLang submodules. Please install git or fetch the submodules manually."
-    )
-  endif()
-endif()
-# find_package(TVM REQUIRED)
-
-if(K_USE_TVM)
-    set(K_USE_CUDNN OFF)
-    set(TVM_LIB tvm) 
-    include(cmake/load_tvm.cmake)
-    add_subdirectory(${TVM_SOURCE} ${TVM_LIB} EXCLUDE_FROM_ALL)
-    # Resolve compile warnings in tvm
-    add_compile_definitions(DMLC_USE_LOGGING_LIBRARY=<tvm/runtime/logging.h>)
-    message(STATUS "TVM_SOURCE=${TVM_SOURCE} TVM_INCLUDES=${TVM_INCLUDES} TVM_LIBRARIES=${TVM_LIBRARIES}")
-    if(EXISTS ${TVM_SOURCE}/cmake/config.cmake)
-        include(${TVM_SOURCE}/cmake/config.cmake)    
-    else()
-        message(FATAL_ERROR "Failed to load TVM. Please ensure TVM is provided as a submodule or installed on the system.")
-    endif()
-    set(MORE_INC ${MORE_INC} ${TVM_INCLUDES})
-    add_compile_definitions(__USE_TVM__)
-else()
-    set(K_USE_CUDNN ON)
-endif()
 
 if(K_USE_TILELANG)
     set(TL_INC  ${CMAKE_SOURCE_DIR}/src/Device/tile_kernel/ /opt/cutlass/include) 
@@ -151,6 +108,8 @@ if(K_USE_EIGEN)
     set(MORE_INC ${MORE_INC} /home/cys/rnd/gssx/gsp_3.0/library/eigen-3.4.0/)
 endif()
 
+
+
 if(K_USECUDA)
     # if target == '4090':
     #     cuda_flags.append('-DCUDA_ADA')
@@ -174,7 +133,7 @@ if(K_USECUDA)
         if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
             set(CMAKE_CUDA_ARCHITECTURES native)
         endif()
-        add_compile_definitions(__USE_CUDA__)
+        add_compile_definitions(__USE_CUDA__ _USE_CUDA_FLOAT_)
         message(STATUS "CUDA ARCH=${CMAKE_CUDA_ARCHITECTURES} DIR=${CUDA_TOOLKIT_ROOT_DIR} INCLUDE=${CUDAToolkit_INCLUDE_DIRS}")
         enable_language(CUDA)
         
@@ -255,7 +214,7 @@ add_subdirectory(src/Models)
 add_subdirectory(src/Utils)
 add_subdirectory(src/TokenSet)
 
-set(sources   ${TGraph_sources} ${util_sources} ${tensor_sources} ${kernel_sources} ${cheby_sources} ${Fuzi_sources} ${ggex_sources} ${device_sources} ${model_sources} 
+set(sources   ${TGraph_sources} ${util_sources} ${tensor_sources} ${kernel_sources} ${cheby_sources} ${watch_sources} ${Fuzi_sources} ${ggex_sources} ${device_sources} ${model_sources} 
     ${token_sources} ${mort_sources} ${blas_sources} ${TEST_SRCS} )
 add_executable(koifish ${CMAKE_CURRENT_SOURCE_DIR}/src/koifish.cpp ${sources} )
 add_executable(bubble ${CMAKE_CURRENT_SOURCE_DIR}/src/bubble.cpp ${sources} )
@@ -265,7 +224,8 @@ message(STATUS "KOIFISH sources=${sources} device_sources=${device_sources}")
 add_library(prog_deps INTERFACE)
 target_link_libraries(prog_deps
   INTERFACE
-    ${GG_LIB}    ${OPENBLAS_LIB}    ${TVM_LIB}    ${GFLAGS_LIBRARIES}
+    ${GG_LIB}    ${OPENBLAS_LIB}  ${WATCH_LIB}   ${TVM_LIB}    ${GFLAGS_LIBRARIES}
+    
     CUDA::cudart
     CUDA::cuda_driver
     CUDA::cublas CUDA::cublasLt cudnn    

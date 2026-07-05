@@ -9,6 +9,7 @@
  */
 #include "Serialize.hpp"
 
+#include <fcntl.h>
 #include <sys/mman.h>
 
 #include <algorithm>
@@ -25,8 +26,6 @@
 #define SAFETENSORS_CPP_IMPLEMENTATION
 #endif
 #include "../Tensor/Safetensors.hpp"
-
-std::string K_SafeTensors::config_key_ = "__koifish__config__";
 
 // from json desc entry of each tensor in some checkpoint files
 GTensor::GTensor(Fish* _hFish, const string& _name, JSON& jEntry, int flag) {
@@ -98,7 +97,7 @@ JSON GTensor::jDesc(K_SafeTensors* st, int flag) {
     return js;
 }
 
-void* JSON2SRC(K_SafeTensors* hst, const JSON& jval, const void* bytes_ptr, const size_t bytes_size, size_t& szSrc, GTensor* tensor) {
+void* JSON2SRC(K_SafeTensors* hKST, const JSON& jval, const void* bytes_ptr, const size_t bytes_size, size_t& szSrc, GTensor* tensor) {
     if (jval.at("data_offsets").size() != 2) {
         return nullptr;
     }
@@ -108,7 +107,7 @@ void* JSON2SRC(K_SafeTensors* hst, const JSON& jval, const void* bytes_ptr, cons
         _ERROR("bad offsets");
         return nullptr;
     }
-    size_t szData = tensor->nByte_CKP(hst->ckp);
+    size_t szData = tensor->nByte_CKP(hKST->ckp);
     szSrc         = offset_end - offset_start;
     if (szData > szSrc || szSrc % szData != 0) {
         _WARN("GTensor::LoadParam_ failed! size mismach[%ld!=%ld] @%s", szData * 3, szSrc, tensor->name);
@@ -140,7 +139,7 @@ SHAPE JSON2SHAPE(const JSON& jval) {
     ---- stage two
     1. quant weight (q4->q2 is also quant)
 */
-int GTensor::LoadParam(K_SafeTensors* hst, const std::string& name_, hGTensor kunsor, void* bytes_ptr, size_t bytes_size, int flag) {
+int GTensor::LoadParam(K_SafeTensors* hKST, const std::string& name_, hGTensor kunsor, void* bytes_ptr, size_t bytes_size, int flag) {
     //  "tokenizer.tokens" model.layers.0.mlp.down_proj.qweight   "model.embed_tokens.weight" t->name,
     if (G_Has_(name, {"model.layers.0.mlp.down_proj.weight"})) {  //  model.layers.0.self_attn.q_proj.qweight
         DEBUG_HERE;
@@ -160,7 +159,7 @@ int GTensor::LoadParam(K_SafeTensors* hst, const std::string& name_, hGTensor ku
     typNUMBER tpMMP = kunsor->type;
     if (tpMMP == typNUMBER::I32 && hQuant != nullptr) {
         tpMMP = hQuant->bit2typ();
-        if (hst->ckp.format == FILE_FORMAT_TYPE::CKP_KOIFISH && tpMMP == typNUMBER::Q2) {
+        if (hKST->ckp.format == FILE_FORMAT_TYPE::CKP_KOIFISH && tpMMP == typNUMBER::Q2) {
             assert(0);
             tpMMP = typNUMBER::T_SIGN;
         }
@@ -174,13 +173,13 @@ int GTensor::LoadParam(K_SafeTensors* hst, const std::string& name_, hGTensor ku
     }
 
     ReShape(shape, tpMMP);
-    if (hst->ckp.format == FILE_FORMAT_TYPE::CKP_KOIFISH) {
+    if (hKST->ckp.format == FILE_FORMAT_TYPE::CKP_KOIFISH) {
         assert(szData == kunsor->szData);
         szGama = kunsor->szGama;
     }
     size_t szSrc = kunsor->data_offsets[1] - kunsor->data_offsets[0];
     void* src    = (hBITARR)bytes_ptr + kunsor->data_offsets[0];
-    /*void* src_1  = JSON2SRC(hst, kunsor->jDesc(hst), bytes_ptr, bytes_size, szSrc, this);
+    /*void* src_1  = JSON2SRC(hKST, kunsor->jDesc(hKST), bytes_ptr, bytes_size, szSrc, this);
     if (src != src_1) {
         DEBUG_HERE;
     }*/
@@ -275,6 +274,48 @@ std::string HF_dtype2str(const typNUMBER dtype) {
     return name;
 }
 
+// Save safetensors to file,    return true upon success. `err` will be filled when false.
+bool K_SafeTensors::Save(const std::string& filename, size_t& sz, std::string* warn, std::string* err, int flag) {
+    bool isRemoveOld = false;
+    if (std::remove(filename.c_str()) == 0) {
+        isRemoveOld = true;
+    } else {
+    }
+    posix_fd = open(filename.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (posix_fd == -1) {
+        if (err) {
+            (*err) += "Failed to open `" + filename + "` to save tensors! File is either existing directory or write-protected, or disk is full?\n";
+        }
+        return false;
+    }
+
+    // if (1) {
+    //   InitHeader, write to mmp, ...
+    if (!_to_ofs(sz, warn, err, flag)) {
+        return false;
+    }
+    /*} else {  //  avoid huge array out of memory
+        std::vector<uint8_t> buf;
+        if (!_to_memory(buf, warn, err)) {
+            return false;
+        }
+        ofs.write(reinterpret_cast<const char*>(buf.data()), buf.size());
+        sz = buf.size();
+    }*/
+    if (fsync(posix_fd) == -1) {
+        (*err) += "fsync(posix_fd) failed" + filename;
+        close(posix_fd);
+        return false;
+    }
+
+    if (close(posix_fd) == -1) {
+        (*err) += "close(posix_fd) failed" + filename;
+        return false;
+    }
+
+    return true;
+}
+
 /*
      support multiple mmap @ different files
      1. AfterBuild->SafeTensors_Serialize
@@ -312,7 +353,7 @@ bool K_SafeTensors::MMAP(const std::string& path, bool isSave, int flag) {
         if (mmaped) {
             databuffer = databuffer_addr;  // st->mmap_addr + 8 + st->header_size;
         } else {
-            assert(0);
+            assert(0 && "Only support MMF file now!");
             //  databuffer = storage.data();
         }
 
@@ -407,7 +448,8 @@ bool Fuyou::Serialize(bool isSave, int flag) {
 /*
     Called by SAFETENSOR_Serialize
 */
-bool K_SafeTensors::_to_ofs(std::ofstream& ofs, size_t& szAll, std::string* warn, std::string* err, int flag) {
+bool K_SafeTensors::_to_ofs(size_t& szAll, std::string* warn, std::string* err, int flag) {
+    assert(posix_fd > 0);
     bool isInitMMap = BIT_TEST(flag, FSerial::INIT_MMAP);
     bool isCopyMMap = BIT_TEST(flag, FSerial::COPY_MMAP);
     try {
@@ -436,17 +478,17 @@ bool K_SafeTensors::_to_ofs(std::ofstream& ofs, size_t& szAll, std::string* warn
         size_t szOFS = 8 + padded_header_size + databuffer_size, nInit = 0;
         szAll = szOFS;
         fflush(stdout);
-        ofs.write(reinterpret_cast<const char*>(&padded_header_size), sizeof(size_t));
-        ofs.write(reinterpret_cast<const char*>(header_str.data()), header_size);
+        write(posix_fd, reinterpret_cast<const char*>(&padded_header_size), sizeof(size_t));
+        write(posix_fd, reinterpret_cast<const char*>(header_str.data()), header_size);
         if (pad_bytes > 0) {  // // Use whitespace for trailing padding.
             std::vector<uint8_t> pad;
             pad.resize(pad_bytes);
             memset(pad.data(), 0x20, pad_bytes);
-            ofs.write(reinterpret_cast<const char*>(pad.data()), pad_bytes);
+            write(posix_fd, reinterpret_cast<const char*>(pad.data()), pad_bytes);
         }
         // memcpy(buffer.data() + 8 + padded_header_size, databuffer_addr, databuffer_size);
         if (databuffer_addr != nullptr)  // mmap file
-            ofs.write(reinterpret_cast<const char*>(databuffer_addr), databuffer_size);
+            write(posix_fd, reinterpret_cast<const char*>(databuffer_addr), databuffer_size);
         else {
             size_t dst_offset = 0, szTmp, szRead;
             for (size_t i = 0; i < tensors.size(); i++) {
@@ -474,12 +516,17 @@ bool K_SafeTensors::_to_ofs(std::ofstream& ofs, size_t& szAll, std::string* warn
                     if (t->GetDataX() == nullptr) {  // copy data@"model.safetensors" to state file
                         if (isInitMMap) {
                             nInit++;
-                        } else if (isCopyMMap) {
-                            assert(t->host_data != nullptr);
-                            szRead = t->nByte_CKP(ckp, -1);
-                            assert(szRead <= szTmp);
-                            SAFE_read_mmap(tmp, (hBITARR)(t->host_data), szRead);
-                            t->tpInit = INIT_WEIGHT::SERIALIZE;
+                        } else if (isCopyMMap) {    //try low-rank compression
+                            if (BIT_TEST(t->flags, GTensor::F_LORA_A) || BIT_TEST(t->flags, GTensor::F_LORA_B)) {
+                                DEBUG_HERE;     //write ZERO datas to .ckp
+                            } else {
+                                assert(t->host_data != nullptr);
+                                szRead = t->nByte_CKP(ckp, -1);
+                                assert(szRead <= szTmp);
+                                SAFE_read_mmap(tmp, (hBITARR)(t->host_data), szRead);
+                                t->tpInit = INIT_WEIGHT::SERIALIZE;
+                            }
+
                         } else {
                             _ERROR("[ST_SERIALIZE] \"%s\" is empty!\n", t->name);
                             return false;
@@ -498,12 +545,16 @@ bool K_SafeTensors::_to_ofs(std::ofstream& ofs, size_t& szAll, std::string* warn
                         }
                         // t->Print(t->name, 0, -1);
                     }
-                    ofs.write(reinterpret_cast<const char*>(tmp), szTmp);
+                    write(posix_fd, reinterpret_cast<const char*>(tmp), szTmp);
+                    // if (G_Has_(t->name, {"model.layers.0.mlp.down_proj.weight"})) {  // for a strange bug
+                    //     uint64_t hash63 = rapidhash_64(tmp, szTmp);
+                    //     PrintTensor<floatX>("tmp", (floatX*)tmp, false, t->size(), 1, 1, 1, -1);
+                    // }
                     delete[] tmp;
                 } else {
                     szTmp           = t->msgpack.size();
                     const char* tmp = (const char*)(t->msgpack.data());
-                    ofs.write(tmp, szTmp);
+                    write(posix_fd, tmp, szTmp);
                 }
                 dst_offset += szTmp;
             }
@@ -586,21 +637,21 @@ void CheckPoint_Params::Init(int flag) {
     // }
 }
 
-void HST2JSON(const std::string& path, K_SafeTensors* hst, int flag = 0x0) {
+void HST2JSON(const std::string& path, K_SafeTensors* hKST, int flag = 0x0) {
     JSON jSafeTensors;
-    for (size_t i = 0; i < hst->tensors.size(); i++) {
-        std::string key = hst->tensors.keys()[i];
-        hGTensor tensor = hst->tensors.at(i);
+    for (size_t i = 0; i < hKST->tensors.size(); i++) {
+        std::string key = hKST->tensors.keys()[i];
+        hGTensor tensor = hKST->tensors.at(i);
         if (key == K_SafeTensors::config_key_) {
             continue;
         }
-        JSON jdesc    = tensor->jDesc(hst);
+        JSON jdesc    = tensor->jDesc(hKST);
         jdesc["name"] = key;
         jSafeTensors.push_back(jdesc);
     }
     JSON jX;
-    jX["ckp"]  = hst->ckp.sModelPath;
-    jX["path"] = hst->sFolderPath;
+    jX["ckp"]  = hKST->ckp.sModelPath;
+    jX["path"] = hKST->sFolderPath;
     jX["APP"]  = g_sAppPath;
 
     jX["Time"] = GST_timeStr();
@@ -615,24 +666,24 @@ void HST2JSON(const std::string& path, K_SafeTensors* hst, int flag = 0x0) {
     return;
 }
 
-int Fish::SAFETENSOR2Gensors(const std::string& path, K_SafeTensors* hst, int flag) {
+int Fish::SAFETENSOR2Gensors(const std::string& path, K_SafeTensors* hKST, int flag) {
     int nSerialT = 0;
-    hst->Clear();
-    bool bLoad = hst->MMAP(path, false, flag);  //*hst
+    hKST->Clear();
+    bool bLoad = hKST->MMAP(path, false, flag);  //*hKST
     if (!bLoad)
         return false;
     const uint8_t* databuffer{nullptr};
-    if (hst->mmaped) {
-        databuffer = hst->databuffer_addr;  // safeTensors->mmap_addr + 8 + safeTensors->header_size;
+    if (hKST->mmaped) {
+        databuffer = hKST->databuffer_addr;  // safeTensors->mmap_addr + 8 + safeTensors->header_size;
     } else {
         assert(0);
         // databuffer = safeTensors.storage.data();
     }
-    HST2JSON("./_safetensors_.json", hst, flag);
+    HST2JSON("./_safetensors_.json", hKST, flag);
     // Print Tensor info & value.
-    for (size_t i = 0; i < hst->tensors.size(); i++) {
-        std::string key = hst->tensors.keys()[i];
-        hGTensor kunsor = hst->tensors.at(i);  // tensor info from .kun
+    for (size_t i = 0; i < hKST->tensors.size(); i++) {
+        std::string key = hKST->tensors.keys()[i];
+        hGTensor kunsor = hKST->tensors.at(i);  // tensor info from .kun
         if (key == K_SafeTensors::config_key_) {
             continue;
         }
@@ -648,13 +699,13 @@ int Fish::SAFETENSOR2Gensors(const std::string& path, K_SafeTensors* hst, int fl
             return -1;
         }
         auto ginfo = GetGensorInfo(target);
-        // JSON jdesc = tensor->jDesc(hst);
-        if (G_Has_(key, {"model.layers.27.mlp.down_proj.weight"})) {  // model.embed_tokens.weight model.layers.0.mlp.down_proj.weight
+        // JSON jdesc = tensor->jDesc(hKST);
+        if (G_Has_(key, {"model.layers.0.mlp.down_proj.weight"})) {  // model.embed_tokens.weight model.layers.0.mlp.down_proj.weight
             DEBUG_HERE;
             // target->Print("wte@ST", 4, -1);
         }
 
-        if (target->LoadParam(hst, key, kunsor, (void*)databuffer, hst->mmap_size) != 0) {
+        if (target->LoadParam(hKST, key, kunsor, (void*)databuffer, hKST->mmap_size) != 0) {
             return false;
         }
         // if (target->szGama > 0)
@@ -731,23 +782,23 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
     std::string warn, err;
 
     vector<hGensor> curParams = optParams;
-    K_SafeTensors st(this, ckp, path), *hst = (K_SafeTensors*)(ckp.hAllST);
+    K_SafeTensors st(this, ckp, path), *hKST = (K_SafeTensors*)(ckp.hAllST);
     switch (ckp.state_type) {
         case CheckPoint_Params::STATE:
-            assert(hst != nullptr);  // hst=&all_states, so mmp would keep open
-            if (hst->hFish == nullptr)
-                hst->hFish = this;
+            assert(hKST != nullptr);  // hKST=&all_states, so mmp would keep open
+            if (hKST->hFish == nullptr)
+                hKST->hFish = this;
             break;
         case CheckPoint_Params::BEST:
             if (config.fuyou.isON()) {
                 curParams = GetFuyou(-1)->ckpParams;
                 assert(curParams.size() > 0 && "curFuyou is empty!");
             }
-            hst = &st;
+            hKST = &st;
             break;
         case CheckPoint_Params::FULL:
             // assert(0);
-            hst = &st;
+            hKST = &st;
             break;
         default:
             assert(0);
@@ -768,8 +819,8 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
                 jsConfig["CLI_params"]["config"]["model"]["parameter"]["max_pos_embeddings"] = config.model.max_pos_embeddings;  //: 32768
             }
 
-            hst->Clear();
-            hst->UpdateMetaData();
+            hKST->Clear();
+            hKST->UpdateMetaData();
             size_t dst_offset = 0;
             if (curParams.size() == 0) {
                 _WARN("\r\n%s SAFETENSOR: Save_Params=0!!! @\"%s\"", path.c_str());
@@ -782,13 +833,13 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
                 if (t->isRefer())  //  "model.out.weight"
                     continue;
                 jsConfig["tensors"][t->name] = dst_offset;  // tensor->Dump(100,"");
-                dst_offset                   = hst->Register(t, dst_offset, hst->ckp.format);
+                dst_offset                   = hKST->Register(t, dst_offset, hKST->ckp.format);
             }
             if (ckp.format == CKP_KOIFISH) {
-                hst->insertJS(jsConfig, dst_offset);
+                hKST->insertJS(jsConfig, dst_offset);
             }
-            HST2JSON("_safetensors_.json", hst, flag);  //
-            bool ret = hst->Save(path, dst_offset, &warn, &err, flag);
+            HST2JSON("_safetensors_.json", hKST, flag);  //
+            bool ret = hKST->Save(path, dst_offset, &warn, &err, flag);
             if (warn.size()) {
                 std::cout << "WARN: " << warn << "\n";
             }
@@ -805,10 +856,10 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
                 o << std::setw(4) << jsConfig << std::endl;
             }
             _INFO("\r<<<<<< ST_SERIALIZE save @\"%s\"(\"%s\") nInit=%ld sz=%.6gM flag=%d T=%s\n", path.c_str(), jPath.empty() ? "" : "+json", nInit,
-                  szOFS / 1.0e6, flag, GST_timeStr().c_str() );//(GST_ms() - t0) / 1000.0
+                  szOFS / 1.0e6, flag, GST_timeStr().c_str());  //(GST_ms() - t0) / 1000.0
             return true;
         } else {
-            int nSerialT = SAFETENSOR2Gensors(path, hst, 0x0);
+            int nSerialT = SAFETENSOR2Gensors(path, hKST, 0x0);
             _LOG(nSerialT == 0 ? DUMP_ERROR : DUMP_INFO, ">>>>>> ST_SERIALIZE load@\"%s\" nSerialT=%d iter=%d\n", path.c_str(), nSerialT, flag);
             return nSerialT > 0;
         }
@@ -884,9 +935,9 @@ bool Fish::LoadFolderOfST(int stType, int flag) {
     int nSerialT     = 0, curSerialT;
     std::vector<K_SafeTensors*> st_mmfs;
     for (auto path : paths) {
-        K_SafeTensors* hst = new K_SafeTensors(this, ckp, sFolder);
-        st_mmfs.push_back(hst);
-        curSerialT = SAFETENSOR2Gensors(path, hst, 0x0);
+        K_SafeTensors* hKST = new K_SafeTensors(this, ckp, sFolder);
+        st_mmfs.push_back(hKST);
+        curSerialT = SAFETENSOR2Gensors(path, hKST, 0x0);
         if (curSerialT <= 0) {
             isLoadCheckpoint = false;
             break;
@@ -903,8 +954,10 @@ bool Fish::LoadFolderOfST(int stType, int flag) {
         if (isTrain()) {  // otherwise, st would release mmap memory!
             SaveTrain(config.state, true, FSerial::COPY_MMAP);
         }
-        for (auto hst : st_mmfs)  // release all mmf resource
-            delete hst;
+
+        FREE_hVECT(st_mmfs);  // release all mmf resource
+        // for (auto hKST : st_mmfs)
+        //     delete hKST;
 
         if (!config.model.st_index_map.empty()) {  //  "model.safetensors.index.json"     "model.embed_tokens.weight"
                                                    /*for (auto kv : config.model.st_index_map) {
@@ -933,6 +986,7 @@ bool Fish::LoadFolderOfST(int stType, int flag) {
         _WARN("\r[LoadFolderOfST] failed!  please check {\"safetensors\", \"kun\"}  files @\"%s\"!\n", sFolder.c_str());
         return false;
     }
+
     // if (ckp != nullptr)
     //     UpdateCheckPoint(*ckp, false);
     config.fuyou.filter_reload = {};  // ckp.fuyou_filter_reload;        // Don't reload

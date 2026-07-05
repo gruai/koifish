@@ -23,10 +23,16 @@ import multiprocessing as mp
 import numpy as np
 from functools import partial
 import torch
+import random
+from tqdm import tqdm
+import re
+import threading
 try:
     import datasets
+    from datasets import load_dataset, Features, Sequence, Value
     from transformers import AutoConfig, AutoTokenizer
     from types import SimpleNamespace
+    
 except ImportError:
     print("Error: transformers package is required.")
     print("Please run `pip install transformers` to install it.")
@@ -149,7 +155,7 @@ worker_tokenizer = None
 class TokenizedFile:
     def __init__(self, model, file_name: str,  vocab_size: int, masking: bool = False):
         self.file_name = file_name
-        self.file_handle = None
+        self.fd = None
         self.header = np.zeros(256, dtype=np.int32) # header is always 256 int32 values
         self.header[0] = model.head_info["magic"]
         self.header[1] = model.head_info["version"]   
@@ -160,22 +166,24 @@ class TokenizedFile:
         self.has_masks = masking
         self.mask_list = []
         self.mask_rest = None
+        self.lock = threading.Lock()
 
     def __enter__(self):
-        self.file_handle = open(self.file_name, "wb+")
+        self.fd = os.open(self.file_name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        # self.fd = os.open(self.file_name, "wb+")
         # reserve space for the file header
-        self.file_handle.write(('*' * 1023 + '\n').encode("ascii"))
+        os.write(self.fd, ('*' * 1023 + '\n').encode("ascii"))
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.has_masks:
             self._write_masks()
         self._write_header()
-        self.file_handle.close()
-        self.file_handle = None
+        os.close(self.fd)
+        self.fd = None
 
     def add_document(self, tokens: np.ndarray, mask: Optional[np.ndarray] = None):
-        assert self.file_handle is not None
+        assert self.fd is not None
         if mask is not None and self.has_masks is False:
             raise ValueError("Cannot add masking to a file that was not created with masking enabled")
         elif mask is None and self.has_masks is True:
@@ -188,7 +196,8 @@ class TokenizedFile:
             assert len(mask) == len(tokens)
             self._record_mask(mask)
 
-        self.file_handle.write(tokens.tobytes())
+        os.write(self.fd, tokens.tobytes())
+        # os.write(self.fd, memoryview(tokens))
         self.toks += len(tokens)
         if self.toks >= 2**31:
             raise RuntimeError("cannot have more than 2**31 tokens in a single file")
@@ -212,7 +221,7 @@ class TokenizedFile:
             self.file_handle.write(part.tobytes())
 
     def _write_header(self):
-        assert self.file_handle is not None
+        assert self.fd is not None
         assert self.toks < 2**31, "token count too large" # ~2.1B tokens
 
         # construct the header        
@@ -220,9 +229,9 @@ class TokenizedFile:
         self.header[9] = self.vocab_size
         self.header[10] = self.has_masks
 
-        self.file_handle.seek(0)
-        nWrite = self.file_handle.write(self.header)
-        self.file_handle.seek(self.header.size*4)        
+        os.lseek(self.fd, 0, os.SEEK_SET)    #self.file_handle.seek(0)
+        nWrite = os.write(self.fd, self.header)
+        os.lseek(self.fd, self.header.size*4, os.SEEK_SET)    #self.file_handle.seek(self.header.size*4)        
         # header_str = "BIN.TOK\n"  # 8 bytes
         # version = 2
         bytes_per_token = 4
@@ -394,6 +403,8 @@ def ProcessDatabricksDolly(dataset, model, in_file, out_file, SYSTEM_PROMPT = "Y
             except json.JSONDecodeError:
                 continue
 
+            # str = model.tokenizer.apply_chat_template(line.strip(), tokenize=False, add_generation_prompt=False)
+
             instruction = obj.get("instruction", "")
             context = obj.get("context", "")
             response = obj.get("response", "")
@@ -423,8 +434,130 @@ def ProcessDatabricksDolly(dataset, model, in_file, out_file, SYSTEM_PROMPT = "Y
             # for tokens in tokenized_examples:
             f.add_document(cat_tokens)
         print(f"ProcessDolly: to {out_file}\n")
-            
 
+# 70%  → with system prompt     30%  → without system prompt (pure UA)
+def pre_processing_chat(conversations, add_system_ratio=0.7):
+    if any(conv.get('tools') for conv in conversations): return conversations
+
+    SYSTEM_PROMPTS = [
+        "你是一个知识丰富的AI，尽力为用户提供准确的信息。",
+        "你是koifish，一个小巧但有用的语言模型。",
+        "你是一个专业的AI助手，请提供有价值的回答。",
+        "你是koifish，请尽力帮助用户解决问题。",
+        "你是一个可靠的AI，请给出准确的回答。",
+        "You are a helpful AI assistant.",
+        "You are koifish, a lightweight intelligent assistant.",
+        "You are a friendly chatbot. Please answer the user's questions carefully.",
+        "You are a knowledgeable AI. Try your best to provide accurate information.",
+        "You are koifish, a small but useful language model."
+    ]
+
+    if conversations[0].get('role') != 'system':
+        if random.random() < add_system_ratio:
+            return [{'role': 'system', 'content': random.choice(SYSTEM_PROMPTS)}] + conversations
+    return conversations
+
+def post_processing_chat(prompt_content, empty_think_ratio=0.2):
+    # if '<think>\n\n</think>\n\n' in prompt_content: and random.random() > empty_think_ratio:
+    #     prompt_content = prompt_content.replace('<think>\n\n</think>\n\n', '')
+    prompt_content = re.sub(r'jingyaogong', 'YingshiChen', prompt_content, flags=re.IGNORECASE)
+    a = prompt_content
+    def ensure_think_tags(data_str: str) -> str:
+        """Inserts empty <think> tags into assistant responses if they are missing."""        
+        def replace_assistant(match):
+            full_block = match.group(0)  # The entire assistant block
+            content = match.group(1)     # Everything inside the block
+            
+            # Check if the content already starts with a <think> tag
+            if content.strip().startswith("<think>"):
+                return full_block  # Keep it exactly as it is
+            
+            # If missing, insert the empty think tags right after the assistant start token
+            return f"<|im_start|>assistant\n<think>\n\n</think>\n\n{content}<|im_end|>"
+
+        # Regex pattern to match everything between assistant start and end tokens
+        # re.DOTALL ensures that the '.' matches newlines as well
+        pattern = r"<\|im_start\|>assistant\n(.*?)<\|im_end\|>"
+        
+        return re.sub(pattern, replace_assistant, data_str, flags=re.DOTALL)
+
+
+    prompt_content = ensure_think_tags(prompt_content)
+    # print(f"\n----before---\n{a}\n----after replace_handler ---\n{prompt_content}")
+    
+    return prompt_content
+'''
+    1.  Base Qwen3 (non-reasoning): No built-in think template
+'''
+def conversations2chatml(tokenizer, conversations):
+    messages = []
+    tools = None
+    for message in conversations:
+        message = dict(message)
+        if message.get("role") == "system" and message.get("tools"):
+            tools = json.loads(message["tools"]) if isinstance(message["tools"], str) else message["tools"]
+        if message.get("tool_calls") and isinstance(message["tool_calls"], str):
+            message["tool_calls"] = json.loads(message["tool_calls"])
+        messages.append(message)
+    assert(tools is None)
+    chatml = tokenizer.apply_chat_template(
+        messages,        tokenize=False,        add_generation_prompt=False,    tools=tools
+    )
+    return chatml.strip()
+
+#   python src/Python/PreTokenizer.py /home/cys/rnd/lic/Models/Qwen3-0.6B/ --dataset minimind --localdir /home/cys/rnd/lic/Datasets/minimind/sft_t2t_mini.jsonl --outdir /home/cys/rnd/lic/Datasets/chatml/ 
+def ProcessMinimind(dataset, model, in_file, out_file, SYSTEM_PROMPT = "You are a helpful assistant.", enable_thinking=False, MAX_TOKENS = -1024):
+    from torch.utils.data import Dataset
+    
+    max_length = MAX_TOKENS if MAX_TOKENS>0 else 1024
+    features = Features({'conversations': [{'role': Value('string'), 'content': Value('string'), 'reasoning_content': Value('string'), 'tools': Value('string'), 'tool_calls': Value('string')}]})
+    samples = load_dataset('json', data_files=in_file, split='train', features=features)
+    start,end = 0, min(len(samples),10000000)    #len(samples) 
+ 
+    samples = samples.select(range(start,end)) 
+    print(f"ProcessMinimind: {len(samples)} samples({start}:{end})")
+    pad_id = model.tokenizer.encode(model.tokenizer.pad_token)
+    eos_id = model.tokenizer(f'{model.tokenizer.eos_token}\n', add_special_tokens=False).input_ids
+
+    processed_data = []
+    path = f"{out_file}_{len(samples)}.bin"
+    counter = 0
+    with TokenizedFile(model, path, model.tokenizer.vocab_size, masking=False) as f:
+        tokens = []
+        pbar = tqdm(samples, desc="Processing SFT samples")
+        for sample in pbar:
+            try:
+                conversations = pre_processing_chat(sample['conversations'])
+                chatml = conversations2chatml(model.tokenizer, conversations)
+                chatml = post_processing_chat(chatml)    
+                # processed_data.append({"text": chatml})        
+                line = chatml
+                line_encoded = model.tokenizer.encode(line)
+                if len(line_encoded) > max_length-1 or len(line_encoded)==0:
+                    continue
+                line_encoded += pad_id
+            except Exception as e:
+                print(f"Failed@{counter} error={str(e)} sample={sample}")
+                continue
+            # print(f"{line}\n{line_encoded}")
+            tokens.append(line_encoded)
+            counter += 1
+            if counter % 1000 == 0:
+                try:
+                    # cat_tokens = np.concatenate(tokens)
+                    cat_tokens = np.fromiter(
+                        (tok for seq in tokens for tok in seq),
+                        dtype=np.int32,
+                        count=sum(map(len, tokens))
+                    ).copy()
+                    f.add_document(cat_tokens)
+                    pbar.set_description(f"{counter:8d} samples: toks={f.toks/1.0e6:.5g}M")
+                    tokens = []
+                except Exception as e:
+                    print("❌ Batch concat / write failed:", e)
+                    tokens.clear()
+    print(f"ProcessMinimind: to {path}\n")  
+    
 def create_assistant_labels(tokenizer, input_ids, im_start, im_end):
     """
     仅对 assistant 块中  之后的真实回答计算损失
@@ -608,21 +741,19 @@ def TokenizeDataset(dataset: str, model, out_dir: Path = "preTokenData", seq_len
         d = datasets.load_dataset("/home/cys/rnd/lic/Datasets/pile-val-backup", split="validation")        
         ProcessPileBackup(d, model, out_dir+"/eval.bin")
         return
-    elif dataset == "databricks-dolly":  # mit-han-lab/pile-val-backup only 10k txt slice with ~30k tokens! (original pie>million!)
+    elif dataset == "databricks-dolly":  
         # d = datasets.load_dataset("/home/cys/rnd/lic/Datasets/pile-val-backup", split="validation")        
         ProcessDatabricksDolly(None, model, localdir, out_dir+"/bricks_chatml", MAX_TOKENS = 1024)
         return
-    elif dataset == "json_file":  # mit-han-lab/pile-val-backup only 10k txt slice with ~30k tokens! (original pie>million!)
+    elif dataset == "minimind":        
+        ProcessMinimind(None, model, localdir, out_dir+"/minimind", MAX_TOKENS = 1024)
+        return
+    elif dataset == "json_file":  
         test_split = 0
         key = "messages"
         is_tiny = True
         # dataset = datasets.load_dataset("json", data_files=localdir, split="train")   # From hf's strange design, we woulg get a single datasets with all json items
         dataset = datasets.load_dataset("json", data_files=localdir)   
-        # all_sample = []
-        # for sample in dataset:
-        #     token_sample = model.tokenizer.apply_chat_template(sample["messages"], tokenize=False, add_generation_prompt=False)
-        #     all_sample.append(token_sample)
-        # d = datasets.Dataset.from_list(all_sample)
         d = dataset
         print(d["train"])
     elif dataset == "hellaswag":

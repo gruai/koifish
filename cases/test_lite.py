@@ -51,7 +51,7 @@ def test_chat_qwen3_4B_awq():
 
 def test_qwen3_596M_q4():    
     most_iter = 101
-    title = "QWen3_596M_q4_gama"
+    title = "QWen3_596M_q4_gama"    # "train_target":"gama" in json file
     dfTrain = koifish_one(title, sExe, "./cases/qwen3/qwen3_596M_q4.json", most_iter=most_iter, train_csv="./Train@[climb]_info_.csv")    
     CheckResult(dfTrain,most_iter,7.989,title=title,rel_tol=0.001)      #   8.035
 
@@ -150,17 +150,17 @@ if __name__ == '__main__':
 
     # test_chat_qwen3_596M()
     # test_chat_qwen3_0_6B()  
-    # test_qwen3_596M()
+    #test_qwen3_596M()
     # test_ising_596M()
     # test_chat_qwen3_4B()
-    #test_chat_qwen3_4B_awq()
+    # test_chat_qwen3_4B_awq()
     # xtest_batch_qwen3_4B()
 
     # test_pp_gpt2()
     # test_gpt2_124M()
-    test_qwen3_596M_q4()
+    # test_qwen3_596M_q4()
     # test_gpt2_124M_fuyou6()
-    # test_gpt2_1558M()
+    test_gpt2_1558M()
     # test_qwen2_494M()
     # # 
     #test_gpt2_1558M()

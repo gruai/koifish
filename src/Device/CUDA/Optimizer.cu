@@ -572,9 +572,9 @@ void PIPE_Muon<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
     // CU_muon_update_v0<<<dGRID, dT4B, 0, stream>>>(*this);
     if (this->hQuant != nullptr) {
         if (BIT_TEST(this->tensor->flags, GTensor::F_GAMA)) {  // gama update
-        } else {
+        } else if (DEBUG.verFakeQuant < 0) {    //reserved for non-fakequant case
             assert(this->tensor->gama_param == nullptr);
-            this->tensor->SetDataX(this->params);  
+            this->tensor->SetDataX(this->params);
         }
     }
     D2e(this->arrNorm, xNrm, this->name + "@CU_muon_update", 0x0);  // assert(!(isnan(xNrm) || isinf(xNrm)));
@@ -640,9 +640,9 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
                     tensor->Print("gama_0", 0, -1);
                 }
                 task_11.config.seed = this->seed;
-                if ((s = hOPT->DistillRate(0x0)) > 0) {
-                    this->learning_rate *= 1.0 - s;  // hQuant->params.distill.lenda = hOPT->DistillRate();
-                }
+                // if ((s = hOPT->DistillRate(0x0)) > 0) {
+                //     this->learning_rate *= 1.0 - s;  // ???
+                // }
                 CU_adamw_p<<<task_11.grid3, task_11.block3, task_11.smem, task_11.stream>>>(task_11, *this);
                 CheckLastError("AdamW");
                 if (tensor->color) {
@@ -659,7 +659,7 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
                         //     hOrgParam->SetDataX(wNewX);  //  params = (Tp*)(tensor->data), grads0 = (Tp*)(tensor->grad);
                         //     // hOrgParam->Print("1", 0, -1);
                         // }
-                    } else {
+                    } else if (DEBUG.verFakeQuant < 0) {    //reserved for non-fakequant case
                         assert(tensor->gama_param == nullptr);
                         tensor->SetDataX(params);  // qaunt version needs STE(Straight-Through Estimator - update dequant high-precision weights with gradient,
                                                    // then quant it for the next forward pass)

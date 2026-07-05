@@ -55,30 +55,35 @@ class GeQuant;
 /*
    Hierarchical lora representation of a sparse matrix
      1. LORA - LOW-RANK ADAPTATION    w=b(:,rank)*a(rank,:)
+        Forward: rhs = b*(a*inp)
 */
-struct HIERARCH_LoRA {
+struct HIERARCH_LorAB {
     static string sNeurons;
-
-    float beta_F       = 1.0f;
-    bool isAccumuDelta = true;
-
+    std::string title;
+    // float beta_F           = 1.0f;
+    LoAB_CARD config;
+    
+    bool isFixB            = false;
     Fish* hFish            = nullptr;
     SparseNeuron* spNeuron = nullptr;
     bool isBack            = true;
     int B, T, rankMode, rank = -1, nHeavy = -1;
+    int nInA = -1, nOutB = -1;
     hGTensor wBase = nullptr;
     void *Adelta = nullptr, *Ax = nullptr;
     hGTensor a = nullptr, b = nullptr;
-    HIERARCH_LoRA(SparseNeuron* hF, hGTensor w_, int r_, int flag = 0x0);
-    virtual ~HIERARCH_LoRA();
+    TASKA_AxB backX_a, backW_a, backX_b, backW_b;
+
+    HIERARCH_LorAB(SparseNeuron* hF, hGTensor w_, const std::string& title_, int r_, int flag = 0x0);
+    virtual ~HIERARCH_LorAB();
 
     virtual void UpdateAdapt(int flag = 0x0);
 
     virtual int Forw(floatX* rhs, floatX* lhs, int BT, int flag = 0x0);
     virtual int Back(hGTensor delta, hGTensor inp_, hGTensor deltaIn, int flag = 0x0);
 };
-typedef std::shared_ptr<HIERARCH_LoRA> H_LORA;
-typedef std::vector<H_LORA> arrLORA;
+typedef std::shared_ptr<HIERARCH_LorAB> H_LoAB;
+typedef std::vector<H_LoAB> arrLORA;
 
 class GeNeuron {
     // GeNeuron(const GeNeuron&)=default;
@@ -94,6 +99,7 @@ class GeNeuron {
             mem = 0.0;
         }
     };
+    float lossKL;  // KL loss between two distributions
 
     STATISTIC stat;
     QUANT_CARD quant_params;
@@ -103,7 +109,8 @@ class GeNeuron {
     SHAPE shape;
     COMPRESSIVE_SENSING compression = SKIP;
     typNUMBER tpWeight = typNUMBER::BF16, tpActivation = typNUMBER::BF16, tpGradient = typNUMBER::BF16;
-    bool isPassBack = false;
+    // bool isPassBack = false;
+    bool isFixWeight = false;            // fix weight on back-propagation
     int level = -1, ID = -1, dad, c_id;  // topo info
     int layid  = -1;                     // no of layer in LLM/Brain structure
     int branch = 0, hierarch = 0;
@@ -131,11 +138,11 @@ class GeNeuron {
     static shared_ptr<GeNeuron> MakeInstance(Fish* hG_, void* ctx_build, const string& guid, JSON::const_iterator jit, int flag = 0x0);
     int B, T;  // from n_batch,n_ctx
 
-    // w is the 道 of neuron.   道者,千变万化之动(wLORAs)
+    // w is the 道 of neuron.   道者,千变万化之动(wLoABs)
     hGensor w = nullptr;
 
-    arrLORA wLORAs;  // LORA of w
-    LORA_ADAPT_W tpLORA = LORA_ADAPT_W::W0;
+    arrLORA wLoABs;  // LORA of w
+    LoAB_CARD::typW tpLORW = LoAB_CARD::typW::W0;
 
     hGensor b = nullptr, out = nullptr;
     hGensor tRhs  = nullptr;  // rhs tensor of Forw, in many case, tRhs!=out
@@ -183,6 +190,7 @@ class GeNeuron {
     virtual void Init(Fish* hG_, int flag = 0x0);
     virtual bool Empty() const { return shape.size() == 0; }
     virtual size_t nElem() { return 0x0; }
+    virtual bool PrepareShadow(int flag = 0x0);
     // memory management at different place
     virtual void ManageMemory(DATA_PLACE target, int typ = 0x0, int flag = 0x0);
     virtual hGensor OnInput(hGensor hIn, int flag = 0x0);
@@ -207,7 +215,7 @@ class GeNeuron {
     // Init & build with more option
     virtual void BuildX(const std::string& key_, const SHAPE& shape, Fish* hG_, int flag);
 
-    virtual bool InitCompression(COMPRESSIVE_SENSING type, LORA_ADAPT_W tpLora, int flag = 0x0) { return false; }
+    virtual bool InitCompression(const std::string& wname, int flag = 0x0) { return false; }
 
     virtual void OnDebug(const std::string& info = "", int typ = 0x0, int flag = 0x0);
     virtual void ExitDebug(const std::string& info = "", int typ = 0x0, int flag = 0x0);
@@ -224,7 +232,7 @@ class GeNeuron {
     friend class Fish;
     friend class NLP_AutoRegressive;
     friend class RLS_BP;
-    friend class HIERARCH_LoRA;
+    friend class HIERARCH_LorAB;
     friend class Fuyou;
     friend class GTensor;
     friend class GeQuant;
@@ -294,7 +302,7 @@ class SparseNeuron : public GeNeuron {
     shared_ptr<LoSVD<float>> hSVD = nullptr;
 
     virtual bool InitSVD(int flag = 0x0);
-    virtual bool InitLoRA(LORA_ADAPT_W tpLora, int flag = 0x0);
+    virtual bool InitLoRA(LoAB_CARD::typW tpLora, const std::string& wname, int flag = 0x0);
 
    public:
     SparseNeuron() {}
@@ -305,7 +313,7 @@ class SparseNeuron : public GeNeuron {
     bool OnData(hGTensor X, hGTensor Y, int* hot, int flag = 0x0) override;
     virtual bool GetHotIndex(int nPoint, floatI* data, int* hot, int flag = 0x0);
     bool Sparsing(int flag = 0x0) override;
-    bool InitCompression(COMPRESSIVE_SENSING type, LORA_ADAPT_W tpLora, int flag = 0x0) override;
+    bool InitCompression(const std::string& wname, int flag = 0x0) override;
     virtual void SetGanglia(const SparseNeuron* gang, int flag = 0x0) {
         compression = gang->compression;
         layid       = gang->layid;
@@ -717,6 +725,7 @@ struct TokenEmbed : public SparseNeuron {
     LayerNormal lnW, lnWInv;
     int *workload_indices = nullptr, nVocab = -1, latent, *hostID = nullptr, num_c_groups = -1, num_buckets = -1;
     int4* bucket_info = nullptr;
+    int* nzGroup      = nullptr;
     bool isAddPos     = false;
     int padded_nCls   = -1;  //*hostInput=nullptr,inp_pos=0;
     // the inverse of w: [nEmbed]=>[nToken]; w is row-major; wInv is column-major
@@ -729,6 +738,7 @@ struct TokenEmbed : public SparseNeuron {
     TokenEmbed(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
     virtual ~TokenEmbed();
     virtual bool UpdateBucket(int type, int flag = 0x0);
+    void WorkloadOnBucker_v0(int* inputs_cpu, int flag);
     virtual void WorkloadOnBucker(int* inputs_cpu, int flag);
     // virtual int InitMAC(int flag=0x0);
     virtual hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag = 0x0) override;

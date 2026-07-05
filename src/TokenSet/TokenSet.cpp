@@ -317,6 +317,10 @@ DataTokenSet::DataTokenSet(hTokenizer hD) : hDict(hD) {
     nVocab = hDict->nVocab();
     assert(nVocab > 0);
 }
+DataTokenSet::~DataTokenSet() {
+    for (auto hSamp : shard_samps) delete hSamp;
+    shard_samps.empty();
+}
 
 TOKEN_ID DataTokenSet::At(size_t pos) {
     assert(pos < tokens.size());
@@ -392,19 +396,22 @@ double DataTokenSet::LossOnResult(hSampLoader hLoader, Head4Token* cls, int flag
     int *mask = hLoader->hBatch->mask32, n = 0, nzLoss = cls->nzLoss;
     int nVocab = cls->nCls, ldP = cls->padded_nCls;
     float* loss      = cls->hostLoss;
-    TOKEN_ID* tokens = TO<TOKEN_ID>(hLoader->hostLabel);  // hLoader->hBatch->hostToken
+    TOKEN_ID* labels = TO<TOKEN_ID>(hLoader->hostLabel);  // hLoader->hBatch->hostToken
     float* logits    = nullptr;
-    if (DEBUG.dump_LossDetail)
-        hLoader->hBatch->DumpX(tokens, cls->hostLoss);
+
     for (int i = 0; i < nzLoss; i++) {
         if (BIT_TEST(mask[i], MASK_FLAG::F_IGNORE_LOSS)) {
             assert(loss[i] == 0.0);
             continue;
         }
         if (!isValidF(loss[i])) {
-            TOKENS tokens(hBatch->host, hBatch->host + nzLoss);
-            DumpTokens(hDict, tokens, -1);
-            TOKEN_ID spot = hBatch->host[i];
+            if (DEBUG.dump_LossDetail)
+                hLoader->hBatch->DumpX(labels, cls->hostLoss);  
+            // TOKENS tokens(hBatch->host_toks, hBatch->host_toks + nzLoss);
+            // DumpTokens(hDict, tokens, -1);
+            hSAMP samp = hLoader->cur_samps[i / ldP];
+            samp->Dump(hDict, hLoader->GetTokens(), 0x0, "Invalid LossOnResult");
+            TOKEN_ID spot = hBatch->host_toks[i];
             _ERROR("spot=%s(%d) loss=%g(%d)", hDict->Decode({spot}).c_str(), spot, loss[i], i);
             K_EXIT_NOW(KOIFISH_INVALID_LOSS);
         }
@@ -671,7 +678,12 @@ Tokenset_JSONL::Tokenset_JSONL(JSON::const_iterator jit, hTokenizer hDict, const
     auto v          = jit.value();
     enable_thinking = hDict->config.chat_sampler.enable_thinking;
     assert(!enable_thinking && "Koifish don't support enable_thinking mode now!");
-
+    // rSampling = jKV(v, {"samp"}, rSampling);
+    std::vector<string> features;
+    features = jKV_arr(v, {"x"}, features);
+    if (G_Has_("multi_turn", features, false)) {
+        multi_turn = true;
+    }
     assert(rSampling == 1);
     assert(!glob_pattern.empty());
 }
@@ -686,11 +698,11 @@ std::string Tokenset_JSONL::toChatML(JSON& jMsg, int flag) {
     // France?<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\nThe capital of France is Paris.<|im_end|>\n'
     //    <|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\nWhat is the capital of France?<|im_end|>\n<|im_start|>assistant\n\n\nThe
     //    capital of France is Paris.<|im_end|>\n"
-    std::vector<ChatML_Line> lines;
+    std::vector<ChatML_samp> lines;
     for (auto& msg : jMsg["messages"]) {
         std::string role    = msg["role"];
         std::string content = msg["content"];
-        lines.push_back(ChatML_Line(role, content));
+        lines.push_back(ChatML_samp(role, content));
     }
     assert(hDict != nullptr);
 
@@ -786,6 +798,60 @@ bool Tokenset_JSONL::GetShardInfo(int id, int flag) {
     return isJsonTxt && nShardSamples > 0;
 }
 
+/**
+ * '<|im_start|>system\nYou are a dog.<|im_end|>\n<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\nFine<|im_end|>\n'
+ *      1.  <|im_start|>systemis notstrictly required​ in ChatML / Qwen-style SFT!
+ *
+ *
+ * */
+bool Tokens2Samp_Chatml(hTokenizer hDict, const TOKENS& tokens, size_t& pos, ChatML_samp& meta, bool multi_turn, int flag) {
+    bool think_closed = false;
+    size_t answer_0 = 0, answer_1 = 0, nToken = tokens.size(), end;
+    TOKEN_ID current = -1;
+    do {
+        while (++pos < nToken && tokens[pos] != hDict->assist_id);
+        assert(tokens[pos] == hDict->assist_id);  //  Detect start of assistant turn: <|im_start|> followed by "assistant"
+        while (++pos < nToken) {
+            current = tokens[pos];
+            if (current == hDict->id_think_close) {
+                think_closed = true;
+                TOKEN_ID a1 = tokens[pos + 1], a2 = tokens[pos + 2];  // tokenizer.decode(seq[pos+1]),tokenizer.decode(seq[pos+2])
+                if (a1 == hDict->id_newline2)                         //"\n\n":    pos = pos+1
+                    pos = pos + 1;
+                if (a1 == hDict->id_newline && a2 == hDict->id_newline)
+                    pos = pos + 2;
+                answer_0 = pos + 1;
+            } else if (current == hDict->id_im_end) {  // hDict->id_im_end
+                answer_1     = pos;
+                think_closed = false;
+                end          = pos + 1;
+                // TOKENS curT(tokens.begin() + answer_0, tokens.begin() + answer_1);
+                // string ans = hDict->Decode(curT);
+                meta.answers.push_back(std::make_tuple(answer_0 - meta.start, answer_1 - meta.start));
+                break;
+            } else {                 // Only enable loss for tokens after  inside assistant block
+                if (think_closed) {  // Skip padding tokens
+                    // a = tokenizer.decode(current)
+                    if (current != hDict->pad_id) {
+                        // labels[batch_idx, pos] = current
+                        // true_answer += a
+                    }
+                }
+            }
+        }
+        if (multi_turn && tokens[pos + 1] == meta.eoc) {
+            pos++;
+            break;
+        }
+    } while (current != meta.eoc && pos + 1 < nToken);
+
+    if (!multi_turn)
+        assert(meta.answers.size() <= 1);
+    meta.end = pos + 1;
+    assert(tokens[meta.end - 1] == meta.eoc);
+    return true;
+}
+
 bool Tokenset_JSONL::Shard2Sample(int id, int flag) {
     // assert(hDict->isValid());
     int n_ctx = hDict->config.n_ctx(), len, pad_id = hDict->pad_id, nDrop = 0;
@@ -802,45 +868,28 @@ bool Tokenset_JSONL::Shard2Sample(int id, int flag) {
         size_t nToken = tokens.size(), pos = -1;
         while (++pos < nToken) {
             assert(tokens[pos] == hDict->id_im_start);
-            // '<|im_start|>system\nYou are a helpful
-            // assistant.<|im_end|>\n<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\nFine<|im_end|>\n'
-            bool think_closed = false;
-            size_t start = pos, end = -1, answer_0 = 0, answer_1 = 0;
-            while (++pos < nToken && tokens[pos] != hDict->assist_id);
-            assert(tokens[pos] == hDict->assist_id);  //  Detect start of assistant turn: <|im_start|> followed by "assistant"
-            while (++pos < nToken) {
-                TOKEN_ID current = tokens[pos];
-                if (current == hDict->id_think_close) {
-                    think_closed = true;
-                    TOKEN_ID a1 = tokens[pos + 1], a2 = tokens[pos + 2];  // tokenizer.decode(seq[pos+1]),tokenizer.decode(seq[pos+2])
-                    if (a1 == hDict->id_newline2)                         //"\n\n":    pos = pos+1
-                        pos = pos + 1;
-                    if (a1 == hDict->id_newline && a2 == hDict->id_newline)
-                        pos = pos + 2;
-                    answer_0 = pos + 1;
-                } else if (current == hDict->id_im_end) {
-                    answer_1     = pos;
-                    think_closed = false;
-                    end          = pos + 1;
-                    break;
-                } else {                 // Only enable loss for tokens after  inside assistant block
-                    if (think_closed) {  // Skip padding tokens
-                        // a = tokenizer.decode(current)
-                        if (current != hDict->pad_id) {
-                            // labels[batch_idx, pos] = current
-                            // true_answer += a
-                        }
-                    }
-                }
-            }
-            TOKENS curT(tokens.begin() + start, tokens.begin() + end);
-            if (answer_1 - answer_0 < 1) {  // at least one word!
-                DumpTokens(hDict, curT, -1);
+            if (pos == 3376)
+                DEBUG_HERE;
+            ChatML_samp chatml(pos, multi_turn, multi_turn ? hDict->pad_id : hDict->id_im_end);
+            if (!Tokens2Samp_Chatml(hDict, tokens, pos, chatml, multi_turn, flag)) {
                 assert(0);
             }
-            if (shard_samps.size() <= 8) {
-                DumpTokens(hDict, curT, -1);
+            if (chatml.answers.size() == 0) {
+                assert(0);  // so strange!
+                continue;
             }
+            TOKENS curT(tokens.begin() + chatml.start, tokens.begin() + chatml.end);
+            // if (shard_samps.size() <= 8 && !chatml.answers.empty()) {
+            //     DumpTokens(hDict, curT, -1);
+            //     if (multi_turn) {
+            //         for (auto [a, b] : chatml.answers) {
+            //             string msg = hDict->Decode(TOKENS(curT.begin() + a, curT.begin() + b));
+            //             _INFO("\"%s\"\t", msg.c_str());
+            //         }
+            //         _INFO("\n");
+            //     }
+            // }
+
             if (curT.size() > max_length) {
                 nDrop++;
                 continue;
@@ -849,7 +898,11 @@ bool Tokenset_JSONL::Shard2Sample(int id, int flag) {
             for (int i = curT.size(); i < max_length; i++) {
                 curT.push_back(hDict->pad_id);
             }
-            shard_samps.push_back(new SAMP(start, curT.size(), nPad));
+            hSAMP hSamp    = new SAMP(chatml.start, curT.size(), nPad);
+            hSamp->answers = chatml.answers;
+            if (shard_samps.size() <= 8 /*|| hSamp->pos == 3376*/)
+                hSamp->Dump(hDict, tokens, 0x0);
+            shard_samps.push_back(hSamp);
 
             // if (messages.size() % 20 == 0) {
             //     tSum = (GST_us() - t0) / 1.0e6;
@@ -871,6 +924,28 @@ bool Tokenset_JSONL::Shard2Sample(int id, int flag) {
     } catch (...) {
         return false;
     }
+}
+
+void SAMP::Dump(hTokenizer hDict, const TOKENS& tokens, int type, const std::string& desc, int flag) {
+    int nValidLen = len - pad_len;
+    size_t start  = pos;
+    if (type == 0x100)
+        start = 0;
+    assert(start + nValidLen <= tokens.size());
+    TOKENS samp_tokens(tokens.begin() + start, tokens.begin() + start + nValidLen);
+    DumpTokens(hDict, samp_tokens, 0, flag);
+    _INFO("\n ------ range=[%lld:%lld pad=%lld] turn=%lld", pos, pos + nValidLen, pad_len, answers.size());
+    if (answers.size() > 0) {  // multi_turn
+        for (auto [a, b] : answers) {
+            assert(a >= 0 && b < nValidLen);
+            string msg = hDict->Decode(TOKENS(samp_tokens.begin() + a, samp_tokens.begin() + b));
+            _INFO("\n\t[%lld:%lld]=\"%s\"\t", a, b, msg.c_str());
+        }
+        _INFO("\n");
+    } else {
+        assert(0);
+    }
+    _INFO(" ------ %s", desc.c_str());
 }
 
 void DumpTokens(hTokenizer hDict, const TOKENS& tokens, int nX, int flag) {

@@ -71,21 +71,23 @@ enum MASK_FLAG {
     F_IGNORE_LOSS = 0x400,  //  -100 of torch's cross_entropy
 };
 struct BATCH_INPUT {
+    //  hostLabel @ SampLoader
     shared_ptr<GTensor> hostToken = nullptr, hostMask = nullptr, devMask = nullptr, hostLen = nullptr;
 
-    int *host = nullptr, *mask32 = nullptr;  //  mask32 = TO<int>(hostMask);
+    int *host_toks = nullptr, *mask32 = nullptr;  //  mask32 = TO<int>(hostMask);
     int nValidTokens = 0;
     int nMostSample = 0, ldT = 0;  //  B,T
     size_t nPrefill = 0, nFill = 0;
     std::vector<int> arrTic0, arrTic1;
+    std::vector<TOKENS_SECTION> section_metas;   //tokens of each sample contain sections, each section may has different role
     Fish* hFish      = nullptr;
     hTokenizer hDict = nullptr;
     //  always point to last token when P_GENERATE
     int tok_pos = -1;
     int CurToken() {
-        assert(tok_pos >= 0 && host != nullptr);
-        // assert(host[pos] < embed->nVocab);
-        return host[tok_pos];
+        assert(tok_pos >= 0 && host_toks != nullptr);
+        // assert(host_toks[pos] < embed->nVocab);
+        return host_toks[tok_pos];
     }
 
     BATCH_INPUT(Fish* hFish, SHAPE sp, int flag = 0x0);
@@ -106,8 +108,8 @@ struct BATCH_INPUT {
             return hostToken->size();
         }
     }
-
-    virtual bool UpdateMask(int iter, int* labels, int flag = 0x0);
+    virtual bool BeforeCollate(int flag=0x0);
+    virtual bool UpdateMask(const std::vector<hSAMP>& samps, int iter, TOKEN_ID* tokens, int* labels, int flag = 0x0);
 
     virtual void DumpX(TOKEN_ID* tokens, float* hostLoss, int flag = 0x0);
 };
@@ -155,11 +157,16 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
     size_t nEvalTokens = 0;
     int StepOfEvaluate(int flag = 0x0);  //  smaple to reduce eval time
 
-    shared_ptr<GTensor> hostLabel = nullptr;  //
+    shared_ptr<GTensor> hostLabel = nullptr;  //hostToken@Batch
 
     int64_t len() { return shard_samps.size(); }
     bool empty() { return len() == 0; }
+
+    // Derprecated, only for PPL
     size_t nTokens() { return hTokens->tokens.size(); }
+    // Derprecated, only for PPL
+    vector<TOKEN_ID>& GetTokens() { return hTokens->tokens; }
+
     int nLeastCTX(int flag = 0x0);
     hSAMP SampAt(size_t idx_) {
         assert(idx_ < nShard());
@@ -179,8 +186,7 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
     virtual hSAMP Next(bool isLoop = true);
     virtual bool NextEpoch(int flag = 0x0);
     virtual string IterInfo(int flag = 0x0);
-    virtual string sTokenSet(int flag = 0x0);
-    vector<TOKEN_ID>& GetTokens() { return hTokens->tokens; }
+    virtual string sTokenSet(int flag = 0x0);    
 
     virtual bool SetLabel(TOKEN_ID label, int i_target, int k, int flag = 0x0);
     TOKEN_ID TokenAt(size_t pos, hSAMP samp, int flag = 0x0);

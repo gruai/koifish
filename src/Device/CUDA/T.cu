@@ -306,7 +306,7 @@ double GTensor::SetDataX(floatX* param_0, bool checkErr, int flag) {
         case typNUMBER::Q4: {
             TASKA_quant<floatX> task_q(this, hQuant, main_stream);
             floatX* wX = param_0;
-            assert(param_0 == shadoW);
+            // assert(param_0 == shadoW);
             if (hQuant->isRTN()) {
                 assert(hQuant->params.type == RTN);
                 if (isDump) {
@@ -321,7 +321,9 @@ double GTensor::SetDataX(floatX* param_0, bool checkErr, int flag) {
                     T1pG(CU_XtoQ128_<floatX, 32>, task_q, (BIT_128*)(data), wX, 0x0);
                 if (isDump)
                     Print("AfterQuant", 0, -1);
+#ifndef NDEBUG
                 if (checkErr) {  // check residual
+                    task_q.distill.lenda = -1.0;    //otherwize, 128toX would contain shadow info
                     floatX* deQuant = nullptr;
                     cudaCheck(cudaMalloc(&deQuant, sizeof(floatX) * N));
                     if (type == typNUMBER::Q2 || type == typNUMBER::T_SIGN)
@@ -336,6 +338,7 @@ double GTensor::SetDataX(floatX* param_0, bool checkErr, int flag) {
                     err = CU_OFF_avg<floatX>(wX, deQuant, size());
                     cudaCheck(cudaFree(deQuant));
                 }
+#endif
                 //  gBUFF->tmpTernary->Print(sX.empty() ? name : sX, 0x0, -1, nRow * nCol);
             } else if (hQuant->params.type == KV_PolarQuant) {
                 assert(0);
@@ -557,7 +560,7 @@ __global__ void CU_rms_backward_v0(Typ* dX0, Typ* dWeight0, float* dW_scratch, c
 
 hGTensor LayerNormal::cuFlow(hGTensor inpDelta, int flag) {  //,hGTensor deltaIn
     NVTX_RANGE_FN();
-    int nToken = nBatchToken(), nTH  = nHead > 0 ? nToken * nHead : nToken;
+    int nToken = nBatchToken(), nTH = nHead > 0 ? nToken * nHead : nToken;
     const int block_size = 256, block_y = block_size / WARP_SIZE, grid_size = CEIL_DIV(nTH, block_y);
     int nThread = X128::nThreadOfBlock(ldTH, 0);
     // w->Print(w->name, 0, 0);

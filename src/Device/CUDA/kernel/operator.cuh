@@ -500,7 +500,7 @@ __global__ static void CU_Tile2X_(T* A, floatGama* gama, float T_x, int M, int N
 
 // return sum of x2
 template <class T, int NUM_THREADS = CU_T4B_SMALL>
-__global__ static void CU_OFF(float* out, T* A, T* B, size_t N, int flag) {
+__global__ static void CU_OFF(float* out, const T* A, const T* B, size_t N, int flag) {
     int tid = threadIdx.x, idx = blockIdx.x * NUM_THREADS + tid;
     if (idx >= N) {
         return;  // guard
@@ -543,16 +543,25 @@ __global__ static void CU_F82Float(const f8e5* src, T* dst, size_t N, int seed, 
 }
 
 template <class T>
-double CU_OFF_avg(T* A, T* B, size_t N, int flag = 0x0) {
-    double res = DBL_MAX;
-    float *d_a, a = 0;
-    cudaMalloc(&d_a, sizeof(float)), cudaCheck(cudaMemset(d_a, 0, sizeof(float)));
+double CU_OFF_avg(const T* A, const T* B, size_t N, bool isRelative = false, int flag = 0x0) {
+    double res = DBL_MAX;    
+    double* d64 = nullptr;
+    cudaMalloc(&d64, sizeof(double));
+    D20(d64, sizeof(double));
+    float *d32 = (float *)d64, a = 0;
     size_t dBLOCK = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
-    CU_OFF<T><<<CEIL_DIV(N, dBLOCK), dBLOCK, smemPB, main_stream>>>(d_a, A, B, N, flag);
-    D2H(d_a, &a, sizeof(float), flag);
-    res = sqrt(a / N);
-    cudaFree(d_a);
-
+    CU_OFF<T><<<CEIL_DIV(N, dBLOCK), dBLOCK, smemPB, main_stream>>>(d32, A, B, N, flag);
+    D2H(d32, &a, sizeof(float), flag);
+    res = sqrt(a / N);    
+    if (isRelative) {
+        double len = 0.0;
+        D20(d64, sizeof(double));
+        CU_x2_atomic<<<CEIL_DIV(N, dBLOCK), dBLOCK, smemPB, main_stream>>>(d64, A, N);
+        D2e(d64, len, "GTensor::Length");
+        len = sqrt(len / N);
+        res /= len;
+    }
+    cudaFree(d64);
     return res;
 }
 
@@ -850,10 +859,6 @@ __global__ void static reduce_add_sum_kernel(floatX* dst, const float* src, size
         }
     }
 }
-
-template <class FloatC, class FloatA, class FloatB, class FloatBias>
-void CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* bias, int m, int n, int k, const float* scale_a, const float* scale_b,
-                  cudaStream_t stream = 0, int transA = 1, int transB = 0, bool accumulate = false);
 
 template <typename Typ>
 __global__ void CU_rope_(Typ* out, Typ* inp, const Typ* freqs, float* stat_info, int B, int T, int Nq, int Nkv, int head_dim, bool isBack = false);
