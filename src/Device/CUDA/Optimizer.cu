@@ -436,7 +436,7 @@ __global__ void CU_adamw_p(TASKA_1p1<Typ> taska, PIPE_Adamw<Typ, Tmv> pipe) {
     //     atomicAdd((float*)pipe.arrNorm, block_sum);
 }
 
-bool Fuyou::Exploitation(hGensor tHead, hGensor tNext, int flag) {
+bool Fuyou::Exploitation(hGTensor tHead, hGTensor tNext, int flag) {
     if (!tHead->isWMAT() || params.algorithm == Fuyou_params::NO_EVOL)
         return false;
     int nParam = tHead->size(), dT4B = 512, M = tHead->ne[0], N = tHead->ne[1], nRander = M;  //
@@ -572,7 +572,7 @@ void PIPE_Muon<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
     // CU_muon_update_v0<<<dGRID, dT4B, 0, stream>>>(*this);
     if (this->hQuant != nullptr) {
         if (BIT_TEST(this->tensor->flags, GTensor::F_GAMA)) {  // gama update
-        } else if (DEBUG.verFakeQuant < 0) {    //reserved for non-fakequant case
+        } else if (DEBUG.verFakeQuant < 0) {                   // reserved for non-fakequant case
             assert(this->tensor->gama_param == nullptr);
             this->tensor->SetDataX(this->params);
         }
@@ -634,10 +634,10 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
 #endif
             } else {  //  ADAMw
                 if (tensor->color) {
-                    hGTensor hOrgParam = tensor->GetRefer();
+                    /*hGTensor hOrgParam = tensor->GetRefer();
                     // assert(hOrgParam != nullptr && hOrgParam->gama_param == tensor);
                     // hOrgParam->Print("0", 0, -1);
-                    tensor->Print("gama_0", 0, -1);
+                    tensor->Print("gama_0", 0, -1);*/
                 }
                 task_11.config.seed = this->seed;
                 // if ((s = hOPT->DistillRate(0x0)) > 0) {
@@ -646,7 +646,8 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
                 CU_adamw_p<<<task_11.grid3, task_11.block3, task_11.smem, task_11.stream>>>(task_11, *this);
                 CheckLastError("AdamW");
                 if (tensor->color) {
-                    tensor->Print("gama_1", 0, -1);
+                    tensor->DumpProber(0x0);
+                    // tensor->Print("gama_1", 0, -1);
                     DEBUG_HERE;
                 }
 
@@ -659,7 +660,7 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
                         //     hOrgParam->SetDataX(wNewX);  //  params = (Tp*)(tensor->data), grads0 = (Tp*)(tensor->grad);
                         //     // hOrgParam->Print("1", 0, -1);
                         // }
-                    } else if (DEBUG.verFakeQuant < 0) {    //reserved for non-fakequant case
+                    } else if (DEBUG.verFakeQuant < 0) {  // reserved for non-fakequant case
                         assert(tensor->gama_param == nullptr);
                         tensor->SetDataX(params);  // qaunt version needs STE(Straight-Through Estimator - update dequant high-precision weights with gradient,
                                                    // then quant it for the next forward pass)
@@ -669,7 +670,7 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
                     }
                 }
             }
-            if (!D2e(arrNorm, tensor->wnorm, name + "CU_adamw_p", 0x0)) {
+            if (!D2e(arrNorm, tensor->wnorm, name + "CU_adamw_p_", 0x0)) {
                 status = KOIFISH_ADAMW_D2E_ARRNORM;
             }
 
@@ -683,6 +684,7 @@ void PIPE_Adamw<Tp, Tmv>::CU_core(cudaStream_t stream, int flag) {
 static float hosti[KOIFISH_MAX_PROBE_LEN] = {};  // 3.33751814e-06        -3.33292087e-06
 bool PIPE_Optimizer::CheckLastError(const std::string& sX, int flag) {
     D2H(prober, hosti, sizeof(hosti));
+    memcpy(tensor->prober_info, hosti, sizeof(float) * KOIFISH_MOST_PROBE_TI);
     int iRet = hosti[0];
     float* a = hosti + 1;
     if (iRet != 0) {
@@ -693,9 +695,11 @@ bool PIPE_Optimizer::CheckLastError(const std::string& sX, int flag) {
         if (tensor->color == 0) {  //! G_Has_(tensor->name, {sX.c_str()})
             return true;
         }
-        for (int i = 0; i < 8; i++) {
-            _INFO("%g\t%g\t%g\n", a[3 * i], a[3 * i + 1], a[3 * i + 2]);
-        }
+#ifdef NDEBUG
+        // for (int i = 0; i < 8; i++) {
+        //     _INFO("[prober] %g\t%g\t%g\n", a[3 * i], a[3 * i + 1], a[3 * i + 2]);
+        // }
+#endif
         // _INFO("[%g,%g,%g,%g,%g,%g,%g,%g]@\"%s\"\n", a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], tensor->name);
     }
     return true;

@@ -39,7 +39,7 @@ LearnSKDU::LearnSKDU(DISTILLATION_CARD& distll, TRAIN_CARD& train_params, int fl
     warmup = 0, mostIter = _params.nMostIter;
     lr_final   = 0.0;
     last_froze = mostIter * 0.02;  // 2-3%
-    lr_base    = 1.0;
+    lr_base    = distll.lr_base();
     // nEpochIter = _params.nEpochIter;
     // if (policy == COSINE_EPOCH) {
     //     mostIter = _params.nEpochIter;
@@ -98,7 +98,14 @@ float LearnSKDU::LearningRate(int64_t step, int flag) {
     return lr;
 }
 
-hGensor GeNeuron::OnInput(hGensor hIn, int flag) {
+float DiscreteSchedule::LearningRate(int64_t step, int flag) {
+    float lr = LearnSKDU::LearningRate(step, flag);
+    if (hDistlConfig != nullptr)
+        hDistlConfig->OnLearningRate(lr);
+    return lr;
+}
+
+hGTensor GeNeuron::OnInput(hGTensor hIn, int flag) {
     assert(hFish != nullptr);
     bool isTemp = hFish->isTemporaryMemory(this);
     if (hFish->isRemater()) {
@@ -253,12 +260,12 @@ void GeNeuron::ManageMemory(DATA_PLACE target, int typ, int flag) {
                             t->Free();
                         }
                     }
+                    AfterActivate(t, target, typ, 0x0);
                 }
         }
     }
     if (target == DEV_MEM) {
-        for(auto nn : SubNeurons())
-            nn->PrepareShadow();
+        for (auto nn : SubNeurons()) nn->PrepareShadow();
     }
 
     place = target;
@@ -355,7 +362,11 @@ void RLS_BP::Init(Fish* hF, std::vector<hNEURON> backbons, int flag) {
     hFish  = hF;
     budget = hDevices->mostRAM / 1.0e6;
     assert(budget > 0);
-
+    Head4Token* cls = hF->GetNeuron<Head4Token>("Head4Token", 0);
+    // if (1) {    //hack
+    //     cls->color = 1;
+    //     std::sort(backbons.begin(), backbons.end(), [](const hNEURON& a, const hNEURON& b) { return a->color > b->color; });
+    // }
     for (auto n : backbons) {
         for (auto t : n->PickGensors()) {
             tMaps[t] = FLIP;
@@ -629,7 +640,7 @@ vector<hFuyou> RLSchedule::ActiveFuyous(int flag) {
     Fuyou_params::ENSEMBLE ensemble = hFish->config.fuyou.ensemble;
     int nFuyou                      = fuyouSwarm.size();
 
-    if (hFish->isAtPhase(LIFE_PHASE::P_EVAL_) || hFish->isAtPhase(LIFE_PHASE::P_GENERATE)) {
+    if (hFish->isAtPhase({LIFE_PHASE::P_EVAL_, LIFE_PHASE::P_CHAT_1, LIFE_PHASE::P_CHAT_N})) {
         if (ensemble == Fuyou_params::RANDOM_1 && nFuyou > 1) {  //  random ensembling
             uint32_t pick = rand() % nFuyou;                     // rand_fuyou.RandU32() % fuyouSwarm.size();
             fuyous        = {fuyouSwarm[pick]};
@@ -645,7 +656,7 @@ vector<hFuyou> RLSchedule::ActiveFuyous(int flag) {
 }
 
 /*
-    Fish::ForwardOnRLS would call this before each step
+    Fish::ForwardOnRLS_ would call this before each step
 */
 bool RLS_BP::Prepare(int iter, int flag) {
     if (iter == -1) {  // only call once!
@@ -660,7 +671,8 @@ bool RLS_BP::Prepare(int iter, int flag) {
 
     switch (hFish->phase) {
         case LIFE_PHASE::P_EVAL_:
-        case LIFE_PHASE::P_GENERATE:
+        case LIFE_PHASE::P_CHAT_1:
+        case LIFE_PHASE::P_CHAT_N:
             return true;
             break;
         case LIFE_PHASE::P_TRAIN:

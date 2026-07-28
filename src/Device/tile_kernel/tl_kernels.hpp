@@ -7,7 +7,8 @@
 
 
     
-extern "C" __global__ void header_cls_T64_64_S49152_bfloat16(__nv_bfloat16* __restrict__ grad_pre_logits, const int* __restrict__ labels, float* __restrict__ losses, __nv_bfloat16* __restrict__ pre_logits, int N, int nValidToken);
+extern "C" __global__ void header_cls_V151936_T64_64_S49152_bfloat16(__nv_bfloat16* __restrict__ grad_pre_logits, const int* __restrict__ labels, float* __restrict__ losses, __nv_bfloat16* __restrict__ pre_logits, int N, int nValidToken);
+extern "C" __global__ void header_cls_V66_T64_64_S49152_bfloat16(__nv_bfloat16* __restrict__ grad_pre_logits, const int* __restrict__ labels, float* __restrict__ losses, __nv_bfloat16* __restrict__ pre_logits, int N, int nValidToken);
 
 #else
 

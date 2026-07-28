@@ -157,10 +157,16 @@ class TokenizedFile:
         self.file_name = file_name
         self.fd = None
         self.header = np.zeros(256, dtype=np.int32) # header is always 256 int32 values
-        self.header[0] = model.head_info["magic"]
-        self.header[1] = model.head_info["version"]   
-        # self.header[2] = self.toks
-        self.header[3] = model.head_info["bytes_per_token"]  
+        if model is None:
+            self.header[0] = 20251218
+            self.header[1] = 1
+            # self.header[2] = self.toks
+            self.header[3] = 4 
+        else:
+            self.header[0] = model.head_info["magic"]
+            self.header[1] = model.head_info["version"]   
+            # self.header[2] = self.toks
+            self.header[3] = model.head_info["bytes_per_token"]  
         self.toks = 0
         self.vocab_size = vocab_size
         self.has_masks = masking
@@ -557,7 +563,34 @@ def ProcessMinimind(dataset, model, in_file, out_file, SYSTEM_PROMPT = "You are 
                     print("❌ Batch concat / write failed:", e)
                     tokens.clear()
     print(f"ProcessMinimind: to {path}\n")  
-    
+
+#
+def ProcessTextInChar(path, model, out_dir : Path, extra_tokens=["_"], split = 0.9):
+    with open(path, "r", encoding="utf-8") as f:
+        text = f.read()
+    chars = sorted(list(set(text)))
+    chars = extra_tokens + chars  # [NEW]: Add underscore (doesn't appear in text)
+    print(chars)
+    vocab_size = len(chars)
+    # Create a mapping from characters to integers
+    stoi = {ch: i for i, ch in enumerate(chars)}
+    itos = {i: ch for i, ch in enumerate(chars)}
+    # encoder: take a string, output a list of integers
+    def encode(s):
+        return [stoi[ch] for ch in s]
+
+    # Train and test splits
+    data = torch.tensor(encode(text), dtype=torch.long)
+    n = int(0.9 * len(data))  # first 90% will be train, rest val
+    train_data = data[:n]
+    val_data = data[n:]
+    out_dir = str(out_dir) +"/"
+    with TokenizedFile(model, out_dir + "_train.bin", vocab_size, masking=False) as f:
+            f.add_document(train_data)
+    with TokenizedFile(model, out_dir + "_val.bin", vocab_size, masking=False) as f:
+            f.add_document(val_data)
+    print(f"ProcessDolly: to {out_dir}\n")
+
 def create_assistant_labels(tokenizer, input_ids, im_start, im_end):
     """
     仅对 assistant 块中  之后的真实回答计算损失
@@ -748,6 +781,9 @@ def TokenizeDataset(dataset: str, model, out_dir: Path = "preTokenData", seq_len
     elif dataset == "minimind":        
         ProcessMinimind(None, model, localdir, out_dir+"/minimind", MAX_TOKENS = 1024)
         return
+    elif dataset == "textinchar":  
+        ProcessTextInChar(localdir, model, out_dir)
+        return
     elif dataset == "json_file":  
         test_split = 0
         key = "messages"
@@ -860,7 +896,10 @@ if __name__ == "__main__":
     if not os.path.exists(args.outdir):
         os.makedirs(args.outdir)
         print(f"Directory created: {args.outdir}")
-        
+    
+    TokenizeDataset(dataset=args.dataset, localdir = args.localdir, model=None, out_dir=args.outdir, seq_len=args.seqlen)
+    exit()
+
     tokenizer_path = os.path.join(args.outdir, "tokenizer.dat")
     model_wrap = LoadTokenizer(args.model,tokenizer_path=tokenizer_path)
     if model_wrap is None:

@@ -18,6 +18,20 @@ shared_ptr<EDGE_DEVICES> EDGE_DEVICES::GetInstance(const CLI_params& config, int
     return hEDS;
 }
 
+/*
+    void* wq[MAX_LAYERS]; // (n_heads * head_dim, dim)
+    void* wk[MAX_LAYERS]; // (n_kv_heads * head_dim, dim)
+    void* wv[MAX_LAYERS]; // (n_kv_heads * head_dim, dim)
+    void* wo[MAX_LAYERS]; // (dim, n_heads * head_dim)
+    // weights for ffn
+    void* w1[MAX_LAYERS]; // (n_experts?, ff, dim)
+    void* w2[MAX_LAYERS]; // (n_experts?, dim, ff)
+    void* w3[MAX_LAYERS]; // (n_experts?, ff, dim)
+    // biases for qkv (qwen)
+    float* bqkv[MAX_LAYERS]; // ((n_heads + n_kv_heads * 2) * head_dim)
+    // moe gate weights (mixtral)
+    void* moegate[MAX_LAYERS]; // (n_experts, dim)
+*/
 bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_, int flag) {
     auto train_params = config.common;
     if (train_params.seed == -1) {
@@ -46,7 +60,7 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_, int flag) {
 
     if (hOPT != nullptr) {
         // hOPT->Dump(1);
-        if (config.isOnlyGPT || !isTrain())
+        if (/*config.isOnlyGPT ||*/ !isTrain())
             return true;
         if (!hOPT->PrepareData(config, flag))
             return false;
@@ -168,8 +182,8 @@ string GeNeuron::__repr__(string& suffix, string& prefix, int flag) {
     return buf;
 }
 
-hGensor SLP::UpdateGensor(int flag) {
-    hGensor h = w == nullptr ? nullptr : hFish->GetGensor(w->name);
+hGTensor SLP::UpdateGensor(int flag) {
+    hGTensor h = w == nullptr ? nullptr : hFish->GetGensor(w->name);
     return h;
 }
 
@@ -185,11 +199,11 @@ void Fish::CopyWeight(const Fish* src, int flag) {
 #else
     auto gsrc = src->hForwTG->raw();
     size_t nx = 0, nz, nT = 0, type_size;
-    vector<hGensor> tSrc;
-    hGensor t1;
+    vector<hGTensor> tSrc;
+    hGTensor t1;
     if (isTrain()) {
         for (int i = 0; i < gsrc->n_nodes; ++i) {
-            hGensor t0 = gsrc->nodes[i];
+            hGTensor t0 = gsrc->nodes[i];
             if (strcmp(t0->name, "output.weight") == 0) {
                 int j = 0;
             }
@@ -253,12 +267,17 @@ bool NLP_AutoRegressive::LocalFeeling(hSampLoader hLoader, vector<float>& result
     return true;
 }
 
-size_t NLP_AutoRegressive::tVocab() {
+size_t NLP_AutoRegressive::nClass() const {
+    int nClass = config.model.pad_vocab_size;
     assert(hDict != nullptr);
-    return hDict->nVocab();
+    if (hDict != nullptr) {
+        assert(hDict != nullptr);
+        hDict->nVocab() <= nClass;
+    }
+    return nClass;
 }
 
-hGensor Fish::BuildLoss(void* ctx, hGensor cur, int flag) {
+hGTensor Fish::BuildLoss(void* ctx, hGTensor cur, int flag) {
     if (DEBUG.NO_loss) {
         assert(cur == hCLS->preLogits);
         out_node = cur;
@@ -274,14 +293,14 @@ hGensor Fish::BuildLoss(void* ctx, hGensor cur, int flag) {
     return loss;
 }
 
-hGensor NLP_AutoRegressive::BuildTarget(void* ctx, hGensor cur, int flag) {
+hGTensor NLP_AutoRegressive::BuildTarget(void* ctx, hGTensor cur, int flag) {
     assert(0);  // Deprecated
-    /*hGensor _tNorm = UpdateGensor(hDictVAE->_norm.w->name);
-    int n_vocab = tVocab(), n_batch = config.common.n_batch, n_ctx = config.common.n_ctx, n_embd = config.nEmbed();
+    /*hGTensor _tNorm = UpdateGensor(hDictVAE->_norm.w->name);
+    int n_vocab = nClass(), n_batch = config.common.n_batch, n_ctx = config.common.n_ctx, n_embd = config.nEmbed();
     auto train_params              = config.common;
     train_params.use_checkpointing = false;  // CYS_0826
     const int N = train_params.n_ctx, n_past = 0;
-    hGensor t32 = nullptr, wA = nullptr, wB = nullptr;*/
+    hGTensor t32 = nullptr, wA = nullptr, wB = nullptr;*/
     return out_node;
 }
 
@@ -314,57 +333,58 @@ bool Fish::InitDictTokenset(int flag) {
             } else {
                 // hDictVAE = std::make_shared<CDict_GPT2>(this);
                 hDict = std::make_shared<GTokenizer_GPT2>(this);
-                if (wikis.size() > 0) {  // lama()!= nullptr
-                    hDict->vocab.resize(wikis[0]->n_vocab);
-                    hDict->bos_id = wikis[0]->bos, hDict->eos_id = wikis[0]->eos;
+                if (wikis.size() > 0) {                      // lama()!= nullptr
+                    hDict->ReserveVocab(wikis[0]->n_vocab);  // vocab.resize(wikis[0]->n_vocab);
+                    hDict->S.bos = wikis[0]->bos, hDict->S.eos = wikis[0]->eos;
                     // hLLM = wikis[0]->lmodel;
                 } else {
                     int n_vocab = 50257;
                     // int n_vocab = CEIL_DIV(50257, 128) * 128;   //  50257 =>  50304
-                    hDict->vocab.resize(n_vocab);
-                    hDict->bos_id = 1, hDict->eos_id = 2;
+                    hDict->ReserveVocab(n_vocab);  // vocab.resize(n_vocab);
+                    hDict->S.bos = 1, hDict->S.eos = 2;
                 }
             }
             // hTokenset = std::make_shared<DataTokenSet>(hDictVAE.get());
             break;
         case MODEL_ARCH::NLP_GUPPY:
-            hDict->vocab.resize(50304);  //  50304       50257   ???
-            hDict->bos_id = 1;
-            hDict->eos_id = 2;
+            hDict = std::make_shared<HF_Tokenizer>(this);
             break;
         case MODEL_ARCH::NLP_MISTRAL:
-            // hDictVAE = std::make_shared<DictVAE>(this);
-            hDict->vocab.resize(32000);
-            hDict->bos_id = 1;
-            hDict->eos_id = 2;
+            hDict = std::make_shared<HF_Tokenizer>(this);
             break;
         case MODEL_ARCH::NLP_DEEPSEEK:
-            // hDictVAE = std::make_shared<DictVAE>(this);
-            hDict->vocab.resize(102400);
-            hDict->bos_id = 100000;
-            hDict->eos_id = 100001;
+            hDict = std::make_shared<HF_Tokenizer>(this);
             break;
         case MODEL_ARCH::NLP_QWEN2:
             hDict = std::make_shared<GTokenizer_QWEN3>(this);
-            hDict->vocab.resize(151936);
+            // hDict->vocab.resize(151936);
             break;
         case MODEL_ARCH::NLP_QWEN3:
             hDict = std::make_shared<GTokenizer_QWEN3>(this);
             break;
+        case MODEL_ARCH::NLP_SCORE_: {
+            // if (DEBUG.VocabIsCharset) {
+            //     std::vector<char> charset;
+            //     hDict = std::make_shared<GTokenizer_CHARset>(this, charset);
+            // }
+            hDict = std::make_shared<HF_Tokenizer>(this);
+        } break;
         case MODEL_ARCH::NLP_BITNET:
-            hDict = std::make_shared<GTokenizer_SentencePiece>(this);
-            hDict->vocab.resize(128256);
+            hDict = std::make_shared<HF_Tokenizer>(this);
+            assert(0);
+            // hDict->vocab.resize(128256);
             break;
         default:
             assert(0 && "DictTokenset don't support current arch!");
             break;
     }
 
-    if (!hDict->isValid(true)) {  //  allowEmpty=true
+    if (!isTrain() && !hDict->isValid(true)) {  //  allowEmpty=true
         assert(0);
         return false;
     }
-
+    hDict->CheckSpecialTokens(true);
+    // hDict->DoSomeTest(flag);
     auto [tsTrain_, tsEval_, tsCalib_] = DataTokenSet::MakeInstance(config, hDict, isLocalInfer, 0x0);
     tsTrain = tsTrain_, tsEval = tsEval_, tsCalib = tsCalib_;
 
@@ -378,8 +398,7 @@ bool Fish::InitDictTokenset(int flag) {
 }
 
 bool NLP_AutoRegressive::InitInput(void* ctx_build, bool isMask, int flag) {
-    auto train_params = config.common;
-    int n_ctx = train_params.n_ctx, n_vocab = tVocab(), n_batch = train_params.n_batch;
+    int n_ctx = config.n_ctx(), n_vocab = nClass(), n_batch = config.n_batch();
     assert(n_ctx > 0 && n_batch > 0);
     SHAPE shape = {n_batch, n_ctx};
 
@@ -395,7 +414,7 @@ bool NLP_AutoRegressive::CreateExlogists(hWIKI wiki, uint32_t n_ctx, uint32_t n_
     auto ctx = GetGGCTX();
     if (teach == WIKI::_OFF)
         return false;
-    int64_t nV = tVocab();
+    int64_t nV = nClass();
     assert(wiki->n_vocab >= nV);
     if (!isLocalInfer) {
         assert(wiki->exLogits == nullptr);
@@ -583,7 +602,7 @@ void NLP_AutoRegressive::Dump(int type, int flag) {
     } else
         _INFO("====== nParams = %ld(%.6gM nT=%ld) ======\n", nParams, nParams / 1.0e6, optParams.size());
     _INFO("\t nParams=%zu model_size = %zu bytes (%.1f MB)\n", nParams, szModel, szModel / (1024.0f * 1024.0f));
-    _INFO("\t n_vocab=%d t_vocab=%d,n_batch=%d,n_ctx=%d,n_embd=%d,n_head=%d,head_dim=%d,n_ff=%d\n", n_vocab, tVocab(), n_batch, n_ctx, n_embd, config.n_head(),
+    _INFO("\t n_vocab=%d t_vocab=%d,n_batch=%d,n_ctx=%d,n_embd=%d,n_head=%d,head_dim=%d,n_ff=%d\n", n_vocab, nClass(), n_batch, n_ctx, n_embd, config.n_head(),
           config.head_dim(), config.n_ff());
     _INFO("\t loader=%s\n", config.tpBatchSample.c_str());
     if (hOPT != nullptr) {
@@ -613,7 +632,7 @@ void NLP_AutoRegressive::Dump(int type, int flag) {
 }
 
 //  @GeNeuron::SetGuoke
-bool Fuyou::Backward(hGensor cur, int flag) {
+bool Fuyou::Backward(hGTensor cur, int flag) {
     bool isMix = true;
     for (auto it = tasks.rbegin(); it != tasks.rend(); ++it) {
         GeNeuron* neuron = (GeNeuron*)((*it)->hOBJ);
@@ -645,7 +664,7 @@ int Fish::BackwardOnRLS(int iter, int flag) {
     }*/
 
     RLS_BP* hRLS = hEDS->GetScheduler<RLS_BP>();
-    hGensor cur  = cls->delta;
+    hGTensor cur = cls->delta;
     hFuyou afu   = hRLS->afu;
     if (!afu->Backward(cur))
         return hOPT->status;
@@ -712,22 +731,6 @@ int Fish::ForwardOnRLS(int iter, int flag) {
     int L = config.nLayer(), nzLoss = cls->nzLoss, i, nFuyou = hRLS->fuyouSwarm.size();
     float *tmpLoss = nullptr, *loss = cls->hostLoss;
     vector<hFuyou> branches = hRLS->ActiveFuyous();
-
-    /*vector<hFuyou> branches = {hRLS->afu};  // curTasks
-
-    if (isAtPhase(LIFE_PHASE::P_EVAL_) || isAtPhase(LIFE_PHASE::P_GENERATE)) {
-        if (config.fuyou.ensemble == Fuyou_params::RANDOM_1 && nFuyou > 1) {  //  random ensembling
-            branches      = hRLS->fuyouSwarm;
-            uint32_t pick = rand_coin.RandU32() % hRLS->fuyouSwarm.size();
-            branches      = {hRLS->fuyouSwarm[pick]};
-        } else if (config.fuyou.ensemble == Fuyou_params::AGGREGATION && nFuyou > 1) {
-            branches = hRLS->fuyouSwarm;
-        } else {
-            // branches = {hRLS->fuyouSwarm[pick]};      //only for debug
-        }
-    }
-        hRLS->curFuyous = branches;
-        */
     int nB = branches.size(), curB = 0;
     if (nB > 1) {
         tmpLoss = new float[nzLoss]();
@@ -736,10 +739,13 @@ int Fish::ForwardOnRLS(int iter, int flag) {
     }
 
     for (auto branch : branches) {
-        hGensor cur = Input(), residual = nullptr;  //  Input = tokens_input
+        hGTensor cur = Input(), residual = nullptr;  //  Input = tokens_input
+        // cur->Print("branch_input", 0, 0);
         switch (phase) {
-            case P_GENERATE:
+            case P_CHAT_1:
                 cur = gBUFF->outL;
+                break;
+            case P_CHAT_N:
                 break;
             default:
                 break;
@@ -775,14 +781,14 @@ int Fish::ForwardOnRLS(int iter, int flag) {
         }
         delete[] tmpLoss;
     }
-    // if (!SYNC_STREAM("ForwardOnRLS", 1))
+    // if (!SYNC_STREAM("ForwardOnRLS_", 1))
     //     assert(0);
     return 0x0;
 }
 int NLP_AutoRegressive::ForwardOnNeuron_v0(int flag) {
     int B, T, C, tpFuseNormal = config.Fuse_Normal, L = config.nLayer();
 
-    hGensor cur         = nullptr;
+    hGTensor cur        = nullptr;
     LayerNormal* lnf    = GetNeuron<LayerNormal>("LayerNormal", 0);
     TokenEmbed* embed   = GetNeuron<TokenEmbed>("TokenEmbed", 0);
     cur                 = embed->OnEmbed(Input(), 0x0);  //  ->Ming(nullptr,Input());

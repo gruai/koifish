@@ -354,7 +354,7 @@ def Kernel2Codes(desc_kernel, kernel_metas, all_codes, block_M, block_N, dtype,s
     for desc, func, TRANS in desc_kernel:
         id = len(kernel_metas)
         # title = '_'.join(str(arg) for arg in args)
-        title = f"_T{block_M}_{block_N}_S{sm_usage}_{dtype}"
+        title = desc + f"_T{block_M}_{block_N}_S{sm_usage}_{dtype}"
         more = '_'.join(str(arg) for arg in args)
         kernel = func(block_M, block_N, dtype, *args)
         # print(kernel)   #assert isinstance(kernel, PrimFunc)

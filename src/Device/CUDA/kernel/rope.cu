@@ -727,7 +727,10 @@ __global__ void CU_rope_rmsnormal_back(Typ* dX0, Typ* dWeight0, const Typ* dY0, 
 #endif
 }
 
-// fuse normal to rope, may reduce time
+/**fuse normal to rope, may reduce time
+ * 1. Order 
+ *      RoPE → QK Norm is the current practical default and usually more stable.​ QK Norm → RoPE is mathematically cleaner but more sensitive to initialization.
+ *  */ 
 int ROPE::cuFlow(SelfAttention* hQKV, uint32_t seed, bool isFX, int flag) {
     if (hFish == nullptr)  // some models(GPT2) don't need rope
         return 0x0;
@@ -738,7 +741,7 @@ int ROPE::cuFlow(SelfAttention* hQKV, uint32_t seed, bool isFX, int flag) {
     // size_t smemPB = 1024 * sizeof(float);
     floatX *q = ToX(hQKV->Q.out), *k = ToX(hQKV->K.out);  // *freqs = ToX(hSin);
     floatX *qW = hnQ == nullptr ? nullptr : ToX(hnQ->w), *kW = hnK == nullptr ? nullptr : ToX(hnK->w);
-    PrintTensor<floatX>("Q.out", q, true, 1, 1, q_dim, 1, dump_flag);
+    // PrintTensor<floatX>("Q.out", q, true, 1, 1, q_dim, 1, dump_flag);
     if (isForward() || BIT_TEST(flag, F_REMATER)) {
         if (fuse_normal == 0) {
             if (hnQ != nullptr) {
@@ -781,10 +784,10 @@ int ROPE::cuFlow(SelfAttention* hQKV, uint32_t seed, bool isFX, int flag) {
         //
         // SYNC_STREAM();
     }
-    // hQKV->Q.out->Print("Q.rope", 0x0, -1, C);  hQKV->K.out->Print("K.rope", 0x0, -1);
-    PrintTensor<floatX>("q_0.rope", (floatX*)q, true, 1, 1, q_dim, 1, dump_flag);
-    PrintTensor<floatX>("k_0.rope", (floatX*)k, true, 1, 1, kv_dim, 1, dump_flag);
-    PrintTensor<floatX>("q_1.rope", (floatX*)q + q_dim, true, 1, 1, q_dim, 1, dump_flag);
-    PrintTensor<floatX>("k_1.rope", (floatX*)k + kv_dim, true, 1, 1, kv_dim, 1, dump_flag);
+    hQKV->Q.out->Print("Q.rope", 0x0, dump_flag);  hQKV->K.out->Print("K.rope", 0x0, dump_flag);
+    // PrintTensor<floatX>("q_0.rope", (floatX*)q, true, 1, 1, q_dim, 1, dump_flag);
+    // PrintTensor<floatX>("k_0.rope", (floatX*)k, true, 1, 1, kv_dim, 1, dump_flag);
+    // PrintTensor<floatX>("q_1.rope", (floatX*)q + q_dim, true, 1, 1, q_dim, 1, dump_flag);
+    // PrintTensor<floatX>("k_1.rope", (floatX*)k + kv_dim, true, 1, 1, kv_dim, 1, dump_flag);
     return 0x0;
 }

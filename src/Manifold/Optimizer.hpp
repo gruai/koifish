@@ -43,11 +43,12 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     OPT_STATUS status = KOIFISH_OK;
 
     void* _ctx = nullptr;
-    std::vector<hGensor> opt_ps;  //  =_fish->optParams;
+    std::vector<hGTensor> opt_ps;  //  =_fish->optParams;
+    std::vector<hGTensor> colorTensors;
 
     // std::vector<hFuyou> fuyous;
-    size_t nOptParams = 0;    //init from Fish::nParams, but maybe vary in differenent case
-    size_t nMostParam = 0;
+    size_t nOptParams     = 0;  // init from Fish::nParams, but maybe vary in differenent case
+    size_t nMostParam     = 0;
     float* _tmp           = nullptr;
     float* prober_host    = nullptr;
     bool just_initialized = false, isAdaptiveSched = false, isGlobalGrad = true;
@@ -62,7 +63,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     // schedule multiplier (fixed, decay or warmup)
     // float sched = 1.0f;
 
-    hGensor grad = nullptr;  // current gradient
+    hGTensor grad = nullptr;  // current gradient
     vector<float> fx_best;
     vector<float> fx_prev;
     int n_no_improvement = 0;
@@ -76,12 +77,12 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     // void *app_ctx = nullptr;
     double zmuv_0 = 0.0, zmuv_1 = 0.0, g_step = 0.0, g_ll = 0, g2_sum = 0;
 
-    hGensor hLoss();
+    hGTensor hLoss();
     //  return _fish->target_label = Head4Token->target
-    hGensor hTargetProbs();
-    // hGensor hPreLogits();
-    hGensor GradOf(hGensor node, int flag = 0);
-    float* fGrad(hGensor node, int flag = 0) {
+    hGTensor hTargetProbs();
+    // hGTensor hPreLogits();
+    hGTensor GradOf(hGTensor node, int flag = 0);
+    float* fGrad(hGTensor node, int flag = 0) {
         auto grad = GradOf(node);
         assert(grad != nullptr);
         float* g = (float*)(grad->data);
@@ -95,6 +96,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     // Learning rate hLR
     hLearnSKDU hLR       = nullptr;
     hLearnSKDU hAR_quant = nullptr;  // Anealing rate need by some quants
+    hLearnSKDU hLR_loAB  = nullptr;  // Anealing rate need by loAB approximation
     bool isStopImprove   = false;
     bool isPreGStep      = false;
 
@@ -105,7 +107,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     virtual bool OnNextShard(int flag = 0x0);
     virtual bool OnNextEpoch(int flag = 0x0);
     virtual int SignStochastic(int nx, CLI_params& config, int flag = 0x0);
-    virtual float gClip(int nx, floatX* g, hGensor hP, int flag = 0x0);
+    virtual float gClip(int nx, floatX* g, hGTensor hP, int flag = 0x0);
     virtual void UpdateParams(int nx, CLI_params& config, int flag);
     // compute grad on batchs
     virtual bool BatchGrad(int iter, float& fx, int flag = 0x0);
@@ -130,7 +132,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     };
     vector<STAGE> stages;
     std::shared_ptr<PIPE_Optimizer> hPipe = nullptr;
-    Grusoft::GRander rRounding;  // stochastic rounding
+    GRander rRounding;  // stochastic rounding
     hSampLoader train_loader = nullptr;
     StepInfos& trainInfos() {
         assert(train_loader != nullptr);
@@ -139,8 +141,8 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     std::vector<hSampLoader> val_loaders;
     size_t shuffle_samples_hash = 0x0;  // hack
 
-    Fish* _fish    = nullptr;  // ref only
-    
+    Fish* _fish = nullptr;  // ref only
+
     TRAIN_CARD TrainParams();
 
     Optimizer(NLP_AutoRegressive* g_, CLI_params& params_, int flag = 0x0);
@@ -162,13 +164,13 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     // return the distillation-ratio of teacher
     virtual float DistillRate(int type, int flag = 0x0);
     virtual void UpdateTrainLoss(int x, float loss, int flag = 0x0);  //
-    virtual OPT_STATUS UpdateTensorParam(hGensor hP, floatX* g, float gnorm);
+    virtual OPT_STATUS UpdateTensorParam(hGTensor hP, floatX* g, float gnorm);
     virtual bool isStopImproving() { return isStopImprove; }
     virtual bool isAtLongtail(int flag = 0x0);
 
     virtual void Dump(int typ);
     virtual void AfterBuild(int flag = 0x0);
-    virtual void BeforeTrain(hGensor tokens_input, int flag);
+    virtual void BeforeTrain(hGTensor tokens_input, int flag);
     virtual void InitOnCUDA(int flag);
     virtual void ClearOnCUDA(int flag);
     virtual bool PrepareData(CLI_params& config, int flag);
@@ -185,7 +187,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
         FREE_a(_tmp);
     }
     virtual void CheckExitSearch(int t, int flag = 0x0);
-    RESULT Search(void* ctx, hGensor loss_, hGensor target_, CLI_params& config);
+    RESULT Search(void* ctx, hGTensor loss_, hGTensor target_, CLI_params& config);
 
     friend class Fish;
     friend class NLP_AutoRegressive;
@@ -207,7 +209,7 @@ class OPT_Adam : public Optimizer {
 
     void Prepare(size_t nx, int flag = 0x0) override;
 
-    OPT_STATUS UpdateTensorParam(hGensor hP, floatX* g, float gnorm) override;
+    OPT_STATUS UpdateTensorParam(hGTensor hP, floatX* g, float gnorm) override;
     // Deprecated
     void UpdateParams_V0(int nx, CLI_params& config, int flag);
 
@@ -218,12 +220,12 @@ class OPT_Adam : public Optimizer {
 
 class OPT_Muon : public Optimizer {
    protected:
-    std::vector<hGensor> tMuons;
+    std::vector<hGTensor> tMuons;
     size_t nmParams = 0;
     void Prepare(size_t nx, int flag = 0x0) override;
     MUON_params_* muon = nullptr;  // may be modified
    public:
     OPT_Muon(NLP_AutoRegressive* g_, CLI_params& params_, int flag = 0x0);
-    void BeforeTrain(hGensor tokens_input, int flag) override;
+    void BeforeTrain(hGTensor tokens_input, int flag) override;
     void Dump(int typ) override;
 };

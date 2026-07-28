@@ -53,8 +53,8 @@ make clean && make -j$(nproc)
 ## [Techniques/Tricks](cases/tricks/Tricks.md)
 
 ## Working plan
-- Support 1-bit version of QWen/DeepSeek
-- Sparsing(Predict sparse neurons by GBDT method)
+- Diffusion Language Model
+- High accuracy 1-bit training/inference algorithm
 
 ## Citation
 Please use the following bibtex entry:

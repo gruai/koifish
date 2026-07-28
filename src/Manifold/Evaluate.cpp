@@ -21,8 +21,8 @@ int Fish_ppl(CLI_params& config) {
 #if defined(K_DEBUGCUDA)
     g_dump_level = 0;
 #endif
-    config.wiki_actor          = "copy";
-    config.isOnlyGPT           = true;
+    config.wiki_actor = "copy";
+    // config.isOnlyGPT           = true;
     config.common.remater_ffn  = 1;
     config.common.n_batch      = 1;
     config.model.preLogits_dB  = 1;
@@ -48,7 +48,7 @@ int Fish_ppl(CLI_params& config) {
     hRLS->Prepare(-1);
     uint64_t rng_seed  = 42;
     std::string prompt = LoadSomeText("/home/cys/rnd/lic/models/TinyStories-valid.txt", 64 * 1024);  // shakespeare.txt
-    int nVocab = fish->config.model.vocab_size, _nctx = fish->config.n_ctx(), i, j;
+    int nVocab = fish->config.model.pad_vocab_size, _nctx = fish->config.n_ctx(), i, j;
     hSampLoader hLoader = hOPT->val_loaders[0];
     if (hLoader->num_batches <= 0) {
         hLoader->InitOneSamp(prompt, nullptr, fish.get(), 0x110);
@@ -65,7 +65,7 @@ int Fish_ppl(CLI_params& config) {
     floatLogits* logits = hCLS->fLogits();
     double sum = 0, ss = 0, nz = 0, ppl = 0, pplerr = 0, tps = 0, t0 = GST_ms(), tAll = 0;
     vector<TOKEN_ID>& tokens = hLoader->GetTokens();
-    fish->SetPhase(LIFE_PHASE::P_GENERATE);
+    fish->SetPhase(LIFE_PHASE::P_CHAT_1);
     fflush(stdout);
     SUM::Reset("memory");
     for (i = 0; i + 1 < nTokens; i++) {
@@ -98,7 +98,7 @@ double Fish::Eval_ppl(int flag) {
     uint64_t rng_seed  = 42;
     RLS_BP* hRLS       = GetScheduler<RLS_BP>();
     std::string prompt = LoadSomeText("/home/cys/rnd/lic/models/TinyStories-valid.txt", 64 * 1024);  // shakespeare.txt
-    int nVocab = config.model.vocab_size, _nctx = config.n_ctx(), i, j;
+    int nVocab = config.model.pad_vocab_size, _nctx = config.n_ctx(), i, j;
     hSampLoader hLoader = hOPT->val_loaders[0];
     if (hLoader->num_batches <= 0) {
         hLoader->InitOneSamp(prompt, nullptr, this, 0x110);
@@ -115,7 +115,7 @@ double Fish::Eval_ppl(int flag) {
     floatLogits* logits = hCLS->fLogits();
     double sum = 0, ss = 0, nz = 0, pplerr = 0, tps = 0, t0 = GST_ms(), tAll = 0;
     vector<TOKEN_ID>& tokens = hLoader->GetTokens();
-    SetPhase(LIFE_PHASE::P_GENERATE);
+    SetPhase(LIFE_PHASE::P_CHAT_1);
     fflush(stdout);
     SUM::Reset("memory");
     for (i = 0; i + 1 < nTokens; i++) {

@@ -32,7 +32,7 @@ std::string SUM::GPU_Info(int flag) {
 size_t EDGE_DEVICES::AfterBuild(hTGraph hTG, void* ctx, int flag) {
     INIT_WEIGHT tpInitWeight = hTG->hFish->config.model.tpInitWeight;
     if (hRLS != nullptr) {
-        std::vector<hGensor> tInMaps;
+        std::vector<hGTensor> tInMaps;
         for (auto gt : hRLS->tMaps) {
             tInMaps.push_back(gt.first);
         }
@@ -156,10 +156,10 @@ bool EDGE_DEVICES::FreeScheduler() {
 }
 
 /*
-    llm_build_cb cb = [&](hGensor  cur, const char * name, int il)
+    llm_build_cb cb = [&](hGTensor  cur, const char * name, int il)
     why "norm"      ???
 */
-int EDGE_DEVICES::SetBackend(hGensor cur0, int flag) {
+int EDGE_DEVICES::SetBackend(hGTensor cur0, int flag) {
     int il = 0, no = 0, pick = -1;
     // if (strcmp(cur->name, "norm") != 0) // norm may be automatically assigned to the backend of the previous layer, increasing data transfer between backends
     //     return -1;

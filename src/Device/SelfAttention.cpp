@@ -174,7 +174,7 @@ int test_FA2() {
         std::cout << "FlashAttention executed successfully!" << std::endl;
 
     } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
+        _ERROR("%s", e.what());
     }
 
     cudaStreamDestroy(stream);

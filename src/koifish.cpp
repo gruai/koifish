@@ -46,8 +46,11 @@ class KoifishApp : public GST_Application {
             case LIFE_PHASE::P_PREFILL:
                 _INFO("[prefill] ");
                 break;
-            case LIFE_PHASE::P_GENERATE:
-                _INFO("[generate] ");
+            case LIFE_PHASE::P_CHAT_1:
+                _INFO("[chat_1] ");
+                break;
+            case LIFE_PHASE::P_CHAT_N:
+                _INFO("[chat_N] ");
                 break;
             default:
                 break;

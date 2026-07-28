@@ -17,7 +17,7 @@ LLM_MAMBA::LLM_MAMBA(const std::string& nam_, struct CLI_params params, ROLE_TYP
     // config.common.adam.alpha = 0.0001;     //
 }
 
-hGensor LLM_MAMBA::BuildTarget(void* ctx, hGensor cur, int flag) { return nullptr; }
+hGTensor LLM_MAMBA::BuildTarget(void* ctx, hGTensor cur, int flag) { return nullptr; }
 
 Guppy::Guppy(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
     assert(arch == MODEL_ARCH::NLP_GUPPY);
@@ -49,7 +49,7 @@ bool Guppy::BeforeNextStep(int iter, int flag) {
 
 string Guppy::DebugInfo(int type, int flag) {
     char buf[5012] = "\0";
-    sprintf(buf + strlen(buf), "|gw|=(%.2f,%.2f)", hEmbed->w->gnorm, hEmbed->wInv->gnorm);
+    sprintf(buf + strlen(buf), "|gw|=(%.2f)", hEmbed->w->gnorm);
     return buf;
 }
 
@@ -102,7 +102,6 @@ CDict_GPT2::CDict_GPT2(Fish* nlp_, int flag) : DictVAE(nlp_, flag) {
 
 CDict_CHAR::CDict_CHAR(Fish* nlp_, int flag) : DictVAE(nlp_, flag) {
     int n_batch = config.n_batch(), n_ctx = config.n_ctx(), n_ctx_train = config.n_ctx_train, n_embd = config.nEmbed();
-    // n_vocab=256;
 }
 int CDict_CHAR::InitMAEC(void* ctx_build, const std::vector<int>& dims_, int flag) {
     int n_batch = config.n_batch(), n_ctx = config.n_ctx(), n_ctx_train = config.n_ctx_train, n_embd = config.nEmbed();

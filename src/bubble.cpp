@@ -19,31 +19,35 @@
 class BubbleApp : public GST_Application {
    protected:
     hFISH fish = nullptr;
+    LIFE_PHASE chatPhase = LIFE_PHASE::P_CHAT_1;
 
    public:
     BubbleApp(int argc, char* argv[]) : GST_Application(argc, argv) {
         name = "Bubble";
         // DEBUG.test_quant = 1;
+        auto arch = params.ModelArch( );
         params.OnArch();
-        params.OnPhase(LIFE_PHASE::P_GENERATE);        
-        params.isOnlyGPT = true;
-        if (0) {    // 20260428 hack
+        chatPhase = arch == NLP_SCORE_ ? LIFE_PHASE::P_CHAT_N : LIFE_PHASE::P_CHAT_1;
+        params.OnPhase(chatPhase);
+        /*params.isOnlyGPT = true;
+        if (0) {                                  // 20260428 hack
             params.OnPhase(LIFE_PHASE::P_EVAL_);  // only for debug
-            params.common.n_ctx = 512;  
+            params.common.n_ctx = 512;
             params.isOnlyGPT    = false;
-        }
+        }*/
 
         params.chat_sampler.mode = params.model.enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
         // params.chat_sampler.isSampleCPU = true;
         params.model.preLogits_dB  = 1;
         params.model.sparse.method = -1;
+        params.kernels.verHeadLoss = KERNEL_LIB_TYPE::TL_CUDA;
         // params.chat_sampler.seq_len     = 32;
         //
         // params.quant.T_errQ             = 0.3;
         // params.quant.isNormalFloat = true;
         // params.quant.default_bits       = 2;
         params.dumpSwitch.tensor_load  = 0;
-        params.dumpSwitch.nn_structure = 0;
+        // params.dumpSwitch.nn_structure = 0;
         DEBUG.verCuda = 1, DEBUG.T_cpu = 0, DEBUG.graph_dump = 0, DEBUG.Time_most = 60;
         DEBUG.verInferQKV = 0, DEBUG.verInferFFN = 0;
         // DEBUG.dump_TensorDetail = 1;
@@ -60,7 +64,7 @@ class BubbleApp : public GST_Application {
             _ERROR("[APP] %s is nullptr!!!", name.c_str());
             return KOIFISH_NULL_FISH;
         }
-        fish->Chat(params.model.enable_thinking, P_GENERATE);
+        fish->Chat(params.model.enable_thinking, chatPhase);
         // while (iRunning() > 0) { // no need this loop
         //     usleep(100000);
         // }

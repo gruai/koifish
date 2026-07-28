@@ -119,7 +119,7 @@ void TokenEmbed::WorkloadOnBucker(int* tokens, int flag) {
     cudaCheck(cudaMemcpy(d_workload_indices, workload_indices, total_items * sizeof(int), cudaMemcpyHostToDevice));
 }
 
-// Deprecated - buckets would crash!
+/* Deprecated - buckets would crash!
 void TokenEmbed::WorkloadOnBucker_v0(int* tokens, int flag) {
     // if(num_buckets>0)
     //     return;
@@ -170,7 +170,7 @@ void TokenEmbed::WorkloadOnBucker_v0(int* tokens, int flag) {
     int* d_workload_indices = (int*)(scratch + B * T * num_c_groups * sizeof(int4));
     cudaCheck(cudaMemcpy(d_bucket_info, bucket_info, num_buckets * sizeof(int4), cudaMemcpyHostToDevice));
     cudaCheck(cudaMemcpy(d_workload_indices, workload_indices, total_items * sizeof(int), cudaMemcpyHostToDevice));
-}
+}*/
 
 //
 hGTensor TokenEmbed::cuInfer(hGTensor hOut, int flag) {
@@ -206,36 +206,36 @@ hGTensor TokenEmbed::cuInfer(hGTensor hOut, int flag) {
     return hOut;
 }
 
-hGTensor TokenEmbed::OnEmbed(hGensor inpL, int seed) {
+hGTensor TokenEmbed::OnEmbed(hGTensor inpL, int seed) {
     try {
         int OC = w->ne[1], Vp = padded_nCls, C = hFish->config.nEmbed();
-        int nToken   = nBatchToken();
-        hGTensor cur = out, curW = w;
+        int nToken    = nBatchToken();
+        hGTensor curX = out, curW = w;
         if (isForward()) {
-            if (hFish->isAtPhase(LIFE_PHASE::P_GENERATE)) {
-                int token = hBatch->CurToken();
-                CU_embed_forw_1<<<C / 32, 32, 0, main_stream>>>(ToX(cur), ToX(curW), token, C, 0);
+            inpL->Print("token_input", 0, 0);
+            if (hFish->isAtPhase(LIFE_PHASE::P_CHAT_1)) {
+                int token = hBatch->CurToken();  //  host_toks[tok_pos];
+                CU_embed_forw_1<<<C / 32, 32, 0, main_stream>>>(ToX(curX), ToX(curW), token, C, 0);
             } else {
                 inp = inpL;
-                inp->Print("token_input", 0, 0);
                 if (w->type == typNUMBER::T_BINARY_3) {
                     curW->Print("curW", 0, 0);
-                    CU_embed_ternary_forw_<floatX>
-                        <<<CEIL_DIV(B * T, block_size), block_size, 0, main_stream>>>(ToX(cur), TO<int>(inp), curW->gama_T(), TO<char>(curW), ToX0(b), B, T, C);
+                    CU_embed_ternary_forw_<floatX><<<CEIL_DIV(nToken, block_size), block_size, 0, main_stream>>>(ToX(curX), TO<int>(inp), curW->gama_T(),
+                                                                                                                 TO<char>(curW), ToX0(b), B, T, C);
                 } else if (w->type != typNUMBER::BF16) {
                     assert(0 && "Not implemented...");
                 } else
-                    CU_embed_forw_<<<CEIL_DIV(B * T, block_size), block_size, 0, main_stream>>>(ToX(cur), TO<int>(inp), ToX(curW), ToX0(b), B, T, C);
+                    CU_embed_forw_<<<CEIL_DIV(nToken, block_size), block_size, 0, main_stream>>>(ToX(curX), TO<int>(inp), ToX(curW), ToX0(b), B, T, C);
 
                 if (b != nullptr)
                     PrintTensor<floatX>("wpe", ToX0(b), true, T, C);
             }
+            curX->Print("token_embed", 0, 0, nToken * C);
             // w->Print("wte", 0, 0);
-            // PrintTensor<int>("inputs",tokens,true,B,T);
-            cur->Print("token_embed", 0, 0, nToken * C);
             if (maec != nullptr) {
-                maec->ENC(cur);
+                curX = maec->ENC(curX);
             }
+            return curX;
         } else {
             // UpdateBucket(0x0);
             WorkloadOnBucker(hBatch->host_toks, 0x0);
@@ -249,8 +249,9 @@ hGTensor TokenEmbed::OnEmbed(hGensor inpL, int seed) {
             // lnW.cuFlow();   lnf->cuFlow(ToG(w),(float*)scratchX,delta);
             // PrintTensor<floatX>("grad of wte",grads.wte,true,Vp,C);         PrintTensor<float>("losses",acts.losses,true,B,T);
             // PrintTensor<floatX>("grad of wpe",grads.wpe,true,T,C);
+            return cur;
         }
-        return cur;
+        return nullptr;
     } catch (...) {
         bool isF = isForward();
         assert(0);
@@ -264,7 +265,7 @@ hGTensor TokenEmbed::SubW(hGTensor hSamp, bool isForw, hGTensor wOut, int flag) 
         int nSamp = hSamp->size(), *samps = TO<int>(hSamp), nLayer = hFish->config.nLayer();
         int OC = w->ne[1], Vp = padded_nCls, T = nSamp, B = 1;  //  , seed = 42
         grid_size    = CEIL_DIV(B * T * latent, block_size);
-        hGTensor cur = wOut, wSrc = flag == 0 ? w : wInv;
+        hGTensor cur = wOut, wSrc = w;  // flag == 0 ? w : wInv_;
 
         if (isForw) {
             // encoder_forward(ToX(cur), samps, ToX(wSrc), nullptr, 1, T, C, main_stream);
@@ -283,11 +284,17 @@ hGTensor TokenEmbed::SubW(hGTensor hSamp, bool isForw, hGTensor wOut, int flag) 
 
 //  W'=b(:,rank)*a(rank,:)  => rhs += beta*b*(a*lhs)
 int HIERARCH_LorAB::Forw(floatX* rhs, floatX* lhs, int BT, int flag) {
-    int dump_flag = -1;
+    int dump_flag = -1, transA = 1;
+    // must D20(rhs, sizeof(floatX) * OC * nToken)!
+    float alpha = config->GetS_ab(), beta = 1.0f;
     // b->Print(b->name, 1, dump_flag);
-    if (config.sAB > 0) {
-        CU_mm_((floatX*)Ax, a, lhs, nullptr, rank, BT, nInA, main_stream, 1, 0, 0.0f);
-        CU_mm_(rhs, b, (floatX*)Ax, nullptr, nOutB, BT, rank, main_stream, 1, 0, 0.0f);
+    string tname = title + "_rhs";
+    if (alpha > 0) {
+        TASKA_AxB(main_stream, rank, BT, nInA, transA, 0, 0.f, alpha).blasLt((floatX*)Ax, a, lhs);
+        // CU_mm_((floatX*)Ax, a, lhs, nullptr, rank, BT, nInA, main_stream, 1, 0, 0.0f);
+        TASKA_AxB(main_stream, nOutB, BT, rank, transA, 0, beta, alpha).blasLt(rhs, b, (floatX*)Ax);
+        // CU_mm_(rhs, b, (floatX*)Ax, nullptr, nOutB, BT, rank, main_stream, 1, 0, 0.0f);
+        // PrintTensor<floatX>(tname.c_str(), rhs, true, B, T, rank, 1, -1);
     }
 
     // b->Print(b->name, 1, dump_flag);
@@ -298,6 +305,9 @@ int HIERARCH_LorAB::Forw(floatX* rhs, floatX* lhs, int BT, int flag) {
 int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, Relu* hRelu, int flag) {
     NVTX_RANGE_FN();
     try {
+        /*if (hFish->isTrain()) {
+            assert(toGelu == nullptr && hRelu == nullptr);
+        }*/
         floatX *rhs = ToX(rhs_0), *to_gelu = ToX0(toGelu);
         int OC = nOut, IC = nIn, nToken = nBatchToken();
         assert(gelu_fusion == 0);
@@ -322,20 +332,27 @@ int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, Relu* hRelu, int f
 
         rhs  = to_gelu ? to_gelu : rhs;
         tRhs = to_gelu ? toGelu : rhs_0;
-        w->Print(w->name, 0, dump_flag);
+        // w->Print(w->name, 0, dump_flag);
         // lhs_->Print(lhs_->name, 0, -1);
         assert(rhs != nullptr);
-        int transA = 1;
+        int transA    = 1;
+        hQUANT hQuant = w->GetDynamicQuant();
+        if (hQuant != nullptr) {
+            transA = hQuant->params.TransA;  // for awq format of qwen3
+        }
+        foreW      = TASKA_AxB(main_stream, OC, nToken, IC, transA, 0);
+        foreW_lora = TASKA_AxB(main_stream, OC, nToken, IC, transA, 0, 0.0, hFish->config.loAB.sW);
         switch (compression) {
             case SAMPLE:
-                CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, nToken, IC, main_stream, transA);
+                TASKA_AxB(main_stream, OC, nToken, IC, transA, 0).blasLt(rhs, w, ToX(lhs_), ToX0(b));
+                // CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, nToken, IC, main_stream, transA);
                 break;
-            case LORA:                      //  rhs += a*b*lhs_
-                if (!hFish->config.loAB.isPassW()) {  // tpLORW != LoAB_CARD::typW::AB && hFish->config.loAB.sW > 0
-                    CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, nToken, IC, main_stream, transA, 0);
-                }
+            case LORA:  //  rhs += a*b*lhs_
+                D20(rhs, sizeof(floatX) * OC * nToken);
+                foreW_lora.blasLt(rhs, w, ToX(lhs_), ToX0(b));
+                // CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, nToken, IC, main_stream, transA, 0);
                 // rhs_0->Print(rhs_0->name, 0, -1);   //w->Print(w->name, 0, -1),
-                if (!hFish->config.loAB.isPassAB()) {   //tpLORW != LoAB_CARD::typW::W0
+                if (!hFish->config.loAB.isPassAB()) {  // tpLORW != LoAB_CARD::typW::W0
                     for (auto lora : wLoABs) {
                         lora->Forw(rhs, ToX(lhs_), nToken, flag);
                     }
@@ -343,7 +360,9 @@ int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, Relu* hRelu, int f
                 // rhs_0->Print(rhs_0->name,0,-1);
                 break;
             default:
-                CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, nToken, IC, main_stream, transA);  // default: transA = 1, transB = 0,
+                foreW.blasLt(rhs, w, ToX(lhs_), ToX0(b));
+                // CU_mm_(rhs, w, ToX(lhs_), ToX0(b), OC, nToken, IC, main_stream, transA);  // default: transA = 1, transB = 0,
+                // tRhs->Print("axb", 0, -1, OC);
                 break;
         }
         if (w->hQuant != nullptr) {
@@ -365,36 +384,38 @@ int SLP::Forw(hGTensor rhs_0, hGTensor lhs_, hGTensor toGelu, Relu* hRelu, int f
 int HIERARCH_LorAB::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, int flag) {
     if (!isBack)
         return 0x0;
-    if (config.sAB <= 0)
+    float sAB = config->GetS_ab();
+    if (sAB <= 0)
         return 0x0;
 
     bool isTransW = False;
     int dump_flag = 0, transAW = 0;  //(int)isTransW;
-    delta->Print("delta_0", 0, dump_flag);
-    float* dbias_buffer = (float*)GTensor::buff, beta = 0.0;
-    if(!config.isPassW()){
-        beta = 1.0; //  AccumuDelta
-    }
-    floatX* bias        = nullptr;
+    delta->Print(title + "delta_0", 0, dump_flag);
+    float *dbias_buffer = (float*)GTensor::buff, beta = 0.0;
+
+    floatX* bias = nullptr;
     //  delta->Print(delta->name, 0, dump_flag);
     a->Print(a->name, 0, dump_flag), b->Print(b->name, 0, dump_flag);
     // assert(inp->isSameShape({B, T, nInA}) && deltaIn->isSameShape({B, T, nOutB}));
     //  Forward: rhs = b*Ax
     // matmul_backward((floatX*)Adelta, ToG(b), nullptr, ToX(deltaIn), (floatX*)Ax, ToX(b), dbias_buffer, B, T, rank, nOutB, main_stream, isTransW);
-    TASKA_AxB(main_stream, rank, B * T, nOutB, transAW, 0, beta).blasLt((floatX*)Adelta, ToX(b), deltaIn);  // Adelta=b*deltaIn
-    TASKA_AxB taskaw(main_stream, rank, nOutB, B * T, transAW, 1, 1.0f);
-    CU_mm_blasLt(ToG(b), (floatX*)Ax, ToX(deltaIn), bias, taskaw);  // weight.b=Ax*deltaIn
+    TASKA_AxB(main_stream, rank, B * T, nOutB, transAW, 0, 0.f, sAB).blasLt((floatX*)Adelta, ToX(b), deltaIn);  // Adelta=b*deltaIn
+    TASKA_AxB taskaw(main_stream, rank, nOutB, B * T, transAW, 1, 0.0f, sAB);
+    taskaw.blasLt(ToG(b), (floatX*)Ax, ToX(deltaIn), bias);  // weight.b=Ax*deltaIn
+    // b->Print(b->name, 1, -1);
     b->Dogleg(-1);
-    b->Print(b->name, 1, dump_flag);
 
     inp->Print("inp", 0, dump_flag), PrintTensor<floatX>("A_delta", (floatX*)Adelta, true, B, T, rank, 1, dump_flag);
     //  Forward: Ax = a*Inp     [64,8192] x [8192,768]=>[64,768]
     // matmul_backward(ToX(delta), ToG(a), nullptr, (floatX*)Adelta, ToX(inp), ToX(a), dbias_buffer, B, T, nInA, rank, main_stream, isTransW,
     // nullptr,isAccumuDelta);
-    TASKA_AxB taskb(main_stream, nInA, B * T, rank, transAW, 0, beta);
-    CU_mm_blasLt(ToX(delta), ToX(a), (floatX*)Adelta, bias, taskb);
-    TASKA_AxB taskbw(main_stream, nInA, rank, B * T, transAW, 1, 1.0f);
-    CU_mm_blasLt(ToG(a), ToX(inp), (floatX*)Adelta, bias, taskbw);
+    if (!config->isPassW()) {
+        beta = 1.0;  //  AccumuDelta
+    }
+    TASKA_AxB taskb(main_stream, nInA, B * T, rank, transAW, 0, beta, sAB);
+    taskb.blasLt(ToX(delta), ToX(a), (floatX*)Adelta, bias);
+    TASKA_AxB taskbw(main_stream, nInA, rank, B * T, transAW, 1, 0.0f, sAB);
+    taskbw.blasLt(ToG(a), ToX(inp), (floatX*)Adelta, bias);
     a->Dogleg(-1);
     a->Print(a->name, 0, dump_flag), a->Print(a->name, 1, dump_flag);
     delta->Print("delta_1", 0, dump_flag);
@@ -404,8 +425,8 @@ int SLP::BackOnCompression(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTen
     try {
         size_t szBuf = 0x0;
         w->BeforeBackward(szBuf, true);
-        floatX *wX = w->GetDataX(), *gW = ToG(w);
-        float* dbias_buffer = (float*)((char*)GTensor::buff + szBuf);
+        floatX* wX          = w->GetDataX();
+        float *dbias_buffer = (float*)((char*)GTensor::buff + szBuf), sW, beta = isAccumuDelta ? 1.0f : 0.0f;
         if (w->hQuant != nullptr) {
             DEBUG_HERE;
         }
@@ -413,12 +434,12 @@ int SLP::BackOnCompression(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTen
         int OC = nOut, IC = nIn, transAW = 0;
         assert(delta != nullptr);
         switch (compression) {
-            case SAMPLE:  // remater to get wX
+            case SAMPLE: {  // remater to get wX
                 subw->SubW(hSamps, true, gBUFF->tmpW, samp_type);
-                wX = ToX(gBUFF->tmpW);  // assert(nSample==OC || nSample==IC);
-                gW = ToX(gBUFF->tmpGW);
+                wX         = ToX(gBUFF->tmpW);  // assert(nSample==OC || nSample==IC);
+                floatX* gW = ToX(gBUFF->tmpGW);
                 cudaCheck(cudaMemsetAsync(gW, 0, gBUFF->tmpGW->nByte(), main_stream));
-                break;
+            } break;
             default:
                 break;
         }
@@ -430,13 +451,16 @@ int SLP::BackOnCompression(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTen
                 // subw->SubW(hSamps, false, gBUFF->tmpGW, samp_type);
                 break;
             case LORA:
-                if (!hFish->config.loAB.isPassW()) {    //tpLORW != LoAB_CARD::typW::AB && tpLORW != LoAB_CARD::typW::SHADOW_AB && hFish->config.loAB.sW > 0
-                    TASKA_AxB(main_stream, nIn, B * T, nOut, transAW, 0, isAccumuDelta ? 1.0f : 0.0f).blasLt(ToX(delta), wX, deltaIn);
-                    TASKA_AxB(main_stream, nIn, nOut, B * T, transAW, 1, 1.0f).blasLt(gW, ToX(inp), deltaIn);
-                    // matmul_backward(ToX(delta), gW, ToG0(b), ToX(deltaIn), ToX(inp), wX, dbias_buffer, B, T, IC, OC, main_stream, isTransW, ToX0(to_gelu),
-                    //                 isAccumuDelta);
+                sW = hFish->config.loAB.GetS_w();
+                // if (1 /*|| !hFish->config.loAB.isPassW()*/) {
+                TASKA_AxB(main_stream, nIn, B * T, nOut, transAW, 0, beta, sW).blasLt(ToX(delta), wX, deltaIn);
+                // w->Print(w->name, 1, -1);
+                if (!hFish->config.loAB.isFixW()) {
+                    TASKA_AxB(main_stream, nIn, nOut, B * T, transAW, 1, 1.0f, sW).blasLt(gW, ToX(inp), deltaIn);
                 }
-                if (!hFish->config.loAB.isPassAB()) {                    
+                // w->Print(w->name, 1, -1);
+                // }
+                if (!hFish->config.loAB.isPassAB()) {
                     for (auto lora : wLoABs) {
                         lora->Back(delta, inp, deltaIn, flag);
                     }
@@ -450,7 +474,7 @@ int SLP::BackOnCompression(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTen
                 break;
         }
 
-        if (!hFish->config.loAB.isPassW() && flag != 0x100 && !isAccumuDelta)
+        if (!hFish->config.loAB.isPassW() && !hFish->config.loAB.isFixW() && !isAccumuDelta)
             w->Dogleg(-1);
 
         return 0x0;
@@ -476,7 +500,7 @@ int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, 
 
         size_t szBuf = 0x0, nToken = B * T;
         w->BeforeBackward(szBuf, true);
-        floatX *wX = w->GetDataX(), *gW = ToG(w);
+        floatX* wX          = w->GetDataX();
         float* dbias_buffer = (float*)((char*)GTensor::buff + szBuf);
         assert(delta != nullptr);
 
@@ -513,7 +537,7 @@ int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, 
         } else {
             if (w->gama_param != nullptr) {
                 TASKA_quant<floatX> tasq(w.get(), w->hQuant, main_stream);
-                GamaBack_v0(tasq, inp, deltaIn, wX, gW, B, 0x0);
+                GamaBack_v0(tasq, inp, deltaIn, wX, ToG(w), B, 0x0);
                 //
                 // CU_GamaBack<floatX><<<tasq.grid3, tasq.block3, tasq.smem, tasq.stream>>>(tasq, ToX(inp), ToX(deltaIn), wX, gW, (int)B, 0x0);  // 3072->1024
                 if (isDogleg) {
@@ -525,7 +549,7 @@ int SLP::Back(hGTensor delta, hGTensor inp, hGTensor deltaIn, hGTensor to_gelu, 
                 }
             } else {
                 // backward to wX, uses += in the backward pass (accumulate the gradient) by setting alpha=one
-                TASKA_AxB(main_stream, nIn, nOut, B * T, transAW, 1, 1.0f).blasLt(gW, ToX(inp), deltaIn);
+                TASKA_AxB(main_stream, nIn, nOut, B * T, transAW, 1, 1.0f).blasLt(ToG(w), ToX(inp), deltaIn);
                 if (isDogleg)
                     w->Dogleg(-1);
             }
@@ -670,11 +694,12 @@ hGTensor FFN::cuFlow(hGTensor hIn, int flag) {
     bool isBias = up.b != nullptr;
     int C       = hFish->config.nEmbed();
     if (isForward()) {
+        hIn->Print("ffn.in", 0, dump_flag, B * T * C);
         inp = OnInput(hIn);
         // inp->Print("ffn.in", 0, dump_flag, B * T * C);
         gBUFF->residual = inp;  // gBUFF->residual->OverWrite(inp);          //
         if (fuseNorm == nullptr) {
-            norm.w->Print("ffn.norm.w", 0, dump_flag, C);
+            // norm.w->Print("ffn.norm.w", 0, dump_flag, C);
             norm.cuFlow(inp);
             norm.out->Print("ffn.norm", 0, dump_flag, B * T * C);
         }
@@ -683,9 +708,9 @@ hGTensor FFN::cuFlow(hGTensor hIn, int flag) {
         }
         // up.w->Print("ffn.up.w", 0, dump_flag);
         up.Forw(up_out, norm.out);  // up.Forw(tGelu, norm.out, up_out, &relu);
-        up_out->Print("ffn.up", 0, dump_flag, latent);
+        up_out->Print("ffn.up", 0, dump_flag);
         relu.Forw(tGelu, up_out);
-
+        tGelu->Print("relu2", 0, dump_flag, B * T * latent);
         hGTensor down_out = gBUFF->delta;
 
         down.Forw(down_out, tGelu, nullptr, nullptr, isMirror);
@@ -728,7 +753,7 @@ hGTensor FFN::cuFlow(hGTensor hIn, int flag) {
             // tGelu->Print("swig.gate", 0, -1, latent);
         }
         relu.Back(gBUFF->bt4c, up_out);
-        // hGensor tmpDelta = GTensor::FromBuffer();
+        // hGTensor tmpDelta = GTensor::FromBuffer();
         up.Back(gBUFF->tmpDelta, norm.out, gBUFF->bt4c, nullptr);
         if (!gate.Empty()) {
             gate.Back(gBUFF->tmpDelta, norm.out, gate.delta, nullptr, true);
@@ -774,8 +799,7 @@ hGTensor OutSimilarity::cuFlow(hGTensor inp, int flag) { return nullptr; }
 
 /*
     Each block for one token
-    todo - 1.   fuse CU_mm_ &replace MM with dot-function
-*/
+
 __global__ static void CU_classifier_(floatX* logits_BT, float* losses, floatX* probs, const float dloss, const int* targets, int B, int T, int V, int P,
                                       float* metric, bool WriteDLogits = true) {
     // int64_t idx = gridDim.x - (blockIdx.x + 1);
@@ -813,9 +837,9 @@ __global__ static void CU_classifier_(floatX* logits_BT, float* losses, floatX* 
         }
     }
     __syncthreads();
-}
+}*/
 
-hGTensor Head4Token::cuInfer(hGTensor inp_, int flag) {
+hGTensor Head4Token::cuInfer_1(hGTensor inp_, int flag) {
     double now = GST_us();
     assert(norm.Empty());
     int nToken = nBatchToken(), nEmbed = hFish->config.nEmbed();
@@ -842,7 +866,7 @@ hGTensor Head4Token::cuInfer(hGTensor inp_, int flag) {
 
 hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
     INSPECT inspect(this);
-    int V = nCls, Vp = padded_nCls, gelu_fusion = 1, i, C = hFish->config.nEmbed(), nPlot = 0;
+    int V = nCls, Vp = padded_nCls, i, C = hFish->config.nEmbed(), nPlot = 0;
     assert(proj.b == nullptr);
     // mean_loss          = 0.0f;
     const int* targets = (int*)(target->data);
@@ -851,10 +875,11 @@ hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
     hGTensor curLogits = preLogits, w = proj.w;
     float alpha4g = 1.0, beta4g = 1.0, logprob = 0;
 
+    inp_->Print("Header.in", 0, dump_flag);
     if (isForward()) {
         double t0 = GST_us();
         rLoss     = 1.0 / hBatch->nValidTokens;
-        // g_dump_level = -1;  // only for debug
+
         inp = inp_;
         if (maec != nullptr) {
             inp = maec->DEC(inp, true);
@@ -871,15 +896,24 @@ hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
             off = 0;  // reduce memory
             // PrintTensor<floatX>("Head4Token.proj.w", w->GetDataX(), true, w->ne[0], w->ne[1], w->ne[2], w->ne[3], -1);
             // [50304,768] x [768,8192] => [50304,8192]
-            hGensor subZ = inp->Partial("partialZ", nZ * sizeof(floatX), {dB, T, C});
+            hGTensor subZ = inp->Partial("partialZ", nZ * sizeof(floatX), {dB, T, C});
             proj.Forw(curLogits, subZ);
+            curLogits->Print("logits", 0, dump_flag);
+            if (onlyLogits)
+                continue;
+
             double t_i0 = GST_us();
             switch (verHeadLoss) {
                 case KERNEL_LIB_TYPE::TL_CUDA: {
 #if defined __USE_TILELANG__
-                    //   grad_pre_logits, const int* labels, float* losses, const  pre_logits, int N
-                    header_cls_T64_64_S49152_bfloat16<<<dim3(dB * T), dim3(128, 1, 1), 49152, main_stream>>>(
-                        ToX(curLogits) + off, targets + n1, cuLoss + n1, ToX(curLogits) + off, dB * T, hBatch->nValidTokens);
+                    if (Vp == 151936)
+                        header_cls_V151936_T64_64_S49152_bfloat16<<<dim3(dB * T), dim3(128, 1, 1), 49152, main_stream>>>(
+                            ToX(curLogits) + off, targets + n1, cuLoss + n1, ToX(curLogits) + off, dB * T, hBatch->nValidTokens);
+                    else if (Vp == 66)
+                        header_cls_V66_T64_64_S49152_bfloat16<<<dim3(dB * T), dim3(128, 1, 1), 49152, main_stream>>>(
+                            ToX(curLogits) + off, targets + n1, cuLoss + n1, ToX(curLogits) + off, dB * T, hBatch->nValidTokens);
+                    else
+                        assert(0 && "Not implemented ...");
                     // header_cls_T64_64_S49152_bfloat16<<<dim3(dB * T), dim3(128, 1, 1), 49152, main_stream>>>(targets + n1, ToX(curLogits) + off, dB * T);
 #else
                     assert(0 && "TL_CUDA kernel of LOSS is missed!");
@@ -892,7 +926,7 @@ hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
             SYNC_STREAM();
             SUM::tLoss += (GST_us() - t_i0) / 1000000.0;  //  0.014
             if (isBack) {
-                hGensor subDelta = delta->Partial("partialDeltaZ", nZ * sizeof(floatX), {dB, T, C});
+                hGTensor subDelta = delta->Partial("partialDeltaZ", nZ * sizeof(floatX), {dB, T, C});
                 if (0 && verHeadLoss == KERNEL_LIB_TYPE::TL_CUDA && i == 0) {  //
                     dump_flag = -1;
                     // PrintTensor<float>("loss", cuLoss + n1, true, dB, T, 1, 1, dump_flag);
@@ -911,10 +945,13 @@ hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
                 proj.Back(subDelta, subZ, curLogits, nullptr, false, 0x100);  // hGTensor delta, hGTensor inp, hGTensor deltaIn
             }
         }
-        delta->Print("δ_head", 0, dump_flag, B * T * C);
-        // g_dump_each = 0;
+        if (!onlyLogits) {
+            delta->Print("δ_head", 0, dump_flag, B * T * C);
+            cudaMemcpy(hostLoss, cuLoss, B * T * sizeof(float), cudaMemcpyDeviceToHost);
+        } else {
+            memset(hostLoss, 0x0, B * T * sizeof(float));
+        }
 
-        cudaMemcpy(hostLoss, cuLoss, B * T * sizeof(float), cudaMemcpyDeviceToHost);
         if (!SYNC_STREAM("Head4Token", 1)) {
             assert(0);
             exit(KOIFISH_EXIT_OUT_CLS);
@@ -933,7 +970,7 @@ hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
     return preLogits;
 }
 
-void GeNeuron::SetInp4Back(hGensor inp_, int flag) {
+void GeNeuron::SetInp4Back(hGTensor inp_, int flag) {
     inp = inp_;
     if (dev_window != nullptr) {
         size_t szCopy = std::min(inp->nByte(), (size_t)CU_DEV_WINDOW);
@@ -950,7 +987,7 @@ __global__ void CU_memcmp(const T* a, const T* b, size_t n, int flag = 0x0) {
         // atomicAdd(nMiss, 1);
     }
 }
-bool GeNeuron::VerifyInp4Back(hGensor inp_, int flag) {
+bool GeNeuron::VerifyInp4Back(hGTensor inp_, int flag) {
     if (dev_window != nullptr) {
         // int nMiss = 0;
         CU_memcmp<BIT_8><<<1, CU_DEV_WINDOW>>>((hBITARR)(dev_window->data), (hBITARR)(inp->data), CU_DEV_WINDOW);

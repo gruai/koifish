@@ -58,6 +58,9 @@ Optimizer::Optimizer(NLP_AutoRegressive* g_, CLI_params& config, int flag) : _fi
             // hAR_quant->LearningRate(15258-1);   //do some testing
             // hAR_quant->LearningRate(0);
         }
+        if (_fish->config.loAB.isDistll()) {
+            hLR_loAB = std::make_shared<DiscreteSchedule>(_fish->config.loAB, _fish->config.common);
+        }
         // train_loader->Init(g_,"Train");
 
     } else {
@@ -78,9 +81,12 @@ bool Fish::SetPhase(LIFE_PHASE phase_, int flag) {
             // _INFO("[prefill] " );
             // assert(loader->num_batches == 1);
             break;
-        case LIFE_PHASE::P_GENERATE:
-            _INFO("[generate] ");
+        case LIFE_PHASE::P_CHAT_1:
+            _INFO("[chat_1] ");
             // assert(loader->num_batches == 1);
+            break;
+        case LIFE_PHASE::P_CHAT_N:
+            _INFO("[chat_N] ");
             break;
         default:
             break;
@@ -88,7 +94,7 @@ bool Fish::SetPhase(LIFE_PHASE phase_, int flag) {
     return true;
 }
 
-hGensor Optimizer::hLoss() {
+hGTensor Optimizer::hLoss() {
     assert(_fish != nullptr);
     if (_fish->loss != nullptr) {
         // auto a = _fish->loss->Item();
@@ -97,9 +103,9 @@ hGensor Optimizer::hLoss() {
     return _fish->loss;
 }
 
-hGensor Optimizer::hTargetProbs() { return _fish->target_label; }
+hGTensor Optimizer::hTargetProbs() { return _fish->target_label; }
 
-hGensor Optimizer::GradOf(hGensor node, int flag) {
+hGTensor Optimizer::GradOf(hGTensor node, int flag) {
     // assert(0);
     // auto cgraph = _fish->GetBackRaw();
     return nullptr;  //::GradOf(cgraph,node,flag);
@@ -145,6 +151,9 @@ bool Optimizer::BatchGrad(int iter, float& fx, int flag) {
     if (hAR_quant != nullptr) {
         hAR_quant->LearningRate(iter - 1);
     }
+    if (hLR_loAB != nullptr) {
+        hLR_loAB->LearningRate(iter - 1);
+    }
     bool bench = false;
 
     for (int accum_step = 0; accum_step < 1; ++accum_step) {
@@ -179,7 +188,7 @@ bool Optimizer::BatchGrad(int iter, float& fx, int flag) {
     return true;
 }
 
-bool isGensor(hGensor gensor, vector<string> keys, int flag = 0x0) {
+bool isGensor(hGTensor gensor, vector<string> keys, int flag = 0x0) {
     string name = gensor->name;
     for (auto key : keys) {
         if (name.find(key) != std::string::npos)
@@ -264,7 +273,7 @@ void OPT_Adam::UpdateParams_V0(int nx, CLI_params& config, int flag) {
     tUpdate = GST_ms() - now;
 }
 
-float Optimizer::gClip(int ne, floatX* g, hGensor hP, int flag) {
+float Optimizer::gClip(int ne, floatX* g, hGTensor hP, int flag) {
     float clip = 1.0f, a, a1 = -FLT_MAX;
     double sum = 0.0;
 
@@ -361,7 +370,7 @@ int GTensor::Dogleg(int flag) {
     return 0;
 }
 
-OPT_STATUS Optimizer::UpdateTensorParam(hGensor hP, floatX* g, float gnorm) {
+OPT_STATUS Optimizer::UpdateTensorParam(hGTensor hP, floatX* g, float gnorm) {
     float grad_norm = g_step;
     hP->Dogleg(0x0);
     grad_norm = hP->gnorm;
@@ -373,7 +382,7 @@ OPT_STATUS Optimizer::UpdateTensorParam(hGensor hP, floatX* g, float gnorm) {
 
 int UpdateTensorParam_cuda(hGTensor tensor, Optimizer* hOPT, float& grad_norm, int flag);
 //  Always call Optimizer::UpdateTensorParam          Deprecated
-OPT_STATUS OPT_Adam::UpdateTensorParam(hGensor hP, floatX* gX, float clip) {
+OPT_STATUS OPT_Adam::UpdateTensorParam(hGTensor hP, floatX* gX, float clip) {
     // return Optimizer::UpdateTensorParam(hP, gX, clip);
 
     // assert(gimap.find(hP)!=gimap.end());
@@ -559,7 +568,7 @@ void Optimizer::CheckExitSearch(int t, int flag) {
         isExit = true;
     }
     if (isExit) {
-        trainInfos().SaveToCSV("_info_.csv");
+        trainInfos().SaveToCSV("_info_.csv", 0x10000);
         // release more resource here
         _WARN("[APP] Koifish exit Optimizer::Search when iter=%d > N_mostiter=%d", t, DEBUG.N_mostiter);
         K_EXIT_NOW(KOIFISH_EXIT_DEBUG);
@@ -568,7 +577,7 @@ void Optimizer::CheckExitSearch(int t, int flag) {
 /*
     10/04/2025  行走于天地之间，所见大美，皆为人心
  */
-Optimizer::RESULT Optimizer::Search(void* ctx, hGensor loss_, hGensor target_, CLI_params& config) {
+Optimizer::RESULT Optimizer::Search(void* ctx, hGTensor loss_, hGTensor target_, CLI_params& config) {
     auto train_params = TrainParams();
     // auto fish_in      = _fish->config.ckp_in[0];_fish->isLoadCheckpoint ? fish_in.sDir.c_str() : ""
 
@@ -584,8 +593,8 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGensor loss_, hGensor target_, C
     _INFO("\tDECENT=%d(%s) SIGN=%d tpFuseCu=%d filter=%d\n\n", tpGD, GD_NAME[tpGD].c_str(), tpSign, tpFuseCu, _fish->config.filter_tmp_grad.size());
     DEBUG.Dump(0);
 
-    if (_fish->isModel({NLP_QWEN2, NLP_QWEN3})) {
-        // g_dump_level = -1;
+    if (_fish->isModel({NLP_QWEN2, NLP_QWEN3, NLP_SCORE_})) {
+        g_dump_level = DEBUG.dump_TensorDetail + 1;  // hack
     }
     float a = 0, grad_norm = 0;
     if (_fish->isLoadCheckpoint) {
@@ -648,8 +657,10 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGensor loss_, hGensor target_, C
                 // g_dump_level = -1;
             }
         }
-        if (t % 100 == 0)
-            trainInfos().SaveToCSV("_info_.csv");
+        if (t % 10 == 0) {
+            // trainInfos().SaveToCSV("_info_.csv");
+            trainInfos().SaveColorsToCSV(".csv");
+        }
 
         Evaluate();
 
@@ -684,9 +695,10 @@ double Optimizer::GraphCompute(hSampLoader hLoader, hTGraph hTG, int flag) {
 
     isBackward = false;
     _fish->ForwardOnRLS(iter, 0x0);
-    if (_fish->phase == LIFE_PHASE::P_GENERATE || _fish->phase == LIFE_PHASE::P_PREFILL) {
+    // g_dump_level = -1;
+    if (_fish->phase == LIFE_PHASE::P_CHAT_1 || _fish->phase == LIFE_PHASE::P_CHAT_N || _fish->phase == LIFE_PHASE::P_PREFILL) {
     } else {
-        mean_loss = hLoader->hTokens->LossOnResult(hLoader, cls);
+        mean_loss = hLoader->hDaTokens->LossOnResult(hLoader, cls);
         if (isOnlyEvaluate) {
             return mean_loss;
         } else {
@@ -713,7 +725,7 @@ bool Optimizer::Evaluate(int type, int flag) {
     }
     int gpt_every = _fish->config.common.gpt_every;
     if (gpt_every > 0 && iter % gpt_every == 0) {
-        _fish->SetPhase(LIFE_PHASE::P_GENERATE);
+        _fish->SetPhase(LIFE_PHASE::P_CHAT_1);
         _fish->config.chat_sampler.seq_len = 64;
         _fish->Chat(0, P_TRAIN, 1);
     }
@@ -764,8 +776,8 @@ float Optimizer::EvaluateSamps(hSampLoader loader, int iter, int flag) {
     const float* wLog   = nullptr;
     loader->next_sample = 0;  // fix this to keep same acc on each experiment
     for (i = 0; i < loader->num_batches; i += step) {
-        if (tokens_input != nullptr &&
-            (_fish->phase != LIFE_PHASE::P_PREFILL && _fish->phase != LIFE_PHASE::P_GENERATE)) {  // in some debug mode, tokens_input maybe null
+        if (tokens_input != nullptr && !_fish->isAtPhase({LIFE_PHASE::P_PREFILL, LIFE_PHASE::P_CHAT_1, LIFE_PHASE::P_CHAT_N})) {
+            //_fish->phase != LIFE_PHASE::P_PREFILL && _fish->phase != LIFE_PHASE::P_CHAT_1)) {  // in some debug mode, tokens_input maybe null
             TIMING_ms(loader->CollateBatch(i, _fish), SUM::tLoadData);
             samp = loader->cur_samps[i];
         }
@@ -780,7 +792,7 @@ float Optimizer::EvaluateSamps(hSampLoader loader, int iter, int flag) {
         }
         mean_loss += GraphCompute(loader, _fish->hForwTG);
         nB++;
-        if (_fish->config.isOnlyGPT) {
+        if (_fish->isLocalInfer) {  // config.isOnlyGPT
             return ee;
         }
 #ifdef _TENSOR_G_
@@ -809,6 +821,19 @@ string StepInfos::STEP::Info(int flag) {
     return buffer;
 }
 
+void StepInfos::AfterStep(int iter, int flag) {
+    assert(hOpt != nullptr);
+    StepInfos::STEP step(hOpt->loss_after, iter, hOpt->train_epochs, hOpt->last_lr, hOpt->g_step, SUM::tX1, hOpt->millis_per_iter);
+    if (!hOpt->colorTensors.empty()) {
+        for (auto t : hOpt->colorTensors) {
+            std::string key = t->Alias(0x0);
+            step.details[key].push_back(t->disq.sProber);
+        }
+        //
+    }
+
+    Add(step);
+}
 float Optimizer::UpdateLossCurve(int flag) {
     TRAIN_CARD _params = TrainParams();
     int n_batch = _params.n_batch, n_ctx = _params.n_ctx;
@@ -835,7 +860,9 @@ float Optimizer::UpdateLossCurve(int flag) {
         impr_plot = 0;
     if (std::isnan(loss_before) || std::isnan(loss_after))
         impr_plot = 0;
-    trainInfos().Add(StepInfos::STEP(loss_after, iter, train_epochs, last_lr, g_step, SUM::tX1, millis_per_iter));
+
+    trainInfos().AfterStep(iter);
+
     if ((iter - 1) % _params.dump_every == 0 || isDumpOnce) {
         isDumpOnce = false;
         _INFO("[epoch_%d]_%-6d loss=%f |g|=%.3g\tlr=%.2e | %s ", train_epochs, iter, loss_after, g_step, last_lr,
@@ -849,7 +876,7 @@ float Optimizer::UpdateLossCurve(int flag) {
         float tokens_per_second = tokens_processed / millis_per_iter * 1000.0f;
         ema_tps                 = iter == 1 ? tokens_per_second : 0.95f * ema_tps + 0.05f * tokens_per_second;
         _INFO(" | %.1fK token/s | %s", ema_tps / 1000.0, _fish->DebugInfo().c_str());
-        if (_fish->config.distill.isDistll())
+        if (_fish->config.loAB.isDistll() || _fish->config.distill.isDistll())
             _INFO(" x=%.8g\n", DistillRate(0x0));
         else {
             _INFO(" x=%.4gs(%.4gs)\n", (SUM::tLoss) / iter, (SUM::tHeader) / iter);
@@ -862,6 +889,10 @@ float Optimizer::UpdateLossCurve(int flag) {
 }
 
 float Optimizer::DistillRate(int type, int flag) {
+    if (hLR_loAB != nullptr) {
+        return hLR_loAB->lr_previous;
+    }
+
     if (hAR_quant == nullptr)
         return -1.0;
 
@@ -909,7 +940,7 @@ void Optimizer::AfterBuild(int flag) {
     //     _fish->hCache = std::make_shared<KVCache>(_fish);
 }
 
-void Optimizer::BeforeTrain(hGensor tokens_, int flag) {
+void Optimizer::BeforeTrain(hGTensor tokens_, int flag) {
     first_iter = iter;
 
     auto& adam        = _fish->config.common.adam;  // TrainParams().
@@ -957,17 +988,38 @@ void Optimizer::BeforeTrain(hGensor tokens_, int flag) {
             assert(0);
             break;
     }
+    if (!DEBUG.filterColor.empty()) {
+        for (auto tensor : opt_ps) {
+            if (G_Has_(tensor->name, DEBUG.filterColor)) {
+                colorTensors.push_back(tensor);
+                tensor->color = GTensor::COLOR_PROBER;
+            }
+        }
+    }
+
+    if (_fish->isTrain()) {
+        trainInfos().Init(this);
+    }
+    for (auto loader : val_loaders) {
+        loader->stepis.Init(this);
+    }
+
     if (DEBUG.watch_Tensors > 0) {
         TENSOR_WATCH watch(_fish, "embed_tokens");
         WatchWeights(watch, opt_ps, {"embed_tokens"}, 0x0);  //"k_proj.weight"        up_proj.weight
     }
 }
 
+// [todo] why skip embed&header layers?
 bool MUON_params_::isAdamW(void* hUserData, int flag) {
     GTensor* tensor = (GTensor*)(hUserData);
+    if (G_Has_(tensor->name, {"embd", "embed", "lm_head", "output.weight"})) {
+        DEBUG_HERE;
+    }
+
     if (!tensor->isWMAT())
         return true;
-    if (G_Has_(tensor->name, {"embd", "embed"}))
+    if (G_Has_(tensor->name, {"embd", "embed", "output.weight"}))  //  why skip embed&header layers?
         return true;
 
     int64_t m = tensor->ne[0], n = tensor->ne[1];
@@ -980,7 +1032,7 @@ bool MUON_params_::isAdamW(void* hUserData, int flag) {
     return true;
 }
 
-void OPT_Muon::BeforeTrain(hGensor tokens_input, int flag) {
+void OPT_Muon::BeforeTrain(hGTensor tokens_input, int flag) {
     Optimizer::BeforeTrain(tokens_input, flag);
     int version        = 1;
     ADAM_params_* adam = &(_fish->config.common.adam);
@@ -1093,7 +1145,7 @@ bool Optimizer::PrepareData(CLI_params& config, int flag) {
         }
     }
     if (!isLoadOK) {
-        hDataToken hTokenset = train_loader->hTokens;
+        hDataToken hTokenset = train_loader->hDaTokens;
         assert(hTokenset != nullptr);
 
         std::vector<size_t> samples_begin, samples_size;
@@ -1149,14 +1201,14 @@ OPT_Muon::OPT_Muon(NLP_AutoRegressive* g_, CLI_params& params_, int flag) : Opti
     adam->gclip               = adam->gclip / _fish->config.nLayer();
     _fish->config.Fuse_Normal = 0;  //
     if (g_->isTrain()) {
-        trainInfos().Init(this);
+        // trainInfos().Init(this);
     } else {  // may different
         _fish->config.common.remater_ffn = 1;
         // _fish->config.common.remater_qkv = 1;
     }
-    for (auto loader : val_loaders) {
-        loader->stepis.Init(this);
-    }
+    // for (auto loader : val_loaders) {
+    //     loader->stepis.Init(this);
+    // }
 }
 
 OPT_Adam::OPT_Adam(NLP_AutoRegressive* g_, CLI_params& params_, int flag) : Optimizer(g_, params_, flag) {
@@ -1168,14 +1220,14 @@ OPT_Adam::OPT_Adam(NLP_AutoRegressive* g_, CLI_params& params_, int flag) : Opti
     adam->gclip               = adam->gclip / _fish->config.nLayer();
     _fish->config.Fuse_Normal = 0;  //
     if (g_->isTrain()) {
-        trainInfos().Init(this);
+        // trainInfos().Init(this);
     } else {  // may different
         _fish->config.common.remater_ffn = 1;
         // _fish->config.common.remater_qkv = 1;
     }
-    for (auto loader : val_loaders) {
-        loader->stepis.Init(this);
-    }
+    // for (auto loader : val_loaders) {    // move to BeforeTrain
+    //     loader->stepis.Init(this);
+    // }
     hPipe = std::make_shared<PIPE_Adamw<floatX, floatMV>>(this, flag, adam->alpha, adam->beta1, adam->beta2, adam->eps, adam->decay);
     // hPipe = std::make_shared<PIPE_Muon<floatX, floatMV>>(this, flag, adam->alpha, adam->beta1, adam->beta2, adam->eps, adam->decay);    //only for debug
     // sched              = 1.0f;
@@ -1215,8 +1267,11 @@ void Optimizer::Dump(int typ) {
     //         _INFO("[Save] Invalid path@\"%s\"!\n", path.c_str());
     //     }
     // }
-    if (!HIERARCH_LorAB::sNeurons.empty()) {  
+    if (!HIERARCH_LorAB::sNeurons.empty()) {
         _INFO("[H_LoAB] neurons={%s}\n", HIERARCH_LorAB::sNeurons.c_str());
+    }
+    if (!colorTensors.empty()) {
+        _INFO("[COLOR] tensors={%d} {%s ...}\n", colorTensors.size(), colorTensors[0]->Alias().c_str());
     }
 
     // if(NOT_DUMP())  return;

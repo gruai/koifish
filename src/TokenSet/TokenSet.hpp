@@ -114,12 +114,12 @@ class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
     // int UniqueTokens(const std::vector<TOKEN_ID>& tokens,size_t n_1,int flag=0x0);
    public:
     static std::tuple<hDataToken, std::vector<hDataToken>, hDataToken> MakeInstance(struct CLI_params& params, hTokenizer, bool isLocalInfer, int flag);
-    // Deprecated, only for Tokenset_HellaSwag::Shard2Sample
-    std::vector<TOKEN_ID> tokens, masks;
+
+    std::vector<TOKEN_ID> tokens, tokens_mask;
     DataTokenSet(hTokenizer hDictVAE);
     virtual ~DataTokenSet();
     virtual bool Init(int flag = 0x0) { return true; }
-    bool hasMask() { return masks.size() > 0; }
+    bool hasMask() { return tokens_mask.size() > 0; }
 
     TOKEN_ID At(size_t pos);
 

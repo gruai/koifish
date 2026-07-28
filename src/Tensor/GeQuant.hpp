@@ -61,7 +61,7 @@ class GeQuant : public std::enable_shared_from_this<GeQuant> {
     int nPer128       = 4;  // number of elems per 128 bit
     GeNeuron* hNeuron = nullptr;
     std::string name;
-    Grusoft::GRander rander;
+    GRander rander;
     uint32_t seed;
     bool isGPU = false;
 

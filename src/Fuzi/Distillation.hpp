@@ -31,7 +31,7 @@ class Distillation {
     float alpha = 0.5;
 
    protected:
-    std::vector<hGensor> dist_gensors;
+    std::vector<hGTensor> dist_gensors;
     std::vector<float> sigmas;
     hLearnSKDU scheduler = nullptr;
     Fish* hFish          = nullptr;
@@ -53,9 +53,9 @@ class Distillation {
     virtual ~Distillation() {}
 
     //  ref:    ggml_scale_impl     ggml_compute_forward_timestep_embedding_f32
-    virtual hGensor UpdateGG(struct ggml_context* ctx, hGensor gensor, hGensor delta, int flag = 0x0) {
+    virtual hGTensor UpdateGG(struct ggml_context* ctx, hGTensor gensor, hGTensor delta, int flag = 0x0) {
         // float sigma = 0.5;
-        hGensor result = nullptr;
+        hGTensor result = nullptr;
         switch (alg) {
             case SIGMA:
                 gensor = nullptr;  // gg_axpy_f32(ctx,G(gensor),sigma,G(delta),1-sigma);

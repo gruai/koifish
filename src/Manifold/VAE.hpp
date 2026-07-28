@@ -11,14 +11,14 @@
 class VariationaAE : public Fish {
    protected:
     int nRefine = 1, tpNorm = 2;
-    bool isMirror = true;
-    bool reserve_x   = false;
-    vector<hGensor> resi_x;
+    bool isMirror  = true;
+    bool reserve_x = false;
+    vector<hGTensor> resi_x;
     vector<float> hier_norm;
     std::vector<int> dims;
     hFISH callosum = nullptr;
 
-    virtual hGensor _build_coder(bool isDown, hGensor x = nullptr) {
+    virtual hGTensor _build_coder(bool isDown, hGTensor x = nullptr) {
         /*x_hier = 0
         if x is None:
             assert(self.first_embed is not None)
@@ -85,14 +85,14 @@ class VariationaAE : public Fish {
 
     virtual void save_gguf(struct gguf_context*, int flag);
 
-    virtual hGensor ENC(void* ctx, hGensor x) {
-        hGensor cur = x;
+    virtual hGTensor ENC(void* ctx, hGTensor x) {
+        hGTensor cur = x;
         for (auto coder : MAEC) cur = coder->ENC(cur);
         return cur;
     }
 
-    virtual hGensor DEC(void* ctx, hGensor x) {
-        hGensor cur = x;
+    virtual hGTensor DEC(void* ctx, hGTensor x) {
+        hGTensor cur = x;
         for (auto it = MAEC.rbegin(); it != MAEC.rend(); ++it) cur = (*it)->DEC(cur);
         return cur;
     }
@@ -111,7 +111,7 @@ class VariationaAE : public Fish {
 
     bool Build(int flag = 0x0) override { return false; }
 
-    virtual void Build(hGensor x = nullptr) {
+    virtual void Build(hGTensor x = nullptr) {
         x = _build_coder(true, x);   // encoder
         callosum->Build();           //  self.scale_MLP( torch.cat(combined, dim=1))                              //
         x = _build_coder(false, x);  // decoer

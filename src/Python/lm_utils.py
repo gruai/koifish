@@ -115,3 +115,18 @@ def hook_model(model, HookGrad=0):
     final_rms_norm.register_full_backward_hook(rms_backward_hook)
 
     return handles
+
+def PrintTensor(t, prefix):
+    if not isDebug:        return
+    
+    t = t.detach().flatten().cpu()
+    n = t.numel()
+    mid = n // 2
+    print(f"{prefix}\t", end="")
+    print(
+        " ".join(f"{x:.6g}" for x in t[:3].tolist()),
+        "...",
+        " ".join(f"{x:.6g}" for x in t[mid:mid+4].tolist()),
+        "...",
+        " ".join(f"{x:.6g}" for x in t[-3:].tolist())
+    )

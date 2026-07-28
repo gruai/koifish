@@ -69,7 +69,7 @@ class EDGE_DEVICES {
     }
     int GridDim(size_t nEle, int typ = 0x0, int flag = 0x0);
     int SetThread(int nThread, int flag = 0x0);
-    virtual int SetBackend(hGensor cur, int flag = 0x0);
+    virtual int SetBackend(hGTensor cur, int flag = 0x0);
     template <typename T>
     T* GetScheduler() {
         T* hS = dynamic_cast<T*>(hRLS.get());

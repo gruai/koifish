@@ -53,19 +53,19 @@ class K_SafeTensors;
 
 struct MixOfModels {
     bool isRes = true, isSiLU = false;
-    vector<hGensor> exs;
+    vector<hGTensor> exs;
     int nTiB;  // number of tokens in batch
-    // hGensor gate = nullptr;
-    hGensor embed2w = nullptr;
-    hGensor gat_    = nullptr;
+    // hGTensor gate = nullptr;
+    hGTensor embed2w = nullptr;
+    hGTensor gat_    = nullptr;
 
-    virtual hGensor Build(CLI_params& config, void* ctx, hGensor cur, int flag = 0x0) { return nullptr; }
-    hGensor Forward(void* ctx, hGensor cur, hGensor w);
+    virtual hGTensor Build(CLI_params& config, void* ctx, hGTensor cur, int flag = 0x0) { return nullptr; }
+    hGTensor Forward(void* ctx, hGTensor cur, hGTensor w);
 };
 
 struct MixOfSwarm : public MixOfModels {
     virtual void Init(tpSWARM& swarm, void* ctx, int n_embd, int flag = 0x0);
-    hGensor Build(CLI_params& config, void* ctx, hGensor cur, int flag = 0x0) override;
+    hGTensor Build(CLI_params& config, void* ctx, hGTensor cur, int flag = 0x0) override;
 };
 
 class Fish : public std::enable_shared_from_this<Fish> {
@@ -90,7 +90,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
 
     WIKI* wiki_tutor = nullptr;
     bool CopyGensors(hWIKI wiki, int flag);
-    vector<hGensor> tmpExLogis;
+    vector<hGTensor> tmpExLogis;
     WIKI::INDUCT_MODE teach = WIKI::_LOGITS;
 
     // Generate some results on prompt
@@ -101,7 +101,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
 
     hTGraph hForwTG = nullptr, hBackTG = nullptr;
     int graph_order = -1, graph_update = -1;
-    std::vector<hGensor> checkpoints;
+    std::vector<hGTensor> checkpoints;
     bool measure_only = false;
     void* ctx_build   = nullptr;  // user context of build graph
 
@@ -110,9 +110,9 @@ class Fish : public std::enable_shared_from_this<Fish> {
     // @TGraph::TopoOrder
     GENSOR_TOPU gensors;
     //  paramter tensors updated by hOPT    @Fish::AfterBuild
-    vector<hGensor> optParams;
-    vector<hGensor> loadGensors;
-    std::vector<hGensor> xGensors;
+    vector<hGTensor> optParams;
+    vector<hGTensor> loadGensors;
+    std::vector<hGTensor> xGensors;
 
     hEDevices hEDS  = nullptr;
     hKVCache hCache = nullptr;
@@ -128,13 +128,13 @@ class Fish : public std::enable_shared_from_this<Fish> {
     size_t nParams = 0, szModel = 0;
     size_t nFixParams = 0;  // 1. isFixWeight 2. GamaMode
 
-    hGensor in_node = nullptr, out_node = nullptr;  // maybe GPU tensor
-    hGensor loss = nullptr, target_mask = nullptr, target_label = nullptr, KQ_pos = nullptr, pos_embd = nullptr;
-    hGensor KQ_mask    = nullptr;  //  mask for 1 head, it will be broadcasted to all heads
+    hGTensor in_node = nullptr, out_node = nullptr;  // maybe GPU tensor
+    hGTensor loss = nullptr, target_mask = nullptr, target_label = nullptr, KQ_pos = nullptr, pos_embd = nullptr;
+    hGTensor KQ_mask   = nullptr;  //  mask for 1 head, it will be broadcasted to all heads
     TokenEmbed* hEmbed = nullptr;
     Head4Token* hCLS   = nullptr;  //  GetNeuron<Head4Token>("Head4Token",0);
 
-    // hGensor gate=nullptr;      //create@InitModel update@
+    // hGTensor gate=nullptr;      //create@InitModel update@
     MixOfModels mom;
     MixOfSwarm mos;
     // Fish can talk, at least it would bubble...
@@ -178,13 +178,13 @@ class Fish : public std::enable_shared_from_this<Fish> {
 
     virtual void Statistic_Quant(int typ, int flag = 0x0);
 
-    Grusoft::GRander rand_coin;
+    GRander rand_coin;
 
    public:
-    hGensor xn = nullptr, xxn = nullptr;  // only for debug
+    hGTensor xn = nullptr, xxn = nullptr;  // only for debug
     hTensorBuffer memBuffer = nullptr;
 
-    struct CLI_params config;
+    struct CLI_params config;  //  each fish has unique config!
     static tpSWARM swarm;
 
     enum ROLE_TYPE {
@@ -207,11 +207,23 @@ class Fish : public std::enable_shared_from_this<Fish> {
     bool isTrain() const { return !isLocalInfer; }
     bool isSymbolic() const { return isSymbolicAnalysis; }
     bool isAtPhase(LIFE_PHASE ph) const;
+    bool isAtPhase(const std::vector<LIFE_PHASE> phases) const {
+        for (auto ph : phases) {
+            if (isAtPhase(ph)) {
+                return true;
+            }
+        }
+        return false;
+    }
     virtual bool SetPhase(LIFE_PHASE phase_, int flag = 0x0);
     CHAT_MODE ChatMode(int flag = 0x0) const {
         if (gopt == nullptr)
             return CHAT_MODE::YABA;
-        return gopt->ChatMode(flag);
+        if (isLocalInfer) {
+            return CHAT_MODE::CHATML_ASSIST;
+        } else
+            return CHAT_MODE::YABA;
+        // return gopt->ChatMode(flag);
     }
     bool hasWiki() { return wikis.size() > 0; }
 
@@ -267,7 +279,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
         return n;
     }
     //  number of class (only valid for classification problem)
-    virtual size_t nClass() {
+    virtual size_t nClass() const {
         assert(0);
         return 0;
     }
@@ -300,10 +312,10 @@ class Fish : public std::enable_shared_from_this<Fish> {
     // virtual void UpdateTernary(int flag = 0x0);
 
     virtual int BuildComputeGraph(int order, void* ctx, int flag);
-    virtual hGensor BuildLoss(void* ctx, hGensor cur, int flag = 0x0);
-    virtual hGensor BuildTarget(void* ctx, hGensor cur, int flag = 0x0) { return nullptr; }
-    virtual hGensor GetGensor(const string& name, int flag = 0x0) { return gensors.Get(arch, name, flag); }
-    virtual GENSOR_INFO& GetGensorInfo(hGensor hP, int flag = 0x0) {
+    virtual hGTensor BuildLoss(void* ctx, hGTensor cur, int flag = 0x0);
+    virtual hGTensor BuildTarget(void* ctx, hGTensor cur, int flag = 0x0) { return nullptr; }
+    virtual hGTensor GetGensor(const string& name, int flag = 0x0) { return gensors.Get(arch, name, flag); }
+    virtual GENSOR_INFO& GetGensorInfo(hGTensor hP, int flag = 0x0) {
         assert(gensors.infos.find(hP) != gensors.infos.end());
         return gensors.infos[hP];
     }
@@ -322,12 +334,13 @@ class Fish : public std::enable_shared_from_this<Fish> {
     // virtual void CreateWiki(int flag=0x0)   {}
 
     // return target_label = Head4Token->target
-    virtual hGensor Target() { return target_label; }
-    virtual hGensor Output() {
+    virtual hGTensor Target() { return target_label; }
+    virtual hGTensor Output() {
         assert(out_node != nullptr);
         return out_node;
     }
-    virtual hGensor Input() { return nullptr; }
+    // 1.tokens_input for LLM 2.
+    virtual hGTensor Input() { return nullptr; }
 
     void UpdateTensors(int flag = 0x0) {
         UNUSED(flag);
@@ -346,14 +359,14 @@ class Fish : public std::enable_shared_from_this<Fish> {
     }
 
     // If isParam 1) call InitParam@huTensor::Alloc(random or serialize); 2) alloc grad if isTrain;
-    void InitGensor(void* ctx, const string& name, hGensor gensor, bool isParam, int flag = 0);
+    void InitGensor(void* ctx, const string& name, hGTensor gensor, bool isParam, int flag = 0);
 
-    void InitGensor(void* ctx, hGensor gensor, const char* name, struct random_normal_distribution* rnd = nullptr, int flag = 0);
+    void InitGensor(void* ctx, hGTensor gensor, const char* name, struct random_normal_distribution* rnd = nullptr, int flag = 0);
 
     void SetTensor(const int nx, const int ny, const std::vector<float>& arr_data, const char* name, int flag = 0x0) {
         assert(0);  //  Drepecated
-        hGensor inp = GetGensor("inp");
-        float* data = (float*)inp->data;
+        hGTensor inp = GetGensor("inp");
+        float* data  = (float*)inp->data;
         assert(data != nullptr);
         const int n = nx * ny;
         // assert(nx == n_img_size && ny == n_img_size);
@@ -370,8 +383,8 @@ class Fish : public std::enable_shared_from_this<Fish> {
 
     virtual void Neck(const std::string& key_, const SHAPE& shape, int flag = 0x0) { ; }
     // Deprecated
-    hGensor AddTensor(const std::string& key_, typNUMBER tp, const SHAPE& shape, int flag = 0x0);
-    hGensor AddTensor(void* ctx, const std::string& key_, typNUMBER tp, const SHAPE& shape, bool isParam, int flag = 0x0);
+    hGTensor AddTensor(const std::string& key_, typNUMBER tp, const SHAPE& shape, int flag = 0x0);
+    hGTensor AddTensor(void* ctx, const std::string& key_, typNUMBER tp, const SHAPE& shape, bool isParam, int flag = 0x0);
 
     std::vector<hLayer> layers;
     virtual void BeforeAddLayer() { ; }

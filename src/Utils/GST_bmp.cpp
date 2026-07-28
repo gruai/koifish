@@ -3364,14 +3364,14 @@ void GST_bitmap::Sharp() {
     }
 }
 
-void GST_bitmap::Colorize(_PIXEL color) {
+void GST_bitmap::Colorize(_PIXEL colour) {
     // Check for valid bitmap
     if (IsValid()) {
         // Calculate colorization params
-        fixed f_sred   = itofx(_GetRValue(color));
-        fixed f_sgreen = itofx(_GetGValue(color));
-        fixed f_sblue  = itofx(_GetBValue(color));
-        _PIXEL _sColor = _RGB2HSV(color);
+        fixed f_sred   = itofx(_GetRValue(colour));
+        fixed f_sgreen = itofx(_GetGValue(colour));
+        fixed f_sblue  = itofx(_GetBValue(colour));
+        _PIXEL _sColor = _RGB2HSV(colour);
         fixed f_value  = Divfx(itofx(_GetBValue(_sColor)), itofx(255));
 
         // Colorize bitmap
@@ -3819,7 +3819,7 @@ void GST_bitmap::EqualizeHistogram(long levels) {
             dwVerticalOffset += m_iPitch;
         }
 
-        // Convert image to RGB color model
+        // Convert image to RGB colour model
         ConvertToRGB();
     }
 }
@@ -11635,7 +11635,7 @@ void GST_bitmap::DrawTextW(long dstX, long dstY, LPWSTR lpszText, _PIXEL textCol
 void GST_bitmap::SetPixel(long x, long y, _PIXEL pixel) {
     // Check for valid bitmap
     if (IsValid()) {
-        // Set pixel color
+        // Set pixel colour
         long _x                    = max(0, min(m_bih.biWidth - 1, x));
         long _y                    = max(0, min(m_bih.biHeight - 1, y));
         DWORD dwTotalOffset        = (m_bih.biHeight - 1 - _y) * m_iPitch + _x * m_iBpp;
@@ -11649,7 +11649,7 @@ _PIXEL GST_bitmap::GetPixel(long x, long y) {
 
     // Check for valid bitmap
     if (IsValid()) {
-        // Get pixel color
+        // Get pixel colour
         long _x             = max(0, min(m_bih.biWidth - 1, x));
         long _y             = max(0, min(m_bih.biHeight - 1, y));
         DWORD dwTotalOffset = (m_bih.biHeight - 1 - _y) * m_iPitch + _x * m_iBpp;
@@ -11773,7 +11773,7 @@ void GST_bitmap::ConvertToHSV() {
             dwVerticalOffset += m_iPitch;
         }
 
-        // Update color mode
+        // Update colour mode
         m_ColorMode = CM_HSV;
     }
 }
@@ -11803,7 +11803,7 @@ void GST_bitmap::ConvertToRGB() {
             dwVerticalOffset += m_iPitch;
         }
 
-        // Update color mode
+        // Update colour mode
         m_ColorMode = CM_RGB;
     }
 }
@@ -11811,7 +11811,7 @@ void GST_bitmap::ConvertToRGB() {
 void GST_bitmap::ReplaceColor(long x, long y, _PIXEL newColor, long alpha, long error, BOOL bImage) {
     // Check for valid bitmap
     if ((IsValid()) && (m_ColorMode == CM_RGB)) {
-        // Calculate color replacement params
+        // Calculate colour replacement params
         _PIXEL reffPixel = _RGB2HSV(GetPixel(x, y));
         BYTE reffRed     = _GetRValue(reffPixel);
         BYTE reffGreen   = _GetGValue(reffPixel);
@@ -11827,7 +11827,7 @@ void GST_bitmap::ReplaceColor(long x, long y, _PIXEL newColor, long alpha, long 
 
         // Check for proccessing flag
         if (bImage) {
-            // Replace bitmap image color
+            // Replace bitmap image colour
             DWORD dwHorizontalOffset;
             DWORD dwVerticalOffset = 0;
             DWORD dwTotalOffset;
@@ -11879,7 +11879,7 @@ void GST_bitmap::ReplaceColor(long x, long y, _PIXEL newColor, long alpha, long 
             memset(pMask, FALSE, m_bih.biHeight * m_bih.biWidth * sizeof(BOOL));
             pMask[pPixels[count - 1].y * m_bih.biHeight + pPixels[count - 1].x] = TRUE;
 
-            // Replace bitmap region color
+            // Replace bitmap region colour
             LPDWORD lpDstData = (LPDWORD)m_lpData;
             do {
                 // Get last point

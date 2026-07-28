@@ -17,6 +17,12 @@
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
 
+/**
+ * 1. Most open‑source LLMs (LLaMA, Mistral, GPT‑J, Pythia, Falcon, etc.) do NOT use PyTorch’s default Gaussian init.
+ *      for example:    nn.init.uniform_(emb.weight, -1.0 / math.sqrt(dim), 1.0 / math.sqrt(dim))
+ * 2. Most diffusion LLMs use Gaussian initialization for embeddings, not uniform, because diffusion training is noise‑dominated
+ * 3. Default PyTorch’s nn.Embedding would call "init.normal_(self.weight)"
+ */
 TokenEmbed::TokenEmbed(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     auto dims = hFish->config.model.token_embeds;
     nVocab    = hG_->nClass();
@@ -52,6 +58,20 @@ bool TokenEmbed::SetMAEC(hMAEC mae_, int flag) {
     return true;
 }
 
+/**
+ * 1.   isEmbedWithNorm - Best choice is empirical, not theoretical!
+ *  The norm after embedding would change/adjust the scale of the residual to the next blocks:
+        If the |x = self.token_emb(idx)| is too large:
+            1. attention logits explode
+            2. RoPE magnitudes distort
+            3. MLP activations saturate
+            4. gradients become unstable
+        If it’s too small:
+            1. early layers learn slowly
+            2. model underfits
+            3. training becomes brittle
+            4. Embedding norm is a cheap, single‑line fix for this.
+ */
 bool TokenEmbed::Build(int flag) {
     void* ctx     = hFish->GetGGCTX(1);
     hFish->hEmbed = this;
@@ -72,7 +92,7 @@ bool TokenEmbed::Build(int flag) {
     // w = GT(hFish, tpData, {latent, padded_nCls}, flagW);  // padded_nCls
     w = GT(hFish, tpData, {padded_nCls, latent}, flagW);
     hFish->InitGensor(ctx, sw.c_str(), w, true);
-    if (!hFish->config.model.isEmbedWeightTying) {
+    /*if (!hFish->config.model.isEmbedWeightTying) {
         wInv = GT(hFish, tpData, {padded_nCls, latent}, flagW);
         if (padded_nCls > n) {
             wInv->x_shape = {n, latent};
@@ -82,7 +102,7 @@ bool TokenEmbed::Build(int flag) {
         hFish->InitGensor(ctx, sw.c_str(), wInv, true);
     } else {
         wInv = w;
-    }
+    }*/
     if (padded_nCls > n) {
         w->x_shape = {latent, n};
     }
@@ -95,7 +115,7 @@ bool TokenEmbed::Build(int flag) {
     }
     if (hFish->isModel({NLP_GUPPY})) {
         // lnW.BuildX(name+".norm",{padded_nCls},hFish,flag);
-        // if(wInv!=w)
+        // if(wInv_!=w)
         //     lnWInv.BuildX(name+".norm"+".inv",{padded_nCls},hFish,flag);
     }
 
@@ -116,17 +136,17 @@ bool TokenEmbed::Build(int flag) {
 /*
    batch(tokens) embeddings from glob token embedding(w)
 */
-hGensor TokenEmbed::Ming(RLS_BP* ctx_, hGensor tokens, int flag) {
+hGTensor TokenEmbed::Ming(RLS_BP* ctx_, hGTensor tokens, int flag) {
     // GeNeuron::BeforeMing(ctx_,tokens,flag);
-    int seed    = 0;  //  rRounding.RandInt32();       //Nearly same as 0
-    string sw   = name + "_rows";
-    hGensor cur = nullptr;
+    int seed     = 0;  //  rRounding.RandInt32();       //Nearly same as 0
+    string sw    = name + "_rows";
+    hGTensor cur = nullptr;
     if (hFish->isSymbolic()) {
         assert(tokens->type == typNUMBER::I32);
-        if (wInv != w)
-            out->AddSrc({w, wInv, tokens, b, lnW.w, lnWInv.w});
-        else
-            out->AddSrc({w, tokens, b, lnW.w});
+        /*if (wInv != w)
+            out->AddSrc({w, tokens, b, lnW.w, wInv});  //, lnWInv.w
+        else*/
+        out->AddSrc({w, tokens, b, lnW.w});
         cur = out;
     } else {
         cur = OnEmbed(tokens, seed);
@@ -145,8 +165,19 @@ string TokenEmbed::__repr__(string& suffix, string& prefix, int flag) {
     return buf;
 };
 
-hGensor VarCoder::ENC(const hGensor x0) {
-    /*hGensor x = encode*x0;
+bool TokenEmbed::AfterActivate(hGTensor t, DATA_PLACE target, int typ, int flag) {
+    // if (BIT_TEST(t->flags, GTensor::F_PARAM)) {
+    //     floatX* tmp = new floatX[t->size()];
+    //     GRanderTorch rander(20260714);
+    //     H2D(t->data, tmp, t->nByte());  // BPE(type)
+    //     delete[] tmp;
+    // }
+
+    return true;
+};
+
+hGTensor VarCoder::ENC(const hGTensor x0) {
+    /*hGTensor x = encode*x0;
     switch(tpNorm){
     case 0:
         x = x->Relu();
@@ -166,7 +197,7 @@ hGensor VarCoder::ENC(const hGensor x0) {
     return nullptr;
 }
 
-hGensor VarCoder::DEC(hGensor x) {
+hGTensor VarCoder::DEC(hGTensor x) {
     if (down.Empty())  // decode==nullptr
         return x;
     if (resi != nullptr) {
@@ -241,7 +272,7 @@ MAEC::MAEC(Fish* hG_, const std::string& key_, int flag) {
 
     return;
 }
-hGensor MAEC::ENC(hGensor cur, int flag) {
+hGTensor MAEC::ENC(hGTensor cur, int flag) {
     if (isForward()) {
         if (!normE.Empty()) {
             normE.cuFlow(cur);
@@ -269,7 +300,7 @@ hGensor MAEC::ENC(hGensor cur, int flag) {
     return cur;
 }
 
-hGensor MAEC::DEC(hGensor cur, bool isForw, int flag) {
+hGTensor MAEC::DEC(hGTensor cur, bool isForw, int flag) {
     if (isForw) {  //  !=isForward()
         for (auto ac : codes) {
             SLP& up = ac->up;
@@ -348,7 +379,7 @@ bool VarCoder::Build(int flag_0) {
     if (isNormalDown) {
         normDown.BuildX(_NAME(name, FFN_NORMAL_DOWN), {nTop}, hFish, flag_0 | F_DELTA);
     }
-    if (hFish->isModel({NLP_QWEN2, NLP_QWEN3, NLP_BITNET})) {
+    if (hFish->isModel({NLP_QWEN2, NLP_QWEN3, NLP_BITNET, NLP_SCORE_})) {
         // qwen 2.5 same as qwen 3.0!
         up.BuildX(_NAME(name, FFN_UP), {nTop, nBottom}, hFish, flagSLP);
         gate.BuildX(_NAME(name, FFN_GATE), {nTop, nBottom}, hFish, flag_0);
@@ -411,6 +442,7 @@ bool FFN::Build(int flag_0) {
     // gate.BuildX(name + "_gate", {shape[0], shape[1]}, hFish, flag);
 
     VarCoder::Build(flag);
+    relu.fAct = hFish->config.model.fActFFN;
     if (isShareParam) {
         TokenEmbed* embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
         down.SetEmbed(embed, 0);  // down.isTransW = true;
@@ -439,10 +471,6 @@ bool FFN::Build(int flag_0) {
     }
 
     up.w->residual_scale = hFish->config.common.residual_scale;
-    if (layid > 6) {  //  Gradient would explode!
-        // up.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORW);
-        // down.InitCompression(COMPRESSIVE_SENSING::LORA, hFish->config.tpLORW);       //  down.Back(gBUFF->bt4c, tGelu, gBUFF->delta, up_out);
-    }
 
     if (quant_params.Init4Neuron(name, hFish->config.jQuant, this)) {
         quant_params.spMost = up.w->shape;
@@ -465,11 +493,11 @@ std::vector<GeNeuron*> FFN::SubNeurons(int flag) {
     return neurons;
 }
 
-hGensor FFN::Ming(RLS_BP* ctx_, hGensor inpL, int flag) {
+hGTensor FFN::Ming(RLS_BP* ctx_, hGTensor inpL, int flag) {
     GeNeuron::BeforeMing(ctx_, inpL, flag);
 
-    hGensor cur      = inpL;
-    hGensor lastResi = inpL;
+    hGTensor cur      = inpL;
+    hGTensor lastResi = inpL;
     if (hFish->isSymbolic()) {
         auto hX = inpL >> up >> down >> gate >> norm;
         if (isNormalDown)
@@ -477,7 +505,11 @@ hGensor FFN::Ming(RLS_BP* ctx_, hGensor inpL, int flag) {
         hX = hX >> this;
         // inpL >> up >> down >> gate >> norm >> this;
         cur = out;
-    } else if (hFish->isAtPhase(LIFE_PHASE::P_GENERATE)) {
+        out->AddSrc(up.PickGensors());  // hack
+        out->AddSrc(down.PickGensors());
+        if (gate.out != nullptr)
+            out->AddSrc(gate.PickGensors());
+    } else if (hFish->isAtPhase(LIFE_PHASE::P_CHAT_1)) {
         cur = cuInfer(cur, flag);
     } else {  //  high performance fused operator
         cur = cuFlow(cur, 0x0);
@@ -509,7 +541,7 @@ string FFN::__repr__(string& suffix, string& prefix, int flag) {
 
 string Relu::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012] = "\0";
-    string sS      = ACTIVATION_META[fAct][0];
+    string sS      = std::string(magic_enum::enum_name(fAct));  // ACTIVATION_META[fAct][0];
     sprintf(buf + strlen(buf), "Activation=%s", sS.c_str());
     if (flag > 0)
         _INFO("%s", buf);

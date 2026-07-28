@@ -121,8 +121,13 @@ struct LearnSKDU {
 typedef std::shared_ptr<LearnSKDU> hLearnSKDU;
 
 struct DiscreteSchedule : LearnSKDU {
+    DISTILLATION_CARD* hDistlConfig = nullptr;
+
     DiscreteSchedule(TRAIN_CARD& train_params) : LearnSKDU(train_params) {}
-    DiscreteSchedule(DISTILLATION_CARD& distll, TRAIN_CARD& train_params, int flag = 0x0) : LearnSKDU(distll, train_params, flag) {}
+    DiscreteSchedule(DISTILLATION_CARD& distll, TRAIN_CARD& train_params, int flag = 0x0) : LearnSKDU(distll, train_params, flag), hDistlConfig(&distll) {}
+
+    float LearningRate(int64_t step, int flag = 0x0) override;
+
     std::vector<float> get_sigmas(uint32_t n) {
         std::vector<float> result;
 
@@ -195,7 +200,7 @@ class Fuyou {
    protected:
     Fuyou_params params;
     size_t nParams = 0, nMostParam = 0;
-    Grusoft::GRander rander;
+    GRander rander;
     uint32_t seed = 42;
     string name;
     float loss = FLT_MAX, loss_0 = FLT_MAX;
@@ -203,9 +208,9 @@ class Fuyou {
     RLS_BP* hRLS = nullptr;
     Fish* hFish  = nullptr;
 
-    vector<hGensor> ckpParams;  // Save/Load from checkpoint
-    vector<hGensor> fParams;    // from Fish::optParams
-    vector<hGensor> tReloads;   //  subset of fParams
+    vector<hGTensor> ckpParams;  // Save/Load from checkpoint
+    vector<hGTensor> fParams;    // from Fish::optParams
+    vector<hGTensor> tReloads;   //  subset of fParams
    public:
     // Fuyou() {}
     Fuyou(const string& name, RLS_BP* hRL, Fish* hFish, vector<TaskNode*> arrT, int l0, int l1, int flag = 0x0);
@@ -224,10 +229,10 @@ class Fuyou {
         return tasks[0];
     }
     virtual bool UpdateFollower(std::shared_ptr<Fuyou> follower, int flag = 0x0);
-    virtual bool Backward(hGensor cur, int flag = 0x0);
-    // bool Exploitation(hGensor cur, int flag = 0x0);
-    virtual bool Exploitation(hGensor tHead, hGensor tNext, int flag = 0x0);
-    // virtual void CrossOver(hGensor tHead, hGensor tNext, int flag = 0x0);
+    virtual bool Backward(hGTensor cur, int flag = 0x0);
+    // bool Exploitation(hGTensor cur, int flag = 0x0);
+    virtual bool Exploitation(hGTensor tHead, hGTensor tNext, int flag = 0x0);
+    // virtual void CrossOver(hGTensor tHead, hGTensor tNext, int flag = 0x0);
     // virtual void Mutation(double T_mut, int flag = 0x0);
     friend class RLSchedule;
     friend class RLS_BP;
@@ -258,7 +263,7 @@ class RLSchedule {
     int curFuyouID = 0;
 
     // LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;
-    Grusoft::GRander rand_branch;
+    GRander rand_branch;
 
     SKDU_params params;
     string resident_list = "";
@@ -311,7 +316,7 @@ class RLS_BP : public RLSchedule {
     int T_fore = -1, T_back = -1;
     int nT_guoke   = 0;
     size_t szGuoke = 0;
-    std::map<hGensor, enum TASK_STATUS> tMaps;
+    std::map<hGTensor, enum TASK_STATUS> tMaps;
     virtual bool UpdateBackbone(int iter, int flag = 0x0);
     virtual bool isUpdateBatch(int iter, int flag = 0x0);
 

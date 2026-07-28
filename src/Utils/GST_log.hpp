@@ -25,15 +25,15 @@
 #include <iostream>
 
 #include "../g_float.hpp"
-#define die(msg)                           \
-    do {                                   \
-        fputs("error: " msg "\n", stderr); \
-        exit(1);                           \
+#define die(msg)                         \
+    do {                                 \
+        fputs("die: " msg "\n", stderr); \
+        exit(1);                         \
     } while (0)
-#define die_fmt(fmt, ...)                                 \
-    do {                                                  \
-        fprintf(stderr, "error: " fmt "\n", __VA_ARGS__); \
-        exit(1);                                          \
+#define die_fmt(fmt, ...)                               \
+    do {                                                \
+        fprintf(stderr, "die: " fmt "\n", __VA_ARGS__); \
+        exit(1);                                        \
     } while (0)
 
 /*
@@ -82,8 +82,12 @@ void inline PrintT(const char* title, const T* src, int n1, int n2, int n3 = 1, 
     if (nElem == 0)
         return;
     assert(cur != nullptr);
-    char format[20];
-    snprintf(format, sizeof(format), "%%.%dg ", g_dump_sigfigs);
+    char format[20] = "\0";
+    if (typeid(T) == typeid(int)) {
+        snprintf(format, sizeof(format), "%%g ");
+    } else
+        snprintf(format, sizeof(format), "%%.%dg ", g_dump_sigfigs);
+
     typNUMBER tpData = TYPE_<T>();
     _INFO("%s<%s>\t", title, K_FLOATS[tpData].name.c_str());
     float a1 = -FLT_MAX, a0 = FLT_MAX, a;

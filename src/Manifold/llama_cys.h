@@ -24,15 +24,15 @@ bool llama_get_params(struct llama_model* lmodel, struct llama_hparams& cparam);
 bool llama_ctx_get_(struct llama_context* ctx, void**, int type);
 bool llama_ctx_set_(struct llama_context* ctx, void* hData, int type);
 struct llama_context* llama_ctx_reset_(struct llama_context* ctx, struct llama_model* model, struct llama_context_params params);
-void GG_set_(hGensor cur, const char* name, int il);
+void GG_set_(hGTensor cur, const char* name, int il);
 // repeat a to same shape as b
-hGensor _repeat(void* ctx, hGensor a, hGensor b);
-hGensor mamba_build_layer(void* ctx, struct llama_context& lctx,  //  const llama_ubatch & batch,
-                          struct ggml_cgraph* graph, hGensor curT, hGensor inpL, int il, int n_layer, int n_tokens, int32_t kv_head = -1, int32_t n_kv = -1,
-                          int n_outputs = -1);
-hGensor moe_build_ffn(void* ctx, struct llama_context& lctx, hGensor cur, hGensor gate_inp, hGensor up_exps, hGensor gate_exps, hGensor down_exps,
-                      int64_t n_expert, int64_t n_expert_used, bool norm_w, bool scale_w, float w_scale, int il);
+hGTensor _repeat(void* ctx, hGTensor a, hGTensor b);
+hGTensor mamba_build_layer(void* ctx, struct llama_context& lctx,  //  const llama_ubatch & batch,
+                           struct ggml_cgraph* graph, hGTensor curT, hGTensor inpL, int il, int n_layer, int n_tokens, int32_t kv_head = -1, int32_t n_kv = -1,
+                           int n_outputs = -1);
+hGTensor moe_build_ffn(void* ctx, struct llama_context& lctx, hGTensor cur, hGTensor gate_inp, hGTensor up_exps, hGTensor gate_exps, hGTensor down_exps,
+                       int64_t n_expert, int64_t n_expert_used, bool norm_w, bool scale_w, float w_scale, int il);
 bool llama_model2vocb_(struct llama_model* model, void* hData, int type);
 int _llama_build_graph(struct llama_model* model, struct ggml_cgraph** hgf, struct ggml_cgraph** hgb, int flag);
 struct ggml_cgraph* _llama_raw_graph(llama_model* model, struct ggml_cgraph* gfx, const std::string& prompt, bool isOnline, int flag);
-extern "C" void _pt_cys_(const char* title, hGensor t, int n);
+extern "C" void _pt_cys_(const char* title, hGTensor t, int n);

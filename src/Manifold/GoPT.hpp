@@ -28,129 +28,117 @@ using namespace std;
 
 class Fish;
 
-// multiple arr design for GPU version
+#include <limits>
+#include <queue>
+#include <vector>
+
+/**
+ * 1. supoort multi-thread
+ */
+struct TOPK_heap {
+    int tid = -1;  // thread id, each thread for one tensor
+    int dim = -1, nPick = -1;
+
+    float maxLogit  = 0.f;
+    float lastLogit = 0.f;  // k-th largest value (smallest in heap)
+    virtual bool isLarge(int i, int k, int flag = 0x0) { return false; }
+    std::priority_queue<int> heap;
+    std::vector<int> picks;
+
+    virtual int Select(int nPick, bool isOrder = false, int flag = 0x0);
+    virtual float ValueAt(int k) {
+        assert(0);
+        return 0.0;
+    }
+};
+
+struct LogitsInfo : TOPK_heap {
+    int ver        = 0;
+    int posInBatch = 0;
+    bool isCPU     = true;
+
+    float* logits       = nullptr;
+    floatX* src         = nullptr;  //  cls->preLogits->host_data
+    hGTensor hClsLogits = nullptr;
+    uint64_t rng_state;
+    TOKEN_ID qu;  // 非我无所取(qu)
+    float confidence;
+
+    LogitsInfo(int id, const Fish* hG_, hGTensor hClsLogits_, int flag = 0x0);
+    // virtual void Swap(int i, int j) { std::swap(logits[i], logits[j]), std::swap(index[i], index[j]); }
+    // virtual bool Init(int n_vocab, hGTensor hClsLogits_, int flag = 0x0);
+    // BF16->float
+    virtual void UpdateLogits(const CHAT_SAMPLER& samp_params, int flag = 0x0);
+
+    bool isLarge(int i, int k, int flag = 0x0) override {
+        assert(i >= 0 && i < dim);
+        assert(k >= 0 && k < dim);
+        float a = T2Float(src + i);
+        float b = T2Float(src + k);
+        return a > b;
+    }
+    float ValueAt(int k) override {
+        assert(k >= 0 && k < dim);
+        float a = T2Float(src + k);
+        return a;
+    }
+
+    virtual void TopK(int k, int flag = 0x0);
+    virtual float TopP(float top_p, int k, int flag = 0x0);
+    virtual int Qu_FlipCoin(int flag = 0x0);
+
+    virtual void SortPair(int nPick, int flag = 0x0) { assert(0); }
+    virtual ~LogitsInfo() { FREE_a(logits); }
+};
+typedef std::shared_ptr<LogitsInfo> hLogitsInfo;
+
 template <typename Typ>
-struct LogitsInfo {
+struct LogitsInfo_GPU : public LogitsInfo {
     void* d_temp  = nullptr;
     size_t szTemp = 0;
 
-    int dim    = -1;
-    bool isCPU = true;
-    //  cls->preLogits->host_data = _logits
-    Typ *logits = nullptr, *logits_sorted = nullptr;
-    int *index = nullptr, *index_sorted = nullptr;
-    float maxLogit     = 0.f;
-    hGensor hClsLogits = nullptr;
-
-    virtual void Swap(int i, int j) { std::swap(logits[i], logits[j]), std::swap(index[i], index[j]); }
-    virtual bool Init(int n_vocab, bool isCPU_, hGensor hClsLogits_, int flag = 0x0) {
-        isCPU      = isCPU_;
-        dim        = n_vocab;
+    virtual bool Init(int n_vocab, hGTensor hClsLogits_, int flag = 0x0) {
+        this->isCPU = false;
+        assert(0);
+        /*dim        = n_vocab;
         hClsLogits = hClsLogits_;
         // assert(cls->preLogits->host_data == nullptr);
         index = new int[n_vocab];
         for (int i = 0; i < n_vocab; i++) {
             index[i] = i;
         }
-        if (isCPU) {
-            logits = new Typ[n_vocab];
-            // hClsLogits->host_data = logits;
-        } else {
-            logits          = TO<Typ>(hClsLogits);
-            int* host_index = index;
-            cudaCheck(cudaMalloc(&index, n_vocab * sizeof(int)));
-            H2D(index, host_index, n_vocab * sizeof(int));
-            delete[] host_index;
 
-            cudaCheck(cudaMalloc(&index_sorted, n_vocab * sizeof(int)));
-            cudaCheck(cudaMalloc(&logits_sorted, n_vocab * sizeof(Typ)));
-        }
-        return true;
-    }
-    virtual void UpdateLogits(int flag = 0x0) {
-        void* src = hClsLogits->host_data;
-        assert(src != nullptr);
-        switch (hClsLogits->type) {
-            case typNUMBER::BF16:
-                for (int i = 0; i < dim; i++) {
-                    float a   = T2Float<bf16>((bf16*)src + i);
-                    logits[i] = Float2T<Typ>(&a);
-                    index[i]  = i;
-                }
-                break;
-            default:
-                assert(0);
-                break;
-        }
-    }
-    virtual void quick_select(int n, int k) {
-        int l = 0, r = n - 1;
-        while (l < r) {
-            // ProbIndex pivot = arr[k];
-            float pivot = (float)logits[k];
-            int i = l, j = r;
-            do {
-                while ((float)logits[i] > pivot) i++;
-                while ((float)logits[j] < pivot) j--;
-                if (i <= j) {
-                    std::swap(logits[i], logits[j]), std::swap(index[i], index[j]);
-                    i++;
-                    j--;
-                }
-            } while (i <= j);
+        logits          = TO<Typ>(hClsLogits);
+        int* host_index = index;
+        cudaCheck(cudaMalloc(&index, n_vocab * sizeof(int)));
+        H2D(index, host_index, n_vocab * sizeof(int));
+        delete[] host_index;
 
-            if (j < k)
-                l = i;
-            if (i > k)
-                r = j;
-        }
-        maxLogit = (float)logits[0];
-        for (int i = 1; i < k; i++) {
-            if ((float)logits[i] > maxLogit) {
-                maxLogit = (float)logits[i];
-            }
-        }
+        cudaCheck(cudaMalloc(&index_sorted, n_vocab * sizeof(int)));
+        cudaCheck(cudaMalloc(&logits_sorted, n_vocab * sizeof(Typ)));*/
+
+        return false;
     }
-    virtual void SortPair(int nPick, int flag = 0x0) {
-        if (nPick <= 0)
-            nPick = dim;
-        if (isCPU) {
-            // qsort(probindex, n_cands, sizeof(ProbIndex), compare_prob_desc);
-            assert(nPick <= dim);
-            for (int i = 0; i < nPick; i++) {
-                for (int j = 1; j < nPick; j++) {
-                    if ((float)logits[i] < (float)logits[j]) {
-                        Swap(i, j);
-                    }
-                }
-            }
-        } else {
-            assert(0);
-            /*if (d_temp == nullptr) {
-                cub::DeviceRadixSort::SortPairs(d_temp, szTemp, logits, logits_sorted, index, index_sorted, nPick);
-                cudaCheck(cudaMalloc(&d_temp, szTemp));  //
-            }
-            CU_init_i<<<CEIL_DIV(nPick, CU_T4B_SMALL), CU_T4B_SMALL>>>(index, nPick);
-            // cub::DeviceRadixSort::SortKeys(d_temp, szTemp, logits, logits, nPick);
-            //  In-place operations are not supported. There must be no overlap between any of the provided ranges!!!
-            // cudaMemcpy(index_out, index, sizeof(int) * nPick, cudaMemcpyDeviceToDevice);
-            // cudaMemcpy(logits_out, logits, sizeof(Typ) * nPick, cudaMemcpyDeviceToDevice);
+
+    void SortPair(int nPick, int flag = 0x0) override {
+        assert(0);
+        /*if (d_temp == nullptr) {
             cub::DeviceRadixSort::SortPairs(d_temp, szTemp, logits, logits_sorted, index, index_sorted, nPick);
-            PrintTensor<Typ>("sort_logits", logits_sorted, true, nPick, 1, 1, 1, 0);
-            PrintTensor<int>("sort_index", index_sorted, true, nPick, 1, 1, 1, 0);*/
+            cudaCheck(cudaMalloc(&d_temp, szTemp));  //
         }
-    }
-    virtual ~LogitsInfo() {
-        if (isCPU) {
-            // hClsLogits would release this! since hClsLogits->host_data = logits; @GeneratOnPrompt::GeneratOnPrompt=>cpuLogits.Init
-            // FREE_a(logits);
-            FREE_a(index);
-        }
+        CU_init_i<<<CEIL_DIV(nPick, CU_T4B_SMALL), CU_T4B_SMALL>>>(index, nPick);
+        // cub::DeviceRadixSort::SortKeys(d_temp, szTemp, logits, logits, nPick);
+        //  In-place operations are not supported. There must be no overlap between any of the provided ranges!!!
+        // cudaMemcpy(index_out, index, sizeof(int) * nPick, cudaMemcpyDeviceToDevice);
+        // cudaMemcpy(logits_out, logits, sizeof(Typ) * nPick, cudaMemcpyDeviceToDevice);
+        cub::DeviceRadixSort::SortPairs(d_temp, szTemp, logits, logits_sorted, index, index_sorted, nPick);
+        PrintTensor<Typ>("sort_logits", logits_sorted, true, nPick, 1, 1, 1, 0);
+        PrintTensor<int>("sort_index", index_sorted, true, nPick, 1, 1, 1, 0);*/
     }
 };
 
 /*
-    Ref     https://github.com/karpathy/llama2.c
+
 */
 class GeneratOnPrompt {
     // GeneratOnPrompt(const GeneratOnPrompt&);
@@ -159,16 +147,16 @@ class GeneratOnPrompt {
    protected:
     CLI_params config;
     CHAT_SAMPLER samp_params;
+    hBATCH hBatch       = nullptr;
+    hGTensor hClsLogits = nullptr;
+    // LogitsInfo cpuLogits;
+    std::vector<hLogitsInfo> arrLogit;
+    // LogitsInfo_GPU<floatLogits> gpuLogits;   // [todo]
 
-    LogitsInfo<float> cpuLogits;
-    LogitsInfo<floatLogits> gpuLogits;
-    // ProbIndex* probindex = nullptr;
-
-    //  std::vector<float> x_logits;
     float delta_max = 0, delta_a = 0;
     // 0.1 – 0.5Mild reduction in repetition; >1.5 Risk of language mixing and degraded quality
     float presence_penalty = 0.0;
-    bool display = true;
+    bool display           = true;
 
     MODEL_ARCH _arch = MODEL_ARCH::_X_;
 
@@ -176,9 +164,8 @@ class GeneratOnPrompt {
     int32_t bos = 1, eos = 2;
     int n_predict = 32, n_batch = 2048, n_keep;
     bool is_antiprompt = false;
-    // bool input_echo           = true;
-    bool isCTXSampling = true;
-    int n_ctx = -1, n_ctx_train = -1;
+    int nCTX_(int type=0x0);    // default return ctx_recommend
+    // int n_ctx = -1, n_ctx_train = -1;
     int nCanTopK = -1;
 
     // std::string path_session = params.path_prompt_cache;
@@ -201,13 +188,12 @@ class GeneratOnPrompt {
     uint64_t rng_state;
     virtual void OnAntiPrompt(int flag);
     virtual bool Inference(hSAMP samp, int& nPast, int flag = 0x0);
-    // virtual void OnInteractive(int& n_past,int& n_consumed,int& n_remain,int flag);
+    virtual void TopK(int idx = -1, int flag = 0x0);
+
    public:
     GeneratOnPrompt() {}
     GeneratOnPrompt(struct gpt_params& par_, int flag);
     GeneratOnPrompt(CLI_params& cp_, arrHWIKI& wiki_, const Fish* hG_, int flag);
-
-    CHAT_MODE ChatMode(int flag = 0x0) const;
 
     static shared_ptr<GeneratOnPrompt> MakeInstance(struct CLI_params& params, arrHWIKI& wiki, const Fish*, int flag);
 
@@ -218,31 +204,21 @@ class GeneratOnPrompt {
     std::vector<TOKEN_ID> inp_pfx, inp_sfx, cml_pfx, cml_sfx;
     int guidance_offset     = 0;
     int original_prompt_len = 0;
+
     virtual void InitInput(int flag = 0x0);
+    virtual void Prepare4N(int flag = 0x0);  // Prepare for CHAT_N(diffusion model)
 
     virtual int Tokenize(int flag);
 
     std::vector<TOKEN_ID> tokens;
-    // std::vector<TOKEN_ID> embd_guidance;
-    // tokenized antiprompts
     std::vector<std::vector<TOKEN_ID>> antiprompt_ids;
-
-    virtual void TokenEmbed(int flag = 0x0) {
-        assert(0);  // Deprecated
-        // antiprompt_ids.reserve(params.antiprompt.size());
-        // for (const std::string & antiprompt : params.antiprompt) {
-        //     antiprompt_ids.emplace_back(::llama_tokenize(ctx, antiprompt, false, true));
-        // }
-    }
-
-    // virtual int UpdateEmbed(int nJob,int &n_past,int &n_remain,int &n_consumed,int &n_session_consumed,int &n_past_guidance,int &ga_i,int flag=0x0);
 
     virtual int Generate(int nJob, int flag = 0x0);
     virtual int Generate_v0(int nJob, int flag = 0x0);
     virtual TOKEN_ID Sample_cpu(int idx = -1, bool isSorted = false);
-    virtual TOKEN_ID Sample(int idx = -1, bool is_resampling = false);
+    virtual TOKEN_ID Sample(hBATCH hBatch, bool is_resampling = false);
     virtual int SampleOnBatch(hBATCH hBatch, float* hostLoss, int B, int T, SampLoader* hLoader, int flag = 0x0);
-    virtual bool VerifyLogits(int flag = 0x0);
+    virtual bool OnLogits(int flag = 0x0);
     virtual void DisplayEmbd(bool input_echo, int n_consumed, int flag = 0x0);
 };
 typedef shared_ptr<GeneratOnPrompt> hGENERATOR;
@@ -258,11 +234,11 @@ class GOPT_infinite : public GeneratOnPrompt {
 
 class GOPT_Metropolis : public GeneratOnPrompt {
    protected:
-    TOKEN_ID Sample(int idx = -1, bool is_resampling = false) override;
+    TOKEN_ID Sample(hBATCH hBatch, bool is_resampling = false) override;
 
    public:
-    GOPT_Metropolis(struct gpt_params& par_, int flag) : GeneratOnPrompt(par_, flag) { isCTXSampling = false; }
-    GOPT_Metropolis(CLI_params& cp_, arrHWIKI& wikis_, const Fish* hG_, int flag) : GeneratOnPrompt(cp_, wikis_, hG_, flag) { isCTXSampling = false; }
+    GOPT_Metropolis(struct gpt_params& par_, int flag) : GeneratOnPrompt(par_, flag) {}
+    GOPT_Metropolis(CLI_params& cp_, arrHWIKI& wikis_, const Fish* hG_, int flag) : GeneratOnPrompt(cp_, wikis_, hG_, flag) {}
 
     virtual ~GOPT_Metropolis() { Clear(); }
 

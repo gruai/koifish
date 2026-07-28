@@ -56,6 +56,7 @@ QWen3::QWen3(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, 
     config.model.isNormalBias  = false;
 }
 
+
 std::string Fish::NN2NAME(const std::string& prefix, tpNEURON4NAME neuron, const std::string& suffix, int flag) {
     switch (neuron) {
         case ATTN_PRE_NORMAL:

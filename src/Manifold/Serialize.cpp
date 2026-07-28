@@ -13,8 +13,10 @@
 #include <sys/mman.h>
 
 #include <algorithm>
+#include <filesystem>
 #include <set>
 
+namespace fs = std::filesystem;
 #include "../Tensor/GeQuant.hpp"
 #include "../TokenSet/Dictionary.hpp"
 #include "../Utils/GST_Application.hpp"
@@ -85,6 +87,7 @@ JSON GTensor::jDesc(K_SafeTensors* st, int flag) {
     js["dtype"]        = info;
     js["shape"]        = jsShape;
     js["data_offsets"] = {data_offsets[0], data_offsets[1]};
+    js["loAB"]         = 0;
     if (st->ckp.format == CKP_HF) {
     } else {  // only kifish support more items!
         js["szGama"] = szGama;
@@ -199,7 +202,7 @@ int GTensor::LoadParam(K_SafeTensors* hKST, const std::string& name_, hGTensor k
             Serial_Quant_MMAP(false, false);
             host_data = nullptr;  // mmap file would release
         } else {
-            if (DEBUG.save_GlobalSate <= 0) {
+            if (hFish->config.save_GlobalSate <= 0) {
                 tpInit = W_SKIP;
                 Alloc(-1, flag);
                 Serial_Quant_MMAP(false, false, LOAD_ONLY_W);
@@ -274,47 +277,147 @@ std::string HF_dtype2str(const typNUMBER dtype) {
     return name;
 }
 
-// Save safetensors to file,    return true upon success. `err` will be filled when false.
+/**
+ * Save safetensors to file,    return true upon success. `err` will be filled when false.
+ *      1. For writinglarge files, write()is usually faster, safer, and simpler than mmap().
+ *      2.  ::unlink()→ removes a single filesystem entry, predictable, minimal
+            std::remove()→ C++ wrapper, may call rmdir()or other logic, less transparent
+ */
 bool K_SafeTensors::Save(const std::string& filename, size_t& sz, std::string* warn, std::string* err, int flag) {
-    bool isRemoveOld = false;
-    if (std::remove(filename.c_str()) == 0) {
-        isRemoveOld = true;
-    } else {
-    }
-    posix_fd = open(filename.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (posix_fd == -1) {
-        if (err) {
-            (*err) += "Failed to open `" + filename + "` to save tensors! File is either existing directory or write-protected, or disk is full?\n";
-        }
+    fs::path final_path(filename), dir_path = final_path.parent_path();
+    int fd = open(dir_path.c_str(), O_TMPFILE | O_WRONLY | O_CLOEXEC, 0644);
+    _INFO("\r<<<<<< ST_SERIALIZE save open(O_TMPFILE) ... posix_fd=%d ....", fd);
+    if (fd == -1) {
+        if (err)
+            *err += "open(O_TMPFILE) failed: " + std::string(strerror(errno)) + "\n";
         return false;
     }
 
-    // if (1) {
-    //   InitHeader, write to mmp, ...
+    posix_fd = fd;
     if (!_to_ofs(sz, warn, err, flag)) {
+        close(fd);
         return false;
     }
-    /*} else {  //  avoid huge array out of memory
-        std::vector<uint8_t> buf;
-        if (!_to_memory(buf, warn, err)) {
-            return false;
+    _INFO("\r<<<<<< ST_SERIALIZE save O_TMPFILE ... fsync&fclose ...");
+    if (fsync(fd) == -1) {
+        if (err)
+            *err += "fsync(O_TMPFILE) failed: " + std::string(strerror(errno)) + "\n";
+        close(fd);
+        return false;
+    }
+    struct stat st;
+    if (fstat(fd, &st) != 0 /*|| static_cast<size_t>(st.st_size) != sz*/) {
+        if (err)
+            *err += "Size mismatch after write\n";
+        close(fd);
+        return false;
+    }
+
+    char proc_path[64];
+    snprintf(proc_path, sizeof(proc_path), "/proc/self/fd/%d", fd);
+    if (unlink(final_path.c_str()) == -1 && errno != ENOENT) {
+        if (err)
+            *err += "unlink original file failed: " + std::string(strerror(errno)) + "\n";
+        return false;
+    }
+    if (linkat(AT_FDCWD, proc_path, AT_FDCWD, final_path.c_str(), AT_SYMLINK_FOLLOW) == -1) {
+        if (err)
+            *err += "linkat() failed: " + std::string(strerror(errno)) + "\n";
+        close(fd);
+        return false;
+    }
+    _INFO("\r<<<<<< ST_SERIALIZE save @file=\"%s\" ... sync dir/disk", final_path.c_str());
+    int dfd = open(dir_path.c_str(), O_DIRECTORY | O_RDONLY);
+    if (dfd == -1) {
+        if (err)
+            *err += "open(dir) failed: " + std::string(strerror(errno)) + "\n";
+        close(fd);
+        return false;
+    }
+
+    if (fsync(dfd) == -1) {
+        if (err)
+            *err += "fsync(dir) failed: " + std::string(strerror(errno)) + "\n";
+        close(dfd);
+        close(fd);
+        return false;
+    }
+
+    close(dfd);
+    close(fd);
+    return true;
+
+    /*fs::path tmp_path(filename + ".tmp"), final_path(filename);
+    _INFO("\r<<<<<< ST_SERIALIZE save @temp file=\"%s\" ...", tmp_path.c_str());
+    fs::path dir_path = final_path.parent_path();
+    posix_fd          = open(tmp_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    _INFO("\r<<<<<< ST_SERIALIZE save @temp file=\"%s\" ... posix_fd=%d ....", tmp_path.c_str(), posix_fd);
+    if (posix_fd == -1) {
+        if (err) {
+            (*err) += "Failed to open temp file=`" + filename + "` to save tensors! File is either existing directory or write-protected, or disk is full?\n";
         }
-        ofs.write(reinterpret_cast<const char*>(buf.data()), buf.size());
-        sz = buf.size();
-    }*/
+        return false;
+    }
+    if (!_to_ofs(sz, warn, err, flag)) {
+        unlink(tmp_path.c_str());
+        return false;
+    }
+    _INFO("\r<<<<<< ST_SERIALIZE save @temp file=\"%s\" ... fsync&fclose ...", tmp_path.c_str());
     if (fsync(posix_fd) == -1) {
         (*err) += "fsync(posix_fd) failed" + filename;
         close(posix_fd);
+        unlink(tmp_path.c_str());
+        return false;
+    }
+    if (close(posix_fd) == -1) {
+        (*err) += "close(posix_fd) failed" + filename;
+        unlink(tmp_path.c_str());
+        return false;
+    }
+    struct stat st;
+    if (stat(tmp_path.c_str(), &st) != 0 ) {
+        if (err)
+            *err += "Temp file size mismatch after write!\n";
+        unlink(tmp_path.c_str());
         return false;
     }
 
-    if (close(posix_fd) == -1) {
-        (*err) += "close(posix_fd) failed" + filename;
+    _INFO("\r<<<<<< ST_SERIALIZE save @file=\"%s\" ... size=%lld.", final_path.c_str(), sz);
+    if (rename(tmp_path.c_str(), final_path.c_str()) == -1) {
+        if (err) {
+            *err += "rename() failed: " + std::string(strerror(errno)) + " (from " + tmp_path.string() + " to " + final_path.string() + ")\n";
+        }
+        unlink(tmp_path.c_str());
         return false;
     }
+
+    _INFO("\r<<<<<< ST_SERIALIZE save @file=\"%s\" ... sync dir/disk", final_path.c_str());
+    int dfd = open(dir_path.c_str(), O_DIRECTORY | O_RDONLY);
+    if (dfd == -1) {
+        if (err)
+            *err += "open(dir) failed: " + std::string(strerror(errno)) + "\n";
+        return false;
+    }
+    if (fsync(dfd) == -1) {
+        if (err)
+            *err += "fsync(dir) failed: " + std::string(strerror(errno)) + "\n";
+        close(dfd);
+        return false;
+    }
+    close(dfd);*/
 
     return true;
 }
+// if (1) {
+//   InitHeader, write to mmp, ...    }
+/*} else {  //  avoid huge array out of memory
+    std::vector<uint8_t> buf;
+    if (!_to_memory(buf, warn, err)) {
+        return false;
+    }
+    ofs.write(reinterpret_cast<const char*>(buf.data()), buf.size());
+    sz = buf.size();
+}*/
 
 /*
      support multiple mmap @ different files
@@ -516,9 +619,9 @@ bool K_SafeTensors::_to_ofs(size_t& szAll, std::string* warn, std::string* err, 
                     if (t->GetDataX() == nullptr) {  // copy data@"model.safetensors" to state file
                         if (isInitMMap) {
                             nInit++;
-                        } else if (isCopyMMap) {    //try low-rank compression
+                        } else if (isCopyMMap) {  // try low-rank compression
                             if (BIT_TEST(t->flags, GTensor::F_LORA_A) || BIT_TEST(t->flags, GTensor::F_LORA_B)) {
-                                DEBUG_HERE;     //write ZERO datas to .ckp
+                                DEBUG_HERE;  // write ZERO datas to .ckp
                             } else {
                                 assert(t->host_data != nullptr);
                                 szRead = t->nByte_CKP(ckp, -1);
@@ -693,7 +796,7 @@ int Fish::SAFETENSOR2Gensors(const std::string& path, K_SafeTensors* hKST, int f
         if (G_Has_(key, config.model.skip_st))
             continue;
 
-        hGensor target = GetGensor(key);  //  "model.embed.weight"    "model.embed_tokens.weight"
+        hGTensor target = GetGensor(key);  //  "model.embed.weight"    "model.embed_tokens.weight"
         if (target == nullptr) {
             _ERROR("\t[SERIAL] Failed @%s!\n", key.c_str());
             return -1;
@@ -743,7 +846,7 @@ void K_SafeTensors::UpdateMetaData(int flag) {
     metadata["writer"] = "koifish";
 }
 
-size_t K_SafeTensors::Register(hGensor t, size_t offset, FILE_FORMAT_TYPE format, int flag) {
+size_t K_SafeTensors::Register(hGTensor t, size_t offset, FILE_FORMAT_TYPE format, int flag) {
     size_t sz = t->nByte_CKP(ckp);  // may expand
     assert(t->hFish != nullptr);
     assert(strlen(t->name) > 0);
@@ -781,7 +884,7 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
     size_t data_offset_base = 0, nInit = 0, szOFS = 0;
     std::string warn, err;
 
-    vector<hGensor> curParams = optParams;
+    vector<hGTensor> curParams = optParams;
     K_SafeTensors st(this, ckp, path), *hKST = (K_SafeTensors*)(ckp.hAllST);
     switch (ckp.state_type) {
         case CheckPoint_Params::STATE:
@@ -961,7 +1064,7 @@ bool Fish::LoadFolderOfST(int stType, int flag) {
 
         if (!config.model.st_index_map.empty()) {  //  "model.safetensors.index.json"     "model.embed_tokens.weight"
                                                    /*for (auto kv : config.model.st_index_map) {
-                                                      hGensor target = GetGensor(kv.first);
+                                                      hGTensor target = GetGensor(kv.first);
                                                       if(target->data == nullptr){
                                                           assert(0);
                                                       }

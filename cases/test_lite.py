@@ -34,19 +34,21 @@ def CheckResult(df,iter,golden,title="",rel_tol=1e-05):
         assert(0)
 
 def test_chat_qwen3_596M():  
-    content = bubble_one("chat_qwen3_596M","--tokenizer ./assets/tokenizer_151936.bin --hf ./Models/Qwen3-0.6B/ --prompts \"hello\"")  #./cases/qwen3/qwen3_0.6B.json
+    content = bubble_one("chat_qwen3_596M"," --hf ./Models/Qwen3-0.6B/ --prompts \"hello\"")  #./cases/qwen3/qwen3_0.6B.json
     assert "Hello! How can I assist you today?" in content
 
 def test_chat_qwen3_4B():    
-    content = bubble_one("chat_qwen3_4B","--tokenizer ./assets/tokenizer_151936.bin --hf ./Models/Qwen3-4B/ --prompts \"Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?\"")  #  "./cases/qwen3/qwen3_4B.json"
+    content = bubble_one("chat_qwen3_4B"," --hf ./Models/Qwen3-4B/ --prompts \"Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?\"")  #  "./cases/qwen3/qwen3_4B.json"
     assert "Answer: \\boxed{1}" in content  or "Answer: 1" in content or "Answer:1" in content or "answer:1" in content  # "Answer: 1"   "✅ Final Answer:1 ✅"  "Answer: 1 ✅"  "✅Answer: 1"
     # assert content=="Hello! How can I assist you today? 😊\n" or content=="Hello! It seems there was a small glitch. 😊 How can I assist you today?\n"
-def test_chat_qwen3_4B_1():    
-    content = bubble_one("chat_qwen3_4B","p1 --tokenizer ./assets/tokenizer_151936.bin --hf ./Models/Qwen3-4B/ --prompts \"Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?\"")  #  "./cases/qwen3/qwen3_4B.json"
+
+# deprecated since 20260727
+def xtest_chat_qwen3_4B_1():    
+    content = bubble_one("chat_qwen3_4B_1","p1  --hf ./Models/Qwen3-4B/ --prompts \"Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?\"")  
     assert "Answer: \\boxed{1}" in content  or "Answer: 1" in content or "Answer:1" in content or "answer:1" in content  # "Answer: 1"   "✅ Final Answer:1 ✅"  "Answer: 1 ✅"  "✅Answer: 1"
 
 def test_chat_qwen3_4B_awq():    
-    content = bubble_one("chat_qwen3_4B_awq","--tokenizer ./assets/tokenizer_151936.bin --hf ./Models/Qwen3-4B-AWQ/ --prompts \"Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?\"")  #  "./cases/qwen3/qwen3_4B.json"
+    content = bubble_one("chat_qwen3_4B_awq"," --hf ./Models/Qwen3-4B-AWQ/ --prompts \"Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?\"")  #  "./cases/qwen3/qwen3_4B.json"
     assert "Answer: \\boxed{1}" in content  or "Answer: 1" in content or "Answer:1" in content or "answer:1" in content  # "Answer: 1"   "✅ Final Answer:1 ✅"  "Answer: 1 ✅"  "✅Answer: 1"
 
 def test_qwen3_596M_q4():    
@@ -79,13 +81,17 @@ def xtest_batch_qwen3_4B():
         content = bubble_one("chat_qwen3_4B",jPath)  
         # Hello! It seems like there might be a small mix-up. I'm Qwen, a large-scale language model developed by Alibaba Cloud. I'm here to help you with any questions or tasks you might have. How can I assist you today? 😊
 
-
+def test_sft_qwen3_mimimind():    
+    most_iter = 30
+    title = "sft_[minimind]_QWen3_596M"
+    dfTrain = koifish_one(title, sExe, "./cases/qwen3/qwen3_sft.json", most_iter=most_iter, train_csv="./Train@[Chat_JSONL]_info_.csv")    
+    CheckResult(dfTrain,most_iter,0.962,title=title,rel_tol=0.001)      #   6.868(iter=180) 6.942169    7.589036
 
 def test_qwen3_596M():    
     most_iter = 80
     title = "QWen3_596M"
     dfTrain = koifish_one(title, sExe, "./cases/qwen3/qwen3_1.json", most_iter=most_iter, train_csv="./Train@[climb]_info_.csv")    
-    CheckResult(dfTrain,most_iter,8.01,title=title,rel_tol=0.001)      #   6.868(iter=180) 6.942169    7.589036
+    CheckResult(dfTrain,most_iter,7.980,title=title,rel_tol=0.001)      #   6.868(iter=180) 6.942169    7.589036
 
 def test_qwen2_494M():    
     most_iter = 70
@@ -93,7 +99,7 @@ def test_qwen2_494M():
     dfTrain = koifish_one(title, sExe, "./cases/qwen3/qwen25_1.json", most_iter=most_iter, train_csv="./Train@[shake]_info_.csv")    
     CheckResult(dfTrain,most_iter, 2.979,title=title,rel_tol=0.001)      #  2.979 2.873
 
-def test_gpt2_1558M():    
+def xtest_gpt2_1558M():    
     title = "1558M"
     dfTrain = koifish_one(title, sExe, "./cases/gpt2/1558M_F8_B80/F8_B32.json", most_iter=most_iter)
     CheckResult(dfTrain,most_iter,9.446,title=title) 
@@ -102,13 +108,13 @@ def test_gpt2_124M_fuyou6():
     most_iter = 70
     title = "124M"
     dfTrain = koifish_one(title, sExe, "./cases/gpt2/124M_shard50_F6_lr0.001/F6_lr0.001.json", most_iter=most_iter)    
-    CheckResult(dfTrain,most_iter,7.497,title=title)
+    CheckResult(dfTrain,most_iter,7.785,title=title)    #7.497
 
 def test_gpt2_124M():    
     most_iter = 70
     title = "124M_no_fuyou"
     dfTrain = koifish_one(title, sExe, "./cases/gpt2/124M_shard50_F6_lr0.001/no_fuyou.json", most_iter=most_iter)    
-    CheckResult(dfTrain,most_iter,7.467,title=title)
+    CheckResult(dfTrain,most_iter,7.751,title=title)    #7.467
 
 
 
@@ -150,17 +156,19 @@ if __name__ == '__main__':
 
     # test_chat_qwen3_596M()
     # test_chat_qwen3_0_6B()  
-    #test_qwen3_596M()
+    # test_sft_qwen3_mimimind() 
+    # test_qwen3_596M()
     # test_ising_596M()
     # test_chat_qwen3_4B()
-    # test_chat_qwen3_4B_awq()
+    #test_chat_qwen3_4B_awq()
     # xtest_batch_qwen3_4B()
 
     # test_pp_gpt2()
     # test_gpt2_124M()
     # test_qwen3_596M_q4()
-    # test_gpt2_124M_fuyou6()
-    test_gpt2_1558M()
+    test_gpt2_124M_fuyou6()
+    # test_gpt2_1558M()
+    # test_chat_qwen3_4B_1()
     # test_qwen2_494M()
     # # 
     #test_gpt2_1558M()

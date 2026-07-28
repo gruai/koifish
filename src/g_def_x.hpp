@@ -9,11 +9,13 @@
 #pragma once
 
 //  PyTorch's ignore_index - "skip loss for this position"
-#define KOIFISH_TOKEN_IGNORE_INDEX = -100       
+#define KOIFISH_TOKEN_IGNORE_INDEX = -100
 
 // Some constants
 #define KOIFISH_MOST_LOG 5120
+#define KOIFISH_MOST_NAME 512
 #define KOIFISH_MAX_PROBE_LEN 5120
+#define KOIFISH_MOST_PROBE_TI 32
 #define KOIFISH_LITE_CHAT_SEQLEN 1024
 
 #define KOIFISH_OK 0x0

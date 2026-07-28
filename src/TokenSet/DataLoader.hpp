@@ -43,10 +43,13 @@ enum DL_BATCH_UPATE {
 struct StepInfos {
     string sTokenSet = "", sRoot = "./";
     Optimizer* hOpt = nullptr;
+    std::vector<hGTensor> csvTensors;  // only dump these tensors to .csv file
+
     struct STEP {
         float loss, lr, gNorm, tX, dt, gMax, wMax;
         int iter, epoch;
         std::vector<float> nrmG, nrmW;
+        std::map<std::string, std::vector<string>> details;
         string gMaxName, wMaxName;
         virtual string Info(int flag);
 
@@ -59,7 +62,9 @@ struct StepInfos {
     bool isAccuracy = false;
     virtual void Init(Optimizer* hO, int flag = 0x0);
     float Last() { return steps.empty() ? FLT_MAX : steps[steps.size() - 1].loss; }
+    virtual void AfterStep(int iter, int flag = 0x0);
     virtual bool SaveToCSV(const string& sPath, int flag = 0x0);
+    virtual bool SaveColorsToCSV(const string& sPath, int flag = 0x0);
     float Best() const;
 
     void Add(STEP step, int flag = 0x0);
@@ -68,22 +73,28 @@ struct StepInfos {
 enum MASK_FLAG {
     F_PAD         = 0x100,
     F_CAUSAL      = 0x200,
-    F_IGNORE_LOSS = 0x400,  //  -100 of torch's cross_entropy
-};
-struct BATCH_INPUT {
-    //  hostLabel @ SampLoader
-    shared_ptr<GTensor> hostToken = nullptr, hostMask = nullptr, devMask = nullptr, hostLen = nullptr;
+    F_SCORE_NOISE = 0x400,
 
+    F_IGNORE_LOSS = 0x10000,  //  -100 of torch's cross_entropy
+};
+
+struct BATCH_INPUT {
+    shared_ptr<GTensor> hostLabel = nullptr;
+    virtual bool SetLabel(TOKEN_ID label, int i_target, int k, int flag = 0x0);
+
+    shared_ptr<GTensor> hostToken = nullptr, hostMask = nullptr, devMask = nullptr, hostLen = nullptr;
+    hRANDER hMaskRander = nullptr;
     int *host_toks = nullptr, *mask32 = nullptr;  //  mask32 = TO<int>(hostMask);
     int nValidTokens = 0;
     int nMostSample = 0, ldT = 0;  //  B,T
     size_t nPrefill = 0, nFill = 0;
     std::vector<int> arrTic0, arrTic1;
-    std::vector<TOKENS_SECTION> section_metas;   //tokens of each sample contain sections, each section may has different role
+    std::vector<TOKENS_SECTION> section_metas;  // tokens of each sample contain sections, each section may has different role
     Fish* hFish      = nullptr;
     hTokenizer hDict = nullptr;
-    //  always point to last token when P_GENERATE
+    //  always point to last token when P_CHAT_1
     int tok_pos = -1;
+    //  just return host_toks[tok_pos], only for P_CHAT_1
     int CurToken() {
         assert(tok_pos >= 0 && host_toks != nullptr);
         // assert(host_toks[pos] < embed->nVocab);
@@ -91,8 +102,11 @@ struct BATCH_INPUT {
     }
 
     BATCH_INPUT(Fish* hFish, SHAPE sp, int flag = 0x0);
+    virtual int nTokens(int flag=0x0);  //return hostToken->size();
     // virtual void Update(hGTensor batch,int flag=0x0);
     virtual int FillPrompt(Fish* hFish, const std::vector<std::string>& Prompt, const std::vector<std::string>& answers, int nRound, int flag = 0x0);
+    virtual void FillTokens(int k, const std::vector<TOKEN_ID>& tokens, CLI_params& params, int i_off, int flag);
+    // 1. Deprecated, replace by FillTokens 2. No BOS at sequence start!
     virtual void Reset(const std::vector<TOKEN_ID>& tokens, int flag = 0x0);
     virtual void SetLen(int i0, int len) {
         if (hostLen != nullptr)
@@ -108,12 +122,19 @@ struct BATCH_INPUT {
             return hostToken->size();
         }
     }
-    virtual bool BeforeCollate(int flag=0x0);
-    virtual bool UpdateMask(const std::vector<hSAMP>& samps, int iter, TOKEN_ID* tokens, int* labels, int flag = 0x0);
+    virtual bool BeforeCollate(int flag = 0x0);
+    virtual bool UpdatePadMask(const std::vector<hSAMP>& samps, int iter, TOKEN_ID* tokens, int* labels, int flag = 0x0);
+    virtual bool UpdateRandomMask(const std::vector<hSAMP>& samps, int iter, int flag = 0x0);
 
     virtual void DumpX(TOKEN_ID* tokens, float* hostLoss, int flag = 0x0);
 };
 typedef shared_ptr<BATCH_INPUT> hBATCH;
+
+// Batch for denoising diffusion model
+struct BATCH_Denoise : public BATCH_INPUT {
+    BATCH_Denoise(Fish* hFish, SHAPE sp, int flag = 0x0);
+    void FillTokens(int k, const std::vector<TOKEN_ID>& tokens, CLI_params& params, int i_off, int flag) override;
+};
 
 class SampLoader : public std::enable_shared_from_this<SampLoader> {
    protected:
@@ -122,22 +143,21 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
     Distri_ARRAY iiLoss;
     // ppl(Perplexity) is the exponential of the average cross entropy; or geometric mean of the inverse probabilities of each token
     Distri_ARRAY iiPPL;
-
+    float* T_mask_probs = nullptr;
     //  Store tokens from source.  always in CPU
     int eval_every = -1, tokens_per_iter = 0;
-    // CLI_params config;
+
     std::string fp_data;
     std::string sentence = "";
     std::vector<TOKEN_ID> samp_toks;
     std::vector<hSAMP> shard_samps;
-    // std::vector<size_t> idcs;      //would change epoch by epoch(shuffle,subsampling...)
-    size_t nShard() { return shard_samps.size(); }
-    // std::shared_ptr<DictVAE> hDictVAE;
-    hDataToken hTokens = nullptr;
-    hTokenizer hDict   = nullptr;
 
-    bool sample_separation_eos, sample_separation_bos;
-    bool isTarget_1 = false;
+    size_t nShard() { return shard_samps.size(); }
+    // data_token_set is much complex than train/val datasets
+    hDataToken hDaTokens = nullptr;
+    hTokenizer hDict     = nullptr;
+
+    // bool isTarget_1 = false;
     bool isRecycle = true, isLastShard = false;
     bool isFixEvalSample = false;  // Need fix this to do some experiments
     bool isMask          = false;
@@ -146,6 +166,15 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
     size_t shuffle_sample_count = 0, next_sample = 0, shuffle_samples_hash = 0x0;
     hBATCH hBatch               = nullptr;
     NLP_AutoRegressive* dolphin = nullptr;
+
+    /**
+     * 1. Most open-source LLMs use BOS at sequence start;
+     *      some papers analyzing the “attention sink” phenomenon explicitly note that the first token is almost always a BOS token
+     * 2. diffusion LMs don’t develop sink heads
+     *  */
+    bool isAddBOS = true;
+    // bool tokenizer_add_bos = false;
+    // bool sample_separation_eos, sample_separation_bos;
 
    public:
     StepInfos stepis;                 // info of each step on train/evaluate/...
@@ -157,15 +186,13 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
     size_t nEvalTokens = 0;
     int StepOfEvaluate(int flag = 0x0);  //  smaple to reduce eval time
 
-    shared_ptr<GTensor> hostLabel = nullptr;  //hostToken@Batch
-
     int64_t len() { return shard_samps.size(); }
     bool empty() { return len() == 0; }
 
     // Derprecated, only for PPL
-    size_t nTokens() { return hTokens->tokens.size(); }
+    size_t nTokens() { return hDaTokens->tokens.size(); }
     // Derprecated, only for PPL
-    vector<TOKEN_ID>& GetTokens() { return hTokens->tokens; }
+    vector<TOKEN_ID>& GetTokens() { return hDaTokens->tokens; }
 
     int nLeastCTX(int flag = 0x0);
     hSAMP SampAt(size_t idx_) {
@@ -186,9 +213,9 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
     virtual hSAMP Next(bool isLoop = true);
     virtual bool NextEpoch(int flag = 0x0);
     virtual string IterInfo(int flag = 0x0);
-    virtual string sTokenSet(int flag = 0x0);    
+    virtual string sTokenSet(int flag = 0x0);
 
-    virtual bool SetLabel(TOKEN_ID label, int i_target, int k, int flag = 0x0);
+    // May be pad_id/mask_id
     TOKEN_ID TokenAt(size_t pos, hSAMP samp, int flag = 0x0);
     bool MaskAt(size_t pos, TOKEN_ID& mask);
     // Deprecated!!!
@@ -196,9 +223,9 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
     std::vector<std::string> curDeTexts;
 
     // 1. prompt=>tokens 2. hTokens->tokens=tokens 3.Samp2Batch 4. hBatch->Set(i, token)
-    virtual hSAMP InitOneSamp(const string& prompt, hGensor input, Fish* hFish, int flag = 0x0);
-    virtual double DecodeVerify(hSAMP samp, hGensor tokens, hGensor logits, int flag = 0x0);
-    void Samp2Batch(int k, hSAMP samp, TRAIN_CARD& params, int flag = 0x0);
+    virtual hSAMP InitOneSamp(const string& prompt, hGTensor input, Fish* hFish, int flag = 0x0);
+    virtual double DecodeVerify(hSAMP samp, hGTensor tokens, hGTensor logits, int flag = 0x0);
+    void Samp2Batch(int k, hSAMP samp, TRAIN_CARD& params, float T_mask, int flag = 0x0);
 
     enum TYPE { DT_TRAIN = 1, DT_EVAL, DT_PREDICT, DT_MERGE };
     TYPE type = DT_TRAIN;
@@ -212,7 +239,7 @@ class SampLoader : public std::enable_shared_from_this<SampLoader> {
         }
     }
 
-    virtual int PickSomeTokens(Grusoft::GRander& rander, int nSample, std::vector<int>& samps, int flag = 0x0);
+    virtual int PickSomeTokens(GRander& rander, int nSample, std::vector<int>& samps, int flag = 0x0);
     virtual bool Prepare(Optimizer* hO, hDataToken hT, int flag = 0x0);
     virtual void UpdateStepInfos(float mean_loss, int nB, int flag = 0x0);
     virtual size_t CollateBatch(int next_id, Fish* fish);

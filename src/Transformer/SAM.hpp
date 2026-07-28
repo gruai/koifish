@@ -54,14 +54,14 @@ struct NT_SAM : public NeLayer {
     int nEmbed, nHead, head_dim;
     bool is_global_attn;
     LayerNormal norm1, norm2;
-    hGensor rel_pos_w = nullptr, rel_pos_h = nullptr;
+    hGTensor rel_pos_w = nullptr, rel_pos_h = nullptr;
     SelfAttention attention;
     SLP in_proj;  // in_proj
     SLP proj;     // out_proj
     SLP mlp_lin1, mlp_lin2;
 
-    hGensor Forward(hFISH, int nEmbed, int nHead, int W, int H, hGensor cur, int flag = 0x0);
-    hGensor Build_(void* ctx0, hGensor inpL, float eps, int n_window_size, int n_enc_state, int n_enc_head_dim, int n_enc_head, int flag);
+    hGTensor Forward(hFISH, int nEmbed, int nHead, int W, int H, hGTensor cur, int flag = 0x0);
+    hGTensor Build_(void* ctx0, hGTensor inpL, float eps, int n_window_size, int n_enc_state, int n_enc_head_dim, int n_enc_head, int flag);
     NT_SAM(hFISH ctx, const std::string& key_, const SHAPE& shape, bool is_global_, int flag = 0x0);
 };
 
@@ -115,7 +115,7 @@ struct SAM_encoder : public Fish {
     }
     void AfterAddNeuron(hNEURON hN, int flag = 0x0) override {}
 
-    hGensor pe, neck_conv_0, neck_conv_1;
+    hGTensor pe, neck_conv_0, neck_conv_1;
     SLP proj;
     LayerNormal neck_norm_0, neck_norm_1;
     void Neck(const std::string& key_, const SHAPE& shape, int flag = 0x0) override {
@@ -142,11 +142,11 @@ struct SAM_encoder : public Fish {
 };
 
 struct sam_state {
-    hGensor embd_img;
-    hGensor output;
-    hGensor low_res_masks;
-    hGensor iou_predictions;
-    // hGensor  tmp_save = {};
+    hGTensor embd_img;
+    hGTensor output;
+    hGTensor low_res_masks;
+    hGTensor iou_predictions;
+    // hGTensor  tmp_save = {};
     void* ctx;
     // buffer for `ggml_graph_plan.work_data`
     std::vector<uint8_t> work_buffer;
@@ -156,7 +156,7 @@ struct sam_state {
     ggml_gallocr_t allocr = {};
 };
 
-inline hGensor sam_layer_norm_2d(void* ctx0, hGensor layer, int n_channels, hGensor w, hGensor b, float eps) {
+inline hGTensor sam_layer_norm_2d(void* ctx0, hGTensor layer, int n_channels, hGTensor w, hGTensor b, float eps) {
     // LayerNorm2d
     // normalize along channel dimmension
     // TODO: better implementation
@@ -488,13 +488,13 @@ struct SegmentAnything : public Fish {
         void* ctx0 = ggml_init(ggml_params);
         // struct ggml_cgraph  * gf     = ggml_new_graph(ctx0);
 
-        hGensor inp = TENSO(ctx0, typNUMBER::F32, n_img_size, n_img_size, 3, 1);
+        hGTensor inp = TENSO(ctx0, typNUMBER::F32, n_img_size, n_img_size, 3, 1);
         ggml_set_name(inp, "inp");
         ggml_set_input(inp);
 
         // ref: https://github.com/facebookresearch/segment-anything/blob/main/segment_anything/modeling/image_encoder.py#L392
-        hGensor cur = ggml_conv_2d_sk_p0(ctx0, enc->proj.w, inp);
-        cur         = ggml_add_inplace(ctx0, cur, ggml_repeat(ctx0, enc->proj.b, cur));
+        hGTensor cur = ggml_conv_2d_sk_p0(ctx0, enc->proj.w, inp);
+        cur          = ggml_add_inplace(ctx0, cur, ggml_repeat(ctx0, enc->proj.b, cur));
         // ref: https://github.com/facebookresearch/segment-anything/blob/main/segment_anything/modeling/image_encoder.py#L394
         // keep in F32
         cur = ggml_cont(ctx0, ggml_permute(ctx0, cur, 1, 2, 0, 3));
@@ -505,7 +505,7 @@ struct SegmentAnything : public Fish {
         // ref: https://github.com/facebookresearch/segment-anything/blob/main/segment_anything/modeling/image_encoder.py#L108-L109
         cur = ggml_add_inplace(ctx0, cur, enc->pe);
 
-        hGensor inpL = cur;
+        hGTensor inpL = cur;
         assert(enc->layers.size() == n_enc_layer);
         for (int il = 0; il < n_enc_layer; ++il) {
             NT_SAM* hLay = dynamic_cast<NT_SAM*>(enc->layers[il].get());
@@ -525,7 +525,7 @@ struct SegmentAnything : public Fish {
         // hForwTG->print();
         ggml_free(ctx0);
         SetInput(nx, ny, data);
-        hGensor inp1 = nullptr;  // hForwTG->get_tensor("inp");
+        hGTensor inp1 = nullptr;  // hForwTG->get_tensor("inp");
         gg_print_tensor_("", inp1);
         hForwTG->compute_helper(params.n_threads, 0x0);
         /*
@@ -539,7 +539,7 @@ struct SegmentAnything : public Fish {
         0.01504 0.01480 0.01463 0.01543 0.01752 0.01574 0.01769 0.02241 0.01670 0.01753 0.01665 0.01794 0.02047 0.02100 0.03392 }
         */
         gg_print_tensor_("embd_img", state.embd_img, 32);
-        hGensor inp0 = GetGensor("inp"); /**/
+        hGTensor inp0 = GetGensor("inp"); /**/
     }
 };
 typedef shared_ptr<SegmentAnything> hSegmentAnything;

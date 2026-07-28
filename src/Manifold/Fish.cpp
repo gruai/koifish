@@ -36,6 +36,9 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vect
         case MODEL_ARCH::NLP_GUPPY:
             fish = std::make_shared<Guppy>(nam_ + "_guppy", params, role_);
             break;
+        case MODEL_ARCH::NLP_SCORE_:
+            fish = std::make_shared<Salmon>(nam_ + "_score", params, role_);
+            break;
         case MODEL_ARCH::NLP_GPT2:
         case MODEL_ARCH::NLP_GPT2_char:
             fish = std::make_shared<GPT2>(nam_ + "_GPT2", params, role_);
@@ -46,8 +49,8 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vect
         case NLP_LLAMA:
             fish = std::make_shared<NLP_AutoRegressive>(nam_, params, role_);
             break;
-        default:  //  more structures
-            switch (params.nabla) {
+        default:                     //  more structures
+            switch (params.nabla) {  //  Deprecated
                 case 1:
                     // fish = std::make_shared<LLAMA_LORA>(nam_+"_lora",params,role_);
                     break;
@@ -207,9 +210,14 @@ size_t Fish::MostMemSize(int typ) {
 }
 
 bool Fish::UpdateParams(int flag) {
-    size_t nx = 0, nR = 0, nReload = 0;
+    size_t nx = 0, nR = 0, nReload = 0, nFix = 0;
     assert(optParams.size() == 0);
     nFixParams = 0;
+    // bool isFixAllW = false;
+    // if (config.loAB.isFixW()) {
+    //     isFixAllW = true;
+    // }
+
     for (auto it : gensors.infos) {
         auto t                = it.first;
         const GENSOR_INFO& gi = it.second;
@@ -219,9 +227,13 @@ bool Fish::UpdateParams(int flag) {
                 continue;
             }
             nx += tELEM(t);  //
+            // if (t->isWMAT() && isFixAllW) {
+            //     BIT_SET(t->flags, GTensor::F_FIXW);
+            // }
             if (BIT_TEST(t->flags, GTensor::F_FIXW)) {
                 t->needUpdateParam = false;
                 nFixParams += tELEM(t);
+                nFix++;
             } else {
                 t->needUpdateParam = true;
             }
@@ -237,7 +249,9 @@ bool Fish::UpdateParams(int flag) {
     }
     if (nParams == 0)
         K_EXIT_NOW(KOIFISH_ZERO_PARAMETERS);
-
+    if (nFixParams > 0) {
+        _INFO("[Params] FixW=%d nFixParams=%gM(%.3g)\n", nFix, nFixParams / 1.0e6, nFixParams * 1.0f / nx);
+    }
     return true;
 }
 
@@ -293,7 +307,8 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
     if (isTrain()) {
         if (isLoadCheckpoint) {  //  @LoadFolderOfST have called SaveTrain
         } else {
-            SaveTrain(config.state, true, FSerial::INIT_MMAP);  //  Init checkpoint
+            if (!SaveTrain(config.state, true, FSerial::INIT_MMAP))
+                return false;  //  Init checkpoint
         }
     } else {
         SetPhase(config.phase);
@@ -306,7 +321,7 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
     }
     if (!config.model.st_index_map.empty()) {  //  "model.safetensors.index.json"     "model.embed_tokens.weight"
         for (auto kv : config.model.st_index_map) {
-            hGensor target = GetGensor(kv.first);
+            hGTensor target = GetGensor(kv.first);
             if (target->data == nullptr) {
                 _WARN("Please check \"model.safetensors.index.json\", null data of tensor=%s!", target->name);
             }
@@ -474,13 +489,16 @@ bool Fish::SaveTrain(CheckPoint_Params& ckp, bool isInit, int flag) {
     assert(optParams.size() > 0);
 
     if (isInit) {
-        if (DEBUG.save_GlobalSate <= 0) {
-            _WARN("[SAFETENSOR]  Skip save to %s(MMAP file). All tensors in GPU!\n", sOut.c_str());
+        if (/*!config.fuyou.paramIsGuoke ||*/ config.save_GlobalSate <= 0) {
+            _WARN("[SAFETENSOR]  Skip save to \"%s\". All tensors in GPU!\n", sOut.c_str());
             return true;
         }
         // this->Dump(0x0);
         isOK = SAFETENSOR_Serialize(ckp, true, flag);  // isInit ? FSerial::INIT_MMAP : 0x0
-        assert(isOK);
+        if (!isOK) {
+            return false;
+        }
+
         ckp.sModelPath = ckp.FullPath(true);
         // this->Dump(0x0);
         _INFO("[SAFETENSOR] Init@\"%s\" nParams=%d save_every=%d\n", sOut.c_str(), optParams.size(), ckp.save_every);
@@ -575,7 +593,7 @@ void Fish::Statistic_Quant(int typ, int flag) {
                 break;
         }
     }
-    assert(nQT>0);
+    assert(nQT > 0);
     // config.quant.default_bits,
     // string info = G_STR(fish->config.quant.filter_WeightF8Ex);
     // _INFO("F8E5=%s\n", info.c_str());
@@ -601,19 +619,12 @@ void Fish::Statistic(int typ, int flag) {
     int vQKV = config.Get({"model_v0", "attention", "version"}, 0, false);
     // _INFO("QKV version=%d\n",vQKV);
 
-    // ggml_graph_stat(gf);
-    // if(gb!=nullptr) ggml_graph_stat(gb);
-    bool isDot = false;
-    if (isDot) {
-        // ggml_graph_dump_dot(gf, NULL, "opt-forward.dot");
-        // if(gb!=nullptr) ggml_graph_dump_dot(gb, gf, "opt-backward.dot");
-    } else {
-        // if(preLogits!=nullptr)
-        // hForwTG->__repr__(suffix,prefix);   //preLogits = gf->nodes[gf->n_nodes - 2];
-        if (hBackTG != nullptr) {
-            // hBackTG->__repr__(suffix,prefix);   //// TGraph("Backward",gb,true)
-        }
+    // if(preLogits!=nullptr)
+    // hForwTG->__repr__(suffix,prefix);   //preLogits = gf->nodes[gf->n_nodes - 2];
+    if (hBackTG != nullptr) {
+        // hBackTG->__repr__(suffix,prefix);   //// TGraph("Backward",gb,true)
     }
+
     if (typ == 0x100) {  // for quantizer
         Statistic_Quant(typ, flag);
     } else {
@@ -646,7 +657,7 @@ int Fish::BuildGraphFromRaw(int flag) {
 }
 
 // If isParam, only alloc grad, no init!
-void Fish::InitGensor(void* ctx, const string& name, hGensor gensor, bool isParam, int flag) {
+void Fish::InitGensor(void* ctx, const string& name, hGTensor gensor, bool isParam, int flag) {
     assert(gensor != nullptr);
     if (!name.empty()) {
         gTN0(gensor, name.c_str());  //    gTN0(w,"%s.w",name.c_str());
@@ -662,13 +673,13 @@ void Fish::InitGensor(void* ctx, const string& name, hGensor gensor, bool isPara
     // }
 }
 
-void Fish::InitGensor(void* ctx, hGensor gensor, const char* name, struct random_normal_distribution* rnd, int flag) {
+void Fish::InitGensor(void* ctx, hGTensor gensor, const char* name, struct random_normal_distribution* rnd, int flag) {
     assert(0);  // Deprecated
 }
 
-hGensor Fish::AddTensor(void* ctx, const std::string& key_, typNUMBER tp, const SHAPE& shape, bool isParam, int flag) {
+hGTensor Fish::AddTensor(void* ctx, const std::string& key_, typNUMBER tp, const SHAPE& shape, bool isParam, int flag) {
     CHECK_SHAPE(shape);
-    hGensor gensor = nullptr;
+    hGTensor gensor = nullptr;
     if (shape.size() == 4) {
         gensor = GT(this, tp, shape, 0x0);
     } else if (shape.size() == 2) {
@@ -729,8 +740,8 @@ bool Fish::CopyGensors(hWIKI wiki, int flag) {
         return false;
     }
     for (auto it : wiki->tmaps) {
-        auto nam    = it.first;
-        hGensor dst = GetGensor(nam.c_str()), src = nullptr;
+        auto nam     = it.first;
+        hGTensor dst = GetGensor(nam.c_str()), src = nullptr;
 #ifndef _TENSOR_G_
         src = it.second;
 #endif
@@ -773,9 +784,9 @@ bool Fish::BeforeNextStep(int iter, int flag) {
         t->tile_r1 = rand_coin.RandU32() % THREAD_TILE_M - THREAD_TILE_M / 2;
         t->tile_c1 = rand_coin.RandU32() % THREAD_TILE_N - THREAD_TILE_N / 2;
 
-        t->color = 0;
+        // t->color = GTensor::COLOR_ZERO;
         if (t->gama_param != nullptr) {
-            t->gama_param->color = 0;
+            BIT_SET(t->gama_param->color, GTensor::COLOR_GAMA);
         }
         // if (G_Has_(t->name, {"mlp.down_proj"})) {  // iter % 10 == 0;BIT_TEST(tensor->flags, GTensor::F_GAMA)
         //     if (t->gama_param != nullptr) {
@@ -846,11 +857,16 @@ void Fish::GetBT(int& B, int& T, int flag) const {
     int q_dim = config.Q_dim(), kv_dim = config.KV_dim();
     assert(q_dim >= kv_dim);  // C!=q_dim
     switch (phase) {
-        case LIFE_PHASE::P_GENERATE:
+        case LIFE_PHASE::P_CHAT_1:
             if (B != 1) {  // in the case of gpt_every>0,
             }
             B = 1;
             T = 1;
+            break;
+        case LIFE_PHASE::P_CHAT_N:
+            if (B != 1) {  // in the case of gpt_every>0,
+                assert(0);
+            }
             break;
         default:
             break;
@@ -873,8 +889,8 @@ bool Fish::AfterNextStep(int iter, int flag) {
     return true;
 }
 
-size_t cudnn_qkv_forw(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn, bool has_attn_bias = false, bool padding_mask = false, int flag = 0x0);
-size_t cudnn_qkv_back(int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn, bool has_attn_bias = false, bool padding_mask = false);
+size_t cudnn_qkv_forw(Fish*, int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn, bool has_attn_bias = false, bool padding_mask = false, int flag = 0x0);
+size_t cudnn_qkv_back(Fish*, int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn, bool has_attn_bias = false, bool padding_mask = false);
 int test_FA2();
 bool Fish::AllocBuffer(int flag) {
     try {
@@ -884,17 +900,21 @@ bool Fish::AllocBuffer(int flag) {
         int B = config.n_batch(), T = config.n_ctx(), NH = config.n_head(), head_dim = config.head_dim();
         int group = NH / config.n_head_kv();
         if (isLocalInfer) {
-            if (config.phase == P_GENERATE) {  // P_EVAL no need cache!
+            if (config.phase == P_CHAT_1) {  // P_EVAL no need cache!
                 // hCache = std::make_shared<KVCache>(this);
             }
         }
-        hCache             = std::make_shared<KVCache>(this);  // why this would affect train loss?
+        if (isModel({NLP_SCORE_})) {
+        } else {
+            hCache = std::make_shared<KVCache>(this);
+        }
+
         bool has_attn_bias = false, padding_mask = phase == P_SFT;
-        if (phase != P_GENERATE) {
+        if (phase != P_CHAT_1) {
 #ifdef __USE_CUDNN__
-            cudnn_qkv_forw(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn, has_attn_bias, padding_mask);
-            if (phase != P_EVAL_) {
-                size_t alloc = cudnn_qkv_back(B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn, has_attn_bias, padding_mask);
+            cudnn_qkv_forw(this, B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn, has_attn_bias, padding_mask);
+            if (!isAtPhase({P_EVAL_, P_CHAT_N})) {
+                size_t alloc = cudnn_qkv_back(this, B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn, has_attn_bias, padding_mask);
                 _INFO("\tcudnn_qkv_back = %.5gM\n", alloc / 1.0e6);
             }
 #endif
@@ -903,6 +923,9 @@ bool Fish::AllocBuffer(int flag) {
             GTensor::workspace_size = std::max(GTensor::workspace_size, mostQKV * 4);     // 134742016
             GTensor::workspace_size = std::max(GTensor::workspace_size, (size_t)32 * 1024 * 1024);
             assert(GTensor::workspace_size >= 32 * 1024 * 1024);
+            cudaCheck(cudaMalloc(&GTensor::qkv_workspace, GTensor::workspace_size));
+        } else {
+            GTensor::workspace_size = std::max(GTensor::workspace_size, (size_t)32 * 1024 * 1024);
             cudaCheck(cudaMalloc(&GTensor::qkv_workspace, GTensor::workspace_size));
         }
 

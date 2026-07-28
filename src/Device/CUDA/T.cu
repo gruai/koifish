@@ -322,9 +322,9 @@ double GTensor::SetDataX(floatX* param_0, bool checkErr, int flag) {
                 if (isDump)
                     Print("AfterQuant", 0, -1);
 #ifndef NDEBUG
-                if (checkErr) {  // check residual
-                    task_q.distill.lenda = -1.0;    //otherwize, 128toX would contain shadow info
-                    floatX* deQuant = nullptr;
+                if (checkErr) {                   // check residual
+                    task_q.distill.lenda = -1.0;  // otherwize, 128toX would contain shadow info
+                    floatX* deQuant      = nullptr;
                     cudaCheck(cudaMalloc(&deQuant, sizeof(floatX) * N));
                     if (type == typNUMBER::Q2 || type == typNUMBER::T_SIGN)
                         T1pG(CU_Q128toX_<floatX, 64>, task_q, (BIT_128*)(data), deQuant, 0x0);
@@ -560,12 +560,13 @@ __global__ void CU_rms_backward_v0(Typ* dX0, Typ* dWeight0, float* dW_scratch, c
 
 hGTensor LayerNormal::cuFlow(hGTensor inpDelta, int flag) {  //,hGTensor deltaIn
     NVTX_RANGE_FN();
+
     int nToken = nBatchToken(), nTH = nHead > 0 ? nToken * nHead : nToken;
     const int block_size = 256, block_y = block_size / WARP_SIZE, grid_size = CEIL_DIV(nTH, block_y);
     int nThread = X128::nThreadOfBlock(ldTH, 0);
     // w->Print(w->name, 0, 0);
     floatX *weight = ToX(w), *bias = ToX0(b), *in = ToX(inpDelta);
-    if (hFish->isAtPhase(LIFE_PHASE::P_GENERATE) && nHead == 0) {  //
+    if (hFish->isAtPhase(LIFE_PHASE::P_CHAT_1) && nHead == 0) {  //
         CU_rms_infer(ToX(out), ToX(inpDelta), weight, ldTH);
         // CU_rms_infer(ToX(inpDelta), ToX(inpDelta), weight, C);
         return out;
@@ -597,6 +598,9 @@ hGTensor LayerNormal::cuFlow(hGTensor inpDelta, int flag) {  //,hGTensor deltaIn
             // }
         }
         cudaCheck(cudaGetLastError());
+        // if (strcmp(out->name, "model.norm") == 0) {
+        //     out->Print("norm before head", 0, -1);
+        // }
         return out;
     } else {
         hGTensor deltaIn = inpDelta;

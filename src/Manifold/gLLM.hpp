@@ -50,7 +50,7 @@ static const char* LLM_TENSOR_FFN_GATE_SHEXP     = "blk.%d.ffn_gate_shexp";
 static const char* LLM_TENSOR_FFN_DOWN_SHEXP     = "blk.%d.ffn_down_shexp";
 static const char* LLM_TENSOR_FFN_UP_SHEXP       = "blk.%d.ffn_up_shexp";
 
-// void static set_name(hGensor  t, const char * n) {
+// void static set_name(hGTensor  t, const char * n) {
 //     ggml_set_name(t, n);
 //     if (t->grad) {
 //         ggml_format_name(t->grad, "%s->grad", n);
@@ -101,7 +101,7 @@ class NLP_AutoRegressive : public Fish {
     std::string T2STR(const std::vector<TOKEN_ID>& tok, int nMost = INT_MAX, int flag = 0x0);
 
     std::string Name() override;
-    hGensor tokens_input = nullptr;
+    hGTensor tokens_input = nullptr;
 
     NLP_AutoRegressive() {}
     NLP_AutoRegressive(const std::string& nam_, struct CLI_params params, ROLE_TYPE role_, int flag = 0x0);
@@ -110,9 +110,8 @@ class NLP_AutoRegressive : public Fish {
     virtual ~NLP_AutoRegressive() {
         // free(rnd);
     }
-    // number of vocab at target layer
-    virtual size_t tVocab();
-    size_t nClass() override { return tVocab(); }
+    // number of padded-vocab size in header
+    size_t nClass() const override;
 
     // get gg_tensors from llama_model (possibly mmapped)
     // virtual void LoadTensors(struct llama_model * lama,int flag=0x0);
@@ -121,18 +120,18 @@ class NLP_AutoRegressive : public Fish {
         assert(0);  //  A more practical way:   just use llama_load_model_from_file get parameters directly from gguf file
     }
 
-    virtual hGensor UpdateGensor(const string& name, int flag = 0x0) { return GetGensor(name); }
+    virtual hGTensor UpdateGensor(const string& name, int flag = 0x0) { return GetGensor(name); }
 
     virtual bool CreateExlogists(hWIKI wiki, uint32_t n_ctx, uint32_t n_batch, int flag = 0x0);
 
     virtual void InitModel(int flag = 0x0);
     virtual void InitGensors(int flag = 0x0);
-    virtual hGensor build_gate(void* ctx, hGensor cur, hGensor cur_logits, int flag);
+    virtual hGTensor build_gate(void* ctx, hGTensor cur, hGTensor cur_logits, int flag);
 
     // for tokens_input & target_label
     bool InitInput(void* ctx, bool isMask, int flag = 0x0) override;
     bool InitDictTokenset(int flag = 0x0) override;
-    hGensor Input() override { return tokens_input; }
+    hGTensor Input() override { return tokens_input; }
 
     bool Init(const vector<hWIKI>& wikis_, int flag = 0x0) override;
 
@@ -142,9 +141,9 @@ class NLP_AutoRegressive : public Fish {
 
     // bool Build(int flag=0x0)   override;
 
-    hGensor BuildTarget(void* ctx, hGensor cur, int flag = 0x0) override;
+    hGTensor BuildTarget(void* ctx, hGTensor cur, int flag = 0x0) override;
 
-    // virtual hBrownMotion CreateBrownMotion(hGensor wq, hGensor wk, hGensor wv,const std::shared_ptr<QKV_LAY>& layer)  {
+    // virtual hBrownMotion CreateBrownMotion(hGTensor wq, hGTensor wk, hGTensor wv,const std::shared_ptr<QKV_LAY>& layer)  {
     //     hBrownMotion hMotion =  (tpATT==ATTENTION_TYPE::QKV) ?
     //         std::make_shared<QKV_Motion> (this,wq,wk,wv,KQ_mask,config,layer,0x0) :
     //         std::make_shared<BROWN_Motion> (this,wq,wv,config,layer,0x0);
@@ -152,8 +151,7 @@ class NLP_AutoRegressive : public Fish {
     // }
 
     int ForwardOnNeuron_v0(int flag);
-    // int ForwardOnRLS(int iter,int flag) override;
-    // int BackwardOnRLS(int iter,int flag) override;
+
     bool LocalFeeling(hSampLoader hLoader, vector<float>& result, int flag) override;
 
     void Loss(int flag = 0x0) override {}
@@ -200,7 +198,7 @@ struct LLM_MAMBA : public NLP_AutoRegressive {
         NLP_AutoRegressive::InitModel(flag);
     }
 
-    hGensor BuildTarget(void* ctx, hGensor cur, int flag = 0x0) override;
+    hGTensor BuildTarget(void* ctx, hGTensor cur, int flag = 0x0) override;
 };
 
 class GPT2 : public NLP_AutoRegressive {
@@ -224,7 +222,7 @@ class GPT2 : public NLP_AutoRegressive {
 
     void InitGensors(int flag = 0x0) override { ; }
 
-    // hGensor BuildTarget(void * ctx,hGensor cur,int flag=0x0) override;
+    // hGTensor BuildTarget(void * ctx,hGTensor cur,int flag=0x0) override;
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
 };
 
@@ -243,7 +241,7 @@ class Guppy : public NLP_AutoRegressive {
         NLP_AutoRegressive::InitModel(flag);
     }
     string DebugInfo(int type = 0x0, int flag = 0x0) override;
-    // hGensor BuildTarget(void * ctx,hGensor cur,int flag=0x0) override;
+    // hGTensor BuildTarget(void * ctx,hGTensor cur,int flag=0x0) override;
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
     bool BeforeNextStep(int iter, int flag = 0x0) override;
 };
@@ -263,7 +261,7 @@ class DeepSeek : public NLP_AutoRegressive {
         NLP_AutoRegressive::InitModel(flag);
     }
 
-    // hGensor BuildTarget(void * ctx,hGensor cur,int flag=0x0) override;
+    // hGTensor BuildTarget(void * ctx,hGTensor cur,int flag=0x0) override;
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
 };
 
@@ -324,6 +322,28 @@ class QWen3 : public QWen {
 
         NLP_AutoRegressive::InitModel(flag);
     }
+};
+
+// life is nothing just like a salmon swim upstream(返朴)
+class Salmon : public NLP_AutoRegressive {
+   protected:   
+
+    // SAMPLE/雕琢/琢磨;    既雕既琢，复归于朴
+    virtual int ZhuoMo(int flag = 0x0);
+
+   public:
+    Salmon(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag = 0x0);
+
+    virtual ~Salmon() {}
+
+    void InitModel(int flag = 0x0) override {
+        _INFO("Score::%s: init model\n", __func__);
+
+        NLP_AutoRegressive::InitModel(flag);
+    }
+
+    int Chat(int enable_thinking, LIFE_PHASE outer_phase, int flag = 0x0) override;
+    std::string NN2NAME(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix = "", int flag = 0x0) override;
 };
 
 struct TinyLama : public NLP_AutoRegressive {};

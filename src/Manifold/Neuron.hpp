@@ -61,8 +61,8 @@ struct HIERARCH_LorAB {
     static string sNeurons;
     std::string title;
     // float beta_F           = 1.0f;
-    LoAB_CARD config;
-    
+    const LoAB_CARD* config = nullptr;
+
     bool isFixB            = false;
     Fish* hFish            = nullptr;
     SparseNeuron* spNeuron = nullptr;
@@ -114,7 +114,8 @@ class GeNeuron {
     int level = -1, ID = -1, dad, c_id;  // topo info
     int layid  = -1;                     // no of layer in LLM/Brain structure
     int branch = 0, hierarch = 0;
-    int xxx = 0;
+    int color = 0;
+    int xxx   = 0;
     vector<double> jvals;
     // vector<hGTensor> vRemater;      //support rematerization
     string _repr_1(string& suffix, string& prefix, string info, int flag = 0x0);
@@ -122,14 +123,14 @@ class GeNeuron {
     void* host_inp = nullptr;                        // backup of input in device memory
     // 天地本逆旅, 你我皆过客(Guoke)
     GeNeuron* hGuoke = nullptr;
-    std::set<hGensor> tReloads;
+    std::set<hGTensor> tReloads;
     shared_ptr<GeQuant> hQuant = nullptr;
     // std::vector<shared_ptr<GeNeuron>> brothers;
     virtual std::string _NAME(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix = "", int flag = 0x0);
 
-    hGensor dev_window = nullptr;                               // a window to record the data in device
-    virtual void SetInp4Back(hGensor inp_, int flag = 0x0);     //  the input tensor of forward would be reused in back-propragation
-    virtual bool VerifyInp4Back(hGensor inp_, int flag = 0x0);  //  @SetInp4Back
+    hGTensor dev_window = nullptr;                               // a window to record the data in device
+    virtual void SetInp4Back(hGTensor inp_, int flag = 0x0);     //  the input tensor of forward would be reused in back-propragation
+    virtual bool VerifyInp4Back(hGTensor inp_, int flag = 0x0);  //  @SetInp4Back
    public:
     enum BIT_FLAG { F_BIAS = 0x10000, F_DELTA = 0x20000, F_REMATER = 0x40000, F_HOTPICK = 0x100000 };
 
@@ -139,15 +140,15 @@ class GeNeuron {
     int B, T;  // from n_batch,n_ctx
 
     // w is the 道 of neuron.   道者,千变万化之动(wLoABs)
-    hGensor w = nullptr;
+    hGTensor w = nullptr;
 
     arrLORA wLoABs;  // LORA of w
     LoAB_CARD::typW tpLORW = LoAB_CARD::typW::W0;
 
-    hGensor b = nullptr, out = nullptr;
-    hGensor tRhs  = nullptr;  // rhs tensor of Forw, in many case, tRhs!=out
-    hGensor inp   = nullptr;  //  may change! maybe nullptr!
-    hGensor delta = nullptr;  //  backward-error tensor at each layer(may share memory!)
+    hGTensor b = nullptr, out = nullptr;
+    hGTensor tRhs  = nullptr;  // rhs tensor of Forw, in many case, tRhs!=out
+    hGTensor inp   = nullptr;  //  may change! maybe nullptr!
+    hGTensor delta = nullptr;  //  backward-error tensor at each layer(may share memory!)
     bool isBias = true, isResidual = true, isSparse = false, isTransW = false;
     bool isShortcut = false;
 
@@ -161,7 +162,7 @@ class GeNeuron {
 
     CLI_params& Config() const;
     //  Gensors with physical memory
-    // virtual std::vector<hGensor> PhysicalGensors(bool isNoRef = true, int flag = 0x0) { return {}; }
+    // virtual std::vector<hGTensor> PhysicalGensors(bool isNoRef = true, int flag = 0x0) { return {}; }
     enum PICK_GENSOR_MODE {
         PICK_PHYSICAL = 0x100,  // Gensors with physical memory
         PICK_LORA     = 0x200,
@@ -170,15 +171,15 @@ class GeNeuron {
         PICK_SUBNN = 0x1000,  // SubNeurons
     };
     // Pick gensors(child,partial,vitual,ref,lora,...)
-    virtual std::vector<hGensor> PickGensors(int flag = PICK_LORA | PICK_SUBNN) const;  // bool isLORA = true,
+    virtual std::vector<hGTensor> PickGensors(int flag = PICK_LORA | PICK_SUBNN) const;  // bool isLORA = true,
     // Important: token in each batch is changing at different phase!(training,eval,generate...)
     virtual int nBatchToken(int flag = 0x0);
     virtual Fish* GetFish() const {
         assert(hFish != nullptr);
         return hFish;
     }
-    virtual hGensor GetGensor(const std::string& key, int flag = 0x0);
-    virtual hGensor GetGensor(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix = "", int flag = 0x0);
+    virtual hGTensor GetGensor(const std::string& key, int flag = 0x0);
+    virtual hGTensor GetGensor(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix = "", int flag = 0x0);
     virtual int SetGuoke(GeNeuron* hGuoke_, bool isX, int flag = 0x0);
     virtual bool UpdateShortcut(bool isShortcut, int flag = 0x0);
     virtual void SetDType(typNUMBER tpW, typNUMBER tpA, typNUMBER tpG) { tpWeight = tpW, tpActivation = tpA, tpGradient = tpG; }
@@ -193,17 +194,19 @@ class GeNeuron {
     virtual bool PrepareShadow(int flag = 0x0);
     // memory management at different place
     virtual void ManageMemory(DATA_PLACE target, int typ = 0x0, int flag = 0x0);
-    virtual hGensor OnInput(hGensor hIn, int flag = 0x0);
+    virtual bool AfterActivate(hGTensor t, DATA_PLACE target, int typ, int flag = 0x0) { return true; }
+
+    virtual hGTensor OnInput(hGTensor hIn, int flag = 0x0);
 
     virtual bool BeforeForward(int iter, int op = 0x0, int flag = 0x0) { return true; }
 
     //  无知觉明
-    virtual hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag = 0x0);
-    virtual hGensor BeforeMing(RLS_BP* hRLS, hGensor cur, int flag = 0x0);
-    virtual hGensor AfterMing(RLS_BP* hRLS, hGensor cur, int flag = 0x0);
+    virtual hGTensor Ming(RLS_BP* hRLS, hGTensor cur, int flag = 0x0);
+    virtual hGTensor BeforeMing(RLS_BP* hRLS, hGTensor cur, int flag = 0x0);
+    virtual hGTensor AfterMing(RLS_BP* hRLS, hGTensor cur, int flag = 0x0);
 
-    virtual hGensor Backward(void* user_ctx, hGensor cur, int flag = 0x0);
-    virtual hGensor Forward2(void* ctx_build, hGensor, hGensor, int flag = 0x0) {
+    virtual hGTensor Backward(void* user_ctx, hGTensor cur, int flag = 0x0);
+    virtual hGTensor Forward2(void* ctx_build, hGTensor, hGTensor, int flag = 0x0) {
         assert(0);
         return nullptr;
     }
@@ -231,6 +234,7 @@ class GeNeuron {
     virtual bool Sparsing(int flag = 0x0) { return false; }
     friend class Fish;
     friend class NLP_AutoRegressive;
+    friend class Salmon;
     friend class RLS_BP;
     friend class HIERARCH_LorAB;
     friend class Fuyou;
@@ -298,7 +302,7 @@ class SparseNeuron : public GeNeuron {
 
     shared_ptr<HotPicker> hPicker = nullptr;
 
-    // hGensor u = nullptr, s = nullptr, v = nullptr;
+    // hGTensor u = nullptr, s = nullptr, v = nullptr;
     shared_ptr<LoSVD<float>> hSVD = nullptr;
 
     virtual bool InitSVD(int flag = 0x0);
@@ -315,9 +319,9 @@ class SparseNeuron : public GeNeuron {
     bool Sparsing(int flag = 0x0) override;
     bool InitCompression(const std::string& wname, int flag = 0x0) override;
     virtual void SetGanglia(const SparseNeuron* gang, int flag = 0x0) {
-        compression = gang->compression;
-        layid       = gang->layid;
-        hSamps      = gang->hSamps;
+        // compression = gang->compression;
+        layid  = gang->layid;
+        hSamps = gang->hSamps;
     }
     virtual void SetEmbed(TokenEmbed* embd_, int type, int flag = 0x0);
     virtual void UpdateSamps(int seed, int flag = 0x0);
@@ -331,7 +335,7 @@ struct Ganglia : public SparseNeuron {
     bool isValid() override { return ns.size() > 0; }
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
     bool isGang() override { return true; }
-    hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag = 0x0) override { return cur; }
+    hGTensor Ming(RLS_BP* hRLS, hGTensor cur, int flag = 0x0) override { return cur; }
 };
 
 class SelfAttention;
@@ -343,19 +347,19 @@ class ROPE : public SparseNeuron {
     int n_ctx_orig = 0, head_dim = 0, q_dim = 0, kv_dim = 0, n_head = 0, n_head_kv = 0, r_dim = 0;
     int max_pos     = 0;
     int fuse_normal = 0;
-    static hGensor KQ_pos, hSin, hCos;
+    static hGTensor KQ_pos, hSin, hCos;
     LayerNormal *hnQ = nullptr, *hnK = nullptr;
     float freq_base, freq_scale, theta;
     tpROPE alg = ROPE_NONE;
     bool isInterleave;  // Interleave the even and odd encodings
-    Grusoft::GRander rRounding;
+    GRander rRounding;
 
    public:
     ROPE() {}
     ROPE(SelfAttention* hQKV, const std::string& key_ = "", int flag = 0x0);
     // ROPE(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
     bool Build(int flag) override;
-    hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag = 0x0) override;
+    hGTensor Ming(RLS_BP* hRLS, hGTensor cur, int flag = 0x0) override;
     int cuFlow(SelfAttention* hQKV, uint32_t seed, bool isFX = true, int flag = 0x0);
     hGTensor cuInfer(SelfAttention* hQKV, uint32_t seed, int pos, int flag = 0x0);
     bool isValid() override { return true; }
@@ -373,7 +377,7 @@ struct Relu : public SparseNeuron {
     Relu(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
     ACTIVATION_FUNC fAct = SWIG;
     int version          = 0;
-    virtual hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag = 0x0) override;
+    virtual hGTensor Ming(RLS_BP* hRLS, hGTensor cur, int flag = 0x0) override;
     bool Build(int flag) override;
     void BuildX(const std::string& key_, const SHAPE& shape, Fish* hG_, int flag) override;
     bool isValid() override { return true; }
@@ -384,7 +388,7 @@ struct Relu : public SparseNeuron {
 
 struct Drop : public SparseNeuron {
     Drop(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
-    virtual hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag = 0x0) override;
+    virtual hGTensor Ming(RLS_BP* hRLS, hGTensor cur, int flag = 0x0) override;
     bool Build(int flag) override;
     bool isValid() override { return true; }
 };
@@ -400,12 +404,12 @@ struct SLP : public SparseNeuron {
     int nIn = -1, nOut = -1;
     bool Empty() const override { return w == nullptr; }
     bool Build(int flag) override;
-    hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag = 0x0) override;
+    hGTensor Ming(RLS_BP* hRLS, hGTensor cur, int flag = 0x0) override;
     // only for deprecated function"UpdateGensor"
-    hGensor UpdateGensor(int flag = 0x0);
+    hGTensor UpdateGensor(int flag = 0x0);
     size_t nElem() override;
     virtual int OnMultiscale(SLP* src, int flag = 0x0);
-
+    TASKA_AxB foreW, foreW_lora;
     // hGTensor operator<<(hGTensor a);
     /*  Forward(rhs,lhs) or remate in Back
         1.  rhs = SLP(lhs)  or rhs = W*lhs+b
@@ -440,12 +444,12 @@ struct LayerNormal : public SparseNeuron {
     int ldTH;  // nTH:  number of tokens or heads
     int ver_rms_qknormal_ = 0;
     //  always float
-    hGensor mean = nullptr, rstd = nullptr;
+    hGTensor mean = nullptr, rstd = nullptr;
     float scale = 0.0;
     LayerNormal() {}
     LayerNormal(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
     bool Build(int flag) override;
-    hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag) override;
+    hGTensor Ming(RLS_BP* hRLS, hGTensor cur, int flag) override;
     hGTensor cuFlow(hGTensor inpL, int flag = 0x0);
     size_t nElem() override;
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
@@ -464,7 +468,7 @@ struct MOE : public SparseNeuron {
     MOE() {}
     MOE(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
     bool Build(int flag) override;
-    hGensor Forward2(void* ctx0, hGensor cur, hGensor, int flag = 0x0) override;
+    hGTensor Forward2(void* ctx0, hGTensor cur, hGTensor, int flag = 0x0) override;
     bool isValid() override { return true; }
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
 };
@@ -504,7 +508,7 @@ class SelfAttention : public SparseNeuron {
     //  tensor format={'SBhd', 'BShd', 'thd'}, default = 'BShd',   t=B*S
     void *devQ = nullptr, *devK = nullptr, *devV = nullptr, *devDeltaQ = nullptr, *devDeltaK = nullptr, *devDeltaV = nullptr;
     void *devQlen = nullptr, *devKVlen = nullptr;
-    hGensor deltaQ = nullptr, deltaK = nullptr, deltaV = nullptr;  // wrap of devDeltaQ,devDeltaK,devDeltaV
+    hGTensor deltaQ = nullptr, deltaK = nullptr, deltaV = nullptr;  // wrap of devDeltaQ,devDeltaK,devDeltaV
     // set dev_ptr of Q/K/V in different case
     virtual bool _devQKV(int stage, int flag = 0x0);
 
@@ -545,11 +549,11 @@ class SelfAttention : public SparseNeuron {
 
     std::shared_ptr<KVCache> hCache = nullptr;
 
-    hGensor attn_k = nullptr, attn_q = nullptr;  // tmpQKV = nullptr;
+    hGTensor attn_k = nullptr, attn_q = nullptr;  // tmpQKV = nullptr;
     // int n_rot=-1;
-    // hGensor W_rope(void *ctx ,hGensor cur,hGensor w,hGensor KQ_pos,SHAPE shape,const string&shortcut,int flag=0x0);
-    hGensor MyAttention(RLS_BP* ctx_, hGensor inpL, int flag);
-    hGensor vXattn(void* ctx, hGensor v, hGensor attn, int flag);
+    // hGTensor W_rope(void *ctx ,hGTensor cur,hGTensor w,hGTensor KQ_pos,SHAPE shape,const string&shortcut,int flag=0x0);
+    hGTensor MyAttention(RLS_BP* ctx_, hGTensor inpL, int flag);
+    hGTensor vXattn(void* ctx, hGTensor v, hGTensor attn, int flag);
     float rope_freq_base, rope_freq_scale;
     std::unordered_map<int64_t, void*> var_packs;
     uint32_t rope_seed = 666888;
@@ -559,15 +563,15 @@ class SelfAttention : public SparseNeuron {
     bool isLast    = false;
     float f_max_alibi_bias;
     int n_head, head_dim, n_head_kv, n_embd_gqa, n_embd, q_dim = -1, kv_dim = -1;
-    int C_qkv      = -1;       //  C_qkv maybe much less than C
-    hGensor bqkv   = nullptr;  //  biases for qkv (qwen)
-    hGensor KQ_pos = nullptr, KQ_mask = nullptr;
-    LayerNormal norm, *fuseNorm       = nullptr;
+    int C_qkv       = -1;       //  C_qkv maybe much less than C
+    hGTensor bqkv   = nullptr;  //  biases for qkv (qwen)
+    hGTensor KQ_pos = nullptr, KQ_mask = nullptr;
+    LayerNormal norm, *fuseNorm        = nullptr;
     LayerNormal normQ, normK;  //  Only w vector to save memory
     LayerNormal normOut;
 
-    hGensor attn = nullptr;
-    hGensor lse  = nullptr;  //  (B, Hq, T) lse of flash attention   {STATS_UID, stats} of CUDNN
+    hGTensor qk_v = nullptr;
+    hGTensor lse  = nullptr;  //  (B, Hq, T) lse of flash attention   {STATS_UID, stats} of CUDNN
 
     SLP Q, K, V;
     hRope rope = nullptr;
@@ -582,7 +586,7 @@ class SelfAttention : public SparseNeuron {
     std::vector<GeNeuron*> SubNeurons(int flag = 0x0) override;
     int SetGuoke(GeNeuron* hGuoke_, bool isRefParam, int flag = 0x0) override;
     bool BeforeForward(int iter, int lay = 0x0, int flag = 0x0) override;
-    hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag = 0x0) override;
+    hGTensor Ming(RLS_BP* hRLS, hGTensor cur, int flag = 0x0) override;
     bool isValid() override { return true; }
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
 
@@ -605,7 +609,7 @@ struct GatedAttention : public SelfAttention {
     GatedAttention() {}
     GatedAttention(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
     bool Build(int flag) override;
-    hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag) override;
+    hGTensor Ming(RLS_BP* hRLS, hGTensor cur, int flag) override;
     bool isValid() override { return true; }
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
 };
@@ -619,7 +623,7 @@ struct cuAttention : public SelfAttention {
     cuAttention() {}
     cuAttention(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
     bool Build(int flag) override;
-    hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag) override;
+    hGTensor Ming(RLS_BP* hRLS, hGTensor cur, int flag) override;
     bool isValid() override { return true; }
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
 };
@@ -635,7 +639,7 @@ struct BROWN_attn : public SelfAttention {
     BROWN_attn(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
     bool Build(int flag) override;
 
-    hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag) override;
+    hGTensor Ming(RLS_BP* hRLS, hGTensor cur, int flag) override;
     bool isValid() override { return true; }
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
 };
@@ -647,7 +651,7 @@ class VarCoder : public SparseNeuron {
     bool isResi       = false;
     bool isMirror     = false;
     bool isNormalDown = false;  // Like 'ffn_sub_norm' of Bitnet
-    hGensor resi      = nullptr;
+    hGTensor resi     = nullptr;
     int tpNorm        = -2;
     SLP up, down, gate;
     Relu relu;
@@ -657,12 +661,12 @@ class VarCoder : public SparseNeuron {
    public:
     LayerNormal norm;
     LayerNormal normDown;  // Like 'ffn_sub_norm' of Bitnet
-    // hGensor encode=nullptr,decode=nullptr,norm=nullptr;
+    // hGTensor encode=nullptr,decode=nullptr,norm=nullptr;
     VarCoder() {}
     VarCoder(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
     VarCoder(Fish* hG_, std::vector<int>& dims, int level, bool isR = false, bool isSym = true, int tpN = 2, int flag = 0x0);
-    virtual hGensor ENC(const hGensor x0);
-    virtual hGensor DEC(hGensor x);
+    virtual hGTensor ENC(const hGTensor x0);
+    virtual hGTensor DEC(hGTensor x);
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
 
     friend class TokenEmbed;
@@ -676,7 +680,7 @@ typedef shared_ptr<VarCoder> hVarCoder;
 struct FFN : public VarCoder {
     LayerNormal* fuseNorm = nullptr;
     bool isShareParam     = false;
-    // hGensor pre_gelu = nullptr;
+    // hGTensor pre_gelu = nullptr;
     int latent;
     // SelfAttention *lastQKV=nullptr;
     bool remater_ffn = false;
@@ -690,7 +694,7 @@ struct FFN : public VarCoder {
 
     int SetGuoke(GeNeuron* hGuoke_, bool isRefParam, int flag = 0x0) override;
 
-    hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag = 0x0) override;
+    hGTensor Ming(RLS_BP* hRLS, hGTensor cur, int flag = 0x0) override;
     bool isValid() override { return true; }
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
 
@@ -707,11 +711,11 @@ struct MAEC : public SparseNeuron {
     vector<hVarCoder> codes;
     LayerNormal normE, normD;
     bool reserve_x = false;
-    vector<hGensor> resi_x;
+    vector<hGTensor> resi_x;
 
     MAEC(Fish* hG_, const std::string& key_, int flag);
-    virtual hGensor ENC(hGensor x, int flag = 0x0);
-    virtual hGensor DEC(hGensor x, bool isForw, int flag = 0x0);
+    virtual hGTensor ENC(hGTensor x, int flag = 0x0);
+    virtual hGTensor DEC(hGTensor x, bool isForw, int flag = 0x0);
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
     bool Empty() const override { return codes.size() > 0; }
 };
@@ -721,32 +725,34 @@ typedef shared_ptr<MAEC> hMAEC;
     Each token is embed to latent vector
 */
 struct TokenEmbed : public SparseNeuron {
-    hBATCH hBatch = nullptr;
-    LayerNormal lnW, lnWInv;
+    hBATCH hBatch        = nullptr;
+    bool isEmbedWithNorm = false;
+    LayerNormal lnW;  //, lnWInv;
     int *workload_indices = nullptr, nVocab = -1, latent, *hostID = nullptr, num_c_groups = -1, num_buckets = -1;
     int4* bucket_info = nullptr;
     int* nzGroup      = nullptr;
     bool isAddPos     = false;
     int padded_nCls   = -1;  //*hostInput=nullptr,inp_pos=0;
-    // the inverse of w: [nEmbed]=>[nToken]; w is row-major; wInv is column-major
-    hGensor wInv = nullptr;
+    // the inverse of w: [nEmbed]=>[nToken]; w is row-major; wInv_ is column-major
+    // hGTensor wInv = nullptr;
     virtual bool SetMAEC(hMAEC maec, int flag = 0x0);
     hMAEC maec = nullptr;
-    Grusoft::GRander rRounding;
+    GRander rRounding;
 
     TokenEmbed() {}
     TokenEmbed(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
     virtual ~TokenEmbed();
     virtual bool UpdateBucket(int type, int flag = 0x0);
-    void WorkloadOnBucker_v0(int* inputs_cpu, int flag);
+    // void WorkloadOnBucker_v0(int* inputs_cpu, int flag);  Deprecated
     virtual void WorkloadOnBucker(int* inputs_cpu, int flag);
-    // virtual int InitMAC(int flag=0x0);
-    virtual hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag = 0x0) override;
+
+    virtual hGTensor Ming(RLS_BP* hRLS, hGTensor cur, int flag = 0x0) override;
     bool Build(int flag) override;
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
     hGTensor cuInfer(hGTensor hIn, int flag);
-    virtual hGTensor OnEmbed(hGensor inpL, int seed);
+    virtual hGTensor OnEmbed(hGTensor inpL, int seed);
     virtual hGTensor SubW(hGTensor hSamp, bool isForw, hGTensor subw, int flag = 0x0);
+    bool AfterActivate(hGTensor t, DATA_PLACE target, int typ, int flag = 0x0) override;
 };
 
 struct FFN_MOE : public FFN {
@@ -763,10 +769,14 @@ struct Head4Token : public SparseNeuron {
     TokenEmbed* hEmbed = nullptr;
     // host version of target is SampLoader::hostLabel
     hGTensor target = nullptr;
+
+    bool onlyLogits = false;
+
     /*
         1. Partial logits only contain dB samples at train stage!!! to reduce memory
         2. In the LLM head, logits represent the importance of each possible next token.
             In self‑attention, logits represent the importance of each token already seen for understanding the current token.”
+        3. 生物之以息(xi is preLogits)相吹也
     */
     hGTensor preLogits = nullptr;
     //  Deprecated!     device=>host    floatX=>float
@@ -784,12 +794,12 @@ struct Head4Token : public SparseNeuron {
     }
     bool Build(int flag) override;
     bool BuildPrelogist(int flag);
-    hGensor Ming(RLS_BP* hRLS, hGensor cur, int flag) override;
+    hGTensor Ming(RLS_BP* hRLS, hGTensor cur, int flag) override;
     bool isValid() override { return true; }
     string __repr__(string& suffix, string& prefix, int flag = 0x0) override;
     // Backward: return lnf->out;       Forward: return preLogits or loss?
     virtual hGTensor cuFlow(hGTensor inpL, int flag);
-    virtual hGTensor cuInfer(hGTensor inpL, int flag);
+    virtual hGTensor cuInfer_1(hGTensor inpL, int flag);
 };
 
 struct OutSimilarity : public Head4Token {

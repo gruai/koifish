@@ -756,6 +756,7 @@ __global__ void CU_rope2_v0(Typ* q, Typ* k, int pos, int N_HEADS, int N_KV_HEADS
 
         q_head[j1] = CU_Float2T<Typ>(q_real * cos - q_imag * sin, seed);  //__float2bfloat16_rn
         q_head[j2] = CU_Float2T<Typ>(q_real * sin + q_imag * cos, seed);  //__float2bfloat16_rn
+        // negative-angle rotation(nealy same results): y1 = x1 * cos + x2 * sin      y2 = x1 * (-sin) + x2 * cos
         // if (nzHead == N_HEADS && j == 0) {
         //     nout("\t(%g,%g)=%g %g %g %g@<%d %d %d>\n", CU_T2Float(q_head+j1),CU_T2Float(q_head+j2),q_real, q_imag, sin,
         //     cos,blockIdx.x,blockIdx.y,blockIdx.z);

@@ -44,7 +44,7 @@ hGTensor GT(SHAPE shape_, void* src, typNUMBER tpD_, int flag) {
 }
 
 hGTensor GT(Fish* hFish, typNUMBER type, SHAPE shape, int flag, const string& name) {
-    hGensor hT = std::make_shared<huTensor>(hFish, name, shape, type, false, flag);
+    hGTensor hT = std::make_shared<huTensor>(hFish, name, shape, type, false, flag);
     return hT;
 }
 
@@ -207,25 +207,11 @@ void GTensor::SetRefer(hGTensor hR, int flag) {
     hRef = hR;
     hR->refered.push_back(this);
     type = hRef->type;
+    assert(hR->size() >= size());
     // hash64 = hRef->hash64;
     if (hFish->config.dumpSwitch.tensor_ref > 0)
         _INFO("\t%s =====> %s\n", name, hR->name);
 }
-/*  Deprecated
-bool GTensor::SetTernary(typNUMBER tpT_, int flag) {
-    if (type == tpT_)
-        return true;
-    BIT_SET(flags, GTensor::F_TERNARY);
-    // tpQuant = W_SCALE;
-    if (DEBUG.T_ternary == 1) {  //  only for debug
-        type = tpT_;
-        return true;
-    }
-    for (auto t : refered) {
-        t->type = tpT_;
-    }
-    return ReShape(shape, tpT_);
-}*/
 
 float GTensor::Get(int pos, int flag) const {
     float fRet  = 0.0;
@@ -396,7 +382,7 @@ hGTensor GTensor::CrossEntropy(const hGTensor b, int flag) {
     return nullptr;
 }
 
-hGensor GENSOR_TOPU::Get(MODEL_ARCH arch, const string& name, int flag) {
+hGTensor GENSOR_TOPU::Get(MODEL_ARCH arch, const string& name, int flag) {
     if (flag == 0x100) {  //  .weight=>.w
         for (auto ng : nag) {
             if (strstr(name.c_str(), ng.first.c_str()) != NULL) {
@@ -423,10 +409,10 @@ hGensor GENSOR_TOPU::Get(MODEL_ARCH arch, const string& name, int flag) {
             }*/
         }
         if (isMiss) {
+            _ERROR("Failed to get tensor=%s nGensor=%d", name.c_str(), nag.size());  // model.layers.0.mlp.down_proj.weight
             for (auto ng : nag) {
                 _INFO("\t%s,", ng.first.c_str());
             }
-            _ERROR("Failed to get tensor=%s nGensor=%d", name.c_str(), nag.size());
             return nullptr;
         }
         return nag[key];
@@ -751,6 +737,16 @@ std::string GTensor::Alias(int flag) {
     return alias;
 }
 
+void GTensor::DumpProber(int type, int flag) {
+    static char logs[KOIFISH_MAX_PROBE_LEN] = "\0";
+    logs[0]                                 = '\0';
+    assert(strlen(logs) == 0);
+    for (int i = 0; i < KOIFISH_MOST_PROBE_TI; i++) {
+        sprintf(logs + strlen(logs), "%g ", prober_info[i]);
+    }
+    disq.sProber = logs;
+}
+
 // CPU version is Dreprecated!
 bool GTensor::DumpX(int tpDump, const string& title, int flag) const {
     if (strcmp(name, "model.layers.0.self_attn.wqkv.bias") == 0) {
@@ -820,7 +816,7 @@ bool GTensor::DumpX(int tpDump, const string& title, int flag) const {
     return true;
 }
 
-void _T_repr_(hGensor t, const char* tab, char* buf, const GENSOR_INFO& info) {
+void _T_repr_(hGTensor t, const char* tab, char* buf, const GENSOR_INFO& info) {
     if (t == nullptr)
         return;
     const char* A = "d";
@@ -856,9 +852,7 @@ bool GTensor::Activate(int tpInit, int flag) {
     return false;
 }
 
-bool GTensor::isZeroShadoW(int flag){
-    return true;
-}
+bool GTensor::isZeroShadoW(int flag) { return true; }
 
 // only called@GeQuant::LowBit_worker
 bool GTensor::InitShadoW(const void* srcData, bool isGPU, DISTILLATION_CARD& distill, int flag) {
@@ -962,16 +956,16 @@ bool huTensor::Activate(int iter, int flagInit) {
     /*if (!wLoABs.empty()) {
         if(isZeroShaow()){
             hash64    = 0;
-        }        
-        
+        }
+
     }*/
     return Alloc(iter, flagInit);
 }
 
 bool huTensor::Alloc(int iter, int flagInit) {
     assert(strlen(name) > 0);
-    if (G_Has_(name, {"self_attn.q_proj_a"})) {  // model.layers.0.mlp.down_proj.weight qzeros scales model.layers.5.self_attn.v_proj.weight
-        DEBUG_HERE;                              //
+    if (G_Has_(name, {"model.layers.1.mlp.up_proj.weight"})) {  // model.layers.0.mlp.down_proj.weight qzeros scales model.layers.5.self_attn.v_proj.weight
+        DEBUG_HERE;                                             //
     }
     size_t sz0 = szGlobalMaloc;
     if (BIT_TEST(flags, F_NOALLOC))  // For example: operator fusing, memory reuse,rematerialization
@@ -1034,7 +1028,10 @@ bool huTensor::Alloc(int iter, int flagInit) {
         }
 
         if (isTrain) {
-            if (grad == nullptr) {
+            if (BIT_TEST(flags, F_FIXW)) {
+                grad = nullptr;
+                szM = 0, szV = 0;
+            } else if (grad == nullptr) {
                 if (isBackGama) {
                     SHAPE sp  = hQuant->GroupShapeOfT(this);  //  @InitGamaParam_
                     int nGama = sp[0] * 2;
@@ -1138,7 +1135,7 @@ bool huTensor::Free(bool isPassResident) {
     return true;
 }
 
-bool Gensors2File(std::vector<hGensor> gensors, const std::string& path, int flag) {
+bool Gensors2File(std::vector<hGTensor> gensors, const std::string& path, int flag) {
     /*FILE* logFile = freopen(path.c_str(), "w", stderr);
     if (!logFile) {
         perror("Failed to redirect stderr");

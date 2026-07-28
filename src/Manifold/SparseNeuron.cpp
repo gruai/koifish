@@ -155,7 +155,8 @@ void SparseNeuron::SetEmbed(TokenEmbed* embd_, int type, int flag) {
     if (samp_type == 0) {
         w->SetRefer(embd_->w);
     } else {
-        w->SetRefer(embd_->wInv);
+        assert(0);
+        // w->SetRefer(embd_->wInv);
     }
 }
 
@@ -165,7 +166,7 @@ void SparseNeuron::UpdateSamps(int seed, int flag) {
     float* weight = nullptr;  // TODO: Weighted sampling
     int nVocab = hFish->nClass(), nSample = hSamps->size();
     std::vector<int> samps;
-    Grusoft::GRander rander(seed);
+    GRander rander(seed);
     if (1) {  // nearly same
         hSampLoader sloader = hFish->GetOptimizer()->train_loader;
         assert(sloader != nullptr);
@@ -206,16 +207,16 @@ bool SparseNeuron::InitSVD(int flag) {
 string HIERARCH_LorAB::sNeurons = "";
 
 //  Forward: rhs = b*(a*inp)
-HIERARCH_LorAB::HIERARCH_LorAB(SparseNeuron* neuron, hGensor w_, const std::string& title_, int r_, int flag)
+HIERARCH_LorAB::HIERARCH_LorAB(SparseNeuron* neuron, hGTensor w_, const std::string& title_, int r_, int flag)
     : wBase(w_), rank(r_), title(title_), spNeuron(neuron) {
-    hFish = neuron->hFish;
-    config = hFish->config.loAB;
-
+    hFish  = neuron->hFish;
+    config = &(hFish->config.loAB);
+    rank   = config->rLatent;
     nInA = w_->ne[1], nOutB = w_->ne[0];
     if (rank == -1)  // only for debug
         rank = nInA;
     else {
-        assert(rank * 10 < hFish->config.nEmbed());  // neuron->C   low rank
+        assert(rank * 2 < hFish->config.nEmbed());  // neuron->C   low rank
     }
     assert(w_->isWMAT() && rank > 0);
     //  nIn = shape[1], nOut = shape[0] @SLP::Build
@@ -224,8 +225,8 @@ HIERARCH_LorAB::HIERARCH_LorAB(SparseNeuron* neuron, hGensor w_, const std::stri
 
     // string title = w_->name;
     //  spQ      = {q_dim, n_embd};
-    a = GT(hFish, w_->type, {rank, nInA}, flag | GTensor::F_LORA_A, title + "_a");
-    b = GT(hFish, w_->type, {nOutB, rank}, flag | GTensor::F_LORA_B, title + "_b");
+    a = GT(hFish, w_->type, {rank, nInA}, flag | GTensor::F_LORA_A, title + "_a.w");
+    b = GT(hFish, w_->type, {nOutB, rank}, flag | GTensor::F_LORA_B, title + "_b.w");
     hFish->InitGensor(nullptr, "", a, true);
     hFish->InitGensor(nullptr, "", b, true);
 
@@ -244,27 +245,7 @@ HIERARCH_LorAB::~HIERARCH_LorAB() {
     ta->Free_1(&Adelta, "");
 }
 
-void HIERARCH_LorAB::UpdateAdapt(int flag) {
-    /*switch (spNeuron->tpLORW) {
-        case LoAB_CARD::W0:  //  x = W*x
-            break;
-        case LoAB_CARD::AB:  //  x = (BA)*x = B*(Ax)
-            // beta_F        = 0.0f;
-            isAccumuDelta = false;
-            break;
-        case LoAB_CARD::W_AB:  //  x = (W+AB)*x
-            // beta_F        = 1.0f;
-            isAccumuDelta = true;
-            break;
-        case LoAB_CARD::SHADOW_AB:  //  Foreward:    x = (W+AB)*x    Backward: delta'=>(AB)delta
-            // beta_F        = 1.0f;
-            isAccumuDelta = false;
-            break;
-        default:
-            assert(0);
-            break;
-    }*/
-}
+void HIERARCH_LorAB::UpdateAdapt(int flag) {}
 /*
     Since low rank, no need to quantize/ramater/guoke...
 */
@@ -274,11 +255,11 @@ bool SparseNeuron::InitLoRA(LoAB_CARD::typW tpLora, const std::string& wname, in
     if (tpLORW == LoAB_CARD::typW::NO_LORW || tpLORW == LoAB_CARD::typW::W0)
         return false;
     HIERARCH_LorAB::sNeurons = HIERARCH_LorAB::sNeurons + "" + name + ",";
-    int rank                 = 32;  // 32 -1
-    H_LoAB lora              = std::make_shared<HIERARCH_LorAB>(this, w, wname, rank);
-    wLoABs.push_back(lora);
 
-    _INFO("[H_LoAB] rank=%d adapt=%d x=%d @\"%s\"\n", rank, tpLORW, 0, w->name);
+    H_LoAB lora = std::make_shared<HIERARCH_LorAB>(this, w, wname, -1);
+    wLoABs.push_back(lora);
+    auto info = lora->config->Dump(0x0);
+    _INFO("[H_LoAB] %s @\"%s\"\n", info.c_str(), w->name);
     return true;
 }
 

@@ -17,7 +17,7 @@ KVCache::KVCache(Fish* hF, int max_batch_size, int max_slen, int flag) : _fish(h
     max_seq_len = std::max(max_slen, (int)_fish->config.n_ctx());
     kv_dim      = hF->config.KV_dim();
     assert(kv_dim > 0);
-    
+
     SHAPE sp = {(int)(hF->config.nLayer()), max_seq_len, kv_dim};
     key      = std::make_shared<huTensor>(hF, "KCache", sp, tpCache, true, GTensor::F_DEBUG);
     value    = std::make_shared<huTensor>(hF, "VCache", sp, tpCache, true, GTensor::F_DEBUG);
@@ -58,8 +58,8 @@ char* KVCache::Get(KVCache::CTYPE typ, int lay, int pos, int flag) {
 
 int KVCache::n_kv() { return kv_n; }
 
-hGensor KVCache::SerialV(void* ctx, hGensor Vcur, int il, bool isSave) {
-    hGensor v = nullptr;
+hGTensor KVCache::SerialV(void* ctx, hGTensor Vcur, int il, bool isSave) {
+    hGTensor v = nullptr;
     /*llama_kv_cache *kv = (llama_kv_cache *)lamakv;
     if(kv==nullptr)
         return Vcur;
@@ -71,8 +71,8 @@ hGensor KVCache::SerialV(void* ctx, hGensor Vcur, int il, bool isSave) {
     if(isSave){
         char nam_[128];
         size_t nzV = n_ctx*n_batch*n_embd_v_gqa;
-            // hGensor  v_cache_view = ggml_view_1d(ctx, kv->v_l[il], nzV, ggml_row_size(kv->v_l[il]->type, n_embd_v_gqa)*kv_head);
-            hGensor v_cache_view = ggml_view_2d(ctx, kv->v_l[il], n_ctx*n_batch,
+            // hGTensor  v_cache_view = ggml_view_1d(ctx, kv->v_l[il], nzV, ggml_row_size(kv->v_l[il]->type, n_embd_v_gqa)*kv_head);
+            hGTensor v_cache_view = ggml_view_2d(ctx, kv->v_l[il], n_ctx*n_batch,
     n_embd_v_gqa,(n_ctx)*ggml_element_size(kv->v_l[il]),(kv_head)*ggml_element_size(kv->v_l[il])); sprintf(nam_,"v_cache_view-%d",il);    gTN(v_cache_view,
     nam_);         //cb(v_cache_view, "v_cache_view", il); Vcur = ggml_transpose(ctx, Vcur); ggml_cpy(ctx, Vcur, v_cache_view);          v = v_cache_view;
     }else{
@@ -83,8 +83,8 @@ hGensor KVCache::SerialV(void* ctx, hGensor Vcur, int il, bool isSave) {
     return v;
 }
 
-hGensor KVCache::SerialK(void* ctx, hGensor Kcur, int il, bool isSave) {
-    hGensor k = nullptr;
+hGTensor KVCache::SerialK(void* ctx, hGTensor Kcur, int il, bool isSave) {
+    hGTensor k = nullptr;
     /*llama_kv_cache *kv = (llama_kv_cache *)lamakv;
     if(kv==nullptr)
         return Kcur;
@@ -96,7 +96,7 @@ hGensor KVCache::SerialK(void* ctx, hGensor Kcur, int il, bool isSave) {
     if(isSave){
         char nam_[128];
         size_t nzK = n_ctx*n_batch*n_embd_k_gqa;
-            hGensor  k_cache_view = ggml_view_1d(ctx, kv->k_l[il], nzK, ggml_row_size(kv->k_l[il]->type, n_embd_k_gqa)*kv_head);
+            hGTensor  k_cache_view = ggml_view_1d(ctx, kv->k_l[il], nzK, ggml_row_size(kv->k_l[il]->type, n_embd_k_gqa)*kv_head);
             sprintf(nam_,"k_cache_view-%d",il);    gTN(k_cache_view, nam_);
         ggml_cpy(ctx, Kcur, k_cache_view);          k = k_cache_view;
 

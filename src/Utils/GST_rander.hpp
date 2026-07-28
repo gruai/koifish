@@ -7,9 +7,10 @@
  */
 
 #pragma once
-#include <assert.h>
-#include <stdint.h>
 
+#include <array>
+#include <cstdint>
+#include <memory>
 #include <random>
 #include <set>
 #include <string>
@@ -23,7 +24,7 @@
 /*
     http://www.drdobbs.com/tools/fast-high-quality-parallel-random-number/229625477?pgno=2
 */
-namespace Grusoft {
+
 class GRander {
     unsigned int x = 123456789;  //
     uint64_t xx, yy, zz;
@@ -83,7 +84,7 @@ class GRander {
         return b;
     }
     // random float32 in [0,1)
-    inline float NextFloat_01() {
+    inline virtual float NextFloat_01(int flag = 0x0) {
         int cur = RandU32();
         float a = cur * 1.0 / 0x7FFFFFFF;
         assert(a >= 0.0 && a < 1.0);
@@ -95,6 +96,29 @@ class GRander {
         assert(a >= 0.0 && a < 1.0);
         return a < thrsh;
     }
+
+    inline void RandFloat(int N, std::vector<float>& arr, int flag = 0x0) {
+        arr.clear();
+        for (int i = 0; i < N; ++i) {
+            arr.push_back(NextFloat_01(flag));
+        }
+    }
+
+    inline void RandMask_MN(int M, int N, std::vector<float>& T_m, int* mask32, int flag = 0x0) {
+        assert(T_m.size() == M);
+        std::vector<float> probs;
+        int* mask = mask32;
+        for (int i = 0; i < M; i++) {
+            float thrsh = T_m[i];
+            RandFloat(N, probs);
+            for (int i = 0; i < N; i++, mask++) {
+                *mask = probs[i] < thrsh;
+            }
+        }
+    }
+
+    //  nn.Embedding(vocab_size, n_embd)
+    virtual void Embedding_nn(int nVocab, int nEmbed, std::vector<float>& embeds, int flag = 0x0);
 
     /* Another kSampleInN
         vector<int> IDs( nVocab );
@@ -151,30 +175,7 @@ class GRander {
         return K;
     }
 };
-
-/*
-//standard normal distribution
-class DIST_Normal : public GRander	{
-    std::normal_distribution<> d;
-public:
-    DIST_Normal(int seed) : GRander(seed) {		}
-
-    template<typename T>
-    T gen(){
-        double a = d(g);
-        return T(a);
-    }
-};
-
-//standard normal distribution in [min-max]
-class DIST_RangeN : public GRander	{
-    std::normal_distribution<> d;
-    double rMin, rMax;
-public:
-    DIST_RangeN(int seed, double a0, double a1);
-    double gen();
-};*/
-}  // namespace Grusoft
+typedef std::shared_ptr<GRander> hRANDER;
 
 #include <math.h>
 
@@ -194,10 +195,9 @@ typedef struct {
     unsigned int next_;
     unsigned int state_[MERSENNE_STATE_N];
     unsigned int MATRIX_A[2];
-} mt19937_torch;
-typedef mt19937_torch mt19937_state;
+} MT19937_torch;
 
-inline void manual_seed(mt19937_torch* state, unsigned int seed) {
+inline void manual_seed(MT19937_torch* state, unsigned int seed) {
     state->MATRIX_A[0] = 0x0u;
     state->MATRIX_A[1] = 0x9908b0df;
     state->state_[0]   = seed & 0xffffffff;
@@ -209,7 +209,7 @@ inline void manual_seed(mt19937_torch* state, unsigned int seed) {
     state->next_ = 0;
 }
 
-inline void next_state(mt19937_torch* state) {
+inline void next_state(MT19937_torch* state) {
     state->left_ = MERSENNE_STATE_N;
     state->next_ = 0;
     unsigned int y, j;
@@ -225,7 +225,7 @@ inline void next_state(mt19937_torch* state) {
     state->state_[MERSENNE_STATE_N - 1] = state->state_[MERSENNE_STATE_M - 1] ^ (y >> 1) ^ state->MATRIX_A[y & 0x1];
 }
 
-inline unsigned int randint32(mt19937_torch* state) {
+inline unsigned int randint32(MT19937_torch* state) {
     if (!state)
         return 0;
     if (state->MATRIX_A[0] != 0 || state->MATRIX_A[1] != 0x9908b0df)
@@ -241,13 +241,13 @@ inline unsigned int randint32(mt19937_torch* state) {
     return y;
 }
 
-inline unsigned long long randint64(mt19937_torch* state) { return (((unsigned long long)(randint32(state)) << 32) | randint32(state)); }
+inline unsigned long long randint64(MT19937_torch* state) { return (((unsigned long long)(randint32(state)) << 32) | randint32(state)); }
 
-inline float randfloat32(mt19937_torch* state) { return (randint32(state) & ((1ull << 24) - 1)) * (1.0f / (1ull << 24)); }
+inline float randfloat32(MT19937_torch* state) { return (randint32(state) & ((1ull << 24) - 1)) * (1.0f / (1ull << 24)); }
 
-inline double randfloat64(mt19937_torch* state) { return (randint64(state) & ((1ull << 53) - 1)) * (1.0 / (1ull << 53)); }
+inline double randfloat64(MT19937_torch* state) { return (randint64(state) & ((1ull << 53) - 1)) * (1.0 / (1ull << 53)); }
 
-inline void uniform_(float* data, unsigned int numel, float from, float to, mt19937_torch* state) {
+inline void uniform_(float* data, unsigned int numel, float from, float to, MT19937_torch* state) {
     for (unsigned int t = 0; t < numel; t++) {
         data[t] = randfloat32(state) * (to - from) + from;
     }
@@ -269,7 +269,7 @@ inline void normal_fill_16(T* data, float mean, float std) {
 }
 
 template <typename T>
-inline void normal_fill(T* data, unsigned int numel, float mean, float std, mt19937_torch* state) {
+inline void normal_fill(T* data, unsigned int numel, float mean, float std, MT19937_torch* state) {
     assert(numel > 0);
     for (unsigned int t = 0; t < numel; t++) {
         data[t] = randfloat32(state);
@@ -288,7 +288,7 @@ inline void normal_fill(T* data, unsigned int numel, float mean, float std, mt19
 }
 
 template <typename T>
-inline void normal_19937(T* data, unsigned int numel, float mean, float std, mt19937_torch* state) {
+inline void normal_19937(T* data, unsigned int numel, float mean, float std, MT19937_torch* state) {
 #define EPSILONE 1e-12f
     if (numel >= 16) {
         normal_fill(data, numel, mean, std, state);
@@ -320,7 +320,7 @@ inline void init_identity_permutation(int* data, int numel) {
     }
 }
 
-inline void random_permutation(int* data, int numel, mt19937_torch* state) {
+inline void random_permutation(int* data, int numel, MT19937_torch* state) {
     for (int i = numel - 1; i > 0; i--) {
         // pick an index j in [0, i] with equal probability
         int j = randint32(state) % (i + 1);
@@ -331,10 +331,62 @@ inline void random_permutation(int* data, int numel, mt19937_torch* state) {
     }
 }
 
-// struct random_normal_distribution {
-//     std::mt19937 gen;
-//     std::normal_distribution<float> rd;
-//     float min;
-//     float max;
-// };
-// struct random_normal_distribution * init_random_normal_distribution(    int seed, float mean, float std, float min, float max);
+/*
+    SCPQ(a Sudden Confession under Persistent Questioning):
+        When discussion solutions with AI tools(doubao,copilot), oftern encounters SCPQ: the AI rambels in circles, offering many specious, harf-backed solutions.
+        Suddenly(may after several miniutes or even hours). it aknowledgeing its own errors.
+    SCPQ is a clear sign that current (transformer based)-AI has no full human intelligence. 
+    Know what one does not know(然乎然,不然乎不然) is one of humanity's most vital forms of intelligence.     
+
+    Philox backend is a typical SCPQ codes fromf copilot. Copilot recommend Philox at first, but the generated sequnce is not match Torch. After one hours' work, copilot says "On current PyTorch releases, torch.rand() on CPU does not use
+        Philox as its RNG backend. "
+*/
+struct GRanderTorch : public GRander {
+    uint64_t seed64;
+    uint64_t offset;
+    MT19937_torch mt_cpu;
+    bool isCPU = true;
+
+    static constexpr uint32_t PHILOX_M0 = 0xD2511F53;
+    static constexpr uint32_t PHILOX_M1 = 0xCD9E8D57;
+    static constexpr uint32_t PHILOX_W0 = 0x9E3779B9;
+    static constexpr uint32_t PHILOX_W1 = 0xBB67AE85;
+
+    GRanderTorch(uint64_t user_seed, uint64_t offset_ = 0) : offset(offset_) {
+        if (isCPU) {
+            manual_seed(&mt_cpu, user_seed);
+        } else {
+            uint64_t z = user_seed + 0x9E3779B97f4A7C15ULL;
+            z          = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+            z          = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+            seed64     = z ^ (z >> 31);
+        }
+    }
+
+    static inline uint32_t mulhilo(uint32_t a, uint32_t b, uint32_t& hi) {
+        uint64_t p = (uint64_t)a * b;
+        hi         = p >> 32;
+        return (uint32_t)p;
+    }
+
+    std::array<uint32_t, 4> philox_round(std::array<uint32_t, 4> ctr, std::array<uint32_t, 2> key) {
+        uint32_t hi0, hi1;
+        uint32_t lo0 = mulhilo(PHILOX_M0, ctr[0], hi0);
+        uint32_t lo1 = mulhilo(PHILOX_M1, ctr[2], hi1);
+
+        return {hi1 ^ ctr[1] ^ key[0], lo1, hi0 ^ ctr[3] ^ key[1], lo0};
+    }
+
+    std::array<uint32_t, 4> philox_generate(uint64_t seed64, uint64_t offset) {
+        std::array<uint32_t, 4> ctr = {(uint32_t)offset, (uint32_t)(offset >> 32), 0, 0};  //(uint32_t)seed64, (uint32_t)(seed64 >> 32)
+        std::array<uint32_t, 2> key = {(uint32_t)seed64, (uint32_t)(seed64 >> 32)};
+        for (int i = 0; i < 10; i++) {
+            ctr = philox_round(ctr, key);
+            key[0] += PHILOX_W0;
+            key[1] += PHILOX_W1;
+        }
+        return ctr;
+    }
+
+    float NextFloat_01(int flag = 0x0) override;
+};

@@ -204,6 +204,11 @@ struct Distri_ARRAY {
     double mean = 0, sigma = 0, sum = 0, ss = 0, average = 0;
     float a0 = FLT_MAX, a1 = -FLT_MAX;
 
+    virtual bool isValid() {
+        // if (distri.empty())
+        //     return false;
+        return true;
+    }
     virtual void Clear() {
         distri.clear();
         mean = 0, sigma = 0, average = 0;

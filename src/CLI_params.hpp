@@ -11,22 +11,23 @@
 
 #include "./Utils/GST_log.hpp"
 #include "./Utils/json.hpp"
+#include "./Utils/magic_enum.hpp"
 #include "./g_float.hpp"
 
 /**
  *  All paramters defined here
  */
 struct CLI_params;
-
+class GRander;
 /*
     生者一过客，
         (activations)
     逝者一归尘；
         (sparse)
-    天地一逆旅，
-        (back propagation)
-    知止一至人
-        (local minima)
+    天地若逆旅，
+        (Langevin dynamics/back propagation)
+    返朴谁至人
+        (like a salmon swim upstream)
 */
 enum LIFE_PHASE {
     // Pre-training
@@ -41,15 +42,9 @@ enum LIFE_PHASE {
     P_EVAL_,
     // Inference     fish->isLocalInfer = true
     P_PREFILL,
-    P_GENERATE,
-    P_CHAT = P_GENERATE
-};
-
-enum CHAT_MODE {
-    YABA,
-    CHAT_SMOKE,
-    CHATML_ASSIST,
-    CHATML_THINK,
+    // P_GENERATE,
+    P_CHAT_1,  // generate 1 token each time
+    P_CHAT_N,  // generate N token each time(diffusion model)
 };
 
 enum METRIC { M_VOID, CLS_LOSS, PPL, METRIC_MOST };
@@ -74,10 +69,19 @@ enum NORMAL_MODE {
 /**
  *
  */
-enum ACTIVATION_FUNC { SIGMOID, GLU2, RELU_, LINEAR, GELU, GLU, SWIG };
-inline std::map<ACTIVATION_FUNC, std::vector<std::string>> ACTIVATION_META = {
-    {SIGMOID, {"SIGMOID"}}, {GLU2, {"GLU2"}}, {RELU_, {"RELU"}}, {LINEAR, {"LINEAR"}}, {GELU, {"GELU"}}, {GLU, {"GLU"}}, {SWIG, {"SWIG"}},
+enum ACTIVATION_FUNC {
+    SIGMOID,
+    GLU2,
+    RELU_,
+    LINEAR,
+    GELU,
+    GLU,
+    SWIG,
+    RELU2,
 };
+// inline std::map<ACTIVATION_FUNC, std::vector<std::string>> ACTIVATION_META = {
+//     {SIGMOID, {"SIGMOID"}}, {GLU2, {"GLU2"}}, {RELU_, {"RELU"}}, {LINEAR, {"LINEAR"}}, {GELU, {"GELU"}}, {GLU, {"GLU"}}, {SWIG, {"SWIG"}},
+// };
 
 /**
  *
@@ -122,11 +126,18 @@ enum MODEL_ARCH {
     NLP_QWEN3,
     NLP_DEEPSEEK,
 
-    NLP_GUPPY,
+    NLP_GUPPY,  // Need redesign after 20260715
 
     NLP_MOE,  //???
-              //////
-    SCORE_,
+
+    // Diffusion language model
+    NLP_SCORE_,
+    // NLP_SCORE_char,
+
+    IMAGE_SCORE_,
+
+    VIDEO_SCORE,
+
     SAM_
 };
 
@@ -251,20 +262,6 @@ enum QKV_PACK {
  */
 class MODEL_CARD {
    protected:
-    /*
-        void* wq[MAX_LAYERS]; // (n_heads * head_dim, dim)
-        void* wk[MAX_LAYERS]; // (n_kv_heads * head_dim, dim)
-        void* wv[MAX_LAYERS]; // (n_kv_heads * head_dim, dim)
-        void* wo[MAX_LAYERS]; // (dim, n_heads * head_dim)
-        // weights for ffn
-        void* w1[MAX_LAYERS]; // (n_experts?, ff, dim)
-        void* w2[MAX_LAYERS]; // (n_experts?, dim, ff)
-        void* w3[MAX_LAYERS]; // (n_experts?, ff, dim)
-        // biases for qkv (qwen)
-        float* bqkv[MAX_LAYERS]; // ((n_heads + n_kv_heads * 2) * head_dim)
-        // moe gate weights (mixtral)
-        void* moegate[MAX_LAYERS]; // (n_experts, dim)
-    */
     struct LAY_PARAM {
         uint32_t _head, _kv_head, _head_dim;
         uint32_t ff;
@@ -315,14 +312,19 @@ class MODEL_CARD {
 
     std::string pathCheckPoint = "";  // support {"safetensors", "kun"} files in this path
 
-    std::string sCardPath = "", sTokenJsonPath = "", sTokenBinPath = "";
+    std::string sCardPath = "", sTokenBinPath = "";
+    std::string sTokenJsonPath   = "";  // tokenizer.json
+    std::string sTokenConfigPath = "";  // tokenizer_config.json
     std::string sArch, torch_dtype, transformers_version, model_type;
     std::string act_type, norm_type;
     typNUMBER tpWeight = typNUMBER::BF16, tpGradient = typNUMBER::BF16, tpActivation = typNUMBER::BF16;
     // typNUMBER tpPreLogits = typNUMBER::F32;tpEmbed = typNUMBER::BF16,
-    // dotprod_t fDotW;
+
     JSON jModelParam, jSafetensorsIndex;  //
-    int vocab_size = -1;
+
+    // Multiples of 64, 128, or 256,​ enable faster memory access and tensor parallelism, common LLM engineering trick for hardware efficiency, especially on
+    // GPUs/TPUs:
+    int pad_vocab_size = 151936;
     // 1. in some model, no bos_token_id!(GPT-2/GPT-3,unsloth/Qwen3-4B-Base,...)
     int bos_token_id, eos_token_id;
 
@@ -332,7 +334,7 @@ class MODEL_CARD {
     bool isQKVBias       = true;
     bool isPaddedCls     = false;
     bool isFFNShareParam = false;
-
+    bool isCausalMask    = true;
     // dim(=head_dim*n_heads)
     int dim = -1, hidden_dim = -1, n_layers = -1, hidden_size = -1, intermediate_size = -1;
     int max_pos_embeddings = -1, num_attention_heads = -1, num_key_value_heads = -1;
@@ -370,7 +372,6 @@ class MODEL_CARD {
 
     tpROPE rope_type = ROPE_NORM;
     int rotary_dim   = 0;
-    // int seq_len      = 0;
 
     MODEL_CARD();
     // virtual bool OnJsonCALM(CLI_params* hConfig, const std::string& path, const JSON& meta, int flag = 0X0);
@@ -404,24 +405,45 @@ struct DISTILLATION_CARD {
     bool isKeepShadoW(int flag = 0x0);
     bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
     void Dump(int typ);
+    virtual bool OnLearningRate(float lf, int flag = 0x0) { return true; }
+    virtual float lr_base(int flag = 0x0) { return 1.0f; }
 };
 
-struct LoAB_CARD {
+//  Score-based modeling with multiple noise perturbations  -  生物之以息(XI)相吹也
+struct XI_CARD {
+    // GRander* hMaskRander = nullptr;
+    int mask_seed = 20260713;
+
+    virtual ~XI_CARD();
+    bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
+    std::string Dump(int typ, int flag = 0x0) const;
+    bool isValid(int flag = 0x0);
+};
+
+// in general, LoAB is a special case of distillation
+struct LoAB_CARD : public DISTILLATION_CARD {
     enum typW { NO_LORW, W0, AB, W_AB, SHADOW_AB, SHADOW_AB_ffn };
-    typW type    = NO_LORW;
-    int32_t rank = 0;
+    typW type       = NO_LORW;
+    int32_t rLatent = 0;  // W[m,n]=A[m,latent]*B[latent,n]
     std::vector<std::string> filterW;
     float sW = 0.f, sAB = 0.f;
     bool isBZero = true;  //  interesting
 
+    float GetS_ab() const { return sAB; }
+    float GetS_w() const { return sW; }
     // Reset W(may load params of do gaussian init) to zero
     static bool isZeroW(typW typ, int flag = 0x0);
+    bool isDistll() const;
+    // W0 used in forw/back, but its weight fix as shadow
+    bool isFixW(int flag = 0x0) const;
     // W = W0(may + 0*AB)
     bool isPassW(int flag = 0x0) const;
     // W = AB (may + 0*W0)
     bool isPassAB(int flag = 0x0) const;
     bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
-    void Dump(int typ);
+    std::string Dump(int typ, int flag = 0x0) const;
+    bool OnLearningRate(float lf, int flag = 0x0) override;
+    float lr_base(int flag = 0x0);
 };
 
 struct SFT_CARD {
@@ -446,6 +468,7 @@ struct SFT_CARD {
     void Dump(int typ);
 
     bool UpdateCKP(MODEL_CARD& model, int flag = 0x0);
+
     std::string sBaseModelPath;
     std::string sCheckpointPath;
 };
@@ -581,13 +604,11 @@ struct TRAIN_CARD {
     bool use_flash;
     bool use_checkpointing;
 
-    std::string sample_start;
-    bool include_sample_start;
-    bool escape;
-    bool overlapping_samples;
-    bool fill_with_next_samples;
-    bool separate_with_eos;
-    bool separate_with_bos;
+    // std::string sample_start;
+    // bool include_sample_start;
+    // bool escape;
+    // bool separate_with_eos;
+    // bool separate_with_bos;
     bool sample_random_offsets;
 
     bool force_reshuffle;
@@ -595,10 +616,6 @@ struct TRAIN_CARD {
     float rSubSample = 1;
     int nMostIter = -1, nEpochIter = -1;
     int warmup, lr_restart         = 0;
-    // int   cos_decay_steps;
-    // float cos_decay_restart;
-    // float cos_decay_min;
-    // bool  enable_restart;
 
     int opt_past;
     float opt_delta;
@@ -635,26 +652,57 @@ struct ChatML_samp {
     ChatML_samp(const std::string& r, const std::string& c, int flag = 0x0) : role(r), content(c) {}
 };
 
-struct CHAT_SAMPLER {
-    enum METHOD { TEMPERATURE, Top_K, Top_P, Min_P, BEAM };
-    METHOD method  = METHOD::TEMPERATURE;
-    CHAT_MODE mode = CHAT_MODE::YABA;
+enum CHAT_MODE {
+    YABA,
+    CHAT_SMOKE,
+    CHATML_ASSIST,
+    CHATML_THINK,
+};
 
-    float temperature = 0.6f;
-    float top_p       = 0.95f;
-    int top_k         = 20;
-    bool ignore_eos   = false;  // ignore EOS token when generating text
-    bool isSampleCPU  = true;
+//  See HF's "generation_config.json"
+struct CHAT_SAMPLER {
+    enum METHOD {
+        TEMPERATURE,
+        Top_K,
+        Top_P,
+        Min_P,
+        BEAM,
+        // for score-model
+        PATH_PLAN,
+    };
+    // SAMPLE is 雕琢/琢磨
+    METHOD tpZhuomo = METHOD::TEMPERATURE;
+    CHAT_MODE mode  = CHAT_MODE::YABA;
+
+    float temperature = 0.6f;  // 0.7~0.9
+    //  keeps only the smallest set of tokens whose total probability exceeds p, then renormalizes and samples from that set.
+    float top_p      = 0.95f;  // 0.9~0.95
+    int top_k        = 50;     // 40,50
+    bool ignore_eos  = false;  // ignore EOS token when generating text
+    bool isSampleCPU = true;
+    bool isTopPFirst = false;
+    /**1. max_position_embeddings - Hard ceiling on (prompt + generated). But there are extrapolation tricks (NTK scaling, YaRN, PI, etc.).
+     * 2. max_allowed = model.config.max_position_embeddings
+     * 3. max_new_tokens -  generation limit: number of new tokens to generate, independent of prompt length.
+     */
+    int max_new_tokens = 20, max_allowed = -1;
+    //For example, “This model supports up to 32k context, but quality is best under 8k.” Many (attention, RoPE geometry, weight distribution ...) would affect this!
+    int ctx_recommend = -1;
+    // Define the length of batch input,   different with n_ctx_train, n_ctrx_origin !!!
+    int seq_len          = 1024;    //"max_sequence_length"
 
     int repeat_last_n        = 64;
     float repeat_penalty     = 1.00f;
     bool interactive         = false;
     int32_t interactive_port = -1;
 
+    // for score model
+    int most_step = 64;
+    float kappa_t = 0.0;
+
     std::string prompt     = "";
     std::string token_test = "";
-    // Define the length of batch input,   different with n_ctx_train, n_ctrx_origin !!!
-    int seq_len          = 1024;
+
     int szBuffer         = 32768;
     bool enable_thinking = true;
 
@@ -680,13 +728,13 @@ struct DUMP_SWITCH {
 
 // Only for developers
 struct DEUG_SWITCH {
-    float fLongTail            = -1;
-    int SelfAttention_noraml   = 1;
-    bool NO_loss               = false;
-    bool check_tensor_norm     = false;
-    int check_tensor_quant     = 0;
-    bool isInitParamHost       = true;
-    int save_GlobalSate        = 1;
+    float fLongTail          = -1;
+    int SelfAttention_noraml = 1;
+    bool NO_loss             = false;
+    bool check_tensor_norm   = false;
+    int check_tensor_quant   = 0;
+    bool isInitParamHost     = true;
+
     std::string eval_OneSample = "";
     int eval_Generate          = -1;
 
@@ -726,6 +774,8 @@ struct DEUG_SWITCH {
     int x1 = 0;
     std::string x_str;
     std::vector<std::string> prompts;
+    std::vector<std::string> filterCSV;
+    std::vector<std::string> filterColor;
 
     float Time_most  = 60;
     typNUMBER tpActi = typNUMBER::BF16;
@@ -816,6 +866,8 @@ struct CLI_params {
 
     std::vector<CheckPoint_Params> ckp_in, ckp_out;
     CheckPoint_Params state;
+    //  >0 would save GlobalState(checkPoint)
+    int save_GlobalSate = 0;
     void InitAllStates(int flag);
 
     DUMP_SWITCH dumpSwitch;
@@ -828,6 +880,7 @@ struct CLI_params {
 
     SKDU_params scheduling;
     Fuyou_params fuyou;
+    XI_CARD XI;
     LoAB_CARD loAB;
 
     std::string eval_metric                  = "";
@@ -890,7 +943,7 @@ struct CLI_params {
     // std::string fp_train_data;   serial_path
     std::string train = "";  //"scratch"
 
-    bool isOnlyGPT = false;
+    // bool isOnlyGPT = false;
 
     CHAT_SAMPLER chat_sampler;
     CHAT_MODE ChatMode() { return chat_sampler.mode; }
@@ -1072,3 +1125,18 @@ struct CLI_params {
     virtual JSON ToJSON(int type, int flag = 0x0);
     std::string GetDataPath(const std::string type, int flag = 0x0);
 };
+
+// This function needs magic_enum
+template <typename T>
+void STR2ENUM(const std::string& val, T& enum_value, bool allowNull = true, int flag = 0x0) {
+    if (val.empty())
+        return;
+
+    auto result = magic_enum::enum_cast<T>(val, magic_enum::case_insensitive);
+    if (result.has_value()) {
+        enum_value = result.value();
+    } else if (allowNull) {
+    } else {
+        assert(0 && "Invalid val");
+    }
+}

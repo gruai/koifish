@@ -13,6 +13,7 @@ if (NOT CMAKE_BUILD_TYPE OR CMAKE_BUILD_TYPE STREQUAL "")
     set(CMAKE_BUILD_TYPE "Release" CACHE STRING "" FORCE)
 endif()
 
+set(BUILD_SHARED_LIBS OFF)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/bin/)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/bin/)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/bin/)
@@ -204,15 +205,16 @@ if(K_USE_GBDT)
     add_subdirectory(src/GBDT)
 endif()
 
-message(STATUS "KOIFISH cc=${DELTA_cc} PWD=${CMAKE_SOURCE_DIR}")
+message(STATUS "KOIFISH cc=${DELTA_cc} SHARED = ${BUILD_SHARED_LIBS} PWD=${CMAKE_SOURCE_DIR}")
 
 add_subdirectory(src/Tensor)
 add_subdirectory(src/Manifold)
 add_subdirectory(src/Fuzi)
 add_subdirectory(src/Device)
-add_subdirectory(src/Models)
+add_subdirectory(src/Transformer)
 add_subdirectory(src/Utils)
 add_subdirectory(src/TokenSet)
+add_subdirectory(src/Utils/oniguruma)
 
 set(sources   ${TGraph_sources} ${util_sources} ${tensor_sources} ${kernel_sources} ${cheby_sources} ${watch_sources} ${Fuzi_sources} ${ggex_sources} ${device_sources} ${model_sources} 
     ${token_sources} ${mort_sources} ${blas_sources} ${TEST_SRCS} )
@@ -225,7 +227,7 @@ add_library(prog_deps INTERFACE)
 target_link_libraries(prog_deps
   INTERFACE
     ${GG_LIB}    ${OPENBLAS_LIB}  ${WATCH_LIB}   ${TVM_LIB}    ${GFLAGS_LIBRARIES}
-    
+    onig
     CUDA::cudart
     CUDA::cuda_driver
     CUDA::cublas CUDA::cublasLt cudnn    

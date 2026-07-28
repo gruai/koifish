@@ -99,11 +99,38 @@ __global__ void CU_swiglu_v0(T* out, const T* gate, const T* inp, int N) {
 template <typename Typ>
 __global__ void CU_glu2_forw_(TASKA_1p1<Typ> taska, Typ* out, const Typ* gate, const Typ* inp, int N) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx) {
+    if (idx < N) {
         float xiW = CU_T2Float(gate + idx);
         float xiV = CU_T2Float(inp + idx);
         float g2  = xiW < 0.0 ? 0.0 : xiW * xiW;
         out[idx]  = (Typ)(g2 * xiV);
+    }
+}
+
+/**
+ *  ReLU²(x)
+ *
+ */
+template <typename Typ>
+__global__ void CU_rlu2_forw_(TASKA_1p1<Typ> taska, Typ* out, const Typ* inp, int N) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < N) {
+        float xiV = CU_T2Float(inp + idx);
+        float g2  = xiV < 0.0 ? 0.0 : xiV * xiV;
+        // if(idx==0){
+        //     DEBUG_HERE;
+        // }
+        out[idx]  = (Typ)(g2);
+    }
+}
+template <typename Typ>
+__global__ void CU_rlu2_back_(TASKA_1p1<Typ> taska, Typ* delta_in_out, const Typ* inp, int N) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < N) {
+        float xiV         = CU_T2Float(inp + idx);
+        float g2          = xiV < 0.0 ? 0.0 : 2 * xiV;
+        float delta       = CU_T2Float(delta_in_out + idx);
+        delta_in_out[idx] = CU_Float2T<Typ>(delta * g2, 42);
     }
 }
 
@@ -160,8 +187,8 @@ __global__ static void CU_swiglu_v1(Typ* out, const Typ* inp, const Typ* gate, i
 
 int Relu::Forw(hGTensor out, hGTensor inp, int flag) {
     int nToken = nBatchToken(), C = hFish->config.n_ff();
-    size_t nz  = nToken * C;  // SHAPE2NZ(shape);
-    const int block_size = 128,grid_size = CEIL_DIV(nz, block_size);
+    size_t nz            = nToken * C;  // SHAPE2NZ(shape);
+    const int block_size = 128, grid_size = CEIL_DIV(nz, block_size);
     // assert(B * T * C == nz);
     hGTensor gate = nullptr;
     if (slp_gate != nullptr && slp_gate->tRhs != nullptr) {
@@ -170,6 +197,9 @@ int Relu::Forw(hGTensor out, hGTensor inp, int flag) {
     }
     TASKA_1p1<floatX> task_11(nz, main_stream, false);
     switch (fAct) {
+        case RELU2:
+            T1p1(CU_rlu2_forw_<floatX>, task_11, ToX(out), ToX(inp), nz);
+            break;
         case GLU2:
             T1p1(CU_glu2_forw_<floatX>, task_11, ToX(out), ToX(gate), ToX(inp), nz);
             break;
@@ -279,6 +309,9 @@ int Relu::Back(hGTensor delta_in_out, hGTensor pre_gelu, int flag) {
             break;
         case GLU2:
             T1p1(CU_glu2_back_<floatX>, task_11, ToX(delta_in_out), ToX(slp_gate->delta), ToX(gate), ToX(pre_gelu), nz);
+            break;
+        case RELU2:
+            T1p1(CU_rlu2_back_<floatX>, task_11, ToX(delta_in_out), ToX(pre_gelu), nz);
             break;
         case GELU:
             //  gelu_backward_inplace_ fused @matmul_backward_

@@ -193,7 +193,7 @@ bool CHECK_FILE_EXIST(const std::string& fkey, const std::string& directory) {
         }
         return false;
     } catch (const fs::filesystem_error& e) {
-        std::cerr << "Filesystem error: " << e.what() << std::endl;
+        _ERROR("Filesystem err=%s ", e.what());
         return false;
     }
 }

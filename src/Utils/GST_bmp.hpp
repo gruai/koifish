@@ -14,7 +14,7 @@
 ����	  �ṹ���� �� ��
 ����	  λͼ�ļ�ͷ (bitmap-file header) BITMAPFILEHEADER bmfh
 ����	  λͼ��Ϣͷ (bitmap-information header) BITMAPINFOHEADER bmih
-����	  ��ɫ����(color table) RGBQUAD aColors[]
+����	  ��ɫ����(colour table) RGBQUAD aColors[]
 ����	  ͼ�����������ֽ� BYTE aBitmapBits[]
 	*/
 	typedef struct bmp_header
@@ -205,13 +205,13 @@
 	}
 #endif
 #define _PI	3.1415926f											// Value of PI
-#define _BITS_PER_PIXEL_32	32									// 32-bit color depth
-#define _BITS_PER_PIXEL_24	24									// 24-bit color depth
+#define _BITS_PER_PIXEL_32	32									// 32-bit colour depth
+#define _BITS_PER_PIXEL_24	24									// 24-bit colour depth
 #define _PIXEL	DWORD											// Pixel
 #define _RGB(r,g,b)	(((r) << 16) | ((g) << 8) | (b))			// Convert to RGB
-#define _GetRValue(c)	((BYTE)(((c) & 0x00FF0000) >> 16))		// Red color component
-#define _GetGValue(c)	((BYTE)(((c) & 0x0000FF00) >> 8))		// Green color component
-#define _GetBValue(c)	((BYTE)((c) & 0x000000FF))				// Blue color component
+#define _GetRValue(c)	((BYTE)(((c) & 0x00FF0000) >> 16))		// Red colour component
+#define _GetGValue(c)	((BYTE)(((c) & 0x0000FF00) >> 8))		// Green colour component
+#define _GetBValue(c)	((BYTE)((c) & 0x000000FF))				// Blue colour component
 #define _NOISE_WIDTH	192
 #define _NOISE_HEIGHT	192
 #define _NOISE_DEPTH	64
@@ -346,7 +346,7 @@ public:
 	void Blur();
 	void GaussianBlur();
 	void Sharp();
-	void Colorize(_PIXEL color);
+	void Colorize(_PIXEL colour);
 	void Rank(bool bMinimum=true);
 	void Spread(long distanceX=8, long distanceY=8);
 	void Offset(long offsetX=16, long offsetY=16);

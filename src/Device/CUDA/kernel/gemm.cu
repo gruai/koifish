@@ -90,7 +90,9 @@ void CU_mv_(floatX* y, const floatX* W, const floatX* x, int m, int n, float alp
     Wrapper around cublasLtMatmul(https://docs.nvidia.com/cuda/cublas/#cublasltmatmul)
 */
 template <class FloatC, class FloatA, class FloatB, class FloatBias>
-void CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* bias, TASKA_AxB& taskm, int flag) {
+int CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* bias, TASKA_AxB& taskm, int flag) {
+    if(taskm.isPass())
+        return -1;
     assert(taskm.isValid());
     assert(d!=nullptr && a!=nullptr && b!=nullptr);
     int m = taskm.m, n = taskm.n, k = taskm.k;
@@ -99,7 +101,7 @@ void CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* 
     bool isDone = false;
     // #ifdef __USE_TILELANG__
     //     for (auto K : TL_GEMM_tables) {                       // KOIFISH(torch)   row-major
-    //         if (!accumulate && K.isMatch(n, m, k, transA)) {  // (m,n) of CU_mm_ is transpose of output matrix
+    //         if (!accumulate && K.isMatch(n, m, k, transA)) {  // (m,n) of CU_mm is transpose of output matrix
     //             assert(transB == 0);
     //             K.kernel<<<dim3(K.grid_x, K.grid_y, K.grid_z), dim3(K.block_x, K.block_y, K.block_z), 49152, stream>>>(b, a, d);
     //             isDone = True;
@@ -112,8 +114,6 @@ void CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* 
     bool has_bias              = (bias != nullptr);
     hBITARR workspace          = (hBITARR)GTensor::qkv_workspace;
     std::size_t workspace_size = GTensor::workspace_size;
-    // hBITARR workspace          = (hBITARR)GTensor::buff;
-    // std::size_t workspace_size = GTensor::buff_len;
     assert(workspace_size >= 32 * 1024 * 1024);
     // check alignment (some modes work unaligned, but it is always best to be aligned for performance)
     if (((uintptr_t)a % 16) != 0 || ((uintptr_t)b % 16) != 0 || ((uintptr_t)d % 16) != 0 || ((uintptr_t)bias % 16) != 0) {
@@ -192,10 +192,10 @@ void CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* 
         exit(EXIT_FAILURE);
     }
 
-    // set whether to accumulate (i.e. D += C) or not - note this isn't considered in algorithm selection (?!)
-    float one    = 1.f, zero   = 0.f;
-    float* alpha = &(taskm.alpha);  //one;
-    float* beta  = &(taskm.beta);   //taskm.isAccumuDelta ? &one : &zero;
+    
+    float* alpha = &(taskm.alpha);      //  1 in most case;
+    // set whether to accumulate (i.e. D += C) or not 
+    float* beta  = &(taskm.beta);       //  taskm.isAccumuDelta ? &one : &zero;
 
     // call the matmul
     cublasCheck(cublasLtMatmul(cublaslt_handle, operationDesc, alpha, a, ALayout, b, BLayout, beta, d, CLayout, d, DLayout, &heuristic.algo, workspace,
@@ -210,6 +210,7 @@ void CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* 
     cublasCheck(cublasLtMatrixLayoutDestroy(CLayout));
     cublasCheck(cublasLtMatrixLayoutDestroy(DLayout));
     cudaCheck(cudaGetLastError());
+    return 0x0;
 }
 
 /*
@@ -240,7 +241,7 @@ void CU_mm_(floatX* d, hGTensor wGensor, const floatX* b, const floatX* bias, in
         // [2048,1024] x [1024,8192] => [2048,8192]         or(transA) [1024,8192]' x [1024,2048] => [8192,2048]
         // #ifdef __USE_TILELANG__
         //         for (auto K : TL_GEMM_tables) {        // KOIFISH(torch)   row-major
-        //             if (K.isMatch(n, m, k, transA)) {  // (m,n) of CU_mm_ is transpose of output matrix
+        //             if (K.isMatch(n, m, k, transA)) {  // (m,n) of CU_mm is transpose of output matrix
         //                 K.kernel<<<dim3(K.grid_x, K.grid_y, K.grid_z), dim3(K.block_x, K.block_y, K.block_z), 49152, stream>>>(b, wX, d);
         //                 isDone = True;
         //                 break;

@@ -54,7 +54,7 @@ hQUANT GeQuant::MakeInstance(GeNeuron* hNeuron, const std::string& nam_, QUANT_C
         for (auto n : neurons) {
             assert(n->isValid());
             std::vector<hGTensor> aux;
-            hGensor t = n->w;
+            hGTensor t = n->w;
             assert(t->hQuant == nullptr);
             // if (!G_Has_(t->name, {"self_attn.o_proj", "self_attn.v_proj"})) {  // onlyr for debug
             //     continue;
@@ -1185,7 +1185,7 @@ float GeQuant::Normal_ROW01(shared_ptr<GTensor> hTensor, void* srcData, floatGam
   },*/
 bool QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, void* hUserData, int flag) {
     GeNeuron* hNN = (GeNeuron*)hUserData;
-    if (hNN->hFish->isAtPhase(P_GENERATE)) {  // in chat mode, we also need some info of quantinizer
+    if (hNN->hFish->isAtPhase(P_CHAT_1)) {  // in chat mode, we also need some info of quantinizer
         isDequant4Generate = true;
         // distill.anneal = ANNEAL_SCHEDULE::ANNEAL_OFF;
         // distill.lenda = -1.0;
@@ -1218,6 +1218,8 @@ bool QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, void* 
     // xTarget = DEBUG.cmd_p1 ? X_WEIGHT : X_GAMA;
 
     s0 = "";
+    if (jQuant.empty())
+        return false;
 
     for (JSON::const_iterator it = jQuant.begin(); it != jQuant.end(); ++it) {
         auto k = it.key();
@@ -1278,7 +1280,8 @@ bool QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, void* 
             }
         }
     }
-    return true;
+    // return true;
+    return type != NO_QUANT;
 }
 bool QUANT_CARD::isPass(const std::string& name, int flag) const {
     return type == NO_QUANT;

@@ -6,6 +6,9 @@
         "embed_tokens": {"bits":4},
         "#MINI":"off"
     },    
+    "env":{
+        "tilelang":["loss"]
+    },  
     "model":{   
         "#hf-card":"/home/cys/rnd/lic/Models/Qwen3-0.6B/",
         "fuyou":{
@@ -88,7 +91,8 @@
         ],
         "most_iter": 181,
         "eval_samp": 0.04,
-        "#long_tail": 10
+        "preLogits_dB": -1,
+        "#long_tail": 10        
     },
     "dump": {
         "train_time": 0,

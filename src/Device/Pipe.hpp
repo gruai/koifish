@@ -115,8 +115,8 @@ struct PIPE_Adamw : public PIPE_Optimizer {
             if (BIT_TEST(tensor->flags, GTensor::F_GAMA)) {
                 assert(tensor->type == typNUMBER::BF16 || tensor->type == typNUMBER::F32);
                 DEBUG_HERE;
-            } else{
-                params = (floatX*)tensor_->shadoW;  
+            } else {
+                params = (floatX*)tensor_->shadoW;
             }
         }
         assert(params != nullptr);
@@ -167,17 +167,17 @@ struct CoopLayer {
 */
 template <typename T, typename KVT, typename Tw>
 struct KERNEL_PIPE : public MODEL_CARD {
-    using tpActivation = T;
-    using tpKV         = T;
-    using tpWeight     = Tw;
-
+    using tpActivation       = T;
+    using tpKV               = T;
+    using tpWeight           = Tw;
+    int vocab_size           = -1;
     CoopLayer<void>* cLayers = nullptr;
     int layNo                = -1;
     hFISH hFish              = nullptr;
-    hGensor out_weight       = nullptr;
+    hGTensor out_weight      = nullptr;
 
-    hGensor inpL = nullptr;
-    float* att   = nullptr;  // buffer for scores/attention values (N_HEADS, seq_len)
+    hGTensor inpL = nullptr;
+    float* att    = nullptr;  // buffer for scores/attention values (N_HEADS, seq_len)
     // T *att = nullptr;     nearly same as float*att !
     T *x = nullptr, *xb = nullptr, *xb2 = nullptr, *q = nullptr, *k = nullptr, *v = nullptr, *exp = nullptr;
     T *hb = nullptr, *hb2 = nullptr, *he = nullptr;
@@ -187,7 +187,7 @@ struct KERNEL_PIPE : public MODEL_CARD {
         size_t szMost = hFish->MostMemSize();
         bw            = PROF_TOKEN(szMost);
         auto config   = hFish->config;
-        vocab_size    = config.model.vocab_size;
+        vocab_size    = config.model.pad_vocab_size;
         assert(vocab_size > 0);
         dim        = config.nEmbed();
         n_layers   = config.nLayer();
@@ -299,8 +299,8 @@ struct KERNEL_PIPE : public MODEL_CARD {
         // ffn->BeforeMing(hRLS, nullptr);
         cLayers[l].rms_ffn_weight = ToX(ffn->norm.w);  // TO<float>(ffn->norm.w);
         cLayers[l].moegate        = nullptr;           // weights->moegate[l];
-        // hGensor w1 = ffn->GetGensor("", FFN_UP, suffix ), w2 = ffn->GetGensor("", FFN_DOWN, suffix), w3 = ffn->GetGensor("", FFN_GATE, suffix);
-        hGensor w1 = ffn->up.w, w2 = ffn->down.w, w3 = ffn->gate.w;
+        // hGTensor w1 = ffn->GetGensor("", FFN_UP, suffix ), w2 = ffn->GetGensor("", FFN_DOWN, suffix), w3 = ffn->GetGensor("", FFN_GATE, suffix);
+        hGTensor w1 = ffn->up.w, w2 = ffn->down.w, w3 = ffn->gate.w;
         cLayers[l].w1 = w1->data, cLayers[l].gama_1 = w1->gama_T();
         cLayers[l].w2 = w2->data, cLayers[l].gama_2 = w2->gama_T();
         cLayers[l].w3 = w3->data, cLayers[l].gama_3 = w3->gama_T();

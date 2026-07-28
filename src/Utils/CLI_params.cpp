@@ -11,11 +11,13 @@
 #include "../CLI_params.hpp"
 
 #include <cstring>
+#include <execution>
 #include <iostream>
 
 #include "../Manifold/Serialize.hpp"
 #include "../Tensor/GTensor.hpp"
 #include "../Utils/GST_obj.hpp"
+#include "../Utils/GST_rander.hpp"
 #include "../lenda/kernel/SVD.hpp"
 #include "json.hpp"
 
@@ -72,8 +74,15 @@ JSON jKEY(const JSON& jConfig, const std::vector<std::string>& keys, int flag) {
         }
         cur = cur[key];
     }
-    if (cur.is_null() || cur.empty()) {
-        _ERROR("%s failed !!!", __func__);
+    auto path = std::reduce(std::execution::seq, keys.begin(), keys.end(), std::string{},
+                            [](std::string a, const std::string& b) { return a.empty() ? b : a + "," + b; });
+    if (cur.is_null()) {
+        _WARN("jKEY(%s) is null @\"%s\"!!!", key.c_str(), path.c_str());
+        return nullptr;
+    }
+    if (cur.empty()) {
+        _ERROR("jKEY(%s) is empty @\"%s\" !!!", key.c_str(), path.c_str());
+        return nullptr;
     }
 
     return cur;
@@ -175,6 +184,9 @@ void CLI_params::Dump(int flag) {
 
 bool LoadJsonFile(const string& jPath, JSON& jObj, int flag) {
     try {
+        // size_t szF = jPath.empty() ? 0 : F_SIZE(sTokenJsonPath);
+        // if (szF == 0)
+        //     return false;
         std::ifstream jfile(jPath);
         std::string info;
         if (jfile.fail()) {
@@ -282,6 +294,7 @@ MODEL_ARCH CLI_params::ModelArch() {
            : info == "QWEN2.5"   ? MODEL_ARCH::NLP_QWEN2
            : info == "QWEN3"     ? MODEL_ARCH::NLP_QWEN3
            : info == "QWEN3_MOE" ? MODEL_ARCH::NLP_QWEN3
+           : info == "SCORE"     ? MODEL_ARCH::NLP_SCORE_
            : info == "GPT2"      ? MODEL_ARCH::NLP_GPT2
            : info == "GPT2CHAR"  ? MODEL_ARCH::NLP_GPT2_char
            : info == "LAMA"      ? MODEL_ARCH::NLP_LLAMA
@@ -343,13 +356,16 @@ bool CLI_params::JModel2Params(int flag) {
         } else if (!sft.UpdateCKP(model)) {
         } else {
         }
+        if (jModel.find("xi") != jModel.end()) {
+            XI.Init(this, jModel, 0x0);
+        }
 
         if (jModel.find("token_bin_path") != jModel.end())  //  only for custom
             model.sTokenBinPath = jKEY(jModel, {"token_bin_path"});
         else {
             // model.sTokenBinPath = "./Datasets/climb-1b/tokenizer.dat";
         }
-        model.vocab_size = jKV(jModel, {"vocab_size"}, model.vocab_size);
+        model.pad_vocab_size = jKV(jModel, {"vocab_size"}, model.pad_vocab_size);
 
         jQuant = jKEY(jConfig, {"quantizer"});
 
@@ -357,6 +373,8 @@ bool CLI_params::JModel2Params(int flag) {
         nLayerX = jKV(jConfig, {"model", "parameter", "Layer"}, nLayerX);
         assert(nLayerX < 2048 && nLayerX > 0);
         model.max_pos_embeddings = jKV(jConfig, {"model", "parameter", "max_pos_embeddings"}, model.max_pos_embeddings);
+        STR2ENUM(jKV<string>(jConfig, {"model", "parameter", "ffn_act"}, ""), model.fActFFN);
+
         model.isEmbedWeightTying = jKV(jConfig, {"model", "parameter", "tie_word_embeddings"}, model.isEmbedWeightTying);
         int nBit                 = -1;
         nBit                     = jKV(jConfig, {"model", "parameter", "weight", "bits"}, nBit);
@@ -417,13 +435,14 @@ bool CLI_params::JModel2Params(int flag) {
         if (!jFFN.empty()) {
             key = "";
             key = jKV(jFFN, {"activation"}, key);
-            if (!key.empty()) {
-                for (auto item : ACTIVATION_META) {
-                    if (G_Has_(item.second[0], {key}, false)) {
-                        model.fActFFN = item.first;
-                    }
-                }
-            }
+            STR2ENUM(key, model.fActFFN);
+            // if (!key.empty()) {
+            //     for (auto item : ACTIVATION_META) {
+            //         if (G_Has_(item.second[0], {key}, false)) {
+            //             model.fActFFN = item.first;
+            //         }
+            //     }
+            // }
         }
 
         fuyou.Init(this, jConfig);
@@ -452,8 +471,10 @@ bool CLI_params::JModel2Params(int flag) {
 bool CLI_params::isShareLayerOut() const {
     // if(common.Empty())  //no training,only infer or evaluate
     //     return true;
-    if (phase == LIFE_PHASE::P_GENERATE)
+    if (phase == LIFE_PHASE::P_CHAT_1)
         return true;
+    // if (phase == LIFE_PHASE::P_CHAT_N)
+    //     return true;
 
     if (scheduling.strategy == MEM_STRATEGY::PRE_ALLOC_GPU || scheduling.strategy == MEM_STRATEGY::PRE_ALLOC_HOST_MAP)
         return false;
@@ -466,7 +487,12 @@ bool CLI_params::isShareLayerOut() const {
 uint32_t CLI_params::n_ctx() const {
     int n = -1;
     switch (phase) {
-        case P_GENERATE:  // case P_CHAT:
+        case P_CHAT_1:
+            n = chat_sampler.seq_len;
+            if (n_ctx_train > 0)
+                assert(n <= n_ctx_train);
+            break;
+        case P_CHAT_N:
             n = chat_sampler.seq_len;
             if (n_ctx_train > 0)
                 assert(n <= n_ctx_train);
@@ -497,24 +523,64 @@ bool LoAB_CARD::isZeroW(LoAB_CARD::typW typ, int flag) {
         return true;
     return false;
 }
+bool LoAB_CARD::isFixW(int flag) const {
+    if (type == LoAB_CARD::typW::AB || type == LoAB_CARD::typW::SHADOW_AB)
+        return true;
+    return false;
+}
 bool LoAB_CARD::isPassW(int flag) const {
     if (type == LoAB_CARD::typW::AB)
         return true;
 
     return sW <= 0;
+    // return false;
 }
 bool LoAB_CARD::isPassAB(int flag) const {
     if (type == LoAB_CARD::typW::W0)
         return true;
     return sAB <= 0;
 }
-void LoAB_CARD::Dump(int typ) {}
+bool LoAB_CARD::isDistll() const { return type == SHADOW_AB; }
+std::string LoAB_CARD::Dump(int typ, int flag) const {
+    //  GTensor::MAX_NAME   ???
+    static char buf[KOIFISH_MOST_LOG];  // Not thread-safe if modified concurrently.
+    string desc;
+    sprintf(buf, "R=%d ", rLatent);
+    switch (type) {
+        case AB:
+            assert(sAB == 1.0f);
+            sprintf(buf + strlen(buf), "AB");
+            break;
+        case W_AB:
+            sprintf(buf + strlen(buf), "W+AB(%g)", sAB);
+            break;
+        case SHADOW_AB:
+            sprintf(buf + strlen(buf), "shadoW+AB distil(lr0=%g) ", sAB);
+            break;
+        default:
+            break;
+    }
+
+    return buf;
+}
+
+XI_CARD::~XI_CARD() {}
+bool XI_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
+    // hMaskRander = new GRanderTorch(mask_seed);
+
+    return true;
+}
+std::string XI_CARD::Dump(int typ, int flag) const { return ""; }
+bool XI_CARD::isValid(int flag) { return true; }
+
 bool LoAB_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
+    if (jConfig.find("lorw") == jConfig.end())
+        return false;
+
     string s;
     s = jKV(jConfig, {"lorw", "type"}, s);
     std::transform(s.begin(), s.end(), s.begin(), ::toupper);
     if (!s.empty() && s[0] != '#') {
-        //  W0, AB, W_AB, SHADOW_AB
         type = s == "AB"          ? LoAB_CARD::typW::AB
                : s == "W_AB"      ? LoAB_CARD::typW::W_AB
                : s == "SHADOW_AB" ? LoAB_CARD::typW::SHADOW_AB
@@ -526,30 +592,51 @@ bool LoAB_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
             sW = 0.f, sAB = 1.f;
             break;
         case W_AB:
-            sW  = jKV(jConfig, {"lorw", "alphaW"}, sW);
             sAB = jKV(jConfig, {"lorw", "alphaAB"}, sAB);
+            assert(sAB >= 0 && sAB <= 1.0);
+            break;
+        case SHADOW_AB:
+            // Init value, would change on distillation schedule
+            sAB = jKV(jConfig, {"lorw", "alphaAB"}, sAB);
+            assert(sAB >= 0 && sAB <= 1.0);
             break;
         default:
             break;
     }
-
+    sW      = 1.0 - sAB;
     filterW = jKV_arr(jConfig, {"lorw", "filter"}, filterW);
-
+    rLatent = jKV(jConfig, {"lorw", "latent"}, rLatent);
+    assert(rLatent > 0);
     return true;
+}
+
+bool LoAB_CARD::OnLearningRate(float lr, int flag) {
+    switch (type) {
+        case SHADOW_AB:
+            assert(0.f <= lr && lr <= 1.0f);
+            if (lr < 1.0) {
+                DEBUG_HERE;
+            }
+            sW = lr;
+            // sW = lr/2;
+            break;
+        default:
+            assert(0);
+            break;
+    }
+    sAB = 1.f - sW;
+    return true;
+}
+float LoAB_CARD::lr_base(int flag) {
+    float lr_base = 1.0f;
+    if (sAB > 0.0 && sAB < 1.0)
+        lr_base = 1.0 - sAB;  // lr would decreased to 0
+    _INFO("[Distillation] lr_base = %f", lr_base);
+    return lr_base;
 }
 
 bool DISTILLATION_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
     string s;
-    /*s = jKV(jConfig, {"distillation", "lorw", "type"}, s);
-    if (!s.empty() && s[0] != '#') {
-        //  W0, AB, W_AB, SHADOW_AB
-        hConfig->tpLORW = s == "AB"          ? LoAB_CARD::typW::AB
-                          : s == "W_AB"      ? LoAB_CARD::typW::W_AB
-                          : s == "shadow_AB" ? LoAB_CARD::typW::SHADOW_AB
-                          : s == "W0"        ? LoAB_CARD::typW::W0
-                                             : LoAB_CARD::typW::NO_LORW;
-    }*/
-
     s = "";
     s = jKV(jConfig, {"distillation", "anneal-method"}, s);
     if (s.empty() || s[0] == '#')
@@ -707,7 +794,7 @@ void Fuyou_params::Dump(int typ) const {
           paramIsGuoke ? "\"Only cur fuyou's params in GPU-memor!\"" : "\"All params in GPU-memory\"");
 }
 
-// LoAB_CARD::typW HIERARCH_LorAB::tpLORW = HIERARCH_LorAB::W_AB;      //  W0, AB, W_AB
+//  Deprecated
 void CLI_params::OnArch() {
     _INFO("[ARCH] sizeof(token)=%ld,sizeof(floatX)=%ld sizeof(Grad)=%d(%d)\n", sizeof(TOKEN_ID), sizeof(floatX), sizeof(floatGrad), sizeof(floatMV));
     int nH        = -1;
@@ -732,7 +819,7 @@ void CLI_params::OnArch() {
             break;
         case MODEL_ARCH::NLP_GPT2:
         case MODEL_ARCH::NLP_GPT2_char: {
-            auto tpLORW = LoAB_CARD::typW::W0;  // refW_AB      W_AB
+            auto tpLORW = LoAB_CARD::typW::W0;  //
             if (tpLORW != LoAB_CARD::typW::W0) {
                 fuyou.paramIsGuoke = true;  //
             }
@@ -796,15 +883,14 @@ TRAIN_CARD::TRAIN_CARD() {
     use_flash         = false;
     use_checkpointing = true;
 
-    sample_start           = "";
-    include_sample_start   = false;
-    escape                 = false;
-    overlapping_samples    = false;
-    fill_with_next_samples = false;
-    separate_with_eos      = false;
-    separate_with_bos      = true;
-    sample_random_offsets  = false;
-    force_reshuffle        = false;
+    // sample_start         = "";
+    // include_sample_start = false;
+    // escape               = false;
+
+    // separate_with_eos      = false;
+    // separate_with_bos      = true;
+    sample_random_offsets = false;
+    force_reshuffle       = false;
 
     opt_past               = 0;
     opt_delta              = 1e-5f;
@@ -875,52 +961,6 @@ JSON CLI_params::ToJSON(int type, int flag) {
     }
     json["config"] = jOut;
     return json;
-    /*
-    std::ofstream file(file_name);
-        if(!file.is_open()) {
-            throw std::runtime_error(fmt::format("could not open file for writing {}", file_name));
-        }
-
-        std::vector<std::string> archs;
-        if(config.Architecture == LLamaConfig::QWEN2) {
-            archs = {"Qwen2ForCausalLM"};
-        } else if (config.Architecture == LLamaConfig::LLAMA) {
-            archs = {"LlamaForCausalLM"};
-        }
-
-        nlohmann::json config_json;
-        config_json["architectures"] = std::move(archs);
-        config_json["bos_token_id"] = config.BosTokenId;
-        config_json["eos_token_id"] = config.EosTokenId;
-        config_json["hidden_size"] = config.HiddenSize;
-        config_json["intermediate_size"] = config.IntermediateSize;
-        config_json["vocab_size"] = config.VocabSize;
-        config_json["num_attention_heads"] = config.NumQueryHeads;
-        config_json["num_key_value_heads"] = config.NumKeyValHeads;
-        config_json["num_hidden_layers"] = config.NumLayers;
-        config_json["max_position_embeddings"] = config.MaxPositionEmbeddings;
-        config_json["rope_theta"] = config.RopeTheta;
-        config_json["rms_norm_eps"] = config.RmsNormEps;
-        config_json["tie_word_embeddings"] = config.TiedWordEmbeddings;
-        config_json["torch_dtype"] = dtype_to_torch_str(config.DType);
-
-        config_json["attention_dropout"] = 0.f;
-        config_json["initializer_range"] = 0.02f;
-        config_json["hidden_act"] = "silu";
-        config_json["use_cache"] = true;
-        if(config.Architecture == LLamaConfig::QWEN2) {
-            config_json["model_type"] = "qwen2";
-            config_json["max_window_layers"] = config.NumLayers;
-            config_json["sliding_window"] = config.MaxPositionEmbeddings;
-            config_json["use_sliding_window"] = false;
-            config_json["use_mrope"] = false;
-        } else if (config.Architecture == LLamaConfig::LLAMA) {
-            config_json["model_type"] = "llama";
-            config_json["attention_bias"] = false;
-            config_json["mlp_bias"] = false;
-        }
-
-        file << config_json.dump(4);*/
 }
 
 bool TRAIN_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
@@ -1277,11 +1317,15 @@ bool CLI_params::InitJConfig(int flag) {
         // tune   = jKV(jConfig, {"lora", "tune"}, tune);    //"lora_tune"
         // lora_r = jKV(jConfig, {"lora", "rank"}, lora_r);  //{"lora-r"}
 
-        DEBUG.x1                 = jKV(jConfig, {"debug", "x"}, DEBUG.x1);
-        DEBUG.x_str              = jKV(jConfig, {"debug", "x_str"}, DEBUG.x_str);
-        DEBUG.N_mostiter         = jKV(jConfig, {"debug", "most_iter"}, DEBUG.N_mostiter);
-        DEBUG.eval_Generate      = jKV(jConfig, {"debug", "eval_generate"}, DEBUG.eval_Generate);      //
-        DEBUG.save_GlobalSate    = jKV(jConfig, {"debug", "save_globalsate"}, DEBUG.save_GlobalSate);  //-1;
+        DEBUG.x1            = jKV(jConfig, {"debug", "x"}, DEBUG.x1);
+        DEBUG.x_str         = jKV(jConfig, {"debug", "x_str"}, DEBUG.x_str);
+        DEBUG.N_mostiter    = jKV(jConfig, {"debug", "most_iter"}, DEBUG.N_mostiter);
+        DEBUG.eval_Generate = jKV(jConfig, {"debug", "eval_generate"}, DEBUG.eval_Generate);  //
+        //  522 TB ÷ 0.24 TB/day ≈ 2175 day ≈ 6 year
+        int tmpGlobalSate = jKV(jConfig, {"debug", "save_globalsate"}, save_GlobalSate);  //-1;
+        if (save_GlobalSate != tmpGlobalSate) {
+            save_GlobalSate = tmpGlobalSate;
+        }
         DEBUG.dump_TensorDetail  = jKV(jConfig, {"debug", "dump_tensordetail"}, DEBUG.dump_TensorDetail);
         DEBUG.dump_LossDetail    = jKV(jConfig, {"debug", "dump_lossdetail"}, DEBUG.dump_LossDetail);
         DEBUG.watch_Tensors      = jKV(jConfig, {"debug", "watch_tensors"}, DEBUG.watch_Tensors);
@@ -1293,7 +1337,9 @@ bool CLI_params::InitJConfig(int flag) {
 
         // DEBUG.verOutCLS         = jKV(jConfig, {"debug", "Head4Token"}, DEBUG.verOutCLS);
 
-        DEBUG.prompts = jKV_arr(jConfig, {"debug", "prompts"}, DEBUG.prompts);
+        DEBUG.prompts     = jKV_arr(jConfig, {"debug", "prompts"}, DEBUG.prompts);
+        DEBUG.filterCSV   = jKV_arr(jConfig, {"debug", "filterCSV"}, DEBUG.filterCSV);
+        DEBUG.filterColor = jKV_arr(jConfig, {"debug", "colors"}, DEBUG.filterColor);
 
         model.preLogits_dB = jKV(jConfig, {"debug", "preLogits_dB"}, model.preLogits_dB);  // only for debug
 
@@ -1305,7 +1351,9 @@ bool CLI_params::InitJConfig(int flag) {
         dumpSwitch.train_csv_path = jKV(jConfig, {"dump", "train_csv_path"}, dumpSwitch.train_csv_path);
         dumpSwitch.tensor_load    = jKV(jConfig, {"dump", "tensor_load"}, dumpSwitch.tensor_load);
         // train = jKV(jConfig,{"train"},train );
-
+        if (fuyou.paramIsGuoke) {  // should after fuyou.Init
+            save_GlobalSate = 1;
+        }
         return true;
     } catch (JSON::parse_error& e) {
         _ERROR("\r\n%s  Failed to open %s!!! ERR=%s", __func__, jsPath.c_str(), e.what());
@@ -1486,7 +1534,7 @@ bool CLI_params::parse(int argc, char** argv) {
             assert(i + 1 < argc);
             sscanf(argv[++i], "%f", &step);
         } else {
-            _ERROR("error: invalid parameter for argument: %s\n", arg.c_str());
+            _ERROR("invalid parameter for argument: %s\n", arg.c_str());
             train_print_usage(argc, argv, this);
             exit(1);
         }
@@ -1509,7 +1557,7 @@ bool CLI_params::parse(int argc, char** argv) {
             }
             model.sTokenBinPath = "./assets/tokenizer_151936.bin";
 
-            model.vocab_size = 151936;
+            model.pad_vocab_size = 151936;
             if (!InitJConfig())
                 return false;
             break;
@@ -1530,7 +1578,9 @@ bool CLI_params::parse(int argc, char** argv) {
     // Dump(0x100);
 
     switch (phase) {
-        case P_GENERATE:
+        case P_CHAT_1:
+            break;
+        case P_CHAT_N:
             break;
         case P_EVAL_:
             InitChekcpoints(argc, argv, "checkpoint_in");
@@ -1549,10 +1599,22 @@ void CLI_params::OnPhase(LIFE_PHASE _phase, int flag) {
     phase                   = _phase;
     FILE_FORMAT_TYPE format = model.ckp_format;
     switch (phase) {
-        case P_GENERATE:
+        case P_CHAT_1:
             common.n_batch = 1;
             distill.anneal = ANNEAL_SCHEDULE::ANNEAL_OFF;
             distill.lenda  = -1.0;
+            break;
+        case P_CHAT_N:
+            common.n_batch = 1;
+            distill.anneal = ANNEAL_SCHEDULE::ANNEAL_OFF;
+            distill.lenda  = -1.0;
+            //  Diffusion LMs do bidirectional iterative denoising, not left‑to‑right autoregressive decoding, do not require AR-style chat templates.
+            chat_sampler.prompt_template        = "%s";
+            chat_sampler.seq_len                = 256;  // hack
+            chat_sampler.system_prompt_template = "%s";
+            chat_sampler.temperature            = 0.5;  //  hack
+            chat_sampler.top_p                  = 1.0;
+            chat_sampler.top_k                  = 200;
             break;
         case P_EVAL_:
 
@@ -1563,7 +1625,7 @@ void CLI_params::OnPhase(LIFE_PHASE _phase, int flag) {
     }
 }
 
-int Gensor_loab(struct ggml_context* ctx0, hGensor w, int nHeavy, hGensor ga, hGensor gb, int flag) {
+int Gensor_loab(struct ggml_context* ctx0, hGTensor w, int nHeavy, hGTensor ga, hGTensor gb, int flag) {
     printf("%s@%s <== %s x %s\n\t", __func__, w->name, ga->name, gb->name);
     auto shape = w->ne;
     int nIn = shape[0], nOut = shape[1], rank = nHeavy;  // min(64,min(nIn,nOut)/10);
@@ -1586,7 +1648,7 @@ int Gensor_loab(struct ggml_context* ctx0, hGensor w, int nHeavy, hGensor ga, hG
     return 0x0;
 }
 
-int Gensor_SVD(struct ggml_context* ctx0, hGensor w, int nHeavy, hGensor U, hGensor D, hGensor V, int flag) {
+int Gensor_SVD(struct ggml_context* ctx0, hGTensor w, int nHeavy, hGTensor U, hGTensor D, hGTensor V, int flag) {
     printf("%s@%s \t ......", __func__, w->name);
 
     auto shape = w->ne;
@@ -1730,7 +1792,7 @@ struct ggml_tensor* ggml_cross_entropy_loss_1(struct ggml_context* ctx, struct g
     return nullptr;
 }
 
-void _T_repr_(hGensor t, const char* tab, char* buf, int typ) {
+void _T_repr_(hGTensor t, const char* tab, char* buf, int typ) {
     if (t == nullptr)
         return;
     bool isInput = t->flags & GTensor::F_INPUT;
@@ -1752,7 +1814,7 @@ void _T_repr_(hGensor t, const char* tab, char* buf, int typ) {
     }
 }
 
-int CHECK_SAME_TENSORS(const string& desc, const std::vector<hGensor>& arrA, const std::vector<hGensor>& arrB, int flag) {
+int CHECK_SAME_TENSORS(const string& desc, const std::vector<hGTensor>& arrA, const std::vector<hGTensor>& arrB, int flag) {
     _INFO("\n======== %s @[%s]...", __func__, desc.c_str());
     size_t nA = arrA.size(), nB = arrB.size(), nDup = 0, nMiss = 0;
     bool isSame = arrA.size() == arrB.size();
@@ -1819,7 +1881,7 @@ size_t F_SIZE(const std::string& fpath, FILE* fp0, int flag) {
     }
 }
 
-hGensor GradOf(struct ggml_cgraph* cgraph, hGensor node, int flag) {
+hGTensor GradOf(struct ggml_cgraph* cgraph, hGTensor node, int flag) {
 #ifdef GG_V12
     assert(0);
     return nullptr;
@@ -1892,7 +1954,7 @@ size_t GTensor::size(int typ) const {
 
 void* GTensor::DataPad(void* src0, int flag) { return nullptr; }
 
-void Gensor2float_(const hGensor w, float* A, int flag) { assert(0); }
+void Gensor2float_(const hGTensor w, float* A, int flag) { assert(0); }
 
 void ADAM_params_::Dump(int typ) {
     _INFO("\tADAM lr=%g,beta=[%g,%g] decay=%g(dim>=%d) clip=%g(alg=%d)\n", alpha, beta1, beta2, decay, decay_min_ndim, gclip, clip_alg);
@@ -2062,7 +2124,7 @@ bool Fish::GGUF_Serialize(const std::string& path, bool isSave, int flag) {
                     return false;
                 }
 
-                hGensor target = GetGensor(name);
+                hGTensor target = GetGensor(name);
                 if (target == nullptr) {
                     if (strcmp(name, "output.weight") == 0 && config.model.isEmbedWeightTying) {
                         continue;
@@ -2205,7 +2267,8 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, bool need
             break;
     }
 
-    sTokenJsonPath = sCardPath + "tokenizer.json";
+    sTokenJsonPath   = sCardPath + "tokenizer.json";
+    sTokenConfigPath = sCardPath + "tokenizer_config.json";
     // LoadJsonFile(sTokenPath,jTokenizer);                             // }
 
     if (jModelParam.empty()) {
@@ -2225,7 +2288,7 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, bool need
             hConfig->jQuant       = QUANT_CARD::Vendor2JSONx(hConfig->jVendorQuant);
             s                     = hConfig->jQuant.dump();
         }
-        vocab_size           = jKV(jModelParam, {"vocab_size"}, vocab_size);
+        pad_vocab_size       = jKV(jModelParam, {"vocab_size"}, pad_vocab_size);
         torch_dtype          = jKV(jModelParam, {"torch_dtype"}, torch_dtype);
         transformers_version = jKV(jModelParam, {"transformers_version"}, transformers_version);
         bos_token_id         = jKV(jModelParam, {"bos_token_id"}, bos_token_id);

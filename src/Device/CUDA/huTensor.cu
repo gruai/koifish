@@ -21,7 +21,7 @@
 #include "../Utils/rapidhash.h"
 #include "./kernel/operator.cuh"
 #include "./kernel/utils.cuh"
-static Grusoft::GRander randParam;
+static GRander randParam;
 huTensor::huTensor(Fish* fish, const string& name_, const SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag) : GTensor(fish, shape, tpD_, false, flag) {
     size_t nEle       = size();
     MEM_STRATEGY stra = fish->config.scheduling.strategy;
@@ -155,10 +155,14 @@ __global__ void CU_GROUP_STAT(int bits, int ldGroup, size_t N, hBITARR qdata, hB
  *
  */
 bool huTensor::InitParam(int tpX) {
+    bool isEmbed = ginfo->neuronIs<TokenEmbed>();  // embed may use uniform distribution
+
     size_t nElem0 = size(), i, nInit = size(1);
     bool isHost = DEBUG.isInitParamHost;
     int iter    = hFish->GetCurIter();
+    floatX *tmp = nullptr, *paramDev = nullptr;
     SUM::nInitParam++;  // may skip(bias is always init to 0)
+
     switch (tpInit) {
         case SERIALIZE: {
             if (host_data != nullptr) {
@@ -181,7 +185,7 @@ bool huTensor::InitParam(int tpX) {
             if (BIT_TEST(flags, F_LORA_B)) {
                 return true;
             }
-            floatX *tmp = nullptr, *paramDev = nullptr;
+
             if (!isHost) {
                 cudaCheck(cudaMalloc(&paramDev, sizeof(floatX) * nInit));
             }
@@ -194,11 +198,6 @@ bool huTensor::InitParam(int tpX) {
                     CU_disti_normal<floatX>(nInit, (floatX*)data, 1.0f, param_seed);
                     break;
                 default:
-                    /*if (BIT_TEST(flags, F_TERNARY)) {
-                        CU_disti_normal<floatX>(nInit, (floatX*)paramDev, 0.02f * residual_scale, param_seed);
-                        ToTernary(paramDev);
-                        // Print(name,0,-1);
-                    } else*/
                     if (hQuant != nullptr) {
                         tmp = new floatX[nInit];
                         //  Gaussian-distributed weights need non-uniform quantization (like NF4/AWQ) or mixed-precision (like GPTQ) to preserve accuracy.
@@ -400,7 +399,7 @@ bool H2D(void* dev, const void* host, size_t szData, int flag) {
 
 uint64_t D2H_hash64(const void* dev, size_t szData, int flag) {
     uint64_t hash64 = 0x0;
-    void *host = std::malloc(szData);    
+    void* host      = std::malloc(szData);
     D2H(dev, host, szData, flag);
     hash64 = rapidhash_64(host, szData);
     std::free(host);
@@ -452,6 +451,14 @@ bool GTensor::SerialGamaData(const string& info, void* host, bool isToHost, size
             Print(buf, 0, -1);
         }
 
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool GTensor::SerialLoAB(const string& info, void* host, bool isToHost, size_t szMost, int flag) {
+    try {
         return true;
     } catch (...) {
         return false;
@@ -674,7 +681,7 @@ double GTensor::Length(int type, int flag) {
     double len = 0.0, *devSum2 = (double*)GTensor::stat_info;
     D20(devSum2, sizeof(double));
     CU_x2_atomic<<<CEIL_DIV(nEle / x128::size, block_size), block_size, 0, main_stream>>>(devSum2, src, nEle);
-    D2e(devSum2, len, "GTensor::Length");
+    D2e(devSum2, len, std::string(name) + "::Length");
     a = len;
 
     // SUM::tX1 += GST_us()-now;
@@ -924,7 +931,7 @@ bool GST_TensorBuffer::Prepare(int flag) {
             nVocab = ceil(nVocab / 128.0) * 128;
         }
         int Vp = (int)(nVocab * 1.1), NH = config.n_head(), nFF = config.n_ff();
-        int dB = config.model.preLogits_dB;
+        int dB = config.model.preLogits_dB < 0 ? B : config.model.preLogits_dB;
         if (hFish->isTrain())
             assert(B % dB == 0);
         size_t nFFW = (size_t)(B)*T * nFF, nPrelogist = (size_t)(dB)*T * Vp;  // nTmp = (size_t)(T)*std::max(nFF, std::max(NH, Vp)),
@@ -945,7 +952,13 @@ bool GST_TensorBuffer::Prepare(int flag) {
 
         delta = std::make_shared<huTensor>(hFish, "tmpDelta", spMost, tpG, true);
 
-        tmpDelta           = std::make_shared<huTensor>(hFish, "tmpDelta2", spMost, tpG, true);
+        tmpDelta = std::make_shared<huTensor>(hFish, "tmpDelta2", spMost, tpG, true);
+
+        tmpQout = std::make_shared<huTensor>(hFish, "tmpQout", SHAPE({B, T, q_dim}), tpA, true, GTensor::F_DEBUG);
+        // gBUFF->tmpQout->data = (hBITARR)GTensor::buff + offset, offset += gBUFF->tmpQout->nByte();
+        tmpKout = std::make_shared<huTensor>(hFish, "tmpKout", SHAPE({B, T, kv_dim}), tpA, true, GTensor::F_DEBUG);
+        // gBUFF->tmpKout->data = (hBITARR)GTensor::buff + offset, offset += gBUFF->tmpKout->nByte();
+
         GTensor::host_buff = new float[scratch->size()];
         if (hFish->isModel({NLP_GUPPY})) {
             tmpW = std::make_shared<huTensor>(hFish, "tmpW", SHAPE({nEmbed, nFF}), tpW, true);
@@ -954,10 +967,13 @@ bool GST_TensorBuffer::Prepare(int flag) {
             gate_delta = std::make_shared<huTensor>(hFish, "tmpGateDelta", SHAPE({B, T, nFF}), tpG, true);
         }
         switch (hFish->phase) {
-            case P_GENERATE:
+            case P_CHAT_1:
                 //  @KERNEL_PIPE
-                outL = std::make_shared<huTensor>(hFish, "tmpOutL", SHAPE({nEmbed * 3 + q_dim + nFF * 2 + NH * nCTX * 2}), tpA, true);
+                outL = std::make_shared<huTensor>(hFish, "OutL_CHART_1", SHAPE({nEmbed * 3 + q_dim + nFF * 2 + NH * nCTX * 2}), tpA, true);
                 // outL = std::make_shared<huTensor>(hFish, "tmpOutL", spMost, tpA, true);
+                break;
+            case P_CHAT_N:
+                outL = std::make_shared<huTensor>(hFish, "tmpOutL", spMost, tpA, true);
                 break;
             default:
                 outL = std::make_shared<huTensor>(hFish, "tmpOutL", spMost, tpA, true);

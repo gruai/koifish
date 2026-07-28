@@ -86,7 +86,7 @@ bool GlobTokenset::Init(int flag) {
     if (nMostTok == 0) {
         assert(0 && "GlobTokenset::Failed to load tokens");
     } else
-        _INFO("[%s] %s find %.8gG tokens @\"%s\"(%d files)\n", __func__, name.c_str(), glob_pattern.c_str(), nG, nFile);
+        _INFO("[Dataset] %s find %.8gG tokens @\"%s\"(%d files)\n", name.c_str(), glob_pattern.c_str(), nG, nFile);
     return true;
 }
 
@@ -396,7 +396,7 @@ double DataTokenSet::LossOnResult(hSampLoader hLoader, Head4Token* cls, int flag
     int *mask = hLoader->hBatch->mask32, n = 0, nzLoss = cls->nzLoss;
     int nVocab = cls->nCls, ldP = cls->padded_nCls;
     float* loss      = cls->hostLoss;
-    TOKEN_ID* labels = TO<TOKEN_ID>(hLoader->hostLabel);  // hLoader->hBatch->hostToken
+    TOKEN_ID* labels = TO<TOKEN_ID>(hLoader->hBatch->hostLabel);  // hLoader->hBatch->hostToken
     float* logits    = nullptr;
 
     for (int i = 0; i < nzLoss; i++) {
@@ -406,7 +406,7 @@ double DataTokenSet::LossOnResult(hSampLoader hLoader, Head4Token* cls, int flag
         }
         if (!isValidF(loss[i])) {
             if (DEBUG.dump_LossDetail)
-                hLoader->hBatch->DumpX(labels, cls->hostLoss);  
+                hLoader->hBatch->DumpX(labels, cls->hostLoss);
             // TOKENS tokens(hBatch->host_toks, hBatch->host_toks + nzLoss);
             // DumpTokens(hDict, tokens, -1);
             hSAMP samp = hLoader->cur_samps[i / ldP];
@@ -448,7 +448,7 @@ bool Tokenset_HellaSwag::Shard2Sample(int id, int flag) {
         uint16_t* buffer16      = new uint16_t[longest_example_bytes];
         assert(can_fit_examples > 0);
         tokens.resize(nShardSamples * nMostCompletion * T);
-        masks.resize(tokens.size());
+        tokens_mask.resize(tokens.size());
         int num_batches = CEIL_DIV(examples_per_process, can_fit_examples), id;
         // now seek through the file to the start of that example
         // utilize <EXAMPLE_BYTES> for efficiency
@@ -499,7 +499,7 @@ bool Tokenset_HellaSwag::Shard2Sample(int id, int flag) {
                     // and at these positions, we want to set mask=1, because these are the
                     // positions where we want to average the loss, in each row, to determine
                     // its overall probability of following the context.
-                    masks[coff * T + context_length + i - 1] = 1;
+                    tokens_mask[coff * T + context_length + i - 1] = 1;
                 }
                 completions_iter += 1 + completion_length;  // move to the next completion
                 hSAMP samp   = new SAMP(coff * T, T);
@@ -533,10 +533,10 @@ double SampLoader::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
             break;
     }
     // double a, a0 = DBL_MAX, a1 = -DBL_MAX, mean_loss = 0, ss = 0, sigma, sum = 0;
-    hGensor target_label = hFish->Target();
-    Head4Token* cls      = hFish->GetNeuron<Head4Token>("Head4Token", 0);
-    cls->hLoader         = shared_from_this();
-    TokenEmbed* embed    = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
+    hGTensor target_label = hFish->Target();
+    Head4Token* cls       = hFish->GetNeuron<Head4Token>("Head4Token", 0);
+    cls->hLoader          = shared_from_this();
+    TokenEmbed* embed     = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
     // hSAMP samp = nullptr;
     next_sample = 0;  // fix this to keep same acc on each experiment
     nEvalTokens = 0;
@@ -545,10 +545,10 @@ double SampLoader::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
     for (int i = 0; i < nMost; i++) {
         if (tpBatch == SAMPLEofSHARD)
             CollateBatch(min(i * step, num_batches), hFish);
-        // samp = cur_samps[0];
         embed->hBatch = GetCurBatch();
+        cls->hBatch   = GetCurBatch();
         hFish->ForwardOnRLS(iter, 0x0);
-
+        hDaTokens->LossOnResult(shared_from_this(), cls);  // mean_loss = hLoader->UpdateII(hostLoss, B, T, 0x0);
         nEvalTokens += embed->hBatch->nFillTokens(), nB++;
         tCur = GST_ms(), dt = tCur - tLast, tLast = tCur;
         tpi = tpi * (1.0 - relax) + dt * relax, tRemain = (nMost - i) * tpi;  //  ms
@@ -567,12 +567,18 @@ double SampLoader::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
     // _INFO("\n\t");
     SUM::tEval_1 = (GST_ms() - tic) / 1.0e3;
     switch (hFish->phase) {
-        case P_GENERATE:
+        case P_CHAT_1:
+            break;
+        case P_CHAT_N:
             break;
         case P_EVAL_:
+            UpdateStepInfos(iiLoss.average, nB);
             break;
         case P_TRAIN:
             UpdateStepInfos(iiLoss.average, nB);
+            break;
+        default:
+            assert(0);
             break;
     }
     // if (!hFish->isLocalInfer)
@@ -583,6 +589,7 @@ double SampLoader::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
             nMost = 1;
             break;
         default:
+            assert(iiLoss.isValid());
             tps = nEvalTokens / SUM::tEval_1 / 1.0e3;
             _INFO("\t#%g±%.4f tps=%.3gK(%gM) a=[%g,%g] T=%g(sec)\n", "", iiLoss.average, iiLoss.sigma, tps, nEvalTokens / 1.0e6, iiLoss.a0, iiLoss.a1,
                   SUM::tEval_1);
@@ -595,7 +602,7 @@ double SampLoader::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
 
 void SampLoader::UpdateStepInfos(float mean_loss, int nB, int flag) {
     int iter = hOPT->GetITER(), nFuyou = dolphin->nFuyou(1);
-    float last          = stepis.Last();  //[eval]   Loss@Evaluation=7.302641 T=0.232s ======
+    float last          = stepis.Last();  // Loss@Evaluation=7.302641 T=0.232s ======
     float train_last    = hOPT->trainInfos().Last();
     bool isFirst        = stepis.steps.empty();
     StepInfos::STEP stp = StepInfos::STEP(mean_loss, iter, hOPT->train_epochs);
@@ -751,7 +758,7 @@ bool Tokenset_JSONL::GetShardInfo_txt(int id, int flag) {
             }
             nPad = max_length - curT.size();
             for (int i = curT.size(); i < max_length; i++) {
-                curT.push_back(hDict->pad_id);
+                curT.push_back(hDict->S.pad);
             }
             messages.push_back(msg);
             size_t begin = tokens.size();
@@ -809,19 +816,19 @@ bool Tokens2Samp_Chatml(hTokenizer hDict, const TOKENS& tokens, size_t& pos, Cha
     size_t answer_0 = 0, answer_1 = 0, nToken = tokens.size(), end;
     TOKEN_ID current = -1;
     do {
-        while (++pos < nToken && tokens[pos] != hDict->assist_id);
-        assert(tokens[pos] == hDict->assist_id);  //  Detect start of assistant turn: <|im_start|> followed by "assistant"
+        while (++pos < nToken && tokens[pos] != hDict->S.assist);
+        assert(tokens[pos] == hDict->S.assist);  //  Detect start of assistant turn: <|im_start|> followed by "assistant"
         while (++pos < nToken) {
             current = tokens[pos];
-            if (current == hDict->id_think_close) {
+            if (current == hDict->S.think_close) {
                 think_closed = true;
                 TOKEN_ID a1 = tokens[pos + 1], a2 = tokens[pos + 2];  // tokenizer.decode(seq[pos+1]),tokenizer.decode(seq[pos+2])
-                if (a1 == hDict->id_newline2)                         //"\n\n":    pos = pos+1
+                if (a1 == hDict->S.newline2)                          //"\n\n":    pos = pos+1
                     pos = pos + 1;
-                if (a1 == hDict->id_newline && a2 == hDict->id_newline)
+                if (a1 == hDict->S.newline && a2 == hDict->S.newline)
                     pos = pos + 2;
                 answer_0 = pos + 1;
-            } else if (current == hDict->id_im_end) {  // hDict->id_im_end
+            } else if (current == hDict->S.im_end) {  // hDict->S.im_end
                 answer_1     = pos;
                 think_closed = false;
                 end          = pos + 1;
@@ -832,7 +839,7 @@ bool Tokens2Samp_Chatml(hTokenizer hDict, const TOKENS& tokens, size_t& pos, Cha
             } else {                 // Only enable loss for tokens after  inside assistant block
                 if (think_closed) {  // Skip padding tokens
                     // a = tokenizer.decode(current)
-                    if (current != hDict->pad_id) {
+                    if (current != hDict->S.pad) {
                         // labels[batch_idx, pos] = current
                         // true_answer += a
                     }
@@ -854,7 +861,7 @@ bool Tokens2Samp_Chatml(hTokenizer hDict, const TOKENS& tokens, size_t& pos, Cha
 
 bool Tokenset_JSONL::Shard2Sample(int id, int flag) {
     // assert(hDict->isValid());
-    int n_ctx = hDict->config.n_ctx(), len, pad_id = hDict->pad_id, nDrop = 0;
+    int n_ctx = hDict->config.n_ctx(), len, pad_id = hDict->S.pad, nDrop = 0;
     int max_length = hDict->config.n_ctx();
     float rSample  = hDict->config.common.rSubSample;
     assert(!enable_thinking);
@@ -867,10 +874,10 @@ bool Tokenset_JSONL::Shard2Sample(int id, int flag) {
         fp2Tokens(flag);
         size_t nToken = tokens.size(), pos = -1;
         while (++pos < nToken) {
-            assert(tokens[pos] == hDict->id_im_start);
+            assert(tokens[pos] == hDict->S.im_start);
             if (pos == 3376)
                 DEBUG_HERE;
-            ChatML_samp chatml(pos, multi_turn, multi_turn ? hDict->pad_id : hDict->id_im_end);
+            ChatML_samp chatml(pos, multi_turn, multi_turn ? hDict->S.pad : hDict->S.im_end);
             if (!Tokens2Samp_Chatml(hDict, tokens, pos, chatml, multi_turn, flag)) {
                 assert(0);
             }
@@ -896,7 +903,7 @@ bool Tokenset_JSONL::Shard2Sample(int id, int flag) {
             }
             int nPad = max_length - curT.size();
             for (int i = curT.size(); i < max_length; i++) {
-                curT.push_back(hDict->pad_id);
+                curT.push_back(hDict->S.pad);
             }
             hSAMP hSamp    = new SAMP(chatml.start, curT.size(), nPad);
             hSamp->answers = chatml.answers;
@@ -953,7 +960,7 @@ void DumpTokens(hTokenizer hDict, const TOKENS& tokens, int nX, int flag) {
     int nPad = 0, PAD_ID = -1;
     if (hDict != nullptr) {
         msg    = hDict->Decode(tokens);
-        PAD_ID = hDict->pad_id;
+        PAD_ID = hDict->S.pad;
     }
 
     size_t pos = 0;

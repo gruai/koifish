@@ -67,7 +67,7 @@ def llm_header(
     scale = 1.44269504  # log2(e)   
     BV = min(T.next_power_of_2(V), 128)
     NV = tl.cdiv(V, BV) #1187
-    assert(V % BV == 0)
+    # assert(V % BV == 0)
     print(f"llm_header threads={threads} V={V}({BV}x{NV}) ...")
 
     @tl.prim_func
@@ -91,8 +91,6 @@ def llm_header(
                 lse = tl.alloc_fragment([1], accum_dtype)    #   lse - Log of Sum of Exponentials            
                 tl.fill(lse, -tl.infinity(accum_dtype))     # get lse byonline fomula: for first tile, exp2(lse - m) = exp2(-∞) = 0
 
-                
-
                 for i_v in tl.Pipelined(0, NV): #   Online LSE
                     start = i_v * BV
                     end = tl.min(V,start + BV)
@@ -108,7 +106,7 @@ def llm_header(
                         )
                     )
 
-                for i_v in tl.Pipelined(0, NV): #   Online LSE
+                for i_v in tl.Pipelined(0, NV): 
                     start = i_v * BV
                     end = tl.min(V,start + BV)                
                     tl.copy(pre_logits[n, start:end], z)
@@ -158,12 +156,15 @@ def HeaderCLS_wraper(jConfig, path, header):
     """)
     kernels = []
     codes = []
-    params,vocab = jConfig["model"]["parameter"]["transformer"], jConfig["model"]["vocab_size"]
+    params = jConfig["model"]["parameter"]["transformer"] 
+    # vocab = jConfig["model"]["vocab_size"]
+    vocabs = [151936, 66]
     # batch = 2 #jConfig["train"]["batch"]
     ctx,embed = params["Ctx"],params["Embed"]   
     dtype = tl.bfloat16
     block_M, block_N, sm_usage = tl_pick_tiling_shape(64,64,dtype=dtype,most=True)    
-    Kernel2Codes([("classification@llm header",llm_header,0)], kernels, codes, block_M, block_N, dtype, sm_usage, vocab, 0 )    #batch*ctx
+    for vocab in vocabs:
+        Kernel2Codes([(f"_V{vocab}",llm_header,0)], kernels, codes, block_M, block_N, dtype, sm_usage, vocab, 0 )    #batch*ctx
 
     with open(path, "w") as f:
         for id, code in enumerate(codes):            

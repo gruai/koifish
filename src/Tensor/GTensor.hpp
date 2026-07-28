@@ -109,6 +109,7 @@ struct Distri_PIPE {
     double zero_2 = DBL_MAX, gama_2 = 0.;
     double abs_max = 0;  //  norm_0
     float sigma_   = 0;
+    std::string sProber;
 
     std::vector<float> codebook;  // at most 256 bins
     enum ASYMMETRY {
@@ -198,12 +199,10 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     hGTensor hRef  = nullptr;
     void* raw_data = nullptr;
 
-    Distri_PIPE disq;  // distri info related to quantization
-
     // @GetDynamicQuant @GeQuant::ExTensor
     shared_ptr<GeQuant> hQuant = nullptr;
     hGTensor qZero = nullptr, qScale = nullptr;  // quantization params, may have different meaning/name in different model
-    
+
     // arrLORA wLoABs; // = GeNeuron_::wLoABs
 
     virtual size_t Alloc_1(void** dst, bool isZero, string desc, size_t sz = 0x0, int flag = 0x0) { return 0x0; };
@@ -222,6 +221,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     static void *buff, *host_buff, *qkv_workspace;
     // float stat_info[1024] in GPU
     static float* stat_info;
+
     static size_t buff_len, workspace_size;
     float residual_scale = 1.0, wnorm = 0, gnorm = 0;  // some tricks
     float rLARS(float s0, float T_lars, int flag);
@@ -249,7 +249,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     };
     SHADOW_TYPE tpShadow = S_NONE;
     void* shadoW         = nullptr;  //  Shadow Weights(in some case,it point to shadoW = ToX(gBUFF->tmpTernary to save memory)
-    
+
     //
     enum GAMA_TYPE {
         GAMA,
@@ -269,18 +269,22 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     bool isBackGama     = false;
     hGTensor gama_param = nullptr;
     // virtual bool isUpdateParam(int iter = -1, int flag = 0x0) const;  // in many case, params are not update, even data is not allocated!
-    bool needUpdateParam = false;       //  false when 1.isFixWeight 2.Gama mode
-    int tile_r1 = 0, tile_c1 = 0;       //  tile_r0 = 0,tile_c0 = 0,
-    int color       = 0;                // special color-mark for special task
-    floatGrad* grad = nullptr;          //
-    void *gm = nullptr, *gv = nullptr;  // first moment, second moment of grad
+    bool needUpdateParam = false;  //  false when 1.isFixWeight 2.Gama mode
+    int tile_r1 = 0, tile_c1 = 0;  //  tile_r0 = 0,tile_c0 = 0,
 
-    float info[8];  // Some info of some operations
+    enum COLOR_MARK { COLOR_ZERO, COLOR_PROBER = 0x2, COLOR_GAMA = 0x4 };
+    int32_t color = COLOR_ZERO;  // special colour-mark for special task
+
+    floatGrad* grad = nullptr;                 //
+    void *gm = nullptr, *gv = nullptr;         // first moment, second moment of grad
+    Distri_PIPE disq;                          // distri info related to quantization
+    float prober_info[KOIFISH_MOST_PROBE_TI];  // Some info of some operations,related to stat_info[1024](static)
     float lossQ = 0.0;
     virtual void* DataPad(void* src0, int flag = 0x0);
 
     typNUMBER type;
     INIT_WEIGHT tpInit = INIT_WEIGHT::RANDOM;
+
     enum BIT_FLAG {
         F_INPUT     = 0x1,
         F_OUTPUT    = 0x2,
@@ -352,6 +356,8 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     //   x==3 ? gv : x==2 ? gm : x == 1 ? grad : data
     virtual void Print(const string& title, int typ, int flag, size_t nEle = 0) const;
     virtual bool DumpX(int type, const string& title = "", int flag = 0x0) const;
+    // Dump some infos(like prober_info[8], stats) to disq.sProber
+    virtual void DumpProber(int type, int flag = 0x0);
     // operations
     hGTensor operator*(const hGTensor& other) { return _Multiply(other); }
 
@@ -382,9 +388,10 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     hGTensor GetRefer() { return hRef; }
     virtual void SetRefer(hGTensor hR, int flag = 0x0);
 
-    shared_ptr<GeNeuron> GetNeuron(int flag=0x0)    const;
+    shared_ptr<GeNeuron> GetNeuron(int flag = 0x0) const;
 
     virtual bool SerialGamaData(const string& info, void* host, bool isToHost, size_t szMost, int flag = 0x0);
+    virtual bool SerialLoAB(const string& info, void* host, bool isToHost, size_t szMost, int flag = 0x0);
     template <typename T>
     T* GetHostData(int flag = 0x0, const string& sX = "") {
         return nullptr;
@@ -512,26 +519,21 @@ T* TO(const std::vector<hGTensor>& gensors, const std::string& key, int flag = 0
 inline hGTensor operator+(const hGTensor& a, const hGTensor& b) { return nullptr; }
 inline hGTensor operator+=(const hGTensor& a, const hGTensor& b) { return nullptr; }
 
-typedef hGTensor hGensor;  // some trick
-// inline struct ggml_tensor* G(hGensor T) {
-//     assert(T != nullptr);
-//     return T->GG();
-// }
 
-inline void ZERO_(hGensor T) { T->Zero(); }
-inline size_t tELEM(hGensor T) { return T == nullptr ? 0 : T->size(); }
-inline size_t tBYTE(hGensor T) { return T == nullptr ? 0 : T->nByte(); }
-inline int tDIM(hGensor T) { return T == nullptr ? 0 : T->dims(); }
-inline float tGET(hGensor T, int i) { return T->Get(i); }
-inline void tSET(hGensor T, float a) { T->Set(a); }
-inline void tFLAG(hGensor T, int64_t flag) { T->SetFlag(flag); }
+inline void ZERO_(hGTensor T) { T->Zero(); }
+inline size_t tELEM(hGTensor T) { return T == nullptr ? 0 : T->size(); }
+inline size_t tBYTE(hGTensor T) { return T == nullptr ? 0 : T->nByte(); }
+inline int tDIM(hGTensor T) { return T == nullptr ? 0 : T->dims(); }
+inline float tGET(hGTensor T, int i) { return T->Get(i); }
+inline void tSET(hGTensor T, float a) { T->Set(a); }
+inline void tFLAG(hGTensor T, int64_t flag) { T->SetFlag(flag); }
 
-inline floatX* ToX(hGensor t) {
+inline floatX* ToX(hGTensor t) {
     assert(t != nullptr);
     BIT_SET(t->flags, GTensor::F_TOX);
     return (floatX*)(t->data);
 }
-inline floatX* ToX0(hGensor t) {
+inline floatX* ToX0(hGTensor t) {
     if (t == nullptr)
         return nullptr;
     return ToX(t);
@@ -548,14 +550,14 @@ inline floatX* ToG0(hGTensor t) {
     return ToG(t);
 }
 // only create tensor
-// hGensor TENSO(void* ctx0,typNUMBER typ,SHAPE,int flag=0x0,const string&name="" );
+// hGTensor TENSO(void* ctx0,typNUMBER typ,SHAPE,int flag=0x0,const string&name="" );
 
 // Generate GTensor
 hGTensor GT(Fish* hFish, typNUMBER typ, SHAPE, int flag = 0x0, const string& name = "");
 //  Create GTensor & alloc & copy data
 hGTensor GT(SHAPE shape_, void* data, typNUMBER tpD_, int flag = 0x0);
 
-hGensor tRAND(hGensor tensor, struct random_normal_distribution* rnd);
+hGTensor tRAND(hGTensor tensor, struct random_normal_distribution* rnd);
 
 /**
  *  tensor stored in hybrid memory of(CPU/GPU/DISK...)
@@ -619,6 +621,11 @@ struct GENSOR_INFO {
             sprintf(buf + strlen(buf), "[%d %d.%d l=%d]", ID, dad, c_id, level);
         return buf;
     }
+    template <typename T>
+    bool neuronIs() const {
+        assert(hNeron != nullptr);
+        return dynamic_cast<T*>(hNeron.get()) != nullptr;
+    }
 
     static bool comp(GENSOR_INFO& a, GENSOR_INFO& b) { return a.ID < b.ID; }
 };
@@ -626,16 +633,16 @@ struct GENSOR_INFO {
 // gensors & its topu relation
 struct GENSOR_TOPU {
     // name_ => tensor
-    std::map<std::string, hGensor> nag;
+    std::map<std::string, hGTensor> nag;
     //  gensor => info
-    std::map<hGensor, GENSOR_INFO> infos;
+    std::map<hGTensor, GENSOR_INFO> infos;
 
-    virtual bool has(hGensor gensor);
-    void Insert(hGensor gensor, const GENSOR_INFO& gi, int flag = 0x0);
+    virtual bool has(hGTensor gensor);
+    void Insert(hGTensor gensor, const GENSOR_INFO& gi, int flag = 0x0);
 
-    void Insert(const std::map<std::string, hGensor>& src) { nag.insert(src.begin(), src.end()); }
+    void Insert(const std::map<std::string, hGTensor>& src) { nag.insert(src.begin(), src.end()); }
     size_t size() { return nag.size(); }
-    virtual hGensor Get(MODEL_ARCH arch, const string& name, int flag = 0x0);
+    virtual hGTensor Get(MODEL_ARCH arch, const string& name, int flag = 0x0);
     virtual void Clear() {
         nag.clear();
         infos.clear();
@@ -646,10 +653,10 @@ struct GENSOR_TOPU {
     }
 };
 
-void assert_shape_1d(hGensor tensor, int64_t ne0);
-void assert_shape_2d(hGensor tensor, int64_t ne0, int64_t ne1);
-void assert_shape_3d(hGensor tensor, int64_t ne0, int64_t ne1, int64_t ne2);
-void assert_shape_4d(hGensor tensor, int64_t ne0, int64_t ne1, int64_t ne2, int64_t ne3);
+void assert_shape_1d(hGTensor tensor, int64_t ne0);
+void assert_shape_2d(hGTensor tensor, int64_t ne0, int64_t ne1);
+void assert_shape_3d(hGTensor tensor, int64_t ne0, int64_t ne1, int64_t ne2);
+void assert_shape_4d(hGTensor tensor, int64_t ne0, int64_t ne1, int64_t ne2, int64_t ne3);
 
 inline bool CHECK_SHAPE(const SHAPE& shape) {
     bool isValid = shape.size() > 0;
@@ -667,10 +674,10 @@ inline bool CHECK_SHAPE(const SHAPE& shape) {
     return isValid;
 }
 
-int CHECK_SAME_TENSORS(const string& desc, const std::vector<hGensor>& arrA, const std::vector<hGensor>& arrB, int flag = 0x0);
+int CHECK_SAME_TENSORS(const string& desc, const std::vector<hGTensor>& arrA, const std::vector<hGTensor>& arrB, int flag = 0x0);
 
-void Gensor2float_(const hGensor w, float* A, int flag = 0x0);
-inline float* Gensor2float(struct ggml_context* ctx0, const hGensor w, int flag = 0x0) {
+void Gensor2float_(const hGTensor w, float* A, int flag = 0x0);
+inline float* Gensor2float(struct ggml_context* ctx0, const hGTensor w, int flag = 0x0) {
     size_t ne00 = tELEM(w), nbyte = tBYTE(w);
     void* data_0 = w->data;
     float* A     = new float[ne00];
@@ -678,8 +685,8 @@ inline float* Gensor2float(struct ggml_context* ctx0, const hGensor w, int flag 
     return A;
 }
 
-void _T_repr_(hGensor t, const char* tab, char* buf, int typ = 0x0);
-void _T_repr_(hGensor t, const char* tab, char* buf, const GENSOR_INFO& info);
+void _T_repr_(hGTensor t, const char* tab, char* buf, int typ = 0x0);
+void _T_repr_(hGTensor t, const char* tab, char* buf, const GENSOR_INFO& info);
 
 template <typename T>
 double P_softmax(int idx, T* logits, int size);
@@ -687,7 +694,7 @@ double P_softmax(int idx, T* logits, int size);
 struct TASKA_AxB;
 
 template <class FloatC, class FloatA, class FloatB, class FloatBias>
-void CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* bias, TASKA_AxB& taskm, int flag = 0x0);
+int CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* bias, TASKA_AxB& taskm, int flag = 0x0);
 
 /*
     Task allocation - maps logical tensor multiply to cuda(or tilelang) operators(like gemm)
@@ -699,12 +706,15 @@ struct TASKA_AxB {
 
     float *scale_a = nullptr, *scale_b = nullptr;
     float alpha = 1.0, beta = 0.0;
-    void* device = nullptr;
+    void* device    = nullptr;
+    int verTilelang = 0;
     TASKA_AxB() {}
+    //  d(m,n) = alpha*a'*b + beta*d + bias
     TASKA_AxB(void* _device, int _m, int _n, int _k, int _transA, int _transB, float _beta = 0.0, float _alpha = 1.0, int flag = 0x0)
         : device(_device), m(_m), n(_n), k(_k), transA(_transA), transB(_transB), alpha(_alpha), beta(_beta) {
         assert(device != nullptr);
     }
+    bool isPass() { return alpha == 0.0 && beta == 0.0; }
     bool isAccumuDelta() { return beta > 0.0; }
     bool isValid() {
         assert(m > 0 && n > 0 && k > 0);
@@ -712,21 +722,23 @@ struct TASKA_AxB {
         return true;
     }
 
+    template <class FloatC, class FloatB>
+    int blasLt(FloatC* d, const hGTensor w, const FloatB* b, const FloatC* bias = nullptr, int flag = 0x0) {
+        FloatB* a = (FloatB*)w->GetDataX(flag);
+        return CU_mm_blasLt(d, a, b, bias, *this, flag);
+    }
+
     template <class FloatC, class FloatA, class FloatB>
-    void blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatC* bias = nullptr, int flag = 0x0) {
-        CU_mm_blasLt(d, a, b, bias, *this, flag);
+    int blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatC* bias = nullptr, int flag = 0x0) {
+        return CU_mm_blasLt(d, a, b, bias, *this, flag);
     }
 
     template <class FloatC, class FloatA>
-    void blasLt(FloatC* d, const FloatA* a, const hGTensor tB, const FloatC* bias = nullptr, int flag = 0x0) {
+    int blasLt(FloatC* d, const FloatA* a, const hGTensor tB, const FloatC* bias = nullptr, int flag = 0x0) {
         const FloatA* b = TO<FloatA>(tB);
-        CU_mm_blasLt(d, a, b, bias, *this, flag);
+        return CU_mm_blasLt(d, a, b, bias, *this, flag);
     }
 };
-
-// template <class FloatC, class FloatA, class FloatB, class FloatBias>
-// void CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* bias, int m, int n, int k, const float* scale_a, const float* scale_b,
-//                   cudaStream_t stream = 0, int transA = 1, int transB = 0, bool accumulate = false);
 
 struct TENSOR_WATCH {
     TENSOR_WATCH(Fish* _fish, const string& sX = "", int flag = 0x0);

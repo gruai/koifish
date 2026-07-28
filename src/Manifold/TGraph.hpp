@@ -43,13 +43,13 @@ class TGraph : public std::enable_shared_from_this<TGraph> {
     double tX = 0, tCompute = 0.0, tPlan = 0.0;
     std::vector<uint8_t> work_buffer;
     // lite hash_set
-    std::set<hGensor> gset;
+    std::set<hGTensor> gset;
 
     int size = 0, nForwN = 0, nForwL = 0, nNeedGrad = 0, nInput = 0;  // n_nodes=0,n_leafs=0;+
     static int curLayer;                                              // no of layer in LLM/Brain structure
-    hGensor *nodes = nullptr, *grads = nullptr, *leafs = nullptr;
-    std::vector<hGensor> topo_nodes;  // nodes in Topological order
-    std::vector<hGensor> sinks;       //  sinks of tensor flow graph
+    hGTensor *nodes = nullptr, *grads = nullptr, *leafs = nullptr;
+    std::vector<hGTensor> topo_nodes;  // nodes in Topological order
+    std::vector<hGTensor> sinks;       //  sinks of tensor flow graph
 
     ORDER order = LEFT_TO_RIGHT;
     // performance
@@ -61,7 +61,7 @@ class TGraph : public std::enable_shared_from_this<TGraph> {
     void Clear() {
         sinks.clear();
         // if (visited_hash_table.size>0)
-        //     memset(visited_hash_table.keys, 0, visited_hash_table.size * sizeof(hGensor));
+        //     memset(visited_hash_table.keys, 0, visited_hash_table.size * sizeof(hGTensor));
     }
 #ifdef __USE_GGML__
     struct ggml_cgraph* cgraph = nullptr;  // only for debug
@@ -88,8 +88,8 @@ class TGraph : public std::enable_shared_from_this<TGraph> {
 
     // ORDER Order() {   return cgraph->order;   }
     bool empty();
-    virtual string __repr__(string& suffix, string& prefix, hGensor root = nullptr, int flag = 0x0);
-    virtual string __repr__(hGensor root = nullptr, int flag = 0x0) {
+    virtual string __repr__(string& suffix, string& prefix, hGTensor root = nullptr, int flag = 0x0);
+    virtual string __repr__(hGTensor root = nullptr, int flag = 0x0) {
         string suffix = "", prefix = "\t";
         return __repr__(suffix, prefix, root, flag);
     }
@@ -102,8 +102,8 @@ class TGraph : public std::enable_shared_from_this<TGraph> {
 
     virtual struct ggml_cgraph* BuildBackward(void* ctx_build, std::shared_ptr<TGraph> gf, bool accumulate = false, int flag = 0x0);
     // Push new added node to last position
-    void PushBack(hGensor node, int flag = 0x0);
-    bool isSink(hGensor node, int flag = 0x0);
+    void PushBack(hGTensor node, int flag = 0x0);
+    bool isSink(hGTensor node, int flag = 0x0);
     virtual void Traverse(int flag = 0x0);
 
     friend class Fish;

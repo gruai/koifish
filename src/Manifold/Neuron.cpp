@@ -155,7 +155,7 @@ void GeNeuron::SetRefer(const GeNeuron* src, bool isBias, int flag) {
 
 int GeNeuron::nBatchToken(int flag) {
     int nT = B * T;
-    if (hFish->isAtPhase(LIFE_PHASE::P_GENERATE)) {
+    if (hFish->isAtPhase(LIFE_PHASE::P_CHAT_1)) {
         // assert(B == 1);
         nT = 1;  // Generate only support 1 tokens one time!
     }
@@ -186,11 +186,11 @@ Relu::Relu(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int fla
 
 bool Relu::Build(int flag) { return true; };
 
-hGensor Relu::Ming(RLS_BP* ctx_, hGensor cur, int flag) { return cur; }
+hGTensor Relu::Ming(RLS_BP* ctx_, hGTensor cur, int flag) { return cur; }
 
 Drop::Drop(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {}
 bool Drop::Build(int flag) { return true; };
-hGensor Drop::Ming(RLS_BP* ctx_, hGensor cur, int flag) { return cur; }
+hGTensor Drop::Ming(RLS_BP* ctx_, hGTensor cur, int flag) { return cur; }
 
 MOE::MOE(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     assert(jvals.size() >= 2);
@@ -212,14 +212,14 @@ bool MOE::Build(int flag) {
 
     return true;
 }
-hGensor MOE::Forward2(void* ctx_, hGensor inpL, hGensor wBase, int flag) {
+hGTensor MOE::Forward2(void* ctx_, hGTensor inpL, hGTensor wBase, int flag) {
     int n0 = inpL->ne[0], n1 = inpL->ne[1], n2 = inpL->ne[2], n3 = inpL->ne[3];
-    hGensor cur = BeforeMing(nullptr, inpL, flag);
+    hGTensor cur = BeforeMing(nullptr, inpL, flag);
     if (cur == nullptr)  //    some operation like symolic analysis
         return cur;
 #ifdef _TENSOR_G_
 #else
-    hGensor wp_ = ggml_mul_mat(ctx_, w, wBase);  // ggml_reshape_2d(ctx,v3,N, n_batch*n_embd)
+    hGTensor wp_ = ggml_mul_mat(ctx_, w, wBase);  // ggml_reshape_2d(ctx,v3,N, n_batch*n_embd)
     gTN(wp_, "%s.trans", name.c_str());
     assert(wp_->ne[0] == 1);
     wp_ = ggml_reshape_3d(ctx_, wp_, n1, n2, n3);
@@ -227,7 +227,7 @@ hGensor MOE::Forward2(void* ctx_, hGensor inpL, hGensor wBase, int flag) {
     if (isSiLU) {  // maybe useful
         wp_ = ggml_silu(ctx_, wp_);
     }
-    hGensor probs = ggml_soft_max(ctx_, wp_);
+    hGTensor probs = ggml_soft_max(ctx_, wp_);
     gTN(probs, "%s.probs", name.c_str());
     probs = ggml_reshape_4d(ctx_, wp_, 1, n1, n2, n3);
     probs = ggml_repeat(ctx_, probs, cur);
@@ -255,13 +255,20 @@ Head4Token::Head4Token(Fish* hG_, const std::string& key_, JSON::const_iterator 
     int nEmbd = hFish->config.nEmbed();
     // _target = hFish->Target();   //null now
     nCls         = hFish->nClass();
-    ignore_token = hFish->hDict->pad_id;
+    ignore_token = hFish->hDict->S.pad;
 
     padded_nCls = (hFish->config.model.isPaddedCls) ? ceil(nCls / 128.0) * 128 : nCls;
     // reduce memory & some float error
-    dB = hFish->config.model.preLogits_dB;
+    if (hFish->config.model.preLogits_dB < 0)
+        dB = B;
+    else
+        dB = hFish->config.model.preLogits_dB;
 
     verHeadLoss = hFish->config.kernels.verHeadLoss;
+
+    if (hG_->isAtPhase({P_CHAT_N})) {
+        onlyLogits = true;
+    }
 
     shape = {nEmbd, padded_nCls};
     rLoss = 1.0f / (B * T);  //* grad_accum_steps
@@ -293,8 +300,10 @@ floatLogits* Head4Token::fLogits(int flag) {
 // allocate preLogits & set it as buff
 bool Head4Token::BuildPrelogist(int flag) {
     typNUMBER tpL = typeid(floatLogits) == typeid(float) ? typNUMBER::F32 : typNUMBER::BF16, tpA = hFish->config.model.tpActivation;
-    SHAPE sp3 = {dB, T, padded_nCls};
-    if (hFish->config.isOnlyGPT) {
+    //  in some case(char based vocab), nCls<100, but buffer used in many place, like "assert(nTH * ldTH * sizeof(float) <= GTensor::buff_len)";"
+    int ldC   = std::max(padded_nCls, latent * 2);
+    SHAPE sp3 = {dB, T, ldC};
+    if (/*hFish->isLocalInfer &&*/ hFish->isAtPhase(P_CHAT_1)) {
         preLogits = GT(hFish, tpL, {padded_nCls}, 0x0, "preLogits");
         // preLogits->flags |= GTensor::F_HOSTDATA;
         preLogits->Alloc(0x0, flag);
@@ -307,15 +316,6 @@ bool Head4Token::BuildPrelogist(int flag) {
     assert(GTensor::buff != nullptr);
     GTensor::buff_len = preLogits->nByte();
 
-    if (hFish->config.model.isQKNormal) {
-        size_t offset = 0x0;
-        int q_dim = hFish->config.Q_dim(), kv_dim = hFish->config.KV_dim();
-        gBUFF->tmpQout       = GT(hFish, tpA, {B, T, q_dim});
-        gBUFF->tmpQout->data = (hBITARR)GTensor::buff + offset, offset += gBUFF->tmpQout->nByte();
-        gBUFF->tmpKout       = GT(hFish, tpA, {B, T, kv_dim});
-        gBUFF->tmpKout->data = (hBITARR)GTensor::buff + offset, offset += gBUFF->tmpKout->nByte();
-        assert(offset <= GTensor::buff_len);
-    }
     return true;
 }
 
@@ -350,8 +350,7 @@ bool Head4Token::Build(int flag) {
         if (hFish->config.ModelArch() == NLP_GUPPY) {
             // assert(FFN::first!=nullptr);
         }
-        proj.w->SetRefer(hEmbed->wInv);
-        // proj.w->SetRefer(hEmbed->w);
+        // proj.w->SetRefer(hEmbed->wInv);
     } else {
         proj.w->SetRefer(hEmbed->w);
     }
@@ -363,19 +362,19 @@ bool Head4Token::Build(int flag) {
     name += ".cls";
     return true;
 }
-hGensor Head4Token::Ming(RLS_BP* ctx_, hGensor inpL, int flag) {
+hGTensor Head4Token::Ming(RLS_BP* ctx_, hGTensor inpL, int flag) {
     GeNeuron::BeforeMing(ctx_, nullptr, flag);
 
     int n_batch = hFish->config.n_batch(), n_ctx = hFish->config.n_ctx();
-    hGensor cur = nullptr;
+    hGTensor cur = nullptr;
 
     if (hFish->isSymbolic()) {
         out->AddSrc({inpL, proj.w, preLogits, target});
 
         assert(target != nullptr);
         cur = out;
-    } else if (hFish->isAtPhase(LIFE_PHASE::P_GENERATE)) {
-        cur = cuInfer(inpL, flag);
+    } else if (hFish->isAtPhase(LIFE_PHASE::P_CHAT_1)) {
+        cur = cuInfer_1(inpL, flag);
     } else {
         cur = cuFlow(inpL, 0x0);  // return preLogits;
         // hFish->hOPT->UpdateTrainLoss(-1,mean_loss);
@@ -386,7 +385,8 @@ hGensor Head4Token::Ming(RLS_BP* ctx_, hGensor inpL, int flag) {
 string Head4Token::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]  = "\0";
     const char* tab = prefix.c_str();
-    sprintf(buf + strlen(buf), "%s Head4Token{dB=%d x=%d} %s", tab, dB, padded_nCls, hFish->config.model.isEmbedWeightTying ? "Tyring" : "");
+    string sTyring  = hFish->config.model.isEmbedWeightTying ? "Tyring" : "";
+    sprintf(buf + strlen(buf), "%s Head4Token{dB=%d x=%d} %s %s", tab, dB, padded_nCls, sTyring.c_str(), onlyLogits ? "OnlyLogits" : "");
     if (flag > 0)
         _INFO("%s", buf);
     return buf;
@@ -398,6 +398,9 @@ SLP::SLP(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag)
     assert(shape[0] > 0 && shape[1] > 0);
 }
 
+/*
+    In some cases(especially distillation), w is fixed!
+*/
 bool SLP::Build(int flag) {
     // delta  = gBUFF->delta;
     isBias = hFish->config.model.isSLPBias || BIT_TEST(flag, F_BIAS);
@@ -408,6 +411,7 @@ bool SLP::Build(int flag) {
         default:
             break;
     }
+    isFixWeight = hFish->config.loAB.isFixW();
 
     void* ctx        = hFish->GetGGCTX();
     typNUMBER tpData = tpWeight;
@@ -453,8 +457,8 @@ bool SLP::Build(int flag) {
 
     const auto& loAB = hFish->config.loAB;
     if (loAB.type != LoAB_CARD::typW::NO_LORW && G_Has_(name, loAB.filterW)) { /*layid > 6 && */
-        if (loAB.isPassW())                                                   //  loAB.type == LoAB_CARD::AB || loAB.type == LoAB_CARD::SHADOW_AB
-            BIT_SET(w->flags, GTensor::F_FIXW);                                // Need w's shadow as teacher
+        if (loAB.isFixW())
+            BIT_SET(w->flags, GTensor::F_FIXW);  // Need w's shadow as teacher
         InitCompression(name);
     } else {
     }
@@ -488,7 +492,7 @@ bool SparseNeuron::InitCompression(const std::string& wname, int flag) {
     return bRet;
 }
 
-hGensor SLP::Ming(RLS_BP* hRLS, hGensor cur, int flag) {
+hGTensor SLP::Ming(RLS_BP* hRLS, hGTensor cur, int flag) {
     string prefix = "";    // sT+".";   //+
     if (cur == nullptr) {  // symbolic analysis
         return GeNeuron::BeforeMing(hRLS, cur, flag);
@@ -509,53 +513,6 @@ hGensor SLP::Ming(RLS_BP* hRLS, hGensor cur, int flag) {
     //     auto svd=std::make_shared<LoSVD<float>>(a,6,5,5,0); //1.0e-3
     //     svd->Build( );
     // }
-#ifdef _TENSOR_G_
-
-#else
-    if (compression == SVD || compression == SVD_a) {  // A=UDV
-        int nIn = shape[0], nOut = shape[1], rank = min(64, min(nIn, nOut) / 10);
-        float* A = new float[nIn * nOut];
-        switch (w->type) {
-            case GGML_TYPE_F16:
-                ggml_fp16_to_fp32_row((ggml_fp16_t*)w->data, A, nIn * nOut);
-                break;
-            case typNUMBER::F32:
-                break;
-            default:
-                assert(0);
-        }
-        ggml_fp16_to_fp32_row((ggml_fp16_t*)w->data, A, nIn * nOut);
-        auto svd = std::make_shared<LoSVD<float> >(A, nIn, nOut, rank, 0);  // 1.0e-3
-        if (!svd->Build()) {
-            compression = SKIP;
-        } else {
-            // GGML_TYPE_F16 tensor would call ggml_vec_dot_f16 with GGML_SIMD acceleration
-            if (compression == SVD_a) {  // keep same graph
-                float* approx = svd->Approx();
-                ggml_fp32_to_fp16_row(approx, (ggml_fp16_t*)w->data, nIn * nOut);
-            } else {
-                u = TENSO(ctx0, typNUMBER::F32, {nIn, rank});
-                memcpy(u->data, svd->U(), sizeof(float) * nIn * rank);
-                memcpy(v->data, svd->V(), sizeof(float) * nIn * rank);
-                v = TENSO(ctx0, typNUMBER::F32, {rank, nOut});
-                // s = GT(hFish, GGML_TYPE_F16, nIn, nOut);
-
-                cur = ggml_mul_mat(ctx0, u, cur);
-                cur = ggml_mul_mat(ctx0, v, cur);
-            }
-        }
-        delete[] A;
-    }
-    if (compression == SKIP || compression == SVD_a) {
-        cur = ggml_mul_mat(ctx0, w, cur);  // create temp GGML_OP_MUL_MAT tensor:  result = ggml_new_tensor(ctx, typNUMBER::F32, 4, ne);
-        gTN(cur, "%s*w", prefix.c_str());
-    }
-    if (b != nullptr) {
-        cur = ggml_add(ctx0, cur, b);
-        gTN(cur, "%s+b", prefix.c_str());
-        // cur = ggml_add_inplace(ctx0, cur, b);
-    }
-#endif
     cur = AfterMing(hRLS, cur, flag);
     // if(!name.empty()){
     //     gTN0(cur,"%s",name.c_str());
@@ -698,25 +655,25 @@ bool ROPE::Build(int flag) {
     return true;
 }
 
-hGensor ROPE::Ming(RLS_BP* ctx_, hGensor inpL, int flag) {
-    hGensor cur = BeforeMing(ctx_, inpL, flag);
+hGTensor ROPE::Ming(RLS_BP* ctx_, hGTensor inpL, int flag) {
+    hGTensor cur = BeforeMing(ctx_, inpL, flag);
     if (cur == nullptr)  //    some operation like symolic analysis
         return cur;
     assert(cur->ne[0] == shape[0] && cur->ne[1] == shape[1] && cur->ne[2] == shape[2] && cur->ne[3] == shape[3]);
     string nam0 = name + "." + sT;
-    // hGensor  t05 = w==nullptr ? cur : ggml_mul_mat(ctx_, w, cur);
+    // hGTensor  t05 = w==nullptr ? cur : ggml_mul_mat(ctx_, w, cur);
     // gTN(t05,"%s*w",name.c_str());
-    // hGensor  t06 = ggml_reshape_4d(ctx_, cur,shape[0],shape[1],shape[2],shape[3]); //n_embd_head, n_head, N, n_batch
+    // hGTensor  t06 = ggml_reshape_4d(ctx_, cur,shape[0],shape[1],shape[2],shape[3]); //n_embd_head, n_head, N, n_batch
     // gTN(t06,"%s$",name.c_str());   //gTN(t06, "t06");
     const int rope_mode = 0;
 #ifdef _TENSOR_G_
 #else
-    hGensor t07 =
+    hGTensor t07 =
         n_embd_head == 1 ? cur : ggml_rope_ext(ctx_, cur, KQ_pos, nullptr, n_rot, rope_mode, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
     gTN(t07, "%s_rope", nam0.c_str());
-    // CYS_0826 hGensor  t07 = ggml_rope_custom(ctx,t06, KQ_pos, n_rot, 0, n_ctx, 0,rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f);
+    // CYS_0826 hGTensor  t07 = ggml_rope_custom(ctx,t06, KQ_pos, n_rot, 0, n_ctx, 0,rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f);
     if (flag == 0) {
-        hGensor t13 = ggml_permute(ctx_, t07, 0, 2, 1, 3);  //  [24,6,512,32] => [24,512,6,32]
+        hGTensor t13 = ggml_permute(ctx_, t07, 0, 2, 1, 3);  //  [24,6,512,32] => [24,512,6,32]
         gTN(t13, "%s_0213", t07->name);
         return t13;
     } else {
@@ -823,7 +780,7 @@ string LayerNormal::__repr__(string& suffix, string& prefix, int flag) {
     return buf;
 }
 
-hGensor LayerNormal::Ming(RLS_BP* hRLS, hGensor cur, int flag) {
+hGTensor LayerNormal::Ming(RLS_BP* hRLS, hGTensor cur, int flag) {
     GeNeuron::BeforeMing(hRLS, cur, flag);
 
     float f_norm_eps = hFish->config.model.norm_eps;
@@ -853,8 +810,8 @@ size_t LayerNormal::nElem() {
     return nX;
 }
 
-hGensor GeNeuron::Backward(void* user_ctx_, hGensor cur, int flag) { return nullptr; }
-hGensor GeNeuron::BeforeMing(RLS_BP* hRLS, hGensor cur, int flag) {
+hGTensor GeNeuron::Backward(void* user_ctx_, hGTensor cur, int flag) { return nullptr; }
+hGTensor GeNeuron::BeforeMing(RLS_BP* hRLS, hGTensor cur, int flag) {
     assert(hRLS != nullptr);
     if (hRLS->isRemater) {
         return cur;
@@ -882,11 +839,11 @@ hGensor GeNeuron::BeforeMing(RLS_BP* hRLS, hGensor cur, int flag) {
 
     return cur;
 }
-hGensor GeNeuron::Ming(RLS_BP* hRLS, hGensor cur, int flag) {
+hGTensor GeNeuron::Ming(RLS_BP* hRLS, hGTensor cur, int flag) {
     assert(0);
     return cur;
 }
-hGensor GeNeuron::AfterMing(RLS_BP* hRLS, hGensor cur, int flag) {
+hGTensor GeNeuron::AfterMing(RLS_BP* hRLS, hGTensor cur, int flag) {
     if (hRLS->isRemater) {
         return cur;
     }
@@ -960,7 +917,7 @@ void GeNeuron::OnDebug(const std::string& info, int typ, int flag) {
 void GeNeuron::ExitDebug(const std::string& info, int typ, int flag) { dump_flag = g_dump_level; }
 
 // SelfAttention::_PickGensors
-std::vector<hGensor> GeNeuron::PickGensors(int flag) const {
+std::vector<hGTensor> GeNeuron::PickGensors(int flag) const {
     bool isLORA = BIT_TEST(flag, PICK_LORA);
     assert(out != nullptr);
     vector tmp = {out};
@@ -993,12 +950,12 @@ std::vector<hGensor> GeNeuron::PickGensors(int flag) const {
         }
     }
 
-    std::vector<hGensor> arrT;
+    std::vector<hGTensor> arrT;
     std::vector<string> arrNames;
-    std::map<hGensor, std::string> mapT;
+    std::map<hGTensor, std::string> mapT;
     for (auto t : tmp) {
-        if (strcmp(t->name, "model.blk.0.attn.wo.weight") == 0) {
-            int debug = 0;
+        if (strcmp(t->name, "model.layers.0.mlp.up_proj_a") == 0) {
+            DEBUG_HERE;
         }
         if (t == nullptr)
             continue;
@@ -1012,11 +969,11 @@ std::vector<hGensor> GeNeuron::PickGensors(int flag) const {
 
     return arrT;
 }
-hGensor GeNeuron::GetGensor(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix, int flag) {
+hGTensor GeNeuron::GetGensor(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix, int flag) {
     string key = _NAME(prefix, neron, suffix);
     return GetGensor(key, flag);
 }
-hGensor GeNeuron::GetGensor(const std::string& key, int flag) {
+hGTensor GeNeuron::GetGensor(const std::string& key, int flag) {
     auto gensors = PickGensors();
     assert(gensors.size() > 0);
     for (auto gensor : gensors) {
@@ -1054,7 +1011,7 @@ bool GeNeuron::UpdateShortcut(bool isShort, int flag) {
 // 天地本逆旅, 你我皆过客(Guoke)
 int GeNeuron::SetGuoke(GeNeuron* hGuoke_, bool isX, int flag) {
     size_t szG = 0;
-    std::vector<hGensor> gSrc, arrP = PickGensors(PICK_SUBNN);
+    std::vector<hGTensor> gSrc, arrP = PickGensors(PICK_SUBNN);
     if (hGuoke_ != nullptr) {
         gSrc = hGuoke_->PickGensors();
         if (gSrc.size() != arrP.size()) {
@@ -1186,6 +1143,7 @@ hGTensor operator>>(hGTensor t, const SLP& slp) {
         return t;
     assert(slp.out != nullptr);
     slp.out->AddSrc({t});  // no need to add(w,b)! which has called in SLP::Build
+    // slp.out->AddSrc(slp.PickGensors()); // May contains more tensor than (w,b)  1.loAB 2. quant
     return slp.out;
 }
 hGTensor operator>>(hGTensor t, const Relu& relu) {

@@ -87,7 +87,7 @@ float* T_generate_Cooperative(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned
 
     // PrintTensor<float>("x_0",args.x,true,dim,1);	uint32_t,__nv_fp8_e5m2,float
 
-    hGensor cur = gBUFF->outL, residual = nullptr;
+    hGTensor cur = gBUFF->outL, residual = nullptr;
     for (int l = 0; l < args.n_layers; ++l) {
         args.InitLayer(l);
         SelfAttention* QKV                = hFish->GetNeuron<SelfAttention>("SelfAttention", l);
@@ -123,7 +123,7 @@ float* T_generate_Cooperative(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned
     if (isOnlyUpdateKV) {
         return NULL;
     }
-    hGensor out_weight = args.out_weight;
+    hGTensor out_weight = args.out_weight;
     uint64_t pTok      = PROF_TOKEN(vocab_size * dim * args.weight_dbits / 8);
     // template <typename T, typename AT> (uint64_t, float* xout, AT* x, T* w, float* rms_weight, int n, int d, float norm_eps, bool norm_ln)
     kernel_output<__nv_fp8_e5m2, AT><<<dGRID, dBLOCK, smemPB, main_stream>>>(pTok, logits, args.x, TO<__nv_fp8_e5m2>(out_weight), rms_final_weight, dim,
@@ -156,30 +156,10 @@ __global__ void CU_sample(T* prelogitst, int* index, int dim, float coin, int fl
     return;
 }
 
-bool GeneratOnPrompt::VerifyLogits(int flag) {
+bool GeneratOnPrompt::OnLogits(int flag) {
     // PrintTensor<floatLogits>("_logits", logits, true, tokenizer->nVocab(), 1, 1, 1, -1);
     // _INFO("\n%s(Invalid logits!)%s\n", COLOR_RED, COLOR_RESET);
     return true;
-}
-
-TOKEN_ID GeneratOnPrompt::Sample(int idx, bool is_resampling) {
-    if (samp_params.isSampleCPU)
-        return Sample_cpu(idx, is_resampling);
-
-    // TOKEN_ID id = 0;
-    int n_vocab = fish_1 == nullptr ? wiki0->n_vocab : fish_1->nClass();
-    assert(n_vocab == gpuLogits.dim);
-    PrintTensor<floatLogits>("_logits", gpuLogits.logits, true, n_vocab, 1, 1, 1, 0);
-    gpuLogits.SortPair(-1);
-
-    // float coin  = 0.1;  // random_f32(&rng_state);
-    // CU_sample<<<1, 1>>>(gpuLogits.logits_sorted, gpuLogits.index_sorted, n_cands, coin, 0x0);
-    // H2D(&id, gpuLogits.index_sorted, sizeof(int));
-    //  return id
-    size_t off = gpuLogits.dim - nCanTopK;
-    D2H(gpuLogits.index_sorted + off, cpuLogits.index, sizeof(int) * nCanTopK);
-    D2H(gpuLogits.logits_sorted + off, cpuLogits.logits, sizeof(floatLogits) * nCanTopK);
-    return Sample_cpu(idx, true);
 }
 
 template <typename T>
@@ -350,10 +330,10 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
     // 12. classifier Matmul
     if (1) {
         INSPECT inspect(cls);
-        cls->cuInfer(hQwen->inpL, 0x0);
+        cls->cuInfer_1(hQwen->inpL, 0x0);
     } else {
         CU_rms_infer(hQwen->x, hQwen->x, rms_final_weight, hQwen->dim);
-        hGensor out_weight = hQwen->out_weight;
+        hGTensor out_weight = hQwen->out_weight;
         CU_mv_(hQwen->xlogit, ToX(out_weight), hQwen->x, hQwen->vocab_size, hQwen->dim);
         // int grid_size = (hQwen->vocab_size + CU_T4B_SMALL - 1) / CU_T4B_SMALL;
         // only for using floatLogits = float;

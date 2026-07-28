@@ -12,8 +12,8 @@ In the backward pass, the gradients flow to both, handled by different kernels
 #include <vector>
 
 #include "../cuda_common.h"
-#include "utils.cuh"
 #include "packedN.cuh"
+#include "utils.cuh"
 // ----------------------------------------------------------------------------
 // CUDA kernels
 // out = wte[inp]
@@ -116,8 +116,8 @@ __global__ static void CU_embed_forw_nf4(floatGama* gamas, hBITARR quants, T_out
     }
     // *x0       = CU_16BF2T<T_out>(&g0, seed);    //g0
     // *(x0 + 1) = CU_16BF2T<T_out>(&g1, seed);    //g1
-    *x0       = CU_GAMA2T<T_out>(g0, seed);    //g0
-    *(x0 + 1) = CU_GAMA2T<T_out>(g1, seed);    //g1
+    *x0       = CU_GAMA2T<T_out>(g0, seed);  // g0
+    *(x0 + 1) = CU_GAMA2T<T_out>(g1, seed);  // g1
 }
 
 template <typename T_out, typename T>
@@ -162,18 +162,22 @@ __global__ static void CU_embed_forw_(floatX* out, const int* tokens, const floa
         return;
     }
     int ix = tokens[idx], pos = idx % T;
-    const floatX* wpe_tc = wpe + pos * C;
-    for (int c = 0; c < C; c++) {
-        floatX* out_btc      = out + idx * C + c;
-        const floatX* wte_ix = wte + ix * C + c;
+    const floatX *wpe_tc = wpe == nullptr ? nullptr : wpe + pos * C, *wte_ix = wte + ix * C;
+    floatX* out_ix = out + idx * C;
+    for (int c = 0; c < C; c++, out_ix++, wte_ix++) {
+        // floatX* out_btc      = out + idx * C + c;
+        // const floatX* wte_ix = wte + ix * C + c;
         if (wpe == nullptr) {
-            *out_btc = *wte_ix;
+            *out_ix = *wte_ix;
         } else {
 #if defined(USE_FP8_BASELINE)
 #else
-            *out_btc = *wte_ix + wpe_tc[c];
+            *out_ix = *wte_ix + wpe_tc[c];
 #endif
         }
+        // if(!CU_isValidF(out_ix)){
+        //     DEBUG_HERE;
+        // }
     }
 }
 
