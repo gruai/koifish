@@ -65,6 +65,8 @@ int SUM::nQuantTensor   = 0;
 size_t SUM::szQuantBits = 0;
 double SUM::tQuant = 0, SUM::tF8Ex = 0, SUM::tLowBit = 0;
 string SUM::sQuantInfo = "";
+char SUM::infoX[KOIFISH_MOST_LOG]="\0";
+
 
 void SUM::Reset(string typ, int flag) {
     if (typ == "time") {

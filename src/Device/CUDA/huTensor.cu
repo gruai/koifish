@@ -152,6 +152,7 @@ __global__ void CU_GROUP_STAT(int bits, int ldGroup, size_t N, hBITARR qdata, hB
 
 /**
  *  @LoadParam_
+ * 1. std=0.02,expected norm ≈ √dim × 0.02. A classic GPT‑2 / NanoGPT initialization for embeddings, also de‑facto industry standard
  *
  */
 bool huTensor::InitParam(int tpX) {
@@ -922,8 +923,8 @@ GST_TensorBuffer::GST_TensorBuffer(Fish* hFis_, int flag) : hFish(hFis_) {
 bool GST_TensorBuffer::Prepare(int flag) {
     try {
         auto& config = hFish->config;
-        int B, T, nEmbed = config.nEmbed(), nCTX = config.n_ctx();
-        hFish->GetBT(B, T);
+        int B, T, nEmbed = config.nEmbed(), nMostChat = hFish->curChatLen(LIMIT);
+        hFish->GetNeuronBT(B, T);
         int q_dim = config.Q_dim(), kv_dim = config.KV_dim(), mostC = std::max(nEmbed, q_dim);  // config.nEmbed(-1);
         assert(q_dim >= kv_dim);
         int nVocab = hFish->nClass();
@@ -963,13 +964,13 @@ bool GST_TensorBuffer::Prepare(int flag) {
         if (hFish->isModel({NLP_GUPPY})) {
             tmpW = std::make_shared<huTensor>(hFish, "tmpW", SHAPE({nEmbed, nFF}), tpW, true);
         }
-        if (hFish->isModel({NLP_QWEN2, NLP_QWEN3})) {
+        if (hFish->isModel({NLP_QWEN2, NLP_QWEN3, NLP_SCORE_})) {
             gate_delta = std::make_shared<huTensor>(hFish, "tmpGateDelta", SHAPE({B, T, nFF}), tpG, true);
         }
         switch (hFish->phase) {
             case P_CHAT_1:
                 //  @KERNEL_PIPE
-                outL = std::make_shared<huTensor>(hFish, "OutL_CHART_1", SHAPE({nEmbed * 3 + q_dim + nFF * 2 + NH * nCTX * 2}), tpA, true);
+                outL = std::make_shared<huTensor>(hFish, "OutL_CHART_1", SHAPE({nEmbed * 3 + q_dim + nFF * 2 + NH * nMostChat * 2}), tpA, true);
                 // outL = std::make_shared<huTensor>(hFish, "tmpOutL", spMost, tpA, true);
                 break;
             case P_CHAT_N:

@@ -41,14 +41,9 @@ Optimizer::Optimizer(NLP_AutoRegressive* g_, CLI_params& config, int flag) : _fi
                                            : ADAMw;
         nGradAccum   = std::max(1, train_params.n_gradient_accumulation);
         isGlobalGrad = nGradAccum > 1;  // Nearly same alloc grad or not
-        train_loader = std::make_shared<SampLoader>(_fish, "Train", false);
-        train_loader->Prepare(this, _fish->tsTrain);
-    }
-    for (auto tsE : _fish->tsEval) {
-        auto loader  = std::make_shared<SampLoader>(_fish, "Eval", false);
-        loader->type = SampLoader::TYPE::DT_EVAL;
-        loader->Prepare(this, tsE);
-        val_loaders.push_back(loader);
+        // train_loader = std::make_shared<SampNanny>(_fish, "Train", false);
+        // train_loader->Prepare(this, _fish->tsTrain);
+        train_loader = _fish->tsTrain->loader;
     }
 
     if (_fish->isTrain()) {
@@ -69,24 +64,28 @@ Optimizer::Optimizer(NLP_AutoRegressive* g_, CLI_params& config, int flag) : _fi
     prober_host = new float[KOIFISH_MAX_PROBE_LEN];
 }
 
-bool Fish::SetPhase(LIFE_PHASE phase_, int flag) {
-    phase = phase_;
+bool Fish::SetPhase(LIFE_PHASE phase_, LIFE_PHASE outer_, int flag) {
+    outer_phase = outer_;
+    phase       = phase_;
     // _fish->GetScheduler<RLS_BP>()->SetPhase(phase);
 
     switch (phase) {
         case LIFE_PHASE::P_EVAL_:
-            _INFO("[eval] ");
+            _INFO("<eval> ");
             break;
         case LIFE_PHASE::P_PREFILL:
-            // _INFO("[prefill] " );
+            // _INFO("<prefill] " );
             // assert(loader->num_batches == 1);
             break;
         case LIFE_PHASE::P_CHAT_1:
-            _INFO("[chat_1] ");
+            _INFO("<chat_1> ");
             // assert(loader->num_batches == 1);
             break;
         case LIFE_PHASE::P_CHAT_N:
-            _INFO("[chat_N] ");
+            _INFO("<chat_N> ");
+            break;
+        case LIFE_PHASE::P_TRAIN:
+            curTokenSet = tsTrain;
             break;
         default:
             break;
@@ -142,7 +141,7 @@ bool Optimizer::BatchGrad(int iter, float& fx, int flag) {
     auto loss    = hLoss();
     float *fLoss = (float*)(loss->data), *g = nullptr, accum_norm = 1.0f / (float)nGradAccum;
     Head4Token* cls = _fish->GetNeuron<Head4Token>("Head4Token", 0);
-    cls->hLoader    = train_loader;
+    // cls->hLoader    = train_loader;
     train_loader->ClearII();
     if (grad != nullptr) {
         ZERO_(grad);
@@ -159,7 +158,7 @@ bool Optimizer::BatchGrad(int iter, float& fx, int flag) {
     for (int accum_step = 0; accum_step < 1; ++accum_step) {
         auto now = GST_ms();
         if (hRLS->isUpdateBatch(GetITER())) {
-            int64_t nSamp = train_loader->CollateBatch(-1, _fish);
+            int64_t nSamp = train_loader->CollateBatch(iter, _fish);
             SUM::tData    = GST_ms() - now;
             if (nSamp == 0) {
                 _WARN("<%s> Failed to get next batch!!!\n", __func__);
@@ -598,7 +597,10 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGTensor loss_, hGTensor target_,
     }
     float a = 0, grad_norm = 0;
     if (_fish->isLoadCheckpoint) {
-        Evaluate(1);
+        // config.chat_sampler.test_every = 1; //only for debug
+        // for (int loop = 0; loop < 10; loop++) 
+        //     _fish->AfterNextStep(0+loop);  
+         _fish->AfterNextStep(0);
     }
     if (DEBUG.quant_UserMode) {
         if (!_fish->config.ckp_out.empty())
@@ -651,21 +653,15 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGTensor loss_, hGTensor target_,
 
         UpdateLossCurve(0x0);
         // throw "DEBUG exit@";        //only for debug
-        for (auto ck : _fish->config.ckp_out) {
-            if (ck.needSave(t)) {
-                _fish->SaveTrain(ck);
-                // g_dump_level = -1;
-            }
-        }
+
         if (t % 10 == 0) {
             // trainInfos().SaveToCSV("_info_.csv");
             trainInfos().SaveColorsToCSV(".csv");
         }
 
-        Evaluate();
-
-        if (_fish->hDistler != nullptr)
-            _fish->hDistler->UpdateSigma(iter);
+        // Evaluate();  // @AfterNextStep
+        // if (_fish->hDistler != nullptr)  // @AfterNextStep
+        //     _fish->hDistler->UpdateSigma(iter);
         // check convergence
         if (isConverge) {
             _INFO("[search] Converged!!!\n");
@@ -685,7 +681,7 @@ void Fish::Train(int flag) {}
     1 Forward/Backward on neuron graph
     2 Forward/Backward on tensor graph
 */
-double Optimizer::GraphCompute(hSampLoader hLoader, hTGraph hTG, int flag) {
+double Optimizer::GraphCompute(hSampNanny hLoader, hTGraph hTG, int flag) {
     double now = GST_ms(), mean_loss = 0.0;
     int nThread = TrainParams().n_threads, no = 0, nAccum = TrainParams().n_gradient_accumulation;
     bool isOnlyEvaluate = !hTG->isBackward;
@@ -698,7 +694,7 @@ double Optimizer::GraphCompute(hSampLoader hLoader, hTGraph hTG, int flag) {
     // g_dump_level = -1;
     if (_fish->phase == LIFE_PHASE::P_CHAT_1 || _fish->phase == LIFE_PHASE::P_CHAT_N || _fish->phase == LIFE_PHASE::P_PREFILL) {
     } else {
-        mean_loss = hLoader->hDaTokens->LossOnResult(hLoader, cls);
+        mean_loss = hLoader->LossOnResult(_fish);
         if (isOnlyEvaluate) {
             return mean_loss;
         } else {
@@ -714,40 +710,6 @@ double Optimizer::GraphCompute(hSampLoader hLoader, hTGraph hTG, int flag) {
     return 0.0;
 }
 
-bool Optimizer::Evaluate(int type, int flag) {
-    Head4Token* cls = _fish->GetNeuron<Head4Token>("Head4Token", 0);
-
-    int iter = GetITER(), token = -1;
-    float val_loss = 0;
-    if (type == 1) {
-        assert(_fish->isLoadCheckpoint);
-        // _INFO("[checkpoint] Evaluate the checkpoint of \"%s\"\n", "");  //_fish->config.fish_in.sDir.c_str()
-    }
-    int gpt_every = _fish->config.common.gpt_every;
-    if (gpt_every > 0 && iter % gpt_every == 0) {
-        _fish->SetPhase(LIFE_PHASE::P_CHAT_1);
-        _fish->config.chat_sampler.seq_len = 64;
-        _fish->Chat(0, P_TRAIN, 1);
-    }
-    // g_dump_level = -1;
-    for (auto vl : val_loaders) {
-        if (type == 1 || vl->isEval(iter + 1)) {
-            _fish->SetPhase(LIFE_PHASE::P_EVAL_);
-            cls->hLoader = vl;
-            // for(int i=0;i<10;i++)
-            // val_loss = EvaluateSamps(vl, iter), a = val_loss;       //  0.272727281
-            val_loss = vl->Evaluate(SAMPLEofSHARD, 0x0);
-            // if (DEBUG.eval_Generate) {
-            //     hChater gopt = _fish->GetGenerator();
-            //     token        = gopt->Sample(-1);  // 1479
-            // }
-        }
-    }
-    // K_EXIT(KOIFISH_EXIT_DEBUG);
-
-    return true;
-}
-
 /*
     Multiple purpose(Need refactor!)
     1. Get loss on some evaluate set in training procee
@@ -755,7 +717,7 @@ bool Optimizer::Evaluate(int type, int flag) {
     3. Prefill stage of Inference
     4. Generation stage of Inference
 */
-float Optimizer::EvaluateSamps(hSampLoader loader, int iter, int flag) {
+float Optimizer::EvaluateSamps(hSampNanny loader, int iter, int flag) {
     if (loader->num_batches == 0) {
         assert(0);
         return 0;
@@ -765,8 +727,8 @@ float Optimizer::EvaluateSamps(hSampLoader loader, int iter, int flag) {
 
     GST_TIC(tic);
     Head4Token* cls = _fish->GetNeuron<Head4Token>("Head4Token", 0);
-    cls->hLoader    = loader;
-    auto loss       = hLoss();
+    // cls->hLoader    = loader;
+    auto loss = hLoss();
     double l2, delta_max = 0, delta_ = 0, a, mean_loss = 0, ee = 0;
     auto tokens_input = _fish->Input();
     int i, nB = 0, step = loader->StepOfEvaluate();
@@ -834,6 +796,15 @@ void StepInfos::AfterStep(int iter, int flag) {
 
     Add(step);
 }
+
+std::string Optimizer::GetSomeInfo(string type, int flag) {
+    if(type=="gopt_result_file"){
+        sprintf(SUM::infoX, "%d_loss=%.3f", iter, loss_after);        
+    }
+    string info = SUM::infoX;
+    return info;
+}
+
 float Optimizer::UpdateLossCurve(int flag) {
     TRAIN_CARD _params = TrainParams();
     int n_batch = _params.n_batch, n_ctx = _params.n_ctx;
@@ -876,10 +847,12 @@ float Optimizer::UpdateLossCurve(int flag) {
         float tokens_per_second = tokens_processed / millis_per_iter * 1000.0f;
         ema_tps                 = iter == 1 ? tokens_per_second : 0.95f * ema_tps + 0.05f * tokens_per_second;
         _INFO(" | %.1fK token/s | %s", ema_tps / 1000.0, _fish->DebugInfo().c_str());
-        if (_fish->config.loAB.isDistll() || _fish->config.distill.isDistll())
+        if (strlen(SUM::infoX) > 0) {
+            _INFO(" %s\n", SUM::infoX);
+        } else if (_fish->config.loAB.isDistll() || _fish->config.distill.isDistll())
             _INFO(" x=%.8g\n", DistillRate(0x0));
         else {
-            _INFO(" x=%.4gs(%.4gs)\n", (SUM::tLoss) / iter, (SUM::tHeader) / iter);
+            _INFO(" tx=%.4gs(%.4gs)\n", (SUM::tLoss) / iter, (SUM::tHeader) / iter);
             // _INFO(" x=%d\n", SUM::nUpdateParam);
         }
         _fish->Statistic_Quant(1, 0x0);
@@ -918,9 +891,10 @@ bool Optimizer::OnNextShard(int flag) {
     float a      = trainInfos().Best();
     string sRoot = "./";
     trainInfos().SaveToCSV("_info_.csv");
-    for (auto vl : val_loaders) {
-        float b = vl->stepis.Best();
-        vl->stepis.SaveToCSV("_info_.csv");
+    // for (auto vl : val_loaders) {
+    for (auto vl : _fish->tsEval) {
+        float b = vl->loader->stepis.Best();
+        vl->loader->stepis.SaveToCSV("_info_.csv");
     }
     // _fish->SaveTrain("");
     // Fish_ppl();
@@ -930,7 +904,7 @@ bool Optimizer::OnNextShard(int flag) {
 
 bool Optimizer::OnNextEpoch(int flag) {
     train_epochs++;
-    if (hLR->policy == LearnSKDU::COSINE_EPOCH) {
+    if (hLR->policy == COSINE_EPOCH) {
     }
     return true;
 }
@@ -996,13 +970,20 @@ void Optimizer::BeforeTrain(hGTensor tokens_, int flag) {
             }
         }
     }
-
-    if (_fish->isTrain()) {
-        trainInfos().Init(this);
+    train_loader->SetOPT(this);
+    for (auto tsE : _fish->tsEval) {
+        // auto loader  = std::make_shared<SampNanny>(_fish, "Eval", false);
+        tsE->loader->type = DT_EVAL;
+        tsE->loader->SetOPT(this);
+        // loader->Prepare(this, tsE);
+        // val_loaders.push_back(loader);
     }
-    for (auto loader : val_loaders) {
-        loader->stepis.Init(this);
-    }
+    // if (_fish->isTrain()) {
+    //     trainInfos().Init(this);
+    // }
+    // for (auto loader : val_loaders) {
+    //     loader->stepis.Init(this);
+    // }
 
     if (DEBUG.watch_Tensors > 0) {
         TENSOR_WATCH watch(_fish, "embed_tokens");
@@ -1133,7 +1114,7 @@ bool Optimizer::PrepareData(CLI_params& config, int flag) {
         assert(train_loader->shuffle_sample_count > 0);
         return true;
     }
-    hSampLoader val_loader = val_loaders.empty() ? nullptr : val_loaders[0];
+    hSampNanny val_loader = _fish->tsEval.empty() ? nullptr : _fish->tsEval[0]->loader;
 
     if (1) {
         if (train_loader->Serialize(spTrain, false) && val_loader->Serialize(spEval, false)) {
@@ -1277,9 +1258,9 @@ void Optimizer::Dump(int typ) {
     // if(NOT_DUMP())  return;
     if (train_loader != nullptr)
         train_loader->Dump(typ);
-    for (auto vl : val_loaders) {
-        vl->Dump(typ);
-    }
+    // for (auto vl : val_loaders) {
+    //     vl->Dump(typ);
+    // }
     _INFO("======== \n");
     if (hLR != nullptr)
         hLR->Dump(typ);

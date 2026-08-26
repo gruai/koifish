@@ -10,6 +10,7 @@
 #include <cassert>
 
 #include "./Utils/GST_log.hpp"
+#include "./Utils/cmd_line_parser.hpp"
 #include "./Utils/json.hpp"
 #include "./Utils/magic_enum.hpp"
 #include "./g_float.hpp"
@@ -30,6 +31,7 @@ class GRander;
         (like a salmon swim upstream)
 */
 enum LIFE_PHASE {
+    P_X,
     // Pre-training
     P_TRAIN,
     P_SFT,  //  supervised fine-tuning - teach a base pretrained LLM​ (which just predicts next tokens) into a helpful assistant​ that follows instructions.
@@ -164,6 +166,13 @@ enum FILE_FORMAT_TYPE {
     CKP_KOIFISH  // Koifish checkpoint is a very-lite format with only safetensors(config json & other metadata is also stored in tensors)
 };
 
+// for each pair<value,id>
+enum SORT_BY {
+    NO_SORT,
+    BY_VALUE,
+    BY_ID,
+};
+
 FILE_FORMAT_TYPE FormatOfFile(const std::string& path, int flag = 0x0);
 
 // parameters of scheduling
@@ -295,8 +304,8 @@ class MODEL_CARD {
     std::vector<LAY_PARAM> layerps;
 
    public:
-    static std::string sWeight, sBias, sLayer, sEmbed, sInvEmbed, sQzeros, sQscale;
-    bool enable_thinking = false;
+    static std::string sWeight, sBias, sLayer, sQzeros, sQscale;  // sEmbed, sInvEmbed,
+    // bool enable_thinking = false;
     bool isSparse() { return sparse.method != 0; }
     struct Sparsing {
         int method = 0;  //  1-GBDT
@@ -313,6 +322,7 @@ class MODEL_CARD {
     std::string pathCheckPoint = "";  // support {"safetensors", "kun"} files in this path
 
     std::string sCardPath = "", sTokenBinPath = "";
+    bool onlyTokenizer           = false;
     std::string sTokenJsonPath   = "";  // tokenizer.json
     std::string sTokenConfigPath = "";  // tokenizer_config.json
     std::string sArch, torch_dtype, transformers_version, model_type;
@@ -334,12 +344,16 @@ class MODEL_CARD {
     bool isQKVBias       = true;
     bool isPaddedCls     = false;
     bool isFFNShareParam = false;
+    bool isFFNGate       = true;
     bool isCausalMask    = true;
     // dim(=head_dim*n_heads)
     int dim = -1, hidden_dim = -1, n_layers = -1, hidden_size = -1, intermediate_size = -1;
     int max_pos_embeddings = -1, num_attention_heads = -1, num_key_value_heads = -1;
     std::vector<int> token_embeds;
     std::vector<int> qkv_embeds;  // try multi-level embed of QKV
+
+    //  A masked AR model with diffusion-style sampling, this hybrid is not theoretically clean, but it is empirically workable! When training: Add noise to x[i], but predict x[i+1](like AR-style)
+    bool isMaskAR = false; 
 
     //  ****
     bool isFFNWeightTying = true;
@@ -356,7 +370,7 @@ class MODEL_CARD {
     */
     bool isEmbedWeightTying = false;
     std::vector<std::string> skip_st;
-    bool isQKNormal    = false;
+    int QKNormal       = 0;
     bool isSeparateQKV = false;
     QKV_PACK qkv4dnn   = QKV_PACK::QKVQKV;  // the  fromat of input var_PACK for cudnn GRAPH
     bool isBqkv        = false;
@@ -591,7 +605,6 @@ struct MUON_params_ {
 
 struct TRAIN_CARD {
     int dump_every = 1;
-    int gpt_every  = -1;
 
     int seed     = -1;
     int n_epochs = -1;
@@ -659,20 +672,31 @@ enum CHAT_MODE {
     CHATML_THINK,
 };
 
+enum CHAT_LENGTH_TYPE {
+    LIMIT,  // max_sequence_length - Max tokens allowed in inference/chat
+    RECOMMEND,
+    MAX_POSE,  // max_position_embeddings, maybe RoPE positional limit
+    ONLY_1,    //
+};
+
 //  See HF's "generation_config.json"
 struct CHAT_SAMPLER {
     enum METHOD {
         TEMPERATURE,
-        Top_K,
+        // Top_K,
         Top_P,
         Min_P,
         BEAM,
-        // for score-model
-        PATH_PLAN,
+        // for musk-diffusion-model
+        MD_LINEAR_TRANSFER,
+        MD_PATH_PLAN,
+        MD_DILATE,  // https://arxiv.org/pdf/2506.19037v3
+        CONFIDENCE,
     };
     // SAMPLE is 雕琢/琢磨
     METHOD tpZhuomo = METHOD::TEMPERATURE;
     CHAT_MODE mode  = CHAT_MODE::YABA;
+    int test_every  = -1;  // called in training process
 
     float temperature = 0.6f;  // 0.7~0.9
     //  keeps only the smallest set of tokens whose total probability exceeds p, then renormalizes and samples from that set.
@@ -682,14 +706,13 @@ struct CHAT_SAMPLER {
     bool isSampleCPU = true;
     bool isTopPFirst = false;
     /**1. max_position_embeddings - Hard ceiling on (prompt + generated). But there are extrapolation tricks (NTK scaling, YaRN, PI, etc.).
-     * 2. max_allowed = model.config.max_position_embeddings
+     * 2. nSeqLimit = max_sequence_length
      * 3. max_new_tokens -  generation limit: number of new tokens to generate, independent of prompt length.
      */
-    int max_new_tokens = 20, max_allowed = -1;
-    //For example, “This model supports up to 32k context, but quality is best under 8k.” Many (attention, RoPE geometry, weight distribution ...) would affect this!
-    int ctx_recommend = -1;
-    // Define the length of batch input,   different with n_ctx_train, n_ctrx_origin !!!
-    int seq_len          = 1024;    //"max_sequence_length"
+    int nSeqLimit = 1024, max_position_embeddings = -1;
+    // For example, “This model supports up to 32k context, but quality is best under 8k.” Many (attention, RoPE geometry, weight distribution ...) would affect
+    //
+    int nSeqRecommend = -1;
 
     int repeat_last_n        = 64;
     float repeat_penalty     = 1.00f;
@@ -697,17 +720,19 @@ struct CHAT_SAMPLER {
     int32_t interactive_port = -1;
 
     // for score model
-    int most_step = 64;
-    float kappa_t = 0.0;
+    int most_step = 1;
+
 
     std::string prompt     = "";
     std::string token_test = "";
 
     int szBuffer         = 32768;
-    bool enable_thinking = true;
+    bool enable_thinking = false;  //  true
 
     std::string prompt_template, system_prompt_template;
+    virtual bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
     virtual bool InitPrefillTemplate(CLI_params* hConfig, int flag = 0x0);
+    virtual bool OnArch(MODEL_ARCH arch, int flag = 0x0);
 
     bool isInstructModel() {  // Instruct model always has there templates! Base Model may has no template
         // system_prompt_template.empty()
@@ -866,6 +891,7 @@ struct CLI_params {
 
     std::vector<CheckPoint_Params> ckp_in, ckp_out;
     CheckPoint_Params state;
+    CheckPoint_Params ckp_error;
     //  >0 would save GlobalState(checkPoint)
     int save_GlobalSate = 0;
     void InitAllStates(int flag);
@@ -880,7 +906,7 @@ struct CLI_params {
 
     SKDU_params scheduling;
     Fuyou_params fuyou;
-    XI_CARD XI;
+    XI_CARD XI;  // 生物之以息(XI - noise from score)相吹也
     LoAB_CARD loAB;
 
     std::string eval_metric                  = "";
@@ -905,7 +931,7 @@ struct CLI_params {
         return n_layer_train;
     }
 
-    uint32_t n_ctx() const;  // number of tokens in each sample
+    uint32_t n_ctx() const;  // only valid at training phase! number of tokens in each sample
     uint32_t n_ctx_orig() const { return n_ctx_orig_yarn != 0 ? n_ctx_orig_yarn : n_ctx_train; }
     void SetNCTX(int _nctx) {
         assert(_nctx > 0 && _nctx < 1024 * 1024);
@@ -950,8 +976,8 @@ struct CLI_params {
 
     bool passLoadToken    = false;
     bool only_write_model = false;
-    bool ffn_use_gate     = false;
-    uint32_t n_swarm      = 1;
+    // bool ffn_use_gate     = false;
+    uint32_t n_swarm = 1;
     // uint32_t n_outputs = 1;
     int n_embd_head_k = -1, n_embd_head_v = -1;  // nEmbed() = -1,
 
@@ -960,9 +986,9 @@ struct CLI_params {
 
     int nabla = 1;  // cys
     // std::string sigma = "";
-    std::string vae           = "";
-    std::string prompt        = "";
-    std::string dict_vae_dims = "", dict_dialect = "", dict_logits = "";
+    std::string vae       = "";
+    std::string prompt    = "";
+    std::string dict_type = "", dict_vae_dims = "", dict_dialect = "", dict_logits = "";
 
     // for RWKV
     uint32_t rescale_every_n_layers = 0;

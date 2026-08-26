@@ -157,6 +157,7 @@ __global__ void CU_sample(T* prelogitst, int* index, int dim, float coin, int fl
 }
 
 bool GeneratOnPrompt::OnLogits(int flag) {
+    D2H(hClsLogits->data, hClsLogits->host_data, hClsLogits->nByte());  //  0x00007fff30000000  0x0000555558a9f6a0
     // PrintTensor<floatLogits>("_logits", logits, true, tokenizer->nVocab(), 1, 1, 1, -1);
     // _INFO("\n%s(Invalid logits!)%s\n", COLOR_RED, COLOR_RESET);
     return true;
@@ -184,13 +185,14 @@ floatLogits* T_generate_cuda(hFISH hFish, bool isOnlyUpdateKV, MODEL_CARD* hPipe
 #else
     constexpr int HEAD_DIM = 128;
     int szBuffer           = hFish->config.chat_sampler.szBuffer;
-    int seq_len            = hFish->config.chat_sampler.seq_len;
+    int seq_len            = hFish->curChatLen();
     int N_HEADS = hFish->config.n_head(), N_KV_HEADS = hFish->config.n_head_kv();
     float rope_theta = hFish->config.model.rope_theta;
     assert(hFish != nullptr && hPipe != nullptr);
 
     TokenEmbed* embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
-    int token = embed->hBatch->CurToken(), pos = embed->hBatch->tok_pos;
+    auto hBatch       = hFish->curBatch(0x0);
+    int token = hBatch->CurToken(), pos = hBatch->tok_pos;
     QWEN3_PIPE* hQwen = dynamic_cast<QWEN3_PIPE*>(hPipe);
     // QWEN3_PIPE qwen_pipe(hFish, pos);
     // QWEN3_PIPE *hQwen = &qwen_pipe;

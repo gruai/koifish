@@ -372,7 +372,7 @@ FFN::FFN(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag)
     tpNorm = 2;
 }
 bool VarCoder::Build(int flag_0) {
-    int flagSLP = flag_0 | F_DELTA;
+    int flagSLP = flag_0 | F_DELTA; //131072
 
     if (tpNorm > 0)
         norm.BuildX(_NAME(name, FFN_PRE_NORMAL), {nBottom}, hFish, flag_0 | F_DELTA);  // name + ".norm",
@@ -382,7 +382,8 @@ bool VarCoder::Build(int flag_0) {
     if (hFish->isModel({NLP_QWEN2, NLP_QWEN3, NLP_BITNET, NLP_SCORE_})) {
         // qwen 2.5 same as qwen 3.0!
         up.BuildX(_NAME(name, FFN_UP), {nTop, nBottom}, hFish, flagSLP);
-        gate.BuildX(_NAME(name, FFN_GATE), {nTop, nBottom}, hFish, flag_0);
+        if (hFish->config.model.isFFNGate)
+            gate.BuildX(_NAME(name, FFN_GATE), {nTop, nBottom}, hFish, flag_0);
         // gate should alloc delta for its gpu memory!
         down.BuildX(_NAME(name, FFN_DOWN), {nBottom, nTop}, hFish, flagSLP);
     } else {
@@ -395,7 +396,8 @@ bool VarCoder::Build(int flag_0) {
         }
     }
     up.SetGanglia(this);
-    gate.SetGanglia(this);
+    if (!gate.Empty())
+        gate.SetGanglia(this);
     down.SetGanglia(this);
 
     if (!isBias) {

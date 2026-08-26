@@ -623,7 +623,7 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
     return nullptr;
 #else
     assert(hCache != nullptr && isSeparateQKV);
-    hBATCH hBatch = hFish->GetCurBatch(true);
+    hBATCH hBatch = hFish->curBatch(0x0);
     int pos       = hBatch->tok_pos;
     if (pos >= 0)
         _devQKV(pos);  // update k,v
@@ -632,7 +632,7 @@ hGTensor SelfAttention::cuInfer(hGTensor inpL, int flag) {
 
     hGTensor tmpQKV = gBUFF->tmpFF1;
     floatX* qkvr    = ToX(tmpQKV);  // Q.out/K.out/V.out
-    int nToken = nBatchToken(), seq_len = hFish->config.n_ctx(), nEmbed = hFish->config.nEmbed();
+    int nToken = nBatchToken(), seq_len = hFish->curChatLen(LIMIT), nEmbed = hFish->config.nEmbed();
     inp = OnInput(inpL);  //  may remater by hIn->SerialData_
     inp->Print("inp", 0x0, dump_flag, nToken * nEmbed);
     gBUFF->residual = inp;

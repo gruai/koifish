@@ -186,6 +186,7 @@ struct SUM {
     static double tQuant, tF8Ex, tLowBit;
     static size_t szUpload;
     static string sQuantInfo;
+    static char infoX[KOIFISH_MOST_LOG];
 
     static void Reset(string typ, int flag = 0x0);
     static void TimeInfo(int typ, int flag = 0x0);

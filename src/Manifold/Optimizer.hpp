@@ -133,12 +133,12 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     vector<STAGE> stages;
     std::shared_ptr<PIPE_Optimizer> hPipe = nullptr;
     GRander rRounding;  // stochastic rounding
-    hSampLoader train_loader = nullptr;
+    hSampNanny train_loader = nullptr;
     StepInfos& trainInfos() {
         assert(train_loader != nullptr);
         return train_loader->stepis;
     }
-    std::vector<hSampLoader> val_loaders;
+    // std::vector<hSampNanny> val_loaders;
     size_t shuffle_samples_hash = 0x0;  // hack
 
     Fish* _fish = nullptr;  // ref only
@@ -147,11 +147,11 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
 
     Optimizer(NLP_AutoRegressive* g_, CLI_params& params_, int flag = 0x0);
     // Deprecated need refactor!!!       9/30/2024
-    virtual double GraphCompute(hSampLoader loader, hTGraph, int flag = 0x0);
+    virtual double GraphCompute(hSampNanny loader, hTGraph, int flag = 0x0);
     // virtual bool SetPhase(LIFE_PHASE phase_, int flag = 0x0);
-    virtual float EvaluateSamps(hSampLoader loader, int iter, int flag = 0x0);
-    virtual bool Evaluate(int type = 0x0, int flag = 0x0);
-    // virtual float Prefill(hSampLoader loader,int iter,int flag=0x0);
+    virtual float EvaluateSamps(hSampNanny loader, int iter, int flag = 0x0);
+    // virtual bool Evaluate(int type = 0x0, int flag = 0x0);   //Deprecated
+
     virtual int GetITER(int flag = 0x0) const;
     virtual float LearningRate(int flag = 0x0) {
         // if(flag==0x100)  //hack
@@ -169,6 +169,8 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     virtual bool isAtLongtail(int flag = 0x0);
 
     virtual void Dump(int typ);
+    virtual std::string GetSomeInfo(string type, int flag = 0x0);
+
     virtual void AfterBuild(int flag = 0x0);
     virtual void BeforeTrain(hGTensor tokens_input, int flag);
     virtual void InitOnCUDA(int flag);
@@ -192,7 +194,7 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     friend class Fish;
     friend class NLP_AutoRegressive;
     friend class GeNeuron;
-    friend class SampLoader;
+    friend class SampNanny;
     friend class SAMP;
     friend class TGraph;
     friend class StepInfos;

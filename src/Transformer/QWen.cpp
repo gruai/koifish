@@ -43,9 +43,9 @@ QWen3::QWen3(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, 
     } else if (arch == MODEL_ARCH::NLP_QWEN3) {
         // config.scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
         // config.scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;
-        config.model.isQKNormal = true;
-        config.model.sLayer     = "layers.";
-        config.model.sEmbed = "embed_tokens", config.model.sInvEmbed = "lm_head";
+        config.model.QKNormal = 1;
+        config.model.sLayer   = "layers.";
+        // config.model.sEmbed = "embed_tokens", config.model.sInvEmbed = "lm_head";
 
         // ??? 0.6B/8B has no tying, but 4B is tying
         // config.model.isEmbedWeightTying = true;  //
@@ -55,7 +55,6 @@ QWen3::QWen3(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, 
     config.fuyou.filter_reload = {"mlp", "self_attn"};  //  {"mlp", "self_attn"};
     config.model.isNormalBias  = false;
 }
-
 
 std::string Fish::NN2NAME(const std::string& prefix, tpNEURON4NAME neuron, const std::string& suffix, int flag) {
     switch (neuron) {
@@ -155,8 +154,8 @@ Bitnet::Bitnet(const std::string& nam_, struct CLI_params params, ROLE_TYPE role
         config.model.qkv4dnn = QKV_PACK::QQKKVV;
     } else {
     }
-    config.model.isQKNormal = false;
-    config.model.sLayer     = "layers.";
+    config.model.QKNormal = 0;
+    config.model.sLayer   = "layers.";
     //  Uses ReLU²​ (squared ReLU) in the Feed-Forward Network (FFN) instead of SwiGLU or GELU
     //  Employs SubLN​ (Sub-Layer Normalization), which applies LayerNorm before the linear projection in both attention and FFN blocks.
     // DEBUG.cmd_p1 = 1;

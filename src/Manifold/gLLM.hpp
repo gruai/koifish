@@ -130,7 +130,7 @@ class NLP_AutoRegressive : public Fish {
 
     // for tokens_input & target_label
     bool InitInput(void* ctx, bool isMask, int flag = 0x0) override;
-    bool InitDictTokenset(int flag = 0x0) override;
+    bool InitTokenCoral(int flag = 0x0) override;
     hGTensor Input() override { return tokens_input; }
 
     bool Init(const vector<hWIKI>& wikis_, int flag = 0x0) override;
@@ -152,7 +152,7 @@ class NLP_AutoRegressive : public Fish {
 
     int ForwardOnNeuron_v0(int flag);
 
-    bool LocalFeeling(hSampLoader hLoader, vector<float>& result, int flag) override;
+    bool LocalFeeling(hSampNanny hLoader, vector<float>& result, int flag) override;
 
     void Loss(int flag = 0x0) override {}
 
@@ -326,8 +326,7 @@ class QWen3 : public QWen {
 
 // life is nothing just like a salmon swim upstream(返朴)
 class Salmon : public NLP_AutoRegressive {
-   protected:   
-
+   protected:
     // SAMPLE/雕琢/琢磨;    既雕既琢，复归于朴
     virtual int ZhuoMo(int flag = 0x0);
 
@@ -342,7 +341,7 @@ class Salmon : public NLP_AutoRegressive {
         NLP_AutoRegressive::InitModel(flag);
     }
 
-    int Chat(int enable_thinking, LIFE_PHASE outer_phase, int flag = 0x0) override;
+    int Chat(int type, int flag = 0x0) override;
     std::string NN2NAME(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix = "", int flag = 0x0) override;
 };
 

@@ -174,6 +174,7 @@ void TokenEmbed::WorkloadOnBucker_v0(int* tokens, int flag) {
 
 //
 hGTensor TokenEmbed::cuInfer(hGTensor hOut, int flag) {
+    auto hBatch = hFish->curBatch(0x0);
     int token = hBatch->CurToken(), pos = hBatch->tok_pos, dim = latent, nRow = w->shape[0];
     hQUANT hQuant = w->GetDynamicQuant();
     assert(dim % 32 == 0);
@@ -210,6 +211,7 @@ hGTensor TokenEmbed::OnEmbed(hGTensor inpL, int seed) {
     try {
         int OC = w->ne[1], Vp = padded_nCls, C = hFish->config.nEmbed();
         int nToken    = nBatchToken();
+        auto hBatch   = hFish->curBatch(0x0);
         hGTensor curX = out, curW = w;
         if (isForward()) {
             inpL->Print("token_input", 0, 0);
@@ -866,11 +868,12 @@ hGTensor Head4Token::cuInfer_1(hGTensor inp_, int flag) {
 
 hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
     INSPECT inspect(this);
-    int V = nCls, Vp = padded_nCls, i, C = hFish->config.nEmbed(), nPlot = 0;
+    auto hBatch        = hFish->curBatch(0x0);
+    int V = nCls, Vp = padded_nCls, i, C = hFish->config.nEmbed(), nPlot = 0, dB = dB4Logits();
     assert(proj.b == nullptr);
     // mean_loss          = 0.0f;
     const int* targets = (int*)(target->data);
-    float* cuLoss      = (float*)out->data;
+    float* cuLoss      = (float*)out->data;    
     int* devMask       = hBatch->devMask == nullptr ? nullptr : TO<int>(hBatch->devMask);
     hGTensor curLogits = preLogits, w = proj.w;
     float alpha4g = 1.0, beta4g = 1.0, logprob = 0;
@@ -879,8 +882,8 @@ hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
     if (isForward()) {
         double t0 = GST_us();
         rLoss     = 1.0 / hBatch->nValidTokens;
-
-        inp = inp_;
+        dump_flag = 1;
+        inp       = inp_;
         if (maec != nullptr) {
             inp = maec->DEC(inp, true);
             C   = inp->ne[2];
@@ -891,15 +894,15 @@ hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
         bool isBack = ToG0(w) != nullptr && delta != nullptr && !hFish->isAtPhase(LIFE_PHASE::P_EVAL_), write_dlogits = isBack;
         target->Print("oucls.target", 0, dump_flag);
         // w->Print("oucls.proj.w", 1, dump_flag);
-        for (i = 0; i < B; i += dB) {
+        for (i = 0; i < hBatch->nMostSample; i += dB) {
             size_t off = i * T * Vp, n1 = i * T, nZ = i * T * C;
             off = 0;  // reduce memory
             // PrintTensor<floatX>("Head4Token.proj.w", w->GetDataX(), true, w->ne[0], w->ne[1], w->ne[2], w->ne[3], -1);
             // [50304,768] x [768,8192] => [50304,8192]
             hGTensor subZ = inp->Partial("partialZ", nZ * sizeof(floatX), {dB, T, C});
             proj.Forw(curLogits, subZ);
-            curLogits->Print("logits", 0, dump_flag);
-            if (onlyLogits)
+            curLogits->Print("logits", 0, dump_flag, dB * T * Vp);
+            if (hBatch->onlyLogits)
                 continue;
 
             double t_i0 = GST_us();
@@ -929,8 +932,8 @@ hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
                 hGTensor subDelta = delta->Partial("partialDeltaZ", nZ * sizeof(floatX), {dB, T, C});
                 if (0 && verHeadLoss == KERNEL_LIB_TYPE::TL_CUDA && i == 0) {  //
                     dump_flag = -1;
-                    // PrintTensor<float>("loss", cuLoss + n1, true, dB, T, 1, 1, dump_flag);
-                    // curLogits->Print("δ_logits", 0, dump_flag);
+                    PrintTensor<float>("loss", cuLoss + n1, true, dB, T, 1, 1, dump_flag);
+                    curLogits->Print("δ_logits", 0, dump_flag);
                     _INFO({"per-token = "});
                     for (int j = 0; j < T; j++) {                       // debug
                         int label = (int)(D2f<int>(targets + n1 + j));  // hBatch->host[n1 + j + 1];
@@ -945,7 +948,7 @@ hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
                 proj.Back(subDelta, subZ, curLogits, nullptr, false, 0x100);  // hGTensor delta, hGTensor inp, hGTensor deltaIn
             }
         }
-        if (!onlyLogits) {
+        if (!hBatch->onlyLogits) {
             delta->Print("δ_head", 0, dump_flag, B * T * C);
             cudaMemcpy(hostLoss, cuLoss, B * T * sizeof(float), cudaMemcpyDeviceToHost);
         } else {
@@ -956,7 +959,7 @@ hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
             assert(0);
             exit(KOIFISH_EXIT_OUT_CLS);
         }
-        // mean_loss = hLoader->UpdateII(hostLoss, B, T, 0x0);
+        
         SUM::tHeader += (GST_us() - t0) / 1000000.0;
     } else {
         // matmul_backward(errOut, gw, NULL, errLogits, z0, w, NULL, B, T, C, Vp, main_stream);

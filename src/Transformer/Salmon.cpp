@@ -9,7 +9,26 @@
  */
 #include "../Manifold/gLLM.hpp"
 #include "../Utils/GST_Application.hpp"
+#include "Scheduler.hpp"
 
+/**
+    Masked AR (Autoregressive) Models (like the original BERT-based Mask-Predict or CMLM).
+    During training:
+        when token n is masked, target[n] is x[n+1], use logits[n] predicts x[n+1] 
+    During generation:
+        Mask-Predict strategy:  if the most confident pos is n, then its prediction is inserted into position n+1! while leaving position n masked.
+        A fast shift-logtis tech: logits = torch.cat([logits[:, :1], logits[:, :-1]], dim=1)
+
+When people say “distill an AR model into a diffusion LM,” what they actually do is:
+    1. take an AR teacher
+    2. corrupt the input sequence
+    3. train the student to predict the teacher’s next-token distribution
+    4. run a diffusion-style sampler at inference
+This produces a model that is not a mathematically correct diffusion LM. It is a masked AR model with diffusion-style sampling.
+This hybrid is not theoretically clean, but it is empirically workable!
+ */
+
+ 
 Salmon::Salmon(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
     assert(arch == MODEL_ARCH::NLP_SCORE_);
     config.model.isSLPBias    = false;
@@ -18,8 +37,8 @@ Salmon::Salmon(const std::string& nam_, struct CLI_params params, ROLE_TYPE role
     config.model.isQKVBias = true;  // for https://huggingface.co/fredzzp/open-dcoder-0.5B
     // config.model.isFFNGate    = false;
     config.model.norm_rms_eps = 1.0e-6;
-    config.model.preLogits_dB = -1;
-
+    config.model.isMaskAR = true;
+    
     if (isTrain()) {
         config.model.qkv4dnn = QKV_PACK::QQKKVV;
     } else {
@@ -29,9 +48,8 @@ Salmon::Salmon(const std::string& nam_, struct CLI_params params, ROLE_TYPE role
     config.model.isSeparateQKV = true;
     // config.scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
     // config.scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;
-    config.model.isQKNormal = false;
     config.model.sLayer     = "layers.";
-    config.model.sEmbed = "embed_tokens", config.model.sInvEmbed = "lm_head";
+    // config.model.sEmbed = "embed_tokens", config.model.sInvEmbed = "lm_head";
     config.model.isBqkv        = false;  //  0.6B has no bias!
     config.model.isCausalMask  = false;
     config.fuyou.filter_reload = {"mlp", "self_attn"};  //  {"mlp", "self_attn"};
@@ -39,120 +57,140 @@ Salmon::Salmon(const std::string& nam_, struct CLI_params params, ROLE_TYPE role
 
 int Salmon::ZhuoMo(int flag) { return 0x0; }
 
-int Salmon::Chat(int enable_thinking, LIFE_PHASE outer_phase, int flag) {
+int Salmon::Chat(int iter, int flag) {
     // Statistic(0x100);
 
-    int seq_len           = config.chat_sampler.seq_len;
-    int num_prompt_tokens = 0, user_turn = 1, next, token, generated_tokens = 0, nRound = 0;  // pos = 0,
-    TOKENS prompt_tokens;
+    int seq_len = curChatLen(), user_turn = 1, next, token, nRound = 0;  // pos = 0,
     hTokenizer tokenizer = GetTokenizer();
     double start_time = 0, eval = 0;
-    string cur_answer, rendered_prompt;
+    string rendered_prompt;
     hChater gopt       = GetGenerator();
     Head4Token* header = GetNeuron<Head4Token>("Head4Token", 0);
-    header->dump_flag  = -1;  // only for debug
-    hBATCH hBatch      = GetCurBatch(true);
-    assert(hBatch->hostToken->ne[0] >= seq_len);  // batch = hBatch->hostToken->ne[1] may >1
-    GST_Application* hApp = GST_Application::GetInstance();
+    // header->dump_flag  = -1;  // only for debug
     // DEBUG.T_generate_most_layer = 1;
-    DEBUG.verGenerate = DEBUG.cmd_p1;  // use this flag to comparse accu/time of different version
-    // DEBUG.verGenerate     = 1;
+    DEBUG.verGenerate     = DEBUG.cmd_p1;  // use this flag to comparse accu/time of different version
     DEBUG.T_cuQK          = 0;
     DEBUG.T_kvcache_quant = 0;
     // g_dump_level          = -1;
-    gopt->Prepare4N( );
-    while (hApp->iRunning() > 0) {
-        if (user_turn) {
-            num_prompt_tokens = hBatch->FillPrompt(this, DEBUG.prompts, {}, nRound);
-            generated_tokens  = 0;
-            cur_answer        = "";
-            user_turn         = 0, nRound++;
-        }
-        if (hApp->iRunning() <= 0) {
-            _WARN("\n%s[APP] Stop running! code=%d%s\t", COLOR_YELLOW, hApp->iRunning(), COLOR_RESET);
-            break;
-        }
 
-        start_time = GST_ms();
-        SUM::tX1 = 0.0, SUM::tQKV_forw = 0.0, SUM::tFFN = 0.0, SUM::tPreLogits = 0.0;
-        eval = Evaluate(DL_BATCH_UPATE::BATCHofEMBED);
-        gopt->OnLogits();
-        hBatch->tok_pos++;
-        // K_EXIT(KOIFISH_EXIT_DEBUG);
+    gopt->Prepare4N(iter, nullptr);
+    start_time = GST_ms();
+    SUM::tX1 = 0.0, SUM::tQKV_forw = 0.0, SUM::tFFN = 0.0, SUM::tPreLogits = 0.0;
+    // eval = Evaluate(DL_BATCH_UPATE::BATCHofEMBED);
+    // gopt->OnLogits();
+    // K_EXIT(KOIFISH_EXIT_DEBUG);
+    token = gopt->Sample(nullptr);
 
-        // _INFO(" %d[%d->%d]", pos, token, next), fflush(stdout);
+    double tSample = (double)(GST_ms() - start_time) / 1000.0;
+    gopt->AfterSample(iter, tSample);
 
-        token = gopt->Sample(hBatch);  // 3347
-        generated_tokens++;
-        if (token == tokenizer->S.eos || hBatch->tok_pos >= seq_len) {  //  stop generation if get EOS token
-            double elapsed_s = (double)(GST_ms() - start_time) / 1000.0;
-            double tps       = (generated_tokens > 0 && elapsed_s > 0) ? (generated_tokens - 1) / elapsed_s : 0.0;
-            if (hBatch->tok_pos >= seq_len) {
-                if (outer_phase == P_TRAIN)
-                    return 0x0;
-                _WARN("%scontext window full!%s\t", COLOR_YELLOW, COLOR_RESET);
-            }
-            _INFO("\n%s[%.2f tk/s, %d tokens in %.2fs(qkv=%.3fs ffn=%.3fs PreLogits=%.3fs X=%.3fs)]%s\n===================================\n", COLOR_GREEN, tps,
-                  generated_tokens - 1, elapsed_s, SUM::tQKV_forw / 1.0e6, SUM::tFFN / 1.0e6, SUM::tPreLogits / 1.0e6, SUM::tX1 / 1.0e6, COLOR_RESET);
-
-            user_turn = 1;
-            cur_answer += "\t\t" + SUM::sQuantInfo;
-            STR2FILE("chat.csv", cur_answer, nRound == 1 ? std::ofstream::out : std::ofstream::app);
-            // OnEOS(shared_from_this());
-            if (nRound == DEBUG.prompts.size()) {  // only for debug
-                return 0x0;
-            }
-            continue;
-        }
-        hBatch->Set(hBatch->tok_pos, 0, 0, 0, token);
-
-        static int in_thinking_section = 0;
-        static int in_bold_section     = 0;
-        if (hBatch->tok_pos == num_prompt_tokens) {  // first token of the response
-            in_thinking_section = enable_thinking;   // reset thinking state
-            in_bold_section     = 0;                 // reset bold state
-            if (in_thinking_section) {
-                _INFO(COLOR_YELLOW);
-            }
-        }
-
-        const char* piece = tokenizer->T2STR(token).c_str();  // decode(tokenizer, token);
-        if (strcmp(piece, "</think>") == 0) {
-            in_thinking_section = 0;
-            if (!in_bold_section) {
-                _INFO(COLOR_RESET);
-            }
-        } else {
-            const char *current_pos = piece, *marker;
-            while ((marker = strstr(current_pos, "**")) != NULL) {
-                // print the text before the marker
-                fwrite(current_pos, 1, marker - current_pos, stdout);
-
-                // flip the bold state and change colour accordingly
-                in_bold_section = !in_bold_section;
-                if (in_bold_section) {
-                    _INFO(COLOR_BOLD_RED);
-                } else if (in_thinking_section) {
-                    _INFO(COLOR_YELLOW);
-                } else {
-                    _INFO(COLOR_RESET);
-                }
-                current_pos = marker + 2;  // Move past the "**"
-            }
-            // print any remaining text after the last marker
-            if (token != tokenizer->S.eos) {
-                _INFO("%s", current_pos);
-                cur_answer += current_pos;
-            }
-        }
-
-        fflush(stdout);
-    }
-    // free(prompt_tokens);
     return 0x0;
 }
 
+bool GOPT_Diffusion::OnLogits(int flag) {
+    D2H(hClsLogits->data, hClsLogits->host_data, hClsLogits->nByte());
+    switch (samp_params.tpZhuomo) {
+        case CHAT_SAMPLER::MD_DILATE:  // maskLogits is fixed
+            maskLogits = originLogits;
+            break;
+        default:
+            maskLogits.clear();
+            for (auto logit : originLogits) {
+                if (tokens[logit->posOfTarget] == mask_id) {
+                    maskLogits.push_back(logit);
+
+                } else {
+                }
+            }
+            break;
+    }
+
+    return true;
+}
+/**
+    The diffusion schedule ensures “random early, deterministic late”
+ */
+TOKEN_ID GOPT_Diffusion::Sample(hBATCH hB, bool is_resampling) {
+    if (hB != nullptr)
+        hBatch = hB;
+
+    int nOriginMask = originLogits.size();
+    nGenerate       = nOriginMask;
+    planner         = std::make_shared<SAMPLE_Planner>(samp_params, samp_params.most_step, nOriginMask, 0x0);
+    planner->Dump();
+
+    auto tokenizer = fish_0->GetTokenizer();
+    assert(planner != nullptr);
+    int nStep         = planner->nMostStep, stp;
+    double start_time = GST_ms();
+    SUM::tX1          = 0.0;
+    float s;
+    for (stp = 0; stp < nStep; stp++) {
+        if (hBatch->nNoiseToken == 0)
+            break;
+        fish_0->Evaluate({tsChat}, DL_BATCH_UPATE::BATCHofEMBED);
+        OnLogits();
+        int n1 = 0, n2 = 0, pos, nMask = maskLogits.size();
+        switch (samp_params.tpZhuomo) {
+            case CHAT_SAMPLER::MD_DILATE:
+            case CHAT_SAMPLER::MD_LINEAR_TRANSFER: {
+                candLogit.clear();
+                std::vector<int> picks = planner->PickGroup(stp, maskLogits.size(), 0x0);
+                for (int pick : picks) {
+                    assert(pick >= 0 && pick < nMask);
+                    auto logit = maskLogits[pick];
+                    candLogit.push_back(logit);
+                }
+                nToMask = 0;
+            } break;
+            default:  // path_Plan
+                s       = (stp + 1) * 1.0f / nStep;
+                nToMask = hBatch->nNoiseToken * (1.0 - s);
+                break;
+        }
+        if (candLogit.size() == 0)
+            continue;
+
+        SampFromLogits(stp);
+
+        // std::sort(candLogit.begin(), candLogit.end(), [](auto logi1, auto logi2) { return logi1->qu.confi < logi2->qu.confi; });
+        int i = 0;
+        for (auto logit : candLogit) {
+            bool isMask = i++ < nToMask;
+            pos         = logit->posOfTarget;  // posInBatch;
+            if (isMask) {
+                if (tokens[pos] != mask_id)
+                    n1++;
+                tokens[pos] = mask_id;
+            } else {
+                // _INFO("%s@%d ", tokenizer->T2STR(logit->qu.token).c_str(), pos);
+                if (tokens[pos] != logit->qu.token)
+                    n2++;
+                tokens[pos] = logit->qu.token;
+            }
+        }
+
+        cur_answer = tokenizer->Decode(tokens, true, true);
+        _INFO("\r[%d]=\"%s\"\n", stp, cur_answer.c_str());
+        hBatch->FillTokens(0, tokens, 0, 0x0);
+    }
+    SUM::tX1 += (double)(GST_ms() - start_time) / 1000.0;
+    // cur_answer = tokenizer->Decode(tokens);
+    // if (!fResult.empty())
+    //     STR2FILE(fResult, cur_answer, std::ofstream::out);
+    // _INFO("GOPT_Diffusion::Sample stp=%d answer=\n%s\n", nStep, cur_answer.c_str());
+    if (fish_0->isAtPhase(P_CHAT_N)) {
+        for (auto hLogit : candLogit) {
+            // hLogit->Dump(100);
+        }
+    }
+    planner.reset(), planner = nullptr;
+    return TOKEN_ID(-1);
+}
+
 std::string Salmon::NN2NAME(const std::string& prefix, tpNEURON4NAME neuron, const std::string& suffix, int flag) {
+    if (nClass() == 66)  //  hack
+        return Fish::NN2NAME(prefix, neuron, suffix, flag);
     size_t pos   = 0x0;
     string tName = "";
     switch (neuron) {

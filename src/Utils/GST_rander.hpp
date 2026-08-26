@@ -104,15 +104,38 @@ class GRander {
         }
     }
 
-    inline void RandMask_MN(int M, int N, std::vector<float>& T_m, int* mask32, int flag = 0x0) {
+    inline void Stratified(int N, std::vector<float>& arr, float sampling_eps = 0.0f, int flag = 0x0) {
+        RandFloat(N, arr);
+        for (int i = 0; i < N; i++) {
+            // float eps_t  = uni(rng);
+            float offset = float(i) / N;                     // stratification offset
+            float strat  = fmod(arr[i] / N + offset, 1.0f);  // wrap into [0,1]
+            arr[i]       = (1.0f - sampling_eps) * strat + sampling_eps;
+        }
+    }
+
+    inline void RandMask_MN(int M, int N, const std::vector<float>& T_m, int* mask32, int flag = 0x0) {
         assert(T_m.size() == M);
         std::vector<float> probs;
         int* mask = mask32;
         for (int i = 0; i < M; i++) {
             float thrsh = T_m[i];
             RandFloat(N, probs);
-            for (int i = 0; i < N; i++, mask++) {
-                *mask = probs[i] < thrsh;
+            for (int j = 0; j < N; j++, mask++) {
+                *mask = probs[j] < thrsh;
+            }
+        }
+    }
+
+    inline void RandNoise_MN(int M, int N, const std::vector<float>& T_m, float* noise, int flag = 0x0) {
+        assert(T_m.size() == M);
+        std::vector<float> probs;
+        float* mask = noise;
+        for (int i = 0; i < M; i++) {
+            float thrsh = T_m[i];
+            RandFloat(N, probs);
+            for (int j = 0; j < N; j++, mask++) {
+                *mask = (float)(probs[j] < thrsh);
             }
         }
     }
@@ -333,13 +356,12 @@ inline void random_permutation(int* data, int numel, MT19937_torch* state) {
 
 /*
     SCPQ(a Sudden Confession under Persistent Questioning):
-        When discussion solutions with AI tools(doubao,copilot), oftern encounters SCPQ: the AI rambels in circles, offering many specious, harf-backed solutions.
-        Suddenly(may after several miniutes or even hours). it aknowledgeing its own errors.
-    SCPQ is a clear sign that current (transformer based)-AI has no full human intelligence. 
-    Know what one does not know(然乎然,不然乎不然) is one of humanity's most vital forms of intelligence.     
+        When discussion solutions with AI tools(doubao,copilot), oftern encounters SCPQ: the AI rambels in circles, offering many specious, harf-backed
+   solutions. Suddenly(may after several miniutes or even hours). it aknowledgeing its own errors. SCPQ is a clear sign that current (transformer based)-AI has
+   no full human intelligence. Know what one does not know(然乎然,不然乎不然) is one of humanity's most vital forms of intelligence.
 
-    Philox backend is a typical SCPQ codes fromf copilot. Copilot recommend Philox at first, but the generated sequnce is not match Torch. After one hours' work, copilot says "On current PyTorch releases, torch.rand() on CPU does not use
-        Philox as its RNG backend. "
+    Philox backend is a typical SCPQ codes fromf copilot. Copilot recommend Philox at first, but the generated sequnce is not match Torch. After one hours'
+   work, copilot says "On current PyTorch releases, torch.rand() on CPU does not use Philox as its RNG backend. "
 */
 struct GRanderTorch : public GRander {
     uint64_t seed64;

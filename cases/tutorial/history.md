@@ -1,4 +1,7 @@
 ## History
+* 08/2026: Support training of Masked diffusion language models (MDLMs)
+* 05/2026: Support tilelang generated operators
+* 04/2026: I suddenly relaized that transformer based LLMs lack huamn-like intelligence.
 * 02/02/2026: Training Qwen3-4B on single 4090
 * 01/01/2026: Training Qwen3-0.6B & Qwen2.5-0.5B on single 4090
 * 12/10/2025: Support inference of QWen3-32B on single 4090
@@ -10,4 +13,3 @@
 * 07/24/2025: Support tile quantization 
 * 06/29/2025: Rope with pre/post normalization 
 * 06/14/2025: Support bit representation(binary[-1,1], ternary[-1,0,1]) 
-

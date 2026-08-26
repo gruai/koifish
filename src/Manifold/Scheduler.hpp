@@ -15,6 +15,35 @@
 
 class EDGE_DEVICES;
 
+typedef enum {
+    FIX,  //  static
+    TRI_LINE,
+    COSINE,
+    COSINE_EPOCH,
+    WSD,  //  Warmup-Stable-Decay (WSD), might be less stable with spike loss curve
+    LINEAR_DECAY,
+} SKDU_POLICY;
+
+// Planner of sampling of LM(mask-denoising, ...)
+struct SAMPLE_Planner {
+    std::string name = "planner"; 
+    typedef std::vector<int> Group;
+    std::vector<Group> arrGroup;
+
+    int nMostStep = 0, seq_len = 0;
+    // SKDU_POLICY policy;
+    CHAT_SAMPLER _params;
+    SAMPLE_Planner(CHAT_SAMPLER& _params, int nMostStep, int seq_len, int flag = 0x0);
+    hRANDER hPickRander = nullptr;
+    float t_base = 0.0, t_previous = 0.0, t_final = 0.0;
+    // how much noise was removed between cur & last step.
+    virtual float RelativeRate(int64_t step, int flag = 0x0);
+    virtual Group PickGroup(int64_t step, int nSamp, int type, int flag = 0x0);
+    virtual void Init4Dilate(int flag=0x0);
+
+    virtual void Dump(int flag = 0x0);
+};
+typedef std::shared_ptr<SAMPLE_Planner> hSampSKDU;
 /**
  * https://towardsdatascience.com/learning-rate-schedules-and-adaptive-learning-rate-methods-for-deep-learning-2c8f433990d1
  * time-based decay, step decay and exponential decay.
@@ -24,15 +53,8 @@ class EDGE_DEVICES;
  */
 struct LearnSKDU {
     string name = "LR";
-    typedef enum {
-        STATIC,
-        TRI_LINE,
-        COSINE,
-        COSINE_EPOCH,
-        WSD,  //  Warmup-Stable-Decay (WSD), might be less stable with spike loss curve
-        FIX,
-    } POLICY;
-    POLICY policy = COSINE;
+
+    SKDU_POLICY policy = COSINE;
 
     TRAIN_CARD _params;
     const static int TIMESTEPS = 1000;
@@ -71,6 +93,7 @@ struct LearnSKDU {
     }
     void Append(float a) { history.vals.push_back(a); }
 
+    LearnSKDU() {}
     LearnSKDU(TRAIN_CARD& train_params);
     LearnSKDU(DISTILLATION_CARD& distll, TRAIN_CARD& train_params, int flag = 0x0);
     virtual void Dump(int typ);

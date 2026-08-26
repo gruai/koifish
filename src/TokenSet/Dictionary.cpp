@@ -479,10 +479,11 @@ GTokenizer_QWEN3::GTokenizer_QWEN3(Fish* dolphin, int flag) : HF_Tokenizer(dolph
     if (!bRet)
         bRet = InitHF(dolphin, flag);*/
 
-    if (nVocab() == 0) {       // vocab.clear();
+    if (nVocab() == 0) {  // vocab.clear();
+        isVirtual = true;
         ReserveVocab(151936);  // LoadBin(dolphin, flag);
         assert(nVocab() == 151936);
-        _WARN("[QWEN3] tokenizer resize to %lld(an empty vocab table).\n", nVocab());
+        _WARN("[QWEN3] virtual tokenizer resize to %lld(an empty vocab table).\n", nVocab());
     } else {
     }
 }
@@ -1272,23 +1273,42 @@ GTokenizer_CHARset::GTokenizer_CHARset(Fish* nlp_, const std::vector<char>& char
     }
     assert(charset.size() > 0);
     assert(vocab.empty());
-    int vocab_size = charset.size();
+    int vocab_size = charset.size(), i = 0;
     for (auto c : charset) {
         string word{c};
         vocab[word] = (int)vocab.size();
+        mapC2T[c]   = i++;
         // vocab.push_back(word);
     }
     S.mask = 0;
     // scores = (float*)malloc(vocab_size * sizeof(float));
 }
 
+std::string GTokenizer_CHARset::Decode(const TOKENS& tokens, bool skip_pad, bool skip_special_tokens) const {
+    string info = "";
+    for(auto tok : tokens){
+        if(tok==S.mask)
+            continue;
+        char a = charset[tok];
+        info += a;
+    }
+    return info;
+}
+
+std::vector<TOKEN_ID> GTokenizer_CHARset::Encode(const std::string& text, bool encode_bos, bool encode_eos) {
+    std::vector<TOKEN_ID> tokens;
+    tokens.resize(text.size());
+    STR2T(text.c_str(), text.size(), tokens);
+    return tokens;
+}
+
 int GTokenizer_CHARset::STR2T(const char* txt, int txt_len, std::vector<TOKEN_ID>& btch, int flag) {
     int n_tokens = 0, nMost = btch.size();
     assert(txt_len <= nMost);
-    unsigned char* a = (unsigned char*)(txt);
+    char* a = (char*)(txt);
     for (int i = 0; i < txt_len; i++, a++) {
-        TOKEN_ID t = (TOKEN_ID)(*a);
-        // assert(t>=0 && t<n_vocab);
+        TOKEN_ID t = mapC2T[*a];
+        assert(t >= 0 && t < vocab.size());
         btch[i] = t;
         n_tokens++;
     }

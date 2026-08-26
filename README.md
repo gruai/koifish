@@ -17,6 +17,7 @@ Note
 2. The evaluating time depends on the frequency of testing and the sampling ratio(We use only ~10% randomly sampled tokens to reduce total time). 
 
 ## Features
+- Support both Masked diffusion language models (MDLMs) and AR models
 - Hybrid 16/8/4/2/1 bit training
 - [Training Qwen3-0.6B on single 4090](cases/tutorial/tutorial_qwen3.md)
 - [Evolutionary optimization of experts](https://arxiv.org/abs/2509.24436)

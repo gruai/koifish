@@ -129,7 +129,7 @@ void GeNeuron::Init(Fish* hG_, int flag) {
     hFish        = hG_;
     auto& config = hG_->config;
 
-    hG_->GetBT(B, T);
+    hG_->GetNeuronBT(B, T);
     // W1A8, W4A4, W8A8
     tpWeight     = hFish->config.model.tpWeight;
     tpActivation = hFish->config.model.tpActivation;
@@ -240,10 +240,10 @@ hGTensor MOE::Forward2(void* ctx_, hGTensor inpL, hGTensor wBase, int flag) {
 }
 string MOE::__repr__(string& suffix, string& prefix, int flag) { return _repr_1(suffix, prefix, "MOE"); };
 
-OutSimilarity::OutSimilarity(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : Head4Token(hG_, key_, jit, flag) { dB = 0; }
+OutSimilarity::OutSimilarity(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : Head4Token(hG_, key_, jit, flag) {}
 
 //  The Unreasonable Effectiveness of Entropy Minimization in LLM Reasoning
-OutEntropy::OutEntropy(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : Head4Token(hG_, key_, jit, flag) { dB = 0; }
+OutEntropy::OutEntropy(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : Head4Token(hG_, key_, jit, flag) {}
 
 /*
     Alias of lm_head - final layer of a language model that:
@@ -259,16 +259,16 @@ Head4Token::Head4Token(Fish* hG_, const std::string& key_, JSON::const_iterator 
 
     padded_nCls = (hFish->config.model.isPaddedCls) ? ceil(nCls / 128.0) * 128 : nCls;
     // reduce memory & some float error
-    if (hFish->config.model.preLogits_dB < 0)
-        dB = B;
-    else
-        dB = hFish->config.model.preLogits_dB;
+    // if (hFish->config.model.preLogits_dB < 0)
+    //     dB = B;
+    // else
+    //     dB = hFish->config.model.preLogits_dB;
 
     verHeadLoss = hFish->config.kernels.verHeadLoss;
 
-    if (hG_->isAtPhase({P_CHAT_N})) {
-        onlyLogits = true;
-    }
+    // if (hG_->isAtPhase({P_CHAT_N})) {
+    //     onlyLogits = true;
+    // }
 
     shape = {nEmbd, padded_nCls};
     rLoss = 1.0f / (B * T);  //* grad_accum_steps
@@ -301,22 +301,38 @@ floatLogits* Head4Token::fLogits(int flag) {
 bool Head4Token::BuildPrelogist(int flag) {
     typNUMBER tpL = typeid(floatLogits) == typeid(float) ? typNUMBER::F32 : typNUMBER::BF16, tpA = hFish->config.model.tpActivation;
     //  in some case(char based vocab), nCls<100, but buffer used in many place, like "assert(nTH * ldTH * sizeof(float) <= GTensor::buff_len)";"
-    int ldC   = std::max(padded_nCls, latent * 2);
-    SHAPE sp3 = {dB, T, ldC};
+    int ldC = std::max(padded_nCls, latent * 2);
     if (/*hFish->isLocalInfer &&*/ hFish->isAtPhase(P_CHAT_1)) {
         preLogits = GT(hFish, tpL, {padded_nCls}, 0x0, "preLogits");
         // preLogits->flags |= GTensor::F_HOSTDATA;
         preLogits->Alloc(0x0, flag);
     } else {
+        SHAPE sp3 = {dB4Logits(), T, ldC};
         preLogits = std::make_shared<huTensor>(hFish, "preLogits", sp3, tpL, true);
     }
-    preLogits->host_data = new float[padded_nCls];  // always allocate this!
+    preLogits->host_data = new float[preLogits->nByte()];  // 0x000055555e9dee00
 
     GTensor::buff = preLogits->data;  // reused in many place!
     assert(GTensor::buff != nullptr);
     GTensor::buff_len = preLogits->nByte();
 
     return true;
+}
+
+// Big trouble! Need some new technique to relplace dB-split
+int Head4Token::dB4Logits(int flag) {
+    if (hFish->curTokenSet == nullptr) {    // no train/eval, just chat
+        /*if (hFish->config.model.preLogits_dB < 0)
+            dB4Logit = nMostSample;
+        else
+            dB4Logit = hFish->config.model.preLogits_dB;
+        assert(dB4Logit > 0);*/
+        return 1;
+    } else {
+        auto hBatch = hFish->curBatch(0x0);
+        assert(hBatch != nullptr && hBatch->dB4Logit > 0);
+        return hBatch->dB4Logit;
+    }
 }
 
 bool Head4Token::Build(int flag) {
@@ -329,7 +345,7 @@ bool Head4Token::Build(int flag) {
     BuildPrelogist(0x0);
     nzLoss   = B * T;
     hostLoss = new float[nzLoss];
-    // isTarget_1 always true @SampLoader::Samp2Batch
+    // isTarget_1 always true @SampNanny::Samp2Batch
     target = std::make_shared<huTensor>(hFish, "target", sp2, typNUMBER::I32, false);
     target->Alloc();
     // hFish->InitGensor(nullptr,"target",target,false);
@@ -343,7 +359,7 @@ bool Head4Token::Build(int flag) {
     hFish->loss = out;  //
     // proj.B = dB;
     proj.BuildX(name, {shape[1], shape[0]}, hFish, flag | F_DELTA);
-    proj.b = nullptr, proj.B = dB;
+    proj.b = nullptr, proj.B = dB4Logits();
     // proj.InitCompression(COMPRESSIVE_SENSING::LORA);     //Very large gradient ,so strange!
 
     if (!hFish->config.model.isEmbedWeightTying) {
@@ -365,7 +381,7 @@ bool Head4Token::Build(int flag) {
 hGTensor Head4Token::Ming(RLS_BP* ctx_, hGTensor inpL, int flag) {
     GeNeuron::BeforeMing(ctx_, nullptr, flag);
 
-    int n_batch = hFish->config.n_batch(), n_ctx = hFish->config.n_ctx();
+    // int n_batch = hFish->config.n_batch(), n_ctx = hFish->config.n_ctx();
     hGTensor cur = nullptr;
 
     if (hFish->isSymbolic()) {
@@ -386,7 +402,7 @@ string Head4Token::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]  = "\0";
     const char* tab = prefix.c_str();
     string sTyring  = hFish->config.model.isEmbedWeightTying ? "Tyring" : "";
-    sprintf(buf + strlen(buf), "%s Head4Token{dB=%d x=%d} %s %s", tab, dB, padded_nCls, sTyring.c_str(), onlyLogits ? "OnlyLogits" : "");
+    sprintf(buf + strlen(buf), "%s Head4Token{dB=%d x=%d} %s %s", tab, dB4Logits(), padded_nCls, sTyring.c_str(), "");
     if (flag > 0)
         _INFO("%s", buf);
     return buf;
@@ -590,7 +606,7 @@ ROPE::ROPE(SelfAttention* hQKV, const std::string& key_, int flag) : SparseNeuro
     // Build(flag);
     BuildX(name + ".ROPE", hQKV->spQ, hFish, flag);
     rRounding.Init(907);
-    if (hFish->config.model.isQKNormal) {
+    if (hFish->config.model.QKNormal>0) {
         hnQ = &(hQKV->normQ), hnK = &(hQKV->normK);
     }
 }

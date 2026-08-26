@@ -89,7 +89,7 @@ int main(int argc, char* argv[]) {
 
         std::string prompt = LoadSomeText("/home/cys/rnd/lic/models/TinyStories-valid.txt", 64 * 1024);  // shakespeare.txt
         int nVocab = fish->nClass(), _nctx = fish->config.n_ctx(), i, j, nz = 0;
-        hSampLoader hLoader = hOPT->val_loaders[0];
+        hSampNanny hLoader = tsEval[0]->loader;
         if (hLoader->num_batches <= 0) {
             hLoader->InitOneSamp(prompt, nullptr, fish.get(), 0x110);
         }

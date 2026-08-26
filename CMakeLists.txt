@@ -60,7 +60,7 @@ add_compile_definitions(_TENSOR_G_)
 find_package(Threads REQUIRED)
 
 if(K_USE_TILELANG)
-    set(TL_INC  ${CMAKE_SOURCE_DIR}/src/Device/tile_kernel/ /opt/cutlass/include) 
+    set(TL_INC  ${CMAKE_SOURCE_DIR}/src/Device/tile_kernel/ ./third_party/cutlass/include) 
     add_compile_definitions(__USE_TILELANG__)
     set(K_USE_CUDNN ON)
 else()

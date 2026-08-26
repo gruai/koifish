@@ -38,11 +38,7 @@ Tokenset_HellaSwag::Tokenset_HellaSwag(JSON::const_iterator jit, hTokenizer hDic
 }
 
 GlobTokenset::GlobTokenset(JSON::const_iterator jit, hTokenizer hDict, int flag) : DataTokenSet(hDict) {
-    header_bytes      = K_SHARD_HEADER_SIZE * sizeof(int);
-    int num_processes = 1, process_rank = 0;
-    B = hDict->config.n_batch(), T = hDict->config.n_ctx();
-    total_batch_size   = num_processes * (B * T);
-    local_batch_offset = process_rank * B * T;
+    header_bytes = K_SHARD_HEADER_SIZE * sizeof(int);
 
     auto k       = jit.key();
     auto v       = jit.value();
@@ -97,7 +93,7 @@ size_t DataTokenSet::nBatch(int flag) {
     return nBatches;
 }
 
-bool GlobTokenset::LoadNextShard(SampLoader* hLoader, int flag) {
+bool GlobTokenset::LoadNextShard(SampNanny* hLoader, int flag) {
     if (shard_index > 0)
         _INFO("-------- End of shard_%d@\"%s\"-------- \n", shard_index, shard_paths[shard_index - 1].c_str());
     if (shard_index == shard_paths.size()) {
@@ -202,8 +198,12 @@ bool GlobTokenset::Shard2Sample(int id, int flag) {
 }
 
 size_t GlobTokenset::OnShardFile(int id0, bool load, int flag) {
-    int id = id0;
-    id     = id0 % shard_paths.size();
+    int id = id0, num_processes = 1, process_rank = 0;
+    int B = hDict->config.n_batch(), T = hDict->config.n_ctx();
+    // local_batch_offset = process_rank * B * T;
+    total_batch_size = num_processes * (B * T);
+
+    id = id0 % shard_paths.size();
     if (isShuffle) {
     }
     if (id >= shard_paths.size()) {
@@ -225,7 +225,7 @@ size_t GlobTokenset::OnShardFile(int id0, bool load, int flag) {
         uint32_t header[K_SHARD_HEADER_SIZE];
         freadCheck(header, sizeof(int), K_SHARD_HEADER_SIZE, fpShard);
         if (header[1] != 1) {
-            _ERROR("Bad version<%d> of data file\n", header[1]);
+            _ERROR("Bad version<%d> of data file@\"%s\"\n", header[1], filename);
             K_EXIT(KOIFISH_LOAD_TOKENFILE_HEADER);
         }
         fseekCheck(fpShard, 0, SEEK_END);  // seek to end of file
@@ -360,9 +360,57 @@ bool DataTokenSet::Serialize(const std::string& path, bool isSave, int flag) {
         return false;
     }
 }
+/*
+double Tokenset_HellaSwag::LossOnResult(hSampNanny hLoader, Head4Token* cls, int flag) {
+    assert(cls != nullptr);
+    double mean_loss = 0, a = 0, a_0 = DBL_MAX;
+    // auto sp = hLoader->hostBatch->shape;
+    // auto config = hFish->config;
+    int nB = hLoader->B, nT = hLoader->T;  //,nB=sp[1],nT=sp[0]
+
+    int *mask = nullptr, n = 0, nzLoss = cls->nzLoss, i = 0, t, b = 0, q, no = -1, nOK = 0, nQ = 0, s = 0;
+    assert(nB % nMostCompletion == 0);
+
+    float* loss = cls->hostLoss;
+    TOKEN_ID token;
+    quesInBatch.clear();
+    while (s < hLoader->cur_samps.size()) {
+        auto samp          = hLoader->cur_samps[s];
+        hQuestion question = (hQuestion)(samp->target);
+        quesInBatch.push_back(question);
+        for (b = question->b0; b < question->b1; b++, s++) {
+            samp = hLoader->cur_samps[s];
+            assert(samp->target == question);
+        }
+
+        for (a_0 = DBL_MAX, no = -1, b = question->b0; b < question->b1; b++) {
+            for (a = 0, n = 0, t = 0; t < nT; t++, i++) {
+                if (!hLoader->isHostMask(i)) {
+                    continue;
+                }
+                a += loss[i];
+                n++;
+            }
+            assert(n > 0);
+            a /= n;
+            if (a < a_0) {
+                a_0 = a;
+                no  = b - question->b0;
+            }
+        }
+        if (no == question->label) {
+            nOK++;
+        }
+        nQ++;
+    }
+    assert(s == hLoader->cur_samps.size());
+    assert(nQ == nB / nMostCompletion);
+    mean_loss = nOK * 1.0 / nQ;
+    return mean_loss;
+}*/
 
 // for each batch @Head4Token::cuFlow
-float SampLoader::UpdateII(float mean_loss, int flag) {
+float SampNanny::UpdateII(float mean_loss, int flag) {
     Fish* hFish = dolphin;
     // float alpha4g = 1.0f, mean_loss = 0.0f, logprob = 0.f;
     Head4Token* cls   = hFish->GetNeuron<Head4Token>("Head4Token", 0);
@@ -386,56 +434,6 @@ float SampLoader::UpdateII(float mean_loss, int flag) {
     //     hChater gopt = hFish->GetGenerator();
     //     gopt->SampleOnBatch(embed->hBatch, hostLoss, B, T, this);  // 1479
     // }
-    return mean_loss;
-}
-
-double DataTokenSet::LossOnResult(hSampLoader hLoader, Head4Token* cls, int flag) {
-    assert(cls != nullptr);
-    double mean_loss = 0, sum = 0, ss = 0, ppl = 0, sigma = 0, logprob = 0;
-    hBATCH hBatch = hLoader->hBatch;
-    int *mask = hLoader->hBatch->mask32, n = 0, nzLoss = cls->nzLoss;
-    int nVocab = cls->nCls, ldP = cls->padded_nCls;
-    float* loss      = cls->hostLoss;
-    TOKEN_ID* labels = TO<TOKEN_ID>(hLoader->hBatch->hostLabel);  // hLoader->hBatch->hostToken
-    float* logits    = nullptr;
-
-    for (int i = 0; i < nzLoss; i++) {
-        if (BIT_TEST(mask[i], MASK_FLAG::F_IGNORE_LOSS)) {
-            assert(loss[i] == 0.0);
-            continue;
-        }
-        if (!isValidF(loss[i])) {
-            if (DEBUG.dump_LossDetail)
-                hLoader->hBatch->DumpX(labels, cls->hostLoss);
-            // TOKENS tokens(hBatch->host_toks, hBatch->host_toks + nzLoss);
-            // DumpTokens(hDict, tokens, -1);
-            hSAMP samp = hLoader->cur_samps[i / ldP];
-            samp->Dump(hDict, hLoader->GetTokens(), 0x0, "Invalid LossOnResult");
-            TOKEN_ID spot = hBatch->host_toks[i];
-            _ERROR("spot=%s(%d) loss=%g(%d)", hDict->Decode({spot}).c_str(), spot, loss[i], i);
-            K_EXIT_NOW(KOIFISH_INVALID_LOSS);
-        }
-
-        mean_loss += loss[i];
-        n++;
-
-        /*if (0) {  //  Debug_PPL   t=921 -10.825027195036846   [1.30967237e-09,...,2.09547579e-09]
-            if (logits == nullptr)
-                logits = cls->fLogits();
-            logprob = log(P_softmax(tokens[i], logits + ldP * i, nVocab));
-            assert(fabs(logprob + loss[i]) < 1.0e-5 * fabs(logprob));
-        } else*/
-        {
-            logprob = -loss[i];
-        }
-        sum += logprob;
-        ss += logprob * logprob;
-        ppl   = exp(-sum / n);
-        sigma = ppl * sqrt((ss - sum * sum / n) / n / n);
-    }
-    assert(n > 0);
-    mean_loss /= n;
-    hLoader->UpdateII(mean_loss, 0x0);
     return mean_loss;
 }
 
@@ -517,14 +515,15 @@ bool Tokenset_HellaSwag::Shard2Sample(int id, int flag) {
 }
 
 /*
-    A lite version of Optimizer::Evaluate
+    kernel of Fish-Evaluate
  */
-double SampLoader::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
-    assert(hOPT != nullptr);
+double SampNanny::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
+    // assert(hOPT != nullptr);
     Fish* hFish  = dolphin;
     RLS_BP* hRLS = hFish->GetScheduler<RLS_BP>();
     double tic = GST_ms(), tps, tRemain = 0.0, tpi = 0, relax = 0.9, dt, tCur, tLast;
-    int i, nB = 0, step = StepOfEvaluate(), iter = hOPT->GetITER(), nMost = CEIL_DIV(num_batches, step);
+    int i, nB = 0, step = StepOfEvaluate(), nMost = CEIL_DIV(num_batches, step);
+    int iter = hOPT != nullptr ? hOPT->GetITER() : 0;
     switch (tpBatch) {
         case BATCHofEMBED:
             nMost = 1;
@@ -535,8 +534,7 @@ double SampLoader::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
     // double a, a0 = DBL_MAX, a1 = -DBL_MAX, mean_loss = 0, ss = 0, sigma, sum = 0;
     hGTensor target_label = hFish->Target();
     Head4Token* cls       = hFish->GetNeuron<Head4Token>("Head4Token", 0);
-    cls->hLoader          = shared_from_this();
-    TokenEmbed* embed     = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
+    // cls->hLoader          = shared_from_this();
     // hSAMP samp = nullptr;
     next_sample = 0;  // fix this to keep same acc on each experiment
     nEvalTokens = 0;
@@ -545,11 +543,9 @@ double SampLoader::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
     for (int i = 0; i < nMost; i++) {
         if (tpBatch == SAMPLEofSHARD)
             CollateBatch(min(i * step, num_batches), hFish);
-        embed->hBatch = GetCurBatch();
-        cls->hBatch   = GetCurBatch();
         hFish->ForwardOnRLS(iter, 0x0);
-        hDaTokens->LossOnResult(shared_from_this(), cls);  // mean_loss = hLoader->UpdateII(hostLoss, B, T, 0x0);
-        nEvalTokens += embed->hBatch->nFillTokens(), nB++;
+        LossOnResult(hFish);  // mean_loss = hLoader->UpdateII(hostLoss, B, T, 0x0);
+        nEvalTokens += hBatch->nFillTokens(), nB++;
         tCur = GST_ms(), dt = tCur - tLast, tLast = tCur;
         tpi = tpi * (1.0 - relax) + dt * relax, tRemain = (nMost - i) * tpi;  //  ms
         if (i % 10 == 0 && tRemain > 60 * 1000) {
@@ -558,10 +554,6 @@ double SampLoader::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
         }
         if ((tCur - tic) / 1.0e3 > DEBUG.Time_most)
             break;
-        // if (DEBUG.eval_Generate > 0) {
-        //     hChater gopt = hFish->GetGenerator();
-        //     gopt->SampleOnBatch(embed->hBatch);  // 1479
-        // }
     }
 
     // _INFO("\n\t");
@@ -581,8 +573,6 @@ double SampLoader::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
             assert(0);
             break;
     }
-    // if (!hFish->isLocalInfer)
-    //     UpdateStepInfos(iiLoss.average, nB);
 
     switch (tpBatch) {
         case BATCHofEMBED:
@@ -600,7 +590,72 @@ double SampLoader::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
     return iiLoss.average;
 }
 
-void SampLoader::UpdateStepInfos(float mean_loss, int nB, int flag) {
+double SampNanny::LossOnResult(Fish* hFish, int flag) {
+    assert(hFish==dolphin);
+    Head4Token* cls = hFish->GetNeuron<Head4Token>("Head4Token", 0);
+    assert(cls != nullptr);
+    double mean_loss = 0, sum = 0, ss = 0, ppl = 0, sigma = 0, logprob = 0;
+    int *mask = hBatch->mask32, n = 0, nzLoss = cls->nzLoss;
+    int nVocab = cls->nCls, ldP = cls->padded_nCls;
+    float* loss      = cls->hostLoss;
+    TOKEN_ID* labels = TO<TOKEN_ID>(hBatch->hostLabel);  // hBatch->hostToken
+    float* logits    = nullptr;
+    
+    // cur_samps[0]->Dump(hBatch->hFish, hDict, GetTokens(), 0x0, "Detail check");
+
+    for (int i = 0; i < nzLoss; i++) {
+        if (BIT_TEST(mask[i], MASK_FLAG::F_IGNORE_LOSS)) {
+            if (loss[i] != 0.0) {
+                _ERROR("SampNanny::LossOnResult loss[i]=%g", loss[i]);
+                if(!hFish->config.ckp_out.empty())  //ckp_err
+                    hFish->SaveTrain(hFish->config.ckp_out[0], false);
+                assert(0);
+            }
+            continue;
+        }
+        if (!isValidF(loss[i])) {
+            if (DEBUG.dump_LossDetail)
+                hBatch->DumpX(labels, cls->hostLoss);
+            // TOKENS tokens(hBatch->host_toks, hBatch->host_toks + nzLoss);
+            // DumpTokens(hDict, tokens, -1);
+            hSAMP samp = cur_samps[i / ldP];
+            samp->Dump(hBatch->hFish, hDict, GetTokens(), 0x0, "Invalid LossOnResult");
+            TOKEN_ID spot = hBatch->host_toks[i];
+            _ERROR("spot=%s(%d) loss=%g(%d)", hDict->Decode({spot}).c_str(), spot, loss[i], i);
+            K_EXIT_NOW(KOIFISH_INVALID_LOSS);
+        }
+
+        mean_loss += loss[i];
+        n++;
+
+        /*if (0) {  //  Debug_PPL   t=921 -10.825027195036846   [1.30967237e-09,...,2.09547579e-09]
+            if (logits == nullptr)
+                logits = cls->fLogits();
+            logprob = log(P_softmax(tokens[i], logits + ldP * i, nVocab));
+            assert(fabs(logprob + loss[i]) < 1.0e-5 * fabs(logprob));
+        } else*/
+        {
+            logprob = -loss[i];
+        }
+        sum += logprob;
+        ss += logprob * logprob;
+        ppl   = exp(-sum / n);
+        sigma = ppl * sqrt((ss - sum * sum / n) / n / n);
+    }
+    assert(n > 0);
+    mean_loss /= n;
+    // UpdateII(mean_loss, 0x0);
+    ppl = exp(mean_loss);
+    iiLoss.Add(mean_loss);
+    iiPPL.Add(ppl);
+
+    iiLoss.Stat();
+    iiPPL.Stat();
+
+    return mean_loss;
+}
+
+void SampNanny::UpdateStepInfos(float mean_loss, int nB, int flag) {
     int iter = hOPT->GetITER(), nFuyou = dolphin->nFuyou(1);
     float last          = stepis.Last();  // Loss@Evaluation=7.302641 T=0.232s ======
     float train_last    = hOPT->trainInfos().Last();
@@ -627,54 +682,6 @@ void SampLoader::UpdateStepInfos(float mean_loss, int nB, int flag) {
     string sX = "_loss=" + std::to_string(mean_loss);
 
     stepis.SaveToCSV("_info_.csv");
-}
-
-double Tokenset_HellaSwag::LossOnResult(hSampLoader hLoader, Head4Token* cls, int flag) {
-    assert(cls != nullptr);
-    double mean_loss = 0, a = 0, a_0 = DBL_MAX;
-    // auto sp = hLoader->hostBatch->shape;
-    // auto config = hFish->config;
-    int nB = hLoader->B, nT = hLoader->T;  //,nB=sp[1],nT=sp[0]
-
-    int *mask = nullptr, n = 0, nzLoss = cls->nzLoss, i = 0, t, b = 0, q, no = -1, nOK = 0, nQ = 0, s = 0;
-    assert(nB % nMostCompletion == 0);
-
-    float* loss = cls->hostLoss;
-    TOKEN_ID token;
-    quesInBatch.clear();
-    while (s < hLoader->cur_samps.size()) {
-        auto samp          = hLoader->cur_samps[s];
-        hQuestion question = (hQuestion)(samp->target);
-        quesInBatch.push_back(question);
-        for (b = question->b0; b < question->b1; b++, s++) {
-            samp = hLoader->cur_samps[s];
-            assert(samp->target == question);
-        }
-
-        for (a_0 = DBL_MAX, no = -1, b = question->b0; b < question->b1; b++) {
-            for (a = 0, n = 0, t = 0; t < nT; t++, i++) {
-                if (!hLoader->isHostMask(i)) {
-                    continue;
-                }
-                a += loss[i];
-                n++;
-            }
-            assert(n > 0);
-            a /= n;
-            if (a < a_0) {
-                a_0 = a;
-                no  = b - question->b0;
-            }
-        }
-        if (no == question->label) {
-            nOK++;
-        }
-        nQ++;
-    }
-    assert(s == hLoader->cur_samps.size());
-    assert(nQ == nB / nMostCompletion);
-    mean_loss = nOK * 1.0 / nQ;
-    return mean_loss;
 }
 
 Tokenset_JSONL::Tokenset_JSONL(JSON::const_iterator jit, hTokenizer hDict, const string& format_, int flag) : GlobTokenset(jit, hDict, flag) {
@@ -908,7 +915,7 @@ bool Tokenset_JSONL::Shard2Sample(int id, int flag) {
             hSAMP hSamp    = new SAMP(chatml.start, curT.size(), nPad);
             hSamp->answers = chatml.answers;
             if (shard_samps.size() <= 8 /*|| hSamp->pos == 3376*/)
-                hSamp->Dump(hDict, tokens, 0x0);
+                hSamp->Dump(nullptr, hDict, tokens, 0x0);
             shard_samps.push_back(hSamp);
 
             // if (messages.size() % 20 == 0) {
@@ -933,14 +940,17 @@ bool Tokenset_JSONL::Shard2Sample(int id, int flag) {
     }
 }
 
-void SAMP::Dump(hTokenizer hDict, const TOKENS& tokens, int type, const std::string& desc, int flag) {
+void SAMP::Dump(Fish* hFish, hTokenizer hDict, const TOKENS& tokens, int type, const std::string& desc, int flag) {
     int nValidLen = len - pad_len;
     size_t start  = pos;
     if (type == 0x100)
         start = 0;
+
     assert(start + nValidLen <= tokens.size());
     TOKENS samp_tokens(tokens.begin() + start, tokens.begin() + start + nValidLen);
-    DumpTokens(hDict, samp_tokens, 0, flag);
+
+    int nX = hFish != nullptr && hFish->isModel({NLP_SCORE_}) ? -1 : 0;
+    DumpTokens(hDict, samp_tokens, nX, flag);
     _INFO("\n ------ range=[%lld:%lld pad=%lld] turn=%lld", pos, pos + nValidLen, pad_len, answers.size());
     if (answers.size() > 0) {  // multi_turn
         for (auto [a, b] : answers) {
@@ -950,7 +960,7 @@ void SAMP::Dump(hTokenizer hDict, const TOKENS& tokens, int type, const std::str
         }
         _INFO("\n");
     } else {
-        assert(0);
+        // assert(0);
     }
     _INFO(" ------ %s", desc.c_str());
 }
@@ -969,14 +979,16 @@ void DumpTokens(hTokenizer hDict, const TOKENS& tokens, int nX, int flag) {
         pos += 2;  // skip the inserted "\n"
     }
     _INFO("[%s]\n{'input_ids': tensor([[", msg.c_str());
-    int i = 0;
-    for (auto id : tokens) {
-        _INFO("%7d,", id);
-        if (++i % 9 == 0)
-            _INFO("\n");
-        if (id == PAD_ID) {
-            _INFO("%7d <pad>...", id);
-            break;
+    if (nX >= 0) {
+        int i = 0;
+        for (auto id : tokens) {
+            _INFO("%7d,", id);
+            if (++i % 9 == 0)
+                _INFO("\n");
+            if (id == PAD_ID) {
+                _INFO("%7d <pad>...", id);
+                break;
+            }
         }
     }
     _INFO("]]),\n");

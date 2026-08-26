@@ -413,7 +413,7 @@ hGTensor GENSOR_TOPU::Get(MODEL_ARCH arch, const string& name, int flag) {
             for (auto ng : nag) {
                 _INFO("\t%s,", ng.first.c_str());
             }
-            return nullptr;
+            return  nullptr;
         }
         return nag[key];
     }  //  model.layers.0.input_layernorm.weight

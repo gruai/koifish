@@ -82,7 +82,7 @@ SelfAttention::SelfAttention(Fish* hG_, const std::string& key_, JSON::const_ite
     isSeparateQKV = hFish->config.model.isSeparateQKV;
     isBqkv        = hFish->config.model.isBqkv;
 
-    isQKNormal    = hFish->config.model.isQKNormal;
+    isQKNormal    = hFish->config.model.QKNormal > 0;
     isNormalOutpu = hFish->isModel({NLP_BITNET});
 
     // dump_flag = -1;
@@ -121,7 +121,7 @@ bool SelfAttention::Build(int flag_0) {
         Q.BuildX(name + "_qkv", {shape[0], shape[1] * 3}, hFish, flag);
     }
     if (hFish->isAtPhase(LIFE_PHASE::P_CHAT_1)) {
-        qk_v = std::make_shared<huTensor>(hFish, name + ".qk_v", (SHAPE){n_head, hFish->config.chat_sampler.seq_len}, tpWeight, false);
+        qk_v = std::make_shared<huTensor>(hFish, name + ".qk_v", (SHAPE){n_head, hFish->curChatLen(LIMIT)}, tpWeight, false);
     } else {
         qk_v = std::make_shared<huTensor>(hFish, name + ".qk_v", (SHAPE){B, T, q_dim}, tpWeight, false);  // B * T * C
     }
@@ -238,7 +238,8 @@ string SelfAttention::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]  = "\0";
     const char* tab = prefix.c_str();
     string a, sRope = rope == nullptr ? "" : rope->__repr__(a, a, flag);
-    sprintf(buf + strlen(buf), "{%s QKV%s%s E%d H%d x=%d trans=%d %s}", tab, moe.Empty() ? "" : "+moe", sRope.c_str(), n_embd, n_head, tpNormal, tpTrans,
+    string sCausal = hFish->config.model.isCausalMask ? "" : "+diffusion";
+    sprintf(buf + strlen(buf), "{%s QKV%s%s E%d H%d x=%d trans=%d %s}", tab, sCausal.c_str(), moe.Empty() ? "" : "+moe", sRope.c_str(), n_embd, n_head, tpNormal, tpTrans,
             bqkv == nullptr ? "" : "bqkv");
     if (flag > 0)
         _INFO("%s", buf);
@@ -1081,10 +1082,7 @@ bool TGraph::isSink(hGTensor node, int flag) {
 }
 
 int Fish::BuildComputeGraph(int order, void* ctx, int flag) {
-    const int N = config.n_ctx(), n_past = 0;
-    if (N == 19) {
-        DEBUG_HERE;
-    }
+    const int n_past = 0;
 
     if (order >= 0) {  // order<0: we have build it in other way
         hForwTG->PushBack(out_node);

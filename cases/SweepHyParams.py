@@ -211,18 +211,18 @@ def pangpi_one(title, sExe, sArgs, path="./tests/", most_iter=-1):
     
     return dfLoss, exit_code
 
-def bubble_one(title,  sArgs, sExe ="./bin/bubble ", path="./tests/", most_iter=-1):    
+def bubble_one(title,  sArgs, sExe ="./bin/bubble ", path="./tests/", most_iter=-1, fResult = 'chat.csv'):    
     sOutput = title+".info"   
     cmd = sExe + sArgs + "> "+path+sOutput + " 2>&1"        # cmd = sExe+ path+title+".json 2>&1 | tee "+path+sOutput 
     print(f"[{title}]\t{cmd} ...")    
 
-    if os.path.exists('chat.csv'):
-        os.remove('chat.csv')
+    if os.path.exists(fResult):
+        os.remove(fResult)
     exit_code = os.system(cmd)
-    if not os.path.exists('chat.csv'):
+    if not os.path.exists(fResult):
         return ""
     try:
-        with open('chat.csv', 'r', encoding='utf-8', errors='replace') as file:
+        with open(fResult, 'r', encoding='utf-8', errors='replace') as file:
             content = file.read()  # 读取全部内容（返回字符串）
         print(content)    
         lines = content.splitlines()

@@ -98,6 +98,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
 
     //  Ref: 1. isAtPhase 2.SetPhase
     LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;
+    LIFE_PHASE outer_phase = LIFE_PHASE::P_TRAIN;
 
     hTGraph hForwTG = nullptr, hBackTG = nullptr;
     int graph_order = -1, graph_update = -1;
@@ -139,11 +140,13 @@ class Fish : public std::enable_shared_from_this<Fish> {
     MixOfSwarm mos;
     // Fish can talk, at least it would bubble...
     hTokenizer hDict = nullptr;
-    virtual bool InitDictTokenset(int flag = 0x0);
+    virtual bool InitTokenCoral(int flag = 0x0);
     // DataTokens tokenset;
-    hDataToken tsTrain = nullptr;  //  always only 1 train set!
-    hDataToken tsCalib = nullptr;  //  May have 1 calib set!
-    DataTokens tsEval;             //  support multiple eval set!
+    hDataToken tsTrain     = nullptr;  //  always only 1 train set!
+    hDataToken tsCalib     = nullptr;  //  May have 1 calib set!
+    hDataToken tsX      = nullptr;  //  
+    hDataToken curTokenSet = nullptr;  //  always has one
+    DataTokens tsEval;                 //  support multiple eval set!
 
     hOptimizer hOPT;
 
@@ -215,7 +218,13 @@ class Fish : public std::enable_shared_from_this<Fish> {
         }
         return false;
     }
-    virtual bool SetPhase(LIFE_PHASE phase_, int flag = 0x0);
+    virtual bool SetPhase(LIFE_PHASE phase_, LIFE_PHASE outer=P_X, int flag = 0x0);
+
+    // [todo] refactor with curContextLen/curChatLen
+    virtual void GetNeuronBT(int& B, int& T, int flag = 0x0) const;
+    hBATCH curBatch(int, int flag = 0x0);
+    int curContextLen(CHAT_LENGTH_TYPE type = CHAT_LENGTH_TYPE::RECOMMEND) const;  // for train/infer/chat ...
+    int curChatLen(CHAT_LENGTH_TYPE type = CHAT_LENGTH_TYPE::RECOMMEND) const;     // max_sequence_length for chat
     CHAT_MODE ChatMode(int flag = 0x0) const {
         if (gopt == nullptr)
             return CHAT_MODE::YABA;
@@ -250,12 +259,12 @@ class Fish : public std::enable_shared_from_this<Fish> {
         assert(gopt != nullptr);
         return gopt;
     }
-    hBATCH GetCurBatch(bool isUpate, int flag = 0x0);
+
     int GetCurIter(int flag = 0x0) const;
     const CheckPoint_Params& SnapShot(int flag = 0x0) const;
     // if type<0 return afu
     hFuyou GetFuyou(int no, int flag = 0x0) const;
-    // Fish can talk, at least it would bubble...
+    // all tokenCoral(train/eval/chat/...) should have same tokennizer
     hTokenizer GetTokenizer(int flag = 0x0) const {
         assert(hDict != nullptr);
         return hDict;
@@ -285,8 +294,6 @@ class Fish : public std::enable_shared_from_this<Fish> {
     }
 
     virtual bool Init(const vector<hWIKI>& wikis, int flag = 0x0) { throw "Fish::Init is ..."; }
-    // shortcut parameter of LLM models
-    virtual void GetBT(int& B, int& T, int flag = 0x0) const;
 
     virtual hKVCache curCache(int flag = 0x0) { return hCache; }
     virtual void* GetGGCTX(int typ = 0x0) {
@@ -411,10 +418,12 @@ class Fish : public std::enable_shared_from_this<Fish> {
     virtual void Sparsing(int flag = 0x0);
 
     virtual bool BeforeNextStep(int iter, int flag = 0x0);
+
+    // 1.chat 2.savetrain
     virtual bool AfterNextStep(int iter, int flag = 0x0);
 
-    virtual int Chat(int enable_thinking, LIFE_PHASE outer_phase, int flag = 0x0);
-    virtual float Evaluate(DL_BATCH_UPATE tpBatch, int flag = 0x0);
+    virtual int Chat(int type, int flag = 0x0);
+
     virtual int ForwardOnRLS(int iter, int flag);
     virtual int BackwardOnRLS(int iter, int flag);
 
@@ -424,11 +433,12 @@ class Fish : public std::enable_shared_from_this<Fish> {
     virtual int jToGraph(void*, bool isBuild, int flag = 0x0);
 
     virtual void Train(int flag = 0x0);
+    virtual float Evaluate(std::vector<hDataToken>, DL_BATCH_UPATE tpBatch, int flag = 0x0);
     virtual void Loss(int flag = 0x0) {}
     virtual double Eval_ppl(int flag = 0x0);
 
     virtual void CopyWeight(const Fish* src, int flag = 0x0);
-    virtual bool LocalFeeling(hSampLoader hLoader, vector<float>& result, int flag = 0x0) { return false; }
+    virtual bool LocalFeeling(hSampNanny hLoader, vector<float>& result, int flag = 0x0) { return false; }
 
     virtual bool isValid() { return true; }
 
@@ -464,7 +474,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     friend class Distillation;
     friend class DictVAE;
     friend class GeneratOnPrompt;
-    friend class SampLoader;
+    friend class SampNanny;
     friend class WIKI;
     friend class KVCache;
     friend class TGraph;

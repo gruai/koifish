@@ -643,7 +643,7 @@ __global__ void CU_rope_rmsnormal_forw(Typ* qk, const Typ* weight, int pos, int 
     1. dX0 may same as dY0
 */
 hGTensor ROPE::cuInfer(SelfAttention* hQKV, uint32_t seed, int pos, int flag) {
-    hFish->GetBT(B, T);
+    hFish->GetNeuronBT(B, T);
     size_t nToken = B * T;
     assert(nToken == 1);
     floatX *q = ToX(hQKV->Q.out), *k = ToX(hQKV->K.out);
@@ -728,15 +728,16 @@ __global__ void CU_rope_rmsnormal_back(Typ* dX0, Typ* dWeight0, const Typ* dY0, 
 }
 
 /**fuse normal to rope, may reduce time
- * 1. Order 
- *      RoPE → QK Norm is the current practical default and usually more stable.​ QK Norm → RoPE is mathematically cleaner but more sensitive to initialization.
- *  */ 
+ * 1. Order
+ *      RoPE → QK Norm is the current practical default and usually more stable.​ QK Norm → RoPE is mathematically cleaner but more sensitive to
+ * initialization.
+ *  */
 int ROPE::cuFlow(SelfAttention* hQKV, uint32_t seed, bool isFX, int flag) {
     if (hFish == nullptr)  // some models(GPT2) don't need rope
         return 0x0;
 
     INSPECT_THIS;
-    hFish->GetBT(B, T);
+    hFish->GetNeuronBT(B, T);
     dim3 blocks_q(B, T, n_head), blocks_k(B, T, n_head_kv), blocks(B, T);
     // size_t smemPB = 1024 * sizeof(float);
     floatX *q = ToX(hQKV->Q.out), *k = ToX(hQKV->K.out);  // *freqs = ToX(hSin);
@@ -784,7 +785,8 @@ int ROPE::cuFlow(SelfAttention* hQKV, uint32_t seed, bool isFX, int flag) {
         //
         // SYNC_STREAM();
     }
-    hQKV->Q.out->Print("Q.rope", 0x0, dump_flag);  hQKV->K.out->Print("K.rope", 0x0, dump_flag);
+    hQKV->Q.out->Print("Q.rope", 0x0, dump_flag);
+    hQKV->K.out->Print("K.rope", 0x0, dump_flag);
     // PrintTensor<floatX>("q_0.rope", (floatX*)q, true, 1, 1, q_dim, 1, dump_flag);
     // PrintTensor<floatX>("k_0.rope", (floatX*)k, true, 1, 1, kv_dim, 1, dump_flag);
     // PrintTensor<floatX>("q_1.rope", (floatX*)q + q_dim, true, 1, 1, q_dim, 1, dump_flag);

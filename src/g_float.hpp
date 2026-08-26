@@ -207,7 +207,9 @@ typNUMBER tpNumOf(const std::string& dtype_str);
     FP16/BF16/FP8/FP4 from different vendors
     floatX - type of Activatioin/tmp
 */
+#ifndef _USE_CUDA_FLOAT_
 #define _USE_CUDA_FLOAT_
+#endif
 // #undef _USE_CUDA_FLOAT_
 #if defined(_USE_CUDA_FLOAT_)
 

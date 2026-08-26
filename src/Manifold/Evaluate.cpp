@@ -49,7 +49,7 @@ int Fish_ppl(CLI_params& config) {
     uint64_t rng_seed  = 42;
     std::string prompt = LoadSomeText("/home/cys/rnd/lic/models/TinyStories-valid.txt", 64 * 1024);  // shakespeare.txt
     int nVocab = fish->config.model.pad_vocab_size, _nctx = fish->config.n_ctx(), i, j;
-    hSampLoader hLoader = hOPT->val_loaders[0];
+    hSampNanny hLoader = nullptr;  //  fish->tsEval[0]->loader;
     if (hLoader->num_batches <= 0) {
         hLoader->InitOneSamp(prompt, nullptr, fish.get(), 0x110);
     }
@@ -99,7 +99,7 @@ double Fish::Eval_ppl(int flag) {
     RLS_BP* hRLS       = GetScheduler<RLS_BP>();
     std::string prompt = LoadSomeText("/home/cys/rnd/lic/models/TinyStories-valid.txt", 64 * 1024);  // shakespeare.txt
     int nVocab = config.model.pad_vocab_size, _nctx = config.n_ctx(), i, j;
-    hSampLoader hLoader = hOPT->val_loaders[0];
+    hSampNanny hLoader = tsEval[0]->loader;
     if (hLoader->num_batches <= 0) {
         hLoader->InitOneSamp(prompt, nullptr, this, 0x110);
     }

@@ -168,7 +168,7 @@ void SparseNeuron::UpdateSamps(int seed, int flag) {
     std::vector<int> samps;
     GRander rander(seed);
     if (1) {  // nearly same
-        hSampLoader sloader = hFish->GetOptimizer()->train_loader;
+        hSampNanny sloader = hFish->GetOptimizer()->train_loader;
         assert(sloader != nullptr);
         sloader->PickSomeTokens(rander, nSample, samps);
     } else {

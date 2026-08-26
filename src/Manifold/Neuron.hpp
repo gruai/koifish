@@ -725,7 +725,7 @@ typedef shared_ptr<MAEC> hMAEC;
     Each token is embed to latent vector
 */
 struct TokenEmbed : public SparseNeuron {
-    hBATCH hBatch        = nullptr;
+    // hBATCH hBatch        = nullptr;
     bool isEmbedWithNorm = false;
     LayerNormal lnW;  //, lnWInv;
     int *workload_indices = nullptr, nVocab = -1, latent, *hostID = nullptr, num_c_groups = -1, num_buckets = -1;
@@ -760,17 +760,17 @@ struct FFN_MOE : public FFN {
 };
 
 struct Head4Token : public SparseNeuron {
-    hBATCH hBatch               = nullptr;
+    // hBATCH hBatch               = nullptr;
     TOKEN_ID ignore_token       = uint32_t(-1);
     KERNEL_LIB_TYPE verHeadLoss = KERNEL_LIB_TYPE::CUDA;
     hMAEC maec;
     LayerNormal norm;
     SLP proj;
     TokenEmbed* hEmbed = nullptr;
-    // host version of target is SampLoader::hostLabel
+    // host version of target is SampNanny::hostLabel
     hGTensor target = nullptr;
 
-    bool onlyLogits = false;
+    // bool onlyLogits = false;
 
     /*
         1. Partial logits only contain dB samples at train stage!!! to reduce memory
@@ -782,8 +782,9 @@ struct Head4Token : public SparseNeuron {
     //  Deprecated!     device=>host    floatX=>float
     floatLogits* fLogits(int flag = 0x0);
     float metric[METRIC_MOST], *dev_metric = nullptr;
-    hSampLoader hLoader = nullptr;
-    int nCls = 0, dB = 1, nzLoss = 0, latent = 0;
+    // hSampNanny hLoader = nullptr;
+    int nCls = 0, nzLoss = 0, latent = 0;
+    int dB4Logits(int flag=0x0);        //  hBatch->dB4Logits
     int padded_nCls;  // padded to e.g. %128==0,
     float rLoss = 1.0, *hostLoss = nullptr;
     Head4Token() {}

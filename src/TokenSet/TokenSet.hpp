@@ -32,8 +32,12 @@ class Fish;
 class DataTokenSet;
 class Head4Token;
 typedef std::shared_ptr<DataTokenSet> hDataToken;
-class SampLoader;
-typedef shared_ptr<SampLoader> hSampLoader;
+class SampNanny;
+typedef shared_ptr<SampNanny> hSampNanny;
+
+// the type of tokenset/dataset
+enum DT_TYPE { DT_TRAIN = 1, DT_EVAL, DT_CHAT, DT_PREDICT, DT_MERGE };
+
 struct SAMP {
     size_t pos = 0, len = 0;   //  range is [pos,pos+len)
     size_t off_cycle     = 0;  // more random
@@ -41,17 +45,17 @@ struct SAMP {
     int pad_len          = 0;  // the length of last pad section
     TOKEN_ID last_target = (TOKEN_ID)(-1);
     std::string desc;
-    char* mask   = nullptr;
-    void* target = nullptr;
+
+    void* target = nullptr;     // for Tokenset_HellaSwag
     TOKENS_SECTION answers;  // for chatml-samp
-    // int label=-1;
+
 
     SAMP() {}
     SAMP(size_t p, size_t l, int nPad = 0) : pos(p), len(l), pad_len(nPad) { assert(pad_len < len); }
     virtual ~SAMP() {}
 
     bool Serialize(FSerial& S, bool isSave, int flag);
-    virtual void Dump(hTokenizer hDict, const std::vector<TOKEN_ID>& tokens, int type, const std::string& desc = "", int flag = 0x0);
+    virtual void Dump(Fish *hFish, hTokenizer hDict, const std::vector<TOKEN_ID>& tokens, int type, const std::string& desc = "", int flag = 0x0);
     virtual double UpdateTag(hDataToken hDT, int* tag, int step, bool flip, int flag = 0x0);
 
     static size_t HASH(const char* fn, const std::vector<SAMP*>& samps) {
@@ -81,6 +85,8 @@ class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
     };
 
    protected:
+    hSampNanny loader = nullptr;  //  Each tokenset has a unique samp_loader
+
     SAMPLE_TYPE tpSample = RANDOM_GENERATE;
     std::vector<string> shard_paths;
     int nMostShard  = -1;
@@ -113,30 +119,33 @@ class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
     }
     // int UniqueTokens(const std::vector<TOKEN_ID>& tokens,size_t n_1,int flag=0x0);
    public:
-    static std::tuple<hDataToken, std::vector<hDataToken>, hDataToken> MakeInstance(struct CLI_params& params, hTokenizer, bool isLocalInfer, int flag);
+    static std::tuple<hDataToken, std::vector<hDataToken>, hDataToken, hDataToken> MakeInstance(Fish* hFish, hTokenizer, bool isLocalInfer, int flag);
 
     std::vector<TOKEN_ID> tokens, tokens_mask;
     DataTokenSet(hTokenizer hDictVAE);
     virtual ~DataTokenSet();
     virtual bool Init(int flag = 0x0) { return true; }
+    virtual bool InitSampNanny(Fish* hFish, DT_TYPE type, int flag = 0x0);
+    // virtual hSampNanny GetSampNanny(int flag = 0x0) { return loader; }
+
     bool hasMask() { return tokens_mask.size() > 0; }
 
     TOKEN_ID At(size_t pos);
 
     bool Serialize(const std::string& path, bool isSave, int flag = 0x0);
-    virtual bool LoadNextShard(SampLoader* hLoader, int flag = 0x0) { return true; }
+    virtual bool LoadNextShard(SampNanny* hLoader, int flag = 0x0) { return true; }
     virtual bool Load(struct CLI_params& config, void* hLLM, int flag = 0x0);
     virtual void Append(TOKEN_ID id, int flag = 0x0);
     int UniqueTokens(size_t n_1, int flag = 0x0);
     bool InitSamps(unsigned context_length, std::vector<size_t>& samples_begin, std::vector<size_t>& samples_size, int flag = 0x0);
 
-    virtual double LossOnResult(hSampLoader hLoader, Head4Token* cls, int flag = 0x0);
-    // virtual double Evaluate(Fish *fish, hSampLoader loader0, int flag = 0x0);
+    
 
     friend class NLP_AutoRegressive;
     friend class Fish;
     friend class Optimizer;
-    friend class SampLoader;
+    friend class SampNanny;
+    friend class GeneratOnPrompt;
 };
 typedef std::vector<hDataToken> DataTokens;
 
@@ -157,11 +166,12 @@ class GlobTokenset : public DataTokenSet {
     virtual bool Shard2Sample(int id, int flag = 0x0);
     virtual bool GetShardInfo(int id, int flag = 0x0) { return false; }
     virtual size_t OnShardFile(int id, bool load = false, int flag = 0x0);
-    bool LoadNextShard(SampLoader* hLoader, int flag = 0x0) override;
+    bool LoadNextShard(SampNanny* hLoader, int flag = 0x0) override;
     size_t total_batch_size;    // total across all processes
-    size_t local_batch_offset;  // inner-sample offset for this process
+    // size_t local_batch_offset;  // inner-sample offset for this process
     size_t longest_example_bytes;
-    int header_bytes, B = -1, T = -1;  // header size in bytes
+    int header_bytes;
+    // int B = -1, T = -1;  // header size in bytes
     size_t szFile, nShardSamples = 0, nShardToks = 0;
 
    public:
@@ -191,7 +201,7 @@ class Tokenset_HellaSwag : public GlobTokenset {
         for (auto q : questions) delete q;
         questions.clear();
     }
-    double LossOnResult(hSampLoader hLoader, Head4Token* cls, int flag = 0x0) override;
+    // double LossOnResult(hSampNanny hLoader, Head4Token* cls, int flag = 0x0) override;
 };
 
 class Tokenset_JSONL : public GlobTokenset {

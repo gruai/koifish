@@ -108,6 +108,7 @@ class GTokenizer {
     int* toktypes = nullptr;
     // Dialect support
     bool isDialect = false;
+    bool isVirtual = false;
     std::map<TOKEN_ID, TOKEN_ID> mapT2T;
     std::vector<TOKEN_ID> dialect;
     // special_tokens support
@@ -162,7 +163,6 @@ class GTokenizer {
     virtual int STR2T(const std::string& txt) const { return -1; }
 
     virtual std::string T2STR(TOKEN_ID tok, int flag = 0x0) const { return Decode({tok}); }
-    virtual std::string T2STR(const std::vector<TOKEN_ID>& toks, int flag = 0x0) const { return Decode(toks); }
     virtual std::string T2STR(const int* arrT, int nTok, int flag = 0x0) const {
         std::vector<TOKEN_ID> toks(nTok);
         std::copy(arrT, arrT + nTok, toks.begin());
@@ -179,7 +179,7 @@ class GTokenizer {
     friend class Tokenset_HellaSwag;
     friend class Tokenset_JSONL;
     friend class GlobTokenset;
-    friend class SampLoader;
+    friend class SampNanny;
     friend class Fish;
     friend class NLP_AutoRegressive;
 };
@@ -255,6 +255,7 @@ class GTokenizer_GPT2 : public GTokenizer {
 class GTokenizer_CHARset : public GTokenizer {
    protected:
     std::vector<char> charset;
+    std::map<char, TOKEN_ID> mapC2T;
 
    public:
     GTokenizer_CHARset(Fish* nlp_, const std::vector<char>& charset, int flag = 0x0);
@@ -262,6 +263,8 @@ class GTokenizer_CHARset : public GTokenizer {
     int STR2T(const char* txt, int txt_len, std::vector<TOKEN_ID>& btch, int flag = 0x0) override;
     std::string T2STR(TOKEN_ID tok, int flag = 0x0) const override;
     bool isValid(bool allowEmpty, int flag) const override { return true; }
+    std::string Decode(const TOKENS& ids, bool skip_pad = true, bool skip_special_tokens = false) const override;
+    std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos = false, bool encode_eos = false) override;
 };
 
 class GTokenizer_Heap : public GTokenizer {

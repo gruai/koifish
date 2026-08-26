@@ -45,6 +45,7 @@ class GST_Application {
    protected:
     string name = "GST_Application";
     CLI_params params;
+    // CommandLine_parser cli_parser;
 
    public:
     GST_Application(int argc, char* argv[]);

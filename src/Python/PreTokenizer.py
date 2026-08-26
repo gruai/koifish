@@ -175,18 +175,25 @@ class TokenizedFile:
         self.lock = threading.Lock()
 
     def __enter__(self):
-        self.fd = os.open(self.file_name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
-        # self.fd = os.open(self.file_name, "wb+")
-        # reserve space for the file header
-        os.write(self.fd, ('*' * 1023 + '\n').encode("ascii"))
+        try:
+            self.fd = os.open(self.file_name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+            # self.fd = os.open(self.file_name, "wb+")
+            # reserve space for the file header
+            os.write(self.fd, ('*' * 1023 + '\n').encode("ascii"))
+        except OSError as e:
+            raise IOError(f"Failed to open file {self.file_name}: {e}")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.has_masks:
-            self._write_masks()
-        self._write_header()
-        os.close(self.fd)
-        self.fd = None
+        try:
+            if self.has_masks:
+                self._write_masks()
+            self._write_header()
+            os.close(self.fd)
+        except Exception as e:
+            print(f"Error during file close: {e}")
+        finally:
+            self.fd = None
 
     def add_document(self, tokens: np.ndarray, mask: Optional[np.ndarray] = None):
         assert self.fd is not None
@@ -195,15 +202,33 @@ class TokenizedFile:
         elif mask is None and self.has_masks is True:
             raise ValueError("Cannot add maskless tokens to a file that was created with masking enabled")
 
-        tokens = np.array(tokens , dtype=np.int32)
+        # tokens = np.array(tokens , dtype=np.int32)
+        if tokens is None:
+            raise ValueError("Tokens cannot be None")        
+        
+        try:# Convert to numpy array safely
+            if not isinstance(tokens, np.ndarray):
+                tokens = np.array(tokens, dtype=np.int32)
+            else:
+                tokens = tokens.astype(np.int32)
+        except Exception as e:
+            raise ValueError(f"Failed to convert tokens to numpy array: {e}")
         assert tokens.ndim == 1
 
         if mask is not None:
             assert len(mask) == len(tokens)
             self._record_mask(mask)
 
-        os.write(self.fd, tokens.tobytes())
-        # os.write(self.fd, memoryview(tokens))
+        # os.write(self.fd, tokens.tobytes())
+        try:   # Write tokens as bytes
+            bytes_written = os.write(self.fd, tokens.tobytes())
+            if bytes_written != len(tokens) * 4:  # int32 is 4 bytes
+                raise IOError(f"Failed to write all tokens. Wrote {bytes_written} bytes, expected {len(tokens) * 4}")
+        except OSError as e:
+            raise IOError(f"Failed to write tokens to file: {e}")
+        except Exception as e:
+            raise IOError(f"Unexpected error writing tokens: {e}")
+        
         self.toks += len(tokens)
         if self.toks >= 2**31:
             raise RuntimeError("cannot have more than 2**31 tokens in a single file")
@@ -585,10 +610,10 @@ def ProcessTextInChar(path, model, out_dir : Path, extra_tokens=["_"], split = 0
     train_data = data[:n]
     val_data = data[n:]
     out_dir = str(out_dir) +"/"
-    with TokenizedFile(model, out_dir + "_train.bin", vocab_size, masking=False) as f:
-            f.add_document(train_data)
-    with TokenizedFile(model, out_dir + "_val.bin", vocab_size, masking=False) as f:
-            f.add_document(val_data)
+    with TokenizedFile(model, out_dir + f"_train_{len(train_data)}.bin", vocab_size, masking=False) as f:
+        f.add_document(train_data)
+    with TokenizedFile(model, out_dir + f"_val_{len(val_data)}.bin", vocab_size, masking=False) as f:
+        f.add_document(val_data)
     print(f"ProcessDolly: to {out_dir}\n")
 
 def create_assistant_labels(tokenizer, input_ids, im_start, im_end):

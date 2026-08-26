@@ -40,7 +40,7 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_, int flag) {
     wikis = wikis_;
     hEDS  = EDGE_DEVICES::GetInstance(config);
     if (hDict == nullptr) {
-        if (!InitDictTokenset())  //
+        if (!InitTokenCoral())  //
             return false;
     }
     if (config.common.method == "muon")
@@ -71,9 +71,9 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_, int flag) {
 NLP_AutoRegressive::NLP_AutoRegressive(const std::string& nam_, struct CLI_params params, ROLE_TYPE role_, int flag) : Fish(nam_, params, role_) {
     if (!config.is({"wiki", "actor"}, "copy")) {
     }
-    config.ffn_use_gate = true;
-    int d               = config.Get({"model_v0", "attention", "dQKV"}, 4, false);
-    isAttOnBC           = d == 3;  // d=4 much faster,nearly same
+    // config.ffn_use_gate = true;
+    int d     = config.Get({"model_v0", "attention", "dQKV"}, 4, false);
+    isAttOnBC = d == 3;  // d=4 much faster,nearly same
 
     string sT = params.KV({"model_v0", "attention", "type"}, "QKV", false);
     tpATT     = sT == "brown" ? ATTENTION_TYPE::BROWN : sT == "off" ? ATTENTION_TYPE::OFF : ATTENTION_TYPE::QKVs;
@@ -236,37 +236,6 @@ void Fish::CopyWeight(const Fish* src, int flag) {
 #endif
 }
 
-/*
-    would affect training process?
-*/
-bool NLP_AutoRegressive::LocalFeeling(hSampLoader hLoader, vector<float>& result, int flag) {
-    assert(hOPT != nullptr);
-    auto preLogits = hCLS->preLogits;
-    assert(hLoader->shard_samps.size() == 1);
-    auto hSamp = hLoader->shard_samps[0];
-    int i, nTok = hSamp->len, _nctx = config.n_ctx();
-    // assert(!hDictVAE->hDict->tokenizer_add_bos);
-    SetPhase(LIFE_PHASE::P_EVAL_);
-    hOPT->EvaluateSamps(hLoader, -666);
-    if (DUMP())
-        _INFO("\t%s @\"%s\"\n", __func__, hLoader->sentence.c_str());
-    assert(preLogits->type == typNUMBER::F32);
-    assert(preLogits->ne[1] == nTok + 1);                           //???
-    size_t nz = tELEM(preLogits), nVocabInWiki = preLogits->ne[0];  // preLogits->nb[0];
-
-    // out is last distribution of Causal Language Modeling
-    size_t off = (nTok)*nVocabInWiki;
-    float* out = (float*)(preLogits->data) + off;
-    if (result.size() != nVocabInWiki) {
-        result.clear();
-        result.resize(nVocabInWiki);
-    }
-    memcpy(result.data(), out, sizeof(float) * nVocabInWiki);
-    float sum = 0;
-    for (auto f : result) sum += f;
-    return true;
-}
-
 size_t NLP_AutoRegressive::nClass() const {
     int nClass = config.model.pad_vocab_size;
     assert(hDict != nullptr);
@@ -283,7 +252,6 @@ hGTensor Fish::BuildLoss(void* ctx, hGTensor cur, int flag) {
         out_node = cur;
         return cur;
     }
-    int n_ctx = config.n_ctx(), nCls = nClass(), n_batch = config.n_batch();
 
     // cuLiteTest(B,T,C);
 
@@ -310,8 +278,8 @@ std::string NLP_AutoRegressive::T2STR(const std::vector<TOKEN_ID>& toks, int nMo
     return str;
 }
 
-bool NLP_AutoRegressive::InitDictTokenset(int flag) {
-    if (!Fish::InitDictTokenset(flag))
+bool NLP_AutoRegressive::InitTokenCoral(int flag) {
+    if (!Fish::InitTokenCoral(flag))
         return false;
 
     // hDictVAE        = std::make_shared<DictVAE>(this);
@@ -319,7 +287,7 @@ bool NLP_AutoRegressive::InitDictTokenset(int flag) {
     // assert(hDictVAE != nullptr && hDictVAE->isValid());
     return true;
 }
-bool Fish::InitDictTokenset(int flag) {
+bool Fish::InitTokenCoral(int flag) {
     void* hLLM = nullptr;
     // hDict = std::make_shared<GTokenizer>(this);     //  entence != prompt
     // hDict = std::make_shared<GTokenizer_Heap>(this);
@@ -363,11 +331,14 @@ bool Fish::InitDictTokenset(int flag) {
             hDict = std::make_shared<GTokenizer_QWEN3>(this);
             break;
         case MODEL_ARCH::NLP_SCORE_: {
-            // if (DEBUG.VocabIsCharset) {
-            //     std::vector<char> charset;
-            //     hDict = std::make_shared<GTokenizer_CHARset>(this, charset);
-            // }
-            hDict = std::make_shared<HF_Tokenizer>(this);
+            if (config.dict_type == "charset") {  // DEBUG.VocabIsCharset
+                std::vector<char> charset;
+                hDict                       = std::make_shared<GTokenizer_CHARset>(this, charset);
+                config.model.pad_vocab_size = hDict->nVocab();
+                config.model.isFFNGate      = false;
+                // config.chat_sampler.top_k   = 25;
+            } else
+                hDict = std::make_shared<HF_Tokenizer>(this);
         } break;
         case MODEL_ARCH::NLP_BITNET:
             hDict = std::make_shared<HF_Tokenizer>(this);
@@ -385,20 +356,38 @@ bool Fish::InitDictTokenset(int flag) {
     }
     hDict->CheckSpecialTokens(true);
     // hDict->DoSomeTest(flag);
-    auto [tsTrain_, tsEval_, tsCalib_] = DataTokenSet::MakeInstance(config, hDict, isLocalInfer, 0x0);
-    tsTrain = tsTrain_, tsEval = tsEval_, tsCalib = tsCalib_;
+    auto [tsTrain_, tsEval_, tsCalib_, tsX_] = DataTokenSet::MakeInstance(this, hDict, isLocalInfer, 0x0);
+    tsTrain = tsTrain_, tsEval = tsEval_, tsCalib = tsCalib_, tsX = tsX_;
 
     if (isTrain()) {
         assert(tsTrain != nullptr && "Train tokensets is nullptr!");
         if (tsTrain != nullptr && tsTrain->nMostTok > 0)
             config.OnMostToken(tsTrain->nMostTok);
     }
-
+    switch (phase) {
+        case P_CHAT_N:
+        case P_CHAT_1:
+            curTokenSet = nullptr;  // should be gopt->tsChat
+            break;
+        case P_TRAIN:
+            curTokenSet = tsTrain;
+            break;
+        case P_SFT:
+            curTokenSet = tsTrain;
+            break;
+        case P_EVAL_:
+            curTokenSet = tsEval_[0];
+            break;
+        default:
+            assert(0);
+            break;
+    }
+    // assert(curTokenSet != nullptr);
     return true;
 }
 
 bool NLP_AutoRegressive::InitInput(void* ctx_build, bool isMask, int flag) {
-    int n_ctx = config.n_ctx(), n_vocab = nClass(), n_batch = config.n_batch();
+    int n_ctx = curContextLen(LIMIT), n_vocab = nClass(), n_batch = config.n_batch();
     assert(n_ctx > 0 && n_batch > 0);
     SHAPE shape = {n_batch, n_ctx};
 
@@ -471,11 +460,12 @@ void NLP_AutoRegressive::Train(int flag) {
 
     if (tsCalib != nullptr) {
         SetPhase(LIFE_PHASE::P_EVAL_);
-        hSampLoader loader = std::make_shared<SampLoader>(this, "Calib", false);
-        loader->type       = SampLoader::TYPE::DT_EVAL;
+        hSampNanny loader = std::make_shared<SampNanny>(this, "Calib", false);
+        loader->type      = DT_EVAL;
         loader->Prepare(hOPT.get(), tsCalib);
-        GetNeuron<Head4Token>("Head4Token", 0)->hLoader = loader;
-        double val_loss                                 = loader->Evaluate(SAMPLEofSHARD, 0x0);
+        assert(0);   // should refactor calib flow
+        // GetNeuron<Head4Token>("Head4Token", 0)->hLoader = loader;
+        // double val_loss                                 = loader->Evaluate(SAMPLEofSHARD, 0x0);
     }
 
     // RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
@@ -703,20 +693,35 @@ hFuyou Fish::GetFuyou(int no, int flag) const {
     return fuyou;
 }
 
-float Fish::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
-    hOptimizer hOPT     = GetOptimizer();
-    hSampLoader hLoader = hOPT->val_loaders[0];
-    // switch (type) {
-    //     case 1:
-    //     // TokenEmbed* embed = GetNeuron<TokenEmbed>("TokenEmbed", 0);
-    //     // embed->hBatch     = hBatch;
-    //         hLoader->num_batches = 1;
-    //         break;
-    //     default:
-    //     break;
-    // }
-    float eval = hLoader->Evaluate(tpBatch, 0x0);
-    return eval;
+/*
+    would affect training process?
+*/
+bool NLP_AutoRegressive::LocalFeeling(hSampNanny hLoader, vector<float>& result, int flag) {
+    assert(hOPT != nullptr);
+    auto preLogits = hCLS->preLogits;
+    assert(hLoader->shard_samps.size() == 1);
+    auto hSamp = hLoader->shard_samps[0];
+    int i, nTok = hSamp->len, _nctx = config.n_ctx();
+    // assert(!hDictVAE->hDict->tokenizer_add_bos);
+    SetPhase(LIFE_PHASE::P_EVAL_);
+    hOPT->EvaluateSamps(hLoader, -666);
+    if (DUMP())
+        _INFO("\t%s @\"%s\"\n", __func__, hLoader->sentence.c_str());
+    assert(preLogits->type == typNUMBER::F32);
+    assert(preLogits->ne[1] == nTok + 1);                           //???
+    size_t nz = tELEM(preLogits), nVocabInWiki = preLogits->ne[0];  // preLogits->nb[0];
+
+    // out is last distribution of Causal Language Modeling
+    size_t off = (nTok)*nVocabInWiki;
+    float* out = (float*)(preLogits->data) + off;
+    if (result.size() != nVocabInWiki) {
+        result.clear();
+        result.resize(nVocabInWiki);
+    }
+    memcpy(result.data(), out, sizeof(float) * nVocabInWiki);
+    float sum = 0;
+    for (auto f : result) sum += f;
+    return true;
 }
 
 int Fish::ForwardOnRLS(int iter, int flag) {

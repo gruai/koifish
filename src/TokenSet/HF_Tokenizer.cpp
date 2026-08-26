@@ -1602,10 +1602,14 @@ HF_Tokenizer::HF_Tokenizer(Fish* dolphin, int flag) : impl_(std::make_unique<Imp
     bool isInit = false;
     if (config.model.isLoadCard()) {
     }
-    string sTokenJsonPath = dolphin->config.model.sTokenJsonPath;
+    string pathTokenJson = dolphin->config.model.sTokenJsonPath;
+    if (pathTokenJson.empty()) {
+        _WARN("[HF_Tokenizer] empty path of TokenJson!\n");
+        vocab.clear();
+    }
     isInit                = InitHF(dolphin, flag);
     if (!isInit) {
-        _WARN("[HF_Tokenizer] failed to load \"%s\"!\n", sTokenJsonPath.c_str());
+        _WARN("[HF_Tokenizer] failed to load \"%s\"!\n", pathTokenJson.c_str());
         vocab.clear();
     }
     if (dolphin->isModel({NLP_SCORE_})) {
@@ -1625,10 +1629,10 @@ HF_Tokenizer::HF_Tokenizer(Fish* dolphin, int flag) : impl_(std::make_unique<Imp
  */
 bool HF_Tokenizer::InitHF(Fish* dolphin, int flag) {
     assert(dolphin != nullptr);
-    string sTokenJsonPath = dolphin->config.model.sTokenJsonPath, sNull = "";
+    string pathTokenJson = dolphin->config.model.sTokenJsonPath, sNull = "";
     assert(nVocab() == 0);
     try {
-        std::ifstream f(sTokenJsonPath);
+        std::ifstream f(pathTokenJson);
         if (!f.is_open())
             return false;
         std::stringstream ss_j;
@@ -1685,7 +1689,7 @@ bool HF_Tokenizer::InitHF(Fish* dolphin, int flag) {
         set_clean_up_tokenization_spaces(clean_up_spaces);
         int nV = impl_->model_->GetVocabs(vocab, 0x0);
         if (nV == 0) {  // training stage may has no vocab tables
-            _WARN("[HF_Tokenizer] vocab is empty! @\"%s\"\n", sTokenJsonPath.c_str());
+            _WARN("[HF_Tokenizer] vocab is empty! @\"%s\"\n", pathTokenJson.c_str());
             return false;
         }
         S.bos = bos_token_id();
@@ -1696,15 +1700,15 @@ bool HF_Tokenizer::InitHF(Fish* dolphin, int flag) {
         // cls_id  = jKV(jVocab, {cls_token}, cls_id);
         // mask_id = jKV(jVocab, {mask_token}, mask_id);
 
-        _INFO("[HF_Tokenizer] nVocab=%d %s special=%ld @\"%s\"\n", nV, S.Dump(0x0).c_str(), special_tokens.size(), sTokenJsonPath.c_str());
+        _INFO("[HF_Tokenizer] nVocab=%d %s special=%ld @\"%s\"\n", nV, S.Dump(0x0).c_str(), special_tokens.size(), pathTokenJson.c_str());
 
         return true;
     } catch (JSON::parse_error& ex) {
-        _INFO("[Tokenizer] Failed @%s! ERR=%s \n", sTokenJsonPath.c_str(), ex.what());
+        _INFO("[Tokenizer] Failed @%s! ERR=%s \n", pathTokenJson.c_str(), ex.what());
         return false;
         // std::cerr << "parse error at byte " << ex.byte << std::endl;
     } catch (...) {
-        _INFO("[Tokenizer] Failed @%s!\n", sTokenJsonPath.c_str());
+        _INFO("[Tokenizer] Failed @%s!\n", pathTokenJson.c_str());
         assert(0);
         return false;
     }

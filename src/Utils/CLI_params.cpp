@@ -129,8 +129,6 @@ std::string EXE_name(int flag) {
 #endif
 }
 
-void train_print_usage(int argc, char** argv, const struct CLI_params* params) {}
-
 bool CLI_params::operator!=(const CLI_params& other) const { return memcmp(this, &other, sizeof(other)); }
 
 DEUG_SWITCH DEBUG;
@@ -168,7 +166,7 @@ void CLI_params::Dump(int flag) {
 
     _INFO("%s::CLI_params: ", exec_name.c_str());
     // _INFO(" n_vocab: %u", n_vocab);
-    _INFO("{ n_ctx=%u", n_ctx());
+    _INFO("{ n_ctx=%u", common.n_ctx);
     _INFO(" embd=%u", nEmbed());
     _INFO(" n_ff=%u", n_ff());
     _INFO(" n_head=%u", n_head());
@@ -184,9 +182,6 @@ void CLI_params::Dump(int flag) {
 
 bool LoadJsonFile(const string& jPath, JSON& jObj, int flag) {
     try {
-        // size_t szF = jPath.empty() ? 0 : F_SIZE(sTokenJsonPath);
-        // if (szF == 0)
-        //     return false;
         std::ifstream jfile(jPath);
         std::string info;
         if (jfile.fail()) {
@@ -207,7 +202,7 @@ bool LoadJsonFile(const string& jPath, JSON& jObj, int flag) {
 string MODEL_CARD::sWeight = ".weight", MODEL_CARD::sBias = ".bias";  //".w"
 string MODEL_CARD::sQzeros = ".qzeros", MODEL_CARD::sQscale = ".scales";
 string MODEL_CARD::sLayer = "blk.";
-string MODEL_CARD::sEmbed = "embed", MODEL_CARD::sInvEmbed = "embed_inv";
+// string MODEL_CARD::sEmbed = "embed", MODEL_CARD::sInvEmbed = "embed_inv";
 
 MODEL_CARD::MODEL_CARD() {
 #if defined(USE_FP16_BASELINE)
@@ -315,7 +310,7 @@ bool CLI_params::isValid(const std::string& path, const std::string& desc, int f
         _ERROR("[jConfig]_\"%s\" layerps is empty! @\"%s\"", desc.c_str(), path.c_str());
         return false;
     }
-    int B = n_batch(), T = n_ctx();
+    int B     = n_batch();  // T = n_ctx();
     int q_dim = Q_dim(), kv_dim = KV_dim();
     if (q_dim < kv_dim) {  // C!=q_dim
         _ERROR("[jConfig]_\"%s\" q_dim=%d <  kv_dim=%d! @\"%s\"", desc.c_str(), q_dim, kv_dim, path.c_str());
@@ -353,6 +348,9 @@ bool CLI_params::JModel2Params(int flag) {
         if (jModel.find("hf-card") != jModel.end()) {
             model.sCardPath      = jKEY(jModel, {"hf-card"});
             model.pathCheckPoint = model.sCardPath;
+        } else if (jModel.find("hf_tokenizer") != jModel.end()) {
+            model.sCardPath     = jKEY(jModel, {"hf_tokenizer"});
+            model.onlyTokenizer = true;
         } else if (!sft.UpdateCKP(model)) {
         } else {
         }
@@ -373,6 +371,8 @@ bool CLI_params::JModel2Params(int flag) {
         nLayerX = jKV(jConfig, {"model", "parameter", "Layer"}, nLayerX);
         assert(nLayerX < 2048 && nLayerX > 0);
         model.max_pos_embeddings = jKV(jConfig, {"model", "parameter", "max_pos_embeddings"}, model.max_pos_embeddings);
+
+        model.QKNormal = jKV(jConfig, {"model", "parameter", "qk_normal"}, model.QKNormal);
         STR2ENUM(jKV<string>(jConfig, {"model", "parameter", "ffn_act"}, ""), model.fActFFN);
 
         model.isEmbedWeightTying = jKV(jConfig, {"model", "parameter", "tie_word_embeddings"}, model.isEmbedWeightTying);
@@ -488,14 +488,16 @@ uint32_t CLI_params::n_ctx() const {
     int n = -1;
     switch (phase) {
         case P_CHAT_1:
-            n = chat_sampler.seq_len;
-            if (n_ctx_train > 0)
-                assert(n <= n_ctx_train);
+            assert(0);
+            // n = chat_sampler.nSeqRecommend == -1 ? chat_sampler.nSeqLimit : chat_sampler.nSeqRecommend;
+            // if (n_ctx_train > 0)
+            //     assert(n <= n_ctx_train);
             break;
         case P_CHAT_N:
-            n = chat_sampler.seq_len;
-            if (n_ctx_train > 0)
-                assert(n <= n_ctx_train);
+            assert(0);
+            // n = chat_sampler.nSeqRecommend;
+            // if (n_ctx_train > 0)
+            //     assert(n <= n_ctx_train);
             break;
         default:
             return common.n_ctx;
@@ -985,7 +987,7 @@ bool TRAIN_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
     n_gradient_accumulation = jKV(jConfig, {"train", "optimizatioin", "grad_accumulation"}, n_gradient_accumulation);
 
     dump_every = jKV(jConfig, {"train", "dump-every"}, dump_every);
-    gpt_every  = jKV(jConfig, {"train", "gpt-every"}, gpt_every);
+
     rSubSample = jKV(jConfig, {"train", "sample"}, rSubSample);
     if (rSubSample < 0)
         rSubSample = 1;
@@ -1192,8 +1194,7 @@ bool CLI_params::ToJConfig(int flag) {
             jConfig["vendor_quantizer"] = jVendorQuant;
         }
 
-        // chat_sampler.seq_len          = 1024;  // 512;
-        jConfig["gpt"]["max_seq_len"] = chat_sampler.seq_len;
+        jConfig["gpt"]["max_seq_len"] = chat_sampler.nSeqLimit;
         // jConfig["debug"]["prompts"] = "hello";
 
         common.seed     = 42;
@@ -1229,6 +1230,8 @@ bool CLI_params::InitJConfig(int flag) {
         std::string s = jConfig.dump(), s0;
         common.Init(this, jConfig);
 
+        chat_sampler.Init(this, jConfig);
+
         kernels.Init(this, jConfig);
 
         if (sft.Init(this, jConfig)) {
@@ -1242,9 +1245,9 @@ bool CLI_params::InitJConfig(int flag) {
         ZMUV_ratio = jKV(jConfig, {"train", "optimizatioin", "ZMUV_ratio"}, ZMUV_ratio);
 
         // serial_path = jKV(jConfig,{"data","serialize_path"},s0 );
-        string dict_type = jKV(jConfig, {"dict", "type"}, s0);
-        tpBatchSample    = jKV(jConfig, {"train", "batch_sample"}, tpBatchSample);
-        rSplit           = jKV(jConfig, {"data", "eval_split"}, rSplit);
+        dict_type     = jKV(jConfig, {"dict", "type"}, s0);
+        tpBatchSample = jKV(jConfig, {"train", "batch_sample"}, tpBatchSample);
+        rSplit        = jKV(jConfig, {"data", "eval_split"}, rSplit);
         // string a = tpBatchSample=="stacking" ? tpBatchSample : "";
 
         std::vector<string> all_base;
@@ -1266,11 +1269,6 @@ bool CLI_params::InitJConfig(int flag) {
         // }
         datatypes.arrTernary = jKV_arr(jConfig, {"model", "datatype", "ternary"}, datatypes.arrTernary, false);
         datatypes.arrTile    = jKV_arr(jConfig, {"model", "datatype", "tile"}, datatypes.arrTile, false);
-
-        chat_sampler.seq_len = jKV(jConfig, {"gpt", "max_seq_len"}, chat_sampler.seq_len);  // 128
-
-        if (chat_sampler.seq_len <= 0)
-            chat_sampler.seq_len = KOIFISH_LITE_CHAT_SEQLEN;
 
         if (!JModel2Params(0x0))
             return false;
@@ -1470,151 +1468,23 @@ bool CLI_params::LoadJConfig(const std::string& path, int flag) {
     }
 }
 
-bool CLI_params::parse(int argc, char** argv) {
-    std::string arg_prefix      = "--", key, value;
-    exec_name                   = EXE_name();
-    string sExt                 = argc > 1 ? FILE_EXT(argv[1]) : "", jPath;
-    FILE_FORMAT_TYPE ckp_format = FILE_JSON;  // bool isHF              = false;
-    for (int i = 1; i < argc; i++) {
-        std::string arg = argv[i];
-        if (fs::exists(arg)) {  //*.json
-            jPath = arg;
-            if (!LoadJConfig(arg)) {
-                return false;
-            }
-        } else if (arg == "--version") {
-        } else if (arg == "p0") {
-        } else if (arg == "p1") {
-            DEBUG.cmd_p1 = 1;
-            _INFO("******************* DEBUG.cmd_p1=%d ******************************\n", DEBUG.cmd_p1);
-        } else if (arg == "p2") {
-            DEBUG.cmd_p2 = 1;
-        } else if (arg == "--quant") {
-            sscanf(argv[++i], "%d", &DEBUG.quant_UserMode);
-        } else if (arg == "--hellaswag") {
-            eval_metric = "hellaswag";
-            assert(i + 1 < argc);
-            JSON jEval;
-            jEval["type"] = "hellaswag", jEval["glob"] = argv[++i];
-            jEval["samp"] = 1.0;
-            // jEval["glob"] = argv[i++];
-            jConfig["datasets_new"]["eval"] = jEval;
-        } else if (arg == "--hf") {  // directory of hf model
-            assert(i + 1 < argc);
-            model.sCardPath = model.pathCheckPoint = argv[++i];
-            if (!VERIFY_DIR_EXIST(model.sCardPath, false)) {
-                K_EXIT(KOIFISH_INVALID_ARGS_MODEL);
-            }
-            ckp_format = CKP_HF;
-        } else if (arg == "--fish") {  // directory of hf model
-            assert(i + 1 < argc);
-            model.pathCheckPoint = argv[++i];
-            ckp_format           = CKP_KOIFISH;
-        } else if (arg == "--prompts") {  // directory of hf model
-            assert(i + 1 < argc);
-            string sPrompt = argv[++i];
-            if (sPrompt.empty()) {
-                DEBUG.prompts = {"hello",
-                                 "What is the capital of Shanghai?",
-                                 "Who wrote the play Romeo and Juliet?",
-                                 "In which year did the Titanic sink?",
-                                 "What is the chemical symbol for the element gold?",
-                                 "What is the longest river in the world?",
-                                 "Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?",
-                                 "How many games did Arsenal FC go unbeaten during the 2003-2004 season of the English Premier League",
-                                 "I get out on the top floor (third floor) at street level. How many stories is the building above the ground?",
-                                 "天命玄鸟,降而生生. 玄鸟是什么鸟?"};
-            } else
-                DEBUG.prompts = {sPrompt};
-        } else if (arg == "--tokenizer") {  // directory of tokenizer
-            assert(i + 1 < argc);
-            model.sTokenBinPath = argv[++i];
-        } else if (arg == "--step") {
-            eval_metric = "hellaswag";
-            assert(i + 1 < argc);
-            sscanf(argv[++i], "%f", &step);
-        } else {
-            _ERROR("invalid parameter for argument: %s\n", arg.c_str());
-            train_print_usage(argc, argv, this);
-            exit(1);
-        }
-    }
-    DEBUG.T_GEMM  = -1;  //  so many version of gemm
-    std::string s = jConfig.dump();
-    switch (ckp_format) {
-        case CKP_KOIFISH:
-            if (!LoadJConfig(model.pathCheckPoint)) {
-                return false;
-            }
-            if (jConfig.contains("datasets")) {
-                jConfig.erase("datasets");
-            }
-            if (jConfig.contains("checkpoint_in")) {  // this would cause many confliction!
-                jConfig.erase("checkpoint_in");
-            }
-            if (jConfig.contains("sft")) {  // this would cause many confliction!
-                jConfig.erase("sft");
-            }
-            model.sTokenBinPath = "./assets/tokenizer_151936.bin";
-
-            model.pad_vocab_size = 151936;
-            if (!InitJConfig())
-                return false;
-            break;
-        case CKP_HF: {
-            if (!model.InitHugFace(this, jConfig, false, 0x0))
-                return false;
-            break;
-        }
-        default:
-            assert(!jConfig.empty());
-            if (!InitJConfig())
-                return false;
-            if (!isValid(jPath, "CLI_params::parse"))
-                return false;
-            break;
-    }
-    chat_sampler.InitPrefillTemplate(this);
-    // Dump(0x100);
-
-    switch (phase) {
-        case P_CHAT_1:
-            break;
-        case P_CHAT_N:
-            break;
-        case P_EVAL_:
-            InitChekcpoints(argc, argv, "checkpoint_in");
-            break;
-        default:
-            InitChekcpoints(argc, argv, "checkpoint_in");
-            InitChekcpoints(argc, argv, "checkpoint_out");
-            InitAllStates(0x0);
-            break;
-    }
-    OnArch();
-    return true;
-}
-
 void CLI_params::OnPhase(LIFE_PHASE _phase, int flag) {
     phase                   = _phase;
     FILE_FORMAT_TYPE format = model.ckp_format;
     switch (phase) {
         case P_CHAT_1:
-            common.n_batch = 1;
-            distill.anneal = ANNEAL_SCHEDULE::ANNEAL_OFF;
-            distill.lenda  = -1.0;
+            common.n_batch          = 1;
+            distill.anneal          = ANNEAL_SCHEDULE::ANNEAL_OFF;
+            distill.lenda           = -1.0;
+            chat_sampler.test_every = 1;
+            // chat_sampler.OnPhase(P_CHAT_1);
             break;
         case P_CHAT_N:
-            common.n_batch = 1;
-            distill.anneal = ANNEAL_SCHEDULE::ANNEAL_OFF;
-            distill.lenda  = -1.0;
-            //  Diffusion LMs do bidirectional iterative denoising, not left‑to‑right autoregressive decoding, do not require AR-style chat templates.
-            chat_sampler.prompt_template        = "%s";
-            chat_sampler.seq_len                = 256;  // hack
-            chat_sampler.system_prompt_template = "%s";
-            chat_sampler.temperature            = 0.5;  //  hack
-            chat_sampler.top_p                  = 1.0;
-            chat_sampler.top_k                  = 200;
+            common.n_batch          = 1;
+            distill.anneal          = ANNEAL_SCHEDULE::ANNEAL_OFF;
+            distill.lenda           = -1.0;
+            chat_sampler.test_every = 1;
+            // chat_sampler.OnPhase(P_CHAT_N);
             break;
         case P_EVAL_:
 
@@ -1995,7 +1865,7 @@ bool CHAT_SAMPLER::InitPrefillTemplate(CLI_params* hConfig, int flag) {
     // }
     // prompt_template        = FILE2STR(fPrompt);
     // system_prompt_template = FILE2STR(fSysPromt);
-    enable_thinking = hConfig->model.enable_thinking;
+    // enable_thinking = hConfig->model.enable_thinking;
     if (enable_thinking) {  //
         prompt_template        = "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n";
         system_prompt_template = "<|im_start|>system\n%s<|im_end|>\n<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n";
@@ -2004,6 +1874,52 @@ bool CHAT_SAMPLER::InitPrefillTemplate(CLI_params* hConfig, int flag) {
         system_prompt_template = "<|im_start|>system\n%s<|im_end|>\n<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
     }
 
+    return true;
+}
+
+bool CHAT_SAMPLER::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
+    nSeqLimit     = jKV(jConfig, {"generate", "max_seq_len"}, nSeqLimit);  // "gpt", "max_seq_len"
+    nSeqRecommend = jKV(jConfig, {"generate", "seq_len"}, nSeqRecommend);
+    test_every    = jKV(jConfig, {"generate", "eval-every"}, test_every);  //"train", "gpt-every"
+    top_k         = jKV(jConfig, {"generate", "top_k"}, top_k);
+    temperature   = jKV(jConfig, {"generate", "temperature"}, temperature);
+    prompt        = jKV(jConfig, {"generate", "prompt"}, prompt);
+    // prompts   = jKV(jConfig, {"generate", "prompts"}, prompts);
+    string key = "";
+    key        = jKV(jConfig, {"generate", "method"}, key);
+    STR2ENUM(key, tpZhuomo);
+
+    if (nSeqLimit <= 0)
+        nSeqLimit = KOIFISH_LITE_CHAT_LIMIT;
+
+    return true;
+}
+
+bool CHAT_SAMPLER::OnArch(MODEL_ARCH arch, int flag) {
+    switch (arch) {
+        case NLP_SCORE_:
+            mode = enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
+            //  Diffusion LMs do bidirectional iterative denoising, not left‑to‑right autoregressive decoding, do not require AR-style chat templates.
+            prompt_template = "%s";
+            if (nSeqRecommend <= 0) {  // should be {"generate","seq_len"}
+                nSeqLimit     = 256;
+                nSeqRecommend = 256;
+            } else {
+                nSeqLimit = nSeqRecommend;
+            }
+            assert(nSeqRecommend > 0);
+            system_prompt_template = "%s";
+            temperature            = 0.5;  //  hack
+            top_p                  = 1.0;
+            top_k                  = 200;
+            // tpZhuomo               = CHAT_SAMPLER::MD_DILATE;
+            most_step = 32;  // nSeqRecommend / 2;
+            break;
+        default:
+            if (test_every > 0)
+                mode = enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
+            break;
+    }
     return true;
 }
 
@@ -2246,23 +2162,26 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, bool need
             assert(0);
             break;
         case FILE_FORMAT_TYPE::CKP_HF: {
-            string jPath = sCardPath + "config.json";
-            if (!LoadJsonFile(jPath, jModelParam)) {
-                return false;
-            };
-            LoadJsonFile(sCardPath + "model.safetensors.index.json", jSafetensorsIndex);
-            if (!jSafetensorsIndex.empty()) {
-                nTotalSize = jKV(jSafetensorsIndex, {"metadata", "total_size"}, nTotalSize);
+            if (!onlyTokenizer) {
+                string jPath = sCardPath + "config.json";
+                if (!LoadJsonFile(jPath, jModelParam)) {
+                    return false;
+                };
+                LoadJsonFile(sCardPath + "model.safetensors.index.json", jSafetensorsIndex);
+                if (!jSafetensorsIndex.empty()) {
+                    nTotalSize = jKV(jSafetensorsIndex, {"metadata", "total_size"}, nTotalSize);
 
-                auto jMap = jSafetensorsIndex["weight_map"];
-                for (JSON::iterator it = jMap.begin(); it != jMap.end(); ++it) {
-                    std::string key = it.key();
-                    st_index_map.insert(std::make_pair(key, nullptr));
+                    auto jMap = jSafetensorsIndex["weight_map"];
+                    for (JSON::iterator it = jMap.begin(); it != jMap.end(); ++it) {
+                        std::string key = it.key();
+                        st_index_map.insert(std::make_pair(key, nullptr));
+                    }
                 }
             }
         } break;
         default:
-            assert(0 && "Unknown format!");
+            _ERROR("[PARAMS] Unknown format @\"%s\"!",sCardPath.c_str());
+            // assert(0 && "Unknown format!");
             return false;
             break;
     }
@@ -2271,7 +2190,7 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, bool need
     sTokenConfigPath = sCardPath + "tokenizer_config.json";
     // LoadJsonFile(sTokenPath,jTokenizer);                             // }
 
-    if (jModelParam.empty()) {
+    if (jModelParam.empty() || onlyTokenizer) {
         sCardPath = "";
     } else {
         isEmbedWeightTying = jKV(jModelParam, {"tie_word_embeddings"}, isEmbedWeightTying);

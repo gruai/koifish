@@ -24,6 +24,7 @@
 using namespace std;
 #include "../TokenSet/DataLoader.hpp"
 #include "../g_float.hpp"
+#include "Scheduler.hpp"
 #include "WIKI.hpp"
 
 class Fish;
@@ -37,7 +38,7 @@ class Fish;
  */
 struct TOPK_heap {
     int tid = -1;  // thread id, each thread for one tensor
-    int dim = -1, nPick = -1;
+    int dim = -1;
 
     float maxLogit  = 0.f;
     float lastLogit = 0.f;  // k-th largest value (smallest in heap)
@@ -45,30 +46,38 @@ struct TOPK_heap {
     std::priority_queue<int> heap;
     std::vector<int> picks;
 
-    virtual int Select(int nPick, bool isOrder = false, int flag = 0x0);
+    virtual int Select(int nPick, SORT_BY sort = SORT_BY::NO_SORT, int flag = 0x0);
     virtual float ValueAt(int k) {
         assert(0);
         return 0.0;
     }
 };
 
+// 非我无所取(qu)
+struct QU {
+    int posOfTarget = -1;
+    TOKEN_ID token  = 0;
+    float confi     = 0.;  // confidense
+};
+
 struct LogitsInfo : TOPK_heap {
-    int ver        = 0;
-    int posInBatch = 0;
-    bool isCPU     = true;
+    bool isHeaviside = false;
+    int ver          = 0;
+    int posInBatch = 0, posOfTarget = 0;
+    bool isCPU = true;
 
     float* logits       = nullptr;
     floatX* src         = nullptr;  //  cls->preLogits->host_data
     hGTensor hClsLogits = nullptr;
-    uint64_t rng_state;
-    TOKEN_ID qu;  // 非我无所取(qu)
-    float confidence;
+    float T_coin        = 0.0f;
 
-    LogitsInfo(int id, const Fish* hG_, hGTensor hClsLogits_, int flag = 0x0);
+    QU qu;
+
+    LogitsInfo(int id, const Fish* hG_, hGTensor hClsLogits_, float T_x_, int flag = 0x0);
     // virtual void Swap(int i, int j) { std::swap(logits[i], logits[j]), std::swap(index[i], index[j]); }
     // virtual bool Init(int n_vocab, hGTensor hClsLogits_, int flag = 0x0);
     // BF16->float
-    virtual void UpdateLogits(const CHAT_SAMPLER& samp_params, int flag = 0x0);
+    virtual void UpdateProbability(const CHAT_SAMPLER& samp_params, int flag = 0x0);
 
     bool isLarge(int i, int k, int flag = 0x0) override {
         assert(i >= 0 && i < dim);
@@ -86,6 +95,8 @@ struct LogitsInfo : TOPK_heap {
     virtual void TopK(int k, int flag = 0x0);
     virtual float TopP(float top_p, int k, int flag = 0x0);
     virtual int Qu_FlipCoin(int flag = 0x0);
+
+    virtual void Dump(int type, int flag = 0x0);
 
     virtual void SortPair(int nPick, int flag = 0x0) { assert(0); }
     virtual ~LogitsInfo() { FREE_a(logits); }
@@ -147,10 +158,16 @@ class GeneratOnPrompt {
    protected:
     CLI_params config;
     CHAT_SAMPLER samp_params;
-    hBATCH hBatch       = nullptr;
+    hBATCH hBatch     = nullptr;  // for chat(1 batch with prompt & mask/pad tokens)
+    hDataToken tsChat = nullptr;
+
+    std::vector<std::string> some_prompts, some_answers;
+
     hGTensor hClsLogits = nullptr;
+    hSampSKDU planner   = nullptr;  // planner to decide which masked tokens to reveal at each sample step
     // LogitsInfo cpuLogits;
-    std::vector<hLogitsInfo> arrLogit;
+    std::vector<hLogitsInfo> originLogits, maskLogits;
+    std::vector<hLogitsInfo> candLogit;  // candidate of SampFromLogits
     // LogitsInfo_GPU<floatLogits> gpuLogits;   // [todo]
 
     float delta_max = 0, delta_a = 0;
@@ -162,43 +179,51 @@ class GeneratOnPrompt {
 
     int ga_n = -1, ga_w = -1;
     int32_t bos = 1, eos = 2;
-    int n_predict = 32, n_batch = 2048, n_keep;
+    // int n_predict = 32, n_batch = 2048, n_keep;
     bool is_antiprompt = false;
-    int nCTX_(int type=0x0);    // default return ctx_recommend
-    // int n_ctx = -1, n_ctx_train = -1;
-    int nCanTopK = -1;
 
+    // int n_ctx = -1, n_ctx_train = -1;
+    int nCanTopK = -1, nGenerate = 0;
+
+    std::string fResult, sResult, cur_answer;  // path of file to save result
     // std::string path_session = params.path_prompt_cache;
     std::vector<TOKEN_ID> session_tokens;
     std::vector<TOKEN_ID> embd_inp;
+    std::vector<QU> arrQu;
     std::string GetPrompt(int flag = 0x0);
-    hSampLoader dialogs;
+    hSampNanny dialogs;
     std::vector<int> input_tokens, output_tokens;
     std::ostringstream output_ss;
     bool is_interacting = false;
     hWIKI wiki0         = nullptr;
     arrHWIKI wikis;
-    const Fish* fish_0 = nullptr;
-    Fish* fish_1       = nullptr;
+    Fish* fish_0 = nullptr;
+    Fish* fish_1 = nullptr;
     // shared_ptr<Fish> fish_1 = nullptr;        //for generate, only 1 input
 
     virtual std::string T2STR(TOKEN_ID tok, int flag = 0x0);
 
     virtual void Clear();
     uint64_t rng_state;
+    GRander rand_coin;
+
     virtual void OnAntiPrompt(int flag);
     virtual bool Inference(hSAMP samp, int& nPast, int flag = 0x0);
     virtual void TopK(int idx = -1, int flag = 0x0);
+    virtual void SampFromLogits(int step, int flag = 0x0);
 
    public:
     GeneratOnPrompt() {}
-    GeneratOnPrompt(struct gpt_params& par_, int flag);
-    GeneratOnPrompt(CLI_params& cp_, arrHWIKI& wiki_, const Fish* hG_, int flag);
+    // GeneratOnPrompt(struct gpt_params& par_, int flag);
+    GeneratOnPrompt(CLI_params& cp_, arrHWIKI& wiki_, Fish* hG_, int flag);
 
-    static shared_ptr<GeneratOnPrompt> MakeInstance(struct CLI_params& params, arrHWIKI& wiki, const Fish*, int flag);
+    static shared_ptr<GeneratOnPrompt> MakeInstance(struct CLI_params& params, arrHWIKI& wiki, Fish*, int flag);
 
     virtual ~GeneratOnPrompt() { Clear(); }
-    virtual bool Init(const std::string& prompt_, int flag = 0x0);
+
+    virtual bool InitCoral(const std::string& prompt_, Fish* hG_, int flag = 0x0);
+    // Deprecated
+    virtual bool Init_0(const std::string& prompt_, int flag = 0x0);
 
     std::vector<TOKEN_ID> guidance_inp;
     std::vector<TOKEN_ID> inp_pfx, inp_sfx, cml_pfx, cml_sfx;
@@ -206,30 +231,39 @@ class GeneratOnPrompt {
     int original_prompt_len = 0;
 
     virtual void InitInput(int flag = 0x0);
-    virtual void Prepare4N(int flag = 0x0);  // Prepare for CHAT_N(diffusion model)
+    virtual void Prepare4N(int iter, hBATCH hBatch, int flag = 0x0);  // Prepare for CHAT_N(diffusion model)
 
     virtual int Tokenize(int flag);
 
     std::vector<TOKEN_ID> tokens;
     std::vector<std::vector<TOKEN_ID>> antiprompt_ids;
 
-    virtual int Generate(int nJob, int flag = 0x0);
     virtual int Generate_v0(int nJob, int flag = 0x0);
-    virtual TOKEN_ID Sample_cpu(int idx = -1, bool isSorted = false);
+
+    // virtual TOKEN_ID Sample_cpu(int idx = -1, bool isSorted = false);
     virtual TOKEN_ID Sample(hBATCH hBatch, bool is_resampling = false);
-    virtual int SampleOnBatch(hBATCH hBatch, float* hostLoss, int B, int T, SampLoader* hLoader, int flag = 0x0);
+    virtual int SampleOnBatch(hBATCH hBatch, float* hostLoss, int B, int T, SampNanny* hLoader, int flag = 0x0);
     virtual bool OnLogits(int flag = 0x0);
     virtual void DisplayEmbd(bool input_echo, int n_consumed, int flag = 0x0);
+
+    virtual void AfterSample(int iter, double elapsed_s, int flag = 0x0);
+
+    friend class Fish;
 };
 typedef shared_ptr<GeneratOnPrompt> hGENERATOR;
 using hChater = hGENERATOR;
 
-class GOPT_infinite : public GeneratOnPrompt {
+// for mask(denoising) models(diffusion LM, ...)
+class GOPT_Diffusion : public GeneratOnPrompt {
    protected:
-    // int UpdateEmbed(int nJob,int &n_past,int &n_remain,int &n_consumed,int &n_session_consumed,int &n_past_guidance,int &ga_i,int flag=0x0) override;
+    int nCurMask = 0, nToMask = 0;
+    TOKEN_ID mask_id;
+    TOKEN_ID Sample(hBATCH hBatch, bool is_resampling = false) override;
 
    public:
-    GOPT_infinite(struct gpt_params& par_, int flag) : GeneratOnPrompt(par_, flag) { ; }
+    GOPT_Diffusion(CLI_params& cp_, arrHWIKI& wikis_, Fish* hG_, int flag);
+    bool OnLogits(int flag = 0x0) override;
+    virtual ~GOPT_Diffusion() {}
 };
 
 class GOPT_Metropolis : public GeneratOnPrompt {
@@ -237,8 +271,8 @@ class GOPT_Metropolis : public GeneratOnPrompt {
     TOKEN_ID Sample(hBATCH hBatch, bool is_resampling = false) override;
 
    public:
-    GOPT_Metropolis(struct gpt_params& par_, int flag) : GeneratOnPrompt(par_, flag) {}
-    GOPT_Metropolis(CLI_params& cp_, arrHWIKI& wikis_, const Fish* hG_, int flag) : GeneratOnPrompt(cp_, wikis_, hG_, flag) {}
+    // GOPT_Metropolis(struct gpt_params& par_, int flag) : GeneratOnPrompt(par_, flag) {}
+    GOPT_Metropolis(CLI_params& cp_, arrHWIKI& wikis_, Fish* hG_, int flag) : GeneratOnPrompt(cp_, wikis_, hG_, flag) {}
 
     virtual ~GOPT_Metropolis() { Clear(); }
 

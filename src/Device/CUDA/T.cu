@@ -292,6 +292,9 @@ __global__ void CU_Q128toX_(const TASKA_quant<Typ> taska, const BIT_128* quants,
         // }
     }
 }
+template __global__ void CU_Q128toX_<__nv_bfloat16, 32>(const TASKA_quant<__nv_bfloat16>, const BIT_128*, __nv_bfloat16*, int);
+template __global__ void CU_Q128toX_<__nv_bfloat16, 64>(const TASKA_quant<__nv_bfloat16>, const BIT_128*, __nv_bfloat16*, int);
+template __global__ void CU_Q128toX_<__nv_bfloat16, 128>(const TASKA_quant<__nv_bfloat16>, const BIT_128*, __nv_bfloat16*, int);
 
 double GTensor::SetDataX(floatX* param_0, bool checkErr, int flag) {
     double err = DBL_MAX;

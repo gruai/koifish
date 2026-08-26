@@ -33,6 +33,11 @@ def CheckResult(df,iter,golden,title="",rel_tol=1e-05):
         print(f"CheckResult failed@{title}! loss={a} golden={golden}\n")
         assert(0)
 
+# "Write a quick sort algorithm in c++."
+def test_diffusion_coder():  
+    content = bubble_one("coder_tiny"," --hf ./Models/dcoder/ --prompts \"Write a quick sort algorithm in c++.\" --seq_len 640 --md_method \"dilate\"", fResult="./output/gopt/dilate__.txt") 
+    assert "This implementation ensures that the first element is the last element at the array of the array, and prints the initial state of the array." in content
+
 def test_chat_qwen3_596M():  
     content = bubble_one("chat_qwen3_596M"," --hf ./Models/Qwen3-0.6B/ --prompts \"hello\"")  #./cases/qwen3/qwen3_0.6B.json
     assert "Hello! How can I assist you today?" in content
@@ -153,10 +158,10 @@ if __name__ == '__main__':
     
     sExe = "./bin/koifish "
     # test_gpt2_774M()
-
+    #test_diffusion_coder()
     # test_chat_qwen3_596M()
     # test_chat_qwen3_0_6B()  
-    # test_sft_qwen3_mimimind() 
+    test_sft_qwen3_mimimind() 
     # test_qwen3_596M()
     # test_ising_596M()
     # test_chat_qwen3_4B()
@@ -166,7 +171,7 @@ if __name__ == '__main__':
     # test_pp_gpt2()
     # test_gpt2_124M()
     # test_qwen3_596M_q4()
-    test_gpt2_124M_fuyou6()
+    # test_gpt2_124M_fuyou6()
     # test_gpt2_1558M()
     # test_chat_qwen3_4B_1()
     # test_qwen2_494M()

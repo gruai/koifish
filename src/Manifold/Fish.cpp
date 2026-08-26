@@ -14,6 +14,9 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vect
     assert(wikis.size() >= 0);
     hFISH fish = nullptr;
     assert(params.isValid("", "MakeInstance"));
+
+    params.chat_sampler.OnArch(params.ModelArch());
+
     switch (params.ModelArch()) {
         case MODEL_ARCH::NLP_MAMBA:
             fish = std::make_shared<LLM_MAMBA>(nam_ + "_mamba", params, role_);
@@ -74,18 +77,20 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vect
     if (!fish->Build())
         return nullptr;
 
+    // GOPT need refactor!
+
     if (fish->config.ChatMode() != CHAT_MODE::YABA) {  //  only for chat
-        fish->gopt = GeneratOnPrompt::MakeInstance(params, wikis, fish.get(), flag);
+        fish->gopt = GeneratOnPrompt::MakeInstance(fish->config, wikis, fish.get(), flag);
     } else {
-        if (fish->role == SWARM_FOLLOWER) {
+        /*if (fish->role == SWARM_FOLLOWER) {
         } else {
             // if (!wikis.empty()) {  // generate some sentence
             if (!fish->isLocalInfer) {
-                params.chat_sampler.mode = params.model.enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
-                fish->gopt               = GeneratOnPrompt::MakeInstance(params, wikis, fish.get(), flag);
+                // fish->config.chat_sampler.mode = fish->config.model.enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
+                fish->gopt = GeneratOnPrompt::MakeInstance(fish->config, wikis, fish.get(), flag);
             }
             // }
-        }
+        }*/
     }
     // fish->Dump(0x0);
     // fish.reset();       fish = nullptr; //only for debug
@@ -839,36 +844,85 @@ int Fish::GetCurIter(int flag) const {
     return hOPT->GetITER();
 }
 
-hBATCH Fish::GetCurBatch(bool isUpate, int flag) {
-    if (hOPT == nullptr)
+/**
+ * Inference max_sequence_length = how far the model allows you to feed(mechanical limit, not the quality limit)
+ *  1. This is usually one of:
+        max_position_embeddings (RoPE positional limit)
+        sliding_window (attention window limit)
+        tokenizer max length
+        vendor‑recommended context
+ *  2. Training seq_len = how far the model learned
+        HF later introduced “max_sequence_length” for inference/tokenizer limits(historically messy reason)
+
+ */
+int Fish::curChatLen(CHAT_LENGTH_TYPE type) const {
+    int len = -1;
+    switch (type) {
+        case ONLY_1:
+            len = 1;
+            break;
+        case LIMIT:
+            len = config.chat_sampler.nSeqLimit;
+            break;
+        case RECOMMEND:
+            len = config.chat_sampler.nSeqRecommend;
+            break;
+    }
+    assert(len <= config.chat_sampler.nSeqLimit);
+    assert(len > 0);
+    return len;
+}
+
+int Fish::curContextLen(CHAT_LENGTH_TYPE type) const {
+    int len = -1;
+    if (isAtPhase({P_CHAT_1, P_CHAT_N})) {
+        len = curChatLen(type);
+    } else {
+        len = config.n_ctx();
+    }
+    assert(len > 0);
+    return len;
+}
+
+hBATCH Fish::curBatch(int x, int flag) {
+    assert(curTokenSet != nullptr);
+    hSampNanny hLoader = curTokenSet->loader;
+    hBATCH hBatch      = hLoader->GetCurBatch();
+    assert(hBatch != nullptr);
+    /*if (hOPT == nullptr)
         return nullptr;
-    hSampLoader hLoader = hOPT->val_loaders[0];
+    hSampNanny hLoader = tsEval[0]->loader;  // tsEval[0]->loader;
     hBATCH hBatch       = hLoader->GetCurBatch();
     if (isUpate) {
         TokenEmbed* embed = GetNeuron<TokenEmbed>("TokenEmbed", 0);
         embed->hBatch     = hBatch;
-    }
+    }*/
     return hBatch;
 }
 
-void Fish::GetBT(int& B, int& T, int flag) const {
+void Fish::GetNeuronBT(int& B, int& T, int flag) const {
     B         = config.n_batch();
-    T         = config.n_ctx();
+    T         = -1;
     int q_dim = config.Q_dim(), kv_dim = config.KV_dim();
     assert(q_dim >= kv_dim);  // C!=q_dim
     switch (phase) {
         case LIFE_PHASE::P_CHAT_1:
             if (B != 1) {  // in the case of gpt_every>0,
+                assert(outer_phase == LIFE_PHASE::P_TRAIN);
+                B = 1;
             }
-            B = 1;
+
             T = 1;
             break;
         case LIFE_PHASE::P_CHAT_N:
             if (B != 1) {  // in the case of gpt_every>0,
-                assert(0);
+                assert(outer_phase == LIFE_PHASE::P_TRAIN);
+                B = 1;
             }
+            T = curChatLen();
             break;
         default:
+            T = config.n_ctx();
             break;
     }
 
@@ -886,6 +940,35 @@ bool Fish::AfterNextStep(int iter, int flag) {
         SUM::tQKV_forw += QKV->stat.tFore;
         SUM::tQKV_back += QKV->stat.tBack;
     }
+
+    int gpt_every = config.chat_sampler.test_every;  // common.gpt_every;
+    if (gpt_every > 0 && iter % gpt_every == 0) {
+        config.chat_sampler.nSeqRecommend = config.n_ctx();
+        SetPhase(isModel({NLP_SCORE_}) ? LIFE_PHASE::P_CHAT_N : LIFE_PHASE::P_CHAT_1, P_TRAIN);
+        gopt->sResult = hOPT->GetSomeInfo("gopt_result_file");    
+        Chat(iter, 1);
+    }
+    Head4Token* cls = GetNeuron<Head4Token>("Head4Token", 0);
+    // g_dump_level = -1;
+    for (auto vl : tsEval) {
+        if (/*type == 1 ||*/ vl->loader->isEval(iter + 1)) {
+            SetPhase(LIFE_PHASE::P_EVAL_);
+            curTokenSet = vl;
+            // cls->hLoader = vl->loader;
+            // for(int i=0;i<10;i++)
+            // val_loss = EvaluateSamps(vl, iter), a = val_loss;       //  0.272727281
+            float val_loss = vl->loader->Evaluate(SAMPLEofSHARD, 0x0);
+        }
+    } /**/
+
+    for (auto ck : config.ckp_out) {
+        if (ck.needSave(iter)) {
+            SaveTrain(ck);
+            // g_dump_level = -1;
+        }
+    }
+    if (hDistler != nullptr)
+        hDistler->UpdateSigma(iter);
     return true;
 }
 
@@ -897,7 +980,7 @@ bool Fish::AllocBuffer(int flag) {
 #ifdef __USE_TVM__
         test_FA2();
 #endif
-        int B = config.n_batch(), T = config.n_ctx(), NH = config.n_head(), head_dim = config.head_dim();
+        int B = config.n_batch(), T = curContextLen(LIMIT), NH = config.n_head(), head_dim = config.head_dim();
         int group = NH / config.n_head_kv();
         if (isLocalInfer) {
             if (config.phase == P_CHAT_1) {  // P_EVAL no need cache!
@@ -943,4 +1026,32 @@ bool Fish::AllocBuffer(int flag) {
         fflush(stdout);
         return -2001;
     }
+}
+
+/*
+    Multiple purpose(Need refactor!)
+    1. Get loss on some evaluate set in training procee
+    2. Get loss on some evaluate set in unit-testing
+    3. Prefill stage of Inference
+    4. Generation stage of Inference
+*/
+float Fish::Evaluate(std::vector<hDataToken> tokenCorals, DL_BATCH_UPATE tpBatch, int flag) {
+    hOptimizer hOPT = GetOptimizer();
+    int iter        = hOPT->GetITER();
+    float eval = 0, val_loss, sum = 0;
+
+    if (tokenCorals.empty()) {
+        // hSampNanny hLoader = tsEval[0]->loader;
+        assert(curTokenSet != nullptr);
+        tokenCorals.push_back(curTokenSet);
+    }
+    for (auto coral : tokenCorals) {
+        // cls->hLoader = vl;   ???
+        // assert(loader->isEval(iter + 1));
+        curTokenSet = coral;
+        val_loss    = coral->loader->Evaluate(tpBatch, 0x0);
+        sum += val_loss;
+    }
+    eval = sum / tokenCorals.size();
+    return eval;
 }

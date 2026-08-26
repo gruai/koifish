@@ -14,7 +14,7 @@
 KVCache::KVCache(Fish* hF, int max_batch_size, int max_slen, int flag) : _fish(hF) {
     // init_lamakv();
     auto modep  = _fish->config.model;
-    max_seq_len = std::max(max_slen, (int)_fish->config.n_ctx());
+    max_seq_len = std::max(max_slen, (int)_fish->curChatLen(LIMIT));
     kv_dim      = hF->config.KV_dim();
     assert(kv_dim > 0);
 
