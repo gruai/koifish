@@ -20,7 +20,7 @@ LLM_MAMBA::LLM_MAMBA(const std::string& nam_, struct CLI_params params, ROLE_TYP
 hGTensor LLM_MAMBA::BuildTarget(void* ctx, hGTensor cur, int flag) { return nullptr; }
 
 Guppy::Guppy(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
-    assert(arch == MODEL_ARCH::NLP_GUPPY);
+    assert(arch == MODEL_ARCH::NTP_GUPPY);
     // config.model.isFFNShareParam = true;
     // config.model.isEmbedWeightTying = false;
     // isBias = config.model.isBias;    //   if true, converge much slower

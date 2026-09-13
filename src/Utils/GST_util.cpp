@@ -64,9 +64,8 @@ int SUM::nzLoadParam = 0, SUM::nzSaveParam = 0;
 int SUM::nQuantTensor   = 0;
 size_t SUM::szQuantBits = 0;
 double SUM::tQuant = 0, SUM::tF8Ex = 0, SUM::tLowBit = 0;
-string SUM::sQuantInfo = "";
-char SUM::infoX[KOIFISH_MOST_LOG]="\0";
-
+string SUM::sQuantInfo            = "";
+char SUM::infoX[KOIFISH_MOST_LOG] = "\0";
 
 void SUM::Reset(string typ, int flag) {
     if (typ == "time") {
@@ -308,6 +307,10 @@ void _LOG(DUMP_LEVEL level, const char* format, ...) {
             snprintf(coloredMsg, sizeof(coloredMsg), "%s %s%s", COLOR_MAGENTA, log_buffer, COLOR_RESET);
             fflush(stdout);
             break;
+        case DUMP_HILIGHT:
+            snprintf(coloredMsg, sizeof(coloredMsg), "%s %s%s", COLOR_YELLOW, log_buffer, COLOR_RESET);
+            fflush(stdout);
+            break;
         default:
             snprintf(coloredMsg, sizeof(coloredMsg), "%s", log_buffer);
             break;
@@ -334,20 +337,45 @@ void read_stdin(const char* guide, char* buffer, size_t bufsize) {
     }
 }
 
-std::string FILE2STR(const std::string fPath, int flag) {
-    std::string info;
-    std::ifstream file(fPath);
-    if (!file.is_open()) {
-        _ERROR("<<<<<<< FILE2STR failed @%s\n", fPath.c_str());
-        return "";
-    }
+std::string FILE2STR(const std::string fPath, size_t nzMost, int flag) {
+try{
+    /* std::ios::binary is not joking! On Windows, when you open a file in text mode (default without std::ios::binary):
+            \r\n (CRLF - Windows line endings) → converted to \n
+            0x1A (Ctrl+Z) → treated as EOF marker
+            This can corrupt or truncate your data
+*/
+    std::ifstream f(fPath, std::ios::in | std::ios::binary);
+    if (!f.is_open())
+        throw std::runtime_error("Cannot open file: " + fPath);
+    // Get size
+    f.seekg(0, std::ios::end);
+    std::streamsize size = f.tellg();
+    if (size < 0)
+        throw std::runtime_error("tellg() failed for: " + fPath);
+    assert(size<nzMost);
+    std::string s;
+    s.reserve(static_cast<size_t>(size));
+    f.seekg(0, std::ios::beg);
+    s.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
 
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    info = buffer.str();
-    file.close();
+    return s;
+}
+catch (const std::exception& e) {    // Re-throw with context
+    throw std::runtime_error(std::string("load_txt failed: ") + e.what());
+}
+/*std::string info;
+std::ifstream file(fPath);
+if (!file.is_open()) {
+    _ERROR("<<<<<<< FILE2STR failed @%s\n", fPath.c_str());
+    return "";
+}
 
-    return info;
+std::stringstream buffer;
+buffer << file.rdbuf();
+info = buffer.str();
+file.close();
+
+return info;*/
 }
 
 bool STR2FILE(const std::string fPath, const std::string& info, std::ofstream::openmode mode, int flag) {

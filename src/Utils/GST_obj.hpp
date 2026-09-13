@@ -44,14 +44,23 @@ typedef __int64 INT_63;
 // #define G_INT_64  long long
 #endif
 
-#define CHECK_(err)                                                                        \
-    do {                                                                                   \
-        bool err_ = (err);                                                                 \
-        if (err_ != true) {                                                                \
-            fprintf(stderr, "!!! %s error %d at %s:%d\n", #err, err_, __FILE__, __LINE__); \
-            throw("");                                                                     \
-        }                                                                                  \
-    } while (0)
+inline void _inline_check_(bool cond, const char* expr,const char* file, int line) {
+    if (!cond) {
+        throw std::runtime_error(
+            std::string("CHECK failed: ") + expr +
+            " at " + file + ":" + std::to_string(line));
+    }
+}
+#define CHECK_(expr) _inline_check_((expr), #expr, __FILE__, __LINE__)
+
+// #define CHECK_(err)                                                                        \
+//     do {                                                                                   \
+//         bool err_ = (err);                                                                 \
+//         if (err_ != true) {                                                                \
+//             fprintf(stderr, "!!! %s error %d at %s:%d\n", #err, err_, __FILE__, __LINE__); \
+//             throw std::runtime_error("CHECK_ failed");                                     \
+//         }                                                                                  \
+//     } while (0)
 
 // Lite macro like REQUIRE of CATCH2
 #define NEED_(expr)                                                           \
@@ -62,19 +71,18 @@ typedef __int64 INT_63;
         }                                                                     \
     } while (0)
 
-
-class GObject{
-public:
+class GObject {
+   public:
     string name;
-    virtual string ToString(int format=0x0){	return name;	}
+    virtual string ToString(int format = 0x0) { return name; }
 };
 
-template<typename T>
-T FIX_TO(T X0,T dx){
-	int n = (int)std::round(X0/dx);
-	T X1 = n*dx;
-	assert(fabs(X1-X0)<=dx/2);
-	return X1;
+template <typename T>
+T FIX_TO(T X0, T dx) {
+    int n = (int)std::round(X0 / dx);
+    T X1  = n * dx;
+    assert(fabs(X1 - X0) <= dx / 2);
+    return X1;
 }
 
 // Prefer a struct when you can. It may involve some overhead, but is definitely easier for maintenance.
@@ -175,7 +183,7 @@ string inline G_prefix_(const string& title, const string& sep, int flag = 0x0) 
 
 bool inline G_Has_(const int& id, const vector<int>& filter, bool isPick = true, int flag = 0x0) {
     for (auto v : filter) {
-        if(v==id)
+        if (v == id)
             return true;
     }
     return false;
@@ -538,7 +546,7 @@ class GST_Dict {
         return true;
     }
     T at(const std::string& key) const {
-        if (!_m.count(key)) {            // This should not happen though.
+        if (!_m.count(key)) {  // This should not happen though.
             assert(0 && "GST_Dict::key out of range!");
         }
 
@@ -574,6 +582,37 @@ class GST_Dict {
     std::map<std::string, T> _m;
 };
 
+// c++20 has some problems when use std::priority_queue
+template <class T>
+class SortedVectorPQ {
+   public:
+    // Always sorted in descending order: largest first, smallest last.
+    void push(const T& x) {
+        auto it = std::lower_bound(data_.begin(), data_.end(), x, [](const T& a, const T& b) { return a > b; }  // descending
+        );
+        data_.insert(it, x);
+    }
+
+    T pop() {
+        T x = data_.back();
+        data_.pop_back();
+        return x;
+    }
+
+    const T& top() const {
+        return data_.back();  // smallest element (end)
+    }
+
+    bool empty() const { return data_.empty(); }
+
+    size_t size() const { return data_.size(); }
+
+    void reserve(size_t n) { data_.reserve(n); }
+
+   private:
+    std::vector<T> data_;
+};
+
 class SafeExit : public std::exception {
    private:
     std::string message;
@@ -586,8 +625,8 @@ class SafeExit : public std::exception {
 
     SafeExit(const std::string& msg, int code = 1, ExitReason reason = ExitReason::ERROR, const std::string& loc = "")
         : message(msg), exit_code(code), timestamp(std::chrono::system_clock::now()), location(loc), reason(reason) {
-            message = msg;
-        }
+        message = msg;
+    }
 
     const char* what() const noexcept override { return message.c_str(); }
 
@@ -615,22 +654,27 @@ class SafeExit : public std::exception {
     }
 
 const std::vector<std::string> SOME_prompts = {"hello",
-                               "What is the capital of Shanghai?",
-                               "Who wrote the play Romeo and Juliet?",
-                               "In which year did the Titanic sink?",
-                               "What is the chemical symbol for the element gold?",
-                               "What is the longest river in the world?",
-                               "Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?",
-                               "How many games did Arsenal FC go unbeaten during the 2003-2004 season of the English Premier League",
-                               "I get out on the top floor (third floor) at street level. How many stories is the building above the ground?",
-                               "天命玄鸟,降而生生. 玄鸟是什么鸟?"};
-const std::vector<std::string> SOME_answers = {"Hello! How can I assist you today?",
-                               "The capital of Shanghai is Shanghai.",
-                               "The play *Romeo and Juliet* was written by William Shakespeare. It was first performed in 1595 at the Globe Theatre in London. The story is a tragic love story set in a feud between families, and it remains one of Shakespeare's most famous and widely performed plays.",
-                               "The Titanic sank on 19 October 1912.",
-                               "The chemical symbol for the element gold is Au.",
-                               "The longest river in the world is the Nile River. It flows through several countries in North Africa and is one of the most significant rivers in the world. The Nile is approximately 6,650 miles long.",
-                               "Sally has 1 sister.",
-                               "Arsenal FC went unbeaten in 23 games during the 2003–04 English Premier League season. This was a remarkable achievement, and it's still remembered as one of the greatest successes in the club's history.",
-                               "So, the number of stories above the ground is: 3.",
-                               "“天命玄鸟，降而生生”出自《诗经·天问》，其中“玄鸟”是一种传说中的鸟。根据古代文献记载，玄鸟被认为是具有超自然力量的神鸟，象征着生命的延续和宇宙的运转。在《易经》和《周易》中，“玄鸟”常被用来象征“天”与“道”，代表着万物的起源与自然的和谐。因此，玄鸟在传统文化中具有重要的象征意义。"};
+                                               "What is the capital of Shanghai?",
+                                               "Who wrote the play Romeo and Juliet?",
+                                               "In which year did the Titanic sink?",
+                                               "What is the chemical symbol for the element gold?",
+                                               "What is the longest river in the world?",
+                                               "Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?",
+                                               "How many games did Arsenal FC go unbeaten during the 2003-2004 season of the English Premier League",
+                                               "I get out on the top floor (third floor) at street level. How many stories is the building above the ground?",
+                                               "天命玄鸟,降而生生. 玄鸟是什么鸟?"};
+const std::vector<std::string> SOME_answers = {
+    "Hello! How can I assist you today?",
+    "The capital of Shanghai is Shanghai.",
+    "The play *Romeo and Juliet* was written by William Shakespeare. It was first performed in 1595 at the Globe Theatre in London. The story is a tragic love "
+    "story set in a feud between families, and it remains one of Shakespeare's most famous and widely performed plays.",
+    "The Titanic sank on 19 October 1912.",
+    "The chemical symbol for the element gold is Au.",
+    "The longest river in the world is the Nile River. It flows through several countries in North Africa and is one of the most significant rivers in the "
+    "world. The Nile is approximately 6,650 miles long.",
+    "Sally has 1 sister.",
+    "Arsenal FC went unbeaten in 23 games during the 2003–04 English Premier League season. This was a remarkable achievement, and it's still remembered as "
+    "one of the greatest successes in the club's history.",
+    "So, the number of stories above the ground is: 3.",
+    "“天命玄鸟，降而生生”出自《诗经·天问》，其中“玄鸟”是一种传说中的鸟。根据古代文献记载，玄鸟被认为是具有超自然力量的神鸟，象征着生命的延续和宇宙的运转。在《"
+    "易经》和《周易》中，“玄鸟”常被用来象征“天”与“道”，代表着万物的起源与自然的和谐。因此，玄鸟在传统文化中具有重要的象征意义。"};

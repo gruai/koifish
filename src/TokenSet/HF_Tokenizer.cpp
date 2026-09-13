@@ -1544,7 +1544,7 @@ struct HF_Tokenizer::Impl {
                 cs.push_back(c);
                 this->added_tokens_.push_back({id, c, special, lstrip, rstrip, normalized});  // Store added token info
                 if (c == "[PAD]" || c == "<pad>")
-                    this->special_tokens_.pad = id;
+                    this->special_tokens_._pad = id;
                 if (c == "[BOS]" || c == "<s>" || c == "<bos>")
                     this->special_tokens_.bos = id;
                 if (c == "[EOS]" || c == "</s>" || c == "<eos>")
@@ -1552,9 +1552,9 @@ struct HF_Tokenizer::Impl {
                 if (c == "[UNK]" || c == "<unk>")
                     this->special_tokens_.unk = id;
                 if (c == "[M]" || c == "<M>")
-                    this->special_tokens_.mask = id;
+                    this->special_tokens_._mask = id;
                 if (c == "[NOISE]" || c == "<noise>")
-                    this->special_tokens_.noise = id;
+                    this->special_tokens_._noise = id;
 
                 auto bpe = std::dynamic_pointer_cast<BPEModel>(this->model_);
                 if (bpe) {
@@ -1580,7 +1580,7 @@ struct HF_Tokenizer::Impl {
             if (co.contains("eos_token"))
                 this->special_tokens_.eos = public_api->token_to_id(get_token_content(co["eos_token"]));
             if (co.contains("pad_token"))
-                this->special_tokens_.pad = public_api->token_to_id(get_token_content(co["pad_token"]));
+                this->special_tokens_._pad = public_api->token_to_id(get_token_content(co["pad_token"]));
             if (co.contains("unk_token"))
                 this->special_tokens_.unk = public_api->token_to_id(get_token_content(co["unk_token"]));
         }
@@ -1596,7 +1596,9 @@ HF_Tokenizer::HF_Tokenizer() : impl_(std::unique_ptr<Impl>(new Impl())) {}
 HF_Tokenizer::~HF_Tokenizer() = default;
 
 HF_Tokenizer::HF_Tokenizer(Fish* dolphin, int flag) : impl_(std::make_unique<Impl>()) {
-    config      = dolphin->config;
+    config    = dolphin->config;
+    isDialect = config.dict.tpDialect == DIALECT_TYPE::DIALECT_on;
+
     name        = "HF_Tokenizer";
     config      = dolphin->config;
     bool isInit = false;
@@ -1607,12 +1609,12 @@ HF_Tokenizer::HF_Tokenizer(Fish* dolphin, int flag) : impl_(std::make_unique<Imp
         _WARN("[HF_Tokenizer] empty path of TokenJson!\n");
         vocab.clear();
     }
-    isInit                = InitHF(dolphin, flag);
+    isInit = InitHF(dolphin, flag);
     if (!isInit) {
         _WARN("[HF_Tokenizer] failed to load \"%s\"!\n", pathTokenJson.c_str());
         vocab.clear();
     }
-    if (dolphin->isModel({NLP_SCORE_})) {
+    if (dolphin->isModel({MD_QWEN})) {
     }
 }
 
@@ -1630,7 +1632,7 @@ HF_Tokenizer::HF_Tokenizer(Fish* dolphin, int flag) : impl_(std::make_unique<Imp
 bool HF_Tokenizer::InitHF(Fish* dolphin, int flag) {
     assert(dolphin != nullptr);
     string pathTokenJson = dolphin->config.model.sTokenJsonPath, sNull = "";
-    assert(nVocab() == 0);
+    assert(empty());
     try {
         std::ifstream f(pathTokenJson);
         if (!f.is_open())
@@ -1640,7 +1642,7 @@ bool HF_Tokenizer::InitHF(Fish* dolphin, int flag) {
         json j = json::parse(ss_j.str());
         if (j.is_null())
             return false;
-        if (dolphin->isModel({NLP_SCORE_})) {
+        if (dolphin->isModel({MD_QWEN})) {
             int _noise_id = 151666;
             json jNoise   = json::parse(
                 R"({
@@ -1696,11 +1698,11 @@ bool HF_Tokenizer::InitHF(Fish* dolphin, int flag) {
         S.eos = eos_token_id();
         S.unk = unk_token_id();
         // sep_id  = jKV(jVocab, {sep_token}, sep_id);
-        S.pad = pad_token_id();
+        S._pad = pad_token_id();
         // cls_id  = jKV(jVocab, {cls_token}, cls_id);
         // mask_id = jKV(jVocab, {mask_token}, mask_id);
 
-        _INFO("[HF_Tokenizer] nVocab=%d %s special=%ld @\"%s\"\n", nV, S.Dump(0x0).c_str(), special_tokens.size(), pathTokenJson.c_str());
+        // _INFO("[HF_Tokenizer] nVocab=%d %s special=%ld @\"%s\"\n", nV, S.Dump(0x0).c_str(), special_tokens.size(), pathTokenJson.c_str());
 
         return true;
     } catch (JSON::parse_error& ex) {
@@ -1743,7 +1745,11 @@ std::string HF_Tokenizer::decode(const std::vector<int>& ids, bool skip_special_
         return "";
 
     std::vector<std::string> tokens;
-    for (int id : ids) {
+    for (int id0 : ids) {
+        TOKEN_ID id = id0;
+        if(isDialect && !invT2T.empty()){
+            id = invT2T.at(id);
+        }
         if (skip_special_tokens) {
             // Check if special token
             bool special = false;
@@ -1769,7 +1775,7 @@ std::string HF_Tokenizer::decode(const std::vector<int>& ids, bool skip_special_
 
 int HF_Tokenizer::token_to_id(const std::string& t) const { return impl_->model_ ? impl_->model_->token_to_id(t) : -1; }
 std::string HF_Tokenizer::id_to_token(int id) const { return impl_->model_ ? impl_->model_->id_to_token(id) : ""; }
-int HF_Tokenizer::pad_token_id() const { return impl_->special_tokens_.pad; }
+int HF_Tokenizer::pad_token_id() const { return impl_->special_tokens_._pad; }
 int HF_Tokenizer::bos_token_id() const { return impl_->special_tokens_.bos; }
 int HF_Tokenizer::eos_token_id() const { return impl_->special_tokens_.eos; }
 int HF_Tokenizer::unk_token_id() const { return impl_->special_tokens_.unk; }

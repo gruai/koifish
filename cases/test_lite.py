@@ -32,11 +32,23 @@ def CheckResult(df,iter,golden,title="",rel_tol=1e-05):
     if not isClose:
         print(f"CheckResult failed@{title}! loss={a} golden={golden}\n")
         assert(0)
-
+  
 # "Write a quick sort algorithm in c++."
 def test_diffusion_coder():  
     content = bubble_one("coder_tiny"," --hf ./Models/dcoder/ --prompts \"Write a quick sort algorithm in c++.\" --seq_len 640 --md_method \"dilate\"", fResult="./output/gopt/dilate__.txt") 
     assert "This implementation ensures that the first element is the last element at the array of the array, and prints the initial state of the array." in content
+
+def test_mdm_tiny():    
+    most_iter = 60
+    title = "MaskDiffusion tiny"
+    dfTrain = koifish_one(title, sExe, "./cases/mask_diffusion/tiny.json", most_iter=most_iter, train_csv="./Train@[tiny_diffusion]_info_.csv")    
+    CheckResult(dfTrain,most_iter,10.993,title=title,rel_tol=0.001)      # 
+
+def test_mdm_coder():    
+    most_iter = 60
+    title = "MaskDiffusion coder"
+    dfTrain = koifish_one(title, sExe, "./cases/mask_diffusion/kcoder.json", most_iter=most_iter, train_csv="./Train@[kcoder]_info_.csv")    
+    CheckResult(dfTrain,most_iter,10.657,title=title,rel_tol=0.001)      # 
 
 def test_chat_qwen3_596M():  
     content = bubble_one("chat_qwen3_596M"," --hf ./Models/Qwen3-0.6B/ --prompts \"hello\"")  #./cases/qwen3/qwen3_0.6B.json
@@ -113,13 +125,13 @@ def test_gpt2_124M_fuyou6():
     most_iter = 70
     title = "124M"
     dfTrain = koifish_one(title, sExe, "./cases/gpt2/124M_shard50_F6_lr0.001/F6_lr0.001.json", most_iter=most_iter)    
-    CheckResult(dfTrain,most_iter,7.785,title=title)    #7.497
+    CheckResult(dfTrain,most_iter,7.497,title=title)    #7.497 7.785
 
 def test_gpt2_124M():    
     most_iter = 70
     title = "124M_no_fuyou"
     dfTrain = koifish_one(title, sExe, "./cases/gpt2/124M_shard50_F6_lr0.001/no_fuyou.json", most_iter=most_iter)    
-    CheckResult(dfTrain,most_iter,7.751,title=title)    #7.467
+    CheckResult(dfTrain,most_iter,7.467,title=title)    #7.467 7.751
 
 
 
@@ -157,11 +169,13 @@ if __name__ == '__main__':
     args = parser.parse_args()    
     
     sExe = "./bin/koifish "
+    test_mdm_coder()
+    # test_mdm_tiny()
     # test_gpt2_774M()
     #test_diffusion_coder()
     # test_chat_qwen3_596M()
     # test_chat_qwen3_0_6B()  
-    test_sft_qwen3_mimimind() 
+    # test_sft_qwen3_mimimind() 
     # test_qwen3_596M()
     # test_ising_596M()
     # test_chat_qwen3_4B()

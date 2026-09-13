@@ -868,12 +868,12 @@ hGTensor Head4Token::cuInfer_1(hGTensor inp_, int flag) {
 
 hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
     INSPECT inspect(this);
-    auto hBatch        = hFish->curBatch(0x0);
+    auto hBatch = hFish->curBatch(0x0);
     int V = nCls, Vp = padded_nCls, i, C = hFish->config.nEmbed(), nPlot = 0, dB = dB4Logits();
     assert(proj.b == nullptr);
     // mean_loss          = 0.0f;
     const int* targets = (int*)(target->data);
-    float* cuLoss      = (float*)out->data;    
+    float* cuLoss      = (float*)out->data;
     int* devMask       = hBatch->devMask == nullptr ? nullptr : TO<int>(hBatch->devMask);
     hGTensor curLogits = preLogits, w = proj.w;
     float alpha4g = 1.0, beta4g = 1.0, logprob = 0;
@@ -909,14 +909,17 @@ hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
             switch (verHeadLoss) {
                 case KERNEL_LIB_TYPE::TL_CUDA: {
 #if defined __USE_TILELANG__
-                    if (Vp == 151936)
+                    /*if (Vp == 151936)
                         header_cls_V151936_T64_64_S49152_bfloat16<<<dim3(dB * T), dim3(128, 1, 1), 49152, main_stream>>>(
                             ToX(curLogits) + off, targets + n1, cuLoss + n1, ToX(curLogits) + off, dB * T, hBatch->nValidTokens);
                     else if (Vp == 66)
                         header_cls_V66_T64_64_S49152_bfloat16<<<dim3(dB * T), dim3(128, 1, 1), 49152, main_stream>>>(
                             ToX(curLogits) + off, targets + n1, cuLoss + n1, ToX(curLogits) + off, dB * T, hBatch->nValidTokens);
                     else
-                        assert(0 && "Not implemented ...");
+                        assert(0 && "Not implemented ...");*/
+//(bfloat16_t* grad_pre_logits, const int* labels, float* losses, bfloat16_t* pre_logits, N,  V, nValidToken) 
+                    header_cls__T64_64_S49152_bfloat16<<<dim3(dB * T), dim3(128, 1, 1), 49152, main_stream>>>(
+                        ToX(curLogits) + off, targets + n1, cuLoss + n1, ToX(curLogits) + off, dB * T, V, hBatch->nValidTokens);
                     // header_cls_T64_64_S49152_bfloat16<<<dim3(dB * T), dim3(128, 1, 1), 49152, main_stream>>>(targets + n1, ToX(curLogits) + off, dB * T);
 #else
                     assert(0 && "TL_CUDA kernel of LOSS is missed!");
@@ -959,7 +962,7 @@ hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
             assert(0);
             exit(KOIFISH_EXIT_OUT_CLS);
         }
-        
+
         SUM::tHeader += (GST_us() - t0) / 1000000.0;
     } else {
         // matmul_backward(errOut, gw, NULL, errLogits, z0, w, NULL, B, T, C, Vp, main_stream);

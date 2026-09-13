@@ -82,6 +82,20 @@ def cpuStats():
     memoryUse = py.memory_info()[0] / 2. ** 30  # memory use in GB...I think
     print('memory use in python(GB):', memoryUse)
 
+def GetSharedMem_per_block():
+    cuda = ctypes.CDLL("libcudart.so")
+    # MAX_SMEM_PER_BLOCK = 97      # cudaDevAttrMaxSharedMemoryPerBlockOptin
+    MAX_SMEM_PER_BLOCK = 8      # cudaDevAttrMaxSharedMemoryPerBlock
+    device = torch.cuda.current_device()
+    value = ctypes.c_int()
+    ret = cuda.cudaDeviceGetAttribute(
+        ctypes.byref(value),
+        MAX_SMEM_PER_BLOCK,
+        device
+    )
+    assert ret == 0    
+    return value.value
+    
 def pytorch_env( device=0 ):
     print(f"\n======== Torch_{torch.__version__} its' cuda={torch.version.cuda} device_capability={torch.cuda.get_device_capability()} ========")
     t_major, t_minor = map(int, torch.version.cuda.split("."))
@@ -96,18 +110,7 @@ def pytorch_env( device=0 ):
     if n_major*1000 + n_minor != t_major*1000 + t_minor:
         print(f"\n======== CUDA version mismatch between tilelang({t_major}.{t_minor}) & nvcc({n_major}.{n_minor})! Dangerous!!! ========\n") 
 
-    cuda = ctypes.CDLL("libcudart.so")
-    MAX_SMEM_PER_BLOCK = 97      # cudaDevAttrMaxSharedMemoryPerBlockOptin
-    device = torch.cuda.current_device()
-    value = ctypes.c_int()
-    ret = cuda.cudaDeviceGetAttribute(
-        ctypes.byref(value),
-        MAX_SMEM_PER_BLOCK,
-        device
-    )
-    assert ret == 0
-    print(f"Max shared memory per block (opt-in): {value.value} bytes")
-
+    print(f"Max shared memory per block: {GetSharedMem_per_block()} bytes")
     #torch.cuda.set_device(0)
     #device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print('__Python VERSION:', sys.version)

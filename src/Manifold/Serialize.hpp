@@ -41,8 +41,8 @@ class FSerial {
 
     virtual ~FSerial() {
         try {
-            // if(_stream!=NULL)
-            //     fclose(_stream);
+            if(_stream!=NULL)
+                fclose(_stream);
         } catch (...) {
         }
     }
@@ -115,6 +115,32 @@ class FSerial {
             arrT.resize(nT);
             for (i = 0; i < nT; i++) {
                 Tchild* obj = new Tchild();
+                if (!obj->Serialize(*this, isSave, flag))
+                    return false;
+                arrT[i] = obj;
+            }
+        }
+        return true;
+    }
+
+    template <typename T, typename Tchild>
+    bool Serial_hVector(std::vector<std::shared_ptr<T>>& arrT, bool isSave, int flag = 0x0) {
+        if (!isValid())
+            return false;
+        size_t nT = arrT.size(), i;
+        Serial(&nT, 1, isSave);
+        if (isSave) {
+            for (auto obj0 : arrT) {
+                Tchild* obj = dynamic_cast<Tchild*>(obj0.get());
+                assert(obj != nullptr);
+                if (!obj->Serialize(*this, isSave, flag))
+                    return false;
+            }
+        } else {
+            arrT.clear();
+            arrT.resize(nT);
+            for (i = 0; i < nT; i++) {
+                auto obj = std::make_shared<Tchild>();
                 if (!obj->Serialize(*this, isSave, flag))
                     return false;
                 arrT[i] = obj;

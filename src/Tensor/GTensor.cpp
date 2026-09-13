@@ -395,7 +395,7 @@ hGTensor GENSOR_TOPU::Get(MODEL_ARCH arch, const string& name, int flag) {
         bool isMiss = nag.find(name) == nag.end();
         if (isMiss) {  //@NN2NAME
             size_t pos = 0;
-            /*if (arch == MODEL_ARCH::NLP_QWEN2) {    //some hack for mismatch of name
+            /*if (arch == MODEL_ARCH::NTP_QWEN2) {    //some hack for mismatch of name
                 std::map<std::string, std::string> S2S={
                     {"input_layernorm","self_attn.norm"}
                 };
@@ -413,7 +413,7 @@ hGTensor GENSOR_TOPU::Get(MODEL_ARCH arch, const string& name, int flag) {
             for (auto ng : nag) {
                 _INFO("\t%s,", ng.first.c_str());
             }
-            return  nullptr;
+            return nullptr;
         }
         return nag[key];
     }  //  model.layers.0.input_layernorm.weight
@@ -789,7 +789,7 @@ bool GTensor::DumpX(int tpDump, const string& title, int flag) const {
             if (disq.err > 0)
                 _INFO("eQ=%.3g ", disq.err);
             _INFO("\n");
-            if (DEBUG.dump_TensorDetail)
+            if (DEBUG.dump_ParamsDetail>0)  //  g_dump_level = DEBUG.dump_TensorDetail + 1;
                 Print(name, 0, -1);
             /*if (n > 0 && a1 != -FLT_MAX) {
                 _INFO("\nsum=%g data=[%f : %f] rZ=%.3g%%\n\t", sum, a0, a1, nz * 100.0 / nElems);

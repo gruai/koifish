@@ -116,7 +116,7 @@ size_t huTensor::Free_1(void** obj, const string& info) {
         cudaError_t error = cudaFree(*obj);
         if (error != cudaSuccess) {
             cudaError_t const last_err{cudaGetLastError()};
-            _WARN("[CUDA] free failed @\"%s\"! err=%s(%s).\n", name, cudaGetErrorString(error), cudaGetErrorString(last_err));
+            // _WARN("[CUDA] free failed @\"%s\"! err=%s(%s).\n", name, cudaGetErrorString(error), cudaGetErrorString(last_err));
         }
     }
     hFish->memBuffer->Free(*obj);
@@ -935,8 +935,8 @@ bool GST_TensorBuffer::Prepare(int flag) {
         int dB = config.model.preLogits_dB < 0 ? B : config.model.preLogits_dB;
         if (hFish->isTrain())
             assert(B % dB == 0);
-        size_t nFFW = (size_t)(B)*T * nFF, nPrelogist = (size_t)(dB)*T * Vp;  // nTmp = (size_t)(T)*std::max(nFF, std::max(NH, Vp)),
-        size_t nTmp = std::max(nFFW, nPrelogist);                             // / dB + 1
+        size_t nFFW = (size_t)(B)*T * nFF, nPrelogist = (size_t)(dB)*T * Vp;  
+        size_t nTmp = std::max(nFFW, nPrelogist);                             // 
         assert(nTmp < INT_MAX);
         typNUMBER tpA = config.model.tpActivation, tpG = config.model.tpGradient, tpW = config.model.tpWeight;
         // cuLiteTest(B,T,C);
@@ -961,10 +961,10 @@ bool GST_TensorBuffer::Prepare(int flag) {
         // gBUFF->tmpKout->data = (hBITARR)GTensor::buff + offset, offset += gBUFF->tmpKout->nByte();
 
         GTensor::host_buff = new float[scratch->size()];
-        if (hFish->isModel({NLP_GUPPY})) {
+        if (hFish->isModel({NTP_GUPPY})) {
             tmpW = std::make_shared<huTensor>(hFish, "tmpW", SHAPE({nEmbed, nFF}), tpW, true);
         }
-        if (hFish->isModel({NLP_QWEN2, NLP_QWEN3, NLP_SCORE_})) {
+        if (hFish->isModel({NTP_QWEN2, NTP_QWEN3, MD_QWEN})) {
             gate_delta = std::make_shared<huTensor>(hFish, "tmpGateDelta", SHAPE({B, T, nFF}), tpG, true);
         }
         switch (hFish->phase) {

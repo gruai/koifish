@@ -15,6 +15,7 @@
 #include <numeric>
 #include <string>
 #include <vector>
+#include <queue>
 using namespace std;
 #include "../EDA/Feat_Selection.hpp"
 #include "../include/LiteBOM_config.h"
@@ -76,6 +77,7 @@ class ARR_TREE {
     }
 };
 
+typedef std::priority_queue<hMIHISTO, std::vector<hMIHISTO>, MINI_HISTO::compare> queMIHISTO;
 class FeatVector {
    protected:
     const FeatsOnFold* hFold_ = nullptr;

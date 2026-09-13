@@ -283,13 +283,13 @@ MODEL_ARCH CLI_params::ModelArch() {
     std::transform(info.begin(), info.end(), info.begin(), ::toupper);
     arch = info == "MOE"         ? NLP_MOE
            : info == "MAMBA"     ? MODEL_ARCH::NLP_MAMBA
-           : info == "GUPPY"     ? MODEL_ARCH::NLP_GUPPY
-           : info == "DEEPSEEK"  ? MODEL_ARCH::NLP_DEEPSEEK
-           : info == "QWEN2"     ? MODEL_ARCH::NLP_QWEN2
-           : info == "QWEN2.5"   ? MODEL_ARCH::NLP_QWEN2
-           : info == "QWEN3"     ? MODEL_ARCH::NLP_QWEN3
-           : info == "QWEN3_MOE" ? MODEL_ARCH::NLP_QWEN3
-           : info == "SCORE"     ? MODEL_ARCH::NLP_SCORE_
+           : info == "GUPPY"     ? MODEL_ARCH::NTP_GUPPY
+           : info == "DEEPSEEK"  ? MODEL_ARCH::NTP_DEEPSEEK
+           : info == "QWEN2"     ? MODEL_ARCH::NTP_QWEN2
+           : info == "QWEN2.5"   ? MODEL_ARCH::NTP_QWEN2
+           : info == "QWEN3"     ? MODEL_ARCH::NTP_QWEN3
+           : info == "QWEN3_MOE" ? MODEL_ARCH::NTP_QWEN3
+           : info == "SCORE"     ? MODEL_ARCH::MD_QWEN
            : info == "GPT2"      ? MODEL_ARCH::NLP_GPT2
            : info == "GPT2CHAR"  ? MODEL_ARCH::NLP_GPT2_char
            : info == "LAMA"      ? MODEL_ARCH::NLP_LLAMA
@@ -351,6 +351,7 @@ bool CLI_params::JModel2Params(int flag) {
         } else if (jModel.find("hf_tokenizer") != jModel.end()) {
             model.sCardPath     = jKEY(jModel, {"hf_tokenizer"});
             model.onlyTokenizer = true;
+            _INFO("[DICT] hf_tokenizer@\"%s\"\n", model.sCardPath.c_str());
         } else if (!sft.UpdateCKP(model)) {
         } else {
         }
@@ -567,11 +568,7 @@ std::string LoAB_CARD::Dump(int typ, int flag) const {
 }
 
 XI_CARD::~XI_CARD() {}
-bool XI_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
-    // hMaskRander = new GRanderTorch(mask_seed);
-
-    return true;
-}
+bool XI_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) { return true; }
 std::string XI_CARD::Dump(int typ, int flag) const { return ""; }
 bool XI_CARD::isValid(int flag) { return true; }
 
@@ -635,6 +632,29 @@ float LoAB_CARD::lr_base(int flag) {
         lr_base = 1.0 - sAB;  // lr would decreased to 0
     _INFO("[Distillation] lr_base = %f", lr_base);
     return lr_base;
+}
+
+DICT_CARD::DICT_CARD() {}
+bool DICT_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
+    string s;
+    type     = jKV(jConfig, {"dict", "type"}, type);
+    vae_dims = jKV(jConfig, {"dict", "vae", "dims"}, vae_dims);
+    // DEBUG.dict_latent_dim = jKV(jConfig,{"dict","latent_dim"},DEBUG.dict_latent_dim );
+
+    logits = jKV(jConfig, {"dict", "logits"}, logits);
+
+    STR2ENUM("DIALECT_" + jKV<string>(jConfig, {"dict", "dialect"}, ""), tpDialect);
+
+    return true;
+}
+void DICT_CARD::Dump(int typ) {
+    // _INFO("[DICT]: anneal=%s lenda=%g",
+    //       anneal == ANNEAL_DECAY_COSINE   ? "cosine"
+    //       : anneal == ANNEAL_DECAY_FIX    ? "fix_1"
+    //       : anneal == ANNEAL_DECAY_LINEAR ? "linear"
+    //                                       : "off",
+    //       lenda);
+    _INFO("\n");
 }
 
 bool DISTILLATION_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
@@ -775,14 +795,20 @@ uint32_t CLI_params::nEmbed(int flag) const {
     int no = model.token_embeds.size() - 1;
     return model.token_embeds[no];
 }
-void CLI_params::OnMostToken(size_t nMost, int flag) {
-    double a          = nMost * 1.0 / n_ctx();  // nTokenInBatch();
+void CLI_params::OnMostToken(size_t nMostToken, int flag) {
+    double a = nMostToken * 1.0 / n_ctx(), b = nTokenInBatch();
     size_t nSamp      = (size_t)(floor)(a);
     int iter_1        = (int)floor(a / n_batch());
     float rSample     = common.rSubSample;
-    common.nEpochIter = (int)ceil(nMost * rSample / nTokenInBatch());
-    common.nMostIter  = (int)floor(nMost * common.n_epochs * rSample / nTokenInBatch());
-    assert(common.nMostIter > 0);
+    common.nEpochIter = (int)ceil(nMostToken * rSample / nTokenInBatch());  // number of batch to pass all tokens
+    if (common.n_epochs > 0) {
+        common.nMostIter = (int)floor(nMostToken * common.n_epochs * rSample / nTokenInBatch());
+    } else {
+        assert(common.nMostIter > 0);
+        common.n_epochs = (int)ceil(common.nMostIter * rSample * nTokenInBatch() / nMostToken);
+    }
+
+    assert(common.nMostIter > 0 && common.n_epochs > 0);
 }
 
 void SKDU_params::Dump(int typ) const {
@@ -809,7 +835,7 @@ void CLI_params::OnArch() {
     srand(common.seed);
 
     switch (ModelArch()) {
-        case MODEL_ARCH::NLP_GUPPY:
+        case MODEL_ARCH::NTP_GUPPY:
             model.isNormalBias       = true;
             model.isSLPBias          = true;  // nealy same
             model.isPaddedCls        = true;  // ceil(n/128.0)*128
@@ -858,7 +884,7 @@ void CLI_params::OnArch() {
             int group = Get({"model_v0", "target_group"}, 1);
             assert(group == 1);
         } break;
-        case NLP_DEEPSEEK:
+        case NTP_DEEPSEEK:
             assert(0);
             break;
         case NLP_MISTRAL:
@@ -872,13 +898,7 @@ void CLI_params::OnArch() {
 }
 
 TRAIN_CARD::TRAIN_CARD() {
-    // seed                    = -1;
-    // n_ctx                   = 128;
-    // n_threads               = 6;
     n_batch = 1;
-    // n_gradient_accumulation = 1;
-    // n_epochs                = -1;
-    // n_gpu_layers            = 0;
 
     custom_n_ctx = false;
 
@@ -965,6 +985,8 @@ JSON CLI_params::ToJSON(int type, int flag) {
     return json;
 }
 
+bool TRAIN_CARD::isNoTrain(int flag) { return n_epochs <= 0 && nMostIter <= 0; }
+
 bool TRAIN_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
     if (jConfig.find("train") == jConfig.end()) {
         _WARN("Can't find the \"train\" parameters in json config file!\n");
@@ -975,7 +997,8 @@ bool TRAIN_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
 
     n_batch   = jKV(jConfig, {"train", "batch"}, n_batch);
     n_epochs  = jKV(jConfig, {"train", "epoch"}, n_epochs);
-    nMostIter = jKV(jConfig, {"train", "adam-iter"}, nMostIter);
+    nMostIter = jKV(jConfig, {"train", "most-iter"}, nMostIter);
+    assert(n_epochs > 0 || nMostIter > 0);
     // why large "learning-rate" would fail, so strange!
     if (jTrain.find("learning-rate") == jTrain.end()) {
         _WARN("Can't find the \"learning-rate\" value in json config file! Use default value=%g\n", adam.alpha);
@@ -1230,7 +1253,7 @@ bool CLI_params::InitJConfig(int flag) {
         std::string s = jConfig.dump(), s0;
         common.Init(this, jConfig);
 
-        chat_sampler.Init(this, jConfig);
+        dict.Init(this, jConfig);
 
         kernels.Init(this, jConfig);
 
@@ -1245,7 +1268,7 @@ bool CLI_params::InitJConfig(int flag) {
         ZMUV_ratio = jKV(jConfig, {"train", "optimizatioin", "ZMUV_ratio"}, ZMUV_ratio);
 
         // serial_path = jKV(jConfig,{"data","serialize_path"},s0 );
-        dict_type     = jKV(jConfig, {"dict", "type"}, s0);
+
         tpBatchSample = jKV(jConfig, {"train", "batch_sample"}, tpBatchSample);
         rSplit        = jKV(jConfig, {"data", "eval_split"}, rSplit);
         // string a = tpBatchSample=="stacking" ? tpBatchSample : "";
@@ -1278,6 +1301,7 @@ bool CLI_params::InitJConfig(int flag) {
         } else {
         }
 
+        chat_sampler.Init(this, jConfig);
         n_swarm = jKV(jConfig, {"train", "swarm"}, 1);
 
         // common.seed = jKV(jConfig, {"seed"}, common.seed);
@@ -1297,13 +1321,6 @@ bool CLI_params::InitJConfig(int flag) {
         }
 
         prompt = jKV(jConfig, {"gpt", "prompt"}, prompt);
-
-        dict_vae_dims = jKV(jConfig, {"dict", "vae", "dims"}, dict_vae_dims);
-        // DEBUG.dict_latent_dim = jKV(jConfig,{"dict","latent_dim"},DEBUG.dict_latent_dim );
-        dict_dialect = jKV(jConfig, {"dict", "dialect"}, dict_dialect);
-        dict_logits  = jKV(jConfig, {"dict", "logits"}, dict_logits);
-
-        vae = dict_vae_dims;  // hack
 
         test = jKV(jConfig, {"test"}, test);
 
@@ -1325,13 +1342,17 @@ bool CLI_params::InitJConfig(int flag) {
             save_GlobalSate = tmpGlobalSate;
         }
         DEBUG.dump_TensorDetail  = jKV(jConfig, {"debug", "dump_tensordetail"}, DEBUG.dump_TensorDetail);
+        DEBUG.dump_ParamsDetail  = jKV(jConfig, {"debug", "dump_paramsdetail"}, DEBUG.dump_ParamsDetail);
         DEBUG.dump_LossDetail    = jKV(jConfig, {"debug", "dump_lossdetail"}, DEBUG.dump_LossDetail);
         DEBUG.watch_Tensors      = jKV(jConfig, {"debug", "watch_tensors"}, DEBUG.watch_Tensors);
         DEBUG.verShuffleSamp     = jKV(jConfig, {"debug", "shuffle_samp"}, DEBUG.verShuffleSamp);
         DEBUG.check_tensor_quant = jKV(jConfig, {"debug", "check_tensor_quant"}, DEBUG.check_tensor_quant);
         DEBUG.verFakeQuant       = jKV(jConfig, {"debug", "fake_quant"}, DEBUG.verFakeQuant);
-        DEBUG.isInitParamHost    = DEBUG.x1 == 0;
-        DEBUG.fLongTail          = jKV(jConfig, {"debug", "long_tail"}, DEBUG.fLongTail);
+        DEBUG.verShiftLabel      = jKV(jConfig, {"debug", "shift_label"}, DEBUG.verShiftLabel);
+        DEBUG.verHuaSNR          = jKV(jConfig, {"debug", "huaer_snr"}, DEBUG.verHuaSNR);
+
+        DEBUG.isInitParamHost = DEBUG.x1 == 0;
+        DEBUG.fLongTail       = jKV(jConfig, {"debug", "long_tail"}, DEBUG.fLongTail);
 
         // DEBUG.verOutCLS         = jKV(jConfig, {"debug", "Head4Token"}, DEBUG.verOutCLS);
 
@@ -1878,15 +1899,27 @@ bool CHAT_SAMPLER::InitPrefillTemplate(CLI_params* hConfig, int flag) {
 }
 
 bool CHAT_SAMPLER::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
-    nSeqLimit     = jKV(jConfig, {"generate", "max_seq_len"}, nSeqLimit);  // "gpt", "max_seq_len"
-    nSeqRecommend = jKV(jConfig, {"generate", "seq_len"}, nSeqRecommend);
-    test_every    = jKV(jConfig, {"generate", "eval-every"}, test_every);  //"train", "gpt-every"
-    top_k         = jKV(jConfig, {"generate", "top_k"}, top_k);
-    temperature   = jKV(jConfig, {"generate", "temperature"}, temperature);
-    prompt        = jKV(jConfig, {"generate", "prompt"}, prompt);
-    // prompts   = jKV(jConfig, {"generate", "prompts"}, prompts);
-    string key = "";
-    key        = jKV(jConfig, {"generate", "method"}, key);
+    if (jConfig.find("generate") == jConfig.end())
+        return false;
+
+    auto jGen = jConfig["generate"];
+    if (jGen.find("max_seq_len") != jGen.end())
+        nSeqLimit = jKV(jConfig, {"generate", "max_seq_len"}, nSeqLimit);  // "gpt", "max_seq_len"
+    else {
+        nSeqLimit = hConfig->n_ctx();
+    }
+    if (jGen.find("max_seq_len") != jGen.end())
+        nSeqRecommend = jKV(jConfig, {"generate", "seq_len"}, nSeqRecommend);
+    else {
+        nSeqRecommend = hConfig->n_ctx();
+    }
+    test_every  = jKV(jConfig, {"generate", "eval-every"}, test_every);  //"train", "gpt-every"
+    top_k       = jKV(jConfig, {"generate", "top_k"}, top_k);
+    temperature = jKV(jConfig, {"generate", "temperature"}, temperature);
+    prompt      = jKV(jConfig, {"generate", "prompt"}, prompt);
+    most_hua    = jKV(jConfig, {"generate", "most-hua"}, most_hua);
+    string key  = "";
+    key         = "MD_" + jKV(jConfig, {"generate", "method"}, key);
     STR2ENUM(key, tpZhuomo);
 
     if (nSeqLimit <= 0)
@@ -1897,7 +1930,7 @@ bool CHAT_SAMPLER::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
 
 bool CHAT_SAMPLER::OnArch(MODEL_ARCH arch, int flag) {
     switch (arch) {
-        case NLP_SCORE_:
+        case MD_QWEN:
             mode = enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
             //  Diffusion LMs do bidirectional iterative denoising, not left‑to‑right autoregressive decoding, do not require AR-style chat templates.
             prompt_template = "%s";
@@ -1912,8 +1945,8 @@ bool CHAT_SAMPLER::OnArch(MODEL_ARCH arch, int flag) {
             temperature            = 0.5;  //  hack
             top_p                  = 1.0;
             top_k                  = 200;
-            // tpZhuomo               = CHAT_SAMPLER::MD_DILATE;
-            most_step = 32;  // nSeqRecommend / 2;
+
+            // most_step = 32;  // nSeqRecommend / 2;
             break;
         default:
             if (test_every > 0)
@@ -2180,9 +2213,11 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, bool need
             }
         } break;
         default:
-            _ERROR("[PARAMS] Unknown format @\"%s\"!",sCardPath.c_str());
-            // assert(0 && "Unknown format!");
-            return false;
+            if (!onlyTokenizer) {
+                _ERROR("[PARAMS] Unknown format @\"%s\"!", sCardPath.c_str());
+                // assert(0 && "Unknown format!");
+                return false;
+            }
             break;
     }
 
@@ -2252,12 +2287,12 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, bool need
     }
 
     switch (hConfig->ModelArch()) {
-        case NLP_QWEN3:
+        case NTP_QWEN3:
             if (nTotalSize == 8045591552) {     //  https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
                 hConfig->n_ctx_train = 262144;  //  Context Length: 262,144 natively
             }
             break;
-        case NLP_QWEN2:
+        case NTP_QWEN2:
             break;
         default:
             break;

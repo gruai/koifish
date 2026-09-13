@@ -10,17 +10,28 @@
 
 #include "../Manifold/Optimizer.hpp"
 #include "../Manifold/gLLM.hpp"
+#include "../Tensor/Safetensors.hpp"
+#include "../Utils/GST_obj.hpp"
 #include "DataLoader.hpp"
 #include "Dictionary.hpp"
 
-PromptTokenset::PromptTokenset(JSON::const_iterator jit, hTokenizer hDict, int flag) : DataTokenSet(hDict) {
+// #define _USE_ARROW_
+#ifdef _USE_ARROW_
+#include <arrow/api.h>
+#include <arrow/io/api.h>
+#include <arrow/result.h>
+#include <arrow/status.h>
+#include <parquet/arrow/reader.h>
+#endif
+
+PromptTokenset::PromptTokenset(JSON::const_iterator jit, hTokenizer hDict, int flag) : TokenCoral(hDict) {
     auto k  = jit.key();
     auto v  = jit.value();
     sPrompt = v["prompt"];
     name    = sPrompt;
     // hDict->eos = 0;
 }
-PromptTokenset::PromptTokenset(const string& prompt, hTokenizer hDict, int flag) : DataTokenSet(hDict) {
+PromptTokenset::PromptTokenset(const string& prompt, hTokenizer hDict, int flag) : TokenCoral(hDict) {
     sPrompt = prompt;
     name    = sPrompt;
 }
@@ -37,7 +48,230 @@ Tokenset_HellaSwag::Tokenset_HellaSwag(JSON::const_iterator jit, hTokenizer hDic
     assert(nFile == 1);
 }
 
-GlobTokenset::GlobTokenset(JSON::const_iterator jit, hTokenizer hDict, int flag) : DataTokenSet(hDict) {
+std::string TokenCoral::Dump(int type, int flag) { return name; }
+
+/**
+ * AR LMs succeed with chaotic, mixed, random‑crop samples because:
+        the objective is local
+        the prefix always defines a valid context
+        the loss decomposes into independent predictions
+        global coherence is not required
+
+    Mask‑diffusion LMs fail under the same conditions because:
+        the objective is global
+        denoising requires coherent sequences
+        corruption must be stationary
+        multimodal sequences break the score function
+ */
+
+Tokenset_KST::Tokenset_KST(JSON::const_iterator jit, hTokenizer hDict, int flag) : GlobTokenset(jit, hDict, flag) {}
+
+bool Tokenset_KST::Shard2Sample(int id, int flag) {
+    try {
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+Tokenset_PARQUET::Tokenset_PARQUET(JSON::const_iterator jit, hTokenizer hDict, int flag) : GlobTokenset(jit, hDict, flag) {}
+
+bool Tokenset_PARQUET::GetShardInfo(int id, int flag) {
+    std::filesystem::path path = shard_paths[id];
+    if (!std::filesystem::exists(path)) {
+        K_EXIT(KOIFISH_LOAD_SHARD_NULL);
+    }
+    assert(hDict != nullptr);
+#ifdef _USE_ARROW_
+    std::shared_ptr<arrow::io::ReadableFile> infile;
+    PARQUET_ASSIGN_OR_THROW(infile, arrow::io::ReadableFile::Open(path.c_str()));
+    auto reader_result = parquet::arrow::OpenFile(infile, arrow::default_memory_pool());
+    PARQUET_THROW_NOT_OK(reader_result.status());
+    std::unique_ptr<parquet::arrow::FileReader> reader = std::move(reader_result).ValueOrDie();
+
+    std::shared_ptr<arrow::Table> table;
+    PARQUET_THROW_NOT_OK(reader->ReadTable(&table));
+    auto schema   = table->schema();
+    nShardSamples = table->num_rows();
+    nCol          = table->num_columns();
+    string header = "";
+    for (int i = 0; i < nCol; i++) {
+        header += " " + schema->field(i)->name();
+    }
+    _INFO("[Dataset] %d samps, %d header=[%s], @\"%s\"\n", nShardSamples, nCol, header.c_str(), path.c_str());
+
+    int col_index = schema->GetFieldIndex("text");
+    if (col_index == -1) {
+        std::cerr << "Column A not found\n";
+        return false;
+    }
+    auto chunk   = table->column(col_index)->chunk(0);
+    auto type_id = schema->field(col_index)->type()->id();
+    assert(type_id == arrow::Type::STRING);
+
+    pathToken = path.replace_extension(".tokens");
+    if (std::filesystem::exists(pathToken)) {
+        FSerial S(pathToken.c_str(), false, 0x0);
+        CHECK_(S.Serial(tokens, false, flag));
+        nShardToks = tokens.size();
+        auto bRet  = S.Serial_hVector<SAMP, SAMP>(shard_samps, false, flag);
+        CHECK_(bRet);
+        assert(shard_samps.size() == nShardSamples);
+    } else {
+        nShardToks = 0;
+        auto arr   = std::static_pointer_cast<arrow::StringArray>(chunk);
+        arrText.clear();
+        double t0 = GST_ms();
+        for (int64_t i = 0; i < arr->length(); i++) {
+            std::string s = arr->GetString(i);
+            TOKENS cur;
+            try {
+                cur = hDict->Encode(s);
+            } catch (...) {
+                continue;
+            }
+            if (cur.size() <= 0 || cur.size() > 100000)
+                continue;
+            shard_samps.push_back(std::make_shared<SAMP>(nShardToks, cur.size()));
+            nShardToks += cur.size();  // most token
+            tokens.insert(tokens.end(), cur.begin(), cur.end());
+
+            if ((i + 1) % 1000 == 0) {
+                double t = (GST_ms() - t0) / 1000.0, tps = nShardToks / t / 1000.0f;
+                double eta = t * nShardSamples / (i + 1) - t;
+                _INFO("\r[Tokenset] %-8dnToken=%-d eta=%8.3g(s) | %.3gK token/s ...", i, nShardToks, eta, tps);
+                // break;
+            }
+        }
+        FSerial S(pathToken.c_str(), true, 0x0);
+        CHECK_(S.Serial(tokens, true, flag));
+        auto bRet = S.Serial_hVector<SAMP, SAMP>(shard_samps, true, flag);
+        CHECK_(bRet);
+    }
+#endif
+    assert(nShardToks > 0);
+
+    return nShardSamples > 0;
+}
+
+bool Tokenset_PARQUET::Shard2Sample(int id, int flag) {
+    try {
+        int n_ctx   = hDict->config.n_ctx(), len;
+        size_t step = 1, nSamp = shard_samps.size();
+        float rSample = hDict->config.common.rSubSample;
+        if (rSample > 0 && rSample < 1)
+            step /= rSample;
+        for (size_t i = 0; i < nSamp; i += step) {
+            int sample_begin;
+            // shard_samps.push_back(new SAMP(sample_begin, len));
+        }
+        size_t n0 = shard_samps.size();
+        if (n0 == 0) {
+            assert(0);
+        } else {
+            if (DEBUG.dump_ShardInfo > 0)
+                _INFO("\n[shard \"%s\"]: %ld(samps) nBach=%d\n", name.c_str(), shard_samps.size(), nBatch());
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+Tokenset_TEXT::Tokenset_TEXT(JSON::const_iterator jit, hTokenizer hDict, int flag) : GlobTokenset(jit, hDict, flag) {
+    fType       = CORAL_TEXT;
+    hPickRander = std::make_shared<GRanderTorch>(20260907);  //  20260907 - 独与天地往来 而不敖倪于万物
+}
+
+std::string Tokenset_TEXT::Dump(int typ, int flag) {
+    char info[KOIFISH_MOST_LOG];
+    auto sType = std::string(magic_enum::enum_name(fType));
+    sprintf(info, "%s %s nV=%d", name.c_str(), sType.c_str(), hDict->nVocab());
+    return info;
+}
+
+size_t Tokenset_TEXT::nMostToken(int flag) {
+    int seq_len = hFish->config.n_ctx();
+    size_t n    = shard_samps.size() * seq_len;
+    return n;
+}
+bool Tokenset_TEXT::GetShardInfo(int id, int flag) {
+    std::filesystem::path path = shard_paths[id];
+    if (!std::filesystem::exists(path)) {
+        K_EXIT(KOIFISH_LOAD_SHARD_NULL);
+    }
+    assert(hDict != nullptr);
+    int seq_len = hFish->config.n_ctx();
+    pathToken   = path;
+    pathToken.replace_extension(".tokens");
+    if (isCache && std::filesystem::exists(pathToken)) {
+        FSerial S(pathToken.c_str(), false, 0x0);
+        CHECK_(S.Serial(tokens, false, flag));
+        nShardToks = tokens.size();
+    } else {
+        nShardToks        = 0;
+        std::string sText = FILE2STR(path.c_str(), 10000000);
+        TOKENS cur;
+        try {
+            cur = hDict->Encode(sText);
+        } catch (...) {
+            _ERROR("");
+            return false;
+        }
+        if (cur.size() <= 0)
+            return false;
+        nShardToks += cur.size();  // most token
+        tokens.insert(tokens.end(), cur.begin(), cur.end());
+        if (isCache) {
+            FSerial S(pathToken.c_str(), true, 0x0);
+            CHECK_(S.Serial(tokens, true, flag));
+        }
+    }
+    assert(nShardToks >= seq_len * 2);
+    if(hDict->isDialect){
+        hDict->UpdateUniqueTokens(tokens);
+    }
+    
+    shard_samps.clear();
+    if (0) {
+        int nPick  = (nShardToks - seq_len) / seq_len;
+        auto picks = hPickRander->kSampleInN(nPick, nShardToks - seq_len, true);
+        for (auto pos : picks) shard_samps.push_back(std::make_shared<SAMP>(pos, seq_len));
+    } else {
+        for (int i = 0; i <= nShardToks - seq_len; i++) {
+            shard_samps.push_back(std::make_shared<SAMP>(i, seq_len));
+        }
+    }
+
+    nShardSamples = shard_samps.size();
+    return nShardSamples > 0;
+}
+
+bool Tokenset_TEXT::Shard2Sample(int id, int flag) {
+    try {
+        int n_ctx   = hDict->config.n_ctx(), len;
+        size_t step = 1, nSamp = shard_samps.size();
+        float rSample = hDict->config.common.rSubSample;
+        if (rSample > 0 && rSample < 1)
+            step /= rSample;
+        for (size_t i = 0; i < nSamp; i += step) {
+            int sample_begin;
+            // shard_samps.push_back(new SAMP(sample_begin, len));
+        }
+        size_t n0 = shard_samps.size();
+        if (n0 == 0) {
+            assert(0);
+        } else {
+            if (DEBUG.dump_ShardInfo > 0)
+                _INFO("\n[shard \"%s\"]: %ld(samps) nBach=%d\n", name.c_str(), shard_samps.size(), nBatch());
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+GlobTokenset::GlobTokenset(JSON::const_iterator jit, hTokenizer hDict, int flag) : TokenCoral(hDict) {
     header_bytes = K_SHARD_HEADER_SIZE * sizeof(int);
 
     auto k       = jit.key();
@@ -55,7 +289,9 @@ GlobTokenset::GlobTokenset(JSON::const_iterator jit, hTokenizer hDict, int flag)
         return;
 }
 
-bool GlobTokenset::Init(int flag) {
+bool GlobTokenset::Init(Fish* fish_, int flag) {
+    hFish = fish_;
+    
     glob_t glob_result;
     int glob_status = glob(glob_pattern.c_str(), 0, NULL, &glob_result);
     if (glob_status != 0) {
@@ -74,10 +310,11 @@ bool GlobTokenset::Init(int flag) {
         int64_t shard_ntok = OnShardFile(id);
         nFile++;
         // assert(shard_ntok >= (int64_t) (num_processes * B * T + 1));
-        nMostTok += shard_ntok;
+        nMostTok += nMostToken();  //  shard_ntok;
         if (nMostShard > 0 && shard_paths.size() == nMostShard)
             break;
-    }
+    }    
+    
     double nG = nMostTok / 1.0e9;
     if (nMostTok == 0) {
         assert(0 && "GlobTokenset::Failed to load tokens");
@@ -86,7 +323,7 @@ bool GlobTokenset::Init(int flag) {
     return true;
 }
 
-size_t DataTokenSet::nBatch(int flag) {
+size_t TokenCoral::nBatch(int flag) {
     size_t nSample  = shard_samps.size();  //  shard_samps init @Shard2Sample
     size_t nBatches = nSample / hDict->config.n_batch();
     nBatches        = nSample == 0 ? 0 : max(nBatches, (size_t)1);
@@ -145,30 +382,9 @@ bool GlobTokenset::fp2Tokens(int flag) {
 bool GlobTokenset::Shard2Sample(int id, int flag) {
     try {
         fp2Tokens(flag);
-        /*int nT = (szFile - header_bytes) / bpToken;
-        assert(nT == nShardToks);
-        // tokens.resize(nT);
-        fseekCheck(fpShard, (long)header_bytes, SEEK_SET);
-        hBITARR tmp = new BIT_8[nT * bpToken];  // TOKEN may 8/16/32 bit
-        if (fread(tmp, bpToken, nT, fpShard) != nT) {
-            _ERROR("file size is not as expected\n");
-            return 0x0;
-        }
-        switch (bpToken) {
-            case 2: {
-                uint16_t* tmp16 = (uint16_t*)tmp;
-                tokens.assign(tmp16, tmp16 + nT);
-            } break;
-            case 4: {
-                int32_t* tmp32 = (int32_t*)tmp;
-                tokens.assign(tmp32, tmp32 + nT);
-            } break;
-            default:
-                assert(0);
-                break;
-        }
-        delete[] tmp;*/
+
         // InitSamps
+        shard_samps.clear();
         int n_ctx     = hDict->config.n_ctx(), len;
         size_t nToken = tokens.size(), nFirst = std::min((size_t)n_ctx, nToken), step = 1, n0 = shard_samps.size();
         // samples_size.push_back(nFirst);
@@ -183,13 +399,14 @@ bool GlobTokenset::Shard2Sample(int id, int flag) {
             len = std::min(n_ctx, (int)(end - sample_begin));
             if (len != n_ctx)  // to simplifi collate function
                 continue;
-            shard_samps.push_back(new SAMP(sample_begin, len));
+            shard_samps.push_back(std::make_shared<SAMP>(sample_begin, len));
         }
         n0 = shard_samps.size();
         if (n0 == 0) {
             assert(0);
         } else {
-            _INFO("\n[shard \"%s\"]: %ld(tokens)=>%ld(samps) nBach=%d step=[%ld:%ld:%ld]\n", name.c_str(), nToken, shard_samps.size(), nBatch(), 0, end, step);
+            // _INFO("\n[shard \"%s\"]: %ld(tokens)=>%ld(samps) nBach=%d step=[%ld:%ld:%ld]\n", name.c_str(), nToken, shard_samps.size(), nBatch(), 0, end,
+            // step);
         }
         return true;
     } catch (...) {
@@ -228,6 +445,7 @@ size_t GlobTokenset::OnShardFile(int id0, bool load, int flag) {
             _ERROR("Bad version<%d> of data file@\"%s\"\n", header[1], filename);
             K_EXIT(KOIFISH_LOAD_TOKENFILE_HEADER);
         }
+        fType = CORAL_BIN;
         fseekCheck(fpShard, 0, SEEK_END);  // seek to end of file
         szFile     = ftell(fpShard);       // read the offset, i.e. file size
         nShardToks = 0;
@@ -275,8 +493,9 @@ size_t GlobTokenset::OnShardFile(int id0, bool load, int flag) {
     }
     if (load) {
         if (Shard2Sample(0x0)) {
-            _INFO("[shard \"%s\"_%d]@\"%s\": tokens=%.3g(M) nShardSamples=%ld(%ld) \n", name.c_str(), id + 1, filename, nShardToks / 1.0e6, nShardSamples,
-                  shard_samps.size());
+            if (DEBUG.dump_ShardInfo > 0)
+                _INFO("[shard \"%s\"_%d]@\"%s\": tokens=%.3g(M) nShardSamples=%ld(%ld) \n", name.c_str(), id + 1, filename, nShardToks / 1.0e6, nShardSamples,
+                      shard_samps.size());
         } else {
             _WARN("[shard \"%s\"_%d]@\"%s\": tokens=%.3g(M) nShardSamples=%ld(%ld) \n", name.c_str(), id + 1, filename, nShardToks / 1.0e6, nShardSamples,
                   shard_samps.size());
@@ -312,23 +531,23 @@ size_t GlobTokenset::OnShardFile(int id0, bool load, int flag) {
     return nShardToks;
 }
 
-DataTokenSet::DataTokenSet(hTokenizer hD) : hDict(hD) {
+TokenCoral::TokenCoral(hTokenizer hD) : hDict(hD) {
     assert(hDict->isValid(true));
-    nVocab = hDict->nVocab();
+    nVocab = hDict->nVocab(-1);
     assert(nVocab > 0);
 }
-DataTokenSet::~DataTokenSet() {
-    for (auto hSamp : shard_samps) delete hSamp;
+TokenCoral::~TokenCoral() {
+    // for (auto hSamp : shard_samps) delete hSamp;
     shard_samps.empty();
 }
 
-TOKEN_ID DataTokenSet::At(size_t pos) {
+TOKEN_ID TokenCoral::At(size_t pos) {
     assert(pos < tokens.size());
     int32_t token = CLAMP(tokens[pos], 0, (nVocab - 1));
     return token;
 }
 
-bool DataTokenSet::Serialize(const std::string& path, bool isSave, int flag) {
+bool TokenCoral::Serialize(const std::string& path, bool isSave, int flag) {
     try {
         FSerial S(path, isSave, flag);
         if (!S.isValid())
@@ -341,8 +560,8 @@ bool DataTokenSet::Serialize(const std::string& path, bool isSave, int flag) {
         CHECK_(S.Serial(nDialect, isSave, flag));
         CHECK_(S.Serial(tokens, isSave, flag));
         if (nDialect > 0) {
-            CHECK_(S.Serial(dialect, isSave, flag));
-            CHECK_(S.Serial(mapT2T, isSave, flag));
+            // CHECK_(S.Serial(dialect, isSave, flag));
+            // CHECK_(S.Serial(mapT2T, isSave, flag));
         }
         if (isSave) {
         } else {
@@ -411,7 +630,6 @@ double Tokenset_HellaSwag::LossOnResult(hSampNanny hLoader, Head4Token* cls, int
 
 // for each batch @Head4Token::cuFlow
 float SampNanny::UpdateII(float mean_loss, int flag) {
-    Fish* hFish = dolphin;
     // float alpha4g = 1.0f, mean_loss = 0.0f, logprob = 0.f;
     Head4Token* cls   = hFish->GetNeuron<Head4Token>("Head4Token", 0);
     TokenEmbed* embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
@@ -500,7 +718,7 @@ bool Tokenset_HellaSwag::Shard2Sample(int id, int flag) {
                     tokens_mask[coff * T + context_length + i - 1] = 1;
                 }
                 completions_iter += 1 + completion_length;  // move to the next completion
-                hSAMP samp   = new SAMP(coff * T, T);
+                hSAMP samp   = std::make_shared<SAMP>(coff * T, T);
                 samp->target = (void*)question;
                 shard_samps.push_back(samp);
             }
@@ -519,7 +737,6 @@ bool Tokenset_HellaSwag::Shard2Sample(int id, int flag) {
  */
 double SampNanny::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
     // assert(hOPT != nullptr);
-    Fish* hFish  = dolphin;
     RLS_BP* hRLS = hFish->GetScheduler<RLS_BP>();
     double tic = GST_ms(), tps, tRemain = 0.0, tpi = 0, relax = 0.9, dt, tCur, tLast;
     int i, nB = 0, step = StepOfEvaluate(), nMost = CEIL_DIV(num_batches, step);
@@ -531,20 +748,20 @@ double SampNanny::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
         default:
             break;
     }
-    // double a, a0 = DBL_MAX, a1 = -DBL_MAX, mean_loss = 0, ss = 0, sigma, sum = 0;
-    hGTensor target_label = hFish->Target();
-    Head4Token* cls       = hFish->GetNeuron<Head4Token>("Head4Token", 0);
-    // cls->hLoader          = shared_from_this();
-    // hSAMP samp = nullptr;
-    next_sample = 0;  // fix this to keep same acc on each experiment
-    nEvalTokens = 0;
-    tLast       = GST_ms();
+
+    Head4Token* cls = hFish->GetNeuron<Head4Token>("Head4Token", 0);
+    auto hBatch     = hFish->curBatch(0x0);
+    next_sample     = 0;  // fix this to keep same acc on each experiment
+    nEvalTokens     = 0;
+    tLast           = GST_ms();
     ClearII();
     for (int i = 0; i < nMost; i++) {
         if (tpBatch == SAMPLEofSHARD)
             CollateBatch(min(i * step, num_batches), hFish);
         hFish->ForwardOnRLS(iter, 0x0);
-        LossOnResult(hFish);  // mean_loss = hLoader->UpdateII(hostLoss, B, T, 0x0);
+        if (hBatch->onlyLogits) {
+        } else
+            LossOnResult(hFish);  // mean_loss = hLoader->UpdateII(hostLoss, B, T, 0x0);
         nEvalTokens += hBatch->nFillTokens(), nB++;
         tCur = GST_ms(), dt = tCur - tLast, tLast = tCur;
         tpi = tpi * (1.0 - relax) + dt * relax, tRemain = (nMost - i) * tpi;  //  ms
@@ -591,23 +808,22 @@ double SampNanny::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
 }
 
 double SampNanny::LossOnResult(Fish* hFish, int flag) {
-    assert(hFish==dolphin);
     Head4Token* cls = hFish->GetNeuron<Head4Token>("Head4Token", 0);
     assert(cls != nullptr);
     double mean_loss = 0, sum = 0, ss = 0, ppl = 0, sigma = 0, logprob = 0;
-    int *mask = hBatch->mask32, n = 0, nzLoss = cls->nzLoss;
+    int *mask = hBatch->mask32, n = 0, nMostLoss = cls->nzLoss;
     int nVocab = cls->nCls, ldP = cls->padded_nCls;
     float* loss      = cls->hostLoss;
     TOKEN_ID* labels = TO<TOKEN_ID>(hBatch->hostLabel);  // hBatch->hostToken
     float* logits    = nullptr;
-    
+
     // cur_samps[0]->Dump(hBatch->hFish, hDict, GetTokens(), 0x0, "Detail check");
 
-    for (int i = 0; i < nzLoss; i++) {
+    for (int i = 0; i < nMostLoss; i++) {
         if (BIT_TEST(mask[i], MASK_FLAG::F_IGNORE_LOSS)) {
             if (loss[i] != 0.0) {
                 _ERROR("SampNanny::LossOnResult loss[i]=%g", loss[i]);
-                if(!hFish->config.ckp_out.empty())  //ckp_err
+                if (!hFish->config.ckp_out.empty())  // ckp_err
                     hFish->SaveTrain(hFish->config.ckp_out[0], false);
                 assert(0);
             }
@@ -656,7 +872,7 @@ double SampNanny::LossOnResult(Fish* hFish, int flag) {
 }
 
 void SampNanny::UpdateStepInfos(float mean_loss, int nB, int flag) {
-    int iter = hOPT->GetITER(), nFuyou = dolphin->nFuyou(1);
+    int iter = hOPT->GetITER(), nFuyou = hFish->nFuyou(1);
     float last          = stepis.Last();  // Loss@Evaluation=7.302641 T=0.232s ======
     float train_last    = hOPT->trainInfos().Last();
     bool isFirst        = stepis.steps.empty();
@@ -725,6 +941,8 @@ std::string Tokenset_JSONL::toChatML(JSON& jMsg, int flag) {
     return result;
 }
 
+void HST2JSON(const std::string& path, K_SafeTensors* hKST, int flag = 0x0);
+
 /*
     GetShardInfo would be called many times, for jsonl, only load json & get meta-info(then to sample) once
     too slow!
@@ -765,12 +983,12 @@ bool Tokenset_JSONL::GetShardInfo_txt(int id, int flag) {
             }
             nPad = max_length - curT.size();
             for (int i = curT.size(); i < max_length; i++) {
-                curT.push_back(hDict->S.pad);
+                curT.push_back(hDict->S._pad);
             }
             messages.push_back(msg);
             size_t begin = tokens.size();
             tokens.insert(tokens.end(), curT.begin(), curT.end());
-            shard_samps.push_back(new SAMP(begin, curT.size(), nPad));
+            shard_samps.push_back(std::make_shared<SAMP>(begin, curT.size(), nPad));
             if (messages.size() <= 2) {
                 string msg_1 = hDict->Decode(curT);
                 assert(msg_1.find(msg) == 0);
@@ -846,7 +1064,7 @@ bool Tokens2Samp_Chatml(hTokenizer hDict, const TOKENS& tokens, size_t& pos, Cha
             } else {                 // Only enable loss for tokens after  inside assistant block
                 if (think_closed) {  // Skip padding tokens
                     // a = tokenizer.decode(current)
-                    if (current != hDict->S.pad) {
+                    if (current != hDict->S._pad) {
                         // labels[batch_idx, pos] = current
                         // true_answer += a
                     }
@@ -868,7 +1086,7 @@ bool Tokens2Samp_Chatml(hTokenizer hDict, const TOKENS& tokens, size_t& pos, Cha
 
 bool Tokenset_JSONL::Shard2Sample(int id, int flag) {
     // assert(hDict->isValid());
-    int n_ctx = hDict->config.n_ctx(), len, pad_id = hDict->S.pad, nDrop = 0;
+    int n_ctx = hDict->config.n_ctx(), len, pad_id = hDict->S._pad, nDrop = 0;
     int max_length = hDict->config.n_ctx();
     float rSample  = hDict->config.common.rSubSample;
     assert(!enable_thinking);
@@ -884,7 +1102,7 @@ bool Tokenset_JSONL::Shard2Sample(int id, int flag) {
             assert(tokens[pos] == hDict->S.im_start);
             if (pos == 3376)
                 DEBUG_HERE;
-            ChatML_samp chatml(pos, multi_turn, multi_turn ? hDict->S.pad : hDict->S.im_end);
+            ChatML_samp chatml(pos, multi_turn, multi_turn ? hDict->S._pad : hDict->S.im_end);
             if (!Tokens2Samp_Chatml(hDict, tokens, pos, chatml, multi_turn, flag)) {
                 assert(0);
             }
@@ -910,9 +1128,9 @@ bool Tokenset_JSONL::Shard2Sample(int id, int flag) {
             }
             int nPad = max_length - curT.size();
             for (int i = curT.size(); i < max_length; i++) {
-                curT.push_back(hDict->S.pad);
+                curT.push_back(hDict->S._pad);
             }
-            hSAMP hSamp    = new SAMP(chatml.start, curT.size(), nPad);
+            hSAMP hSamp    = std::make_shared<SAMP>(chatml.start, curT.size(), nPad);
             hSamp->answers = chatml.answers;
             if (shard_samps.size() <= 8 /*|| hSamp->pos == 3376*/)
                 hSamp->Dump(nullptr, hDict, tokens, 0x0);
@@ -933,7 +1151,8 @@ bool Tokenset_JSONL::Shard2Sample(int id, int flag) {
                 continue;
             shard_samps.push_back(new SAMP(sample_begin, len));
         }*/
-        _INFO("\n[shard \"%s\"]: %ld(tokens)=>%ld(samps) nDrop=%d nBach=%d\n", name.c_str(), tokens.size(), shard_samps.size(), nDrop, nBatch());
+        if (DEBUG.dump_ShardInfo > 0)
+            _INFO("\n[shard \"%s\"]: %ld(tokens)=>%ld(samps) nDrop=%d nBach=%d\n", name.c_str(), tokens.size(), shard_samps.size(), nDrop, nBatch());
         return true;
     } catch (...) {
         return false;
@@ -949,7 +1168,7 @@ void SAMP::Dump(Fish* hFish, hTokenizer hDict, const TOKENS& tokens, int type, c
     assert(start + nValidLen <= tokens.size());
     TOKENS samp_tokens(tokens.begin() + start, tokens.begin() + start + nValidLen);
 
-    int nX = hFish != nullptr && hFish->isModel({NLP_SCORE_}) ? -1 : 0;
+    int nX = hFish != nullptr && hFish->isModel({MD_QWEN}) ? -1 : 0;
     DumpTokens(hDict, samp_tokens, nX, flag);
     _INFO("\n ------ range=[%lld:%lld pad=%lld] turn=%lld", pos, pos + nValidLen, pad_len, answers.size());
     if (answers.size() > 0) {  // multi_turn
@@ -970,7 +1189,7 @@ void DumpTokens(hTokenizer hDict, const TOKENS& tokens, int nX, int flag) {
     int nPad = 0, PAD_ID = -1;
     if (hDict != nullptr) {
         msg    = hDict->Decode(tokens);
-        PAD_ID = hDict->S.pad;
+        PAD_ID = hDict->S._pad;
     }
 
     size_t pos = 0;
@@ -994,3 +1213,29 @@ void DumpTokens(hTokenizer hDict, const TOKENS& tokens, int nX, int flag) {
     _INFO("]]),\n");
     return;
 }
+
+/** Deprecated
+ * int TokenCoral::UniqueTokens(size_t n_1, int flag) {
+    mapT2T.clear();
+    // std::vector<size_t> token_noccurs;
+    dialect.resize(nVocab, 0);  // params.nVocab()
+    assert(nVocab > 0);
+    for (unsigned int i = 0; i < tokens.size(); ++i) {
+        TOKEN_ID id = tokens[i];
+        assert(id >= 0 && id < nVocab);
+        // if(id==28739)        //only for debug
+        //     id=28739;
+        ++dialect[id];
+    }
+    nUnique = 0;
+    for (unsigned int i = 0; i < dialect.size(); ++i) {
+        if (dialect[i] == 0)
+            continue;
+        TOKEN_ID id = dialect[i];
+        mapT2T[i]   = nUnique;
+        ++nUnique;
+    }
+    assert(mapT2T.size() == nUnique);
+    return nUnique;
+}
+ */

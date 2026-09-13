@@ -49,6 +49,7 @@ enum DUMP_LEVEL {
     DUMP_ERROR     = 4,
     DUMP_EXCEPTION = 5,
     DUMP_CONT      = 6,  // continue previous log
+    DUMP_HILIGHT   = 7,
 };
 inline bool NOT_DUMP(int t = 0) {
     if (g_dump_level <= t)
@@ -60,6 +61,7 @@ inline bool DUMP(int t = 0) { return !NOT_DUMP(t); }
 void _LOG(DUMP_LEVEL level, const char* format, ...);
 
 #define _INFO(...) _LOG(DUMP_INFO, __VA_ARGS__)
+#define _HILIGHT(...) _LOG(DUMP_HILIGHT, __VA_ARGS__)
 #define _WARN(...) _LOG(DUMP_WARN, __VA_ARGS__)
 #define _WARN0(...) _LOG(DUMP_WARN0, __VA_ARGS__)
 #define _ERROR(...) _LOG(DUMP_ERROR, __VA_ARGS__)

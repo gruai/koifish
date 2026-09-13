@@ -213,6 +213,7 @@ int CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* b
     return 0x0;
 }
 template int CU_mm_blasLt<__nv_bfloat16, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16>(__nv_bfloat16* d, const __nv_bfloat16* a, const __nv_bfloat16* b, const __nv_bfloat16* bias, TASKA_AxB& taskm, int flag = 0x0);
+
 /*
     d = wGensor*b+bias
     wrapper of CU_abc_ & cublasGemmEx & more ...

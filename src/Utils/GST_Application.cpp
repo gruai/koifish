@@ -106,7 +106,9 @@ bool CLI_params::parse(int argc, char** argv) {
         } else if (arg == "--seq_len") {
             sscanf(argv[++i], "%d", &chat_sampler.nSeqRecommend);
         } else if (arg == "--md_method") {
-            chat_sampler.tpZhuomo = strcmp(argv[++i], "dilate") == 0 ? CHAT_SAMPLER::MD_DILATE : CHAT_SAMPLER::MD_LINEAR_TRANSFER;
+            string sType = "MD_";
+            STR2ENUM(sType + argv[++i], chat_sampler.tpZhuomo);
+            // strcmp(argv[++i], "dilate") == 0 ? CHAT_SAMPLER::MD_DILATE : CHAT_SAMPLER::MD_SNR;
         } else if (arg == "--hellaswag") {
             eval_metric = "hellaswag";
             assert(i + 1 < argc);

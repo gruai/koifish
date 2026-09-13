@@ -14,7 +14,7 @@
 */
 #include "../Manifold/gLLM.hpp"
 QWen::QWen(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
-    assert(arch == MODEL_ARCH::NLP_QWEN2 || arch == MODEL_ARCH::NLP_QWEN3);
+    assert(arch == MODEL_ARCH::NTP_QWEN2 || arch == MODEL_ARCH::NTP_QWEN3);
     config.model.isSLPBias    = false;
     config.model.isNormalBias = false;
     config.model.norm_rms_eps = 1.0e-6;
@@ -26,11 +26,11 @@ QWen::QWen(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, in
 }
 QWen3::QWen3(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : QWen(nam_, params, role, flag) {
     // also support QWen2.5 model
-    assert(arch == MODEL_ARCH::NLP_QWEN3 || arch == MODEL_ARCH::NLP_QWEN2);
+    assert(arch == MODEL_ARCH::NTP_QWEN3 || arch == MODEL_ARCH::NTP_QWEN2);
     config.model.isSLPBias     = false;
     config.model.isQKVBias     = false;
     config.model.isSeparateQKV = true;
-    if (arch == MODEL_ARCH::NLP_QWEN2) {
+    if (arch == MODEL_ARCH::NTP_QWEN2) {
         // scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
         // scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;
 
@@ -40,7 +40,7 @@ QWen3::QWen3(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, 
         config.model.isEmbedWeightTying = true;
         config.model.isQKVBias          = true;
         config.model.isBqkv             = false;
-    } else if (arch == MODEL_ARCH::NLP_QWEN3) {
+    } else if (arch == MODEL_ARCH::NTP_QWEN3) {
         // config.scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
         // config.scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;
         config.model.QKNormal = 1;

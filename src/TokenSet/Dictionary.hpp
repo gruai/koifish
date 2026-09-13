@@ -18,11 +18,11 @@ typedef std::vector<TOKEN_ID> TOKENS;
 typedef std::unordered_map<std::string, int> VOCAB_MAP;
 
 struct TOKEN_Special {
-    int pad  = -1;
-    int mask = -1;
+    int _pad  = -1;
+    int _mask = -1;
     // [noise]/[riddle] indicator in training & infer of diffusion lm. Although many AR llm model has a special token for mask, like ""mask_token": "<M>" in
     // tokenizer_config.json.
-    int noise = -1;
+    int _noise = -1;
 
     int sep = -1, cls = -1, assist = -1;
     // 1. in some model, no bos_token!(GPT-2/GPT-3,unsloth/Qwen3-4B-Base,...)
@@ -69,13 +69,11 @@ class GTokenizer {
     CLI_params config;
     string sTokenizerClass = "";
     /* The separator token, which is used when building a sequence from multiple sequences, e.g. two sequences for
-            sequence classification or for a text and a question for question answering. It is also used as the last
-            token of a sequence built with special tokens.*/
+            sequence classification or for a text and a question for question answering.*/
     string sep_token = "[SEP]";
     // The token used for padding, for example when batching sequences of different lengths.
     string pad_token = "[PAD]";
-    // The classifier token which is used when doing sequence classification (classification of the whole sequence instead of per-token classification). It is
-    // the first token of the sequence when built with special tokens.
+    // The classifier token which is used when doing sequence classification (classification of the whole sequence instead of per-token classification).    
     string cls_token = "[CLS]";
     // The token used for masking values. This is the token used when training this model with masked language modeling. This is the token which the model will
     // try to predict.
@@ -104,13 +102,17 @@ class GTokenizer {
     std::vector<const char*> merges;
     bool isIignoreMerges = false;
     std::map<std::pair<std::string, std::string>, int> bpe_ranks;
-    float* scores = nullptr;
-    int* toktypes = nullptr;
+    float* scores  = nullptr;
+    int* toktypes  = nullptr;
+    bool isVirtual = false;
+
     // Dialect support
     bool isDialect = false;
-    bool isVirtual = false;
+    int UpdateUniqueTokens(const TOKENS& tokens, int flag = 0x0);
     std::map<TOKEN_ID, TOKEN_ID> mapT2T;
-    std::vector<TOKEN_ID> dialect;
+    std::map<TOKEN_ID, TOKEN_ID> invT2T;
+    // std::vector<TOKEN_ID> dialect;
+
     // special_tokens support
     std::vector<std::string> special_tokens;
 
@@ -137,11 +139,12 @@ class GTokenizer {
         F_JVOCAB = 0x10000,
     };
     GTokenizer() {}
-    GTokenizer(Fish* lama_, int flag = 0x0);
+    GTokenizer(Fish* dolphin, int flag = 0x0);
     virtual ~GTokenizer() {
         FREE_a(scores);
         FREE_a(toktypes);
     }
+    virtual bool empty(int flag = 0x0) const { return vocab.empty(); }
     virtual int nVocab(int flag = 0x0) const;
 
     virtual bool isValid(bool allowEmpty = false, int flag = 0x0) const;
@@ -172,11 +175,15 @@ class GTokenizer {
     virtual bool DoSomeTest(int flag = 0x0);
     virtual bool CheckSpecialTokens(bool isAllowNone, int flag = 0x0);
 
+    virtual std::string Dump(int type, int flag = 0X0) const;
+
     std::string decode_one(int prev_token, int token) const;
     // std::string encoding_to_debug_string(const std::vector<TOKEN_ID>& encoding) const;
-
-    friend class DataTokenSet;
+    friend class BATCH_INPUT;
+    friend class TokenCoral;
     friend class Tokenset_HellaSwag;
+    friend class Tokenset_PARQUET;
+    friend class Tokenset_TEXT;
     friend class Tokenset_JSONL;
     friend class GlobTokenset;
     friend class SampNanny;

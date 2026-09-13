@@ -117,6 +117,7 @@ static std::string GD_NAME[] = {"ADAMw", "SGD", "SGD_v", "SGD_blk_v", "SGD_HYBRI
 
 enum MODEL_ARCH {
     _X_,
+    //  next-token prediction(autoregressive transformer with causal attention)
     NLP_GPT2,
     NLP_GPT2_char,
     NLP_LLAMA,
@@ -124,16 +125,16 @@ enum MODEL_ARCH {
     NLP_MISTRAL,
     NLP_MAMBA,
 
-    NLP_QWEN2,
-    NLP_QWEN3,
-    NLP_DEEPSEEK,
+    NTP_QWEN2,
+    NTP_QWEN3,
+    NTP_DEEPSEEK,
 
-    NLP_GUPPY,  // Need redesign after 20260715
+    NTP_GUPPY,  // Need redesign after 20260715
 
     NLP_MOE,  //???
 
-    // Diffusion language model
-    NLP_SCORE_,
+    // MASK Diffusion language model
+    MD_QWEN,  // MASK Diffusion model(QWEN structure with bidirectional attention)
     // NLP_SCORE_char,
 
     IMAGE_SCORE_,
@@ -264,6 +265,22 @@ enum QKV_PACK {
     Q_K_V,  // separate three tensor
 };
 
+enum DIALECT_TYPE {
+    DIALECT_off,
+    DIALECT_on,
+};
+class DICT_CARD {
+   protected:
+   public:
+    std::string type = "", vae_dims = "", logits = "";
+    DIALECT_TYPE tpDialect = DIALECT_TYPE::DIALECT_off;
+
+    DICT_CARD();
+    bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
+
+    void Dump(int typ);
+};
+
 /**
  * should have config.json,tokenizer.json & tokenizer_config.json
  * generation_config.json
@@ -352,9 +369,10 @@ class MODEL_CARD {
     std::vector<int> token_embeds;
     std::vector<int> qkv_embeds;  // try multi-level embed of QKV
 
-    //  A masked AR model with diffusion-style sampling, this hybrid is not theoretically clean, but it is empirically workable! When training: Add noise to x[i], but predict x[i+1](like AR-style)
-    bool isMaskAR = false; 
-
+    //  A masked AR model with diffusion-style sampling, this hybrid is not theoretically clean, but it is empirically workable! When training: Add noise to
+    //  x[i], but predict x[i+1](like AR-style)
+    bool isShiftLabel = true;
+    // bool isMaskAR = false;
     //  ****
     bool isFFNWeightTying = true;
 
@@ -425,7 +443,6 @@ struct DISTILLATION_CARD {
 
 //  Score-based modeling with multiple noise perturbations  -  生物之以息(XI)相吹也
 struct XI_CARD {
-    // GRander* hMaskRander = nullptr;
     int mask_seed = 20260713;
 
     virtual ~XI_CARD();
@@ -608,7 +625,7 @@ struct TRAIN_CARD {
 
     int seed     = -1;
     int n_epochs = -1;
-    bool Empty() { return n_epochs < 0; }
+    bool isNoTrain(int flag = 0x0);
 
     int n_ctx = -1, n_batch = -1, n_threads = -1, n_gradient_accumulation = -1, n_gpu_layers = -1;
 
@@ -688,10 +705,13 @@ struct CHAT_SAMPLER {
         Min_P,
         BEAM,
         // for musk-diffusion-model
-        MD_LINEAR_TRANSFER,
+        MD_SNR,
         MD_PATH_PLAN,
         MD_DILATE,  // https://arxiv.org/pdf/2506.19037v3
+        MD_DUEL,    // https://arxiv.org/pdf/2603.01367
+        MD_PUMA,    // https://arxiv.org/pdf/2602.10314
         CONFIDENCE,
+        InfoGAIN,
     };
     // SAMPLE is 雕琢/琢磨
     METHOD tpZhuomo = METHOD::TEMPERATURE;
@@ -719,9 +739,8 @@ struct CHAT_SAMPLER {
     bool interactive         = false;
     int32_t interactive_port = -1;
 
-    // for score model
-    int most_step = 1;
-
+    // most hua(transition) used to sampling a result
+    int most_hua = 1;
 
     std::string prompt     = "";
     std::string token_test = "";
@@ -766,6 +785,8 @@ struct DEUG_SWITCH {
     int test_quant        = 0;
     int dump_LossDetail   = 0;
     int dump_TensorDetail = 0;
+    int dump_ParamsDetail = 0;
+    int dump_ShardInfo    = 0;
     int watch_Tensors     = 0;
     int quant_UserMode    = 0;  //  1 only quant,
 
@@ -777,6 +798,8 @@ struct DEUG_SWITCH {
     int verCuda            = 0;
     int verInferQKV        = 1;
     int verInferFFN        = 1;
+    int verHuaSNR          = 1;
+    int verShiftLabel      = -1;  // Defualt is AR model, always shift label
 
     int verCuX2        = 0;
     int verShuffleSamp = 0;
@@ -885,6 +908,7 @@ struct CLI_params {
 
     TRAIN_CARD common;
     MODEL_CARD model;
+    DICT_CARD dict;
     DISTILLATION_CARD distill;
     SFT_CARD sft;
     KERNEL_CARD kernels;
@@ -986,9 +1010,8 @@ struct CLI_params {
 
     int nabla = 1;  // cys
     // std::string sigma = "";
-    std::string vae       = "";
-    std::string prompt    = "";
-    std::string dict_type = "", dict_vae_dims = "", dict_dialect = "", dict_logits = "";
+
+    std::string prompt = "";
 
     // for RWKV
     uint32_t rescale_every_n_layers = 0;

@@ -564,7 +564,6 @@ float MINI_HISTO::T_left(int flag) {
     return feata.split_F;
 }
 
-void queHisto2Thrsh(const queMIHISTO& queMH, std::vector<float>& thrshs, int flag) {}
 /*
     v0.2	cys
         1/28/2019

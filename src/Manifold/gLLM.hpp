@@ -97,7 +97,7 @@ class NLP_AutoRegressive : public Fish {
         // return lam->lmodel;
         return nullptr;
     }
-
+    // Deprecated
     std::string T2STR(const std::vector<TOKEN_ID>& tok, int nMost = INT_MAX, int flag = 0x0);
 
     std::string Name() override;

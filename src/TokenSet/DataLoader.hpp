@@ -16,7 +16,8 @@ struct DictVAE;
 #include "../Tensor/GTensor.hpp"
 #include "../Utils/GST_obj.hpp"
 #include "../Utils/GST_rander.hpp"
-#include "TokenSet.hpp"
+#include "Batch.hpp"
+
 using namespace std;
 // ----------------------------------------------------------------------------
 // implementation of glob for Windows is in dev/unistd.h
@@ -36,7 +37,7 @@ class SampNanny;
 
 // the type of update each batch
 enum DL_BATCH_UPATE {
-    SAMPLEofSHARD,    //  SampNanny::Samp2Batch -> hBatch->Set(...);
+    SAMPLEofSHARD,    //  SampNanny::Samp2Batch_ -> hBatch->Set(...);
     BATCHofEMBED = 1  //  TokenEmbed::hBatch
 };
 
@@ -71,90 +72,6 @@ struct StepInfos {
     void Add(STEP step, int flag = 0x0);
 };
 
-enum MASK_FLAG {
-    F_PAD         = 0x100,
-    F_CAUSAL      = 0x200,
-    F_SCORE_NOISE = 0x400,
-
-    F_IGNORE_LOSS = 0x10000,  //  -100 of torch's cross_entropy
-};
-
-// Each tokenset has a unique samp_loader; Each samp_loader has a unique batch
-struct BATCH_INPUT {
-    LIFE_PHASE phasb              = P_X;  // batch only has one phase(never change in lifecycle!)
-    shared_ptr<GTensor> hostLabel = nullptr;
-    enum NOISE_TYPE {
-        NO_NOISE,
-        MASK_NOISE,
-    };
-    NOISE_TYPE tpNoise = NO_NOISE;
-    
-    shared_ptr<GTensor> hostToken = nullptr, hostMask = nullptr, devMask = nullptr, hostLen = nullptr;
-    hRANDER hMaskRander = nullptr;
-    int *host_toks = nullptr, *mask32 = nullptr;  //  mask32 = TO<int>(hostMask);
-    int* tmp32       = nullptr;
-    float* fNoise    = nullptr;  // float noise for each tokens
-    int nValidTokens = 0, nNoiseToken = -1, nPadToken = -1;
-    int nMostSample = 0, ldT = 0;  //  B,T
-    int dB4Logit    = -1, iter = -1;
-    size_t nPrefill = 0, nFill = 0;
-    std::vector<int> arrTic0, arrTic1;
-    std::vector<TOKENS_SECTION> section_metas;  // tokens of each sample contain sections, each section may has different role
-    Fish* hFish      = nullptr;
-    hTokenizer hDict = nullptr;
-    //  always point to last token when P_CHAT_1
-    int tok_pos = -1;
-    //  just return host_toks[tok_pos], only for P_CHAT_1
-    int CurToken() {
-        assert(tok_pos >= 0 && host_toks != nullptr);
-        // assert(host_toks[pos] < embed->nVocab);
-        return host_toks[tok_pos];
-    }
-    bool onlyLogits = false;  // If true, logits is enough, no need to set label & get loss!
-
-    BATCH_INPUT(Fish* hFish, SHAPE sp, LIFE_PHASE phasb, int flag = 0x0);
-    virtual ~BATCH_INPUT() {
-        FREE_a(tmp32);
-        FREE_a(fNoise);
-    }
-    virtual int nTokens(int flag = 0x0);  // return hostToken->size();
-    // virtual void Update(hGTensor batch,int flag=0x0);
-    virtual int FillPrompt(Fish* hFish, const std::vector<std::string>& Prompt, const std::vector<std::string>& answers, int nRound, int flag = 0x0);
-    virtual void FillTokens(int k, const std::vector<TOKEN_ID>& tokens, int i_off, int flag);
-    // 1. Deprecated, replace by FillTokens 2. No BOS at sequence start!
-    virtual void Reset(const std::vector<TOKEN_ID>& tokens, int flag = 0x0);
-    virtual void SetLen(int i0, int len) {
-        if (hostLen != nullptr)
-            hostLen->Set(i0, 0, 0, 0, len);
-    }
-    virtual void SetToken(int i0, int i1, int i2, int i3, int tok);
-    virtual void SetMask(int i0, int i1, int i2, int i3, int tok) { hostMask->Set(i0, i1, i2, i3, tok); }
-    // Label may be noised(>0) in some models(mask-noise diffusion model)
-    virtual bool SetLabel(int label0, int i_target, int k, int tpNoise = -1, int flag = 0x0);
-    virtual TOKEN_ID GetLabel(int i_target, int k, int flag = 0x0);
-
-    virtual size_t nFillTokens() {
-        if (nFill > 0)
-            return nFill;
-        else {
-            assert(nFill <= hostToken->size());
-            return hostToken->size();
-        }
-    }
-    virtual bool BeforeCollate(int iter, int flag = 0x0);
-    virtual bool UpdatePadMask(const std::vector<hSAMP>& samps, int iter, TOKEN_ID* tokens, int* labels, int flag = 0x0);
-    virtual bool AddSomeNoise(const std::vector<hSAMP>& samps, int iter, int flag = 0x0);
-
-    virtual void DumpX(TOKEN_ID* tokens, float* hostLoss, int flag = 0x0);
-};
-typedef shared_ptr<BATCH_INPUT> hBATCH;
-
-// Batch for denoising diffusion model
-struct BATCH_Denoise : public BATCH_INPUT {
-    BATCH_Denoise(Fish* hFish, SHAPE sp, LIFE_PHASE phasb, int flag = 0x0);
-    void FillTokens(int k, const std::vector<TOKEN_ID>& tokens, int i_off, int flag) override;
-};
-
 /**
  * 1. Each tokenset has a unique samp_nanny
  * 2. samp_nanny load each samp from tokenset, records its' train/eval/chat infos
@@ -174,9 +91,8 @@ class SampNanny : public std::enable_shared_from_this<SampNanny> {
     std::string fp_data;
     std::string sentence = "";
     std::vector<TOKEN_ID> samp_toks;
-    std::vector<hSAMP> shard_samps;
-
-    size_t nShard() { return shard_samps.size(); }
+    // std::vector<hSAMP> shard_samps;
+    size_t nShard();
     // data_token_set is much complex than train/val datasets
     hDataToken hDaTokens = nullptr;
     hTokenizer hDict     = nullptr;
@@ -185,11 +101,13 @@ class SampNanny : public std::enable_shared_from_this<SampNanny> {
     bool isRecycle = true, isLastShard = false;
     bool isFixEvalSample = false;  // Need fix this to do some experiments
     bool isMask          = false;
-    mt19937_state shuffle_rng_state_current;
-    mt19937_state shuffle_rng_state_next;
+    bool isAppendPad     = true;  // Append pad if samp's len < context_len
+
+    int nReShuffle = 0;
+    mt19937_state shuffle_rng_state_current, shuffle_rng_state_next;
     size_t shuffle_sample_count = 0, next_sample = 0, shuffle_samples_hash = 0x0;
-    hBATCH hBatch               = nullptr;
-    NLP_AutoRegressive* dolphin = nullptr;
+    hBATCH hBatch = nullptr;
+    Fish* hFish   = nullptr;
 
     /**
      * 1. Most open-source LLMs use BOS at sequence start;
@@ -198,7 +116,8 @@ class SampNanny : public std::enable_shared_from_this<SampNanny> {
      * 3. chat(InitOneSamp) no need bos
      *  */
     bool isAddBOS = true;
-    bool isNoShiftLabel = false;
+
+    bool isNoShiftLabel() const;
 
    public:
     StepInfos stepis;                 // info of each step on train/evaluate/...
@@ -210,7 +129,7 @@ class SampNanny : public std::enable_shared_from_this<SampNanny> {
     size_t nEvalTokens = 0;
     int StepOfEvaluate(int flag = 0x0);  //  smaple to reduce eval time
 
-    int64_t len() { return shard_samps.size(); }
+    int64_t len() { return nShard(); /*shard_samps.size();*/ }
     bool empty() { return len() == 0; }
 
     // Derprecated, only for PPL
@@ -220,14 +139,14 @@ class SampNanny : public std::enable_shared_from_this<SampNanny> {
 
     int nLeastCTX(int flag = 0x0);
     hSAMP SampAt(size_t idx_) {
-        assert(idx_ < nShard());
-        return shard_samps[idx_];
+        assert(hDaTokens != nullptr && idx_ < nShard());
+        return hDaTokens->shard_samps[idx_];
     }
     virtual void ClearII() {
-        iiLoss.Clear(); 
+        iiLoss.Clear();
         iiPPL.Clear();
     }
-    virtual double LossOnResult(Fish *hFish, int flag = 0x0);
+    virtual double LossOnResult(Fish* hFish, int flag = 0x0);
     virtual float UpdateII(float mean_loss, int flag);
     hBATCH GetCurBatch(int flag = 0x0) const {
         assert(hBatch != nullptr);
@@ -246,20 +165,19 @@ class SampNanny : public std::enable_shared_from_this<SampNanny> {
     bool isHostMask(size_t pos, int flag = 0x0);
     std::vector<std::string> curDeTexts;
 
-    // 1. prompt=>tokens 2. hTokens->tokens=tokens 3.Samp2Batch 4. hBatch->Set(i, token)
+    // 1. prompt=>tokens 2. hTokens->tokens=tokens 3.Samp2Batch_ 4. hBatch->Set(i, token)
     virtual hSAMP InitOneSamp(const string& prompt, hGTensor input, Fish* hFish, int flag = 0x0);
     virtual double DecodeVerify(hSAMP samp, hGTensor tokens, hGTensor logits, int flag = 0x0);
-    void Samp2Batch(int k, hSAMP samp, const CLI_params& params, float T_mask, int flag = 0x0);
 
-    DT_TYPE type = DT_TRAIN;
+    DT_PHASE type = DT_TRAIN;
 
     Optimizer* hOPT = nullptr;
 
     SampNanny() {}
     SampNanny(Fish* g_, const string& n, bool isNewTS, int flag = 0x0);
     virtual ~SampNanny() {
-        if (!shard_samps.empty()) {
-        }
+        // if (!shard_samps.empty()) {
+        // }
     }
 
     virtual int PickSomeTokens(GRander& rander, int nSample, std::vector<int>& samps, int flag = 0x0);
@@ -273,7 +191,7 @@ class SampNanny : public std::enable_shared_from_this<SampNanny> {
 #else
     virtual bool Serialize(const std::string& path, bool isSave, int flag = 0x0);
     virtual void SetSamples(std::vector<size_t>& begin_, std::vector<size_t>& size_, bool isTrain, CLI_params& train_params, int flag = 0x0);
-    void Shuffle(int flag = 0x0);
+    void Shuffle(bool changed_train_data, int flag = 0x0);
     bool TopoOrder(std::vector<size_t>& ids, std::mt19937& rng, int flag = 0x0);
 #endif
     virtual void Dump(int typ);
@@ -282,8 +200,9 @@ class SampNanny : public std::enable_shared_from_this<SampNanny> {
     friend class Fish;
     friend class GeneratOnPrompt;
     friend class Head4Token;
-    friend class DataTokenSet;
+    friend class TokenCoral;
     friend class GlobTokenset;
+    friend class BATCH_INPUT;
 };
 typedef shared_ptr<SampNanny> hSampNanny;
 

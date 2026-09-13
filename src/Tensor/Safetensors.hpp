@@ -25,24 +25,25 @@ struct K_SafeTensors;
 
 constexpr size_t kMaxDim = 8;  // must be equal to SAFETENSORS_C_MAX_DIM in `safetensors-c.h`
 /**
- *  The HF's safetensors format cannot add custom fields directly to Tensor Entries. But Koifish would add many detial info(for example, quant method & bit).
+ *  1. Designed for large, memory‑mapped, zero‑copy loading.
+ *  2. Sharding into multiple .safetensors files if >1 GB.
+ *
+ *  3. The HF's safetensors format cannot add custom fields directly to Tensor Entries. But Koifish would add many detial info(for example, quant method & bit).
     So Koifish format is not compliant with HF's safetensors format!
+        3.1. HF's safetensors format
+        a) Tensor Entry Structure
+            Each key (e.g., "layer1.weight") maps to an object with these mandatory​ fields:
+                dtype​("F16", "BF16", "I32"),shape​,data_offsets([start, end])
+            Important:​ data_offsets are relative to the start of the data buffer (the section after the header), not the start of the file.
+        b). __metadata__ Section
+            This is an optional key containing a dictionary of string-to-string​ pairs. There is no enforced schema, but common conventions include:
+                format: Framework origin (e.g., "pt"for PyTorch).
+                description: Human-readable model info.
+                Custom keys: Any other metadata (e.g., "author", "version").
+                Restriction:​ All values under __metadata__must be strings.
 
- *  1. HF's safetensors format
- *  a) Tensor Entry Structure
-        Each key (e.g., "layer1.weight") maps to an object with these mandatory​ fields:
-            dtype​("F16", "BF16", "I32"),shape​,data_offsets([start, end])
-        Important:​ data_offsets are relative to the start of the data buffer (the section after the header), not the start of the file.
-    b). __metadata__Section
-        This is an optional key containing a dictionary of string-to-string​ pairs. There is no enforced schema, but common conventions include:
-            format: Framework origin (e.g., "pt"for PyTorch).
-            description: Human-readable model info.
-            Custom keys: Any other metadata (e.g., "author", "version").
-            Restriction:​ All values under __metadata__must be strings.
 
-    2
 */
-// using tensor_st = GTensor;
 
 class K_SafeTensors {
    protected:
@@ -260,21 +261,6 @@ bool load_from_file(const std::string& filename, K_SafeTensors* st, std::string*
 // @return true upon success. `err` will be filled when false.
 //
 bool load_from_memory(const uint8_t* addr, const size_t nbytes, const std::string& filename, K_SafeTensors* st, std::string* warn, std::string* err);
-
-//
-// Load safetensors with memory mapping(i.e. zero-copy).
-// databuffer is not copied to `K_SafeTensors` object, thus the app must hold
-// file during `safetensor_t` object is live.
-//
-// @param[in] filename Filepath. Assume UTF-8 filepath.
-// @param[out] st safetensors data.
-// @param[out] warn Warning message buffer(can be nullptr if you don't need
-// warning message)
-// @param[out] err Error message buffer(can be nullptr if you don't need error
-// message)
-//
-// @return true upon success. `err` will be filled when false.
-bool mmap_from_file(const std::string& filename, K_SafeTensors* st, std::string* warn, std::string* err);
 
 //
 // Load safetensors from mmaped region.
@@ -1574,21 +1560,39 @@ bool mmap_from_file(const std::string& filename, K_SafeTensors* st, std::string&
         delete pm;
         return false;
     }
-
-    // bool ret = mmap_from_memory(pm->addr, pm->size, filename, st, &warn, &err);
     uint64_t json_size     = *(uint64_t*)pm->addr;
     st->header_size        = json_size;
     const char* json_bytes = reinterpret_cast<const char*>(pm->addr) + sizeof(uint64_t);
-    std::string json_str(json_bytes, json_size);
-    // _INFO(">>>>>> header of%s= \n\t%s", filename.c_str(), json_str.c_str());
-    st->jHeader = JSON::parse(json_str);
-    for (auto& [key, value] : st->jHeader.items()) {
-        //_INFO();
-        if (key == "__metadata__")
-            st->metadata = value;
-        else {
-            hGTensor tensor = std::make_shared<GTensor>(st->hFish, key, value);
-            st->tensors.insert(key, tensor);
+    /*if (1) {    //  simdjson version
+        simdjson::ondemand::parser parser;
+        simdjson::padded_string_view view(json_bytes, json_size);
+        simdjson::ondemand::document doc = parser.iterate(view);
+        simdjson::ondemand::object obj   = doc.get_object();
+        for (auto field : obj) {
+            simdjson::ondemand::raw_json_string key_raw = field.key();
+            simdjson::ondemand::value value             = field.value();
+            if (key == "__metadata__")
+                st->metadata = value;
+            else {
+                hGTensor tensor = std::make_shared<GTensor>(st->hFish, key, value);
+                st->tensors.insert(key, tensor);
+            }
+        }
+    } else*/ {
+        // bool ret = mmap_from_memory(pm->addr, pm->size, filename, st, &warn, &err);
+
+        std::string json_str(json_bytes, json_size);
+        _INFO(">>>>>> header of%s= \n\t%s", filename.c_str(), json_str.c_str());
+        st->jHeader = JSON::parse(json_str);
+
+        for (auto& [key, value] : st->jHeader.items()) {
+            //_INFO();
+            if (key == "__metadata__")
+                st->metadata = value;
+            else {
+                hGTensor tensor = std::make_shared<GTensor>(st->hFish, key, value);
+                st->tensors.insert(key, tensor);
+            }
         }
     }
 
@@ -1646,4 +1650,3 @@ bool mmap_from_memory(const uint8_t* addr, const size_t nbytes, const std::strin
 
 std::string HF_dtype2str(const typNUMBER dtype);
 #endif
-

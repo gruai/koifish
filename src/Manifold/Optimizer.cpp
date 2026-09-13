@@ -592,15 +592,15 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGTensor loss_, hGTensor target_,
     _INFO("\tDECENT=%d(%s) SIGN=%d tpFuseCu=%d filter=%d\n\n", tpGD, GD_NAME[tpGD].c_str(), tpSign, tpFuseCu, _fish->config.filter_tmp_grad.size());
     DEBUG.Dump(0);
 
-    if (_fish->isModel({NLP_QWEN2, NLP_QWEN3, NLP_SCORE_})) {
+    if (_fish->isModel({NTP_QWEN2, NTP_QWEN3, MD_QWEN})) {
         g_dump_level = DEBUG.dump_TensorDetail + 1;  // hack
     }
     float a = 0, grad_norm = 0;
     if (_fish->isLoadCheckpoint) {
         // config.chat_sampler.test_every = 1; //only for debug
-        // for (int loop = 0; loop < 10; loop++) 
-        //     _fish->AfterNextStep(0+loop);  
-         _fish->AfterNextStep(0);
+        // for (int loop = 0; loop < 10; loop++)
+        //     _fish->AfterNextStep(0+loop);
+        _fish->AfterNextStep(0);
     }
     if (DEBUG.quant_UserMode) {
         if (!_fish->config.ckp_out.empty())
@@ -798,8 +798,8 @@ void StepInfos::AfterStep(int iter, int flag) {
 }
 
 std::string Optimizer::GetSomeInfo(string type, int flag) {
-    if(type=="gopt_result_file"){
-        sprintf(SUM::infoX, "%d_loss=%.3f", iter, loss_after);        
+    if (type == "gopt_result_file") {
+        sprintf(SUM::infoX, "%d_loss=%.3f", iter, loss_after);
     }
     string info = SUM::infoX;
     return info;
@@ -883,6 +883,10 @@ bool Optimizer::AfterLoadBatch(int accum_step, int flag) {
     }
     const bool last_epoch_reached = (_params.n_epochs > 0 && train_epochs - first_epoch >= _params.n_epochs);
     if (last_epoch_reached) {
+    }
+    auto hBatch = _fish->curBatch(GetITER());
+    // Get logits
+    if (hBatch->hHuaPLAN != nullptr) {
     }
     return true;
 }
@@ -1110,7 +1114,7 @@ bool Optimizer::PrepareData(CLI_params& config, int flag) {
     bool isLoadOK = false;
     string root = _fish->tsTrain->serial_root, spTrain = root + ".train", spEval = root + ".eval";
     if (root.empty()) {
-        train_loader->Shuffle();
+        train_loader->Shuffle(false);
         assert(train_loader->shuffle_sample_count > 0);
         return true;
     }

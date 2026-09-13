@@ -236,12 +236,18 @@ void Fish::CopyWeight(const Fish* src, int flag) {
 #endif
 }
 
+// padded_nCls of [TokenEmbed,Head4Token]   config.model.isPaddedCls    config.model.pad_vocab_size
 size_t NLP_AutoRegressive::nClass() const {
     int nClass = config.model.pad_vocab_size;
     assert(hDict != nullptr);
     if (hDict != nullptr) {
         assert(hDict != nullptr);
         hDict->nVocab() <= nClass;
+        int nV = hDict->nVocab();
+        if (config.model.isPaddedCls) {
+            nClass = CEIL_DIV(nV, 128) * 128;
+        }else
+            nClass = nV;
     }
     return nClass;
 }
@@ -281,16 +287,10 @@ std::string NLP_AutoRegressive::T2STR(const std::vector<TOKEN_ID>& toks, int nMo
 bool NLP_AutoRegressive::InitTokenCoral(int flag) {
     if (!Fish::InitTokenCoral(flag))
         return false;
-
-    // hDictVAE        = std::make_shared<DictVAE>(this);
-    // hDictVAE->hDict = hDict;
-    // assert(hDictVAE != nullptr && hDictVAE->isValid());
     return true;
 }
 bool Fish::InitTokenCoral(int flag) {
     void* hLLM = nullptr;
-    // hDict = std::make_shared<GTokenizer>(this);     //  entence != prompt
-    // hDict = std::make_shared<GTokenizer_Heap>(this);
 
     switch (config.ModelArch()) {
         case MODEL_ARCH::NLP_GPT2:
@@ -312,26 +312,26 @@ bool Fish::InitTokenCoral(int flag) {
                     hDict->S.bos = 1, hDict->S.eos = 2;
                 }
             }
-            // hTokenset = std::make_shared<DataTokenSet>(hDictVAE.get());
+            // hTokenset = std::make_shared<TokenCoral>(hDictVAE.get());
             break;
-        case MODEL_ARCH::NLP_GUPPY:
+        case MODEL_ARCH::NTP_GUPPY:
             hDict = std::make_shared<HF_Tokenizer>(this);
             break;
         case MODEL_ARCH::NLP_MISTRAL:
             hDict = std::make_shared<HF_Tokenizer>(this);
             break;
-        case MODEL_ARCH::NLP_DEEPSEEK:
+        case MODEL_ARCH::NTP_DEEPSEEK:
             hDict = std::make_shared<HF_Tokenizer>(this);
             break;
-        case MODEL_ARCH::NLP_QWEN2:
+        case MODEL_ARCH::NTP_QWEN2:
             hDict = std::make_shared<GTokenizer_QWEN3>(this);
             // hDict->vocab.resize(151936);
             break;
-        case MODEL_ARCH::NLP_QWEN3:
+        case MODEL_ARCH::NTP_QWEN3:
             hDict = std::make_shared<GTokenizer_QWEN3>(this);
             break;
-        case MODEL_ARCH::NLP_SCORE_: {
-            if (config.dict_type == "charset") {  // DEBUG.VocabIsCharset
+        case MODEL_ARCH::MD_QWEN: {
+            if (config.dict.type == "charset") {  // DEBUG.VocabIsCharset
                 std::vector<char> charset;
                 hDict                       = std::make_shared<GTokenizer_CHARset>(this, charset);
                 config.model.pad_vocab_size = hDict->nVocab();
@@ -355,8 +355,10 @@ bool Fish::InitTokenCoral(int flag) {
         return false;
     }
     hDict->CheckSpecialTokens(true);
+    _INFO("%s", hDict->Dump(0x0).c_str());
+
     // hDict->DoSomeTest(flag);
-    auto [tsTrain_, tsEval_, tsCalib_, tsX_] = DataTokenSet::MakeInstance(this, hDict, isLocalInfer, 0x0);
+    auto [tsTrain_, tsEval_, tsCalib_, tsX_] = TokenCoral::MakeInstance(this, hDict, isLocalInfer, 0x0);
     tsTrain = tsTrain_, tsEval = tsEval_, tsCalib = tsCalib_, tsX = tsX_;
 
     if (isTrain()) {
@@ -463,7 +465,7 @@ void NLP_AutoRegressive::Train(int flag) {
         hSampNanny loader = std::make_shared<SampNanny>(this, "Calib", false);
         loader->type      = DT_EVAL;
         loader->Prepare(hOPT.get(), tsCalib);
-        assert(0);   // should refactor calib flow
+        assert(0);  // should refactor calib flow
         // GetNeuron<Head4Token>("Head4Token", 0)->hLoader = loader;
         // double val_loss                                 = loader->Evaluate(SAMPLEofSHARD, 0x0);
     }
@@ -699,8 +701,8 @@ hFuyou Fish::GetFuyou(int no, int flag) const {
 bool NLP_AutoRegressive::LocalFeeling(hSampNanny hLoader, vector<float>& result, int flag) {
     assert(hOPT != nullptr);
     auto preLogits = hCLS->preLogits;
-    assert(hLoader->shard_samps.size() == 1);
-    auto hSamp = hLoader->shard_samps[0];
+    assert(hLoader->len() == 1);
+    auto hSamp = hLoader->SampAt(0);  // shard_samps[0];
     int i, nTok = hSamp->len, _nctx = config.n_ctx();
     // assert(!hDictVAE->hDict->tokenizer_add_bos);
     SetPhase(LIFE_PHASE::P_EVAL_);
@@ -733,12 +735,12 @@ int Fish::ForwardOnRLS(int iter, int flag) {
         hRLS->Prepare(iter, 0);
 
     Head4Token* cls = GetNeuron<Head4Token>("Head4Token", 0);
-    int L = config.nLayer(), nzLoss = cls->nzLoss, i, nFuyou = hRLS->fuyouSwarm.size();
+    int L = config.nLayer(), nzLos = cls->nzLoss, i, nFuyou = hRLS->fuyouSwarm.size();
     float *tmpLoss = nullptr, *loss = cls->hostLoss;
     vector<hFuyou> branches = hRLS->ActiveFuyous();
     int nB = branches.size(), curB = 0;
     if (nB > 1) {
-        tmpLoss = new float[nzLoss]();
+        tmpLoss = new float[nzLos]();
     } else {
         assert(nB > 0);
     }
@@ -776,11 +778,11 @@ int Fish::ForwardOnRLS(int iter, int flag) {
         }
         curB++;
         if (tmpLoss != nullptr)
-            for (i = 0; i < nzLoss; i++) tmpLoss[i] += loss[i];
+            for (i = 0; i < nzLos; i++) tmpLoss[i] += loss[i];
         // break;
     }
     if (nB > 1) {
-        for (i = 0; i < nzLoss; i++) {
+        for (i = 0; i < nzLos; i++) {
             loss[i] = tmpLoss[i] / curB;
             assert(isValidF(loss + i) && loss[i] > 0 && loss[i] < 100.0);
         }

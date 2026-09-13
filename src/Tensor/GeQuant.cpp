@@ -8,8 +8,15 @@
 
 #include "GeQuant.hpp"
 
+#ifdef __USE_GBDT__
 #include "../GBDT/data_fold/Distribution.hpp"
 #include "../GBDT/python/pyMORT_DLL.h"
+#include "../GBDT/tree/GBRT.hpp"
+using namespace Grusoft;
+#else
+#include <omp.h>
+#endif
+
 #include "../Manifold/Fish.hpp"
 #include "../Manifold/Neuron.hpp"
 #include "../Manifold/Optimizer.hpp"
@@ -264,9 +271,6 @@ int Q_JL<T, Tproj>::InitProject(int flag) {
 // Explicit instantiation for specific types
 template class Q_JL<float, float>;
 template class Q_JL<bf16, bf16>;
-
-#include "../GBDT/tree/GBRT.hpp"
-using namespace Grusoft;
 
 template <typename T>
 Q_Impurity<T>::Q_Impurity(const std::string& nam_, void* hN, QUANT_CARD& param_, int flag) : Quantizer<T>(nam_, hN, param_, flag) {
@@ -753,14 +757,15 @@ float GeQuant::RT_NormalF(shared_ptr<GTensor> hTensor, const void* srcData, int 
 
 template class Quantizer<float>;
 template class Quantizer<bf16>;
-
+#ifdef __USE_GBDT__
 FeatsOnFold* Mat2DORT(LiteBOM_Config config, ExploreDA* edaX, typNUMBER tpN, void* hData, int nMostFeat, int nSamp, DORT_wrap* dort, int flag);
-
+#endif
 /*
-    It's really a suprize to find that GBDT would improve quant.    cys 11/22/2025
+    It's really a suprize to find that GBDT_ would improve quant.    cys 11/22/2025
 */
 template <typename T>
 float Q_Impurity<T>::LowBit_GBDT(shared_ptr<GTensor> hTensor, const void* srcData, int flag) {
+#ifdef __USE_GBDT__
     double t0 = GST_ms();
     assert(hTensor->isWMAT());
     int nRow = hTensor->shape[0], nCol = hTensor->shape[1];
@@ -819,7 +824,9 @@ float Q_Impurity<T>::LowBit_GBDT(shared_ptr<GTensor> hTensor, const void* srcDat
         _ERROR("\nEXCEPTION@Q_Impurity::LowBit_ %s!!!!!!\n\n", "...");
     }
     fflush(stdout);
-
+#else
+    assert(0);
+#endif
     // hTensor->AfterQuant();
     return this->impurity;
 }
@@ -907,7 +914,6 @@ float GeQuant::LowBit_worker(shared_ptr<GTensor> hTensor, const void* srcData, i
 // the shape&type of srcDat is defined in hTensor
 template <typename T>
 float Q_Impurity<T>::Core(shared_ptr<GTensor> hTensor, const void* srcData, floatGama* curGama, int flag) {
-    // return LowBit_GBDT(hTensor, srcData, flag);
     double t0 = GST_ms(), a0 = DBL_MAX, a1 = 0;
     // assert(hTensor->isWMAT());
     int nRow = hTensor->shape[0], nCol = hTensor->shape[1], minLeaf = 2, nSplit = -1, nQuant = 0x1 << this->bits;  // hFold->config.num_trees;
@@ -929,6 +935,7 @@ float Q_Impurity<T>::Core(shared_ptr<GTensor> hTensor, const void* srcData, floa
             break;
     }
     if (this->params.type == QUANT_MODE::MINI_GBDT) {
+#ifdef __USE_GBDT__
         dort                   = static_cast<DORT_wrap*>(LiteMORT_init(nullptr, 0, nullptr, 0x0));
         LiteBOM_Config& config = dort->config;
         config.feat_quanti = 1024, config.verbose = 1000, config.objective = "quant";
@@ -959,11 +966,14 @@ float Q_Impurity<T>::Core(shared_ptr<GTensor> hTensor, const void* srcData, floa
             a1 = std::max(hFeat->wGain, a1), a0 = std::min(hFeat->wGain, a0);  // this->impurity += hFeat->wGain;
             this->impurity += hFeat->errQ;
         }
+        delete hFold;
+        delete dort;
+#else
+        assert(0);
+#endif        
         this->impurity = sqrt(this->impurity / nRow / nCol);
         _INFO("<QUANT_MI_%d>@%s nF=%d(%ld) impurity=%g[%g-%g]\t split=%g t1=%.5gms\n", this->bits, "", nRow, nCol, this->impurity, a0, a1, nSplit * 1.0 / nRow,
               GST_ms() - t0);
-        delete hFold;
-        delete dort;
     } else {
         if (this->bits == 1)
             this->impurity = Quantizer<T>::YinYang(hTensor, srcData, flag);
@@ -977,10 +987,12 @@ float Q_Impurity<T>::Core(shared_ptr<GTensor> hTensor, const void* srcData, floa
 
 template <typename T>
 Q_Impurity<T>::~Q_Impurity() {
+#ifdef __USE_GBDT__
     if (dort != nullptr) {
         LiteMORT_clear(dort);
         dort = nullptr;
     }
+#endif
 }
 template class Q_Impurity<bf16>;
 template class Q_Impurity<float>;

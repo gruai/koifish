@@ -14,7 +14,7 @@
 /**
     Masked AR (Autoregressive) Models (like the original BERT-based Mask-Predict or CMLM).
     During training:
-        when token n is masked, target[n] is x[n+1], use logits[n] predicts x[n+1] 
+        when token n is masked, target[n] is x[n+1], use logits[n] predicts x[n+1]
     During generation:
         Mask-Predict strategy:  if the most confident pos is n, then its prediction is inserted into position n+1! while leaving position n masked.
         A fast shift-logtis tech: logits = torch.cat([logits[:, :1], logits[:, :-1]], dim=1)
@@ -28,17 +28,25 @@ This produces a model that is not a mathematically correct diffusion LM. It is a
 This hybrid is not theoretically clean, but it is empirically workable!
  */
 
- 
 Salmon::Salmon(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
-    assert(arch == MODEL_ARCH::NLP_SCORE_);
+    assert(arch == MODEL_ARCH::MD_QWEN);
     config.model.isSLPBias    = false;
     config.model.isNormalBias = false;
     // config.model.isQKVBias    = false;
     config.model.isQKVBias = true;  // for https://huggingface.co/fredzzp/open-dcoder-0.5B
     // config.model.isFFNGate    = false;
     config.model.norm_rms_eps = 1.0e-6;
-    config.model.isMaskAR = true;
-    
+    // config.model.isMaskAR     = true;
+    config.model.isShiftLabel = false;
+
+    if (config.model.sCardPath == "./Models/dcoder/") {  // dcoder is actually MaskAR
+        config.model.isShiftLabel = true;
+        _WARN("[Model] Since dcoder is actually MaskAR, set its' \"isShiftLabel\" to true!\n");
+    }
+
+    if (DEBUG.verShiftLabel >= 0)
+        config.model.isShiftLabel = DEBUG.verShiftLabel != 0;
+
     if (isTrain()) {
         config.model.qkv4dnn = QKV_PACK::QQKKVV;
     } else {
@@ -48,10 +56,11 @@ Salmon::Salmon(const std::string& nam_, struct CLI_params params, ROLE_TYPE role
     config.model.isSeparateQKV = true;
     // config.scheduling.strategy = MEM_STRATEGY::MEM_SWAP_GUOKE;
     // config.scheduling.strategy     = MEM_STRATEGY::PRE_ALLOC_HOST_MAP;
-    config.model.sLayer     = "layers.";
+    config.model.sLayer = "layers.";
     // config.model.sEmbed = "embed_tokens", config.model.sInvEmbed = "lm_head";
-    config.model.isBqkv        = false;  //  0.6B has no bias!
-    config.model.isCausalMask  = false;
+    config.model.isBqkv       = false;  //  0.6B has no bias!
+    config.model.isCausalMask = false;
+
     config.fuyou.filter_reload = {"mlp", "self_attn"};  //  {"mlp", "self_attn"};
 }
 
@@ -89,19 +98,21 @@ int Salmon::Chat(int iter, int flag) {
 
 bool GOPT_Diffusion::OnLogits(int flag) {
     D2H(hClsLogits->data, hClsLogits->host_data, hClsLogits->nByte());
+    maskLogits = originLogits;
+
     switch (samp_params.tpZhuomo) {
         case CHAT_SAMPLER::MD_DILATE:  // maskLogits is fixed
-            maskLogits = originLogits;
+
             break;
         default:
-            maskLogits.clear();
+            /*maskLogits.clear();
             for (auto logit : originLogits) {
                 if (tokens[logit->posOfTarget] == mask_id) {
                     maskLogits.push_back(logit);
 
                 } else {
                 }
-            }
+            }*/
             break;
     }
 
@@ -114,14 +125,16 @@ TOKEN_ID GOPT_Diffusion::Sample(hBATCH hB, bool is_resampling) {
     if (hB != nullptr)
         hBatch = hB;
 
-    int nOriginMask = originLogits.size();
-    nGenerate       = nOriginMask;
-    planner         = std::make_shared<SAMPLE_Planner>(samp_params, samp_params.most_step, nOriginMask, 0x0);
+    int nOriginMask = originLogits.size(), dump_each = 1;
+    nGenerate = nOriginMask;
+    // planner   = std::make_shared<TOKEN_Planner>("Huaer of chat", samp_params, samp_params.most_step, nOriginMask, 0x0);
+    planner = hBatch->hHuaPLAN;
+    planner->Init(-1, hB);
     planner->Dump();
-
+    planner->Init4Prefill(hBatch->nFill, hBatch->nFill + 1, TOKEN_Planner::F_ABSOLUTE_ID);
     auto tokenizer = fish_0->GetTokenizer();
     assert(planner != nullptr);
-    int nStep         = planner->nMostStep, stp;
+    int nStep         = planner->arrGroup.size(), stp;
     double start_time = GST_ms();
     SUM::tX1          = 0.0;
     float s;
@@ -132,10 +145,13 @@ TOKEN_ID GOPT_Diffusion::Sample(hBATCH hB, bool is_resampling) {
         OnLogits();
         int n1 = 0, n2 = 0, pos, nMask = maskLogits.size();
         switch (samp_params.tpZhuomo) {
+            case CHAT_SAMPLER::MD_PUMA:
             case CHAT_SAMPLER::MD_DILATE:
-            case CHAT_SAMPLER::MD_LINEAR_TRANSFER: {
+            case CHAT_SAMPLER::MD_SNR: {
                 candLogit.clear();
-                std::vector<int> picks = planner->PickGroup(stp, maskLogits.size(), 0x0);
+                std::vector<int> picks = planner->arrGroup[stp];  // planner->PickGroup(stp, maskLogits.size(), 0x0);
+                // if(stp==nStep-1)
+                //     assert(picks.size()==maskLogits.size());
                 for (int pick : picks) {
                     assert(pick >= 0 && pick < nMask);
                     auto logit = maskLogits[pick];
@@ -154,7 +170,7 @@ TOKEN_ID GOPT_Diffusion::Sample(hBATCH hB, bool is_resampling) {
         SampFromLogits(stp);
 
         // std::sort(candLogit.begin(), candLogit.end(), [](auto logi1, auto logi2) { return logi1->qu.confi < logi2->qu.confi; });
-        int i = 0;
+        int i = 0, nSpecial = 0;
         for (auto logit : candLogit) {
             bool isMask = i++ < nToMask;
             pos         = logit->posOfTarget;  // posInBatch;
@@ -167,11 +183,15 @@ TOKEN_ID GOPT_Diffusion::Sample(hBATCH hB, bool is_resampling) {
                 if (tokens[pos] != logit->qu.token)
                     n2++;
                 tokens[pos] = logit->qu.token;
+                if (tokenizer->isSpecialTok(tokens[pos])) {
+                    nSpecial++;
+                }
             }
         }
 
         cur_answer = tokenizer->Decode(tokens, true, true);
-        _INFO("\r[%d]=\"%s\"\n", stp, cur_answer.c_str());
+        if (stp < dump_each || stp > nStep - dump_each - 1)
+            _INFO("\r[%d]=\"%s\" special=%d\n", stp, cur_answer.c_str(),nSpecial);
         hBatch->FillTokens(0, tokens, 0, 0x0);
     }
     SUM::tX1 += (double)(GST_ms() - start_time) / 1000.0;

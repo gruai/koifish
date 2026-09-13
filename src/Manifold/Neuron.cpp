@@ -255,7 +255,7 @@ Head4Token::Head4Token(Fish* hG_, const std::string& key_, JSON::const_iterator 
     int nEmbd = hFish->config.nEmbed();
     // _target = hFish->Target();   //null now
     nCls         = hFish->nClass();
-    ignore_token = hFish->hDict->S.pad;
+    ignore_token = hFish->hDict->S._pad;
 
     padded_nCls = (hFish->config.model.isPaddedCls) ? ceil(nCls / 128.0) * 128 : nCls;
     // reduce memory & some float error
@@ -301,7 +301,9 @@ floatLogits* Head4Token::fLogits(int flag) {
 bool Head4Token::BuildPrelogist(int flag) {
     typNUMBER tpL = typeid(floatLogits) == typeid(float) ? typNUMBER::F32 : typNUMBER::BF16, tpA = hFish->config.model.tpActivation;
     //  in some case(char based vocab), nCls<100, but buffer used in many place, like "assert(nTH * ldTH * sizeof(float) <= GTensor::buff_len)";"
-    int ldC = std::max(padded_nCls, latent * 2);
+    int ldC = std::max(padded_nCls, B / dB4Logits() * latent * 2);
+    if (padded_nCls == 66)  // hack for charset
+        ldC = std::max(padded_nCls, latent * 1280);
     if (/*hFish->isLocalInfer &&*/ hFish->isAtPhase(P_CHAT_1)) {
         preLogits = GT(hFish, tpL, {padded_nCls}, 0x0, "preLogits");
         // preLogits->flags |= GTensor::F_HOSTDATA;
@@ -321,7 +323,7 @@ bool Head4Token::BuildPrelogist(int flag) {
 
 // Big trouble! Need some new technique to relplace dB-split
 int Head4Token::dB4Logits(int flag) {
-    if (hFish->curTokenSet == nullptr) {    // no train/eval, just chat
+    if (hFish->curTokenSet == nullptr) {  // no train/eval, just chat
         /*if (hFish->config.model.preLogits_dB < 0)
             dB4Logit = nMostSample;
         else
@@ -363,7 +365,7 @@ bool Head4Token::Build(int flag) {
     // proj.InitCompression(COMPRESSIVE_SENSING::LORA);     //Very large gradient ,so strange!
 
     if (!hFish->config.model.isEmbedWeightTying) {
-        if (hFish->config.ModelArch() == NLP_GUPPY) {
+        if (hFish->config.ModelArch() == NTP_GUPPY) {
             // assert(FFN::first!=nullptr);
         }
         // proj.w->SetRefer(hEmbed->wInv);
@@ -606,7 +608,7 @@ ROPE::ROPE(SelfAttention* hQKV, const std::string& key_, int flag) : SparseNeuro
     // Build(flag);
     BuildX(name + ".ROPE", hQKV->spQ, hFish, flag);
     rRounding.Init(907);
-    if (hFish->config.model.QKNormal>0) {
+    if (hFish->config.model.QKNormal > 0) {
         hnQ = &(hQKV->normQ), hnK = &(hQKV->normK);
     }
 }
@@ -738,7 +740,7 @@ bool LayerNormal::Build(int flag0) {
     rms_eps  = hFish->config.model.norm_rms_eps;
     delta    = gBUFF->delta;
     int flag = flag0 | GTensor::F_RESIDENT;
-    if (hFish->arch == MODEL_ARCH::NLP_GPT2 || hFish->arch == MODEL_ARCH::NLP_GUPPY)
+    if (hFish->arch == MODEL_ARCH::NLP_GPT2 || hFish->arch == MODEL_ARCH::NTP_GUPPY)
         isRMS = false;
     // isRMS = name!="model.output_norm" ? false : true;
     isBias = hFish->config.model.isNormalBias || BIT_TEST(flag, F_BIAS);
@@ -902,7 +904,7 @@ hGTensor GeNeuron::AfterMing(RLS_BP* hRLS, hGTensor cur, int flag) {
 }
 
 void GeNeuron::OnDebug(const std::string& info, int typ, int flag) {
-    if (!hFish->isModel({NLP_QWEN2}))
+    if (!hFish->isModel({NTP_QWEN2}))
         return;
     if (!hFish->isTrain())
         return;

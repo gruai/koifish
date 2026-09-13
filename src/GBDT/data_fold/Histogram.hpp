@@ -11,7 +11,6 @@
 #include <cmath>
 #include <map>
 #include <numeric>
-#include <queue>
 #include <vector>
 
 #include "../include/LiteBOM_config.h"
@@ -341,8 +340,7 @@ class MINI_HISTO : public HistoGRAM {
 };
 typedef shared_ptr<MINI_HISTO> hMIHISTO;
 typedef std::vector<hMIHISTO> arrMIHISTO;
-typedef std::priority_queue<hMIHISTO, std::vector<hMIHISTO>, MINI_HISTO::compare> queMIHISTO;
-void queHisto2Thrsh(const queMIHISTO& queMH, std::vector<float>& thrshs, int flag = 0x0);
+
 
 /*
     from Tianqi Chen's formula

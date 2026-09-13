@@ -21,13 +21,13 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vect
         case MODEL_ARCH::NLP_MAMBA:
             fish = std::make_shared<LLM_MAMBA>(nam_ + "_mamba", params, role_);
             break;
-        case MODEL_ARCH::NLP_DEEPSEEK:
+        case MODEL_ARCH::NTP_DEEPSEEK:
             fish = std::make_shared<DeepSeek>(nam_ + "_DS", params, role_);
             break;
-        case MODEL_ARCH::NLP_QWEN2:
+        case MODEL_ARCH::NTP_QWEN2:
             fish = std::make_shared<QWen3>(nam_ + "_QW2", params, role_);
             break;
-        case MODEL_ARCH::NLP_QWEN3:
+        case MODEL_ARCH::NTP_QWEN3:
             fish = std::make_shared<QWen3>(nam_ + "_QW3", params, role_);
             break;
         case MODEL_ARCH::NLP_BITNET:
@@ -36,10 +36,10 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vect
         case MODEL_ARCH::NLP_MISTRAL:
             fish = std::make_shared<Mistral>(nam_ + "_mistral", params, role_);
             break;
-        case MODEL_ARCH::NLP_GUPPY:
+        case MODEL_ARCH::NTP_GUPPY:
             fish = std::make_shared<Guppy>(nam_ + "_guppy", params, role_);
             break;
-        case MODEL_ARCH::NLP_SCORE_:
+        case MODEL_ARCH::MD_QWEN:
             fish = std::make_shared<Salmon>(nam_ + "_score", params, role_);
             break;
         case MODEL_ARCH::NLP_GPT2:
@@ -68,7 +68,7 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vect
                     assert(0);
             }
     }
-    if (params.common.Empty()) {
+    if (params.common.isNoTrain()) {
         fish->isLocalInfer = true;
     } else
         fish->isLocalInfer = flag == 0x110;
@@ -944,8 +944,8 @@ bool Fish::AfterNextStep(int iter, int flag) {
     int gpt_every = config.chat_sampler.test_every;  // common.gpt_every;
     if (gpt_every > 0 && iter % gpt_every == 0) {
         config.chat_sampler.nSeqRecommend = config.n_ctx();
-        SetPhase(isModel({NLP_SCORE_}) ? LIFE_PHASE::P_CHAT_N : LIFE_PHASE::P_CHAT_1, P_TRAIN);
-        gopt->sResult = hOPT->GetSomeInfo("gopt_result_file");    
+        SetPhase(isModel({MD_QWEN}) ? LIFE_PHASE::P_CHAT_N : LIFE_PHASE::P_CHAT_1, P_TRAIN);
+        gopt->sResult = hOPT->GetSomeInfo("gopt_result_file");
         Chat(iter, 1);
     }
     Head4Token* cls = GetNeuron<Head4Token>("Head4Token", 0);
@@ -987,7 +987,7 @@ bool Fish::AllocBuffer(int flag) {
                 // hCache = std::make_shared<KVCache>(this);
             }
         }
-        if (isModel({NLP_SCORE_})) {
+        if (isModel({MD_QWEN})) {
         } else {
             hCache = std::make_shared<KVCache>(this);
         }

@@ -275,7 +275,7 @@ hGENERATOR GeneratOnPrompt::MakeInstance(struct CLI_params& config, arrHWIKI& wi
     switch (config.ChatMode()) {
         case CHATML_ASSIST:
         case CHATML_THINK: {
-            if (fish_0->isModel({NLP_SCORE_})) {
+            if (fish_0->isModel({MD_QWEN})) {
                 gopt = std::make_shared<GOPT_Diffusion>(config, wikis, fish_0, 0x0);  // GOPT_Diffusion,GeneratOnPrompt
             } else
                 gopt = std::make_shared<GeneratOnPrompt>(config, wikis, fish_0, 0x0);
@@ -355,12 +355,12 @@ GeneratOnPrompt::GeneratOnPrompt(CLI_params& cp_, arrHWIKI& wiki_, Fish* hG_, in
                 fResult = "./output/gopt/gopt_";
                 break;
         }
-        if(!samp_params.prompt.empty()){
+        if (!samp_params.prompt.empty()) {
             some_prompts = {samp_params.prompt};
-        }else{
+        } else {
             some_prompts = DEBUG.prompts;
         }
-        
+
         auto gang_param   = config;
         gang_param.tpWiki = "off";
         assert(gang_param.tpWiki == "off");
@@ -387,7 +387,7 @@ GeneratOnPrompt::GeneratOnPrompt(CLI_params& cp_, arrHWIKI& wiki_, Fish* hG_, in
             // gpuLogits.Init(n_vocab, cls->preLogits, 0x0);
         }
         _arch = fish_0->arch;
-        // if (_arch == NLP_SCORE_)
+        // if (_arch == MD_QWEN)
         InitCoral("Write a quick sort algorithm in c++.", fish_0);
     } else {
         _arch = config.ModelArch();
@@ -413,25 +413,27 @@ void GeneratOnPrompt::Prepare4N(int iter, hBATCH hB, int flag) {
     }
     originLogits.clear();
     //  MaskAR: When training: Add noise to x[i], but predict x[i+1](like AR-style)
-    int shift = fish_0->config.model.isMaskAR ? -1 : 0;
+    // int shift = fish_0->config.model.isMaskAR ? -1 : 0;
+    int shift = fish_0->config.model.isShiftLabel ? -1 : 0;
     for (int i = hBatch->nPrefill + shift; i < nMostToken + shift; i++) {
         float T_coin = rand_coin.NextFloat_01();
         auto hLogit  = std::make_shared<LogitsInfo>(i, fish_0, hClsLogits, T_coin, 0x0);
         originLogits.push_back(hLogit);
         hLogit->posOfTarget = hLogit->posInBatch - shift;
     }
+    // hBatch->hHuaPLAN->InitAllTrainsitions(hBatch->nPrefill, hBatch->nPrefill + 1);
 }
 
 bool GeneratOnPrompt::InitCoral(const std::string& prompt_, Fish* hG_, int flag) {
     tsChat = std::make_shared<PromptTokenset>("Prompt", hG_->GetTokenizer());
     // tsEval.push_back(hTokenset);
-    tsChat->Init(flag);
+    tsChat->Init(hG_, flag);
     tsChat->InitSampNanny(hG_, DT_CHAT, flag);
 
     int seq_len = hG_->curChatLen(CHAT_LENGTH_TYPE::LIMIT);
     hBatch      = tsChat->loader->GetCurBatch();
     assert(hBatch->hostToken->ne[0] >= seq_len);
-    int num_prompt_tokens = hBatch->FillPrompt(hG_, some_prompts, {}, 0);   //DEBUG.prompts
+    int num_prompt_tokens = hBatch->FillPrompt(hG_, some_prompts, {}, 0);  // DEBUG.prompts
 
     return true;
 }
@@ -663,8 +665,8 @@ void GeneratOnPrompt::AfterSample(int iter, double elapsed_s, int flag) {
           nGenerate - 1, elapsed_s, SUM::tQKV_forw / 1.0e6, SUM::tFFN / 1.0e6, SUM::tPreLogits / 1.0e6, SUM::tX1 / 1.0e6, COLOR_RESET);
     bool isAppend = false;
     // cur_answer += "\t\t" + SUM::sQuantInfo;
-    if (!fResult.empty()){        
-        string path = fResult + sResult + "_.txt";  //hOPT->GetSomeInfo("gopt_result_file"); 
+    if (!fResult.empty()) {
+        string path = fResult + sResult + "_.txt";  // hOPT->GetSomeInfo("gopt_result_file");
         STR2FILE(path, cur_answer, isAppend ? std::ofstream::app : std::ofstream::out);
     }
     // OnEOS(shared_from_this());
@@ -672,7 +674,7 @@ void GeneratOnPrompt::AfterSample(int iter, double elapsed_s, int flag) {
 }
 
 TOKEN_ID GeneratOnPrompt::Sample(hBATCH hBatch, bool is_resampling) {
-    for (int stp = 0; stp < samp_params.most_step; stp++) {
+    for (int stp = 0; stp < samp_params.most_hua; stp++) {
         SampFromLogits(stp);
     }
     assert(arrQu.size() == 1);
@@ -684,7 +686,7 @@ TOKEN_ID GeneratOnPrompt::Sample(hBATCH hBatch, bool is_resampling) {
 
 GOPT_Diffusion::GOPT_Diffusion(CLI_params& cp_, arrHWIKI& wikis_, Fish* hG_, int flag) : GeneratOnPrompt(cp_, wikis_, hG_, flag) {
     auto hToken = hG_->GetTokenizer();
-    mask_id     = hToken->S.mask;
+    mask_id     = hToken->S._mask;
 }
 
 //  The probability vector must be in the same order as the categories
@@ -827,8 +829,8 @@ int LogitsInfo::Qu_FlipCoin(int flag) {
     for (int i = 0; i < nPick; i++) {
         cdf += logits[i];
         if (coin < cdf) {
-            isHeaviside = cdf>0.999 && logits[i]>0.999;
-            pos = i;
+            isHeaviside = cdf > 0.999 && logits[i] > 0.999;
+            pos         = i;
             break;
         }
     }
@@ -1323,82 +1325,3 @@ std::vector<hWIKI> WIKI::MakeInstance(const std::string nam_, struct CLI_params&
     return wikis;
 }
 #endif
-
-void SAMPLE_Planner::Init4Dilate(int flag) {
-    int basis = 2, i, j, at = basis, st, B = seq_len, nz = 0;
-    int* mask = new int[B]();
-
-    nMostStep = (int)ceil(log(seq_len) / log(basis));
-    for (i = 0; i < nMostStep; i++) {
-        st = (int)floor(B * 1.0 / at);
-        if (st == 0)
-            break;
-        Group group;
-        for (j = 0; j < B; j++) {
-            if (mask[j] != 0)
-                continue;
-            if (j % st == 0) {
-                mask[j] = 1;
-                group.push_back(j);
-            }
-        }
-        if (group.empty())
-            break;
-        arrGroup.push_back(group);
-        nz += group.size();
-        at *= basis;
-    }
-    assert(nz == B);
-    delete[] mask;
-
-    nMostStep = arrGroup.size();
-}
-
-SAMPLE_Planner::SAMPLE_Planner(CHAT_SAMPLER& user_params, int nMostStep_, int len_, int flag) : _params(user_params), nMostStep(nMostStep_), seq_len(len_) {
-    // policy = LINEAR_DECAY;
-
-    hPickRander = std::make_shared<GRanderTorch>(803);
-    switch (_params.tpZhuomo) {
-        case CHAT_SAMPLER::MD_DILATE:
-            name = "DilateGap";
-            Init4Dilate(flag);
-            break;
-        default:
-            break;
-    }
-
-    t_base     = 1.0;
-    t_previous = t_base;
-    t_final    = 0.001;
-}
-float SAMPLE_Planner::RelativeRate(int64_t step, int flag) {
-    float delta = (t_final - t_base) / nMostStep, t_cur = t_base + (step + 1) * delta;
-    float r    = t_cur / t_previous;
-    t_previous = t_cur;
-    return r;
-}
-
-std::vector<int> SAMPLE_Planner::PickGroup(int64_t step, int nSamp, int x, int flag) {
-    float scale = RelativeRate(step), s;
-    std::vector<int> picks;
-    // hPickRander->Init(20260713);  // only for debug
-    switch (_params.tpZhuomo) {
-        case CHAT_SAMPLER::MD_DILATE:
-            picks = arrGroup[step];
-            break;
-        default:
-            s = 1.0 - scale;
-            for (int i = 0; i < nSamp; i++) {
-                float a = hPickRander->NextFloat_01();
-                if (a < s)
-                    picks.push_back(i);
-            }
-            // if (step == 0)
-            //     picks = {1, 20};  // hack for debug
-            // else if (step == 1)
-            //     picks = {27, 42};  // hack for debug
-            break;
-    }
-    return picks;
-}
-void SAMPLE_Planner::Dump(int flag) { _INFO("[SAMP_PLAN]_\"%s\" N=%d(iter=%d)\n", name.c_str(), seq_len, nMostStep); }

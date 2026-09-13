@@ -170,13 +170,15 @@ wstring pad_chinese_chars(const wstring& text) { return L""; }
 #endif
 
 bool TOKEN_Special::Has(const int tok, int flag) const {
-    if (tok == pad)
+    if (tok == _pad)
         return true;
     if (tok == sep)
         return true;
     if (tok == cls)
         return true;
-    if (tok == mask)
+    if (tok == _mask)
+        return true;
+    if (tok == _noise)
         return true;
     if (tok == bos)
         return true;
@@ -194,7 +196,7 @@ std::string GTokenizer::Decode(const TOKENS& ids, bool skip_pad, bool skip_speci
     int nV = nVocab(), i = 0;
     for (auto id : ids) {
         assert(id < nV);
-        if (skip_pad && id == S.pad)
+        if (skip_pad && id == S._pad)
             continue;
         if (skip_special_tokens && isSpecialTok(id))
             continue;
@@ -239,8 +241,8 @@ bool TOKEN_Special::isValid(int flag) const {
                 _WARN("[DICT] \"%s\" invalid id_think_close=%d!\n", name.c_str(), id_think_close);
                 return false;
             }
-            if (S.pad < 0) {  //
-                _WARN("[DICT] \"%s\" invalid S.pad=%d!\n", name.c_str(), S.pad);
+            if (S._pad < 0) {  //
+                _WARN("[DICT] \"%s\" invalid S._pad=%d!\n", name.c_str(), S._pad);
                 return false;
             }
             // if (mask_id < 0) {  //
@@ -259,7 +261,7 @@ bool TOKEN_Special::isValid(int flag) const {
 }
 
 bool GTokenizer::isValid(bool allowEmpty, int flag) const {
-    if (nVocab() <= 0) {
+    if (empty()) {
         _WARN("[DICT] Invalid \"%s\" with null vocab!", name.c_str());
         return allowEmpty;
     }
@@ -367,7 +369,9 @@ int GTokenizer_Heap::merge_tokens(std::vector<TOKEN_ID>& tokens, int flag) {
 TOKENS GTokenizer::Encode(const std::string& text, bool encode_bos, bool encode_eos) { assert(0 && "Encode is not Implemented ..."); }
 
 GTokenizer::GTokenizer(Fish* dolphin, int flag) {
-    config = dolphin->config;
+    config    = dolphin->config;
+    isDialect = config.dict.tpDialect == DIALECT_TYPE::DIALECT_on;
+
     if (dolphin->config.model.isLoadCard()) {
         bool bRet = this->InitHF(dolphin, flag);
     }
@@ -381,7 +385,18 @@ std::string TOKEN_Special::Dump(int type, int flag) const {
     char buf[KOIFISH_MOST_LOG];
     switch (type) {
         default:
-            sprintf(buf, "bos=%d,eos=%d,sep=%d,pad=%d,cls=%d,mask=%d", bos, eos, sep, pad, cls, mask);
+            sprintf(buf, "bos=%d,eos=%d,sep=%d,pad=%d,cls=%d,mask=%d,noise=%d", bos, eos, sep, _pad, cls, _mask, _noise);
+    }
+    return buf;
+}
+
+std::string GTokenizer::Dump(int type, int flag) const {
+    //_INFO("[Dict] nVocab=%d %s special=%ld @\"%s\"\n", nV, S.Dump(0x0).c_str(), special_tokens.size(), pathTokenJson.c_str());
+    char buf[KOIFISH_MOST_LOG];
+    switch (type) {
+        default:
+            sprintf(buf, "[DICT_\"%s\"] nVocab=%d(dialect=%d) %s special=%ld", name.c_str(), vocab.size(), mapT2T.size(), S.Dump(0x0).c_str(),
+                    special_tokens.size());
     }
     return buf;
 }
@@ -395,7 +410,7 @@ GTokenizer_GPT2::GTokenizer_GPT2(Fish* dolphin, int flag) {
     S.eot     = 7;                        //  End of Tool / End of Text block
     S.unk     = 8;                        //<unk>
     S.newline = 9, S.newline2 = 10;
-    S.pad    = 11;
+    S._pad   = 11;
     S.assist = 12;
 }
 
@@ -417,8 +432,8 @@ bool GTokenizer::CheckSpecialTokens(bool isAllowNone, int flag) {
     }
     //  In Qwen (and many GPT-family models), <pad>and <eot>(end-of-text) are mapped to the same token — <|endoftext|>!!! because during pretraining there
     //  is no separate "padding" concept in the LM objective.
-    if (S.pad < 0) {  //
-        S.pad = STR2T("<|endoftext|>");
+    if (S._pad < 0) {  //
+        S._pad = STR2T("<|endoftext|>");
     }
     if (S.eos < 0) {  //
         S.eos = STR2T("<|endoftext|>");
@@ -426,11 +441,11 @@ bool GTokenizer::CheckSpecialTokens(bool isAllowNone, int flag) {
     if (S.assist < 0) {  //    <|im_start|>assistant
         S.assist = STR2T("assistant");
     }
-    if (S.mask < 0) {  //    <|im_start|>assistant
-        S.mask = STR2T("<M>");
+    if (S._mask < 0) {  //    <|im_start|>assistant
+        S._mask = STR2T("<M>");
     }
-    if (S.noise < 0) {  //    <|im_start|>assistant
-        S.noise = STR2T("<noise>");
+    if (S._noise < 0) {  //    <|im_start|>assistant
+        S._noise = STR2T("<noise>");
     }
     S.newline = STR2T("\n");  // 198
     if (S.newline < 0)        //  hack
@@ -440,6 +455,19 @@ bool GTokenizer::CheckSpecialTokens(bool isAllowNone, int flag) {
         S.newline2 = 271;
     if (S.eot < 0) {  //  <|end|>is NOT a special token in Qwen / Qwen2 / Qwen3.
         S.eot = S.eos;
+    }
+    if (isDialect) {
+        std::vector<int> ss = {S.im_start, S.im_end, S.think_open, S.think_close, S._pad, S.eos, S.assist, S._mask, S._noise, S.newline, S.newline2, S.eot};
+        for (auto tok : ss) {
+            if (tok < 0)
+                continue;
+            if (mapT2T.find(tok) != mapT2T.end()) {  //  S.eot = S.eos
+                continue;
+            }
+            mapT2T[tok] = mapT2T.size();
+        }
+        S._pad = mapT2T[S._pad], S.eos = mapT2T[S.eos], S.eot = mapT2T[S.eot];
+        S._mask = mapT2T[S._mask], S._noise = mapT2T[S._noise];
     }
     return true;
 }
@@ -516,8 +544,8 @@ bool GTokenizer_Heap::Prepare(int flag) {
         }
     }
     jVocab.clear();
-    S.pad = sLookup("<|endoftext|>");  //  151643
-    _INFO("\n[Tokenizer_HEAP] Init from \"%s\", n_vocab=%d S.pad=%d\n", config.model.sTokenJsonPath.c_str(), vocab_size, S.pad);*/
+    S._pad = sLookup("<|endoftext|>");  //  151643
+    _INFO("\n[Tokenizer_HEAP] Init from \"%s\", n_vocab=%d S._pad=%d\n", config.model.sTokenJsonPath.c_str(), vocab_size, S._pad);*/
 
     return true;
 }
@@ -790,13 +818,39 @@ TOKENS GTokenizer_QWEN3::Encode(const std::string& sText, bool encode_bos, bool 
 }
 
 int GTokenizer::nVocab(int flag) const {
-    assert(vocab.size() >= 0);
+    // assert(vocab.size() >= 0);
+    if (flag < 0)
+        return vocab.size();
+
     if (!isDialect) {
         return (int)(vocab.size());
     } else {
         assert(!mapT2T.empty());
         return (int)(mapT2T.size());
     }
+}
+
+int GTokenizer::UpdateUniqueTokens(const TOKENS& tokens, int flag) {
+    assert(isDialect);
+    int nMost = vocab.size();
+    // mapT2T.clear();
+    // dialect.resize(nMost, 0);
+
+    for (auto tok : tokens) {
+        assert(tok >= 0 && tok < nMost);
+        if (mapT2T.find(tok) != mapT2T.end()) {
+            continue;
+        }
+        mapT2T[tok] = mapT2T.size();
+        // ++dialect[id];
+    }
+    int nUnique = mapT2T.size();
+
+    invT2T.clear();
+    for (const auto& [x, y] : mapT2T) {
+        invT2T[y] = x;
+    }
+    return nUnique;
 }
 
 bool GTokenizer::isInRange(const int* inp, size_t nz, int flag) {
@@ -918,7 +972,7 @@ DictVAE::DictVAE(Fish* dolphin, int flag) : VariationaAE(), dolphin(dolphin) {
     assert(dolphin->isValid());
     config = dolphin->config;
     // isDialect = config.dict_dialect == "on";
-    isSVD = config.dict_logits == "svd";
+    isSVD = config.dict.logits == "svd";
     if (dolphin->wikis.size() > 0)
         wiki_tutor = dolphin->wikis[0];
     // assert(wiki_tutor!=nullptr);
@@ -932,7 +986,7 @@ DictVAE::DictVAE(Fish* dolphin, int flag) : VariationaAE(), dolphin(dolphin) {
     latent_dim = config.nEmbed();
     if (dolphin->config.nabla > 3)
         assert(0);
-    if (!dolphin->config.vae.empty()) {
+    if (!dolphin->config.dict.vae_dims.empty()) {
         // if(dolphin->config.nabla==3){
         dims = {(int)config.nEmbed(), 256};
         // dims = {config.nEmbed(), 1024, 256};
@@ -1215,12 +1269,11 @@ void VariationaAE::save_gguf(struct gguf_context* fctx, int flag) {
 //  llama.cpp/examples/tokenize/tokenize.cpp
 CDict_LLAMA::CDict_LLAMA(Fish* nlp_, int flag) : DictVAE(nlp_, flag) {}
 
+// to test tokenizer
 int Fish_token(CLI_params& config) {
-    config.wiki_actor         = "copy";
-    config.common.n_batch     = 1;
-    config.model.preLogits_dB = 1;
-    // config.isOnlyGPT          = true;
-    arrHWIKI wikis = WIKI::MakeInstance("wikis", config, 0x0);
+    config.wiki_actor     = "copy";
+    config.common.n_batch = 1;
+    arrHWIKI wikis        = WIKI::MakeInstance("wikis", config, 0x0);
 
     hFISH fish = Fish::MakeInstance("Token_", config, wikis, Fish::ROLE_TYPE::COMMON, 0x110);
 
@@ -1280,14 +1333,15 @@ GTokenizer_CHARset::GTokenizer_CHARset(Fish* nlp_, const std::vector<char>& char
         mapC2T[c]   = i++;
         // vocab.push_back(word);
     }
-    S.mask = 0;
+    S._mask  = 0;
+    S._noise = 0;
     // scores = (float*)malloc(vocab_size * sizeof(float));
 }
 
 std::string GTokenizer_CHARset::Decode(const TOKENS& tokens, bool skip_pad, bool skip_special_tokens) const {
     string info = "";
-    for(auto tok : tokens){
-        if(tok==S.mask)
+    for (auto tok : tokens) {
+        if (tok == S._mask)
             continue;
         char a = charset[tok];
         info += a;

@@ -23,6 +23,7 @@ from tilelang.contrib.nvcc import default_compile_options
 import json
 import subprocess
 import ctypes
+from some_utils import GetSharedMem_per_block
 # if 256, flashattn_bwd_atomic_add would "LayoutInference conflict" for ugly/strange reanson
 TL_threads_per_block = 128
 
@@ -85,7 +86,8 @@ def tl_smem_size(M, N, dtype):
 '''
 def tl_pick_tiling_shape(block_M, block_N, dtype=torch.float16, device_id=0, func=None, most=False):    
     props = torch.cuda.get_device_properties(device_id)
-    sm_per_block = props.shared_memory_per_block
+    print(dir(props))
+    sm_per_block = GetSharedMem_per_block() #props.shared_memory_per_block
     target_ratio = 0.95  # avoid OOM
     target_sm = sm_per_block * target_ratio
     element_size = tl.dtype(dtype).itemsize
@@ -348,7 +350,7 @@ def Kernel2Codes(desc_kernel, kernel_metas, all_codes, block_M, block_N, dtype,s
     M,N = args[0], args[1]  
     # smem = tl_smem_size(block_M, block_N, dtype)  
     props = torch.cuda.get_device_properties(0)
-    assert( sm_usage<=props.shared_memory_per_block )
+    # assert( sm_usage<=props.shared_memory_per_block )
     dim3 = [sm_usage, tl.ceildiv(N, block_N),tl.ceildiv(M, block_M),1, TL_threads_per_block,1,1]
     #batch, heads, seq_len, dim_qk, dim_v, is_causal, block_M, block_N, groups
     for desc, func, TRANS in desc_kernel:

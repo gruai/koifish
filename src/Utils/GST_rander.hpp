@@ -167,6 +167,10 @@ class GRander {
             for (int i = 0; i < N; ++i) {
                 ret.push_back(i);
             }
+            if (!isOrder) {
+                std::mt19937 g(N);
+                std::shuffle(ret.begin(), ret.end(), g);
+            }
         } else if (K > 1 && K > (N / std::log2(K))) {
             for (int i = 0; i < N; ++i) {
                 double prob = (K - ret.size()) / static_cast<double>(N - i);

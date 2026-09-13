@@ -111,6 +111,8 @@
 #define nout printf
 #define INSPECT_THIS INSPECT inspect(this);
 
+#define NOT_IMPLEMENTED throw std::logic_error("not implemented")
+
 #define DEBUG_HERE                      \
     do {                                \
         volatile int __debug_break = 0; \

@@ -22,6 +22,7 @@
 #include <typeinfo>
 #include <vector>
 using namespace std;
+#include "../Dynamics/Langevin.hpp"
 #include "../TokenSet/DataLoader.hpp"
 #include "../g_float.hpp"
 #include "Scheduler.hpp"
@@ -164,7 +165,7 @@ class GeneratOnPrompt {
     std::vector<std::string> some_prompts, some_answers;
 
     hGTensor hClsLogits = nullptr;
-    hSampSKDU planner   = nullptr;  // planner to decide which masked tokens to reveal at each sample step
+    hHuaPLAN planner    = nullptr;  // planner to decide which masked tokens to reveal at each sample step
     // LogitsInfo cpuLogits;
     std::vector<hLogitsInfo> originLogits, maskLogits;
     std::vector<hLogitsInfo> candLogit;  // candidate of SampFromLogits

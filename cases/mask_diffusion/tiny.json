@@ -1,0 +1,120 @@
+{
+    "version": "0.1.0",
+    "env":{
+        "tilelang":["loss"]
+    },  
+    "model": {
+        "hf_tokenizer":"./Models/dcoder/",
+        "arch": "Score",
+        "xi":{
+
+        },
+        
+        "parameter": {
+            "Layer": 6,
+            "transformer": {
+                "Ctx": 256,                "Embed": "384",                "Head": 6,                "Ffn": 1536
+            },
+            
+            "max_pos_embeddings": 32768,
+            "qk_normal": 1,
+            "ffn_act":"relu2"            
+        },
+        "backbone":{
+            "inp_embd": {
+                "Embedding+": []
+            },
+            "layer": {
+                "attn": {
+                    "QKV": []
+                },
+                "ffn": {
+                    "FFN": []
+
+                }
+            },
+            "output_norm": {
+                "Normal": []
+            },
+            "out": {
+                "CLASIFY": []
+            }
+        }
+    },
+    "dict": {
+        "dialect": "onf",
+        "#type":"charset",
+        "#latent_dim":256,
+        "#vae":         {
+            "symmetry":0,
+            "0dims": "1024"
+        }   
+    },
+    "datasets": {        
+        "train": {
+            "glob": "./Datasets/txt/first_citizen.txt",
+            "#glob": "./Datasets/txt/zhuangzi.txt",
+            "name": "tiny_diffusion", "type":"k_text"
+        },
+        "#eval_1": {"glob":"./Datasets/textinchar/*val*.bin","name":"tiny_diffusion","eval-every":500 ,"samp":0.01       }        
+    },
+    "generate": {
+        "prompt": "First Citizen:\nB",
+        "eval-every": 500,
+        "temperature": 1.0,
+        "top_k":3,
+        "#method":"MD_SNR MD_DILATE",
+        "method":"SNR"   
+    },
+    "train": {
+        "save-every": 500,
+        "dump-every": 10,
+        "# batch_sample": "super",
+        "# sample": 0.1,
+        "# epoch": 600,
+        "most-iter": 10000,
+        "batch": 64,
+        "learning-rate": 0.0003,
+        "decay": 0.1,
+        "optimizatioin": {
+            "#method": "adamw sgdv hsgd sgd lion adams muon",
+            "method": "adamw",
+            "sign": 0,
+            "grad_accumulation": 1,
+            "lars_ratio": 0,
+            "ZMUV_ratio": 0.0
+        }
+    },
+
+    "debug": {
+        "most_iter": -10,
+        "eval_samp": 0.04,
+        "dump_tensordetail": 1,
+        "dump_paramsdetail": 1,
+        "dump_lossdetail": 0,
+        "shuffle_samp": 1,
+        "preLogits_dB": 1,
+        "watch_tensors": 0,
+        "huaer_snr": -1
+    },
+    "#checkpoint_in": {
+        "torch": {
+            "path":"/home/cys/rnd/lic/Models/score/tiny_1/"
+        }
+    },
+    "# checkpoint_out": {
+        "koifish_0.6B": {
+            "path": "/home/cys/rnd/lic/Models/koifish-0.6B/",
+            "#state": "best full state",
+            "state": "best",
+            "format": "koifish",
+            "save-every": 500,
+            "snapshot": {
+                "curFuyou": -1
+            }
+        }
+    },
+    
+    "threads": 20,
+    "seed": 42
+}

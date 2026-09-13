@@ -18,18 +18,18 @@
 
 class BubbleApp : public GST_Application {
    protected:
-    hFISH fish = nullptr;
+    hFISH fish           = nullptr;
     LIFE_PHASE chatPhase = LIFE_PHASE::P_CHAT_1;
 
    public:
     BubbleApp(int argc, char* argv[]) : GST_Application(argc, argv) {
         name = "Bubble";
         // DEBUG.test_quant = 1;
-        auto arch = params.ModelArch( );
+        auto arch = params.ModelArch();
         params.OnArch();
-        chatPhase = arch == NLP_SCORE_ ? LIFE_PHASE::P_CHAT_N : LIFE_PHASE::P_CHAT_1;
-        params.OnPhase(chatPhase);        
-
+        chatPhase = arch == MD_QWEN ? LIFE_PHASE::P_CHAT_N : LIFE_PHASE::P_CHAT_1;
+        params.OnPhase(chatPhase);
+        
         // params.chat_sampler.mode = params.model.enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
         // params.chat_sampler.isSampleCPU = true;
         params.model.preLogits_dB  = 1;
@@ -40,7 +40,7 @@ class BubbleApp : public GST_Application {
         // params.quant.T_errQ             = 0.3;
         // params.quant.isNormalFloat = true;
         // params.quant.default_bits       = 2;
-        params.dumpSwitch.tensor_load  = 0;
+        params.dumpSwitch.tensor_load = 0;
         // params.dumpSwitch.nn_structure = 0;
         DEBUG.verCuda = 1, DEBUG.T_cpu = 0, DEBUG.graph_dump = 0, DEBUG.Time_most = 60;
         DEBUG.verInferQKV = 0, DEBUG.verInferFFN = 0;

@@ -2,6 +2,7 @@
  *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
+ *  CORALs provide enviroments for fish to survice, reproduce & evolve.
  *  Tokenset manager. Key component of speed & accuracy
  *
  *  \brief Tokenset from files/hugging/...
@@ -24,19 +25,23 @@
 #include "../CLI_params.hpp"
 #include "../Manifold/Serialize.hpp"
 #include "../Utils/GST_obj.hpp"
+#include "../Utils/GST_rander.hpp"
 
 struct DictVAE;
 class GTokenizer;
 typedef std::shared_ptr<GTokenizer> hTokenizer;
 class Fish;
-class DataTokenSet;
+class TokenCoral;
 class Head4Token;
-typedef std::shared_ptr<DataTokenSet> hDataToken;
+typedef std::shared_ptr<TokenCoral> hDataToken;
 class SampNanny;
 typedef shared_ptr<SampNanny> hSampNanny;
 
 // the type of tokenset/dataset
-enum DT_TYPE { DT_TRAIN = 1, DT_EVAL, DT_CHAT, DT_PREDICT, DT_MERGE };
+enum DT_PHASE { DT_TRAIN = 1, DT_EVAL, DT_CHAT, DT_PREDICT, DT_MERGE };
+
+//
+enum CORAL_FTYPE { CORAL_FILE, CORAL_BIN, CORAL_TEXT, CORAL_PARQUET, CORAL_GLOB };
 
 struct SAMP {
     size_t pos = 0, len = 0;   //  range is [pos,pos+len)
@@ -44,21 +49,33 @@ struct SAMP {
     int jump             = 0;
     int pad_len          = 0;  // the length of last pad section
     TOKEN_ID last_target = (TOKEN_ID)(-1);
+    // std::vector<TOKEN_ID> tmp_toks;  // may change in training iters
     std::string desc;
 
-    void* target = nullptr;     // for Tokenset_HellaSwag
+    void* target = nullptr;  // for Tokenset_HellaSwag
     TOKENS_SECTION answers;  // for chatml-samp
-
 
     SAMP() {}
     SAMP(size_t p, size_t l, int nPad = 0) : pos(p), len(l), pad_len(nPad) { assert(pad_len < len); }
     virtual ~SAMP() {}
 
     bool Serialize(FSerial& S, bool isSave, int flag);
-    virtual void Dump(Fish *hFish, hTokenizer hDict, const std::vector<TOKEN_ID>& tokens, int type, const std::string& desc = "", int flag = 0x0);
+    virtual void Dump(Fish* hFish, hTokenizer hDict, const std::vector<TOKEN_ID>& tokens, int type, const std::string& desc = "", int flag = 0x0);
     virtual double UpdateTag(hDataToken hDT, int* tag, int step, bool flip, int flag = 0x0);
+    virtual int UpdateTokens(SampNanny* hNanny, int flag = 0x0);
 
-    static size_t HASH(const char* fn, const std::vector<SAMP*>& samps) {
+    // static size_t HASH(const char* fn, const std::vector<SAMP*>& samps) {
+    //     std::hash<std::string> h_string;
+    //     std::hash<unsigned long long> h_ull;
+    //     size_t h = h_string(std::string(fn)), sample_count = samps.size();
+    //     h = HASH_combine(h, h_ull((unsigned long long)sample_count));
+    //     for (auto samp : samps) {
+    //         h = HASH_combine(h, h_ull((unsigned long long)samp->pos));
+    //         h = HASH_combine(h, h_ull((unsigned long long)samp->len));
+    //     }
+    //     return h;
+    // }
+    static size_t HASH(const char* fn, const std::vector<std::shared_ptr<SAMP>>& samps) {
         std::hash<std::string> h_string;
         std::hash<unsigned long long> h_ull;
         size_t h = h_string(std::string(fn)), sample_count = samps.size();
@@ -70,14 +87,17 @@ struct SAMP {
         return h;
     }
 };
-// typedef std::shared_ptr<SAMP> hSAMP;
-typedef SAMP* hSAMP;
+typedef std::shared_ptr<SAMP> hSAMP;
+// typedef SAMP* hSAMP;
+
+// With json structure, store much more meta info
+struct JSON_SAMP : public SAMP {};
 
 /*
     v0.2    09/02/2025
         Support multiple shard_samps for multiple hSample
 */
-class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
+class TokenCoral : public std::enable_shared_from_this<TokenCoral> {
    public:
     enum SAMPLE_TYPE {
         RANDOM_GENERATE,
@@ -85,8 +105,9 @@ class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
     };
 
    protected:
-    hSampNanny loader = nullptr;  //  Each tokenset has a unique samp_loader
-
+    CORAL_FTYPE fType    = CORAL_FILE;
+    hSampNanny loader    = nullptr;  //  Each tokenset has a unique samp_loader
+    hRANDER hPickRander  = nullptr;
     SAMPLE_TYPE tpSample = RANDOM_GENERATE;
     std::vector<string> shard_paths;
     int nMostShard  = -1;
@@ -98,11 +119,15 @@ class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
     // bool isNextEpoch = false;
     string name;
     string serial_root;
-    // hTokenizer hDictVAE = nullptr;
-    // Fish* hFish      = nullptr;
+
+    Fish* hFish      = nullptr;
     hTokenizer hDict = nullptr;
-    std::map<TOKEN_ID, TOKEN_ID> mapT2T;
-    std::vector<TOKEN_ID> dialect;
+
+    // Dialect support
+    // bool isDialect = false;
+    // std::map<TOKEN_ID, TOKEN_ID> mapT2T;
+    // std::vector<TOKEN_ID> dialect;
+    
     std::string fpath;
     size_t fsize = 0, nUnique = 0, nVocab = 0, nDialect = 0, nMostTok = 0;
     std::vector<hSAMP> shard_samps;
@@ -117,15 +142,15 @@ class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
 #endif
         assert(ret == 0);  // same
     }
-    // int UniqueTokens(const std::vector<TOKEN_ID>& tokens,size_t n_1,int flag=0x0);
+
    public:
     static std::tuple<hDataToken, std::vector<hDataToken>, hDataToken, hDataToken> MakeInstance(Fish* hFish, hTokenizer, bool isLocalInfer, int flag);
 
     std::vector<TOKEN_ID> tokens, tokens_mask;
-    DataTokenSet(hTokenizer hDictVAE);
-    virtual ~DataTokenSet();
-    virtual bool Init(int flag = 0x0) { return true; }
-    virtual bool InitSampNanny(Fish* hFish, DT_TYPE type, int flag = 0x0);
+    TokenCoral(hTokenizer hDictVAE);
+    virtual ~TokenCoral();
+    virtual bool Init(Fish* hFish, int flag = 0x0) { return true; }
+    virtual bool InitSampNanny(Fish* hFish, DT_PHASE type, int flag = 0x0);
     // virtual hSampNanny GetSampNanny(int flag = 0x0) { return loader; }
 
     bool hasMask() { return tokens_mask.size() > 0; }
@@ -134,12 +159,11 @@ class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
 
     bool Serialize(const std::string& path, bool isSave, int flag = 0x0);
     virtual bool LoadNextShard(SampNanny* hLoader, int flag = 0x0) { return true; }
-    virtual bool Load(struct CLI_params& config, void* hLLM, int flag = 0x0);
+    virtual bool LoadTokenset(struct CLI_params& config, void* hLLM, int flag = 0x0);
     virtual void Append(TOKEN_ID id, int flag = 0x0);
-    int UniqueTokens(size_t n_1, int flag = 0x0);
-    bool InitSamps(unsigned context_length, std::vector<size_t>& samples_begin, std::vector<size_t>& samples_size, int flag = 0x0);
-
     
+    bool InitSamps(unsigned context_length, std::vector<size_t>& samples_begin, std::vector<size_t>& samples_size, int flag = 0x0);
+    virtual std::string Dump(int type, int flag = 0x0);
 
     friend class NLP_AutoRegressive;
     friend class Fish;
@@ -149,7 +173,7 @@ class DataTokenSet : public std::enable_shared_from_this<DataTokenSet> {
 };
 typedef std::vector<hDataToken> DataTokens;
 
-class PromptTokenset : public DataTokenSet {
+class PromptTokenset : public TokenCoral {
    protected:
     string sPrompt;
 
@@ -157,26 +181,28 @@ class PromptTokenset : public DataTokenSet {
     PromptTokenset(JSON::const_iterator jit, hTokenizer hDictVAE, int flag = 0x0);
     PromptTokenset(const string& prompt, hTokenizer hDictVAE, int flag = 0x0);
 };
-class GlobTokenset : public DataTokenSet {
+class GlobTokenset : public TokenCoral {
    protected:
     string glob_pattern;
     FILE* fpShard  = nullptr;
     bool isShuffle = false;
+    bool isCache   = false;
     virtual bool fp2Tokens(int flag = 0x0);
     virtual bool Shard2Sample(int id, int flag = 0x0);
     virtual bool GetShardInfo(int id, int flag = 0x0) { return false; }
     virtual size_t OnShardFile(int id, bool load = false, int flag = 0x0);
     bool LoadNextShard(SampNanny* hLoader, int flag = 0x0) override;
-    size_t total_batch_size;    // total across all processes
+    size_t total_batch_size;  // total across all processes
     // size_t local_batch_offset;  // inner-sample offset for this process
     size_t longest_example_bytes;
     int header_bytes;
     // int B = -1, T = -1;  // header size in bytes
     size_t szFile, nShardSamples = 0, nShardToks = 0;
+    virtual size_t nMostToken(int flag = 0x0) { return nShardToks; }
 
    public:
     GlobTokenset(JSON::const_iterator jit, hTokenizer hDictVAE, int flag = 0x0);
-    bool Init(int flag = 0x0) override;
+    bool Init(Fish* hFish, int flag = 0x0) override;
 };
 
 class Tokenset_HellaSwag : public GlobTokenset {
@@ -204,6 +230,52 @@ class Tokenset_HellaSwag : public GlobTokenset {
     // double LossOnResult(hSampNanny hLoader, Head4Token* cls, int flag = 0x0) override;
 };
 
+/*
+    Use .safetensors file to store tokenset: Each sequence/samp is internally consistent!
+*/
+class Tokenset_KST : public GlobTokenset {
+   protected:
+    bool Shard2Sample(int id, int flag = 0x0) override;
+    // bool GetShardInfo(int id, int flag = 0x0) override;
+
+   public:
+    Tokenset_KST(JSON::const_iterator jit, hTokenizer hDict, int flag = 0x0);
+};
+
+/*
+    Use .parquet file to store tokenset: Each sequence/samp is internally consistent!
+*/
+class Tokenset_PARQUET : public GlobTokenset {
+   protected:
+    int nCol, nRow;  // for current parquet file
+    std::vector<string> arrText;
+    bool Shard2Sample(int id, int flag = 0x0) override;
+    bool GetShardInfo(int id, int flag = 0x0) override;
+    std::filesystem::path pathToken;
+
+   public:
+    Tokenset_PARQUET(JSON::const_iterator jit, hTokenizer hDict, int flag = 0x0);
+};
+
+/*
+    Only one text, random pick sample from this text
+*/
+class Tokenset_TEXT : public GlobTokenset {
+   protected:
+    int nCol, nRow;  // for current parquet file
+    std::vector<string> arrText;
+    bool Shard2Sample(int id, int flag = 0x0) override;
+    bool GetShardInfo(int id, int flag = 0x0) override;
+    size_t nMostToken(int flag = 0x0) override;
+
+    std::filesystem::path pathToken;
+
+   public:
+    Tokenset_TEXT(JSON::const_iterator jit, hTokenizer hDict, int flag = 0x0);
+
+    std::string Dump(int type, int flag = 0x0) override;
+};
+
 class Tokenset_JSONL : public GlobTokenset {
    protected:
     //  ChatML​ is a tokenization-friendly text formatthat encodes chat messages into a single string
@@ -224,7 +296,7 @@ class Tokenset_JSONL : public GlobTokenset {
     virtual ~Tokenset_JSONL() {}
 };
 
-class DTS_GPT2 : public DataTokenSet {
+class DTS_GPT2 : public TokenCoral {
    public:
-    DTS_GPT2(hTokenizer hDictVAE) : DataTokenSet(hDictVAE) {}
+    DTS_GPT2(hTokenizer hDictVAE) : TokenCoral(hDictVAE) {}
 };

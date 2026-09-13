@@ -55,7 +55,7 @@ struct WIKI {
     std::vector<std::pair<std::string, struct ggml_tensor*>> tmaps;
 
     std::map<TOKEN_ID, TOKEN_ID> mapT2T;
-    std::vector<TOKEN_ID> dialect;
+    std::vector<TOKEN_ID> foreign_lang;
     float *exLogits = nullptr, *t2t = nullptr;
     // struct ggml_tensor  *exLogits = nullptr,*t2t = nullptr;
 

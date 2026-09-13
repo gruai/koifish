@@ -1,0 +1,116 @@
+{
+    "version": "0.1.0",
+    "env":{
+        "tilelang":["loss"]
+    },  
+    "model": {
+        "hf_tokenizer":"./Models/dcoder/",
+        "#hf-card":"./Models/dcoder/",
+        "#arch": "QWEN3",
+        "arch": "Score",
+        
+        "xi":{
+
+        },
+        "parameter": {
+            "Layer": 24,
+            "transformer": {
+                "Ctx": 640,     "Embed": "896",    "Ffn": 4864,  "Head": 14,  "KVHead": 2, "head_dim": 64         
+            },
+            "tie_word_embeddings": true,
+            "max_pos_embeddings": 32768,
+            "#ffn_act":"silu"
+        },
+        "backbone":{
+            "embed_tokens": {
+                "Embedding": []
+            },
+            "layer": {
+                "self_attn": {
+                    "QKV": []
+                },
+                "mlp": {
+                    "FFN": []
+                },
+                "# gattn": {
+                    "GAU": []
+                }
+            },
+            "norm": {
+                "Normal": []
+            },
+            "output": {
+                "CLASIFY": []
+            }
+        }
+    },
+    "dict": {
+	"dialect": "onf",
+        "#type":"charset"
+    },
+    "datasets": {
+        "train": { "glob": "./Datasets/fine_code/data_1/*.parquet",   "type":"k_parquet",         "name": "kcoder"        },
+        "#train": {
+            "glob": "./Datasets/climb-1b/*train*.bin",            "most": 50,            "name": "climb"
+        },      
+        "#eval_1": {"glob":"./Datasets/fine_code/bin/*val*.bin","name":"kcoder_eval","eval-every":10,"samp":0.001       }        
+    },
+    "generate": {
+        "prompt": "Write a quick sort algorithm in c++.",
+        "eval-every": 100,
+        "temperature": 0.5,
+        "top_k":200,
+        "method":"DILATE"
+    },
+    "train": {
+        "save-every": 500,
+        "dump-every": 10,
+        "# batch_sample": "super",
+        "# sample": 0.1,
+        "epoch": 1,
+        "batch": 16,
+        "learning-rate": 0.0001,
+        "decay": 0.1,
+        "optimizatioin": {
+            "#method": "adamw sgdv hsgd sgd lion adams muon",
+            "method": "adamw",
+            "sign": 0,
+            "grad_accumulation": 1,
+            "lars_ratio": 0,
+            "ZMUV_ratio": 0.0
+        }
+    },
+
+    "debug": {
+        "shift_label": 1,
+        "most_iter": -10,
+        "eval_samp": 0.04,
+        "dump_tensordetail": 1,
+        "dump_paramsdetail": 0,
+        "dump_lossdetail": 0,
+        "shuffle_samp": 1,
+        "preLogits_dB": 1,
+        "watch_tensors": 0,
+	    "huaer_snr": 1
+    },
+    "#checkpoint_in": {
+        "torch": {
+            "path":"/home/cys/rnd/lic/Models/kcoder/"
+        }
+    },
+    "#checkpoint_out": {
+        "kcoder": {
+            "path": "/home/cys/rnd/lic/Models/kcoder/",
+            "#state": "best full state",
+            "state": "best",
+            "format": "koifish",
+            "save-every": 100,
+            "snapshot": {
+                "curFuyou": -1
+            }
+        }
+    },
+    
+    "threads": 20,
+    "seed": 42
+}

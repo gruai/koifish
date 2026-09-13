@@ -239,7 +239,7 @@ string SelfAttention::__repr__(string& suffix, string& prefix, int flag) {
     const char* tab = prefix.c_str();
     string a, sRope = rope == nullptr ? "" : rope->__repr__(a, a, flag);
     string sCausal = hFish->config.model.isCausalMask ? "" : "+diffusion";
-    sprintf(buf + strlen(buf), "{%s QKV%s%s E%d H%d x=%d trans=%d %s}", tab, sCausal.c_str(), moe.Empty() ? "" : "+moe", sRope.c_str(), n_embd, n_head, tpNormal, tpTrans,
+    sprintf(buf + strlen(buf), "{%s QKV%s%s%s E%d H%d x=%d trans=%d %s}", tab, sCausal.c_str(), moe.Empty() ? "" : "+moe", sRope.c_str(), n_embd, n_head, tpNormal, tpTrans,
             bqkv == nullptr ? "" : "bqkv");
     if (flag > 0)
         _INFO("%s", buf);

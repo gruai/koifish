@@ -32,7 +32,7 @@ Mistral::Mistral(const std::string& nam_, struct CLI_params params, ROLE_TYPE ro
 }
 
 DeepSeek::DeepSeek(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
-    assert(arch == MODEL_ARCH::NLP_DEEPSEEK);
+    assert(arch == MODEL_ARCH::NTP_DEEPSEEK);
     config.model.isSLPBias    = false;
     config.model.isNormalBias = false;
 }

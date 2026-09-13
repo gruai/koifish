@@ -113,7 +113,7 @@ bool TokenEmbed::Build(int flag) {
         sb = "position_embd.weight";
         hFish->InitGensor(ctx, sb.c_str(), b, true);
     }
-    if (hFish->isModel({NLP_GUPPY})) {
+    if (hFish->isModel({NTP_GUPPY})) {
         // lnW.BuildX(name+".norm",{padded_nCls},hFish,flag);
         // if(wInv_!=w)
         //     lnWInv.BuildX(name+".norm"+".inv",{padded_nCls},hFish,flag);
@@ -352,7 +352,7 @@ FFN::FFN(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag)
         // isMirror = true;      Need more time to study its effect
     }
     isNormalDown = hFish->isModel({NLP_BITNET});
-    if (hFish->config.ModelArch() == NLP_GUPPY) {  //->config.model.isFFNShareParam;
+    if (hFish->config.ModelArch() == NTP_GUPPY) {  //->config.model.isFFNShareParam;
         int nSample = nTop;
         int nVocab  = hFish->nClass();
         if (nSample == nVocab) {
@@ -372,14 +372,14 @@ FFN::FFN(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag)
     tpNorm = 2;
 }
 bool VarCoder::Build(int flag_0) {
-    int flagSLP = flag_0 | F_DELTA; //131072
+    int flagSLP = flag_0 | F_DELTA;  // 131072
 
     if (tpNorm > 0)
         norm.BuildX(_NAME(name, FFN_PRE_NORMAL), {nBottom}, hFish, flag_0 | F_DELTA);  // name + ".norm",
     if (isNormalDown) {
         normDown.BuildX(_NAME(name, FFN_NORMAL_DOWN), {nTop}, hFish, flag_0 | F_DELTA);
     }
-    if (hFish->isModel({NLP_QWEN2, NLP_QWEN3, NLP_BITNET, NLP_SCORE_})) {
+    if (hFish->isModel({NTP_QWEN2, NTP_QWEN3, NLP_BITNET, MD_QWEN})) {
         // qwen 2.5 same as qwen 3.0!
         up.BuildX(_NAME(name, FFN_UP), {nTop, nBottom}, hFish, flagSLP);
         if (hFish->config.model.isFFNGate)

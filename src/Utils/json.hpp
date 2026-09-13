@@ -1,5 +1,15 @@
-// [todo] /simdjson https://github.com/simdjson/simdjson
 
+/**
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT
+ *
+ *   JSON simd/nlohmann
+ *  
+ *  \brief JSON
+ *  \author Yingshi Chen
+ */
+
+// #include "simdjson.h"
 
 //     __ _____ _____ _____
 //  __|  |   __|     |   | |  JSON for Modern C++

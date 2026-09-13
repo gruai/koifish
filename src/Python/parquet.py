@@ -10,6 +10,11 @@ from PreTokenizer import TokenizedFile
 import numpy as np
 from pathlib import Path
 from typing import Callable, Dict, List, Literal, Optional
+from safetensors import safe_open
+from safetensors.numpy import save_file
+import json
+import time
+import base64
 
 class MappingDataset(Dataset):
     """
@@ -32,6 +37,45 @@ class MappingDataset(Dataset):
         else:
             return self._data[index]
         
+def P2TokenizedFile(model, path,file):
+    with TokenizedFile(model, path, tokenizer.vocab_size, masking=False) as f:
+        dataset = load_dataset("parquet", data_files=file, split="train") #   split="train", "test"
+        nAllSamp = len(dataset)
+        if nAllSamp==0:
+            print(f"No data found in the {file}!")
+            return
+
+        nPass = 0  
+        buffer_pos = 0         
+        pbar = tqdm(dataset, total=nAllSamp, desc=f"Processing")
+        for step, samp in enumerate(pbar):
+            sample = samp['text']    
+            try:
+                line_encoded = tokenizer.encode(sample, add_special_tokens=False,max_length=tokenizer.model_max_length,truncation=True )
+                if len(line_encoded) >= max_length or len(line_encoded)==0:
+                    nPass = nPass+1
+                    continue                    
+                line_encoded = line_encoded + [tokenizer.eos_token_id]
+                # line_encoded += pad_id
+            except Exception as e:
+                print(f"Failed@{step} error={str(e)} sample={sample}")
+                continue
+            arr = np.array(line_encoded, dtype=np.int32)
+            buffer[buffer_pos:buffer_pos+len(arr)] = arr
+            buffer_pos += len(arr)
+            assert(buffer_pos<=max_tokens_per_batch)
+            if (step+1) % most_line == 0:
+                try:                            
+                    f.add_document(buffer[:buffer_pos])
+                    pbar.set_description(f"{step:8d} samples(nPass={nPass}): toks={f.toks/1.0e6:.5g}M")
+                    buffer_pos = 0    
+                except Exception as e:
+                    print("❌ Batch concat / write failed:", e)
+
+def ST2Meta():
+    with safe_open("output.safetensors", framework="pt") as f:
+        meta = f.metadata()
+        sample_meta = json.loads(meta["sample_metadata"])
 
 # python src/Python/parquet.py
 def main(directory, output_dir, text_column, model_name, MAX_TOKENS=-1):
@@ -60,27 +104,27 @@ def main(directory, output_dir, text_column, model_name, MAX_TOKENS=-1):
     most_line = 1000
     max_tokens_per_batch = (most_line+1) * (max_length+1)  # 100 sequences * max length
     buffer = np.zeros(max_tokens_per_batch, dtype=np.int32)
-    print(f"max_length={max_length}\nparquet_files={parquet_files}")
-    # for idx, file in enumerate(tqdm(parquet_files, desc="Process all parquet files")):
-    for idx, file in enumerate(parquet_files):
-        path = f"{output_dir}{Path(file).stem}___.bin"
+    print(f"max_length={max_length}\nparquet_files={len(parquet_files)}")
+    # for idf, file in enumerate(tqdm(parquet_files, desc="Process all parquet files")):
+    for idf, file in enumerate(parquet_files):
+        if idf>10:                break
+        path = f"{output_dir}{Path(file).stem}___.jsonl"  #"bin"
         if os.path.isfile(path):
             continue
-        print(f"[parquet] @{path} ...")  
-        with TokenizedFile(model, path, tokenizer.vocab_size, masking=False) as f:
-            dataset = load_dataset("parquet", data_files=file, split="train") #   split="train", "test"
-            nAllSamp = len(dataset)
-            if nAllSamp==0:
-                print(f"No data found in the {file}!")
-                continue
-
-            nPass = 0  
-            buffer_pos = 0         
-            pbar = tqdm(dataset, total=nAllSamp, desc=f"Processing")
-            for step, samp in enumerate(pbar):
+        print(f"[parquet] {file}=>{path} ...")  
+        
+        dataset = load_dataset("parquet", data_files=file, split="train") #   split="train", "test"
+        nAllSamp = len(dataset)
+        if nAllSamp==0:
+            print(f"No data found in the {file}!")
+            continue
+      
+        pbar = tqdm(dataset, total=nAllSamp, desc=f"Processing")
+        with open(path, "w", encoding="utf-8") as f:
+            for step, samp in enumerate(pbar):            
                 sample = samp['text']    
                 try:
-                    line_encoded = tokenizer.encode(sample, add_special_tokens=False,max_length=tokenizer.model_max_length,truncation=True )
+                    line_encoded =  tokenizer.encode(sample, add_special_tokens=False,max_length=tokenizer.model_max_length,truncation=True )
                     if len(line_encoded) >= max_length or len(line_encoded)==0:
                         nPass = nPass+1
                         continue                    
@@ -89,19 +133,26 @@ def main(directory, output_dir, text_column, model_name, MAX_TOKENS=-1):
                 except Exception as e:
                     print(f"Failed@{step} error={str(e)} sample={sample}")
                     continue
+
                 arr = np.array(line_encoded, dtype=np.int32)
-                buffer[buffer_pos:buffer_pos+len(arr)] = arr
-                buffer_pos += len(arr)
-                assert(buffer_pos<=max_tokens_per_batch)
-                if (step+1) % most_line == 0:
-                    try:                            
-                        f.add_document(buffer[:buffer_pos])
-                        pbar.set_description(f"{step:8d} samples(nPass={nPass}): toks={f.toks/1.0e6:.5g}M")
-                        buffer_pos = 0    
-                    except Exception as e:
-                        print("❌ Batch concat / write failed:", e)
-            
-        
+                binary = arr.tobytes()                     # raw binary
+                b64 = base64.b64encode(binary).decode()    # convert to base64 string
+                obj = {
+                    "index": step,
+                    "type": "" if samp["type"] is None else samp["type"],
+                    "lang": "" if samp["lang"] is None else samp["lang"],
+                    "file_name": "" if samp["file_name"] is None else samp["file_name"],
+                    "file_ext": "" if samp["file_ext"] is None else samp["file_ext"],
+                    "file_size_in_byte": 0 if samp["file_size_in_byte"] is None else samp["file_size_in_byte"],
+                    "program_lang": "" if samp["program_lang"] is None else samp["program_lang"],
+                    "length": len(arr),
+                    "name": f"samp_{step}",
+                    "data": b64  #arr.tolist()
+                }
+                f.write(json.dumps(obj) + "\n")
+                if step%10000==0:         time.sleep(1)
+                if step>10000:                break
+                
         
 
 
@@ -127,7 +178,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description='Tokenize parquet data with Qwen tokenizer')
     parser.add_argument('--directory', default="/home/cys/rnd/lic/Datasets/fine_code/data/", help='Directory containing parquet files')
-    parser.add_argument('--output', default='/home/cys/rnd/lic/Datasets/fine_code/bin/1.bin', help='Output .bin file path')
+    parser.add_argument('--output', default='/home/cys/rnd/lic/Datasets/fine_code/bin/', help='Output .bin file path')
     parser.add_argument('--text-column', default='text', help='Name of text column (auto-detected if not specified)')
     parser.add_argument('--model', default='/home/cys/rnd/lic/Models/Qwen3-0.6B/', help='Qwen model name')
     # parser.add_argument('--model-size', choices=['0.5B', '1.5B', '3B', '7B', '14B', '72B'], help='Qwen model size (shorthand)')
