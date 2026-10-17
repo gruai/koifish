@@ -2,9 +2,8 @@
 include_directories(.)
 
 set(PWD ${CMAKE_CURRENT_SOURCE_DIR})
-set(manifold_sources  ${PWD}/Fish.cpp ${PWD}/TGraph.cpp ${PWD}/Optimizer.cpp ${PWD}/Evaluate.cpp 
-                    ${PWD}/gLLM.cpp ${PWD}/gLLMx.cpp ${PWD}/MoE.cpp ${PWD}/GoPT.cpp 
-                    ${PWD}/Salp.cpp ${PWD}/Neuron.cpp ${PWD}/SparseNeuron.cpp ${PWD}/Scheduler.cpp ${PWD}/EmbedVAE.cpp ${PWD}/Serialize.cpp 
+set(manifold_sources  ${PWD}/TGraph.cpp ${PWD}/Optimizer.cpp                      
+                    ${PWD}/Neuron.cpp ${PWD}/SparseNeuron.cpp ${PWD}/Scheduler.cpp ${PWD}/Serialize.cpp 
 
 PARENT_SCOPE )
 

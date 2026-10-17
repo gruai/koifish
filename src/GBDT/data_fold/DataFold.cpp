@@ -63,7 +63,7 @@ FeatsOnFold::~FeatsOnFold() {
         // for each(FeatVector *hFeat in feats)
         delete hFeat;
     feats.clear();  // fold.clear();
-    delete[] distri;
+    delete[] fDistri;
     if (importance != nullptr)
         delete importance;
     if (hMove != nullptr)
@@ -73,6 +73,24 @@ FeatsOnFold::~FeatsOnFold() {
         delete lossy;
         lossy = nullptr;
     }
+}
+
+void FeatsOnFold::Dump(int flag) {
+    int nSamp = nSample(), n0 = 0, n1 = 0;
+    float* y = GetY_<float>();
+    for (int i = 0; i < nSamp; i++) {
+        if (y[i] == 0)
+            n0++;
+        if (y[i] == 1)
+            n1++;
+    }
+    _INFO("%s nNamp=%d(n0=%d n1=%d)", nam.c_str(), nSamp, n0, n1);
+    bool isBinary = config.objective == "binary";
+    if (isBinary) {
+    } else {
+    }
+
+    _INFO("\n");
 }
 
 void FeatsOnFold::InitRanders(int flag) {
@@ -131,8 +149,9 @@ FeatsOnFold* FeatsOnFold::read_json(const string& sPath, int flag) {
 }
 
 void FeatsOnFold::Distri2Tag(int* mark, int nCls, int flag) {
-    float *dtr = distri, d1 = 0;
-    int* tag = Tag();
+    float *dtr = fDistri, d1 = 0;
+    // int* tag = Tag();    may crash
+    float* tag = GetY_<float>();
     size_t i, j, total = nSample(), cls;
     rOK = 0;
     for (i = 0; i < total; i++, dtr += nCls) {
@@ -686,7 +705,7 @@ FeatVec_Q::FeatVec_Q(const FeatsOnFold *hData_, FeatVector *hFeat,int nMostBin, 
 */
 void INIT_SCORE::Init(FeatsOnFold* hData_, int flag) {
     LiteBOM_Config& config = hData_->config;
-    if(config.objective=="quant")
+    if (config.objective == "quant")
         return;
 
     // hLoss->predict->Set(mean);
@@ -719,6 +738,24 @@ FeatVector* FeatsOnFold::GetY() {
     return lossy->GetY();
 }
 
+// need more refactor to define tags
+void FeatsOnFold::InitTags(int flag) {
+    int nSamp = nSample();
+    tags      = new FeatVec_T<int>(this, nSamp, 0, "tags");
+    int* dst  = tags->arr();
+
+    if (config.objective == "binary") {
+        float* src = this->GetY_<float>();
+        for (int i = 0; i < nSamp; i++) {
+            assert(src[i] == 1 || src[i] == 0);
+            dst[i] = src[i];
+        }
+    } else if (config.objective == "regression") {
+    } else {
+        assert(0);
+    }
+}
+
 // pDown=target-predict
 tpDOWN* FeatsOnFold::GetDownDirection() const {
     assert(lossy != nullptr);
@@ -748,7 +785,16 @@ tpDOWN* FeatsOnFold::GetSampleHessian() const {
         return VECTOR2ARR(lossy->sample_hessian);
 }
 
-int* FeatsOnFold::Tag() { return lossy->Tag(); }
+int* FeatsOnFold::Tag() {
+    if (tags != nullptr)
+        return tags->arr();
+    /*else {
+        CLASS_VEC* cls_vec = dynamic_cast<CLASS_VEC*>(y);
+        assert(cls_vec != nullptr);
+        return cls_vec->arr();
+    }*/
+    return nullptr;
+}
 
 /*
     hFeat���뱣�ֲ�����
@@ -873,7 +919,7 @@ float FeatsOnFold::Quant(int bits, typNUMBER tpGama, floatGama* gama0, hBITARR q
     vector<float> errs;
     assert(nSamp % 8 == 0);
     errs.resize(feats.size());
-//  #pragma omp parallel for
+    //  #pragma omp parallel for
     for (auto hFeat : feats) {
         // if (hFeat->id != 23)
         //     continue;  // ony for debug

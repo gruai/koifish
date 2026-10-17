@@ -12,8 +12,8 @@
 
 #include <cmath>
 
-#include "../../../Manifold/Fish.hpp"
 #include "../../../Manifold/Optimizer.hpp"
+#include "../../../Shoal/Fish.hpp"
 #include "../../../Tensor/GTensor.hpp"
 #include "../../../Tensor/GeQuant.hpp"
 #include "../../../Utils/GST_MemBuffer.hpp"

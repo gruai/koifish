@@ -72,6 +72,49 @@ struct StepInfos {
     void Add(STEP step, int flag = 0x0);
 };
 
+// Discrete distribution of array   @/home/cys/rnd/lic/src/GBDT/data_fold/Distribution.hpp
+struct Distri_ARRAY {
+    static string CSV_LOG_DIR;
+    std::vector<float> distri;
+    double mean = 0, sigma = 0, sum = 0, ss = 0, average = 0;
+    float a0 = FLT_MAX, a1 = -FLT_MAX;
+
+    virtual bool isValid() {
+        // if (distri.empty())
+        //     return false;
+        return true;
+    }
+    virtual void Clear() {
+        distri.clear();
+        mean = 0, sigma = 0, average = 0;
+        sum = 0, ss = 0;
+        a0 = DBL_MAX, a1 = -DBL_MAX;
+    }
+    virtual void Add(float a) {
+        distri.push_back(a);
+        sum += a;
+        ss += a * a;
+        a0 = std::min(a0, a), a1 = std::max(a1, a);
+    }
+
+    virtual float Last() {
+        assert(!distri.empty());
+        return distri[distri.size() - 1];
+    }
+
+    virtual void Stat() {
+        size_t n = distri.size();
+        if (n == 0)
+            return;
+
+        average = sum / n;
+        sigma   = std::max(0.0, ss / n - average * average);  // float point error
+        sigma   = sqrt(sigma);
+    }
+
+    virtual bool SaveToCSV(const string& x, int flag);
+};
+
 /**
  * 1. Each tokenset has a unique samp_nanny
  * 2. samp_nanny load each samp from tokenset, records its' train/eval/chat infos
@@ -90,18 +133,20 @@ class SampNanny : public std::enable_shared_from_this<SampNanny> {
 
     std::string fp_data;
     std::string sentence = "";
+    int CollateSampTokens(hSAMP samp, int nMost, int flag);  // fill samp_toks with samp's tokens(may apply many filter)
     std::vector<TOKEN_ID> samp_toks;
     // std::vector<hSAMP> shard_samps;
     size_t nShard();
     // data_token_set is much complex than train/val datasets
-    hDataToken hDaTokens = nullptr;
+    hDataToken hCoral = nullptr;
     hTokenizer hDict     = nullptr;
 
     // bool isTarget_1 = false;
-    bool isRecycle = true, isLastShard = false;
+    bool isRecycle = false, isLastShard = false;
     bool isFixEvalSample = false;  // Need fix this to do some experiments
     bool isMask          = false;
     bool isAppendPad     = true;  // Append pad if samp's len < context_len
+    bool isPrefixBlank   = false;
 
     int nReShuffle = 0;
     mt19937_state shuffle_rng_state_current, shuffle_rng_state_next;
@@ -122,7 +167,7 @@ class SampNanny : public std::enable_shared_from_this<SampNanny> {
    public:
     StepInfos stepis;                 // info of each step on train/evaluate/...
     std::string tpBatchSample, name;  //
-    std::vector<hSAMP> cur_samps;
+    // std::vector<hSAMP> cur_samps;
     int nMostToken  = -1;
     int num_batches = -1;        // number of batchs in each epoch
     int B = -1, T = -1, C = -1;  // number of samples in each batch,  number of tokens in each sample
@@ -133,14 +178,14 @@ class SampNanny : public std::enable_shared_from_this<SampNanny> {
     bool empty() { return len() == 0; }
 
     // Derprecated, only for PPL
-    size_t nTokens() { return hDaTokens->tokens.size(); }
+    size_t nTokens() { return hCoral->tokens.size(); }
     // Derprecated, only for PPL
-    vector<TOKEN_ID>& GetTokens() { return hDaTokens->tokens; }
+    vector<TOKEN_ID>& GetTokens() { return hCoral->tokens; }
 
     int nLeastCTX(int flag = 0x0);
     hSAMP SampAt(size_t idx_) {
-        assert(hDaTokens != nullptr && idx_ < nShard());
-        return hDaTokens->shard_samps[idx_];
+        assert(hCoral != nullptr && idx_ < nShard());
+        return hCoral->shard_samps[idx_];
     }
     virtual void ClearII() {
         iiLoss.Clear();
@@ -203,6 +248,7 @@ class SampNanny : public std::enable_shared_from_this<SampNanny> {
     friend class TokenCoral;
     friend class GlobTokenset;
     friend class BATCH_INPUT;
+    friend class SAMP;
 };
 typedef shared_ptr<SampNanny> hSampNanny;
 

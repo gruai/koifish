@@ -5,19 +5,21 @@
  *  \brief Random swimming fish that generated from AI
  *  \author Yingshi Chen
  */
-#include "Fish.hpp"
-
+#include "../Decision/Maisui.hpp"
+#include "../Shoal/gLLM.hpp"
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
+#include "../Device/CUDA/cuda_def.hpp"
 
-hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vector<hWIKI> wikis, ROLE_TYPE role_, int flag) {
+hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vector<hWIKI> wikis, MODEL_ROLE role_, int flag) {
     assert(wikis.size() >= 0);
     hFISH fish = nullptr;
     assert(params.isValid("", "MakeInstance"));
 
     params.chat_sampler.OnArch(params.ModelArch());
+    MODEL_ARCH arch = params.ModelArch(role_);
 
-    switch (params.ModelArch()) {
+    switch (arch) {
         case MODEL_ARCH::NLP_MAMBA:
             fish = std::make_shared<LLM_MAMBA>(nam_ + "_mamba", params, role_);
             break;
@@ -41,6 +43,12 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vect
             break;
         case MODEL_ARCH::MD_QWEN:
             fish = std::make_shared<Salmon>(nam_ + "_score", params, role_);
+            break;
+        case MODEL_ARCH::MD_AR_QWEN:
+            fish = std::make_shared<SalmonQwen>(nam_ + "_score", params, role_);
+            break;
+        case MODEL_ARCH::DECISION_MAISUI:
+            fish = std::make_shared<Maisui>("Maisui_", params, role_);
             break;
         case MODEL_ARCH::NLP_GPT2:
         case MODEL_ARCH::NLP_GPT2_char:
@@ -98,8 +106,8 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vect
     return fish;
 }
 
-Fish::Fish(const std::string& nam_, struct CLI_params params, ROLE_TYPE role_, int flag) : name(nam_), config(params), role(role_) {
-    arch = params.ModelArch();
+Fish::Fish(const std::string& nam_, struct CLI_params params, MODEL_ROLE role_, int flag) : name(nam_), config(params), role(role_) {
+    arch = params.ModelArch(role);
 
     string w    = config.KV({"model", "parameter", "debug_init_weight"});  // hack parameter only for debug
     bool isLoad = !config.ckp_in.empty() || config.model.isLoadCard();
@@ -116,8 +124,8 @@ Fish::Fish(const std::string& nam_, struct CLI_params params, ROLE_TYPE role_, i
     }
 }
 
-bool Fish::isModel(std::vector<MODEL_ARCH> arcs, int flag) {
-    MODEL_ARCH arc = config.ModelArch();
+bool Fish::isModel(std::vector<MODEL_ARCH> arcs, int flag) const {
+    MODEL_ARCH arc = arch;  // config.ModelArch();
     for (auto arc0 : arcs) {
         if (arc == arc0)
             return true;
@@ -149,8 +157,8 @@ hFISH Fish::MakeSwarm(const std::string nam_, struct CLI_params& params, int fla
 
     int nSwarm = params.n_swarm, i;
     for (i = 0; i < nSwarm; i++) {
-        ROLE_TYPE role = i == nSwarm - 1 ? SWARM_HEAD : SWARM_FOLLOWER;
-        string title   = role == SWARM_HEAD ? "Head_" : "Follower_";
+        MODEL_ROLE role = i == nSwarm - 1 ? SWARM_HEAD : SWARM_FOLLOWER;
+        string title    = role == SWARM_HEAD ? "Head_" : "Follower_";
         if (1 || role == SWARM_HEAD) {
             hFISH fish = Fish::MakeInstance(title, params, wikis, role, 0x0);
             Fish::swarm.push_back(fish);
@@ -161,8 +169,8 @@ hFISH Fish::MakeSwarm(const std::string nam_, struct CLI_params& params, int fla
 }
 /**/
 hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, const Fish* hSrc_, int flag) {
-    hFISH fish     = nullptr;
-    ROLE_TYPE role = ROLE_TYPE::COMMON;
+    hFISH fish      = nullptr;
+    MODEL_ROLE role = MODEL_ROLE::COMMON;
     switch (params.nabla) {
         case 1:
             // fish = std::make_shared<LLAMA_LORA>(nam_+"_lora",params,role);
@@ -346,15 +354,6 @@ bool Fish::AfterBuild(bool isInitParam, int flag) {
     if (!ComputePlan(flag)) {
         return false;
     }
-#ifdef _TENSOR_G_
-
-#else
-    // ugly code!
-    int* data = (int*)KQ_pos->data;
-    for (int i = 0; i < config.n_ctx(); ++i) {
-        data[i] = 0 + i;  // n_past=0
-    }
-#endif
     return true;
 }
 
@@ -365,10 +364,11 @@ void Fish::Clear() {
     }
     neurons.clear();
 
-    // gBUFF = nullptr;
-    // memBuffer->Clear();
-    hEDS->FreeScheduler();
-    hEDS = nullptr;
+    if (hEDS != nullptr) {
+        hEDS->FreeScheduler();
+        hEDS = nullptr;
+    }
+
     // AllocBuffer @Fish::jToGraph
     // GTensor::FreeBuffer();
 }
@@ -747,9 +747,6 @@ bool Fish::CopyGensors(hWIKI wiki, int flag) {
     for (auto it : wiki->tmaps) {
         auto nam     = it.first;
         hGTensor dst = GetGensor(nam.c_str()), src = nullptr;
-#ifndef _TENSOR_G_
-        src = it.second;
-#endif
         size_t nElem = tELEM(src), nbyte = tBYTE(src);
         sz += nElem;
         if (strcmp(src->name, "blk.0.attn_q.weight") == 0) {  // only for debug
@@ -777,6 +774,7 @@ bool Fish::CopyGensors(hWIKI wiki, int flag) {
 }
 
 bool Fish::BeforeNextStep(int iter, int flag) {
+    // if(iter==1)    K_EXIT(KOIFISH_EXIT_DEBUG);
     int nLayer = config.nLayer(), l, l_0 = 0, l_1 = nLayer, nPass = 0;
     hFuyou afu = GetFuyou(-1);
     if (afu != nullptr) {
@@ -944,8 +942,11 @@ bool Fish::AfterNextStep(int iter, int flag) {
     int gpt_every = config.chat_sampler.test_every;  // common.gpt_every;
     if (gpt_every > 0 && iter % gpt_every == 0) {
         config.chat_sampler.nSeqRecommend = config.n_ctx();
-        SetPhase(isModel({MD_QWEN}) ? LIFE_PHASE::P_CHAT_N : LIFE_PHASE::P_CHAT_1, P_TRAIN);
+        SetPhase(isModel({MD_QWEN, MD_AR_QWEN}) ? LIFE_PHASE::P_CHAT_N : LIFE_PHASE::P_CHAT_1, P_TRAIN);
         gopt->sResult = hOPT->GetSomeInfo("gopt_result_file");
+        // for (int i = 0; i < 10; i++) { // only for debug
+        //     DEBUG.watch_2 = i==1;
+        // }
         Chat(iter, 1);
     }
     Head4Token* cls = GetNeuron<Head4Token>("Head4Token", 0);
@@ -960,9 +961,9 @@ bool Fish::AfterNextStep(int iter, int flag) {
             float val_loss = vl->loader->Evaluate(SAMPLEofSHARD, 0x0);
         }
     } /**/
-
+    bool isLastStep = iter == hOPT->TrainParams().nMostIter - 1;
     for (auto ck : config.ckp_out) {
-        if (ck.needSave(iter)) {
+        if (ck.needSave(iter) || isLastStep) {
             SaveTrain(ck);
             // g_dump_level = -1;
         }
@@ -970,62 +971,6 @@ bool Fish::AfterNextStep(int iter, int flag) {
     if (hDistler != nullptr)
         hDistler->UpdateSigma(iter);
     return true;
-}
-
-size_t cudnn_qkv_forw(Fish*, int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn, bool has_attn_bias = false, bool padding_mask = false, int flag = 0x0);
-size_t cudnn_qkv_back(Fish*, int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn, bool has_attn_bias = false, bool padding_mask = false);
-int test_FA2();
-bool Fish::AllocBuffer(int flag) {
-    try {
-#ifdef __USE_TVM__
-        test_FA2();
-#endif
-        int B = config.n_batch(), T = curContextLen(LIMIT), NH = config.n_head(), head_dim = config.head_dim();
-        int group = NH / config.n_head_kv();
-        if (isLocalInfer) {
-            if (config.phase == P_CHAT_1) {  // P_EVAL no need cache!
-                // hCache = std::make_shared<KVCache>(this);
-            }
-        }
-        if (isModel({MD_QWEN})) {
-        } else {
-            hCache = std::make_shared<KVCache>(this);
-        }
-
-        bool has_attn_bias = false, padding_mask = phase == P_SFT;
-        if (phase != P_CHAT_1) {
-#ifdef __USE_CUDNN__
-            cudnn_qkv_forw(this, B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn, has_attn_bias, padding_mask);
-            if (!isAtPhase({P_EVAL_, P_CHAT_N})) {
-                size_t alloc = cudnn_qkv_back(this, B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn, has_attn_bias, padding_mask);
-                _INFO("\tcudnn_qkv_back = %.5gM\n", alloc / 1.0e6);
-            }
-#endif
-            size_t mostQKV          = B * T * NH * head_dim + B * NH * T +                // dQ[[batch, seq_len, heads, dim_qk]] + Delta[batch, heads, seq_len]
-                                      B * T * config.n_head_kv() * head_dim * group * 4;  // [groups, batch, seq_len, head_kv, dim_v]
-            GTensor::workspace_size = std::max(GTensor::workspace_size, mostQKV * 4);     // 134742016
-            GTensor::workspace_size = std::max(GTensor::workspace_size, (size_t)32 * 1024 * 1024);
-            assert(GTensor::workspace_size >= 32 * 1024 * 1024);
-            cudaCheck(cudaMalloc(&GTensor::qkv_workspace, GTensor::workspace_size));
-        } else {
-            GTensor::workspace_size = std::max(GTensor::workspace_size, (size_t)32 * 1024 * 1024);
-            cudaCheck(cudaMalloc(&GTensor::qkv_workspace, GTensor::workspace_size));
-        }
-
-        return true;
-    } catch (const std::exception& e) {
-        _INFO("%s", e.what());
-        fflush(stdout);
-        return -1000;
-    } catch (const char* info) {
-        _INFO("%s", info);
-        fflush(stdout);
-        return -1001;
-    } catch (...) {
-        _INFO("\r\n%s  Unknown exception !!!", __func__);
-        fflush(stdout);
-        return -2001;
-    }
 }
 
 /*

@@ -8,6 +8,7 @@
 
 #include "../EDevice.hpp"
 #include "../Utils/GST_MemBuffer.hpp"
+#include "./cuda_common.h"
 
 // Static member definitions
 std::atomic<int> CudaDriverManager::allocation_count{0};

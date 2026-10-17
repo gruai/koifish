@@ -12,7 +12,7 @@
 #endif
 
 #include "../Manifold/Optimizer.hpp"
-#include "../Manifold/gLLM.hpp"
+#include "../Shoal/gLLM.hpp"
 // #include "../ggex/llmc_utils.h"
 #include "Dictionary.hpp"
 
@@ -112,7 +112,7 @@ double SampNanny::DecodeVerify(hSAMP samp, hGTensor tokens, hGTensor logits, int
 }
 
 int SampNanny::StepOfEvaluate(int flag) {  //  smaple to reduce eval time
-    int nSamp        = max((int)(num_batches * hDaTokens->rSampling), 1);
+    int nSamp        = max((int)(num_batches * hCoral->rSampling), 1);
     int step         = (int)(num_batches / nSamp);
     float realSample = (ceil)(num_batches * 1.0 / step) / (num_batches);
     return max(step, 1);
@@ -125,10 +125,10 @@ int SampNanny::nLeastCTX(int flag) {
 
 // support both tokens_mask & batch_mask
 bool SampNanny::MaskAt(size_t pos, TOKEN_ID& mask) {
-    if (hDaTokens->hasMask()) {
+    if (hCoral->hasMask()) {
         assert(0);
-        assert(pos >= 0 && pos < hDaTokens->tokens_mask.size());
-        mask = hDaTokens->tokens_mask[pos];
+        assert(pos >= 0 && pos < hCoral->tokens_mask.size());
+        mask = hCoral->tokens_mask[pos];
         return true;
     }
     return false;
@@ -170,13 +170,14 @@ TOKEN_ID BATCH_INPUT::GetLabel(int label_pos, int k, int flag) {
     return tok;
 }
 
-void BATCH_INPUT::SetToken(int tok_pos, int idSamp, int i2, int i3, int tok, HUA_STATE ti) {
+void BATCH_INPUT::SetToken(int tok_pos, int idSamp, int i2, int i3, int tok, HUA_STATE ti, int flag) {
+    double t0 = GST_ms();
     assert(tok >= 0);
-    if(tok==151666)
-        DEBUG_HERE;
-    
-    size_t off = tok_pos + idSamp * hostLabel->ne[0];
-    if (tpNoise == MASK_NOISE) {
+    assert(i2 == 0 && i3 == 0);
+    // if (tok == 151666)
+    //     DEBUG_HERE;
+    // size_t off = tok_pos + idSamp * hostLabel->ne[0];
+    if (curNoise == MASK_NOISE) {
         if (ti == HUA_STATE::MASK) {
             tok = hDict->S._noise;
             nMaskToken++;
@@ -188,11 +189,12 @@ void BATCH_INPUT::SetToken(int tok_pos, int idSamp, int i2, int i3, int tok, HUA
         if (ti == HUA_STATE::PAD) {
         }
     }
-    if (hDict->isDialect) {
-        // assert(hDict->dialect[token] > 0);
-        tok = hDict->mapT2T[tok];
+    if (hDict->isDialect) {  //
+        assert(hDict->mapT2T.contains(tok));
+        tok = hDict->mapT2T.at(tok);
     }
     hostToken->Set(tok_pos, idSamp, i2, i3, tok);
+    SUM::tX1 += (double)(GST_ms() - t0) / 1000.0;
 }
 // Label may be noised in some models(mask-noise diffusion model)
 bool BATCH_INPUT::SetLabel(int label0, int label_pos, int idSamp, HUA_STATE ti, int flag) {
@@ -204,10 +206,9 @@ bool BATCH_INPUT::SetLabel(int label0, int label_pos, int idSamp, HUA_STATE ti, 
     noise_id = hDict->S._mask;
     if (label0 < 0) {  // for example, token="<|endoftext|>", then no need to set label!
         BIT_SET(mask32[off], MASK_FLAG::F_IGNORE_LOSS);
-    } else if (tpNoise == MASK_NOISE) {
+    } else if (curNoise == MASK_NOISE) {
         // float noise_level = fNoise[off];
         if (ti == HUA_STATE::MASK) {
-            // BIT_RESET(mask32[off], MASK_FLAG::F_IGNORE_LOSS);
             assert(label >= 0);
             BIT_SET(mask32[off], MASK_FLAG::F_IGNORE_LOSS);
             label = -(label + 1);
@@ -219,6 +220,7 @@ bool BATCH_INPUT::SetLabel(int label0, int label_pos, int idSamp, HUA_STATE ti, 
             label = -(label + 1);
         }
     } else {  // NO_NOISE
+        BIT_RESET(mask32[off], MASK_FLAG::F_IGNORE_LOSS);
     }
     if (iter == 18 && off == 5759) {  // label_pos==9599
         DEBUG_HERE;
@@ -226,8 +228,10 @@ bool BATCH_INPUT::SetLabel(int label0, int label_pos, int idSamp, HUA_STATE ti, 
 
     if (hDict->isDialect) {
         // assert(hDict->dialect[token] > 0);
-        if(label>=0)
-            label = hDict->mapT2T[label];
+        if (label >= 0) {
+            assert(hDict->mapT2T.contains(label));
+            label = hDict->mapT2T.at(label);
+        }
     }
     // isTarget_1 = g_->config.is({"model_v0", "target"}, string("OneHot"));
     if (isTarget_1) {
@@ -243,26 +247,27 @@ bool BATCH_INPUT::PickTransitions(const std::vector<hSAMP>& samps, int iter, int
     nNoiseToken = 0;
     if (hHuaPLAN == nullptr)
         return false;
+    if (curNoise == NO_NOISE)
+        return false;
 
     auto params = hFish->config.XI;
     assert(params.isValid());
     hHuaPLAN->Transition4Batch(iter, shared_from_this());
-
-    /*std::vector<float> T_sample;
-    hMaskRander->RandFloat(nMostSample, T_sample);
-    // mask_probs = torch.rand(batch_size, 1),    mask = torch.rand(batch_size, block_size) < mask_probs
-    int label = -1, *mask = mask32, *token = nullptr;
-    // for (int loop = 0; loop < 30; loop++)    only for debug
-    hMaskRander->RandNoise_MN(nMostSample, ldT, T_sample, fNoise);*/
-    tpNoise = MASK_NOISE;
+    // tpNoise = MASK_NOISE;
     // hostMask->Print("BATCH_INPUT_mask", 0, -1);
     return true;
 }
 
 // May be pad_id/mask_id
 TOKEN_ID SampNanny::TokenAt(size_t pos, hSAMP samp, int flag) {
-    if (pos == hDaTokens->tokens.size())
+    if (pos == hCoral->tokens.size() && samp->pad_len == 0)
         return hDict->S.eos;
+    /**
+     * if (pos >= hNanny->nTokens()) {
+            if (hNanny->isRecycle)  // Deprecated ,since no recycle(always padding)
+                pos = 0;
+        }
+     */
     if (samp != nullptr) {
         assert(pos >= samp->pos);
         if (samp->pad_len > 0 && pos + samp->pad_len >= samp->pos + samp->len) {
@@ -274,21 +279,110 @@ TOKEN_ID SampNanny::TokenAt(size_t pos, hSAMP samp, int flag) {
         }
     }
 
-    if (hDaTokens->hasMask()) {  // Only mask from tokens(never chang from batch on batch)
+    if (hCoral->hasMask()) {  // Only mask from tokens(never chang from batch on batch)
         // assert(0);
-        // assert(pos >= 0 && pos < hDaTokens->tokens_mask.size());
-        TOKEN_ID mask = hDaTokens->tokens_mask[pos];
+        // assert(pos >= 0 && pos < hCoral->tokens_mask.size());
+        TOKEN_ID mask = hCoral->tokens_mask[pos];
         return mask;
     }
-    TOKEN_ID token = hDaTokens->At(pos);
-    // if (hDict->isDialect) {
-    //     // assert(hDict->dialect[token] > 0);
-    //     token = hDict->mapT2T[token];
-    // }
+    TOKEN_ID token = hCoral->At(pos);
 
     return token;
 }
 
+int SampNanny::CollateSampTokens(hSAMP samp, int nMost, int flag) {
+    if (!samp->ToTokens(hCoral, flag)) {
+        return KOIFISH_COLLATE_1SAMP;
+    }
+
+    auto& tmp_toks = samp_toks;
+    tmp_toks.clear();
+    if (isAddBOS) {
+        tmp_toks.push_back(hDict->S.bos);
+    }
+    size_t starting = samp->pos + samp->jump, nBlank = 0;
+    if (tmp_toks.size() + samp->len < nMost && isPrefixBlank) {
+        nBlank         = nMost - (tmp_toks.size() + samp->len);
+        TOKEN_ID blank = hDict->whitespace_token;  //" "
+        for (int64_t i = 0; i < nBlank; ++i) {
+            tmp_toks.push_back(blank);
+        }
+        samp->prefix_blank = nBlank;
+    }
+
+    for (int64_t i = tmp_toks.size(); i < nMost; ++i) {
+        TOKEN_ID token = TokenAt(starting++, samp);
+        // if (DEBUG.train_datas == 1)
+        //     token = i;                   // only for debug
+        //  _INFO("%d,", token);
+        tmp_toks.push_back(token);
+    } /**/
+    assert(tmp_toks.size() == nMost);
+    if (samp->prefix_blank > 0) {
+        // sentence = hDict->Decode(samp_toks);
+        // _INFO("\n    (%ld,%d)@\"%s\"", samp->pos, samp->jump, sentence.c_str());
+    }
+    return 0x0;
+}
+
+int BATCH_INPUT::FillOneSamp(SampNanny* hNanny, int idSamp, hSAMP samp, const CLI_params& params, float T_x, int flag) {
+    int iRet        = 0x0;
+    size_t starting = samp->pos + samp->jump, _nctx = params.n_ctx(), _pos = 0;  //    tokens_input->ne[0];
+    if ((iRet = hNanny->CollateSampTokens(samp, _nctx, 0x0)) != 0x0) {
+        return iRet;
+    }
+    auto& flow = huaers.empty() ? transiX.flow : huaers[idSamp]->flow;
+    if (samp->len != _nctx) {
+        if (hPLAN_1 != nullptr) {
+            hPLAN_1->Transition4Samp(samp.get());
+            flow = hPLAN_1->samp_flow;  // huaers[0]->flow;
+            assert(flow.size() == _nctx);
+        }
+    }
+    int label_pos = -1, i_off = 0, i = 0;  //
+    if (hNanny->isAddBOS) {                // isAddBOS =false when ARCH=QWEN or chat(InitOneSamp)
+        // SetToken(0, idSamp, 0, 0, hDict->S.bos);
+        // hNanny->samp_toks.push_back(hDict->S.bos);
+        _pos  = 1;
+        i_off = 1;
+    }
+
+    bool isPad = false;
+    for (auto token : hNanny->samp_toks) {
+        isPad = token == hDict->S._pad;  //  151643="<|endoftext|>"
+        if (isPad) {
+            nPadToken++;
+        }
+        ++starting;
+        if (needLabel()) {
+            label_pos = hNanny->isNoShiftLabel() ? i + i_off : i + i_off - 1;  // Shift label back 1 (In most case: self-regression )
+            if (label_pos >= 0) {
+                SetLabel(token, label_pos, idSamp, flow[label_pos]);
+            }
+        }
+        double t0 = GST_ms();
+        if (_pos < _nctx) {  //  i + i_off < _nctx
+            // assert(_pos<=hostToken->size());
+            SetToken((int)_pos, (int)idSamp, 0, 0, token, flow[_pos]);
+        } else {
+            samp->last_target = token;
+        }
+        ++i;
+        ++_pos;
+    }
+
+    // assert(nPad < _nctx);
+    SetLen(idSamp, _nctx - samp->pad_len);
+    if (++label_pos < _nctx && needLabel()) {                                      // last label
+        int _label = isPad ? -hDict->S._pad : hNanny->TokenAt(starting, nullptr);  // pad has no label
+        SetLabel(_label, label_pos, idSamp, flow[label_pos]);
+    }
+    samp->User2Batch(shared_from_this());
+    return iRet;
+}
+
+/*
+v0  Deprecated since 2026/09/15
 void BATCH_INPUT::FillOneSamp(SampNanny* hNanny, int idSamp, hSAMP samp, const CLI_params& params, float T_x, int flag) {
     samp->UpdateTokens(hNanny);
     hNanny->samp_toks.clear();
@@ -300,7 +394,7 @@ void BATCH_INPUT::FillOneSamp(SampNanny* hNanny, int idSamp, hSAMP samp, const C
         assert(flow.size() == _nctx);
     }
     int label_pos = -1, i_off = 0;  //
-    if (hNanny->isAddBOS) {         // isAddBOS =false when {NTP_QWEN2, NTP_QWEN3, MD_QWEN} or chat(InitOneSamp)
+    if (hNanny->isAddBOS) {         // isAddBOS =false when QWEN or chat(InitOneSamp)
         SetToken(0, idSamp, 0, 0, hDict->S.bos);
         hNanny->samp_toks.push_back(hDict->S.bos);
         tok_pos = 1;
@@ -321,7 +415,7 @@ void BATCH_INPUT::FillOneSamp(SampNanny* hNanny, int idSamp, hSAMP samp, const C
             DEBUG_HERE;
         // eos ???
         if (starting >= hNanny->nTokens()) {
-            if (hNanny->isRecycle)
+            if (hNanny->isRecycle)  // Deprecated ,since no recycle(always padding)
                 starting = 0;
         }
         // if (starting < _nToken)
@@ -356,8 +450,14 @@ void BATCH_INPUT::FillOneSamp(SampNanny* hNanny, int idSamp, hSAMP samp, const C
         int _label = isPad ? -hDict->S._pad : hNanny->TokenAt(starting, nullptr);  // pad has no label
         SetLabel(_label, label_pos, idSamp, flow[label_pos]);
     }
+}*/
+TOKENS BATCH_INPUT::curTokens(int flag) const {
+    TOKENS tokens;
+    for (int i = 0; i < nTokens(); i++) {
+        tokens.push_back(host_toks[i]);
+    }
+    return tokens;
 }
-
 /*
     1. i_off=1 for 1) Diffusion LM
     2. tokens[0] may bos_id
@@ -409,7 +509,7 @@ bool SampNanny::isEval(int t, int flag) {
         float train_last = hOPT->trainInfos().Last();
         if (t == 0) {
         }
-        if (hDaTokens->tpSample == TokenCoral::HellaSwag) {  // too long!
+        if (hCoral->tpSample == TokenCoral::HellaSwag) {  // too long!
             // return train_last<5.0;
         }
         return true;
@@ -418,24 +518,29 @@ bool SampNanny::isEval(int t, int flag) {
 }
 
 bool SampNanny::NextEpoch(int flag) {
+    if (hOPT == nullptr) {  //  Only evaluate
+        // isLastShard = true;
+        return false;
+    }
     _INFO("-------- End of all shards @epoch_%d! -------- \n", hOPT->train_epochs);
     hOPT->OnNextEpoch();
     return true;
 }
 
 size_t SampNanny::nShard() {
-    assert(hDaTokens != nullptr);
-    return hDaTokens->shard_samps.size();
+    assert(hCoral != nullptr);
+    return hCoral->shard_samps.size();
 }
 
 hSAMP SampNanny::Next(bool isLoop) {
     if (next_sample == nShard()) {
-        if (!hDaTokens->LoadNextShard(this)) {
+        if (!hCoral->LoadNextShard(this)) {
             _WARN("<SampNanny::%s> Failed to get next shard file!!!\n", __func__);
             return nullptr;
         }
         Shuffle(true);
-        hOPT->OnNextShard();
+        if (hOPT != nullptr)
+            hOPT->OnNextShard();
         next_sample = 0;
     }
 
@@ -449,8 +554,8 @@ hSAMP SampNanny::Next(bool isLoop) {
     }
 
     auto hSamp = SampAt(idx_);
-    // hDaTokens->shard_samps[idx_]->jump = 0;
-    // return hDaTokens->shard_samps[idx_];
+    // hCoral->shard_samps[idx_]->jump = 0;
+    // return hCoral->shard_samps[idx_];
     hSamp->jump = 0;
     return hSamp;
 }
@@ -462,6 +567,8 @@ bool BATCH_INPUT::BeforeCollate(int iter_, int flag) {
     section_metas.clear();
     nValidTokens = hostToken->size();
     nMaskToken = 0, nNoiseToken = 0, nPadToken = 0;
+    user_answer.clear();
+    curSamps.clear();
     return true;
 }
 /**
@@ -471,9 +578,8 @@ bool BATCH_INPUT::BeforeCollate(int iter_, int flag) {
         Pads lists of equal-length tensors
 */
 size_t SampNanny::CollateBatch(int iter, Fish* fish) {
-    // TRAIN_CARD _params = hOPT->TrainParams();
-    assert(fish == hOPT->_fish);
-    cur_samps.clear();
+    // assert(fish == hOPT->_fish);
+
     hBatch->BeforeCollate(iter);  // hostToken->Zero();
 
     hTokenizer tokenizer = fish->GetTokenizer();
@@ -481,10 +587,9 @@ size_t SampNanny::CollateBatch(int iter, Fish* fish) {
         hBatch->FillPrompt(fish, SOME_prompts, SOME_answers, -1);
         return 1;
     }
-    int64_t nAllSamples_ = nShard();
+    int64_t nAllSamples_ = nShard(), iRet;
     // const TOKEN_ID    * train_data=tokens.data();
     size_t k, n_train_data = nTokens();  // tokens.size();
-    double t_Samp = 0, nrm = 0, a;
     // bool sample_random_offsets = _params.sample_random_offsets;
     // assert(samples_count > 0);
     // assert(ggml_is_matrix(tokens_input));
@@ -497,8 +602,9 @@ size_t SampNanny::CollateBatch(int iter, Fish* fish) {
     hSAMP samp            = nullptr;
     hGTensor tokens_input = fish->Input(), target_label = fish->Target();  // hOPT->hTargetProbs();
     assert(tokens_input != nullptr);
-    hBatch->PickTransitions(cur_samps, hOPT->GetITER(), 0x0);
-    GST_TIC(tic);
+    hBatch->PickTransitions(hBatch->curSamps, iter, 0x0);
+    double tic = GST_ms(), nrm = 0, a;
+    ;  // GST_TIC(tic);
     for (k = 0; k < nSampInBatch; ++k) {
         if (tpBatchSample == "stacking") {
             if (k == 0)
@@ -512,15 +618,20 @@ size_t SampNanny::CollateBatch(int iter, Fish* fish) {
             _WARN("<%s> Failed to get next sample!!!\n", __func__);
             return 0x0;
         }
-        hBatch->section_metas.push_back(samp->answers);
-        // LLAMA_LOG_INFO("%s: sample_idx=%zu sample=%zu\n", __func__, sample_idx, sample);
-        if (GST_TOC(tic) > 20) {  // for long-time data-update
-            _INFO("\r[%s] k=%d(%d) T=%.3g ...", __func__, k, nSampInBatch, GST_TOC(tic));
-            tic = Clock::now();
+
+        if (GST_ms() - tic > 10 * 1000) {  // for long-time data-update
+            _INFO("\r[%s] k=%d(%d) T=%.3g ...", __func__, k, nSampInBatch, (GST_ms() - tic) / 1000.0);
+            SUM::tCollate += (GST_ms() - tic) / 1000.0;
+            tic = GST_ms();
         }
-        cur_samps.push_back(samp);
-        hBatch->FillOneSamp(this, k, samp, fish->config, -1.0f);
+        if ((iRet = hBatch->FillOneSamp(this, k, samp, fish->config, -1.0f)) != 0x0) {
+            _WARN("\t FillOneSamp_%d (%d/%d) failed. err=%d. Continue to next samp.", iter, hBatch->curSamps.size(), nSampInBatch, iRet);
+            k--;
+            continue;
+        }
+        hBatch->curSamps.push_back(samp);
         // Samp2Batch(k, samp, fish->config, -1.0f);
+        hBatch->section_metas.push_back(samp->arrROI);
 
         if (isLog && k < 12 && tpBatchSample != "stacking") {
             sentence = hDict->Decode(samp_toks);                                      // T2STR(samp_toks, 640, 0x0);
@@ -540,12 +651,13 @@ size_t SampNanny::CollateBatch(int iter, Fish* fish) {
         }
     }
     if (next_sample + nSampInBatch >= nShard()) {
-        hOPT->isDumpOnce = true;
+        if (hOPT != nullptr)
+            hOPT->isDumpOnce = true;
     }
 
     assert(hDict->isInRange(hBatch->host_toks, hBatch->nFillTokens(), 0));  //(int*)(hostBatch->data)
     if (hBatch->hostLen != nullptr) {
-        hBatch->UpdatePadMask(cur_samps, hOPT->GetITER(), (TOKEN_ID*)hBatch->host_toks, TO<int>(hBatch->hostLabel));
+        hBatch->UpdatePadMask(hBatch->curSamps, hOPT == nullptr ? -1 : hOPT->GetITER(), (TOKEN_ID*)hBatch->host_toks, TO<int>(hBatch->hostLabel));
     }
 
     tokens_input->OverWrite(hBatch->hostToken);  // H2D
@@ -553,10 +665,10 @@ size_t SampNanny::CollateBatch(int iter, Fish* fish) {
         target_label->OverWrite(hBatch->hostLabel);  // H2D
         // target_label->Print("target_label", 0, -1);
     }
-    t_Samp = GST_TOC(tic);
+    SUM::tCollate += (GST_ms() - tic) / 1000.0;
     // Decode(tokens_input);       //only for debug
-    if (isLog)
-        _INFO("\tT=%g\n", GST_TOC(T0));
+    // if (isLog)
+    //     _INFO("\tT=%g\n", GST_TOC(T0));
     if (tpBatchSample == "stacking") {
         /*if(fish->wiki->isInduct()){
             GST_TIC(tic);
@@ -620,14 +732,7 @@ std::tuple<hDataToken, std::vector<hDataToken>, hDataToken, hDataToken> TokenCor
     std::vector<hDataToken> tsEval;
     JSON jdata  = jKEY(hFish->config.jConfig, {"datasets"});
     string type = "";
-    if (jdata.empty()) {  // no dataset in chat-mode
-        /*assert(isLocalInfer);
-        hDataToken hTokenset = std::make_shared<PromptTokenset>("Prompt", hDict);
-        // tsEval.push_back(hTokenset);
-        hTokenset->Init(flag);
-        hTokenset->InitSampNanny(hFish, DT_CHAT, flag);
-        tsChat = hTokenset;*/
-
+    if (J_isEmpty(jdata) ) {  // jdata.empty()  no dataset in chat-mode
         return std::make_tuple(tsTrain, tsEval, tsCalib, tsChat);
     } else {
     }
@@ -639,22 +744,28 @@ std::tuple<hDataToken, std::vector<hDataToken>, hDataToken, hDataToken> TokenCor
             continue;
         }
 
-        auto v               = it.value();
+        const JSON v         = it.value();
         hDataToken hTokenset = nullptr;
         type                 = jKV(v, {"type"}, type);
         if (G_Aa(type, "hellaswag"))
-            hTokenset = std::make_shared<Tokenset_HellaSwag>(it, hDict);
-        else if (G_Aa(type, "k_parquet"))
-            hTokenset = std::make_shared<Tokenset_PARQUET>(it, hDict);
+            hTokenset = std::make_shared<Tokenset_HellaSwag>(v, hDict);
+        else if (G_Aa(type, "k_parquet")) {
+            hTokenset = std::make_shared<Tokenset_PARQUET>(v, hDict);
+        } else if (G_Aa(type, "boolq")) {
+            hTokenset = std::make_shared<Tokenset_BoolQ>(v, hDict);
+        } else if (G_Aa(type, "JEV_message") || G_Aa(type, "Jev"))
+            hTokenset = std::make_shared<Tokenset_JEV>(v, hDict, type);
+
         else if (G_Aa(type, "k_text"))
-            hTokenset = std::make_shared<Tokenset_TEXT>(it, hDict);
+            hTokenset = std::make_shared<Tokenset_TEXT>(v, hDict);
         else if (G_Aa(type, "OAI_message") || G_Aa(type, "ChatML"))
-            hTokenset = std::make_shared<Tokenset_JSONL>(it, hDict, type);
+            hTokenset = std::make_shared<Tokenset_JSONL>(v, hDict, type);
+
         else {
             if (v.find("prompt") != v.end())
-                hTokenset = std::make_shared<PromptTokenset>(it, hDict);
+                hTokenset = std::make_shared<PromptTokenset>(v, hDict);
             else if (v.find("glob") != v.end())
-                hTokenset = std::make_shared<GlobTokenset>(it, hDict);
+                hTokenset = std::make_shared<GlobTokenset>(v, hDict);
             else
                 assert(0);
         }
@@ -662,11 +773,13 @@ std::tuple<hDataToken, std::vector<hDataToken>, hDataToken, hDataToken> TokenCor
         DT_PHASE tpDT = DT_TRAIN;
         if (key == "train") {
             tsTrain = hTokenset;
+            hTokenset->N_mostSamp = DEBUG.N_mostTrainSamp;
         } else if (key == "calib") {
             tsCalib = hTokenset;
         } else {  // key=="eval"
             tpDT = DT_EVAL;
             tsEval.push_back(hTokenset);
+            hTokenset->N_mostSamp = DEBUG.N_mostEvalSamp;
         }
         hTokenset->InitSampNanny(hFish, tpDT, flag);
         dts.push_back(hTokenset);
@@ -745,6 +858,7 @@ SampNanny::SampNanny(Fish* g_, const string& n, bool isNewTS, int flag) : hFish(
         assert(0);
         return;
     }
+    isPrefixBlank    = hFish->config.chat_sampler.isPrefixBlank;
     tpBatchSample    = hFish->config.tpBatchSample;
     stepis.sTokenSet = name;
     _params          = hFish->config.common;
@@ -754,15 +868,15 @@ SampNanny::SampNanny(Fish* g_, const string& n, bool isNewTS, int flag) : hFish(
 
 void SampNanny::Dump(int typ) {
     size_t nShardFile = 0, nBatch = 0, nMostTok = 0;
-    if (hDaTokens != nullptr) {
-        nShardFile = hDaTokens->shard_paths.size();
-        nBatch     = hDaTokens->nBatch();
-        nMostTok   = hDaTokens->nMostTok;
-        // nShardSamp = hDaTokens->nMostShard();
+    if (hCoral != nullptr) {
+        nShardFile = hCoral->shard_paths.size();
+        nBatch     = hCoral->nBatch();
+        nMostTok   = hCoral->nMostTok;
+        // nShardSamp = hCoral->nMostShard();
     }
     double nToken = nMostTok / 1.0e6;  // nTokens() / 1.0e6 * nShardFile;
-    _INFO("[Dataset]_\"%s\"(%s) nShard=%ld(T=%.6gM) samping=%g(%d) EachShard(nSamp=%ld,nBatch=%ld)\n", hDaTokens->Dump(0x0).c_str(), name.c_str(), nShardFile,
-          nToken, hDaTokens->rSampling, (int)(nBatch * hDaTokens->rSampling), nShard(), nBatch);
+    _INFO("[Dataset]_\"%s\"(%s) nShard=%ld(T=%.6gM) samping=%g(%d) EachShard(nSamp=%ld,nBatch=%ld)\n", hCoral->Dump(0x0).c_str(), name.c_str(), nShardFile,
+          nToken, hCoral->rSampling, (int)(nBatch * hCoral->rSampling), nShard(), nBatch);
     _HILIGHT("\tAddBOS=%s shiftLABEL=%s appendPad=%d [m]=%d [n]=%d\n", isAddBOS ? "True" : "False", isNoShiftLabel() ? "False" : "True", (int)isAppendPad,
              hDict->S._mask, hDict->S._noise);
 }
@@ -778,12 +892,12 @@ bool SampNanny::Prepare(Optimizer* hO, hDataToken hT, int flag) {
     bool isNewTS = hT == nullptr;
     hDict        = hFish->hDict;
     if (isNewTS) {
-        hDaTokens = std::make_shared<TokenCoral>(hDict);
+        hCoral = std::make_shared<TokenCoral>(hDict);
     } else
-        hDaTokens = hT;
-    assert(hDaTokens != nullptr && hDict != nullptr);
+        hCoral = hT;
+    assert(hCoral != nullptr && hDict != nullptr);
     hOPT = hO;  // maybe nullptr
-    if (hFish->isModel({NTP_QWEN2, NTP_QWEN3, MD_QWEN})) {
+    if (hFish->isModel({NTP_QWEN2, NTP_QWEN3, MD_QWEN, MD_AR_QWEN})) {
         isAddBOS = false;
     }
 
@@ -792,31 +906,34 @@ bool SampNanny::Prepare(Optimizer* hO, hDataToken hT, int flag) {
     if (dynamic_cast<Tokenset_HellaSwag*>(hT.get()) != nullptr) {
         stepis.isAccuracy = true;
     }
-    if (hDaTokens != nullptr && hDaTokens->nMostShard > 0) {
-        if (!hDaTokens->LoadNextShard(this))
+    if (hCoral != nullptr && hCoral->nMostShard > 0) {
+        if (!hCoral->LoadNextShard(this))
             return false;
-        // shard_samps      = hDaTokens->shard_samps;
-        num_batches      = hDaTokens->nBatch();
-        stepis.sTokenSet = name + "@[" + hDaTokens->name + "]";
-        eval_every       = hDaTokens->eval_every;
+        // shard_samps      = hCoral->shard_samps;
+        num_batches      = hCoral->nBatch();
+        stepis.sTokenSet = name + "@[" + hCoral->name + "]";
+        eval_every       = hCoral->eval_every;
     }
 
     if (hFish->isAtPhase(LIFE_PHASE::P_CHAT_1)) {
         B = 1, T = hFish->curChatLen(CHAT_LENGTH_TYPE::LIMIT);
-        hBatch = std::make_shared<BATCH_INPUT>(hFish, SHAPE({T, B}), P_CHAT_1);
+        hBatch = std::make_shared<BATCH_INPUT>(this, SHAPE({T, B}), P_CHAT_1);
     } else if (hFish->isAtPhase(LIFE_PHASE::P_CHAT_N)) {
         B = 1, T = hFish->curChatLen();
-        hBatch = std::make_shared<BATCH_Denoise>(hFish, SHAPE({T, B}), P_CHAT_N);
+        hBatch = std::make_shared<BATCH_Denoise>(this, SHAPE({T, B}), P_CHAT_N);
     } else {
         hFish->GetNeuronBT(B, T);
         if (type == DT_CHAT) {
-            hBatch = std::make_shared<BATCH_Denoise>(hFish, SHAPE({T, 1}), P_CHAT_N);
+            if (hFish->isModel({MD_QWEN, MD_AR_QWEN}))
+                hBatch = std::make_shared<BATCH_Denoise>(this, SHAPE({T, 1}), P_CHAT_N);
+            else
+                hBatch = std::make_shared<BATCH_Denoise>(this, SHAPE({T, 1}), P_CHAT_1);
         } else
-            hBatch = std::make_shared<BATCH_INPUT>(hFish, SHAPE({T, B}), P_TRAIN);
+            hBatch = std::make_shared<BATCH_INPUT>(this, SHAPE({T, B}), P_TRAIN);
     }
     hBatch->Init();
 
-    if (hDaTokens->hasMask()) {
+    if (hCoral->hasMask()) {
         // hostBatchMask = std::make_shared<GTensor>(shape,typNUMBER::I32);
         // hostBatchMask->Alloc();
         hFish->target_mask = hBatch->hostMask;
@@ -830,58 +947,8 @@ bool SampNanny::Prepare(Optimizer* hO, hDataToken hT, int flag) {
 /*
 
 */
-void SampNanny::SetSamples(std::vector<size_t>& samp_0, std::vector<size_t>& samp_L, bool isTrain, CLI_params& hp_, int flag) {
-    assert(0);
-    /*tpBatchSample = hFish->config.tpBatchSample;
+void SampNanny::SetSamples(std::vector<size_t>& samp_0, std::vector<size_t>& samp_L, bool isTrain, CLI_params& hp_, int flag) { assert(0); }
 
-    double rSplit = 1.0 - hFish->config.rSplit;
-    // hDaTokens = hDT;
-    size_t nSample = samp_0.size(), pick = (size_t)(nSample * rSplit), i, nSampInBatch = hFish->config.n_batch();
-    //    assert(samp_begin.size() == samp_size.size());
-    if (isTrain) {
-        for (i = 0; i < pick; i++) {
-            shard_samps.push_back(std::make_shared<SAMP>(samp_0[i], samp_L[i]));
-        }
-
-        Shuffle();
-    } else if (pick < nSample) {
-        for (i = pick; i < nSample; i++) {
-            shard_samps.push_back(std::make_shared<SAMP>(samp_0[i], samp_L[i]));
-        }
-
-        if (1) {  // too many batch in eval-set, so just random pick
-            Shuffle();
-        } else {
-            assert(0);
-        }
-    }
-    nSample     = shard_samps.size();
-    num_batches = nSample / hFish->config.n_batch();
-    num_batches = nSample == 0 ? 0 : max(num_batches, 1);
-    _INFO("%s@[%s]: tokens=%zu nSamp=%d nBatch=%d\n", __func__, isTrain ? "train" : "eval", nTokens(), shard_samps.size(), num_batches);*/
-}
-
-int SAMP::UpdateTokens(SampNanny* hNanny, int flag) {
-    /*tmp_toks.clear();
-    if (hNanny->isAddBOS) {
-        tmp_toks.push_back(hDict->S.bos);
-    }
-
-    for (int64_t i = 0; i < _nctx; ++i, ++tok_pos) {
-        TOKEN_ID token = hDict->S.eos;
-        if (samp->pos == 4781 && i == 16)
-            DEBUG_HERE;
-        // eos ???
-        if (starting >= hNanny->nTokens()) {
-            if (hNanny->isRecycle)
-                starting = 0;
-        }
-        // if (starting < _nToken)
-        token = hNanny->TokenAt(starting, samp);
-        tmp_toks.push_back(token);
-    }*/
-    return 0x0;
-}
 double SAMP::UpdateTag(hDataToken hDT, int* tag, int step, bool do_mask, int flag) {
     TOKEN_ID tok;
     int nFlip = 0;
@@ -913,11 +980,48 @@ double SAMP::UpdateTag(hDataToken hDT, int* tag, int step, bool do_mask, int fla
     return nFlip * 1.0;
 }
 
+SAMP::SAMP(size_t p, size_t l, int nPad) : pos(p), len(l), pad_len(nPad) {
+    if (pad_len > 0) {
+        assert(pad_len < len);
+    }
+}
+// Fish* hFish, hTokenizer hDict,
+void SAMP::Dump(hDataToken coral, const TOKENS& tokens, int type, const std::string& desc, int flag) {
+    int nValidLen = len - pad_len;
+    size_t start  = pos;
+    if (type == 0x100)
+        start = 0;
+
+    assert(start + nValidLen <= tokens.size());
+    TOKENS samp_tokens(tokens.begin() + start, tokens.begin() + start + nValidLen);
+    switch (type) {
+        case 0x0:
+            break;
+        default:
+            break;
+    }
+    Fish* hFish = coral->hFish;
+    int nX      = hFish != nullptr && hFish->isModel({MD_QWEN, MD_AR_QWEN}) ? -1 : 0;
+    DumpTokens(coral->hDict, samp_tokens, nX, flag);
+    _INFO("\n ------ range=[%lld:%lld pad=%lld] turn=%lld", pos, pos + nValidLen, pad_len, arrROI.size());
+    if (arrROI.size() > 0) {  // multi_turn
+        for (auto [a, b] : arrROI) {
+            assert(a >= 0 && b < nValidLen);
+            string msg = coral->hDict->Decode(TOKENS(samp_tokens.begin() + a, samp_tokens.begin() + b));
+            _INFO("\n\t[%lld:%lld]=\"%s\"\t", a, b, msg.c_str());
+        }
+        _INFO("\n");
+    } else {
+        // assert(0);
+    }
+    _INFO("\n------ %s\n", desc.c_str());
+}
+
 bool SampNanny::TopoOrder(std::vector<size_t>& ids, std::mt19937& rng, int flag) {
     bool isRepeated   = true;
-    auto& shard_samps = hDaTokens->shard_samps;
+    auto& shard_samps = hCoral->shard_samps;
     size_t count = shard_samps.size(), i, j, k, jj, pick, seed, nPick = 16, nLeft;
-    size_t nSampInBatch = hFish->config.n_batch(), nVocab = hDaTokens->nVocab, ctx = hFish->config.n_ctx(), tib = hFish->config.nTokenInBatch();
+    size_t nSampInBatch = hFish->config.n_batch(), nVocab = hCoral->nVocab, ctx = hFish->config.n_ctx(), tib = hFish->config.nTokenInBatch();
     if (count < nSampInBatch * 10)
         return false;
     GST_TIC(tic);
@@ -931,7 +1035,7 @@ bool SampNanny::TopoOrder(std::vector<size_t>& ids, std::mt19937& rng, int flag)
         seed = ids[i * nSampInBatch];
         cur  = shard_samps[seed];
         step++;
-        double rEx = cur->UpdateTag(hDaTokens, stp, step, true), r, rBest = FLT_MAX;
+        double rEx = cur->UpdateTag(hCoral, stp, step, true), r, rBest = FLT_MAX;
         for (j = i * nSampInBatch + 1; j < (i + 1) * nSampInBatch; j++) {
             if (0) {  // 10001/16/3 rDup=0.415(0.568)=>rDup=0.347(0.453)        10001/16/32 rDup=0.704(0.738)=>0.625(0.649)
                 nLeft = count - j;
@@ -943,7 +1047,7 @@ bool SampNanny::TopoOrder(std::vector<size_t>& ids, std::mt19937& rng, int flag)
                         assert(jj >= j && jj < count);
                     }
                     next = shard_samps[ids[jj]];
-                    r    = next->UpdateTag(hDaTokens, stp, step, false);
+                    r    = next->UpdateTag(hCoral, stp, step, false);
                     if (r > rBest) {
                         rBest = r;
                         pick  = jj;
@@ -952,7 +1056,7 @@ bool SampNanny::TopoOrder(std::vector<size_t>& ids, std::mt19937& rng, int flag)
                 std::swap(ids[j], ids[pick]);
             }
             next = shard_samps[ids[j]];
-            r    = next->UpdateTag(hDaTokens, stp, step, true);
+            r    = next->UpdateTag(hCoral, stp, step, true);
             assert(r == rBest || rBest == FLT_MAX);
             rEx += r;
         }
@@ -971,9 +1075,9 @@ bool SampNanny::TopoOrder(std::vector<size_t>& ids, std::mt19937& rng, int flag)
 
 string SampNanny::IterInfo(int flag) {
     char buffer[256];
-    if (hDaTokens->shard_paths.size() > 0) {
+    if (hCoral->shard_paths.size() > 0) {
         float s = 100.0f * std::min(1 + next_sample, shuffle_sample_count) / shuffle_sample_count;
-        sprintf(buffer, "%.1f%%@S%d", s, hDaTokens->shard_index);
+        sprintf(buffer, "%.1f%%@S%d", s, hCoral->shard_index);
     } else {
         sprintf(buffer, "sample@%zu/%zu", std::min(1 + next_sample, shuffle_sample_count), shuffle_sample_count);
     }
@@ -983,8 +1087,8 @@ string SampNanny::IterInfo(int flag) {
 
 string SampNanny::sTokenSet(int flag) {
     char buffer[256] = "\0";
-    if (hDaTokens != nullptr)
-        sprintf(buffer, "%s", hDaTokens->name.c_str());
+    if (hCoral != nullptr)
+        sprintf(buffer, "%s", hCoral->name.c_str());
     else
         sprintf(buffer, "%s", name.c_str());
     return buffer;
@@ -993,7 +1097,7 @@ string SampNanny::sTokenSet(int flag) {
 void SampNanny::Shuffle(bool changed_train_data, int flag) {
     if (empty())
         return;
-    auto& shard_samps = hDaTokens->shard_samps;
+    auto& shard_samps = hCoral->shard_samps;
     size_t count = shard_samps.size(), i, j, nSampInBatch = hFish->config.n_batch();
     if (DEBUG.verShuffleSamp < 0) {
         shuffle_sample_count = shard_samps.size();
@@ -1093,29 +1197,6 @@ static size_t mark_utf8_units(const char* bytes, int* utf8_units, int* utf8_nuni
     return count_utf8;
 }
 
-int DictVAE::STR2T(const char* txt, int txt_len, std::vector<TOKEN_ID>& btch, int flag) {
-    int n_tokens = -1;
-    if (wiki_tutor != nullptr) {
-        n_tokens = wiki_tutor->STR2T(txt, btch, flag);
-    } else {
-        assert(0);
-    }
-    // if(tokenizer_add_bos)
-    //     assert(btch[0]==bos);
-    return n_tokens;
-}
-std::string DictVAE::T2STR(TOKEN_ID tok, int flag) {
-    string word = "";
-
-    if (wiki_tutor != nullptr) {
-        word = wiki_tutor->T2STR(tok, flag);
-    } else {
-        assert(hDict != nullptr);
-        word = hDict->T2STR(tok, flag);
-    }
-    return word;
-}
-
 bool TokenCoral::LoadTokenset(struct CLI_params& config, void* hLLM, int flag) {
     if (config.passLoadToken)
         return true;
@@ -1125,8 +1206,8 @@ bool TokenCoral::LoadTokenset(struct CLI_params& config, void* hLLM, int flag) {
     // rSplit = jKV(jConfig,{"data","eval_split"},rSplit );
     string ssf = "./dataset/Serial/";
 
-    ssf += "_[" + config.model_title + config.dict.type + "]_" + ".tokenset";  // config.serial_path+
-    ssf = serial_root + ".tokenset";                                           // only for debug
+    ssf += "_[" + config.ModelTitle() + config.dict.type + "]_" + ".tokenset";  // config.serial_path+
+    ssf = serial_root + ".tokenset";                                            // only for debug
     // string ssf = config.serial_path+".tokenset";
     if (Serialize(ssf, false)) {
     } else {
@@ -1210,25 +1291,25 @@ hSAMP SampNanny::InitOneSamp(const string& prompt, hGTensor input, Fish* hFish, 
     const char* buf = prompt.c_str();
     // std::vector<TOKEN_ID> btch;
     // btch.resize(10*1024*1024);
-    hDaTokens->tokens.clear();
-    assert(hDaTokens != nullptr && hDaTokens->tokens.size() == 0);
-    // hDaTokens->tokens.clear();
-    int n_tokens = hDict->STR2T(buf, prompt.size(), hDaTokens->tokens, flag);
+    hCoral->tokens.clear();
+    assert(hCoral != nullptr && hCoral->tokens.size() == 0);
+    // hCoral->tokens.clear();
+    int n_tokens = hDict->STR2T(buf, prompt.size(), hCoral->tokens, flag);
     int _nctx    = hFish->config.n_ctx();
     // if(n_tokens>_nctx){  //???
-    //     hDaTokens->tokens.resize(_nctx);
+    //     hCoral->tokens.resize(_nctx);
     // }
-    nMostToken = n_tokens = hDaTokens->tokens.size();
+    nMostToken = n_tokens = hCoral->tokens.size();
     assert(n_tokens > 0);
-    // hDaTokens->tokens.insert(hDaTokens->tokens.begin(),btch.begin(),btch.begin()+n_tokens);
-    auto& my_samps = hDaTokens->shard_samps;
+    // hCoral->tokens.insert(hCoral->tokens.begin(),btch.begin(),btch.begin()+n_tokens);
+    auto& my_samps = hCoral->shard_samps;
     my_samps.clear();
     my_samps.push_back(std::make_shared<SAMP>(0, n_tokens));
     hSAMP samp = my_samps[0];
     // assert(_nvocab==0);
     // _nvocab = hDict->nVocab();
     num_batches = 1;
-    sentence    = hDict->Decode(hDaTokens->tokens);  //  9309,...
+    sentence    = hDict->Decode(hCoral->tokens);  //  9309,...
     if (sentence != prompt) {
         _WARN("sentence!=prompt:\n\t%s\n~~~~~~~~~~~~~~~~~\n\t%s\n", sentence.c_str(), prompt.c_str());
     }
@@ -1558,15 +1639,19 @@ int BATCH_INPUT::FillPrompt(Fish* hFish, const std::vector<std::string>& arrProm
         // no need add bos at the begin of all_tokens
         FillTokens(0, all_tokens, 0.0, 0x0);
     } else if (phasb == P_CHAT_1) {
-        Reset(all_tokens);  // No BOS at sequence start!
+        ReFill(all_tokens);  // No BOS at sequence start!
     }
     return nTokens;
 }
 
-BATCH_INPUT::BATCH_INPUT(Fish* hFish_, SHAPE shape, LIFE_PHASE phasb_, int flag) : hFish(hFish_), phasb(phasb_) {
+BATCH_INPUT::BATCH_INPUT(SampNanny* hNanny_, SHAPE shape, LIFE_PHASE phasb_, int flag) : hNanny(hNanny_), hFish(hNanny->hFish), phasb(phasb_) {
     CHECK_SHAPE(shape);
     if (phasb == P_CHAT_1 || phasb == P_CHAT_N) {
         onlyLogits = true;
+    }
+    if (hFish->role == BACKBONE_LOGITS) {
+        onlyLogits     = true;
+        onlyLastHidden = true;
     }
     hostToken = std::make_shared<GTensor>(nullptr, shape, typNUMBER::I32);
     hostToken->Alloc();
@@ -1574,12 +1659,12 @@ BATCH_INPUT::BATCH_INPUT(Fish* hFish_, SHAPE shape, LIFE_PHASE phasb_, int flag)
     hostMask->Alloc();
     hostMask->Zero();
     nMostSample = shape[1], ldT = shape[0];
-
+    nVToken = hFish->nClass();
     // fNoise    = new float[nMostSample * ldT]();
     SHAPE sp1 = shape;  //{1, T, B};
                         // bool isTarget_1 = true;
                         // if (isTarget_1) {
-    hostLabel = std::make_shared<GTensor>(hFish_, sp1, typNUMBER::I32);
+    hostLabel = std::make_shared<GTensor>(hFish, sp1, typNUMBER::I32);
     hostLabel->Alloc();
 
     if (hFish->config.model.preLogits_dB < 0)
@@ -1588,8 +1673,8 @@ BATCH_INPUT::BATCH_INPUT(Fish* hFish_, SHAPE shape, LIFE_PHASE phasb_, int flag)
         dB4Logit = hFish->config.model.preLogits_dB;
     assert(dB4Logit > 0);
 
-    if (hFish->isAtPhase(P_SFT)) {        //
-        SHAPE spB = {nMostSample, 1, 1};  //     hBatch = std::make_shared<BATCH_INPUT>({T, B});
+    if (hFish->isAtPhase(P_SFT) || hFish->config.common.isPadMask) {  //
+        SHAPE spB = {nMostSample, 1, 1};                              //     hBatch = std::make_shared<BATCH_INPUT>({T, B});
         hostLen   = std::make_shared<GTensor>(nullptr, spB, typNUMBER::I32);
         hostLen->Alloc();
         hostLen->Zero();
@@ -1597,22 +1682,23 @@ BATCH_INPUT::BATCH_INPUT(Fish* hFish_, SHAPE shape, LIFE_PHASE phasb_, int flag)
     hDict     = hFish->GetTokenizer();
     host_toks = TO<int>(hostToken), mask32 = TO<int>(hostMask);
     tok_pos = 0;
-    int tok = CurToken();  //
+    // int tok = CurToken();
+    // if (devMask == nullptr)
+    //     devMask = std::make_shared<huTensor>(hFish, "MaskOfBatch", hostMask->shape, typNUMBER::I32, true, GTensor::F_DEBUG);
 }
 
 void BATCH_INPUT::Init(int flag) {
-    if (hFish->isModel({MD_QWEN})) {
+    if (hFish->isModel({MD_QWEN, MD_AR_QWEN})) {
         auto& S = hFish->GetTokenizer()->S;
         assert(S._mask >= 0 && S._noise >= 0);
         hHuaPLAN = TOKEN_Planner::MakeInstance("BATCH", hFish, shared_from_this());
-        if(hFish->isTrain())
-            hPLAN_1  = TOKEN_Planner::MakeInstance("short-samp", hFish, shared_from_this());
-    } else {
-        transiX.Init(hostToken->ne[0]);
+        if (hFish->isTrain())
+            hPLAN_1 = TOKEN_Planner::MakeInstance("short-samp", hFish, shared_from_this());
     }
+    transiX.Init(hostToken->ne[0]);
 }
 
-void BATCH_INPUT::Reset(const TOKENS& tokens, int flag) {
+void BATCH_INPUT::ReFill(const TOKENS& tokens, int flag) {
     tok_pos = tokens.size() > 0 ? 0 : -1;
     hostToken->Zero();
     for (int i = 0; i < tokens.size(); i++) {
@@ -1622,7 +1708,7 @@ void BATCH_INPUT::Reset(const TOKENS& tokens, int flag) {
     nPrefill = tokens.size();
 }
 
-int BATCH_INPUT::nTokens(int flag) { return hostToken->size(); }
+int BATCH_INPUT::nTokens(int flag) const { return hostToken->size(); }
 // 8948, 198,   2610,    525,    264,  10950,  17847,     13, 151645, 198, 151644,    872,    198,   9707, 151645,    198, 151644,  77091,   198, 151667, 271,
 // 151668,    271,  63716, 151645,    198
 //  12.94 8.38 17.88 0.03 0.67 3.34 0.33 0.61 20.12 0.13 0.00 37.25 0.15 3.53 18.88 0.00 0.00 33.75 8.00 0.00 13.88 1.87 0.00 21.38 23.88
@@ -1647,7 +1733,7 @@ void BATCH_INPUT::DumpX(TOKEN_ID* labels, float* hostLoss, int flag) {
     _INFO("\n\tavg_loss=%g(%d)\n", avg_loss, nLoss);
 }
 
-BATCH_Denoise::BATCH_Denoise(Fish* hFish, SHAPE sp, LIFE_PHASE phasb_, int flag) : BATCH_INPUT(hFish, sp, phasb_, flag) {}
+BATCH_Denoise::BATCH_Denoise(SampNanny *hNanny_, SHAPE sp, LIFE_PHASE phasb_, int flag) : BATCH_INPUT(hNanny_, sp, phasb_, flag) {}
 void BATCH_Denoise::FillTokens(int kRow, const TOKENS& tokens, int x, int flag) {
     nNoiseToken = 0, nPadToken = 0;
     hGTensor tokens_input = hFish->Input(), target_label = hFish->Target();
@@ -1721,7 +1807,7 @@ bool BATCH_INPUT::UpdatePadMask(const std::vector<hSAMP>& samps, int iter, TOKEN
         //     DumpTokens(hDict, TOKENS(line, line + ldT), -1);
         // }
 
-        assert(nTokenLen >= 0 && nTokenLen < ldT);
+        assert(nTokenLen >= 0 && nTokenLen <= ldT);
         bool isAnswer = false;
         answer        = "";
         for (c = 0; c < ldT; c++) {
@@ -1741,10 +1827,11 @@ bool BATCH_INPUT::UpdatePadMask(const std::vector<hSAMP>& samps, int iter, TOKEN
         //     assert(0);
         // }
         const TOKENS_SECTION& section = section_metas[r];
-        assert(section.size() > 0);
+        assert(section.size() == samps[r]->arrROI.size());
         for (auto [a, b] : section) {  // 139,165
             for (c = a; c < b; c++) {  // it's labels, not original tokens
-                assert(samp_token[c] == samp_label[c - 1]);
+                if (c > 0 && needLabel())
+                    assert(samp_token[c] == samp_label[c - 1]);
                 answer += hDict->Decode({(TOKEN_ID)samp_token[c]});
                 BIT_RESET(mask[c - 1], MASK_FLAG::F_IGNORE_LOSS);
                 nValidTokens++;
@@ -1754,8 +1841,9 @@ bool BATCH_INPUT::UpdatePadMask(const std::vector<hSAMP>& samps, int iter, TOKEN
         all_answer += answer + "\n";
     }
     // _INFO("all_answer=%s",all_answer.c_str());
+
     if (devMask == nullptr)
-        devMask = std::make_shared<huTensor>(hFish, "MaskOfBatch", hostMask->shape, typNUMBER::I32, true, GTensor::F_DEBUG);
+        devMask = std::make_shared<huTensor>(hFish, hNanny->name + "MaskOfBatch", hostMask->shape, typNUMBER::I32, true, GTensor::F_DEBUG);
     devMask->OverWrite(hostMask);
     if (nValidTokens < nMostToken) {
         mask   = mask32;

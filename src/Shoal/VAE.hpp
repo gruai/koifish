@@ -8,6 +8,7 @@
 #pragma once
 #include "Fish.hpp"
 
+// Deprcated
 class VariationaAE : public Fish {
    protected:
     int nRefine = 1, tpNorm = 2;

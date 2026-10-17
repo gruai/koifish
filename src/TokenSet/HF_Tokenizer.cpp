@@ -16,15 +16,15 @@
 #include <set>
 #include <sstream>
 #include <string>
-#include <unordered_map>
 #include <utility>  // for std::pair
 #include <vector>
 
+#include "../Shoal/gLLM.hpp"
 #include "../Utils/oniguruma/src/oniguruma.h"
 #include "../Utils/utf8proc/utf8proc.h"
 #include "Dictionary.hpp"
 #include "jinja.hpp"
-#include "ujson.hpp"
+#include "../Utils/json/ujson.hpp"
 
 #ifdef _WIN32
 #include <basetsd.h>
@@ -81,7 +81,7 @@ class Model {
     virtual int token_to_id(const std::string& token) const          = 0;
     virtual std::string id_to_token(int id) const                    = 0;
     virtual size_t vocab_size() const                                = 0;
-    virtual int GetVocabs(VOCAB_MAP& vocab, int flag = 0x0) const    = 0;
+    virtual int GetVocabs(MAP_VOCAB& vocab, int flag = 0x0) const    = 0;
 };
 
 class PostProcessor {
@@ -586,7 +586,7 @@ struct PairHash {
 class BPEModel : public Model {
    public:
     bool use_byte_level_;
-    std::unordered_map<std::string, int> vocab_;
+    MAP_VOCAB vocab_;
     std::unordered_map<int, std::string> id_to_token_;
     std::unordered_map<std::pair<int, int>, int, PairHash> merges_;
     mutable std::mutex cache_mutex_;
@@ -611,7 +611,7 @@ class BPEModel : public Model {
         return (it != id_to_token_.end()) ? it->second : "";
     }
     size_t vocab_size() const override { return vocab_.size(); }
-    int GetVocabs(VOCAB_MAP& vocab, int flag = 0x0) const override {
+    int GetVocabs(MAP_VOCAB& vocab, int flag = 0x0) const override {
         vocab = vocab_;
         return vocab.size();
     }
@@ -719,7 +719,7 @@ class WordPieceModel : public Model {
     std::string unk_token_;
     std::string continuing_subword_prefix_;
     int max_input_chars_per_word_;
-    std::unordered_map<std::string, int> vocab_;
+    MAP_VOCAB vocab_;
     std::unordered_map<int, std::string> id_to_token_;
     int unk_token_id_;
 
@@ -748,7 +748,7 @@ class WordPieceModel : public Model {
     }
 
     size_t vocab_size() const override { return vocab_.size(); }
-    int GetVocabs(VOCAB_MAP& vocab, int flag = 0x0) const override {
+    int GetVocabs(MAP_VOCAB& vocab, int flag = 0x0) const override {
         vocab = vocab_;
         return vocab.size();
     }
@@ -799,7 +799,7 @@ class WordPieceModel : public Model {
 class UnigramModel : public Model {
     std::string unk_token_;
     int unk_token_id_;
-    std::unordered_map<std::string, int> vocab_;
+    MAP_VOCAB vocab_;
     std::unordered_map<int, std::string> id_to_token_;
     std::vector<double> scores_;
     bool byte_fallback_;
@@ -837,7 +837,7 @@ class UnigramModel : public Model {
     }
 
     size_t vocab_size() const override { return vocab_.size(); }
-    int GetVocabs(VOCAB_MAP& vocab, int flag = 0x0) const override {
+    int GetVocabs(MAP_VOCAB& vocab, int flag = 0x0) const override {
         vocab = vocab_;
         return vocab.size();
     }
@@ -1265,20 +1265,20 @@ struct HF_Tokenizer::Impl {
 
     bool load_from_json(HF_Tokenizer* public_api, const json& j) {
         if (j.contains("model") && j["model"].is_object()) {
-            std::string model_type = j["model"].value("type", "");
+            std::string mtype = j["model"].value("type", "");
             // Auto-detect model type if not specified
-            if (model_type.empty()) {
+            if (mtype.empty()) {
                 if (j["model"].contains("vocab") && j["model"]["vocab"].is_array()) {
-                    model_type = "Unigram";
+                    mtype = "Unigram";
                 } else if (j["model"].contains("continuing_subword_prefix") ||
                            (j["model"].contains("vocab") && j["model"]["vocab"].is_object() && !j["model"].contains("merges"))) {
-                    model_type = "WordPiece";
+                    mtype = "WordPiece";
                 } else {
-                    model_type = "BPE";
+                    mtype = "BPE";
                 }
             }
 
-            if (model_type == "WordPiece") {
+            if (mtype == "WordPiece") {
                 // WordPiece model
                 std::string unk_token = j["model"].value("unk_token", "[UNK]");
                 std::string prefix    = j["model"].value("continuing_subword_prefix", "##");
@@ -1288,7 +1288,7 @@ struct HF_Tokenizer::Impl {
                     wp->load(j["model"]["vocab"]);
                 }
                 this->model_ = wp;
-            } else if (model_type == "Unigram") {
+            } else if (mtype == "Unigram") {
                 // Unigram model
                 int unk_id         = j["model"].value("unk_id", 0);
                 bool byte_fallback = j["model"].value("byte_fallback", false);
@@ -1614,7 +1614,7 @@ HF_Tokenizer::HF_Tokenizer(Fish* dolphin, int flag) : impl_(std::make_unique<Imp
         _WARN("[HF_Tokenizer] failed to load \"%s\"!\n", pathTokenJson.c_str());
         vocab.clear();
     }
-    if (dolphin->isModel({MD_QWEN})) {
+    if (dolphin->isModel({MD_QWEN, MD_AR_QWEN})) {
     }
 }
 
@@ -1634,7 +1634,7 @@ bool HF_Tokenizer::InitHF(Fish* dolphin, int flag) {
     string pathTokenJson = dolphin->config.model.sTokenJsonPath, sNull = "";
     assert(empty());
     try {
-        std::ifstream f(pathTokenJson);
+        std::ifstream f(pathTokenJson);  //  ./Models/dcoder/tokenizer.json
         if (!f.is_open())
             return false;
         std::stringstream ss_j;
@@ -1642,9 +1642,15 @@ bool HF_Tokenizer::InitHF(Fish* dolphin, int flag) {
         json j = json::parse(ss_j.str());
         if (j.is_null())
             return false;
-        if (dolphin->isModel({MD_QWEN})) {
-            int _noise_id = 151666;
-            json jNoise   = json::parse(
+        json jVocab, jAddedTokens;
+        int nV0 = 0;
+        if (j.contains("model") && j["model"].contains("vocab")) {
+            jVocab = j["model"]["vocab"];
+            nV0    = jVocab.size();
+        }
+
+        if (dolphin->isModel({MD_QWEN, MD_AR_QWEN})) {
+            json jNoise = json::parse(
                 R"({
                 "id": 151666,
                 "content": "<noise>",
@@ -1654,6 +1660,7 @@ bool HF_Tokenizer::InitHF(Fish* dolphin, int flag) {
                 "normalized": false,
                 "special": true
                 })");
+            bool isNeedNoise = true;
             if (j.contains("added_tokens") && j["added_tokens"].is_array()) {
                 for (const auto& item : j["added_tokens"]) {
                     std::string c    = item.value("content", "");
@@ -1668,12 +1675,20 @@ bool HF_Tokenizer::InitHF(Fish* dolphin, int flag) {
                                                           // Normalizer (lowercasing, unicode NFC, etc.), that step is bypassed for this token.
                     if (c.empty() || id == -1)
                         continue;
-                    assert(id != _noise_id);
+                    if (c == "<noise>") {
+                        isNeedNoise = false;
+                    }
                 }
-                j["added_tokens"].push_back(jNoise);
+                if (isNeedNoise) {
+                    j["added_tokens"].push_back(jNoise);
+                }
             }
         }
-
+        if (j.contains("added_tokens") && j["added_tokens"].is_array()) {
+            jAddedTokens = j["added_tokens"];
+            nAddedToken  = jAddedTokens.size();
+            // assert(nAdded==28);
+        }
         std::ifstream fc(dolphin->config.model.sTokenConfigPath);  // path + "/tokenizer_config.json"
         bool clean_up_spaces = false;
         if (fc.is_open()) {
@@ -1740,27 +1755,27 @@ std::string HF_Tokenizer::T2STR(TOKEN_ID tok, int flag) const {
 
 std::vector<int> HF_Tokenizer::encode(const std::string& text, bool add_special_tokens) const { return impl_->encode(this, text, add_special_tokens); }
 
-std::string HF_Tokenizer::decode(const std::vector<int>& ids, bool skip_special_tokens) const {
+std::string HF_Tokenizer::decode_i(const std::vector<int>& ids, bool skip_special_tokens, int flag) const {
     if (impl_ == nullptr || impl_->model_ == nullptr)
         return "";
-
+    bool isDiatTokens = BIT_TEST(flag, F_DIALECT_TOKENS);
     std::vector<std::string> tokens;
-    for (int id0 : ids) {
-        TOKEN_ID id = id0;
-        if(isDialect && !invT2T.empty()){
-            id = invT2T.at(id);
-        }
+    for (int id0 : ids) {  //
         if (skip_special_tokens) {
             // Check if special token
-            bool special = false;
-            for (const auto& at : impl_->added_tokens_) {
-                if (at.id == id && at.special) {
-                    special = true;
-                    break;
-                }
-            }
+            bool special = isSpecialTok(id0);  // false;
+            // for (const auto& at : impl_->added_tokens_) {
+            //     if (at.id == id && at.special) {
+            //         special = true;
+            //         break;
+            //     }
+            // }
             if (special)
                 continue;
+        }
+        TOKEN_ID id = id0;
+        if (isDialect && !invT2T.empty()) {
+            id = invT2T.at(id);
         }
         std::string t = impl_->model_->id_to_token(id);
         if (!t.empty())
@@ -1773,7 +1788,10 @@ std::string HF_Tokenizer::decode(const std::vector<int>& ids, bool skip_special_
     return out;
 }
 
-int HF_Tokenizer::token_to_id(const std::string& t) const { return impl_->model_ ? impl_->model_->token_to_id(t) : -1; }
+int HF_Tokenizer::token_to_id(const std::string& t) const {
+    int iRet = impl_->model_ ? impl_->model_->token_to_id(t) : -1;
+    return iRet;
+}
 std::string HF_Tokenizer::id_to_token(int id) const { return impl_->model_ ? impl_->model_->id_to_token(id) : ""; }
 int HF_Tokenizer::pad_token_id() const { return impl_->special_tokens_._pad; }
 int HF_Tokenizer::bos_token_id() const { return impl_->special_tokens_.bos; }

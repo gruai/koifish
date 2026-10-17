@@ -7,7 +7,6 @@ In the backward pass, the gradients flow to both, handled by different kernels
 #include <stdint.h>
 
 #include <algorithm>
-#include <unordered_map>
 #include <utility>  // std::pair
 #include <vector>
 

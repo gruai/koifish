@@ -8,7 +8,7 @@
 
 #include "GeQuant.hpp"
 
-#ifdef __USE_GBDT__
+#ifdef __USE_GBDT_IMPURITY__
 #include "../GBDT/data_fold/Distribution.hpp"
 #include "../GBDT/python/pyMORT_DLL.h"
 #include "../GBDT/tree/GBRT.hpp"
@@ -17,12 +17,13 @@ using namespace Grusoft;
 #include <omp.h>
 #endif
 
-#include "../Manifold/Fish.hpp"
 #include "../Manifold/Neuron.hpp"
 #include "../Manifold/Optimizer.hpp"
 #include "../PackedQ.hpp"
+#include "../Shoal/Fish.hpp"
 #include "../Utils/rapidhash.h"
 #include "GTensor.hpp"
+#include "../Device/CUDA/cuda_def.hpp"
 using namespace Grusoft;
 
 hQUANT hQuant_A8 = nullptr, hQuant_A4 = nullptr;
@@ -757,15 +758,13 @@ float GeQuant::RT_NormalF(shared_ptr<GTensor> hTensor, const void* srcData, int 
 
 template class Quantizer<float>;
 template class Quantizer<bf16>;
-#ifdef __USE_GBDT__
-FeatsOnFold* Mat2DORT(LiteBOM_Config config, ExploreDA* edaX, typNUMBER tpN, void* hData, int nMostFeat, int nSamp, DORT_wrap* dort, int flag);
-#endif
+
 /*
     It's really a suprize to find that GBDT_ would improve quant.    cys 11/22/2025
 */
 template <typename T>
 float Q_Impurity<T>::LowBit_GBDT(shared_ptr<GTensor> hTensor, const void* srcData, int flag) {
-#ifdef __USE_GBDT__
+#ifdef __USE_GBDT_IMPURITY__
     double t0 = GST_ms();
     assert(hTensor->isWMAT());
     int nRow = hTensor->shape[0], nCol = hTensor->shape[1];
@@ -776,7 +775,7 @@ float Q_Impurity<T>::LowBit_GBDT(shared_ptr<GTensor> hTensor, const void* srcDat
         LiteBOM_Config& config = dort->config;
         // config.objective       = "quant";
         // _INFO("\n[DORT] nSamp=%d,nFeat_0=%d %s hExDA=%p********* \n\n", nSamp, nFeat_0, dort->merge_info.c_str(), dort->hEDA_train);
-        FeatsOnFold* hFold = Mat2DORT(config, dort->hEDA_train, hTensor->type, (void*)srcData, nFeat_0, nSamp, dort, flag | FeatsOnFold::DF_TRAIN);
+        hTabularData hFold = Mat2DORT(config, dort->hEDA_train, hTensor->type, (void*)srcData, nFeat_0, nSamp, dort, flag | FeatsOnFold::DF_TRAIN);
         this->gama         = new floatGama[nRow * nQuant];
         if (config.objective == "quant") {
             // this->impurity = hFold->Quant(this->bits, this->tpGama, this->gama, this->quant_data, string(hTensor->name), 0x0);
@@ -790,7 +789,7 @@ float Q_Impurity<T>::LowBit_GBDT(shared_ptr<GTensor> hTensor, const void* srcDat
                 floatGama* gama_ = this->gama + nQuant * hFeat->id;
                 hBITARR quant_   = this->quant_data + nSamp * this->bits / 8 * hFeat->id;
                 // MI_Tree(hFold, hFeat);
-                errs[hFeat->id] = hFeat->Quant_RTN(this->bits, this->tpGama, gama_, quant_, hFold, flag);
+                errs[hFeat->id] = hFeat->Quant_RTN(this->bits, this->tpGama, gama_, quant_, hFold.get(), flag);
 
                 // PrintT<floatGama>("feat_gama", gama, 16, 1, 1, 1, -1);
             }
@@ -801,7 +800,7 @@ float Q_Impurity<T>::LowBit_GBDT(shared_ptr<GTensor> hTensor, const void* srcDat
             // _INFO("<QUANT_%d>@%s nF=%d(%ld) impurity=%g[%g-%g]\t t1=%.5gms\n", bits, desc.c_str(), feats.size(), nSamp, impurity, a0, a1, GST_ms() - t0);
         } else {
             int nTree   = 1;                                                                                                       // just grow leaf
-            dort->hGBRT = new GBRT(hFold, nullptr, 0.0, flag == 0 ? BoostingForest::REGRESSION : BoostingForest::CLASIFY, nTree);  //
+            dort->hGBRT = new GBRT(hFold.get(), nullptr, 0.0, flag == 0 ? BoostingForest::REGRESSION : BoostingForest::CLASIFY, nTree);  //
             dort->hGBRT->Train("", 0x0);
             // memory
             dort->hGBRT->ClearData(), dort->hGBRT->ClearHisto();
@@ -812,7 +811,6 @@ float Q_Impurity<T>::LowBit_GBDT(shared_ptr<GTensor> hTensor, const void* srcDat
         // H2D(hTensor->gama_T(), this->gama, sizeof(floatGama) * (nRow + nCol + nRow * nQuant));
         // hTensor->Print(hTensor->name, 0x0, -1);
         // delete[] this->gama;
-        delete hFold;
         delete dort;
 
         //_INFO("<QUANT_%d> @\"%s\" t2=%.3gms\t \n", this->bits, hTensor->name, GST_ms() - t0);
@@ -935,12 +933,12 @@ float Q_Impurity<T>::Core(shared_ptr<GTensor> hTensor, const void* srcData, floa
             break;
     }
     if (this->params.type == QUANT_MODE::MINI_GBDT) {
-#ifdef __USE_GBDT__
+#ifdef __USE_GBDT_IMPURITY__
         dort                   = static_cast<DORT_wrap*>(LiteMORT_init(nullptr, 0, nullptr, 0x0));
         LiteBOM_Config& config = dort->config;
         config.feat_quanti = 1024, config.verbose = 1000, config.objective = "quant";
         // return this->imbalance;  // only for debug
-        FeatsOnFold* hFold = Mat2DORT(dort->config, dort->hEDA_train, hTensor->type, mat1, nRow, nCol, dort, flag | FeatsOnFold::DF_TRAIN);
+        hTabularData hFold = Mat2DORT(dort->config, dort->hEDA_train, hTensor->type, mat1, nRow, nCol, dort, flag | FeatsOnFold::DF_TRAIN);
 
 #pragma omp parallel for
         for (int id = 0; id < nRow; id++) {
@@ -966,11 +964,10 @@ float Q_Impurity<T>::Core(shared_ptr<GTensor> hTensor, const void* srcData, floa
             a1 = std::max(hFeat->wGain, a1), a0 = std::min(hFeat->wGain, a0);  // this->impurity += hFeat->wGain;
             this->impurity += hFeat->errQ;
         }
-        delete hFold;
         delete dort;
 #else
         assert(0);
-#endif        
+#endif
         this->impurity = sqrt(this->impurity / nRow / nCol);
         _INFO("<QUANT_MI_%d>@%s nF=%d(%ld) impurity=%g[%g-%g]\t split=%g t1=%.5gms\n", this->bits, "", nRow, nCol, this->impurity, a0, a1, nSplit * 1.0 / nRow,
               GST_ms() - t0);
@@ -987,7 +984,7 @@ float Q_Impurity<T>::Core(shared_ptr<GTensor> hTensor, const void* srcData, floa
 
 template <typename T>
 Q_Impurity<T>::~Q_Impurity() {
-#ifdef __USE_GBDT__
+#ifdef __USE_GBDT_IMPURITY__
     if (dort != nullptr) {
         LiteMORT_clear(dort);
         dort = nullptr;
@@ -1205,7 +1202,7 @@ bool QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, void* 
     }
     type      = NO_QUANT;
     string s0 = "";
-    if (jQuant.find("VendorQuant") != jQuant.end()) {
+    if (J_has(jQuant, "VendorQuant")) {  //jQuant.find("VendorQuant") != jQuant.end()
         isVendorQuant = true;
 
         // nPassLayer    = -1;  // no pass layer in QWen3

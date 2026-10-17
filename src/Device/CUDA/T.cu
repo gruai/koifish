@@ -5,11 +5,11 @@
  *  \brief Some trial/testing cuda kernels
  *  \author Yingshi Chen
  */
-#include "../../Manifold/Fish.hpp"
 #include "../../Manifold/Neuron.hpp"
 #include "../../Manifold/Optimizer.hpp"
-#include "../../Manifold/gLLM.hpp"
 #include "../../PackedQ.hpp"
+#include "../../Shoal/Fish.hpp"
+#include "../../Shoal/gLLM.hpp"
 #include "./kernel/layernorm.cuh"
 #include "./kernel/operator.cuh"
 
@@ -563,7 +563,9 @@ __global__ void CU_rms_backward_v0(Typ* dX0, Typ* dWeight0, float* dW_scratch, c
 
 hGTensor LayerNormal::cuFlow(hGTensor inpDelta, int flag) {  //,hGTensor deltaIn
     NVTX_RANGE_FN();
-
+    if (name == "model.norm") {  // G_Has_(name, {"norm"})
+        DEBUG_HERE;
+    }
     int nToken = nBatchToken(), nTH = nHead > 0 ? nToken * nHead : nToken;
     const int block_size = 256, block_y = block_size / WARP_SIZE, grid_size = CEIL_DIV(nTH, block_y);
     int nThread = X128::nThreadOfBlock(ldTH, 0);

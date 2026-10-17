@@ -10,7 +10,7 @@
 
 #include "gLLM.hpp"
 
-#include "Fish.hpp"
+#include "../Shoal/gLLM.hpp"
 #include "Optimizer.hpp"
 
 shared_ptr<EDGE_DEVICES> EDGE_DEVICES::GetInstance(const CLI_params& config, int flag) {
@@ -68,7 +68,7 @@ bool NLP_AutoRegressive::Init(const vector<hWIKI>& wikis_, int flag) {
     return true;
 }
 
-NLP_AutoRegressive::NLP_AutoRegressive(const std::string& nam_, struct CLI_params params, ROLE_TYPE role_, int flag) : Fish(nam_, params, role_) {
+NLP_AutoRegressive::NLP_AutoRegressive(const std::string& nam_, struct CLI_params params, MODEL_ROLE role_, int flag) : Fish(nam_, params, role_) {
     if (!config.is({"wiki", "actor"}, "copy")) {
     }
     // config.ffn_use_gate = true;
@@ -195,59 +195,24 @@ void Fish::CopyWeight(const Fish* src, int flag) {
         assert(wiki_tutor == src->wiki_tutor);
         return;
     }
-#ifdef _TENSOR_G_
-#else
-    auto gsrc = src->hForwTG->raw();
-    size_t nx = 0, nz, nT = 0, type_size;
-    vector<hGTensor> tSrc;
-    hGTensor t1;
-    if (isTrain()) {
-        for (int i = 0; i < gsrc->n_nodes; ++i) {
-            hGTensor t0 = gsrc->nodes[i];
-            if (strcmp(t0->name, "output.weight") == 0) {
-                int j = 0;
-            }
-            type_size = BPE(t0->type);
-            if (t0->flags & GTensor::F_PARAM) {
-                t1 = GetGensor(t0->name);
-                assert(t1 != nullptr && t0->type == t1->type);
-                nz = tELEM(t0);
-                assert(nz == tELEM(t1));
-                memcpy(t1->data, t0->data, type_size * nz);
-                nx += nz;
-                nT++;
-            }
-        }
-        assert(nx == src->nParams);
-        return;
-    } else if (!src->loadGensors.empty()) {
-        tSrc = src->loadGensors;
-    }
-    for (auto t0 : tSrc) {
-        t1 = GetGensor(t0->name);
-        assert(t1 != nullptr && t0->type == t1->type);
-        nz        = tELEM(t0);
-        type_size = BPE(t0->type);
-        assert(nz == tELEM(t1));
-        memcpy(t1->data, t0->data, type_size * nz);
-        nx += nz;
-        nT++;
-    }
-#endif
 }
 
 // padded_nCls of [TokenEmbed,Head4Token]   config.model.isPaddedCls    config.model.pad_vocab_size
 size_t NLP_AutoRegressive::nClass() const {
     int nClass = config.model.pad_vocab_size;
     assert(hDict != nullptr);
-    if (hDict != nullptr) {
-        assert(hDict != nullptr);
-        hDict->nVocab() <= nClass;
+    if (hDict != nullptr) {  // get true size of vocab
+        // assert(hDict->nVocab() <= nClass);
         int nV = hDict->nVocab();
         if (config.model.isPaddedCls) {
             nClass = CEIL_DIV(nV, 128) * 128;
-        }else
+        } else
             nClass = nV;
+        // assert(nClass == 3770);  // only for debug
+    }
+    if (config.model.pad_vocab_size != -1) {
+        assert(config.model.pad_vocab_size >= nClass);
+        nClass = config.model.pad_vocab_size;
     }
     return nClass;
 }
@@ -290,12 +255,16 @@ bool NLP_AutoRegressive::InitTokenCoral(int flag) {
     return true;
 }
 bool Fish::InitTokenCoral(int flag) {
+    _INFO("[Tokenset] InitCoral ... \n");
     void* hLLM = nullptr;
-
-    switch (config.ModelArch()) {
+    if (config.dict.type == "koifish") {
+        config.model.sTokenJsonPath   = "./assets/tokenizer/tokenizer.json";
+        config.model.sTokenConfigPath = "./assets/tokenizer/tokenizer_config.json";
+    }
+    switch (arch) {
         case MODEL_ARCH::NLP_GPT2:
         case MODEL_ARCH::NLP_GPT2_char:
-            if (config.ModelArch() == MODEL_ARCH::NLP_GPT2_char) {
+            if (arch == MODEL_ARCH::NLP_GPT2_char) {
                 // hDictVAE = std::make_shared<CDict_CHAR>(this);
                 // hDictVAE->LoadVocab("",0x0);
             } else {
@@ -330,7 +299,8 @@ bool Fish::InitTokenCoral(int flag) {
         case MODEL_ARCH::NTP_QWEN3:
             hDict = std::make_shared<GTokenizer_QWEN3>(this);
             break;
-        case MODEL_ARCH::MD_QWEN: {
+        case MODEL_ARCH::MD_QWEN:
+        case MODEL_ARCH::MD_AR_QWEN: {
             if (config.dict.type == "charset") {  // DEBUG.VocabIsCharset
                 std::vector<char> charset;
                 hDict                       = std::make_shared<GTokenizer_CHARset>(this, charset);
@@ -345,6 +315,9 @@ bool Fish::InitTokenCoral(int flag) {
             assert(0);
             // hDict->vocab.resize(128256);
             break;
+        case MODEL_ARCH::DECISION_MAISUI:
+            assert(hDict != nullptr);
+            break;
         default:
             assert(0 && "DictTokenset don't support current arch!");
             break;
@@ -354,8 +327,10 @@ bool Fish::InitTokenCoral(int flag) {
         assert(0);
         return false;
     }
-    hDict->CheckSpecialTokens(true);
-    _INFO("%s", hDict->Dump(0x0).c_str());
+    if (hDict != nullptr) {
+        hDict->CheckSpecialTokens(true);
+        _INFO("%s", hDict->Dump(0x0).c_str());
+    }
 
     // hDict->DoSomeTest(flag);
     auto [tsTrain_, tsEval_, tsCalib_, tsX_] = TokenCoral::MakeInstance(this, hDict, isLocalInfer, 0x0);
@@ -378,7 +353,9 @@ bool Fish::InitTokenCoral(int flag) {
             curTokenSet = tsTrain;
             break;
         case P_EVAL_:
-            curTokenSet = tsEval_[0];
+            if (role == BACKBONE_LOGITS) {
+            } else
+                curTokenSet = tsEval_[0];
             break;
         default:
             assert(0);
@@ -389,9 +366,9 @@ bool Fish::InitTokenCoral(int flag) {
 }
 
 bool NLP_AutoRegressive::InitInput(void* ctx_build, bool isMask, int flag) {
-    int n_ctx = curContextLen(LIMIT), n_vocab = nClass(), n_batch = config.n_batch();
-    assert(n_ctx > 0 && n_batch > 0);
-    SHAPE shape = {n_batch, n_ctx};
+    int n_ctx = curContextLen(LIMIT), n_vocab = nClass(), sampInBatch = config.n_batch();
+    assert(n_ctx > 0 && sampInBatch > 0);
+    SHAPE shape = {n_ctx, sampInBatch};
 
     // tokens_input copy values from Batch tensor
     tokens_input = GT(this, typNUMBER::I32, shape, GTensor::F_INPUT, "inp_tokens");
@@ -409,22 +386,10 @@ bool NLP_AutoRegressive::CreateExlogists(hWIKI wiki, uint32_t n_ctx, uint32_t n_
     assert(wiki->n_vocab >= nV);
     if (!isLocalInfer) {
         assert(wiki->exLogits == nullptr);
-#ifndef _TENSOR_G_
-        if (wiki->n_vocab > nV) {
-            wiki->exLogits = GT(this, typNUMBER::F32, {nV, n_ctx, n_batch});
-            if (0) {
-                wiki->t2t = GT(this, typNUMBER::F32, {nV, nV});
-                sprintf(wiki->t2t->name, "t2t@%s", wiki->title.c_str());
-            }
-        } else {
-            wiki->exLogits = GT(this, typNUMBER::F32, {wiki->n_vocab, n_ctx, n_batch});
-        }
 
-        tmpExLogis.push_back(wiki->exLogits);
-#else
         size_t nz      = nV * n_ctx * n_batch;
         wiki->exLogits = new float[nz];
-#endif
+
         return true;
     }
     return false;
@@ -473,72 +438,19 @@ void NLP_AutoRegressive::Train(int flag) {
     // RLS_BP *hRLS = hEDS->GetScheduler<RLS_BP>();
     // hRLS->Prepare(-1);
     // UpdateTernary(flag);
-    int64_t now = GST_ms();
-    double ms   = 0;
-    // print_build_info();
-
+    int64_t now              = GST_ms();
     Optimizer::RESULT result = hOPT->Search(nullptr, loss, target_label, config);
     assert(result == Optimizer::OK || result == Optimizer::DID_NOT_CONVERGE);
-    ms = GST_ms() - now;
+    double ms = GST_ms() - now;
     _INFO("\n[%s]: ", hOPT->sTrainStage.c_str());
     _TIME_INFO("Total time=", ms);
     _INFO("\n\n");
 }
 
-#ifdef __USE_GGML__
-#include "ggml-impl.h"
-#endif
 static struct random_normal_distribution* rnd = nullptr;
-// TO DO :  refactor
-void NLP_AutoRegressive::InitGensors(int flag) {
-    /*auto ctx               = GetGGCTX();
-    const uint32_t n_layer = layers.size();
-    for (u_int i = 0; i < n_layer; i++) {
-        auto layer = dynamic_pointer_cast<QKV_LAY>(layers[i]);
-        if (!layer->Q.Empty()) {
-            InitGensor(ctx, layer->att_norm.w, TN(LLM_TENSOR_ATTN_NORM, i), rnd);
-            InitGensor(ctx, layer->Q.w, TN(LLM_TENSOR_ATTN_Q, i), rnd);
-            if (layer->K.w != nullptr)
-                InitGensor(ctx, layer->K.w, TN(LLM_TENSOR_ATTN_K, i), rnd);
-            if (layer->V.w != nullptr)
-                InitGensor(ctx, layer->V.w, TN(LLM_TENSOR_ATTN_V, i), rnd);
-            // InitGensor(ctx,layer->wo,             TN(LLM_TENSOR_ATTN_OUT, i), rnd);
-            InitGensor(ctx, layer->wo, TN("blk.%d.attn_out", i), rnd);
-        }
-        if (layer->ffn_norm.w != nullptr)
-            InitGensor(ctx, layer->ffn_norm.w, TN(LLM_TENSOR_FFN_NORM, i), rnd);
-        if (layer->up.w != nullptr) {
-            if (layer->ffn_gate != nullptr) {
-                InitGensor(ctx, layer->ffn_gate, TN(LLM_TENSOR_FFN_GATE, i), rnd);
-            }
-            InitGensor(ctx, layer->down.w, TN(LLM_TENSOR_FFN_DOWN, i), rnd);
-            InitGensor(ctx, layer->up.w, TN(LLM_TENSOR_FFN_UP, i), rnd);
-        }
-        if (layer->ffn_gate_inp != nullptr) {
-            InitGensor(ctx, layer->ffn_gate_inp, TN(LLM_TENSOR_FFN_GATE_INP, i), rnd);
-            InitGensor(ctx, layer->ffn_gate_exps, TN(LLM_TENSOR_FFN_GATE_EXPS, i), rnd);
-            InitGensor(ctx, layer->ffn_down_exps, TN(LLM_TENSOR_FFN_DOWN_EXPS, i), rnd);
-            InitGensor(ctx, layer->ffn_up_exps, TN(LLM_TENSOR_FFN_UP_EXPS, i), rnd);
-            InitGensor(ctx, layer->ffn_gate_inp_shexp, TN(LLM_TENSOR_FFN_GATE_INP_SHEXP, i), rnd);
-            InitGensor(ctx, layer->ffn_gate_shexp, TN(LLM_TENSOR_FFN_GATE_SHEXP, i), rnd);
-            InitGensor(ctx, layer->ffn_down_shexp, TN(LLM_TENSOR_FFN_DOWN_SHEXP, i), rnd);
-            InitGensor(ctx, layer->ffn_up_shexp, TN(LLM_TENSOR_FFN_UP_SHEXP, i), rnd);
-        }
-    }
-    if (mom.embed2w != nullptr) {
-        InitGensor(ctx, mom.embed2w, "gate_cys", rnd);
-    }
-    if (mos.gat_ != nullptr) {
-        InitGensor(ctx, mos.gat_, "gate_swarm", rnd);
-    }
-    for (auto wiki : wikis) {
-        if (wiki->t2t != nullptr) {
-#ifndef _TENSOR_G_
-            InitGensor(ctx, wiki->t2t, nullptr, rnd);
-#endif
-        }
-    }*/
-}
+
+// Deprecated
+void NLP_AutoRegressive::InitGensors(int flag) {}
 
 void NLP_AutoRegressive::InitModel(int flag) {
     const uint32_t n_ff = config.n_ff();
@@ -559,12 +471,12 @@ void NLP_AutoRegressive::InitModel(int flag) {
                                                                      : "other");
     // _INFO("\t type of ATTENTION=%s P=%s \n",tpATT==ATTENTION_TYPE::BROWN ? "BROWN":"QKV",BROWN_Motion::Transfer_1?"Token":"TokenEmbed");
     tmpExLogis.clear();
-    if (role == ROLE_TYPE::SWARM_FOLLOWER) {
+    if (role == MODEL_ROLE::SWARM_FOLLOWER) {
     } else {
         for (auto wiki : wikis) {
             CreateExlogists(wiki, n_ctx, train_params.n_batch);
         }
-        if (role == ROLE_TYPE::SWARM_HEAD) {
+        if (role == MODEL_ROLE::SWARM_HEAD) {
             mos.Init(swarm, ctx, n_embd);
         }
     }
@@ -726,13 +638,13 @@ bool NLP_AutoRegressive::LocalFeeling(hSampNanny hLoader, vector<float>& result,
     return true;
 }
 
-int Fish::ForwardOnRLS(int iter, int flag) {
+int Fish::ForwardOnRLS(int opt_iter, int flag) {
     // if(DEBUG.back_graph_version==1)
     // { return ForwardOnNeuron_v0(flag);  }
     RLS_BP* hRLS = hEDS->GetScheduler<RLS_BP>();
     double now   = GST_ms();
-    if (iter < 0 || isTrain())
-        hRLS->Prepare(iter, 0);
+    if (opt_iter < 0 || isTrain())
+        hRLS->Prepare(opt_iter, 0);
 
     Head4Token* cls = GetNeuron<Head4Token>("Head4Token", 0);
     int L = config.nLayer(), nzLos = cls->nzLoss, i, nFuyou = hRLS->fuyouSwarm.size();
@@ -770,7 +682,7 @@ int Fish::ForwardOnRLS(int iter, int flag) {
             if (neuron->isShortcut)
                 continue;
             auto t0 = GST_ms();
-            neuron->BeforeForward(iter);
+            neuron->BeforeForward(opt_iter);
             cur                = neuron->Ming(hRLS, cur);
             neuron->stat.tFore = GST_ms() - t0;
             // if (!SYNC_STREAM(neuron->name, 1))

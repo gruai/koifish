@@ -25,8 +25,8 @@ using namespace std;
 #include "../Dynamics/Langevin.hpp"
 #include "../TokenSet/DataLoader.hpp"
 #include "../g_float.hpp"
-#include "Scheduler.hpp"
-#include "WIKI.hpp"
+#include "../Manifold/Scheduler.hpp"
+#include "../Manifold/WIKI.hpp"
 
 class Fish;
 
@@ -45,7 +45,7 @@ struct TOPK_heap {
     float lastLogit = 0.f;  // k-th largest value (smallest in heap)
     virtual bool isLarge(int i, int k, int flag = 0x0) { return false; }
     std::priority_queue<int> heap;
-    std::vector<int> picks;
+    std::vector<int> _picks;
 
     virtual int Select(int nPick, SORT_BY sort = SORT_BY::NO_SORT, int flag = 0x0);
     virtual float ValueAt(int k) {
@@ -59,6 +59,7 @@ struct QU {
     int posOfTarget = -1;
     TOKEN_ID token  = 0;
     float confi     = 0.;  // confidense
+    string word     = "";
 };
 
 struct LogitsInfo : TOPK_heap {
@@ -66,6 +67,9 @@ struct LogitsInfo : TOPK_heap {
     int ver          = 0;
     int posInBatch = 0, posOfTarget = 0;
     bool isCPU = true;
+    float repetition_penalty;      // Need fewer loops
+    float presence_penalty = 0.f;  // Need more topic variety.  Qwen recommending presence_penalty=1.5
+    float frequency_penalty;       // Need less word reuse
 
     float* logits       = nullptr;
     floatX* src         = nullptr;  //  cls->preLogits->host_data
@@ -95,7 +99,7 @@ struct LogitsInfo : TOPK_heap {
 
     virtual void TopK(int k, int flag = 0x0);
     virtual float TopP(float top_p, int k, int flag = 0x0);
-    virtual int Qu_FlipCoin(int flag = 0x0);
+    virtual int Qu_FlipCoin(hTokenizer tokenizer, int flag = 0x0);
 
     virtual void Dump(int type, int flag = 0x0);
 
@@ -217,6 +221,7 @@ class GeneratOnPrompt {
     GeneratOnPrompt() {}
     // GeneratOnPrompt(struct gpt_params& par_, int flag);
     GeneratOnPrompt(CLI_params& cp_, arrHWIKI& wiki_, Fish* hG_, int flag);
+    virtual void InitRandomState(int seed = 20251021, int flag = 0x0);
 
     static shared_ptr<GeneratOnPrompt> MakeInstance(struct CLI_params& params, arrHWIKI& wiki, Fish*, int flag);
 
@@ -232,11 +237,11 @@ class GeneratOnPrompt {
     int original_prompt_len = 0;
 
     virtual void InitInput(int flag = 0x0);
-    virtual void Prepare4N(int iter, hBATCH hBatch, int flag = 0x0);  // Prepare for CHAT_N(diffusion model)
+    virtual void OnPrompt(int iter, hBATCH hBatch, int flag = 0x0);  // Prepare for CHAT_N(diffusion model)
 
     virtual int Tokenize(int flag);
 
-    std::vector<TOKEN_ID> tokens;
+    std::vector<TOKEN_ID> tokens;  //  tokens=hBatch->host_toks[i] (dialect)
     std::vector<std::vector<TOKEN_ID>> antiprompt_ids;
 
     virtual int Generate_v0(int nJob, int flag = 0x0);

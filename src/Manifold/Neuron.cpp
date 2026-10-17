@@ -8,19 +8,18 @@
  */
 #include <set>
 
+#include "../Shoal/gLLM.hpp"
 #include "../lenda/kernel/SVD.hpp"
-#include "Fish.hpp"
 #include "Optimizer.hpp"
-#include "gLLM.hpp"
 
-hNEURON GeNeuron::MakeInstance(Fish* hG_, void* ctx, const string& guid, JSON::const_iterator jit, int flag) {
+hNEURON GeNeuron::MakeInstance(Fish* hG_, void* ctx, const string& guid, const string& jKey, const JSON& jit, int flag) {
     try {
         hNEURON nn = nullptr;
         // assert(j.is_object());
-        auto typ_0 = jit.key();
-        auto v     = jit.value();
+        // auto typ_0 = jit.key();
+        // auto v     = jit.value();
 
-        string typ = typ_0;
+        string typ = jKey;
         std::transform(typ.begin(), typ.end(), typ.begin(), ::toupper);
 
         if (typ.rfind("EMBED", 0) == 0) {
@@ -67,21 +66,20 @@ hNEURON GeNeuron::MakeInstance(Fish* hG_, void* ctx, const string& guid, JSON::c
     }
 }
 
-GeNeuron::GeNeuron(const std::string& key_, JSON::const_iterator jit, Fish* hG_, int flag) : name(key_), hFish(hG_), ID(0) {
+GeNeuron::GeNeuron(const std::string& key_, const JSON& jit, Fish* hG_, int flag) : name(key_), hFish(hG_), ID(0) {
     try {
         Init(hG_, 0x0);
         layid = TGraph::curLayer;
         assert(layid >= 0);
-        if (jit->is_null()) {  //  from no-json constructor
+        if (J_isEmpty(jit)) {  // jit->is_null() from no-json constructor
         } else {
-            if ((*jit).contains(std::string{"#id"})) {
-                ID = (*jit)["id"];
-            }
-            type_info = jit.key();
-            if (jit->is_array()) {
-                for (const auto& item : *jit) {
+            ID = jKV(jit, {"#id"}, ID);
+            // if (jit.contains(std::string{"#id"})) {ID = (jit)["id"];}
+            // type_info = jit.key();
+            if (jit.is_array()) {
+                for (const auto& item : jit) {
                     if (item.is_string()) {
-                        string sVal = item.template get<string>();
+                        string sVal = J_get<string>(item);  //item.template get<string>();
                         std::transform(sVal.begin(), sVal.end(), sVal.begin(), ::toupper);
                         if (sVal == "SPARSE") {
                             isSparse = true;
@@ -91,7 +89,7 @@ GeNeuron::GeNeuron(const std::string& key_, JSON::const_iterator jit, Fish* hG_,
                             assert(0);  // need BLAS support
                         }
                     } else if (item.is_number()) {
-                        double val = item.template get<double>();
+                        double val = J_get<double>(item);   //item.template get<double>();
                         jvals.push_back(val);
                     }
                 }
@@ -182,17 +180,17 @@ Ganglia::Ganglia(Fish* hG_, const string& key_, std::vector<hNEURON>& ns_, int f
     hFish = hG_;
 }
 
-Relu::Relu(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {}
+Relu::Relu(Fish* hG_, const std::string& key_, const JSON& jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {}
 
 bool Relu::Build(int flag) { return true; };
 
 hGTensor Relu::Ming(RLS_BP* ctx_, hGTensor cur, int flag) { return cur; }
 
-Drop::Drop(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {}
+Drop::Drop(Fish* hG_, const std::string& key_, const JSON& jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {}
 bool Drop::Build(int flag) { return true; };
 hGTensor Drop::Ming(RLS_BP* ctx_, hGTensor cur, int flag) { return cur; }
 
-MOE::MOE(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
+MOE::MOE(Fish* hG_, const std::string& key_, const JSON& jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     assert(jvals.size() >= 2);
     shape = {(int)(jvals[0]), (int)(jvals[1])};
     assert(shape[0] > 0 && shape[1] > 0);
@@ -217,33 +215,15 @@ hGTensor MOE::Forward2(void* ctx_, hGTensor inpL, hGTensor wBase, int flag) {
     hGTensor cur = BeforeMing(nullptr, inpL, flag);
     if (cur == nullptr)  //    some operation like symolic analysis
         return cur;
-#ifdef _TENSOR_G_
-#else
-    hGTensor wp_ = ggml_mul_mat(ctx_, w, wBase);  // ggml_reshape_2d(ctx,v3,N, n_batch*n_embd)
-    gTN(wp_, "%s.trans", name.c_str());
-    assert(wp_->ne[0] == 1);
-    wp_ = ggml_reshape_3d(ctx_, wp_, n1, n2, n3);
-    // w_ = ggml_reshape_2d(ctx_, w_, n_ctx,n_batch);
-    if (isSiLU) {  // maybe useful
-        wp_ = ggml_silu(ctx_, wp_);
-    }
-    hGTensor probs = ggml_soft_max(ctx_, wp_);
-    gTN(probs, "%s.probs", name.c_str());
-    probs = ggml_reshape_4d(ctx_, wp_, 1, n1, n2, n3);
-    probs = ggml_repeat(ctx_, probs, cur);
-    //
-    cur = ggml_mul(ctx_, cur, probs);
-    gTN(cur, "%s.moe", name.c_str());
 
-#endif
     return cur;
 }
 string MOE::__repr__(string& suffix, string& prefix, int flag) { return _repr_1(suffix, prefix, "MOE"); };
 
-OutSimilarity::OutSimilarity(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : Head4Token(hG_, key_, jit, flag) {}
+OutSimilarity::OutSimilarity(Fish* hG_, const std::string& key_, const JSON& jit, int flag) : Head4Token(hG_, key_, jit, flag) {}
 
 //  The Unreasonable Effectiveness of Entropy Minimization in LLM Reasoning
-OutEntropy::OutEntropy(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : Head4Token(hG_, key_, jit, flag) {}
+OutEntropy::OutEntropy(Fish* hG_, const std::string& key_, const JSON& jit, int flag) : Head4Token(hG_, key_, jit, flag) {}
 
 /*
     Alias of lm_head - final layer of a language model that:
@@ -251,7 +231,7 @@ OutEntropy::OutEntropy(Fish* hG_, const std::string& key_, JSON::const_iterator 
         3. Projects them to the vocabulary space
         3. Produces probability distributions over tokens
 */
-Head4Token::Head4Token(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
+Head4Token::Head4Token(Fish* hG_, const std::string& key_, const JSON& jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     int nEmbd = hFish->config.nEmbed();
     // _target = hFish->Target();   //null now
     nCls         = hFish->nClass();
@@ -301,15 +281,15 @@ floatLogits* Head4Token::fLogits(int flag) {
 bool Head4Token::BuildPrelogist(int flag) {
     typNUMBER tpL = typeid(floatLogits) == typeid(float) ? typNUMBER::F32 : typNUMBER::BF16, tpA = hFish->config.model.tpActivation;
     //  in some case(char based vocab), nCls<100, but buffer used in many place, like "assert(nTH * ldTH * sizeof(float) <= GTensor::buff_len)";"
-    int ldC = std::max(padded_nCls, B / dB4Logits() * latent * 2);
+    int ldV = std::max(padded_nCls, B / dB4Logits() * latent * 2), dB4L = dB4Logits();
     if (padded_nCls == 66)  // hack for charset
-        ldC = std::max(padded_nCls, latent * 1280);
+        ldV = std::max(padded_nCls, latent * 1280);
     if (/*hFish->isLocalInfer &&*/ hFish->isAtPhase(P_CHAT_1)) {
         preLogits = GT(hFish, tpL, {padded_nCls}, 0x0, "preLogits");
         // preLogits->flags |= GTensor::F_HOSTDATA;
         preLogits->Alloc(0x0, flag);
     } else {
-        SHAPE sp3 = {dB4Logits(), T, ldC};
+        SHAPE sp3 = {ldV, T, dB4Logits()};  //{dB4Logits(), T, ldC};
         preLogits = std::make_shared<huTensor>(hFish, "preLogits", sp3, tpL, true);
     }
     preLogits->host_data = new float[preLogits->nByte()];  // 0x000055555e9dee00
@@ -410,7 +390,7 @@ string Head4Token::__repr__(string& suffix, string& prefix, int flag) {
     return buf;
 };
 
-SLP::SLP(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
+SLP::SLP(Fish* hG_, const std::string& key_, const JSON& jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     assert(jvals.size() >= 2);
     shape = {(int)(jvals[0]), (int)(jvals[1])};
     assert(shape[0] > 0 && shape[1] > 0);
@@ -595,7 +575,7 @@ int SLP::Forw_cpu(float* rhs, float* lhs, int flag) {
     From https://www.reddit.com/r/LocalLLaMA/comments/1npbxpw/reproducing_gpt2_124m_from_scratch_results_notes/ &
    https://github.com/garg-aayush/building-from-scratch/blob/main/gpt-2/ A better gpt2-rope	2.987392	0.320155	Replaced learned embeddings with RoPE
 
-ROPE::ROPE(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
+ROPE::ROPE(Fish* hG_, const std::string& key_, const JSON& jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     assert(jvals.size() >= 1 && jvals[0] > 0);
     alg = hG_->config.model.rope_type;
     // shape={(int)(jvals[0])};
@@ -684,20 +664,6 @@ hGTensor ROPE::Ming(RLS_BP* ctx_, hGTensor inpL, int flag) {
     // hGTensor  t06 = ggml_reshape_4d(ctx_, cur,shape[0],shape[1],shape[2],shape[3]); //n_embd_head, n_head, N, n_batch
     // gTN(t06,"%s$",name.c_str());   //gTN(t06, "t06");
     const int rope_mode = 0;
-#ifdef _TENSOR_G_
-#else
-    hGTensor t07 =
-        n_embd_head == 1 ? cur : ggml_rope_ext(ctx_, cur, KQ_pos, nullptr, n_rot, rope_mode, n_ctx, rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f, 0.0f);
-    gTN(t07, "%s_rope", nam0.c_str());
-    // CYS_0826 hGTensor  t07 = ggml_rope_custom(ctx,t06, KQ_pos, n_rot, 0, n_ctx, 0,rope_freq_base, rope_freq_scale, 0.0f, 1.0f, 0.0f);
-    if (flag == 0) {
-        hGTensor t13 = ggml_permute(ctx_, t07, 0, 2, 1, 3);  //  [24,6,512,32] => [24,512,6,32]
-        gTN(t13, "%s_0213", t07->name);
-        return t13;
-    } else {
-        return t07;
-    }
-#endif
     return cur;
 }
 
@@ -713,7 +679,7 @@ string ROPE::__repr__(string& suffix, string& prefix, int flag) {
     return _repr_1(suffix, prefix, info);
 };
 
-LayerSoftmax::LayerSoftmax(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
+LayerSoftmax::LayerSoftmax(Fish* hG_, const std::string& key_, const JSON& jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     /*
         float scale = 1.f / sqrtf(HS);
         int grid_size = CEIL_DIV(B * NH * T * WARP_SIZE, block_size);
@@ -721,7 +687,7 @@ LayerSoftmax::LayerSoftmax(Fish* hG_, const std::string& key_, JSON::const_itera
     */
 }
 
-LayerNormal::LayerNormal(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
+LayerNormal::LayerNormal(Fish* hG_, const std::string& key_, const JSON& jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     // delta = gBUFF->delta;
     // isRMS = true;
     if (jvals.size() == 1) {
@@ -769,8 +735,7 @@ bool LayerNormal::Build(int flag0) {
     if (b != nullptr)
         b->tpInit = W_ZERO;
     // assert(nIn==C || nIn==hFish->config.nEmbed(-1));
-    SHAPE sp = {B, T}, sp3 = {B, T, nIn};
-    out = GT(hFish, tpActivation, {B, T, nIn}, flag, name + ".out");
+    out = GT(hFish, tpActivation, {nIn, T, B}, flag, name + ".out");  //  {B, T, nIn}
     if (isRMS) {
     } else {
         mean = GT(hFish, typNUMBER::F32, {B, T}, flag, name + ".mean");

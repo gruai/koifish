@@ -50,6 +50,7 @@ typedef shared_ptr<Fish> hFISH;
 typedef vector<hFISH> tpSWARM;
 class NLP_AutoRegressive;
 class K_SafeTensors;
+class FeatPicker;
 
 struct MixOfModels {
     bool isRes = true, isSiLU = false;
@@ -76,7 +77,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
         int ID = -1;
         JSON js;
         JConfig(const JSON& j, int id = -1) : js(j), ID(id) {}
-        virtual bool Valid() { return !js.empty(); }
+        virtual bool Valid() { return !J_isEmpty(js); }
     };
 
    protected:
@@ -97,7 +98,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     hGENERATOR gopt = nullptr;
 
     //  Ref: 1. isAtPhase 2.SetPhase
-    LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;
+    LIFE_PHASE phase       = LIFE_PHASE::P_TRAIN;
     LIFE_PHASE outer_phase = LIFE_PHASE::P_TRAIN;
 
     hTGraph hForwTG = nullptr, hBackTG = nullptr;
@@ -115,8 +116,9 @@ class Fish : public std::enable_shared_from_this<Fish> {
     vector<hGTensor> loadGensors;
     std::vector<hGTensor> xGensors;
 
-    hEDevices hEDS  = nullptr;
-    hKVCache hCache = nullptr;
+    hEDevices hEDS     = nullptr;
+    hKVCache hCache    = nullptr;
+    MAP_<string, shared_ptr<FeatPicker>> Pickers;
 
     bool updateTMap = false;
     // Ref@isTrain      No training process! only Evaluate/GPT/...
@@ -131,6 +133,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
 
     hGTensor in_node = nullptr, out_node = nullptr;  // maybe GPU tensor
     hGTensor loss = nullptr, target_mask = nullptr, target_label = nullptr, KQ_pos = nullptr, pos_embd = nullptr;
+
     hGTensor KQ_mask   = nullptr;  //  mask for 1 head, it will be broadcasted to all heads
     TokenEmbed* hEmbed = nullptr;
     Head4Token* hCLS   = nullptr;  //  GetNeuron<Head4Token>("Head4Token",0);
@@ -144,7 +147,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     // DataTokens tokenset;
     hDataToken tsTrain     = nullptr;  //  always only 1 train set!
     hDataToken tsCalib     = nullptr;  //  May have 1 calib set!
-    hDataToken tsX      = nullptr;  //  
+    hDataToken tsX         = nullptr;  //
     hDataToken curTokenSet = nullptr;  //  always has one
     DataTokens tsEval;                 //  support multiple eval set!
 
@@ -176,7 +179,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     int SAFETENSOR2Gensors(const std::string& path, K_SafeTensors* hst, int flag);
     // Load/Save model wight <=> SafeTensors files(.kun, HF*.safetensors, ...). Support multifiles in one folder!
 
-    MODEL_ARCH arch = MODEL_ARCH::_X_;
+    MODEL_ARCH arch = MODEL_ARCH::_X_;  // each fish has unique arch
     virtual std::string NN2NAME(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix = "", int flag = 0x0);
 
     virtual void Statistic_Quant(int typ, int flag = 0x0);
@@ -190,20 +193,15 @@ class Fish : public std::enable_shared_from_this<Fish> {
     struct CLI_params config;  //  each fish has unique config!
     static tpSWARM swarm;
 
-    enum ROLE_TYPE {
-        COMMON,
-        SWARM_HEAD,
-        SWARM_FOLLOWER,
-    };
-    ROLE_TYPE role = ROLE_TYPE::COMMON;
+    MODEL_ROLE role = MODEL_ROLE::COMMON;
 
     Fish() {}
-    Fish(const std::string& nam_, struct CLI_params params, ROLE_TYPE role_ = COMMON, int flag = 0x0);
+    Fish(const std::string& nam_, struct CLI_params params, MODEL_ROLE role_ = COMMON, int flag = 0x0);
 
     virtual ~Fish() { Clear(); }
     std::shared_ptr<Fish> SharedThis() { return shared_from_this(); }
 
-    virtual bool isModel(std::vector<MODEL_ARCH> arcs, int flag = 0x0);
+    virtual bool isModel(std::vector<MODEL_ARCH> arcs, int flag = 0x0) const;
     virtual bool isRemater(int flag = 0x0) const;
     virtual bool isTemporaryMemory(GeNeuron* neuron, int flag = 0x0) const;
     // return !isLocalInfer
@@ -218,11 +216,13 @@ class Fish : public std::enable_shared_from_this<Fish> {
         }
         return false;
     }
-    virtual bool SetPhase(LIFE_PHASE phase_, LIFE_PHASE outer=P_X, int flag = 0x0);
+    virtual bool SetPhase(LIFE_PHASE phase_, LIFE_PHASE outer = P_X, int flag = 0x0);
 
     // [todo] refactor with curContextLen/curChatLen
     virtual void GetNeuronBT(int& B, int& T, int flag = 0x0) const;
     hBATCH curBatch(int, int flag = 0x0);
+    // BATCH_INPUT::NOISE_TYPE curNoiseType(int flag = 0x0) const;
+
     int curContextLen(CHAT_LENGTH_TYPE type = CHAT_LENGTH_TYPE::RECOMMEND) const;  // for train/infer/chat ...
     int curChatLen(CHAT_LENGTH_TYPE type = CHAT_LENGTH_TYPE::RECOMMEND) const;     // max_sequence_length for chat
     CHAT_MODE ChatMode(int flag = 0x0) const {
@@ -293,7 +293,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
         return 0;
     }
 
-    virtual bool Init(const vector<hWIKI>& wikis, int flag = 0x0) { throw "Fish::Init is ..."; }
+    virtual bool Init(const vector<hWIKI>& wikis, int flag = 0x0);
 
     virtual hKVCache curCache(int flag = 0x0) { return hCache; }
     virtual void* GetGGCTX(int typ = 0x0) {
@@ -367,26 +367,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
 
     // If isParam 1) call InitParam@huTensor::Alloc(random or serialize); 2) alloc grad if isTrain;
     void InitGensor(void* ctx, const string& name, hGTensor gensor, bool isParam, int flag = 0);
-
     void InitGensor(void* ctx, hGTensor gensor, const char* name, struct random_normal_distribution* rnd = nullptr, int flag = 0);
-
-    void SetTensor(const int nx, const int ny, const std::vector<float>& arr_data, const char* name, int flag = 0x0) {
-        assert(0);  //  Drepecated
-        hGTensor inp = GetGensor("inp");
-        float* data  = (float*)inp->data;
-        assert(data != nullptr);
-        const int n = nx * ny;
-        // assert(nx == n_img_size && ny == n_img_size);
-        for (int k = 0; k < 3; k++) {
-            for (int y = 0; y < ny; y++) {
-                for (int x = 0; x < nx; x++) {
-                    data[k * n + y * nx + x] = arr_data[3 * (y * nx + x) + k];
-                }
-            }
-        }
-    }
-
-    void SetInput(const int nx, const int ny, const std::vector<float>& arr_data, int flag = 0x0) { SetTensor(nx, ny, arr_data, "inp", flag); }
 
     virtual void Neck(const std::string& key_, const SHAPE& shape, int flag = 0x0) { ; }
     // Deprecated
@@ -434,6 +415,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
 
     virtual void Train(int flag = 0x0);
     virtual float Evaluate(std::vector<hDataToken>, DL_BATCH_UPATE tpBatch, int flag = 0x0);
+    int CollateHidden(hDataToken, const std::string&, int flag = 0x0);
     virtual void Loss(int flag = 0x0) {}
     virtual double Eval_ppl(int flag = 0x0);
 
@@ -447,7 +429,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
         _WANDB_log(1.0);
 #endif
     }
-    static hFISH MakeInstance(const std::string nam_, struct CLI_params& params, vector<hWIKI> wikis, ROLE_TYPE role, int flag);
+    static hFISH MakeInstance(const std::string nam_, struct CLI_params& params, vector<hWIKI> wikis, MODEL_ROLE role, int flag);
     static hFISH MakeSwarm(const std::string nam_, struct CLI_params& params, int flag);
     static hFISH MakeInstance(const std::string nam_, struct CLI_params& params, const Fish* hSrc_, int flag);
     // static Fish* Copy(const Fish* src,int flag=0x0);
@@ -483,6 +465,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     friend class GST_TensorBuffer;
     friend class KoifishApp;
     friend class BubbleApp;
+    friend class Maisui;
 };
 
 /*

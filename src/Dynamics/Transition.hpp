@@ -90,7 +90,7 @@ struct TOKEN_Planner {
     // virtual lState PickGroup(int64_t step, int nSamp, int type, int flag = 0x0);
 
     virtual bool Transition4Batch(int iter, std::shared_ptr<BATCH_INPUT> hBatch, int flag = 0x0);
-    virtual bool Transition4Samp(SAMP* hSamp, int flag = 0x0) { NOT_IMPLEMENTED; }
+    virtual bool Transition4Samp(SAMP* hSamp, int flag = 0x0);
     // For fixed prefill, get all trainsitions
     virtual bool Init4Prefill(int minPrefill, int type, int flag = 0x0) { NOT_IMPLEMENTED; }
     virtual bool InitAllTrainsitions(int minPrefill, int mostPrefill, int flag = 0x0);
@@ -122,7 +122,7 @@ struct TPLAN_SNR_sequence : public TPLAN_SNR {
 struct TPLAN_Dilate : public TOKEN_Planner {
     TPLAN_Dilate(const std::string& nam_, Fish* hFish, std::shared_ptr<BATCH_INPUT>, int flag = 0x0);
     bool Transition4Batch(int iter, std::shared_ptr<BATCH_INPUT> hBatch, int flag = 0x0) override;
-    bool Transition4Samp(SAMP* hSamp, int flag = 0x0) override;
+    // bool Transition4Samp(SAMP* hSamp, int flag = 0x0) override;
 
     // bool InitAllTrainsitions(int minPrefill, int mostPrefill, int flag = 0x0) override;
     bool Init4Prefill(int minPrefill, int type, int flag = 0x0) override;

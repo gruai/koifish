@@ -8,7 +8,7 @@
 
 #include "Transition.hpp"
 
-#include "../Manifold/Fish.hpp"
+#include "../Shoal/Fish.hpp"
 #include "../TokenSet/Batch.hpp"
 
 /**
@@ -33,7 +33,8 @@ bool TPLAN_SNR::Init4Prefill(int prefill, int type, int flag) {
 
     std::vector<int> ids0, ids, status;
     status.resize(cur_len);
-    bool isFixID = BIT_TEST(flag, F_ABSOLUTE_ID);
+    bool isFixID = true;  // always true since 2026/09/14
+    // isFixID = BIT_TEST(flag, F_ABSOLUTE_ID);
     for (int i = 0; i < cur_len; i++) ids0.push_back(i);
     for (int step = 0; step < nMostStep; step++) {
         // float scale = RelativeRate(step), s;
@@ -127,7 +128,6 @@ bool TPLAN_SNR::Transition4Batch(int iter, std::shared_ptr<BATCH_INPUT> hBatch, 
 };
 
 bool TOKEN_Planner::InitAllTrainsitions(int minPrefill, int mostPrefill, int flag) {
-    // int samp_len = seq_len;
     int nzPrefill = 0, nzDenoise = 0;
     std::vector<HUA_STATE> current;
     current.resize(samp_len);
@@ -141,6 +141,8 @@ bool TOKEN_Planner::InitAllTrainsitions(int minPrefill, int mostPrefill, int fla
         arrGroup.clear();
         int cur_len = samp_len - prefill;
         for (int i = 0; i < prefill; i++) current[i] = HUA_STATE::TOKEN;
+        if (samp_len == 601)
+            DEBUG_HERE;
         Init4Prefill(prefill, 0x0, flag);
         for (auto group : arrGroup) {
             for (auto pos : group) {

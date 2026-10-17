@@ -38,6 +38,8 @@ class RLS_BP;
 class SparseNeuron;
 class KVCache;
 class GeQuant;
+class FeatPicker;
+    
 /**
  * Each Neuron has
  * 1. inp,out,w
@@ -125,6 +127,7 @@ class GeNeuron {
     GeNeuron* hGuoke = nullptr;
     std::set<hGTensor> tReloads;
     shared_ptr<GeQuant> hQuant = nullptr;
+    shared_ptr<FeatPicker> hPicker = nullptr;
     // std::vector<shared_ptr<GeNeuron>> brothers;
     virtual std::string _NAME(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix = "", int flag = 0x0);
 
@@ -136,7 +139,7 @@ class GeNeuron {
 
     DATA_PLACE place = DATA_PLACE::VOID;
 
-    static shared_ptr<GeNeuron> MakeInstance(Fish* hG_, void* ctx_build, const string& guid, JSON::const_iterator jit, int flag = 0x0);
+    static shared_ptr<GeNeuron> MakeInstance(Fish* hG_, void* ctx_build, const string& guid, const string& jKey, const JSON& jit, int flag = 0x0);
     int B, T;  // from n_batch,n_ctx
 
     // w is the 道 of neuron.   道者,千变万化之动(wLoABs)
@@ -156,7 +159,7 @@ class GeNeuron {
     string sT        = "";  //  short-cut infomation
     std::string name = "N", type_info = "";
     GeNeuron() {}
-    GeNeuron(const std::string& key_, JSON::const_iterator jit, Fish* hG_, int flag);
+    GeNeuron(const std::string& key_, const JSON& jit, Fish* hG_, int flag);
     GeNeuron(const std::string& key_, Fish* hG_, int flag);
     virtual ~GeNeuron();
 
@@ -192,6 +195,10 @@ class GeNeuron {
     virtual bool Empty() const { return shape.size() == 0; }
     virtual size_t nElem() { return 0x0; }
     virtual bool PrepareShadow(int flag = 0x0);
+
+    virtual bool InitFeatPicker(const std::string& name, int dim_, int flag = 0x0);
+    virtual bool AppendFeats(hGTensor feat, int samp_id, int flag = 0x0);
+
     // memory management at different place
     virtual void ManageMemory(DATA_PLACE target, int typ = 0x0, int flag = 0x0);
     virtual bool AfterActivate(hGTensor t, DATA_PLACE target, int typ, int flag = 0x0) { return true; }
@@ -256,33 +263,9 @@ struct INSPECT {
     }
 };
 
-class HotPicker;
 class TokenEmbed;
 template <typename T>
 class LoSVD;
-
-// Pick some neurons from context sparcity
-class CS_Picker {
-   protected:
-    bool isMerge = false;
-    int dim = -1, nLastHot = -1;
-    float T_hot = 0.2, T_zero = 1.0e-3;
-
-   public:
-    int* hot     = nullptr;
-    float* dTemp = nullptr;
-    static double tPick;  //  Picker should much fast than dot!
-    CS_Picker() {}
-    CS_Picker(shared_ptr<Fish> hFish, int flag = 0x0);
-    //  uses the first layer’s attention output to predict the sparsity pattern for the entire model
-    virtual ~CS_Picker() {
-        FREE_a(hot);
-        FREE_a(dTemp);
-    }
-
-    int Update(int level, float* hb, int flag = 0x0);
-};
-typedef shared_ptr<CS_Picker> hCSPicker;
 
 /*
 How get sparse index
@@ -299,9 +282,6 @@ class SparseNeuron : public GeNeuron {
 
     // subw = w[samples]
     TokenEmbed* subw = nullptr;
-
-    shared_ptr<HotPicker> hPicker = nullptr;
-
     // hGTensor u = nullptr, s = nullptr, v = nullptr;
     shared_ptr<LoSVD<float>> hSVD = nullptr;
 
@@ -310,7 +290,7 @@ class SparseNeuron : public GeNeuron {
 
    public:
     SparseNeuron() {}
-    SparseNeuron(const std::string& key_, JSON::const_iterator jit, Fish* hG_, int flag);
+    SparseNeuron(const std::string& key_, const JSON& jit, Fish* hG_, int flag);
     SparseNeuron(const std::string& key_, Fish* hG_, int flag);
     virtual ~SparseNeuron() {}
 
@@ -357,7 +337,7 @@ class ROPE : public SparseNeuron {
    public:
     ROPE() {}
     ROPE(SelfAttention* hQKV, const std::string& key_ = "", int flag = 0x0);
-    // ROPE(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
+    // ROPE(Fish* hG_, const std::string& key_, const JSON& jit, int flag);
     bool Build(int flag) override;
     hGTensor Ming(RLS_BP* hRLS, hGTensor cur, int flag = 0x0) override;
     int cuFlow(SelfAttention* hQKV, uint32_t seed, bool isFX = true, int flag = 0x0);
@@ -374,7 +354,7 @@ struct Relu : public SparseNeuron {
     SLP* slp_gate = nullptr;
 
     Relu() { ; }
-    Relu(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
+    Relu(Fish* hG_, const std::string& key_, const JSON& jit, int flag);
     ACTIVATION_FUNC fAct = SWIG;
     int version          = 0;
     virtual hGTensor Ming(RLS_BP* hRLS, hGTensor cur, int flag = 0x0) override;
@@ -387,7 +367,7 @@ struct Relu : public SparseNeuron {
 };
 
 struct Drop : public SparseNeuron {
-    Drop(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
+    Drop(Fish* hG_, const std::string& key_, const JSON& jit, int flag);
     virtual hGTensor Ming(RLS_BP* hRLS, hGTensor cur, int flag = 0x0) override;
     bool Build(int flag) override;
     bool isValid() override { return true; }
@@ -399,7 +379,7 @@ struct SLP : public SparseNeuron {
     float alpha_forw = 1.0f, alpha_back = 1.0f;
     floatX* gW = nullptr;
     SLP() {}
-    SLP(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
+    SLP(Fish* hG_, const std::string& key_, const JSON& jit, int flag);
     // The channel/neuron number of input&output
     int nIn = -1, nOut = -1;
     bool Empty() const override { return w == nullptr; }
@@ -447,7 +427,7 @@ struct LayerNormal : public SparseNeuron {
     hGTensor mean = nullptr, rstd = nullptr;
     float scale = 0.0;
     LayerNormal() {}
-    LayerNormal(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
+    LayerNormal(Fish* hG_, const std::string& key_, const JSON& jit, int flag);
     bool Build(int flag) override;
     hGTensor Ming(RLS_BP* hRLS, hGTensor cur, int flag) override;
     hGTensor cuFlow(hGTensor inpL, int flag = 0x0);
@@ -459,14 +439,14 @@ struct LayerNormal : public SparseNeuron {
 
 struct LayerSoftmax : public SparseNeuron {
     LayerSoftmax() {}
-    LayerSoftmax(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
+    LayerSoftmax(Fish* hG_, const std::string& key_, const JSON& jit, int flag);
 };
 
 struct MOE : public SparseNeuron {
     bool isSiLU  = false;
     int head_dim = -1, n_head = -1;
     MOE() {}
-    MOE(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
+    MOE(Fish* hG_, const std::string& key_, const JSON& jit, int flag);
     bool Build(int flag) override;
     hGTensor Forward2(void* ctx0, hGTensor cur, hGTensor, int flag = 0x0) override;
     bool isValid() override { return true; }
@@ -476,22 +456,6 @@ struct MOE : public SparseNeuron {
 //  reversible residual network (RevNet)
 class RevNet : public SparseNeuron {};
 
-enum UIDs {
-    Q_UID,
-    K_UID,
-    V_UID,
-    Attn_scale_UID,
-    O_UID,
-    dO_UID,
-    dQ_UID,
-    dK_UID,
-    dV_UID,
-    STATS_UID,
-    BIAS_UID,
-    DBIAS_UID,
-    SEQ_LEN_Q_UID,
-    SEQ_LEN_KV_UID,
-};
 class SelfAttention : public SparseNeuron {
    protected:
     int tpNormal = 1, n_ff = 0;
@@ -500,6 +464,7 @@ class SelfAttention : public SparseNeuron {
     bool isQKNormal    = false;
     bool isNormalOutpu = false;  // Like 'attn_sub_norm' of Bitnet
     bool isVarLen      = false;  // QKV has different len(padding,...)
+
     QKV_PACK qkv4dnn, qkvPack = QKV_PACK::QQKKVV;
 
     bool isSeparateQKV = false;
@@ -561,6 +526,7 @@ class SelfAttention : public SparseNeuron {
    public:
     bool use_cache = false;
     bool isLast    = false;
+    int causalMode = 1;
     float f_max_alibi_bias;
     int n_head, head_dim, n_head_kv, n_embd_gqa, n_embd, q_dim = -1, kv_dim = -1;
     int C_qkv       = -1;       //  C_qkv maybe much less than C
@@ -579,7 +545,7 @@ class SelfAttention : public SparseNeuron {
     SLP proj_cat;  //   concatenate the heads and combine them with a final weight matrix.
     // SLP qkv;
     SelfAttention() {}
-    SelfAttention(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
+    SelfAttention(Fish* hG_, const std::string& key_, const JSON& jit, int flag);
     virtual ~SelfAttention() { attn_k = nullptr, attn_q = nullptr; }
     bool Build(int flag) override;
 
@@ -595,8 +561,7 @@ class SelfAttention : public SparseNeuron {
 
     friend class ROPE;
 };
-// B, Hq, Hkv, T, head_dim, x
-using QKV_KEY6 = std::tuple<int, int, int, int, int, int>;
+
 /*
     Gated SelfAttention
 */
@@ -607,7 +572,7 @@ struct GatedAttention : public SelfAttention {
 
    public:
     GatedAttention() {}
-    GatedAttention(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
+    GatedAttention(Fish* hG_, const std::string& key_, const JSON& jit, int flag);
     bool Build(int flag) override;
     hGTensor Ming(RLS_BP* hRLS, hGTensor cur, int flag) override;
     bool isValid() override { return true; }
@@ -621,7 +586,7 @@ struct cuAttention : public SelfAttention {
 
    public:
     cuAttention() {}
-    cuAttention(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
+    cuAttention(Fish* hG_, const std::string& key_, const JSON& jit, int flag);
     bool Build(int flag) override;
     hGTensor Ming(RLS_BP* hRLS, hGTensor cur, int flag) override;
     bool isValid() override { return true; }
@@ -636,7 +601,7 @@ struct BROWN_attn : public SelfAttention {
 
    public:
     BROWN_attn() {}
-    BROWN_attn(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
+    BROWN_attn(Fish* hG_, const std::string& key_, const JSON& jit, int flag);
     bool Build(int flag) override;
 
     hGTensor Ming(RLS_BP* hRLS, hGTensor cur, int flag) override;
@@ -663,7 +628,7 @@ class VarCoder : public SparseNeuron {
     LayerNormal normDown;  // Like 'ffn_sub_norm' of Bitnet
     // hGTensor encode=nullptr,decode=nullptr,norm=nullptr;
     VarCoder() {}
-    VarCoder(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
+    VarCoder(Fish* hG_, const std::string& key_, const JSON& jit, int flag);
     VarCoder(Fish* hG_, std::vector<int>& dims, int level, bool isR = false, bool isSym = true, int tpN = 2, int flag = 0x0);
     virtual hGTensor ENC(const hGTensor x0);
     virtual hGTensor DEC(hGTensor x);
@@ -687,7 +652,7 @@ struct FFN : public VarCoder {
 
     static FFN* first;
     FFN() {}
-    FFN(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
+    FFN(Fish* hG_, const std::string& key_, const JSON& jit, int flag);
     virtual ~FFN() {}
     bool Build(int flag) override;
     std::vector<GeNeuron*> SubNeurons(int flag = 0x0) override;
@@ -740,7 +705,7 @@ struct TokenEmbed : public SparseNeuron {
     GRander rRounding;
 
     TokenEmbed() {}
-    TokenEmbed(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
+    TokenEmbed(Fish* hG_, const std::string& key_, const JSON& jit, int flag);
     virtual ~TokenEmbed();
     virtual bool UpdateBucket(int type, int flag = 0x0);
     // void WorkloadOnBucker_v0(int* inputs_cpu, int flag);  Deprecated
@@ -784,11 +749,11 @@ struct Head4Token : public SparseNeuron {
     float metric[METRIC_MOST], *dev_metric = nullptr;
     // hSampNanny hLoader = nullptr;
     int nCls = 0, nzLoss = 0, latent = 0;
-    int dB4Logits(int flag=0x0);        //  hBatch->dB4Logits
-    int padded_nCls;  // padded to e.g. %128==0,
+    int dB4Logits(int flag = 0x0);  //  hBatch->dB4Logits
+    int padded_nCls;                // padded to e.g. %128==0,
     float rLoss = 1.0, *hostLoss = nullptr;
     Head4Token() {}
-    Head4Token(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
+    Head4Token(Fish* hG_, const std::string& key_, const JSON& jit, int flag);
     virtual ~Head4Token() {
         if (hostLoss != nullptr)
             delete[] hostLoss;
@@ -804,12 +769,12 @@ struct Head4Token : public SparseNeuron {
 };
 
 struct OutSimilarity : public Head4Token {
-    OutSimilarity(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
+    OutSimilarity(Fish* hG_, const std::string& key_, const JSON& jit, int flag);
     hGTensor cuFlow(hGTensor inpL, int flag) override;
 };
 
 struct OutEntropy : public Head4Token {
-    OutEntropy(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag);
+    OutEntropy(Fish* hG_, const std::string& key_, const JSON& jit, int flag);
     // hGTensor cuFlow(hGTensor inpL,int flag)  override;
 };
 

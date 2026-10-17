@@ -1,12 +1,19 @@
-#include "Fish.hpp"
+/**
+ *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-License-Identifier: MIT
+ *
+ *  \brief
+ *  \author Yingshi Chen
+ */
+
+#include "../Shoal/gLLM.hpp"
 
 tpSWARM Fish::swarm = {};
 
-
-Pangpi::Pangpi(const std::string &nam_, struct CLI_params params, int flag) {
+Pangpi::Pangpi(const std::string& nam_, struct CLI_params params, int flag) {
     assert(swarm.size() > 0);
     for (auto fish : swarm) {
-        if (fish->role == ROLE_TYPE::SWARM_HEAD) {
+        if (fish->role == MODEL_ROLE::SWARM_HEAD) {
             assert(head == nullptr);
             head = fish;
         }
@@ -25,7 +32,7 @@ void Pangpi::Train(int flag) {
     }
 }
 
-void Pangpi::cross_over(const Pangpi *A, const Pangpi *B, int flag) {
+void Pangpi::cross_over(const Pangpi* A, const Pangpi* B, int flag) {
     assert(space == BIT_MASK);
     int DIM = position.size(), i;
     int pos = 0;  // rander_.RandInt32() % DIM;

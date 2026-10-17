@@ -24582,70 +24582,30 @@ using JSON = nlohmann::ordered_json;
 
 bool LoadJsonFile(const std::string&jPath,JSON&jObj,int flag=0x0);
 JSON jKEY(const JSON& jConfig,const std::vector<std::string>&keys,int flag=0x0);
-
-template<typename T>
-T jKV(const JSON& jConfig,const std::vector<std::string>&keys,T default_value,bool isCLI=true,int flag=0x0) {
-    assert(keys.size()>0);
-    std::string last = keys[keys.size()-1];
-try{    
-    JSON cur = jKEY(jConfig,keys);
-    std::string sKey=keys[0];
-    for(auto it=keys.begin()+1; it<keys.end();it++)  sKey += "::"+(*it);    //last= keys[keys.size()-1];
-    if(cur.is_null() || cur.empty()){
-        // if(isCLI)
-        //     std::cout<<"{"<<sKey<<"}"<<" := " << default_value<<std::endl;
-        return default_value;
-    }
-        
-    // T val = cur.get();
-    T val = cur.template get<T>();
-    if(isCLI)
-        std::cout<<"{"<<sKey<<"}"<<" = "<<val<<std::endl;
-    return val;
-}   catch(JSON::parse_error &e){
-    printf("\r\n%s  Failed to parse %s!!! ERR=%s",__func__,last.c_str(),e.what());
-    std::abort();
-}   catch(...){
-    printf("\r\n%s  Unknown exception @%s!!!",__func__,last.c_str());
-    std::abort();
+bool inline J_has(const JSON& jObj, const std::string& key, int flag = 0x0) {
+    return jObj.find(key) != jObj.end();
 }
+bool inline J_isEmpty(const JSON& jObj) {
+    return jObj.is_null() || jObj.empty();
 }
 
-template<typename T>
-T jKVs(const JSON& jConfig,const std::vector<std::string>&keys,T default_value){
-    std::string info="";
-    info = jKV(jConfig,keys,info,false,0x0);
-    T t = default_value;
-    // G_S2T_(info,t);
-    std::stringstream ss(info);
-    ss>>t;
-    return t;
+std::vector<uint8_t> inline J_to_msgpack(const JSON& js){
+    return JSON::to_msgpack(js);
 }
-template<typename T>
-std::vector<T> jKV_arr(const JSON& jConfig,const std::vector<std::string>&keys,std::vector<T> default_value,bool isCLI=true,int flag=0x0) {
-    JSON cur = jKEY(jConfig,keys);
-    std::string sKey="";
-    for(auto key:keys)  sKey += key+"::";    //last= keys[keys.size()-1];
-    if(cur.is_null() || cur.empty()){
-        // if(isCLI)
-        //     std::cout<<"{"<<sKey<<"}"<<":=" << default_value<<std::endl;
-        return default_value;
-    }
-        
-    // T val = cur.get();
-    std::vector<T> val = cur.template get<std::vector<T>>();
-    // if(isCLI)
-    //     std::cout<<"{"<<sKey<<"}"<<"="<<default_value<<std::endl;
+JSON inline J_from_msgpack(const std::vector<uint8_t>& msgpack){
+    return JSON::from_msgpack(msgpack);
+}
+
+template <typename T>
+T J_get(const JSON& jObj) {
+    T val = jObj.template get<T>();
     return val;
 }
 
-template<typename T>
-bool jKV_is(const JSON& jConfig,const std::vector<std::string>&keys,T target,int flag=0x0) {
-    JSON cur = jKEY(jConfig,keys);
-    if(cur.is_null() || cur.empty())
-        return false;
-    T val = cur.template get<T>();
-    return val==target;
+template <typename T>
+std::vector<T> J_getArray(const JSON& jObj) {
+    std::vector<T> val = jObj.template get<std::vector<T>>();
+    return val;
 }
 
 void UpdateJConfig(JSON& jConfig,const std::string&jPath);

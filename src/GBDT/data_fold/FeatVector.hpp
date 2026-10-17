@@ -198,7 +198,12 @@ class FeatVector {
     virtual void RefineThrsh(const FeatsOnFold* hData_, const MT_BiSplit* hBlit, int flag = 0x0) {}
     // virtual void SetSplitInfo(MT_BiSplit *hBlit, FeatBlit&box, int flag = 0x0) { throw "FeatVector::SetSplit is ..."; }
     virtual void BinaryOperate(FeatVector*, BINARY_OPERATE opt, int flag = 0x0) { throw "FeatVector::BinaryOperate is ..."; }
+
+    friend class FeatVec_LOSS;
 };
+typedef std::shared_ptr<FeatVector> hFeatVector;
+// typedef std::vector<hFeatVector> arrFEATS;
+typedef std::vector<FeatVector*> arrFEATS;
 
 FeatVector* FeatVecQ_InitInstance(FeatsOnFold* hFold, FeatVector* hFeat, int x, int flag = 0x0);
 

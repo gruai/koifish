@@ -125,11 +125,11 @@ void FeatVec_LOSS::EDA(ExploreDA *edaX, int flag) {
             size_t nPosi = 0, nNega = 0;
             HistoGRAM *histo = disY != nullptr ? disY->histo : nullptr;
             assert(histo != nullptr);
-            if (histo != nullptr) {
-                assert(histo->nBins == 2 || histo->nBins == 3);
+            if (histo != nullptr) {        
+                assert(histo->nBins == 2 || histo->nBins == 3);  //if all 1/0, no need to train a classifier        
                 nPosi = histo->bins[1].nz;
                 nNega = histo->bins[0].nz;
-                printf("\tNumber of positive : %ld, number of negative : %ld\n", nPosi, nNega);
+                printf("\tNumber of positive : %ld, number of negative : %ld\n", nPosi, nNega);                
             }
         }
         // printf("********* EDA::Analysis......OK\n");

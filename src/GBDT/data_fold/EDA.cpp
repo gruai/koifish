@@ -53,6 +53,14 @@ void ExploreDA::AddDistri(const PY_COLUMN* PY, int id, int flag) {
     mapDistri.insert(pair<int, Distribution*>(id, distri));
 }
 
+void ExploreDA::AddDistri(const std::string& name, int id, int flag) {
+    assert(mapDistri.find(id) == mapDistri.end());
+
+    Distribution* distri = new Distribution();
+    distri->nam = name.empty() ? "feat_" + std::to_string(id) : name;
+    mapDistri.insert(pair<int, Distribution*>(id, distri));
+}
+
 Distribution* ExploreDA::GetDistri(int id) {
     if (mapDistri.find(id) == mapDistri.end()) {
         printf("\nEDA_%s::GetDistri id=%d is XXX\n", name.c_str(), id);
@@ -231,7 +239,8 @@ void Distribution::Dump(int feat, bool isQuanti, int flag) {
         // printf("%4d %c%12s [%.3g,%.3g,%.3g,%.3g,%.3g]\tnBin=%d[%.3g,%.3g,%.3g,%.3g,%.3g]%s \n", feat, typ, nam.c_str(),
         //	vMin, q1, q2, q3, vMax,
         // ��Ҫ�����λ��
-        printf("%4d %c%12s [%.4g-%.8g]\t H_q4=[%.4g,%.4g,%.4g,%.4g,%.4g]%s \n", feat, typ, nam.c_str(), vMin, vMax, H_q0, H_q1, H_q2, H_q3, H_q4, tmp);
+        printf("%4d %c%12s [%.4g-%.8g]\t nBin=%d H_q4=[%.4g,%.4g,%.4g,%.4g,%.4g]%s \n", feat, typ, nam.c_str(), vMin, vMax, histo == nullptr ? 0 : histo->nBins,
+               H_q0, H_q1, H_q2, H_q3, H_q4, tmp);
     }
 }
 
@@ -284,8 +293,8 @@ BIN_FEATA& Distribution::AddBin(const LiteBOM_Config& config, size_t nz, double 
     BIN_FEATA& feata = binFeatas[noBin];
     bin.tic          = noBin;  // tic split_F����һ��
                                // bin.split_F = i_0 > 0 ? (v0 + vUnique[i_0 - 1].val) / 2 : v0;
-    feata.split_F = (left_outer + left_inner) / 2;
-    bin.nz        = nz;
+    feata.split_F    = (left_outer + left_inner) / 2;
+    bin.nz           = nz;
     // feata.density = nz*1.0 / nDistinc;
 
     histo->nBins++;
@@ -355,7 +364,8 @@ void Distribution::HistoOnFrequncy_1(const LiteBOM_Config& config, vector<vDISTI
     while (i_0 < nUnique) {
         vLeftInner = vUnique[i_0].val;
         vLeftOuter = i_0 > 0 ? vUnique[i_0 - 1].val : vLeftInner;
-        nz         = 0;     gama = vUnique[i_0].val*vUnique[i_0].nz;
+        nz         = 0;
+        gama       = vUnique[i_0].val * vUnique[i_0].nz;
         i_1        = i_0;
         if (histo->nBins == nMostBin)
             T_next = nA * 10;

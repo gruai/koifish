@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-#include "./Manifold/gLLM.hpp"
+#include "./Shoal/gLLM.hpp"
 #include "./Utils/GST_Application.hpp"
 #include "./Utils/GST_log.hpp"
 #include "./g_def_x.hpp"
@@ -28,7 +28,7 @@ class KoifishApp : public GST_Application {
 
     int Swim() override {
         vector<hWIKI> wikis;  // reserved for hybrid llm training
-        fish = Fish::MakeInstance("Fish_", params, wikis, Fish::ROLE_TYPE::COMMON, 0x0);
+        fish = Fish::MakeInstance("Fish_", params, wikis, MODEL_ROLE::COMMON, 0x0);
         if (fish == nullptr) {
             _ERROR("[APP] %s is nullptr!!!", name.c_str());
             return KOIFISH_NULL_FISH;

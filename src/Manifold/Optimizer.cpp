@@ -10,9 +10,10 @@
  */
 #include "Optimizer.hpp"
 
+#include "../Device/CUDA/cuda_common.h"
 #include "../Device/Pipe.hpp"
+#include "../Shoal/gLLM.hpp"
 #include "../TokenSet/Dictionary.hpp"
-#include "gLLM.hpp"
 
 int PackedN_bug = 0;
 int tpFuseCu    = 1;
@@ -25,6 +26,9 @@ Optimizer::Optimizer(NLP_AutoRegressive* g_, CLI_params& config, int flag) : _fi
     tpSign            = config.Get({"train", "optimizatioin", "sign"}, 0, false);
     string method     = config.Get({"train", "optimizatioin", "method"}, string("adamw"), false);
     auto train_params = TrainParams();
+    if (train_params.seed == -1) {
+        train_params.seed = time(NULL);
+    }
     /*
         Although many people think "ADAMw is much better than SGD for attention models"  https://arxiv.org/pdf/2310.01082
         But may litter slower. For example:   jModel_SGD_v.info
@@ -41,9 +45,8 @@ Optimizer::Optimizer(NLP_AutoRegressive* g_, CLI_params& config, int flag) : _fi
                                            : ADAMw;
         nGradAccum   = std::max(1, train_params.n_gradient_accumulation);
         isGlobalGrad = nGradAccum > 1;  // Nearly same alloc grad or not
-        // train_loader = std::make_shared<SampNanny>(_fish, "Train", false);
-        // train_loader->Prepare(this, _fish->tsTrain);
         train_loader = _fish->tsTrain->loader;
+        assert(train_loader != nullptr);
     }
 
     if (_fish->isTrain()) {
@@ -64,6 +67,12 @@ Optimizer::Optimizer(NLP_AutoRegressive* g_, CLI_params& config, int flag) : _fi
     prober_host = new float[KOIFISH_MAX_PROBE_LEN];
 }
 
+OPT_NONE::OPT_NONE(NLP_AutoRegressive* g_, CLI_params& config, int flag) : Optimizer(g_, config, flag) {
+    if (_fish->isTrain()) {
+        assert(0);
+    }
+};
+
 bool Fish::SetPhase(LIFE_PHASE phase_, LIFE_PHASE outer_, int flag) {
     outer_phase = outer_;
     phase       = phase_;
@@ -82,7 +91,7 @@ bool Fish::SetPhase(LIFE_PHASE phase_, LIFE_PHASE outer_, int flag) {
             // assert(loader->num_batches == 1);
             break;
         case LIFE_PHASE::P_CHAT_N:
-            _INFO("<chat_N> ");
+            _INFO("--- <chat_N@%s> ---", name.c_str());
             break;
         case LIFE_PHASE::P_TRAIN:
             curTokenSet = tsTrain;
@@ -379,126 +388,6 @@ OPT_STATUS Optimizer::UpdateTensorParam(hGTensor hP, floatX* g, float gnorm) {
     return KOIFISH_OK;
 }
 
-int UpdateTensorParam_cuda(hGTensor tensor, Optimizer* hOPT, float& grad_norm, int flag);
-//  Always call Optimizer::UpdateTensorParam          Deprecated
-OPT_STATUS OPT_Adam::UpdateTensorParam(hGTensor hP, floatX* gX, float clip) {
-    // return Optimizer::UpdateTensorParam(hP, gX, clip);
-
-    // assert(gimap.find(hP)!=gimap.end());
-    auto& im = _fish->GetGensorInfo(hP);  // gimap[hP];
-    float *m = im.gm, *v = im.gv, grad_norm = g_step;
-    ;
-    bool isToHost    = false;  // out of GPU memory!
-    const int64_t ne = tELEM(hP);
-    floatX *paramX   = (floatX*)(hP->data), *paramX0, *gX0;
-    float mh, vh, g0, x, x0, x00;
-#ifdef __USE_CUDA__
-    /*if (isToHost) {
-        assert(_tmp != nullptr);
-        paramX  = (floatX*)_tmp;
-        gX      = paramX + hP->szData;
-        paramX0 = paramX, gX0 = gX;
-        hP->SerialGP(paramX, gX, hP->szData, true);
-        x00 = T2Float(paramX);
-        if (DEBUG.train_hyperparams == 1) {
-            clip = 1.0e-6;
-        } else {
-            clip = gClip(ne, gX, hP);
-        }
-    }*/
-#else
-    if (gX == nullptr) {
-        gX   = fGrad(hP);
-        clip = gClip(ne, gX, hP);
-    } else {
-    }
-    assert(hP->type == typNUMBER::F32);
-    if (config.lars_ratio > 0) {  // lars/lamb
-        float wnorm = 0, norm = 0, trust_ratio;
-        for (int64_t j = 0; j < ne; ++j) {
-            float x = ggml_get_f32_1d(opt_ps[p], j);
-            wnorm += x * x;
-        }
-        for (int64_t j = i; j < i + ne; ++j) {
-            norm += g[j] * g[j];
-        }
-        trust_ratio = sqrt(wnorm) / sqrt(norm + eps);
-        trust_ratio = std::min(trust_ratio, config.lars_ratio);
-        gnorm       = trust_ratio;
-    }
-#endif
-#ifdef __USE_CUDA__
-    if (hP->Dogleg(0x0) != KOIFISH_OK)
-        return status;
-    grad_norm = hP->gnorm;
-    // UpdateTensorParam_cuda(hP, this, grad_norm, 0x0);
-
-    if (!isPreGStep)
-        g_step += grad_norm * grad_norm;
-    /*if (isToHost) {
-        x  = T2Float(paramX0);
-        g0 = x - x00;
-        hP->SerialGP(paramX0, gX0, hP->szData, false);
-    }*/
-#else
-    float alpha = adam->alpha, beta1 = adam->beta1, beta2 = adam->beta2, eps = adam->eps;
-    GD_METHOD tpCurGD = tpGD;
-    if (tpGD == SGD_HYBRID) {
-        tpCurGD = im.isAdam ? ADAMw : SGD;
-    }
-    switch (tpCurGD) {
-        case SGD:  //  converge very slow  !!!
-            for (int64_t j = 0; j < ne; ++j, v++, gX++, paramX++) {
-                g0      = *gX * clip;
-                x       = T2Float(paramX);
-                *paramX = x - alpha * (g0);
-            }
-            break;
-        case SGD_v:  // why v is so important?
-            for (int64_t j = 0; j < ne; ++j, v++, gX++, paramX++) {
-                g0      = *gX * clip;
-                x       = T2Float(paramX);
-                *v      = *v * beta2 + g0 * g0 * (1.0f - beta2);
-                vh      = sqrtf(*v * beta2h) + eps;
-                *paramX = x - alpha * (g0) / vh;  //  beta1h = learning rate
-            }
-            break;
-        case SGD_blk_v: {                                           // why v is so important?
-            double vb = *v * beta2 + (g_ll / ne) * (1.0f - beta2);  // *v = *v*beta2 + g0*g0*(1.0f - beta2);
-            *v        = vb;
-            v++;
-            vh = sqrtf(vb * beta2h) + eps;
-            for (int64_t j = 0; j < ne; ++j, gX++, paramX++) {
-                g0      = *gX * clip;
-                x       = T2Float(paramX);
-                *paramX = x - alpha * (g0) / vh;  //  beta1h = learning rate
-            }
-        } break;
-        case ADAMw:
-        default:
-
-            for (int64_t j = 0; j < ne; ++j, m++, v++, gX++, paramX++) {
-                float g = T2Float(gX);
-                x0 = x = T2Float(paramX);
-                // float g0 = isZMUV ? *gX : *gX*clip;
-                g0      = g * clip;
-                *m      = *m * beta1 + g0 * (1.0f - beta1);       // linear interpolations of the gradients
-                *v      = *v * beta2 + g0 * g0 * (1.0f - beta2);  // linear interpolations of their variances
-                mh      = *m * beta1h;                            // debiasing
-                vh      = *v * beta2h;
-                vh      = sqrtf(vh) + eps;
-                x       = x * (1.0f - p_decay) - alpha * mh / vh;  // ormalize step(mh) by its standard deviation(vh)
-                *paramX = x;                                       // ggml_set_f32_1d(hP, j, x);
-                //  !!!update our low precision version of the parameters using stochastic rounding!!!
-            }
-
-            break;
-    }
-#endif
-
-    return KOIFISH_OK;
-}
-
 void Optimizer::UpdateTrainLoss(int x, float loss, int flag) {
     int step = iter;
     if (!fx_prev.empty()) {
@@ -592,21 +481,8 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGTensor loss_, hGTensor target_,
     _INFO("\tDECENT=%d(%s) SIGN=%d tpFuseCu=%d filter=%d\n\n", tpGD, GD_NAME[tpGD].c_str(), tpSign, tpFuseCu, _fish->config.filter_tmp_grad.size());
     DEBUG.Dump(0);
 
-    if (_fish->isModel({NTP_QWEN2, NTP_QWEN3, MD_QWEN})) {
-        g_dump_level = DEBUG.dump_TensorDetail + 1;  // hack
-    }
     float a = 0, grad_norm = 0;
-    if (_fish->isLoadCheckpoint) {
-        // config.chat_sampler.test_every = 1; //only for debug
-        // for (int loop = 0; loop < 10; loop++)
-        //     _fish->AfterNextStep(0+loop);
-        _fish->AfterNextStep(0);
-    }
-    if (DEBUG.quant_UserMode) {
-        if (!_fish->config.ckp_out.empty())
-            _fish->SaveTrain(_fish->config.ckp_out[0]);  // only for debug
-        K_EXIT(KOIFISH_EXIT_DEBUG);
-    }
+
     if (isWarmup && !BatchGrad(0, a, 0x0))  //  warmup
         return CANCEL;
 
@@ -620,7 +496,6 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGTensor loss_, hGTensor target_,
         // NvtxRange range("step", t);
         CheckExitSearch(t);
 
-        _fish->BeforeNextStep(t, 0x0);
         if (t == train_params.nMostIter - 1) {
             if (train_loader != nullptr) {
                 train_loader->isLastShard = true;
@@ -629,26 +504,27 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGTensor loss_, hGTensor target_,
         }
         iter = iter0 + t + 1;
         SUM::Reset("time");
-        _fish->SetPhase(LIFE_PHASE::P_TRAIN);
-        if (!BatchGrad(iter, a, 0x0)) {
-            // SaveTrain(config.state, true, FSerial::COPY_MMAP);
-            return CANCEL;
-        }
-
-        // if(t==1)    K_EXIT(KOIFISH_EXIT_DEBUG);
-
-        SignStochastic(nOptParams, config);
-        if (_fish->config.scheduling.isUpdateParamV0()) {
-            UpdateParams(nOptParams, config, 0x0);
+        if (_fish->role == BACKBONE_LOGITS) {
         } else {
-            for (auto t : opt_ps) {
-                if (t->isRefer())
-                    continue;
-                // assert(t->last_stp==GetITER());
+            _fish->SetPhase(LIFE_PHASE::P_TRAIN);
+            _fish->BeforeNextStep(t, 0x0);
+            if (!BatchGrad(iter, a, 0x0)) {
+                // SaveTrain(config.state, true, FSerial::COPY_MMAP);
+                return CANCEL;
             }
+            SignStochastic(nOptParams, config);
+            if (_fish->config.scheduling.isUpdateParamV0()) {
+                UpdateParams(nOptParams, config, 0x0);
+            } else {
+                for (auto t : opt_ps) {
+                    if (t->isRefer())
+                        continue;
+                    // assert(t->last_stp==GetITER());
+                }
+            }
+            if (!isPreGStep)
+                g_step = sqrt(g_step);
         }
-        if (!isPreGStep)
-            g_step = sqrt(g_step);
         _fish->AfterNextStep(t, 0x0);
 
         UpdateLossCurve(0x0);
@@ -659,9 +535,6 @@ Optimizer::RESULT Optimizer::Search(void* ctx, hGTensor loss_, hGTensor target_,
             trainInfos().SaveColorsToCSV(".csv");
         }
 
-        // Evaluate();  // @AfterNextStep
-        // if (_fish->hDistler != nullptr)  // @AfterNextStep
-        //     _fish->hDistler->UpdateSigma(iter);
         // check convergence
         if (isConverge) {
             _INFO("[search] Converged!!!\n");
@@ -692,7 +565,7 @@ double Optimizer::GraphCompute(hSampNanny hLoader, hTGraph hTG, int flag) {
     isBackward = false;
     _fish->ForwardOnRLS(iter, 0x0);
     // g_dump_level = -1;
-    if (_fish->phase == LIFE_PHASE::P_CHAT_1 || _fish->phase == LIFE_PHASE::P_CHAT_N || _fish->phase == LIFE_PHASE::P_PREFILL) {
+    if (_fish->isAtPhase({LIFE_PHASE::P_CHAT_1, LIFE_PHASE::P_CHAT_N, LIFE_PHASE::P_PREFILL})) {
     } else {
         mean_loss = hLoader->LossOnResult(_fish);
         if (isOnlyEvaluate) {
@@ -740,8 +613,8 @@ float Optimizer::EvaluateSamps(hSampNanny loader, int iter, int flag) {
     for (i = 0; i < loader->num_batches; i += step) {
         if (tokens_input != nullptr && !_fish->isAtPhase({LIFE_PHASE::P_PREFILL, LIFE_PHASE::P_CHAT_1, LIFE_PHASE::P_CHAT_N})) {
             //_fish->phase != LIFE_PHASE::P_PREFILL && _fish->phase != LIFE_PHASE::P_CHAT_1)) {  // in some debug mode, tokens_input maybe null
-            TIMING_ms(loader->CollateBatch(i, _fish), SUM::tLoadData);
-            samp = loader->cur_samps[i];
+            TIMING_ms(loader->CollateBatch(i, _fish), SUM::tCollate);
+            samp = loader->hBatch->curSamps[i];
         }
         if (wLog != nullptr) {
             for (l2 = 0, j = 0; j < nz; j++) {
@@ -757,13 +630,6 @@ float Optimizer::EvaluateSamps(hSampNanny loader, int iter, int flag) {
         if (_fish->isLocalInfer) {  // config.isOnlyGPT
             return ee;
         }
-#ifdef _TENSOR_G_
-#else
-        a  = ((float*)hPreLogits()->data)[0];  //  -6.60046101     -4.3040733
-        ee = loader->DecodeVerify(samp, tokens_input, _fish->preLogits);
-        mean_loss += loss == nullptr ? 0 : ((float*)(loss->data))[0];
-        break;
-#endif
         if (_fish->wikis.size() > 0)  // too long
             break;
     }
@@ -852,7 +718,7 @@ float Optimizer::UpdateLossCurve(int flag) {
         } else if (_fish->config.loAB.isDistll() || _fish->config.distill.isDistll())
             _INFO(" x=%.8g\n", DistillRate(0x0));
         else {
-            _INFO(" tx=%.4gs(%.4gs)\n", (SUM::tLoss) / iter, (SUM::tHeader) / iter);
+            _INFO(" tx=%.4gs(%.4gs)\n", (SUM::tX1) / iter, (SUM::tCollate) / iter);
             // _INFO(" x=%d\n", SUM::nUpdateParam);
         }
         _fish->Statistic_Quant(1, 0x0);
@@ -958,7 +824,7 @@ void Optimizer::BeforeTrain(hGTensor tokens_, int flag) {
             if (adam.alpha < 1.0e-5 || adam.alpha > 3.0e-5) {
                 _WARN(
                     "The learning rate(%g) does not alight with common industry practices(%g - %g). Maybe %g is better for full-parameter fine-tuning (SFT) of "
-                    "pretrained LLMs",
+                    "pretrained LLMs\n",
                     adam.alpha, 1e-5, 3e-5, 2e-5);
             }
             break;
@@ -982,16 +848,25 @@ void Optimizer::BeforeTrain(hGTensor tokens_, int flag) {
         // loader->Prepare(this, tsE);
         // val_loaders.push_back(loader);
     }
-    // if (_fish->isTrain()) {
-    //     trainInfos().Init(this);
-    // }
-    // for (auto loader : val_loaders) {
-    //     loader->stepis.Init(this);
-    // }
 
     if (DEBUG.watch_Tensors > 0) {
         TENSOR_WATCH watch(_fish, "embed_tokens");
         WatchWeights(watch, opt_ps, {"embed_tokens"}, 0x0);  //"k_proj.weight"        up_proj.weight
+    }
+    if (_fish->isModel({NTP_QWEN2, NTP_QWEN3, MD_QWEN, MD_AR_QWEN})) {
+        g_dump_level = DEBUG.dump_TensorDetail + 1;  // hack
+    }
+
+    if (_fish->isLoadCheckpoint) {
+        // config.chat_sampler.test_every = 1; //only for debug
+        // for (int loop = 0; loop < 10; loop++)
+        //     _fish->AfterNextStep(0+loop);
+        _fish->AfterNextStep(0);
+    }
+    if (DEBUG.quant_UserMode) {
+        if (!_fish->config.ckp_out.empty())
+            _fish->SaveTrain(_fish->config.ckp_out[0]);  // only for debug
+        K_EXIT(KOIFISH_EXIT_DEBUG);
     }
 }
 
@@ -1064,12 +939,6 @@ size_t TGraph::Prepare4Train(void* ctx_, GD_METHOD tpGD, int flag) {
 
         nP++;
         nz += nParam;
-#ifdef _TENSOR_G_
-#else
-        gi.second.gm  = new float[nParam]();
-        gi.second.gv  = new float[nParam]();
-        gi.second.gpf = new float[nParam]();
-#endif
     }
 
     _INFO("[TGraph::%s] AdamTensor=(%d,%.3g%%) filter={", __func__, nP, nz * 100.0 / nzAll);
@@ -1130,7 +999,7 @@ bool Optimizer::PrepareData(CLI_params& config, int flag) {
         }
     }
     if (!isLoadOK) {
-        hDataToken hTokenset = train_loader->hDaTokens;
+        hDataToken hTokenset = train_loader->hCoral;
         assert(hTokenset != nullptr);
 
         std::vector<size_t> samples_begin, samples_size;
@@ -1191,9 +1060,6 @@ OPT_Muon::OPT_Muon(NLP_AutoRegressive* g_, CLI_params& params_, int flag) : Opti
         _fish->config.common.remater_ffn = 1;
         // _fish->config.common.remater_qkv = 1;
     }
-    // for (auto loader : val_loaders) {
-    //     loader->stepis.Init(this);
-    // }
 }
 
 OPT_Adam::OPT_Adam(NLP_AutoRegressive* g_, CLI_params& params_, int flag) : Optimizer(g_, params_, flag) {
@@ -1210,17 +1076,15 @@ OPT_Adam::OPT_Adam(NLP_AutoRegressive* g_, CLI_params& params_, int flag) : Opti
         _fish->config.common.remater_ffn = 1;
         // _fish->config.common.remater_qkv = 1;
     }
-    // for (auto loader : val_loaders) {    // move to BeforeTrain
-    //     loader->stepis.Init(this);
-    // }
+
     hPipe = std::make_shared<PIPE_Adamw<floatX, floatMV>>(this, flag, adam->alpha, adam->beta1, adam->beta2, adam->eps, adam->decay);
     // hPipe = std::make_shared<PIPE_Muon<floatX, floatMV>>(this, flag, adam->alpha, adam->beta1, adam->beta2, adam->eps, adam->decay);    //only for debug
     // sched              = 1.0f;
 }
 
 void Optimizer::Dump(int typ) {
-    if (NOT_DUMP(1))
-        return;
+    // if (NOT_DUMP(1))
+    //     return;
     _fish->memBuffer->Dump(0x0);
 
     auto train_params = TrainParams();
@@ -1302,4 +1166,90 @@ void OPT_Muon::Dump(int typ) {
     _INFO("[OPT_Muon]\tnT=%ld muon_params=%ld(%.3g)\n", tMuons.size(), nmParams, nmParams * 1.0 / nOptParams);
     muon.Dump(0x0);
     fflush(stdout);
+}
+
+/*
+    kernel of Fish-Evaluate
+ */
+double SampNanny::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
+    // assert(hOPT != nullptr);
+    RLS_BP* hRLS = hFish->GetScheduler<RLS_BP>();
+    double tic = GST_ms(), tps, tRemain = 0.0, tpi = 0, relax = 0.9, dt, tCur, tLast;
+    int i, nB = 0, step = StepOfEvaluate(), nMost = CEIL_DIV(num_batches, step);
+    int iter = hOPT != nullptr ? hOPT->GetITER() : 0;
+    switch (tpBatch) {
+        case BATCHofEMBED:
+            nMost = 1;
+            break;
+        default:
+            break;
+    }
+
+    Head4Token* cls = hFish->GetNeuron<Head4Token>("Head4Token", 0);
+    auto hBatch     = hFish->curBatch(0x0);
+    next_sample     = 0;  // fix this to keep same acc on each experiment
+    nEvalTokens     = 0;
+    tLast           = GST_ms();
+    ClearII();
+    for (int i = 0; i < nMost; i++) {
+        // if (i < 50) {  // only for debug
+        //     Next();
+        //     continue;
+        // }
+        if (tpBatch == SAMPLEofSHARD) {
+            if (CollateBatch(min(i * step, num_batches), hFish) == 0)
+                continue;
+        }
+
+        hFish->ForwardOnRLS(iter, 0x0);
+        if (hBatch->onlyLogits || hBatch->onlyLastHidden) {
+        } else
+            LossOnResult(hFish);  // mean_loss = hLoader->UpdateII(hostLoss, B, T, 0x0);
+        nEvalTokens += hBatch->nFillTokens(), nB++;
+        tCur = GST_ms(), dt = tCur - tLast, tLast = tCur;
+        tpi = tpi * (1.0 - relax) + dt * relax, tRemain = (nMost - i) * tpi;  //  ms
+        bool isDump = hFish->isAtPhase({P_EVAL_}) && i % DEBUG.dump_Eval_each == 0;
+        if (isDump /*&& tRemain > 60 * 1000*/) {
+            _INFO("\r\t%d/%d a=[%.3g,%.3g] %.4gk/s ...\t", i, nMost, iiLoss.a0, iiLoss.a1, nEvalTokens / (tCur - tic));
+            _TIME_INFO("remain=", tRemain), _INFO("        ");
+        }
+        if ((tCur - tic) / 1.0e3 > DEBUG.Time_most) {
+            _WARN("\n \t%d/%d SampNanny::Evaluate Out of time(%.3gs)\n", i, nMost, DEBUG.Time_most);
+            break;
+        }
+    }
+
+    // _INFO("\n\t");
+    SUM::tEval_1 = (GST_ms() - tic) / 1.0e3;
+    switch (hFish->phase) {
+        case P_CHAT_1:
+            break;
+        case P_CHAT_N:
+            break;
+        case P_EVAL_:
+            if (hOPT != nullptr)
+                UpdateStepInfos(iiLoss.average, nB);
+            break;
+        case P_TRAIN:
+            UpdateStepInfos(iiLoss.average, nB);
+            break;
+        default:
+            assert(0);
+            break;
+    }
+
+    switch (tpBatch) {
+        case BATCHofEMBED:
+            nMost = 1;
+            break;
+        default:
+            assert(iiLoss.isValid());
+            tps = nEvalTokens / SUM::tEval_1 / 1.0e3;
+            _INFO("\t#%g±%.4f tps=%.3gK(%gM) a=[%g,%g] T=%g(sec)\n", "", iiLoss.average, iiLoss.sigma, tps, nEvalTokens / 1.0e6, iiLoss.a0, iiLoss.a1,
+                  SUM::tEval_1);
+            iiLoss.SaveToCSV(name + "_loss.csv", 0x0);
+            break;
+    }
+
+    return iiLoss.average;
 }

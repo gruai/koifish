@@ -7,7 +7,7 @@
  *  \brief Scoring(返璞) model
  *  \author Yingshi Chen
  */
-#include "../Manifold/gLLM.hpp"
+#include "../Shoal/gLLM.hpp"
 #include "../Utils/GST_Application.hpp"
 #include "Scheduler.hpp"
 
@@ -26,10 +26,13 @@ When people say “distill an AR model into a diffusion LM,” what they actuall
     4. run a diffusion-style sampler at inference
 This produces a model that is not a mathematically correct diffusion LM. It is a masked AR model with diffusion-style sampling.
 This hybrid is not theoretically clean, but it is empirically workable!
+
+    More:
+    1. Diffusion LMs often need higher temperature than AR LMs because their logits are flatter.
  */
 
-Salmon::Salmon(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
-    assert(arch == MODEL_ARCH::MD_QWEN);
+Salmon::Salmon(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
+    assert(arch == MODEL_ARCH::MD_QWEN || arch == MODEL_ARCH::MD_AR_QWEN);
     config.model.isSLPBias    = false;
     config.model.isNormalBias = false;
     // config.model.isQKVBias    = false;
@@ -60,11 +63,58 @@ Salmon::Salmon(const std::string& nam_, struct CLI_params params, ROLE_TYPE role
     // config.model.sEmbed = "embed_tokens", config.model.sInvEmbed = "lm_head";
     config.model.isBqkv       = false;  //  0.6B has no bias!
     config.model.isCausalMask = false;
+    if (isModel({MD_AR_QWEN})) {
+        config.model.isCausalMask = true;
+        assert(config.model.isShiftLabel == true);
+    }
 
     config.fuyou.filter_reload = {"mlp", "self_attn"};  //  {"mlp", "self_attn"};
+    if (config.sft.baseArch == NTP_QWEN3) {
+        config.model.QKNormal = 1;
+    }
 }
 
+SalmonQwen::SalmonQwen(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag) : Salmon(nam_, params, role, flag) {}
 int Salmon::ZhuoMo(int flag) { return 0x0; }
+
+/*
+BATCH_INPUT::NOISE_TYPE Fish::curNoiseType(int flag) const {
+    BATCH_INPUT::NOISE_TYPE _tpNoise = BATCH_INPUT::NO_NOISE;
+    if (isModel({MD_QWEN})) {
+        _tpNoise = BATCH_INPUT::MASK_NOISE;
+} else if (isModel({MD_AR_QWEN})) {
+        int iter = hOPT->GetITER(), each = 10, turn = (int)(iter / each);
+        if (turn % 2 == 0)
+            _tpNoise = BATCH_INPUT::NO_NOISE;
+        else
+            _tpNoise = BATCH_INPUT::MASK_NOISE;
+    }
+
+    return _tpNoise;
+}
+*/
+bool Salmon::BeforeNextStep(int iter, int flag) {
+    bool bRet   = Fish::BeforeNextStep(iter, flag);
+    auto hBatch = curBatch(iter);
+    bool isAR   = false;
+    if (isModel({MD_AR_QWEN})) {
+        int each = DEBUG.ensemble_swap_each, turn = (int)(iter / each);
+        isAR             = turn % 2 == 0;
+        hBatch->curNoise = isAR ? BATCH_INPUT::NO_NOISE : BATCH_INPUT::MASK_NOISE;
+        if (iter % each == 0) {  // swap between AR&QWEN
+            _INFO("[Huaer] %s(_%d)\n", isAR ? "=>AR" : "=>MD", iter);
+        }
+    } else {
+        hBatch->curNoise = BATCH_INPUT::MASK_NOISE;
+    }
+    for (auto nn : neurons) {
+        SelfAttention* qkv = dynamic_cast<SelfAttention*>(nn.get());
+        if (qkv != nullptr) {
+            qkv->causalMode = isAR ? 1 : 0;
+        }
+    }
+    return bRet;
+}
 
 int Salmon::Chat(int iter, int flag) {
     // Statistic(0x100);
@@ -73,7 +123,8 @@ int Salmon::Chat(int iter, int flag) {
     hTokenizer tokenizer = GetTokenizer();
     double start_time = 0, eval = 0;
     string rendered_prompt;
-    hChater gopt       = GetGenerator();
+    hChater gopt = GetGenerator();
+    gopt->InitRandomState();
     Head4Token* header = GetNeuron<Head4Token>("Head4Token", 0);
     // header->dump_flag  = -1;  // only for debug
     // DEBUG.T_generate_most_layer = 1;
@@ -82,7 +133,7 @@ int Salmon::Chat(int iter, int flag) {
     DEBUG.T_kvcache_quant = 0;
     // g_dump_level          = -1;
 
-    gopt->Prepare4N(iter, nullptr);
+    gopt->OnPrompt(iter, nullptr);
     start_time = GST_ms();
     SUM::tX1 = 0.0, SUM::tQKV_forw = 0.0, SUM::tFFN = 0.0, SUM::tPreLogits = 0.0;
     // eval = Evaluate(DL_BATCH_UPATE::BATCHofEMBED);
@@ -135,10 +186,12 @@ TOKEN_ID GOPT_Diffusion::Sample(hBATCH hB, bool is_resampling) {
     auto tokenizer = fish_0->GetTokenizer();
     assert(planner != nullptr);
     int nStep         = planner->arrGroup.size(), stp;
-    double start_time = GST_ms();
-    SUM::tX1          = 0.0;
+    double start_time = GST_ms(), confi_sum = 0.0;
+    SUM::tX1 = 0.0;
     float s;
+    TOKENS nativeToks;
     for (stp = 0; stp < nStep; stp++) {
+        string sentence;
         if (hBatch->nNoiseToken == 0)
             break;
         fish_0->Evaluate({tsChat}, DL_BATCH_UPATE::BATCHofEMBED);
@@ -171,6 +224,7 @@ TOKEN_ID GOPT_Diffusion::Sample(hBATCH hB, bool is_resampling) {
 
         // std::sort(candLogit.begin(), candLogit.end(), [](auto logi1, auto logi2) { return logi1->qu.confi < logi2->qu.confi; });
         int i = 0, nSpecial = 0;
+        confi_sum = 0.0;
         for (auto logit : candLogit) {
             bool isMask = i++ < nToMask;
             pos         = logit->posOfTarget;  // posInBatch;
@@ -187,14 +241,21 @@ TOKEN_ID GOPT_Diffusion::Sample(hBATCH hB, bool is_resampling) {
                     nSpecial++;
                 }
             }
+            sentence += logit->qu.word;
+            confi_sum += logit->qu.confi;
         }
 
         cur_answer = tokenizer->Decode(tokens, true, true);
         if (stp < dump_each || stp > nStep - dump_each - 1)
-            _INFO("\r[%d]=\"%s\" special=%d\n", stp, cur_answer.c_str(),nSpecial);
+            _INFO("\r[%d]=\"%s\" confi=%.3g special=%d\n", stp, cur_answer.c_str(), confi_sum / candLogit.size(), nSpecial);
+
+        if (tokenizer->isDialect) {
+            tokens = tokenizer->Translate(tokens);
+        }
         hBatch->FillTokens(0, tokens, 0, 0x0);
+        tokens = hBatch->curTokens();
     }
-    SUM::tX1 += (double)(GST_ms() - start_time) / 1000.0;
+    // SUM::tX1 += (double)(GST_ms() - start_time) / 1000.0;
     // cur_answer = tokenizer->Decode(tokens);
     // if (!fResult.empty())
     //     STR2FILE(fResult, cur_answer, std::ofstream::out);
@@ -204,10 +265,11 @@ TOKEN_ID GOPT_Diffusion::Sample(hBATCH hB, bool is_resampling) {
             // hLogit->Dump(100);
         }
     }
-    planner.reset(), planner = nullptr;
+
     return TOKEN_ID(-1);
 }
 
+// just same as QWen::NN2NAME(prefix, neuron, suffix, flag);
 std::string Salmon::NN2NAME(const std::string& prefix, tpNEURON4NAME neuron, const std::string& suffix, int flag) {
     if (nClass() == 66)  //  hack
         return Fish::NN2NAME(prefix, neuron, suffix, flag);

@@ -62,7 +62,7 @@
         "prompt": "First Citizen:\nB",
         "eval-every": 500,
         "temperature": 1.0,
-        "top_k":3,
+        "top_k":200,
         "#method":"MD_SNR MD_DILATE",
         "method":"SNR"   
     },

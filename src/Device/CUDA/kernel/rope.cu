@@ -18,8 +18,8 @@
 #include <algorithm>
 #include <vector>
 
-#include "../../../Manifold/Fish.hpp"
 #include "../../../Manifold/Neuron.hpp"
+#include "../../../Shoal/Fish.hpp"
 // #include "packedN.cuh"
 #include "operator.cuh"
 #include "utils.cuh"

@@ -10,7 +10,7 @@
 
 #include "gLLM.hpp"
 
-LLM_MAMBA::LLM_MAMBA(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
+LLM_MAMBA::LLM_MAMBA(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
     assert(arch == MODEL_ARCH::NLP_MAMBA);
     bool worst_case = true;
     // isLoadTokenEmbed = true;
@@ -19,7 +19,7 @@ LLM_MAMBA::LLM_MAMBA(const std::string& nam_, struct CLI_params params, ROLE_TYP
 
 hGTensor LLM_MAMBA::BuildTarget(void* ctx, hGTensor cur, int flag) { return nullptr; }
 
-Guppy::Guppy(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
+Guppy::Guppy(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
     assert(arch == MODEL_ARCH::NTP_GUPPY);
     // config.model.isFFNShareParam = true;
     // config.model.isEmbedWeightTying = false;
@@ -53,7 +53,7 @@ string Guppy::DebugInfo(int type, int flag) {
     return buf;
 }
 
-GPT2::GPT2(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
+GPT2::GPT2(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
     assert(arch == MODEL_ARCH::NLP_GPT2 || arch == MODEL_ARCH::NLP_GPT2_char);
     // isBias = config.model.isBias;    //   if true, converge much slower
 }
@@ -96,17 +96,17 @@ int DTS_GPT2::STR2T(void *hLLM,const char*txt,int txt_len,std::vector<TOKEN_ID>&
     return 0x0;
 }*/
 
-CDict_GPT2::CDict_GPT2(Fish* nlp_, int flag) : DictVAE(nlp_, flag) {
+CDict_GPT2::CDict_GPT2(Fish* nlp_, int flag) : GTokenizer(nlp_, flag) {
     int n_batch = config.n_batch(), n_ctx = config.n_ctx(), n_ctx_train = config.n_ctx_train, n_embd = config.nEmbed();
 }
 
-CDict_CHAR::CDict_CHAR(Fish* nlp_, int flag) : DictVAE(nlp_, flag) {
+CDict_CHAR::CDict_CHAR(Fish* nlp_, int flag) : GTokenizer(nlp_, flag) {
     int n_batch = config.n_batch(), n_ctx = config.n_ctx(), n_ctx_train = config.n_ctx_train, n_embd = config.nEmbed();
 }
 int CDict_CHAR::InitMAEC(void* ctx_build, const std::vector<int>& dims_, int flag) {
     int n_batch = config.n_batch(), n_ctx = config.n_ctx(), n_ctx_train = config.n_ctx_train, n_embd = config.nEmbed();
 
-    assert(gensors.size() == 0);
+    // assert(gensors.size() == 0);
     return 0x0;
 }
 int CDict_CHAR::STR2T(const char* txt, int txt_len, std::vector<TOKEN_ID>& btch, int flag) {
@@ -148,11 +148,8 @@ string GPT2::__repr__(string& suffix, string& prefix, int flag) {
 }
 
 std::string CDict_GPT2::T2STR(TOKEN_ID tok, int flag) {
-#ifdef _TENSOR_G_
     // [todo] call gpt2 tokenizer in next version
-#else
-    assert(0);
-#endif
+
     return "";
 };
 int CDict_GPT2::STR2T(const char* txt, int txt_len, std::vector<TOKEN_ID>& btch, int flag) {

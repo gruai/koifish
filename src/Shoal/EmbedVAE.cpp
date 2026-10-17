@@ -11,19 +11,20 @@
 
 #include "../Tensor/GeQuant.hpp"
 #include "../lenda/kernel/SVD.hpp"
-#include "Fish.hpp"
+#include "../Shoal/gLLM.hpp"
 #include "HotPicker.hpp"
 #include "Neuron.hpp"
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
 
-/**
- * 1. Most open‑source LLMs (LLaMA, Mistral, GPT‑J, Pythia, Falcon, etc.) do NOT use PyTorch’s default Gaussian init.
- *      for example:    nn.init.uniform_(emb.weight, -1.0 / math.sqrt(dim), 1.0 / math.sqrt(dim))
- * 2. Most diffusion LLMs use Gaussian initialization for embeddings, not uniform, because diffusion training is noise‑dominated
- * 3. Default PyTorch’s nn.Embedding would call "init.normal_(self.weight)"
- */
-TokenEmbed::TokenEmbed(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
+    /**
+     * 1. Most open‑source LLMs (LLaMA, Mistral, GPT‑J, Pythia, Falcon, etc.) do NOT use PyTorch’s default Gaussian init.
+     *      for example:    nn.init.uniform_(emb.weight, -1.0 / math.sqrt(dim), 1.0 / math.sqrt(dim))
+     * 2. Most diffusion LLMs use Gaussian initialization for embeddings, not uniform, because diffusion training is noise‑dominated
+     * 3. Default PyTorch’s nn.Embedding would call "init.normal_(self.weight)"
+     */
+    TokenEmbed::TokenEmbed(Fish* hG_, const std::string& key_, const JSON& jit, int flag)
+    : SparseNeuron(key_, jit, hG_, flag) {
     auto dims = hFish->config.model.token_embeds;
     nVocab    = hG_->nClass();
     latent    = hFish->config.nEmbed(-1);
@@ -331,7 +332,7 @@ string MAEC::__repr__(string& suffix, string& prefix, int flag) {
     return info;
 };
 
-VarCoder::VarCoder(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
+VarCoder::VarCoder(Fish* hG_, const std::string& key_, const JSON& jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     if (jvals.size() >= 2) {
         shape = {(int)(jvals[0]), (int)(jvals[1])};
     } else {
@@ -342,7 +343,7 @@ VarCoder::VarCoder(Fish* hG_, const std::string& key_, JSON::const_iterator jit,
     nBottom = shape[0], nTop = shape[1];
 }
 
-FFN::FFN(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : VarCoder(hG_, key_, jit, flag) {
+FFN::FFN(Fish* hG_, const std::string& key_, const JSON& jit, int flag) : VarCoder(hG_, key_, jit, flag) {
     remater_ffn = hFish->config.common.remater_ffn;  // false;
 
     up.SetDType(tpWeight, tpActivation, tpGradient);
@@ -379,7 +380,7 @@ bool VarCoder::Build(int flag_0) {
     if (isNormalDown) {
         normDown.BuildX(_NAME(name, FFN_NORMAL_DOWN), {nTop}, hFish, flag_0 | F_DELTA);
     }
-    if (hFish->isModel({NTP_QWEN2, NTP_QWEN3, NLP_BITNET, MD_QWEN})) {
+    if (hFish->isModel({NTP_QWEN2, NTP_QWEN3, NLP_BITNET, MD_QWEN, MD_AR_QWEN})) {
         // qwen 2.5 same as qwen 3.0!
         up.BuildX(_NAME(name, FFN_UP), {nTop, nBottom}, hFish, flagSLP);
         if (hFish->config.model.isFFNGate)
@@ -428,7 +429,7 @@ void Relu::BuildX(const std::string& key_, const SHAPE& sp, Fish* hG_, int flag)
 FFN* FFN::first = nullptr;
 bool FFN::Build(int flag_0) {
     delta        = gBUFF->delta;
-    SHAPE sp     = {shape[0]}, sp3, sp2;
+    SHAPE sp     = {shape[0]}, sp2;
     void* ctx_   = hFish->GetGGCTX(1);
     bool isTrain = hFish->isTrain();
     int flag     = flag_0;
@@ -437,8 +438,8 @@ bool FFN::Build(int flag_0) {
     relu.BuildX(_NAME(name, FFN_RELU), {B, T, latent}, hFish, flag_0);
     relu.slp_gate = &gate;
     // flag |= GeNeuron::F_BIAS;
-    sp3 = {B, T, latent};
-    sp2 = {B, T, (int)hFish->config.nEmbed()};
+    // sp3 = {B, T, latent};
+    sp2 = {(int)hFish->config.nEmbed(), T, B};  //{B, T, (int)hFish->config.nEmbed()};
     // dump_flag = -1;
     // relu.out = std::make_shared<huTensor>(name+"_relu",sp3,tpWeight,false);
     // gate.BuildX(name + "_gate", {shape[0], shape[1]}, hFish, flag);

@@ -8,6 +8,7 @@
 #define PYMORT_DLL_API
 #endif
 
+#include "../../g_float.hpp"
 #include "../util/PY_obj.hpp"
 
 #define __API_BEGIN__() try {
@@ -35,6 +36,7 @@ namespace Grusoft {
 class GBRT;
 class ExploreDA;
 class FeatsOnFold;
+class FeatVector;
 }  // namespace Grusoft
 #include "../include/LiteBOM_config.h"
 
@@ -56,6 +58,8 @@ struct DORT_wrap {
     }
     virtual ~DORT_wrap();
 };
+
+std::shared_ptr<Grusoft::FeatsOnFold> Tensor2Tabular(Grusoft::LiteBOM_Config config, Grusoft::ExploreDA* edaX, void* hOBJ, int nMostFeat, int nSamp, int flag);
 
 #ifdef __cplusplus
 extern "C" {

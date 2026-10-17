@@ -37,7 +37,7 @@
 #include <chrono>
 
 // External dependency: nlohmann/json
-#include "ujson.hpp"
+#include "../Utils/json/ujson.hpp"
 
 #define JINJA_VERSION_MAJOR 0
 #define JINJA_VERSION_MINOR 0

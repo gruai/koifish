@@ -6,7 +6,6 @@
 #include <iostream>
 #include <limits>
 #include <map>
-#include <unordered_map>
 #include <unsupported/Eigen/FFT>
 
 #include "./roots.h"
@@ -75,7 +74,7 @@ MonomialCoefficients monomial_coefficients_library;
 
 Eigen::ArrayXd get_monomial_from_Cheb_basis(int n) { return monomial_coefficients_library.get_coeffs(n); }
 
-std::size_t count_sign_changes(const Eigen::ArrayXd &a, const double reltol) {
+std::size_t count_sign_changes(const Eigen::ArrayXd& a, const double reltol) {
     std::size_t changes = 0;
     auto tol            = reltol * a.abs().maxCoeff();
 
@@ -95,7 +94,7 @@ inline bool ValidNumber(double x) {
     return (x <= DBL_MAX && x >= -DBL_MAX);
 };
 
-void balance_matrix(const Eigen::MatrixXd &A, Eigen::MatrixXd &Aprime, Eigen::MatrixXd &D) {
+void balance_matrix(const Eigen::MatrixXd& A, Eigen::MatrixXd& Aprime, Eigen::MatrixXd& D) {
     // https://arxiv.org/pdf/1401.5766.pdf (Algorithm #3)
     const int p    = 2;
     double beta    = 2;  // Radix base (2?)
@@ -152,7 +151,7 @@ class ChebyshevLobattoNodesLibrary {
 
    public:
     /// Get the Chebyshev-Lobatto nodes for expansion of degree \f$N\f$
-    const Eigen::VectorXd &get(std::size_t N) {
+    const Eigen::VectorXd& get(std::size_t N) {
         auto it = vectors.find(N);
         if (it != vectors.end()) {
             return it->second;
@@ -163,7 +162,7 @@ class ChebyshevLobattoNodesLibrary {
     }
 };
 static ChebyshevLobattoNodesLibrary CLnodes_library;
-const Eigen::VectorXd &get_CLnodes(std::size_t N) { return CLnodes_library.get(N); }
+const Eigen::VectorXd& get_CLnodes(std::size_t N) { return CLnodes_library.get(N); }
 
 // DEPRECATED: but held around for future reference
 // class ChebyshevRootsLibrary {
@@ -211,7 +210,7 @@ class LMatrixLibrary {
 
    public:
     /// Get the \f$\mathbf{L}\f$ matrix of degree N
-    const Eigen::MatrixXd &get(std::size_t N) {
+    const Eigen::MatrixXd& get(std::size_t N) {
         auto it = matrices.find(N);
         if (it != matrices.end()) {
             return it->second;
@@ -222,7 +221,7 @@ class LMatrixLibrary {
     }
 };
 static LMatrixLibrary l_matrix_library;
-const Eigen::MatrixXd &get_Lmatrix(std::size_t N) { return l_matrix_library.get(N); }
+const Eigen::MatrixXd& get_Lmatrix(std::size_t N) { return l_matrix_library.get(N); }
 
 /**
  * @brief This class stores sets of U matrices (because they are a function only of the degree of the expansion)
@@ -246,7 +245,7 @@ class UMatrixLibrary {
 
    public:
     /// Get the \f$\mathbf{U}\f$ matrix of degree N
-    const Eigen::MatrixXd &get(std::size_t N) {
+    const Eigen::MatrixXd& get(std::size_t N) {
         auto it = matrices.find(N);
         if (it != matrices.end()) {
             return it->second;
@@ -264,7 +263,7 @@ bool is_in_closed_range(T x1, T x2, T x) {
     return (x >= std::min(x1, x2) && x <= std::max(x1, x2));
 };
 
-ChebyshevExpansion ChebyshevExpansion::operator+(const ChebyshevExpansion &ce2) const {
+ChebyshevExpansion ChebyshevExpansion::operator+(const ChebyshevExpansion& ce2) const {
     if (m_c.size() == ce2.coef().size()) {
         // Both are the same size, nothing creative to do, just add the coefficients
         return ChebyshevExpansion(std::move(ce2.coef() + m_c), m_xmin, m_xmax);
@@ -283,7 +282,7 @@ ChebyshevExpansion ChebyshevExpansion::operator+(const ChebyshevExpansion &ce2) 
         }
     }
 };
-ChebyshevExpansion &ChebyshevExpansion::operator+=(const ChebyshevExpansion &donor) {
+ChebyshevExpansion& ChebyshevExpansion::operator+=(const ChebyshevExpansion& donor) {
     std::size_t Ndonor = donor.coef().size(), N1 = m_c.size();
     std::size_t Nmin = std::min(N1, Ndonor), Nmax = std::max(N1, Ndonor);
     // The first Nmin terms overlap between the two vectors
@@ -297,7 +296,7 @@ ChebyshevExpansion &ChebyshevExpansion::operator+=(const ChebyshevExpansion &don
     }
     return *this;
 }
-ChebyshevExpansion &ChebyshevExpansion::operator-=(const ChebyshevExpansion &donor) {
+ChebyshevExpansion& ChebyshevExpansion::operator-=(const ChebyshevExpansion& donor) {
     std::size_t Ndonor = donor.coef().size(), N1 = m_c.size();
     std::size_t Nmin = std::min(N1, Ndonor), Nmax = std::max(N1, Ndonor);
     // The first Nmin terms overlap between the two vectors
@@ -311,7 +310,7 @@ ChebyshevExpansion &ChebyshevExpansion::operator-=(const ChebyshevExpansion &don
     }
     return *this;
 }
-ChebyshevExpansion ChebyshevExpansion::operator-(const ChebyshevExpansion &ce2) const {
+ChebyshevExpansion ChebyshevExpansion::operator-(const ChebyshevExpansion& ce2) const {
     if (m_c.size() == ce2.coef().size()) {
         // Both are the same size, nothing creative to do, just subtract the coefficients
         return ChebyshevExpansion(std::move(ce2.coef() - m_c), m_xmin, m_xmax);
@@ -345,19 +344,19 @@ ChebyshevExpansion ChebyshevExpansion::operator-() const {
     Eigen::VectorXd c = m_c;
     return ChebyshevExpansion(-c, m_xmin, m_xmax);
 }
-ChebyshevExpansion &ChebyshevExpansion::operator*=(double value) {
+ChebyshevExpansion& ChebyshevExpansion::operator*=(double value) {
     m_c *= value;
     return *this;
 }
-ChebyshevExpansion &ChebyshevExpansion::operator+=(double value) {
+ChebyshevExpansion& ChebyshevExpansion::operator+=(double value) {
     m_c(0) += value;
     return *this;
 }
-ChebyshevExpansion &ChebyshevExpansion::operator-=(double value) {
+ChebyshevExpansion& ChebyshevExpansion::operator-=(double value) {
     m_c(0) -= value;
     return *this;
 }
-ChebyshevExpansion ChebyshevExpansion::operator*(const ChebyshevExpansion &ce2) const {
+ChebyshevExpansion ChebyshevExpansion::operator*(const ChebyshevExpansion& ce2) const {
     std::size_t order1 = this->m_c.size() - 1, order2 = ce2.coef().size() - 1;
     // The order of the product is the sum of the orders of the two expansions
     std::size_t Norder_product = order1 + order2;
@@ -369,8 +368,8 @@ ChebyshevExpansion ChebyshevExpansion::operator*(const ChebyshevExpansion &ce2) 
     b.head(order2 + 1) = ce2.coef();
 
     // Get the matrices U and V from the libraries
-    const Eigen::MatrixXd &U = u_matrix_library.get(Norder_product);
-    const Eigen::MatrixXd &V = l_matrix_library.get(Norder_product);
+    const Eigen::MatrixXd& U = u_matrix_library.get(Norder_product);
+    const Eigen::MatrixXd& V = l_matrix_library.get(Norder_product);
 
     // Carry out the calculation of the final coefficients
     // U*a is the functional values at the Chebyshev-Lobatto nodes for the first expansion
@@ -401,7 +400,7 @@ ChebyshevExpansion ChebyshevExpansion::times_x() const {
     Eigen::VectorXd coefs = (((m_xmax - m_xmin) / 2.0) * cc).array() + (m_xmax + m_xmin) / 2.0 * c_padded.array();
     return ChebyshevExpansion(coefs, m_xmin, m_xmax);
 };
-ChebyshevExpansion &ChebyshevExpansion::times_x_inplace() {
+ChebyshevExpansion& ChebyshevExpansion::times_x_inplace() {
     Eigen::Index N = m_c.size() - 1;  // N is the order of A
     double diff = ((m_xmax - m_xmin) / 2.0), plus = (m_xmax + m_xmin) / 2.0;
     double cim1old = 0, ciold = 0;
@@ -434,17 +433,17 @@ ChebyshevExpansion ChebyshevExpansion::reciprocal() const {
     // 1. Transform Chebyshev-Lobatto node function values by the function f(y) -> 1/y
     // 2. Go backwards to coefficients from node values c2 = V/y
     const auto Ndegree       = m_c.size() - 1;
-    const Eigen::MatrixXd &V = l_matrix_library.get(Ndegree);
+    const Eigen::MatrixXd& V = l_matrix_library.get(Ndegree);
     // Values at the nodes in the x range of [-1, 1]
     Eigen::VectorXd c = V * (1.0 / get_node_function_values().array()).matrix();
 
     return ChebyshevExpansion(c, xmin(), xmax());
 }
-ChebyshevExpansion ChebyshevExpansion::apply(std::function<Eigen::ArrayXd(const Eigen::ArrayXd &)> &f) const {
+ChebyshevExpansion ChebyshevExpansion::apply(std::function<Eigen::ArrayXd(const Eigen::ArrayXd&)>& f) const {
     // 1. Transform Chebyshev-Lobatto node function values by the function f(y) -> y2
     // 2. Go backwards to coefficients from node values c2 = V*y2
     const auto Ndegree       = m_c.size() - 1;
-    const Eigen::MatrixXd &V = l_matrix_library.get(Ndegree);
+    const Eigen::MatrixXd& V = l_matrix_library.get(Ndegree);
     return ChebyshevExpansion(V * f(get_node_function_values()).matrix(), xmin(), xmax());
 }
 Eigen::ArrayXd ChebyshevExpansion::to_monomial_increasing() const {
@@ -465,7 +464,7 @@ bool ChebyshevExpansion::has_real_roots_Descartes(const double reltol) const {
 
     // Optimized Polynomial Taylor shift using the Horner method
     // See: http://www.hvks.com/Numerical/Downloads/HVE%20Polynomial%20Taylor%20shifting.pdf
-    auto shift_poly_Horner = [](const Eigen::ArrayXd &a_decreasing, double shift) {
+    auto shift_poly_Horner = [](const Eigen::ArrayXd& a_decreasing, double shift) {
         int n            = a_decreasing.size() - 1;
         Eigen::ArrayXd a = a_decreasing;
         if (shift == 0)
@@ -498,7 +497,7 @@ bool ChebyshevExpansion::is_monotonic() const {
     return (diff < 0.0).all() || (diff > 0.0).all();
 }
 
-const vectype &ChebyshevExpansion::coef() const { return m_c; };
+const vectype& ChebyshevExpansion::coef() const { return m_c; };
 /**
  * @brief Do a single input/single output evaluation of the Chebyshev expansion with the inputs scaled in [xmin, xmax]
  * @param x A value scaled in the domain [xmin,xmax]
@@ -516,7 +515,7 @@ double ChebyshevExpansion::y_recurrence(const double x) {
         return m_c[0] + m_c[1] * xscaled;
     }
 
-    vectype &o = m_recurrence_buffer;
+    vectype& o = m_recurrence_buffer;
     o(0)       = 1;
     o(1)       = xscaled;
     for (int n = 1; n < Norder; ++n) {
@@ -542,7 +541,7 @@ double ChebyshevExpansion::y_Clenshaw_xscaled(const double xscaled) const {
  * @brief Do a vectorized evaluation of the Chebyshev expansion with the inputs scaled in [xmin, xmax]
  * @param x A vectype of values in the domain [xmin,xmax]
  */
-vectype ChebyshevExpansion::y(const vectype &x) const {
+vectype ChebyshevExpansion::y(const vectype& x) const {
     // Scale x linearly into the domain [-1, 1]
     const vectype xscaled = (2 * x.array() - (m_xmax + m_xmin)) / (m_xmax - m_xmin);
     // Then call the function that takes the scaled x values
@@ -558,7 +557,7 @@ vectype ChebyshevExpansion::y(const vectype &x) const {
  * under the hood, giving a significant speed improvement. From naive
  * testing, the increase was a factor of about 10x.
  */
-vectype ChebyshevExpansion::y_recurrence_xscaled(const vectype &xscaled) const {
+vectype ChebyshevExpansion::y_recurrence_xscaled(const vectype& xscaled) const {
     const std::size_t Norder = m_c.size() - 1;
 
     Eigen::MatrixXd A(xscaled.size(), Norder + 1);
@@ -580,7 +579,7 @@ vectype ChebyshevExpansion::y_recurrence_xscaled(const vectype &xscaled) const {
     // In this form, the matrix-vector product will yield the y values
     return A * m_c;
 }
-vectype ChebyshevExpansion::y_Clenshaw_xscaled(const vectype &xscaled) const {
+vectype ChebyshevExpansion::y_Clenshaw_xscaled(const vectype& xscaled) const {
     const std::size_t Norder = m_c.size() - 1;
     vectype u_k, u_kp1(xscaled.size()), u_kp2(xscaled.size());
     u_kp1.fill(m_c[Norder]);
@@ -596,12 +595,12 @@ vectype ChebyshevExpansion::y_Clenshaw_xscaled(const vectype &xscaled) const {
     return xscaled.array() * u_k.array() - u_kp1.array() + m_c(0);
 }
 
-Eigen::MatrixXd ChebyshevExpansion::companion_matrix(const Eigen::VectorXd &coeffs) const {
+Eigen::MatrixXd ChebyshevExpansion::companion_matrix(const Eigen::VectorXd& coeffs) const {
     Eigen::VectorXd new_mc = reduce_zeros(coeffs);
     return companion_matrix_noreduce(new_mc);
 }
-Eigen::MatrixXd ChebyshevExpansion::companion_matrix_noreduce(const Eigen::ArrayXd &coeffs) const { return rootfinding::companion_matrix(coeffs); }
-Eigen::MatrixXd ChebyshevExpansion::companion_matrix_noreduce_transposed(const Eigen::ArrayXd &coeffs) const {
+Eigen::MatrixXd ChebyshevExpansion::companion_matrix_noreduce(const Eigen::ArrayXd& coeffs) const { return rootfinding::companion_matrix(coeffs); }
+Eigen::MatrixXd ChebyshevExpansion::companion_matrix_noreduce_transposed(const Eigen::ArrayXd& coeffs) const {
     return rootfinding::companion_matrix_transposed(coeffs);
 }
 std::vector<double> ChebyshevExpansion::real_roots2(bool only_in_domain) const {
@@ -653,7 +652,7 @@ std::vector<double> ChebyshevExpansion::real_roots2(bool only_in_domain) const {
                 }
             }
             bool in1 = inbetween(x_1, x_3, root1), in2 = inbetween(x_1, x_3, root2);
-            const ChebyshevExpansion &e = *this;
+            const ChebyshevExpansion& e = *this;
             auto secant                 = [e](double a, double ya, double b, double yb, double yeps = 1e-14, double xeps = 1e-14) {
                 auto c  = b - yb * (b - a) / (yb - ya);
                 auto yc = e.y_Clenshaw_xscaled(c);
@@ -783,7 +782,7 @@ double ChebyshevExpansion::monotonic_solvex(double y) const {
     Function is known to be monotonic, so we can shortcut some of the solving steps used
     We don't use the eigenvalue method because it is too slow
     */
-    auto &e     = *this;
+    auto& e     = *this;
     auto secant = [e, y](double a, double ya, double b, double yb, double yeps = 1e-14, double xeps = 1e-14) {
         double c, yc;
         for (auto i = 0; i < 50; ++i) {
@@ -860,9 +859,9 @@ std::vector<ChebyshevExpansion> ChebyshevExpansion::subdivide(std::size_t Ninter
     }
     return segments;
 }
-std::vector<double> ChebyshevExpansion::real_roots_intervals(const std::vector<ChebyshevExpansion> &segments, bool only_in_domain) {
+std::vector<double> ChebyshevExpansion::real_roots_intervals(const std::vector<ChebyshevExpansion>& segments, bool only_in_domain) {
     std::vector<double> roots;
-    for (auto &seg : segments) {
+    for (auto& seg : segments) {
         const auto segroots = seg.real_roots(only_in_domain);
         roots.insert(roots.end(), segroots.cbegin(), segroots.cend());
     }
@@ -938,16 +937,16 @@ Eigen::VectorXd ChebyshevExpansion::get_node_function_values() const {
         return u_matrix_library.get(N) * m_c;
     }
 }
-ChebyshevExpansion ChebyshevExpansion::factoryf(const std::size_t N, const Eigen::VectorXd &f, const double xmin, const double xmax) {
+ChebyshevExpansion ChebyshevExpansion::factoryf(const std::size_t N, const Eigen::VectorXd& f, const double xmin, const double xmax) {
     if (f.size() != N + 1) {
         throw std::invalid_argument("Size of f [" + std::to_string(f.size()) + "] does not equal N+1 with N of " + std::to_string(N));
     }
     // Step 3: Get coefficients for the L matrix from the library of coefficients
-    const Eigen::MatrixXd &L = l_matrix_library.get(N);
+    const Eigen::MatrixXd& L = l_matrix_library.get(N);
     // Step 4: Obtain coefficients from vector - matrix product
     return ChebyshevExpansion(L * f, xmin, xmax);
 }
-ChebyshevExpansion ChebyshevExpansion::factoryfFFT(const std::size_t N, const Eigen::VectorXd &f, const double xmin, const double xmax) {
+ChebyshevExpansion ChebyshevExpansion::factoryfFFT(const std::size_t N, const Eigen::VectorXd& f, const double xmin, const double xmax) {
     if (f.size() != N + 1) {
         throw std::invalid_argument("Size of f [" + std::to_string(f.size()) + "] does not equal N+1 with N of " + std::to_string(N));
     }
@@ -1039,7 +1038,7 @@ ChebyshevExpansion ChebyshevExpansion::integrate(std::size_t Nintegral) const {
     return ChebyshevExpansion(std::move(c), m_xmin, m_xmax);
 }
 
-Eigen::VectorXd eigenvalues_upperHessenberg(const Eigen::MatrixXd &A, bool balance) {
+Eigen::VectorXd eigenvalues_upperHessenberg(const Eigen::MatrixXd& A, bool balance) {
     Eigen::RealSchur<Eigen::MatrixXd> schur;
 
     if (balance) {
@@ -1050,7 +1049,7 @@ Eigen::VectorXd eigenvalues_upperHessenberg(const Eigen::MatrixXd &A, bool balan
         schur.computeFromHessenberg(A, Eigen::MatrixXd::Identity(A.rows(), A.cols()), false);
     }
 
-    const Eigen::MatrixXd &T = schur.matrixT();
+    const Eigen::MatrixXd& T = schur.matrixT();
 
     Eigen::VectorXd roots(A.cols());
     Eigen::Index j = 0;
@@ -1069,7 +1068,7 @@ Eigen::VectorXd eigenvalues_upperHessenberg(const Eigen::MatrixXd &A, bool balan
     return roots;
 }
 
-Eigen::MatrixXd Schur_matrixT(const Eigen::MatrixXd &A, bool balance) {
+Eigen::MatrixXd Schur_matrixT(const Eigen::MatrixXd& A, bool balance) {
     Eigen::RealSchur<Eigen::MatrixXd> schur;
     if (balance) {
         Eigen::MatrixXd Abalanced, D;
@@ -1081,7 +1080,7 @@ Eigen::MatrixXd Schur_matrixT(const Eigen::MatrixXd &A, bool balance) {
 
     return schur.matrixT();
 }
-std::vector<double> Schur_realeigenvalues(const Eigen::MatrixXd &T) {
+std::vector<double> Schur_realeigenvalues(const Eigen::MatrixXd& T) {
     std::vector<double> roots;
     for (int i = 0; i < T.cols(); ++i) {
         if (i == T.cols() - 1 || T(i + 1, i) == 0) {
@@ -1097,7 +1096,7 @@ std::vector<double> Schur_realeigenvalues(const Eigen::MatrixXd &T) {
     return roots;
 }
 
-Eigen::VectorXcd eigenvalues(const Eigen::MatrixXd &A, bool balance) {
+Eigen::VectorXcd eigenvalues(const Eigen::MatrixXd& A, bool balance) {
     if (balance) {
         Eigen::MatrixXd Abalanced, D;
         balance_matrix(A, Abalanced, D);

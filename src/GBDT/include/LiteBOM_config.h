@@ -77,7 +77,7 @@ class LiteBOM_Config {
         cout << "goss_beta " << goss_beta << endl;
     }
 
-    int num_trees;
+    int num_trees = 0;
 
     // int max_leaf;
 
@@ -244,7 +244,7 @@ class LiteBOM_Config {
     float *feat_selector       = nullptr;
 
     // gradient variance
-    // std::string leaf_optimal = "taylor_2";		//ËÆºõÓÐÎÊÌâ£¬grad_varianceÊÕÁ²ËÙ¶ÈÃ÷ÏÔ¸ü¿ì
+    // std::string leaf_optimal = "taylor_2";		//ï¿½Æºï¿½ï¿½ï¿½ï¿½ï¿½ï¿½â£¬grad_varianceï¿½ï¿½ï¿½ï¿½ï¿½Ù¶ï¿½ï¿½ï¿½ï¿½Ô¸ï¿½ï¿½ï¿½
     std::string leaf_optimal = "grad_variance";
     // std::string leaf_optimal = "ap_outlier";
     // std::string leaf_optimal = "lambda_0";
@@ -254,7 +254,7 @@ class LiteBOM_Config {
 
     std::string leaf_regression = "none";
     // std::string leaf_regression = "linear";
-    // std::string leaf_regression = "histo_mean";	//ËÆºõ¹ýÄâºÏ£¬²Î¼û10_8_[histo_mean]_1.5771.info
+    // std::string leaf_regression = "histo_mean";	//ï¿½Æºï¿½ï¿½ï¿½ï¿½ï¿½Ï£ï¿½ï¿½Î¼ï¿½10_8_[histo_mean]_1.5771.info
 
     typedef enum {
         on_QUANTILE,
@@ -262,8 +262,8 @@ class LiteBOM_Config {
         onUNIQUE,
         on_FREQ_and_Y,
     } HISTO_BINS_MAP;
-    HISTO_BINS_MAP histo_bin_map = HISTO_BINS_MAP::on_FREQ;  // ËÆºõon_FREQ¸üºÏÀíÒ»Ð©
-    int _histo_bins_Y            = 0;                        // Èç¹û´óÓÚ1£¬Ôò×Ô¶¯update
+    HISTO_BINS_MAP histo_bin_map = HISTO_BINS_MAP::on_FREQ;  // ï¿½Æºï¿½on_FREQï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ò»Ð©
+    int _histo_bins_Y            = 0;                        // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½1ï¿½ï¿½ï¿½ï¿½ï¿½Ô¶ï¿½update
 
     /*
     typedef enum { on_EDA, on_subsample, on_Y } HISTO_ALGORITHM;
@@ -286,13 +286,13 @@ class LiteBOM_Config {
 
     typedef enum {
         split_X = 0,
-        histo_X_split_G,  // histoÓëXÒ»Ñù£¬µ«splitÒÀÕÕGrad
+        histo_X_split_G,  // histoï¿½ï¿½XÒ»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½splitï¿½ï¿½ï¿½ï¿½Grad
         REGRESS_X,
         REGRESS_Y,
         histo_Y_split_Y = 111,
     } NODAL_TASK;
     NODAL_TASK node_task = split_X;  // 0:split_X		1:split_Y		2:regression
-                                     // int _histo_bins_Y=0;	//Èç¹û´óÓÚ1£¬Ôò×Ô¶¯update
+                                     // int _histo_bins_Y=0;	//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½1ï¿½ï¿½ï¿½ï¿½ï¿½Ô¶ï¿½update
     bool histo_bins_onY() const;     /*{
           //return _histo_bins_Y!=0;
           return node_task == split_Y;
@@ -356,7 +356,7 @@ class LiteBOM_Config {
     // desc = **Note**: to enable bagging, ``bagging_freq`` should be set to a non zero value as well
     double subsample = 1;
 
-    // 1-25²âÊÔ£¬Ã»ÓÐÐ§¹û£¨ËÆºõbatchµÄÑù±¾±äÐ¡£¬Æä¶þ·ÖÀàµÄ·º»¯Ð§¹û¾Í²»ºÃ£©
+    // 1-25ï¿½ï¿½ï¿½Ô£ï¿½Ã»ï¿½ï¿½Ð§ï¿½ï¿½ï¿½ï¿½ï¿½Æºï¿½batchï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ð¡ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä·ï¿½ï¿½ï¿½Ð§ï¿½ï¿½ï¿½Í²ï¿½ï¿½Ã£ï¿½
     double batch = 1;
 
     // alias = subsample_freq

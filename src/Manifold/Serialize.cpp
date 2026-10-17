@@ -22,15 +22,14 @@ namespace fs = std::filesystem;
 #include "../Utils/GST_Application.hpp"
 #include "../Utils/GST_os.hpp"
 #include "../Utils/rapidhash.h"
-#include "Fish.hpp"
-
+#include "../Shoal/gLLM.hpp"
 #if !defined(SAFETENSORS_CPP_NO_IMPLEMENTATION)
 #define SAFETENSORS_CPP_IMPLEMENTATION
 #endif
 #include "../Tensor/Safetensors.hpp"
 
-// from json desc entry of each tensor in some checkpoint files
-GTensor::GTensor(Fish* _hFish, const string& _name, JSON& jEntry, int flag) {
+    // from json desc entry of each tensor in some checkpoint files
+    GTensor::GTensor(Fish* _hFish, const string& _name, JSON& jEntry, int flag) {
     // assert(_hFish != nullptr);       //  when SAFETENSOR_Load_jconfig, _hFish is still nullptr
     strcpy(name, _name.c_str());
     hFish        = _hFish;
@@ -918,7 +917,7 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
             if (jsConfig["CLI_params"]["config"].contains("model") && jsConfig["CLI_params"]["config"]["model"].contains("hf-card")) {
                 jsConfig["CLI_params"]["config"]["model"]["#origin-hf-card"] = jsConfig["CLI_params"]["config"]["model"]["hf-card"];
                 jsConfig["CLI_params"]["config"]["model"].erase("hf-card");
-                jsConfig["CLI_params"]["config"]["model"]["arch"]                            = config.model.model_type;          //"QWEN3";
+                jsConfig["CLI_params"]["config"]["model"]["arch"]                            = config.sft.model_type;            //"QWEN3";
                 jsConfig["CLI_params"]["config"]["model"]["parameter"]["max_pos_embeddings"] = config.model.max_pos_embeddings;  //: 32768
             }
 

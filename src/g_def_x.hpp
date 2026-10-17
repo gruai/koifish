@@ -39,6 +39,7 @@
 #define KOIFISH_LOAD_TOKENFILE_HEADER -302
 #define KOIFISH_LOAD_TOKENSET_GLOB -310
 #define KOIFISH_LOAD_SHARD_NULL -320
+#define KOIFISH_LOAD_ARROW_ERROR -330
 
 #define KOIFISH_SAFETENSOR_ERROR -400
 #define KOIFISH_SAFETENSOR_SAVE -401
@@ -60,7 +61,10 @@
 #define KOIFISH_DATASET_EMPTY -1300
 #define KOIFISH_DATALOADER_EMPTY -1310
 
-#define KOIFISH_CUDA_CHECK -1400
+#define KOIFISH_COLLATE_ERROR -1400
+#define KOIFISH_COLLATE_1SAMP -1401
+
+#define KOIFISH_CUDA_CHECK -1500
 
 #define KOIFISH_BLAS_UNALIGN -2000
 #define KOIFISH_BLAS_ERROR -2001
@@ -75,6 +79,10 @@
 
 #define KOIFISH_CHAT_ERROR -6000
 #define KOIFISH_INVALID_PROMPT -6100
+
+#define KOIFISH_DECISION_ERROR  -7000
+#define KOIFISH_FEATURE_NULL    -7100
+#define KOIFISH_HIDDEN_NULL     -7110
 
 #define KOIFISH_EXIT_DEBUG -10000
 #define KOIFISH_EXIT_SYNC_DEVICE -10100
@@ -107,11 +115,18 @@
 
 #define CHILD_1012_CACHE true
 
+// #define THREAD_TILE_M 16U
+// #define THREAD_TILE_N 16U
+#define THREAD_TILE_M 8U
+#define THREAD_TILE_N 8U
+// #define THREAD_TILE_M 4U
+// #define THREAD_TILE_N 4U
+
+#define NOT_IMPLEMENTED throw std::logic_error(std::string("Not implemented in ") + __func__ + " at " __FILE__ ":" + std::to_string(__LINE__))
+
 #ifndef NDEBUG
 #define nout printf
 #define INSPECT_THIS INSPECT inspect(this);
-
-#define NOT_IMPLEMENTED throw std::logic_error("not implemented")
 
 #define DEBUG_HERE                      \
     do {                                \

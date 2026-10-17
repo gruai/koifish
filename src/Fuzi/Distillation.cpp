@@ -1,7 +1,7 @@
 #include "Distillation.hpp"
 
-#include "../Manifold/Fish.hpp"
 #include "../Manifold/Optimizer.hpp"
+#include "../Shoal/Fish.hpp"
 void Distillation::UpdateSigma(int step, int flag) {
     if (alg != SIGMA)
         return;

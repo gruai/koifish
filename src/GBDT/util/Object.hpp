@@ -9,12 +9,8 @@
 #include <memory>  //for shared_ptr
 #include <string>
 #include <typeinfo>
-#include <unordered_map>
 #include <vector>
-// https://github.com/Tessil/hopscotch-map
-#ifdef HOPSCOTCH_MAP_LIB
-#include "./Lib/hopscotch_map.h"
-#endif
+
 #include <assert.h>
 #include <float.h>
 #include <math.h>
@@ -183,24 +179,7 @@ void FREE_a( T* &ptr ){
     }
 }
 
-#ifdef HOPSCOTCH_MAP_LIB
-template<typename K,typename V>
-//V *HT_FIND( unordered_map<K,V*>&HT,K key){
-V *HT_FIND( tsl::hopscotch_map<K,V*>&HT,K key){
-    if( HT.find(key)==HT.end( ) )
-        return nullptr;
-    else
-        return HT[key];
-}
-#else
-template<typename K,typename V>
-V *HT_FIND( unordered_map<K,V*>&HT,K key){
-    if( HT.find(key)==HT.end( ) )
-        return nullptr;
-    else
-        return HT[key];
-}
-#endif
+
 
 
 */

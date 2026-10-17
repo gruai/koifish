@@ -12,8 +12,8 @@
    The Qwen3-0.6B
        1. GQA: QKV projections are all configured with a bias=False parameter, meaning they do not use a bias term.
 */
-#include "../Manifold/gLLM.hpp"
-QWen::QWen(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
+#include "../Shoal/gLLM.hpp"
+QWen::QWen(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
     assert(arch == MODEL_ARCH::NTP_QWEN2 || arch == MODEL_ARCH::NTP_QWEN3);
     config.model.isSLPBias    = false;
     config.model.isNormalBias = false;
@@ -24,7 +24,7 @@ QWen::QWen(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, in
     }
     // DEBUG.cmd_p1 = 1;
 }
-QWen3::QWen3(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : QWen(nam_, params, role, flag) {
+QWen3::QWen3(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag) : QWen(nam_, params, role, flag) {
     // also support QWen2.5 model
     assert(arch == MODEL_ARCH::NTP_QWEN3 || arch == MODEL_ARCH::NTP_QWEN2);
     config.model.isSLPBias     = false;
@@ -56,6 +56,30 @@ QWen3::QWen3(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, 
     config.model.isNormalBias  = false;
 }
 
+/**
+ * static const char* LLM_TENSOR_TOKEN_EMBD         = "token_embd";
+static const char* LLM_TENSOR_OUTPUT_NORM        = "output_norm";
+static const char* LLM_TENSOR_OUTPUT             = "output";
+static const char* LLM_TENSOR_ATTN_NORM          = "blk.%d.attn_norm";
+static const char* LLM_TENSOR_ATTN_Q             = "blk.%d.attn_q";
+static const char* LLM_TENSOR_ATTN_K             = "blk.%d.attn_k";
+static const char* LLM_TENSOR_ATTN_V             = "blk.%d.attn_v";
+static const char* LLM_TENSOR_ATTN_OUT           = "blk.%d.attn_output";
+static const char* LLM_TENSOR_FFN_NORM           = "blk.%d.ffn_norm";
+static const char* LLM_TENSOR_FFN_GATE           = "blk.%d.ffn_gate";
+static const char* LLM_TENSOR_FFN_DOWN           = "blk.%d.ffn_down";
+static const char* LLM_TENSOR_FFN_UP             = "blk.%d.ffn_up";
+static const char* LLM_DICT_UP                   = "dict.%d.up";
+static const char* LLM_DICT_DOWN                 = "dict.%d.down";
+static const char* LLM_TENSOR_FFN_GATE_INP       = "blk.%d.ffn_gate_inp";
+static const char* LLM_TENSOR_FFN_GATE_EXPS      = "blk.%d.ffn_gate_exps";
+static const char* LLM_TENSOR_FFN_DOWN_EXPS      = "blk.%d.ffn_down_exps";
+static const char* LLM_TENSOR_FFN_UP_EXPS        = "blk.%d.ffn_up_exps";
+static const char* LLM_TENSOR_FFN_GATE_INP_SHEXP = "blk.%d.ffn_gate_inp_shexp";
+static const char* LLM_TENSOR_FFN_GATE_SHEXP     = "blk.%d.ffn_gate_shexp";
+static const char* LLM_TENSOR_FFN_DOWN_SHEXP     = "blk.%d.ffn_down_shexp";
+static const char* LLM_TENSOR_FFN_UP_SHEXP       = "blk.%d.ffn_up_shexp";
+ */
 std::string Fish::NN2NAME(const std::string& prefix, tpNEURON4NAME neuron, const std::string& suffix, int flag) {
     switch (neuron) {
         case ATTN_PRE_NORMAL:
@@ -142,7 +166,7 @@ std::string QWen::NN2NAME(const std::string& prefix, tpNEURON4NAME neuron, const
     return tName;
 }
 
-Bitnet::Bitnet(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
+Bitnet::Bitnet(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
     // assert(arch == MODEL_ARCH::NLP_BITNET);
     config.model.isSLPBias     = false;
     config.model.isNormalBias  = false;

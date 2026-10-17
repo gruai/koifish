@@ -17,9 +17,8 @@
 #include <unicode/uchar.h>
 #endif
 #include <memory>
-#include <unordered_map>
 
-#include "../Manifold/gLLM.hpp"
+#include "../Shoal/gLLM.hpp"
 #include "Dictionary.hpp"
 
 #ifdef _USE_SENTENCEPIECE_
@@ -190,6 +189,16 @@ bool TOKEN_Special::Has(const int tok, int flag) const {
 }
 
 bool GTokenizer::isSpecialTok(const int tok, int flag) const { return S.Has(tok, flag); }
+
+TOKENS GTokenizer::Translate(const TOKENS& input, int flag) const {
+    TOKENS out;
+    for (auto id0 : input) {
+        assert(invT2T.contains(id0));
+        auto id1 = invT2T.at(id0);
+        out.push_back(id1);
+    }
+    return out;
+}
 
 std::string GTokenizer::Decode(const TOKENS& ids, bool skip_pad, bool skip_special_tokens) const {
     string line;
@@ -395,8 +404,8 @@ std::string GTokenizer::Dump(int type, int flag) const {
     char buf[KOIFISH_MOST_LOG];
     switch (type) {
         default:
-            sprintf(buf, "[DICT_\"%s\"] nVocab=%d(dialect=%d) %s special=%ld", name.c_str(), vocab.size(), mapT2T.size(), S.Dump(0x0).c_str(),
-                    special_tokens.size());
+            sprintf(buf, "[DICT_\"%s\"] nVocab=%ld(nAdd=%d dialect=%ld) %s special=%ld", name.c_str(), vocab.size(), nAddedToken, mapT2T.size(),
+                    S.Dump(0x0).c_str(), special_tokens.size());
     }
     return buf;
 }
@@ -418,6 +427,12 @@ GTokenizer_GPT2::GTokenizer_GPT2(Fish* dolphin, int flag) {
 std::string GTokenizer_GPT2::T2STR(TOKEN_ID tok, int flag) const { return std::to_string((int)(tok) % 10); }
 
 bool GTokenizer::CheckSpecialTokens(bool isAllowNone, int flag) {
+    whitespace_token = (TOKEN_ID)STR2T(" ");
+    if (whitespace_token == TOKEN_NAN) {
+        whitespace_token = 220;  // In Qwen3’s tokenizer.json, there is no vocab entry whose string is a literal ASCII space " ". It's Ġ (U+0120, Latin Capital
+                                 // Letter G with Dot Above)
+    }
+
     if (S.im_start < 0) {
         S.im_start = STR2T("<|im_start|>");
     }
@@ -441,12 +456,13 @@ bool GTokenizer::CheckSpecialTokens(bool isAllowNone, int flag) {
     if (S.assist < 0) {  //    <|im_start|>assistant
         S.assist = STR2T("assistant");
     }
-    if (S._mask < 0) {  //    <|im_start|>assistant
+    if (S._mask < 0) {  //
         S._mask = STR2T("<M>");
     }
-    if (S._noise < 0) {  //    <|im_start|>assistant
+    if (S._noise < 0) {  //
         S._noise = STR2T("<noise>");
     }
+
     S.newline = STR2T("\n");  // 198
     if (S.newline < 0)        //  hack
         S.newline = 198;
@@ -457,18 +473,17 @@ bool GTokenizer::CheckSpecialTokens(bool isAllowNone, int flag) {
         S.eot = S.eos;
     }
     if (isDialect) {
-        std::vector<int> ss = {S.im_start, S.im_end, S.think_open, S.think_close, S._pad, S.eos, S.assist, S._mask, S._noise, S.newline, S.newline2, S.eot};
-        for (auto tok : ss) {
-            if (tok < 0)
+        for (auto* tok : S.AllTokens(flag)) {
+            if (*tok < 0)
                 continue;
-            if (mapT2T.find(tok) != mapT2T.end()) {  //  S.eot = S.eos
-                continue;
-            }
-            mapT2T[tok] = mapT2T.size();
+            *tok = mapT2T.size();  // in many case, need S.mask, S.noise
+            // if (mapT2T.find(*tok) != mapT2T.end()) {  //  S.eot = S.eos
+            //     continue;
+            // }
+            mapT2T[*tok] = mapT2T.size();
         }
-        S._pad = mapT2T[S._pad], S.eos = mapT2T[S.eos], S.eot = mapT2T[S.eot];
-        S._mask = mapT2T[S._mask], S._noise = mapT2T[S._noise];
     }
+
     return true;
 }
 /*
@@ -930,6 +945,7 @@ const char* kv(const char* key) {
     return keybuf;
 };
 
+#ifdef __USE_DICTVAE__
 string DictVAE::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]     = "\0";
     const char* _ops[] = {
@@ -1268,6 +1284,7 @@ void VariationaAE::save_gguf(struct gguf_context* fctx, int flag) {
 
 //  llama.cpp/examples/tokenize/tokenize.cpp
 CDict_LLAMA::CDict_LLAMA(Fish* nlp_, int flag) : DictVAE(nlp_, flag) {}
+#endif  
 
 // to test tokenizer
 int Fish_token(CLI_params& config) {
@@ -1275,7 +1292,7 @@ int Fish_token(CLI_params& config) {
     config.common.n_batch = 1;
     arrHWIKI wikis        = WIKI::MakeInstance("wikis", config, 0x0);
 
-    hFISH fish = Fish::MakeInstance("Token_", config, wikis, Fish::ROLE_TYPE::COMMON, 0x110);
+    hFISH fish = Fish::MakeInstance("Token_", config, wikis, MODEL_ROLE::COMMON, 0x110);
 
     hTokenizer hTok = std::make_shared<GTokenizer>(fish.get());  //
     // GTokenizer_WordPiece has some bug, need more time!

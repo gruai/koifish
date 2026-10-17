@@ -11,7 +11,7 @@
 #include <iostream>
 #include <string>
 
-#include "./Manifold/gLLM.hpp"
+#include "./Shoal/gLLM.hpp"
 #include "./Utils/GST_Application.hpp"
 #include "./Utils/GST_log.hpp"
 #include "./g_def_x.hpp"
@@ -27,9 +27,9 @@ class BubbleApp : public GST_Application {
         // DEBUG.test_quant = 1;
         auto arch = params.ModelArch();
         params.OnArch();
-        chatPhase = arch == MD_QWEN ? LIFE_PHASE::P_CHAT_N : LIFE_PHASE::P_CHAT_1;
+        chatPhase = (arch == MD_QWEN || arch == MD_AR_QWEN) ? LIFE_PHASE::P_CHAT_N : LIFE_PHASE::P_CHAT_1;
         params.OnPhase(chatPhase);
-        
+
         // params.chat_sampler.mode = params.model.enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
         // params.chat_sampler.isSampleCPU = true;
         params.model.preLogits_dB  = 1;
@@ -53,7 +53,7 @@ class BubbleApp : public GST_Application {
 
     int Swim() override {
         vector<hWIKI> wikis;  // reserved for hybrid llm training
-        fish = Fish::MakeInstance("Bubble_", params, wikis, Fish::ROLE_TYPE::COMMON, 0x110);
+        fish = Fish::MakeInstance("Bubble_", params, wikis, MODEL_ROLE::COMMON, 0x110);
         if (fish == nullptr) {
             _ERROR("[APP] %s is nullptr!!!", name.c_str());
             return KOIFISH_NULL_FISH;

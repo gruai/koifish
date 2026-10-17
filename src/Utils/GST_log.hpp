@@ -121,3 +121,26 @@ void inline PrintT(const char* title, const T* src, int n1, int n2, int n3 = 1, 
     _INFO(" |avg|=%g(%ld) [%.3e,%.3e] avg_len=%g sum2=%g nz=%.3g\n", sum / nElem, nElem, a0, a1, len, sum2, nz * 1.0 / nElem);
     fflush(stdout);
 }
+
+// extern int g_dump_level;
+template <typename T>
+void inline PrintTensor(const char* title, const T* src, bool isDevice, int n1, int n2, int n3 = 1, int n4 = 1, int flag = 0x0) {
+    if (g_dump_level > 0 && flag >= 0)
+        return;
+    T* host_dat  = (T*)src;
+    size_t nElem = (size_t)(n1)*n2 * n3 * n4;
+    if (nElem == 0)
+        return;
+    assert(src != nullptr);
+    if (isDevice) {
+        // SYNC_STREAM();
+        host_dat = (T*)malloc(sizeof(T) * nElem);
+        D2H(src, host_dat, nElem * sizeof(T));
+        // cudaCheck(cudaMemcpy(host_dat, src, nElem * sizeof(T), cudaMemcpyDeviceToHost));
+    }
+
+    PrintT(title, host_dat, n1, n2, n3, n4, flag);
+    if (isDevice) {
+        free(host_dat);
+    }
+}

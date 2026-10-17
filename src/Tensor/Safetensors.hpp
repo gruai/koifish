@@ -64,8 +64,8 @@ class K_SafeTensors {
     bool mmaped{false};
     virtual void Clear(int flag = 0x0) {
         tensors.Clear();
-        metadata.clear();
-        jsConfig.clear();
+        metadata = JSON();  //.clear();
+        jsConfig = JSON();  //.clear();
         // storage.clear();
         header_size = 0x0;
     }
@@ -90,7 +90,7 @@ class K_SafeTensors {
         hGTensor tensor = std::make_shared<GTensor>();
         strcpy(tensor->name, config_key_.c_str());
         tensor->hFish           = hFish;
-        tensor->msgpack         = JSON::to_msgpack(js);
+        tensor->msgpack         = J_to_msgpack(js); //JSON::to_msgpack(js);
         tensor->type            = typNUMBER::U8;           // dtype::kUINT8;
         size_t sz               = tensor->msgpack.size();  // storage.size();
         tensor->data_offsets[0] = dst_offset;
@@ -118,7 +118,7 @@ class K_SafeTensors {
         std::vector<uint8_t> msgpack;
         msgpack.resize(szSrc);
         memcpy(msgpack.data(), bytes_ptr + offset_start, szSrc);
-        jsConfig = JSON::from_msgpack(msgpack);
+        jsConfig = J_from_msgpack(msgpack);
         return 0x0;
     }
 
@@ -139,12 +139,13 @@ class K_SafeTensors {
             // assert(end<nbytes);
             std::vector<uint8_t> msgpack = {databuffer + start, databuffer + end};
             size_t sz                    = msgpack.size();
-            jsConfig                     = JSON::from_msgpack(msgpack);
+            jsConfig                     = J_from_msgpack(msgpack);    //JSON::from_msgpack(msgpack);
             return true;
-        } catch (JSON::parse_error& e) {
+        } /*catch (JSON::parse_error& e) {
             _INFO("\r\n%s  Failed to initJS from safetensor[]!!! ERR=%s", __func__, e.what());
             return false;
-        } catch (...) {
+        }*/ catch (...) {
+            _ERROR("\r\n%s  Failed to initJS from safetensor[]!!!", __func__);
             return false;
         }
     }
@@ -1582,7 +1583,7 @@ bool mmap_from_file(const std::string& filename, K_SafeTensors* st, std::string&
         // bool ret = mmap_from_memory(pm->addr, pm->size, filename, st, &warn, &err);
 
         std::string json_str(json_bytes, json_size);
-        _INFO(">>>>>> header of%s= \n\t%s", filename.c_str(), json_str.c_str());
+        _INFO(">>>>>> header of \"%s\"= \n\t%s\n\n", filename.c_str(), json_str.c_str());
         st->jHeader = JSON::parse(json_str);
 
         for (auto& [key, value] : st->jHeader.items()) {

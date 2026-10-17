@@ -10,7 +10,7 @@
 
 #include "gLLM.hpp"
 
-LLM_MOE::LLM_MOE(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
+LLM_MOE::LLM_MOE(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
     assert(arch == MODEL_ARCH::NLP_MOE);
 
     tpFFN = FFN_TYPE::GATE_CYS;

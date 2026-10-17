@@ -12,8 +12,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#include "../Manifold/Fish.hpp"
 #include "../PackedQ.hpp"
+#include "../Shoal/Fish.hpp"
 #include "GeQuant.hpp"
 
 GTensor* GTensor::tZ      = nullptr;
@@ -138,6 +138,27 @@ size_t GTensor::Offset(int i0, int i1, int i2, int i3, int flag) const {
     // }
     assert(off < szData);
     return off;
+}
+
+bool GTensor::Shrink(int nKeep, int no_dim, int flag) {
+    assert(!BIT_TEST(flags, F_GPU) && !BIT_TEST(flags, F_MMAP));
+    assert(nKeep < ne[0]);
+    int n234 = ne[1] * ne[2] * ne[3];
+    assert(szData * nKeep % ne[0] == 0);
+    size_t szNew   = szData * nKeep / ne[0];
+    void* data_new = new char[szNew]();
+    double nBit    = BitPE(type);
+    size_t sz1     = nKeep * nBit / 8;
+    for (int i = 0; i < n234; i++) {
+        void *src = data + Offset(0, i, 0, 0), *dest = data_new + i * sz1;
+        memcpy(dest, src, sizeof(float) * sz1);
+    }
+
+    FREE_a(data);
+    ne[0] = nKeep, shape[0] = nKeep;
+    szData = szNew;
+    data   = data_new;
+    return true;
 }
 
 //  support dynamic change shape&type!  return false if not change anything
@@ -337,19 +358,6 @@ void GTensor::Set(float a, int flag) {
         assert(0);
     }
 }
-#ifdef __USE_GGML__
-bool GTensor::OverWrite(struct ggml_tensor* gg_, bool isSrc, int flag) {
-    assert(size() == ggml_nelements(gg_));
-    assert(type == (typNUMBER)gg_->type);
-    if (isSrc) {
-        memcpy(data, gg_->data, szData);
-    } else {
-        memcpy(gg_->data, data, szData);
-    }
-
-    return true;
-}
-#endif
 
 bool GTensor::OverWrite(hGTensor hGT, bool isSrc, int flag) {
     /*huTensor *src = dynamic_cast<huTensor *>(hGT.get());
@@ -789,7 +797,7 @@ bool GTensor::DumpX(int tpDump, const string& title, int flag) const {
             if (disq.err > 0)
                 _INFO("eQ=%.3g ", disq.err);
             _INFO("\n");
-            if (DEBUG.dump_ParamsDetail>0)  //  g_dump_level = DEBUG.dump_TensorDetail + 1;
+            if (DEBUG.dump_ParamsDetail > 0)  //  g_dump_level = DEBUG.dump_TensorDetail + 1;
                 Print(name, 0, -1);
             /*if (n > 0 && a1 != -FLT_MAX) {
                 _INFO("\nsum=%g data=[%f : %f] rZ=%.3g%%\n\t", sum, a0, a1, nz * 100.0 / nElems);
@@ -838,10 +846,10 @@ void _T_repr_(hGTensor t, const char* tab, char* buf, const GENSOR_INFO& info) {
 
 bool GTensor::Alloc(int tpInit, int flag) {
     assert(szData > 0);
-    data = new char[szData];
+    data = new char[szData]();
     if (isParam()) {
         // if(hFish!=nullptr && hFish->isTrain())
-        grad = new floatGrad[size()];
+        grad = new floatGrad[size()]();
     }
     mem_status = 1;
     return true;
@@ -1063,7 +1071,8 @@ bool huTensor::Alloc(int iter, int flagInit) {
                 } else {
                     Alloc_1(&gv, true, desc + ".m", szM), szV = 0;
                 }
-                assert(gm != nullptr && "gm is nullptr@huTensor::Alloc");
+                if (hFish->role != BACKBONE_LOGITS)
+                    assert(gm != nullptr && "gm is nullptr@huTensor::Alloc");
             }
         } else {  // infer or generate stage
             szV = 0, szGrad = 0, szM = 0;

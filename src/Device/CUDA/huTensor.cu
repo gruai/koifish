@@ -11,7 +11,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#include "../../Manifold/Fish.hpp"
+#include "../../Shoal/Fish.hpp"
 #include "../../Tensor/GTensor.hpp"
 #include "../../Tensor/GeQuant.hpp"
 #include "../../Utils/GST_log.hpp"
@@ -270,10 +270,9 @@ bool huTensor::CopyGG(struct ggml_tensor* gg_, int flag) {
         }
     };
 
-#ifdef _TENSOR_G_
+
     bool toDevice = SerialGP(src, nullptr, szSrc, false, 0x0);
     assert(toDevice);
-#endif
 
     // if(src!=data)       delete[] src;
     return true;
@@ -361,6 +360,14 @@ bool cuClearGrad(std::vector<hGTensor> tensors, int flag) {
     return true;
 }
 
+void D20(void* dev, size_t szData, int flag) {
+    cudaError_t error = cudaMemset(dev, 0, szData);
+    if (error != cudaSuccess) {
+        _ERROR("[CUDA ERROR] at D20 \"%s\" (%s code=%d)\n", cudaGetErrorString(error), cudaGetErrorName(error), error);
+        exit(KOIFISH_CUDA_CHECK);
+    }
+}
+
 bool D2D(void* hDst, const void* hSrc, size_t szData, int flag) {
     try {
         assert(hDst != nullptr && hSrc != nullptr);
@@ -430,7 +437,7 @@ bool GTensor::SerialGamaData(const string& info, void* host, bool isToHost, size
         cudaError_t err = cudaSuccess;
         if (isToHost) {
             // cudaCheck(cudaMemcpyAsync(host,data, szX, cudaMemcpyDeviceToHost));
-            err = cudaMemcpy(host, data, szX, cudaMemcpyDeviceToHost);  // 303872
+            err = cudaMemcpy(host, data, szX, cudaMemcpyDeviceToHost);  // 303332
             // if (G_Has_(name, {"model.layers.0.mlp.down_proj.weight"})) {
             //     uint64_t hash63 = rapidhash_64(host, szX);
             //     _INFO("\n\t<hash@output>%-40.40s\t0x%016llX\n", name, hash63);
@@ -935,13 +942,14 @@ bool GST_TensorBuffer::Prepare(int flag) {
         int dB = config.model.preLogits_dB < 0 ? B : config.model.preLogits_dB;
         if (hFish->isTrain())
             assert(B % dB == 0);
-        size_t nFFW = (size_t)(B)*T * nFF, nPrelogist = (size_t)(dB)*T * Vp;  
-        size_t nTmp = std::max(nFFW, nPrelogist);                             // 
+        size_t nFFW = (size_t)(B)*T * nFF, nPrelogist = (size_t)(dB)*T * Vp;
+        size_t nTmp = std::max(nFFW, nPrelogist);  //
         assert(nTmp < INT_MAX);
         typNUMBER tpA = config.model.tpActivation, tpG = config.model.tpGradient, tpW = config.model.tpWeight;
         // cuLiteTest(B,T,C);
 
-        SHAPE sp4 = {B, T, max(nFF, q_dim + kv_dim * 2)}, sp0 = {(int)nTmp}, spMost = {B, T, mostC}, spB = {B, 1, 1};
+        SHAPE sp4 = {B, T, max(nFF, q_dim + kv_dim * 2)}, sp0 = {(int)nTmp}, spB = {B, 1, 1};
+        SHAPE spMost    = {mostC, T, B};  //  {B, T, mostC}
         Qlen            = std::make_shared<huTensor>(hFish, "Qlen", spB, typNUMBER::I32, true, GTensor::F_DEBUG);
         KVlen           = std::make_shared<huTensor>(hFish, "KVlen", spB, typNUMBER::I32, true, GTensor::F_DEBUG);
         bt4c            = std::make_shared<huTensor>(hFish, "tmpBT4c", sp4, tpA, true);
@@ -964,7 +972,7 @@ bool GST_TensorBuffer::Prepare(int flag) {
         if (hFish->isModel({NTP_GUPPY})) {
             tmpW = std::make_shared<huTensor>(hFish, "tmpW", SHAPE({nEmbed, nFF}), tpW, true);
         }
-        if (hFish->isModel({NTP_QWEN2, NTP_QWEN3, MD_QWEN})) {
+        if (hFish->isModel({NTP_QWEN2, NTP_QWEN3, MD_QWEN, MD_AR_QWEN})) {
             gate_delta = std::make_shared<huTensor>(hFish, "tmpGateDelta", SHAPE({B, T, nFF}), tpG, true);
         }
         switch (hFish->phase) {

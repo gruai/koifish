@@ -203,6 +203,14 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
 };
 typedef shared_ptr<Optimizer> hOptimizer;
 
+// Used in many function of evaluate/infer phase
+class OPT_NONE : public Optimizer {
+   public:
+    OPT_NONE(NLP_AutoRegressive* g_, CLI_params& params_, int flag = 0x0);
+    void Dump(int typ) override { _INFO("Only for many function of evaluate/infer phase"); }
+    int GetITER(int flag = 0x0) const override { return -1; }
+};
+
 class OPT_Adam : public Optimizer {
    protected:
     ADAM_params_* adam = nullptr;  // may be modified

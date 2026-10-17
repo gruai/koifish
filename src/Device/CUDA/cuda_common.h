@@ -339,27 +339,7 @@ inline float get_flops_promised(const char* device, int precision_mode) {
 }
 
 extern cudaStream_t main_stream;
-extern int g_dump_level;
-template <typename T>
-void inline PrintTensor(const char* title, const T* src, bool isDevice, int n1, int n2, int n3 = 1, int n4 = 1, int flag = 0x0) {
-    if (g_dump_level > 0 && flag >= 0)
-        return;
-    T* host_dat  = (T*)src;
-    size_t nElem = (size_t)(n1)*n2 * n3 * n4;
-    if (nElem == 0)
-        return;
-    assert(src != nullptr);
-    if (isDevice) {
-        // SYNC_STREAM();
-        host_dat = (T*)malloc(sizeof(T) * nElem);
-        cudaCheck(cudaMemcpy(host_dat, src, nElem * sizeof(T), cudaMemcpyDeviceToHost));
-    }
 
-    PrintT(title, host_dat, n1, n2, n3, n4, flag);
-    if (isDevice) {
-        free(host_dat);
-    }
-}
 
 inline size_t get_compute_capability() {
     int current_device;
@@ -671,42 +651,6 @@ struct Surface {
         }
     }
 };
-
-void inline D20(void* dev, size_t szData, int flag = 0x0) {
-    cudaError_t error = cudaMemset(dev, 0, szData);
-    if (error != cudaSuccess) {
-        _ERROR("[CUDA ERROR] at D20 \"%s\" (%s code=%d)\n", cudaGetErrorString(error), cudaGetErrorName(error), error);
-        exit(KOIFISH_CUDA_CHECK);
-    }
-}
-
-uint64_t D2H_hash64(const void* dev, size_t szData, int flag = 0x0);
-bool D2H(const void* dev, void* host, size_t szData, int flag = 0x0);
-bool D2D(void* hDst, const void* hSrc, size_t szData, int flag = 0x0);
-bool H2D(void* dev, const void* host, size_t szData, int flag = 0x0);
-
-// copy value of one elemetn from device
-template <typename T>
-bool D2e(const void* dev, T& host, const std::string& desc, int flag = 0x0) {
-    if (!D2H(dev, &host, sizeof(T), flag))
-        return false;
-    float a = T2Float(&host);
-    if (isnan(a) || isinf(a)) {
-        _ERROR("[D2e] faild@\"%s\" a=%g\n", desc.c_str(), a);
-        return false;
-        // K_EXIT_NOW(KOIFISH_INVALID_D2E);
-    }
-    return true;
-}
-
-template <typename T>
-float D2f(const T* dev, const std::string& desc = "", int flag = 0x0) {
-    T hostVal;
-    bool bRet = D2e((const void*)dev, hostVal, desc.empty() ? "D2f" : desc);
-    assert(bRet);
-    float a = T2Float(&hostVal);
-    return a;
-}
 
 typedef int (*fnPOS)(int r, int c, int M, int N);
 // Column major to be compatible with cuBlas

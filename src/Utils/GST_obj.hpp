@@ -23,9 +23,10 @@
 #include <random>
 #include <string>
 #include <typeinfo>
-#include <unordered_map>
 #include <vector>
 using namespace std;
+
+using CSTRING = const std::string;
 
 #ifdef WIN32
 #define G_INT_64 __int64
@@ -44,11 +45,9 @@ typedef __int64 INT_63;
 // #define G_INT_64  long long
 #endif
 
-inline void _inline_check_(bool cond, const char* expr,const char* file, int line) {
+inline void _inline_check_(bool cond, const char* expr, const char* file, int line) {
     if (!cond) {
-        throw std::runtime_error(
-            std::string("CHECK failed: ") + expr +
-            " at " + file + ":" + std::to_string(line));
+        throw std::runtime_error(std::string("CHECK failed: ") + expr + " at " + file + ":" + std::to_string(line));
     }
 }
 #define CHECK_(expr) _inline_check_((expr), #expr, __FILE__, __LINE__)
@@ -159,6 +158,31 @@ void G_SomeXat_(vector<int>& pos, const vector<T>& someX, const vector<T>& allX,
     }
 }
 
+// If string contains like "<|fim_prefix|>", "<|fim_middle|>", it would be encoded as specail tokens!
+std::string inline G_rewrite_special_tokens(std::string text, int flag=0x0) {
+    std::string out;
+    out.reserve(text.size());
+
+    size_t i = 0, n = text.size();
+    while (i < n) {
+        if (i + 1 < n && text[i] == '<' && text[i + 1] == '|') {    // <|
+            size_t j = i + 2;
+            while (j < n && (std::isalnum(static_cast<unsigned char>(text[j])) || text[j] == '_')) {
+                ++j;
+            }
+            if (j > i + 2 && j + 1 < n && text[j] == '|' && text[j + 1] == '>') {   // |>
+                out += "<\xC2\xA6";
+                out.append(text.substr(i + 2, j - (i + 2)));
+                out += "\xC2\xA6>";
+                i = j + 2;
+                continue;
+            }
+        }
+        out += text[i++];
+    }
+    return out;
+}
+
 // compare strings ignoring case
 bool inline G_Aa(const std::string& A, const std::string& a) {
     if (A.size() != a.size())
@@ -261,25 +285,6 @@ inline void FREE_a<void>(void*& ptr) {
         ptr = nullptr;
     }
 }
-
-#ifdef HOPSCOTCH_MAP_LIB
-template <typename K, typename V>
-// V *HT _FIND( unordered_map<K,V*>&HT,K key){
-V* HT_FIND(tsl::hopscotch _ map<K, V*> δHT, K key) {
-    if (HT.find(key) == HT.end())
-        return nullptr;
-    else
-        return HT[key];
-}
-#else
-template <typename K, typename V>
-V* HT_FIND(unordered_map<K, V*>& HT, K key) {
-    if (HT.find(key) == HT.end())
-        return nullptr;
-    else
-        return HT[key];
-}
-#endif
 
 // return lhs+rhs
 template <typename T>
@@ -649,7 +654,7 @@ class SafeExit : public std::exception {
 #define K_EXIT(code) throw SafeExit("", code, SafeExit::ExitReason::SYSTEM_FAILURE, __func__);
 #define K_EXIT_NOW(code)                                                                 \
     {                                                                                    \
-        fprintf(stderr, "\r\n%s EXIT_NOW with err=%d %s", COLOR_RED, code, COLOR_RESET); \
+        fprintf(stderr, "\r\n%s EXIT_NOW with err=%d %s\n\n", COLOR_RED, code, COLOR_RESET); \
         exit(code);                                                                      \
     }
 

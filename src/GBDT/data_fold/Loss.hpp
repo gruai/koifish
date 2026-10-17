@@ -122,7 +122,7 @@ class FeatVec_LOSS {
             ids[nz++] = i;
         }
         assert(nz == dim);
-        std::mt19937 rand_g(42);  
+        std::mt19937 rand_g(42);
         std::shuffle(ids + nOutlier, ids + dim, rand_g);
         // std::random_shuffle(ids + nOutlier, ids + dim);  // deprecated
         nMost = MIN2((dim - nOutlier) / nOutlier, 1000);
@@ -255,7 +255,7 @@ class FeatVec_LOSS {
 
         if (metric == "logloss") {  // binary cross entropy
             err_logloss = 0;        //-np.mean(true_y*np.log(pred_h) + (1 - true_y)*np.log(1 - pred_h))
-            // vEXP(dim, y_exp);
+                                    // vEXP(dim, y_exp);
 #pragma omp parallel for reduction(+ : a_logloss) schedule(static, 1)
             for (int thread = 0; thread < num_threads; thread++) {
                 size_t start = thread * step, end = MIN2(start + step, dim), i;
@@ -347,6 +347,28 @@ class FeatVec_LOSS {
         if (round % 100 == 0) {
             printf("w(%.3g%%:%.4g,%.4g)\t", nzW * 100.0 / nSamp, w0, w1);
         }
+    }
+
+    // vResi=predict-target		pDown=target-predict
+    template <typename Tx>
+    double Check01(FeatsOnFold* hData_, int round, int flag = 0x0) {
+        const string objective = hData_->config.objective, metric = hData_->config.eval_metric;
+        bool isOutlier = objective == "outlier";
+        Tx fuyi = -1, *y1 = ((FeatVec_T<Tx>*)predict)->arr(), *y0 = ((FeatVec_T<Tx>*)y)->arr();
+        tpDOWN *vResi = VECTOR2ARR(resi), *pDown = GetDownDirection();
+        tpDOWN* vHess = VECTOR2ARR(hessian);
+        size_t dim = resi.size(), nSamp = hData_->nSample(), step = dim, start, end;
+        G_INT_64 i, n0 = 0, n1 = 0;
+        for (int i = 0; i < nSamp; i++) {
+            Tx label = y0[i], a = y1[i];
+            assert(label == 0 || label == 1);
+            if (label == 0 && fabs(a) < fabs(a-1.0))
+                n0++;
+            if (label == 1 && fabs(a) > fabs(a-1.0))
+                n1++;
+        }
+        double accu = (n0 + n1) * 1.0 / nSamp;
+        return accu;
     }
 
     // vResi=predict-target		pDown=target-predict
@@ -458,11 +480,6 @@ class FeatVec_LOSS {
     tpDOWN* GetDownDirection() { return VECTOR2ARR(down); }
     tpDOWN* GetDeltaStep() { return VECTOR2ARR(delta_step); }
     tpDOWN* GetSampleDown() { return VECTOR2ARR(sample_down); }
-    int* Tag() {  // �������ڷ�������
-        CLASS_VEC* cls_vec = dynamic_cast<CLASS_VEC*>(y);
-        assert(cls_vec != nullptr);
-        return cls_vec->arr();
-    }
 
     size_t size() const { return resi.size(); }
 

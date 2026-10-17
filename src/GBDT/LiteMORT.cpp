@@ -40,7 +40,7 @@ int test() {
 */
 int CS_Predict(FeatsOnFold *hTrainData, int flag) {
     // FeatsOnFold *hTrainData = FeatsOnFold::read_json("F:/Project/LiteMORT/data/nomad2018_train.json", 0x0);
-    hTrainData->nCls = 2;
+    hTrainData->nClas = 2;
     int nTree        = 64;
     GBRT *hGBRT      = new GBRT(hTrainData, nullptr, 0.333, BoostingForest::CLASIFY, nTree);
     hGBRT->Train("", 50, 0x0);

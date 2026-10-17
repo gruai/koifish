@@ -9,15 +9,15 @@
 #include <float.h>
 #include <inttypes.h>
 #include <stdio.h>
-
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <complex>
 #include <cstdarg>
 #include <fstream>
-#include <map>
 #include <memory>
-#include <regex>
+// #include <regex>
+// #include <map>
 #include <thread>
 #include <typeinfo>
 #include <vector>
@@ -26,7 +26,8 @@ using namespace std;
 #include <string.h>
 
 #include "../g_def_x.hpp"
-
+#include "../g_float.hpp"
+#include "../CLI_params.hpp"
 #define GG_V12
 
 class GTensor;
@@ -43,10 +44,7 @@ struct GENSOR_TOPU;
 
 bool Gensors2File(std::vector<hGTensor> gset, const std::string& path, int flag = 0x0);
 
-#if defined(_USE_CUDA_FLOAT_)
-#include "../Device/CUDA/cuda_common.h"
-#else
-#endif
+
 
 // set name of a tensor if its name is "\0" & its grad
 int gTN(hGTensor, const char* format, ...);
@@ -183,6 +181,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     size_t szData = 0, szGama = 0, szUse = 0, szGrad = 0, szM = 0, szV = 0;
     int last_iter = -1;
     //  support dynamic change shape&type!  return false if not change anything
+    
     virtual bool ReShape(SHAPE shape_, typNUMBER tpD_, int flag = 0x0);
     virtual hGTensor _Multiply(const hGTensor& other) {
         assert(0);
@@ -232,6 +231,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     SHAPE x_shape;  //  1.padded for high performance or menory alignment(x_shape<=shape)
     // same as shape, would remove in future version
     int64_t ne[N_DIMS];
+    int64_t strides[N_DIMS];
     // shape=>x_shape
     vector<hGOP> src;
     virtual void AddSrc(const vector<hGTensor>& ts, int flag = 0x0);
@@ -364,6 +364,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     double Length(int tp, int flag = 0x0);  //  return ||X||
 
     // operations
+    virtual bool Shrink(int nKeep, int type, int flag = 0x0);
     virtual bool ShareMemory(hGTensor, int flag = 0x0);
     virtual bool OverWrite(hGTensor, bool isSrc = true, int flag = 0x0);
     // Quantized Activation
@@ -427,7 +428,11 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     virtual size_t nByte_CKP(const CheckPoint_Params&, int flag = 0x0) const;
     //   A weight matrix is a linear operator on RMS-normed vector spaces.
     virtual bool isWMAT(int flag = 0x0) const;
-    //  The offset of (i0,i1,i2,i3) in byte
+    /*
+      offset=(i0 + i1 * ne[0] + i2 * ne[0] * ne[1] + i3 * ne[0] * ne[1] * ne[2])
+      1. ne[0] is the continuous dimension - next of (0,0) is (1,0)
+      2. For 2d tensor, it’s the same row-major memory layout as PyTorch, just with the dimensions named in reverse order(detail in tensor.md).
+    */
     virtual size_t Offset(int i0, int i1, int i2, int i3, int flag = 0x0) const;
     //  The offset of N-th elemen in byte
     virtual size_t Offset(size_t N, int flag = 0x0) const;
@@ -441,6 +446,8 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     virtual void Zero() { Set(0.0); }
     virtual void ZeroGrad() { assert(0); }
     virtual void Set(float a, int flag = 0x0);
+
+    //  off = i0 + i1 * ne[0] + i2 * ne[0] * ne[1] + i3 * ne[0] * ne[1] * ne[2]
     template <typename T>
     void Set(int i0, int i1, int i2, int i3, T value) {
         void* val = (char*)data + Offset(i0, i1, i2, i3);
@@ -458,7 +465,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
                 assert(0 && "fatal error");
             } break;
             case typNUMBER::BF16: {
-                assert(0 && "fatal error");
+                ((bf16*)(val))[0] = value;;
             } break;
             case typNUMBER::F32: {
                 ((float*)(val))[0] = value;

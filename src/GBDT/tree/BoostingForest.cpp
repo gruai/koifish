@@ -61,7 +61,7 @@ void BoostingForest::TestOOB(FeatsOnFold* hData, int flag) {
         }
         eOOB = sOOb == 0.0 ? DBL_MAX : eOOB;  // δУ��OOB
     } else {
-        float* distri = hData->distri;
+        float* distri = hData->fDistri;
         hData->Distri2Tag(nullptr, nClass, 0x0);
         eInB = 1.0 - hData->rOK;
         memset(distri, 0x0, sizeof(float) * total * nClass);
@@ -92,7 +92,7 @@ void BoostingForest::Train(FeatsOnFold* hData, int flag) {
     // FeatsOnFold *hData=curF[0]->hData;
     total = hData->nSample();
     assert(nClass > 0);
-    float *distri = hData->distri, *dtr = nullptr, tag, d1, rOK = 0;
+    float *distri = hData->fDistri, *dtr = nullptr, tag, d1, rOK = 0;
     memset(distri, 0x0, sizeof(float) * total * nClass);
     WeakLearner* hWL = nullptr;
     impurity         = 0;
@@ -150,7 +150,7 @@ void BoostingForest::Clasify(int nSamp, FeatsOnFold* hSamp, int flag) {
     stage = RF_TEST;
     GST_VERIFY(nSamp <= hSamp->nSample(), "");
     int i, j, nz, sum = 0, tag, no;
-    float *distri = hSamp->distri, d1, *dtr = nullptr, *model;
+    float *distri = hSamp->fDistri, d1, *dtr = nullptr, *model;
     memset(distri, 0x0, sizeof(float) * nSamp * nClass);
     arrPFNO points;
     for (i = 0; i < nSamp; i++) {

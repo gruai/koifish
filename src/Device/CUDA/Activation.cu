@@ -9,8 +9,8 @@
 
 #include <assert.h>
 
-#include "../../Manifold/Fish.hpp"
 #include "../../Manifold/Neuron.hpp"
+#include "../../Shoal/Fish.hpp"
 #include "./cuda_common.h"
 #include "./kernel/packedN.cuh"
 #include "./kernel/utils.cuh"
@@ -120,7 +120,7 @@ __global__ void CU_rlu2_forw_(TASKA_1p1<Typ> taska, Typ* out, const Typ* inp, in
         // if(idx==0){
         //     DEBUG_HERE;
         // }
-        out[idx]  = (Typ)(g2);
+        out[idx] = (Typ)(g2);
     }
 }
 template <typename Typ>

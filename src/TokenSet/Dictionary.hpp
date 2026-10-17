@@ -9,13 +9,14 @@
  */
 
 #pragma once
-#include <unordered_map>
 
-#include "../Manifold/Fish.hpp"
-#include "../Manifold/VAE.hpp"
+#include "../g_float.hpp"
+#include "../CLI_params.hpp"
+#include "../Utils/GST_hashmap.hpp"
+#include "../Utils/GST_obj.hpp"
+using namespace std;
 
 typedef std::vector<TOKEN_ID> TOKENS;
-typedef std::unordered_map<std::string, int> VOCAB_MAP;
 
 struct TOKEN_Special {
     int _pad  = -1;
@@ -36,6 +37,11 @@ struct TOKEN_Special {
     int eot     = -1;                       //  End of Tool / End of Text block
     int unk     = -1;                       //<unk>
     int newline = -1, newline2 = -1;        //\n\n    Qwen3(198,271)
+
+    std::vector<int*> AllTokens(int flag = 0x0) {
+        auto fields = {&_pad, &_mask, &_noise, &sep, &cls, &assist, &bos, &eos, &im_start, &im_end, &think_open, &think_close, &eot, &unk, &newline, &newline2};
+        return fields;
+    }
 
     string sep_token = "[SEP]";
     // The token used for padding, for example when batching sequences of different lengths.
@@ -73,28 +79,27 @@ class GTokenizer {
     string sep_token = "[SEP]";
     // The token used for padding, for example when batching sequences of different lengths.
     string pad_token = "[PAD]";
-    // The classifier token which is used when doing sequence classification (classification of the whole sequence instead of per-token classification).    
+    // The classifier token which is used when doing sequence classification (classification of the whole sequence instead of per-token classification).
     string cls_token = "[CLS]";
     // The token used for masking values. This is the token used when training this model with masked language modeling. This is the token which the model will
     // try to predict.
     string mask_token = "[MASK]";
     string unk_token  = "<unk>";  //  unknown word, may be null!(null means the tokenizer is designed to never encounter an unknown token​ in practice.)
 
-    int byte_fallback = -1;  // BPE has byte fallback option to convert unk character to utf-8 bytes
+    TOKEN_ID whitespace_token = -1;  // token for " ";
+    int byte_fallback         = -1;  // BPE has byte fallback option to convert unk character to utf-8 bytes
 
     // Deprecated!  vector where the index is the token id and the value is the token string
     // std::vector<std::string> vocab;
 
-    std::unordered_map<std::string, int> vocab;
-    // std::unordered_map<int, std::string> id_to_token_;
+    MAP_VOCAB vocab;
 
     virtual int Lookup(const std::string& word, int flag = 0x0);
-    // trie mapping token strings to token ids
-    // TokenTrie vocab_trie;
-    JSON jTokenizer, jVocab;  // from "tokenizer.json"
-    JSON jTokenConfig;        // from "tokenizer_config.json"
 
-    size_t max_input_chars_per_word = 0;
+    // JSON jTokenizer, jVocab, jAddedTokens;  // from "tokenizer.json"
+    JSON jTokenConfig;  // from "tokenizer_config.json"
+
+    int max_input_chars_per_word = 0, nAddedToken = 0;
 
     std::string name = "no_vocab";  //"no_vocab","llama","bert","gpt2"
 
@@ -107,10 +112,9 @@ class GTokenizer {
     bool isVirtual = false;
 
     // Dialect support
-    bool isDialect = false;
     int UpdateUniqueTokens(const TOKENS& tokens, int flag = 0x0);
-    std::map<TOKEN_ID, TOKEN_ID> mapT2T;
-    std::map<TOKEN_ID, TOKEN_ID> invT2T;
+    MAP_T2T mapT2T;
+    MAP_T2T invT2T;
     // std::vector<TOKEN_ID> dialect;
 
     // special_tokens support
@@ -133,10 +137,13 @@ class GTokenizer {
     static const int MAX_TEMPLATE     = 1024;
 
     TOKEN_Special S;  // Special tokens 1.from "tokenizer.json" &"tokenizer_config.json"
+    bool isDialect = false;
+    virtual TOKENS Translate(const TOKENS& ids, int flag = 0x0) const;
 
     enum BIT_FLAG {
-
         F_JVOCAB = 0x10000,
+
+        F_DIALECT_TOKENS = 0x10000,
     };
     GTokenizer() {}
     GTokenizer(Fish* dolphin, int flag = 0x0);
@@ -208,7 +215,7 @@ class HF_Tokenizer : public GTokenizer {
 
     // --- Core API ---
     std::vector<int> encode(const std::string& text, bool add_special_tokens = true) const;
-    std::string decode(const std::vector<int>& ids, bool skip_special_tokens = true) const;
+    std::string decode_i(const std::vector<int>& ids, bool skip_special_tokens = true, int flag = 0x0) const;
 
     std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos = false, bool encode_eos = false) override {
         auto ids = encode(text, encode_bos);
@@ -216,8 +223,9 @@ class HF_Tokenizer : public GTokenizer {
     }
 
     std::string Decode(const TOKENS& tokens, bool skip_pad = true, bool skip_special_tokens = false) const override {
+        assert(!tokens.empty());
         std::vector<int> ids(tokens.begin(), tokens.end());
-        return decode(ids, skip_special_tokens);
+        return decode_i(ids, skip_special_tokens);
     }
     std::string T2STR(TOKEN_ID tok, int flag = 0x0) const override;
 
@@ -356,7 +364,7 @@ class GTokenizer_QWEN3 : public HF_Tokenizer {
     std::vector<TOKEN_ID> Encode(const std::string& text, bool encode_bos = false, bool encode_eos = false) override;
 };
 
-// Deprecated!
+/**  Deprecated!
 struct DictVAE : public VariationaAE {
     enum OUTPUT_OP {
         ONLY_LOAD = 0x0,  // lr=0.001 much more oscillation than 0.0001
@@ -424,9 +432,9 @@ class CDict_LLAMA : public DictVAE {
    public:
     CDict_LLAMA(Fish* nlp_, int flag = 0x0);
 };
-
+*/
 // Deprecated!
-class CDict_GPT2 : public DictVAE {
+class CDict_GPT2 : public GTokenizer {
    protected:
     // uint32_t vocab_size;
     char** token_table = nullptr;
@@ -436,28 +444,28 @@ class CDict_GPT2 : public DictVAE {
    public:
     CDict_GPT2(Fish* nlp_, int flag = 0x0);
     virtual ~CDict_GPT2() {
-        if (token_table != nullptr) {
+        /*if (token_table != nullptr) {
             for (uint32_t i = 0; i < hDict->nVocab(); i++) {
                 free(token_table[i]);
             }
             free(token_table);
-        }
+        }*/
     }
-    int InitMAEC(void* ctx, const std::vector<int>& dims_, int flag = 0x0) override;
-    std::string T2STR(TOKEN_ID tok, int flag = 0x0) override;
+    int InitMAEC(void* ctx, const std::vector<int>& dims_, int flag = 0x0) ;
+    std::string T2STR(TOKEN_ID tok, int flag = 0x0);
     int STR2T(const char* txt, int txt_len, std::vector<TOKEN_ID>& btch, int flag = 0x0) override;
 };
 
 /*
     Just map characters to int, only for debug!
 */
-class CDict_CHAR : public DictVAE {
+class CDict_CHAR : public GTokenizer {
    public:
     CDict_CHAR(Fish* nlp_, int flag = 0x0);
-    void LoadVocab(const char* fn_model_base, int flag) override;
-    int InitMAEC(void* ctx, const std::vector<int>& dims_, int flag = 0x0) override;
+    // virtual void LoadVocab(const char* fn_model_base, int flag);
+    int InitMAEC(void* ctx, const std::vector<int>& dims_, int flag = 0x0);
     int STR2T(const char* txt, int txt_len, std::vector<TOKEN_ID>& btch, int flag = 0x0) override;
-    std::string T2STR(TOKEN_ID tok, int flag = 0x0) override;
+    std::string T2STR(TOKEN_ID tok, int flag = 0x0);
 };
 
 void DumpTokens(hTokenizer hDict, const TOKENS& tokens, int nPad, int flag = 0x0);
@@ -471,97 +479,3 @@ class AutoTokenizer {
 };
 
 // } // namespace tokenizer
-
-/**
- struct TokenTrie;
-
-struct TokenTrie {
-    std::unordered_map<char, std::shared_ptr<TokenTrie>> children;
-    // If non-negative, then this represents the ID of the token formed by the path from the root to this node.
-    int token_id = -1;
-};
-
-class TrieNode {
-   public:
-    std::unordered_map<wchar_t, std::unique_ptr<TrieNode>> children;
-    bool is_end;
-    std::wstring delimiter;
-
-    TrieNode() : is_end(false) {}
-};
-
-class Splitter {
-   private:
-    std::unique_ptr<TrieNode> root;
-
-    void insert(const std::wstring& str) {
-        TrieNode* current = root.get();
-        for (wchar_t ch : str) {
-            if (!current->children[ch]) {
-                current->children[ch] = std::make_unique<TrieNode>();
-            }
-            current = current->children[ch].get();
-        }
-        current->is_end    = true;
-        current->delimiter = str;
-    }
-
-   public:
-    Splitter(const std::vector<std::wstring>& delimiters) {
-        root = std::make_unique<TrieNode>();
-        for (const auto& delimiter : delimiters) {
-            insert(delimiter);
-        }
-    }
-
-    std::vector<std::wstring> split(const std::wstring& input) {
-        std::vector<std::wstring> result;
-        size_t start = 0;
-
-        while (start < input.length()) {
-            // Try to find the next delimiter starting from current position
-            size_t best_match_length = 0;
-            std::wstring matched_delimiter;
-
-            // Check for possible delimiter match starting at current position
-            TrieNode* current = root.get();
-            size_t pos        = start;
-
-            while (pos < input.length() && current->children.count(input[pos])) {
-                current = current->children[input[pos]].get();
-                pos++;
-                if (current->is_end) {
-                    best_match_length = pos - start;
-                    matched_delimiter = current->delimiter;
-                }
-            }
-
-            if (best_match_length > 0) {
-                // Add substring before delimiter if it exists
-                if (start < start + best_match_length) {
-                    result.push_back(input.substr(start, best_match_length));
-                }
-                start += best_match_length;
-            } else {
-                // No delimiter found at current position
-                size_t next_pos = start + 1;
-                bool found_next = false;
-
-                // Find next possible delimiter start
-                while (next_pos < input.length()) {
-                    if (root->children.count(input[next_pos])) {
-                        found_next = true;
-                        break;
-                    }
-                    next_pos++;
-                }
-
-                // Add the substring up to next possible delimiter or end
-                result.push_back(input.substr(start, (found_next ? next_pos - start : std::wstring::npos)));
-                start = next_pos;
-            }
-        }
-
-        return result;
-    }
-};*/

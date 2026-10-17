@@ -149,6 +149,7 @@ class FeatsOnFold {
     virtual string LOSSY_INFO(double err, int flag = 0x0);
     FeatVector* GetPrecict();
     FeatVector* GetY();
+    // Get value of Y
     template <typename T>
     T* GetY_(int flag = 0x0) {
         FeatVector* hY = GetY();
@@ -157,6 +158,11 @@ class FeatsOnFold {
         T* y              = hYd == nullptr ? nullptr : hYd->arr();
         return y;
     }
+
+    FeatVec_T<int>* tags = nullptr;  // each samp has a tag
+    virtual void InitTags(int flag = 0x0);
+    int* Tag();  // Get Tag of each element, in some case(binary, classification), is same as GetY_
+
     template <typename T>
     T* GetPredict_(int flag = 0x0) {
         FeatVector* pred = GetPrecict();
@@ -199,14 +205,17 @@ class FeatsOnFold {
     size_t nMost = 0;
 
     int *info = nullptr, *permut = nullptr;  // ������ǰ�İ汾
-    int nCls = 0;                            // �������ڷ�������
+    int nClas = 0;                           // �������ڷ�������
 
     vector<int> nEach;  // �������ڷ�������???
 
-    float* distri = nullptr;
+    float* fDistri = nullptr;
     // tpDOWN *resi = nullptr, *move = nullptr;			//gradient boosting
 
     FeatsOnFold(LiteBOM_Config confi_, ExploreDA* eda, string nam_, int dtype = 0x0);
+    virtual ~FeatsOnFold();
+
+    virtual void Empty(int flag) {}    
     virtual void InitRanders(int flag = 0x0);
     /*
     template<typename Tx, typename Ty>
@@ -224,10 +233,7 @@ class FeatsOnFold {
         importance = new Feat_Importance(this);
     }*/
 
-    virtual ~FeatsOnFold();
 
-    int* Tag();
-    virtual void Empty(int flag) {}
     // virtual void Compress(int flag = 0x0);
     virtual void ExpandFeat(int flag = 0x0);
     virtual void ExpandMerge(const vector<FeatsOnFold*>& merge_sets, int flag = 0x0);
@@ -258,6 +264,8 @@ class FeatsOnFold {
         return feats[no];
     }
     FeatVector* Feat(const string& name) { return nullptr; }
+
+    virtual void Dump(int type = 0x0);
 
     float Quant(int nQuant, typNUMBER tpGama, floatGama* gama, hBITARR quant_data, const std::string& desc, int flag = 0x0);
     // histo�ռ������ݵ�Distri������������train_data
@@ -614,6 +622,8 @@ class FeatVec_T : public FeatVector {
     }
 
     void Set_bf16(size_t len, bf16* src, int flag = 0x0) override {
+        assert(typeid(Tx) == typeid(float));
+
         size_t szT = sizeof(Tx);
         if (len != size())
             throw "FeatVec_T::Set len mismatch!!!";
@@ -1324,7 +1334,7 @@ class FeatVec_T : public FeatVector {
             pos = idx[cur];
             assert(!IS_NAN_INF(val[pos]));
             assert(qid < nQuant);  //  qid = 0x6;      // only for debug
-            assert(0);  // would replace by hQuant_RTN
+            assert(0);             // would replace by hQuant_RTN
             // BIT_SET_k(quanti, pos, qid, bits);
             // assert(BIT_GET_k(quanti, pos, bits) == qid);
             sum += val[pos], nz++;
@@ -1409,7 +1419,7 @@ class FeatVec_T : public FeatVector {
             pos = idx[cur];
             assert(!IS_NAN_INF(val[pos]));
             assert(qid < nQuant);  //  qid = 0x6;      // only for debug
-            assert(0);  //would replace by hQuant_RTN
+            assert(0);             // would replace by hQuant_RTN
             // BIT_SET_k(quanti, pos, qid, bits);
             // assert(BIT_GET_k(quanti, pos, bits) == qid);
             sum += val[pos], nz++;
@@ -1454,9 +1464,9 @@ class FeatVec_T : public FeatVector {
         }
         // char typ = ' ';
         // _INFO("%4d Q<%d> %12s [%.4g-%.8g]\t \n", id, bits, nam.c_str(), v0, v2);
-        a = sqrt(err / len2);
-        wGain = a;  //hack wGain to record error
-        // return a;        
+        a     = sqrt(err / len2);
+        wGain = a;  // hack wGain to record error
+        // return a;
         errQ = err;
         return err;
     }

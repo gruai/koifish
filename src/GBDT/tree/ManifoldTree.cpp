@@ -62,15 +62,15 @@ WeakLearner::WeakLearner(DecisionTree *hTr, arrPFNO &sam_, int d, int flag)
             samps.push_back(hfn);
         }
     }
-    int nSamp = samps.size(), *distri = new int[hDat->nCls]();
+    int nSamp = samps.size(), *distri = new int[hDat->nClas]();
     for (arrPFNO::iterator it = samps.begin(); it != samps.end(); it++) {
         F4NO *hfn = *it;
         no        = hfn->pos;
         cls       = tag[no];
-        assert(cls >= 0 && cls < hDat->nCls);
+        assert(cls >= 0 && cls < hDat->nClas);
         distri[cls]++;
     }
-    impuri = Impurity(hDat->nCls, nSamp, distri);
+    impuri = Impurity(hDat->nClas, nSamp, distri);
     delete[] distri;
 }
 
@@ -922,7 +922,7 @@ void ManifoldTree::AddScore(INIT_SCORE *score, int flag) {
 
 // ����֮ǰdistri��������
 void DecisionTree::Clasify(FeatsOnFold *hSamp, arrPFNO &points, float *distri, int flag) {
-    int nSamp = points.size(), sum = 0, nz, no, nClass = hSamp->nCls, j;
+    int nSamp = points.size(), sum = 0, nz, no, nClass = hSamp->nClas, j;
     float *model, *dtr = nullptr;
     WeakLearners vLeaf;
     hData_         = hSamp;
@@ -945,7 +945,7 @@ void DecisionTree::Regress(arrPFNO &points, int flag) {
 
 void WeakLearner::AtLeaf(int flag) {
     FeatsOnFold *hData = hTree->GetDat();
-    int i, j, tag, no, nCls = hData->nCls, nSamp = samps.size(), *tags = hData->Tag();
+    int i, j, tag, no, nCls = hData->nClas, nSamp = samps.size(), *tags = hData->Tag();
     GST_VERIFY(nSamp != 0, "WeakLearner::AtLeaf nSamp is 0");
     if (hTree->hForest->isStage(RF_TRAIN)) {
         assert(distri == nullptr);
@@ -970,7 +970,7 @@ void WeakLearner::AtLeaf(int flag) {
         for (auto hfn : samps) {
             // for each( F4NO *hfn in samps ){
             no  = hfn->pos;
-            dtr = hData->distri + no * nCls;
+            dtr = hData->fDistri + no * nCls;
             for (j = 0; j < nCls; j++) {
                 dtr[j] += distri[j];
             }
@@ -987,7 +987,7 @@ bool WeakLearner::Model2Distri(int nCls, double *dist_, int flag) {
 
 // bootstrap samples from the original data
 void DecisionTree::BootSample(arrPFNO &boot, arrPFNO &oob, FeatsOnFold *hDat, int flag) {
-    int total = hDat->nSample(), i, j, cls, nCls = hDat->nCls, nSample = total, no, nz;
+    int total = hDat->nSample(), i, j, cls, nCls = hDat->nClas, nSample = total, no, nz;
     assert(total > 0);
     double sBalance = hForest->sBalance;
     int *info = hDat->info, *tag = hDat->Tag();

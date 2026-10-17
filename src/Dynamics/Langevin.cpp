@@ -8,7 +8,7 @@
 
 #include "Langevin.hpp"
 
-#include "../Manifold/Fish.hpp"
+#include "../Shoal/Fish.hpp"
 #include "../TokenSet/Batch.hpp"
 
 hHuaPLAN TOKEN_Planner::MakeInstance(const std::string& nam_, Fish* hFish, std::shared_ptr<BATCH_INPUT> hBatch, int flag) {
@@ -114,18 +114,6 @@ void HUA_Token::Init(int seq_len, int flag) {
     flow.resize(seq_len);
     for (int i = 0; i < seq_len; i++) flow[i] = HUA_STATE::X;
 }
-/**
- * 1. MDLM forward process defines noise as a function of the ratio between timesteps
-
-TPLAN_random::TPLAN_random(const std::string& nam_, Fish* hFish, std::shared_ptr<BATCH_INPUT> _hB, int flag)
-    : TOKEN_Planner(nam_, hFish->config.chat_sampler, -1, _hB->ldT, flag) {
-    // hBatch      = _hB;
-    int seed    = hFish->config.XI.mask_seed;
-    hMaskRander = std::make_shared<GRanderTorch>(seed);
-    fNoise      = new float[_hB->nMostSample * seq_len]();
-}
-
-*/
 
 /**
  * signal_noise_ratio based token planner
@@ -140,7 +128,7 @@ TPLAN_SNR::TPLAN_SNR(const std::string& nam_, Fish* hFish, std::shared_ptr<BATCH
         float scale = RelativeRate(step);
         arrRatio.push_back(1.0 - scale);
     }
-    if(DEBUG.verHuaSNR<0){
+    if (DEBUG.verHuaSNR < 0) {
         name += "_random noise on training";
     }
     assert(nMostStep >= 1);
@@ -182,7 +170,7 @@ TPLAN_SNR_sequence::TPLAN_SNR_sequence(const std::string& nam_, Fish* hFish, std
 TPLAN_Dilate::TPLAN_Dilate(const std::string& nam_, Fish* hFish, std::shared_ptr<BATCH_INPUT> _hB, int flag)
     : TOKEN_Planner(nam_ + "_dialate", hFish->config.chat_sampler, -1, _hB->ldT, flag) {
     // hBatch   = _hB;
-    int seed = hFish->config.XI.mask_seed;
+    int seed  = hFish->config.XI.mask_seed;
     nMostStep = -1;
 }
 
@@ -214,15 +202,18 @@ bool TPLAN_Dilate::Transition4Batch(int iter, std::shared_ptr<BATCH_INPUT> hBatc
     return true;
 }
 
-bool TPLAN_Dilate::Transition4Samp(SAMP* hSamp, int flag) {
+bool TOKEN_Planner::Transition4Samp(SAMP* hSamp, int flag) {
     huaers.clear();
-    samp_len = hSamp->len;           // 601
-    if (hSamp->len > context_len) {  //
+    samp_len = hSamp->len + hSamp->prefix_blank;  // 601
+    if (hSamp->len > context_len) {               //
         samp_len = context_len;
     }
     int mostPrefill = samp_len / 10, minPrefill = std::max(6, samp_len / 100), prefill = 0;
+    if (hSamp->prefix_blank > 0) {
+        mostPrefill = hSamp->prefix_blank + hSamp->len / 10, minPrefill = hSamp->prefix_blank + std::max((size_t)6, hSamp->len / 100);
+    }
     prefill = (mostPrefill + minPrefill) / 2;
-    InitAllTrainsitions(prefill, prefill + 1);
+    InitAllTrainsitions(prefill, prefill + 1, flag | F_ABSOLUTE_ID);
     assert(huaers.size() > 0);
     auto picks = hPickRander->kSampleInN(1, huaers.size());
     // std::random_device rd;

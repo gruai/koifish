@@ -31,7 +31,7 @@ struct TOKEN_Planner;
  *  */
 struct BATCH_INPUT : public std::enable_shared_from_this<BATCH_INPUT> {
     LIFE_PHASE phasb = P_X;  // batch only has one phase(never change in lifecycle!)
-
+    SampNanny *hNanny = nullptr;    //Each samp_loader has a unique batch
     std::shared_ptr<TOKEN_Planner> hHuaPLAN = nullptr;
     std::shared_ptr<TOKEN_Planner> hPLAN_1  = nullptr;  // fro one samp
 
@@ -39,9 +39,9 @@ struct BATCH_INPUT : public std::enable_shared_from_this<BATCH_INPUT> {
         NO_NOISE,
         MASK_NOISE,
     };
-    NOISE_TYPE tpNoise = NO_NOISE;
-
-    shared_ptr<GTensor> hostLabel = nullptr;
+    std::vector<float> user_answer;  // Each samp may contain multiple problems, each problem has one answer
+    BATCH_INPUT::NOISE_TYPE curNoise = NO_NOISE;
+    shared_ptr<GTensor> hostLabel    = nullptr;
     shared_ptr<GTensor> hostToken = nullptr, hostMask = nullptr, devMask = nullptr, hostLen = nullptr;
 
     int *host_toks = nullptr, *mask32 = nullptr;  //  mask32 = TO<int>(hostMask);
@@ -52,6 +52,9 @@ struct BATCH_INPUT : public std::enable_shared_from_this<BATCH_INPUT> {
 
     int nValidTokens = 0, nMaskToken = -1, nNoiseToken = -1, nPadToken = -1;
     int nMostSample = 0, ldT = 0;  //  B,T
+    int samp_nz = 0;               // number of collated samps
+    std::vector<hSAMP> curSamps;
+
     int dB4Logit = -1, iter = -1;
     size_t nPrefill = 0, nFill = 0;
     std::vector<int> arrTic0, arrTic1;
@@ -59,34 +62,37 @@ struct BATCH_INPUT : public std::enable_shared_from_this<BATCH_INPUT> {
     Fish* hFish      = nullptr;
     hTokenizer hDict = nullptr;
     //  always point to last token when P_CHAT_1
-    int tok_pos = -1;
+    int tok_pos = -1, nVToken = -1;
     //  just return host_toks[tok_pos], only for P_CHAT_1
     int CurToken() {
         assert(tok_pos >= 0 && host_toks != nullptr);
-        // assert(host_toks[pos] < embed->nVocab);
+        assert(host_toks[tok_pos] < nVToken);
         return host_toks[tok_pos];
     }
-    bool onlyLogits = false;  // If true, logits is enough, no need to set label & get loss!
+    bool onlyLogits     = false;  // If true, logits is enough, no need to set label & get loss!
+    bool onlyLastHidden = false;
+    bool needLabel() const { return !onlyLogits && !onlyLastHidden; }
 
-    BATCH_INPUT(Fish* hFish, SHAPE sp, LIFE_PHASE phasb, int flag = 0x0);
+    BATCH_INPUT(SampNanny *hNanny_, SHAPE sp, LIFE_PHASE phasb, int flag = 0x0);
     virtual ~BATCH_INPUT() {
         FREE_a(tmp32);
         // FREE_a(fNoise);
     }
     virtual void Init(int flag = 0x0);
 
-    virtual int nTokens(int flag = 0x0);  // return hostToken->size();
+    virtual int nTokens(int flag = 0x0) const;  // return hostToken->size();
+    std::vector<TOKEN_ID> curTokens(int flag = 0x0) const;
     // virtual void Update(hGTensor batch,int flag=0x0);
     virtual int FillPrompt(Fish* hFish, const std::vector<std::string>& Prompt, const std::vector<std::string>& answers, int nRound, int flag = 0x0);
     virtual void FillTokens(int k, const std::vector<TOKEN_ID>& tokens, int i_off, int flag);
-    virtual void FillOneSamp(SampNanny* hNanny, int idSamp, hSAMP samp, const CLI_params& params, float T_x, int flag = 0x0);
+    virtual int FillOneSamp(SampNanny* hNanny, int idSamp, hSAMP samp, const CLI_params& params, float T_x, int flag = 0x0);
     // 1. Deprecated, replace by FillTokens 2. No BOS at sequence start!
-    virtual void Reset(const std::vector<TOKEN_ID>& tokens, int flag = 0x0);
+    virtual void ReFill(const std::vector<TOKEN_ID>& tokens, int flag = 0x0);
     virtual void SetLen(int i0, int len) {
         if (hostLen != nullptr)
             hostLen->Set(i0, 0, 0, 0, len);
     }
-    virtual void SetToken(int i0, int i1, int i2, int i3, int tok, HUA_STATE ti = HUA_STATE::X);
+    virtual void SetToken(int i0, int i1, int i2, int i3, int tok, HUA_STATE ti = HUA_STATE::X, int flag = 0x0);
     virtual void SetMask(int i0, int i1, int i2, int i3, int tok) { hostMask->Set(i0, i1, i2, i3, tok); }
     // Label may be noised(>0) in some models(mask-noise diffusion model)
     virtual bool SetLabel(int label0, int i_target, int k, HUA_STATE ti = HUA_STATE::X, int flag = 0x0);
@@ -110,6 +116,6 @@ typedef shared_ptr<BATCH_INPUT> hBATCH;
 
 // Batch for denoising diffusion model
 struct BATCH_Denoise : public BATCH_INPUT {
-    BATCH_Denoise(Fish* hFish, SHAPE sp, LIFE_PHASE phasb, int flag = 0x0);
+    BATCH_Denoise(SampNanny *hNanny_, SHAPE sp, LIFE_PHASE phasb, int flag = 0x0);
     void FillTokens(int k, const std::vector<TOKEN_ID>& tokens, int i_off, int flag) override;
 };

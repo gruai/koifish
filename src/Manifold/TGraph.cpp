@@ -10,9 +10,9 @@
 
 #include <sched.h>
 
+#include "../Shoal/gLLM.hpp"
 #include "../Tensor/GeQuant.hpp"
 #include "../lenda/kernel/SVD.hpp"
-#include "Fish.hpp"
 #include "llama_cys.h"
 #ifdef __USE_GGML__
 #include "ggml-impl.h"
@@ -46,11 +46,11 @@ size_t SLP::nElem() {
     return nX;
 }
 
-SelfAttention::SelfAttention(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
+SelfAttention::SelfAttention(Fish* hG_, const std::string& key_, const JSON& jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     assert(hFish != nullptr);
 
-    delta = gBUFF->delta;
-
+    delta            = gBUFF->delta;
+    causalMode       = (int)hFish->config.model.isCausalMask;
     auto& config     = hG_->config;
     f_max_alibi_bias = config.f_max_alibi_bias;
     n_embd_gqa       = config.n_embd_v_gqa();
@@ -127,7 +127,7 @@ bool SelfAttention::Build(int flag_0) {
     }
     lse = GT(hFish, typNUMBER::F32, {B, n_head, T}, 0x0, name + ".flash_lse");  // (B, Hq, T) lse var of flash attention
 
-    SHAPE spOut = {B, T, (int)hFish->config.nEmbed()};  //,T
+    SHAPE spOut = {(int)hFish->config.nEmbed(), T, B};  //{B, T, (int)hFish->config.nEmbed()};
     out         = std::make_shared<huTensor>(hFish, name + ".out", spOut, tpWeight, false);
     if (hFish->config.isShareLayerOut()) {
         out->SetRefer(gBUFF->outL);
@@ -238,9 +238,9 @@ string SelfAttention::__repr__(string& suffix, string& prefix, int flag) {
     char buf[5012]  = "\0";
     const char* tab = prefix.c_str();
     string a, sRope = rope == nullptr ? "" : rope->__repr__(a, a, flag);
-    string sCausal = hFish->config.model.isCausalMask ? "" : "+diffusion";
-    sprintf(buf + strlen(buf), "{%s QKV%s%s%s E%d H%d x=%d trans=%d %s}", tab, sCausal.c_str(), moe.Empty() ? "" : "+moe", sRope.c_str(), n_embd, n_head, tpNormal, tpTrans,
-            bqkv == nullptr ? "" : "bqkv");
+    string sCausal = causalMode ? "" : "+diffusion";
+    sprintf(buf + strlen(buf), "{%s QKV%s%s%s E%d H%d x=%d trans=%d %s}", tab, sCausal.c_str(), moe.Empty() ? "" : "+moe", sRope.c_str(), n_embd, n_head,
+            tpNormal, tpTrans, bqkv == nullptr ? "" : "bqkv");
     if (flag > 0)
         _INFO("%s", buf);
     return buf;
@@ -398,7 +398,7 @@ hGTensor SelfAttention::MyAttention(RLS_BP* ctx_, hGTensor cur, int flag) {
     return kq;
 }
 
-BROWN_attn::BROWN_attn(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SelfAttention(hG_, key_, jit, flag) {
+BROWN_attn::BROWN_attn(Fish* hG_, const std::string& key_, const JSON& jit, int flag) : SelfAttention(hG_, key_, jit, flag) {
     auto& config    = hG_->config;
     n_rot           = config.head_dim();
     rope_freq_base  = config.model.rope_freq_base;
@@ -489,7 +489,7 @@ string BROWN_attn::__repr__(string& suffix, string& prefix, int flag) {
     return buf;
 };
 
-GatedAttention::GatedAttention(Fish* hG_, const std::string& key_, JSON::const_iterator jit, int flag) : SelfAttention(hG_, key_, jit, flag) {
+GatedAttention::GatedAttention(Fish* hG_, const std::string& key_, const JSON& jit, int flag) : SelfAttention(hG_, key_, jit, flag) {
     auto& config = hG_->config;
     shape        = {n_embd, n_ff};
     tpTrans      = T_RELU2;
@@ -615,7 +615,7 @@ hGTensor SelfAttention::vXattn(void* ctx_, hGTensor v, hGTensor qk_v, int flag) 
 }
 
 /*
-BROWN_v0::BROWN_v0(Fish* hG_,const std::string&key_,JSON::const_iterator jit,int flag) : SelfAttention(hG_,key_,jit,flag)     {
+BROWN_v0::BROWN_v0(Fish* hG_,const std::string&key_,const JSON& jit,int flag) : SelfAttention(hG_,key_,jit,flag)     {
     auto& config = hG_->config;
     n_rot = config.n_rot;
     rope_freq_base  = config.model.rope_freq_base;
@@ -1558,7 +1558,7 @@ hNEURON Fish::J2Neuron(void* ctx_, string& dad, int level, const JConfig& jconfi
         } else {
             assert(0);
         }
-        cur        = GeNeuron::MakeInstance(this, ctx_, dad, it, flag);
+        cur        = GeNeuron::MakeInstance(this, ctx_, dad, it.key(),it. value(), flag);
         cur->ID    = jconfig.ID;
         cur->level = level + 1;
         neurons.push_back(cur);

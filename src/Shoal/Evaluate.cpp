@@ -9,8 +9,8 @@
 #include <iostream>
 #include <string>
 
+#include "../Shoal/gLLM.hpp"
 #include "../Utils/GST_os.hpp"
-#include "Fish.hpp"
 #include "GoPT.hpp"
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
@@ -41,7 +41,7 @@ int Fish_ppl(CLI_params& config) {
     // config.model.tpActivation = typNUMBER::BF16;
     // return run_caml(config.prompt.c_str(),0x0);
 
-    hFISH fish      = Fish::MakeInstance("PPL_", config, {}, Fish::ROLE_TYPE::COMMON, 0x110);
+    hFISH fish      = Fish::MakeInstance("PPL_", config, {}, MODEL_ROLE::COMMON, 0x110);
     hOptimizer hOPT = fish->GetOptimizer();
     RLS_BP* hRLS    = fish->GetScheduler<RLS_BP>();
 
@@ -83,7 +83,7 @@ int Fish_ppl(CLI_params& config) {
     tps             = nz / tAll;
     double tRemater = SUM::tRemater / 1000.0;
     _INFO("[PPL] #ppl=%g ± %.3f tps=%g(%d) T=%.3g(%.3g)s T_remater=%.3gs \n", ppl, pplerr, tps, nTokens, tAll, SUM::tX1 / 1.0e6,
-          tRemater);  // CS_Picker::tPick / 1.0e6
+          tRemater);  // FeatPicker::tPick / 1.0e6
     _INFO("[PPL] Upload=%.3gG Throughput=%.3g GByte/s \n", SUM::szUpload / 1.0e9, SUM::szUpload / 1.0e9 / tRemater);
     // Fish::stat.Dump(0x0);
 
@@ -133,7 +133,7 @@ double Fish::Eval_ppl(int flag) {
     tps             = nz / tAll;
     double tRemater = SUM::tRemater / 1000.0;
     _INFO("[PPL] #ppl=%g ± %.3f tps=%g(%d) T=%.3g(%.3g)s T_remater=%.3gs \n", ppl, pplerr, tps, nTokens, tAll, SUM::tX1 / 1.0e6,
-          tRemater);  // CS_Picker::tPick / 1.0e6
+          tRemater);  // FeatPicker::tPick / 1.0e6
     _INFO("[PPL] Upload=%.3gG Throughput=%.3g GByte/s \n", SUM::szUpload / 1.0e9, SUM::szUpload / 1.0e9 / tRemater);
     // Fish::stat.Dump(0x0);
     return ppl;

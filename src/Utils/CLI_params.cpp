@@ -19,8 +19,10 @@
 #include "../Utils/GST_obj.hpp"
 #include "../Utils/GST_rander.hpp"
 #include "../lenda/kernel/SVD.hpp"
-#include "json.hpp"
-
+#if defined(_USE_CUDA_FLOAT_)
+#include "../Device/CUDA/cuda_common.h"
+#else
+#endif
 int g_dump_level   = 1;
 int g_dump_each    = 3;
 int g_dump_sigfigs = 5;
@@ -267,36 +269,58 @@ std::size_t QUANT_CARD::Hash(const QUANT_CARD& params, const std::type_info& ti,
     return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3);
 }
 
-MODEL_ARCH CLI_params::ModelArch() {
+std::string CLI_params::ModelTitle(int flag) {
+    if (!model_title.empty())
+        return model_title;
+    else {
+        string jArch = jKV(jConfig, {"model", "arch"}, string(""), false);
+        if (!jArch.empty()) {
+            model_title = jArch;
+            return model_title;
+        }
+    }
+    return title_short;
+}
+
+MODEL_ARCH S2ARCH(const std::string& info0) {
+    std::string info = info0;
+    std::transform(info.begin(), info.end(), info.begin(), ::toupper);
+    MODEL_ARCH arch = info == "MOE"         ? NLP_MOE
+                      : info == "MAMBA"     ? MODEL_ARCH::NLP_MAMBA
+                      : info == "GUPPY"     ? MODEL_ARCH::NTP_GUPPY
+                      : info == "DEEPSEEK"  ? MODEL_ARCH::NTP_DEEPSEEK
+                      : info == "QWEN2"     ? MODEL_ARCH::NTP_QWEN2
+                      : info == "QWEN2.5"   ? MODEL_ARCH::NTP_QWEN2
+                      : info == "QWEN3"     ? MODEL_ARCH::NTP_QWEN3
+                      : info == "QWEN3_MOE" ? MODEL_ARCH::NTP_QWEN3
+                      : info == "MAISUI"    ? MODEL_ARCH::DECISION_MAISUI
+                      : info == "SCORE"     ? MODEL_ARCH::MD_QWEN
+                      : info == "MD_AR_QW"  ? MODEL_ARCH::MD_AR_QWEN
+                      : info == "GPT2"      ? MODEL_ARCH::NLP_GPT2
+                      : info == "GPT2CHAR"  ? MODEL_ARCH::NLP_GPT2_char
+                      : info == "LAMA"      ? MODEL_ARCH::NLP_LLAMA
+                      : info == "BITNET"    ? MODEL_ARCH::NLP_BITNET
+                      : info == "MISTRAL"   ? MODEL_ARCH::NLP_MISTRAL
+                                            : MODEL_ARCH::NLP_LLAMA;
+    return arch;
+};
+MODEL_ARCH CLI_params::ModelArch(MODEL_ROLE role_) const {
+    if (role_ == MODEL_ROLE::BACKBONE_LOGITS) {
+        return sft.baseArch;
+    }
     MODEL_ARCH arch = MODEL_ARCH::_X_;
     string info     = "";
-    if (!model.isLoadCard()) {
-        string s = jKV(jConfig, {"model", "arch"}, string(""), false);
-        assert(!s.empty());
-        info = s;
-    } else {
-        info = model.model_type;
+    string jArch    = jKV(jConfig, {"model", "arch"}, string(""), false);
+    if (!jArch.empty()) {
+        info = jArch;
+    } else if (model.isLoadCard()) {
+        info = sft.model_type;
     }
-    if (model_title.empty())
-        model_title = info;
+    if (info.empty()) {
+        _ERROR("[Model] arch_info is empty!");
+    }
 
-    std::transform(info.begin(), info.end(), info.begin(), ::toupper);
-    arch = info == "MOE"         ? NLP_MOE
-           : info == "MAMBA"     ? MODEL_ARCH::NLP_MAMBA
-           : info == "GUPPY"     ? MODEL_ARCH::NTP_GUPPY
-           : info == "DEEPSEEK"  ? MODEL_ARCH::NTP_DEEPSEEK
-           : info == "QWEN2"     ? MODEL_ARCH::NTP_QWEN2
-           : info == "QWEN2.5"   ? MODEL_ARCH::NTP_QWEN2
-           : info == "QWEN3"     ? MODEL_ARCH::NTP_QWEN3
-           : info == "QWEN3_MOE" ? MODEL_ARCH::NTP_QWEN3
-           : info == "SCORE"     ? MODEL_ARCH::MD_QWEN
-           : info == "GPT2"      ? MODEL_ARCH::NLP_GPT2
-           : info == "GPT2CHAR"  ? MODEL_ARCH::NLP_GPT2_char
-           : info == "LAMA"      ? MODEL_ARCH::NLP_LLAMA
-           : info == "BITNET"    ? MODEL_ARCH::NLP_BITNET
-           : info == "MISTRAL"   ? MODEL_ARCH::NLP_MISTRAL
-                                 : MODEL_ARCH::NLP_LLAMA;
-
+    arch = S2ARCH(info);
     return arch;
 }
 
@@ -345,7 +369,7 @@ bool CLI_params::JModel2Params(int flag) {
             _ERROR("%s  No \"backbone\" in jConfig!!!", __func__);
             return false;
         }
-        if (jModel.find("hf-card") != jModel.end()) {
+        if (jModel.find("hf-card") != jModel.end()) {  // just
             model.sCardPath      = jKEY(jModel, {"hf-card"});
             model.pathCheckPoint = model.sCardPath;
         } else if (jModel.find("hf_tokenizer") != jModel.end()) {
@@ -705,7 +729,8 @@ bool SFT_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
             isOK           = true;
         }
 
-        s = jKEY(jConfig, {"sft", "method"});
+        sTrain = jKV(jConfig, {"sft", "train"}, sTrain);
+        s      = jKEY(jConfig, {"sft", "method"});
         if (G_Aa(s, "OnlyScale")) {
             method = TUNING_METHOD::OnlyScale;
         }
@@ -717,6 +742,12 @@ bool SFT_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
         _ERROR("\r\n_SFT_CARD  Unknown exception !!!");
         return false;
     }
+}
+
+LIFE_PHASE SFT_CARD::GetPhase(int flag) {
+    if (sTrain == "normal")
+        return P_TRAIN;
+    return P_SFT;  // samps of standard sft-trainging is var-len, need padding-trick
 }
 
 bool DISTILLATION_CARD::isKeepShadoW(int flag) { return anneal != ANNEAL_OFF; }
@@ -985,6 +1016,10 @@ JSON CLI_params::ToJSON(int type, int flag) {
     return json;
 }
 
+void TRAIN_CARD::SetOnlyInfer(int flag) {
+    n_epochs  = 0;
+    nMostIter = 0;
+}
 bool TRAIN_CARD::isNoTrain(int flag) { return n_epochs <= 0 && nMostIter <= 0; }
 
 bool TRAIN_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
@@ -1258,7 +1293,7 @@ bool CLI_params::InitJConfig(int flag) {
         kernels.Init(this, jConfig);
 
         if (sft.Init(this, jConfig)) {
-            phase = LIFE_PHASE::P_SFT;
+            phase = sft.GetPhase();  // LIFE_PHASE::P_SFT;
         } else {
             distill.Init(this, jConfig);
         }
@@ -1287,9 +1322,7 @@ bool CLI_params::InitJConfig(int flag) {
                 model_title = remove_extension(base_name(path));
             fn_model_base.push_back(path);
         }
-        // if(model_title.empty()){
-        //     model_title = "Unknown";
-        // }
+
         datatypes.arrTernary = jKV_arr(jConfig, {"model", "datatype", "ternary"}, datatypes.arrTernary, false);
         datatypes.arrTile    = jKV_arr(jConfig, {"model", "datatype", "tile"}, datatypes.arrTile, false);
 
@@ -1332,18 +1365,24 @@ bool CLI_params::InitJConfig(int flag) {
         // tune   = jKV(jConfig, {"lora", "tune"}, tune);    //"lora_tune"
         // lora_r = jKV(jConfig, {"lora", "rank"}, lora_r);  //{"lora-r"}
 
-        DEBUG.x1            = jKV(jConfig, {"debug", "x"}, DEBUG.x1);
-        DEBUG.x_str         = jKV(jConfig, {"debug", "x_str"}, DEBUG.x_str);
-        DEBUG.N_mostiter    = jKV(jConfig, {"debug", "most_iter"}, DEBUG.N_mostiter);
+        DEBUG.x1              = jKV(jConfig, {"debug", "x"}, DEBUG.x1);
+        DEBUG.x_str           = jKV(jConfig, {"debug", "x_str"}, DEBUG.x_str);
+        DEBUG.N_mostiter      = jKV(jConfig, {"debug", "most_iter"}, DEBUG.N_mostiter);
+        DEBUG.N_mostTrainSamp = jKV(jConfig, {"debug", "most_train_samp"}, DEBUG.N_mostTrainSamp);
+        DEBUG.N_mostEvalSamp  = jKV(jConfig, {"debug", "most_eval_samp"}, DEBUG.N_mostEvalSamp);
+        DEBUG.fHiddenFeature  = jKV(jConfig, {"debug", "path_feat"}, DEBUG.fHiddenFeature);
+
         DEBUG.eval_Generate = jKV(jConfig, {"debug", "eval_generate"}, DEBUG.eval_Generate);  //
         //  522 TB ÷ 0.24 TB/day ≈ 2175 day ≈ 6 year
         int tmpGlobalSate = jKV(jConfig, {"debug", "save_globalsate"}, save_GlobalSate);  //-1;
         if (save_GlobalSate != tmpGlobalSate) {
             save_GlobalSate = tmpGlobalSate;
         }
+        DEBUG.ensemble_swap_each = jKV(jConfig, {"debug", "ensemble_swap"}, DEBUG.ensemble_swap_each);
         DEBUG.dump_TensorDetail  = jKV(jConfig, {"debug", "dump_tensordetail"}, DEBUG.dump_TensorDetail);
         DEBUG.dump_ParamsDetail  = jKV(jConfig, {"debug", "dump_paramsdetail"}, DEBUG.dump_ParamsDetail);
         DEBUG.dump_LossDetail    = jKV(jConfig, {"debug", "dump_lossdetail"}, DEBUG.dump_LossDetail);
+        DEBUG.dump_Eval_each     = jKV(jConfig, {"debug", "dump_evaleach"}, DEBUG.dump_Eval_each);
         DEBUG.watch_Tensors      = jKV(jConfig, {"debug", "watch_tensors"}, DEBUG.watch_Tensors);
         DEBUG.verShuffleSamp     = jKV(jConfig, {"debug", "shuffle_samp"}, DEBUG.verShuffleSamp);
         DEBUG.check_tensor_quant = jKV(jConfig, {"debug", "check_tensor_quant"}, DEBUG.check_tensor_quant);
@@ -1772,30 +1811,6 @@ size_t F_SIZE(const std::string& fpath, FILE* fp0, int flag) {
     }
 }
 
-hGTensor GradOf(struct ggml_cgraph* cgraph, hGTensor node, int flag) {
-#ifdef GG_V12
-    assert(0);
-    return nullptr;
-    /*const size_t igrad = ggml_hash_find(&cgraph->visited_hash_set, node);
-    if(igrad == GGML_HASHSET_FULL){
-        assert(0);      return nullptr;
-    }
-
-    if( ggml_bitset_get(cgraph->visited_hash_set.used, igrad) && cgraph->grads )
-        return cgraph->grads[igrad];
-    else
-        return nullptr;*/
-#elif defined _TENSOR_G_
-    assert(0);
-    return nullptr;
-#else
-    if (node->grad == nullptr) {
-        int maybe = 0;
-    }
-    return node->grad;
-#endif
-}
-
 /*
     byte per element of this type(maybe decimals rather than integers!)
 */
@@ -1878,21 +1893,20 @@ The model falls into:auto-completing random internal reasoning tokens spitting o
 it’s trying to "continue raw text" instead of "respond to user chat"
  */
 bool CHAT_SAMPLER::InitPrefillTemplate(CLI_params* hConfig, int flag) {
-    // string fPrompt = sCardPath + "template_user_thinking.txt", fSysPromt = sCardPath + "template_system_thinking.txt";
-    // if (enable_thinking) {  // load the "thinking" versions of the templates
-
-    // } else {  // load the standard versions of the templates
-    //     fPrompt = sCardPath + "template_user.txt", fSysPromt = sCardPath + "template_system.txt";
-    // }
-    // prompt_template        = FILE2STR(fPrompt);
-    // system_prompt_template = FILE2STR(fSysPromt);
     // enable_thinking = hConfig->model.enable_thinking;
-    if (enable_thinking) {  //
+    if (enable_thinking) {  // load the "thinking" versions of the templates
         prompt_template        = "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n";
         system_prompt_template = "<|im_start|>system\n%s<|im_end|>\n<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n";
-    } else {  //
+    } else {  // load the standard versions of the templates
         prompt_template        = "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
         system_prompt_template = "<|im_start|>system\n%s<|im_end|>\n<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
+    }
+    string user_info;
+    auto jGen = hConfig->jConfig["generate"];
+    if (jGen.find("template") != jGen.end()) {
+        user_info              = jKV(jGen, {"template"}, user_info);
+        prompt_template        = user_info;
+        system_prompt_template = user_info;
     }
 
     return true;
@@ -1913,13 +1927,14 @@ bool CHAT_SAMPLER::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
     else {
         nSeqRecommend = hConfig->n_ctx();
     }
-    test_every  = jKV(jConfig, {"generate", "eval-every"}, test_every);  //"train", "gpt-every"
-    top_k       = jKV(jConfig, {"generate", "top_k"}, top_k);
-    temperature = jKV(jConfig, {"generate", "temperature"}, temperature);
-    prompt      = jKV(jConfig, {"generate", "prompt"}, prompt);
-    most_hua    = jKV(jConfig, {"generate", "most-hua"}, most_hua);
-    string key  = "";
-    key         = "MD_" + jKV(jConfig, {"generate", "method"}, key);
+    test_every    = jKV(jConfig, {"generate", "eval-every"}, test_every);  //"train", "gpt-every"
+    top_k         = jKV(jConfig, {"generate", "top_k"}, top_k);
+    temperature   = jKV(jConfig, {"generate", "temperature"}, temperature);
+    prompt        = jKV(jConfig, {"generate", "prompt"}, prompt);
+    most_hua      = jKV(jConfig, {"generate", "most-hua"}, most_hua);
+    isPrefixBlank = jKV(jConfig, {"generate", "isPrefixBlank"}, isPrefixBlank);
+    string key    = "";
+    key           = "MD_" + jKV(jConfig, {"generate", "method"}, key);
     STR2ENUM(key, tpZhuomo);
 
     if (nSeqLimit <= 0)
@@ -1931,6 +1946,7 @@ bool CHAT_SAMPLER::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
 bool CHAT_SAMPLER::OnArch(MODEL_ARCH arch, int flag) {
     switch (arch) {
         case MD_QWEN:
+        case MD_AR_QWEN:
             mode = enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
             //  Diffusion LMs do bidirectional iterative denoising, not left‑to‑right autoregressive decoding, do not require AR-style chat templates.
             prompt_template = "%s";
@@ -1942,11 +1958,7 @@ bool CHAT_SAMPLER::OnArch(MODEL_ARCH arch, int flag) {
             }
             assert(nSeqRecommend > 0);
             system_prompt_template = "%s";
-            temperature            = 0.5;  //  hack
             top_p                  = 1.0;
-            top_k                  = 200;
-
-            // most_step = 32;  // nSeqRecommend / 2;
             break;
         default:
             if (test_every > 0)
@@ -1995,12 +2007,8 @@ void SFT_CARD::Dump(int typ) {
     _INFO("\n");
 }
 
-ggml_cgraph* GG_dup_graph(ggml_context* ctx, ggml_cgraph* src) {
-    assert(0);
-    return nullptr;
-}
 
-#include "../Manifold/Fish.hpp"
+#include "../Shoal/Fish.hpp"
 
 /*
     Deprecated - Since koifish support 1-bit parameters, why need GGUF?
@@ -2200,6 +2208,7 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, bool need
                 if (!LoadJsonFile(jPath, jModelParam)) {
                     return false;
                 };
+                _INFO("");
                 LoadJsonFile(sCardPath + "model.safetensors.index.json", jSafetensorsIndex);
                 if (!jSafetensorsIndex.empty()) {
                     nTotalSize = jKV(jSafetensorsIndex, {"metadata", "total_size"}, nTotalSize);
@@ -2232,8 +2241,10 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, bool need
         if (isEmbedWeightTying) {
             skip_st.push_back("lm_head.weight");  //  so strange: Qwen/Qwen3-0.6B has this & unsloth/Qwen3-0.6B-Base remove this
         }
-        model_type = jKV(jModelParam, {"model_type"}, model_type);
-        assert(model_type != "");
+        hConfig->sft.model_type = jKV(jModelParam, {"model_type"}, hConfig->sft.model_type);
+        assert(hConfig->sft.model_type != "");
+        hConfig->sft.baseArch = S2ARCH(hConfig->sft.model_type);
+
         num_attention_heads = jKV(jModelParam, {"num_attention_heads"}, n_heads);
         num_key_value_heads = jKV(jModelParam, {"num_key_value_heads"}, n_kv_heads);
         if (jModelParam.find("quantization_config") != jModelParam.end()) {

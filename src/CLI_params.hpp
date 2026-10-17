@@ -11,9 +11,88 @@
 
 #include "./Utils/GST_log.hpp"
 #include "./Utils/cmd_line_parser.hpp"
-#include "./Utils/json.hpp"
+#define _nlohmann_json_
+#ifdef _nlohmann_json_
+// #include "./Utils/json/json_fwd.hpp"
+// using JSON = nlohmann::ordered_json;
+#include "./Utils/json/json.hpp"
+#else
+#include "./Utils/json/json11.hpp"
+using namespace json11;
+using JSON = json11::Json;
+#endif
 #include "./Utils/magic_enum.hpp"
 #include "./g_float.hpp"
+
+template <typename T>
+T jKV(const JSON& jConfig, const std::vector<std::string>& keys, T default_value, bool isCLI = true, int flag = 0x0) {
+    assert(keys.size() > 0);
+    std::string last = keys[keys.size() - 1];
+    try {
+        JSON cur         = jKEY(jConfig, keys);
+        std::string sKey = keys[0];
+        for (auto it = keys.begin() + 1; it < keys.end(); it++) sKey += "::" + (*it);  // last= keys[keys.size()-1];
+        if (J_isEmpty(cur)) {                                                          //  cur.is_null() || cur.empty()
+            // if(isCLI)
+            //     std::cout<<"{"<<sKey<<"}"<<" := " << default_value<<std::endl;
+            return default_value;
+        }
+
+        // T val = cur.get();
+        T val = J_get<T>(cur);  // cur.template get<T>();
+        if (isCLI)
+            std::cout << "{" << sKey << "}" << " = " << val << std::endl;
+        return val;
+    }
+#ifdef _nlohmann_json_
+    catch (JSON::parse_error& e) {
+        printf("\r\n%s  Failed to parse %s!!! ERR=%s", __func__, last.c_str(), e.what());
+        std::abort();
+    }
+#else
+#endif
+    catch (...) {
+        printf("\r\n%s  Unknown exception @%s!!!", __func__, last.c_str());
+        std::abort();
+    }
+}
+
+template <typename T>
+T jKVs(const JSON& jConfig, const std::vector<std::string>& keys, T default_value) {
+    std::string info = "";
+    info             = jKV(jConfig, keys, info, false, 0x0);
+    T t              = default_value;
+    // G_S2T_(info,t);
+    std::stringstream ss(info);
+    ss >> t;
+    return t;
+}
+template <typename T>
+std::vector<T> jKV_arr(const JSON& jConfig, const std::vector<std::string>& keys, std::vector<T> default_value, bool isCLI = true, int flag = 0x0) {
+    JSON cur         = jKEY(jConfig, keys);
+    std::string sKey = "";
+    for (auto key : keys) sKey += key + "::";  // last= keys[keys.size()-1];
+    if (J_isEmpty(cur)) {
+        // if(isCLI)
+        //     std::cout<<"{"<<sKey<<"}"<<":=" << default_value<<std::endl;
+        return default_value;
+    }
+
+    std::vector<T> val = J_getArray<T>(cur);
+    // std::vector<T> val = cur.template get<std::vector<T>>();
+    // if(isCLI)
+    //     std::cout<<"{"<<sKey<<"}"<<"="<<default_value<<std::endl;
+    return val;
+}
+
+template <typename T>
+bool jKV_is(const JSON& jConfig, const std::vector<std::string>& keys, T target, int flag = 0x0) {
+    JSON cur = jKEY(jConfig, keys);
+    if (J_isEmpty(cur))
+        return false;
+    T val = J_get<T>(cur);  //= cur.template get<T>();
+    return val == target;
+}
 
 /**
  *  All paramters defined here
@@ -42,8 +121,10 @@ enum LIFE_PHASE {
 
     // evaluate
     P_EVAL_,
+
     // Inference     fish->isLocalInfer = true
     P_PREFILL,
+
     // P_GENERATE,
     P_CHAT_1,  // generate 1 token each time
     P_CHAT_N,  // generate N token each time(diffusion model)
@@ -133,8 +214,15 @@ enum MODEL_ARCH {
 
     NLP_MOE,  //???
 
+    // Decision Model
+    DECISION_MAISUI,
+
+    // Time Series
+    TIME_MAKOU,
+
     // MASK Diffusion language model
     MD_QWEN,  // MASK Diffusion model(QWEN structure with bidirectional attention)
+    MD_AR_QWEN,
     // NLP_SCORE_char,
 
     IMAGE_SCORE_,
@@ -142,6 +230,15 @@ enum MODEL_ARCH {
     VIDEO_SCORE,
 
     SAM_
+};
+
+// The role of fish in a swarm
+enum MODEL_ROLE {
+    COMMON,
+
+    SWARM_HEAD,
+    SWARM_FOLLOWER,
+    BACKBONE_LOGITS,
 };
 
 enum MEM_STRATEGY {
@@ -337,12 +434,14 @@ class MODEL_CARD {
     INIT_WEIGHT tpInitWeight = INIT_WEIGHT::RANDOM;
 
     std::string pathCheckPoint = "";  // support {"safetensors", "kun"} files in this path
-
+    // sCardPath should be sft.sCardPath
     std::string sCardPath = "", sTokenBinPath = "";
-    bool onlyTokenizer           = false;
-    std::string sTokenJsonPath   = "";  // tokenizer.json
-    std::string sTokenConfigPath = "";  // tokenizer_config.json
-    std::string sArch, torch_dtype, transformers_version, model_type;
+    bool onlyTokenizer = false;
+    // std::string sTokenJsonPath   = "./assets/tokenizer/tokenizer.json";         // tokenizer.json
+    // std::string sTokenConfigPath = "./assets/tokenizer/tokenizer_config.json";  // tokenizer_config.json
+    std::string sTokenJsonPath   = "";                     // tokenizer.json
+    std::string sTokenConfigPath = "";                     // tokenizer_config.json
+    std::string sArch, torch_dtype, transformers_version;  //, model_type;
     std::string act_type, norm_type;
     typNUMBER tpWeight = typNUMBER::BF16, tpGradient = typNUMBER::BF16, tpActivation = typNUMBER::BF16;
     // typNUMBER tpPreLogits = typNUMBER::F32;tpEmbed = typNUMBER::BF16,
@@ -351,7 +450,7 @@ class MODEL_CARD {
 
     // Multiples of 64, 128, or 256,​ enable faster memory access and tensor parallelism, common LLM engineering trick for hardware efficiency, especially on
     // GPUs/TPUs:
-    int pad_vocab_size = 151936;
+    int pad_vocab_size = -1;  // 151936;
     // 1. in some model, no bos_token_id!(GPT-2/GPT-3,unsloth/Qwen3-4B-Base,...)
     int bos_token_id, eos_token_id;
 
@@ -406,11 +505,10 @@ class MODEL_CARD {
     int rotary_dim   = 0;
 
     MODEL_CARD();
-    // virtual bool OnJsonCALM(CLI_params* hConfig, const std::string& path, const JSON& meta, int flag = 0X0);
-    // more param from HF's "model_card"
+
     virtual bool InitHugFace(CLI_params* hConfig, const JSON& jConfig, bool needAlign, int flag = 0x0);
 
-    bool isLoadCard() { return !sCardPath.empty(); }
+    bool isLoadCard() const { return !sCardPath.empty(); }
     void Dump(int typ);
 
     friend class CLI_params;
@@ -419,6 +517,49 @@ class MODEL_CARD {
 enum EVICTION_MODE {
     NO_EVICTION,
     H2O,  //  Heavy Hitter Oracle
+};
+
+//  Score-based modeling with multiple noise perturbations  -  生物之以息(XI)相吹也
+struct XI_CARD {
+    int mask_seed = 20260713;
+
+    virtual ~XI_CARD();
+    bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
+    std::string Dump(int typ, int flag = 0x0) const;
+    bool isValid(int flag = 0x0);
+};
+/*  Parameter of sft(Supervised Fine-Tuning) training
+ *      In many case, sft-training use distillation/self-distillation/LoRA tricks
+ */
+struct SFT_CARD {
+    enum TUNING_METHOD {
+        FULL_PARAM,
+        //  selective tuning
+        OnlyBias,  // BitFit: https://arxiv.org/pdf/2106.10199
+        OnlyScale,
+        OnlyAttention,  //  only update Query and Value weight projections
+        MASK,           //  FishMask    DiffPruning
+        Top_Layer,      //  Head Tuning
+
+        //  Prompt Tuning / Prefix Tuning
+        Prompt_Prefix,
+        //  Reparameterization-based Methods
+        LORA,
+    };
+    TUNING_METHOD method = FULL_PARAM;
+
+    std::string sTrain;
+    std::string model_type;
+
+    LIFE_PHASE GetPhase(int flag = 0x0);
+    bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
+    bool isFixWeight(int flag = 0x0);
+    void Dump(int typ);
+
+    bool UpdateCKP(MODEL_CARD& model, int flag = 0x0);
+    MODEL_ARCH baseArch = _X_;
+    std::string sBaseModelPath;
+    std::string sCheckpointPath;
 };
 
 enum ANNEAL_SCHEDULE { ANNEAL_OFF, ANNEAL_DECAY_COSINE, ANNEAL_DECAY_LINEAR, ANNEAL_DECAY_FIX };
@@ -440,17 +581,6 @@ struct DISTILLATION_CARD {
     virtual bool OnLearningRate(float lf, int flag = 0x0) { return true; }
     virtual float lr_base(int flag = 0x0) { return 1.0f; }
 };
-
-//  Score-based modeling with multiple noise perturbations  -  生物之以息(XI)相吹也
-struct XI_CARD {
-    int mask_seed = 20260713;
-
-    virtual ~XI_CARD();
-    bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
-    std::string Dump(int typ, int flag = 0x0) const;
-    bool isValid(int flag = 0x0);
-};
-
 // in general, LoAB is a special case of distillation
 struct LoAB_CARD : public DISTILLATION_CARD {
     enum typW { NO_LORW, W0, AB, W_AB, SHADOW_AB, SHADOW_AB_ffn };
@@ -475,33 +605,6 @@ struct LoAB_CARD : public DISTILLATION_CARD {
     std::string Dump(int typ, int flag = 0x0) const;
     bool OnLearningRate(float lf, int flag = 0x0) override;
     float lr_base(int flag = 0x0);
-};
-
-struct SFT_CARD {
-    enum TUNING_METHOD {
-        FULL_PARAM,
-        //  selective tuning
-        OnlyBias,  // BitFit: https://arxiv.org/pdf/2106.10199
-        OnlyScale,
-        OnlyAttention,  //  only update Query and Value weight projections
-        MASK,           //  FishMask    DiffPruning
-        Top_Layer,      //  Head Tuning
-
-        //  Prompt Tuning / Prefix Tuning
-        Prompt_Prefix,
-        //  Reparameterization-based Methods
-        LORA,
-    };
-    TUNING_METHOD method = FULL_PARAM;
-
-    bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
-    bool isFixWeight(int flag = 0x0);
-    void Dump(int typ);
-
-    bool UpdateCKP(MODEL_CARD& model, int flag = 0x0);
-
-    std::string sBaseModelPath;
-    std::string sCheckpointPath;
 };
 
 /**
@@ -626,6 +729,7 @@ struct TRAIN_CARD {
     int seed     = -1;
     int n_epochs = -1;
     bool isNoTrain(int flag = 0x0);
+    void SetOnlyInfer(int flag = 0x0);
 
     int n_ctx = -1, n_batch = -1, n_threads = -1, n_gradient_accumulation = -1, n_gpu_layers = -1;
 
@@ -642,7 +746,7 @@ struct TRAIN_CARD {
     bool sample_random_offsets;
 
     bool force_reshuffle;
-
+    bool isPadMask   = false;
     float rSubSample = 1;
     int nMostIter = -1, nEpochIter = -1;
     int warmup, lr_restart         = 0;
@@ -707,9 +811,11 @@ struct CHAT_SAMPLER {
         // for musk-diffusion-model
         MD_SNR,
         MD_PATH_PLAN,
-        MD_DILATE,  // https://arxiv.org/pdf/2506.19037v3
-        MD_DUEL,    // https://arxiv.org/pdf/2603.01367
-        MD_PUMA,    // https://arxiv.org/pdf/2602.10314
+        MD_DILATE,       // https://arxiv.org/pdf/2506.19037v3
+        MD_DUEL,         // https://arxiv.org/pdf/2603.01367
+        MD_PUMA,         // https://arxiv.org/pdf/2602.10314
+        MD_Speculative,  // https://arxiv.org/pdf/2609.04010
+
         CONFIDENCE,
         InfoGAIN,
     };
@@ -718,13 +824,15 @@ struct CHAT_SAMPLER {
     CHAT_MODE mode  = CHAT_MODE::YABA;
     int test_every  = -1;  // called in training process
 
-    float temperature = 0.6f;  // 0.7~0.9
+    float temperature = 1.0f;  // 0.8–1.2 for open‑ended chat   0.0–0.3 for deterministic tasks(Extraction, classification, routing, SQL, JSON, code generation)
     //  keeps only the smallest set of tokens whose total probability exceeds p, then renormalizes and samples from that set.
-    float top_p      = 0.95f;  // 0.9~0.95
-    int top_k        = 50;     // 40,50
-    bool ignore_eos  = false;  // ignore EOS token when generating text
-    bool isSampleCPU = true;
-    bool isTopPFirst = false;
+    float top_p        = 0.95f;  // 0.9~0.95
+    int top_k          = 200;    // 40,50
+    bool ignore_eos    = false;  // ignore EOS token when generating text
+    bool isSampleCPU   = true;
+    bool isTopPFirst   = false;
+    bool isPrefixBlank = false;
+
     /**1. max_position_embeddings - Hard ceiling on (prompt + generated). But there are extrapolation tricks (NTK scaling, YaRN, PI, etc.).
      * 2. nSeqLimit = max_sequence_length
      * 3. max_new_tokens -  generation limit: number of new tokens to generate, independent of prompt length.
@@ -787,8 +895,12 @@ struct DEUG_SWITCH {
     int dump_TensorDetail = 0;
     int dump_ParamsDetail = 0;
     int dump_ShardInfo    = 0;
+    int dump_Eval_each    = 1;
     int watch_Tensors     = 0;
+    int watch_2           = 0;
     int quant_UserMode    = 0;  //  1 only quant,
+
+    int ensemble_swap_each = -1;
 
     int dict_latent_dim    = -1;
     int graph_dump         = 0;  //  10 levels of dumps, 0-9. 0 is a full dump_,The lower the number the more dump_.
@@ -817,10 +929,13 @@ struct DEUG_SWITCH {
     int T_generate_most_layer = 10000000;
     int T_kvcache_quant       = 0;
     int N_mostiter            = -1;
+    int N_mostTrainSamp       = -1;
+    int N_mostEvalSamp        = -1;
 
     int cmd_p1 = 0, cmd_p2 = 0, cmd_p3 = 0;  // some commandline parameter for debug
     int x1 = 0;
     std::string x_str;
+    std::string fHiddenFeature;  // path of file to store feature/hidden_state
     std::vector<std::string> prompts;
     std::vector<std::string> filterCSV;
     std::vector<std::string> filterColor;
@@ -903,8 +1018,11 @@ static std::map<CheckPoint_Params::STATE_TYPE, std::string> CKP_desc = {
 };
 
 struct CLI_params {
+    std::string model_title = "";
     std::string title_short = "";
-    LIFE_PHASE phase        = LIFE_PHASE::P_TRAIN;
+    std::string ModelTitle(int flag = 0x0);
+
+    LIFE_PHASE phase = LIFE_PHASE::P_TRAIN;
 
     TRAIN_CARD common;
     MODEL_CARD model;
@@ -977,10 +1095,10 @@ struct CLI_params {
     bool isShareLayerOut() const;
     std::string jsPath = "";
     JSON jConfig;
-    nlohmann::ordered_json jModel, jBackBone;
+    JSON jModel, jBackBone;
     JSON jQuant, jVendorQuant;
 
-    MODEL_ARCH ModelArch();
+    MODEL_ARCH ModelArch(MODEL_ROLE role = MODEL_ROLE::COMMON) const;
     virtual void OnArch();                                   // Deprecated
     virtual void OnPhase(LIFE_PHASE phase, int flag = 0x0);  // Deprecated
     virtual bool isValid(const std::string& path, const std::string& desc = "", int flag = 0x0);
@@ -988,8 +1106,7 @@ struct CLI_params {
     virtual void OnMostToken(size_t nMost, int flag = 0x0);
     std::string exec_name = "", test = "", compute_graph = "";
     std::vector<std::string> fn_model_base;
-    //  std::string fn_vocab_model;
-    std::string model_title = "";
+
     // std::string fp_train_data;   serial_path
     std::string train = "";  //"scratch"
 
@@ -1072,14 +1189,14 @@ struct CLI_params {
 
     // parameters of wiki
     std::string wiki_actor = "", wiki_logits = "";
-
+    std::string tpWiki = "";
     // bool only_infer = false;
 
     // parameters of datasets
     float rSplit = 0.1;
 
     std::string tpBatchSample;
-    std::string tpWiki = "";
+
     float lars_ratio = 0.0f, ZMUV_ratio = 0.0;
 
     uint32_t FOMULA_n_ff(int n_mult) {

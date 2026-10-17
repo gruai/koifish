@@ -43,7 +43,7 @@ class PangpiApp : public GST_Application {
             } else if (params.wiki_actor == "copy") {
                 wikis[0]->CopyParams(params);
             }
-            fish = Fish::MakeInstance("Fish_", params, wikis, Fish::ROLE_TYPE::COMMON, 0x0);
+            fish = Fish::MakeInstance("Fish_", params, wikis, MODEL_ROLE::COMMON, 0x0);
         }
 
         if (fish && fish->isTrain())
@@ -82,7 +82,7 @@ int main(int argc, char* argv[]) {
         config.Dump(0x100);
 
         // fish->isLocalInfer = flag == 0x110;
-        hFISH fish      = Fish::MakeInstance("PPL_", config, {}, Fish::ROLE_TYPE::COMMON, 0x110);
+        hFISH fish      = Fish::MakeInstance("PPL_", config, {}, MODEL_ROLE::COMMON, 0x110);
         hOptimizer hOPT = fish->GetOptimizer();
         if (hOPT->val_loaders.empty())
             return KOIFISH_DATALOADER_EMPTY;

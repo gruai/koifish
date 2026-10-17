@@ -66,9 +66,6 @@ class TGraph : public std::enable_shared_from_this<TGraph> {
 #ifdef __USE_GGML__
     struct ggml_cgraph* cgraph = nullptr;  // only for debug
     struct ggml_cgraph* raw() {
-#ifdef _TENSOR_G_
-        return nullptr;
-#endif
         assert(cgraph != nullptr);
         return cgraph;
     }

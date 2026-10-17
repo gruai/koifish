@@ -56,7 +56,7 @@ int SUM::nMinTensorAlloc = 100 * 1024 * 1024;
 double SUM::tX = 0.0, SUM::tX1 = 0.0, SUM::tRemater = 0.0, SUM::tPreLogits = 0.0, SUM::tHeader = 0.0, SUM::tLoss = 0.0;
 size_t SUM::szUpload  = 0;
 double SUM::tQKV_forw = 0.0, SUM::tQKV_back = 0.0, SUM::tFFN = 0.0, SUM::tUpload = 0.0, SUM::tData = 0.0;
-double SUM::tLoadData = 0.0, SUM::tLoadParam = 0.0, SUM::tEval_1 = 0.0, SUM::tEval_0 = 0.0;
+double SUM::tCollate = 0.0, SUM::tLoadParam = 0.0, SUM::tEval_1 = 0.0, SUM::tEval_0 = 0.0;
 int SUM::nInitParam = 0, SUM::nSaveParam = 0, SUM::nLoadParam = 0, SUM::nDogLeg = 0;
 int SUM::nzLoadParam = 0, SUM::nzSaveParam = 0;
 // std::vector<MEM_USAGE> SUM::mems;
@@ -231,7 +231,7 @@ bool VERIFY_DIR_EXIST(const std::string& path, bool isCreate) {
 /**
  *  v0.1    20250918
  */
-const char* GRUAI_KOIFISH_APP_NAME = "Koifish-v0.3";
+const char* GRUAI_KOIFISH_APP_NAME = "Koifish-v0.4";
 void GRUAI_KOIFISH_VERSION(char* str, int flag = 0x0) {
     char sName[80] = "\0";
     int i, nLen = (int)strlen(GRUAI_KOIFISH_APP_NAME), nFrame = 68, off;
@@ -308,7 +308,7 @@ void _LOG(DUMP_LEVEL level, const char* format, ...) {
             fflush(stdout);
             break;
         case DUMP_HILIGHT:
-            snprintf(coloredMsg, sizeof(coloredMsg), "%s %s%s", COLOR_YELLOW, log_buffer, COLOR_RESET);
+            snprintf(coloredMsg, sizeof(coloredMsg), "%s %s%s", COLOR_ORANGE, log_buffer, COLOR_RESET);
             fflush(stdout);
             break;
         default:

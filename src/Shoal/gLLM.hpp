@@ -25,38 +25,6 @@
 #define GGML_OBJECT_MAX_SIZE 128
 #endif
 
-//  GGML_DEFAULT_GRAPH_SIZE/*2048*/
-
-static const char* LLM_TENSOR_TOKEN_EMBD         = "token_embd";
-static const char* LLM_TENSOR_OUTPUT_NORM        = "output_norm";
-static const char* LLM_TENSOR_OUTPUT             = "output";
-static const char* LLM_TENSOR_ATTN_NORM          = "blk.%d.attn_norm";
-static const char* LLM_TENSOR_ATTN_Q             = "blk.%d.attn_q";
-static const char* LLM_TENSOR_ATTN_K             = "blk.%d.attn_k";
-static const char* LLM_TENSOR_ATTN_V             = "blk.%d.attn_v";
-static const char* LLM_TENSOR_ATTN_OUT           = "blk.%d.attn_output";
-static const char* LLM_TENSOR_FFN_NORM           = "blk.%d.ffn_norm";
-static const char* LLM_TENSOR_FFN_GATE           = "blk.%d.ffn_gate";
-static const char* LLM_TENSOR_FFN_DOWN           = "blk.%d.ffn_down";
-static const char* LLM_TENSOR_FFN_UP             = "blk.%d.ffn_up";
-static const char* LLM_DICT_UP                   = "dict.%d.up";
-static const char* LLM_DICT_DOWN                 = "dict.%d.down";
-static const char* LLM_TENSOR_FFN_GATE_INP       = "blk.%d.ffn_gate_inp";
-static const char* LLM_TENSOR_FFN_GATE_EXPS      = "blk.%d.ffn_gate_exps";
-static const char* LLM_TENSOR_FFN_DOWN_EXPS      = "blk.%d.ffn_down_exps";
-static const char* LLM_TENSOR_FFN_UP_EXPS        = "blk.%d.ffn_up_exps";
-static const char* LLM_TENSOR_FFN_GATE_INP_SHEXP = "blk.%d.ffn_gate_inp_shexp";
-static const char* LLM_TENSOR_FFN_GATE_SHEXP     = "blk.%d.ffn_gate_shexp";
-static const char* LLM_TENSOR_FFN_DOWN_SHEXP     = "blk.%d.ffn_down_shexp";
-static const char* LLM_TENSOR_FFN_UP_SHEXP       = "blk.%d.ffn_up_shexp";
-
-// void static set_name(hGTensor  t, const char * n) {
-//     ggml_set_name(t, n);
-//     if (t->grad) {
-//         ggml_format_name(t->grad, "%s->grad", n);
-//     }
-// };
-
 class NLP_AutoRegressive : public Fish {
    protected:
    public:
@@ -104,7 +72,7 @@ class NLP_AutoRegressive : public Fish {
     hGTensor tokens_input = nullptr;
 
     NLP_AutoRegressive() {}
-    NLP_AutoRegressive(const std::string& nam_, struct CLI_params params, ROLE_TYPE role_, int flag = 0x0);
+    NLP_AutoRegressive(const std::string& nam_, struct CLI_params params, MODEL_ROLE role_, int flag = 0x0);
     NLP_AutoRegressive(const std::string& nam_, const NLP_AutoRegressive* src, struct CLI_params params, int flag = 0x0);
 
     virtual ~NLP_AutoRegressive() {
@@ -163,7 +131,7 @@ typedef shared_ptr<NLP_AutoRegressive> hLLAMA;
 struct LLAMA_VAE : public NLP_AutoRegressive {
     int lama_embed = 0, latent_dim = 192;
 
-    LLAMA_VAE(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag = 0x0) : NLP_AutoRegressive(nam_, params, role, flag) {
+    LLAMA_VAE(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag = 0x0) : NLP_AutoRegressive(nam_, params, role, flag) {
         isLoadTokenEmbed = true;
         // config.common.adam.alpha = 0.0001;     //
     }
@@ -189,7 +157,7 @@ struct LLM_MAMBA : public NLP_AutoRegressive {
     int32_t kv_head;  // index of where we store new KV data in the cache
     int32_t n_ctx_orig;
 
-    LLM_MAMBA(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag = 0x0);
+    LLM_MAMBA(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag = 0x0);
 
     virtual ~LLM_MAMBA() {}
 
@@ -205,12 +173,8 @@ class GPT2 : public NLP_AutoRegressive {
    protected:
     LayerNormal _norm;
     SLP _output;
-#ifdef _TENSOR_G_
-#else
-    int cRawGraph(void*, bool isBuild, int flag = 0x0);  // override;
-#endif
    public:
-    GPT2(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag = 0x0);
+    GPT2(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag = 0x0);
 
     virtual ~GPT2() {}
 
@@ -231,7 +195,7 @@ class GPT2 : public NLP_AutoRegressive {
 class Guppy : public NLP_AutoRegressive {
    protected:
    public:
-    Guppy(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag = 0x0);
+    Guppy(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag = 0x0);
 
     virtual ~Guppy() {}
 
@@ -251,7 +215,7 @@ class DeepSeek : public NLP_AutoRegressive {
     virtual void _forward_cpu(int token, int pos, int flag = 0x0);
 
    public:
-    DeepSeek(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag = 0x0);
+    DeepSeek(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag = 0x0);
 
     virtual ~DeepSeek() {}
 
@@ -268,7 +232,7 @@ class DeepSeek : public NLP_AutoRegressive {
 class Mistral : public NLP_AutoRegressive {
    protected:
    public:
-    Mistral(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag = 0x0);
+    Mistral(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag = 0x0);
 
     virtual ~Mistral() {}
 
@@ -282,7 +246,7 @@ class Mistral : public NLP_AutoRegressive {
 class Bitnet : public NLP_AutoRegressive {
    protected:
    public:
-    Bitnet(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag = 0x0);
+    Bitnet(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag = 0x0);
 
     virtual ~Bitnet() {}
 
@@ -297,7 +261,7 @@ class Bitnet : public NLP_AutoRegressive {
 class QWen : public NLP_AutoRegressive {
    protected:
    public:
-    QWen(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag = 0x0);
+    QWen(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag = 0x0);
 
     virtual ~QWen() {}
 
@@ -313,7 +277,7 @@ class QWen : public NLP_AutoRegressive {
 class QWen3 : public QWen {
    protected:
    public:
-    QWen3(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag = 0x0);
+    QWen3(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag = 0x0);
 
     virtual ~QWen3() {}
 
@@ -329,14 +293,14 @@ class Salmon : public NLP_AutoRegressive {
    protected:
     // SAMPLE/雕琢/琢磨;    既雕既琢，复归于朴
     virtual int ZhuoMo(int flag = 0x0);
-
+    bool BeforeNextStep(int iter, int flag = 0x0)   override;
    public:
-    Salmon(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag = 0x0);
+    Salmon(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag = 0x0);
 
     virtual ~Salmon() {}
 
     void InitModel(int flag = 0x0) override {
-        _INFO("Score::%s: init model\n", __func__);
+        _INFO("Salmon::%s: init model\n", __func__);
 
         NLP_AutoRegressive::InitModel(flag);
     }
@@ -345,13 +309,24 @@ class Salmon : public NLP_AutoRegressive {
     std::string NN2NAME(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix = "", int flag = 0x0) override;
 };
 
-struct TinyLama : public NLP_AutoRegressive {};
+// A salmon support qwen
+class SalmonQwen : public Salmon {
+   protected:
+   public:
+    SalmonQwen(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag = 0x0);
 
-struct StableLM : public NLP_AutoRegressive {};
+    virtual ~SalmonQwen() {}
+
+    void InitModel(int flag = 0x0) override {
+        _INFO("SalmonQwen::%s: init model\n", __func__);
+
+        Salmon::InitModel(flag);
+    }
+};
 
 struct LLM_MOE : public NLP_AutoRegressive {
     uint32_t n_expert, n_expert_used;
-    LLM_MOE(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag = 0x0);
+    LLM_MOE(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag = 0x0);
 
     virtual ~LLM_MOE() {}
 

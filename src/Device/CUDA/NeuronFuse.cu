@@ -8,9 +8,9 @@
  */
 
 // ugly  "__builtin_ia32_ldtilecfg" is undefined
-#include "../../Manifold/Fish.hpp"
 #include "../../Manifold/Neuron.hpp"
 #include "../../Manifold/Optimizer.hpp"
+#include "../../Shoal/Fish.hpp"
 #include "./cuda_common.h"
 #include "./kernel/embed.cuh"
 #include "./kernel/fused_classifier.cuh"
@@ -63,7 +63,7 @@ void TokenEmbed::WorkloadOnBucker(int* tokens, int flag) {
     }
     // (nz, token) in descending order
     std::sort(freqPairs.begin(), freqPairs.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
-    std::unordered_map<int, int> rankMap;
+    MAP_I2I rankMap;
     for (size_t i = 0; i < freqPairs.size(); ++i) {
         int cur      = freqPairs[i].second;
         rankMap[cur] = i;
@@ -217,6 +217,8 @@ hGTensor TokenEmbed::OnEmbed(hGTensor inpL, int seed) {
             inpL->Print("token_input", 0, 0);
             if (hFish->isAtPhase(LIFE_PHASE::P_CHAT_1)) {
                 int token = hBatch->CurToken();  //  host_toks[tok_pos];
+                if (DEBUG.watch_2 == 1)
+                    DEBUG_HERE;
                 CU_embed_forw_1<<<C / 32, 32, 0, main_stream>>>(ToX(curX), ToX(curW), token, C, 0);
             } else {
                 inp = inpL;
@@ -869,6 +871,11 @@ hGTensor Head4Token::cuInfer_1(hGTensor inp_, int flag) {
 hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
     INSPECT inspect(this);
     auto hBatch = hFish->curBatch(0x0);
+    if (hBatch->onlyLastHidden) {
+        AppendFeats(inp_, 0);
+        return nullptr;
+    }
+
     int V = nCls, Vp = padded_nCls, i, C = hFish->config.nEmbed(), nPlot = 0, dB = dB4Logits();
     assert(proj.b == nullptr);
     // mean_loss          = 0.0f;
@@ -899,7 +906,7 @@ hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
             off = 0;  // reduce memory
             // PrintTensor<floatX>("Head4Token.proj.w", w->GetDataX(), true, w->ne[0], w->ne[1], w->ne[2], w->ne[3], -1);
             // [50304,768] x [768,8192] => [50304,8192]
-            hGTensor subZ = inp->Partial("partialZ", nZ * sizeof(floatX), {dB, T, C});
+            hGTensor subZ = inp->Partial("partialZ", nZ * sizeof(floatX), {C, T, dB});  //{dB, T, C}
             proj.Forw(curLogits, subZ);
             curLogits->Print("logits", 0, dump_flag, dB * T * Vp);
             if (hBatch->onlyLogits)
@@ -917,7 +924,7 @@ hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
                             ToX(curLogits) + off, targets + n1, cuLoss + n1, ToX(curLogits) + off, dB * T, hBatch->nValidTokens);
                     else
                         assert(0 && "Not implemented ...");*/
-//(bfloat16_t* grad_pre_logits, const int* labels, float* losses, bfloat16_t* pre_logits, N,  V, nValidToken) 
+                    //(bfloat16_t* grad_pre_logits, const int* labels, float* losses, bfloat16_t* pre_logits, N,  V, nValidToken)
                     header_cls__T64_64_S49152_bfloat16<<<dim3(dB * T), dim3(128, 1, 1), 49152, main_stream>>>(
                         ToX(curLogits) + off, targets + n1, cuLoss + n1, ToX(curLogits) + off, dB * T, V, hBatch->nValidTokens);
                     // header_cls_T64_64_S49152_bfloat16<<<dim3(dB * T), dim3(128, 1, 1), 49152, main_stream>>>(targets + n1, ToX(curLogits) + off, dB * T);

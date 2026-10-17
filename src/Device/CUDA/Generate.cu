@@ -8,8 +8,8 @@
  *  \author Yingshi Chen
  */
 #include "../../Device/Pipe.hpp"
-#include "../../Manifold/Fish.hpp"
 #include "../../Manifold/Neuron.hpp"
+#include "../../Shoal/Fish.hpp"
 #include "./kernel/embed.cuh"
 // #include "./kernel/gelu.cuh"
 #include "./kernel/layernorm.cuh"
@@ -116,7 +116,7 @@ float* T_generate_Cooperative(hFISH hFish, bool isOnlyUpdateKV, int id, unsigned
             cudaCheck(err);
         }
         SYNC_STREAM();
-        // SUM::tX1 += GST_ms() - now;
+
         PrintTensor<AT>("x_ffn", args.x, true, dim, 1);
         // args.AfterLayer(l);
     }

@@ -7,9 +7,9 @@
  *  \brief cuda kernel of Optimizer
  *  \author Yingshi Chen
  */
-#include "../../Manifold/Fish.hpp"
 #include "../../Manifold/Neuron.hpp"
 #include "../../Manifold/Optimizer.hpp"
+#include "../../Shoal/Fish.hpp"
 #include "../Pipe.hpp"
 #include "./kernel/operator.cuh"
 #include "./kernel/utils.cuh"
@@ -777,4 +777,124 @@ int UpdateTensorParam_cuda(hGTensor tensor, Optimizer* hOPT, float& grad_norm, i
 
     cudaCheck(cudaGetLastError());
     return 0x0;
+}
+
+// int UpdateTensorParam_cuda(hGTensor tensor, Optimizer* hOPT, float& grad_norm, int flag);
+//  Always call Optimizer::UpdateTensorParam          Deprecated
+OPT_STATUS OPT_Adam::UpdateTensorParam(hGTensor hP, floatX* gX, float clip) {
+    // return Optimizer::UpdateTensorParam(hP, gX, clip);
+
+    // assert(gimap.find(hP)!=gimap.end());
+    auto& im = _fish->GetGensorInfo(hP);  // gimap[hP];
+    float *m = im.gm, *v = im.gv, grad_norm = g_step;
+    ;
+    bool isToHost    = false;  // out of GPU memory!
+    const int64_t ne = tELEM(hP);
+    floatX *paramX   = (floatX*)(hP->data), *paramX0, *gX0;
+    float mh, vh, g0, x, x0, x00;
+#ifdef __USE_CUDA__
+    /*if (isToHost) {
+        assert(_tmp != nullptr);
+        paramX  = (floatX*)_tmp;
+        gX      = paramX + hP->szData;
+        paramX0 = paramX, gX0 = gX;
+        hP->SerialGP(paramX, gX, hP->szData, true);
+        x00 = T2Float(paramX);
+        if (DEBUG.train_hyperparams == 1) {
+            clip = 1.0e-6;
+        } else {
+            clip = gClip(ne, gX, hP);
+        }
+    }*/
+#else
+    if (gX == nullptr) {
+        gX   = fGrad(hP);
+        clip = gClip(ne, gX, hP);
+    } else {
+    }
+    assert(hP->type == typNUMBER::F32);
+    if (config.lars_ratio > 0) {  // lars/lamb
+        float wnorm = 0, norm = 0, trust_ratio;
+        for (int64_t j = 0; j < ne; ++j) {
+            float x = ggml_get_f32_1d(opt_ps[p], j);
+            wnorm += x * x;
+        }
+        for (int64_t j = i; j < i + ne; ++j) {
+            norm += g[j] * g[j];
+        }
+        trust_ratio = sqrt(wnorm) / sqrt(norm + eps);
+        trust_ratio = std::min(trust_ratio, config.lars_ratio);
+        gnorm       = trust_ratio;
+    }
+#endif
+#ifdef __USE_CUDA__
+    if (hP->Dogleg(0x0) != KOIFISH_OK)
+        return status;
+    grad_norm = hP->gnorm;
+    // UpdateTensorParam_cuda(hP, this, grad_norm, 0x0);
+
+    if (!isPreGStep)
+        g_step += grad_norm * grad_norm;
+    /*if (isToHost) {
+        x  = T2Float(paramX0);
+        g0 = x - x00;
+        hP->SerialGP(paramX0, gX0, hP->szData, false);
+    }*/
+#else
+    float alpha = adam->alpha, beta1 = adam->beta1, beta2 = adam->beta2, eps = adam->eps;
+    GD_METHOD tpCurGD = tpGD;
+    if (tpGD == SGD_HYBRID) {
+        tpCurGD = im.isAdam ? ADAMw : SGD;
+    }
+    switch (tpCurGD) {
+        case SGD:  //  converge very slow  !!!
+            for (int64_t j = 0; j < ne; ++j, v++, gX++, paramX++) {
+                g0      = *gX * clip;
+                x       = T2Float(paramX);
+                *paramX = x - alpha * (g0);
+            }
+            break;
+        case SGD_v:  // why v is so important?
+            for (int64_t j = 0; j < ne; ++j, v++, gX++, paramX++) {
+                g0      = *gX * clip;
+                x       = T2Float(paramX);
+                *v      = *v * beta2 + g0 * g0 * (1.0f - beta2);
+                vh      = sqrtf(*v * beta2h) + eps;
+                *paramX = x - alpha * (g0) / vh;  //  beta1h = learning rate
+            }
+            break;
+        case SGD_blk_v: {                                           // why v is so important?
+            double vb = *v * beta2 + (g_ll / ne) * (1.0f - beta2);  // *v = *v*beta2 + g0*g0*(1.0f - beta2);
+            *v        = vb;
+            v++;
+            vh = sqrtf(vb * beta2h) + eps;
+            for (int64_t j = 0; j < ne; ++j, gX++, paramX++) {
+                g0      = *gX * clip;
+                x       = T2Float(paramX);
+                *paramX = x - alpha * (g0) / vh;  //  beta1h = learning rate
+            }
+        } break;
+        case ADAMw:
+        default:
+
+            for (int64_t j = 0; j < ne; ++j, m++, v++, gX++, paramX++) {
+                float g = T2Float(gX);
+                x0 = x = T2Float(paramX);
+                // float g0 = isZMUV ? *gX : *gX*clip;
+                g0      = g * clip;
+                *m      = *m * beta1 + g0 * (1.0f - beta1);       // linear interpolations of the gradients
+                *v      = *v * beta2 + g0 * g0 * (1.0f - beta2);  // linear interpolations of their variances
+                mh      = *m * beta1h;                            // debiasing
+                vh      = *v * beta2h;
+                vh      = sqrtf(vh) + eps;
+                x       = x * (1.0f - p_decay) - alpha * mh / vh;  // ormalize step(mh) by its standard deviation(vh)
+                *paramX = x;                                       // ggml_set_f32_1d(hP, j, x);
+                //  !!!update our low precision version of the parameters using stochastic rounding!!!
+            }
+
+            break;
+    }
+#endif
+
+    return KOIFISH_OK;
 }

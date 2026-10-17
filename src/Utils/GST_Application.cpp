@@ -9,7 +9,7 @@
 #include "GST_Application.hpp"
 
 #include <iostream>
-
+#include <filesystem>
 #include "GST_MemBuffer.hpp"
 #include "GST_util.hpp"
 
@@ -105,21 +105,26 @@ bool CLI_params::parse(int argc, char** argv) {
             sscanf(argv[++i], "%d", &DEBUG.quant_UserMode);
         } else if (arg == "--seq_len") {
             sscanf(argv[++i], "%d", &chat_sampler.nSeqRecommend);
-        } else if (arg == "--md_method") {
+        } else if (arg == "--temperature") {
+            sscanf(argv[++i], "%f", &chat_sampler.temperature);
+        }else if (arg == "--md_method") {
             string sType = "MD_";
             STR2ENUM(sType + argv[++i], chat_sampler.tpZhuomo);
             // strcmp(argv[++i], "dilate") == 0 ? CHAT_SAMPLER::MD_DILATE : CHAT_SAMPLER::MD_SNR;
         } else if (arg == "--hellaswag") {
             eval_metric = "hellaswag";
             assert(i + 1 < argc);
+#ifdef _nlohmann_json_
             JSON jEval;
             jEval["type"] = "hellaswag", jEval["glob"] = argv[++i];
             jEval["samp"] = 1.0;
             // jEval["glob"] = argv[i++];
             jConfig["datasets_new"]["eval"] = jEval;
+#endif
         } else if (arg == "--hf") {  // directory of hf model
             assert(i + 1 < argc);
             model.sCardPath = model.pathCheckPoint = argv[++i];
+            // model.isPaddedCls = true;
             if (!VERIFY_DIR_EXIST(model.sCardPath, false)) {
                 K_EXIT(KOIFISH_INVALID_ARGS_MODEL);
             }
@@ -163,6 +168,7 @@ bool CLI_params::parse(int argc, char** argv) {
             if (!LoadJConfig(model.pathCheckPoint)) {
                 return false;
             }
+#ifdef _nlohmann_json_
             if (jConfig.contains("datasets")) {
                 jConfig.erase("datasets");
             }
@@ -172,6 +178,7 @@ bool CLI_params::parse(int argc, char** argv) {
             if (jConfig.contains("sft")) {  // this would cause many confliction!
                 jConfig.erase("sft");
             }
+#endif
             model.sTokenBinPath = "./assets/tokenizer_151936.bin";
 
             model.pad_vocab_size = 151936;
@@ -184,7 +191,7 @@ bool CLI_params::parse(int argc, char** argv) {
             break;
         }
         default:
-            assert(!jConfig.empty());
+            assert(!J_isEmpty(jConfig));    //jConfig.empty()
             if (!InitJConfig())
                 return false;
             if (!isValid(jPath, "CLI_params::parse"))

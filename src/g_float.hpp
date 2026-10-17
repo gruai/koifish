@@ -25,6 +25,7 @@
 using TOKEN_ID = uint32_t;
 // using TOKEN_ID = uint16_t;
 const TOKEN_ID TOKEN_MAX = TOKEN_ID(-1);
+const TOKEN_ID TOKEN_NAN = TOKEN_ID(-1);
 
 // Always use unsigned types for bit manipulation!
 using hBITARR = uint8_t*;
@@ -207,9 +208,9 @@ typNUMBER tpNumOf(const std::string& dtype_str);
     FP16/BF16/FP8/FP4 from different vendors
     floatX - type of Activatioin/tmp
 */
-#ifndef _USE_CUDA_FLOAT_
-#define _USE_CUDA_FLOAT_
-#endif
+// #ifndef _USE_CUDA_FLOAT_
+// #define _USE_CUDA_FLOAT_
+// #endif
 // #undef _USE_CUDA_FLOAT_
 #if defined(_USE_CUDA_FLOAT_)
 
@@ -292,11 +293,18 @@ inline constexpr cudaDataType cuLibType<__nv_fp8_e5m2> = cudaDataType::CUDA_R_8F
 
 #else
 #include <cstdint>
+#ifdef __STDCPP_FLOAT16_T__
 // using half      = uint16_t;  // C++11/14/17/20: only correct memory layout, Not a real floating‑point type!
 using half      = _Float16;  // C++11/14/17/20: only correct memory layout, Not a real floating‑point type!
 using floatX    = _Float16;  // Weight
 using floatGama = _Float16;
 using floatGrad = _Float16;
+#else
+using half      = float;  // C++11/14/17/20: only correct memory layout, Not a real floating‑point type!
+using floatX    = float;  // Weight
+using floatGama = float;
+using floatGrad = float;
+#endif
 using bf16      = uint16_t;
 #endif
 
@@ -569,3 +577,33 @@ struct NF3_LUT {
     float nf4_scale[8] = {-1.0f, -0.6961928009986877f * 0.7f, -0.5250730514526367f * 0.7f, -0.18477343022823334f * 0.7f,
                           0.0f,  0.18477343022823334f * 0.7f, 0.5250730514526367f * 0.7f,  1.0f};
 };
+
+// Some utils to transfer data between device & host
+void D20(void* dev, size_t szData, int flag = 0x0);
+uint64_t D2H_hash64(const void* dev, size_t szData, int flag = 0x0);
+bool D2H(const void* dev, void* host, size_t szData, int flag = 0x0);
+bool D2D(void* hDst, const void* hSrc, size_t szData, int flag = 0x0);
+bool H2D(void* dev, const void* host, size_t szData, int flag = 0x0);
+
+// copy value of one elemetn from device
+template <typename T>
+bool D2e(const void* dev, T& host, const std::string& desc, int flag = 0x0) {
+    if (!D2H(dev, &host, sizeof(T), flag))
+        return false;
+    float a = T2Float(&host);
+    if (isnan(a) || isinf(a)) {
+        fprintf(stderr, "[D2e] faild@\"%s\" a=%g\n", desc.c_str(), a);
+        return false;
+        // K_EXIT_NOW(KOIFISH_INVALID_D2E);
+    }
+    return true;
+}
+
+template <typename T>
+float D2f(const T* dev, const std::string& desc = "", int flag = 0x0) {
+    T hostVal;
+    bool bRet = D2e((const void*)dev, hostVal, desc.empty() ? "D2f" : desc);
+    assert(bRet);
+    float a = T2Float(&hostVal);
+    return a;
+}

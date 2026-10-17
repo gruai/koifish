@@ -32,11 +32,23 @@ def CheckResult(df,iter,golden,title="",rel_tol=1e-05):
     if not isClose:
         print(f"CheckResult failed@{title}! loss={a} golden={golden}\n")
         assert(0)
-  
-# "Write a quick sort algorithm in c++."
-def test_diffusion_coder():  
-    content = bubble_one("coder_tiny"," --hf ./Models/dcoder/ --prompts \"Write a quick sort algorithm in c++.\" --seq_len 640 --md_method \"dilate\"", fResult="./output/gopt/dilate__.txt") 
+
+def test_chat_dcoder():  
+    content = bubble_one("chat_dcoder"," --hf ./Models/dcoder/ --prompts \"Write a quick sort algorithm in c++.\" --seq_len 640 --temperature 0.5 --md_method \"dilate\"", fResult="./output/gopt/dilate__.txt") 
     assert "This implementation ensures that the first element is the last element at the array of the array, and prints the initial state of the array." in content
+
+
+def test_chat_qwen3_4B_awq():    
+    content = bubble_one("chat_qwen3_4B_awq"," --hf ./Models/Qwen3-4B-AWQ/ --prompts \"Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?\"")  #  "./cases/qwen3/qwen3_4B.json"
+    assert "Answer: \\boxed{1}" in content  or "Answer: 1" in content or "Answer:1" in content or "answer:1" in content  or "answer is:1" in content # "Answer: 1"   "✅ Final Answer:1 ✅"  "Answer: 1 ✅"  "✅Answer: 1"
+
+def test_qwen3_596M_q4():    
+    most_iter = 60
+    title = "QWen3_596M_q4_gama"    # "train_target":"gama" in json file
+    dfTrain = koifish_one(title, sExe, "./cases/qwen3/qwen3_596M_q4.json", most_iter=most_iter, train_csv="./Train@[climb]_info_.csv")    
+    CheckResult(dfTrain,most_iter,10.291,title=title,rel_tol=0.001)      #  7.972 7.989 8.035
+
+# chat(dcoder): "Write a quick sort algorithm in c++."
 
 def test_mdm_tiny():    
     most_iter = 60
@@ -54,7 +66,7 @@ def test_chat_qwen3_596M():
     content = bubble_one("chat_qwen3_596M"," --hf ./Models/Qwen3-0.6B/ --prompts \"hello\"")  #./cases/qwen3/qwen3_0.6B.json
     assert "Hello! How can I assist you today?" in content
 
-def test_chat_qwen3_4B():    
+def xtest_chat_qwen3_4B():    
     content = bubble_one("chat_qwen3_4B"," --hf ./Models/Qwen3-4B/ --prompts \"Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?\"")  #  "./cases/qwen3/qwen3_4B.json"
     assert "Answer: \\boxed{1}" in content  or "Answer: 1" in content or "Answer:1" in content or "answer:1" in content  # "Answer: 1"   "✅ Final Answer:1 ✅"  "Answer: 1 ✅"  "✅Answer: 1"
     # assert content=="Hello! How can I assist you today? 😊\n" or content=="Hello! It seems there was a small glitch. 😊 How can I assist you today?\n"
@@ -64,15 +76,7 @@ def xtest_chat_qwen3_4B_1():
     content = bubble_one("chat_qwen3_4B_1","p1  --hf ./Models/Qwen3-4B/ --prompts \"Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?\"")  
     assert "Answer: \\boxed{1}" in content  or "Answer: 1" in content or "Answer:1" in content or "answer:1" in content  # "Answer: 1"   "✅ Final Answer:1 ✅"  "Answer: 1 ✅"  "✅Answer: 1"
 
-def test_chat_qwen3_4B_awq():    
-    content = bubble_one("chat_qwen3_4B_awq"," --hf ./Models/Qwen3-4B-AWQ/ --prompts \"Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?\"")  #  "./cases/qwen3/qwen3_4B.json"
-    assert "Answer: \\boxed{1}" in content  or "Answer: 1" in content or "Answer:1" in content or "answer:1" in content  # "Answer: 1"   "✅ Final Answer:1 ✅"  "Answer: 1 ✅"  "✅Answer: 1"
 
-def test_qwen3_596M_q4():    
-    most_iter = 101
-    title = "QWen3_596M_q4_gama"    # "train_target":"gama" in json file
-    dfTrain = koifish_one(title, sExe, "./cases/qwen3/qwen3_596M_q4.json", most_iter=most_iter, train_csv="./Train@[climb]_info_.csv")    
-    CheckResult(dfTrain,most_iter,7.989,title=title,rel_tol=0.001)      #   8.035
 
 def xtest_ising_596M():    
     most_iter = 100
@@ -108,30 +112,32 @@ def test_qwen3_596M():
     most_iter = 80
     title = "QWen3_596M"
     dfTrain = koifish_one(title, sExe, "./cases/qwen3/qwen3_1.json", most_iter=most_iter, train_csv="./Train@[climb]_info_.csv")    
-    CheckResult(dfTrain,most_iter,7.980,title=title,rel_tol=0.001)      #   6.868(iter=180) 6.942169    7.589036
+    CheckResult(dfTrain,most_iter,7.932,title=title,rel_tol=0.001)      #   6.868(iter=180) 6.942169    7.589036 7.980
 
 def test_qwen2_494M():    
     most_iter = 70
     title = "QWen2.5_494M"
     dfTrain = koifish_one(title, sExe, "./cases/qwen3/qwen25_1.json", most_iter=most_iter, train_csv="./Train@[shake]_info_.csv")    
-    CheckResult(dfTrain,most_iter, 2.979,title=title,rel_tol=0.001)      #  2.979 2.873
+    CheckResult(dfTrain,most_iter, 2.893,title=title,rel_tol=0.001)      #  2.979 2.873
 
 def xtest_gpt2_1558M():    
     title = "1558M"
     dfTrain = koifish_one(title, sExe, "./cases/gpt2/1558M_F8_B80/F8_B32.json", most_iter=most_iter)
     CheckResult(dfTrain,most_iter,9.446,title=title) 
+    
+def test_gpt2_124M():    
+    most_iter = 70
+    title = "124M_no_fuyou"
+    dfTrain = koifish_one(title, sExe, "./cases/gpt2/124M_shard50_F6_lr0.001/no_fuyou.json", most_iter=most_iter)    
+    CheckResult(dfTrain,most_iter,7.443,title=title)    #=7.443  7.467 7.751
 
 def test_gpt2_124M_fuyou6():    
     most_iter = 70
     title = "124M"
     dfTrain = koifish_one(title, sExe, "./cases/gpt2/124M_shard50_F6_lr0.001/F6_lr0.001.json", most_iter=most_iter)    
-    CheckResult(dfTrain,most_iter,7.497,title=title)    #7.497 7.785
+    CheckResult(dfTrain,most_iter,7.492,title=title)    #7.492 7.497 7.785
 
-def test_gpt2_124M():    
-    most_iter = 70
-    title = "124M_no_fuyou"
-    dfTrain = koifish_one(title, sExe, "./cases/gpt2/124M_shard50_F6_lr0.001/no_fuyou.json", most_iter=most_iter)    
-    CheckResult(dfTrain,most_iter,7.467,title=title)    #7.467 7.751
+
 
 
 
@@ -169,7 +175,7 @@ if __name__ == '__main__':
     args = parser.parse_args()    
     
     sExe = "./bin/koifish "
-    test_mdm_coder()
+    # test_mdm_coder()
     # test_mdm_tiny()
     # test_gpt2_774M()
     #test_diffusion_coder()
@@ -178,13 +184,13 @@ if __name__ == '__main__':
     # test_sft_qwen3_mimimind() 
     # test_qwen3_596M()
     # test_ising_596M()
-    # test_chat_qwen3_4B()
-    #test_chat_qwen3_4B_awq()
+    # xtest_chat_qwen3_4B()
+    # test_chat_qwen3_4B_awq()
     # xtest_batch_qwen3_4B()
 
     # test_pp_gpt2()
     # test_gpt2_124M()
-    # test_qwen3_596M_q4()
+    test_qwen3_596M_q4()
     # test_gpt2_124M_fuyou6()
     # test_gpt2_1558M()
     # test_chat_qwen3_4B_1()

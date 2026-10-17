@@ -25,7 +25,6 @@
 #include <memory>  //for shared_ptr
 #include <string>
 #include <typeinfo>
-#include <unordered_map>
 #include <vector>
 
 #include "../g_def_x.hpp"
@@ -182,7 +181,7 @@ struct SUM {
     static int nQuantTensor;
     static size_t szQuantBits;
     static int nInitParam, nSaveParam, nzSaveParam, nLoadParam, nzLoadParam, nDogLeg;
-    static double tX, tX1, tData, tRemater, tQKV_forw, tQKV_back, tFFN, tPreLogits, tHeader, tLoss, tUpload, tLoadData, tLoadParam, tEval_0, tEval_1;
+    static double tX, tX1, tData, tRemater, tQKV_forw, tQKV_back, tFFN, tPreLogits, tHeader, tLoss, tUpload, tCollate, tLoadParam, tEval_0, tEval_1;
     static double tQuant, tF8Ex, tLowBit;
     static size_t szUpload;
     static string sQuantInfo;
@@ -197,49 +196,6 @@ struct SUM {
 };
 
 // #define GPU_TIME_a(a,b)   {SYNC_STREAM(); (a) += GST_us() - (b);}
-
-// Discrete distribution of array   @/home/cys/rnd/lic/src/GBDT/data_fold/Distribution.hpp
-struct Distri_ARRAY {
-    static string CSV_LOG_DIR;
-    std::vector<float> distri;
-    double mean = 0, sigma = 0, sum = 0, ss = 0, average = 0;
-    float a0 = FLT_MAX, a1 = -FLT_MAX;
-
-    virtual bool isValid() {
-        // if (distri.empty())
-        //     return false;
-        return true;
-    }
-    virtual void Clear() {
-        distri.clear();
-        mean = 0, sigma = 0, average = 0;
-        sum = 0, ss = 0;
-        a0 = DBL_MAX, a1 = -DBL_MAX;
-    }
-    virtual void Add(float a) {
-        distri.push_back(a);
-        sum += a;
-        ss += a * a;
-        a0 = std::min(a0, a), a1 = std::max(a1, a);
-    }
-
-    virtual float Last() {
-        assert(!distri.empty());
-        return distri[distri.size() - 1];
-    }
-
-    virtual void Stat() {
-        size_t n = distri.size();
-        if (n == 0)
-            return;
-
-        average = sum / n;
-        sigma   = std::max(0.0, ss / n - average * average);  // float point error
-        sigma   = sqrt(sigma);
-    }
-
-    virtual bool SaveToCSV(const string& x, int flag);
-};
 
 #ifndef _WIN32
 #include <arpa/inet.h>

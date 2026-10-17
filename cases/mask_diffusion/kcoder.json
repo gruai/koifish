@@ -49,7 +49,7 @@
         "#type":"charset"
     },
     "datasets": {
-        "train": { "glob": "./Datasets/fine_code/data_1/*.parquet",   "type":"k_parquet",         "name": "kcoder"        },
+        "train": { "glob": "./Datasets/fine_code/data_1/*.parquet",   "type":"k_parquet",  "most": 10,       "name": "kcoder"        },
         "#train": {
             "glob": "./Datasets/climb-1b/*train*.bin",            "most": 50,            "name": "climb"
         },      

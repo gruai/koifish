@@ -55,6 +55,7 @@ double BitPE(typNUMBER type) {
         return 0.125;
     }
     double bit = K_FLOATS[type].bis;
+    assert(bit>=1.0 && bit<=64.0);
     return bit;
 }
 

@@ -12,8 +12,8 @@
 #include <memory>
 #include <type_traits>
 
-#include "../Manifold/Fish.hpp"
 #include "../Manifold/Optimizer.hpp"
+#include "../Shoal/Fish.hpp"
 
 struct PIPE_Optimizer {
     typedef int32_t _STATUS;

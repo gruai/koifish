@@ -8,7 +8,7 @@
  *  \author Yingshi Chen
  */
 
-#include "../Manifold/gLLM.hpp"
+#include "../Shoal/gLLM.hpp"
 
 void matmul_unscaled(float* xout, float* x, float* w, int n, int d);
 void matmul_unscaled(float* xout, float* x, __gcc_fp16* w, int n, int d);
@@ -25,13 +25,13 @@ void rope(float* vec, int d, int head_dim, int pos, float theta, int rotary_dim)
 void rope(float* buf, float* vec, int d, int head_dim, int pos, float theta);
 void rope(float* buf, __gcc_fp16* vec, int d, int head_dim, int pos, float theta);
 
-Mistral::Mistral(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
+Mistral::Mistral(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
     assert(arch == MODEL_ARCH::NLP_MISTRAL);
     config.model.isSLPBias    = false;
     config.model.isNormalBias = false;
 }
 
-DeepSeek::DeepSeek(const std::string& nam_, struct CLI_params params, ROLE_TYPE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
+DeepSeek::DeepSeek(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
     assert(arch == MODEL_ARCH::NTP_DEEPSEEK);
     config.model.isSLPBias    = false;
     config.model.isNormalBias = false;
