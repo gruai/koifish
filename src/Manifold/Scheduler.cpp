@@ -14,8 +14,7 @@
 #include "../Shoal/gLLM.hpp"
 #include "Optimizer.hpp"
 
-    LearnSKDU::LearnSKDU(TRAIN_CARD& train_params)
-    : _params(train_params) {
+LearnSKDU::LearnSKDU(TRAIN_CARD& train_params) : _params(train_params) {
     if (_params.lr_restart == 1)
         policy = COSINE_EPOCH;
     lr_base                        = _params.LearningRate();
@@ -674,6 +673,7 @@ bool RLS_BP::Prepare(int iter, int flag) {
         case LIFE_PHASE::P_EVAL_:
         case LIFE_PHASE::P_CHAT_1:
         case LIFE_PHASE::P_CHAT_N:
+        case LIFE_PHASE::P_EVAL_CHAT:
             return true;
             break;
         case LIFE_PHASE::P_TRAIN:

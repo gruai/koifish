@@ -1582,15 +1582,8 @@ hNEURON Fish::J2Neuron(void* ctx_, string& dad, int level, const JConfig& jconfi
 
 */
 int Fish::jToGraph(void* ctx_, bool isBuild, int flag) {
-    JConfig js(config.jBackBone);
-    assert(js.Valid());
-    std::ofstream file("./log/_koifish_jToGraph_.json");
-    if (0) {  // only for debug
-        if (file.is_open()) {
-            file << js.js.dump(4);
-            file.close();
-        }
-    }
+    JConfig js(config.jBackBone);assert(js.Valid());
+    J_dump("./log/_koifish_jToGraph_.json", js.js);    
 
     string sRoot = "model";  //  prefix = dad.empty() ? nam_ : dad + "." + nam_;
 

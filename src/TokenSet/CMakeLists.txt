@@ -2,7 +2,7 @@
 include_directories(.)
 
 set(PWD ${CMAKE_CURRENT_SOURCE_DIR})
-set(token_sources  ${PWD}/DataLoader.cpp ${PWD}/Dictionary.cpp ${PWD}/TokenSet.cpp ${PWD}/TokenSet_Json.cpp ${PWD}/HF_Tokenizer.cpp 
+set(token_sources  ${PWD}/DataLoader.cpp ${PWD}/Sample.cpp ${PWD}/Dictionary.cpp ${PWD}/TokenSet.cpp ${PWD}/TokenSet_Json.cpp ${PWD}/HF_Tokenizer.cpp 
 PARENT_SCOPE )
 
 # set_source_files_properties(

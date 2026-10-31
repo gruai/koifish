@@ -14,6 +14,7 @@
 #include <atomic>
 #include <cassert>
 #include <complex>
+#include <limits>
 #include <map>
 #include <memory>
 #include <regex>
@@ -23,46 +24,17 @@
 #include <vector>
 using namespace std;
 #include "../Dynamics/Langevin.hpp"
-#include "../TokenSet/DataLoader.hpp"
-#include "../g_float.hpp"
 #include "../Manifold/Scheduler.hpp"
 #include "../Manifold/WIKI.hpp"
+#include "../TokenSet/DataLoader.hpp"
+#include "../g_float.hpp"
+#include "Prober.hpp"
 
 class Fish;
+class FeatPicker;
 
-#include <limits>
-#include <queue>
-#include <vector>
-
-/**
- * 1. supoort multi-thread
- */
-struct TOPK_heap {
-    int tid = -1;  // thread id, each thread for one tensor
-    int dim = -1;
-
-    float maxLogit  = 0.f;
-    float lastLogit = 0.f;  // k-th largest value (smallest in heap)
-    virtual bool isLarge(int i, int k, int flag = 0x0) { return false; }
-    std::priority_queue<int> heap;
-    std::vector<int> _picks;
-
-    virtual int Select(int nPick, SORT_BY sort = SORT_BY::NO_SORT, int flag = 0x0);
-    virtual float ValueAt(int k) {
-        assert(0);
-        return 0.0;
-    }
-};
-
-// 非我无所取(qu)
-struct QU {
-    int posOfTarget = -1;
-    TOKEN_ID token  = 0;
-    float confi     = 0.;  // confidense
-    string word     = "";
-};
-
-struct LogitsInfo : TOPK_heap {
+class LogitsInfo : PROBER {
+   public:
     bool isHeaviside = false;
     int ver          = 0;
     int posInBatch = 0, posOfTarget = 0;
@@ -71,13 +43,14 @@ struct LogitsInfo : TOPK_heap {
     float presence_penalty = 0.f;  // Need more topic variety.  Qwen recommending presence_penalty=1.5
     float frequency_penalty;       // Need less word reuse
 
-    float* logits       = nullptr;
-    floatX* src         = nullptr;  //  cls->preLogits->host_data
-    hGTensor hClsLogits = nullptr;
-    float T_coin        = 0.0f;
+    float* logits                  = nullptr;
+    floatX* src                    = nullptr;  //      cls->preLogits->host_data
+    shared_ptr<GTensor> hClsLogits = nullptr;
+    float T_coin                   = 0.0f;
 
     QU qu;
 
+    LogitsInfo(CSTRING& nam_, CSTRING& sN, int n0, FEAT_TYPE tpF, int flag);
     LogitsInfo(int id, const Fish* hG_, hGTensor hClsLogits_, float T_x_, int flag = 0x0);
     // virtual void Swap(int i, int j) { std::swap(logits[i], logits[j]), std::swap(index[i], index[j]); }
     // virtual bool Init(int n_vocab, hGTensor hClsLogits_, int flag = 0x0);
@@ -101,7 +74,7 @@ struct LogitsInfo : TOPK_heap {
     virtual float TopP(float top_p, int k, int flag = 0x0);
     virtual int Qu_FlipCoin(hTokenizer tokenizer, int flag = 0x0);
 
-    virtual void Dump(int type, int flag = 0x0);
+    void Dump(int type, int flag = 0x0) const override;
 
     virtual void SortPair(int nPick, int flag = 0x0) { assert(0); }
     virtual ~LogitsInfo() { FREE_a(logits); }
@@ -109,7 +82,8 @@ struct LogitsInfo : TOPK_heap {
 typedef std::shared_ptr<LogitsInfo> hLogitsInfo;
 
 template <typename Typ>
-struct LogitsInfo_GPU : public LogitsInfo {
+class LogitsInfo_GPU : public LogitsInfo {
+   public:
     void* d_temp  = nullptr;
     size_t szTemp = 0;
 
@@ -175,7 +149,7 @@ class GeneratOnPrompt {
     std::vector<hLogitsInfo> candLogit;  // candidate of SampFromLogits
     // LogitsInfo_GPU<floatLogits> gpuLogits;   // [todo]
 
-    float delta_max = 0, delta_a = 0;
+    float delta_max = 0, delta_a = 0, avgConfi = 0., tSample, tPrefill;
     // 0.1 – 0.5Mild reduction in repetition; >1.5 Risk of language mixing and degraded quality
     float presence_penalty = 0.0;
     bool display           = true;
@@ -188,14 +162,15 @@ class GeneratOnPrompt {
     bool is_antiprompt = false;
 
     // int n_ctx = -1, n_ctx_train = -1;
-    int nCanTopK = -1, nGenerate = 0;
+    int nCanTopK = -1, generated_tokens = 0, nMatch = 0;
 
+    std::vector<hSAMP> curSamps;
     std::string fResult, sResult, cur_answer;  // path of file to save result
     // std::string path_session = params.path_prompt_cache;
     std::vector<TOKEN_ID> session_tokens;
     std::vector<TOKEN_ID> embd_inp;
     std::vector<QU> arrQu;
-    std::string GetPrompt(int flag = 0x0);
+    std::string GetRawPrompt(int flag = 0x0);
     hSampNanny dialogs;
     std::vector<int> input_tokens, output_tokens;
     std::ostringstream output_ss;
@@ -220,10 +195,10 @@ class GeneratOnPrompt {
    public:
     GeneratOnPrompt() {}
     // GeneratOnPrompt(struct gpt_params& par_, int flag);
-    GeneratOnPrompt(CLI_params& cp_, arrHWIKI& wiki_, Fish* hG_, int flag);
+    GeneratOnPrompt(hDataToken coral, arrHWIKI& wiki_, Fish* hG_, int flag);
     virtual void InitRandomState(int seed = 20251021, int flag = 0x0);
 
-    static shared_ptr<GeneratOnPrompt> MakeInstance(struct CLI_params& params, arrHWIKI& wiki, Fish*, int flag);
+    static shared_ptr<GeneratOnPrompt> MakeInstance(hDataToken coral, arrHWIKI& wiki, Fish*, int flag);
 
     virtual ~GeneratOnPrompt() { Clear(); }
 
@@ -245,16 +220,18 @@ class GeneratOnPrompt {
     std::vector<std::vector<TOKEN_ID>> antiprompt_ids;
 
     virtual int Generate_v0(int nJob, int flag = 0x0);
-
+    void BeforeGenerate(int flag = 0x0);
     // virtual TOKEN_ID Sample_cpu(int idx = -1, bool isSorted = false);
     virtual TOKEN_ID Sample(hBATCH hBatch, bool is_resampling = false);
     virtual int SampleOnBatch(hBATCH hBatch, float* hostLoss, int B, int T, SampNanny* hLoader, int flag = 0x0);
-    virtual bool OnLogits(int flag = 0x0);
+    virtual bool OnLogits(hSAMP hSamp, shared_ptr<FeatPicker> logitsPicker, int flag = 0x0);
     virtual void DisplayEmbd(bool input_echo, int n_consumed, int flag = 0x0);
+    virtual void DisplayAnswer(const std::string& answer, int flag);
 
-    virtual void AfterSample(int iter, double elapsed_s, int flag = 0x0);
+    virtual void AfterSample(int iter, double elapsed_s, bool isLast = true, int flag = 0x0);
 
     friend class Fish;
+    friend class Maisui;
 };
 typedef shared_ptr<GeneratOnPrompt> hGENERATOR;
 using hChater = hGENERATOR;
@@ -267,8 +244,8 @@ class GOPT_Diffusion : public GeneratOnPrompt {
     TOKEN_ID Sample(hBATCH hBatch, bool is_resampling = false) override;
 
    public:
-    GOPT_Diffusion(CLI_params& cp_, arrHWIKI& wikis_, Fish* hG_, int flag);
-    bool OnLogits(int flag = 0x0) override;
+    GOPT_Diffusion(hDataToken coral, arrHWIKI& wikis_, Fish* hG_, int flag);
+    bool OnLogits(hSAMP hSamp, shared_ptr<FeatPicker> logitsPicker, int flag = 0x0) override;
     virtual ~GOPT_Diffusion() {}
 };
 
@@ -278,7 +255,7 @@ class GOPT_Metropolis : public GeneratOnPrompt {
 
    public:
     // GOPT_Metropolis(struct gpt_params& par_, int flag) : GeneratOnPrompt(par_, flag) {}
-    GOPT_Metropolis(CLI_params& cp_, arrHWIKI& wikis_, Fish* hG_, int flag) : GeneratOnPrompt(cp_, wikis_, hG_, flag) {}
+    GOPT_Metropolis(hDataToken coral, arrHWIKI& wikis_, Fish* hG_, int flag) : GeneratOnPrompt(coral, wikis_, hG_, flag) {}
 
     virtual ~GOPT_Metropolis() { Clear(); }
 

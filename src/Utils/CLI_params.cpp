@@ -69,10 +69,10 @@ JSON jKEY(const JSON& jConfig, const std::vector<std::string>& keys, int flag) {
     std::string key;
     for (int i = 0; i < keys.size(); i++) {
         key = keys[i];
-        if (cur.find(key) == cur.end()) {
+        if (!J_has(cur, key)) {  // cur.find(key) == cur.end()
             // _ERROR("\t NO %s @\"%s\";",__func__,key.c_str());
-            cur.clear();
-            return cur;
+            // cur.clear();
+            return JSON();
         }
         cur = cur[key];
     }
@@ -82,7 +82,7 @@ JSON jKEY(const JSON& jConfig, const std::vector<std::string>& keys, int flag) {
         _WARN("jKEY(%s) is null @\"%s\"!!!", key.c_str(), path.c_str());
         return nullptr;
     }
-    if (cur.empty()) {
+    if (J_isEmpty(cur)) {  // cur.empty()
         _ERROR("jKEY(%s) is empty @\"%s\" !!!", key.c_str(), path.c_str());
         return nullptr;
     }
@@ -92,13 +92,24 @@ JSON jKEY(const JSON& jConfig, const std::vector<std::string>& keys, int flag) {
 // bool jK2S(const JSON& jConfig,const std::vector<std::string>&keys,(const char*) &str,int flag=0x0);
 bool jK2S(const JSON& jConfig, const std::vector<std::string>& keys, char** str, int flag = 0x0) {
     JSON cur = jKEY(jConfig, keys);
-    if (cur.is_null() || cur.empty()) {
+    if (J_isEmpty(cur)) {  // cur.is_null() || cur.empty()
         assert(0);
         return false;
     }
-    string val = cur.get<std::string>();
+    string val = J_get<string>(cur);  // cur.get<std::string>();
     // *str = val.c_str();
     strcpy(*str, val.c_str());
+    return true;
+}
+
+bool J_dump(const std::string& path, const JSON& jObj, int flag) {
+    // assert(js.Valid());
+    std::ofstream file(path);
+    if (file.is_open()) {
+        file << jObj.dump();  // dump(4);
+        file.close();
+    } else
+        return false;
     return true;
 }
 
@@ -110,9 +121,10 @@ void UpdateJConfig(JSON& jConfig, const std::string& jPath) {
         }
         jfile >> jConfig;
         std::string s = jConfig.dump();
-    } catch (JSON::parse_error& e) {
+    } /*catch (JSON::parse_error& e) {
         _WARN("\r\n%s  Failed to open %s!!! ERR=%s", __func__, jPath.c_str(), e.what());
-    } catch (...) {
+    }*/
+    catch (...) {
         _WARN("\r\n%s  Unknown exception @%s!!!", __func__, jPath.c_str());
     }
 }
@@ -396,6 +408,8 @@ bool CLI_params::JModel2Params(int flag) {
         nLayerX = jKV(jConfig, {"model", "parameter", "Layer"}, nLayerX);
         assert(nLayerX < 2048 && nLayerX > 0);
         model.max_pos_embeddings = jKV(jConfig, {"model", "parameter", "max_pos_embeddings"}, model.max_pos_embeddings);
+        model.sPadMask           = jKV(jConfig, {"model", "parameter", "pad_mask"}, model.sPadMask);
+        model.sResultMarker      = jKV(jConfig, {"model", "parameter", "result_marker"}, model.sResultMarker);
 
         model.QKNormal = jKV(jConfig, {"model", "parameter", "qk_normal"}, model.QKNormal);
         STR2ENUM(jKV<string>(jConfig, {"model", "parameter", "ffn_act"}, ""), model.fActFFN);
@@ -523,6 +537,9 @@ uint32_t CLI_params::n_ctx() const {
             // n = chat_sampler.nSeqRecommend;
             // if (n_ctx_train > 0)
             //     assert(n <= n_ctx_train);
+            break;
+        case P_EVAL_CHAT:
+            return chat_sampler.nSeqRecommend;  // common.n_ctx;
             break;
         default:
             return common.n_ctx;
@@ -1022,6 +1039,10 @@ void TRAIN_CARD::SetOnlyInfer(int flag) {
 }
 bool TRAIN_CARD::isNoTrain(int flag) { return n_epochs <= 0 && nMostIter <= 0; }
 
+std::string TRAIN_CARD::Desc(int type, int flag) {
+    string desc = _sLOG("B%d lr%g WD%g", n_batch, LearningRate(), adam.decay);
+    return desc;
+}
 bool TRAIN_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
     if (jConfig.find("train") == jConfig.end()) {
         _WARN("Can't find the \"train\" parameters in json config file!\n");
@@ -1238,6 +1259,10 @@ bool CLI_params::ToJConfig(int flag) {
         jBackBone["output"]["CLASIFY"]         = JSON::array();
         jConfig["model"]["backbone"]           = jBackBone;
 
+        if (!J_isEmpty(jCoral)) {
+            jConfig["datasets"] = jCoral;
+        }
+
         if (jQuant.empty()) {
             if (DEBUG.test_quant) {
                 jConfig["quantizer"]["self_attn"]["bits"]    = 3;
@@ -1371,6 +1396,7 @@ bool CLI_params::InitJConfig(int flag) {
         DEBUG.N_mostTrainSamp = jKV(jConfig, {"debug", "most_train_samp"}, DEBUG.N_mostTrainSamp);
         DEBUG.N_mostEvalSamp  = jKV(jConfig, {"debug", "most_eval_samp"}, DEBUG.N_mostEvalSamp);
         DEBUG.fHiddenFeature  = jKV(jConfig, {"debug", "path_feat"}, DEBUG.fHiddenFeature);
+        DEBUG.sPromptGuide    = jKV(jConfig, {"debug", "prompt_guide"}, DEBUG.sPromptGuide);
 
         DEBUG.eval_Generate = jKV(jConfig, {"debug", "eval_generate"}, DEBUG.eval_Generate);  //
         //  522 TB ÷ 0.24 TB/day ≈ 2175 day ≈ 6 year
@@ -1537,14 +1563,17 @@ void CLI_params::OnPhase(LIFE_PHASE _phase, int flag) {
             distill.anneal          = ANNEAL_SCHEDULE::ANNEAL_OFF;
             distill.lenda           = -1.0;
             chat_sampler.test_every = 1;
-            // chat_sampler.OnPhase(P_CHAT_1);
             break;
         case P_CHAT_N:
             common.n_batch          = 1;
             distill.anneal          = ANNEAL_SCHEDULE::ANNEAL_OFF;
             distill.lenda           = -1.0;
             chat_sampler.test_every = 1;
-            // chat_sampler.OnPhase(P_CHAT_N);
+            break;
+        case P_EVAL_CHAT:
+            if (chat_sampler.system_guide.empty())
+                chat_sampler.system_guide = DEBUG.sPromptGuide;
+            // common.n_batch          = 1;
             break;
         case P_EVAL_:
 
@@ -1879,6 +1908,16 @@ void MODEL_CARD::Dump(int typ) {
     // _INFO("\tMODEL card=%s\n", sCardPath.c_str());
 }
 
+static string SYSTEM_GUIDE_bool =
+    ("You will be given a passage from Wikipedia and a yes/no question about it. "
+     "Decide whether the correct answer to the question is yes or no, based on the passage. "
+     "Reply 'true' if the answer is yes and 'false' if the answer is no. "
+     "Reply with that single word only.\n\n"
+     "Guidelines:\n"
+     "- Use the passage as the main evidence. Use general knowledge only to interpret it.\n"
+     "- If the passage describes the opposite of what the question asks, or says it is not the case, the answer is false.\n"
+     "- Pay attention to negations, exceptions, and qualifiers such as \"only\", \"never\", \"at least\".");
+
 /**
 The exact behavior can vary based on model version, configuration, and prompt design
 1. enable_thinking
@@ -1892,14 +1931,20 @@ Qwen3’s tokenizer + generation pipeline doesn’t detect a valid chat turn bou
 The model falls into:auto-completing random internal reasoning tokens spitting out garbled thought fragments, repeated words, nonsense rambling
 it’s trying to "continue raw text" instead of "respond to user chat"
  */
-bool CHAT_SAMPLER::InitPrefillTemplate(CLI_params* hConfig, int flag) {
+bool CHAT_SAMPLER::InitPromptTemplate(CLI_params* hConfig, int flag) {
     // enable_thinking = hConfig->model.enable_thinking;
-    if (enable_thinking) {  // load the "thinking" versions of the templates
-        prompt_template        = "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n";
-        system_prompt_template = "<|im_start|>system\n%s<|im_end|>\n<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n";
+    system_prompt_template = "<|im_start|>system\n%s<|im_end|>\n";  // %s=>system guide
+    if (enable_thinking) {                                          // load the "thinking" versions of the templates
+        prompt_template = "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n";
+        system_prompt_template += prompt_template;
+        // system_prompt_template = "<|im_start|>system\n%s<|im_end|>\n<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n";
     } else {  // load the standard versions of the templates
-        prompt_template        = "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
-        system_prompt_template = "<|im_start|>system\n%s<|im_end|>\n<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
+        prompt_template = "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
+        string sX =
+            "You are a strict yes/no classifier. Answer ONLY with the single word 'yes' or 'no'. Do not explain, do not add punctuation, do not add any other "
+            "text.";
+        system_prompt_template += prompt_template;
+        // system_prompt_template = "<|im_start|>system\n%s<|im_end|>\n<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
     }
     string user_info;
     auto jGen = hConfig->jConfig["generate"];
@@ -1911,6 +1956,16 @@ bool CHAT_SAMPLER::InitPrefillTemplate(CLI_params* hConfig, int flag) {
 
     return true;
 }
+/**
+ * Context:
+Persian (Farsi) is one of the Western Iranian languages... [your passage here] ...
+
+Question: Do Iran and Afghanistan speak the same language?
+Answer strictly with 'yes' or 'no':<|im_end|>
+
+Yes, adding that "Context:" label and structuring the question will very likely improve accuracy—but the reason is not that Qwen3 has a special hard-coded
+preference for the literal word "Context." The benefit comes from clearer instruction following and reduced ambiguity, not from a magic keyword.
+ */
 
 bool CHAT_SAMPLER::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
     if (jConfig.find("generate") == jConfig.end())
@@ -1932,6 +1987,7 @@ bool CHAT_SAMPLER::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
     temperature   = jKV(jConfig, {"generate", "temperature"}, temperature);
     prompt        = jKV(jConfig, {"generate", "prompt"}, prompt);
     most_hua      = jKV(jConfig, {"generate", "most-hua"}, most_hua);
+    system_guide  = jKV(jConfig, {"generate", "system_guide"}, system_guide);
     isPrefixBlank = jKV(jConfig, {"generate", "isPrefixBlank"}, isPrefixBlank);
     string key    = "";
     key           = "MD_" + jKV(jConfig, {"generate", "method"}, key);
@@ -2006,7 +2062,6 @@ void SFT_CARD::Dump(int typ) {
     _INFO("[SFT]: method=%s", method == OnlyScale ? "OnlyScale" : method == Top_Layer ? "OnlyHead" : method == LORA ? "LORA" : "FULL_PARAM");
     _INFO("\n");
 }
-
 
 #include "../Shoal/Fish.hpp"
 
@@ -2294,7 +2349,7 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, bool need
             }
         }
 
-        // InitPrefillTemplate(hConfig);
+        // InitPromptTemplate(hConfig);
     }
 
     switch (hConfig->ModelArch()) {
@@ -2313,4 +2368,14 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, bool need
     }
 
     return true;  //
+}
+
+std::string CHAT_SAMPLER::GetPrompt(const std::string& prompt_0, const std::string& sys, int flag) {
+    char rendered_prompt[szBuffer] = "\0";
+    if (!sys.empty()) {
+        system_guide = sys;
+    }
+    sprintf(rendered_prompt, system_prompt_template.c_str(), system_guide.c_str(), prompt_0.c_str());
+    std::string prompt = G_rewrite_special_tokens(rendered_prompt);
+    return rendered_prompt;
 }

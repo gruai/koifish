@@ -17,7 +17,7 @@ using namespace Grusoft;
 #include <omp.h>
 #endif
 
-#include "../Manifold/Neuron.hpp"
+#include "../Shoal/Neuron.hpp"
 #include "../Manifold/Optimizer.hpp"
 #include "../PackedQ.hpp"
 #include "../Shoal/Fish.hpp"

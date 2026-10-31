@@ -8,9 +8,9 @@
  */
 
 // ugly  "__builtin_ia32_ldtilecfg" is undefined
-#include "../../Manifold/Neuron.hpp"
 #include "../../Manifold/Optimizer.hpp"
 #include "../../Shoal/Fish.hpp"
+#include "../../Shoal/Neuron.hpp"
 #include "./cuda_common.h"
 #include "./kernel/embed.cuh"
 #include "./kernel/fused_classifier.cuh"
@@ -872,7 +872,6 @@ hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
     INSPECT inspect(this);
     auto hBatch = hFish->curBatch(0x0);
     if (hBatch->onlyLastHidden) {
-        AppendFeats(inp_, 0);
         return nullptr;
     }
 
@@ -908,9 +907,15 @@ hGTensor Head4Token::cuFlow(hGTensor inp_, int flag) {
             // [50304,768] x [768,8192] => [50304,8192]
             hGTensor subZ = inp->Partial("partialZ", nZ * sizeof(floatX), {C, T, dB});  //{dB, T, C}
             proj.Forw(curLogits, subZ);
+            // ProbeLogist();
             curLogits->Print("logits", 0, dump_flag, dB * T * Vp);
-            if (hBatch->onlyLogits)
+            if (hBatch->onlyLogits) {
+                for (auto prober : probers) {
+                    if (prober->stage == PROBER::PARTIAL_PRELOGITS)
+                        prober->CollectFeats(this, curLogits);
+                }
                 continue;
+            }
 
             double t_i0 = GST_us();
             switch (verHeadLoss) {

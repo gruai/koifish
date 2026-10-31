@@ -5,10 +5,10 @@
  *  \brief Some trial/testing cuda kernels
  *  \author Yingshi Chen
  */
-#include "../../Manifold/Neuron.hpp"
 #include "../../Manifold/Optimizer.hpp"
 #include "../../PackedQ.hpp"
 #include "../../Shoal/Fish.hpp"
+#include "../../Shoal/Neuron.hpp"
 #include "../../Shoal/gLLM.hpp"
 #include "./kernel/layernorm.cuh"
 #include "./kernel/operator.cuh"

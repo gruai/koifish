@@ -53,6 +53,7 @@
 #include <initializer_list>
 #include <map>
 #include <memory>
+#include <ostream>
 #include <string>
 #include <vector>
 
@@ -180,6 +181,44 @@ class Json final {
     bool operator<=(const Json& rhs) const { return !(rhs < *this); }
     bool operator>(const Json& rhs) const { return (rhs < *this); }
     bool operator>=(const Json& rhs) const { return !(*this < rhs); }
+    // more functions add by cys
+    typedef object::const_iterator const_iterator;   // std::map<std::string, Json>::const_iterator
+    Json::const_iterator Json::begin() const { return object_items().begin(); }
+    Json::const_iterator Json::end()   const { return object_items().end();   }
+
+    std::ostream& operator>>(std::ostream& o) const {
+        o << dump();
+        return o;
+    }
+    std::istream& read(std::istream& i) {
+        std::string text((std::istreambuf_iterator<char>(i)), std::istreambuf_iterator<char>());
+        std::string err;
+        Json parsed = Json::parse(text, err);
+        if (!err.empty()) {
+            i.setstate(std::ios::failbit);
+            return i;
+        }
+        *this = parsed;
+        return i;
+    }
+
+    // operator form: j << std::cin;
+    std::istream& operator<<(std::istream& i) { return read(i); }
+
+    bool empty() const {
+        switch (type()) {
+            case NUL:
+                return true;
+            case ARRAY:
+                return array_items().empty();
+            case OBJECT:
+                return object_items().empty();
+            case STRING:
+                return string_value().empty();
+            default:
+                return false;  // NUMBER, BOOL,
+        }
+    }
 
     /* has_shape(types, err)
      *

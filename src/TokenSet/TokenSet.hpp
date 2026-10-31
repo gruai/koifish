@@ -28,6 +28,7 @@
 #include "../Utils/GST_obj.hpp"
 #include "../Utils/GST_rander.hpp"
 #include "../g_def_x.hpp"
+#include "Sample.hpp"
 
 struct DictVAE;
 class GTokenizer;
@@ -44,89 +45,10 @@ class FeatsOnFold;
 };
 
 // the type of tokenset/dataset
-enum DT_PHASE { DT_TRAIN = 1, DT_EVAL, DT_CHAT, DT_PREDICT, DT_MERGE };
+enum DT_PHASE { DT_X = 0, DT_TRAIN, DT_EVAL, DT_CHAT, DT_PREDICT, DT_MERGE };
 
 //
 enum CORAL_FTYPE { CORAL_FILE, CORAL_BIN, CORAL_TEXT, CORAL_PARQUET, CORAL_GLOB };
-
-struct SAMP {
-    size_t pos = 0, len = 0;   //  range is [pos,pos+len)
-    size_t off_cycle     = 0;  // more random
-    int jump             = 0;
-    int pad_len          = 0;  // the length of last pad section
-    int prefix_blank     = 0;
-    TOKEN_ID last_target = (TOKEN_ID)(-1);
-    std::vector<TOKEN_ID> ttoks;  // tmp_tokens - may change in training iters
-    std::string desc;
-
-    void* target = nullptr;  // for Tokenset_HellaSwag
-    TOKENS_SECTION arrROI;   // region of interest:    like answers for chatml-samp
-
-    SAMP() {}
-    SAMP(size_t p, size_t l, int nPad = 0);
-    virtual ~SAMP() {}
-
-    virtual bool ToTokens(hDataToken coral, int flag = 0x0) {
-        assert(len > 0);
-        return true;
-    }
-    bool Serialize(FSerial& S, bool isSave, int flag);
-    virtual void Dump(hDataToken coral, const std::vector<TOKEN_ID>& tokens, int type, const std::string& desc = "", int flag = 0x0);
-    virtual double UpdateTag(hDataToken hDT, int* tag, int step, bool flip, int flag = 0x0);
-
-    static size_t HASH(const char* fn, const std::vector<std::shared_ptr<SAMP>>& samps) {
-        std::hash<std::string> h_string;
-        std::hash<unsigned long long> h_ull;
-        size_t h = h_string(std::string(fn)), sample_count = samps.size();
-        h = HASH_combine(h, h_ull((unsigned long long)sample_count));
-        for (auto samp : samps) {
-            h = HASH_combine(h, h_ull((unsigned long long)samp->pos));
-            h = HASH_combine(h, h_ull((unsigned long long)samp->len));
-        }
-        return h;
-    }
-    virtual bool User2Batch(shared_ptr<BATCH_INPUT> hBatch, int flag = 0x0) { return true; }
-};
-typedef std::shared_ptr<SAMP> hSAMP;
-
-/**
- * "messages": [
-    {"role": "system", "content": "You are a knowledgeable assistant."},
-    {"role": "user", "content": "Why is the sky blue?"},
-    {"role": "assistant", "content": "The sky appears blue because molecules in the air scatter shorter blue wavelengths of sunlight more than longer red
- wavelengths."}
-  ]
- */
-struct SAMP_CHATML : public SAMP {};  //  struct ChatML_samp
-
-// With json structure, store much more meta info
-struct SAMP_JEV : public SAMP {
-    SAMP_JEV(CSTRING& state, CSTRING& qid, MAP_S2S& q_kv, int flag = 0x0);
-    //  a Choice maps onto branches, a Score onto a threshold, a Noul onto an if
-    enum tpDECISION {
-        NOUL,  //  "type": "noul",
-        CHOICE,
-        SCORE
-    };
-    tpDECISION tpDecisoin = NOUL;
-    union {
-        bool bY;
-        float fY;
-        int iY;
-    };
-
-    std::string state, qid, sLabel, question;  //
-    MAP_S2S q_kv;
-    // bool state_is_object = false;
-    // MAP_S2S questions_raw;  // key -> raw json
-    // meta info
-    int64_t meta_row = -1;
-    std::string meta_source, meta_id, meta_split;
-
-    bool ToTokens(hDataToken coral, int flag = 0x0) override;
-    void Dump(hDataToken coral, const std::vector<TOKEN_ID>& tokens, int type, const std::string& desc = "", int flag = 0x0) override;
-    bool User2Batch(shared_ptr<BATCH_INPUT> hBatch, int flag = 0x0) override;
-};
 
 /*
     v0.2    09/02/2025
@@ -145,17 +67,21 @@ class TokenCoral : public std::enable_shared_from_this<TokenCoral> {
 
    protected:
     CORAL_FTYPE fType    = CORAL_FILE;
+    DT_PHASE tpDT        = DT_X;
     hSampNanny loader    = nullptr;  //  Each tokenset has a unique samp_loader
     hRANDER hPickRander  = nullptr;
     SAMPLE_TYPE tpSample = RANDOM_GENERATE;
     std::vector<string> shard_paths;
-    int nMostShard = -1;
-
+    int nMostShard  = -1;
+    int nMostSamp   = -1;
     int shard_index = 0;
-    int eval_every  = -1;
-    int bpToken     = 4;  // bytes_per_token
+    int eval_every  = -1;  // Actually: nanny->eval_every = eval_every;
+    int bpToken     = 4;   // bytes_per_token
     // float rStepOfEval = 0;
-    float rSampling = 1.0;
+    int result_marker = -1;  // Tokens after this marker are results(only sum the loss on results). Some marker strings are "=,等于,结果是",
+
+    float rSampling      = 1.0;
+    double rSplitOfTrain = 0.5;
     // bool isNextEpoch = false;
     string name;
     string serial_root;
@@ -187,14 +113,20 @@ class TokenCoral : public std::enable_shared_from_this<TokenCoral> {
     int N_mostSamp = -1;
     std::vector<TOKEN_ID> tokens, tokens_mask;
     TokenCoral(hTokenizer hDict);
+    TokenCoral(CSTRING& name_, hDataToken hBase, int flag = 0x0);
     virtual ~TokenCoral();
-    virtual bool Init(Fish* hFish, int flag = 0x0) { return true; }
+    std::tuple<hDataToken, hDataToken> Split(int type = 0x0, int flag = 0x0);
+    virtual bool Init(Fish* hFish, int flag = 0x0);
     virtual bool InitSampNanny(Fish* hFish, DT_PHASE type, int flag = 0x0);
     // virtual hSampNanny GetSampNanny(int flag = 0x0) { return loader; }
     virtual std::string Name(int type = 0x0) { return name; }
-    
-    bool hasMask() { return tokens_mask.size() > 0; }
+    virtual hSampNanny GetNanny() {
+        assert(loader != nullptr);
+        return loader;
+    }
 
+    bool hasMask() { return tokens_mask.size() > 0; }
+    virtual bool SetSamps(const std::vector<hSAMP>&, int flag = 0x0);
     TOKEN_ID At(size_t pos);
 
     bool Serialize(const std::string& path, bool isSave, int flag = 0x0);
@@ -207,6 +139,8 @@ class TokenCoral : public std::enable_shared_from_this<TokenCoral> {
 
     friend class NLP_AutoRegressive;
     friend class Fish;
+    friend class Fish;
+
     friend class Optimizer;
     friend class SampNanny;
     friend class GeneratOnPrompt;
@@ -223,6 +157,26 @@ class PromptTokenset : public TokenCoral {
     PromptTokenset(const JSON& jit, hTokenizer hDict, int flag = 0x0);
     PromptTokenset(const string& prompt, hTokenizer hDict, int flag = 0x0);
 };
+
+class SyntheticCoral : public TokenCoral {
+   protected:
+    // bool Shard2Sample(int id, int flag = 0x0) override;
+    // bool GetShardInfo(int id, int flag = 0x0) override;
+    int tpProblem = 1;
+    std::filesystem::path pathTxt;
+    int nBASE = 97;
+    std::string sOperation;
+    std::shared_ptr<SAMP> S_math(int i, int j, MAP_S2S& q_kv, int flag = 0x0);
+    //  given two elements 𝑎 and 𝑏 from a group 𝐺,the network must predict the result of the operation 𝑎 ∘ 𝑏, where ∘ is a generic operation
+    std::shared_ptr<SAMP> S_permutegroup(int i, int j, MAP_S2S& q_kv, int flag = 0x0);
+    std::shared_ptr<SAMP> S_Polynomial(int i, int j, MAP_S2S& q_kv, int flag = 0x0);
+    std::shared_ptr<SAMP> S_parity(int i, int j, MAP_S2S& q_kv, int flag = 0x0);    //    Sparse Parities. the binary classification tasks of 𝑛-length binary strings
+
+   public:
+    SyntheticCoral(const JSON& jit, hTokenizer hDict, int flag = 0x0);
+    bool Init(Fish* hFish, int flag = 0x0) override;
+};
+
 class GlobTokenset : public TokenCoral {
    protected:
     string glob_pattern;

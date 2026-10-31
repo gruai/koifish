@@ -6,10 +6,10 @@
  *  \author Yingshi Chen
  */
 #include "../Decision/Maisui.hpp"
+#include "../Device/CUDA/cuda_def.hpp"
 #include "../Shoal/gLLM.hpp"
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
-#include "../Device/CUDA/cuda_def.hpp"
 
 hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vector<hWIKI> wikis, MODEL_ROLE role_, int flag) {
     assert(wikis.size() >= 0);
@@ -88,17 +88,13 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vect
     // GOPT need refactor!
 
     if (fish->config.ChatMode() != CHAT_MODE::YABA) {  //  only for chat
-        fish->gopt = GeneratOnPrompt::MakeInstance(fish->config, wikis, fish.get(), flag);
+        hDataToken coral = nullptr;
+        if (fish->isAtPhase({P_EVAL_CHAT})) {
+            assert(!fish->tsEval.empty());
+            coral = fish->tsEval[0];
+        }
+        fish->gopt = GeneratOnPrompt::MakeInstance(coral, wikis, fish.get(), flag);
     } else {
-        /*if (fish->role == SWARM_FOLLOWER) {
-        } else {
-            // if (!wikis.empty()) {  // generate some sentence
-            if (!fish->isLocalInfer) {
-                // fish->config.chat_sampler.mode = fish->config.model.enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
-                fish->gopt = GeneratOnPrompt::MakeInstance(fish->config, wikis, fish.get(), flag);
-            }
-            // }
-        }*/
     }
     // fish->Dump(0x0);
     // fish.reset();       fish = nullptr; //only for debug
@@ -191,7 +187,7 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, cons
     fish->Build();
 
     if (fish->isTrain()) {
-        fish->gopt = GeneratOnPrompt::MakeInstance(params, fish->wikis, fish.get(), flag);
+        fish->gopt = GeneratOnPrompt::MakeInstance(nullptr, fish->wikis, fish.get(), flag);
     } else {
     }
 
@@ -842,6 +838,34 @@ int Fish::GetCurIter(int flag) const {
     return hOPT->GetITER();
 }
 
+arrNEURON Fish::GetNeurons(CSTRING sType, int nid_0, int nid_1, int flag) {
+    arrNEURON picks;
+    auto it = GeNeuron::registry_S2C.find(sType);
+    if (it == GeNeuron::registry_S2C.end()) {
+        return picks;
+    }
+
+    int k = 0;
+    for (auto n : neurons) {
+        auto tid = std::type_index(typeid(*(n.get())));
+        if (tid != it->second)
+            continue;
+        bool isIn = false;
+        if (nid_0 >= 0 && nid_1 >= nid_0) {
+            isIn = k >= nid_0 && k < nid_1;
+        } else if (nid_0 >= 0) {
+            isIn = k >= nid_0;
+        } else if (nid_0 == -1 && nid_1 == -1) {
+            isIn = true;
+        }
+        if (isIn) {
+            picks.push_back(n);
+        }
+        k++;
+    }
+    return picks;
+}
+
 /**
  * Inference max_sequence_length = how far the model allows you to feed(mechanical limit, not the quality limit)
  *  1. This is usually one of:
@@ -958,7 +982,7 @@ bool Fish::AfterNextStep(int iter, int flag) {
             // cls->hLoader = vl->loader;
             // for(int i=0;i<10;i++)
             // val_loss = EvaluateSamps(vl, iter), a = val_loss;       //  0.272727281
-            float val_loss = vl->loader->Evaluate(SAMPLEofSHARD, 0x0);
+            float val_loss = vl->loader->QiWu(SAMPLEofSHARD, 0x0);
         }
     } /**/
     bool isLastStep = iter == hOPT->TrainParams().nMostIter - 1;
@@ -994,7 +1018,7 @@ float Fish::Evaluate(std::vector<hDataToken> tokenCorals, DL_BATCH_UPATE tpBatch
         // cls->hLoader = vl;   ???
         // assert(loader->isEval(iter + 1));
         curTokenSet = coral;
-        val_loss    = coral->loader->Evaluate(tpBatch, 0x0);
+        val_loss    = coral->loader->QiWu(tpBatch, 0x0);
         sum += val_loss;
     }
     eval = sum / tokenCorals.size();

@@ -45,7 +45,7 @@
         }
     },
     "dict": {
-	"dialect": "onf",
+	    "dialect": "onf",
         "#type":"charset"
     },
     "datasets": {

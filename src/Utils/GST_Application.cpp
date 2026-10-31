@@ -8,8 +8,10 @@
 
 #include "GST_Application.hpp"
 
-#include <iostream>
 #include <filesystem>
+#include <iostream>
+
+#include "../Shoal/Neuron.hpp"
 #include "GST_MemBuffer.hpp"
 #include "GST_util.hpp"
 
@@ -107,7 +109,7 @@ bool CLI_params::parse(int argc, char** argv) {
             sscanf(argv[++i], "%d", &chat_sampler.nSeqRecommend);
         } else if (arg == "--temperature") {
             sscanf(argv[++i], "%f", &chat_sampler.temperature);
-        }else if (arg == "--md_method") {
+        } else if (arg == "--md_method") {
             string sType = "MD_";
             STR2ENUM(sType + argv[++i], chat_sampler.tpZhuomo);
             // strcmp(argv[++i], "dilate") == 0 ? CHAT_SAMPLER::MD_DILATE : CHAT_SAMPLER::MD_SNR;
@@ -152,6 +154,12 @@ bool CLI_params::parse(int argc, char** argv) {
         } else if (arg == "--tokenizer") {  // directory of tokenizer
             assert(i + 1 < argc);
             model.sTokenBinPath = argv[++i];
+        } else if (arg == "--coral") {
+            assert(i + 1 < argc);
+            ++i;  // only for debug
+            phase                      = P_EVAL_CHAT;
+            chat_sampler.nSeqRecommend = 1024;
+            jCoral                     = {{"eval", {{"glob", "/all_datasets/Jev/boolq/data/train*.parquet"}, {"name", "boolq_train"}, {"type", "boolq"}}}};
         } else if (arg == "--step") {
             eval_metric = "hellaswag";
             assert(i + 1 < argc);
@@ -161,8 +169,9 @@ bool CLI_params::parse(int argc, char** argv) {
             exit(1);
         }
     }
-    DEBUG.T_GEMM  = -1;  //  so many version of gemm
-    std::string s = jConfig.dump();
+    DEBUG.T_GEMM = -1;  //  so many version of gemm
+    // std::string s = jConfig.dump();
+    J_dump("./log/_koifish_jApp_0.json", jConfig);
     switch (ckp_format) {
         case CKP_KOIFISH:
             if (!LoadJConfig(model.pathCheckPoint)) {
@@ -191,14 +200,15 @@ bool CLI_params::parse(int argc, char** argv) {
             break;
         }
         default:
-            assert(!J_isEmpty(jConfig));    //jConfig.empty()
+            assert(!J_isEmpty(jConfig));  // jConfig.empty()
             if (!InitJConfig())
                 return false;
             if (!isValid(jPath, "CLI_params::parse"))
                 return false;
             break;
     }
-    chat_sampler.InitPrefillTemplate(this);
+    J_dump("./log/_koifish_jApp_1.json", jConfig);
+    chat_sampler.InitPromptTemplate(this);
     // Dump(0x100);
 
     switch (phase) {
@@ -243,12 +253,12 @@ GST_Application::GST_Application(int argc, char* argv[]) {
     }
 }
 
-GST_Application ::~GST_Application() {
+GST_Application::~GST_Application() {
     end_time = std::chrono::system_clock::now();
     _INFO("🐠 end at: %s\n", Time2String(end_time).c_str());
 }
 
-void GST_Application ::Cleanup() {
+void GST_Application::Cleanup() {
     _INFO("[APP] %s Cleanup...\n", name.c_str());
     gBUFF     = nullptr;
     g_running = false;
@@ -257,7 +267,40 @@ void GST_Application ::Cleanup() {
     CleanupLogging();
 }
 
-int GST_Application ::Run() {
+bool InitRegisterOnce(int flag) {
+    static std::once_flag once;
+    static bool result = false;
+    std::call_once(once, [&] { result = GeNeuron::InitRegister(flag); });
+    return result;
+}
+
+bool GST_Application::Initialize() {
+    try {
+        if (!InitRegisterOnce(0x1))
+            return false;
+    } catch (const std::exception& e) {
+        std::cerr << "init failed: " << e.what() << "\n";
+        return 1;
+    }
+
+    char path[PATH_MAX] = "\0";
+    ssize_t len         = readlink("/proc/self/exe", path, sizeof(path) - 1);  // getpid()
+    _INFO("------------------------------------------------------------------------------\n");
+    _INFO("[APP] %s Initialization.\tProcess=%s\n", name.c_str(), path);
+    KOIFISH_Device_Info(0x0);
+
+    // Linux-specific initializations
+    if (!InitializeLogging()) {
+        std::cerr << "Logging initialization failed" << std::endl;
+        return false;
+    }
+
+    _INFO("------------------------------------------------------------------------------\n");
+    g_running = true;
+    return true;
+}
+
+int GST_Application::Run() {
     try {
         if (!Initialize()) {
             throw std::runtime_error("Initialization failed");

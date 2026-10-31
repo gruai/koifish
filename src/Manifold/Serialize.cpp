@@ -17,29 +17,29 @@
 #include <set>
 
 namespace fs = std::filesystem;
+#include "../Shoal/gLLM.hpp"
 #include "../Tensor/GeQuant.hpp"
 #include "../TokenSet/Dictionary.hpp"
 #include "../Utils/GST_Application.hpp"
 #include "../Utils/GST_os.hpp"
 #include "../Utils/rapidhash.h"
-#include "../Shoal/gLLM.hpp"
 #if !defined(SAFETENSORS_CPP_NO_IMPLEMENTATION)
 #define SAFETENSORS_CPP_IMPLEMENTATION
 #endif
 #include "../Tensor/Safetensors.hpp"
 
-    // from json desc entry of each tensor in some checkpoint files
-    GTensor::GTensor(Fish* _hFish, const string& _name, JSON& jEntry, int flag) {
+// from json desc entry of each tensor in some checkpoint files
+GTensor::GTensor(Fish* _hFish, const string& _name, JSON& jEntry, int flag) {
     // assert(_hFish != nullptr);       //  when SAFETENSOR_Load_jconfig, _hFish is still nullptr
     strcpy(name, _name.c_str());
     hFish        = _hFish;
-    string jtext = jEntry.dump(4);
+    string jtext = jEntry.dump( );
     try {
-        string info = jEntry["dtype"];
+        string info = J_get<string>(jEntry["dtype"]);  //jEntry["dtype"];
         type        = tpNumOf(info);
-        assert(jEntry.contains("shape"));
+        assert(J_has(jEntry,"shape"));    //.contains("shape")
         shape = jKV_arr(jEntry, {"shape"}, shape);
-        assert(jEntry.contains("data_offsets"));
+        assert(J_has(jEntry,"data_offsets"));
         std::vector<size_t> offsets;
         offsets = jKV_arr(jEntry, {"data_offsets"}, offsets);
         assert(offsets.size() == 2);
@@ -49,10 +49,10 @@ namespace fs = std::filesystem;
         if (szData + szGama > 0) {
             // assert(szData + szGama == offsets[1] - offsets[0]);
         }
-    } catch (JSON::parse_error& e) {
+    } /*catch (JSON::parse_error& e) {
         _ERROR("@%s  ERR=%s jtext=%s", __func__, e.what(), jtext.c_str());
         return;
-    } catch (...) {
+    }*/ catch (...) {
         _ERROR("@%s  jtext=%s", __func__, jtext.c_str());
         return;
     }
@@ -948,7 +948,7 @@ bool Fish::SAFETENSOR_Serialize(CheckPoint_Params& ckp, bool isSave, int flag) {
             if (!ret) {
                 std::cerr << "Failed to write safetensor data to " << path << "\n";
                 if (err.size()) {
-                    std::cout << "ERR: " << err << "\n";
+                    std::cout << "err: " << err << "\n";
                 }
                 return false;
             }
@@ -1087,6 +1087,8 @@ bool Fish::LoadFolderOfST(int stType, int flag) {
     if (!isLoadCheckpoint) {
         _WARN("\r[LoadFolderOfST] failed!  please check {\"safetensors\", \"kun\"}  files @\"%s\"!\n", sFolder.c_str());
         return false;
+    } else {
+        name = ModelInFolder(sFolder);
     }
 
     // if (ckp != nullptr)

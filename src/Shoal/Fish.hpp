@@ -38,7 +38,7 @@
 #include "../Utils/GST_util.hpp"
 #include "GoPT.hpp"
 #include "Neuron.hpp"
-#include "SLP.hpp"
+#include "Prober.hpp"
 #include "TGraph.hpp"
 
 using namespace std;
@@ -116,9 +116,10 @@ class Fish : public std::enable_shared_from_this<Fish> {
     vector<hGTensor> loadGensors;
     std::vector<hGTensor> xGensors;
 
-    hEDevices hEDS     = nullptr;
-    hKVCache hCache    = nullptr;
-    MAP_<string, shared_ptr<FeatPicker>> Pickers;
+    hEDevices hEDS  = nullptr;
+    hKVCache hCache = nullptr;
+    // MAP_<string, shared_ptr<FeatPicker>> Pickers;
+    std::vector<shared_ptr<FeatPicker>> arrPicker;
 
     bool updateTMap = false;
     // Ref@isTrain      No training process! only Evaluate/GPT/...
@@ -137,13 +138,14 @@ class Fish : public std::enable_shared_from_this<Fish> {
     hGTensor KQ_mask   = nullptr;  //  mask for 1 head, it will be broadcasted to all heads
     TokenEmbed* hEmbed = nullptr;
     Head4Token* hCLS   = nullptr;  //  GetNeuron<Head4Token>("Head4Token",0);
-
+    arrPROBER probers;
     // hGTensor gate=nullptr;      //create@InitModel update@
     MixOfModels mom;
     MixOfSwarm mos;
     // Fish can talk, at least it would bubble...
     hTokenizer hDict = nullptr;
     virtual bool InitTokenCoral(int flag = 0x0);
+
     // DataTokens tokenset;
     hDataToken tsTrain     = nullptr;  //  always only 1 train set!
     hDataToken tsCalib     = nullptr;  //  May have 1 calib set!
@@ -251,6 +253,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
         assert(0);
         return nullptr;
     }
+    std::vector<hNEURON> GetNeurons(CSTRING sType, int nid_0, int nid_1 = -1, int flag = 0x0);
     hOptimizer GetOptimizer() const {
         assert(hOPT != nullptr);
         return hOPT;
@@ -294,6 +297,7 @@ class Fish : public std::enable_shared_from_this<Fish> {
     }
 
     virtual bool Init(const vector<hWIKI>& wikis, int flag = 0x0);
+    virtual bool InitProbers(CSTRING& sType, int nMostSamp, int flag = 0x0);
 
     virtual hKVCache curCache(int flag = 0x0) { return hCache; }
     virtual void* GetGGCTX(int typ = 0x0) {
@@ -403,7 +407,9 @@ class Fish : public std::enable_shared_from_this<Fish> {
     // 1.chat 2.savetrain
     virtual bool AfterNextStep(int iter, int flag = 0x0);
 
-    virtual int Chat(int type, int flag = 0x0);
+    virtual std::string GetPrompt(const std::string& prompt_0, const std::string& sys = "", int flag = 0x0);  // 1) template 2)rewrite
+    virtual int Chat(int round, int flag = 0x0);
+    virtual int ChatOnCoral(hDataToken coral, int flag = 0x0);
 
     virtual int ForwardOnRLS(int iter, int flag);
     virtual int BackwardOnRLS(int iter, int flag);

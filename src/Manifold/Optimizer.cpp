@@ -14,6 +14,9 @@
 #include "../Device/Pipe.hpp"
 #include "../Shoal/gLLM.hpp"
 #include "../TokenSet/Dictionary.hpp"
+#ifdef __USE_LIVEPLOT__
+#include "../Utils/LivePlot.hpp"
+#endif
 
 int PackedN_bug = 0;
 int tpFuseCu    = 1;
@@ -77,10 +80,11 @@ bool Fish::SetPhase(LIFE_PHASE phase_, LIFE_PHASE outer_, int flag) {
     outer_phase = outer_;
     phase       = phase_;
     // _fish->GetScheduler<RLS_BP>()->SetPhase(phase);
-
+    bool isDump = flag == 0x0;
     switch (phase) {
         case LIFE_PHASE::P_EVAL_:
-            _INFO("<eval> ");
+            if (isDump)
+                _INFO("<eval> ");
             break;
         case LIFE_PHASE::P_PREFILL:
             // _INFO("<prefill] " );
@@ -118,29 +122,6 @@ hGTensor Optimizer::GradOf(hGTensor node, int flag) {
     // auto cgraph = _fish->GetBackRaw();
     return nullptr;  //::GradOf(cgraph,node,flag);
 }
-
-/* Xoshiro256PlusSIMD       https://github.com/stephanfr/Xoshiro256PlusSIMD/blob/main/README.md
- * https://www.lomont.org/papers/2008/Lomont_PRNG_2008.pdf
- */
-/*
-bool Optimizer::OnLogits(int flag) {
-    auto pTarget = hTargetProbs();
-    size_t nz = tELEM(pTarget), nToken = pTarget->ne[0], n_ctx = pTarget->ne[1];
-
-    auto pLogits = hPreLogits();
-    assert(pLogits != nullptr);
-    assert(pLogits->type == typNUMBER::F32);
-
-    float *p = (float*)(pLogits->data), sum = 0;  // target_label->data
-
-    for (int k = 0; k < n_ctx; k++) {
-        sum = 0;
-        for (int i = 0; i < nToken; i++) sum += p[i];
-        // assert(fabs(sum-1.0)<1.0e-6);
-    }
-
-    return true;
-}*/
 
 bool cuClearGrad(std::vector<hGTensor> tensors, int flag);
 bool Optimizer::BatchGrad(int iter, float& fx, int flag) {
@@ -699,7 +680,14 @@ float Optimizer::UpdateLossCurve(int flag) {
         impr_plot = 0;
 
     trainInfos().AfterStep(iter);
-
+#ifdef __USE_LIVEPLOT__
+    hLossPlot->push_train(iter, loss_after);
+    hLossPlot->push_param(iter, "lr", (float)last_lr);
+    hLossPlot->push_param(iter, "|g|", (float)g_step);
+    char buf[128];
+    std::snprintf(buf, sizeof buf, "lr=3e-4   batch=64   %d/%d steps", iter, iter);
+    // hLossPlot->set_status(buf);
+#endif
     if ((iter - 1) % _params.dump_every == 0 || isDumpOnce) {
         isDumpOnce = false;
         _INFO("[epoch_%d]_%-6d loss=%f |g|=%.3g\tlr=%.2e | %s ", train_epochs, iter, loss_after, g_step, last_lr,
@@ -785,6 +773,12 @@ void Optimizer::AfterBuild(int flag) {
 }
 
 void Optimizer::BeforeTrain(hGTensor tokens_, int flag) {
+#ifdef __USE_LIVEPLOT__
+    string title = "My training - " + TrainParams().Desc(0x0) + "    " + GST_timeStr();  //_sLOG("My LLM training");
+    hLossPlot    = std::make_shared<LivePlot>(title);
+    hLossPlot->save_png_on_stop("./Koifish_train_curve.png");
+    hLossPlot->start();
+#endif
     first_iter = iter;
 
     auto& adam        = _fish->config.common.adam;  // TrainParams().
@@ -842,7 +836,6 @@ void Optimizer::BeforeTrain(hGTensor tokens_, int flag) {
     }
     train_loader->SetOPT(this);
     for (auto tsE : _fish->tsEval) {
-        // auto loader  = std::make_shared<SampNanny>(_fish, "Eval", false);
         tsE->loader->type = DT_EVAL;
         tsE->loader->SetOPT(this);
         // loader->Prepare(this, tsE);
@@ -1169,9 +1162,9 @@ void OPT_Muon::Dump(int typ) {
 }
 
 /*
-    kernel of Fish-Evaluate
+    齐物(万物齐一) kernel of Fish-Evaluate
  */
-double SampNanny::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
+double SampNanny::QiWu(DL_BATCH_UPATE tpBatch, int flag) {
     // assert(hOPT != nullptr);
     RLS_BP* hRLS = hFish->GetScheduler<RLS_BP>();
     double tic = GST_ms(), tps, tRemain = 0.0, tpi = 0, relax = 0.9, dt, tCur, tLast;
@@ -1186,10 +1179,11 @@ double SampNanny::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
     }
 
     Head4Token* cls = hFish->GetNeuron<Head4Token>("Head4Token", 0);
-    auto hBatch     = hFish->curBatch(0x0);
-    next_sample     = 0;  // fix this to keep same acc on each experiment
-    nEvalTokens     = 0;
-    tLast           = GST_ms();
+    assert(hBatch != nullptr);
+    // auto hBatch     = hFish->curBatch(0x0);
+    next_sample = 0;  // fix this to keep same acc on each experiment
+    nEvalTokens = 0;
+    tLast       = GST_ms();
     ClearII();
     for (int i = 0; i < nMost; i++) {
         // if (i < 50) {  // only for debug
@@ -1200,11 +1194,14 @@ double SampNanny::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
             if (CollateBatch(min(i * step, num_batches), hFish) == 0)
                 continue;
         }
-
-        hFish->ForwardOnRLS(iter, 0x0);
-        if (hBatch->onlyLogits || hBatch->onlyLastHidden) {
-        } else
-            LossOnResult(hFish);  // mean_loss = hLoader->UpdateII(hostLoss, B, T, 0x0);
+        if (hFish->isAtPhase({P_EVAL_CHAT})) {
+            hFish->Chat(0x0, 0x0);  // hack
+        } else {
+            hFish->ForwardOnRLS(iter, 0x0);
+            if (hBatch->onlyLogits || hBatch->onlyLastHidden) {
+            } else
+                LossOnResult(hFish);  // mean_loss = hLoader->UpdateII(hostLoss, B, T, 0x0);
+        }
         nEvalTokens += hBatch->nFillTokens(), nB++;
         tCur = GST_ms(), dt = tCur - tLast, tLast = tCur;
         tpi = tpi * (1.0 - relax) + dt * relax, tRemain = (nMost - i) * tpi;  //  ms
@@ -1227,8 +1224,16 @@ double SampNanny::Evaluate(DL_BATCH_UPATE tpBatch, int flag) {
         case P_CHAT_N:
             break;
         case P_EVAL_:
-            if (hOPT != nullptr)
+            if (hOPT != nullptr) {
                 UpdateStepInfos(iiLoss.average, nB);
+#ifdef __USE_LIVEPLOT__
+                hOPT->hLossPlot->push_eval(iter, iiLoss.average);
+                char buf[128];
+                std::snprintf(buf, sizeof buf, "lr=3e-4   batch=64   %d/%d steps", iter, iter);
+                // hLossPlot->set_status(buf);
+#endif
+            }
+
             break;
         case P_TRAIN:
             UpdateStepInfos(iiLoss.average, nB);

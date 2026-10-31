@@ -9,8 +9,8 @@
  */
 
 // #include <catch2/catch_test_macros.hpp>
-#include "../../Manifold/Neuron.hpp"
 #include "../../Shoal/Fish.hpp"
+#include "../../Shoal/Neuron.hpp"
 #include "./cuda_common.h"
 // #include "./kernel/gelu.cuh"
 #include "./kernel/layernorm.cuh"

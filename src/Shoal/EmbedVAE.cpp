@@ -532,7 +532,7 @@ string FFN::__repr__(string& suffix, string& prefix, int flag) {
             sS = "SAMP_" + std::to_string(samp_1);
             break;
         default:
-            sS = isSparse ? hPicker->__repr__(suffix, prefix, flag) : "";
+            sS = /*isSparse ? hPicker->__repr__(suffix, prefix, flag) :*/ "";
             break;
     }
 

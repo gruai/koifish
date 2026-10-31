@@ -8,9 +8,9 @@
 
 #include "EDevice.hpp"
 
-#include "../Manifold/Neuron.hpp"
 #include "../Manifold/TGraph.hpp"
 #include "../Shoal/Fish.hpp"
+#include "../Shoal/Neuron.hpp"
 #ifdef __USE_TILELANG__
 #include "./tile_kernel/tl_kernels.hpp"
 #endif

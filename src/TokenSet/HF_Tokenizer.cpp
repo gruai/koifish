@@ -10,7 +10,6 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -21,6 +20,7 @@
 
 #include "../Shoal/gLLM.hpp"
 #include "../Utils/oniguruma/src/oniguruma.h"
+#include "../Utils/GST_hashmap.hpp"
 #include "../Utils/utf8proc/utf8proc.h"
 #include "Dictionary.hpp"
 #include "jinja.hpp"
@@ -137,7 +137,7 @@ static std::vector<std::string> create_bytes_char_map() {
         return out;
     };
     std::vector<std::string> bs(256);
-    std::unordered_map<unsigned char, std::string> temp_bs;
+    phmap::flat_hash_map<unsigned char, std::string> temp_bs;
     for (int b = 33; b <= 126; ++b) temp_bs[(unsigned char)b] = u2u(b);
     for (int b = 161; b <= 172; ++b) temp_bs[(unsigned char)b] = u2u(b);
     for (int b = 174; b <= 255; ++b) temp_bs[(unsigned char)b] = u2u(b);
@@ -587,10 +587,10 @@ class BPEModel : public Model {
    public:
     bool use_byte_level_;
     MAP_VOCAB vocab_;
-    std::unordered_map<int, std::string> id_to_token_;
-    std::unordered_map<std::pair<int, int>, int, PairHash> merges_;
+    phmap::flat_hash_map<int, std::string> id_to_token_;
+    phmap::flat_hash_map<std::pair<int, int>, int, PairHash> merges_;
     mutable std::mutex cache_mutex_;
-    mutable std::unordered_map<std::string, std::vector<int>> cache_;
+    mutable phmap::flat_hash_map<std::string, std::vector<int>> cache_;
 
     BPEModel(const std::map<std::string, int>& vocab, const std::map<std::pair<int, int>, int>& merges, const std::map<std::string, int>& added_tokens,
              bool use_byte_level, bool byte_fallback)
@@ -720,7 +720,7 @@ class WordPieceModel : public Model {
     std::string continuing_subword_prefix_;
     int max_input_chars_per_word_;
     MAP_VOCAB vocab_;
-    std::unordered_map<int, std::string> id_to_token_;
+    phmap::flat_hash_map<int, std::string> id_to_token_;
     int unk_token_id_;
 
    public:
@@ -800,7 +800,7 @@ class UnigramModel : public Model {
     std::string unk_token_;
     int unk_token_id_;
     MAP_VOCAB vocab_;
-    std::unordered_map<int, std::string> id_to_token_;
+    phmap::flat_hash_map<int, std::string> id_to_token_;
     std::vector<double> scores_;
     bool byte_fallback_;
     size_t max_token_len_ = 0;
@@ -1029,7 +1029,7 @@ class ByteLevelDecoder : public Decoder {
    public:
     void decode(std::vector<std::string>& tokens) const override {
         static auto bm = []() {
-            std::unordered_map<std::string, unsigned char> m;
+            phmap::flat_hash_map<std::string, unsigned char> m;
             auto byte_vec = create_bytes_char_map();
             for (int i = 0; i < 256; ++i) {
                 if (!byte_vec[i].empty())

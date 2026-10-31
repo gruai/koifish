@@ -7,9 +7,9 @@
  *  \brief cuda kernel of Optimizer
  *  \author Yingshi Chen
  */
-#include "../../Manifold/Neuron.hpp"
 #include "../../Manifold/Optimizer.hpp"
 #include "../../Shoal/Fish.hpp"
+#include "../../Shoal/Neuron.hpp"
 #include "../Pipe.hpp"
 #include "./kernel/operator.cuh"
 #include "./kernel/utils.cuh"

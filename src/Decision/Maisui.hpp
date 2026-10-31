@@ -22,10 +22,11 @@ struct DORT_wrap;
 */
 class Maisui : public Fish {
    protected:
+    bool isOnlyChat = false;
     hFISH backbone  = nullptr;  //  decision model readouts logits of backbone
     // DORT_wrap* dort = nullptr;
     string sPickerName = "maisui";
-    int x = 0;
+    int x              = 0;
     float fitness;  // greater fitness will have a greater probability of being selected for recombination.
     vector<double> position;
     bool AllocBuffer(int flag = 0x0) override;
@@ -38,5 +39,6 @@ class Maisui : public Fish {
     bool Init(const vector<hWIKI>& wikis_, int flag = 0x0) override;
     void Train(int flag = 0x0) override;
     bool InitInput(void* ctx_build, bool isMask, int flag) override;
+    virtual int ChatOnSamps(int type, int flag = 0x0);
 };
 typedef shared_ptr<Maisui> hMaisui;

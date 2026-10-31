@@ -30,6 +30,7 @@ using namespace std;
 
 #include "../TokenSet/DataLoader.hpp"
 #include "../Utils/GST_util.hpp"
+#include "Prober.hpp"
 
 class Fish;
 struct NeLayer;
@@ -39,7 +40,7 @@ class SparseNeuron;
 class KVCache;
 class GeQuant;
 class FeatPicker;
-    
+
 /**
  * Each Neuron has
  * 1. inp,out,w
@@ -92,6 +93,8 @@ class GeNeuron {
     GeNeuron& operator=(const GeNeuron&) = default;
 
    protected:
+    static MAP_S2CLASS registry_S2C;
+
     struct STATISTIC {
         double time = 0.0, tFore = 0.0, tBack = 0.0;
         double mem = 0.0;
@@ -127,7 +130,8 @@ class GeNeuron {
     GeNeuron* hGuoke = nullptr;
     std::set<hGTensor> tReloads;
     shared_ptr<GeQuant> hQuant = nullptr;
-    shared_ptr<FeatPicker> hPicker = nullptr;
+    std::vector<PROBER*> probers;
+    // shared_ptr<FeatPicker> hPicker = nullptr;
     // std::vector<shared_ptr<GeNeuron>> brothers;
     virtual std::string _NAME(const std::string& prefix, tpNEURON4NAME neron, const std::string& suffix = "", int flag = 0x0);
 
@@ -135,6 +139,8 @@ class GeNeuron {
     virtual void SetInp4Back(hGTensor inp_, int flag = 0x0);     //  the input tensor of forward would be reused in back-propragation
     virtual bool VerifyInp4Back(hGTensor inp_, int flag = 0x0);  //  @SetInp4Back
    public:
+    static bool InitRegister(int flag);
+
     enum BIT_FLAG { F_BIAS = 0x10000, F_DELTA = 0x20000, F_REMATER = 0x40000, F_HOTPICK = 0x100000 };
 
     DATA_PLACE place = DATA_PLACE::VOID;
@@ -197,7 +203,7 @@ class GeNeuron {
     virtual bool PrepareShadow(int flag = 0x0);
 
     virtual bool InitFeatPicker(const std::string& name, int dim_, int flag = 0x0);
-    virtual bool AppendFeats(hGTensor feat, int samp_id, int flag = 0x0);
+    // virtual bool AppendFeats(hGTensor feat, int samp_id, int flag = 0x0);
 
     // memory management at different place
     virtual void ManageMemory(DATA_PLACE target, int typ = 0x0, int flag = 0x0);
@@ -248,19 +254,7 @@ class GeNeuron {
     friend class GTensor;
     friend class GeQuant;
     friend class QUANT_CARD;
-};
-
-struct INSPECT {
-    GeNeuron* hN = nullptr;
-    INSPECT(GeNeuron* hN_, const std::string& info = "", int typ = 0x0, int flag = 0x0) : hN(hN_) {
-        if (hN != nullptr)
-            hN->OnDebug(info, typ, flag);
-    }
-
-    virtual ~INSPECT() {
-        if (hN != nullptr)
-            hN->ExitDebug();
-    }
+    friend class PROBER;
 };
 
 class TokenEmbed;
@@ -307,7 +301,7 @@ class SparseNeuron : public GeNeuron {
     virtual void UpdateSamps(int seed, int flag = 0x0);
 };
 typedef shared_ptr<GeNeuron> hNEURON;
-
+typedef std::vector<shared_ptr<GeNeuron>> arrNEURON;
 // Collection of neurons, only special operation!
 struct Ganglia : public SparseNeuron {
     std::vector<hNEURON> ns;

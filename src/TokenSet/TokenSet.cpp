@@ -8,7 +8,6 @@
 
 #include "TokenSet.hpp"
 
-#include "../Manifold/Optimizer.hpp"
 #include "../Shoal/gLLM.hpp"
 #include "../Tensor/Safetensors.hpp"
 #include "../Utils/GST_obj.hpp"
@@ -23,6 +22,153 @@
 #include <arrow/status.h>
 #include <parquet/arrow/reader.h>
 #endif
+
+SyntheticCoral::SyntheticCoral(const JSON& jit, hTokenizer hDict, int flag) : TokenCoral(hDict) {
+    hPickRander = std::make_shared<GRanderTorch>(20261027);  //  20260907 - 独与天地往来 而不敖倪于万物
+
+    eval_every    = jKV(jit, {"eval-every"}, eval_every);
+    rSplitOfTrain = jKV(jit, {"split"}, rSplitOfTrain);
+    nMostSamp     = jKV(jit, {"most_samp"}, nMostSamp);  // sPrompt = jit["prompt"];
+    tpProblem     = jKV(jit, {"problem"}, tpProblem);    // sPrompt = jit["prompt"];
+    name          = jKV(jit, {"name"}, name);
+    // hDict->eos = 0;
+    if (tpProblem != 1) {
+        hDict->S.equal_token = nBASE + 1;
+        hDict->S.op_token    = nBASE;
+        result_marker        = hDict->S.equal_token;
+    }
+}
+
+bool TokenCoral::Init(Fish* hFish_, int flag) {
+    hFish = hFish_;
+    if (!hFish->config.model.sResultMarker.empty()) {
+        TOKENS tokens = hDict->Encode(hFish->config.model.sResultMarker);
+        assert(tokens.size() == 1);
+        result_marker = tokens[tokens.size() - 1];  //  28("=")
+    }
+    return true;
+}
+/**
+ * "samp_1": {
+    "state":"you are a calculator"
+            "type": "score",
+            "instructions": "3+2=5",
+            "label": "5",
+            "src": "sync",
+        }
+ */
+hSAMP SyntheticCoral::S_math(int i, int j, MAP_S2S& q_kv, int flag) {
+    sOperation   = "(i * j) % nBASE";
+    string state = "", qid = "samp_" + std::to_string(shard_samps.size());
+    float a              = (i * j) % nBASE;  // i + j
+    q_kv["instructions"] = _sLOG("%d#%d=%g", i, j, a);
+    string sLabel        = _sLOG("%g", a);
+    q_kv["label"]        = sLabel;
+
+    std::shared_ptr<SAMP_JEV> hSamp = std::make_shared<SAMP_JEV>(state, qid, q_kv);
+    hSamp->ToTokens(shared_from_this(), SAMP::RAW);
+    return hSamp;
+}
+hSAMP SyntheticCoral::S_permutegroup(int i, int j, MAP_S2S& q_kv, int flag) {
+    sOperation   = "([i],[j])->[k]";
+    string state = "", qid = "samp_" + std::to_string(shard_samps.size());
+    int k = (i * j) % nBASE, offset = 15;  // i + j
+    q_kv["instructions"] = _sLOG("([%d],[%d])->[%d]", i, j, k);
+    TOKEN_ID ti = i + offset, tj = j + offset, tk = k + offset;
+    TOKEN_ID tOP = hDict->S.op_token + offset, tEqual = hDict->S.equal_token + offset;
+    result_marker = tEqual;
+    string sLabel = _sLOG("%d", tk);
+    q_kv["label"] = sLabel;
+
+    std::shared_ptr<SAMP_JEV> hSamp = std::make_shared<SAMP_JEV>(state, qid, q_kv);
+    hSamp->ttoks                    = {ti, tOP, tj, tEqual, tk};  // ti#tj=tk
+    hSamp->MergeToCoral(shared_from_this());
+    assert(hSamp->nzROI(0) == 1);
+    return hSamp;
+}
+
+bool SyntheticCoral::Init(Fish* hFish_, int flag) {
+    if (!TokenCoral::Init(hFish_, flag))
+        return false;
+
+    MAP_S2S q_kv;
+    q_kv["src"]  = "sync";
+    q_kv["type"] = "score";
+
+    float a;
+    hSAMP hSamp = nullptr;
+    for (int i = nBASE - 1; i >= 0; i--) {
+        for (int j = nBASE - 1; j >= 0; j--) {
+            // if (hPickRander->NextCoin(0.5))
+            //     continue;
+            hSamp = tpProblem == 1 ? S_math(i, j, q_kv) : S_permutegroup(i, j, q_kv);
+            // std::shared_ptr<SAMP_JEV> hSamp = std::make_shared<SAMP_JEV>(state, qid, q_kv);
+            // hSamp->ToTokens(shared_from_this(), SAMP::RAW);
+            shard_samps.push_back(hSamp);
+
+            if (result_marker > 0) {
+                assert(!hSamp->arrROI.empty());
+            }
+        }
+    }
+    int n_ctx   = hFish->config.n_ctx(), len;
+    size_t step = 1, nSamp = shard_samps.size();
+    float rSample = hFish->config.common.rSubSample;
+    if (rSample > 0 && rSample < 1)
+        step /= rSample;
+    for (size_t i = 0; i < nSamp; i += step) {
+        int sample_begin;
+        // shard_samps.push_back(new SAMP(sample_begin, len));
+    }
+    size_t n0 = shard_samps.size();
+    if (n0 == 0) {
+        assert(0);
+    } else {
+        nMostShard = 1;
+        nMostSamp  = n0;
+        nMostTok   = nMostSamp * n_ctx;
+        if (DEBUG.dump_ShardInfo > 0)
+            _INFO("\n[shard \"%s\"]: %ld(samps) nBach=%d\n", name.c_str(), shard_samps.size(), nBatch());
+    }
+    _INFO("\n[Tokenset]_%s Synthetic=\"%s\" %ld(samps) nToken=%ld [base]=%d\n", name.c_str(), sOperation.c_str(), nMostSamp, tokens.size(), nBASE);
+    return true;
+};
+
+TokenCoral::TokenCoral(CSTRING& name_, hDataToken hBase, int flag) : hDict(hBase->hDict), name(hBase->name) {
+    if (!name_.empty())
+        name = name_;
+    assert(hDict->isValid(true));
+    nVocab = hDict->nVocab(-1);
+    assert(nVocab > 0);
+    nMostShard = hBase->nMostShard;
+    nMostSamp  = hBase->nMostSamp;
+    tokens     = hBase->tokens;
+}
+
+std::tuple<hDataToken, hDataToken> TokenCoral::Split(int type, int flag) {
+    size_t nTrain = shard_samps.size() * rSplitOfTrain, nEval = shard_samps.size() - nTrain;
+    assert(nMostShard == 1 && nTrain > 1 && nEval > 1);
+    hDataToken tsTrain = nullptr, tsEval = nullptr;
+    tsTrain       = std::make_shared<TokenCoral>(name + "_train", shared_from_this(), flag);
+    tsEval        = std::make_shared<TokenCoral>(name + "_eval", shared_from_this(), flag);
+    tsTrain->tpDT = DT_TRAIN, tsEval->tpDT = DT_EVAL;
+    tsTrain->result_marker = tsEval->result_marker = result_marker;
+    std::mt19937 g(20261028);
+    std::shuffle(shard_samps.begin(), shard_samps.end(), g);  // shuffle sample
+
+    tsTrain->SetSamps(std::vector<hSAMP>(shard_samps.begin(), shard_samps.begin() + nTrain));
+    tsEval->SetSamps(std::vector<hSAMP>(shard_samps.begin() + nTrain, shard_samps.end()));
+    tsEval->eval_every = eval_every;
+    tsTrain->nMostTok = nMostTok * rSplitOfTrain, tsEval->nMostTok = nMostTok - tsTrain->nMostTok;
+    return {tsTrain, tsEval};
+}
+bool TokenCoral::SetSamps(const std::vector<hSAMP>& samps, int flag) {
+    shard_samps = samps;
+    for (auto samp : shard_samps) {
+    }
+    nMostSamp = samps.size();
+    return true;
+}
 
 PromptTokenset::PromptTokenset(const JSON& jit, hTokenizer hDict, int flag) : TokenCoral(hDict) {
     // auto k  = jit.key();
@@ -754,33 +900,6 @@ double Tokenset_HellaSwag::LossOnResult(hSampNanny hLoader, Head4Token* cls, int
     return mean_loss;
 }*/
 
-// for each batch @Head4Token::cuFlow
-float SampNanny::UpdateII(float mean_loss, int flag) {
-    // float alpha4g = 1.0f, mean_loss = 0.0f, logprob = 0.f;
-    Head4Token* cls   = hFish->GetNeuron<Head4Token>("Head4Token", 0);
-    TokenEmbed* embed = hFish->GetNeuron<TokenEmbed>("TokenEmbed", 0);
-    /*int i;
-    for (logprob = 0, i = 0; i < B * T; i++) {
-        mean_loss += hostLoss[i];
-        logprob += -hostLoss[i];
-    }
-    mean_loss /= B * T;
-
-    float ppl = exp(-logprob / (B * T));  //  just exp(mean_loss)*/
-    float ppl = exp(mean_loss);
-
-    iiLoss.Add(mean_loss);
-    iiPPL.Add(ppl);
-    iiLoss.Stat();
-    iiPPL.Stat();
-
-    // if (DEBUG.eval_Generate > 0) {
-    //     hChater gopt = hFish->GetGenerator();
-    //     gopt->SampleOnBatch(embed->hBatch, hostLoss, B, T, this);  // 1479
-    // }
-    return mean_loss;
-}
-
 bool Tokenset_HellaSwag::Shard2Sample(int id, int flag) {
     try {
         size_t B = hDict->config.n_batch(), T = hDict->config.n_ctx();
@@ -920,35 +1039,6 @@ double SampNanny::LossOnResult(Fish* hFish, int flag) {
     iiPPL.Stat();
 
     return mean_loss;
-}
-
-void SampNanny::UpdateStepInfos(float mean_loss, int nB, int flag) {
-    int iter = hOPT->GetITER(), nFuyou = hFish->nFuyou(1);
-    float last          = stepis.Last();  // Loss@Evaluation=7.302641 T=0.232s ======
-    float train_last    = hOPT->trainInfos().Last();
-    bool isFirst        = stepis.steps.empty();
-    StepInfos::STEP stp = StepInfos::STEP(mean_loss, iter, hOPT->train_epochs);
-    stepis.Add(stp);
-    if (isFirst) {
-        _INFO(" Loss@\"%s\"=%.3f nFuyou=%d ", sTokenSet().c_str(), mean_loss, nFuyou);
-        return;
-    }
-
-    float delta = last - mean_loss, best = stepis.Best(), ee = 0;
-    bool isOverfit = delta < 0 && abs(mean_loss - best) > best / 10;
-    // if(isOverfit)   {
-    //     _INFO(" !OVERFIT! ");
-    // }
-    double a = nB * hOPT->TrainParams().nTokenInBatch() / 1.0e6;
-    _INFO(" Loss@\"%s\"=%.3f(%.2g) nBranch=%d nToken=%.3gM best=%.4f(%d) E2T=%.3g T=%g(%.3g)s x=%.3g\n", sTokenSet().c_str(), mean_loss, nFuyou, delta, a, best,
-          stepis.best_id, mean_loss - train_last, SUM::tEval_1, SUM::tCollate / 1000.0, ee);  //
-
-    // if (wLog == nullptr) {
-    // } else
-    //     _INFO("\t Loss@Evaluation=%f delta=%g(%.5g) T=%gs\n", mean_loss, delta_max, delta_ / nB, GST_TOC(tic));
-    string sX = "_loss=" + std::to_string(mean_loss);
-
-    stepis.SaveToCSV("_info_.csv");
 }
 
 Tokenset_JSONL::Tokenset_JSONL(const JSON& jit, hTokenizer hDict, const string& format_, int flag) : GlobTokenset(jit, hDict, flag) {
@@ -1245,149 +1335,6 @@ bool Tokenset_JSONL::Shard2Sample(int id, int flag) {
     } catch (...) {
         return false;
     }
-}
-
-/**
- * "state": "The Washington Monument is an obelisk on the National Mall in Washington, D.C., built to commemorate George Washington, once commander-in-chief of
- the Continental Army and the first President of the United States. Located almost due east of the Reflecting Pool and the Lincoln Memorial, the monument, made
- of marble, granite, and bluestone gneiss, is both the world's tallest stone structure and the world's tallest obelisk, standing 554 feet 7 ⁄ inches (169.046 m)
- tall according to the National Geodetic Survey (measured 2013--14) or 555 feet 5 ⁄ inches (169.294 m) tall according to the National Park Service (measured
- 1884). It is the tallest monumental column in the world if all are measured above their pedestrian entrances. It was the tallest structure in the world from
- 1884 to 1889.", "questions": { "is_tallest": { "type": "noul", "instructions": { "question": "is the washington monument the tallest monument in the world?",
-                "focus": "Use only the information given."
-            },
-            "label": true,
-            "src": "boolq",
-            "criteria": {
-                "true": "The passage supports a yes answer",
-                "false": "The passage supports a no answer or does not say"
-            }
-        },
-        "height_range": {
-            "type": "choice",
-            "instructions": "What is the height of the Washington Monument according to the passage?",
-            "criteria": {
-                "under_100m": "Less than 100 meters",
-                "100_to_150m": "100 to 150 meters",
-                "over_150m": "More than 150 meters"
-            },
-            "label": "over_150m"
-        }
-    }
- */
-SAMP_JEV::SAMP_JEV(CSTRING& state_, CSTRING& qid_, MAP_S2S& q_kv_, int flag) : state(state_), qid(qid_), q_kv(q_kv_) {
-    for (const auto& [key, value] : q_kv) {
-        if (key == "label") {  // target:  "label": true,            "src": "boolq",
-            sLabel = value;
-            continue;
-        } else if (key == "src") {
-            meta_source = value;
-        } else if (key == "instructions") {
-            question = value;
-        } else if (key == "type") {
-            tpDecisoin = G_Aa(value, "noul") ? NOUL : G_Aa(value, "score") ? SCORE : CHOICE;
-        }
-    }
-
-    assert(!sLabel.empty());
-    switch (tpDecisoin) {
-        case NOUL:
-            bY = G_Aa(sLabel, "true") ? true : false;
-            break;
-        case SCORE:
-            break;
-        default:
-            NOT_IMPLEMENTED;
-    }
-
-    if (tpDecisoin != SAMP_JEV::NOUL) {
-        _INFO("state=%s, question=%s", state.c_str(), question.c_str());
-    }
-}
-
-void SAMP_JEV::Dump(hDataToken coral, const std::vector<TOKEN_ID>& tokens, int type, const std::string& desc, int flag) {
-    // desc = state;
-    SAMP::Dump(coral, tokens, type, desc, flag);
-    return;
-};
-
-// MAX_STATE, MAX_BRANCH = 384, 1024
-/**
- * 1. label, src, meta_	are not part of the Jev request. Just for evaluation (ground truth, source, hashes, split)
- * 2.
- */
-bool SAMP_JEV::ToTokens(hDataToken coral, int flag) {
-    if (len > 0)
-        return true;
-    TOKEN_ID idState = Tokenset_JEV::specials[0], idQuestion = Tokenset_JEV::specials[1], idOption = Tokenset_JEV::specials[2],
-             idOption_1 = Tokenset_JEV::specials[3], idDecide = Tokenset_JEV::specials[4];
-    hTokenizer dict = coral->hDict;
-    int nContext    = coral->hFish->curContextLen();
-    bool isTemplate = true; //  引子
-    // string sY       = sLabel;
-    if (isTemplate) {
-        Fish* hFish                    = coral->hFish;
-        int szBuffer                   = hFish->config.chat_sampler.szBuffer;
-        char rendered_prompt[szBuffer] = "\0";
-        sprintf(rendered_prompt, hFish->config.chat_sampler.prompt_template.c_str(), state.c_str());
-        state = rendered_prompt;
-    }else{
-        ttoks      = {idState};
-    }
-        
-    TOKENS cur = dict->Encode(G_rewrite_special_tokens(state));
-    // assert(cur.size() <= 384);
-    ttoks.insert(ttoks.end(), cur.begin(), cur.end());
-    if(!isTemplate)
-        ttoks.push_back(idQuestion);
-    cur = dict->Encode(G_rewrite_special_tokens(question));
-    ttoks.insert(ttoks.end(), cur.begin(), cur.end());
-    if(!isTemplate)
-        ttoks.push_back(idDecide);
-    // spans = [[o_id] + user_tokens(tok, o) + [c_id] for o in q["options"]]    "The passage supports a yes answer"/"The passage supports a no answer or does
-    // not say"
-    /*for (const auto& [key, value] : q_kv) {
-        if (key == "label") {  // target:  "label": true,            "src": "boolq",
-            sY = value;
-            continue;
-        } else if (key == "src") {
-        } else if (key == "type") {
-            tpDecisoin = G_Aa(value, "noul") ? NOUL : G_Aa(value, "score") ? SCORE : CHOICE;
-        }
-    }*/
-    // assert(!sY.empty());
-
-    pos = coral->tokens.size();
-    if (ttoks.size() > nContext) {
-        DumpTokens(coral->hDict, ttoks, -1, flag);
-        // Dump(coral, ttoks, 0x0, state + "\n" + question);
-        ttoks = TOKENS(ttoks.end() - 512, ttoks.end());
-        return false;
-    }
-    len = ttoks.size();
-    coral->tokens.insert(coral->tokens.end(), ttoks.begin(), ttoks.end());
-    assert(pos + len == coral->tokens.size());
-    // Dump(coral, coral->tokens, 0x0, state + "\n" + question);
-    coral->nMostTok = std::max(coral->nMostTok, pos + len);
-
-    arrROI.push_back(std::make_tuple(0, len));
-    pad_len = nContext - len;
-    len     = nContext;
-
-    return true;
-}
-
-bool SAMP_JEV::User2Batch(hBATCH hBatch, int flag) {
-    switch (tpDecisoin) {
-        case NOUL:
-            hBatch->user_answer.push_back(bY ? 1.0 : 0.0);
-            break;
-        case SCORE:
-            NOT_IMPLEMENTED;
-        default:
-            NOT_IMPLEMENTED;
-    }
-    return true;
 }
 
 void DumpTokens(hTokenizer hDict, const TOKENS& tokens, int nX, int flag) {

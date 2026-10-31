@@ -161,7 +161,7 @@ std::string FILE_EXT(const std::string& path);
 bool CHECK_FILE_EXIST(const std::string& fkey, const std::string& directory);
 bool VERIFY_DIR_EXIST(const std::string& path, bool isCreate = false);
 std::vector<std::string> FilesOfDir(const std::string& path, const std::vector<std::string>& keys = {}, int flag = 0x0);
-
+std::string ModelInFolder(std::string path, int flag = 0x0);
 /*
 struct MEM_USAGE {
     static size_t szA, szW, szG, szMoment, szTemp, szOther;

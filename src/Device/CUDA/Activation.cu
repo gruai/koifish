@@ -9,8 +9,8 @@
 
 #include <assert.h>
 
-#include "../../Manifold/Neuron.hpp"
 #include "../../Shoal/Fish.hpp"
+#include "../../Shoal/Neuron.hpp"
 #include "./cuda_common.h"
 #include "./kernel/packedN.cuh"
 #include "./kernel/utils.cuh"

@@ -94,6 +94,8 @@ bool jKV_is(const JSON& jConfig, const std::vector<std::string>& keys, T target,
     return val == target;
 }
 
+bool J_dump(const std::string& path, const JSON& jObj, int flag = 0x0);
+
 /**
  *  All paramters defined here
  */
@@ -121,6 +123,7 @@ enum LIFE_PHASE {
 
     // evaluate
     P_EVAL_,
+    P_EVAL_CHAT,  // generate answers for each samp of coral
 
     // Inference     fish->isLocalInfer = true
     P_PREFILL,
@@ -128,6 +131,7 @@ enum LIFE_PHASE {
     // P_GENERATE,
     P_CHAT_1,  // generate 1 token each time
     P_CHAT_N,  // generate N token each time(diffusion model)
+
 };
 
 enum METRIC { M_VOID, CLS_LOSS, PPL, METRIC_MOST };
@@ -262,13 +266,6 @@ enum FILE_FORMAT_TYPE {
 
     CKP_HF,      // HugFace transformers compatible,
     CKP_KOIFISH  // Koifish checkpoint is a very-lite format with only safetensors(config json & other metadata is also stored in tensors)
-};
-
-// for each pair<value,id>
-enum SORT_BY {
-    NO_SORT,
-    BY_VALUE,
-    BY_ID,
 };
 
 FILE_FORMAT_TYPE FormatOfFile(const std::string& path, int flag = 0x0);
@@ -465,6 +462,8 @@ class MODEL_CARD {
     // dim(=head_dim*n_heads)
     int dim = -1, hidden_dim = -1, n_layers = -1, hidden_size = -1, intermediate_size = -1;
     int max_pos_embeddings = -1, num_attention_heads = -1, num_key_value_heads = -1;
+    std::string sPadMask      = "";
+    std::string sResultMarker = "";
     std::vector<int> token_embeds;
     std::vector<int> qkv_embeds;  // try multi-level embed of QKV
 
@@ -733,29 +732,15 @@ struct TRAIN_CARD {
 
     int n_ctx = -1, n_batch = -1, n_threads = -1, n_gradient_accumulation = -1, n_gpu_layers = -1;
 
-    bool custom_n_ctx;
-    bool isSuperBatch = true;
-    bool use_flash;
-    bool use_checkpointing;
+    bool custom_n_ctx, isSuperBatch = true, use_flash, use_checkpointing, sample_random_offsets, force_reshuffle;
 
-    // std::string sample_start;
-    // bool include_sample_start;
-    // bool escape;
-    // bool separate_with_eos;
-    // bool separate_with_bos;
-    bool sample_random_offsets;
-
-    bool force_reshuffle;
-    bool isPadMask   = false;
     float rSubSample = 1;
     int nMostIter = -1, nEpochIter = -1;
     int warmup, lr_restart         = 0;
 
     int opt_past;
     float opt_delta;
-    int opt_max_no_improvement;
-    int opt_stochastic_rounding = 0;
-    int opt_alloc_weight        = 0;
+    int opt_max_no_improvement, opt_stochastic_rounding = 0, opt_alloc_weight = 0;
 
     int remater_ffn    = 0;
     std::string method = "muon";
@@ -766,8 +751,10 @@ struct TRAIN_CARD {
     size_t nTokenInBatch() const { return n_batch * n_ctx; }
     TRAIN_CARD();
     bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
+    std::string Desc(int type, int flag=0x0);
 };
 
+// for (auto [a, b] : section)
 typedef std::vector<std::tuple<int, int>> TOKENS_SECTION;
 // one sample(conversation) in ChatML format(support multi_turn)
 struct ChatML_samp {
@@ -857,8 +844,10 @@ struct CHAT_SAMPLER {
     bool enable_thinking = false;  //  true
 
     std::string prompt_template, system_prompt_template;
+    std::string system_guide;  // A high-priority text to guide system
     virtual bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
-    virtual bool InitPrefillTemplate(CLI_params* hConfig, int flag = 0x0);
+    virtual bool InitPromptTemplate(CLI_params* hConfig, int flag = 0x0);
+    virtual std::string GetPrompt(const std::string& prompt_0, const std::string& sys = "", int flag = 0x0);
     virtual bool OnArch(MODEL_ARCH arch, int flag = 0x0);
 
     bool isInstructModel() {  // Instruct model always has there templates! Base Model may has no template
@@ -892,6 +881,7 @@ struct DEUG_SWITCH {
 
     int test_quant        = 0;
     int dump_LossDetail   = 0;
+    int dump_BatchDetail  = 0;
     int dump_TensorDetail = 0;
     int dump_ParamsDetail = 0;
     int dump_ShardInfo    = 0;
@@ -936,6 +926,7 @@ struct DEUG_SWITCH {
     int x1 = 0;
     std::string x_str;
     std::string fHiddenFeature;  // path of file to store feature/hidden_state
+    std::string sPromptGuide;
     std::vector<std::string> prompts;
     std::vector<std::string> filterCSV;
     std::vector<std::string> filterColor;
@@ -1095,7 +1086,7 @@ struct CLI_params {
     bool isShareLayerOut() const;
     std::string jsPath = "";
     JSON jConfig;
-    JSON jModel, jBackBone;
+    JSON jModel, jBackBone, jCoral;
     JSON jQuant, jVendorQuant;
 
     MODEL_ARCH ModelArch(MODEL_ROLE role = MODEL_ROLE::COMMON) const;

@@ -9,7 +9,8 @@
 #pragma once
 
 #include <string>
-
+#include <typeindex>
+#include <typeinfo>
 #include "../g_float.hpp"
 //
 
@@ -29,6 +30,8 @@ using MAP_VOCAB = phmap::flat_hash_map<std::string, int>;
 using MAP_T2T = phmap::flat_hash_map<TOKEN_ID, TOKEN_ID>;
 using MAP_I2I = phmap::flat_hash_map<int, int>;
 using MAP_S2S = phmap::flat_hash_map<std::string, std::string>;
+
+using MAP_S2CLASS = phmap::flat_hash_map<std::string, std::type_index>;
 
 template <typename K, typename V>
 V* HT_FIND(phmap::flat_hash_map<K, V*>& HT, K key) {

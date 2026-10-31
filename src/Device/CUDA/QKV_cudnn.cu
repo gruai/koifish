@@ -7,8 +7,8 @@
  *  \author Yingshi Chen
  */
 
-#include "../../Manifold/Neuron.hpp"
 #include "../../Shoal/Fish.hpp"
+#include "../../Shoal/Neuron.hpp"
 #include "../Utils/GST_obj.hpp"
 #include "./cuda_common.h"
 #include "./kernel/operator.cuh"
@@ -392,7 +392,7 @@ bool Fish::AllocBuffer(int flag) {
         if (phase != P_CHAT_1) {
 #ifdef __USE_CUDNN__
             cudnn_qkv_forw(this, B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn, isCausal, padding_mask);
-            if (!isAtPhase({P_EVAL_, P_CHAT_N})) {
+            if (!isAtPhase({P_EVAL_, P_CHAT_N, P_EVAL_CHAT})) {
                 size_t alloc = cudnn_qkv_back(this, B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn, isCausal, padding_mask);
                 _INFO("\tcudnn_qkv_back = %.5gM\n", alloc / 1.0e6);
             }

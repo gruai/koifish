@@ -263,14 +263,14 @@ void GRUAI_KOIFISH_VERSION(char* str, int flag = 0x0) {
     return;
 }
 
-void GG_log_callback_default(DUMP_LEVEL level, const char* text, void* user_data) {
+void _log_callback_default(DUMP_LEVEL level, const char* text, void* user_data) {
     (void)level;
     (void)user_data;
     fputs(text, stderr);
     fflush(stderr);
 }
 
-inline void GG_log_head(char* buff, const char* tag = "KOIFISH", int flag = 0x0) {
+inline void _log_head(char* buff, const char* tag = "KOIFISH", int flag = 0x0) {
     const char* file = (strrchr(__FILE__, '/') ? (strrchr(__FILE__, '/') + 1) : __FILE__);
     // sprintf(buff, "[%s %s %d:%ld %s:%d %s] ", tag, curr_time(), get_pid(), get_tid(),
     //             file, __LINE__,__FUNCTION__ );
@@ -280,10 +280,10 @@ static char log_buffer[KOIFISH_MOST_LOG], coloredMsg[KOIFISH_MOST_LOG + 100];
 void _LOG(DUMP_LEVEL level, const char* format, ...) {
     va_list args;
     va_start(args, format);
-    // void GG_log_internal_v(DUMP_LEVEL level, const char* format, va_list args) {
+
     va_list args_copy;
     va_copy(args_copy, args);
-    GG_log_head(log_buffer);
+    _log_head(log_buffer);
     //  If>MOST_LOG Output is ​​truncated but valid​​.
     int len = vsnprintf(log_buffer, KOIFISH_MOST_LOG, format, args);
     va_end(args_copy);
@@ -292,7 +292,7 @@ void _LOG(DUMP_LEVEL level, const char* format, ...) {
     coloredMsg[0]       = '\0';
     switch (level) {
         case DUMP_ERROR:
-            snprintf(coloredMsg, sizeof(coloredMsg), "\r\n%s error: %s%s", COLOR_RED, log_buffer, COLOR_RESET);
+            snprintf(coloredMsg, sizeof(coloredMsg), "\r\n%s ERR: %s%s", COLOR_RED, log_buffer, COLOR_RESET);
             fflush(stdout);
             break;
         case DUMP_EXCEPTION:
@@ -300,7 +300,7 @@ void _LOG(DUMP_LEVEL level, const char* format, ...) {
             fflush(stdout);
             break;
         case DUMP_WARN:
-            snprintf(coloredMsg, sizeof(coloredMsg), "%s warn: %s%s", COLOR_MAGENTA, log_buffer, COLOR_RESET);
+            snprintf(coloredMsg, sizeof(coloredMsg), "%s WARN: %s%s", COLOR_MAGENTA, log_buffer, COLOR_RESET);
             fflush(stdout);
             break;
         case DUMP_WARN0:
@@ -323,6 +323,19 @@ void _LOG(DUMP_LEVEL level, const char* format, ...) {
     // fputs(log_buffer, stderr);
     fflush(stderr);
     va_end(args);
+}
+
+std::string _sLOG(const char* format, ...) {
+    va_list args;
+    va_start(args, format);    
+    va_list args_copy;
+    va_copy(args_copy, args);
+    _log_head(log_buffer);
+    //  If>MOST_LOG Output is ​​truncated but valid​​.
+    int len = vsnprintf(log_buffer, KOIFISH_MOST_LOG, format, args);
+    va_end(args_copy);
+    va_end(args);
+    return log_buffer;
 }
 
 void read_stdin(const char* guide, char* buffer, size_t bufsize) {
@@ -426,6 +439,20 @@ std::vector<std::string> FilesOfDir(const std::string& path, const std::vector<s
     std::sort(files.begin(), files.end());
 
     return files;
+}
+
+std::string ModelInFolder(std::string path, int flag) {
+    // 1. strip ALL trailing separators
+    while (!path.empty() && (path.back() == '/' || path.back() == '\\'))
+        path.pop_back();
+
+    // 2. if now empty (path was just "/" or "///"), return empty
+    if (path.empty()) return "";
+
+    // 3. take component after last separator
+    auto pos = path.find_last_of("/\\");
+    std::string model = (pos == std::string::npos) ? path : path.substr(pos + 1);
+    return model;
 }
 
 // #define UNPACK_32to2_(val, arr)                                 \

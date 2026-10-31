@@ -270,7 +270,6 @@ bool huTensor::CopyGG(struct ggml_tensor* gg_, int flag) {
         }
     };
 
-
     bool toDevice = SerialGP(src, nullptr, szSrc, false, 0x0);
     assert(toDevice);
 

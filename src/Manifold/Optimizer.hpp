@@ -30,6 +30,7 @@ using namespace std;
 #include "TGraph.hpp"
 
 class Fish;
+class LivePlot;
 struct PIPE_Optimizer;
 typedef int32_t OPT_STATUS;
 class Optimizer : public std::enable_shared_from_this<Optimizer> {
@@ -41,6 +42,8 @@ class Optimizer : public std::enable_shared_from_this<Optimizer> {
     std::string sTrainStage = "PreTrain";
 
     OPT_STATUS status = KOIFISH_OK;
+
+    std::shared_ptr<LivePlot> hLossPlot;
 
     void* _ctx = nullptr;
     std::vector<hGTensor> opt_ps;  //  =_fish->optParams;

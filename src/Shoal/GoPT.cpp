@@ -12,13 +12,13 @@
 #include <string>
 
 #include "../Device/Pipe.hpp"
+#include "../Shoal/gLLM.hpp"
 #include "../Utils/GST_Application.hpp"
 #include "../Utils/GST_rander.hpp"
-#include "../Shoal/gLLM.hpp"
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
 
-    namespace fs = std::filesystem;
+namespace fs = std::filesystem;
 /**
  * 1. endless repetition occurs
  * If the model learns that a certain phrase or token(may assign very high probability to recently used words) has high probability in the current context, it
@@ -208,69 +208,22 @@ int fish_1(CLI_params& config) {
     return 666;
 }
 
-int GPT_work(CLI_params& config) {
-    //  GRUS_Get_SystemInfo
-    _INFO("[%s] threads=%d \n%s\n", __func__, std::thread::hardware_concurrency(), "");  // llama_print_system_info()
-    // ggml_numa_init(GGML_NUMA_STRATEGY_DISABLED);
-    DEBUG.SelfAttention_noraml = 0;
-    DEBUG.NO_loss              = true;
-    DEBUG.graph_dump           = 1;
-    // config.wiki_actor="";    //only for debug
-
-    // config.isOnlyGPT     = true;
-    config.passLoadToken = true;
-    bool isMakeFish      = config.is({"wiki", "actor"}, "copy") || config.wiki_actor == "OnlyTokenizer";
-    hFISH fish           = nullptr;
-    vector<hWIKI> wikis  = WIKI::MakeInstance("", config, 0x0);
-    if (config.fn_model_base.size() > 0 && !isMakeFish) {
-        for (auto wiki : wikis) {
-            if (wiki->isOnlyTokenizer)
-                assert(wiki->teach == WIKI::_OFF);
-            else
-                wiki->teach = WIKI::_LOGITS;
-        }
-    }
-
-    if (isMakeFish) {
-        fish = Fish::MakeInstance("Fish_", config, wikis, MODEL_ROLE::COMMON, 0x110);
-        if (fish == nullptr || fish->SAFETENSOR_Serialize(config.ckp_in[0], false)) { /*!fish->LoadCheckPoint_(config.ckp_in.data())*/
-            _ERROR("%s has no WIKI or FISH!\n", __func__);
-            return 0;
-        }
-    }
-    //  hGENERATOR gpt = std::make_shared<GeneratOnPrompt>(params,0x0);
-    //  hGENERATOR gpt = std::make_shared<GOPT_infinite>(params,0x0);
-    hGENERATOR gpt = std::make_shared<GOPT_Metropolis>(config, wikis, fish.get(), 0x0);
-    if (gpt->Init_0(config.prompt)) {
-        for (int i = 0; i < 10; i++) {
-            if (!wikis.empty())
-                wikis[0]->Reset();  // to get same results each run
-            gpt->Generate_v0(i);
-            // break;
-        }
-    } else {
-        return -1;
-    }
-
-    return 666;
-}
-
-hGENERATOR GeneratOnPrompt::MakeInstance(struct CLI_params& config, arrHWIKI& wikis, Fish* fish_0, int flag) {
+hGENERATOR GeneratOnPrompt::MakeInstance(hDataToken coral, arrHWIKI& wikis, Fish* fish_0, int flag) {
     hGENERATOR gopt = nullptr;
 
-    switch (config.ChatMode()) {
+    switch (fish_0->config.ChatMode()) {
         case CHATML_ASSIST:
         case CHATML_THINK: {
             if (fish_0->isModel({MD_QWEN, MD_AR_QWEN})) {  // GOPT_Diffusion,GeneratOnPrompt
-                gopt = std::make_shared<GOPT_Diffusion>(config, wikis, fish_0, 0x0);
-                // gopt = std::make_shared<GeneratOnPrompt>(config, wikis, fish_0, 0x0);
+                gopt = std::make_shared<GOPT_Diffusion>(coral, wikis, fish_0, 0x0);
+                // gopt = std::make_shared<GeneratOnPrompt>(nullptr, wikis, fish_0, 0x0);
             } else
-                gopt = std::make_shared<GeneratOnPrompt>(config, wikis, fish_0, 0x0);
+                gopt = std::make_shared<GeneratOnPrompt>(coral, wikis, fish_0, 0x0);
 
         } break;
         case CHAT_SMOKE: {
-            gopt = std::make_shared<GOPT_Metropolis>(config, wikis, fish_0, 0x0);
-            if (gopt != nullptr && gopt->Init_0(config.prompt)) {
+            gopt = std::make_shared<GOPT_Metropolis>(coral, wikis, fish_0, 0x0);
+            if (gopt != nullptr && gopt->Init_0(fish_0->config.prompt)) {
                 // gopt->Generate(0); //only for debug
             } else {
                 gopt.reset();
@@ -280,7 +233,7 @@ hGENERATOR GeneratOnPrompt::MakeInstance(struct CLI_params& config, arrHWIKI& wi
             std::vector<TOKEN_ID> some_inp = {9493, 279, 16603, 374, 2133, 1523, 11};  // const char* promt = "when the smoke is going down,";
         } break;
         default:
-            assert(0);
+            NOT_IMPLEMENTED;
     }
 
     // wiki->Decode(embd_inp,0,0x0);
@@ -288,7 +241,7 @@ hGENERATOR GeneratOnPrompt::MakeInstance(struct CLI_params& config, arrHWIKI& wi
     return gopt;
 }
 
-std::string GeneratOnPrompt::GetPrompt(int flag) { return config.prompt; }
+std::string GeneratOnPrompt::GetRawPrompt(int flag) { return config.prompt; }
 
 /*
     1.   prompt=>embd_inp
@@ -316,7 +269,7 @@ void GeneratOnPrompt::InitInput(int flag) {
             break;
 
         default: {
-            int iRet = wiki0->STR2T(GetPrompt(), embd_inp);
+            int iRet = wiki0->STR2T(GetRawPrompt(), embd_inp);
             // const bool add_bos = llama_add_bos_token(model);
             // embd_inp = ::llama_tokenize(ctx, GetPrompt(), add_bos, true);
             bo = embd_inp[0];
@@ -331,7 +284,7 @@ void GeneratOnPrompt::Clear() {
 }
 
 // only for debug
-GeneratOnPrompt::GeneratOnPrompt(CLI_params& cp_, arrHWIKI& wiki_, Fish* hG_, int flag) : config(cp_), fish_0(hG_), wikis(wiki_) {
+GeneratOnPrompt::GeneratOnPrompt(hDataToken coral, arrHWIKI& wiki_, Fish* hG_, int flag) : config(hG_->config), fish_0(hG_), wikis(wiki_) {
     if (fish_0 != nullptr) {
         samp_params = config.chat_sampler;
         switch (samp_params.tpZhuomo) {
@@ -339,7 +292,7 @@ GeneratOnPrompt::GeneratOnPrompt(CLI_params& cp_, arrHWIKI& wiki_, Fish* hG_, in
                 fResult = "./output/gopt/dilate_";
                 break;
             default:
-                fResult = "./output/gopt/gopt_";
+                fResult = "./output/gopt/gopt_" + fish_0->Name() + "_";
                 break;
         }
         if (!samp_params.prompt.empty()) {
@@ -359,7 +312,7 @@ GeneratOnPrompt::GeneratOnPrompt(CLI_params& cp_, arrHWIKI& wiki_, Fish* hG_, in
         nCanTopK        = (samp_params.top_k < n_vocab) ? samp_params.top_k : n_vocab;
         Head4Token* cls = ((Fish*)fish_0)->GetNeuron<Head4Token>("Head4Token", 0);
         hClsLogits      = cls->preLogits;
-        // OnLogits(); //only for debug!
+
         InitRandomState();
         if (hG_->isAtPhase(P_CHAT_N)) {
         } else {
@@ -372,8 +325,12 @@ GeneratOnPrompt::GeneratOnPrompt(CLI_params& cp_, arrHWIKI& wiki_, Fish* hG_, in
             // gpuLogits.Init(n_vocab, cls->preLogits, 0x0);
         }
         _arch = fish_0->arch;
+        if (coral != nullptr) {
+            tsChat = coral;
+        } else {
+            InitCoral("Write a quick sort algorithm in c++.", fish_0);
+        }
 
-        InitCoral("Write a quick sort algorithm in c++.", fish_0);
     } else {
         _arch = config.ModelArch();
     }
@@ -392,14 +349,29 @@ void GeneratOnPrompt::InitRandomState(int rng_state, int flag) {
     }
 }
 
+#include "../Manifold/HotPicker.hpp"
 void GeneratOnPrompt::OnPrompt(int iter, hBATCH hB, int flag) {
     // assert(hBatch == nullptr);   //may be called many times in training
     if (hB != nullptr)
         hBatch = hB;
 
-    int num_prompt_tokens = hBatch->FillPrompt(fish_0, some_prompts, some_answers, 0);  //  [19, 48, 57, 58, 59,  2, 16, 48, 59, 48, 65, 44, 53, 11,  1, 15]
+    int num_prompt_tokens = 0;
+    if (!some_prompts.empty()) {
+        hBatch->FillPrompt(fish_0, some_prompts, some_answers, 0);  //  [19, 48, 57, 58, 59,  2, 16, 48, 59, 48, 65, 44, 53, 11,  1, 15]
+    } else {                                                        // hBatch is filled in other place (like SAMP_JEV::ToTokens
+
+    }
+    int nFill = hBatch->nTokens(BATCH_INPUT::F_PROMPT_LEN);
+    // if (fish_0->arrPicker.size() == 1)
+    //     fish_0->arrPicker[0]->idf = nFill - 1;  
+
     tokens.clear();
-    tokens = hBatch->curTokens();
+    tokens = hBatch->curTokens(BATCH_INPUT::F_IGNORE_PAD);
+    assert(!tokens.empty());
+    if (some_prompts.empty()) {
+        string a = tsChat->hDict->Decode(tokens);
+        _INFO("\n[PROMPT] %d=\"%s\"", iter, a.c_str());
+    }
     if (fish_0->isAtPhase(P_CHAT_N)) {
         int B = hClsLogits->ne[0], T = hClsLogits->ne[1], nMostToken = hBatch->nTokens();
         assert(nMostToken == B * T || nMostToken == T);
@@ -407,7 +379,7 @@ void GeneratOnPrompt::OnPrompt(int iter, hBATCH hB, int flag) {
         //  MaskAR: When training: Add noise to x[i], but predict x[i+1](like AR-style)
         // int shift = fish_0->config.model.isMaskAR ? -1 : 0;
         int shift = fish_0->config.model.isShiftLabel ? -1 : 0;
-        for (int i = hBatch->nPrefill + shift; i < nMostToken + shift; i++) {
+        for (int i = nFill + shift; i < nMostToken + shift; i++) {  // hBatch->nPrefill
             float T_coin = rand_coin.NextFloat_01();
             auto hLogit  = std::make_shared<LogitsInfo>(i, fish_0, hClsLogits, T_coin, 0x0);
             originLogits.push_back(hLogit);
@@ -415,10 +387,11 @@ void GeneratOnPrompt::OnPrompt(int iter, hBATCH hB, int flag) {
         }
         // hBatch->hHuaPLAN->InitAllTrainsitions(hBatch->nPrefill, hBatch->nPrefill + 1);
     }
+    // assert(hBatch->nPrefill > 0);
 }
 
 bool GeneratOnPrompt::InitCoral(const std::string& prompt_, Fish* hG_, int flag) {
-    tsChat = std::make_shared<PromptTokenset>((string)"Prompt", hG_->GetTokenizer());
+    tsChat = std::make_shared<PromptTokenset>((string) "Prompt", hG_->GetTokenizer());
     // tsEval.push_back(hTokenset);
     tsChat->Init(hG_, flag);
     tsChat->InitSampNanny(hG_, DT_CHAT, flag);
@@ -426,7 +399,7 @@ bool GeneratOnPrompt::InitCoral(const std::string& prompt_, Fish* hG_, int flag)
     int seq_len = hG_->curChatLen(CHAT_LENGTH_TYPE::LIMIT);
     hBatch      = tsChat->loader->GetCurBatch();
     assert(hBatch->hostToken->ne[0] >= seq_len);
-    int num_prompt_tokens = hBatch->FillPrompt(hG_, some_prompts, {}, 0);  // DEBUG.prompts
+    // int num_prompt_tokens = hBatch->FillPrompt(hG_, some_prompts, {}, 0);  // DEBUG.prompts
 
     return true;
 }
@@ -463,7 +436,7 @@ bool GeneratOnPrompt::Init_0(const std::string& prompt_, int flag) {
     _INFO("\n");
 
     // prompt = prompt_;
-    if (GetPrompt() != "") {
+    if (GetRawPrompt() != "") {
         // GetPrompt() = prompt;
         Tokenize(flag);
     }
@@ -647,23 +620,65 @@ void GeneratOnPrompt::SampFromLogits(int step, int flag) {
         arrQu.push_back(hLogit->qu);
     }
 }
+/*
+int OnEOS(hFISH fish, std::string  cur_answer, int flag = 0x0) {
+    hChater gopt = fish->GetGenerator();
+    double elapsed_s = (double)(GST_ms() - start_time) / 1000.0;
+    double tps       = (gopt->generated_tokens > 0 && elapsed_s > 0) ? (gopt->generated_tokens - 1) / elapsed_s : 0.0;
+    _INFO("\n%s[%.2f tk/s, %d tokens in %.2fs(qkv=%.3fs ffn=%.3fs PreLogits=%.3fs X=%.3fs)]%s\n===================================\n", COLOR_GREEN, tps,
+          generated_tokens - 1, elapsed_s, SUM::tQKV_forw / 1.0e6, SUM::tFFN / 1.0e6, SUM::tPreLogits / 1.0e6, SUM::tX1 / 1.0e6, COLOR_RESET);
 
-void GeneratOnPrompt::AfterSample(int iter, double elapsed_s, int flag) {
-    double tps = (nGenerate > 0 && elapsed_s > 0) ? (nGenerate - 1) / elapsed_s : 0.0;
+    cur_answer += "\t\t" + SUM::sQuantInfo;
+    STR2FILE("chat.csv", cur_answer, std::ofstream::out);
+
+
+    _INFO("[MEMORY] %s\t%s\n", SUM::GPU_Info(0x0).c_str(), SUM::CPU_Info(0x0).c_str());
+    _INFO("\t quant=%s\t DEBUG_switch={generate=%d %d} QKV=%d FFN=%d\n", SUM::sQuantInfo.c_str(), DEBUG.verGenerate, DEBUG.T_cuQK, DEBUG.verInferQKV,
+          DEBUG.verInferFFN);
+    _INFO("\n");  // next turn
+    return 0x0;
+}*/
+void GeneratOnPrompt::AfterSample(int iter, double x, bool isLast, int flag) {
+    double tps = (generated_tokens > 0 && tSample > 0) ? (generated_tokens - 1) / tSample : 0.0;
     /*if (hBatch->tok_pos >= seq_len) {
         if (outer_phase == P_TRAIN)
             return 0x0;
         _WARN("%scontext window full!%s\t", COLOR_YELLOW, COLOR_RESET);
     }*/
-    _INFO("\n%s[%.2f tk/s, %d tokens in %.2fs(qkv=%.3fs ffn=%.3fs PreLogits=%.3fs X=%.3fs)]%s\n===================================\n", COLOR_GREEN, tps,
-          nGenerate - 1, elapsed_s, SUM::tQKV_forw / 1.0e6, SUM::tFFN / 1.0e6, SUM::tPreLogits / 1.0e6, SUM::tX1 / 1.0e6, COLOR_RESET);
-    bool isAppend = false;
+    hSAMP samp = curSamps.empty() ? nullptr : curSamps[0];
+    // _INFO("\n%s[%.2f tk/s, %d tokens in %.2fs(qkv=%.3fs ffn=%.3fs PreLgits=%.3fs X=%.3fs)]%s\n===================================\n", COLOR_GREEN, tps,
+    //       generated_tokens - 1, elapsed_s, SUM::tQKV_forw / 1.0e6, SUM::tFFN / 1.0e6, SUM::tPreLogits / 1.0e6, SUM::tX1 / 1.0e6, COLOR_RESET);
+    bool isAppend = iter > 1;
     // cur_answer += "\t\t" + SUM::sQuantInfo;
+    string path = fResult + sResult + "_.txt";  // hOPT->GetSomeInfo("gopt_result_file");
     if (!fResult.empty()) {
-        string path = fResult + sResult + "_.txt";  // hOPT->GetSomeInfo("gopt_result_file");
-        STR2FILE(path, cur_answer, isAppend ? std::ofstream::app : std::ofstream::out);
+        string a = "\n[" + std::to_string(iter) + "] ";
+        if (samp != nullptr && !samp->sLabel.empty()) {
+            if (samp->sLabel == cur_answer) {
+                nMatch++;
+            }
+            a += _sLOG("\tlable=\"%s\"\ttime=(%.2g,%.1g)\n", samp->sLabel.c_str(), tPrefill, tSample);
+            // "\tlable=\"" + samp->sLabel + "\"\ttime=(" + std::to_string(tPrefill) + "," + std::to_string(tSample) + ")\n";
+        }
+        a += cur_answer;
+        for (std::size_t pos = 0; (pos = a.find("**", pos)) != std::string::npos;) {  // remove "**"
+            a.erase(pos, 2);                                                          // don't advance pos: new chars may form a pair
+        }
+        STR2FILE(path, a, isAppend ? std::ofstream::app : std::ofstream::out);
     }
     // OnEOS(shared_from_this());
+    /*if (next_turn) {
+        _INFO("[MEMORY] %s\t%s\n", SUM::GPU_Info(0x0).c_str(), SUM::CPU_Info(0x0).c_str());
+        _INFO("\t quant=%s\t DEBUG_switch={generate=%d %d} QKV=%d FFN=%d\n", SUM::sQuantInfo.c_str(), DEBUG.verGenerate, DEBUG.T_cuQK, DEBUG.verInferQKV,
+              DEBUG.verInferFFN);
+        _INFO("\n");  // next turn
+    }*/
+    if (isLast) {
+        std::filesystem::copy_file(path, "./output/gopt/gopt__.txt", std::filesystem::copy_options::overwrite_existing);  // for test_lite.py
+        double accu = nMatch * 1.0 / iter;
+        string a    = _sLOG("\n Accuracy=%g(%d/%d)", accu, nMatch, iter);
+        STR2FILE(path, a, std::ofstream::app);
+    }
     fflush(stdout);
 }
 
@@ -673,12 +688,13 @@ TOKEN_ID GeneratOnPrompt::Sample(hBATCH hBatch, bool is_resampling) {
     }
     assert(arrQu.size() == 1);
     auto& qu = arrQu[0];
+    avgConfi += qu.confi;
     hBatch->SetToken(qu.posOfTarget, 0, 0, 0, qu.token);
 
     return qu.token;
 }
 
-GOPT_Diffusion::GOPT_Diffusion(CLI_params& cp_, arrHWIKI& wikis_, Fish* hG_, int flag) : GeneratOnPrompt(cp_, wikis_, hG_, flag) {
+GOPT_Diffusion::GOPT_Diffusion(hDataToken coral, arrHWIKI& wikis_, Fish* hG_, int flag) : GeneratOnPrompt(coral, wikis_, hG_, flag) {
     auto hToken = hG_->GetTokenizer();
     mask_id     = hToken->S._mask;
 }
@@ -728,10 +744,10 @@ int TOPK_heap::Select(int nPick, SORT_BY sort, int flag) {
     }
 
     switch (sort) {
-        case BY_VALUE:
+        case SORT_BY::BY_VALUE:
             std::sort(_picks.begin(), _picks.end(), [this](int i1, int i2) { return this->isLarge(i1, i2); });
             break;
-        case BY_ID:
+        case SORT_BY::BY_ID:
             std::sort(_picks.begin(), _picks.end(), [this](int i1, int i2) { return i1 < i2; });
             break;
         default:
@@ -739,6 +755,21 @@ int TOPK_heap::Select(int nPick, SORT_BY sort, int flag) {
     }
 
     return 0x0;
+}
+
+LogitsInfo::LogitsInfo(CSTRING& nam_, CSTRING& sN, int n0, FEAT_TYPE tpF, int flag) : PROBER(nam_, sN, n0, n0 + 1, tpF, flag) {
+    /*ver         = 1;  //  0,  1
+    T_coin      = T_x_;
+    tid         = id;
+    posInBatch  = id;
+    int n_vocab = hG_->nClass();
+    dim         = n_vocab;
+    hClsLogits  = hClsLogits_;
+    assert(id >= 0 && (id + 1) * dim <= hClsLogits->size());*/
+
+    // src = (floatX*)(hClsLogits->host_data) + id * dim;
+    // assert(src != nullptr);
+    // logits = new float[n_vocab];
 }
 
 LogitsInfo::LogitsInfo(int id, const Fish* hG_, hGTensor hClsLogits_, float T_x_, int flag) {
@@ -805,7 +836,7 @@ void LogitsInfo::UpdateProbability(const CHAT_SAMPLER& samp_params, int flag) {
     }
 }
 
-void LogitsInfo::Dump(int type, int flag) {
+void LogitsInfo::Dump(int type, int flag) const {
     switch (type) {
         default:
             _INFO("\t(%d,%.6f)\n", qu.token, qu.confi);
@@ -1038,7 +1069,7 @@ int GeneratOnPrompt::Generate_v0(int nJob, int flag) {
 int GeneratOnPrompt::Tokenize(int flag) {
     // auto& embd_inp = prompt
     // const int n_ctx = llama_n_ctx(ctx);
-    if (!GetPrompt().empty()) {
+    if (!GetRawPrompt().empty()) {
         InitInput();
     } else {
         _INFO("use session tokens\n");
@@ -1083,15 +1114,6 @@ int GeneratOnPrompt::Tokenize(int flag) {
 //  Keeping the prefill process uncompressed is crucial for performance maintenance
 int Prefill(hFISH fish, int enable_thinking) { return 0x0; }
 
-int OnEOS(hFISH fish, int flag = 0x0) {
-    hChater gopt = fish->GetGenerator();
-    _INFO("[MEMORY] %s\t%s\n", SUM::GPU_Info(0x0).c_str(), SUM::CPU_Info(0x0).c_str());
-    _INFO("\t quant=%s\t DEBUG_switch={generate=%d %d} QKV=%d FFN=%d\n", SUM::sQuantInfo.c_str(), DEBUG.verGenerate, DEBUG.T_cuQK, DEBUG.verInferQKV,
-          DEBUG.verInferFFN);
-    _INFO("\n");  // next turn
-    return 0x0;
-}
-
 /*
     hello
         Hello! How can I assist you today?
@@ -1114,10 +1136,9 @@ int OnEOS(hFISH fish, int flag = 0x0) {
         What is the chemical symbol for the element gold?
         What is the longest river in the world?
 */
-#define _CHAT_V1_
-#ifdef _CHAT_V1_
 int Fish::Chat(int iter, int flag) {
-    int seq_len = curChatLen(LIMIT), next, token, generated_tokens = 0;
+    int seq_len = curChatLen(LIMIT), next, token;
+
     hTokenizer tokenizer = GetTokenizer();
     double start_time = 0, eval = 0;
     hChater gopt       = GetGenerator();
@@ -1129,10 +1150,10 @@ int Fish::Chat(int iter, int flag) {
     DEBUG.T_cuQK          = 0;
     DEBUG.T_kvcache_quant = 0;
     // g_dump_level          = -1;
-    string cur_answer, rendered_prompt;
+    gopt->cur_answer = "";
     gopt->OnPrompt(iter, nullptr);
-    int num_prompt_tokens = gopt->hBatch->nPrefill;
-    for (int i = 0; i < num_prompt_tokens - 1; i++) {  // prefill
+    int num_prompt_tokens = gopt->hBatch->nTokens(BATCH_INPUT::F_PROMPT_LEN);  
+    for (int i = 0; i < num_prompt_tokens - 1; i++) {                        // prefill
         eval = Evaluate({gopt->tsChat}, DL_BATCH_UPATE::BATCHofEMBED);
         gopt->hBatch->tok_pos++;
         if (gopt->hBatch->tok_pos == 1) {  // nRound == 2
@@ -1142,32 +1163,36 @@ int Fish::Chat(int iter, int flag) {
     }
     start_time = GST_ms();
     SUM::tX1 = 0.0, SUM::tQKV_forw = 0.0, SUM::tFFN = 0.0, SUM::tPreLogits = 0.0;
+    gopt->generated_tokens = 0;
     while (true) {
         eval = Evaluate({}, DL_BATCH_UPATE::BATCHofEMBED);
-        gopt->OnLogits();
+        gopt->OnLogits(nullptr, nullptr);
         hBatch->tok_pos++;
         // _INFO(" %d[%d->%d]", pos, token, next), fflush(stdout);
         token = gopt->Sample(hBatch);  // 3347
-        generated_tokens++;
+        gopt->generated_tokens++;
         if (token == tokenizer->S.eos || hBatch->tok_pos >= seq_len) {  //  stop generation if get EOS token
-            double elapsed_s = (double)(GST_ms() - start_time) / 1000.0;
-            double tps       = (generated_tokens > 0 && elapsed_s > 0) ? (generated_tokens - 1) / elapsed_s : 0.0;
             if (hBatch->tok_pos >= seq_len) {
                 if (outer_phase == P_TRAIN)
                     return 0x0;
                 _WARN("%scontext window full!%s\t", COLOR_YELLOW, COLOR_RESET);
             }
+            /*double elapsed_s = (double)(GST_ms() - start_time) / 1000.0;
+            double tps       = (generated_tokens > 0 && elapsed_s > 0) ? (generated_tokens - 1) / elapsed_s : 0.0;
             _INFO("\n%s[%.2f tk/s, %d tokens in %.2fs(qkv=%.3fs ffn=%.3fs PreLogits=%.3fs X=%.3fs)]%s\n===================================\n", COLOR_GREEN, tps,
                   generated_tokens - 1, elapsed_s, SUM::tQKV_forw / 1.0e6, SUM::tFFN / 1.0e6, SUM::tPreLogits / 1.0e6, SUM::tX1 / 1.0e6, COLOR_RESET);
 
             cur_answer += "\t\t" + SUM::sQuantInfo;
             STR2FILE("chat.csv", cur_answer, std::ofstream::out);
             OnEOS(shared_from_this());
+            */
             break;
         }
         hBatch->SetToken(hBatch->tok_pos, 0, 0, 0, token);
+        if (token != tokenizer->S.eos)
+            gopt->cur_answer += tokenizer->T2STR(token);
 
-        static int in_thinking_section = 0;
+        /*static int in_thinking_section = 0;
         static int in_bold_section     = 0;
         if (hBatch->tok_pos == num_prompt_tokens) {                     // first token of the response
             in_thinking_section = config.chat_sampler.enable_thinking;  // reset thinking state
@@ -1207,141 +1232,51 @@ int Fish::Chat(int iter, int flag) {
             }
         }
 
-        fflush(stdout);
+        fflush(stdout);*/
     }
-
     double tSample = (double)(GST_ms() - start_time) / 1000.0;
+    gopt->DisplayAnswer(gopt->cur_answer, 0x0);
     gopt->AfterSample(iter, tSample);
 
     return 0x0;
 }
-#else
-int Fish::Chat(int type, int flag) {
-    Statistic(0x100);
 
-    int seq_len           = curChatLen(LIMIT);                                                // config.chat_sampler.seq_len;
-    int num_prompt_tokens = 0, user_turn = 1, next, token, generated_tokens = 0, nRound = 0;  // pos = 0,
-    TOKENS prompt_tokens;
-    hTokenizer tokenizer = GetTokenizer();
-    double start_time = 0, eval = 0;
-    string cur_answer, rendered_prompt;
-    hChater gopt  = GetGenerator();
-    hBATCH hBatch = gopt->hBatch;                 //  curBatch(0x0);
-    assert(hBatch->hostToken->ne[0] >= seq_len);  // batch = hBatch->hostToken->ne[1] may >1
-    GST_Application* hApp = GST_Application::GetInstance();
-    // DEBUG.T_generate_most_layer = 1;
-    DEBUG.verGenerate = DEBUG.cmd_p1;  // use this flag to comparse accu/time of different version
-    // DEBUG.verGenerate     = 1;
-    DEBUG.T_cuQK          = 0;
-    DEBUG.T_kvcache_quant = 0;
-    g_dump_level          = 1;
+void GeneratOnPrompt::DisplayAnswer(const std::string& answer, int flag) {
+    int in_thinking_section = config.chat_sampler.enable_thinking;  // reset thinking state
+    int in_bold_section = 0, len = answer.size();
 
-    while (hApp->iRunning() > 0) {
-        if (user_turn) {
-            num_prompt_tokens = hBatch->FillPrompt(this, gopt->some_prompts, {}, nRound);  // DEBUG.prompts
-            generated_tokens  = 0;
-            cur_answer        = "";
-            user_turn         = 0, nRound++;
-            // hLoader->InitOneSamp(rendered_prompt, nullptr, fish.get(), 0x110);
-            _INFO("\n");
-            for (int i = 0; i < num_prompt_tokens - 1; i++) {  // prefill
-                eval = Evaluate({gopt->tsChat}, DL_BATCH_UPATE::BATCHofEMBED);
-                hBatch->tok_pos++;
-                if (hBatch->tok_pos == 1) {  // nRound == 2
-                    DEBUG_HERE;
-                    // K_EXIT(KOIFISH_EXIT_DEBUG);
-                }
-            }
-        }
-        if (hApp->iRunning() <= 0) {
-            _WARN("\n%s[APP] Stop running! code=%d%s\t", COLOR_YELLOW, hApp->iRunning(), COLOR_RESET);
-            break;
-        }
-
-        start_time = GST_ms();
-        SUM::tX1 = 0.0, SUM::tQKV_forw = 0.0, SUM::tFFN = 0.0, SUM::tPreLogits = 0.0;
-        if (DEBUG.verGenerate) {  //    Deprecated
-            QWEN3_PIPE qwen_pipe(shared_from_this(), 0x0);
-            T_generate_(shared_from_this(), &qwen_pipe, config.model.tpActivation, 1);
-        } else {
-            eval = Evaluate({}, DL_BATCH_UPATE::BATCHofEMBED);
-        }
-        gopt->OnLogits();
-        hBatch->tok_pos++;
-        // K_EXIT(KOIFISH_EXIT_DEBUG);
-
-        // _INFO(" %d[%d->%d]", pos, token, next), fflush(stdout);
-
-        token = gopt->Sample(hBatch);  // 3347
-        generated_tokens++;
-        if (token == tokenizer->S.eos || hBatch->tok_pos >= seq_len) {  //  stop generation if get EOS token
-            double elapsed_s = (double)(GST_ms() - start_time) / 1000.0;
-            double tps       = (generated_tokens > 0 && elapsed_s > 0) ? (generated_tokens - 1) / elapsed_s : 0.0;
-            if (hBatch->tok_pos >= seq_len) {
-                if (outer_phase == P_TRAIN)
-                    return 0x0;
-                _WARN("%scontext window full!%s\t", COLOR_YELLOW, COLOR_RESET);
-            }
-            _INFO("\n%s[%.2f tk/s, %d tokens in %.2fs(qkv=%.3fs ffn=%.3fs PreLogits=%.3fs X=%.3fs)]%s\n===================================\n", COLOR_GREEN, tps,
-                  generated_tokens - 1, elapsed_s, SUM::tQKV_forw / 1.0e6, SUM::tFFN / 1.0e6, SUM::tPreLogits / 1.0e6, SUM::tX1 / 1.0e6, COLOR_RESET);
-
-            user_turn = 1;
-            cur_answer += "\t\t" + SUM::sQuantInfo;
-            STR2FILE("chat.csv", cur_answer, nRound == 1 ? std::ofstream::out : std::ofstream::app);
-            OnEOS(shared_from_this());
-            if (nRound == DEBUG.prompts.size()) {  // only for debug
-                return 0x0;
-            }
-            continue;
-        }
-        hBatch->SetToken(hBatch->tok_pos, 0, 0, 0, token);
-
-        static int in_thinking_section = 0;
-        static int in_bold_section     = 0;
-        if (hBatch->tok_pos == num_prompt_tokens) {                     // first token of the response
-            in_thinking_section = config.chat_sampler.enable_thinking;  // reset thinking state
-            in_bold_section     = 0;                                    // reset bold state
-            if (in_thinking_section) {
-                _INFO(COLOR_YELLOW);
-            }
-        }
-
-        const char* piece = tokenizer->T2STR(token).c_str();  //
-        if (strcmp(piece, "</think>") == 0) {
+    if (in_thinking_section) {
+        _INFO(COLOR_YELLOW);
+    }
+    const char *base = answer.data(), *end = base + std::min<std::size_t>(len, answer.size());
+    for (const char* current = base; current < end; /* inside: current += n */) {
+        if (std::strncmp(current, "</think>", 2) == 0) {  // strcmp(piece, "</think>") == 0
             in_thinking_section = 0;
             if (!in_bold_section) {
                 _INFO(COLOR_RESET);
             }
+            current += strlen("</think>");
+        } else if (std::strncmp(current, "**", 2) == 0) {
+            // print the text before the marker
+            // fwrite(current_pos, 1, marker - current_pos, stdout);
+            in_bold_section = !in_bold_section;
+            if (in_bold_section) {
+                _INFO(COLOR_BOLD_RED);
+            } else if (in_thinking_section) {
+                _INFO(COLOR_YELLOW);
+            } else {
+                _INFO(COLOR_RESET);
+            }
+            current += strlen("**");
+            ;  // Move past the "**"
         } else {
-            const char *current_pos = piece, *marker;
-            while ((marker = strstr(current_pos, "**")) != NULL) {
-                // print the text before the marker
-                fwrite(current_pos, 1, marker - current_pos, stdout);
-
-                // flip the bold state and change colour accordingly
-                in_bold_section = !in_bold_section;
-                if (in_bold_section) {
-                    _INFO(COLOR_BOLD_RED);
-                } else if (in_thinking_section) {
-                    _INFO(COLOR_YELLOW);
-                } else {
-                    _INFO(COLOR_RESET);
-                }
-                current_pos = marker + 2;  // Move past the "**"
-            }
-            // print any remaining text after the last marker
-            if (token != tokenizer->S.eos) {
-                _INFO("%s", current_pos);
-                cur_answer += current_pos;
-            }
+            _INFO("%c", current[0]);
+            current++;
         }
-
-        fflush(stdout);
     }
-    // free(prompt_tokens);
-    return 0x0;
+    _INFO("\tconfi=%g", avgConfi / generated_tokens);
+    fflush(stdout);
 }
-#endif
 
 // Although each batch has B samples, but preLogits contains only dB samples(enough tokens since T is large)
 int GeneratOnPrompt::SampleOnBatch(hBATCH hBatch, float* fLoss, int B, int T, SampNanny* hLoader, int flag) {
@@ -1425,3 +1360,8 @@ std::vector<hWIKI> WIKI::MakeInstance(const std::string nam_, struct CLI_params&
     return wikis;
 }
 #endif
+
+void GeneratOnPrompt::BeforeGenerate(int flag) {
+    generated_tokens = 0;
+    avgConfi         = 0.0;
+}

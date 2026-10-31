@@ -40,11 +40,14 @@ FeatPicker::FeatPicker(const std::string& key_, int dimX_, int dimY_, int flag) 
 #ifdef __USE_GBDT__
     // PY_ITEM params[] = {{"feature_quanti", 8}, {"verbose", 1000}, {"objective", 0, "binary"}, {"n_estimators", 32}, {"adaptive", 0, "weight"}};
     PY_ITEM params[] = {{"feature_quanti", 128}, {"verbose", 1000},         {"objective", 0, "regression"}, {"n_estimators", 3200},
-                        {"learning_rate", 0.1},  {"adaptive", 0, "weight"}, {"metric", 0, "rmse"},          {"early_stopping_rounds", 5000}};
+                        {"learning_rate", 0.001},  {"adaptive", 0, "weight"}, {"metric", 0, "rmse"},          {"early_stopping_rounds", 5000}};
     DORT_wrap* dort  = static_cast<DORT_wrap*>(LiteMORT_init(params, sizeof(params) / sizeof(PY_ITEM), nullptr, 0x0));
     config           = dort->config;
     name             = name + "_GBDT";
 #endif
+    // SHAPE spMost = {nMostSamp, dim()};
+    // raw_feat = std::make_shared<GTensor>(this, spMost, typNUMBER::F32, true, GTensor::F_DEBUG);
+    // raw_feat->Alloc();
 }
 
 bool FeatPicker::SerialFeatures(Fish* hFish, const std::filesystem::path& path0, bool isSave, int flag) {
@@ -91,29 +94,19 @@ bool FeatPicker::CleanFeats(int flag) {
     _INFO("[Feature] Shrink from %d=>%d @%s\n", n0, nPickSamp, name.c_str());
     return true;
 }
-
+#ifdef __USE_GBDT__
 hTabularData FeatPicker::Coral2Tabular(hDataToken coral, hFISH backbone, MODEL_ARCH model, int flagD, int flag) {
     assert(model == DECISION_MAISUI);
     assert(dimY == 1);
     //  BeforeCollate(coral);
-    nPickSamp = 0;
 
-    backbone->CollateHidden(coral, sKey);  // KOIFISH_FEATURE_NULL
+    // backbone->CollateHidden(coral, sKey);  // KOIFISH_FEATURE_NULL
 
-#ifdef __USE_GBDT__
-    // PY_ITEM params[] = {{"feature_quanti", 8}, {"verbose", 1000}, {"objective", 0, "binary"}, {"n_estimators", 32}, {"adaptive", 0, "weight"}};
-    // PY_ITEM params[] = {{"feature_quanti", 8},  {"verbose", 1000},         {"objective", 0, "regression"},
-    //                     {"n_estimators", 3200}, {"adaptive", 0, "weight"}, {"metric", 0, "rmse"}};
-    // DORT_wrap* dort  = static_cast<DORT_wrap*>(LiteMORT_init(params, sizeof(params) / sizeof(PY_ITEM), nullptr, 0x0));
-    // config           = dort->config;
 
-    // _INFO("\n[DORT] nSamp=%d,nFeat_0=%d %s hExDA=%p********* \n\n", nSamp, nFeat_0, dort->merge_info.c_str(), dort->hEDA_train);
-    // FeatsOnFold* hFold = Feats2DORT(config, dort, hidden_feats, flag | FeatsOnFold::DF_TRAIN);
 
-    //  flagD = flag | FeatsOnFold::DF_TRAIN,
     int nRow = raw_feat->ne[1], nFeat = nRow - dimY;
     ExploreDA* hEDA_train = new ExploreDA(config, "DORT_wrap", flag);
-    assert(nPickSamp <= raw_feat->ne[0]);
+    assert(0 < nPickSamp && nPickSamp <= raw_feat->ne[0]);
     if (nFeat <= 0) {
         _ERROR("[Feature] Feature raw is empty(nPick=%d)!\n", nPickSamp);
         return nullptr;
@@ -121,12 +114,11 @@ hTabularData FeatPicker::Coral2Tabular(hDataToken coral, hFISH backbone, MODEL_A
     hTabularData hData = Tensor2Tabular(config, hEDA_train, raw_feat.get(), nFeat, nPickSamp, flagD);
     hData->nam         = coral->Name() + "_" + std::to_string(nPickSamp) + "x" + std::to_string(nFeat);
     // hTrainData->nClas = 2;
-#else
-    NOT_IMPLEMENTED;
-#endif
+
     // hData.reset();     return -1;  //only for debug
     return hData;
 }
+#endif
 
 int FeatPicker::Train(int flag) {
 #ifdef __USE_GBDT__
@@ -250,8 +242,8 @@ SparseNeuron::SparseNeuron(const std::string& key_, const JSON& jit, Fish* hG_, 
         isSparse = true;
     }
     if (isSparse) {
-        method  = hG_->config.model.sparse.method;
-        hPicker = std::make_shared<HotPicker>(this);
+        method = hG_->config.model.sparse.method;
+        // hPicker = std::make_shared<HotPicker>(this);
     }
 }
 
@@ -260,8 +252,8 @@ SparseNeuron::SparseNeuron(const std::string& key_, Fish* hG_, int flag) : GeNeu
         isSparse = true;
     }
     if (isSparse) {
-        method  = hG_->config.model.sparse.method;
-        hPicker = std::make_shared<HotPicker>(this);
+        method = hG_->config.model.sparse.method;
+        // hPicker = std::make_shared<HotPicker>(this);
     }
 }
 
@@ -381,6 +373,7 @@ bool SparseNeuron::InitLoRA(LoAB_CARD::typW tpLora, const std::string& wname, in
 }
 
 bool SparseNeuron::Sparsing(int flag) {
+    auto hPicker = probers[0]->hPicker;
     if (hPicker == nullptr)
         return false;
     int iRet = hPicker->Train(flag);
@@ -388,6 +381,7 @@ bool SparseNeuron::Sparsing(int flag) {
 };
 
 bool SparseNeuron::GetHotIndex(int nPoint, floatI* data, int* hot, int flag) {
+    auto hPicker = probers[0]->hPicker;
     if (hPicker == nullptr)
         return false;
     hPicker->Predict(nPoint, data, hot);
@@ -395,6 +389,7 @@ bool SparseNeuron::GetHotIndex(int nPoint, floatI* data, int* hot, int flag) {
 }
 
 bool SparseNeuron::OnData(hGTensor X, hGTensor Y, int* hot, int flag) {
+    auto hPicker = probers[0]->hPicker;
     if (hPicker == nullptr)
         return false;
     if (method == 1) {
@@ -416,66 +411,14 @@ void Fish::Sparsing(int flag) {
 }
 
 bool GeNeuron::InitFeatPicker(const std::string& key, int dim_, int flag) {
-    hPicker = std::make_shared<FeatPicker>(key, dim_);
+    assert(0);  // deprecated
+    // hPicker = std::make_shared<FeatPicker>(key, dim_);
     // hGTensor hidden_feats = nullptr;
     // std::vector<Grusoft::FeatVector*> hidden_feats;return true;
-    hFish->Pickers[key] = hPicker;
+    // hFish->Pickers[key] = hPicker;
     return true;
 }
-
-bool GeNeuron::AppendFeats(hGTensor fTensor, int x, int flag) {
-    assert(hPicker != nullptr);
-    hBATCH hBatch     = hFish->curBatch(0x0);
-    hGTensor raw_feat = hPicker->raw_feat;
-    int sampInBatch = fTensor->ne[2], ldT = fTensor->ne[1], ldH = fTensor->ne[0], i, samp, nSamp = raw_feat->ne[0];
-    int pid           = hPicker->nPickSamp;
-    const floatX* dev = ToX(fTensor);
-    floatX *host_data = new floatX[ldH], *fv;
-    assert(ldH <= raw_feat->ne[1]);
-    for (samp = 0; samp < sampInBatch; samp++, pid++, hPicker->nPickSamp++) {
-        hSAMP hSamp = hBatch->curSamps[samp];
-        assert(pid <= nSamp);
-        D2H(dev + fTensor->size() - hSamp->pad_len * ldH, host_data, sizeof(floatX) * ldH);  // last hidden feat
-        // PrintTensor<floatX>("host_data", host_data, false, 1, ldH, 1, 1, -1);
-        for (i = 0; i < hPicker->dimY; i++) {  // i_th target
-            float a = hBatch->user_answer[samp * hPicker->dimY + i];
-            assert(a == 1.0f || a == 0.0f);
-            raw_feat->Set(pid, ldH + i, 0, 0, a);
-        }
-        for (i = 0; i < ldH; i++) {
-            float a = T2Float(host_data + i);
-            raw_feat->Set(pid, i, 0, 0, a);
-
-            /*  @MAT_ROW2FEAT_
-            Wrong -  each FeatVector need all samp's element, so not available here!
-            Grusoft::FeatVector* hFV    = nullptr;
-            Grusoft::FeatsOnFold* hFold = nullptr;
-            int flagF = flag, id = hidden_feats.size();
-            string desc = "feat_" + std::to_string(id);
-            assert(!BIT_TEST(flagF, Grusoft::FeatVector::VAL_REFER));
-            switch (feat->type) {
-                case typNUMBER::BF16:
-                    hFV = new FeatVec_T<float>(hFold, nSamp_, id, desc, flagF);
-                    hFV->Set_bf16(nSamp_, (bf16*)samp_data);
-                    break;
-                case typNUMBER::F32:
-                    hFV = new FeatVec_T<float>(hFold, nSamp_, id, desc, flagF);
-                    hFV->Set(nSamp_, samp_data);
-                    break;
-                default:
-                    NOT_IMPLEMENTED;
-                    break;
-            }
-            hidden_feats.push_back(hFV);
-            */
-        }
-    }
-    // PrintTensor<float>("Target", (float*)(raw_feat->data) + ldH * nSamp, false, nSamp, 1, 1, 1, -1);
-    // PrintTensor<float>("feature", (float*)(raw_feat->data), false, nSamp, ldH, 1, 1, -1);
-    delete[] host_data;
-    return true;
-}
-
+#ifdef __USE_GBDT__
 /*
     v0.1	cys
         11/17/2025
@@ -631,3 +574,4 @@ hTabularData Tensor2Tabular(LiteBOM_Config config, ExploreDA* edaX, void* hOBJ, 
     //	printf("\t!!! [%s] nLocalConst=%ld !!! \n",hFold->nam.c_str(), nLocalConst);
     return hFold;
 }
+#endif

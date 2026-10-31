@@ -1170,7 +1170,7 @@ hGTensor huTensor::Partial(const string& name_, size_t szOff, const SHAPE shape,
         sub->name[0] = '\0';
     size_t sz1 = sub->nByte(), sz2 = sizeof(floatGama) * (ne[0] + ne[1]), szAll = nByte() + szGama;
     if (szOff + sz1 > szAll) {
-        _ERROR("Out of size! szOff=%ld sub=%ld most=%ld. x=%ld", szOff, sz1, szAll, szOff + sz1 - szAll);
+        _ERROR("Out of size! @<huTensor::Partial> szOff=%ld sub=%ld most=%ld. x=%ld", szOff, sz1, szAll, szOff + sz1 - szAll);
         K_EXIT(KOIFISH_TENSOR_PARTIAL);
     }
     // assert(BitPE(type) == 8 || BitPE(type) == 16);

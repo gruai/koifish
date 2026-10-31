@@ -8,8 +8,8 @@
  *  \author Yingshi Chen
  */
 #include "../../Device/Pipe.hpp"
-#include "../../Manifold/Neuron.hpp"
 #include "../../Shoal/Fish.hpp"
+#include "../../Shoal/Neuron.hpp"
 #include "./kernel/embed.cuh"
 // #include "./kernel/gelu.cuh"
 #include "./kernel/layernorm.cuh"
@@ -154,13 +154,6 @@ __global__ void CU_init_i(int* vec, int n) {
 template <typename T>
 __global__ void CU_sample(T* prelogitst, int* index, int dim, float coin, int flag) {
     return;
-}
-
-bool GeneratOnPrompt::OnLogits(int flag) {
-    D2H(hClsLogits->data, hClsLogits->host_data, hClsLogits->nByte());  //  0x00007fff30000000  0x0000555558a9f6a0
-    // PrintTensor<floatLogits>("_logits", logits, true, tokenizer->nVocab(), 1, 1, 1, -1);
-    // _INFO("\n%s(Invalid logits!)%s\n", COLOR_RED, COLOR_RESET);
-    return true;
 }
 
 template <typename T>

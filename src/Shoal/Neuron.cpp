@@ -1,4 +1,3 @@
-
 /**
  *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
@@ -6,11 +5,22 @@
  *  \brief Neurons & Perceptrons
  *  \author Yingshi Chen
  */
-#include <set>
-
 #include "../Shoal/gLLM.hpp"
 #include "../lenda/kernel/SVD.hpp"
 #include "Optimizer.hpp"
+
+MAP_S2CLASS GeNeuron::registry_S2C;
+
+bool GeNeuron::InitRegister(int flag) {
+    registry_S2C.insert_or_assign("Head4Token", std::type_index(typeid(Head4Token)));
+    registry_S2C.insert_or_assign("LayerNormal", std::type_index(typeid(LayerNormal)));
+    registry_S2C.insert_or_assign("SelfAttention", std::type_index(typeid(SelfAttention)));
+    registry_S2C.insert_or_assign("FFN", std::type_index(typeid(FFN)));
+    // ["LayerNormal"] = std::type_index(typeid(LayerNormal));
+
+    return true;
+}
+// const bool _init = GeNeuron::InitRegister(0x1);  dangeourous and hard to debug
 
 hNEURON GeNeuron::MakeInstance(Fish* hG_, void* ctx, const string& guid, const string& jKey, const JSON& jit, int flag) {
     try {
@@ -79,7 +89,7 @@ GeNeuron::GeNeuron(const std::string& key_, const JSON& jit, Fish* hG_, int flag
             if (jit.is_array()) {
                 for (const auto& item : jit) {
                     if (item.is_string()) {
-                        string sVal = J_get<string>(item);  //item.template get<string>();
+                        string sVal = J_get<string>(item);  // item.template get<string>();
                         std::transform(sVal.begin(), sVal.end(), sVal.begin(), ::toupper);
                         if (sVal == "SPARSE") {
                             isSparse = true;
@@ -89,7 +99,7 @@ GeNeuron::GeNeuron(const std::string& key_, const JSON& jit, Fish* hG_, int flag
                             assert(0);  // need BLAS support
                         }
                     } else if (item.is_number()) {
-                        double val = J_get<double>(item);   //item.template get<double>();
+                        double val = J_get<double>(item);  // item.template get<double>();
                         jvals.push_back(val);
                     }
                 }
@@ -305,10 +315,10 @@ bool Head4Token::BuildPrelogist(int flag) {
 int Head4Token::dB4Logits(int flag) {
     if (hFish->curTokenSet == nullptr) {  // no train/eval, just chat
         /*if (hFish->config.model.preLogits_dB < 0)
-            dB4Logit = nMostSample;
+            dB4Logit_ = nMostSample;
         else
-            dB4Logit = hFish->config.model.preLogits_dB;
-        assert(dB4Logit > 0);*/
+            dB4Logit_ = hFish->config.model.preLogits_dB;
+        assert(dB4Logit_ > 0);*/
         return 1;
     } else {
         auto hBatch = hFish->curBatch(0x0);
@@ -688,6 +698,8 @@ LayerSoftmax::LayerSoftmax(Fish* hG_, const std::string& key_, const JSON& jit, 
 }
 
 LayerNormal::LayerNormal(Fish* hG_, const std::string& key_, const JSON& jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
+    // registry_S2C["LayerNormal"] = std::type_index(typeid(LayerNormal));
+
     // delta = gBUFF->delta;
     // isRMS = true;
     if (jvals.size() == 1) {
@@ -838,6 +850,10 @@ hGTensor GeNeuron::AfterMing(RLS_BP* hRLS, hGTensor cur, int flag) {
             gTN0(cur, "%s", name.c_str());
         }
     } else {
+        for (auto prober : probers) {
+            if (prober->stage == PROBER::AFTER_MING)
+                prober->CollectFeats(this, nullptr);
+        }
         if (isForward()) {
         } else {  // After backward, UpdateParam
             if (!hFish->config.scheduling.isUpdateParamV0()) {

@@ -10,11 +10,11 @@
 
 #include "../CLI_params.hpp"
 #include "../Device/EDevice.hpp"
-#include "Neuron.hpp"
+#include "../Utils/GST_rander.hpp"
 #include "TGraph.hpp"
 
 class EDGE_DEVICES;
-
+class GeNeuron;
 typedef enum {
     FIX,  //  static
     TRI_LINE,

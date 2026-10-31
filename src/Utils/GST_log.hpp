@@ -58,6 +58,7 @@ inline bool NOT_DUMP(int t = 0) {
 }
 inline bool DUMP(int t = 0) { return !NOT_DUMP(t); }
 
+std::string _sLOG(const char* format, ...);
 void _LOG(DUMP_LEVEL level, const char* format, ...);
 
 #define _INFO(...) _LOG(DUMP_INFO, __VA_ARGS__)
@@ -74,7 +75,7 @@ void _LOG(DUMP_LEVEL level, const char* format, ...);
     }
 
 void _TIME_INFO(const std::string& info, double fmillis, int flag = 0x0);
-
+#define _sINFO(...) _LOG(DUMP_INFO, __VA_ARGS__)
 template <typename T>
 void inline PrintT(const char* title, const T* src, int n1, int n2, int n3 = 1, int n4 = 1, int flag = 0x0) {
     if (g_dump_level > 0 && flag >= 0)

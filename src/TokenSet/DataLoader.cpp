@@ -163,12 +163,12 @@ int SampNanny::PickSomeTokens(GRander& rander, int nMostToken, std::vector<int>&
     return 0x0;
 }
 
-TOKEN_ID BATCH_INPUT::GetLabel(int label_pos, int k, int flag) {
-    int32_t* labels = TO<int32_t>(hostLabel);
-    size_t off      = hostLabel->Offset(label_pos, k, 0, 0);
-    TOKEN_ID tok    = labels[off];
-    return tok;
-}
+// TOKEN_ID BATCH_INPUT::GetLabel(int label_pos, int k, int flag) {
+//     int32_t* labels = TO<int32_t>(hostLabel);
+//     size_t off      = hostLabel->Offset(label_pos, k, 0, 0);
+//     TOKEN_ID tok    = labels[off];
+//     return tok;
+// }
 
 void BATCH_INPUT::SetToken(int tok_pos, int idSamp, int i2, int i3, int tok, HUA_STATE ti, int flag) {
     double t0 = GST_ms();
@@ -204,6 +204,7 @@ bool BATCH_INPUT::SetLabel(int label0, int label_pos, int idSamp, HUA_STATE ti, 
     size_t off      = label_pos + idSamp * hostLabel->ne[0];
     int noise_id = hDict->S._noise, label = label0;
     noise_id = hDict->S._mask;
+
     if (label0 < 0) {  // for example, token="<|endoftext|>", then no need to set label!
         BIT_SET(mask32[off], MASK_FLAG::F_IGNORE_LOSS);
     } else if (curNoise == MASK_NOISE) {
@@ -221,6 +222,9 @@ bool BATCH_INPUT::SetLabel(int label0, int label_pos, int idSamp, HUA_STATE ti, 
         }
     } else {  // NO_NOISE
         BIT_RESET(mask32[off], MASK_FLAG::F_IGNORE_LOSS);
+        // if(label0==hDict->S._pad){
+        //     BIT_SET(mask32[off], MASK_FLAG::F_IGNORE_LOSS);
+        // }
     }
     if (iter == 18 && off == 5759) {  // label_pos==9599
         DEBUG_HERE;
@@ -260,7 +264,7 @@ bool BATCH_INPUT::PickTransitions(const std::vector<hSAMP>& samps, int iter, int
 
 // May be pad_id/mask_id
 TOKEN_ID SampNanny::TokenAt(size_t pos, hSAMP samp, int flag) {
-    if (pos == hCoral->tokens.size() && samp->pad_len == 0)
+    if (pos == hCoral->tokens.size() && samp->last_pad_len == 0)
         return hDict->S.eos;
     /**
      * if (pos >= hNanny->nTokens()) {
@@ -270,7 +274,7 @@ TOKEN_ID SampNanny::TokenAt(size_t pos, hSAMP samp, int flag) {
      */
     if (samp != nullptr) {
         assert(pos >= samp->pos);
-        if (samp->pad_len > 0 && pos + samp->pad_len >= samp->pos + samp->len) {
+        if (samp->last_pad_len > 0 && pos + samp->last_pad_len >= samp->pos + samp->len) {
             return hDict->S._pad;
         }
         if (pos >= samp->pos + samp->len && isAppendPad) {
@@ -289,35 +293,34 @@ TOKEN_ID SampNanny::TokenAt(size_t pos, hSAMP samp, int flag) {
 
     return token;
 }
-
-int SampNanny::CollateSampTokens(hSAMP samp, int nMost, int flag) {
-    if (!samp->ToTokens(hCoral, flag)) {
+/** 20261029 old version of FillOneSamp, keep at last 3 months!
+ * int SampNanny::CollateSampTokenLabels(hSAMP samp, int nMost, int flag) {
+    if (!samp->ToTokens(hCoral, SAMP::DAOYIN, flag)) {
         return KOIFISH_COLLATE_1SAMP;
     }
 
-    auto& tmp_toks = samp_toks;
-    tmp_toks.clear();
+    samp_toks.clear();
     if (isAddBOS) {
-        tmp_toks.push_back(hDict->S.bos);
+        samp_toks.push_back(hDict->S.bos);
     }
     size_t starting = samp->pos + samp->jump, nBlank = 0;
-    if (tmp_toks.size() + samp->len < nMost && isPrefixBlank) {
-        nBlank         = nMost - (tmp_toks.size() + samp->len);
+    if (samp_toks.size() + samp->len < nMost && isPrefixBlank) {
+        nBlank         = nMost - (samp_toks.size() + samp->len);
         TOKEN_ID blank = hDict->whitespace_token;  //" "
         for (int64_t i = 0; i < nBlank; ++i) {
-            tmp_toks.push_back(blank);
+            samp_toks.push_back(blank);
         }
         samp->prefix_blank = nBlank;
     }
 
-    for (int64_t i = tmp_toks.size(); i < nMost; ++i) {
+    for (int64_t i = samp_toks.size(); i < nMost; ++i) {
         TOKEN_ID token = TokenAt(starting++, samp);
         // if (DEBUG.train_datas == 1)
         //     token = i;                   // only for debug
         //  _INFO("%d,", token);
-        tmp_toks.push_back(token);
-    } /**/
-    assert(tmp_toks.size() == nMost);
+        samp_toks.push_back(token);
+    }
+    assert(samp_toks.size() == nMost);
     if (samp->prefix_blank > 0) {
         // sentence = hDict->Decode(samp_toks);
         // _INFO("\n    (%ld,%d)@\"%s\"", samp->pos, samp->jump, sentence.c_str());
@@ -328,7 +331,7 @@ int SampNanny::CollateSampTokens(hSAMP samp, int nMost, int flag) {
 int BATCH_INPUT::FillOneSamp(SampNanny* hNanny, int idSamp, hSAMP samp, const CLI_params& params, float T_x, int flag) {
     int iRet        = 0x0;
     size_t starting = samp->pos + samp->jump, _nctx = params.n_ctx(), _pos = 0;  //    tokens_input->ne[0];
-    if ((iRet = hNanny->CollateSampTokens(samp, _nctx, 0x0)) != 0x0) {
+    if ((iRet = hNanny->CollateSampTokenLabels(samp, _nctx, 0x0)) != 0x0) {
         return iRet;
     }
     auto& flow = huaers.empty() ? transiX.flow : huaers[idSamp]->flow;
@@ -349,7 +352,8 @@ int BATCH_INPUT::FillOneSamp(SampNanny* hNanny, int idSamp, hSAMP samp, const CL
 
     bool isPad = false;
     for (auto token : hNanny->samp_toks) {
-        isPad = token == hDict->S._pad;  //  151643="<|endoftext|>"
+        int flagToken = 0x0;
+        isPad         = token == hDict->S._pad;  //  151643="<|endoftext|>"
         if (isPad) {
             nPadToken++;
         }
@@ -357,7 +361,7 @@ int BATCH_INPUT::FillOneSamp(SampNanny* hNanny, int idSamp, hSAMP samp, const CL
         if (needLabel()) {
             label_pos = hNanny->isNoShiftLabel() ? i + i_off : i + i_off - 1;  // Shift label back 1 (In most case: self-regression )
             if (label_pos >= 0) {
-                SetLabel(token, label_pos, idSamp, flow[label_pos]);
+                SetLabel(token, label_pos, idSamp, flow[label_pos], flagToken);
             }
         }
         double t0 = GST_ms();
@@ -371,8 +375,8 @@ int BATCH_INPUT::FillOneSamp(SampNanny* hNanny, int idSamp, hSAMP samp, const CL
         ++_pos;
     }
 
-    // assert(nPad < _nctx);
-    SetLen(idSamp, _nctx - samp->pad_len);
+    // assert(samp->last_pad_len == nPadToken);  //failed for sft_[minimind]_ & MaskDiffusion
+    SetLen(idSamp, _nctx - samp->last_pad_len);
     if (++label_pos < _nctx && needLabel()) {                                      // last label
         int _label = isPad ? -hDict->S._pad : hNanny->TokenAt(starting, nullptr);  // pad has no label
         SetLabel(_label, label_pos, idSamp, flow[label_pos]);
@@ -380,80 +384,160 @@ int BATCH_INPUT::FillOneSamp(SampNanny* hNanny, int idSamp, hSAMP samp, const CL
     samp->User2Batch(shared_from_this());
     return iRet;
 }
-
-/*
-v0  Deprecated since 2026/09/15
-void BATCH_INPUT::FillOneSamp(SampNanny* hNanny, int idSamp, hSAMP samp, const CLI_params& params, float T_x, int flag) {
-    samp->UpdateTokens(hNanny);
-    hNanny->samp_toks.clear();
-    size_t starting = samp->pos + samp->jump, _nctx = params.n_ctx(), tok_pos = 0;  //    tokens_input->ne[0];
-    auto& flow = huaers.empty() ? transiX.flow : huaers[idSamp]->flow;
-    if (samp->len != _nctx && hPLAN_1 != nullptr) {
-        hPLAN_1->Transition4Samp(samp.get());
-        flow = hPLAN_1->samp_flow;  // huaers[0]->flow;
-        assert(flow.size() == _nctx);
-    }
-    int label_pos = -1, i_off = 0;  //
-    if (hNanny->isAddBOS) {         // isAddBOS =false when QWEN or chat(InitOneSamp)
-        SetToken(0, idSamp, 0, 0, hDict->S.bos);
-        hNanny->samp_toks.push_back(hDict->S.bos);
-        tok_pos = 1;
-        i_off   = 1;
+ */
+int SampNanny::CollateSampTokenLabels(hSAMP samp, int nMost, int flag) {
+    if (!samp->ToTokens(hCoral, SAMP::DAOYIN, flag)) {
+        return KOIFISH_COLLATE_1SAMP;
     }
 
-    if (DEBUG.verSampJump < 0)
-        starting = samp->pos * _nctx;
-    // if (hNanny->nMostToken > 0)
-    //     _nctx = std::min((int)_nctx, nMostToken);
-    bool isPad = false;
-    // if (hOPT->GetITER() == 18 && idSamp == 8)
-    //     DEBUG_HERE;
-
-    for (int64_t i = 0; i < _nctx; ++i, ++tok_pos) {
-        TOKEN_ID token = hDict->S.eos;
-        if (samp->pos == 4781 && i == 16)
-            DEBUG_HERE;
-        // eos ???
-        if (starting >= hNanny->nTokens()) {
-            if (hNanny->isRecycle)  // Deprecated ,since no recycle(always padding)
-                starting = 0;
+    samp_toks.clear();
+    samp_labels.clear();
+    if (isAddBOS) {
+        samp_toks.push_back(hDict->S.bos);
+    }
+    size_t starting = samp->pos + samp->jump, nBlank = 0;
+    if (samp_toks.size() + samp->len < nMost && isPrefixBlank) {
+        nBlank         = nMost - (samp_toks.size() + samp->len);
+        TOKEN_ID blank = hDict->whitespace_token;  //" "
+        for (int64_t i = 0; i < nBlank; ++i) {
+            samp_toks.push_back(blank);
         }
-        // if (starting < _nToken)
-        token = hNanny->TokenAt(starting, samp);
-        // else
-        //     token = hDict->S.eos;
-        if (DEBUG.train_datas == 1)
-            token = i;                   // only for debug
-        isPad = token == hDict->S._pad;  //  151643="<|endoftext|>"
-        if (isPad) {
-            nPadToken++;
-        }
+        samp->prefix_blank = nBlank;
+    }
 
-        ++starting;
-        label_pos = hNanny->isNoShiftLabel() ? i + i_off : i + i_off - 1;  // Shift label back 1 (In most case: self-regression )
-        if (label_pos >= 0) {
-            SetLabel(token, label_pos, idSamp, flow[label_pos]);
-        }
-
-        hNanny->samp_toks.push_back(token);
+    for (int64_t i = samp_toks.size(); i < nMost; ++i) {
+        TOKEN_ID token = TokenAt(starting++, samp);
+        // if (DEBUG.train_datas == 1)
+        //     token = i;                   // only for debug
         //  _INFO("%d,", token);
-        if (tok_pos < _nctx) {  //  i + i_off < _nctx
-            // assert(tok_pos<=hostToken->size());
-            SetToken((int)tok_pos, (int)idSamp, 0, 0, token, flow[tok_pos]);
+        samp_toks.push_back(token);
+    } /**/
+    assert(samp_toks.size() == nMost);
+    if (samp->prefix_blank > 0) {
+        // sentence = hDict->Decode(samp_toks);
+        // _INFO("\n    (%ld,%d)@\"%s\"", samp->pos, samp->jump, sentence.c_str());
+    }
+    TOKEN_ID pad_id = hDict->S._pad, last_label, last_tok = samp_toks[samp_toks.size() - 1];
+    int i = 0, last_valid = -1, result_pos = -1;
+    bool firstTokenIsLabel = isNoShiftLabel();
+    for (auto tok : samp_toks) {
+        if (tok == pad_id) {
+            hBatch->nPadToken++;
+        } else
+            last_valid = i;
+        // if (tok == hBatch->result_marker) {
+        //     result_pos = i;
+        // }
+        if (i > 0 || isAddBOS || firstTokenIsLabel)
+            samp_labels.push_back(tok);
+        i++;
+    }
+    // pad has no label
+    if (samp_labels.size() < samp_toks.size()) {  // each token should has a label
+        assert(!isAddBOS && !firstTokenIsLabel);
+        assert(samp_labels.size() == nMost - 1);
+        last_label = last_tok == pad_id ? -hDict->S._pad : TokenAt(starting, nullptr);
+        samp_labels.push_back(last_label);
+    }
+    assert(last_valid >= 0 && samp_toks[last_valid] != pad_id);
+    if (hCoral->result_marker >= 0) {
+        // for (i = 0; i <= result_pos; i++) {
+        //     assert(samp_labels[i] >= 0);
+        //     samp_labels[i] = -samp_labels[i] - 1;  // if (label0 < 0) BIT_SET(mask32[off], MASK_FLAG::F_IGNORE_LOSS);
+        // }
+        hBatch->nResultToken += samp->nzROI(0);
+    }
+    // assert(samp->last_pad_len == nPadToken);  //failed for sft_[minimind]_ & MaskDiffusion
+    return 0x0;
+}
+
+int BATCH_INPUT::FillOneSamp(SampNanny* hNanny, int idSamp, hSAMP samp, const CLI_params& params, float T_x, int flag) {
+    int iRet        = 0x0;
+    size_t starting = samp->pos + samp->jump, _nctx = params.n_ctx(), _pos = 0;  //    tokens_input->ne[0];
+    if ((iRet = hNanny->CollateSampTokenLabels(samp, _nctx, 0x0)) != 0x0) {
+        return iRet;
+    }
+    auto& flow = huaers.empty() ? transiX.flow : huaers[idSamp]->flow;
+    if (samp->len != _nctx) {
+        if (hPLAN_1 != nullptr) {
+            hPLAN_1->Transition4Samp(samp.get());
+            flow = hPLAN_1->samp_flow;  // huaers[0]->flow;
+            assert(flow.size() == _nctx);
+        }
+    }
+    int label_pos = -1, i_off = 0, i = 0;  //
+    if (hNanny->isAddBOS) {                // isAddBOS =false when ARCH=QWEN or chat(InitOneSamp)
+        // SetToken(0, idSamp, 0, 0, hDict->S.bos);
+        // hNanny->samp_toks.push_back(hDict->S.bos);
+        _pos  = 1;
+        i_off = 1;
+    }
+
+    // bool isPad = false;
+    auto& labels = hNanny->samp_labels;
+    for (auto token : hNanny->samp_toks) {
+        int flagToken = 0x0;
+        // isPad         = token == hDict->S._pad;  //  151643="<|endoftext|>"
+        // if (isPad) {
+        //     nPadToken++;
+        // }
+        // ++starting;
+        if (needLabel()) {
+            label_pos = hNanny->isNoShiftLabel() ? i + i_off : i + i_off - 1;  // Shift label back 1 (In most case: self-regression )
+            if (label_pos >= 0) {
+                SetLabel(labels[label_pos], label_pos, idSamp, flow[label_pos], flagToken);
+            }
+        }
+        double t0 = GST_ms();
+        if (_pos < _nctx) {  //  i + i_off < _nctx
+            // assert(_pos<=hostToken->size());
+            SetToken((int)_pos, (int)idSamp, 0, 0, token, flow[_pos]);
         } else {
             samp->last_target = token;
         }
+        ++i;
+        ++_pos;
     }
-    // assert(nPad < _nctx);
-    SetLen(idSamp, _nctx - samp->pad_len);
-    if (++label_pos < _nctx) {                                                     // last label
-        int _label = isPad ? -hDict->S._pad : hNanny->TokenAt(starting, nullptr);  // pad has no label
-        SetLabel(_label, label_pos, idSamp, flow[label_pos]);
+
+    SetLen(idSamp, _nctx - samp->last_pad_len);
+    if (++label_pos < _nctx && needLabel()) {  // last label
+        // int _label = isPad ? -hDict->S._pad : hNanny->TokenAt(starting, nullptr);  // pad has no label
+        SetLabel(labels[label_pos], label_pos, idSamp, flow[label_pos]);
     }
-}*/
+    samp->User2Batch(shared_from_this());
+    return iRet;
+}
+
+void BATCH_INPUT::SetLen(int i0, int len, int flag) {
+    if (hostLen != nullptr)
+        hostLen->Set(i0, 0, 0, 0, len);
+}
+
+size_t BATCH_INPUT::nFillTokens(int flag) {
+    int nFill = 0;
+    for (auto samp : curSamps) nFill += samp->nCollate;
+    if (nFill > 0)
+        return nFill;
+    else {
+        assert(nFill <= hostToken->size());
+        return hostToken->size();
+    }
+}
+int BATCH_INPUT::nTokens(int flag) const {
+    int nz = hostToken->size();
+    if (BIT_TEST(flag, BATCH_INPUT::F_IGNORE_PAD)) {
+        nz -= nPadToken;
+    } else if (BIT_TEST(flag, BATCH_INPUT::F_PROMPT_LEN)) {
+        assert(curSamps.size() == 1);
+        nz = curSamps[0]->nPrefill;
+    }
+    return nz;
+}
 TOKENS BATCH_INPUT::curTokens(int flag) const {
+    assert(curSamps.size() == 1);
     TOKENS tokens;
-    for (int i = 0; i < nTokens(); i++) {
+    int nz = nTokens(flag);
+    for (int i = 0; i < nz; i++) {
         tokens.push_back(host_toks[i]);
     }
     return tokens;
@@ -505,6 +589,7 @@ bool SampNanny::isNoShiftLabel() const { return !hFish->config.model.isShiftLabe
 
 bool SampNanny::isEval(int t, int flag) {
     assert(type == DT_EVAL);
+
     if (eval_every > 0 && t % eval_every == 0) {
         float train_last = hOPT->trainInfos().Last();
         if (t == 0) {
@@ -566,7 +651,7 @@ bool BATCH_INPUT::BeforeCollate(int iter_, int flag) {
     hostToken->Zero();
     section_metas.clear();
     nValidTokens = hostToken->size();
-    nMaskToken = 0, nNoiseToken = 0, nPadToken = 0;
+    nMaskToken = 0, nNoiseToken = 0, nPadToken = 0, nResultToken = 0;
     user_answer.clear();
     curSamps.clear();
     return true;
@@ -596,9 +681,9 @@ size_t SampNanny::CollateBatch(int iter, Fish* fish) {
     size_t nSampInBatch  = fish->config.n_batch();
     hBatch->nValidTokens = hBatch->hostToken->size();
     GST_TIC(T0);
-    bool isLog = false;
+    bool isLog = DEBUG.dump_BatchDetail;
     if (isLog)
-        _INFO("BATCH_%ld ", next_sample);
+        _INFO("\n-------- BATCH_%d (samp_0=%ld)-------- ", iter, next_sample);
     hSAMP samp            = nullptr;
     hGTensor tokens_input = fish->Input(), target_label = fish->Target();  // hOPT->hTargetProbs();
     assert(tokens_input != nullptr);
@@ -618,7 +703,9 @@ size_t SampNanny::CollateBatch(int iter, Fish* fish) {
             _WARN("<%s> Failed to get next sample!!!\n", __func__);
             return 0x0;
         }
+        // if(!samp->sLabel.empty()){
 
+        // }
         if (GST_ms() - tic > 10 * 1000) {  // for long-time data-update
             _INFO("\r[%s] k=%d(%d) T=%.3g ...", __func__, k, nSampInBatch, (GST_ms() - tic) / 1000.0);
             SUM::tCollate += (GST_ms() - tic) / 1000.0;
@@ -630,7 +717,6 @@ size_t SampNanny::CollateBatch(int iter, Fish* fish) {
             continue;
         }
         hBatch->curSamps.push_back(samp);
-        // Samp2Batch(k, samp, fish->config, -1.0f);
         hBatch->section_metas.push_back(samp->arrROI);
 
         if (isLog && k < 12 && tpBatchSample != "stacking") {
@@ -687,6 +773,10 @@ size_t SampNanny::CollateBatch(int iter, Fish* fish) {
     if (hBatch->nNoiseToken > 0) {
         double s = 1.0 / hBatch->nTokens();
         sprintf(SUM::infoX, "msk=%.3g los=%.3g pad=%.3g", hBatch->nMaskToken * s, hBatch->nNoiseToken * s, hBatch->nPadToken * s);
+    } else if (hBatch->nPadToken > 0) {
+        assert(hBatch->nMaskToken == 0);
+        double s = 1.0 / hBatch->nTokens(), a = hBatch->nResultToken * 1.0 / hBatch->curSamps.size();
+        sprintf(SUM::infoX, "rPad=%.3g nResult=%.8g", hBatch->nPadToken * s, a);
     }
 
     return nSampInBatch;
@@ -732,7 +822,7 @@ std::tuple<hDataToken, std::vector<hDataToken>, hDataToken, hDataToken> TokenCor
     std::vector<hDataToken> tsEval;
     JSON jdata  = jKEY(hFish->config.jConfig, {"datasets"});
     string type = "";
-    if (J_isEmpty(jdata) ) {  // jdata.empty()  no dataset in chat-mode
+    if (J_isEmpty(jdata)) {  // jdata.empty()  no dataset in chat-mode
         return std::make_tuple(tsTrain, tsEval, tsCalib, tsChat);
     } else {
     }
@@ -753,6 +843,8 @@ std::tuple<hDataToken, std::vector<hDataToken>, hDataToken, hDataToken> TokenCor
             hTokenset = std::make_shared<Tokenset_PARQUET>(v, hDict);
         } else if (G_Aa(type, "boolq")) {
             hTokenset = std::make_shared<Tokenset_BoolQ>(v, hDict);
+        } else if (G_Aa(type, "synthetic")) {
+            hTokenset = std::make_shared<SyntheticCoral>(v, hDict);
         } else if (G_Aa(type, "JEV_message") || G_Aa(type, "Jev"))
             hTokenset = std::make_shared<Tokenset_JEV>(v, hDict, type);
 
@@ -770,29 +862,36 @@ std::tuple<hDataToken, std::vector<hDataToken>, hDataToken, hDataToken> TokenCor
                 assert(0);
         }
         hTokenset->Init(hFish, flag);
-        DT_PHASE tpDT = DT_TRAIN;
-        if (key == "train") {
-            tsTrain = hTokenset;
-            hTokenset->N_mostSamp = DEBUG.N_mostTrainSamp;
-        } else if (key == "calib") {
-            tsCalib = hTokenset;
-        } else {  // key=="eval"
-            tpDT = DT_EVAL;
-            tsEval.push_back(hTokenset);
-            hTokenset->N_mostSamp = DEBUG.N_mostEvalSamp;
+        // DT_PHASE tpDT = DT_TRAIN;
+        if (key == "train_eval") {  // train/eval split
+            auto [tsT, tsE] = hTokenset->Split();
+            tsTrain         = tsT;
+            tsEval.push_back(tsE);
+            dts.push_back(tsT), dts.push_back(tsE);
+        } else {
+            if (key == "train") {
+                hTokenset->tpDT       = DT_TRAIN;
+                tsTrain               = hTokenset;
+                hTokenset->N_mostSamp = DEBUG.N_mostTrainSamp;
+            } else if (key == "calib") {
+                tsCalib = hTokenset;
+            } else {  // key=="eval"
+                hTokenset->tpDT = DT_EVAL;
+                tsEval.push_back(hTokenset);
+                hTokenset->N_mostSamp = DEBUG.N_mostEvalSamp;
+            }
+            // hTokenset->InitSampNanny(hFish, tpDT, flag);
+            dts.push_back(hTokenset);
         }
-        hTokenset->InitSampNanny(hFish, tpDT, flag);
-        dts.push_back(hTokenset);
     }
 
     if (dts.empty()) {
         _ERROR("\n======== %s Failed to load tokenset!========\n", __func__);
-    } /*else{
-         tsTrain = dts[0];
-         for (int i = 1; i < dts.size(); i++) {
-             tsEval.push_back(dts[i]);
-         }
-     }*/
+    } else {
+        for (auto dt : dts) {
+            dt->InitSampNanny(hFish, dt->tpDT, flag);
+        }
+    }
 
     return std::make_tuple(tsTrain, tsEval, tsCalib, tsChat);
 }
@@ -980,14 +1079,14 @@ double SAMP::UpdateTag(hDataToken hDT, int* tag, int step, bool do_mask, int fla
     return nFlip * 1.0;
 }
 
-SAMP::SAMP(size_t p, size_t l, int nPad) : pos(p), len(l), pad_len(nPad) {
-    if (pad_len > 0) {
-        assert(pad_len < len);
+SAMP::SAMP(size_t p, size_t l, int nPad) : pos(p), len(l), last_pad_len(nPad) {
+    if (last_pad_len > 0) {
+        assert(last_pad_len < len);
     }
 }
 // Fish* hFish, hTokenizer hDict,
 void SAMP::Dump(hDataToken coral, const TOKENS& tokens, int type, const std::string& desc, int flag) {
-    int nValidLen = len - pad_len;
+    int nValidLen = len - last_pad_len;
     size_t start  = pos;
     if (type == 0x100)
         start = 0;
@@ -1003,7 +1102,7 @@ void SAMP::Dump(hDataToken coral, const TOKENS& tokens, int type, const std::str
     Fish* hFish = coral->hFish;
     int nX      = hFish != nullptr && hFish->isModel({MD_QWEN, MD_AR_QWEN}) ? -1 : 0;
     DumpTokens(coral->hDict, samp_tokens, nX, flag);
-    _INFO("\n ------ range=[%lld:%lld pad=%lld] turn=%lld", pos, pos + nValidLen, pad_len, arrROI.size());
+    _INFO("\n ------ range=[%lld:%lld pad=%lld] turn=%lld", pos, pos + nValidLen, last_pad_len, arrROI.size());
     if (arrROI.size() > 0) {  // multi_turn
         for (auto [a, b] : arrROI) {
             assert(a >= 0 && b < nValidLen);
@@ -1328,7 +1427,7 @@ hSAMP SampNanny::InitOneSamp(const string& prompt, hGTensor input, Fish* hFish, 
 }
 
 bool TokenCoral::InitSampNanny(Fish* hFish, DT_PHASE type, int flag) {
-    auto magic         = magic_enum::enum_name(type);  // sType == "train" ? "Train" : "Eval";
+    auto magic         = magic_enum::enum_name(type);
     std::string sGroup = (std::string)magic;
     sGroup             = type == DT_TRAIN ? "Train" : "Eval";
     loader             = std::make_shared<SampNanny>(hFish, sGroup, false);
@@ -1633,19 +1732,29 @@ int BATCH_INPUT::FillPrompt(Fish* hFish, const std::vector<std::string>& arrProm
     }
     _INFO("\n");
     int nTokens = all_tokens.size();
-    nPrefill = nFill = nTokens;
+    hSAMP samp  = std::make_shared<SAMP>(0, nTokens);
+    curSamps.push_back(samp);
+    samp->nPrefill = samp->nCollate = nTokens;
 
     if (phasb == P_CHAT_N) {
         // no need add bos at the begin of all_tokens
         FillTokens(0, all_tokens, 0.0, 0x0);
     } else if (phasb == P_CHAT_1) {
-        ReFill(all_tokens);  // No BOS at sequence start!
+        // ReFill(all_tokens);  // No BOS at sequence start!
+        tok_pos = all_tokens.size() > 0 ? 0 : -1;
+        hostToken->Zero();
+        for (int i = 0; i < all_tokens.size(); i++) {
+            SetToken(i, 0, 0, 0, all_tokens[i]);
+        }
+        // nFill    = tokens.size();
+        // nPrefill = tokens.size();
     }
     return nTokens;
 }
 
 BATCH_INPUT::BATCH_INPUT(SampNanny* hNanny_, SHAPE shape, LIFE_PHASE phasb_, int flag) : hNanny(hNanny_), hFish(hNanny->hFish), phasb(phasb_) {
     CHECK_SHAPE(shape);
+    name = hNanny_->name;
     if (phasb == P_CHAT_1 || phasb == P_CHAT_N) {
         onlyLogits = true;
     }
@@ -1653,6 +1762,7 @@ BATCH_INPUT::BATCH_INPUT(SampNanny* hNanny_, SHAPE shape, LIFE_PHASE phasb_, int
         onlyLogits     = true;
         onlyLastHidden = true;
     }
+    
     hostToken = std::make_shared<GTensor>(nullptr, shape, typNUMBER::I32);
     hostToken->Alloc();
     hostMask = std::make_shared<GTensor>(nullptr, shape, typNUMBER::I32);
@@ -1670,11 +1780,11 @@ BATCH_INPUT::BATCH_INPUT(SampNanny* hNanny_, SHAPE shape, LIFE_PHASE phasb_, int
     if (hFish->config.model.preLogits_dB < 0)
         dB4Logit = nMostSample;
     else
-        dB4Logit = hFish->config.model.preLogits_dB;
+        dB4Logit = std::min(hFish->config.model.preLogits_dB, nMostSample);
     assert(dB4Logit > 0);
 
-    if (hFish->isAtPhase(P_SFT) || hFish->config.common.isPadMask) {  //
-        SHAPE spB = {nMostSample, 1, 1};                              //     hBatch = std::make_shared<BATCH_INPUT>({T, B});
+    if (hFish->isAtPhase(P_SFT) || !hFish->config.model.sPadMask.empty()) {  //
+        SHAPE spB = {nMostSample, 1, 1};                                     //     hBatch = std::make_shared<BATCH_INPUT>({T, B});
         hostLen   = std::make_shared<GTensor>(nullptr, spB, typNUMBER::I32);
         hostLen->Alloc();
         hostLen->Zero();
@@ -1698,6 +1808,7 @@ void BATCH_INPUT::Init(int flag) {
     transiX.Init(hostToken->ne[0]);
 }
 
+/*  Deprecated
 void BATCH_INPUT::ReFill(const TOKENS& tokens, int flag) {
     tok_pos = tokens.size() > 0 ? 0 : -1;
     hostToken->Zero();
@@ -1706,9 +1817,8 @@ void BATCH_INPUT::ReFill(const TOKENS& tokens, int flag) {
     }
     nFill    = tokens.size();
     nPrefill = tokens.size();
-}
+}*/
 
-int BATCH_INPUT::nTokens(int flag) const { return hostToken->size(); }
 // 8948, 198,   2610,    525,    264,  10950,  17847,     13, 151645, 198, 151644,    872,    198,   9707, 151645,    198, 151644,  77091,   198, 151667, 271,
 // 151668,    271,  63716, 151645,    198
 //  12.94 8.38 17.88 0.03 0.67 3.34 0.33 0.61 20.12 0.13 0.00 37.25 0.15 3.53 18.88 0.00 0.00 33.75 8.00 0.00 13.88 1.87 0.00 21.38 23.88
@@ -1733,7 +1843,7 @@ void BATCH_INPUT::DumpX(TOKEN_ID* labels, float* hostLoss, int flag) {
     _INFO("\n\tavg_loss=%g(%d)\n", avg_loss, nLoss);
 }
 
-BATCH_Denoise::BATCH_Denoise(SampNanny *hNanny_, SHAPE sp, LIFE_PHASE phasb_, int flag) : BATCH_INPUT(hNanny_, sp, phasb_, flag) {}
+BATCH_Denoise::BATCH_Denoise(SampNanny* hNanny_, SHAPE sp, LIFE_PHASE phasb_, int flag) : BATCH_INPUT(hNanny_, sp, phasb_, flag) {}
 void BATCH_Denoise::FillTokens(int kRow, const TOKENS& tokens, int x, int flag) {
     nNoiseToken = 0, nPadToken = 0;
     hGTensor tokens_input = hFish->Input(), target_label = hFish->Target();
@@ -1831,7 +1941,7 @@ bool BATCH_INPUT::UpdatePadMask(const std::vector<hSAMP>& samps, int iter, TOKEN
         for (auto [a, b] : section) {  // 139,165
             for (c = a; c < b; c++) {  // it's labels, not original tokens
                 if (c > 0 && needLabel())
-                    assert(samp_token[c] == samp_label[c - 1]);
+                    assert(samp_token[c] == samp_label[c - 1] || samp_token[c] + 1 == -samp_label[c - 1]);
                 answer += hDict->Decode({(TOKEN_ID)samp_token[c]});
                 BIT_RESET(mask[c - 1], MASK_FLAG::F_IGNORE_LOSS);
                 nValidTokens++;

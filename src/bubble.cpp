@@ -27,10 +27,14 @@ class BubbleApp : public GST_Application {
         // DEBUG.test_quant = 1;
         auto arch = params.ModelArch();
         params.OnArch();
-        chatPhase = (arch == MD_QWEN || arch == MD_AR_QWEN) ? LIFE_PHASE::P_CHAT_N : LIFE_PHASE::P_CHAT_1;
+        if (params.phase == P_EVAL_CHAT) {
+            DEBUG.sPromptGuide = "You are a strict yes/no classifier. Answer ONLY with the single word 'true' or 'false'. Do not explain, do not add punctuation, do not add any other text.";
+            chatPhase            = P_EVAL_CHAT;
+            DEBUG.N_mostEvalSamp = 1000;
+        } else
+            chatPhase = (arch == MD_QWEN || arch == MD_AR_QWEN) ? LIFE_PHASE::P_CHAT_N : LIFE_PHASE::P_CHAT_1;
         params.OnPhase(chatPhase);
-
-        // params.chat_sampler.mode = params.model.enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
+        params.chat_sampler.mode = params.chat_sampler.enable_thinking ? CHAT_MODE::CHATML_THINK : CHAT_MODE::CHATML_ASSIST;
         // params.chat_sampler.isSampleCPU = true;
         params.model.preLogits_dB  = 1;
         params.model.sparse.method = -1;
@@ -44,6 +48,7 @@ class BubbleApp : public GST_Application {
         // params.dumpSwitch.nn_structure = 0;
         DEBUG.verCuda = 1, DEBUG.T_cpu = 0, DEBUG.graph_dump = 0, DEBUG.Time_most = 60;
         DEBUG.verInferQKV = 0, DEBUG.verInferFFN = 0;
+
         // DEBUG.dump_TensorDetail = 1;
 
         // config.quant.filter_KVcache = {"0.self_attn"};    //   "layers.27.mlp" model.blk.0.attn
@@ -58,7 +63,13 @@ class BubbleApp : public GST_Application {
             _ERROR("[APP] %s is nullptr!!!", name.c_str());
             return KOIFISH_NULL_FISH;
         }
-        fish->Chat(chatPhase);
+        hDataToken coral = nullptr;
+        if (fish->isAtPhase({P_EVAL_CHAT})) {
+            assert(!fish->tsEval.empty());
+            coral = fish->tsEval[0];
+            fish->ChatOnCoral(coral);
+        } else
+            fish->Chat(chatPhase);
         // while (iRunning() > 0) { // no need this loop
         //     usleep(100000);
         // }

@@ -133,13 +133,14 @@ class SampNanny : public std::enable_shared_from_this<SampNanny> {
 
     std::string fp_data;
     std::string sentence = "";
-    int CollateSampTokens(hSAMP samp, int nMost, int flag);  // fill samp_toks with samp's tokens(may apply many filter)
+    int CollateSampTokenLabels(hSAMP samp, int nMost, int flag);  // fill samp_toks with samp's tokens(may apply many filter)
     std::vector<TOKEN_ID> samp_toks;
-    // std::vector<hSAMP> shard_samps;
+    std::vector<int> samp_labels;  // if (label0 < 0) BIT_SET(mask32[off], MASK_FLAG::F_IGNORE_LOSS);
+
     size_t nShard();
     // data_token_set is much complex than train/val datasets
     hDataToken hCoral = nullptr;
-    hTokenizer hDict     = nullptr;
+    hTokenizer hDict  = nullptr;
 
     // bool isTarget_1 = false;
     bool isRecycle = false, isLastShard = false;
@@ -230,7 +231,7 @@ class SampNanny : public std::enable_shared_from_this<SampNanny> {
     virtual bool SetOPT(Optimizer* hO, int flag = 0x0);
     virtual void UpdateStepInfos(float mean_loss, int nB, int flag = 0x0);
     virtual size_t CollateBatch(int next_id, Fish* fish);
-    virtual double Evaluate(DL_BATCH_UPATE tpBatch, int flag = 0x0);
+    virtual double QiWu(DL_BATCH_UPATE tpBatch, int flag = 0x0);  // 齐物
 
 #ifdef _DATA_LOADER_LITE_
 #else

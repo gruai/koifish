@@ -147,7 +147,7 @@ int Salmon::Chat(int iter, int flag) {
     return 0x0;
 }
 
-bool GOPT_Diffusion::OnLogits(int flag) {
+bool GOPT_Diffusion::OnLogits(hSAMP hSamp, shared_ptr<FeatPicker> logitsPicker, int flag) {
     D2H(hClsLogits->data, hClsLogits->host_data, hClsLogits->nByte());
     maskLogits = originLogits;
 
@@ -176,13 +176,13 @@ TOKEN_ID GOPT_Diffusion::Sample(hBATCH hB, bool is_resampling) {
     if (hB != nullptr)
         hBatch = hB;
 
-    int nOriginMask = originLogits.size(), dump_each = 1;
-    nGenerate = nOriginMask;
+    int nOriginMask = originLogits.size(), dump_each = 1, nPreFill = hBatch->nTokens(BATCH_INPUT::F_PROMPT_LEN);    //
+    generated_tokens = nOriginMask;
     // planner   = std::make_shared<TOKEN_Planner>("Huaer of chat", samp_params, samp_params.most_step, nOriginMask, 0x0);
     planner = hBatch->hHuaPLAN;
     planner->Init(-1, hB);
     planner->Dump();
-    planner->Init4Prefill(hBatch->nFill, hBatch->nFill + 1, TOKEN_Planner::F_ABSOLUTE_ID);
+    planner->Init4Prefill(nPreFill, nPreFill + 1, TOKEN_Planner::F_ABSOLUTE_ID);
     auto tokenizer = fish_0->GetTokenizer();
     assert(planner != nullptr);
     int nStep         = planner->arrGroup.size(), stp;
@@ -195,7 +195,7 @@ TOKEN_ID GOPT_Diffusion::Sample(hBATCH hB, bool is_resampling) {
         if (hBatch->nNoiseToken == 0)
             break;
         fish_0->Evaluate({tsChat}, DL_BATCH_UPATE::BATCHofEMBED);
-        OnLogits();
+        OnLogits(nullptr, nullptr);
         int n1 = 0, n2 = 0, pos, nMask = maskLogits.size();
         switch (samp_params.tpZhuomo) {
             case CHAT_SAMPLER::MD_PUMA:

@@ -159,18 +159,18 @@ void G_SomeXat_(vector<int>& pos, const vector<T>& someX, const vector<T>& allX,
 }
 
 // If string contains like "<|fim_prefix|>", "<|fim_middle|>", it would be encoded as specail tokens!
-std::string inline G_rewrite_special_tokens(std::string text, int flag=0x0) {
+std::string inline G_rewrite_special_tokens(std::string text, int flag = 0x0) {
     std::string out;
     out.reserve(text.size());
 
     size_t i = 0, n = text.size();
     while (i < n) {
-        if (i + 1 < n && text[i] == '<' && text[i + 1] == '|') {    // <|
+        if (i + 1 < n && text[i] == '<' && text[i + 1] == '|') {  // <|
             size_t j = i + 2;
             while (j < n && (std::isalnum(static_cast<unsigned char>(text[j])) || text[j] == '_')) {
                 ++j;
             }
-            if (j > i + 2 && j + 1 < n && text[j] == '|' && text[j + 1] == '>') {   // |>
+            if (j > i + 2 && j + 1 < n && text[j] == '|' && text[j + 1] == '>') {  // |>
                 out += "<\xC2\xA6";
                 out.append(text.substr(i + 2, j - (i + 2)));
                 out += "\xC2\xA6>";
@@ -652,11 +652,16 @@ class SafeExit : public std::exception {
     ExitReason reason;
 };
 #define K_EXIT(code) throw SafeExit("", code, SafeExit::ExitReason::SYSTEM_FAILURE, __func__);
-#define K_EXIT_NOW(code)                                                                 \
-    {                                                                                    \
-        fprintf(stderr, "\r\n%s EXIT_NOW with err=%d %s\n\n", COLOR_RED, code, COLOR_RESET); \
-        exit(code);                                                                      \
-    }
+inline void K_EXIT_NOW(int code) {
+    fprintf(stderr,
+    "\n"
+    "\033[1;31m"
+    "╔══════════════════════════════════════╗\n"
+    "║  🛑  EXIT_NOW   code=%8d   ║\n"            
+    "╚══════════════════════════════════════╝\n"
+    "\033[0m\n", code);
+    exit(code);
+}
 
 const std::vector<std::string> SOME_prompts = {"hello",
                                                "What is the capital of Shanghai?",

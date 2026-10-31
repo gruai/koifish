@@ -187,7 +187,7 @@ hGTensor SLP::UpdateGensor(int flag) {
     return h;
 }
 
-std::string NLP_AutoRegressive::Name() { return "LAMA"; }
+std::string NLP_AutoRegressive::Name() { return name; }
 
 // REF: ggml_compute_forward_dup_bytes
 void Fish::CopyWeight(const Fish* src, int flag) {
@@ -257,7 +257,7 @@ bool NLP_AutoRegressive::InitTokenCoral(int flag) {
 bool Fish::InitTokenCoral(int flag) {
     _INFO("[Tokenset] InitCoral ... \n");
     void* hLLM = nullptr;
-    if (config.dict.type == "koifish") {
+    if (config.dict.type == "koifish_v0") {
         config.model.sTokenJsonPath   = "./assets/tokenizer/tokenizer.json";
         config.model.sTokenConfigPath = "./assets/tokenizer/tokenizer_config.json";
     }
@@ -344,6 +344,7 @@ bool Fish::InitTokenCoral(int flag) {
     switch (phase) {
         case P_CHAT_N:
         case P_CHAT_1:
+        case P_EVAL_CHAT:
             curTokenSet = nullptr;  // should be gopt->tsChat
             break;
         case P_TRAIN:

@@ -211,7 +211,7 @@ def pangpi_one(title, sExe, sArgs, path="./tests/", most_iter=-1):
     
     return dfLoss, exit_code
 
-def bubble_one(title,  sArgs, sExe ="./bin/bubble ", path="./tests/", most_iter=-1, fResult = 'chat.csv'):    
+def bubble_one(title,  sArgs, sExe ="./bin/bubble ", path="./tests/", most_iter=-1, fResult = './output/gopt/gopt__.txt'):    
     sOutput = title+".info"   
     cmd = sExe + sArgs + "> "+path+sOutput + " 2>&1"        # cmd = sExe+ path+title+".json 2>&1 | tee "+path+sOutput 
     print(f"[{title}]\t{cmd} ...")    
@@ -223,7 +223,7 @@ def bubble_one(title,  sArgs, sExe ="./bin/bubble ", path="./tests/", most_iter=
         return ""
     try:
         with open(fResult, 'r', encoding='utf-8', errors='replace') as file:
-            content = file.read()  # 读取全部内容（返回字符串）
+            content = file.read()  #
         print(content)    
         lines = content.splitlines()
         line_numbers = list(range(1, len(lines) + 1))

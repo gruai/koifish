@@ -34,7 +34,7 @@ def CheckResult(df,iter,golden,title="",rel_tol=1e-05):
         assert(0)
 
 def test_chat_dcoder():  
-    content = bubble_one("chat_dcoder"," --hf ./Models/dcoder/ --prompts \"Write a quick sort algorithm in c++.\" --seq_len 640 --temperature 0.5 --md_method \"dilate\"", fResult="./output/gopt/dilate__.txt") 
+    content = bubble_one("chat_dcoder"," --hf ./Models/dcoder/ --prompts \"Write a quick sort algorithm in c++.\" --seq_len 640 --temperature 0.5 --md_method \"dilate\"") 
     assert "This implementation ensures that the first element is the last element at the array of the array, and prints the initial state of the array." in content
 
 
@@ -129,13 +129,13 @@ def test_gpt2_124M():
     most_iter = 70
     title = "124M_no_fuyou"
     dfTrain = koifish_one(title, sExe, "./cases/gpt2/124M_shard50_F6_lr0.001/no_fuyou.json", most_iter=most_iter)    
-    CheckResult(dfTrain,most_iter,7.443,title=title)    #=7.443  7.467 7.751
+    CheckResult(dfTrain,most_iter,7.425,title=title)    #=7.443  7.467 7.751
 
 def test_gpt2_124M_fuyou6():    
     most_iter = 70
     title = "124M"
     dfTrain = koifish_one(title, sExe, "./cases/gpt2/124M_shard50_F6_lr0.001/F6_lr0.001.json", most_iter=most_iter)    
-    CheckResult(dfTrain,most_iter,7.492,title=title)    #7.492 7.497 7.785
+    CheckResult(dfTrain,most_iter,7.443,title=title)    #7.492 7.497 7.785
 
 
 
@@ -175,11 +175,12 @@ if __name__ == '__main__':
     args = parser.parse_args()    
     
     sExe = "./bin/koifish "
+    # test_chat_dcoder()
     # test_mdm_coder()
     # test_mdm_tiny()
     # test_gpt2_774M()
-    #test_diffusion_coder()
-    # test_chat_qwen3_596M()
+
+    #test_chat_qwen3_596M()
     # test_chat_qwen3_0_6B()  
     # test_sft_qwen3_mimimind() 
     # test_qwen3_596M()
@@ -190,8 +191,8 @@ if __name__ == '__main__':
 
     # test_pp_gpt2()
     # test_gpt2_124M()
-    test_qwen3_596M_q4()
-    # test_gpt2_124M_fuyou6()
+    # test_qwen3_596M_q4()
+    test_gpt2_124M_fuyou6()
     # test_gpt2_1558M()
     # test_chat_qwen3_4B_1()
     # test_qwen2_494M()

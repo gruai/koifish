@@ -38,6 +38,8 @@ struct TOKEN_Special {
     int unk     = -1;                       //<unk>
     int newline = -1, newline2 = -1;        //\n\n    Qwen3(198,271)
 
+    int equal_token = -1, op_token = -1;    // a*b=c
+    
     std::vector<int*> AllTokens(int flag = 0x0) {
         auto fields = {&_pad, &_mask, &_noise, &sep, &cls, &assist, &bos, &eos, &im_start, &im_end, &think_open, &think_close, &eot, &unk, &newline, &newline2};
         return fields;
@@ -225,7 +227,7 @@ class HF_Tokenizer : public GTokenizer {
     std::string Decode(const TOKENS& tokens, bool skip_pad = true, bool skip_special_tokens = false) const override {
         assert(!tokens.empty());
         std::vector<int> ids(tokens.begin(), tokens.end());
-        return decode_i(ids, skip_special_tokens);
+        return decode_i(ids, skip_special_tokens || skip_pad);  // pad is also special tokens
     }
     std::string T2STR(TOKEN_ID tok, int flag = 0x0) const override;
 
