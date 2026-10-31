@@ -1,4 +1,4 @@
-cmake_minimum_required (VERSION 3.27)
+cmake_minimum_required (VERSION 3.22)
 unset(ENV{CFLAGS})
 unset(ENV{CXXFLAGS})
 unset(ENV{CPPFLAGS})
@@ -35,6 +35,7 @@ option(K_USE_EIGEN                  "KOIFISH: Enable Eigen lib"               OF
 
 option(K_TESTING                    "KOIFISH: Do some testing"               OFF)
 option(K_WATCHING                   "KOIFISH: Do some watching"              OFF)
+option(K_LIVEPLOT                   "KOIFISH: Plot learning curves"          ON)
 # option(K_USE_CUFILE "Enable cuFile support for optimized file I/O" OFF)
 # option(K_USE_NVML "Enable nvml support for detailed GPU stats reporting" OFF)
 # option(K_USE_MPI "Enable MPI backend for multi-GPU support" OFF)
@@ -121,6 +122,12 @@ if(K_USE_ARROW)
     #  snappy zstd lz4 brotli
     set(ARROW_LIB ${ARROW_DIR}/libparquet.so  ${ARROW_DIR}/libarrow.so)
 else()
+endif()
+
+if(K_LIVEPLOT)
+    find_package(X11 REQUIRED)          # apt install libx11-dev
+    add_compile_definitions(__USE_LIVEPLOT__)
+    set(MORE_INC ${MORE_INC} ${X11_INCLUDE_DIR})
 endif()
 
 if(K_WATCHING)
@@ -211,7 +218,8 @@ else()
         message(WARNING "CUDA not found")
     endif()
 
-    set(MORE_INC ${MORE_INC} ${CMAKE_SOURCE_DIR}/third_party/cutlass/include/ ${CMAKE_SOURCE_DIR}/src/Device/tile_kernel/ ${CMAKE_SOURCE_DIR}/cudnn-frontend/include ${CMAKE_SOURCE_DIR}/src/Device/CUDA/TK/include)
+    set(MORE_INC ${MORE_INC} ${CMAKE_SOURCE_DIR}/third_party/cutlass/include/ ${CMAKE_SOURCE_DIR}/src/Device/tile_kernel/ ${CMAKE_SOURCE_DIR}/cudnn-frontend/include ${CMAKE_SOURCE_
+DIR}/src/Device/CUDA/TK/include)
     set(NPU_LIB  ${CUDA_LIB} cudnn )  
     add_compile_definitions(__USE_CUDNN__)  
 endif()
@@ -219,6 +227,8 @@ endif()
 if(K_USE_GBDT)
     add_compile_definitions(__USE_GBDT__)
     add_subdirectory(src/GBDT)
+    set(GBDT_LIB gbdt)   
+else()
 endif()
 
 message(STATUS "KOIFISH cc=${DELTA_cc} CXX=${MY_CXX_STANDARD} SHARED = ${BUILD_SHARED_LIBS} PWD=${CMAKE_SOURCE_DIR}")
@@ -244,8 +254,9 @@ message(STATUS "KOIFISH sources=${sources} device_sources=${device_sources}  NPU
 add_library(prog_deps INTERFACE)
 target_link_libraries(prog_deps
   INTERFACE
-    ${GG_LIB}    ${OPENBLAS_LIB}  ${WATCH_LIB}   ${TVM_LIB}    ${GFLAGS_LIBRARIES} ${ARROW_LIB} ${NPU_LIB}
-    gbdt
+    ${X11_LIBRARIES}
+    ${GG_LIB}    ${OPENBLAS_LIB}  ${WATCH_LIB}   ${TVM_LIB}    ${GFLAGS_LIBRARIES} ${ARROW_LIB}
+    ${NPU_LIB}   ${GBDT_LIB}
     onig  
     Threads::Threads
 )

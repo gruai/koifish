@@ -40,7 +40,7 @@ Training module needs more:
 # sudo apt-get -y install libcudnn9-dev-cuda-12  # maybe need this to install CUDNN
 # sudo apt-get install libicu-dev
 # export CPATH=/usr/local/cuda/include:$CPATH        # maybe need this to export CPATH
-git clone https://github.com/gruai/koifish
+git clone --recurse-submodules https://github.com/gruai/koifish
 cd koifish
 mkdir build && cd build && cmake ..
 make clean && make -j$(nproc)
@@ -76,6 +76,7 @@ Please use the following bibtex entry:
 
 * Thanks very much for the highly instructive work of [qwen600](https://github.com/yassa9/qwen600), [calm](https://github.com/zeux/calm), [llm.c](https://github.com/karpathy/llm.c)
  & [ggml](https://github.com/ggerganov/ggml).
+* Thanks very much for the support of Professor TianLan.
 
 ## More
 ### [History](cases/tutorial/history.md)

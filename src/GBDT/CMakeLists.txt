@@ -1,4 +1,4 @@
-cmake_minimum_required (VERSION 3.27)
+cmake_minimum_required (VERSION 3.22)
 project(gbdt VERSION 0.2.0 LANGUAGES CXX)
 
 set(PWD ${CMAKE_CURRENT_SOURCE_DIR})
