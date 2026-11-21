@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2013-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2013-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -13,7 +13,7 @@
 #include <memory>
 #include <stdexcept>
 
-CCS_pattern::CCS_pattern(const CCS_pattern &ptn, int r_0, int c_0, int nR, int nC) {
+CCS_pattern::CCS_pattern(const CCS_pattern& ptn, int r_0, int c_0, int nR, int nC) {
     if (r_0 < 0 || c_0 < 0 || r_0 + nR >= ptn.nCol || r_0 + nC >= ptn.nCol)
         throw std::out_of_range("CCS_pattern( const CCS_pattern &ptn,int r_0,int c_0,int nR,int nC ");
     int nzMax = 0, i, j, r, pos = 0, *ptr0 = ptn.ptr, *ind0 = ptn.ind;
@@ -37,7 +37,7 @@ CCS_pattern::CCS_pattern(const CCS_pattern &ptn, int r_0, int c_0, int nR, int n
 }
 /*
  */
-void CCS_pattern::Create(int d, int *ap, int *ai, int t) {
+void CCS_pattern::Create(int d, int* ap, int* ai, int t) {
     try {
         ptr = nullptr, ptr_e = nullptr, ind = nullptr;
         nCol = -1, type = 0x0;
@@ -101,13 +101,13 @@ void CCS_pattern::Clear() {
 
 /*
  */
-int CCS_pattern::Order(int *I_temp, int flag) { return -1; }
+int CCS_pattern::Order(int* I_temp, int flag) { return -1; }
 
 /*
     v0.1	cys
         5/28/2012
 */
-int CCS_pattern::Compress(int *comp, int *cluster, int alg, int flag) {
+int CCS_pattern::Compress(int* comp, int* cluster, int alg, int flag) {
     int i, j, k, no, same = 0, nComp = 0, nCls = 0, nzMax = 0, nz = 0, nPass = 0, no_c = 0;
     int *stmp = new int[nCol], stp = 0, *sum = new int[nCol];
     bool isSame;

@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2019-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2019-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief GRUSOFT TEMPLATE	- Utility
@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <complex>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <memory>  //for shared_ptr
@@ -30,7 +31,7 @@
 #include "../g_def_x.hpp"
 
 using namespace std;
-
+using fPath = std::filesystem::path;
 #if defined(_MSC_VER) || defined(__MINGW32__) || defined(WIN32)
 
 #define GST_NOW() (clock())
@@ -63,7 +64,13 @@ inline int64_t GST_us(void) {
 #include <chrono>
 #include <thread>
 
-typedef std::chrono::high_resolution_clock Clock;
+using Clock = std::chrono::steady_clock;
+inline double MS_since(Clock::time_point t) { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); }
+
+//  In practice: high_resolution_clock = system_clock, which uses clock_gettime(CLOCK_REALTIME). steady_clock uses clock_gettime(CLOCK_MONOTONIC). Both have the
+//  same tick period (typically 1 ns in period, with actual hardware resolution ~20–30 ns).
+// typedef std::chrono::high_resolution_clock Clock;
+
 #define GST_NOW() (Clock::now())
 #define GST_TIC(tick) auto tick = Clock::now();
 // #define GST_TOC(tick)	( (std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now( )-(tick)).count( ))/1000.0)
@@ -426,11 +433,35 @@ inline bool isStrMatch(const string& target, const vector<string>& words) {
 
 void read_stdin(const char* guide, char* buffer, size_t bufsize);
 
+// Get current date/time, format is YYYY-MM-DD.HH:mm:ss
+extern inline const std::string DATE(int fmt = 0x0) {
+    time_t now = time(0);
+    struct tm tstruct;
+    char buf[80];
+    tstruct = *localtime(&now);
+    // Visit http://en.cppreference.com/w/cpp/chrono/c/strftime for more information about date/time format
+    switch (fmt) {
+        case 100:
+            strftime(buf, sizeof(buf), "%Y-%m-%d", &tstruct);
+            break;
+        default:
+            strftime(buf, sizeof(buf), "\"%Y-%m-%d.%X\"", &tstruct);
+            break;
+    }
+
+    std::string sDate = buf;
+    // sDate             = "" + sDate + "";
+    return sDate;
+}
+#define cDATE DATE().c_str()
+
 size_t F_SIZE(const std::string& fpath, FILE* fp0 = NULL, int flag = 0x0);
-std::string FILE2STR(const std::string fPath, size_t nzMost = (size_t)(-1), int flag = 0x0);
-bool STR2FILE(const std::string fPath, const std::string& text, std::ofstream::openmode mode, int flag = 0x0);
+std::string FILE2STR(const std::string& fpath, size_t nzMost = (size_t)(-1), int flag = 0x0);
+bool STR2FILE(const std::string& fpath, const std::string& text, std::ofstream::openmode mode, int flag = 0x0);
 
 /*
     CUBLAS: Base addresses of A, B, C matrices should be aligned to 256-byte boundaries for optimal performance.
 */
 inline bool PTR_is_aligned(const void* ptr, size_t alignment = 256) { return (reinterpret_cast<uintptr_t>(ptr) % alignment) == 0; }
+
+void mem_mark(const char* where);

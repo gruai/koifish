@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2018-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2018-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief globl macro & error code
@@ -83,9 +83,9 @@
 #define KOIFISH_CHAT_ERROR -6000
 #define KOIFISH_INVALID_PROMPT -6100
 
-#define KOIFISH_DECISION_ERROR  -7000
-#define KOIFISH_FEATURE_NULL    -7100
-#define KOIFISH_HIDDEN_NULL     -7110
+#define KOIFISH_DECISION_ERROR -7000
+#define KOIFISH_FEATURE_NULL -7100
+#define KOIFISH_HIDDEN_NULL -7110
 
 #define KOIFISH_EXIT_DEBUG -10000
 #define KOIFISH_EXIT_SYNC_DEVICE -10100

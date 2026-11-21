@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *
@@ -18,13 +18,27 @@
 #include "./Utils/GST_log.hpp"
 #include "./g_def_x.hpp"
 
+bool CmdLineParser::koifish_configure(int flag) {
+    add_positional("config_file", "path of the config file", false);
+    bool success = parse();
+    return success;
+}
+
 class KoifishApp : public GST_Application {
    protected:
     hFISH fish = nullptr;
 
    public:
-    KoifishApp(int argc, char* argv[]) : GST_Application(argc, argv) { name = "Koifish"; }
+    KoifishApp(int argc, char* argv[]) : GST_Application("Koifish", argc, argv) {}
     virtual ~KoifishApp() {}
+
+    bool ParseCmdline(int flag = 0x0) override {
+        bool success = cli_parser.koifish_configure();
+        if (!success)
+            return false;
+
+        return true;
+    }
 
     int Swim() override {
         vector<hWIKI> wikis;  // reserved for hybrid llm training

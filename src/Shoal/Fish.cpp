@@ -1,12 +1,12 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Random swimming fish that generated from AI
  *  \author Yingshi Chen
  */
 #include "../Decision/Maisui.hpp"
-#include "../Device/CUDA/cuda_def.hpp"
+#include "../Utils/GST_Serialize.hpp"
 #include "../Shoal/gLLM.hpp"
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
@@ -31,6 +31,9 @@ hFISH Fish::MakeInstance(const std::string nam_, struct CLI_params& params, vect
             break;
         case MODEL_ARCH::NTP_QWEN3:
             fish = std::make_shared<QWen3>(nam_ + "_QW3", params, role_);
+            break;
+        case MODEL_ARCH::NTP_QWEN38_STRATA:
+            fish = std::make_shared<QWen38_strata>(nam_ + "_QW38_STRATA", params, role_);
             break;
         case MODEL_ARCH::NLP_BITNET:
             fish = std::make_shared<Bitnet>(nam_ + "_bitnet", params, role_);

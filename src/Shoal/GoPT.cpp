@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Generate some nonsense on Prompt
@@ -141,49 +141,6 @@ int Sample_CDF(int n, float* preP, uint64_t* rng_seed, int flag = 0x0) {
         }
     }
     return next_token;
-}
-
-int GGUF_list(CLI_params& config) {
-    std::vector<string> paths;
-    std::string root = "/media/cys/E0/", path;
-    root             = "/home/cys/rnd/lic/models/";
-    for (const auto& entry : fs::directory_iterator(root)) {
-        fs::path filePath = entry.path();
-        if (filePath.extension() == ".gguf")
-            paths.push_back(entry.path());
-    }
-    int nP = paths.size(), i = 0;
-    FILE* fp = fopen("./log/GGUF_list.log", "wt");
-    string sToken, info, suffix = "\t", prefix;
-    fprintf(fp, "%s LOAD %d @%s\n", __func__, nP, root.c_str());
-    fflush(fp);
-    for (auto path : paths) {
-        // path = "/media/cys/E0/LLaMA3-8B_mmproj-Q4_1.gguf";      //only for debug
-        auto param_1       = config;
-        param_1.wiki_actor = "OnlyTokenizer";
-        param_1.tpWiki     = WIKI::_OFF;
-        // param_1.fn_model_base = path;
-
-        // hFISH fish_0 = Fish::MakeInstance("GGUF_",param_1,0x0);
-        // fish_0->Dump(0x0);
-        GST_TIC(tic);
-        fprintf(fp, "%d: \"%s\" ...\n", i++, path.c_str());
-        fflush(fp);
-        try {
-            hWIKI wiki = nullptr;  //  WIKI::MakeInstance
-            assert(wiki != nullptr);
-            info = wiki == nullptr ? "" : wiki->__repr__(suffix, prefix);
-        } catch (const std::exception& e) {
-            info = std::string(e.what());
-        } catch (...) {
-            info = "!!! UNKNOW EXCEPTION !!!";
-        }
-
-        fprintf(fp, "\t %s  T=%.3g\n", info.c_str(), GST_TOC(tic));
-        fflush(fp);
-    }
-    fclose(fp);
-    return 0x0;
 }
 
 int run_caml(const char* prompt, int flag);
@@ -359,11 +316,10 @@ void GeneratOnPrompt::OnPrompt(int iter, hBATCH hB, int flag) {
     if (!some_prompts.empty()) {
         hBatch->FillPrompt(fish_0, some_prompts, some_answers, 0);  //  [19, 48, 57, 58, 59,  2, 16, 48, 59, 48, 65, 44, 53, 11,  1, 15]
     } else {                                                        // hBatch is filled in other place (like SAMP_JEV::ToTokens
-
     }
     int nFill = hBatch->nTokens(BATCH_INPUT::F_PROMPT_LEN);
     // if (fish_0->arrPicker.size() == 1)
-    //     fish_0->arrPicker[0]->idf = nFill - 1;  
+    //     fish_0->arrPicker[0]->idf = nFill - 1;
 
     tokens.clear();
     tokens = hBatch->curTokens(BATCH_INPUT::F_IGNORE_PAD);
@@ -640,11 +596,7 @@ int OnEOS(hFISH fish, std::string  cur_answer, int flag = 0x0) {
 }*/
 void GeneratOnPrompt::AfterSample(int iter, double x, bool isLast, int flag) {
     double tps = (generated_tokens > 0 && tSample > 0) ? (generated_tokens - 1) / tSample : 0.0;
-    /*if (hBatch->tok_pos >= seq_len) {
-        if (outer_phase == P_TRAIN)
-            return 0x0;
-        _WARN("%scontext window full!%s\t", COLOR_YELLOW, COLOR_RESET);
-    }*/
+
     hSAMP samp = curSamps.empty() ? nullptr : curSamps[0];
     // _INFO("\n%s[%.2f tk/s, %d tokens in %.2fs(qkv=%.3fs ffn=%.3fs PreLgits=%.3fs X=%.3fs)]%s\n===================================\n", COLOR_GREEN, tps,
     //       generated_tokens - 1, elapsed_s, SUM::tQKV_forw / 1.0e6, SUM::tFFN / 1.0e6, SUM::tPreLogits / 1.0e6, SUM::tX1 / 1.0e6, COLOR_RESET);
@@ -1152,8 +1104,8 @@ int Fish::Chat(int iter, int flag) {
     // g_dump_level          = -1;
     gopt->cur_answer = "";
     gopt->OnPrompt(iter, nullptr);
-    int num_prompt_tokens = gopt->hBatch->nTokens(BATCH_INPUT::F_PROMPT_LEN);  
-    for (int i = 0; i < num_prompt_tokens - 1; i++) {                        // prefill
+    int num_prompt_tokens = gopt->hBatch->nTokens(BATCH_INPUT::F_PROMPT_LEN);
+    for (int i = 0; i < num_prompt_tokens - 1; i++) {  // prefill
         eval = Evaluate({gopt->tsChat}, DL_BATCH_UPATE::BATCHofEMBED);
         gopt->hBatch->tok_pos++;
         if (gopt->hBatch->tok_pos == 1) {  // nRound == 2

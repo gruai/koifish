@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2019-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2019-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief GRUSOFT TEMPLATE	- Application
@@ -55,40 +55,7 @@ std::string Time2String(const std::chrono::system_clock::time_point& now, int fl
     return ss.str();
 }
 
-/*
-https://github.com/jermp/cmd_line_parser
-
-void configure(cmd_line_parser::parser& parser) {
-    parser.add("perc",                 // name
-               "A percentage value.",  // description
-               "-p",                   // shorthand
-               true,                   // required argument
-               false                   // not boolean option (default is false)
-    );
-    parser.add("input_filename", "An input file name.", "-i", true);
-
-    parser.add("output_filename",       // name
-               "An output file name.",  // description
-               "-o",                    // shorthand
-               false, false);
-    parser.add("num_trials", "Number of trials.", "-n", false, false);
-
-    parser.add("sorted", "Sort output.", "--sort", false,
-               true  // boolean option: a value is not expected after the shorthand
-    );
-    parser.add("buffered", "Buffer input.", "--buffer", false, true);
-
-    parser.add("ram", "Amount of ram to use.", "--ram", false, false);
-}
-
-
-*/
-
-bool CLI_params::parse(int argc, char** argv) {
-    std::string arg_prefix      = "--", key, value;
-    exec_name                   = EXE_name();
-    string sExt                 = argc > 1 ? FILE_EXT(argv[1]) : "", jPath;
-    FILE_FORMAT_TYPE ckp_format = FILE_JSON;  // bool isHF              = false;
+/*std::string arg_prefix = "--";
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (fs::exists(arg)) {  //*.json
@@ -116,13 +83,13 @@ bool CLI_params::parse(int argc, char** argv) {
         } else if (arg == "--hellaswag") {
             eval_metric = "hellaswag";
             assert(i + 1 < argc);
-#ifdef _nlohmann_json_
+
             JSON jEval;
             jEval["type"] = "hellaswag", jEval["glob"] = argv[++i];
             jEval["samp"] = 1.0;
             // jEval["glob"] = argv[i++];
             jConfig["datasets_new"]["eval"] = jEval;
-#endif
+
         } else if (arg == "--hf") {  // directory of hf model
             assert(i + 1 < argc);
             model.sCardPath = model.pathCheckPoint = argv[++i];
@@ -131,6 +98,13 @@ bool CLI_params::parse(int argc, char** argv) {
                 K_EXIT(KOIFISH_INVALID_ARGS_MODEL);
             }
             ckp_format = CKP_HF;
+        } else if (arg == "--strata") {  // directory of hf model
+            assert(i + 1 < argc);
+            model.sCardPath = model.pathCheckPoint = argv[++i];
+            if (!VERIFY_DIR_EXIST(model.sCardPath, false)) {
+                K_EXIT(KOIFISH_INVALID_ARGS_MODEL);
+            }
+            ckp_format = CKP_GGUF;
         } else if (arg == "--fish") {  // directory of hf model
             assert(i + 1 < argc);
             model.pathCheckPoint = argv[++i];
@@ -154,6 +128,9 @@ bool CLI_params::parse(int argc, char** argv) {
         } else if (arg == "--tokenizer") {  // directory of tokenizer
             assert(i + 1 < argc);
             model.sTokenBinPath = argv[++i];
+        } else if (arg == "--model") {  // directory of tokenizer
+            assert(i + 1 < argc);
+            value = argv[++i];
         } else if (arg == "--coral") {
             assert(i + 1 < argc);
             ++i;  // only for debug
@@ -168,7 +145,34 @@ bool CLI_params::parse(int argc, char** argv) {
             _ERROR("invalid parameter for argument: %s\n", arg.c_str());
             exit(1);
         }
+    }*/
+
+bool CLI_params::OnCmdLine(CmdLineParser* parser, int flag) {
+    assert(parser != nullptr);
+    cli_parser = parser;  //
+    exec_name  = EXE_name();
+    // string sExt                 = argc > 1 ? FILE_EXT(argv[1]) : "";
+    FILE_FORMAT_TYPE ckp_format = FILE_JSON;  //
+    std::string path, jPath, key, value;
+    parser->get<std::string>("config_file", jPath, true);
+    if (!jPath.empty() && !LoadJConfig(jPath)) {
+        return false;
     }
+    if (!(path = parser->get<std::string>("strata", path)).empty()) {
+        model.sCardPath = model.pathCheckPoint = path;
+        ckp_format                             = CKP_STRATA;
+    } else if (!(path = parser->get<std::string>("gguf", path)).empty()) {
+        model.sCardPath = model.pathCheckPoint = path;
+        ckp_format                             = CKP_GGUF;
+    } else if (!(path = parser->get<std::string>("hf", path)).empty()) {
+        model.sCardPath = model.pathCheckPoint = path;
+        ckp_format                             = CKP_HF;
+    }
+    parser->get<std::string>("prompts", value);
+    if (value.empty()) {
+    } else
+        DEBUG.prompts = {value};
+
     DEBUG.T_GEMM = -1;  //  so many version of gemm
     // std::string s = jConfig.dump();
     J_dump("./log/_koifish_jApp_0.json", jConfig);
@@ -188,8 +192,7 @@ bool CLI_params::parse(int argc, char** argv) {
                 jConfig.erase("sft");
             }
 #endif
-            model.sTokenBinPath = "./assets/tokenizer_151936.bin";
-
+            model.sTokenBinPath  = "./assets/tokenizer_151936.bin";  // Deprecated
             model.pad_vocab_size = 151936;
             if (!InitJConfig())
                 return false;
@@ -199,6 +202,28 @@ bool CLI_params::parse(int argc, char** argv) {
                 return false;
             break;
         }
+        case CKP_GGUF: {
+            // jConfig["model"]["arch"] = "";
+        } break;
+        case CKP_STRATA: {
+            // jConfig["model"]["arch"] = "strata_qwen38";
+            jConfig = JSON::parse(
+                R"({"model": {
+                    "arch": "strata_qwen38",
+                    "vocab_size": 248320,
+                    "parameter": {
+                        "Layer": 48,
+                        "transformer": {
+                            "Ctx": 1024,"Embed": 1024,"Ffn": 3072,"Head": 24,"KVHead": 2,"head_dim": 256
+                        },
+                        "tie_word_embeddings": false,
+                        "max_pos_embeddings": 32768
+                    },
+                    "backbone": {"embed_tokens": {"Embedding": []}  }
+                }                
+                }           )");
+            InitJConfig();
+        } break;
         default:
             assert(!J_isEmpty(jConfig));  // jConfig.empty()
             if (!InitJConfig())
@@ -217,11 +242,11 @@ bool CLI_params::parse(int argc, char** argv) {
         case P_CHAT_N:
             break;
         case P_EVAL_:
-            InitChekcpoints(argc, argv, "checkpoint_in");
+            InitChekcpoints(parser->m_argc, parser->m_argv, "checkpoint_in");
             break;
         default:
-            InitChekcpoints(argc, argv, "checkpoint_in");
-            InitChekcpoints(argc, argv, "checkpoint_out");
+            InitChekcpoints(parser->m_argc, parser->m_argv, "checkpoint_in");
+            InitChekcpoints(parser->m_argc, parser->m_argv, "checkpoint_out");
             InitAllStates(0x0);
             break;
     }
@@ -229,7 +254,7 @@ bool CLI_params::parse(int argc, char** argv) {
     return true;
 }
 
-GST_Application::GST_Application(int argc, char* argv[]) {
+GST_Application::GST_Application(const string& _name, int argc, char* argv[], int flag) : name(_name), cli_parser(argc, argv) {
 #ifdef _WIN32
     system("chcp 65001");  // Ensures that Unicode characters (Chinese, emojis, etc.) are displayed correctly in the console output.
 #endif
@@ -237,20 +262,9 @@ GST_Application::GST_Application(int argc, char* argv[]) {
     // atexit(CUDA_cleanup);    //CUDA runtime unloading may happen BEFORE your atexit()!   Do not​ try to clean up CUDA in program exits
     g_instance = this;
     SetupSignalHandlers();
-
-    start_time = std::chrono::system_clock::now();
+    const bool g_dbg = std::getenv("KOIFISH_VERIFY_DEBUG") != nullptr;
+    start_time       = std::chrono::system_clock::now();
     _INFO("🐠 started at: %s\n\n", Time2String(start_time).c_str());
-
-    if (!params.parse(argc, argv)) {
-        std::ostringstream oss;
-        for (int i = 0; i < argc; ++i) {
-            oss << argv[i];
-            if (i != argc - 1)
-                oss << " ";
-        }
-        _ERROR("[APP] exit now! It failed to parse arguments={%s}\n", oss.str().c_str());
-        std::exit(EXIT_FAILURE);
-    }
 }
 
 GST_Application::~GST_Application() {
@@ -276,8 +290,13 @@ bool InitRegisterOnce(int flag) {
 
 bool GST_Application::Initialize() {
     try {
+        // run_tail();
+#ifndef NDEBUG
+        std::setvbuf(stdout, nullptr, _IONBF, 0);
+#endif
         if (!InitRegisterOnce(0x1))
             return false;
+
     } catch (const std::exception& e) {
         std::cerr << "init failed: " << e.what() << "\n";
         return 1;
@@ -294,8 +313,28 @@ bool GST_Application::Initialize() {
         std::cerr << "Logging initialization failed" << std::endl;
         return false;
     }
-
     _INFO("------------------------------------------------------------------------------\n");
+
+    if (!ParseCmdline()) {
+        _ERROR("[APP] exit now! It failed to parse arguments\n");
+        cli_parser.help();
+        std::exit(EXIT_FAILURE);
+    }
+    if (!params.OnCmdLine(&cli_parser)) {
+        _ERROR("[APP] exit now! It failed to parse arguments\n");
+        cli_parser.help();
+        std::exit(EXIT_FAILURE);
+    }
+    /*if (!params.parse(cli_parser)) {
+    std::ostringstream oss;
+    for (int i = 0; i < argc; ++i) {
+        oss << argv[i];
+        if (i != argc - 1)
+            oss << " ";
+    }
+    _ERROR("[APP] exit now! It failed to parse arguments={%s}\n", oss.str().c_str());
+    std::exit(EXIT_FAILURE);
+    }*/
     g_running = true;
     return true;
 }
@@ -328,30 +367,100 @@ int GST_Application::Run() {
 bool GST_Application::g_running              = false;
 GST_Application* GST_Application::g_instance = nullptr;
 
-#if (defined _WINDOWS) || (defined WIN32)
-BOOL APIENTRY DllMain(HANDLE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
-    char str_version[1000];
-    switch (ul_reason_for_call) {
-        case DLL_PROCESS_ATTACH:
-            GRUAI_KOIFISH_VERSION(str_version);
-            _INFO("%s", str_version);
-            break;
-        case DLL_THREAD_ATTACH:
-            break;
-        default:
-            break;
+bool CmdLineParser::parse() {
+    assert(m_argc > 0);
+    if (m_argc - 1 < m_required + m_required_pos)
+        return abort();
+
+    int num_required = 0;      // required *options* seen
+    size_t next_pos  = 0;      // next positional slot to fill
+    bool options_end = false;  // set after a bare "--"
+    UNORDER_SET_<std::string> parsed_shorthands;
+    parsed_shorthands.reserve(m_argc);
+
+    for (int i = 1; i != m_argc; ++i) {
+        std::string parsed(m_argv[i]);
+        if (!options_end) {
+            if (parsed == "-h" || parsed == "--help")
+                return abort();
+            if (parsed == "--") {  // everything after this is positional
+                options_end = true;
+                continue;
+            }
+        }
+        // ---- positional argument: anything that does not look like an option ----
+        if (options_end || !looks_like_option(parsed)) {
+            if (next_pos == m_pos_names.size()) {
+                std::cerr << "== error: unexpected argument '" + parsed + "'" << std::endl;
+                return abort();
+            }
+            auto& cmd = m_cmds[m_pos_names[next_pos++]];
+            cmd.value = parsed, cmd.isUserSet = true;
+            continue;
+        }
+        // ---- option (your original logic, unchanged except the new error message) ----
+        int id = 0;
+        if (const auto it = m_shorthands.find(parsed); it == m_shorthands.end()) {
+            std::cerr << "== error: shorthand '" + parsed + "' not found" << std::endl;
+            return abort();
+        } else {
+            if (const auto it = parsed_shorthands.find(parsed); it != parsed_shorthands.end()) {
+                std::cerr << "== error: shorthand '" + parsed + "' already parsed" << std::endl;
+                return abort();
+            }
+            parsed_shorthands.emplace(parsed);
+            id = (*it).second;
+        }
+        assert(static_cast<size_t>(id) < m_names.size());
+        auto const& name = m_names[id];
+        auto& cmd        = m_cmds[name];
+        if (cmd.is_required)
+            num_required += 1;
+        if (cmd.is_boolean) {
+            parsed = "true";
+        } else {
+            ++i;
+            if (i == m_argc) {
+                std::cerr << "== error: option '" << m_argv[i - 1] << "' needs a value" << std::endl;
+                return abort();
+            }
+            parsed = m_argv[i];
+        }
+        cmd.value     = parsed;
+        cmd.isUserSet = true;
     }
 
-    return TRUE;
-}
-#else
-// https://stackoverflow.com/questions/22763945/dll-main-on-windows-vs-attribute-constructor-entry-points-on-linux
-__attribute__((constructor)) void dllLoad() {
-    char str_version[1000];
-    GRUAI_KOIFISH_VERSION(str_version, 0x0);
-    _INFO("%s", str_version);
-    _INFO("\n");
+    if (next_pos < static_cast<size_t>(m_required_pos)) {
+        std::cerr << "== error: missing required argument '" + m_pos_names[next_pos] + "'" << std::endl;
+        return abort();
+    }
+    if (num_required != m_required)
+        return abort();
+    return true;
 }
 
-__attribute__((destructor)) void dllUnload() {}
-#endif
+void CmdLineParser::help() const {
+    std::cerr << "Usage: " << m_argv[0];
+    for (auto const& n : m_pos_names) std::cerr << (m_cmds.at(n).is_required ? " <" : " [") << n << (m_cmds.at(n).is_required ? ">" : "]");
+    std::cerr << " [-h,--help]";
+    const auto print = [this](bool with_description) {  // unchanged
+        for (size_t i = 0; i != m_names.size(); ++i) {
+            auto const& cmd = m_cmds.at(m_names[i]);
+            std::cerr << " [" << cmd.shorthand;
+            if (!cmd.is_boolean)
+                std::cerr << " " << m_names[i];
+            std::cerr << "]";
+            if (with_description)
+                std::cerr << "\n\t" << (cmd.is_required ? "REQUIRED: " : "") << cmd.descr << "\n\n";
+        }
+    };
+    print(false);
+    std::cerr << "\n\n";
+    for (auto const& n : m_pos_names) {  // positional descriptions first
+        auto const& cmd = m_cmds.at(n);
+        std::cerr << " " << (cmd.is_required ? "<" : "[") << n << (cmd.is_required ? ">" : "]") << "\n\t" << (cmd.is_required ? "REQUIRED: " : "") << cmd.descr
+                  << "\n\n";
+    }
+    print(true);
+    std::cerr << " [-h,--help]\n\tPrint this help text and silently exits." << std::endl;
+}

@@ -1,7 +1,7 @@
 /**
- *  SPDX-FileCopyrightText: 2019-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2019-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
- *  
+ *
  *  \brief boosting forest
  *  \author Yingshi Chen
  */

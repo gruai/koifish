@@ -36,8 +36,13 @@
 #include <iomanip>
 #include <chrono>
 
-// External dependency: nlohmann/json
-#include "../Utils/json/ujson.hpp"
+#ifndef _n_json_
+    #include "../Utils/json/json12.hpp"
+    using json = json11::Json;
+#else    
+    #include "../Utils/json/ujson.hpp"
+    using json = ujson::json;
+#endif
 
 #define JINJA_VERSION_MAJOR 0
 #define JINJA_VERSION_MINOR 0
@@ -52,7 +57,7 @@
 
 namespace jinja {
 
-using json = ujson::json;
+
 
 
 using Argument = std::pair<std::string, json>;
@@ -1330,7 +1335,7 @@ struct ForStmt : Node {
         } else if (iter_val.is_object()) {
             // Iterate keys
             std::vector<std::string> keys;
-            for (json::iterator it = iter_val.begin(); it != iter_val.end(); ++it) {
+            for (json::const_iterator it = iter_val.begin(); it != iter_val.end(); ++it) {
                 keys.push_back(it.key());
             }
             // Sort keys to be deterministic/consistent with map behavior

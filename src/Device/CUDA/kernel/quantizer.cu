@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Quantizer is much more subtle & complex than most people think. It refects the essence of our world, just like quantum mechanics

@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief  Numbers:    Floating/Integer/Quants
@@ -305,7 +305,7 @@ using floatX    = float;  // Weight
 using floatGama = float;
 using floatGrad = float;
 #endif
-using bf16      = uint16_t;
+using bf16 = uint16_t;
 #endif
 
 #include "g_float_cpu.hpp"
@@ -607,3 +607,25 @@ float D2f(const T* dev, const std::string& desc = "", int flag = 0x0) {
     float a = T2Float(&hostVal);
     return a;
 }
+
+/* Unsigned decimal notation.  */
+#if __WORDSIZE == 64
+#define __PRI64_PREFIX "l"
+#define __PRIPTR_PREFIX "l"
+#else
+#define __PRI64_PREFIX "ll"
+#define __PRIPTR_PREFIX
+#endif
+
+#define SCNu8 "hhu"
+#define SCNu16 "hu"
+#define SCNu32 "u"
+#define SCNu64 __PRI64_PREFIX "u"
+#define SCNd8 "hhd"
+#define SCNd16 "hd"
+#define SCNd32 "d"
+#define SCNd64 __PRI64_PREFIX "d"
+#define SCNuLEAST8 "hhu"
+#define SCNuLEAST16 "hu"
+#define SCNuLEAST32 "u"
+#define SCNuLEAST64 __PRI64_PREFIX "u"

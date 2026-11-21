@@ -74,7 +74,7 @@ Please use the following bibtex entry:
   
 ## Acknowledgements
 
-* Thanks very much for the highly instructive work of [qwen600](https://github.com/yassa9/qwen600), [calm](https://github.com/zeux/calm), [llm.c](https://github.com/karpathy/llm.c)
+* Thanks very much for the highly instructive work of [strata](https://github.com/niko1221/strata) [qwen600](https://github.com/yassa9/qwen600), [calm](https://github.com/zeux/calm), [llm.c](https://github.com/karpathy/llm.c)
  & [ggml](https://github.com/ggerganov/ggml).
 * Thanks very much for the support of Professor TianLan.
 

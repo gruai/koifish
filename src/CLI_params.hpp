@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -8,21 +8,22 @@
 
 #pragma once
 #include <cassert>
-
+#include <sstream>
+#include <filesystem>
 #include "./Utils/GST_log.hpp"
-#include "./Utils/cmd_line_parser.hpp"
-#define _nlohmann_json_
+// #define _nlohmann_json_
 #ifdef _nlohmann_json_
 // #include "./Utils/json/json_fwd.hpp"
 // using JSON = nlohmann::ordered_json;
 #include "./Utils/json/json.hpp"
 #else
-#include "./Utils/json/json11.hpp"
+#include "./Utils/json/json12.hpp"
 using namespace json11;
 using JSON = json11::Json;
 #endif
 #include "./Utils/magic_enum.hpp"
 #include "./g_float.hpp"
+using fPath = std::filesystem::path;
 
 template <typename T>
 T jKV(const JSON& jConfig, const std::vector<std::string>& keys, T default_value, bool isCLI = true, int flag = 0x0) {
@@ -43,14 +44,11 @@ T jKV(const JSON& jConfig, const std::vector<std::string>& keys, T default_value
         if (isCLI)
             std::cout << "{" << sKey << "}" << " = " << val << std::endl;
         return val;
-    }
-#ifdef _nlohmann_json_
-    catch (JSON::parse_error& e) {
-        printf("\r\n%s  Failed to parse %s!!! ERR=%s", __func__, last.c_str(), e.what());
-        std::abort();
-    }
-#else
-#endif
+    } /*
+     catch (JSON::parse_error& e) {
+         printf("\r\n%s  Failed to parse %s!!! ERR=%s", __func__, last.c_str(), e.what());
+         std::abort();
+     }*/
     catch (...) {
         printf("\r\n%s  Unknown exception @%s!!!", __func__, last.c_str());
         std::abort();
@@ -96,11 +94,143 @@ bool jKV_is(const JSON& jConfig, const std::vector<std::string>& keys, T target,
 
 bool J_dump(const std::string& path, const JSON& jObj, int flag = 0x0);
 
+class CmdLineParser {
+   public:
+    CmdLineParser(int argc, char** argv) : m_argc(argc), m_argv(argv), m_required(0) {}
+    // CmdLineParser() {}
+    struct cmd {
+        std::string shorthand, value, descr;
+        bool is_required, is_boolean;
+        bool isUserSet = false;
+    };
+
+    bool parse();
+    void help() const;
+
+    bool add(std::string const& name, std::string const& descr, std::string const& shorthand, bool is_required, bool is_boolean = false) {
+        bool ret = m_cmds.emplace(name, cmd{shorthand, is_boolean ? "false" : "", descr, is_required, is_boolean}).second;
+        if (ret) {
+            if (is_required)
+                m_required += 1;
+            m_names.push_back(name);
+            m_shorthands.emplace(shorthand, m_names.size() - 1);
+        }
+        return ret;
+    }
+
+    template <typename T>
+    T get(std::string const& name, T& x, bool isRequired = false, int flag = 0x0) const {
+        auto it = m_cmds.find(name);
+        if (it == m_cmds.end()) {
+            if (isRequired)
+                throw std::runtime_error("error: '" + name + "' not found");
+            return x;
+        }
+        auto& cmd = (*it).second;
+        if (!cmd.isUserSet)
+            return x;
+
+        auto const& value = cmd.value;
+        x                 = parse<T>(value);
+        return x;
+    }
+
+    bool parsed(std::string const& name) const {
+        auto it = m_cmds.find(name);
+        if (it == m_cmds.end())
+            return false;
+        auto const& cmd = (*it).second;
+        if (cmd.is_boolean) {
+            if (cmd.value == "true")
+                return true;
+            if (cmd.value == "false")
+                return false;
+            assert(false);  // should never happen
+        }
+        return cmd.value != "";
+    }
+
+    template <typename T>
+    T parse(std::string const& value) const {
+        if constexpr (std::is_same<T, std::string>::value) {
+            return value;
+        } else if constexpr (std::is_same<T, char>::value || std::is_same<T, signed char>::value || std::is_same<T, unsigned char>::value) {
+            return value.front();
+        } else if constexpr (std::is_same<T, int>::value || std::is_same<T, short int>::value) {
+            return std::strtol(value.c_str(), nullptr, 10);
+        } else if constexpr (std::is_same<T, unsigned int>::value || std::is_same<T, unsigned short int>::value) {
+            return std::strtoul(value.c_str(), nullptr, 10);
+        } else if constexpr (std::is_same<T, long int>::value || std::is_same<T, long long int>::value) {
+            return std::strtoll(value.c_str(), nullptr, 10);
+        } else if constexpr (std::is_same<T, unsigned long int>::value || std::is_same<T, unsigned long long int>::value) {
+            return std::strtoull(value.c_str(), nullptr, 10);
+        } else if constexpr (std::is_same<T, float>::value || std::is_same<T, double>::value || std::is_same<T, long double>::value) {
+            return std::strtod(value.c_str(), nullptr);
+        } else if constexpr (std::is_same<T, bool>::value) {
+            std::istringstream stream(value);
+            bool ret;
+            if (value == "true" || value == "false") {
+                stream >> std::boolalpha >> ret;
+            } else {
+                stream >> std::noboolalpha >> ret;
+            }
+            return ret;
+        }
+        assert(false);  // should never happen
+        throw std::runtime_error("unsupported type");
+    }
+
+    // Required positionals must be added before optional ones.
+    bool add_positional(std::string const& name, std::string const& descr, bool is_required = true) {
+        if (is_required && m_has_optional_pos)
+            return false;
+        bool ret = m_cmds.emplace(name, cmd{"", "", descr, is_required, false}).second;
+        if (ret) {
+            m_pos_names.push_back(name);
+            if (is_required)
+                m_required_pos += 1;
+            else
+                m_has_optional_pos = true;
+        }
+        return ret;
+    }
+
+   protected:
+    int m_argc    = 0;
+    char** m_argv = nullptr;
+
+   private:
+    // "-" alone (the stdin convention) and anything not starting with '-' is positional.
+    static bool looks_like_option(std::string const& s) { return s.size() > 1 && s[0] == '-'; }
+
+    int m_required_pos      = 0;
+    bool m_has_optional_pos = false;
+    std::vector<std::string> m_pos_names;  // positionals, in add_positional() order
+
+    int m_required;
+    MAP_<std::string, cmd> m_cmds;
+    MAP_<std::string, int> m_shorthands;
+    std::vector<std::string> m_names;
+
+    bool abort() const {
+        help();
+        return false;
+    }
+
+   public:
+    bool koifish_configure(int flag = 0x0);
+    bool bubble_configure(int flag = 0x0);
+    bool strata_configure(int flag = 0x0);
+
+    friend class CLI_params;
+};
+
 /**
  *  All paramters defined here
  */
 struct CLI_params;
 class GRander;
+
 /*
     生者一过客，
         (activations)
@@ -212,6 +342,7 @@ enum MODEL_ARCH {
 
     NTP_QWEN2,
     NTP_QWEN3,
+    NTP_QWEN38_STRATA,
     NTP_DEEPSEEK,
 
     NTP_GUPPY,  // Need redesign after 20260715
@@ -264,8 +395,10 @@ enum FILE_FORMAT_TYPE {
     FILE_FISH,
     FILE_CHECKPOINT,  // *.ck
 
-    CKP_HF,      // HugFace transformers compatible,
-    CKP_KOIFISH  // Koifish checkpoint is a very-lite format with only safetensors(config json & other metadata is also stored in tensors)
+    CKP_HF,       // HugFace transformers compatible,
+    CKP_KOIFISH,  // Koifish checkpoint is a very-lite format with only safetensors(config json & other metadata is also stored in tensors)
+    CKP_GGUF,
+    CKP_STRATA
 };
 
 FILE_FORMAT_TYPE FormatOfFile(const std::string& path, int flag = 0x0);
@@ -433,11 +566,10 @@ class MODEL_CARD {
     std::string pathCheckPoint = "";  // support {"safetensors", "kun"} files in this path
     // sCardPath should be sft.sCardPath
     std::string sCardPath = "", sTokenBinPath = "";
-    bool onlyTokenizer = false;
-    // std::string sTokenJsonPath   = "./assets/tokenizer/tokenizer.json";         // tokenizer.json
-    // std::string sTokenConfigPath = "./assets/tokenizer/tokenizer_config.json";  // tokenizer_config.json
-    std::string sTokenJsonPath   = "";                     // tokenizer.json
-    std::string sTokenConfigPath = "";                     // tokenizer_config.json
+    bool onlyTokenizer           = false;
+    // std::string sTokenFolder     = "";
+    std::string sTokenJsonPath   = "";                     // tokenizer.json        or "./assets/tokenizer/tokenizer.json"
+    std::string sTokenConfigPath = "";                     // tokenizer_config.json or "./assets/tokenizer/tokenizer_config.json"
     std::string sArch, torch_dtype, transformers_version;  //, model_type;
     std::string act_type, norm_type;
     typNUMBER tpWeight = typNUMBER::BF16, tpGradient = typNUMBER::BF16, tpActivation = typNUMBER::BF16;
@@ -506,6 +638,7 @@ class MODEL_CARD {
     MODEL_CARD();
 
     virtual bool InitHugFace(CLI_params* hConfig, const JSON& jConfig, bool needAlign, int flag = 0x0);
+    virtual bool InitStrata(CLI_params* hConfig, const JSON& jConfig, bool needAlign, int flag = 0x0);
 
     bool isLoadCard() const { return !sCardPath.empty(); }
     void Dump(int typ);
@@ -735,8 +868,9 @@ struct TRAIN_CARD {
     bool custom_n_ctx, isSuperBatch = true, use_flash, use_checkpointing, sample_random_offsets, force_reshuffle;
 
     float rSubSample = 1;
-    int nMostIter = -1, nEpochIter = -1;
-    int warmup, lr_restart         = 0;
+    int nMostIter    = -1;  // nMostIter=["train", "most-iter"] if n_epochs==-1
+    int nEpochIter   = -1;  // used in COSINE_EPOCH
+    int warmup, lr_restart = 0;
 
     int opt_past;
     float opt_delta;
@@ -751,7 +885,7 @@ struct TRAIN_CARD {
     size_t nTokenInBatch() const { return n_batch * n_ctx; }
     TRAIN_CARD();
     bool Init(CLI_params* hConfig, const JSON& jConfig, int flag = 0x0);
-    std::string Desc(int type, int flag=0x0);
+    std::string Desc(int type, int flag = 0x0);
 };
 
 // for (auto [a, b] : section)
@@ -785,6 +919,18 @@ enum CHAT_LENGTH_TYPE {
     RECOMMEND,
     MAX_POSE,  // max_position_embeddings, maybe RoPE positional limit
     ONLY_1,    //
+};
+
+/** speculative decoding pipeline
+ *  1. Multi-Token Prediction
+ *  2. DFlash2
+ *  3. Suffix drafter ("prompt lookup")
+ *  4. Cost‑model window
+ **/
+struct SPECULATE_CARD {
+    int kernel_capacity = 8;  // GPU kernels are compiled with this fixed maximum token capacity
+    int mtp_max_t = 4, spec = 6;
+    int nSpecDepth(int nFreeContex, int flag = 0x0);
 };
 
 //  See HF's "generation_config.json"
@@ -908,6 +1054,7 @@ struct DEUG_SWITCH {
     int verSampJump    = 0;
     int verGenerate    = 0;
     int verFakeQuant   = 0;
+    int verLivePlot    = 1;
 
     int T_ternary        = 0;
     int T_classifier_ver = 0;
@@ -1156,6 +1303,7 @@ struct CLI_params {
         std::string val = Get(keys, t);
         return val;
     }
+    
 
     // It is also not easy to change keys in a std::map
     template <typename T>
@@ -1272,7 +1420,13 @@ struct CLI_params {
 
     void Dump(int flag = 0x0);
 
-    bool parse(int argc, char** argv);
+    CmdLineParser* cli_parser = nullptr;
+    template <typename T>
+    T ARG(const std::string& key, T& t, bool isCLI = true) const {
+        T val = cli_parser->get<T>(key, t);
+        return val;
+    }
+    bool OnCmdLine(CmdLineParser* parser, int flag = 0x0);
     // 1) Only load json config file. Init model would be later!  2) may also call InitHugFace_
     bool LoadJConfig(const std::string& path, int flag = 0x0);
 

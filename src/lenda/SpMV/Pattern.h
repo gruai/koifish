@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2013-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2013-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -18,34 +18,34 @@
 */
 class CCS_pattern {
    private:
-    CCS_pattern &operator=(const CCS_pattern &);
+    CCS_pattern& operator=(const CCS_pattern&);
 
    protected:
     //	double control[SMAT_CONTROL_ITEM];
     int type;
     //	int *permut;
 
-    void Create(int dim, int *ptr, int *ind, int m_type = 0x0);
+    void Create(int dim, int* ptr, int* ind, int m_type = 0x0);
 
    public:
     int nCol, *ptr, *ind;
-    int *ptr_e;  // for MKL call
+    int* ptr_e;  // for MKL call
 
     int nNZ() const { return ptr == nullptr ? 0 : ptr[nCol]; }
     virtual int nzLU() { return 0; }
 
     CCS_pattern() : nCol(0), type(0), ptr(nullptr), ptr_e(nullptr), ind(nullptr) { ; }
     // CCS_pattern( const CCS_pattern &)	{;}
-    CCS_pattern(const CCS_pattern &ptn, int r_0, int c_0, int nR, int nC);
-    CCS_pattern(const CCS_pattern &ptn) { Create(ptn.nCol, ptn.ptr, ptn.ind, ptn.type); }
-    CCS_pattern(int dim, int *ptr, int *ind, int m_type = 0x0) { Create(dim, ptr, ind, m_type); }
+    CCS_pattern(const CCS_pattern& ptn, int r_0, int c_0, int nR, int nC);
+    CCS_pattern(const CCS_pattern& ptn) { Create(ptn.nCol, ptn.ptr, ptn.ind, ptn.type); }
+    CCS_pattern(int dim, int* ptr, int* ind, int m_type = 0x0) { Create(dim, ptr, ind, m_type); }
     virtual ~CCS_pattern(void) { Clear(); }
 
     //	void Create( const CCS_pattern &ptn,int flag,int r_0=-1,int c_0=-1,int nR=-1,int nC=-1 );
     void Clear();
 
-    int Order(int *, int flag);
-    int Compress(int *comp, int *, int alg, int flag);
+    int Order(int*, int flag);
+    int Compress(int* comp, int*, int alg, int flag);
     virtual bool isValid() { return nCol > 0 && ptr != nullptr && ind != nullptr; }
 
     //	template<typename T>  friend class Matrix;

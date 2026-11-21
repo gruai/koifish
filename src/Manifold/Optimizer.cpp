@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  1. Spike analysis
@@ -545,7 +545,8 @@ double Optimizer::GraphCompute(hSampNanny hLoader, hTGraph hTG, int flag) {
 
     isBackward = false;
     _fish->ForwardOnRLS(iter, 0x0);
-    // g_dump_level = -1;
+    // g_dump_level = ENV2VAL<int>("STRATA_VERIFY_DEBUG");
+    
     if (_fish->isAtPhase({LIFE_PHASE::P_CHAT_1, LIFE_PHASE::P_CHAT_N, LIFE_PHASE::P_PREFILL})) {
     } else {
         mean_loss = hLoader->LossOnResult(_fish);
@@ -681,12 +682,15 @@ float Optimizer::UpdateLossCurve(int flag) {
 
     trainInfos().AfterStep(iter);
 #ifdef __USE_LIVEPLOT__
-    hLossPlot->push_train(iter, loss_after);
-    hLossPlot->push_param(iter, "lr", (float)last_lr);
-    hLossPlot->push_param(iter, "|g|", (float)g_step);
-    char buf[128];
-    std::snprintf(buf, sizeof buf, "lr=3e-4   batch=64   %d/%d steps", iter, iter);
-    // hLossPlot->set_status(buf);
+    if (hLossPlot != nullptr) {
+        hLossPlot->push_train(iter, loss_after);
+        // hLossPlot->push_param(iter, "lr", (float)last_lr);
+        hLossPlot->push_param(iter, "|w|_head", (float)g_step);  // slingshot mechanism
+
+        char buf[128];
+        std::snprintf(buf, sizeof buf, "lr=3e-4   batch=64   %d/%d steps", iter, iter);
+        // hLossPlot->set_status(buf);
+    }
 #endif
     if ((iter - 1) % _params.dump_every == 0 || isDumpOnce) {
         isDumpOnce = false;
@@ -774,10 +778,12 @@ void Optimizer::AfterBuild(int flag) {
 
 void Optimizer::BeforeTrain(hGTensor tokens_, int flag) {
 #ifdef __USE_LIVEPLOT__
-    string title = "My training - " + TrainParams().Desc(0x0) + "    " + GST_timeStr();  //_sLOG("My LLM training");
-    hLossPlot    = std::make_shared<LivePlot>(title);
-    hLossPlot->save_png_on_stop("./Koifish_train_curve.png");
-    hLossPlot->start();
+    if (DEBUG.verLivePlot > 0) {
+        string title = _sLOG("%s(%lldk)%s    %s", _fish->Name().c_str(), nOptParams / 1000, TrainParams().Desc(0x0).c_str(), GST_timeStr().c_str());
+        hLossPlot    = std::make_shared<LivePlot>(title);
+        hLossPlot->save_png_on_stop("./Koifish_train_curve.png");
+        hLossPlot->start();
+    }
 #endif
     first_iter = iter;
 
@@ -1056,9 +1062,6 @@ OPT_Muon::OPT_Muon(NLP_AutoRegressive* g_, CLI_params& params_, int flag) : Opti
 }
 
 OPT_Adam::OPT_Adam(NLP_AutoRegressive* g_, CLI_params& params_, int flag) : Optimizer(g_, params_, flag) {
-    // auto train_params = TrainParams();
-    //  0.9f, 0.95f, 1e-8f      decay=0.1
-
     adam                      = &(_fish->config.common.adam);
     adam->clip_alg            = 1;  // clip_alg=0 little better
     adam->gclip               = adam->gclip / _fish->config.nLayer();
@@ -1081,7 +1084,7 @@ void Optimizer::Dump(int typ) {
     _fish->memBuffer->Dump(0x0);
 
     auto train_params = TrainParams();
-    _INFO("======== %s nEopch=%d most_iter=%d\n", sTrainStage.c_str(), train_params.n_epochs, train_params.nMostIter);  //,train_params.nEpochIter
+    _INFO("======== %s nEopch=%d most_iter=%d\n", sTrainStage.c_str(), train_params.n_epochs, train_params.nMostIter);  
     fflush(stdout);
     RLS_BP* hRLS = _fish->curDevice()->GetScheduler<RLS_BP>();
     hRLS->Dump(typ);
@@ -1227,10 +1230,12 @@ double SampNanny::QiWu(DL_BATCH_UPATE tpBatch, int flag) {
             if (hOPT != nullptr) {
                 UpdateStepInfos(iiLoss.average, nB);
 #ifdef __USE_LIVEPLOT__
-                hOPT->hLossPlot->push_eval(iter, iiLoss.average);
-                char buf[128];
-                std::snprintf(buf, sizeof buf, "lr=3e-4   batch=64   %d/%d steps", iter, iter);
-                // hLossPlot->set_status(buf);
+                if (hOPT->hLossPlot != nullptr) {
+                    hOPT->hLossPlot->push_eval(iter, iiLoss.average);
+                    char buf[128];
+                    std::snprintf(buf, sizeof buf, "lr=3e-4   batch=64   %d/%d steps", iter, iter);
+                    // hOPT->hLossPlot->set_status(buf);
+                }
 #endif
             }
 

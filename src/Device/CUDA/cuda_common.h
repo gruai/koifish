@@ -1,6 +1,6 @@
 
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Common utilities for CUDA code
@@ -30,6 +30,9 @@
 #include "../../Utils/GST_util.hpp"
 #include "../../g_float.hpp"
 #include "cuda_def.hpp"
+
+struct DeviceFree { void operator()(void* p) const { if (p) cudaFree(p); } };
+using DevicePtr = std::unique_ptr<void, DeviceFree>;
 
 extern const size_t cublaslt_workspace_size;
 extern void* cublaslt_workspace;
@@ -339,7 +342,6 @@ inline float get_flops_promised(const char* device, int precision_mode) {
 }
 
 extern cudaStream_t main_stream;
-
 
 inline size_t get_compute_capability() {
     int current_device;

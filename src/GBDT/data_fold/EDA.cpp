@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2018-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2018-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Exploratory data analysis
@@ -57,7 +57,7 @@ void ExploreDA::AddDistri(const std::string& name, int id, int flag) {
     assert(mapDistri.find(id) == mapDistri.end());
 
     Distribution* distri = new Distribution();
-    distri->nam = name.empty() ? "feat_" + std::to_string(id) : name;
+    distri->nam          = name.empty() ? "feat_" + std::to_string(id) : name;
     mapDistri.insert(pair<int, Distribution*>(id, distri));
 }
 

@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2018-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2018-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Tree
@@ -31,7 +31,7 @@ static char ssPath[256];  // only for debug
 #define thread_local __thread
 #endif
 
-double Impurity(int nCls, int nz, int *distri) {
+double Impurity(int nCls, int nz, int* distri) {
     double e = 0.0, p;
     int i, n1 = 0;
     for (i = 0; i < nCls; i++) {
@@ -47,24 +47,24 @@ double Impurity(int nCls, int nz, int *distri) {
     return e;
 }
 
-WeakLearner::WeakLearner(DecisionTree *hTr, arrPFNO &sam_, int d, int flag)
+WeakLearner::WeakLearner(DecisionTree* hTr, arrPFNO& sam_, int d, int flag)
     : samps(sam_), feat(-1), thrsh(0.0), left(nullptr), right(nullptr), hTree(hTr), distri(nullptr), hBlit(nullptr), depth(d) {
     int i, no, cls;
     bool isRoot = samps.size() == 0;
 
-    FeatsOnFold *hDat = hTree->GetDat();
-    int *tag          = hDat->Tag();
+    FeatsOnFold* hDat = hTree->GetDat();
+    int* tag          = hDat->Tag();
     if (samps.size() == 0) {  //
         int nSample = hDat->nSample();
         for (i = 0; i < nSample; i++) {
             int cls   = tag[i];
-            F4NO *hfn = new FLOA_NO<float>(-1, i, cls);
+            F4NO* hfn = new FLOA_NO<float>(-1, i, cls);
             samps.push_back(hfn);
         }
     }
     int nSamp = samps.size(), *distri = new int[hDat->nClas]();
     for (arrPFNO::iterator it = samps.begin(); it != samps.end(); it++) {
-        F4NO *hfn = *it;
+        F4NO* hfn = *it;
         no        = hfn->pos;
         cls       = tag[no];
         assert(cls >= 0 && cls < hDat->nClas);
@@ -74,7 +74,7 @@ WeakLearner::WeakLearner(DecisionTree *hTr, arrPFNO &sam_, int d, int flag)
     delete[] distri;
 }
 
-double WeakLearner::s_plit(int cur, int *nEachCls, int *nos, double &thrsh, int flag) {
+double WeakLearner::s_plit(int cur, int* nEachCls, int* nos, double& thrsh, int flag) {
     /*	FeatsOnFold *hData=hTree->GetDat( );
         int i,j,cls,nCls=hData->nCls,nSamp=samps.size(),nLeft=0,nRight=nSamp,no,ldX=hData->ldX;
         int h_0,h_1,*ptr=nullptr,*ptr1,dim,pos,iv,*permut=nos+nSamp;
@@ -165,10 +165,10 @@ double WeakLearner::s_plit(int cur, int *nEachCls, int *nos, double &thrsh, int 
     return 0;
 }
 
-void split_samps(float *feat, float thrsh, arrPFNO &samps, arrPFNO &fnL, arrPFNO &fnR) {
+void split_samps(float* feat, float thrsh, arrPFNO& samps, arrPFNO& fnL, arrPFNO& fnR) {
     int no;
     for (arrPFNO::iterator it = samps.begin(); it != samps.end(); it++) {
-        F4NO *hfn = *it;
+        F4NO* hfn = *it;
         no        = hfn->pos;
         //	assert( no==nos[i++] );
         hfn->val = feat[no];  // dat[no*ldX];
@@ -182,7 +182,7 @@ void split_samps(float *feat, float thrsh, arrPFNO &samps, arrPFNO &fnL, arrPFNO
 
 bool WeakLearner::Split(int flag) { return true; }
 
-DecisionTree::DecisionTree(BoostingForest *hF, FeatsOnFold *hD, int flag) : hForest(hF), hData_(hD), root(nullptr) {
+DecisionTree::DecisionTree(BoostingForest* hF, FeatsOnFold* hD, int flag) : hForest(hF), hData_(hD), root(nullptr) {
     arrPFNO boot;
     assert(hData_->nSample() > 0);
     // BootSample( boot,oob,hData );
@@ -222,12 +222,12 @@ DecisionTree::~DecisionTree() {
     oob.clear();
 }
 
-void DecisionTree::GetLeaf(WeakLearners &vLeaf, int flag) {
+void DecisionTree::GetLeaf(WeakLearners& vLeaf, int flag) {
     vLeaf.clear();
-    stack<WeakLearner *> stk;
+    stack<WeakLearner*> stk;
     stk.push(hRoot());
     while (!stk.empty()) {
-        WeakLearner *hWL = stk.top();
+        WeakLearner* hWL = stk.top();
         stk.pop();
         if (hWL->left != nullptr) {
             stk.push(hWL->right);
@@ -237,14 +237,14 @@ void DecisionTree::GetLeaf(WeakLearners &vLeaf, int flag) {
     }
     assert(stk.empty());
 }
-void DecisionTree::GetNodes(WeakLearners &vNodes, int flag) {
+void DecisionTree::GetNodes(WeakLearners& vNodes, int flag) {
     vNodes.clear();
     if (hRoot() == nullptr)
         return;
-    stack<WeakLearner *> stk;
+    stack<WeakLearner*> stk;
     stk.push(hRoot());
     while (!stk.empty()) {
-        WeakLearner *hWL = stk.top();
+        WeakLearner* hWL = stk.top();
         stk.pop();
         vNodes.push_back(hWL);
         if (hWL->left != nullptr) {
@@ -258,7 +258,7 @@ void DecisionTree::GetNodes(WeakLearners &vNodes, int flag) {
 void DecisionTree::Train(int flag) {
     // if( hForest->skdu.noT%10==0 )
     //	printf( "\n********* Tree %d......\n",hForest->skdu.noT );
-    WeakLearner *root = hRoot();
+    WeakLearner* root = hRoot();
     int nIns = 0, nz = 0, i;
     impurity = 0;
     double a;
@@ -304,13 +304,13 @@ void DecisionTree::Train(int flag) {
     // printf( "\n%d...OK",hForest->skdu.noT );
 }
 
-ManifoldTree::ManifoldTree(BoostingForest *hBoosting, FeatsOnFold *hData, string nam_, int flag) {
+ManifoldTree::ManifoldTree(BoostingForest* hBoosting, FeatsOnFold* hData, string nam_, int flag) {
     hForest = hBoosting, name = nam_;
     hData_ = hData;
     // FeatsOnFold *hData = hF->GurrentData();
     int rnd_seed = hBoosting->skdu.noT;
     // hData->samp_set.Shuffle(rnd_seed);
-    MT_BiSplit *root = new MT_BiSplit(hData, hBoosting, 0, rnd_seed);
+    MT_BiSplit* root = new MT_BiSplit(hData, hBoosting, 0, rnd_seed);
     root->id         = nodes.size();
     nodes.push_back(root);
     // leafs.push_back(root);
@@ -323,7 +323,7 @@ ManifoldTree::ManifoldTree(BoostingForest *hBoosting, FeatsOnFold *hData, string
     }*/
 }
 
-void ManifoldTree::OnNewLeaf(hMTNode hNode, FeatsOnFold *hData_, const vector<int> &pick_feats, bool isOnlyAdd, int flag) {
+void ManifoldTree::OnNewLeaf(hMTNode hNode, FeatsOnFold* hData_, const vector<int>& pick_feats, bool isOnlyAdd, int flag) {
     hNode->gain_ = 0;
     if (isOnlyAdd) {
         leafs.push(hNode);
@@ -340,7 +340,7 @@ void ManifoldTree::OnNewLeaf(hMTNode hNode, FeatsOnFold *hData_, const vector<in
         }*/
         hNode->CheckGain(hData_, pick_feats, 0);
         if (hGuideTree != nullptr) {
-            FeatsOnFold *hGuideData = hGuideTree->hData_;
+            FeatsOnFold* hGuideData = hGuideTree->hData_;
             hMTNode hBlit           = hGuideTree->nodes[hNode->id];
             hBlit->Observation_AtLocalSamp(hGuideData);
             hBlit->feat_id = hNode->feat_id;
@@ -382,7 +382,7 @@ void ManifoldTree::DelChild(hMTNode hNode, int flag) {
     v0.1	cys
         8/2/2018
 */
-void ManifoldTree::GrowLeaf(hMTNode hBlit, const char *info, bool isAtLeaf, int flag) {
+void ManifoldTree::GrowLeaf(hMTNode hBlit, const char* info, bool isAtLeaf, int flag) {
     // assert(hData_->atTrainTask());
     assert(hBlit->isLeaf());
     size_t nSamp = hBlit->nSample();
@@ -445,7 +445,7 @@ void ManifoldTree::BeforeEachBatch(size_t nMost, size_t rng_seed, int flag) {
 
     for (auto node : nodes) {
         // for each(hMTNode node in nodes) {
-        SAMP_SET &set = node->samp_set;
+        SAMP_SET& set = node->samp_set;
         if (node->isLeaf()) {  // ��FeatsOnFold:;AtLeafһ��
             node->Observation_AtLocalSamp(hData_);
             node->feat_id    = -1;
@@ -477,12 +477,12 @@ void ManifoldTree::DropNodes(int flag) {
     nElite = MAX2(1, nLeaf / 2);
     vector<tpSAMP_ID> idx;
     sort_indexes(nNode, w, idx);
-    GRander &rander = hForest->hTrainData->rander_nodes;
+    GRander& rander = hForest->hTrainData->rander_nodes;
     // for (i = 0; i < nNode-nElite; i++) {
     for (i = 0; i < nNode; i++) {
         no = idx[i];
         // assert(w[no]<=w[idx[i+1]]);
-        MT_BiSplit *hNode = nodes[no];
+        MT_BiSplit* hNode = nodes[no];
         if (hNode->isLeaf()) {
             if (rander.Uniform_(0, 1) < T_drop) {
                 // if (hNode->id % 10 == 0) {
@@ -509,7 +509,7 @@ void ManifoldTree::Adpative_LR(int flag) {
     if (!(hData_->config.lr_adptive_leaf && nTree > 1))
         return;
 
-    FeatsOnFold *hLRData = hForest->hEvalData;
+    FeatsOnFold* hLRData = hForest->hEvalData;
     hLRData              = hForest->hTrainData;
     nFeat                = hLRData->feats.size();
     nEite                = nFeat / 2;  // MIN2(32, nFeat / 2);
@@ -523,7 +523,7 @@ void ManifoldTree::Adpative_LR(int flag) {
     // assert(nzS == 0);
 
     if (isOneSetp) {
-        tpDOWN *delta_ = VECTOR2ARR(hLRData->lossy->delta_step);
+        tpDOWN* delta_ = VECTOR2ARR(hLRData->lossy->delta_step);
         for (auto node : nodes) {
             // for each(hMTNode node in nodes) {
             if (!node->isLeaf())
@@ -532,7 +532,7 @@ void ManifoldTree::Adpative_LR(int flag) {
             tpDOWN step_base = node->GetDownStep();
             size_t nS        = node->nSample();
             nz += nS;
-            tpSAMP_ID *samps = node->samp_set.samps;
+            tpSAMP_ID* samps = node->samp_set.samps;
             for (i = 0; i < nS; i++) {
                 delta_[samps[i]] = step_base;
             }
@@ -558,7 +558,7 @@ void ManifoldTree::Adpative_LR(int flag) {
                 size_t nS = node->nSample();
                 nz += nS;
                 int feat = node->parent->feat_id, isCheck = 1;
-                FeatVector *hFeat = hLRData->Feat(feat);
+                FeatVector* hFeat = hLRData->Feat(feat);
                 assert(hFeat != nullptr);
                 /*if (rank[hFeat->id]<nEite || (feat + time(NULL)) % 10 == 0) {
                     isCheck = 1;
@@ -598,7 +598,7 @@ void ManifoldTree::Train(int flag) {
     int nTree = hForest->forest.size(), iter = 0, nMoreLeaf = 0;
     // FeatsOnFold *hData_ = hForest->GurrentData();
     bool isBatch  = hData_->config.batch < 0.9;
-    tpDOWN *yDown = hData_->GetDownDirection();
+    tpDOWN* yDown = hData_->GetDownDirection();
     char info[2000];
     size_t pick, i, nSamp = hData_->nSample(), nPass = 0, nz = 0;
 
@@ -698,7 +698,7 @@ void ManifoldTree::Train(int flag) {
             hForest->skdu.noLeaf++;
             if (hData_->config.leaf_regression == "linear" && nSamp > 2) {
                 assert(node->feat_regress != -1);  // node->feat_id==-1 &&
-                FeatVector *hF_  = hData_->Feat(node->feat_regress);
+                FeatVector* hF_  = hData_->Feat(node->feat_regress);
                 node->regression = hF_->InitRegression(hData_, node, 0x0);
             } else if (hData_->config.leaf_regression == "histo_mean" && nSamp > 2) {
                 // ע�� ��Grow Leafʱ��ÿ���ڵ��impuri,fruit�ѱ���ʼ��
@@ -781,10 +781,10 @@ int ManifoldTree::maxDepth() {
     v0.2	cys
         8/31/2019
 */
-ARR_TREE *ManifoldTree::To_ARR_Tree(FeatsOnFold *hData_, bool isQuant_, bool isClear, int flag) {
+ARR_TREE* ManifoldTree::To_ARR_Tree(FeatsOnFold* hData_, bool isQuant_, bool isClear, int flag) {
     // return nullptr;
-    ARR_TREE *harrTree = new ARR_TREE();
-    ARR_TREE &arrTree  = *(harrTree);
+    ARR_TREE* harrTree = new ARR_TREE();
+    ARR_TREE& arrTree  = *(harrTree);
     bool isQuanti      = hData_->isQuanti;  // predict,test��Ӧ�����ݼ���û�и��ӻ�!!!
     int nNode = nodes.size(), no = 0;
     double step;
@@ -806,8 +806,8 @@ ARR_TREE *ManifoldTree::To_ARR_Tree(FeatsOnFold *hData_, bool isQuant_, bool isC
             arrTree.rigt[no] = node->right->id;
             // arrTree.thrsh_step[no] = isQuanti ? node->fruit->T_quanti : node->fruit->thrshold;
             if (node->fruit->isY) {
-                FeatVector *hFeat    = hData_->Feat(node->feat_id);
-                Distribution *distri = hData_->histoDistri(hFeat);
+                FeatVector* hFeat    = hData_->Feat(node->feat_id);
+                Distribution* distri = hData_->histoDistri(hFeat);
                 int nBins            = distri->histo->nBins;
                 arrTree.folds[no]    = new tpFOLD[nBins];
                 memcpy(arrTree.folds[no], node->fruit->mapFolds, sizeof(tpFOLD) * nBins);
@@ -856,7 +856,7 @@ void ManifoldTree::Dump(int flag) {
         // for each(hMTNode node in nodes) {
         if (node->isLeaf())
             continue;
-        FeatVector *hFeat = hData_->Feat(node->feat_id);
+        FeatVector* hFeat = hData_->Feat(node->feat_id);
         size_t nSamp      = node->nSample();
         if (hFeat->nam.length() == 0)
             printf("%d ", node->feat_id);
@@ -907,7 +907,7 @@ void ManifoldTree::Dump(int flag) {
     printf("%d\n", hForest->skdu.noT);
 }
 
-void ManifoldTree::AddScore(INIT_SCORE *score, int flag) {
+void ManifoldTree::AddScore(INIT_SCORE* score, int flag) {
     double bias = score->step;
     assert(!IS_NAN_INF(bias));
     if (bias == 0)
@@ -921,7 +921,7 @@ void ManifoldTree::AddScore(INIT_SCORE *score, int flag) {
 }
 
 // ����֮ǰdistri��������
-void DecisionTree::Clasify(FeatsOnFold *hSamp, arrPFNO &points, float *distri, int flag) {
+void DecisionTree::Clasify(FeatsOnFold* hSamp, arrPFNO& points, float* distri, int flag) {
     int nSamp = points.size(), sum = 0, nz, no, nClass = hSamp->nClas, j;
     float *model, *dtr = nullptr;
     WeakLearners vLeaf;
@@ -935,7 +935,7 @@ void DecisionTree::Clasify(FeatsOnFold *hSamp, arrPFNO &points, float *distri, i
     hRoot()->Split();
 }
 
-void DecisionTree::Regress(arrPFNO &points, int flag) {
+void DecisionTree::Regress(arrPFNO& points, int flag) {
     int nSamp = points.size(), sum = 0, nz, no;
     WeakLearners vLeaf;
     hRoot()->samps = points;
@@ -944,7 +944,7 @@ void DecisionTree::Regress(arrPFNO &points, int flag) {
 }
 
 void WeakLearner::AtLeaf(int flag) {
-    FeatsOnFold *hData = hTree->GetDat();
+    FeatsOnFold* hData = hTree->GetDat();
     int i, j, tag, no, nCls = hData->nClas, nSamp = samps.size(), *tags = hData->Tag();
     GST_VERIFY(nSamp != 0, "WeakLearner::AtLeaf nSamp is 0");
     if (hTree->hForest->isStage(RF_TRAIN)) {
@@ -953,7 +953,7 @@ void WeakLearner::AtLeaf(int flag) {
         for (i = 0; i < nCls; i++) distri[i] = 0;
         double s = 1.0 / nSamp;  // samps.size( );
         for (arrPFNO::iterator it = samps.begin(); it != samps.end(); it++) {
-            F4NO *hfn = *it;
+            F4NO* hfn = *it;
             no        = hfn->pos;
             tag       = tags[no];
             assert(tag >= 0 && tag < nCls);
@@ -966,7 +966,7 @@ void WeakLearner::AtLeaf(int flag) {
         assert(distri != nullptr);
     }
     if (1) {  // �ۻ���hData->distri
-        float *dtr;
+        float* dtr;
         for (auto hfn : samps) {
             // for each( F4NO *hfn in samps ){
             no  = hfn->pos;
@@ -978,7 +978,7 @@ void WeakLearner::AtLeaf(int flag) {
     }
 }
 
-bool WeakLearner::Model2Distri(int nCls, double *dist_, int flag) {
+bool WeakLearner::Model2Distri(int nCls, double* dist_, int flag) {
     assert(samps.size() == 0);
     int i, cls;
     for (i = 0; i < nCls; i++) dist_[i] = distri[i];
@@ -986,7 +986,7 @@ bool WeakLearner::Model2Distri(int nCls, double *dist_, int flag) {
 }
 
 // bootstrap samples from the original data
-void DecisionTree::BootSample(arrPFNO &boot, arrPFNO &oob, FeatsOnFold *hDat, int flag) {
+void DecisionTree::BootSample(arrPFNO& boot, arrPFNO& oob, FeatsOnFold* hDat, int flag) {
     int total = hDat->nSample(), i, j, cls, nCls = hDat->nClas, nSample = total, no, nz;
     assert(total > 0);
     double sBalance = hForest->sBalance;
@@ -1032,7 +1032,7 @@ WeakLearner::~WeakLearner() {
 
 void WeakLearner::ToCPP(int flag) { hTree->hForest->ToCPP(this, flag); }
 
-void MT_BiSplit::Dump(FeatsOnFold *hData_, const char *info_0, int type, int flag) {
+void MT_BiSplit::Dump(FeatsOnFold* hData_, const char* info_0, int type, int flag) {
     assert(fruit != nullptr);
     double f = fruit->Thrshold(false);  // fruit.Get_<float>( );
     if (left == nullptr) {

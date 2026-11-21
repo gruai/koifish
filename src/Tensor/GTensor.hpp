@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -9,15 +9,13 @@
 #include <float.h>
 #include <inttypes.h>
 #include <stdio.h>
+
 #include <array>
 #include <atomic>
 #include <cassert>
 #include <complex>
-#include <cstdarg>
 #include <fstream>
 #include <memory>
-// #include <regex>
-// #include <map>
 #include <thread>
 #include <typeinfo>
 #include <vector>
@@ -25,10 +23,12 @@ using namespace std;
 #include <stdio.h>
 #include <string.h>
 
+#include <cstdlib>
+
+#include "../CLI_params.hpp"
+#include "../Utils/GST_obj.hpp"
 #include "../g_def_x.hpp"
 #include "../g_float.hpp"
-#include "../CLI_params.hpp"
-#define GG_V12
 
 class GTensor;
 class huTensor;
@@ -43,8 +43,6 @@ struct GENSOR_INFO;
 struct GENSOR_TOPU;
 
 bool Gensors2File(std::vector<hGTensor> gset, const std::string& path, int flag = 0x0);
-
-
 
 // set name of a tensor if its name is "\0" & its grad
 int gTN(hGTensor, const char* format, ...);
@@ -77,23 +75,6 @@ struct GENSOR_OP {
     static bool comp(GENSOR_OP& a, GENSOR_OP& b) { return a.ID < b.ID; }
 };
 typedef shared_ptr<GENSOR_OP> hGOP;
-
-#include <cstdlib>
-#include <memory>
-
-template <typename T>
-struct VirtualAllocator {
-    using value_type = T;
-    T* allocate(size_t n) { return static_cast<T*>(std::malloc(n * sizeof(T))); }
-    void deallocate(T* p, size_t n) { std::free(p); }
-
-    VirtualAllocator() = default;
-    template <typename U>
-    VirtualAllocator(const VirtualAllocator<U>&) {}
-};
-
-template <typename T>
-struct GPUAllocator : public VirtualAllocator<T> {};
 
 /*
     distri info of a tensor, transfer data between device & host
@@ -181,7 +162,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     size_t szData = 0, szGama = 0, szUse = 0, szGrad = 0, szM = 0, szV = 0;
     int last_iter = -1;
     //  support dynamic change shape&type!  return false if not change anything
-    
+
     virtual bool ReShape(SHAPE shape_, typNUMBER tpD_, int flag = 0x0);
     virtual hGTensor _Multiply(const hGTensor& other) {
         assert(0);
@@ -204,7 +185,9 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
 
     // arrLORA wLoABs; // = GeNeuron_::wLoABs
 
-    virtual size_t Alloc_1(void** dst, bool isZero, string desc, size_t sz = 0x0, int flag = 0x0) { return 0x0; };
+    virtual size_t Alloc_1(void** dst, bool isZero, string desc, size_t sz = 0x0, SourceLocation where = SourceLocation::current(), int flag = 0x0) {
+        return 0x0;
+    };
     virtual size_t Free_1(void** obj, const string& info = "") { return 0x0; };
     virtual hBITARR GetRawData(int x, int flag, int64_t sp[4], size_t& nEle, bool isAlloc = false) const;
 
@@ -226,6 +209,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     float rLARS(float s0, float T_lars, int flag);
     size_t offset = 0x0;
     /** 1. PyTorch’s nn.Linear defines weight as [out_features, in_features], and the forward pass is: y = X @ W.T + bias
+     *  2. GGUF order: dim 0 varies fastest
      *  */
     SHAPE shape;
     SHAPE x_shape;  //  1.padded for high performance or menory alignment(x_shape<=shape)
@@ -321,7 +305,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     static size_t MostOverhead() { return sizeof(GTensor) * 2; }
     GTensor() {}
     GTensor(Fish* hFish, SHAPE shape_, typNUMBER tpD_, bool isAlloc = true, int flag = 0x0);
-    GTensor(Fish* hFish, const string& name, JSON& jDesc, int flag = 0x0);  // init from checkpoints(safetensors)
+    GTensor(Fish* hFish, const string& name, const JSON& jDesc, int flag = 0x0);  // init from checkpoints(safetensors)
     virtual JSON jDesc(K_SafeTensors* st, int flag = 0x0);
 
     virtual hGTensor Partial(const string& name, size_t offset, SHAPE shape, typNUMBER tyP = typNUMBER::T_OTHER, int flag = 0x0) {
@@ -331,7 +315,7 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
     virtual ~GTensor();
 
     virtual bool Activate(int tpInit = 0, int flag = 0x0);
-    virtual bool Alloc(int tpInit = 0, int flag = 0x0);
+    virtual bool Alloc(int tpInit = 0, SourceLocation where = SourceLocation::current(), int flag = 0x0);
     virtual bool InitParam(int tpInit) {
         assert(0);
         return false;
@@ -465,7 +449,8 @@ class GTensor : public std::enable_shared_from_this<GTensor> {
                 assert(0 && "fatal error");
             } break;
             case typNUMBER::BF16: {
-                ((bf16*)(val))[0] = value;;
+                ((bf16*)(val))[0] = value;
+                ;
             } break;
             case typNUMBER::F32: {
                 ((float*)(val))[0] = value;
@@ -526,7 +511,6 @@ T* TO(const std::vector<hGTensor>& gensors, const std::string& key, int flag = 0
 inline hGTensor operator+(const hGTensor& a, const hGTensor& b) { return nullptr; }
 inline hGTensor operator+=(const hGTensor& a, const hGTensor& b) { return nullptr; }
 
-
 inline void ZERO_(hGTensor T) { T->Zero(); }
 inline size_t tELEM(hGTensor T) { return T == nullptr ? 0 : T->size(); }
 inline size_t tBYTE(hGTensor T) { return T == nullptr ? 0 : T->nByte(); }
@@ -560,9 +544,9 @@ inline floatX* ToG0(hGTensor t) {
 // hGTensor TENSO(void* ctx0,typNUMBER typ,SHAPE,int flag=0x0,const string&name="" );
 
 // Generate GTensor
-hGTensor GT(Fish* hFish, typNUMBER typ, SHAPE, int flag = 0x0, const string& name = "");
+hGTensor GT(Fish* hFish, typNUMBER typ, SHAPE, int flag = 0x0, const string& name = "", SourceLocation where = SourceLocation::current());
 //  Create GTensor & alloc & copy data
-hGTensor GT(SHAPE shape_, void* data, typNUMBER tpD_, int flag = 0x0);
+hGTensor GT(SHAPE shape_, void* data, typNUMBER tpD_, int flag = 0x0, SourceLocation where = SourceLocation::current());
 
 hGTensor tRAND(hGTensor tensor, struct random_normal_distribution* rnd);
 
@@ -572,16 +556,17 @@ hGTensor tRAND(hGTensor tensor, struct random_normal_distribution* rnd);
 class huTensor : public GTensor {
    protected:
     hGTensor _Multiply(const hGTensor& other);
-    size_t Alloc_1(void** dst, bool isZero, string desc, size_t sz = 0x0, int flag = 0x0) override;
+    size_t Alloc_1(void** dst, bool isZero, string desc, size_t sz = 0x0, SourceLocation where = SourceLocation::current(), int flag = 0x0) override;
     size_t Free_1(void** obj, const string& info = "") override;
 
    public:
     //   In most case, would call randParam to gen param_seed
-    huTensor(Fish* hFish, const string& name_, const SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag = 0x0);
+    huTensor(Fish* hFish, const string& name_, const SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag = 0x0,
+             SourceLocation where = SourceLocation::current());
     virtual ~huTensor();
     hGTensor Partial(const string&, size_t offset, const SHAPE shape, typNUMBER tyP = typNUMBER::T_OTHER, int flag = 0x0) override;
 
-    bool Alloc(int tpInit = 0, int flag = 0x0) override;
+    bool Alloc(int tpInit = 0, SourceLocation where = SourceLocation::current(), int flag = 0x0) override;
     bool Activate(int tpInit = 0, int flag = 0x0) override;
     size_t mostMemory(int typ = 0) const override;
     bool InitParam(int tpInit) override;
@@ -604,6 +589,17 @@ class huTensor : public GTensor {
     float ToF8Ex(int type, int flag = 0x0) override;
     bool Mutation(int flag = 0x0) override;
     friend class HIERARCH_LorAB;
+};
+
+// Weight has grads(for training)
+class huWeight : public GTensor {
+   protected:
+   public:
+};
+
+class huActivation : public GTensor {
+   protected:
+   public:
 };
 
 struct GENSOR_INFO {

@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2013-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2013-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -13,7 +13,7 @@
 #include "../util/BLAS_t.hpp"
 
 template <>
-hGVEC MatCCS<D>::Transform(hGVEC &vecY, const hGVEC &vecX, int flag) {
+hGVEC MatCCS<D>::Transform(hGVEC& vecY, const hGVEC& vecX, int flag) {
     G_DATATYPE dt = vecX->DataType();
     if (dt == FLOAT_D)
         Ax<double>(vecY, vecX, flag);
@@ -25,7 +25,7 @@ hGVEC MatCCS<D>::Transform(hGVEC &vecY, const hGVEC &vecX, int flag) {
 }
 
 template <>
-hGMAT &MatCCS<D>::Transform(hGMAT &mV, const hGMAT &mU, int flag) {  // V=AU
+hGMAT& MatCCS<D>::Transform(hGMAT& mV, const hGMAT& mU, int flag) {  // V=AU
     G_DATATYPE dt = mU->DataType();
     if (dt == FLOAT_D)
         AU<double>(mV, mU, flag);
@@ -40,13 +40,13 @@ hGMAT &MatCCS<D>::Transform(hGMAT &mV, const hGMAT &mU, int flag) {  // V=AU
      the tridiagonal matrix derived from standard central difference of the 1-d convection diffusion operator - u" + rho*u'
      on the interval [0, 1] with zero Dirichlet boundary condition.
 */
-void TRI_1_Z(int dim, int **colptr, int **rowind, Z **val, Z **rhs) {
+void TRI_1_Z(int dim, int** colptr, int** rowind, Z** val, Z** rhs) {
     int nz = dim * 3 - 2, i, pos = 0;
     if (rhs != nullptr)
         *rhs = nullptr;
-    *rowind = static_cast<int *>(operator new[](sizeof(int) * nz));
-    *val    = static_cast<Z *>(operator new[](sizeof(Z) * nz));
-    *colptr = static_cast<int *>(operator new[](sizeof(int) * (dim + 1)));
+    *rowind = static_cast<int*>(operator new[](sizeof(int) * nz));
+    *val    = static_cast<Z*>(operator new[](sizeof(Z) * nz));
+    *colptr = static_cast<int*>(operator new[](sizeof(int) * (dim + 1)));
     Z rho = Z(10, 0), h = 1.0 / Z(dim + 1, 0.0), h2 = h * h, s = rho / 2.0, sigma = 0.0;
     Z s1 = -1.0 / h2 - s / h, s2 = 2.0 / h2 - sigma, s3 = -1.0 / h2 + s / h;
     *colptr[0] = 0;

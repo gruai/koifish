@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  All cu functions that call cudnn
@@ -7,7 +7,6 @@
  *  \author Yingshi Chen
  */
 
-#include "../../Shoal/Fish.hpp"
 #include "../../Shoal/Neuron.hpp"
 #include "../Utils/GST_obj.hpp"
 #include "./cuda_common.h"
@@ -366,67 +365,4 @@ bool SelfAttention::FUSE_qkv(floatX* dqkvr, floatX* dout, int flag) {
     }
     cudaCheck(cudaGetLastError());
     return true;
-}
-
-// size_t cudnn_qkv_forw(Fish*, int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn, bool has_attn_bias = false, bool padding_mask = false, int flag = 0x0);
-// size_t cudnn_qkv_back(Fish*, int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn, bool has_attn_bias = false, bool padding_mask = false);
-// int test_FA2();
-bool Fish::AllocBuffer(int flag) {
-    try {
-#ifdef __USE_TVM__
-        test_FA2();
-#endif
-        int B = config.n_batch(), T = curContextLen(LIMIT), NH = config.n_head(), head_dim = config.head_dim();
-        int group = NH / config.n_head_kv();
-        if (isLocalInfer) {
-            if (config.phase == P_CHAT_1) {  // P_EVAL no need cache!
-                // hCache = std::make_shared<KVCache>(this);
-            }
-        }
-        if (isModel({MD_QWEN, MD_AR_QWEN})) {
-        } else {
-            hCache = std::make_shared<KVCache>(this);
-        }
-
-        bool isCausal = config.model.isCausalMask, padding_mask = phase == P_SFT;
-        if (phase != P_CHAT_1) {
-#ifdef __USE_CUDNN__
-            cudnn_qkv_forw(this, B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn, isCausal, padding_mask);
-            if (!isAtPhase({P_EVAL_, P_CHAT_N, P_EVAL_CHAT})) {
-                size_t alloc = cudnn_qkv_back(this, B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn, isCausal, padding_mask);
-                _INFO("\tcudnn_qkv_back = %.5gM\n", alloc / 1.0e6);
-            }
-            if (isModel({MD_AR_QWEN})) {
-                cudnn_qkv_forw(this, B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn, !isCausal, padding_mask);
-                if (!isAtPhase({P_EVAL_, P_CHAT_N})) {
-                    size_t alloc = cudnn_qkv_back(this, B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn, !isCausal, padding_mask);
-                    _INFO("\tcudnn_qkv_back = %.5gM\n", alloc / 1.0e6);
-                }
-            }
-#endif
-            size_t mostQKV          = B * T * NH * head_dim + B * NH * T +                // dQ[[batch, seq_len, heads, dim_qk]] + Delta[batch, heads, seq_len]
-                                      B * T * config.n_head_kv() * head_dim * group * 4;  // [groups, batch, seq_len, head_kv, dim_v]
-            GTensor::workspace_size = std::max(GTensor::workspace_size, mostQKV * 4);     // 134742016
-            GTensor::workspace_size = std::max(GTensor::workspace_size, (size_t)32 * 1024 * 1024);
-            assert(GTensor::workspace_size >= 32 * 1024 * 1024);
-            cudaCheck(cudaMalloc(&GTensor::qkv_workspace, GTensor::workspace_size));
-        } else {
-            GTensor::workspace_size = std::max(GTensor::workspace_size, (size_t)32 * 1024 * 1024);
-            cudaCheck(cudaMalloc(&GTensor::qkv_workspace, GTensor::workspace_size));
-        }
-
-        return true;
-    } catch (const std::exception& e) {
-        _INFO("%s", e.what());
-        fflush(stdout);
-        return -1000;
-    } catch (const char* info) {
-        _INFO("%s", info);
-        fflush(stdout);
-        return -1001;
-    } catch (...) {
-        _INFO("\r\n%s  Unknown exception !!!", __func__);
-        fflush(stdout);
-        return -2001;
-    }
 }

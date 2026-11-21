@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2019-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2019-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief GRUSOFT TEMPLATE	- Random Generator
@@ -58,17 +58,17 @@ void GRander::Embedding_nn(int nVocab, int nEmbed, std::vector<float>& embeds, i
     }
 }
 
-    /*
-    DIST_RangeN::DIST_RangeN(int seed, double a0, double a1) :
-        GRander(seed), rMin(a0), rMax(a1)  {
-        std::normal_distribution<> d1((rMax+rMin)/2,(rMax-rMin)/6);
-        d=d1;
-    }
+/*
+DIST_RangeN::DIST_RangeN(int seed, double a0, double a1) :
+    GRander(seed), rMin(a0), rMax(a1)  {
+    std::normal_distribution<> d1((rMax+rMin)/2,(rMax-rMin)/6);
+    d=d1;
+}
 
-    double DIST_RangeN::gen(){
-        double a;
-        do{
-            a = d(g);
-        } while (a<rMin || a>rMax);
-        return (a);
-    }*/
+double DIST_RangeN::gen(){
+    double a;
+    do{
+        a = d(g);
+    } while (a<rMin || a>rMax);
+    return (a);
+}*/

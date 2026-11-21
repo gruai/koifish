@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2018-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2018-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Distribution
@@ -593,7 +593,7 @@ class Distribution {
         size_t i = -1, nMostBin = idx.size(), nz = 0, nz_1 = 0, nUinque = 0;
         double a0 = val[idx[0]], a1 = val[idx[nMostBin - 1]], vLeftOuter, sum_1 = 0, sum_2 = 0, next = FLT_MAX, pre = a0;
         assert(a0 < a1);
-        Tx v0 = val[idx[0]];
+        Tx v0       = val[idx[0]];
         histo->bins = new HISTO_BIN[nMostBin + 1];
         binFeatas.resize(nMostBin + 1);
 

@@ -19,12 +19,11 @@
 #include <vector>
 
 #include "../Shoal/gLLM.hpp"
-#include "../Utils/oniguruma/src/oniguruma.h"
 #include "../Utils/GST_hashmap.hpp"
+#include "../Utils/oniguruma/src/oniguruma.h"
 #include "../Utils/utf8proc/utf8proc.h"
 #include "Dictionary.hpp"
 #include "jinja.hpp"
-#include "../Utils/json/ujson.hpp"
 
 #ifdef _WIN32
 #include <basetsd.h>
@@ -34,8 +33,7 @@ typedef SSIZE_T ssize_t;
 
 // using namespace tokenizer;
 // namespace tokenizer {
-
-using json = ujson::json;
+using namespace jinja;
 
 // ==========================================
 // C++11 Polyfills
@@ -1598,9 +1596,8 @@ HF_Tokenizer::~HF_Tokenizer() = default;
 HF_Tokenizer::HF_Tokenizer(Fish* dolphin, int flag) : impl_(std::make_unique<Impl>()) {
     config    = dolphin->config;
     isDialect = config.dict.tpDialect == DIALECT_TYPE::DIALECT_on;
+    name      = "HF_Tokenizer";
 
-    name        = "HF_Tokenizer";
-    config      = dolphin->config;
     bool isInit = false;
     if (config.model.isLoadCard()) {
     }
@@ -1609,137 +1606,33 @@ HF_Tokenizer::HF_Tokenizer(Fish* dolphin, int flag) : impl_(std::make_unique<Imp
         _WARN("[HF_Tokenizer] empty path of TokenJson!\n");
         vocab.clear();
     }
-    isInit = InitHF(dolphin, flag);
-    if (!isInit) {
-        _WARN("[HF_Tokenizer] failed to load \"%s\"!\n", pathTokenJson.c_str());
-        vocab.clear();
-    }
+    // isInit = InitFromFiles(dolphin, flag);
+    // if (!isInit) {
+    //     _WARN("[HF_Tokenizer] failed to load \"%s\"!\n", pathTokenJson.c_str());
+    //     vocab.clear();
+    // }
     if (dolphin->isModel({MD_QWEN, MD_AR_QWEN})) {
     }
 }
 
-/**
- * 1. "vocab" & "added_tokens"
- *  vocab Produced by the tokenizer algorithm during pretraining (BPE, SentencePiece, WordPiece, etc.).
- *  "added_tokens" is extra tokens for the training(for example: Chat tokens: <|im_start|>, <|im_end|>...),
- *      "added_tokens" has richer info than vocab(simple map str to id)
- * But in Rust/C++ tokenizer backend, Both sources are merged into a single trie or hashmap! Encoding and decoding don’t care where a token came from
- * 2. In qwen2/3
- *  The fist of "vocab" is "!", last="â½Ĺ": 151642
- *  Pad the vocab size to 151,936! 151936=187×128, the rest of the vocab is just empty rows in the embedding matrix, not missing tokens.
- * 3. "merges" is the “assembly instructions” for the BPE vocabulary.
- */
-bool HF_Tokenizer::InitHF(Fish* dolphin, int flag) {
-    assert(dolphin != nullptr);
-    string pathTokenJson = dolphin->config.model.sTokenJsonPath, sNull = "";
-    assert(empty());
-    try {
-        std::ifstream f(pathTokenJson);  //  ./Models/dcoder/tokenizer.json
-        if (!f.is_open())
-            return false;
-        std::stringstream ss_j;
-        ss_j << f.rdbuf();
-        json j = json::parse(ss_j.str());
-        if (j.is_null())
-            return false;
-        json jVocab, jAddedTokens;
-        int nV0 = 0;
-        if (j.contains("model") && j["model"].contains("vocab")) {
-            jVocab = j["model"]["vocab"];
-            nV0    = jVocab.size();
-        }
-
-        if (dolphin->isModel({MD_QWEN, MD_AR_QWEN})) {
-            json jNoise = json::parse(
-                R"({
-                "id": 151666,
-                "content": "<noise>",
-                "single_word": false,
-                "lstrip": false,
-                "rstrip": false,
-                "normalized": false,
-                "special": true
-                })");
-            bool isNeedNoise = true;
-            if (j.contains("added_tokens") && j["added_tokens"].is_array()) {
-                for (const auto& item : j["added_tokens"]) {
-                    std::string c    = item.value("content", "");
-                    int id           = item.value("id", -1);
-                    bool single_word = item.value(
-                        "single_word", false);  //  false​ — It does not require word boundaries. Would match even if it sits adjacent to other  characters
-                    bool special = item.value("special", false);  //  true​ — Treated as an indivisible control token:
-                    bool lstrip  = item.value("lstrip", false);
-                    bool rstrip  = item.value("rstrip", false);
-                    bool normalized =
-                        item.value("normalized", false);  // false​ — Match against the raw​ input, not the normalized version. So if the tokenizer has a
-                                                          // Normalizer (lowercasing, unicode NFC, etc.), that step is bypassed for this token.
-                    if (c.empty() || id == -1)
-                        continue;
-                    if (c == "<noise>") {
-                        isNeedNoise = false;
-                    }
-                }
-                if (isNeedNoise) {
-                    j["added_tokens"].push_back(jNoise);
-                }
-            }
-        }
-        if (j.contains("added_tokens") && j["added_tokens"].is_array()) {
-            jAddedTokens = j["added_tokens"];
-            nAddedToken  = jAddedTokens.size();
-            // assert(nAdded==28);
-        }
-        std::ifstream fc(dolphin->config.model.sTokenConfigPath);  // path + "/tokenizer_config.json"
-        bool clean_up_spaces = false;
-        if (fc.is_open()) {
-            std::stringstream ss_jc;
-            ss_jc << fc.rdbuf();
-            json jc = json::parse(ss_jc.str());
-            if (jc.contains("chat_template"))
-                set_chat_template(jc["chat_template"].get<std::string>());
-            clean_up_spaces       = jc.value("clean_up_tokenization_spaces", false);
-            j["config_overrides"] = jc;
-        }
-        if (!load_from_json_str(j.dump()))
-            return false;
-
-        set_clean_up_tokenization_spaces(clean_up_spaces);
-        int nV = impl_->model_->GetVocabs(vocab, 0x0);
-        if (nV == 0) {  // training stage may has no vocab tables
-            _WARN("[HF_Tokenizer] vocab is empty! @\"%s\"\n", pathTokenJson.c_str());
-            return false;
-        }
-        S.bos = bos_token_id();
-        S.eos = eos_token_id();
-        S.unk = unk_token_id();
-        // sep_id  = jKV(jVocab, {sep_token}, sep_id);
-        S._pad = pad_token_id();
-        // cls_id  = jKV(jVocab, {cls_token}, cls_id);
-        // mask_id = jKV(jVocab, {mask_token}, mask_id);
-
-        // _INFO("[HF_Tokenizer] nVocab=%d %s special=%ld @\"%s\"\n", nV, S.Dump(0x0).c_str(), special_tokens.size(), pathTokenJson.c_str());
-
-        return true;
-    } catch (JSON::parse_error& ex) {
-        _INFO("[Tokenizer] Failed @%s! ERR=%s \n", pathTokenJson.c_str(), ex.what());
-        return false;
-        // std::cerr << "parse error at byte " << ex.byte << std::endl;
-    } catch (...) {
-        _INFO("[Tokenizer] Failed @%s!\n", pathTokenJson.c_str());
-        assert(0);
+bool HF_Tokenizer::InitVocab(CSTRING& path, int flag) {
+    int nV = impl_->model_->GetVocabs(vocab, 0x0);
+    if (empty()) {  // training stage may has no vocab tables
+        _WARN("[HF_Tokenizer] vocab is empty! @\"%s\"\n", path.c_str());
         return false;
     }
-};
+    S.bos = bos_token_id();
+    S.eos = eos_token_id();
+    S.unk = unk_token_id();
+    // sep_id  = jKV(jVocab, {sep_token}, sep_id);
+    S._pad = pad_token_id();
+    // cls_id  = jKV(jVocab, {cls_token}, cls_id);
+    // mask_id = jKV(jVocab, {mask_token}, mask_id);
 
-// int HF_Tokenizer::nVocab(int flag) const {
-//     if (impl_ == nullptr)
-//         return 0x0; //config.model.pad_vocab_size;
-//     if (impl_->model_ == nullptr)
-//         return 0x0; //config.model.pad_vocab_size;
+    // _INFO("[HF_Tokenizer] nVocab=%d %s special=%ld @\"%s\"\n", nV, S.Dump(0x0).c_str(), special_tokens.size(), pathTokenJson.c_str());
 
-//     auto nV = impl_->model_->vocab_size();
-//     return nV;
-// }
+    return nV > 0;
+}
 
 std::string HF_Tokenizer::T2STR(TOKEN_ID tok, int flag) const {
     /*string sA = id_to_token({(int)tok});
@@ -1758,31 +1651,30 @@ std::vector<int> HF_Tokenizer::encode(const std::string& text, bool add_special_
 std::string HF_Tokenizer::decode_i(const std::vector<int>& ids, bool skip_special_tokens, int flag) const {
     if (impl_ == nullptr || impl_->model_ == nullptr)
         return "";
-    bool isDiatTokens = BIT_TEST(flag, F_DIALECT_TOKENS);
+    // bool isDiatTokens = BIT_TEST(flag, F_DIALECT_TOKENS);
     std::vector<std::string> tokens;
-    for (int id0 : ids) {  //
-        if (skip_special_tokens) {
-            // Check if special token
+    for (int id0 : ids) {                      //
+        if (skip_special_tokens) {             // Check if special token
             bool special = isSpecialTok(id0);  // false;
-            // for (const auto& at : impl_->added_tokens_) {
-            //     if (at.id == id && at.special) {
-            //         special = true;
-            //         break;
-            //     }
-            // }
             if (special)
                 continue;
         }
         TOKEN_ID id = id0;
         if (isDialect && !invT2T.empty()) {
-            id = invT2T.at(id);
+            // id      = invT2T.at(id);
+            auto it = invT2T.find(id);
+            if (it == invT2T.end()) {
+                assert(0 && "invT2T should find id");
+                continue;
+            }
+            id = it->second;
         }
         std::string t = impl_->model_->id_to_token(id);
         if (!t.empty())
             tokens.push_back(t);
     }
     if (impl_->decoder_)
-        impl_->decoder_->decode(tokens);
+        impl_->decoder_->decode(tokens);  // extra work like utf8proc_iterate
     std::string out;
     for (const auto& t : tokens) out += t;
     return out;

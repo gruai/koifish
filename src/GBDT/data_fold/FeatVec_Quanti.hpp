@@ -1,8 +1,8 @@
 /**
- *  SPDX-FileCopyrightText: 2018-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2018-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
- *  \brief 
+ *  \brief
  *  \author Yingshi Chen
  */
 
@@ -274,9 +274,9 @@ class FeatVec_Q : public FeatVec_T<tpQUANTI> {
                 pBins[p1].G_sum -= down[i + 1];
                 pBins[p2].G_sum -= down[i + 2];
                 pBins[p3].G_sum -= down[i + 3];
-            }else{
-				pBins[p0].G_sum = 1.0,	pBins[p1].G_sum = 1.0,	pBins[p2].G_sum = 1.0,	pBins[p3].G_sum = 1.0;
-			}
+            } else {
+                pBins[p0].G_sum = 1.0, pBins[p1].G_sum = 1.0, pBins[p2].G_sum = 1.0, pBins[p3].G_sum = 1.0;
+            }
             ++pBins[p0].nz, ++pBins[p1].nz, ++pBins[p2].nz, ++pBins[p3].nz;
             /*TO_BIN_01(pBins, quanti, samps++, down++);
             TO_BIN_01(pBins, quanti, samps++, down++);
@@ -288,9 +288,9 @@ class FeatVec_Q : public FeatVec_T<tpQUANTI> {
             const auto p0 = quanti[samps[i]];
             if (down != nullptr) {
                 pBins[p0].G_sum -= down[i];
-            }else{
-				pBins[p0].G_sum = 1.0;
-			}
+            } else {
+                pBins[p0].G_sum = 1.0;
+            }
             ++pBins[p0].nz;
             // TO_BIN_01(pBins, quanti, samps++, down++);
         }

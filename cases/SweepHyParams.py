@@ -131,7 +131,7 @@ def log2df(logfile):
     # dataset = dataset.cast_column("step", "int32")
     return df
 
-def koifish_one(title, sExe, jsFile0, path="./tests/", most_iter=-1,train_csv=None,isFromLogFile=False):
+def koifish_one(title, sExe, jsFile0, path="./tests/", most_iter=-1,train_csv=None,isFromLogFile=False,check_line=True):
     dfTrain = None
     with open(jsFile0, 'r') as f:
         jConfig = json.load(f)  
@@ -139,6 +139,7 @@ def koifish_one(title, sExe, jsFile0, path="./tests/", most_iter=-1,train_csv=No
         if  "debug" not in jConfig:
             jConfig["debug"] = {}
         jConfig["debug"]["most_iter"] = most_iter
+        jConfig["debug"]["liveplot"] = -1
         # jConfig["train"]["dump-every"] = 1
     if train_csv is not None:
         if os.path.exists(train_csv):
@@ -178,12 +179,13 @@ def koifish_one(title, sExe, jsFile0, path="./tests/", most_iter=-1,train_csv=No
         #     shutil.copy('./Eval@[edu_fineweb1B]_info_.csv', path+"./Eval.csv")
         #     szEval = os.path.getsize(path+"./Eval.csv")
             print(f"{title}...OK! code={exit_code}. nByte of fTrain={szTrain}; nByte of fEval={szEval} Time={elapsed:.4f} seconds")
-    if dfTrain is None or "loss" not in dfTrain.columns or most_iter >= len(dfTrain):
+    if dfTrain is None or "loss" not in dfTrain.columns:
         if os.path.isfile(path+sOutput):
                 subprocess.Popen(    ["gedit", path+sOutput],    start_new_session=True)  
         print(f"❌ exit_code={exit_code} koifish_one failed to get result! train_csv={train_csv}\ndfTrain={dfTrain}\n")
         return None
-    
+    if most_iter >= len(dfTrain) and check_line:
+        return None
     return dfTrain
 
 def pangpi_one(title, sExe, sArgs, path="./tests/", most_iter=-1):    

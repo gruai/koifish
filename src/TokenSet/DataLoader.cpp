@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -13,6 +13,7 @@
 
 #include "../Manifold/Optimizer.hpp"
 #include "../Shoal/gLLM.hpp"
+#include "../Utils/GST_Serialize.hpp"
 // #include "../ggex/llmc_utils.h"
 #include "Dictionary.hpp"
 
@@ -827,14 +828,14 @@ std::tuple<hDataToken, std::vector<hDataToken>, hDataToken, hDataToken> TokenCor
     } else {
     }
     for (JSON::const_iterator it = jdata.begin(); it != jdata.end(); ++it) {
-        auto key = it.key();
+        auto key = J_it2key(it);  // it.key();
         if (!key.empty() && key[0] == '#')
             continue;
         if (key == "debug") {
             continue;
         }
 
-        const JSON v         = it.value();
+        const JSON v         = J_it2value(it);  // it.value();
         hDataToken hTokenset = nullptr;
         type                 = jKV(v, {"type"}, type);
         if (G_Aa(type, "hellaswag"))
@@ -878,7 +879,7 @@ std::tuple<hDataToken, std::vector<hDataToken>, hDataToken, hDataToken> TokenCor
             } else {  // key=="eval"
                 hTokenset->tpDT = DT_EVAL;
                 tsEval.push_back(hTokenset);
-                hTokenset->N_mostSamp = DEBUG.N_mostEvalSamp;
+                hTokenset->SetMostSamp(DEBUG.N_mostEvalSamp);  // N_mostSamp = ;
             }
             // hTokenset->InitSampNanny(hFish, tpDT, flag);
             dts.push_back(hTokenset);
@@ -1762,7 +1763,7 @@ BATCH_INPUT::BATCH_INPUT(SampNanny* hNanny_, SHAPE shape, LIFE_PHASE phasb_, int
         onlyLogits     = true;
         onlyLastHidden = true;
     }
-    
+
     hostToken = std::make_shared<GTensor>(nullptr, shape, typNUMBER::I32);
     hostToken->Alloc();
     hostMask = std::make_shared<GTensor>(nullptr, shape, typNUMBER::I32);
@@ -1903,7 +1904,8 @@ bool BATCH_INPUT::UpdatePadMask(const std::vector<hSAMP>& samps, int iter, TOKEN
     gBUFF->KVlen->OverWrite(hostLen);
     // if (iter == 2)
     //     DEBUG_HERE;
-    bool multi_turn = false;
+    bool multi_turn       = false;
+    bool isDebugAllAnswer = false;
     string answer = "", a, all_answer = "";
     int r, c, nMostToken = hostToken->size(), *mask = nullptr, *samp_label = nullptr, nIgnore = 0, nPad = 0, posFine = -1;
     TOKEN_ID* samp_token = nullptr;
@@ -1942,13 +1944,16 @@ bool BATCH_INPUT::UpdatePadMask(const std::vector<hSAMP>& samps, int iter, TOKEN
             for (c = a; c < b; c++) {  // it's labels, not original tokens
                 if (c > 0 && needLabel())
                     assert(samp_token[c] == samp_label[c - 1] || samp_token[c] + 1 == -samp_label[c - 1]);
-                answer += hDict->Decode({(TOKEN_ID)samp_token[c]});
+                if (isDebugAllAnswer) {
+                    answer += hDict->Decode({(TOKEN_ID)samp_token[c]});
+                }
+
                 BIT_RESET(mask[c - 1], MASK_FLAG::F_IGNORE_LOSS);
                 nValidTokens++;
             }
         }
-
-        all_answer += answer + "\n";
+        if (isDebugAllAnswer)
+            all_answer += answer + "\n";
     }
     // _INFO("all_answer=%s",all_answer.c_str());
 
@@ -1964,7 +1969,7 @@ bool BATCH_INPUT::UpdatePadMask(const std::vector<hSAMP>& samps, int iter, TOKEN
                     labels[i] = -(labels[i] + 1);
                 }
                 nIgnore++;
-            } else {
+            } else if (isDebugAllAnswer) {
                 a = hDict->Decode({(TOKEN_ID)labels[i]});
                 answer += a;
             }
@@ -1975,6 +1980,7 @@ bool BATCH_INPUT::UpdatePadMask(const std::vector<hSAMP>& samps, int iter, TOKEN
     }
     // assert(all_answer == answer + "\n");
     assert(nValidTokens > 0);
-    // _INFO("[SFT_BATCH] nValidToken=%d(%d) nIgNore=%d nPad=%d answer=%s", nValidTokens, posFine, nIgnore, nPad, all_answer.c_str());
+    if (isDebugAllAnswer)
+        _INFO("[SFT_BATCH] nValidToken=%d(%d) nIgNore=%d nPad=%d answer=%s", nValidTokens, posFine, nIgnore, nPad, all_answer.c_str());
     return true;
 }

@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2018-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2018-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -105,7 +105,7 @@ struct HISTO_BIN {
     // if (val[pos] < bins[noBin+1].split_F) {		quanti[pos] = noBin;		}
     tpFOLD fold  = -1;  // ÿ��BIN����һ��FOLD
     uint16_t tic = 0;
-    double G_sum = 0, H_sum = 0;  // Second-order approximation from Tianqi Chen's formula    
+    double G_sum = 0, H_sum = 0;  // Second-order approximation from Tianqi Chen's formula
     /*static bool isSplitSmall(const HISTO_BIN &l, const HISTO_BIN &r)		{
         return l.split_F<r.split_F;
     }*/
@@ -117,8 +117,8 @@ struct BIN_FEATA {
     char fold      = -1;        // ÿ��BIN����һ��FOLD
     int tic        = 0;         // X		��ɾ��
     double density, bandwidth;  // The bandwidth of the kernel is a free parameter which exhibits a strong influence on the resulting estimate
-	double sum_1 = 0, sum_2 = 0;
-	
+    double sum_1 = 0, sum_2 = 0;
+
     bool operator==(const BIN_FEATA& right) const {
         if (split_F != right.split_F)
             return false;
@@ -340,7 +340,6 @@ class MINI_HISTO : public HistoGRAM {
 };
 typedef shared_ptr<MINI_HISTO> hMIHISTO;
 typedef std::vector<hMIHISTO> arrMIHISTO;
-
 
 /*
     from Tianqi Chen's formula

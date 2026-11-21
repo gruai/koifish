@@ -1,6 +1,6 @@
 
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Neurons flow on manifold, just like our life, from no begin to no end(上善若水,生生不息)
@@ -712,6 +712,13 @@ struct TokenEmbed : public SparseNeuron {
     virtual hGTensor OnEmbed(hGTensor inpL, int seed);
     virtual hGTensor SubW(hGTensor hSamp, bool isForw, hGTensor subw, int flag = 0x0);
     bool AfterActivate(hGTensor t, DATA_PLACE target, int typ, int flag = 0x0) override;
+};
+
+/*
+    Each token is embed to latent vector
+*/
+struct SpectralEmbed : public TokenEmbed {
+    SpectralEmbed(Fish* hG_, const std::string& key_, const JSON& jit, int flag);
 };
 
 struct FFN_MOE : public FFN {

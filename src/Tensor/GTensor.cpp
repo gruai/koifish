@@ -1,6 +1,6 @@
 
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -34,7 +34,7 @@ float GTensor::rLARS(float s0, float T_lars, int flag) {
 
 GTensor::GTensor(Fish* hFis_, SHAPE shape_, typNUMBER tpD_, bool isX, int flag) : hFish(hFis_), flags(flag) { ReShape(shape_, tpD_, flag); }
 
-hGTensor GT(SHAPE shape_, void* src, typNUMBER tpD_, int flag) {
+hGTensor GT(SHAPE shape_, void* src, typNUMBER tpD_, int flag, SourceLocation where) {
     hGTensor t = std::make_shared<GTensor>(nullptr, shape_, tpD_, true, 0x0);
     t->Alloc();
     assert(0);  // memcpy is dangerous
@@ -43,8 +43,8 @@ hGTensor GT(SHAPE shape_, void* src, typNUMBER tpD_, int flag) {
     return t;
 }
 
-hGTensor GT(Fish* hFish, typNUMBER type, SHAPE shape, int flag, const string& name) {
-    hGTensor hT = std::make_shared<huTensor>(hFish, name, shape, type, false, flag);
+hGTensor GT(Fish* hFish, typNUMBER type, SHAPE shape, int flag, const string& name, SourceLocation where) {
+    hGTensor hT = std::make_shared<huTensor>(hFish, name, shape, type, false, flag, where);
     return hT;
 }
 
@@ -150,7 +150,7 @@ bool GTensor::Shrink(int nKeep, int no_dim, int flag) {
     double nBit    = BitPE(type);
     size_t sz1     = nKeep * nBit / 8;
     for (int i = 0; i < n234; i++) {
-        void *src = data + Offset(0, i, 0, 0), *dest = data_new + i * sz1;
+        void *src = (hBITARR)data + Offset(0, i, 0, 0), *dest = (hBITARR)data_new + i * sz1;
         memcpy(dest, src, sizeof(float) * sz1);
     }
 
@@ -844,7 +844,7 @@ void _T_repr_(hGTensor t, const char* tab, char* buf, const GENSOR_INFO& info) {
     n1 = strlen(buf);
 }
 
-bool GTensor::Alloc(int tpInit, int flag) {
+bool GTensor::Alloc(int tpInit, SourceLocation where, int flag) {
     assert(szData > 0);
     data = new char[szData]();
     if (isParam()) {
@@ -868,7 +868,7 @@ bool GTensor::InitShadoW(const void* srcData, bool isGPU, DISTILLATION_CARD& dis
     if (hFish->isTrain() && DEBUG.verFakeQuant >= 0) {
         assert(shadoW == nullptr);
         string desc = name;
-        Alloc_1(&shadoW, true, desc + ".w0", szData);
+        Alloc_1(&shadoW, true, desc + ".w0", szData, SRC_LOC);
         if (isGPU) {
             assert(0);
         } else
@@ -967,10 +967,10 @@ bool huTensor::Activate(int iter, int flagInit) {
         }
 
     }*/
-    return Alloc(iter, flagInit);
+    return Alloc(iter, SRC_LOC, flagInit);
 }
 
-bool huTensor::Alloc(int iter, int flagInit) {
+bool huTensor::Alloc(int iter, SourceLocation where, int flagInit) {
     assert(strlen(name) > 0);
     if (G_Has_(name, {"model.layers.1.mlp.up_proj.weight"})) {  // model.layers.0.mlp.down_proj.weight qzeros scales model.layers.5.self_attn.v_proj.weight
         DEBUG_HERE;                                             //
@@ -1021,8 +1021,8 @@ bool huTensor::Alloc(int iter, int flagInit) {
             szGama = sizeof(floatGama) * ne[0];
             // Alloc_1((void **)(&gama_T), false, sizeof(float) * ne[0]);
         }*/
-        string suffix = isParam() ? ".w" : ".a";               //  weight or activation
-        Alloc_1(&data, true, desc + suffix, szData + szGama);  //  1048576+98560
+        string suffix = isParam() ? ".w" : ".a";                      //  weight or activation
+        Alloc_1(&data, true, desc + suffix, szData + szGama, where);  //  1048576+98560
         // if(hQuant!=nullptr)
         //     hQuant->ExTensor(this);
 
@@ -1191,38 +1191,3 @@ TENSOR_WATCH::TENSOR_WATCH(Fish* _fish, const string& sX, int flag) {
     B = _fish->config.n_batch(), T = _fish->config.n_ctx(), C = _fish->config.nEmbed();
 }
 
-/*
-1. RAII (Resource Acquisition Is Initialization)
-2. Throw exceptions from constructors​ if resource acquisition fails
-
-class SafeCUDAMemory {
-private:
-    void* ptr;
-
-public:
-    SafeCUDAMemory(size_t size) : ptr(nullptr) {
-        cudaError_t err = cudaMalloc(&ptr, size);
-        if (err != cudaSuccess) {
-            throw std::runtime_error("CUDA malloc failed");
-        }
-    }
-
-    ~SafeCUDAMemory() {
-        if (ptr != nullptr) {
-            // Note: Don't throw from destructor!
-            cudaFree(ptr);
-        }
-    }
-
-    // Prevent copying
-    SafeCUDAMemory(const SafeCUDAMemory&) = delete;
-    SafeCUDAMemory& operator=(const SafeCUDAMemory&) = delete;
-
-    // Allow moving
-    SafeCUDAMemory(SafeCUDAMemory&& other) noexcept : ptr(other.ptr) {
-        other.ptr = nullptr;
-    }
-
-    void* get() const { return ptr; }
-};
-*/

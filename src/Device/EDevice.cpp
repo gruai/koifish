@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Edge devices & resource limited scheduling
@@ -200,3 +200,35 @@ bool EDGE_DEVICES::AllocGraph(hTGraph graph, int flag) {
 }
 
 bool EDGE_DEVICES::Reserve(hTGraph graph, int flag) { return false; }
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+int ggml_cpu_has_fma(void) {
+#if defined(__FMA__)
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+int ggml_cpu_has_avx2(void) {
+#if defined(__AVX2__)
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+int ggml_cpu_has_avx512(void) {
+#if defined(__AVX512F__)
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+#ifdef __cplusplus
+}
+#endif

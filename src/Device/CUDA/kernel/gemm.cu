@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *
@@ -91,10 +91,10 @@ void CU_mv_(floatX* y, const floatX* W, const floatX* x, int m, int n, float alp
 */
 template <class FloatC, class FloatA, class FloatB, class FloatBias>
 int CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* bias, TASKA_AxB& taskm, int flag) {
-    if(taskm.isPass())
+    if (taskm.isPass())
         return -1;
     assert(taskm.isValid());
-    assert(d!=nullptr && a!=nullptr && b!=nullptr);
+    assert(d != nullptr && a != nullptr && b != nullptr);
     int m = taskm.m, n = taskm.n, k = taskm.k;
     cudaStream_t stream = (cudaStream_t)taskm.device;
     NVTX_RANGE_FN();
@@ -192,10 +192,9 @@ int CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* b
         exit(EXIT_FAILURE);
     }
 
-    
-    float* alpha = &(taskm.alpha);      //  1 in most case;
-    // set whether to accumulate (i.e. D += C) or not 
-    float* beta  = &(taskm.beta);       //  taskm.isAccumuDelta ? &one : &zero;
+    float* alpha = &(taskm.alpha);  //  1 in most case;
+    // set whether to accumulate (i.e. D += C) or not
+    float* beta = &(taskm.beta);  //  taskm.isAccumuDelta ? &one : &zero;
 
     // call the matmul
     cublasCheck(cublasLtMatmul(cublaslt_handle, operationDesc, alpha, a, ALayout, b, BLayout, beta, d, CLayout, d, DLayout, &heuristic.algo, workspace,
@@ -212,7 +211,8 @@ int CU_mm_blasLt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* b
     cudaCheck(cudaGetLastError());
     return 0x0;
 }
-template int CU_mm_blasLt<__nv_bfloat16, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16>(__nv_bfloat16* d, const __nv_bfloat16* a, const __nv_bfloat16* b, const __nv_bfloat16* bias, TASKA_AxB& taskm, int flag = 0x0);
+template int CU_mm_blasLt<__nv_bfloat16, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16>(__nv_bfloat16* d, const __nv_bfloat16* a, const __nv_bfloat16* b,
+                                                                                      const __nv_bfloat16* bias, TASKA_AxB& taskm, int flag = 0x0);
 
 /*
     d = wGensor*b+bias
@@ -322,7 +322,6 @@ struct TASKA_gemm_back {
     }
 };
 
-
 /*
 void matmul_backward(floatX* delta, floatX* dweight, floatX* bias, floatX* deltaIn, floatX* inp, floatX* weight, float* dbias_buffer, int B, int T, int C,
                      int OC, cudaStream_t stream, bool isTransW = false, floatX* pre_gelu = NULL, bool isAccumuDelta = false) {
@@ -357,7 +356,7 @@ void matmul_backward(floatX* delta, floatX* dweight, floatX* bias, floatX* delta
         }
         bias = NULL;  // prevent bias calculation from also being fused in CU_mm_blas_ below (if we enabled fusion)
     }
-    
+
 
     CU_mm_blasLt(delta, weight, deltaIn, bias, C, B * T, OC, nullptr, nullptr, stream, (int)transAW, 0, isAccumuDelta ? 1.0f : 0.0f, true);
 

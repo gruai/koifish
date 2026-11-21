@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2019-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2019-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief GRUSOFT TEMPLATE	- Application
@@ -16,8 +16,8 @@
 
 #include "../CLI_params.hpp"
 #include "../g_def_x.hpp"
+#include "./os/GST_os.hpp"
 #include "GST_obj.hpp"
-#include "GST_os.hpp"
 
 struct AppResult {
     std::error_code error_code;
@@ -44,11 +44,12 @@ class GST_Application {
 
    protected:
     string name = "GST_Application";
+    CmdLineParser cli_parser;
+    virtual bool ParseCmdline(int flag = 0x0) { return true; }
     CLI_params params;
-    // CommandLine_parser cli_parser;
 
    public:
-    GST_Application(int argc, char* argv[]);
+    GST_Application(const string& _name, int argc, char* argv[], int flag = 0x0);
 
     virtual ~GST_Application();
 

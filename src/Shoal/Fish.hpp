@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Some key characteristics & design goals
@@ -173,10 +173,6 @@ class Fish : public std::enable_shared_from_this<Fish> {
     }
 
     std::vector<std::string> to_quant, to_skip;
-
-    virtual bool GGUF_Serialize(const std::string& path, bool isSave, int flag = 0x0);
-    // Deprecated
-    // virtual bool SafeTensors_Serialize(bool isSave, int flag = 0x0);
 
     int SAFETENSOR2Gensors(const std::string& path, K_SafeTensors* hst, int flag);
     // Load/Save model wight <=> SafeTensors files(.kun, HF*.safetensors, ...). Support multifiles in one folder!

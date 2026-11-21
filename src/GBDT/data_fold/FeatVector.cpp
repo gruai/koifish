@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2018-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2018-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief FeatVector
@@ -19,7 +19,7 @@ FeatVector::~FeatVector() {
     }
 }
 
-void FeatVector::SetDistri(Distribution *d_, int flag) {
+void FeatVector::SetDistri(Distribution* d_, int flag) {
     assert(distri_ == nullptr);
     distri_       = d_;
     distri_->nam  = this->nam;

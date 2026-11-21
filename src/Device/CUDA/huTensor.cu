@@ -1,6 +1,6 @@
 
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Functions of huTensor
@@ -17,12 +17,14 @@
 #include "../../Utils/GST_log.hpp"
 #include "../../Utils/GST_rander.hpp"
 #include "../../Utils/GST_util.hpp"
+#include "../../Utils/GST_Serialize.hpp"
 #include "../../g_float.hpp"
 #include "../Utils/rapidhash.h"
 #include "./kernel/operator.cuh"
 #include "./kernel/utils.cuh"
 static GRander randParam;
-huTensor::huTensor(Fish* fish, const string& name_, const SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag) : GTensor(fish, shape, tpD_, false, flag) {
+huTensor::huTensor(Fish* fish, const string& name_, const SHAPE shape, typNUMBER tpD_, bool isAlloc, int flag, SourceLocation where)
+    : GTensor(fish, shape, tpD_, false, flag) {
     size_t nEle       = size();
     MEM_STRATEGY stra = fish->config.scheduling.strategy;
     if (stra == MEM_STRATEGY::PRE_ALLOC_HOST_MAP) {
@@ -40,7 +42,7 @@ huTensor::huTensor(Fish* fish, const string& name_, const SHAPE shape, typNUMBER
         param_seed = randParam.RandU32();
     }
     if (isAlloc) {
-        Alloc(0x0, flag);
+        Alloc(0x0, where, flag);
     }
 }
 
@@ -67,7 +69,7 @@ size_t huTensor::mostMemory(int typ) const {
     cudaHostAlloc is a function used to allocate pinned (page-locked) host memory, which can improve data transfer performance between the host (CPU) and device
    (GPU). Pinned memory allows for faster transfers because it bypasses the operating system's virtual memory system.
 */
-size_t huTensor::Alloc_1(void** dst, bool isZero, string desc, size_t sz0, int flag) {
+size_t huTensor::Alloc_1(void** dst, bool isZero, string desc, size_t sz0, SourceLocation where, int flag) {
     assert(*dst == nullptr);
 
     bool hostAlloc    = BIT_TEST(flags, F_HOSTALLOC);
@@ -98,7 +100,7 @@ size_t huTensor::Alloc_1(void** dst, bool isZero, string desc, size_t sz0, int f
         cudaCheck(cudaMemset(*dst, 0, szAlloc));
     szGlobalMaloc += szAlloc;
     // SUM::mems.push_back(MEM_USAGE(szAlloc, desc, *dst));
-    hFish->memBuffer->Register(szAlloc, desc, *dst);
+    hFish->memBuffer->Register(szAlloc, desc, *dst, where);
     return szAlloc;
 }
 size_t huTensor::Free_1(void** obj, const string& info) {
@@ -228,55 +230,6 @@ bool huTensor::InitParam(int tpX) {
     //     Print(name, 0, -1);
     return true;
 }
-
-#ifdef __USE_GGML__
-/*
-   Only for gguf-serialize
-*/
-bool huTensor::CopyGG(struct ggml_tensor* gg_, int flag) {
-    int i = 0;
-    assert(gg == nullptr);
-    bool isAlloc = data != nullptr;
-    void* src    = gg_->data;
-    if (!isAlloc) {
-        memcpy(name, gg_->name, sizeof(char) * GGML_MAX_NAME);
-        for (i = 0; i < GGML_MAX_DIMS; i++) {
-            shape.push_back(gg_->ne[i]);
-            nb[i] = gg_->nb[i];
-        }
-        type = (typNUMBER)gg_->type;
-        Alloc();
-        // flags = gg_->flags;     //bug in ggml: don't support flag serialization
-        double fnB = BPE(type);  // ggml_row_size  ???
-        szData     = size() * fnB;
-    } else {
-        for (i = 0; i < shape.size(); i++) {
-            if (BIT_TEST(flags, F_PADDED))
-                assert(shape[i] >= gg_->ne[i]);
-            else
-                assert(shape[i] == gg_->ne[i]);
-            if (type == (typNUMBER)gg_->type)
-                assert(nb[i] == gg_->nb[i]);
-        }
-    }
-    size_t szSrc = ggml_nbytes(gg_);
-    if (type == (typNUMBER)gg_->type) {
-        if (szSrc != szData) {
-            if (BIT_TEST(flags, F_PADDED)) {
-                assert(strcmp(name, "token_embd.weight") == 0 && szSrc <= szData);
-            } else {
-                assert(0);
-            }
-        }
-    };
-
-    bool toDevice = SerialGP(src, nullptr, szSrc, false, 0x0);
-    assert(toDevice);
-
-    // if(src!=data)       delete[] src;
-    return true;
-}
-#endif
 
 //  From:   https://stackoverflow.com/questions/57948643/whats-a-good-way-to-zero-out-cudamallocd-data
 /*__global__ void clear_scratch_space_kernel(int * data, int blocks, int threads) {
@@ -827,7 +780,7 @@ bool huTensor::Mutation(int flag) {
 
 float huTensor::ToF8Ex(int tpX, int flag) {
     double t0      = GST_ms();
-    void *data_old = data, *data_fp8 = nullptr;
+    void *data_fp8 = nullptr;
     /*typNUMBER oldType = type;
     Print("BF16", 0, 0);
     if (!ReShape(shape, typNUMBER::F8E5M2, F_OP_NO_REALLOC))
@@ -835,7 +788,7 @@ float huTensor::ToF8Ex(int tpX, int flag) {
     */
     size_t nEle = size(), dGrid = CEIL_DIV(nEle, CU_T4B_MIDDLE);
     string desc = name, suffix = isParam() ? ".w" : ".a";
-    Alloc_1(&data_fp8, true, desc + suffix, szData + szGama);
+    Alloc_1(&data_fp8, true, desc + suffix, szData + szGama, SRC_LOC);
     switch (type) {
         case typNUMBER::BF16:
             CU_Float2F8<bf16><<<dGrid, CU_T4B_MIDDLE>>>((bf16*)data, (f8e5*)data_fp8, nEle, 0, 0);
@@ -949,8 +902,8 @@ bool GST_TensorBuffer::Prepare(int flag) {
 
         SHAPE sp4 = {B, T, max(nFF, q_dim + kv_dim * 2)}, sp0 = {(int)nTmp}, spB = {B, 1, 1};
         SHAPE spMost    = {mostC, T, B};  //  {B, T, mostC}
-        Qlen            = std::make_shared<huTensor>(hFish, "Qlen", spB, typNUMBER::I32, true, GTensor::F_DEBUG);
-        KVlen           = std::make_shared<huTensor>(hFish, "KVlen", spB, typNUMBER::I32, true, GTensor::F_DEBUG);
+        Qlen            = std::make_shared<huTensor>(hFish, "Qlen", spB, typNUMBER::I32, true, GTensor::F_DEBUG, SRC_LOC);
+        KVlen           = std::make_shared<huTensor>(hFish, "KVlen", spB, typNUMBER::I32, true, GTensor::F_DEBUG, SRC_LOC);
         bt4c            = std::make_shared<huTensor>(hFish, "tmpBT4c", sp4, tpA, true);
         tmpFF1          = std::make_shared<huTensor>(hFish, "tmpFF1", sp4, tpA, true);
         SHAPE spTernary = {mostC, max(nVocab, 3 * mostC)};
@@ -991,7 +944,6 @@ bool GST_TensorBuffer::Prepare(int flag) {
         // tmpGW = std::make_shared<huTensor>(hFish, "tmpGW", SHAPE({nEmbed, nFF}), tpG, true);
         const int dMaxThread = deviceProp.maxThreadsPerMultiProcessor * deviceProp.multiProcessorCount;
         cudaCheck(cudaMalloc(&GTensor::stat_info, sizeof(float) * std::max(KOIFISH_MAX_PROBE_LEN, dMaxThread)));
-
         //  GTensor::buff = hCLS->preLogits->data;
 
         return true;
@@ -1031,5 +983,68 @@ void Distri_PIPE::OnArray(size_t N, T* arr, bool isHost, int flag) {
             assert(fabs(hnrm_1 - nrm_1) <= 1.0e-6 * hnrm_1);
             delete[] tmp;
         }
+    }
+}
+
+size_t cudnn_qkv_forw(Fish* hFish, int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn, bool isCausal = false, bool padding_mask = false, int flag = 0x0);
+size_t cudnn_qkv_back(Fish* hFish, int B, int Hq, int Hkv, int T, int HS, QKV_PACK qkv4dnn, bool isCausal = false, bool padding_mask = false);
+// int test_FA2();
+bool Fish::AllocBuffer(int flag) {
+    try {
+#ifdef __USE_TVM__
+        test_FA2();
+#endif
+        int B = config.n_batch(), T = curContextLen(LIMIT), NH = config.n_head(), head_dim = config.head_dim();
+        int group = NH / config.n_head_kv();
+        if (isLocalInfer) {
+            if (config.phase == P_CHAT_1) {  // P_EVAL no need cache!
+                // hCache = std::make_shared<KVCache>(this);
+            }
+        }
+        if (isModel({MD_QWEN, MD_AR_QWEN})) {
+        } else {
+            hCache = std::make_shared<KVCache>(this);
+        }
+
+        bool isCausal = config.model.isCausalMask, padding_mask = phase == P_SFT;
+        if (phase != P_CHAT_1) {
+#ifdef __USE_CUDNN__
+            cudnn_qkv_forw(this, B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn, isCausal, padding_mask);
+            if (!isAtPhase({P_EVAL_, P_CHAT_N, P_EVAL_CHAT})) {
+                size_t alloc = cudnn_qkv_back(this, B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn, isCausal, padding_mask);
+                _INFO("\tcudnn_qkv_back = %.5gM\n", alloc / 1.0e6);
+            }
+            if (isModel({MD_AR_QWEN})) {
+                cudnn_qkv_forw(this, B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn, !isCausal, padding_mask);
+                if (!isAtPhase({P_EVAL_, P_CHAT_N})) {
+                    size_t alloc = cudnn_qkv_back(this, B, NH, config.n_head_kv(), T, config.head_dim(), config.model.qkv4dnn, !isCausal, padding_mask);
+                    _INFO("\tcudnn_qkv_back = %.5gM\n", alloc / 1.0e6);
+                }
+            }
+#endif
+            size_t mostQKV          = B * T * NH * head_dim + B * NH * T +                // dQ[[batch, seq_len, heads, dim_qk]] + Delta[batch, heads, seq_len]
+                                      B * T * config.n_head_kv() * head_dim * group * 4;  // [groups, batch, seq_len, head_kv, dim_v]
+            GTensor::workspace_size = std::max(GTensor::workspace_size, mostQKV * 4);     // 134742016
+            GTensor::workspace_size = std::max(GTensor::workspace_size, (size_t)32 * 1024 * 1024);
+            assert(GTensor::workspace_size >= 32 * 1024 * 1024);
+            cudaCheck(cudaMalloc(&GTensor::qkv_workspace, GTensor::workspace_size));
+        } else {
+            GTensor::workspace_size = std::max(GTensor::workspace_size, (size_t)32 * 1024 * 1024);
+            cudaCheck(cudaMalloc(&GTensor::qkv_workspace, GTensor::workspace_size));
+        }
+
+        return true;
+    } catch (const std::exception& e) {
+        _INFO("%s", e.what());
+        fflush(stdout);
+        return -1000;
+    } catch (const char* info) {
+        _INFO("%s", info);
+        fflush(stdout);
+        return -1001;
+    } catch (...) {
+        _INFO("\r\n%s  Unknown exception !!!", __func__);
+        fflush(stdout);
+        return -2001;
     }
 }

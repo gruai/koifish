@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Perceptrons
@@ -9,22 +9,21 @@
  */
 #include <set>
 
+#include "../Shoal/gLLM.hpp"
 #include "../Tensor/GeQuant.hpp"
 #include "../lenda/kernel/SVD.hpp"
-#include "../Shoal/gLLM.hpp"
 #include "HotPicker.hpp"
 #include "Neuron.hpp"
 #include "Optimizer.hpp"
 #include "gLLM.hpp"
 
-    /**
-     * 1. Most open‑source LLMs (LLaMA, Mistral, GPT‑J, Pythia, Falcon, etc.) do NOT use PyTorch’s default Gaussian init.
-     *      for example:    nn.init.uniform_(emb.weight, -1.0 / math.sqrt(dim), 1.0 / math.sqrt(dim))
-     * 2. Most diffusion LLMs use Gaussian initialization for embeddings, not uniform, because diffusion training is noise‑dominated
-     * 3. Default PyTorch’s nn.Embedding would call "init.normal_(self.weight)"
-     */
-    TokenEmbed::TokenEmbed(Fish* hG_, const std::string& key_, const JSON& jit, int flag)
-    : SparseNeuron(key_, jit, hG_, flag) {
+/**
+ * 1. Most open‑source LLMs (LLaMA, Mistral, GPT‑J, Pythia, Falcon, etc.) do NOT use PyTorch’s default Gaussian init.
+ *      for example:    nn.init.uniform_(emb.weight, -1.0 / math.sqrt(dim), 1.0 / math.sqrt(dim))
+ * 2. Most diffusion LLMs use Gaussian initialization for embeddings, not uniform, because diffusion training is noise‑dominated
+ * 3. Default PyTorch’s nn.Embedding would call "init.normal_(self.weight)"
+ */
+TokenEmbed::TokenEmbed(Fish* hG_, const std::string& key_, const JSON& jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     auto dims = hFish->config.model.token_embeds;
     nVocab    = hG_->nClass();
     latent    = hFish->config.nEmbed(-1);
@@ -331,6 +330,9 @@ string MAEC::__repr__(string& suffix, string& prefix, int flag) {
     info += prefix + "\t}\n";
     return info;
 };
+
+//  https://arxiv.org/pdf/2110.08614     Spectral Embedding by GNN
+SpectralEmbed::SpectralEmbed(Fish* hG_, const std::string& key_, const JSON& jit, int flag) : TokenEmbed(hG_, key_, jit, flag) {}
 
 VarCoder::VarCoder(Fish* hG_, const std::string& key_, const JSON& jit, int flag) : SparseNeuron(key_, jit, hG_, flag) {
     if (jvals.size() >= 2) {

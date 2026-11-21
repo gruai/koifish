@@ -1,6 +1,6 @@
 
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Why batch is so important?
@@ -80,7 +80,7 @@ struct BATCH_INPUT : public std::enable_shared_from_this<BATCH_INPUT> {
     bool onlyLogits     = false;  // If true, logits is enough, no need to set label & get loss!
     bool onlyLastHidden = false;
     // bool onlyLastLoss   = false;
-    
+
     bool needLabel() const { return !onlyLogits && !onlyLastHidden; }
 
     BATCH_INPUT(SampNanny* hNanny_, SHAPE sp, LIFE_PHASE phasb, int flag = 0x0);

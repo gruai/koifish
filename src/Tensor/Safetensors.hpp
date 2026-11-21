@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *   hf-transformers compatible SafeTensors
@@ -85,70 +85,10 @@ class K_SafeTensors {
 
     size_t Register(shared_ptr<GTensor> t, size_t offset, FILE_FORMAT_TYPE format, int flag = 0x0);
     bool InitHeader(int flag = 0x0);
-    void insertJS(const JSON& js, size_t dst_offset, int flag = 0x0) {
-        jsConfig        = js;
-        hGTensor tensor = std::make_shared<GTensor>();
-        strcpy(tensor->name, config_key_.c_str());
-        tensor->hFish           = hFish;
-        tensor->msgpack         = J_to_msgpack(js); //JSON::to_msgpack(js);
-        tensor->type            = typNUMBER::U8;           // dtype::kUINT8;
-        size_t sz               = tensor->msgpack.size();  // storage.size();
-        tensor->data_offsets[0] = dst_offset;
-        tensor->data_offsets[1] = dst_offset + sz;
-        tensor->shape           = {(int)sz};
-        tensors.insert(config_key_, tensor);
+    void insertJS(const JSON& js, size_t dst_offset, int flag = 0x0);
+    int loadJS(hGTensor tensor, const uint8_t* bytes_ptr, size_t bytes_size, int flag = 0x0);
 
-        // storage.resize(dst_offset + sz);
-        // memcpy(storage.data() + dst_offset, msgpack.data(), sz);  //  6441  [132...160]
-    }
-    int loadJS(hGTensor tensor, const uint8_t* bytes_ptr, size_t bytes_size, int flag = 0x0) {
-        /*JSON jdesc = tensor.jDesc();
-        if (jdesc.at("data_offsets").size() != 2) {
-            return -3;
-        }
-        size_t offset_start = static_cast<size_t>(jdesc.at("data_offsets")[0]);  // 1544148992
-        size_t offset_end   = static_cast<size_t>(jdesc.at("data_offsets")[1]);  // 1545276932*/
-        size_t offset_start = tensor->data_offsets[0];
-        size_t offset_end   = tensor->data_offsets[1];
-        if (offset_start < 0 || offset_end <= offset_start || offset_end > bytes_size) {
-            std::cerr << "bad offsets" << std::endl;
-            return -1;
-        }
-        size_t szSrc = offset_end - offset_start;
-        std::vector<uint8_t> msgpack;
-        msgpack.resize(szSrc);
-        memcpy(msgpack.data(), bytes_ptr + offset_start, szSrc);
-        jsConfig = J_from_msgpack(msgpack);
-        return 0x0;
-    }
-
-    bool initJS(int flag = 0x0) {
-        try {
-            const uint8_t* databuffer = nullptr;
-            if (mmaped) {
-                databuffer = databuffer_addr;  // st->mmap_addr + 8 + st->header_size;
-            } else {
-                assert(0);  // only mmap is support LLM
-                // databuffer = storage.data();
-            }
-            hGTensor tensor = nullptr;
-            if (!tensors.at(config_key_, tensor))  // may has no "__koifish__config__"
-                return false;
-
-            size_t start = tensor->data_offsets[0], end = tensor->data_offsets[1];
-            // assert(end<nbytes);
-            std::vector<uint8_t> msgpack = {databuffer + start, databuffer + end};
-            size_t sz                    = msgpack.size();
-            jsConfig                     = J_from_msgpack(msgpack);    //JSON::from_msgpack(msgpack);
-            return true;
-        } /*catch (JSON::parse_error& e) {
-            _INFO("\r\n%s  Failed to initJS from safetensor[]!!! ERR=%s", __func__, e.what());
-            return false;
-        }*/ catch (...) {
-            _ERROR("\r\n%s  Failed to initJS from safetensor[]!!!", __func__);
-            return false;
-        }
-    }
+    bool initJS(int flag = 0x0);
 
     ~K_SafeTensors();
 
@@ -1541,79 +1481,6 @@ K_SafeTensors::~K_SafeTensors() {
         delete p;
         st_file = nullptr;
     }
-}
-
-bool mmap_from_file(const std::string& filename, K_SafeTensors* st, std::string& warn, std::string& err, int __prot) {
-    if (!st) {
-        return false;
-    }
-    detail::safetensors_file* pf = new detail::safetensors_file(filename.c_str(), "r+b");
-    // detail::safetensors_file *pf = new detail::safetensors_file(filename.c_str(), "rb");
-    if (!pf->is_valid()) {
-        err += pf->get_error();
-        delete pf;
-        return false;
-    }
-    // TODO: prefetch, numa
-    detail::safetensors_mmap* pm = new detail::safetensors_mmap(pf, __prot);
-    if (!pm->is_valid()) {
-        err += pm->get_error();
-        delete pm;
-        return false;
-    }
-    uint64_t json_size     = *(uint64_t*)pm->addr;
-    st->header_size        = json_size;
-    const char* json_bytes = reinterpret_cast<const char*>(pm->addr) + sizeof(uint64_t);
-    /*if (1) {    //  simdjson version
-        simdjson::ondemand::parser parser;
-        simdjson::padded_string_view view(json_bytes, json_size);
-        simdjson::ondemand::document doc = parser.iterate(view);
-        simdjson::ondemand::object obj   = doc.get_object();
-        for (auto field : obj) {
-            simdjson::ondemand::raw_json_string key_raw = field.key();
-            simdjson::ondemand::value value             = field.value();
-            if (key == "__metadata__")
-                st->metadata = value;
-            else {
-                hGTensor tensor = std::make_shared<GTensor>(st->hFish, key, value);
-                st->tensors.insert(key, tensor);
-            }
-        }
-    } else*/ {
-        // bool ret = mmap_from_memory(pm->addr, pm->size, filename, st, &warn, &err);
-
-        std::string json_str(json_bytes, json_size);
-        _INFO(">>>>>> header of \"%s\"= \n\t%s\n\n", filename.c_str(), json_str.c_str());
-        st->jHeader = JSON::parse(json_str);
-
-        for (auto& [key, value] : st->jHeader.items()) {
-            //_INFO();
-            if (key == "__metadata__")
-                st->metadata = value;
-            else {
-                hGTensor tensor = std::make_shared<GTensor>(st->hFish, key, value);
-                st->tensors.insert(key, tensor);
-            }
-        }
-    }
-
-    // st->tensors     = std::move(tensors);
-
-    // size_t databuffer_size = pm->size - st->header_size - sizeof(uint64_t);
-    st->mmaped    = true;
-    st->mmap_addr = pm->addr, st->mmap_size = pm->size;
-    st->databuffer_addr = st->mmap_addr + sizeof(uint64_t) + st->header_size;
-    st->databuffer_size = st->mmap_size - (sizeof(uint64_t) + st->header_size);
-    // st->mmap_addr       = pm->addr;
-    // st->mmap_size       = pm->size;
-    // st->databuffer_addr = st->mmap_addr + 8 + st->header_size;
-    // st->databuffer_size = st->mmap_size - (8 + st->header_size);
-    // retain pointer
-    st->st_file = pf;
-    st->st_mmap = pm;
-    // st->mmaped = true;
-    st->initJS();
-    return true;
 }
 
 bool mmap_from_memory(const uint8_t* addr, const size_t nbytes, const std::string& filename, K_SafeTensors* st, std::string* warn, std::string* err) {

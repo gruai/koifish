@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Edge devices & resource limited scheduling
@@ -31,7 +31,7 @@ class EDGE_DEVICES {
         int maxGridSize[3];      //  4090: (2147483647, 65535, 65535)
 
         static int MAX_COUNT;  //  16
-        static std::vector<GPU_> cudaGetDevice(int flag = 0x0);
+        static std::vector<GPU_> cudaGetAllDevice(int flag = 0x0);
     };
     std::vector<GPU_> gpus;
     // Fish *hFish = nullptr;

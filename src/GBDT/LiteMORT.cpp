@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2018-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2018-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief LiteMORT: A memory efficient gradient boosting tree system on adaptive compact distributions
@@ -38,11 +38,11 @@ int test() {
 /*
     Predict Contextual Sparsity of LLM
 */
-int CS_Predict(FeatsOnFold *hTrainData, int flag) {
+int CS_Predict(FeatsOnFold* hTrainData, int flag) {
     // FeatsOnFold *hTrainData = FeatsOnFold::read_json("F:/Project/LiteMORT/data/nomad2018_train.json", 0x0);
     hTrainData->nClas = 2;
-    int nTree        = 64;
-    GBRT *hGBRT      = new GBRT(hTrainData, nullptr, 0.333, BoostingForest::CLASIFY, nTree);
+    int nTree         = 64;
+    GBRT* hGBRT       = new GBRT(hTrainData, nullptr, 0.333, BoostingForest::CLASIFY, nTree);
     hGBRT->Train("", 50, 0x0);
     // hGBRT->Test("",);
     delete hGBRT;

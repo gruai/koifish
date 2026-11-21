@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2019-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2019-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief  Some functions on float number
@@ -34,7 +34,7 @@ typNUMBER tpNumOf(const std::string& dtype_str) {
                 return type;
             }
         }
-    }    
+    }
     if (type == typNUMBER::T_OTHER) {
         std::string sErr = "Invalid typNumber@" + sType;
         assert(0 && sErr.c_str());
@@ -55,7 +55,7 @@ double BitPE(typNUMBER type) {
         return 0.125;
     }
     double bit = K_FLOATS[type].bis;
-    assert(bit>=1.0 && bit<=64.0);
+    assert(bit >= 1.0 && bit <= 64.0);
     return bit;
 }
 

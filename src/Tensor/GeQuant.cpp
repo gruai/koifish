@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -17,13 +17,13 @@ using namespace Grusoft;
 #include <omp.h>
 #endif
 
-#include "../Shoal/Neuron.hpp"
+#include "../Device/CUDA/cuda_def.hpp"
 #include "../Manifold/Optimizer.hpp"
 #include "../PackedQ.hpp"
 #include "../Shoal/Fish.hpp"
+#include "../Shoal/Neuron.hpp"
 #include "../Utils/rapidhash.h"
 #include "GTensor.hpp"
-#include "../Device/CUDA/cuda_def.hpp"
 using namespace Grusoft;
 
 hQUANT hQuant_A8 = nullptr, hQuant_A4 = nullptr;
@@ -799,7 +799,7 @@ float Q_Impurity<T>::LowBit_GBDT(shared_ptr<GTensor> hTensor, const void* srcDat
             impurity /= hFold->feats.size();
             // _INFO("<QUANT_%d>@%s nF=%d(%ld) impurity=%g[%g-%g]\t t1=%.5gms\n", bits, desc.c_str(), feats.size(), nSamp, impurity, a0, a1, GST_ms() - t0);
         } else {
-            int nTree   = 1;                                                                                                       // just grow leaf
+            int nTree   = 1;                                                                                                             // just grow leaf
             dort->hGBRT = new GBRT(hFold.get(), nullptr, 0.0, flag == 0 ? BoostingForest::REGRESSION : BoostingForest::CLASIFY, nTree);  //
             dort->hGBRT->Train("", 0x0);
             // memory
@@ -1202,7 +1202,7 @@ bool QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, void* 
     }
     type      = NO_QUANT;
     string s0 = "";
-    if (J_has(jQuant, "VendorQuant")) {  //jQuant.find("VendorQuant") != jQuant.end()
+    if (J_has(jQuant, "VendorQuant")) {  // jQuant.find("VendorQuant") != jQuant.end()
         isVendorQuant = true;
 
         // nPassLayer    = -1;  // no pass layer in QWen3
@@ -1231,14 +1231,14 @@ bool QUANT_CARD::Init4Neuron(const std::string& name, const JSON& jQuant, void* 
         return false;
 
     for (JSON::const_iterator it = jQuant.begin(); it != jQuant.end(); ++it) {
-        auto k = it.key();
+        auto k = J_it2key(it);  // it.key();
         if (!k.empty() && k[0] == '#')
             continue;
         if (k == "debug") {
             continue;
         }
         if (G_Has_(name, {k})) {
-            const JSON& jQ = it.value();
+            const JSON& jQ = J_it2value(it);  // it.value();
             if (jQ.find("filterQ") != jQ.end()) {
                 filterQ = jKV_arr(jQ, {"filterQ"}, filterQ, false);
             }

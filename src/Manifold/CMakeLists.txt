@@ -3,7 +3,7 @@ include_directories(.)
 
 set(PWD ${CMAKE_CURRENT_SOURCE_DIR})
 set(manifold_sources  ${PWD}/TGraph.cpp ${PWD}/Optimizer.cpp                      
-                     ${PWD}/Scheduler.cpp ${PWD}/Serialize.cpp 
+                     ${PWD}/Scheduler.cpp 
 
 PARENT_SCOPE )
 

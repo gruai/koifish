@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *
@@ -544,15 +544,15 @@ __global__ static void CU_F82Float(const f8e5* src, T* dst, size_t N, int seed, 
 
 template <class T>
 double CU_OFF_avg(const T* A, const T* B, size_t N, bool isRelative = false, int flag = 0x0) {
-    double res = DBL_MAX;    
+    double res  = DBL_MAX;
     double* d64 = nullptr;
     cudaMalloc(&d64, sizeof(double));
     D20(d64, sizeof(double));
-    float *d32 = (float *)d64, a = 0;
+    float *d32 = (float*)d64, a = 0;
     size_t dBLOCK = CU_T4B_SMALL, smemPB = 1024 * sizeof(float);
     CU_OFF<T><<<CEIL_DIV(N, dBLOCK), dBLOCK, smemPB, main_stream>>>(d32, A, B, N, flag);
     D2H(d32, &a, sizeof(float), flag);
-    res = sqrt(a / N);    
+    res = sqrt(a / N);
     if (isRelative) {
         double len = 0.0;
         D20(d64, sizeof(double));

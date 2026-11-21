@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Some codes are from llm.c
@@ -18,7 +18,13 @@
 
 #define NOMINMAX
 
-static cudaEvent_t cuStart, cuEnd;
+// static cudaEvent_t cuStart, cuEnd;
+// if (0) {
+//     cudaCheck(cudaEventCreate(&cuStart));
+//     cudaCheck(cudaEventCreate(&cuEnd));
+//     //  https://github.com/jonasmr/microprofile
+//     cudaCheck(cudaProfilerStart());
+// }
 
 /*
 void CUBIN_1()  {
@@ -74,105 +80,7 @@ void CUBIN_1()  {
 }*/
 //
 
-inline int convert_SM_to_cores(int major, int minor) {
-    // Defines for GPU Architecture types (using the SM version to determine the # of cores per SM
-    typedef struct {
-        int SM;  // 0xMm (hexidecimal notation), M = SM Major version, and m = SM minor version
-        int cores;
-    } sSMtoCores;
-
-    sSMtoCores nGpuArchCoresPerSM[] = {{0x30, 192}, {0x32, 192}, {0x35, 192}, {0x37, 192}, {0x50, 128}, {0x52, 128}, {0x53, 128},
-                                       {0x60, 64},  {0x61, 128}, {0x62, 128}, {0x70, 64},  {0x72, 64},  {0x75, 64},  {0x80, 64},
-                                       {0x86, 128}, {0x87, 128}, {0x89, 128}, {0x90, 128}, {-1, -1}};
-
-    int index = 0;
-    while (nGpuArchCoresPerSM[index].SM != -1) {
-        if (nGpuArchCoresPerSM[index].SM == ((major << 4) + minor)) {
-            return nGpuArchCoresPerSM[index].cores;
-        }
-        index++;
-    }
-    // If we don't find the values, we default use the previous one to run properly
-    _INFO("MapSMtoCores for SM %d.%d is undefined. Default to use %d cores/SM", major, minor, nGpuArchCoresPerSM[index - 1].cores);
-    return nGpuArchCoresPerSM[index - 1].cores;
-}
-
 bool InitCUDNN();
-
-bool InitCUDA(const CLI_params& hparams, EDGE_DEVICES* hDevice, int flag) {
-    int local_device_idx = 0;  // override_enable_tf32 = 1;
-    cudaError_t err      = cudaSetDevice(0);
-    if (err != cudaSuccess) {
-        printf("[InitCUDA] failed at cudaSetDevice! ERR=%s\n", cudaGetErrorString(err));
-        exit(EXIT_FAILURE);
-    }
-
-    cudaCheck(cudaGetDeviceProperties(&deviceProp, local_device_idx));
-    // int cuda_num_SMs = deviceProp.multiProcessorCount;
-    // int cuda_threads_per_SM = deviceProp.maxThreadsPerMultiProcessor;
-    // int cuda_arch_major = deviceProp.major;
-    // int cuda_arch_minor = deviceProp.minor;
-
-    // set up the cuda streams. atm everything is on the single main stream
-    cudaCheck(cudaStreamCreate(&main_stream));
-    // nvtxNameCudaStreamA(main_stream, "main stream");
-
-    // set up cuBLAS and cuBLASLt
-    cublasCheck(cublasLtCreate(&cublaslt_handle));
-    cublasCheck(cublasCreate(&cublas_handle));
-    cudaCheck(cudaMalloc(&cublaslt_workspace, cublaslt_workspace_size));
-
-    // TF32 precision is equivalent to torch.set_float32_matmul_precision('high')
-    // bool enable_tf32 = PARAMS_TYPE == typNUMBER::F32 && deviceProp.major >= 8 && override_enable_tf32;
-    // cublas_compute   = enable_tf32 ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F;
-#ifdef __USE_CUDNN__
-    InitCUDNN();
-#endif
-    int driver_version = 0, runtime_version = 0;
-    cudaDriverGetVersion(&driver_version);
-    cudaRuntimeGetVersion(&runtime_version);
-    int nCorePP = convert_SM_to_cores(deviceProp.major, deviceProp.minor);
-    _INFO("+-----------------------+----------------------------------------------------+\n");
-    _INFO("\t君子不器 - \"%s\" \n", deviceProp.name);
-    _INFO("\tCUDA driver version: %d.%d, %s runtime version: %d.%d %s\n", driver_version / 1000, (driver_version % 100) / 10, COLOR_ORANGE,
-          runtime_version / 1000, (runtime_version % 100) / 10, COLOR_RESET);
-    _INFO("\tCUDA capability major/minor version number: %d.%d. ECC=%d\n", deviceProp.major, deviceProp.minor, deviceProp.ECCEnabled);
-    _INFO("\t\n");
-    _INFO("\t%d multiprocessors, %d CUDA cores/MP, %d CUDA cores\n", deviceProp.multiProcessorCount, nCorePP, nCorePP * deviceProp.multiProcessorCount);
-
-    _INFO("\tGPU max clock rate: %.0f MHz (%0.2f GHz)\n", static_cast<double>(deviceProp.clockRate) * 1e-3, static_cast<double>(deviceProp.clockRate) * 1e-6);
-    _INFO("\tPeak bandwidth %.1f GByte/s.\tMemory clock rate: %.0f MHz (%0.2f GHz)\n",
-          (double)deviceProp.memoryClockRate * (deviceProp.memoryBusWidth / 8) * 2 / 1e6, static_cast<double>(deviceProp.memoryClockRate) * 1e-3,
-          static_cast<double>(deviceProp.memoryClockRate) * 1e-6);
-    _INFO("\tMemory bus width: %d-bit\n", deviceProp.memoryBusWidth);
-    _INFO("\tGlobal memory: %.0f MBytes (%zu Bytes)\n", static_cast<double>(deviceProp.totalGlobalMem) / 1048576, deviceProp.totalGlobalMem);
-    _INFO("\tConstant memory: %.0f KBytes (%zu Bytes)\n", static_cast<double>(deviceProp.totalConstMem) / 1024, deviceProp.totalConstMem);
-    _INFO("\tShared memory per block: %.0f KBytes (%zu Bytes)\n", static_cast<double>(deviceProp.sharedMemPerBlock) / 1024, deviceProp.sharedMemPerBlock);
-    _INFO("\tShared memory per multiprocessor: %.0f KBytes (%zu Bytes)\n", static_cast<double>(deviceProp.sharedMemPerMultiprocessor) / 1024,
-          deviceProp.sharedMemPerMultiprocessor);
-    _INFO("\tL2 cache size: %.0f KBytes (%d Bytes)\n", static_cast<double>(deviceProp.l2CacheSize) / 1024, deviceProp.l2CacheSize);
-    _INFO("\tTotal number of registers available per block: %d\n", deviceProp.regsPerBlock);
-    _INFO("\tWarp size: %d, Max number of threads per block: %d\n", deviceProp.warpSize, deviceProp.maxThreadsPerBlock);
-    _INFO("\tMax number of threads per multiprocessor: %d\n", deviceProp.maxThreadsPerMultiProcessor);
-
-    _INFO("\tMax dimension size of a thread block (x,y,z): (%d, %d, %d)\n", deviceProp.maxThreadsDim[0], deviceProp.maxThreadsDim[1],
-          deviceProp.maxThreadsDim[2]);
-    _INFO("\tMax dimension size of a grid size (x,y,z): (%d, %d, %d)\n", deviceProp.maxGridSize[0], deviceProp.maxGridSize[1], deviceProp.maxGridSize[2]);
-    _INFO("+-----------------------+----------------------------------------------------+\n");
-
-    fflush(stdout);
-    // Streaming Multiprocessors (SMs) of NVIDIA GPUs are roughly analogous to the cores of CPUs. That is, SMs both execute computations and store state
-    // available for computation in registers, with associated caches. Compared to CPU cores, GPU SMs are simple, weak processors.
-    hDevice->nCore = deviceProp.multiProcessorCount;
-    if (0) {
-        cudaCheck(cudaEventCreate(&cuStart));
-        cudaCheck(cudaEventCreate(&cuEnd));
-        //  https://github.com/jonasmr/microprofile
-        cudaCheck(cudaProfilerStart());
-    }
-
-    return true;
-}
 
 /*
     Even if my program uses only one stream, cudaDeviceSynchronize()may still wait for GPU work launched by other programs.

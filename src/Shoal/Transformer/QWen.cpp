@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Acknowledgement: https://github.com/andrewkchan/deepseek.cpp
@@ -13,8 +13,9 @@
        1. GQA: QKV projections are all configured with a bias=False parameter, meaning they do not use a bias term.
 */
 #include "../Shoal/gLLM.hpp"
+#include "../Utils/GST_Serialize.hpp"
 QWen::QWen(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag) : NLP_AutoRegressive(nam_, params, role, flag) {
-    assert(arch == MODEL_ARCH::NTP_QWEN2 || arch == MODEL_ARCH::NTP_QWEN3);
+    // assert(arch == MODEL_ARCH::NTP_QWEN2 || arch == MODEL_ARCH::NTP_QWEN3);
     config.model.isSLPBias    = false;
     config.model.isNormalBias = false;
     config.model.norm_rms_eps = 1.0e-6;
@@ -56,30 +57,41 @@ QWen3::QWen3(const std::string& nam_, struct CLI_params params, MODEL_ROLE role,
     config.model.isNormalBias  = false;
 }
 
-/**
- * static const char* LLM_TENSOR_TOKEN_EMBD         = "token_embd";
-static const char* LLM_TENSOR_OUTPUT_NORM        = "output_norm";
-static const char* LLM_TENSOR_OUTPUT             = "output";
-static const char* LLM_TENSOR_ATTN_NORM          = "blk.%d.attn_norm";
-static const char* LLM_TENSOR_ATTN_Q             = "blk.%d.attn_q";
-static const char* LLM_TENSOR_ATTN_K             = "blk.%d.attn_k";
-static const char* LLM_TENSOR_ATTN_V             = "blk.%d.attn_v";
-static const char* LLM_TENSOR_ATTN_OUT           = "blk.%d.attn_output";
-static const char* LLM_TENSOR_FFN_NORM           = "blk.%d.ffn_norm";
-static const char* LLM_TENSOR_FFN_GATE           = "blk.%d.ffn_gate";
-static const char* LLM_TENSOR_FFN_DOWN           = "blk.%d.ffn_down";
-static const char* LLM_TENSOR_FFN_UP             = "blk.%d.ffn_up";
-static const char* LLM_DICT_UP                   = "dict.%d.up";
-static const char* LLM_DICT_DOWN                 = "dict.%d.down";
-static const char* LLM_TENSOR_FFN_GATE_INP       = "blk.%d.ffn_gate_inp";
-static const char* LLM_TENSOR_FFN_GATE_EXPS      = "blk.%d.ffn_gate_exps";
-static const char* LLM_TENSOR_FFN_DOWN_EXPS      = "blk.%d.ffn_down_exps";
-static const char* LLM_TENSOR_FFN_UP_EXPS        = "blk.%d.ffn_up_exps";
-static const char* LLM_TENSOR_FFN_GATE_INP_SHEXP = "blk.%d.ffn_gate_inp_shexp";
-static const char* LLM_TENSOR_FFN_GATE_SHEXP     = "blk.%d.ffn_gate_shexp";
-static const char* LLM_TENSOR_FFN_DOWN_SHEXP     = "blk.%d.ffn_down_shexp";
-static const char* LLM_TENSOR_FFN_UP_SHEXP       = "blk.%d.ffn_up_shexp";
- */
+QWen38_strata::QWen38_strata(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag) : QWen(nam_, params, role, flag) {
+    // also support QWen2.5 model
+    assert(arch == MODEL_ARCH::NTP_QWEN38_STRATA);
+    dBase = config.model.sCardPath;
+    InitModel(0x0); //only for debug
+    string sPack;
+    config.ARG<std::filesystem::path>("pack_folder", dPackFolder);
+    config.ARG<std::filesystem::path>("mtp_folder", dMTPFolder);
+}
+
+static const char* kQuants[] = {"Q2_0", "IQ2_XS", "IQ3_XXS", "IQ3_S"};  // the sizes setup.py offers for this repo
+void QWen38_strata::InitModel(int flag) {
+    _INFO("QWen38_strata::%s: init model\n", __func__);
+    if (std::find(std::begin(kQuants), std::end(kQuants), tpQuant) == std::end(kQuants)) {
+        std::cerr << "unknown --quant " << tpQuant << "\n";
+        return;
+    }
+    int nShards       = 2;
+    bool isDownloaded = true;
+    for (int i = 1; i <= nShards; ++i) {
+        char name[256];
+        std::snprintf(name, sizeof(name), "%s/Qwen3.8-Flash-Next-GSQ-RCO-%s-%05d-of-%05d.gguf", tpQuant.c_str(), tpQuant.c_str(), i, nShards);
+        if (!std::filesystem::exists(dBase / name)) {
+            isDownloaded = false;
+        }
+        gguf_files.push_back(name);
+    }
+    if (isDownloaded) {
+    } else {
+        DownloadGGUF("ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF", gguf_files, tpQuant, dBase);
+    }
+
+    // NLP_AutoRegressive::InitModel(flag);
+}
+
 std::string Fish::NN2NAME(const std::string& prefix, tpNEURON4NAME neuron, const std::string& suffix, int flag) {
     switch (neuron) {
         case ATTN_PRE_NORMAL:

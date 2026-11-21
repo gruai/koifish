@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2018-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2018-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -215,7 +215,7 @@ class FeatsOnFold {
     FeatsOnFold(LiteBOM_Config confi_, ExploreDA* eda, string nam_, int dtype = 0x0);
     virtual ~FeatsOnFold();
 
-    virtual void Empty(int flag) {}    
+    virtual void Empty(int flag) {}
     virtual void InitRanders(int flag = 0x0);
     /*
     template<typename Tx, typename Ty>
@@ -232,7 +232,6 @@ class FeatsOnFold {
             hMove->Init_T<Tx, Ty>(nMost);
         importance = new Feat_Importance(this);
     }*/
-
 
     // virtual void Compress(int flag = 0x0);
     virtual void ExpandFeat(int flag = 0x0);

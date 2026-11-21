@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  General LLM model
@@ -173,6 +173,7 @@ class GPT2 : public NLP_AutoRegressive {
    protected:
     LayerNormal _norm;
     SLP _output;
+
    public:
     GPT2(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag = 0x0);
 
@@ -288,12 +289,28 @@ class QWen3 : public QWen {
     }
 };
 
+class QWen38_strata : public QWen {
+   protected:
+   std::filesystem::path dPackFolder, dMTPFolder, dBase;
+   std::string tpQuant = "IQ3_S";
+   std::vector<std::string> gguf_files;
+   public:
+    QWen38_strata(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag = 0x0);
+
+    virtual ~QWen38_strata() {}
+
+    void InitModel(int flag = 0x0) override;
+    friend class GTokenizer_STRATA;
+};
+
+
 // life is nothing just like a salmon swim upstream(返朴)
 class Salmon : public NLP_AutoRegressive {
    protected:
     // SAMPLE/雕琢/琢磨;    既雕既琢，复归于朴
     virtual int ZhuoMo(int flag = 0x0);
-    bool BeforeNextStep(int iter, int flag = 0x0)   override;
+    bool BeforeNextStep(int iter, int flag = 0x0) override;
+
    public:
     Salmon(const std::string& nam_, struct CLI_params params, MODEL_ROLE role, int flag = 0x0);
 

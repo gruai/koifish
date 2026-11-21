@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief #define for CUDA code
@@ -7,7 +7,6 @@
  */
 
 #pragma once
-
 
 // WarpSize is not a compile time constant, Defining here like this possibly allows the compiler to optimize better
 #define WARP_SIZE 32U

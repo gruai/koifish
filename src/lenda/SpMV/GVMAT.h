@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2013-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2013-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -16,6 +16,7 @@
 #include <memory>
 #include <typeinfo>
 #include <vector>
+
 #include "../../g_def_x.hpp"
 #include "../Utils/GST_obj.hpp"
 #include "../g_float.hpp"

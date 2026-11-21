@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -22,9 +22,9 @@ Maisui::Maisui(const std::string& nam_, CLI_params params, int flag) : Fish(nam_
         CLI_params paramSwarm = params;
         assert(paramSwarm.sft.baseArch == NTP_QWEN3);
         paramSwarm.common.SetOnlyInfer();
-        paramSwarm.phase            = LIFE_PHASE::P_EVAL_;
-        paramSwarm.model.sPadMask = "last"; //paramSwarm.common.isPadMask = true;
-        hFISH fish                  = Fish::MakeInstance(title, paramSwarm, wikis, role, 0x0);
+        paramSwarm.phase          = LIFE_PHASE::P_EVAL_;
+        paramSwarm.model.sPadMask = "last";  // paramSwarm.common.isPadMask = true;
+        hFISH fish                = Fish::MakeInstance(title, paramSwarm, wikis, role, 0x0);
 
         // fish->isLocalInfer = true;
         Fish::swarm.push_back(fish);
@@ -106,7 +106,8 @@ int Fish::CollateHidden(hDataToken coral, const std::string& sX, int flag) {
             return KOIFISH_HIDDEN_NULL;
         }
         if (isCache) {
-            std::string sPath = _sLOG("%s_%s@[%s]_<%s>_N%d.dat", DEBUG.fHiddenFeature.c_str(), Name().c_str(), coral->name.c_str(), prober->name.c_str(), nSamp);
+            std::string sPath =
+                _sLOG("%s_%s@[%s]_<%s>_N%d.dat", DEBUG.fHiddenFeature.c_str(), Name().c_str(), coral->name.c_str(), prober->name.c_str(), nSamp);
             picker->SerialFeatures(this, sPath, true);
         }
     }
@@ -143,7 +144,6 @@ void Maisui::Train(int flag) {
     NOT_IMPLEMENTED;
 #endif
     arrPicker[0]->Train();
-
 }
 
 bool Fish::Init(const vector<hWIKI>& wikis_, int flag) {
@@ -216,7 +216,7 @@ int Maisui::ChatOnSamps(int iter, int flag) {
     string cur_answer, rendered_prompt;
     gopt->OnPrompt(iter, nullptr);
     int num_prompt_tokens = gopt->hBatch->nTokens(BATCH_INPUT::F_PROMPT_LEN);  // nPrefill;
-    for (int i = 0; i < num_prompt_tokens - 1; i++) {                        // prefill
+    for (int i = 0; i < num_prompt_tokens - 1; i++) {                          // prefill
         eval = Evaluate({gopt->tsChat}, DL_BATCH_UPATE::BATCHofEMBED);
         gopt->hBatch->tok_pos++;
         if (gopt->hBatch->tok_pos == 1) {  // nRound == 2

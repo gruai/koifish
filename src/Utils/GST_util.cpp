@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Utility functions
@@ -14,12 +14,11 @@
 
 #include "../PackedQ.hpp"
 #include "../g_float.hpp"
+#include "./os/GST_os.hpp"
 #include "GST_log.hpp"
 #include "GST_obj.hpp"
-#include "GST_os.hpp"
 
-int GST_util::dump = 10;
-
+int GST_util::dump   = 10;
 int GST_util::verify = 0;
 
 void _TIME_INFO(const string& info, double fmillis, int flag) {
@@ -228,41 +227,6 @@ bool VERIFY_DIR_EXIST(const std::string& path, bool isCreate) {
     }
 }
 
-/**
- *  v0.1    20250918
- */
-const char* GRUAI_KOIFISH_APP_NAME = "Koifish-v0.4";
-void GRUAI_KOIFISH_VERSION(char* str, int flag = 0x0) {
-    char sName[80] = "\0";
-    int i, nLen = (int)strlen(GRUAI_KOIFISH_APP_NAME), nFrame = 68, off;
-    std::string sDat = DATE(100);
-    sprintf(sName, " %s %s %s (%s by gcc %s ENV=\"%s\")", COLOR_ORANGE, GRUAI_KOIFISH_APP_NAME, COLOR_RESET, sDat.c_str(), __VERSION__, KOIFISH_CONDA_ENV);
-    int pad = (nFrame - strlen(sName)) / 2 - 1;
-    assert(pad >= 0);
-
-    sprintf(str, "%s*%*s%s%*s*\n%s", "********************************************************************\n", pad, "", sName,
-            (int)(nFrame - strlen(sName) - pad - 2), "",
-            "*  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen                  *\n"
-            "*  SPDX-License-Identifier: MIT                                    *\n"
-            "*  MAIL: gsp.cys@gmail.com                                         *\n"
-            "********************************************************************\n");
-
-    // print_build_info();
-
-    /*
-        // "\tCompiler-specific macros:%d"
-    #ifdef __GNUC__
-        std::cout << "GCC/G++ Version: " << __GNUC__ << "." << __GNUC_MINOR__ << "." << __GNUC_PATCHLEVEL__ << "\n";
-    #endif
-    #ifdef _MSC_VER
-        std::cout << "MSVC Version: " << _MSC_VER << "\n";
-    #endif
-    #ifdef __clang__
-        std::cout << "Clang Version: " << __clang_major__ << "." << __clang_minor__ << "." << __clang_patchlevel__ << "\n";
-    #endif*/
-    return;
-}
-
 void _log_callback_default(DUMP_LEVEL level, const char* text, void* user_data) {
     (void)level;
     (void)user_data;
@@ -277,6 +241,13 @@ inline void _log_head(char* buff, const char* tag = "KOIFISH", int flag = 0x0) {
 }
 
 static char log_buffer[KOIFISH_MOST_LOG], coloredMsg[KOIFISH_MOST_LOG + 100];
+
+std::string SourceLocation::DumpX(int type, const std::string& title, int flag) {
+    std::string x;
+    std::sprintf(log_buffer, "%s:%u (%s)\n", file_, line_, func_);
+    return log_buffer;
+}
+
 void _LOG(DUMP_LEVEL level, const char* format, ...) {
     va_list args;
     va_start(args, format);
@@ -327,7 +298,7 @@ void _LOG(DUMP_LEVEL level, const char* format, ...) {
 
 std::string _sLOG(const char* format, ...) {
     va_list args;
-    va_start(args, format);    
+    va_start(args, format);
     va_list args_copy;
     va_copy(args_copy, args);
     _log_head(log_buffer);
@@ -350,48 +321,47 @@ void read_stdin(const char* guide, char* buffer, size_t bufsize) {
     }
 }
 
-std::string FILE2STR(const std::string fPath, size_t nzMost, int flag) {
-try{
-    /* std::ios::binary is not joking! On Windows, when you open a file in text mode (default without std::ios::binary):
-            \r\n (CRLF - Windows line endings) → converted to \n
-            0x1A (Ctrl+Z) → treated as EOF marker
-            This can corrupt or truncate your data
-*/
-    std::ifstream f(fPath, std::ios::in | std::ios::binary);
-    if (!f.is_open())
-        throw std::runtime_error("Cannot open file: " + fPath);
-    // Get size
-    f.seekg(0, std::ios::end);
-    std::streamsize size = f.tellg();
-    if (size < 0)
-        throw std::runtime_error("tellg() failed for: " + fPath);
-    assert(size<nzMost);
-    std::string s;
-    s.reserve(static_cast<size_t>(size));
-    f.seekg(0, std::ios::beg);
-    s.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+std::string FILE2STR(const std::string& fPath, size_t nzMost, int flag) {
+    try {
+        /* std::ios::binary is not joking! On Windows, when you open a file in text mode (default without std::ios::binary):
+                \r\n (CRLF - Windows line endings) → converted to \n
+                0x1A (Ctrl+Z) → treated as EOF marker
+                This can corrupt or truncate your data
+    */
+        std::ifstream f(fPath, std::ios::in | std::ios::binary);
+        if (!f.is_open())
+            throw std::runtime_error("Cannot open file: " + fPath);
+        // Get size
+        f.seekg(0, std::ios::end);
+        std::streamsize size = f.tellg();
+        if (size < 0)
+            throw std::runtime_error("tellg() failed for: " + fPath);
+        assert(size < nzMost);
+        std::string s;
+        s.reserve(static_cast<size_t>(size));
+        f.seekg(0, std::ios::beg);
+        s.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
 
-    return s;
-}
-catch (const std::exception& e) {    // Re-throw with context
-    throw std::runtime_error(std::string("load_txt failed: ") + e.what());
-}
-/*std::string info;
-std::ifstream file(fPath);
-if (!file.is_open()) {
-    _ERROR("<<<<<<< FILE2STR failed @%s\n", fPath.c_str());
-    return "";
+        return s;
+    } catch (const std::exception& e) {  // Re-throw with context
+        throw std::runtime_error(std::string("load_txt failed: ") + e.what());
+    }
+    /*std::string info;
+    std::ifstream file(fPath);
+    if (!file.is_open()) {
+        _ERROR("<<<<<<< FILE2STR failed @%s\n", fPath.c_str());
+        return "";
+    }
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    info = buffer.str();
+    file.close();
+
+    return info;*/
 }
 
-std::stringstream buffer;
-buffer << file.rdbuf();
-info = buffer.str();
-file.close();
-
-return info;*/
-}
-
-bool STR2FILE(const std::string fPath, const std::string& info, std::ofstream::openmode mode, int flag) {
+bool STR2FILE(const std::string& fPath, const std::string& info, std::ofstream::openmode mode, int flag) {
     std::ofstream file(fPath, mode);
     if (!file.is_open()) {
         _ERROR("STR2FILE failed @%s", fPath.c_str());
@@ -443,14 +413,14 @@ std::vector<std::string> FilesOfDir(const std::string& path, const std::vector<s
 
 std::string ModelInFolder(std::string path, int flag) {
     // 1. strip ALL trailing separators
-    while (!path.empty() && (path.back() == '/' || path.back() == '\\'))
-        path.pop_back();
+    while (!path.empty() && (path.back() == '/' || path.back() == '\\')) path.pop_back();
 
     // 2. if now empty (path was just "/" or "///"), return empty
-    if (path.empty()) return "";
+    if (path.empty())
+        return "";
 
     // 3. take component after last separator
-    auto pos = path.find_last_of("/\\");
+    auto pos          = path.find_last_of("/\\");
     std::string model = (pos == std::string::npos) ? path : path.substr(pos + 1);
     return model;
 }

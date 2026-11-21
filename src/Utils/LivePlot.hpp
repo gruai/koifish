@@ -1,6 +1,6 @@
 
 /**
- *  SPDX-FileCopyrightText: 2019-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2019-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief single-header, zero third-party-code live loss plot.
@@ -13,14 +13,13 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
-#include "GST_hashmap.hpp"
 #include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
 
-
+#include "GST_hashmap.hpp"
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -53,13 +52,13 @@ using Pt = std::pair<int, int>;
 
 // State shared between the user's threads and the window thread.
 struct Shared {
-    std::atomic<bool>  stop{false};
-    std::atomic<bool>  dirty{true};
-    std::atomic<void*> native{nullptr};   // HWND on Windows (used to wake the window)
-    std::atomic<bool>  want_png{false};   // capture a last frame when the window closes
+    std::atomic<bool> stop{false};
+    std::atomic<bool> dirty{true};
+    std::atomic<void*> native{nullptr};  // HWND on Windows (used to wake the window)
+    std::atomic<bool> want_png{false};   // capture a last frame when the window closes
     // Filled by the window thread just before it exits; read by stop() after join().
     int cap_w = 0, cap_h = 0;
-    std::vector<unsigned char> cap_rgb;   // cap_w * cap_h * 3, RGB
+    std::vector<unsigned char> cap_rgb;  // cap_w * cap_h * 3, RGB
 };
 
 // Minimal PNG writer (RGB8). Uses zlib "stored" blocks, so no compression and no zlib needed.
@@ -1009,7 +1008,7 @@ class LivePlot {
     liveplot::Shared sh_;
     std::mutex mu_;
     liveplot::Series train_, eval_;
-    std::vector<liveplot::Named> params_;                // extra per-step values, in first-push order
+    std::vector<liveplot::Named> params_;  // extra per-step values, in first-push order
     MAP_<std::string, size_t> param_idx_;  // name -> index in params_
     std::string status_;
     std::string png_path_;

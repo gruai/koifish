@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Align;   Packed data
@@ -627,11 +627,11 @@ struct TASKA_1p1 {
 
         block3 = tpb;
         // assert(N % (block3 * X128::size) == 0);
-        if(is128)
+        if (is128)
             nBlock = CEIL_DIV(N, tpb * typ128::size);
         else
             nBlock = CEIL_DIV(N, tpb);
-        grid3  = nBlock;
+        grid3 = nBlock;
     }
     bool isValid() const {
         if (nBlock <= 0)

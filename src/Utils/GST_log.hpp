@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Log is much complex than printf
@@ -73,9 +73,19 @@ void _LOG(DUMP_LEVEL level, const char* format, ...);
         if (DUMP())                       \
             _LOG(DUMP_INFO, __VA_ARGS__); \
     }
+    
+#define _sINFO(...) _LOG(DUMP_INFO, __VA_ARGS__)
+
+// usage LOG_FIRST_N(8, "decode_i: id %d not in invT2T, skipping", id);
+#define _LOG_FIRST_N(n, ...)                                                                                   \
+    do {                                                                                                      \
+        static std::atomic<int> _cnt{0};                                                                      \
+        if (_cnt.load(std::memory_order_relaxed) < (n) && _cnt.fetch_add(1, std::memory_order_relaxed) < (n)) \
+            _INFO(__VA_ARGS__);                                                                               \
+    } while (0)
 
 void _TIME_INFO(const std::string& info, double fmillis, int flag = 0x0);
-#define _sINFO(...) _LOG(DUMP_INFO, __VA_ARGS__)
+
 template <typename T>
 void inline PrintT(const char* title, const T* src, int n1, int n2, int n3 = 1, int n4 = 1, int flag = 0x0) {
     if (g_dump_level > 0 && flag >= 0)
@@ -99,7 +109,7 @@ void inline PrintT(const char* title, const T* src, int n1, int n2, int n3 = 1, 
     }
     for (i = 0; i < nElem; i++) {
         a = T2Float<T>(cur, i);
-        assert(!isnan(a) && !isinf(a));
+        assert(!std::isnan(a) && !std::isinf(a));
         if (g_dump_each > 0) {
             if (i < nEach || i >= nElem - nEach || fabs(i - nElem / 2) <= nEach) {
                 _INFO(format, a);  //  "%.15g "
@@ -116,7 +126,7 @@ void inline PrintT(const char* title, const T* src, int n1, int n2, int n3 = 1, 
         a0 = std::min(a0, a);
     }
 
-    assert(!isnan(sum2) && !isinf(sum2));
+    assert(!std::isnan(sum2) && !std::isinf(sum2));
     len = sqrt(sum2 / nElem);
     //  printf output is only displayed if the kernel finishes successfully,  cudaDeviceSynchronize()
     _INFO(" |avg|=%g(%ld) [%.3e,%.3e] avg_len=%g sum2=%g nz=%.3g\n", sum / nElem, nElem, a0, a1, len, sum2, nz * 1.0 / nElem);

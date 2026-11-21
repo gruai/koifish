@@ -15,23 +15,36 @@ from SweepHyParams import koifish_one,bubble_one,pangpi_one
 
 sExe = "./bin/koifish "
 most_iter = 10
-def CheckResult(df,iter,golden,title="",rel_tol=1e-05):
+def CheckResult(df,line,golden,title="",rel_tol=1e-05):
     if df is None:
         return
     # print(df)
     a = -1.0
     try:
-        a = df["loss"][iter]
+        a = df["loss"][line]
         print(f"{title} loss={a} golden={golden}\n")
     except KeyError:
         print(f"{title} 'loss' column does not exist!\n")
     except IndexError:
-        print(f"{title} index out of range!(iter={iter})\n")
+        print(f"{title} index out of range!(line={line})\n")
     # a = df["loss"][iter]
     isClose = math.isclose(a,golden,rel_tol=rel_tol, abs_tol=0.0)
     if not isClose:
         print(f"CheckResult failed@{title}! loss={a} golden={golden}\n")
         assert(0)
+
+ 
+
+def xtest_EvalChat():    
+    content = bubble_one("EvalChat on many questions", " --hf ./Models/Qwen3-0.6B/ --coral \"/all_datasets/Jev/boolq/data/validation*.parquet\"")    
+    assert "does hot and sour soup have a lot of sodium?\n<|im_start|>assistant\n<think>\n\n</think>\n\ntrue   confi=1" in content
+
+
+def Xtest_kicking_B8():    
+    most_iter = 2000
+    title = "kicking on Batch=8"
+    dfTrain = koifish_one(title, sExe, "./cases/grokking.json", most_iter=most_iter, train_csv="./Eval@[math0_eval]_info_.csv", check_line=False)    
+    CheckResult(dfTrain,most_iter//100-1,2.473,title=title,rel_tol=0.001)      # 
 
 def test_chat_dcoder():  
     content = bubble_one("chat_dcoder"," --hf ./Models/dcoder/ --prompts \"Write a quick sort algorithm in c++.\" --seq_len 640 --temperature 0.5 --md_method \"dilate\"") 
@@ -137,7 +150,17 @@ def test_gpt2_124M_fuyou6():
     dfTrain = koifish_one(title, sExe, "./cases/gpt2/124M_shard50_F6_lr0.001/F6_lr0.001.json", most_iter=most_iter)    
     CheckResult(dfTrain,most_iter,7.443,title=title)    #7.492 7.497 7.785
 
+def test_grokking():    
+    most_iter = 2000
+    title = "grokking"
+    dfTrain = koifish_one(title, sExe, "./cases/grokking.json", most_iter=most_iter, train_csv="./Eval@[math0_eval]_info_.csv", check_line=False)    
+    CheckResult(dfTrain,most_iter//100-1,2.473,title=title,rel_tol=0.001)      # 2.473
 
+def xtest_JEV():    
+    most_iter = 2000
+    title = "JEV"
+    dfTrain = koifish_one(title, sExe, "./cases/grokking.json", most_iter=most_iter, train_csv="./Eval@[math0_eval]_info_.csv", check_line=False)    
+    CheckResult(dfTrain,most_iter//100-1,2.473,title=title,rel_tol=0.001)
 
 
 
@@ -191,8 +214,10 @@ if __name__ == '__main__':
 
     # test_pp_gpt2()
     # test_gpt2_124M()
-    # test_qwen3_596M_q4()
-    test_gpt2_124M_fuyou6()
+    test_qwen3_596M_q4()
+    # test_EvalChat()
+    # test_grokking()
+    # test_gpt2_124M_fuyou6()
     # test_gpt2_1558M()
     # test_chat_qwen3_4B_1()
     # test_qwen2_494M()

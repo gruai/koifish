@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -1114,10 +1114,6 @@ int Fish::BuildComputeGraph(int order, void* ctx, int flag) {
         // make sure some tensors are not reallocated by inserting new temporary nodes depending on them
         int n_leafs_before = gb->n_leafs, n_nodes_before = gb->n_nodes;
 
-#ifndef GG_V12
-        auto grad = GradOf(gb, out_node);  // out_node->grad
-        ggml_set_input(grad);
-#endif
         hBackTG->PushBack(tSCAL(ctx, KQ_pos, 1.0f));
 
         bool isReforward = false;  // why???
@@ -1230,11 +1226,11 @@ bool TGraph::isValid() {
     assert(nInput && "No input nodes!");
     if (hFish->isTrain()) {
         assert(any_params && "no trainable parameters found, did you forget to set F_PARAM?");
-#ifdef GG_V12
+
         if (!any_loss) {
             _INFO("Invalid TGraph,no training loss node found, did you forget to set F_LOSS?\n\n");
         }
-#endif
+
     }
 
     return true;
@@ -1537,19 +1533,19 @@ hNEURON Fish::J2Neuron(void* ctx_, string& dad, int level, const JConfig& jconfi
     int i, nLay;
 
     for (JSON::const_iterator it = jconfig.js.begin(); it != jconfig.js.end(); ++it) {
-        k = it.key();
+        k = J_it2key(it);  // it.key();
         if (!k.empty() && k[0] == '#')
             continue;
-        auto v = it.value();
-        if (it->is_array()) {
-        } else if (it->is_structured()) {
+        auto v = J_it2value(it);  // it.value();
+        if (v.is_array()) {
+        } else if (v.is_object()) {  // it->is_structured()
             s2layerinfo(config, dad, k, lay_names);
             int lay = 0;
             for (auto nam_ : lay_names) {
                 if (level == 0) {
                     TGraph::curLayer++;
                 }
-                JConfig jLay(*it, lay++);
+                JConfig jLay(v, lay++);                          //*it, lay++
                 prefix = dad.empty() ? nam_ : dad + "." + nam_;  //  ,  //nam_
                 cur    = J2Neuron(ctx_, prefix, level + 1, jLay, flag);
                 vNN.push_back(cur);
@@ -1558,7 +1554,7 @@ hNEURON Fish::J2Neuron(void* ctx_, string& dad, int level, const JConfig& jconfi
         } else {
             assert(0);
         }
-        cur        = GeNeuron::MakeInstance(this, ctx_, dad, it.key(),it. value(), flag);
+        cur        = GeNeuron::MakeInstance(this, ctx_, dad, k, v, flag);
         cur->ID    = jconfig.ID;
         cur->level = level + 1;
         neurons.push_back(cur);
@@ -1582,8 +1578,11 @@ hNEURON Fish::J2Neuron(void* ctx_, string& dad, int level, const JConfig& jconfi
 
 */
 int Fish::jToGraph(void* ctx_, bool isBuild, int flag) {
-    JConfig js(config.jBackBone);assert(js.Valid());
-    J_dump("./log/_koifish_jToGraph_.json", js.js);    
+    JConfig js(config.jBackBone);
+    assert(js.Valid());
+    string tmpJPath = "./log/_koifish_jToGraph_.json";
+    J_dump(tmpJPath, js.js);
+    _INFO("[Model] jToGraph@\"%s\" ", tmpJPath.c_str());
 
     string sRoot = "model";  //  prefix = dad.empty() ? nam_ : dad + "." + nam_;
 

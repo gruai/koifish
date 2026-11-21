@@ -1,6 +1,6 @@
 #pragma once
 /**
- *  SPDX-FileCopyrightText: 2018-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2018-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -13,9 +13,9 @@
 #include <map>
 #include <memory>
 #include <numeric>
+#include <queue>
 #include <string>
 #include <vector>
-#include <queue>
 using namespace std;
 #include "../EDA/Feat_Selection.hpp"
 #include "../include/LiteBOM_config.h"
@@ -106,7 +106,7 @@ class FeatVector {
 
     Feature_Selection* select_bins = nullptr;
     double wSplit = 0, wSplit_last = 0;  //"split", result contains numbers of times the feature is used in a model.
-    double wGain = 0, errQ = 0;                    //"gain", result contains total gains of splits which use the feature.
+    double wGain = 0, errQ = 0;          //"gain", result contains total gains of splits which use the feature.
     float* wBins = nullptr;
     enum {  // ��Ҫ��Distribution�ϲ�
         // CATEGORY = 0x100,		DISCRETE = 0x200,

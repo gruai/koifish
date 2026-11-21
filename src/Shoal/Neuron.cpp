@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Neurons & Perceptrons
@@ -76,18 +76,18 @@ hNEURON GeNeuron::MakeInstance(Fish* hG_, void* ctx, const string& guid, const s
     }
 }
 
-GeNeuron::GeNeuron(const std::string& key_, const JSON& jit, Fish* hG_, int flag) : name(key_), hFish(hG_), ID(0) {
+GeNeuron::GeNeuron(const std::string& key_, const JSON& jObj, Fish* hG_, int flag) : name(key_), hFish(hG_), ID(0) {
     try {
         Init(hG_, 0x0);
         layid = TGraph::curLayer;
         assert(layid >= 0);
-        if (J_isEmpty(jit)) {  // jit->is_null() from no-json constructor
+        if (J_isEmpty(jObj)) {  // jit->is_null() from no-json constructor
         } else {
-            ID = jKV(jit, {"#id"}, ID);
+            ID = jKV(jObj, {"#id"}, ID);
             // if (jit.contains(std::string{"#id"})) {ID = (jit)["id"];}
             // type_info = jit.key();
-            if (jit.is_array()) {
-                for (const auto& item : jit) {
+            if (jObj.is_array()) {
+                for (const auto& item : jChilds(jObj)) {  //  jObj
                     if (item.is_string()) {
                         string sVal = J_get<string>(item);  // item.template get<string>();
                         std::transform(sVal.begin(), sVal.end(), sVal.begin(), ::toupper);
@@ -297,7 +297,7 @@ bool Head4Token::BuildPrelogist(int flag) {
     if (/*hFish->isLocalInfer &&*/ hFish->isAtPhase(P_CHAT_1)) {
         preLogits = GT(hFish, tpL, {padded_nCls}, 0x0, "preLogits");
         // preLogits->flags |= GTensor::F_HOSTDATA;
-        preLogits->Alloc(0x0, flag);
+        preLogits->Alloc(0x0, SRC_LOC, flag);
     } else {
         SHAPE sp3 = {ldV, T, dB4Logits()};  //{dB4Logits(), T, ldC};
         preLogits = std::make_shared<huTensor>(hFish, "preLogits", sp3, tpL, true);

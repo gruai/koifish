@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  CORALs provide enviroments for fish to survice, reproduce & evolve.
@@ -16,6 +16,7 @@
 
 class TokenCoral;
 class BATCH_INPUT;
+class FSerial;
 
 struct SAMP {
     size_t pos = 0, len = 0;   //  range is [pos,pos+len)

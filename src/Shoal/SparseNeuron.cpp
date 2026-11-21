@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Neurons with sparsing activation/weight
@@ -9,6 +9,7 @@
 
 #include "../Shoal/Fish.hpp"
 #include "../Utils/GST_rander.hpp"
+#include "../Utils/GST_Serialize.hpp"
 #include "../lenda/kernel/SVD.hpp"
 #include "HotPicker.hpp"
 #include "Optimizer.hpp"
@@ -39,8 +40,8 @@ FeatPicker::FeatPicker(const std::string& key_, int dimX_, int dimY_, int flag) 
     sKey = key_;
 #ifdef __USE_GBDT__
     // PY_ITEM params[] = {{"feature_quanti", 8}, {"verbose", 1000}, {"objective", 0, "binary"}, {"n_estimators", 32}, {"adaptive", 0, "weight"}};
-    PY_ITEM params[] = {{"feature_quanti", 128}, {"verbose", 1000},         {"objective", 0, "regression"}, {"n_estimators", 3200},
-                        {"learning_rate", 0.001},  {"adaptive", 0, "weight"}, {"metric", 0, "rmse"},          {"early_stopping_rounds", 5000}};
+    PY_ITEM params[] = {{"feature_quanti", 128},  {"verbose", 1000},         {"objective", 0, "regression"}, {"n_estimators", 3200},
+                        {"learning_rate", 0.001}, {"adaptive", 0, "weight"}, {"metric", 0, "rmse"},          {"early_stopping_rounds", 5000}};
     DORT_wrap* dort  = static_cast<DORT_wrap*>(LiteMORT_init(params, sizeof(params) / sizeof(PY_ITEM), nullptr, 0x0));
     config           = dort->config;
     name             = name + "_GBDT";
@@ -101,8 +102,6 @@ hTabularData FeatPicker::Coral2Tabular(hDataToken coral, hFISH backbone, MODEL_A
     //  BeforeCollate(coral);
 
     // backbone->CollateHidden(coral, sKey);  // KOIFISH_FEATURE_NULL
-
-
 
     int nRow = raw_feat->ne[1], nFeat = nRow - dimY;
     ExploreDA* hEDA_train = new ExploreDA(config, "DORT_wrap", flag);

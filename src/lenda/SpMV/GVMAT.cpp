@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2013-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2013-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -18,7 +18,7 @@
 static const int inc_1 = 1;
 static char trans[]    = {'N', 'T'};
 
-void Unitary(hGVEC &mA, int flag) {
+void Unitary(hGVEC& mA, int flag) {
     double norm = mA->Nrm2(flag);
     mA->Scald(1.0 / norm, flag);
 }

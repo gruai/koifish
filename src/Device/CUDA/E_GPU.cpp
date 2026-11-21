@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief CUDA&CUDNN
@@ -8,7 +8,9 @@
 
 #include "../EDevice.hpp"
 #include "../Utils/GST_MemBuffer.hpp"
+#include "../Utils/os/GST_os.hpp"
 #include "./cuda_common.h"
+#include "./gpu_report.hpp"
 
 // Static member definitions
 std::atomic<int> CudaDriverManager::allocation_count{0};
@@ -26,7 +28,7 @@ void SUM::GPU_TIME(double& a, const double b, int flag) {
 }
 
 int EDGE_DEVICES::GPU_::MAX_COUNT = 16;  //  16
-std::vector<EDGE_DEVICES::GPU_> EDGE_DEVICES::GPU_::cudaGetDevice(int flag) {
+std::vector<EDGE_DEVICES::GPU_> EDGE_DEVICES::GPU_::cudaGetAllDevice(int flag) {
     std::vector<GPU_> devices;
 #ifdef __HIP_PLATFORM_AMD__
     // Workaround for a rocBLAS bug when using multiple graphics cards:
@@ -73,7 +75,6 @@ std::vector<EDGE_DEVICES::GPU_> EDGE_DEVICES::GPU_::cudaGetDevice(int flag) {
     devices.resize(device_count);
     for (int id = 0; id < device_count; ++id) {
         int device_vmm = 0;
-
 #if defined(_USE_VMM)
         CUdevice device;
         CU_CHECK(cuDeviceGet(&device, id));
@@ -119,18 +120,204 @@ std::vector<EDGE_DEVICES::GPU_> EDGE_DEVICES::GPU_::cudaGetDevice(int flag) {
         devices[id].cc    = 100 * prop.major + 10 * prop.minor;
         _INFO("  Device %d: %s(%.6gM), compute capability %d.%d, VMM: %s\n", id, prop.name, devices[id].total_vram / 1.0e6, prop.major, prop.minor,
               device_vmm ? "yes" : "no");
+        size_t free_b = 0, total_b = 0;
+        if (cudaMemGetInfo(&free_b, &total_b) != cudaSuccess) {
+            (void)cudaGetLastError();
+            continue;
+        }
+        namespace gr = strata::program::gpu_report; 
+        gr::Card c;     //  v0.1 strata::print_startup_gpu_report
+        c.index    = id;
+        c.free_mib = (uint64_t)(free_b >> 20), c.total_mib = (uint64_t)(total_b >> 20);
+        c.name = prop.name;
+#if !defined(STRATA_USE_HIP) && !defined(STRATA_HIP_GFX906) && !defined(STRATA_GPU_METAL)
+        char bus[64] = {};
+        if (cudaDeviceGetPCIBusId(bus, (int)sizeof bus, id) == cudaSuccess)
+            c.processes_known = gr::query_other_processes(bus, c.processes);
+        else
+            (void)cudaGetLastError();
+#endif
+        _INFO(" GPU memory right now (best effort):\n%s\n", gr::format_gpu_memory_report({c}, curPID()).c_str());
 #endif  // defined(_USE_HIP) && defined(__HIP_PLATFORM_AMD__)
     }
 
     return devices;
 }
 
-bool InitCUDA(const CLI_params& hparams, EDGE_DEVICES* hDevice, int flag);
+/**
+ * v0.1 strata::print_startup_gpu_report
+ */
+static void print_startup_gpu_report(const std::vector<int>& devices) {
+    namespace gr = strata::program::gpu_report;
+    std::vector<gr::Card> cards;
+    int count = 0, prev = 0;
+    if (cudaGetDeviceCount(&count) != cudaSuccess) {
+        (void)cudaGetLastError();
+        return;
+    }
+    if (cudaGetDevice(&prev) != cudaSuccess) {
+        (void)cudaGetLastError();
+        prev = 0;
+    }
+    std::vector<int> seen;
+    for (const int d : devices) {
+        if (d < 0 || d >= count || std::find(seen.begin(), seen.end(), d) != seen.end())
+            continue;
+        seen.push_back(d);
+        if (cudaSetDevice(d) != cudaSuccess) {
+            (void)cudaGetLastError();
+            continue;
+        }  // no context fits there either
+        size_t free_b = 0, total_b = 0;
+        if (cudaMemGetInfo(&free_b, &total_b) != cudaSuccess) {
+            (void)cudaGetLastError();
+            continue;
+        }
+        gr::Card c;
+        c.index     = d;
+        c.free_mib  = (uint64_t)(free_b >> 20);
+        c.total_mib = (uint64_t)(total_b >> 20);
+        cudaDeviceProp prop{};
+        if (cudaGetDeviceProperties(&prop, d) == cudaSuccess)
+            c.name = prop.name;
+        else
+            (void)cudaGetLastError();
+#if !defined(STRATA_USE_HIP) && !defined(STRATA_HIP_GFX906) && !defined(STRATA_GPU_METAL)
+        char bus[64] = {};
+        if (cudaDeviceGetPCIBusId(bus, (int)sizeof bus, d) == cudaSuccess)
+            c.processes_known = gr::query_other_processes(bus, c.processes);
+        else
+            (void)cudaGetLastError();
+#endif
+        cards.push_back(std::move(c));
+    }
+    if (prev >= 0 && prev < count)
+        (void)cudaSetDevice(prev);
+    (void)cudaGetLastError();
+    if (cards.empty())
+        return;
+
+    std::fprintf(stderr, "strata generate: GPU memory right now (best effort):\n%s\n", gr::format_gpu_memory_report(cards, curPID()).c_str());
+}
+
+bool InitCUDNN();
+inline int convert_SM_to_cores(int major, int minor) {
+    // Defines for GPU Architecture types (using the SM version to determine the # of cores per SM
+    typedef struct {
+        int SM;  // 0xMm (hexidecimal notation), M = SM Major version, and m = SM minor version
+        int cores;
+    } sSMtoCores;
+
+    sSMtoCores nGpuArchCoresPerSM[] = {{0x30, 192}, {0x32, 192}, {0x35, 192}, {0x37, 192}, {0x50, 128}, {0x52, 128}, {0x53, 128},
+                                       {0x60, 64},  {0x61, 128}, {0x62, 128}, {0x70, 64},  {0x72, 64},  {0x75, 64},  {0x80, 64},
+                                       {0x86, 128}, {0x87, 128}, {0x89, 128}, {0x90, 128}, {-1, -1}};
+
+    int index = 0;
+    while (nGpuArchCoresPerSM[index].SM != -1) {
+        if (nGpuArchCoresPerSM[index].SM == ((major << 4) + minor)) {
+            return nGpuArchCoresPerSM[index].cores;
+        }
+        index++;
+    }
+    // If we don't find the values, we default use the previous one to run properly
+    _INFO("MapSMtoCores for SM %d.%d is undefined. Default to use %d cores/SM", major, minor, nGpuArchCoresPerSM[index - 1].cores);
+    return nGpuArchCoresPerSM[index - 1].cores;
+}
+bool launch_blocking() {
+#if defined(USE_HIP) || defined(HIP_GFX906)
+    return false;
+#else
+    const char* v = std::getenv("CUDA_LAUNCH_BLOCKING");
+    bool bRet     = v != nullptr && std::atoi(v) != 0;
+    if (!bRet) {
+        _WARN("CUDA_LAUNCH_BLOCKING=1: the verify windows cannot run with blocking launches\n");
+    }
+
+    return bRet;
+#endif
+}
+bool InitCUDA(const CLI_params& hparams, EDGE_DEVICES* hDevice, int flag) {
+    if (std::getenv("CUDA_MODULE_LOADING") == nullptr) {
+#if defined(_WIN32)
+        _putenv_s("CUDA_MODULE_LOADING", "EAGER");
+#else
+        setenv("CUDA_MODULE_LOADING", "EAGER", 0);
+#endif
+    }
+    launch_blocking();
+
+    int local_device_idx = 0;  // override_enable_tf32 = 1;
+    cudaError_t err      = cudaSetDevice(0);
+    if (err != cudaSuccess) {
+        printf("[InitCUDA] failed at cudaSetDevice! ERR=%s\n", cudaGetErrorString(err));
+        exit(EXIT_FAILURE);
+    }
+
+    cudaCheck(cudaGetDeviceProperties(&deviceProp, local_device_idx));
+    // int cuda_num_SMs = deviceProp.multiProcessorCount;
+    // int cuda_threads_per_SM = deviceProp.maxThreadsPerMultiProcessor;
+    // int cuda_arch_major = deviceProp.major;
+    // int cuda_arch_minor = deviceProp.minor;
+
+    // set up the cuda streams. atm everything is on the single main stream
+    cudaCheck(cudaStreamCreate(&main_stream));
+    // nvtxNameCudaStreamA(main_stream, "main stream");
+
+    // set up cuBLAS and cuBLASLt
+    cublasCheck(cublasLtCreate(&cublaslt_handle));
+    cublasCheck(cublasCreate(&cublas_handle));
+    cudaCheck(cudaMalloc(&cublaslt_workspace, cublaslt_workspace_size));
+
+    // TF32 precision is equivalent to torch.set_float32_matmul_precision('high')
+    // bool enable_tf32 = PARAMS_TYPE == typNUMBER::F32 && deviceProp.major >= 8 && override_enable_tf32;
+    // cublas_compute   = enable_tf32 ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F;
+#ifdef __USE_CUDNN__
+    InitCUDNN();
+#endif
+    int driver_version = 0, runtime_version = 0;
+    cudaDriverGetVersion(&driver_version);
+    cudaRuntimeGetVersion(&runtime_version);
+    int nCorePP = convert_SM_to_cores(deviceProp.major, deviceProp.minor);
+    _INFO("+-----------------------+----------------------------------------------------+\n");
+    _INFO("\t君子不器 - \"%s\" \n", deviceProp.name);
+    _INFO("\tCUDA driver version: %d.%d, %s runtime version: %d.%d %s\n", driver_version / 1000, (driver_version % 100) / 10, COLOR_ORANGE,
+          runtime_version / 1000, (runtime_version % 100) / 10, COLOR_RESET);
+    _INFO("\tCUDA capability major/minor version number: %d.%d. ECC=%d\n", deviceProp.major, deviceProp.minor, deviceProp.ECCEnabled);
+    _INFO("\t\n");
+    _INFO("\t%d multiprocessors, %d CUDA cores/MP, %d CUDA cores\n", deviceProp.multiProcessorCount, nCorePP, nCorePP * deviceProp.multiProcessorCount);
+
+    _INFO("\tGPU max clock rate: %.0f MHz (%0.2f GHz)\n", static_cast<double>(deviceProp.clockRate) * 1e-3, static_cast<double>(deviceProp.clockRate) * 1e-6);
+    _INFO("\tPeak bandwidth %.1f GByte/s.\tMemory clock rate: %.0f MHz (%0.2f GHz)\n",
+          (double)deviceProp.memoryClockRate * (deviceProp.memoryBusWidth / 8) * 2 / 1e6, static_cast<double>(deviceProp.memoryClockRate) * 1e-3,
+          static_cast<double>(deviceProp.memoryClockRate) * 1e-6);
+    _INFO("\tMemory bus width: %d-bit\n", deviceProp.memoryBusWidth);
+    _INFO("\tGlobal memory: %.0f MBytes (%zu Bytes)\n", static_cast<double>(deviceProp.totalGlobalMem) / 1048576, deviceProp.totalGlobalMem);
+    _INFO("\tConstant memory: %.0f KBytes (%zu Bytes)\n", static_cast<double>(deviceProp.totalConstMem) / 1024, deviceProp.totalConstMem);
+    _INFO("\tShared memory per block: %.0f KBytes (%zu Bytes)\n", static_cast<double>(deviceProp.sharedMemPerBlock) / 1024, deviceProp.sharedMemPerBlock);
+    _INFO("\tShared memory per multiprocessor: %.0f KBytes (%zu Bytes)\n", static_cast<double>(deviceProp.sharedMemPerMultiprocessor) / 1024,
+          deviceProp.sharedMemPerMultiprocessor);
+    _INFO("\tL2 cache size: %.0f KBytes (%d Bytes)\n", static_cast<double>(deviceProp.l2CacheSize) / 1024, deviceProp.l2CacheSize);
+    _INFO("\tTotal number of registers available per block: %d\n", deviceProp.regsPerBlock);
+    _INFO("\tWarp size: %d, Max number of threads per block: %d\n", deviceProp.warpSize, deviceProp.maxThreadsPerBlock);
+    _INFO("\tMax number of threads per multiprocessor: %d\n", deviceProp.maxThreadsPerMultiProcessor);
+
+    _INFO("\tMax dimension size of a thread block (x,y,z): (%d, %d, %d)\n", deviceProp.maxThreadsDim[0], deviceProp.maxThreadsDim[1],
+          deviceProp.maxThreadsDim[2]);
+    _INFO("\tMax dimension size of a grid size (x,y,z): (%d, %d, %d)\n", deviceProp.maxGridSize[0], deviceProp.maxGridSize[1], deviceProp.maxGridSize[2]);
+    _INFO("+-----------------------+----------------------------------------------------+\n");
+
+    fflush(stdout);
+    // Streaming Multiprocessors (SMs) of NVIDIA GPUs are roughly analogous to the cores of CPUs. That is, SMs both execute computations and store state
+    // available for computation in registers, with associated caches. Compared to CPU cores, GPU SMs are simple, weak processors.
+    hDevice->nCore = deviceProp.multiProcessorCount;
+
+    return true;
+}
 
 //  Destroy @EDGE_DEVICES::ClearGPU
 bool EDGE_DEVICES::InitGPU(const CLI_params& hparams, int flag) {
     string sTp = hparams.KV({"train", "device"}, "");
-    gpus       = EDGE_DEVICES::GPU_::cudaGetDevice(flag);
+    gpus       = EDGE_DEVICES::GPU_::cudaGetAllDevice(flag);
     mostRAM    = 0;
     for (auto gpu : gpus) mostRAM += gpu.total_vram;
 #ifdef __USE_CUDA__
@@ -174,96 +361,21 @@ void CUDA_cleanup() {
     cudaCheck(cudaDeviceReset());
     g_cuda_cleaned = true;
 }
-/*
-void ggml_numa_init(enum ggml_numa_strategy numa_flag) {
-    if (g_state.numa.n_nodes > 0) {
-        fprintf(stderr, "ggml_numa_init: NUMA already initialized\n");
 
+void mem_mark(const char* where) {
+    static const char* const env = std::getenv("STRATA_TRACE");
+    if (env == nullptr)
         return;
+    size_t free_b = 0, total_b = 0;
+    cudaMemGetInfo(&free_b, &total_b);
+    std::fprintf(stderr, "strata trace: %lld MiB free after %s\n", (long long)(free_b >> 20), where);
+    // STRATA_TRACE=2: also wait for the device here and name the first step after which it reports an error.  A
+    // "sticky" failure (#2013: unspecified launch failure surfacing in a later, unrelated call) is then pinned to
+    // the step that ran the faulting work.  Only a diagnostic: it adds a synchronisation per mark.
+    if (env[0] == '2') {
+        const cudaError_t sync_e = cudaDeviceSynchronize();
+        const cudaError_t last_e = cudaGetLastError();
+        std::fprintf(stderr, "strata trace: device %s after %s (sync: %s, last error: %s)\n", sync_e == cudaSuccess && last_e == cudaSuccess ? "ok" : "ERROR",
+                     where, cudaGetErrorString(sync_e), cudaGetErrorString(last_e));
     }
-
-#if defined(__gnu_linux__)
-    struct stat st;
-    char path[256];
-    int rv;
-
-    // set numa scheme
-    g_state.numa.numa_strategy = numa_flag;
-
-    _PRINT_DEBUG("numa strategy %u\n",g_state.numa.numa_strategy);
-
-    g_state.numa.cpuset = ggml_get_numa_affinity();
-
-    // enumerate nodes
-    while (g_state.numa.n_nodes < _NUMA_MAX_NODES) {
-        rv = snprintf(path, sizeof(path), "/sys/devices/system/node/node%u", g_state.numa.n_nodes);
-        _ASSERT(rv > 0 && (unsigned)rv < sizeof(path));
-        if (stat(path, &st) != 0) { break; }
-        ++g_state.numa.n_nodes;
-    }
-
-    // enumerate CPUs
-    while (g_state.numa.total_cpus < _NUMA_MAX_CPUS) {
-        rv = snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%u", g_state.numa.total_cpus);
-        _ASSERT(rv > 0 && (unsigned)rv < sizeof(path));
-        if (stat(path, &st) != 0) { break; }
-        ++g_state.numa.total_cpus;
-    }
-
-    _PRINT_DEBUG("found %u numa nodes, %u CPUs\n", g_state.numa.n_nodes, g_state.numa.total_cpus);
-
-    // figure out which node we're on
-    uint current_cpu;
-    int getcpu_ret = 0;
-#if __GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ > 33) || defined(__COSMOPOLITAN__)
-    getcpu_ret = getcpu(&current_cpu, &g_state.numa.current_node);
-#else
-    // old glibc doesn't have a wrapper for this call. Fall back on direct syscall
-#   if !defined(SYS_getcpu) && defined(SYS_get_cpu)
-#       define SYS_getcpu SYS_get_cpu // some older glibc versions use this name
-#   endif
-    getcpu_ret = syscall(SYS_getcpu, &current_cpu, &g_state.numa.current_node);
-#endif
-
-    if (g_state.numa.n_nodes < 1 || g_state.numa.total_cpus < 1 || getcpu_ret != 0) {
-        g_state.numa.n_nodes = 0;
-        return;
-    }
-
-    _PRINT_DEBUG("found our process on numa node %u, CPU %u\n", g_state.numa.current_node, current_cpu);
-
-    for (uint32_t n = 0; n < g_state.numa.n_nodes; ++n) {
-        struct ggml_numa_node * node = &g_state.numa.nodes[n];
-        _PRINT_DEBUG("CPUs on node %u:", n);
-        node->n_cpus = 0;
-        for (uint32_t c = 0; c < g_state.numa.total_cpus; ++c) {
-            rv = snprintf(path, sizeof(path), "/sys/devices/system/node/node%u/cpu%u", n, c);
-            _ASSERT(rv > 0 && (unsigned)rv < sizeof(path));
-            if (stat(path, &st) == 0) {
-                node->cpus[node->n_cpus++] = c;
-                _PRINT_DEBUG(" %u", c);
-            }
-        }
-        _PRINT_DEBUG("\n");
-    }
-
-    if (ggml_is_numa()) {
-        FILE *fptr = fopen("/proc/sys/kernel/numa_balancing", "r");
-        if (fptr != NULL) {
-            char buf[42];
-            if (fgets(buf, sizeof(buf), fptr) && strncmp(buf, "0\n", sizeof(buf)) != 0) {
-                _LOG_WARN("/proc/sys/kernel/numa_balancing is enabled, this has been observed to impair performance\n");
-            }
-            fclose(fptr);
-        }
-    }
-#else
-    UNUSED(numa_flag);
-    // TODO
-#endif
 }
-
-bool ggml_is_numa(void) {
-    return g_state.numa.n_nodes > 1;
-}
-*/

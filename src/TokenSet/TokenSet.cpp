@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
@@ -11,6 +11,7 @@
 #include "../Shoal/gLLM.hpp"
 #include "../Tensor/Safetensors.hpp"
 #include "../Utils/GST_obj.hpp"
+#include "../Utils/GST_Serialize.hpp"
 #include "DataLoader.hpp"
 #include "Dictionary.hpp"
 
@@ -28,8 +29,8 @@ SyntheticCoral::SyntheticCoral(const JSON& jit, hTokenizer hDict, int flag) : To
 
     eval_every    = jKV(jit, {"eval-every"}, eval_every);
     rSplitOfTrain = jKV(jit, {"split"}, rSplitOfTrain);
-    nMostSamp     = jKV(jit, {"most_samp"}, nMostSamp);  // sPrompt = jit["prompt"];
-    tpProblem     = jKV(jit, {"problem"}, tpProblem);    // sPrompt = jit["prompt"];
+    N_mostSamp    = jKV(jit, {"most_samp"}, N_mostSamp);  // sPrompt = jit["prompt"];
+    tpProblem     = jKV(jit, {"problem"}, tpProblem);     // sPrompt = jit["prompt"];
     name          = jKV(jit, {"name"}, name);
     // hDict->eos = 0;
     if (tpProblem != 1) {
@@ -125,12 +126,12 @@ bool SyntheticCoral::Init(Fish* hFish_, int flag) {
         assert(0);
     } else {
         nMostShard = 1;
-        nMostSamp  = n0;
-        nMostTok   = nMostSamp * n_ctx;
+        N_mostSamp = n0;
+        nMostTok   = N_mostSamp * n_ctx;
         if (DEBUG.dump_ShardInfo > 0)
             _INFO("\n[shard \"%s\"]: %ld(samps) nBach=%d\n", name.c_str(), shard_samps.size(), nBatch());
     }
-    _INFO("\n[Tokenset]_%s Synthetic=\"%s\" %ld(samps) nToken=%ld [base]=%d\n", name.c_str(), sOperation.c_str(), nMostSamp, tokens.size(), nBASE);
+    _INFO("\n[Tokenset]_%s Synthetic=\"%s\" %ld(samps) nToken=%ld [base]=%d\n", name.c_str(), sOperation.c_str(), N_mostSamp, tokens.size(), nBASE);
     return true;
 };
 
@@ -141,8 +142,13 @@ TokenCoral::TokenCoral(CSTRING& name_, hDataToken hBase, int flag) : hDict(hBase
     nVocab = hDict->nVocab(-1);
     assert(nVocab > 0);
     nMostShard = hBase->nMostShard;
-    nMostSamp  = hBase->nMostSamp;
+    N_mostSamp = hBase->N_mostSamp;
     tokens     = hBase->tokens;
+}
+
+void TokenCoral::SetMostSamp(int nMost, int flag) {
+    N_mostSamp = nMost;
+    _WARN("[Tokenset]_\"\"%s N_mostSamp=%d", name.c_str(), N_mostSamp);
 }
 
 std::tuple<hDataToken, hDataToken> TokenCoral::Split(int type, int flag) {
@@ -166,7 +172,7 @@ bool TokenCoral::SetSamps(const std::vector<hSAMP>& samps, int flag) {
     shard_samps = samps;
     for (auto samp : shard_samps) {
     }
-    nMostSamp = samps.size();
+    N_mostSamp = samps.size();
     return true;
 }
 
@@ -543,7 +549,7 @@ GlobTokenset::GlobTokenset(const JSON& jit, hTokenizer hDict, int flag) : TokenC
     // auto k       = jit.key();
     // auto v       = jit.value();
     auto v       = jit;
-    glob_pattern = v["glob"];
+    glob_pattern = jKV(v, {"glob"}, glob_pattern);  // v["glob"];
     name         = jKV(v, {"name"}, name);
     eval_every   = jKV(v, {"eval-every"}, eval_every);
     // rSampling    = 0.01;
@@ -1094,7 +1100,7 @@ std::string Tokenset_JEV::Dump(int typ, int flag) {
 }
 
 //  ChatML​ is a tokenization-friendly text formatthat encodes chat messages into a single string
-std::string Tokenset_JSONL::toChatML(JSON& jMsg, int flag) {
+std::string Tokenset_JSONL::toChatML(const JSON& jMsg, int flag) {
     assert(jMsg.find("messages") != jMsg.end());
     /*{"role": "system", "content": "You are a helpful assistant."},
     {"role": "user", "content": "What is the capital of France?"},
@@ -1104,9 +1110,10 @@ std::string Tokenset_JSONL::toChatML(JSON& jMsg, int flag) {
     //    <|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\nWhat is the capital of
     //    France?<|im_end|>\n<|im_start|>assistant\n\n\nThe capital of France is Paris.<|im_end|>\n"
     std::vector<ChatML_samp> lines;
-    for (auto& msg : jMsg["messages"]) {
-        std::string role    = msg["role"];
-        std::string content = msg["content"];
+    for (auto& msg : jChilds(jMsg, {"messages"})) {  // jMsg["messages"]
+        std::string role, content;                   // role    = msg["role"],content = msg["content"];
+        role    = jKV(msg, {"role"}, role);
+        content = jKV(msg, {"content"}, content);
         lines.push_back(ChatML_samp(role, content));
     }
     assert(hDict != nullptr);
@@ -1139,7 +1146,7 @@ bool Tokenset_JSONL::GetShardInfo_txt(int id, int flag) {
         file >> jData;
         size_t nMsg = jData.size();
 
-        for (auto& item : jData) {
+        for (auto& item : jChilds(jData)) {  // jData
             // _INFO("%s", item.dump().c_str());
             string msg;
             if (G_Aa(format, "OAI_message")) {
@@ -1148,7 +1155,7 @@ bool Tokenset_JSONL::GetShardInfo_txt(int id, int flag) {
             } else {
                 // _INFO("%s\n", item.dump().c_str());
                 assert(item.find("text") != item.end());
-                msg = item["text"];
+                msg = jKV(item, {"text"}, msg, false);  // item["text"];
             }
             double t1   = GST_us();
             TOKENS curT = hDict->Encode(msg);
@@ -1185,10 +1192,11 @@ bool Tokenset_JSONL::GetShardInfo_txt(int id, int flag) {
         assert(nShardToks > 0);
         // messages=>tokens
 
-    } catch (JSON::parse_error& e) {
+    } /*catch (JSON::parse_error& e) {
         _ERROR("\r\n>>>>>> Tokenset_JSONL::OnShardFile @ %s!!! ERR=%s", sPath.c_str(), e.what());
         return false;
-    } catch (...) {
+    }*/
+    catch (...) {
         return false;
     }
     return nShardSamples > 0;

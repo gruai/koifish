@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Acknowledgement: https://github.com/andrewkchan/deepseek.cpp
@@ -176,7 +176,7 @@ TOKEN_ID GOPT_Diffusion::Sample(hBATCH hB, bool is_resampling) {
     if (hB != nullptr)
         hBatch = hB;
 
-    int nOriginMask = originLogits.size(), dump_each = 1, nPreFill = hBatch->nTokens(BATCH_INPUT::F_PROMPT_LEN);    //
+    int nOriginMask = originLogits.size(), dump_each = 1, nPreFill = hBatch->nTokens(BATCH_INPUT::F_PROMPT_LEN);  //
     generated_tokens = nOriginMask;
     // planner   = std::make_shared<TOKEN_Planner>("Huaer of chat", samp_params, samp_params.most_step, nOriginMask, 0x0);
     planner = hBatch->hHuaPLAN;

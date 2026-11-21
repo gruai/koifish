@@ -1,6 +1,6 @@
 
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  HUA(化)  庄周化蝶, 蝶胥也化而为虫, 虫千日为鸟, 鸟扶摇而上九万⾥化鹏, 鹏六月以去北冥，物化为鲲
@@ -64,7 +64,7 @@ struct TOKEN_Planner {
     static std::shared_ptr<TOKEN_Planner> MakeInstance(const std::string& nam_, Fish* hFish, std::shared_ptr<BATCH_INPUT>, int flag = 0x0);
 
     enum BIT_FLAG {
-        F_ABSOLUTE_ID   = 0x100,  //  @Init4Prefill_ ABSOLUTE: id=id0[k], Relative: id=k        
+        F_ABSOLUTE_ID = 0x100,  //  @Init4Prefill_ ABSOLUTE: id=id0[k], Relative: id=k
     };
 
     float* fNoise    = nullptr;

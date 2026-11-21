@@ -4,7 +4,7 @@ unset(ENV{CXXFLAGS})
 unset(ENV{CPPFLAGS})
 unset(ENV{LDFLAGS})
 
-project(koifish VERSION 0.2.0)
+project(koifish VERSION 0.4.0)
 
 message(STATUS "CONDA_ENV      = $ENV{CONDA_DEFAULT_ENV}")
 message(STATUS "Python_which = $ENV{CONDA_PREFIX}/bin/python")
@@ -29,13 +29,15 @@ option(K_NPU_LIB                    "KOIFISH: libs run on NPU(cu,amd,...)"  ON)
 # option(K_USE_GGML                   "KOIFISH: use GGML libs"        OFF)
 option(K_USE_OPENMP                 "KOIFISH: Enable OpenMP"                 ON)
 option(K_USE_OPENBLAS               "KOIFISH: Enable OpenBLAS"               OFF)
-option(K_USE_GBDT                   "KOIFISH: Enable Gradient boosting trees"               ON)
+option(K_USE_GBDT                   "KOIFISH: Enable Gradient boosting trees"               OFF)
 option(K_USE_EIGEN                  "KOIFISH: Enable Eigen lib"               OFF)
 # option(K_USE_TVM                    "KOIFISH: Enable TVM lib"               OFF)
 
 option(K_TESTING                    "KOIFISH: Do some testing"               OFF)
 option(K_WATCHING                   "KOIFISH: Do some watching"              OFF)
 option(K_LIVEPLOT                   "KOIFISH: Plot learning curves"          ON)
+option(K_STRATA                     "KOIFISH: Enable STRATA"                 ON)
+
 # option(K_USE_CUFILE "Enable cuFile support for optimized file I/O" OFF)
 # option(K_USE_NVML "Enable nvml support for detailed GPU stats reporting" OFF)
 # option(K_USE_MPI "Enable MPI backend for multi-GPU support" OFF)
@@ -46,10 +48,8 @@ cmake_dependent_option(K_USE_ARROW    "KOIFISH: Enable arrow for parquet"    ON 
 
 if (K_USE_ARROW)
 set(MY_CXX_STANDARD 20)
-message(STATUS "arrow lib needs c++20, so set CXX_STANDARD=20")
 else()
 set(MY_CXX_STANDARD 17)
-message(STATUS "Set CXX_STANDARD=17")
 endif()
 
 
@@ -99,7 +99,7 @@ if (K_USE_CCACHE)
 endif()
 
 set(DELTA_cc ${DELTA_cc} -mf16c -mavx2 -mfma)
-# set(CMAKE_CXX_FLAGS_DEBUG "-g3 -O0 -fno-lto")   #   Fix the Underlying DWARF Debug Info
+# set(CMAKE_CXX_FLAGS_DEBUG "-g -gdwarf-4 -fno-eliminate-unused-debug-types")   #   Fix the Underlying DWARF Debug Info
 # -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer
 
 if(K_USE_OPENBLAS)
@@ -164,64 +164,24 @@ if(K_USE_EIGEN)
     set(MORE_INC ${MORE_INC} /home/cys/rnd/gssx/gsp_3.0/library/eigen-3.4.0/)
 endif()
 
+if(K_STRATA)
+    add_subdirectory(src/Infer/strata)
+    set(STRATA_LIB swardfish)
+    # set(STRATA_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/third_party/strata/)
+    # message(STATUS "STRATA_ROOT = ${STRATA_ROOT}")
+    # set(MORE_INC ${MORE_INC} ${STRATA_ROOT}/include/ )
+    # set(strata_sources ${CMAKE_CURRENT_SOURCE_DIR}/src/Infer/strata_generate.cpp) 
+    add_compile_definitions(_USE_STRATA_ _KOIFISH_MASTER_)
+    # set(STRATA_LIB -Wl,--start-group ${_SLIB}_core.a ${_SLIB}_engine.a ${_SLIB}_kernels.a ${_SLIB}_kernels_cpu.a -Wl,--end-group)
+    # set(_SLIB ${CMAKE_CURRENT_SOURCE_DIR}/third_party/strata/src/cys/build/)    
+    # set(STRATA_LIB -Wl,--start-group ${_SLIB}libswardfish.so -Wl,--end-group)
+else()
+endif()
 
 if(K_NPU_LIB)
+    add_subdirectory(src/Device)
     set(NPU_LIB npu_lib)    
-else()
-    find_package(CUDAToolkit)
-    if (CUDAToolkit_FOUND)
-        # set(cdir _cuda)
-        # set(CMAKE_CUDA_ARCHITECTURES "80;86;87;89")  BF16  Ref:    https://arnon.dk/matching-sm-architectures-arch-and-gencode-for-various-nvidia-cards/
-        # SM_89+ for FP8 support
-        set(CMAKE_CUDA_ARCHITECTURES "89") 
-        # compile for native GPU if no GPU has been specified
-        if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-            set(CMAKE_CUDA_ARCHITECTURES native)
-        endif()
-        add_compile_definitions(__USE_CUDA__ _USE_CUDA_FLOAT_)
-        message(STATUS "CUDA ARCH=${CMAKE_CUDA_ARCHITECTURES} DIR=${CUDA_TOOLKIT_ROOT_DIR} INCLUDE=${CUDAToolkit_INCLUDE_DIRS}")
-        enable_language(CUDA)
-        
-        set(CUDA_FLAGS -use_fast_math  -DENABLE_BF16 --expt-relaxed-constexpr -g0 )
-        # -mavx512f -mavx512vl  for identifier "__builtin_ia32_ldtilecfg" is undefined
-        #  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills
-        # -std=c++20
-        if (NOT CUDA_CCFULLVER MATCHES clang)
-            set(CUDA_CCID "GNU")
-            execute_process(
-                COMMAND ${NVCC_CMD} -Xcompiler "-dumpfullversion -dumpversion"
-                OUTPUT_VARIABLE CUDA_CCVER
-                ERROR_QUIET
-            )
-        else()
-            if (CUDA_CCFULLVER MATCHES Apple)
-                set(CUDA_CCID "AppleClang")
-            else()
-                set(CUDA_CCID "Clang")
-            endif()
-            string(REGEX REPLACE "^.* version ([0-9.]*).*$" "\\1" CUDA_CCVER ${CUDA_CCFULLVER})
-        endif()
-        message("-- CUDA host compiler is ${CUDA_CCID} ${CUDA_CCVER}")
-        list(APPEND CUDA_CXX_FLAGS ${ARCH_FLAGS})
-        list(JOIN   CUDA_CXX_FLAGS " " CUDA_CXX_FLAGS_JOINED)  # pass host compiler flags as a single argument
-        if (NOT CUDA_CXX_FLAGS_JOINED STREQUAL "")
-            list(APPEND CUDA_FLAGS -Xcompiler ${CUDA_CXX_FLAGS_JOINED})
-        endif()
-        if(K_DEBUGCUDA)
-            message(STATUS "DEBUG_CUDA - CUDA with debug option, very slow!!!")
-            list(APPEND CUDA_FLAGS -G -O0 ${CUDA_CXX_FLAGS_JOINED})
-        endif()
-        message(STATUS "CUDA_FLAGS=${CUDA_FLAGS}")
-        add_compile_options("$<$<COMPILE_LANGUAGE:CUDA>:${CUDA_FLAGS}>")
-        set(CUDA_LIB  cudart cublas cublasLt ) #cuda_driver  
-    else()
-        message(WARNING "CUDA not found")
-    endif()
-
-    set(MORE_INC ${MORE_INC} ${CMAKE_SOURCE_DIR}/third_party/cutlass/include/ ${CMAKE_SOURCE_DIR}/src/Device/tile_kernel/ ${CMAKE_SOURCE_DIR}/cudnn-frontend/include ${CMAKE_SOURCE_
-DIR}/src/Device/CUDA/TK/include)
-    set(NPU_LIB  ${CUDA_LIB} cudnn )  
-    add_compile_definitions(__USE_CUDNN__)  
+else()    
 endif()
 
 if(K_USE_GBDT)
@@ -242,10 +202,10 @@ add_subdirectory(src/Utils)
 add_subdirectory(src/Dynamics)
 add_subdirectory(src/TokenSet)
 add_subdirectory(src/Utils/oniguruma)
-add_subdirectory(src/Device)
+
 
 set(sources   ${manifold_sources} ${decision_sources} ${util_sources} ${tensor_sources} ${kernel_sources} ${cheby_sources} ${watch_sources} ${Fuzi_sources} ${ggex_sources} ${device_sources} ${model_sources} 
-    ${token_sources} ${mort_sources} ${blas_sources} ${dynamics_sources} ${TEST_SRCS} )
+    ${token_sources} ${mort_sources} ${blas_sources} ${dynamics_sources} ${strata_sources} ${TEST_SRCS} )
 add_executable(koifish ${CMAKE_CURRENT_SOURCE_DIR}/src/koifish.cpp ${sources} )
 add_executable(bubble ${CMAKE_CURRENT_SOURCE_DIR}/src/bubble.cpp ${sources} )
 # add_executable(pangpi ${CMAKE_CURRENT_SOURCE_DIR}/src/pangpi.cpp ${sources} )
@@ -256,8 +216,8 @@ target_link_libraries(prog_deps
   INTERFACE
     ${X11_LIBRARIES}
     ${GG_LIB}    ${OPENBLAS_LIB}  ${WATCH_LIB}   ${TVM_LIB}    ${GFLAGS_LIBRARIES} ${ARROW_LIB}
-    ${NPU_LIB}   ${GBDT_LIB}
-    onig  
+    ${NPU_LIB}   ${GBDT_LIB} ${STRATA_LIB}
+    onig curl
     Threads::Threads
 )
 add_compile_definitions(_USE_CUDA_FLOAT_)
@@ -279,8 +239,11 @@ foreach(prog koifish bubble)
     )
     # target_compile_features(${prog} PRIVATE cxx_std_17)
     target_compile_options(${prog} PRIVATE ${cxx_flags} ${DELTA_cc})
-
-    target_compile_definitions(${prog} PRIVATE  KOIFISH_CONDA_ENV="$ENV{CONDA_DEFAULT_ENV}")        
+    target_compile_definitions(${prog} PRIVATE  
+        K_CONDA_ENV="$ENV{CONDA_DEFAULT_ENV}"
+        K_APP_NAME="${prog}"
+        K_APP_VERSION="${PROJECT_VERSION}"
+    )
     target_link_libraries(${prog} PRIVATE prog_deps )
 endforeach(prog)
 
@@ -295,6 +258,7 @@ if (K_TESTING)
         target_link_libraries(${prog} PRIVATE prog_deps )
         target_compile_features(${prog} PRIVATE cxx_std_17)
         target_compile_options(${prog} PRIVATE ${cxx_flags} ${DELTA_cc})
+        
         # target_link_libraries(${prog} PRIVATE pybind11::embed)
     endforeach(prog)
 

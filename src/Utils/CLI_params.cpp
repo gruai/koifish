@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  Some functions for CLI_params
@@ -12,9 +12,10 @@
 
 #include <cstring>
 #include <execution>
+#include <filesystem>
 #include <iostream>
 
-#include "../Manifold/Serialize.hpp"
+#include "../Utils/GST_Serialize.hpp"
 #include "../Tensor/GTensor.hpp"
 #include "../Utils/GST_obj.hpp"
 #include "../Utils/GST_rander.hpp"
@@ -66,6 +67,9 @@ hGTensor tRAND(hGTensor tensor, struct random_normal_distribution* rnd) { return
 JSON jKEY(const JSON& jConfig, const std::vector<std::string>& keys, int flag) {
     assert(keys.size() > 0);
     JSON cur = (JSON)jConfig;
+    if (keys.empty())
+        return cur;
+
     std::string key;
     for (int i = 0; i < keys.size(); i++) {
         key = keys[i];
@@ -194,7 +198,7 @@ void CLI_params::Dump(int flag) {
     // _INFO(" SIGMA = %s\n", sigma.c_str());
 }
 
-bool LoadJsonFile(const string& jPath, JSON& jObj, int flag) {
+bool LoadJsonFile(const string& jPath, JSON& jObj, int flag = 0x0) {
     try {
         std::ifstream jfile(jPath);
         std::string info;
@@ -202,10 +206,10 @@ bool LoadJsonFile(const string& jPath, JSON& jObj, int flag) {
             _WARN("[JSON] Failed to open json@\"%s\" !!!\n", jPath.c_str());
             return false;
         }
-        std::stringstream buffer;
-        buffer << jfile.rdbuf();  // fast io read
-        jObj = nlohmann::json::parse(buffer.str());
-        // jfile >> jObj;
+        // std::stringstream buffer;
+        // buffer << jfile.rdbuf();  // fast io read
+        // jObj = nlohmann::json::parse(buffer.str());
+        jfile >> jObj;
         return true;
     } catch (...) {
         _ERROR("[JSON] Failed to open \"%s\" !!!\n", jPath.c_str());
@@ -297,23 +301,24 @@ std::string CLI_params::ModelTitle(int flag) {
 MODEL_ARCH S2ARCH(const std::string& info0) {
     std::string info = info0;
     std::transform(info.begin(), info.end(), info.begin(), ::toupper);
-    MODEL_ARCH arch = info == "MOE"         ? NLP_MOE
-                      : info == "MAMBA"     ? MODEL_ARCH::NLP_MAMBA
-                      : info == "GUPPY"     ? MODEL_ARCH::NTP_GUPPY
-                      : info == "DEEPSEEK"  ? MODEL_ARCH::NTP_DEEPSEEK
-                      : info == "QWEN2"     ? MODEL_ARCH::NTP_QWEN2
-                      : info == "QWEN2.5"   ? MODEL_ARCH::NTP_QWEN2
-                      : info == "QWEN3"     ? MODEL_ARCH::NTP_QWEN3
-                      : info == "QWEN3_MOE" ? MODEL_ARCH::NTP_QWEN3
-                      : info == "MAISUI"    ? MODEL_ARCH::DECISION_MAISUI
-                      : info == "SCORE"     ? MODEL_ARCH::MD_QWEN
-                      : info == "MD_AR_QW"  ? MODEL_ARCH::MD_AR_QWEN
-                      : info == "GPT2"      ? MODEL_ARCH::NLP_GPT2
-                      : info == "GPT2CHAR"  ? MODEL_ARCH::NLP_GPT2_char
-                      : info == "LAMA"      ? MODEL_ARCH::NLP_LLAMA
-                      : info == "BITNET"    ? MODEL_ARCH::NLP_BITNET
-                      : info == "MISTRAL"   ? MODEL_ARCH::NLP_MISTRAL
-                                            : MODEL_ARCH::NLP_LLAMA;
+    MODEL_ARCH arch = info == "MOE"             ? NLP_MOE
+                      : info == "MAMBA"         ? MODEL_ARCH::NLP_MAMBA
+                      : info == "GUPPY"         ? MODEL_ARCH::NTP_GUPPY
+                      : info == "DEEPSEEK"      ? MODEL_ARCH::NTP_DEEPSEEK
+                      : info == "QWEN2"         ? MODEL_ARCH::NTP_QWEN2
+                      : info == "QWEN2.5"       ? MODEL_ARCH::NTP_QWEN2
+                      : info == "QWEN3"         ? MODEL_ARCH::NTP_QWEN3
+                      : info == "STRATA_QWEN38" ? MODEL_ARCH::NTP_QWEN38_STRATA
+                      : info == "QWEN3_MOE"     ? MODEL_ARCH::NTP_QWEN3
+                      : info == "MAISUI"        ? MODEL_ARCH::DECISION_MAISUI
+                      : info == "SCORE"         ? MODEL_ARCH::MD_QWEN
+                      : info == "MD_AR_QW"      ? MODEL_ARCH::MD_AR_QWEN
+                      : info == "GPT2"          ? MODEL_ARCH::NLP_GPT2
+                      : info == "GPT2CHAR"      ? MODEL_ARCH::NLP_GPT2_char
+                      : info == "LAMA"          ? MODEL_ARCH::NLP_LLAMA
+                      : info == "BITNET"        ? MODEL_ARCH::NLP_BITNET
+                      : info == "MISTRAL"       ? MODEL_ARCH::NLP_MISTRAL
+                                                : MODEL_ARCH::NLP_LLAMA;
     return arch;
 };
 MODEL_ARCH CLI_params::ModelArch(MODEL_ROLE role_) const {
@@ -322,7 +327,8 @@ MODEL_ARCH CLI_params::ModelArch(MODEL_ROLE role_) const {
     }
     MODEL_ARCH arch = MODEL_ARCH::_X_;
     string info     = "";
-    string jArch    = jKV(jConfig, {"model", "arch"}, string(""), false);
+
+    string jArch = jKV(jConfig, {"model", "arch"}, string(""), false);
     if (!jArch.empty()) {
         info = jArch;
     } else if (model.isLoadCard()) {
@@ -382,10 +388,10 @@ bool CLI_params::JModel2Params(int flag) {
             return false;
         }
         if (jModel.find("hf-card") != jModel.end()) {  // just
-            model.sCardPath      = jKEY(jModel, {"hf-card"});
+            model.sCardPath      = jKV(jModel, {"hf-card"}, model.sCardPath);
             model.pathCheckPoint = model.sCardPath;
         } else if (jModel.find("hf_tokenizer") != jModel.end()) {
-            model.sCardPath     = jKEY(jModel, {"hf_tokenizer"});
+            model.sCardPath     = jKV(jModel, {"hf_tokenizer"}, model.sCardPath);
             model.onlyTokenizer = true;
             _INFO("[DICT] hf_tokenizer@\"%s\"\n", model.sCardPath.c_str());
         } else if (!sft.UpdateCKP(model)) {
@@ -396,7 +402,7 @@ bool CLI_params::JModel2Params(int flag) {
         }
 
         if (jModel.find("token_bin_path") != jModel.end())  //  only for custom
-            model.sTokenBinPath = jKEY(jModel, {"token_bin_path"});
+            model.sTokenBinPath = jKV(jModel, {"token_bin_path"}, model.sTokenBinPath);
         else {
             // model.sTokenBinPath = "./Datasets/climb-1b/tokenizer.dat";
         }
@@ -433,16 +439,18 @@ bool CLI_params::JModel2Params(int flag) {
         if (!jTrans.empty()) {
             int nH = jKV(jTrans, {"Head"}, -1), nF = jKV(jTrans, {"Ffn"}, -1), nE = -1, nC = jKV(jTrans, {"Ctx"}, -1), nHd = -1;
             assert(nH > 0);
-            int nKV = jKV(jTrans, {"KVHead"}, nH);
+            int nKV = jKV(jTrans, {"KVHead"}, nH), n;
 
             auto item = jKEY(jTrans, {"Embed"});
             std::vector<int> embeds;
             if (item.is_string()) {
-                string sE = item.get<string>();
+                string sE;  // = item.get<string>();
+                sE = jKV(jTrans, {"Embed"}, sE);
                 G_S2TTT_(sE, embeds);
             } else {
-                assert(item.is_number_integer());
-                int n = item.get<int>();
+                n = jKV(jTrans, {"Embed"}, n);
+                // assert(item.is_number_integer());
+                // int n = item.get<int>();
                 embeds.push_back(n);
             }
             assert(embeds.size() > 0 && embeds[0] > 0);
@@ -498,10 +506,11 @@ bool CLI_params::JModel2Params(int flag) {
         }
 
         return true;
-    } catch (JSON::parse_error& e) {
+    } /*catch (JSON::parse_error& e) {
         _WARN("%s  Failed to open %s!!! ERR=%s", __func__, key.c_str(), e.what());
         return false;
-    } catch (...) {
+    }*/
+    catch (...) {
         _WARN("%s  Unknown exception @%s!!!", __func__, key.c_str());
         return false;
     }
@@ -739,23 +748,24 @@ bool SFT_CARD::Init(CLI_params* hConfig, const JSON& jConfig, int flag) {
         bool isOK = false;
 
         if (jSFT.find("path") != jSFT.end()) {
-            sCheckpointPath = jKEY(jSFT, {"path"});
+            sCheckpointPath = jKV(jSFT, {"path"}, sCheckpointPath);
             isOK            = true;
         } else if (jSFT.find("hf-card") != jSFT.end()) {
-            sBaseModelPath = jKEY(jSFT, {"hf-card"});
+            sBaseModelPath = jKV(jSFT, {"hf-card"}, sBaseModelPath);
             isOK           = true;
         }
 
         sTrain = jKV(jConfig, {"sft", "train"}, sTrain);
-        s      = jKEY(jConfig, {"sft", "method"});
+        s      = jKV(jConfig, {"sft", "method"}, s);
         if (G_Aa(s, "OnlyScale")) {
             method = TUNING_METHOD::OnlyScale;
         }
         return isOK;  //! sBaseModelPath.empty();
-    } catch (JSON::parse_error& e) {
+    } /*catch (JSON::parse_error& e) {
         _ERROR("\r\n_SFT_CARD  Failed !!! ERR=%s", e.what());
         return false;
-    } catch (...) {
+    }*/
+    catch (...) {
         _ERROR("\r\n_SFT_CARD  Unknown exception !!!");
         return false;
     }
@@ -998,7 +1008,30 @@ std::string CLI_params::GetDataPath(const string type, int flag) {
     return fp;
 }
 
+static JSON JSON_without_keys_(const JSON& node, const std::string& prefix) {
+    if (node.is_object()) {
+        JSON::object out;  // std::map<std::string, Json>
+        for (const auto& kv : node.object_items()) {
+            if (kv.first.compare(0, prefix.size(), prefix) == 0) {
+                continue;  // drop this key and its whole subtree
+            }
+            out.emplace(kv.first, JSON_without_keys_(kv.second, prefix));
+        }
+        return JSON(std::move(out));
+    }
+    if (node.is_array()) {
+        JSON::array out;  // std::vector<Json>
+        out.reserve(node.array_items().size());
+        for (const auto& element : node.array_items()) {
+            out.push_back(JSON_without_keys_(element, prefix));
+        }
+        return JSON(std::move(out));
+    }
+    return node;  // string / number / bool / null: unchanged
+}
+
 void _JSON_remove_keys_(JSON& node, const std::string& prefix) {
+#ifdef _nlohmann_json_
     if (node.is_object()) {
         for (auto it = node.begin(); it != node.end();) {
             if (it.key().compare(0, prefix.size(), prefix) == 0) {
@@ -1014,6 +1047,9 @@ void _JSON_remove_keys_(JSON& node, const std::string& prefix) {
             _JSON_remove_keys_(element, prefix);
         }
     }
+#else
+    node = JSON_without_keys_(node, prefix);
+#endif
 }
 
 JSON CLI_params::ToJSON(int type, int flag) {
@@ -1100,7 +1136,7 @@ CheckPoint_Params::CheckPoint_Params(const JSON& jData, const std::string& key, 
         bool isFind = false;
         std::string stp, s;
         if (jdata.find("state") != jdata.end()) {
-            stp = jdata["state"];
+            stp = jKV(jdata, {"state"}, stp);  // jdata["state"];
             for (auto kv : CKP_desc) {
                 if (stp == kv.second) {
                     state_type = kv.first;
@@ -1182,7 +1218,7 @@ bool CheckPoint_Params::SerialSnap(JSON& jConfig, bool isSave, int flag) {
         jSnapshot["curIter"]  = curIter;
         jSnapshot["curEpoch"] = curEpoch;
         for (auto seed : seeds) {
-            jSnapshot["seeds"][seed.first] = seed.second;
+            jSnapshot["seeds"][seed.first] = (int)seed.second;
         }
         // JSON j_array = fuyou_filter_reload;
         jSnapshot["fuyou_filter"] = fuyou_filter_reload;
@@ -1204,7 +1240,7 @@ bool CLI_params::InitChekcpoints(int argc, char** argv, const std::string& ckp_q
         string type    = "", path;
         int save_every = -1;
         for (JSON::const_iterator it = jdata.begin(); it != jdata.end(); ++it) {
-            auto k = it.key();
+            auto k = J_it2key(it);  // it.key();
             if (!k.empty() && k[0] == '#')
                 continue;
             if (k == "debug") {
@@ -1228,10 +1264,11 @@ bool CLI_params::InitChekcpoints(int argc, char** argv, const std::string& ckp_q
             state.Init();
             // checkpoints.push_back(state);
         }
-    } catch (JSON::parse_error& e) {
+    } /*catch (JSON::parse_error& e) {
         _ERROR("\r\n_InitChekcpoints  Failed to open %s!!! ERR=%s", ckp_queue.c_str(), e.what());
         return false;
-    } catch (...) {
+    }*/
+    catch (...) {
         _ERROR("\r\n_InitChekcpoints  Unknown exception @%s!!!", ckp_queue.c_str());
         return false;
     }
@@ -1258,6 +1295,7 @@ bool CLI_params::ToJConfig(int flag) {
         jBackBone["norm"]["Normal"]            = JSON::array();
         jBackBone["output"]["CLASIFY"]         = JSON::array();
         jConfig["model"]["backbone"]           = jBackBone;
+        J_dump("./log/_koifish_jBackBone_.json", jBackBone);
 
         if (!J_isEmpty(jCoral)) {
             jConfig["datasets"] = jCoral;
@@ -1292,10 +1330,11 @@ bool CLI_params::ToJConfig(int flag) {
 
         Dump(0x100);
         return true;
-    } catch (JSON::parse_error& e) {
+    } /*catch (JSON::parse_error& e) {
         _INFO("\r\n%s  Failed!!! ERR=%s", __func__, e.what());
         return false;
-    } catch (...) {
+    }*/
+    catch (...) {
         _INFO("\r\n%s  Unknown exception @%s!!!", __func__, jsPath.c_str());
         return false;
     }
@@ -1354,9 +1393,16 @@ bool CLI_params::InitJConfig(int flag) {
         if (!JModel2Params(0x0))
             return false;
         if (!model.sCardPath.empty()) {
-            if (!model.InitHugFace(this, jConfig, true))
+            if (ModelArch() == NTP_QWEN38_STRATA) {
+                if (!model.InitStrata(this, jConfig, true))
+                    return false;
+            } else if (!model.InitHugFace(this, jConfig, true))
                 return false;
         } else {
+            //  ReserveVocab(151936);
+            // model.sTokenJsonPath   = "./assets/tokenizer/tokenizer.json";
+            // model.sTokenConfigPath = "./assets/tokenizer/tokenizer_config.json";  //
+            // _WARN("[Tokenizer] No tokenizer, would use defualt tokenizer of Koifish @%s\n", model.sTokenJsonPath.c_str());
         }
 
         chat_sampler.Init(this, jConfig);
@@ -1397,6 +1443,16 @@ bool CLI_params::InitJConfig(int flag) {
         DEBUG.N_mostEvalSamp  = jKV(jConfig, {"debug", "most_eval_samp"}, DEBUG.N_mostEvalSamp);
         DEBUG.fHiddenFeature  = jKV(jConfig, {"debug", "path_feat"}, DEBUG.fHiddenFeature);
         DEBUG.sPromptGuide    = jKV(jConfig, {"debug", "prompt_guide"}, DEBUG.sPromptGuide);
+        DEBUG.prompts         = {"hello",
+                                 "What is the capital of Shanghai?",
+                                 "Who wrote the play Romeo and Juliet?",
+                                 "In which year did the Titanic sink?",
+                                 "What is the chemical symbol for the element gold?",
+                                 "What is the longest river in the world?",
+                                 "Sally (a girl) has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?",
+                                 "How many games did Arsenal FC go unbeaten during the 2003-2004 season of the English Premier League",
+                                 "I get out on the top floor (third floor) at street level. How many stories is the building above the ground?",
+                                 "天命玄鸟,降而生生. 玄鸟是什么鸟?"};
 
         DEBUG.eval_Generate = jKV(jConfig, {"debug", "eval_generate"}, DEBUG.eval_Generate);  //
         //  522 TB ÷ 0.24 TB/day ≈ 2175 day ≈ 6 year
@@ -1413,6 +1469,7 @@ bool CLI_params::InitJConfig(int flag) {
         DEBUG.verShuffleSamp     = jKV(jConfig, {"debug", "shuffle_samp"}, DEBUG.verShuffleSamp);
         DEBUG.check_tensor_quant = jKV(jConfig, {"debug", "check_tensor_quant"}, DEBUG.check_tensor_quant);
         DEBUG.verFakeQuant       = jKV(jConfig, {"debug", "fake_quant"}, DEBUG.verFakeQuant);
+        DEBUG.verLivePlot        = jKV(jConfig, {"debug", "liveplot"}, DEBUG.verLivePlot);
         DEBUG.verShiftLabel      = jKV(jConfig, {"debug", "shift_label"}, DEBUG.verShiftLabel);
         DEBUG.verHuaSNR          = jKV(jConfig, {"debug", "huaer_snr"}, DEBUG.verHuaSNR);
 
@@ -1439,10 +1496,11 @@ bool CLI_params::InitJConfig(int flag) {
             save_GlobalSate = 1;
         }
         return true;
-    } catch (JSON::parse_error& e) {
+    } /*catch (JSON::parse_error& e) {
         _ERROR("\r\n%s  Failed to open %s!!! ERR=%s", __func__, jsPath.c_str(), e.what());
         return false;
-    } catch (...) {
+    }*/
+    catch (...) {
         _ERROR("\r\n%s  Unknown exception @%s!!!", __func__, jsPath.c_str());
         return false;
     }
@@ -1545,10 +1603,11 @@ bool CLI_params::LoadJConfig(const std::string& path, int flag) {
             // isJConfig = true;
         }*/
         return true;
-    } catch (JSON::parse_error& e) {
+    } /*catch (JSON::parse_error& e) {
         _WARN("\r\n[CONFIG] LoadJConfig failed to open \"%s\"!!! ERR=%s", path.c_str(), e.what());
         return false;
-    } catch (...) {
+    }*/
+    catch (...) {
         _WARN("\r\n[CONFIG] LoadJConfig has unknown exception \"@%s\"!!!", path.c_str());
         return false;
     }
@@ -1729,26 +1788,6 @@ float SOFT_MAX_minus(const int n, float* y, const float* x) {
     }
 #endif
     return x1;
-}
-
-struct ggml_tensor* ggml_cross_entropy_loss_1(struct ggml_context* ctx, struct ggml_tensor* a, struct ggml_tensor* b) {
-#ifndef GG_V12
-    bool is_node = false;
-
-    if (a->grad || b->grad) {
-        is_node = true;
-    }
-
-    struct ggml_tensor* result = ggml_new_tensor_1d(ctx, a->type, 1);
-
-    result->op     = GGML_OP_CROSS_ENTROPY_LOSS_1;
-    result->grad   = is_node ? ggml_dup_tensor(ctx, result) : NULL;
-    result->src[0] = a;
-    result->src[1] = b;
-
-    return result;
-#endif
-    return nullptr;
 }
 
 void _T_repr_(hGTensor t, const char* tab, char* buf, int typ) {
@@ -2063,128 +2102,6 @@ void SFT_CARD::Dump(int typ) {
     _INFO("\n");
 }
 
-#include "../Shoal/Fish.hpp"
-
-/*
-    Deprecated - Since koifish support 1-bit parameters, why need GGUF?
-    1.  gguf_get_tensor_offset
-*/
-bool Fish::GGUF_Serialize(const std::string& path, bool isSave, int flag) {
-#ifdef __USE_GGML__
-    try {
-        if (path.empty())
-            return false;
-        GST_TIC(tic);
-        char buf[1024];
-        struct ggml_context* fctx_data = NULL;
-        struct gguf_context* fctx      = NULL;
-        int n_kv = 0, n_tensors = 0;
-        if (isSave) {  // KV pairs
-            fctx = gguf_init_empty();
-            // struct ggml_init_params params = {128ull*1024ull*1024ull,NULL,false,};
-            // fctx_data = ggml_init(params);
-        } else {
-            fctx = gguf_init_from_file(path.c_str(), {false, &fctx_data});
-            if (!fctx) {
-                _INFO("%s: failed to load '%s'\n", __func__, path.c_str());
-                return false;
-            }
-
-            _INFO("%s: version=%d alignment=%zu offset=%zu\n", __func__, gguf_get_version(fctx), gguf_get_alignment(fctx), gguf_get_data_offset(fctx));
-            n_kv = gguf_get_n_kv(fctx);
-            _INFO("%s: n_kv: %d\n", __func__, n_kv);
-            for (int i = 0; i < n_kv; ++i) {
-                const char* key = gguf_get_key(fctx, i);
-                _INFO_IF("%s: kv[%d]: key = %s\n", __func__, i, key);
-            }
-            if (0) {  // find kv string
-                const char* findkey = "some.parameter.string";
-                const int keyidx    = gguf_find_key(fctx, findkey);
-                if (keyidx == -1) {
-                    printf("%s: find key: %s not found.\n", __func__, findkey);
-                } else {
-                    const char* key_value = gguf_get_val_str(fctx, keyidx);
-                    printf("%s: find key: %s found, kv[%d] value = %s\n", __func__, findkey, keyidx, key_value);
-                }
-            }
-        }
-        if (isSave) {
-            // if(!std::filesystem::exists(path)){
-            //     _INFO("%s: failed to save @'%s'\n", __func__, path.c_str());
-            //     return false;
-            // }
-            for (auto ps : optParams) {
-                gguf_add_tensor(fctx, G(ps));
-            }
-            const bool only_meta = false;
-            gguf_write_to_file(fctx, path.c_str(), only_meta);
-            size_t fsize = F_SIZE(path.c_str());
-            _INFO("[save] @\"%s\" nT=%ld fsize=%gM\tT=%.3g S\n", path.c_str(), optParams.size(), fsize / 1.0e6, GST_TOC(tic));
-        } else {
-            n_tensors = gguf_get_n_tensors(fctx);
-            if (isTrain() && n_tensors != optParams.size()) {  //  optParams maybe empty
-                _INFO("%s nOptParams don't match(%d,%d) @%s!", __func__, n_tensors, optParams.size(), path.c_str());
-                return false;
-            }
-            _INFO("[Serialize] n_tensors: %d\n", n_tensors);
-            loadGensors.clear();
-            for (int i = 0; i < n_tensors; ++i) {
-                const char* name = gguf_get_tensor_name(fctx, i);
-                ggml_tensor* cur = ggml_get_tensor(fctx_data, name);
-                if (cur == nullptr) {
-                    _INFO("%s failed to load tensor(%s) @%s!", __func__, name, path.c_str());
-                    return false;
-                }
-
-                hGTensor target = GetGensor(name);
-                if (target == nullptr) {
-                    if (strcmp(name, "output.weight") == 0 && config.model.isEmbedWeightTying) {
-                        continue;
-                    } else
-                        return false;
-                }
-                loadGensors.push_back(target);
-                if (!optParams.empty()) {
-                    if (!(target->flags & GTensor::F_PARAM)) {
-                        return false;
-                    }
-                } else {
-                    assert(!isTrain());
-                }
-
-#ifdef _TENSOR_G_
-                target->CopyGG(cur);
-#else
-                size_t nEle = tELEM(cur), sz = tBYTE(cur);
-                if (nEle != tELEM(target)) {
-                    assert(0);
-                    continue;
-                }
-                if (target->type != cur->type) {
-                    Gensor2float_(cur, (float*)target->data, 0x0);
-                } else
-                    memcpy(target->data, cur->data, sz);
-#endif
-                if (DUMP()) {
-                    sprintf(buf, "\t%d d=%d sz=%ld", i, tDIM(target), tBYTE(target));
-                    // _pt_cys_(buf,target,0x0);      printf("\n");
-                }
-                // _INFO("[Serialize]_%d\t%s: n_dims=%d sz = %ld\n",i,cur->name, tDIM(cur),sz);
-            }
-        }
-        if (fctx_data != NULL)
-            ggml_free(fctx_data);
-        gguf_free(fctx);
-        return true;
-    } catch (...) {
-        return false;
-    }
-#else
-    assert(0);
-    return false;
-#endif
-}
-
 // array: a bit stream from left to right
 void BIT_SET_k(hBITARR array, size_t offset, int elem_, int bits) {
     int elem = elem_;
@@ -2229,7 +2146,14 @@ int BIT_GET_2(const hBITARR array, size_t offset, int bits) {
     int bias = static_cast<int8_t>(elem - 1);
     return bias;
 }
-
+bool MODEL_CARD::InitStrata(CLI_params* hConfig, const JSON& jConfig, bool needAlign, int flag) {
+    string sPack;
+    // move to QWen38_strata::QWen38_strata
+    // cli_parser->get<std::string>("pack_folder", sPack);
+    // cli_parser->get<std::string>("mtp_folder", sPack);
+    // sTokenFolder = sCardPath + "tokenizer/";
+    return true;
+}
 /**
  * koifish has defined model in json config file, should do some alignment
  */
@@ -2269,8 +2193,8 @@ bool MODEL_CARD::InitHugFace(CLI_params* hConfig, const JSON& jConfig, bool need
                     nTotalSize = jKV(jSafetensorsIndex, {"metadata", "total_size"}, nTotalSize);
 
                     auto jMap = jSafetensorsIndex["weight_map"];
-                    for (JSON::iterator it = jMap.begin(); it != jMap.end(); ++it) {
-                        std::string key = it.key();
+                    for (JSON::const_iterator it = jMap.begin(); it != jMap.end(); ++it) {
+                        std::string key = J_it2key(it);  // it.key();
                         st_index_map.insert(std::make_pair(key, nullptr));
                     }
                 }
@@ -2378,4 +2302,37 @@ std::string CHAT_SAMPLER::GetPrompt(const std::string& prompt_0, const std::stri
     sprintf(rendered_prompt, system_prompt_template.c_str(), system_guide.c_str(), prompt_0.c_str());
     std::string prompt = G_rewrite_special_tokens(rendered_prompt);
     return rendered_prompt;
+}
+
+// the block of tokens that the lightweight draft model proposes and the full target model verifies in a single decode step
+int SPECULATE_CARD::nSpecDepth(int nFreeContex, int flag) {
+    int nT = std::min(mtp_max_t, spec);
+    /*if (cost_window_applies(in.use_mtp, in.spec_cost, in.df2_active, in.first_window)) {
+        T = std::clamp(in.chain_rows, 1, in.cap);
+    } else if (in.draft_on && in.spec_min_p > 0.0 && in.dprob != nullptr) {
+        T = 1;
+        while (T < in.cap && in.dprob[T - 1] >= (float)in.spec_min_p) ++T;
+    }
+    if (in.df2_active && in.draft_conf > 0.0 && in.dprob != nullptr) {  // DFlash2's own confidence: every draft so far holds
+        T            = 1;
+        double chain = 1.0;
+        while (T < in.cap && (chain *= (double)in.dprob[T - 1]) >= in.draft_conf) ++T;
+    }*/
+    const int room = (int)std::min<int64_t>(kernel_capacity, nFreeContex);
+    nT             = std::min(nT, room);
+    return nT;
+}
+
+template <>
+fPath CLI_params::ARG(const std::string& key, fPath& fpath, bool isCLI) const {
+    string path;
+    cli_parser->get<string>(key, path);
+    fPath fp = path;
+    if (!fs::exists(fp)) {
+        _WARN("[APP] \"%s\" is not a valid path!", fp.c_str());
+    } else {
+        fpath = fp;
+    }
+    bool is_dir = fs::is_directory(fpath);
+    return fpath;
 }

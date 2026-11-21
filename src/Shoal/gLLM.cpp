@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  General AutoRegressive Language model
@@ -77,7 +77,9 @@ NLP_AutoRegressive::NLP_AutoRegressive(const std::string& nam_, struct CLI_param
 
     string sT = params.KV({"model_v0", "attention", "type"}, "QKV", false);
     tpATT     = sT == "brown" ? ATTENTION_TYPE::BROWN : sT == "off" ? ATTENTION_TYPE::OFF : ATTENTION_TYPE::QKVs;
-    tpFFN     = (FFN_TYPE)(jKV(params.jConfig, {"model_v0", "ffn", "type"}, 5, false));
+    d         = 5;
+    d         = jKV(params.jConfig, {"model_v0", "ffn", "type"}, d, false);
+    tpFFN     = (FFN_TYPE)(d);
 }
 // params!=src->params
 NLP_AutoRegressive::NLP_AutoRegressive(const std::string& nam_, const NLP_AutoRegressive* src, struct CLI_params params, int flag) : Fish(nam_, params) {
@@ -299,6 +301,9 @@ bool Fish::InitTokenCoral(int flag) {
         case MODEL_ARCH::NTP_QWEN3:
             hDict = std::make_shared<GTokenizer_QWEN3>(this);
             break;
+        case MODEL_ARCH::NTP_QWEN38_STRATA:
+            hDict = std::make_shared<GTokenizer_STRATA>(this);
+            break;
         case MODEL_ARCH::MD_QWEN:
         case MODEL_ARCH::MD_AR_QWEN: {
             if (config.dict.type == "charset") {  // DEBUG.VocabIsCharset
@@ -321,6 +326,10 @@ bool Fish::InitTokenCoral(int flag) {
         default:
             assert(0 && "DictTokenset don't support current arch!");
             break;
+    }
+    if (!hDict->InitFromFiles(this)) {
+        assert(0);
+        return false;
     }
 
     if (!isTrain() && !hDict->isValid(true)) {  //  allowEmpty=true

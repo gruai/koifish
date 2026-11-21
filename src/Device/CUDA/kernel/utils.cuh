@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief Some simple utilities cuda kernels
@@ -453,4 +453,3 @@ __global__ static void CU_print_kernel(const T* devData, size_t offset, int flag
     float a = CU_T2Float(devData + offset);
     printf("%f", a);
 }
-

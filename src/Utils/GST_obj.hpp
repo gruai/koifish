@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2018-2025 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: 2018-2026 Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief GRUSOFT TEMPLATE	- some obj & functions on STL
@@ -651,15 +651,52 @@ class SafeExit : public std::exception {
    private:
     ExitReason reason;
 };
+
+class SourceLocation {
+   public:
+#if defined(__has_builtin)
+#if __has_builtin(__builtin_COLUMN)
+#define _HAS_COLUMN_ 1
+#endif
+#endif
+    static constexpr SourceLocation current(const char* file = __builtin_FILE(), const char* func = __builtin_FUNCTION(),
+                                            std::uint_least32_t line = __builtin_LINE(),
+                                            std::uint_least32_t column =
+#if defined(_HAS_COLUMN_)
+                                                __builtin_COLUMN()
+#else
+                                                0
+#endif
+                                                ) noexcept {
+        return SourceLocation(file, func, line, column);
+    }
+
+    constexpr const char* file_name() const noexcept { return file_; }
+    constexpr const char* function_name() const noexcept { return func_; }
+    constexpr std::uint_least32_t line() const noexcept { return line_; }
+    constexpr std::uint_least32_t column() const noexcept { return column_; }
+    std::string DumpX(int type, const std::string& title = "", int flag = 0x0);
+   private:
+    constexpr SourceLocation(const char* f, const char* fn, std::uint_least32_t l, std::uint_least32_t c) noexcept
+        : file_(f), func_(fn), line_(l), column_(c) {}
+
+    const char* file_;
+    const char* func_;
+    std::uint_least32_t line_;
+    std::uint_least32_t column_;
+};
+#define SRC_LOC SourceLocation::current()
+
 #define K_EXIT(code) throw SafeExit("", code, SafeExit::ExitReason::SYSTEM_FAILURE, __func__);
 inline void K_EXIT_NOW(int code) {
     fprintf(stderr,
-    "\n"
-    "\033[1;31m"
-    "╔══════════════════════════════════════╗\n"
-    "║  🛑  EXIT_NOW   code=%8d   ║\n"            
-    "╚══════════════════════════════════════╝\n"
-    "\033[0m\n", code);
+            "\n"
+            "\033[1;31m"
+            "╔══════════════════════════════════════╗\n"
+            "║  🛑  EXIT_NOW   code=%8d   ║\n"
+            "╚══════════════════════════════════════╝\n"
+            "\033[0m\n",
+            code);
     exit(code);
 }
 

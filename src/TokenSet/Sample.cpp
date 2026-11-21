@@ -1,15 +1,15 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  \brief
  *  \author Yingshi Chen
  */
-#include "TokenSet.hpp"
-#include "DataLoader.hpp"
-#include "Dictionary.hpp"
 #include "../Manifold/Optimizer.hpp"
 #include "../Shoal/gLLM.hpp"
+#include "DataLoader.hpp"
+#include "Dictionary.hpp"
+#include "TokenSet.hpp"
 
 void SampNanny::UpdateStepInfos(float mean_loss, int nB, int flag) {
     int iter = hOPT->GetITER(), nFuyou = hFish->nFuyou(1);
@@ -63,7 +63,6 @@ float SampNanny::UpdateII(float mean_loss, int flag) {
     // }
     return mean_loss;
 }
-
 
 /**
  * "state": "The Washington Monument is an obelisk on the National Mall in Washington, D.C., built to commemorate George Washington, once commander-in-chief of
@@ -190,8 +189,8 @@ bool SAMP_JEV::ToTokens(hDataToken coral, S2TOKEN s2t_, int flag) {
 }
 
 bool SAMP_JEV::MergeToCoral(hDataToken coral, int flag) {
-    int nContext    = coral->hFish->curContextLen();
-    pos = coral->tokens.size();
+    int nContext = coral->hFish->curContextLen();
+    pos          = coral->tokens.size();
     if (ttoks.size() > nContext) {
         DumpTokens(coral->hDict, ttoks, -1, flag);
         // Dump(coral, ttoks, 0x0, state + "\n" + question);

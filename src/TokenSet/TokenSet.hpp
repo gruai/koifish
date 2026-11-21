@@ -1,5 +1,5 @@
 /**
- *  SPDX-FileCopyrightText: 2023-2026 Yingshi Chen <gsp.cys@gmail.com>
+ *  SPDX-FileCopyrightText: Yingshi Chen <gsp.cys@gmail.com>
  *  SPDX-License-Identifier: MIT
  *
  *  CORALs provide enviroments for fish to survice, reproduce & evolve.
@@ -24,7 +24,6 @@
 #include <vector>
 
 #include "../CLI_params.hpp"
-#include "../Manifold/Serialize.hpp"
 #include "../Utils/GST_obj.hpp"
 #include "../Utils/GST_rander.hpp"
 #include "../g_def_x.hpp"
@@ -72,8 +71,9 @@ class TokenCoral : public std::enable_shared_from_this<TokenCoral> {
     hRANDER hPickRander  = nullptr;
     SAMPLE_TYPE tpSample = RANDOM_GENERATE;
     std::vector<string> shard_paths;
-    int nMostShard  = -1;
-    int nMostSamp   = -1;
+    int nMostShard = -1;
+    // int nMostSamp   = -1;
+    int N_mostSamp  = -1;  // may changed in debug process
     int shard_index = 0;
     int eval_every  = -1;  // Actually: nanny->eval_every = eval_every;
     int bpToken     = 4;   // bytes_per_token
@@ -110,7 +110,7 @@ class TokenCoral : public std::enable_shared_from_this<TokenCoral> {
    public:
     static std::tuple<hDataToken, std::vector<hDataToken>, hDataToken, hDataToken> MakeInstance(Fish* hFish, hTokenizer, bool isLocalInfer, int flag);
 
-    int N_mostSamp = -1;
+    virtual void SetMostSamp(int nMost, int flag = 0x0);
     std::vector<TOKEN_ID> tokens, tokens_mask;
     TokenCoral(hTokenizer hDict);
     TokenCoral(CSTRING& name_, hDataToken hBase, int flag = 0x0);
@@ -170,7 +170,8 @@ class SyntheticCoral : public TokenCoral {
     //  given two elements 𝑎 and 𝑏 from a group 𝐺,the network must predict the result of the operation 𝑎 ∘ 𝑏, where ∘ is a generic operation
     std::shared_ptr<SAMP> S_permutegroup(int i, int j, MAP_S2S& q_kv, int flag = 0x0);
     std::shared_ptr<SAMP> S_Polynomial(int i, int j, MAP_S2S& q_kv, int flag = 0x0);
-    std::shared_ptr<SAMP> S_parity(int i, int j, MAP_S2S& q_kv, int flag = 0x0);    //    Sparse Parities. the binary classification tasks of 𝑛-length binary strings
+    std::shared_ptr<SAMP> S_parity(int i, int j, MAP_S2S& q_kv,
+                                   int flag = 0x0);  //    Sparse Parities. the binary classification tasks of 𝑛-length binary strings
 
    public:
     SyntheticCoral(const JSON& jit, hTokenizer hDict, int flag = 0x0);
@@ -298,7 +299,7 @@ class Tokenset_TEXT : public GlobTokenset {
 class Tokenset_JSONL : public GlobTokenset {
    protected:
     //  ChatML​ is a tokenization-friendly text formatthat encodes chat messages into a single string
-    std::string toChatML(JSON& jMsg, int flag = 0x0);
+    std::string toChatML(const JSON& jMsg, int flag = 0x0);
     string format;
     bool isJsonTxt       = false;
     bool enable_thinking = false;
